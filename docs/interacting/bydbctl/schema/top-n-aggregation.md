@@ -30,12 +30,11 @@ resource_opts:
 EOF
 ```
 
-The group creates two shards to store data points. Every day, it would create a
-segment that will generate a block every 2 hours.
+The group creates two shards to store data points. Every day, it would create a segment.
 
 The data in this group will keep 7 days.
 
-The top-n-aggregation monitors the data ingestion of the source measure while  generating ranked top-N entities. We should create such a measure before creating a top-n-aggregation.
+The top-n-aggregation monitors the data ingestion of the source measure while generating ranked top-N entities. We should create such a measure before creating a top-n-aggregation.
 
 ```shell
 bydbctl measure create -f - <<EOF
@@ -61,17 +60,17 @@ fields:
     encoding_method: ENCODING_METHOD_GORILLA
     compression_method: COMPRESSION_METHOD_ZSTD
 entity:
-  tagNames: 
+  tagNames:
     - service_id
     - entity_id
 sharding_key:
-  tagNames: 
+  tagNames:
     - service_id
 interval: 1m
 EOF
 ```
 
-`service_instance_cpm_minute` expects to ingest per-minute metrics for individual service instances. 
+`service_instance_cpm_minute` expects to ingest per-minute metrics for individual service instances.
 
 Then, the below command will create a new top-n-aggregation:
 
@@ -91,6 +90,7 @@ counters_number: 1000
 lru_size: 10
 EOF
 ```
+
 `service_instance_cpm_minute_top_bottom_100` is watching the data ingesting of the source measure `service_instance_cpm_minute` to generate both top 1000 and bottom 1000 entity cardinalities. If only Top 1000 or Bottom 1000 is needed, the `field_value_sort` could be `DESC` or `ASC` respectively.
 
 - `SORT_DESC`: Top-N. In a series of `1,2,3...1000`. Top10’s result is `1000,999...991`.

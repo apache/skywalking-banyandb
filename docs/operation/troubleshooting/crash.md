@@ -13,7 +13,7 @@ If the BanyanDB standalone process crashes due to corrupted metadata. You should
    - The metadata file is located in the standalone directory.
    - Navigate to the directory where BanyanDB stores its standalone data. This is typically specified in the [metadata-root-path](../configuration.md#data--storage)
 
-## Remove Corrupted Stream or Measure Data
+## Remove Corrupted Stream, Measure or Trace Data
 
 The logs may indicate that the crash was caused by corrupted data. In such cases, it is essential to remove the corrupted data to restore the integrity of the database. Follow these steps to safely remove corrupted data from BanyanDB:
 

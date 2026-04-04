@@ -672,13 +672,15 @@ func (qs *queueSupplier) OpenDB(groupSchema *commonv1.Group) (resourceSchema.DB,
 	}
 	shardNum := ro.ShardNum
 	group := groupSchema.Metadata.Name
+	metrics, metricsFactory := qs.newMetrics(p)
 	opts := wqueue.Opts[*tsTable, option]{
 		Group:           group,
 		ShardNum:        shardNum,
 		SegmentInterval: storage.MustToIntervalRule(ro.SegmentInterval),
 		Location:        path.Join(qs.path, group),
 		Option:          qs.option,
-		Metrics:         qs.newMetrics(p),
+		Metrics:         metrics,
+		MetricsFactory:  metricsFactory,
 		SubQueueCreator: func(fileSystem fs.FileSystem, root string, position common.Position,
 			l *logger.Logger, option option, metrics any, group string, shardID common.ShardID, getNodes func() []string,
 		) (*tsTable, error) {

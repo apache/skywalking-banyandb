@@ -5,6 +5,7 @@ CRUD operations create, read, update and delete streams.
 [bydbctl](../bydbctl.md) is the command line tool in examples.
 
 Stream intends to store streaming data, for example, traces or logs.
+
 ## Create operation
 
 Create operation adds a new stream to the database's metadata registry repository. If the stream does not currently exist, create operation will create the schema.
@@ -30,8 +31,7 @@ resource_opts:
 EOF
 ```
 
-The group creates two shards to store stream data points. Every one day, it would create a
-segment which will generate a block every 2 hours.
+The group creates two shards to store stream data points. Every one day, it would create a segment.
 
 The data in this group will keep 7 days.
 
@@ -44,7 +44,7 @@ metadata:
   group: default
 tagFamilies:
   - name: searchable
-    tags: 
+    tags:
       - name: trace_id
         type: TAG_TYPE_STRING
 entity:
@@ -70,6 +70,7 @@ Update operation update a stream's schema.
 ### Examples of updating
 
 `bydbctl` is the command line tool to update a stream in this example.
+
 ```shell
 bydbctl stream update -f - <<EOF
 metadata:
@@ -77,7 +78,7 @@ metadata:
   group: default
 tagFamilies:
   - name: searchable
-    tags: 
+    tags:
       - name: trace_id
         type: TAG_TYPE_STRING
       - name: trace_name
@@ -89,7 +90,7 @@ EOF
 
 ```
 
-You only can append new tags to a measure. You can't change the existing tags . The order of tags is immutable, you can't change the order of tags. You can't insert a new tag in the middle or front of the existing tags.
+You only can append new tags to a stream. You can't change the existing tags. The order of tags is immutable, you can't change the order of tags. You can't insert a new tag in the middle or front of the existing tags.
 
 ## Delete operation
 
@@ -98,6 +99,7 @@ Delete operation delete a stream's schema.
 ### Examples of deleting
 
 `bydbctl` is the command line tool to delete a stream in this example.
+
 ```shell
 bydbctl stream delete -g default -n sw
 ```
@@ -105,6 +107,7 @@ bydbctl stream delete -g default -n sw
 ## List operation
 
 List operation list all streams' schema in a group.
+
 ### Examples of listing
 
 ```shell

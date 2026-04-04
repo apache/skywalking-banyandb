@@ -6,8 +6,8 @@ Query operation queries the data in a stream.
 
 The input contains two parts:
 
-* Request: a YAML-based text which is defined by the [API](#api-reference)
-* Time Range: YAML and CLI's flags both support it.
+- Request: a YAML-based text which is defined by the [API](#api-reference)
+- Time Range: YAML and CLI's flags both support it.
 
 ## Time Range
 
@@ -18,20 +18,22 @@ The query specification contains `time_range` field. The request should set abso
 or relative time (to the current time) like "-30m", or "30m".
 They are both optional and their default values follow the rules below:
 
-* when "start" and "end" are both absent, "start = now - 30 minutes" and "end = now",
+- when "start" and "end" are both absent, "start = now - 30 minutes" and "end = now",
   namely past 30 minutes;
-* when "start" is absent and "end" is present, this command calculates "start" (minus 30 units),
+- when "start" is absent and "end" is present, this command calculates "start" (minus 30 units),
   e.g. "end = 2022-11-09T12:34:00Z", so "start = end - 30 minutes = 2022-11-09T12:04:00Z";
-* when "start" is present and "end" is absent, this command calculates "end" (plus 30 units),
+- when "start" is present and "end" is absent, this command calculates "end" (plus 30 units),
   e.g. "start = 2022-11-09T12:04:00Z", so "end = start + 30 minutes = 2022-11-09T12:34:00Z".
 
-
 ## Understand the schema you are querying
+
 Before querying the data, you need to know the stream name and the tag families and fields in the stream. You can use the `bydbctl stream get` command to get the stream schema.
 for example, if you want to get the schema of a stream named `segment` in the group `stream-segment`, you can use the below command:
+
 ```shell
 bydbctl stream get -g stream-segment -n segment
 ```
+
 ```shell
 stream:
   entity:
@@ -74,9 +76,11 @@ stream:
 ```
 
 ## Examples
+
 The following examples use above schema to show how to query data in a stream and cover some common use cases:
 
 ### Query between specific time range
+
 To retrieve elements in a stream named `sw` between `2022-10-15T22:32:48Z` and `2022-10-15T23:32:48Z` could use the below command. These elements also choose a tag `trace_id` which lives in a family named `searchable`.
 
 ```shell
@@ -94,6 +98,7 @@ EOF
 ```
 
 ### Query using relative time duration
+
 The below command could query data in the last 30 minutes using relative time duration :
 
 ```shell
@@ -108,6 +113,7 @@ EOF
 ```
 
 ### Query with filter
+
 The below command could query data with a filter where the service_id is `bW9ja19iX3NlcnZpY2U=.1`:
 
 ```shell
@@ -131,6 +137,7 @@ EOF
 More filter operations can be found in [here](filter-operation.md).
 
 ### Query ordered by time-series
+
 The below command could query data order by time-series in descending [order](../../../api-reference.md#sort) :
 
 ```shell
@@ -149,6 +156,7 @@ EOF
 ```
 
 ### Query ordered by index (searchable tag)
+
 The below command could query data order by index in descending [order](../../../api-reference.md#sort) :
 
 ```shell
@@ -168,6 +176,7 @@ EOF
 ```
 
 ### Query limit result
+
 The below command could query ordered data and return the first two results:
 
 ```shell
@@ -190,12 +199,12 @@ EOF
 
 ### Query from Multiple Groups
 
-When querying data from multiple groups, you can combine streams that share the same measure name. Note the following requirements:
+When querying data from multiple groups, you can combine streams that share the same stream name. Note the following requirements:
 
-* Entity tag names must be identical across groups.
-* Tags with the same name across different groups must share the same type.
-* The orderBy tag and indexRuleName must be identical across groups.
-* Any tags used in filter criteria must exist in all groups with the same name and type.
+- Entity tag names must be identical across groups.
+- Tags with the same name across different groups must share the same type.
+- The orderBy tag and indexRuleName must be identical across groups.
+- Any tags used in filter criteria must exist in all groups with the same name and type.
 
 ### Query from Multiple Groups Example
 

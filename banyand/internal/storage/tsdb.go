@@ -146,6 +146,7 @@ type database[T TSTable, O any] struct {
 	tsEventCh         chan int64
 	scheduler         *timestamp.Scheduler
 	segmentController *segmentController[T, O]
+	metricsFactory    observability.Factory
 	*metrics
 	logger         *logger.Logger
 	retentionGate  chan struct{}
@@ -172,6 +173,10 @@ func (d *database[T, O]) Close() error {
 	if err := d.lfs.DeleteFile(d.lock.Path()); err != nil {
 		logger.Panicf("cannot delete lock file %s: %s", d.lock.Path(), err)
 	}
+	if d.metricsFactory != nil {
+		d.metricsFactory.Close()
+	}
+	obsservice.MetricsCollector.Unregister(d.location)
 	return nil
 }
 
@@ -222,6 +227,7 @@ func OpenTSDB[T TSTable, O any](ctx context.Context, opts TSDBOpts[T, O], cache 
 		p:         p,
 		segmentController: newSegmentController(ctx, location,
 			l, opts, indexMetrics, opts.TableMetrics, opts.SegmentIdleTimeout, tsdbLfs, sc, group),
+		metricsFactory:   opts.StorageMetricsFactory,
 		metrics:          newMetrics(opts.StorageMetricsFactory),
 		disableRetention: opts.DisableRetention,
 		lfs:              tsdbLfs,

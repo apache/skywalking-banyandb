@@ -66,6 +66,8 @@ func (b *bypassFactory) NewHistogram(_ string, _ meter.Buckets, _ ...string) met
 	return &bypassHistogram{}
 }
 
+func (b *bypassFactory) Close() {}
+
 // bypassCounter is a Counter that does nothing.
 type bypassCounter struct{}
 

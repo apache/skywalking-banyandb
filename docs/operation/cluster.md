@@ -1,9 +1,11 @@
 # Cluster Maintenance
 
 ## Introduction
+
 Properly maintaining and scaling a cluster is crucial for ensuring its reliable and efficient operation. This document provides guidance on setting up a cluster, planning its capacity, and scaling it to meet evolving requirements.
 
 ## Cluster Setup
+
 Before deploying or maintaining a cluster, it is recommended to familiarize oneself with the basic clustering concepts by reviewing the [clustering documentation](../concept/clustering.md).
 
 To set up a cluster, one can refer to the [cluster installation guide](../installation/cluster.md), which describes the process in detail. A minimal cluster should consist of the following nodes:
@@ -21,20 +23,23 @@ To balance the write and query traffic to the liaison nodes, the use of an gRPC 
 For those seeking to set up a cluster in a Kubernetes environment, a [dedicated guide](../installation/kubernetes.md) is available to assist with the process.
 
 ## Capacity Planning
+
 Each node role can be provisioned with the most suitable hardware resources. The cluster's capacity scales linearly with the available resources. The required amounts of CPU and RAM per node role depend highly on the workload, such as the number of time series, query types, and write/query QPS. It is recommended to set up a test cluster mirroring the production workload and iteratively scale the per-node resources and the number of nodes per role until the cluster becomes stable. Additionally, the use of observability tools is advised, as they can help identify bottlenecks in the cluster setup.
 
-The necessary storage space can be estimated based on the disk space usage observed during a test run. For example, if the storage space usage is 10GB after a day-long test run on a production workload, then the cluster should have at least 10GB*7=70GB of disk space for a group with `ttl=7day`.
+The necessary storage space can be estimated based on the disk space usage observed during a test run. For example, if the storage space usage is 10GB after a day-long test run on a production workload, then the cluster should have at least 10GB\*7=70GB of disk space for a group with `ttl=7day`.
 
 To ensure the cluster's resilience and responsiveness, it is recommended to maintain the following spare resource levels:
 
 - 50% of free RAM across all the nodes to reduce the probability of OOM (out of memory) crashes and slowdowns during temporary spikes in workload.
 - 50% of spare CPU across all the nodes to reduce the probability of slowdowns during temporary spikes in workload.
-- At least 20% of free storage space at the directories pointed by `measure-root-path` and `stream-root-path`.
+- At least 20% of free storage space at the directories pointed by `measure-root-path`, `stream-root-path` and `trace-root-path`.
 
 ## Scalability
+
 The cluster's performance and capacity can be scaled in two ways: vertical scalability and horizontal scalability.
 
 ### Vertical Scalability
+
 Vertical scalability refers to adding more resources (CPU, RAM, disk I/O, disk space, network bandwidth) to existing nodes in the cluster.
 
 Increasing the CPU and RAM of existing liaison nodes can improve the performance for heavy queries that process a large number of time series with many data points.
@@ -44,6 +49,7 @@ Increasing the CPU and RAM of existing data nodes can increase the number of tim
 Increasing the disk I/O and disk space of existing etcd nodes can improve the performance for heavy metadata queries that process a large number of metadata entries.
 
 ### Horizontal Scalability
+
 Horizontal scalability refers to adding more nodes to the cluster.
 
 Increasing the number of liaison nodes can increase the maximum possible data ingestion speed, as the ingested data can be split among a larger number of liaison nodes. It can also increase the maximum possible query rate, as the incoming concurrent requests can be split among a larger number of liaison nodes.
@@ -87,7 +93,7 @@ A workload management platform, such as Kubernetes, can be used to automatically
 
 ### etcd Node Failure
 
-If an etcd node fails, the cluster can still ingest new data and serve queries of `Stream` and `Measure`. `Property` operations are not available during the etcd node failure.
+If an etcd node fails, the cluster can still ingest new data and serve queries of `Stream`, `Measure` and `Trace`. `Property` operations are not available during the etcd node failure.
 
 When the etcd node is back online, the cluster automatically recovers without any manual intervention. If the etcd cluster lost the data, the client should rerun the metadata initialization process to recover the metadata.
 
