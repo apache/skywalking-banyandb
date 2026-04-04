@@ -310,7 +310,7 @@ func (d *database[T, O]) TakeFileSnapshot(dst string) (bool, error) {
 			d.lfs.MkdirIfNotExist(shardPath, DirPerm)
 			if _, err := shard.table.TakeFileSnapshot(shardPath); err != nil {
 				if errors.Is(err, ErrNoCurrentSnapshot) {
-					log.Warn().Str("shard", shardDir).Str("segment", segDir).
+					log.Debug().Str("shard", shardDir).Str("segment", segDir).
 						Msg("skipping empty shard snapshot")
 					continue
 				}

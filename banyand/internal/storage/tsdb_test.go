@@ -19,7 +19,6 @@ package storage
 
 import (
 	"context"
-	"fmt"
 	"path/filepath"
 	"testing"
 	"time"
@@ -338,10 +337,12 @@ func TestTakeFileSnapshot(t *testing.T) {
 
 		normalSeg, err := tsdb.CreateSegmentIfNotExist(ts)
 		require.NoError(t, err)
+		normalSegLocation := normalSeg.(*segment[*SnapshotMockTSTable, any]).location
 		normalSeg.DecRef()
 
 		epochSeg, err := tsdb.CreateSegmentIfNotExist(time.Unix(0, 0))
 		require.NoError(t, err)
+		epochSegLocation := epochSeg.(*segment[*SnapshotMockTSTable, any]).location
 		epochSeg.DecRef()
 
 		created, snapshotErr := tsdb.TakeFileSnapshot(snapshotDir)
@@ -349,12 +350,11 @@ func TestTakeFileSnapshot(t *testing.T) {
 			"snapshot should not fail due to empty shard in epoch segment")
 		require.True(t, created)
 
-		normalSegDir := filepath.Join(snapshotDir,
-			fmt.Sprintf("seg-%s", ts.Format("20060102")))
+		normalSegDir := filepath.Join(snapshotDir, filepath.Base(normalSegLocation))
 		require.DirExists(t, normalSegDir,
 			"normal segment should be present in snapshot")
 
-		epochSegDir := filepath.Join(snapshotDir, "seg-19700101")
+		epochSegDir := filepath.Join(snapshotDir, filepath.Base(epochSegLocation))
 		require.DirExists(t, epochSegDir,
 			"epoch segment directory should still be created")
 	})
