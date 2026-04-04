@@ -309,6 +309,11 @@ func (d *database[T, O]) TakeFileSnapshot(dst string) (bool, error) {
 			shardPath := filepath.Join(segPath, shardDir)
 			d.lfs.MkdirIfNotExist(shardPath, DirPerm)
 			if _, err := shard.table.TakeFileSnapshot(shardPath); err != nil {
+				if errors.Is(err, ErrNoCurrentSnapshot) {
+					log.Warn().Str("shard", shardDir).Str("segment", segDir).
+						Msg("skipping empty shard snapshot")
+					continue
+				}
 				return false, errors.Wrapf(err, "failed to snapshot shard %s in segment %s", shardDir, segDir)
 			}
 		}

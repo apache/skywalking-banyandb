@@ -227,7 +227,7 @@ func (tst *tsTable) TakeFileSnapshot(dst string) (bool, error) {
 	}
 	snapshot := tst.currentSnapshot()
 	if snapshot == nil {
-		return false, fmt.Errorf("no current snapshot available")
+		return false, storage.ErrNoCurrentSnapshot
 	}
 	defer snapshot.decRef()
 

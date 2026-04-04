@@ -19,6 +19,7 @@ package storage
 
 import (
 	"context"
+	"fmt"
 	"path/filepath"
 	"testing"
 	"time"
@@ -307,6 +308,55 @@ func TestTakeFileSnapshot(t *testing.T) {
 		require.NoDirExists(t, snapshotDir, "snapshot directory should not exist when no segments")
 
 		require.NoError(t, tsdb.Close())
+	})
+
+	t.Run("Take snapshot skips shard with no current snapshot", func(t *testing.T) {
+		dir, defFn := test.Space(require.New(t))
+		defer defFn()
+
+		snapshotDir := filepath.Join(dir, "snapshot")
+
+		opts := TSDBOpts[*SnapshotMockTSTable, any]{
+			Location:        dir,
+			SegmentInterval: IntervalRule{Unit: DAY, Num: 1},
+			TTL:             IntervalRule{Unit: DAY, Num: 7},
+			ShardNum:        1,
+			TSTableCreator:  SnapshotMockTSTableCreator,
+		}
+
+		ctx := context.Background()
+		mc := timestamp.NewMockClock()
+		ts, err := time.ParseInLocation("2006-01-02 15:04:05", "2024-05-01 00:00:00", time.Local)
+		require.NoError(t, err)
+		mc.Set(ts)
+		ctx = timestamp.SetClock(ctx, mc)
+
+		serviceCache := NewServiceCache()
+		tsdb, err := OpenTSDB(ctx, opts, serviceCache, group)
+		require.NoError(t, err)
+		defer tsdb.Close()
+
+		normalSeg, err := tsdb.CreateSegmentIfNotExist(ts)
+		require.NoError(t, err)
+		normalSeg.DecRef()
+
+		epochSeg, err := tsdb.CreateSegmentIfNotExist(time.Unix(0, 0))
+		require.NoError(t, err)
+		epochSeg.DecRef()
+
+		created, snapshotErr := tsdb.TakeFileSnapshot(snapshotDir)
+		require.NoError(t, snapshotErr,
+			"snapshot should not fail due to empty shard in epoch segment")
+		require.True(t, created)
+
+		normalSegDir := filepath.Join(snapshotDir,
+			fmt.Sprintf("seg-%s", ts.Format("20060102")))
+		require.DirExists(t, normalSegDir,
+			"normal segment should be present in snapshot")
+
+		epochSegDir := filepath.Join(snapshotDir, "seg-19700101")
+		require.DirExists(t, epochSegDir,
+			"epoch segment directory should still be created")
 	})
 }
 
