@@ -40,13 +40,30 @@
     tableData: [],
     name: route.params.name,
   });
-  const yamlCode = ref(`name: ${data.name}
-limit: 10`);
+  const yamlCode = ref(buildSearchYaml(data.name, 10));
   const showTracesDialog = ref(false);
   const traceData = ref(null);
-  const getProperties = async (params) => {
+
+  function buildSearchYaml(name, limit) {
+    return `name: ${name}
+limit: ${limit}`;
+  }
+
+  function normalizeSearchParams(params = {}) {
+    return {
+      ...params,
+      name: params.name ?? data.name,
+      limit: params.limit ?? 10,
+    };
+  }
+
+  const getProperties = async (params, resetYaml = false) => {
+    const normalizedParams = normalizeSearchParams(params);
+    if (resetYaml) {
+      yamlCode.value = buildSearchYaml(normalizedParams.name, normalizedParams.limit);
+    }
     $loadingCreate();
-    const res = await fetchProperties({ groups: [data.group], name: data.name, limit: 10, ...params });
+    const res = await fetchProperties({ groups: [data.group], ...normalizedParams });
     $loadingClose();
     if (res.error) {
       ElMessage({
@@ -82,8 +99,12 @@ limit: 10`);
       });
   }
 
+  function refreshProperties() {
+    getProperties(undefined, true);
+  }
+
   onMounted(() => {
-    getProperties();
+    getProperties(undefined, true);
   });
   watch(
     () => route.params,
@@ -91,8 +112,7 @@ limit: 10`);
       const { group, name } = route.params;
       data.name = name;
       data.group = group;
-      yamlCode.value = `name: ${data.name}
-limit: 10`;
+      yamlCode.value = buildSearchYaml(data.name, 10);
       getProperties();
     },
   );
@@ -105,7 +125,7 @@ limit: 10`;
       </template>
       <div class="button-group-operator">
         <el-button size="small" :icon="Search" @click="searchProperties" plain />
-        <el-button size="small" :icon="RefreshRight" @click="getProperties" plain />
+        <el-button size="small" :icon="RefreshRight" @click="refreshProperties" plain />
       </div>
       <CodeMirror ref="yamlRef" v-model="yamlCode" mode="yaml" style="height: 200px" :lint="true" />
       <div style="margin-top: 20px; margin-bottom: 10px; display: flex; justify-content: flex-end">
