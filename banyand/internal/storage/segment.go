@@ -34,7 +34,6 @@ import (
 
 	"github.com/apache/skywalking-banyandb/api/common"
 	commonv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/common/v1"
-	"github.com/apache/skywalking-banyandb/pkg/convert"
 	banyanfs "github.com/apache/skywalking-banyandb/pkg/fs"
 	"github.com/apache/skywalking-banyandb/pkg/index/inverted"
 	"github.com/apache/skywalking-banyandb/pkg/logger"
@@ -483,23 +482,32 @@ func (sc *segmentController[T, O]) open() error {
 		suffix := sc.format(start)
 		segmentPath := path.Join(sc.location, fmt.Sprintf(segTemplate, suffix))
 		metadataPath := path.Join(segmentPath, metadataFilename)
-		version, err := sc.lfs.Read(metadataPath)
-		if err != nil {
-			if errors.Is(err, fs.ErrNotExist) {
+		rawMeta, readErr := sc.lfs.Read(metadataPath)
+		if readErr != nil {
+			if errors.Is(readErr, fs.ErrNotExist) {
 				emptySegments = append(emptySegments, segmentPath)
 				return nil
 			}
-			return err
+			return readErr
 		}
-		if len(version) == 0 {
+		if len(rawMeta) == 0 {
 			emptySegments = append(emptySegments, segmentPath)
 			return nil
 		}
-		if err = checkVersion(convert.BytesToString(version)); err != nil {
-			return err
+		meta, parseErr := readSegmentMeta(rawMeta)
+		if parseErr != nil {
+			return parseErr
 		}
-		_, err = sc.load(start, end, sc.location)
-		return err
+		segmentEnd := end
+		if meta.EndTime != "" {
+			parsedEnd, timeErr := time.Parse(time.RFC3339Nano, meta.EndTime)
+			if timeErr != nil {
+				return timeErr
+			}
+			segmentEnd = parsedEnd
+		}
+		_, loadErr := sc.load(start, segmentEnd, sc.location)
+		return loadErr
 	})
 	if len(emptySegments) > 0 {
 		sc.l.Warn().Strs("segments", emptySegments).Msg("empty segments found, removing them.")
