@@ -49,6 +49,27 @@ func checkVersion(version string) error {
 	return errors.WithMessagef(errVersionIncompatible, "incompatible version %s, supported versions: %s", version, strings.Join(compatibleVersions, ", "))
 }
 
+type segmentMeta struct {
+	Version string `json:"version"`
+	EndTime string `json:"endTime,omitempty"`
+}
+
+func readSegmentMeta(data []byte) (segmentMeta, error) {
+	var meta segmentMeta
+	trimmed := strings.TrimSpace(string(data))
+	if len(trimmed) > 0 && trimmed[0] == '{' {
+		if unmarshalErr := json.Unmarshal(data, &meta); unmarshalErr != nil {
+			return segmentMeta{}, unmarshalErr
+		}
+	} else {
+		meta.Version = trimmed
+	}
+	if checkErr := checkVersion(meta.Version); checkErr != nil {
+		return segmentMeta{}, checkErr
+	}
+	return meta, nil
+}
+
 func readCompatibleVersions() []string {
 	i, err := versionFS.ReadFile(compatibleVersionsFilename)
 	if err != nil {
