@@ -28,7 +28,7 @@ import (
 
 const (
 	metadataFilename           = "metadata"
-	currentVersion             = "1.4.0"
+	currentVersion             = "1.5.0"
 	compatibleVersionsKey      = "versions"
 	compatibleVersionsFilename = "versions.yml"
 )
