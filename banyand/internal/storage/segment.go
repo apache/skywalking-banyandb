@@ -19,6 +19,7 @@ package storage
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"io/fs"
 	"path"
@@ -539,7 +540,14 @@ func (sc *segmentController[T, O]) create(start time.Time) (*segment[T, O], erro
 	}
 	segPath := path.Join(sc.location, fmt.Sprintf(segTemplate, sc.format(start)))
 	sc.lfs.MkdirPanicIfExist(segPath, DirPerm)
-	data := []byte(currentVersion)
+	meta := segmentMeta{
+		Version: currentVersion,
+		EndTime: end.Format(time.RFC3339Nano),
+	}
+	data, marshalErr := json.Marshal(meta)
+	if marshalErr != nil {
+		logger.Panicf("cannot marshal segment metadata: %s", marshalErr)
+	}
 	metadataPath := filepath.Join(segPath, metadataFilename)
 	lf, err := sc.lfs.CreateLockFile(metadataPath, FilePerm)
 	if err != nil {

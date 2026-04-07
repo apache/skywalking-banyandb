@@ -641,3 +641,69 @@ func TestDeleteExpiredSegmentsWithClosedSegments(t *testing.T) {
 			"Remaining segment %d should be from the expected date", i)
 	}
 }
+
+func TestCreateSegmentWritesJSONMetadata(t *testing.T) {
+	tempDir, cleanup := setupTestEnvironment(t)
+	defer cleanup()
+
+	ctx := context.Background()
+	l := logger.GetLogger("test-segment-metadata")
+	ctx = context.WithValue(ctx, logger.ContextKey, l)
+	ctx = common.SetPosition(ctx, func(_ common.Position) common.Position {
+		return common.Position{
+			Database: "test-db",
+			Stage:    "test-stage",
+		}
+	})
+
+	opts := TSDBOpts[mockTSTable, mockTSTableOpener]{
+		TSTableCreator: func(_ fs.FileSystem, _ string, _ common.Position, _ *logger.Logger,
+			_ timestamp.TimeRange, _ mockTSTableOpener, _ any,
+		) (mockTSTable, error) {
+			return mockTSTable{ID: common.ShardID(0)}, nil
+		},
+		ShardNum:                       1,
+		SegmentInterval:                IntervalRule{Unit: DAY, Num: 1},
+		TTL:                            IntervalRule{Unit: DAY, Num: 7},
+		SeriesIndexFlushTimeoutSeconds: 10,
+		SeriesIndexCacheMaxBytes:       1024 * 1024,
+	}
+
+	serviceCache := NewServiceCache().(*serviceCache)
+	sc := newSegmentController[mockTSTable, mockTSTableOpener](
+		ctx,
+		tempDir,
+		l,
+		opts,
+		nil,
+		nil,
+		5*time.Minute,
+		fs.NewLocalFileSystemWithLoggerAndLimit(logger.GetLogger("storage"), opts.MemoryLimit),
+		serviceCache,
+		group,
+	)
+
+	now := time.Now().UTC()
+	startTime := time.Date(now.Year(), now.Month(), now.Day(), 0, 0, 0, 0, time.UTC)
+
+	seg, createErr := sc.create(startTime)
+	require.NoError(t, createErr)
+	require.NotNil(t, seg)
+
+	// Read metadata from disk and verify it's JSON with endTime
+	suffix := startTime.Format(dayFormat)
+	metadataPath := filepath.Join(tempDir, fmt.Sprintf("seg-%s", suffix), metadataFilename)
+	rawMeta, readErr := os.ReadFile(metadataPath)
+	require.NoError(t, readErr)
+
+	meta, parseErr := readSegmentMeta(rawMeta)
+	require.NoError(t, parseErr)
+	assert.Equal(t, currentVersion, meta.Version)
+	assert.NotEmpty(t, meta.EndTime, "endTime should be persisted in metadata")
+
+	// Verify the endTime matches the segment's End
+	expectedEnd := startTime.Add(24 * time.Hour)
+	assert.Equal(t, expectedEnd.Format(time.RFC3339Nano), meta.EndTime)
+
+	seg.DecRef()
+}
