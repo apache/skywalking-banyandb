@@ -268,14 +268,14 @@ func (d *database[T, O]) UpdateOptions(resourceOpts *commonv1.ResourceOpts) {
 	d.segmentController.updateOptions(resourceOpts)
 }
 
-func (d *database[T, O]) TakeFileSnapshot(dst string) (bool, error) {
+func (d *database[T, O]) TakeFileSnapshot(dst string) (success bool, err error) {
 	if d.closed.Load() {
 		return false, errors.New("database is closed")
 	}
 
-	segments, err := d.segmentController.segments(true)
-	if err != nil {
-		return false, errors.Wrap(err, "failed to get segments")
+	segments, segErr := d.segmentController.segments(true)
+	if segErr != nil {
+		return false, errors.Wrap(segErr, "failed to get segments")
 	}
 	defer func() {
 		for _, seg := range segments {
@@ -287,6 +287,12 @@ func (d *database[T, O]) TakeFileSnapshot(dst string) (bool, error) {
 		return false, nil
 	}
 
+	defer func() {
+		if err != nil {
+			d.lfs.MustRMAll(dst)
+		}
+	}()
+
 	log.Info().Int("segment_count", len(segments)).Str("db_location", d.location).
 		Msgf("taking file snapshot for %s", dst)
 	for _, seg := range segments {
@@ -296,14 +302,14 @@ func (d *database[T, O]) TakeFileSnapshot(dst string) (bool, error) {
 
 		metadataSrc := filepath.Join(seg.location, metadataFilename)
 		metadataDest := filepath.Join(segPath, metadataFilename)
-		if err := d.lfs.CreateHardLink(metadataSrc, metadataDest, nil); err != nil {
-			return false, errors.Wrapf(err, "failed to snapshot metadata for segment %s", segDir)
+		if linkErr := d.lfs.CreateHardLink(metadataSrc, metadataDest, nil); linkErr != nil {
+			return false, errors.Wrapf(linkErr, "failed to snapshot metadata for segment %s", segDir)
 		}
 
 		indexPath := filepath.Join(segPath, seriesIndexDirName)
 		d.lfs.MkdirIfNotExist(indexPath, DirPerm)
-		if err := seg.index.store.TakeFileSnapshot(indexPath); err != nil {
-			return false, errors.Wrapf(err, "failed to snapshot index for segment %s", segDir)
+		if indexErr := seg.index.store.TakeFileSnapshot(indexPath); indexErr != nil {
+			return false, errors.Wrapf(indexErr, "failed to snapshot index for segment %s", segDir)
 		}
 
 		sLst := seg.sLst.Load()
@@ -314,13 +320,13 @@ func (d *database[T, O]) TakeFileSnapshot(dst string) (bool, error) {
 			shardDir := filepath.Base(shard.location)
 			shardPath := filepath.Join(segPath, shardDir)
 			d.lfs.MkdirIfNotExist(shardPath, DirPerm)
-			if _, err := shard.table.TakeFileSnapshot(shardPath); err != nil {
-				if errors.Is(err, ErrNoCurrentSnapshot) {
+			if _, shardErr := shard.table.TakeFileSnapshot(shardPath); shardErr != nil {
+				if errors.Is(shardErr, ErrNoCurrentSnapshot) {
 					log.Debug().Str("shard", shardDir).Str("segment", segDir).
 						Msg("skipping empty shard snapshot")
 					continue
 				}
-				return false, errors.Wrapf(err, "failed to snapshot shard %s in segment %s", shardDir, segDir)
+				return false, errors.Wrapf(shardErr, "failed to snapshot shard %s in segment %s", shardDir, segDir)
 			}
 		}
 	}
