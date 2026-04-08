@@ -42,10 +42,12 @@ import (
 	"github.com/apache/skywalking-banyandb/api/common"
 	clusterv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/cluster/v1"
 	databasev1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/database/v1"
+	fodcv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/fodc/v1"
 	measurev1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/measure/v1"
 	streamv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/stream/v1"
 	tracev1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/trace/v1"
 	"github.com/apache/skywalking-banyandb/banyand/liaison/grpc/route"
+	"github.com/apache/skywalking-banyandb/banyand/metadata"
 	"github.com/apache/skywalking-banyandb/banyand/observability"
 	"github.com/apache/skywalking-banyandb/banyand/queue"
 	"github.com/apache/skywalking-banyandb/pkg/bus"
@@ -77,10 +79,11 @@ type server struct {
 	databasev1.UnimplementedNodeQueryServiceServer
 	databasev1.UnimplementedClusterStateServiceServer
 	clusterv1.UnimplementedServiceServer
+	fodcv1.UnimplementedGroupLifecycleServiceServer
 	omr                   observability.MetricsRegistry
 	creds                 credentials.TransportCredentials
-	curNode               *databasev1.Node
-	metrics               *metrics
+	metadataRepo          metadata.Repo
+	clientCloser          context.CancelFunc
 	ser                   *grpclib.Server
 	listeners             map[bus.Topic][]bus.MessageListener
 	topicMap              map[string]bus.Topic
@@ -88,14 +91,15 @@ type server struct {
 	log                   *logger.Logger
 	httpSrv               *http.Server
 	tlsReloader           *pkgtls.Reloader
-	clientCloser          context.CancelFunc
+	metrics               *metrics
 	routeTableProvider    map[string]route.TableProvider
+	curNode               *databasev1.Node
+	flagNamePrefix        string
 	certFile              string
 	addr                  string
-	keyFile               string
-	flagNamePrefix        string
 	httpAddr              string
 	host                  string
+	keyFile               string
 	chunkBufferTimeout    time.Duration
 	maxRecvMsgSize        run.Bytes
 	listenersLock         sync.RWMutex
@@ -285,6 +289,9 @@ func (s *server) Serve() run.StopNotify {
 	streamv1.RegisterStreamServiceServer(s.ser, &streamService{ser: s})
 	measurev1.RegisterMeasureServiceServer(s.ser, &measureService{ser: s})
 	tracev1.RegisterTraceServiceServer(s.ser, &traceService{ser: s})
+	if s.metadataRepo != nil {
+		fodcv1.RegisterGroupLifecycleServiceServer(s.ser, s)
+	}
 
 	var ctx context.Context
 	ctx, s.clientCloser = context.WithCancel(context.Background())
@@ -389,6 +396,11 @@ func (s *server) SetRouteProviders(providers map[string]route.TableProvider) {
 	s.routeTableProviderMu.Lock()
 	s.routeTableProvider = providers
 	s.routeTableProviderMu.Unlock()
+}
+
+// SetMetadataRepo sets the metadata repository for the internal gRPC server.
+func (s *server) SetMetadataRepo(repo metadata.Repo) {
+	s.metadataRepo = repo
 }
 
 type metrics struct {

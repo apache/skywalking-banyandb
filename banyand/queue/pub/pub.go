@@ -388,7 +388,7 @@ func (p *pub) PreRun(context.Context) error {
 	p.log = logger.GetLogger("server-queue-pub-" + p.prefix)
 
 	// Initialize connection manager with the pub as the handler
-	p.connMgr = grpchelper.NewConnManager(grpchelper.ConnManagerConfig[*client]{
+	p.connMgr = grpchelper.NewConnManager(grpchelper.ConnManagerConfig[*client]{ //nolint:contextcheck // health check runs in background goroutine
 		Handler:        p,
 		Logger:         p.log,
 		RetryPolicy:    p.retryPolicy,

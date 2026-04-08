@@ -29,8 +29,7 @@ resource_opts:
 EOF
 ```
 
-The group creates two shards to store data points. Every day, it would create a
-segment that will generate a block every 2 hours.
+The group creates two shards to store data points. Every day, it would create a segment.
 
 The data in this group will keep 7 days.
 
@@ -137,3 +136,4 @@ bydbctl measure list -g sw_metric
 ## API Reference
 
 [Measure Registration Operations](../../../api-reference.md#measureregistryservice)
+

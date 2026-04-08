@@ -28,14 +28,29 @@ setup:
     - name: install swctl
       command: bash test/e2e-v2/script/prepare/setup-e2e-shell/install.sh swctl
 
+trigger:
+  action: http
+  interval: 5s
+  times: -1
+  url: http://${consumer_host}:${consumer_9092}/users
+  method: POST
+  body: '{"id":"123","name":"skywalking"}'
+  headers:
+    "Content-Type": "application/json"
+
 verify:
   # verify with retry strategy
   retry:
     # max retry count
-    count: 3
+    count: 20
     # the interval between two retries, in millisecond.
     interval: 10s
   cases:
+    - includes:
+        - ../storage/storage-cases.yaml
+    - query: swctl --display yaml --base-url=http://${oap_host}:${oap_12800}/graphql metrics exec --expression="top_n(service_resp_time,3,des,attr0='GENERAL',attr1!='Not_exist')/100"
+      expected: ../storage/expected/topN-OP-service.yml
+
     # cold data test
     - query: swctl --display yaml --base-url=http://${oap_host}:${oap_12800}/graphql metrics exec --expression=service_resp_time --service-name=mock_a_service --start="-96h" --end="-48h" --cold=true --step=DAY
       expected: ../storage/expected/metrics-has-value.yml
@@ -45,18 +60,39 @@ verify:
       expected: ./expected/dependency-instance.yml
     - query: swctl --display yaml --base-url=http://${oap_host}:${oap_12800}/graphql dependency endpoint --service-name=mock_a_service --endpoint-name=/dubbox-case/case/dubbox-rest/404-test --start="-96h" --end="-48h" --cold=true --step=DAY
       expected: ./expected/dependency-endpoint.yml
-    # TODO:// enabled below when file based sync is supported
-    # trace segment list
-    # - query: swctl --display yaml --base-url=http://${oap_host}:${oap_12800}/graphql trace ls --tags http.method=get --start="-96h" --end="-48h" --cold=true
-    #   expected: ./expected/traces-list.yml
-    # - query: |
-    #     swctl --display yaml --base-url=http://${oap_host}:${oap_12800}/graphql trace ls --trace-id=$( \
-    #       swctl --display yaml --base-url=http://${oap_host}:${oap_12800}/graphql trace ls --tags http.method=get --start="-96h" --end="-48h" --cold=true \
-    #         | yq e '.traces | select(.[].endpointnames[0]=="/dubbox-case/case/dubbox-rest/404-test") | .[0].traceids[0]' -
-    #     ) --start="-96h" --end="-48h" --cold=true
-    #   expected: ./expected/trace-detail.yml
+    # trace list
+    - query: swctl --display yaml --base-url=http://${oap_host}:${oap_12800}/graphql tv2 ls --service-name=mock_a_service --endpoint-name=/dubbox-case/case/dubbox-rest/404-test --tags http.method=get --start="-96h" --end="-48h" --cold=true
+      expected: ./expected/traces-list.yml
     ## topN
     - query: swctl --display yaml --base-url=http://${oap_host}:${oap_12800}/graphql metrics exec --expression="top_n(service_resp_time,3,des,attr0='GENERAL')" --start="-96h" --end="-48h" --cold=true --step=DAY
       expected: ./expected/topN-OP-service.yml
     - query: swctl --display yaml --base-url=http://${oap_host}:${oap_12800}/graphql metrics exec --expression="top_n(endpoint_resp_time,3,des)" --start="-96h" --end="-48h" --cold=true --step=DAY
       expected: ./expected/topN-OP-endpoint.yml
+
+cleanup:
+  on: always
+  collect:
+    on: failure
+    output-dir: $SW_INFRA_E2E_LOG_DIR/banyandb-data
+    items:
+      - service: data-hot1
+        paths:
+          - /tmp/trace/
+          - /tmp/stream/
+          - /tmp/measure/
+          - /tmp/property/
+          - /tmp/schema-property/
+      - service: data-warm1
+        paths:
+          - /tmp/trace/
+          - /tmp/stream/
+          - /tmp/measure/
+          - /tmp/property/
+          - /tmp/schema-property/
+      - service: data-cold1
+        paths:
+          - /tmp/trace/
+          - /tmp/stream/
+          - /tmp/measure/
+          - /tmp/property/
+          - /tmp/schema-property/

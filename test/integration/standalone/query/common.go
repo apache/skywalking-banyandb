@@ -42,6 +42,7 @@ import (
 
 // SetupResult contains all info returned by SetupFunc.
 type SetupResult struct {
+	Restart  func() (string, func())
 	Now      time.Time
 	StopFunc func()
 	Addr     string
@@ -95,6 +96,9 @@ var _ = ginkgo.SynchronizedBeforeSuite(func() []byte {
 var _ = ginkgo.SynchronizedAfterSuite(func() {
 	if connection != nil {
 		gomega.Expect(connection.Close()).To(gomega.Succeed())
+	}
+	if round2Conn != nil {
+		gomega.Expect(round2Conn.Close()).To(gomega.Succeed())
 	}
 }, func() {})
 

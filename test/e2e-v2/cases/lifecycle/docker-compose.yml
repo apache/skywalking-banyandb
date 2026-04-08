@@ -14,34 +14,26 @@
 # limitations under the License.
 
 services:
-  etcd:
-    extends:
-      file: ../../script/docker-compose/base-compose.yml
-      service: etcd
-    networks:
-      - e2e
-
   data-hot1:
     extends:
       file: ../../script/docker-compose/base-compose.yml
       service: data
     hostname: data-hot1
-    command: data --etcd-endpoints=http://etcd:2379 --node-labels type=hot --schema-registry-mode=etcd --node-discovery-mode=etcd
+    command: data --node-discovery-mode=file --node-discovery-file-path=/etc/banyandb/nodes.yaml --node-labels type=hot
     volumes:
-      - ./data-generator/tmp/metadata:/tmp/measure/data/metadata
+      - ./data-generator/tmp/metadata:/tmp/measure/data/sw_metadata
+      - ./nodes.yaml:/etc/banyandb/nodes.yaml
     networks:
       - e2e
 
-  data-hot2:
+  data-warm1:
     extends:
       file: ../../script/docker-compose/base-compose.yml
       service: data
-    hostname: data-hot2
-    command: data --etcd-endpoints=http://etcd:2379 --node-labels type=hot --schema-registry-mode=etcd --node-discovery-mode=etcd
+    hostname: data-warm1
+    command: data --node-discovery-mode=file --node-discovery-file-path=/etc/banyandb/nodes.yaml --node-labels type=warm
     volumes:
-      - ./data-generator/tmp/measure-data/measure:/tmp/measure
-      - ./data-generator/tmp/stream-data/stream:/tmp/stream
-      - ./data-generator/tmp/property/data:/tmp/property
+      - ./nodes.yaml:/etc/banyandb/nodes.yaml
     networks:
       - e2e
 
@@ -50,11 +42,13 @@ services:
       file: ../../script/docker-compose/base-compose.yml
       service: data
     hostname: data-cold1
-    command: data --etcd-endpoints=http://etcd:2379 --node-labels type=cold --schema-registry-mode=etcd --node-discovery-mode=etcd
+    command: data --node-discovery-mode=file --node-discovery-file-path=/etc/banyandb/nodes.yaml --node-labels type=cold
     volumes:
-      - /tmp/measure/data-cold1:/tmp/measure
-      - /tmp/stream/data-cold1:/tmp/stream
-      - /tmp/property/data-cold1:/tmp/property
+      - ./data-generator/tmp/measure:/tmp/measure
+      - ./data-generator/tmp/stream:/tmp/stream
+      - ./data-generator/tmp/property:/tmp/property
+      - ./data-generator/tmp/trace:/tmp/trace
+      - ./nodes.yaml:/etc/banyandb/nodes.yaml
     networks:
       - e2e
 
@@ -62,7 +56,9 @@ services:
     extends:
       file: ../../script/docker-compose/base-compose.yml
       service: liaison
-    command: liaison --etcd-endpoints=http://etcd:2379 --data-node-selector type=hot --schema-registry-mode=etcd --node-discovery-mode=etcd
+    command: liaison --node-discovery-mode=file --node-discovery-file-path=/etc/banyandb/nodes.yaml --data-node-selector type=hot
+    volumes:
+      - ./nodes.yaml:/etc/banyandb/nodes.yaml
     networks:
       - e2e
 
@@ -73,44 +69,57 @@ services:
     environment:
       SW_STORAGE: banyandb
       SW_STORAGE_BANYANDB_TARGETS: "liaison:17912"
-      SW_STORAGE_BANYANDB_METRICS_MINUTE_ENABLE_WARM_STAGE: "false"
+      SW_STORAGE_BANYANDB_METRICS_MINUTE_ENABLE_WARM_STAGE: "true"
       SW_STORAGE_BANYANDB_METRICS_MINUTE_ENABLE_COLD_STAGE: "true"
-      SW_STORAGE_BANYANDB_METRICS_HOUR_ENABLE_WARM_STAGE: "false"
+      SW_STORAGE_BANYANDB_METRICS_HOUR_ENABLE_WARM_STAGE: "true"
       SW_STORAGE_BANYANDB_METRICS_HOUR_ENABLE_COLD_STAGE: "true"
-      SW_STORAGE_BANYANDB_METRICS_DAY_ENABLE_WARM_STAGE: "false"
+      SW_STORAGE_BANYANDB_METRICS_DAY_ENABLE_WARM_STAGE: "true"
       SW_STORAGE_BANYANDB_METRICS_DAY_ENABLE_COLD_STAGE: "true"
-      SW_STORAGE_BANYANDB_RECORDS_ENABLE_WARM_STAGE: "false"
+      SW_STORAGE_BANYANDB_RECORDS_ENABLE_WARM_STAGE: "true"
       SW_STORAGE_BANYANDB_RECORDS_ENABLE_COLD_STAGE: "true"
-      SW_STORAGE_BANYANDB_TRACE_ENABLE_WARM_STAGE: "false"
+      SW_STORAGE_BANYANDB_TRACE_ENABLE_WARM_STAGE: "true"
       SW_STORAGE_BANYANDB_TRACE_ENABLE_COLD_STAGE: "true"
-      SW_STORAGE_BANYANDB_TRACE_TTL_DAYS: "1"
-      SW_STORAGE_BANYANDB_RECORDS_TTL_DAYS: "1"
-      SW_STORAGE_BANYANDB_METRICS_MINUTE_TTL_DAYS: "1"
-      SW_STORAGE_BANYANDB_METRICS_HOUR_TTL_DAYS: "1"
-      SW_STORAGE_BANYANDB_METRICS_HOUR_SI_DAYS: "1"
-      SW_STORAGE_BANYANDB_METRICS_DAY_TTL_DAYS: "1"
-      SW_STORAGE_BANYANDB_METRICS_DAY_SI_DAYS: "1"
     ports:
-      - 12800
-    networks:
-      - e2e
+      - 12800:12800
+      - 11800:11800
     depends_on:
       liaison:
         condition: service_healthy
 
-  data-hot1-lifecycle-agent:
-    image: "apache/skywalking-banyandb:${TAG}-testing"
-    network_mode: service:data-hot2
-    volumes_from:
-      - data-hot2
-    entrypoint: ["/lifecycle", "--node-labels", "type=hot", "--etcd-endpoints=http://etcd:2379"]
-    volumes:
-      - /tmp/lifecycle:/tmp
+  agent:
+    extends:
+      file: ../../script/docker-compose/base-compose.yml
+      service: agent
+    networks:
+      - e2e
+
+  provider:
+    extends:
+      file: ../../script/docker-compose/base-compose.yml
+      service: provider
+    ports:
+      - 9090
+    networks:
+      - e2e
     depends_on:
-      data-hot2:
-        condition: service_healthy
       oap:
         condition: service_healthy
+      agent:
+        condition: service_completed_successfully
+
+  consumer:
+    extends:
+      file: ../../script/docker-compose/base-compose.yml
+      service: consumer
+    ports:
+      - 9092
+    depends_on:
+      oap:
+        condition: service_healthy
+      provider:
+        condition: service_healthy
+      agent:
+        condition: service_completed_successfully
 
 networks:
   e2e:

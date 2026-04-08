@@ -24,6 +24,7 @@ import (
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 
+	"github.com/apache/skywalking-banyandb/pkg/test"
 	"github.com/apache/skywalking-banyandb/pkg/test/setup"
 	"github.com/apache/skywalking-banyandb/pkg/timestamp"
 	test_cases "github.com/apache/skywalking-banyandb/test/cases"
@@ -33,14 +34,33 @@ import (
 
 func init() {
 	query.SetupFunc = func() query.SetupResult {
-		addr, _, cleanup := setup.Standalone(nil)
+		path, diskCleanupFn, pathErr := test.NewSpace()
+		Expect(pathErr).NotTo(HaveOccurred())
+		var ports []int
+		ports, portsErr := test.AllocateFreePorts(4)
+		Expect(portsErr).NotTo(HaveOccurred())
+		addr, _, closeFunc := setup.ClosableStandalone(nil, path, ports)
 		ns := timestamp.NowMilli().UnixNano()
 		now := time.Unix(0, ns-ns%int64(time.Minute))
 		test_cases.Initialize(addr, now)
+		prevClose, currClose := closeFunc, func() {}
 		return query.SetupResult{
-			Addr:     addr,
-			Now:      now,
-			StopFunc: cleanup,
+			Addr: addr,
+			Now:  now,
+			Restart: func() (string, func()) {
+				time.Sleep(5 * time.Second)
+				prevClose()
+				time.Sleep(3 * time.Second)
+				currClose()
+				addr, _, closeFunc := setup.EmptyClosableStandalone(nil, path, ports)
+				prevClose, currClose = currClose, closeFunc
+				return addr, closeFunc
+			},
+			StopFunc: func() {
+				currClose()
+				prevClose()
+				diskCleanupFn()
+			},
 		}
 	}
 }

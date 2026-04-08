@@ -29,6 +29,7 @@ import (
 	"time"
 
 	"github.com/apache/skywalking-banyandb/fodc/proxy/internal/cluster"
+	"github.com/apache/skywalking-banyandb/fodc/proxy/internal/lifecycle"
 	"github.com/apache/skywalking-banyandb/fodc/proxy/internal/metrics"
 	"github.com/apache/skywalking-banyandb/fodc/proxy/internal/registry"
 	"github.com/apache/skywalking-banyandb/pkg/logger"
@@ -38,6 +39,7 @@ import (
 type Server struct {
 	metricsAggregator     *metrics.Aggregator
 	clusterStateCollector *cluster.Manager
+	lifecycleManager      *lifecycle.Manager
 	registry              *registry.AgentRegistry
 	server                *http.Server
 	logger                *logger.Logger
@@ -48,12 +50,14 @@ type Server struct {
 func NewServer(
 	metricsAggregator *metrics.Aggregator,
 	clusterStateCollector *cluster.Manager,
+	lifecycleManager *lifecycle.Manager,
 	registry *registry.AgentRegistry,
 	logger *logger.Logger,
 ) *Server {
 	return &Server{
 		metricsAggregator:     metricsAggregator,
 		clusterStateCollector: clusterStateCollector,
+		lifecycleManager:      lifecycleManager,
 		registry:              registry,
 		logger:                logger,
 		startTime:             time.Now(),
@@ -68,6 +72,7 @@ func (s *Server) Start(listenAddr string, readTimeout, writeTimeout time.Duratio
 	mux.HandleFunc("/metrics-windows", s.handleMetricsWindows)
 	mux.HandleFunc("/health", s.handleHealth)
 	mux.HandleFunc("/cluster/topology", s.handleClusterTopology)
+	mux.HandleFunc("/cluster/lifecycle", s.handleClusterLifecycle)
 
 	s.server = &http.Server{
 		Addr:         listenAddr,
@@ -468,6 +473,24 @@ type timeSeriesMetric struct {
 	agentID     string
 	podName     string
 	data        []map[string]interface{}
+}
+
+// handleClusterLifecycle handles GET /cluster/lifecycle endpoint.
+func (s *Server) handleClusterLifecycle(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	if s.lifecycleManager == nil {
+		http.Error(w, "Lifecycle manager not available", http.StatusServiceUnavailable)
+		return
+	}
+	lifecycleData := s.lifecycleManager.CollectLifecycle(r.Context())
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusOK)
+	if encodeErr := json.NewEncoder(w).Encode(lifecycleData); encodeErr != nil {
+		s.logger.Error().Err(encodeErr).Msg("Failed to encode lifecycle response")
+	}
 }
 
 // handleClusterTopology handles GET /cluster/topology endpoint.

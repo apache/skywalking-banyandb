@@ -8,7 +8,7 @@ BanyanDB uses the [zerolog](https://github.com/rs/zerolog) library for logging. 
 
 `logging-env` is used to set the logging environment. The default value is `prod`. The logging environment can be set to `dev` for development or `prod` for production. The logging environment affects the log format and output. In the `dev` environment, logs are output in a human-readable format, while in the `prod` environment, logs are output in JSON format.
 
-`logging-modules` and `logging-levels` are used to set the log level for specific modules. The `logging-modules` flag is a comma-separated list of module names, and the `logging-levels` flag is a comma-separated list of log levels corresponding to the module names. The log level for a specific module can be set using these flags. Available modules are `storage`, `distributed-query`, `liaison-grpc`, `liaison-http`, `measure`, `stream`, `metadata`, `etcd-client`, `etcd-server`, `schema-registry`, `metrics`, `pprof-service`, `query`, `server-queue-sub`, `server-queue-pub`. For example, to set the log level for the `storage` module to `debug`, you can use the following flags:
+`logging-modules` and `logging-levels` are used to set the log level for specific modules. The `logging-modules` flag is a comma-separated list of module names, and the `logging-levels` flag is a comma-separated list of log levels corresponding to the module names. The log level for a specific module can be set using these flags. Available modules are `storage`, `distributed-query`, `liaison-grpc`, `liaison-http`, `measure`, `stream`, `trace`, `metadata`, `etcd-client`, `etcd-server`, `schema-registry`, `metrics`, `pprof-service`, `query`, `server-queue-sub`, `server-queue-pub`. For example, to set the log level for the `storage` module to `debug`, you can use the following flags:
 
 ```sh
 --logging-modules=storage --logging-levels=debug
@@ -34,9 +34,9 @@ BanyanDB expose metrics for monitoring and analysis. In this part, we use some v
 
 #### Write Rate
 
-The write rate is the number of write operations per second. It is calculated by summing the total number of written operations for measures and streams.
+The write rate is the number of write operations per second. It is calculated by summing the total number of written operations for measures, streams and traces.
 
-**Expression**: `sum(rate(banyandb_measure_total_written{job=~\"$job\", instance=~\"$instance\"}[$__rate_interval])) + sum(rate(banyandb_stream_tst_total_written{job=~\"$job\", instance=~\"$instance\"}[$__rate_interval]))`
+**Expression**: `sum(rate(banyandb_measure_total_written{job=~\"$job\", instance=~\"$instance\"}[$__rate_interval])) + sum(rate(banyandb_stream_tst_total_written{job=~\"$job\", instance=~\"$instance\"}[$__rate_interval])) + sum(rate(banyandb_trace_tst_total_written{job=~\"$job\", instance=~\"$instance\"}[$__rate_interval]))`
 
 #### Total Memory
 
@@ -116,11 +116,11 @@ The network usage is the number of bytes sent and received per second.
 
 #### Write Rate
 
-The write rate is the number of write operations per second. It is calculated by summing the total number of written operations for measures and streams. It's grouped by the `group` tag.
+The write rate is the number of write operations per second. It is calculated by summing the total number of written operations for measures, streams and traces. It's grouped by the `group` tag.
 
 You can view the write rate of different instance to find out the hot instance.
 
-**Expression**: `sum(rate(banyandb_measure_total_written{job=~\"$job\", instance=~\"$instance\"}[$__rate_interval])) by (group) + sum(rate(banyandb_stream_tst_total_written{job=~\"$job\", instance=~\"$instance\"}[$__rate_interval])) by (group)`
+**Expression**: `sum(rate(banyandb_measure_total_written{job=~\"$job\", instance=~\"$instance\"}[$__rate_interval])) by (group) + sum(rate(banyandb_stream_tst_total_written{job=~\"$job\", instance=~\"$instance\"}[$__rate_interval])) by (group) + sum(rate(banyandb_trace_tst_total_written{job=~\"$job\", instance=~\"$instance\"}[$__rate_interval])) by (group)`
 
 #### Query Latency
 
@@ -138,6 +138,7 @@ You can view the total data of different instance to find out the instance with 
 
 **Expression1**: `sum(banyandb_measure_total_file_elements{job=~\"$job\",instance=~\"$instance\"})by(group)`
 **Expression2**: `sum(banyandb_stream_tst_total_file_elements{job=~\"$job\",instance=~\"$instance\"})by(group)`
+**Expression3**: `sum(banyandb_trace_tst_total_file_elements{job=~"$job",instance=~"$instance"})by(group)`
 
 #### Merge File Rate
 
@@ -151,6 +152,7 @@ If the value surges, it may indicate that too many small files are being merged.
 
 **Expression1**: `sum(rate(banyandb_measure_total_merge_loop_started{job=~\"$job\",instance=~\"$instance\"}[$__rate_interval]))by(group) * 60`
 **Expression2**: `sum(rate(banyandb_stream_tst_total_merge_loop_started{job=~\"$job\",instance=~\"$instance\"}[$__rate_interval]))by(group) * 60`
+**Expression3**: `sum(rate(banyandb_trace_tst_total_merge_loop_started{job=~"$job",instance=~"$instance"}[$__rate_interval]))by(group) * 60`
 
 #### Merge File Latency
 
@@ -164,6 +166,7 @@ If the value surges, it may indicate that the merge file operation is slow. It m
 
 **Expression1**: `sum(rate(banyandb_measure_total_merge_latency{job=~\"$job\", instance=~\"$instance\",type=\"file\"}[$__rate_interval]))by(group) / sum(rate(banyandb_measure_total_merge_loop_started{job=~\"$job\",instance=~\"$instance\"}[$__rate_interval]))by(group)`
 **Expression2**: `sum(rate(banyandb_stream_tst_total_merge_latency{job=~\"$job\", instance=~\"$instance\",type=\"file\"}[$__rate_interval]))by(group) / sum(rate(banyandb_stream_tst_total_merge_loop_started{job=~\"$job\",instance=~\"$instance\"}[$__rate_interval]))by(group)`
+**Expression3**: `sum(rate(banyandb_trace_tst_total_merge_latency{job=~"$job", instance=~"$instance",type="file"}[$__rate_interval]))by(group) / sum(rate(banyandb_trace_tst_total_merge_loop_started{job=~"$job",instance=~"$instance"}[$__rate_interval]))by(group)`
 
 #### Merge File Partitions
 
@@ -174,6 +177,7 @@ If the value surges, it may indicate that too many partitions are being merged. 
 **Expression1**: `sum(rate(banyandb_measure_total_merged_parts{job=~\"$job\", instance=~\"$instance\",type=\"file\"}[$__rate_interval]))by(group) / sum(rate(banyandb_measure_total_merge_loop_started{job=~\"$job\",instance=~\"$instance\"}[$__rate_interval]))by(group)`
 
 **Expression2**: `sum(rate(banyandb_stream_tst_total_merged_parts{job=~\"$job\", instance=~\"$instance\",type=\"file\"}[$__rate_interval]))by(group) / sum(rate(banyandb_stream_tst_total_merge_loop_started{job=~\"$job\",instance=~\"$instance\"}[$__rate_interval]))by(group)`
+**Expression3**: `sum(rate(banyandb_trace_tst_total_merged_parts{job=~"$job", instance=~"$instance",type="file"}[$__rate_interval]))by(group) / sum(rate(banyandb_trace_tst_total_merge_loop_started{job=~"$job",instance=~"$instance"}[$__rate_interval]))by(group)`
 
 #### Series Write Rate
 
@@ -268,19 +272,19 @@ Next, configure the following target to collect metrics from BanyanDB. Be sure t
 
 ```yaml
 scrape_configs:
-  - job_name: 'banyandb'
+  - job_name: "banyandb"
     kubernetes_sd_configs:
       - role: pod
         namespaces:
-          names: [ '${BANYANDB_NAMESPACE}' ]
+          names: ["${BANYANDB_NAMESPACE}"]
     relabel_configs:
-      - source_labels: [ __meta_kubernetes_pod_label_app_kubernetes_io_name ]
+      - source_labels: [__meta_kubernetes_pod_label_app_kubernetes_io_name]
         action: keep
         regex: banyandb
       - source_labels: [__meta_kubernetes_pod_name]
         target_label: pod
         action: replace
-      - source_labels: [ __address__ ]
+      - source_labels: [__address__]
         target_label: __address__
         regex: (.*):\d+
         replacement: $1:2121
@@ -294,7 +298,7 @@ Check out the [BanyanDB Cluster Dashboard](grafana-cluster.json) for monitoring 
 
 ### Native
 
-If the `observability-modes` flag is set to `native`, the self-observability metrics provider will be enabled. The some of metrics will be displayed in the dashboard of [banyandb-ui](http://localhost:17913/) 
+If the `observability-modes` flag is set to `native`, the self-observability metrics provider will be enabled. Some of the metrics will be displayed in the dashboard of [banyandb-ui](http://localhost:17913/)
 
 ![dashboard](https://skywalking.apache.org/doc-graph/banyandb/v0.7.0/dashboard.png)
 

@@ -68,7 +68,7 @@ var _ = Describe("Test Case 4: Multiple Agents and Roles", func() {
 		heartbeatInterval := 2 * time.Second
 		agentRegistry = registry.NewAgentRegistry(testLogger, heartbeatTimeout, cleanupTimeout, 100)
 		metricsAggregator = metricsproxy.NewAggregator(agentRegistry, nil, testLogger)
-		grpcService = grpcproxy.NewFODCService(agentRegistry, metricsAggregator, nil, testLogger, heartbeatInterval)
+		grpcService = grpcproxy.NewFODCService(agentRegistry, metricsAggregator, nil, nil, testLogger, heartbeatInterval)
 		metricsAggregator.SetGRPCService(grpcService)
 
 		grpcListener, listenErr := net.Listen("tcp", "localhost:0")
@@ -84,7 +84,7 @@ var _ = Describe("Test Case 4: Multiple Agents and Roles", func() {
 		Expect(httpListenErr).NotTo(HaveOccurred())
 		proxyHTTPAddr = httpListener.Addr().String()
 		_ = httpListener.Close()
-		httpServer = api.NewServer(metricsAggregator, nil, agentRegistry, testLogger)
+		httpServer = api.NewServer(metricsAggregator, nil, nil, agentRegistry, testLogger)
 		Expect(httpServer.Start(proxyHTTPAddr, 10*time.Second, 10*time.Second)).To(Succeed())
 
 		Eventually(func() error {
@@ -111,6 +111,7 @@ var _ = Describe("Test Case 4: Multiple Agents and Roles", func() {
 			1*time.Second,
 			flightRecorder1,
 			testLogger,
+			"",
 		)
 		Expect(proxyClient1).NotTo(BeNil())
 
@@ -124,6 +125,7 @@ var _ = Describe("Test Case 4: Multiple Agents and Roles", func() {
 			1*time.Second,
 			flightRecorder2,
 			testLogger,
+			"",
 		)
 		Expect(proxyClient2).NotTo(BeNil())
 
@@ -137,6 +139,7 @@ var _ = Describe("Test Case 4: Multiple Agents and Roles", func() {
 			1*time.Second,
 			flightRecorder3,
 			testLogger,
+			"",
 		)
 		Expect(proxyClient3).NotTo(BeNil())
 

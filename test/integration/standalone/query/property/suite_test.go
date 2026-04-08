@@ -38,15 +38,32 @@ func init() {
 		Expect(tmpErr).NotTo(HaveOccurred())
 		dfWriter := setup.NewDiscoveryFileWriter(tmpDir)
 		config := setup.PropertyClusterConfig(dfWriter)
-		addr, _, closeFn := setup.Standalone(config)
+		path, diskCleanupFn, pathErr := test.NewSpace()
+		Expect(pathErr).NotTo(HaveOccurred())
+		var ports []int
+		ports, portsErr := test.AllocateFreePorts(5)
+		Expect(portsErr).NotTo(HaveOccurred())
+		addr, _, closeFunc := setup.ClosableStandalone(config, path, ports)
 		ns := timestamp.NowMilli().UnixNano()
 		now := time.Unix(0, ns-ns%int64(time.Minute))
 		test_cases.Initialize(addr, now)
+		prevClose, currClose := closeFunc, func() {}
 		return query.SetupResult{
 			Addr: addr,
 			Now:  now,
+			Restart: func() (string, func()) {
+				time.Sleep(5 * time.Second)
+				prevClose()
+				time.Sleep(3 * time.Second)
+				currClose()
+				addr, _, closeFunc := setup.EmptyClosableStandalone(config, path, ports)
+				prevClose, currClose = currClose, closeFunc
+				return addr, closeFunc
+			},
 			StopFunc: func() {
-				closeFn()
+				currClose()
+				prevClose()
+				diskCleanupFn()
 				tmpDirCleanup()
 			},
 		}

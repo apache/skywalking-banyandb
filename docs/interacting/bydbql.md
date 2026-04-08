@@ -4,17 +4,18 @@
 
 ### 1.1. Purpose
 
-This document outlines the design of the BanyanDB Data Query Language (BydbQL), a unified query language with SQL-like syntax for all of BanyanDB's data models. The primary goal of BydbQL is to provide users with a familiar, intuitive, and powerful interface to interact with their data, abstracting the underlying protobuf-based APIs for streams, measures, properties, and Top-N queries.
+This document outlines the design of the BanyanDB Data Query Language (BydbQL), a unified query language with SQL-like syntax for all of BanyanDB's data models. The primary goal of BydbQL is to provide users with a familiar, intuitive, and powerful interface to interact with their data, abstracting the underlying protobuf-based APIs for streams, measures, traces, properties, and Top-N queries.
 
 This document specifies the language's syntax, its semantics, and the precise mapping from BydbQL statements to the various `Request` messages.
 
 ### 1.2. Scope
 
 BydbQL supports querying across BanyanDB's primary data models:
-*   **Streams**: For raw, time-series elements like logs and traces.
-*   **Measures**: For aggregated numerical time-series data (metrics).
-*   **Properties**: For metadata and key-value information.
-*   **Traces**: For distributed tracing data with spans.
+
+- **Streams**: For raw, time-series elements like logs and traces.
+- **Measures**: For aggregated numerical time-series data (metrics).
+- **Properties**: For metadata and key-value information.
+- **Traces**: For distributed tracing data with spans.
 
 It also provides a specialized syntax for optimized **Top-N** queries against measures.
 
@@ -36,41 +37,42 @@ Abstract Syntax Tree (AST)
    Transformer
 ```
 
-*   **Lexer**: Breaks the query string into a sequence of tokens.
-*   **Parser**: Builds an Abstract Syntax Tree (AST) from the tokens, validating the query's syntax.
-*   **Transformer**: Traverses the AST, performs semantic analysis using a schema, and transforms the AST into the appropriate target protobuf `Stream/Measure/Property/Traces/TopN Request` message.
+- **Lexer**: Breaks the query string into a sequence of tokens.
+- **Parser**: Builds an Abstract Syntax Tree (AST) from the tokens, validating the query's syntax.
+- **Transformer**: Traverses the AST, performs semantic analysis using a schema, and transforms the AST into the appropriate target protobuf `Stream/Measure/Property/Traces/TopN Request` message.
 
 ### 2.2. Distinguishing Query Types
 
 BydbQL distinguishes the target data model explicitly through keywords in the `FROM` clause. This allows the parser to apply the correct grammar and transformation rules for the query.
 
-*   **Streams**: `FROM STREAM <name> IN <groups>` or `FROM STREAM <name> IN (<groups>)`
-*   **Measures**: `FROM MEASURE <name> IN <groups>` or `FROM MEASURE <name> IN (<groups>)`
-*   **Properties**: `FROM PROPERTY <name> IN <groups>` or `FROM PROPERTY <name> IN (<groups>)`
-*   **Traces**: `FROM TRACE <name> IN <groups>` or `FROM TRACE <name> IN (<groups>)`
+- **Streams**: `FROM STREAM <name> IN <groups>` or `FROM STREAM <name> IN (<groups>)`
+- **Measures**: `FROM MEASURE <name> IN <groups>` or `FROM MEASURE <name> IN (<groups>)`
+- **Properties**: `FROM PROPERTY <name> IN <groups>` or `FROM PROPERTY <name> IN (<groups>)`
+- **Traces**: `FROM TRACE <name> IN <groups>` or `FROM TRACE <name> IN (<groups>)`
 
 Specialized queries, like Top-N, use a distinct top-level command:
 
-*   **Top-N**: `SHOW TOP <n> FROM MEASURE <name> IN <groups>` or `SHOW TOP <n> FROM MEASURE <name> IN (<groups>)`
+- **Top-N**: `SHOW TOP <n> FROM MEASURE <name> IN <groups>` or `SHOW TOP <n> FROM MEASURE <name> IN (<groups>)`
 
 ### 2.3. Required Clauses
 
 In BydbQL, the following clauses are **required** for all queries:
 
-*   **`FROM` clause**: Specifies the data model type, resource name, and group list
-*   **`IN groups` clause**: Specifies one or more groups to query from. Parentheses around the group list are optional.
-*   **`TIME` clause**: Specifies the time range for the query (required for Streams, Measures, Traces, and Top-N queries; not applicable to Property queries)
+- **`FROM` clause**: Specifies the data model type, resource name, and group list
+- **`IN groups` clause**: Specifies one or more groups to query from. Parentheses around the group list are optional.
+- **`TIME` clause**: Specifies the time range for the query (required for Streams, Measures, Traces, and Top-N queries; not applicable to Property queries)
 
 ### 2.4. Case Sensitivity
 
 BydbQL follows SQL-like conventions for case sensitivity:
 
-*   **Reserved words are case-insensitive**: Keywords like `SELECT`, `FROM`, `WHERE`, `ORDER BY`, `TIME`, `BETWEEN`, `AND`, etc. can be written in any case combination.
-*   **Identifiers are case-sensitive**: Names of streams, measures, properties, tags, and fields preserve their case and must be referenced exactly as defined.
+- **Reserved words are case-insensitive**: Keywords like `SELECT`, `FROM`, `WHERE`, `ORDER BY`, `TIME`, `BETWEEN`, `AND`, etc. can be written in any case combination.
+- **Identifiers are case-sensitive**: Names of streams, measures, traces, properties, tags, and fields preserve their case and must be referenced exactly as defined.
 
 #### Examples
 
 All of these queries are equivalent:
+
 ```sql
 SELECT * FROM STREAM sw in group1 WHERE service_id = 'webapp';
 
@@ -80,6 +82,7 @@ Select * From Stream sw in group1 Where service_id = 'webapp';
 ```
 
 But these refer to different identifiers:
+
 ```sql
 -- Different tag names (case-sensitive)
 SELECT ServiceName FROM STREAM sw in group1;  -- refers to tag "ServiceName"
@@ -99,34 +102,39 @@ BydbQL supports flexible timestamp specifications in TIME clauses, accommodating
 ### 2.5.1. Absolute Time Format
 
 Absolute timestamps use the RFC3339 standard format:
+
 ```
 "2006-01-02T15:04:05Z07:00"
 ```
 
 Examples:
-* `"2023-01-01T00:00:00Z"` - January 1, 2023, 00:00:00 UTC
-* `"2023-01-01T15:30:45+08:00"` - January 1, 2023, 15:30:45 UTC+8
-* `"2023-12-31T23:59:59Z"` - December 31, 2023, 23:59:59 UTC
+
+- `"2023-01-01T00:00:00Z"` - January 1, 2023, 00:00:00 UTC
+- `"2023-01-01T15:30:45+08:00"` - January 1, 2023, 15:30:45 UTC+8
+- `"2023-12-31T23:59:59Z"` - December 31, 2023, 23:59:59 UTC
 
 ### 2.5.2. Relative Time Format
 
 Relative timestamps are duration strings that are evaluated relative to the current time:
+
 ```
 [-][duration]
 ```
 
 Supported duration units:
-* `m` - minutes
-* `h` - hours  
-* `d` - days
-* `w` - weeks
+
+- `m` - minutes
+- `h` - hours
+- `d` - days
+- `w` - weeks
 
 Examples:
-* `"-30m"` - 30 minutes ago
-* `"2h"` - 2 hours from now
-* `"-1d"` - 1 day ago
-* `"-1w"` - 1 week ago
-* `"now"` - current time
+
+- `"-30m"` - 30 minutes ago
+- `"2h"` - 2 hours from now
+- `"-1d"` - 1 day ago
+- `"-1w"` - 1 week ago
+- `"now"` - current time
 
 ### 2.5.3. Usage in TIME Clauses
 
@@ -138,7 +146,7 @@ TIME = '2023-01-01T00:00:00Z'
 TIME BETWEEN '2023-01-01T00:00:00Z' AND '2023-01-02T00:00:00Z'
 TIME > '2023-01-01T08:00:00Z'
 
--- Relative time examples  
+-- Relative time examples
 TIME > '-30m'
 TIME BETWEEN '-1h' AND 'now'
 TIME < '-1d'
@@ -152,11 +160,11 @@ The WHERE clause in BydbQL provides powerful filtering capabilities with support
 
 ### Key Features
 
-*   **Binary Tree Structure**: WHERE conditions are organized as a binary expression tree supporting complex nested logic
-*   **Operator Precedence**: Parentheses `()` > `AND` > `OR`
-*   **Multiple Operators**: Comparison (`=`, `!=`, `>`, `<`, `>=`, `<=`), set operations (`IN`, `NOT IN`, `HAVING`, `NOT HAVING`), and full-text search (`MATCH`)
-*   **Type Support**: String, integer, and NULL values
-*   **Complex Expressions**: Support for nested parentheses and mixed AND/OR logic
+- **Binary Tree Structure**: WHERE conditions are organized as a binary expression tree supporting complex nested logic
+- **Operator Precedence**: Parentheses `()` > `AND` > `OR`
+- **Multiple Operators**: Comparison (`=`, `!=`, `>`, `<`, `>=`, `<=`), set operations (`IN`, `NOT IN`, `HAVING`, `NOT HAVING`), and full-text search (`MATCH`)
+- **Type Support**: String, integer, and NULL values
+- **Complex Expressions**: Support for nested parentheses and mixed AND/OR logic
 
 ### 3.1. MATCH Operator
 
@@ -175,29 +183,29 @@ MATCH((value1, value2, ...), analyzer, operator)
 
 **Parameters:**
 
-*   **value(s)** (required): The search term(s) to match. Can be:
-    *   Single value: `MATCH('error')`
-    *   Multiple values (array): `MATCH(('error', 'warning'))` - wrapped in parentheses
-    *   Supports both string and integer types
+- **value(s)** (required): The search term(s) to match. Can be:
+  - Single value: `MATCH('error')`
+  - Multiple values (array): `MATCH(('error', 'warning'))` - wrapped in parentheses
+  - Supports both string and integer types
 
-*   **analyzer** (optional): The text analyzer to use for tokenizing and matching. Common analyzers include:
-    *   `"standard"` - Standard text analysis with lowercase and word tokenization
-    *   `"simple"` - Simple lowercase analysis
-    *   `"keyword"` - No tokenization, exact matching (case-insensitive)
-    *   `"url"` - URL-specific tokenization
-    *   Default: Uses the analyzer configured for the field/tag in the schema
+- **analyzer** (optional): The text analyzer to use for tokenizing and matching. Common analyzers include:
+  - `"standard"` - Standard text analysis with lowercase and word tokenization
+  - `"simple"` - Simple lowercase analysis
+  - `"keyword"` - No tokenization, exact matching (case-insensitive)
+  - `"url"` - URL-specific tokenization
+  - Default: Uses the analyzer configured for the field/tag in the schema
 
-*   **operator** (optional): Logical operator for multiple values. Valid values:
-    *   `"AND"` - All values must match (default for multiple values)
-    *   `"OR"` - At least one value must match
+- **operator** (optional): Logical operator for multiple values. Valid values:
+  - `"AND"` - All values must match (default for multiple values)
+  - `"OR"` - At least one value must match
 
 #### 3.1.2. Supported Data Types
 
 The MATCH operator is available in:
 
-*   **Streams**: For full-text search in stream tags
-*   **Measures**: For full-text search in measure tags
-*   **Traces**: For full-text search in trace tags (e.g., searching span attributes)
+- **Streams**: For full-text search in stream tags
+- **Measures**: For full-text search in measure tags
+- **Traces**: For full-text search in trace tags (e.g., searching span attributes)
 
 Note: MATCH is not supported in Top-N and Property queries.
 
@@ -272,20 +280,20 @@ ORDER BY start_time DESC;
 
 #### 3.1.4. Performance Considerations
 
-*   **Indexing**: MATCH queries leverage full-text indexes. Ensure your tags/fields are properly indexed for optimal performance.
-*   **Analyzer Selection**: Choose the appropriate analyzer for your use case:
-    *   Use `"keyword"` for exact matching
-    *   Use `"standard"` for general text search
-    *   Use `"url"` for URL-specific patterns
-*   **Multiple Values**: When using multiple values, `"OR"` logic may scan more results than `"AND"` logic.
-*   **Combination with Filters**: Combine MATCH with other WHERE conditions to narrow down results and improve query performance.
+- **Indexing**: MATCH queries leverage full-text indexes. Ensure your tags/fields are properly indexed for optimal performance.
+- **Analyzer Selection**: Choose the appropriate analyzer for your use case:
+  - Use `"keyword"` for exact matching
+  - Use `"standard"` for general text search
+  - Use `"url"` for URL-specific patterns
+- **Multiple Values**: When using multiple values, `"OR"` logic may scan more results than `"AND"` logic.
+- **Combination with Filters**: Combine MATCH with other WHERE conditions to narrow down results and improve query performance.
 
 #### 3.1.5. Notes
 
-*   The MATCH operator is case-insensitive by default (behavior depends on the analyzer).
-*   Multiple values must be wrapped in parentheses: `MATCH(('val1', 'val2'))`.
-*   The analyzer and operator parameters are optional; when omitted, schema defaults are used.
-*   For single-value searches, the operator parameter is ignored.
+- The MATCH operator is case-insensitive by default (behavior depends on the analyzer).
+- Multiple values must be wrapped in parentheses: `MATCH(('val1', 'val2'))`.
+- The analyzer and operator parameters are optional; when omitted, schema defaults are used.
+- For single-value searches, the operator parameter is ignored.
 
 ## 4. BydbQL for Streams
 
@@ -320,24 +328,24 @@ integer_literal ::= [0-9]+
 
 ### 4.2. Mapping to `stream.v1.QueryRequest`
 
-*   **`FROM STREAM name IN groups`** or **`FROM STREAM name IN (groups)`**: Maps to the `name` and `groups` fields. Both are required.
-*   **`SELECT tags`**: Maps to `projection`. Requires a stream schema to resolve tags to their families.
-*   **`TIME` clause (required)**: Maps to `time_range`:
-    *   **`TIME = '2023-01-01T00:00:00Z'`**: Sets `begin` and `end` to the same timestamp.
-    *   **`TIME > '2023-01-01T00:00:00Z'`**: Sets `begin` to the timestamp.
-    *   **`TIME < '2023-01-01T00:00:00Z'`**: Sets `end` to the timestamp.
-    *   **`TIME >= '2023-01-01T00:00:00Z'`**: Sets `begin` to the timestamp (inclusive).
-    *   **`TIME <= '2023-01-01T00:00:00Z'`**: Sets `end` to the timestamp (inclusive).
-    *   **`TIME BETWEEN '2023-01-01T00:00:00Z' AND '2023-01-02T00:00:00Z'`**: Sets `begin` and `end` to the respective timestamps.
-    *   **`TIME > '-30m'`**: Sets `begin` to 30 minutes ago.
-    *   **`TIME BETWEEN '-1h' AND 'now'`**: Sets `begin` to 1 hour ago and `end` to current time.
-*   **`WHERE conditions`**: Maps to `criteria`.
-*   **`ORDER BY` clause**: Maps to `order_by`. Supports the following forms:
-    *   **`ORDER BY field`**: Maps to `order_by` with ascending sort by default.
-    *   **`ORDER BY field DESC` / `ORDER BY field ASC`**: Adds an explicit sort direction while targeting the specified field.
-    *   **`ORDER BY TIME DESC` / `ORDER BY TIME ASC`**: Shorthand that relies on the timestamps.
-*   **`LIMIT`/`OFFSET`**: Maps to `limit` and `offset`.
-*   **`WITH QUERY_TRACE`**: Maps to the `trace` field to enable distributed tracing of query execution.
+- **`FROM STREAM name IN groups`** or **`FROM STREAM name IN (groups)`**: Maps to the `name` and `groups` fields. Both are required.
+- **`SELECT tags`**: Maps to `projection`. Requires a stream schema to resolve tags to their families.
+- **`TIME` clause (required)**: Maps to `time_range`:
+  - **`TIME = '2023-01-01T00:00:00Z'`**: Sets `begin` and `end` to the same timestamp.
+  - **`TIME > '2023-01-01T00:00:00Z'`**: Sets `begin` to the timestamp.
+  - **`TIME < '2023-01-01T00:00:00Z'`**: Sets `end` to the timestamp.
+  - **`TIME >= '2023-01-01T00:00:00Z'`**: Sets `begin` to the timestamp (inclusive).
+  - **`TIME <= '2023-01-01T00:00:00Z'`**: Sets `end` to the timestamp (inclusive).
+  - **`TIME BETWEEN '2023-01-01T00:00:00Z' AND '2023-01-02T00:00:00Z'`**: Sets `begin` and `end` to the respective timestamps.
+  - **`TIME > '-30m'`**: Sets `begin` to 30 minutes ago.
+  - **`TIME BETWEEN '-1h' AND 'now'`**: Sets `begin` to 1 hour ago and `end` to current time.
+- **`WHERE conditions`**: Maps to `criteria`.
+- **`ORDER BY` clause**: Maps to `order_by`. Supports the following forms:
+  - **`ORDER BY field`**: Maps to `order_by` with ascending sort by default.
+  - **`ORDER BY field DESC` / `ORDER BY field ASC`**: Adds an explicit sort direction while targeting the specified field.
+  - **`ORDER BY TIME DESC` / `ORDER BY TIME ASC`**: Shorthand that relies on the timestamps.
+- **`LIMIT`/`OFFSET`**: Maps to `limit` and `offset`.
+- **`WITH QUERY_TRACE`**: Maps to the `trace` field to enable distributed tracing of query execution.
 
 ### 4.3. Examples
 
@@ -460,28 +468,28 @@ integer_literal   ::= [0-9]+
 
 The `SELECT` clause for measures is highly flexible, allowing for the selection of tags, fields, and aggregations in a single, flat list.
 
-*   `SELECT <field_key>, <tag_key>`: Returns specific fields and tags. The parser will infer the type of each identifier from the measure's schema.
-*   `SELECT <identifier>::field, <identifier>::tag`: If a field and a tag share the same name, the `::field` or `::tag` syntax **must** be used to disambiguate the identifier's type.
-*   The clause also supports aggregation functions (`SUM`, `MEAN`, `COUNT`, `MAX`, `MIN`) and a `TOP N` clause for ranked results.
+- `SELECT <field_key>, <tag_key>`: Returns specific fields and tags. The parser will infer the type of each identifier from the measure's schema.
+- `SELECT <identifier>::field, <identifier>::tag`: If a field and a tag share the same name, the `::field` or `::tag` syntax **must** be used to disambiguate the identifier's type.
+- The clause also supports aggregation functions (`SUM`, `MEAN`, `COUNT`, `MAX`, `MIN`) and a `TOP N` clause for ranked results.
 
 ### 5.3. Mapping to `measure.v1.QueryRequest`
 
-*   **`FROM MEASURE name IN groups`** or **`FROM MEASURE name IN (groups)`**: Maps to the `name` and `groups` fields. Both are required.
-*   **`SELECT <tag1>, <field1>, <field2>`**: The transformer inspects each identifier. Those identified as tags (either by schema lookup or `::tag`) are added to `tag_projection`. Those identified as fields (by schema lookup or `::field`) are added to `field_projection`.
-*   **`SELECT SUM(field)`**: Maps to `agg`.
-*   **`TIME` clause (required)**: Maps to `time_range`:
-    *   **`TIME = '2023-01-01T00:00:00Z'`**: Sets `begin` and `end` to the same timestamp.
-    *   **`TIME > '2023-01-01T00:00:00Z'`**: Sets `begin` to the timestamp.
-    *   **`TIME < '2023-01-01T00:00:00Z'`**: Sets `end` to the timestamp.
-    *   **`TIME >= '2023-01-01T00:00:00Z'`**: Sets `begin` to the timestamp (inclusive).
-    *   **`TIME <= '2023-01-01T00:00:00Z'`**: Sets `end` to the timestamp (inclusive).
-    *   **`TIME BETWEEN '2023-01-01T00:00:00Z' AND '2023-01-02T00:00:00Z'`**: Sets `begin` and `end` to the respective timestamps.
-    *   **`TIME > '-30m'`**: Sets `begin` to 30 minutes ago.
-    *   **`TIME BETWEEN '-1h' AND 'now'`**: Sets `begin` to 1 hour ago and `end` to current time.
-*   **`GROUP BY <tag1>, <tag2>`**: The `GROUP BY` clause takes a simple list of tags and maps to `group_by.tag_projection`.
-    *   **Note**: When the query contains an aggregate function (e.g., `SUM`, `AVG`, `COUNT`, `MAX`, `MIN`) with `GROUP BY`, the `GROUP BY` clause **must include at least one field**. This ensures proper aggregation behavior in measure queries.
-*   **`SELECT TOP N ...`**: Maps to the `top` message.
-*   **`WITH QUERY_TRACE`**: Maps to the `trace` field to enable distributed tracing of query execution.
+- **`FROM MEASURE name IN groups`** or **`FROM MEASURE name IN (groups)`**: Maps to the `name` and `groups` fields. Both are required.
+- **`SELECT <tag1>, <field1>, <field2>`**: The transformer inspects each identifier. Those identified as tags (either by schema lookup or `::tag`) are added to `tag_projection`. Those identified as fields (by schema lookup or `::field`) are added to `field_projection`.
+- **`SELECT SUM(field)`**: Maps to `agg`.
+- **`TIME` clause (required)**: Maps to `time_range`:
+  - **`TIME = '2023-01-01T00:00:00Z'`**: Sets `begin` and `end` to the same timestamp.
+  - **`TIME > '2023-01-01T00:00:00Z'`**: Sets `begin` to the timestamp.
+  - **`TIME < '2023-01-01T00:00:00Z'`**: Sets `end` to the timestamp.
+  - **`TIME >= '2023-01-01T00:00:00Z'`**: Sets `begin` to the timestamp (inclusive).
+  - **`TIME <= '2023-01-01T00:00:00Z'`**: Sets `end` to the timestamp (inclusive).
+  - **`TIME BETWEEN '2023-01-01T00:00:00Z' AND '2023-01-02T00:00:00Z'`**: Sets `begin` and `end` to the respective timestamps.
+  - **`TIME > '-30m'`**: Sets `begin` to 30 minutes ago.
+  - **`TIME BETWEEN '-1h' AND 'now'`**: Sets `begin` to 1 hour ago and `end` to current time.
+- **`GROUP BY <tag1>, <tag2>`**: The `GROUP BY` clause takes a simple list of tags and maps to `group_by.tag_projection`.
+  - **Note**: When the query contains an aggregate function (e.g., `SUM`, `AVG`, `COUNT`, `MAX`, `MIN`) with `GROUP BY`, the `GROUP BY` clause **must include at least one field**. This ensures proper aggregation behavior in measure queries.
+- **`SELECT TOP N ...`**: Maps to the `top` message.
+- **`WITH QUERY_TRACE`**: Maps to the `trace` field to enable distributed tracing of query execution.
 
 ### 5.4. Examples
 
@@ -633,21 +641,21 @@ integer_literal    ::= [0-9]+
 
 ### 6.2. Mapping to `measure.v1.TopNRequest`
 
-*   **`SHOW TOP N`**: Maps to `top_n`.
-*   **`FROM MEASURE name IN groups`** or **`FROM MEASURE name IN (groups)`**: Maps to the `name` and `groups` fields. Both are required.
-*   **`TIME` clause (required)**: Maps to `time_range`:
-    *   **`TIME = '2023-01-01T00:00:00Z'`**: Sets `begin` and `end` to the same timestamp.
-    *   **`TIME > '2023-01-01T00:00:00Z'`**: Sets `begin` to the timestamp.
-    *   **`TIME < '2023-01-01T00:00:00Z'`**: Sets `end` to the timestamp.
-    *   **`TIME >= '2023-01-01T00:00:00Z'`**: Sets `begin` to the timestamp (inclusive).
-    *   **`TIME <= '2023-01-01T00:00:00Z'`**: Sets `end` to the timestamp (inclusive).
-    *   **`TIME BETWEEN '2023-01-01T00:00:00Z' AND '2023-01-02T00:00:00Z'`**: Sets `begin` and `end` to the respective timestamps.
-    *   **`TIME > '-30m'`**: Sets `begin` to 30 minutes ago.
-    *   **`TIME BETWEEN '-1h' AND 'now'`**: Sets `begin` to 1 hour ago and `end` to current time.
-*   **`WHERE tag = 'value'`**: Maps to `conditions`. Only simple equality is supported.
-*   **`AGGREGATE BY FUNC`**: Maps to `agg`.
-*   **`ORDER BY value DESC`**: Maps to `field_value_sort`.
-*   **`WITH QUERY_TRACE`**: Maps to the `trace` field to enable distributed tracing of query execution.
+- **`SHOW TOP N`**: Maps to `top_n`.
+- **`FROM MEASURE name IN groups`** or **`FROM MEASURE name IN (groups)`**: Maps to the `name` and `groups` fields. Both are required.
+- **`TIME` clause (required)**: Maps to `time_range`:
+  - **`TIME = '2023-01-01T00:00:00Z'`**: Sets `begin` and `end` to the same timestamp.
+  - **`TIME > '2023-01-01T00:00:00Z'`**: Sets `begin` to the timestamp.
+  - **`TIME < '2023-01-01T00:00:00Z'`**: Sets `end` to the timestamp.
+  - **`TIME >= '2023-01-01T00:00:00Z'`**: Sets `begin` to the timestamp (inclusive).
+  - **`TIME <= '2023-01-01T00:00:00Z'`**: Sets `end` to the timestamp (inclusive).
+  - **`TIME BETWEEN '2023-01-01T00:00:00Z' AND '2023-01-02T00:00:00Z'`**: Sets `begin` and `end` to the respective timestamps.
+  - **`TIME > '-30m'`**: Sets `begin` to 30 minutes ago.
+  - **`TIME BETWEEN '-1h' AND 'now'`**: Sets `begin` to 1 hour ago and `end` to current time.
+- **`WHERE tag = 'value'`**: Maps to `conditions`. Only simple equality is supported.
+- **`AGGREGATE BY FUNC`**: Maps to `agg`.
+- **`ORDER BY value DESC`**: Maps to `field_value_sort`.
+- **`WITH QUERY_TRACE`**: Maps to the `trace` field to enable distributed tracing of query execution.
 
 ### 6.3. Examples
 
@@ -751,12 +759,12 @@ integer_literal     ::= [0-9]+
 
 ### 7.2. Mapping to `property.v1.QueryRequest`
 
-*   **`FROM PROPERTY name IN groups`** or **`FROM PROPERTY name IN (groups)`**: Maps to the `name` and `groups` fields. Both are required.
-*   **`SELECT tags`**: Maps to `tag_projection`.
-*   **`WHERE ID IN (...)`**: Maps to `ids`.
-*   **`WHERE tag = 'value'`**: Maps to `criteria`.
-*   **`LIMIT n`**: Maps to `limit`.
-*   **`WITH QUERY_TRACE`**: Maps to the `trace` field to enable distributed tracing of query execution.
+- **`FROM PROPERTY name IN groups`** or **`FROM PROPERTY name IN (groups)`**: Maps to the `name` and `groups` fields. Both are required.
+- **`SELECT tags`**: Maps to `tag_projection`.
+- **`WHERE ID IN (...)`**: Maps to `ids`.
+- **`WHERE tag = 'value'`**: Maps to `criteria`.
+- **`LIMIT n`**: Maps to `limit`.
+- **`WITH QUERY_TRACE`**: Maps to the `trace` field to enable distributed tracing of query execution.
 
 ### 7.3. Examples
 
@@ -833,48 +841,48 @@ integer_literal       ::= [0-9]+
 
 The Trace model in BanyanDB is specifically designed for storing and querying trace data with the following key characteristics:
 
-*   **Trace Resource**: A logical namespace within a group that defines the structure for trace data
-*   **Tags**: Indexed tags that support filtering and querying (defined by `TraceTagSpec`)
-*   **Trace ID Tag**: A specific tag that stores the trace ID for trace correlation
-*   **Timestamp Tag**: A specific tag that stores the timestamp for time-based queries
-*   **Span Data**: Raw span data stored as binary for efficient storage and retrieval
+- **Trace Resource**: A logical namespace within a group that defines the structure for trace data
+- **Tags**: Indexed tags that support filtering and querying (defined by `TraceTagSpec`)
+- **Trace ID Tag**: A specific tag that stores the trace ID for trace correlation
+- **Timestamp Tag**: A specific tag that stores the timestamp for time-based queries
+- **Span Data**: Raw span data stored as binary for efficient storage and retrieval
 
 ### 8.2.1. Empty Projection Support
 
 BydbQL for traces supports an empty projection syntax `SELECT ()` that allows queries to return only raw span data without any tag information. This is useful for:
 
-*   **Performance Optimization**: When you only need the raw span data and don't want to pay the cost of loading and returning tag values
-*   **Data Processing**: When you plan to process the raw span data externally and don't need the indexed tag values
-*   **Storage Efficiency**: Reducing network transfer and memory usage by excluding tag data
+- **Performance Optimization**: When you only need the raw span data and don't want to pay the cost of loading and returning tag values
+- **Data Processing**: When you plan to process the raw span data externally and don't need the indexed tag values
+- **Storage Efficiency**: Reducing network transfer and memory usage by excluding tag data
 
 **Syntax**: `SELECT ()` - Returns only raw span data, no tag information
 **Behavior**: The query will still apply filtering and ordering based on the WHERE and ORDER BY clauses, but the result will contain only the binary span data without any tag projections.
 
 ### 8.3. Mapping to `trace.v1.QueryRequest`
 
-*   **`FROM TRACE name IN groups`** or **`FROM TRACE name IN (groups)`**: Maps to the `name` and `groups` fields. Both are required.
-*   **`SELECT tags`**: Maps to `tag_projection`. Requires a trace schema to resolve tags to their specifications.
-*   **`SELECT ()`**: Maps to an empty `tag_projection` array, indicating no tag data should be returned (only raw span data).
-*   **`TIME` clause (required)**: Maps to `time_range`:
-    *   **`TIME = '2023-01-01T00:00:00Z'`**: Sets `begin` and `end` to the same timestamp.
-    *   **`TIME > '2023-01-01T00:00:00Z'`**: Sets `begin` to the timestamp.
-    *   **`TIME < '2023-01-01T00:00:00Z'`**: Sets `end` to the timestamp.
-    *   **`TIME >= '2023-01-01T00:00:00Z'`**: Sets `begin` to the timestamp (inclusive).
-    *   **`TIME <= '2023-01-01T00:00:00Z'`**: Sets `end` to the timestamp (inclusive).
-    *   **`TIME BETWEEN '2023-01-01T00:00:00Z' AND '2023-01-02T00:00:00Z'`**: Sets `begin` and `end` to the respective timestamps.
-    *   **`TIME > '-30m'`**: Sets `begin` to 30 minutes ago.
-    *   **`TIME BETWEEN '-1h' AND 'now'`**: Sets `begin` to 1 hour ago and `end` to current time.
-*   **`WHERE conditions`**: Maps to `criteria` for filtering spans based on tag values.
-*   **`ORDER BY field`**: Maps to `order_by` for sorting results.
-*   **`LIMIT`/`OFFSET`**: Maps to `limit` and `offset` for pagination.
-*   **`WITH QUERY_TRACE`**: Maps to the `trace` field to enable distributed tracing of query execution.
+- **`FROM TRACE name IN groups`** or **`FROM TRACE name IN (groups)`**: Maps to the `name` and `groups` fields. Both are required.
+- **`SELECT tags`**: Maps to `tag_projection`. Requires a trace schema to resolve tags to their specifications.
+- **`SELECT ()`**: Maps to an empty `tag_projection` array, indicating no tag data should be returned (only raw span data).
+- **`TIME` clause (required)**: Maps to `time_range`:
+  - **`TIME = '2023-01-01T00:00:00Z'`**: Sets `begin` and `end` to the same timestamp.
+  - **`TIME > '2023-01-01T00:00:00Z'`**: Sets `begin` to the timestamp.
+  - **`TIME < '2023-01-01T00:00:00Z'`**: Sets `end` to the timestamp.
+  - **`TIME >= '2023-01-01T00:00:00Z'`**: Sets `begin` to the timestamp (inclusive).
+  - **`TIME <= '2023-01-01T00:00:00Z'`**: Sets `end` to the timestamp (inclusive).
+  - **`TIME BETWEEN '2023-01-01T00:00:00Z' AND '2023-01-02T00:00:00Z'`**: Sets `begin` and `end` to the respective timestamps.
+  - **`TIME > '-30m'`**: Sets `begin` to 30 minutes ago.
+  - **`TIME BETWEEN '-1h' AND 'now'`**: Sets `begin` to 1 hour ago and `end` to current time.
+- **`WHERE conditions`**: Maps to `criteria` for filtering spans based on tag values.
+- **`ORDER BY field`**: Maps to `order_by` for sorting results.
+- **`LIMIT`/`OFFSET`**: Maps to `limit` and `offset` for pagination.
+- **`WITH QUERY_TRACE`**: Maps to the `trace` field to enable distributed tracing of query execution.
 
 ### 8.3.1. Naming Convention Clarification
 
 To avoid confusion between different uses of the word "trace" in BanyanDB:
 
-*   **Trace Model**: Refers to the data model for storing trace data (spans, tags, etc.) - used in `FROM TRACE` clauses
-*   **Query Tracing**: Refers to distributed tracing of query execution for observability - enabled with `WITH QUERY_TRACE`
+- **Trace Model**: Refers to the data model for storing trace data (spans, tags, etc.) - used in `FROM TRACE` clauses
+- **Query Tracing**: Refers to distributed tracing of query execution for observability - enabled with `WITH QUERY_TRACE`
 
 The `WITH QUERY_TRACE` clause enables distributed tracing of the query execution itself, which is separate from querying trace data. When enabled, the query response will include execution trace information in the `trace_query_result` field.
 
@@ -1002,7 +1010,7 @@ LIMIT 100;
 ## 9. Summary of BydbQL Capabilities
 
 | Feature             | Streams                                         | Measures                                        | Top-N                                           | Properties                                      | Traces                                          |
-|:--------------------|:------------------------------------------------|:------------------------------------------------|:------------------------------------------------|:------------------------------------------------|:------------------------------------------------|
+| :------------------ | :---------------------------------------------- | :---------------------------------------------- | :---------------------------------------------- | :---------------------------------------------- | :---------------------------------------------- |
 | **Primary Command** | `SELECT ... FROM STREAM ... IN ...`             | `SELECT ... FROM MEASURE ... IN ...`            | `SHOW TOP ... FROM MEASURE ... IN ...`          | `SELECT ... FROM PROPERTY ... IN ...`           | `SELECT ... FROM TRACE ... IN ...`              |
 | **Groups Clause**   | **Required** `IN groups` (parentheses optional) | **Required** `IN groups` (parentheses optional) | **Required** `IN groups` (parentheses optional) | **Required** `IN groups` (parentheses optional) | **Required** `IN groups` (parentheses optional) |
 | **Time Clause**     | **Required** `TIME ...`                         | **Required** `TIME ...`                         | **Required** `TIME ...`                         | Not applicable                                  | **Required** `TIME ...`                         |

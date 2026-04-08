@@ -13,7 +13,7 @@ Create operation adds a new index rule binding to the database's metadata regist
 
 ### Examples
 
-An index rule binding belongs to a unique group. We should create such a group with a catalog `CATALOG_STREAM` before creating a index rule binding. The subject(stream/measure) and index rule MUST live in the same group with the binding.
+An index rule binding belongs to a unique group. We should create such a group with a catalog `CATALOG_STREAM`, `CATALOG_MEASURE` or `CATALOG_TRACE` before creating a index rule binding. The subject(stream/measure/trace) and index rule MUST live in the same group with the binding.
 
 ```shell
 bydbctl group create -f - <<EOF
@@ -31,8 +31,7 @@ resource_opts:
 EOF
 ```
 
-The group creates two shards to store indexRuleBinding data points. Every one day, it would create a
-segment which will generate a block every 2 hours.
+The group creates two shards to store indexRuleBinding data points. Every one day, it would create a segment.
 
 The data in this group will keep 7 days.
 
@@ -65,9 +64,9 @@ EOF
 
 The YAML contains:
 
-* `rules`: references to the name of index rules.
-* `subject`: stream or measure's name and catalog.
-* `begin_at` and `expire_at`: the TTL of this binding.
+- `rules`: references to the name of index rules.
+- `subject`: stream, measure or trace's name and catalog.
+- `begin_at` and `expire_at`: the TTL of this binding.
 
 ## Get operation
 
@@ -116,6 +115,7 @@ The new YAML removed the index rule `extended_tags`'s binding.
 ## Delete operation
 
 Delete operation delete an index rule binding's schema.
+
 ### Examples of deleting
 
 ```shell

@@ -28,8 +28,9 @@ import (
 
 // Provider is a prometheus provider.
 type provider struct {
-	scope meter.Scope
-	reg   prometheus.Registerer
+	scope      meter.Scope
+	reg        prometheus.Registerer
+	collectors []prometheus.Collector
 }
 
 // NewProvider creates a new prometheus provider with given meter.Scope.
@@ -42,30 +43,39 @@ func NewProvider(scope meter.Scope, reg prometheus.Registerer) meter.Provider {
 
 // Counter returns a prometheus counter.
 func (p *provider) Counter(name string, labels ...string) meter.Counter {
-	return &counter{counter: registerCollector(p.reg, prometheus.NewCounterVec(prometheus.CounterOpts{
+	vec := prometheus.NewCounterVec(prometheus.CounterOpts{
 		Name:        p.scope.GetNamespace() + "_" + name,
 		Help:        p.scope.GetNamespace() + "_" + name,
 		ConstLabels: convertLabels(p.scope.GetLabels()),
-	}, labels))}
+	}, labels)
+	collected := registerCollector(p.reg, vec)
+	p.collectors = append(p.collectors, collected)
+	return &counter{counter: collected}
 }
 
 // Gauge returns a prometheus gauge.
 func (p *provider) Gauge(name string, labels ...string) meter.Gauge {
-	return &gauge{gauge: registerCollector(p.reg, prometheus.NewGaugeVec(prometheus.GaugeOpts{
+	vec := prometheus.NewGaugeVec(prometheus.GaugeOpts{
 		Name:        p.scope.GetNamespace() + "_" + name,
 		Help:        p.scope.GetNamespace() + "_" + name,
 		ConstLabels: convertLabels(p.scope.GetLabels()),
-	}, labels))}
+	}, labels)
+	collected := registerCollector(p.reg, vec)
+	p.collectors = append(p.collectors, collected)
+	return &gauge{gauge: collected}
 }
 
 // Histogram returns a prometheus histogram.
 func (p *provider) Histogram(name string, buckets meter.Buckets, labels ...string) meter.Histogram {
-	return &histogram{histogram: registerCollector(p.reg, prometheus.NewHistogramVec(prometheus.HistogramOpts{
+	vec := prometheus.NewHistogramVec(prometheus.HistogramOpts{
 		Name:        p.scope.GetNamespace() + "_" + name,
 		Help:        p.scope.GetNamespace() + "_" + name,
 		ConstLabels: convertLabels(p.scope.GetLabels()),
 		Buckets:     buckets,
-	}, labels))}
+	}, labels)
+	collected := registerCollector(p.reg, vec)
+	p.collectors = append(p.collectors, collected)
+	return &histogram{histogram: collected}
 }
 
 func registerCollector[T prometheus.Collector](reg prometheus.Registerer, c T) T {
@@ -79,6 +89,14 @@ func registerCollector[T prometheus.Collector](reg prometheus.Registerer, c T) T
 		panic(regErr)
 	}
 	return c
+}
+
+// Close unregisters all collectors from the prometheus registry.
+func (p *provider) Close() {
+	for _, c := range p.collectors {
+		p.reg.Unregister(c)
+	}
+	p.collectors = nil
 }
 
 // convertLabels converts a map of labels to a prometheus.Labels.

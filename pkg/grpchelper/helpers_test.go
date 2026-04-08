@@ -18,6 +18,8 @@
 package grpchelper
 
 import (
+	"sync"
+
 	"google.golang.org/grpc"
 
 	databasev1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/database/v1"
@@ -37,6 +39,7 @@ func (m *mockClient) Close() error {
 type mockHandler struct {
 	activeNodes   map[string]*mockClient
 	inactiveNodes map[string]*mockClient
+	mu            sync.Mutex
 }
 
 func (h *mockHandler) AddressOf(node *databasev1.Node) string {
@@ -52,6 +55,8 @@ func (h *mockHandler) NewClient(_ *grpc.ClientConn, _ *databasev1.Node) (*mockCl
 }
 
 func (h *mockHandler) OnActive(name string, client *mockClient) {
+	h.mu.Lock()
+	defer h.mu.Unlock()
 	if h.activeNodes == nil {
 		h.activeNodes = make(map[string]*mockClient)
 	}
@@ -59,9 +64,25 @@ func (h *mockHandler) OnActive(name string, client *mockClient) {
 }
 
 func (h *mockHandler) OnInactive(name string, client *mockClient) {
+	h.mu.Lock()
+	defer h.mu.Unlock()
 	if h.inactiveNodes == nil {
 		h.inactiveNodes = make(map[string]*mockClient)
 	}
 	h.inactiveNodes[name] = client
 	delete(h.activeNodes, name)
+}
+
+func (h *mockHandler) isActive(name string) bool {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	_, ok := h.activeNodes[name]
+	return ok
+}
+
+func (h *mockHandler) isInactive(name string) bool {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	_, ok := h.inactiveNodes[name]
+	return ok
 }

@@ -348,24 +348,23 @@ func buildFilterFromCondition(cond *modelv1.Condition, schema logical.Schema, ta
 		}
 	}
 
-	if cond.Name == traceIDTagName && (cond.Op == modelv1.Condition_BINARY_OP_EQ || cond.Op == modelv1.Condition_BINARY_OP_IN) {
-		traceIDs = extractIDsFromCondition(cond)
-	} else if cond.Name != spanIDTagName {
-		collectedTagNames = append(collectedTagNames, cond.Name)
-	}
-
-	_, parsedEntity, err := logical.ParseExprOrEntity(entityDict, entity, cond)
+	// Check entity condition first: entity tags are handled by series routing and are NOT stored
+	// as tag data in SIDX blocks. They must not be added to collectedTagNames, as that would
+	// shift TagIdx values in conditionSchema and cause wrong tag values to be looked up.
+	expr, parsedEntity, err := logical.ParseExprOrEntity(entityDict, entity, cond)
 	if err != nil {
 		return nil, nil, collectedTagNames, traceIDs, minVal, maxVal, err
 	}
 	if parsedEntity != nil {
 		return nil, parsedEntity, collectedTagNames, traceIDs, minVal, maxVal, nil
 	}
-	// For trace, all non-entity tags have skipping index
-	expr, _, err := logical.ParseExprOrEntity(entityDict, entity, cond)
-	if err != nil {
-		return nil, nil, collectedTagNames, traceIDs, minVal, maxVal, err
+	// Non-entity condition: add to collectedTagNames (but skip traceID and spanID special cases)
+	if cond.Name == traceIDTagName && (cond.Op == modelv1.Condition_BINARY_OP_EQ || cond.Op == modelv1.Condition_BINARY_OP_IN) {
+		traceIDs = extractIDsFromCondition(cond)
+	} else if cond.Name != spanIDTagName {
+		collectedTagNames = append(collectedTagNames, cond.Name)
 	}
+	// For trace, all non-entity tags have skipping index
 	filter, entities, err := parseConditionToFilter(cond, schema, entity, expr)
 	return filter, entities, collectedTagNames, traceIDs, minVal, maxVal, err
 }

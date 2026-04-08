@@ -208,6 +208,27 @@ var MockTSTableCreator = func(_ fs.FileSystem, _ string, _ common.Position,
 	return &MockTSTable{}, nil
 }
 
+type SnapshotMockTSTable struct {
+	timeRange timestamp.TimeRange
+}
+
+func (m *SnapshotMockTSTable) Close() error { return nil }
+
+func (m *SnapshotMockTSTable) Collect(_ Metrics) {}
+
+func (m *SnapshotMockTSTable) TakeFileSnapshot(_ string) (bool, error) {
+	if m.timeRange.Start.Equal(time.Unix(0, 0)) {
+		return false, ErrNoCurrentSnapshot
+	}
+	return true, nil
+}
+
+var SnapshotMockTSTableCreator = func(_ fs.FileSystem, _ string, _ common.Position,
+	_ *logger.Logger, timeRange timestamp.TimeRange, _, _ any,
+) (*SnapshotMockTSTable, error) {
+	return &SnapshotMockTSTable{timeRange: timeRange}, nil
+}
+
 type MockMetrics struct{}
 
 func (m *MockMetrics) DeleteAll() {}

@@ -2,6 +2,26 @@
 
 Release Notes.
 
+## 0.11.0
+
+### Features
+
+- Organize access logs under a dedicated "accesslog" subdirectory to improve log organization and separation from other application data.
+- Collect BanyanDB data on e2e test failure for CI debugging.
+- Add log query e2e test.
+- Sync lifecycle e2e test from SkyWalking stages test.
+- Add periodic health check for property schema connection.
+
+### Bug Fixes
+
+- Fix flaky trace query filtering caused by non-deterministic sidx tag ordering and add consistency checks for integration query cases.
+- Fix index-mode measure queries returning documents outside the requested time range when a widened segment overlaps the query window.
+- MCP: Add validation for properties and harden the mcp server.
+- Fix property schema client connection not stable after data node restarted.
+- Fix flaky on-disk integration tests caused by Ginkgo v2 random container shuffling closing gRPC connections prematurely.
+- Fix snapshot error when there is no data in a segment.
+- ui: fix query editor refresh/reset behavior and BydbQL keyword highlighting.
+
 ## 0.10.0
 
 ### Features
@@ -50,6 +70,7 @@ Release Notes.
 - Fix segment reference leaks in measure/stream/trace queries and ensure chunked sync sessions close part contexts correctly.
 - Fix duplicate query execution in distributed measure Agg+TopN queries by enabling push-down aggregation, removing the wasteful double-query pattern.
 - Fix nil pointer panic in segment collectMetrics during shutdown.
+- Fix entity tag handling in trace filter to prevent TagIdx index mismatch when filtering with both entity and non-entity tags.
 
 ### Document
 
@@ -62,6 +83,8 @@ Release Notes.
 ### Chores
 
 - Upgrade Node.js support from 20.12 to 24.6.0, and align CI, license checks, and documentation
+- Add Claude Code skill for vendor dependency updates.
+- Upgrade Go vendor dependencies and sync BPF2GO_VERSION with cilium/ebpf library.
 
 ## 0.9.0
 

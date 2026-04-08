@@ -101,7 +101,7 @@ func (s *seriesIndex) Stats() (dataCount int64, dataSizeBytes int64) {
 func (s *seriesIndex) filter(ctx context.Context, series []*pbv1.Series,
 	projection []index.FieldKey, secondaryQuery index.Query, timeRange *timestamp.TimeRange,
 ) (data SeriesData, err error) {
-	if len(series) == 0 && secondaryQuery == nil {
+	if len(series) == 0 && secondaryQuery == nil && timeRange == nil {
 		return data, nil
 	}
 	var seriesMatchers []index.SeriesMatcher
@@ -343,7 +343,14 @@ func (s *seriesIndex) SearchWithoutSeries(ctx context.Context, opts IndexSearchO
 		}()
 	}
 
-	iter, err := s.store.SeriesSort(ctx, opts.Query, opts.Order,
+	sortQuery := opts.Query
+	if opts.TimeRange != nil {
+		sortQuery, err = s.store.BuildQuery(nil, opts.Query, opts.TimeRange)
+		if err != nil {
+			return sd, nil, err
+		}
+	}
+	iter, err := s.store.SeriesSort(ctx, sortQuery, opts.Order,
 		opts.PreloadSize, opts.Projection)
 	if err != nil {
 		return sd, nil, err

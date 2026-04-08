@@ -3,7 +3,7 @@
 CRUD operations create, read, update and delete index rules.
 
 IndexRule defines how to generate indices based on tags and the index type.
-IndexRule should bind to a subject(stream or measure) through an IndexRuleBinding to generate proper indices.
+IndexRule should bind to a subject(stream, measure or trace) through an IndexRuleBinding to generate proper indices.
 
 [bydbctl](../bydbctl.md) is the command line tool in examples.
 
@@ -33,8 +33,7 @@ resource_opts:
 EOF
 ```
 
-The group creates two shards to store indexRule data points. Every day, it would create a
-segment that will generate a block every 2 hours.
+The group creates two shards to store indexRule data points. Every day, it would create a segment.
 
 The data in this group will keep 7 days.
 
@@ -55,6 +54,7 @@ This YAML creates an index rule which uses the tag `trace_id` to generate a `TYP
 
 The `analyzer` field is optional. If it is not set, the default value is an empty string.
 We can set it to `url` to specify the analyzer. More analyzers can refer to the [API Reference](../../../api-reference.md#indexruleanalyzer).
+
 ```shell
 bydbctl indexRule create -f - <<EOF
 metadata:
@@ -120,3 +120,4 @@ bydbctl indexRule list -g sw_stream
 ## API Reference
 
 [IndexRule Registration Operations](../../../api-reference.md#indexruleregistryservice)
+

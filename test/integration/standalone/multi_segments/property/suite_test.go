@@ -38,17 +38,34 @@ func init() {
 		Expect(tmpErr).NotTo(HaveOccurred())
 		dfWriter := setup.NewDiscoveryFileWriter(tmpDir)
 		config := setup.PropertyClusterConfig(dfWriter)
-		addr, _, closeFn := setup.Standalone(config)
+		path, diskCleanupFn, pathErr := test.NewSpace()
+		Expect(pathErr).NotTo(HaveOccurred())
+		var ports []int
+		ports, portsErr := test.AllocateFreePorts(5)
+		Expect(portsErr).NotTo(HaveOccurred())
+		addr, _, closeFunc := setup.ClosableStandalone(config, path, ports)
 		ns := timestamp.NowMilli().UnixNano()
 		now := time.Unix(0, ns-ns%int64(time.Minute))
 		baseTime := time.Date(now.Year(), now.Month(), now.Day(), 0o0, 0o2, 0, 0, now.Location())
 		test_cases.Initialize(addr, baseTime)
+		prevClose, currClose := closeFunc, func() {}
 		return multisegments.SetupResult{
 			Addr:     addr,
 			Now:      now,
 			BaseTime: baseTime,
+			Restart: func() (string, func()) {
+				time.Sleep(5 * time.Second)
+				prevClose()
+				time.Sleep(3 * time.Second)
+				currClose()
+				addr, _, closeFunc := setup.EmptyClosableStandalone(config, path, ports)
+				prevClose, currClose = currClose, closeFunc
+				return addr, closeFunc
+			},
 			StopFunc: func() {
-				closeFn()
+				currClose()
+				prevClose()
+				diskCleanupFn()
 				tmpDirCleanup()
 			},
 		}
