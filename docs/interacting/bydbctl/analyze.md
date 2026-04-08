@@ -8,11 +8,11 @@
 
 Flags:
 
-* `-s` or `--subject`: The name of stream or measure in the series index. If it's absent, the command will analyze all series in the series index.
+- `-s` or `--subject`: The name of stream, measure or trace in the series index. If it's absent, the command will analyze all series in the series index.
 
 Arguments:
 
-* `path`: The path of the series index. It's mandatory.
+- `path`: The path of the series index. It's mandatory.
 
 ### All series distribution in the series index
 
@@ -60,6 +60,6 @@ The expected result is a csv file with the following content:
 ...
 ```
 
-Each row represents a group of tags which compose a series. They are defined in the `entity` field on `Stream` or `Measure`.
+Each row represents a group of tags which compose a series. They are defined in the `entity` field on `Stream`, `Measure` or `Trace`.
 
 In this example, `endpoint_sla_day`'s `entity` is `entity_id` tag which comes from OAP's internal `endpoint_id`.

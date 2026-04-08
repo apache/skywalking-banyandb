@@ -24,18 +24,18 @@ The lifecycle agent performs the following steps:
 
 2. **Take Snapshots:**
    - Request a snapshot from the source data node.
-   - Retrieve the stream and measure data directory paths.
+   - Retrieve the stream, measure and trace data directory paths.
 
 3. **Setup Query Services:**
-   - Create read-only services for streams and measures using the snapshot paths.
+   - Create read-only services for streams, measures and traces using the snapshot paths.
 
 4. **Process Each Group:**
    - Determine the current stage based on node labels.
    - Identify target nodes for the next lifecycle stage.
-   - For each stream or measure:
-      - Query data from the current stage.
-      - Transform data into write requests.
-      - Send write requests to target nodes.
+   - For each stream, measure or trace:
+     - Query data from the current stage.
+     - Transform data into write requests.
+     - Send write requests to target nodes.
    - Delete the source data after a successful migration.
 
 5. **Progress Tracking:**
@@ -45,16 +45,16 @@ The lifecycle agent performs the following steps:
 
 ## Configuration
 
-Lifecycle stages are defined within the group configuration using the `LifecycleStage` structure. 
+Lifecycle stages are defined within the group configuration using the `LifecycleStage` structure.
 
-| Field         | Description                                                          |
-| ------------- | -------------------------------------------------------------------- |
-| `name`        | Stage name (e.g., "hot", "warm", "cold")                             |
-| `shard_num`   | Number of shards allocated for this stage                            |
-| `segment_interval` | Time interval for data segmentation (uses `IntervalRule`)       |
-| `ttl`         | Time-to-live before data moves to the next stage (uses `IntervalRule`)|
-| `node_selector` | Label selector to identify target nodes for this stage             |
-| `close`       | Indicates whether to close segments that are no longer live          |
+| Field              | Description                                                            |
+| ------------------ | ---------------------------------------------------------------------- |
+| `name`             | Stage name (e.g., "hot", "warm", "cold")                               |
+| `shard_num`        | Number of shards allocated for this stage                              |
+| `segment_interval` | Time interval for data segmentation (uses `IntervalRule`)              |
+| `ttl`              | Time-to-live before data moves to the next stage (uses `IntervalRule`) |
+| `node_selector`    | Label selector to identify target nodes for this stage                 |
+| `close`            | Indicates whether to close segments that are no longer live            |
 
 ### Example Configuration
 
@@ -110,6 +110,7 @@ lifecycle \
   --etcd-endpoints <etcd-endpoints> \
   --stream-root-path /path/to/stream \
   --measure-root-path /path/to/measure \
+  --trace-root-path /path/to/trace \
   --node-labels type=hot \
   --progress-file /path/to/progress.json \
   --schedule @daily
@@ -117,18 +118,19 @@ lifecycle \
 
 ### Command-Line Parameters
 
-| Parameter           | Description                                                               | Default Value                   |
-| ------------------- | ------------------------------------------------------------------------- | ------------------------------- |
-| `--node-labels`     | Labels of the current node (e.g., `type=hot,region=us-west`)                | `nil`                           |
-| `--grpc-addr`       | gRPC address of the data node                                             | `127.0.0.1:17912`               |
-| `--enable-tls`      | Enable TLS for gRPC connection                                            | `false`                         |
-| `--insecure`        | Skip server certificate verification                                      | `false`                         |
-| `--cert`            | Path to the gRPC server certificate                                       | `""`                            |
-| `--stream-root-path`| Root directory for stream catalog snapshots                               | `/tmp`                          |
-| `--measure-root-path`| Root directory for measure catalog snapshots                              | `/tmp`                          |
-| `--progress-file`   | File path used for progress tracking and crash recovery                   | `/tmp/lifecycle-progress.json`  |
-| `--etcd-endpoints`  | Endpoints for etcd connections                                             | `""`                            |
-| `--schedule`        | Schedule for periodic backup (e.g., @yearly, @monthly, @weekly, @daily, etc.) | `""`                            |
+| Parameter             | Description                                                                   | Default Value                  |
+| --------------------- | ----------------------------------------------------------------------------- | ------------------------------ |
+| `--node-labels`       | Labels of the current node (e.g., `type=hot,region=us-west`)                  | `nil`                          |
+| `--grpc-addr`         | gRPC address of the data node                                                 | `127.0.0.1:17912`              |
+| `--enable-tls`        | Enable TLS for gRPC connection                                                | `false`                        |
+| `--insecure`          | Skip server certificate verification                                          | `false`                        |
+| `--cert`              | Path to the gRPC server certificate                                           | `""`                           |
+| `--stream-root-path`  | Root directory for stream catalog snapshots                                   | `/tmp`                         |
+| `--measure-root-path` | Root directory for measure catalog snapshots                                  | `/tmp`                         |
+| `--trace-root-path`   | Root directory for trace catalog snapshots                                    | `/tmp`                         |
+| `--progress-file`     | File path used for progress tracking and crash recovery                       | `/tmp/lifecycle-progress.json` |
+| `--etcd-endpoints`    | Endpoints for etcd connections                                                | `""`                           |
+| `--schedule`          | Schedule for periodic backup (e.g., @yearly, @monthly, @weekly, @daily, etc.) | `""`                           |
 
 ## Best Practices
 
@@ -156,7 +158,7 @@ lifecycle \
 
    # Hot node
    banyand data --node-labels type=hot --etcd-endpoints <etcd-endpoints> --grpc-port 17912
-   
+
    # Warm node
    banyand data --node-labels type=warm --etcd-endpoints <etcd-endpoints> --grpc-port 18912
    ```
@@ -164,7 +166,7 @@ lifecycle \
 2. **Create a group with lifecycle stages.**
 
 `bydbctl` connects the `liaison` node to create a group with lifecycle stages:
-   
+
 ```bash
    bydbctl group create -f - <<EOF
 metadata:
@@ -196,15 +198,16 @@ EOF
 
 `lifecycle` connects to the `hot` node to manage data migration:
 
-   ```bash
-   lifecycle \
-     --etcd-endpoints <etcd-endpoints> \
-     --node-labels type=hot \
-     --grpc-addr 127.0.0.1:17912 \
-     --stream-root-path /data/stream \
-     --measure-root-path /data/measure \
-     --progress-file /data/progress.json
-   ```
+```bash
+lifecycle \
+  --etcd-endpoints <etcd-endpoints> \
+  --node-labels type=hot \
+  --grpc-addr 127.0.0.1:17912 \
+  --stream-root-path /data/stream \
+  --measure-root-path /data/measure \
+  --trace-root-path /data/trace \
+  --progress-file /data/progress.json
+```
 
 4. **Verify migration:**
    - Check logs for progress details.

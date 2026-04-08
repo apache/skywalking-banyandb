@@ -12,7 +12,7 @@ There are three bootstrap commands: `data`, `liaison`, and `standalone`. You cou
 
 - `data`: Run as the data server. It stores the data and processes the data requests.
 - `liaison`: Run as the liaison server. It is responsible for the communication between the data servers and clients.
-- `standalone`: Run as the standalone server. It combines the data, liaison server and embed etcd server for development and testing. 
+- `standalone`: Run as the standalone server. It combines the data, liaison server and embed etcd server for development and testing.
 
 ### Other commands
 
@@ -112,6 +112,12 @@ The following flags are used to configure the stream storage engine:
 - `--stream-max-fan-out-size bytes`: the upper bound of a single file size after merge of stream (default 8.00EiB)
 - `--element-index-flush-timeout duration`: The element index timeout of stream (default: 1s).
 
+The following flags are used to configure the trace storage engine:
+
+- `--trace-flush-timeout duration`: The memory data timeout of trace (default: 1s).
+- `--trace-root-path string`: The root path of the database (default: "/tmp").
+- `--trace-max-fan-out-size bytes`: the upper bound of a single file size after merge of trace (default 8.00EiB)
+
 The following flags are used to configure the embedded etcd storage engine which is only used when running as a standalone server:
 
 - `--metadata-root-path string`: The root path of metadata (default: "/tmp").
@@ -122,7 +128,7 @@ The following flags are used to configure the embedded etcd storage engine which
 
 The following flags are used to configure the memory protector:
 
-- `--allowed-bytes bytes`: Allowed bytes of memory usage. If the memory usage exceeds this value, the query services will stop. Setting a large value may evict data from the OS page cache, causing high disk I/O. (default 0B)  
+- `--allowed-bytes bytes`: Allowed bytes of memory usage. If the memory usage exceeds this value, the query services will stop. Setting a large value may evict data from the OS page cache, causing high disk I/O. (default 0B)
 - `--allowed-percent int`: Allowed percentage of total memory usage. If usage exceeds this value, the query services will stop. This takes effect only if `allowed-bytes` is 0. If usage is too high, it may cause OS page cache eviction. (default 75)
 
 ### Observability

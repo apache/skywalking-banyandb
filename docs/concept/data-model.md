@@ -2,15 +2,15 @@
 
 This chapter introduces BanyanDB's data models and covers the following:
 
-* the high-level data organization
-* data model
-* data retrieval
+- the high-level data organization
+- data model
+- data retrieval
 
-You can also find [examples](../interacting/bydbctl/schema) of how to interact with BanyanDB using [bydbctl](../interacting/bydbctl/bydbctl.md), how to create and drop groups, or how to create, read, update and drop streams/measures.
+You can also find [examples](../interacting/bydbctl/schema) of how to interact with BanyanDB using [bydbctl](../interacting/bydbctl/bydbctl.md), how to create and drop groups, or how to create, read, update and drop streams/measures/traces.
 
 ## Structure of BanyanDB
 
-The hierarchy that data is organized into **streams**, **measures** and **properties** in groups.
+The hierarchy that data is organized into **streams**, **measures**, **traces** and **properties** in groups.
 
 ![Structure of BanyanDB](https://skywalking.apache.org/doc-graph/banyandb/v0.2.0/structure.png)
 
@@ -39,13 +39,14 @@ resource_opts:
     num: 7
 ```
 
-The group creates two shards to store data points. Every day, it would create a segment that will generate a block every 2 hours. The available units are `HOUR` and `DAY`. The data in this group will keep 7 days.
+The group creates two shards to store data points. Every day, it would create a segment. The available units are `HOUR` and `DAY`. The data in this group will keep 7 days.
 
 Every other resource should belong to a group. The `catalog` indicates which kind of data model the group contains.
 
-* `UNSPECIFIED`: `Property` or other data models.
-* `MEASURE`: [`Measure`](#streams).
-* `STREAM`: [`Stream`](#measures).
+- `UNSPECIFIED`: `Property` or other data models.
+- `MEASURE`: [`Measure`](#measures).
+- `STREAM`: [`Stream`](#streams).
+- `TRACE`: [`Trace`](#traces).
 
 [Group Registration Operations](../api-reference.md#groupregistryservice)
 
@@ -58,29 +59,29 @@ metadata:
   name: service_cpm_minute
   group: sw_metric
 tag_families:
-- name: default
-  tags:
-  - name: id
-    type: TAG_TYPE_STRING
-  - name: entity_id
-    type: TAG_TYPE_STRING
-  - name: service_id
-    type: TAG_TYPE_STRING
+  - name: default
+    tags:
+      - name: id
+        type: TAG_TYPE_STRING
+      - name: entity_id
+        type: TAG_TYPE_STRING
+      - name: service_id
+        type: TAG_TYPE_STRING
 fields:
-- name: total
-  field_type: FIELD_TYPE_INT
-  encoding_method: ENCODING_METHOD_GORILLA
-  compression_method: COMPRESSION_METHOD_ZSTD
-- name: value
-  field_type: FIELD_TYPE_INT
-  encoding_method: ENCODING_METHOD_GORILLA
-  compression_method: COMPRESSION_METHOD_ZSTD
+  - name: total
+    field_type: FIELD_TYPE_INT
+    encoding_method: ENCODING_METHOD_GORILLA
+    compression_method: COMPRESSION_METHOD_ZSTD
+  - name: value
+    field_type: FIELD_TYPE_INT
+    encoding_method: ENCODING_METHOD_GORILLA
+    compression_method: COMPRESSION_METHOD_ZSTD
 entity:
   tag_names:
-  - entity_id
+    - entity_id
 sharding_key:
   tag_names:
-  - service_id
+    - service_id
 index_mode: false
 interval: 1m
 ```
@@ -93,11 +94,11 @@ interval: 1m
 
 `Measure` supports the following tag types:
 
-* **STRING** : Text
-* **INT** : 64 bits long integer
-* **STRING_ARRAY** : A group of strings
-* **INT_ARRAY** : A group of integers
-* **DATA_BINARY** : Raw binary
+- **STRING** : Text
+- **INT** : 64 bits long integer
+- **STRING_ARRAY** : A group of strings
+- **INT_ARRAY** : A group of integers
+- **DATA_BINARY** : Raw binary
 
 A group of selected tags composite an `entity` that points out a specific time series the data point belongs to. The database engine has capacities to encode and compress values in the same time series. Users should select appropriate tag combinations to optimize the data size.
 
@@ -108,18 +109,18 @@ functions to them.
 
 `Measure` supports the following fields types:
 
-* **STRING** : Text
-* **INT** : 64 bits long integer
-* **DATA_BINARY** : Raw binary
-* **FLOAT** : 64 bits double-precision floating-point number
+- **STRING** : Text
+- **INT** : 64 bits long integer
+- **DATA_BINARY** : Raw binary
+- **FLOAT** : 64 bits double-precision floating-point number
 
 `Measure` supports the following encoding methods:
 
-* **GORILLA** : GORILLA encoding is lossless. It is more suitable for a numerical sequence with similar values and is not recommended for sequence data with large fluctuations.
+- **GORILLA** : GORILLA encoding is lossless. It is more suitable for a numerical sequence with similar values and is not recommended for sequence data with large fluctuations.
 
 `Measure` supports the types of the following fields:
 
-* **ZSTD** : Zstandard is a real-time compression algorithm, that provides high compression ratios. It offers a very wide range of compression/speed trade-offs, while being backed by a very fast decoder. For BanyanDB focus on speed.
+- **ZSTD** : Zstandard is a real-time compression algorithm, that provides high compression ratios. It offers a very wide range of compression/speed trade-offs, while being backed by a very fast decoder. For BanyanDB focus on speed.
 
 Another option named `interval` plays a critical role in encoding. It indicates the time range between two adjacent data points in a time series and implies that all data points belonging to the same time series are distributed based on a fixed interval. A better practice for the naming measure is to append the interval literal to the tail, for example, `service_cpm_minute`. It's a parameter of `GORILLA` encoding method.
 
@@ -132,12 +133,12 @@ metadata:
   name: service_traffic
   group: sw_metric
 tag_families:
-- name: default
-  tags:
-  - name: id
-    type: TAG_TYPE_STRING
-  - name: service_name
-    type: TAG_TYPE_STRING
+  - name: default
+    tags:
+      - name: id
+        type: TAG_TYPE_STRING
+      - name: service_name
+        type: TAG_TYPE_STRING
 index_mode: true
 entity: ["id"]
 ```
@@ -163,15 +164,15 @@ source_measure:
 field_name: value
 field_value_sort: SORT_UNSPECIFIED
 group_by_tag_names:
-- entity_id
+  - entity_id
 counters_number: 1000
 lru_size: 10
 ```
 
 `endpoint_cpm_minute_top_bottom` is watching the data ingesting of the source measure `endpoint_cpm_minute` to generate both top 1000 and bottom 1000 entity cardinalities. If only Top 1000 or Bottom 1000 is needed, the `field_value_sort` could be `DESC` or `ASC` respectively.
 
-* SORT_DESC: Top-N. In a series of `1,2,3...1000`. Top10's result is `1000,999...991`.
-* SORT_ASC: Bottom-N. In a series of `1,2,3...1000`. Bottom10's result is `1,2...10`.
+- SORT_DESC: Top-N. In a series of `1,2,3...1000`. Top10's result is `1000,999...991`.
+- SORT_ASC: Bottom-N. In a series of `1,2,3...1000`. Bottom10's result is `1,2...10`.
 
 Tags in `group_by_tag_names` are used as dimensions. These tags can be searched (only equality is supported) in the query phase. Tags do not exist in `group_by_tag_names` will be dropped in the pre-calculating phase.
 
@@ -183,13 +184,68 @@ Tags in `group_by_tag_names` are used as dimensions. These tags can be searched 
 
 ### Streams
 
-`Stream` shares many details with `Measure` except for abandoning `field`. Stream focuses on high throughput data collection, for example, tracing and logging. The database engine also supports compressing stream entries based on `entity`, but no encoding process is involved.
+`Stream` shares many details with `Measure` except for abandoning `field`. Stream focuses on high throughput data collection, for example, logging. The database engine also supports compressing stream entries based on `entity`, but no encoding process is involved.
 
 [Stream Registration Operations](../api-reference.md#streamregistryservice)
 
+### Traces
+
+`Trace` is a purpose-built data model for distributed tracing data. Unlike `Stream`, which stores individual elements independently, `Trace` organizes data around traces — each trace consists of multiple spans that share the same trace ID. The database engine groups spans by trace ID, enabling efficient trace-level queries.
+
+BanyanDB lets you define a trace as follows:
+
+```yaml
+metadata:
+  name: sw
+  group: sw_trace
+tags:
+  - name: trace_id
+    type: TAG_TYPE_STRING
+  - name: state
+    type: TAG_TYPE_INT
+  - name: service_id
+    type: TAG_TYPE_STRING
+  - name: service_instance_id
+    type: TAG_TYPE_STRING
+  - name: endpoint_id
+    type: TAG_TYPE_STRING
+  - name: duration
+    type: TAG_TYPE_INT
+  - name: span_id
+    type: TAG_TYPE_STRING
+  - name: timestamp
+    type: TAG_TYPE_TIMESTAMP
+trace_id_tag_name: trace_id
+span_id_tag_name: span_id
+timestamp_tag_name: timestamp
+```
+
+`Trace` defines a flat list of `tags` — there are no tag families. Each tag has a `name` and a `type`.
+
+`Trace` supports the following tag types:
+
+- **STRING** : Text
+- **INT** : 64 bits long integer
+- **STRING_ARRAY** : A group of strings
+- **INT_ARRAY** : A group of integers
+- **DATA_BINARY** : Raw binary
+- **TIMESTAMP** : Timestamp
+
+Three special tag name fields are required:
+
+- `trace_id_tag_name`: Specifies which tag holds the trace ID. The database engine uses this to group spans into traces.
+- `span_id_tag_name`: Specifies which tag holds the span ID. Each span within a trace has a unique span ID.
+- `timestamp_tag_name`: Specifies which tag holds the timestamp of the span.
+
+Each data point written to a `Trace` represents a single span. The database engine automatically groups spans by their trace ID. When querying, the response returns `Trace` objects, each containing all matching spans that belong to the same trace.
+
+Each span also carries a raw `span` field (binary), which stores the original span data.
+
+[Trace Registration Operations](../api-reference.md#traceregistryservice)
+
 ### Properties
 
-A `Property` is a schema-less (or schema-free) document, stored using a distributed inverted index for efficient tag-based queries. Unlike Measures and Streams, Properties support a more flexible key structure: `group`/`name`/`id`.
+A `Property` is a schema-less (or schema-free) document, stored using a distributed inverted index for efficient tag-based queries. Unlike Measures, Streams and Traces, Properties support a more flexible key structure: `group`/`name`/`id`.
 
 We should create a group before creating a property.
 
@@ -212,14 +268,14 @@ metadata:
     name: temp_data
   id: General-Service
 tags:
-- key: name
-  value:
-    str:
-      value: "hello"
-- key: state
-  value:
-    str:
-      value: "succeed"
+  - key: name
+    value:
+      str:
+        value: "hello"
+  - key: state
+    value:
+      str:
+        value: "succeed"
 ```
 
 `Property` supports a three-level hierarchy, `group`/`name`/`id`, that is more flexible than schemaful data models.
@@ -234,7 +290,7 @@ Data models in BanyanDB derive from some classic data models.
 
 A time series is a series of data points indexed in time order. Most commonly, a time series is a sequence taken at successive equally spaced points in time. Thus it is a sequence of discrete-time data.
 
-You can store time series data points through `Stream` or `Measure`. Examples of `Stream` are logs, traces and events. `Measure` could ingest metrics, profiles, etc.
+You can store time series data points through `Stream`, `Measure` or `Trace`. Examples of `Stream` are logs and events. `Trace` is designed for distributed tracing data. `Measure` could ingest metrics, profiles, etc.
 
 ### Key-Value Model
 
@@ -244,10 +300,11 @@ There are several Key-Value pairs in a property, named `Tags`. You could add, up
 
 ## Data Retrieval
 
-`Queries` and `Writes` are used to filter schemaful data models, `Stream`, `Measure` or `TopNAggregation` based on certain criteria, as well as to compute or store new data.
+`Queries` and `Writes` are used to filter schemaful data models, `Stream`, `Measure`, `Trace` or `TopNAggregation` based on certain criteria, as well as to compute or store new data.
 
-* `MeasureService` provides `Write`, `Query` and `TopN`
-* `StreamService` provides `Write`, `Query`
+- `MeasureService` provides `Write`, `Query` and `TopN`
+- `StreamService` provides `Write`, `Query`
+- `TraceService` provides `Write`, `Query`
 
 ### IndexRule & IndexRuleBinding
 
@@ -260,36 +317,36 @@ metadata:
   name: trace_id
   group: sw_stream
 tags:
-- trace_id
+  - trace_id
 type: TYPE_INVERTED
 ```
 
-IndexRule supports several kinds of index structures. The `INVERTED` index is suitable for measure tag indexing due to better query performance. The `SKIPPING` index is optimized for the majority of stream tags, which prioritizes efficient space utilization. The `TREE` index is designed for storing hierarchical data.
+IndexRule supports several kinds of index structures. The `INVERTED` index is suitable for measure tag indexing due to better query performance. The `SKIPPING` index is optimized for the majority of stream tags, which prioritizes efficient space utilization. The `TREE` index is designed for trace, which stores data with user-controlled int64 ordering keys (e.g., duration, timestamp) in a tree index, enabling efficient sorted result retrieval on numeric tags.
 
 ```yaml
 metadata:
   name: stream_binding
   group: sw_stream
 rules:
-- trace_id
-- duration
-- endpoint_id
-- status_code
-- http.method
-- db.instance
-- db.type
-- mq.broker
-- mq.queue
-- mq.topic
-- extended_tags
+  - trace_id
+  - duration
+  - endpoint_id
+  - status_code
+  - http.method
+  - db.instance
+  - db.type
+  - mq.broker
+  - mq.queue
+  - mq.topic
+  - extended_tags
 subject:
   catalog: CATALOG_STREAM
   name: sw
-begin_at: '2021-04-15T01:30:15.01Z'
-expire_at: '2121-04-15T01:30:15.01Z'
+begin_at: "2021-04-15T01:30:15.01Z"
+expire_at: "2121-04-15T01:30:15.01Z"
 ```
 
-IndexRuleBinding binds IndexRules to a subject, `Stream` or `Measure`. The time range between `begin_at` and `expire_at` is the effective time.
+IndexRuleBinding binds IndexRules to a subject, `Stream`, `Measure` or `Trace`. The time range between `begin_at` and `expire_at` is the effective time.
 
 [IndexRule Registration Operations](../api-reference.md#indexruleregistryservice)
 
@@ -297,7 +354,7 @@ IndexRuleBinding binds IndexRules to a subject, `Stream` or `Measure`. The time 
 
 ### Index Granularity
 
-In BanyanDB, `Stream` and `Measure` have different levels of index granularity.
+In BanyanDB, `Stream`, `Measure` and `Trace` have different levels of index granularity.
 
 For `Measure`, the indexed target is a data point with specific tag values. The query processor uses the tag values defined in the `entity` field of the Measure to compose a series ID, which is used to find the several series that match the query criteria. The `entity` field is a set of tags that defines the unique identity of a time series, and it restricts the tags that can be used as indexed target.
 
@@ -313,11 +370,16 @@ For example, suppose we have a `Stream` with the following tags: `service`, `ope
 
 The indexed target would be the combination of the series ID and timestamp, which in this case would be `shopping_search_prod-1_200_1641052800`. The `Stream` query processor would use the time range specified in the query to find target files and then search within those files for the indexed target.
 
-The following is a comparison of the indexing granularity, performance, and flexibility of `Stream` and `Measure` indices:
+For `Trace`, the indexed target is a numeric tag value stored in a tree index via `TREE` type index rules. The tree index maintains data ordered by user-controlled int64 keys, enabling efficient sorted queries on numeric tags such as `duration`. When a `TREE` index rule is bound to a trace, the database engine extracts the int64 value from the indexed tag and uses it as the ordering key. This allows queries to efficiently retrieve and sort traces by numeric dimensions without scanning all data.
 
-| Indexing Granularity                                                                                                                                     | Performance                                | Flexibility                                                                                                     |
-|----------------------------------------------------------------------------------------------------------------------------------------------------------|--------------------------------------------|-----------------------------------------------------------------------------------------------------------------|
-| Measure indices are constructed for each series and are based on the entity field of the Measure. Each indexed value has to represent a unique seriesID. | Measure index is faster than Stream index. | Measure index is less flexible and requires more care when indexing tags that are not part of the entity field. |
-| Stream indices are constructed for each element and are based on the series ID and timestamp.                                                            | Stream index is slower than Measure index. | Stream index is more flexible than Measure index and can index any tag value.                                   |
+For example, suppose we have a `Trace` with a `TREE` index rule bound to the `duration` tag. If a span has `duration=350`, the tree index stores this value as the ordering key pointing to that span. When querying for traces with `duration > 200`, the tree index directly locates the matching entries by performing an ordered range scan, avoiding full data scans.
 
-In general, `Measure` indices are faster and more efficient, but they require more care when indexing tags that are not part of the `entity` field. `Stream` indices, on the other hand, are slower and take up more space, but they can index any tag value and do not have the same side effects as `Measure` indices.
+The following is a comparison of the indexing granularity, performance, and flexibility of `Measure`, `Stream` and `Trace` indices:
+
+| Type    | Indexing Granularity                                                                                                                             | Performance                                        | Flexibility                                                                                                  |
+| ------- | ------------------------------------------------------------------------------------------------------------------------------------------------ | -------------------------------------------------- | ------------------------------------------------------------------------------------------------------------ |
+| Measure | Indices are constructed for each series and are based on the entity field of the Measure. Each indexed value has to represent a unique seriesID. | Fast for lookups due to series-level indexing.  | Less flexible; requires care when indexing tags that are not part of the entity field.                       |
+| Stream  | Indices are constructed for each element and are based on the series ID and timestamp.                                                           | Slower than Measure due to element-level indexing. | More flexible than Measure; can index any tag value.                                                         |
+| Trace   | Indices are constructed per element using a tree index, ordered by int64 tag values.                                                             | Efficient for sorted retrieval on numeric tags.    | Limited to int64/timestamp tags with `TREE` type index rules; does not support inverted or skipping indices. |
+
+In general, `Measure` indices are fast and efficient, but they require more care when indexing tags that are not part of the `entity` field. `Stream` indices are slower and take up more space, but they can index any tag value and do not have the same side effects as `Measure` indices. `Trace` indices excel at sorted queries on numeric dimensions, but are limited to `TREE` type index rules with int64 or timestamp tag values.

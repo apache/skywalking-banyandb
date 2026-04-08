@@ -48,6 +48,7 @@ type Provider interface {
 	Counter(name string, labelNames ...string) Counter
 	Gauge(name string, labelNames ...string) Gauge
 	Histogram(name string, buckets Buckets, labelNames ...string) Histogram
+	Close()
 }
 
 // Scope is a namespace wrapper for metrics.

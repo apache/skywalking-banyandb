@@ -35,6 +35,7 @@ type Factory interface {
 	NewCounter(name string, labelNames ...string) meter.Counter
 	NewGauge(name string, labelNames ...string) meter.Gauge
 	NewHistogram(name string, buckets meter.Buckets, labelNames ...string) meter.Histogram
+	Close()
 }
 
 // MetricsRegistry is the interface for metrics registry.

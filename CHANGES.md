@@ -20,6 +20,8 @@ Release Notes.
 - MCP: Add validation for properties and harden the mcp server.
 - Fix property schema client connection not stable after data node restarted.
 - Fix flaky on-disk integration tests caused by Ginkgo v2 random container shuffling closing gRPC connections prematurely.
+- Fix snapshot error when there is no data in a segment.
+- ui: fix query editor refresh/reset behavior and BydbQL keyword highlighting.
 
 ## 0.10.0
 

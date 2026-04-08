@@ -8,7 +8,7 @@ A BanyanDB installation includes three distinct types of nodes: Data Nodes, Meta
 
 ### 1.1 Data Nodes
 
-Data Nodes hold all the raw time series data, metadata, and indexed data. They handle the storage and management of data, including streams and measures, tag keys and values, as well as field keys and values.
+Data Nodes hold all the raw time series data, metadata, and indexed data. They handle the storage and management of data, including streams, measures and traces, tag keys and values, as well as field keys and values.
 
 Data Nodes also handle the local query execution. When a query is made, it is directed to a Liaison, which then interacts with Data Nodes to execute the distributed query and return results.
 
@@ -93,11 +93,11 @@ The comparison between using a storage system and application-level replication 
 
 **Complexity**: With the storage system handling replication, the complexity is abstracted away from the user. The user need not concern themselves with the details of how replication is handled. Managing replication at the application level can be complex. It requires careful configuration, monitoring, and potentially significant engineering effort to maintain.
 
-Futhermore, the storage system might be cheaper. For instance, S3 can be more cost-effective because it eliminates the need for additional resources required for application-level replication.  Application-level replication also requires ongoing maintenance, potentially increasing operational costs.
+Furthermore, the storage system might be cheaper. For instance, S3 can be more cost-effective because it eliminates the need for additional resources required for application-level replication. Application-level replication also requires ongoing maintenance, potentially increasing operational costs.
 
 ### 5.2 Data Sharding
 
-Data distribution across the cluster is determined by the `shard_num` setting for a group and the specified `entity` in each resource, whether it is a stream or a measure. The combination of the resource’s `name` and its `entity` forms the sharding key, which guides data distribution to the appropriate Data Node during write operations.
+Data distribution across the cluster is determined by the `shard_num` setting for a group and the specified `entity` in each resource, whether it is a stream, measure or trace. The combination of the resource's `name` and its `entity` forms the sharding key, which guides data distribution to the appropriate Data Node during write operations.
 
 For example, if a group has 5 shards, the data is distributed across these shards based on the sharding key:
 
@@ -140,8 +140,8 @@ User
 | (Identifies relevant Data Nodes   |
 |  and dispatches write request)    |
 ------------------------------------
-       |                            
-       v                            
+       |
+       v
 -----------------  -----------------  -----------------
 |  Data Node 1  |  |  Data Node 2  |  |  Data Node 3  |
 |  (Shard 1)    |  |  (Shard 2)    |  |  (Shard 3)    |

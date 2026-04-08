@@ -28,7 +28,7 @@ resource_opts:
 EOF
 ```
 
-The group creates two shards to store group data points. Every day, it would create a segment that will generate a block every 2 hours.
+The group creates two shards to store group data points. Every day, it would create a segment.
 
 The data in this group will keep 7 days.
 
@@ -89,4 +89,5 @@ bydbctl group list
 ```
 
 ## API Reference
+
 [Group Registration Operations](../../../api-reference.md#groupregistryservice)

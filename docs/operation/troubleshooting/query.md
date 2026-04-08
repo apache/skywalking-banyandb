@@ -6,9 +6,9 @@ If you encounter issues with query results in BanyanDB, follow these troubleshoo
 
 ### Mandatory Fields Missing
 
-The query's mandatory fields are `time_range`,  `name` and `groups`. If any of these fields are missing, the query will fail. Ensure that the query includes all the required fields and that the syntax is correct.
+The query's mandatory fields are `time_range`, `name` and `groups`. If any of these fields are missing, the query will fail. Ensure that the query includes all the required fields and that the syntax is correct.
 
-For `Stream`, the `tag_projection` field is mandatory. For `Measure`, either `tag_projection` or `field_projection` is required.
+For `Stream`, the `tag_projection` field is mandatory. For `Trace`, the `tag_projection` field is optional. For `Measure`, either `tag_projection` or `field_projection` is required.
 
 ### Ignore Unknown Fields
 
@@ -25,7 +25,7 @@ tagProjection:
       tags: ["last_update_time_bucket", "represent_service_id", "represent_service_instance_id"]
     - name: "storage_only"
       tags: ["address"]
-# The correct field name should be "limit", not "lmit". 
+# The correct field name should be "limit", not "lmit".
 lmit: 5
 ```
 
@@ -51,7 +51,7 @@ Please refer to the [Troubleshooting No Data Issue](./no-data.md) guide to ident
 
 ### Duplicate Data
 
-`Stream` and `Measure` handles duplicate data differently:
+`Stream`, `Measure` and `Trace` handle duplicate data differently:
 
 - `Stream`: If the same data is ingested multiple times, the `Stream` will store all the data points. The query results will include all the duplicate data points with the same entity and timestamp.
 - `Measure`: If the same data is ingested multiple times, the `Measure` will store the latest data point. It uses a internal `version` field to determine the latest data point.
@@ -68,7 +68,7 @@ Use query tracing to understand execution plans and identify bottlenecks. To ena
 
 There are some important nodes in the trace result:
 
-- `measure-grpc` or `stream-grpc`: It represents the overall time spent on the gRPC call.
+- `measure-grpc`, `stream-grpc` or `trace-grpc`: It represents the overall time spent on the gRPC call.
 - `data-xxx`: It represents the time spent on reading data from the data server. The `xxx` is the data server's address. Because all data servers are queried in parallel, the total time(`xxxx-grpc`) spent on reading data is the maximum time spent on reading data from all data servers.
 
 In each data server, there are some important nodes:
@@ -76,9 +76,9 @@ In each data server, there are some important nodes:
 - `indexScan`: Using index to fetch data.
   - `seriesIndex.Search`: It represents the time spent on searching the series index for the specified time range.
     tag:
-      1. `query`: The query expression to search the series index.
-      1. `matched`: The number of series matched by the query.
-      1. `field_length`: The number of fields is read from the series index. For `Stream`, it's always 1. For `Measure`, it's the number of indexed tags.
+    1. `query`: The query expression to search the series index.
+    1. `matched`: The number of series matched by the query.
+    1. `field_length`: The number of fields is read from the series index. For `Stream` and `Trace`, it's always 1. For `Measure`, it's the number of indexed tags.
   - `scan-blocks`: It represents the time spent on scanning the data blocks for the matched series.
     1. `series_num`: The number of series to scan. It should be identical to the `matched` in `seriesIndex.Search`.
     1. `part_num`: The number of data parts to scan.
@@ -101,8 +101,8 @@ If the `part_header` is:
 `part_xxxx` is:
 
 ```yaml
- - key: part_377403_/tmp/measure/measure-default/seg-20240923/shard-0/000000000005c23b
-   value: Sep 23 00:00:00, Sep 23 22:50:00, 37 MB, 61 MB, 736,674, 420,920
+- key: part_377403_/tmp/measure/measure-default/seg-20240923/shard-0/000000000005c23b
+  value: Sep 23 00:00:00, Sep 23 22:50:00, 37 MB, 61 MB, 736,674, 420,920
 ```
 
 `377403` is the `PartID`, which means this data part is in the directory `part_377403_/tmp/measure/measure-default/seg-20240923/shard-0/000000000005c23b`. `000000000005c23b` is the hexadecimal representation of the `PartID`.

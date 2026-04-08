@@ -651,13 +651,15 @@ func (s *queueSupplier) OpenDB(groupSchema *commonv1.Group) (resourceSchema.DB, 
 	}
 	shardNum := ro.ShardNum
 	group := groupSchema.Metadata.Name
+	metrics, metricsFactory := s.newMetrics(p)
 	opts := wqueue.Opts[*tsTable, option]{
 		Group:           group,
 		ShardNum:        shardNum,
 		SegmentInterval: storage.MustToIntervalRule(ro.SegmentInterval),
 		Location:        path.Join(s.path, group),
 		Option:          s.option,
-		Metrics:         s.newMetrics(p),
+		Metrics:         metrics,
+		MetricsFactory:  metricsFactory,
 		SubQueueCreator: newWriteQueue,
 		GetNodes: func(shardID common.ShardID) []string {
 			copies := ro.Replicas + 1

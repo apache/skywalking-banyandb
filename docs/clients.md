@@ -2,14 +2,15 @@
 
 ## Command Line
 
-The command line tool named `bydbctl` improves users' interactive experience. The examples listed in this folder show how to use this command to create, update, read and delete schemas. Furthermore, `bydbctl` could help in querying data stored in streams, measures and properties.
+The command line tool named `bydbctl` improves users' interactive experience. The examples listed in this folder show how to use this command to create, update, read and delete schemas. Furthermore, `bydbctl` could help in querying data stored in streams, measures, traces and properties.
 
 These are several ways to install:
 
-* Get binaries from [download](https://skywalking.apache.org/downloads/).
-* Build from [sources](https://github.com/apache/skywalking-banyandb/tree/main/bydbctl) to get latest features.
+- Get binaries from [download](https://skywalking.apache.org/downloads/).
+- Build from [sources](https://github.com/apache/skywalking-banyandb/tree/main/bydbctl) to get latest features.
 
 The config file named `.bydbctl.yaml` will be created in `$HOME` folder after the first CRUD command is applied.
+
 ```shell
 > more ~/.bydbctl.yaml
 addr: http://127.0.0.1:64299
