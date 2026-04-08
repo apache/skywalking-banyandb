@@ -812,3 +812,43 @@ func TestInitTSTableLoadsNewestWhenMultipleValid(t *testing.T) {
 	sort.Slice(snapshots, func(i, j int) bool { return snapshots[i] > snapshots[j] })
 	require.Equal(t, snapshots[0], epoch2, "must load newest valid snapshot")
 }
+
+func TestTakeFileSnapshotEmptySegment(t *testing.T) {
+	fileSystem := fs.NewLocalFileSystem()
+
+	tmpPath, deferFn := test.Space(require.New(t))
+	defer deferFn()
+
+	tabDir := filepath.Join(tmpPath, "tab")
+	fileSystem.MkdirPanicIfExist(tabDir, 0o755)
+
+	tst, err := newTSTable(
+		fileSystem,
+		tabDir,
+		common.Position{},
+		logger.GetLogger("test"),
+		timestamp.TimeRange{},
+		option{
+			flushTimeout: 0,
+			mergePolicy:  newDefaultMergePolicy(),
+			protector:    protector.Nop{},
+		},
+		nil,
+	)
+	require.NoError(t, err)
+	defer tst.Close()
+
+	tst.Lock()
+	tst.snapshot = nil
+	tst.Unlock()
+
+	snapshotPath := filepath.Join(tmpPath, "snapshot")
+	fileSystem.MkdirIfNotExist(snapshotPath, 0o755)
+
+	created, err := tst.TakeFileSnapshot(snapshotPath)
+	require.ErrorIs(t, err, storage.ErrNoCurrentSnapshot)
+	assert.False(t, created)
+
+	entries := fileSystem.ReadDir(snapshotPath)
+	assert.Empty(t, entries, "no files or dirs should remain when snapshot is nil")
+}
