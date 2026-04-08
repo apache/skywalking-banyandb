@@ -2,7 +2,20 @@
 
 Release Notes.
 
+<<<<<<< HEAD
 ## 0.10.2
+=======
+## 0.11.0
+
+### Features
+
+- Organize access logs under a dedicated "accesslog" subdirectory to improve log organization and separation from other application data.
+- Collect BanyanDB data on e2e test failure for CI debugging.
+- Add log query e2e test.
+- Sync lifecycle e2e test from SkyWalking stages test.
+- Add periodic health check for property schema connection.
+- Persist segment end time in per-segment metadata so boundaries don't shift across restarts or config changes.
+>>>>>>> 29e87c9d (Stable Segment Endtime (#1051))
 
 ### Bug Fixes
 
