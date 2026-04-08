@@ -832,8 +832,8 @@ func TestOpenFallbackOldFormatMetadata(t *testing.T) {
 		group,
 	)
 
-	now := time.Now().UTC()
-	day1 := time.Date(now.Year(), now.Month(), now.Day(), 0, 0, 0, 0, time.UTC)
+	now := time.Now()
+	day1 := time.Date(now.Year(), now.Month(), now.Day(), 0, 0, 0, 0, time.Local)
 	day2 := day1.Add(24 * time.Hour)
 
 	// Create segments with OLD format metadata (plain version string).
@@ -852,9 +852,9 @@ func TestOpenFallbackOldFormatMetadata(t *testing.T) {
 	require.Len(t, sc.lst, 2)
 
 	// First segment's end should be day2's start (fallback: end = next segment's start).
-	assert.Equal(t, day2.Local(), sc.lst[0].End, "old format should use fallback end time")
+	assert.Equal(t, day2, sc.lst[0].End, "old format should use fallback end time")
 	// Second segment's end should be day2 + 24h (fallback: end = NextTime(start)).
-	assert.Equal(t, day2.Add(24*time.Hour).Local(), sc.lst[1].End, "last segment should use NextTime fallback")
+	assert.Equal(t, day2.Add(24*time.Hour), sc.lst[1].End, "last segment should use NextTime fallback")
 
 	for _, seg := range sc.lst {
 		seg.DecRef()
