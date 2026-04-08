@@ -229,7 +229,7 @@ func (m *ConnManager[C]) OnDelete(node *databasev1.Node) {
 						return
 					}
 				case <-m.closer.CloseNotify():
-						return
+					return
 				}
 				attempt++
 			}
