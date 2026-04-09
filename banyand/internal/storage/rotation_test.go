@@ -245,12 +245,12 @@ func TestRotationDisabled(t *testing.T) {
 		defer defFn()
 
 		TSDBOpts := TSDBOpts[*MockTSTable, any]{
-			Location:         dir,
-			SegmentInterval:  IntervalRule{Unit: DAY, Num: 3},
-			TTL:              IntervalRule{Unit: DAY, Num: 30},
-			ShardNum:         1,
-			TSTableCreator:   MockTSTableCreator,
-			DisableRotation:  true,
+			Location:        dir,
+			SegmentInterval: IntervalRule{Unit: DAY, Num: 3},
+			TTL:             IntervalRule{Unit: DAY, Num: 30},
+			ShardNum:        1,
+			TSTableCreator:  MockTSTableCreator,
+			DisableRotation: true,
 		}
 		ctx := context.Background()
 		mc := timestamp.NewMockClock()
