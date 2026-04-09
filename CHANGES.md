@@ -25,6 +25,10 @@ Release Notes.
 - Disable the rotation task on warm and cold nodes to prevent incorrect segment boundaries during lifecycle migration.
 - Prevent epoch-dated segment directories (seg-19700101) from being created by zero timestamps in distributed sync paths.
 
+### Chores
+
+- Upgrade Go and npm dependencies including etcd to v3.6.10, OpenTelemetry to v1.43.0, AWS SDK, and Google Cloud libraries.
+
 ## 0.10.0
 
 ### Features
