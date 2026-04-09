@@ -96,9 +96,9 @@ var _ = ginkgo.Describe("publish clients register/unregister", func() {
 		verifyClients(p, 1, 0, 1, 0)
 		closeFn()
 		p.failover("node1", common.NewError("test"), data.TopicCommon)
-		verifyClients(p, 0, 1, 1, 2)
+		verifyClients(p, 0, 1, 1, 1)
 		p.OnDelete(node1)
-		verifyClients(p, 0, 0, 1, 2)
+		verifyClients(p, 0, 0, 1, 1)
 	})
 
 	ginkgo.It("should be removed eventually", func() {
