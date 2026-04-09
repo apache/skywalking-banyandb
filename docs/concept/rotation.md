@@ -136,6 +136,15 @@ S = 2
 
 So, **2 segments** are required to retain data for 7 days with an 8-day segment interval. 2 segments are the minimum number whatever the TTL and segment interval are. When the TTL is less than the segment interval, you can have the minimum number of segments.
 
+## Rotation in Lifecycle Deployments
+
+In a hot-warm-cold lifecycle deployment, data rotation behaves differently depending on the node's role:
+
+- **Hot nodes**: Rotation is enabled. The rotation task pre-creates segments based on the hot stage's `segment_interval`.
+- **Warm and cold nodes**: Rotation is disabled. Segments are created on demand by the lifecycle migration process via `CreateSegmentIfNotExist`, using the target stage's `segment_interval`. Since the rotation task uses `NextTime(eventTime)` which produces incorrect boundaries for multi-day intervals, disabling it on warm/cold nodes ensures segments are always created with correct boundaries.
+
+Additionally, data retention (TTL-based segment deletion) is disabled on non-last-stage nodes, since the lifecycle agent manages data migration between stages instead.
+
 ## Conclusion
 
 Data rotation is a critical aspect of managing data in BanyanDB. By understanding the relationship between the number of segments, segment interval, and TTL, you can effectively manage data retention and query performance in the database. The formula provided here offers a simple way to calculate the number of segments required based on the chosen segment interval and TTL.

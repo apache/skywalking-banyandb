@@ -682,6 +682,7 @@ func (s *supplier) OpenDB(groupSchema *commonv1.Group) (resourceSchema.DB, error
 	segInterval := ro.SegmentInterval
 	segmentIdleTimeout := time.Duration(0)
 	disableRetention := false
+	disableRotation := false
 	if len(ro.Stages) > 0 && len(s.nodeLabels) > 0 {
 		var ttlNum uint32
 		foundMatched := false
@@ -705,10 +706,12 @@ func (s *supplier) OpenDB(groupSchema *commonv1.Group) (resourceSchema.DB, error
 				segmentIdleTimeout = 5 * time.Minute
 			}
 			disableRetention = i+1 < len(ro.Stages)
+			disableRotation = true
 			break
 		}
 		if !foundMatched {
 			disableRetention = true
+			disableRotation = true
 		}
 	}
 	group := groupSchema.Metadata.Name
@@ -725,6 +728,7 @@ func (s *supplier) OpenDB(groupSchema *commonv1.Group) (resourceSchema.DB, error
 		StorageMetricsFactory:          factory,
 		SegmentIdleTimeout:             segmentIdleTimeout,
 		DisableRetention:               disableRetention,
+		DisableRotation:                disableRotation,
 		MemoryLimit:                    s.pm.GetLimit(),
 	}
 	return storage.OpenTSDB(
