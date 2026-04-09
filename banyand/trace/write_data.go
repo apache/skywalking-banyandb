@@ -171,6 +171,9 @@ func (s *syncSeriesCallback) CheckHealth() *common.Error {
 }
 
 func (s *syncSeriesCallback) CreatePartHandler(ctx *queue.ChunkedSyncPartContext) (queue.PartHandler, error) {
+	if ctx.MinTimestamp <= 0 {
+		return nil, fmt.Errorf("invalid MinTimestamp %d in series sync context for group %s", ctx.MinTimestamp, ctx.Group)
+	}
 	tsdb, err := s.schemaRepo.loadTSDB(ctx.Group)
 	if err != nil {
 		s.l.Error().Err(err).Str("group", ctx.Group).Msg("failed to load TSDB for group")
@@ -242,6 +245,9 @@ func (s *syncChunkCallback) CheckHealth() *common.Error {
 
 // CreatePartHandler implements queue.ChunkedSyncHandler.
 func (s *syncChunkCallback) CreatePartHandler(ctx *queue.ChunkedSyncPartContext) (queue.PartHandler, error) {
+	if ctx.MinTimestamp <= 0 {
+		return nil, fmt.Errorf("invalid MinTimestamp %d in chunk sync context for group %s", ctx.MinTimestamp, ctx.Group)
+	}
 	tsdb, err := s.schemaRepo.loadTSDB(ctx.Group)
 	if err != nil {
 		s.l.Error().Err(err).Str("group", ctx.Group).Msg("failed to load TSDB for group")
