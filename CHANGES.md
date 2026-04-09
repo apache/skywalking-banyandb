@@ -11,6 +11,7 @@ Release Notes.
 - Add log query e2e test.
 - Sync lifecycle e2e test from SkyWalking stages test.
 - Add periodic health check for property schema connection.
+- Persist segment end time in per-segment metadata so boundaries don't shift across restarts or config changes.
 
 ### Bug Fixes
 
