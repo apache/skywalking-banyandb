@@ -158,6 +158,7 @@ type database[T TSTable, O any] struct {
 	rotationProcessOn atomic.Bool
 	closed            atomic.Bool
 	disableRetention  bool
+	disableRotation   bool
 }
 
 func (d *database[T, O]) Close() error {
@@ -245,9 +246,7 @@ func OpenTSDB[T TSTable, O any](ctx context.Context, opts TSDBOpts[T, O], cache 
 		return nil, err
 	}
 	obsservice.MetricsCollector.Register(location, db.collect)
-	if opts.DisableRotation {
-		return db, nil
-	}
+	db.disableRotation = opts.DisableRotation
 	return db, db.startRotationTask()
 }
 
