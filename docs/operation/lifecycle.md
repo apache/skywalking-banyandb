@@ -132,6 +132,15 @@ lifecycle \
 | `--etcd-endpoints`    | Endpoints for etcd connections                                                | `""`                           |
 | `--schedule`          | Schedule for periodic backup (e.g., @yearly, @monthly, @weekly, @daily, etc.) | `""`                           |
 
+## Automatic Behavior on Warm and Cold Nodes
+
+When a data node matches a lifecycle stage (i.e., its labels match a stage's `node_selector`), two behaviors are automatically configured:
+
+- **Rotation is disabled**: The rotation task (which pre-creates segments on hot nodes) is not started on warm or cold nodes. Segments are created on demand by the lifecycle migration process, ensuring correct segment boundaries for multi-day intervals.
+- **Retention is disabled on non-last stages**: TTL-based segment deletion is disabled on all stages except the last one. Data removal on intermediate stages is managed by the lifecycle migration process, not by the built-in retention mechanism.
+
+If a node's labels do not match any stage, both rotation and retention are disabled as a safety measure.
+
 ## Best Practices
 
 1. **Node Labeling:**

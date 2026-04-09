@@ -22,6 +22,7 @@ Release Notes.
 - Fix flaky on-disk integration tests caused by Ginkgo v2 random container shuffling closing gRPC connections prematurely.
 - Fix snapshot error when there is no data in a segment.
 - ui: fix query editor refresh/reset behavior and BydbQL keyword highlighting.
+- Disable the rotation task on warm and cold nodes to prevent incorrect segment boundaries during lifecycle migration.
 
 ## 0.10.0
 

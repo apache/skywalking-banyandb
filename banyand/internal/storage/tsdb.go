@@ -63,6 +63,7 @@ type TSDBOpts[T TSTable, O any] struct {
 	SeriesIndexCacheMaxBytes       int
 	ShardNum                       uint32
 	DisableRetention               bool
+	DisableRotation                bool
 	SegmentIdleTimeout             time.Duration
 	MemoryLimit                    uint64
 }
@@ -157,6 +158,7 @@ type database[T TSTable, O any] struct {
 	rotationProcessOn atomic.Bool
 	closed            atomic.Bool
 	disableRetention  bool
+	disableRotation   bool
 }
 
 func (d *database[T, O]) Close() error {
@@ -244,6 +246,7 @@ func OpenTSDB[T TSTable, O any](ctx context.Context, opts TSDBOpts[T, O], cache 
 		return nil, err
 	}
 	obsservice.MetricsCollector.Register(location, db.collect)
+	db.disableRotation = opts.DisableRotation
 	return db, db.startRotationTask()
 }
 
