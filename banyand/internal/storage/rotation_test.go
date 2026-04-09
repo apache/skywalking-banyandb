@@ -238,3 +238,72 @@ func (m *MockMetrics) Factory() observability.Factory {
 }
 
 var MockMetricsCreator = func(_ common.Position) Metrics { return &MockMetrics{} }
+
+func TestRotationDisabled(t *testing.T) {
+	t.Run("rotation should not create segments when disabled", func(t *testing.T) {
+		dir, defFn := test.Space(require.New(t))
+		defer defFn()
+
+		TSDBOpts := TSDBOpts[*MockTSTable, any]{
+			Location:        dir,
+			SegmentInterval: IntervalRule{Unit: DAY, Num: 3},
+			TTL:             IntervalRule{Unit: DAY, Num: 30},
+			ShardNum:        1,
+			TSTableCreator:  MockTSTableCreator,
+			DisableRotation: true,
+		}
+		ctx := context.Background()
+		mc := timestamp.NewMockClock()
+		ts, err := time.ParseInLocation("2006-01-02 15:04:05", "2024-05-01 00:00:00", time.Local)
+		require.NoError(t, err)
+		mc.Set(ts)
+		ctx = timestamp.SetClock(ctx, mc)
+
+		sc := NewServiceCache()
+		tsdb, err := OpenTSDB(ctx, TSDBOpts, sc, group)
+		require.NoError(t, err)
+		defer tsdb.Close()
+
+		// Create initial segment for day 1
+		seg, err := tsdb.CreateSegmentIfNotExist(ts)
+		require.NoError(t, err)
+		seg.DecRef()
+
+		db := tsdb.(*database[*MockTSTable, any])
+		segCtrl := db.segmentController
+
+		// Simulate data arriving day by day for 6 days (mimicking lifecycle migration)
+		// Day 1 (05-01): already in segment [05-01, 05-04)
+		// Day 2 (05-02): still in [05-01, 05-04)
+		// Day 3 (05-03): still in [05-01, 05-04)
+		// Day 4 (05-04): need new segment [05-04, 05-07)
+		for day := 0; day < 6; day++ {
+			dayTime := ts.AddDate(0, 0, day)
+			mc.Set(dayTime)
+			// Simulate what migration does: CreateSegmentIfNotExist then Tick
+			seg, segErr := tsdb.CreateSegmentIfNotExist(dayTime)
+			require.NoError(t, segErr)
+			seg.DecRef()
+			// Tick with max timestamp near end of day (like migration does with ctx.MaxTimestamp)
+			maxTS := dayTime.Add(23*time.Hour + 59*time.Minute + 59*time.Second)
+			tsdb.Tick(maxTS.UnixNano())
+		}
+
+		// Verify: only 2 segments created, both with correct 3-day boundaries
+		segments, _ := segCtrl.segments(false)
+		defer func() {
+			for i := range segments {
+				segments[i].DecRef()
+			}
+		}()
+		require.Equal(t, 2, len(segments), "expected 2 segments for 6 days with 3-day interval")
+
+		// First segment: [05-01, 05-04)
+		assert.Equal(t, "2024-05-01 00:00:00", segments[0].Start.Format("2006-01-02 15:04:05"))
+		assert.Equal(t, "2024-05-04 00:00:00", segments[0].End.Format("2006-01-02 15:04:05"))
+
+		// Second segment: [05-04, 05-07)
+		assert.Equal(t, "2024-05-04 00:00:00", segments[1].Start.Format("2006-01-02 15:04:05"))
+		assert.Equal(t, "2024-05-07 00:00:00", segments[1].End.Format("2006-01-02 15:04:05"))
+	})
+}
