@@ -245,6 +245,9 @@ func OpenTSDB[T TSTable, O any](ctx context.Context, opts TSDBOpts[T, O], cache 
 		return nil, err
 	}
 	obsservice.MetricsCollector.Register(location, db.collect)
+	if opts.DisableRotation {
+		return db, nil
+	}
 	return db, db.startRotationTask()
 }
 
