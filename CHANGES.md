@@ -29,6 +29,7 @@ Release Notes.
 - ui: fix query editor refresh/reset behavior and BydbQL keyword highlighting.
 - Disable the rotation task on warm and cold nodes to prevent incorrect segment boundaries during lifecycle migration.
 - Prevent epoch-dated segment directories (seg-19700101) from being created by zero timestamps in distributed sync paths.
+- Fix SIDX streaming sync sending SegmentID as MinTimestamp instead of the actual timestamp, causing sync failures on the receiving node.
 
 ### Chores
 
