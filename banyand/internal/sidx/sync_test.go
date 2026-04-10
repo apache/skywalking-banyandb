@@ -163,4 +163,3 @@ func TestStreamingParts_Timestamps(t *testing.T) {
 		assert.Equal(t, int64(1800001000), parts[1].MaxTimestamp)
 	})
 }
-
