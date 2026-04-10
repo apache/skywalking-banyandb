@@ -15,110 +15,29 @@
 // specific language governing permissions and limitations
 // under the License.
 
-// Package stream implements helpers to load schemas for testing.
-package stream
+// Package replicatedstream implements helpers to load replicated schemas for testing.
+package replicatedstream
 
 import (
 	"context"
-	"embed"
+	_ "embed"
 	"encoding/json"
 	"errors"
-	"path"
 
 	"google.golang.org/protobuf/encoding/protojson"
 
 	commonv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/common/v1"
-	databasev1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/database/v1"
 	"github.com/apache/skywalking-banyandb/banyand/metadata/schema"
 	"github.com/apache/skywalking-banyandb/pkg/logger"
-)
-
-const (
-	streamDir           = "testdata/streams"
-	indexRuleDir        = "testdata/index_rules"
-	indexRuleBindingDir = "testdata/index_rule_bindings"
+	teststream "github.com/apache/skywalking-banyandb/pkg/test/stream"
 )
 
 var (
-	//go:embed testdata/index_rules/*.json
-	indexRuleStore embed.FS
-	//go:embed testdata/index_rule_bindings/*.json
-	indexRuleBindingStore embed.FS
-	//go:embed testdata/streams/*.json
-	streamStore embed.FS
 	//go:embed testdata/group.json
 	groupJSON string
 	//go:embed testdata/group_with_stages.json
 	groupWithStagesJSON string
 )
-
-// PreloadResourcesOnly loads streams, index rules, and index rule bindings.
-// It does NOT load groups.
-func PreloadResourcesOnly(ctx context.Context, e schema.Registry) error {
-	return loadSchemas(ctx, e)
-}
-
-// loadSchemas loads streams, index rules, and index rule bindings.
-func loadSchemas(ctx context.Context, e schema.Registry) error {
-	streams, err := streamStore.ReadDir(streamDir)
-	if err != nil {
-		return err
-	}
-	var data []byte
-	for _, entry := range streams {
-		data, err = streamStore.ReadFile(path.Join(streamDir, entry.Name()))
-		if err != nil {
-			return err
-		}
-		var stream databasev1.Stream
-		err = protojson.Unmarshal(data, &stream)
-		if err != nil {
-			return err
-		}
-		if _, innerErr := e.CreateStream(ctx, &stream); innerErr != nil {
-			return innerErr
-		}
-	}
-
-	entries, err := indexRuleStore.ReadDir(indexRuleDir)
-	if err != nil {
-		return err
-	}
-	for _, entry := range entries {
-		data, err = indexRuleStore.ReadFile(path.Join(indexRuleDir, entry.Name()))
-		if err != nil {
-			return err
-		}
-		var idxRule databasev1.IndexRule
-		err = protojson.Unmarshal(data, &idxRule)
-		if err != nil {
-			return err
-		}
-		if innerErr := e.CreateIndexRule(ctx, &idxRule); innerErr != nil {
-			return innerErr
-		}
-	}
-	indexRulesBindings, err := indexRuleBindingStore.ReadDir(indexRuleBindingDir)
-	if err != nil {
-		return err
-	}
-	for _, entry := range indexRulesBindings {
-		data, err = indexRuleBindingStore.ReadFile(path.Join(indexRuleBindingDir, entry.Name()))
-		if err != nil {
-			return err
-		}
-		var idxRuleBinding databasev1.IndexRuleBinding
-		err = protojson.Unmarshal(data, &idxRuleBinding)
-		if err != nil {
-			return err
-		}
-		if innerErr := e.CreateIndexRuleBinding(ctx, &idxRuleBinding); innerErr != nil {
-			return innerErr
-		}
-	}
-
-	return nil
-}
 
 // LoadSchemaWithStages loads schemas from files, including group stages.
 func LoadSchemaWithStages(ctx context.Context, e schema.Registry) error {
@@ -143,7 +62,7 @@ func LoadSchemaWithStages(ctx context.Context, e schema.Registry) error {
 			return innerErr
 		}
 	}
-	return loadSchemas(ctx, e)
+	return teststream.PreloadResourcesOnly(ctx, e)
 }
 
 // PreloadSchema loads schemas from files in the booting process.
@@ -170,6 +89,5 @@ func PreloadSchema(ctx context.Context, e schema.Registry) error {
 			return innerErr
 		}
 	}
-
-	return loadSchemas(ctx, e)
+	return teststream.PreloadResourcesOnly(ctx, e)
 }

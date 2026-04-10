@@ -54,6 +54,34 @@ func LoadSchemaWithStages(ctx context.Context, e schema.Registry) error {
 	return loadAllSchemas(ctx, e, groupStagesDir)
 }
 
+// PreloadResourcesOnly loads measures, index rules, index rule bindings, and topN aggregations.
+// It does NOT load groups.
+func PreloadResourcesOnly(ctx context.Context, e schema.Registry) error {
+	return preloadSchemaWithFuncs(ctx, e,
+		func(ctx context.Context, e schema.Registry) error {
+			return loadSchema(measureDir, &databasev1.Measure{}, func(measure *databasev1.Measure) error {
+				_, innerErr := e.CreateMeasure(ctx, measure)
+				return innerErr
+			})
+		},
+		func(ctx context.Context, e schema.Registry) error {
+			return loadSchema(indexRuleDir, &databasev1.IndexRule{}, func(indexRule *databasev1.IndexRule) error {
+				return e.CreateIndexRule(ctx, indexRule)
+			})
+		},
+		func(ctx context.Context, e schema.Registry) error {
+			return loadSchema(indexRuleBindingDir, &databasev1.IndexRuleBinding{}, func(indexRuleBinding *databasev1.IndexRuleBinding) error {
+				return e.CreateIndexRuleBinding(ctx, indexRuleBinding)
+			})
+		},
+		func(ctx context.Context, e schema.Registry) error {
+			return loadSchema(topNAggregationDir, &databasev1.TopNAggregation{}, func(topN *databasev1.TopNAggregation) error {
+				return e.CreateTopNAggregation(ctx, topN)
+			})
+		},
+	)
+}
+
 // loadAllSchemas is the common logic to load schemas from a given group directory.
 func loadAllSchemas(ctx context.Context, e schema.Registry, groupDirectory string) error {
 	return preloadSchemaWithFuncs(ctx, e,

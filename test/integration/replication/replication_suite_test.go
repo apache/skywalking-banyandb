@@ -20,7 +20,6 @@ package replication_test
 import (
 	"context"
 	"encoding/json"
-	"fmt"
 	"testing"
 	"time"
 
@@ -31,9 +30,7 @@ import (
 	"google.golang.org/grpc/credentials/insecure"
 
 	databasev1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/database/v1"
-	"github.com/apache/skywalking-banyandb/banyand/metadata"
-	"github.com/apache/skywalking-banyandb/banyand/metadata/embeddedetcd"
-	"github.com/apache/skywalking-banyandb/banyand/metadata/schema"
+	schemapkg "github.com/apache/skywalking-banyandb/banyand/metadata/schema"
 	"github.com/apache/skywalking-banyandb/pkg/grpchelper"
 	"github.com/apache/skywalking-banyandb/pkg/logger"
 	"github.com/apache/skywalking-banyandb/pkg/pool"
@@ -41,11 +38,11 @@ import (
 	"github.com/apache/skywalking-banyandb/pkg/test/flags"
 	"github.com/apache/skywalking-banyandb/pkg/test/gmatcher"
 	"github.com/apache/skywalking-banyandb/pkg/test/helpers"
-	test_measure "github.com/apache/skywalking-banyandb/pkg/test/measure"
 	test_property "github.com/apache/skywalking-banyandb/pkg/test/property"
+	test_replicated_measure "github.com/apache/skywalking-banyandb/pkg/test/replicated/measure"
+	test_replicated_stream "github.com/apache/skywalking-banyandb/pkg/test/replicated/stream"
+	test_replicated_trace "github.com/apache/skywalking-banyandb/pkg/test/replicated/trace"
 	"github.com/apache/skywalking-banyandb/pkg/test/setup"
-	test_stream "github.com/apache/skywalking-banyandb/pkg/test/stream"
-	test_trace "github.com/apache/skywalking-banyandb/pkg/test/trace"
 	"github.com/apache/skywalking-banyandb/pkg/timestamp"
 	test_cases "github.com/apache/skywalking-banyandb/test/cases"
 	casesmeasure "github.com/apache/skywalking-banyandb/test/cases/measure"
@@ -57,14 +54,15 @@ func TestReplication(t *testing.T) {
 }
 
 var (
-	deferFunc       func()
-	goods           []gleak.Goroutine
-	now             time.Time
-	connection      *grpc.ClientConn
-	liaisonAddr     string
-	etcdEndpoint    string
-	dataNodeClosers []func()
-	clusterConfig   *setup.ClusterConfig
+	deferFunc           func()
+	goods               []gleak.Goroutine
+	now                 time.Time
+	connection          *grpc.ClientConn
+	liaisonAddr         string
+	dataNodeClosers     []func()
+	dataNodeDirs        []string
+	dataNodeDirCleanups []func()
+	clusterConfig       *setup.ClusterConfig
 )
 
 var _ = SynchronizedBeforeSuite(func() []byte {
@@ -75,48 +73,34 @@ var _ = SynchronizedBeforeSuite(func() []byte {
 	pool.EnableStackTracking(true)
 	goods = gleak.Goroutines()
 
-	By("Starting etcd server")
-	ports, err := test.AllocateFreePorts(2)
+	By("Creating discovery file writer for DNS-based node discovery")
+	tmpDir, tmpDirCleanup, err := test.NewSpace()
 	Expect(err).NotTo(HaveOccurred())
-	dir, spaceDef, err := test.NewSpace()
-	Expect(err).NotTo(HaveOccurred())
-	ep := fmt.Sprintf("http://127.0.0.1:%d", ports[0])
-	etcdEndpoint = ep
-
-	server, err := embeddedetcd.NewServer(
-		embeddedetcd.ConfigureListener([]string{ep}, []string{fmt.Sprintf("http://127.0.0.1:%d", ports[1])}),
-		embeddedetcd.RootDir(dir),
-		embeddedetcd.AutoCompactionMode("periodic"),
-		embeddedetcd.AutoCompactionRetention("1h"),
-		embeddedetcd.QuotaBackendBytes(2*1024*1024*1024),
-	)
-	Expect(err).ShouldNot(HaveOccurred())
-	<-server.ReadyNotify()
-
-	By("Loading schema")
-	schemaRegistry, err := schema.NewEtcdSchemaRegistry(
-		schema.Namespace(metadata.DefaultNamespace),
-		schema.ConfigureServerEndpoints([]string{ep}),
-	)
-	Expect(err).NotTo(HaveOccurred())
-	defer schemaRegistry.Close()
-
-	ctx := context.Background()
-	// Preload all schemas since test_cases.Initialize needs them
-	test_stream.PreloadSchema(ctx, schemaRegistry)
-	test_measure.PreloadSchema(ctx, schemaRegistry)
-	test_trace.PreloadSchema(ctx, schemaRegistry)
-	test_property.PreloadSchema(ctx, schemaRegistry)
-
-	clusterConfig = setup.EtcdClusterConfig(ep)
+	dfWriter := setup.NewDiscoveryFileWriter(tmpDir)
+	clusterConfig = setup.PropertyClusterConfig(dfWriter)
 
 	By("Starting 3 data nodes for replication test")
 	dataNodeClosers = make([]func(), 0, 3)
+	dataNodeDirs = make([]string, 0, 3)
+	dataNodeDirCleanups = make([]func(), 0, 3)
 
 	for i := 0; i < 3; i++ {
-		closeDataNode := setup.DataNode(clusterConfig, "--node-labels", "role=data")
+		nodeDir, nodeDirCleanup, dirErr := test.NewSpace()
+		Expect(dirErr).NotTo(HaveOccurred())
+		_, _, closeDataNode := setup.DataNodeFromDataDir(clusterConfig, nodeDir, "--node-labels", "role=data")
+		dataNodeDirs = append(dataNodeDirs, nodeDir)
+		dataNodeDirCleanups = append(dataNodeDirCleanups, nodeDirCleanup)
 		dataNodeClosers = append(dataNodeClosers, closeDataNode)
 	}
+
+	By("Loading schema via property")
+	setup.PreloadSchemaViaProperty(clusterConfig,
+		test_replicated_measure.PreloadSchema,
+		test_replicated_stream.PreloadSchema,
+		test_replicated_trace.PreloadSchema,
+		test_property.PreloadSchema,
+	)
+	clusterConfig.AddLoadedKinds(schemapkg.KindStream, schemapkg.KindMeasure, schemapkg.KindTrace, schemapkg.KindProperty)
 
 	By("Starting liaison node")
 	liaisonAddr2, closerLiaisonNode := setup.LiaisonNode(clusterConfig, "--data-node-selector", "role=data")
@@ -158,27 +142,27 @@ var _ = SynchronizedBeforeSuite(func() []byte {
 		for _, closeDataNode := range dataNodeClosers {
 			closeDataNode()
 		}
-		_ = server.Close()
-		<-server.StopNotify()
-		spaceDef()
+		for _, cleanup := range dataNodeDirCleanups {
+			cleanup()
+		}
+		tmpDirCleanup()
 	}
 
 	suiteConfig := map[string]interface{}{
-		"liaison_addr":  liaisonAddr,
-		"etcd_endpoint": etcdEndpoint,
-		"now":           now.UnixNano(),
+		"liaison_addr": liaisonAddr,
+		"now":          now.UnixNano(),
 	}
 
 	configBytes, err := json.Marshal(suiteConfig)
 	Expect(err).NotTo(HaveOccurred())
 	return configBytes
 }, func(configBytes []byte) {
+	var err error
 	var config map[string]interface{}
-	err := json.Unmarshal(configBytes, &config)
+	err = json.Unmarshal(configBytes, &config)
 	Expect(err).NotTo(HaveOccurred())
 
 	liaisonAddr = config["liaison_addr"].(string)
-	etcdEndpoint = config["etcd_endpoint"].(string)
 	now = time.Unix(0, int64(config["now"].(float64)))
 
 	var err2 error
@@ -199,11 +183,27 @@ var _ = SynchronizedAfterSuite(func() {
 	}
 }, func() {})
 
+// AfterEach restores cluster to 3 active nodes if a spec left a node stopped.
+var _ = AfterEach(func() {
+	if len(dataNodeDirs) == 0 || connection == nil {
+		return
+	}
+	if isClusterStable(connection) {
+		return
+	}
+	// Node 0 may have been stopped by a spec — restart it from its data directory.
+	_, _, closeDataNode := setup.DataNodeFromDataDir(clusterConfig, dataNodeDirs[0], "--node-labels", "role=data")
+	dataNodeClosers[0] = closeDataNode
+	Eventually(func() bool {
+		return isClusterStable(connection)
+	}, flags.EventuallyTimeout).Should(BeTrue(), "Cluster should stabilize after restoring node 0")
+})
+
 var _ = ReportAfterSuite("Replication Suite", func(report Report) {
+	if deferFunc != nil {
+		deferFunc()
+	}
 	if report.SuiteSucceeded {
-		if deferFunc != nil {
-			deferFunc()
-		}
 		Eventually(gleak.Goroutines, flags.EventuallyTimeout).ShouldNot(gleak.HaveLeaked(goods))
 		Eventually(pool.AllRefsCount, flags.EventuallyTimeout).Should(gmatcher.HaveZeroRef())
 	}

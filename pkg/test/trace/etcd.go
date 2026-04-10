@@ -53,6 +53,29 @@ func PreloadSchemaWithStages(ctx context.Context, e schema.Registry) error {
 	return loadAllSchemas(ctx, e, groupStagesDir)
 }
 
+// PreloadResourcesOnly loads traces, index rules, and index rule bindings.
+// It does NOT load groups.
+func PreloadResourcesOnly(ctx context.Context, e schema.Registry) error {
+	return preloadSchemaWithFuncs(ctx, e,
+		func(ctx context.Context, e schema.Registry) error {
+			return loadSchema(traceDir, &databasev1.Trace{}, func(trace *databasev1.Trace) error {
+				_, innerErr := e.CreateTrace(ctx, trace)
+				return innerErr
+			})
+		},
+		func(ctx context.Context, e schema.Registry) error {
+			return loadSchema(indexRuleDir, &databasev1.IndexRule{}, func(indexRule *databasev1.IndexRule) error {
+				return e.CreateIndexRule(ctx, indexRule)
+			})
+		},
+		func(ctx context.Context, e schema.Registry) error {
+			return loadSchema(indexRuleBindingDir, &databasev1.IndexRuleBinding{}, func(indexRuleBinding *databasev1.IndexRuleBinding) error {
+				return e.CreateIndexRuleBinding(ctx, indexRuleBinding)
+			})
+		},
+	)
+}
+
 // loadAllSchemas loads all trace-related schemas from the testdata directory.
 func loadAllSchemas(ctx context.Context, e schema.Registry, group string) error {
 	return preloadSchemaWithFuncs(ctx, e,

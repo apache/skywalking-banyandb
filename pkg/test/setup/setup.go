@@ -610,7 +610,15 @@ func CMD(flags ...string) func() {
 	}()
 	return func() {
 		closeFn()
-		wg.Wait()
+		waitCh := make(chan struct{})
+		go func() {
+			wg.Wait()
+			close(waitCh)
+		}()
+		select {
+		case <-waitCh:
+		case <-time.After(30 * time.Second):
+		}
 	}
 }
 

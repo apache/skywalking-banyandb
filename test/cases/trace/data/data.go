@@ -77,7 +77,8 @@ var VerifyFn = func(innerGm gm.Gomega, sharedContext helpers.SharedContext, args
 	query.TimeRange = helpers.TimeRange(args, sharedContext)
 	query.Stages = args.Stages
 	c := tracev1.NewTraceServiceClient(sharedContext.Connection)
-	ctx := context.Background()
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
 	resp, err := c.Query(ctx, query)
 	if args.WantErr {
 		if err == nil {
@@ -224,7 +225,9 @@ func verifyQLWithRequest(innerGm gm.Gomega, args helpers.Args, yamlQuery *tracev
 	innerGm.Expect(errStrs).To(gm.BeNil())
 
 	transformer := bydbql.NewTransformer(mockRepo)
-	result, err := transformer.Transform(context.Background(), parsed)
+	transformCtx, transformCancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer transformCancel()
+	result, err := transformer.Transform(transformCtx, parsed)
 	innerGm.Expect(err).NotTo(gm.HaveOccurred())
 
 	qlQuery, ok := result.QueryRequest.(*tracev1.QueryRequest)
@@ -240,7 +243,9 @@ func verifyQLWithRequest(innerGm gm.Gomega, args helpers.Args, yamlQuery *tracev
 	innerGm.Expect(equal).To(gm.BeTrue(), "QL:\n%s\nYAML:\n%s", qlQuery.String(), yamlQuery.String())
 
 	bydbqlClient := bydbqlv1.NewBydbQLServiceClient(conn)
-	bydbqlResp, err := bydbqlClient.Query(context.Background(), &bydbqlv1.QueryRequest{
+	qlCtx, qlCancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer qlCancel()
+	bydbqlResp, err := bydbqlClient.Query(qlCtx, &bydbqlv1.QueryRequest{
 		Query: qlQueryStr,
 	})
 	innerGm.Expect(err).NotTo(gm.HaveOccurred())

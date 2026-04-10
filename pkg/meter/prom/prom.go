@@ -18,6 +18,7 @@
 package prom
 
 import (
+	"errors"
 	"unsafe"
 
 	"github.com/prometheus/client_golang/prometheus"
@@ -47,9 +48,9 @@ func (p *provider) Counter(name string, labels ...string) meter.Counter {
 		Help:        p.scope.GetNamespace() + "_" + name,
 		ConstLabels: convertLabels(p.scope.GetLabels()),
 	}, labels)
-	p.reg.MustRegister(vec)
-	p.collectors = append(p.collectors, vec)
-	return &counter{counter: vec}
+	collected := registerCollector(p.reg, vec)
+	p.collectors = append(p.collectors, collected)
+	return &counter{counter: collected}
 }
 
 // Gauge returns a prometheus gauge.
@@ -59,9 +60,9 @@ func (p *provider) Gauge(name string, labels ...string) meter.Gauge {
 		Help:        p.scope.GetNamespace() + "_" + name,
 		ConstLabels: convertLabels(p.scope.GetLabels()),
 	}, labels)
-	p.reg.MustRegister(vec)
-	p.collectors = append(p.collectors, vec)
-	return &gauge{gauge: vec}
+	collected := registerCollector(p.reg, vec)
+	p.collectors = append(p.collectors, collected)
+	return &gauge{gauge: collected}
 }
 
 // Histogram returns a prometheus histogram.
@@ -72,9 +73,22 @@ func (p *provider) Histogram(name string, buckets meter.Buckets, labels ...strin
 		ConstLabels: convertLabels(p.scope.GetLabels()),
 		Buckets:     buckets,
 	}, labels)
-	p.reg.MustRegister(vec)
-	p.collectors = append(p.collectors, vec)
-	return &histogram{histogram: vec}
+	collected := registerCollector(p.reg, vec)
+	p.collectors = append(p.collectors, collected)
+	return &histogram{histogram: collected}
+}
+
+func registerCollector[T prometheus.Collector](reg prometheus.Registerer, c T) T {
+	if regErr := reg.Register(c); regErr != nil {
+		var are prometheus.AlreadyRegisteredError
+		if errors.As(regErr, &are) {
+			if existing, ok := are.ExistingCollector.(T); ok {
+				return existing
+			}
+		}
+		panic(regErr)
+	}
+	return c
 }
 
 // Close unregisters all collectors from the prometheus registry.
