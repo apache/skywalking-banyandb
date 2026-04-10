@@ -74,21 +74,21 @@ MIT licenses
     @parcel/watcher-linux-x64-musl 2.5.6 MIT
     @popperjs/core 2.11.8 MIT
     @tanstack/match-sorter-utils 8.19.4 MIT
-    @tanstack/query-core 5.95.2 MIT
-    @tanstack/vue-query 5.95.2 MIT
+    @tanstack/query-core 5.97.0 MIT
+    @tanstack/vue-query 5.97.0 MIT
     @types/lodash 4.17.24 MIT
     @types/lodash-es 4.17.12 MIT
     @types/web-bluetooth 0.0.20 MIT
-    @vue/compiler-core 3.5.31 MIT
-    @vue/compiler-dom 3.5.31 MIT
-    @vue/compiler-sfc 3.5.31 MIT
-    @vue/compiler-ssr 3.5.31 MIT
+    @vue/compiler-core 3.5.32 MIT
+    @vue/compiler-dom 3.5.32 MIT
+    @vue/compiler-sfc 3.5.32 MIT
+    @vue/compiler-ssr 3.5.32 MIT
     @vue/devtools-api 6.6.4 MIT
-    @vue/reactivity 3.5.31 MIT
-    @vue/runtime-core 3.5.31 MIT
-    @vue/runtime-dom 3.5.31 MIT
-    @vue/server-renderer 3.5.31 MIT
-    @vue/shared 3.5.31 MIT
+    @vue/reactivity 3.5.32 MIT
+    @vue/runtime-core 3.5.32 MIT
+    @vue/runtime-dom 3.5.32 MIT
+    @vue/server-renderer 3.5.32 MIT
+    @vue/shared 3.5.32 MIT
     @vueuse/core 12.0.0 MIT
     @vueuse/metadata 12.0.0 MIT
     @vueuse/shared 12.0.0 MIT
@@ -118,18 +118,18 @@ MIT licenses
     node-addon-api 7.1.1 MIT
     picomatch 4.0.4 MIT
     pinia 2.3.1 MIT
-    postcss 8.5.8 MIT
+    postcss 8.5.9 MIT
     process-nextick-args 2.0.1 MIT
     readable-stream 2.3.8 MIT
     readdirp 4.1.2 MIT
     remove-accents 0.5.0 MIT
     safe-buffer 5.1.2 MIT
-    sass 1.98.0 MIT
+    sass 1.99.0 MIT
     setimmediate 1.0.5 MIT
     string_decoder 1.1.1 MIT
     universalify 2.0.1 MIT
     util-deprecate 1.0.2 MIT
-    vue 3.5.31 MIT
+    vue 3.5.32 MIT
     vue-component-type-helpers 3.2.6 MIT
     vue-demi 0.14.10 MIT
     vue-router 4.6.4 MIT
