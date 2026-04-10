@@ -27,6 +27,7 @@ import (
 	"go.uber.org/mock/gomock"
 
 	commonv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/common/v1"
+	"github.com/apache/skywalking-banyandb/pkg/fs"
 	"github.com/apache/skywalking-banyandb/pkg/logger"
 	"github.com/apache/skywalking-banyandb/pkg/meter"
 	"github.com/apache/skywalking-banyandb/pkg/test"
@@ -309,11 +310,9 @@ func TestTakeFileSnapshot(t *testing.T) {
 		require.NoError(t, tsdb.Close())
 	})
 
-	t.Run("Take snapshot skips shard with no current snapshot", func(t *testing.T) {
+	t.Run("Epoch timestamp segment creation is rejected", func(t *testing.T) {
 		dir, defFn := test.Space(require.New(t))
 		defer defFn()
-
-		snapshotDir := filepath.Join(dir, "snapshot")
 
 		opts := TSDBOpts[*SnapshotMockTSTable, any]{
 			Location:        dir,
@@ -335,29 +334,69 @@ func TestTakeFileSnapshot(t *testing.T) {
 		require.NoError(t, err)
 		defer tsdb.Close()
 
-		normalSeg, err := tsdb.CreateSegmentIfNotExist(ts)
-		require.NoError(t, err)
-		normalSegLocation := normalSeg.(*segment[*SnapshotMockTSTable, any]).location
+		normalSeg, segErr := tsdb.CreateSegmentIfNotExist(ts)
+		require.NoError(t, segErr)
 		normalSeg.DecRef()
 
-		epochSeg, err := tsdb.CreateSegmentIfNotExist(time.Unix(0, 0))
-		require.NoError(t, err)
-		epochSegLocation := epochSeg.(*segment[*SnapshotMockTSTable, any]).location
-		epochSeg.DecRef()
-
-		created, snapshotErr := tsdb.TakeFileSnapshot(snapshotDir)
-		require.NoError(t, snapshotErr,
-			"snapshot should not fail due to empty shard in epoch segment")
-		require.True(t, created)
-
-		normalSegDir := filepath.Join(snapshotDir, filepath.Base(normalSegLocation))
-		require.DirExists(t, normalSegDir,
-			"normal segment should be present in snapshot")
-
-		epochSegDir := filepath.Join(snapshotDir, filepath.Base(epochSegLocation))
-		require.DirExists(t, epochSegDir,
-			"epoch segment directory should still be created")
+		_, epochErr := tsdb.CreateSegmentIfNotExist(time.Unix(0, 0))
+		require.ErrorIs(t, epochErr, ErrInvalidSegmentTimestamp,
+			"creating a segment with epoch timestamp should be rejected")
 	})
+}
+
+func TestEpochSegmentCleanupOnOpen(t *testing.T) {
+	logger.Init(logger.Logging{
+		Env:   "dev",
+		Level: flags.LogLevel,
+	})
+
+	dir, defFn := test.Space(require.New(t))
+	defer defFn()
+
+	opts := TSDBOpts[*MockTSTable, any]{
+		Location:        dir,
+		SegmentInterval: IntervalRule{Unit: DAY, Num: 1},
+		TTL:             IntervalRule{Unit: DAY, Num: 7},
+		ShardNum:        1,
+		TSTableCreator:  MockTSTableCreator,
+	}
+
+	ctx := context.Background()
+	mc := timestamp.NewMockClock()
+	ts, err := time.ParseInLocation("2006-01-02 15:04:05", "2024-05-01 00:00:00", time.Local)
+	require.NoError(t, err)
+	mc.Set(ts)
+	ctx = timestamp.SetClock(ctx, mc)
+
+	// Create a TSDB with a valid segment
+	sc := NewServiceCache()
+	tsdb1, err := OpenTSDB(ctx, opts, sc, group)
+	require.NoError(t, err)
+
+	seg, segErr := tsdb1.CreateSegmentIfNotExist(ts)
+	require.NoError(t, segErr)
+	seg.DecRef()
+	require.NoError(t, tsdb1.Close())
+
+	// Manually create a fake epoch segment directory with metadata to simulate the bug
+	epochSegDir := filepath.Join(dir, "seg-19700101")
+	lfs := fs.NewLocalFileSystem()
+	lfs.MkdirIfNotExist(epochSegDir, DirPerm)
+	metaPath := filepath.Join(epochSegDir, metadataFilename)
+	lf, lockErr := lfs.CreateLockFile(metaPath, FilePerm)
+	require.NoError(t, lockErr)
+	_, writeErr := lf.Write([]byte(`{"version":"v1","end_time":"1970-01-02T00:00:00Z"}`))
+	require.NoError(t, writeErr)
+	require.NoError(t, lf.Close())
+
+	require.DirExists(t, epochSegDir, "epoch segment should exist before reopening")
+
+	// Reopen TSDB - it should clean up the epoch segment
+	tsdb2, err := OpenTSDB(ctx, opts, sc, group)
+	require.NoError(t, err)
+	defer tsdb2.Close()
+
+	require.NoDirExists(t, epochSegDir, "epoch segment should be removed on open")
 }
 
 func TestTSDBCollect(t *testing.T) {

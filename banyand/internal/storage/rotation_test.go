@@ -208,25 +208,20 @@ var MockTSTableCreator = func(_ fs.FileSystem, _ string, _ common.Position,
 	return &MockTSTable{}, nil
 }
 
-type SnapshotMockTSTable struct {
-	timeRange timestamp.TimeRange
-}
+type SnapshotMockTSTable struct{}
 
 func (m *SnapshotMockTSTable) Close() error { return nil }
 
 func (m *SnapshotMockTSTable) Collect(_ Metrics) {}
 
 func (m *SnapshotMockTSTable) TakeFileSnapshot(_ string) (bool, error) {
-	if m.timeRange.Start.Equal(time.Unix(0, 0)) {
-		return false, ErrNoCurrentSnapshot
-	}
 	return true, nil
 }
 
 var SnapshotMockTSTableCreator = func(_ fs.FileSystem, _ string, _ common.Position,
-	_ *logger.Logger, timeRange timestamp.TimeRange, _, _ any,
+	_ *logger.Logger, _ timestamp.TimeRange, _, _ any,
 ) (*SnapshotMockTSTable, error) {
-	return &SnapshotMockTSTable{timeRange: timeRange}, nil
+	return &SnapshotMockTSTable{}, nil
 }
 
 type MockMetrics struct{}
@@ -306,4 +301,48 @@ func TestRotationDisabled(t *testing.T) {
 		assert.Equal(t, "2024-05-04 00:00:00", segments[1].Start.Format("2006-01-02 15:04:05"))
 		assert.Equal(t, "2024-05-07 00:00:00", segments[1].End.Format("2006-01-02 15:04:05"))
 	})
+}
+
+func TestTickRejectsZeroTimestamp(t *testing.T) {
+	logger.Init(logger.Logging{
+		Env:   "dev",
+		Level: flags.LogLevel,
+	})
+
+	dir, defFn := test.Space(require.New(t))
+	defer defFn()
+
+	opts := TSDBOpts[*MockTSTable, any]{
+		Location:        dir,
+		SegmentInterval: IntervalRule{Unit: DAY, Num: 1},
+		TTL:             IntervalRule{Unit: DAY, Num: 7},
+		ShardNum:        1,
+		TSTableCreator:  MockTSTableCreator,
+	}
+
+	ctx := context.Background()
+	mc := timestamp.NewMockClock()
+	ts, err := time.ParseInLocation("2006-01-02 15:04:05", "2024-05-01 00:00:00", time.Local)
+	require.NoError(t, err)
+	mc.Set(ts)
+	ctx = timestamp.SetClock(ctx, mc)
+
+	tsdb, err := OpenTSDB(ctx, opts, NewServiceCache(), group)
+	require.NoError(t, err)
+	defer tsdb.Close()
+
+	db := tsdb.(*database[*MockTSTable, any])
+
+	// Tick with a valid timestamp to set latestTickTime
+	validTS := ts.UnixNano()
+	tsdb.Tick(validTS)
+	require.Equal(t, validTS, db.latestTickTime.Load(), "valid tick should update latestTickTime")
+
+	// Tick with zero should be rejected and not update latestTickTime
+	tsdb.Tick(0)
+	require.Equal(t, validTS, db.latestTickTime.Load(), "Tick(0) should not update latestTickTime")
+
+	// Tick with negative should also be rejected
+	tsdb.Tick(-1)
+	require.Equal(t, validTS, db.latestTickTime.Load(), "Tick(-1) should not update latestTickTime")
 }

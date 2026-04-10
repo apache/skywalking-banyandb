@@ -32,6 +32,9 @@ var (
 )
 
 func (d *database[T, O]) Tick(ts int64) {
+	if ts <= 0 {
+		return
+	}
 	if (ts - timeEventSnapDuration) < d.latestTickTime.Load() {
 		return
 	}
