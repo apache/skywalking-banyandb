@@ -75,14 +75,45 @@ func TestStreamingParts_Timestamps(t *testing.T) {
 		assert.Equal(t, "test-sidx", parts[0].PartType)
 	})
 
-	t.Run("nil_timestamps_default_to_zero", func(t *testing.T) {
+	t.Run("nil_timestamps_fallback_to_segment_id", func(t *testing.T) {
 		sidxIface := createTestSIDX(t)
 		raw := sidxIface.(*sidx)
 		defer func() {
 			assert.NoError(t, raw.Close())
 		}()
 
-		writeTestDataWithTimeRange(t, raw, reqs, 1, 1, nil, nil)
+		// segmentID=1000, nil timestamps — should fall back to SegmentID
+		writeTestDataWithTimeRange(t, raw, reqs, 1000, 1, nil, nil)
+
+		flushIntro, err := raw.Flush(map[uint64]struct{}{1: {}})
+		require.NoError(t, err)
+		raw.IntroduceFlushed(flushIntro)
+		flushIntro.Release()
+
+		partIDs := map[uint64]struct{}{1: {}}
+		parts, releaseFuncs := raw.StreamingParts(partIDs, "test-group", 0, "test-sidx")
+		defer func() {
+			for _, release := range releaseFuncs {
+				release()
+			}
+		}()
+
+		require.Len(t, parts, 1)
+		assert.Equal(t, int64(1000), parts[0].MinTimestamp,
+			"MinTimestamp should fall back to SegmentID when partMetadata.MinTimestamp is nil")
+		assert.Equal(t, int64(1000), parts[0].MaxTimestamp,
+			"MaxTimestamp should fall back to MinTimestamp when partMetadata.MaxTimestamp is nil")
+	})
+
+	t.Run("nil_timestamps_zero_segment_id", func(t *testing.T) {
+		sidxIface := createTestSIDX(t)
+		raw := sidxIface.(*sidx)
+		defer func() {
+			assert.NoError(t, raw.Close())
+		}()
+
+		// segmentID=0, nil timestamps — both should be 0
+		writeTestDataWithTimeRange(t, raw, reqs, 0, 1, nil, nil)
 
 		flushIntro, err := raw.Flush(map[uint64]struct{}{1: {}})
 		require.NoError(t, err)
@@ -99,9 +130,9 @@ func TestStreamingParts_Timestamps(t *testing.T) {
 
 		require.Len(t, parts, 1)
 		assert.Equal(t, int64(0), parts[0].MinTimestamp,
-			"MinTimestamp should default to 0 when partMetadata.MinTimestamp is nil")
+			"MinTimestamp should be 0 when both MinTimestamp and SegmentID are zero")
 		assert.Equal(t, int64(0), parts[0].MaxTimestamp,
-			"MaxTimestamp should default to 0 when partMetadata.MaxTimestamp is nil")
+			"MaxTimestamp should be 0 when MinTimestamp fallback is 0")
 	})
 
 	t.Run("nil_snapshot_returns_nil", func(t *testing.T) {

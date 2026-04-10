@@ -90,9 +90,13 @@ func (s *sidx) StreamingParts(partIDsToSync map[uint64]struct{}, group string, s
 			}
 			if part.partMetadata.MinTimestamp != nil {
 				spd.MinTimestamp = *part.partMetadata.MinTimestamp
+			} else if part.partMetadata.SegmentID > 0 {
+				spd.MinTimestamp = part.partMetadata.SegmentID
 			}
 			if part.partMetadata.MaxTimestamp != nil {
 				spd.MaxTimestamp = *part.partMetadata.MaxTimestamp
+			} else {
+				spd.MaxTimestamp = spd.MinTimestamp
 			}
 			streamingParts = append(streamingParts, spd)
 		}
