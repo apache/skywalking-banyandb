@@ -92,6 +92,8 @@ func (s *sidx) StreamingParts(partIDsToSync map[uint64]struct{}, group string, s
 				spd.MinTimestamp = *part.partMetadata.MinTimestamp
 			} else if part.partMetadata.SegmentID > 0 {
 				spd.MinTimestamp = part.partMetadata.SegmentID
+			} else {
+				logger.Panicf("sidx streaming parts: %s, part %d has no valid timestamp (MinTimestamp=nil, SegmentID=0)", name, part.partMetadata.ID)
 			}
 			if part.partMetadata.MaxTimestamp != nil {
 				spd.MaxTimestamp = *part.partMetadata.MaxTimestamp
