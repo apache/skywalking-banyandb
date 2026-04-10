@@ -23,6 +23,7 @@ Release Notes.
 - Fix snapshot error when there is no data in a segment.
 - ui: fix query editor refresh/reset behavior and BydbQL keyword highlighting.
 - Disable the rotation task on warm and cold nodes to prevent incorrect segment boundaries during lifecycle migration.
+- Prevent epoch-dated segment directories (seg-19700101) from being created by zero timestamps in distributed sync paths.
 
 ## 0.10.0
 
