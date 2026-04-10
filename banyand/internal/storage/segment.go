@@ -43,8 +43,9 @@ import (
 var (
 	// ErrSegmentClosed is returned when trying to access a closed segment.
 	ErrSegmentClosed = errors.New("segment closed")
-	// ErrInvalidSegmentTimestamp is returned when a segment timestamp is clearly invalid (e.g., epoch).
-	ErrInvalidSegmentTimestamp = errors.New("invalid segment timestamp: before year 2000")
+	// ErrInvalidSegmentTimestamp is returned when a segment timestamp is zero or near-epoch,
+	// indicating a corrupted timestamp (e.g., unset MinTimestamp flowing through sync paths).
+	ErrInvalidSegmentTimestamp = errors.New("invalid segment timestamp: epoch or near-epoch time is not valid for APM data")
 )
 
 var _ Cache = (*segmentCache)(nil)
@@ -485,7 +486,9 @@ func (sc *segmentController[T, O]) open() error {
 	err := loadSegments(sc.location, segPathPrefix, sc, sc.getOptions().SegmentInterval, func(start, end time.Time) error {
 		suffix := sc.format(start)
 		segmentPath := path.Join(sc.location, fmt.Sprintf(segTemplate, suffix))
-		if start.Year() < 2000 {
+		// Detect epoch/near-epoch segments created by zero MinTimestamp in sync paths.
+		// BanyanDB is an APM database -- no legitimate data predates the year 2000.
+		if start.UnixNano() <= 0 {
 			invalidSegments = append(invalidSegments, segmentPath)
 			return nil
 		}
@@ -527,7 +530,9 @@ func (sc *segmentController[T, O]) open() error {
 }
 
 func (sc *segmentController[T, O]) create(start time.Time) (*segment[T, O], error) {
-	if start.Year() < 2000 {
+	// Reject epoch/near-epoch timestamps caused by zero MinTimestamp flowing through sync paths.
+	// BanyanDB is an APM database -- no legitimate data predates the year 2000.
+	if start.UnixNano() <= 0 {
 		return nil, ErrInvalidSegmentTimestamp
 	}
 	sc.Lock()

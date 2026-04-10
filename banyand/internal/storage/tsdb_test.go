@@ -387,6 +387,7 @@ func TestEpochSegmentCleanupOnOpen(t *testing.T) {
 	require.NoError(t, lockErr)
 	_, writeErr := lf.Write([]byte(`{"version":"v1","end_time":"1970-01-02T00:00:00Z"}`))
 	require.NoError(t, writeErr)
+	require.NoError(t, lf.Close())
 
 	require.DirExists(t, epochSegDir, "epoch segment should exist before reopening")
 
