@@ -176,12 +176,15 @@ func (t *topNQueryProcessor) Rev(ctx context.Context, message bus.Message) (resp
 			r++
 			current := mIterator.Current()
 			if len(current) > 0 {
-				result = append(result, current[0].GetDataPoint())
+				idp := current[0]
+				dp := idp.GetDataPoint()
+				dp.ShardId = idp.GetShardId()
+				result = append(result, dp)
 			}
 		}
 	}()
 
-	resp = bus.NewMessage(bus.MessageID(now), toTopNResponse(result))
+	resp = bus.NewMessage(bus.MessageID(now), toTopNResponse(result, request.GetEmitPartial()))
 	if !request.Trace && t.slowQuery > 0 {
 		latency := time.Since(n)
 		if latency > t.slowQuery {
@@ -191,16 +194,25 @@ func (t *topNQueryProcessor) Rev(ctx context.Context, message bus.Message) (resp
 	return
 }
 
-func toTopNResponse(dps []*measurev1.DataPoint) *measurev1.TopNResponse {
+func toTopNResponse(dps []*measurev1.DataPoint, emitPartial bool) *measurev1.TopNResponse {
 	topNList := make([]*measurev1.TopNList, 0)
 	topNItems := make([]*measurev1.TopNList_Item, len(dps))
 	for i, dp := range dps {
-		topNItems[i] = &measurev1.TopNList_Item{
+		item := &measurev1.TopNList_Item{
 			Entity:    dp.GetTagFamilies()[0].GetTags(),
-			Value:     dp.GetFields()[0].GetValue(),
 			Version:   dp.GetVersion(),
 			Timestamp: dp.GetTimestamp(),
 		}
+		if emitPartial {
+			item.ShardId = dp.GetShardId()
+			item.Values = make([]*modelv1.FieldValue, len(dp.GetFields()))
+			for idx, f := range dp.GetFields() {
+				item.Values[idx] = f.GetValue()
+			}
+		} else {
+			item.Value = dp.GetFields()[0].GetValue()
+		}
+		topNItems[i] = item
 	}
 	topNList = append(topNList, &measurev1.TopNList{
 		Items: topNItems,

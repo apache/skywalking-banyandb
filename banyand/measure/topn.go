@@ -341,8 +341,8 @@ func (t *topNStreamingProcessor) writeStreamRecord(record flow.StreamRecord, buf
 	topNValue := GenerateTopNValue()
 	defer ReleaseTopNValue(topNValue)
 	for group, tuples := range tuplesGroups {
-		if e := t.l.Debug(); e.Enabled() {
-			for i := range tuples {
+		for i := range tuples {
+			if e := t.l.Debug(); e.Enabled() {
 				tuple := tuples[i]
 				data := tuple.V2.(flow.StreamRecord).Data().(flow.Data)
 				e.

@@ -37,6 +37,13 @@ message TopNList {
     model.v1.FieldValue value = 2;
     int64 version = 3;
     google.protobuf.Timestamp timestamp = 4;
+    // values is used for distributed aggregation to carry partial results.
+    // For MEAN aggregation, it contains [sum, count].
+    // For other aggregations, it contains a single value.
+    repeated model.v1.FieldValue values = 5;
+    // shard_id is the shard identifier where this item's data is stored.
+    // Only returned when emit_partial is true (distributed TopN query).
+    uint32 shard_id = 6;
   }
   // items contains top-n items in a list
   repeated Item items = 2;
@@ -71,4 +78,8 @@ message TopNRequest {
   bool trace = 8;
   // stages is used to specify the stage of the data points in the lifecycle
   repeated string stages = 9;
+  // emit_partial indicates whether to emit partial results for distributed aggregation.
+  // If true, data nodes return partial results (e.g., sum and count for mean).
+  // If false, data nodes return final aggregated values.
+  bool emit_partial = 10;
 }

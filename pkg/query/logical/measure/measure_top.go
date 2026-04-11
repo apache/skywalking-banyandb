@@ -115,6 +115,10 @@ func NewTopQueue(n int, reverted bool) *TopQueue {
 // It returns true if the element are accepted by the queue,
 // returns false if it's evicted.
 func (s *TopQueue) Insert(element TopElement) bool {
+	if s.n <= 0 {
+		heap.Push(&s.th, element)
+		return true
+	}
 	if len(s.th.elements) < s.n {
 		heap.Push(&s.th, element)
 		return true

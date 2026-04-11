@@ -43,13 +43,15 @@ type unresolvedGroup struct {
 	// groupBy should be a subset of tag projection
 	groupBy       [][]*logical.Tag
 	groupByEntity bool
+	groupByShard  bool
 }
 
-func newUnresolvedGroupBy(input logical.UnresolvedPlan, groupBy [][]*logical.Tag, groupByEntity bool) logical.UnresolvedPlan {
+func newUnresolvedGroupBy(input logical.UnresolvedPlan, groupBy [][]*logical.Tag, groupByEntity bool, groupByShard bool) logical.UnresolvedPlan {
 	return &unresolvedGroup{
 		unresolvedInput: input,
 		groupBy:         groupBy,
 		groupByEntity:   groupByEntity,
+		groupByShard:    groupByShard,
 	}
 }
 
@@ -75,6 +77,7 @@ func (gba *unresolvedGroup) Analyze(measureSchema logical.Schema) (logical.Plan,
 		schema:          schema,
 		groupByTagsRefs: groupByTagRefs,
 		groupByEntity:   gba.groupByEntity,
+		groupByShard:    gba.groupByShard,
 	}, nil
 }
 
@@ -83,6 +86,7 @@ type groupBy struct {
 	schema          logical.Schema
 	groupByTagsRefs [][]*logical.TagRef
 	groupByEntity   bool
+	groupByShard    bool
 }
 
 func (g *groupBy) String() string {
@@ -137,6 +141,9 @@ func (g *groupBy) hash(ec context.Context) (mit executor.MIterator, err error) {
 			key, innerErr := formatGroupByKey(idp.GetDataPoint(), g.groupByTagsRefs)
 			if innerErr != nil {
 				return nil, innerErr
+			}
+			if g.groupByShard {
+				key ^= uint64(idp.GetShardId())
 			}
 			group, ok := groupMap[key]
 			if !ok {

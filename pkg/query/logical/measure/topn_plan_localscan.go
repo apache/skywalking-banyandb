@@ -223,6 +223,7 @@ func (ei *topNMIterator) Next() bool {
 				Timestamp: ts,
 				Sid:       uint64(r.SID),
 				Version:   r.Versions[i],
+				ShardId:   shardID,
 			}
 			tagFamily := &modelv1.TagFamily{
 				Name: measure.TopNTagFamily,

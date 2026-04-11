@@ -35,6 +35,7 @@ import (
 	"github.com/apache/skywalking-banyandb/pkg/logger"
 	pbv1 "github.com/apache/skywalking-banyandb/pkg/pb/v1"
 	pkgquery "github.com/apache/skywalking-banyandb/pkg/query"
+	"github.com/apache/skywalking-banyandb/pkg/query/aggregation"
 )
 
 const defaultTopNQueryTimeout = 10 * time.Second
@@ -61,21 +62,10 @@ func (t *topNQueryProcessor) Rev(ctx context.Context, message bus.Message) (resp
 	if e := t.log.Debug(); e.Enabled() {
 		e.RawJSON("req", logger.Proto(request)).Msg("received a topN query event")
 	}
-	nodeSelectors := make(map[string][]string)
-	for _, g := range request.Groups {
-		if gs, ok := t.measureService.LoadGroup(g); ok {
-			if ns, exist := t.parseNodeSelector(request.Stages, gs.GetSchema().ResourceOpts); exist {
-				nodeSelectors[g] = ns
-			} else if len(gs.GetSchema().ResourceOpts.Stages) > 0 {
-				t.log.Error().Strs("req_stages", request.Stages).Strs("default_stages", gs.GetSchema().GetResourceOpts().GetDefaultStages()).Msg("no stage found")
-				resp = bus.NewMessage(now, common.NewError("no stage found in request or default stages in resource opts"))
-				return
-			}
-		} else {
-			t.log.Error().Str("group", g).Msg("failed to load group")
-			resp = bus.NewMessage(now, common.NewError("failed to load group %s", g))
-			return
-		}
+	nodeSelectors, nsErr := t.resolveNodeSelectors(request)
+	if nsErr != nil {
+		resp = bus.NewMessage(now, nsErr)
+		return
 	}
 	if len(request.Stages) > 0 && len(nodeSelectors) == 0 {
 		t.log.Error().RawJSON("req", logger.Proto(request)).Msg("no stage found")
@@ -103,16 +93,69 @@ func (t *topNQueryProcessor) Rev(ctx context.Context, message bus.Message) (resp
 			span.Stop()
 		}()
 	}
-	agg := request.Agg
-	request.Agg = modelv1.AggregationFunction_AGGREGATION_FUNCTION_UNSPECIFIED
+	topn := request.GetTopN()
+	if request.Agg != modelv1.AggregationFunction_AGGREGATION_FUNCTION_MIN && request.Agg != modelv1.AggregationFunction_AGGREGATION_FUNCTION_MAX {
+		request.TopN = 0
+	}
+	request.EmitPartial = true
 	ff, err := t.broadcaster.Broadcast(defaultTopNQueryTimeout, data.TopicTopNQuery, bus.NewMessageWithNodeSelectors(now, nodeSelectors, request.TimeRange, request))
 	if err != nil {
 		resp = bus.NewMessage(now, common.NewError("execute the query %s: %v", request.GetName(), err))
 		return
 	}
+	aggregator := newReduceTopNAggregator(topn,
+		request.Agg, request.GetFieldValueSort())
+	tags, responseCount, allErr := t.collectResponses(ff, request.Agg, aggregator)
+	if span != nil {
+		span.Tagf("response_count", "%d", responseCount)
+	}
+	if allErr != nil {
+		resp = bus.NewMessage(now, common.NewError("execute the query %s: %v", request.GetName(), allErr))
+		return
+	}
+	if tags == nil {
+		resp = bus.NewMessage(now, &measurev1.TopNResponse{})
+		return
+	}
+	lists := aggregator.buildResult(tags)
+
+	if span != nil {
+		span.Tagf("list_count", "%d", len(lists))
+	}
+	resp = bus.NewMessage(now, &measurev1.TopNResponse{
+		Lists: lists,
+	})
+	if !request.Trace && t.slowQuery > 0 {
+		latency := time.Since(n)
+		if latency > t.slowQuery {
+			t.log.Warn().Dur("latency", latency).RawJSON("req", logger.Proto(request)).Int("resp_count", len(lists)).Msg("top_n slow query")
+		}
+	}
+	return
+}
+
+// resolveNodeSelectors resolves node selectors for each group in the request.
+func (t *topNQueryProcessor) resolveNodeSelectors(request *measurev1.TopNRequest) (map[string][]string, *common.Error) {
+	nodeSelectors := make(map[string][]string)
+	for _, g := range request.Groups {
+		if gs, ok := t.measureService.LoadGroup(g); ok {
+			if ns, exist := t.parseNodeSelector(request.Stages, gs.GetSchema().ResourceOpts); exist {
+				nodeSelectors[g] = ns
+			} else if len(gs.GetSchema().ResourceOpts.Stages) > 0 {
+				t.log.Error().Strs("req_stages", request.Stages).Strs("default_stages", gs.GetSchema().GetResourceOpts().GetDefaultStages()).Msg("no stage found")
+				return nil, common.NewError("no stage found in request or default stages in resource opts")
+			}
+		} else {
+			t.log.Error().Str("group", g).Msg("failed to load group")
+			return nil, common.NewError("failed to load group %s", g)
+		}
+	}
+	return nodeSelectors, nil
+}
+
+// collectResponses collects partial results from broadcast futures into the aggregator.
+func (t *topNQueryProcessor) collectResponses(ff []bus.Future, aggrFunc modelv1.AggregationFunction, aggregator *reduceTopNAggregator) ([]string, int, error) {
 	var allErr error
-	aggregator := measure.CreateTopNPostProcessor(request.GetTopN(),
-		agg, request.GetFieldValueSort())
 	var tags []string
 	var responseCount int
 	for _, f := range ff {
@@ -137,41 +180,19 @@ func (t *topNQueryProcessor) Rev(ctx context.Context, message bus.Message) (resp
 					for _, e := range tn.Entity {
 						entityValues = append(entityValues, e.Value)
 					}
-					aggregator.Put(entityValues, tn.Value.GetInt().GetValue(), uint64(tn.Timestamp.AsTime().UnixMilli()), tn.Version)
+					partial, partialErr := aggregation.FieldValuesToPartial[int64](aggrFunc, tn.Values)
+					if partialErr != nil {
+						allErr = multierr.Append(allErr, partialErr)
+						continue
+					}
+					if putErr := aggregator.putPartial(tn.ShardId, entityValues, partial); putErr != nil {
+						allErr = multierr.Append(allErr, putErr)
+					}
 				}
 			}
 		}
 	}
-	if span != nil {
-		span.Tagf("response_count", "%d", responseCount)
-	}
-	if allErr != nil {
-		resp = bus.NewMessage(now, common.NewError("execute the query %s: %v", request.GetName(), allErr))
-		return
-	}
-	if tags == nil {
-		resp = bus.NewMessage(now, &measurev1.TopNResponse{})
-		return
-	}
-	lists, err := aggregator.Val(tags)
-	if err != nil {
-		resp = bus.NewMessage(now, common.NewError("failed to post-aggregate %s: %v", request.GetName(), err))
-		return
-	}
-
-	if span != nil {
-		span.Tagf("list_count", "%d", len(lists))
-	}
-	resp = bus.NewMessage(now, &measurev1.TopNResponse{
-		Lists: lists,
-	})
-	if !request.Trace && t.slowQuery > 0 {
-		latency := time.Since(n)
-		if latency > t.slowQuery {
-			t.log.Warn().Dur("latency", latency).RawJSON("req", logger.Proto(request)).Int("resp_count", len(lists)).Msg("top_n slow query")
-		}
-	}
-	return
+	return tags, responseCount, allErr
 }
 
 var _ sort.Comparable = (*comparableTopNItem)(nil)

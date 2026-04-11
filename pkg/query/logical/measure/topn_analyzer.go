@@ -24,6 +24,7 @@ import (
 
 	databasev1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/database/v1"
 	measurev1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/measure/v1"
+	modelv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/model/v1"
 	"github.com/apache/skywalking-banyandb/banyand/measure"
 	"github.com/apache/skywalking-banyandb/pkg/query/executor"
 	"github.com/apache/skywalking-banyandb/pkg/query/logical"
@@ -112,12 +113,15 @@ func TopNAnalyze(criteria *measurev1.TopNRequest, sourceMeasureSchemaList []*dat
 	if criteria.GetAgg() != 0 {
 		groupByProjectionTags := sourceMeasureSchema.GetEntity().GetTagNames()
 		groupByTags := [][]*logical.Tag{logical.NewTags(measure.TopNTagFamily, groupByProjectionTags...)}
-		plan = newUnresolvedGroupBy(plan, groupByTags, false)
+		groupByShard := criteria.GetEmitPartial() &&
+			criteria.GetAgg() != modelv1.AggregationFunction_AGGREGATION_FUNCTION_MIN &&
+			criteria.GetAgg() != modelv1.AggregationFunction_AGGREGATION_FUNCTION_MAX
+		plan = newUnresolvedGroupBy(plan, groupByTags, false, groupByShard)
 		plan = newUnresolvedAggregation(plan,
 			&logical.Field{Name: topNAggSchema.FieldName},
 			criteria.GetAgg(),
 			true,
-			false,
+			criteria.GetEmitPartial(),
 			false)
 	}
 

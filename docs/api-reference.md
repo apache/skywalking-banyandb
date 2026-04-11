@@ -919,6 +919,7 @@ DataPoint is stored in Measures
 | fields | [DataPoint.Field](#banyandb-measure-v1-DataPoint-Field) | repeated | fields contains fields selected in the projection |
 | sid | [uint64](#uint64) |  | sid is the series id of the data point |
 | version | [int64](#int64) |  | version is the version of the data point in a series sid, timestamp and version are used to identify a data point |
+| shard_id | [uint32](#uint32) |  | shard_id is the shard identifier where this data point is stored. Only populated in internal distributed query responses, not exposed to external clients. |
 
 
 
@@ -1145,6 +1146,8 @@ TopNList contains a series of topN items
 | value | [banyandb.model.v1.FieldValue](#banyandb-model-v1-FieldValue) |  |  |
 | version | [int64](#int64) |  |  |
 | timestamp | [google.protobuf.Timestamp](#google-protobuf-Timestamp) |  |  |
+| values | [banyandb.model.v1.FieldValue](#banyandb-model-v1-FieldValue) | repeated | values is used for distributed aggregation to carry partial results. For MEAN aggregation, it contains [sum, count]. For other aggregations, it contains a single value. |
+| shard_id | [uint32](#uint32) |  | shard_id is the shard identifier where this item&#39;s data is stored. Only returned when emit_partial is true (distributed TopN query). |
 
 
 
@@ -1168,6 +1171,7 @@ TopNRequest is the request contract for query.
 | field_value_sort | [banyandb.model.v1.Sort](#banyandb-model-v1-Sort) |  | field_value_sort indicates how to sort fields |
 | trace | [bool](#bool) |  | trace is used to enable trace for the query |
 | stages | [string](#string) | repeated | stages is used to specify the stage of the data points in the lifecycle |
+| emit_partial | [bool](#bool) |  | emit_partial indicates whether to emit partial results for distributed aggregation. If true, data nodes return partial results (e.g., sum and count for mean). If false, data nodes return final aggregated values. |
 
 
 

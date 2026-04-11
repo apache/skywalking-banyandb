@@ -115,7 +115,7 @@ func Analyze(criteria *measurev1.QueryRequest, metadata []*commonv1.Metadata, ss
 	pushedLimit := int(limitParameter + criteria.GetOffset())
 
 	if criteria.GetGroupBy() != nil {
-		plan = newUnresolvedGroupBy(plan, groupByTags, groupByEntity)
+		plan = newUnresolvedGroupBy(plan, groupByTags, groupByEntity, false)
 		pushedLimit = math.MaxInt
 	}
 
@@ -171,7 +171,7 @@ func DistributedAnalyze(criteria *measurev1.QueryRequest, ss []logical.Schema) (
 	pushedLimit := int(limitParameter + criteria.GetOffset())
 
 	if criteria.GetGroupBy() != nil {
-		plan = newUnresolvedGroupBy(plan, groupByTags, false)
+		plan = newUnresolvedGroupBy(plan, groupByTags, false, false)
 		pushedLimit = math.MaxInt
 	}
 

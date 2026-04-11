@@ -45,6 +45,9 @@ message DataPoint {
   // version is the version of the data point in a series
   // sid, timestamp and version are used to identify a data point
   int64 version = 5;
+  // shard_id is the shard identifier where this data point is stored.
+  // Only populated in internal distributed query responses, not exposed to external clients.
+  uint32 shard_id = 6;
 }
 
 // QueryResponse is the response for a query to the Query module.
