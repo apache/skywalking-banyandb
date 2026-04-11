@@ -29,6 +29,8 @@ Liaison Nodes serve as gateways, routing traffic to Data Nodes. In addition to r
 
 Liaison Nodes are also responsible for handling computational tasks associated with distributed querying the database. They build query tasks and search for data from Data Nodes.
 
+For measure queries that include aggregation, data nodes perform a local **map** phase and the liaison performs a **reduce** phase so results stay correct across shards while limiting raw data on the network. See [Distributed Measure Aggregation](distributed-measure-aggregation.md).
+
 ### 1.4 Standalone Mode
 
 BanyanDB integrates multiple roles into a single process in the standalone mode, making it simpler and faster to deploy. This mode is especially useful for scenarios with a limited number of data points or for testing and development purposes.
