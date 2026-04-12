@@ -446,10 +446,11 @@ func TestHandoffController_ReadPartFromHandoff_CoreMetadata(t *testing.T) {
 	fileSystem.MkdirIfNotExist(partPath, storage.DirPerm)
 
 	coreFiles := map[string][]byte{
-		"primary.bin":    []byte("primary data"),
-		"spans.bin":      []byte("spans data"),
-		"meta.bin":       []byte("meta data"),
-		"metadata.json":  []byte(`{"compressedSizeBytes":1024,"uncompressedSpanSizeBytes":2048,"totalCount":50,"blocksCount":5,"minTimestamp":1700000000,"maxTimestamp":1700001000}`),
+		"primary.bin": []byte("primary data"),
+		"spans.bin":   []byte("spans data"),
+		"meta.bin":    []byte("meta data"),
+		"metadata.json": []byte(`{"compressedSizeBytes":1024,"uncompressedSpanSizeBytes":2048,` +
+			`"totalCount":50,"blocksCount":5,"minTimestamp":1700000000,"maxTimestamp":1700001000}`),
 		"tag.type":       []byte("tag type"),
 		"traceID.filter": []byte("filter"),
 	}
