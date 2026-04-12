@@ -22,6 +22,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"sync"
 	"testing"
 	"time"
 
@@ -689,4 +690,59 @@ func TestHandoffController_SizeRecovery(t *testing.T) {
 	node2Pending, err := hc2.listPendingForNode("node2:17912")
 	tester.NoError(err)
 	tester.Len(node2Pending, 1)
+}
+
+// TestHandoffController_ConcurrentSizeEnforcement verifies that concurrent enqueues
+// cannot exceed the size limit due to the atomic tryReserveSize check.
+func TestHandoffController_ConcurrentSizeEnforcement(t *testing.T) {
+	tester := require.New(t)
+	tempDir, deferFunc := test.Space(tester)
+	defer deferFunc()
+
+	// Create a source part with 3MB metadata
+	partID := uint64(500)
+	partPath := filepath.Join(tempDir, "source", partName(partID))
+	tester.NoError(os.MkdirAll(partPath, 0o755))
+
+	metadata := map[string]interface{}{
+		"compressedSizeBytes": 3 * megabyte,
+	}
+	metadataBytes, err := json.Marshal(metadata)
+	tester.NoError(err)
+	tester.NoError(os.WriteFile(filepath.Join(partPath, "metadata.json"), metadataBytes, 0o600))
+	tester.NoError(os.WriteFile(filepath.Join(partPath, "data.bin"), []byte("test data"), 0o600))
+
+	// 10MB limit allows at most 3 parts of 3MB each
+	lfs := fs.NewLocalFileSystem()
+	l := logger.GetLogger("test")
+	hc, err := newHandoffController(lfs, tempDir, nil, []string{"node1:17912"}, 10*megabyte, l, nil)
+	tester.NoError(err)
+	defer hc.close()
+
+	const numGoroutines = 20
+	var wg sync.WaitGroup
+	var successCount int64
+	var mu sync.Mutex
+
+	for i := 0; i < numGoroutines; i++ {
+		wg.Add(1)
+		go func(idx int) {
+			defer wg.Done()
+			enqueueErr := hc.enqueueForNode("node1:17912", partID+uint64(idx), PartTypeCore, partPath, "group1", 1)
+			if enqueueErr == nil {
+				mu.Lock()
+				successCount++
+				mu.Unlock()
+			}
+		}(i)
+	}
+	wg.Wait()
+
+	// At most 3 enqueues should succeed (3 * 3MB = 9MB <= 10MB)
+	tester.LessOrEqual(successCount, int64(3))
+
+	// Total size must not exceed 10MB limit
+	totalSize := hc.getTotalSize()
+	tester.LessOrEqual(totalSize, uint64(10*megabyte))
+	tester.Equal(uint64(successCount)*3*megabyte, totalSize)
 }

@@ -370,6 +370,11 @@ var _ = Describe("trace handoff", func() {
 			return queryTrace(connection, traceID, writeTime)
 		}, flags.EventuallyTimeout).Should(Succeed())
 
+		By("verifying sidx data was replayed correctly by querying via indexed tag")
+		Eventually(func() error {
+			return queryTraceByService(connection, "handoff_service", writeTime)
+		}, flags.EventuallyTimeout).Should(Succeed())
+
 		var otherIndex int
 		for idx := range dnHandles {
 			if idx != targetIndex {
@@ -534,4 +539,43 @@ func waitForPendingParts(nodeAddr string, timeout time.Duration) bool {
 		}
 		time.Sleep(100 * time.Millisecond)
 	}
+}
+
+// queryTraceByService queries traces by service_id, which exercises the sidx secondary index.
+// If sidx parts were replayed with MinTimestamp=0, the sidx data is rejected or corrupted,
+// and this query fails to find traces even though core data exists.
+func queryTraceByService(conn *grpc.ClientConn, serviceID string, ts time.Time) error {
+	client := tracev1.NewTraceServiceClient(conn)
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+
+	req := &tracev1.QueryRequest{
+		Groups: []string{"test-trace-group"},
+		Name:   "sw",
+		TimeRange: &modelv1.TimeRange{
+			Begin: timestamppb.New(ts.Add(-5 * time.Minute)),
+			End:   timestamppb.New(ts.Add(5 * time.Minute)),
+		},
+		Criteria: &modelv1.Criteria{
+			Exp: &modelv1.Criteria_Condition{
+				Condition: &modelv1.Condition{
+					Name: "service_id",
+					Op:   modelv1.Condition_BINARY_OP_EQ,
+					Value: &modelv1.TagValue{Value: &modelv1.TagValue_Str{
+						Str: &modelv1.Str{Value: serviceID},
+					}},
+				},
+			},
+		},
+		TagProjection: []string{"trace_id", "service_id"},
+	}
+
+	resp, queryErr := client.Query(ctx, req)
+	if queryErr != nil {
+		return queryErr
+	}
+	if len(resp.GetTraces()) == 0 {
+		return fmt.Errorf("no traces found for service_id=%s", serviceID)
+	}
+	return nil
 }

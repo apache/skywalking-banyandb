@@ -30,6 +30,8 @@ Release Notes.
 - Disable the rotation task on warm and cold nodes to prevent incorrect segment boundaries during lifecycle migration.
 - Prevent epoch-dated segment directories (seg-19700101) from being created by zero timestamps in distributed sync paths.
 - Fix SIDX streaming sync sending SegmentID as MinTimestamp instead of the actual timestamp, causing sync failures on the receiving node.
+- Fix handoff controller TOCTOU race allowing disk size limit bypass, and populate sidx MinTimestamp/MaxTimestamp during replay to prevent corrupt segment creation on recovered nodes.
+- Delete orphaned parts when no snapshot references them during tsTable initialization.
 
 ### Chores
 
