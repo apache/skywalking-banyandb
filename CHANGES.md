@@ -32,6 +32,7 @@ Release Notes.
 - Fix SIDX streaming sync sending SegmentID as MinTimestamp instead of the actual timestamp, causing sync failures on the receiving node.
 - Fix handoff controller TOCTOU race allowing disk size limit bypass, and populate sidx MinTimestamp/MaxTimestamp during replay to prevent corrupt segment creation on recovered nodes.
 - Delete orphaned parts when no snapshot references them during tsTable initialization.
+- Extract shared LocateAll on NodeRegistry to ensure resolveAssignments and syncer GetNodes always produce identical node lists, preventing liaison from enqueuing parts to online/healthy data nodes.
 
 ### Chores
 
