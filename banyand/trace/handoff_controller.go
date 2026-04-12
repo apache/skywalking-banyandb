@@ -718,17 +718,13 @@ func (hc *handoffController) stats() (partCount int64, totalSize int64) {
 // Returns false if adding partSize would exceed maxTotalSizeBytes.
 // Callers must call updateTotalSize(-int64(partSize)) to release on failure.
 func (hc *handoffController) tryReserveSize(partSize uint64) bool {
-	if hc.maxTotalSizeBytes == 0 {
-		return true // No limit configured
-	}
-
 	hc.sizeMu.Lock()
 	defer hc.sizeMu.Unlock()
-	if hc.currentTotalSize+partSize <= hc.maxTotalSizeBytes {
-		hc.currentTotalSize += partSize
-		return true
+	if hc.maxTotalSizeBytes > 0 && hc.currentTotalSize+partSize > hc.maxTotalSizeBytes {
+		return false
 	}
-	return false
+	hc.currentTotalSize += partSize
+	return true
 }
 
 // readPartSizeFromMetadata reads the CompressedSizeBytes from the part's metadata file.
