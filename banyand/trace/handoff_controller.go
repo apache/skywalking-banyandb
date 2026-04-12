@@ -223,8 +223,8 @@ func (hc *handoffController) enqueueForNode(nodeAddr string, partID uint64, part
 	// Read part size from metadata
 	partSize := hc.readPartSizeFromMetadata(sourcePath, partType)
 
-	// Check if enqueue would exceed limit
-	if !hc.canEnqueue(partSize) {
+	// Atomically check and reserve size to prevent TOCTOU race between check and update.
+	if !hc.tryReserveSize(partSize) {
 		currentSize := hc.getTotalSize()
 		return fmt.Errorf("handoff queue full: current=%d MB, limit=%d MB, part=%d MB",
 			currentSize/1024/1024, hc.maxTotalSizeBytes/1024/1024, partSize/1024/1024)
@@ -243,15 +243,14 @@ func (hc *handoffController) enqueueForNode(nodeAddr string, partID uint64, part
 
 	nodeQueue, err := hc.getOrCreateNodeQueue(nodeAddr)
 	if err != nil {
+		hc.updateTotalSize(-int64(partSize))
 		return fmt.Errorf("failed to get node queue for %s: %w", nodeAddr, err)
 	}
 
-	if err := nodeQueue.enqueue(partID, partType, sourcePath, meta); err != nil {
-		return err
+	if enqueueErr := nodeQueue.enqueue(partID, partType, sourcePath, meta); enqueueErr != nil {
+		hc.updateTotalSize(-int64(partSize))
+		return enqueueErr
 	}
-
-	// Update total size after successful enqueue
-	hc.updateTotalSize(int64(partSize))
 
 	return nil
 }
@@ -714,15 +713,18 @@ func (hc *handoffController) stats() (partCount int64, totalSize int64) {
 	return count, int64(hc.getTotalSize())
 }
 
-// canEnqueue checks if adding a part of the given size would exceed the total size limit.
-func (hc *handoffController) canEnqueue(partSize uint64) bool {
-	if hc.maxTotalSizeBytes == 0 {
-		return true // No limit configured
+// tryReserveSize atomically checks and reserves the given size if within the limit.
+// Returns true and increments currentTotalSize if the size can be reserved.
+// Returns false if adding partSize would exceed maxTotalSizeBytes.
+// Callers must call updateTotalSize(-int64(partSize)) to release on failure.
+func (hc *handoffController) tryReserveSize(partSize uint64) bool {
+	hc.sizeMu.Lock()
+	defer hc.sizeMu.Unlock()
+	if hc.maxTotalSizeBytes > 0 && hc.currentTotalSize+partSize > hc.maxTotalSizeBytes {
+		return false
 	}
-
-	hc.sizeMu.RLock()
-	defer hc.sizeMu.RUnlock()
-	return hc.currentTotalSize+partSize <= hc.maxTotalSizeBytes
+	hc.currentTotalSize += partSize
+	return true
 }
 
 // readPartSizeFromMetadata reads the CompressedSizeBytes from the part's metadata file.
@@ -1210,25 +1212,74 @@ func (hc *handoffController) readPartFromHandoff(nodeAddr string, partID uint64,
 		PartType: partType,
 	}
 
-	// For core parts, read additional metadata from metadata.json if present
-	if partType == PartTypeCore {
-		metadataPath := filepath.Join(partPath, metadataFilename)
-		if metadataBytes, err := hc.fileSystem.Read(metadataPath); err == nil {
-			var pm partMetadata
-			if err := json.Unmarshal(metadataBytes, &pm); err == nil {
-				streamingPart.CompressedSizeBytes = pm.CompressedSizeBytes
-				streamingPart.UncompressedSizeBytes = pm.UncompressedSpanSizeBytes
-				streamingPart.TotalCount = pm.TotalCount
-				streamingPart.BlocksCount = pm.BlocksCount
-				streamingPart.MinTimestamp = pm.MinTimestamp
-				streamingPart.MaxTimestamp = pm.MaxTimestamp
-			}
-		}
-	}
-
 	release := func() {
 		for _, buf := range buffers {
 			bigValuePool.Release(buf)
+		}
+	}
+
+	// For core parts, read additional metadata from metadata.json.
+	if partType == PartTypeCore {
+		metadataPath := filepath.Join(partPath, metadataFilename)
+		metadataBytes, readErr := hc.fileSystem.Read(metadataPath)
+		if readErr != nil {
+			release()
+			return nil, func() {}, fmt.Errorf("failed to read %s: %w", metadataFilename, readErr)
+		}
+		var pm partMetadata
+		if parseErr := json.Unmarshal(metadataBytes, &pm); parseErr != nil {
+			release()
+			return nil, func() {}, fmt.Errorf("failed to parse %s: %w", metadataFilename, parseErr)
+		}
+		streamingPart.CompressedSizeBytes = pm.CompressedSizeBytes
+		streamingPart.UncompressedSizeBytes = pm.UncompressedSpanSizeBytes
+		streamingPart.TotalCount = pm.TotalCount
+		streamingPart.BlocksCount = pm.BlocksCount
+		streamingPart.MinTimestamp = pm.MinTimestamp
+		streamingPart.MaxTimestamp = pm.MaxTimestamp
+	} else {
+		// For sidx parts, read manifest.json and populate timestamps using the same
+		// fallback logic as streaming sync: MinTimestamp pointer → SegmentID legacy → warn.
+		manifestPath := filepath.Join(partPath, "manifest.json")
+		manifestBytes, readErr := hc.fileSystem.Read(manifestPath)
+		if readErr != nil {
+			release()
+			return nil, func() {}, fmt.Errorf("failed to read manifest.json: %w", readErr)
+		}
+		var pm struct {
+			MinTimestamp          *int64 `json:"minTimestamp,omitempty"`
+			MaxTimestamp          *int64 `json:"maxTimestamp,omitempty"`
+			CompressedSizeBytes   uint64 `json:"compressedSizeBytes"`
+			UncompressedSizeBytes uint64 `json:"uncompressedSizeBytes"`
+			TotalCount            uint64 `json:"totalCount"`
+			BlocksCount           uint64 `json:"blocksCount"`
+			MinKey                int64  `json:"minKey"`
+			MaxKey                int64  `json:"maxKey"`
+			SegmentID             int64  `json:"segmentID"`
+		}
+		if parseErr := json.Unmarshal(manifestBytes, &pm); parseErr != nil {
+			release()
+			return nil, func() {}, fmt.Errorf("failed to parse manifest.json: %w", parseErr)
+		}
+		streamingPart.CompressedSizeBytes = pm.CompressedSizeBytes
+		streamingPart.UncompressedSizeBytes = pm.UncompressedSizeBytes
+		streamingPart.TotalCount = pm.TotalCount
+		streamingPart.BlocksCount = pm.BlocksCount
+		streamingPart.MinKey = pm.MinKey
+		streamingPart.MaxKey = pm.MaxKey
+		switch {
+		case pm.MinTimestamp != nil:
+			streamingPart.MinTimestamp = *pm.MinTimestamp
+		case pm.SegmentID > 0:
+			streamingPart.MinTimestamp = pm.SegmentID
+		default:
+			release()
+			return nil, func() {}, fmt.Errorf("sidx part %d has no valid timestamp (MinTimestamp=nil, SegmentID=0)", partID)
+		}
+		if pm.MaxTimestamp != nil {
+			streamingPart.MaxTimestamp = *pm.MaxTimestamp
+		} else {
+			streamingPart.MaxTimestamp = streamingPart.MinTimestamp
 		}
 	}
 

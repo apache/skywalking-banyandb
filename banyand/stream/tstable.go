@@ -290,6 +290,10 @@ func initTSTable(fileSystem fs.FileSystem, rootPath string, p common.Position,
 		for _, id := range loadedSnapshots {
 			fileSystem.MustRMAll(filepath.Join(rootPath, snapshotName(id)))
 		}
+		for _, id := range loadedParts {
+			l.Info().Str("path", partPath(rootPath, id)).Msg("delete orphaned part without snapshot")
+			fileSystem.MustRMAll(partPath(rootPath, id))
+		}
 		return &tst, uint64(time.Now().UnixNano()), nil
 	}
 	sort.Slice(loadedSnapshots, func(i, j int) bool {
@@ -308,6 +312,10 @@ func initTSTable(fileSystem fs.FileSystem, rootPath string, p common.Position,
 			fileSystem.MustRMAll(filepath.Join(rootPath, snapshotName(id)))
 		}
 		return &tst, epoch, nil
+	}
+	for _, id := range loadedParts {
+		l.Info().Str("path", partPath(rootPath, id)).Msg("delete orphaned part after all snapshots failed to load")
+		fileSystem.MustRMAll(partPath(rootPath, id))
 	}
 	return &tst, uint64(time.Now().UnixNano()), nil
 }
