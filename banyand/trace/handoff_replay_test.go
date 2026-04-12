@@ -428,7 +428,6 @@ func createTestSidxPart(t *testing.T, fileSystem fs.FileSystem, root string, par
 		_, err = lf.Write(content)
 		require.NoError(t, err)
 		require.NoError(t, lf.Close())
-=======
 	}
 
 	return partPath
@@ -453,7 +452,6 @@ func TestHandoffController_ReadPartFromHandoff_CoreMetadata(t *testing.T) {
 		"meta.bin":    []byte("meta data"),
 		"metadata.json": []byte(`{"compressedSizeBytes":1024,"uncompressedSpanSizeBytes":2048,` +
 			`"totalCount":50,"blocksCount":5,"minTimestamp":1700000000,"maxTimestamp":1700001000}`),
->>>>>>> 77e23c9a (fix(test): close lock files after writing to prevent FD leaks in tests)
 		"tag.type":       []byte("tag type"),
 		"traceID.filter": []byte("filter"),
 	}
@@ -464,7 +462,52 @@ func TestHandoffController_ReadPartFromHandoff_CoreMetadata(t *testing.T) {
 		_, err = lf.Write(content)
 		require.NoError(t, err)
 		require.NoError(t, lf.Close())
-<<<<<<< HEAD
+	}
+
+	nodeAddr := testNodeAddrPrimary
+	controller, err := newHandoffController(fileSystem, tempDir, nil, []string{nodeAddr}, 0, l, nil)
+	require.NoError(t, err)
+	defer controller.close()
+
+	require.NoError(t, controller.enqueueForNode(nodeAddr, partID, PartTypeCore, partPath, "group1", 1))
+
+	streamingPart, release, err := controller.readPartFromHandoff(nodeAddr, partID, PartTypeCore)
+	require.NoError(t, err)
+	defer release()
+
+	assert.Equal(t, uint64(1024), streamingPart.CompressedSizeBytes)
+	assert.Equal(t, uint64(2048), streamingPart.UncompressedSizeBytes)
+	assert.Equal(t, uint64(50), streamingPart.TotalCount)
+	assert.Equal(t, uint64(5), streamingPart.BlocksCount)
+	assert.Equal(t, int64(1700000000), streamingPart.MinTimestamp)
+	assert.Equal(t, int64(1700001000), streamingPart.MaxTimestamp)
+}
+
+func TestHandoffController_ReadPartFromHandoff_CoreMissingMetadata(t *testing.T) {
+	tempDir, defFn := test.Space(require.New(t))
+	defer defFn()
+
+	fileSystem := fs.NewLocalFileSystem()
+	l := logger.GetLogger("test")
+
+	sourceRoot := filepath.Join(tempDir, "source")
+	fileSystem.MkdirIfNotExist(sourceRoot, storage.DirPerm)
+	partID := uint64(0x61)
+	partPath := filepath.Join(sourceRoot, partName(partID))
+	fileSystem.MkdirIfNotExist(partPath, storage.DirPerm)
+
+	coreFiles := map[string][]byte{
+		"primary.bin": []byte("primary data"),
+		"spans.bin":   []byte("spans data"),
+		"meta.bin":    []byte("meta data"),
+	}
+	for filename, content := range coreFiles {
+		filePath := filepath.Join(partPath, filename)
+		lf, err := fileSystem.CreateLockFile(filePath, storage.FilePerm)
+		require.NoError(t, err)
+		_, err = lf.Write(content)
+		require.NoError(t, err)
+		require.NoError(t, lf.Close())
 	}
 
 	nodeAddr := testNodeAddrPrimary
@@ -505,8 +548,6 @@ func TestHandoffController_ReadPartFromHandoff_CoreInvalidMetadata(t *testing.T)
 		_, err = lf.Write(content)
 		require.NoError(t, err)
 		require.NoError(t, lf.Close())
-<<<<<<< HEAD
-=======
 	}
 
 	nodeAddr := testNodeAddrPrimary
@@ -695,4 +736,3 @@ func TestHandoffController_ReadPartFromHandoff_SidxNoValidTimestamp(t *testing.T
 	require.Error(t, readErr)
 	assert.Contains(t, readErr.Error(), "has no valid timestamp")
 }
->>>>>>> 77e23c9a (fix(test): close lock files after writing to prevent FD leaks in tests)
