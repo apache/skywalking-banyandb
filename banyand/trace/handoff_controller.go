@@ -1273,8 +1273,8 @@ func (hc *handoffController) readPartFromHandoff(nodeAddr string, partID uint64,
 		case pm.SegmentID > 0:
 			streamingPart.MinTimestamp = pm.SegmentID
 		default:
-			hc.l.Warn().Uint64("partID", partID).Str("partType", partType).
-				Msg("sidx handoff replay: part has no valid timestamp (MinTimestamp=nil, SegmentID=0)")
+			release()
+			return nil, func() {}, fmt.Errorf("sidx part %d has no valid timestamp (MinTimestamp=nil, SegmentID=0)", partID)
 		}
 		if pm.MaxTimestamp != nil {
 			streamingPart.MaxTimestamp = *pm.MaxTimestamp

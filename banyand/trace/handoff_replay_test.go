@@ -698,3 +698,37 @@ func TestHandoffController_ReadPartFromHandoff_SidxInvalidManifest(t *testing.T)
 	require.Error(t, readErr)
 	assert.Contains(t, readErr.Error(), "failed to parse manifest.json")
 }
+
+func TestHandoffController_ReadPartFromHandoff_SidxNoValidTimestamp(t *testing.T) {
+	tempDir, defFn := test.Space(require.New(t))
+	defer defFn()
+
+	fileSystem := fs.NewLocalFileSystem()
+	l := logger.GetLogger("test")
+
+	sourceRoot := filepath.Join(tempDir, "source")
+	fileSystem.MkdirIfNotExist(sourceRoot, storage.DirPerm)
+	partID := uint64(0x74)
+
+	// Manifest with no minTimestamp and segmentID=0 (invalid)
+	manifest := []byte(`{
+		"compressedSizeBytes": 128,
+		"totalCount": 5,
+		"blocksCount": 1,
+		"minKey": 1,
+		"maxKey": 10,
+		"segmentID": 0
+	}`)
+	sourcePath := createTestSidxPart(t, fileSystem, sourceRoot, partID, manifest)
+
+	nodeAddr := testNodeAddrPrimary
+	controller, err := newHandoffController(fileSystem, tempDir, nil, []string{nodeAddr}, 0, l, nil)
+	require.NoError(t, err)
+	defer controller.close()
+
+	require.NoError(t, controller.enqueueForNode(nodeAddr, partID, "sidx_trace_id", sourcePath, "group1", 1))
+
+	_, _, readErr := controller.readPartFromHandoff(nodeAddr, partID, "sidx_trace_id")
+	require.Error(t, readErr)
+	assert.Contains(t, readErr.Error(), "has no valid timestamp")
+}
