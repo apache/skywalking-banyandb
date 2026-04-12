@@ -427,6 +427,7 @@ func createTestSidxPart(t *testing.T, fileSystem fs.FileSystem, root string, par
 		require.NoError(t, err)
 		_, err = lf.Write(content)
 		require.NoError(t, err)
+		require.NoError(t, lf.Close())
 	}
 
 	return partPath
@@ -460,6 +461,7 @@ func TestHandoffController_ReadPartFromHandoff_CoreMetadata(t *testing.T) {
 		require.NoError(t, err)
 		_, err = lf.Write(content)
 		require.NoError(t, err)
+		require.NoError(t, lf.Close())
 	}
 
 	nodeAddr := testNodeAddrPrimary
@@ -505,6 +507,7 @@ func TestHandoffController_ReadPartFromHandoff_CoreMissingMetadata(t *testing.T)
 		require.NoError(t, err)
 		_, err = lf.Write(content)
 		require.NoError(t, err)
+		require.NoError(t, lf.Close())
 	}
 
 	nodeAddr := testNodeAddrPrimary
@@ -544,6 +547,7 @@ func TestHandoffController_ReadPartFromHandoff_CoreInvalidMetadata(t *testing.T)
 		require.NoError(t, err)
 		_, err = lf.Write(content)
 		require.NoError(t, err)
+		require.NoError(t, lf.Close())
 	}
 
 	nodeAddr := testNodeAddrPrimary
