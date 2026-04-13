@@ -28,6 +28,7 @@ import (
 
 	"github.com/apache/skywalking-banyandb/fodc/agent/internal/metrics"
 	"github.com/apache/skywalking-banyandb/pkg/logger"
+	"github.com/apache/skywalking-banyandb/pkg/panicdiag"
 )
 
 // MetricsRecorder is an interface for recording metrics.
@@ -182,10 +183,17 @@ func (w *Watchdog) GracefulStop() {
 
 // pollAndForward polls metrics and forwards them to the recorder.
 func (w *Watchdog) pollAndForward() error {
-	rawMetrics, pollErr := w.pollMetrics(w.ctx)
+	ctx := panicdiag.WithBreadcrumb(w.ctx, "poll watchdog metrics", "fodc-watchdog", map[string]string{
+		"endpoint_count": fmt.Sprintf("%d", len(w.urls)),
+	})
+
+	rawMetrics, pollErr := w.pollMetrics(ctx)
 	if pollErr != nil {
 		return fmt.Errorf("failed to poll metrics: %w", pollErr)
 	}
+	ctx = panicdiag.WithBreadcrumb(ctx, "parsed watchdog metrics", "fodc-watchdog", map[string]string{
+		"metric_count": fmt.Sprintf("%d", len(rawMetrics)),
+	})
 
 	if w.recorder == nil {
 		w.log.Error().Int("count", len(rawMetrics)).Msg("No recorder configured, skipping metrics forwarding")
@@ -195,6 +203,9 @@ func (w *Watchdog) pollAndForward() error {
 	if updateErr := w.recorder.Update(rawMetrics); updateErr != nil {
 		return fmt.Errorf("failed to forward metrics to recorder: %w", updateErr)
 	}
+	ctx = panicdiag.WithBreadcrumb(ctx, "forwarded watchdog metrics", "fodc-watchdog", map[string]string{
+		"metric_count": fmt.Sprintf("%d", len(rawMetrics)),
+	})
 
 	w.log.Info().Int("count", len(rawMetrics)).Msg("Successfully polled and forwarded metrics")
 	return nil

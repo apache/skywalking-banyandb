@@ -36,6 +36,7 @@ import (
 	"github.com/apache/skywalking-banyandb/pkg/index"
 	"github.com/apache/skywalking-banyandb/pkg/index/posting/roaring"
 	"github.com/apache/skywalking-banyandb/pkg/logger"
+	"github.com/apache/skywalking-banyandb/pkg/panicdiag"
 	pbv1 "github.com/apache/skywalking-banyandb/pkg/pb/v1"
 	"github.com/apache/skywalking-banyandb/pkg/pool"
 	"github.com/apache/skywalking-banyandb/pkg/query/model"
@@ -82,6 +83,10 @@ type topNQueryOptions struct {
 
 func (m *measure) Query(ctx context.Context, mqo model.MeasureQueryOptions) (mqr model.MeasureQueryResult, err error) {
 	startTime := time.Now()
+	ctx = panicdiag.WithBreadcrumb(ctx, "start measure query", "measure", map[string]string{
+		"group":   m.group,
+		"measure": mqo.Name,
+	})
 	defer func() {
 		if m.queryMetrics != nil {
 			m.queryMetrics.queryLatency.Observe(time.Since(startTime).Seconds())
@@ -114,6 +119,10 @@ func (m *measure) Query(ctx context.Context, mqo model.MeasureQueryOptions) (mqr
 	if len(segments) < 1 {
 		return nilResult, nil
 	}
+	ctx = panicdiag.WithBreadcrumb(ctx, "selected measure segments", "measure", map[string]string{
+		"group":    m.group,
+		"segments": fmt.Sprintf("%d", len(segments)),
+	})
 	segmentsNeedRelease := true
 	defer func() {
 		if !segmentsNeedRelease {
@@ -126,6 +135,10 @@ func (m *measure) Query(ctx context.Context, mqo model.MeasureQueryOptions) (mqr
 
 	if m.schema.IndexMode {
 		segmentsNeedRelease = false
+		ctx = panicdiag.WithBreadcrumb(ctx, "build indexed measure query result", "measure", map[string]string{
+			"group":   m.group,
+			"measure": mqo.Name,
+		})
 		return m.buildIndexQueryResult(ctx, mqo, segments)
 	}
 
@@ -148,6 +161,10 @@ func (m *measure) Query(ctx context.Context, mqo model.MeasureQueryOptions) (mqr
 	if len(sids) < 1 {
 		return nilResult, nil
 	}
+	ctx = panicdiag.WithBreadcrumb(ctx, "resolved measure series", "measure", map[string]string{
+		"group":  m.group,
+		"series": fmt.Sprintf("%d", len(sids)),
+	})
 	result := queryResult{
 		ctx:              ctx,
 		qm:               m.queryMetrics,
@@ -203,6 +220,10 @@ func (m *measure) Query(ctx context.Context, mqo model.MeasureQueryOptions) (mqr
 		result.snapshots = append(result.snapshots, s)
 	}
 
+	ctx = panicdiag.WithBreadcrumb(ctx, "search measure blocks", "measure", map[string]string{
+		"group": m.group,
+		"parts": fmt.Sprintf("%d", len(parts)),
+	})
 	if err = m.searchBlocks(ctx, &result, sids, parts, qo); err != nil {
 		return nil, err
 	}

@@ -33,6 +33,7 @@ type PanicRecord struct {
 	PanicValue      string            `json:"panicValue"`
 	Recovered       bool              `json:"recovered"`
 	GoroutineStack  string            `json:"goroutineStack"`
+	Breadcrumbs     []Breadcrumb      `json:"breadcrumbs,omitempty"`
 	ProcessMetadata map[string]string `json:"processMetadata,omitempty"`
 }
 
@@ -53,3 +54,11 @@ type RecoveryResult struct {
 
 // Reporter receives the result of a recovered panic.
 type Reporter func(context.Context, RecoveryResult)
+
+// Breadcrumb stores a semantic execution marker attached to a context.
+type Breadcrumb struct {
+	Time      time.Time         `json:"time"`
+	Stage     string            `json:"stage"`
+	Component string            `json:"component,omitempty"`
+	Fields    map[string]string `json:"fields,omitempty"`
+}

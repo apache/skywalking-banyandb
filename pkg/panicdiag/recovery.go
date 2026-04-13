@@ -52,6 +52,7 @@ func WithRecovery(ctx context.Context, opts RecoveryOptions, reporter Reporter, 
 			PanicValue:      fmt.Sprint(panicValue),
 			Recovered:       true,
 			GoroutineStack:  string(debug.Stack()),
+			Breadcrumbs:     BreadcrumbsFromContext(ctx),
 			ProcessMetadata: cloneStringMap(opts.ProcessMetadata),
 		}
 

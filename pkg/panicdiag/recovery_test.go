@@ -56,8 +56,11 @@ func TestWithRecoveryRecoversAndWritesArtifacts(t *testing.T) {
 	artifactRoot := t.TempDir()
 	counter := &fakeCounter{}
 	reported := make(chan RecoveryResult, 1)
+	ctx := WithBreadcrumb(context.Background(), "poll metrics", "watchdog", map[string]string{
+		"endpoint_count": "1",
+	})
 
-	WithRecovery(context.Background(), RecoveryOptions{
+	WithRecovery(ctx, RecoveryOptions{
 		Component:    "watchdog",
 		ArtifactRoot: artifactRoot,
 		Counter:      counter,
@@ -80,6 +83,12 @@ func TestWithRecoveryRecoversAndWritesArtifacts(t *testing.T) {
 		}
 		if result.Record.PanicValue != "boom" {
 			t.Fatalf("panic value mismatch: got %s", result.Record.PanicValue)
+		}
+		if len(result.Record.Breadcrumbs) != 1 {
+			t.Fatalf("breadcrumb count mismatch: got %d want 1", len(result.Record.Breadcrumbs))
+		}
+		if result.Record.Breadcrumbs[0].Stage != "poll metrics" {
+			t.Fatalf("breadcrumb stage mismatch: got %s", result.Record.Breadcrumbs[0].Stage)
 		}
 		if !strings.Contains(result.Record.GoroutineStack, "TestWithRecoveryRecoversAndWritesArtifacts") {
 			t.Fatalf("stack missing test frame: %s", result.Record.GoroutineStack)
