@@ -27,6 +27,7 @@ import (
 	"github.com/apache/skywalking-banyandb/pkg/cgroups"
 	"github.com/apache/skywalking-banyandb/pkg/config"
 	"github.com/apache/skywalking-banyandb/pkg/logger"
+	"github.com/apache/skywalking-banyandb/pkg/panicdiag"
 	"github.com/apache/skywalking-banyandb/pkg/run"
 	"github.com/apache/skywalking-banyandb/pkg/version"
 )
@@ -43,6 +44,7 @@ const logo = `
 // NewRoot returns a root command.
 func NewRoot(runners ...run.Unit) *cobra.Command {
 	logging := logger.Logging{}
+	crashOutputConfig := panicdiag.NewCrashOutputConfig()
 	cmd := &cobra.Command{
 		DisableAutoGenTag: true,
 		Version:           version.Build(),
@@ -52,6 +54,9 @@ BanyanDB, as an observability database, aims to ingest, analyze and store Metric
 `,
 		PersistentPreRunE: func(cmd *cobra.Command, _ []string) (err error) {
 			fmt.Print(logo)
+			if err = crashOutputConfig.InstallGlobalCrashOutput(); err != nil {
+				return err
+			}
 			if err = config.Load("logging", cmd.Flags()); err != nil {
 				return err
 			}
@@ -72,6 +77,7 @@ BanyanDB, as an observability database, aims to ingest, analyze and store Metric
 	cmd.PersistentFlags().StringVar(&logging.Level, "logging-level", "info", "the root level of logging")
 	cmd.PersistentFlags().StringSliceVar(&logging.Modules, "logging-modules", nil, "the specific module")
 	cmd.PersistentFlags().StringSliceVar(&logging.Levels, "logging-levels", nil, "the level logging of logging")
+	crashOutputConfig.RegisterFlags(cmd.PersistentFlags())
 	cmd.AddCommand(newStandaloneCmd(runners...))
 	cmd.AddCommand(newDataCmd(runners...))
 	cmd.AddCommand(newLiaisonCmd(runners...))
