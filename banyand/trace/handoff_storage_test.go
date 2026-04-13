@@ -627,6 +627,70 @@ func TestHandoffController_FiltersNonOwningOfflineNodes(t *testing.T) {
 	tester.True(os.IsNotExist(statErr), "expected no queue directory to be created for non-owning node")
 }
 
+func TestHandoffController_OnlineNodeSkipsStaleHealthCheck(t *testing.T) {
+	tester := require.New(t)
+	tempDir, deferFunc := test.Space(tester)
+	defer deferFunc()
+
+	lfs := fs.NewLocalFileSystem()
+	l := logger.GetLogger("test")
+	dataNodes := []string{"node1:17912", "node2:17912"}
+	const groupName = "group1"
+	const shardID uint32 = 0
+
+	resolver := func(string, uint32) ([]string, error) {
+		return dataNodes, nil
+	}
+
+	// Health check reports only node1 (simulating stale health after node2 restart).
+	queueClient := &fakeQueueClient{healthy: []string{"node1:17912"}}
+	hc, err := newHandoffController(lfs, tempDir, queueClient, dataNodes, 0, l, resolver)
+	tester.NoError(err)
+	defer hc.close()
+
+	// Both nodes are in the syncer's target list, but health check is stale for node2.
+	offline := hc.calculateOfflineNodes(
+		[]string{"node1:17912", "node2:17912"},
+		groupName,
+		common.ShardID(shardID),
+	)
+	tester.Len(offline, 0,
+		"expected no offline nodes when both are in the syncer target list, even with stale health check")
+}
+
+// TestHandoffController_OfflineNodeNotInOnlineSet verifies that a node NOT in the syncer's
+// target list and reported unhealthy is correctly classified as offline.
+func TestHandoffController_OfflineNodeNotInOnlineSet(t *testing.T) {
+	tester := require.New(t)
+	tempDir, deferFunc := test.Space(tester)
+	defer deferFunc()
+
+	lfs := fs.NewLocalFileSystem()
+	l := logger.GetLogger("test")
+	dataNodes := []string{"node1:17912", "node2:17912"}
+	const groupName = "group1"
+	const shardID uint32 = 0
+
+	resolver := func(string, uint32) ([]string, error) {
+		return dataNodes, nil
+	}
+
+	// Health check reports only node1 — node2 is offline.
+	queueClient := &fakeQueueClient{healthy: []string{"node1:17912"}}
+	hc, err := newHandoffController(lfs, tempDir, queueClient, dataNodes, 0, l, resolver)
+	tester.NoError(err)
+	defer hc.close()
+
+	// Only node1 is in the syncer's target list (simulating registry before AddNode).
+	offline := hc.calculateOfflineNodes(
+		[]string{"node1:17912"},
+		groupName,
+		common.ShardID(shardID),
+	)
+	tester.Len(offline, 1)
+	tester.Equal("node2:17912", offline[0])
+}
+
 // TestHandoffController_SizeRecovery verifies that total size is correctly calculated on restart.
 func TestHandoffController_SizeRecovery(t *testing.T) {
 	tester := require.New(t)

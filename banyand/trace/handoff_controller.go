@@ -467,14 +467,12 @@ func (hc *handoffController) calculateOfflineNodes(onlineNodes []string, group s
 			continue
 		}
 		seen[node] = struct{}{}
-		if !hc.isNodeHealthy(node) {
-			offlineNodes = append(offlineNodes, node)
+		// Online nodes are delivered by the syncer; only enqueue truly offline nodes.
+		if _, isOnline := onlineSet[node]; isOnline {
 			continue
 		}
-		if len(onlineSet) > 0 {
-			if _, isOnline := onlineSet[node]; !isOnline {
-				offlineNodes = append(offlineNodes, node)
-			}
+		if !hc.isNodeHealthy(node) {
+			offlineNodes = append(offlineNodes, node)
 			continue
 		}
 		if hc.tire2Client == nil {
