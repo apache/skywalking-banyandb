@@ -19,6 +19,7 @@ package grpc
 
 import (
 	"fmt"
+	"sort"
 	"sync"
 
 	"github.com/pkg/errors"
@@ -78,6 +79,9 @@ func (n *clusterNodeService) Locate(group, name string, shardID, replicaID uint3
 }
 
 func (n *clusterNodeService) LocateAll(group string, shardID uint32, replicas int) ([]string, error) {
+	if replicas < 1 {
+		return nil, fmt.Errorf("replicas must be >= 1, got %d", replicas)
+	}
 	nodeSet := make(map[string]struct{}, replicas)
 	for replica := 0; replica < replicas; replica++ {
 		nodeID, err := n.Locate(group, "", shardID, uint32(replica))
@@ -90,6 +94,7 @@ func (n *clusterNodeService) LocateAll(group string, shardID uint32, replicas in
 	for nodeID := range nodeSet {
 		nodes = append(nodes, nodeID)
 	}
+	sort.Strings(nodes)
 	return nodes, nil
 }
 
