@@ -19,10 +19,13 @@ package watchdog
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"path/filepath"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -33,6 +36,7 @@ import (
 
 	"github.com/apache/skywalking-banyandb/fodc/agent/internal/flightrecorder"
 	"github.com/apache/skywalking-banyandb/fodc/agent/internal/metrics"
+	"github.com/apache/skywalking-banyandb/pkg/panicdiag"
 )
 
 const testMetricsCPUUsage = "cpu_usage 75.5"
@@ -86,6 +90,12 @@ func (m *mockMetricsRecorder) SetUpdateErrors(errors []error) {
 	defer m.mu.Unlock()
 
 	m.updateErrors = errors
+}
+
+type panicMetricsRecorder struct{}
+
+func (panicMetricsRecorder) Update(_ []metrics.RawMetric) error {
+	panic("recorder panic")
 }
 
 func TestNewWatchdogWithConfig(t *testing.T) {
@@ -515,6 +525,51 @@ func TestWatchdog_GracefulStop_NotRunning(t *testing.T) {
 
 	// Should be able to stop multiple times without issue
 	wd.GracefulStop()
+}
+
+func TestWatchdog_Serve_PanicWritesStateDump(t *testing.T) {
+	metricsText := testMetricsCPUUsage
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte(metricsText))
+	}))
+	defer server.Close()
+
+	artifactRoot := t.TempDir()
+	wd := NewWatchdogWithConfig(panicMetricsRecorder{}, []string{server.URL}, 10*time.Millisecond, "datanode-cold", "pod-1", []string{"data"})
+	wd.panicRootDir = artifactRoot
+
+	preRunErr := wd.PreRun(context.Background())
+	require.NoError(t, preRunErr)
+
+	stopCh := wd.Serve()
+	select {
+	case <-stopCh:
+	case <-time.After(3 * time.Second):
+		t.Fatal("watchdog panic did not stop in time")
+	}
+
+	entries, err := os.ReadDir(artifactRoot)
+	require.NoError(t, err)
+	require.Len(t, entries, 1)
+
+	artifactDir := filepath.Join(artifactRoot, entries[0].Name())
+	panicRecordPath := filepath.Join(artifactDir, "panic.json")
+	deepDumpPath := filepath.Join(artifactDir, "deep-dump.json")
+
+	recordData, err := os.ReadFile(panicRecordPath)
+	require.NoError(t, err)
+	var record panicdiag.PanicRecord
+	require.NoError(t, json.Unmarshal(recordData, &record))
+	require.NotNil(t, record.StateDump)
+	assert.Contains(t, record.PanicValue, "recorder panic")
+	assert.NotEmpty(t, record.StateDump.Path)
+	assert.Equal(t, deepDumpPath, record.StateDump.Path)
+
+	deepDumpData, err := os.ReadFile(deepDumpPath)
+	require.NoError(t, err)
+	assert.Contains(t, string(deepDumpData), `"podName": "pod-1"`)
+	assert.Contains(t, string(deepDumpData), `"nodeRole": "datanode-cold"`)
 }
 
 func TestWatchdog_HTTPClientConnectionReuse(t *testing.T) {

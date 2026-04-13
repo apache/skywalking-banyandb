@@ -74,13 +74,7 @@ func (aw *ArtifactWriter) Write(record *PanicRecord) (string, error) {
 		return "", fmt.Errorf("create artifact dir: %w", err)
 	}
 
-	recordPath := filepath.Join(artifactDir, panicRecordFileName)
-	recordData, marshalErr := json.MarshalIndent(record, "", "  ")
-	if marshalErr != nil {
-		return "", fmt.Errorf("marshal panic record: %w", marshalErr)
-	}
-	recordData = append(recordData, '\n')
-	if writeErr := os.WriteFile(recordPath, recordData, 0o644); writeErr != nil {
+	if writeErr := aw.rewritePanicRecord(artifactDir, record); writeErr != nil {
 		return "", fmt.Errorf("write panic record: %w", writeErr)
 	}
 
@@ -91,6 +85,36 @@ func (aw *ArtifactWriter) Write(record *PanicRecord) (string, error) {
 	}
 
 	return artifactDir, nil
+}
+
+func (aw *ArtifactWriter) rewritePanicRecord(artifactDir string, record *PanicRecord) error {
+	recordPath := filepath.Join(artifactDir, panicRecordFileName)
+	recordData, marshalErr := json.MarshalIndent(record, "", "  ")
+	if marshalErr != nil {
+		return fmt.Errorf("marshal panic record: %w", marshalErr)
+	}
+	recordData = append(recordData, '\n')
+	if writeErr := os.WriteFile(recordPath, recordData, 0o644); writeErr != nil {
+		return fmt.Errorf("write panic record: %w", writeErr)
+	}
+	return nil
+}
+
+// WriteStateDump persists a deep state dump into an existing artifact directory.
+func (aw *ArtifactWriter) WriteStateDump(artifactDir string, value any, limitBytes int64) (bool, string, error) {
+	if aw == nil {
+		return false, "", fmt.Errorf("artifact writer is nil")
+	}
+	if artifactDir == "" {
+		return false, "", fmt.Errorf("artifact dir is empty")
+	}
+
+	dumpPath := filepath.Join(artifactDir, deepDumpFileName)
+	truncated, err := NewBoundedStateWriter().WriteJSON(dumpPath, value, limitBytes)
+	if err != nil {
+		return truncated, dumpPath, err
+	}
+	return truncated, dumpPath, nil
 }
 
 func (aw *ArtifactWriter) dirName(component string, occurredAt time.Time) string {

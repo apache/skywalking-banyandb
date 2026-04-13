@@ -19,6 +19,7 @@ package panicdiag
 
 import (
 	"context"
+	"errors"
 	"os"
 	"path/filepath"
 	"strings"
@@ -48,6 +49,18 @@ func (f *fakeCounter) Delete(labelValues ...string) bool {
 	f.deleteCalls++
 	f.lastLabels = append([]string(nil), labelValues...)
 	return true
+}
+
+type fakeStateDumper struct {
+	state any
+	err   error
+}
+
+func (f fakeStateDumper) DumpState(_ context.Context) (any, error) {
+	if f.err != nil {
+		return nil, f.err
+	}
+	return f.state, nil
 }
 
 func TestWithRecoveryRecoversAndWritesArtifacts(t *testing.T) {
@@ -102,6 +115,9 @@ func TestWithRecoveryRecoversAndWritesArtifacts(t *testing.T) {
 		if _, err := os.Stat(filepath.Join(result.ArtifactDir, crashTextFileName)); err != nil {
 			t.Fatalf("missing crash summary file: %v", err)
 		}
+		if result.Record.StateDump != nil {
+			t.Fatalf("unexpected state dump status: %#v", result.Record.StateDump)
+		}
 	default:
 		t.Fatal("expected recovery reporter to be called")
 	}
@@ -114,6 +130,66 @@ func TestWithRecoveryRecoversAndWritesArtifacts(t *testing.T) {
 	}
 	if len(counter.lastLabels) != 1 || counter.lastLabels[0] != "watchdog" {
 		t.Fatalf("counter labels mismatch: got %v", counter.lastLabels)
+	}
+}
+
+func TestWithRecoveryWritesStateDump(t *testing.T) {
+	t.Helper()
+
+	artifactRoot := t.TempDir()
+	reported := make(chan RecoveryResult, 1)
+
+	WithRecovery(context.Background(), RecoveryOptions{
+		Component:       "watchdog",
+		ArtifactRoot:    artifactRoot,
+		StateDumper:     fakeStateDumper{state: map[string]string{"pod": "banyand-0"}},
+		StateLimitBytes: 1024,
+	}, func(_ context.Context, result RecoveryResult) {
+		reported <- result
+	}, func(_ context.Context) {
+		panic("boom")
+	})
+
+	result := <-reported
+	if result.Record == nil || result.Record.StateDump == nil {
+		t.Fatal("expected state dump status")
+	}
+	if result.Record.StateDump.Error != "" {
+		t.Fatalf("unexpected state dump error: %s", result.Record.StateDump.Error)
+	}
+	if result.Record.StateDump.Truncated {
+		t.Fatal("state dump should not be truncated")
+	}
+	data, err := os.ReadFile(filepath.Join(result.ArtifactDir, deepDumpFileName))
+	if err != nil {
+		t.Fatalf("read deep dump: %v", err)
+	}
+	if !strings.Contains(string(data), `"pod": "banyand-0"`) {
+		t.Fatalf("unexpected deep dump content: %s", string(data))
+	}
+}
+
+func TestWithRecoveryStateDumpFailureRecorded(t *testing.T) {
+	t.Helper()
+
+	reported := make(chan RecoveryResult, 1)
+	WithRecovery(context.Background(), RecoveryOptions{
+		Component:       "watchdog",
+		ArtifactRoot:    t.TempDir(),
+		StateDumper:     fakeStateDumper{err: errors.New("snapshot failed")},
+		StateLimitBytes: 1024,
+	}, func(_ context.Context, result RecoveryResult) {
+		reported <- result
+	}, func(_ context.Context) {
+		panic("boom")
+	})
+
+	result := <-reported
+	if result.Record == nil || result.Record.StateDump == nil {
+		t.Fatal("expected state dump status")
+	}
+	if result.Record.StateDump.Error != "snapshot failed" {
+		t.Fatalf("unexpected state dump error: %s", result.Record.StateDump.Error)
 	}
 }
 

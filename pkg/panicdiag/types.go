@@ -34,6 +34,7 @@ type PanicRecord struct {
 	Recovered       bool              `json:"recovered"`
 	GoroutineStack  string            `json:"goroutineStack"`
 	Breadcrumbs     []Breadcrumb      `json:"breadcrumbs,omitempty"`
+	StateDump       *StateDumpStatus  `json:"stateDump,omitempty"`
 	ProcessMetadata map[string]string `json:"processMetadata,omitempty"`
 }
 
@@ -43,6 +44,8 @@ type RecoveryOptions struct {
 	ArtifactRoot    string
 	Counter         meter.Counter
 	Logger          *logger.Logger
+	StateDumper     StateDumper
+	StateLimitBytes int64
 	ProcessMetadata map[string]string
 }
 
@@ -55,10 +58,22 @@ type RecoveryResult struct {
 // Reporter receives the result of a recovered panic.
 type Reporter func(context.Context, RecoveryResult)
 
+// StateDumper returns a bounded diagnostic snapshot after a recovered panic.
+type StateDumper interface {
+	DumpState(context.Context) (any, error)
+}
+
 // Breadcrumb stores a semantic execution marker attached to a context.
 type Breadcrumb struct {
 	Time      time.Time         `json:"time"`
 	Stage     string            `json:"stage"`
 	Component string            `json:"component,omitempty"`
 	Fields    map[string]string `json:"fields,omitempty"`
+}
+
+// StateDumpStatus describes the result of deep state serialization.
+type StateDumpStatus struct {
+	Path      string `json:"path,omitempty"`
+	Truncated bool   `json:"truncated,omitempty"`
+	Error     string `json:"error,omitempty"`
 }

@@ -62,6 +62,7 @@ type Watchdog struct {
 	mu           sync.RWMutex
 	wg           sync.WaitGroup
 	isRunning    bool
+	panicRootDir string
 }
 
 // NewWatchdogWithConfig creates a new Watchdog instance with specified configuration.
@@ -77,6 +78,7 @@ func NewWatchdogWithConfig(recorder MetricsRecorder, urls []string, interval tim
 		nodeRole:       nodeRole,
 		podName:        podName,
 		containerNames: containerNames,
+		panicRootDir:   "",
 	}
 }
 
@@ -127,32 +129,64 @@ func (w *Watchdog) Serve() <-chan struct{} {
 	go func() {
 		defer w.wg.Done()
 		defer close(stopCh)
+		panicdiag.WithRecovery(w.ctx, panicdiag.RecoveryOptions{
+			Component:    "fodc-watchdog",
+			ArtifactRoot: w.panicRootDir,
+			Logger:       w.log,
+			StateDumper:  watchdogStateDumper{watchdog: w},
+			ProcessMetadata: map[string]string{
+				"pod_name":  w.podName,
+				"node_role": w.nodeRole,
+			},
+		}, nil, func(_ context.Context) {
+			ticker := time.NewTicker(w.interval)
+			defer ticker.Stop()
 
-		ticker := time.NewTicker(w.interval)
-		defer ticker.Stop()
+			w.log.Info().Msg("Starting watchdog polling loop")
+			if pollErr := w.pollAndForward(); pollErr != nil {
+				w.log.Warn().Err(pollErr).Msg("Initial metrics poll failed")
+			} else {
+				w.log.Info().Msg("Initial metrics poll succeeded")
+			}
 
-		w.log.Info().Msg("Starting watchdog polling loop")
-		if pollErr := w.pollAndForward(); pollErr != nil {
-			w.log.Warn().Err(pollErr).Msg("Initial metrics poll failed")
-		} else {
-			w.log.Info().Msg("Initial metrics poll succeeded")
-		}
-
-		for {
-			select {
-			case <-w.ctx.Done():
-				w.log.Info().Msg("Watchdog stopping")
-				return
-			case <-ticker.C:
-				w.log.Info().Msg("Starting metrics poll")
-				if pollErr := w.pollAndForward(); pollErr != nil {
-					w.log.Warn().Err(pollErr).Msg("Metrics poll failed")
+			for {
+				select {
+				case <-w.ctx.Done():
+					w.log.Info().Msg("Watchdog stopping")
+					return
+				case <-ticker.C:
+					w.log.Info().Msg("Starting metrics poll")
+					if pollErr := w.pollAndForward(); pollErr != nil {
+						w.log.Warn().Err(pollErr).Msg("Metrics poll failed")
+					}
 				}
 			}
-		}
+		})
 	}()
 
 	return stopCh
+}
+
+type watchdogStateDumper struct {
+	watchdog *Watchdog
+}
+
+func (w watchdogStateDumper) DumpState(_ context.Context) (any, error) {
+	if w.watchdog == nil {
+		return nil, fmt.Errorf("watchdog is nil")
+	}
+	w.watchdog.mu.RLock()
+	defer w.watchdog.mu.RUnlock()
+
+	return map[string]any{
+		"podName":        w.watchdog.podName,
+		"nodeRole":       w.watchdog.nodeRole,
+		"urls":           append([]string(nil), w.watchdog.urls...),
+		"containerNames": append([]string(nil), w.watchdog.containerNames...),
+		"interval":       w.watchdog.interval.String(),
+		"retryBackoff":   w.watchdog.retryBackoff.String(),
+		"isRunning":      w.watchdog.isRunning,
+	}, nil
 }
 
 // GracefulStop gracefully stops the watchdog polling loop.
