@@ -13,7 +13,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-{{- contains . }}
+{{- contains (. | noDuplicates) }}
 - traceid: {{ notEmpty .traceid }}
   instanceid: {{ notEmpty .instanceid }}
   instancename: provider1
@@ -22,7 +22,7 @@
   duration: {{ gt .duration 0 }}
   start: "{{ notEmpty .start }}"
   spans:
-  {{- contains .spans}}
+  {{- contains (.spans | noDuplicates) }}
   - spanid: {{ ge .spanid 0 }}
     parentspanid: {{ .parentspanid }}
     segmentid: {{ notEmpty .segmentid }}

@@ -15,7 +15,7 @@
 
 debuggingtrace: null
 traces:
-{{- contains .traces }}
+{{- contains (.traces | noDuplicates) }}
 - segmentid: {{ notEmpty .segmentid }}
   endpointnames:
     - /dubbox-case/case/dubbox-rest/404-test
