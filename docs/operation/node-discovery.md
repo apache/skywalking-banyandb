@@ -7,13 +7,38 @@ Node discovery enables BanyanDB nodes to locate and communicate with each other 
 1. **Request Routing**: When liaison nodes need to send requests to data nodes for query/write execution.
 2. **Data Migration**: When the lifecycle service queries the node list to perform shard migration and rebalancing.
 
-BanyanDB supports three discovery mechanisms to accommodate different deployment environments:
+BanyanDB supports four discovery mechanisms to accommodate different deployment environments:
 
+- **None Discovery**: Default mode. No service discovery infrastructure is needed. Suitable for standalone deployments.
 - **Etcd-based Discovery**: Traditional distributed consensus approach suitable for VM deployments and multi-cloud scenarios.
 - **DNS-based Discovery**: Cloud-native solution leveraging Kubernetes service discovery infrastructure.
 - **File-based Discovery**: Static configuration file approach for simple deployments and testing environments.
 
 This document provides guidance on configuring and operating all discovery modes.
+
+> **Note**: As of 0.10.0, the default node discovery mode is `none`. Cluster deployments must explicitly configure a discovery mode (`etcd`, `dns`, or `file`). See [Upgrading to 0.10](upgrade.md) for migration notes.
+
+## None Mode
+
+### Overview
+
+None mode is the default discovery mode since 0.10.0. In this mode, nodes do not perform any service discovery. This is suitable for standalone deployments and single-node setups where no inter-node communication is needed.
+
+### Configuration
+
+```shell
+# None mode is the default; no additional flags are required
+banyand standalone
+
+# Explicitly set none mode (equivalent to default)
+banyand data --node-discovery-mode=none
+```
+
+### When to Use None Mode
+
+- **Standalone deployments**: The single process handles all roles internally.
+- **Single-node setups**: No other nodes need to be discovered.
+- **Development and testing**: No external infrastructure dependencies.
 
 ## Etcd-Based Discovery
 
@@ -388,6 +413,12 @@ When the service starts:
 - File deleted → keep existing cache, log error
 
 ## Choosing a Discovery Mode
+
+### None Mode - Best For
+
+- Standalone and single-node deployments (default mode)
+- Development and testing environments
+- No infrastructure dependencies
 
 ### Etcd Mode - Best For
 
