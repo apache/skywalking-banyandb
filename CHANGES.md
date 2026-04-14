@@ -10,6 +10,7 @@ Release Notes.
 - Collect BanyanDB data on e2e test failure for CI debugging.
 - Add log query e2e test.
 - Sync lifecycle e2e test from SkyWalking stages test.
+- Add `noDuplicates` verification to all e2e expected files to detect duplicate data in query results.
 - Add periodic health check for property schema connection.
 - Persist segment end time in per-segment metadata so boundaries don't shift across restarts or config changes.
 - [Breaking Change] Remove etcd components. The property-based schema registry is now the only supported mode. 
