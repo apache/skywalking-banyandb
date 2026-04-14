@@ -30,7 +30,7 @@ nodes:
   isreal: true
 {{- end }}
 calls:
-{{- contains (.calls | noDuplicates) }}
+{{- contains .calls }}
 - source: {{ b64enc "e2e-service-consumer" }}.1_{{ b64enc "POST:/users" }}
   sourcecomponents: []
   target: {{ b64enc "e2e-service-provider" }}.1_{{ b64enc "POST:/users" }}

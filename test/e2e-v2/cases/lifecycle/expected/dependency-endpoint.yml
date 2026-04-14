@@ -36,7 +36,7 @@ nodes:
   isreal: false
 {{- end }}
 calls:
-{{- contains (.calls | noDuplicates) }}
+{{- contains .calls }}
 - source: {{ b64enc "mock_a_service" }}.1_{{ b64enc "/dubbox-case/case/dubbox-rest/404-test" }}
   sourcecomponents: []
   target: {{ b64enc "mock_b_service" }}.1_{{ b64enc "org.skywaking.apm.testcase.dubbo.services.GreetServiceImpl.doBusiness()" }}
