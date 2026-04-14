@@ -19,6 +19,9 @@ package server
 
 import (
 	"context"
+	"encoding/json"
+	"net/http"
+	"net/http/httptest"
 	"testing"
 	"time"
 
@@ -30,11 +33,24 @@ import (
 	"github.com/apache/skywalking-banyandb/fodc/agent/internal/flightrecorder"
 )
 
+type stubCollectionProvider struct {
+	payload []map[string]any
+	err     error
+}
+
+func (s stubCollectionProvider) MarshalCollections() ([]byte, error) {
+	if s.err != nil {
+		return nil, s.err
+	}
+	return json.Marshal(s.payload)
+}
+
 func TestNewServer_ValidConfig(t *testing.T) {
 	config := Config{
-		ListenAddr:        ":9090",
-		ReadHeaderTimeout: 5 * time.Second,
-		ShutdownTimeout:   10 * time.Second,
+		ListenAddr:          ":9090",
+		DiagnosisListenAddr: ":9091",
+		ReadHeaderTimeout:   5 * time.Second,
+		ShutdownTimeout:     10 * time.Second,
 	}
 
 	server, err := NewServer(config)
@@ -42,6 +58,7 @@ func TestNewServer_ValidConfig(t *testing.T) {
 	require.NoError(t, err)
 	assert.NotNil(t, server)
 	assert.Equal(t, ":9090", server.GetListenAddr())
+	assert.Equal(t, ":9091", server.GetDiagnosisListenAddr())
 	assert.False(t, server.IsStarted())
 	assert.Equal(t, config.ReadHeaderTimeout, server.config.ReadHeaderTimeout)
 	assert.Equal(t, config.ShutdownTimeout, server.config.ShutdownTimeout)
@@ -56,6 +73,7 @@ func TestNewServer_DefaultTimeouts(t *testing.T) {
 
 	require.NoError(t, err)
 	assert.NotNil(t, server)
+	assert.Equal(t, ":9090", server.GetDiagnosisListenAddr())
 	assert.Equal(t, defaultReadHeaderTimeout, server.config.ReadHeaderTimeout)
 	assert.Equal(t, defaultShutdownTimeout, server.config.ShutdownTimeout)
 }
@@ -89,7 +107,7 @@ func TestServer_StartStop(t *testing.T) {
 	datasourceCollector := exporter.NewDatasourceCollector(fr)
 
 	// Start the server
-	errCh, startErr := server.Start(registry, datasourceCollector)
+	errCh, startErr := server.Start(registry, datasourceCollector, nil)
 	require.NoError(t, startErr)
 	assert.True(t, server.IsStarted())
 
@@ -124,12 +142,12 @@ func TestServer_Start_AlreadyStarted(t *testing.T) {
 	datasourceCollector := exporter.NewDatasourceCollector(fr)
 
 	// Start the server first time
-	_, startErr := server.Start(registry, datasourceCollector)
+	_, startErr := server.Start(registry, datasourceCollector, nil)
 	require.NoError(t, startErr)
 	assert.True(t, server.IsStarted())
 
 	// Try to start again - should fail
-	_, startErr2 := server.Start(registry, datasourceCollector)
+	_, startErr2 := server.Start(registry, datasourceCollector, nil)
 	assert.Error(t, startErr2)
 	assert.Contains(t, startErr2.Error(), "server is already started")
 
@@ -166,7 +184,7 @@ func TestServer_Start_RegistryAlreadyHasCollector(t *testing.T) {
 	datasourceCollector := exporter.NewDatasourceCollector(fr)
 
 	// First start should work
-	errCh, startErr := server.Start(registry, datasourceCollector)
+	errCh, startErr := server.Start(registry, datasourceCollector, nil)
 	require.NoError(t, startErr)
 	assert.True(t, server.IsStarted())
 
@@ -211,7 +229,7 @@ func TestServer_IsStarted(t *testing.T) {
 	datasourceCollector := exporter.NewDatasourceCollector(fr)
 
 	// Start the server
-	_, startErr := server.Start(registry, datasourceCollector)
+	_, startErr := server.Start(registry, datasourceCollector, nil)
 	require.NoError(t, startErr)
 	assert.True(t, server.IsStarted())
 
@@ -219,4 +237,67 @@ func TestServer_IsStarted(t *testing.T) {
 	stopErr := server.Stop(context.Background())
 	require.NoError(t, stopErr)
 	assert.False(t, server.IsStarted())
+}
+
+func TestServer_CollectionsEndpoint(t *testing.T) {
+	config := Config{
+		ListenAddr:        "localhost:0",
+		ReadHeaderTimeout: time.Second,
+		ShutdownTimeout:   time.Second,
+	}
+
+	server, err := NewServer(config)
+	require.NoError(t, err)
+
+	registry := prometheus.NewRegistry()
+	fr := flightrecorder.NewFlightRecorder(1000)
+	datasourceCollector := exporter.NewDatasourceCollector(fr)
+	provider := stubCollectionProvider{
+		payload: []map[string]any{
+			{
+				"artifactDir": "/crash/one",
+				"collector":   "fodc-agent",
+			},
+		},
+	}
+
+	errCh, startErr := server.Start(registry, datasourceCollector, provider)
+	require.NoError(t, startErr)
+	defer func() {
+		require.NoError(t, server.Stop(context.Background()))
+		select {
+		case serverErr := <-errCh:
+			t.Fatalf("unexpected server error: %v", serverErr)
+		default:
+		}
+	}()
+
+	request := httptest.NewRequest(http.MethodGet, "http://example/collections", nil)
+	recorder := httptest.NewRecorder()
+	server.diagnosisServer.Handler.ServeHTTP(recorder, request)
+
+	require.Equal(t, http.StatusOK, recorder.Code)
+	var payload []map[string]any
+	require.NoError(t, json.NewDecoder(recorder.Body).Decode(&payload))
+	require.Len(t, payload, 1)
+	assert.Equal(t, "/crash/one", payload[0]["artifactDir"])
+}
+
+func TestCollectionsHandlerMethodNotAllowed(t *testing.T) {
+	server, err := NewServer(Config{ListenAddr: "localhost:0"})
+	require.NoError(t, err)
+
+	registry := prometheus.NewRegistry()
+	fr := flightrecorder.NewFlightRecorder(1000)
+	datasourceCollector := exporter.NewDatasourceCollector(fr)
+	_, startErr := server.Start(registry, datasourceCollector, stubCollectionProvider{})
+	require.NoError(t, startErr)
+	defer func() {
+		require.NoError(t, server.Stop(context.Background()))
+	}()
+
+	request := httptest.NewRequest(http.MethodPost, "http://"+server.GetListenAddr()+"/collections", nil)
+	recorder := httptest.NewRecorder()
+	server.diagnosisServer.Handler.ServeHTTP(recorder, request)
+	assert.Equal(t, http.StatusMethodNotAllowed, recorder.Code)
 }

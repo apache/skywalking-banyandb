@@ -82,6 +82,16 @@ func NewWatchdogWithConfig(recorder MetricsRecorder, urls []string, interval tim
 	}
 }
 
+// SetPanicArtifactRoot sets the directory where recovered watchdog panic artifacts are written.
+func (w *Watchdog) SetPanicArtifactRoot(rootDir string) {
+	if w == nil {
+		return
+	}
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	w.panicRootDir = rootDir
+}
+
 // Name returns the name of the watchdog service.
 func (w *Watchdog) Name() string {
 	return "watchdog"

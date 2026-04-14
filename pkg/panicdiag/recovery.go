@@ -58,9 +58,13 @@ func WithRecovery(ctx context.Context, opts RecoveryOptions, reporter Reporter, 
 
 		incPanicCounter(opts.Counter, opts.Component)
 
+		artifactRoot := opts.ArtifactRoot
+		if artifactRoot == "" {
+			artifactRoot = DefaultArtifactRoot()
+		}
 		var artifactDir string
-		artifactWriter := NewArtifactWriter(opts.ArtifactRoot)
-		if opts.ArtifactRoot != "" {
+		artifactWriter := NewArtifactWriter(artifactRoot)
+		if artifactRoot != "" {
 			writtenDir, writeErr := artifactWriter.Write(record)
 			if writeErr != nil {
 				log.Error().Err(writeErr).Str("component", opts.Component).Msg("failed to write panic artifacts")

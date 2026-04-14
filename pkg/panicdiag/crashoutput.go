@@ -63,6 +63,7 @@ func (c CrashOutputConfig) InstallGlobalCrashOutput() error {
 	if err := os.MkdirAll(c.Dir, 0o755); err != nil {
 		return fmt.Errorf("create panic diagnostics dir: %w", err)
 	}
+	SetDefaultArtifactRoot(c.Dir)
 
 	filePath := filepath.Join(c.Dir, runtimeCrashFileName())
 	crashFile, err := os.OpenFile(filePath, os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0o644)
