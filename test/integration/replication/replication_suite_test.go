@@ -73,7 +73,7 @@ var _ = SynchronizedBeforeSuite(func() []byte {
 	pool.EnableStackTracking(true)
 	goods = gleak.Goroutines()
 
-	By("Creating discovery file writer for DNS-based node discovery")
+	By("Creating discovery file writer for file-based node discovery")
 	tmpDir, tmpDirCleanup, err := test.NewSpace()
 	Expect(err).NotTo(HaveOccurred())
 	dfWriter := setup.NewDiscoveryFileWriter(tmpDir)

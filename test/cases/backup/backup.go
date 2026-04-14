@@ -22,6 +22,7 @@ import (
 	"context"
 	"os"
 	"path/filepath"
+	"strings"
 	"time"
 
 	"github.com/onsi/ginkgo/v2"
@@ -30,6 +31,7 @@ import (
 	commonv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/common/v1"
 	databasev1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/database/v1"
 	"github.com/apache/skywalking-banyandb/banyand/backup"
+	"github.com/apache/skywalking-banyandb/banyand/backup/snapshot"
 	"github.com/apache/skywalking-banyandb/pkg/fs"
 	"github.com/apache/skywalking-banyandb/pkg/test/helpers"
 )
@@ -50,53 +52,51 @@ var _ = ginkgo.Describe("Backup", func() {
 		return 0
 	}
 
+	const schemaPropertyKey = -1
+	resolveSnapshotDir := func(snp *databasev1.Snapshot) (string, commonv1.Catalog, bool) {
+		if strings.HasPrefix(snp.Name, snapshot.SchemaPropertyCatalogName+"/") {
+			return filepath.Join(SharedContext.RootDir, "schema-property", "snapshots"), commonv1.Catalog(schemaPropertyKey), true
+		}
+		switch snp.Catalog {
+		case commonv1.Catalog_CATALOG_MEASURE:
+			return filepath.Join(SharedContext.RootDir, "measure", "snapshots"), snp.Catalog, true
+		case commonv1.Catalog_CATALOG_STREAM:
+			return filepath.Join(SharedContext.RootDir, "stream", "snapshots"), snp.Catalog, true
+		case commonv1.Catalog_CATALOG_PROPERTY:
+			return filepath.Join(SharedContext.RootDir, "property", "snapshots"), snp.Catalog, true
+		case commonv1.Catalog_CATALOG_TRACE:
+			return filepath.Join(SharedContext.RootDir, "trace", "snapshots"), snp.Catalog, true
+		}
+		return "", 0, false
+	}
+
 	ginkgo.It("should take a snapshot", func() {
 		client := databasev1.NewSnapshotServiceClient(SharedContext.Connection)
 		resp, err := client.Snapshot(context.Background(), &databasev1.SnapshotRequest{})
 		gomega.Expect(err).NotTo(gomega.HaveOccurred())
 		gomega.Expect(resp).NotTo(gomega.BeNil())
-		gomega.Expect(resp.Snapshots).To(gomega.HaveLen(4))
+		gomega.Expect(resp.Snapshots).To(gomega.HaveLen(5))
 		catalogNumMap := make(map[commonv1.Catalog]int)
 		for _, snp := range resp.Snapshots {
-			var snpDir string
-			if snp.Catalog == commonv1.Catalog_CATALOG_MEASURE {
-				snpDir = filepath.Join(SharedContext.RootDir, "measure", "snapshots")
-			} else if snp.Catalog == commonv1.Catalog_CATALOG_STREAM {
-				snpDir = filepath.Join(SharedContext.RootDir, "stream", "snapshots")
-			} else if snp.Catalog == commonv1.Catalog_CATALOG_PROPERTY {
-				snpDir = filepath.Join(SharedContext.RootDir, "property", "snapshots")
-			} else if snp.Catalog == commonv1.Catalog_CATALOG_TRACE {
-				snpDir = filepath.Join(SharedContext.RootDir, "trace", "snapshots")
-			} else {
+			snpDir, key, ok := resolveSnapshotDir(snp)
+			if !ok {
 				ginkgo.Fail("unexpected snapshot catalog")
 			}
 			entries := lfs.ReadDir(snpDir)
-			catalogNumMap[snp.GetCatalog()] = verifySnapshot(snp.Name, entries)
+			actualName := strings.TrimPrefix(snp.Name, snapshot.SchemaPropertyCatalogName+"/")
+			catalogNumMap[key] = verifySnapshot(actualName, entries)
 		}
 		resp, err = client.Snapshot(context.Background(), &databasev1.SnapshotRequest{})
 		gomega.Expect(err).NotTo(gomega.HaveOccurred())
 		gomega.Expect(resp).NotTo(gomega.BeNil())
-		gomega.Expect(resp.Snapshots).To(gomega.HaveLen(4))
+		gomega.Expect(resp.Snapshots).To(gomega.HaveLen(5))
 		for _, snp := range resp.Snapshots {
-			if snp.Catalog == commonv1.Catalog_CATALOG_MEASURE {
-				measureSnapshotDir := filepath.Join(SharedContext.RootDir, "measure", "snapshots")
-				entries := lfs.ReadDir(measureSnapshotDir)
-				gomega.Expect(entries).To(gomega.HaveLen(catalogNumMap[snp.GetCatalog()] + 1))
-			} else if snp.Catalog == commonv1.Catalog_CATALOG_STREAM {
-				streamSnapshotDir := filepath.Join(SharedContext.RootDir, "stream", "snapshots")
-				entries := lfs.ReadDir(streamSnapshotDir)
-				gomega.Expect(entries).To(gomega.HaveLen(catalogNumMap[snp.GetCatalog()] + 1))
-			} else if snp.Catalog == commonv1.Catalog_CATALOG_PROPERTY {
-				propertySnapshotDir := filepath.Join(SharedContext.RootDir, "property", "snapshots")
-				entries := lfs.ReadDir(propertySnapshotDir)
-				gomega.Expect(entries).To(gomega.HaveLen(catalogNumMap[snp.GetCatalog()] + 1))
-			} else if snp.Catalog == commonv1.Catalog_CATALOG_TRACE {
-				traceSnapshotDir := filepath.Join(SharedContext.RootDir, "trace", "snapshots")
-				entries := lfs.ReadDir(traceSnapshotDir)
-				gomega.Expect(entries).To(gomega.HaveLen(catalogNumMap[snp.GetCatalog()] + 1))
-			} else {
+			snpDir, key, ok := resolveSnapshotDir(snp)
+			if !ok {
 				ginkgo.Fail("unexpected snapshot catalog")
 			}
+			entries := lfs.ReadDir(snpDir)
+			gomega.Expect(entries).To(gomega.HaveLen(catalogNumMap[key] + 1))
 		}
 	})
 
@@ -113,6 +113,7 @@ var _ = ginkgo.Describe("Backup", func() {
 			"--measure-root-path", SharedContext.RootDir,
 			"--property-root-path", SharedContext.RootDir,
 			"--trace-root-path", SharedContext.RootDir,
+			"--schema-root-path", SharedContext.RootDir,
 			"--dest", destURL,
 			"--time-style", "daily",
 		})
@@ -121,9 +122,9 @@ var _ = ginkgo.Describe("Backup", func() {
 
 		timeDir := time.Now().Format("2006-01-02")
 		entries := lfs.ReadDir(filepath.Join(destDir, timeDir))
-		gomega.Expect(entries).To(gomega.HaveLen(4))
+		gomega.Expect(entries).To(gomega.HaveLen(5))
 		for _, entry := range entries {
-			gomega.Expect(entry.Name()).To(gomega.BeElementOf([]string{"stream", "measure", "property", "trace"}))
+			gomega.Expect(entry.Name()).To(gomega.BeElementOf([]string{"stream", "measure", "property", "trace", snapshot.SchemaPropertyCatalogName}))
 		}
 	})
 })

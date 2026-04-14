@@ -18,9 +18,7 @@
 package other
 
 import (
-	"context"
 	"errors"
-	"fmt"
 	"io"
 	"time"
 
@@ -32,9 +30,6 @@ import (
 
 	measurev1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/measure/v1"
 	modelv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/model/v1"
-	"github.com/apache/skywalking-banyandb/banyand/metadata"
-	"github.com/apache/skywalking-banyandb/banyand/metadata/embeddedetcd"
-	"github.com/apache/skywalking-banyandb/banyand/metadata/schema"
 	"github.com/apache/skywalking-banyandb/pkg/grpchelper"
 	"github.com/apache/skywalking-banyandb/pkg/pool"
 	"github.com/apache/skywalking-banyandb/pkg/test"
@@ -57,7 +52,7 @@ var _ = g.Describe("Disk", func() {
 		gm.Eventually(pool.AllRefsCount, flags.EventuallyTimeout).Should(gmatcher.HaveZeroRef())
 	})
 	g.It(" is a standalone server, blocking writing, with disk full", func() {
-		addr, _, deferFn := setup.Standalone(testConfig,
+		addr, _, deferFn := setup.Standalone(NewTestConfig(),
 			"--measure-retention-high-watermark",
 			"0",
 			"--measure-retention-low-watermark",
@@ -76,31 +71,10 @@ var _ = g.Describe("Disk", func() {
 		}
 	})
 	g.It(" is a cluster, blocking writing on node 0, with disk full", func() {
-		g.By("Starting etcd server")
-		ports, err := test.AllocateFreePorts(2)
-		gm.Expect(err).NotTo(gm.HaveOccurred())
 		dir, spaceDef, err := test.NewSpace()
 		gm.Expect(err).NotTo(gm.HaveOccurred())
-		ep := fmt.Sprintf("http://127.0.0.1:%d", ports[0])
-		server, err := embeddedetcd.NewServer(
-			embeddedetcd.ConfigureListener([]string{ep}, []string{fmt.Sprintf("http://127.0.0.1:%d", ports[1])}),
-			embeddedetcd.RootDir(dir),
-			embeddedetcd.AutoCompactionMode("periodic"),
-			embeddedetcd.AutoCompactionRetention("1h"),
-			embeddedetcd.QuotaBackendBytes(2*1024*1024*1024),
-		)
-		gm.Expect(err).ShouldNot(gm.HaveOccurred())
-		<-server.ReadyNotify()
-		g.By("Loading schema")
-		schemaRegistry, err := schema.NewEtcdSchemaRegistry(
-			schema.Namespace(metadata.DefaultNamespace),
-			schema.ConfigureServerEndpoints([]string{ep}),
-		)
-		gm.Expect(err).NotTo(gm.HaveOccurred())
-		defer schemaRegistry.Close()
-		ctx := context.Background()
-		test_measure.PreloadSchema(ctx, schemaRegistry)
-		clusterConfig := setup.EtcdClusterConfig(ep)
+		dfWriter := setup.NewDiscoveryFileWriter(dir)
+		clusterConfig := setup.PropertyClusterConfig(dfWriter)
 		g.By("Starting data node 0")
 		closeDataNode0 := setup.DataNode(clusterConfig)
 		g.By("Starting data node 1")
@@ -109,12 +83,12 @@ var _ = g.Describe("Disk", func() {
 		liaisonAddr, closerLiaisonNode := setup.LiaisonNode(clusterConfig,
 			"--measure-max-disk-usage-percent",
 			"0")
+		g.By("Loading schema")
+		setup.PreloadSchemaViaProperty(clusterConfig, test_measure.PreloadSchema)
 		defer func() {
 			closerLiaisonNode()
 			closeDataNode0()
 			closeDataNode1()
-			_ = server.Close()
-			<-server.StopNotify()
 			spaceDef()
 		}()
 		wc, deferFn := writeData(liaisonAddr)

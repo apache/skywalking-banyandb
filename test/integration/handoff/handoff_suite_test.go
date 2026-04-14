@@ -41,9 +41,6 @@ import (
 	commonv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/common/v1"
 	modelv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/model/v1"
 	tracev1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/trace/v1"
-	"github.com/apache/skywalking-banyandb/banyand/metadata"
-	"github.com/apache/skywalking-banyandb/banyand/metadata/embeddedetcd"
-	"github.com/apache/skywalking-banyandb/banyand/metadata/schema"
 	"github.com/apache/skywalking-banyandb/pkg/grpchelper"
 	"github.com/apache/skywalking-banyandb/pkg/logger"
 	"github.com/apache/skywalking-banyandb/pkg/test"
@@ -63,20 +60,24 @@ type dataNodeHandle struct {
 	closeFn    func()
 	dataDir    string
 	addr       string
+	schemaAddr string
 	grpcPort   int
 	gossipPort int
+	schemaPort int
 }
 
-func newDataNodeHandle(dataDir string, grpcPort, gossipPort int) *dataNodeHandle {
+func newDataNodeHandle(dataDir string, grpcPort, gossipPort, schemaPort int) *dataNodeHandle {
 	return &dataNodeHandle{
 		dataDir:    dataDir,
 		grpcPort:   grpcPort,
 		gossipPort: gossipPort,
+		schemaPort: schemaPort,
 		addr:       fmt.Sprintf("%s:%d", nodeHost, grpcPort),
+		schemaAddr: fmt.Sprintf("%s:%d", nodeHost, schemaPort),
 	}
 }
 
-func (h *dataNodeHandle) start(etcdEndpoint string) {
+func (h *dataNodeHandle) start(discoveryFilePath string) {
 	Expect(h.closeFn).To(BeNil())
 	args := []string{
 		"data",
@@ -87,7 +88,9 @@ func (h *dataNodeHandle) start(etcdEndpoint string) {
 		"--measure-root-path=" + h.dataDir,
 		"--property-root-path=" + h.dataDir,
 		"--trace-root-path=" + h.dataDir,
-		"--etcd-endpoints", etcdEndpoint,
+		"--schema-server-root-path=" + h.dataDir,
+		"--schema-server-grpc-host=" + nodeHost,
+		fmt.Sprintf("--schema-server-grpc-port=%d", h.schemaPort),
 		"--node-host-provider", "flag",
 		"--node-host", nodeHost,
 		"--node-labels", "type=handoff",
@@ -96,33 +99,21 @@ func (h *dataNodeHandle) start(etcdEndpoint string) {
 		"--measure-flush-timeout=0s",
 		"--stream-flush-timeout=0s",
 		"--trace-flush-timeout=0s",
-		"--schema-registry-mode=etcd",
-		"--node-discovery-mode=etcd",
+		"--node-discovery-mode=file",
+		"--node-discovery-file-path=" + discoveryFilePath,
+		"--node-discovery-file-fetch-interval=1s",
 	}
 	h.closeFn = setup.CMD(args...)
 
 	Eventually(helpers.HealthCheck(fmt.Sprintf("%s:%d", grpcHost, h.grpcPort), 10*time.Second, 10*time.Second,
 		grpc.WithTransportCredentials(insecure.NewCredentials())), flags.EventuallyTimeout).Should(Succeed())
-
-	Eventually(func() (map[string]struct{}, error) {
-		m, err := helpers.ListKeys(etcdEndpoint, h.etcdKey())
-		return keysToSet(m), err
-	}, flags.EventuallyTimeout).Should(HaveLen(1))
 }
 
-func (h *dataNodeHandle) stop(etcdEndpoint string) {
+func (h *dataNodeHandle) stop() {
 	if h.closeFn != nil {
 		h.closeFn()
 		h.closeFn = nil
 	}
-	Eventually(func() (map[string]struct{}, error) {
-		m, err := helpers.ListKeys(etcdEndpoint, h.etcdKey())
-		return keysToSet(m), err
-	}, flags.EventuallyTimeout).Should(HaveLen(0))
-}
-
-func (h *dataNodeHandle) etcdKey() string {
-	return fmt.Sprintf("/%s/nodes/%s:%d", metadata.DefaultNamespace, nodeHost, h.grpcPort)
 }
 
 type liaisonHandle struct {
@@ -146,7 +137,7 @@ func newLiaisonHandle(rootPath string, grpcPort, httpPort, serverPort int) *liai
 	}
 }
 
-func (l *liaisonHandle) start(etcdEndpoint string, dataNodes []string) {
+func (l *liaisonHandle) start(discoveryFilePath string, dataNodes []string) {
 	Expect(l.closeFn).To(BeNil())
 	joined := strings.Join(dataNodes, ",")
 	Expect(os.Setenv("BYDB_DATA_NODE_LIST", joined)).To(Succeed())
@@ -160,7 +151,6 @@ func (l *liaisonHandle) start(etcdEndpoint string, dataNodes []string) {
 		"--liaison-server-grpc-host=" + grpcHost,
 		fmt.Sprintf("--liaison-server-grpc-port=%d", l.serverPort),
 		"--http-grpc-addr=" + l.addr,
-		"--etcd-endpoints", etcdEndpoint,
 		"--node-host-provider", "flag",
 		"--node-host", nodeHost,
 		"--stream-root-path=" + l.rootPath,
@@ -175,68 +165,45 @@ func (l *liaisonHandle) start(etcdEndpoint string, dataNodes []string) {
 		"--handoff-max-size-percent=100",
 		"--logging-modules", "trace,sidx",
 		"--logging-levels", "debug,debug",
-		"--schema-registry-mode=etcd",
-		"--node-discovery-mode=etcd",
+		"--node-discovery-mode=file",
+		"--node-discovery-file-path=" + discoveryFilePath,
+		"--node-discovery-file-fetch-interval=1s",
 	}
 
 	l.closeFn = setup.CMD(args...)
 
 	Eventually(helpers.HTTPHealthCheck(l.httpAddr, ""), flags.EventuallyTimeout).Should(Succeed())
-	Eventually(func() (map[string]struct{}, error) {
-		m, err := helpers.ListKeys(etcdEndpoint, l.etcdKey())
-		return keysToSet(m), err
-	}, flags.EventuallyTimeout).Should(HaveLen(1))
 }
 
-func (l *liaisonHandle) stop(etcdEndpoint string) {
+func (l *liaisonHandle) stop() {
 	if l.closeFn != nil {
 		l.closeFn()
 		l.closeFn = nil
 	}
 	_ = os.Unsetenv("BYDB_DATA_NODE_LIST")
 	_ = os.Unsetenv("BYDB_DATA_NODE_SELECTOR")
-	Eventually(func() (map[string]struct{}, error) {
-		m, err := helpers.ListKeys(etcdEndpoint, l.etcdKey())
-		return keysToSet(m), err
-	}, flags.EventuallyTimeout).Should(HaveLen(0))
-}
-
-func (l *liaisonHandle) etcdKey() string {
-	return fmt.Sprintf("/%s/nodes/%s:%d", metadata.DefaultNamespace, nodeHost, l.serverPort)
 }
 
 type suiteInfo struct {
-	LiaisonAddr  string   `json:"liaison_addr"`
-	EtcdEndpoint string   `json:"etcd_endpoint"`
-	HandoffRoot  string   `json:"handoff_root"`
-	DataNodes    []string `json:"data_nodes"`
-}
-
-func keysToSet[K comparable, V any](m map[K]V) map[K]struct{} {
-	if m == nil {
-		return nil
-	}
-	out := make(map[K]struct{}, len(m))
-	for k := range m {
-		out[k] = struct{}{}
-	}
-	return out
+	LiaisonAddr       string   `json:"liaison_addr"`
+	DiscoveryFilePath string   `json:"discovery_file_path"`
+	HandoffRoot       string   `json:"handoff_root"`
+	DataNodes         []string `json:"data_nodes"`
 }
 
 var (
-	connection   *grpc.ClientConn
-	goods        []gleak.Goroutine
-	cleanupFunc  func()
-	handoffRoot  string
-	etcdEndpoint string
+	connection        *grpc.ClientConn
+	goods             []gleak.Goroutine
+	cleanupFunc       func()
+	handoffRoot       string
+	discoveryFilePath string
 
 	dnHandles [2]*dataNodeHandle
 	liaison   *liaisonHandle
 
-	etcdServer   embeddedetcd.Server
-	etcdSpaceDef func()
-	liaisonDef   func()
-	dataDefs     []func()
+	spaceDef   func()
+	liaisonDef func()
+	dataDefs   []func()
 )
 
 func TestHandoff(t *testing.T) {
@@ -248,44 +215,23 @@ var _ = SynchronizedBeforeSuite(func() []byte {
 	Expect(logger.Init(logger.Logging{Env: "dev", Level: flags.LogLevel})).To(Succeed())
 	goods = gleak.Goroutines()
 
-	etcdPorts, err := test.AllocateFreePorts(2)
+	var dir string
+	var err error
+	dir, spaceDef, err = test.NewSpace()
 	Expect(err).NotTo(HaveOccurred())
-
-	var etcdDir string
-	etcdDir, etcdSpaceDef, err = test.NewSpace()
-	Expect(err).NotTo(HaveOccurred())
-
-	clientEP := fmt.Sprintf("http://%s:%d", nodeHost, etcdPorts[0])
-	peerEP := fmt.Sprintf("http://%s:%d", nodeHost, etcdPorts[1])
-
-	etcdServer, err = embeddedetcd.NewServer(
-		embeddedetcd.ConfigureListener([]string{clientEP}, []string{peerEP}),
-		embeddedetcd.RootDir(etcdDir),
-		embeddedetcd.AutoCompactionMode("periodic"),
-		embeddedetcd.AutoCompactionRetention("1h"),
-		embeddedetcd.QuotaBackendBytes(2*1024*1024*1024),
-	)
-	Expect(err).NotTo(HaveOccurred())
-	<-etcdServer.ReadyNotify()
-	etcdEndpoint = clientEP
-
-	registry, err := schema.NewEtcdSchemaRegistry(
-		schema.Namespace(metadata.DefaultNamespace),
-		schema.ConfigureServerEndpoints([]string{clientEP}),
-	)
-	Expect(err).NotTo(HaveOccurred())
-	defer registry.Close()
-	Expect(testtrace.PreloadSchema(context.Background(), registry)).To(Succeed())
+	dfWriter := setup.NewDiscoveryFileWriter(dir)
+	discoveryFilePath = dfWriter.Path()
 
 	dataDefs = make([]func(), 0, 2)
 	for i := range dnHandles {
 		dataDir, def, errDir := test.NewSpace()
 		Expect(errDir).NotTo(HaveOccurred())
 		dataDefs = append(dataDefs, def)
-		ports, errPorts := test.AllocateFreePorts(2)
+		ports, errPorts := test.AllocateFreePorts(3)
 		Expect(errPorts).NotTo(HaveOccurred())
-		dnHandles[i] = newDataNodeHandle(dataDir, ports[0], ports[1])
-		dnHandles[i].start(etcdEndpoint)
+		dnHandles[i] = newDataNodeHandle(dataDir, ports[0], ports[1], ports[2])
+		dnHandles[i].start(discoveryFilePath)
+		dfWriter.AddNode(fmt.Sprintf("data-%d", i), dnHandles[i].addr)
 	}
 
 	liaisonPath, def, err := test.NewSpace()
@@ -295,21 +241,24 @@ var _ = SynchronizedBeforeSuite(func() []byte {
 	Expect(err).NotTo(HaveOccurred())
 	liaison = newLiaisonHandle(liaisonPath, liaisonPorts[0], liaisonPorts[1], liaisonPorts[2])
 	nodeAddrs := []string{dnHandles[0].addr, dnHandles[1].addr}
-	liaison.start(etcdEndpoint, nodeAddrs)
+	liaison.start(discoveryFilePath, nodeAddrs)
+
+	clusterConfig := setup.PropertyClusterConfig(dfWriter)
+	for i := range dnHandles {
+		clusterConfig.AddSchemaServerAddr(dnHandles[i].schemaAddr)
+	}
+	setup.PreloadSchemaViaProperty(clusterConfig, testtrace.PreloadSchema)
 
 	handoffRoot = filepath.Join(liaisonPath, "trace", "data", "handoff", "nodes")
 
 	cleanupFunc = func() {
 		if liaison != nil {
-			liaison.stop(etcdEndpoint)
+			liaison.stop()
 		}
 		for i := range dnHandles {
 			if dnHandles[i] != nil {
-				dnHandles[i].stop(etcdEndpoint)
+				dnHandles[i].stop()
 			}
-		}
-		if etcdServer != nil {
-			_ = etcdServer.Close()
 		}
 		if liaisonDef != nil {
 			liaisonDef()
@@ -319,16 +268,16 @@ var _ = SynchronizedBeforeSuite(func() []byte {
 				def()
 			}
 		}
-		if etcdSpaceDef != nil {
-			etcdSpaceDef()
+		if spaceDef != nil {
+			spaceDef()
 		}
 	}
 
 	info := suiteInfo{
-		LiaisonAddr:  liaison.addr,
-		EtcdEndpoint: etcdEndpoint,
-		HandoffRoot:  handoffRoot,
-		DataNodes:    nodeAddrs,
+		LiaisonAddr:       liaison.addr,
+		DiscoveryFilePath: discoveryFilePath,
+		HandoffRoot:       handoffRoot,
+		DataNodes:         nodeAddrs,
 	}
 	payload, err := json.Marshal(info)
 	Expect(err).NotTo(HaveOccurred())
@@ -336,7 +285,7 @@ var _ = SynchronizedBeforeSuite(func() []byte {
 }, func(data []byte) {
 	var info suiteInfo
 	Expect(json.Unmarshal(data, &info)).To(Succeed())
-	etcdEndpoint = info.EtcdEndpoint
+	discoveryFilePath = info.DiscoveryFilePath
 	handoffRoot = info.HandoffRoot
 	if liaison == nil {
 		liaison = &liaisonHandle{addr: info.LiaisonAddr}
@@ -385,7 +334,7 @@ var _ = Describe("trace handoff", func() {
 			Expect(countPendingParts(dnHandles[idx].addr)).To(Equal(0))
 
 			By(fmt.Sprintf("stopping %s for shard %d", dnHandles[idx].addr, candidateShard))
-			dnHandles[idx].stop(etcdEndpoint)
+			dnHandles[idx].stop()
 			time.Sleep(7 * time.Second)
 
 			candidateWriteTime := writeTrace(connection, candidateTraceID)
@@ -399,7 +348,7 @@ var _ = Describe("trace handoff", func() {
 			}
 
 			By(fmt.Sprintf("no handoff data detected for %s, bringing node back online", dnHandles[idx].addr))
-			dnHandles[idx].start(etcdEndpoint)
+			dnHandles[idx].start(discoveryFilePath)
 			Eventually(func() int {
 				return countPendingParts(dnHandles[idx].addr)
 			}, flags.EventuallyTimeout).Should(Equal(0))
@@ -409,7 +358,7 @@ var _ = Describe("trace handoff", func() {
 		targetAddr := dnHandles[targetIndex].addr
 
 		By("restarting the offline node after queueing data")
-		dnHandles[targetIndex].start(etcdEndpoint)
+		dnHandles[targetIndex].start(discoveryFilePath)
 
 		By("waiting for the queue to drain")
 		Eventually(func() int {
@@ -421,6 +370,11 @@ var _ = Describe("trace handoff", func() {
 			return queryTrace(connection, traceID, writeTime)
 		}, flags.EventuallyTimeout).Should(Succeed())
 
+		By("verifying sidx data was replayed correctly by querying via indexed tag")
+		Eventually(func() error {
+			return queryTraceByService(connection, "handoff_service", writeTime)
+		}, flags.EventuallyTimeout).Should(Succeed())
+
 		var otherIndex int
 		for idx := range dnHandles {
 			if idx != targetIndex {
@@ -430,8 +384,8 @@ var _ = Describe("trace handoff", func() {
 		}
 
 		By("stopping the other node to ensure the trace resides on the recovered node")
-		dnHandles[otherIndex].stop(etcdEndpoint)
-		defer dnHandles[otherIndex].start(etcdEndpoint)
+		dnHandles[otherIndex].stop()
+		defer dnHandles[otherIndex].start(discoveryFilePath)
 
 		Eventually(func() error {
 			return queryTrace(connection, traceID, writeTime)
@@ -585,4 +539,43 @@ func waitForPendingParts(nodeAddr string, timeout time.Duration) bool {
 		}
 		time.Sleep(100 * time.Millisecond)
 	}
+}
+
+// queryTraceByService queries traces by service_id, which exercises the sidx secondary index.
+// If sidx parts were replayed with MinTimestamp=0, the sidx data is rejected or corrupted,
+// and this query fails to find traces even though core data exists.
+func queryTraceByService(conn *grpc.ClientConn, serviceID string, ts time.Time) error {
+	client := tracev1.NewTraceServiceClient(conn)
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+
+	req := &tracev1.QueryRequest{
+		Groups: []string{"test-trace-group"},
+		Name:   "sw",
+		TimeRange: &modelv1.TimeRange{
+			Begin: timestamppb.New(ts.Add(-5 * time.Minute)),
+			End:   timestamppb.New(ts.Add(5 * time.Minute)),
+		},
+		Criteria: &modelv1.Criteria{
+			Exp: &modelv1.Criteria_Condition{
+				Condition: &modelv1.Condition{
+					Name: "service_id",
+					Op:   modelv1.Condition_BINARY_OP_EQ,
+					Value: &modelv1.TagValue{Value: &modelv1.TagValue_Str{
+						Str: &modelv1.Str{Value: serviceID},
+					}},
+				},
+			},
+		},
+		TagProjection: []string{"trace_id", "service_id"},
+	}
+
+	resp, queryErr := client.Query(ctx, req)
+	if queryErr != nil {
+		return queryErr
+	}
+	if len(resp.GetTraces()) == 0 {
+		return fmt.Errorf("no traces found for service_id=%s", serviceID)
+	}
+	return nil
 }

@@ -17,17 +17,6 @@
 
 package schema
 
-import (
-	"io"
-
-	"github.com/pkg/errors"
-	mvccpb "go.etcd.io/etcd/api/v3/mvccpb"
-	"google.golang.org/protobuf/proto"
-
-	commonv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/common/v1"
-	databasev1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/database/v1"
-)
-
 // Kind is the type of a resource.
 type Kind int
 
@@ -47,83 +36,6 @@ const (
 		KindTopNAggregation | KindNode | KindProperty
 	KindSize = 9
 )
-
-// Key returns the etcd key prefix for this Kind.
-func (k Kind) Key() string {
-	switch k {
-	case KindGroup:
-		return groupsKeyPrefix
-	case KindStream:
-		return streamKeyPrefix
-	case KindMeasure:
-		return measureKeyPrefix
-	case KindTrace:
-		return traceKeyPrefix
-	case KindIndexRuleBinding:
-		return indexRuleBindingKeyPrefix
-	case KindIndexRule:
-		return indexRuleKeyPrefix
-	case KindTopNAggregation:
-		return topNAggregationKeyPrefix
-	case KindNode:
-		return nodeKeyPrefix
-	case KindProperty:
-		return propertyKeyPrefix
-	default:
-		return "unknown"
-	}
-}
-
-// Unmarshal encode bytes to proto.Message.
-func (k Kind) Unmarshal(kv *mvccpb.KeyValue) (Metadata, error) {
-	if len(kv.Value) == 0 {
-		return Metadata{}, io.EOF
-	}
-	var m proto.Message
-	switch k {
-	case KindGroup:
-		m = &commonv1.Group{}
-	case KindStream:
-		m = &databasev1.Stream{}
-	case KindMeasure:
-		m = &databasev1.Measure{}
-	case KindTrace:
-		m = &databasev1.Trace{}
-	case KindIndexRuleBinding:
-		m = &databasev1.IndexRuleBinding{}
-	case KindIndexRule:
-		m = &databasev1.IndexRule{}
-	case KindTopNAggregation:
-		m = &databasev1.TopNAggregation{}
-	case KindNode:
-		m = &databasev1.Node{}
-	case KindProperty:
-		m = &databasev1.Property{}
-	default:
-		return Metadata{}, ErrUnsupportedEntityType
-	}
-	err := proto.Unmarshal(kv.Value, m)
-	if err != nil {
-		return Metadata{}, err
-	}
-	if messageWithMetadata, ok := m.(HasMetadata); ok {
-		if messageWithMetadata.GetMetadata() == nil {
-			return Metadata{}, errors.Errorf("message %s does not have metadata", k.Key())
-		}
-		// Assign readonly fields
-		messageWithMetadata.GetMetadata().CreateRevision = kv.CreateRevision
-		messageWithMetadata.GetMetadata().ModRevision = kv.ModRevision
-		return Metadata{
-			TypeMeta: TypeMeta{
-				Kind:  k,
-				Name:  messageWithMetadata.GetMetadata().GetName(),
-				Group: messageWithMetadata.GetMetadata().GetGroup(),
-			},
-			Spec: messageWithMetadata,
-		}, nil
-	}
-	return Metadata{Spec: m}, nil
-}
 
 func (k Kind) String() string {
 	switch k {
@@ -160,13 +72,4 @@ func AllKinds() []Kind {
 		}
 	}
 	return kinds
-}
-
-// AllKeys returns the key prefixes for all known kinds.
-func AllKeys() []string {
-	var keys []string
-	for _, ki := range AllKinds() {
-		keys = append(keys, ki.Key())
-	}
-	return keys
 }

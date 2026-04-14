@@ -12,6 +12,11 @@ Release Notes.
 - Sync lifecycle e2e test from SkyWalking stages test.
 - Add periodic health check for property schema connection.
 - Persist segment end time in per-segment metadata so boundaries don't shift across restarts or config changes.
+- [Breaking Change] Remove etcd components. The property-based schema registry is now the only supported mode. 
+  - All `--etcd-*` CLI flags have been removed. 
+  - The `--namespace` CLI flag has been removed (it previously configured the etcd key prefix).
+  - The `--node-discovery-mode` flag no longer accepts `etcd` (supported values: `none`, `dns`, `file`). 
+  - The `--schema-registry-mode` flag only accepts `property`.
 
 ### Bug Fixes
 
@@ -24,6 +29,10 @@ Release Notes.
 - ui: fix query editor refresh/reset behavior and BydbQL keyword highlighting.
 - Disable the rotation task on warm and cold nodes to prevent incorrect segment boundaries during lifecycle migration.
 - Prevent epoch-dated segment directories (seg-19700101) from being created by zero timestamps in distributed sync paths.
+- Fix SIDX streaming sync sending SegmentID as MinTimestamp instead of the actual timestamp, causing sync failures on the receiving node.
+- Fix handoff controller TOCTOU race allowing disk size limit bypass, and populate sidx MinTimestamp/MaxTimestamp during replay to prevent corrupt segment creation on recovered nodes.
+- Delete orphaned parts when no snapshot references them during tsTable initialization.
+- Extract shared LocateAll on NodeRegistry to ensure resolveAssignments and syncer GetNodes always produce identical node lists, preventing liaison from enqueuing parts to online/healthy data nodes.
 
 ### Chores
 

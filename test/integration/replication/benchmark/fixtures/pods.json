@@ -1,0 +1,36 @@
+{
+  "items": [
+    {
+      "metadata": {
+        "name": "banyandb-data-0",
+        "namespace": "bench",
+        "ownerReferences": [{"kind": "StatefulSet", "name": "banyandb-data"}]
+      },
+      "spec": {"containers": []}
+    },
+    {
+      "metadata": {
+        "name": "banyandb-data-1",
+        "namespace": "bench",
+        "ownerReferences": [{"kind": "StatefulSet", "name": "banyandb-data"}]
+      },
+      "spec": {"containers": []}
+    },
+    {
+      "metadata": {
+        "name": "banyandb-etcd-0",
+        "namespace": "bench",
+        "ownerReferences": [{"kind": "StatefulSet", "name": "banyandb-etcd"}]
+      },
+      "spec": {"containers": []}
+    },
+    {
+      "metadata": {
+        "name": "banyandb-liaison-0",
+        "namespace": "bench",
+        "ownerReferences": [{"kind": "ReplicaSet", "name": "banyandb-liaison-abc"}]
+      },
+      "spec": {"containers": []}
+    }
+  ]
+}

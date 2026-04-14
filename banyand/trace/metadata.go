@@ -692,18 +692,10 @@ func (qs *queueSupplier) OpenDB(groupSchema *commonv1.Group) (resourceSchema.DB,
 		},
 		GetNodes: func(shardID common.ShardID) []string {
 			copies := ro.Replicas + 1
-			nodeSet := make(map[string]struct{}, copies)
-			for i := uint32(0); i < copies; i++ {
-				nodeID, err := qs.traceDataNodeRegistry.Locate(group, "", uint32(shardID), i)
-				if err != nil {
-					qs.l.Error().Err(err).Str("group", group).Uint32("shard", uint32(shardID)).Uint32("copy", i).Msg("failed to locate node")
-					return nil
-				}
-				nodeSet[nodeID] = struct{}{}
-			}
-			nodes := make([]string, 0, len(nodeSet))
-			for nodeID := range nodeSet {
-				nodes = append(nodes, nodeID)
+			nodes, err := qs.traceDataNodeRegistry.LocateAll(group, uint32(shardID), int(copies))
+			if err != nil {
+				qs.l.Error().Err(err).Str("group", group).Uint32("shard", uint32(shardID)).Msg("failed to locate nodes")
+				return nil
 			}
 			return nodes
 		},

@@ -88,8 +88,8 @@ func (sr *schemaRepo) inFlow(
 
 func (sr *schemaRepo) getSteamingManager(source *commonv1.Metadata, pipeline queue.Client) (manager *topNProcessorManager) {
 	key := getKey(source)
-	// avoid creating a new manager if the source group is closing
-	if sr.isGroupClosing(source.GetGroup()) {
+	// avoid creating a new manager if the repo is closing or the source group is closing
+	if sr.ctx.Err() != nil || sr.isGroupClosing(source.GetGroup()) {
 		return nil
 	}
 	sourceMeasure, ok := sr.loadMeasure(source)
@@ -514,9 +514,16 @@ func (manager *topNProcessorManager) Close() error {
 		return nil
 	}
 	manager.closed = true
-	var err error
+	// Close all processors in parallel to avoid serial 5-second-per-flow timeouts.
+	errCh := make(chan error, len(manager.processorList))
 	for _, processor := range manager.processorList {
-		err = multierr.Append(err, processor.Close())
+		go func(p *topNStreamingProcessor) {
+			errCh <- p.Close()
+		}(processor)
+	}
+	var err error
+	for range manager.processorList {
+		err = multierr.Append(err, <-errCh)
 	}
 	manager.processorList = nil
 	manager.registeredTasks = nil

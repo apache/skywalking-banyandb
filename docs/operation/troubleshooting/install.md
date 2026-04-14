@@ -43,7 +43,7 @@ If the liaison and data nodes remain in a pending state after installation, chec
 kubectl logs -n <namespace> <pod-name>
 ```
 
-If you see `the schema registry init timeout, retrying...`, that means the schema registry(etcd) is not ready yet. You can check the status of the etcd cluster.
+If you see `the schema registry init timeout, retrying...`, that means the schema registry is not ready yet. Check that the data nodes are running and reachable, and verify the node discovery configuration.
 
 ## Liaison and Data Node Keeps Restarting
 
@@ -59,15 +59,7 @@ Common reasons for nodes restarting include insufficient resources, configuratio
 
 If the liaison and data nodes are unable to connect to each other, verify the network configuration and connectivity between the nodes. Ensure that the nodes can communicate with each other over the network and that there are no firewall rules blocking the connections.
 
-Check registered endpoints of the data nodes in the etcd cluster:
-
-```sh
-etcdctl get --prefix /banyandb/nodes
-```
-
-`banyandb` is the namespace of the BanyanDB cluster. It can be changed by the flag `namespace`. You should ensure this namespace is consistent across all nodes.
-
-If the addresses are incorrect or the nodes are not registered, check the configuration setting [service discovery](../configuration.md#service-discovery)
+Verify that the nodes are correctly registered through the configured node discovery mechanism (dns or file). If the addresses are incorrect or the nodes are not registered, check the configuration setting [service discovery](../configuration.md#service-discovery) and [node discovery](../node-discovery.md).
 
 ## Failed to Connect to Liaison Node
 

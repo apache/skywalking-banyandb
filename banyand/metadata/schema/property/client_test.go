@@ -391,6 +391,85 @@ func TestStreamCRUD(t *testing.T) {
 	require.Error(t, getErr)
 }
 
+// TestGroupUpdateNoOpSkipsBroadcast verifies the Group equality checker
+// (which was previously broken due to an incorrect IgnoreFields descriptor)
+// short-circuits a no-op UpdateGroup, and a real change still goes through.
+func TestGroupUpdateNoOpSkipsBroadcast(t *testing.T) {
+	addr := startTestSchemaServer(t)
+	reg := newTestRegistry(t, addr)
+	ctx := context.Background()
+	createTestGroup(t, reg)
+
+	got, getErr := reg.GetGroup(ctx, "test-group")
+	require.NoError(t, getErr)
+	storedModRev := got.GetMetadata().GetModRevision()
+	require.NotZero(t, storedModRev)
+
+	time.Sleep(2 * time.Millisecond)
+	require.NoError(t, reg.UpdateGroup(ctx, got))
+
+	afterNoOp, getErr := reg.GetGroup(ctx, "test-group")
+	require.NoError(t, getErr)
+	assert.Equal(t, storedModRev, afterNoOp.GetMetadata().GetModRevision(),
+		"ModRevision should be unchanged when the submitted group is identical")
+
+	afterNoOp.ResourceOpts.ShardNum = 4
+	time.Sleep(2 * time.Millisecond)
+	require.NoError(t, reg.UpdateGroup(ctx, afterNoOp))
+	afterRealChange, getErr := reg.GetGroup(ctx, "test-group")
+	require.NoError(t, getErr)
+	assert.Greater(t, afterRealChange.GetMetadata().GetModRevision(), storedModRev,
+		"ModRevision should advance when the group actually changes")
+	assert.Equal(t, uint32(4), afterRealChange.GetResourceOpts().GetShardNum())
+}
+
+// TestStreamUpdateNoOpSkipsBroadcast verifies that resubmitting an identical
+// schema spec is detected by the equality checker in updateResource and does
+// not trigger an UpdateSchema RPC. The persisted ModRevision is used as the
+// observable because the client mutates the incoming spec's ModRevision on
+// every UpdateStream call; when the write is skipped, the server-side value
+// stays at whatever was last persisted.
+func TestStreamUpdateNoOpSkipsBroadcast(t *testing.T) {
+	addr := startTestSchemaServer(t)
+	reg := newTestRegistry(t, addr)
+	ctx := context.Background()
+	createTestGroup(t, reg)
+	s := testStream()
+	_, createErr := reg.CreateStream(ctx, s)
+	require.NoError(t, createErr)
+
+	got, getErr := reg.GetStream(ctx, &commonv1.Metadata{Group: "test-group", Name: testStreamName})
+	require.NoError(t, getErr)
+	storedModRev := got.GetMetadata().GetModRevision()
+	require.NotZero(t, storedModRev)
+
+	// Re-submit the same spec. UpdateStream will bump ModRevision / UpdatedAt
+	// on the caller's copy, but the checker should compare against the
+	// persisted spec (ignoring updated_at / mod_revision) and short-circuit.
+	time.Sleep(2 * time.Millisecond)
+	_, updateErr := reg.UpdateStream(ctx, got)
+	require.NoError(t, updateErr)
+
+	afterNoOp, getErr := reg.GetStream(ctx, &commonv1.Metadata{Group: "test-group", Name: testStreamName})
+	require.NoError(t, getErr)
+	assert.Equal(t, storedModRev, afterNoOp.GetMetadata().GetModRevision(),
+		"ModRevision should be unchanged when the submitted spec is identical")
+
+	// A real change must still go through.
+	afterNoOp.TagFamilies[0].Tags = append(afterNoOp.TagFamilies[0].Tags, &databasev1.TagSpec{
+		Name: "endpoint",
+		Type: databasev1.TagType_TAG_TYPE_STRING,
+	})
+	time.Sleep(2 * time.Millisecond)
+	_, updateErr = reg.UpdateStream(ctx, afterNoOp)
+	require.NoError(t, updateErr)
+	afterRealChange, getErr := reg.GetStream(ctx, &commonv1.Metadata{Group: "test-group", Name: testStreamName})
+	require.NoError(t, getErr)
+	assert.Greater(t, afterRealChange.GetMetadata().GetModRevision(), storedModRev,
+		"ModRevision should advance when the spec actually changes")
+	assert.Len(t, afterRealChange.GetTagFamilies()[0].GetTags(), 2)
+}
+
 func TestMeasureCRUD(t *testing.T) {
 	addr := startTestSchemaServer(t)
 	reg := newTestRegistry(t, addr)

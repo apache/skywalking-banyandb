@@ -18,7 +18,6 @@
 package test
 
 import (
-	"fmt"
 	"net"
 )
 
@@ -44,13 +43,4 @@ func AllocateFreePorts(n int) ([]int, error) {
 	}
 
 	return ports, nil
-}
-
-// NewEtcdListenUrls returns two urls with different ports.
-func NewEtcdListenUrls() (string, string, error) {
-	ports, err := AllocateFreePorts(2)
-	if err != nil {
-		return "", "", err
-	}
-	return fmt.Sprintf("http://127.0.0.1:%d", ports[0]), fmt.Sprintf("http://127.0.0.1:%d", ports[1]), nil
 }

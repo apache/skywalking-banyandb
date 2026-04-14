@@ -56,24 +56,16 @@ jobs:
       fail-fast: false
       matrix:
         test:
-          - name: Storage (etcd)
-            config: test/e2e-v2/cases/storage/banyandb/e2e-etcd.yaml
-          - name: Storage (native-property/dns)
-            config: test/e2e-v2/cases/storage/banyandb/e2e-property.yaml
-          - name: Trace Profiling (etcd)
-            config: test/e2e-v2/cases/profiling/trace/banyandb/e2e-etcd.yaml
-          - name: Trace Profiling (native-property/dns)
-            config: test/e2e-v2/cases/profiling/trace/banyandb/e2e-property.yaml
-          - name: Event (etcd)
-            config: test/e2e-v2/cases/event/banyandb/e2e-etcd.yaml
-          - name: Event (native-property/dns)
-            config: test/e2e-v2/cases/event/banyandb/e2e-property.yaml
+          - name: Storage
+            config: test/e2e-v2/cases/storage/banyandb/e2e.yaml
+          - name: Trace Profiling
+            config: test/e2e-v2/cases/profiling/trace/banyandb/e2e.yaml
+          - name: Event
+            config: test/e2e-v2/cases/event/banyandb/e2e.yaml
           - name: Log
             config: test/e2e-v2/cases/log/banyandb/e2e.yaml
-          - name: Cluster (etcd)
-            config: test/e2e-v2/cases/cluster/e2e-etcd.yaml
-          - name: Cluster (native-property/dns)
-            config: test/e2e-v2/cases/cluster/e2e-property.yaml
+          - name: Cluster
+            config: test/e2e-v2/cases/cluster/e2e.yaml
           - name: Rover eBPF - Istio mesh, Kind
             config: test/e2e-v2/cases/rover/process/istio/banyandb/e2e-banyandb.yaml
             env: |

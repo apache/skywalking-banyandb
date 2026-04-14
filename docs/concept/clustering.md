@@ -1,10 +1,10 @@
 # BanyanDB Clustering
 
-BanyanDB Clustering introduces a robust and scalable architecture that comprises "Liaison Nodes", "Data Nodes", and "Meta Nodes". This structure allows for effectively distributing and managing time-series data within the system.
+BanyanDB Clustering introduces a robust and scalable architecture that comprises "Liaison Nodes" and "Data Nodes", along with a property-based schema registry. This structure allows for effectively distributing and managing time-series data within the system.
 
 ## 1. Architectural Overview
 
-A BanyanDB installation includes three distinct types of nodes: Data Nodes, Meta Nodes, and Liaison Nodes.
+A BanyanDB installation includes two distinct types of nodes: Data Nodes and Liaison Nodes, along with a property-based schema registry for metadata management.
 
 ### 1.1 Data Nodes
 
@@ -14,12 +14,14 @@ Data Nodes also handle the local query execution. When a query is made, it is di
 
 In addition to persistent raw data, Data Nodes also handle TopN aggregation calculation or other computational tasks.
 
-### 1.2 Meta Nodes
+### 1.2 Schema Registry
 
-Meta Nodes is implemented by etcd. They are responsible for maintaining high-level metadata of the cluster, which includes:
+The schema registry is responsible for maintaining high-level metadata of the cluster, which includes:
 
 - All nodes in the cluster
 - All database schemas
+
+In the default `property` mode, schema metadata is synchronized between nodes via an internal property-based protocol without requiring an external dependency.
 
 ### 1.3 Liaison Nodes
 
@@ -27,33 +29,35 @@ Liaison Nodes serve as gateways, routing traffic to Data Nodes. In addition to r
 
 Liaison Nodes are also responsible for handling computational tasks associated with distributed querying the database. They build query tasks and search for data from Data Nodes.
 
+For measure queries that include aggregation, data nodes perform a local **map** phase and the liaison performs a **reduce** phase so results stay correct across shards while limiting raw data on the network. See [Distributed Measure Aggregation](distributed-measure-aggregation.md).
+
 ### 1.4 Standalone Mode
 
 BanyanDB integrates multiple roles into a single process in the standalone mode, making it simpler and faster to deploy. This mode is especially useful for scenarios with a limited number of data points or for testing and development purposes.
 
-In this mode, the single process performs the roles of the Liaison Node, Data Node, and Meta Node. It receives requests, maintains metadata, processes queries, and handles data, all within a unified setup.
+In this mode, the single process performs the roles of the Liaison Node and Data Node, along with the schema registry. It receives requests, maintains metadata, processes queries, and handles data, all within a unified setup.
 
 ## 2. Communication within a Cluster
 
 All nodes within a BanyanDB cluster communicate with other nodes according to their roles:
 
-- Meta Nodes share high-level metadata about the cluster.
-- Data Nodes store and manage the raw time series data and communicate with Meta Nodes.
-- Liaison Nodes distribute incoming data to the appropriate Data Nodes. They also handle distributed query execution and communicate with Meta Nodes.
+- The schema registry shares high-level metadata about the cluster.
+- Data Nodes store and manage the raw time series data and communicate with the schema registry.
+- Liaison Nodes distribute incoming data to the appropriate Data Nodes. They also handle distributed query execution and communicate with the schema registry.
 
 ### Nodes Discovery
 
-All nodes in the cluster are discovered by the Meta Nodes. When a node starts up, it registers itself with the Meta Nodes. The Meta Nodes then share this information with the Liaison Nodes which use it to route requests to the appropriate nodes.
+All nodes in the cluster are discovered through the configured node discovery mechanism (none, dns, or file). When a node starts up, it registers itself with the discovery service. The Liaison Nodes use this information to route requests to the appropriate nodes.
 
-If data nodes are unable to connect to the meta nodes due to network partition or other issues, they will be removed from the meta nodes. However, the liaison nodes will not remove the data nodes from their routing list until the data nodes are also unreachable from the liaison nodes' perspective. This approach ensures that the system can continue to function even if some data nodes are temporarily unavailable from the meta nodes.
+If data nodes become unreachable, the liaison nodes will not remove them from their routing list until they are also unreachable from the liaison nodes' perspective. This approach ensures that the system can continue to function even if some data nodes are temporarily unavailable.
 
 ## 3. **Data Organization**
 
 Different nodes in BanyanDB are responsible for different parts of the database, while Query and Liaison Nodes manage the routing and processing of queries.
 
-### 3.1 Meta Nodes
+### 3.1 Schema Registry
 
-Meta Nodes store all high-level metadata that describes the cluster. This data is kept in an etcd-backed database on disk, including Group configurations (such as `shard_num` and `replicas`) and Data Node registration information.
+The schema registry stores all high-level metadata that describes the cluster, including Group configurations (such as `shard_num` and `replicas`) and Data Node registration information. In the default `property` mode, this metadata is synchronized between nodes via an internal property-based protocol.
 
 Liaison Nodes use this metadata to dynamically determine shard-to-node assignments using a deterministic round-robin algorithm. Rather than storing explicit shard allocation mappings, BanyanDB calculates assignments on-the-fly based on the current cluster topology. This design simplifies cluster scaling, as adding or removing nodes automatically triggers recalculation of assignments without manual intervention.
 
@@ -69,7 +73,7 @@ They also handle the computational tasks associated with data queries, interacti
 
 ## 4. **Determining Optimal Node Counts**
 
-When creating a BanyanDB cluster, choosing the appropriate number of each node type to configure and connect is crucial. The number of Meta Nodes should always be odd, for instance, “3”. The number of Data Nodes scales based on your storage and query needs. The number of Liaison Nodes depends on the expected query load and routing complexity.
+When creating a BanyanDB cluster, choosing the appropriate number of each node type to configure and connect is crucial. The number of Data Nodes scales based on your storage and query needs. The number of Liaison Nodes depends on the expected query load and routing complexity.
 
 If the write and read load is from different sources, it is recommended to separate the Liaison Nodes for write and read. For instance, if the write load is from metrics, trace or log collectors and the read load is from a web application, it is recommended to separate the Liaison Nodes for write and read.
 
@@ -113,7 +117,7 @@ Similarly, a stream named `system_log` belonging to `stream-log` with an entity 
 
 > Note: If there are ":" or "|" in the entity, they will be prefixed with a backslash "\\".
 
-Liaison Nodes play a crucial role in this process by retrieving Group configurations and Data Node information from Meta Nodes. Using this metadata, Liaison Nodes dynamically calculate shard-to-node assignments using a deterministic round-robin algorithm.
+Liaison Nodes play a crucial role in this process by retrieving Group configurations and Data Node information from the schema registry. Using this metadata, Liaison Nodes dynamically calculate shard-to-node assignments using a deterministic round-robin algorithm.
 
 This sharding strategy ensures that the write load is evenly distributed across the cluster, thereby enhancing write performance and overall system efficiency. BanyanDB sorts the shards by the `Group` name and the shard ID, then calculates node assignments using the formula: `node = (shard_index + replica_id) % node_count`. This deterministic calculation ensures consistent routing: the same shard always maps to the same nodes as long as the node list remains unchanged. When nodes are added or removed, assignments are automatically recalculated, eliminating the need to maintain explicit shard allocation mappings.
 
@@ -161,7 +165,7 @@ BanyanDB utilizes a distributed architecture that allows for efficient query pro
 
 ### 6.1 Query Routing
 
-Liaison Nodes do not use shard mapping information from Meta Nodes to execute distributed queries. Instead, they access all Data Nodes to retrieve the necessary data for queries. As the query load is lower, it is practical for liaison nodes to access all data nodes for this purpose. It may increase network traffic, but simplifies scaling out of the cluster.
+Liaison Nodes do not use shard mapping information from the schema registry to execute distributed queries. Instead, they access all Data Nodes to retrieve the necessary data for queries. As the query load is lower, it is practical for liaison nodes to access all data nodes for this purpose. It may increase network traffic, but simplifies scaling out of the cluster.
 
 Compared to the write load, the query load is relatively low. For instance, in a time series database, the write load is typically 100x higher than the query load. This is because the write load is driven by the number of devices sending data to the database, while the query load is driven by the number of users accessing the data.
 

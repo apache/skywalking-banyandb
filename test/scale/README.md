@@ -27,7 +27,6 @@ helm install "scale-test" \
   --set standalone.enabled=false \
   --set cluster.enabled=true \
   --set cluster.data.replicas=1 \
-  --set etcd.enabled=true
 ```
 
 ## Deploy Data Generator
