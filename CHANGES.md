@@ -19,6 +19,7 @@ Release Notes.
 - MCP: Add validation for properties and harden the mcp server.
 - Fix property schema client connection not stable after data node restarted.
 - Fix flaky on-disk integration tests caused by Ginkgo v2 random container shuffling closing gRPC connections prematurely.
+- Fix wrong backup path of schema property.
 
 ## 0.10.0
 

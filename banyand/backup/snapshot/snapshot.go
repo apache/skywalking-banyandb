@@ -72,7 +72,7 @@ func Dir(snapshot *databasev1.Snapshot, streamRoot, measureRoot, propertyRoot, t
 	if strings.HasPrefix(snapshot.Name, SchemaPropertyCatalogName+"/") {
 		actualName := strings.TrimPrefix(snapshot.Name, SchemaPropertyCatalogName+"/")
 		baseDir := filepath.Join(schemaRoot, SchemaPropertyCatalogName)
-		return filepath.Join(baseDir, storage.SnapshotsDir, actualName), nil
+		return filepath.Join(baseDir, storage.SnapshotsDir, actualName, storage.DataDir), nil
 	}
 	var baseDir string
 	switch snapshot.Catalog {
