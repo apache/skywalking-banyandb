@@ -28,6 +28,7 @@ import (
 
 	"github.com/apache/skywalking-banyandb/api/common"
 	"github.com/apache/skywalking-banyandb/banyand/internal/storage"
+	"github.com/apache/skywalking-banyandb/banyand/queue"
 	"github.com/apache/skywalking-banyandb/pkg/encoding"
 	"github.com/apache/skywalking-banyandb/pkg/fs"
 	"github.com/apache/skywalking-banyandb/pkg/logger"
@@ -59,6 +60,11 @@ func validatePartMetadata(fileSystem fs.FileSystem, partPath string) error {
 		return errors.WithMessage(err, "cannot parse metadata.json")
 	}
 	return nil
+}
+
+// ValidatePartMetadata reads and validates the manifest.json in the given part directory.
+func ValidatePartMetadata(fileSystem fs.FileSystem, partPath string) error {
+	return validatePartMetadata(fileSystem, partPath)
 }
 
 // blockMetadata contains metadata for a block within a part.
@@ -140,6 +146,19 @@ func (pm *partMetadata) reset() {
 	pm.MinTimestamp = nil
 	pm.MaxTimestamp = nil
 	pm.ID = 0
+}
+
+func (pm *partMetadata) fillFromSyncContext(ctx *queue.ChunkedSyncPartContext) {
+	pm.CompressedSizeBytes = ctx.CompressedSizeBytes
+	pm.UncompressedSizeBytes = ctx.UncompressedSizeBytes
+	pm.TotalCount = ctx.TotalCount
+	pm.BlocksCount = ctx.BlocksCount
+	pm.MinKey = ctx.MinKey
+	pm.MaxKey = ctx.MaxKey
+	minTS := ctx.MinTimestamp
+	maxTS := ctx.MaxTimestamp
+	pm.MinTimestamp = &minTS
+	pm.MaxTimestamp = &maxTS
 }
 
 // reset clears blockMetadata for reuse in object pool.

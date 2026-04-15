@@ -113,6 +113,19 @@ func (sw *writers) MustClose() {
 	}
 }
 
+func (sw *writers) mustInitForFilePart(fileSystem fs.FileSystem, path string, shouldCache bool) {
+	sw.reset()
+	fileSystem.MkdirPanicIfExist(path, storage.DirPerm)
+	sw.mustCreateTagFamilyWriters = func(name string) (fs.Writer, fs.Writer) {
+		return fs.MustCreateFile(fileSystem, filepath.Join(path, name+tagFamiliesMetadataFilenameExt), storage.FilePerm, shouldCache),
+			fs.MustCreateFile(fileSystem, filepath.Join(path, name+tagFamiliesFilenameExt), storage.FilePerm, shouldCache)
+	}
+	sw.metaWriter.init(fs.MustCreateFile(fileSystem, filepath.Join(path, metaFilename), storage.FilePerm, shouldCache))
+	sw.primaryWriter.init(fs.MustCreateFile(fileSystem, filepath.Join(path, primaryFilename), storage.FilePerm, shouldCache))
+	sw.timestampsWriter.init(fs.MustCreateFile(fileSystem, filepath.Join(path, timestampsFilename), storage.FilePerm, shouldCache))
+	sw.fieldValuesWriter.init(fs.MustCreateFile(fileSystem, filepath.Join(path, fieldValuesFilename), storage.FilePerm, shouldCache))
+}
+
 func (sw *writers) getColumnMetadataWriterAndColumnWriter(columnName string) (*writer, *writer) {
 	chw, ok := sw.tagFamilyMetadataWriters[columnName]
 	cw := sw.tagFamilyWriters[columnName]
@@ -176,18 +189,7 @@ func (bw *blockWriter) MustInitForMemPart(mp *memPart) {
 
 func (bw *blockWriter) mustInitForFilePart(fileSystem fs.FileSystem, path string, shouldCache bool) {
 	bw.reset()
-	fileSystem.MkdirPanicIfExist(path, storage.DirPerm)
-	bw.writers.mustCreateTagFamilyWriters = func(name string) (fs.Writer, fs.Writer) {
-		metaPath := filepath.Join(path, name+tagFamiliesMetadataFilenameExt)
-		dataPath := filepath.Join(path, name+tagFamiliesFilenameExt)
-		return fs.MustCreateFile(fileSystem, metaPath, storage.FilePerm, shouldCache),
-			fs.MustCreateFile(fileSystem, dataPath, storage.FilePerm, shouldCache)
-	}
-
-	bw.writers.metaWriter.init(fs.MustCreateFile(fileSystem, filepath.Join(path, metaFilename), storage.FilePerm, shouldCache))
-	bw.writers.primaryWriter.init(fs.MustCreateFile(fileSystem, filepath.Join(path, primaryFilename), storage.FilePerm, shouldCache))
-	bw.writers.timestampsWriter.init(fs.MustCreateFile(fileSystem, filepath.Join(path, timestampsFilename), storage.FilePerm, shouldCache))
-	bw.writers.fieldValuesWriter.init(fs.MustCreateFile(fileSystem, filepath.Join(path, fieldValuesFilename), storage.FilePerm, shouldCache))
+	bw.writers.mustInitForFilePart(fileSystem, path, shouldCache)
 }
 
 func (bw *blockWriter) MustWriteDataPoints(sid common.SeriesID, timestamps, versions []int64, tagFamilies [][]nameValues, fields []nameValues) {

@@ -69,6 +69,7 @@ Release Notes.
 - Fix duplicate query execution in distributed measure Agg+TopN queries by enabling push-down aggregation, removing the wasteful double-query pattern.
 - Fix nil pointer panic in segment collectMetrics during shutdown.
 - Fix entity tag handling in trace filter to prevent TagIdx index mismatch when filtering with both entity and non-entity tags.
+- Fix OOM issue cause during migration when a group contains a large amount of data.
 
 ### Document
 
