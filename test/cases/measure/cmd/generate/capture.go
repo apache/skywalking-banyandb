@@ -15,6 +15,9 @@
 // specific language governing permissions and limitations
 // under the License.
 
+// Package main implements the capture subcommand for the test-case generator.
+// It connects to a live BanyanDB server, executes generated queries, and
+// writes the responses as want/*.yaml files.
 package main
 
 import (
@@ -55,16 +58,12 @@ func runCapture(outputDir, serverAddr string) {
 		fmt.Fprintf(os.Stderr, "Error connecting to server: %v\n", connErr)
 		os.Exit(1)
 	}
-	defer func() {
-		if closeErr := conn.Close(); closeErr != nil {
-			fmt.Fprintf(os.Stderr, "Warning: error closing connection: %v\n", closeErr)
-		}
-	}()
 
 	// Discover all generated input YAML files
 	entries, readErr := os.ReadDir(inputDirPath)
 	if readErr != nil {
 		fmt.Fprintf(os.Stderr, "Error reading input directory: %v\n", readErr)
+		_ = conn.Close()
 		os.Exit(1)
 	}
 
@@ -166,7 +165,7 @@ func runCapture(outputDir, serverAddr string) {
 		}
 
 		wantPath := filepath.Join(wantDirPath, testName+".yaml")
-		if writeErr := os.WriteFile(wantPath, respYAML, 0o644); writeErr != nil {
+		if writeErr := os.WriteFile(wantPath, respYAML, 0o600); writeErr != nil {
 			fmt.Fprintf(os.Stderr, "  [ERROR] %s: write failed: %v\n", testName, writeErr)
 			errorCount++
 			continue
@@ -177,6 +176,7 @@ func runCapture(outputDir, serverAddr string) {
 		capturedCount++
 	}
 
+	_ = conn.Close()
 	fmt.Printf("\nCapture complete: %d captured, %d skipped (error cases), %d errors\n",
 		capturedCount, skippedCount, errorCount)
 }

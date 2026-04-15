@@ -38,9 +38,9 @@ const (
 // TagDef defines a tag in a measure schema.
 type TagDef struct {
 	Name     string
+	Family   string
 	Type     TagType
-	Family   string // tag family name (e.g., "default")
-	IsEntity bool   // whether this tag is the entity
+	IsEntity bool
 }
 
 // FieldDef defines a field in a measure schema.
@@ -124,9 +124,18 @@ func serviceTraffic() Measure {
 		},
 		Fields: []FieldDef{},
 		DataPoints: []DataPoint{
-			{TagValues: map[string]interface{}{"id": "1", "service_id": "service_1", "name": "service_name_1", "short_name": "service_short_name_1", "service_group": "group1", "layer": int64(1)}},
-			{TagValues: map[string]interface{}{"id": "2", "service_id": "service_2", "name": "service_name_2", "short_name": "service_short_name_2", "service_group": "group1", "layer": int64(2)}},
-			{TagValues: map[string]interface{}{"id": "3", "service_id": "service_3", "name": "service_name_3", "short_name": "service_short_name_3", "service_group": "group1", "layer": int64(0)}},
+			{TagValues: map[string]interface{}{
+				"id": "1", "service_id": "service_1", "name": "service_name_1",
+				"short_name": "service_short_name_1", "service_group": "group1", "layer": int64(1),
+			}},
+			{TagValues: map[string]interface{}{
+				"id": "2", "service_id": "service_2", "name": "service_name_2",
+				"short_name": "service_short_name_2", "service_group": "group1", "layer": int64(2),
+			}},
+			{TagValues: map[string]interface{}{
+				"id": "3", "service_id": "service_3", "name": "service_name_3",
+				"short_name": "service_short_name_3", "service_group": "group1", "layer": int64(0),
+			}},
 		},
 	}
 }
@@ -165,9 +174,18 @@ func instanceCPUCPUMinute() Measure {
 			{Name: "value", Kind: FieldKindFloat},
 		},
 		DataPoints: []DataPoint{
-			{TagValues: map[string]interface{}{"service_id": "1", "entity_id": "entity_1"}, FieldValues: map[string]interface{}{"summation": 18.1, "count": int64(1), "value": 18.1}},
-			{TagValues: map[string]interface{}{"service_id": "4", "entity_id": "entity_2"}, FieldValues: map[string]interface{}{"summation": 100.4, "count": int64(2), "value": 50.2}},
-			{TagValues: map[string]interface{}{"service_id": "5", "entity_id": "entity_2"}, FieldValues: map[string]interface{}{"summation": 100.0, "count": int64(3), "value": 33.333}},
+			{
+				TagValues:   map[string]interface{}{"service_id": "1", "entity_id": "entity_1"},
+				FieldValues: map[string]interface{}{"summation": 18.1, "count": int64(1), "value": 18.1},
+			},
+			{
+				TagValues:   map[string]interface{}{"service_id": "4", "entity_id": "entity_2"},
+				FieldValues: map[string]interface{}{"summation": 100.4, "count": int64(2), "value": 50.2},
+			},
+			{
+				TagValues:   map[string]interface{}{"service_id": "5", "entity_id": "entity_2"},
+				FieldValues: map[string]interface{}{"summation": 100.0, "count": int64(3), "value": 33.333},
+			},
 		},
 	}
 }

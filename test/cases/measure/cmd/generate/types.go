@@ -18,22 +18,23 @@
 package main
 
 import (
-	measurev1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/measure/v1"
-	modelv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/model/v1"
 	"google.golang.org/protobuf/encoding/protojson"
 	"sigs.k8s.io/yaml"
+
+	measurev1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/measure/v1"
+	modelv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/model/v1"
 )
 
 // TestCase represents a generated test case with all its artifacts.
 type TestCase struct {
-	Name      string
 	Measure   *Measure
 	Request   *measurev1.QueryRequest
-	QL        string // rendered QL query string
+	Name      string
+	QL        string
+	Duration  string
 	WantErr   bool
 	WantEmpty bool
 	DisOrder  bool
-	Duration  string // Go duration expression for helpers.Args
 }
 
 const licenseHeader = "# Licensed to Apache Software Foundation (ASF) under one or more contributor\n" +

@@ -25,6 +25,8 @@ import (
 	modelv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/model/v1"
 )
 
+const strNone = "none"
+
 // GenerateLayer3 produces test cases for query feature combinations.
 // Uses pairwise testing across AggFunction, TopN, GroupBy, OrderBy, and CriteriaPresence.
 func GenerateLayer3() []*TestCase {
@@ -34,31 +36,31 @@ func GenerateLayer3() []*TestCase {
 	}
 
 	params := map[string][]string{
-		"agg":    {"MEAN", "MAX", "MIN", "COUNT", "SUM", "none"},
-		"top":    {"desc", "asc", "none"},
+		"agg":    {"MEAN", "MAX", "MIN", "COUNT", "SUM", strNone},
+		"top":    {"desc", "asc", strNone},
 		"group":  {"true", "false"},
-		"order":  {"asc", "desc", "none"},
-		"filter": {"none", "eq"},
+		"order":  {"asc", "desc", strNone},
+		"filter": {strNone, "eq"},
 	}
 
 	constraints := []ConstraintFunc{
 		// TopN requires GroupBy
 		func(tv TestVector) bool {
-			if tv["top"] != "none" && tv["group"] == "false" {
+			if tv["top"] != strNone && tv["group"] == "false" {
 				return false
 			}
 			return true
 		},
 		// Agg (non-none) requires GroupBy
 		func(tv TestVector) bool {
-			if tv["agg"] != "none" && tv["group"] == "false" {
+			if tv["agg"] != strNone && tv["group"] == "false" {
 				return false
 			}
 			return true
 		},
 		// TopN requires Agg
 		func(tv TestVector) bool {
-			if tv["top"] != "none" && tv["agg"] == "none" {
+			if tv["top"] != strNone && tv["agg"] == strNone {
 				return false
 			}
 			return true
@@ -80,21 +82,21 @@ func GenerateLayer3() []*TestCase {
 			continue
 		}
 
-		disOrder := tv["order"] == "none" && tv["group"] == "true"
+		disOrder := tv["order"] == strNone && tv["group"] == "true"
 		nameParts := []string{}
-		if tv["agg"] != "none" {
+		if tv["agg"] != strNone {
 			nameParts = append(nameParts, strings.ToLower(tv["agg"]))
 		}
-		if tv["top"] != "none" {
+		if tv["top"] != strNone {
 			nameParts = append(nameParts, "top_"+tv["top"])
 		}
 		if tv["group"] == "true" {
 			nameParts = append(nameParts, "group")
 		}
-		if tv["order"] != "none" {
+		if tv["order"] != strNone {
 			nameParts = append(nameParts, "order_"+tv["order"])
 		}
-		if tv["filter"] != "none" {
+		if tv["filter"] != strNone {
 			nameParts = append(nameParts, "filter")
 		}
 		if len(nameParts) == 0 {
@@ -139,7 +141,7 @@ func buildLayer3Request(m *Measure, tv TestVector) *measurev1.QueryRequest {
 	}
 
 	// Aggregation
-	if tv["agg"] != "none" {
+	if tv["agg"] != strNone {
 		req.Agg = &measurev1.QueryRequest_Aggregation{
 			Function:  parseAggFunction(tv["agg"]),
 			FieldName: "value",
@@ -147,7 +149,7 @@ func buildLayer3Request(m *Measure, tv TestVector) *measurev1.QueryRequest {
 	}
 
 	// TopN
-	if tv["top"] != "none" {
+	if tv["top"] != strNone {
 		sortVal := modelv1.Sort_SORT_DESC
 		if tv["top"] == "asc" {
 			sortVal = modelv1.Sort_SORT_ASC
@@ -200,10 +202,10 @@ func ensureAggCoverage(vectors []TestVector) []TestVector {
 		// Add a vector with this agg function, group=true, varied other params
 		vectors = append(vectors, TestVector{
 			"agg":    aggFn,
-			"top":    "none",
+			"top":    strNone,
 			"group":  "true",
 			"order":  "desc",
-			"filter": "none",
+			"filter": strNone,
 		})
 	}
 	return vectors

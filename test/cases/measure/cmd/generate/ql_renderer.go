@@ -31,10 +31,11 @@ func RenderQL(req *measurev1.QueryRequest) (string, error) {
 
 	// SELECT projection
 	projection := renderProjection(req)
-	parts = append(parts, fmt.Sprintf("SELECT %s FROM MEASURE %s IN %s", projection, req.GetName(), strings.Join(req.GetGroups(), ",")))
-
 	// TIME — always required by the BydbQL service; actual range is injected by the test framework
-	parts = append(parts, "TIME > '-15m'")
+	parts = append(parts,
+		fmt.Sprintf("SELECT %s FROM MEASURE %s IN %s", projection, req.GetName(), strings.Join(req.GetGroups(), ",")),
+		"TIME > '-15m'",
+	)
 
 	// WHERE
 	if req.GetCriteria() != nil {
@@ -50,9 +51,7 @@ func RenderQL(req *measurev1.QueryRequest) (string, error) {
 		var groupCols []string
 		if tp := req.GetGroupBy().GetTagProjection(); tp != nil {
 			for _, family := range tp.GetTagFamilies() {
-				for _, tag := range family.GetTags() {
-					groupCols = append(groupCols, tag)
-				}
+				groupCols = append(groupCols, family.GetTags()...)
 			}
 		}
 		if fn := req.GetGroupBy().GetFieldName(); fn != "" {
@@ -99,9 +98,7 @@ func renderProjection(req *measurev1.QueryRequest) string {
 	// Tag projection
 	if tp := req.GetTagProjection(); tp != nil {
 		for _, family := range tp.GetTagFamilies() {
-			for _, tag := range family.GetTags() {
-				cols = append(cols, tag)
-			}
+			cols = append(cols, family.GetTags()...)
 		}
 	}
 

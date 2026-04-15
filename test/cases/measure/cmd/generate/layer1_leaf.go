@@ -26,12 +26,12 @@ import (
 
 // LeafOp defines a valid BinaryOp + TagValue + measure + tag combination.
 type LeafOp struct {
-	Op         modelv1.Condition_BinaryOp
-	ValueType  string           // "str", "int", "null", "str_array", "int_array"
-	Value      *modelv1.TagValue // example value to use
-	Measure    string           // target measure name
-	TagName    string           // tag to filter on
-	QLValue    string           // QL representation of the value
+	Value     *modelv1.TagValue
+	ValueType string
+	Measure   string
+	TagName   string
+	QLValue   string
+	Op        modelv1.Condition_BinaryOp
 }
 
 // GenerateLayer1 produces test cases for the Criteria leaf layer.
@@ -50,10 +50,10 @@ func GenerateLayer1() []*TestCase {
 			continue
 		}
 		cases = append(cases, &TestCase{
-			Name:    fmt.Sprintf("gen_leaf_%s_%s", binaryOpShortName(op.Op), op.ValueType),
-			Measure: m,
-			Request: req,
-			QL:      ql,
+			Name:     fmt.Sprintf("gen_leaf_%s_%s", binaryOpShortName(op.Op), op.ValueType),
+			Measure:  m,
+			Request:  req,
+			QL:       ql,
 			WantErr:  op.ValueType == "null", // server rejects null value comparisons
 			Duration: "25 * time.Minute",
 		})
@@ -89,10 +89,16 @@ func defineLeafOps() []LeafOp {
 		{Op: modelv1.Condition_BINARY_OP_GE, ValueType: "str", Value: TagValueStr("svc2"), Measure: "service_cpm_minute", TagName: "id", QLValue: "'svc2'"},
 		{Op: modelv1.Condition_BINARY_OP_GE, ValueType: "int", Value: TagValueInt(2), Measure: "service_traffic", TagName: "layer", QLValue: "2"},
 		// IN with str_array, int_array
-		{Op: modelv1.Condition_BINARY_OP_IN, ValueType: "str_array", Value: TagValueStrArray([]string{"svc1", "svc2"}), Measure: "service_cpm_minute", TagName: "id", QLValue: "('svc1', 'svc2')"},
+		{
+			Op: modelv1.Condition_BINARY_OP_IN, ValueType: "str_array", Value: TagValueStrArray([]string{"svc1", "svc2"}),
+			Measure: "service_cpm_minute", TagName: "id", QLValue: "('svc1', 'svc2')",
+		},
 		{Op: modelv1.Condition_BINARY_OP_IN, ValueType: "int_array", Value: TagValueIntArray([]int64{1, 2}), Measure: "service_traffic", TagName: "layer", QLValue: "(1, 2)"},
 		// NOT_IN with str_array, int_array
-		{Op: modelv1.Condition_BINARY_OP_NOT_IN, ValueType: "str_array", Value: TagValueStrArray([]string{"svc3"}), Measure: "service_cpm_minute", TagName: "id", QLValue: "('svc3')"},
+		{
+			Op: modelv1.Condition_BINARY_OP_NOT_IN, ValueType: "str_array", Value: TagValueStrArray([]string{"svc3"}),
+			Measure: "service_cpm_minute", TagName: "id", QLValue: "('svc3')",
+		},
 		{Op: modelv1.Condition_BINARY_OP_NOT_IN, ValueType: "int_array", Value: TagValueIntArray([]int64{0}), Measure: "service_traffic", TagName: "layer", QLValue: "(0)"},
 		// MATCH with str
 		{Op: modelv1.Condition_BINARY_OP_MATCH, ValueType: "str", Value: TagValueStr("nodea"), Measure: "service_instance_traffic", TagName: "name", QLValue: "MATCH('nodea')"},
@@ -105,10 +111,10 @@ func buildLeafRequest(m *Measure, op LeafOp) *measurev1.QueryRequest {
 	tagNames := AllTagNames(m)
 	fieldNames := AllFieldNames(m)
 	return &measurev1.QueryRequest{
-		Name:           m.Name,
-		Groups:         []string{m.Group},
-		Criteria:       criteria,
-		TagProjection:  BuildTagProjection(m, tagNames),
+		Name:            m.Name,
+		Groups:          []string{m.Group},
+		Criteria:        criteria,
+		TagProjection:   BuildTagProjection(m, tagNames),
 		FieldProjection: BuildFieldProjection(fieldNames),
 	}
 }
@@ -117,7 +123,7 @@ func generateLeafErrorCases() []*TestCase {
 	return []*TestCase{
 		// IN with scalar (should use array)
 		{
-			Name: "gen_err_in_scalar",
+			Name:    "gen_err_in_scalar",
 			Measure: FindMeasure("service_cpm_minute"),
 			Request: &measurev1.QueryRequest{
 				Name:   "service_cpm_minute",
@@ -125,7 +131,7 @@ func generateLeafErrorCases() []*TestCase {
 				Criteria: BuildCriteriaFromCondition(
 					BuildCondition("id", modelv1.Condition_BINARY_OP_IN, TagValueStr("svc1")),
 				),
-				TagProjection:  BuildTagProjection(FindMeasure("service_cpm_minute"), []string{"id", "entity_id"}),
+				TagProjection:   BuildTagProjection(FindMeasure("service_cpm_minute"), []string{"id", "entity_id"}),
 				FieldProjection: BuildFieldProjection([]string{"total", "value"}),
 			},
 			QL:      "SELECT id, entity_id, total, value FROM MEASURE service_cpm_minute IN sw_metric TIME > '-15m' WHERE id IN ('svc1')",
@@ -133,7 +139,7 @@ func generateLeafErrorCases() []*TestCase {
 		},
 		// MATCH with int value
 		{
-			Name: "gen_err_match_int",
+			Name:    "gen_err_match_int",
 			Measure: FindMeasure("service_traffic"),
 			Request: &measurev1.QueryRequest{
 				Name:   "service_traffic",

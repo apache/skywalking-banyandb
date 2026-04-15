@@ -22,6 +22,11 @@ import (
 	"strings"
 )
 
+const (
+	strTrue  = "true"
+	strFalse = "false"
+)
+
 // GenerateEntryCode produces g.Entry lines for measure.go.
 func GenerateEntryCode(cases []*TestCase) string {
 	var lines []string
@@ -38,20 +43,20 @@ func GenerateEntryCode(cases []*TestCase) string {
 func renderEntryLine(tc *TestCase) string {
 	name := tc.Name
 	want := name
-	wantEmpty := "false"
-	wantErr := "false"
-	disOrder := "false"
+	wantEmpty := strFalse
+	wantErr := strFalse
+	disOrder := strFalse
 	duration := "25 * time.Minute"
 	offset := "-20 * time.Minute"
 
 	if tc.WantErr {
-		wantErr = "true"
+		wantErr = strTrue
 	}
 	if tc.WantEmpty {
-		wantEmpty = "true"
+		wantEmpty = strTrue
 	}
 	if tc.DisOrder {
-		disOrder = "true"
+		disOrder = strTrue
 	}
 	if tc.Duration != "" {
 		duration = tc.Duration

@@ -100,7 +100,7 @@ func runGenerate(outputDir string) {
 	for _, tc := range filtered {
 		// Write .ql file
 		qlPath := filepath.Join(inputDirPath, tc.Name+".ql")
-		if writeErr := os.WriteFile(qlPath, tc.QLFileContent(), 0o644); writeErr != nil {
+		if writeErr := os.WriteFile(qlPath, tc.QLFileContent(), 0o600); writeErr != nil {
 			fmt.Fprintf(os.Stderr, "Error writing %s: %v\n", qlPath, writeErr)
 			continue
 		}
@@ -112,7 +112,7 @@ func runGenerate(outputDir string) {
 			continue
 		}
 		yamlPath := filepath.Join(inputDirPath, tc.Name+".yaml")
-		if writeErr := os.WriteFile(yamlPath, yamlContent, 0o644); writeErr != nil {
+		if writeErr := os.WriteFile(yamlPath, yamlContent, 0o600); writeErr != nil {
 			fmt.Fprintf(os.Stderr, "Error writing %s: %v\n", yamlPath, writeErr)
 			continue
 		}
@@ -122,7 +122,7 @@ func runGenerate(outputDir string) {
 			// Write placeholder want file (to be filled by capture)
 			wantPath := filepath.Join(wantDirPath, tc.Name+".yaml")
 			placeholder := []byte("# Placeholder - run 'capture' subcommand to fill this file\n")
-			if writeErr := os.WriteFile(wantPath, placeholder, 0o644); writeErr != nil {
+			if writeErr := os.WriteFile(wantPath, placeholder, 0o600); writeErr != nil {
 				fmt.Fprintf(os.Stderr, "Error writing %s: %v\n", wantPath, writeErr)
 				continue
 			}

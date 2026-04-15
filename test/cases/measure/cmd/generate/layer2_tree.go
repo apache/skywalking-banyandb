@@ -33,9 +33,9 @@ func GenerateLayer2() []*TestCase {
 	}
 
 	type depthConfig struct {
-		depth    int
-		rootOp   modelv1.LogicalExpression_LogicalOp
-		suffix   string
+		suffix string
+		depth  int
+		rootOp modelv1.LogicalExpression_LogicalOp
 	}
 
 	configs := []depthConfig{
@@ -55,10 +55,10 @@ func GenerateLayer2() []*TestCase {
 			continue
 		}
 		req := &measurev1.QueryRequest{
-			Name:           m.Name,
-			Groups:         []string{m.Group},
-			Criteria:       criteria,
-			TagProjection:  BuildTagProjection(m, []string{"id", "entity_id"}),
+			Name:            m.Name,
+			Groups:          []string{m.Group},
+			Criteria:        criteria,
+			TagProjection:   BuildTagProjection(m, []string{"id", "entity_id"}),
 			FieldProjection: BuildFieldProjection([]string{"total", "value"}),
 		}
 		ql, qlErr := RenderQL(req)

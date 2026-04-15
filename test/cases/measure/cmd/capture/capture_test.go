@@ -169,7 +169,7 @@ func TestCapture(t *testing.T) {
 		}
 
 		wantPath := filepath.Join(wantDirPath, testName+".yaml")
-		if writeErr := os.WriteFile(wantPath, respYAML, 0o644); writeErr != nil {
+		if writeErr := os.WriteFile(wantPath, respYAML, 0o600); writeErr != nil {
 			t.Errorf("  [ERROR] %s: write failed: %v", testName, writeErr)
 			continue
 		}

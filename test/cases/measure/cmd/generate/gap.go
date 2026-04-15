@@ -26,17 +26,17 @@ import (
 
 // CoverageMap tracks which combinations are already tested by existing cases.
 type CoverageMap struct {
-	BinaryOps   map[string]bool // "EQ:str", "NE:int", etc.
-	AggFunctions map[string]bool // "MEAN", "MAX", etc.
-	TreeDepths  map[int]bool    // 1, 2, 3, 5
-	LogicalOps  map[string]bool // "AND", "OR"
-	SortOrders  map[string]bool // "ASC", "DESC"
-	TopN        bool
-	GroupBy     bool
-	Limit       bool
-	Offset      bool
-	Criteria    map[string]bool // "EQ", "NE", "IN", etc. (any use of criteria)
-	TestNames   map[string]bool // existing test names
+	BinaryOps    map[string]bool
+	AggFunctions map[string]bool
+	TreeDepths   map[int]bool
+	LogicalOps   map[string]bool
+	SortOrders   map[string]bool
+	Criteria     map[string]bool
+	TestNames    map[string]bool
+	TopN         bool
+	GroupBy      bool
+	Limit        bool
+	Offset       bool
 }
 
 // AnalyzeGaps reads existing test files and builds a coverage map.
