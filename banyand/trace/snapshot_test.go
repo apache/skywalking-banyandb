@@ -27,6 +27,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/apache/skywalking-banyandb/api/common"
+	"github.com/apache/skywalking-banyandb/banyand/internal/storage"
 	"github.com/apache/skywalking-banyandb/banyand/protector"
 	"github.com/apache/skywalking-banyandb/pkg/bytes"
 	"github.com/apache/skywalking-banyandb/pkg/convert"
@@ -737,4 +738,49 @@ func TestTakeFileSnapshotNoDiskPartsWithoutSidx(t *testing.T) {
 	created, err := tst.TakeFileSnapshot(snapshotPath)
 	require.NoError(t, err)
 	assert.False(t, created, "TakeFileSnapshot should return false when sidxMap is empty and no disk parts")
+}
+
+func TestTakeFileSnapshotEmptySegment(t *testing.T) {
+	fileSystem := fs.NewLocalFileSystem()
+
+	tmpPath, deferFn := test.Space(require.New(t))
+	defer deferFn()
+
+	tabDir := filepath.Join(tmpPath, "tab")
+	fileSystem.MkdirPanicIfExist(tabDir, 0o755)
+
+	tst, err := newTSTable(
+		fileSystem,
+		tabDir,
+		common.Position{},
+		logger.GetLogger("test"),
+		timestamp.TimeRange{},
+		option{
+			flushTimeout: 0,
+			mergePolicy:  newDefaultMergePolicy(),
+			protector:    protector.Nop{},
+		},
+		nil,
+	)
+	require.NoError(t, err)
+	defer tst.Close()
+
+	// Populate sidxMap so the test guards against the prior bug where the
+	// sidxMap loop created sidx directories before the nil-snapshot check.
+	_, err = tst.getOrCreateSidx("test_sidx")
+	require.NoError(t, err)
+
+	tst.Lock()
+	tst.snapshot = nil
+	tst.Unlock()
+
+	snapshotPath := filepath.Join(tmpPath, "snapshot")
+	fileSystem.MkdirIfNotExist(snapshotPath, 0o755)
+
+	created, err := tst.TakeFileSnapshot(snapshotPath)
+	require.ErrorIs(t, err, storage.ErrNoCurrentSnapshot)
+	assert.False(t, created)
+
+	entries := fileSystem.ReadDir(snapshotPath)
+	assert.Empty(t, entries, "no files or dirs should remain when snapshot is nil")
 }

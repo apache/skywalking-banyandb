@@ -18,18 +18,13 @@
 package integration_sync_retry_test
 
 import (
-	"context"
 	"encoding/json"
-	"fmt"
 	"testing"
 
 	g "github.com/onsi/ginkgo/v2"
 	"github.com/onsi/gomega"
 	"github.com/onsi/gomega/gleak"
 
-	"github.com/apache/skywalking-banyandb/banyand/metadata"
-	"github.com/apache/skywalking-banyandb/banyand/metadata/embeddedetcd"
-	"github.com/apache/skywalking-banyandb/banyand/metadata/schema"
 	"github.com/apache/skywalking-banyandb/pkg/logger"
 	"github.com/apache/skywalking-banyandb/pkg/test"
 	"github.com/apache/skywalking-banyandb/pkg/test/flags"
@@ -61,45 +56,13 @@ var _ = g.SynchronizedBeforeSuite(func() []byte {
 	goods = gleak.Goroutines()
 	gomega.Expect(logger.Init(logger.Logging{Env: "dev", Level: flags.LogLevel})).To(gomega.Succeed())
 
-	ports, err := test.AllocateFreePorts(2)
-	gomega.Expect(err).NotTo(gomega.HaveOccurred())
 	dir, releaseSpace, err := test.NewSpace()
 	gomega.Expect(err).NotTo(gomega.HaveOccurred())
 
-	clientEP := fmt.Sprintf("http://127.0.0.1:%d", ports[0])
-	serverEP := fmt.Sprintf("http://127.0.0.1:%d", ports[1])
+	dfWriter := setup.NewDiscoveryFileWriter(dir)
+	clusterConfig := setup.PropertyClusterConfig(dfWriter)
 
-	server, err := embeddedetcd.NewServer(
-		embeddedetcd.ConfigureListener([]string{clientEP}, []string{serverEP}),
-		embeddedetcd.RootDir(dir),
-		embeddedetcd.AutoCompactionMode("periodic"),
-		embeddedetcd.AutoCompactionRetention("1h"),
-		embeddedetcd.QuotaBackendBytes(2*1024*1024*1024),
-	)
-	gomega.Expect(err).NotTo(gomega.HaveOccurred())
-	<-server.ReadyNotify()
-
-	cleanupFuncs = append([]func(){
-		func() {
-			_ = server.Close()
-			<-server.StopNotify()
-			releaseSpace()
-		},
-	}, cleanupFuncs...)
-
-	schemaRegistry, err := schema.NewEtcdSchemaRegistry(
-		schema.Namespace(metadata.DefaultNamespace),
-		schema.ConfigureServerEndpoints([]string{clientEP}),
-	)
-	gomega.Expect(err).NotTo(gomega.HaveOccurred())
-	defer schemaRegistry.Close()
-
-	ctx := context.Background()
-	test_stream.PreloadSchema(ctx, schemaRegistry)
-	test_measure.PreloadSchema(ctx, schemaRegistry)
-	test_trace.PreloadSchema(ctx, schemaRegistry)
-
-	clusterConfig := setup.EtcdClusterConfig(clientEP)
+	cleanupFuncs = append([]func(){releaseSpace}, cleanupFuncs...)
 
 	// Start two data nodes to ensure replication targets exist
 	startDataNode := func() (string, string) {
@@ -114,6 +77,12 @@ var _ = g.SynchronizedBeforeSuite(func() []byte {
 
 	liaisonAddrLocal, _, closeLiaison := setup.LiaisonNodeWithHTTP(clusterConfig)
 	cleanupFuncs = append(cleanupFuncs, closeLiaison)
+
+	setup.PreloadSchemaViaProperty(clusterConfig,
+		test_stream.PreloadSchema,
+		test_measure.PreloadSchema,
+		test_trace.PreloadSchema,
+	)
 
 	cfg := suiteConfig{
 		LiaisonAddr: liaisonAddrLocal,

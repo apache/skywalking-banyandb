@@ -1,12 +1,14 @@
 # bydbctl
-`bydbctl` is the command line tool for interacting with BanyanDB. It is a powerful tool that can be used to create, update, read, and delete schemas. It can also be used to query data stored in streams, measures, and properties.
+
+`bydbctl` is the command line tool for interacting with BanyanDB. It is a powerful tool that can be used to create, update, read, and delete schemas. It can also be used to query data stored in streams, measures, traces, and properties.
 
 These are several ways to install:
 
-* Get binaries from [download](https://skywalking.apache.org/downloads/).
-* Build from [sources](https://github.com/apache/skywalking-banyandb/tree/main/bydbctl) to get latest features.
+- Get binaries from [download](https://skywalking.apache.org/downloads/).
+- Build from [sources](https://github.com/apache/skywalking-banyandb/tree/main/bydbctl) to get latest features.
 
 The config file named `.bydbctl.yaml` will be created in `$HOME` folder after the first CRUD command is applied.
+
 ```shell
 > more ~/.bydbctl.yaml
 addr: http://127.0.0.1:17913

@@ -151,3 +151,12 @@ func (h *histogramCollection) Delete(labelValues ...string) bool {
 	}
 	return success
 }
+
+func (f *factory) Close() {
+	if f.PromProvider != nil {
+		f.PromProvider.Close()
+	}
+	if f.NativeProvider != nil {
+		f.NativeProvider.Close()
+	}
+}

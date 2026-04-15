@@ -310,7 +310,12 @@ func (m *metrics) DeleteAll() {
 
 func (s *supplier) newMetrics(p common.Position) (storage.Metrics, observability.Factory) {
 	factory := s.omr.With(measureScope.ConstLabels(meter.ToLabelPairs(common.DBLabelNames(), p.DBLabelValues())))
-	s.queryMetrics.Store(newQueryMetrics(s.omr.With(measureScope.SubScope("query").ConstLabels(meter.ToLabelPairs(common.DBLabelNames(), p.DBLabelValues())))))
+	if prev, ok := s.queryMetricsFactory.Load().(observability.Factory); ok && prev != nil {
+		prev.Close()
+	}
+	queryFactory := s.omr.With(measureScope.SubScope("query").ConstLabels(meter.ToLabelPairs(common.DBLabelNames(), p.DBLabelValues())))
+	s.queryMetricsFactory.Store(queryFactory)
+	s.queryMetrics.Store(newQueryMetrics(queryFactory))
 	return &metrics{
 		totalWritten:               factory.NewCounter("total_written"),
 		totalBatch:                 factory.NewCounter("total_batch"),

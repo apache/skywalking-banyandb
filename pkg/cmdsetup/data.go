@@ -44,7 +44,7 @@ import (
 func newDataCmd(runners ...run.Unit) *cobra.Command {
 	l := logger.GetLogger("bootstrap")
 	ctx := context.Background()
-	metaSvc, err := service.NewService(ctx, false)
+	metaSvc, err := service.NewService()
 	if err != nil {
 		l.Fatal().Err(err).Msg("failed to initiate metadata service")
 	}

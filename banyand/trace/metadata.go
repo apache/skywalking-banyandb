@@ -560,6 +560,7 @@ func (s *supplier) OpenDB(groupSchema *commonv1.Group) (resourceSchema.DB, error
 	segInterval := ro.SegmentInterval
 	segmentIdleTimeout := time.Duration(0)
 	disableRetention := false
+	disableRotation := false
 	if len(ro.Stages) > 0 && len(s.nodeLabels) > 0 {
 		var ttlNum uint32
 		foundMatched := false
@@ -583,10 +584,12 @@ func (s *supplier) OpenDB(groupSchema *commonv1.Group) (resourceSchema.DB, error
 				segmentIdleTimeout = 5 * time.Minute
 			}
 			disableRetention = i+1 < len(ro.Stages)
+			disableRotation = true
 			break
 		}
 		if !foundMatched {
 			disableRetention = true
+			disableRotation = true
 		}
 	}
 	group := groupSchema.Metadata.Name
@@ -603,6 +606,7 @@ func (s *supplier) OpenDB(groupSchema *commonv1.Group) (resourceSchema.DB, error
 		StorageMetricsFactory:          s.omr.With(traceScope.ConstLabels(meter.ToLabelPairs(common.DBLabelNames(), p.DBLabelValues()))),
 		SegmentIdleTimeout:             segmentIdleTimeout,
 		DisableRetention:               disableRetention,
+		DisableRotation:                disableRotation,
 		MemoryLimit:                    s.pm.GetLimit(),
 	}
 	return storage.OpenTSDB(
@@ -672,13 +676,15 @@ func (qs *queueSupplier) OpenDB(groupSchema *commonv1.Group) (resourceSchema.DB,
 	}
 	shardNum := ro.ShardNum
 	group := groupSchema.Metadata.Name
+	metrics, metricsFactory := qs.newMetrics(p)
 	opts := wqueue.Opts[*tsTable, option]{
 		Group:           group,
 		ShardNum:        shardNum,
 		SegmentInterval: storage.MustToIntervalRule(ro.SegmentInterval),
 		Location:        path.Join(qs.path, group),
 		Option:          qs.option,
-		Metrics:         qs.newMetrics(p),
+		Metrics:         metrics,
+		MetricsFactory:  metricsFactory,
 		SubQueueCreator: func(fileSystem fs.FileSystem, root string, position common.Position,
 			l *logger.Logger, option option, metrics any, group string, shardID common.ShardID, getNodes func() []string,
 		) (*tsTable, error) {
@@ -686,18 +692,10 @@ func (qs *queueSupplier) OpenDB(groupSchema *commonv1.Group) (resourceSchema.DB,
 		},
 		GetNodes: func(shardID common.ShardID) []string {
 			copies := ro.Replicas + 1
-			nodeSet := make(map[string]struct{}, copies)
-			for i := uint32(0); i < copies; i++ {
-				nodeID, err := qs.traceDataNodeRegistry.Locate(group, "", uint32(shardID), i)
-				if err != nil {
-					qs.l.Error().Err(err).Str("group", group).Uint32("shard", uint32(shardID)).Uint32("copy", i).Msg("failed to locate node")
-					return nil
-				}
-				nodeSet[nodeID] = struct{}{}
-			}
-			nodes := make([]string, 0, len(nodeSet))
-			for nodeID := range nodeSet {
-				nodes = append(nodes, nodeID)
+			nodes, err := qs.traceDataNodeRegistry.LocateAll(group, uint32(shardID), int(copies))
+			if err != nil {
+				qs.l.Error().Err(err).Str("group", group).Uint32("shard", uint32(shardID)).Msg("failed to locate nodes")
+				return nil
 			}
 			return nodes
 		},

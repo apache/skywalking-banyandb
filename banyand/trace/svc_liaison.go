@@ -23,7 +23,6 @@ import (
 	"fmt"
 	"path"
 	"path/filepath"
-	"sort"
 	"time"
 
 	"github.com/dustin/go-humanize"
@@ -253,22 +252,7 @@ func (l *liaison) PreRun(ctx context.Context) error {
 				return nil, fmt.Errorf("group %s missing resource options", group)
 			}
 			copies := groupSchema.ResourceOpts.Replicas + 1
-			if len(l.dataNodeList) == 0 {
-				return nil, fmt.Errorf("no data nodes configured for handoff")
-			}
-			sortedNodes := append([]string(nil), l.dataNodeList...)
-			sort.Strings(sortedNodes)
-			nodes := make([]string, 0, copies)
-			seen := make(map[string]struct{}, copies)
-			for replica := uint32(0); replica < copies; replica++ {
-				nodeID := sortedNodes[(int(shardID)+int(replica))%len(sortedNodes)]
-				if _, ok := seen[nodeID]; ok {
-					continue
-				}
-				nodes = append(nodes, nodeID)
-				seen[nodeID] = struct{}{}
-			}
-			return nodes, nil
+			return traceDataNodeRegistry.LocateAll(group, shardID, int(copies))
 		}
 
 		// nolint:contextcheck

@@ -13,6 +13,8 @@ A dedicated lifecycle agent (an independent Go process) is responsible for:
 
 This process ensures data flows correctly through hot, warm, and cold stages as defined in your group configurations.
 
+> **Prerequisite: node discovery must be configured.** The lifecycle agent resolves the target nodes of every stage by listing all data nodes through the cluster's node registry and filtering them by the stage's `node_selector`. In the default `--node-discovery-mode=none` setting the registry is empty, so the agent cannot find any destination to migrate data to and the run will be a no-op. Configure `dns` or `file` mode on the lifecycle agent using the same source of truth as the rest of the cluster; see the [node discovery documentation](node-discovery.md) for the full list of `--node-discovery-*` flags.
+
 ## Data Migration Process
 
 The lifecycle agent performs the following steps:
@@ -24,18 +26,18 @@ The lifecycle agent performs the following steps:
 
 2. **Take Snapshots:**
    - Request a snapshot from the source data node.
-   - Retrieve the stream and measure data directory paths.
+   - Retrieve the stream, measure and trace data directory paths.
 
 3. **Setup Query Services:**
-   - Create read-only services for streams and measures using the snapshot paths.
+   - Create read-only services for streams, measures and traces using the snapshot paths.
 
 4. **Process Each Group:**
    - Determine the current stage based on node labels.
    - Identify target nodes for the next lifecycle stage.
-   - For each stream or measure:
-      - Query data from the current stage.
-      - Transform data into write requests.
-      - Send write requests to target nodes.
+   - For each stream, measure or trace:
+     - Query data from the current stage.
+     - Transform data into write requests.
+     - Send write requests to target nodes.
    - Delete the source data after a successful migration.
 
 5. **Progress Tracking:**
@@ -45,16 +47,16 @@ The lifecycle agent performs the following steps:
 
 ## Configuration
 
-Lifecycle stages are defined within the group configuration using the `LifecycleStage` structure. 
+Lifecycle stages are defined within the group configuration using the `LifecycleStage` structure.
 
-| Field         | Description                                                          |
-| ------------- | -------------------------------------------------------------------- |
-| `name`        | Stage name (e.g., "hot", "warm", "cold")                             |
-| `shard_num`   | Number of shards allocated for this stage                            |
-| `segment_interval` | Time interval for data segmentation (uses `IntervalRule`)       |
-| `ttl`         | Time-to-live before data moves to the next stage (uses `IntervalRule`)|
-| `node_selector` | Label selector to identify target nodes for this stage             |
-| `close`       | Indicates whether to close segments that are no longer live          |
+| Field              | Description                                                            |
+| ------------------ | ---------------------------------------------------------------------- |
+| `name`             | Stage name (e.g., "hot", "warm", "cold")                               |
+| `shard_num`        | Number of shards allocated for this stage                              |
+| `segment_interval` | Time interval for data segmentation (uses `IntervalRule`)              |
+| `ttl`              | Time-to-live before data moves to the next stage (uses `IntervalRule`) |
+| `node_selector`    | Label selector to identify target nodes for this stage                 |
+| `close`            | Indicates whether to close segments that are no longer live            |
 
 ### Example Configuration
 
@@ -107,28 +109,41 @@ The lifecycle command offers options to customize data migration:
 ```bash
 lifecycle \
   --grpc-addr 127.0.0.1:17912 \
-  --etcd-endpoints <etcd-endpoints> \
   --stream-root-path /path/to/stream \
   --measure-root-path /path/to/measure \
+  --trace-root-path /path/to/trace \
   --node-labels type=hot \
   --progress-file /path/to/progress.json \
-  --schedule @daily
+  --schedule @daily \
+  --node-discovery-mode file \
+  --node-discovery-file-path /etc/banyandb/nodes.yaml
 ```
 
 ### Command-Line Parameters
 
-| Parameter           | Description                                                               | Default Value                   |
-| ------------------- | ------------------------------------------------------------------------- | ------------------------------- |
-| `--node-labels`     | Labels of the current node (e.g., `type=hot,region=us-west`)                | `nil`                           |
-| `--grpc-addr`       | gRPC address of the data node                                             | `127.0.0.1:17912`               |
-| `--enable-tls`      | Enable TLS for gRPC connection                                            | `false`                         |
-| `--insecure`        | Skip server certificate verification                                      | `false`                         |
-| `--cert`            | Path to the gRPC server certificate                                       | `""`                            |
-| `--stream-root-path`| Root directory for stream catalog snapshots                               | `/tmp`                          |
-| `--measure-root-path`| Root directory for measure catalog snapshots                              | `/tmp`                          |
-| `--progress-file`   | File path used for progress tracking and crash recovery                   | `/tmp/lifecycle-progress.json`  |
-| `--etcd-endpoints`  | Endpoints for etcd connections                                             | `""`                            |
-| `--schedule`        | Schedule for periodic backup (e.g., @yearly, @monthly, @weekly, @daily, etc.) | `""`                            |
+| Parameter             | Description                                                                   | Default Value                  |
+| --------------------- | ----------------------------------------------------------------------------- | ------------------------------ |
+| `--node-labels`       | Labels of the current node (e.g., `type=hot,region=us-west`)                  | `nil`                          |
+| `--grpc-addr`         | gRPC address of the source data node to snapshot and read from                | `127.0.0.1:17912`              |
+| `--enable-tls`        | Enable TLS for gRPC connection                                                | `false`                        |
+| `--insecure`          | Skip server certificate verification                                          | `false`                        |
+| `--cert`              | Path to the gRPC server certificate                                           | `""`                           |
+| `--stream-root-path`  | Root directory for stream catalog snapshots                                   | `/tmp`                         |
+| `--measure-root-path` | Root directory for measure catalog snapshots                                  | `/tmp`                         |
+| `--trace-root-path`   | Root directory for trace catalog snapshots                                    | `/tmp`                         |
+| `--progress-file`     | File path used for progress tracking and crash recovery                       | `/tmp/lifecycle-progress.json` |
+| `--schedule`          | Schedule for periodic backup (e.g., @yearly, @monthly, @weekly, @daily, etc.) | `""`                           |
+
+## Automatic Behavior on Warm and Cold Nodes
+
+When a data node matches a lifecycle stage (i.e., its labels match a stage's `node_selector`), two behaviors are automatically configured:
+
+- **Rotation is disabled**: The rotation task (which pre-creates segments on hot nodes) is not started on warm or cold nodes. Segments are created on demand by the lifecycle migration process, ensuring correct segment boundaries for multi-day intervals.
+- **Retention is disabled on non-last stages**: TTL-based segment deletion is disabled on all stages except the last one. Data removal on intermediate stages is managed by the lifecycle migration process, not by the built-in retention mechanism.
+
+If a node's labels do not match any stage, both rotation and retention are disabled as a safety measure.
+
+The lifecycle agent also accepts the full suite of `--node-discovery-*` flags so it can enumerate every candidate target node in the cluster. At a minimum you need `--node-discovery-mode` and either `--node-discovery-dns-srv-addresses` (DNS mode) or `--node-discovery-file-path` (file mode). The set of nodes visible to the lifecycle agent must include every warm/cold data node that any stage's `node_selector` could match — use the same discovery configuration that the liaison nodes use. See the [node discovery documentation](node-discovery.md) for the complete reference.
 
 ## Best Practices
 
@@ -150,21 +165,33 @@ lifecycle \
 
 1. **Setup nodes with appropriate labels:**
 
+   Every node (liaison, hot, warm, cold, and the lifecycle agent itself) must point at the same node-discovery source so that the lifecycle agent and liaison nodes see the identical topology. The example below uses file mode with a shared `/etc/banyandb/nodes.yaml`; see the [node discovery documentation](node-discovery.md) for DNS mode.
+
    ```bash
    # Liaison node
-   banyand liaison --etcd-endpoints <etcd-endpoints>
+   banyand liaison \
+     --node-discovery-mode=file \
+     --node-discovery-file-path=/etc/banyandb/nodes.yaml
 
-   # Hot node
-   banyand data --node-labels type=hot --etcd-endpoints <etcd-endpoints> --grpc-port 17912
-   
-   # Warm node
-   banyand data --node-labels type=warm --etcd-endpoints <etcd-endpoints> --grpc-port 18912
+   # Hot data node
+   banyand data \
+     --node-labels type=hot \
+     --grpc-port 17912 \
+     --node-discovery-mode=file \
+     --node-discovery-file-path=/etc/banyandb/nodes.yaml
+
+   # Warm data node
+   banyand data \
+     --node-labels type=warm \
+     --grpc-port 18912 \
+     --node-discovery-mode=file \
+     --node-discovery-file-path=/etc/banyandb/nodes.yaml
    ```
 
 2. **Create a group with lifecycle stages.**
 
 `bydbctl` connects the `liaison` node to create a group with lifecycle stages:
-   
+
 ```bash
    bydbctl group create -f - <<EOF
 metadata:
@@ -194,16 +221,18 @@ EOF
 
 3. **Run the lifecycle agent:**
 
-`lifecycle` connects to the `hot` node to manage data migration:
+`lifecycle` connects to the `hot` node (as its snapshot source via `--grpc-addr`) and uses node discovery to locate the warm/cold target nodes:
 
    ```bash
    lifecycle \
-     --etcd-endpoints <etcd-endpoints> \
      --node-labels type=hot \
      --grpc-addr 127.0.0.1:17912 \
      --stream-root-path /data/stream \
      --measure-root-path /data/measure \
-     --progress-file /data/progress.json
+     --trace-root-path /data/trace \
+     --progress-file /data/progress.json \
+     --node-discovery-mode=file \
+     --node-discovery-file-path=/etc/banyandb/nodes.yaml
    ```
 
 4. **Verify migration:**

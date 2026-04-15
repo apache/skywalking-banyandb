@@ -35,7 +35,7 @@ import (
 // NewCommand creates a new lifecycle command.
 func NewCommand() *cobra.Command {
 	logging := logger.Logging{}
-	metaSvc, err := metadata.NewClient(false, false)
+	metaSvc, err := metadata.NewClient()
 	if err != nil {
 		logger.GetLogger().Err(err).Msg("failed to initiate metadata service")
 	}

@@ -75,12 +75,9 @@ gomock_reflect*
 .cursor/
 
 # Claude
-Claude.md
 .claude/
-CLAUDE.md
+.omc/
 
 # eBPF generated files and binaries
 fodc/agent/internal/ktm/iomonitor/ebpf/generated/vmlinux.h
 
-# Codex
-AGENTS.md

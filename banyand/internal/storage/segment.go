@@ -19,6 +19,7 @@ package storage
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"io/fs"
 	"path"
@@ -33,15 +34,19 @@ import (
 
 	"github.com/apache/skywalking-banyandb/api/common"
 	commonv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/common/v1"
-	"github.com/apache/skywalking-banyandb/pkg/convert"
 	banyanfs "github.com/apache/skywalking-banyandb/pkg/fs"
 	"github.com/apache/skywalking-banyandb/pkg/index/inverted"
 	"github.com/apache/skywalking-banyandb/pkg/logger"
 	"github.com/apache/skywalking-banyandb/pkg/timestamp"
 )
 
-// ErrSegmentClosed is returned when trying to access a closed segment.
-var ErrSegmentClosed = errors.New("segment closed")
+var (
+	// ErrSegmentClosed is returned when trying to access a closed segment.
+	ErrSegmentClosed = errors.New("segment closed")
+	// ErrInvalidSegmentTimestamp is returned when a segment timestamp is zero or near-epoch,
+	// indicating a corrupted timestamp (e.g., unset MinTimestamp flowing through sync paths).
+	ErrInvalidSegmentTimestamp = errors.New("invalid segment timestamp: epoch or near-epoch time is not valid for APM data")
+)
 
 var _ Cache = (*segmentCache)(nil)
 
@@ -477,39 +482,59 @@ func (sc *segmentController[T, O]) parse(value string) (time.Time, error) {
 func (sc *segmentController[T, O]) open() error {
 	sc.Lock()
 	defer sc.Unlock()
-	emptySegments := make([]string, 0)
+	invalidSegments := make([]string, 0)
 	err := loadSegments(sc.location, segPathPrefix, sc, sc.getOptions().SegmentInterval, func(start, end time.Time) error {
 		suffix := sc.format(start)
 		segmentPath := path.Join(sc.location, fmt.Sprintf(segTemplate, suffix))
-		metadataPath := path.Join(segmentPath, metadataFilename)
-		version, err := sc.lfs.Read(metadataPath)
-		if err != nil {
-			if errors.Is(err, fs.ErrNotExist) {
-				emptySegments = append(emptySegments, segmentPath)
-				return nil
-			}
-			return err
-		}
-		if len(version) == 0 {
-			emptySegments = append(emptySegments, segmentPath)
+		// Detect epoch/near-epoch segments created by zero MinTimestamp in sync paths.
+		// BanyanDB is an APM database -- no legitimate data predates the year 2000.
+		if start.UnixNano() <= 0 {
+			invalidSegments = append(invalidSegments, segmentPath)
 			return nil
 		}
-		if err = checkVersion(convert.BytesToString(version)); err != nil {
-			return err
+		metadataPath := path.Join(segmentPath, metadataFilename)
+		rawMeta, readErr := sc.lfs.Read(metadataPath)
+		if readErr != nil {
+			if errors.Is(readErr, fs.ErrNotExist) {
+				invalidSegments = append(invalidSegments, segmentPath)
+				return nil
+			}
+			return readErr
 		}
-		_, err = sc.load(start, end, sc.location)
-		return err
+		if len(rawMeta) == 0 {
+			invalidSegments = append(invalidSegments, segmentPath)
+			return nil
+		}
+		meta, parseErr := readSegmentMeta(rawMeta)
+		if parseErr != nil {
+			return parseErr
+		}
+		segmentEnd := end
+		if meta.EndTime != "" {
+			parsedEnd, timeErr := time.Parse(time.RFC3339Nano, meta.EndTime)
+			if timeErr != nil {
+				return timeErr
+			}
+			segmentEnd = parsedEnd
+		}
+		_, loadErr := sc.load(start, segmentEnd, sc.location)
+		return loadErr
 	})
-	if len(emptySegments) > 0 {
-		sc.l.Warn().Strs("segments", emptySegments).Msg("empty segments found, removing them.")
-		for i := range emptySegments {
-			sc.lfs.MustRMAll(emptySegments[i])
+	if len(invalidSegments) > 0 {
+		sc.l.Warn().Strs("segments", invalidSegments).Msg("invalid segments found (empty or epoch-dated), removing them")
+		for i := range invalidSegments {
+			sc.lfs.MustRMAll(invalidSegments[i])
 		}
 	}
 	return err
 }
 
 func (sc *segmentController[T, O]) create(start time.Time) (*segment[T, O], error) {
+	// Reject epoch/near-epoch timestamps caused by zero MinTimestamp flowing through sync paths.
+	// BanyanDB is an APM database -- no legitimate data predates the year 2000.
+	if start.UnixNano() <= 0 {
+		return nil, ErrInvalidSegmentTimestamp
+	}
 	sc.Lock()
 	defer sc.Unlock()
 	last := len(sc.lst) - 1
@@ -539,7 +564,14 @@ func (sc *segmentController[T, O]) create(start time.Time) (*segment[T, O], erro
 	}
 	segPath := path.Join(sc.location, fmt.Sprintf(segTemplate, sc.format(start)))
 	sc.lfs.MkdirPanicIfExist(segPath, DirPerm)
-	data := []byte(currentVersion)
+	meta := segmentMeta{
+		Version: currentVersion,
+		EndTime: end.Format(time.RFC3339Nano),
+	}
+	data, marshalErr := json.Marshal(meta)
+	if marshalErr != nil {
+		logger.Panicf("cannot marshal segment metadata: %s", marshalErr)
+	}
 	metadataPath := filepath.Join(segPath, metadataFilename)
 	lf, err := sc.lfs.CreateLockFile(metadataPath, FilePerm)
 	if err != nil {

@@ -66,6 +66,7 @@
       ],
     },
   });
+  const filterConfigBaseKeys = ['groups', 'name', 'offset', 'limit', 'stages', 'projection'];
   const data = reactive({
     fields: [],
     tableFields: [],
@@ -282,6 +283,11 @@ orderBy:
   }
   function handleCodeData() {
     const json = yamlToJson(data.code).data;
+    Object.keys(filterConfig).forEach((key) => {
+      if (!filterConfigBaseKeys.includes(key)) {
+        delete filterConfig[key];
+      }
+    });
     filterConfig.offset = json.offset !== undefined ? json.offset : 0;
     filterConfig.limit = json.limit !== undefined ? json.limit : 10;
     delete filterConfig.timeRange;
@@ -327,6 +333,12 @@ orderBy:
         });
       });
   }
+
+  function refreshTableData() {
+    initCode();
+    handleCodeData();
+  }
+
   function changeDatePicker() {
     const json = yamlToJson(data.code);
     if (!json.data.hasOwnProperty('timeRange')) {
@@ -404,7 +416,7 @@ orderBy:
         </el-col>
         <el-col :span="8">
           <div class="flex align-item-center justify-end" style="height: 30px">
-            <el-button :icon="RefreshRight" @click="getTableData" plain />
+            <el-button :icon="RefreshRight" @click="refreshTableData" plain />
           </div>
         </el-col>
       </el-row>

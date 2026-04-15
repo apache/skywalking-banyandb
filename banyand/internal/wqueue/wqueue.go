@@ -31,6 +31,7 @@ import (
 	"github.com/apache/skywalking-banyandb/api/common"
 	commonv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/common/v1"
 	"github.com/apache/skywalking-banyandb/banyand/internal/storage"
+	"github.com/apache/skywalking-banyandb/banyand/observability"
 	"github.com/apache/skywalking-banyandb/pkg/fs"
 	"github.com/apache/skywalking-banyandb/pkg/logger"
 	"github.com/apache/skywalking-banyandb/pkg/timestamp"
@@ -48,12 +49,6 @@ var (
 	errQueueClosed  = errors.New("queue is closed")
 )
 
-// Metrics is the interface of metrics.
-type Metrics interface {
-	// DeleteAll deletes all metrics.
-	DeleteAll()
-}
-
 // SubQueue represents a sub-queue interface that can be closed.
 type SubQueue interface {
 	io.Closer
@@ -67,7 +62,8 @@ type SubQueueCreator[S SubQueue, O any] func(fileSystem fs.FileSystem, root stri
 type Opts[S SubQueue, O any] struct {
 	SubQueueCreator SubQueueCreator[S, O]
 	GetNodes        func(common.ShardID) []string
-	Metrics         Metrics
+	Metrics         storage.Metrics
+	MetricsFactory  observability.Factory
 	Option          O
 	Group           string
 	Location        string
@@ -124,6 +120,12 @@ func (q *Queue[S, O]) Close() error {
 	q.lock.Close()
 	if err := q.lfs.DeleteFile(q.lock.Path()); err != nil {
 		logger.Panicf("cannot delete lock file %s: %s", q.lock.Path(), err)
+	}
+	if q.opts.Metrics != nil {
+		q.opts.Metrics.DeleteAll()
+	}
+	if q.opts.MetricsFactory != nil {
+		q.opts.MetricsFactory.Close()
 	}
 	return nil
 }

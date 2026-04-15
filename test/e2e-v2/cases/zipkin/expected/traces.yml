@@ -13,9 +13,9 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-  {{- contains . }}
+  {{- contains (. | noDuplicates) }}
 -
-  {{- contains . }}
+  {{- contains (. | noDuplicates) }}
   - traceId: {{ notEmpty .traceId }}
     id: {{ notEmpty .id }}
     kind: SERVER

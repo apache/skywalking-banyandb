@@ -29,7 +29,6 @@ import (
 	. "github.com/onsi/gomega"
 	"github.com/onsi/gomega/gleak"
 
-	"github.com/apache/skywalking-banyandb/banyand/metadata/embeddedetcd"
 	"github.com/apache/skywalking-banyandb/pkg/logger"
 	"github.com/apache/skywalking-banyandb/pkg/test"
 	"github.com/apache/skywalking-banyandb/pkg/test/flags"
@@ -62,31 +61,19 @@ var _ = SynchronizedBeforeSuite(func() []byte {
 	})).To(Succeed())
 
 	// Set up distributed BanyanDB environment
-	// 1. Start etcd server
-	ports, err := test.AllocateFreePorts(2)
-	Expect(err).NotTo(HaveOccurred())
 	dir, spaceDef, err := test.NewSpace()
 	Expect(err).NotTo(HaveOccurred())
-	etcdEp := fmt.Sprintf("http://127.0.0.1:%d", ports[0])
-	etcdServer, err := embeddedetcd.NewServer(
-		embeddedetcd.ConfigureListener([]string{etcdEp}, []string{fmt.Sprintf("http://127.0.0.1:%d", ports[1])}),
-		embeddedetcd.RootDir(dir),
-		embeddedetcd.AutoCompactionMode("periodic"),
-		embeddedetcd.AutoCompactionRetention("1h"),
-		embeddedetcd.QuotaBackendBytes(2*1024*1024*1024),
-	)
-	Expect(err).ShouldNot(HaveOccurred())
-	<-etcdServer.ReadyNotify()
+	dfWriter := setup.NewDiscoveryFileWriter(dir)
+	config := setup.PropertyClusterConfig(dfWriter)
 
-	// 2. Start data node
-	config := setup.EtcdClusterConfig(etcdEp)
+	// Start data node
 	var dataNodeCloseFn func()
 	dataNodeGRPCAddr, _, dataNodeCloseFn = setup.DataNodeWithAddrAndDir(config,
 		"--observability-modes=prometheus",
 		"--observability-listener-addr=:2121",
 	)
 
-	// 3. Start liaison node
+	// Start liaison node
 	var liaisonCloseFn func()
 	banyanDBGRPCAddr, banyanDBHTTPAddr, liaisonCloseFn = setup.LiaisonNodeWithHTTP(config,
 		"--observability-modes=prometheus",
@@ -96,8 +83,6 @@ var _ = SynchronizedBeforeSuite(func() []byte {
 	deferFunc = func() {
 		liaisonCloseFn()
 		dataNodeCloseFn()
-		_ = etcdServer.Close()
-		<-etcdServer.StopNotify()
 		spaceDef()
 	}
 

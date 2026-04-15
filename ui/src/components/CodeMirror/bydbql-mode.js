@@ -103,6 +103,15 @@ CodeMirror.defineMode('bydbql', function (config) {
     },
 
     token: function (stream, state) {
+      const prefixedKeywordMatch = stream.match(/^--([A-Za-z_]\w*)/, false);
+      if (prefixedKeywordMatch) {
+        const upperWord = prefixedKeywordMatch[1].toUpperCase();
+        if (entityTypes[upperWord] || bydbqlKeywords[upperWord]) {
+          stream.match(/^--[A-Za-z_]\w*/);
+          return entityTypes[upperWord] ? 'entity-type' : 'keyword';
+        }
+      }
+
       const style = sqlMode.token(stream, state.sqlState);
       if (style === 'comment' || style === 'string') {
         return style;

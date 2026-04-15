@@ -21,11 +21,6 @@ x-data-base: &data_base
     file: ../docker/base-compose.yml
     service: data
   image: apache/skywalking-banyandb:latest
-  depends_on:
-    etcd:
-      condition: service_healthy
-    liaison:
-      condition: service_healthy
   healthcheck:
     test: ["CMD", "nc", "-z", "localhost", "17913"]
     interval: 5s
@@ -33,38 +28,33 @@ x-data-base: &data_base
     retries: 20
   cpus: 2
   mem_limit: 4g
+  volumes:
+    - ./nodes.yaml:/etc/banyandb/nodes.yaml
   command: &base_data_cmd |
-    data --etcd-endpoints=http://etcd:2379
-         --observability-modes=prometheus
+    data --observability-modes=prometheus
          --observability-listener-addr=:2121
          --property-repair-enabled=true
          --property-repair-build-tree-cron="@every 30s"
          --stream-root-path=/tmp/banyandb-data
          --measure-root-path=/tmp/banyandb-data
          --property-root-path=/tmp/banyandb-data
-         --schema-registry-mode=etcd
-         --node-discovery-mode=etcd
+         --node-discovery-mode=file
+         --node-discovery-file-path=/etc/banyandb/nodes.yaml
 
 # Base services for property repair tests
 services:
-  etcd:
-    extends:
-      file: ../docker/base-compose.yml
-      service: etcd
-    ports:
-      - "2379:2379"
-
   liaison:
     extends:
       file: ../docker/base-compose.yml
       service: liaison
     image: apache/skywalking-banyandb:latest
-    depends_on:
-      etcd:
-        condition: service_healthy
     cpus: 2
     mem_limit: 3g
     container_name: liaison
+    depends_on:
+      - data-node-1
+      - data-node-2
+      - data-node-3
     healthcheck:
       test: ["CMD", "nc", "-z", "localhost", "17913"]
       interval: 5s
@@ -74,7 +64,9 @@ services:
       - "17912:17912"
       - "17913:17913"
       - "2121:2121"  # observability port for metrics
-    command: liaison --etcd-endpoints=http://etcd:2379 --observability-modes=prometheus --schema-registry-mode=etcd --node-discovery-mode=etcd
+    volumes:
+      - ./nodes.yaml:/etc/banyandb/nodes.yaml
+    command: liaison --observability-modes=prometheus --node-discovery-mode=file --node-discovery-file-path=/etc/banyandb/nodes.yaml
 
   # Data nodes with specific configurations
   data-node-1:
@@ -85,8 +77,7 @@ services:
       - "2122:2121"  # observability port
       - "6061:6060"  # pprof port
     command: |
-      data --etcd-endpoints=http://etcd:2379
-           --observability-modes=prometheus
+      data --observability-modes=prometheus
            --observability-listener-addr=:2121
            --property-repair-enabled=true
            --property-repair-build-tree-cron="@every 30s"
@@ -94,8 +85,8 @@ services:
            --measure-root-path=/tmp/banyandb-data
            --property-root-path=/tmp/banyandb-data
            --property-repair-trigger-cron="*/3 * * * *"
-           --schema-registry-mode=etcd
-           --node-discovery-mode=etcd
+           --node-discovery-mode=file
+           --node-discovery-file-path=/etc/banyandb/nodes.yaml
 
   data-node-2:
     <<: *data_base

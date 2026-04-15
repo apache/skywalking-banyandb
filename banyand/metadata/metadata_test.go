@@ -19,6 +19,7 @@ package metadata_test
 
 import (
 	"context"
+	"fmt"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -46,11 +47,17 @@ func Test_service_RulesBySubject(t *testing.T) {
 		Level: flags.LogLevel,
 	}))
 	ctx := context.TODO()
-	s, _ := service.NewService(ctx, true)
+	s, _ := service.NewService()
 	req.NotNil(s)
 	rootDir, deferFn, err := testhelper.NewSpace()
 	req.NoError(err)
-	err = s.FlagSet().Parse([]string{"--metadata-root-path=" + rootDir, "--schema-registry-mode=etcd"})
+	ports, portErr := testhelper.AllocateFreePorts(1)
+	req.NoError(portErr)
+	err = s.FlagSet().Parse([]string{
+		"--schema-server-root-path=" + rootDir,
+		fmt.Sprintf("--schema-server-grpc-port=%d", ports[0]),
+		"--schema-server-grpc-host=127.0.0.1",
+	})
 	req.NoError(err)
 	req.NoError(s.Validate())
 	ctx = context.WithValue(ctx, common.ContextNodeKey, common.Node{NodeID: "test"})

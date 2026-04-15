@@ -28,7 +28,6 @@ import (
 
 	commonv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/common/v1"
 	databasev1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/database/v1"
-	"github.com/apache/skywalking-banyandb/banyand/metadata"
 	"github.com/apache/skywalking-banyandb/pkg/grpchelper"
 	"github.com/apache/skywalking-banyandb/pkg/test/flags"
 	"github.com/apache/skywalking-banyandb/pkg/test/helpers"
@@ -54,7 +53,8 @@ var _ = g.Describe("Replication", func() {
 	g.Context("with replicated_group", func() {
 		g.It("should survive node failure", func() {
 			g.By("Verifying the measure exists in replicated_group")
-			ctx := context.Background()
+			ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+			defer cancel()
 			measureMetadata := &commonv1.Metadata{
 				Name:  "service_traffic",
 				Group: "replicated_group",
@@ -66,39 +66,25 @@ var _ = g.Describe("Replication", func() {
 			gm.Expect(resp.GetMeasure()).NotTo(gm.BeNil())
 			gm.Expect(resp.GetMeasure().GetMetadata().GetGroup()).To(gm.Equal("replicated_group"))
 
-			g.By("Getting list of all nodes from etcd (includes data nodes + liaison)")
-			nodePath := "/" + metadata.DefaultNamespace + "/nodes"
-			allNodes, err2 := helpers.ListKeys(etcdEndpoint, nodePath)
-			gm.Expect(err2).NotTo(gm.HaveOccurred())
-
-			// We have: 3 data nodes + 1 liaison node = 4 nodes total
-			gm.Expect(len(allNodes)).To(gm.Equal(4),
-				"Should have 4 nodes total (3 data nodes + 1 liaison node), found %d", len(allNodes))
+			g.By("Verifying cluster is stable with 3 data nodes")
+			gm.Eventually(func() bool {
+				return isClusterStable(conn)
+			}, flags.EventuallyTimeout).Should(gm.BeTrue(),
+				"Cluster should have 3 active data nodes before test")
 
 			g.By("Stopping one data node")
-			// We should have 3 data node closers in dataNodeClosers
-			// Stop the first one
-			// Create a local copy to avoid mutating the package-level slice
 			closersToStop := make([]func(), len(dataNodeClosers))
 			copy(closersToStop, dataNodeClosers)
 			closersToStop[0]()
-
-			// Wait for the cluster to stabilize
-			gm.Eventually(func() int {
-				nodes, err3 := helpers.ListKeys(etcdEndpoint, nodePath)
-				if err3 != nil {
-					return 0
-				}
-				return len(nodes)
-			}, flags.EventuallyTimeout).Should(gm.Equal(3),
-				"Should have 3 nodes total after stopping one data node (2 data nodes + 1 liaison)")
 
 			g.By("Verifying data is still accessible after node failure")
 			verifyDataContentAfterNodeFailure(conn, now)
 
 			g.By("Verifying replication factor")
 			groupClient := databasev1.NewGroupRegistryServiceClient(conn)
-			groupResp, err := groupClient.Get(ctx, &databasev1.GroupRegistryServiceGetRequest{
+			groupCtx, groupCancel := context.WithTimeout(context.Background(), 10*time.Second)
+			defer groupCancel()
+			groupResp, err := groupClient.Get(groupCtx, &databasev1.GroupRegistryServiceGetRequest{
 				Group: "replicated_group",
 			})
 			gm.Expect(err).NotTo(gm.HaveOccurred())

@@ -429,12 +429,16 @@ func NewReadonlyDataSVC(metadata metadata.Repo, omr observability.MetricsRegistr
 }
 
 func newDataSchemaRepo(path string, svc *dataSVC, nodeLabels map[string]string, nodeID string) *schemaRepo {
+	ctx, cancel := context.WithCancel(context.Background())
 	sr := &schemaRepo{
-		path:     path,
-		l:        svc.l,
-		metadata: svc.metadata,
-		nodeID:   nodeID,
-		role:     databasev1.Role_ROLE_DATA,
+		path:          path,
+		l:             svc.l,
+		metadata:      svc.metadata,
+		nodeID:        nodeID,
+		role:          databasev1.Role_ROLE_DATA,
+		closingGroups: make(map[string]struct{}),
+		ctx:           ctx,
+		cancel:        cancel,
 	}
 	sr.Repository = resourceSchema.NewRepository(
 		svc.metadata,

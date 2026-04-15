@@ -16,7 +16,7 @@
 debuggingtrace: null
 errorreason: null
 logs:
-{{- contains .logs }}
+{{- contains (.logs | noDuplicates) }}
 - servicename: e2e-service-provider
   serviceid: {{ b64enc "e2e-service-provider" }}.1
   serviceinstancename: provider1

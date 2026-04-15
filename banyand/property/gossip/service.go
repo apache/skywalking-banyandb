@@ -143,11 +143,11 @@ func (s *service) PreRun(ctx context.Context) error {
 	s.serverMetrics = newServerMetrics(s.omr.With(metricsScope))
 	if s.metadata != nil {
 		s.sel.OnInit([]schema.Kind{schema.KindGroup})
-		s.metadata.RegisterHandler(s.prefix+"-nodes", schema.KindNode, s)
-		s.metadata.RegisterHandler(s.prefix+"-groups", schema.KindGroup, s)
 		if err := s.initTracing(ctx); err != nil {
 			s.log.Warn().Err(err).Msg("failed to init internal trace stream")
 		}
+		s.metadata.RegisterHandler(s.prefix+"-nodes", schema.KindNode, s)
+		s.metadata.RegisterHandler(s.prefix+"-groups", schema.KindGroup, s)
 	}
 	s.protocolHandler = newProtocolHandler(s)
 	go s.protocolHandler.processPropagation()

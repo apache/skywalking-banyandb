@@ -4,7 +4,7 @@ Data rotation is the process of managing the size of data stored in BanyanDB by 
 
 ## Overview
 
-BanyanDB partitions its data into multiple [**segments**](tsdb.md#segment). These segments are time-based, allowing efficient management of data retention and querying. The `segment_interval` and retention policy (`ttl`) for each [group](../interacting/data-lifecycle.md#measures-and-streams) determine how data is segmented and retained in the database.
+BanyanDB partitions its data into multiple [**segments**](tsdb.md#segment). These segments are time-based, allowing efficient management of data retention and querying. The `segment_interval` and retention policy (`ttl`) for each [group](../interacting/data-lifecycle.md#measures-streams-and-traces) determine how data is segmented and retained in the database.
 
 ## Formulation
 
@@ -48,14 +48,14 @@ S = 3 + 1
 S = 4
 ```
 
-| Time (Day)    | Action                                | Number of Segments |
-|---------------|---------------------------------------|--------------------|
-| Day 1 (00:00) | Segment for Days 1–3 is created       | 1                  |
-| Day 3 (23:00) | New segment for Days 4–6 is created   | 2                  |
-| Day 6 (23:00) | New segment for Days 7–9 is created   | 3                  |
-| Day 9 (23:00) | New segment for Days 10–12 is created | 4                  |
+| Time (Day)     | Action                                 | Number of Segments |
+| -------------- | -------------------------------------- | ------------------ |
+| Day 1 (00:00)  | Segment for Days 1–3 is created        | 1                  |
+| Day 3 (23:00)  | New segment for Days 4–6 is created    | 2                  |
+| Day 6 (23:00)  | New segment for Days 7–9 is created    | 3                  |
+| Day 9 (23:00)  | New segment for Days 10–12 is created  | 4                  |
 | Day 10 (00:00) | Oldest segment for Days 1–3 is removed | 3                  |
-| Day 12 (23:00) | New segment for Days 13–15 is created | 4                  |
+| Day 12 (23:00) | New segment for Days 13–15 is created  | 4                  |
 | Day 13 (00:00) | Oldest segment for Days 4–6 is removed | 3                  |
 
 So, **4 segments** are required to retain data for 7 days with a 3-day segment interval.
@@ -68,17 +68,17 @@ S = 7 + 1
 S = 8
 ```
 
-| Time (Day)    | Action                            | Number of Segments |
-|---------------|-----------------------------------|--------------------|
-| Day 1 (23:00) | New segment for Day 2 is created  | 1                  |
-| Day 2 (00:00) | Oldest segment (if any) removed   | 1                  |
-| Day 2 (23:00) | New segment for Day 3 is created  | 2                  |
-| Day 3 (00:00) | Oldest segment (if any) removed   | 2                  |
-| ...           | ...                               | ...                |
-| Day 7 (23:00) | New segment for Day 8 is created  | 7                  |
-| Day 8 (00:00) | Oldest segment for Day 1 removed  | 7                  |
-| Day 8 (23:00) | New segment for Day 9 is created  | 8                  |
-| Day 9 (00:00) | Oldest segment for Day 2 removed  | 7                  |
+| Time (Day)    | Action                           | Number of Segments |
+| ------------- | -------------------------------- | ------------------ |
+| Day 1 (23:00) | New segment for Day 2 is created | 1                  |
+| Day 2 (00:00) | Oldest segment (if any) removed  | 1                  |
+| Day 2 (23:00) | New segment for Day 3 is created | 2                  |
+| Day 3 (00:00) | Oldest segment (if any) removed  | 2                  |
+| ...           | ...                              | ...                |
+| Day 7 (23:00) | New segment for Day 8 is created | 7                  |
+| Day 8 (00:00) | Oldest segment for Day 1 removed | 7                  |
+| Day 8 (23:00) | New segment for Day 9 is created | 8                  |
+| Day 9 (00:00) | Oldest segment for Day 2 removed | 7                  |
 
 At any given time, there will be a maximum of **8 segments**: 1 for the new day and 7 for the last 7 days of data.
 
@@ -125,7 +125,6 @@ S = 7
 
 So, **7 segments** are required to retain data for 3 days with a 12-hour segment interval.
 
-
 ### Example 5: Minimum Number of Segments
 
 ```
@@ -136,6 +135,15 @@ S = 2
 ```
 
 So, **2 segments** are required to retain data for 7 days with an 8-day segment interval. 2 segments are the minimum number whatever the TTL and segment interval are. When the TTL is less than the segment interval, you can have the minimum number of segments.
+
+## Rotation in Lifecycle Deployments
+
+In a hot-warm-cold lifecycle deployment, data rotation behaves differently depending on the node's role:
+
+- **Hot nodes**: Rotation is enabled. The rotation task pre-creates segments based on the hot stage's `segment_interval`.
+- **Warm and cold nodes**: Rotation is disabled. Segments are created on demand by the lifecycle migration process via `CreateSegmentIfNotExist`, using the target stage's `segment_interval`. Since the rotation task uses `NextTime(eventTime)` which produces incorrect boundaries for multi-day intervals, disabling it on warm/cold nodes ensures segments are always created with correct boundaries.
+
+Additionally, data retention (TTL-based segment deletion) is disabled on non-last-stage nodes, since the lifecycle agent manages data migration between stages instead.
 
 ## Conclusion
 
