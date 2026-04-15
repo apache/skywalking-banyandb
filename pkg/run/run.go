@@ -36,6 +36,7 @@ import (
 	databasev1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/database/v1"
 	"github.com/apache/skywalking-banyandb/pkg/config"
 	"github.com/apache/skywalking-banyandb/pkg/logger"
+	"github.com/apache/skywalking-banyandb/pkg/panicdiag"
 )
 
 // FlagSet holds a pflag.FlagSet as well as an exported Name variable for
@@ -416,9 +417,19 @@ func (g *Group) Run(ctx context.Context) (err error) {
 
 		g.log.Debug().Uint32("total", uint32(len(g.s))).Uint32("ran", uint32(idx+1)).Str("name", s.Name()).Msg("serve")
 		g.r.Add(func() error {
-			notify := s.Serve()
-			swg.Done()
-			<-notify
+			readyNotified := false
+			panicdiag.WithRecovery(ctx, panicdiag.RecoveryOptions{
+				Component: s.Name(),
+				Logger:    g.log,
+			}, nil, func(_ context.Context) {
+				notify := s.Serve()
+				readyNotified = true
+				swg.Done()
+				<-notify
+			})
+			if !readyNotified {
+				swg.Done()
+			}
 			return nil
 		}, func(_ error) {
 			g.log.Warn().Uint32("total", uint32(len(g.s))).Uint32("ran", uint32(idx+1)).Str("name", s.Name()).Msg("stopping")

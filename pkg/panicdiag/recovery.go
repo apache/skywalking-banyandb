@@ -96,6 +96,7 @@ func WithRecovery(ctx context.Context, opts RecoveryOptions, reporter Reporter, 
 		log.Error().
 			Str("component", opts.Component).
 			Str("panic", record.PanicValue).
+			Str("stack", record.GoroutineStack).
 			Str("artifact_dir", artifactDir).
 			Msg("recovered panic")
 
