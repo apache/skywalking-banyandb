@@ -1,0 +1,1 @@
+SELECT id, entity_id, total::field, value::field FROM MEASURE service_cpm_minute IN sw_metric TIME > '-15m' WHERE ((id = 'svc1' OR entity_id = 'entity_2') AND (id = 'svc3' OR entity_id = 'entity_4'))

@@ -1,0 +1,51 @@
+dataPoints:
+- sid: "17262786445563424612"
+  tagFamilies:
+  - name: default
+    tags:
+    - key: id
+      value:
+        str:
+          value: "1"
+    - key: service_id
+      value:
+        str:
+          value: svc_1
+    - key: name
+      value:
+        str:
+          value: nodea@west-us
+    - key: last_ping
+      value:
+        int:
+          value: "100"
+    - key: layer
+      value:
+        int: {}
+  timestamp: "2026-04-15T01:02:59Z"
+  version: "1776215004007632395"
+- sid: "18180773176666025369"
+  tagFamilies:
+  - name: default
+    tags:
+    - key: id
+      value:
+        str:
+          value: "3"
+    - key: service_id
+      value:
+        str:
+          value: svc_1
+    - key: name
+      value:
+        str:
+          value: nodea@east-cn
+    - key: last_ping
+      value:
+        int:
+          value: "100"
+    - key: layer
+      value:
+        int: {}
+  timestamp: "2026-04-15T01:03:00Z"
+  version: "1776215004007743095"

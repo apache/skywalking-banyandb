@@ -1,0 +1,19 @@
+criteria:
+  condition:
+    name: name
+    op: BINARY_OP_MATCH
+    value:
+      str:
+        value: nodea
+groups:
+- sw_metric
+name: service_instance_traffic
+tagProjection:
+  tagFamilies:
+  - name: default
+    tags:
+    - id
+    - service_id
+    - name
+    - last_ping
+    - layer

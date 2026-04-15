@@ -32,6 +32,7 @@ import (
 	propertyv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/property/v1"
 	"github.com/apache/skywalking-banyandb/pkg/convert"
 	"github.com/apache/skywalking-banyandb/pkg/index"
+	pbv1 "github.com/apache/skywalking-banyandb/pkg/pb/v1"
 	"github.com/apache/skywalking-banyandb/pkg/query/logical"
 	"github.com/apache/skywalking-banyandb/pkg/timestamp"
 )
@@ -145,6 +146,29 @@ func BuildQuery(criteria *modelv1.Criteria, schema logical.Schema, entityDict ma
 					query: bluge.NewMatchAllQuery(),
 					node:  newMatchAllNode(),
 				}, entities, true, nil
+			}
+			// When one OR branch has no query (entity-only), check if all entities are specific.
+			// If no AnyTagValue is present, the nil branch's entity needs match-all to find its documents.
+			// When AnyTagValue exists, the other branch's query already covers all entities.
+			if left == nil || right == nil {
+				allSpecific := true
+				for _, entity := range entities {
+					for _, entry := range entity {
+						if entry == pbv1.AnyTagValue {
+							allSpecific = false
+							break
+						}
+					}
+					if !allSpecific {
+						break
+					}
+				}
+				if allSpecific {
+					return &queryNode{
+						query: bluge.NewMatchAllQuery(),
+						node:  newMatchAllNode(),
+					}, entities, true, nil
+				}
 			}
 			query, node := bluge.NewBooleanQuery(), newShouldNode()
 			query.SetMinShould(1)
@@ -315,6 +339,12 @@ func parseConditionToQuery(cond *modelv1.Condition, indexRule *databasev1.IndexR
 		if indexRule == nil {
 			return nil, errors.WithMessagef(logical.ErrUnsupportedConditionOp, "index rule is mandatory for match operation: %s", cond)
 		}
+		if cond.Value == nil {
+			return nil, errors.WithMessagef(logical.ErrUnsupportedConditionValue, "MATCH condition requires non-nil value")
+		}
+		if _, ok := cond.Value.Value.(*modelv1.TagValue_Str); !ok {
+			return nil, errors.WithMessagef(logical.ErrUnsupportedConditionValue, "MATCH condition requires string value type: %s", cond)
+		}
 		bb := expr.Bytes()
 		if len(bb) != 1 {
 			return nil, errors.WithMessagef(logical.ErrUnsupportedConditionOp, "don't support multiple or null value: %s", cond)
@@ -356,6 +386,15 @@ func parseConditionToQuery(cond *modelv1.Condition, indexRule *databasev1.IndexR
 		node.SetSubNode(node)
 		return &queryNode{query, node}, nil
 	case modelv1.Condition_BINARY_OP_IN:
+		if cond.Value == nil {
+			return nil, errors.WithMessagef(logical.ErrUnsupportedConditionValue, "IN condition requires non-nil value")
+		}
+		switch cond.Value.Value.(type) {
+		case *modelv1.TagValue_StrArray, *modelv1.TagValue_IntArray:
+			// valid
+		default:
+			return nil, errors.WithMessagef(logical.ErrUnsupportedConditionValue, "IN condition requires array value type: %s", cond)
+		}
 		bb, elements := expr.Bytes(), expr.Elements()
 		query, node := bluge.NewBooleanQuery(), newShouldNode()
 		query.SetMinShould(1)

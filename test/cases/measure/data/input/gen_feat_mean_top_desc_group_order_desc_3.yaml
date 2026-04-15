@@ -1,0 +1,29 @@
+agg:
+  fieldName: value
+  function: AGGREGATION_FUNCTION_MEAN
+fieldProjection:
+  names:
+  - total
+  - value
+groupBy:
+  fieldName: value
+  tagProjection:
+    tagFamilies:
+    - name: default
+      tags:
+      - id
+groups:
+- sw_metric
+name: service_cpm_minute
+orderBy:
+  sort: SORT_DESC
+tagProjection:
+  tagFamilies:
+  - name: default
+    tags:
+    - id
+    - entity_id
+top:
+  fieldName: value
+  fieldValueSort: SORT_DESC
+  number: 2

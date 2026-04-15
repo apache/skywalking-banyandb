@@ -1,0 +1,20 @@
+criteria:
+  condition:
+    name: layer
+    op: BINARY_OP_MATCH
+    value:
+      int:
+        value: "1"
+groups:
+- index_mode
+name: service_traffic
+tagProjection:
+  tagFamilies:
+  - name: default
+    tags:
+    - id
+    - service_id
+    - name
+    - short_name
+    - service_group
+    - layer

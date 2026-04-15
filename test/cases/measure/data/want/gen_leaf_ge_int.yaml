@@ -1,0 +1,31 @@
+dataPoints:
+- sid: "3906119849472468294"
+  tagFamilies:
+  - name: default
+    tags:
+    - key: id
+      value:
+        str:
+          value: "2"
+    - key: service_id
+      value:
+        str:
+          value: service_2
+    - key: name
+      value:
+        str:
+          value: service_name_2
+    - key: short_name
+      value:
+        str:
+          value: service_short_name_2
+    - key: service_group
+      value:
+        str:
+          value: group1
+    - key: layer
+      value:
+        int:
+          value: "2"
+  timestamp: "2026-04-15T01:02:59.500Z"
+  version: "1776215003965417936"

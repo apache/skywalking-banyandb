@@ -1,0 +1,24 @@
+dataPoints:
+- fields:
+  - name: total
+    value:
+      int:
+        value: "100"
+  - name: value
+    value:
+      int:
+        value: "2"
+  sid: "13293155473432710288"
+  tagFamilies:
+  - name: default
+    tags:
+    - key: id
+      value:
+        str:
+          value: svc1
+    - key: entity_id
+      value:
+        str:
+          value: entity_2
+  timestamp: "2026-04-15T01:02:58Z"
+  version: "1776215004052042343"

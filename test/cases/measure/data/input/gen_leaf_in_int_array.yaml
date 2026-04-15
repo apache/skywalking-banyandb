@@ -1,0 +1,22 @@
+criteria:
+  condition:
+    name: layer
+    op: BINARY_OP_IN
+    value:
+      intArray:
+        value:
+        - "1"
+        - "2"
+groups:
+- index_mode
+name: service_traffic
+tagProjection:
+  tagFamilies:
+  - name: default
+    tags:
+    - id
+    - service_id
+    - name
+    - short_name
+    - service_group
+    - layer

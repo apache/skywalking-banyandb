@@ -1,0 +1,20 @@
+criteria:
+  condition:
+    name: id
+    op: BINARY_OP_IN
+    value:
+      str:
+        value: svc1
+fieldProjection:
+  names:
+  - total
+  - value
+groups:
+- sw_metric
+name: service_cpm_minute
+tagProjection:
+  tagFamilies:
+  - name: default
+    tags:
+    - id
+    - entity_id

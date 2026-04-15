@@ -1,0 +1,49 @@
+dataPoints:
+- fields:
+  - name: value
+    value:
+      int:
+        value: "6"
+  tagFamilies:
+  - name: default
+    tags:
+    - key: id
+      value:
+        str:
+          value: svc3
+    - key: entity_id
+      value:
+        str:
+          value: entity_6
+- fields:
+  - name: value
+    value:
+      int:
+        value: "9"
+  tagFamilies:
+  - name: default
+    tags:
+    - key: id
+      value:
+        str:
+          value: svc2
+    - key: entity_id
+      value:
+        str:
+          value: entity_5
+- fields:
+  - name: value
+    value:
+      int:
+        value: "6"
+  tagFamilies:
+  - name: default
+    tags:
+    - key: id
+      value:
+        str:
+          value: svc1
+    - key: entity_id
+      value:
+        str:
+          value: entity_3
