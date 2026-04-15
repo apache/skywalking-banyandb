@@ -47,3 +47,5 @@ This is a **transient issue** that resolves automatically once the schema sync c
 - **Wait for sync**: The error should disappear within one or two sync intervals (default: 30-60 seconds) after startup.
 - **Check resource allocation**: If the error persists for an extended period, verify that the nodes have sufficient CPU and memory resources.
 - **Adjust sync interval**: If faster startup convergence is needed, you can reduce the sync interval with `--schema-property-client-sync-interval` (e.g., `10s`), though this increases the background sync overhead.
+
+If you need to inspect what the liaison is trying to sync (for example, when investigating malformed queued parts), see [Disk Management](../disk-management.md#inspecting-the-liaison-write-queue-on-disk) for the on-disk queue layout, `smeta.bin` (series metadata), and the `dump` tool.
