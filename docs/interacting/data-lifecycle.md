@@ -1,14 +1,15 @@
 # Data Lifecycle
 
-## [Measures](../concept/data-model.md#measures) and [Streams](../concept/data-model.md#streams)
+## [Measures](../concept/data-model.md#measures), [Streams](../concept/data-model.md#streams) and [Traces](../concept/data-model.md#traces)
 
-Due to the design of BanyanDB, the data in the `Measures and Streams` can not be deleted directly.
+Due to the design of BanyanDB, the data in the `Measures, Streams and Traces` can not be deleted directly.
 The data will be deleted automatically based on the [Groups](../concept/data-model.md#groups) `TTL` setting.
 
-The TTL means the `time to live` of the data in the group. 
+The TTL means the `time to live` of the data in the group.
 Each group has an internal trigger which is triggered by writing events. If there is no further data, the expired data can’t get removed.
 
 For example, the following command will create a group with a TTL of 7 days:
+
 ```shell
 bydbctl group create -f - <<EOF
 metadata:
@@ -24,6 +25,7 @@ resource_opts:
     num: 7
 EOF
 ```
+
 The data in this group will keep 7 days.
 
 If you want to change the `TTL` of the data in this group to be 1 day, use the command:
@@ -75,7 +77,7 @@ ttl: "1h"
 EOF
 ```
 
-"General-Service" will be dropped after 1 hour. If you want to extend the TTL, you could use the "keepalive" operation. The "lease_id" is returned in the apply response. 
+"General-Service" will be dropped after 1 hour. If you want to extend the TTL, you could use the "keepalive" operation. The "lease_id" is returned in the apply response.
 You can use get operation to get the property with the lease_id as well.
 
 ```shell
@@ -98,7 +100,8 @@ bydbctl property keepalive --lease_id 7587880824757265022
 
 You can also manage the Property by other clients such as [Web-UI](./web-ui/property.md) or [Client APIs](client.md).
 
-## The API reference 
+## The API reference
+
 - [Group Registration Operations](../api-reference.md#groupregistryservice)
 - [ResourceOpts Definition](../api-reference.md#resourceopts)
 - [PropertyService v1](../api-reference.md#propertyservice)

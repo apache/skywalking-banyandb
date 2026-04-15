@@ -19,6 +19,7 @@ package grpc_test
 
 import (
 	"context"
+	"fmt"
 	"time"
 
 	. "github.com/onsi/ginkgo/v2"
@@ -181,7 +182,7 @@ func setupForRegistry() func() {
 	// Init `Queue` module
 	pipeline := queue.Local()
 	// Init `Metadata` module
-	metaSvc, err := service.NewService(context.TODO(), true)
+	metaSvc, err := service.NewService()
 	Expect(err).NotTo(HaveOccurred())
 	metricSvc := obsservice.NewMetricService(metaSvc, pipeline, "standalone", nil)
 
@@ -194,10 +195,13 @@ func setupForRegistry() func() {
 	var flags []string
 	metaPath, metaDeferFunc, err := test.NewSpace()
 	Expect(err).NotTo(HaveOccurred())
-	listenClientURL, listenPeerURL, err := test.NewEtcdListenUrls()
-	Expect(err).NotTo(HaveOccurred())
-	flags = append(flags, "--metadata-root-path="+metaPath, "--etcd-listen-client-url="+listenClientURL,
-		"--etcd-listen-peer-url="+listenPeerURL, "--schema-registry-mode=etcd")
+	schemaPorts, schemaPortsErr := test.AllocateFreePorts(1)
+	Expect(schemaPortsErr).NotTo(HaveOccurred())
+	flags = append(flags,
+		"--schema-server-root-path="+metaPath,
+		fmt.Sprintf("--schema-server-grpc-port=%d", schemaPorts[0]),
+		"--schema-server-grpc-host=127.0.0.1",
+	)
 	deferFunc := test.SetupModules(
 		flags,
 		pipeline,

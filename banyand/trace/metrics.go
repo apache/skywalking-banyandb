@@ -352,7 +352,7 @@ func (s *supplier) newMetrics(p common.Position) storage.Metrics {
 	}
 }
 
-func (qs *queueSupplier) newMetrics(p common.Position) storage.Metrics {
+func (qs *queueSupplier) newMetrics(p common.Position) (storage.Metrics, observability.Factory) {
 	factory := qs.omr.With(tbScope.ConstLabels(meter.ToLabelPairs(common.DBLabelNames(), p.DBLabelValues())))
 	return &metrics{
 		totalWritten:               factory.NewCounter("total_written"),
@@ -395,7 +395,7 @@ func (qs *queueSupplier) newMetrics(p common.Position) storage.Metrics {
 			pendingDataCount:               factory.NewGauge("pending_data_count", common.ShardLabelNames()...),
 		},
 		indexMetrics: inverted.NewMetrics(factory, common.SegLabelNames()...),
-	}
+	}, factory
 }
 
 func (tst *tsTable) Collect(m storage.Metrics) {

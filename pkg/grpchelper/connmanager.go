@@ -345,10 +345,11 @@ func (m *ConnManager[C]) FailoverNode(node string) {
 		}
 		return
 	}
-	if mn, ok := m.active[node]; ok && !m.checkHealthAndReconnect(mn.conn, mn.node, mn.client) {
-		_ = mn.conn.Close()
-		delete(m.active, node)
-		m.handler.OnInactive(node, mn.client)
+	mn, ok := m.active[node]
+	if !ok {
+		return
+	}
+	if !m.checkHealthAndReconnect(mn.conn, mn.node, mn.client) {
 		m.log.Info().Str("status", m.dump()).Str("node", node).Msg("node is unhealthy in the failover flow, move it to evict queue")
 	}
 }
@@ -423,6 +424,7 @@ func (m *ConnManager[C]) removeNodeIfUnhealthy(name string, mn *managedNode[C]) 
 	if m.healthCheck(mn.node.String(), mn.conn) {
 		return false
 	}
+	m.log.Info().Str("node", name).Msg("removeNodeIfUnhealthy: node is unhealthy, removing from active")
 	_ = mn.conn.Close()
 	delete(m.active, name)
 	m.handler.OnInactive(name, mn.client)
@@ -430,12 +432,13 @@ func (m *ConnManager[C]) removeNodeIfUnhealthy(name string, mn *managedNode[C]) 
 }
 
 // checkHealthAndReconnect checks if a node is healthy. If not, closes the conn,
-// adds to evictable, calls OnInactive, and starts a retry goroutine.
+// adds to evictable, deletes from active, calls OnInactive, and starts a retry goroutine.
 // Returns true if healthy.
 func (m *ConnManager[C]) checkHealthAndReconnect(conn *grpc.ClientConn, node *databasev1.Node, client C) bool {
 	if m.healthCheck(node.String(), conn) {
 		return true
 	}
+	m.log.Info().Str("node", node.Metadata.Name).Msg("checkHealthAndReconnect: node is unhealthy, moving to evictable")
 	_ = conn.Close()
 	if !m.closer.AddRunning() {
 		return false
@@ -502,6 +505,7 @@ func (m *ConnManager[C]) checkHealthAndReconnect(conn *grpc.ClientConn, node *da
 			attempt++
 		}
 	}(name, m.evictable[name])
+	delete(m.active, name)
 	return false
 }
 
@@ -530,12 +534,14 @@ func (m *ConnManager[C]) healthCheck(node string, conn *grpc.ClientConn) bool {
 			})
 		return err
 	}); requestErr != nil {
-		if e := m.log.Debug(); e.Enabled() {
-			e.Err(requestErr).Str("node", node).Msg("service unhealthy")
-		}
+		m.log.Info().Err(requestErr).Str("node", node).Msg("healthCheck: service unhealthy, RPC error")
 		return false
 	}
-	return resp.GetStatus() == grpc_health_v1.HealthCheckResponse_SERVING
+	if resp.GetStatus() != grpc_health_v1.HealthCheckResponse_SERVING {
+		m.log.Info().Str("node", node).Str("status", resp.GetStatus().String()).Msg("healthCheck: service not SERVING")
+		return false
+	}
+	return true
 }
 
 func (m *ConnManager[C]) dump() string {

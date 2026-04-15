@@ -36,7 +36,7 @@ BSD-3-Clause licenses
 ========================================================================
 
     fast-uri 3.1.0 BSD-3-Clause
-    qs 6.15.0 BSD-3-Clause
+    qs 6.15.1 BSD-3-Clause
 
 ========================================================================
 ISC licenses
@@ -48,14 +48,14 @@ ISC licenses
     setprototypeof 1.2.0 ISC
     which 2.0.2 ISC
     wrappy 1.0.2 ISC
-    zod-to-json-schema 3.25.1 ISC
+    zod-to-json-schema 3.25.2 ISC
 
 ========================================================================
 MIT licenses
 ========================================================================
 
-    @hono/node-server 1.19.11 MIT
-    @modelcontextprotocol/sdk 1.28.0 MIT
+    @hono/node-server 1.19.13 MIT
+    @modelcontextprotocol/sdk 1.29.0 MIT
     accepts 2.0.0 MIT
     ajv 8.18.0 MIT
     ajv-formats 3.0.1 MIT
@@ -63,7 +63,7 @@ MIT licenses
     bytes 3.1.2 MIT
     call-bind-apply-helpers 1.0.2 MIT
     call-bound 1.0.4 MIT
-    content-disposition 1.0.1 MIT
+    content-disposition 1.1.0 MIT
     content-type 1.0.5 MIT
     cookie 0.7.2 MIT
     cookie-signature 1.2.2 MIT
@@ -82,7 +82,7 @@ MIT licenses
     eventsource 3.0.7 MIT
     eventsource-parser 3.0.6 MIT
     express 5.2.1 MIT
-    express-rate-limit 8.3.1 MIT
+    express-rate-limit 8.3.2 MIT
     fast-deep-equal 3.1.3 MIT
     finalhandler 2.1.1 MIT
     forwarded 0.2.0 MIT
@@ -93,7 +93,7 @@ MIT licenses
     gopd 1.2.0 MIT
     has-symbols 1.1.0 MIT
     hasown 2.0.2 MIT
-    hono 4.12.9 MIT
+    hono 4.12.12 MIT
     http-errors 2.0.1 MIT
     iconv-lite 0.7.2 MIT
     ip-address 10.1.0 MIT
@@ -113,7 +113,7 @@ MIT licenses
     on-finished 2.4.1 MIT
     parseurl 1.3.3 MIT
     path-key 3.1.1 MIT
-    path-to-regexp 8.4.1 MIT
+    path-to-regexp 8.4.2 MIT
     pkce-challenge 5.0.1 MIT
     proxy-addr 2.0.7 MIT
     range-parser 1.2.1 MIT
@@ -126,7 +126,7 @@ MIT licenses
     shebang-command 2.0.0 MIT
     shebang-regex 3.0.0 MIT
     side-channel 1.1.0 MIT
-    side-channel-list 1.0.0 MIT
+    side-channel-list 1.0.1 MIT
     side-channel-map 1.0.1 MIT
     side-channel-weakmap 1.0.2 MIT
     statuses 2.0.2 MIT

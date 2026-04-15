@@ -144,7 +144,8 @@ func verifyWithContext(ctx context.Context, innerGm gm.Gomega, sharedContext hel
 
 // VerifyFn verify whether the query response matches the wanted result.
 var VerifyFn = func(innerGm gm.Gomega, sharedContext helpers.SharedContext, args helpers.Args) {
-	ctx := context.Background()
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
 	verifyWithContext(ctx, innerGm, sharedContext, args)
 }
 

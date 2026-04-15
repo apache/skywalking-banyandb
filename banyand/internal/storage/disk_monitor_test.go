@@ -140,6 +140,8 @@ func (m *mockFactory) NewHistogram(_ string, _ meter.Buckets, _ ...string) meter
 	return &mockHistogram{}
 }
 
+func (m *mockFactory) Close() {}
+
 type mockCounter struct{}
 
 func (m *mockCounter) Inc(_ float64, _ ...string) {}

@@ -79,6 +79,11 @@ func (s *seriesIndexCallback) Rev(_ context.Context, message bus.Message) (resp 
 		return
 	}
 
+	if timestamp <= 0 {
+		s.l.Error().Int64("timestamp", timestamp).Str("group", group).Msg("invalid timestamp in series index message, skipping")
+		return
+	}
+
 	// Get TSDB by group name using schemaRepo
 	tsdb, err := s.schemaRepo.loadTSDB(group)
 	if err != nil {
@@ -170,6 +175,10 @@ func (l *localIndexCallback) Rev(_ context.Context, message bus.Message) (resp b
 	}
 
 	// Use the first document's timestamp to get the segment
+	if documents[0].Timestamp <= 0 {
+		l.l.Error().Int64("timestamp", documents[0].Timestamp).Str("group", group).Msg("invalid document timestamp in local index message, skipping")
+		return
+	}
 	firstDocTime := time.Unix(0, documents[0].Timestamp)
 	segment, err := tsdb.CreateSegmentIfNotExist(firstDocTime)
 	if err != nil {

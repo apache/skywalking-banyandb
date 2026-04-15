@@ -15,8 +15,7 @@
 // specific language governing permissions and limitations
 // under the License.
 
-// Package service implements the metadata server wrapper supporting both
-// embedded etcd (standalone) and external etcd (data node) modes.
+// Package service implements the metadata server wrapper.
 package service
 
 import (
@@ -27,28 +26,16 @@ import (
 	"strings"
 	"time"
 
-	"github.com/robfig/cron/v3"
-	clientv3 "go.etcd.io/etcd/client/v3"
-
 	"github.com/apache/skywalking-banyandb/api/common"
 	"github.com/apache/skywalking-banyandb/api/data"
 	databasev1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/database/v1"
 	"github.com/apache/skywalking-banyandb/banyand/backup/snapshot"
 	"github.com/apache/skywalking-banyandb/banyand/metadata"
-	"github.com/apache/skywalking-banyandb/banyand/metadata/embeddedetcd"
 	"github.com/apache/skywalking-banyandb/banyand/metadata/schema/schemaserver"
 	"github.com/apache/skywalking-banyandb/banyand/observability"
 	"github.com/apache/skywalking-banyandb/banyand/queue"
 	"github.com/apache/skywalking-banyandb/pkg/bus"
-	"github.com/apache/skywalking-banyandb/pkg/logger"
-	banyandbpath "github.com/apache/skywalking-banyandb/pkg/path"
 	"github.com/apache/skywalking-banyandb/pkg/run"
-	"github.com/apache/skywalking-banyandb/pkg/timestamp"
-)
-
-var (
-	schemaTypeEtcd     = metadata.RegistryModeEtcd
-	schemaTypeProperty = metadata.RegistryModeProperty
 )
 
 // Service extends metadata.Service with schema server port access.
@@ -62,27 +49,16 @@ type Service interface {
 
 type server struct {
 	metadata.Service
-	etcdServer              embeddedetcd.Server
-	propServer              schemaserver.Server
-	repairSvc               schemaserver.RepairService
-	pipelineClient          queue.Client
-	snapshotPipeline        queue.Server
-	omr                     observability.MetricsRegistry
-	serviceFlags            *run.FlagSet
-	scheduler               *timestamp.Scheduler
-	ecli                    *clientv3.Client
-	closer                  *run.Closer
-	rootDir                 string
-	defragCron              string
-	autoCompactionMode      string
-	autoCompactionRetention string
-	schemaRegistryMode      string
-	nodeDiscoveryMode       string
-	listenClientURL         []string
-	listenPeerURL           []string
-	quotaBackendBytes       run.Bytes
-	embedded                bool
-	hasMetaRole             bool
+	propServer         schemaserver.Server
+	repairSvc          schemaserver.RepairService
+	pipelineClient     queue.Client
+	snapshotPipeline   queue.Server
+	omr                observability.MetricsRegistry
+	serviceFlags       *run.FlagSet
+	closer             *run.Closer
+	schemaRegistryMode string
+	nodeDiscoveryMode  string
+	hasMetaRole        bool
 }
 
 func (s *server) Name() string {
@@ -90,8 +66,7 @@ func (s *server) Name() string {
 }
 
 func (s *server) Role() databasev1.Role {
-	needEtcd := s.schemaRegistryMode == schemaTypeEtcd || s.nodeDiscoveryMode == metadata.NodeDiscoveryModeEtcd
-	if (s.embedded && needEtcd) || (s.schemaRegistryMode == schemaTypeProperty && s.hasMetaRole) {
+	if s.hasMetaRole {
 		return databasev1.Role_ROLE_META
 	}
 	return databasev1.Role_ROLE_UNSPECIFIED
@@ -99,23 +74,12 @@ func (s *server) Role() databasev1.Role {
 
 func (s *server) FlagSet() *run.FlagSet {
 	fs := run.NewFlagSet("metadata")
-	fs.StringVar(&s.schemaRegistryMode, "schema-registry-mode", schemaTypeProperty,
-		"Schema registry mode: 'etcd' for etcd-based storage, 'property' for property-based storage")
+	fs.StringVar(&s.schemaRegistryMode, "schema-registry-mode", metadata.RegistryModeProperty,
+		"Schema registry mode: 'property' for property-based storage")
 	fs.StringVar(&s.nodeDiscoveryMode, "node-discovery-mode", metadata.NodeDiscoveryModeNone,
-		"Node discovery mode: 'none' for standalone, 'etcd' for etcd-based, 'dns' for DNS-based, 'file' for file-based")
+		"Node discovery mode: 'none' for standalone, 'dns' for DNS-based, 'file' for file-based")
 	fs.BoolVar(&s.hasMetaRole, "has-meta-role", true,
 		"Whether this data node runs the schema server. Only effective in property schema registry mode.")
-	if s.embedded {
-		fs.StringVar(&s.rootDir, "metadata-root-path", "/tmp", "the root path of metadata")
-		fs.StringVar(&s.autoCompactionMode, "etcd-auto-compaction-mode", "periodic", "auto compaction mode: 'periodic' or 'revision'")
-		fs.StringVar(&s.autoCompactionRetention, "etcd-auto-compaction-retention", "1h",
-			"auto compaction retention: e.g. '1h', '30m', '24h' for periodic; '1000' for revision")
-		fs.StringVar(&s.defragCron, "etcd-defrag-cron", "@daily",
-			"defragmentation cron: e.g. '@daily', '@hourly', '0 0 * * 0', '0 */6 * * *'")
-		fs.StringSliceVar(&s.listenClientURL, "etcd-listen-client-url", []string{"http://localhost:2379"}, "A URL to listen on for client traffic")
-		fs.StringSliceVar(&s.listenPeerURL, "etcd-listen-peer-url", []string{"http://localhost:2380"}, "A URL to listen on for peer traffic")
-		fs.VarP(&s.quotaBackendBytes, "etcd-quota-backend-bytes", "", "Quota for backend storage")
-	}
 	if s.propServer == nil {
 		omr := s.omr
 		if omr == nil {
@@ -141,35 +105,10 @@ func (s *server) Validate() error {
 	if err := s.serviceFlags.Set("node-discovery-mode", s.nodeDiscoveryMode); err != nil {
 		return err
 	}
-	needEtcd := s.schemaRegistryMode == schemaTypeEtcd || s.nodeDiscoveryMode == metadata.NodeDiscoveryModeEtcd
-	if s.embedded && needEtcd {
-		if s.rootDir == "" {
-			return errors.New("rootDir is empty")
-		}
-		if s.listenClientURL == nil {
-			return errors.New("listenClientURL is empty")
-		}
-		if s.listenPeerURL == nil {
-			return errors.New("listenPeerURL is empty")
-		}
-		if s.autoCompactionMode == "" {
-			return errors.New("autoCompactionMode is empty")
-		}
-		if s.autoCompactionMode != "periodic" && s.autoCompactionMode != "revision" {
-			return errors.New("autoCompactionMode is invalid")
-		}
-		if s.autoCompactionRetention == "" {
-			return errors.New("autoCompactionRetention is empty")
-		}
-		if setErr := s.serviceFlags.Set(metadata.FlagEtcdEndpointsName,
-			strings.Join(s.listenClientURL, ",")); setErr != nil {
-			return setErr
-		}
-	}
 	if validateErr := s.Service.Validate(); validateErr != nil {
 		return validateErr
 	}
-	if s.schemaRegistryMode == schemaTypeProperty && s.propServer != nil {
+	if s.propServer != nil {
 		if propValidateErr := s.propServer.Validate(); propValidateErr != nil {
 			return propValidateErr
 		}
@@ -181,49 +120,25 @@ func (s *server) Validate() error {
 }
 
 func (s *server) PreRun(ctx context.Context) error {
-	needEtcd := s.schemaRegistryMode == schemaTypeEtcd || s.nodeDiscoveryMode == metadata.NodeDiscoveryModeEtcd
-	if s.embedded && needEtcd {
-		var err error
-		s.rootDir, err = banyandbpath.Get(s.rootDir)
-		if err != nil {
-			return err
-		}
-		etcdServer, startErr := embeddedetcd.NewServer(embeddedetcd.RootDir(s.rootDir), embeddedetcd.ConfigureListener(s.listenClientURL, s.listenPeerURL),
-			embeddedetcd.AutoCompactionMode(s.autoCompactionMode), embeddedetcd.AutoCompactionRetention(s.autoCompactionRetention),
-			embeddedetcd.QuotaBackendBytes(int64(s.quotaBackendBytes)))
-		if startErr != nil {
-			return startErr
-		}
-		s.etcdServer = etcdServer
-		<-s.etcdServer.ReadyNotify()
-	}
-	switch s.schemaRegistryMode {
-	case schemaTypeEtcd:
+	if !s.hasMetaRole {
 		s.propServer = nil
 		s.repairSvc = nil
-	case schemaTypeProperty:
-		if !s.hasMetaRole {
-			s.propServer = nil
-			s.repairSvc = nil
-		} else {
-			ctx = s.enrichContextWithSchemaAddress(ctx)
-			if propPreRunErr := s.propServer.PreRun(ctx); propPreRunErr != nil {
-				return propPreRunErr
-			}
-			if s.repairSvc != nil {
-				if repairPreRunErr := s.repairSvc.PreRun(ctx); repairPreRunErr != nil {
-					return repairPreRunErr
-				}
+	} else {
+		ctx = s.enrichContextWithSchemaAddress(ctx)
+		if propPreRunErr := s.propServer.PreRun(ctx); propPreRunErr != nil {
+			return propPreRunErr
+		}
+		if s.repairSvc != nil {
+			if repairPreRunErr := s.repairSvc.PreRun(ctx); repairPreRunErr != nil {
+				return repairPreRunErr
 			}
 		}
-		if s.snapshotPipeline != nil {
-			if subscribeErr := s.snapshotPipeline.Subscribe(data.TopicSnapshot,
-				&schemaPropertySnapshotListener{s: s}); subscribeErr != nil {
-				return subscribeErr
-			}
+	}
+	if s.snapshotPipeline != nil {
+		if subscribeErr := s.snapshotPipeline.Subscribe(data.TopicSnapshot,
+			&schemaPropertySnapshotListener{s: s}); subscribeErr != nil {
+			return subscribeErr
 		}
-	default:
-		return errors.New("unknown schema storage type")
 	}
 	return s.Service.PreRun(ctx)
 }
@@ -243,14 +158,6 @@ func (s *server) Serve() run.StopNotify {
 			<-s.repairSvc.Serve()
 		}()
 	}
-	if s.etcdServer != nil {
-		s.registerDefrag()
-		s.closer.AddRunning()
-		go func() {
-			defer s.closer.Done()
-			<-s.etcdServer.StoppingNotify()
-		}()
-	}
 	_ = s.Service.Serve()
 	return s.closer.CloseNotify()
 }
@@ -262,34 +169,17 @@ func (s *server) GracefulStop() {
 	if s.propServer != nil {
 		s.propServer.GracefulStop()
 	}
-	if s.scheduler != nil {
-		s.scheduler.Close()
-	}
-	if s.ecli != nil {
-		_ = s.ecli.Close()
-	}
 	s.Service.GracefulStop()
-	if s.etcdServer != nil {
-		s.etcdServer.Close()
-		<-s.etcdServer.StopNotify()
-	}
 	s.closer.CloseThenWait()
 }
 
 // NewService returns a new metadata repository Service.
-// When embedded is true (standalone mode), an embedded etcd server is started.
-// When embedded is false (data node mode), the service connects to external etcd.
-func NewService(_ context.Context, embedded bool) (Service, error) {
+func NewService() (Service, error) {
 	s := &server{
-		closer:   run.NewCloser(0),
-		embedded: embedded,
+		closer: run.NewCloser(0),
 	}
 	var clientErr error
-	if embedded {
-		s.Service, clientErr = metadata.NewClient(true, true)
-	} else {
-		s.Service, clientErr = metadata.NewClient(true, false)
-	}
+	s.Service, clientErr = metadata.NewClient()
 	if clientErr != nil {
 		return nil, clientErr
 	}
@@ -304,7 +194,7 @@ func (s *server) SetMetricsRegistry(omr observability.MetricsRegistry) {
 
 // GetSchemaServerPort returns the schema server gRPC port.
 func (s *server) GetSchemaServerPort() *uint32 {
-	if s.propServer != nil && s.schemaRegistryMode == schemaTypeProperty {
+	if s.propServer != nil {
 		return s.propServer.GetPort()
 	}
 	return nil
@@ -370,42 +260,4 @@ func (l *schemaPropertySnapshotListener) Rev(ctx context.Context, _ bus.Message)
 	}
 	snp.Name = snapshot.SchemaPropertyCatalogName + "/" + snp.Name
 	return bus.NewMessage(bus.MessageID(time.Now().UnixNano()), snp)
-}
-
-func performDefrag(listenURLs []string, ecli *clientv3.Client) error {
-	for _, listenURL := range listenURLs {
-		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-		defer cancel()
-		_, err := ecli.Defragment(ctx, listenURL)
-		return err
-	}
-	return nil
-}
-
-func (s *server) registerDefrag() {
-	var (
-		err        error
-		etcdLogger = logger.GetLogger().Named("etcd-server")
-		parser     = cron.Minute | cron.Hour | cron.Dom | cron.Month | cron.Dow | cron.Descriptor
-	)
-
-	s.ecli, err = clientv3.New(clientv3.Config{
-		Endpoints: s.listenClientURL,
-	})
-	if err != nil {
-		etcdLogger.Error().Err(err).Msg("failed to create client")
-		return
-	}
-	s.scheduler = timestamp.NewScheduler(etcdLogger, timestamp.NewClock())
-
-	err = s.scheduler.Register("defrag", parser, s.defragCron, func(_ time.Time, l *logger.Logger) bool {
-		if errInner := performDefrag(s.listenClientURL, s.ecli); errInner != nil {
-			l.Error().Err(errInner).Msg("failed to execute defragmentation")
-			return false
-		}
-		return true
-	})
-	if err != nil {
-		etcdLogger.Error().Err(err).Msg("failed to register defragmentation")
-	}
 }

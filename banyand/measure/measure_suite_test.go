@@ -19,6 +19,7 @@ package measure_test
 
 import (
 	"context"
+	"fmt"
 	"testing"
 
 	"github.com/onsi/ginkgo/v2"
@@ -72,7 +73,7 @@ func setUp() (*services, func()) {
 	pipeline := queue.Local()
 
 	// Init Metadata Service
-	metadataService, err := service.NewService(context.TODO(), true)
+	metadataService, err := service.NewService()
 	gomega.Expect(err).NotTo(gomega.HaveOccurred())
 
 	metricSvc := obsservice.NewMetricService(metadataService, pipeline, "test", nil)
@@ -87,14 +88,16 @@ func setUp() (*services, func()) {
 	var flags []string
 	metaPath, metaDeferFunc, err := test.NewSpace()
 	gomega.Expect(err).NotTo(gomega.HaveOccurred())
-	flags = append(flags, "--metadata-root-path="+metaPath)
+	schemaPorts, schemaPortsErr := test.AllocateFreePorts(1)
+	gomega.Expect(schemaPortsErr).NotTo(gomega.HaveOccurred())
+	flags = append(flags,
+		"--schema-server-root-path="+metaPath,
+		fmt.Sprintf("--schema-server-grpc-port=%d", schemaPorts[0]),
+		"--schema-server-grpc-host=127.0.0.1",
+	)
 	rootPath, deferFunc, err := test.NewSpace()
 	gomega.Expect(err).NotTo(gomega.HaveOccurred())
 	flags = append(flags, "--measure-root-path="+rootPath)
-	listenClientURL, listenPeerURL, err := test.NewEtcdListenUrls()
-	gomega.Expect(err).NotTo(gomega.HaveOccurred())
-	flags = append(flags, "--etcd-listen-client-url="+listenClientURL, "--etcd-listen-peer-url="+listenPeerURL,
-		"--schema-registry-mode=etcd")
 	moduleDeferFunc := test.SetupModules(
 		flags,
 		pipeline,

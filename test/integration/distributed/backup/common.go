@@ -20,7 +20,6 @@ package backup
 
 import (
 	"context"
-	"fmt"
 	"os"
 	"time"
 
@@ -34,9 +33,6 @@ import (
 	databasev1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/database/v1"
 	modelv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/model/v1"
 	propertyv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/property/v1"
-	"github.com/apache/skywalking-banyandb/banyand/metadata"
-	"github.com/apache/skywalking-banyandb/banyand/metadata/embeddedetcd"
-	"github.com/apache/skywalking-banyandb/banyand/metadata/schema"
 	"github.com/apache/skywalking-banyandb/pkg/fs/remote"
 	"github.com/apache/skywalking-banyandb/pkg/grpchelper"
 	"github.com/apache/skywalking-banyandb/pkg/logger"
@@ -76,47 +72,25 @@ func InitializeTestSuite() (*CommonTestVars, error) {
 		Level: flags.LogLevel,
 	})).To(gomega.Succeed())
 	vars.Goods = gleak.Goroutines()
-	ginkgo.By("Starting etcd server")
-	ports, err := test.AllocateFreePorts(2)
-	gomega.Expect(err).NotTo(gomega.HaveOccurred())
 	var spaceDef func()
 	vars.Dir, spaceDef, err = test.NewSpace()
 	gomega.Expect(err).NotTo(gomega.HaveOccurred())
 	vars.DestDir, err = os.MkdirTemp("", "backup-restore-dest")
 	gomega.Expect(err).NotTo(gomega.HaveOccurred())
-	ep := fmt.Sprintf("http://127.0.0.1:%d", ports[0])
-	server, err := embeddedetcd.NewServer(
-		embeddedetcd.ConfigureListener([]string{ep}, []string{fmt.Sprintf("http://127.0.0.1:%d", ports[1])}),
-		embeddedetcd.RootDir(vars.Dir),
-		embeddedetcd.AutoCompactionMode("periodic"),
-		embeddedetcd.AutoCompactionRetention("1h"),
-		embeddedetcd.QuotaBackendBytes(2*1024*1024*1024),
-	)
-	gomega.Expect(err).NotTo(gomega.HaveOccurred())
-	<-server.ReadyNotify()
-	ginkgo.By("Loading schema")
-	schemaRegistry, err := schema.NewEtcdSchemaRegistry(
-		schema.Namespace(metadata.DefaultNamespace),
-		schema.ConfigureServerEndpoints([]string{ep}),
-	)
-	gomega.Expect(err).NotTo(gomega.HaveOccurred())
-	defer schemaRegistry.Close()
-	ctx := context.Background()
-	err = test_stream.PreloadSchema(ctx, schemaRegistry)
-	gomega.Expect(err).NotTo(gomega.HaveOccurred())
-	err = test_measure.PreloadSchema(ctx, schemaRegistry)
-	gomega.Expect(err).NotTo(gomega.HaveOccurred())
-	err = test_trace.PreloadSchema(ctx, schemaRegistry)
-	gomega.Expect(err).NotTo(gomega.HaveOccurred())
-	err = test_property.PreloadSchema(ctx, schemaRegistry)
-	gomega.Expect(err).NotTo(gomega.HaveOccurred())
-
-	clusterConfig := setup.EtcdClusterConfig(ep)
+	dfWriter := setup.NewDiscoveryFileWriter(vars.Dir)
+	clusterConfig := setup.PropertyClusterConfig(dfWriter)
 	ginkgo.By("Starting data node 0")
 	var closeDataNode0 func()
 	vars.DataAddr, vars.Dir, closeDataNode0 = setup.DataNodeWithAddrAndDir(clusterConfig)
 	ginkgo.By("Starting liaison node")
 	liaisonAddr, closerLiaisonNode := setup.LiaisonNode(clusterConfig)
+	ginkgo.By("Loading schema")
+	setup.PreloadSchemaViaProperty(clusterConfig,
+		test_stream.PreloadSchema,
+		test_measure.PreloadSchema,
+		test_trace.PreloadSchema,
+		test_property.PreloadSchema,
+	)
 	ginkgo.By("Initializing test cases")
 	ns := timestamp.NowMilli().UnixNano()
 	now := time.Unix(0, ns-ns%int64(time.Minute))
@@ -170,8 +144,6 @@ func InitializeTestSuite() (*CommonTestVars, error) {
 	vars.DeferFunc = func() {
 		closerLiaisonNode()
 		closeDataNode0()
-		_ = server.Close()
-		<-server.StopNotify()
 		spaceDef()
 	}
 

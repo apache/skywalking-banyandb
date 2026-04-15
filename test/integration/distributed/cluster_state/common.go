@@ -31,23 +31,13 @@ import (
 	databasev1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/database/v1"
 	"github.com/apache/skywalking-banyandb/pkg/grpchelper"
 	"github.com/apache/skywalking-banyandb/pkg/logger"
+	"github.com/apache/skywalking-banyandb/pkg/test"
 	"github.com/apache/skywalking-banyandb/pkg/test/flags"
+	"github.com/apache/skywalking-banyandb/pkg/test/setup"
 )
 
-// SetupResult contains all info returned by SetupFunc.
-type SetupResult struct {
-	StopFunc    func()
-	DataAddr    string
-	LiaisonAddr string
-	Ep          string
-	SrcDir      string
-}
-
-// SetupFunc is provided by sub-packages to start the environment.
-var SetupFunc func() SetupResult
-
 var (
-	result            SetupResult
+	stopFunc          func()
 	dataConnection    *grpc.ClientConn
 	liaisonConnection *grpc.ClientConn
 	goods             []gleak.Goroutine
@@ -59,13 +49,25 @@ var _ = ginkgo.SynchronizedBeforeSuite(func() []byte {
 		Level: flags.LogLevel,
 	})).To(gomega.Succeed())
 	goods = gleak.Goroutines()
-	result = SetupFunc()
+	tmpDir, tmpDirCleanup, tmpErr := test.NewSpace()
+	gomega.Expect(tmpErr).NotTo(gomega.HaveOccurred())
+	dfWriter := setup.NewDiscoveryFileWriter(tmpDir)
+	config := setup.PropertyClusterConfig(dfWriter)
+	ginkgo.By("Starting data node")
+	dataAddr, _, closeDataNode0 := setup.DataNodeWithAddrAndDir(config)
+	ginkgo.By("Starting liaison node")
+	liaisonAddr, closerLiaisonNode := setup.LiaisonNode(config)
+	stopFunc = func() {
+		closerLiaisonNode()
+		closeDataNode0()
+		tmpDirCleanup()
+	}
 	time.Sleep(flags.ConsistentlyTimeout)
 	var err error
-	liaisonConnection, err = grpchelper.Conn(result.LiaisonAddr, 10*time.Second,
+	liaisonConnection, err = grpchelper.Conn(liaisonAddr, 10*time.Second,
 		grpc.WithTransportCredentials(insecure.NewCredentials()))
 	gomega.Expect(err).NotTo(gomega.HaveOccurred())
-	dataConnection, err = grpchelper.Conn(result.DataAddr, 10*time.Second,
+	dataConnection, err = grpchelper.Conn(dataAddr, 10*time.Second,
 		grpc.WithTransportCredentials(insecure.NewCredentials()))
 	gomega.Expect(err).NotTo(gomega.HaveOccurred())
 	return nil
@@ -97,8 +99,8 @@ var _ = ginkgo.SynchronizedAfterSuite(func() {
 
 var _ = ginkgo.ReportAfterSuite("Distributed Lifecycle Suite", func(report ginkgo.Report) {
 	if report.SuiteSucceeded {
-		if result.StopFunc != nil {
-			result.StopFunc()
+		if stopFunc != nil {
+			stopFunc()
 		}
 		gomega.Eventually(gleak.Goroutines, flags.EventuallyTimeout).ShouldNot(gleak.HaveLeaked(goods))
 	}

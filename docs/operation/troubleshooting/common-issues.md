@@ -26,12 +26,7 @@ The group name in the error (e.g., `zipkinTrace`) may vary depending on your con
 
 ### Applicable Scenario
 
-This issue is most commonly seen when `schema-registry-mode` is set to `property`, which is the **default** mode. However, it can also occur in `etcd` mode when the node is under heavy CPU pressure.
-
-BanyanDB supports two schema registry modes:
-
-- **`property`** (default): Schema metadata is synchronized between nodes via an internal property-based protocol. This mode does not require an external etcd cluster. The startup delay is more pronounced in this mode due to the push-pull synchronization mechanism.
-- **`etcd`**: Schema metadata is stored and distributed through etcd. This mode generally provides faster schema availability upon startup, but under high CPU pressure, nodes may still experience delays in loading the schema from etcd.
+This issue occurs during startup when the property-based schema registry has not yet completed synchronization. It can be more pronounced when the node is under heavy CPU pressure.
 
 ### Cause
 
@@ -52,4 +47,3 @@ This is a **transient issue** that resolves automatically once the schema sync c
 - **Wait for sync**: The error should disappear within one or two sync intervals (default: 30-60 seconds) after startup.
 - **Check resource allocation**: If the error persists for an extended period, verify that the nodes have sufficient CPU and memory resources.
 - **Adjust sync interval**: If faster startup convergence is needed, you can reduce the sync interval with `--schema-property-client-sync-interval` (e.g., `10s`), though this increases the background sync overhead.
-- **Switch to etcd mode**: For environments where immediate schema availability at startup is critical, consider using `--schema-registry-mode=etcd` with an external etcd cluster.

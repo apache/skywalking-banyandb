@@ -20,9 +20,9 @@ retrievedtimerange:
   endtime: {{ gt .endtime 0 }}
   {{- end }}
 traces:
-  {{- contains .traces }}
+  {{- contains (.traces | noDuplicates) }}
   - spans:
-    {{- contains .spans }}
+    {{- contains (.spans | noDuplicates) }}
     - traceid: {{ .traceid }}
       segmentid: {{ .segmentid }}
       spanid: {{ .spanid }}

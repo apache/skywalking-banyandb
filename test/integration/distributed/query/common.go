@@ -27,12 +27,21 @@ import (
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials/insecure"
 
+	"github.com/apache/skywalking-banyandb/banyand/metadata/schema"
 	"github.com/apache/skywalking-banyandb/pkg/grpchelper"
 	"github.com/apache/skywalking-banyandb/pkg/logger"
 	"github.com/apache/skywalking-banyandb/pkg/pool"
+	"github.com/apache/skywalking-banyandb/pkg/test"
 	"github.com/apache/skywalking-banyandb/pkg/test/flags"
 	"github.com/apache/skywalking-banyandb/pkg/test/gmatcher"
 	"github.com/apache/skywalking-banyandb/pkg/test/helpers"
+	test_measure "github.com/apache/skywalking-banyandb/pkg/test/measure"
+	test_property "github.com/apache/skywalking-banyandb/pkg/test/property"
+	"github.com/apache/skywalking-banyandb/pkg/test/setup"
+	test_stream "github.com/apache/skywalking-banyandb/pkg/test/stream"
+	test_trace "github.com/apache/skywalking-banyandb/pkg/test/trace"
+	"github.com/apache/skywalking-banyandb/pkg/timestamp"
+	test_cases "github.com/apache/skywalking-banyandb/test/cases"
 	casesmeasure "github.com/apache/skywalking-banyandb/test/cases/measure"
 	casesproperty "github.com/apache/skywalking-banyandb/test/cases/property"
 	casesstream "github.com/apache/skywalking-banyandb/test/cases/stream"
@@ -40,18 +49,9 @@ import (
 	casestrace "github.com/apache/skywalking-banyandb/test/cases/trace"
 )
 
-// SetupResult contains all info returned by SetupFunc.
-type SetupResult struct {
-	Now      time.Time
-	StopFunc func()
-	Addr     string
-}
-
-// SetupFunc is provided by sub-packages to start the environment.
-var SetupFunc func() SetupResult
-
 var (
-	result     SetupResult
+	now        time.Time
+	stopFunc   func()
 	connection *grpc.ClientConn
 	goods      []gleak.Goroutine
 )
@@ -63,31 +63,53 @@ var _ = ginkgo.SynchronizedBeforeSuite(func() []byte {
 	})).To(gomega.Succeed())
 	pool.EnableStackTracking(true)
 	goods = gleak.Goroutines()
-	result = SetupFunc()
-	return []byte(result.Addr)
+	tmpDir, tmpDirCleanup, tmpErr := test.NewSpace()
+	gomega.Expect(tmpErr).NotTo(gomega.HaveOccurred())
+	dfWriter := setup.NewDiscoveryFileWriter(tmpDir)
+	config := setup.PropertyClusterConfig(dfWriter)
+	ginkgo.By("Starting data node 0")
+	closeDataNode0 := setup.DataNode(config)
+	ginkgo.By("Starting data node 1")
+	closeDataNode1 := setup.DataNode(config)
+	ginkgo.By("Loading schema via property")
+	setup.PreloadSchemaViaProperty(config, test_stream.PreloadSchema, test_measure.PreloadSchema, test_trace.PreloadSchema, test_property.PreloadSchema)
+	config.AddLoadedKinds(schema.KindStream, schema.KindMeasure, schema.KindTrace)
+	ginkgo.By("Starting liaison node")
+	liaisonAddr, closerLiaisonNode := setup.LiaisonNode(config)
+	ginkgo.By("Initializing test cases")
+	ns := timestamp.NowMilli().UnixNano()
+	now = time.Unix(0, ns-ns%int64(time.Minute))
+	test_cases.Initialize(liaisonAddr, now)
+	stopFunc = func() {
+		closerLiaisonNode()
+		closeDataNode0()
+		closeDataNode1()
+		tmpDirCleanup()
+	}
+	return []byte(liaisonAddr)
 }, func(address []byte) {
 	var err error
 	connection, err = grpchelper.Conn(string(address), 10*time.Second,
 		grpc.WithTransportCredentials(insecure.NewCredentials()))
 	casesstream.SharedContext = helpers.SharedContext{
 		Connection: connection,
-		BaseTime:   result.Now,
+		BaseTime:   now,
 	}
 	casesmeasure.SharedContext = helpers.SharedContext{
 		Connection: connection,
-		BaseTime:   result.Now,
+		BaseTime:   now,
 	}
 	casestopn.SharedContext = helpers.SharedContext{
 		Connection: connection,
-		BaseTime:   result.Now,
+		BaseTime:   now,
 	}
 	casestrace.SharedContext = helpers.SharedContext{
 		Connection: connection,
-		BaseTime:   result.Now,
+		BaseTime:   now,
 	}
 	casesproperty.SharedContext = helpers.SharedContext{
 		Connection: connection,
-		BaseTime:   result.Now,
+		BaseTime:   now,
 	}
 	gomega.Expect(err).NotTo(gomega.HaveOccurred())
 })
@@ -100,8 +122,8 @@ var _ = ginkgo.SynchronizedAfterSuite(func() {
 
 var _ = ginkgo.ReportAfterSuite("Distributed Query Suite", func(report ginkgo.Report) {
 	if report.SuiteSucceeded {
-		if result.StopFunc != nil {
-			result.StopFunc()
+		if stopFunc != nil {
+			stopFunc()
 		}
 		gomega.Eventually(gleak.Goroutines, flags.EventuallyTimeout).ShouldNot(gleak.HaveLeaked(goods))
 		gomega.Eventually(pool.AllRefsCount, flags.EventuallyTimeout).Should(gmatcher.HaveZeroRef())

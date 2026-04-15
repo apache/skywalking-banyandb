@@ -156,7 +156,9 @@ func IsFailoverError(err error) bool {
 	if !ok {
 		return false
 	}
-	return code == codes.Unavailable || code == codes.DeadlineExceeded
+	// codes.Canceled with "client connection is closing" indicates the gRPC connection
+	// to the node was closed (node failure or keepalive timeout), not a client-side cancellation.
+	return code == codes.Unavailable || code == codes.DeadlineExceeded || code == codes.Canceled
 }
 
 // IsInternalError checks if the error is an internal server error.

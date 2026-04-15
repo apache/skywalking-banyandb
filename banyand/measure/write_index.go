@@ -82,6 +82,11 @@ func (i *indexCallback) Rev(_ context.Context, message bus.Message) (resp bus.Me
 		return
 	}
 
+	if timestamp <= 0 {
+		i.l.Error().Int64("timestamp", timestamp).Str("group", group).Msg("invalid timestamp in index insert message, skipping")
+		return
+	}
+
 	// Get TSDB by group name using schemaRepo
 	tsdb, err := i.schemaRepo.loadTSDB(group)
 	if err != nil {
