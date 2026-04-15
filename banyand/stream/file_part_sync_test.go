@@ -117,19 +117,19 @@ func TestIntroduceMemPart_NilMpGuard(t *testing.T) {
 	tabDir := filepath.Join(tmpPath, "tab")
 	fileSystem.MkdirPanicIfExist(tabDir, 0o755)
 
-	now := int64(2_000_000_000)
-	es := makeTestElements(now)
-
-	partID := uint64(7)
-	destPath := partPath(tabDir, partID)
-	buildAndFlushStreamMemPart(t, fileSystem, es, destPath)
-
 	tst, _, initErr := initTSTable(fileSystem, tabDir, common.Position{}, logger.GetLogger("test"), streamSnapshotOption(), nil, false)
 	require.NoError(t, initErr)
 	tst.startLoop(1)
 	defer func() {
 		require.NoError(t, tst.Close())
 	}()
+
+	now := int64(2_000_000_000)
+	es := makeTestElements(now)
+
+	partID := uint64(7)
+	destPath := partPath(tabDir, partID)
+	buildAndFlushStreamMemPart(t, fileSystem, es, destPath)
 
 	require.NotPanics(t, func() {
 		tst.mustAddFilePart(partID)

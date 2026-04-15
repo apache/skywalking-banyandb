@@ -130,18 +130,18 @@ func TestIntroduceMemPart_NilMpGuard(t *testing.T) {
 	tabDir := filepath.Join(tmpPath, "tab")
 	fileSystem.MkdirPanicIfExist(tabDir, 0o755)
 
+	tst, _ := initTSTable(fileSystem, tabDir, common.Position{}, logger.GetLogger("test"), testSnapshotOption(), nil)
+	tst.startLoop(1)
+	defer func() {
+		require.NoError(t, tst.Close())
+	}()
+
 	now := int64(2_000_000_000)
 	dps := makeTestDataPoints(now)
 
 	partID := uint64(7)
 	destPath := partPath(tabDir, partID)
 	buildAndFlushMeasureMemPart(t, fileSystem, dps, destPath)
-
-	tst, _ := initTSTable(fileSystem, tabDir, common.Position{}, logger.GetLogger("test"), testSnapshotOption(), nil)
-	tst.startLoop(1)
-	defer func() {
-		require.NoError(t, tst.Close())
-	}()
 
 	require.NotPanics(t, func() {
 		tst.mustAddFilePart(partID)

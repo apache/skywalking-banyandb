@@ -164,7 +164,12 @@ func TestIntroduceMemPart_NilMpGuard(t *testing.T) {
 	tabDir := filepath.Join(tmpPath, "tab")
 	fileSystem.MkdirPanicIfExist(tabDir, 0o755)
 
-	// Build and flush a memPart so we have valid files on disk.
+	tst, _ := initTSTable(fileSystem, tabDir, common.Position{}, logger.GetLogger("test"), traceSnapshotOption(), nil)
+	tst.startLoop(1)
+	defer func() {
+		require.NoError(t, tst.Close())
+	}()
+
 	now := int64(3_000_000_000)
 	ts := &traces{
 		traceIDs:   []string{"trace-nil-guard"},
@@ -179,12 +184,6 @@ func TestIntroduceMemPart_NilMpGuard(t *testing.T) {
 	destPath := partPath(tabDir, partID)
 	mp.mustFlush(fileSystem, destPath)
 	releaseMemPart(mp)
-
-	tst, _ := initTSTable(fileSystem, tabDir, common.Position{}, logger.GetLogger("test"), traceSnapshotOption(), nil)
-	tst.startLoop(1)
-	defer func() {
-		require.NoError(t, tst.Close())
-	}()
 
 	// mustAddFilePart calls introducePart with a nil-mp partWrapper.
 	// It must not panic at addPendingDataCount.
