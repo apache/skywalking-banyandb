@@ -28,7 +28,12 @@ import (
 
 const defaultCrashOutputDir = "crash"
 
-var setCrashOutput = debug.SetCrashOutput
+var (
+	setCrashOutput = debug.SetCrashOutput
+	// globalCrashFile holds the crash output file open for the entire process lifetime.
+	// debug.SetCrashOutput requires the underlying fd to remain valid until the process exits.
+	globalCrashFile *os.File
+)
 
 // CrashOutputConfig controls whether runtime crash output is persisted to disk.
 type CrashOutputConfig struct {
@@ -70,14 +75,19 @@ func (c CrashOutputConfig) InstallGlobalCrashOutput() error {
 	if err != nil {
 		return fmt.Errorf("open runtime crash output file: %w", err)
 	}
-	defer func() {
-		_ = crashFile.Close()
-	}()
 
-	if err := setCrashOutput(crashFile, debug.CrashOptions{}); err != nil {
-		return fmt.Errorf("set runtime crash output: %w", err)
+	if setCrashErr := setCrashOutput(crashFile, debug.CrashOptions{}); setCrashErr != nil {
+		_ = crashFile.Close()
+		return fmt.Errorf("set runtime crash output: %w", setCrashErr)
 	}
 
+	// Keep the file open for the entire process lifetime.
+	// Closing it would invalidate the fd that debug.SetCrashOutput holds,
+	// silently discarding any fatal crash output.
+	if globalCrashFile != nil {
+		_ = globalCrashFile.Close()
+	}
+	globalCrashFile = crashFile
 	return nil
 }
 

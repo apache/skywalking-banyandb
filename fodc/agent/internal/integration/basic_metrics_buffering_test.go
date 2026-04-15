@@ -80,7 +80,7 @@ var _ = Describe("Test Case 1: Basic Metrics Buffering", func() {
 		})
 		Expect(serverCreateErr).NotTo(HaveOccurred())
 
-		serverErrCh, serverStartErr := metricsServer.Start(promReg, datasourceCollector)
+		serverErrCh, serverStartErr := metricsServer.Start(promReg, datasourceCollector, nil)
 		Expect(serverStartErr).NotTo(HaveOccurred())
 		Expect(serverErrCh).NotTo(BeNil())
 

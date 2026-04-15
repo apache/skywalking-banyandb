@@ -44,6 +44,9 @@ import (
 	"github.com/apache/skywalking-banyandb/fodc/agent/internal/watchdog"
 	"github.com/apache/skywalking-banyandb/pkg/cgroups"
 	"github.com/apache/skywalking-banyandb/pkg/logger"
+	"github.com/apache/skywalking-banyandb/pkg/meter"
+	"github.com/apache/skywalking-banyandb/pkg/meter/prom"
+	"github.com/apache/skywalking-banyandb/pkg/panicdiag"
 	"github.com/apache/skywalking-banyandb/pkg/version"
 )
 
@@ -77,7 +80,8 @@ var (
 	reconnectInterval              time.Duration
 	clusterStatePorts              []string
 	clusterStatePollInterval       time.Duration
-	crashWatchDir                  string
+	crashWatchDir  string
+	crashSourceDir string
 	diagnosisPollInterval          time.Duration
 	diagnosisBufferSize            int
 	maxDiagnosisMemoryUsagePercent int
@@ -129,6 +133,8 @@ func init() {
 		"Interval at which to poll cluster state from the BanyanDB nodes")
 	rootCmd.Flags().StringVar(&crashWatchDir, "crash-watch-dir", "",
 		"Directory where the FODC agent writes its own recovered panic artifacts")
+	rootCmd.Flags().StringVar(&crashSourceDir, "crash-source-dir", "",
+		"Shared volume directory to watch for BanyanDB crash artifacts (enables FS Watcher alongside HTTP polling)")
 	rootCmd.Flags().DurationVar(&diagnosisPollInterval, "diagnosis-poll-interval", defaultDiagnosisPollInterval,
 		"Interval at which the FODC agent polls BanyanDB diagnosis collections")
 	rootCmd.Flags().IntVar(&diagnosisBufferSize, "diagnosis-buffer-size", defaultDiagnosisBufferSize,
@@ -247,6 +253,10 @@ func runFODC(_ *cobra.Command, _ []string) error {
 	fr := flightrecorder.NewFlightRecorder(capacitySize)
 	diagnosisCapacitySize := calculateDiagnosisCapacity(log)
 
+	reg := prometheus.NewRegistry()
+	panicScope := meter.NewHierarchicalScope("fodc_agent", "_")
+	panicdiag.SetDefaultPanicCounter(prom.NewProvider(panicScope, reg).Counter("panic_total", "component"))
+
 	metricsServer, serverErr := server.NewServer(server.Config{
 		ListenAddr:          prometheusListenAddr,
 		DiagnosisListenAddr: diagnosisListenAddr,
@@ -285,14 +295,25 @@ func runFODC(_ *cobra.Command, _ []string) error {
 		return fmt.Errorf("failed to initialize watchdog: %w", preRunErr)
 	}
 	stopCh := wd.Serve()
-	crashCollector := crashcollector.New(log, crashcollector.Config{
+	collectorCfg := crashcollector.Config{
 		SourceEndpoints:   metricsEndpoints,
 		PollInterval:      diagnosisPollInterval,
 		BufferSize:        diagnosisBufferSize,
 		CapacitySizeBytes: diagnosisCapacitySize,
-	})
-	serverErrCh, startErr := metricsServer.Start(prometheus.NewRegistry(), exporter.NewDatasourceCollector(fr), crashCollector)
+	}
+	crashCollector := crashcollector.New(log, collectorCfg)
+	var collectionProvider server.CollectionProvider = crashCollector
+	var stopDirWatcher func()
+	if crashSourceDir != "" {
+		dirWatcher := crashcollector.NewDirectoryWatcher(log, crashSourceDir, collectorCfg)
+		stopDirWatcher = dirWatcher.Start(ctx)
+		collectionProvider = crashcollector.NewMultiCollectionProvider(crashCollector, dirWatcher)
+	}
+	serverErrCh, startErr := metricsServer.Start(reg, exporter.NewDatasourceCollector(fr), collectionProvider)
 	if startErr != nil {
+		if stopDirWatcher != nil {
+			stopDirWatcher()
+		}
 		return fmt.Errorf("failed to start metrics server: %w", startErr)
 	}
 	stopCrashCollector := crashCollector.Start(ctx)
@@ -312,6 +333,9 @@ func runFODC(_ *cobra.Command, _ []string) error {
 	wd.GracefulStop()
 	if stopCrashCollector != nil {
 		stopCrashCollector()
+	}
+	if stopDirWatcher != nil {
+		stopDirWatcher()
 	}
 
 	if stopKTM != nil {

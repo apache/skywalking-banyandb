@@ -505,3 +505,19 @@ Suggested flags for FODC:
 - Faster MTTR because the crash report includes both the failing stack and the causal path.
 - Fewer manual reproductions because state snapshots preserve the most relevant runtime inputs.
 - Better fleet-level observability because every panic increments metrics and is exported through FODC.
+
+
+## Core Components and Workflow
+BanyanDB Main Container: This is the primary application container.
+BanyanDB Process: The core database service.
+debug.SetCrashOutput: A function that directs crash-related data (like stack traces) to a specific output.
+Context Breadcrumbs: Metadata or state information collected during execution to provide context for a failure.
+Shared Volume (/crash): An ephemeral or persistent storage space accessible by both containers in the pod.
+The main container writes two key files here upon failure: crash.txt (likely the stack trace) and deep-dump.json (detailed state/breadcrumbs).
+FODC Sidecar Container: A secondary container ("Sidecar") that runs alongside the main application to handle auxiliary tasks.
+FS Watcher / inotify: Monitors the /crash directory for filesystem changes.
+Crash Analyzer: Once a new file is detected, this component processes the crash data.
+Layer 4: FODC Component: Bundles the artifacts and prepares them for external transmission.
+External Notification:
+Inspection Agent: Receives the uploaded artifacts for further automated or manual review.
+SlackChannel: The final step where an Alert / Notify message is sent to a DevOps or SRE team for immediate action.

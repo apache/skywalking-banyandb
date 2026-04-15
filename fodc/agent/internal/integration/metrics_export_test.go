@@ -163,7 +163,7 @@ var _ = Describe("Test Case 3: Metrics Export to Prometheus", func() {
 		})
 		Expect(serverCreateErr).NotTo(HaveOccurred())
 
-		serverErrCh, serverStartErr := metricsServer.Start(promReg, datasourceCollector)
+		serverErrCh, serverStartErr := metricsServer.Start(promReg, datasourceCollector, nil)
 		Expect(serverStartErr).NotTo(HaveOccurred())
 		Expect(serverErrCh).NotTo(BeNil())
 

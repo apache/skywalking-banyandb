@@ -17,11 +17,34 @@
 
 package panicdiag
 
-import "github.com/apache/skywalking-banyandb/pkg/meter"
+import (
+	"sync/atomic"
 
-func incPanicCounter(counter meter.Counter, component string) {
+	"github.com/apache/skywalking-banyandb/pkg/meter"
+)
+
+// defaultPanicCounterPtr is a process-wide fallback used when RecoveryOptions.Counter is nil.
+// Set it once at process startup via SetDefaultPanicCounter.
+var defaultPanicCounterPtr atomic.Pointer[meter.Counter]
+
+// SetDefaultPanicCounter registers a process-wide panic counter used by WithRecovery
+// when RecoveryOptions.Counter is nil. Call once during process initialization.
+func SetDefaultPanicCounter(counter meter.Counter) {
 	if counter == nil {
 		return
 	}
-	counter.Inc(1, component)
+	defaultPanicCounterPtr.Store(&counter)
+}
+
+func incPanicCounter(counter meter.Counter, component string) {
+	c := counter
+	if c == nil {
+		if ptr := defaultPanicCounterPtr.Load(); ptr != nil {
+			c = *ptr
+		}
+	}
+	if c == nil {
+		return
+	}
+	c.Inc(1, component)
 }

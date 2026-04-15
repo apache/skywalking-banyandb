@@ -78,13 +78,13 @@ func WithRecovery(ctx context.Context, opts RecoveryOptions, reporter Reporter, 
 						}
 					} else {
 						truncated, dumpPath, writeDumpErr := artifactWriter.WriteStateDump(artifactDir, stateDump, opts.StateLimitBytes)
-						record.StateDump = &StateDumpStatus{
-							Path:      dumpPath,
-							Truncated: truncated,
-						}
+						dumpStatus := &StateDumpStatus{Truncated: truncated}
 						if writeDumpErr != nil {
-							record.StateDump.Error = writeDumpErr.Error()
+							dumpStatus.Error = writeDumpErr.Error()
+						} else {
+							dumpStatus.Path = dumpPath
 						}
+						record.StateDump = dumpStatus
 					}
 					if rewriteErr := artifactWriter.rewritePanicRecord(artifactDir, record); rewriteErr != nil {
 						log.Error().Err(rewriteErr).Str("component", opts.Component).Msg("failed to update panic record with state dump status")
