@@ -228,6 +228,11 @@ func (tst *tsTable) introducePart(nextIntroduction *introduction, epoch uint64) 
 	nextSnp.parts = append(nextSnp.parts, next)
 	nextSnp.creator = snapshotCreatorMemPart
 	tst.replaceSnapshot(&nextSnp)
+	// Persist snapshot for file-backed introductions so the part survives restart.
+	// memPart introductions skip persist because the flusher persists after mem→file conversion.
+	if next.mp == nil {
+		tst.persistSnapshot(&nextSnp)
+	}
 	if nextIntroduction.applied != nil {
 		close(nextIntroduction.applied)
 	}

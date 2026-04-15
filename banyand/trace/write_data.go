@@ -110,9 +110,7 @@ func (s *syncPartContext) FinishSync() error {
 	for _, sidxPartContext := range s.sidxPartContexts {
 		sidxFilePartsMap[sidxPartContext.Name()] = sidxPartContext.Finish()
 	}
-	// sidxReqsMap is nil on the sync path; it remains on mustAddFilePart for parity with
-	// mustAddMemPart so the introducer can accept mixed mem/file introductions in the future.
-	s.tsTable.mustAddFilePart(s.partID, nil, sidxFilePartsMap)
+	s.tsTable.mustAddFilePart(s.partID, sidxFilePartsMap)
 	s.partPath = ""
 	s.traceIDFilterBuffer = nil
 	s.tagTypeBuffer = nil

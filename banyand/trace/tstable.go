@@ -502,7 +502,7 @@ func (tst *tsTable) Close() error {
 	return tst.closeSidxMap()
 }
 
-func (tst *tsTable) mustAddFilePart(partID uint64, sidxReqsMap map[string]*sidx.MemPart, sidxFilePartsMap map[string]string) {
+func (tst *tsTable) mustAddFilePart(partID uint64, sidxFilePartsMap map[string]string) {
 	p := mustOpenFilePart(partID, tst.root, tst.fileSystem)
 	p.partMetadata.ID = partID
 
@@ -510,7 +510,6 @@ func (tst *tsTable) mustAddFilePart(partID uint64, sidxReqsMap map[string]*sidx.
 	defer releaseIntroduction(ind)
 	ind.applied = make(chan struct{})
 	ind.part = newPartWrapper(nil, p)
-	ind.sidxReqsMap = sidxReqsMap
 	ind.sidxFilePartsMap = sidxFilePartsMap
 
 	select {

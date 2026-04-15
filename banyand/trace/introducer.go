@@ -274,6 +274,16 @@ func (tst *tsTable) introducePart(nextIntroduction *introduction, epoch uint64) 
 	// Commit all atomically under single transaction lock
 	txn.Commit()
 
+	// Persist snapshot for file-backed introductions so the part survives restart.
+	// memPart introductions skip persist because the flusher persists after mem→file conversion.
+	if next.mp == nil {
+		cur := tst.currentSnapshot()
+		if cur != nil {
+			defer cur.decRef()
+			tst.persistSnapshot(cur)
+		}
+	}
+
 	if nextIntroduction.applied != nil {
 		close(nextIntroduction.applied)
 	}

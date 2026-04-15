@@ -89,14 +89,6 @@ func (sw *writers) reset() {
 	}
 }
 
-func (sw *writers) mustInitForMemPart(mp *memPart) {
-	sw.reset()
-	sw.mustCreateTagFamilyWriters = mp.mustCreateMemTagFamilyWriters
-	sw.metaWriter.init(&mp.meta)
-	sw.primaryWriter.init(&mp.primary)
-	sw.timestampsWriter.init(&mp.timestamps)
-}
-
 func (sw *writers) mustInitForFilePart(fileSystem fs.FileSystem, path string, shouldCache bool) {
 	sw.reset()
 	fileSystem.MkdirPanicIfExist(path, storage.DirPerm)

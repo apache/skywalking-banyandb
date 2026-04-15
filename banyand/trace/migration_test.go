@@ -20,7 +20,10 @@ package trace
 import (
 	"bytes"
 	"context"
+	"errors"
 	"io"
+	"path/filepath"
+	"sort"
 	"testing"
 	"time"
 
@@ -65,7 +68,7 @@ func transferParts(g *gomega.WithT, senderSnp *snapshot, receiverTst *tsTable, f
 				if n > 0 {
 					g.Expect(handler.HandleFileChunk(ctx, buf[:n])).To(gomega.Succeed())
 				}
-				if readErr == io.EOF {
+				if errors.Is(readErr, io.EOF) {
 					break
 				}
 				g.Expect(readErr).NotTo(gomega.HaveOccurred())
@@ -133,6 +136,187 @@ func transferParts(g *gomega.WithT, senderSnp *snapshot, receiverTst *tsTable, f
 
 		g.Expect(partCtx.FinishSync()).To(gomega.Succeed())
 	}
+}
+
+// readPartFiles reads every regular file in partPath into a name→bytes map.
+// Directories are skipped. Intended for byte-level comparison of two migrated parts.
+func readPartFiles(g *gomega.WithT, fileSystem fs.FileSystem, partPath string) map[string][]byte {
+	entries := fileSystem.ReadDir(partPath)
+	files := make(map[string][]byte, len(entries))
+	for _, e := range entries {
+		if e.IsDir() {
+			continue
+		}
+		data, err := fileSystem.Read(filepath.Join(partPath, e.Name()))
+		g.Expect(err).NotTo(gomega.HaveOccurred(), "read %s/%s", partPath, e.Name())
+		files[e.Name()] = data
+	}
+	return files
+}
+
+// assertFileSetsEqual verifies that sender and receiver produced byte-identical files,
+// excluding the manifest file whose ID/local-state may legitimately differ.
+func assertFileSetsEqual(g *gomega.WithT, senderFiles, receiverFiles map[string][]byte, manifestName, context string) {
+	g.Expect(receiverFiles).To(gomega.HaveLen(len(senderFiles)), "[%s] file count", context)
+	for name, senderBytes := range senderFiles {
+		receiverBytes, ok := receiverFiles[name]
+		g.Expect(ok).To(gomega.BeTrue(), "[%s] receiver missing file %q", context, name)
+		if name == manifestName {
+			continue
+		}
+		g.Expect(receiverBytes).To(gomega.Equal(senderBytes), "[%s] file %q bytes mismatch", context, name)
+	}
+	for name := range receiverFiles {
+		_, ok := senderFiles[name]
+		g.Expect(ok).To(gomega.BeTrue(), "[%s] receiver has extra file %q", context, name)
+	}
+}
+
+// assertCorePartsEqual verifies a receiver core trace part byte-matches the sender's,
+// and that every non-ID field in metadata.json round-trips faithfully.
+func assertCorePartsEqual(g *gomega.WithT, fileSystem fs.FileSystem, senderPath, receiverPath string) {
+	senderMeta, err := ParsePartMetadata(fileSystem, senderPath)
+	g.Expect(err).NotTo(gomega.HaveOccurred(), "parse sender core metadata.json at %s", senderPath)
+	receiverMeta, err := ParsePartMetadata(fileSystem, receiverPath)
+	g.Expect(err).NotTo(gomega.HaveOccurred(), "parse receiver core metadata.json at %s", receiverPath)
+
+	g.Expect(receiverMeta.CompressedSizeBytes).To(gomega.Equal(senderMeta.CompressedSizeBytes), "core CompressedSizeBytes")
+	g.Expect(receiverMeta.UncompressedSizeBytes).To(gomega.Equal(senderMeta.UncompressedSizeBytes), "core UncompressedSizeBytes")
+	g.Expect(receiverMeta.TotalCount).To(gomega.Equal(senderMeta.TotalCount), "core TotalCount")
+	g.Expect(receiverMeta.BlocksCount).To(gomega.Equal(senderMeta.BlocksCount), "core BlocksCount")
+	g.Expect(receiverMeta.MinTimestamp).To(gomega.Equal(senderMeta.MinTimestamp), "core MinTimestamp")
+	g.Expect(receiverMeta.MaxTimestamp).To(gomega.Equal(senderMeta.MaxTimestamp), "core MaxTimestamp")
+
+	senderFiles := readPartFiles(g, fileSystem, senderPath)
+	receiverFiles := readPartFiles(g, fileSystem, receiverPath)
+	assertFileSetsEqual(g, senderFiles, receiverFiles, metadataFilename, "core "+senderPath)
+}
+
+// assertSidxPartsEqual verifies a receiver SIDX part byte-matches the sender's,
+// and that every non-ID field in manifest.json round-trips faithfully — including
+// SegmentID, which is smuggled through the MinTimestamp field in the sync protocol.
+func assertSidxPartsEqual(g *gomega.WithT, fileSystem fs.FileSystem, senderPath, receiverPath string) {
+	senderMeta, err := sidx.ParsePartMetadata(fileSystem, senderPath)
+	g.Expect(err).NotTo(gomega.HaveOccurred(), "parse sender sidx manifest.json at %s", senderPath)
+	receiverMeta, err := sidx.ParsePartMetadata(fileSystem, receiverPath)
+	g.Expect(err).NotTo(gomega.HaveOccurred(), "parse receiver sidx manifest.json at %s", receiverPath)
+
+	g.Expect(receiverMeta.CompressedSizeBytes).To(gomega.Equal(senderMeta.CompressedSizeBytes), "sidx CompressedSizeBytes")
+	g.Expect(receiverMeta.UncompressedSizeBytes).To(gomega.Equal(senderMeta.UncompressedSizeBytes), "sidx UncompressedSizeBytes")
+	g.Expect(receiverMeta.TotalCount).To(gomega.Equal(senderMeta.TotalCount), "sidx TotalCount")
+	g.Expect(receiverMeta.BlocksCount).To(gomega.Equal(senderMeta.BlocksCount), "sidx BlocksCount")
+	g.Expect(receiverMeta.MinKey).To(gomega.Equal(senderMeta.MinKey), "sidx MinKey")
+	g.Expect(receiverMeta.MaxKey).To(gomega.Equal(senderMeta.MaxKey), "sidx MaxKey")
+	// The sender hijacks StreamingPartData.MinTimestamp to carry SegmentID (see sidx/sync.go),
+	// so this assertion is what proves SegmentID round-trips through the sync protocol.
+	g.Expect(receiverMeta.MinTimestamp).To(gomega.Equal(senderMeta.MinTimestamp), "sidx MinTimestamp")
+	g.Expect(receiverMeta.MaxTimestamp).To(gomega.Equal(senderMeta.MaxTimestamp), "sidx MaxTimestamp")
+
+	senderFiles := readPartFiles(g, fileSystem, senderPath)
+	receiverFiles := readPartFiles(g, fileSystem, receiverPath)
+	assertFileSetsEqual(g, senderFiles, receiverFiles, "manifest.json", "sidx "+senderPath)
+}
+
+// pairSnapshotParts returns sender→receiver part path pairs. The sender sorts file-backed
+// parts by partID ASC before streaming (syncer.executeSyncOperation), and the receiver
+// allocates local partIDs monotonically as each part arrives (CreatePartHandler), so sorting
+// both sides by partID ASC yields 1-1 pairing in transfer order — robust against any future
+// change in snapshot.parts iteration order.
+func pairSnapshotParts(g *gomega.WithT, senderSnp *snapshot, receiverTst *tsTable) []struct{ senderPath, receiverPath string } {
+	var senderParts []*partWrapper
+	for _, pw := range senderSnp.parts {
+		if pw.mp == nil {
+			senderParts = append(senderParts, pw)
+		}
+	}
+	sort.Slice(senderParts, func(i, j int) bool {
+		return senderParts[i].p.partMetadata.ID < senderParts[j].p.partMetadata.ID
+	})
+	receiverSnp := receiverTst.currentSnapshot()
+	g.Expect(receiverSnp).NotTo(gomega.BeNil(), "receiver snapshot must exist after migration")
+	defer receiverSnp.decRef()
+	g.Expect(len(receiverSnp.parts)).To(gomega.Equal(len(senderParts)), "receiver part count must match sender")
+
+	receiverParts := make([]*partWrapper, len(receiverSnp.parts))
+	copy(receiverParts, receiverSnp.parts)
+	sort.Slice(receiverParts, func(i, j int) bool {
+		return receiverParts[i].p.partMetadata.ID < receiverParts[j].p.partMetadata.ID
+	})
+
+	pairs := make([]struct{ senderPath, receiverPath string }, 0, len(senderParts))
+	for i := range senderParts {
+		pairs = append(pairs, struct{ senderPath, receiverPath string }{
+			senderPath:   senderParts[i].p.path,
+			receiverPath: receiverParts[i].p.path,
+		})
+	}
+	return pairs
+}
+
+// assertMigrationPreservesAllFiles walks every file-backed part in the sender snapshot and
+// asserts byte-identical migration on the receiver side: every file, every metadata field.
+// senderSidxPaths is the sender's SIDX part paths captured atomically via
+// waitForConsistentSidxSnapshot; pass nil for tests without SIDX. The function derives the
+// matching receiver SIDX paths from the receiver's tsTable so callers don't need to plumb them.
+func assertMigrationPreservesAllFiles(g *gomega.WithT, fileSystem fs.FileSystem, senderSnp *snapshot,
+	receiverTst *tsTable, senderSidxPaths map[string]map[uint64]string,
+) {
+	pairs := pairSnapshotParts(g, senderSnp, receiverTst)
+	for _, p := range pairs {
+		assertCorePartsEqual(g, fileSystem, p.senderPath, p.receiverPath)
+	}
+
+	if len(senderSidxPaths) == 0 {
+		return
+	}
+
+	// SIDX parts: pair by sender partID→receiver partID via iteration order.
+	senderCoreIDs := make([]uint64, 0, len(pairs))
+	for _, pw := range senderSnp.parts {
+		if pw.mp == nil {
+			senderCoreIDs = append(senderCoreIDs, pw.p.partMetadata.ID)
+		}
+	}
+	receiverSnp := receiverTst.currentSnapshot()
+	g.Expect(receiverSnp).NotTo(gomega.BeNil())
+	defer receiverSnp.decRef()
+	receiverCoreIDs := make([]uint64, 0, len(pairs))
+	receiverPartIDSet := make(map[uint64]struct{}, len(pairs))
+	for _, pw := range receiverSnp.parts {
+		receiverCoreIDs = append(receiverCoreIDs, pw.p.partMetadata.ID)
+		receiverPartIDSet[pw.p.partMetadata.ID] = struct{}{}
+	}
+	receiverSidxMap := receiverTst.getAllSidx()
+
+	for name, senderPathsByID := range senderSidxPaths {
+		receiverInst, ok := receiverSidxMap[name]
+		g.Expect(ok).To(gomega.BeTrue(), "receiver missing sidx instance %q", name)
+		receiverPathsByID := receiverInst.PartPaths(receiverPartIDSet)
+		for i, senderID := range senderCoreIDs {
+			senderSidxPath, hasSender := senderPathsByID[senderID]
+			if !hasSender {
+				continue
+			}
+			receiverID := receiverCoreIDs[i]
+			receiverSidxPath, hasReceiver := receiverPathsByID[receiverID]
+			g.Expect(hasReceiver).To(gomega.BeTrue(), "receiver sidx %q missing part for receiver partID %d", name, receiverID)
+			assertSidxPartsEqual(g, fileSystem, senderSidxPath, receiverSidxPath)
+		}
+	}
+}
+
+// reopenTSTable closes the existing tsTable and opens a new one at the same root.
+// This simulates a process restart and exercises the snapshot persistence path.
+func reopenTSTable(g *gomega.WithT, tst *tsTable, fileSystem fs.FileSystem, path string, loggerName string) *tsTable {
+	g.Expect(tst.Close()).To(gomega.Succeed())
+	reopened, err := newTSTable(
+		fileSystem, path, common.Position{},
+		logger.GetLogger(loggerName), timestamp.TimeRange{},
+		option{flushTimeout: 0, mergePolicy: newDefaultMergePolicyForTesting(), protector: protector.Nop{}},
+		nil,
+	)
+	g.Expect(err).NotTo(gomega.HaveOccurred(), "reopen tsTable at %s", path)
+	return reopened
 }
 
 // mustBuildSidxMemPart creates a sidx.MemPart for the given index name and write requests.
@@ -223,8 +407,9 @@ func waitForConsistentSidxSnapshot(g *gomega.WithT, tst *tsTable, sidxNames []st
 }
 
 // queryTraceID executes the standard query pattern used in query_test.go and returns all TraceResults.
-func queryTraceID(g *gomega.WithT, snp *snapshot, traceID string, minTS, maxTS int64) []model.TraceResult {
-	pp, _ := snp.getParts(nil, minTS, maxTS, []string{traceID})
+// The timestamp range is fixed at [1, 2] since every migration test writes traces at timestamp 1 or 2.
+func queryTraceID(g *gomega.WithT, snp *snapshot, traceID string) []model.TraceResult {
+	pp, _ := snp.getParts(nil, 1, 2, []string{traceID})
 
 	bma := generateBlockMetadataArray()
 	defer releaseBlockMetadataArray(bma)
@@ -346,6 +531,9 @@ func TestLifecycleMigration_PreserveTraceData(t *testing.T) {
 
 	transferParts(g, senderSnp, receiverTst, fileSystem, nil)
 
+	// Verify every core file/metadata field round-tripped byte-for-byte.
+	assertMigrationPreservesAllFiles(g, fileSystem, senderSnp, receiverTst, nil)
+
 	// Verify the receiver snapshot has only file-backed parts.
 	recvSnp := receiverTst.currentSnapshot()
 	g.Expect(recvSnp).NotTo(gomega.BeNil())
@@ -380,7 +568,7 @@ func TestLifecycleMigration_PreserveTraceData(t *testing.T) {
 	}
 
 	// trace1 should return spans from both tsTS1 (span1) and tsTS2 (span4).
-	got := queryTraceID(g, recvSnp, "trace1", 1, 2)
+	got := queryTraceID(g, recvSnp, "trace1")
 	g.Expect(got).NotTo(gomega.BeEmpty(), "should have query results for trace1")
 
 	totalSpans := 0
@@ -442,10 +630,10 @@ func TestLifecycleMigration_PreserveTraceData(t *testing.T) {
 	}
 
 	// trace2 and trace3 should also be queryable.
-	got2 := queryTraceID(g, recvSnp, "trace2", 1, 2)
+	got2 := queryTraceID(g, recvSnp, "trace2")
 	g.Expect(got2).NotTo(gomega.BeEmpty(), "should have query results for trace2")
 
-	got3 := queryTraceID(g, recvSnp, "trace3", 1, 2)
+	got3 := queryTraceID(g, recvSnp, "trace3")
 	g.Expect(got3).NotTo(gomega.BeEmpty(), "should have query results for trace3")
 }
 
@@ -508,12 +696,28 @@ func TestLifecycleMigration_TwoConcurrentSenders(t *testing.T) {
 	transferParts(g, sender1Snp, receiverTst, fileSystem, nil)
 	transferParts(g, sender2Snp, receiverTst, fileSystem, nil)
 
+	// Verify the receiver carries one file-backed part per sender file-backed part across both transfers.
+	expectedParts := 0
+	for _, pw := range sender1Snp.parts {
+		if pw.mp == nil {
+			expectedParts++
+		}
+	}
+	for _, pw := range sender2Snp.parts {
+		if pw.mp == nil {
+			expectedParts++
+		}
+	}
 	recvSnp := receiverTst.currentSnapshot()
 	g.Expect(recvSnp).NotTo(gomega.BeNil())
 	defer recvSnp.decRef()
+	g.Expect(len(recvSnp.parts)).To(gomega.Equal(expectedParts), "receiver part count must equal sum of senders' file-backed parts")
+	for _, pw := range recvSnp.parts {
+		g.Expect(pw.mp).To(gomega.BeNil(), "receiver parts must be file-backed")
+	}
 
 	// trace1 should surface spans from both senders.
-	got := queryTraceID(g, recvSnp, "trace1", 1, 2)
+	got := queryTraceID(g, recvSnp, "trace1")
 	g.Expect(got).NotTo(gomega.BeEmpty())
 	totalSpans := 0
 	for _, tr := range got {
@@ -522,7 +726,7 @@ func TestLifecycleMigration_TwoConcurrentSenders(t *testing.T) {
 	g.Expect(totalSpans).To(gomega.Equal(2), "trace1 should have 2 spans from two senders")
 
 	// trace2 should also be present.
-	got2 := queryTraceID(g, recvSnp, "trace2", 1, 2)
+	got2 := queryTraceID(g, recvSnp, "trace2")
 	g.Expect(got2).NotTo(gomega.BeEmpty())
 }
 
@@ -570,6 +774,9 @@ func TestLifecycleMigration_BloomFilterAfterMigration(t *testing.T) {
 	}()
 
 	transferParts(g, senderSnp, receiverTst, fileSystem, nil)
+
+	// Verify every core file/metadata field round-tripped byte-for-byte.
+	assertMigrationPreservesAllFiles(g, fileSystem, senderSnp, receiverTst, nil)
 
 	recvSnp := receiverTst.currentSnapshot()
 	g.Expect(recvSnp).NotTo(gomega.BeNil())
@@ -659,6 +866,9 @@ func TestLifecycleMigration_WithSIDX(t *testing.T) {
 
 	transferParts(g, senderSnp, receiverTst, fileSystem, senderSidxAllPaths)
 
+	// Verify every core and SIDX file/metadata field (including SegmentID) round-tripped byte-for-byte.
+	assertMigrationPreservesAllFiles(g, fileSystem, senderSnp, receiverTst, senderSidxAllPaths)
+
 	// Phase 3: Verify core parts migrated correctly.
 	recvSnp := receiverTst.currentSnapshot()
 	g.Expect(recvSnp).NotTo(gomega.BeNil())
@@ -670,7 +880,7 @@ func TestLifecycleMigration_WithSIDX(t *testing.T) {
 	}
 
 	// Verify trace data is queryable after migration.
-	got := queryTraceID(g, recvSnp, "trace1", 1, 2)
+	got := queryTraceID(g, recvSnp, "trace1")
 	g.Expect(got).NotTo(gomega.BeEmpty(), "trace1 must be queryable after SIDX migration")
 
 	// Phase 4: Verify SIDX parts migrated to receiver.
@@ -690,16 +900,17 @@ func TestLifecycleMigration_WithSIDX(t *testing.T) {
 	}
 }
 
-// buildSidxTagReqs is a helper for constructing sidx.WriteRequest slices with a string tag value,
-// suitable for use with mustBuildSidxMemPart when testing tagged SIDX data.
-func buildSidxTagReqs(seriesID uint64, key int64, data []byte, tagName, tagValue string) sidx.WriteRequest {
+// buildSidxTagReqs is a helper for constructing sidx.WriteRequest slices with a string tag value
+// under the fixed tag name "service", suitable for use with mustBuildSidxMemPart when testing
+// tagged SIDX data.
+func buildSidxTagReqs(seriesID uint64, key int64, data []byte, tagValue string) sidx.WriteRequest {
 	return sidx.WriteRequest{
 		SeriesID: common.SeriesID(seriesID),
 		Key:      key,
 		Data:     data,
 		Tags: []sidx.Tag{
 			{
-				Name:      tagName,
+				Name:      "service",
 				Value:     []byte(tagValue),
 				ValueType: pbv1.ValueTypeStr,
 			},
@@ -729,9 +940,9 @@ func TestLifecycleMigration_WithSIDXTags(t *testing.T) {
 
 	// Build SIDX write requests with tags (simulating indexed span attributes like latency).
 	sidxReqs := []sidx.WriteRequest{
-		buildSidxTagReqs(1, 1, convert.Int64ToBytes(100), "service", "frontend"),
-		buildSidxTagReqs(2, 1, convert.Int64ToBytes(200), "service", "backend"),
-		buildSidxTagReqs(3, 2, convert.Int64ToBytes(150), "service", "cache"),
+		buildSidxTagReqs(1, 1, convert.Int64ToBytes(100), "frontend"),
+		buildSidxTagReqs(2, 1, convert.Int64ToBytes(200), "backend"),
+		buildSidxTagReqs(3, 2, convert.Int64ToBytes(150), "cache"),
 	}
 
 	sidxMp := mustBuildSidxMemPart(g, senderTst, sidxIndexName, sidxReqs, 1, 2)
@@ -767,6 +978,9 @@ func TestLifecycleMigration_WithSIDXTags(t *testing.T) {
 
 	transferParts(g, senderSnp, receiverTst, fileSystem, senderSidxAllPaths)
 
+	// Verify every core and SIDX file/metadata field (including tag files and SegmentID) round-tripped byte-for-byte.
+	assertMigrationPreservesAllFiles(g, fileSystem, senderSnp, receiverTst, senderSidxAllPaths)
+
 	// Phase 3: Verify receiver has SIDX with tag data.
 	receiverSidxMap := receiverTst.getAllSidx()
 	g.Expect(receiverSidxMap).To(gomega.HaveKey(sidxIndexName), "receiver must have SIDX index %q after migration", sidxIndexName)
@@ -779,4 +993,114 @@ func TestLifecycleMigration_WithSIDXTags(t *testing.T) {
 	g.Expect(receiverSidxPaths).NotTo(gomega.BeEmpty(), "receiver SIDX must have file-backed parts with tag data")
 	g.Expect(len(receiverSidxPaths)).To(gomega.Equal(len(senderSidxPaths)),
 		"receiver SIDX part count must match sender")
+}
+
+// TestLifecycleMigration_ReceiverSurvivesRestart verifies that file-backed parts and SIDX parts
+// introduced via migration survive a receiver restart. This guards the snapshot-persist invariant:
+// introducePart must persist the snapshot for file-backed introductions, otherwise loadSnapshot
+// would treat the on-disk part as orphan and gc.removePart would delete it.
+func TestLifecycleMigration_ReceiverSurvivesRestart(t *testing.T) {
+	g := gomega.NewWithT(t)
+	checkGoroutineLeak(t, g)
+	fileSystem := fs.NewLocalFileSystem()
+
+	const sidxIndexName = "service_latency_restart"
+
+	// Phase 1: Sender writes core trace data + SIDX with non-zero SegmentID and tag data.
+	senderPath, senderCleanup := mustNewSpace(g)
+	defer senderCleanup()
+
+	senderTst, err := newTSTable(
+		fileSystem, senderPath, common.Position{},
+		logger.GetLogger("sender-restart"), timestamp.TimeRange{},
+		option{flushTimeout: 0, mergePolicy: newDefaultMergePolicyForTesting(), protector: protector.Nop{}},
+		nil,
+	)
+	g.Expect(err).NotTo(gomega.HaveOccurred())
+
+	sidxReqs := []sidx.WriteRequest{
+		buildSidxTagReqs(1, 1, convert.Int64ToBytes(100), "frontend"),
+		buildSidxTagReqs(2, 2, convert.Int64ToBytes(200), "backend"),
+	}
+	sidxMp := mustBuildSidxMemPart(g, senderTst, sidxIndexName, sidxReqs, 1, 2)
+	senderTst.mustAddTraces(tsTS1, map[string]*sidx.MemPart{sidxIndexName: sidxMp})
+	time.Sleep(100 * time.Millisecond)
+
+	senderSnp, senderSidxAllPaths := waitForConsistentSidxSnapshot(g, senderTst, []string{sidxIndexName})
+	g.Expect(senderSnp).NotTo(gomega.BeNil())
+	defer senderSnp.decRef()
+	g.Expect(senderSidxAllPaths).To(gomega.HaveKey(sidxIndexName))
+
+	g.Expect(senderTst.Close()).To(gomega.Succeed())
+
+	// Phase 2: Receiver receives the migration.
+	receiverPath, receiverCleanup := mustNewSpace(g)
+	defer receiverCleanup()
+
+	receiverTst, err := newTSTable(
+		fileSystem, receiverPath, common.Position{},
+		logger.GetLogger("receiver-restart-1"), timestamp.TimeRange{},
+		option{flushTimeout: 0, mergePolicy: newDefaultMergePolicyForTesting(), protector: protector.Nop{}},
+		nil,
+	)
+	g.Expect(err).NotTo(gomega.HaveOccurred())
+
+	transferParts(g, senderSnp, receiverTst, fileSystem, senderSidxAllPaths)
+	assertMigrationPreservesAllFiles(g, fileSystem, senderSnp, receiverTst, senderSidxAllPaths)
+
+	// Capture pre-restart state for comparison.
+	preRestartSnp := receiverTst.currentSnapshot()
+	g.Expect(preRestartSnp).NotTo(gomega.BeNil())
+	preRestartCorePartIDs := snapshotPartIDSet(preRestartSnp)
+	g.Expect(preRestartCorePartIDs).NotTo(gomega.BeEmpty(), "pre-restart receiver must have file-backed parts")
+
+	preRestartSidxMap := receiverTst.getAllSidx()
+	preRestartSidxPaths := preRestartSidxMap[sidxIndexName].PartPaths(preRestartCorePartIDs)
+	g.Expect(preRestartSidxPaths).NotTo(gomega.BeEmpty(), "pre-restart receiver SIDX must have file-backed parts")
+	preRestartSnp.decRef()
+
+	preRestartGot := func() []model.TraceResult {
+		s := receiverTst.currentSnapshot()
+		defer s.decRef()
+		return queryTraceID(g, s, "trace1")
+	}()
+	g.Expect(preRestartGot).NotTo(gomega.BeEmpty(), "trace1 must be queryable before restart")
+
+	// Phase 3: Restart — close and reopen the receiver tsTable at the same root.
+	reopenedTst := reopenTSTable(g, receiverTst, fileSystem, receiverPath, "receiver-restart-2")
+	defer func() {
+		g.Expect(reopenedTst.Close()).To(gomega.Succeed())
+	}()
+
+	// Verify core parts survived: same partIDs, all file-backed.
+	postRestartSnp := reopenedTst.currentSnapshot()
+	g.Expect(postRestartSnp).NotTo(gomega.BeNil(), "reopened receiver must have a snapshot")
+	defer postRestartSnp.decRef()
+	postRestartCorePartIDs := snapshotPartIDSet(postRestartSnp)
+	g.Expect(postRestartCorePartIDs).To(gomega.Equal(preRestartCorePartIDs),
+		"reopened core part IDs must match pre-restart (snapshot must have been persisted)")
+	for _, pw := range postRestartSnp.parts {
+		g.Expect(pw.mp).To(gomega.BeNil(), "reopened parts must be file-backed")
+	}
+
+	// Verify SIDX survived: same partIDs and on-disk paths still exist.
+	postRestartSidxMap := reopenedTst.getAllSidx()
+	g.Expect(postRestartSidxMap).To(gomega.HaveKey(sidxIndexName), "SIDX index must reopen")
+	postRestartSidxPaths := postRestartSidxMap[sidxIndexName].PartPaths(postRestartCorePartIDs)
+	g.Expect(postRestartSidxPaths).To(gomega.Equal(preRestartSidxPaths),
+		"reopened SIDX part paths must match pre-restart (SIDX snapshot must persist as well)")
+
+	// Verify queries still return data on the reopened tsTable.
+	postRestartGot := queryTraceID(g, postRestartSnp, "trace1")
+	g.Expect(postRestartGot).NotTo(gomega.BeEmpty(), "trace1 must remain queryable after restart")
+
+	preSpans := 0
+	for _, tr := range preRestartGot {
+		preSpans += len(tr.Spans)
+	}
+	postSpans := 0
+	for _, tr := range postRestartGot {
+		postSpans += len(tr.Spans)
+	}
+	g.Expect(postSpans).To(gomega.Equal(preSpans), "span count must be identical after restart")
 }

@@ -869,13 +869,13 @@ func partName(epoch uint64) string {
 	return fmt.Sprintf("%016x", epoch)
 }
 
-// SyncPartContext manages multiple sidx memParts or file-backed parts.
+// SyncPartContext manages a file-backed sidx part during streaming sync.
 type SyncPartContext struct {
-	writers    *writers
 	fileSystem fs.FileSystem
-	partMeta   partMetadata
+	writers    *writers
 	name       string
 	partPath   string
+	partMeta   partMetadata
 }
 
 // NewSyncPartContext creates a new sidx part context.

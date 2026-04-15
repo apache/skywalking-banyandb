@@ -34,14 +34,12 @@ import (
 	"github.com/apache/skywalking-banyandb/pkg/test/flags"
 )
 
-func buildAndFlushMeasureMemPart(t *testing.T, fileSystem fs.FileSystem, dps *dataPoints, destPath string) uint64 {
+func buildAndFlushMeasureMemPart(t *testing.T, fileSystem fs.FileSystem, dps *dataPoints, destPath string) {
 	t.Helper()
 	mp := generateMemPart()
 	mp.mustInitFromDataPoints(dps)
-	totalCount := mp.partMetadata.TotalCount
 	mp.mustFlush(fileSystem, destPath)
 	releaseMemPart(mp)
-	return totalCount
 }
 
 func makeTestDataPoints(now int64) *dataPoints {

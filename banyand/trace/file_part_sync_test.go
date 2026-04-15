@@ -104,7 +104,7 @@ func TestMustAddFilePart_FilesOnDisk(t *testing.T) {
 	fileSystem.SyncPath(destPath)
 
 	// Introduce the file part via mustAddFilePart.
-	tst.mustAddFilePart(partID, nil, nil)
+	tst.mustAddFilePart(partID, nil)
 
 	// Verify the part is in the snapshot.
 	snp := tst.currentSnapshot()
@@ -189,7 +189,7 @@ func TestIntroduceMemPart_NilMpGuard(t *testing.T) {
 	// mustAddFilePart calls introducePart with a nil-mp partWrapper.
 	// It must not panic at addPendingDataCount.
 	require.NotPanics(t, func() {
-		tst.mustAddFilePart(partID, nil, nil)
+		tst.mustAddFilePart(partID, nil)
 	})
 
 	snp := tst.currentSnapshot()
@@ -302,7 +302,7 @@ func TestFilePart_DirectWrite_ProducesCorrectFiles(t *testing.T) {
 	fileSystem.SyncPath(destPath)
 
 	// Introduce the file-backed part.
-	tst.mustAddFilePart(partID, nil, nil)
+	tst.mustAddFilePart(partID, nil)
 
 	// Verify: snapshot contains the part with nil mp (file-backed).
 	snp := tst.currentSnapshot()
@@ -348,8 +348,8 @@ func TestFilePart_ConcurrentSenders(t *testing.T) {
 
 	// Prepare two parts on disk before starting the goroutines.
 	type partSpec struct {
-		id   uint64
 		path string
+		id   uint64
 	}
 	specs := []partSpec{
 		{id: 201},
@@ -383,7 +383,7 @@ func TestFilePart_ConcurrentSenders(t *testing.T) {
 		spec := specs[i]
 		go func() {
 			defer wg.Done()
-			tst.mustAddFilePart(spec.id, nil, nil)
+			tst.mustAddFilePart(spec.id, nil)
 		}()
 	}
 	wg.Wait()
@@ -506,7 +506,7 @@ func TestFilePart_FlusherSkipsFileParts(t *testing.T) {
 		tags:       [][]*tagValue{{}},
 	}
 	buildAndFlushMemPart(t, fileSystem, ts, destPath)
-	tst.mustAddFilePart(partID, nil, nil)
+	tst.mustAddFilePart(partID, nil)
 
 	// Confirm the part is in the snapshot with nil mp before the flusher runs.
 	snpBefore := tst.currentSnapshot()
