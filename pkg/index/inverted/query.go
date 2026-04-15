@@ -147,9 +147,9 @@ func BuildQuery(criteria *modelv1.Criteria, schema logical.Schema, entityDict ma
 					node:  newMatchAllNode(),
 				}, entities, true, nil
 			}
-			// When one OR branch has no query (entity-only), check if all entities are specific.
-			// If no AnyTagValue is present, the nil branch's entity needs match-all to find its documents.
-			// When AnyTagValue exists, the other branch's query already covers all entities.
+			// When one OR branch is entity-only (nil query), entity-level series lookup already
+			// constrains the scope. If all entities are specific (no AnyTagValue wildcards),
+			// return match-all — no index query is needed.
 			if left == nil || right == nil {
 				allSpecific := true
 				for _, entity := range entities {
