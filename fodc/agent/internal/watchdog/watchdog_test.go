@@ -296,7 +296,7 @@ http_requests_total{method="GET"} 100`
 	preRunErr := wd.PreRun(ctx)
 	require.NoError(t, preRunErr)
 
-	err := wd.pollAndForward()
+	_, err := wd.pollAndForward(context.Background())
 
 	require.NoError(t, err)
 	assert.Equal(t, 1, recorder.GetUpdateCallCount())
@@ -321,7 +321,7 @@ func TestWatchdog_PollAndForward_NoRecorder(t *testing.T) {
 	preRunErr := wd.PreRun(ctx)
 	require.NoError(t, preRunErr)
 
-	err := wd.pollAndForward()
+	_, err := wd.pollAndForward(context.Background())
 
 	require.NoError(t, err)
 }
@@ -344,7 +344,7 @@ func TestWatchdog_PollAndForward_RecorderError(t *testing.T) {
 	preRunErr := wd.PreRun(ctx)
 	require.NoError(t, preRunErr)
 
-	err := wd.pollAndForward()
+	_, err := wd.pollAndForward(context.Background())
 
 	assert.Error(t, err)
 	assert.Contains(t, err.Error(), "failed to forward metrics to recorder")
@@ -358,7 +358,7 @@ func TestWatchdog_PollAndForward_PollError(t *testing.T) {
 	preRunErr := wd.PreRun(ctx)
 	require.NoError(t, preRunErr)
 
-	err := wd.pollAndForward()
+	_, err := wd.pollAndForward(context.Background())
 
 	assert.Error(t, err)
 	assert.Contains(t, err.Error(), "failed to poll metrics")
@@ -632,7 +632,7 @@ http_requests_total{method="POST"} 200
 	preRunErr := wd.PreRun(ctx)
 	require.NoError(t, preRunErr)
 
-	err := wd.pollAndForward()
+	_, err := wd.pollAndForward(context.Background())
 
 	require.NoError(t, err)
 
@@ -745,7 +745,7 @@ func TestWatchdog_EmptyMetricsResponse(t *testing.T) {
 	preRunErr := wd.PreRun(ctx)
 	require.NoError(t, preRunErr)
 
-	err := wd.pollAndForward()
+	_, err := wd.pollAndForward(context.Background())
 
 	require.NoError(t, err)
 	assert.Equal(t, 1, recorder.GetUpdateCallCount())
