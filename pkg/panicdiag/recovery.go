@@ -27,7 +27,10 @@ import (
 )
 
 // WithRecovery executes fn and recovers any panic with structured diagnostics.
-func WithRecovery(ctx context.Context, opts RecoveryOptions, reporter Reporter, fn func(context.Context)) {
+// fn receives a pointer to the active context so it can enrich it with
+// breadcrumbs; the recovery defer reads through the pointer and therefore
+// captures every marker added during fn's execution.
+func WithRecovery(ctx context.Context, opts RecoveryOptions, reporter Reporter, fn func(*context.Context)) {
 	if ctx == nil {
 		ctx = context.Background()
 	}
@@ -93,9 +96,14 @@ func WithRecovery(ctx context.Context, opts RecoveryOptions, reporter Reporter, 
 			}
 		}
 
+		stages := make([]string, len(record.Breadcrumbs))
+		for idx, bc := range record.Breadcrumbs {
+			stages[idx] = bc.Stage
+		}
 		log.Error().
 			Str("component", opts.Component).
 			Str("panic", record.PanicValue).
+			Strs("breadcrumbs", stages).
 			Str("stack", record.GoroutineStack).
 			Str("artifact_dir", artifactDir).
 			Msg("recovered panic")
@@ -108,11 +116,11 @@ func WithRecovery(ctx context.Context, opts RecoveryOptions, reporter Reporter, 
 		}
 	}()
 
-	fn(ctx)
+	fn(&ctx)
 }
 
 // GoWithRecovery starts fn in a goroutine protected by WithRecovery.
-func GoWithRecovery(ctx context.Context, opts RecoveryOptions, reporter Reporter, fn func(context.Context)) {
+func GoWithRecovery(ctx context.Context, opts RecoveryOptions, reporter Reporter, fn func(*context.Context)) {
 	go WithRecovery(ctx, opts, reporter, fn)
 }
 

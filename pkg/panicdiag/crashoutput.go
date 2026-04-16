@@ -26,25 +26,36 @@ import (
 	"github.com/spf13/pflag"
 )
 
-const defaultCrashOutputDir = "crash"
+const (
+	defaultCrashOutputDir = "crash"
+	defaultMaxArtifacts   = 10
+	defaultGoMemLimitPct  = 90
+)
 
 var (
 	setCrashOutput = debug.SetCrashOutput
-	// globalCrashFile holds the crash output file open for the entire process lifetime.
-	// debug.SetCrashOutput requires the underlying fd to remain valid until the process exits.
+	// globalCrashFile retains the *os.File returned by os.OpenFile so that its
+	// finalizer does not close the original fd while the process is running.
+	// debug.SetCrashOutput internally duplicates the file descriptor, so the
+	// runtime's crash-output fd is independent; however keeping this reference
+	// also enables us to close the previous file cleanly on reinstall.
 	globalCrashFile *os.File
 )
 
 // CrashOutputConfig controls whether runtime crash output is persisted to disk.
 type CrashOutputConfig struct {
-	Enabled bool
-	Dir     string
+	Enabled       bool
+	Dir           string
+	MaxArtifacts  int
+	GoMemLimitPct int
 }
 
 // NewCrashOutputConfig returns the default global crash-output configuration.
 func NewCrashOutputConfig() CrashOutputConfig {
 	return CrashOutputConfig{
-		Dir: defaultCrashOutputDir,
+		Dir:           defaultCrashOutputDir,
+		MaxArtifacts:  defaultMaxArtifacts,
+		GoMemLimitPct: defaultGoMemLimitPct,
 	}
 }
 
@@ -54,6 +65,10 @@ func (c *CrashOutputConfig) RegisterFlags(flags *pflag.FlagSet) {
 		"enable runtime crash output persistence for fatal panics")
 	flags.StringVar(&c.Dir, "panic-diagnostics-dir", c.Dir,
 		"directory used to store panic diagnostics and runtime crash output")
+	flags.IntVar(&c.MaxArtifacts, "panic-diagnostics-max-artifacts", c.MaxArtifacts,
+		"maximum number of crash artifact directories to retain; oldest are removed first (0 disables pruning)")
+	flags.IntVar(&c.GoMemLimitPct, "panic-diagnostics-gomemlimit-pct", c.GoMemLimitPct,
+		"set GOMEMLIMIT to this percentage of the cgroup memory limit, reserving headroom for post-panic diagnostics (0 disables)")
 }
 
 // InstallGlobalCrashOutput registers runtime/debug crash output when enabled.
@@ -81,13 +96,21 @@ func (c CrashOutputConfig) InstallGlobalCrashOutput() error {
 		return fmt.Errorf("set runtime crash output: %w", setCrashErr)
 	}
 
-	// Keep the file open for the entire process lifetime.
-	// Closing it would invalidate the fd that debug.SetCrashOutput holds,
-	// silently discarding any fatal crash output.
+	// Close the previous file (safe because SetCrashOutput already dup'd its fd)
+	// and store the new one so its finalizer doesn't run close() on us.
 	if globalCrashFile != nil {
 		_ = globalCrashFile.Close()
 	}
 	globalCrashFile = crashFile
+
+	SetDefaultMaxArtifacts(c.MaxArtifacts)
+
+	if c.GoMemLimitPct > 0 {
+		if _, memLimitErr := ApplyGoMemLimit(c.GoMemLimitPct); memLimitErr != nil {
+			return fmt.Errorf("apply GOMEMLIMIT: %w", memLimitErr)
+		}
+	}
+
 	return nil
 }
 

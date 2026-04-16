@@ -32,6 +32,72 @@ var defaultArtifactRootHolder struct {
 	root string
 }
 
+var defaultMaxArtifactsHolder struct {
+	sync.RWMutex
+	n int
+}
+
+// SetDefaultMaxArtifacts sets the process-wide default maximum number of crash
+// artifact directories to retain. When a new artifact is written, directories
+// beyond this count are removed oldest-first. Zero disables pruning.
+func SetDefaultMaxArtifacts(n int) {
+	defaultMaxArtifactsHolder.Lock()
+	defer defaultMaxArtifactsHolder.Unlock()
+	defaultMaxArtifactsHolder.n = n
+}
+
+// DefaultMaxArtifacts returns the process-wide default max artifact count.
+func DefaultMaxArtifacts() int {
+	defaultMaxArtifactsHolder.RLock()
+	defer defaultMaxArtifactsHolder.RUnlock()
+	return defaultMaxArtifactsHolder.n
+}
+
+// PruneArtifacts removes the oldest crash artifact directories under rootDir
+// until at most maxArtifacts remain. Only directories containing a panic.json
+// are considered; other directories are left untouched. When maxArtifacts is
+// zero the call is a no-op.
+func PruneArtifacts(rootDir string, maxArtifacts int) error {
+	if maxArtifacts <= 0 || rootDir == "" {
+		return nil
+	}
+	entries, err := os.ReadDir(rootDir)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return nil
+		}
+		return fmt.Errorf("read artifact root for pruning: %w", err)
+	}
+
+	// os.ReadDir returns entries in lexicographic ascending order.
+	// Artifact directory names are prefixed with a nanosecond-precision UTC
+	// timestamp (e.g. 20060102T150405.123456789Z-…), so ascending lexicographic
+	// order equals oldest-first — exactly what we need for LRU eviction.
+	var artifactDirs []string
+	for _, entry := range entries {
+		if !entry.IsDir() {
+			continue
+		}
+		if _, statErr := os.Stat(filepath.Join(rootDir, entry.Name(), panicRecordFileName)); os.IsNotExist(statErr) {
+			continue
+		}
+		artifactDirs = append(artifactDirs, entry.Name())
+	}
+
+	if len(artifactDirs) <= maxArtifacts {
+		return nil
+	}
+
+	// Remove the oldest (front of the slice) until we are within the limit.
+	excess := artifactDirs[:len(artifactDirs)-maxArtifacts]
+	for _, name := range excess {
+		if removeErr := os.RemoveAll(filepath.Join(rootDir, name)); removeErr != nil {
+			return fmt.Errorf("remove old artifact dir %s: %w", name, removeErr)
+		}
+	}
+	return nil
+}
+
 // Collection contains the persisted diagnosis data for a single panic artifact.
 type Collection struct {
 	ArtifactDir string       `json:"artifactDir"`

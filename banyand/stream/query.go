@@ -34,6 +34,7 @@ import (
 	"github.com/apache/skywalking-banyandb/pkg/index/posting/roaring"
 	itersort "github.com/apache/skywalking-banyandb/pkg/iter/sort"
 	"github.com/apache/skywalking-banyandb/pkg/logger"
+	"github.com/apache/skywalking-banyandb/pkg/panicdiag"
 	pbv1 "github.com/apache/skywalking-banyandb/pkg/pb/v1"
 	"github.com/apache/skywalking-banyandb/pkg/pool"
 	logicalstream "github.com/apache/skywalking-banyandb/pkg/query/logical/stream"
@@ -46,6 +47,10 @@ var streamQueryResultTracker = pool.RegisterTracker("stream.queryResult")
 const checkDoneEvery = 128
 
 func (s *stream) Query(ctx context.Context, sqo model.StreamQueryOptions) (sqr model.StreamQueryResult, err error) {
+	ctx = panicdiag.WithBreadcrumb(ctx, "start stream query", "stream", map[string]string{
+		"group":  s.group,
+		"stream": sqo.Name,
+	})
 	if err = validateQueryInput(sqo); err != nil {
 		return nil, err
 	}
@@ -62,6 +67,10 @@ func (s *stream) Query(ctx context.Context, sqo model.StreamQueryOptions) (sqr m
 	if len(segments) < 1 {
 		return bypassQueryResultInstance, nil
 	}
+	ctx = panicdiag.WithBreadcrumb(ctx, "selected stream segments", "stream", map[string]string{
+		"group":    s.group,
+		"segments": fmt.Sprintf("%d", len(segments)),
+	})
 
 	segmentsNeedRelease := true
 	defer func() {
@@ -94,6 +103,10 @@ func (s *stream) Query(ctx context.Context, sqo model.StreamQueryOptions) (sqr m
 		return sqr, nil
 	}
 
+	ctx = panicdiag.WithBreadcrumb(ctx, "execute stream indexed query", "stream", map[string]string{
+		"group":  s.group,
+		"stream": sqo.Name,
+	})
 	sqr, err = s.executeIndexedQuery(ctx, segments, series, sqo, schemaTagTypes, &tr)
 	if err != nil {
 		return nil, err

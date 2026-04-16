@@ -421,7 +421,7 @@ func (g *Group) Run(ctx context.Context) (err error) {
 			panicdiag.WithRecovery(ctx, panicdiag.RecoveryOptions{
 				Component: s.Name(),
 				Logger:    g.log,
-			}, nil, func(_ context.Context) {
+			}, nil, func(_ *context.Context) {
 				notify := s.Serve()
 				readyNotified = true
 				swg.Done()

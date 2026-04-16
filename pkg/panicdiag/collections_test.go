@@ -25,6 +25,112 @@ import (
 	"time"
 )
 
+func writeMinimalArtifact(t *testing.T, rootDir, name string) {
+	t.Helper()
+	artifactDir := filepath.Join(rootDir, name)
+	if mkdirErr := os.MkdirAll(artifactDir, 0o755); mkdirErr != nil {
+		t.Fatalf("create artifact dir: %v", mkdirErr)
+	}
+	record := PanicRecord{
+		OccurredAt: time.Now().UTC(),
+		Component:  "test",
+		PanicValue: "boom",
+	}
+	recordData, marshalErr := json.Marshal(record)
+	if marshalErr != nil {
+		t.Fatalf("marshal panic record: %v", marshalErr)
+	}
+	if writeErr := os.WriteFile(filepath.Join(artifactDir, panicRecordFileName), append(recordData, '\n'), 0o644); writeErr != nil {
+		t.Fatalf("write panic record: %v", writeErr)
+	}
+}
+
+func TestPruneArtifactsRemovesOldest(t *testing.T) {
+	t.Helper()
+
+	rootDir := t.TempDir()
+	// Create 5 artifacts with names that sort oldest-first lexicographically.
+	names := []string{
+		"20260101T000000.000000000Z-comp-1",
+		"20260102T000000.000000000Z-comp-1",
+		"20260103T000000.000000000Z-comp-1",
+		"20260104T000000.000000000Z-comp-1",
+		"20260105T000000.000000000Z-comp-1",
+	}
+	for _, name := range names {
+		writeMinimalArtifact(t, rootDir, name)
+	}
+
+	// Keep only the 3 newest; 2 oldest should be removed.
+	if pruneErr := PruneArtifacts(rootDir, 3); pruneErr != nil {
+		t.Fatalf("PruneArtifacts: %v", pruneErr)
+	}
+
+	entries, readErr := os.ReadDir(rootDir)
+	if readErr != nil {
+		t.Fatalf("read rootDir: %v", readErr)
+	}
+	if len(entries) != 3 {
+		t.Fatalf("expected 3 dirs after pruning, got %d", len(entries))
+	}
+	remaining := make([]string, 0, len(entries))
+	for _, e := range entries {
+		remaining = append(remaining, e.Name())
+	}
+	for _, name := range names[:2] {
+		for _, rem := range remaining {
+			if rem == name {
+				t.Fatalf("expected %s to be pruned, but it still exists", name)
+			}
+		}
+	}
+}
+
+func TestPruneArtifactsNopWhenUnderLimit(t *testing.T) {
+	t.Helper()
+
+	rootDir := t.TempDir()
+	writeMinimalArtifact(t, rootDir, "20260101T000000.000000000Z-comp-1")
+	writeMinimalArtifact(t, rootDir, "20260102T000000.000000000Z-comp-1")
+
+	if pruneErr := PruneArtifacts(rootDir, 5); pruneErr != nil {
+		t.Fatalf("PruneArtifacts: %v", pruneErr)
+	}
+
+	entries, readErr := os.ReadDir(rootDir)
+	if readErr != nil {
+		t.Fatalf("read rootDir: %v", readErr)
+	}
+	if len(entries) != 2 {
+		t.Fatalf("expected 2 dirs, got %d", len(entries))
+	}
+}
+
+func TestPruneArtifactsIgnoresNonArtifactDirs(t *testing.T) {
+	t.Helper()
+
+	rootDir := t.TempDir()
+	// Non-artifact dir (no panic.json).
+	if mkdirErr := os.MkdirAll(filepath.Join(rootDir, "not-an-artifact"), 0o755); mkdirErr != nil {
+		t.Fatalf("create non-artifact dir: %v", mkdirErr)
+	}
+	writeMinimalArtifact(t, rootDir, "20260101T000000.000000000Z-comp-1")
+	writeMinimalArtifact(t, rootDir, "20260102T000000.000000000Z-comp-1")
+	writeMinimalArtifact(t, rootDir, "20260103T000000.000000000Z-comp-1")
+
+	// maxArtifacts=2 should remove only the oldest real artifact, not the non-artifact dir.
+	if pruneErr := PruneArtifacts(rootDir, 2); pruneErr != nil {
+		t.Fatalf("PruneArtifacts: %v", pruneErr)
+	}
+
+	if _, statErr := os.Stat(filepath.Join(rootDir, "not-an-artifact")); statErr != nil {
+		t.Fatalf("non-artifact dir should not be removed: %v", statErr)
+	}
+	if _, statErr := os.Stat(filepath.Join(rootDir, "20260101T000000.000000000Z-comp-1")); !os.IsNotExist(statErr) {
+		t.Fatal("expected oldest artifact to be pruned")
+	}
+}
+
 func TestListCollections(t *testing.T) {
 	t.Helper()
 

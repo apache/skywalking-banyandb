@@ -24,9 +24,15 @@ import (
 
 type breadcrumbContextKey struct{}
 
+// maxBreadcrumbDepth is the maximum number of breadcrumbs a single context chain
+// may hold. Additions beyond this limit are silently dropped, preserving the
+// oldest markers so the earliest causal context is never lost.
+const maxBreadcrumbDepth = 64
+
 type breadcrumbNode struct {
 	breadcrumb Breadcrumb
 	parent     *breadcrumbNode
+	depth      int
 }
 
 var nowBreadcrumbTime = func() time.Time {
@@ -34,11 +40,20 @@ var nowBreadcrumbTime = func() time.Time {
 }
 
 // WithBreadcrumb appends a semantic breadcrumb to the context.
+// The call is O(1): a single node allocation with a pointer assignment.
+// When the chain reaches maxBreadcrumbDepth the call is a no-op.
 func WithBreadcrumb(ctx context.Context, stage string, component string, fields map[string]string) context.Context {
 	if ctx == nil {
 		ctx = context.Background()
 	}
 	node, _ := ctx.Value(breadcrumbContextKey{}).(*breadcrumbNode)
+	nextDepth := 0
+	if node != nil {
+		nextDepth = node.depth + 1
+	}
+	if nextDepth >= maxBreadcrumbDepth {
+		return ctx
+	}
 	return context.WithValue(ctx, breadcrumbContextKey{}, &breadcrumbNode{
 		breadcrumb: Breadcrumb{
 			Time:      nowBreadcrumbTime(),
@@ -47,6 +62,7 @@ func WithBreadcrumb(ctx context.Context, stage string, component string, fields 
 			Fields:    cloneStringMap(fields),
 		},
 		parent: node,
+		depth:  nextDepth,
 	})
 }
 

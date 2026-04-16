@@ -82,7 +82,7 @@ func TestWithRecoveryRecoversAndWritesArtifacts(t *testing.T) {
 		},
 	}, func(_ context.Context, result RecoveryResult) {
 		reported <- result
-	}, func(_ context.Context) {
+	}, func(_ *context.Context) {
 		panic("boom")
 	})
 
@@ -146,7 +146,7 @@ func TestWithRecoveryWritesStateDump(t *testing.T) {
 		StateLimitBytes: 1024,
 	}, func(_ context.Context, result RecoveryResult) {
 		reported <- result
-	}, func(_ context.Context) {
+	}, func(_ *context.Context) {
 		panic("boom")
 	})
 
@@ -180,7 +180,7 @@ func TestWithRecoveryStateDumpFailureRecorded(t *testing.T) {
 		StateLimitBytes: 1024,
 	}, func(_ context.Context, result RecoveryResult) {
 		reported <- result
-	}, func(_ context.Context) {
+	}, func(_ *context.Context) {
 		panic("boom")
 	})
 
@@ -206,7 +206,7 @@ func TestWithRecoveryNoPanic(t *testing.T) {
 		Counter:      counter,
 	}, func(_ context.Context, _ RecoveryResult) {
 		reporterCalled = true
-	}, func(_ context.Context) {})
+	}, func(_ *context.Context) {})
 
 	if reporterCalled {
 		t.Fatal("reporter should not be called")
@@ -235,7 +235,7 @@ func TestGoWithRecovery(t *testing.T) {
 		Counter:   counter,
 	}, func(_ context.Context, result RecoveryResult) {
 		reported <- result
-	}, func(_ context.Context) {
+	}, func(_ *context.Context) {
 		panic("async failure")
 	})
 

@@ -43,6 +43,7 @@ import (
 	"github.com/apache/skywalking-banyandb/banyand/queue"
 	"github.com/apache/skywalking-banyandb/pkg/logger"
 	"github.com/apache/skywalking-banyandb/pkg/node"
+	"github.com/apache/skywalking-banyandb/pkg/panicdiag"
 	"github.com/apache/skywalking-banyandb/pkg/partition"
 	banyandbpath "github.com/apache/skywalking-banyandb/pkg/path"
 	"github.com/apache/skywalking-banyandb/pkg/run"
@@ -232,17 +233,21 @@ func (s *service) Serve(closer *run.Closer) {
 	if s.tls {
 		opts = []grpclib.ServerOption{grpclib.Creds(s.creds)}
 	}
-	grpcPanicRecoveryHandler := func(p any) (err error) {
-		s.log.Error().Interface("panic", p).Str("stack", string(debug.Stack())).Msg("recovered from panic")
-
+	grpcPanicRecoveryHandler := func(ctx context.Context, p any) (err error) {
+		breadcrumbs := panicdiag.BreadcrumbsFromContext(ctx)
+		stages := make([]string, len(breadcrumbs))
+		for idx, bc := range breadcrumbs {
+			stages[idx] = bc.Stage
+		}
+		s.log.Error().Interface("panic", p).Str("stack", string(debug.Stack())).Strs("breadcrumbs", stages).Msg("recovered from panic")
 		return status.Errorf(codes.Internal, "%s", p)
 	}
 	streamChain := []grpclib.StreamServerInterceptor{
-		recovery.StreamServerInterceptor(recovery.WithRecoveryHandler(grpcPanicRecoveryHandler)),
+		recovery.StreamServerInterceptor(recovery.WithRecoveryHandlerContext(grpcPanicRecoveryHandler)),
 	}
 	unaryChain := []grpclib.UnaryServerInterceptor{
 		grpc_validator.UnaryServerInterceptor(),
-		recovery.UnaryServerInterceptor(recovery.WithRecoveryHandler(grpcPanicRecoveryHandler)),
+		recovery.UnaryServerInterceptor(recovery.WithRecoveryHandlerContext(grpcPanicRecoveryHandler)),
 	}
 	opts = append(opts, grpclib.MaxRecvMsgSize(int(s.maxRecvMsgSize)),
 		grpclib.ChainUnaryInterceptor(unaryChain...),

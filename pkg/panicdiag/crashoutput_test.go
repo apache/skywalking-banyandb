@@ -29,8 +29,10 @@ func TestCrashOutputConfigInstallGlobalCrashOutput(t *testing.T) {
 
 	tempDir := t.TempDir()
 	cfg := CrashOutputConfig{
-		Enabled: true,
-		Dir:     tempDir,
+		Enabled:       true,
+		Dir:           tempDir,
+		MaxArtifacts:  5,
+		GoMemLimitPct: 0, // disable to avoid cgroup calls in test
 	}
 
 	called := false
@@ -89,6 +91,64 @@ func TestCrashOutputConfigInstallGlobalCrashOutputDisabled(t *testing.T) {
 
 	if err := cfg.InstallGlobalCrashOutput(); err != nil {
 		t.Fatalf("install global crash output: %v", err)
+	}
+}
+
+func TestCrashOutputConfigInstallSetsMaxArtifacts(t *testing.T) {
+	t.Helper()
+
+	originalSetCrashOutput := setCrashOutput
+	setCrashOutput = func(_ *os.File, _ debug.CrashOptions) error { return nil }
+	defer func() { setCrashOutput = originalSetCrashOutput }()
+
+	cfg := CrashOutputConfig{
+		Enabled:       true,
+		Dir:           t.TempDir(),
+		MaxArtifacts:  7,
+		GoMemLimitPct: 0,
+	}
+	if err := cfg.InstallGlobalCrashOutput(); err != nil {
+		t.Fatalf("install global crash output: %v", err)
+	}
+	if got := DefaultMaxArtifacts(); got != 7 {
+		t.Fatalf("DefaultMaxArtifacts: got %d want 7", got)
+	}
+}
+
+func TestCrashOutputConfigInstallAppliesGoMemLimit(t *testing.T) {
+	t.Helper()
+
+	originalSetCrashOutput := setCrashOutput
+	setCrashOutput = func(_ *os.File, _ debug.CrashOptions) error { return nil }
+	defer func() { setCrashOutput = originalSetCrashOutput }()
+
+	origCgroup := cgroupMemLimit
+	origSet := setMemoryLimit
+	defer func() {
+		cgroupMemLimit = origCgroup
+		setMemoryLimit = origSet
+	}()
+
+	const cgBytes = int64(2 * 1024 * 1024 * 1024) // 2 GiB
+	var appliedLimit int64
+	cgroupMemLimit = func() (int64, error) { return cgBytes, nil }
+	setMemoryLimit = func(n int64) int64 {
+		appliedLimit = n
+		return 0
+	}
+
+	cfg := CrashOutputConfig{
+		Enabled:       true,
+		Dir:           t.TempDir(),
+		MaxArtifacts:  0,
+		GoMemLimitPct: 85,
+	}
+	if err := cfg.InstallGlobalCrashOutput(); err != nil {
+		t.Fatalf("install global crash output: %v", err)
+	}
+	want := cgBytes * 85 / 100
+	if appliedLimit != want {
+		t.Fatalf("GOMEMLIMIT: got %d want %d", appliedLimit, want)
 	}
 }
 

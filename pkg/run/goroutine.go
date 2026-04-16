@@ -33,5 +33,7 @@ func Go(ctx context.Context, component string, log *logger.Logger, fn func(conte
 	panicdiag.GoWithRecovery(ctx, panicdiag.RecoveryOptions{
 		Component: component,
 		Logger:    log,
-	}, nil, fn)
+	}, nil, func(ctxPtr *context.Context) {
+		fn(*ctxPtr)
+	})
 }

@@ -80,8 +80,9 @@ var (
 	reconnectInterval              time.Duration
 	clusterStatePorts              []string
 	clusterStatePollInterval       time.Duration
-	crashWatchDir  string
-	crashSourceDir string
+	crashWatchDir                  string
+	crashSourceDir                 string
+	crashOutputCfg                 = panicdiag.NewCrashOutputConfig()
 	diagnosisPollInterval          time.Duration
 	diagnosisBufferSize            int
 	maxDiagnosisMemoryUsagePercent int
@@ -135,6 +136,7 @@ func init() {
 		"Directory where the FODC agent writes its own recovered panic artifacts")
 	rootCmd.Flags().StringVar(&crashSourceDir, "crash-source-dir", "",
 		"Shared volume directory to watch for BanyanDB crash artifacts (enables FS Watcher alongside HTTP polling)")
+	crashOutputCfg.RegisterFlags(rootCmd.Flags())
 	rootCmd.Flags().DurationVar(&diagnosisPollInterval, "diagnosis-poll-interval", defaultDiagnosisPollInterval,
 		"Interval at which the FODC agent polls BanyanDB diagnosis collections")
 	rootCmd.Flags().IntVar(&diagnosisBufferSize, "diagnosis-buffer-size", defaultDiagnosisBufferSize,
@@ -238,6 +240,9 @@ func initializeKTM(ctx context.Context, log *logger.Logger, fr *flightrecorder.F
 
 // runFODC is the main function for the FODC agent.
 func runFODC(_ *cobra.Command, _ []string) error {
+	if installErr := crashOutputCfg.InstallGlobalCrashOutput(); installErr != nil {
+		return fmt.Errorf("failed to install crash output: %w", installErr)
+	}
 	if initErr := logger.Init(logger.Logging{Env: "prod", Level: "info"}); initErr != nil {
 		return fmt.Errorf("failed to initialize logger: %w", initErr)
 	}

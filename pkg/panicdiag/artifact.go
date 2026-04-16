@@ -84,6 +84,12 @@ func (aw *ArtifactWriter) Write(record *PanicRecord) (string, error) {
 		return "", fmt.Errorf("write crash summary: %w", writeErr)
 	}
 
+	// Best-effort: prune old artifact directories to honour the disk quota.
+	// Errors here are non-fatal; the caller already has the new artifact path.
+	if maxArtifacts := DefaultMaxArtifacts(); maxArtifacts > 0 {
+		_ = PruneArtifacts(aw.rootDir, maxArtifacts)
+	}
+
 	return artifactDir, nil
 }
 
@@ -112,7 +118,7 @@ func (aw *ArtifactWriter) WriteStateDump(artifactDir string, value any, limitByt
 	dumpPath := filepath.Join(artifactDir, deepDumpFileName)
 	truncated, err := NewBoundedStateWriter().WriteJSON(dumpPath, value, limitBytes)
 	if err != nil {
-		return truncated, dumpPath, err
+		return truncated, "", err
 	}
 	return truncated, dumpPath, nil
 }
