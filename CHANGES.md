@@ -34,6 +34,7 @@ Release Notes.
 - Fix handoff controller TOCTOU race allowing disk size limit bypass, and populate sidx MinTimestamp/MaxTimestamp during replay to prevent corrupt segment creation on recovered nodes.
 - Delete orphaned parts when no snapshot references them during tsTable initialization.
 - Extract shared LocateAll on NodeRegistry to ensure resolveAssignments and syncer GetNodes always produce identical node lists, preventing liaison from enqueuing parts to online/healthy data nodes.
+- Add validation for MATCH and IN conditions in inverted index query builder, and handle nil OR branch when all entities are specific.
 - Fix wrong backup path of schema property.
 
 ### Chores

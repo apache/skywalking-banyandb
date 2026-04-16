@@ -62,6 +62,13 @@ jobs:
             git status -s; \
             exit 1; \
           fi
+      - name: Generate test cases and check drift
+        run: |
+          make generate-test-cases
+          git diff --exit-code -- test/cases/measure/data/input/ \
+          || (echo "::error::Generated test cases have drifted. Run 'make generate-test-cases' locally and commit the changes." \
+          && git diff --stat -- test/cases/measure/data/input/ \
+          && exit 1)
       - name: Check License Header
         run: make license-check
       - name: Check requirements
