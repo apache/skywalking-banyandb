@@ -237,6 +237,9 @@ func (tst *tsTable) introducePart(nextIntroduction *introduction, epoch uint64) 
 	}
 	partID := next.p.partMetadata.ID
 
+	// Capture the snapshot built by the transaction so we can persist it directly
+	// after commit, without re-acquiring a reference via currentSnapshot().
+	var traceNextSnp *snapshot
 	traceTransition := snapshotpkg.NewTransition(tst, func(cur *snapshot) *snapshot {
 		if cur == nil {
 			cur = new(snapshot)
@@ -244,7 +247,8 @@ func (tst *tsTable) introducePart(nextIntroduction *introduction, epoch uint64) 
 		nextSnp := cur.copyAllTo(epoch)
 		nextSnp.parts = append(nextSnp.parts, next)
 		nextSnp.creator = snapshotCreatorMemPart
-		return &nextSnp
+		traceNextSnp = &nextSnp
+		return traceNextSnp
 	})
 	defer traceTransition.Release()
 	snapshotpkg.AddTransition(txn, traceTransition)
@@ -276,12 +280,8 @@ func (tst *tsTable) introducePart(nextIntroduction *introduction, epoch uint64) 
 
 	// Persist snapshot for file-backed introductions so the part survives restart.
 	// memPart introductions skip persist because the flusher persists after mem→file conversion.
-	if next.mp == nil {
-		cur := tst.currentSnapshot()
-		if cur != nil {
-			defer cur.decRef()
-			tst.persistSnapshot(cur)
-		}
+	if next.mp == nil && traceNextSnp != nil {
+		tst.persistSnapshot(traceNextSnp)
 	}
 
 	if nextIntroduction.applied != nil {
