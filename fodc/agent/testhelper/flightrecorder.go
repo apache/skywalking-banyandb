@@ -176,6 +176,7 @@ func NewProxyClientWithCollector(
 		frTyped,
 		collector,
 		nil,
+		nil,
 		logger,
 	)
 }
@@ -279,6 +280,7 @@ func NewProxyClientWrapper(
 		frTyped,
 		clusterCollector,
 		lifecycleCollector,
+		nil,
 		logger,
 	)
 	return &ProxyClientWrapper{

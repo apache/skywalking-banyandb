@@ -21,7 +21,6 @@ import (
 	"context"
 	"io"
 	"path"
-	"runtime/debug"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -36,6 +35,7 @@ import (
 	"github.com/apache/skywalking-banyandb/banyand/metadata/schema"
 	"github.com/apache/skywalking-banyandb/pkg/cgroups"
 	"github.com/apache/skywalking-banyandb/pkg/logger"
+	"github.com/apache/skywalking-banyandb/pkg/panicdiag"
 	"github.com/apache/skywalking-banyandb/pkg/run"
 )
 
@@ -153,16 +153,16 @@ func (sr *schemaRepo) Watcher() {
 			if !sr.closer.AddReceiver() {
 				return
 			}
-			defer func() {
-				sr.closer.ReceiverDone()
-				if err := recover(); err != nil {
-					sr.l.Warn().Interface("err", err).Str("stack", string(debug.Stack())).Msg("watching the events")
-				}
+			panicdiag.WithRecovery(context.Background(), panicdiag.RecoveryOptions{
+				Component: "schema-watcher",
+				Logger:    sr.l,
+			}, func(_ context.Context, _ panicdiag.RecoveryResult) {
 				sr.metrics.totalPanics.Inc(1)
-			}()
-			for {
-				select {
-				case evt, more := <-sr.eventCh:
+			}, func(_ *context.Context) {
+				defer sr.closer.ReceiverDone()
+				for {
+					select {
+					case evt, more := <-sr.eventCh:
 					if !more {
 						return
 					}
@@ -244,6 +244,7 @@ func (sr *schemaRepo) Watcher() {
 					return
 				}
 			}
+		})
 		}()
 	}
 }

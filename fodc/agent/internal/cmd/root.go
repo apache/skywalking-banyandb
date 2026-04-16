@@ -308,11 +308,14 @@ func runFODC(_ *cobra.Command, _ []string) error {
 	}
 	crashCollector := crashcollector.New(log, collectorCfg)
 	var collectionProvider server.CollectionProvider = crashCollector
+	var crashCollectionLister crashcollector.CollectionLister = crashCollector
 	var stopDirWatcher func()
 	if crashSourceDir != "" {
 		dirWatcher := crashcollector.NewDirectoryWatcher(log, crashSourceDir, collectorCfg)
 		stopDirWatcher = dirWatcher.Start(ctx)
-		collectionProvider = crashcollector.NewMultiCollectionProvider(crashCollector, dirWatcher)
+		multi := crashcollector.NewMultiCollectionProvider(crashCollector, dirWatcher)
+		collectionProvider = multi
+		crashCollectionLister = multi
 	}
 	serverErrCh, startErr := metricsServer.Start(reg, exporter.NewDatasourceCollector(fr), collectionProvider)
 	if startErr != nil {
@@ -322,7 +325,7 @@ func runFODC(_ *cobra.Command, _ []string) error {
 		return fmt.Errorf("failed to start metrics server: %w", startErr)
 	}
 	stopCrashCollector := crashCollector.Start(ctx)
-	proxyClient := startProxyClient(ctx, log, fr, nodeRole, nodeLabels, clusterCollector)
+	proxyClient := startProxyClient(ctx, log, fr, nodeRole, nodeLabels, clusterCollector, crashCollectionLister)
 
 	sigCh := make(chan os.Signal, 1)
 	signal.Notify(sigCh, os.Interrupt, syscall.SIGTERM)
@@ -445,6 +448,7 @@ func validateFlags() error {
 
 func startProxyClient(ctx context.Context, log *logger.Logger, fr *flightrecorder.FlightRecorder,
 	nodeRole string, nodeLabels map[string]string, collector *cluster.Collector,
+	collectionLister crashcollector.CollectionLister,
 ) *proxy.Client {
 	if proxyAddr == "" || podName == "" || nodeRole == "" {
 		log.Info().Msg("Proxy client not started (missing: --proxy-addr, --pod-name, and --node-role)")
@@ -457,7 +461,7 @@ func startProxyClient(ctx context.Context, log *logger.Logger, fr *flightrecorde
 		log.Info().Str("grpc_addr", grpcAddr).Msg("Lifecycle collector initialized")
 	}
 	client := proxy.NewClient(proxyAddr, nodeRole, podName, containerNames, nodeLabels,
-		heartbeatInterval, reconnectInterval, fr, collector, lifecycleCollector, log)
+		heartbeatInterval, reconnectInterval, fr, collector, lifecycleCollector, collectionLister, log)
 	go func() {
 		if startErr := client.Start(ctx); startErr != nil {
 			log.Error().Err(startErr).Msg("Proxy client error")

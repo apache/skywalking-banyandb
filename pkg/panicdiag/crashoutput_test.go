@@ -24,6 +24,24 @@ import (
 	"testing"
 )
 
+func TestNewCrashOutputConfigDefaultsToEnabled(t *testing.T) {
+	t.Helper()
+
+	cfg := NewCrashOutputConfig()
+	if !cfg.Enabled {
+		t.Fatal("NewCrashOutputConfig must default to Enabled=true — crash output is the final safety net")
+	}
+	if cfg.Dir == "" {
+		t.Fatal("NewCrashOutputConfig must set a default Dir")
+	}
+	if cfg.MaxArtifacts <= 0 {
+		t.Fatalf("NewCrashOutputConfig must set a positive MaxArtifacts default, got %d", cfg.MaxArtifacts)
+	}
+	if cfg.GoMemLimitPct <= 0 {
+		t.Fatalf("NewCrashOutputConfig must set a positive GoMemLimitPct default, got %d", cfg.GoMemLimitPct)
+	}
+}
+
 func TestCrashOutputConfigInstallGlobalCrashOutput(t *testing.T) {
 	t.Helper()
 

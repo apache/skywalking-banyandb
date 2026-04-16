@@ -22,10 +22,13 @@ import (
 	"fmt"
 )
 
-// collectionLister returns the latest crash collection records.
-type collectionLister interface {
+// CollectionLister returns the latest crash collection records.
+type CollectionLister interface {
 	ListCollections() []CollectionRecord
 }
+
+// collectionLister is an alias used internally within the package.
+type collectionLister = CollectionLister
 
 // MultiCollectionProvider combines multiple collection sources into a single provider.
 // It deduplicates by artifact directory name so the same crash is not reported twice
@@ -40,8 +43,8 @@ func NewMultiCollectionProvider(providers ...collectionLister) *MultiCollectionP
 	return &MultiCollectionProvider{providers: providers}
 }
 
-// MarshalCollections merges, deduplicates, and marshals collections from all providers.
-func (m *MultiCollectionProvider) MarshalCollections() ([]byte, error) {
+// ListCollections merges and deduplicates collections from all providers.
+func (m *MultiCollectionProvider) ListCollections() []CollectionRecord {
 	seen := make(map[string]struct{})
 	var all []CollectionRecord
 	for _, provider := range m.providers {
@@ -53,6 +56,12 @@ func (m *MultiCollectionProvider) MarshalCollections() ([]byte, error) {
 			all = append(all, record)
 		}
 	}
+	return all
+}
+
+// MarshalCollections merges, deduplicates, and marshals collections from all providers.
+func (m *MultiCollectionProvider) MarshalCollections() ([]byte, error) {
+	all := m.ListCollections()
 	if all == nil {
 		all = make([]CollectionRecord, 0)
 	}

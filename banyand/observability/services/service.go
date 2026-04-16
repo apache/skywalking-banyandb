@@ -155,6 +155,10 @@ func (p *metricService) PreRun(ctx context.Context) error {
 			nodeInfo: nodeInfo,
 		}
 	}
+	// Register the process-wide panic counter so that all goroutines using
+	// panicdiag.WithRecovery (including run.Group services and run.Go) increment
+	// banyandb_panic_total{component="..."} without needing per-call wiring.
+	panicdiag.SetDefaultPanicCounter(p.With(observability.RootScope).NewCounter("panic_total", "component"))
 	return nil
 }
 

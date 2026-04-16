@@ -51,8 +51,11 @@ type CrashOutputConfig struct {
 }
 
 // NewCrashOutputConfig returns the default global crash-output configuration.
+// Crash output is enabled by default; it is the final safety net for unrecoverable
+// runtime failures and should always be active in production.
 func NewCrashOutputConfig() CrashOutputConfig {
 	return CrashOutputConfig{
+		Enabled:       true,
 		Dir:           defaultCrashOutputDir,
 		MaxArtifacts:  defaultMaxArtifacts,
 		GoMemLimitPct: defaultGoMemLimitPct,
