@@ -33,7 +33,7 @@
   },
   "sharding_key": {
     "tag_names": [
-      "id"
+      "service_id"
     ]
   },
   "interval": "1m",

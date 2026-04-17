@@ -93,17 +93,13 @@ func (t *topNQueryProcessor) Rev(ctx context.Context, message bus.Message) (resp
 			span.Stop()
 		}()
 	}
-	topn := request.GetTopN()
-	if request.Agg != modelv1.AggregationFunction_AGGREGATION_FUNCTION_MIN && request.Agg != modelv1.AggregationFunction_AGGREGATION_FUNCTION_MAX {
-		request.TopN = 0
-	}
 	request.EmitPartial = true
 	ff, err := t.broadcaster.Broadcast(defaultTopNQueryTimeout, data.TopicTopNQuery, bus.NewMessageWithNodeSelectors(now, nodeSelectors, request.TimeRange, request))
 	if err != nil {
 		resp = bus.NewMessage(now, common.NewError("execute the query %s: %v", request.GetName(), err))
 		return
 	}
-	aggregator := newReduceTopNAggregator(topn,
+	aggregator := newReduceTopNAggregator(request.GetTopN(),
 		request.Agg, request.GetFieldValueSort())
 	tags, responseCount, allErr := t.collectResponses(ff, request.Agg, aggregator)
 	if span != nil {
