@@ -502,14 +502,36 @@ func (tst *tsTable) Close() error {
 	return tst.closeSidxMap()
 }
 
+func (tst *tsTable) mustAddFilePart(partID uint64, sidxFilePartsMap map[string]string) {
+	p := mustOpenFilePart(partID, tst.root, tst.fileSystem)
+	p.partMetadata.ID = partID
+
+	ind := generateIntroduction()
+	defer releaseIntroduction(ind)
+	ind.applied = make(chan struct{})
+	ind.part = newPartWrapper(nil, p)
+	ind.sidxFilePartsMap = sidxFilePartsMap
+
+	select {
+	case tst.introductions <- ind:
+	case <-tst.loopCloser.CloseNotify():
+		ind.part.decRef()
+		return
+	}
+	select {
+	case <-ind.applied:
+	case <-tst.loopCloser.CloseNotify():
+	}
+}
+
 func (tst *tsTable) mustAddMemPart(mp *memPart, sidxReqsMap map[string]*sidx.MemPart) {
 	p := openMemPart(mp)
 
 	ind := generateIntroduction()
 	defer releaseIntroduction(ind)
 	ind.applied = make(chan struct{})
-	ind.memPart = newPartWrapper(mp, p)
-	ind.memPart.p.partMetadata.ID = atomic.AddUint64(&tst.curPartID, 1)
+	ind.part = newPartWrapper(mp, p)
+	ind.part.p.partMetadata.ID = atomic.AddUint64(&tst.curPartID, 1)
 	ind.sidxReqsMap = sidxReqsMap
 	startTime := time.Now()
 	totalCount := mp.partMetadata.TotalCount
@@ -518,7 +540,7 @@ func (tst *tsTable) mustAddMemPart(mp *memPart, sidxReqsMap map[string]*sidx.Mem
 	case tst.introductions <- ind:
 	case <-tst.loopCloser.CloseNotify():
 		tst.addPendingDataCount(-int64(totalCount))
-		ind.memPart.decRef()
+		ind.part.decRef()
 		return
 	}
 	select {
