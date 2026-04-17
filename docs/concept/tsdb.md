@@ -78,7 +78,7 @@ In measure's timestamp file, there are version fields to record the version of t
 
 ![measure-block](https://skywalking.apache.org/doc-graph/banyandb/v0.9.0/measure-block.png)
 
-Unlike the measure, there are element ids in the stream's timestamp file. The element id is used to identify the data of the same series. The data with the same timestamp but different element id will both be stored in the TSDB. This introduces a series of new files, named "*.tff", which contain tag filter information for each tag. As of 0.10.0, dictionary-encoded tags no longer use Bloom filters, replacing them with a more efficient dictionary-based filter. Additionally, min/max fields are added to the "*.tfm" file to further aid in skipping blocks.
+Unlike the measure, there are element ids in the stream's timestamp file. The element id is used to identify the data of the same series. The data with the same timestamp but different element id will both be stored in the TSDB. This introduces a series of new files, named `*.tff`, which contain tag filter information for each tag. As of 0.10.0, dictionary-encoded tags no longer use Bloom filters, replacing them with a more efficient dictionary-based filter. Additionally, min/max fields are added to the `*.tfm` file to further aid in skipping blocks.
 
 ![stream-block](https://skywalking.apache.org/doc-graph/banyandb/v0.9.0/stream-block.png)
 
@@ -98,13 +98,13 @@ The read path in TSDB retrieves time-series data from disk or memory, and return
 
 The first step in the read path is to perform an index lookup to determine which parts contain the desired time range. The index contains metadata about each data part, including its start and end time.
 
-## Snapshot Coordination
+### Snapshot Coordination
 
 BanyanDB uses a shared snapshot coordination mechanism to ensure atomic snapshot transitions across the trace and sidx (skipping index) engines. When a snapshot transition occurs, both engines coordinate to produce a consistent view of the data. This prevents situations where the trace engine and the sidx engine have different views of the same data.
 
 This coordination is automatic and requires no operator configuration.
 
-## Series Metadata Persistence
+### Series Metadata Persistence
 
 In cluster mode, liaison nodes persist series metadata to disk. This improves recovery after restarts by allowing the liaison to rebuild its series mapping without waiting for data from other nodes. The persisted metadata includes the mapping between series IDs and entity values.
 

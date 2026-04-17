@@ -417,13 +417,6 @@ When the service starts:
 - Development and testing environments
 - No infrastructure dependencies
 
-### None Mode - Best For
-
-- Standalone and single-node deployments (default mode)
-- Development and testing environments
-- No infrastructure dependencies
-
-### Etcd Mode - Best For
 `--node-discovery-mode=none` disables external node discovery entirely. The discovery registry is wired to a stub that returns no peers, so no remote schema server, request routing target, or lifecycle migration target can be located. This is the default, and it is the only valid mode for `banyand standalone`.
 
 ### When to Use
