@@ -20,21 +20,26 @@ package measure
 import (
 	"fmt"
 	"strings"
+	"sync/atomic"
 	"time"
 
 	"github.com/apache/skywalking-banyandb/api/common"
 	commonv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/common/v1"
 	"github.com/apache/skywalking-banyandb/banyand/internal/storage"
 	"github.com/apache/skywalking-banyandb/banyand/queue"
+	"github.com/apache/skywalking-banyandb/pkg/fs"
 	"github.com/apache/skywalking-banyandb/pkg/index"
 	"github.com/apache/skywalking-banyandb/pkg/logger"
 	"github.com/apache/skywalking-banyandb/pkg/pool"
 )
 
 type syncPartContext struct {
-	tsTable *tsTable
-	writers *writers
-	memPart *memPart
+	tsTable    *tsTable
+	fileSystem fs.FileSystem
+	writers    *writers
+	partPath   string
+	partMeta   partMetadata
+	partID     uint64
 }
 
 func (s *syncPartContext) NewPartType(_ *queue.ChunkedSyncPartContext) error {
@@ -43,23 +48,36 @@ func (s *syncPartContext) NewPartType(_ *queue.ChunkedSyncPartContext) error {
 }
 
 func (s *syncPartContext) FinishSync() error {
-	mp := s.memPart
-	s.memPart = nil
-	s.tsTable.mustAddMemPart(mp)
+	// Close writers first so file data is flushed before we write metadata.
+	s.releaseCoreWriters()
+
+	s.partMeta.mustWriteMetadata(s.fileSystem, s.partPath)
+	s.fileSystem.SyncPath(s.partPath)
+
+	s.tsTable.mustAddFilePart(s.partID)
+	s.partPath = ""
 	return s.Close()
 }
 
-func (s *syncPartContext) Close() error {
+// releaseCoreWriters closes and releases the core writers, if any. Safe to call multiple times.
+func (s *syncPartContext) releaseCoreWriters() {
+	if s.writers == nil {
+		return
+	}
 	s.writers.MustClose()
 	releaseWriters(s.writers)
 	s.writers = nil
-	if s.memPart != nil {
-		// syncPartContext owns the memPart directly without partWrapper refcounting.
-		// It must release via releaseMemPart, not decRef, which is used in mustAddMemPart.
-		releaseMemPart(s.memPart)
-		s.memPart = nil
+}
+
+func (s *syncPartContext) Close() error {
+	s.releaseCoreWriters()
+	// Clean up incomplete filePart on error (partPath is cleared on success in FinishSync)
+	if s.partPath != "" && s.fileSystem != nil {
+		s.fileSystem.MustRMAll(s.partPath)
+		s.partPath = ""
 	}
 	s.tsTable = nil
+	s.fileSystem = nil
 	return nil
 }
 
@@ -103,20 +121,23 @@ func (s *syncCallback) CreatePartHandler(ctx *queue.ChunkedSyncPartContext) (que
 	}
 
 	tsdb.Tick(ctx.MaxTimestamp)
-	memPart := generateMemPart()
-	memPart.partMetadata.CompressedSizeBytes = ctx.CompressedSizeBytes
-	memPart.partMetadata.UncompressedSizeBytes = ctx.UncompressedSizeBytes
-	memPart.partMetadata.TotalCount = ctx.TotalCount
-	memPart.partMetadata.BlocksCount = ctx.BlocksCount
-	memPart.partMetadata.MinTimestamp = ctx.MinTimestamp
-	memPart.partMetadata.MaxTimestamp = ctx.MaxTimestamp
-	writers := generateWriters()
-	writers.mustInitForMemPart(memPart)
-	return &syncPartContext{
-		tsTable: tsTable,
-		writers: writers,
-		memPart: memPart,
-	}, nil
+
+	partID := atomic.AddUint64(&tsTable.curPartID, 1)
+	pp := partPath(tsTable.root, partID)
+	fileSystem := tsTable.fileSystem
+
+	w := generateWriters()
+	w.mustInitForFilePart(fileSystem, pp, tsTable.pm.ShouldCache(int64(ctx.CompressedSizeBytes)))
+
+	partCtx := &syncPartContext{
+		tsTable:    tsTable,
+		fileSystem: fileSystem,
+		writers:    w,
+		partPath:   pp,
+		partID:     partID,
+	}
+	partCtx.partMeta.fillFromSyncContext(ctx)
+	return partCtx, nil
 }
 
 // HandleFileChunk implements queue.ChunkedSyncHandler for streaming file chunks.
@@ -179,15 +200,6 @@ func releaseWriters(sw *writers) {
 }
 
 var writersPool = pool.Register[*writers]("measure-writers")
-
-func (sw *writers) mustInitForMemPart(mp *memPart) {
-	sw.reset()
-	sw.mustCreateTagFamilyWriters = mp.mustCreateMemTagFamilyWriters
-	sw.metaWriter.init(&mp.meta)
-	sw.primaryWriter.init(&mp.primary)
-	sw.timestampsWriter.init(&mp.timestamps)
-	sw.fieldValuesWriter.init(&mp.fieldValues)
-}
 
 type syncSeriesContext struct {
 	streamer index.ExternalSegmentStreamer

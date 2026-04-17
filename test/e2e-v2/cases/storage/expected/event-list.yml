@@ -14,7 +14,7 @@
 # limitations under the License.
 
 events:
-{{- contains .events }}
+{{- contains (.events | noDuplicates) }}
 - uuid: {{ notEmpty .uuid }}
   source:
     service: e2e-service-provider

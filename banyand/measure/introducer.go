@@ -23,12 +23,12 @@ import (
 )
 
 type introduction struct {
-	memPart *partWrapper
+	part    *partWrapper
 	applied chan struct{}
 }
 
 func (i *introduction) reset() {
-	i.memPart = nil
+	i.part = nil
 	i.applied = nil
 }
 
@@ -120,7 +120,7 @@ func (tst *tsTable) introducerLoop(flushCh chan *flusherIntroduction, mergeCh ch
 			return
 		case next := <-tst.introductions:
 			tst.incTotalIntroduceLoopStarted("mem")
-			tst.introduceMemPart(next, epoch)
+			tst.introducePart(next, epoch)
 			tst.incTotalIntroduceLoopFinished("mem")
 			epoch++
 		case next := <-flushCh:
@@ -154,7 +154,7 @@ func (tst *tsTable) introducerLoopWithSync(flushCh chan *flusherIntroduction, me
 			return
 		case next := <-tst.introductions:
 			tst.incTotalIntroduceLoopStarted("mem")
-			tst.introduceMemPart(next, epoch)
+			tst.introducePart(next, epoch)
 			tst.incTotalIntroduceLoopFinished("mem")
 			epoch++
 		case next := <-flushCh:
@@ -183,7 +183,7 @@ func (tst *tsTable) introducerLoopWithSync(flushCh chan *flusherIntroduction, me
 	}
 }
 
-func (tst *tsTable) introduceMemPart(nextIntroduction *introduction, epoch uint64) {
+func (tst *tsTable) introducePart(nextIntroduction *introduction, epoch uint64) {
 	cur := tst.currentSnapshot()
 	if cur != nil {
 		defer cur.decRef()
@@ -191,12 +191,16 @@ func (tst *tsTable) introduceMemPart(nextIntroduction *introduction, epoch uint6
 		cur = new(snapshot)
 	}
 
-	next := nextIntroduction.memPart
-	tst.addPendingDataCount(-int64(next.mp.partMetadata.TotalCount))
+	next := nextIntroduction.part
+	if next.mp != nil {
+		tst.addPendingDataCount(-int64(next.mp.partMetadata.TotalCount))
+	}
 	nextSnp := cur.copyAllTo(epoch)
 	nextSnp.parts = append(nextSnp.parts, next)
 	nextSnp.creator = snapshotCreatorMemPart
-	tst.replaceSnapshot(&nextSnp, false)
+	// Persist snapshot for file-backed introductions so the part survives restart.
+	// memPart introductions skip persist because the flusher persists after mem→file conversion.
+	tst.replaceSnapshot(&nextSnp, next.mp == nil)
 	if nextIntroduction.applied != nil {
 		close(nextIntroduction.applied)
 	}

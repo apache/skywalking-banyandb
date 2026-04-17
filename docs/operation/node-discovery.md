@@ -8,8 +8,130 @@ Node discovery enables BanyanDB nodes to locate and communicate with each other 
 2. **Request Routing**: Liaison nodes look up data nodes through the registry to send query and write requests.
 3. **Data Migration**: The lifecycle agent lists all data nodes from the registry and filters them by `node_selector` labels to pick the warm/cold targets of a migration.
 
-BanyanDB supports three discovery mechanisms to accommodate different deployment environments:
+BanyanDB supports four discovery mechanisms to accommodate different deployment environments:
 
+- **None Discovery**: Default mode. No service discovery infrastructure is needed. Suitable for standalone deployments.
+- **Etcd-based Discovery**: Traditional distributed consensus approach suitable for VM deployments and multi-cloud scenarios.
+- **DNS-based Discovery**: Cloud-native solution leveraging Kubernetes service discovery infrastructure.
+- **File-based Discovery**: Static configuration file approach for simple deployments and testing environments.
+
+This document provides guidance on configuring and operating all discovery modes.
+
+> **Note**: As of 0.10.0, the default node discovery mode is `none`. Cluster deployments must explicitly configure a discovery mode (`etcd`, `dns`, or `file`). See [Upgrading to 0.10](upgrade.md) for migration notes.
+
+## None Mode
+
+### Overview
+
+None mode is the default discovery mode since 0.10.0. In this mode, nodes do not perform any service discovery. This is suitable for standalone deployments and single-node setups where no inter-node communication is needed.
+
+### Configuration
+
+```shell
+# None mode is the default; no additional flags are required
+banyand standalone
+
+# Explicitly set none mode (equivalent to default)
+banyand data --node-discovery-mode=none
+```
+
+### When to Use None Mode
+
+- **Standalone deployments**: The single process handles all roles internally.
+- **Single-node setups**: No other nodes need to be discovered.
+- **Development and testing**: No external infrastructure dependencies.
+
+## Etcd-Based Discovery
+
+### Overview
+
+Etcd-based discovery uses a distributed key-value store to maintain cluster membership. Each node registers itself in etcd with a time-limited lease and continuously renews the lease through heartbeat mechanisms.
+
+### Configuration Flags
+
+The following flags control etcd-based node discovery:
+
+```shell
+# Basic configuration
+--node-discovery-mode=etcd                    # Enable etcd mode (default)
+--namespace=banyandb                          # Namespace in etcd (default: banyandb)
+--etcd-endpoints=http://localhost:2379        # Comma-separated etcd endpoints
+
+# Authentication
+--etcd-username=myuser                        # Etcd username (optional)
+--etcd-password=mypass                        # Etcd password (optional)
+
+# TLS configuration
+--etcd-tls-ca-file=/path/to/ca.crt           # Trusted CA certificate
+--etcd-tls-cert-file=/path/to/client.crt     # Client certificate
+--etcd-tls-key-file=/path/to/client.key      # Client private key
+
+# Timeouts and intervals
+--node-registry-timeout=2m                    # Node registration timeout (default: 2m)
+--etcd-full-sync-interval=30m                 # Full state sync interval (default: 30m)
+```
+
+### Configuration Examples
+
+**Data Node with TLS:**
+
+```shell
+banyand data \
+  --node-discovery-mode=etcd \
+  --etcd-endpoints=https://etcd-1:2379,https://etcd-2:2379,https://etcd-3:2379 \
+  --etcd-tls-ca-file=/etc/banyandb/certs/etcd-ca.crt \
+  --etcd-tls-cert-file=/etc/banyandb/certs/etcd-client.crt \
+  --etcd-tls-key-file=/etc/banyandb/certs/etcd-client.key \
+  --namespace=production-banyandb
+```
+
+**Data Node with Basic Authentication:**
+
+```shell
+banyand data \
+  --node-discovery-mode=etcd \
+  --etcd-endpoints=http://etcd-1:2379,http://etcd-2:2379 \
+  --etcd-username=banyandb-client \
+  --etcd-password=${ETCD_PASSWORD} \
+  --namespace=production-banyandb
+```
+
+### Etcd Key Structure
+
+BanyanDB stores node registrations using the following pattern:
+
+```
+/{namespace}/nodes/{node-id}
+
+Example: /banyandb/nodes/data-node-1:17912
+```
+
+**Key Components:**
+
+- **Namespace**: Configurable via `--namespace` flag (default: `banyandb`). Allows multiple BanyanDB clusters to coexist in the same etcd instance
+- **Node ID**: Format `{hostname}:{port}` or `{ip}:{port}`, uniquely identifying each node
+
+The value stored is a Protocol Buffer serialized `databasev1.Node` message containing node metadata, addresses, roles, and labels.
+
+### Node Lifecycle
+
+#### Registration
+
+When a node starts, it performs the following sequence:
+
+1. **Lease Creation**: Creates a 5-second TTL lease with etcd, automatically renewed through keep-alive heartbeat.
+2. **Key-Value Registration**: Uses etcd transaction to ensure the key doesn't already exist, preventing registration conflicts.
+3. **Keep-Alive Loop**: Background goroutine continuously sends heartbeat with automatic reconnection and exponential backoff on network failures.
+
+#### Health Monitoring
+
+Node health is implicitly monitored through the lease mechanism:
+
+- Nodes with expired leases (>5 seconds without keep-alive) are automatically removed by etcd.
+- Presence in etcd indicates the node is alive.
+- Dead nodes disappear within 5 seconds of failure.
+
+#### Event Watching
 - **None** (default): No external discovery; suitable for standalone mode only.
 - **DNS-based Discovery**: Cloud-native solution leveraging Kubernetes service discovery infrastructure.
 - **File-based Discovery**: Static configuration file approach for simple deployments and testing environments.
@@ -289,6 +411,13 @@ When the service starts:
 
 ### Overview
 
+### None Mode - Best For
+
+- Standalone and single-node deployments (default mode)
+- Development and testing environments
+- No infrastructure dependencies
+
+### Etcd Mode - Best For
 `--node-discovery-mode=none` disables external node discovery entirely. The discovery registry is wired to a stub that returns no peers, so no remote schema server, request routing target, or lifecycle migration target can be located. This is the default, and it is the only valid mode for `banyand standalone`.
 
 ### When to Use

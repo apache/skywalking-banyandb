@@ -19,7 +19,9 @@ package trace
 
 import (
 	"fmt"
+	"path/filepath"
 	"strings"
+	"sync/atomic"
 	"time"
 
 	"github.com/apache/skywalking-banyandb/api/common"
@@ -27,28 +29,41 @@ import (
 	"github.com/apache/skywalking-banyandb/banyand/internal/sidx"
 	"github.com/apache/skywalking-banyandb/banyand/internal/storage"
 	"github.com/apache/skywalking-banyandb/banyand/queue"
+	"github.com/apache/skywalking-banyandb/pkg/fs"
 	"github.com/apache/skywalking-banyandb/pkg/index"
 	"github.com/apache/skywalking-banyandb/pkg/logger"
 )
 
 type syncPartContext struct {
 	tsTable             *tsTable
+	fileSystem          fs.FileSystem
 	l                   *logger.Logger
 	writers             *writers
-	memPart             *memPart
+	partPath            string
 	sidxPartContexts    map[string]*sidx.SyncPartContext
 	traceIDFilterBuffer []byte
 	tagTypeBuffer       []byte
+	partMeta            partMetadata
+	partID              uint64
 }
 
 func (s *syncPartContext) NewPartType(ctx *queue.ChunkedSyncPartContext) error {
 	if ctx.PartType != PartTypeCore {
+		// Allocate partID on first call so SIDX parts use the same ID as the core part.
+		if s.partID == 0 {
+			s.partID = atomic.AddUint64(&s.tsTable.curPartID, 1)
+			s.fileSystem = s.tsTable.fileSystem
+		}
+		// Pre-register the SIDX instance before writing files so its init/loadSnapshot
+		// runs against an empty directory. Otherwise mustGetOrCreateSidx in introducePart
+		// would lazily create the SIDX, scan the directory, and delete the freshly-written
+		// part because it isn't in the (nil) availablePartIDs list.
+		if _, err := s.tsTable.getOrCreateSidx(ctx.PartType); err != nil {
+			return fmt.Errorf("cannot pre-create sidx %q: %w", ctx.PartType, err)
+		}
 		sidxPartContext := sidx.NewSyncPartContext()
-		memPart := sidx.GenerateMemPart()
-		memPart.SetPartMetadata(ctx.CompressedSizeBytes, ctx.UncompressedSizeBytes, ctx.TotalCount, ctx.BlocksCount, ctx.MinKey, ctx.MaxKey, ctx.ID)
-		writers := sidx.GenerateWriters()
-		writers.MustInitForMemPart(memPart)
-		sidxPartContext.Set(ctx.PartType, memPart, writers)
+		sidxPartPath := filepath.Join(s.tsTable.root, sidxDirName, ctx.PartType, fmt.Sprintf("%016x", s.partID))
+		sidxPartContext.SetForFile(ctx.PartType, s.fileSystem, sidxPartPath, ctx, s.tsTable.pm.ShouldCache(int64(ctx.CompressedSizeBytes)))
 		if s.sidxPartContexts == nil {
 			s.sidxPartContexts = make(map[string]*sidx.SyncPartContext)
 		}
@@ -56,59 +71,68 @@ func (s *syncPartContext) NewPartType(ctx *queue.ChunkedSyncPartContext) error {
 		return nil
 	}
 
-	memPart := generateMemPart()
-	memPart.partMetadata.CompressedSizeBytes = ctx.CompressedSizeBytes
-	memPart.partMetadata.UncompressedSpanSizeBytes = ctx.UncompressedSizeBytes
-	memPart.partMetadata.TotalCount = ctx.TotalCount
-	memPart.partMetadata.BlocksCount = ctx.BlocksCount
-	memPart.partMetadata.MinTimestamp = ctx.MinTimestamp
-	memPart.partMetadata.MaxTimestamp = ctx.MaxTimestamp
-	memPart.partMetadata.ID = ctx.ID
-	writers := generateWriters()
-	writers.mustInitForMemPart(memPart)
-	s.writers = writers
-	s.memPart = memPart
+	// Allocate partID if not already allocated by an earlier SIDX NewPartType call.
+	if s.partID == 0 {
+		s.partID = atomic.AddUint64(&s.tsTable.curPartID, 1)
+	}
+	s.partPath = partPath(s.tsTable.root, s.partID)
+	s.fileSystem = s.tsTable.fileSystem
+
+	w := generateWriters()
+	w.mustInitForFilePart(s.fileSystem, s.partPath, s.tsTable.pm.ShouldCache(int64(ctx.CompressedSizeBytes)))
+	s.writers = w
+
+	s.partMeta.fillFromSyncContext(ctx)
 	return nil
 }
 
 func (s *syncPartContext) FinishSync() error {
-	if len(s.traceIDFilterBuffer) > 0 && s.memPart != nil {
-		bf := generateTraceIDBloomFilter()
-		s.memPart.traceIDFilter.filter = decodeBloomFilter(s.traceIDFilterBuffer, bf)
-	}
-	if len(s.tagTypeBuffer) > 0 && s.memPart != nil {
-		if s.memPart.tagType == nil {
-			s.memPart.tagType = make(tagType)
-		}
-		if err := s.memPart.tagType.unmarshal(s.tagTypeBuffer); err != nil {
-			s.l.Error().Err(err).Msg("failed to unmarshal tag type data")
-			return err
-		}
+	if s.partPath == "" {
+		// No core part was written (only SIDX parts arrived). Nothing to finalize;
+		// Close will discard any partially-written SIDX parts too.
+		return s.Close()
 	}
 
-	if s.memPart != nil {
-		mp := s.memPart
-		s.memPart = nil
-		sidxPartContexts := make(map[string]*sidx.MemPart, len(s.sidxPartContexts))
-		for _, sidxPartContext := range s.sidxPartContexts {
-			sidxPartContexts[sidxPartContext.Name()] = sidxPartContext.GetMemPart()
-		}
-		s.tsTable.mustAddMemPart(mp, sidxPartContexts)
+	// Close writers first so file data is flushed before we write sidecar metadata.
+	s.releaseCoreWriters()
+
+	if len(s.traceIDFilterBuffer) > 0 {
+		fs.MustFlush(s.fileSystem, s.traceIDFilterBuffer, filepath.Join(s.partPath, traceIDFilterFilename), storage.FilePerm)
 	}
+	if len(s.tagTypeBuffer) > 0 {
+		fs.MustFlush(s.fileSystem, s.tagTypeBuffer, filepath.Join(s.partPath, tagTypeFilename), storage.FilePerm)
+	}
+	s.partMeta.mustWriteMetadata(s.fileSystem, s.partPath)
+	s.fileSystem.SyncPath(s.partPath)
+
+	// Finish SIDX writers and collect file paths for file-backed parts.
+	sidxFilePartsMap := make(map[string]string, len(s.sidxPartContexts))
+	for _, sidxPartContext := range s.sidxPartContexts {
+		sidxFilePartsMap[sidxPartContext.Name()] = sidxPartContext.Finish()
+	}
+	s.tsTable.mustAddFilePart(s.partID, sidxFilePartsMap)
+	s.partPath = ""
+	s.traceIDFilterBuffer = nil
+	s.tagTypeBuffer = nil
 	return s.Close()
 }
 
-func (s *syncPartContext) Close() error {
-	if s.writers != nil {
-		s.writers.MustClose()
-		releaseWriters(s.writers)
-		s.writers = nil
+// releaseCoreWriters closes and releases the core writers, if any. Safe to call multiple times.
+func (s *syncPartContext) releaseCoreWriters() {
+	if s.writers == nil {
+		return
 	}
-	if s.memPart != nil {
-		// syncPartContext owns the memPart directly without partWrapper refcounting.
-		// It must release via releaseMemPart, not decRef, which is used in mustAddMemPart.
-		releaseMemPart(s.memPart)
-		s.memPart = nil
+	s.writers.MustClose()
+	releaseWriters(s.writers)
+	s.writers = nil
+}
+
+func (s *syncPartContext) Close() error {
+	s.releaseCoreWriters()
+	// Clean up incomplete filePart on error (partPath is cleared on success in FinishSync)
+	if s.partPath != "" && s.fileSystem != nil {
+		s.fileSystem.MustRMAll(s.partPath)
+		s.partPath = ""
 	}
 	if s.sidxPartContexts != nil {
 		for _, sidxPartContext := range s.sidxPartContexts {
@@ -117,6 +141,7 @@ func (s *syncPartContext) Close() error {
 		s.sidxPartContexts = nil
 	}
 	s.tsTable = nil
+	s.fileSystem = nil
 	s.traceIDFilterBuffer = nil
 	s.tagTypeBuffer = nil
 	return nil
@@ -329,13 +354,9 @@ func (s *syncChunkCallback) handleTraceFileChunk(ctx *queue.ChunkedSyncPartConte
 	case fileName == traceSpansName:
 		partCtx.writers.spanWriter.MustWrite(chunk)
 	case fileName == traceIDFilterFilename:
-		if partCtx.memPart != nil {
-			s.handleTraceIDFilterChunk(partCtx, chunk)
-		}
+		s.handleTraceIDFilterChunk(partCtx, chunk)
 	case fileName == tagTypeFilename:
-		if partCtx.memPart != nil {
-			s.handleTagTypeChunk(partCtx, chunk)
-		}
+		s.handleTagTypeChunk(partCtx, chunk)
 	case strings.HasPrefix(fileName, traceTagsPrefix):
 		tagName := fileName[len(traceTagsPrefix):]
 		_, tagWriter := partCtx.writers.getWriters(tagName)

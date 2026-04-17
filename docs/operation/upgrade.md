@@ -50,6 +50,41 @@ The data ingestion and retrieval will be stopped during the upgrade process. The
 
 If you don't have enough resource to perform a rolling upgrade or you have a large cluster with many nodes, you can use the minimum downtime strategy.
 
+## Upgrading to 0.10
+
+This section describes breaking changes and important behavioral changes when upgrading to BanyanDB 0.10.0.
+
+### Property on-disk path change (breaking)
+
+The property data storage path structure has changed:
+
+- **Before**: `<data-dir>/property/data/shard-<id>/...`
+- **After**: `<data-dir>/property/data/<group>/shard-<id>/...`
+
+The new path includes the `<group>` directory under `property/data/`. Existing data at the old path layout will **not** be automatically migrated. Plan a data migration strategy or accept that existing property data at the old path will not be accessible after upgrade.
+
+### Node discovery default changed (breaking)
+
+The default node discovery mode changed from `etcd` to `none`. Cluster deployments **must** explicitly set `--node-discovery-mode=etcd` (or another supported mode such as `dns` or `file`) on each node to maintain the previous behavior. Without this flag, the cluster nodes will not discover each other after the upgrade. For configuration details, see [Node Discovery](../operation/node-discovery.md).
+
+Standalone deployments are unaffected since they do not use node discovery.
+
+### Windows binaries no longer shipped (breaking)
+
+Release binaries and Docker images no longer include Windows builds. Users requiring Windows must build from source.
+
+### Bloom filters removed for dictionary-encoded tags
+
+Queries on dictionary-encoded tags no longer use Bloom filters. The engine now uses a more efficient dictionary-based filter for tag filtering. This may change query performance characteristics. See [TSDB documentation](../concept/tsdb.md) for storage format details.
+
+### Criteria tags no longer required in projection
+
+Tags used in `WHERE` conditions no longer need to be included in the `SELECT` projection. This is a backward-compatible improvement. Existing queries continue to work, and new queries can omit criteria tags from projections. See [BydbQL](../interacting/bydbql.md) for details.
+
+### Property repair activated by default
+
+The property background repair mechanism is now enabled by default. This automatically repairs inconsistent property data. To disable or tune this behavior, use flags such as `--property-repair-enabled` and `--property-repair-cron`. See [Property Repair](../operation/property-repair.md) for full configuration options.
+
 ## Rollback
 
 If you encounter any issues during the upgrade process, you can rollback to the previous version by following the same procedure as the upgrade process. If file format is backward compatible, you can rollback to the previous version without any data loss. Please check the [CHANGELOG.md](https://github.com/apache/skywalking-banyandb/tree/master/CHANGES.md) to ensure that old version is compatible with the new data files.

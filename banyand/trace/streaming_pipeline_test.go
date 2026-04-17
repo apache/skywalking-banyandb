@@ -90,6 +90,10 @@ func (f *fakeSIDX) PrepareMemPart(uint64, *sidx.MemPart) func(cur *sidx.Snapshot
 	return func(cur *sidx.Snapshot) *sidx.Snapshot { return cur }
 }
 
+func (f *fakeSIDX) PrepareFilePart(uint64, string) func(cur *sidx.Snapshot) *sidx.Snapshot {
+	return func(cur *sidx.Snapshot) *sidx.Snapshot { return cur }
+}
+
 func (f *fakeSIDX) PrepareFlushed(*sidx.FlusherIntroduction) func(cur *sidx.Snapshot) *sidx.Snapshot {
 	return func(cur *sidx.Snapshot) *sidx.Snapshot { return cur }
 }
@@ -681,6 +685,10 @@ func (f *fakeSIDXInfinite) PartPaths(map[uint64]struct{}) map[uint64]string {
 func (f *fakeSIDXInfinite) IntroduceSynced(map[uint64]struct{}) func() { return func() {} }
 func (f *fakeSIDXInfinite) TakeFileSnapshot(_ string) error            { return nil }
 func (f *fakeSIDXInfinite) PrepareMemPart(uint64, *sidx.MemPart) func(cur *sidx.Snapshot) *sidx.Snapshot {
+	return func(cur *sidx.Snapshot) *sidx.Snapshot { return cur }
+}
+
+func (f *fakeSIDXInfinite) PrepareFilePart(uint64, string) func(cur *sidx.Snapshot) *sidx.Snapshot {
 	return func(cur *sidx.Snapshot) *sidx.Snapshot { return cur }
 }
 
