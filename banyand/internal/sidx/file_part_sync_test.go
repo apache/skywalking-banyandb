@@ -47,7 +47,7 @@ func TestSyncPartContext_SetForFile_WritesFiles(t *testing.T) {
 	destPath := filepath.Join(tmpPath, "sidx-part-1")
 
 	spc := NewSyncPartContext()
-	spc.SetForFile("test-part", fileSystem, destPath, &queue.ChunkedSyncPartContext{})
+	spc.SetForFile("test-part", fileSystem, destPath, &queue.ChunkedSyncPartContext{}, false)
 
 	w := spc.GetWriters()
 	require.NotNil(t, w, "writers must be initialized after SetForFile")

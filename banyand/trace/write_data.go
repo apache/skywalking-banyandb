@@ -63,7 +63,7 @@ func (s *syncPartContext) NewPartType(ctx *queue.ChunkedSyncPartContext) error {
 		}
 		sidxPartContext := sidx.NewSyncPartContext()
 		sidxPartPath := filepath.Join(s.tsTable.root, sidxDirName, ctx.PartType, fmt.Sprintf("%016x", s.partID))
-		sidxPartContext.SetForFile(ctx.PartType, s.fileSystem, sidxPartPath, ctx)
+		sidxPartContext.SetForFile(ctx.PartType, s.fileSystem, sidxPartPath, ctx, s.tsTable.pm.ShouldCache(int64(ctx.CompressedSizeBytes)))
 		if s.sidxPartContexts == nil {
 			s.sidxPartContexts = make(map[string]*sidx.SyncPartContext)
 		}
@@ -79,7 +79,7 @@ func (s *syncPartContext) NewPartType(ctx *queue.ChunkedSyncPartContext) error {
 	s.fileSystem = s.tsTable.fileSystem
 
 	w := generateWriters()
-	w.mustInitForFilePart(s.fileSystem, s.partPath, false)
+	w.mustInitForFilePart(s.fileSystem, s.partPath, s.tsTable.pm.ShouldCache(int64(ctx.CompressedSizeBytes)))
 	s.writers = w
 
 	s.partMeta.fillFromSyncContext(ctx)

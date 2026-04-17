@@ -885,14 +885,14 @@ func NewSyncPartContext() *SyncPartContext {
 
 // SetForFile initializes file-backed writers for direct file writing.
 // The metadata fields are stored and written as manifest.json during Finish().
-func (spc *SyncPartContext) SetForFile(name string, fileSystem fs.FileSystem, partPath string, ctx *queue.ChunkedSyncPartContext) {
+func (spc *SyncPartContext) SetForFile(name string, fileSystem fs.FileSystem, partPath string, ctx *queue.ChunkedSyncPartContext, shouldCache bool) {
 	spc.name = name
 	spc.fileSystem = fileSystem
 	spc.partPath = partPath
 	spc.partMeta.fillFromSyncContext(ctx)
 
 	w := GenerateWriters()
-	w.MustInitForFilePart(fileSystem, partPath, false)
+	w.MustInitForFilePart(fileSystem, partPath, shouldCache)
 	spc.writers = w
 }
 

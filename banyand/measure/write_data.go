@@ -127,7 +127,7 @@ func (s *syncCallback) CreatePartHandler(ctx *queue.ChunkedSyncPartContext) (que
 	fileSystem := tsTable.fileSystem
 
 	w := generateWriters()
-	w.mustInitForFilePart(fileSystem, pp, false)
+	w.mustInitForFilePart(fileSystem, pp, tsTable.pm.ShouldCache(int64(ctx.CompressedSizeBytes)))
 
 	partCtx := &syncPartContext{
 		tsTable:    tsTable,
