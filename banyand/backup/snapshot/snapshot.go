@@ -72,9 +72,13 @@ func Dir(snapshot *databasev1.Snapshot, streamRoot, measureRoot, propertyRoot, t
 	if strings.HasPrefix(snapshot.Name, SchemaPropertyCatalogName+"/") {
 		actualName := strings.TrimPrefix(snapshot.Name, SchemaPropertyCatalogName+"/")
 		baseDir := filepath.Join(schemaRoot, SchemaPropertyCatalogName)
-		return filepath.Join(baseDir, storage.SnapshotsDir, actualName), nil
+		return filepath.Join(baseDir, storage.SnapshotsDir, actualName, storage.DataDir), nil
 	}
 	var baseDir string
+	// Property DB writes its snapshot contents under <snapshotDir>/<sn>/data/<group>/<shard>/.
+	// Point backup at the inner data/ to keep remote paths aligned with the other catalogs
+	// and prevent restore from producing <property>/data/data/... nesting.
+	propertyDataDir := false
 	switch snapshot.Catalog {
 	case commonv1.Catalog_CATALOG_STREAM:
 		baseDir = LocalDir(streamRoot, snapshot.Catalog)
@@ -82,10 +86,14 @@ func Dir(snapshot *databasev1.Snapshot, streamRoot, measureRoot, propertyRoot, t
 		baseDir = LocalDir(measureRoot, snapshot.Catalog)
 	case commonv1.Catalog_CATALOG_PROPERTY:
 		baseDir = LocalDir(propertyRoot, snapshot.Catalog)
+		propertyDataDir = true
 	case commonv1.Catalog_CATALOG_TRACE:
 		baseDir = LocalDir(traceRoot, snapshot.Catalog)
 	default:
 		return "", errors.New("unknown catalog type")
+	}
+	if propertyDataDir {
+		return filepath.Join(baseDir, storage.SnapshotsDir, snapshot.Name, storage.DataDir), nil
 	}
 	return filepath.Join(baseDir, storage.SnapshotsDir, snapshot.Name), nil
 }

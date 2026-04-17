@@ -1,85 +1,143 @@
 # Installing BanyanDB Cluster Mode
 
-## Setup Meta Nodes
+A BanyanDB cluster consists of at least one **data node** (stores time-series data and hosts the property-based schema registry) and at least one **liaison node** (stateless gateway that routes writes and queries). Both node types run as independent processes of the same `banyand` binary.
 
-Meta nodes are a etcd cluster which is required for the metadata module to provide the metadata service and nodes discovery service for the whole cluster.
+The schema registry is hosted by the data nodes themselves and synchronized between peers via an internal property-based protocol. Every node must therefore be able to locate its peers **before** it can join the cluster — so **node discovery has to be configured first**, otherwise liaison nodes will not find data nodes and additional data nodes will not find the existing schema registry to sync from.
 
-The etcd cluster can be setup by the [etcd installation guide](https://etcd.io/docs/v3.5/install/)
+The recommended order is therefore:
 
-## Role-base Banyand Cluster
+1. Decide on a node-discovery mode and prepare the SRV records or static nodes file.
+2. Obtain the `banyand` binary on every node.
+3. Start the data nodes (each one exposes its gRPC endpoint and the property schema server).
+4. Start the liaison nodes, pointing them at the same discovery source.
 
-- Download or build the BanyanDB packages.
-- Unpack and extract the `skywalking-banyandb-x.x.x-bin.tgz`.
-- Select the binary for your platform, such as `banyand-linux-amd64` or `banyand-darwin-amd64`.
-- Move the binary to the directory you want to run BanyanDB. For instance, `mv banyand-linux-amd64 /usr/local/bin/banyand`. The following steps assume that the binary is in the `/usr/local/bin` directory.
+## 1. Configure Node Discovery
 
-There is an example: The etcd cluster is spread across three nodes with the addresses `10.0.0.1:2379`, `10.0.0.2:2379`, and `10.0.0.3:2379`.
+BanyanDB supports three node-discovery modes: `none` (default, standalone only), `dns` (DNS SRV based, cloud-native), and `file` (static YAML file). For cluster deployments you must pick either `dns` or `file`. A full reference of all discovery-related flags, TLS settings, retry/backoff tuning, and operational behavior lives in the [node discovery documentation](../operation/node-discovery.md); this guide only shows the minimum needed to bring up a cluster.
 
-Data nodes and liaison nodes are running as independent processes by
+### Decide Which Mode to Use
 
-```shell
-banyand data --etcd-endpoints=http://10.0.0.1:2379,http://10.0.0.2:2379,http://10.0.0.3:2379 <flags>
-banyand data --etcd-endpoints=http://10.0.0.1:2379,http://10.0.0.2:2379,http://10.0.0.3:2379 <flags>
-banyand data --etcd-endpoints=http://10.0.0.1:2379,http://10.0.0.2:2379,http://10.0.0.3:2379 <flags>
-banyand liaison --etcd-endpoints=http://10.0.0.1:2379,http://10.0.0.2:2379,http://10.0.0.3:2379 <flags>
+- **`file` mode**: simplest choice for bare-metal, VM, Docker Compose, development environments, or any setup with a small and relatively static list of nodes. Node membership is declared in a YAML file and reloaded periodically.
+- **`dns` mode**: recommended for Kubernetes (especially StatefulSets behind a headless service) and any environment that already publishes DNS SRV records for the cluster. No external coordination service is required — the cluster relies on the DNS infrastructure that already exists.
+- **`none` mode**: only used in standalone mode; not a valid choice for clusters.
+
+The same discovery configuration must be supplied to every data node and every liaison node in the cluster.
+
+### File Mode: Prepare a `nodes.yaml`
+
+Create a file reachable by every process that will participate in the cluster (e.g. `/etc/banyandb/nodes.yaml`). List every data node and every liaison node — each entry needs a unique `name` and the gRPC endpoint:
+
+```yaml
+nodes:
+  - name: data-0
+    grpc_address: 192.168.1.20:17912
+  - name: data-1
+    grpc_address: 192.168.1.21:17912
+  - name: liaison-0
+    grpc_address: 192.168.1.10:17912
 ```
 
-## Node Discovery
+The file is reread at the `--node-discovery-file-fetch-interval` cadence (default 5m), so adding or removing a node after startup only requires editing the file on each host; failed nodes are retried with exponential backoff. TLS fields (`tls_enabled`, `ca_cert_path`) can be added per entry — see the [node discovery documentation](../operation/node-discovery.md#file-based-discovery) for the full schema.
 
-The node discovery is based on the etcd cluster. The etcd cluster is required for the metadata module to provide the metadata service and nodes discovery service for the whole cluster.
+### DNS Mode: Publish SRV Records
 
-The host is registered to the etcd cluster by the `banyand` automatically based on `node-host-provider` :
+In Kubernetes, create a headless service (`clusterIP: None`) selecting your data and liaison pods; Kubernetes will automatically publish SRV records of the form `_<port-name>._<proto>.<service>.<namespace>.svc.cluster.local`. In non-Kubernetes environments, configure your DNS server with equivalent SRV records pointing to each node's gRPC endpoint.
 
-- `node-host-provider=hostname` : Default. The OS's hostname is registered as the host part in the address.
-- `node-host-provider=ip` : The OS's the first non-loopback active IP address(IPv4) is registered as the host part in the address.
-- `node-host-provider=flag` : `node-host` is registered as the host part in the address.
+An example headless service for the data tier:
 
-## Etcd Authentication
-
-`etcd` supports through tls certificates and RBAC-based authentication for both clients to server communication. This section tends to help users set up authentication for BanyanDB.
-
-### Authentication with username/password
-
-The etcd user can be setup by the [etcd authentication guide](https://etcd.io/docs/v3.5/op-guide/authentication/)
-
-The username/password is configured in the following command:
-
-- `etcd-username`: The username for etcd client authentication.
-- `etcd-password`: The password for etcd client authentication.
-
-***Note: recommended using environment variables to set username/password for higher security.***
-
-```shell
-banyand data --etcd-endpoints=your-endpoints --etcd-username=your-username --etcd-password=your-password <flags>
-banyand liaison --etcd-endpoints=your-endpoints --etcd-username=your-username --etcd-password=your-password <flags>
+```yaml
+apiVersion: v1
+kind: Service
+metadata:
+  name: banyandb-data
+  namespace: default
+spec:
+  clusterIP: None
+  selector:
+    app: banyandb
+    component: data
+  ports:
+    - name: grpc
+      port: 17912
+      protocol: TCP
+      targetPort: grpc
 ```
 
-### Transport security with HTTPS
+This produces the SRV record `_grpc._tcp.banyandb-data.default.svc.cluster.local`, which is what you will pass to `--node-discovery-dns-srv-addresses`. For multi-zone topologies, mTLS, CoreDNS TTL tuning, and fallback behavior, see the [node discovery documentation](../operation/node-discovery.md#dns-based-discovery).
 
-The etcd trusted certificate file can be setup by the [etcd transport security model](https://etcd.io/docs/v3.5/op-guide/security/#example-1-client-to-server-transport-security-with-https)
+## 2. Obtain the Binary
 
-- `etcd-tls-ca-file`: The path of the trusted certificate file.
+On every host (or in the container image) that will run a BanyanDB process:
+
+- Download or build the BanyanDB release.
+- Unpack `skywalking-banyandb-x.x.x-bin.tgz`.
+- Select the binary for your platform, for example `banyand-linux-amd64` or `banyand-darwin-amd64`.
+- Move it onto `PATH`, for example `mv banyand-linux-amd64 /usr/local/bin/banyand`.
+
+The following examples assume `banyand` is available in `/usr/local/bin`.
+
+## 3. Start the Data Nodes
+
+Every data node runs as `banyand data`, with its gRPC service plus the property-based schema server. Start them **before** the liaison nodes so that when liaison nodes come up, the schema registry is already reachable.
+
+**File mode example:**
 
 ```shell
-banyand data --etcd-endpoints=your-https-endpoints --etcd-tls-ca-file=youf-file-path <flags>
-banyand liaison --etcd-endpoints=your-https-endpoints --etcd-tls-ca-file=youf-file-path <flags>
+banyand data \
+  --node-discovery-mode=file \
+  --node-discovery-file-path=/etc/banyandb/nodes.yaml
 ```
 
-### Authentication with HTTPS client certificates
-
-The etcd client certificates can be setup by the [etcd transport security model](https://etcd.io/docs/v3.5/op-guide/security/#example-2-client-to-server-authentication-with-https-client-certificates)
-
-- `etcd-tls-ca-file`: The path of the trusted certificate file.
-- `etcd-tls-cert-file`: Certificate used for SSL/TLS connections to etcd. When this option is set, advertise-client-urls can use the HTTPS schema.
-- `etcd-tls-key-file`: Key for the certificate. Must be unencrypted.
+**DNS mode example:**
 
 ```shell
-banyand data --etcd-endpoints=your-https-endpoints --etcd-tls-ca-file=youf-file-path --etcd-tls-cert-file=youf-file-path --etcd-tls-key-file=youf-file-path <flags>
-banyand liaison --etcd-endpoints=your-https-endpoints --etcd-tls-ca-file=youf-file-path --etcd-tls-cert-file=youf-file-path --etcd-tls-key-file=youf-file-path <flags>
+banyand data \
+  --node-discovery-mode=dns \
+  --node-discovery-dns-srv-addresses=_grpc._tcp.banyandb-data.default.svc.cluster.local
 ```
 
-### Self-observability dashboard
+Repeat on each physical or virtual data node. Additional data nodes joining an already-running cluster will locate the existing schema server through the same discovery source and sync the schema from it automatically.
 
-If self-observability mode is on, there will be a dashboard in [banyandb-ui](http://localhost:17913/) to monitor the nodes status in the cluster.  
+## 4. Start the Liaison Nodes
+
+Liaison nodes are stateless and use the same discovery source to locate data nodes; there is no separate configuration to point them at "the" schema registry.
+
+**File mode example:**
+
+```shell
+banyand liaison \
+  --node-discovery-mode=file \
+  --node-discovery-file-path=/etc/banyandb/nodes.yaml
+```
+
+**DNS mode example:**
+
+```shell
+banyand liaison \
+  --node-discovery-mode=dns \
+  --node-discovery-dns-srv-addresses=_grpc._tcp.banyandb-data.default.svc.cluster.local
+```
+
+A minimal cluster ends up as a small set of these processes:
+
+```shell
+banyand data    <flags>   # on each data host
+banyand data    <flags>   # ...
+banyand liaison <flags>   # on each liaison host
+```
+
+## Node Host Registration
+
+Every node advertises itself to the rest of the cluster using a host part that is resolved according to `--node-host-provider`:
+
+- `node-host-provider=hostname` *(default)*: the OS hostname is used.
+- `node-host-provider=ip`: the first non-loopback IPv4 address is used.
+- `node-host-provider=flag`: the value of `--node-host` is used.
+
+Pick the option that matches how other nodes in the cluster can reach this process. In container environments where hostnames are not routable, `ip` or an explicit `flag` value is usually safer than the default.
+
+## Self-observability dashboard
+
+If self-observability mode is on, there will be a dashboard in [banyandb-ui](http://localhost:17913/) to monitor the nodes status in the cluster.
 
 ![dashboard](https://skywalking.apache.org/doc-graph/banyandb/v0.7.0/dashboard.png) 

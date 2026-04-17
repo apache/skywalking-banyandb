@@ -869,11 +869,13 @@ func partName(epoch uint64) string {
 	return fmt.Sprintf("%016x", epoch)
 }
 
-// SyncPartContext manages multiple sidx memParts.
+// SyncPartContext manages a file-backed sidx part during streaming sync.
 type SyncPartContext struct {
-	memPart *memPart
-	writers *writers
-	name    string
+	fileSystem fs.FileSystem
+	writers    *writers
+	name       string
+	partPath   string
+	partMeta   partMetadata
 }
 
 // NewSyncPartContext creates a new sidx part context.
@@ -881,11 +883,35 @@ func NewSyncPartContext() *SyncPartContext {
 	return &SyncPartContext{}
 }
 
-// Set sets the memory part and writers.
-func (spc *SyncPartContext) Set(name string, memPart *memPart, writers *writers) {
+// SetForFile initializes file-backed writers for direct file writing.
+// The metadata fields are stored and written as manifest.json during Finish().
+func (spc *SyncPartContext) SetForFile(name string, fileSystem fs.FileSystem, partPath string, ctx *queue.ChunkedSyncPartContext, shouldCache bool) {
 	spc.name = name
-	spc.memPart = memPart
-	spc.writers = writers
+	spc.fileSystem = fileSystem
+	spc.partPath = partPath
+	spc.partMeta.fillFromSyncContext(ctx)
+
+	w := GenerateWriters()
+	w.MustInitForFilePart(fileSystem, partPath, shouldCache)
+	spc.writers = w
+}
+
+// Finish closes writers, writes manifest.json, and returns the on-disk part path.
+// It clears spc.partPath so a subsequent Close will not remove the files.
+func (spc *SyncPartContext) Finish() string {
+	if spc.writers != nil {
+		spc.writers.MustClose()
+		ReleaseWriters(spc.writers)
+		spc.writers = nil
+	}
+	if spc.fileSystem != nil && spc.partPath != "" {
+		spc.partMeta.mustWriteMetadata(spc.fileSystem, spc.partPath)
+		spc.fileSystem.SyncPath(spc.partPath)
+	}
+	p := spc.partPath
+	spc.partPath = ""
+	spc.fileSystem = nil
+	return p
 }
 
 // Name gets the name.
@@ -893,22 +919,22 @@ func (spc *SyncPartContext) Name() string {
 	return spc.name
 }
 
-// GetMemPart gets the memory part.
-func (spc *SyncPartContext) GetMemPart() *MemPart {
-	return spc.memPart
-}
-
 // GetWriters gets the writers.
 func (spc *SyncPartContext) GetWriters() *Writers {
 	return spc.writers
 }
 
-// Close closes the sidx part context.
+// Close closes the sidx part context and cleans up any incomplete file parts on error.
 func (spc *SyncPartContext) Close() {
-	spc.writers.MustClose()
-	ReleaseWriters(spc.writers)
-	spc.writers = nil
-	spc.memPart = nil
+	if spc.writers != nil {
+		spc.writers.MustClose()
+		ReleaseWriters(spc.writers)
+		spc.writers = nil
+	}
+	if spc.partPath != "" && spc.fileSystem != nil {
+		spc.fileSystem.MustRMAll(spc.partPath)
+		spc.partPath = ""
+	}
 }
 
 func removeExt(nameWithExt, ext string) string {

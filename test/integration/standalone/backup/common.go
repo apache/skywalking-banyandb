@@ -74,7 +74,7 @@ func InitStandaloneEnv() (*CommonTestVars, string, error) {
 	vars.DestDir, err = os.MkdirTemp("", "backup-restore-dest")
 	gomega.Expect(err).NotTo(gomega.HaveOccurred())
 
-	ports, err := test.AllocateFreePorts(4)
+	ports, err := test.AllocateFreePorts(5)
 	gomega.Expect(err).NotTo(gomega.HaveOccurred())
 
 	var addr string

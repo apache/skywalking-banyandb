@@ -51,19 +51,6 @@ import (
 // It returns the server address, data path, and a cleanup function.
 var SetupFunc func() (addr string, dataPath string, closeFn func())
 
-// DefaultSetup creates a standalone server with etcd (default) configuration.
-func DefaultSetup() (string, string, func()) {
-	path, pathDeferFn, spaceErr := test.NewSpace()
-	gm.Expect(spaceErr).NotTo(gm.HaveOccurred())
-	ports, portsErr := test.AllocateFreePorts(4)
-	gm.Expect(portsErr).NotTo(gm.HaveOccurred())
-	addr, _, serverCloseFn := setup.ClosableStandalone(nil, path, ports)
-	return addr, path, func() {
-		serverCloseFn()
-		pathDeferFn()
-	}
-}
-
 // PropertySetup creates a standalone server with property-based configuration.
 func PropertySetup() (string, string, func()) {
 	tmpDir, tmpDirCleanup, tmpErr := test.NewSpace()

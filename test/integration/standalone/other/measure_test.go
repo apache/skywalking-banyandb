@@ -45,7 +45,7 @@ var _ = g.Describe("Query service_cpm_minute", func() {
 
 	g.BeforeEach(func() {
 		var addr string
-		addr, _, deferFn = setup.Standalone(testConfig)
+		addr, _, deferFn = setup.Standalone(NewTestConfig())
 		var err error
 		conn, err = grpchelper.Conn(addr, 10*time.Second, grpc.WithTransportCredentials(insecure.NewCredentials()))
 		gm.Expect(err).NotTo(gm.HaveOccurred())

@@ -15,7 +15,7 @@
 
 debuggingtrace: null
 spans:
-  {{- contains .spans }}
+  {{- contains (.spans | noDuplicates) }}
   - traceid: {{ .traceid }}
     segmentid: {{ .segmentid }}
     spanid: {{ .spanid }}

@@ -16,7 +16,7 @@
 debuggingtrace: null
 type: TIME_SERIES_VALUES
 results:
-  {{- contains .results }}
+  {{- contains (.results | noDuplicates) }}
   - metric:
       labels: []
     values:

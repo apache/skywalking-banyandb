@@ -93,6 +93,5 @@ type LifecycleSharedContext struct {
 	DataAddr      string
 	SrcDir        string
 	DestDir       string
-	EtcdAddr      string
 	MetadataFlags []string
 }

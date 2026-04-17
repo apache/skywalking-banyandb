@@ -15,9 +15,9 @@
 
 tip: null
 trees:
-  {{- contains .trees }}
+  {{- contains (.trees | noDuplicates) }}
   - elements:
-    {{- contains .elements }}
+    {{- contains (.elements | noDuplicates) }}
     - id: "{{ notEmpty .id }}"
       parentid: "{{ notEmpty .parentid }}"
       codesignature: "test.apache.skywalking.e2e.profile.ProfileController.createAuthor:-1"

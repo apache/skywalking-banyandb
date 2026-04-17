@@ -15,8 +15,7 @@
 // specific language governing permissions and limitations
 // under the License.
 
-// Package metadata implements a Raft-based distributed metadata storage system.
-// Powered by etcd.
+// Package metadata implements the metadata storage system.
 package metadata
 
 import (

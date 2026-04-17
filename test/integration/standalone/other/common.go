@@ -27,23 +27,18 @@ import (
 	"github.com/apache/skywalking-banyandb/pkg/test/setup"
 )
 
-// SetupResult contains all info returned by SetupFunc.
-type SetupResult struct {
-	Config *setup.ClusterConfig
+// NewTestConfig creates a fresh ClusterConfig for standalone tests.
+// Standalone tests use ModeNone for node discovery since no cluster discovery is needed.
+func NewTestConfig() *setup.ClusterConfig {
+	return &setup.ClusterConfig{
+		NodeDiscovery:  setup.NodeDiscoveryConfig{Mode: setup.ModeNone},
+		SchemaRegistry: setup.SchemaRegistryConfig{Mode: setup.ModeProperty},
+	}
 }
-
-// SetupFunc is provided by sub-packages to perform mode-specific setup.
-var SetupFunc func() SetupResult
-
-var testConfig *setup.ClusterConfig
 
 var _ = g.BeforeSuite(func() {
 	gm.Expect(logger.Init(logger.Logging{
 		Env:   "dev",
 		Level: flags.LogLevel,
 	})).To(gm.Succeed())
-	if SetupFunc != nil {
-		r := SetupFunc()
-		testConfig = r.Config
-	}
 })

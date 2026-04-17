@@ -62,11 +62,11 @@ var _ = g.Describe("Forced TTL Cleanup", func() {
 		defer cleanupDir()
 
 		// Allocate ports for the standalone server
-		ports, err := test.AllocateFreePorts(4)
+		ports, err := test.AllocateFreePorts(5)
 		gm.Expect(err).NotTo(gm.HaveOccurred())
 
 		// Start standalone server with forced cleanup enabled, using the temp directory as root
-		addr, _, deferFn := setup.ClosableStandalone(testConfig, tempDir, ports,
+		addr, _, deferFn := setup.ClosableStandalone(NewTestConfig(), tempDir, ports,
 			"--measure-retention-high-watermark", "20.0", // Trigger at 20%
 			"--measure-retention-low-watermark", "10.0", // Stop at 10%
 			"--measure-retention-check-interval", "1s", // Check every second

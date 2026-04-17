@@ -336,6 +336,9 @@ func (sr *schemaRepo) OnDelete(metadata schema.Metadata) {
 
 func (sr *schemaRepo) Close() {
 	sr.cancel()
+	// Close the Repository first to stop the event watcher, ensuring no new
+	// topN processors are created while we are draining the existing ones.
+	sr.Repository.Close()
 	var err error
 	sr.topNProcessorMap.Range(func(_, val any) bool {
 		manager := val.(*topNProcessorManager)
@@ -345,7 +348,6 @@ func (sr *schemaRepo) Close() {
 	if err != nil {
 		sr.l.Error().Err(err).Msg("faced error when closing schema repository")
 	}
-	sr.Repository.Close()
 }
 
 func (sr *schemaRepo) loadMeasure(metadata *commonv1.Metadata) (*measure, bool) {
@@ -814,18 +816,10 @@ func (s *queueSupplier) OpenDB(groupSchema *commonv1.Group) (resourceSchema.DB, 
 		SubQueueCreator: newWriteQueue,
 		GetNodes: func(shardID common.ShardID) []string {
 			copies := ro.Replicas + 1
-			nodeSet := make(map[string]struct{}, copies)
-			for i := uint32(0); i < copies; i++ {
-				nodeID, err := s.measureDataNodeRegistry.Locate(group, "", uint32(shardID), i)
-				if err != nil {
-					s.l.Error().Err(err).Str("group", group).Uint32("shard", uint32(shardID)).Uint32("copy", i).Msg("failed to locate node")
-					return nil
-				}
-				nodeSet[nodeID] = struct{}{}
-			}
-			nodes := make([]string, 0, len(nodeSet))
-			for nodeID := range nodeSet {
-				nodes = append(nodes, nodeID)
+			nodes, err := s.measureDataNodeRegistry.LocateAll(group, uint32(shardID), int(copies))
+			if err != nil {
+				s.l.Error().Err(err).Str("group", group).Uint32("shard", uint32(shardID)).Msg("failed to locate nodes")
+				return nil
 			}
 			return nodes
 		},

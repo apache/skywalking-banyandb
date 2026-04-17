@@ -8,7 +8,7 @@ BanyanDB uses the [zerolog](https://github.com/rs/zerolog) library for logging. 
 
 `logging-env` is used to set the logging environment. The default value is `prod`. The logging environment can be set to `dev` for development or `prod` for production. The logging environment affects the log format and output. In the `dev` environment, logs are output in a human-readable format, while in the `prod` environment, logs are output in JSON format.
 
-`logging-modules` and `logging-levels` are used to set the log level for specific modules. The `logging-modules` flag is a comma-separated list of module names, and the `logging-levels` flag is a comma-separated list of log levels corresponding to the module names. The log level for a specific module can be set using these flags. Available modules are `storage`, `distributed-query`, `liaison-grpc`, `liaison-http`, `measure`, `stream`, `trace`, `metadata`, `etcd-client`, `etcd-server`, `schema-registry`, `metrics`, `pprof-service`, `query`, `server-queue-sub`, `server-queue-pub`. For example, to set the log level for the `storage` module to `debug`, you can use the following flags:
+`logging-modules` and `logging-levels` are used to set the log level for specific modules. The `logging-modules` flag is a comma-separated list of module names, and the `logging-levels` flag is a comma-separated list of log levels corresponding to the module names. The log level for a specific module can be set using these flags. Available modules are `storage`, `distributed-query`, `liaison-grpc`, `liaison-http`, `measure`, `stream`, `trace`, `metadata`, `schema-registry`, `metrics`, `pprof-service`, `query`, `server-queue-sub`, `server-queue-pub`. For example, to set the log level for the `storage` module to `debug`, you can use the following flags:
 
 ```sh
 --logging-modules=storage --logging-levels=debug
@@ -68,9 +68,9 @@ The write and query errors rate is the number of write and query errors per minu
 
 **Expression**: `sum(rate(banyandb_liaison_grpc_total_err{job=~\"$job\",instance=~\"$instance\",method=\"query\"}[$__rate_interval])*60) + sum(rate(banyandb_liaison_grpc_total_stream_msg_sent_err{job=~\"$job\",instance=~\"$instance\"}[$__rate_interval])*60) + sum(rate(banyandb_liaison_grpc_total_stream_msg_received_err{job=~\"$job\",instance=~\"$instance\"}[$__rate_interval])*60)  + sum(rate(banyandb_queue_sub_total_msg_sent_err{job=~\"$job\",instance=~\"$instance\"}[$__rate_interval])*60)`
 
-#### Etcd Operation Rate
+#### Registry Operation Rate
 
-The etcd operation rate is the number of etcd operations per second. It is calculated by summing the total number of etcd operations.
+The registry operation rate is the number of registry operations per second. It is calculated by summing the total number of registry operations.
 
 **Expression**: `sum(rate(banyandb_liaison_grpc_total_registry_started{job=~\"$job\",instance=~\"$instance\"}[$__rate_interval])) + sum(rate(banyandb_liaison_grpc_total_started{job=~\"$job\",instance=~\"$instance\",method!=\"query\"}[$__rate_interval]))`
 

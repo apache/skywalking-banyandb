@@ -116,6 +116,21 @@ func (sw *writers) MustInitForMemPart(mp *memPart) {
 	sw.keysWriter.init(&mp.keys)
 }
 
+// MustInitForFilePart initializes writers for file-backed part.
+func (sw *writers) MustInitForFilePart(fileSystem fs.FileSystem, path string, shouldCache bool) {
+	sw.reset()
+	fileSystem.MkdirPanicIfExist(path, storage.DirPerm)
+	sw.mustCreateTagWriters = func(name string) (fs.Writer, fs.Writer, fs.Writer) {
+		return fs.MustCreateFile(fileSystem, filepath.Join(path, name+tagMetadataExtension), storage.FilePerm, shouldCache),
+			fs.MustCreateFile(fileSystem, filepath.Join(path, name+tagDataExtension), storage.FilePerm, shouldCache),
+			fs.MustCreateFile(fileSystem, filepath.Join(path, name+tagFilterExtension), storage.FilePerm, shouldCache)
+	}
+	sw.metaWriter.init(fs.MustCreateFile(fileSystem, filepath.Join(path, metaFilename), storage.FilePerm, shouldCache))
+	sw.primaryWriter.init(fs.MustCreateFile(fileSystem, filepath.Join(path, primaryFilename), storage.FilePerm, shouldCache))
+	sw.dataWriter.init(fs.MustCreateFile(fileSystem, filepath.Join(path, dataFilename), storage.FilePerm, shouldCache))
+	sw.keysWriter.init(fs.MustCreateFile(fileSystem, filepath.Join(path, keysFilename), storage.FilePerm, shouldCache))
+}
+
 // totalBytesWritten returns total bytes written across all writers.
 func (sw *writers) totalBytesWritten() uint64 {
 	n := sw.metaWriter.bytesWritten + sw.primaryWriter.bytesWritten +
@@ -244,21 +259,7 @@ func (bw *blockWriter) MustInitForMemPart(mp *memPart) {
 // mustInitForFilePart initializes block writer for file part.
 func (bw *blockWriter) mustInitForFilePart(fileSystem fs.FileSystem, path string, shouldCache bool) {
 	bw.reset()
-	fileSystem.MkdirPanicIfExist(path, storage.DirPerm)
-
-	bw.writers.mustCreateTagWriters = func(name string) (fs.Writer, fs.Writer, fs.Writer) {
-		metaPath := filepath.Join(path, name+tagMetadataExtension)
-		dataPath := filepath.Join(path, name+tagDataExtension)
-		filterPath := filepath.Join(path, name+tagFilterExtension)
-		return fs.MustCreateFile(fileSystem, metaPath, storage.FilePerm, shouldCache),
-			fs.MustCreateFile(fileSystem, dataPath, storage.FilePerm, shouldCache),
-			fs.MustCreateFile(fileSystem, filterPath, storage.FilePerm, shouldCache)
-	}
-
-	bw.writers.metaWriter.init(fs.MustCreateFile(fileSystem, filepath.Join(path, metaFilename), storage.FilePerm, shouldCache))
-	bw.writers.primaryWriter.init(fs.MustCreateFile(fileSystem, filepath.Join(path, primaryFilename), storage.FilePerm, shouldCache))
-	bw.writers.dataWriter.init(fs.MustCreateFile(fileSystem, filepath.Join(path, dataFilename), storage.FilePerm, shouldCache))
-	bw.writers.keysWriter.init(fs.MustCreateFile(fileSystem, filepath.Join(path, keysFilename), storage.FilePerm, shouldCache))
+	bw.writers.MustInitForFilePart(fileSystem, path, shouldCache)
 }
 
 // MustWriteElements writes elements to the block writer.

@@ -41,7 +41,6 @@ helm install banyandb \
     --set image.tag=0.7.0 \
     --set standalone.enabled=true \
     --set cluster.enabled=false \
-    --set etcd.enabled=false \
     --set storage.enabled=true \
     -n sw
 ```
@@ -99,7 +98,6 @@ helm install banyandb \
     --set image.tag=0.7.0 \
     --set standalone.enabled=false \
     --set cluster.enabled=true \
-    --set etcd.enabled=true \
     --set storage.enabled=true \
     --set storage.persistentVolumeClaims[0].mountTargets[0]=stream \
     --set storage.persistentVolumeClaims[0].claimName=stream-data\
@@ -127,10 +125,8 @@ banyandb-1                 1/1     Running   0               5m6s
 banyandb-2                 1/1     Running   0               4m6s
 banyandb-885bc59d4-669lh   1/1     Running   3 (6m35s ago)   7m7s
 banyandb-885bc59d4-dd4j7   1/1     Running   3 (6m36s ago)   7m7s
-banyandb-etcd-0            1/1     Running   0               7m7s
 ```
-
-In cluster model the default `cluster.liaison.replicas` is 2, and the default `cluster.data.replicas` is 3. The default `etcd.replicas` is 1.
+In cluster model the default `cluster.liaison.replicas` is 2, and the default `cluster.data.replicas` is 3.
 
 - You can check the storage using the following command:
 
@@ -140,7 +136,6 @@ kubectl get pvc -n sw
 
 ```shell
 NAME                      STATUS   VOLUME                                     CAPACITY   ACCESS MODES   STORAGECLASS   VOLUMEATTRIBUTESCLASS   AGE
-data-banyandb-etcd-0      Bound    pvc-b0139dc4-01ed-423d-8f00-13376ecad015   8Gi        RWO            standard       <unset>                 13m
 measure-data-banyandb-0   Bound    pvc-471758b8-1dc9-4508-85cb-34f2e53ee4a0   10Gi       RWO            standard       <unset>                 13m
 measure-data-banyandb-1   Bound    pvc-a95f7196-b55c-4030-a99a-96476716c3f4   10Gi       RWO            standard       <unset>                 11m
 measure-data-banyandb-2   Bound    pvc-29983adc-ee40-45b5-944c-49379a13384c   10Gi       RWO            standard       <unset>                 10m
@@ -148,9 +143,7 @@ stream-data-banyandb-0    Bound    pvc-60f2f332-cc07-4a3d-aad7-6c7866cfb739   10
 stream-data-banyandb-1    Bound    pvc-66dad00a-2c16-45b3-8d0a-dbf939d479ac   10Gi       RWO            standard       <unset>                 11m
 stream-data-banyandb-2    Bound    pvc-bfdfde2d-7e78-4e9f-b781-949963e729f3   10Gi       RWO            standard       <unset>                 10m
 ```
-
 The command creates the PVCs for the `stream`, `measure` and `trace` data in the different PVCs. You can customize them by setting the `storage.persistentVolumeClaims` in the `--set` flag.
-In the cluster model, BanyanDB leverage the `etcd` to manage the metadata.
 
 - You can check the services using the following command:
 
@@ -160,8 +153,6 @@ kubectl get svc -n sw
 
 ```shell
 NAME                     TYPE           CLUSTER-IP      EXTERNAL-IP   PORT(S)             AGE
-banyandb-etcd            ClusterIP      10.96.33.132    <none>        2379/TCP,2380/TCP   5m
-banyandb-etcd-headless   ClusterIP      None            <none>        2379/TCP,2380/TCP   5m
 banyandb-grpc            ClusterIP      10.96.152.152   <none>        17912/TCP           5m
 banyandb-http            LoadBalancer   10.96.137.29    <pending>     17913:30899/TCP     5m
 ```

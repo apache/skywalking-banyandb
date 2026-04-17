@@ -24,7 +24,7 @@ services:
     container_name: banyandb
     command: >
       standalone
-      --metadata-root-path=/data/metadata
+      --schema-server-root-path=/data/metadata
       --stream-root-path=/data/stream
       --measure-root-path=/data/measure
       --property-root-path=/data/property

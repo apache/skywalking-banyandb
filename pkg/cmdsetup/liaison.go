@@ -49,7 +49,7 @@ import (
 func newLiaisonCmd(runners ...run.Unit) *cobra.Command {
 	l := logger.GetLogger("bootstrap")
 	ctx := context.Background()
-	metaSvc, err := metadata.NewClient(true, false)
+	metaSvc, err := metadata.NewClient()
 	if err != nil {
 		l.Fatal().Err(err).Msg("failed to initiate metadata service")
 	}

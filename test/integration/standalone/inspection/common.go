@@ -41,22 +41,14 @@ import (
 	"github.com/apache/skywalking-banyandb/pkg/grpchelper"
 	"github.com/apache/skywalking-banyandb/pkg/logger"
 	"github.com/apache/skywalking-banyandb/pkg/pool"
+	"github.com/apache/skywalking-banyandb/pkg/test"
 	"github.com/apache/skywalking-banyandb/pkg/test/flags"
 	"github.com/apache/skywalking-banyandb/pkg/test/gmatcher"
+	"github.com/apache/skywalking-banyandb/pkg/test/setup"
 )
 
-// SetupResult contains all info returned by SetupFunc.
-type SetupResult struct {
-	StopFunc func()
-	Addr     string
-}
-
-// SetupFunc is provided by sub-packages to start the environment.
-var SetupFunc func() SetupResult
-
-var result SetupResult
-
 var (
+	stopFunc           func()
 	connection         *grpc.ClientConn
 	goods              []gleak.Goroutine
 	groupClient        databasev1.GroupRegistryServiceClient
@@ -75,8 +67,17 @@ var _ = ginkgo.SynchronizedBeforeSuite(func() []byte {
 	})).To(gomega.Succeed())
 	pool.EnableStackTracking(true)
 	goods = gleak.Goroutines()
-	result = SetupFunc()
-	return []byte(result.Addr)
+	ginkgo.By("Starting standalone server with property mode")
+	tmpDir, tmpDirCleanup, tmpErr := test.NewSpace()
+	gomega.Expect(tmpErr).NotTo(gomega.HaveOccurred())
+	dfWriter := setup.NewDiscoveryFileWriter(tmpDir)
+	config := setup.PropertyClusterConfig(dfWriter)
+	addr, _, closeFn := setup.EmptyStandalone(config)
+	stopFunc = func() {
+		closeFn()
+		tmpDirCleanup()
+	}
+	return []byte(addr)
 }, func(address []byte) {
 	var err error
 	connection, err = grpchelper.Conn(string(address), 10*time.Second,
@@ -96,8 +97,8 @@ var _ = ginkgo.SynchronizedAfterSuite(func() {
 		gomega.Expect(connection.Close()).To(gomega.Succeed())
 	}
 }, func() {
-	if result.StopFunc != nil {
-		result.StopFunc()
+	if stopFunc != nil {
+		stopFunc()
 	}
 })
 

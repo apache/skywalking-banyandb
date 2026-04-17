@@ -570,7 +570,7 @@ func createResource[T proto.Message](ctx context.Context, r *SchemaRegistry,
 }
 
 func updateResource[T proto.Message](ctx context.Context, r *SchemaRegistry,
-	kind schema.Kind, spec T,
+	kind schema.Kind, spec T, validators ...func(prev T) error,
 ) error {
 	metadata, metaErr := getMetadataFromSpec(kind, spec)
 	if metaErr != nil {
@@ -586,9 +586,25 @@ func updateResource[T proto.Message](ctx context.Context, r *SchemaRegistry,
 	if originalProp == nil {
 		return fmt.Errorf("schema %s/%s not exist", metadata.GetGroup(), metadata.GetName())
 	}
-	prop, convErr := SchemaToProperty(kind, spec)
+	prevMd, convErr := ToSchema(kind, originalProp)
 	if convErr != nil {
 		return convErr
+	}
+	prev, ok := prevMd.Spec.(T)
+	if !ok {
+		return fmt.Errorf("unexpected spec type for kind %s", kind)
+	}
+	for _, v := range validators {
+		if validateErr := v(prev); validateErr != nil {
+			return validateErr
+		}
+	}
+	if checker, checkerOk := schema.CheckerMap[kind]; checkerOk && checker(prev, spec) {
+		return nil
+	}
+	prop, propErr := SchemaToProperty(kind, spec)
+	if propErr != nil {
+		return propErr
 	}
 	return r.broadcastAll(func(_ string, c *schemaClient) error {
 		_, rpcErr := c.management.UpdateSchema(ctx, &schemav1.UpdateSchemaRequest{Property: prop})
@@ -625,7 +641,12 @@ func (r *SchemaRegistry) UpdateStream(ctx context.Context, stream *databasev1.St
 	now := time.Now().UnixNano()
 	stream.Metadata.ModRevision = now
 	stream.UpdatedAt = timestamppb.Now()
-	return now, updateResource(ctx, r, schema.KindStream, stream)
+	return now, updateResource(ctx, r, schema.KindStream, stream, func(prev *databasev1.Stream) error {
+		if err := validateStreamUpdate(prev, stream); err != nil {
+			return fmt.Errorf("validation failed: %w", err)
+		}
+		return nil
+	})
 }
 
 // DeleteStream deletes a stream schema.
@@ -672,7 +693,12 @@ func (r *SchemaRegistry) UpdateMeasure(ctx context.Context, measure *databasev1.
 	now := time.Now().UnixNano()
 	measure.Metadata.ModRevision = now
 	measure.UpdatedAt = timestamppb.Now()
-	return now, updateResource(ctx, r, schema.KindMeasure, measure)
+	return now, updateResource(ctx, r, schema.KindMeasure, measure, func(prev *databasev1.Measure) error {
+		if err := validateMeasureUpdate(prev, measure); err != nil {
+			return fmt.Errorf("validation failed: %w", err)
+		}
+		return nil
+	})
 }
 
 // DeleteMeasure deletes a measure schema.
@@ -724,7 +750,12 @@ func (r *SchemaRegistry) UpdateTrace(ctx context.Context, trace *databasev1.Trac
 	now := time.Now().UnixNano()
 	trace.Metadata.ModRevision = now
 	trace.UpdatedAt = timestamppb.Now()
-	return now, updateResource(ctx, r, schema.KindTrace, trace)
+	return now, updateResource(ctx, r, schema.KindTrace, trace, func(prev *databasev1.Trace) error {
+		if err := validate.TraceUpdate(prev, trace); err != nil {
+			return fmt.Errorf("validation failed: %w", err)
+		}
+		return nil
+	})
 }
 
 // DeleteTrace deletes a trace schema.

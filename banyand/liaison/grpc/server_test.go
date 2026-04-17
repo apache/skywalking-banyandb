@@ -19,6 +19,7 @@ package grpc
 
 import (
 	"context"
+	"fmt"
 	"sync"
 	"testing"
 	"time"
@@ -31,7 +32,6 @@ import (
 	"google.golang.org/grpc/status"
 
 	"github.com/apache/skywalking-banyandb/api/common"
-	databasev1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/database/v1"
 	streamv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/stream/v1"
 	"github.com/apache/skywalking-banyandb/banyand/internal/test"
 	"github.com/apache/skywalking-banyandb/banyand/metadata/service"
@@ -40,6 +40,7 @@ import (
 	"github.com/apache/skywalking-banyandb/banyand/protector"
 	"github.com/apache/skywalking-banyandb/banyand/queue"
 	"github.com/apache/skywalking-banyandb/pkg/grpchelper"
+	"github.com/apache/skywalking-banyandb/pkg/run"
 	pkgtest "github.com/apache/skywalking-banyandb/pkg/test"
 )
 
@@ -346,49 +347,18 @@ func TestBufferSizeMetrics(t *testing.T) {
 }
 
 // setupTestServer creates a minimal gRPC server for integration testing.
-// Note: This is a simplified setup for testing load shedding and buffer sizing.
-// For full integration tests, use the test.SetupModules helper.
 func setupTestServer(t *testing.T, protectorService protector.Memory) (string, func()) {
 	ctx := context.Background()
 	pipeline := queue.Local()
 
-	// Create temporary directories for metadata
 	metaPath, metaDeferFunc, err := pkgtest.NewSpace()
 	require.NoError(t, err)
 
-	// Get etcd listen URLs
-	listenClientURL, listenPeerURL, err := pkgtest.NewEtcdListenUrls()
+	ports, portsErr := pkgtest.AllocateFreePorts(2)
+	require.NoError(t, portsErr)
+
+	metaSvc, err := service.NewService()
 	require.NoError(t, err)
-
-	metaSvc, err := service.NewService(ctx, true)
-	require.NoError(t, err)
-
-	// Set up flags for metadata service
-	flags := []string{
-		"--metadata-root-path=" + metaPath,
-		"--etcd-listen-client-url=" + listenClientURL,
-		"--etcd-listen-peer-url=" + listenPeerURL,
-		"--schema-registry-mode=etcd",
-	}
-
-	// Parse flags
-	fs := metaSvc.FlagSet()
-	require.NoError(t, fs.Parse(flags))
-	require.NoError(t, metaSvc.Validate())
-
-	// Add node ID and roles to context (required by metadata service)
-	ctx = context.WithValue(ctx, common.ContextNodeKey, common.Node{NodeID: "test-integration"})
-	ctx = context.WithValue(ctx, common.ContextNodeRolesKey, []databasev1.Role{
-		databasev1.Role_ROLE_LIAISON,
-		databasev1.Role_ROLE_DATA,
-	})
-
-	// Initialize metadata service - required before PreRun
-	require.NoError(t, metaSvc.PreRun(ctx))
-	stopChMeta := metaSvc.Serve()
-
-	// Wait a bit for metadata service to be ready
-	time.Sleep(200 * time.Millisecond)
 
 	metricSvc := obsservice.NewMetricService(metaSvc, pipeline, "test", nil)
 
@@ -399,30 +369,34 @@ func setupTestServer(t *testing.T, protectorService protector.Memory) (string, f
 		PropertyNodeRegistry:       nr,
 		TraceLiaisonNodeRegistry:   nr,
 	}, metricSvc, protectorService, nil)
-
-	// Configure server - use a fixed port for testing
-	grpcServer.(*server).host = "localhost"
-	grpcServer.(*server).port = 17912 // Use fixed port
+	grpcServer.(*server).host = "127.0.0.1"
+	grpcServer.(*server).port = uint32(ports[1])
 	grpcServer.(*server).grpcBufferMemoryRatio = 0.1
 
-	require.NoError(t, grpcServer.(*server).PreRun(ctx))
-	require.NoError(t, grpcServer.(*server).Validate())
-
-	stopCh := grpcServer.(*server).Serve()
-
-	// Wait for server to start
-	time.Sleep(300 * time.Millisecond)
-	addr := "localhost:17912"
-
-	cleanup := func() {
-		grpcServer.(*server).GracefulStop()
-		<-stopCh
-		metaSvc.GracefulStop()
-		<-stopChMeta
-		metaDeferFunc()
+	flags := []string{
+		"--schema-server-root-path=" + metaPath,
+		fmt.Sprintf("--schema-server-grpc-port=%d", ports[0]),
+		"--schema-server-grpc-host=127.0.0.1",
 	}
 
-	return addr, cleanup
+	closer, closeFn := run.NewTester("closer")
+	g := run.NewGroup("standalone-test")
+	g.Register(closer, pipeline, metaSvc, grpcServer)
+	require.NoError(t, g.RegisterFlags().Parse(flags))
+	wg := sync.WaitGroup{}
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		require.NoError(t, g.Run(context.WithValue(ctx, common.ContextNodeKey, common.Node{NodeID: "test"})))
+	}()
+	g.WaitTillReady()
+
+	addr := fmt.Sprintf("127.0.0.1:%d", ports[1])
+	return addr, func() {
+		closeFn()
+		wg.Wait()
+		metaDeferFunc()
+	}
 }
 
 // eventuallyExpectResourceExhausted retries a function until it returns a ResourceExhausted error,
