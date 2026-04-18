@@ -30,6 +30,7 @@ import (
 	"github.com/apache/skywalking-banyandb/banyand/metadata/schema"
 	"github.com/apache/skywalking-banyandb/pkg/bus"
 	"github.com/apache/skywalking-banyandb/pkg/grpchelper"
+	"github.com/apache/skywalking-banyandb/pkg/run"
 )
 
 const (
@@ -213,14 +214,15 @@ func (p *pub) checkWritable(n string, topic bus.Topic) (bool, *common.Error) {
 	p.writableProbe[n][topicStr] = struct{}{}
 	p.writableProbeMu.Unlock()
 
-	go func(nodeName, t string) {
+	probeName, probeTopic := n, topicStr
+	run.Go(context.Background(), "pub-node-probe", p.log, func(_ context.Context) {
 		defer p.closer.Done()
 		defer func() {
 			p.writableProbeMu.Lock()
-			if topics, ok := p.writableProbe[nodeName]; ok {
-				delete(topics, t)
+			if topics, ok := p.writableProbe[probeName]; ok {
+				delete(topics, probeTopic)
 				if len(topics) == 0 {
-					delete(p.writableProbe, nodeName)
+					delete(p.writableProbe, probeName)
 				}
 			}
 			p.writableProbeMu.Unlock()
@@ -230,23 +232,23 @@ func (p *pub) checkWritable(n string, topic bus.Topic) (bool, *common.Error) {
 			backoff := grpchelper.JitteredBackoff(grpchelper.InitBackoff, grpchelper.MaxBackoff, attempt, grpchelper.DefaultJitterFactor)
 			select {
 			case <-time.After(backoff):
-				nodeCur, okCur := p.connMgr.GetClient(nodeName)
+				nodeCur, okCur := p.connMgr.GetClient(probeName)
 				if !okCur {
 					return
 				}
-				errInternal := p.checkServiceHealth(t, nodeCur.conn)
+				errInternal := p.checkServiceHealth(probeTopic, nodeCur.conn)
 				if errInternal == nil {
 					// Record success for circuit breaker
-					p.connMgr.RecordSuccess(nodeName)
+					p.connMgr.RecordSuccess(probeName)
 					h.OnAddOrUpdate(nodeCur.md)
 					return
 				}
-				p.log.Warn().Str("topic", t).Err(errInternal).Str("node", nodeName).Dur("backoff", backoff).Msg("data node can not ingest data")
+				p.log.Warn().Str("topic", probeTopic).Err(errInternal).Str("node", probeName).Dur("backoff", backoff).Msg("data node can not ingest data")
 			case <-p.closer.CloseNotify():
 				return
 			}
 			attempt++
 		}
-	}(n, topicStr)
+	})
 	return false, err
 }

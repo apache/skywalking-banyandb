@@ -48,6 +48,7 @@ import (
 	"github.com/apache/skywalking-banyandb/pkg/flow/streaming/sources"
 	"github.com/apache/skywalking-banyandb/pkg/logger"
 	pbv1 "github.com/apache/skywalking-banyandb/pkg/pb/v1"
+	"github.com/apache/skywalking-banyandb/pkg/run"
 	"github.com/apache/skywalking-banyandb/pkg/pool"
 	"github.com/apache/skywalking-banyandb/pkg/query/logical"
 	"github.com/apache/skywalking-banyandb/pkg/timestamp"
@@ -525,7 +526,7 @@ func (manager *topNProcessorManager) Close() error {
 }
 
 func (manager *topNProcessorManager) onMeasureWrite(seriesID uint64, shardID uint32, request *measurev1.InternalWriteRequest, measure *databasev1.Measure) {
-	go func() {
+	run.Go(context.Background(), "topn-write", manager.l, func(_ context.Context) {
 		manager.RLock()
 		defer manager.RUnlock()
 		if manager.closed {
@@ -549,7 +550,7 @@ func (manager *topNProcessorManager) onMeasureWrite(seriesID uint64, shardID uin
 			)
 			processor.src <- flow.NewStreamRecordWithTimestampPb(dpWithEntity, dp.GetTimestamp())
 		}
-	}()
+	})
 }
 
 func (manager *topNProcessorManager) register(topNSchema *databasev1.TopNAggregation) {

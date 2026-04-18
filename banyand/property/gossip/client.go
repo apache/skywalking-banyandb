@@ -24,6 +24,7 @@ import (
 	databasev1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/database/v1"
 	propertyv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/property/v1"
 	"github.com/apache/skywalking-banyandb/banyand/metadata/schema"
+	"github.com/apache/skywalking-banyandb/pkg/run"
 )
 
 func (s *service) Propagation(nodes []string, group string, shardID uint32) error {
@@ -85,15 +86,14 @@ func (s *service) Propagation(nodes []string, group string, shardID uint32) erro
 		}
 	}
 
-	go func() {
+	run.Go(context.Background(), "gossip-propagation", s.log, func(_ context.Context) {
 		cancelCtx, cancelFunc := context.WithTimeout(context.Background(), s.totalTimeout)
 		defer cancelFunc()
 		_, err := sendTo(cancelCtx, request, s.createTraceForRequest(request))
 		if err != nil {
 			s.log.Warn().Err(err).Msg("propagation failed")
-			return
 		}
-	}()
+	})
 
 	return nil
 }

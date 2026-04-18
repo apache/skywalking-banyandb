@@ -27,8 +27,6 @@ import (
 // Go launches fn in a new goroutine protected by panic recovery.
 // Panics are intercepted, the panic value and localized stack trace are logged,
 // and banyandb_panic_total is incremented with component as the label.
-// This is the project-wide entry point for launching background goroutines,
-// following TiDB's high-reliability goroutine pattern.
 func Go(ctx context.Context, component string, log *logger.Logger, fn func(context.Context)) {
 	panicdiag.GoWithRecovery(ctx, panicdiag.RecoveryOptions{
 		Component: component,

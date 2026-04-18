@@ -39,6 +39,7 @@ import (
 	"github.com/apache/skywalking-banyandb/pkg/bus"
 	"github.com/apache/skywalking-banyandb/pkg/node"
 	"github.com/apache/skywalking-banyandb/pkg/partition"
+	"github.com/apache/skywalking-banyandb/pkg/run"
 )
 
 var (
@@ -242,7 +243,7 @@ func (s *service) appendReadySendTraceSpan(span *recordTraceSpan) {
 	if !atomic.CompareAndSwapInt32(s.traceSpanNotified, 0, 1) {
 		return
 	}
-	go func() {
+	run.Go(context.Background(), "gossip-trace-send", s.log, func(_ context.Context) {
 		select {
 		case <-s.closer.CloseNotify():
 			return
@@ -252,7 +253,7 @@ func (s *service) appendReadySendTraceSpan(span *recordTraceSpan) {
 				s.log.Warn().Err(err).Msg("failed to save tracing spans")
 			}
 		}
-	}()
+	})
 }
 
 func (s *service) createTraceForRequest(request *propertyv1.PropagationRequest) Trace {

@@ -26,7 +26,7 @@ import (
 )
 
 const (
-	defaultStateLimitBytes = 5 * 1024 * 1024
+	defaultStateLimitBytes = 5 * 1024 * 1024 // 5 MiB
 	deepDumpFileName       = "deep-dump.json"
 )
 

@@ -205,7 +205,7 @@ func (m *ConnManager[C]) OnDelete(node *databasev1.Node) {
 		if !m.closer.AddRunning() {
 			return
 		}
-		go func() {
+		run.Go(context.Background(), "connmanager-reconnect", m.log, func(_ context.Context) {
 			defer m.closer.Done()
 			var elapsed time.Duration
 			attempt := 0
@@ -233,7 +233,7 @@ func (m *ConnManager[C]) OnDelete(node *databasev1.Node) {
 				}
 				attempt++
 			}
-		}()
+		})
 	}
 }
 
@@ -443,7 +443,8 @@ func (m *ConnManager[C]) checkHealthAndReconnect(conn *grpc.ClientConn, node *da
 	name := node.Metadata.Name
 	m.evictable[name] = evictNode{n: node, c: make(chan struct{})}
 	m.handler.OnInactive(name, client)
-	go func(name string, en evictNode) {
+	en := m.evictable[name]
+	run.Go(context.Background(), "connmanager-evict-reconnect", m.log, func(_ context.Context) {
 		defer m.closer.Done()
 		attempt := 0
 		for {
@@ -501,7 +502,7 @@ func (m *ConnManager[C]) checkHealthAndReconnect(conn *grpc.ClientConn, node *da
 			}
 			attempt++
 		}
-	}(name, m.evictable[name])
+	})
 	return false
 }
 

@@ -539,7 +539,7 @@ func (e *etcdSchemaRegistry) keepLeaseAlive(lease *clientv3.LeaseGrantResponse, 
 		return fmt.Errorf("failed to keep lease alive for key %s: %w", key, err)
 	}
 
-	go func() {
+	run.Go(context.Background(), "etcd-keepalive", e.l, func(_ context.Context) {
 		if !e.closer.AddRunning() {
 			return
 		}
@@ -558,7 +558,7 @@ func (e *etcdSchemaRegistry) keepLeaseAlive(lease *clientv3.LeaseGrantResponse, 
 				}
 			}
 		}
-	}()
+	})
 
 	return nil
 }

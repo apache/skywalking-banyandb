@@ -18,11 +18,13 @@
 package storage
 
 import (
+	"context"
 	"time"
 
 	"github.com/robfig/cron/v3"
 
 	"github.com/apache/skywalking-banyandb/pkg/logger"
+	"github.com/apache/skywalking-banyandb/pkg/run"
 )
 
 var (
@@ -48,7 +50,7 @@ func (d *database[T, O]) startRotationTask() error {
 	if !d.disableRetention {
 		rt = newRetentionTask(d, options.TTL)
 	}
-	go func(rt *retentionTask[T, O]) {
+	run.Go(context.Background(), "storage-rotation", d.logger, func(_ context.Context) {
 		var idleCheckTicker *time.Ticker
 		var idleCheckC <-chan time.Time
 
@@ -124,7 +126,7 @@ func (d *database[T, O]) startRotationTask() error {
 				}()
 			}
 		}
-	}(rt)
+	})
 	if rt == nil {
 		return nil
 	}

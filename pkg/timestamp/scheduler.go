@@ -18,6 +18,7 @@
 package timestamp
 
 import (
+	"context"
 	"runtime/debug"
 	"sync"
 	"sync/atomic"
@@ -94,13 +95,13 @@ func (s *Scheduler) Register(name string, options cron.ParseOption, expr string,
 	}
 	t := newTask(s.l.Named(name), name, clock, schedule, action)
 	s.tasks[name] = t
-	go func() {
+	run.Go(context.Background(), "scheduler-task-"+name, s.l, func(_ context.Context) {
 		t.run()
 		t.close()
 		s.Lock()
 		defer s.Unlock()
 		delete(s.tasks, name)
-	}()
+	})
 	return nil
 }
 
@@ -227,9 +228,9 @@ func (t *task) run() {
 				resultCh := make(chan bool, 1)
 				timeoutCh := t.clock.Timer(5 * time.Minute).C
 
-				go func() {
+				run.Go(context.Background(), "scheduler-action-"+t.name, t.l, func(_ context.Context) {
 					resultCh <- t.action(now, t.l)
-				}()
+				})
 
 				select {
 				case result := <-resultCh:
