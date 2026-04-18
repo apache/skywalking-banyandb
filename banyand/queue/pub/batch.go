@@ -33,6 +33,7 @@ import (
 	"github.com/apache/skywalking-banyandb/pkg/bus"
 	"github.com/apache/skywalking-banyandb/pkg/grpchelper"
 	"github.com/apache/skywalking-banyandb/pkg/logger"
+	"github.com/apache/skywalking-banyandb/pkg/run"
 )
 
 const (
@@ -165,22 +166,25 @@ func (bp *batchPublisher) Publish(ctx context.Context, topic bus.Topic, messages
 		bp.f.events = append(bp.f.events, make(chan batchEvent))
 		_ = sendData()
 		nodeName := node
-		go func(s clusterv1.Service_SendClient, deferFn func(), bc chan batchEvent, curNode string) {
+		recvStream := stream
+		recvDeferFn := deferFn
+		recvBC := bp.f.events[len(bp.f.events)-1]
+		run.Go(ctx, "batch-stream-recv", bp.pub.log, func(_ context.Context) {
 			defer func() {
-				close(bc)
-				deferFn()
+				close(recvBC)
+				recvDeferFn()
 			}()
 			select {
 			case <-ctx.Done():
 				return
 			default:
 			}
-			resp, errRecv := s.Recv()
+			resp, errRecv := recvStream.Recv()
 			if errRecv != nil {
 				if grpchelper.IsFailoverError(errRecv) {
 					// Record circuit breaker failure before creating failover event
-					bp.pub.connMgr.RecordFailure(curNode, errRecv)
-					bc <- batchEvent{n: curNode, e: common.NewErrorWithStatus(modelv1.Status_STATUS_INTERNAL_ERROR, errRecv.Error())}
+					bp.pub.connMgr.RecordFailure(nodeName, errRecv)
+					recvBC <- batchEvent{n: nodeName, e: common.NewErrorWithStatus(modelv1.Status_STATUS_INTERNAL_ERROR, errRecv.Error())}
 				}
 				return
 			}
@@ -193,10 +197,10 @@ func (bp *batchPublisher) Publish(ctx context.Context, topic bus.Topic, messages
 			if isFailoverStatus(resp.Status) {
 				ce := common.NewErrorWithStatus(resp.Status, resp.Error)
 				// Record circuit breaker failure before creating failover event
-				bp.pub.connMgr.RecordFailure(curNode, ce)
-				bc <- batchEvent{n: curNode, e: ce}
+				bp.pub.connMgr.RecordFailure(nodeName, ce)
+				recvBC <- batchEvent{n: nodeName, e: ce}
 			}
-		}(stream, deferFn, bp.f.events[len(bp.f.events)-1], nodeName)
+		})
 	}
 	return nil, err
 }
@@ -213,7 +217,7 @@ func (bp *batchPublisher) Close() (cee map[string]*common.Error, err error) {
 		return nil, err
 	}
 	if bp.pub.closer.AddRunning() {
-		go func() {
+		run.Go(context.Background(), "batch-failover", bp.pub.log, func(_ context.Context) {
 			defer bp.pub.closer.Done()
 			for n, e := range batchEvents {
 				// Record circuit breaker failure before failover
@@ -224,7 +228,7 @@ func (bp *batchPublisher) Close() (cee map[string]*common.Error, err error) {
 				}
 				bp.pub.failover(n, e.e, *bp.topic)
 			}
-		}()
+		})
 	}
 	cee = make(map[string]*common.Error, len(batchEvents))
 	for n, be := range batchEvents {

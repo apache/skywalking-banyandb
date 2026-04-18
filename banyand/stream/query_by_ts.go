@@ -32,6 +32,7 @@ import (
 	pbv1 "github.com/apache/skywalking-banyandb/pkg/pb/v1"
 	"github.com/apache/skywalking-banyandb/pkg/pool"
 	"github.com/apache/skywalking-banyandb/pkg/query/model"
+	"github.com/apache/skywalking-banyandb/pkg/run"
 )
 
 var _ model.StreamQueryResult = (*tsResult)(nil)
@@ -107,7 +108,9 @@ func (t *tsResult) runTabScanner(ctx context.Context) (*model.StreamResult, erro
 	}
 	is := t.sm.indexSchema.Load().(indexSchema)
 	for i := range workerSize {
-		go func(workerID int) {
+		workerID := i
+		run.Go(ctx, "stream-ts-worker", t.l, func(_ context.Context) {
+			defer workerWg.Done()
 			tmpBlock := generateBlock()
 			defer releaseBlock(tmpBlock)
 			blockHeap := generateBlockCursorHeap(t.asc)
@@ -135,8 +138,7 @@ func (t *tsResult) runTabScanner(ctx context.Context) (*model.StreamResult, erro
 				blockHeap.reset()
 				releaseBlockScanResultBatch(batch)
 			}
-			workerWg.Done()
-		}(i)
+		})
 	}
 	t.ts.scan(ctx, batchCh)
 	close(batchCh)

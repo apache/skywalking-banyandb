@@ -433,8 +433,16 @@ func (qr *queryResult) loadTraceCursors(cursors []*blockCursor) ([]*blockCursor,
 	}
 
 	cursorChan := make(chan int, len(cursors))
+	traceBlockLogger := logger.GetLogger("trace-query-block-loader")
 	for i := range cursors {
-		go func(idx int) {
+		idx := i
+		go func() {
+			defer func() {
+				if r := recover(); r != nil {
+					traceBlockLogger.Error().Interface("panic", r).Msg("panic in parallel block loader")
+					cursorChan <- idx
+				}
+			}()
 			select {
 			case <-qr.ctx.Done():
 				cursorChan <- idx
@@ -448,7 +456,7 @@ func (qr *queryResult) loadTraceCursors(cursors []*blockCursor) ([]*blockCursor,
 				return
 			}
 			cursorChan <- -1
-		}(i)
+		}()
 	}
 
 	var blankCursorIdx []int

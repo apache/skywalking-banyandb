@@ -19,6 +19,7 @@ package storage
 
 import (
 	"container/heap"
+	"context"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -162,10 +163,11 @@ func NewServiceCacheWithConfig(config CacheConfig) Cache {
 }
 
 func (sc *serviceCache) startCleaner() {
-	go func() {
+	l := logger.GetLogger("storage-cache-cleaner")
+	run.Go(context.Background(), "storage-cache-cleaner", l, func(_ context.Context) {
 		defer sc.wg.Done()
 		sc.clean()
-	}()
+	})
 }
 
 func (sc *serviceCache) removeEntry(key EntryKey) {

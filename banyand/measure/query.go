@@ -785,25 +785,33 @@ func (qr *queryResult) Pull() *model.MeasureResult {
 		}
 
 		cursorChan := make(chan int, len(qr.data))
+		measureBlockLogger := logger.GetLogger("measure-query-block-loader")
 		for i := 0; i < len(qr.data); i++ {
-			go func(i int) {
+			idx := i
+			go func() {
+				defer func() {
+					if r := recover(); r != nil {
+						measureBlockLogger.Error().Interface("panic", r).Msg("panic in parallel block loader")
+						cursorChan <- idx
+					}
+				}()
 				select {
 				case <-qr.ctx.Done():
-					cursorChan <- i
+					cursorChan <- idx
 					return
 				default:
 				}
 				tmpBlock := generateBlock()
 				defer releaseBlock(tmpBlock)
-				if !qr.data[i].loadData(tmpBlock) {
-					cursorChan <- i
+				if !qr.data[idx].loadData(tmpBlock) {
+					cursorChan <- idx
 					return
 				}
 				if qr.orderByTimestampDesc() {
-					qr.data[i].idx = len(qr.data[i].timestamps) - 1
+					qr.data[idx].idx = len(qr.data[idx].timestamps) - 1
 				}
 				cursorChan <- -1
-			}(i)
+			}()
 		}
 
 		blankCursorList := []int{}

@@ -24,8 +24,10 @@ import (
 	"time"
 
 	"github.com/apache/skywalking-banyandb/banyand/metadata"
+	"github.com/apache/skywalking-banyandb/pkg/logger"
 	"github.com/apache/skywalking-banyandb/pkg/meter"
 	"github.com/apache/skywalking-banyandb/pkg/meter/native"
+	"github.com/apache/skywalking-banyandb/pkg/run"
 )
 
 type nativeProviderFactory struct {
@@ -42,11 +44,13 @@ func (f *nativeProviderFactory) provider(scope meter.Scope) meter.Provider {
 	f.providers = append(f.providers, p)
 	f.mu.Unlock()
 	if f.serveStarted.Load() {
-		go func(prov meter.Provider) {
-			ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+		prov := p
+		initLogger := logger.GetLogger("meter-native-schema-init")
+		run.Go(context.Background(), "meter-native-schema-init", initLogger, func(_ context.Context) {
+			initCtx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 			defer cancel()
-			native.InitSchema(ctx, prov)
-		}(p)
+			native.InitSchema(initCtx, prov)
+		})
 	}
 	return p
 }

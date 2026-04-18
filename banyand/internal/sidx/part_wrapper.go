@@ -18,10 +18,12 @@
 package sidx
 
 import (
+	"context"
 	"fmt"
 	"sync/atomic"
 
 	"github.com/apache/skywalking-banyandb/pkg/logger"
+	"github.com/apache/skywalking-banyandb/pkg/run"
 )
 
 // partWrapper provides thread-safe reference counting for parts.
@@ -106,13 +108,16 @@ func (pw *partWrapper) cleanup() {
 
 	// Remove from disk if marked as removable
 	if pw.removable.Load() && pw.p.fileSystem != nil {
-		go func(partPath string, fileSystem interface{}) {
+		partPath := pw.p.path
+		fileSystem := pw.p.fileSystem
+		l := logger.GetLogger("storage-part-removal")
+		run.Go(context.Background(), "storage-part-removal", l, func(_ context.Context) {
 			// Use a goroutine for potentially slow disk operations
 			// to avoid blocking the caller
-			if fs, ok := fileSystem.(interface{ MustRMAll(string) }); ok {
-				fs.MustRMAll(partPath)
+			if rmFS, ok := fileSystem.(interface{ MustRMAll(string) }); ok {
+				rmFS.MustRMAll(partPath)
 			}
-		}(pw.p.path, pw.p.fileSystem)
+		})
 	}
 }
 
