@@ -40,6 +40,7 @@ import (
 	"github.com/apache/skywalking-banyandb/fodc/agent/internal/lifecycle"
 	"github.com/apache/skywalking-banyandb/fodc/agent/internal/metrics"
 	"github.com/apache/skywalking-banyandb/pkg/logger"
+	"github.com/apache/skywalking-banyandb/pkg/panicdiag"
 )
 
 // MetricsRequestFilter defines filters for metrics requests.
@@ -1276,7 +1277,10 @@ func (c *Client) startHeartbeat(ctx context.Context) {
 	c.heartbeatWg.Add(1)
 	c.streamsMu.Unlock()
 
-	go func() {
+	panicdiag.GoWithRecovery(ctx, panicdiag.RecoveryOptions{
+		Component: "fodc-agent-heartbeat",
+		Logger:    c.logger,
+	}, nil, func(_ *context.Context) {
 		defer c.heartbeatWg.Done()
 		for {
 			select {
@@ -1290,7 +1294,7 @@ func (c *Client) startHeartbeat(ctx context.Context) {
 				}
 			}
 		}
-	}()
+	})
 }
 
 // parseMetricKey parses a metric key string into a MetricKey struct.

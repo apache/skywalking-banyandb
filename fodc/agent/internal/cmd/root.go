@@ -261,6 +261,8 @@ func runFODC(_ *cobra.Command, _ []string) error {
 	reg := prometheus.NewRegistry()
 	panicScope := meter.NewHierarchicalScope("fodc_agent", "_")
 	panicdiag.SetDefaultPanicCounter(prom.NewProvider(panicScope, reg).Counter("panic_total", "component"))
+	panicStore := crashcollector.NewInProcessPanicStore(0)
+	panicdiag.SetDefaultReporter(panicStore.Reporter())
 
 	metricsServer, serverErr := server.NewServer(server.Config{
 		ListenAddr:          prometheusListenAddr,
@@ -307,16 +309,16 @@ func runFODC(_ *cobra.Command, _ []string) error {
 		CapacitySizeBytes: diagnosisCapacitySize,
 	}
 	crashCollector := crashcollector.New(log, collectorCfg)
-	var collectionProvider server.CollectionProvider = crashCollector
-	var crashCollectionLister crashcollector.CollectionLister = crashCollector
 	var stopDirWatcher func()
+	providers := []crashcollector.CollectionLister{panicStore, crashCollector}
 	if crashSourceDir != "" {
 		dirWatcher := crashcollector.NewDirectoryWatcher(log, crashSourceDir, collectorCfg)
 		stopDirWatcher = dirWatcher.Start(ctx)
-		multi := crashcollector.NewMultiCollectionProvider(crashCollector, dirWatcher)
-		collectionProvider = multi
-		crashCollectionLister = multi
+		providers = append(providers, dirWatcher)
 	}
+	multi := crashcollector.NewMultiCollectionProvider(providers...)
+	var collectionProvider server.CollectionProvider = multi
+	var crashCollectionLister crashcollector.CollectionLister = multi
 	serverErrCh, startErr := metricsServer.Start(reg, exporter.NewDatasourceCollector(fr), collectionProvider)
 	if startErr != nil {
 		if stopDirWatcher != nil {
@@ -384,7 +386,9 @@ func startKTM(ctx context.Context, log zerolog.Logger, fr *flightrecorder.Flight
 	}
 
 	stopBridgeCh := make(chan struct{})
-	go func() {
+	panicdiag.GoWithRecovery(ctx, panicdiag.RecoveryOptions{
+		Component: "fodc-agent-ktm-bridge",
+	}, nil, func(_ *context.Context) {
 		ticker := time.NewTicker(ktmInterval)
 		defer ticker.Stop()
 
@@ -410,7 +414,7 @@ func startKTM(ctx context.Context, log zerolog.Logger, fr *flightrecorder.Flight
 				}
 			}
 		}
-	}()
+	})
 
 	return func() {
 		close(stopBridgeCh)
@@ -462,11 +466,14 @@ func startProxyClient(ctx context.Context, log *logger.Logger, fr *flightrecorde
 	}
 	client := proxy.NewClient(proxyAddr, nodeRole, podName, containerNames, nodeLabels,
 		heartbeatInterval, reconnectInterval, fr, collector, lifecycleCollector, collectionLister, log)
-	go func() {
+	panicdiag.GoWithRecovery(ctx, panicdiag.RecoveryOptions{
+		Component: "fodc-agent-proxy-client",
+		Logger:    log,
+	}, nil, func(_ *context.Context) {
 		if startErr := client.Start(ctx); startErr != nil {
 			log.Error().Err(startErr).Msg("Proxy client error")
 		}
-	}()
+	})
 	log.Info().Str("proxy_addr", proxyAddr).Str("pod_name", podName).Str("node_role", nodeRole).Msg("Proxy client started")
 	return client
 }

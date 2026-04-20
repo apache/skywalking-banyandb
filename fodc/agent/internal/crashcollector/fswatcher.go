@@ -84,10 +84,13 @@ func (w *DirectoryWatcher) Start(ctx context.Context) func() {
 	watchCtx, cancel := context.WithCancel(ctx)
 	w.cancel = cancel
 	w.wg.Add(1)
-	go func() {
+	panicdiag.GoWithRecovery(watchCtx, panicdiag.RecoveryOptions{
+		Component: "crash-fswatcher",
+		Logger:    w.log,
+	}, nil, func(_ *context.Context) {
 		defer w.wg.Done()
 		w.watch(watchCtx)
-	}()
+	})
 	return func() {
 		cancel()
 		w.wg.Wait()

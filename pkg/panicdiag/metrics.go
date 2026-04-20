@@ -18,6 +18,7 @@
 package panicdiag
 
 import (
+	"context"
 	"sync/atomic"
 
 	"github.com/apache/skywalking-banyandb/pkg/meter"
@@ -27,6 +28,10 @@ import (
 // Set it once at process startup via SetDefaultPanicCounter.
 var defaultPanicCounterPtr atomic.Pointer[meter.Counter]
 
+// defaultReporterPtr is a process-wide fallback used when the Reporter passed to WithRecovery is nil.
+// Set it once at process startup via SetDefaultReporter.
+var defaultReporterPtr atomic.Pointer[Reporter]
+
 // SetDefaultPanicCounter registers a process-wide panic counter used by WithRecovery
 // when RecoveryOptions.Counter is nil. Call once during process initialization.
 func SetDefaultPanicCounter(counter meter.Counter) {
@@ -34,6 +39,15 @@ func SetDefaultPanicCounter(counter meter.Counter) {
 		return
 	}
 	defaultPanicCounterPtr.Store(&counter)
+}
+
+// SetDefaultReporter registers a process-wide Reporter used by WithRecovery when the
+// caller passes nil as the reporter argument. Call once during process initialization.
+func SetDefaultReporter(r Reporter) {
+	if r == nil {
+		return
+	}
+	defaultReporterPtr.Store(&r)
 }
 
 func incPanicCounter(counter meter.Counter, component string) {
@@ -47,4 +61,14 @@ func incPanicCounter(counter meter.Counter, component string) {
 		return
 	}
 	c.Inc(1, component)
+}
+
+func callReporter(reporter Reporter, ctx context.Context, result RecoveryResult) {
+	if reporter != nil {
+		reporter(ctx, result)
+		return
+	}
+	if ptr := defaultReporterPtr.Load(); ptr != nil {
+		(*ptr)(ctx, result)
+	}
 }

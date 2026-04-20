@@ -104,10 +104,13 @@ func (c *Collector) Start(ctx context.Context) func() {
 	collectorCtx, cancel := context.WithCancel(ctx)
 	c.cancel = cancel
 	c.wg.Add(1)
-	go func() {
+	panicdiag.GoWithRecovery(collectorCtx, panicdiag.RecoveryOptions{
+		Component: "crash-collector",
+		Logger:    c.log,
+	}, nil, func(_ *context.Context) {
 		defer c.wg.Done()
 		c.loop(collectorCtx)
-	}()
+	})
 	return func() {
 		cancel()
 		c.wg.Wait()

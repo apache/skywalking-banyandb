@@ -117,12 +117,10 @@ func WithRecovery(ctx context.Context, opts RecoveryOptions, reporter Reporter, 
 			Str("artifact_dir", artifactDir).
 			Msg("recovered panic")
 
-		if reporter != nil {
-			reporter(ctx, RecoveryResult{
-				Record:      record,
-				ArtifactDir: artifactDir,
-			})
-		}
+		callReporter(reporter, ctx, RecoveryResult{
+			Record:      record,
+			ArtifactDir: artifactDir,
+		})
 	}()
 
 	fn(&ctx)
