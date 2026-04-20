@@ -292,9 +292,11 @@ func (s *server) PreRun(_ context.Context) error {
 		return status.Errorf(codes.Internal, "%s", p)
 	}
 	streamChain := []grpclib.StreamServerInterceptor{
+		panicdiag.BreadcrumbStreamInterceptor(),
 		recovery.StreamServerInterceptor(recovery.WithRecoveryHandlerContext(grpcPanicRecoveryHandler)),
 	}
 	unaryChain := []grpclib.UnaryServerInterceptor{
+		panicdiag.BreadcrumbUnaryInterceptor(),
 		grpc_validator.UnaryServerInterceptor(),
 		recovery.UnaryServerInterceptor(recovery.WithRecoveryHandlerContext(grpcPanicRecoveryHandler)),
 	}
