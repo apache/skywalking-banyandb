@@ -306,6 +306,21 @@ There are several Key-Value pairs in a property, named `Tags`. You could add, up
 - `StreamService` provides `Write`, `Query`
 - `TraceService` provides `Write`, `Query`
 
+### Query Projection Flexibility
+
+As of 0.10.0, tags used in query criteria (the `WHERE` clause) no longer need to be included in the projection (the `SELECT` clause). Previously, any tag referenced in a filter condition had to also appear in the result projection. This restriction has been removed, allowing more flexible queries.
+
+For example, the following query filters on `service_id` but only projects `duration`:
+
+```sql
+SELECT duration
+FROM MEASURE service_latency IN production
+TIME > '-30m'
+WHERE service_id = 'frontend';
+```
+
+This applies to queries across `Stream`, `Measure`, and `Trace` data models.
+
 ### IndexRule & IndexRuleBinding
 
 An `IndexRule` indicates which tags are indexed. An `IndexRuleBinding` binds an index rule to the target resources or the `subject`. There might be several rule bindings to a single resource, but their effective time range could NOT overlap.
