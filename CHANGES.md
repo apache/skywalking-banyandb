@@ -13,6 +13,20 @@ Release Notes.
 - Fix property schema client connection not stable after data node restarted.
 - Fix flaky on-disk integration tests caused by Ginkgo v2 random container shuffling closing gRPC connections prematurely.
 - ui: fix query editor refresh/reset behavior and BydbQL keyword highlighting.
+- Disable the rotation task on warm and cold nodes to prevent incorrect segment boundaries during lifecycle migration.
+- Prevent epoch-dated segment directories (seg-19700101) from being created by zero timestamps in distributed sync paths.
+- Fix SIDX streaming sync sending SegmentID as MinTimestamp instead of the actual timestamp, causing sync failures on the receiving node.
+- Fix handoff controller TOCTOU race allowing disk size limit bypass, and populate sidx MinTimestamp/MaxTimestamp during replay to prevent corrupt segment creation on recovered nodes.
+- Delete orphaned parts when no snapshot references them during tsTable initialization.
+- Extract shared LocateAll on NodeRegistry to ensure resolveAssignments and syncer GetNodes always produce identical node lists, preventing liaison from enqueuing parts to online/healthy data nodes.
+- Add validation for MATCH and IN conditions in inverted index query builder, and handle nil OR branch when all entities are specific.
+- Fix wrong backup path of schema property.
+- Fix lifecycle migration failure when the target stage has `close: true`.
+
+### Chores
+
+- Upgrade Go and npm dependencies including etcd to v3.6.10, OpenTelemetry to v1.43.0, AWS SDK, and Google Cloud libraries.
+- Regenerate expired TLS test certificate with 100-year validity.
 
 ## 0.10.0
 
