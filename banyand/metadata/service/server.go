@@ -398,7 +398,7 @@ func (s *server) registerDefrag() {
 	}
 	s.scheduler = timestamp.NewScheduler(etcdLogger, timestamp.NewClock())
 
-	err = s.scheduler.Register("defrag", parser, s.defragCron, func(_ time.Time, l *logger.Logger) bool {
+	err = s.scheduler.Register("defrag", parser, s.defragCron, func(_ context.Context, _ time.Time, l *logger.Logger) bool {
 		if errInner := performDefrag(s.listenClientURL, s.ecli); errInner != nil {
 			l.Error().Err(errInner).Msg("failed to execute defragmentation")
 			return false

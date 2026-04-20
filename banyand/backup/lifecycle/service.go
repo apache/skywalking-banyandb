@@ -267,7 +267,7 @@ func (l *lifecycleService) Serve() run.StopNotify {
 	clockInstance := clock.New()
 	l.sch = timestamp.NewScheduler(l.l, clockInstance)
 	var executionCount int
-	err := l.sch.Register("lifecycle", cron.Descriptor, l.schedule, func(triggerTime time.Time, _ *logger.Logger) bool {
+	err := l.sch.Register("lifecycle", cron.Descriptor, l.schedule, func(_ context.Context, triggerTime time.Time, _ *logger.Logger) bool {
 		l.l.Info().Msgf("lifecycle migration triggered at %s", triggerTime)
 		if err := l.action(); err != nil {
 			l.l.Error().Err(err).Msg("failed to run lifecycle migration action")

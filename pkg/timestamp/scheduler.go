@@ -40,9 +40,10 @@ var (
 	ErrTaskDuplicated = errors.New("the task is duplicated")
 )
 
-// SchedulerAction is an executable when a trigger is fired
-// now is the trigger time, logger has a context indicating the task's identity.
-type SchedulerAction func(now time.Time, logger *logger.Logger) bool
+// SchedulerAction is an executable when a trigger is fired.
+// ctx is cancelled when the scheduler is closed, now is the trigger time,
+// and logger carries the task's identity.
+type SchedulerAction func(ctx context.Context, now time.Time, logger *logger.Logger) bool
 
 // Scheduler maintains a registry of tasks and their duty cycle.
 // It also provides a Trigger method to fire a task that is scheduled by a MockClock.
@@ -228,8 +229,8 @@ func (t *task) run() {
 				resultCh := make(chan bool, 1)
 				timeoutCh := t.clock.Timer(5 * time.Minute).C
 
-				run.Go(context.Background(), "scheduler-action-"+t.name, t.l, func(_ context.Context) {
-					resultCh <- t.action(now, t.l)
+				run.Go(context.Background(), "scheduler-action-"+t.name, t.l, func(ctx context.Context) {
+					resultCh <- t.action(ctx, now, t.l)
 				})
 
 				select {

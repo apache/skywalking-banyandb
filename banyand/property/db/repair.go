@@ -973,7 +973,7 @@ func newRepairScheduler(l *logger.Logger, omr observability.MetricsRegistry, met
 	}
 	c := timestamp.NewScheduler(l, s.buildTreeClock)
 	s.repairTreeScheduler = c
-	err := c.Register("build-tree", cron.Descriptor, buildTreeCronExp, func(t time.Time, _ *logger.Logger) bool {
+	err := c.Register("build-tree", cron.Descriptor, buildTreeCronExp, func(_ context.Context, t time.Time, _ *logger.Logger) bool {
 		s.doBuildTreeScheduler(t, true)
 		return true
 	})

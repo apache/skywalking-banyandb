@@ -185,7 +185,7 @@ func (p *metricService) Serve() run.StopNotify {
 	p.scheduler = timestamp.NewScheduler(p.l, clock)
 	p.schedulerMetrics = NewSchedulerMetrics(p.With(obScope))
 	metricsCollectorExpr := fmt.Sprintf("@every %s", p.metricsInterval)
-	err := p.scheduler.Register("metrics-collector", cron.Descriptor, metricsCollectorExpr, func(_ time.Time, _ *logger.Logger) bool {
+	err := p.scheduler.Register("metrics-collector", cron.Descriptor, metricsCollectorExpr, func(_ context.Context, _ time.Time, _ *logger.Logger) bool {
 		MetricsCollector.collect()
 		metrics := p.scheduler.Metrics()
 		for job, m := range metrics {
@@ -204,7 +204,7 @@ func (p *metricService) Serve() run.StopNotify {
 	}
 	if containsMode(p.modes, flagNativeMode) {
 		nativeFlushExpr := fmt.Sprintf("@every %s", p.nativeFlushInterval)
-		err = p.scheduler.Register("native-metric-collection", cron.Descriptor, nativeFlushExpr, func(_ time.Time, _ *logger.Logger) bool {
+		err = p.scheduler.Register("native-metric-collection", cron.Descriptor, nativeFlushExpr, func(_ context.Context, _ time.Time, _ *logger.Logger) bool {
 			p.nCollection.FlushMetrics()
 			return true
 		})

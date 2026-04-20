@@ -77,7 +77,7 @@ func (d *database[T, O]) startRotationTask() error {
 					defer d.rotationProcessOn.Store(false)
 					t := time.Unix(0, ts)
 					if rt != nil {
-						rt.run(t, d.logger)
+						rt.run(context.Background(), t, d.logger)
 					}
 					func() {
 						ss, err := d.segmentController.segments(true) // Ensure segments are open
@@ -152,7 +152,7 @@ func newRetentionTask[T TSTable, O any](database *database[T, O], ttl IntervalRu
 	}
 }
 
-func (rc *retentionTask[T, O]) run(now time.Time, l *logger.Logger) bool {
+func (rc *retentionTask[T, O]) run(_ context.Context, now time.Time, l *logger.Logger) bool {
 	// Use the new retention gate for exclusivity with forced cleanup
 	select {
 	case rc.database.retentionGate <- struct{}{}:
