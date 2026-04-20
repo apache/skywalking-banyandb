@@ -41,6 +41,7 @@ Release Notes.
 ### Chores
 
 - Upgrade Go and npm dependencies including etcd to v3.6.10, OpenTelemetry to v1.43.0, AWS SDK, and Google Cloud libraries.
+- Regenerate expired TLS test certificate with 100-year validity.
 
 ## 0.10.0
 

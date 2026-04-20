@@ -81,3 +81,6 @@ gomock_reflect*
 # eBPF generated files and binaries
 fodc/agent/internal/ktm/iomonitor/ebpf/generated/vmlinux.h
 
+# OpenSSL serial files
+*.srl
+
