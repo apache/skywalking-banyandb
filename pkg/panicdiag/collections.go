@@ -23,7 +23,6 @@ import (
 	"os"
 	"path/filepath"
 	"sort"
-	"strings"
 	"sync"
 )
 
@@ -156,22 +155,6 @@ func ListCollections(root string) ([]Collection, error) {
 	return collections, nil
 }
 
-// MarshalCollections marshals persisted diagnosis collections as JSON.
-func MarshalCollections(root string) ([]byte, error) {
-	collections, err := ListCollections(root)
-	if err != nil {
-		return nil, err
-	}
-	if collections == nil {
-		collections = make([]Collection, 0)
-	}
-	data, marshalErr := json.Marshal(collections)
-	if marshalErr != nil {
-		return nil, fmt.Errorf("marshal collections: %w", marshalErr)
-	}
-	return data, nil
-}
-
 func readCollection(artifactDir string) (*Collection, error) {
 	recordPath := filepath.Join(artifactDir, panicRecordFileName)
 	recordData, err := os.ReadFile(recordPath)
@@ -212,8 +195,4 @@ func listArtifactFiles(artifactDir string) ([]string, error) {
 	}
 	sort.Strings(files)
 	return files, nil
-}
-
-func diagnosisEndpoint(metricsEndpoint string) string {
-	return strings.TrimSuffix(metricsEndpoint, "/metrics") + "/diagnostics/collections"
 }

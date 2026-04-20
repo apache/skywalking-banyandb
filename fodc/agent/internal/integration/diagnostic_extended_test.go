@@ -21,8 +21,6 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"net/http"
-	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"testing"
@@ -131,65 +129,6 @@ func TestIncompleteArtifactStoredByWatcher(t *testing.T) {
 
 	records = watcher.ListCollections()
 	require.Len(t, records, 1, "directory without panic.json should be silently skipped")
-}
-
-// TestMultiProviderDeduplicatesAcrossWatcherAndHTTPCollector writes a single crash
-// artifact, has both a DirectoryWatcher and an HTTP Collector discover it (using
-// the same ArtifactDir basename), and verifies that MultiCollectionProvider
-// produces exactly one deduplicated record.
-func TestMultiProviderDeduplicatesAcrossWatcherAndHTTPCollector(t *testing.T) {
-	t.Helper()
-
-	dir := t.TempDir()
-	log := diagnosticLogger(t)
-
-	writer := panicdiag.NewArtifactWriter(dir)
-	_, writeErr := writer.Write(&panicdiag.PanicRecord{
-		OccurredAt: time.Date(2026, time.April, 20, 9, 0, 0, 0, time.UTC),
-		Component:  "dedup-target",
-		PanicValue: "index out of range",
-		Recovered:  true,
-	})
-	require.NoError(t, writeErr)
-
-	// FS watcher picks up the artifact; capture its ArtifactDir basename.
-	fsWatcher := crashcollector.NewDirectoryWatcher(log, dir, crashcollector.Config{})
-	fsWatcher.Scan()
-	fsRecords := fsWatcher.ListCollections()
-	require.Len(t, fsRecords, 1, "FS watcher should detect the artifact")
-	artifactBasename := fsRecords[0].Collection.ArtifactDir
-
-	// HTTP test server returns the same collection with the identical basename
-	// so both sources agree on the artifact identity used for deduplication.
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		require.Equal(t, "/diagnostics/collections", r.URL.Path)
-		w.Header().Set("Content-Type", "application/json")
-		require.NoError(t, json.NewEncoder(w).Encode([]panicdiag.Collection{
-			{
-				ArtifactDir: artifactBasename,
-				Files:       []string{"panic.json", "crash.txt"},
-				Record: &panicdiag.PanicRecord{
-					Component:  "dedup-target",
-					PanicValue: "index out of range",
-					Recovered:  true,
-				},
-			},
-		}))
-	}))
-	t.Cleanup(srv.Close)
-
-	collector := crashcollector.New(log, crashcollector.Config{
-		SourceEndpoints: []string{srv.URL + "/metrics"},
-	})
-	require.NoError(t, collector.PollOnce(context.Background()))
-	httpRecords := collector.ListCollections()
-	require.Len(t, httpRecords, 1, "HTTP collector should detect the artifact")
-	assert.Equal(t, artifactBasename, httpRecords[0].Collection.ArtifactDir)
-
-	// MultiCollectionProvider must surface exactly one record despite two sources.
-	multi := crashcollector.NewMultiCollectionProvider(fsWatcher, collector)
-	all := multi.ListCollections()
-	assert.Len(t, all, 1, "MultiCollectionProvider should deduplicate the same ArtifactDir from FS and HTTP")
 }
 
 // TestDirectoryWatcherEvictsOldestOnRingBufferOverflow writes six crash artifacts

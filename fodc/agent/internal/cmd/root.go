@@ -60,7 +60,6 @@ const (
 	defaultHeartbeatInterval              = 10 * time.Second
 	defaultReconnectInterval              = 5 * time.Second
 	defaultClusterStatePollInterval       = 30 * time.Second
-	defaultDiagnosisPollInterval          = 5 * time.Second
 	defaultDiagnosisBufferSize            = 128
 	defaultMaxDiagnosisMemoryUsagePercent = 5
 )
@@ -83,7 +82,6 @@ var (
 	crashWatchDir                  string
 	crashSourceDir                 string
 	crashOutputCfg                 = panicdiag.NewCrashOutputConfig()
-	diagnosisPollInterval          time.Duration
 	diagnosisBufferSize            int
 	maxDiagnosisMemoryUsagePercent int
 	lifecyclePort                  int
@@ -135,10 +133,8 @@ func init() {
 	rootCmd.Flags().StringVar(&crashWatchDir, "crash-watch-dir", "",
 		"Directory where the FODC agent writes its own recovered panic artifacts")
 	rootCmd.Flags().StringVar(&crashSourceDir, "crash-source-dir", "",
-		"Shared volume directory to watch for BanyanDB crash artifacts (enables FS Watcher alongside HTTP polling)")
+		"Shared volume directory to watch for BanyanDB crash artifacts via filesystem notifications")
 	crashOutputCfg.RegisterFlags(rootCmd.Flags())
-	rootCmd.Flags().DurationVar(&diagnosisPollInterval, "diagnosis-poll-interval", defaultDiagnosisPollInterval,
-		"Interval at which the FODC agent polls BanyanDB diagnosis collections")
 	rootCmd.Flags().IntVar(&diagnosisBufferSize, "diagnosis-buffer-size", defaultDiagnosisBufferSize,
 		"Maximum number of diagnosis collections stored in the FODC agent ring buffer")
 	rootCmd.Flags().IntVar(&maxDiagnosisMemoryUsagePercent, "max-diagnosis-memory-usage-percentage",
@@ -303,14 +299,11 @@ func runFODC(_ *cobra.Command, _ []string) error {
 	}
 	stopCh := wd.Serve()
 	collectorCfg := crashcollector.Config{
-		SourceEndpoints:   metricsEndpoints,
-		PollInterval:      diagnosisPollInterval,
 		BufferSize:        diagnosisBufferSize,
 		CapacitySizeBytes: diagnosisCapacitySize,
 	}
-	crashCollector := crashcollector.New(log, collectorCfg)
 	var stopDirWatcher func()
-	providers := []crashcollector.CollectionLister{panicStore, crashCollector}
+	providers := []crashcollector.CollectionLister{panicStore}
 	if crashSourceDir != "" {
 		dirWatcher := crashcollector.NewDirectoryWatcher(log, crashSourceDir, collectorCfg)
 		stopDirWatcher = dirWatcher.Start(ctx)
@@ -326,7 +319,6 @@ func runFODC(_ *cobra.Command, _ []string) error {
 		}
 		return fmt.Errorf("failed to start metrics server: %w", startErr)
 	}
-	stopCrashCollector := crashCollector.Start(ctx)
 	proxyClient := startProxyClient(ctx, log, fr, nodeRole, nodeLabels, clusterCollector, crashCollectionLister)
 
 	sigCh := make(chan os.Signal, 1)
@@ -341,9 +333,6 @@ func runFODC(_ *cobra.Command, _ []string) error {
 	}
 
 	wd.GracefulStop()
-	if stopCrashCollector != nil {
-		stopCrashCollector()
-	}
 	if stopDirWatcher != nil {
 		stopDirWatcher()
 	}
@@ -437,9 +426,6 @@ func validateFlags() error {
 	}
 	if diagnosisListenAddr == "" {
 		return fmt.Errorf("diagnosis-listen-addr cannot be empty")
-	}
-	if diagnosisPollInterval <= 0 {
-		return fmt.Errorf("diagnosis-poll-interval must be greater than 0")
 	}
 	if diagnosisBufferSize <= 0 {
 		return fmt.Errorf("diagnosis-buffer-size must be greater than 0")

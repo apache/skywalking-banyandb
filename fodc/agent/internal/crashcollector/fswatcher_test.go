@@ -25,8 +25,15 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
+	"github.com/apache/skywalking-banyandb/pkg/logger"
 	"github.com/apache/skywalking-banyandb/pkg/panicdiag"
 )
+
+func testLogger(t *testing.T) *logger.Logger {
+	t.Helper()
+	require.NoError(t, logger.Init(logger.Logging{Env: "dev", Level: "warn"}))
+	return logger.GetLogger("test", t.Name())
+}
 
 func TestDirectoryWatcherScanDetectsArtifacts(t *testing.T) {
 	t.Helper()

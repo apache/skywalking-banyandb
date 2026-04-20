@@ -20,7 +20,28 @@ package crashcollector
 import (
 	"encoding/json"
 	"fmt"
+	"time"
+
+	"github.com/apache/skywalking-banyandb/pkg/panicdiag"
 )
+
+const (
+	defaultDiagnosisBufferSize = 128
+	estimatedRecordBytes       = 16 * 1024
+)
+
+// Config configures the crash collector.
+type Config struct {
+	BufferSize        int
+	CapacitySizeBytes int64
+}
+
+// CollectionRecord stores diagnosis data fetched from a crash artifact source.
+type CollectionRecord struct {
+	FetchedAt      time.Time            `json:"fetchedAt"`
+	SourceEndpoint string               `json:"sourceEndpoint"`
+	Collection     panicdiag.Collection `json:"collection"`
+}
 
 // CollectionLister returns the latest crash collection records.
 type CollectionLister interface {
@@ -32,7 +53,7 @@ type collectionLister = CollectionLister
 
 // MultiCollectionProvider combines multiple collection sources into a single provider.
 // It deduplicates by artifact directory name so the same crash is not reported twice
-// when both the filesystem watcher and the HTTP collector detect it.
+// when both the filesystem watcher and the in-process store detect it.
 type MultiCollectionProvider struct {
 	providers []collectionLister
 }
@@ -70,4 +91,15 @@ func (m *MultiCollectionProvider) MarshalCollections() ([]byte, error) {
 		return nil, fmt.Errorf("marshal collections: %w", err)
 	}
 	return data, nil
+}
+
+func computeCapacity(capacitySizeBytes int64) int {
+	if capacitySizeBytes <= 0 {
+		return 1
+	}
+	capacity := int(capacitySizeBytes / estimatedRecordBytes)
+	if capacity < 1 {
+		return 1
+	}
+	return capacity
 }
