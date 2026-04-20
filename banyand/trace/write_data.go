@@ -35,7 +35,12 @@ import (
 )
 
 type syncPartContext struct {
-	tsTable             *tsTable
+	tsTable *tsTable
+	// segment is held until Close. On stages with Close=true, closeIdleSegments
+	// can drive refCount to 0; releasing earlier lets each sync call bottom out
+	// there, so the next session's incRef re-runs initTSTable and deletes the
+	// in-flight part.
+	segment             storage.Segment[*tsTable, *commonv1.ResourceOpts]
 	fileSystem          fs.FileSystem
 	l                   *logger.Logger
 	writers             *writers
@@ -139,6 +144,10 @@ func (s *syncPartContext) Close() error {
 			sidxPartContext.Close()
 		}
 		s.sidxPartContexts = nil
+	}
+	if s.segment != nil {
+		s.segment.DecRef()
+		s.segment = nil
 	}
 	s.tsTable = nil
 	s.fileSystem = nil
@@ -284,9 +293,9 @@ func (s *syncChunkCallback) CreatePartHandler(ctx *queue.ChunkedSyncPartContext)
 		s.l.Error().Err(err).Str("group", ctx.Group).Time("segmentTime", segmentTime).Msg("failed to create segment")
 		return nil, err
 	}
-	defer segment.DecRef()
 	tsTable, err := segment.CreateTSTableIfNotExist(common.ShardID(ctx.ShardID))
 	if err != nil {
+		segment.DecRef()
 		s.l.Error().Err(err).Str("group", ctx.Group).Uint32("shardID", ctx.ShardID).Msg("failed to create ts table")
 		return nil, err
 	}
@@ -294,9 +303,16 @@ func (s *syncChunkCallback) CreatePartHandler(ctx *queue.ChunkedSyncPartContext)
 	tsdb.Tick(ctx.MaxTimestamp)
 	partCtx := &syncPartContext{
 		tsTable: tsTable,
+		segment: segment,
 		l:       s.l,
 	}
-	return partCtx, partCtx.NewPartType(ctx)
+	if err := partCtx.NewPartType(ctx); err != nil {
+		if closeErr := partCtx.Close(); closeErr != nil {
+			return nil, fmt.Errorf("new part type: %w; close part context: %w", err, closeErr)
+		}
+		return nil, err
+	}
+	return partCtx, nil
 }
 
 // HandleFileChunk implements queue.ChunkedSyncHandler for streaming file chunks.

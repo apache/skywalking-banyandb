@@ -36,6 +36,7 @@ Release Notes.
 - Extract shared LocateAll on NodeRegistry to ensure resolveAssignments and syncer GetNodes always produce identical node lists, preventing liaison from enqueuing parts to online/healthy data nodes.
 - Add validation for MATCH and IN conditions in inverted index query builder, and handle nil OR branch when all entities are specific.
 - Fix wrong backup path of schema property.
+- Fix lifecycle migration failure when the target stage has `close: true`.
 
 ### Chores
 
