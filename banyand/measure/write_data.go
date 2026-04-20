@@ -34,7 +34,12 @@ import (
 )
 
 type syncPartContext struct {
-	tsTable    *tsTable
+	tsTable *tsTable
+	// segment is held until Close. On stages with Close=true, closeIdleSegments
+	// can drive refCount to 0; releasing earlier lets each sync call bottom out
+	// there, so the next session's incRef re-runs initTSTable and deletes the
+	// in-flight part.
+	segment    storage.Segment[*tsTable, *commonv1.ResourceOpts]
 	fileSystem fs.FileSystem
 	writers    *writers
 	partPath   string
@@ -76,6 +81,10 @@ func (s *syncPartContext) Close() error {
 		s.fileSystem.MustRMAll(s.partPath)
 		s.partPath = ""
 	}
+	if s.segment != nil {
+		s.segment.DecRef()
+		s.segment = nil
+	}
 	s.tsTable = nil
 	s.fileSystem = nil
 	return nil
@@ -113,9 +122,9 @@ func (s *syncCallback) CreatePartHandler(ctx *queue.ChunkedSyncPartContext) (que
 		s.l.Error().Err(err).Str("group", ctx.Group).Time("segmentTime", segmentTime).Msg("failed to create segment")
 		return nil, err
 	}
-	defer segment.DecRef()
 	tsTable, err := segment.CreateTSTableIfNotExist(common.ShardID(ctx.ShardID))
 	if err != nil {
+		segment.DecRef()
 		s.l.Error().Err(err).Str("group", ctx.Group).Uint32("shardID", ctx.ShardID).Msg("failed to create ts table")
 		return nil, err
 	}
@@ -131,6 +140,7 @@ func (s *syncCallback) CreatePartHandler(ctx *queue.ChunkedSyncPartContext) (que
 
 	partCtx := &syncPartContext{
 		tsTable:    tsTable,
+		segment:    segment,
 		fileSystem: fileSystem,
 		writers:    w,
 		partPath:   pp,
