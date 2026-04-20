@@ -30,9 +30,13 @@ import (
 	"github.com/apache/skywalking-banyandb/pkg/grpchelper"
 	"github.com/apache/skywalking-banyandb/pkg/logger"
 	"github.com/apache/skywalking-banyandb/pkg/pool"
+	"github.com/apache/skywalking-banyandb/pkg/test"
 	"github.com/apache/skywalking-banyandb/pkg/test/flags"
 	"github.com/apache/skywalking-banyandb/pkg/test/gmatcher"
 	"github.com/apache/skywalking-banyandb/pkg/test/helpers"
+	"github.com/apache/skywalking-banyandb/pkg/test/setup"
+	"github.com/apache/skywalking-banyandb/pkg/timestamp"
+	test_cases "github.com/apache/skywalking-banyandb/test/cases"
 	casesmeasure "github.com/apache/skywalking-banyandb/test/cases/measure"
 	casesproperty "github.com/apache/skywalking-banyandb/test/cases/property"
 	casesstream "github.com/apache/skywalking-banyandb/test/cases/stream"
@@ -40,18 +44,9 @@ import (
 	casestrace "github.com/apache/skywalking-banyandb/test/cases/trace"
 )
 
-// SetupResult contains all info returned by SetupFunc.
-type SetupResult struct {
-	Now      time.Time
-	StopFunc func()
-	Addr     string
-}
-
-// SetupFunc is provided by sub-packages to start the environment.
-var SetupFunc func() SetupResult
-
 var (
-	result     SetupResult
+	now        time.Time
+	stopFunc   func()
 	connection *grpc.ClientConn
 	goods      []gleak.Goroutine
 )
@@ -62,31 +57,42 @@ var _ = ginkgo.SynchronizedBeforeSuite(func() []byte {
 		Env:   "dev",
 		Level: flags.LogLevel,
 	})).To(gomega.Succeed())
-	result = SetupFunc()
-	return []byte(result.Addr)
+	tmpDir, tmpDirCleanup, tmpErr := test.NewSpace()
+	gomega.Expect(tmpErr).NotTo(gomega.HaveOccurred())
+	dfWriter := setup.NewDiscoveryFileWriter(tmpDir)
+	config := setup.PropertyClusterConfig(dfWriter)
+	addr, _, closeFn := setup.Standalone(config)
+	ns := timestamp.NowMilli().UnixNano()
+	now = time.Unix(0, ns-ns%int64(time.Minute)).Add(-time.Hour * 24)
+	test_cases.Initialize(addr, now)
+	stopFunc = func() {
+		closeFn()
+		tmpDirCleanup()
+	}
+	return []byte(addr)
 }, func(address []byte) {
 	var err error
 	connection, err = grpchelper.Conn(string(address), 10*time.Second,
 		grpc.WithTransportCredentials(insecure.NewCredentials()))
 	casesstream.SharedContext = helpers.SharedContext{
 		Connection: connection,
-		BaseTime:   result.Now,
+		BaseTime:   now,
 	}
 	casesmeasure.SharedContext = helpers.SharedContext{
 		Connection: connection,
-		BaseTime:   result.Now,
+		BaseTime:   now,
 	}
 	casestopn.SharedContext = helpers.SharedContext{
 		Connection: connection,
-		BaseTime:   result.Now,
+		BaseTime:   now,
 	}
 	casestrace.SharedContext = helpers.SharedContext{
 		Connection: connection,
-		BaseTime:   result.Now,
+		BaseTime:   now,
 	}
 	casesproperty.SharedContext = helpers.SharedContext{
 		Connection: connection,
-		BaseTime:   result.Now,
+		BaseTime:   now,
 	}
 	gomega.Expect(err).NotTo(gomega.HaveOccurred())
 })
@@ -99,8 +105,8 @@ var _ = ginkgo.SynchronizedAfterSuite(func() {
 
 var _ = ginkgo.ReportAfterSuite("Integration Query Cold Data Suite", func(report ginkgo.Report) {
 	if report.SuiteSucceeded {
-		if result.StopFunc != nil {
-			result.StopFunc()
+		if stopFunc != nil {
+			stopFunc()
 		}
 		gomega.Eventually(gleak.Goroutines, flags.EventuallyTimeout).ShouldNot(gleak.HaveLeaked(goods))
 		gomega.Eventually(pool.AllRefsCount, flags.EventuallyTimeout).Should(gmatcher.HaveZeroRef())

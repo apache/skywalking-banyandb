@@ -13,7 +13,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-{{- contains . }}
+{{- contains (. | noDuplicates) }}
 - id: {{ notEmpty .id }}
   name: gunicorn
   serviceid: {{ b64enc "productpage.default" }}.1

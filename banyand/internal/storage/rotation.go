@@ -34,6 +34,9 @@ var (
 )
 
 func (d *database[T, O]) Tick(ts int64) {
+	if ts <= 0 {
+		return
+	}
 	if (ts - timeEventSnapDuration) < d.latestTickTime.Load() {
 		return
 	}
@@ -102,7 +105,7 @@ func (d *database[T, O]) startRotationTask() error {
 						gap := latest.End.UnixNano() - ts
 						// gap <=0 means the event is from the future
 						// the segment will be created by a written event directly
-						if gap <= 0 || gap > newSegmentTimeGap {
+						if gap <= 0 || gap > newSegmentTimeGap || d.disableRotation {
 							return
 						}
 						d.incTotalRotationStarted(1)

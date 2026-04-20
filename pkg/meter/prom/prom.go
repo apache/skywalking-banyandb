@@ -18,18 +18,19 @@
 package prom
 
 import (
+	"errors"
 	"unsafe"
 
 	"github.com/prometheus/client_golang/prometheus"
-	"github.com/prometheus/client_golang/prometheus/promauto"
 
 	"github.com/apache/skywalking-banyandb/pkg/meter"
 )
 
 // Provider is a prometheus provider.
 type provider struct {
-	scope meter.Scope
-	reg   prometheus.Registerer
+	scope      meter.Scope
+	reg        prometheus.Registerer
+	collectors []prometheus.Collector
 }
 
 // NewProvider creates a new prometheus provider with given meter.Scope.
@@ -42,36 +43,60 @@ func NewProvider(scope meter.Scope, reg prometheus.Registerer) meter.Provider {
 
 // Counter returns a prometheus counter.
 func (p *provider) Counter(name string, labels ...string) meter.Counter {
-	return &counter{
-		counter: promauto.With(p.reg).NewCounterVec(prometheus.CounterOpts{
-			Name:        p.scope.GetNamespace() + "_" + name,
-			Help:        p.scope.GetNamespace() + "_" + name,
-			ConstLabels: convertLabels(p.scope.GetLabels()),
-		}, labels),
-	}
+	vec := prometheus.NewCounterVec(prometheus.CounterOpts{
+		Name:        p.scope.GetNamespace() + "_" + name,
+		Help:        p.scope.GetNamespace() + "_" + name,
+		ConstLabels: convertLabels(p.scope.GetLabels()),
+	}, labels)
+	collected := registerCollector(p.reg, vec)
+	p.collectors = append(p.collectors, collected)
+	return &counter{counter: collected}
 }
 
 // Gauge returns a prometheus gauge.
 func (p *provider) Gauge(name string, labels ...string) meter.Gauge {
-	return &gauge{
-		gauge: promauto.With(p.reg).NewGaugeVec(prometheus.GaugeOpts{
-			Name:        p.scope.GetNamespace() + "_" + name,
-			Help:        p.scope.GetNamespace() + "_" + name,
-			ConstLabels: convertLabels(p.scope.GetLabels()),
-		}, labels),
-	}
+	vec := prometheus.NewGaugeVec(prometheus.GaugeOpts{
+		Name:        p.scope.GetNamespace() + "_" + name,
+		Help:        p.scope.GetNamespace() + "_" + name,
+		ConstLabels: convertLabels(p.scope.GetLabels()),
+	}, labels)
+	collected := registerCollector(p.reg, vec)
+	p.collectors = append(p.collectors, collected)
+	return &gauge{gauge: collected}
 }
 
 // Histogram returns a prometheus histogram.
 func (p *provider) Histogram(name string, buckets meter.Buckets, labels ...string) meter.Histogram {
-	return &histogram{
-		histogram: promauto.With(p.reg).NewHistogramVec(prometheus.HistogramOpts{
-			Name:        p.scope.GetNamespace() + "_" + name,
-			Help:        p.scope.GetNamespace() + "_" + name,
-			ConstLabels: convertLabels(p.scope.GetLabels()),
-			Buckets:     buckets,
-		}, labels),
+	vec := prometheus.NewHistogramVec(prometheus.HistogramOpts{
+		Name:        p.scope.GetNamespace() + "_" + name,
+		Help:        p.scope.GetNamespace() + "_" + name,
+		ConstLabels: convertLabels(p.scope.GetLabels()),
+		Buckets:     buckets,
+	}, labels)
+	collected := registerCollector(p.reg, vec)
+	p.collectors = append(p.collectors, collected)
+	return &histogram{histogram: collected}
+}
+
+func registerCollector[T prometheus.Collector](reg prometheus.Registerer, c T) T {
+	if regErr := reg.Register(c); regErr != nil {
+		var are prometheus.AlreadyRegisteredError
+		if errors.As(regErr, &are) {
+			if existing, ok := are.ExistingCollector.(T); ok {
+				return existing
+			}
+		}
+		panic(regErr)
 	}
+	return c
+}
+
+// Close unregisters all collectors from the prometheus registry.
+func (p *provider) Close() {
+	for _, c := range p.collectors {
+		p.reg.Unregister(c)
+	}
+	p.collectors = nil
 }
 
 // convertLabels converts a map of labels to a prometheus.Labels.

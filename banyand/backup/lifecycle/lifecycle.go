@@ -37,7 +37,7 @@ import (
 func NewCommand() *cobra.Command {
 	logging := logger.Logging{}
 	crashOutputCfg := panicdiag.NewCrashOutputConfig()
-	metaSvc, err := metadata.NewClient(false, false)
+	metaSvc, err := metadata.NewClient()
 	if err != nil {
 		logger.GetLogger().Err(err).Msg("failed to initiate metadata service")
 	}

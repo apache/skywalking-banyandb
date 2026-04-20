@@ -76,12 +76,5 @@ services:
     networks:
       - e2e
 
-  etcd:
-    extends:
-      file: ../../../docker/base-compose.yml
-      service: etcd
-    networks:
-      - e2e
-
 networks:
   e2e:

@@ -76,7 +76,8 @@ var VerifyFn = func(innerGm gm.Gomega, sharedContext helpers.SharedContext, args
 	query.TimeRange = helpers.TimeRange(args, sharedContext)
 	query.Stages = args.Stages
 	c := streamv1.NewStreamServiceClient(sharedContext.Connection)
-	ctx := context.Background()
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
 	resp, err := c.Query(ctx, query)
 	if args.WantErr {
 		if err == nil {
@@ -248,7 +249,9 @@ func verifyQLWithRequest(innerGm gm.Gomega, args helpers.Args, yamlQuery *stream
 	query, errStrs := bydbql.ParseQuery(qlQueryStr)
 	innerGm.Expect(errStrs).To(gm.BeNil())
 	transformer := bydbql.NewTransformer(mockRepo)
-	transform, err := transformer.Transform(context.Background(), query)
+	transformCtx, transformCancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer transformCancel()
+	transform, err := transformer.Transform(transformCtx, query)
 	if args.WantErr && err != nil {
 		return
 	}
@@ -268,8 +271,9 @@ func verifyQLWithRequest(innerGm gm.Gomega, args helpers.Args, yamlQuery *stream
 
 	// simple check the QL can be executed
 	client := bydbqlv1.NewBydbQLServiceClient(conn)
-	ctx := context.Background()
-	bydbqlResp, err := client.Query(ctx, &bydbqlv1.QueryRequest{
+	qlCtx, qlCancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer qlCancel()
+	bydbqlResp, err := client.Query(qlCtx, &bydbqlv1.QueryRequest{
 		Query: qlQueryStr,
 	})
 	if args.WantErr {

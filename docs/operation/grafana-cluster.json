@@ -482,7 +482,7 @@
         "type": "prometheus",
         "uid": "${DS_PROMETHEUS}"
       },
-      "description": "The etcd operation rate is the number of etcd operations per second. It is calculated by summing the total number of etcd operations.",
+      "description": "The registry operation rate is the number of registry operations per second. It is calculated by summing the total number of registry operations.",
       "fieldConfig": {
         "defaults": {
           "color": {
@@ -545,7 +545,7 @@
           "refId": "A"
         }
       ],
-      "title": "Etcd Operation Rate",
+      "title": "Registry Operation Rate",
       "type": "stat"
     },
     {

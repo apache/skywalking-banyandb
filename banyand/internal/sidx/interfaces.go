@@ -37,6 +37,8 @@ import (
 type SnapshotTransactionSupport interface {
 	// PrepareMemPart prepares a transition for introducing a memory part.
 	PrepareMemPart(partID uint64, mp *MemPart) func(cur *Snapshot) *Snapshot
+	// PrepareFilePart prepares a transition for introducing a file-backed part.
+	PrepareFilePart(partID uint64, partPath string) func(cur *Snapshot) *Snapshot
 	// PrepareFlushed prepares a transition for introducing flushed parts.
 	PrepareFlushed(intro *FlusherIntroduction) func(cur *Snapshot) *Snapshot
 	// PrepareMerged prepares a transition for introducing merged parts.

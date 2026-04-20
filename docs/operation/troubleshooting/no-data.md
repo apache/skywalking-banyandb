@@ -21,6 +21,6 @@ Verify that the data retention policy is not deleting data prematurely. If the d
 
 ## Metadata Missing
 
-If the metadata for a group, measure or stream is missing, it can result in missing data in query results. Ensure that the metadata for the group, measure or stream is correctly defined and available in the BanyanDB metadata registry.
+If the metadata for a group, measure, stream or trace is missing, it can result in missing data in query results. Ensure that the metadata for the group, measure, stream or trace is correctly defined and available in the BanyanDB metadata registry.
 
 If only the metadata is missing, you can recreate the metadata using the SkyWalking OAP, bydbctl or WebUI to restore the missing metadata. Refer to the [metadata management](../../interacting/bydbctl/schema/) documentation for more information.

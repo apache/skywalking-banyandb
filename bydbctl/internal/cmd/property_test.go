@@ -38,7 +38,6 @@ import (
 	databasev1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/database/v1"
 	propertyv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/property/v1"
 	streamv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/stream/v1"
-	"github.com/apache/skywalking-banyandb/banyand/metadata/embeddedetcd"
 	"github.com/apache/skywalking-banyandb/banyand/metadata/schema"
 	"github.com/apache/skywalking-banyandb/banyand/observability"
 	"github.com/apache/skywalking-banyandb/banyand/property/gossip"
@@ -414,7 +413,7 @@ var _ = Describe("Property Cluster Operation", func() {
 		By("Starting node1 with data")
 		node1Dir, spaceDef1, err = test.NewSpace()
 		Expect(err).NotTo(HaveOccurred())
-		ports, err = test.AllocateFreePorts(4)
+		ports, err = test.AllocateFreePorts(5)
 		Expect(err).NotTo(HaveOccurred())
 		_, node1Addr, node1Defer := setup.ClosableStandalone(nil, node1Dir, ports)
 		node1Addr = httpSchema + node1Addr
@@ -432,7 +431,7 @@ var _ = Describe("Property Cluster Operation", func() {
 		By("Starting node2 with data")
 		node2Dir, spaceDef2, err = test.NewSpace()
 		Expect(err).NotTo(HaveOccurred())
-		ports, err = test.AllocateFreePorts(4)
+		ports, err = test.AllocateFreePorts(5)
 		Expect(err).NotTo(HaveOccurred())
 		_, node2Addr, node2Defer := setup.ClosableStandalone(nil, node2Dir, ports)
 		node2Addr = httpSchema + node2Addr
@@ -446,19 +445,10 @@ var _ = Describe("Property Cluster Operation", func() {
 		node2Defer()
 
 		// setup cluster with two data nodes
-		By("Starting etcd server")
-		ports, err = test.AllocateFreePorts(2)
-		Expect(err).NotTo(HaveOccurred())
 		dir, spaceDef, err := test.NewSpace()
 		Expect(err).NotTo(HaveOccurred())
-		ep := fmt.Sprintf("http://127.0.0.1:%d", ports[0])
-		server, err := embeddedetcd.NewServer(
-			embeddedetcd.ConfigureListener([]string{ep}, []string{fmt.Sprintf("http://127.0.0.1:%d", ports[1])}),
-			embeddedetcd.RootDir(dir),
-		)
-		Expect(err).ShouldNot(HaveOccurred())
-		<-server.ReadyNotify()
-		config := setup.EtcdClusterConfig(ep)
+		dfWriter := setup.NewDiscoveryFileWriter(dir)
+		config := setup.PropertyClusterConfig(dfWriter)
 		By("Starting data node 0")
 		_, _, closeNode1 = setup.DataNodeFromDataDir(config, node1Dir)
 		By("Starting data node 1")
@@ -471,8 +461,6 @@ var _ = Describe("Property Cluster Operation", func() {
 			closerLiaisonNode()
 			closeNode1()
 			closeNode2()
-			_ = server.Close()
-			<-server.StopNotify()
 			spaceDef()
 			spaceDef1()
 			spaceDef2()
@@ -597,7 +585,7 @@ var _ = Describe("Property Cluster background Repair Operation", func() {
 		By("Starting node1 with data")
 		node1Dir, spaceDef1, err = test.NewSpace()
 		Expect(err).NotTo(HaveOccurred())
-		ports, err = test.AllocateFreePorts(4)
+		ports, err = test.AllocateFreePorts(5)
 		Expect(err).NotTo(HaveOccurred())
 		_, node1Addr, node1Defer := setup.ClosableStandalone(nil, node1Dir, ports)
 		node1Addr = httpSchema + node1Addr
@@ -608,7 +596,7 @@ var _ = Describe("Property Cluster background Repair Operation", func() {
 		By("Starting node2 with data")
 		node2Dir, spaceDef2, err = test.NewSpace()
 		Expect(err).NotTo(HaveOccurred())
-		ports, err = test.AllocateFreePorts(4)
+		ports, err = test.AllocateFreePorts(5)
 		Expect(err).NotTo(HaveOccurred())
 		_, node2Addr, node2Defer := setup.ClosableStandalone(nil, node2Dir, ports)
 		node2Addr = httpSchema + node2Addr
@@ -617,19 +605,10 @@ var _ = Describe("Property Cluster background Repair Operation", func() {
 		node2Defer()
 
 		// setup cluster with two data nodes
-		By("Starting etcd server")
-		ports, err = test.AllocateFreePorts(4)
-		Expect(err).NotTo(HaveOccurred())
 		dir, spaceDef, err := test.NewSpace()
 		Expect(err).NotTo(HaveOccurred())
-		ep := fmt.Sprintf("http://127.0.0.1:%d", ports[0])
-		server, err := embeddedetcd.NewServer(
-			embeddedetcd.ConfigureListener([]string{ep}, []string{fmt.Sprintf("http://127.0.0.1:%d", ports[1])}),
-			embeddedetcd.RootDir(dir),
-		)
-		Expect(err).ShouldNot(HaveOccurred())
-		<-server.ReadyNotify()
-		config := setup.EtcdClusterConfig(ep)
+		dfWriter := setup.NewDiscoveryFileWriter(dir)
+		config := setup.PropertyClusterConfig(dfWriter)
 		By("Starting data node 0")
 		var node1Repair, node2Repair string
 		node1ID, node1Repair, closeNode1 = setup.DataNodeFromDataDir(config, node1Dir, "--property-repair-enabled=true")
@@ -663,8 +642,6 @@ var _ = Describe("Property Cluster background Repair Operation", func() {
 			closerLiaisonNode()
 			closeNode1()
 			closeNode2()
-			_ = server.Close()
-			<-server.StopNotify()
 			spaceDef()
 			spaceDef1()
 			spaceDef2()
@@ -719,8 +696,6 @@ var _ = Describe("Property Cluster Resilience with 5 Data Nodes", func() {
 	var nodeDirs []string
 	var closeNodes []func()
 	var messenger gossip.Messenger
-	var server embeddedetcd.Server
-	var ep string
 	var clusterConfig *setup.ClusterConfig
 	nodeCount := 5
 	closedNodeCount := 3
@@ -728,7 +703,6 @@ var _ = Describe("Property Cluster Resilience with 5 Data Nodes", func() {
 	BeforeEach(func() {
 		rootCmd = &cobra.Command{Use: "root"}
 		cmd.RootCmdFlags(rootCmd)
-		var ports []int
 		var err error
 		var spaceDefs []func()
 
@@ -745,28 +719,18 @@ var _ = Describe("Property Cluster Resilience with 5 Data Nodes", func() {
 			Expect(err).NotTo(HaveOccurred())
 		}
 
-		// Setup cluster with etcd server
-		By("Starting etcd server")
-		ports, err = test.AllocateFreePorts(2)
-		Expect(err).NotTo(HaveOccurred())
 		dir, spaceDef, err := test.NewSpace()
 		Expect(err).NotTo(HaveOccurred())
-		ep = fmt.Sprintf("http://127.0.0.1:%d", ports[0])
-		server, err = embeddedetcd.NewServer(
-			embeddedetcd.ConfigureListener([]string{ep}, []string{fmt.Sprintf("http://127.0.0.1:%d", ports[1])}),
-			embeddedetcd.RootDir(dir),
-		)
-		Expect(err).ShouldNot(HaveOccurred())
-		<-server.ReadyNotify()
-
-		clusterConfig = setup.EtcdClusterConfig(ep)
-		// Start 5 data nodes
+		dfWriter := setup.NewDiscoveryFileWriter(dir)
+		clusterConfig = setup.PropertyClusterConfig(dfWriter)
+		// Start 5 data nodes with short file discovery interval for faster failure detection
 		for i := 0; i < nodeCount; i++ {
 			By(fmt.Sprintf("Starting data node %d", i))
 			nodeIDs[i], nodeRepairAddrs[i], closeNodes[i] = setup.DataNodeFromDataDir(clusterConfig, nodeDirs[i],
 				"--logging-level=debug",
 				"--property-repair-enabled=true", "--property-repair-quick-build-tree-time=1s",
-				"--property-repair-build-tree-cron=@every 2s")
+				"--property-repair-build-tree-cron=@every 2s",
+				"--node-discovery-file-fetch-interval=1s")
 			// Update node ID to use 127.0.0.1
 			_, nodePort, found := strings.Cut(nodeIDs[i], ":")
 			Expect(found).To(BeTrue())
@@ -774,7 +738,8 @@ var _ = Describe("Property Cluster Resilience with 5 Data Nodes", func() {
 		}
 
 		By("Starting liaison node")
-		_, liaisonHTTPAddr, closerLiaisonNode := setup.LiaisonNodeWithHTTP(clusterConfig)
+		_, liaisonHTTPAddr, closerLiaisonNode := setup.LiaisonNodeWithHTTP(clusterConfig,
+			"--node-discovery-file-fetch-interval=1s")
 		addr = httpSchema + liaisonHTTPAddr
 
 		By("Creating test group with shard=1, copies=5")
@@ -802,8 +767,6 @@ var _ = Describe("Property Cluster Resilience with 5 Data Nodes", func() {
 					closeNodes[i]()
 				}
 			}
-			_ = server.Close()
-			<-server.StopNotify()
 			spaceDef()
 			for i := 0; i < nodeCount; i++ {
 				spaceDefs[i]()
@@ -833,7 +796,12 @@ var _ = Describe("Property Cluster Resilience with 5 Data Nodes", func() {
 			GinkgoWriter.Printf("Closing node %d\n", i)
 			closeNodes[i]()
 			closeNodes[i] = nil
+			// Remove the dead node from discovery file so file discovery doesn't keep retrying it.
+			clusterConfig.NodeDiscovery.FileWriter.RemoveNode(nodeIDs[i])
 		}
+
+		By("Waiting for file discovery to propagate node removal")
+		time.Sleep(5 * time.Second)
 
 		By(fmt.Sprintf("Verifying data can still be queried after closing %d nodes", closedNodeCount))
 		queryData(rootCmd, addr, propertyGroup, property1ID, 1, func(data string, _ *propertyv1.QueryResponse) {
@@ -858,7 +826,8 @@ var _ = Describe("Property Cluster Resilience with 5 Data Nodes", func() {
 			nodeIDs[i], nodeRepairAddrs[i], closeNodes[i] = setup.DataNodeFromDataDir(clusterConfig, nodeDirs[i],
 				"--logging-level=debug",
 				"--property-repair-enabled=true", "--property-repair-quick-build-tree-time=1s",
-				"--property-repair-build-tree-cron=@every 2s")
+				"--property-repair-build-tree-cron=@every 2s",
+				"--node-discovery-file-fetch-interval=1s")
 			// Update node ID to use 127.0.0.1
 			_, nodePort, found := strings.Cut(nodeIDs[i], ":")
 			Expect(found).To(BeTrue())

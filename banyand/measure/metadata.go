@@ -82,6 +82,8 @@ type schemaRepo struct {
 	metadata         metadata.Repo
 	pipeline         queue.Client
 	l                *logger.Logger
+	ctx              context.Context
+	cancel           context.CancelFunc
 	closingGroups    map[string]struct{}
 	topNProcessorMap sync.Map
 	nodeID           string
@@ -91,6 +93,7 @@ type schemaRepo struct {
 }
 
 func newSchemaRepo(path string, svc *standalone, nodeLabels map[string]string, nodeID string) *schemaRepo {
+	ctx, cancel := context.WithCancel(context.Background())
 	sr := &schemaRepo{
 		path:          path,
 		l:             svc.l,
@@ -99,6 +102,8 @@ func newSchemaRepo(path string, svc *standalone, nodeLabels map[string]string, n
 		nodeID:        nodeID,
 		closingGroups: make(map[string]struct{}),
 		role:          databasev1.Role_ROLE_DATA,
+		ctx:           ctx,
+		cancel:        cancel,
 	}
 	sr.Repository = resourceSchema.NewRepository(
 		svc.metadata,
@@ -111,6 +116,7 @@ func newSchemaRepo(path string, svc *standalone, nodeLabels map[string]string, n
 }
 
 func newLiaisonSchemaRepo(path string, svc *liaison, measureDataNodeRegistry grpc.NodeRegistry, pipeline queue.Client) *schemaRepo {
+	ctx, cancel := context.WithCancel(context.Background())
 	sr := &schemaRepo{
 		path:          path,
 		l:             svc.l,
@@ -118,6 +124,8 @@ func newLiaisonSchemaRepo(path string, svc *liaison, measureDataNodeRegistry grp
 		pipeline:      pipeline,
 		closingGroups: make(map[string]struct{}),
 		role:          databasev1.Role_ROLE_LIAISON,
+		ctx:           ctx,
+		cancel:        cancel,
 	}
 	sr.Repository = resourceSchema.NewRepository(
 		svc.metadata,
@@ -188,7 +196,7 @@ func (sr *schemaRepo) OnInit(kinds []schema.Kind) (bool, []int64) {
 	}
 	groupNames, revs := sr.Repository.Init(schema.KindMeasure)
 	for i := range groupNames {
-		sr.createTopNResultMeasure(context.Background(), sr.metadata.MeasureRegistry(), groupNames[i])
+		sr.createTopNResultMeasure(sr.ctx, sr.metadata.MeasureRegistry(), groupNames[i])
 	}
 	return true, revs
 }
@@ -209,7 +217,7 @@ func (sr *schemaRepo) OnAddOrUpdate(metadata schema.Metadata) {
 			Kind:     resourceSchema.EventKindGroup,
 			Metadata: g,
 		})
-		sr.createTopNResultMeasure(context.Background(), sr.metadata.MeasureRegistry(), g.Metadata.Name)
+		sr.createTopNResultMeasure(sr.ctx, sr.metadata.MeasureRegistry(), g.Metadata.Name)
 	case schema.KindMeasure:
 		m := metadata.Spec.(*databasev1.Measure)
 		if err := validate.Measure(m); err != nil {
@@ -327,6 +335,10 @@ func (sr *schemaRepo) OnDelete(metadata schema.Metadata) {
 }
 
 func (sr *schemaRepo) Close() {
+	sr.cancel()
+	// Close the Repository first to stop the event watcher, ensuring no new
+	// topN processors are created while we are draining the existing ones.
+	sr.Repository.Close()
 	var err error
 	sr.topNProcessorMap.Range(func(_, val any) bool {
 		manager := val.(*topNProcessorManager)
@@ -336,7 +348,6 @@ func (sr *schemaRepo) Close() {
 	if err != nil {
 		sr.l.Error().Err(err).Msg("faced error when closing schema repository")
 	}
-	sr.Repository.Close()
 }
 
 func (sr *schemaRepo) loadMeasure(metadata *commonv1.Metadata) (*measure, bool) {
@@ -578,9 +589,10 @@ func (sr *schemaRepo) createTopNResultMeasure(ctx context.Context, measureSchema
 	backoffStrategy := backoff.NewExponentialBackOff()
 	backoffStrategy.MaxElapsedTime = 0 // never stop until topN measure has been created
 
-	err := backoff.Retry(operation, backoffStrategy)
-	if err != nil {
-		logger.Panicf("fail to create topN measure %s: %v", md, err)
+	if err := backoff.Retry(operation, backoff.WithContext(backoffStrategy, ctx)); err != nil {
+		if !errors.Is(err, context.Canceled) {
+			logger.Panicf("fail to create topN measure %s: %v", md, err)
+		}
 	}
 }
 
@@ -616,16 +628,17 @@ func (sr *schemaRepo) stopAllProcessorsWithGroupPrefix(groupName string) {
 var _ resourceSchema.ResourceSupplier = (*supplier)(nil)
 
 type supplier struct {
-	metadata     metadata.Repo
-	omr          observability.MetricsRegistry
-	c            storage.Cache
-	pm           protector.Memory
-	l            *logger.Logger
-	schemaRepo   *schemaRepo
-	nodeLabels   map[string]string
-	queryMetrics atomic.Pointer[queryMetrics]
-	path         string
-	option       option
+	metadata            metadata.Repo
+	omr                 observability.MetricsRegistry
+	c                   storage.Cache
+	pm                  protector.Memory
+	l                   *logger.Logger
+	schemaRepo          *schemaRepo
+	nodeLabels          map[string]string
+	queryMetrics        atomic.Pointer[queryMetrics]
+	queryMetricsFactory atomic.Value
+	path                string
+	option              option
 }
 
 func newSupplier(path string, svc *standalone, sr *schemaRepo, nodeLabels map[string]string) *supplier {
@@ -681,6 +694,7 @@ func (s *supplier) OpenDB(groupSchema *commonv1.Group) (resourceSchema.DB, error
 	segInterval := ro.SegmentInterval
 	segmentIdleTimeout := time.Duration(0)
 	disableRetention := false
+	disableRotation := false
 	if len(ro.Stages) > 0 && len(s.nodeLabels) > 0 {
 		var ttlNum uint32
 		foundMatched := false
@@ -704,10 +718,12 @@ func (s *supplier) OpenDB(groupSchema *commonv1.Group) (resourceSchema.DB, error
 				segmentIdleTimeout = 5 * time.Minute
 			}
 			disableRetention = i+1 < len(ro.Stages)
+			disableRotation = true
 			break
 		}
 		if !foundMatched {
 			disableRetention = true
+			disableRotation = true
 		}
 	}
 	group := groupSchema.Metadata.Name
@@ -724,6 +740,7 @@ func (s *supplier) OpenDB(groupSchema *commonv1.Group) (resourceSchema.DB, error
 		StorageMetricsFactory:          factory,
 		SegmentIdleTimeout:             segmentIdleTimeout,
 		DisableRetention:               disableRetention,
+		DisableRotation:                disableRotation,
 		MemoryLimit:                    s.pm.GetLimit(),
 	}
 	return storage.OpenTSDB(
@@ -787,28 +804,22 @@ func (s *queueSupplier) OpenDB(groupSchema *commonv1.Group) (resourceSchema.DB, 
 	}
 	shardNum := ro.ShardNum
 	group := groupSchema.Metadata.Name
+	metrics, metricsFactory := s.newMetrics(p)
 	opts := wqueue.Opts[*tsTable, option]{
 		Group:           group,
 		ShardNum:        shardNum,
 		SegmentInterval: storage.MustToIntervalRule(ro.SegmentInterval),
 		Location:        path.Join(s.path, group),
 		Option:          s.option,
-		Metrics:         s.newMetrics(p),
+		Metrics:         metrics,
+		MetricsFactory:  metricsFactory,
 		SubQueueCreator: newWriteQueue,
 		GetNodes: func(shardID common.ShardID) []string {
 			copies := ro.Replicas + 1
-			nodeSet := make(map[string]struct{}, copies)
-			for i := uint32(0); i < copies; i++ {
-				nodeID, err := s.measureDataNodeRegistry.Locate(group, "", uint32(shardID), i)
-				if err != nil {
-					s.l.Error().Err(err).Str("group", group).Uint32("shard", uint32(shardID)).Uint32("copy", i).Msg("failed to locate node")
-					return nil
-				}
-				nodeSet[nodeID] = struct{}{}
-			}
-			nodes := make([]string, 0, len(nodeSet))
-			for nodeID := range nodeSet {
-				nodes = append(nodes, nodeID)
+			nodes, err := s.measureDataNodeRegistry.LocateAll(group, uint32(shardID), int(copies))
+			if err != nil {
+				s.l.Error().Err(err).Str("group", group).Uint32("shard", uint32(shardID)).Msg("failed to locate nodes")
+				return nil
 			}
 			return nodes
 		},
@@ -821,7 +832,7 @@ func (s *queueSupplier) OpenDB(groupSchema *commonv1.Group) (resourceSchema.DB, 
 	)
 }
 
-func (s *queueSupplier) newMetrics(p common.Position) storage.Metrics {
+func (s *queueSupplier) newMetrics(p common.Position) (storage.Metrics, observability.Factory) {
 	factory := s.omr.With(measureScope.ConstLabels(meter.ToLabelPairs(common.DBLabelNames(), p.DBLabelValues())))
 	return &metrics{
 		totalWritten:               factory.NewCounter("total_written"),
@@ -863,7 +874,7 @@ func (s *queueSupplier) newMetrics(p common.Position) storage.Metrics {
 			totalFilePartUncompressedBytes: factory.NewGauge("total_file_part_uncompressed_bytes", common.ShardLabelNames()...),
 			pendingDataCount:               factory.NewGauge("pending_data_count", common.ShardLabelNames()...),
 		},
-	}
+	}, factory
 }
 
 // GetTopNSchema returns the schema of the topN result measure.

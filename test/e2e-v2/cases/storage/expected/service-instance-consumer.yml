@@ -15,7 +15,7 @@
 # specific language governing permissions and limitations
 # under the License.
 
-{{- contains . }}
+{{- contains (. | noDuplicates) }}
 - id: {{ b64enc "e2e-service-consumer" }}.1_{{ b64enc "consumer1" }}
   name: consumer1
   attributes:

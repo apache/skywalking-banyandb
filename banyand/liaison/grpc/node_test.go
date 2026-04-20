@@ -58,4 +58,15 @@ func TestClusterNodeRegistry(t *testing.T) {
 	nodeID, err := cnr.Locate("metrics", "instance_traffic", 0, 0)
 	assert.NoError(t, err)
 	assert.Equal(t, fakeNodeID, nodeID)
+
+	nodes, locateAllErr := cnr.LocateAll("metrics", 0, 3)
+	assert.NoError(t, locateAllErr)
+	assert.Equal(t, []string{fakeNodeID}, nodes)
+}
+
+func TestLocalNodeRegistry_LocateAll(t *testing.T) {
+	nr := NewLocalNodeRegistry()
+	nodes, err := nr.LocateAll("any-group", 0, 3)
+	assert.NoError(t, err)
+	assert.Equal(t, []string{"local"}, nodes)
 }

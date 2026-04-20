@@ -19,6 +19,7 @@ package storage
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -639,5 +640,223 @@ func TestDeleteExpiredSegmentsWithClosedSegments(t *testing.T) {
 	for i, seg := range sc.lst {
 		assert.Equal(t, expectedDates[i].Format(dayFormat), seg.TimeRange.Start.Format(dayFormat),
 			"Remaining segment %d should be from the expected date", i)
+	}
+}
+
+func TestCreateSegmentWritesJSONMetadata(t *testing.T) {
+	tempDir, cleanup := setupTestEnvironment(t)
+	defer cleanup()
+
+	ctx := context.Background()
+	l := logger.GetLogger("test-segment-metadata")
+	ctx = context.WithValue(ctx, logger.ContextKey, l)
+	ctx = common.SetPosition(ctx, func(_ common.Position) common.Position {
+		return common.Position{
+			Database: "test-db",
+			Stage:    "test-stage",
+		}
+	})
+
+	opts := TSDBOpts[mockTSTable, mockTSTableOpener]{
+		TSTableCreator: func(_ fs.FileSystem, _ string, _ common.Position, _ *logger.Logger,
+			_ timestamp.TimeRange, _ mockTSTableOpener, _ any,
+		) (mockTSTable, error) {
+			return mockTSTable{ID: common.ShardID(0)}, nil
+		},
+		ShardNum:                       1,
+		SegmentInterval:                IntervalRule{Unit: DAY, Num: 1},
+		TTL:                            IntervalRule{Unit: DAY, Num: 7},
+		SeriesIndexFlushTimeoutSeconds: 10,
+		SeriesIndexCacheMaxBytes:       1024 * 1024,
+	}
+
+	serviceCache := NewServiceCache().(*serviceCache)
+	sc := newSegmentController[mockTSTable, mockTSTableOpener](
+		ctx,
+		tempDir,
+		l,
+		opts,
+		nil,
+		nil,
+		5*time.Minute,
+		fs.NewLocalFileSystemWithLoggerAndLimit(logger.GetLogger("storage"), opts.MemoryLimit),
+		serviceCache,
+		group,
+	)
+
+	now := time.Now().UTC()
+	startTime := time.Date(now.Year(), now.Month(), now.Day(), 0, 0, 0, 0, time.UTC)
+
+	seg, createErr := sc.create(startTime)
+	require.NoError(t, createErr)
+	require.NotNil(t, seg)
+
+	// Read metadata from disk and verify it's JSON with endTime
+	suffix := startTime.Format(dayFormat)
+	metadataPath := filepath.Join(tempDir, fmt.Sprintf("seg-%s", suffix), metadataFilename)
+	rawMeta, readErr := os.ReadFile(metadataPath)
+	require.NoError(t, readErr)
+
+	meta, parseErr := readSegmentMeta(rawMeta)
+	require.NoError(t, parseErr)
+	assert.Equal(t, currentVersion, meta.Version)
+	assert.NotEmpty(t, meta.EndTime, "endTime should be persisted in metadata")
+
+	// Verify the endTime matches the segment's End
+	expectedEnd := startTime.Add(24 * time.Hour)
+	assert.Equal(t, expectedEnd.Format(time.RFC3339Nano), meta.EndTime)
+
+	seg.DecRef()
+}
+
+func TestOpenReadsPersistedEndTime(t *testing.T) {
+	tempDir, cleanup := setupTestEnvironment(t)
+	defer cleanup()
+
+	ctx := context.Background()
+	l := logger.GetLogger("test-open-endtime")
+	ctx = context.WithValue(ctx, logger.ContextKey, l)
+	ctx = common.SetPosition(ctx, func(_ common.Position) common.Position {
+		return common.Position{
+			Database: "test-db",
+			Stage:    "test-stage",
+		}
+	})
+
+	group := "test-group"
+	opts := TSDBOpts[mockTSTable, mockTSTableOpener]{
+		TSTableCreator: func(_ fs.FileSystem, _ string, _ common.Position, _ *logger.Logger,
+			_ timestamp.TimeRange, _ mockTSTableOpener, _ any,
+		) (mockTSTable, error) {
+			return mockTSTable{ID: common.ShardID(0)}, nil
+		},
+		ShardNum:                       1,
+		SegmentInterval:                IntervalRule{Unit: DAY, Num: 1},
+		TTL:                            IntervalRule{Unit: DAY, Num: 30},
+		SeriesIndexFlushTimeoutSeconds: 10,
+		SeriesIndexCacheMaxBytes:       1024 * 1024,
+	}
+
+	serviceCache := NewServiceCache().(*serviceCache)
+	sc := newSegmentController[mockTSTable, mockTSTableOpener](
+		ctx,
+		tempDir,
+		l,
+		opts,
+		nil,
+		nil,
+		5*time.Minute,
+		fs.NewLocalFileSystemWithLoggerAndLimit(logger.GetLogger("storage"), opts.MemoryLimit),
+		serviceCache,
+		group,
+	)
+
+	now := time.Now().UTC()
+	day1 := time.Date(now.Year(), now.Month(), now.Day(), 0, 0, 0, 0, time.UTC)
+	day2 := day1.Add(24 * time.Hour)
+
+	// Manually create segment directories with JSON metadata.
+	// day1 with a specific endTime that differs from the default NextTime.
+	customEnd := day1.Add(12 * time.Hour)
+	segPath1 := filepath.Join(tempDir, "seg-"+day1.Format(dayFormat))
+	require.NoError(t, os.MkdirAll(segPath1, DirPerm))
+	meta1 := segmentMeta{Version: currentVersion, EndTime: customEnd.Format(time.RFC3339Nano)}
+	meta1Data, marshalErr := json.Marshal(meta1)
+	require.NoError(t, marshalErr)
+	require.NoError(t, os.WriteFile(filepath.Join(segPath1, metadataFilename), meta1Data, FilePerm))
+
+	// day2 with standard endTime.
+	segPath2 := filepath.Join(tempDir, "seg-"+day2.Format(dayFormat))
+	require.NoError(t, os.MkdirAll(segPath2, DirPerm))
+	meta2 := segmentMeta{Version: currentVersion, EndTime: day2.Add(24 * time.Hour).Format(time.RFC3339Nano)}
+	meta2Data, marshalErr := json.Marshal(meta2)
+	require.NoError(t, marshalErr)
+	require.NoError(t, os.WriteFile(filepath.Join(segPath2, metadataFilename), meta2Data, FilePerm))
+
+	// Open the controller (loads segments from disk).
+	openErr := sc.open()
+	require.NoError(t, openErr)
+
+	// Verify segments loaded correctly.
+	require.Len(t, sc.lst, 2)
+
+	// First segment should have the custom endTime from metadata.
+	assert.Equal(t, customEnd, sc.lst[0].End, "segment 0 should use persisted endTime")
+	// Second segment should have its endTime from metadata.
+	assert.Equal(t, day2.Add(24*time.Hour), sc.lst[1].End, "segment 1 should use persisted endTime")
+
+	for _, seg := range sc.lst {
+		seg.DecRef()
+	}
+}
+
+func TestOpenFallbackOldFormatMetadata(t *testing.T) {
+	tempDir, cleanup := setupTestEnvironment(t)
+	defer cleanup()
+
+	ctx := context.Background()
+	l := logger.GetLogger("test-open-fallback")
+	ctx = context.WithValue(ctx, logger.ContextKey, l)
+	ctx = common.SetPosition(ctx, func(_ common.Position) common.Position {
+		return common.Position{
+			Database: "test-db",
+			Stage:    "test-stage",
+		}
+	})
+
+	group := "test-group"
+	opts := TSDBOpts[mockTSTable, mockTSTableOpener]{
+		TSTableCreator: func(_ fs.FileSystem, _ string, _ common.Position, _ *logger.Logger,
+			_ timestamp.TimeRange, _ mockTSTableOpener, _ any,
+		) (mockTSTable, error) {
+			return mockTSTable{ID: common.ShardID(0)}, nil
+		},
+		ShardNum:                       1,
+		SegmentInterval:                IntervalRule{Unit: DAY, Num: 1},
+		TTL:                            IntervalRule{Unit: DAY, Num: 30},
+		SeriesIndexFlushTimeoutSeconds: 10,
+		SeriesIndexCacheMaxBytes:       1024 * 1024,
+	}
+
+	serviceCache := NewServiceCache().(*serviceCache)
+	sc := newSegmentController[mockTSTable, mockTSTableOpener](
+		ctx,
+		tempDir,
+		l,
+		opts,
+		nil,
+		nil,
+		5*time.Minute,
+		fs.NewLocalFileSystemWithLoggerAndLimit(logger.GetLogger("storage"), opts.MemoryLimit),
+		serviceCache,
+		group,
+	)
+
+	now := time.Now()
+	day1 := time.Date(now.Year(), now.Month(), now.Day(), 0, 0, 0, 0, time.Local)
+	day2 := day1.Add(24 * time.Hour)
+
+	// Create segments with OLD format metadata (plain version string).
+	segPath1 := filepath.Join(tempDir, "seg-"+day1.Format(dayFormat))
+	require.NoError(t, os.MkdirAll(segPath1, DirPerm))
+	require.NoError(t, os.WriteFile(filepath.Join(segPath1, metadataFilename), []byte("1.4.0"), FilePerm))
+
+	segPath2 := filepath.Join(tempDir, "seg-"+day2.Format(dayFormat))
+	require.NoError(t, os.MkdirAll(segPath2, DirPerm))
+	require.NoError(t, os.WriteFile(filepath.Join(segPath2, metadataFilename), []byte("1.4.0"), FilePerm))
+
+	// Open should succeed with fallback end time computation.
+	openErr := sc.open()
+	require.NoError(t, openErr)
+
+	require.Len(t, sc.lst, 2)
+
+	// First segment's end should be day2's start (fallback: end = next segment's start).
+	assert.Equal(t, day2, sc.lst[0].End, "old format should use fallback end time")
+	// Second segment's end should be day2 + 24h (fallback: end = NextTime(start)).
+	assert.Equal(t, day2.Add(24*time.Hour), sc.lst[1].End, "last segment should use NextTime fallback")
+
+	for _, seg := range sc.lst {
+		seg.DecRef()
 	}
 }

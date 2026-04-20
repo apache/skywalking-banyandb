@@ -89,12 +89,17 @@ func (sw *writers) reset() {
 	}
 }
 
-func (sw *writers) mustInitForMemPart(mp *memPart) {
+func (sw *writers) mustInitForFilePart(fileSystem fs.FileSystem, path string, shouldCache bool) {
 	sw.reset()
-	sw.mustCreateTagFamilyWriters = mp.mustCreateMemTagFamilyWriters
-	sw.metaWriter.init(&mp.meta)
-	sw.primaryWriter.init(&mp.primary)
-	sw.timestampsWriter.init(&mp.timestamps)
+	fileSystem.MkdirPanicIfExist(path, storage.DirPerm)
+	sw.mustCreateTagFamilyWriters = func(name string) (fs.Writer, fs.Writer, fs.Writer) {
+		return fs.MustCreateFile(fileSystem, filepath.Join(path, name+tagFamiliesMetadataFilenameExt), storage.FilePerm, shouldCache),
+			fs.MustCreateFile(fileSystem, filepath.Join(path, name+tagFamiliesFilenameExt), storage.FilePerm, shouldCache),
+			fs.MustCreateFile(fileSystem, filepath.Join(path, name+tagFamiliesFilterFilenameExt), storage.FilePerm, shouldCache)
+	}
+	sw.metaWriter.init(fs.MustCreateFile(fileSystem, filepath.Join(path, metaFilename), storage.FilePerm, shouldCache))
+	sw.primaryWriter.init(fs.MustCreateFile(fileSystem, filepath.Join(path, primaryFilename), storage.FilePerm, shouldCache))
+	sw.timestampsWriter.init(fs.MustCreateFile(fileSystem, filepath.Join(path, timestampsFilename), storage.FilePerm, shouldCache))
 }
 
 func (sw *writers) totalBytesWritten() uint64 {
@@ -194,19 +199,7 @@ func (bw *blockWriter) MustInitForMemPart(mp *memPart) {
 
 func (bw *blockWriter) mustInitForFilePart(fileSystem fs.FileSystem, path string, shouldCache bool) {
 	bw.reset()
-	fileSystem.MkdirPanicIfExist(path, storage.DirPerm)
-	bw.writers.mustCreateTagFamilyWriters = func(name string) (fs.Writer, fs.Writer, fs.Writer) {
-		metaPath := filepath.Join(path, name+tagFamiliesMetadataFilenameExt)
-		dataPath := filepath.Join(path, name+tagFamiliesFilenameExt)
-		fitlerPath := filepath.Join(path, name+tagFamiliesFilterFilenameExt)
-		return fs.MustCreateFile(fileSystem, metaPath, storage.FilePerm, shouldCache),
-			fs.MustCreateFile(fileSystem, dataPath, storage.FilePerm, shouldCache),
-			fs.MustCreateFile(fileSystem, fitlerPath, storage.FilePerm, shouldCache)
-	}
-
-	bw.writers.metaWriter.init(fs.MustCreateFile(fileSystem, filepath.Join(path, metaFilename), storage.FilePerm, shouldCache))
-	bw.writers.primaryWriter.init(fs.MustCreateFile(fileSystem, filepath.Join(path, primaryFilename), storage.FilePerm, shouldCache))
-	bw.writers.timestampsWriter.init(fs.MustCreateFile(fileSystem, filepath.Join(path, timestampsFilename), storage.FilePerm, shouldCache))
+	bw.writers.mustInitForFilePart(fileSystem, path, shouldCache)
 }
 
 func (bw *blockWriter) MustWriteElements(sid common.SeriesID, timestamps []int64, elementIDs []uint64, tagFamilies [][]tagValues) {

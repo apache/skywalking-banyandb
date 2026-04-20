@@ -1,6 +1,6 @@
 # TimeSeries Database(TSDB) v1.3.0
 
-TSDB is a time-series storage engine designed to store and query large volumes of time-series data. One of the key features of TSDB is its ability to automatically manage data storage over time, optimize performance and ensure that the system can scale to handle large workloads. TSDB empowers `Measure` and `Stream` relevant data.
+TSDB is a time-series storage engine designed to store and query large volumes of time-series data. One of the key features of TSDB is its ability to automatically manage data storage over time, optimize performance and ensure that the system can scale to handle large workloads. TSDB empowers `Measure`, `Stream` and `Trace` relevant data.
 
 In TSDB, the data in a group is partitioned based on the time range of the data. The segment size is determined by the `segment_interval` of a group. The number of segments in a group is determined by the `ttl` of a group. A new segment is created when the written data exceeds the time range of the current segment. The expired segment will be deleted after the `ttl` of the group.
 
@@ -18,7 +18,7 @@ In each segment, the data is spread into shards based on `entity`. The series in
 
 Each shard is assigned to a specific set of storage nodes, and those nodes store and process the data within that shard. This allows BanyanDB to scale horizontally by adding more storage nodes to the cluster as needed.
 
-In `Stream` or `Measure`, Each shard is composed of multiple [parts](#Part). Whenever SkyWalking sends a batch of data, BanyanDB writes this batch of data into a new part. For data of the `Stream` type, the inverted indexes generated based on the indexing rules are also stored in the segment.
+In `Stream`, `Measure` or `Trace`, Each shard is composed of multiple [parts](#Part). Whenever SkyWalking sends a batch of data, BanyanDB writes this batch of data into a new part. For data of the `Stream` type, the inverted indexes generated based on the indexing rules are also stored in the segment. For data of the `Trace` type, BanyanDB maintains a tree index for `TREE` type index rules. The tree index stores data with user-controlled int64 ordering keys, enabling efficient sorted result retrieval.
 
 Since BanyanDB adopts a snapshot approach for data read and write operations, the segment also needs to maintain additional snapshot information to record the validity of the parts. The shard contains `xxxxxxx.snp` to record the validity of parts. In the chart, `0000000000000001` is removed from the snapshot file, which means the part is invalid. It will be cleaned up in the next flush or merge operation.
 
@@ -28,9 +28,17 @@ In `Property`, the shard is implemented by the [inverted index](#Inverted-Index)
 
 ## Inverted Index
 
-The inverted index is used to locate the data in the shard. For `measure`, it is a mapping from the term to the series id. For `stream`, it is a mapping from the term to the timestamp. 
+The inverted index is used to locate the data in the shard. For `measure`, it is a mapping from the term to the series id. For `stream`, it is a mapping from the term to the timestamp.
 
-For `property`, all the content of a property is stored as a `_source` field in the inverted index. `group`, `name`,  `id` and `tags` are only indexed in the inverted index.
+## Tree Index
+
+The tree index is a high-performance indexing system used by `Trace` for `TREE` type index rules. The tree index stores data with user-controlled int64 ordering keys, enabling efficient sorted result retrieval.
+
+Each `TREE` type index rule bound to a trace creates a separate tree index instance identified by the index rule name. During writes, the database engine extracts the int64 value from the indexed tag and stores it as the ordering key along with the trace data. During queries, the tree index supports streaming result retrieval sorted by the ordering key, cross-shard ordered merging, and key range filtering.
+
+The tree index follows the same part-based storage model as the main data store, with memory parts flushed to disk parts and periodic merge operations to maintain performance.
+
+For `property`, all the content of a property is stored as a `_source` field in the inverted index. `group`, `name`, `id` and `tags` are only indexed in the inverted index.
 
 The inverted index stores `snapshot` file `xxxxxxx.snp` to record the validity of segments. In the chart, `0000000000000001.seg` is removed from the snapshot file, which means the segment is invalid. It will be cleaned up in the next flush or merge operation.
 
@@ -47,13 +55,13 @@ If you want to search `Tag1=Value1`, the index will first search the `Tags` part
 
 ## Part
 
-Within a part, data is split into multiple files in a columnar manner. The timestamps are stored in the `timestamps.bin` file, tags are organized in persistent tag families as various files with the `.tf` suffix, and fields are stored separately in the `fields.bin` file. 
+Within a part, data is split into multiple files in a columnar manner. The timestamps are stored in the `timestamps.bin` file, tags are organized in persistent tag families as various files with the `.tf` suffix, and fields are stored separately in the `fields.bin` file.
 
-In addition, each part maintains several metadata files. Among them, `metadata.json` is the metadata file for the part, storing descriptive information, such as start and end times, part size, etc. 
+In addition, each part maintains several metadata files. Among them, `metadata.json` is the metadata file for the part, storing descriptive information, such as start and end times, part size, etc.
 
-The `meta.bin` is a skipping index file that serves as the entry file for the entire part, helping to index the `primary.bin` file. 
+The `meta.bin` is a skipping index file that serves as the entry file for the entire part, helping to index the `primary.bin` file.
 
-The `primary.bin` file contains the index of each [block](#Block). Through it, the actual data files or the tagFamily metadata files ending with `.tfm` can be indexed, which in turn helps to locate the data in blocks. 
+The `primary.bin` file contains the index of each [block](#Block). Through it, the actual data files or the tagFamily metadata files ending with `.tfm` can be indexed, which in turn helps to locate the data in blocks.
 
 Notably, for data of the `Stream` type, since there are no field columns, the `fields.bin` file does not exist, while the rest of the structure is entirely consistent with the `Measure` type.
 
@@ -62,7 +70,7 @@ Notably, for data of the `Stream` type, since there are no field columns, the `f
 
 ## Block
 
-Each block holds data with the same series ID. 
+Each block holds data with the same series ID.
 The max size of the measure block is controlled by data volume and the number of rows. Meanwhile, the max size of the stream block is controlled by data volume.
 The diagram below shows the detailed fields within each block. The block is the minimal unit of TSDB, which contains several rows of data. Due to the column-based design, each block is spread over several files.
 
@@ -80,7 +88,7 @@ The write path of TSDB begins when time-series data is ingested into the system.
 
 Each shard in TSDB is responsible for storing a subset of the time-series data. The shard also holds an in-memory index allowing fast lookups of time-series data.
 
-When a shard receives a write request, the data is written to the buffer as a memory part. Meanwhile, the series index and inverted index will also be updated. The worker in the background periodically flushes data, writing the memory part to the disk. After the flush operation is completed, it triggers a merge operation to combine the parts and remove invalid data. 
+When a shard receives a write request, the data is written to the buffer as a memory part. Meanwhile, the series index and inverted index will also be updated. The worker in the background periodically flushes data, writing the memory part to the disk. After the flush operation is completed, it triggers a merge operation to combine the parts and remove invalid data.
 
 Whenever a new memory part is generated, or when a flush or merge operation is triggered, they initiate an update of the snapshot and delete outdated snapshots. The parts in a persistent snapshot could be accessible to the reader.
 

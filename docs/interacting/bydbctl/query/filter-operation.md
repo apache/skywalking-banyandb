@@ -1,8 +1,8 @@
 # Filter Operation
 
-Filter operation is a part of the query configuration. It is used to filter the data based on the given condition for [Stream](stream.md) and [Measure](measure.md) queries.
+Filter operation is a part of the query configuration. It is used to filter the data based on the given condition for [Stream](stream.md), [Measure](measure.md) and [Trace](trace.md) queries.
 
-The condition is a combination of the tag name, operation, and value. 
+The condition is a combination of the tag name, operation, and value.
 The operation's root is Criteria which is defined in the [API Reference](../../../api-reference.md#criteria).
 
 The following are the examples of filter operations:
@@ -10,6 +10,7 @@ The following are the examples of filter operations:
 ## [Condition.BinaryOp](../../../api-reference.md#conditionbinaryop)
 
 ### EQ, NE, LT, GT, LE and GE
+
 EQ, NE, LT, GT, LE and GE, only one operand should be given, i.e. one-to-one relationship.
 
 ```shell
@@ -23,6 +24,7 @@ criteria:
 ```
 
 ### IN and NOT_IN
+
 HAVING and NOT_HAVING allow multi-value to be the operand such as array/vector, i.e. one-to-many relationship.
 
 ```shell
@@ -36,6 +38,7 @@ criteria:
 ```
 
 ### HAVING and NOT_HAVING
+
 HAVING and NOT_HAVING allow multi-value to be the operand such as array/vector, i.e. one-to-many relationship. For example, "keyA" contains "valueA" and "valueB"
 
 ```shell
@@ -49,6 +52,7 @@ criteria:
 ```
 
 ### MATCH
+
 MATCH performances a full-text search if the tag is analyzed.
 The string value applies to the same analyzer as the tag, but string array value does not.
 Each item in a string array is seen as a token instead of a query expression.
@@ -101,9 +105,11 @@ The above query will return the data with the tag `name` that contains both `ser
 If you set the `operator` to `OPERATOR_OR`, the query will return the data with the tag `name` that contains either `service` or `1`, which is `service-1` and `service-2`.
 
 ## [LogicalExpression.LogicalOp](../../../api-reference.md#logicalexpressionlogicalop)
+
 Logical operation is used to combine multiple conditions.
 
 ### AND, OR
+
 The following example queries the data where the `id` is `1` and the `service_id` is `service_1`
 
 ```shell

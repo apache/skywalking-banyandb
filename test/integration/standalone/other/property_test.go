@@ -46,7 +46,7 @@ var _ = g.Describe("Property application", func() {
 
 	g.BeforeEach(func() {
 		var addr string
-		addr, _, deferFn = setup.Standalone(testConfig)
+		addr, _, deferFn = setup.Standalone(NewTestConfig())
 		var err error
 		conn, err = grpchelper.Conn(addr, 10*time.Second, grpc.WithTransportCredentials(insecure.NewCredentials()))
 		gm.Expect(err).NotTo(gm.HaveOccurred())
@@ -224,7 +224,7 @@ var _ = g.Describe("Property application", func() {
 
 	g.BeforeEach(func() {
 		var addr string
-		addr, _, deferFn = setup.Standalone(testConfig)
+		addr, _, deferFn = setup.Standalone(NewTestConfig())
 		var err error
 		conn, err = grpchelper.Conn(addr, 10*time.Second, grpc.WithTransportCredentials(insecure.NewCredentials()))
 		gm.Expect(err).NotTo(gm.HaveOccurred())

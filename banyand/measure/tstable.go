@@ -112,6 +112,10 @@ func initTSTable(fileSystem fs.FileSystem, rootPath string, p common.Position,
 		for _, id := range loadedSnapshots {
 			fileSystem.MustRMAll(filepath.Join(rootPath, snapshotName(id)))
 		}
+		for _, id := range loadedParts {
+			l.Info().Str("path", partPath(rootPath, id)).Msg("delete orphaned part without snapshot")
+			fileSystem.MustRMAll(partPath(rootPath, id))
+		}
 		return &tst, uint64(time.Now().UnixNano())
 	}
 	sort.Slice(loadedSnapshots, func(i, j int) bool {
@@ -130,6 +134,10 @@ func initTSTable(fileSystem fs.FileSystem, rootPath string, p common.Position,
 			fileSystem.MustRMAll(filepath.Join(rootPath, snapshotName(id)))
 		}
 		return &tst, epoch
+	}
+	for _, id := range loadedParts {
+		l.Info().Str("path", partPath(rootPath, id)).Msg("delete orphaned part after all snapshots failed to load")
+		fileSystem.MustRMAll(partPath(rootPath, id))
 	}
 	return &tst, uint64(time.Now().UnixNano())
 }
@@ -341,14 +349,35 @@ func (tst *tsTable) mustAddDataPointsWithSegmentID(dps *dataPoints, segmentID in
 	tst.mustAddMemPart(mp)
 }
 
+func (tst *tsTable) mustAddFilePart(partID uint64) {
+	p := mustOpenFilePart(partID, tst.root, tst.fileSystem)
+	p.partMetadata.ID = partID
+
+	ind := generateIntroduction()
+	defer releaseIntroduction(ind)
+	ind.applied = make(chan struct{})
+	ind.part = newPartWrapper(nil, p)
+
+	select {
+	case tst.introductions <- ind:
+	case <-tst.loopCloser.CloseNotify():
+		ind.part.decRef()
+		return
+	}
+	select {
+	case <-ind.applied:
+	case <-tst.loopCloser.CloseNotify():
+	}
+}
+
 func (tst *tsTable) mustAddMemPart(mp *memPart) {
 	p := openMemPart(mp)
 
 	ind := generateIntroduction()
 	defer releaseIntroduction(ind)
 	ind.applied = make(chan struct{})
-	ind.memPart = newPartWrapper(mp, p)
-	ind.memPart.p.partMetadata.ID = atomic.AddUint64(&tst.curPartID, 1)
+	ind.part = newPartWrapper(mp, p)
+	ind.part.p.partMetadata.ID = atomic.AddUint64(&tst.curPartID, 1)
 	startTime := time.Now()
 	totalCount := mp.partMetadata.TotalCount
 	tst.addPendingDataCount(int64(totalCount))
@@ -356,7 +385,7 @@ func (tst *tsTable) mustAddMemPart(mp *memPart) {
 	case tst.introductions <- ind:
 	case <-tst.loopCloser.CloseNotify():
 		tst.addPendingDataCount(-int64(totalCount))
-		ind.memPart.decRef()
+		ind.part.decRef()
 		return
 	}
 	select {

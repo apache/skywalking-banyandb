@@ -32,8 +32,6 @@ helm install "failover-test" \
   --set cluster.enabled=true \
   --set cluster.liaison.replicas=1 \
   --set cluster.data.replicas=1 \
-  --set etcd.enabled=true \
-  --set etcd.replicaCount=1
 ```
 
 ## Deploy Data Generator

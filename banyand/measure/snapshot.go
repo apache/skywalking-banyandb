@@ -153,12 +153,17 @@ func parseSnapshot(name string) (uint64, error) {
 	return parseEpoch(name[:16])
 }
 
-func (tst *tsTable) TakeFileSnapshot(dst string) (bool, error) {
+func (tst *tsTable) TakeFileSnapshot(dst string) (success bool, err error) {
 	snapshot := tst.currentSnapshot()
 	if snapshot == nil {
-		return false, fmt.Errorf("no current snapshot available")
+		return false, storage.ErrNoCurrentSnapshot
 	}
 	defer snapshot.decRef()
+	defer func() {
+		if err != nil {
+			tst.fileSystem.MustRMAll(dst)
+		}
+	}()
 
 	hasDiskParts := false
 	for _, pw := range snapshot.parts {
@@ -171,8 +176,8 @@ func (tst *tsTable) TakeFileSnapshot(dst string) (bool, error) {
 		srcPath := part.path
 		destPartPath := filepath.Join(dst, filepath.Base(srcPath))
 
-		if err := tst.fileSystem.CreateHardLink(srcPath, destPartPath, nil); err != nil {
-			return false, fmt.Errorf("failed to create snapshot for part %d: %w", part.partMetadata.ID, err)
+		if linkErr := tst.fileSystem.CreateHardLink(srcPath, destPartPath, nil); linkErr != nil {
+			return false, fmt.Errorf("failed to create snapshot for part %d: %w", part.partMetadata.ID, linkErr)
 		}
 	}
 	if !hasDiskParts {

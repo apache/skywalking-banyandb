@@ -64,7 +64,9 @@ const (
 var (
 	// ErrUnknownShard indicates that the shard is not found.
 	ErrUnknownShard = errors.New("unknown shard")
-	errOpenDatabase = errors.New("fails to open the database")
+	// ErrNoCurrentSnapshot is returned when a shard has no current snapshot available.
+	ErrNoCurrentSnapshot = errors.New("no current snapshot available")
+	errOpenDatabase      = errors.New("fails to open the database")
 
 	lfs = fs.NewLocalFileSystemWithLogger(logger.GetLogger("storage"))
 )

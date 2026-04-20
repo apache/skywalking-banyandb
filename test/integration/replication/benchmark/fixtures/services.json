@@ -1,0 +1,25 @@
+{
+  "items": [
+    {
+      "metadata": {
+        "name": "banyandb-etcd",
+        "namespace": "bench"
+      },
+      "spec": {
+        "ports": [{"name": "client", "port": 2379}]
+      }
+    },
+    {
+      "metadata": {
+        "name": "banyandb-grpc",
+        "namespace": "bench"
+      },
+      "spec": {
+        "ports": [
+          {"name": "grpc", "port": 17912},
+          {"name": "http", "port": 17913}
+        ]
+      }
+    }
+  ]
+}
