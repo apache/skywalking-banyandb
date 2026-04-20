@@ -74,6 +74,17 @@ type Breadcrumb struct {
 // StateDumpStatus describes the result of deep state serialization.
 type StateDumpStatus struct {
 	Path      string `json:"path,omitempty"`
+	SpewPath  string `json:"spewPath,omitempty"`
 	Truncated bool   `json:"truncated,omitempty"`
 	Error     string `json:"error,omitempty"`
+}
+
+// StateDumperFunc is a function adapter for StateDumper.
+// Closures that capture named-return variables can be used directly as a
+// StateDumper, preserving function-local state across a panic boundary.
+type StateDumperFunc func(context.Context) (any, error)
+
+// DumpState implements StateDumper.
+func (f StateDumperFunc) DumpState(ctx context.Context) (any, error) {
+	return f(ctx)
 }

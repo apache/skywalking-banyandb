@@ -106,6 +106,22 @@ func (aw *ArtifactWriter) rewritePanicRecord(artifactDir string, record *PanicRe
 	return nil
 }
 
+// WriteSpewDump persists a go-spew reflection dump into an existing artifact directory.
+func (aw *ArtifactWriter) WriteSpewDump(artifactDir string, value any, limitBytes int64) (bool, string, error) {
+	if aw == nil {
+		return false, "", fmt.Errorf("artifact writer is nil")
+	}
+	if artifactDir == "" {
+		return false, "", fmt.Errorf("artifact dir is empty")
+	}
+	dumpPath := filepath.Join(artifactDir, deepDumpSpewFileName)
+	truncated, dumpErr := NewBoundedSpewWriter().WriteSpew(dumpPath, value, limitBytes)
+	if dumpErr != nil {
+		return truncated, "", dumpErr
+	}
+	return truncated, dumpPath, nil
+}
+
 // WriteStateDump persists a deep state dump into an existing artifact directory.
 func (aw *ArtifactWriter) WriteStateDump(artifactDir string, value any, limitBytes int64) (bool, string, error) {
 	if aw == nil {

@@ -87,6 +87,15 @@ func WithRecovery(ctx context.Context, opts RecoveryOptions, reporter Reporter, 
 						} else {
 							dumpStatus.Path = dumpPath
 						}
+						spewTruncated, spewPath, writeSpewErr := artifactWriter.WriteSpewDump(artifactDir, stateDump, opts.StateLimitBytes)
+						if writeSpewErr != nil {
+							log.Error().Err(writeSpewErr).Str("component", opts.Component).Msg("failed to write spew state dump")
+						} else {
+							dumpStatus.SpewPath = spewPath
+							if spewTruncated {
+								dumpStatus.Truncated = true
+							}
+						}
 						record.StateDump = dumpStatus
 					}
 					if rewriteErr := artifactWriter.rewritePanicRecord(artifactDir, record); rewriteErr != nil {

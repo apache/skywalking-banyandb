@@ -167,6 +167,38 @@ func TestWithRecoveryWritesStateDump(t *testing.T) {
 	if !strings.Contains(string(data), `"pod": "banyand-0"`) {
 		t.Fatalf("unexpected deep dump content: %s", string(data))
 	}
+	if result.Record.StateDump.SpewPath == "" {
+		t.Fatal("expected spew dump path to be set")
+	}
+	spewData, spewErr := os.ReadFile(result.Record.StateDump.SpewPath)
+	if spewErr != nil {
+		t.Fatalf("read spew dump: %v", spewErr)
+	}
+	if !strings.Contains(string(spewData), "banyand-0") {
+		t.Fatalf("unexpected spew dump content: %s", string(spewData))
+	}
+}
+
+func TestStateDumperFunc(t *testing.T) {
+	t.Helper()
+
+	capturedState := "initial"
+	dumper := StateDumperFunc(func(_ context.Context) (any, error) {
+		return map[string]string{"state": capturedState}, nil
+	})
+
+	capturedState = "updated"
+	result, dumpErr := dumper.DumpState(context.Background())
+	if dumpErr != nil {
+		t.Fatalf("unexpected error: %v", dumpErr)
+	}
+	stateMap, ok := result.(map[string]string)
+	if !ok {
+		t.Fatalf("expected map[string]string, got %T", result)
+	}
+	if stateMap["state"] != "updated" {
+		t.Fatalf("expected 'updated' (current named-return value), got %s", stateMap["state"])
+	}
 }
 
 func TestWithRecoveryStateDumpFailureRecorded(t *testing.T) {
