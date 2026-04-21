@@ -22,6 +22,7 @@ import (
 	"context"
 	"embed"
 	"regexp"
+	"slices"
 	"strings"
 
 	"github.com/google/go-cmp/cmp"
@@ -82,6 +83,13 @@ var VerifyFn = func(innerGm gm.Gomega, sharedContext helpers.SharedContext, args
 	innerGm.Expect(err).NotTo(gm.HaveOccurred())
 	want := &measurev1.TopNResponse{}
 	helpers.UnmarshalYAML(ww, want)
+	// Sort items by entity to normalize order for items with equal values.
+	for _, list := range resp.Lists {
+		slices.SortFunc(list.Items, compareTopNItems)
+	}
+	for _, list := range want.Lists {
+		slices.SortFunc(list.Items, compareTopNItems)
+	}
 	success := innerGm.Expect(cmp.Equal(resp, want,
 		protocmp.IgnoreUnknown(),
 		protocmp.IgnoreFields(&measurev1.TopNList{}, "timestamp"),
@@ -107,6 +115,27 @@ var VerifyFn = func(innerGm gm.Gomega, sharedContext helpers.SharedContext, args
 	innerGm.Expect(err).NotTo(gm.HaveOccurred())
 	innerGm.Expect(resp.Trace).NotTo(gm.BeNil())
 	innerGm.Expect(resp.Trace.GetSpans()).NotTo(gm.BeEmpty())
+}
+
+// compareTopNItems compares two TopNList_Item by their entity tags for deterministic ordering.
+func compareTopNItems(a, b *measurev1.TopNList_Item) int {
+	for tagIdx, aTag := range a.Entity {
+		if tagIdx >= len(b.Entity) {
+			return 1
+		}
+		aVal := aTag.GetValue().GetStr().GetValue()
+		bVal := b.Entity[tagIdx].GetValue().GetStr().GetValue()
+		if aVal < bVal {
+			return -1
+		}
+		if aVal > bVal {
+			return 1
+		}
+	}
+	if len(a.Entity) < len(b.Entity) {
+		return -1
+	}
+	return 0
 }
 
 // verifyQLWithRequest verifies that the QL file produces an equivalent QueryRequest to the YAML.
