@@ -76,7 +76,7 @@ Delete operation removes a group's data and, unless `--data-only` is set, its as
 
 - Default delete only succeeds when the group is empty.
 - `--force` allows deleting a non-empty group.
-- `--dry-run` previews the schema resources that would be deleted in `schemaInfo` in the HTTP JSON / `bydbctl` YAML output (proto field: `schema_info`) and does not create a deletion task.
+- `--dry-run` previews the schema resources that would be deleted and does not create a deletion task.
 - `--data-only` removes only the data files and keeps the group metadata and schema resources.
 
 ### Examples of deleting
@@ -135,7 +135,9 @@ Example response:
     },
     "totalDataSizeBytes": "1048576",
     "deletedDataSizeBytes": "524288",
-    "message": "deleting streams"
+    "message": "deleting streams",
+    "createdAt": "2026-04-21T10:30:00Z",
+    "updatedAt": "2026-04-21T10:31:15Z"
   }
 }
 ```
