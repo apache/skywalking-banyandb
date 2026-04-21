@@ -76,7 +76,7 @@ Delete operation removes a group's data and, unless `--data-only` is set, its as
 
 - Default delete only succeeds when the group is empty.
 - `--force` allows deleting a non-empty group.
-- `--dry-run` previews the schema resources that would be deleted in `schema_info` and does not create a deletion task.
+- `--dry-run` previews the schema resources that would be deleted in `schemaInfo` in the HTTP JSON / `bydbctl` YAML output (proto field: `schema_info`) and does not create a deletion task.
 - `--data-only` removes only the data files and keeps the group metadata and schema resources.
 
 ### Examples of deleting
@@ -154,5 +154,5 @@ bydbctl group list
 
 ## API Reference
 
-- [Group Registration Operations](../../../api-reference.md#groupregistryservice)
+- [Group Registration Operations](../../../api-reference.md#banyandb-database-v1-GroupRegistryService)
 - [GroupDeletionTask](../../../api-reference.md#banyandb-database-v1-GroupDeletionTask)
