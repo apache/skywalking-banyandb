@@ -95,6 +95,8 @@ type metricService struct {
 	npf                 nativeProviderFactory
 	metricsInterval     time.Duration
 	nativeFlushInterval time.Duration
+	panicArtifactRoot   string
+	panicMaxArtifacts   int
 	mutex               sync.Mutex
 }
 
@@ -104,6 +106,10 @@ func (p *metricService) FlagSet() *run.FlagSet {
 	flagSet.StringSliceVar(&p.modes, "observability-modes", []string{"prometheus"}, "modes for observability")
 	flagSet.DurationVar(&p.metricsInterval, "observability-metrics-interval", 15*time.Second, "interval for metrics collection")
 	flagSet.DurationVar(&p.nativeFlushInterval, "observability-native-flush-interval", 5*time.Second, "interval for native metrics flush")
+	flagSet.StringVar(&p.panicArtifactRoot, "panic-artifact-root", "",
+		"directory where banyand writes recovered panic artifacts; leave empty to disable")
+	flagSet.IntVar(&p.panicMaxArtifacts, "panic-max-artifacts", 0,
+		"maximum number of panic artifact directories to retain; 0 disables pruning")
 	return flagSet
 }
 
@@ -159,6 +165,12 @@ func (p *metricService) PreRun(ctx context.Context) error {
 	// panicdiag.WithRecovery (including run.Group services and run.Go) increment
 	// banyandb_panic_total{component="..."} without needing per-call wiring.
 	panicdiag.SetDefaultPanicCounter(p.With(observability.RootScope).NewCounter("panic_total", "component"))
+	if p.panicArtifactRoot != "" {
+		panicdiag.SetDefaultArtifactRoot(p.panicArtifactRoot)
+	}
+	if p.panicMaxArtifacts > 0 {
+		panicdiag.SetDefaultMaxArtifacts(p.panicMaxArtifacts)
+	}
 	return nil
 }
 
