@@ -38,6 +38,7 @@ Release Notes.
 - Fix wrong backup path of schema property.
 - Fix lifecycle migration failure when the target stage has `close: true`.
 - Fix stale sync request blocking watch session channel, causing repeated "channel full, skipping session" errors when a watch stream is in backoff.
+- Fix nil pointer panic in disk monitor when group schema is not yet initialized during early startup, and ensure monitor loop survives recovered panics.
 
 ### Chores
 
