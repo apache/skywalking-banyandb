@@ -19,6 +19,7 @@ package storage
 
 import (
 	"os"
+	"runtime/debug"
 	"sort"
 	"sync/atomic"
 	"time"
@@ -190,7 +191,10 @@ func (dm *DiskMonitor) monitorLoop(serviceName string) {
 func (dm *DiskMonitor) safeCheckAndCleanup(serviceName string) {
 	defer func() {
 		if r := recover(); r != nil {
-			dm.logger.Error().Interface("panic", r).Msg("disk monitor panic recovered")
+			dm.logger.Error().Interface("panic", r).Str("stack", string(debug.Stack())).Msg("disk monitor panic recovered")
+			// Reset active state so Stop() doesn't hang and the next tick can retry
+			dm.isActive.Store(false)
+			dm.metrics.forcedRetentionActive.Set(0, serviceName)
 		}
 	}()
 	dm.checkAndCleanup(serviceName)
