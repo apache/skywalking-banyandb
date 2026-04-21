@@ -21,6 +21,7 @@ import (
 	"errors"
 	"fmt"
 	"path/filepath"
+	"sync"
 	"sync/atomic"
 	"time"
 
@@ -40,72 +41,234 @@ var (
 	mergeTypeFile = "file"
 )
 
+var (
+	mergeLaneFast = "fast"
+	mergeLaneSlow = "slow"
+)
+
+const defaultSmallMergeThreshold = 32 << 20 // 32MB fallback
+
+func computeSmallMergeThreshold() uint64 {
+	memLimit, err := cgroups.MemoryLimit()
+	if err != nil || memLimit <= 0 {
+		return defaultSmallMergeThreshold
+	}
+	threshold := uint64(memLimit) / 16
+	if threshold < defaultSmallMergeThreshold {
+		return defaultSmallMergeThreshold
+	}
+	return threshold
+}
+
+type mergeDispatchRequest struct {
+	enqueuedAt time.Time
+	parts      []*partWrapper
+	toBeMerged map[uint64]struct{}
+	typ        string
+}
+
 func (tst *tsTable) mergeLoop(merges chan *mergerIntroduction, flusherNotifier watcher.Channel) {
 	defer tst.loopCloser.Done()
 
-	var epoch uint64
+	var lastProcessedEpoch uint64
 
 	ew := flusherNotifier.Add(0, tst.loopCloser.CloseNotify())
 	if ew == nil {
 		return
 	}
 
-	var pwsChunk []*partWrapper
+	threshold := computeSmallMergeThreshold()
+	fastWorkers := max(1, cgroups.CPUs()/2)
+	fastCh := make(chan *mergeDispatchRequest, fastWorkers)
+	slowCh := make(chan *mergeDispatchRequest, 1)
+	triggerCh := make(chan struct{}, 1)
+
+	var workersWg, dispatcherWg sync.WaitGroup
+
+	for i := 0; i < fastWorkers; i++ {
+		workersWg.Add(1)
+		go func() {
+			defer workersWg.Done()
+			tst.mergeLaneWorker(fastCh, merges)
+		}()
+	}
+	workersWg.Add(1)
+	go func() {
+		defer workersWg.Done()
+		tst.mergeLaneWorker(slowCh, merges)
+	}()
+
+	dispatcherWg.Add(1)
+	go func() {
+		defer dispatcherWg.Done()
+		tst.dispatcherLoop(triggerCh, threshold, fastCh, slowCh)
+	}()
+
+	// Shutdown order: stop dispatcher first so no new work enters the lane
+	// channels, then close the lane channels so idle workers exit their range
+	// loops, then wait for workers to drain any in-flight merges.
+	defer func() {
+		close(triggerCh)
+		dispatcherWg.Wait()
+		close(fastCh)
+		close(slowCh)
+		workersWg.Wait()
+	}()
 
 	for {
 		select {
 		case <-tst.loopCloser.CloseNotify():
 			return
 		case <-ew.Watch():
-			if func() bool {
-				curSnapshot := tst.currentSnapshot()
-				if curSnapshot == nil {
-					return false
+			curSnapshot := tst.currentSnapshot()
+			if curSnapshot == nil {
+				return
+			}
+			if curSnapshot.epoch > lastProcessedEpoch {
+				tst.incTotalMergeLoopStarted(1)
+				select {
+				case triggerCh <- struct{}{}:
+				default:
 				}
-				defer curSnapshot.decRef()
-				if curSnapshot.epoch != epoch {
-					select {
-					case mergeMaxConcurrencyCh <- struct{}{}:
-						defer func() {
-							<-mergeMaxConcurrencyCh
-						}()
-					case <-tst.loopCloser.CloseNotify():
-						return true
-					}
-					tst.incTotalMergeLoopStarted(1)
-					defer tst.incTotalMergeLoopFinished(1)
-					var err error
-					if pwsChunk, err = tst.mergeSnapshot(curSnapshot, merges, pwsChunk[:0]); err != nil {
-						if errors.Is(err, errClosed) {
-							return true
-						}
-						tst.l.Logger.Warn().Err(err).Msgf("cannot merge snapshot: %d", curSnapshot.epoch)
-						tst.incTotalMergeLoopErr(1)
-						return false
-					}
-					epoch = curSnapshot.epoch
-				}
-				ew = flusherNotifier.Add(epoch, tst.loopCloser.CloseNotify())
-				return ew == nil
-			}() {
+				lastProcessedEpoch = curSnapshot.epoch
+				tst.incTotalMergeLoopFinished(1)
+			}
+			curSnapshot.decRef()
+			ew = flusherNotifier.Add(lastProcessedEpoch, tst.loopCloser.CloseNotify())
+			if ew == nil {
 				return
 			}
 		}
 	}
 }
 
-func (tst *tsTable) mergeSnapshot(curSnapshot *snapshot, merges chan *mergerIntroduction, dst []*partWrapper) ([]*partWrapper, error) {
-	freeDiskSize := tst.freeDiskSpace(tst.root)
-	var toBeMerged map[uint64]struct{}
-	dst, toBeMerged = tst.getPartsToMerge(curSnapshot, freeDiskSize, dst)
-	if len(dst) < 2 {
-		return nil, nil
+func (tst *tsTable) dispatcherLoop(triggerCh chan struct{}, threshold uint64, fastCh, slowCh chan *mergeDispatchRequest) {
+	for {
+		select {
+		case <-tst.loopCloser.CloseNotify():
+			return
+		case _, ok := <-triggerCh:
+			if !ok {
+				return
+			}
+			if tst.dispatchAllMerges(threshold, fastCh, slowCh) {
+				return
+			}
+		}
 	}
-	if _, err := tst.mergePartsThenSendIntroduction(snapshotCreatorMerger, dst,
-		toBeMerged, merges, tst.loopCloser.CloseNotify(), mergeTypeFile); err != nil {
-		return dst, err
+}
+
+func (tst *tsTable) dispatchAllMerges(threshold uint64, fastCh, slowCh chan *mergeDispatchRequest) bool {
+	for {
+		curSnapshot := tst.currentSnapshot()
+		if curSnapshot == nil {
+			return false
+		}
+		freeDiskSize := tst.freeDiskSpace(tst.root)
+		var dst []*partWrapper
+		dst, toBeMerged := tst.getPartsToMerge(curSnapshot, freeDiskSize, dst)
+		if len(dst) < 2 {
+			curSnapshot.decRef()
+			return false
+		}
+		for _, pw := range dst {
+			pw.incRef()
+		}
+		curSnapshot.decRef()
+
+		tst.inFlightMu.Lock()
+		if tst.inFlight == nil {
+			tst.inFlight = make(map[uint64]struct{})
+		}
+		for _, pw := range dst {
+			tst.inFlight[pw.ID()] = struct{}{}
+		}
+		tst.inFlightMu.Unlock()
+
+		var totalSize uint64
+		for _, pw := range dst {
+			totalSize += pw.p.partMetadata.CompressedSizeBytes
+		}
+
+		lane := mergeLaneSlow
+		targetCh := slowCh
+		if totalSize < threshold {
+			lane = mergeLaneFast
+			targetCh = fastCh
+		}
+
+		typ := fmt.Sprintf("%s_%s", mergeTypeFile, lane)
+		req := &mergeDispatchRequest{
+			parts:      dst,
+			toBeMerged: toBeMerged,
+			typ:        typ,
+			enqueuedAt: time.Now(),
+		}
+
+		tst.l.Info().
+			Str("lane", lane).
+			Uint64("totalSize", totalSize).
+			Uint64("threshold", threshold).
+			Int("partCount", len(dst)).
+			Msg("dispatching merge")
+
+		select {
+		case targetCh <- req:
+		case <-tst.loopCloser.CloseNotify():
+			tst.inFlightMu.Lock()
+			for _, pw := range dst {
+				delete(tst.inFlight, pw.ID())
+			}
+			tst.inFlightMu.Unlock()
+			for _, pw := range dst {
+				pw.decRef()
+			}
+			return true
+		}
 	}
-	return dst, nil
+}
+
+func (tst *tsTable) mergeLaneWorker(ch chan *mergeDispatchRequest, merges chan *mergerIntroduction) {
+	for req := range ch {
+		if !req.enqueuedAt.IsZero() {
+			tst.incTotalMergeQueueLatency(time.Since(req.enqueuedAt).Seconds(), req.typ)
+		}
+		select {
+		case mergeMaxConcurrencyCh <- struct{}{}:
+		case <-tst.loopCloser.CloseNotify():
+			tst.inFlightMu.Lock()
+			for _, pw := range req.parts {
+				delete(tst.inFlight, pw.ID())
+			}
+			tst.inFlightMu.Unlock()
+			for _, pw := range req.parts {
+				pw.decRef()
+			}
+			return
+		}
+
+		_, mergeErr := tst.mergePartsThenSendIntroduction(
+			snapshotCreatorMerger, req.parts, req.toBeMerged, merges,
+			tst.loopCloser.CloseNotify(), req.typ,
+		)
+		<-mergeMaxConcurrencyCh
+
+		tst.inFlightMu.Lock()
+		for _, pw := range req.parts {
+			delete(tst.inFlight, pw.ID())
+		}
+		tst.inFlightMu.Unlock()
+		for _, pw := range req.parts {
+			pw.decRef()
+		}
+
+		if mergeErr != nil {
+			if !errors.Is(mergeErr, errClosed) {
+				tst.l.Logger.Warn().Err(mergeErr).Str("typ", req.typ).Msg("merge lane worker error")
+				tst.incTotalMergeLoopErr(1)
+			}
+		}
+	}
 }
 
 func (tst *tsTable) mergePartsThenSendIntroduction(creator snapshotCreator, parts []*partWrapper, merged map[uint64]struct{}, merges chan *mergerIntroduction,
@@ -249,12 +412,17 @@ var reservedDiskSpace uint64
 func (tst *tsTable) getPartsToMerge(snapshot *snapshot, freeDiskSize uint64, dst []*partWrapper) ([]*partWrapper, map[uint64]struct{}) {
 	var parts []*partWrapper
 
+	tst.inFlightMu.RLock()
 	for _, pw := range snapshot.parts {
 		if pw.mp != nil || pw.p.partMetadata.TotalCount < 1 {
 			continue
 		}
+		if _, inFlight := tst.inFlight[pw.ID()]; inFlight {
+			continue
+		}
 		parts = append(parts, pw)
 	}
+	tst.inFlightMu.RUnlock()
 
 	dst = tst.option.mergePolicy.getPartsToMerge(dst, parts, freeDiskSize)
 	if len(dst) == 0 {

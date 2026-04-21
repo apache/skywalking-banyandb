@@ -12,6 +12,7 @@ Release Notes.
 - Sync lifecycle e2e test from SkyWalking stages test.
 - Add periodic health check for property schema connection.
 - Persist segment end time in per-segment metadata so boundaries don't shift across restarts or config changes.
+- Introduce fair fast/slow lane scheduling for trace part merges to prevent short merges from being blocked by long-running merges; expose queue wait time as `total_merge_queue_latency`.
 
 ### Bug Fixes
 

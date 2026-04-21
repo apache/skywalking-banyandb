@@ -61,9 +61,10 @@ type metrics struct {
 	totalFlushIntroLatency   meter.Counter
 	totalFlushLatency        meter.Counter
 
-	totalMergedParts  meter.Counter
-	totalMergeLatency meter.Counter
-	totalMerged       meter.Counter
+	totalMergedParts       meter.Counter
+	totalMergeLatency      meter.Counter
+	totalMerged            meter.Counter
+	totalMergeQueueLatency meter.Counter
 
 	tbMetrics
 }
@@ -250,6 +251,13 @@ func (tst *tsTable) incTotalMerged(delta int, typ string) {
 	tst.metrics.totalMerged.Inc(float64(delta), typ)
 }
 
+func (tst *tsTable) incTotalMergeQueueLatency(delta float64, typ string) {
+	if tst == nil || tst.metrics == nil {
+		return
+	}
+	tst.metrics.totalMergeQueueLatency.Inc(delta, typ)
+}
+
 func (tst *tsTable) addPendingDataCount(delta int64) {
 	tst.pendingDataCount.Add(delta)
 	if tst.metrics == nil {
@@ -301,9 +309,14 @@ func (m *metrics) DeleteAll() {
 	m.totalMergedParts.Delete("mem")
 	m.totalMergeLatency.Delete("mem")
 	m.totalMerged.Delete("mem")
-	m.totalMergedParts.Delete("file")
-	m.totalMergeLatency.Delete("file")
-	m.totalMerged.Delete("file")
+	m.totalMergedParts.Delete("file_fast")
+	m.totalMergeLatency.Delete("file_fast")
+	m.totalMerged.Delete("file_fast")
+	m.totalMergedParts.Delete("file_slow")
+	m.totalMergeLatency.Delete("file_slow")
+	m.totalMerged.Delete("file_slow")
+	m.totalMergeQueueLatency.Delete("file_fast")
+	m.totalMergeQueueLatency.Delete("file_slow")
 }
 
 func (s *supplier) newMetrics(p common.Position) storage.Metrics {
@@ -335,6 +348,7 @@ func (s *supplier) newMetrics(p common.Position) storage.Metrics {
 		totalMergedParts:           factory.NewCounter("total_merged_parts", "type"),
 		totalMergeLatency:          factory.NewCounter("total_merge_latency", "type"),
 		totalMerged:                factory.NewCounter("total_merged", "type"),
+		totalMergeQueueLatency:     factory.NewCounter("total_merge_queue_latency", "type"),
 		tbMetrics: tbMetrics{
 			totalMemParts:                  factory.NewGauge("total_mem_part", common.ShardLabelNames()...),
 			totalMemElements:               factory.NewGauge("total_mem_elements", common.ShardLabelNames()...),
@@ -381,6 +395,7 @@ func (qs *queueSupplier) newMetrics(p common.Position) (storage.Metrics, observa
 		totalMergedParts:           factory.NewCounter("total_merged_parts", "type"),
 		totalMergeLatency:          factory.NewCounter("total_merge_latency", "type"),
 		totalMerged:                factory.NewCounter("total_merged", "type"),
+		totalMergeQueueLatency:     factory.NewCounter("total_merge_queue_latency", "type"),
 		tbMetrics: tbMetrics{
 			totalMemParts:                  factory.NewGauge("total_mem_part", common.ShardLabelNames()...),
 			totalMemElements:               factory.NewGauge("total_mem_elements", common.ShardLabelNames()...),

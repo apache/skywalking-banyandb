@@ -65,6 +65,8 @@ type tsTable struct {
 	option           option
 	curPartID        uint64
 	pendingDataCount atomic.Int64
+	inFlight         map[uint64]struct{}
+	inFlightMu       sync.RWMutex
 	sync.RWMutex
 	shardID common.ShardID
 }
