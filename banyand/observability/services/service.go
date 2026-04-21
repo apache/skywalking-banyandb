@@ -95,7 +95,7 @@ type metricService struct {
 	npf                 nativeProviderFactory
 	metricsInterval     time.Duration
 	nativeFlushInterval time.Duration
-	panicArtifactRoot   string
+	panicArtifactDir    string
 	panicMaxArtifacts   int
 	mutex               sync.Mutex
 }
@@ -106,7 +106,7 @@ func (p *metricService) FlagSet() *run.FlagSet {
 	flagSet.StringSliceVar(&p.modes, "observability-modes", []string{"prometheus"}, "modes for observability")
 	flagSet.DurationVar(&p.metricsInterval, "observability-metrics-interval", 15*time.Second, "interval for metrics collection")
 	flagSet.DurationVar(&p.nativeFlushInterval, "observability-native-flush-interval", 5*time.Second, "interval for native metrics flush")
-	flagSet.StringVar(&p.panicArtifactRoot, "panic-artifact-root", "",
+	flagSet.StringVar(&p.panicArtifactDir, "panic-artifact-dir", "",
 		"directory where banyand writes recovered panic artifacts; leave empty to disable")
 	flagSet.IntVar(&p.panicMaxArtifacts, "panic-max-artifacts", 0,
 		"maximum number of panic artifact directories to retain; 0 disables pruning")
@@ -165,8 +165,8 @@ func (p *metricService) PreRun(ctx context.Context) error {
 	// panicdiag.WithRecovery (including run.Group services and run.Go) increment
 	// banyandb_panic_total{component="..."} without needing per-call wiring.
 	panicdiag.SetDefaultPanicCounter(p.With(observability.RootScope).NewCounter("panic_total", "component"))
-	if p.panicArtifactRoot != "" {
-		panicdiag.SetDefaultArtifactRoot(p.panicArtifactRoot)
+	if p.panicArtifactDir != "" {
+		panicdiag.SetDefaultArtifactRoot(p.panicArtifactDir)
 	}
 	if p.panicMaxArtifacts > 0 {
 		panicdiag.SetDefaultMaxArtifacts(p.panicMaxArtifacts)
@@ -210,6 +210,7 @@ func (p *metricService) Serve() run.StopNotify {
 	}
 	metricsMux := http.NewServeMux()
 	metricsMux.HandleFunc("/_route", p.routeTableHandler)
+	metricsMux.HandleFunc("/debug/panic", p.handleDebugPanic)
 	if containsMode(p.modes, flagPromethusMode) {
 		registerMetricsEndpoint(p.promReg, metricsMux)
 	}
@@ -297,6 +298,25 @@ func (sm *SchedulerMetrics) Collect(job string, m *timestamp.SchedulerMetrics) {
 	sm.totalTasksFinished.Set(float64(m.TotalTasksFinished.Load()), job)
 	sm.totalTasksPanic.Set(float64(m.TotalTasksPanic.Load()), job)
 	sm.totalTaskLatency.Set(float64(m.TotalTaskLatencyInNanoseconds.Load())/float64(time.Second), job)
+}
+
+func (p *metricService) handleDebugPanic(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	component := r.URL.Query().Get("component")
+	if component == "" {
+		component = "debug-panic"
+	}
+	panicdiag.GoWithRecovery(context.Background(), panicdiag.RecoveryOptions{
+		Component: component,
+		Logger:    p.l,
+	}, nil, func(_ *context.Context) {
+		panic("diagnostic test panic triggered via /debug/panic")
+	})
+	w.WriteHeader(http.StatusAccepted)
+	_, _ = w.Write([]byte("panic triggered; check --panic-artifact-dir for artifacts\n"))
 }
 
 func (p *metricService) With(scope meter.Scope) observability.Factory {
