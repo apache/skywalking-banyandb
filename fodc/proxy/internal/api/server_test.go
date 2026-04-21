@@ -89,7 +89,7 @@ func newTestServer(t *testing.T) (*Server, *registry.AgentRegistry, *mockCluster
 	mockRequester := &mockClusterDataRequester{}
 	clusterMgr := cluster.NewManager(testRegistry, mockRequester, testLogger)
 	mockRequester.clusterMgr = clusterMgr
-	server := NewServer(aggregator, clusterMgr, nil, testRegistry, testLogger)
+	server := NewServer(aggregator, clusterMgr, nil, testRegistry, nil, testLogger)
 	return server, testRegistry, mockRequester
 }
 
@@ -165,7 +165,7 @@ func TestHandleClusterTopology_NoClusterStateCollector(t *testing.T) {
 	testRegistry := registry.NewAgentRegistry(testLogger, 5*time.Second, 10*time.Second, 100)
 	mockSender := &mockRequestSender{}
 	aggregator := metrics.NewAggregator(testRegistry, mockSender, testLogger)
-	server := NewServer(aggregator, nil, nil, testRegistry, testLogger)
+	server := NewServer(aggregator, nil, nil, testRegistry, nil, testLogger)
 	req := httptest.NewRequest(http.MethodGet, "/cluster/topology", nil)
 	resp := httptest.NewRecorder()
 	server.handleClusterTopology(resp, req)
@@ -180,7 +180,7 @@ func TestHandleClusterTopology_RequestClusterDataError(t *testing.T) {
 	aggregator := metrics.NewAggregator(testRegistry, mockSender, testLogger)
 	mockRequester := &mockClusterDataRequester{requestErr: assert.AnError}
 	clusterMgr := cluster.NewManager(testRegistry, mockRequester, testLogger)
-	server := NewServer(aggregator, clusterMgr, nil, testRegistry, testLogger)
+	server := NewServer(aggregator, clusterMgr, nil, testRegistry, nil, testLogger)
 	ctx := context.Background()
 	identity := registry.AgentIdentity{
 		PodName:        "test-pod",
@@ -202,7 +202,7 @@ func TestNewServer(t *testing.T) {
 	mockSender := &mockRequestSender{}
 	aggregator := metrics.NewAggregator(testRegistry, mockSender, testLogger)
 
-	server := NewServer(aggregator, nil, nil, testRegistry, testLogger)
+	server := NewServer(aggregator, nil, nil, testRegistry, nil, testLogger)
 
 	assert.NotNil(t, server)
 	assert.Equal(t, aggregator, server.metricsAggregator)
@@ -747,7 +747,7 @@ func TestHandleClusterLifecycle_Success(t *testing.T) {
 	}
 	mockLifecycleRequester.podByAgent[agentID] = "test-pod-1"
 
-	server := NewServer(aggregator, nil, lifecycleMgr, testRegistry, testLogger)
+	server := NewServer(aggregator, nil, lifecycleMgr, testRegistry, nil, testLogger)
 
 	req := httptest.NewRequest(http.MethodGet, "/cluster/lifecycle", nil)
 	resp := httptest.NewRecorder()
@@ -773,7 +773,7 @@ func TestHandleClusterLifecycle_NoLifecycleManager(t *testing.T) {
 	testRegistry := registry.NewAgentRegistry(testLogger, 5*time.Second, 10*time.Second, 100)
 	mockSender := &mockRequestSender{}
 	aggregator := metrics.NewAggregator(testRegistry, mockSender, testLogger)
-	server := NewServer(aggregator, nil, nil, testRegistry, testLogger)
+	server := NewServer(aggregator, nil, nil, testRegistry, nil, testLogger)
 
 	req := httptest.NewRequest(http.MethodGet, "/cluster/lifecycle", nil)
 	resp := httptest.NewRecorder()
