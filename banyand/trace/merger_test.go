@@ -269,7 +269,7 @@ func Test_mergeBlocks_fastPath(t *testing.T) {
 			closeCh := make(chan struct{})
 			defer close(closeCh)
 
-			pm, tf, tagTypes, err := mergeBlocks(closeCh, bw, br)
+			pm, tf, tagTypes, err := mergeBlocks(closeCh, bw, br, nil)
 			require.NoError(t, err)
 			require.NotNil(t, pm)
 			require.NotNil(t, tf)
@@ -1455,4 +1455,156 @@ func Test_flush_cleansUpOnSidxFlushError(t *testing.T) {
 	require.False(t, fileSystem.IsExist(tracePartPath), "trace part directory should be removed on sidx flush failure")
 	sidxPartPath := filepath.Join(tmpPath, sidxDirName, "idx1", fmt.Sprintf("%016x", partID))
 	require.False(t, fileSystem.IsExist(sidxPartPath), "sidx part directory should be removed on sidx flush failure")
+}
+
+func Test_mergePartsWithConflictingTagTypes(t *testing.T) {
+	tests := []struct {
+		name         string
+		parts        []*traces
+		wantTagTypes map[string]pbv1.ValueType
+		wantDeleted  []string
+	}{
+		{
+			name: "multiple parts with int and str for same tag",
+			parts: []*traces{
+				{
+					traceIDs:   []string{"trace1"},
+					timestamps: []int64{1},
+					tags: [][]*tagValue{
+						{
+							{tag: "state", valueType: pbv1.ValueTypeInt64, value: convert.Int64ToBytes(100)},
+							{tag: "name", valueType: pbv1.ValueTypeStr, value: []byte("svc1")},
+						},
+					},
+					spans:   [][]byte{[]byte("span1")},
+					spanIDs: []string{"span1"},
+				},
+				{
+					traceIDs:   []string{"trace2"},
+					timestamps: []int64{2},
+					tags: [][]*tagValue{
+						{
+							{tag: "state", valueType: pbv1.ValueTypeStr, value: []byte("active")},
+							{tag: "name", valueType: pbv1.ValueTypeStr, value: []byte("svc2")},
+						},
+					},
+					spans:   [][]byte{[]byte("span2")},
+					spanIDs: []string{"span2"},
+				},
+			},
+			wantTagTypes: map[string]pbv1.ValueType{
+				"state#int": pbv1.ValueTypeInt64,
+				"state#str": pbv1.ValueTypeStr,
+				"name":      pbv1.ValueTypeStr,
+			},
+			wantDeleted: []string{"state"},
+		},
+		{
+			name: "merge typed-suffix part with plain part",
+			parts: []*traces{
+				{
+					traceIDs:   []string{"trace1"},
+					timestamps: []int64{1},
+					tags: [][]*tagValue{
+						{{tag: "state#int", valueType: pbv1.ValueTypeInt64, value: convert.Int64ToBytes(100)}},
+					},
+					spans:   [][]byte{[]byte("span1")},
+					spanIDs: []string{"span1"},
+				},
+				{
+					traceIDs:   []string{"trace2"},
+					timestamps: []int64{2},
+					tags: [][]*tagValue{
+						{{tag: "state", valueType: pbv1.ValueTypeStr, value: []byte("pending")}},
+					},
+					spans:   [][]byte{[]byte("span2")},
+					spanIDs: []string{"span2"},
+				},
+			},
+			wantTagTypes: map[string]pbv1.ValueType{
+				"state#int": pbv1.ValueTypeInt64,
+				"state#str": pbv1.ValueTypeStr,
+			},
+			wantDeleted: []string{"state"},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			tmpPath, defFn := test.Space(require.New(t))
+			defer defFn()
+			fileSystem := fs.NewLocalFileSystem()
+
+			partIDs := make([]uint64, len(tt.parts))
+			for idx := range partIDs {
+				partIDs[idx] = uint64(idx)
+			}
+			dstID := uint64(999)
+			dstPath := mergePartsWithConflictTags(t, fileSystem, tmpPath, tt.parts, partIDs, dstID)
+
+			mergedPart := mustOpenFilePart(dstID, tmpPath, fileSystem)
+			for tag, wantType := range tt.wantTagTypes {
+				gotType, exists := mergedPart.tagType[tag]
+				require.True(t, exists, "expected tag type entry for %q", tag)
+				require.Equal(t, wantType, gotType, "tag type mismatch for %q", tag)
+			}
+			for _, tag := range tt.wantDeleted {
+				_, ok := mergedPart.tagType[tag]
+				require.False(t, ok, "tag %q should not exist in tagType after merge", tag)
+				dataFile := filepath.Join(dstPath, tag+tagsFilenameExt)
+				require.False(t, fileSystem.IsExist(dataFile), "tag data file %q should not exist", dataFile)
+				metaFile := filepath.Join(dstPath, tag+tagsMetadataFilenameExt)
+				require.False(t, fileSystem.IsExist(metaFile), "tag metadata file %q should not exist", metaFile)
+			}
+		})
+	}
+}
+
+func mergePartsWithConflictTags(t *testing.T, fileSystem fs.FileSystem, tmpPath string, tsList []*traces, partIDs []uint64, dstID uint64) string {
+	t.Helper()
+	var parts []*partWrapper
+	for i, traces := range tsList {
+		mp := generateMemPart()
+		mp.mustInitFromTraces(traces)
+		mp.mustFlush(fileSystem, partPath(tmpPath, partIDs[i]))
+		p := mustOpenFilePart(partIDs[i], tmpPath, fileSystem)
+		parts = append(parts, &partWrapper{p: p})
+		releaseMemPart(mp)
+	}
+
+	conflictTags := collectConflictTags(parts)
+
+	var pmi []*partMergeIter
+	var traceSize uint64
+	for i := range tsList {
+		p := mustOpenFilePart(partIDs[i], tmpPath, fileSystem)
+		iter := generatePartMergeIter()
+		iter.mustInitFromPart(p)
+		pmi = append(pmi, iter)
+		traceSize += uint64(len(tsList[i].traceIDs))
+	}
+
+	br := generateBlockReader()
+	br.init(pmi)
+	bw := generateBlockWriter()
+	dstPath := partPath(tmpPath, dstID)
+	bw.mustInitForFilePart(fileSystem, dstPath, false, int(traceSize))
+
+	closeCh := make(chan struct{})
+	pm, tf, tagTypes, mergeErr := mergeBlocks(closeCh, bw, br, conflictTags)
+	close(closeCh)
+	require.NoError(t, mergeErr)
+	require.NotNil(t, pm)
+
+	releaseBlockWriter(bw)
+	releaseBlockReader(br)
+	for _, iter := range pmi {
+		releasePartMergeIter(iter)
+	}
+
+	pm.mustWriteMetadata(fileSystem, dstPath)
+	tf.mustWriteTraceIDFilter(fileSystem, dstPath)
+	tagTypes.mustWriteTagType(fileSystem, dstPath)
+	fileSystem.SyncPath(dstPath)
+	return dstPath
 }

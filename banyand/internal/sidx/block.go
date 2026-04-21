@@ -482,6 +482,8 @@ func fastTagAppend(bi, b *blockPointer, offset int) error {
 		if _, exists := b.tags[t.name]; !exists {
 			return fmt.Errorf("unexpected tag name for tag %q", t.name)
 		}
+	}
+	for _, t := range bi.tags {
 		assertIdxAndOffset(t.name, len(b.tags[t.name].values), b.idx, offset)
 		bi.tags[t.name].values = append(bi.tags[t.name].values, b.tags[t.name].values[b.idx:offset]...)
 	}

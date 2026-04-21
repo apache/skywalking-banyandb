@@ -119,7 +119,7 @@ func Benchmark_mergeBlocks_FastRawMerge(b *testing.B) {
 
 				closeCh := make(chan struct{})
 
-				_, _, _, err := mergeBlocks(closeCh, bw, br)
+				_, _, _, err := mergeBlocks(closeCh, bw, br, nil)
 				if err != nil {
 					b.Fatal(err)
 				}
@@ -226,7 +226,7 @@ func Benchmark_mergeBlocks_OriginalMerge(b *testing.B) {
 
 				closeCh := make(chan struct{})
 
-				_, _, _, err := mergeBlocks(closeCh, bw, br)
+				_, _, _, err := mergeBlocks(closeCh, bw, br, nil)
 				if err != nil {
 					b.Fatal(err)
 				}
@@ -331,7 +331,7 @@ func Benchmark_mergeBlocks_Comparison(b *testing.B) {
 
 			closeCh := make(chan struct{})
 
-			_, _, _, err := mergeBlocks(closeCh, bw, br)
+			_, _, _, err := mergeBlocks(closeCh, bw, br, nil)
 			if err != nil {
 				b.Fatal(err)
 			}
@@ -377,7 +377,7 @@ func Benchmark_mergeBlocks_Comparison(b *testing.B) {
 
 			closeCh := make(chan struct{})
 
-			_, _, _, err := mergeBlocks(closeCh, bw, br)
+			_, _, _, err := mergeBlocks(closeCh, bw, br, nil)
 			if err != nil {
 				b.Fatal(err)
 			}

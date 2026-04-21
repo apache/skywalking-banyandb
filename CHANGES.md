@@ -37,6 +37,7 @@ Release Notes.
 - Add validation for MATCH and IN conditions in inverted index query builder, and handle nil OR branch when all entities are specific.
 - Fix wrong backup path of schema property.
 - Fix lifecycle migration failure when the target stage has `close: true`.
+- Fix stale sync request blocking watch session channel, causing repeated "channel full, skipping session" errors when a watch stream is in backoff.
 
 ### Chores
 

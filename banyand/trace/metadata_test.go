@@ -270,7 +270,7 @@ var _ = Describe("Metadata", func() {
 
 				Eventually(func(innerGm Gomega) {
 					spans := querySchemaChangeTraceData(svcs, traceName, groupName, now.Add(-3*time.Hour), now,
-						[]string{"trace_id", "service_id", "duration"}, nil)
+						[]string{"trace_id", "service_id", "duration"})
 					innerGm.Expect(spans).To(HaveLen(8))
 
 					for _, span := range spans {
@@ -297,7 +297,7 @@ var _ = Describe("Metadata", func() {
 
 				Eventually(func(innerGm Gomega) {
 					spans := querySchemaChangeTraceData(svcs, traceName, groupName, now.Add(-3*time.Hour), now,
-						[]string{"trace_id", "service_id", "duration", "extra_tag"}, nil)
+						[]string{"trace_id", "service_id", "duration", "extra_tag"})
 					innerGm.Expect(spans).To(HaveLen(8))
 
 					oldDataCount := 0
@@ -333,7 +333,7 @@ var _ = Describe("Metadata", func() {
 
 				Eventually(func(innerGm Gomega) {
 					spans := querySchemaChangeTraceData(svcs, traceName, groupName, now.Add(-3*time.Hour), now,
-						[]string{"trace_id", "service_id", "duration", "extra_tag"}, nil)
+						[]string{"trace_id", "service_id", "duration", "extra_tag"})
 					innerGm.Expect(spans).To(HaveLen(8))
 
 					nullCount := 0
@@ -352,6 +352,52 @@ var _ = Describe("Metadata", func() {
 					}
 					innerGm.Expect(nullCount).To(Equal(5), "old data with INT type should return null after schema changed to STRING")
 					innerGm.Expect(stringCount).To(Equal(3), "new data should have STRING extra_tag values")
+				}, flags.EventuallyTimeout).Should(Succeed())
+
+				env.cleanup()
+			})
+		})
+
+		Context("Trace schema with changed tag type after merge", func() {
+			It("querying data should return correct values after parts with different types are merged", func() {
+				traceName := "schema_change_tag_type_merge"
+				now := timestamp.NowMilli()
+
+				env := setupSchemaChangeTrace(svcs, traceName, groupName, traceSetupOptions{withExtraTag: true})
+				writeSchemaChangeTraceData(svcs, traceName, groupName, now.Add(-2*time.Hour), 5,
+					writeTraceDataOptions{extraTag: extraTagInt})
+				changeTraceExtraTagType(svcs, traceName, groupName)
+				writeSchemaChangeTraceData(svcs, traceName, groupName, now.Add(-1*time.Hour), 3,
+					writeTraceDataOptions{extraTag: extraTagString, traceIDPrefix: "trace_new_"})
+				partCountBeforeMerge := getTotalPartCount(svcs, groupName)
+				Eventually(func() int64 {
+					return getTotalPartCount(svcs, groupName)
+				}, flags.EventuallyTimeout).Should(BeNumerically("<", partCountBeforeMerge))
+
+				Eventually(func(innerGm Gomega) {
+					spans := querySchemaChangeTraceData(svcs, traceName, groupName,
+						now.Add(-3*time.Hour), now,
+						[]string{"trace_id", "service_id", "duration", "extra_tag"})
+					innerGm.Expect(spans).To(HaveLen(8))
+
+					nullCount := 0
+					stringCount := 0
+					for _, span := range spans {
+						for _, tag := range span.Tags {
+							if tag.Key == "extra_tag" {
+								switch tag.Value.GetValue().(type) {
+								case *modelv1.TagValue_Null:
+									nullCount++
+								case *modelv1.TagValue_Str:
+									stringCount++
+								}
+							}
+						}
+					}
+					innerGm.Expect(nullCount).To(Equal(5),
+						"old data with int type should return null after schema changed to STRING and parts merged")
+					innerGm.Expect(stringCount).To(Equal(3),
+						"new data should have string extra_tag values after merge")
 				}, flags.EventuallyTimeout).Should(Succeed())
 
 				env.cleanup()
@@ -652,7 +698,7 @@ func writeSchemaChangeTraceData(svcs *services, name, group string, baseTime tim
 	}
 }
 
-func querySchemaChangeTraceData(svcs *services, name, group string, begin, end time.Time, tags []string, criteria *modelv1.Criteria) []*tracev1.Span {
+func querySchemaChangeTraceData(svcs *services, name, group string, begin, end time.Time, tags []string) []*tracev1.Span {
 	req := &tracev1.QueryRequest{
 		Groups: []string{group},
 		Name:   name,
@@ -665,9 +711,6 @@ func querySchemaChangeTraceData(svcs *services, name, group string, begin, end t
 			IndexRuleName: name + "-duration",
 			Sort:          modelv1.Sort_SORT_DESC,
 		},
-	}
-	if criteria != nil {
-		req.Criteria = criteria
 	}
 	var spans []*tracev1.Span
 	Eventually(func() bool {
@@ -693,4 +736,18 @@ func querySchemaChangeTraceData(svcs *services, name, group string, begin, end t
 		return false
 	}).WithTimeout(flags.EventuallyTimeout).Should(BeTrue())
 	return spans
+}
+
+func getTotalPartCount(svcs *services, group string) int64 {
+	dataInfo, err := svcs.trace.CollectDataInfo(context.TODO(), group)
+	if err != nil || dataInfo == nil {
+		return 0
+	}
+	var total int64
+	for _, seg := range dataInfo.SegmentInfo {
+		for _, shard := range seg.ShardInfo {
+			total += shard.PartCount
+		}
+	}
+	return total
 }

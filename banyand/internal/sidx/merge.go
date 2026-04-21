@@ -19,9 +19,11 @@ package sidx
 
 import (
 	"fmt"
+	"io"
 
 	"github.com/apache/skywalking-banyandb/pkg/encoding"
 	"github.com/apache/skywalking-banyandb/pkg/fs"
+	pbv1 "github.com/apache/skywalking-banyandb/pkg/pb/v1"
 )
 
 var (
@@ -80,6 +82,7 @@ func (s *sidx) mergeParts(fileSystem fs.FileSystem, closeCh <-chan struct{}, par
 		return nil, errNoPartToMerge
 	}
 	dstPath := partPath(root, partID)
+	conflictTags := collectConflictTags(parts)
 	var totalSize int64
 	pii := make([]*partMergeIter, 0, len(parts))
 	for i := range parts {
@@ -94,7 +97,7 @@ func (s *sidx) mergeParts(fileSystem fs.FileSystem, closeCh <-chan struct{}, par
 	bw := generateBlockWriter()
 	bw.mustInitForFilePart(fileSystem, dstPath, shouldCache)
 
-	pm, err := mergeBlocks(closeCh, bw, br)
+	pm, err := mergeBlocks(closeCh, bw, br, conflictTags)
 	releaseBlockWriter(bw)
 	releaseBlockReader(br)
 	for i := range pii {
@@ -132,7 +135,7 @@ func (s *sidx) mergeParts(fileSystem fs.FileSystem, closeCh <-chan struct{}, par
 	return newPartWrapper(nil, p), nil
 }
 
-func mergeBlocks(closeCh <-chan struct{}, bw *blockWriter, br *blockReader) (*partMetadata, error) {
+func mergeBlocks(closeCh <-chan struct{}, bw *blockWriter, br *blockReader, conflictTags map[string]struct{}) (*partMetadata, error) {
 	pendingBlockIsEmpty := true
 	pendingBlock := generateBlockPointer()
 	defer releaseBlockPointer(pendingBlock)
@@ -150,6 +153,10 @@ func mergeBlocks(closeCh <-chan struct{}, bw *blockWriter, br *blockReader) (*pa
 			decoder = nil
 		}
 	}
+	loadAndRename := func() {
+		br.loadBlockData(getDecoder())
+		renameConflictTags(&br.block.block, conflictTags)
+	}
 	for br.nextBlockMetadata() {
 		select {
 		case <-closeCh:
@@ -159,7 +166,7 @@ func mergeBlocks(closeCh <-chan struct{}, bw *blockWriter, br *blockReader) (*pa
 		b := br.block
 
 		if pendingBlockIsEmpty {
-			br.loadBlockData(getDecoder())
+			loadAndRename()
 			pendingBlock.copyFrom(b)
 			pendingBlockIsEmpty = false
 			continue
@@ -170,7 +177,7 @@ func mergeBlocks(closeCh <-chan struct{}, bw *blockWriter, br *blockReader) (*pa
 			pendingBlock.block.uncompressedSizeBytes() >= maxUncompressedBlockSize {
 			bw.mustWriteBlock(pendingBlock.bm.seriesID, &pendingBlock.block)
 			releaseDecoder()
-			br.loadBlockData(getDecoder())
+			loadAndRename()
 			pendingBlock.copyFrom(b)
 			continue
 		}
@@ -181,7 +188,7 @@ func mergeBlocks(closeCh <-chan struct{}, bw *blockWriter, br *blockReader) (*pa
 		}
 		tmpBlock.reset()
 		tmpBlock.bm.seriesID = b.bm.seriesID
-		br.loadBlockData(getDecoder())
+		loadAndRename()
 		mergeTwoBlocks(tmpBlock, pendingBlock, b)
 		if len(tmpBlock.userKeys) <= maxBlockLength && tmpBlock.block.uncompressedSizeBytes() <= maxUncompressedBlockSize {
 			if len(tmpBlock.userKeys) == 0 {
@@ -206,6 +213,73 @@ func mergeBlocks(closeCh <-chan struct{}, bw *blockWriter, br *blockReader) (*pa
 	var result partMetadata
 	bw.Flush(&result)
 	return &result, nil
+}
+
+func collectConflictTags(parts []*partWrapper) map[string]struct{} {
+	tagTypes := make(map[string]map[pbv1.ValueType]struct{})
+	for _, pw := range parts {
+		p := pw.p
+		for tt := range p.tagMetadata {
+			t := tt
+			var vt pbv1.ValueType
+			if hasTypeSuffix(tt) {
+				t = decodeTypedTag(tt)
+				vt = valueType(tt)
+			} else {
+				var readErr error
+				vt, readErr = readFirstTagValueType(p.tagMetadata[tt])
+				if readErr != nil {
+					continue
+				}
+			}
+			if tagTypes[t] == nil {
+				tagTypes[t] = make(map[pbv1.ValueType]struct{})
+			}
+			tagTypes[t][vt] = struct{}{}
+		}
+	}
+	var result map[string]struct{}
+	for tag, types := range tagTypes {
+		if len(types) > 1 {
+			if result == nil {
+				result = make(map[string]struct{})
+			}
+			result[tag] = struct{}{}
+		}
+	}
+	return result
+}
+
+func readFirstTagValueType(tmReader fs.Reader) (pbv1.ValueType, error) {
+	sr := tmReader.SequentialRead()
+	defer fs.MustClose(sr)
+	buf := make([]byte, 512)
+	n, readErr := io.ReadFull(sr, buf)
+	if readErr != nil && n == 0 {
+		return pbv1.ValueTypeUnknown, fmt.Errorf("cannot read tag metadata: %w", readErr)
+	}
+	tm := generateTagMetadata()
+	defer releaseTagMetadata(tm)
+	if unmarshalErr := tm.unmarshal(buf[:n]); unmarshalErr != nil {
+		return pbv1.ValueTypeUnknown, fmt.Errorf("cannot unmarshal tag metadata: %w", unmarshalErr)
+	}
+	return tm.valueType, nil
+}
+
+func renameConflictTags(b *block, conflictTags map[string]struct{}) {
+	if len(conflictTags) == 0 {
+		return
+	}
+	for t := range conflictTags {
+		td, exists := b.tags[t]
+		if !exists {
+			continue
+		}
+		typedName := encodeTypedTag(t, td.valueType)
+		td.name = typedName
+		b.tags[typedName] = td
+		delete(b.tags, t)
+	}
 }
 
 func mergeTwoBlocks(target, left, right *blockPointer) {

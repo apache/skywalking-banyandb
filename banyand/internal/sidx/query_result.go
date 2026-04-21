@@ -114,16 +114,30 @@ func (qr *queryResult) loadBlockData(tmpBlock *block, p *part, bm *blockMetadata
 	// Load tag data for selected tags only
 	for tagName := range tagsToLoad {
 		tagBlockInfo, exists := bm.tagsBlocks[tagName]
-		if !exists {
-			continue // Skip missing tags
-		}
-
-		if !qr.loadTagData(tmpBlock, p, tagName, &tagBlockInfo, int(bm.count), decoder) {
-			// Continue loading other tags even if one fails
+		if exists {
+			qr.loadTagData(tmpBlock, p, tagName, &tagBlockInfo, int(bm.count), decoder)
 			continue
 		}
+		schemaType, hasSchemaType := qr.request.SchemaTagTypes[tagName]
+		if !hasSchemaType {
+			continue
+		}
+		for typedTag, typedBlock := range bm.tagsBlocks {
+			if decodeTypedTag(typedTag) != tagName {
+				continue
+			}
+			if valueType(typedTag) != schemaType {
+				continue
+			}
+			if qr.loadTagData(tmpBlock, p, typedTag, &typedBlock, int(bm.count), decoder) {
+				td := tmpBlock.tags[typedTag]
+				td.name = tagName
+				tmpBlock.tags[tagName] = td
+				delete(tmpBlock.tags, typedTag)
+			}
+			break
+		}
 	}
-
 	return len(tmpBlock.userKeys) > 0
 }
 
