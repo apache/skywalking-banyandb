@@ -90,7 +90,7 @@ func setUp() (*services, func()) {
 	flags = append(flags, "--metadata-root-path="+metaPath)
 	rootPath, deferFunc, err := test.NewSpace()
 	gomega.Expect(err).NotTo(gomega.HaveOccurred())
-	flags = append(flags, "--trace-root-path="+rootPath)
+	flags = append(flags, "--trace-root-path="+rootPath, "--trace-max-merge-parts=2")
 	listenClientURL, listenPeerURL, err := test.NewEtcdListenUrls()
 	gomega.Expect(err).NotTo(gomega.HaveOccurred())
 	flags = append(flags, "--etcd-listen-client-url="+listenClientURL, "--etcd-listen-peer-url="+listenPeerURL,

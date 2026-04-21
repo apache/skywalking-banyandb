@@ -20,10 +20,21 @@ package validate
 
 import (
 	"errors"
+	"fmt"
+	"strings"
 
 	commonv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/common/v1"
 	databasev1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/database/v1"
 )
+
+const reservedTagSeparator = "#"
+
+func validateTagName(name string) error {
+	if strings.Contains(name, reservedTagSeparator) {
+		return fmt.Errorf("tag name %q must not contain reserved character %q", name, reservedTagSeparator)
+	}
+	return nil
+}
 
 // Group validates the provided Group object.
 func Group(group *commonv1.Group) error {
@@ -188,15 +199,27 @@ func Trace(trace *databasev1.Trace) error {
 	if trace.TraceIdTagName == "" {
 		return errors.New("trace_id_tag_name is empty")
 	}
+	if err := validateTagName(trace.TraceIdTagName); err != nil {
+		return err
+	}
 	if trace.SpanIdTagName == "" {
 		return errors.New("span_id_tag_name is empty")
+	}
+	if err := validateTagName(trace.SpanIdTagName); err != nil {
+		return err
 	}
 	if trace.TimestampTagName == "" {
 		return errors.New("timestamp_tag_name is empty")
 	}
+	if err := validateTagName(trace.TimestampTagName); err != nil {
+		return err
+	}
 	for i := range trace.Tags {
 		if trace.Tags[i].Name == "" {
 			return errors.New("trace tag name is empty")
+		}
+		if err := validateTagName(trace.Tags[i].Name); err != nil {
+			return err
 		}
 		if trace.Tags[i].Type == databasev1.TagType_TAG_TYPE_UNSPECIFIED {
 			return errors.New("trace tag type is unspecified")
@@ -235,6 +258,9 @@ func tagFamily(tagFamilies []*databasev1.TagFamilySpec) error {
 		for j := range tagFamilies[i].Tags {
 			if tagFamilies[i].Tags[j].Name == "" {
 				return errors.New("tag name is empty")
+			}
+			if err := validateTagName(tagFamilies[i].Tags[j].Name); err != nil {
+				return err
 			}
 			if tagFamilies[i].Tags[j].Type == databasev1.TagType_TAG_TYPE_UNSPECIFIED {
 				return errors.New("tag type is unspecified")

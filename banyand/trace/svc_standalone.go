@@ -95,6 +95,7 @@ func (s *standalone) FlagSet() *run.FlagSet {
 	fs.IntVar(&s.maxFileSnapshotNum, "trace-max-file-snapshot-num", 10, "the maximum number of file snapshots")
 	fs.DurationVar(&s.minFileSnapshotAge, "trace-min-file-snapshot-age", time.Hour, "minimum age for file snapshots to be eligible for deletion")
 	s.option.mergePolicy = newDefaultMergePolicy()
+	fs.IntVar(&s.option.mergePolicy.maxParts, "trace-max-merge-parts", s.option.mergePolicy.maxParts, "the maximum number of parts to merge at once")
 	fs.VarP(&s.option.mergePolicy.maxFanOutSize, "trace-max-fan-out-size", "", "the upper bound of a single file size after merge of trace")
 	// Additional flags can be added here
 	return fs

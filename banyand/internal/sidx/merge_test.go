@@ -29,6 +29,7 @@ import (
 
 	"github.com/apache/skywalking-banyandb/api/common"
 	"github.com/apache/skywalking-banyandb/banyand/protector"
+	"github.com/apache/skywalking-banyandb/pkg/convert"
 	"github.com/apache/skywalking-banyandb/pkg/fs"
 	pbv1 "github.com/apache/skywalking-banyandb/pkg/pb/v1"
 	"github.com/apache/skywalking-banyandb/pkg/test"
@@ -480,6 +481,126 @@ func Test_mergeParts(t *testing.T) {
 			})
 		})
 	}
+}
+
+func Test_mergePartsWithConflictTags(t *testing.T) {
+	esConflictStr := func() *elements {
+		es := generateElements()
+		es.mustAppend(1, 100, make([]byte, 10), []Tag{
+			{Name: "status", Value: []byte("ok"), ValueType: pbv1.ValueTypeStr},
+		})
+		es.mustAppend(2, 200, make([]byte, 10), []Tag{
+			{Name: "status", Value: []byte("error"), ValueType: pbv1.ValueTypeStr},
+		})
+		es.mustAppend(3, 300, make([]byte, 10), []Tag{
+			{Name: "status", Value: []byte("warn"), ValueType: pbv1.ValueTypeStr},
+		})
+		return es
+	}()
+
+	esConflictInt := func() *elements {
+		es := generateElements()
+		es.mustAppend(1, 150, make([]byte, 10), []Tag{
+			{Name: "status", Value: convert.Int64ToBytes(200), ValueType: pbv1.ValueTypeInt64},
+		})
+		es.mustAppend(2, 250, make([]byte, 10), []Tag{
+			{Name: "status", Value: convert.Int64ToBytes(500), ValueType: pbv1.ValueTypeInt64},
+		})
+		es.mustAppend(3, 350, make([]byte, 10), []Tag{
+			{Name: "status", Value: convert.Int64ToBytes(404), ValueType: pbv1.ValueTypeInt64},
+		})
+		return es
+	}()
+
+	verify := func(t *testing.T, pp []*partWrapper, fileSystem fs.FileSystem, root string, partID uint64) {
+		closeCh := make(chan struct{})
+		defer close(closeCh)
+		s := &sidx{pm: protector.Nop{}}
+		p, mergeErr := s.mergeParts(fileSystem, closeCh, pp, partID, root)
+		require.NoError(t, mergeErr)
+		defer func() {
+			if p != nil {
+				p.release()
+			}
+		}()
+
+		pmi := &partMergeIter{}
+		pmi.mustInitFromPart(p.p)
+		reader := &blockReader{}
+		reader.init([]*partMergeIter{pmi})
+		decoder := generateTagValuesDecoder()
+		defer releaseTagValuesDecoder(decoder)
+
+		var blockCount int
+		for reader.nextBlockMetadata() {
+			reader.loadBlockData(decoder)
+			b := &reader.block.block
+			blockCount++
+
+			_, hasBareStatus := b.tags["status"]
+			require.False(t, hasBareStatus,
+				"block %d (seriesID=%d) has bare 'status' tag; expected renamed tags only",
+				blockCount, reader.block.bm.seriesID)
+
+			hasStr := false
+			hasInt := false
+			for tagName := range b.tags {
+				if tagName == "status#str" {
+					hasStr = true
+				}
+				if tagName == "status#int" {
+					hasInt = true
+				}
+			}
+			require.True(t, hasStr || hasInt,
+				"block %d (seriesID=%d) has neither 'status#str' nor 'status#int'",
+				blockCount, reader.block.bm.seriesID)
+		}
+		require.NoError(t, reader.error())
+		require.Equal(t, 3, blockCount, "expected 3 blocks (one per seriesID)")
+	}
+
+	esList := []*elements{esConflictStr, esConflictInt}
+
+	t.Run("memory parts", func(t *testing.T) {
+		var pp []*partWrapper
+		tmpPath, defFn := test.Space(require.New(t))
+		defer func() {
+			for _, pw := range pp {
+				pw.release()
+			}
+			defFn()
+		}()
+		for _, es := range esList {
+			mp := GenerateMemPart()
+			mp.mustInitFromElements(es)
+			pp = append(pp, newPartWrapper(mp, openMemPart(mp)))
+		}
+		verify(t, pp, fs.NewLocalFileSystem(), tmpPath, 1)
+	})
+
+	t.Run("file parts", func(t *testing.T) {
+		var fpp []*partWrapper
+		tmpPath, defFn := test.Space(require.New(t))
+		defer func() {
+			for _, pw := range fpp {
+				pw.release()
+			}
+			defFn()
+		}()
+		fileSystem := fs.NewLocalFileSystem()
+		for i, es := range esList {
+			mp := GenerateMemPart()
+			mp.mustInitFromElements(es)
+			partPath := filepath.Join(tmpPath, "part_"+string(rune('0'+i)))
+			mp.mustFlush(fileSystem, partPath)
+			filePart := mustOpenPart(uint64(i), partPath, fileSystem)
+			filePW := newPartWrapper(nil, filePart)
+			fpp = append(fpp, filePW)
+			ReleaseMemPart(mp)
+		}
+		verify(t, fpp, fileSystem, tmpPath, uint64(len(esList)))
+	})
 }
 
 func elementsToBlocks(esList []*elements) []block {

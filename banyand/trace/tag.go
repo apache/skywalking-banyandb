@@ -18,6 +18,8 @@
 package trace
 
 import (
+	"strings"
+
 	internalencoding "github.com/apache/skywalking-banyandb/banyand/internal/encoding"
 	"github.com/apache/skywalking-banyandb/pkg/bytes"
 	pkgencoding "github.com/apache/skywalking-banyandb/pkg/encoding"
@@ -25,6 +27,57 @@ import (
 	"github.com/apache/skywalking-banyandb/pkg/logger"
 	pbv1 "github.com/apache/skywalking-banyandb/pkg/pb/v1"
 )
+
+const typedTagSeparator = "#"
+
+var (
+	valueTypeToSuffix = map[pbv1.ValueType]string{
+		pbv1.ValueTypeStr:        "str",
+		pbv1.ValueTypeInt64:      "int",
+		pbv1.ValueTypeFloat64:    "float",
+		pbv1.ValueTypeBinaryData: "bin",
+		pbv1.ValueTypeStrArr:     "str_arr",
+		pbv1.ValueTypeInt64Arr:   "int_arr",
+		pbv1.ValueTypeTimestamp:  "ts",
+		pbv1.ValueTypeUnknown:    "",
+	}
+	suffixToValueType = map[string]pbv1.ValueType{
+		"str":     pbv1.ValueTypeStr,
+		"int":     pbv1.ValueTypeInt64,
+		"float":   pbv1.ValueTypeFloat64,
+		"bin":     pbv1.ValueTypeBinaryData,
+		"str_arr": pbv1.ValueTypeStrArr,
+		"int_arr": pbv1.ValueTypeInt64Arr,
+		"ts":      pbv1.ValueTypeTimestamp,
+	}
+)
+
+func encodeTypedTag(name string, vt pbv1.ValueType) string {
+	suffix, ok := valueTypeToSuffix[vt]
+	if !ok || suffix == "" {
+		return name
+	}
+	return name + typedTagSeparator + suffix
+}
+
+func decodeTypedTag(key string) string {
+	for suffix := range suffixToValueType {
+		sepSuffix := typedTagSeparator + suffix
+		if strings.HasSuffix(key, sepSuffix) {
+			return key[:len(key)-len(sepSuffix)]
+		}
+	}
+	return key
+}
+
+func hasTypeSuffix(key string) bool {
+	for suffix := range suffixToValueType {
+		if strings.HasSuffix(key, typedTagSeparator+suffix) {
+			return true
+		}
+	}
+	return false
+}
 
 type tag struct {
 	name      string
