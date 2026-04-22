@@ -34,8 +34,8 @@ import (
 )
 
 type stubCollectionProvider struct {
-	payload []map[string]any
 	err     error
+	payload []map[string]any
 }
 
 func (s stubCollectionProvider) MarshalCollections() ([]byte, error) {

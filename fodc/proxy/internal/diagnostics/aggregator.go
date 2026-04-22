@@ -39,9 +39,9 @@ const refreshWait = 2 * time.Second
 type CrashPanicInfo struct {
 	OccurredAt     time.Time `json:"occurred_at"`
 	Component      string    `json:"component"`
+	GoroutineStack string    `json:"goroutine_stack,omitempty"`
 	PanicValue     string    `json:"panic_value"`
 	Recovered      bool      `json:"recovered"`
-	GoroutineStack string    `json:"goroutine_stack,omitempty"`
 }
 
 // AggregatedCrashRecord enriches a crash collection with agent identity.
@@ -79,9 +79,10 @@ type Aggregator struct {
 	registry    *registry.AgentRegistry
 	grpcService RequestSender
 	// cache maps "agentID::artifactDir" → record for O(1) dedup.
-	cache   map[string]*AggregatedCrashRecord
+	cache map[string]*AggregatedCrashRecord
+	log   *logger.Logger
+
 	cacheMu sync.RWMutex
-	log     *logger.Logger
 	mu      sync.RWMutex
 }
 

@@ -38,20 +38,20 @@ const (
 
 // CrashAnalysis holds the result of analyzing a crash artifact directory.
 type CrashAnalysis struct {
-	Complete     bool
 	MissingFiles []string
+	Complete     bool
 }
 
 // DirectoryWatcher watches a local crash artifact directory for new collections
 // using filesystem notifications (inotify on Linux, kqueue on macOS, FSEvents on macOS).
 // This implements the FS Watcher / Crash Analyzer component from the Core Components and Workflow.
 type DirectoryWatcher struct {
+	cancel   context.CancelFunc
+	seenKeys map[string]struct{}
+	records  *flightrecorder.RingBuffer[CollectionRecord]
 	log      *logger.Logger
 	dir      string
-	records  *flightrecorder.RingBuffer[CollectionRecord]
-	seenKeys map[string]struct{}
 	mu       sync.RWMutex
-	cancel   context.CancelFunc
 	wg       sync.WaitGroup
 }
 

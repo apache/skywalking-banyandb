@@ -109,7 +109,7 @@ func TestIncompleteArtifactStoredByWatcher(t *testing.T) {
 	}
 	data, marshalErr := json.MarshalIndent(record, "", "  ")
 	require.NoError(t, marshalErr)
-	require.NoError(t, os.WriteFile(filepath.Join(artifactSubdir, "panic.json"), append(data, '\n'), 0o644))
+	require.NoError(t, os.WriteFile(filepath.Join(artifactSubdir, "panic.json"), append(data, '\n'), 0o600))
 
 	watcher := crashcollector.NewDirectoryWatcher(log, dir, crashcollector.Config{})
 	watcher.Scan()
@@ -142,16 +142,16 @@ func TestDirectoryWatcherEvictsOldestOnRingBufferOverflow(t *testing.T) {
 	log := diagnosticLogger(t)
 
 	type componentCrash struct {
-		name       string
 		occurredAt time.Time
+		name       string
 	}
 	crashes := []componentCrash{
-		{"alpha", time.Date(2026, time.April, 20, 10, 0, 0, 0, time.UTC)},
-		{"beta", time.Date(2026, time.April, 20, 10, 0, 1, 0, time.UTC)},
-		{"gamma", time.Date(2026, time.April, 20, 10, 0, 2, 0, time.UTC)},
-		{"delta", time.Date(2026, time.April, 20, 10, 0, 3, 0, time.UTC)},
-		{"epsilon", time.Date(2026, time.April, 20, 10, 0, 4, 0, time.UTC)},
-		{"zeta", time.Date(2026, time.April, 20, 10, 0, 5, 0, time.UTC)},
+		{name: "alpha", occurredAt: time.Date(2026, time.April, 20, 10, 0, 0, 0, time.UTC)},
+		{name: "beta", occurredAt: time.Date(2026, time.April, 20, 10, 0, 1, 0, time.UTC)},
+		{name: "gamma", occurredAt: time.Date(2026, time.April, 20, 10, 0, 2, 0, time.UTC)},
+		{name: "delta", occurredAt: time.Date(2026, time.April, 20, 10, 0, 3, 0, time.UTC)},
+		{name: "epsilon", occurredAt: time.Date(2026, time.April, 20, 10, 0, 4, 0, time.UTC)},
+		{name: "zeta", occurredAt: time.Date(2026, time.April, 20, 10, 0, 5, 0, time.UTC)},
 	}
 
 	const bufSize = 3

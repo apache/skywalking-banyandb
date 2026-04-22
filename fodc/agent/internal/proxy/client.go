@@ -51,22 +51,22 @@ type MetricsRequestFilter struct {
 
 // Client manages connection and communication with the FODC Proxy.
 type Client struct {
-	logger              *logger.Logger
-	heartbeatTicker     *time.Ticker
-	flightRecorder      *flightrecorder.FlightRecorder
-	connManager         *connManager
-	clusterCollector    *cluster.Collector
-	lifecycleCollector  *lifecycle.Collector
-	collectionLister    crashcollector.CollectionLister
-	stopCh              chan struct{}
-	reconnectCh         chan struct{}
-	labels              map[string]string
-	metricsStream       fodcv1.FODCService_StreamMetricsClient
-	registrationStream  fodcv1.FODCService_RegisterAgentClient
-	clusterStateStream  fodcv1.FODCService_StreamClusterTopologyClient
-	lifecycleStream     fodcv1.FODCService_StreamLifecycleClient
-	crashStream         fodcv1.FODCService_StreamCrashDiagnosticsClient
-	client              fodcv1.FODCServiceClient
+	logger             *logger.Logger
+	heartbeatTicker    *time.Ticker
+	flightRecorder     *flightrecorder.FlightRecorder
+	connManager        *connManager
+	clusterCollector   *cluster.Collector
+	lifecycleCollector *lifecycle.Collector
+	collectionLister   crashcollector.CollectionLister
+	stopCh             chan struct{}
+	reconnectCh        chan struct{}
+	labels             map[string]string
+	metricsStream      fodcv1.FODCService_StreamMetricsClient
+	registrationStream fodcv1.FODCService_RegisterAgentClient
+	clusterStateStream fodcv1.FODCService_StreamClusterTopologyClient
+	lifecycleStream    fodcv1.FODCService_StreamLifecycleClient
+	crashStream        fodcv1.FODCService_StreamCrashDiagnosticsClient
+	client             fodcv1.FODCServiceClient
 
 	proxyAddr      string
 	nodeRole       string

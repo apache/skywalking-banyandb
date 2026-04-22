@@ -21,6 +21,7 @@ package server
 import (
 	"context"
 	"fmt"
+	"net"
 	"net/http"
 	"time"
 
@@ -53,6 +54,8 @@ type Config struct {
 type Server struct {
 	server          *http.Server
 	diagnosisServer *http.Server
+	listener        net.Listener
+	diagnosisLn     net.Listener
 	logger          *logger.Logger
 	config          Config
 	started         bool
@@ -102,21 +105,55 @@ func (s *Server) Start(
 	))
 	diagnosisMux := http.NewServeMux()
 	if collectionProvider != nil {
-		diagnosisMux.HandleFunc("/collections", func(writer http.ResponseWriter, request *http.Request) {
-			if request.Method != http.MethodGet {
-				writer.WriteHeader(http.StatusMethodNotAllowed)
-				return
+		diagnosisMux.HandleFunc("/collections", collectionsHandler(collectionProvider))
+	}
+
+	if s.config.DiagnosisListenAddr == s.config.ListenAddr {
+		combinedMux := http.NewServeMux()
+		combinedMux.Handle("/metrics", promhttp.HandlerFor(
+			registry,
+			promhttp.HandlerOpts{},
+		))
+		if collectionProvider != nil {
+			combinedMux.HandleFunc("/collections", collectionsHandler(collectionProvider))
+		}
+
+		listener, listenErr := net.Listen("tcp", s.config.ListenAddr)
+		if listenErr != nil {
+			return nil, fmt.Errorf("failed to listen on metrics address: %w", listenErr)
+		}
+
+		s.server = &http.Server{
+			Addr:              s.config.ListenAddr,
+			Handler:           combinedMux,
+			ReadHeaderTimeout: s.config.ReadHeaderTimeout,
+		}
+		s.diagnosisServer = s.server
+		s.listener = listener
+		s.diagnosisLn = listener
+
+		serverErrCh := make(chan error, 1)
+		go func() {
+			s.logger.Info().
+				Str("listen-addr", listener.Addr().String()).
+				Msg("Starting Prometheus metrics server")
+			if serveErr := s.server.Serve(listener); serveErr != nil && serveErr != http.ErrServerClosed {
+				serverErrCh <- fmt.Errorf("metrics server error: %w", serveErr)
 			}
-			writer.Header().Set("Content-Type", "application/json")
-			payload, payloadErr := collectionProvider.MarshalCollections()
-			if payloadErr != nil {
-				http.Error(writer, payloadErr.Error(), http.StatusInternalServerError)
-				return
-			}
-			if _, writeErr := writer.Write(payload); writeErr != nil {
-				http.Error(writer, writeErr.Error(), http.StatusInternalServerError)
-			}
-		})
+		}()
+
+		s.started = true
+		return serverErrCh, nil
+	}
+
+	listener, listenErr := net.Listen("tcp", s.config.ListenAddr)
+	if listenErr != nil {
+		return nil, fmt.Errorf("failed to listen on metrics address: %w", listenErr)
+	}
+	diagnosisListener, diagnosisListenErr := net.Listen("tcp", s.config.DiagnosisListenAddr)
+	if diagnosisListenErr != nil {
+		_ = listener.Close()
+		return nil, fmt.Errorf("failed to listen on diagnosis address: %w", diagnosisListenErr)
 	}
 
 	s.server = &http.Server{
@@ -129,22 +166,24 @@ func (s *Server) Start(
 		Handler:           diagnosisMux,
 		ReadHeaderTimeout: s.config.ReadHeaderTimeout,
 	}
+	s.listener = listener
+	s.diagnosisLn = diagnosisListener
 
 	// Start server in goroutine
 	serverErrCh := make(chan error, 2)
 	go func() {
 		s.logger.Info().
-			Str("listen-addr", s.config.ListenAddr).
+			Str("listen-addr", listener.Addr().String()).
 			Msg("Starting Prometheus metrics server")
-		if serveErr := s.server.ListenAndServe(); serveErr != nil && serveErr != http.ErrServerClosed {
+		if serveErr := s.server.Serve(listener); serveErr != nil && serveErr != http.ErrServerClosed {
 			serverErrCh <- fmt.Errorf("metrics server error: %w", serveErr)
 		}
 	}()
 	go func() {
 		s.logger.Info().
-			Str("listen-addr", s.config.DiagnosisListenAddr).
+			Str("listen-addr", diagnosisListener.Addr().String()).
 			Msg("Starting diagnosis server")
-		if serveErr := s.diagnosisServer.ListenAndServe(); serveErr != nil && serveErr != http.ErrServerClosed {
+		if serveErr := s.diagnosisServer.Serve(diagnosisListener); serveErr != nil && serveErr != http.ErrServerClosed {
 			serverErrCh <- fmt.Errorf("diagnosis server error: %w", serveErr)
 		}
 	}()
@@ -169,7 +208,7 @@ func (s *Server) Stop(ctx context.Context) error {
 		s.logger.Warn().Err(shutdownErr).Msg("Error shutting down metrics server")
 		return shutdownErr
 	}
-	if s.diagnosisServer != nil {
+	if s.diagnosisServer != nil && s.diagnosisServer != s.server {
 		if shutdownErr := s.diagnosisServer.Shutdown(shutdownCtx); shutdownErr != nil {
 			s.logger.Warn().Err(shutdownErr).Msg("Error shutting down diagnosis server")
 			return shutdownErr
@@ -188,10 +227,34 @@ func (s *Server) IsStarted() bool {
 
 // GetListenAddr returns the configured listen address.
 func (s *Server) GetListenAddr() string {
+	if s.listener != nil {
+		return s.listener.Addr().String()
+	}
 	return s.config.ListenAddr
 }
 
 // GetDiagnosisListenAddr returns the configured diagnosis endpoint listen address.
 func (s *Server) GetDiagnosisListenAddr() string {
+	if s.diagnosisLn != nil {
+		return s.diagnosisLn.Addr().String()
+	}
 	return s.config.DiagnosisListenAddr
+}
+
+func collectionsHandler(collectionProvider CollectionProvider) http.HandlerFunc {
+	return func(writer http.ResponseWriter, request *http.Request) {
+		if request.Method != http.MethodGet {
+			writer.WriteHeader(http.StatusMethodNotAllowed)
+			return
+		}
+		writer.Header().Set("Content-Type", "application/json")
+		payload, payloadErr := collectionProvider.MarshalCollections()
+		if payloadErr != nil {
+			http.Error(writer, payloadErr.Error(), http.StatusInternalServerError)
+			return
+		}
+		if _, writeErr := writer.Write(payload); writeErr != nil {
+			http.Error(writer, writeErr.Error(), http.StatusInternalServerError)
+		}
+	}
 }

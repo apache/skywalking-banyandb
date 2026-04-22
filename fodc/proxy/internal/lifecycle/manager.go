@@ -159,9 +159,6 @@ func (m *Manager) CollectLifecycle(ctx context.Context) *InspectionResult {
 		Msg("CollectLifecycle: requests sent, waiting for responses")
 
 	allData := m.waitForResponses(ctx, collectChs)
-	ctx = panicdiag.WithBreadcrumb(ctx, "received lifecycle reports", "fodc-proxy-lifecycle", map[string]string{
-		"response_count": fmt.Sprintf("%d", len(allData)),
-	})
 	m.log.Info().Int("responses_with_data", len(allData)).
 		Msg("CollectLifecycle: all responses collected, aggregating")
 

@@ -54,6 +54,7 @@ type Watchdog struct {
 
 	nodeRole       string
 	podName        string
+	panicRootDir   string
 	urls           []string
 	containerNames []string
 
@@ -62,7 +63,6 @@ type Watchdog struct {
 	mu           sync.RWMutex
 	wg           sync.WaitGroup
 	isRunning    bool
-	panicRootDir string
 }
 
 // NewWatchdogWithConfig creates a new Watchdog instance with specified configuration.

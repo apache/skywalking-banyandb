@@ -15,6 +15,10 @@
 // specific language governing permissions and limitations
 // under the License.
 
+// Package crashcollector provides components to collect crash artifacts from multiple sources,
+// deduplicate them, and expose them for analysis. This includes the FS Watcher / Crash Analyzer
+// component from the Core Components and Workflow, as well as an in-process store of collections
+// detected by other means (e.g. a signal handler).
 package crashcollector
 
 import (
@@ -38,9 +42,9 @@ type Config struct {
 
 // CollectionRecord stores diagnosis data fetched from a crash artifact source.
 type CollectionRecord struct {
+	Collection     panicdiag.Collection `json:"collection"`
 	FetchedAt      time.Time            `json:"fetchedAt"`
 	SourceEndpoint string               `json:"sourceEndpoint"`
-	Collection     panicdiag.Collection `json:"collection"`
 }
 
 // CollectionLister returns the latest crash collection records.
