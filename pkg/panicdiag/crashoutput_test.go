@@ -181,3 +181,54 @@ func TestCrashOutputConfigInstallGlobalCrashOutputRequiresDir(t *testing.T) {
 		t.Fatal("expected empty dir to fail")
 	}
 }
+
+func TestCleanupGlobalCrashOutputRemovesEmptyFile(t *testing.T) {
+	t.Helper()
+
+	tempDir := t.TempDir()
+	crashPath := filepath.Join(tempDir, runtimeCrashFileName())
+	crashFile, openErr := os.OpenFile(crashPath, os.O_CREATE|os.O_WRONLY, 0o644)
+	if openErr != nil {
+		t.Fatalf("open crash output file: %v", openErr)
+	}
+
+	globalCrashFile = crashFile
+	globalCrashPath = crashPath
+
+	if cleanupErr := CleanupGlobalCrashOutput(); cleanupErr != nil {
+		t.Fatalf("cleanup global crash output: %v", cleanupErr)
+	}
+
+	if _, statErr := os.Stat(crashPath); !os.IsNotExist(statErr) {
+		t.Fatalf("expected crash output file to be removed, got stat err: %v", statErr)
+	}
+}
+
+func TestCleanupGlobalCrashOutputKeepsNonEmptyFile(t *testing.T) {
+	t.Helper()
+
+	tempDir := t.TempDir()
+	crashPath := filepath.Join(tempDir, runtimeCrashFileName())
+	crashFile, openErr := os.OpenFile(crashPath, os.O_CREATE|os.O_WRONLY, 0o644)
+	if openErr != nil {
+		t.Fatalf("open crash output file: %v", openErr)
+	}
+	if _, writeErr := crashFile.WriteString("fatal runtime output\n"); writeErr != nil {
+		t.Fatalf("write crash output file: %v", writeErr)
+	}
+
+	globalCrashFile = crashFile
+	globalCrashPath = crashPath
+
+	if cleanupErr := CleanupGlobalCrashOutput(); cleanupErr != nil {
+		t.Fatalf("cleanup global crash output: %v", cleanupErr)
+	}
+
+	info, statErr := os.Stat(crashPath)
+	if statErr != nil {
+		t.Fatalf("stat crash output file: %v", statErr)
+	}
+	if info.Size() == 0 {
+		t.Fatal("expected non-empty crash output file to be preserved")
+	}
+}

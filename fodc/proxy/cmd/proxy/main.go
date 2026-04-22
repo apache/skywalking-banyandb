@@ -99,6 +99,13 @@ func init() {
 func main() {
 	if err := rootCmd.Execute(); err != nil {
 		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+		if cleanupErr := panicdiag.CleanupGlobalCrashOutput(); cleanupErr != nil {
+			fmt.Fprintf(os.Stderr, "Error: %v\n", cleanupErr)
+		}
+		os.Exit(1)
+	}
+	if cleanupErr := panicdiag.CleanupGlobalCrashOutput(); cleanupErr != nil {
+		fmt.Fprintf(os.Stderr, "Error: %v\n", cleanupErr)
 		os.Exit(1)
 	}
 }

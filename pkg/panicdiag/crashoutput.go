@@ -40,6 +40,7 @@ var (
 	// runtime's crash-output fd is independent; however keeping this reference
 	// also enables us to close the previous file cleanly on reinstall.
 	globalCrashFile *os.File
+	globalCrashPath string
 )
 
 // CrashOutputConfig controls whether runtime crash output is persisted to disk.
@@ -105,6 +106,7 @@ func (c CrashOutputConfig) InstallGlobalCrashOutput() error {
 		_ = globalCrashFile.Close()
 	}
 	globalCrashFile = crashFile
+	globalCrashPath = filePath
 
 	SetDefaultMaxArtifacts(c.MaxArtifacts)
 
@@ -119,4 +121,39 @@ func (c CrashOutputConfig) InstallGlobalCrashOutput() error {
 
 func runtimeCrashFileName() string {
 	return fmt.Sprintf("runtime-crash-%d.txt", os.Getpid())
+}
+
+// CleanupGlobalCrashOutput removes the current runtime crash output file when it
+// exists but remained empty for the lifetime of the process.
+func CleanupGlobalCrashOutput() error {
+	if globalCrashFile == nil {
+		return nil
+	}
+
+	crashFile := globalCrashFile
+	crashPath := globalCrashPath
+	globalCrashFile = nil
+	globalCrashPath = ""
+
+	if closeErr := crashFile.Close(); closeErr != nil {
+		return fmt.Errorf("close runtime crash output file: %w", closeErr)
+	}
+	if crashPath == "" {
+		return nil
+	}
+
+	info, statErr := os.Stat(crashPath)
+	if statErr != nil {
+		if os.IsNotExist(statErr) {
+			return nil
+		}
+		return fmt.Errorf("stat runtime crash output file: %w", statErr)
+	}
+	if info.IsDir() || info.Size() > 0 {
+		return nil
+	}
+	if removeErr := os.Remove(crashPath); removeErr != nil && !os.IsNotExist(removeErr) {
+		return fmt.Errorf("remove empty runtime crash output file: %w", removeErr)
+	}
+	return nil
 }

@@ -23,11 +23,19 @@ import (
 	"os"
 
 	"github.com/apache/skywalking-banyandb/fodc/agent/internal/cmd"
+	"github.com/apache/skywalking-banyandb/pkg/panicdiag"
 )
 
 func main() {
 	if err := cmd.Execute(); err != nil {
 		_, _ = fmt.Fprintln(os.Stderr, err)
+		if cleanupErr := panicdiag.CleanupGlobalCrashOutput(); cleanupErr != nil {
+			_, _ = fmt.Fprintln(os.Stderr, cleanupErr)
+		}
+		os.Exit(1)
+	}
+	if cleanupErr := panicdiag.CleanupGlobalCrashOutput(); cleanupErr != nil {
+		_, _ = fmt.Fprintln(os.Stderr, cleanupErr)
 		os.Exit(1)
 	}
 }
