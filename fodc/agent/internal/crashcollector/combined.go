@@ -42,9 +42,9 @@ type Config struct {
 
 // CollectionRecord stores diagnosis data fetched from a crash artifact source.
 type CollectionRecord struct {
-	Collection     panicdiag.Collection `json:"collection"`
 	FetchedAt      time.Time            `json:"fetchedAt"`
 	SourceEndpoint string               `json:"sourceEndpoint"`
+	Collection     panicdiag.Collection `json:"collection"`
 }
 
 // CollectionLister returns the latest crash collection records.
