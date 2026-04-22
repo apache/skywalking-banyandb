@@ -1392,7 +1392,7 @@ func Test_mergePartsThenSendIntroduction_cleansUpOnSidxMergeError(t *testing.T) 
 	merges := make(chan *mergerIntroduction, 1)
 	closeCh := make(chan struct{})
 
-	_, err := tst.mergePartsThenSendIntroduction(snapshotCreatorMerger, parts, merged, merges, closeCh, mergeTypeFile)
+	_, err := tst.mergePartsThenSendIntroduction(snapshotCreatorMerger, parts, merged, merges, closeCh, mergeTypeFile, mergeLaneFast)
 	require.Error(t, err)
 	require.Contains(t, err.Error(), "sidx merge failed")
 
@@ -1593,7 +1593,8 @@ func Test_dispatchAllMerges_laneClassification(t *testing.T) {
 	// Should receive on slowCh
 	select {
 	case req := <-slowCh:
-		require.Equal(t, fmt.Sprintf("%s_%s", mergeTypeFile, mergeLaneSlow), req.typ)
+		require.Equal(t, mergeTypeFile, req.typ)
+		require.Equal(t, mergeLaneSlow, req.lane)
 		require.GreaterOrEqual(t, len(req.parts), 2, "should merge at least 2 parts")
 		// Verify inFlight was set
 		tst.inFlightMu.RLock()
@@ -1682,7 +1683,8 @@ func Test_mergeLaneWorker_cleansUpInFlight(t *testing.T) {
 	ch <- &mergeDispatchRequest{
 		parts:      parts,
 		toBeMerged: toBeMerged,
-		typ:        fmt.Sprintf("%s_%s", mergeTypeFile, mergeLaneFast),
+		typ:        mergeTypeFile,
+		lane:       mergeLaneFast,
 	}
 	close(ch)
 

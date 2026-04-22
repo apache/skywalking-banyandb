@@ -65,6 +65,7 @@ type mergeDispatchRequest struct {
 	parts      []*partWrapper
 	toBeMerged map[uint64]struct{}
 	typ        string
+	lane       string
 }
 
 func (tst *tsTable) mergeLoop(merges chan *mergerIntroduction, flusherNotifier watcher.Channel) {
@@ -193,11 +194,11 @@ func (tst *tsTable) dispatchAllMerges(threshold uint64, fastCh, slowCh chan *mer
 			targetCh = fastCh
 		}
 
-		typ := fmt.Sprintf("%s_%s", mergeTypeFile, lane)
 		req := &mergeDispatchRequest{
 			parts:      dst,
 			toBeMerged: toBeMerged,
-			typ:        typ,
+			typ:        mergeTypeFile,
+			lane:       lane,
 			enqueuedAt: time.Now(),
 		}
 
@@ -220,7 +221,7 @@ func (tst *tsTable) dispatchAllMerges(threshold uint64, fastCh, slowCh chan *mer
 func (tst *tsTable) mergeLaneWorker(ch chan *mergeDispatchRequest, merges chan *mergerIntroduction) {
 	for req := range ch {
 		if !req.enqueuedAt.IsZero() {
-			tst.incTotalMergeQueueLatency(time.Since(req.enqueuedAt).Seconds(), req.typ)
+			tst.incTotalMergeQueueLatency(time.Since(req.enqueuedAt).Seconds(), req.typ, req.lane)
 		}
 		select {
 		case mergeMaxConcurrencyCh <- struct{}{}:
@@ -239,7 +240,7 @@ func (tst *tsTable) mergeLaneWorker(ch chan *mergeDispatchRequest, merges chan *
 		tst.incTotalMergeLoopStarted(1)
 		_, mergeErr := tst.mergePartsThenSendIntroduction(
 			snapshotCreatorMerger, req.parts, req.toBeMerged, merges,
-			tst.loopCloser.CloseNotify(), req.typ,
+			tst.loopCloser.CloseNotify(), req.typ, req.lane,
 		)
 		tst.incTotalMergeLoopFinished(1)
 		<-mergeMaxConcurrencyCh
@@ -248,7 +249,7 @@ func (tst *tsTable) mergeLaneWorker(ch chan *mergeDispatchRequest, merges chan *
 
 		if mergeErr != nil {
 			if !errors.Is(mergeErr, errClosed) {
-				tst.l.Logger.Warn().Err(mergeErr).Str("typ", req.typ).Msg("merge lane worker error")
+				tst.l.Logger.Warn().Err(mergeErr).Str("typ", req.typ).Str("lane", req.lane).Msg("merge lane worker error")
 				tst.incTotalMergeLoopErr(1)
 			}
 		}
@@ -267,7 +268,7 @@ func (tst *tsTable) releaseDispatchRequest(req *mergeDispatchRequest) {
 }
 
 func (tst *tsTable) mergePartsThenSendIntroduction(creator snapshotCreator, parts []*partWrapper, merged map[uint64]struct{}, merges chan *mergerIntroduction,
-	closeCh <-chan struct{}, typ string,
+	closeCh <-chan struct{}, typ string, lane string,
 ) (*partWrapper, error) {
 	reservedSpace := tst.reserveSpace(parts)
 	defer releaseDiskSpace(reservedSpace)
@@ -278,9 +279,9 @@ func (tst *tsTable) mergePartsThenSendIntroduction(creator snapshotCreator, part
 		return nil, err
 	}
 	elapsed := time.Since(start)
-	tst.incTotalMergeLatency(elapsed.Seconds(), typ)
-	tst.incTotalMerged(1, typ)
-	tst.incTotalMergedParts(len(parts), typ)
+	tst.incTotalMergeLatency(elapsed.Seconds(), typ, lane)
+	tst.incTotalMerged(1, typ, lane)
+	tst.incTotalMergedParts(len(parts), typ, lane)
 	if elapsed > 30*time.Second {
 		var totalCount uint64
 		for _, pw := range parts {
@@ -340,9 +341,10 @@ func (tst *tsTable) mergePartsThenSendIntroduction(creator snapshotCreator, part
 		}
 		mergerIntroductionMap[sidxName] = mergerIntroduction
 		elapsed = time.Since(start)
-		tst.incTotalMergeLatency(elapsed.Seconds(), fmt.Sprintf("%s_%s", typ, sidxName))
-		tst.incTotalMerged(1, fmt.Sprintf("%s_%s", typ, sidxName))
-		tst.incTotalMergedParts(len(parts), fmt.Sprintf("%s_%s", typ, sidxName))
+		sidxTyp := fmt.Sprintf("%s_%s", typ, sidxName)
+		tst.incTotalMergeLatency(elapsed.Seconds(), sidxTyp, lane)
+		tst.incTotalMerged(1, sidxTyp, lane)
+		tst.incTotalMergedParts(len(parts), sidxTyp, lane)
 		if elapsed > 30*time.Second {
 			tst.l.Warn().Int("mergedPartsCount", len(parts)).Str("sidxName", sidxName).Dur("elapsed", elapsed).Msg("sidx merge parts took too long")
 		}
