@@ -148,6 +148,38 @@ name: temp_data
 EOF
 ```
 
+## Sorted Query
+
+Property queries support sorting results by tag values using the `order_by` field. This allows you to retrieve properties in a specific order based on a tag's value.
+
+### Examples of sorted queries
+
+Sort properties by a string tag in ascending order:
+
+```shell
+bydbctl property query -f - <<EOF
+groups: ["sw"]
+name: temp_data
+order_by:
+  tag_name: "name"
+  sort: SORT_ASC
+EOF
+```
+
+Sort properties by a string tag in descending order:
+
+```shell
+bydbctl property query -f - <<EOF
+groups: ["sw"]
+name: temp_data
+order_by:
+  tag_name: "name"
+  sort: SORT_DESC
+EOF
+```
+
+The `sort` field accepts `SORT_ASC` for ascending order and `SORT_DESC` for descending order.
+
 ## API Reference
 
 [PropertyService v1](../../api-reference.md#propertyservice)
