@@ -61,9 +61,10 @@ type metrics struct {
 	totalFlushIntroLatency   meter.Counter
 	totalFlushLatency        meter.Counter
 
-	totalMergedParts  meter.Counter
-	totalMergeLatency meter.Counter
-	totalMerged       meter.Counter
+	totalMergedParts       meter.Counter
+	totalMergeLatency      meter.Counter
+	totalMerged            meter.Counter
+	totalMergeQueueLatency meter.Counter
 
 	tbMetrics
 }
@@ -229,25 +230,32 @@ func (tst *tsTable) incTotalFlushLatency(delta float64) {
 	tst.metrics.totalFlushLatency.Inc(delta)
 }
 
-func (tst *tsTable) incTotalMergedParts(delta int, typ string) {
+func (tst *tsTable) incTotalMergedParts(delta int, typ, lane string) {
 	if tst == nil || tst.metrics == nil {
 		return
 	}
-	tst.metrics.totalMergedParts.Inc(float64(delta), typ)
+	tst.metrics.totalMergedParts.Inc(float64(delta), typ, lane)
 }
 
-func (tst *tsTable) incTotalMergeLatency(delta float64, typ string) {
+func (tst *tsTable) incTotalMergeLatency(delta float64, typ, lane string) {
 	if tst == nil || tst.metrics == nil {
 		return
 	}
-	tst.metrics.totalMergeLatency.Inc(delta, typ)
+	tst.metrics.totalMergeLatency.Inc(delta, typ, lane)
 }
 
-func (tst *tsTable) incTotalMerged(delta int, typ string) {
+func (tst *tsTable) incTotalMerged(delta int, typ, lane string) {
 	if tst == nil || tst.metrics == nil {
 		return
 	}
-	tst.metrics.totalMerged.Inc(float64(delta), typ)
+	tst.metrics.totalMerged.Inc(float64(delta), typ, lane)
+}
+
+func (tst *tsTable) incTotalMergeQueueLatency(delta float64, typ, lane string) {
+	if tst == nil || tst.metrics == nil {
+		return
+	}
+	tst.metrics.totalMergeQueueLatency.Inc(delta, typ, lane)
 }
 
 func (tst *tsTable) addPendingDataCount(delta int64) {
@@ -298,12 +306,17 @@ func (m *metrics) DeleteAll() {
 	m.totalFlushPauseBreak.Delete()
 	m.totalFlushLatency.Delete()
 
-	m.totalMergedParts.Delete("mem")
-	m.totalMergeLatency.Delete("mem")
-	m.totalMerged.Delete("mem")
-	m.totalMergedParts.Delete("file")
-	m.totalMergeLatency.Delete("file")
-	m.totalMerged.Delete("file")
+	m.totalMergedParts.Delete("mem", "")
+	m.totalMergeLatency.Delete("mem", "")
+	m.totalMerged.Delete("mem", "")
+	m.totalMergedParts.Delete("file", "fast")
+	m.totalMergeLatency.Delete("file", "fast")
+	m.totalMerged.Delete("file", "fast")
+	m.totalMergedParts.Delete("file", "slow")
+	m.totalMergeLatency.Delete("file", "slow")
+	m.totalMerged.Delete("file", "slow")
+	m.totalMergeQueueLatency.Delete("file", "fast")
+	m.totalMergeQueueLatency.Delete("file", "slow")
 }
 
 func (s *supplier) newMetrics(p common.Position) storage.Metrics {
@@ -332,9 +345,10 @@ func (s *supplier) newMetrics(p common.Position) storage.Metrics {
 		totalFlushPauseBreak:       factory.NewCounter("total_flush_pause_break"),
 		totalFlushIntroLatency:     factory.NewCounter("total_flush_intro_latency"),
 		totalFlushLatency:          factory.NewCounter("total_flush_latency"),
-		totalMergedParts:           factory.NewCounter("total_merged_parts", "type"),
-		totalMergeLatency:          factory.NewCounter("total_merge_latency", "type"),
-		totalMerged:                factory.NewCounter("total_merged", "type"),
+		totalMergedParts:           factory.NewCounter("total_merged_parts", "type", "lane"),
+		totalMergeLatency:          factory.NewCounter("total_merge_latency", "type", "lane"),
+		totalMerged:                factory.NewCounter("total_merged", "type", "lane"),
+		totalMergeQueueLatency:     factory.NewCounter("total_merge_queue_latency", "type", "lane"),
 		tbMetrics: tbMetrics{
 			totalMemParts:                  factory.NewGauge("total_mem_part", common.ShardLabelNames()...),
 			totalMemElements:               factory.NewGauge("total_mem_elements", common.ShardLabelNames()...),
@@ -378,9 +392,10 @@ func (qs *queueSupplier) newMetrics(p common.Position) (storage.Metrics, observa
 		totalFlushPauseBreak:       factory.NewCounter("total_flush_pause_break"),
 		totalFlushIntroLatency:     factory.NewCounter("total_flush_intro_latency"),
 		totalFlushLatency:          factory.NewCounter("total_flush_latency"),
-		totalMergedParts:           factory.NewCounter("total_merged_parts", "type"),
-		totalMergeLatency:          factory.NewCounter("total_merge_latency", "type"),
-		totalMerged:                factory.NewCounter("total_merged", "type"),
+		totalMergedParts:           factory.NewCounter("total_merged_parts", "type", "lane"),
+		totalMergeLatency:          factory.NewCounter("total_merge_latency", "type", "lane"),
+		totalMerged:                factory.NewCounter("total_merged", "type", "lane"),
+		totalMergeQueueLatency:     factory.NewCounter("total_merge_queue_latency", "type", "lane"),
 		tbMetrics: tbMetrics{
 			totalMemParts:                  factory.NewGauge("total_mem_part", common.ShardLabelNames()...),
 			totalMemElements:               factory.NewGauge("total_mem_elements", common.ShardLabelNames()...),

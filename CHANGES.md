@@ -13,6 +13,7 @@ Release Notes.
 - Add `noDuplicates` verification to all e2e expected files to detect duplicate data in query results.
 - Add periodic health check for property schema connection.
 - Persist segment end time in per-segment metadata so boundaries don't shift across restarts or config changes.
+- Introduce fair fast/slow lane scheduling for trace part merges to prevent short merges from being blocked by long-running merges; expose queue wait time as `total_merge_queue_latency`.
 - [Breaking Change] Remove etcd components. The property-based schema registry is now the only supported mode. 
   - All `--etcd-*` CLI flags have been removed. 
   - The `--namespace` CLI flag has been removed (it previously configured the etcd key prefix).

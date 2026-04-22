@@ -23,6 +23,7 @@ import (
 	"path/filepath"
 	"reflect"
 	"testing"
+	"time"
 
 	"github.com/google/go-cmp/cmp"
 	"github.com/google/go-cmp/cmp/cmpopts"
@@ -1391,7 +1392,7 @@ func Test_mergePartsThenSendIntroduction_cleansUpOnSidxMergeError(t *testing.T) 
 	merges := make(chan *mergerIntroduction, 1)
 	closeCh := make(chan struct{})
 
-	_, err := tst.mergePartsThenSendIntroduction(snapshotCreatorMerger, parts, merged, merges, closeCh, mergeTypeFile)
+	_, err := tst.mergePartsThenSendIntroduction(snapshotCreatorMerger, parts, merged, merges, closeCh, mergeTypeFile, mergeLaneFast)
 	require.Error(t, err)
 	require.Contains(t, err.Error(), "sidx merge failed")
 
@@ -1455,6 +1456,257 @@ func Test_flush_cleansUpOnSidxFlushError(t *testing.T) {
 	require.False(t, fileSystem.IsExist(tracePartPath), "trace part directory should be removed on sidx flush failure")
 	sidxPartPath := filepath.Join(tmpPath, sidxDirName, "idx1", fmt.Sprintf("%016x", partID))
 	require.False(t, fileSystem.IsExist(sidxPartPath), "sidx part directory should be removed on sidx flush failure")
+}
+
+func Test_computeSmallMergeThreshold(t *testing.T) {
+	threshold := computeSmallMergeThreshold()
+	require.GreaterOrEqual(t, threshold, uint64(defaultSmallMergeThreshold),
+		"threshold should be at least the default (%d bytes)", defaultSmallMergeThreshold)
+}
+
+func Test_getPartsToMerge_skipsInFlightParts(t *testing.T) {
+	tmpPath, defFn := test.Space(require.New(t))
+	defer defFn()
+
+	fileSystem := fs.NewLocalFileSystem()
+
+	// Create 4 file parts
+	var allParts []*partWrapper
+	for i := range 4 {
+		partID := uint64(100 + i)
+		mp := generateMemPart()
+		mp.mustInitFromTraces(tsTS1)
+		mp.mustFlush(fileSystem, partPath(tmpPath, partID))
+		p := mustOpenFilePart(partID, tmpPath, fileSystem)
+		p.partMetadata.ID = partID
+		allParts = append(allParts, newPartWrapper(nil, p))
+		releaseMemPart(mp)
+	}
+
+	closer := run.NewCloser(1)
+	defer closer.Done()
+
+	tst := &tsTable{
+		pm:         protector.Nop{},
+		fileSystem: fileSystem,
+		root:       tmpPath,
+		loopCloser: closer,
+		l:          logger.GetLogger("test"),
+		curPartID:  200,
+		option: option{
+			mergePolicy: newDefaultMergePolicyForTesting(),
+		},
+	}
+
+	snp := &snapshot{
+		parts: allParts,
+		epoch: 1,
+	}
+	snp.incRef()
+	defer snp.decRef()
+
+	// Without inFlight: all parts should be eligible
+	dst, _ := tst.getPartsToMerge(snp, uint64(1<<30), nil)
+	require.GreaterOrEqual(t, len(dst), 2, "should find parts to merge when none are in-flight")
+
+	// Mark part 100 and 101 as in-flight
+	tst.inFlight = make(map[uint64]struct{})
+	tst.inFlight[100] = struct{}{}
+	tst.inFlight[101] = struct{}{}
+
+	// With inFlight: parts 100 and 101 should be skipped
+	dst2, _ := tst.getPartsToMerge(snp, uint64(1<<30), nil)
+	if len(dst2) > 0 {
+		for _, pw := range dst2 {
+			require.NotEqual(t, uint64(100), pw.ID(), "part 100 should be skipped (in-flight)")
+			require.NotEqual(t, uint64(101), pw.ID(), "part 101 should be skipped (in-flight)")
+		}
+	}
+
+	// Mark all parts as in-flight: no parts should be eligible
+	tst.inFlight[102] = struct{}{}
+	tst.inFlight[103] = struct{}{}
+	dst3, _ := tst.getPartsToMerge(snp, uint64(1<<30), nil)
+	require.Nil(t, dst3, "no parts should be eligible when all are in-flight")
+}
+
+func Test_dispatchAllMerges_laneClassification(t *testing.T) {
+	tmpPath, defFn := test.Space(require.New(t))
+	defer defFn()
+
+	fileSystem := fs.NewLocalFileSystem()
+
+	closer := run.NewCloser(1)
+
+	tst := &tsTable{
+		pm:         protector.Nop{},
+		fileSystem: fileSystem,
+		root:       tmpPath,
+		loopCloser: closer,
+		l:          logger.GetLogger("test"),
+		curPartID:  200,
+		option: option{
+			mergePolicy: newDefaultMergePolicyForTesting(),
+		},
+	}
+
+	// Use a very low threshold to force all merges into slow lane
+	smallThreshold := uint64(1) // 1 byte - everything is "large"
+	slowCh := make(chan *mergeDispatchRequest, 10)
+	fastCh := make(chan *mergeDispatchRequest, 10)
+
+	// Create 3 file parts and build a snapshot
+	var allParts []*partWrapper
+	for i := range 3 {
+		partID := uint64(200 + i)
+		mp := generateMemPart()
+		mp.mustInitFromTraces(tsTS1)
+		mp.mustFlush(fileSystem, partPath(tmpPath, partID))
+		p := mustOpenFilePart(partID, tmpPath, fileSystem)
+		p.partMetadata.ID = partID
+		allParts = append(allParts, newPartWrapper(nil, p))
+		releaseMemPart(mp)
+	}
+
+	snp := &snapshot{
+		parts: allParts,
+		epoch: 1,
+	}
+	snp.incRef()
+	tst.snapshot = snp
+	defer snp.decRef()
+
+	// Drain introductions
+	merges := make(chan *mergerIntroduction, 10)
+	go func() {
+		for m := range merges {
+			_ = m
+		}
+	}()
+
+	// Run dispatchAllMerges - it should dispatch to slowCh since threshold is 1 byte
+	dispatchDone := make(chan struct{})
+	go func() {
+		defer close(dispatchDone)
+		tst.dispatchAllMerges(smallThreshold, fastCh, slowCh)
+	}()
+
+	// Should receive on slowCh
+	select {
+	case req := <-slowCh:
+		require.Equal(t, mergeTypeFile, req.typ)
+		require.Equal(t, mergeLaneSlow, req.lane)
+		require.GreaterOrEqual(t, len(req.parts), 2, "should merge at least 2 parts")
+		// Verify inFlight was set
+		tst.inFlightMu.RLock()
+		for _, pw := range req.parts {
+			_, exists := tst.inFlight[pw.ID()]
+			require.True(t, exists, "part %d should be in inFlight map", pw.ID())
+		}
+		tst.inFlightMu.RUnlock()
+		// Don't clear inFlight — dispatchAllMerges loop will find no eligible parts and exit naturally
+	case <-fastCh:
+		t.Fatal("should not dispatch to fast lane with threshold=1")
+	case <-time.After(5 * time.Second):
+		t.Fatal("timed out waiting for dispatch")
+	}
+
+	// Wait for dispatchAllMerges to finish (it exits when all parts are in inFlight)
+	select {
+	case <-dispatchDone:
+	case <-time.After(5 * time.Second):
+		t.Fatal("dispatchAllMerges did not finish")
+	}
+
+	// Close the closer after dispatchAllMerges has exited
+	closer.Done()
+	closer.CloseThenWait()
+	close(fastCh)
+	close(slowCh)
+	close(merges)
+}
+
+func Test_mergeLaneWorker_cleansUpInFlight(t *testing.T) {
+	tmpPath, defFn := test.Space(require.New(t))
+	defer defFn()
+
+	fileSystem := fs.NewLocalFileSystem()
+
+	closer := run.NewCloser(1)
+
+	tst := &tsTable{
+		pm:         protector.Nop{},
+		fileSystem: fileSystem,
+		root:       tmpPath,
+		loopCloser: closer,
+		l:          logger.GetLogger("test"),
+		curPartID:  0,
+		option: option{
+			mergePolicy: newDefaultMergePolicyForTesting(),
+		},
+		inFlight: make(map[uint64]struct{}),
+	}
+
+	// Create 2 file parts to merge
+	var parts []*partWrapper
+	for i := range 2 {
+		partID := uint64(300 + i)
+		mp := generateMemPart()
+		mp.mustInitFromTraces(tsTS1)
+		mp.mustFlush(fileSystem, partPath(tmpPath, partID))
+		p := mustOpenFilePart(partID, tmpPath, fileSystem)
+		p.partMetadata.ID = partID
+		parts = append(parts, newPartWrapper(nil, p))
+		releaseMemPart(mp)
+	}
+
+	// Mark parts as inFlight
+	toBeMerged := make(map[uint64]struct{})
+	for _, pw := range parts {
+		tst.inFlight[pw.ID()] = struct{}{}
+		toBeMerged[pw.ID()] = struct{}{}
+	}
+
+	require.Len(t, tst.inFlight, 2)
+
+	// Create channels
+	ch := make(chan *mergeDispatchRequest, 1)
+	merges := make(chan *mergerIntroduction, 1)
+
+	// Start worker in background
+	workerDone := make(chan struct{})
+	go func() {
+		defer close(workerDone)
+		tst.mergeLaneWorker(ch, merges)
+	}()
+
+	// Send a dispatch request
+	ch <- &mergeDispatchRequest{
+		parts:      parts,
+		toBeMerged: toBeMerged,
+		typ:        mergeTypeFile,
+		lane:       mergeLaneFast,
+	}
+	close(ch)
+
+	// The worker will try to merge and send introduction.
+	// Since there's no introducerLoop, mergePartsThenSendIntroduction
+	// will block on mi.applied. Close the closer to unblock it.
+	time.Sleep(100 * time.Millisecond)
+	closer.Done()
+	closer.CloseThenWait()
+
+	// Wait for worker to finish
+	select {
+	case <-workerDone:
+	case <-time.After(5 * time.Second):
+		t.Fatal("worker did not finish")
+	}
+
+	// Verify inFlight was cleaned up
+	tst.inFlightMu.RLock()
+	require.Empty(t, tst.inFlight, "inFlight map should be empty after worker completes")
+	tst.inFlightMu.RUnlock()
 }
 
 func Test_mergePartsWithConflictingTagTypes(t *testing.T) {
