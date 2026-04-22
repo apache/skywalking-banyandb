@@ -33,9 +33,9 @@ const (
 
 // ArtifactWriter writes panic artifacts to disk.
 type ArtifactWriter struct {
-	rootDir string
 	nowFn   func() time.Time
 	pidFn   func() int
+	rootDir string
 }
 
 // NewArtifactWriter returns a new ArtifactWriter.
@@ -80,11 +80,11 @@ func (aw *ArtifactWriter) Write(record *PanicRecord) (string, error) {
 
 	summaryPath := filepath.Join(artifactDir, crashTextFileName)
 	summary := buildCrashSummary(record)
-	if writeErr := os.WriteFile(summaryPath, []byte(summary), 0o644); writeErr != nil {
+	if writeErr := os.WriteFile(summaryPath, []byte(summary), 0o600); writeErr != nil {
 		return "", fmt.Errorf("write crash summary: %w", writeErr)
 	}
 
-	// Best-effort: prune old artifact directories to honour the disk quota.
+	// Best-effort: prune old artifact directories to honor the disk quota.
 	// Errors here are non-fatal; the caller already has the new artifact path.
 	if maxArtifacts := DefaultMaxArtifacts(); maxArtifacts > 0 {
 		_ = PruneArtifacts(aw.rootDir, maxArtifacts)
@@ -100,7 +100,7 @@ func (aw *ArtifactWriter) rewritePanicRecord(artifactDir string, record *PanicRe
 		return fmt.Errorf("marshal panic record: %w", marshalErr)
 	}
 	recordData = append(recordData, '\n')
-	if writeErr := os.WriteFile(recordPath, recordData, 0o644); writeErr != nil {
+	if writeErr := os.WriteFile(recordPath, recordData, 0o600); writeErr != nil {
 		return fmt.Errorf("write panic record: %w", writeErr)
 	}
 	return nil

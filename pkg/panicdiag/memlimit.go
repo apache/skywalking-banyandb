@@ -26,7 +26,7 @@ import (
 
 // Package-level vars allow tests to override without forking the process.
 var (
-	cgroupMemLimit = func() (int64, error) { return cgroups.MemoryLimit() }
+	cgroupMemLimit = cgroups.MemoryLimit
 	setMemoryLimit = debug.SetMemoryLimit
 )
 

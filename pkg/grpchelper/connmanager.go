@@ -213,7 +213,7 @@ func (m *ConnManager[C]) OnDelete(node *databasev1.Node) {
 				backoff := JitteredBackoff(InitBackoff, MaxBackoff, attempt, DefaultJitterFactor)
 				select {
 				case <-time.After(backoff):
-					if func() bool {
+					if func() bool { //nolint:contextcheck // healthCheck uses its own timeout via context.Background()
 						elapsed += backoff
 						m.mu.Lock()
 						defer m.mu.Unlock()
@@ -464,7 +464,7 @@ func (m *ConnManager[C]) checkHealthAndReconnect(conn *grpc.ClientConn, node *da
 				allOpts = append(allOpts, credOpts...)
 				allOpts = append(allOpts, m.dialOpts...)
 				connEvict, errEvict := grpc.NewClient(address, allOpts...)
-				if errEvict == nil && m.healthCheck(en.n.String(), connEvict) {
+				if errEvict == nil && m.healthCheck(en.n.String(), connEvict) { //nolint:contextcheck // healthCheck uses its own timeout via context.Background()
 					func() {
 						m.mu.Lock()
 						defer m.mu.Unlock()

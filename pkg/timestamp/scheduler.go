@@ -41,7 +41,7 @@ var (
 )
 
 // SchedulerAction is an executable when a trigger is fired.
-// ctx is cancelled when the scheduler is closed, now is the trigger time,
+// ctx is canceled when the scheduler is closed, now is the trigger time,
 // and logger carries the task's identity.
 type SchedulerAction func(ctx context.Context, now time.Time, logger *logger.Logger) bool
 

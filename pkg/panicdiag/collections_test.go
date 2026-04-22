@@ -40,7 +40,7 @@ func writeMinimalArtifact(t *testing.T, rootDir, name string) {
 	if marshalErr != nil {
 		t.Fatalf("marshal panic record: %v", marshalErr)
 	}
-	if writeErr := os.WriteFile(filepath.Join(artifactDir, panicRecordFileName), append(recordData, '\n'), 0o644); writeErr != nil {
+	if writeErr := os.WriteFile(filepath.Join(artifactDir, panicRecordFileName), append(recordData, '\n'), 0o600); writeErr != nil {
 		t.Fatalf("write panic record: %v", writeErr)
 	}
 }
@@ -150,11 +150,11 @@ func TestListCollections(t *testing.T) {
 	if err != nil {
 		t.Fatalf("marshal panic record: %v", err)
 	}
-	if err := os.WriteFile(filepath.Join(artifactDir, panicRecordFileName), append(recordData, '\n'), 0o644); err != nil {
-		t.Fatalf("write panic record: %v", err)
+	if writeErr := os.WriteFile(filepath.Join(artifactDir, panicRecordFileName), append(recordData, '\n'), 0o600); writeErr != nil {
+		t.Fatalf("write panic record: %v", writeErr)
 	}
-	if err := os.WriteFile(filepath.Join(artifactDir, crashTextFileName), []byte("panic\n"), 0o644); err != nil {
-		t.Fatalf("write crash text: %v", err)
+	if writeErr := os.WriteFile(filepath.Join(artifactDir, crashTextFileName), []byte("panic\n"), 0o600); writeErr != nil {
+		t.Fatalf("write crash text: %v", writeErr)
 	}
 
 	collections, err := ListCollections(rootDir)

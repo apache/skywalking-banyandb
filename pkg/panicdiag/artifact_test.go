@@ -66,8 +66,8 @@ func TestArtifactWriterWrite(t *testing.T) {
 	}
 
 	var decoded PanicRecord
-	if err := json.Unmarshal(recordData, &decoded); err != nil {
-		t.Fatalf("unmarshal panic record: %v", err)
+	if unmarshalErr := json.Unmarshal(recordData, &decoded); unmarshalErr != nil {
+		t.Fatalf("unmarshal panic record: %v", unmarshalErr)
 	}
 	if decoded.Component != record.Component {
 		t.Fatalf("component mismatch: got %s want %s", decoded.Component, record.Component)

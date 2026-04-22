@@ -63,7 +63,7 @@ func incPanicCounter(counter meter.Counter, component string) {
 	c.Inc(1, component)
 }
 
-func callReporter(reporter Reporter, ctx context.Context, result RecoveryResult) {
+func callReporter(ctx context.Context, reporter Reporter, result RecoveryResult) {
 	if reporter != nil {
 		reporter(ctx, result)
 		return

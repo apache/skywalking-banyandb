@@ -45,8 +45,8 @@ var (
 
 // CrashOutputConfig controls whether runtime crash output is persisted to disk.
 type CrashOutputConfig struct {
-	Enabled       bool
 	Dir           string
+	Enabled       bool
 	MaxArtifacts  int
 	GoMemLimitPct int
 }

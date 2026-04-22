@@ -28,11 +28,11 @@ import (
 )
 
 type fakeCounter struct {
-	mu          sync.Mutex
-	calls       int
-	lastDelta   float64
 	lastLabels  []string
+	lastDelta   float64
+	calls       int
 	deleteCalls int
+	mu          sync.Mutex
 }
 
 func (f *fakeCounter) Inc(delta float64, labelValues ...string) {

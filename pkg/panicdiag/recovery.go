@@ -32,6 +32,7 @@ import (
 // captures every marker added during fn's execution.
 func WithRecovery(ctx context.Context, opts RecoveryOptions, reporter Reporter, fn func(*context.Context)) {
 	if ctx == nil {
+		//nolint:contextcheck // nil caller context has no parent to inherit from; background is the safe root fallback
 		ctx = context.Background()
 	}
 	if fn == nil {
@@ -117,7 +118,7 @@ func WithRecovery(ctx context.Context, opts RecoveryOptions, reporter Reporter, 
 			Str("artifact_dir", artifactDir).
 			Msg("recovered panic")
 
-		callReporter(reporter, ctx, RecoveryResult{
+		callReporter(ctx, reporter, RecoveryResult{
 			Record:      record,
 			ArtifactDir: artifactDir,
 		})

@@ -27,8 +27,8 @@ import (
 )
 
 var defaultArtifactRootHolder struct {
-	sync.RWMutex
 	root string
+	sync.RWMutex
 }
 
 var defaultMaxArtifactsHolder struct {
@@ -100,8 +100,8 @@ func PruneArtifacts(rootDir string, maxArtifacts int) error {
 // Collection contains the persisted diagnosis data for a single panic artifact.
 type Collection struct {
 	ArtifactDir string       `json:"artifactDir"`
-	Files       []string     `json:"files"`
 	Record      *PanicRecord `json:"record,omitempty"`
+	Files       []string     `json:"files"`
 }
 
 // SetDefaultArtifactRoot stores the process-wide default artifact root.
@@ -166,8 +166,8 @@ func readCollection(artifactDir string) (*Collection, error) {
 	}
 
 	var record PanicRecord
-	if err := json.Unmarshal(recordData, &record); err != nil {
-		return nil, fmt.Errorf("unmarshal panic record: %w", err)
+	if unmarshalErr := json.Unmarshal(recordData, &record); unmarshalErr != nil {
+		return nil, fmt.Errorf("unmarshal panic record: %w", unmarshalErr)
 	}
 
 	files, err := listArtifactFiles(artifactDir)

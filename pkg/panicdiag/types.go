@@ -28,25 +28,25 @@ import (
 
 // PanicRecord stores the structured panic information captured by recovery helpers.
 type PanicRecord struct {
-	OccurredAt      time.Time         `json:"occurredAt"`
+	ProcessMetadata map[string]string `json:"processMetadata,omitempty"`
+	StateDump       *StateDumpStatus  `json:"stateDump,omitempty"`
 	Component       string            `json:"component"`
 	PanicValue      string            `json:"panicValue"`
-	Recovered       bool              `json:"recovered"`
 	GoroutineStack  string            `json:"goroutineStack"`
+	OccurredAt      time.Time         `json:"occurredAt"`
 	Breadcrumbs     []Breadcrumb      `json:"breadcrumbs,omitempty"`
-	StateDump       *StateDumpStatus  `json:"stateDump,omitempty"`
-	ProcessMetadata map[string]string `json:"processMetadata,omitempty"`
+	Recovered       bool              `json:"recovered"`
 }
 
 // RecoveryOptions configures how panic recovery writes diagnostics.
 type RecoveryOptions struct {
-	Component       string
-	ArtifactRoot    string
 	Counter         meter.Counter
 	Logger          *logger.Logger
 	StateDumper     StateDumper
-	StateLimitBytes int64
 	ProcessMetadata map[string]string
+	Component       string
+	ArtifactRoot    string
+	StateLimitBytes int64
 }
 
 // RecoveryResult contains the outcome of a recovered panic.
@@ -65,18 +65,18 @@ type StateDumper interface {
 
 // Breadcrumb stores a semantic execution marker attached to a context.
 type Breadcrumb struct {
+	Fields    map[string]string `json:"fields,omitempty"`
 	Time      time.Time         `json:"time"`
 	Stage     string            `json:"stage"`
 	Component string            `json:"component,omitempty"`
-	Fields    map[string]string `json:"fields,omitempty"`
 }
 
 // StateDumpStatus describes the result of deep state serialization.
 type StateDumpStatus struct {
 	Path      string `json:"path,omitempty"`
+	Error     string `json:"error,omitempty"`
 	SpewPath  string `json:"spewPath,omitempty"`
 	Truncated bool   `json:"truncated,omitempty"`
-	Error     string `json:"error,omitempty"`
 }
 
 // StateDumperFunc is a function adapter for StateDumper.

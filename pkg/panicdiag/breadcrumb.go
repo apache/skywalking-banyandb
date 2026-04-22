@@ -43,8 +43,8 @@ type mutableBreadcrumbStore struct {
 const maxBreadcrumbDepth = 64
 
 type breadcrumbNode struct {
-	breadcrumb Breadcrumb
 	parent     *breadcrumbNode
+	breadcrumb Breadcrumb
 	depth      int
 }
 

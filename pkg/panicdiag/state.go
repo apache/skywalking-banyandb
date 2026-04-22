@@ -64,7 +64,7 @@ func NewBoundedStateWriter() BoundedStateWriter {
 }
 
 // BoundedSpewWriter writes reflection-based state snapshots under a fixed size limit.
-// Unlike BoundedStateWriter, it serialises all struct fields including unexported ones
+// Unlike BoundedStateWriter, it serializes all struct fields including unexported ones
 // via go-spew, making it suitable for dumping complex internal database state.
 type BoundedSpewWriter interface {
 	WriteSpew(path string, value any, limitBytes int64) (truncated bool, err error)
@@ -101,7 +101,7 @@ func (spewStateWriter) WriteSpew(path string, value any, limitBytes int64) (bool
 		dump = dump[:limitBytes]
 		truncated = true
 	}
-	if writeErr := os.WriteFile(path, []byte(dump), 0o644); writeErr != nil {
+	if writeErr := os.WriteFile(path, []byte(dump), 0o600); writeErr != nil {
 		return truncated, fmt.Errorf("write spew dump: %w", writeErr)
 	}
 	return truncated, nil
@@ -124,7 +124,7 @@ func (jsonStateWriter) WriteJSON(path string, value any, limitBytes int64) (bool
 		}
 		return false, fmt.Errorf("marshal state dump: %w", encErr)
 	}
-	if writeErr := os.WriteFile(path, lw.buf.Bytes(), 0o644); writeErr != nil {
+	if writeErr := os.WriteFile(path, lw.buf.Bytes(), 0o600); writeErr != nil {
 		return false, fmt.Errorf("write state dump: %w", writeErr)
 	}
 	return false, nil
