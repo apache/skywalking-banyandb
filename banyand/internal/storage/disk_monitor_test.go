@@ -170,15 +170,11 @@ func (m *mockHistogram) Delete(_ ...string) bool {
 
 // Mock group implementation.
 type mockGroup struct {
-	name string
+	schema *commonv1.Group
 }
 
 func (m *mockGroup) GetSchema() *commonv1.Group {
-	return &commonv1.Group{
-		Metadata: &commonv1.Metadata{
-			Name: m.name,
-		},
-	}
+	return m.schema
 }
 
 func (m *mockGroup) SupplyTSDB() io.Closer {
@@ -186,7 +182,17 @@ func (m *mockGroup) SupplyTSDB() io.Closer {
 }
 
 func createMockGroup(name string) resourceSchema.Group {
-	return &mockGroup{name: name}
+	return &mockGroup{
+		schema: &commonv1.Group{
+			Metadata: &commonv1.Metadata{
+				Name: name,
+			},
+		},
+	}
+}
+
+func createMockGroupWithNilSchema() resourceSchema.Group {
+	return &mockGroup{schema: nil}
 }
 
 func TestNewDiskMonitor(t *testing.T) {
@@ -314,6 +320,27 @@ func TestDiskMonitor_findGroupWithOldestSegment(t *testing.T) {
 
 		result := dm.findGroupWithOldestSegment(groups)
 		assert.Equal(t, "group2", result)
+	})
+
+	t.Run("groups with nil schema are skipped", func(t *testing.T) {
+		nilGroup := createMockGroupWithNilSchema()
+		group1 := createMockGroup("group1")
+		groups := []resourceSchema.Group{nilGroup, group1}
+
+		now := time.Now()
+		service.SetSegmentTime("group1", now.Add(-time.Hour), true)
+
+		result := dm.findGroupWithOldestSegment(groups)
+		assert.Equal(t, "group1", result)
+	})
+
+	t.Run("all groups with nil schema returns empty", func(t *testing.T) {
+		nilGroup1 := createMockGroupWithNilSchema()
+		nilGroup2 := createMockGroupWithNilSchema()
+		groups := []resourceSchema.Group{nilGroup1, nilGroup2}
+
+		result := dm.findGroupWithOldestSegment(groups)
+		assert.Empty(t, result)
 	})
 
 	t.Run("mixed groups - some with segments, some without", func(t *testing.T) {
