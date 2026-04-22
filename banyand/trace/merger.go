@@ -120,20 +120,16 @@ func (tst *tsTable) mergeLoop(merges chan *mergerIntroduction, flusherNotifier w
 		case <-tst.loopCloser.CloseNotify():
 			return
 		case <-ew.Watch():
-			curSnapshot := tst.currentSnapshot()
-			if curSnapshot == nil {
-				return
-			}
-			if curSnapshot.epoch > lastProcessedEpoch {
-				tst.incTotalMergeLoopStarted(1)
-				select {
-				case triggerCh <- struct{}{}:
-				default:
+			if curSnapshot := tst.currentSnapshot(); curSnapshot != nil {
+				if curSnapshot.epoch > lastProcessedEpoch {
+					select {
+					case triggerCh <- struct{}{}:
+					default:
+					}
+					lastProcessedEpoch = curSnapshot.epoch
 				}
-				lastProcessedEpoch = curSnapshot.epoch
-				tst.incTotalMergeLoopFinished(1)
+				curSnapshot.decRef()
 			}
-			curSnapshot.decRef()
 			ew = flusherNotifier.Add(lastProcessedEpoch, tst.loopCloser.CloseNotify())
 			if ew == nil {
 				return
@@ -215,14 +211,7 @@ func (tst *tsTable) dispatchAllMerges(threshold uint64, fastCh, slowCh chan *mer
 		select {
 		case targetCh <- req:
 		case <-tst.loopCloser.CloseNotify():
-			tst.inFlightMu.Lock()
-			for _, pw := range dst {
-				delete(tst.inFlight, pw.ID())
-			}
-			tst.inFlightMu.Unlock()
-			for _, pw := range dst {
-				pw.decRef()
-			}
+			tst.releaseDispatchRequest(req)
 			return true
 		}
 	}
@@ -236,31 +225,26 @@ func (tst *tsTable) mergeLaneWorker(ch chan *mergeDispatchRequest, merges chan *
 		select {
 		case mergeMaxConcurrencyCh <- struct{}{}:
 		case <-tst.loopCloser.CloseNotify():
-			tst.inFlightMu.Lock()
-			for _, pw := range req.parts {
-				delete(tst.inFlight, pw.ID())
-			}
-			tst.inFlightMu.Unlock()
-			for _, pw := range req.parts {
-				pw.decRef()
+			tst.releaseDispatchRequest(req)
+			// Drain remaining buffered requests so their inFlight entries and
+			// part references are released. The lane channel is closed by the
+			// mergeLoop shutdown defer after the dispatcher exits, which lets
+			// this range loop terminate.
+			for pending := range ch {
+				tst.releaseDispatchRequest(pending)
 			}
 			return
 		}
 
+		tst.incTotalMergeLoopStarted(1)
 		_, mergeErr := tst.mergePartsThenSendIntroduction(
 			snapshotCreatorMerger, req.parts, req.toBeMerged, merges,
 			tst.loopCloser.CloseNotify(), req.typ,
 		)
+		tst.incTotalMergeLoopFinished(1)
 		<-mergeMaxConcurrencyCh
 
-		tst.inFlightMu.Lock()
-		for _, pw := range req.parts {
-			delete(tst.inFlight, pw.ID())
-		}
-		tst.inFlightMu.Unlock()
-		for _, pw := range req.parts {
-			pw.decRef()
-		}
+		tst.releaseDispatchRequest(req)
 
 		if mergeErr != nil {
 			if !errors.Is(mergeErr, errClosed) {
@@ -268,6 +252,17 @@ func (tst *tsTable) mergeLaneWorker(ch chan *mergeDispatchRequest, merges chan *
 				tst.incTotalMergeLoopErr(1)
 			}
 		}
+	}
+}
+
+func (tst *tsTable) releaseDispatchRequest(req *mergeDispatchRequest) {
+	tst.inFlightMu.Lock()
+	for _, pw := range req.parts {
+		delete(tst.inFlight, pw.ID())
+	}
+	tst.inFlightMu.Unlock()
+	for _, pw := range req.parts {
+		pw.decRef()
 	}
 }
 
