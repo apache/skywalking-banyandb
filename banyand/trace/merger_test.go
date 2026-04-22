@@ -1579,7 +1579,8 @@ func Test_dispatchAllMerges_laneClassification(t *testing.T) {
 	// Drain introductions
 	merges := make(chan *mergerIntroduction, 10)
 	go func() {
-		for range merges {
+		for m := range merges {
+			_ = m
 		}
 	}()
 

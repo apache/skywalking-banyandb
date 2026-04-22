@@ -63,10 +63,10 @@ func computeSmallMergeThreshold() uint64 {
 
 type mergeDispatchRequest struct {
 	enqueuedAt time.Time
-	parts      []*partWrapper
 	toBeMerged map[uint64]struct{}
 	typ        string
 	lane       string
+	parts      []*partWrapper
 }
 
 func (tst *tsTable) mergeLoop(merges chan *mergerIntroduction, flusherNotifier watcher.Channel) {
