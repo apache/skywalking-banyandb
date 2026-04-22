@@ -19,6 +19,7 @@ package storage
 
 import (
 	"os"
+	"runtime/debug"
 	"sort"
 	"sync/atomic"
 	"time"
@@ -177,20 +178,26 @@ func (dm *DiskMonitor) Stop() {
 }
 
 func (dm *DiskMonitor) monitorLoop(serviceName string) {
-	defer func() {
-		if r := recover(); r != nil {
-			dm.logger.Error().Interface("panic", r).Msg("disk monitor panic recovered")
-		}
-	}()
-
 	for {
 		select {
 		case <-dm.stopCh:
 			return
 		case <-dm.ticker.C:
-			dm.checkAndCleanup(serviceName)
+			dm.safeCheckAndCleanup(serviceName)
 		}
 	}
+}
+
+func (dm *DiskMonitor) safeCheckAndCleanup(serviceName string) {
+	defer func() {
+		if r := recover(); r != nil {
+			dm.logger.Error().Interface("panic", r).Str("stack", string(debug.Stack())).Msg("disk monitor panic recovered")
+			// Reset active state so Stop() doesn't hang and the next tick can retry
+			dm.isActive.Store(false)
+			dm.metrics.forcedRetentionActive.Set(0, serviceName)
+		}
+	}()
+	dm.checkAndCleanup(serviceName)
 }
 
 func (dm *DiskMonitor) checkAndCleanup(serviceName string) {
@@ -344,7 +351,11 @@ func (dm *DiskMonitor) findGroupWithOldestSegment(groups []resourceSchema.Group)
 
 	// Query each group's oldest segment end time
 	for _, group := range groups {
-		groupName := group.GetSchema().Metadata.Name
+		schema := group.GetSchema()
+		if schema == nil || schema.Metadata == nil {
+			continue
+		}
+		groupName := schema.Metadata.Name
 		endTime, hasSegments := dm.service.PeekOldestSegmentEndTimeInGroup(groupName)
 
 		// Only consider groups that have segments

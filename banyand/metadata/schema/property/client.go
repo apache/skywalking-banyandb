@@ -1331,6 +1331,12 @@ func (r *SchemaRegistry) sendSyncRequest(ctx context.Context,
 	sentChs := make(map[string]chan []*digestEntry, len(sessions))
 	var skipped int
 	for name, s := range sessions {
+		// Drain any stale message left from a previous timed-out sync.
+		select {
+		case <-s.syncReqCh:
+			r.l.Debug().Str("node", name).Msg("sendSyncRequest: drained stale sync request")
+		default:
+		}
 		msg := &syncMessage{
 			syncRequest: *req,
 			responseCh:  make(chan []*digestEntry, 1),
