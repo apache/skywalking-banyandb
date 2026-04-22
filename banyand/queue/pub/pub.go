@@ -261,9 +261,9 @@ func (p *pub) Broadcast(timeout time.Duration, topic bus.Topic, messages bus.Mes
 			errs = multierr.Append(errs, pkgerrors.Wrapf(f.e, "failed to publish message to %s", f.n))
 			if grpchelper.IsFailoverError(f.e) {
 				if p.closer.AddRunning() {
-					run.Go(context.Background(), "pub-failover", p.log, func(_ context.Context) {
+					run.Go(context.Background(), "pub-failover", p.log, func(ctx context.Context) {
 						defer p.closer.Done()
-						p.failover(f.n, common.NewErrorWithStatus(modelv1.Status_STATUS_INTERNAL_ERROR, f.e.Error()), topic)
+						p.failover(ctx, f.n, common.NewErrorWithStatus(modelv1.Status_STATUS_INTERNAL_ERROR, f.e.Error()), topic)
 					})
 				}
 			}

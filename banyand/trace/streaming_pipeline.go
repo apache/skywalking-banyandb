@@ -266,7 +266,7 @@ func (t *trace) streamSIDXTraceBatches(
 	}
 	streamCtx, cancel := context.WithCancel(tracingCtx)
 	runner := newSIDXStreamRunner(ctx, streamCtx, cancel, req, maxTraceSize)
-	run.Go(context.Background(), "trace-sidx-stream", t.l, func(_ context.Context) {
+	run.Go(tracingCtx, "trace-sidx-stream", t.l, func(runCtx context.Context) {
 		defer func() {
 			if span != nil {
 				span.Tagf("batches_emitted", "%d", runner.batchesEmitted.Load())
@@ -427,9 +427,9 @@ func (r *sidxStreamRunner) prepare(instances []sidx.SIDX) error {
 		for _, errSrc := range allErrChannels {
 			r.errWg.Add(1)
 			errIdx, errCh := errSrc.idx, errSrc.errCh
-			run.Go(r.streamCtx, "trace-sidx-error-forward", errFwdLogger, func(_ context.Context) {
+			run.Go(r.streamCtx, "trace-sidx-error-forward", errFwdLogger, func(runCtx context.Context) {
 				defer r.errWg.Done()
-				forwardSIDXError(r.streamCtx, errIdx, errCh, r.errEvents)
+				forwardSIDXError(runCtx, errIdx, errCh, r.errEvents)
 			})
 		}
 

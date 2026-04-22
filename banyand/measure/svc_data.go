@@ -263,7 +263,7 @@ func (s *dataSVC) PreRun(ctx context.Context) error {
 	if s.cc.MaxCacheSize == 0 {
 		s.c = storage.NewBypassCache()
 	} else {
-		s.c = storage.NewServiceCacheWithConfig(s.cc)
+		s.c = storage.NewServiceCacheWithConfig(ctx, s.cc)
 	}
 	node := val.(common.Node)
 	s.schemaRepo = newDataSchemaRepo(s.dataPath, s, node.Labels, node.NodeID)

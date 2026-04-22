@@ -91,11 +91,11 @@ type metricService struct {
 	schedulerMetrics    *SchedulerMetrics
 	listenAddr          string
 	nodeType            string
+	panicArtifactDir    string
 	modes               []string
 	npf                 nativeProviderFactory
 	metricsInterval     time.Duration
 	nativeFlushInterval time.Duration
-	panicArtifactDir    string
 	panicMaxArtifacts   int
 	mutex               sync.Mutex
 }

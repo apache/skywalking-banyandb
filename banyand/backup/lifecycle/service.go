@@ -258,7 +258,7 @@ func (l *lifecycleService) Serve() run.StopNotify {
 	if l.schedule == "" {
 		defer close(done)
 		l.l.Info().Msg("starting lifecycle migration without schedule")
-		if err := l.action(); err != nil {
+		if err := l.action(context.Background()); err != nil {
 			logger.Panicf("failed to run lifecycle migration: %v", err)
 		}
 		return done
@@ -267,9 +267,9 @@ func (l *lifecycleService) Serve() run.StopNotify {
 	clockInstance := clock.New()
 	l.sch = timestamp.NewScheduler(l.l, clockInstance)
 	var executionCount int
-	err := l.sch.Register(context.Background(), "lifecycle", cron.Descriptor, l.schedule, func(_ context.Context, triggerTime time.Time, _ *logger.Logger) bool {
+	err := l.sch.Register(context.Background(), "lifecycle", cron.Descriptor, l.schedule, func(ctx context.Context, triggerTime time.Time, _ *logger.Logger) bool {
 		l.l.Info().Msgf("lifecycle migration triggered at %s", triggerTime)
-		if err := l.action(); err != nil {
+		if err := l.action(ctx); err != nil {
 			l.l.Error().Err(err).Msg("failed to run lifecycle migration action")
 		}
 		executionCount++
@@ -402,8 +402,7 @@ func (l *lifecycleService) startServers() {
 	}()
 }
 
-func (l *lifecycleService) action() error {
-	ctx := context.Background()
+func (l *lifecycleService) action(ctx context.Context) error {
 	progress := LoadProgress(l.progressFilePath, l.l)
 	progress.ClearErrors()
 
@@ -422,7 +421,7 @@ func (l *lifecycleService) action() error {
 	}
 
 	// Pass progress to getSnapshots
-	streamDir, measureDir, traceDir, err := l.getSnapshots(groups, progress)
+	streamDir, measureDir, traceDir, err := l.getSnapshots(ctx, groups, progress)
 	if err != nil {
 		l.l.Error().Err(err).Msg("failed to get snapshots")
 		return err

@@ -67,6 +67,7 @@ var (
 )
 
 func (sr *schemaRepo) inFlow(
+	ctx context.Context,
 	stm *databasev1.Measure,
 	seriesID uint64,
 	shardID uint32,
@@ -75,7 +76,7 @@ func (sr *schemaRepo) inFlow(
 	spec *measurev1.DataPointSpec,
 ) {
 	if p, _ := sr.topNProcessorMap.Load(getKey(stm.GetMetadata())); p != nil {
-		p.(*topNProcessorManager).onMeasureWrite(seriesID, shardID, &measurev1.InternalWriteRequest{
+		p.(*topNProcessorManager).onMeasureWrite(ctx, seriesID, shardID, &measurev1.InternalWriteRequest{
 			Request: &measurev1.WriteRequest{
 				Metadata:      stm.GetMetadata(),
 				DataPoint:     dp,
@@ -532,8 +533,14 @@ func (manager *topNProcessorManager) Close() error {
 	return err
 }
 
-func (manager *topNProcessorManager) onMeasureWrite(seriesID uint64, shardID uint32, request *measurev1.InternalWriteRequest, measure *databasev1.Measure) {
-	run.Go(context.Background(), "topn-write", manager.l, func(_ context.Context) {
+func (manager *topNProcessorManager) onMeasureWrite(
+	ctx context.Context,
+	seriesID uint64,
+	shardID uint32,
+	request *measurev1.InternalWriteRequest,
+	measure *databasev1.Measure,
+) {
+	run.Go(ctx, "topn-write", manager.l, func(_ context.Context) {
 		manager.RLock()
 		defer manager.RUnlock()
 		if manager.closed {

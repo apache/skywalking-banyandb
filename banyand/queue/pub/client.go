@@ -160,11 +160,11 @@ func (p *pub) OnDelete(md schema.Metadata) {
 	p.connMgr.OnDelete(node)
 }
 
-func (p *pub) checkServiceHealth(svc string, conn *grpc.ClientConn) *common.Error {
+func (p *pub) checkServiceHealth(ctx context.Context, svc string, conn *grpc.ClientConn) *common.Error {
 	serviceClient := clusterv1.NewServiceClient(conn)
-	ctx, cancel := context.WithTimeout(context.Background(), rpcTimeout)
+	timeoutCtx, cancel := context.WithTimeout(ctx, rpcTimeout)
 	defer cancel()
-	resp, err := serviceClient.HealthCheck(ctx, &clusterv1.HealthCheckRequest{
+	resp, err := serviceClient.HealthCheck(timeoutCtx, &clusterv1.HealthCheckRequest{
 		ServiceName: svc,
 	})
 	if err != nil {
@@ -176,15 +176,15 @@ func (p *pub) checkServiceHealth(svc string, conn *grpc.ClientConn) *common.Erro
 	return common.NewErrorWithStatus(resp.Status, resp.Error)
 }
 
-func (p *pub) failover(node string, ce *common.Error, topic bus.Topic) {
+func (p *pub) failover(ctx context.Context, node string, ce *common.Error, topic bus.Topic) {
 	if ce.Status() != modelv1.Status_STATUS_INTERNAL_ERROR {
-		_, _ = p.checkWritable(node, topic)
+		_, _ = p.checkWritable(ctx, node, topic)
 		return
 	}
 	p.connMgr.FailoverNode(node)
 }
 
-func (p *pub) checkWritable(n string, topic bus.Topic) (bool, *common.Error) {
+func (p *pub) checkWritable(ctx context.Context, n string, topic bus.Topic) (bool, *common.Error) {
 	h, ok := p.handlers[topic]
 	if !ok {
 		return false, nil
@@ -194,7 +194,7 @@ func (p *pub) checkWritable(n string, topic bus.Topic) (bool, *common.Error) {
 		return false, nil
 	}
 	topicStr := topic.String()
-	err := p.checkServiceHealth(topicStr, c.conn)
+	err := p.checkServiceHealth(ctx, topicStr, c.conn)
 	if err == nil {
 		return true, nil
 	}
@@ -215,7 +215,7 @@ func (p *pub) checkWritable(n string, topic bus.Topic) (bool, *common.Error) {
 	p.writableProbeMu.Unlock()
 
 	probeName, probeTopic := n, topicStr
-	run.Go(context.Background(), "pub-node-probe", p.log, func(_ context.Context) {
+	run.Go(ctx, "pub-node-probe", p.log, func(probeCtx context.Context) {
 		defer p.closer.Done()
 		defer func() {
 			p.writableProbeMu.Lock()
@@ -236,7 +236,7 @@ func (p *pub) checkWritable(n string, topic bus.Topic) (bool, *common.Error) {
 				if !okCur {
 					return
 				}
-				errInternal := p.checkServiceHealth(probeTopic, nodeCur.conn)
+				errInternal := p.checkServiceHealth(probeCtx, probeTopic, nodeCur.conn)
 				if errInternal == nil {
 					// Record success for circuit breaker
 					p.connMgr.RecordSuccess(probeName)

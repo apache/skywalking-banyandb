@@ -88,14 +88,14 @@ func NewBackupCommand() *cobra.Command {
 				return err
 			}
 			if backupOpts.schedule == "" {
-				return backupAction(backupOpts)
+				return backupAction(cmd.Context(), backupOpts)
 			}
 			schedLogger := logger.GetLogger().Named("backup-scheduler")
 			schedLogger.Info().Msgf("backup to %s will run with schedule: %s", backupOpts.dest, backupOpts.schedule)
 			clockInstance := clock.New()
 			sch := timestamp.NewScheduler(schedLogger, clockInstance)
-			err := sch.Register(cmd.Context(), "backup", cron.Descriptor, backupOpts.schedule, func(_ context.Context, _ time.Time, l *logger.Logger) bool {
-				err := backupAction(backupOpts)
+			err := sch.Register(cmd.Context(), "backup", cron.Descriptor, backupOpts.schedule, func(ctx context.Context, _ time.Time, l *logger.Logger) bool {
+				err := backupAction(ctx, backupOpts)
 				if err != nil {
 					l.Error().Err(err).Msg("backup failed")
 				} else {
@@ -151,7 +151,7 @@ func NewBackupCommand() *cobra.Command {
 	return cmd
 }
 
-func backupAction(options backupOptions) error {
+func backupAction(ctx context.Context, options backupOptions) error {
 	if options.dest == "" {
 		return errors.New("dest is required")
 	}
@@ -173,13 +173,14 @@ func backupAction(options backupOptions) error {
 		return err
 	}
 
+	//nolint:contextcheck // Remote filesystem constructors are configuration-only and do not accept contexts.
 	fs, err := newFS(options.dest, &options.fsConfig)
 	if err != nil {
 		return err
 	}
 	defer fs.Close()
 
-	snapshots, err := snapshot.Get(options.gRPCAddr, options.enableTLS, options.insecure, options.cert)
+	snapshots, err := snapshot.Get(ctx, options.gRPCAddr, options.enableTLS, options.insecure, options.cert)
 	if err != nil {
 		return err
 	}
@@ -197,7 +198,7 @@ func backupAction(options backupOptions) error {
 		if strings.HasPrefix(snp.Name, snapshot.SchemaPropertyCatalogName+"/") {
 			catalogName = snapshot.SchemaPropertyCatalogName
 		}
-		multierr.AppendInto(&err, backupSnapshot(fs, snapshotDir, catalogName, timeDir))
+		multierr.AppendInto(&err, backupSnapshot(ctx, fs, snapshotDir, catalogName, timeDir))
 	}
 	return err
 }
@@ -232,13 +233,12 @@ func getTimeDir(style string) string {
 	}
 }
 
-func backupSnapshot(fs remote.FS, snapshotDir, catalog, timeDir string) error {
+func backupSnapshot(ctx context.Context, fs remote.FS, snapshotDir, catalog, timeDir string) error {
 	localFiles, err := getAllFiles(snapshotDir)
 	if err != nil {
 		return err
 	}
 
-	ctx := context.Background()
 	remotePrefix := path.Join(timeDir, catalog) + "/"
 
 	remoteFiles, err := fs.List(ctx, remotePrefix)

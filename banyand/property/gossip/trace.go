@@ -174,13 +174,12 @@ func (s *service) initInternalTraceGroup(ctx context.Context) error {
 	return s.metadata.GroupRegistry().CreateGroup(ctx, g)
 }
 
-func (s *service) savingTracingSpans() (err error) {
+func (s *service) savingTracingSpans(ctx context.Context) (err error) {
 	spans := s.readAllReadySendTraceSpan()
 	s.log.Debug().Int("spans", len(spans)).Msg("ready to save trace spans to storage")
 	if len(spans) == 0 || s.pipeline == nil {
 		return nil
 	}
-	ctx := context.Background()
 	publisher := s.pipeline.NewBatchPublisher(traceSavingTimeout)
 	defer func() {
 		result, closeErr := publisher.Close()
@@ -243,13 +242,13 @@ func (s *service) appendReadySendTraceSpan(span *recordTraceSpan) {
 	if !atomic.CompareAndSwapInt32(s.traceSpanNotified, 0, 1) {
 		return
 	}
-	run.Go(context.Background(), "gossip-trace-send", s.log, func(_ context.Context) {
+	run.Go(context.Background(), "gossip-trace-send", s.log, func(ctx context.Context) {
 		select {
 		case <-s.closer.CloseNotify():
 			return
 		case <-time.After(time.Second * 3):
 			atomic.StoreInt32(s.traceSpanNotified, 0)
-			if err := s.savingTracingSpans(); err != nil {
+			if err := s.savingTracingSpans(ctx); err != nil {
 				s.log.Warn().Err(err).Msg("failed to save tracing spans")
 			}
 		}

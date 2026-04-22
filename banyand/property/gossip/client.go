@@ -86,8 +86,8 @@ func (s *service) Propagation(nodes []string, group string, shardID uint32) erro
 		}
 	}
 
-	run.Go(context.Background(), "gossip-propagation", s.log, func(_ context.Context) {
-		cancelCtx, cancelFunc := context.WithTimeout(context.Background(), s.totalTimeout)
+	run.Go(context.Background(), "gossip-propagation", s.log, func(runCtx context.Context) {
+		cancelCtx, cancelFunc := context.WithTimeout(runCtx, s.totalTimeout)
 		defer cancelFunc()
 		_, err := sendTo(cancelCtx, request, s.createTraceForRequest(request))
 		if err != nil {

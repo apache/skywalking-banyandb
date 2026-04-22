@@ -137,7 +137,7 @@ func (bp *batchPublisher) Publish(ctx context.Context, topic bus.Topic, messages
 				err = multierr.Append(err, fmt.Errorf("failed to get client for node %s", node))
 				return true
 			}
-			succeed, ce := bp.pub.checkWritable(node, topic)
+			succeed, ce := bp.pub.checkWritable(ctx, node, topic)
 			if succeed {
 				return false
 			}
@@ -217,16 +217,16 @@ func (bp *batchPublisher) Close() (cee map[string]*common.Error, err error) {
 		return nil, err
 	}
 	if bp.pub.closer.AddRunning() {
-		run.Go(context.Background(), "batch-failover", bp.pub.log, func(_ context.Context) {
+		run.Go(context.Background(), "batch-failover", bp.pub.log, func(ctx context.Context) {
 			defer bp.pub.closer.Done()
 			for n, e := range batchEvents {
 				// Record circuit breaker failure before failover
 				bp.pub.connMgr.RecordFailure(n, e.e)
 				if bp.topic == nil {
-					bp.pub.failover(n, e.e, data.TopicCommon)
+					bp.pub.failover(ctx, n, e.e, data.TopicCommon)
 					continue
 				}
-				bp.pub.failover(n, e.e, *bp.topic)
+				bp.pub.failover(ctx, n, e.e, *bp.topic)
 			}
 		})
 	}

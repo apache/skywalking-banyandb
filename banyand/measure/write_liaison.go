@@ -105,7 +105,7 @@ func (w *writeQueueCallback) Rev(ctx context.Context, message bus.Message) (resp
 		if req != nil && req.GetDataPointSpec() != nil {
 			spec = req.GetDataPointSpec()
 		}
-		newGroups, handleErr := w.handle(groups, writeEvent, metadata, spec)
+		newGroups, handleErr := w.handle(ctx, groups, writeEvent, metadata, spec)
 		if handleErr != nil {
 			w.l.Error().Err(handleErr).Msg("cannot handle write event")
 			continue
@@ -173,7 +173,7 @@ func (w *writeQueueCallback) Rev(ctx context.Context, message bus.Message) (resp
 	return
 }
 
-func (w *writeQueueCallback) handle(dst map[string]*dataPointsInQueue,
+func (w *writeQueueCallback) handle(ctx context.Context, dst map[string]*dataPointsInQueue,
 	writeEvent *measurev1.InternalWriteRequest, metadata *commonv1.Metadata, spec *measurev1.DataPointSpec,
 ) (map[string]*dataPointsInQueue, error) {
 	req := writeEvent.Request
@@ -237,6 +237,6 @@ func (w *writeQueueCallback) handle(dst map[string]*dataPointsInQueue,
 	if err != nil {
 		return nil, err
 	}
-	w.schemaRepo.inFlow(stm.GetSchema(), sid, writeEvent.ShardId, writeEvent.EntityValues, req.DataPoint, spec)
+	w.schemaRepo.inFlow(ctx, stm.GetSchema(), sid, writeEvent.ShardId, writeEvent.EntityValues, req.DataPoint, spec)
 	return dst, nil
 }
