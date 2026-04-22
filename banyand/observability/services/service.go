@@ -309,9 +309,19 @@ func (p *metricService) handleDebugPanic(w http.ResponseWriter, r *http.Request)
 	if component == "" {
 		component = "debug-panic"
 	}
+	dumper := panicdiag.StateDumperFunc(func(_ context.Context) (any, error) {
+		return map[string]any{
+			"listenAddr":  p.listenAddr,
+			"nodeType":    p.nodeType,
+			"modes":       p.modes,
+			"component":   component,
+			"artifactDir": p.panicArtifactDir,
+		}, nil
+	})
 	panicdiag.GoWithRecovery(context.Background(), panicdiag.RecoveryOptions{
-		Component: component,
-		Logger:    p.l,
+		Component:   component,
+		Logger:      p.l,
+		StateDumper: dumper,
 	}, nil, func(_ *context.Context) {
 		panic("diagnostic test panic triggered via /debug/panic")
 	})
