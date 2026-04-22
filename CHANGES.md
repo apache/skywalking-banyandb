@@ -18,6 +18,7 @@ Release Notes.
   - The `--namespace` CLI flag has been removed (it previously configured the etcd key prefix).
   - The `--node-discovery-mode` flag no longer accepts `etcd` (supported values: `none`, `dns`, `file`). 
   - The `--schema-registry-mode` flag only accepts `property`.
+- implement panic diagnostics and FODC crash reporting pipeline.
 
 ### Bug Fixes
 
