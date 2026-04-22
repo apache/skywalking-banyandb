@@ -266,7 +266,7 @@ func (t *trace) streamSIDXTraceBatches(
 	}
 	streamCtx, cancel := context.WithCancel(tracingCtx)
 	runner := newSIDXStreamRunner(ctx, streamCtx, cancel, req, maxTraceSize)
-	run.Go(tracingCtx, "trace-sidx-stream", t.l, func(runCtx context.Context) {
+	run.Go(tracingCtx, "trace-sidx-stream", t.l, func(_ context.Context) {
 		defer func() {
 			if span != nil {
 				span.Tagf("batches_emitted", "%d", runner.batchesEmitted.Load())
