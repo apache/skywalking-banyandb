@@ -124,9 +124,6 @@ func (h *entityDedupTopN) tryAddToHeap(key string, val int64, idp *measurev1.Int
 		heap.Push(h, &dedupHeapItem{key: key, val: val, idp: idp})
 		return
 	}
-	if len(h.items) == 0 {
-		return
-	}
 	root := h.items[0]
 	if h.isBetter(val, root.val) {
 		heap.Pop(h)

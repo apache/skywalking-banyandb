@@ -219,7 +219,7 @@ func (t *topNQueryProcessor) Rev(ctx context.Context, message bus.Message) (resp
 		}
 		resp = bus.NewMessage(bus.MessageID(now), &measurev1.TopNResponse{Lists: lists})
 	} else {
-		// Distribute DataNode mode: return top N distinct entities directly
+		// Standalone mode without aggregation or distributed DataNode mode: return top N distinct entities directly
 		resp = bus.NewMessage(bus.MessageID(now), toTopNResponse(result))
 	}
 	if !request.Trace && t.slowQuery > 0 {
