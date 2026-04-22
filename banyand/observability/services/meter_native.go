@@ -46,8 +46,8 @@ func (f *nativeProviderFactory) provider(scope meter.Scope) meter.Provider {
 	if f.serveStarted.Load() {
 		prov := p
 		initLogger := logger.GetLogger("meter-native-schema-init")
-		run.Go(context.Background(), "meter-native-schema-init", initLogger, func(_ context.Context) {
-			initCtx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+		run.Go(context.Background(), "meter-native-schema-init", initLogger, func(runCtx context.Context) {
+			initCtx, cancel := context.WithTimeout(runCtx, 30*time.Second)
 			defer cancel()
 			native.InitSchema(initCtx, prov)
 		})

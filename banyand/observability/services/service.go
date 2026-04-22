@@ -161,10 +161,21 @@ func (p *metricService) PreRun(ctx context.Context) error {
 			nodeInfo: nodeInfo,
 		}
 	}
+	var promProvider meter.Provider
+	if containsMode(p.modes, flagPromethusMode) {
+		promProvider = prom.NewProvider(observability.RootScope, p.promReg)
+	}
+	var nativeProvider meter.Provider
+	if containsMode(p.modes, flagNativeMode) {
+		nativeProvider = native.NewProvider(observability.RootScope, p.metadata, p.npf.nodeInfo)
+		p.npf.mu.Lock()
+		p.npf.providers = append(p.npf.providers, nativeProvider)
+		p.npf.mu.Unlock()
+	}
 	// Register the process-wide panic counter so that all goroutines using
 	// panicdiag.WithRecovery (including run.Group services and run.Go) increment
 	// banyandb_panic_total{component="..."} without needing per-call wiring.
-	panicdiag.SetDefaultPanicCounter(p.With(observability.RootScope).NewCounter("panic_total", "component"))
+	panicdiag.SetDefaultPanicCounter(NewFactory(promProvider, nativeProvider, p.nCollection).NewCounter("panic_total", "component"))
 	if p.panicArtifactDir != "" {
 		panicdiag.SetDefaultArtifactRoot(p.panicArtifactDir)
 	}
@@ -182,22 +193,22 @@ func (p *metricService) Serve() run.StopNotify {
 	p.mutex.Lock()
 	defer p.mutex.Unlock()
 	p.initMetrics()
+	startupCtx, cancelStartup := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancelStartup()
 	if containsMode(p.modes, flagNativeMode) {
 		p.npf.setServeStarted()
-		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
-		p.npf.initAllSchemas(ctx)
-		cancel()
+		p.npf.initAllSchemas(startupCtx)
 	}
 	// First collection on startup so metrics arrive sooner.
 	MetricsCollector.collect()
 	if containsMode(p.modes, flagNativeMode) {
-		p.nCollection.FlushMetrics()
+		p.nCollection.FlushMetrics(startupCtx)
 	}
 	clock, _ := timestamp.GetClock(context.TODO())
 	p.scheduler = timestamp.NewScheduler(p.l, clock)
 	p.schedulerMetrics = NewSchedulerMetrics(p.With(obScope))
 	metricsCollectorExpr := fmt.Sprintf("@every %s", p.metricsInterval)
-	err := p.scheduler.Register("metrics-collector", cron.Descriptor, metricsCollectorExpr, func(_ context.Context, _ time.Time, _ *logger.Logger) bool {
+	err := p.scheduler.Register(startupCtx, "metrics-collector", cron.Descriptor, metricsCollectorExpr, func(_ context.Context, _ time.Time, _ *logger.Logger) bool {
 		MetricsCollector.collect()
 		metrics := p.scheduler.Metrics()
 		for job, m := range metrics {
@@ -216,8 +227,8 @@ func (p *metricService) Serve() run.StopNotify {
 	}
 	if containsMode(p.modes, flagNativeMode) {
 		nativeFlushExpr := fmt.Sprintf("@every %s", p.nativeFlushInterval)
-		err = p.scheduler.Register("native-metric-collection", cron.Descriptor, nativeFlushExpr, func(_ context.Context, _ time.Time, _ *logger.Logger) bool {
-			p.nCollection.FlushMetrics()
+		err = p.scheduler.Register(startupCtx, "native-metric-collection", cron.Descriptor, nativeFlushExpr, func(ctx context.Context, _ time.Time, _ *logger.Logger) bool {
+			p.nCollection.FlushMetrics(ctx)
 			return true
 		})
 		if err != nil {
@@ -318,7 +329,7 @@ func (p *metricService) handleDebugPanic(w http.ResponseWriter, r *http.Request)
 			"artifactDir": p.panicArtifactDir,
 		}, nil
 	})
-	panicdiag.GoWithRecovery(context.Background(), panicdiag.RecoveryOptions{
+	panicdiag.GoWithRecovery(r.Context(), panicdiag.RecoveryOptions{
 		Component:   component,
 		Logger:      p.l,
 		StateDumper: dumper,

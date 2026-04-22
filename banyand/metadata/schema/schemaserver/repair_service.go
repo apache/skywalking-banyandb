@@ -106,7 +106,7 @@ func (r *repairService) PreRun(ctx context.Context) error {
 	r.registerGossip(r.messenger)
 	r.metadata.RegisterHandler("schema-repair-nodes", schema.KindNode, r)
 	r.scheduler = timestamp.NewScheduler(r.l, timestamp.NewClock())
-	registerErr := r.scheduler.Register("schema-property-repair-trigger",
+	registerErr := r.scheduler.Register(ctx, "schema-property-repair-trigger",
 		cron.Minute|cron.Hour|cron.Dom|cron.Month|cron.Dow|cron.Descriptor,
 		r.repairCron, func(_ context.Context, _ time.Time, l *logger.Logger) bool {
 			l.Debug().Msg("starting schema repair gossip")

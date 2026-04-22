@@ -133,7 +133,7 @@ func (d *database[T, O]) startRotationTask() error {
 	if rt == nil {
 		return nil
 	}
-	return d.scheduler.Register("retention", rt.option, rt.expr, rt.run)
+	return d.scheduler.Register(context.Background(), "retention", rt.option, rt.expr, rt.run)
 }
 
 type retentionTask[T TSTable, O any] struct {

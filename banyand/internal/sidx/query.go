@@ -92,7 +92,7 @@ func (s *sidx) runStreamingQuery(ctx context.Context, req QueryRequest, resultsC
 		}
 		return nil
 	}
-	defer snap.decRef()
+	defer snap.decRef() //nolint:contextcheck // reference counting cleanup does not require context
 
 	resources, ok := s.prepareStreamingResources(ctx, req, snap, span)
 	if !ok {
