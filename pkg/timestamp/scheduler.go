@@ -72,7 +72,7 @@ func NewScheduler(parent *logger.Logger, clock Clock) *Scheduler {
 
 // Register adds the given task's SchedulerAction to the Scheduler,
 // and associate the given schedule expression.
-func (s *Scheduler) Register(name string, options cron.ParseOption, expr string, action SchedulerAction) error {
+func (s *Scheduler) Register(ctx context.Context, name string, options cron.ParseOption, expr string, action SchedulerAction) error {
 	s.Lock()
 	defer s.Unlock()
 	if s.closed {
@@ -94,9 +94,9 @@ func (s *Scheduler) Register(name string, options cron.ParseOption, expr string,
 	} else {
 		clock = s.clock
 	}
-	t := newTask(s.l.Named(name), name, clock, schedule, action)
+	t := newTask(ctx, s.l.Named(name), name, clock, schedule, action)
 	s.tasks[name] = t
-	run.Go(context.Background(), "scheduler-task-"+name, s.l, func(_ context.Context) {
+	run.Go(ctx, "scheduler-task-"+name, s.l, func(_ context.Context) {
 		t.run()
 		t.close()
 		s.Lock()
@@ -172,24 +172,26 @@ func (s *Scheduler) Metrics() map[string]*SchedulerMetrics {
 }
 
 type task struct {
-	clock    Clock
-	schedule cron.Schedule
-	closer   *run.Closer
-	l        *logger.Logger
-	action   SchedulerAction
-	metrics  *SchedulerMetrics
-	name     string
+	parentCtx context.Context
+	clock     Clock
+	schedule  cron.Schedule
+	closer    *run.Closer
+	l         *logger.Logger
+	action    SchedulerAction
+	metrics   *SchedulerMetrics
+	name      string
 }
 
-func newTask(l *logger.Logger, name string, clock clock.Clock, schedule cron.Schedule, action SchedulerAction) *task {
+func newTask(parentCtx context.Context, l *logger.Logger, name string, clock clock.Clock, schedule cron.Schedule, action SchedulerAction) *task {
 	return &task{
-		l:        l,
-		name:     name,
-		clock:    clock,
-		schedule: schedule,
-		action:   action,
-		closer:   run.NewCloser(0),
-		metrics:  &SchedulerMetrics{},
+		parentCtx: parentCtx,
+		l:         l,
+		name:      name,
+		clock:     clock,
+		schedule:  schedule,
+		action:    action,
+		closer:    run.NewCloser(0),
+		metrics:   &SchedulerMetrics{},
 	}
 }
 
@@ -229,7 +231,7 @@ func (t *task) run() {
 				resultCh := make(chan bool, 1)
 				timeoutCh := t.clock.Timer(5 * time.Minute).C
 
-				run.Go(context.Background(), "scheduler-action-"+t.name, t.l, func(ctx context.Context) {
+				run.Go(t.parentCtx, "scheduler-action-"+t.name, t.l, func(ctx context.Context) {
 					resultCh <- t.action(ctx, now, t.l)
 				})
 
