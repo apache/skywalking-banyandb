@@ -31,12 +31,13 @@ import (
 	grpclib "google.golang.org/grpc"
 	"google.golang.org/grpc/credentials"
 	"google.golang.org/grpc/credentials/insecure"
+	grpcmetadata "google.golang.org/grpc/metadata"
 	"gopkg.in/yaml.v3"
 
 	commonv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/common/v1"
 	databasev1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/database/v1"
 	"github.com/apache/skywalking-banyandb/banyand/metadata"
-	"github.com/apache/skywalking-banyandb/banyand/metadata/embeddedetcd"
+	"github.com/apache/skywalking-banyandb/banyand/metadata/discovery/file"
 	"github.com/apache/skywalking-banyandb/banyand/metadata/schema"
 	"github.com/apache/skywalking-banyandb/banyand/metadata/schema/property"
 	"github.com/apache/skywalking-banyandb/pkg/cmdsetup"
@@ -55,48 +56,39 @@ import (
 const (
 	host = "localhost"
 
-	// ModeEtcd is the etcd mode for node discovery and schema registry.
-	ModeEtcd = "etcd"
 	// ModeFile is the file-based mode for node discovery.
-	ModeFile = "file"
+	ModeFile = metadata.NodeDiscoveryModeFile
 	// ModeProperty is the property-based mode for schema registry.
-	ModeProperty = "property"
+	ModeProperty = metadata.RegistryModeProperty
 	// ModeNone is the none mode for node discovery (standalone).
-	ModeNone = "none"
+	ModeNone = metadata.NodeDiscoveryModeNone
 )
 
 // NodeDiscoveryConfig configures node discovery mode.
 type NodeDiscoveryConfig struct {
 	FileWriter *DiscoveryFileWriter
-	Mode       string // ModeEtcd (default), ModeFile, or ModeNone
+	Mode       string // ModeFile or ModeNone
 }
 
 // SchemaRegistryConfig configures schema registry mode.
 type SchemaRegistryConfig struct {
-	Mode string // ModeEtcd (default) or ModeProperty
+	Mode string // ModeProperty
 }
 
-var defaultClusterConfig = &ClusterConfig{
-	NodeDiscovery:  NodeDiscoveryConfig{Mode: ModeEtcd},
-	SchemaRegistry: SchemaRegistryConfig{Mode: ModeEtcd},
+func newDefaultClusterConfig() *ClusterConfig {
+	return &ClusterConfig{
+		NodeDiscovery:  NodeDiscoveryConfig{Mode: ModeNone},
+		SchemaRegistry: SchemaRegistryConfig{Mode: ModeProperty},
+	}
 }
 
 // ClusterConfig configures node discovery and schema registry for test clusters.
 type ClusterConfig struct {
 	NodeDiscovery     NodeDiscoveryConfig
 	SchemaRegistry    SchemaRegistryConfig
-	EtcdEndpoint      string
 	schemaServerAddrs []string
 	loadedKinds       []schema.Kind
 	mu                sync.Mutex
-}
-
-// NeedsEtcd returns true if the config requires an embedded etcd server.
-func (c *ClusterConfig) NeedsEtcd() bool {
-	if c == nil {
-		return true
-	}
-	return c.NodeDiscovery.Mode != ModeFile || c.SchemaRegistry.Mode != ModeProperty
 }
 
 // SchemaServerAddrs returns the accumulated schema server addresses.
@@ -108,7 +100,8 @@ func (c *ClusterConfig) SchemaServerAddrs() []string {
 	return result
 }
 
-func (c *ClusterConfig) addSchemaServerAddr(addr string) {
+// AddSchemaServerAddr adds a schema server address to the cluster config.
+func (c *ClusterConfig) AddSchemaServerAddr(addr string) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	c.schemaServerAddrs = append(c.schemaServerAddrs, addr)
@@ -129,19 +122,6 @@ func (c *ClusterConfig) getLoadedKinds() []schema.Kind {
 	return result
 }
 
-// EtcdClusterConfig creates a ClusterConfig that uses etcd for discovery and schema registry.
-func EtcdClusterConfig(etcdEndpoint string) *ClusterConfig {
-	return &ClusterConfig{
-		EtcdEndpoint: etcdEndpoint,
-		NodeDiscovery: NodeDiscoveryConfig{
-			Mode: ModeEtcd,
-		},
-		SchemaRegistry: SchemaRegistryConfig{
-			Mode: ModeEtcd,
-		},
-	}
-}
-
 // PropertyClusterConfig creates a ClusterConfig that uses file-based discovery and property-based schema.
 func PropertyClusterConfig(fileWriter *DiscoveryFileWriter) *ClusterConfig {
 	return &ClusterConfig{
@@ -158,17 +138,8 @@ func PropertyClusterConfig(fileWriter *DiscoveryFileWriter) *ClusterConfig {
 // DiscoveryFileWriter manages a dynamic YAML file for file-based node discovery.
 type DiscoveryFileWriter struct {
 	path  string
-	nodes []nodeEntry
+	nodes []file.NodeConfig
 	mu    sync.Mutex
-}
-
-type nodeEntry struct {
-	Name    string `yaml:"name"`
-	Address string `yaml:"grpc_address"`
-}
-
-type nodeFileConfig struct {
-	Nodes []nodeEntry `yaml:"nodes"`
 }
 
 // NewDiscoveryFileWriter creates a new DiscoveryFileWriter in the given directory.
@@ -183,7 +154,21 @@ func NewDiscoveryFileWriter(dir string) *DiscoveryFileWriter {
 func (w *DiscoveryFileWriter) AddNode(name, address string) {
 	w.mu.Lock()
 	defer w.mu.Unlock()
-	w.nodes = append(w.nodes, nodeEntry{Name: name, Address: address})
+	w.nodes = append(w.nodes, file.NodeConfig{Name: name, Address: address})
+	w.flushLocked()
+}
+
+// RemoveNode removes a node from the discovery file by address and writes it.
+func (w *DiscoveryFileWriter) RemoveNode(address string) {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	filtered := make([]file.NodeConfig, 0, len(w.nodes))
+	for _, n := range w.nodes {
+		if n.Address != address {
+			filtered = append(filtered, n)
+		}
+	}
+	w.nodes = filtered
 	w.flushLocked()
 }
 
@@ -199,47 +184,36 @@ func (w *DiscoveryFileWriter) flush() {
 }
 
 func (w *DiscoveryFileWriter) flushLocked() {
-	cfg := nodeFileConfig{Nodes: w.nodes}
+	cfg := file.NodeFileConfig{Nodes: w.nodes}
 	data, marshalErr := yaml.Marshal(&cfg)
 	gomega.Expect(marshalErr).NotTo(gomega.HaveOccurred())
 	gomega.Expect(os.WriteFile(w.path, data, 0o600)).To(gomega.Succeed())
 }
 
-// StartEmbeddedEtcd starts an embedded etcd server and returns the endpoint, directory, and cleanup function.
-func StartEmbeddedEtcd() (endpoint string, dir string, cleanup func()) {
-	ports, allocErr := test.AllocateFreePorts(2)
-	gomega.Expect(allocErr).NotTo(gomega.HaveOccurred())
-	dir, spaceDef, spaceErr := test.NewSpace()
-	gomega.Expect(spaceErr).NotTo(gomega.HaveOccurred())
-	endpoint = fmt.Sprintf("http://127.0.0.1:%d", ports[0])
-	server, serverErr := embeddedetcd.NewServer(
-		embeddedetcd.ConfigureListener([]string{endpoint}, []string{fmt.Sprintf("http://127.0.0.1:%d", ports[1])}),
-		embeddedetcd.RootDir(dir),
-		embeddedetcd.AutoCompactionMode("periodic"),
-		embeddedetcd.AutoCompactionRetention("1h"),
-		embeddedetcd.QuotaBackendBytes(2*1024*1024*1024),
-	)
-	gomega.Expect(serverErr).ShouldNot(gomega.HaveOccurred())
-	<-server.ReadyNotify()
-	cleanup = func() {
-		_ = server.Close()
-		<-server.StopNotify()
-		spaceDef()
+// PreloadSchemaViaProperty connects to property schema servers and runs the provided schema loader functions.
+func PreloadSchemaViaProperty(config *ClusterConfig, loaders ...func(ctx context.Context, registry schema.Registry) error) {
+	addrs := config.SchemaServerAddrs()
+	nodes := make([]*databasev1.Node, len(addrs))
+	for idx, addr := range addrs {
+		nodes[idx] = &databasev1.Node{
+			Metadata:                  &commonv1.Metadata{Name: fmt.Sprintf("test-node-%d", idx)},
+			Roles:                     []databasev1.Role{databasev1.Role_ROLE_META},
+			PropertySchemaGrpcAddress: addr,
+		}
 	}
-	return endpoint, dir, cleanup
-}
-
-// PreloadSchemaViaEtcd creates an etcd schema registry and runs the provided schema loader functions.
-func PreloadSchemaViaEtcd(endpoint string, loaders ...func(ctx context.Context, registry schema.Registry) error) {
-	schemaRegistry, registryErr := schema.NewEtcdSchemaRegistry(
-		schema.Namespace(metadata.DefaultNamespace),
-		schema.ConfigureServerEndpoints([]string{endpoint}),
-	)
-	gomega.Expect(registryErr).NotTo(gomega.HaveOccurred())
-	defer schemaRegistry.Close()
+	reg, regErr := property.NewSchemaRegistryClient(&property.ClientConfig{
+		GRPCTimeout:  10 * time.Second,
+		NodeRegistry: &testNodeRegistry{nodes: nodes},
+	})
+	gomega.Expect(regErr).NotTo(gomega.HaveOccurred())
+	defer func() { _ = reg.Close() }()
+	gomega.Eventually(func() int {
+		return len(reg.ActiveNodeNames())
+	}).WithTimeout(testflags.EventuallyTimeout).WithPolling(200 * time.Millisecond).
+		Should(gomega.Equal(len(nodes)))
 	ctx := context.Background()
 	for _, loader := range loaders {
-		gomega.Expect(loader(ctx, schemaRegistry)).To(gomega.Succeed())
+		gomega.Expect(loader(ctx, reg)).To(gomega.Succeed())
 	}
 }
 
@@ -270,33 +244,6 @@ func (r *testNodeRegistry) GetNode(_ context.Context, _ string) (*databasev1.Nod
 }
 
 func (r *testNodeRegistry) UpdateNode(_ context.Context, _ *databasev1.Node) error { return nil }
-
-// PreloadSchemaViaProperty connects to property schema servers and runs the provided schema loader functions.
-func PreloadSchemaViaProperty(config *ClusterConfig, loaders ...func(ctx context.Context, registry schema.Registry) error) {
-	addrs := config.SchemaServerAddrs()
-	nodes := make([]*databasev1.Node, len(addrs))
-	for idx, addr := range addrs {
-		nodes[idx] = &databasev1.Node{
-			Metadata:                  &commonv1.Metadata{Name: fmt.Sprintf("test-node-%d", idx)},
-			Roles:                     []databasev1.Role{databasev1.Role_ROLE_META},
-			PropertySchemaGrpcAddress: addr,
-		}
-	}
-	reg, regErr := property.NewSchemaRegistryClient(&property.ClientConfig{
-		GRPCTimeout:  10 * time.Second,
-		NodeRegistry: &testNodeRegistry{nodes: nodes},
-	})
-	gomega.Expect(regErr).NotTo(gomega.HaveOccurred())
-	defer func() { _ = reg.Close() }()
-	gomega.Eventually(func() int {
-		return len(reg.ActiveNodeNames())
-	}).WithTimeout(testflags.EventuallyTimeout).WithPolling(200 * time.Millisecond).
-		Should(gomega.Equal(len(nodes)))
-	ctx := context.Background()
-	for _, loader := range loaders {
-		gomega.Expect(loader(ctx, reg)).To(gomega.Succeed())
-	}
-}
 
 // QueryNodeGroups returns active group names from each schema server.
 func QueryNodeGroups(config *ClusterConfig) map[string][]string {
@@ -377,13 +324,10 @@ func StandaloneWithSchemaLoaders(config *ClusterConfig, schemaLoaders []SchemaLo
 ) (string, string, func()) {
 	path, deferFn, err := test.NewSpace()
 	gomega.Expect(err).NotTo(gomega.HaveOccurred())
-	portCount := 4
 	if config == nil {
-		config = defaultClusterConfig
+		config = newDefaultClusterConfig()
 	}
-	if config.SchemaRegistry.Mode == ModeProperty {
-		portCount = 5
-	}
+	portCount := 5
 	var ports []int
 	ports, err = test.AllocateFreePorts(portCount)
 	gomega.Expect(err).NotTo(gomega.HaveOccurred())
@@ -424,10 +368,12 @@ func standaloneServerWithAuth(config *ClusterConfig, path string, ports []int, s
 	username, password string, flags ...string,
 ) (string, string, func()) {
 	if config == nil {
-		config = defaultClusterConfig
+		config = newDefaultClusterConfig()
 	}
 	addr := fmt.Sprintf("%s:%d", host, ports[0])
 	httpAddr := fmt.Sprintf("%s:%d", host, ports[1])
+	schemaPort := ports[4]
+	schemaAddr := fmt.Sprintf("127.0.0.1:%d", schemaPort)
 	ff := []string{
 		"--logging-env=dev",
 		"--logging-level=" + testflags.LogLevel,
@@ -438,39 +384,21 @@ func standaloneServerWithAuth(config *ClusterConfig, path string, ports []int, s
 		"--http-grpc-addr=" + addr,
 		"--stream-root-path=" + path,
 		"--measure-root-path=" + path,
-		"--metadata-root-path=" + path,
 		"--property-root-path=" + path,
 		"--trace-root-path=" + path,
 		"--schema-server-root-path=" + path,
 		"--schema-registry-mode=" + config.SchemaRegistry.Mode,
 		"--node-discovery-mode=" + config.NodeDiscovery.Mode,
+		"--node-host-provider=flag",
+		"--node-host=127.0.0.1",
+		"--schema-server-grpc-host=127.0.0.1",
+		fmt.Sprintf("--schema-server-grpc-port=%d", schemaPort),
 	}
 	if config.NodeDiscovery.Mode == ModeFile {
 		ff = append(ff,
 			fmt.Sprintf("--node-discovery-file-path=%s", config.NodeDiscovery.FileWriter.Path()))
 	}
-	isPropertyMode := config.SchemaRegistry.Mode == ModeProperty
-	if isPropertyMode || config.NodeDiscovery.Mode == ModeFile {
-		ff = append(ff,
-			"--node-host-provider=flag",
-			"--node-host=127.0.0.1",
-		)
-	}
-	if isPropertyMode {
-		schemaPort := ports[4]
-		schemaAddr := fmt.Sprintf("127.0.0.1:%d", schemaPort)
-		ff = append(ff,
-			"--schema-server-grpc-host=127.0.0.1",
-			fmt.Sprintf("--schema-server-grpc-port=%d", schemaPort),
-		)
-		config.addSchemaServerAddr(schemaAddr)
-	} else {
-		endpoint := fmt.Sprintf("http://%s:%d", host, ports[2])
-		ff = append(ff,
-			fmt.Sprintf("--etcd-listen-client-url=%s", endpoint),
-			fmt.Sprintf("--etcd-listen-peer-url=http://%s:%d", host, ports[3]),
-		)
-	}
+	config.AddSchemaServerAddr(schemaAddr)
 	tlsEnabled := false
 	if certFile != "" && keyFile != "" {
 		ff = append(ff, "--tls=true", "--cert-file="+certFile, "--key-file="+keyFile, "--http-grpc-cert-file="+certFile,
@@ -497,43 +425,28 @@ func standaloneServerWithAuth(config *ClusterConfig, path string, ports []int, s
 			testflags.EventuallyTimeout).Should(gomega.Succeed())
 		gomega.Eventually(helpers.HTTPHealthCheckWithAuth(httpAddr, "", username, password), testflags.EventuallyTimeout).Should(gomega.Succeed())
 	}
-	if isPropertyMode && config.NodeDiscovery.FileWriter != nil {
+	if config.NodeDiscovery.FileWriter != nil {
 		config.NodeDiscovery.FileWriter.AddNode(
 			fmt.Sprintf("127.0.0.1:%d", ports[0]),
 			fmt.Sprintf("127.0.0.1:%d", ports[0]),
 		)
 	}
 	if schemaLoaders != nil {
-		if isPropertyMode {
-			preloadStandaloneSchemaViaProperty(config, schemaLoaders)
-			waitForSchemaSync(addr)
-			if config.NodeDiscovery.Mode == ModeFile {
-				waitForNodeDiscovery(addr)
-			}
+		preloadStandaloneSchemaViaProperty(config, schemaLoaders)
+		var dialOpts []grpclib.DialOption
+		if tlsEnabled {
+			creds, credErr := credentials.NewClientTLSFromFile(certFile, "localhost")
+			gomega.Expect(credErr).NotTo(gomega.HaveOccurred())
+			dialOpts = append(dialOpts, grpclib.WithTransportCredentials(creds))
 		} else {
-			endpoint := fmt.Sprintf("http://%s:%d", host, ports[2])
-			preloadStandaloneSchemaViaEtcd(endpoint, schemaLoaders)
+			dialOpts = append(dialOpts, grpclib.WithTransportCredentials(insecure.NewCredentials()))
+		}
+		waitForSchemaSyncWithAuth(addr, username, password, dialOpts...)
+		if config.NodeDiscovery.Mode == ModeFile {
+			waitForNodeDiscovery(addr, dialOpts...)
 		}
 	}
 	return addr, httpAddr, closeFn
-}
-
-func preloadStandaloneSchemaViaEtcd(endpoint string, schemaLoaders []SchemaLoader) {
-	schemaRegistry, err := schema.NewEtcdSchemaRegistry(
-		schema.Namespace(metadata.DefaultNamespace),
-		schema.ConfigureServerEndpoints([]string{endpoint}),
-	)
-	gomega.Expect(err).NotTo(gomega.HaveOccurred())
-	defer schemaRegistry.Close()
-	var units []run.Unit
-	for _, sl := range schemaLoaders {
-		sl.SetRegistry(schemaRegistry)
-		units = append(units, sl)
-	}
-	preloadGroup := run.NewGroup("preload")
-	preloadGroup.Register(units...)
-	err = preloadGroup.Run(context.Background())
-	gomega.Expect(err).NotTo(gomega.HaveOccurred())
 }
 
 func preloadStandaloneSchemaViaProperty(config *ClusterConfig, schemaLoaders []SchemaLoader) {
@@ -636,10 +549,9 @@ func hasFlagValue(flags []string, key, value string) bool {
 
 func startDataNode(config *ClusterConfig, dataDir string, flags ...string) (string, string, func()) {
 	if config == nil {
-		config = defaultClusterConfig
+		config = newDefaultClusterConfig()
 	}
-	isPropertyMode := config.SchemaRegistry.Mode == ModeProperty
-	runSchemaServer := isPropertyMode && !hasFlagValue(flags, "--has-meta-role", "false")
+	runSchemaServer := !hasFlagValue(flags, "--has-meta-role", "false")
 	portCount := 2
 	if runSchemaServer {
 		portCount = 3
@@ -673,38 +585,32 @@ func startDataNode(config *ClusterConfig, dataDir string, flags ...string) (stri
 			fmt.Sprintf("--node-discovery-file-path=%s", config.NodeDiscovery.FileWriter.Path()))
 	}
 
-	if isPropertyMode {
-		if runSchemaServer {
-			schemaPort := ports[2]
-			schemaAddr := fmt.Sprintf("%s:%d", nodeHost, schemaPort)
-			flags = append(flags,
-				"--schema-server-grpc-host="+nodeHost,
-				fmt.Sprintf("--schema-server-grpc-port=%d", schemaPort),
-			)
-			config.addSchemaServerAddr(schemaAddr)
-		}
-	} else {
-		flags = append(flags, "--etcd-endpoints", config.EtcdEndpoint)
+	if runSchemaServer {
+		schemaPort := ports[2]
+		schemaAddr := fmt.Sprintf("%s:%d", nodeHost, schemaPort)
+		flags = append(flags,
+			"--schema-server-grpc-host="+nodeHost,
+			fmt.Sprintf("--schema-server-grpc-port=%d", schemaPort),
+		)
+		config.AddSchemaServerAddr(schemaAddr)
 	}
 
-	closeFn := CMD(flags...)
+	rawCloseFn := CMD(flags...)
 
 	gomega.Eventually(
 		helpers.HealthCheck(addr, 10*time.Second, 10*time.Second, grpclib.WithTransportCredentials(insecure.NewCredentials())),
 		testflags.EventuallyTimeout).Should(gomega.Succeed())
 
-	if !isPropertyMode {
-		gomega.Eventually(func() (map[string]*databasev1.Node, error) {
-			return helpers.ListKeys(config.EtcdEndpoint,
-				fmt.Sprintf("/%s/nodes/%s:%d", metadata.DefaultNamespace, nodeHost, ports[0]))
-		}, testflags.EventuallyTimeout).Should(gomega.HaveLen(1))
+	nodeAddr := fmt.Sprintf("%s:%d", nodeHost, ports[0])
+	if config.NodeDiscovery.FileWriter != nil {
+		config.NodeDiscovery.FileWriter.AddNode(nodeAddr, nodeAddr)
 	}
 
-	if isPropertyMode && config.NodeDiscovery.FileWriter != nil {
-		config.NodeDiscovery.FileWriter.AddNode(
-			fmt.Sprintf("%s:%d", nodeHost, ports[0]),
-			fmt.Sprintf("%s:%d", nodeHost, ports[0]),
-		)
+	closeFn := func() {
+		if config.NodeDiscovery.FileWriter != nil {
+			config.NodeDiscovery.FileWriter.RemoveNode(nodeAddr)
+		}
+		rawCloseFn()
 	}
 
 	return addr, fmt.Sprintf("%s:%d", host, ports[1]), closeFn
@@ -749,7 +655,7 @@ func DataNodeWithAddrAndDir(config *ClusterConfig, flags ...string) (string, str
 
 func startLiaisonNode(config *ClusterConfig, path string, flags ...string) (string, string, func()) {
 	if config == nil {
-		config = defaultClusterConfig
+		config = newDefaultClusterConfig()
 	}
 	ports, err := test.AllocateFreePorts(3)
 	gomega.Expect(err).NotTo(gomega.HaveOccurred())
@@ -758,7 +664,6 @@ func startLiaisonNode(config *ClusterConfig, path string, flags ...string) (stri
 	nodeHost := "127.0.0.1"
 	logger.Infof("liaison test directory: %s", path)
 	gomega.Expect(err).NotTo(gomega.HaveOccurred())
-	isPropertyMode := config.SchemaRegistry.Mode == ModeProperty
 	flags = append(flags, "liaison",
 		"--grpc-host="+host,
 		fmt.Sprintf("--grpc-port=%d", ports[0]),
@@ -787,26 +692,15 @@ func startLiaisonNode(config *ClusterConfig, path string, flags ...string) (stri
 		flags = append(flags,
 			fmt.Sprintf("--node-discovery-file-path=%s", config.NodeDiscovery.FileWriter.Path()))
 	}
-	if !isPropertyMode {
-		flags = append(flags, "--etcd-endpoints", config.EtcdEndpoint)
-	}
 	closeFn := CMD(flags...)
 	gomega.Eventually(helpers.HTTPHealthCheck(httpAddr, ""), testflags.EventuallyTimeout).Should(gomega.Succeed())
-	if !isPropertyMode {
-		gomega.Eventually(func() (map[string]*databasev1.Node, error) {
-			return helpers.ListKeys(config.EtcdEndpoint,
-				fmt.Sprintf("/%s/nodes/%s:%d", metadata.DefaultNamespace, nodeHost, ports[2]))
-		}, testflags.EventuallyTimeout).Should(gomega.HaveLen(1))
-	}
 	if config.NodeDiscovery.FileWriter != nil {
 		config.NodeDiscovery.FileWriter.AddNode(
 			fmt.Sprintf("%s:%d", nodeHost, ports[2]),
 			fmt.Sprintf("%s:%d", nodeHost, ports[2]),
 		)
 	}
-	if isPropertyMode {
-		waitForActiveDataNodes(grpcAddr, config)
-	}
+	waitForActiveDataNodes(grpcAddr, config)
 
 	return grpcAddr, httpAddr, func() {
 		fmt.Printf("Liaison %d write queue path: %s\n", ports[0], path)
@@ -850,9 +744,11 @@ func LiaisonNodeWithAddrAndDir(config *ClusterConfig, flags ...string) (string, 
 	}
 }
 
-func waitForSchemaSync(grpcAddr string) {
-	conn, connErr := grpchelper.Conn(grpcAddr, 10*time.Second,
-		grpclib.WithTransportCredentials(insecure.NewCredentials()))
+func waitForSchemaSyncWithAuth(grpcAddr, username, password string, opts ...grpclib.DialOption) {
+	if len(opts) == 0 {
+		opts = append(opts, grpclib.WithTransportCredentials(insecure.NewCredentials()))
+	}
+	conn, connErr := grpchelper.ConnWithAuth(grpcAddr, 10*time.Second, username, password, opts...)
 	gomega.Expect(connErr).NotTo(gomega.HaveOccurred())
 	defer func() {
 		if conn != nil {
@@ -861,17 +757,20 @@ func waitForSchemaSync(grpcAddr string) {
 	}()
 	groupClient := databasev1.NewGroupRegistryServiceClient(conn)
 	gomega.Eventually(func(g gomega.Gomega) {
-		resp, listErr := groupClient.List(
-			context.Background(), &databasev1.GroupRegistryServiceListRequest{})
+		ctx := context.Background()
+		if username != "" && password != "" {
+			md := grpcmetadata.Pairs("username", username, "password", password)
+			ctx = grpcmetadata.NewOutgoingContext(ctx, md)
+		}
+		resp, listErr := groupClient.List(ctx, &databasev1.GroupRegistryServiceListRequest{})
 		g.Expect(listErr).NotTo(gomega.HaveOccurred())
 		g.Expect(resp.GetGroup()).NotTo(gomega.BeEmpty(),
 			"no groups found in standalone schema registry")
 	}, testflags.EventuallyTimeout).Should(gomega.Succeed())
 }
 
-func waitForNodeDiscovery(grpcAddr string) {
-	conn, connErr := grpchelper.Conn(grpcAddr, 10*time.Second,
-		grpclib.WithTransportCredentials(insecure.NewCredentials()))
+func waitForNodeDiscovery(grpcAddr string, dialOpts ...grpclib.DialOption) {
+	conn, connErr := grpchelper.Conn(grpcAddr, 10*time.Second, dialOpts...)
 	gomega.Expect(connErr).NotTo(gomega.HaveOccurred())
 	defer func() {
 		if conn != nil {

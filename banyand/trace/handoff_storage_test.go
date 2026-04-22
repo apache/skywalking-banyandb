@@ -22,6 +22,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"sync"
 	"testing"
 	"time"
 
@@ -626,6 +627,70 @@ func TestHandoffController_FiltersNonOwningOfflineNodes(t *testing.T) {
 	tester.True(os.IsNotExist(statErr), "expected no queue directory to be created for non-owning node")
 }
 
+func TestHandoffController_OnlineNodeSkipsStaleHealthCheck(t *testing.T) {
+	tester := require.New(t)
+	tempDir, deferFunc := test.Space(tester)
+	defer deferFunc()
+
+	lfs := fs.NewLocalFileSystem()
+	l := logger.GetLogger("test")
+	dataNodes := []string{"node1:17912", "node2:17912"}
+	const groupName = "group1"
+	const shardID uint32 = 0
+
+	resolver := func(string, uint32) ([]string, error) {
+		return dataNodes, nil
+	}
+
+	// Health check reports only node1 (simulating stale health after node2 restart).
+	queueClient := &fakeQueueClient{healthy: []string{"node1:17912"}}
+	hc, err := newHandoffController(lfs, tempDir, queueClient, dataNodes, 0, l, resolver)
+	tester.NoError(err)
+	defer hc.close()
+
+	// Both nodes are in the syncer's target list, but health check is stale for node2.
+	offline := hc.calculateOfflineNodes(
+		[]string{"node1:17912", "node2:17912"},
+		groupName,
+		common.ShardID(shardID),
+	)
+	tester.Len(offline, 0,
+		"expected no offline nodes when both are in the syncer target list, even with stale health check")
+}
+
+// TestHandoffController_OfflineNodeNotInOnlineSet verifies that a node NOT in the syncer's
+// target list and reported unhealthy is correctly classified as offline.
+func TestHandoffController_OfflineNodeNotInOnlineSet(t *testing.T) {
+	tester := require.New(t)
+	tempDir, deferFunc := test.Space(tester)
+	defer deferFunc()
+
+	lfs := fs.NewLocalFileSystem()
+	l := logger.GetLogger("test")
+	dataNodes := []string{"node1:17912", "node2:17912"}
+	const groupName = "group1"
+	const shardID uint32 = 0
+
+	resolver := func(string, uint32) ([]string, error) {
+		return dataNodes, nil
+	}
+
+	// Health check reports only node1 — node2 is offline.
+	queueClient := &fakeQueueClient{healthy: []string{"node1:17912"}}
+	hc, err := newHandoffController(lfs, tempDir, queueClient, dataNodes, 0, l, resolver)
+	tester.NoError(err)
+	defer hc.close()
+
+	// Only node1 is in the syncer's target list (simulating registry before AddNode).
+	offline := hc.calculateOfflineNodes(
+		[]string{"node1:17912"},
+		groupName,
+		common.ShardID(shardID),
+	)
+	tester.Len(offline, 1)
+	tester.Equal("node2:17912", offline[0])
+}
+
 // TestHandoffController_SizeRecovery verifies that total size is correctly calculated on restart.
 func TestHandoffController_SizeRecovery(t *testing.T) {
 	tester := require.New(t)
@@ -689,4 +754,59 @@ func TestHandoffController_SizeRecovery(t *testing.T) {
 	node2Pending, err := hc2.listPendingForNode("node2:17912")
 	tester.NoError(err)
 	tester.Len(node2Pending, 1)
+}
+
+// TestHandoffController_ConcurrentSizeEnforcement verifies that concurrent enqueues
+// cannot exceed the size limit due to the atomic tryReserveSize check.
+func TestHandoffController_ConcurrentSizeEnforcement(t *testing.T) {
+	tester := require.New(t)
+	tempDir, deferFunc := test.Space(tester)
+	defer deferFunc()
+
+	// Create a source part with 3MB metadata
+	partID := uint64(500)
+	partPath := filepath.Join(tempDir, "source", partName(partID))
+	tester.NoError(os.MkdirAll(partPath, 0o755))
+
+	metadata := map[string]interface{}{
+		"compressedSizeBytes": 3 * megabyte,
+	}
+	metadataBytes, err := json.Marshal(metadata)
+	tester.NoError(err)
+	tester.NoError(os.WriteFile(filepath.Join(partPath, "metadata.json"), metadataBytes, 0o600))
+	tester.NoError(os.WriteFile(filepath.Join(partPath, "data.bin"), []byte("test data"), 0o600))
+
+	// 10MB limit allows at most 3 parts of 3MB each
+	lfs := fs.NewLocalFileSystem()
+	l := logger.GetLogger("test")
+	hc, err := newHandoffController(lfs, tempDir, nil, []string{"node1:17912"}, 10*megabyte, l, nil)
+	tester.NoError(err)
+	defer hc.close()
+
+	const numGoroutines = 20
+	var wg sync.WaitGroup
+	var successCount int64
+	var mu sync.Mutex
+
+	for i := 0; i < numGoroutines; i++ {
+		wg.Add(1)
+		go func(idx int) {
+			defer wg.Done()
+			enqueueErr := hc.enqueueForNode("node1:17912", partID+uint64(idx), PartTypeCore, partPath, "group1", 1)
+			if enqueueErr == nil {
+				mu.Lock()
+				successCount++
+				mu.Unlock()
+			}
+		}(i)
+	}
+	wg.Wait()
+
+	// At most 3 enqueues should succeed (3 * 3MB = 9MB <= 10MB)
+	tester.LessOrEqual(successCount, int64(3))
+
+	// Total size must not exceed 10MB limit
+	totalSize := hc.getTotalSize()
+	tester.LessOrEqual(totalSize, uint64(10*megabyte))
+	tester.Equal(uint64(successCount)*3*megabyte, totalSize)
 }

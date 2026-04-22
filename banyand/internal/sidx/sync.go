@@ -74,7 +74,7 @@ func (s *sidx) StreamingParts(partIDsToSync map[uint64]struct{}, group string, s
 			part := pw.p
 			files, release := createPartFileReaders(part)
 			releaseFuncs = append(releaseFuncs, release)
-			streamingParts = append(streamingParts, queue.StreamingPartData{
+			spd := queue.StreamingPartData{
 				ID:                    part.partMetadata.ID,
 				Group:                 group,
 				ShardID:               shardID,
@@ -84,11 +84,24 @@ func (s *sidx) StreamingParts(partIDsToSync map[uint64]struct{}, group string, s
 				UncompressedSizeBytes: part.partMetadata.UncompressedSizeBytes,
 				TotalCount:            part.partMetadata.TotalCount,
 				BlocksCount:           part.partMetadata.BlocksCount,
-				MinTimestamp:          part.partMetadata.SegmentID,
 				MinKey:                part.partMetadata.MinKey,
 				MaxKey:                part.partMetadata.MaxKey,
 				PartType:              name,
-			})
+			}
+			switch {
+			case part.partMetadata.MinTimestamp != nil:
+				spd.MinTimestamp = *part.partMetadata.MinTimestamp
+			case part.partMetadata.SegmentID > 0:
+				spd.MinTimestamp = part.partMetadata.SegmentID
+			default:
+				logger.Panicf("sidx streaming parts: %s, part %d has no valid timestamp (MinTimestamp=nil, SegmentID=0)", name, part.partMetadata.ID)
+			}
+			if part.partMetadata.MaxTimestamp != nil {
+				spd.MaxTimestamp = *part.partMetadata.MaxTimestamp
+			} else {
+				spd.MaxTimestamp = spd.MinTimestamp
+			}
+			streamingParts = append(streamingParts, spd)
 		}
 	}
 

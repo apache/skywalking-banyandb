@@ -19,6 +19,7 @@ package grpc
 
 import (
 	"fmt"
+	"sort"
 	"sync"
 
 	"github.com/pkg/errors"
@@ -39,7 +40,10 @@ var (
 // NodeRegistry is for locating data node with group/name of the metadata
 // together with the shardID calculated from the incoming data.
 type NodeRegistry interface {
+	// Locate returns the data node assigned to the given (group, name, shardID, replicaID).
 	Locate(group, name string, shardID, replicaID uint32) (string, error)
+	// LocateAll returns all distinct data nodes owning the given shard across all replicas.
+	LocateAll(group string, shardID uint32, replicas int) ([]string, error)
 	fmt.Stringer
 }
 
@@ -72,6 +76,26 @@ func (n *clusterNodeService) Locate(group, name string, shardID, replicaID uint3
 		return "", errors.Wrapf(err, "fail to locate %s/%s(%d,%d)", group, name, shardID, replicaID)
 	}
 	return nodeID, nil
+}
+
+func (n *clusterNodeService) LocateAll(group string, shardID uint32, replicas int) ([]string, error) {
+	if replicas < 1 {
+		return nil, fmt.Errorf("replicas must be >= 1, got %d", replicas)
+	}
+	nodeSet := make(map[string]struct{}, replicas)
+	for replica := 0; replica < replicas; replica++ {
+		nodeID, err := n.Locate(group, "", shardID, uint32(replica))
+		if err != nil {
+			return nil, errors.Wrapf(err, "fail to locate %s/%d/%d", group, shardID, replica)
+		}
+		nodeSet[nodeID] = struct{}{}
+	}
+	nodes := make([]string, 0, len(nodeSet))
+	for nodeID := range nodeSet {
+		nodes = append(nodes, nodeID)
+	}
+	sort.Strings(nodes)
+	return nodes, nil
 }
 
 func (n *clusterNodeService) OnAddOrUpdate(metadata schema.Metadata) {
@@ -116,4 +140,9 @@ func NewLocalNodeRegistry() NodeRegistry {
 // Locate of localNodeService always returns local.
 func (localNodeService) Locate(_, _ string, _, _ uint32) (string, error) {
 	return "local", nil
+}
+
+// LocateAll of localNodeService always returns [local].
+func (localNodeService) LocateAll(_ string, _ uint32, _ int) ([]string, error) {
+	return []string{"local"}, nil
 }

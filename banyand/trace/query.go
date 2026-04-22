@@ -252,13 +252,14 @@ func (t *trace) prepareSIDXStreaming(
 	}
 
 	req := sidx.QueryRequest{
-		Filter:       tqo.SkippingFilter,
-		TagFilter:    tqo.TagFilter,
-		Order:        tqo.Order,
-		MaxBatchSize: tqo.MaxTraceSize,
-		MinKey:       &tqo.MinVal,
-		MaxKey:       &tqo.MaxVal,
-		SeriesIDs:    seriesIDs,
+		Filter:         tqo.SkippingFilter,
+		TagFilter:      tqo.TagFilter,
+		Order:          tqo.Order,
+		MaxBatchSize:   tqo.MaxTraceSize,
+		MinKey:         &tqo.MinVal,
+		MaxKey:         &tqo.MaxVal,
+		SeriesIDs:      seriesIDs,
+		SchemaTagTypes: qo.schemaTagTypes,
 	}
 	if tqo.TagProjection != nil {
 		req.TagProjection = []model.TagProjection{*tqo.TagProjection}

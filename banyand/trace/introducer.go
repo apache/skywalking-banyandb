@@ -25,15 +25,17 @@ import (
 )
 
 type introduction struct {
-	memPart     *partWrapper
-	applied     chan struct{}
-	sidxReqsMap map[string]*sidx.MemPart
+	part             *partWrapper
+	applied          chan struct{}
+	sidxReqsMap      map[string]*sidx.MemPart
+	sidxFilePartsMap map[string]string
 }
 
 func (i *introduction) reset() {
-	i.memPart = nil
+	i.part = nil
 	i.applied = nil
 	i.sidxReqsMap = nil
+	i.sidxFilePartsMap = nil
 }
 
 var introductionPool = pool.Register[*introduction]("trace-introduction")
@@ -160,7 +162,7 @@ func (tst *tsTable) introducerLoop(flushCh chan *flusherIntroduction, mergeCh ch
 			return
 		case next := <-tst.introductions:
 			tst.incTotalIntroduceLoopStarted("mem")
-			tst.introduceMemPart(next, epoch)
+			tst.introducePart(next, epoch)
 			tst.incTotalIntroduceLoopFinished("mem")
 			epoch++
 		case next := <-flushCh:
@@ -194,7 +196,7 @@ func (tst *tsTable) introducerLoopWithSync(flushCh chan *flusherIntroduction, me
 			return
 		case next := <-tst.introductions:
 			tst.incTotalIntroduceLoopStarted("mem")
-			tst.introduceMemPart(next, epoch)
+			tst.introducePart(next, epoch)
 			tst.incTotalIntroduceLoopFinished("mem")
 			epoch++
 		case next := <-flushCh:
@@ -223,16 +225,21 @@ func (tst *tsTable) introducerLoopWithSync(flushCh chan *flusherIntroduction, me
 	}
 }
 
-func (tst *tsTable) introduceMemPart(nextIntroduction *introduction, epoch uint64) {
+func (tst *tsTable) introducePart(nextIntroduction *introduction, epoch uint64) {
 	// Create generic transaction
 	txn := snapshotpkg.NewTransaction()
 	defer txn.Release()
 
 	// Prepare trace snapshot transition
-	next := nextIntroduction.memPart
-	tst.addPendingDataCount(-int64(next.mp.partMetadata.TotalCount))
+	next := nextIntroduction.part
+	if next.mp != nil {
+		tst.addPendingDataCount(-int64(next.mp.partMetadata.TotalCount))
+	}
 	partID := next.p.partMetadata.ID
 
+	// Capture the snapshot built by the transaction so we can persist it directly
+	// after commit, without re-acquiring a reference via currentSnapshot().
+	var traceNextSnp *snapshot
 	traceTransition := snapshotpkg.NewTransition(tst, func(cur *snapshot) *snapshot {
 		if cur == nil {
 			cur = new(snapshot)
@@ -240,7 +247,8 @@ func (tst *tsTable) introduceMemPart(nextIntroduction *introduction, epoch uint6
 		nextSnp := cur.copyAllTo(epoch)
 		nextSnp.parts = append(nextSnp.parts, next)
 		nextSnp.creator = snapshotCreatorMemPart
-		return &nextSnp
+		traceNextSnp = &nextSnp
+		return traceNextSnp
 	})
 	defer traceTransition.Release()
 	snapshotpkg.AddTransition(txn, traceTransition)
@@ -254,6 +262,13 @@ func (tst *tsTable) introduceMemPart(nextIntroduction *introduction, epoch uint6
 		sidxTransitions = append(sidxTransitions, sidxTransition)
 		snapshotpkg.AddTransition(txn, sidxTransition)
 	}
+	for name, sidxPartPath := range nextIntroduction.sidxFilePartsMap {
+		sidxInstance := tst.mustGetOrCreateSidx(name)
+		prepareFunc := sidxInstance.PrepareFilePart(partID, sidxPartPath)
+		sidxTransition := snapshotpkg.NewTransition(sidxInstance, prepareFunc)
+		sidxTransitions = append(sidxTransitions, sidxTransition)
+		snapshotpkg.AddTransition(txn, sidxTransition)
+	}
 	defer func() {
 		for _, t := range sidxTransitions {
 			t.Release()
@@ -262,6 +277,12 @@ func (tst *tsTable) introduceMemPart(nextIntroduction *introduction, epoch uint6
 
 	// Commit all atomically under single transaction lock
 	txn.Commit()
+
+	// Persist snapshot for file-backed introductions so the part survives restart.
+	// memPart introductions skip persist because the flusher persists after mem→file conversion.
+	if next.mp == nil && traceNextSnp != nil {
+		tst.persistSnapshot(traceNextSnp)
+	}
 
 	if nextIntroduction.applied != nil {
 		close(nextIntroduction.applied)

@@ -49,6 +49,15 @@ func (pm *partMetadata) reset() {
 	pm.ID = 0
 }
 
+func (pm *partMetadata) fillFromSyncContext(ctx *queue.ChunkedSyncPartContext) {
+	pm.CompressedSizeBytes = ctx.CompressedSizeBytes
+	pm.UncompressedSizeBytes = ctx.UncompressedSizeBytes
+	pm.TotalCount = ctx.TotalCount
+	pm.BlocksCount = ctx.BlocksCount
+	pm.MinTimestamp = ctx.MinTimestamp
+	pm.MaxTimestamp = ctx.MaxTimestamp
+}
+
 func validatePartMetadata(fileSystem fs.FileSystem, partPath string) error {
 	metadataPath := filepath.Join(partPath, metadataFilename)
 	metadata, err := fileSystem.Read(metadataPath)

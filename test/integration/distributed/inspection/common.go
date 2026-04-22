@@ -41,22 +41,14 @@ import (
 	"github.com/apache/skywalking-banyandb/pkg/grpchelper"
 	"github.com/apache/skywalking-banyandb/pkg/logger"
 	"github.com/apache/skywalking-banyandb/pkg/pool"
+	"github.com/apache/skywalking-banyandb/pkg/test"
 	"github.com/apache/skywalking-banyandb/pkg/test/flags"
 	"github.com/apache/skywalking-banyandb/pkg/test/gmatcher"
+	"github.com/apache/skywalking-banyandb/pkg/test/setup"
 )
 
-// SetupResult contains all info returned by SetupFunc.
-type SetupResult struct {
-	StopFunc     func()
-	LiaisonAddr  string
-	EtcdEndpoint string
-}
-
-// SetupFunc is provided by sub-packages to start the environment.
-var SetupFunc func() SetupResult
-
 var (
-	result             SetupResult
+	stopFunc           func()
 	connection         *grpc.ClientConn
 	goods              []gleak.Goroutine
 	groupClient        databasev1.GroupRegistryServiceClient
@@ -75,8 +67,23 @@ var _ = ginkgo.SynchronizedBeforeSuite(func() []byte {
 	})).To(gomega.Succeed())
 	pool.EnableStackTracking(true)
 	goods = gleak.Goroutines()
-	result = SetupFunc()
-	return []byte(result.LiaisonAddr)
+	tmpDir, tmpDirCleanup, tmpErr := test.NewSpace()
+	gomega.Expect(tmpErr).NotTo(gomega.HaveOccurred())
+	dfWriter := setup.NewDiscoveryFileWriter(tmpDir)
+	config := setup.PropertyClusterConfig(dfWriter)
+	ginkgo.By("Starting data node 0")
+	closeDataNode0 := setup.DataNode(config)
+	ginkgo.By("Starting data node 1")
+	closeDataNode1 := setup.DataNode(config)
+	ginkgo.By("Starting liaison node")
+	liaisonAddr, closerLiaisonNode := setup.LiaisonNode(config)
+	stopFunc = func() {
+		closerLiaisonNode()
+		closeDataNode0()
+		closeDataNode1()
+		tmpDirCleanup()
+	}
+	return []byte(liaisonAddr)
 }, func(address []byte) {
 	var err error
 	connection, err = grpchelper.Conn(string(address), 10*time.Second,
@@ -100,8 +107,8 @@ var _ = ginkgo.SynchronizedAfterSuite(func() {
 
 var _ = ginkgo.ReportAfterSuite("Distributed Inspect Suite", func(report ginkgo.Report) {
 	if report.SuiteSucceeded {
-		if result.StopFunc != nil {
-			result.StopFunc()
+		if stopFunc != nil {
+			stopFunc()
 		}
 		gomega.Eventually(gleak.Goroutines, flags.EventuallyTimeout).ShouldNot(gleak.HaveLeaked(goods))
 		gomega.Eventually(pool.AllRefsCount, flags.EventuallyTimeout).Should(gmatcher.HaveZeroRef())

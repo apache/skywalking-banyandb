@@ -57,7 +57,7 @@ var _ = g.Describe("Query service_cpm_minute", func() {
 		basePath := filepath.Dir(currentFile)
 		certFile = filepath.Join(basePath, "testdata/server_cert.pem")
 		keyFile = filepath.Join(basePath, "testdata/server_key.pem")
-		addr, _, deferFn = setup.StandaloneWithTLS(testConfig, certFile, keyFile)
+		addr, _, deferFn = setup.StandaloneWithTLS(NewTestConfig(), certFile, keyFile)
 		var err error
 		creds, err := credentials.NewClientTLSFromFile(certFile, "localhost")
 		gm.Expect(err).NotTo(gm.HaveOccurred())
@@ -112,7 +112,7 @@ var _ = g.Describe("Query service_cpm_minute", func() {
 		gm.Expect(err).NotTo(gm.HaveOccurred())
 
 		// Start a new server using the temporary certificate files
-		grpcAddr, httpAddr, tempDeferFn := setup.StandaloneWithTLS(testConfig, tempCertFile, tempKeyFile)
+		grpcAddr, httpAddr, tempDeferFn := setup.StandaloneWithTLS(NewTestConfig(), tempCertFile, tempKeyFile)
 		defer tempDeferFn()
 
 		// Create a secure HTTP client with the initial certificates

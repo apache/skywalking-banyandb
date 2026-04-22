@@ -80,10 +80,17 @@ func TestGetSnapshotDir(t *testing.T) {
 			false,
 		},
 		{
+			"property catalog",
+			&databasev1.Snapshot{Catalog: commonv1.Catalog_CATALOG_PROPERTY, Name: "test"},
+			"/tmp", "/tmp", "/tmp", "/tmp", "/tmp",
+			filepath.Join("/tmp/property", storage.SnapshotsDir, "test", storage.DataDir),
+			false,
+		},
+		{
 			"schema-property catalog",
 			&databasev1.Snapshot{Catalog: commonv1.Catalog_CATALOG_PROPERTY, Name: "schema-property/test"},
 			"/tmp", "/tmp", "/tmp", "/tmp", "/tmp",
-			filepath.Join("/tmp/schema-property", storage.SnapshotsDir, "test"),
+			filepath.Join("/tmp/schema-property", storage.SnapshotsDir, "test", storage.DataDir),
 			false,
 		},
 		{

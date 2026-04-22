@@ -2,18 +2,44 @@
 
 ## Introduction
 
-Node discovery enables BanyanDB nodes to locate and communicate with each other in a distributed cluster. The service discovery mechanism is primarily applied in two scenarios:
+Node discovery enables BanyanDB nodes to locate and communicate with each other in a distributed cluster. The discovery registry is consulted in three scenarios:
 
-1. **Request Routing**: When liaison nodes need to send requests to data nodes for query/write execution.
-2. **Data Migration**: When the lifecycle service queries the node list to perform shard migration and rebalancing.
+1. **Schema Registry Bootstrap**: Every node (data and liaison) runs a property schema client that must reach an embedded schema server on a data node to synchronize metadata. The discovery registry is the only source of schema server endpoints, so a misconfigured discovery mode prevents the cluster from ever forming.
+2. **Request Routing**: Liaison nodes look up data nodes through the registry to send query and write requests.
+3. **Data Migration**: The lifecycle agent lists all data nodes from the registry and filters them by `node_selector` labels to pick the warm/cold targets of a migration.
 
-BanyanDB supports three discovery mechanisms to accommodate different deployment environments:
+BanyanDB supports four discovery mechanisms to accommodate different deployment environments:
 
+- **None Discovery**: Default mode. No service discovery infrastructure is needed. Suitable for standalone deployments.
 - **Etcd-based Discovery**: Traditional distributed consensus approach suitable for VM deployments and multi-cloud scenarios.
 - **DNS-based Discovery**: Cloud-native solution leveraging Kubernetes service discovery infrastructure.
 - **File-based Discovery**: Static configuration file approach for simple deployments and testing environments.
 
 This document provides guidance on configuring and operating all discovery modes.
+
+> **Note**: As of 0.10.0, the default node discovery mode is `none`. Cluster deployments must explicitly configure a discovery mode (`etcd`, `dns`, or `file`). See [Upgrading to 0.10](upgrade.md) for migration notes.
+
+## None Mode
+
+### Overview
+
+None mode is the default discovery mode since 0.10.0. In this mode, nodes do not perform any service discovery. This is suitable for standalone deployments and single-node setups where no inter-node communication is needed.
+
+### Configuration
+
+```shell
+# None mode is the default; no additional flags are required
+banyand standalone
+
+# Explicitly set none mode (equivalent to default)
+banyand data --node-discovery-mode=none
+```
+
+### When to Use None Mode
+
+- **Standalone deployments**: The single process handles all roles internally.
+- **Single-node setups**: No other nodes need to be discovered.
+- **Development and testing**: No external infrastructure dependencies.
 
 ## Etcd-Based Discovery
 
@@ -106,32 +132,26 @@ Node health is implicitly monitored through the lease mechanism:
 - Dead nodes disappear within 5 seconds of failure.
 
 #### Event Watching
+- **None** (default): No external discovery; suitable for standalone mode only.
+- **DNS-based Discovery**: Cloud-native solution leveraging Kubernetes service discovery infrastructure.
+- **File-based Discovery**: Static configuration file approach for simple deployments and testing environments.
 
-BanyanDB implements real-time cluster membership tracking:
+### Which Commands Accept These Flags
 
-- Watches etcd prefix `/nodes/` for PUT (add/update) and DELETE events.
-- Revision-based streaming resumes from last known revision after reconnection.
-- Periodic full sync every 30 minutes (randomized) to detect missed events.
+The `--node-discovery-*` flag set is registered in the metadata client that every long-lived BanyanDB process embeds. All four of the following commands accept the same flags and must be given a consistent configuration so that they observe the same cluster topology:
 
-#### Deregistration
+- `banyand data`
+- `banyand liaison`
+- `banyand standalone` (only `none` is meaningful here)
+- `lifecycle` (the lifecycle agent — see the [lifecycle documentation](lifecycle.md) for how it uses the discovery registry to pick migration targets)
 
-**Graceful Shutdown:**
-
-1. Close signal triggers lease revocation.
-2. Etcd automatically deletes the node's key.
-3. Watch streams notify all other nodes immediately.
-
-**Crash Recovery:**
-
-- Lease expires after 5 seconds without renewal.
-- Etcd automatically removes the key.
-- No manual intervention required for cleanup.
+This document provides guidance on configuring and operating all discovery modes.
 
 ## DNS-Based Discovery
 
 ### Overview
 
-DNS-based discovery provides a cloud-native alternative leveraging Kubernetes' built-in service discovery infrastructure. This eliminates the operational complexity of managing a separate etcd cluster.
+DNS-based discovery provides a cloud-native alternative leveraging Kubernetes' built-in service discovery infrastructure.
 
 ### How it Works with Kubernetes
 
@@ -387,19 +407,34 @@ When the service starts:
 - File read error → keep existing cache, log error
 - File deleted → keep existing cache, log error
 
+## None Mode
+
+### Overview
+
+### None Mode - Best For
+
+- Standalone and single-node deployments (default mode)
+- Development and testing environments
+- No infrastructure dependencies
+
+`--node-discovery-mode=none` disables external node discovery entirely. The discovery registry is wired to a stub that returns no peers, so no remote schema server, request routing target, or lifecycle migration target can be located. This is the default, and it is the only valid mode for `banyand standalone`.
+
+### When to Use
+
+- `banyand standalone` — single-process deployments that bundle the liaison and data roles together. The standalone process talks to its own in-process schema server, so no discovery is necessary.
+- Smoke tests and unit tests where a cluster is not needed.
+
+### Caveats
+
+- **Not valid for clusters.** Running any of `banyand data`, `banyand liaison`, or `lifecycle` with `--node-discovery-mode=none` will leave the schema client with no server to talk to, liaison routing tables empty, and lifecycle migrations as no-ops. Use `dns` or `file` for every clustered deployment.
+- None mode has no additional flags; there is nothing else to configure.
+
 ## Choosing a Discovery Mode
-
-### Etcd Mode - Best For
-
-- Traditional VM/bare-metal deployments
-- Multi-cloud deployments requiring global service discovery
-- Environments where etcd is already deployed
-- Need for strong consistency guarantees
 
 ### DNS Mode - Best For
 
 - Kubernetes-native deployments
-- Simplified operations (no external etcd management)
+- Simplified operations (no external dependencies beyond DNS)
 - Cloud-native architecture alignment
 - StatefulSets with stable network identities
 - Rapid deployment without external dependencies
@@ -412,3 +447,8 @@ When the service starts:
 - Proof-of-concept and demo setups
 - Environments where node membership is manually managed
 - Scenarios requiring predictable and auditable node configuration
+
+### None Mode - Best For
+
+- `banyand standalone` (the only supported cluster topology for this mode)
+- Local smoke tests and unit tests where no remote peers are involved

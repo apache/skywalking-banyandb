@@ -179,6 +179,8 @@ catalog:
     catalog:
       - name: "Clustering"
         path: "/concept/clustering"
+      - name: "Distributed Measure Aggregation"
+        path: "/concept/distributed-measure-aggregation"
       - name: "TSDB"
         path: "/concept/tsdb"
       - name: "Data Rotation"

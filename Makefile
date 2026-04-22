@@ -47,6 +47,9 @@ generate: TARGET=generate
 generate: PROJECTS:=api $(PROJECTS) pkg
 generate: default  ## Generate API codes
 
+generate-test-cases:  ## Regenerate measure query test cases (input/*.ql, input/*.yaml)
+	go run ./test/cases/measure/cmd/generate generate test/cases/measure/data
+
 build: TARGET=all
 build: default  ## Build all projects
 
@@ -141,6 +144,7 @@ check: ## Check that the status is consistent with CI
 pre-push: ## Check source files before pushing to the remote repo
 	$(MAKE) check-req
 	$(MAKE) generate
+	$(MAKE) generate-test-cases
 	$(MAKE) lint
 	$(MAKE) check
 	$(MAKE) vuln-check
@@ -222,7 +226,7 @@ release-push-candidate: ## Push release candidate
 	${PUSH_RELEASE_SCRIPTS}
 	
 .PHONY: all $(PROJECTS) clean build  default nuke
-.PHONY: lint check tidy format pre-push
+.PHONY: lint check tidy format pre-push generate-test-cases
 .PHONY: test test-race test-coverage test-ci test-docker
 .PHONY: license-check license-fix license-dep
 .PHONY: release release-binary release-source release-sign release-assembly

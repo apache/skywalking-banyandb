@@ -12,7 +12,7 @@ There are three bootstrap commands: `data`, `liaison`, and `standalone`. You cou
 
 - `data`: Run as the data server. It stores the data and processes the data requests.
 - `liaison`: Run as the liaison server. It is responsible for the communication between the data servers and clients.
-- `standalone`: Run as the standalone server. It combines the data, liaison server and embed etcd server for development and testing.
+- `standalone`: Run as the standalone server. It combines the data and liaison server for development and testing.
 
 ### Other commands
 
@@ -25,7 +25,32 @@ Below are the available flags for configuring BanyanDB:
 
 ### Service Discovery
 
-BanyanDB Liaison reads the endpoints of the data servers from the etcd server. The following flags are used to configure:
+BanyanDB supports three node-discovery modes: `none` (default, standalone only), `dns` (DNS SRV based), and `file` (static YAML list). For conceptual details, TLS configuration, cluster bring-up, and operational guidance, see the [node discovery documentation](node-discovery.md).
+
+- `--node-discovery-mode string`: Node discovery mode: `none` (default, standalone), `dns`, or `file`.
+- `--node-registry-timeout duration`: Timeout for the node registry (default: 2m).
+- `--node-discovery-grpc-timeout duration`: Timeout for gRPC calls to fetch node metadata from discovered nodes.
+
+#### DNS Mode Flags
+
+- `--node-discovery-dns-srv-addresses strings`: Comma-separated DNS SRV addresses to query (e.g., `_grpc._tcp.banyandb.default.svc.cluster.local`).
+- `--node-discovery-dns-fetch-init-interval duration`: Query interval during the initialization phase (default: 5s).
+- `--node-discovery-dns-fetch-init-duration duration`: How long the initialization phase lasts before falling back to the steady-state interval (default: 5m).
+- `--node-discovery-dns-fetch-interval duration`: Query interval after the initialization phase (default: 15s).
+- `--node-discovery-dns-tls`: Enable TLS for DNS discovery gRPC connections.
+- `--node-discovery-dns-ca-certs strings`: Comma-separated CA certificate files, one per SRV address in the same order, used to verify DNS-discovered nodes.
+
+#### File Mode Flags
+
+- `--node-discovery-file-path string`: Path to the static YAML file that lists cluster nodes (required when the mode is `file`).
+- `--node-discovery-file-fetch-interval duration`: Polling interval to reread the discovery file as a fallback to fsnotify-based reloads (default: 5m).
+- `--node-discovery-file-retry-initial-interval duration`: Initial retry delay for nodes whose metadata fetch failed (default: 1s).
+- `--node-discovery-file-retry-max-interval duration`: Upper bound for the retry backoff (default: 2m).
+- `--node-discovery-file-retry-multiplier float`: Multiplicative factor applied between retries (default: 2.0).
+
+#### Node Host Registration
+
+Each node advertises itself with a host part resolved according to `--node-host-provider`:
 
 `node-host-provider`: the node host provider, can be "hostname", "ip" or "flag", default is hostname.
 
@@ -57,11 +82,6 @@ The following flags are used to configure access logs for the data ingestion:
 - `--access-log-root-path string`: Access log root path.
 - `--enable-ingestion-access-log`: Enable ingestion access log.
 - `--access-log-sampled`: if true, requests may be dropped when the channel is full; if false, requests are never dropped
-
-BanyanDB uses etcd for service discovery and configuration. The following flags are used to configure the etcd settings. These flags are only used when running as a liaison or data server. Standalone server embeds etcd server and does not need these flags.
-
-- `--etcd-listen-client-url strings`: A URL to listen on for client traffic (default: [http://localhost:2379]).
-- `--etcd-listen-peer-url strings`: A URL to listen on for peer traffic (default: [http://localhost:2380]).
 
 The following flags are used to configure the timeout of data sending from liaison to data servers:
 
@@ -95,20 +115,18 @@ The same certificate/key pair can be reused for both external traffic and the in
 
 ### Data & Storage
 
-If the node is running as a data server, you can configure the health check server port:
-
-`--health-port uint32`: the port of banyand health check listens (default 17913)
-
 The following flags are used to configure the measure storage engine:
 
 - `--measure-flush-timeout duration`: The memory data timeout of measure (default: 5s).
-- `--measure-root-path string`: The root path of the database (default: "/tmp").
+- `--measure-root-path string`: The root path of the measure database (default: "/tmp").
+- `--measure-data-path string`: The data directory path of measure. If not set, `<measure-root-path>/measure/data` is used.
 - `--measure-max-fan-out-size bytes`: the upper bound of a single file size after merge of measure (default 8.00EiB)
 
 The following flags are used to configure the stream storage engine:
 
 - `--stream-flush-timeout duration`: The memory data timeout of stream (default: 1s).
-- `--stream-root-path string`: The root path of the database (default: "/tmp").
+- `--stream-root-path string`: The root path of the stream database (default: "/tmp").
+- `--stream-data-path string`: The data directory path of stream. If not set, `<stream-root-path>/stream/data` is used.
 - `--stream-max-fan-out-size bytes`: the upper bound of a single file size after merge of stream (default 8.00EiB)
 - `--element-index-flush-timeout duration`: The element index timeout of stream (default: 1s).
 
@@ -118,13 +136,10 @@ The following flags are used to configure the trace storage engine:
 - `--trace-root-path string`: The root path of the database (default: "/tmp").
 - `--trace-max-fan-out-size bytes`: the upper bound of a single file size after merge of trace (default 8.00EiB)
 
-The following flags are used to configure the embedded etcd storage engine which is only used when running as a standalone server:
+The following flags configure the remaining per-catalog storage roots:
 
-- `--metadata-root-path string`: The root path of metadata (default: "/tmp").
-- `--etcd-auto-compaction-mode string`: The mode to compact the storage (default: "periodic").
-- `--etcd-auto-compaction-retention string`: The retention period of the storage (default: "1h").
-- `--etcd-defrag-cron string`: The scheduled task to free up disk space (default: "@daily").
-- `--etcd-quota-backend-bytes bytes`: Quota for backend storage (default: 2.00GiB).
+- `--property-root-path string`: The root path of the property database (default: "/tmp").
+- `--trace-root-path string`: The root path of the trace database (default: "/tmp").
 
 The following flags are used to configure the memory protector:
 
@@ -141,9 +156,40 @@ The following flags are used to configure the memory protector:
 
 ### Schema Registry
 
-The following flags configure the property-based schema registry used for metadata synchronization between nodes:
+BanyanDB stores cluster metadata in a property-based schema registry. Data nodes that carry the meta role host the schema server; every node (data and liaison) runs a schema client that connects to the schema server and keeps its local cache in sync.
 
-- `--schema-registry-mode string`: Schema registry mode: `etcd` for etcd-based storage, `property` for property-based storage (default: "property").
+- `--schema-registry-mode string`: Schema registry mode (default: "property"). Only `property` is supported.
+
+#### Schema Server (data node)
+
+These flags are only effective on the `data` command and configure the property-based schema server embedded in the data node. They have no effect on liaison nodes.
+
+- `--has-meta-role`: Whether this data node runs the embedded schema server (default: true). Set to false to deploy a pure data node that only serves time-series data and reads schemas from other data nodes. When false, every other flag in this subsection is inert on that node.
+- `--schema-server-root-path string`: Root storage path for the schema property data (default: "/tmp").
+- `--schema-server-grpc-host string`: Host the schema server listens on.
+- `--schema-server-grpc-port uint32`: Port the schema server listens on (default: 17916).
+- `--schema-server-flush-timeout duration`: Memory flush interval (default: 5s).
+- `--schema-server-expire-delete-timeout duration`: Soft-delete expiration for deleted schemas (default: 168h / 7d).
+- `--schema-server-tls`: Enable TLS on the schema server.
+- `--schema-server-cert-file string`: The TLS certificate file of the schema server.
+- `--schema-server-key-file string`: The TLS key file of the schema server.
+- `--schema-server-max-recv-msg-size bytes`: Max gRPC receive message size for the schema server.
+- `--schema-server-max-file-snapshot-num int`: Maximum number of file snapshots retained (default: 10).
+- `--schema-server-min-file-snapshot-age duration`: Minimum age before a file snapshot is eligible for deletion (default: 1h).
+
+##### Schema repair (gossip)
+
+The following flags tune the gossip-based repair protocol that reconciles schema state between data nodes.
+
+- `--schema-property-repair-trigger-cron string`: Cron expression that triggers a repair gossip round (default: `@every 10m`).
+- `--schema-server-repair-tree-slot-count int`: Repair merkle tree slot count (default: 32).
+- `--schema-server-repair-build-tree-cron string`: Cron for periodic repair tree rebuilding (default: `@every 1h`).
+- `--schema-server-repair-quick-build-tree-time duration`: Minimum delay between on-demand quick repair tree rebuilds (default: 10m).
+
+#### Schema Client (all nodes)
+
+These flags configure how every node talks to the schema server.
+
 - `--schema-property-client-sync-interval duration`: Polling interval for property-based schema sync (default: 30s).
 - `--schema-property-client-health-check-interval duration`: Interval for periodic connection health checks to schema servers. Set to 0 to use the default interval (10s), or to a negative value to disable.
 - `--schema-property-client-max-recv-msg-size bytes`: Max gRPC receive message size for property schema client.

@@ -53,8 +53,8 @@ Please refer to the [Troubleshooting No Data Issue](./no-data.md) guide to ident
 
 `Stream`, `Measure` and `Trace` handle duplicate data differently:
 
-- `Stream`: If the same data is ingested multiple times, the `Stream` will store all the data points. The query results will include all the duplicate data points with the same entity and timestamp.
-- `Measure`: If the same data is ingested multiple times, the `Measure` will store the latest data point. It uses a internal `version` field to determine the latest data point.
+- `Stream`: `Stream` stores elements even when they share the same entity and timestamp. Query results are deduplicated by `element_id`, not by timestamp alone. Elements with different `element_id` values remain distinct. If clients omit `element_id`, BanyanDB generates one for each write, so repeated writes without a stable `element_id` appear as separate elements in query results.
+- `Measure`: If the same data is ingested multiple times, the `Measure` will store the latest data point. It uses an internal `version` field to determine the latest data point.
 
 `Measure` data version is determined by:
 

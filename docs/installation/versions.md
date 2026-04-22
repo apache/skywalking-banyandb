@@ -5,6 +5,8 @@ OAP releases, you need to pick the proper API versions.
 
 | API Version | BanyanDB Release Version |
 |-------------|--------------------------|
+| 0.11        | 0.11                     |
+| 0.10        | 0.10                     |
 | 0.9         | 0.9                      |
 | 0.8         | 0.8                      |
 

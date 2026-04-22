@@ -737,6 +737,8 @@ ORDER BY value DESC;
 
 BydbQL for properties is designed for simple key-value lookups and metadata filtering. It maps to the `banyandb.property.v1.QueryRequest` message.
 
+> **Note**: As of BanyanDB v0.10.0, Property queries support `ORDER BY` for sorted results.
+
 ### 7.1. Grammar
 
 ```
@@ -781,6 +783,13 @@ FROM PROPERTY server_metadata IN datacenter-1
 WHERE datacenter = 'dc-101' AND in_service = 'true'
 LIMIT 50
 ORDER BY ip;
+
+-- Find properties and sort by an integer tag
+SELECT ip, owner, priority
+FROM PROPERTY server_metadata IN datacenter-1
+WHERE in_service = 'true'
+ORDER BY priority ASC
+LIMIT 20;
 
 -- Retrieve a specific property by its unique ID
 SELECT *

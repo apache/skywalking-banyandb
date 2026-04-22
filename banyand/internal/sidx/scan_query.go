@@ -151,16 +151,17 @@ func (s *sidx) scanPart(ctx context.Context, pw *partWrapper, req ScanQueryReque
 		}
 
 		// Create a temporary QueryRequest to reuse existing blockCursor infrastructure
-		tmpReq := QueryRequest{
-			TagFilter:     req.TagFilter,
-			MinKey:        &minKey,
-			MaxKey:        &maxKey,
-			TagProjection: req.TagProjection,
-			MaxBatchSize:  maxBatchSize,
+		qr := QueryRequest{
+			TagFilter:      req.TagFilter,
+			SchemaTagTypes: req.SchemaTagTypes,
+			MinKey:         &minKey,
+			MaxKey:         &maxKey,
+			TagProjection:  req.TagProjection,
+			MaxBatchSize:   maxBatchSize,
 		}
 
 		bc := generateBlockCursor()
-		bc.init(p, pi.curBlock, tmpReq)
+		bc.init(p, pi.curBlock, qr)
 
 		// Load block data
 		tmpBlock := generateBlock()
@@ -184,7 +185,7 @@ func (s *sidx) scanPart(ctx context.Context, pw *partWrapper, req ScanQueryReque
 		if s.loadBlockCursor(bc, tmpBlock, blockScanResult{
 			p:  p,
 			bm: *pi.curBlock,
-		}, tagsToLoad, tmpReq, s.pm, nil) {
+		}, tagsToLoad, qr, s.pm, nil) {
 			// Copy all rows from this block cursor to current batch
 			for idx := 0; idx < len(bc.userKeys); idx++ {
 				bc.idx = idx

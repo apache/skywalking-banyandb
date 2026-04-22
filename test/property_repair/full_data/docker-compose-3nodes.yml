@@ -16,13 +16,6 @@
 version: '3.8'
 
 services:
-  etcd:
-    extends:
-      file: ../base-compose.yml
-      service: etcd
-    networks:
-      - property-repair
-
   liaison:
     extends:
       file: ../base-compose.yml

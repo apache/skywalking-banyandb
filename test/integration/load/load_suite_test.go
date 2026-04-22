@@ -84,7 +84,7 @@ var _ = Describe("Load Test Suit", func() {
 			Level: "debug",
 		})).Should(Succeed())
 		goods = gleak.Goroutines()
-		ports, err := test.AllocateFreePorts(4)
+		ports, err := test.AllocateFreePorts(5)
 		Expect(err).NotTo(HaveOccurred())
 		var addr string
 		addr, _, deferFunc = setup.ClosableStandalone(nil, dir, ports)

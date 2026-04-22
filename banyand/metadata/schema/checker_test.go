@@ -18,6 +18,8 @@
 package schema_test
 
 import (
+	"embed"
+	"testing"
 	"time"
 
 	"github.com/onsi/ginkgo/v2"
@@ -30,6 +32,22 @@ import (
 	"github.com/apache/skywalking-banyandb/banyand/metadata/schema"
 	"github.com/apache/skywalking-banyandb/pkg/test/flags"
 )
+
+const indexRuleDir = "testdata/index_rules"
+
+var (
+	//go:embed testdata/index_rules/*.json
+	indexRuleStore embed.FS
+	//go:embed testdata/index_rule_binding.json
+	indexRuleBindingJSON string
+	//go:embed testdata/stream.json
+	streamJSON string
+)
+
+func TestSchema(t *testing.T) {
+	gomega.RegisterFailHandler(ginkgo.Fail)
+	ginkgo.RunSpecs(t, "Schema Suite")
+}
 
 func loadStream() *databasev1.Stream {
 	s := &databasev1.Stream{}

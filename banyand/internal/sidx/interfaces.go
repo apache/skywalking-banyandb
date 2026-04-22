@@ -37,6 +37,8 @@ import (
 type SnapshotTransactionSupport interface {
 	// PrepareMemPart prepares a transition for introducing a memory part.
 	PrepareMemPart(partID uint64, mp *MemPart) func(cur *Snapshot) *Snapshot
+	// PrepareFilePart prepares a transition for introducing a file-backed part.
+	PrepareFilePart(partID uint64, partPath string) func(cur *Snapshot) *Snapshot
 	// PrepareFlushed prepares a transition for introducing flushed parts.
 	PrepareFlushed(intro *FlusherIntroduction) func(cur *Snapshot) *Snapshot
 	// PrepareMerged prepares a transition for introducing merged parts.
@@ -103,16 +105,17 @@ type WriteRequest struct {
 
 // QueryRequest specifies parameters for a query operation, following StreamQueryOptions pattern.
 type QueryRequest struct {
-	Filter        index.Filter
-	TagFilter     model.TagFilterMatcher
-	Order         *index.OrderBy
-	MinKey        *int64
-	MaxKey        *int64
-	MinTimestamp  *int64
-	MaxTimestamp  *int64
-	SeriesIDs     []common.SeriesID
-	TagProjection []model.TagProjection
-	MaxBatchSize  int
+	Filter         index.Filter
+	TagFilter      model.TagFilterMatcher
+	Order          *index.OrderBy
+	MinKey         *int64
+	MaxKey         *int64
+	SchemaTagTypes map[string]pbv1.ValueType
+	MinTimestamp   *int64
+	MaxTimestamp   *int64
+	SeriesIDs      []common.SeriesID
+	TagProjection  []model.TagProjection
+	MaxBatchSize   int
 }
 
 // ScanProgressFunc is a callback for reporting scan progress.
@@ -125,14 +128,15 @@ type ScanProgressFunc func(currentPart, totalParts int, rowsFound int)
 //
 //nolint:govet // struct layout optimized for readability; 64 bytes is acceptable
 type ScanQueryRequest struct {
-	TagFilter     model.TagFilterMatcher
-	OnProgress    ScanProgressFunc
-	MinKey        *int64
-	MaxKey        *int64
-	MinTimestamp  *int64
-	MaxTimestamp  *int64
-	TagProjection []model.TagProjection
-	MaxBatchSize  int
+	TagFilter      model.TagFilterMatcher
+	SchemaTagTypes map[string]pbv1.ValueType
+	OnProgress     ScanProgressFunc
+	MinKey         *int64
+	MaxKey         *int64
+	MinTimestamp   *int64
+	MaxTimestamp   *int64
+	TagProjection  []model.TagProjection
+	MaxBatchSize   int
 }
 
 // QueryResponse contains a batch of query results and execution metadata.

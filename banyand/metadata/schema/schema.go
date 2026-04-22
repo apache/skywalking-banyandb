@@ -35,6 +35,12 @@ const SchemaGroup = "_schema"
 // ErrUnsupportedEntityType indicates an unsupported entity type.
 var ErrUnsupportedEntityType = errors.New("unsupported entity type")
 
+// HasMetadata allows getting Metadata.
+type HasMetadata interface {
+	GetMetadata() *commonv1.Metadata
+	proto.Message
+}
+
 // EventHandler allows receiving and handling the resource change events.
 type EventHandler interface {
 	OnInit([]Kind) (bool, []int64)
@@ -64,9 +70,6 @@ func (u UnimplementedOnInitHandler) OnInit([]Kind) (bool, []int64) {
 type ListOpt struct {
 	Group string
 }
-
-// WatcherOption is a placeholder for watcher configuration.
-type WatcherOption func(*watcherConfig)
 
 // Registry allowing depositing resources.
 type Registry interface {
@@ -107,65 +110,6 @@ type Metadata struct {
 
 // Spec is a placeholder of a serialized resource.
 type Spec interface{}
-
-func (m Metadata) key() (string, error) {
-	switch m.Kind {
-	case KindGroup:
-		return formatGroupKey(m.Name), nil
-	case KindMeasure:
-		return formatMeasureKey(&commonv1.Metadata{
-			Group: m.Group,
-			Name:  m.Name,
-		}), nil
-	case KindStream:
-		return formatStreamKey(&commonv1.Metadata{
-			Group: m.Group,
-			Name:  m.Name,
-		}), nil
-	case KindTrace:
-		return formatTraceKey(&commonv1.Metadata{
-			Group: m.Group,
-			Name:  m.Name,
-		}), nil
-	case KindIndexRule:
-		return formatIndexRuleKey(&commonv1.Metadata{
-			Group: m.Group,
-			Name:  m.Name,
-		}), nil
-	case KindIndexRuleBinding:
-		return formatIndexRuleBindingKey(&commonv1.Metadata{
-			Group: m.Group,
-			Name:  m.Name,
-		}), nil
-
-	case KindTopNAggregation:
-		return formatTopNAggregationKey(&commonv1.Metadata{
-			Group: m.Group,
-			Name:  m.Name,
-		}), nil
-	case KindNode:
-		return formatNodeKey(m.Name), nil
-	case KindProperty:
-		return formatPropertyKey(&commonv1.Metadata{
-			Group: m.Group,
-			Name:  m.Name,
-		}), nil
-	default:
-		return "", ErrUnsupportedEntityType
-	}
-}
-
-func (m Metadata) equal(other Metadata) bool {
-	if other.Spec == nil {
-		return false
-	}
-
-	if checker, ok := CheckerMap[m.Kind]; ok {
-		return checker(m.Spec.(proto.Message), other.Spec.(proto.Message))
-	}
-
-	return false
-}
 
 // Stream allows CRUD stream schemas in a group.
 //

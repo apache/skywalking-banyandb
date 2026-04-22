@@ -85,12 +85,16 @@ func (sw *writers) reset() {
 	}
 }
 
-func (sw *writers) mustInitForMemPart(mp *memPart) {
+func (sw *writers) mustInitForFilePart(fileSystem fs.FileSystem, path string, shouldCache bool) {
 	sw.reset()
-	sw.mustCreateTagWriters = mp.mustCreateMemTagWriters
-	sw.metaWriter.init(&mp.meta)
-	sw.primaryWriter.init(&mp.primary)
-	sw.spanWriter.init(&mp.spans)
+	fileSystem.MkdirPanicIfExist(path, storage.DirPerm)
+	sw.mustCreateTagWriters = func(name string) (fs.Writer, fs.Writer) {
+		return fs.MustCreateFile(fileSystem, filepath.Join(path, name+tagsMetadataFilenameExt), storage.FilePerm, shouldCache),
+			fs.MustCreateFile(fileSystem, filepath.Join(path, name+tagsFilenameExt), storage.FilePerm, shouldCache)
+	}
+	sw.metaWriter.init(fs.MustCreateFile(fileSystem, filepath.Join(path, metaFilename), storage.FilePerm, shouldCache))
+	sw.primaryWriter.init(fs.MustCreateFile(fileSystem, filepath.Join(path, primaryFilename), storage.FilePerm, shouldCache))
+	sw.spanWriter.init(fs.MustCreateFile(fileSystem, filepath.Join(path, spansFilename), storage.FilePerm, shouldCache))
 }
 
 func (sw *writers) totalBytesWritten() uint64 {
@@ -198,17 +202,7 @@ func (bw *blockWriter) MustInitForMemPart(mp *memPart, traceSize int) {
 
 func (bw *blockWriter) mustInitForFilePart(fileSystem fs.FileSystem, path string, shouldCache bool, traceSize int) {
 	bw.reset()
-	fileSystem.MkdirPanicIfExist(path, storage.DirPerm)
-	bw.writers.mustCreateTagWriters = func(name string) (fs.Writer, fs.Writer) {
-		metaPath := filepath.Join(path, name+tagsMetadataFilenameExt)
-		dataPath := filepath.Join(path, name+tagsFilenameExt)
-		return fs.MustCreateFile(fileSystem, metaPath, storage.FilePerm, shouldCache),
-			fs.MustCreateFile(fileSystem, dataPath, storage.FilePerm, shouldCache)
-	}
-
-	bw.writers.metaWriter.init(fs.MustCreateFile(fileSystem, filepath.Join(path, metaFilename), storage.FilePerm, shouldCache))
-	bw.writers.primaryWriter.init(fs.MustCreateFile(fileSystem, filepath.Join(path, primaryFilename), storage.FilePerm, shouldCache))
-	bw.writers.spanWriter.init(fs.MustCreateFile(fileSystem, filepath.Join(path, spansFilename), storage.FilePerm, shouldCache))
+	bw.writers.mustInitForFilePart(fileSystem, path, shouldCache)
 	if traceSize > 0 {
 		bw.traceIDFilter = &traceIDFilter{
 			filter: generateTraceIDBloomFilter(),

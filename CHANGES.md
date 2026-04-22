@@ -10,9 +10,15 @@ Release Notes.
 - Collect BanyanDB data on e2e test failure for CI debugging.
 - Add log query e2e test.
 - Sync lifecycle e2e test from SkyWalking stages test.
+- Add `noDuplicates` verification to all e2e expected files to detect duplicate data in query results.
 - Add periodic health check for property schema connection.
 - Persist segment end time in per-segment metadata so boundaries don't shift across restarts or config changes.
 - Introduce fair fast/slow lane scheduling for trace part merges to prevent short merges from being blocked by long-running merges; expose queue wait time as `total_merge_queue_latency`.
+- [Breaking Change] Remove etcd components. The property-based schema registry is now the only supported mode. 
+  - All `--etcd-*` CLI flags have been removed. 
+  - The `--namespace` CLI flag has been removed (it previously configured the etcd key prefix).
+  - The `--node-discovery-mode` flag no longer accepts `etcd` (supported values: `none`, `dns`, `file`). 
+  - The `--schema-registry-mode` flag only accepts `property`.
 
 ### Bug Fixes
 
@@ -25,10 +31,20 @@ Release Notes.
 - ui: fix query editor refresh/reset behavior and BydbQL keyword highlighting.
 - Disable the rotation task on warm and cold nodes to prevent incorrect segment boundaries during lifecycle migration.
 - Prevent epoch-dated segment directories (seg-19700101) from being created by zero timestamps in distributed sync paths.
+- Fix SIDX streaming sync sending SegmentID as MinTimestamp instead of the actual timestamp, causing sync failures on the receiving node.
+- Fix handoff controller TOCTOU race allowing disk size limit bypass, and populate sidx MinTimestamp/MaxTimestamp during replay to prevent corrupt segment creation on recovered nodes.
+- Delete orphaned parts when no snapshot references them during tsTable initialization.
+- Extract shared LocateAll on NodeRegistry to ensure resolveAssignments and syncer GetNodes always produce identical node lists, preventing liaison from enqueuing parts to online/healthy data nodes.
+- Add validation for MATCH and IN conditions in inverted index query builder, and handle nil OR branch when all entities are specific.
+- Fix wrong backup path of schema property.
+- Fix lifecycle migration failure when the target stage has `close: true`.
+- Fix stale sync request blocking watch session channel, causing repeated "channel full, skipping session" errors when a watch stream is in backoff.
+- Fix nil pointer panic in disk monitor when group schema is not yet initialized during early startup, and ensure monitor loop survives recovered panics.
 
 ### Chores
 
 - Upgrade Go and npm dependencies including etcd to v3.6.10, OpenTelemetry to v1.43.0, AWS SDK, and Google Cloud libraries.
+- Regenerate expired TLS test certificate with 100-year validity.
 
 ## 0.10.0
 
@@ -79,6 +95,7 @@ Release Notes.
 - Fix duplicate query execution in distributed measure Agg+TopN queries by enabling push-down aggregation, removing the wasteful double-query pattern.
 - Fix nil pointer panic in segment collectMetrics during shutdown.
 - Fix entity tag handling in trace filter to prevent TagIdx index mismatch when filtering with both entity and non-entity tags.
+- Fix OOM issue cause during migration when a group contains a large amount of data.
 
 ### Document
 

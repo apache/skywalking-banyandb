@@ -70,13 +70,79 @@ You can't change the unit of `segment_interval`. If you want to change the unit,
 
 ## Delete operation
 
-Delete operation deletes a group's schema.
+Delete operation removes a group's data and, unless `--data-only` is set, its associated schema resources. For non-dry-run deletes, BanyanDB creates a background task so the request can return quickly while data files and schema resources are removed in order.
+
+### Delete modes
+
+- Default delete only succeeds when the group is empty.
+- `--force` allows deleting a non-empty group.
+- `--dry-run` previews the schema resources that would be deleted and does not create a deletion task.
+- `--data-only` removes only the data files and keeps the group metadata and schema resources.
 
 ### Examples of deleting
+
+Delete an empty group:
 
 ```shell
 bydbctl group delete -g sw_metric
 ```
+
+Preview what would be deleted from a non-empty group:
+
+```shell
+bydbctl group delete -g sw_metric --dry-run
+```
+
+Force delete a non-empty group:
+
+```shell
+bydbctl group delete -g sw_metric --force
+```
+
+Delete only the data files while keeping the schema:
+
+```shell
+bydbctl group delete -g sw_metric --force --data-only
+```
+
+### Deletion task status
+
+For non-dry-run deletes, BanyanDB creates a background deletion task. The task typically moves through these phases:
+
+- `PHASE_PENDING`: the task is created and waiting to start.
+- `PHASE_IN_PROGRESS`: data files and schema resources are being removed.
+- `PHASE_COMPLETED`: deletion finished successfully.
+- `PHASE_FAILED`: deletion stopped with an error message.
+
+`bydbctl` currently exposes the delete request itself, but not a dedicated subcommand for polling the task status. Because `bydbctl` uses BanyanDB's HTTP endpoints, you can query the task status with any HTTP client:
+
+```shell
+curl http://127.0.0.1:17913/api/v1/group/task/sw_metric
+```
+
+Example response:
+
+```json
+{
+  "task": {
+    "currentPhase": "PHASE_IN_PROGRESS",
+    "totalCounts": {
+      "stream": 1,
+      "index_rule_binding": 1
+    },
+    "deletedCounts": {
+      "index_rule_binding": 1
+    },
+    "totalDataSizeBytes": "1048576",
+    "deletedDataSizeBytes": "524288",
+    "message": "deleting streams",
+    "createdAt": "2026-04-21T10:30:00Z",
+    "updatedAt": "2026-04-21T10:31:15Z"
+  }
+}
+```
+
+The task endpoint is especially useful after `--force` or `--data-only`, because those operations may continue after the initial delete request returns.
 
 ## List operation
 
@@ -90,4 +156,5 @@ bydbctl group list
 
 ## API Reference
 
-[Group Registration Operations](../../../api-reference.md#groupregistryservice)
+- [Group Registration Operations](../../../api-reference.md#banyandb-database-v1-GroupRegistryService)
+- [GroupDeletionTask](../../../api-reference.md#banyandb-database-v1-GroupDeletionTask)

@@ -75,6 +75,20 @@ stream:
   updatedAt: null
 ```
 
+## Element identity and deduplication
+
+Each stream element has an internal element identity in addition to the series ID and timestamp.
+
+- If a write request carries `element_id`, BanyanDB derives the element identity from it.
+- If `element_id` is omitted, BanyanDB generates the element identity on the server side.
+
+This affects query results in two ways:
+
+- Two elements with the same entity and timestamp but different element identities are still distinct stream elements, so both may appear in the result.
+- BanyanDB deduplicates query results by element identity during scan and merge. Re-ingesting the same payload without a stable `element_id` creates a new element identity, so the query result treats it as a separate element.
+
+See [Client APIs](../../client.md#stream-element-identity) for the write-side behavior.
+
 ## Examples
 
 The following examples use above schema to show how to query data in a stream and cover some common use cases:

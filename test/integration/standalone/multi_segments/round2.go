@@ -38,15 +38,15 @@ var round2Conn *grpc.ClientConn
 
 var _ = ginkgo.Describe("on-disk data", ginkgo.Ordered, func() {
 	ginkgo.BeforeAll(func() {
-		gomega.Expect(result.Restart).NotTo(gomega.BeNil())
-		newAddr, _ := result.Restart()
+		gomega.Expect(result.restart).NotTo(gomega.BeNil())
+		newAddr, _ := result.restart()
 		var connErr error
 		round2Conn, connErr = grpchelper.Conn(newAddr, 10*time.Second,
 			grpc.WithTransportCredentials(insecure.NewCredentials()))
 		gomega.Expect(connErr).NotTo(gomega.HaveOccurred())
 		sharedCtx := helpers.SharedContext{
 			Connection: round2Conn,
-			BaseTime:   result.BaseTime,
+			BaseTime:   result.baseTime,
 		}
 		casesstream.SharedContext = sharedCtx
 		casesmeasure.SharedContext = sharedCtx

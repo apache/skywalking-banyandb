@@ -298,6 +298,20 @@ func (s *sidx) PrepareMemPart(partID uint64, mp *MemPart) func(cur *Snapshot) *S
 	}
 }
 
+// PrepareFilePart prepares a transition for introducing a file-backed part.
+func (s *sidx) PrepareFilePart(partID uint64, partPath string) func(cur *Snapshot) *Snapshot {
+	return func(cur *Snapshot) *Snapshot {
+		if cur == nil {
+			cur = &Snapshot{}
+		}
+		next := cur.copyAllTo()
+		part := mustOpenPart(partID, partPath, s.fileSystem)
+		pw := newPartWrapper(nil, part)
+		next.parts = append(next.parts, pw)
+		return next
+	}
+}
+
 // PrepareFlushed prepares a transition for introducing flushed parts.
 func (s *sidx) PrepareFlushed(intro *FlusherIntroduction) func(cur *Snapshot) *Snapshot {
 	return func(cur *Snapshot) *Snapshot {
