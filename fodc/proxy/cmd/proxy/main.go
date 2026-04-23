@@ -35,7 +35,6 @@ import (
 	"github.com/apache/skywalking-banyandb/fodc/proxy/internal/metrics"
 	"github.com/apache/skywalking-banyandb/fodc/proxy/internal/registry"
 	"github.com/apache/skywalking-banyandb/pkg/logger"
-	"github.com/apache/skywalking-banyandb/pkg/panicdiag"
 	"github.com/apache/skywalking-banyandb/pkg/version"
 )
 
@@ -52,8 +51,6 @@ const (
 )
 
 var (
-	crashOutputCfg = panicdiag.NewCrashOutputConfig()
-
 	grpcListenAddr    string
 	httpListenAddr    string
 	heartbeatTimeout  time.Duration
@@ -93,27 +90,16 @@ func init() {
 		"HTTP write timeout")
 	rootCmd.Flags().DurationVar(&heartbeatInterval, "heartbeat-interval", defaultHeartbeatInterval,
 		"Default heartbeat interval for agents")
-	crashOutputCfg.RegisterFlags(rootCmd.Flags())
 }
 
 func main() {
 	if err := rootCmd.Execute(); err != nil {
 		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
-		if cleanupErr := panicdiag.CleanupGlobalCrashOutput(); cleanupErr != nil {
-			fmt.Fprintf(os.Stderr, "Error: %v\n", cleanupErr)
-		}
-		os.Exit(1)
-	}
-	if cleanupErr := panicdiag.CleanupGlobalCrashOutput(); cleanupErr != nil {
-		fmt.Fprintf(os.Stderr, "Error: %v\n", cleanupErr)
 		os.Exit(1)
 	}
 }
 
 func runProxy(_ *cobra.Command, _ []string) error {
-	if installErr := crashOutputCfg.InstallGlobalCrashOutput(); installErr != nil {
-		return fmt.Errorf("failed to install crash output: %w", installErr)
-	}
 	if initErr := logger.Init(logger.Logging{
 		Env:   "prod",
 		Level: "info",

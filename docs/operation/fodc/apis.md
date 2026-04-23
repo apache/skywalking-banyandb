@@ -282,14 +282,12 @@ The agent binary is `fodc` (see `fodc/agent/cmd/agent`).
 | `--lifecycle-report-dir` | `/tmp/lifecycle-reports` | Directory where lifecycle sidecar writes report files. |
 | `--lifecycle-cache-ttl` | `10m` | TTL for cached lifecycle data. After expiry, the next collection call refreshes the cache. |
 | `--diagnosis-listen-addr` | `:9091` | Address on which the agent exposes its local diagnosis collection HTTP endpoint. |
-| `--diagnosis-buffer-size` | `128` | Maximum number of in-process crash records retained in the agent ring buffer. |
-| `--max-diagnosis-memory-usage-percentage` | `5` | Maximum percentage of cgroup memory used for the in-process crash diagnostics ring buffer. |
-| `--crash-watch-dir` | _empty_ | Directory where the FODC agent writes its own recovered panic artifacts. |
+| `--max-fodc-diagnosis-memory-usage-percentage` | `5` | Maximum percentage of cgroup memory used for the agent crash-diagnosis collector ring buffer. |
 | `--crash-source-dir` | _empty_ | Shared volume directory watched for BanyanDB crash artifacts via filesystem notifications. |
 | `--panic-diagnostics-enabled` | `true` | Enable runtime crash output persistence for fatal panics. |
-| `--panic-diagnostics-dir` | `crash` | Directory used to store panic diagnostics and runtime crash output. |
+| `--panic-diagnostics-dir` | `crash` | Directory used to store runtime crash output and recovered panic artifacts. |
 | `--panic-diagnostics-max-artifacts` | `10` | Maximum number of crash artifact directories to retain; oldest are removed first (0 disables pruning). |
-| `--panic-diagnostics-gomemlimit-pct` | `90` | Set `GOMEMLIMIT` to this percentage of the cgroup memory limit, reserving headroom for post-panic diagnostics (0 disables). |
+| `--max-diagnosis-memory-usage-percentage` | `50` | Set `GOMEMLIMIT` to this percentage of the cgroup memory limit, reserving headroom for post-panic diagnostics (0 disables). |
 
 **Behavior notes**
 
@@ -312,4 +310,3 @@ The proxy binary is `fodc-proxy` (see `fodc/proxy/cmd/proxy`).
 | `--http-read-timeout` | `10s` | HTTP server read timeout. |
 | `--http-write-timeout` | `10s` | HTTP server write timeout. |
 | `--heartbeat-interval` | `10s` | Default heartbeat interval communicated to agents on registration. |
-

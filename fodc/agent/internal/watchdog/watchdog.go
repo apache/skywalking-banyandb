@@ -54,7 +54,6 @@ type Watchdog struct {
 
 	nodeRole       string
 	podName        string
-	panicRootDir   string
 	urls           []string
 	containerNames []string
 
@@ -78,18 +77,7 @@ func NewWatchdogWithConfig(recorder MetricsRecorder, urls []string, interval tim
 		nodeRole:       nodeRole,
 		podName:        podName,
 		containerNames: containerNames,
-		panicRootDir:   "",
 	}
-}
-
-// SetPanicArtifactRoot sets the directory where recovered watchdog panic artifacts are written.
-func (w *Watchdog) SetPanicArtifactRoot(rootDir string) {
-	if w == nil {
-		return
-	}
-	w.mu.Lock()
-	defer w.mu.Unlock()
-	w.panicRootDir = rootDir
 }
 
 // Name returns the name of the watchdog service.
@@ -140,10 +128,9 @@ func (w *Watchdog) Serve() <-chan struct{} {
 		defer w.wg.Done()
 		defer close(stopCh)
 		panicdiag.WithRecovery(w.ctx, panicdiag.RecoveryOptions{
-			Component:    "fodc-watchdog",
-			ArtifactRoot: w.panicRootDir,
-			Logger:       w.log,
-			StateDumper:  watchdogStateDumper{watchdog: w},
+			Component:   "fodc-watchdog",
+			Logger:      w.log,
+			StateDumper: watchdogStateDumper{watchdog: w},
 			ProcessMetadata: map[string]string{
 				"pod_name":  w.podName,
 				"node_role": w.nodeRole,

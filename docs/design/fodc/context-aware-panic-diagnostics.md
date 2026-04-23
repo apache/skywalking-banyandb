@@ -35,7 +35,7 @@ This document describes the current behavior implemented in code and highlights 
 - `panicdiag.WithRecovery` and `panicdiag.GoWithRecovery` recover panics, capture stack traces, and persist structured artifacts.
 - `panicdiag.WithBreadcrumb` and `panicdiag.BreadcrumbsFromContext` preserve semantic execution markers.
 - `panicdiag.StateDumper` supports bounded JSON state dumps and a companion spew dump.
-- `panicdiag.CrashOutputConfig.InstallGlobalCrashOutput` installs `debug.SetCrashOutput` and configures the default artifact root and retention.
+- `panicdiag.CrashOutputConfig.InstallGlobalCrashOutput` installs `debug.SetCrashOutput` and configures the default artifact root and retention for processes that enable crash output.
 - The FODC agent aggregates crash collections from:
   - An in-process panic reporter.
   - An optional filesystem watcher over the configured crash directory.
@@ -93,7 +93,7 @@ FODC agent
 - `panicdiag` is responsible for local panic capture and artifact persistence.
 - The FODC agent is responsible for discovering crash collections from local sources.
 - The FODC proxy is responsible for requesting, caching, filtering, and serving fleet-wide diagnostics.
-- Global crash output remains the last-resort path for fatal runtime crashes that bypass recovery.
+- Global crash output remains the last-resort path for fatal runtime crashes that bypass recovery in processes that enable it, such as the FODC agent.
 
 ## Component Design
 
@@ -162,7 +162,9 @@ type PanicRecord struct {
 - Installing crash output also sets:
   - the default artifact root used by `panicdiag`
   - the default maximum number of retained artifact directories
-- `--panic-diagnostics-gomemlimit-pct` can reserve memory headroom for post-panic diagnostics.
+- `--max-diagnosis-memory-usage-percentage` can reserve memory headroom for post-panic diagnostics.
+
+In the current FODC code, this crash-output path is enabled by the FODC agent, not the FODC proxy.
 
 This is the safety net for fatal runtime failures and escaped panics.
 
@@ -420,9 +422,9 @@ From the current implementation:
 - `--panic-diagnostics-enabled`
 - `--panic-diagnostics-dir`
 - `--panic-diagnostics-max-artifacts`
-- `--panic-diagnostics-gomemlimit-pct`
+- `--max-diagnosis-memory-usage-percentage`
 
-Agent crash collection also depends on the configured watched crash source directory when filesystem-backed collection is enabled.
+These flags are part of the FODC agent's CLI surface. Agent crash collection also depends on the configured watched crash source directory when filesystem-backed collection is enabled.
 
 ### Operational Notes
 

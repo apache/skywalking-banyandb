@@ -60,34 +60,31 @@ const (
 	defaultHeartbeatInterval              = 10 * time.Second
 	defaultReconnectInterval              = 5 * time.Second
 	defaultClusterStatePollInterval       = 30 * time.Second
-	defaultDiagnosisBufferSize            = 128
 	defaultMaxDiagnosisMemoryUsagePercent = 5
 )
 
 var (
-	metricsPollInterval            time.Duration
-	pollMetricsPorts               []string
-	maxMetricsMemoryUsagePercent   int
-	prometheusListenAddr           string
-	diagnosisListenAddr            string
-	ktmEnabled                     bool
-	ktmInterval                    time.Duration
-	proxyAddr                      string
-	podName                        string
-	containerNames                 []string
-	heartbeatInterval              time.Duration
-	reconnectInterval              time.Duration
-	clusterStatePorts              []string
-	clusterStatePollInterval       time.Duration
-	crashWatchDir                  string
-	crashSourceDir                 string
-	crashOutputCfg                 = panicdiag.NewCrashOutputConfig()
-	diagnosisBufferSize            int
-	maxDiagnosisMemoryUsagePercent int
-	lifecyclePort                  int
-	lifecycleReportDir             string
-	lifecycleCacheTTL              time.Duration
-	rootCmd                        = &cobra.Command{
+	metricsPollInterval                time.Duration
+	pollMetricsPorts                   []string
+	maxMetricsMemoryUsagePercent       int
+	prometheusListenAddr               string
+	diagnosisListenAddr                string
+	ktmEnabled                         bool
+	ktmInterval                        time.Duration
+	proxyAddr                          string
+	podName                            string
+	containerNames                     []string
+	heartbeatInterval                  time.Duration
+	reconnectInterval                  time.Duration
+	clusterStatePorts                  []string
+	clusterStatePollInterval           time.Duration
+	crashSourceDir                     string
+	crashOutputCfg                     = panicdiag.NewCrashOutputConfig()
+	maxFODCDiagnosisMemoryUsagePercent int
+	lifecyclePort                      int
+	lifecycleReportDir                 string
+	lifecycleCacheTTL                  time.Duration
+	rootCmd                            = &cobra.Command{
 		Use:     "fodc",
 		Short:   "First Occurrence Data Collection (FODC) agent",
 		Version: version.Build(),
@@ -130,14 +127,10 @@ func init() {
 		"Ports of the BanyanDB node's gRPC endpoints to poll cluster state from. If empty, cluster state polling is disabled.")
 	rootCmd.Flags().DurationVar(&clusterStatePollInterval, "cluster-state-poll-interval", defaultClusterStatePollInterval,
 		"Interval at which to poll cluster state from the BanyanDB nodes")
-	rootCmd.Flags().StringVar(&crashWatchDir, "crash-watch-dir", "",
-		"Directory where the FODC agent writes its own recovered panic artifacts")
 	rootCmd.Flags().StringVar(&crashSourceDir, "crash-source-dir", "",
 		"Shared volume directory to watch for BanyanDB crash artifacts via filesystem notifications")
 	crashOutputCfg.RegisterFlags(rootCmd.Flags())
-	rootCmd.Flags().IntVar(&diagnosisBufferSize, "diagnosis-buffer-size", defaultDiagnosisBufferSize,
-		"Maximum number of diagnosis collections stored in the FODC agent ring buffer")
-	rootCmd.Flags().IntVar(&maxDiagnosisMemoryUsagePercent, "max-diagnosis-memory-usage-percentage",
+	rootCmd.Flags().IntVar(&maxFODCDiagnosisMemoryUsagePercent, "max-fodc-diagnosis-memory-usage-percentage",
 		defaultMaxDiagnosisMemoryUsagePercent,
 		"Maximum percentage of available memory (based on cgroup memory limit) that can be used for storing diagnosis data in the FODC ring buffer. Valid range: 0-100.")
 	rootCmd.Flags().IntVar(&lifecyclePort, "lifecycle-port", 18912,
@@ -185,14 +178,14 @@ func calculateDiagnosisCapacity(log *logger.Logger) int64 {
 	}
 	var capacitySize int64
 	if memoryLimit > 0 {
-		capacitySize = (memoryLimit * int64(maxDiagnosisMemoryUsagePercent)) / 100
+		capacitySize = (memoryLimit * int64(maxFODCDiagnosisMemoryUsagePercent)) / 100
 	} else {
 		capacitySize = 50 * 1024 * 1024
 		log.Info().Msg("Memory limit is unlimited or invalid, using default diagnosis capacity of 50MB")
 	}
 	log.Info().
 		Int64("memory-limit-bytes", memoryLimit).
-		Int("memory-usage-percent", maxDiagnosisMemoryUsagePercent).
+		Int("memory-usage-percent", maxFODCDiagnosisMemoryUsagePercent).
 		Int64("capacity-size-bytes", capacitySize).
 		Msg("Diagnosis collector capacity configured")
 	return capacitySize
@@ -285,7 +278,6 @@ func runFODC(_ *cobra.Command, _ []string) error {
 	}
 
 	wd := watchdog.NewWatchdogWithConfig(fr, metricsEndpoints, metricsPollInterval, nodeRole, podName, containerNames)
-	wd.SetPanicArtifactRoot(crashWatchDir)
 
 	stopKTM := initializeKTM(ctx, log, fr)
 
@@ -299,7 +291,6 @@ func runFODC(_ *cobra.Command, _ []string) error {
 	}
 	stopCh := wd.Serve()
 	collectorCfg := crashcollector.Config{
-		BufferSize:        diagnosisBufferSize,
 		CapacitySizeBytes: diagnosisCapacitySize,
 	}
 	var stopDirWatcher func()
@@ -427,11 +418,8 @@ func validateFlags() error {
 	if diagnosisListenAddr == "" {
 		return fmt.Errorf("diagnosis-listen-addr cannot be empty")
 	}
-	if diagnosisBufferSize <= 0 {
-		return fmt.Errorf("diagnosis-buffer-size must be greater than 0")
-	}
-	if maxDiagnosisMemoryUsagePercent < 0 || maxDiagnosisMemoryUsagePercent > 100 {
-		return fmt.Errorf("max-diagnosis-memory-usage-percentage must be between 0 and 100")
+	if maxFODCDiagnosisMemoryUsagePercent < 0 || maxFODCDiagnosisMemoryUsagePercent > 100 {
+		return fmt.Errorf("max-fodc-diagnosis-memory-usage-percentage must be between 0 and 100")
 	}
 	return nil
 }

@@ -154,9 +154,14 @@ func TestDirectoryWatcherEvictsOldestOnRingBufferOverflow(t *testing.T) {
 		{name: "zeta", occurredAt: time.Date(2026, time.April, 20, 10, 0, 5, 0, time.UTC)},
 	}
 
-	const bufSize = 3
+	const (
+		bufSize              = 3
+		estimatedRecordBytes = 16 * 1024
+	)
 	writer := panicdiag.NewArtifactWriter(dir)
-	watcher := crashcollector.NewDirectoryWatcher(log, dir, crashcollector.Config{BufferSize: bufSize})
+	watcher := crashcollector.NewDirectoryWatcher(log, dir, crashcollector.Config{
+		CapacitySizeBytes: int64(bufSize * estimatedRecordBytes),
+	})
 
 	// Write and scan incrementally so the ring buffer receives arrivals in
 	// chronological order and applies LRU eviction correctly.

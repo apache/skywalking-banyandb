@@ -29,7 +29,7 @@ import (
 const (
 	defaultCrashOutputDir = "crash"
 	defaultMaxArtifacts   = 10
-	defaultGoMemLimitPct  = 90
+	defaultGoMemLimitPct  = 50
 )
 
 var (
@@ -71,7 +71,7 @@ func (c *CrashOutputConfig) RegisterFlags(flags *pflag.FlagSet) {
 		"directory used to store panic diagnostics and runtime crash output")
 	flags.IntVar(&c.MaxArtifacts, "panic-diagnostics-max-artifacts", c.MaxArtifacts,
 		"maximum number of crash artifact directories to retain; oldest are removed first (0 disables pruning)")
-	flags.IntVar(&c.GoMemLimitPct, "panic-diagnostics-gomemlimit-pct", c.GoMemLimitPct,
+	flags.IntVar(&c.GoMemLimitPct, "max-diagnosis-memory-usage-percentage", c.GoMemLimitPct,
 		"set GOMEMLIMIT to this percentage of the cgroup memory limit, reserving headroom for post-panic diagnostics (0 disables)")
 }
 

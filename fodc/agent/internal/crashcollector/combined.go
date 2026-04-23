@@ -36,7 +36,6 @@ const (
 
 // Config configures the crash collector.
 type Config struct {
-	BufferSize        int
 	CapacitySizeBytes int64
 }
 

@@ -536,8 +536,8 @@ func TestWatchdog_Serve_PanicWritesStateDump(t *testing.T) {
 	defer server.Close()
 
 	artifactRoot := t.TempDir()
+	panicdiag.SetDefaultArtifactRoot(artifactRoot)
 	wd := NewWatchdogWithConfig(panicMetricsRecorder{}, []string{server.URL}, 10*time.Millisecond, "datanode-cold", "pod-1", []string{"data"})
-	wd.panicRootDir = artifactRoot
 
 	preRunErr := wd.PreRun(context.Background())
 	require.NoError(t, preRunErr)

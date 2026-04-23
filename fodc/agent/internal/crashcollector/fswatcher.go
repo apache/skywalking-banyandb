@@ -57,14 +57,9 @@ type DirectoryWatcher struct {
 
 // NewDirectoryWatcher returns a new DirectoryWatcher that monitors dir for crash artifacts.
 func NewDirectoryWatcher(log *logger.Logger, dir string, cfg Config) *DirectoryWatcher {
-	bufferSize := cfg.BufferSize
-	if bufferSize <= 0 {
-		bufferSize = defaultDiagnosisBufferSize
-	}
+	bufferSize := defaultDiagnosisBufferSize
 	if cfg.CapacitySizeBytes > 0 {
-		if computed := computeCapacity(cfg.CapacitySizeBytes); computed < bufferSize {
-			bufferSize = computed
-		}
+		bufferSize = computeCapacity(cfg.CapacitySizeBytes)
 	}
 	rb := flightrecorder.NewRingBuffer[CollectionRecord]()
 	rb.SetCapacity(bufferSize)
