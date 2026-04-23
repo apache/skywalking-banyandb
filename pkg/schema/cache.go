@@ -82,6 +82,7 @@ type schemaRepo struct {
 	closer                 *run.ChannelCloser
 	eventCh                chan MetadataEvent
 	metrics                *Metrics
+	closeEventChOnce       sync.Once
 	groupMap               sync.Map
 	resourceMap            sync.Map
 	indexRuleMap           sync.Map
@@ -153,7 +154,7 @@ func (sr *schemaRepo) Watcher() {
 			if !sr.closer.AddReceiver() {
 				return
 			}
-			panicdiag.WithRecovery(context.Background(), panicdiag.RecoveryOptions{
+			panicdiag.WithRecovery(sr.closer.Ctx(), panicdiag.RecoveryOptions{
 				Component: "schema-watcher",
 				Logger:    sr.l,
 			}, func(_ context.Context, _ panicdiag.RecoveryResult) {
@@ -480,8 +481,11 @@ func (sr *schemaRepo) Close() {
 			sr.l.Warn().Interface("err", err).Msg("closing resource")
 		}
 	}()
-	sr.closer.CloseThenWait()
-	close(sr.eventCh)
+	sr.closer.Close()
+	sr.closeEventChOnce.Do(func() {
+		close(sr.eventCh)
+	})
+	sr.closer.Wait()
 
 	sr.groupMux.Lock()
 	defer sr.groupMux.Unlock()
