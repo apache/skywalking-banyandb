@@ -19,7 +19,6 @@
 package fs
 
 import (
-	"errors"
 	"fmt"
 	iofs "io/fs"
 )
@@ -52,14 +51,16 @@ func (err *FileSystemError) Error() string {
 // Is reports whether the error matches one of the standard io/fs sentinel
 // errors, so callers can use errors.Is with iofs.ErrNotExist, iofs.ErrExist
 // and iofs.ErrPermission regardless of the underlying OS error wrapping.
+// The target is compared directly (no recursive errors.Is) to mirror the
+// convention used by syscall.Errno.Is in the standard library.
 func (err *FileSystemError) Is(target error) bool {
-	switch err.Code {
-	case IsNotExistError:
-		return errors.Is(target, iofs.ErrNotExist)
-	case isExistError:
-		return errors.Is(target, iofs.ErrExist)
-	case permissionError:
-		return errors.Is(target, iofs.ErrPermission)
+	switch target {
+	case iofs.ErrNotExist:
+		return err.Code == IsNotExistError
+	case iofs.ErrExist:
+		return err.Code == isExistError
+	case iofs.ErrPermission:
+		return err.Code == permissionError
 	}
 	return false
 }

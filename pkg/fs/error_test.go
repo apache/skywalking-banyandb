@@ -19,6 +19,7 @@ package fs
 
 import (
 	"errors"
+	"fmt"
 	iofs "io/fs"
 	"path/filepath"
 	"testing"
@@ -49,6 +50,7 @@ func TestFileSystemErrorIsMatrix(t *testing.T) {
 		{name: "not-exist-vs-exist", code: IsNotExistError, target: iofs.ErrExist, want: false},
 		{name: "read-vs-not-exist", code: readError, target: iofs.ErrNotExist, want: false},
 		{name: "other-vs-permission", code: otherError, target: iofs.ErrPermission, want: false},
+		{name: "wrapped-not-exist-does-not-match", code: IsNotExistError, target: fmt.Errorf("wrapped: %w", iofs.ErrNotExist), want: false},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
