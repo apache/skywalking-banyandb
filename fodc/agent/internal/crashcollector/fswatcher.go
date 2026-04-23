@@ -78,23 +78,29 @@ func (w *DirectoryWatcher) Start(ctx context.Context) func() {
 	}
 	watchCtx, cancel := context.WithCancel(ctx)
 	w.cancel = cancel
+	readyCh := make(chan struct{})
 	w.wg.Add(1)
 	panicdiag.GoWithRecovery(watchCtx, panicdiag.RecoveryOptions{
 		Component: "crash-fswatcher",
 		Logger:    w.log,
 	}, nil, func(_ *context.Context) {
 		defer w.wg.Done()
-		w.watch(watchCtx)
+		w.watch(watchCtx, readyCh)
 	})
+	select {
+	case <-watchCtx.Done():
+	case <-readyCh:
+	}
 	return func() {
 		cancel()
 		w.wg.Wait()
 	}
 }
 
-func (w *DirectoryWatcher) watch(ctx context.Context) {
+func (w *DirectoryWatcher) watch(ctx context.Context, readyCh chan<- struct{}) {
 	fsWatcher, watchErr := fsnotify.NewWatcher()
 	if watchErr != nil {
+		close(readyCh)
 		w.log.Warn().Err(watchErr).Str("dir", w.dir).Msg("Failed to create filesystem watcher, using periodic scan")
 		w.periodicScan(ctx)
 		return
@@ -104,12 +110,14 @@ func (w *DirectoryWatcher) watch(ctx context.Context) {
 	}()
 
 	if addErr := fsWatcher.Add(w.dir); addErr != nil {
+		close(readyCh)
 		w.log.Warn().Err(addErr).Str("dir", w.dir).Msg("Failed to watch crash directory, using periodic scan")
 		w.periodicScan(ctx)
 		return
 	}
 
 	w.Scan()
+	close(readyCh)
 
 	ticker := time.NewTicker(periodicRescanInterval)
 	defer ticker.Stop()
@@ -176,7 +184,9 @@ func (w *DirectoryWatcher) analyzeAndStore(collection panicdiag.Collection) {
 			Str("artifactDir", collection.ArtifactDir).
 			Strs("missingFiles", analysis.MissingFiles).
 			Msg("Incomplete crash artifact detected")
-	} else if collection.Record != nil {
+		return
+	}
+	if collection.Record != nil {
 		w.log.Info().
 			Str("artifactDir", collection.ArtifactDir).
 			Str("component", collection.Record.Component).

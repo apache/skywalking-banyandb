@@ -87,11 +87,12 @@ func TestStateDumpFilesDetectedByWatcher(t *testing.T) {
 	assert.False(t, rec.StateDump.Truncated, "small payload should not be truncated")
 }
 
-// TestIncompleteArtifactStoredByWatcher verifies that an artifact directory that
-// contains panic.json but not crash.txt (e.g. interrupted mid-write) is still
-// stored in the ring buffer. A directory with no panic.json at all must be
-// silently ignored by ListCollections.
-func TestIncompleteArtifactStoredByWatcher(t *testing.T) {
+// TestIncompleteArtifactIgnoredUntilComplete verifies that an artifact directory
+// that contains panic.json but not crash.txt (e.g. interrupted mid-write) is
+// not stored in the ring buffer until the artifact becomes complete. A
+// directory with no panic.json at all must be silently ignored by
+// ListCollections.
+func TestIncompleteArtifactIgnoredUntilComplete(t *testing.T) {
 	t.Helper()
 
 	dir := t.TempDir()
@@ -115,12 +116,7 @@ func TestIncompleteArtifactStoredByWatcher(t *testing.T) {
 	watcher.Scan()
 
 	records := watcher.ListCollections()
-	require.Len(t, records, 1, "incomplete artifact should still be stored in the ring buffer")
-	assert.Equal(t, "incomplete-component", records[0].Collection.Record.Component)
-
-	for _, file := range records[0].Collection.Files {
-		assert.NotEqual(t, "crash.txt", file, "crash.txt must not appear in Files for an incomplete artifact")
-	}
+	require.Empty(t, records, "incomplete artifact should not be stored in the ring buffer")
 
 	// A directory with no panic.json must be silently ignored.
 	emptySubdir := filepath.Join(dir, "20260420T090000.000000000Z-no-record-88888")
@@ -128,7 +124,14 @@ func TestIncompleteArtifactStoredByWatcher(t *testing.T) {
 	watcher.Scan()
 
 	records = watcher.ListCollections()
-	require.Len(t, records, 1, "directory without panic.json should be silently skipped")
+	require.Empty(t, records, "directory without panic.json should be silently skipped")
+
+	require.NoError(t, os.WriteFile(filepath.Join(artifactSubdir, "crash.txt"), []byte("summary"), 0o600))
+	watcher.Scan()
+
+	records = watcher.ListCollections()
+	require.Len(t, records, 1, "artifact should be stored once all required files exist")
+	assert.Equal(t, "incomplete-component", records[0].Collection.Record.Component)
 }
 
 // TestDirectoryWatcherEvictsOldestOnRingBufferOverflow writes six crash artifacts
