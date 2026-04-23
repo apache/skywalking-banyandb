@@ -13,6 +13,7 @@ Release Notes.
 - Add `noDuplicates` verification to all e2e expected files to detect duplicate data in query results.
 - Add periodic health check for property schema connection.
 - Persist segment end time in per-segment metadata so boundaries don't shift across restarts or config changes.
+- Introduce fair fast/slow lane scheduling for trace part merges to prevent short merges from being blocked by long-running merges; expose queue wait time as `total_merge_queue_latency`.
 - [Breaking Change] Remove etcd components. The property-based schema registry is now the only supported mode. 
   - All `--etcd-*` CLI flags have been removed. 
   - The `--namespace` CLI flag has been removed (it previously configured the etcd key prefix).
@@ -40,6 +41,7 @@ Release Notes.
 - Fix lifecycle migration failure when the target stage has `close: true`.
 - Fix stale sync request blocking watch session channel, causing repeated "channel full, skipping session" errors when a watch stream is in backoff.
 - Fix nil pointer panic in disk monitor when group schema is not yet initialized during early startup, and ensure monitor loop survives recovered panics.
+- Fix `FileSystemError` not satisfying `errors.Is(err, io/fs.ErrNotExist)`, which prevented the segment controller from cleaning up half-born segment directories and left groups in a permanent zombie state after a crash or partial sync.
 
 ### Chores
 

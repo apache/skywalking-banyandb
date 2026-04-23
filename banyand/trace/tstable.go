@@ -48,8 +48,9 @@ const (
 )
 
 type tsTable struct {
-	pm               protector.Memory
 	fileSystem       fs.FileSystem
+	pm               protector.Memory
+	inFlight         map[uint64]struct{}
 	handoffCtrl      *handoffController
 	metrics          *metrics
 	snapshot         *snapshot
@@ -59,12 +60,13 @@ type tsTable struct {
 	sidxMap          map[string]sidx.SIDX
 	introductions    chan *introduction
 	p                common.Position
-	root             string
 	group            string
+	root             string
 	gc               garbageCleaner
 	option           option
 	curPartID        uint64
 	pendingDataCount atomic.Int64
+	inFlightMu       sync.RWMutex
 	sync.RWMutex
 	shardID common.ShardID
 }
