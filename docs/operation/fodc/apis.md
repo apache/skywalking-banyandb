@@ -156,6 +156,59 @@ The proxy triggers a topology collection across all registered agents and merges
 	- `status` / `last_heartbeat`: online status from the agent registry.
 - `calls` entries describe the node-to-node call graph reported by agents.
 
+### GET /diagnostics
+
+Requests crash diagnostic records from all connected agents and returns aggregated records as JSON.
+The proxy triggers a fresh collection from all matching agents, waits up to 2 seconds for records to arrive, then returns the current cached snapshot.
+Records are deduplicated by agent and artifact directory across requests.
+
+**Query parameters**
+
+- `role` (optional): Filters records whose agent role matches the specified value (case-insensitive).
+- `pod_name` (optional): Filters records whose pod name matches the specified value (case-insensitive).
+
+**Response**
+
+- Content-Type: `application/json`
+- Body shape (array of crash records):
+
+```json
+[
+	{
+		"fetched_at": "2026-04-20T10:00:00Z",
+		"panic_record": {
+			"occurred_at": "2026-04-20T09:59:30Z",
+			"component": "watchdog",
+			"panic_value": "unexpected nil pointer",
+			"recovered": true,
+			"goroutine_stack": "goroutine 42 [running]:\nmain.foo(...)\n\t/src/main.go:17"
+		},
+		"agent_id": "9b3f44a8-acde-4f7c-a9f9-0b4b4581fd12",
+		"pod_name": "banyandb-data-0",
+		"role": "ROLE_DATA",
+		"source_endpoint": "file:///crash",
+		"artifact_dir": "20260420T095930.000000000Z-watchdog-1234",
+		"files": ["crash.txt", "panic.json", "deep-dump.json", "deep-dump.spew"]
+	}
+]
+```
+
+**Field notes**
+
+- `panic_record` is omitted when no structured panic record was captured (e.g. bare runtime crash with only a text dump).
+- `goroutine_stack` is the stack trace of the panicking goroutine at the time of capture.
+- `source_endpoint` is `file:///` for filesystem-watched artifacts or `fodc-agent` for in-process captures.
+- `artifact_dir` is the name of the crash artifact directory relative to the watched crash source directory.
+- `files` lists the files present in the artifact directory (e.g., `panic.json`, `crash.txt`, `deep-dump.json`, `deep-dump.spew`).
+
+**Example**
+
+```text
+GET http://localhost:17913/diagnostics
+GET http://localhost:17913/diagnostics?role=ROLE_DATA
+GET http://localhost:17913/diagnostics?pod_name=banyandb-data-0
+```
+
 ### GET /cluster/lifecycle
 
 Requests lifecycle data from all connected agents and returns aggregated lifecycle reports and group information as JSON.
@@ -228,6 +281,15 @@ The agent binary is `fodc` (see `fodc/agent/cmd/agent`).
 | `--lifecycle-port` | `18912` | gRPC port for lifecycle InspectAll service. Set to 0 to disable lifecycle collection. |
 | `--lifecycle-report-dir` | `/tmp/lifecycle-reports` | Directory where lifecycle sidecar writes report files. |
 | `--lifecycle-cache-ttl` | `10m` | TTL for cached lifecycle data. After expiry, the next collection call refreshes the cache. |
+| `--diagnosis-listen-addr` | `:9091` | Address on which the agent exposes its local diagnosis collection HTTP endpoint. |
+| `--diagnosis-buffer-size` | `128` | Maximum number of in-process crash records retained in the agent ring buffer. |
+| `--max-diagnosis-memory-usage-percentage` | `5` | Maximum percentage of cgroup memory used for the in-process crash diagnostics ring buffer. |
+| `--crash-watch-dir` | _empty_ | Directory where the FODC agent writes its own recovered panic artifacts. |
+| `--crash-source-dir` | _empty_ | Shared volume directory watched for BanyanDB crash artifacts via filesystem notifications. |
+| `--panic-diagnostics-enabled` | `true` | Enable runtime crash output persistence for fatal panics. |
+| `--panic-diagnostics-dir` | `crash` | Directory used to store panic diagnostics and runtime crash output. |
+| `--panic-diagnostics-max-artifacts` | `10` | Maximum number of crash artifact directories to retain; oldest are removed first (0 disables pruning). |
+| `--panic-diagnostics-gomemlimit-pct` | `90` | Set `GOMEMLIMIT` to this percentage of the cgroup memory limit, reserving headroom for post-panic diagnostics (0 disables). |
 
 **Behavior notes**
 

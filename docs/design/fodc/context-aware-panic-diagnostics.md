@@ -2,112 +2,104 @@
 
 ## Table of Contents
 1. [Overview](#overview)
-2. [Goals and Non-Goals](#goals-and-non-goals)
+2. [Current Implementation Status](#current-implementation-status)
 3. [Architecture](#architecture)
 4. [Component Design](#component-design)
 5. [Crash Artifacts](#crash-artifacts)
-6. [Deployment and Operations](#deployment-and-operations)
-7. [Implementation Plan](#implementation-plan)
+6. [Proxy API and Collection Semantics](#proxy-api-and-collection-semantics)
+7. [Deployment and Operations](#deployment-and-operations)
 8. [Testing Strategy](#testing-strategy)
 9. [Appendix](#appendix)
 
 ## Overview
 
-Unhandled panics in BanyanDB create blind spots during production incidents. A process can terminate with only a raw runtime stack trace, while the business context that led to the crash is lost. This is especially painful for background goroutines, asynchronous pipelines, and high-throughput query paths where the failure cannot be reproduced cheaply.
+Context-aware panic diagnostics in BanyanDB and FODC provide two complementary capabilities:
 
-Context-Aware Panic Diagnostics is a multi-layered defense-in-depth architecture for BanyanDB and FODC. It ensures every panic is either recovered with rich diagnostics or persisted as a crash artifact that can be collected and analyzed later.
+1. Recover selected panics with structured diagnostics and persisted artifacts.
+2. Surface those artifacts through the FODC agent and proxy for centralized inspection.
 
-The design has five layers:
+The implementation is no longer just a file-watching sidecar concept. The current codebase has an end-to-end flow:
 
-1. **Layer 0 - WithRecovery Wrapper**: Recovers panics in managed goroutines, records localized stacks, and updates metrics.
-2. **Layer 1 - Global Crash Output**: Uses `debug.SetCrashOutput` during bootstrap so fatal panics and early initialization failures are still persisted.
-3. **Layer 2 - Diagnostic Breadcrumbs**: Attaches lightweight execution markers to `context.Context` to reconstruct the causal path to the crash.
-4. **Layer 3 - Deep State Serialization**: Serializes selected in-memory state after a panic to capture the data shape that triggered the failure.
-5. **Layer 4 - FODC Sidecar Collection**: Watches crash artifacts from a shared volume and forwards them to centralized analysis pipelines.
+1. `pkg/panicdiag` captures panic context, breadcrumbs, stack traces, and optional state dumps.
+2. Recovered panics are written to an artifact directory on disk.
+3. The FODC agent collects crash records from both in-process panic reports and an optional watched artifact directory.
+4. The FODC proxy requests crash collections from connected agents over the crash diagnostics gRPC stream.
+5. The proxy caches deduplicated crash records and exposes them via `GET /diagnostics`.
 
-### Problem Statement
+This document describes the current behavior implemented in code and highlights the parts that remain operational guidance rather than shipped features.
 
-The design addresses the following gaps in current panic handling:
+## Current Implementation Status
 
-- Standard Go panic output shows where a crash happened, but not the business operation or inputs that caused it.
-- Panics in background goroutines can terminate critical loops without enough context for root-cause analysis.
-- Initialization panics may happen before logging, metrics, or tracing are ready.
-- High-throughput code paths cannot afford expensive diagnostics during normal execution.
-- Operators need a uniform artifact format that FODC can collect automatically.
+### Implemented
 
-### Design Principles
+- `panicdiag.WithRecovery` and `panicdiag.GoWithRecovery` recover panics, capture stack traces, and persist structured artifacts.
+- `panicdiag.WithBreadcrumb` and `panicdiag.BreadcrumbsFromContext` preserve semantic execution markers.
+- `panicdiag.StateDumper` supports bounded JSON state dumps and a companion spew dump.
+- `panicdiag.CrashOutputConfig.InstallGlobalCrashOutput` installs `debug.SetCrashOutput` and configures the default artifact root and retention.
+- The FODC agent aggregates crash collections from:
+  - An in-process panic reporter.
+  - An optional filesystem watcher over the configured crash directory.
+- The FODC proxy requests diagnostics from agents over `StreamCrashDiagnostics`.
+- The proxy caches crash records keyed by `agentID::artifactDir`.
+- `GET /diagnostics` returns the proxy cache and supports filtering by `role` and `pod_name`.
 
-- **Defense in depth**: One failing layer must not prevent another layer from capturing the crash.
-- **Zero overhead on the hot path**: Expensive work happens only after a panic or fatal runtime failure.
-- **Explicit scope control**: Only safe, bounded diagnostic state is serialized.
-- **Operational consistency**: All artifacts use stable paths and metadata to simplify FODC collection.
-- **Incremental adoption**: The wrapper and breadcrumbs can be introduced gradually across subsystems.
+### Not Implemented Here
 
-## Goals and Non-Goals
+- Automatic upload of crash artifacts from the proxy or agent to OAP.
+- Alert fan-out such as Slack or webhook notifications.
+- Proxy-side artifact completeness markers or remote retention coordination.
 
-### Goals
-
-- Capture every managed goroutine panic with component metadata and stack traces.
-- Persist unrecoverable crashes and early startup panics to disk.
-- Preserve the execution narrative that led to a panic.
-- Dump bounded, structured state for selected high-value code paths.
-- Integrate crash artifacts with the FODC sidecar for centralized analysis and notification.
-- Provide clear rollout guidance for BanyanDB maintainers.
-
-### Non-Goals
-
-- Prevent all panics from terminating the process.
-- Serialize the entire heap or provide a full core dump replacement.
-- Add request tracing or distributed tracing semantics to every `context.Context`.
-- Introduce noticeable CPU or allocation overhead in steady-state execution.
+Those remain future integration possibilities, not current behavior.
 
 ## Architecture
 
-### Layered Flow
+### End-to-End Flow
 
 ```text
-Managed Goroutine / Request Path
+Managed goroutine / instrumented code path
         │
-        ├── Layer 2: Breadcrumbs attached to context.Context
+        ├── Breadcrumbs added to context.Context
         │
-        └── Layer 0: WithRecovery wrapper
+        └── panicdiag.WithRecovery / GoWithRecovery
                 │
-                ├── Recoverable panic
-                │      ├── Record panic metadata
-                │      ├── Capture stack trace
-                │      ├── Serialize bounded state
-                │      └── Write crash artifacts
-                │
-                └── Unrecoverable / escaped panic
-                       │
-                       └── Layer 1: debug.SetCrashOutput persists runtime crash output
+                ├── Recover panic value
+                ├── Capture goroutine stack
+                ├── Read breadcrumbs from context
+                ├── Optionally dump bounded state
+                └── Write artifact directory on disk
+                        │
+                        ├── panic.json
+                        ├── crash.txt
+                        ├── deep-dump.json         (optional)
+                        └── deep-dump.spew         (optional)
 
-Artifacts written to shared volume (/crash)
+FODC agent
         │
-        └── Layer 4: FODC sidecar watches files, bundles artifacts, uploads to OAP, and emits alerts
+        ├── In-process panic store
+        ├── Optional filesystem watcher over crash directory
+        └── MultiCollectionProvider deduplicates by artifactDir
+                │
+                └── Crash diagnostics gRPC stream to proxy
+                        │
+                        ├── Proxy sends RequestDiagnostics=true
+                        ├── Agent streams one message per collection
+                        └── Proxy caches records by agentID::artifactDir
+                                │
+                                └── HTTP GET /diagnostics
 ```
 
 ### Why the Layers Are Separate
 
-- Layer 0 focuses on panics that occur in explicitly managed goroutines and request handlers.
-- Layer 1 covers crashes outside managed recovery boundaries, including bootstrap failures and runtime fatal errors.
-- Layer 2 adds low-cost semantic context before anything fails.
-- Layer 3 adds deep object state only after a panic is already in progress.
-- Layer 4 decouples transport and retention from BanyanDB itself.
+- `panicdiag` is responsible for local panic capture and artifact persistence.
+- The FODC agent is responsible for discovering crash collections from local sources.
+- The FODC proxy is responsible for requesting, caching, filtering, and serving fleet-wide diagnostics.
+- Global crash output remains the last-resort path for fatal runtime crashes that bypass recovery.
 
 ## Component Design
 
 ### 1. Recovery Runtime
 
-**Purpose**: Provide a uniform wrapper for goroutines that need panic recovery, metrics, and artifact emission.
-
-#### Core Responsibilities
-
-- Wrap background goroutines and request-scoped async execution.
-- Recover panic values with `defer` and `recover`.
-- Capture localized stack traces for the crashing goroutine.
-- Increment panic metrics with component labels.
-- Invoke the diagnostic writer with breadcrumb and state data.
+**Purpose**: Recover managed panics and persist structured diagnostics.
 
 #### Core Types
 
@@ -115,11 +107,13 @@ Artifacts written to shared volume (/crash)
 
 ```go
 type RecoveryOptions struct {
-	Component    string
-	Context      context.Context
-	ArtifactRoot string
-	StateDumper  StateDumper
-	Logger       *logger.Logger
+	Counter         meter.Counter
+	Logger          *logger.Logger
+	StateDumper     StateDumper
+	ProcessMetadata map[string]string
+	Component       string
+	ArtifactRoot    string
+	StateLimitBytes int64
 }
 ```
 
@@ -127,7 +121,7 @@ type RecoveryOptions struct {
 
 ```go
 type StateDumper interface {
-	DumpState(ctx context.Context) (any, error)
+	DumpState(context.Context) (any, error)
 }
 ```
 
@@ -135,224 +129,180 @@ type StateDumper interface {
 
 ```go
 type PanicRecord struct {
-	OccurredAt      time.Time         `json:"occurredAt"`
+	ProcessMetadata map[string]string `json:"processMetadata,omitempty"`
+	StateDump       *StateDumpStatus  `json:"stateDump,omitempty"`
 	Component       string            `json:"component"`
 	PanicValue      string            `json:"panicValue"`
-	Recovered       bool              `json:"recovered"`
 	GoroutineStack  string            `json:"goroutineStack"`
+	OccurredAt      time.Time         `json:"occurredAt"`
 	Breadcrumbs     []Breadcrumb      `json:"breadcrumbs,omitempty"`
-	ProcessMetadata map[string]string `json:"processMetadata,omitempty"`
+	Recovered       bool              `json:"recovered"`
 }
 ```
 
-#### Key Functions
+#### Current Behavior
 
-**`WithRecovery(ctx context.Context, opts RecoveryOptions, fn func(context.Context))`**
-
-- Executes `fn` in a protected goroutine boundary.
-- On panic, records the panic value and localized stack.
-- Extracts breadcrumbs from `ctx`.
-- Invokes optional state serialization.
-- Writes a structured panic report and increments `banyandb_panic_total{component=...}`.
-
-**`GoWithRecovery(ctx context.Context, opts RecoveryOptions, fn func(context.Context))`**
-
-- Convenience helper that starts a goroutine and applies `WithRecovery`.
-- Used for worker loops, asynchronous maintenance tasks, and proxy-side background jobs.
-
-#### Adoption Guidance
-
-The following categories should be wrapped first:
-
-- Scheduler and compaction goroutines.
-- Stream and measure background maintenance loops.
-- gRPC handlers that launch child goroutines.
-- FODC agent and proxy workers.
+- `WithRecovery` recovers panics with `defer` and `recover`.
+- The active `context.Context` is passed by pointer so breadcrumbs appended during execution are visible to recovery.
+- If configured, a panic counter is incremented with a `component` label.
+- If an artifact root is available, `panic.json` and `crash.txt` are written immediately.
+- If a `StateDumper` is configured, the runtime writes:
+  - `deep-dump.json`
+  - `deep-dump.spew`
+- The persisted `panic.json` is then rewritten to include `stateDump` status, including `path`, `spewPath`, `truncated`, or `error`.
 
 ### 2. Global Crash Output
 
-**Purpose**: Persist crashes that happen before normal recovery and logging are available.
+**Purpose**: Persist unrecoverable runtime crash output for failures that do not pass through `WithRecovery`.
 
-#### Core Responsibilities
+#### Current Behavior
 
-- Register `debug.SetCrashOutput` at the earliest point in `banyand` startup.
-- Create a stable crash output file under the configured crash directory.
-- Keep the file descriptor valid independently of later logging or runtime corruption.
-- Act as the last-resort persistence layer for fatal runtime failures.
+- `CrashOutputConfig.InstallGlobalCrashOutput` registers `debug.SetCrashOutput`.
+- The runtime crash output file is `runtime-crash-<pid>.txt` under `--panic-diagnostics-dir`.
+- Installing crash output also sets:
+  - the default artifact root used by `panicdiag`
+  - the default maximum number of retained artifact directories
+- `--panic-diagnostics-gomemlimit-pct` can reserve memory headroom for post-panic diagnostics.
 
-#### Initialization Contract
-
-Bootstrap order:
-
-1. Resolve crash artifact directory.
-2. Open crash output file.
-3. Duplicate or otherwise preserve the file descriptor for runtime crash output.
-4. Call `debug.SetCrashOutput`.
-5. Continue with logger and subsystem initialization.
-
-#### Failure Modes Covered
-
-- Panics during bootstrap before the logger is initialized.
-- Fatal runtime errors such as concurrent map writes.
-- Stack overflow and similar runtime-generated crash reports.
-- Panics that escape all managed recovery boundaries.
+This is the safety net for fatal runtime failures and escaped panics.
 
 ### 3. Diagnostic Breadcrumbs
 
-**Purpose**: Reconstruct the execution narrative that led to a crash.
+**Purpose**: Preserve the semantic path that led to a panic.
 
-#### Design
-
-Breadcrumbs are small immutable markers attached to `context.Context`. Each marker describes a meaningful stage transition or resource interaction, for example:
-
-- `opening shard 5`
-- `loading measure service_latency`
-- `merging memtable into tsdb segment`
-
-Each breadcrumb should be cheap to append and safe to read during panic recovery.
-
-#### Core Types
-
-**`Breadcrumb`**
+#### Core Type
 
 ```go
 type Breadcrumb struct {
+	Fields    map[string]string `json:"fields,omitempty"`
 	Time      time.Time         `json:"time"`
 	Stage     string            `json:"stage"`
 	Component string            `json:"component,omitempty"`
-	Fields    map[string]string `json:"fields,omitempty"`
 }
 ```
 
-#### Key Functions
+#### Current Behavior
 
-**`WithBreadcrumb(ctx context.Context, stage string, fields map[string]string) context.Context`**
-
-- Returns a new context carrying the appended breadcrumb chain.
-- Must avoid mutating shared state.
-- Should use compact storage to limit allocations.
-
-**`BreadcrumbsFromContext(ctx context.Context) []Breadcrumb`**
-
-- Returns the breadcrumb chain in insertion order.
-- Used by panic recovery and optional debug endpoints.
-
-#### Authoring Rules
-
-- Add breadcrumbs at semantic boundaries, not every function call.
-- Prefer stable identifiers such as shard ID, group, or schema name.
-- Never place secrets, payload bodies, or large serialized data in breadcrumb fields.
-- Keep stage strings human-readable because operators will read them directly.
+- `WithBreadcrumb(ctx, stage, component, fields)` returns a derived context with one additional immutable marker.
+- `BreadcrumbsFromContext(ctx)` returns markers ordered oldest-to-newest.
+- The implementation clones field maps so callers cannot mutate already-recorded breadcrumb data.
+- Breadcrumbs are already used in several query and service paths, including FODC lifecycle collection and BanyanDB stream and measure query handling.
 
 ### 4. Deep State Serialization
 
-**Purpose**: Capture the in-memory state that explains what the crashing code was processing.
+**Purpose**: Persist bounded state that helps explain the crash input and runtime state.
 
-#### Design
+#### Current Behavior
 
-After a panic is recovered, the diagnostic path may invoke a targeted dumper that exposes selected named return values, request descriptors, iterators, shard metadata, or aggregation inputs. The result is serialized into a bounded artifact file.
+- `StateDumper.DumpState` is called only after a panic has been recovered.
+- The runtime writes a bounded JSON dump and a bounded spew dump.
+- Serialization status is recorded in `PanicRecord.StateDump`.
+- Serialization failure does not prevent panic recovery or artifact creation.
 
-This layer complements breadcrumbs:
-
-- Breadcrumbs explain the execution path.
-- State dumps explain the data shape and internal state at the moment of failure.
-
-#### State Selection Rules
-
-- Only serialize high-value diagnostic structures.
-- Avoid opaque global state unless it directly explains the failure.
-- Redact credentials, tokens, and user-sensitive fields.
-- Prefer stable, typed snapshots over raw reflection of arbitrary graphs.
-
-#### Bounded Serialization Contract
-
-- Maximum artifact size: `5 MiB` per dump.
-- Serialization must fail closed when the cap is exceeded.
-- The panic path must continue even if state dumping fails.
-- The dump writer should record truncation or serialization errors in the panic report.
-
-#### Suggested Interface
-
-**`BoundedStateWriter`**
+#### StateDump Status
 
 ```go
-type BoundedStateWriter interface {
-	WriteJSON(path string, value any, limitBytes int64) (truncated bool, err error)
+type StateDumpStatus struct {
+	Path      string `json:"path,omitempty"`
+	Error     string `json:"error,omitempty"`
+	SpewPath  string `json:"spewPath,omitempty"`
+	Truncated bool   `json:"truncated,omitempty"`
 }
 ```
 
-#### Implementation Notes
-
-- Start with JSON output for interoperability.
-- Reflection helpers may be used internally, but the external artifact format should stay stable.
-- Prefer typed snapshot structs in core database paths instead of dumping arbitrary live objects.
-
 ### 5. Artifact Writer
 
-**Purpose**: Materialize crash diagnostics into a stable on-disk layout.
+**Purpose**: Write crash diagnostics into a stable per-panic directory.
 
-#### Core Responsibilities
-
-- Create a unique crash directory per panic event.
-- Write structured metadata, human-readable summaries, and optional deep dumps.
-- Guarantee best-effort persistence without turning a panic into a secondary failure.
-- Apply rotation or retention hooks compatible with disk quotas.
-
-#### Artifact Layout
+#### Current Layout
 
 ```text
-/crash/
+<panic-diagnostics-dir>/
+  runtime-crash-<pid>.txt
   <timestamp>-<component>-<pid>/
     panic.json
     crash.txt
-    deep-dump.json
-    metadata.json
+    deep-dump.json        (optional)
+    deep-dump.spew        (optional)
 ```
 
-#### File Semantics
+#### Naming and Retention
 
-- `panic.json`: Structured panic record from Layer 0.
-- `crash.txt`: Raw runtime output from Layer 1 or a human-readable recovery summary.
-- `deep-dump.json`: Optional bounded state snapshot from Layer 3.
-- `metadata.json`: Node identity, version, build info, and collection status markers.
+- Artifact directories are named as `<UTC timestamp>-<sanitized component>-<pid>`.
+- Components are sanitized for safe filesystem names.
+- Retention pruning removes the oldest artifact directories first.
+- Only directories containing `panic.json` are treated as crash artifacts for pruning.
 
-### 6. FODC Sidecar Integration
+### 6. FODC Agent Collection
 
-**Purpose**: Detect crash artifacts from BanyanDB and forward them for centralized analysis.
+**Purpose**: Merge locally available crash collections into one streamable view.
 
-#### Core Responsibilities
+#### Sources
 
-- Watch the shared crash volume for newly completed crash directories.
-- Validate presence of required files before upload.
-- Bundle panic metadata, raw crash output, and deep state dumps into a single incident package.
-- Ship artifacts to SkyWalking OAP.
-- Emit alerts to configured channels such as Slack.
+- `InProcessPanicStore`
+  - receives reports directly from `panicdiag` through the default reporter
+- `DirectoryWatcher`
+  - scans a crash directory using filesystem notifications plus periodic rescans
+  - stores even incomplete artifacts, but flags missing required files during analysis
 
-#### Sidecar Contract
+#### Merging
 
-BanyanDB container responsibilities:
+`MultiCollectionProvider` deduplicates by `Collection.ArtifactDir` so the same artifact is not reported twice when it is seen by both the in-process store and the directory watcher.
 
-- Write crash artifacts into the shared volume.
-- Keep file names and directory structure stable.
-- Flush writes before process exit when possible.
+#### Collection Record
 
-FODC sidecar responsibilities:
+```go
+type CollectionRecord struct {
+	FetchedAt      time.Time            `json:"fetchedAt"`
+	SourceEndpoint string               `json:"sourceEndpoint"`
+	Collection     panicdiag.Collection `json:"collection"`
+}
+```
 
-- Detect new artifacts without polling too aggressively.
-- Avoid duplicate uploads by maintaining a collection marker.
-- Continue collection even if BanyanDB has already exited.
+### 7. FODC Proxy Aggregation
+
+**Purpose**: Collect diagnostics from connected agents on demand and expose a filtered fleet view.
+
+#### Current Behavior
+
+- The proxy creates the diagnostics aggregator before the gRPC service exists.
+- `SetGRPCService` wires the gRPC sender after service construction.
+- `CollectDiagnostics` reads `grpcService` under lock.
+- If `grpcService` is still `nil` during startup, the proxy logs a warning and returns the cached snapshot instead of failing.
+- On each `GET /diagnostics` request, the proxy:
+  1. filters agents by `role` and optional `pod_name`
+  2. sends `RequestDiagnostics(agentID)` to each matching agent
+  3. waits a short fixed collection window
+  4. returns the current cached snapshot
+
+#### Cache Semantics
+
+- Each incoming `StreamCrashDiagnosticsRequest` represents one artifact.
+- The proxy cache key is `agentID::artifactDir`.
+- Repeated sends update the cached record in place.
+- Removing an agent removes all cached records for that agent.
+- Request failures are non-fatal and are logged as agent capability or stream-availability issues.
 
 ## Crash Artifacts
 
-### Structured Panic Record Example
+### Persisted `panic.json` Example
 
 ```json
 {
-  "occurredAt": "2026-04-01T10:11:12Z",
+  "processMetadata": {
+    "node": "banyand-datanode-0",
+    "role": "datanode",
+    "version": "dev"
+  },
+  "stateDump": {
+    "path": "/crash/20260401T101112.000000000Z-measure-query-worker-1234/deep-dump.json",
+    "spewPath": "/crash/20260401T101112.000000000Z-measure-query-worker-1234/deep-dump.spew",
+    "truncated": false
+  },
   "component": "measure-query-worker",
   "panicValue": "runtime error: index out of range [7] with length 4",
-  "recovered": true,
   "goroutineStack": "goroutine 9123 [running]:\n...",
+  "occurredAt": "2026-04-01T10:11:12Z",
   "breadcrumbs": [
     {
       "time": "2026-04-01T10:11:11Z",
@@ -372,152 +322,149 @@ FODC sidecar responsibilities:
       }
     }
   ],
-  "processMetadata": {
-    "node": "banyand-datanode-0",
-    "role": "datanode",
-    "version": "dev"
-  }
+  "recovered": true
 }
 ```
 
-### Artifact Completion Rules
+### Files in a Collection
 
-- `panic.json` is the canonical machine-readable entry point.
-- `deep-dump.json` is optional and may be omitted on serialization failure or size-limit rejection.
-- `metadata.json` should contain version, git revision, pod name, node role, and artifact status flags.
-- Sidecar upload should occur only after the artifact directory is marked complete.
+- `panic.json` is the canonical machine-readable record.
+- `crash.txt` is the human-readable summary written by the artifact writer.
+- `deep-dump.json` is optional.
+- `deep-dump.spew` is optional.
+- A runtime-level fatal crash may also produce `runtime-crash-<pid>.txt` in the artifact root.
+
+### Completeness Rules
+
+- `panic.json` is required for a directory to be recognized as a crash collection by `panicdiag.ListCollections`.
+- The agent-side `DirectoryWatcher` treats `panic.json` and `crash.txt` as the required files for a complete artifact.
+- Incomplete artifacts can still be surfaced by the watcher, but they are logged as incomplete.
+
+## Proxy API and Collection Semantics
+
+### HTTP Endpoint
+
+The proxy exposes:
+
+- `GET /diagnostics`
+
+Supported query parameters:
+
+- `role`
+- `pod_name`
+
+The endpoint returns an array of aggregated records.
+
+### Returned Record Shape
+
+```json
+{
+  "fetched_at": "2026-04-20T10:00:00Z",
+  "panic_record": {
+    "occurred_at": "2026-04-20T09:59:30Z",
+    "component": "watchdog",
+    "goroutine_stack": "goroutine 100 [running]:\n...",
+    "panic_value": "boom",
+    "recovered": true
+  },
+  "agent_id": "agent-1",
+  "pod_name": "banyand-datanode-0",
+  "role": "datanode",
+  "source_endpoint": "file:///crash",
+  "artifact_dir": "20260420T095930.000000000Z-watchdog-1234",
+  "files": [
+    "crash.txt",
+    "deep-dump.json",
+    "deep-dump.spew",
+    "panic.json"
+  ]
+}
+```
+
+### Request/Response Model
+
+- The proxy does not continuously mirror all agent crash collections.
+- Diagnostics are refreshed on demand when the HTTP endpoint is called.
+- Agents respond by listing their currently known collections and streaming them one-by-one to the proxy.
+- The proxy then serves a cached snapshot after waiting for a short response window.
+
+This model avoids requiring a batch-end marker in the current proto while still giving the HTTP caller a coherent fleet snapshot.
 
 ## Deployment and Operations
 
-### Shared Volume Model
+### Shared Directory Model
+
+The local crash artifact directory is still important, but it now primarily feeds the FODC agent rather than a separate sidecar uploader.
 
 ```text
 +---------------------------+        +---------------------------+
-| BanyanDB main container   |        | FODC sidecar container    |
+| BanyanDB / FODC process   |        | FODC agent               |
 |                           |        |                           |
-| Layer 0-3 diagnostics     |        | File watcher              |
-| write /crash artifacts    | -----> | Bundle and upload         |
-|                           | shared | Notify operators          |
-+---------------------------+ volume +---------------------------+
+| panicdiag writes artifacts| -----> | In-process store          |
+| and runtime crash output  | local  | Directory watcher         |
+|                           | dir    | gRPC crash stream client  |
++---------------------------+        +-------------+-------------+
+                                                  |
+                                                  v
+                                        +-----------------------+
+                                        | FODC proxy            |
+                                        | diagnostics cache     |
+                                        | GET /diagnostics      |
+                                        +-----------------------+
 ```
 
-### Configuration Flags
+### Relevant Flags
 
-Suggested flags for BanyanDB:
+From the current implementation:
 
 - `--panic-diagnostics-enabled`
-- `--panic-diagnostics-dir=/crash`
-- `--panic-diagnostics-state-limit=5MiB`
-- `--panic-diagnostics-retention-max-files`
+- `--panic-diagnostics-dir`
+- `--panic-diagnostics-max-artifacts`
+- `--panic-diagnostics-gomemlimit-pct`
 
-Suggested flags for FODC:
+Agent crash collection also depends on the configured watched crash source directory when filesystem-backed collection is enabled.
 
-- `--crash-watch-dir=/crash`
-- `--crash-upload-enabled`
-- `--crash-alert-webhook`
+### Operational Notes
 
-### Performance and Stability
-
-- Breadcrumb insertion must remain allocation-light and constant-time in common paths.
-- State serialization is off the hot path and only runs after panic recovery.
-- The `5 MiB` state cap prevents dump generation from exhausting memory.
-- Operators should reserve headroom with `GOMEMLIMIT` so diagnostic work can complete during memory pressure.
-- Crash directory rotation should prevent the shared volume from growing without bounds.
-
-## Implementation Plan
-
-### Phase 1 - Core Runtime Support
-
-- Add the recovery wrapper package and panic counter metric.
-- Register global crash output in the `banyand` entry point.
-- Introduce artifact writer utilities and stable directory layout.
-
-### Phase 2 - Breadcrumb Foundation
-
-- Add breadcrumb context helpers.
-- Instrument high-value query, compaction, and lifecycle paths.
-- Standardize stage naming conventions across subsystems.
-
-### Phase 3 - State Dumping
-
-- Add bounded JSON state writer.
-- Introduce typed snapshot structures for selected hot diagnostic targets.
-- Record truncation and dump failures in `panic.json`.
-
-### Phase 4 - FODC Integration
-
-- Extend the sidecar watcher to collect crash directories.
-- Bundle artifacts and upload them to OAP.
-- Add notification hooks and collection status markers.
-
-### Phase 5 - Hardening
-
-- Add disk retention policy.
-- Add redaction rules and secret scanning for serialized snapshots.
-- Validate coverage across all background goroutines.
+- The artifact directory should be writable by the process generating artifacts.
+- Retention is directory-count based, not total-byte based.
+- `GOMEMLIMIT` headroom helps the process finish diagnostic work under memory pressure.
+- Incomplete artifacts may appear transiently while files are still being written.
+- During proxy startup, `/diagnostics` can return a cached snapshot even before the gRPC service has been wired into the aggregator.
 
 ## Testing Strategy
 
 ### Unit Tests
 
-- Recovery wrapper captures panic values, stack traces, and metrics labels.
-- Breadcrumb helpers preserve ordering and immutability.
-- State writer enforces the configured size limit.
-- Artifact writer produces the expected on-disk layout.
+- `WithRecovery` captures panic value, stack trace, breadcrumbs, and optional state dump status.
+- Breadcrumb helpers preserve ordering and clone field maps.
+- Artifact writing creates `panic.json` and `crash.txt`.
+- Crash output installation calls `debug.SetCrashOutput` when enabled.
+- Directory watching detects complete and incomplete artifact directories.
+- Proxy aggregation returns a cached snapshot when the gRPC service is unset.
 
 ### Integration Tests
 
-- Panic inside a wrapped goroutine creates `panic.json` and `deep-dump.json`.
-- Startup panic before subsystem initialization is persisted through `debug.SetCrashOutput`.
-- Sidecar detects a completed crash directory and marks it as collected.
-- Rotation removes old crash directories without affecting the newest artifact.
-
-### Failure Injection Scenarios
-
-- Panic during stream query execution.
-- Panic in compaction or shard merge background loops.
-- Serialization failure due to unsupported field graph.
-- Disk full or permission errors in the crash directory.
-- Fatal runtime error that bypasses normal recovery.
-
-### Acceptance Criteria
-
-- Every adopted goroutine entry point uses `WithRecovery` or an equivalent wrapper.
-- Every panic artifact contains component name, timestamp, and stack trace.
-- Breadcrumbs are present for instrumented query and lifecycle paths.
-- State dumping never exceeds the configured memory bound.
-- FODC can collect and upload artifacts without BanyanDB participation after the crash.
+- State dump files are surfaced in collection `Files`.
+- Breadcrumbs written during recovered panics persist into `panic.json`.
+- Incomplete artifact directories are still recorded by the agent watcher.
+- Proxy diagnostics requests collect records from connected agents and expose them through `GET /diagnostics`.
 
 ## Appendix
 
 ### Layer Summary
 
-| Layer | Name | Primary Outcome |
+| Layer | Name | Current Outcome |
 |-------|------|-----------------|
-| 0 | WithRecovery Wrapper | Recover managed goroutine panics and create structured reports |
-| 1 | Global Crash Output | Persist fatal and early crashes that escape recovery |
-| 2 | Diagnostic Breadcrumbs | Preserve the execution narrative |
-| 3 | Deep State Serialization | Preserve selected in-memory state |
-| 4 | FODC Sidecar | Centralize collection, upload, and alerting |
+| 0 | Recovery Runtime | Recover managed panics and persist `panic.json` / `crash.txt` |
+| 1 | Global Crash Output | Persist fatal runtime crash output to `runtime-crash-<pid>.txt` |
+| 2 | Breadcrumbs | Preserve semantic execution history in `panic.json` |
+| 3 | State Dump | Persist bounded JSON and spew state snapshots |
+| 4 | Agent Collection | Merge in-process and filesystem-backed crash collections |
+| 5 | Proxy Aggregation | Request, cache, filter, and serve fleet-wide diagnostics |
 
 ### Expected Operator Value
 
-- Faster MTTR because the crash report includes both the failing stack and the causal path.
-- Fewer manual reproductions because state snapshots preserve the most relevant runtime inputs.
-- Better fleet-level observability because every panic increments metrics and is exported through FODC.
-
-
-## Core Components and Workflow
-BanyanDB Main Container: This is the primary application container.
-BanyanDB Process: The core database service.
-debug.SetCrashOutput: A function that directs crash-related data (like stack traces) to a specific output.
-Context Breadcrumbs: Metadata or state information collected during execution to provide context for a failure.
-Shared Volume (/crash): An ephemeral or persistent storage space accessible by both containers in the pod.
-The main container writes two key files here upon failure: crash.txt (likely the stack trace) and deep-dump.json (detailed state/breadcrumbs).
-FODC Sidecar Container: A secondary container ("Sidecar") that runs alongside the main application to handle auxiliary tasks.
-FS Watcher / inotify: Monitors the /crash directory for filesystem changes.
-Crash Analyzer: Once a new file is detected, this component processes the crash data.
-Layer 4: FODC Component: Bundles the artifacts and prepares them for external transmission.
-External Notification:
-Inspection Agent: Receives the uploaded artifacts for further automated or manual review.
-SlackChannel: The final step where an Alert / Notify message is sent to a DevOps or SRE team for immediate action.
+- Faster root-cause analysis because crash records include stack traces, breadcrumbs, and optional state dumps.
+- Better resilience because fatal runtime crash output is persisted even when recovery wrappers are bypassed.
+- Fleet-level visibility because the proxy can serve crash diagnostics aggregated from connected agents through a single endpoint.

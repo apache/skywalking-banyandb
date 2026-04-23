@@ -239,7 +239,7 @@ func TestServer_IsStarted(t *testing.T) {
 	assert.False(t, server.IsStarted())
 }
 
-func TestServer_CollectionsEndpoint(t *testing.T) {
+func TestServer_DiagnosticsEndpoint(t *testing.T) {
 	config := Config{
 		ListenAddr:        "localhost:0",
 		ReadHeaderTimeout: time.Second,
@@ -272,7 +272,7 @@ func TestServer_CollectionsEndpoint(t *testing.T) {
 		}
 	}()
 
-	request := httptest.NewRequest(http.MethodGet, "http://example/collections", nil)
+	request := httptest.NewRequest(http.MethodGet, "http://example/diagnostics", nil)
 	recorder := httptest.NewRecorder()
 	server.diagnosisServer.Handler.ServeHTTP(recorder, request)
 
@@ -283,7 +283,7 @@ func TestServer_CollectionsEndpoint(t *testing.T) {
 	assert.Equal(t, "/crash/one", payload[0]["artifactDir"])
 }
 
-func TestCollectionsHandlerMethodNotAllowed(t *testing.T) {
+func TestDiagnosticsHandlerMethodNotAllowed(t *testing.T) {
 	server, err := NewServer(Config{ListenAddr: "localhost:0"})
 	require.NoError(t, err)
 
@@ -296,7 +296,7 @@ func TestCollectionsHandlerMethodNotAllowed(t *testing.T) {
 		require.NoError(t, server.Stop(context.Background()))
 	}()
 
-	request := httptest.NewRequest(http.MethodPost, "http://"+server.GetListenAddr()+"/collections", nil)
+	request := httptest.NewRequest(http.MethodPost, "http://"+server.GetListenAddr()+"/diagnostics", nil)
 	recorder := httptest.NewRecorder()
 	server.diagnosisServer.Handler.ServeHTTP(recorder, request)
 	assert.Equal(t, http.StatusMethodNotAllowed, recorder.Code)

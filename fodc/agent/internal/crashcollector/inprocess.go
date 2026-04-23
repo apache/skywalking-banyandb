@@ -29,7 +29,7 @@ import (
 const defaultInProcessCapacity = 32
 
 // InProcessPanicStore records panics from in-process goroutines into a bounded ring buffer
-// so they appear alongside remote and file-based collections on the /collections endpoint.
+// so they appear alongside remote and file-based collections on the /diagnostics endpoint.
 type InProcessPanicStore struct {
 	records *flightrecorder.RingBuffer[CollectionRecord]
 }

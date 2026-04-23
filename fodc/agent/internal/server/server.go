@@ -105,7 +105,7 @@ func (s *Server) Start(
 	))
 	diagnosisMux := http.NewServeMux()
 	if collectionProvider != nil {
-		diagnosisMux.HandleFunc("/collections", collectionsHandler(collectionProvider))
+		diagnosisMux.HandleFunc("/diagnostics", diagnosticsHandler(collectionProvider))
 	}
 
 	if s.config.DiagnosisListenAddr == s.config.ListenAddr {
@@ -115,7 +115,7 @@ func (s *Server) Start(
 			promhttp.HandlerOpts{},
 		))
 		if collectionProvider != nil {
-			combinedMux.HandleFunc("/collections", collectionsHandler(collectionProvider))
+			combinedMux.HandleFunc("/diagnostics", diagnosticsHandler(collectionProvider))
 		}
 
 		listener, listenErr := net.Listen("tcp", s.config.ListenAddr)
@@ -241,7 +241,7 @@ func (s *Server) GetDiagnosisListenAddr() string {
 	return s.config.DiagnosisListenAddr
 }
 
-func collectionsHandler(collectionProvider CollectionProvider) http.HandlerFunc {
+func diagnosticsHandler(collectionProvider CollectionProvider) http.HandlerFunc {
 	return func(writer http.ResponseWriter, request *http.Request) {
 		if request.Method != http.MethodGet {
 			writer.WriteHeader(http.StatusMethodNotAllowed)
