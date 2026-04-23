@@ -154,6 +154,10 @@ func (a *Aggregator) CollectDiagnostics(ctx context.Context, filter *Filter) ([]
 	a.mu.RLock()
 	grpcService := a.grpcService
 	a.mu.RUnlock()
+	if grpcService == nil {
+		a.log.Warn().Msg("Diagnostics gRPC service not configured yet, returning cached snapshot")
+		return a.snapshotCache(filter), nil
+	}
 
 	agents := a.getFilteredAgents(filter)
 

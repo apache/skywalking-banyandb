@@ -25,8 +25,10 @@ import (
 )
 
 // Go launches fn in a new goroutine protected by panic recovery.
-// Panics are intercepted, the panic value and localized stack trace are logged,
-// and banyandb_panic_total is incremented with component as the label.
+// Panics are intercepted, and the panic value and localized stack trace are logged.
+// When a panic counter is configured via RecoveryOptions.Counter or
+// panicdiag.SetDefaultPanicCounter, banyandb_panic_total is incremented with
+// component as the label.
 func Go(ctx context.Context, component string, log *logger.Logger, fn func(context.Context)) {
 	panicdiag.GoWithRecovery(ctx, panicdiag.RecoveryOptions{
 		Component: component,

@@ -82,13 +82,13 @@ type schemaRepo struct {
 	closer                 *run.ChannelCloser
 	eventCh                chan MetadataEvent
 	metrics                *Metrics
-	closeEventChOnce       sync.Once
 	groupMap               sync.Map
 	resourceMap            sync.Map
 	indexRuleMap           sync.Map
 	bindingForwardMap      sync.Map
 	bindingBackwardMap     sync.Map
 	workerNum              int
+	closeEventChOnce       sync.Once
 	resourceMutex          sync.Mutex
 	groupMux               sync.Mutex
 }
