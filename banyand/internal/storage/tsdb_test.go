@@ -399,6 +399,65 @@ func TestEpochSegmentCleanupOnOpen(t *testing.T) {
 	require.NoDirExists(t, epochSegDir, "epoch segment should be removed on open")
 }
 
+// TestHalfBornSegmentCleanupOnOpen reproduces the production failure where a
+// segment directory exists on disk without a metadata file (e.g. crash between
+// MkdirPanicIfExist and metadata write, or partial sync receive). Prior to the
+// errors.Is fix in pkg/fs, localFileSystem.Read returned a *FileSystemError
+// that did not satisfy errors.Is(err, io/fs.ErrNotExist), so the segment
+// controller's cleanup branch was never taken and OpenTSDB failed, leaving the
+// group with db=nil forever.
+func TestHalfBornSegmentCleanupOnOpen(t *testing.T) {
+	logger.Init(logger.Logging{
+		Env:   "dev",
+		Level: flags.LogLevel,
+	})
+	dir, defFn := test.Space(require.New(t))
+	defer defFn()
+
+	opts := TSDBOpts[*MockTSTable, any]{
+		Location:        dir,
+		SegmentInterval: IntervalRule{Unit: DAY, Num: 1},
+		TTL:             IntervalRule{Unit: DAY, Num: 7},
+		ShardNum:        1,
+		TSTableCreator:  MockTSTableCreator,
+	}
+
+	ctx := context.Background()
+	mc := timestamp.NewMockClock()
+	ts, err := time.ParseInLocation("2006-01-02 15:04:05", "2024-05-01 00:00:00", time.Local)
+	require.NoError(t, err)
+	mc.Set(ts)
+	ctx = timestamp.SetClock(ctx, mc)
+
+	sc := NewServiceCache()
+	tsdb1, err := OpenTSDB(ctx, opts, sc, group)
+	require.NoError(t, err)
+	seg, segErr := tsdb1.CreateSegmentIfNotExist(ts)
+	require.NoError(t, segErr)
+	seg.DecRef()
+	require.NoError(t, tsdb1.Close())
+
+	halfBornDir := filepath.Join(dir, "seg-20240502")
+	lfs := fs.NewLocalFileSystem()
+	lfs.MkdirIfNotExist(halfBornDir, DirPerm)
+	require.NoFileExists(t, filepath.Join(halfBornDir, metadataFilename),
+		"half-born segment must have no metadata file to reproduce the bug")
+
+	tsdb2, err := OpenTSDB(ctx, opts, sc, group)
+	require.NoError(t, err, "OpenTSDB must not fail on a half-born segment")
+	require.NotNil(t, tsdb2)
+	defer tsdb2.Close()
+
+	require.NoDirExists(t, halfBornDir, "half-born segment should be removed on open")
+
+	db := tsdb2.(*database[*MockTSTable, any])
+	segs, _ := db.segmentController.segments(false)
+	require.Equal(t, 1, len(segs), "only the valid segment should remain after cleanup")
+	for i := range segs {
+		segs[i].DecRef()
+	}
+}
+
 func TestTSDBCollect(t *testing.T) {
 	logger.Init(logger.Logging{
 		Env:   "dev",
