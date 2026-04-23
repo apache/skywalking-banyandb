@@ -109,23 +109,7 @@ func TopNAnalyze(criteria *measurev1.TopNRequest, sourceMeasureSchemaList []*dat
 		return nil, err
 	}
 
-	if criteria.GetAgg() != 0 {
-		groupByProjectionTags := sourceMeasureSchema.GetEntity().GetTagNames()
-		groupByTags := [][]*logical.Tag{logical.NewTags(measure.TopNTagFamily, groupByProjectionTags...)}
-		plan = newUnresolvedGroupBy(plan, groupByTags, false)
-		plan = newUnresolvedAggregation(plan,
-			&logical.Field{Name: topNAggSchema.FieldName},
-			criteria.GetAgg(),
-			true,
-			false,
-			false)
-	}
-
-	plan = top(plan, &measurev1.QueryRequest_Top{
-		Number:         criteria.GetTopN(),
-		FieldName:      topNAggSchema.FieldName,
-		FieldValueSort: criteria.GetFieldValueSort(),
-	})
+	plan = topNDistinct(plan, criteria.GetTopN(), criteria.GetFieldValueSort(), topNAggSchema.FieldName)
 
 	p, err := plan.Analyze(s)
 	if err != nil {
