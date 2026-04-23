@@ -451,7 +451,7 @@ func TestHalfBornSegmentCleanupOnOpen(t *testing.T) {
 	require.NoDirExists(t, halfBornDir, "half-born segment should be removed on open")
 
 	db := tsdb2.(*database[*MockTSTable, any])
-	segs, _ := db.segmentController.segments(false)
+	segs, _ := db.segmentController.segments(context.Background(), false)
 	require.Equal(t, 1, len(segs), "only the valid segment should remain after cleanup")
 	for i := range segs {
 		segs[i].DecRef()
