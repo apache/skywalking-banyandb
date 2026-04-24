@@ -119,4 +119,6 @@ message Group {
   ResourceOpts resource_opts = 3;
   // updated_at indicates when resources of the group are updated
   google.protobuf.Timestamp updated_at = 4;
+  // created_at is the first-appearance timestamp; survives updates unchanged.
+  google.protobuf.Timestamp created_at = 5;
 }

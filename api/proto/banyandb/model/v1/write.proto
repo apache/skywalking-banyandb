@@ -34,4 +34,5 @@ enum Status {
   STATUS_VERSION_UNSUPPORTED = 7; // Client version not supported
   STATUS_VERSION_DEPRECATED = 8; // Client version deprecated but still supported
   STATUS_METADATA_REQUIRED = 9; // Metadata is required for the first request
+  STATUS_SCHEMA_NOT_APPLIED = 10; // Client's ModRevision is ahead of the server cache; the server waited and timed out.
 }

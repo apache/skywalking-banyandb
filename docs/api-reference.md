@@ -37,6 +37,9 @@
     - [LogicalExpression.LogicalOp](#banyandb-model-v1-LogicalExpression-LogicalOp)
     - [Sort](#banyandb-model-v1-Sort)
   
+- [banyandb/model/v1/write.proto](#banyandb_model_v1_write-proto)
+    - [Status](#banyandb-model-v1-Status)
+  
 - [banyandb/measure/v1/query.proto](#banyandb_measure_v1_query-proto)
     - [DataPoint](#banyandb-measure-v1-DataPoint)
     - [DataPoint.Field](#banyandb-measure-v1-DataPoint-Field)
@@ -47,8 +50,10 @@
     - [QueryRequest.Aggregation](#banyandb-measure-v1-QueryRequest-Aggregation)
     - [QueryRequest.FieldProjection](#banyandb-measure-v1-QueryRequest-FieldProjection)
     - [QueryRequest.GroupBy](#banyandb-measure-v1-QueryRequest-GroupBy)
+    - [QueryRequest.GroupModRevisionsEntry](#banyandb-measure-v1-QueryRequest-GroupModRevisionsEntry)
     - [QueryRequest.Top](#banyandb-measure-v1-QueryRequest-Top)
     - [QueryResponse](#banyandb-measure-v1-QueryResponse)
+    - [QueryResponse.GroupStatusesEntry](#banyandb-measure-v1-QueryResponse-GroupStatusesEntry)
   
 - [banyandb/measure/v1/topn.proto](#banyandb_measure_v1_topn-proto)
     - [TopNList](#banyandb-measure-v1-TopNList)
@@ -90,13 +95,17 @@
 - [banyandb/stream/v1/query.proto](#banyandb_stream_v1_query-proto)
     - [Element](#banyandb-stream-v1-Element)
     - [QueryRequest](#banyandb-stream-v1-QueryRequest)
+    - [QueryRequest.GroupModRevisionsEntry](#banyandb-stream-v1-QueryRequest-GroupModRevisionsEntry)
     - [QueryResponse](#banyandb-stream-v1-QueryResponse)
+    - [QueryResponse.GroupStatusesEntry](#banyandb-stream-v1-QueryResponse-GroupStatusesEntry)
   
 - [banyandb/trace/v1/query.proto](#banyandb_trace_v1_query-proto)
     - [InternalQueryResponse](#banyandb-trace-v1-InternalQueryResponse)
     - [InternalTrace](#banyandb-trace-v1-InternalTrace)
     - [QueryRequest](#banyandb-trace-v1-QueryRequest)
+    - [QueryRequest.GroupModRevisionsEntry](#banyandb-trace-v1-QueryRequest-GroupModRevisionsEntry)
     - [QueryResponse](#banyandb-trace-v1-QueryResponse)
+    - [QueryResponse.GroupStatusesEntry](#banyandb-trace-v1-QueryResponse-GroupStatusesEntry)
     - [Span](#banyandb-trace-v1-Span)
     - [Trace](#banyandb-trace-v1-Trace)
   
@@ -129,9 +138,6 @@
     - [KeyRevision](#banyandb-cluster-v1-KeyRevision)
   
     - [NodeSchemaStatusService](#banyandb-cluster-v1-NodeSchemaStatusService)
-  
-- [banyandb/model/v1/write.proto](#banyandb_model_v1_write-proto)
-    - [Status](#banyandb-model-v1-Status)
   
 - [banyandb/cluster/v1/rpc.proto](#banyandb_cluster_v1_rpc-proto)
     - [FileInfo](#banyandb-cluster-v1-FileInfo)
@@ -922,6 +928,43 @@ Each item in a string array is seen as a token instead of a query expression.
 
 
 
+<a name="banyandb_model_v1_write-proto"></a>
+<p align="right"><a href="#top">Top</a></p>
+
+## banyandb/model/v1/write.proto
+
+
+ 
+
+
+<a name="banyandb-model-v1-Status"></a>
+
+### Status
+Status is the response status for write
+
+| Name | Number | Description |
+| ---- | ------ | ----------- |
+| STATUS_UNSPECIFIED | 0 |  |
+| STATUS_SUCCEED | 1 |  |
+| STATUS_INVALID_TIMESTAMP | 2 |  |
+| STATUS_NOT_FOUND | 3 |  |
+| STATUS_EXPIRED_SCHEMA | 4 |  |
+| STATUS_INTERNAL_ERROR | 5 |  |
+| STATUS_DISK_FULL | 6 |  |
+| STATUS_VERSION_UNSUPPORTED | 7 | Client version not supported |
+| STATUS_VERSION_DEPRECATED | 8 | Client version deprecated but still supported |
+| STATUS_METADATA_REQUIRED | 9 | Metadata is required for the first request |
+| STATUS_SCHEMA_NOT_APPLIED | 10 | Client&#39;s ModRevision is ahead of the server cache; the server waited and timed out. |
+
+
+ 
+
+ 
+
+ 
+
+
+
 <a name="banyandb_measure_v1_query-proto"></a>
 <p align="right"><a href="#top">Top</a></p>
 
@@ -1038,6 +1081,7 @@ QueryRequest is the request contract for query.
 | trace | [bool](#bool) |  | trace is used to enable trace for the query |
 | stages | [string](#string) | repeated | stages is used to specify the stage of the data points in the lifecycle |
 | rewrite_agg_top_n_result | [bool](#bool) |  | rewrite_agg_top_n_result will rewrite agg result to raw data |
+| group_mod_revisions | [QueryRequest.GroupModRevisionsEntry](#banyandb-measure-v1-QueryRequest-GroupModRevisionsEntry) | repeated | group_mod_revisions gates the query per group. Keys match entries in `groups`; values are the client&#39;s known mod_revision for that group. Empty map or value 0 means &#34;don&#39;t gate&#34;. A group not listed in the map is not gated. |
 
 
 
@@ -1091,6 +1135,22 @@ QueryRequest is the request contract for query.
 
 
 
+<a name="banyandb-measure-v1-QueryRequest-GroupModRevisionsEntry"></a>
+
+### QueryRequest.GroupModRevisionsEntry
+
+
+
+| Field | Type | Label | Description |
+| ----- | ---- | ----- | ----------- |
+| key | [string](#string) |  |  |
+| value | [int64](#int64) |  |  |
+
+
+
+
+
+
 <a name="banyandb-measure-v1-QueryRequest-Top"></a>
 
 ### QueryRequest.Top
@@ -1118,6 +1178,23 @@ QueryResponse is the response for a query to the Query module.
 | ----- | ---- | ----- | ----------- |
 | data_points | [DataPoint](#banyandb-measure-v1-DataPoint) | repeated | data_points are the actual data returned |
 | trace | [banyandb.common.v1.Trace](#banyandb-common-v1-Trace) |  | trace contains the trace information of the query when trace is enabled |
+| group_statuses | [QueryResponse.GroupStatusesEntry](#banyandb-measure-v1-QueryResponse-GroupStatusesEntry) | repeated | group_statuses reports the per-group gate outcome. Populated even when the query short-circuits because any group failed the gate. |
+
+
+
+
+
+
+<a name="banyandb-measure-v1-QueryResponse-GroupStatusesEntry"></a>
+
+### QueryResponse.GroupStatusesEntry
+
+
+
+| Field | Type | Label | Description |
+| ----- | ---- | ----- | ----------- |
+| key | [string](#string) |  |  |
+| value | [banyandb.model.v1.Status](#banyandb-model-v1-Status) |  |  |
 
 
 
@@ -1241,6 +1318,7 @@ Group is an internal object for Group management
 | catalog | [Catalog](#banyandb-common-v1-Catalog) |  | catalog denotes which type of data the group contains |
 | resource_opts | [ResourceOpts](#banyandb-common-v1-ResourceOpts) |  | resourceOpts indicates the structure of the underlying kv storage |
 | updated_at | [google.protobuf.Timestamp](#google-protobuf-Timestamp) |  | updated_at indicates when resources of the group are updated |
+| created_at | [google.protobuf.Timestamp](#google-protobuf-Timestamp) |  | created_at is the first-appearance timestamp; survives updates unchanged. |
 
 
 
@@ -1675,6 +1753,23 @@ QueryRequest is the request contract for query.
 | projection | [banyandb.model.v1.TagProjection](#banyandb-model-v1-TagProjection) |  | projection can be used to select the key names of the element in the response |
 | trace | [bool](#bool) |  | trace is used to enable trace for the query |
 | stages | [string](#string) | repeated | stage is used to specify the stage of the query in the lifecycle |
+| group_mod_revisions | [QueryRequest.GroupModRevisionsEntry](#banyandb-stream-v1-QueryRequest-GroupModRevisionsEntry) | repeated | group_mod_revisions gates the query per group. Keys match entries in `groups`; values are the client&#39;s known mod_revision for that group. Empty map or value 0 means &#34;don&#39;t gate&#34;. A group not listed in the map is not gated. |
+
+
+
+
+
+
+<a name="banyandb-stream-v1-QueryRequest-GroupModRevisionsEntry"></a>
+
+### QueryRequest.GroupModRevisionsEntry
+
+
+
+| Field | Type | Label | Description |
+| ----- | ---- | ----- | ----------- |
+| key | [string](#string) |  |  |
+| value | [int64](#int64) |  |  |
 
 
 
@@ -1691,6 +1786,23 @@ QueryResponse is the response for a query to the Query module.
 | ----- | ---- | ----- | ----------- |
 | elements | [Element](#banyandb-stream-v1-Element) | repeated | elements are the actual data returned |
 | trace | [banyandb.common.v1.Trace](#banyandb-common-v1-Trace) |  | trace contains the trace information of the query when trace is enabled |
+| group_statuses | [QueryResponse.GroupStatusesEntry](#banyandb-stream-v1-QueryResponse-GroupStatusesEntry) | repeated | group_statuses reports the per-group gate outcome. Populated even when the query short-circuits because any group failed the gate. |
+
+
+
+
+
+
+<a name="banyandb-stream-v1-QueryResponse-GroupStatusesEntry"></a>
+
+### QueryResponse.GroupStatusesEntry
+
+
+
+| Field | Type | Label | Description |
+| ----- | ---- | ----- | ----------- |
+| key | [string](#string) |  |  |
+| value | [banyandb.model.v1.Status](#banyandb-model-v1-Status) |  |  |
 
 
 
@@ -1764,6 +1876,23 @@ QueryRequest is the request contract for query.
 | tag_projection | [string](#string) | repeated | projection can be used to select the names of the tags in the response |
 | trace | [bool](#bool) |  | trace is used to enable trace for the query |
 | stages | [string](#string) | repeated | stage is used to specify the stage of the query in the lifecycle |
+| group_mod_revisions | [QueryRequest.GroupModRevisionsEntry](#banyandb-trace-v1-QueryRequest-GroupModRevisionsEntry) | repeated | group_mod_revisions gates the query per group. Keys match entries in `groups`; values are the client&#39;s known mod_revision for that group. Empty map or value 0 means &#34;don&#39;t gate&#34;. A group not listed in the map is not gated. |
+
+
+
+
+
+
+<a name="banyandb-trace-v1-QueryRequest-GroupModRevisionsEntry"></a>
+
+### QueryRequest.GroupModRevisionsEntry
+
+
+
+| Field | Type | Label | Description |
+| ----- | ---- | ----- | ----------- |
+| key | [string](#string) |  |  |
+| value | [int64](#int64) |  |  |
 
 
 
@@ -1780,6 +1909,23 @@ QueryResponse is the response of a query.
 | ----- | ---- | ----- | ----------- |
 | traces | [Trace](#banyandb-trace-v1-Trace) | repeated | traces is a list of traces that match the query, with spans grouped by trace ID. |
 | trace_query_result | [banyandb.common.v1.Trace](#banyandb-common-v1-Trace) |  | trace_query_result contains the trace of the query execution if tracing is enabled. |
+| group_statuses | [QueryResponse.GroupStatusesEntry](#banyandb-trace-v1-QueryResponse-GroupStatusesEntry) | repeated | group_statuses reports the per-group gate outcome. Populated even when the query short-circuits because any group failed the gate. |
+
+
+
+
+
+
+<a name="banyandb-trace-v1-QueryResponse-GroupStatusesEntry"></a>
+
+### QueryResponse.GroupStatusesEntry
+
+
+
+| Field | Type | Label | Description |
+| ----- | ---- | ----- | ----------- |
+| key | [string](#string) |  |  |
+| value | [banyandb.model.v1.Status](#banyandb-model-v1-Status) |  |  |
 
 
 
@@ -2212,42 +2358,6 @@ request. The implementation lands in Step 2.1.
 | GetMaxRevision | [GetMaxRevisionRequest](#banyandb-cluster-v1-GetMaxRevisionRequest) | [GetMaxRevisionResponse](#banyandb-cluster-v1-GetMaxRevisionResponse) | GetMaxRevision returns the highest mod_revision currently observed by the node&#39;s schema cache. |
 | GetKeyRevisions | [GetKeyRevisionsRequest](#banyandb-cluster-v1-GetKeyRevisionsRequest) | [GetKeyRevisionsResponse](#banyandb-cluster-v1-GetKeyRevisionsResponse) | GetKeyRevisions returns the per-key mod_revision observed by the node, and a presence flag for each key. |
 | GetAbsentKeys | [GetAbsentKeysRequest](#banyandb-cluster-v1-GetAbsentKeysRequest) | [GetAbsentKeysResponse](#banyandb-cluster-v1-GetAbsentKeysResponse) | GetAbsentKeys partitions the requested keys into those the node has already removed and those that are still present. |
-
- 
-
-
-
-<a name="banyandb_model_v1_write-proto"></a>
-<p align="right"><a href="#top">Top</a></p>
-
-## banyandb/model/v1/write.proto
-
-
- 
-
-
-<a name="banyandb-model-v1-Status"></a>
-
-### Status
-Status is the response status for write
-
-| Name | Number | Description |
-| ---- | ------ | ----------- |
-| STATUS_UNSPECIFIED | 0 |  |
-| STATUS_SUCCEED | 1 |  |
-| STATUS_INVALID_TIMESTAMP | 2 |  |
-| STATUS_NOT_FOUND | 3 |  |
-| STATUS_EXPIRED_SCHEMA | 4 |  |
-| STATUS_INTERNAL_ERROR | 5 |  |
-| STATUS_DISK_FULL | 6 |  |
-| STATUS_VERSION_UNSUPPORTED | 7 | Client version not supported |
-| STATUS_VERSION_DEPRECATED | 8 | Client version deprecated but still supported |
-| STATUS_METADATA_REQUIRED | 9 | Metadata is required for the first request |
-
-
- 
-
- 
 
  
 
@@ -2786,6 +2896,7 @@ IndexRule should bind to a subject through an IndexRuleBinding to generate prope
 | updated_at | [google.protobuf.Timestamp](#google-protobuf-Timestamp) |  | updated_at indicates when the IndexRule is updated |
 | analyzer | [string](#string) |  | analyzer analyzes tag value to support the full-text searching for TYPE_INVERTED indices. available analyzers are: - &#34;standard&#34; provides grammar based tokenization - &#34;simple&#34; breaks text into tokens at any non-letter character, such as numbers, spaces, hyphens and apostrophes, discards non-letter characters, and changes uppercase to lowercase. - &#34;keyword&#34; is a “noop” analyzer which returns the entire input string as a single token. - &#34;url&#34; breaks test into tokens at any non-letter and non-digit character. |
 | no_sort | [bool](#bool) |  | no_sort indicates whether the index is not for sorting. |
+| created_at | [google.protobuf.Timestamp](#google-protobuf-Timestamp) |  | created_at is the first-appearance timestamp; survives updates unchanged. |
 
 
 
@@ -2808,6 +2919,7 @@ to control how to generate time series indices.
 | begin_at | [google.protobuf.Timestamp](#google-protobuf-Timestamp) |  | begin_at_nanoseconds is the timestamp, after which the binding will be active |
 | expire_at | [google.protobuf.Timestamp](#google-protobuf-Timestamp) |  | expire_at_nanoseconds it the timestamp, after which the binding will be inactive expire_at_nanoseconds must be larger than begin_at_nanoseconds |
 | updated_at | [google.protobuf.Timestamp](#google-protobuf-Timestamp) |  | updated_at indicates when the IndexRuleBinding is updated |
+| created_at | [google.protobuf.Timestamp](#google-protobuf-Timestamp) |  | created_at is the first-appearance timestamp; survives updates unchanged. |
 
 
 
@@ -2830,6 +2942,7 @@ Measure intends to store data point
 | updated_at | [google.protobuf.Timestamp](#google-protobuf-Timestamp) |  | updated_at indicates when the measure is updated |
 | index_mode | [bool](#bool) |  | index_mode specifies whether the data should be stored exclusively in the index, meaning it will not be stored in the data storage system. |
 | sharding_key | [ShardingKey](#banyandb-database-v1-ShardingKey) |  | sharding_key determines the distribution of TopN-related data. |
+| created_at | [google.protobuf.Timestamp](#google-protobuf-Timestamp) |  | created_at is the first-appearance timestamp; survives updates unchanged. |
 
 
 
@@ -2847,6 +2960,7 @@ Property stores the user defined data
 | metadata | [banyandb.common.v1.Metadata](#banyandb-common-v1-Metadata) |  | metadata is the identity of a property |
 | tags | [TagSpec](#banyandb-database-v1-TagSpec) | repeated | tag stores the content of a property |
 | updated_at | [google.protobuf.Timestamp](#google-protobuf-Timestamp) |  | updated_at indicates when the property is updated |
+| created_at | [google.protobuf.Timestamp](#google-protobuf-Timestamp) |  | created_at is the first-appearance timestamp; survives updates unchanged. |
 
 
 
@@ -2880,6 +2994,7 @@ Stream intends to store streaming data, for example, traces or logs
 | tag_families | [TagFamilySpec](#banyandb-database-v1-TagFamilySpec) | repeated | tag_families |
 | entity | [Entity](#banyandb-database-v1-Entity) |  | entity indicates how to generate a series and shard a stream |
 | updated_at | [google.protobuf.Timestamp](#google-protobuf-Timestamp) |  | updated_at indicates when the stream is updated |
+| created_at | [google.protobuf.Timestamp](#google-protobuf-Timestamp) |  | created_at is the first-appearance timestamp; survives updates unchanged. |
 
 
 
@@ -2951,6 +3066,7 @@ TopNAggregation generates offline TopN statistics for a measure&#39;s TopN appro
 | counters_number | [int32](#int32) |  | counters_number sets the number of counters to be tracked. The default value is 1000 |
 | lru_size | [int32](#int32) |  | lru_size defines how much entry is allowed to be maintained in the memory |
 | updated_at | [google.protobuf.Timestamp](#google-protobuf-Timestamp) |  | updated_at indicates when the measure is updated |
+| created_at | [google.protobuf.Timestamp](#google-protobuf-Timestamp) |  | created_at is the first-appearance timestamp; survives updates unchanged. |
 
 
 
@@ -2974,6 +3090,7 @@ while the group of a Trace corresponds to a physical directory.
 | timestamp_tag_name | [string](#string) |  | timestamp_tag_name is the name of the tag that stores the timestamp. |
 | updated_at | [google.protobuf.Timestamp](#google-protobuf-Timestamp) |  | updated_at indicates when the trace resource is updated. |
 | span_id_tag_name | [string](#string) |  | span_id_tag_name is the name of the tag that stores the span ID. |
+| created_at | [google.protobuf.Timestamp](#google-protobuf-Timestamp) |  | created_at is the first-appearance timestamp; survives updates unchanged. |
 
 
 
@@ -3240,6 +3357,11 @@ GroupDeletionTask represents the status of a group deletion operation.
 
 
 
+| Field | Type | Label | Description |
+| ----- | ---- | ----- | ----------- |
+| mod_revision | [int64](#int64) |  | mod_revision is the etcd revision assigned by the server on successful create/update. |
+
+
 
 
 
@@ -3271,6 +3393,8 @@ GroupRegistryServiceDeleteResponse is the response for deleting a group.
 | Field | Type | Label | Description |
 | ----- | ---- | ----- | ----------- |
 | schema_info | [SchemaInfo](#banyandb-database-v1-SchemaInfo) |  | schema_info contains the schema resources that would be deleted (populated in dry-run mode). |
+| delete_time | [int64](#int64) |  | delete_time is the server-assigned tombstone timestamp in unix nanos. |
+| mod_revision | [int64](#int64) |  | mod_revision is the etcd revision of the tombstone; zero if the server did not record one. |
 
 
 
@@ -3446,6 +3570,11 @@ GroupRegistryServiceQueryResponse is the response for querying a group deletion 
 
 
 
+| Field | Type | Label | Description |
+| ----- | ---- | ----- | ----------- |
+| mod_revision | [int64](#int64) |  | mod_revision is the etcd revision assigned by the server on successful create/update. |
+
+
 
 
 
@@ -3469,6 +3598,11 @@ GroupRegistryServiceQueryResponse is the response for querying a group deletion 
 
 ### IndexRuleBindingRegistryServiceCreateResponse
 
+
+
+| Field | Type | Label | Description |
+| ----- | ---- | ----- | ----------- |
+| mod_revision | [int64](#int64) |  | mod_revision is the etcd revision assigned by the server on successful create/update. |
 
 
 
@@ -3499,6 +3633,8 @@ GroupRegistryServiceQueryResponse is the response for querying a group deletion 
 | Field | Type | Label | Description |
 | ----- | ---- | ----- | ----------- |
 | deleted | [bool](#bool) |  |  |
+| delete_time | [int64](#int64) |  | delete_time is the server-assigned tombstone timestamp in unix nanos. |
+| mod_revision | [int64](#int64) |  | mod_revision is the etcd revision of the tombstone; zero if the server did not record one. |
 
 
 
@@ -3617,6 +3753,11 @@ GroupRegistryServiceQueryResponse is the response for querying a group deletion 
 
 
 
+| Field | Type | Label | Description |
+| ----- | ---- | ----- | ----------- |
+| mod_revision | [int64](#int64) |  | mod_revision is the etcd revision assigned by the server on successful create/update. |
+
+
 
 
 
@@ -3640,6 +3781,11 @@ GroupRegistryServiceQueryResponse is the response for querying a group deletion 
 
 ### IndexRuleRegistryServiceCreateResponse
 
+
+
+| Field | Type | Label | Description |
+| ----- | ---- | ----- | ----------- |
+| mod_revision | [int64](#int64) |  | mod_revision is the etcd revision assigned by the server on successful create/update. |
 
 
 
@@ -3670,6 +3816,8 @@ GroupRegistryServiceQueryResponse is the response for querying a group deletion 
 | Field | Type | Label | Description |
 | ----- | ---- | ----- | ----------- |
 | deleted | [bool](#bool) |  |  |
+| delete_time | [int64](#int64) |  | delete_time is the server-assigned tombstone timestamp in unix nanos. |
+| mod_revision | [int64](#int64) |  | mod_revision is the etcd revision of the tombstone; zero if the server did not record one. |
 
 
 
@@ -3788,6 +3936,11 @@ GroupRegistryServiceQueryResponse is the response for querying a group deletion 
 
 
 
+| Field | Type | Label | Description |
+| ----- | ---- | ----- | ----------- |
+| mod_revision | [int64](#int64) |  | mod_revision is the etcd revision assigned by the server on successful create/update. |
+
+
 
 
 
@@ -3881,6 +4034,8 @@ LiaisonInfo contains information about pending operations in liaison.
 | Field | Type | Label | Description |
 | ----- | ---- | ----- | ----------- |
 | deleted | [bool](#bool) |  |  |
+| delete_time | [int64](#int64) |  | delete_time is the server-assigned tombstone timestamp in unix nanos. |
+| mod_revision | [int64](#int64) |  | mod_revision is the etcd revision of the tombstone; zero if the server did not record one. |
 
 
 
@@ -4062,6 +4217,8 @@ LiaisonInfo contains information about pending operations in liaison.
 | Field | Type | Label | Description |
 | ----- | ---- | ----- | ----------- |
 | deleted | [bool](#bool) |  |  |
+| delete_time | [int64](#int64) |  | delete_time is the server-assigned tombstone timestamp in unix nanos. |
+| mod_revision | [int64](#int64) |  | mod_revision is the etcd revision of the tombstone; zero if the server did not record one. |
 
 
 
@@ -4417,6 +4574,8 @@ ShardInfo contains information about a specific shard.
 | Field | Type | Label | Description |
 | ----- | ---- | ----- | ----------- |
 | deleted | [bool](#bool) |  |  |
+| delete_time | [int64](#int64) |  | delete_time is the server-assigned tombstone timestamp in unix nanos. |
+| mod_revision | [int64](#int64) |  | mod_revision is the etcd revision of the tombstone; zero if the server did not record one. |
 
 
 
@@ -4565,6 +4724,11 @@ ShardInfo contains information about a specific shard.
 
 
 
+| Field | Type | Label | Description |
+| ----- | ---- | ----- | ----------- |
+| mod_revision | [int64](#int64) |  | mod_revision is the etcd revision assigned by the server on successful create/update. |
+
+
 
 
 
@@ -4593,6 +4757,8 @@ ShardInfo contains information about a specific shard.
 | Field | Type | Label | Description |
 | ----- | ---- | ----- | ----------- |
 | deleted | [bool](#bool) |  |  |
+| delete_time | [int64](#int64) |  | delete_time is the server-assigned tombstone timestamp in unix nanos. |
+| mod_revision | [int64](#int64) |  | mod_revision is the etcd revision of the tombstone; zero if the server did not record one. |
 
 
 
@@ -4711,6 +4877,11 @@ ShardInfo contains information about a specific shard.
 
 
 
+| Field | Type | Label | Description |
+| ----- | ---- | ----- | ----------- |
+| mod_revision | [int64](#int64) |  | mod_revision is the etcd revision assigned by the server on successful create/update. |
+
+
 
 
 
@@ -4769,6 +4940,8 @@ ShardInfo contains information about a specific shard.
 | Field | Type | Label | Description |
 | ----- | ---- | ----- | ----------- |
 | deleted | [bool](#bool) |  |  |
+| delete_time | [int64](#int64) |  | delete_time is the server-assigned tombstone timestamp in unix nanos. |
+| mod_revision | [int64](#int64) |  | mod_revision is the etcd revision of the tombstone; zero if the server did not record one. |
 
 
 
