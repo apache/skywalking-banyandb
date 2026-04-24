@@ -22,4 +22,4 @@ See [Server-Generated Element ID](./bydbctl/schema/stream.md#server-generated-el
 
 ## Write Specifications
 
-As of 0.10.0, BanyanDB supports writing data with specifications for [Stream](../concept/data-model.md#streams) and [Trace](../concept/data-model.md#traces) models. Write specifications allow clients to include metadata alongside data in a write request, enabling the server to better route and validate the write operation.
+As of 0.10.0, BanyanDB supports write specifications for [Stream](../concept/data-model.md#streams), [Measure](../concept/data-model.md#measures), and [Trace](../concept/data-model.md#traces) models. These specifications describe how the write payload maps to the schema, such as tag and field ordering, enabling the server to correctly interpret and validate the write operation.

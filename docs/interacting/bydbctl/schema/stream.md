@@ -118,11 +118,11 @@ bydbctl stream list -g default
 
 When writing stream data, the `element_id` field in the write request is optional. If omitted, the server generates a unique element ID automatically. This simplifies client code when stable element IDs are not required.
 
+Note that this generated `element_id` is server-side only. The StreamService `WriteResponse` does not return the generated ID, so clients cannot rely on retrieving it later for correlation, retries, or idempotent writes. If a client needs a stable or externally known element ID, it must set `element_id` explicitly in the write request.
+
 ## Query Deduplication
 
-Stream queries deduplicate results by element ID across the scan, merge, and result building stages. This ensures that each element appears only once in query results, even if the underlying storage or replication causes the same element to be read from multiple sources.
-
-This deduplication is automatic and requires no configuration. Users benefit from cleaner query results without needing to handle duplicates in client code.
+For details about stream query deduplication and element identity, see [Element Identity and Deduplication](../query/stream.md#element-identity-and-deduplication).
 
 ## API Reference
 
