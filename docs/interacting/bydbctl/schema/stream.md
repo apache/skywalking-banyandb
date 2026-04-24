@@ -114,6 +114,16 @@ List operation list all streams' schema in a group.
 bydbctl stream list -g default
 ```
 
+## Server-Generated Element ID
+
+When writing stream data, the `element_id` field in the write request is optional. If omitted, the server generates a unique element ID automatically. This simplifies client code when stable element IDs are not required.
+
+## Query Deduplication
+
+Stream queries deduplicate results by element ID across the scan, merge, and result building stages. This ensures that each element appears only once in query results, even if the underlying storage or replication causes the same element to be read from multiple sources.
+
+This deduplication is automatic and requires no configuration. Users benefit from cleaner query results without needing to handle duplicates in client code.
+
 ## API Reference
 
 [Stream Registration Operations](../../../api-reference.md#streamregistryservice)
