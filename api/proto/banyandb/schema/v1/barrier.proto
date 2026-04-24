@@ -1,0 +1,104 @@
+// Licensed to Apache Software Foundation (ASF) under one or more contributor
+// license agreements. See the NOTICE file distributed with
+// this work for additional information regarding copyright
+// ownership. Apache Software Foundation (ASF) licenses this file to you under
+// the Apache License, Version 2.0 (the "License"); you may
+// not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing,
+// software distributed under the License is distributed on an
+// "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
+// KIND, either express or implied.  See the License for the
+// specific language governing permissions and limitations
+// under the License.
+
+syntax = "proto3";
+
+package banyandb.schema.v1;
+
+import "google/protobuf/duration.proto";
+
+option go_package = "github.com/apache/skywalking-banyandb/api/proto/banyandb/schema/v1";
+option java_package = "org.apache.skywalking.banyandb.schema.v1";
+
+// SchemaBarrierService lets clients block until every data node in the cluster
+// has caught up to a target schema state. The standalone implementation lands
+// in Step 1.8; the distributed liaison fan-out lands in Steps 1.15-1.17.
+service SchemaBarrierService {
+  // AwaitRevisionApplied blocks until every data node's local schema cache has
+  // observed mod_revision >= min_revision, or the timeout elapses.
+  rpc AwaitRevisionApplied(AwaitRevisionAppliedRequest) returns (AwaitRevisionAppliedResponse);
+  // AwaitSchemaApplied blocks until every data node reports all requested keys
+  // present at or above the per-key mod_revision.
+  rpc AwaitSchemaApplied(AwaitSchemaAppliedRequest) returns (AwaitSchemaAppliedResponse);
+  // AwaitSchemaDeleted blocks until every data node has removed all requested
+  // keys from its cache.
+  rpc AwaitSchemaDeleted(AwaitSchemaDeletedRequest) returns (AwaitSchemaDeletedResponse);
+}
+
+// SchemaKey identifies a schema resource by kind and name. Valid kind values:
+// "measure", "stream", "trace", "property", "index_rule",
+// "index_rule_binding", "group", "top_n_aggregation".
+message SchemaKey {
+  string kind = 1;
+  string group = 2;
+  string name = 3;
+}
+
+// AwaitRevisionAppliedRequest carries the minimum mod_revision the caller is
+// waiting for and a wall-clock budget for the wait.
+message AwaitRevisionAppliedRequest {
+  int64 min_revision = 1;
+  google.protobuf.Duration timeout = 2;
+}
+
+// NodeLaggard reports a single data node that has not caught up to the
+// requested schema state. missing_keys is populated by AwaitSchemaApplied
+// responses; still_present_keys is populated by AwaitSchemaDeleted responses.
+message NodeLaggard {
+  string node = 1;
+  int64 current_mod_revision = 2;
+  repeated SchemaKey missing_keys = 3;
+  repeated SchemaKey still_present_keys = 4;
+}
+
+// AwaitRevisionAppliedResponse reports whether every node reached the target
+// revision before the timeout, and lists laggards otherwise.
+message AwaitRevisionAppliedResponse {
+  bool applied = 1;
+  repeated NodeLaggard laggards = 2;
+}
+
+// AwaitSchemaAppliedRequest pairs each key with a per-key minimum revision.
+// keys is capped at 10000 server-side; exceeding the cap returns
+// InvalidArgument. A min_revisions entry of 0 means "just present, any
+// revision".
+message AwaitSchemaAppliedRequest {
+  repeated SchemaKey keys = 1;
+  repeated int64 min_revisions = 2;
+  google.protobuf.Duration timeout = 3;
+}
+
+// AwaitSchemaAppliedResponse reports whether every requested key is present at
+// or above its target revision on every node.
+message AwaitSchemaAppliedResponse {
+  bool applied = 1;
+  repeated NodeLaggard laggards = 2;
+}
+
+// AwaitSchemaDeletedRequest names the keys that must disappear from every
+// node's cache before the call returns.
+message AwaitSchemaDeletedRequest {
+  repeated SchemaKey keys = 1;
+  google.protobuf.Duration timeout = 2;
+}
+
+// AwaitSchemaDeletedResponse reports whether every node has removed the
+// requested keys.
+message AwaitSchemaDeletedResponse {
+  bool applied = 1;
+  repeated NodeLaggard laggards = 2;
+}

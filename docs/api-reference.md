@@ -107,6 +107,29 @@
 - [banyandb/bydbql/v1/rpc.proto](#banyandb_bydbql_v1_rpc-proto)
     - [BydbQLService](#banyandb-bydbql-v1-BydbQLService)
   
+- [banyandb/schema/v1/barrier.proto](#banyandb_schema_v1_barrier-proto)
+    - [AwaitRevisionAppliedRequest](#banyandb-schema-v1-AwaitRevisionAppliedRequest)
+    - [AwaitRevisionAppliedResponse](#banyandb-schema-v1-AwaitRevisionAppliedResponse)
+    - [AwaitSchemaAppliedRequest](#banyandb-schema-v1-AwaitSchemaAppliedRequest)
+    - [AwaitSchemaAppliedResponse](#banyandb-schema-v1-AwaitSchemaAppliedResponse)
+    - [AwaitSchemaDeletedRequest](#banyandb-schema-v1-AwaitSchemaDeletedRequest)
+    - [AwaitSchemaDeletedResponse](#banyandb-schema-v1-AwaitSchemaDeletedResponse)
+    - [NodeLaggard](#banyandb-schema-v1-NodeLaggard)
+    - [SchemaKey](#banyandb-schema-v1-SchemaKey)
+  
+    - [SchemaBarrierService](#banyandb-schema-v1-SchemaBarrierService)
+  
+- [banyandb/cluster/v1/node_schema_status.proto](#banyandb_cluster_v1_node_schema_status-proto)
+    - [GetAbsentKeysRequest](#banyandb-cluster-v1-GetAbsentKeysRequest)
+    - [GetAbsentKeysResponse](#banyandb-cluster-v1-GetAbsentKeysResponse)
+    - [GetKeyRevisionsRequest](#banyandb-cluster-v1-GetKeyRevisionsRequest)
+    - [GetKeyRevisionsResponse](#banyandb-cluster-v1-GetKeyRevisionsResponse)
+    - [GetMaxRevisionRequest](#banyandb-cluster-v1-GetMaxRevisionRequest)
+    - [GetMaxRevisionResponse](#banyandb-cluster-v1-GetMaxRevisionResponse)
+    - [KeyRevision](#banyandb-cluster-v1-KeyRevision)
+  
+    - [NodeSchemaStatusService](#banyandb-cluster-v1-NodeSchemaStatusService)
+  
 - [banyandb/model/v1/write.proto](#banyandb_model_v1_write-proto)
     - [Status](#banyandb-model-v1-Status)
   
@@ -1876,6 +1899,319 @@ BydbQLService provides query interface for BanyanDB Query Language (BydbQL)
 | Method Name | Request Type | Response Type | Description |
 | ----------- | ------------ | ------------- | ------------|
 | Query | [QueryRequest](#banyandb-bydbql-v1-QueryRequest) | [QueryResponse](#banyandb-bydbql-v1-QueryResponse) | Query executes a generic BydbQL query with explicit FROM clause This endpoint requires the query to specify the resource type and name in the FROM clause (e.g., &#34;FROM STREAM sw&#34;, &#34;FROM MEASURE metrics&#34;) |
+
+ 
+
+
+
+<a name="banyandb_schema_v1_barrier-proto"></a>
+<p align="right"><a href="#top">Top</a></p>
+
+## banyandb/schema/v1/barrier.proto
+
+
+
+<a name="banyandb-schema-v1-AwaitRevisionAppliedRequest"></a>
+
+### AwaitRevisionAppliedRequest
+AwaitRevisionAppliedRequest carries the minimum mod_revision the caller is
+waiting for and a wall-clock budget for the wait.
+
+
+| Field | Type | Label | Description |
+| ----- | ---- | ----- | ----------- |
+| min_revision | [int64](#int64) |  |  |
+| timeout | [google.protobuf.Duration](#google-protobuf-Duration) |  |  |
+
+
+
+
+
+
+<a name="banyandb-schema-v1-AwaitRevisionAppliedResponse"></a>
+
+### AwaitRevisionAppliedResponse
+AwaitRevisionAppliedResponse reports whether every node reached the target
+revision before the timeout, and lists laggards otherwise.
+
+
+| Field | Type | Label | Description |
+| ----- | ---- | ----- | ----------- |
+| applied | [bool](#bool) |  |  |
+| laggards | [NodeLaggard](#banyandb-schema-v1-NodeLaggard) | repeated |  |
+
+
+
+
+
+
+<a name="banyandb-schema-v1-AwaitSchemaAppliedRequest"></a>
+
+### AwaitSchemaAppliedRequest
+AwaitSchemaAppliedRequest pairs each key with a per-key minimum revision.
+keys is capped at 10000 server-side; exceeding the cap returns
+InvalidArgument. A min_revisions entry of 0 means &#34;just present, any
+revision&#34;.
+
+
+| Field | Type | Label | Description |
+| ----- | ---- | ----- | ----------- |
+| keys | [SchemaKey](#banyandb-schema-v1-SchemaKey) | repeated |  |
+| min_revisions | [int64](#int64) | repeated |  |
+| timeout | [google.protobuf.Duration](#google-protobuf-Duration) |  |  |
+
+
+
+
+
+
+<a name="banyandb-schema-v1-AwaitSchemaAppliedResponse"></a>
+
+### AwaitSchemaAppliedResponse
+AwaitSchemaAppliedResponse reports whether every requested key is present at
+or above its target revision on every node.
+
+
+| Field | Type | Label | Description |
+| ----- | ---- | ----- | ----------- |
+| applied | [bool](#bool) |  |  |
+| laggards | [NodeLaggard](#banyandb-schema-v1-NodeLaggard) | repeated |  |
+
+
+
+
+
+
+<a name="banyandb-schema-v1-AwaitSchemaDeletedRequest"></a>
+
+### AwaitSchemaDeletedRequest
+AwaitSchemaDeletedRequest names the keys that must disappear from every
+node&#39;s cache before the call returns.
+
+
+| Field | Type | Label | Description |
+| ----- | ---- | ----- | ----------- |
+| keys | [SchemaKey](#banyandb-schema-v1-SchemaKey) | repeated |  |
+| timeout | [google.protobuf.Duration](#google-protobuf-Duration) |  |  |
+
+
+
+
+
+
+<a name="banyandb-schema-v1-AwaitSchemaDeletedResponse"></a>
+
+### AwaitSchemaDeletedResponse
+AwaitSchemaDeletedResponse reports whether every node has removed the
+requested keys.
+
+
+| Field | Type | Label | Description |
+| ----- | ---- | ----- | ----------- |
+| applied | [bool](#bool) |  |  |
+| laggards | [NodeLaggard](#banyandb-schema-v1-NodeLaggard) | repeated |  |
+
+
+
+
+
+
+<a name="banyandb-schema-v1-NodeLaggard"></a>
+
+### NodeLaggard
+NodeLaggard reports a single data node that has not caught up to the
+requested schema state. missing_keys is populated by AwaitSchemaApplied
+responses; still_present_keys is populated by AwaitSchemaDeleted responses.
+
+
+| Field | Type | Label | Description |
+| ----- | ---- | ----- | ----------- |
+| node | [string](#string) |  |  |
+| current_mod_revision | [int64](#int64) |  |  |
+| missing_keys | [SchemaKey](#banyandb-schema-v1-SchemaKey) | repeated |  |
+| still_present_keys | [SchemaKey](#banyandb-schema-v1-SchemaKey) | repeated |  |
+
+
+
+
+
+
+<a name="banyandb-schema-v1-SchemaKey"></a>
+
+### SchemaKey
+SchemaKey identifies a schema resource by kind and name. Valid kind values:
+&#34;measure&#34;, &#34;stream&#34;, &#34;trace&#34;, &#34;property&#34;, &#34;index_rule&#34;,
+&#34;index_rule_binding&#34;, &#34;group&#34;, &#34;top_n_aggregation&#34;.
+
+
+| Field | Type | Label | Description |
+| ----- | ---- | ----- | ----------- |
+| kind | [string](#string) |  |  |
+| group | [string](#string) |  |  |
+| name | [string](#string) |  |  |
+
+
+
+
+
+ 
+
+ 
+
+ 
+
+
+<a name="banyandb-schema-v1-SchemaBarrierService"></a>
+
+### SchemaBarrierService
+SchemaBarrierService lets clients block until every data node in the cluster
+has caught up to a target schema state. The standalone implementation lands
+in Step 1.8; the distributed liaison fan-out lands in Steps 1.15-1.17.
+
+| Method Name | Request Type | Response Type | Description |
+| ----------- | ------------ | ------------- | ------------|
+| AwaitRevisionApplied | [AwaitRevisionAppliedRequest](#banyandb-schema-v1-AwaitRevisionAppliedRequest) | [AwaitRevisionAppliedResponse](#banyandb-schema-v1-AwaitRevisionAppliedResponse) | AwaitRevisionApplied blocks until every data node&#39;s local schema cache has observed mod_revision &gt;= min_revision, or the timeout elapses. |
+| AwaitSchemaApplied | [AwaitSchemaAppliedRequest](#banyandb-schema-v1-AwaitSchemaAppliedRequest) | [AwaitSchemaAppliedResponse](#banyandb-schema-v1-AwaitSchemaAppliedResponse) | AwaitSchemaApplied blocks until every data node reports all requested keys present at or above the per-key mod_revision. |
+| AwaitSchemaDeleted | [AwaitSchemaDeletedRequest](#banyandb-schema-v1-AwaitSchemaDeletedRequest) | [AwaitSchemaDeletedResponse](#banyandb-schema-v1-AwaitSchemaDeletedResponse) | AwaitSchemaDeleted blocks until every data node has removed all requested keys from its cache. |
+
+ 
+
+
+
+<a name="banyandb_cluster_v1_node_schema_status-proto"></a>
+<p align="right"><a href="#top">Top</a></p>
+
+## banyandb/cluster/v1/node_schema_status.proto
+
+
+
+<a name="banyandb-cluster-v1-GetAbsentKeysRequest"></a>
+
+### GetAbsentKeysRequest
+GetAbsentKeysRequest names the keys whose absence the caller wants to
+confirm.
+
+
+| Field | Type | Label | Description |
+| ----- | ---- | ----- | ----------- |
+| keys | [banyandb.schema.v1.SchemaKey](#banyandb-schema-v1-SchemaKey) | repeated |  |
+
+
+
+
+
+
+<a name="banyandb-cluster-v1-GetAbsentKeysResponse"></a>
+
+### GetAbsentKeysResponse
+GetAbsentKeysResponse partitions the requested keys into absent and
+still-present subsets.
+
+
+| Field | Type | Label | Description |
+| ----- | ---- | ----- | ----------- |
+| absent_keys | [banyandb.schema.v1.SchemaKey](#banyandb-schema-v1-SchemaKey) | repeated |  |
+| still_present_keys | [banyandb.schema.v1.SchemaKey](#banyandb-schema-v1-SchemaKey) | repeated |  |
+
+
+
+
+
+
+<a name="banyandb-cluster-v1-GetKeyRevisionsRequest"></a>
+
+### GetKeyRevisionsRequest
+GetKeyRevisionsRequest names the keys whose per-key revisions the caller
+wants to inspect.
+
+
+| Field | Type | Label | Description |
+| ----- | ---- | ----- | ----------- |
+| keys | [banyandb.schema.v1.SchemaKey](#banyandb-schema-v1-SchemaKey) | repeated |  |
+
+
+
+
+
+
+<a name="banyandb-cluster-v1-GetKeyRevisionsResponse"></a>
+
+### GetKeyRevisionsResponse
+GetKeyRevisionsResponse lists per-key revisions in the same order the
+caller supplied keys.
+
+
+| Field | Type | Label | Description |
+| ----- | ---- | ----- | ----------- |
+| revisions | [KeyRevision](#banyandb-cluster-v1-KeyRevision) | repeated |  |
+
+
+
+
+
+
+<a name="banyandb-cluster-v1-GetMaxRevisionRequest"></a>
+
+### GetMaxRevisionRequest
+GetMaxRevisionRequest carries no parameters; the node returns its current
+max mod_revision.
+
+
+
+
+
+
+<a name="banyandb-cluster-v1-GetMaxRevisionResponse"></a>
+
+### GetMaxRevisionResponse
+GetMaxRevisionResponse holds the node&#39;s current max mod_revision.
+
+
+| Field | Type | Label | Description |
+| ----- | ---- | ----- | ----------- |
+| max_mod_revision | [int64](#int64) |  |  |
+
+
+
+
+
+
+<a name="banyandb-cluster-v1-KeyRevision"></a>
+
+### KeyRevision
+KeyRevision pairs a SchemaKey with the node&#39;s local mod_revision and
+presence flag.
+
+
+| Field | Type | Label | Description |
+| ----- | ---- | ----- | ----------- |
+| key | [banyandb.schema.v1.SchemaKey](#banyandb-schema-v1-SchemaKey) |  |  |
+| mod_revision | [int64](#int64) |  |  |
+| present | [bool](#bool) |  |  |
+
+
+
+
+
+ 
+
+ 
+
+ 
+
+
+<a name="banyandb-cluster-v1-NodeSchemaStatusService"></a>
+
+### NodeSchemaStatusService
+NodeSchemaStatusService is exposed by every data node so the liaison can
+inspect each node&#39;s local schema cache when satisfying a SchemaBarrierService
+request. The implementation lands in Step 2.1.
+
+| Method Name | Request Type | Response Type | Description |
+| ----------- | ------------ | ------------- | ------------|
+| GetMaxRevision | [GetMaxRevisionRequest](#banyandb-cluster-v1-GetMaxRevisionRequest) | [GetMaxRevisionResponse](#banyandb-cluster-v1-GetMaxRevisionResponse) | GetMaxRevision returns the highest mod_revision currently observed by the node&#39;s schema cache. |
+| GetKeyRevisions | [GetKeyRevisionsRequest](#banyandb-cluster-v1-GetKeyRevisionsRequest) | [GetKeyRevisionsResponse](#banyandb-cluster-v1-GetKeyRevisionsResponse) | GetKeyRevisions returns the per-key mod_revision observed by the node, and a presence flag for each key. |
+| GetAbsentKeys | [GetAbsentKeysRequest](#banyandb-cluster-v1-GetAbsentKeysRequest) | [GetAbsentKeysResponse](#banyandb-cluster-v1-GetAbsentKeysResponse) | GetAbsentKeys partitions the requested keys into those the node has already removed and those that are still present. |
 
  
 

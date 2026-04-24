@@ -34,7 +34,11 @@ import (
 // SharedContext is the context shared between test cases in the integration testing.
 type SharedContext struct {
 	Connection *grpclib.ClientConn
-	BaseTime   time.Time
+	// Mode identifies the deployment shape of the running suite. Valid values are
+	// "standalone" and "distributed". The empty string is accepted for callers that
+	// do not need to discriminate between modes.
+	Mode     string
+	BaseTime time.Time
 }
 
 // Args is a wrapper seals all necessary info for table specs.

@@ -1,0 +1,81 @@
+// Licensed to Apache Software Foundation (ASF) under one or more contributor
+// license agreements. See the NOTICE file distributed with
+// this work for additional information regarding copyright
+// ownership. Apache Software Foundation (ASF) licenses this file to you under
+// the Apache License, Version 2.0 (the "License"); you may
+// not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing,
+// software distributed under the License is distributed on an
+// "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
+// KIND, either express or implied.  See the License for the
+// specific language governing permissions and limitations
+// under the License.
+
+syntax = "proto3";
+
+package banyandb.cluster.v1;
+
+import "banyandb/schema/v1/barrier.proto";
+
+option go_package = "github.com/apache/skywalking-banyandb/api/proto/banyandb/cluster/v1";
+
+// NodeSchemaStatusService is exposed by every data node so the liaison can
+// inspect each node's local schema cache when satisfying a SchemaBarrierService
+// request. The implementation lands in Step 2.1.
+service NodeSchemaStatusService {
+  // GetMaxRevision returns the highest mod_revision currently observed by the
+  // node's schema cache.
+  rpc GetMaxRevision(GetMaxRevisionRequest) returns (GetMaxRevisionResponse);
+  // GetKeyRevisions returns the per-key mod_revision observed by the node, and
+  // a presence flag for each key.
+  rpc GetKeyRevisions(GetKeyRevisionsRequest) returns (GetKeyRevisionsResponse);
+  // GetAbsentKeys partitions the requested keys into those the node has
+  // already removed and those that are still present.
+  rpc GetAbsentKeys(GetAbsentKeysRequest) returns (GetAbsentKeysResponse);
+}
+
+// GetMaxRevisionRequest carries no parameters; the node returns its current
+// max mod_revision.
+message GetMaxRevisionRequest {}
+
+// GetMaxRevisionResponse holds the node's current max mod_revision.
+message GetMaxRevisionResponse {
+  int64 max_mod_revision = 1;
+}
+
+// GetKeyRevisionsRequest names the keys whose per-key revisions the caller
+// wants to inspect.
+message GetKeyRevisionsRequest {
+  repeated banyandb.schema.v1.SchemaKey keys = 1;
+}
+
+// KeyRevision pairs a SchemaKey with the node's local mod_revision and
+// presence flag.
+message KeyRevision {
+  banyandb.schema.v1.SchemaKey key = 1;
+  int64 mod_revision = 2;
+  bool present = 3;
+}
+
+// GetKeyRevisionsResponse lists per-key revisions in the same order the
+// caller supplied keys.
+message GetKeyRevisionsResponse {
+  repeated KeyRevision revisions = 1;
+}
+
+// GetAbsentKeysRequest names the keys whose absence the caller wants to
+// confirm.
+message GetAbsentKeysRequest {
+  repeated banyandb.schema.v1.SchemaKey keys = 1;
+}
+
+// GetAbsentKeysResponse partitions the requested keys into absent and
+// still-present subsets.
+message GetAbsentKeysResponse {
+  repeated banyandb.schema.v1.SchemaKey absent_keys = 1;
+  repeated banyandb.schema.v1.SchemaKey still_present_keys = 2;
+}

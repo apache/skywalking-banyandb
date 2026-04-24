@@ -69,6 +69,7 @@ var _ = ginkgo.SynchronizedBeforeSuite(func() []byte {
 		grpc.WithTransportCredentials(insecure.NewCredentials()))
 	casesschema.SharedContext = helpers.SharedContext{
 		Connection: connection,
+		Mode:       "standalone",
 		BaseTime:   now,
 	}
 	gomega.Expect(err).NotTo(gomega.HaveOccurred())
