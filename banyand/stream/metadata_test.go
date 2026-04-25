@@ -59,7 +59,7 @@ var _ = Describe("Metadata", func() {
 
 	Context("Manage group", func() {
 		It("should close the group", func() {
-			deleted, err := svcs.metadataService.GroupRegistry().DeleteGroup(context.TODO(), "default")
+			deleted, _, err := svcs.metadataService.GroupRegistry().DeleteGroup(context.TODO(), "default")
 			Expect(err).ShouldNot(HaveOccurred())
 			Expect(deleted).Should(BeTrue())
 			Eventually(func() bool {
@@ -74,7 +74,8 @@ var _ = Describe("Metadata", func() {
 			Expect(groupSchema).ShouldNot(BeNil())
 			groupSchema.ResourceOpts.ShardNum = 4
 
-			Expect(svcs.metadataService.GroupRegistry().UpdateGroup(context.TODO(), groupSchema)).Should(Succeed())
+			_, updateGroupErr := svcs.metadataService.GroupRegistry().UpdateGroup(context.TODO(), groupSchema)
+			Expect(updateGroupErr).ShouldNot(HaveOccurred())
 
 			Eventually(func() bool {
 				group, ok := svcs.stream.LoadGroup("default")
@@ -97,7 +98,7 @@ var _ = Describe("Metadata", func() {
 			}).WithTimeout(flags.EventuallyTimeout).Should(BeTrue())
 		})
 		It("should close the stream", func() {
-			deleted, err := svcs.metadataService.StreamRegistry().DeleteStream(context.TODO(), &commonv1.Metadata{
+			deleted, _, err := svcs.metadataService.StreamRegistry().DeleteStream(context.TODO(), &commonv1.Metadata{
 				Name:  "sw",
 				Group: "default",
 			})
@@ -354,7 +355,7 @@ var _ = Describe("Schema Change", func() {
 
 		groupCounter++
 		groupName = "test-schema-change-" + strconv.Itoa(groupCounter)
-		err := svcs.metadataService.GroupRegistry().CreateGroup(context.TODO(), &commonv1.Group{
+		_, err := svcs.metadataService.GroupRegistry().CreateGroup(context.TODO(), &commonv1.Group{
 			Metadata: &commonv1.Metadata{
 				Name: groupName,
 			},
@@ -379,7 +380,7 @@ var _ = Describe("Schema Change", func() {
 	})
 
 	AfterEach(func() {
-		_, _ = svcs.metadataService.GroupRegistry().DeleteGroup(context.TODO(), groupName)
+		_, _, _ = svcs.metadataService.GroupRegistry().DeleteGroup(context.TODO(), groupName)
 		deferFn()
 		Eventually(gleak.Goroutines, flags.EventuallyTimeout).ShouldNot(gleak.HaveLeaked(goods))
 	})
@@ -679,7 +680,7 @@ func setupSchemaChangeStream(svcs *services, streamName, groupName string, opts 
 
 	return &schemaChangeEnv{
 		cleanup: func() {
-			_, _ = svcs.metadataService.StreamRegistry().DeleteStream(ctx, &commonv1.Metadata{
+			_, _, _ = svcs.metadataService.StreamRegistry().DeleteStream(ctx, &commonv1.Metadata{
 				Name:  streamName,
 				Group: groupName,
 			})

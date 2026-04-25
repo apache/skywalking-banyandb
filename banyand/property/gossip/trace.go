@@ -170,7 +170,8 @@ func (s *service) initInternalTraceGroup(ctx context.Context) error {
 			},
 		},
 	}
-	return s.metadata.GroupRegistry().CreateGroup(ctx, g)
+	_, createErr := s.metadata.GroupRegistry().CreateGroup(ctx, g)
+	return createErr
 }
 
 func (s *service) savingTracingSpans() (err error) {

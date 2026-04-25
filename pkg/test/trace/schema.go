@@ -65,12 +65,14 @@ func PreloadResourcesOnly(ctx context.Context, e schema.Registry) error {
 		},
 		func(ctx context.Context, e schema.Registry) error {
 			return loadSchema(indexRuleDir, &databasev1.IndexRule{}, func(indexRule *databasev1.IndexRule) error {
-				return e.CreateIndexRule(ctx, indexRule)
+				_, innerErr := e.CreateIndexRule(ctx, indexRule)
+				return innerErr
 			})
 		},
 		func(ctx context.Context, e schema.Registry) error {
 			return loadSchema(indexRuleBindingDir, &databasev1.IndexRuleBinding{}, func(indexRuleBinding *databasev1.IndexRuleBinding) error {
-				return e.CreateIndexRuleBinding(ctx, indexRuleBinding)
+				_, innerErr := e.CreateIndexRuleBinding(ctx, indexRuleBinding)
+				return innerErr
 			})
 		},
 	)
@@ -81,7 +83,8 @@ func loadAllSchemas(ctx context.Context, e schema.Registry, group string) error 
 	return preloadSchemaWithFuncs(ctx, e,
 		func(ctx context.Context, e schema.Registry) error {
 			return loadSchema(group, &commonv1.Group{}, func(group *commonv1.Group) error {
-				return e.CreateGroup(ctx, group)
+				_, innerErr := e.CreateGroup(ctx, group)
+				return innerErr
 			})
 		},
 		func(ctx context.Context, e schema.Registry) error {
@@ -92,12 +95,14 @@ func loadAllSchemas(ctx context.Context, e schema.Registry, group string) error 
 		},
 		func(ctx context.Context, e schema.Registry) error {
 			return loadSchema(indexRuleDir, &databasev1.IndexRule{}, func(indexRule *databasev1.IndexRule) error {
-				return e.CreateIndexRule(ctx, indexRule)
+				_, innerErr := e.CreateIndexRule(ctx, indexRule)
+				return innerErr
 			})
 		},
 		func(ctx context.Context, e schema.Registry) error {
 			return loadSchema(indexRuleBindingDir, &databasev1.IndexRuleBinding{}, func(indexRuleBinding *databasev1.IndexRuleBinding) error {
-				return e.CreateIndexRuleBinding(ctx, indexRuleBinding)
+				_, innerErr := e.CreateIndexRuleBinding(ctx, indexRuleBinding)
+				return innerErr
 			})
 		},
 	)

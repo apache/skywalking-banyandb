@@ -56,7 +56,7 @@ var _ = ginkgo.SynchronizedBeforeSuite(func() []byte {
 	gomega.Expect(tmpErr).NotTo(gomega.HaveOccurred())
 	dfWriter := setup.NewDiscoveryFileWriter(tmpDir)
 	config := setup.PropertyClusterConfig(dfWriter)
-	addr, _, closeFn := setup.EmptyStandalone(config)
+	addr, _, closeFn := setup.EmptyStandalone(config, "--schema-server-tombstone-retention=2s")
 	now = time.Now()
 	stopFunc = func() {
 		closeFn()

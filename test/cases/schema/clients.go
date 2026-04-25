@@ -19,16 +19,13 @@ package schema
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"strings"
 	"time"
 
 	"google.golang.org/grpc"
-	"google.golang.org/grpc/codes"
-	"google.golang.org/grpc/status"
+	"google.golang.org/protobuf/types/known/durationpb"
 
-	commonv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/common/v1"
 	databasev1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/database/v1"
 	measurev1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/measure/v1"
 	schemav1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/schema/v1"
@@ -36,200 +33,125 @@ import (
 	tracev1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/trace/v1"
 )
 
-// Clients holds all gRPC clients required by the schema integration test
-// helpers. The BarrierClient is left nil at this step (Step 1.0) and will be
-// populated by Step 1.8 once the SchemaBarrierService server is registered.
+// Clients holds all gRPC clients required by the schema integration test helpers.
 type Clients struct {
-	GroupClient            databasev1.GroupRegistryServiceClient
-	MeasureRegClient       databasev1.MeasureRegistryServiceClient
-	StreamRegClient        databasev1.StreamRegistryServiceClient
-	TraceRegClient         databasev1.TraceRegistryServiceClient
-	IndexRuleClient        databasev1.IndexRuleRegistryServiceClient
-	IndexRuleBindingClient databasev1.IndexRuleBindingRegistryServiceClient
-	MeasureWriteClient     measurev1.MeasureServiceClient
-	StreamWriteClient      streamv1.StreamServiceClient
-	TraceWriteClient       tracev1.TraceServiceClient
-	// BarrierClient is intentionally nil pre-Step-1.8. Step 1.8 will replace
-	// the constructor body to wire schemav1.NewSchemaBarrierServiceClient(conn).
-	BarrierClient schemav1.SchemaBarrierServiceClient
+	GroupClient                databasev1.GroupRegistryServiceClient
+	MeasureRegClient           databasev1.MeasureRegistryServiceClient
+	StreamRegClient            databasev1.StreamRegistryServiceClient
+	TraceRegClient             databasev1.TraceRegistryServiceClient
+	IndexRuleClient            databasev1.IndexRuleRegistryServiceClient
+	IndexRuleBindingClient     databasev1.IndexRuleBindingRegistryServiceClient
+	TopNAggregationRegClient   databasev1.TopNAggregationRegistryServiceClient
+	MeasureWriteClient         measurev1.MeasureServiceClient
+	StreamWriteClient          streamv1.StreamServiceClient
+	TraceWriteClient           tracev1.TraceServiceClient
+	BarrierClient              schemav1.SchemaBarrierServiceClient
 }
 
-// NewClients constructs the registry/service client bundle used by the schema
-// integration tests. Step 1.8 will extend this constructor to wire the
-// SchemaBarrierService client; until then the BarrierClient field stays nil
-// and the Await* helpers fall back to direct registry polling.
+// NewClients constructs the registry/service client bundle used by the schema integration tests.
 func NewClients(conn *grpc.ClientConn) *Clients {
 	return &Clients{
-		GroupClient:            databasev1.NewGroupRegistryServiceClient(conn),
-		MeasureRegClient:       databasev1.NewMeasureRegistryServiceClient(conn),
-		StreamRegClient:        databasev1.NewStreamRegistryServiceClient(conn),
-		TraceRegClient:         databasev1.NewTraceRegistryServiceClient(conn),
-		IndexRuleClient:        databasev1.NewIndexRuleRegistryServiceClient(conn),
-		IndexRuleBindingClient: databasev1.NewIndexRuleBindingRegistryServiceClient(conn),
-		MeasureWriteClient:     measurev1.NewMeasureServiceClient(conn),
-		StreamWriteClient:      streamv1.NewStreamServiceClient(conn),
-		TraceWriteClient:       tracev1.NewTraceServiceClient(conn),
-		// BarrierClient: schemav1.NewSchemaBarrierServiceClient(conn), // enabled by Step 1.8.
+		GroupClient:              databasev1.NewGroupRegistryServiceClient(conn),
+		MeasureRegClient:         databasev1.NewMeasureRegistryServiceClient(conn),
+		StreamRegClient:          databasev1.NewStreamRegistryServiceClient(conn),
+		TraceRegClient:           databasev1.NewTraceRegistryServiceClient(conn),
+		IndexRuleClient:          databasev1.NewIndexRuleRegistryServiceClient(conn),
+		IndexRuleBindingClient:   databasev1.NewIndexRuleBindingRegistryServiceClient(conn),
+		TopNAggregationRegClient: databasev1.NewTopNAggregationRegistryServiceClient(conn),
+		MeasureWriteClient:       measurev1.NewMeasureServiceClient(conn),
+		StreamWriteClient:        streamv1.NewStreamServiceClient(conn),
+		TraceWriteClient:         tracev1.NewTraceServiceClient(conn),
+		BarrierClient:            schemav1.NewSchemaBarrierServiceClient(conn),
 	}
 }
 
-const (
-	awaitInitialInterval = 10 * time.Millisecond
-	awaitMaxInterval     = 500 * time.Millisecond
-	awaitGrowthFactor    = 1.5
-	awaitRevisionBudget  = 200 * time.Millisecond
-)
-
-// AwaitRevision blocks until the cluster's schema cache has advanced to the
-// given mod_revision or the timeout elapses. The pre-Step-1.8 implementation
-// is a bounded sleep placeholder because the surrounding flows already issue
-// synchronous registry RPCs; Step 1.8 swaps the body to delegate to
-// BarrierClient.AwaitRevisionApplied.
-func (c *Clients) AwaitRevision(ctx context.Context, _ int64, timeout time.Duration) error {
-	// TODO(Step 1.8): replace body with BarrierClient delegation.
-	wait := awaitRevisionBudget
-	if timeout > 0 && timeout < wait {
-		wait = timeout
+// AwaitRevision blocks until the cluster's schema cache has advanced to the given
+// mod_revision or the timeout elapses. Delegates to SchemaBarrierService.AwaitRevisionApplied.
+func (c *Clients) AwaitRevision(ctx context.Context, target int64, timeout time.Duration) error {
+	resp, rpcErr := c.BarrierClient.AwaitRevisionApplied(ctx, &schemav1.AwaitRevisionAppliedRequest{
+		MinRevision: target,
+		Timeout:     durationpb.New(timeout),
+	})
+	if rpcErr != nil {
+		return fmt.Errorf("AwaitRevisionApplied RPC failed: %w", rpcErr)
 	}
-	select {
-	case <-time.After(wait):
-		return nil
-	case <-ctx.Done():
-		if errors.Is(ctx.Err(), context.Canceled) {
-			return fmt.Errorf("schema revision await canceled: %w", ctx.Err())
-		}
-		return fmt.Errorf("timeout waiting for schema revision: %w", ctx.Err())
+	if !resp.GetApplied() {
+		return fmt.Errorf("timeout waiting for schema revision %d", target)
 	}
+	return nil
 }
 
 // AwaitApplied blocks until every key in the list reports as present in the
 // cluster's schema cache or the timeout elapses. Each key is encoded as
 // "kind:group/name"; supported kinds are "measure", "stream", and "trace".
-// Pre-Step-1.8 the body polls the registry Get RPCs; Step 1.8 delegates to
-// BarrierClient.AwaitSchemaApplied.
+// Delegates to SchemaBarrierService.AwaitSchemaApplied.
 func (c *Clients) AwaitApplied(ctx context.Context, keys []string, timeout time.Duration) error {
-	// TODO(Step 1.8): replace body with BarrierClient delegation.
-	return c.pollKeys(ctx, keys, timeout, true)
+	schemaKeys, parseErr := parseSchemaKeys(keys)
+	if parseErr != nil {
+		return parseErr
+	}
+	resp, rpcErr := c.BarrierClient.AwaitSchemaApplied(ctx, &schemav1.AwaitSchemaAppliedRequest{
+		Keys:    schemaKeys,
+		Timeout: durationpb.New(timeout),
+	})
+	if rpcErr != nil {
+		return fmt.Errorf("AwaitSchemaApplied RPC failed: %w", rpcErr)
+	}
+	if !resp.GetApplied() {
+		return fmt.Errorf("timeout waiting for schema keys to be applied: %v", keys)
+	}
+	return nil
 }
 
 // AwaitDeleted blocks until every key in the list is absent from the cluster's
 // schema cache or the timeout elapses. Encoding follows AwaitApplied.
-// Pre-Step-1.8 the body polls the registry Get RPCs for NotFound; Step 1.8
-// delegates to BarrierClient.AwaitSchemaDeleted.
+// Delegates to SchemaBarrierService.AwaitSchemaDeleted.
 func (c *Clients) AwaitDeleted(ctx context.Context, keys []string, timeout time.Duration) error {
-	// TODO(Step 1.8): replace body with BarrierClient delegation.
-	return c.pollKeys(ctx, keys, timeout, false)
-}
-
-// pollKeys polls each key with bounded exponential backoff until either every
-// key satisfies the present/absent predicate or the deadline expires.
-func (c *Clients) pollKeys(ctx context.Context, keys []string, timeout time.Duration, wantPresent bool) error {
-	deadline := time.Now().Add(timeout)
-	pollCtx, cancel := context.WithDeadline(ctx, deadline)
-	defer cancel()
-	interval := awaitInitialInterval
-	for {
-		allDone := true
-		var lastErr error
-		for _, key := range keys {
-			present, checkErr := c.checkKey(pollCtx, key)
-			if checkErr != nil {
-				lastErr = checkErr
-				allDone = false
-				break
-			}
-			if present != wantPresent {
-				allDone = false
-				break
-			}
-		}
-		if allDone {
-			return nil
-		}
-		if lastErr != nil && !isTransient(lastErr) {
-			return lastErr
-		}
-		if time.Now().After(deadline) {
-			if wantPresent {
-				return fmt.Errorf("timeout waiting for schema keys to be applied: %v", keys)
-			}
-			return fmt.Errorf("timeout waiting for schema keys to be deleted: %v", keys)
-		}
-		select {
-		case <-time.After(interval):
-		case <-pollCtx.Done():
-			// Distinguish parent-context cancellation from a real deadline expiry so callers aren't
-			// misled by a "timeout" message when the test itself canceled the context.
-			if errors.Is(pollCtx.Err(), context.Canceled) {
-				return fmt.Errorf("schema await canceled while waiting on keys %v: %w", keys, pollCtx.Err())
-			}
-			if wantPresent {
-				return fmt.Errorf("timeout waiting for schema keys to be applied: %v", keys)
-			}
-			return fmt.Errorf("timeout waiting for schema keys to be deleted: %v", keys)
-		}
-		interval = time.Duration(float64(interval) * awaitGrowthFactor)
-		if interval > awaitMaxInterval {
-			interval = awaitMaxInterval
-		}
-	}
-}
-
-// checkKey returns whether the given encoded key currently resolves to a live
-// schema entry. Unknown kinds yield an error so callers fail fast rather than
-// silently waiting forever.
-func (c *Clients) checkKey(ctx context.Context, key string) (bool, error) {
-	kind, group, name, parseErr := parseSchemaKey(key)
+	schemaKeys, parseErr := parseSchemaKeys(keys)
 	if parseErr != nil {
-		return false, parseErr
+		return parseErr
 	}
-	metadata := &commonv1.Metadata{Group: group, Name: name}
-	var rpcErr error
-	switch kind {
-	case "measure":
-		_, rpcErr = c.MeasureRegClient.Get(ctx, &databasev1.MeasureRegistryServiceGetRequest{Metadata: metadata})
-	case "stream":
-		_, rpcErr = c.StreamRegClient.Get(ctx, &databasev1.StreamRegistryServiceGetRequest{Metadata: metadata})
-	case "trace":
-		_, rpcErr = c.TraceRegClient.Get(ctx, &databasev1.TraceRegistryServiceGetRequest{Metadata: metadata})
-	default:
-		return false, fmt.Errorf("unsupported schema key kind %q in %q", kind, key)
+	resp, rpcErr := c.BarrierClient.AwaitSchemaDeleted(ctx, &schemav1.AwaitSchemaDeletedRequest{
+		Keys:    schemaKeys,
+		Timeout: durationpb.New(timeout),
+	})
+	if rpcErr != nil {
+		return fmt.Errorf("AwaitSchemaDeleted RPC failed: %w", rpcErr)
 	}
-	if rpcErr == nil {
-		return true, nil
+	if !resp.GetApplied() {
+		return fmt.Errorf("timeout waiting for schema keys to be deleted: %v", keys)
 	}
-	if st, ok := status.FromError(rpcErr); ok && st.Code() == codes.NotFound {
-		return false, nil
-	}
-	return false, rpcErr
+	return nil
 }
 
-// parseSchemaKey splits an encoded "kind:group/name" key into its components.
-func parseSchemaKey(key string) (string, string, string, error) {
+// parseSchemaKeys converts a slice of "kind:group/name" encoded strings to SchemaKey protos.
+func parseSchemaKeys(keys []string) ([]*schemav1.SchemaKey, error) {
+	result := make([]*schemav1.SchemaKey, 0, len(keys))
+	for _, key := range keys {
+		sk, parseErr := parseSchemaKey(key)
+		if parseErr != nil {
+			return nil, parseErr
+		}
+		result = append(result, sk)
+	}
+	return result, nil
+}
+
+// parseSchemaKey splits an encoded "kind:group/name" key into a SchemaKey proto.
+func parseSchemaKey(key string) (*schemav1.SchemaKey, error) {
 	colon := strings.IndexByte(key, ':')
 	if colon <= 0 || colon == len(key)-1 {
-		return "", "", "", fmt.Errorf("invalid schema key %q: expected kind:group/name", key)
+		return nil, fmt.Errorf("invalid schema key %q: expected kind:group/name", key)
 	}
 	kind := key[:colon]
 	rest := key[colon+1:]
 	slash := strings.IndexByte(rest, '/')
 	if slash <= 0 || slash == len(rest)-1 {
-		return "", "", "", fmt.Errorf("invalid schema key %q: expected kind:group/name", key)
+		return nil, fmt.Errorf("invalid schema key %q: expected kind:group/name", key)
 	}
-	return kind, rest[:slash], rest[slash+1:], nil
-}
-
-// isTransient reports whether an RPC error is worth retrying inside the poll
-// loop. Context errors signal we have already exhausted the deadline.
-func isTransient(err error) bool {
-	if err == nil {
-		return false
-	}
-	if st, ok := status.FromError(err); ok {
-		switch st.Code() {
-		case codes.Unavailable, codes.DeadlineExceeded, codes.ResourceExhausted, codes.Aborted:
-			return true
-		}
-	}
-	return false
+	return &schemav1.SchemaKey{
+		Kind:  kind,
+		Group: rest[:slash],
+		Name:  rest[slash+1:],
+	}, nil
 }

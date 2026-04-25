@@ -45,7 +45,8 @@ var store embed.FS
 // PreloadSchema loads schemas from files in the booting process.
 func PreloadSchema(ctx context.Context, e schema.Registry) error {
 	if err := loadSchema(groupDir, &commonv1.Group{}, func(group *commonv1.Group) error {
-		return e.CreateGroup(ctx, group)
+		_, innerErr := e.CreateGroup(ctx, group)
+		return innerErr
 	}); err != nil {
 		return errors.WithStack(err)
 	}
@@ -53,7 +54,8 @@ func PreloadSchema(ctx context.Context, e schema.Registry) error {
 		return errors.WithStack(loadErr)
 	}
 	return loadSchema(indexRuleBindingDir, &databasev1.IndexRuleBinding{}, func(irb *databasev1.IndexRuleBinding) error {
-		return e.CreateIndexRuleBinding(ctx, irb)
+		_, innerErr := e.CreateIndexRuleBinding(ctx, irb)
+		return innerErr
 	})
 }
 

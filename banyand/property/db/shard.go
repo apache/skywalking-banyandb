@@ -429,6 +429,12 @@ func (s *shard) prepareForMerge(src []*roaring.Bitmap, segments []segment.Segmen
 		return src, nil
 	}
 	for segID, seg := range segments {
+		// bluge's drop-set entries point at segment-owned bitmaps that concurrent searches
+		// read via Snapshot.PostingsIterator. Mutating the original aliases would race against
+		// roaring.AndNot in those readers. We take a private copy at most once per segment —
+		// only on the first expired doc — so segments with no expirations cost nothing and
+		// segments with many expirations clone exactly once instead of per-docID.
+		privateOwned := false
 		var docID uint64
 		for ; docID < seg.Count(); docID++ {
 			var deleteTime int64
@@ -446,8 +452,13 @@ func (s *shard) prepareForMerge(src []*roaring.Bitmap, segments []segment.Segmen
 				continue
 			}
 
-			if src[segID] == nil {
-				src[segID] = roaring.New()
+			if !privateOwned {
+				if src[segID] == nil {
+					src[segID] = roaring.New()
+				} else {
+					src[segID] = src[segID].Clone()
+				}
+				privateOwned = true
 			}
 
 			src[segID].Add(uint32(docID))

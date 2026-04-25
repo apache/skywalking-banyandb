@@ -97,6 +97,7 @@ type server struct {
 	flushTimeout             time.Duration
 	snapshotSeq              uint64
 	expireTimeout            time.Duration
+	tombstoneRetention       time.Duration
 	repairQuickBuildTreeTime time.Duration
 	maxRecvMsgSize           run.Bytes
 	maxFileSnapshotNum       int
@@ -148,6 +149,8 @@ func (s *server) FlagSet() *run.FlagSet {
 	flagS.Uint32Var(&s.port, "schema-server-grpc-port", 17916, "the port of schema server")
 	flagS.DurationVar(&s.flushTimeout, "schema-server-flush-timeout", 5*time.Second, "memory flush interval")
 	flagS.DurationVar(&s.expireTimeout, "schema-server-expire-delete-timeout", time.Hour*24*7, "soft-delete expiration")
+	flagS.DurationVar(&s.tombstoneRetention, "schema-server-tombstone-retention", time.Hour*24*7,
+		"schema tombstone retention duration; tombstones older than this value are physically excluded from queries")
 	flagS.BoolVar(&s.tls, "schema-server-tls", false, "connection uses TLS if true")
 	flagS.StringVar(&s.certFile, "schema-server-cert-file", "", "the TLS cert file")
 	flagS.StringVar(&s.keyFile, "schema-server-key-file", "", "the TLS key file")
@@ -169,6 +172,10 @@ func (s *server) Validate() error {
 	if s.port == 0 {
 		s.port = 17920
 	}
+	// Short retention values (<1h) are unusual in production but required by integration tests
+	// that verify the physical-removal path of tombstone GC. Accept the value as given so
+	// operators (and the test harness) retain control; silent clamping previously hid the
+	// §4.7.2 test case.
 	s.addr = net.JoinHostPort(s.host, strconv.FormatUint(uint64(s.port), 10))
 	if s.addr == ":" {
 		return errors.New("no address")
@@ -221,11 +228,15 @@ func (s *server) PreRun(_ context.Context) error {
 	s.snapshotDir = filepath.Join(s.root, snapshot.SchemaPropertyCatalogName, "snapshots")
 	repairDir := filepath.Join(s.root, snapshot.SchemaPropertyCatalogName, "repair")
 
+	expireToDelete := s.expireTimeout
+	if s.tombstoneRetention > 0 {
+		expireToDelete = s.tombstoneRetention
+	}
 	cfg := db.Config{
 		Location:               dataDir,
 		MetricsScopeName:       "schema_property",
 		FlushInterval:          s.flushTimeout,
-		ExpireToDeleteDuration: s.expireTimeout,
+		ExpireToDeleteDuration: expireToDelete,
 		Repair: db.RepairConfig{
 			Enabled:            true,
 			Location:           repairDir,

@@ -162,7 +162,8 @@ func (p *provider) createNativeObservabilityGroup(ctx context.Context) error {
 			},
 		},
 	}
-	return p.metadata.GroupRegistry().CreateGroup(ctx, g)
+	_, createErr := p.metadata.GroupRegistry().CreateGroup(ctx, g)
+	return createErr
 }
 
 //nolint:unparam

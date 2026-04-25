@@ -64,7 +64,7 @@ var _ = Describe("Metadata", func() {
 		BeforeEach(func() {
 			groupCounter++
 			groupName = "test-schema-change-" + strconv.Itoa(groupCounter)
-			err := svcs.metadataService.GroupRegistry().CreateGroup(context.TODO(), &commonv1.Group{
+			_, err := svcs.metadataService.GroupRegistry().CreateGroup(context.TODO(), &commonv1.Group{
 				Metadata: &commonv1.Metadata{
 					Name: groupName,
 				},
@@ -89,7 +89,7 @@ var _ = Describe("Metadata", func() {
 		})
 
 		AfterEach(func() {
-			_, _ = svcs.metadataService.GroupRegistry().DeleteGroup(context.TODO(), groupName)
+			_, _, _ = svcs.metadataService.GroupRegistry().DeleteGroup(context.TODO(), groupName)
 		})
 
 		It("deleting reserved tag should fail", func() {
@@ -496,8 +496,8 @@ func setupSchemaChangeTrace(svcs *services, traceName, groupName string, opts tr
 		Tags: []string{"duration"},
 		Type: databasev1.IndexRule_TYPE_TREE,
 	}
-	err = svcs.metadataService.IndexRuleRegistry().CreateIndexRule(ctx, indexRule)
-	Expect(err).ShouldNot(HaveOccurred())
+	_, createIRErr := svcs.metadataService.IndexRuleRegistry().CreateIndexRule(ctx, indexRule)
+	Expect(createIRErr).ShouldNot(HaveOccurred())
 
 	// Create index rule binding
 	indexRuleBindingName := traceName + "-index-rule-binding"
@@ -514,8 +514,8 @@ func setupSchemaChangeTrace(svcs *services, traceName, groupName string, opts tr
 		BeginAt:  timestamppb.Now(),
 		ExpireAt: timestamppb.New(time.Now().Add(24 * time.Hour)),
 	}
-	err = svcs.metadataService.IndexRuleBindingRegistry().CreateIndexRuleBinding(ctx, indexRuleBinding)
-	Expect(err).ShouldNot(HaveOccurred())
+	_, createIRBErr := svcs.metadataService.IndexRuleBindingRegistry().CreateIndexRuleBinding(ctx, indexRuleBinding)
+	Expect(createIRBErr).ShouldNot(HaveOccurred())
 
 	Eventually(func() bool {
 		_, err := svcs.trace.Trace(&commonv1.Metadata{
@@ -527,15 +527,15 @@ func setupSchemaChangeTrace(svcs *services, traceName, groupName string, opts tr
 
 	return &schemaChangeEnv{
 		cleanup: func() {
-			_, _ = svcs.metadataService.IndexRuleBindingRegistry().DeleteIndexRuleBinding(ctx, &commonv1.Metadata{
+			_, _, _ = svcs.metadataService.IndexRuleBindingRegistry().DeleteIndexRuleBinding(ctx, &commonv1.Metadata{
 				Name:  indexRuleBindingName,
 				Group: groupName,
 			})
-			_, _ = svcs.metadataService.IndexRuleRegistry().DeleteIndexRule(ctx, &commonv1.Metadata{
+			_, _, _ = svcs.metadataService.IndexRuleRegistry().DeleteIndexRule(ctx, &commonv1.Metadata{
 				Name:  indexRuleName,
 				Group: groupName,
 			})
-			_, _ = svcs.metadataService.TraceRegistry().DeleteTrace(ctx, &commonv1.Metadata{
+			_, _, _ = svcs.metadataService.TraceRegistry().DeleteTrace(ctx, &commonv1.Metadata{
 				Name:  traceName,
 				Group: groupName,
 			})

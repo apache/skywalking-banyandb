@@ -88,7 +88,7 @@ func PreloadSchema(ctx context.Context, e schema.Registry) error {
 			logger.Infof("group %s already exists", g.Metadata.Name)
 			return nil
 		}
-		if innerErr := e.CreateGroup(ctx, g); innerErr != nil {
+		if _, innerErr := e.CreateGroup(ctx, g); innerErr != nil {
 			return innerErr
 		}
 	}
