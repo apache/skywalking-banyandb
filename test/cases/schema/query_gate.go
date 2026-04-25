@@ -67,6 +67,9 @@ func sendStreamQuery(
 	return st, nil
 }
 
+// queryGateStreamName is the fixture stream name reused across §4.5 specs.
+const queryGateStreamName = "qg_stream"
+
 // Schema query gate smoke tests — §4.5.1 / §4.5.2 / §4.5.3.
 // Each spec exercises a distinct branch of the per-group ModRevision gate on the
 // query path.
@@ -85,7 +88,7 @@ var _ = g.Describe("Schema query gate", func() {
 	// is short-circuited and returns STATUS_EXPIRED_SCHEMA for that group.
 	g.It("returns STATUS_EXPIRED_SCHEMA for stale group ModRevision (§4.5.1)", func() {
 		groupName := fmt.Sprintf("qg-stale-%d", time.Now().UnixNano())
-		streamName := "qg_stream"
+		streamName := queryGateStreamName
 
 		g.By("Creating stream group and schema to obtain baseline ModRevision (R1)")
 		_, createGroupErr := clients.GroupClient.Create(ctx, &databasev1.GroupRegistryServiceCreateRequest{
@@ -132,7 +135,7 @@ var _ = g.Describe("Schema query gate", func() {
 	// until the configured wait duration and then returned with STATUS_SCHEMA_NOT_APPLIED.
 	g.It("returns STATUS_SCHEMA_NOT_APPLIED for ahead group ModRevision that never applies (§4.5.2)", func() {
 		groupName := fmt.Sprintf("qg-ahead-%d", time.Now().UnixNano())
-		streamName := "qg_stream"
+		streamName := queryGateStreamName
 
 		g.By("Creating stream group and schema")
 		_, createGroupErr := clients.GroupClient.Create(ctx, &databasev1.GroupRegistryServiceCreateRequest{
@@ -164,7 +167,7 @@ var _ = g.Describe("Schema query gate", func() {
 	// and returns STATUS_SUCCEED for that group.
 	g.It("passes the gate and returns STATUS_SUCCEED when ModRevision matches cache (§4.5.3)", func() {
 		groupName := fmt.Sprintf("qg-match-%d", time.Now().UnixNano())
-		streamName := "qg_stream"
+		streamName := queryGateStreamName
 
 		g.By("Creating stream group and schema")
 		_, createGroupErr := clients.GroupClient.Create(ctx, &databasev1.GroupRegistryServiceCreateRequest{
@@ -196,7 +199,7 @@ var _ = g.Describe("Schema query gate", func() {
 	g.It("returns mixed group_statuses and empty elements when one group is stale (§4.5.4)", func() {
 		group1 := fmt.Sprintf("qg-mixed1-%d", time.Now().UnixNano())
 		group2 := fmt.Sprintf("qg-mixed2-%d", time.Now().UnixNano())
-		streamName := "qg_stream"
+		streamName := queryGateStreamName
 
 		g.By("Creating group1 + stream → R1a; updating stream → R1b")
 		_, createGroup1Err := clients.GroupClient.Create(ctx, &databasev1.GroupRegistryServiceCreateRequest{
@@ -290,7 +293,7 @@ var _ = g.Describe("Schema query gate", func() {
 	g.It("executes query when one group is ungated (not in GroupModRevisions) (§4.5.5)", func() {
 		group1 := fmt.Sprintf("qg-partial1-%d", time.Now().UnixNano())
 		group2 := fmt.Sprintf("qg-partial2-%d", time.Now().UnixNano())
-		streamName := "qg_stream"
+		streamName := queryGateStreamName
 
 		g.By("Creating group1 and group2 with streams")
 		var maxGroupRev int64

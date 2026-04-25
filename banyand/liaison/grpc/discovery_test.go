@@ -30,12 +30,14 @@ import (
 	"github.com/apache/skywalking-banyandb/pkg/logger"
 )
 
-// --- entityRepo tombstone GC helpers ---
+// entityRepo tombstone GC helpers follow.
 
 // minimalStream returns a Stream proto suitable for entityRepo event tests.
-func minimalStream(group, name string, modRevision int64) *databasev1.Stream {
+// Group and name are fixed because every caller uses the same values; introducing
+// variation would only add noise without changing what's being asserted.
+func minimalStream(modRevision int64) *databasev1.Stream {
 	return &databasev1.Stream{
-		Metadata: &commonv1.Metadata{Group: group, Name: name, ModRevision: modRevision},
+		Metadata: &commonv1.Metadata{Group: "g", Name: "s", ModRevision: modRevision},
 		Entity:   &databasev1.Entity{TagNames: []string{"svc"}},
 		TagFamilies: []*databasev1.TagFamilySpec{{
 			Name: "default",
@@ -82,13 +84,13 @@ func traceAddEvent(tr *databasev1.Trace) schema.Metadata {
 	return schema.Metadata{TypeMeta: schema.TypeMeta{Kind: schema.KindTrace}, Spec: tr}
 }
 
-// --- entityRepo tombstone GC unit tests ---
+// entityRepo tombstone GC unit tests follow.
 
 // TestEntityRepo_OnAddOrUpdate_Stream verifies that OnAddOrUpdate for a stream
 // populates entitiesMap with the correct ModRevision and streamMap with the spec.
 func TestEntityRepo_OnAddOrUpdate_Stream(t *testing.T) {
 	er := newEmptyEntityRepo()
-	s := minimalStream("g", "s", 42)
+	s := minimalStream(42)
 	er.OnAddOrUpdate(streamAddEvent(s))
 
 	id := identity{group: "g", name: "s"}
@@ -152,7 +154,7 @@ func TestEntityRepo_OnAddOrUpdate_Trace_MissingTraceID(t *testing.T) {
 // the locator from entitiesMap and the entry from streamMap (tombstone GC).
 func TestEntityRepo_OnDelete_Stream(t *testing.T) {
 	er := newEmptyEntityRepo()
-	s := minimalStream("g", "s", 42)
+	s := minimalStream(42)
 	er.OnAddOrUpdate(streamAddEvent(s))
 
 	er.OnDelete(streamAddEvent(s))
@@ -203,7 +205,7 @@ func TestEntityRepo_OnDelete_Trace(t *testing.T) {
 // add → present; delete → absent; add again with new revision → present with new revision.
 func TestEntityRepo_AddDeleteAdd_Sequence(t *testing.T) {
 	er := newEmptyEntityRepo()
-	s := minimalStream("g", "s", 10)
+	s := minimalStream(10)
 	id := identity{group: "g", name: "s"}
 
 	er.OnAddOrUpdate(streamAddEvent(s))
@@ -214,7 +216,7 @@ func TestEntityRepo_AddDeleteAdd_Sequence(t *testing.T) {
 	_, ok = er.getLocator(id)
 	require.False(t, ok, "entity must be absent after OnDelete (tombstone)")
 
-	s2 := minimalStream("g", "s", 20)
+	s2 := minimalStream(20)
 	er.OnAddOrUpdate(streamAddEvent(s2))
 	loc, ok := er.getLocator(id)
 	require.True(t, ok, "entity must be present after second OnAddOrUpdate")
@@ -222,10 +224,10 @@ func TestEntityRepo_AddDeleteAdd_Sequence(t *testing.T) {
 }
 
 // TestEntityRepo_OnDelete_UnknownKind_IsNoop verifies that OnDelete for an
-// unrecognised kind does not panic and leaves existing entries intact.
+// unrecognized kind does not panic and leaves existing entries intact.
 func TestEntityRepo_OnDelete_UnknownKind_IsNoop(t *testing.T) {
 	er := newEmptyEntityRepo()
-	s := minimalStream("g", "s", 1)
+	s := minimalStream(1)
 	er.OnAddOrUpdate(streamAddEvent(s))
 
 	assert.NotPanics(t, func() {

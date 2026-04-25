@@ -51,10 +51,12 @@ func newTestSchemaRepo() *schemaRepo {
 	return &schemaRepo{resourceSchemaSupplier: stubSupplier{}}
 }
 
-// buildMeasure returns a *databasev1.Measure with the specified group, name, and mod_revision.
-func buildMeasure(group, name string, modRevision int64) *databasev1.Measure {
+// buildMeasure returns a *databasev1.Measure with the specified name and mod_revision.
+// Group is fixed to "g" because every test in this file uses the same group; varying
+// it would only add noise without changing what's being asserted.
+func buildMeasure(name string, modRevision int64) *databasev1.Measure {
 	return &databasev1.Measure{
-		Metadata: &commonv1.Metadata{Group: group, Name: name, ModRevision: modRevision},
+		Metadata: &commonv1.Metadata{Group: "g", Name: name, ModRevision: modRevision},
 	}
 }
 
@@ -63,10 +65,10 @@ func buildMeasure(group, name string, modRevision int64) *databasev1.Measure {
 // leaving the cache entry intact (A7).
 func TestDeleteResource_RevisionGuard_RejectsStaleDelete(t *testing.T) {
 	sr := newTestSchemaRepo()
-	require.NoError(t, sr.storeResource(buildMeasure("g", "m", 100)))
+	require.NoError(t, sr.storeResource(buildMeasure("m", 100)))
 
 	sr.deleteResource(MetadataEvent{
-		Metadata:       buildMeasure("g", "m", 100),
+		Metadata:       buildMeasure("m", 100),
 		DeleteRevision: 50,
 		Typ:            EventDelete,
 		Kind:           EventKindResource,
@@ -81,10 +83,10 @@ func TestDeleteResource_RevisionGuard_RejectsStaleDelete(t *testing.T) {
 // the cache entry (A7).
 func TestDeleteResource_RevisionGuard_AcceptsFreshDelete(t *testing.T) {
 	sr := newTestSchemaRepo()
-	require.NoError(t, sr.storeResource(buildMeasure("g", "m", 100)))
+	require.NoError(t, sr.storeResource(buildMeasure("m", 100)))
 
 	sr.deleteResource(MetadataEvent{
-		Metadata:       buildMeasure("g", "m", 100),
+		Metadata:       buildMeasure("m", 100),
 		DeleteRevision: 150,
 		Typ:            EventDelete,
 		Kind:           EventKindResource,
@@ -100,14 +102,14 @@ func TestLatestModRevision_Monotonic(t *testing.T) {
 	sr := newTestSchemaRepo()
 	assert.Equal(t, int64(0), sr.LatestModRevision(), "watermark must start at zero")
 
-	require.NoError(t, sr.storeResource(buildMeasure("g", "m1", 10)))
+	require.NoError(t, sr.storeResource(buildMeasure("m1", 10)))
 	assert.Equal(t, int64(10), sr.LatestModRevision())
 
-	require.NoError(t, sr.storeResource(buildMeasure("g", "m2", 30)))
+	require.NoError(t, sr.storeResource(buildMeasure("m2", 30)))
 	assert.Equal(t, int64(30), sr.LatestModRevision())
 
 	// A new key at a lower revision must not regress the watermark.
-	require.NoError(t, sr.storeResource(buildMeasure("g", "m3", 20)))
+	require.NoError(t, sr.storeResource(buildMeasure("m3", 20)))
 	assert.Equal(t, int64(30), sr.LatestModRevision(), "stale store (rev=20) must not lower the watermark from 30")
 }
 
@@ -116,7 +118,7 @@ func TestLatestModRevision_Monotonic(t *testing.T) {
 func TestLatestModRevision_AcrossKinds(t *testing.T) {
 	sr := newTestSchemaRepo()
 
-	require.NoError(t, sr.storeResource(buildMeasure("g", "m1", 10)))
+	require.NoError(t, sr.storeResource(buildMeasure("m1", 10)))
 	assert.Equal(t, int64(10), sr.LatestModRevision())
 
 	sr.storeIndexRule(&databasev1.IndexRule{
@@ -138,7 +140,7 @@ func TestLatestModRevision_AcrossKinds(t *testing.T) {
 // stored mod_revision and ok=true for a present resource, and (0, false) for an absent one (A8).
 func TestResourceRevision_PresentAndAbsent(t *testing.T) {
 	sr := newTestSchemaRepo()
-	require.NoError(t, sr.storeResource(buildMeasure("g", "m", 77)))
+	require.NoError(t, sr.storeResource(buildMeasure("m", 77)))
 
 	rev, ok := sr.ResourceRevision(schema.KindMeasure, "g", "m")
 	assert.True(t, ok)
@@ -153,12 +155,12 @@ func TestResourceRevision_PresentAndAbsent(t *testing.T) {
 // is cached and true after a valid delete removes it from the cache (A7, A8).
 func TestIsAbsent_AfterDelete(t *testing.T) {
 	sr := newTestSchemaRepo()
-	require.NoError(t, sr.storeResource(buildMeasure("g", "m", 100)))
+	require.NoError(t, sr.storeResource(buildMeasure("m", 100)))
 
 	assert.False(t, sr.IsAbsent(schema.KindMeasure, "g", "m"), "resource must not be absent immediately after store")
 
 	sr.deleteResource(MetadataEvent{
-		Metadata:       buildMeasure("g", "m", 100),
+		Metadata:       buildMeasure("m", 100),
 		DeleteRevision: 100,
 		Typ:            EventDelete,
 		Kind:           EventKindResource,

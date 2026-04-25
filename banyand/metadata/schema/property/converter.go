@@ -389,8 +389,8 @@ func getCreatedAtFromSpec(kind schema.Kind, spec proto.Message) *timestamppb.Tim
 		if p, ok := spec.(*databasev1.Property); ok {
 			return p.GetCreatedAt()
 		}
-	case schema.KindNode:
-		// Node does not have a CreatedAt field.
+	case schema.KindNode, schema.KindMask:
+		// Node and Mask do not have a CreatedAt field.
 	}
 	return nil
 }
@@ -430,8 +430,8 @@ func setCreatedAtOnSpec(kind schema.Kind, spec proto.Message, ts *timestamppb.Ti
 		if p, ok := spec.(*databasev1.Property); ok {
 			p.CreatedAt = ts
 		}
-	case schema.KindNode:
-		// Node does not have a CreatedAt field.
+	case schema.KindNode, schema.KindMask:
+		// Node and Mask do not have a CreatedAt field.
 	}
 }
 

@@ -33,12 +33,12 @@ import (
 	schemav1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/schema/v1"
 )
 
-// --- mock cache helpers ---
+// Mock cache helpers follow.
 
 // staticBarrierCache implements barrierCacheReader with fixed data — no advancing.
 type staticBarrierCache struct {
+	keys           map[string]int64
 	maxModRevision int64
-	keys           map[string]int64 // propID → modRevision; key absent means "not in cache"
 }
 
 func (c *staticBarrierCache) GetMaxModRevision() int64 { return c.maxModRevision }
@@ -50,9 +50,9 @@ func (c *staticBarrierCache) GetKeyModRevision(propID string) (int64, bool) {
 // advancingBarrierCache implements barrierCacheReader where individual fields can
 // be updated concurrently (used to simulate cache catch-up).
 type advancingBarrierCache struct {
-	mu     sync.RWMutex
-	maxRev int64
 	keys   map[string]int64
+	maxRev int64
+	mu     sync.RWMutex
 }
 
 func newAdvancingCache(maxRev int64, keys map[string]int64) *advancingBarrierCache {
@@ -97,7 +97,7 @@ func schemaKey(kind, group, name string) *schemav1.SchemaKey {
 	return &schemav1.SchemaKey{Kind: kind, Group: group, Name: name}
 }
 
-// --- AwaitRevisionApplied tests ---
+// AwaitRevisionApplied tests follow.
 
 // TestBarrier_AwaitRevisionApplied_AlreadyAtRevision verifies that when the
 // cache is already at or above the requested min_revision, Applied=true is
@@ -144,7 +144,7 @@ func TestBarrier_AwaitRevisionApplied_CacheAdvances_ReturnsTrue(t *testing.T) {
 }
 
 // TestBarrier_AwaitRevisionApplied_ContextCancelled_ReturnsFalse verifies that
-// when the caller's context is cancelled before the revision is reached, the RPC
+// when the caller's context is canceled before the revision is reached, the RPC
 // returns Applied=false without error.
 func TestBarrier_AwaitRevisionApplied_ContextCancelled_ReturnsFalse(t *testing.T) {
 	svc := newBarrierService(func() barrierCacheReader { return &staticBarrierCache{maxModRevision: 1} })
@@ -161,7 +161,7 @@ func TestBarrier_AwaitRevisionApplied_ContextCancelled_ReturnsFalse(t *testing.T
 	assert.False(t, resp.GetApplied())
 }
 
-// --- AwaitSchemaApplied tests ---
+// AwaitSchemaApplied tests follow.
 
 // TestBarrier_AwaitSchemaApplied_AllKeysPresent_ReturnsTrue verifies that when
 // all requested schema keys are already in the cache, Applied=true is returned immediately.
@@ -225,7 +225,7 @@ func TestBarrier_AwaitSchemaApplied_KeyAppearsInTime_ReturnsTrue(t *testing.T) {
 	assert.True(t, resp.GetApplied())
 }
 
-// --- AwaitSchemaDeleted tests ---
+// AwaitSchemaDeleted tests follow.
 
 // TestBarrier_AwaitSchemaDeleted_AllKeysAbsent_ReturnsTrue verifies that when all
 // requested keys are already absent from the cache, Applied=true is returned immediately.
@@ -289,7 +289,7 @@ func TestBarrier_AwaitSchemaDeleted_KeyRemovedInTime_ReturnsTrue(t *testing.T) {
 	assert.True(t, resp.GetApplied())
 }
 
-// --- Pure function tests ---
+// Pure function tests follow.
 
 // TestBarrierBackoff_GrowsByFactor verifies the backoff grows by barrierGrowthFactor each step.
 func TestBarrierBackoff_GrowsByFactor(t *testing.T) {

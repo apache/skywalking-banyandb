@@ -35,8 +35,8 @@ func newTestStreamService(er *entityRepo, maxWait time.Duration) *streamService 
 	return &streamService{
 		discoveryService: &discoveryService{entityRepo: er},
 		maxWaitDuration:  maxWait,
-		l:               logger.GetLogger("test"),
-		metrics:         newBypassMetrics(),
+		l:                logger.GetLogger("test"),
+		metrics:          newBypassMetrics(),
 	}
 }
 
@@ -53,7 +53,7 @@ func validStreamWriteRequest() *streamv1.WriteRequest {
 // with STATUS_EXPIRED_SCHEMA.
 func TestValidateWriteRequest_Stream_ClientLower_ReturnsExpiredSchema(t *testing.T) {
 	id := identity{group: "g", name: "s"}
-	er := seededLocatorRepo(id, 100)
+	er := seededLocatorRepo(id)
 	svc := newTestStreamService(er, 50*time.Millisecond)
 	mock := &mockBidiServer[streamv1.WriteRequest, streamv1.WriteResponse]{}
 
@@ -70,7 +70,7 @@ func TestValidateWriteRequest_Stream_ClientLower_ReturnsExpiredSchema(t *testing
 // maxWaitDuration and then returns STATUS_SCHEMA_NOT_APPLIED when the cache stays stale.
 func TestValidateWriteRequest_Stream_ClientHigher_WaitsAndReturnsNotApplied_OnTimeout(t *testing.T) {
 	id := identity{group: "g", name: "s"}
-	er := seededLocatorRepo(id, 100)
+	er := seededLocatorRepo(id)
 	svc := newTestStreamService(er, 50*time.Millisecond)
 	mock := &mockBidiServer[streamv1.WriteRequest, streamv1.WriteResponse]{}
 
@@ -87,7 +87,7 @@ func TestValidateWriteRequest_Stream_ClientHigher_WaitsAndReturnsNotApplied_OnTi
 // once the cache advances to the required revision within maxWaitDuration.
 func TestValidateWriteRequest_Stream_ClientHigher_SucceedsWhenCacheCatchesUp(t *testing.T) {
 	id := identity{group: "g", name: "s"}
-	er := seededLocatorRepo(id, 100)
+	er := seededLocatorRepo(id)
 	svc := newTestStreamService(er, 500*time.Millisecond)
 	mock := &mockBidiServer[streamv1.WriteRequest, streamv1.WriteResponse]{}
 
@@ -104,7 +104,7 @@ func TestValidateWriteRequest_Stream_ClientHigher_SucceedsWhenCacheCatchesUp(t *
 // client ModRevision equal to the cached revision is accepted immediately.
 func TestValidateWriteRequest_Stream_Equal_ReturnsSucceed(t *testing.T) {
 	id := identity{group: "g", name: "s"}
-	er := seededLocatorRepo(id, 100)
+	er := seededLocatorRepo(id)
 	svc := newTestStreamService(er, 50*time.Millisecond)
 	mock := &mockBidiServer[streamv1.WriteRequest, streamv1.WriteResponse]{}
 

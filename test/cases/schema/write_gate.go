@@ -260,56 +260,6 @@ func sendMeasureWriteAtTime(
 	return firstStatus, nil
 }
 
-// sendStreamElementAtTime opens a bidi stream write, sends one element at the given
-// timestamp with the svc entity tag, and returns the status string from the first response.
-func sendStreamElementAtTime(
-	ctx context.Context,
-	client streamv1.StreamServiceClient,
-	groupName, streamName string,
-	ts time.Time,
-) (string, error) {
-	writeCtx, cancel := context.WithTimeout(ctx, 30*time.Second)
-	defer cancel()
-	writeClient, dialErr := client.Write(writeCtx)
-	if dialErr != nil {
-		return "", fmt.Errorf("open stream write: %w", dialErr)
-	}
-	tsMilli := ts.Truncate(time.Millisecond)
-	sendErr := writeClient.Send(&streamv1.WriteRequest{
-		Metadata: &commonv1.Metadata{Name: streamName, Group: groupName},
-		Element: &streamv1.ElementValue{
-			ElementId: fmt.Sprintf("elt-%d", tsMilli.UnixNano()),
-			Timestamp: timestamppb.New(tsMilli),
-			TagFamilies: []*modelv1.TagFamilyForWrite{{
-				Tags: []*modelv1.TagValue{{
-					Value: &modelv1.TagValue_Str{Str: &modelv1.Str{Value: "svc-a"}},
-				}},
-			}},
-		},
-		MessageId: uint64(time.Now().UnixNano()),
-	})
-	if sendErr != nil {
-		return "", fmt.Errorf("send stream element: %w", sendErr)
-	}
-	if closeErr := writeClient.CloseSend(); closeErr != nil {
-		return "", fmt.Errorf("close stream send: %w", closeErr)
-	}
-	var firstStatus string
-	for {
-		resp, recvErr := writeClient.Recv()
-		if errors.Is(recvErr, io.EOF) {
-			break
-		}
-		if recvErr != nil {
-			return "", fmt.Errorf("recv stream response: %w", recvErr)
-		}
-		if resp != nil && firstStatus == "" {
-			firstStatus = resp.Status
-		}
-	}
-	return firstStatus, nil
-}
-
 // Schema write gate smoke tests — §4.4.1 / §4.4.2 / §4.4.3.
 // Each spec exercises a distinct branch of the three-way ModRevision split.
 var _ = g.Describe("Schema write gate", func() {

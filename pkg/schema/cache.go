@@ -39,8 +39,10 @@ import (
 	"github.com/apache/skywalking-banyandb/pkg/run"
 )
 
-var _ Resource = (*resourceSpec)(nil)
-var _ RevisionRepository = (*schemaRepo)(nil)
+var (
+	_ Resource           = (*resourceSpec)(nil)
+	_ RevisionRepository = (*schemaRepo)(nil)
+)
 
 type resourceSpec struct {
 	schema    ResourceSchema
@@ -554,6 +556,10 @@ func (sr *schemaRepo) ResourceRevision(kind schema.Kind, groupName, name string)
 				return gs.GetMetadata().GetModRevision(), true
 			}
 		}
+	case schema.KindIndexRuleBinding, schema.KindTopNAggregation,
+		schema.KindNode, schema.KindProperty, schema.KindMask:
+		// schemaRepo only caches resources, index rules, and groups; other kinds
+		// (bindings, top-n aggregations, nodes, properties, masks) have no entry here.
 	}
 	return 0, false
 }

@@ -35,8 +35,8 @@ import (
 // mockBidiServer captures Send calls emitted by service handlers under test.
 // It satisfies grpc.BidiStreamingServer[Req, Res] (= grpc.ServerStream + Recv + Send).
 type mockBidiServer[Req any, Res any] struct {
-	mu      sync.Mutex
 	replies []*Res
+	mu      sync.Mutex
 }
 
 func (s *mockBidiServer[Req, Res]) Send(resp *Res) error {
@@ -46,13 +46,13 @@ func (s *mockBidiServer[Req, Res]) Send(resp *Res) error {
 	return nil
 }
 
-func (s *mockBidiServer[Req, Res]) Recv() (*Req, error)           { return nil, io.EOF }
-func (s *mockBidiServer[Req, Res]) Context() context.Context       { return context.Background() }
-func (s *mockBidiServer[Req, Res]) SetHeader(grpcmd.MD) error     { return nil }
-func (s *mockBidiServer[Req, Res]) SendHeader(grpcmd.MD) error    { return nil }
-func (s *mockBidiServer[Req, Res]) SetTrailer(grpcmd.MD)          {}
-func (s *mockBidiServer[Req, Res]) SendMsg(any) error      { return nil }
-func (s *mockBidiServer[Req, Res]) RecvMsg(any) error      { return nil }
+func (s *mockBidiServer[Req, Res]) Recv() (*Req, error)        { return nil, io.EOF }
+func (s *mockBidiServer[Req, Res]) Context() context.Context   { return context.Background() }
+func (s *mockBidiServer[Req, Res]) SetHeader(grpcmd.MD) error  { return nil }
+func (s *mockBidiServer[Req, Res]) SendHeader(grpcmd.MD) error { return nil }
+func (s *mockBidiServer[Req, Res]) SetTrailer(grpcmd.MD)       {}
+func (s *mockBidiServer[Req, Res]) SendMsg(any) error          { return nil }
+func (s *mockBidiServer[Req, Res]) RecvMsg(any) error          { return nil }
 
 // newBypassMetrics returns a metrics instance backed by a no-op registry.
 func newBypassMetrics() *metrics {
@@ -72,10 +72,17 @@ func newEmptyEntityRepo() *entityRepo {
 	}
 }
 
-// seededLocatorRepo returns an entityRepo with a single locator entry at rev.
-func seededLocatorRepo(id identity, rev int64) *entityRepo {
+// seededLocatorRepoRev is the baseline ModRevision every test uses for the seeded
+// locator. Picking 100 leaves headroom for tests that simulate stale (<100) and
+// future (>100) client revisions against this baseline.
+const seededLocatorRepoRev int64 = 100
+
+// seededLocatorRepo returns an entityRepo with a single locator entry at the
+// fixed seededLocatorRepoRev baseline. Tests that need a different revision
+// should mutate er.entitiesMap directly.
+func seededLocatorRepo(id identity) *entityRepo {
 	er := newEmptyEntityRepo()
-	er.entitiesMap[id] = partition.Locator{ModRevision: rev}
+	er.entitiesMap[id] = partition.Locator{ModRevision: seededLocatorRepoRev}
 	return er
 }
 

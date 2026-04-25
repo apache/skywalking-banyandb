@@ -35,8 +35,8 @@ func newTestMeasureService(er *entityRepo, maxWait time.Duration) *measureServic
 	return &measureService{
 		discoveryService: &discoveryService{entityRepo: er},
 		maxWaitDuration:  maxWait,
-		l:               logger.GetLogger("test"),
-		metrics:         newBypassMetrics(),
+		l:                logger.GetLogger("test"),
+		metrics:          newBypassMetrics(),
 	}
 }
 
@@ -53,7 +53,7 @@ func validMeasureWriteRequest() *measurev1.WriteRequest {
 // with STATUS_EXPIRED_SCHEMA.
 func TestValidateWriteRequest_Measure_ClientLower_ReturnsExpiredSchema(t *testing.T) {
 	id := identity{group: "g", name: "m"}
-	er := seededLocatorRepo(id, 100)
+	er := seededLocatorRepo(id)
 	svc := newTestMeasureService(er, 50*time.Millisecond)
 	mock := &mockBidiServer[measurev1.WriteRequest, measurev1.WriteResponse]{}
 
@@ -70,7 +70,7 @@ func TestValidateWriteRequest_Measure_ClientLower_ReturnsExpiredSchema(t *testin
 // maxWaitDuration and then returns STATUS_SCHEMA_NOT_APPLIED when the cache stays stale.
 func TestValidateWriteRequest_Measure_ClientHigher_WaitsAndReturnsNotApplied_OnTimeout(t *testing.T) {
 	id := identity{group: "g", name: "m"}
-	er := seededLocatorRepo(id, 100)
+	er := seededLocatorRepo(id)
 	svc := newTestMeasureService(er, 50*time.Millisecond)
 	mock := &mockBidiServer[measurev1.WriteRequest, measurev1.WriteResponse]{}
 
@@ -87,7 +87,7 @@ func TestValidateWriteRequest_Measure_ClientHigher_WaitsAndReturnsNotApplied_OnT
 // once the cache advances to the required revision within maxWaitDuration.
 func TestValidateWriteRequest_Measure_ClientHigher_SucceedsWhenCacheCatchesUp(t *testing.T) {
 	id := identity{group: "g", name: "m"}
-	er := seededLocatorRepo(id, 100)
+	er := seededLocatorRepo(id)
 	svc := newTestMeasureService(er, 500*time.Millisecond)
 	mock := &mockBidiServer[measurev1.WriteRequest, measurev1.WriteResponse]{}
 
@@ -104,7 +104,7 @@ func TestValidateWriteRequest_Measure_ClientHigher_SucceedsWhenCacheCatchesUp(t 
 // client ModRevision equal to the cached revision is accepted immediately.
 func TestValidateWriteRequest_Measure_Equal_ReturnsSucceed(t *testing.T) {
 	id := identity{group: "g", name: "m"}
-	er := seededLocatorRepo(id, 100)
+	er := seededLocatorRepo(id)
 	svc := newTestMeasureService(er, 50*time.Millisecond)
 	mock := &mockBidiServer[measurev1.WriteRequest, measurev1.WriteResponse]{}
 

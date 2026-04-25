@@ -35,17 +35,17 @@ import (
 
 // Clients holds all gRPC clients required by the schema integration test helpers.
 type Clients struct {
-	GroupClient                databasev1.GroupRegistryServiceClient
-	MeasureRegClient           databasev1.MeasureRegistryServiceClient
-	StreamRegClient            databasev1.StreamRegistryServiceClient
-	TraceRegClient             databasev1.TraceRegistryServiceClient
-	IndexRuleClient            databasev1.IndexRuleRegistryServiceClient
-	IndexRuleBindingClient     databasev1.IndexRuleBindingRegistryServiceClient
-	TopNAggregationRegClient   databasev1.TopNAggregationRegistryServiceClient
-	MeasureWriteClient         measurev1.MeasureServiceClient
-	StreamWriteClient          streamv1.StreamServiceClient
-	TraceWriteClient           tracev1.TraceServiceClient
-	BarrierClient              schemav1.SchemaBarrierServiceClient
+	GroupClient              databasev1.GroupRegistryServiceClient
+	MeasureRegClient         databasev1.MeasureRegistryServiceClient
+	StreamRegClient          databasev1.StreamRegistryServiceClient
+	TraceRegClient           databasev1.TraceRegistryServiceClient
+	IndexRuleClient          databasev1.IndexRuleRegistryServiceClient
+	IndexRuleBindingClient   databasev1.IndexRuleBindingRegistryServiceClient
+	TopNAggregationRegClient databasev1.TopNAggregationRegistryServiceClient
+	MeasureWriteClient       measurev1.MeasureServiceClient
+	StreamWriteClient        streamv1.StreamServiceClient
+	TraceWriteClient         tracev1.TraceServiceClient
+	BarrierClient            schemav1.SchemaBarrierServiceClient
 }
 
 // NewClients constructs the registry/service client bundle used by the schema integration tests.

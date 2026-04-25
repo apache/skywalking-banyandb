@@ -35,8 +35,8 @@ func newTestTraceService(er *entityRepo, maxWait time.Duration) *traceService {
 	return &traceService{
 		discoveryService: &discoveryService{entityRepo: er},
 		maxWaitDuration:  maxWait,
-		l:               logger.GetLogger("test"),
-		metrics:         newBypassMetrics(),
+		l:                logger.GetLogger("test"),
+		metrics:          newBypassMetrics(),
 	}
 }
 

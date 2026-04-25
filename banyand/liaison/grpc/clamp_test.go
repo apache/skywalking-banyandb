@@ -86,7 +86,7 @@ func TestClampTimeRangeBegin_BeginEqualsMaxCreatedAt_ReturnsBeginUnchanged(t *te
 func TestClampTimeRangeBegin_ClampedBeginAfterEnd_ReturnsEmpty(t *testing.T) {
 	// End is far in the past; createdAt is recent → clamped begin > end.
 	createdAt := base.Add(time.Hour)
-	begin := base.Add(-time.Hour) // before createdAt
+	begin := base.Add(-time.Hour)      // before createdAt
 	end := base.Add(-30 * time.Minute) // between begin and createdAt
 	gotBegin, empty := clampTimeRangeBegin(begin, end, []time.Time{createdAt})
 	assert.Equal(t, createdAt, gotBegin)
@@ -98,8 +98,8 @@ func TestClampTimeRangeBegin_ClampedBeginAfterEnd_ReturnsEmpty(t *testing.T) {
 // and empty is false (the caller should proceed with the query).
 func TestClampTimeRangeBegin_ClampedBeginEqualsEnd_NotEmpty(t *testing.T) {
 	createdAt := base.Add(30 * time.Minute)
-	begin := base                        // before createdAt
-	end := createdAt                     // exactly equal to createdAt after clamping
+	begin := base    // before createdAt
+	end := createdAt // exactly equal to createdAt after clamping
 	gotBegin, empty := clampTimeRangeBegin(begin, end, []time.Time{createdAt})
 	assert.Equal(t, createdAt, gotBegin)
 	assert.False(t, empty, "clamped begin == end is a valid single-point range, not empty")

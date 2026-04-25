@@ -66,6 +66,9 @@ func arMeasureSpec(group, name string) *databasev1.Measure {
 	}
 }
 
+// applyRollbackMeasureName is the fixture measure name reused across the §6.1–§6.7 specs.
+const applyRollbackMeasureName = "cpu_total"
+
 // Schema apply-rollback tests — §6.1 through §6.7.
 var _ = g.Describe("Schema apply rollback", func() {
 	var (
@@ -81,7 +84,7 @@ var _ = g.Describe("Schema apply rollback", func() {
 	// §6.1 — creates a measure visible end-to-end.
 	g.It("creates a measure visible end-to-end (§6.1)", func() {
 		groupName := fmt.Sprintf("ar-vm-%d", time.Now().UnixNano())
-		measureName := "cpu_total"
+		measureName := applyRollbackMeasureName
 
 		g.By("Creating measure group and awaiting revision")
 		createGroupResp, createGroupErr := clients.GroupClient.Create(ctx, &databasev1.GroupRegistryServiceCreateRequest{
@@ -222,7 +225,7 @@ var _ = g.Describe("Schema apply rollback", func() {
 	// §6.3 — lists groups and measures after create.
 	g.It("lists groups and measures after create (§6.3)", func() {
 		groupName := fmt.Sprintf("ar-list-%d", time.Now().UnixNano())
-		measureName := "cpu_total"
+		measureName := applyRollbackMeasureName
 
 		g.By("Creating measure group and measure")
 		_, createGroupErr := clients.GroupClient.Create(ctx, &databasev1.GroupRegistryServiceCreateRequest{
@@ -297,7 +300,7 @@ var _ = g.Describe("Schema apply rollback", func() {
 
 		g.By("Creating first measure cpu_total → R1")
 		createResp1, createErr1 := clients.MeasureRegClient.Create(ctx, &databasev1.MeasureRegistryServiceCreateRequest{
-			Measure: arMeasureSpec(groupName, "cpu_total"),
+			Measure: arMeasureSpec(groupName, applyRollbackMeasureName),
 		})
 		gm.Expect(createErr1).ShouldNot(gm.HaveOccurred())
 		r1 := createResp1.GetModRevision()
@@ -319,7 +322,7 @@ var _ = g.Describe("Schema apply rollback", func() {
 
 		g.By("Verifying GetMeasure for cpu_total returns R1")
 		getCPUResp, getCPUErr := clients.MeasureRegClient.Get(ctx, &databasev1.MeasureRegistryServiceGetRequest{
-			Metadata: &commonv1.Metadata{Name: "cpu_total", Group: groupName},
+			Metadata: &commonv1.Metadata{Name: applyRollbackMeasureName, Group: groupName},
 		})
 		gm.Expect(getCPUErr).ShouldNot(gm.HaveOccurred())
 		gm.Expect(getCPUResp.GetMeasure().GetMetadata().GetModRevision()).Should(gm.Equal(r1),
@@ -341,7 +344,7 @@ var _ = g.Describe("Schema apply rollback", func() {
 		for _, m := range listResp.GetMeasure() {
 			names = append(names, m.GetMetadata().GetName())
 		}
-		gm.Expect(names).Should(gm.ConsistOf("cpu_total", "mem_total"))
+		gm.Expect(names).Should(gm.ConsistOf(applyRollbackMeasureName, "mem_total"))
 
 		_, _ = clients.GroupClient.Delete(ctx, &databasev1.GroupRegistryServiceDeleteRequest{Group: groupName})
 	})
@@ -349,7 +352,7 @@ var _ = g.Describe("Schema apply rollback", func() {
 	// §6.5 — drops measure from BanyanDB on delete.
 	g.It("drops measure from BanyanDB on delete (§6.5)", func() {
 		groupName := fmt.Sprintf("ar-del-%d", time.Now().UnixNano())
-		measureName := "cpu_total"
+		measureName := applyRollbackMeasureName
 
 		g.By("Creating measure group and measure")
 		_, createGroupErr := clients.GroupClient.Create(ctx, &databasev1.GroupRegistryServiceCreateRequest{
@@ -405,7 +408,7 @@ var _ = g.Describe("Schema apply rollback", func() {
 	// §6.6 — delete-then-recreate is idempotent for identical shape.
 	g.It("delete-then-recreate is idempotent for identical shape (§6.6)", func() {
 		groupName := fmt.Sprintf("ar-recreate-%d", time.Now().UnixNano())
-		measureName := "cpu_total"
+		measureName := applyRollbackMeasureName
 
 		g.By("Creating measure group and measure → R1")
 		_, createGroupErr := clients.GroupClient.Create(ctx, &databasev1.GroupRegistryServiceCreateRequest{

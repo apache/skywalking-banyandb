@@ -26,7 +26,7 @@ import "errors"
 var ErrWatchControlNotImplemented = errors.New("watch control not implemented: landed in Phase 2")
 
 // PauseDataNodeWatch suspends the named data node's schema watch loop so a
-// test can observe behaviour while the node is missing schema events. It is a
+// test can observe behavior while the node is missing schema events. It is a
 // distributed-only hook; the standalone harness has no separate watch path.
 // Phase 2 will provide a real implementation; until then it returns
 // ErrWatchControlNotImplemented and callers should skip.
