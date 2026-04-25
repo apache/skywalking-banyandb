@@ -444,7 +444,13 @@ func (ms *measureService) Query(ctx context.Context, req *measurev1.QueryRequest
 	if shortCircuit {
 		return &measurev1.QueryResponse{GroupStatuses: gatedStatuses}, nil
 	}
-	if req.TimeRange != nil {
+	// Gate the clamp on the same opt-in trigger as the query gate (GroupModRevisions
+	// non-empty). Schema-aware clients that pass per-group revisions also accept
+	// pre-creation filtering; legacy clients that omit GroupModRevisions retain the
+	// pre-Step-1.6 behaviour where data with timestamps preceding CreatedAt is still
+	// returned. This keeps backward compatibility for fixtures that write historical
+	// data into a freshly-created measure.
+	if req.TimeRange != nil && len(req.GroupModRevisions) > 0 {
 		createdAts := make([]time.Time, 0, len(req.Groups))
 		for _, group := range req.Groups {
 			measureEntity, measureOK := ms.entityRepo.getMeasure(identity{name: req.Name, group: group})

@@ -36,11 +36,14 @@ import (
 
 // sendStreamQueryWithRange issues a unary stream Query with an explicit time range.
 // It returns the QueryResponse or an error; callers inspect Elements / GroupStatuses.
+// The query carries GroupModRevisions so the schema-aware clamp activates — without
+// it the liaison treats the request as a legacy query and skips clamping.
 func sendStreamQueryWithRange(
 	ctx context.Context,
 	client streamv1.StreamServiceClient,
 	groupName, streamName string,
 	begin, end time.Time,
+	modRevision int64,
 ) (*streamv1.QueryResponse, error) {
 	return client.Query(ctx, &streamv1.QueryRequest{
 		Groups: []string{groupName},
@@ -49,7 +52,8 @@ func sendStreamQueryWithRange(
 			Begin: timestamppb.New(begin.Truncate(time.Millisecond)),
 			End:   timestamppb.New(end.Truncate(time.Millisecond)),
 		},
-		Limit: 10,
+		Limit:             10,
+		GroupModRevisions: map[string]int64{groupName: modRevision},
 		Projection: &modelv1.TagProjection{
 			TagFamilies: []*modelv1.TagProjection_TagFamily{
 				{Name: "default", Tags: []string{"svc"}},
@@ -86,10 +90,11 @@ var _ = g.Describe("Schema time-range clamp", func() {
 		})
 		gm.Expect(createGroupErr).ShouldNot(gm.HaveOccurred())
 
-		_, createStreamErr := clients.StreamRegClient.Create(ctx, &databasev1.StreamRegistryServiceCreateRequest{
+		createStreamResp, createStreamErr := clients.StreamRegClient.Create(ctx, &databasev1.StreamRegistryServiceCreateRequest{
 			Stream: wgStreamSpec(groupName, streamName),
 		})
 		gm.Expect(createStreamErr).ShouldNot(gm.HaveOccurred())
+		streamRev := createStreamResp.GetModRevision()
 
 		g.By("Waiting for schema to be applied in cache (so CreatedAt is populated)")
 		awaitErr := clients.AwaitApplied(ctx, []string{fmt.Sprintf("stream:%s/%s", groupName, streamName)}, 10*time.Second)
@@ -98,7 +103,7 @@ var _ = g.Describe("Schema time-range clamp", func() {
 		g.By("Querying with a range that ends far in the past (before schema creation)")
 		epoch := time.Date(1970, 1, 1, 0, 0, 0, 0, time.UTC)
 		resp, queryErr := sendStreamQueryWithRange(ctx, clients.StreamWriteClient, groupName, streamName,
-			epoch, epoch.Add(time.Millisecond))
+			epoch, epoch.Add(time.Millisecond), streamRev)
 		gm.Expect(queryErr).ShouldNot(gm.HaveOccurred())
 		gm.Expect(resp.GetElements()).Should(gm.BeEmpty(),
 			"clamped Begin (≈ CreatedAt) > End (epoch+1ms) must produce an empty response")
@@ -119,10 +124,11 @@ var _ = g.Describe("Schema time-range clamp", func() {
 		})
 		gm.Expect(createGroupErr).ShouldNot(gm.HaveOccurred())
 
-		_, createStreamErr := clients.StreamRegClient.Create(ctx, &databasev1.StreamRegistryServiceCreateRequest{
+		createStreamResp, createStreamErr := clients.StreamRegClient.Create(ctx, &databasev1.StreamRegistryServiceCreateRequest{
 			Stream: wgStreamSpec(groupName, streamName),
 		})
 		gm.Expect(createStreamErr).ShouldNot(gm.HaveOccurred())
+		streamRev := createStreamResp.GetModRevision()
 
 		g.By("Waiting for group and stream schema to be applied in cache")
 		gm.Expect(clients.AwaitRevision(ctx, groupResp.GetModRevision(), 10*time.Second)).ShouldNot(gm.HaveOccurred())
@@ -133,7 +139,7 @@ var _ = g.Describe("Schema time-range clamp", func() {
 		epoch := time.Date(1970, 1, 1, 0, 0, 0, 0, time.UTC)
 		now := time.Now()
 		resp, queryErr := sendStreamQueryWithRange(ctx, clients.StreamWriteClient, groupName, streamName,
-			epoch, now.Add(time.Hour))
+			epoch, now.Add(time.Hour), streamRev)
 		gm.Expect(queryErr).ShouldNot(gm.HaveOccurred(),
 			"query spanning schema CreatedAt must succeed after Begin is clamped")
 		// No data was written; expect zero elements (not an error).
@@ -152,15 +158,17 @@ var _ = g.Describe("Schema time-range clamp", func() {
 		streamName := "clamp_stream"
 
 		g.By("Creating two stream groups and schemas back-to-back")
+		streamRevs := make(map[string]int64, 2)
 		for _, groupName := range []string{group1, group2} {
 			_, createGroupErr := clients.GroupClient.Create(ctx, &databasev1.GroupRegistryServiceCreateRequest{
 				Group: wgStreamGroup(groupName),
 			})
 			gm.Expect(createGroupErr).ShouldNot(gm.HaveOccurred())
-			_, createStreamErr := clients.StreamRegClient.Create(ctx, &databasev1.StreamRegistryServiceCreateRequest{
+			createStreamResp, createStreamErr := clients.StreamRegClient.Create(ctx, &databasev1.StreamRegistryServiceCreateRequest{
 				Stream: wgStreamSpec(groupName, streamName),
 			})
 			gm.Expect(createStreamErr).ShouldNot(gm.HaveOccurred())
+			streamRevs[groupName] = createStreamResp.GetModRevision()
 		}
 
 		g.By("Waiting for both schemas to be applied")
@@ -179,7 +187,8 @@ var _ = g.Describe("Schema time-range clamp", func() {
 				Begin: timestamppb.New(epoch),
 				End:   timestamppb.New(epoch.Add(time.Millisecond)),
 			},
-			Limit: 10,
+			Limit:             10,
+			GroupModRevisions: streamRevs,
 			Projection: &modelv1.TagProjection{
 				TagFamilies: []*modelv1.TagProjection_TagFamily{
 					{Name: "default", Tags: []string{"svc"}},
@@ -234,9 +243,9 @@ var _ = g.Describe("Schema time-range clamp", func() {
 		gm.Expect(writeStatus).Should(gm.Equal(modelv1.Status_STATUS_SUCCEED.String()),
 			"write at T_data1 must return STATUS_SUCCEED")
 
-		g.By("Sanity-checking that querying group1 alone returns the datum (unclamped baseline)")
+		g.By("Sanity-checking that querying group1 alone returns the datum (legacy unclamped baseline — pass modRevision=0)")
 		baselineResp, baselineErr := queryMeasureRange(ctx, clients.MeasureWriteClient, group1, measureName,
-			tData1.Add(-time.Hour), time.Now().Add(time.Hour))
+			tData1.Add(-time.Hour), time.Now().Add(time.Hour), 0)
 		gm.Expect(baselineErr).ShouldNot(gm.HaveOccurred())
 		gm.Expect(baselineResp.GetDataPoints()).Should(gm.HaveLen(1),
 			"baseline single-group query must return the written datum — otherwise §4.6.4 is not falsifying anything")
@@ -272,6 +281,7 @@ var _ = g.Describe("Schema time-range clamp", func() {
 				Begin: timestamppb.New(tData1.Add(-time.Hour).Truncate(time.Millisecond)),
 				End:   timestamppb.New(time.Now().Add(time.Hour).Truncate(time.Millisecond)),
 			},
+			GroupModRevisions: map[string]int64{group1: r1, group2: r2},
 			TagProjection: &modelv1.TagProjection{
 				TagFamilies: []*modelv1.TagProjection_TagFamily{
 					{Name: "default", Tags: []string{"host"}},

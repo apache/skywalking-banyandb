@@ -112,13 +112,17 @@ func throughputMeasureSpecV2(group, name string) *databasev1.Measure {
 }
 
 // queryMeasureRange issues a unary measure Query over the given time range.
+// modRevision opts the request into the schema-aware path: the liaison clamps
+// TimeRange.Begin to schema.CreatedAt only when GroupModRevisions is non-empty.
+// Pass 0 to keep the query in the legacy unclamped mode.
 func queryMeasureRange(
 	ctx context.Context,
 	client measurev1.MeasureServiceClient,
 	groupName, measureName string,
 	begin, end time.Time,
+	modRevision int64,
 ) (*measurev1.QueryResponse, error) {
-	return client.Query(ctx, &measurev1.QueryRequest{
+	req := &measurev1.QueryRequest{
 		Groups: []string{groupName},
 		Name:   measureName,
 		TimeRange: &modelv1.TimeRange{
@@ -134,7 +138,11 @@ func queryMeasureRange(
 			Names: []string{"value"},
 		},
 		Limit: 100,
-	})
+	}
+	if modRevision > 0 {
+		req.GroupModRevisions = map[string]int64{groupName: modRevision}
+	}
+	return client.Query(ctx, req)
 }
 
 // §6.8 / §6.9 / §6.10 / §6.11 — Shape-break and delete-then-recreate scenarios.
@@ -194,7 +202,7 @@ var _ = g.Describe("Schema shape-break rejection", func() {
 
 		g.By("Querying [CreatedAt1, now+1h] — must return exactly 1 data point")
 		queryResp1, queryErr1 := queryMeasureRange(ctx, clients.MeasureWriteClient, groupName, measureName,
-			createdAt1.AsTime(), time.Now().Add(time.Hour))
+			createdAt1.AsTime(), time.Now().Add(time.Hour), r1)
 		gm.Expect(queryErr1).ShouldNot(gm.HaveOccurred())
 		gm.Expect(queryResp1.GetDataPoints()).Should(gm.HaveLen(1), "sanity baseline: pre-delete query must return 1 data point")
 
@@ -237,7 +245,7 @@ var _ = g.Describe("Schema shape-break rejection", func() {
 
 		// Rule 7 clamp: query [T_data1, now+1h] must return empty because T_data1 < CreatedAt2.
 		queryResp2, queryErr2 := queryMeasureRange(ctx, clients.MeasureWriteClient, groupName, measureName,
-			tData1, time.Now().Add(time.Hour))
+			tData1, time.Now().Add(time.Hour), r2)
 		gm.Expect(queryErr2).ShouldNot(gm.HaveOccurred())
 		gm.Expect(queryResp2.GetDataPoints()).Should(gm.BeEmpty(),
 			"Rule 7 clamp must hide pre-CreatedAt2 data points")
@@ -432,7 +440,7 @@ var _ = g.Describe("Schema shape-break rejection", func() {
 		gm.Expect(writeStatus1).Should(gm.Equal(modelv1.Status_STATUS_SUCCEED.String()))
 
 		queryResp1, queryErr1 := queryMeasureRange(ctx, clients.MeasureWriteClient, groupName, measureName,
-			createdAt1.AsTime(), time.Now().Add(time.Hour))
+			createdAt1.AsTime(), time.Now().Add(time.Hour), r1)
 		gm.Expect(queryErr1).ShouldNot(gm.HaveOccurred())
 		gm.Expect(queryResp1.GetDataPoints()).Should(gm.HaveLen(1), "baseline: pre-delete query returns 1 data point")
 
@@ -472,7 +480,7 @@ var _ = g.Describe("Schema shape-break rejection", func() {
 
 		// Rule 7 clamp: query [T_data1, now+1h] returns empty because T_data1 < CreatedAt2.
 		queryResp2, queryErr2 := queryMeasureRange(ctx, clients.MeasureWriteClient, groupName, measureName,
-			tData1, time.Now().Add(time.Hour))
+			tData1, time.Now().Add(time.Hour), r2)
 		gm.Expect(queryErr2).ShouldNot(gm.HaveOccurred())
 		gm.Expect(queryResp2.GetDataPoints()).Should(gm.BeEmpty(),
 			"Rule 7 clamp must hide pre-delete data because T_data1 < CreatedAt2")
@@ -487,7 +495,7 @@ var _ = g.Describe("Schema shape-break rejection", func() {
 
 		// Post-write query [CreatedAt2, now+1h] must return the newly-written point.
 		queryResp3, queryErr3 := queryMeasureRange(ctx, clients.MeasureWriteClient, groupName, measureName,
-			createdAt2.AsTime(), time.Now().Add(time.Hour))
+			createdAt2.AsTime(), time.Now().Add(time.Hour), r2)
 		gm.Expect(queryErr3).ShouldNot(gm.HaveOccurred())
 		gm.Expect(queryResp3.GetDataPoints()).Should(gm.HaveLen(1),
 			"post-creation write must be queryable after AwaitRevision(R2)")

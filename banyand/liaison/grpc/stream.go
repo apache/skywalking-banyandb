@@ -411,7 +411,9 @@ func (s *streamService) Query(ctx context.Context, req *streamv1.QueryRequest) (
 	if shortCircuit {
 		return &streamv1.QueryResponse{GroupStatuses: gatedStatuses}, nil
 	}
-	if req.TimeRange != nil {
+	// See measure.go for rationale: gate the clamp on the same opt-in trigger as the
+	// query gate so legacy clients that omit GroupModRevisions are not affected.
+	if req.TimeRange != nil && len(req.GroupModRevisions) > 0 {
 		createdAts := make([]time.Time, 0, len(req.Groups))
 		for _, group := range req.Groups {
 			streamEntity, streamOK := s.entityRepo.getStream(identity{name: req.Name, group: group})
