@@ -124,6 +124,25 @@ func (c *Clients) AwaitDeleted(ctx context.Context, keys []string, timeout time.
 	return nil
 }
 
+// internalTopNResultMeasureName is the auto-created measure that backs TopN
+// aggregations. The measure subsystem provisions it in every measure group, so
+// list assertions in the §6 specs need to skip it.
+const internalTopNResultMeasureName = "_top_n_result"
+
+// userMeasures returns measures with the auto-provisioned _top_n_result entry
+// removed, so spec assertions can count user-created measures only without
+// hard-coding off-by-one for the internal entry.
+func userMeasures(in []*databasev1.Measure) []*databasev1.Measure {
+	out := make([]*databasev1.Measure, 0, len(in))
+	for _, m := range in {
+		if m.GetMetadata().GetName() == internalTopNResultMeasureName {
+			continue
+		}
+		out = append(out, m)
+	}
+	return out
+}
+
 // parseSchemaKeys converts a slice of "kind:group/name" encoded strings to SchemaKey protos.
 func parseSchemaKeys(keys []string) ([]*schemav1.SchemaKey, error) {
 	result := make([]*schemav1.SchemaKey, 0, len(keys))

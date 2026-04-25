@@ -552,15 +552,8 @@ func (rs *measureRegistryServer) List(ctx context.Context,
 		rs.metrics.totalRegistryErr.Inc(1, g, "measure", "list")
 		return nil, err
 	}
-	// Filter out the internal top-N result measure (_top_n_result) created automatically by the measure subsystem.
-	filtered := entities[:0]
-	for _, m := range entities {
-		if m.GetMetadata().GetName() != "_top_n_result" {
-			filtered = append(filtered, m)
-		}
-	}
 	return &databasev1.MeasureRegistryServiceListResponse{
-		Measure: filtered,
+		Measure: entities,
 	}, nil
 }
 

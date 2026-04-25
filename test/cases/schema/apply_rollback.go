@@ -121,11 +121,12 @@ var _ = g.Describe("Schema apply rollback", func() {
 		gm.Expect(got.GetCreatedAt().AsTime().Equal(got.GetUpdatedAt().AsTime())).Should(gm.BeTrue(),
 			"CreatedAt must equal UpdatedAt on first create")
 
-		g.By("Verifying ListMeasure returns exactly one entry")
+		g.By("Verifying ListMeasure returns exactly one user-created entry")
 		listResp, listErr := clients.MeasureRegClient.List(ctx, &databasev1.MeasureRegistryServiceListRequest{Group: groupName})
 		gm.Expect(listErr).ShouldNot(gm.HaveOccurred())
-		gm.Expect(listResp.GetMeasure()).Should(gm.HaveLen(1), "ListMeasure must return exactly one entry")
-		gm.Expect(listResp.GetMeasure()[0].GetMetadata().GetName()).Should(gm.Equal(measureName))
+		userOnly := userMeasures(listResp.GetMeasure())
+		gm.Expect(userOnly).Should(gm.HaveLen(1), "ListMeasure must return exactly one user-created entry")
+		gm.Expect(userOnly[0].GetMetadata().GetName()).Should(gm.Equal(measureName))
 
 		_, _ = clients.GroupClient.Delete(ctx, &databasev1.GroupRegistryServiceDeleteRequest{Group: groupName})
 	})
@@ -255,11 +256,12 @@ var _ = g.Describe("Schema apply rollback", func() {
 		}
 		gm.Expect(foundGroup).Should(gm.BeTrue(), "ListGroup must contain the created group")
 
-		g.By("ListMeasure returns exactly one entry")
+		g.By("ListMeasure returns exactly one user-created entry")
 		listMeasureResp, listMeasureErr := clients.MeasureRegClient.List(ctx, &databasev1.MeasureRegistryServiceListRequest{Group: groupName})
 		gm.Expect(listMeasureErr).ShouldNot(gm.HaveOccurred())
-		gm.Expect(listMeasureResp.GetMeasure()).Should(gm.HaveLen(1))
-		gm.Expect(listMeasureResp.GetMeasure()[0].GetMetadata().GetName()).Should(gm.Equal(measureName))
+		userMeasureOnly := userMeasures(listMeasureResp.GetMeasure())
+		gm.Expect(userMeasureOnly).Should(gm.HaveLen(1))
+		gm.Expect(userMeasureOnly[0].GetMetadata().GetName()).Should(gm.Equal(measureName))
 
 		g.By("ListStream, ListTrace, ListIndexRule, ListIndexRuleBinding, ListTopNAggregation all empty")
 		listStreamResp, listStreamErr := clients.StreamRegClient.List(ctx, &databasev1.StreamRegistryServiceListRequest{Group: groupName})
@@ -336,12 +338,13 @@ var _ = g.Describe("Schema apply rollback", func() {
 		gm.Expect(getMemResp.GetMeasure().GetMetadata().GetModRevision()).Should(gm.Equal(r2),
 			"mem_total ModRevision must equal R2")
 
-		g.By("ListMeasure returns both measures")
+		g.By("ListMeasure returns both user-created measures")
 		listResp, listErr := clients.MeasureRegClient.List(ctx, &databasev1.MeasureRegistryServiceListRequest{Group: groupName})
 		gm.Expect(listErr).ShouldNot(gm.HaveOccurred())
-		gm.Expect(listResp.GetMeasure()).Should(gm.HaveLen(2), "ListMeasure must return both measures")
+		userOnly := userMeasures(listResp.GetMeasure())
+		gm.Expect(userOnly).Should(gm.HaveLen(2), "ListMeasure must return both user-created measures")
 		names := make([]string, 0, 2)
-		for _, m := range listResp.GetMeasure() {
+		for _, m := range userOnly {
 			names = append(names, m.GetMetadata().GetName())
 		}
 		gm.Expect(names).Should(gm.ConsistOf(applyRollbackMeasureName, "mem_total"))
@@ -389,10 +392,11 @@ var _ = g.Describe("Schema apply rollback", func() {
 		st, _ := status.FromError(getErr)
 		gm.Expect(st.Code()).Should(gm.Equal(codes.NotFound), "GetMeasure must return NotFound after deletion")
 
-		g.By("Verifying ListMeasure is empty")
+		g.By("Verifying ListMeasure has no user-created entries")
 		listResp, listErr := clients.MeasureRegClient.List(ctx, &databasev1.MeasureRegistryServiceListRequest{Group: groupName})
 		gm.Expect(listErr).ShouldNot(gm.HaveOccurred())
-		gm.Expect(listResp.GetMeasure()).Should(gm.BeEmpty(), "ListMeasure must be empty after deletion")
+		gm.Expect(userMeasures(listResp.GetMeasure())).Should(gm.BeEmpty(),
+			"ListMeasure must contain no user-created entries after deletion")
 
 		g.By("Verifying write to deleted measure fails or returns non-SUCCEED status")
 		writeStatus, writeErr := sendSingleMeasureWrite(ctx, clients.MeasureWriteClient, groupName, measureName, 0)
@@ -465,7 +469,8 @@ var _ = g.Describe("Schema apply rollback", func() {
 
 		listResp, listErr := clients.MeasureRegClient.List(ctx, &databasev1.MeasureRegistryServiceListRequest{Group: groupName})
 		gm.Expect(listErr).ShouldNot(gm.HaveOccurred())
-		gm.Expect(listResp.GetMeasure()).Should(gm.HaveLen(1), "ListMeasure must return exactly one entry after recreate")
+		gm.Expect(userMeasures(listResp.GetMeasure())).Should(gm.HaveLen(1),
+			"ListMeasure must return exactly one user-created entry after recreate")
 
 		g.By("Write with stale R1 must return STATUS_EXPIRED_SCHEMA")
 		writeStatus, writeErr := sendSingleMeasureWrite(ctx, clients.MeasureWriteClient, groupName, measureName, r1)
@@ -489,10 +494,11 @@ var _ = g.Describe("Schema apply rollback", func() {
 		awaitGroupErr := clients.AwaitRevision(ctx, groupRev, 10*time.Second)
 		gm.Expect(awaitGroupErr).ShouldNot(gm.HaveOccurred())
 
-		g.By("All list RPCs must return empty")
+		g.By("All list RPCs must return no user-created entries")
 		listMeasureResp, listMeasureErr := clients.MeasureRegClient.List(ctx, &databasev1.MeasureRegistryServiceListRequest{Group: groupName})
 		gm.Expect(listMeasureErr).ShouldNot(gm.HaveOccurred())
-		gm.Expect(listMeasureResp.GetMeasure()).Should(gm.BeEmpty(), "ListMeasure must be empty")
+		gm.Expect(userMeasures(listMeasureResp.GetMeasure())).Should(gm.BeEmpty(),
+			"ListMeasure must contain no user-created entries")
 
 		listStreamResp, listStreamErr := clients.StreamRegClient.List(ctx, &databasev1.StreamRegistryServiceListRequest{Group: groupName})
 		gm.Expect(listStreamErr).ShouldNot(gm.HaveOccurred())

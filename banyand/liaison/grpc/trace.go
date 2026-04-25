@@ -433,6 +433,36 @@ func (s *traceService) Write(stream tracev1.TraceService_WriteServer) error {
 
 var emptyTraceQueryResponse = &tracev1.QueryResponse{Traces: make([]*tracev1.Trace, 0)}
 
+// applyClamp rewrites req.TimeRange.Begin to schema.CreatedAt for schema-aware
+// queries (those carrying GroupModRevisions). Returns true when the clamped
+// range is empty, in which case the caller should short-circuit with an empty
+// response. See measure.go for the rationale on the GroupModRevisions opt-in.
+func (s *traceService) applyClamp(req *tracev1.QueryRequest) bool {
+	if req.TimeRange == nil || len(req.GroupModRevisions) == 0 {
+		return false
+	}
+	createdAts := make([]time.Time, 0, len(req.Groups))
+	for _, group := range req.Groups {
+		traceEntity, traceOK := s.entityRepo.getTrace(identity{name: req.Name, group: group})
+		if traceOK && traceEntity.GetCreatedAt() != nil {
+			createdAts = append(createdAts, traceEntity.GetCreatedAt().AsTime())
+		}
+	}
+	endTime := time.Time{}
+	if req.TimeRange.GetEnd() != nil {
+		endTime = req.TimeRange.GetEnd().AsTime()
+	}
+	originalBegin := req.TimeRange.GetBegin().AsTime()
+	newBegin, rangeEmpty := clampTimeRangeBegin(originalBegin, endTime, createdAts)
+	if rangeEmpty {
+		return true
+	}
+	if newBegin != originalBegin {
+		req.TimeRange.Begin = timestamppb.New(newBegin)
+	}
+	return false
+}
+
 func (s *traceService) Query(ctx context.Context, req *tracev1.QueryRequest) (resp *tracev1.QueryResponse, err error) {
 	for _, g := range req.Groups {
 		if acquireErr := s.groupRepo.acquireRequest(g); acquireErr != nil {
@@ -499,28 +529,8 @@ func (s *traceService) Query(ctx context.Context, req *tracev1.QueryRequest) (re
 	if shortCircuit {
 		return &tracev1.QueryResponse{GroupStatuses: gatedStatuses}, nil
 	}
-	// See measure.go for rationale: gate the clamp on the same opt-in trigger as the
-	// query gate so legacy clients that omit GroupModRevisions are not affected.
-	if req.TimeRange != nil && len(req.GroupModRevisions) > 0 {
-		createdAts := make([]time.Time, 0, len(req.Groups))
-		for _, group := range req.Groups {
-			traceEntity, traceOK := s.entityRepo.getTrace(identity{name: req.Name, group: group})
-			if traceOK && traceEntity.GetCreatedAt() != nil {
-				createdAts = append(createdAts, traceEntity.GetCreatedAt().AsTime())
-			}
-		}
-		endTime := time.Time{}
-		if req.TimeRange.GetEnd() != nil {
-			endTime = req.TimeRange.GetEnd().AsTime()
-		}
-		originalBegin := req.TimeRange.GetBegin().AsTime()
-		newBegin, rangeEmpty := clampTimeRangeBegin(originalBegin, endTime, createdAts)
-		if rangeEmpty {
-			return emptyTraceQueryResponse, nil
-		}
-		if newBegin != originalBegin {
-			req.TimeRange.Begin = timestamppb.New(newBegin)
-		}
+	if rangeEmpty := s.applyClamp(req); rangeEmpty {
+		return emptyTraceQueryResponse, nil
 	}
 	message := bus.NewMessage(bus.MessageID(now.UnixNano()), req)
 	var future bus.Future
