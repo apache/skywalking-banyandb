@@ -22,6 +22,7 @@ import (
 	"context"
 	"embed"
 	"regexp"
+	"slices"
 	"strings"
 
 	"github.com/google/go-cmp/cmp"
@@ -37,6 +38,7 @@ import (
 	commonv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/common/v1"
 	databasev1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/database/v1"
 	measurev1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/measure/v1"
+	modelv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/model/v1"
 	"github.com/apache/skywalking-banyandb/banyand/metadata"
 	"github.com/apache/skywalking-banyandb/banyand/metadata/schema"
 	"github.com/apache/skywalking-banyandb/pkg/bydbql"
@@ -82,6 +84,13 @@ var VerifyFn = func(innerGm gm.Gomega, sharedContext helpers.SharedContext, args
 	innerGm.Expect(err).NotTo(gm.HaveOccurred())
 	want := &measurev1.TopNResponse{}
 	helpers.UnmarshalYAML(ww, want)
+	// Sort items by value, using entity as tie-breaker for deterministic ordering.
+	for _, list := range resp.Lists {
+		slices.SortFunc(list.Items, compareTopNItems)
+	}
+	for _, list := range want.Lists {
+		slices.SortFunc(list.Items, compareTopNItems)
+	}
 	success := innerGm.Expect(cmp.Equal(resp, want,
 		protocmp.IgnoreUnknown(),
 		protocmp.IgnoreFields(&measurev1.TopNList{}, "timestamp"),
@@ -107,6 +116,88 @@ var VerifyFn = func(innerGm gm.Gomega, sharedContext helpers.SharedContext, args
 	innerGm.Expect(err).NotTo(gm.HaveOccurred())
 	innerGm.Expect(resp.Trace).NotTo(gm.BeNil())
 	innerGm.Expect(resp.Trace.GetSpans()).NotTo(gm.BeEmpty())
+}
+
+// compareTopNItems compares two TopNList_Item by value first, then by entity tags for deterministic ordering.
+func compareTopNItems(a, b *measurev1.TopNList_Item) int {
+	// Primary: sort by value to preserve ranking verification.
+	aVal := a.GetValue().GetInt().GetValue()
+	bVal := b.GetValue().GetInt().GetValue()
+	if aVal < bVal {
+		return -1
+	}
+	if aVal > bVal {
+		return 1
+	}
+	// Secondary: sort by entity tags as tie-breaker for equal values.
+	for tagIdx, aTag := range a.Entity {
+		if tagIdx >= len(b.Entity) {
+			return 1
+		}
+		if tagCmp := compareTagValue(aTag.GetValue(), b.Entity[tagIdx].GetValue()); tagCmp != 0 {
+			return tagCmp
+		}
+	}
+	if len(a.Entity) < len(b.Entity) {
+		return -1
+	}
+	return 0
+}
+
+// compareTagValue compares two TagValue instances in a type-aware manner.
+func compareTagValue(a, b *modelv1.TagValue) int {
+	aOrd := tagValOrder(a)
+	bOrd := tagValOrder(b)
+	if aOrd != bOrd {
+		return aOrd - bOrd
+	}
+	switch a.GetValue().(type) {
+	case *modelv1.TagValue_Str:
+		aVal := a.GetStr().GetValue()
+		bVal := b.GetStr().GetValue()
+		switch {
+		case aVal < bVal:
+			return -1
+		case aVal > bVal:
+			return 1
+		default:
+			return 0
+		}
+	case *modelv1.TagValue_Int:
+		aVal := a.GetInt().GetValue()
+		bVal := b.GetInt().GetValue()
+		switch {
+		case aVal < bVal:
+			return -1
+		case aVal > bVal:
+			return 1
+		default:
+			return 0
+		}
+	default:
+		return 0
+	}
+}
+
+func tagValOrder(v *modelv1.TagValue) int {
+	switch v.GetValue().(type) {
+	case *modelv1.TagValue_Null:
+		return 0
+	case *modelv1.TagValue_Str:
+		return 1
+	case *modelv1.TagValue_Int:
+		return 2
+	case *modelv1.TagValue_StrArray:
+		return 3
+	case *modelv1.TagValue_IntArray:
+		return 4
+	case *modelv1.TagValue_BinaryData:
+		return 5
+	case *modelv1.TagValue_Timestamp:
+		return 6
+	default:
+		return -1
+	}
 }
 
 // verifyQLWithRequest verifies that the QL file produces an equivalent QueryRequest to the YAML.

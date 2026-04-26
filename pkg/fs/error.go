@@ -18,7 +18,10 @@
 // Package fs (file system) is an independent component to operate file and directory.
 package fs
 
-import "fmt"
+import (
+	"fmt"
+	iofs "io/fs"
+)
 
 // FileSystemError code.
 const (
@@ -43,4 +46,21 @@ type FileSystemError struct {
 
 func (err *FileSystemError) Error() string {
 	return fmt.Sprintf("File system return error: %s, error code: %d", err.Message, err.Code)
+}
+
+// Is reports whether the error matches one of the standard io/fs sentinel
+// errors, so callers can use errors.Is with iofs.ErrNotExist, iofs.ErrExist
+// and iofs.ErrPermission regardless of the underlying OS error wrapping.
+// The target is compared directly (no recursive errors.Is) to mirror the
+// convention used by syscall.Errno.Is in the standard library.
+func (err *FileSystemError) Is(target error) bool {
+	switch target {
+	case iofs.ErrNotExist:
+		return err.Code == IsNotExistError
+	case iofs.ErrExist:
+		return err.Code == isExistError
+	case iofs.ErrPermission:
+		return err.Code == permissionError
+	}
+	return false
 }

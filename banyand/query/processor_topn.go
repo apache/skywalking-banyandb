@@ -32,6 +32,7 @@ import (
 	"github.com/apache/skywalking-banyandb/banyand/measure"
 	"github.com/apache/skywalking-banyandb/pkg/bus"
 	"github.com/apache/skywalking-banyandb/pkg/logger"
+	pbv1 "github.com/apache/skywalking-banyandb/pkg/pb/v1"
 	"github.com/apache/skywalking-banyandb/pkg/query"
 	"github.com/apache/skywalking-banyandb/pkg/query/executor"
 	logical_measure "github.com/apache/skywalking-banyandb/pkg/query/logical/measure"
@@ -181,7 +182,46 @@ func (t *topNQueryProcessor) Rev(ctx context.Context, message bus.Message) (resp
 		}
 	}()
 
-	resp = bus.NewMessage(bus.MessageID(now), toTopNResponse(result))
+	if request.GetAgg() != modelv1.AggregationFunction_AGGREGATION_FUNCTION_UNSPECIFIED {
+		// Standalone mode: use TopNPostProcessor for aggregation
+		if len(result) == 0 {
+			resp = bus.NewMessage(bus.MessageID(now), &measurev1.TopNResponse{})
+			return
+		}
+		aggregator := measure.CreateTopNPostProcessor(
+			request.GetTopN(),
+			request.GetAgg(),
+			request.GetFieldValueSort(),
+		)
+		var tags []string
+		for _, dp := range result {
+			dpTags := dp.GetTagFamilies()[0].GetTags()
+			if tags == nil {
+				tags = make([]string, len(dpTags))
+				for i, tag := range dpTags {
+					tags[i] = tag.Key
+				}
+			}
+			entityValues := make(pbv1.EntityValues, 0, len(dpTags))
+			for _, tag := range dpTags {
+				entityValues = append(entityValues, tag.Value)
+			}
+			aggregator.Put(entityValues,
+				dp.GetFields()[0].GetValue().GetInt().GetValue(),
+				uint64(dp.GetTimestamp().AsTime().UnixMilli()),
+				dp.GetVersion())
+		}
+		lists, err := aggregator.Val(tags)
+		if err != nil {
+			ml.Error().Err(err).RawJSON("req", logger.Proto(request)).Msg("fail to aggregate topN results")
+			resp = bus.NewMessage(bus.MessageID(now), common.NewError("fail to aggregate topN results for measure %s: %v", request.Name, err))
+			return
+		}
+		resp = bus.NewMessage(bus.MessageID(now), &measurev1.TopNResponse{Lists: lists})
+	} else {
+		// Standalone mode without aggregation or distributed DataNode mode: return top N distinct entities directly
+		resp = bus.NewMessage(bus.MessageID(now), toTopNResponse(result))
+	}
 	if !request.Trace && t.slowQuery > 0 {
 		latency := time.Since(n)
 		if latency > t.slowQuery {

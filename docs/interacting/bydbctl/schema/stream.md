@@ -114,6 +114,16 @@ List operation list all streams' schema in a group.
 bydbctl stream list -g default
 ```
 
+## Server-Generated Element ID
+
+When writing stream data, the `element_id` field in the write request is optional. If omitted, the server generates a unique element ID automatically. This simplifies client code when stable element IDs are not required.
+
+Note that this generated `element_id` is server-side only. The StreamService `WriteResponse` does not return the generated ID, so clients cannot rely on retrieving it later for correlation, retries, or idempotent writes. If a client needs a stable or externally known element ID, it must set `element_id` explicitly in the write request.
+
+## Query Deduplication
+
+For details about stream query deduplication and element identity, see [Element Identity and Deduplication](../query/stream.md#element-identity-and-deduplication).
+
 ## API Reference
 
 [Stream Registration Operations](../../../api-reference.md#streamregistryservice)
