@@ -56,6 +56,10 @@ func clampTimeRangeBegin(begin, end time.Time, createdAts []time.Time) (time.Tim
 // groups passed (STATUS_SUCCEED) and the caller should attach the map to the
 // successful query response.
 // An empty groupModRevisions map skips the gate entirely (backward compat).
+//
+// maxWait is a single overall deadline shared across every "ahead" group rather
+// than a per-group budget, so a multi-group query with N gated groups cannot
+// exceed maxWait wall-clock time.
 func checkQueryGate(
 	groups []string,
 	name string,
@@ -66,6 +70,7 @@ func checkQueryGate(
 	if len(groupModRevisions) == 0 {
 		return nil, false
 	}
+	deadline := time.Now().Add(maxWait)
 	groupStatuses := make(map[string]modelv1.Status)
 	for _, g := range groups {
 		clientRev, revOK := groupModRevisions[g]
@@ -85,7 +90,7 @@ func checkQueryGate(
 			reached := awaitRevisionReached(func() int64 {
 				rev, _ := getLocatorRevision(name, currentGroup)
 				return rev
-			}, clientRev, maxWait)
+			}, clientRev, time.Until(deadline))
 			if reached {
 				groupStatuses[g] = modelv1.Status_STATUS_SUCCEED
 			} else {

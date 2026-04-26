@@ -465,6 +465,9 @@ func (ms *measureService) Query(ctx context.Context, req *measurev1.QueryRequest
 		originalBegin := req.TimeRange.GetBegin().AsTime()
 		newBegin, rangeEmpty := clampTimeRangeBegin(originalBegin, endTime, createdAts)
 		if rangeEmpty {
+			if len(gatedStatuses) > 0 {
+				return &measurev1.QueryResponse{GroupStatuses: gatedStatuses}, nil
+			}
 			return emptyMeasureQueryResponse, nil
 		}
 		if newBegin != originalBegin {

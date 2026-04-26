@@ -39,8 +39,9 @@ import (
 const tombstoneRetentionForTest = 2 * time.Second
 
 // Schema tombstone GC specs — §4.7.1 / §4.7.2.
-// These specs require a short tombstone_retention (e.g. 2s) to be configured.
-// Set BANYANDB_TOMBSTONE_RETENTION=2s before running the suite.
+// The integration suite wires the standalone server with
+// --schema-server-tombstone-retention=tombstoneRetentionForTest in BeforeSuite,
+// so these specs run without any environment-variable setup.
 var _ = g.Describe("Schema tombstone GC", func() {
 	var (
 		ctx     context.Context

@@ -68,23 +68,37 @@ func (b *barrierService) cache() barrierCacheReader {
 }
 
 // AwaitRevisionApplied blocks until the cache's max modRevision is >= req.MinRevision
-// or the timeout elapses. In standalone mode there is only one node, so Laggards is always empty.
+// or the timeout elapses. In standalone mode there is one node, so Laggards carries a
+// single entry whose current_mod_revision reports the cache watermark — this lets
+// callers diagnose how far behind the standalone cache is even when applied=false.
 func (b *barrierService) AwaitRevisionApplied(ctx context.Context, req *schemav1.AwaitRevisionAppliedRequest) (*schemav1.AwaitRevisionAppliedResponse, error) {
 	deadline := time.Now().Add(barrierDeadlineDuration(req.GetTimeout()))
 	pollCtx, cancel := context.WithDeadline(ctx, deadline)
 	defer cancel()
 	interval := barrierInitInterval
+	currentRevision := func() int64 {
+		if c := b.cache(); c != nil {
+			return c.GetMaxModRevision()
+		}
+		return 0
+	}
 	for {
-		if c := b.cache(); c != nil && c.GetMaxModRevision() >= req.GetMinRevision() {
+		if currentRevision() >= req.GetMinRevision() {
 			return &schemav1.AwaitRevisionAppliedResponse{Applied: true}, nil
 		}
 		if time.Now().After(deadline) {
-			return &schemav1.AwaitRevisionAppliedResponse{Applied: false}, nil
+			return &schemav1.AwaitRevisionAppliedResponse{
+				Applied:  false,
+				Laggards: []*schemav1.NodeLaggard{{CurrentModRevision: currentRevision()}},
+			}, nil
 		}
 		select {
 		case <-time.After(interval):
 		case <-pollCtx.Done():
-			return &schemav1.AwaitRevisionAppliedResponse{Applied: false}, nil
+			return &schemav1.AwaitRevisionAppliedResponse{
+				Applied:  false,
+				Laggards: []*schemav1.NodeLaggard{{CurrentModRevision: currentRevision()}},
+			}, nil
 		}
 		interval = barrierBackoff(interval)
 	}

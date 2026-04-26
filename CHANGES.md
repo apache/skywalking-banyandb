@@ -28,7 +28,7 @@ Release Notes.
   - Add per-group query-path gate via `QueryRequest.group_mod_revisions` and `QueryResponse.group_statuses` for Stream / Measure / Trace queries.
   - Add automatic time-range clamp `max(time_range.start, schema.created_at)`; multi-group uses the maximum across queried groups; nil for pre-upgrade schemas is a no-op.
   - Add `SchemaBarrierService` with `AwaitRevisionApplied`, `AwaitSchemaApplied`, `AwaitSchemaDeleted` (10 000-key cap, timeout-bounded, returns laggards on expiry).
-  - Add tombstone retention/GC (default 7 days, 1 hour floor, configurable via `--schema-server-tombstone-retention`) with a per-cache count cap to bound memory under bulk deletes.
+  - Add tombstone retention/GC (default 7 days, configurable via `--schema-server-tombstone-retention`) with a per-cache count cap to bound memory under bulk deletes.
   - Reject `Create` with `updated_at <= tombstone.delete_time` to prevent replayed creates from overwriting newer deletes.
   - Guard `pkg/schema/cache` against out-of-order `EventDelete` events; expose monotonic `LatestModRevision` watermark.
 

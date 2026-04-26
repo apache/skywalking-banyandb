@@ -530,6 +530,9 @@ func (s *traceService) Query(ctx context.Context, req *tracev1.QueryRequest) (re
 		return &tracev1.QueryResponse{GroupStatuses: gatedStatuses}, nil
 	}
 	if rangeEmpty := s.applyClamp(req); rangeEmpty {
+		if len(gatedStatuses) > 0 {
+			return &tracev1.QueryResponse{GroupStatuses: gatedStatuses}, nil
+		}
 		return emptyTraceQueryResponse, nil
 	}
 	message := bus.NewMessage(bus.MessageID(now.UnixNano()), req)

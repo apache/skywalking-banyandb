@@ -136,7 +136,7 @@ func (sr *schemaRepo) processEvent(evt MetadataEvent) error {
 		switch evt.Kind {
 		case EventKindGroup:
 			_, err = sr.storeGroup(evt.Metadata.GetMetadata())
-			if errors.As(err, schema.ErrGRPCResourceNotFound) {
+			if errors.Is(err, schema.ErrGRPCResourceNotFound) {
 				err = nil
 			}
 		case EventKindResource:

@@ -428,6 +428,9 @@ func (s *streamService) Query(ctx context.Context, req *streamv1.QueryRequest) (
 		originalBegin := req.TimeRange.GetBegin().AsTime()
 		newBegin, rangeEmpty := clampTimeRangeBegin(originalBegin, endTime, createdAts)
 		if rangeEmpty {
+			if len(gatedStatuses) > 0 {
+				return &streamv1.QueryResponse{GroupStatuses: gatedStatuses}, nil
+			}
 			return emptyStreamQueryResponse, nil
 		}
 		if newBegin != originalBegin {
