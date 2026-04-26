@@ -18,6 +18,8 @@
 package stream
 
 import (
+	"fmt"
+	"os"
 	"path/filepath"
 	"strconv"
 
@@ -40,6 +42,7 @@ type Visitor interface {
 // streamSegmentVisitor adapts Visitor to work with storage.SegmentVisitor.
 type streamSegmentVisitor struct {
 	visitor Visitor
+	lfs     fs.FileSystem
 }
 
 // VisitSeries implements storage.SegmentVisitor.
@@ -60,8 +63,7 @@ func (sv *streamSegmentVisitor) VisitShard(segmentTR *timestamp.TimeRange, shard
 
 // visitShardParts visits all part directories within a shard.
 func (sv *streamSegmentVisitor) visitShardParts(segmentTR *timestamp.TimeRange, shardID common.ShardID, shardPath string) error {
-	lfs := fs.NewLocalFileSystem()
-	entries := lfs.ReadDir(shardPath)
+	entries := sv.lfs.ReadDir(shardPath)
 
 	for _, entry := range entries {
 		if !entry.IsDir() {
@@ -91,6 +93,15 @@ func (sv *streamSegmentVisitor) visitShardParts(segmentTR *timestamp.TimeRange, 
 // visitShardElementIndex visits the element index directory within a shard.
 func (sv *streamSegmentVisitor) visitShardElementIndex(segmentTR *timestamp.TimeRange, shardID common.ShardID, shardPath string) error {
 	indexPath := filepath.Join(shardPath, elementIndexFilename)
+	// A shard with parts but no indexed elements has no idx/ directory in the snapshot;
+	// skip instead of letting the visitor's ReadDir panic on the missing path.
+	// Surface other stat errors (permission, I/O) so real filesystem problems aren't hidden.
+	if _, err := os.Stat(indexPath); err != nil {
+		if os.IsNotExist(err) {
+			return nil
+		}
+		return fmt.Errorf("failed to stat element index directory %q: %w", indexPath, err)
+	}
 	return sv.visitor.VisitElementIndex(segmentTR, shardID, indexPath)
 }
 
@@ -99,6 +110,6 @@ func (sv *streamSegmentVisitor) visitShardElementIndex(segmentTR *timestamp.Time
 // This function works directly with the filesystem without requiring a database instance.
 // Returns a list of segment suffixes that were visited.
 func VisitStreamsInTimeRange(tsdbRootPath string, timeRange timestamp.TimeRange, visitor Visitor, segmentInterval storage.IntervalRule) ([]string, error) {
-	adapter := &streamSegmentVisitor{visitor: visitor}
+	adapter := &streamSegmentVisitor{visitor: visitor, lfs: fs.NewLocalFileSystem()}
 	return storage.VisitSegmentsInTimeRange(tsdbRootPath, timeRange, adapter, segmentInterval)
 }

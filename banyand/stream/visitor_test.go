@@ -120,3 +120,37 @@ func TestVisitStreamsInTimeRange(t *testing.T) {
 	assert.Equal(t, common.ShardID(0), visitor.visitedElementIndex[0].shardID)
 	assert.Contains(t, visitor.visitedElementIndex[0].path, elementIndexFilename)
 }
+
+func TestVisitStreamsInTimeRange_MissingElementIndexDir(t *testing.T) {
+	tmpDir, err := os.MkdirTemp("", "stream_visitor_missing_idx_test")
+	require.NoError(t, err)
+	defer os.RemoveAll(tmpDir)
+
+	now := time.Now()
+	segmentTime := now.Format("2006010215")
+	segmentDir := filepath.Join(tmpDir, "seg-"+segmentTime)
+	require.NoError(t, os.MkdirAll(segmentDir, 0o755))
+
+	seriesDir := filepath.Join(segmentDir, "sidx")
+	require.NoError(t, os.MkdirAll(seriesDir, 0o755))
+
+	shardDir := filepath.Join(segmentDir, "shard-1")
+	require.NoError(t, os.MkdirAll(shardDir, 0o755))
+
+	partDir := filepath.Join(shardDir, "000000000000001a")
+	require.NoError(t, os.MkdirAll(partDir, 0o755))
+
+	visitor := &TestVisitor{}
+	timeRange := timestamp.TimeRange{
+		Start: now.Add(-time.Hour),
+		End:   now.Add(time.Hour),
+	}
+	intervalRule := storage.IntervalRule{Unit: storage.HOUR, Num: 1}
+
+	suffixes, err := VisitStreamsInTimeRange(tmpDir, timeRange, visitor, intervalRule)
+	require.NoError(t, err)
+	assert.NotEmpty(t, suffixes)
+
+	assert.Len(t, visitor.visitedParts, 1)
+	assert.Empty(t, visitor.visitedElementIndex, "VisitElementIndex must be skipped when idx/ is absent")
+}
