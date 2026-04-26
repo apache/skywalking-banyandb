@@ -91,6 +91,11 @@ func (sv *streamSegmentVisitor) visitShardParts(segmentTR *timestamp.TimeRange, 
 // visitShardElementIndex visits the element index directory within a shard.
 func (sv *streamSegmentVisitor) visitShardElementIndex(segmentTR *timestamp.TimeRange, shardID common.ShardID, shardPath string) error {
 	indexPath := filepath.Join(shardPath, elementIndexFilename)
+	// A shard with parts but no indexed elements has no idx/ directory in the snapshot;
+	// skip instead of letting the visitor's ReadDir panic on the missing path.
+	if !fs.NewLocalFileSystem().IsExist(indexPath) {
+		return nil
+	}
 	return sv.visitor.VisitElementIndex(segmentTR, shardID, indexPath)
 }
 
