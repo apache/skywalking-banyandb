@@ -25,6 +25,7 @@ import (
 	"github.com/pkg/errors"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
+	"google.golang.org/protobuf/types/known/timestamppb"
 
 	"github.com/apache/skywalking-banyandb/api/common"
 	"github.com/apache/skywalking-banyandb/api/data"
@@ -96,16 +97,32 @@ func (s *streamService) validateWriteRequest(writeEntity *streamv1.WriteRequest,
 	}
 
 	if metadata.ModRevision > 0 {
-		streamCache, existed := s.entityRepo.getLocator(getID(metadata))
+		id := getID(metadata)
+		streamCache, existed := s.entityRepo.getLocator(id)
 		if !existed {
 			s.l.Error().Stringer("written", writeEntity).Msg("stream schema not found")
 			s.sendReply(metadata, modelv1.Status_STATUS_NOT_FOUND, writeEntity.GetMessageId(), stream)
 			return modelv1.Status_STATUS_NOT_FOUND
 		}
-		if metadata.ModRevision != streamCache.ModRevision {
+		clientRev := metadata.ModRevision
+		cacheRev := streamCache.ModRevision
+		if clientRev < cacheRev {
 			s.l.Error().Stringer("written", writeEntity).Msg("the stream schema is expired")
 			s.sendReply(metadata, modelv1.Status_STATUS_EXPIRED_SCHEMA, writeEntity.GetMessageId(), stream)
 			return modelv1.Status_STATUS_EXPIRED_SCHEMA
+		}
+		if clientRev > cacheRev {
+			reached := awaitRevisionReached(func() int64 {
+				loc, ok := s.entityRepo.getLocator(id)
+				if !ok {
+					return 0
+				}
+				return loc.ModRevision
+			}, clientRev, s.maxWaitDuration)
+			if !reached {
+				s.sendReply(metadata, modelv1.Status_STATUS_SCHEMA_NOT_APPLIED, writeEntity.GetMessageId(), stream)
+				return modelv1.Status_STATUS_SCHEMA_NOT_APPLIED
+			}
 		}
 	}
 
@@ -386,6 +403,40 @@ func (s *streamService) Query(ctx context.Context, req *streamv1.QueryRequest) (
 			}
 		}()
 	}
+	gatedStatuses, shortCircuit := checkQueryGate(req.Groups, req.Name, req.GroupModRevisions,
+		func(name, group string) (int64, bool) {
+			loc, ok := s.entityRepo.getLocator(identity{name: name, group: group})
+			return loc.ModRevision, ok
+		}, s.maxWaitDuration)
+	if shortCircuit {
+		return &streamv1.QueryResponse{GroupStatuses: gatedStatuses}, nil
+	}
+	// See measure.go for rationale: gate the clamp on the same opt-in trigger as the
+	// query gate so legacy clients that omit GroupModRevisions are not affected.
+	if req.TimeRange != nil && len(req.GroupModRevisions) > 0 {
+		createdAts := make([]time.Time, 0, len(req.Groups))
+		for _, group := range req.Groups {
+			streamEntity, streamOK := s.entityRepo.getStream(identity{name: req.Name, group: group})
+			if streamOK && streamEntity.GetCreatedAt() != nil {
+				createdAts = append(createdAts, streamEntity.GetCreatedAt().AsTime())
+			}
+		}
+		endTime := time.Time{}
+		if req.TimeRange.GetEnd() != nil {
+			endTime = req.TimeRange.GetEnd().AsTime()
+		}
+		originalBegin := req.TimeRange.GetBegin().AsTime()
+		newBegin, rangeEmpty := clampTimeRangeBegin(originalBegin, endTime, createdAts)
+		if rangeEmpty {
+			if len(gatedStatuses) > 0 {
+				return &streamv1.QueryResponse{GroupStatuses: gatedStatuses}, nil
+			}
+			return emptyStreamQueryResponse, nil
+		}
+		if newBegin != originalBegin {
+			req.TimeRange.Begin = timestamppb.New(newBegin)
+		}
+	}
 	message := bus.NewMessage(bus.MessageID(now.UnixNano()), req)
 	feat, errQuery := s.broadcaster.Publish(ctx, data.TopicStreamQuery, message)
 	if errQuery != nil {
@@ -402,6 +453,9 @@ func (s *streamService) Query(ctx context.Context, req *streamv1.QueryRequest) (
 	switch d := data.(type) {
 	case *streamv1.QueryResponse:
 		responseElementCount = len(d.Elements)
+		if len(gatedStatuses) > 0 {
+			d.GroupStatuses = gatedStatuses
+		}
 		return d, nil
 	case *common.Error:
 		return nil, errors.WithMessage(errQueryMsg, d.Error())

@@ -43,6 +43,7 @@ import (
 	databasev1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/database/v1"
 	measurev1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/measure/v1"
 	propertyv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/property/v1"
+	schemav1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/schema/v1"
 	streamv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/stream/v1"
 	tracev1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/trace/v1"
 	"github.com/apache/skywalking-banyandb/banyand/internal/storage"
@@ -104,7 +105,8 @@ type server struct {
 	stopCh     chan struct{}
 	*indexRuleRegistryServer
 	*measureRegistryServer
-	streamSVC *streamService
+	streamSVC  *streamService
+	barrierSVC *barrierService
 	*streamRegistryServer
 	measureSVC *measureService
 	bydbQLSVC  *bydbQLService
@@ -179,6 +181,20 @@ func NewServer(_ context.Context, tir1Client, tir2Client, broadcaster queue.Clie
 		propertyServer: propertyService,
 	}
 
+	var barrierSVC *barrierService
+	if svc, svcOk := schemaRegistry.(metadata.Service); svcOk {
+		barrierSVC = newBarrierService(func() barrierCacheReader {
+			inner := svc.SchemaRegistry()
+			if inner == nil {
+				return nil
+			}
+			bc, bcOk := inner.(barrierCacheReader)
+			if !bcOk {
+				return nil
+			}
+			return bc
+		})
+	}
 	s := &server{
 		omr:        omr,
 		streamSVC:  streamSVC,
@@ -186,6 +202,7 @@ func NewServer(_ context.Context, tir1Client, tir2Client, broadcaster queue.Clie
 		traceSVC:   traceSVC,
 		bydbQLSVC:  bydbQLSVC,
 		groupRepo:  gr,
+		barrierSVC: barrierSVC,
 		streamRegistryServer: &streamRegistryServer{
 			schemaRegistry: schemaRegistry,
 		},
@@ -489,6 +506,9 @@ func (s *server) Serve() run.StopNotify {
 	databasev1.RegisterTraceRegistryServiceServer(s.ser, s.traceRegistryServer)
 	databasev1.RegisterClusterStateServiceServer(s.ser, s)
 	databasev1.RegisterNodeQueryServiceServer(s.ser, s)
+	if s.barrierSVC != nil {
+		schemav1.RegisterSchemaBarrierServiceServer(s.ser, s.barrierSVC)
+	}
 	grpc_health_v1.RegisterHealthServer(s.ser, health.NewServer())
 
 	s.stopCh = make(chan struct{})

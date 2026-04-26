@@ -60,7 +60,7 @@ var _ = Describe("Metadata", func() {
 
 	Context("Manage group", func() {
 		It("should close the group", func() {
-			deleted, err := svcs.metadataService.GroupRegistry().DeleteGroup(context.TODO(), "sw_metric")
+			deleted, _, err := svcs.metadataService.GroupRegistry().DeleteGroup(context.TODO(), "sw_metric")
 			Expect(err).ShouldNot(HaveOccurred())
 			Expect(deleted).Should(BeTrue())
 			Eventually(func() bool {
@@ -75,7 +75,8 @@ var _ = Describe("Metadata", func() {
 			Expect(groupSchema).ShouldNot(BeNil())
 			groupSchema.ResourceOpts.ShardNum = 4
 
-			Expect(svcs.metadataService.GroupRegistry().UpdateGroup(context.TODO(), groupSchema)).Should(Succeed())
+			_, updateGroupErr := svcs.metadataService.GroupRegistry().UpdateGroup(context.TODO(), groupSchema)
+			Expect(updateGroupErr).ShouldNot(HaveOccurred())
 
 			Eventually(func() bool {
 				group, ok := svcs.measure.LoadGroup("sw_metric")
@@ -98,7 +99,7 @@ var _ = Describe("Metadata", func() {
 			}).WithTimeout(flags.EventuallyTimeout).Should(BeTrue())
 		})
 		It("should close the measure", func() {
-			deleted, err := svcs.metadataService.MeasureRegistry().DeleteMeasure(context.TODO(), &commonv1.Metadata{
+			deleted, _, err := svcs.metadataService.MeasureRegistry().DeleteMeasure(context.TODO(), &commonv1.Metadata{
 				Name:  "service_cpm_minute",
 				Group: "sw_metric",
 			})
@@ -208,8 +209,8 @@ var _ = Describe("Metadata", func() {
 						Tags: []string{"new_tag"},
 						Type: databasev1.IndexRule_TYPE_INVERTED,
 					}
-					err := svcs.metadataService.IndexRuleRegistry().CreateIndexRule(context.TODO(), indexRule)
-					Expect(err).ShouldNot(HaveOccurred())
+					_, createIRErr := svcs.metadataService.IndexRuleRegistry().CreateIndexRule(context.TODO(), indexRule)
+					Expect(createIRErr).ShouldNot(HaveOccurred())
 					indexRuleBinding := &databasev1.IndexRuleBinding{
 						Metadata: &commonv1.Metadata{
 							Name:  "service_cpm_minute_new_tag",
@@ -223,8 +224,8 @@ var _ = Describe("Metadata", func() {
 						BeginAt:  timestamppb.New(timestamp.NowMilli().Add(-time.Hour)),
 						ExpireAt: timestamppb.New(timestamp.NowMilli().Add(time.Hour)),
 					}
-					err = svcs.metadataService.IndexRuleBindingRegistry().CreateIndexRuleBinding(context.TODO(), indexRuleBinding)
-					Expect(err).ShouldNot(HaveOccurred())
+					_, createIRBErr := svcs.metadataService.IndexRuleBindingRegistry().CreateIndexRuleBinding(context.TODO(), indexRuleBinding)
+					Expect(createIRBErr).ShouldNot(HaveOccurred())
 
 					Eventually(func() bool {
 						val, err := svcs.measure.Measure(&commonv1.Metadata{
@@ -735,7 +736,7 @@ func setupSchemaChangeMeasure(svcs *services, measureName string, opts measureSe
 
 	return &measureSchemaChangeEnv{
 		cleanup: func() {
-			_, _ = svcs.metadataService.MeasureRegistry().DeleteMeasure(ctx, &commonv1.Metadata{
+			_, _, _ = svcs.metadataService.MeasureRegistry().DeleteMeasure(ctx, &commonv1.Metadata{
 				Name:  measureName,
 				Group: schemaChangeGroupName,
 			})

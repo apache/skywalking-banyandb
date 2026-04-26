@@ -41,6 +41,8 @@ const (
 	TagKeySource    = "source"
 	TagKeyKind      = "kind"
 	TagKeyUpdatedAt = "updated_at"
+	// TagKeyCreatedAt is the tag key for the first-appearance timestamp; survives updates unchanged.
+	TagKeyCreatedAt = "created_at"
 )
 
 // BuildPropertyID returns the property ID for a schema resource.
@@ -80,19 +82,29 @@ func SchemaToProperty(kind schema.Kind, spec proto.Message) (*propertyv1.Propert
 	if updatedAt != nil {
 		updatedAtNano = updatedAt.AsTime().UnixNano()
 	}
+	tags := []*modelv1.Tag{
+		{Key: TagKeyGroup, Value: &modelv1.TagValue{Value: &modelv1.TagValue_Str{Str: &modelv1.Str{Value: group}}}},
+		{Key: TagKeyName, Value: &modelv1.TagValue{Value: &modelv1.TagValue_Str{Str: &modelv1.Str{Value: name}}}},
+		{Key: TagKeySource, Value: &modelv1.TagValue{Value: &modelv1.TagValue_Str{Str: &modelv1.Str{Value: string(data)}}}},
+		{Key: TagKeyKind, Value: &modelv1.TagValue{Value: &modelv1.TagValue_Str{Str: &modelv1.Str{Value: kind.String()}}}},
+		{Key: TagKeyUpdatedAt, Value: &modelv1.TagValue{Value: &modelv1.TagValue_Int{Int: &modelv1.Int{Value: updatedAtNano}}}},
+	}
+	// Only persist the created_at tag when it has been stamped (non-zero).
+	if createdAt := getCreatedAtFromSpec(kind, spec); createdAt != nil {
+		if createdAtNano := createdAt.AsTime().UnixNano(); createdAtNano != 0 {
+			tags = append(tags, &modelv1.Tag{
+				Key:   TagKeyCreatedAt,
+				Value: &modelv1.TagValue{Value: &modelv1.TagValue_Int{Int: &modelv1.Int{Value: createdAtNano}}},
+			})
+		}
+	}
 	return &propertyv1.Property{
 		Metadata: &commonv1.Metadata{
 			Name:        kind.String(),
 			ModRevision: metadata.GetModRevision(),
 		},
-		Id: BuildPropertyID(kind, metadata),
-		Tags: []*modelv1.Tag{
-			{Key: TagKeyGroup, Value: &modelv1.TagValue{Value: &modelv1.TagValue_Str{Str: &modelv1.Str{Value: group}}}},
-			{Key: TagKeyName, Value: &modelv1.TagValue{Value: &modelv1.TagValue_Str{Str: &modelv1.Str{Value: name}}}},
-			{Key: TagKeySource, Value: &modelv1.TagValue{Value: &modelv1.TagValue_Str{Str: &modelv1.Str{Value: string(data)}}}},
-			{Key: TagKeyKind, Value: &modelv1.TagValue{Value: &modelv1.TagValue_Str{Str: &modelv1.Str{Value: kind.String()}}}},
-			{Key: TagKeyUpdatedAt, Value: &modelv1.TagValue{Value: &modelv1.TagValue_Int{Int: &modelv1.Int{Value: updatedAtNano}}}},
-		},
+		Id:        BuildPropertyID(kind, metadata),
+		Tags:      tags,
 		UpdatedAt: updatedAt,
 	}, nil
 }
@@ -144,6 +156,7 @@ type ParsedTags struct {
 	Source    string
 	Kind      string
 	UpdatedAt int64
+	CreatedAt int64
 }
 
 // ParseTags extracts all known tag values in a single pass.
@@ -161,6 +174,8 @@ func ParseTags(tags []*modelv1.Tag) ParsedTags {
 			pt.Kind = tag.GetValue().GetStr().GetValue()
 		case TagKeyUpdatedAt:
 			pt.UpdatedAt = tag.GetValue().GetInt().GetValue()
+		case TagKeyCreatedAt:
+			pt.CreatedAt = tag.GetValue().GetInt().GetValue()
 		}
 	}
 	return pt
@@ -276,8 +291,12 @@ func ParsePropID(propID string) (kind schema.Kind, group, name string, err error
 	return kind, rest[:slashIdx], rest[slashIdx+1:], nil
 }
 
-// buildDeleteRequest builds a DeleteSchema request.
-func buildDeleteRequest(kind schema.Kind, group, name string) *schemav1.DeleteSchemaRequest {
+// buildDeleteRequest builds a DeleteSchema request. The caller supplies deleteTime
+// (unix nanos) so the value persisted as the tombstone on the server matches the
+// value broadcastDelete returns to its caller — otherwise two separate time.Now()
+// snapshots drift, breaking the design contract that delete_time is the
+// authoritative tombstone timestamp.
+func buildDeleteRequest(kind schema.Kind, group, name string, deleteTime int64) *schemav1.DeleteSchemaRequest {
 	metadata := &commonv1.Metadata{Group: group, Name: name}
 	return &schemav1.DeleteSchemaRequest{
 		Delete: &propertyv1.DeleteRequest{
@@ -285,7 +304,7 @@ func buildDeleteRequest(kind schema.Kind, group, name string) *schemav1.DeleteSc
 			Name:  kind.String(),
 			Id:    BuildPropertyID(kind, metadata),
 		},
-		UpdateAt: timestamppb.New(time.Now()),
+		UpdateAt: timestamppb.New(time.Unix(0, deleteTime)),
 	}
 }
 
@@ -333,6 +352,87 @@ func getUpdatedAtFromSpec(kind schema.Kind, spec proto.Message) (*timestamppb.Ti
 		return ts, nil
 	}
 	return timestamppb.Now(), nil
+}
+
+// getCreatedAtFromSpec returns the created_at timestamp from a schema spec, or nil if not present.
+func getCreatedAtFromSpec(kind schema.Kind, spec proto.Message) *timestamppb.Timestamp {
+	switch kind {
+	case schema.KindGroup:
+		if g, ok := spec.(*commonv1.Group); ok {
+			return g.GetCreatedAt()
+		}
+	case schema.KindStream:
+		if s, ok := spec.(*databasev1.Stream); ok {
+			return s.GetCreatedAt()
+		}
+	case schema.KindMeasure:
+		if m, ok := spec.(*databasev1.Measure); ok {
+			return m.GetCreatedAt()
+		}
+	case schema.KindTrace:
+		if t, ok := spec.(*databasev1.Trace); ok {
+			return t.GetCreatedAt()
+		}
+	case schema.KindIndexRule:
+		if ir, ok := spec.(*databasev1.IndexRule); ok {
+			return ir.GetCreatedAt()
+		}
+	case schema.KindIndexRuleBinding:
+		if irb, ok := spec.(*databasev1.IndexRuleBinding); ok {
+			return irb.GetCreatedAt()
+		}
+	case schema.KindTopNAggregation:
+		if t, ok := spec.(*databasev1.TopNAggregation); ok {
+			return t.GetCreatedAt()
+		}
+	case schema.KindProperty:
+		if p, ok := spec.(*databasev1.Property); ok {
+			return p.GetCreatedAt()
+		}
+	case schema.KindNode, schema.KindMask:
+		// Node and Mask do not have a CreatedAt field.
+	}
+	return nil
+}
+
+// setCreatedAtOnSpec sets the created_at timestamp on a schema spec in-place.
+func setCreatedAtOnSpec(kind schema.Kind, spec proto.Message, ts *timestamppb.Timestamp) {
+	switch kind {
+	case schema.KindGroup:
+		if g, ok := spec.(*commonv1.Group); ok {
+			g.CreatedAt = ts
+		}
+	case schema.KindStream:
+		if s, ok := spec.(*databasev1.Stream); ok {
+			s.CreatedAt = ts
+		}
+	case schema.KindMeasure:
+		if m, ok := spec.(*databasev1.Measure); ok {
+			m.CreatedAt = ts
+		}
+	case schema.KindTrace:
+		if t, ok := spec.(*databasev1.Trace); ok {
+			t.CreatedAt = ts
+		}
+	case schema.KindIndexRule:
+		if ir, ok := spec.(*databasev1.IndexRule); ok {
+			ir.CreatedAt = ts
+		}
+	case schema.KindIndexRuleBinding:
+		if irb, ok := spec.(*databasev1.IndexRuleBinding); ok {
+			irb.CreatedAt = ts
+		}
+	case schema.KindTopNAggregation:
+		if t, ok := spec.(*databasev1.TopNAggregation); ok {
+			t.CreatedAt = ts
+		}
+	case schema.KindProperty:
+		if p, ok := spec.(*databasev1.Property); ok {
+			p.CreatedAt = ts
+		}
+	case schema.KindNode, schema.KindMask:
+		// Node and Mask do not have a CreatedAt field.
+	}
 }
 
 func getMetadataFromSpec(kind schema.Kind, spec proto.Message) (*commonv1.Metadata, error) {

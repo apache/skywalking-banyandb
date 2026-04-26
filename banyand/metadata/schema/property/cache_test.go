@@ -207,6 +207,61 @@ func TestSchemaCache_DeleteLastEntryRemovesKind(t *testing.T) {
 	assert.Empty(t, c.GetEntriesByKind(schema.KindStream))
 }
 
+// TestSchemaCache_TombstoneCap_EvictsOldestWhenFull verifies that Delete drops the
+// oldest tombstone (lowest deleteTime) once tombstoneIndex reaches maxTombstones,
+// so the index never grows beyond the cap.
+func TestSchemaCache_TombstoneCap_EvictsOldestWhenFull(t *testing.T) {
+	c := newSchemaCacheWithLimit(2)
+	c.Update("stream_g1/s1", &cacheEntry{group: "g1", name: "s1", latestUpdateAt: 10, kind: schema.KindStream})
+	c.Update("stream_g1/s2", &cacheEntry{group: "g1", name: "s2", latestUpdateAt: 20, kind: schema.KindStream})
+	c.Update("stream_g1/s3", &cacheEntry{group: "g1", name: "s3", latestUpdateAt: 30, kind: schema.KindStream})
+
+	require.True(t, c.Delete("stream_g1/s1", 100), "first delete should record a tombstone")
+	require.True(t, c.Delete("stream_g1/s2", 200), "second delete fills the cap")
+	require.True(t, c.Delete("stream_g1/s3", 300), "third delete must evict the oldest before recording")
+
+	assert.Len(t, c.tombstoneIndex, 2, "tombstone index must respect maxTombstones")
+	_, s1Tracked := c.tombstoneIndex["stream_g1/s1"]
+	assert.False(t, s1Tracked, "oldest tombstone (s1, deleteTime=100) must have been evicted")
+	_, s2Tracked := c.tombstoneIndex["stream_g1/s2"]
+	_, s3Tracked := c.tombstoneIndex["stream_g1/s3"]
+	assert.True(t, s2Tracked, "newer tombstones must be retained")
+	assert.True(t, s3Tracked, "newer tombstones must be retained")
+}
+
+// TestSchemaCache_TombstoneCap_Disabled_NoEviction verifies that maxTombstones=0
+// disables the cap entirely so the index grows without eviction.
+func TestSchemaCache_TombstoneCap_Disabled_NoEviction(t *testing.T) {
+	c := newSchemaCacheWithLimit(0)
+	for i := 0; i < 5; i++ {
+		propID := "stream_g1/s" + string(rune('a'+i))
+		c.Update(propID, &cacheEntry{group: "g1", name: "s", latestUpdateAt: int64(i + 1), kind: schema.KindStream})
+		require.True(t, c.Delete(propID, int64(100*(i+1))))
+	}
+	assert.Len(t, c.tombstoneIndex, 5, "with cap disabled all tombstones must persist")
+}
+
+// TestSchemaCache_TombstoneCap_RedeleteSameKey_NoEviction verifies that deleting an
+// already-tombstoned propID does not consume a slot — it updates the existing entry
+// rather than appending, so eviction does not fire.
+func TestSchemaCache_TombstoneCap_RedeleteSameKey_NoEviction(t *testing.T) {
+	c := newSchemaCacheWithLimit(2)
+	c.Update("stream_g1/s1", &cacheEntry{group: "g1", name: "s1", latestUpdateAt: 10, kind: schema.KindStream})
+	c.Update("stream_g1/s2", &cacheEntry{group: "g1", name: "s2", latestUpdateAt: 20, kind: schema.KindStream})
+
+	require.True(t, c.Delete("stream_g1/s1", 100))
+	require.True(t, c.Delete("stream_g1/s2", 200))
+
+	// Re-create then re-delete s1 — the tombstone slot is reused, not freshly allocated.
+	c.Update("stream_g1/s1", &cacheEntry{group: "g1", name: "s1", latestUpdateAt: 30, kind: schema.KindStream})
+	require.True(t, c.Delete("stream_g1/s1", 300))
+
+	assert.Len(t, c.tombstoneIndex, 2, "redelete of an existing tombstone must not evict")
+	_, s2Tracked := c.tombstoneIndex["stream_g1/s2"]
+	assert.True(t, s2Tracked, "s2 must be retained — eviction should not have fired")
+	assert.Equal(t, int64(300), c.tombstoneIndex["stream_g1/s1"], "s1 deleteTime must reflect the latest delete")
+}
+
 func TestSchemaCache_GetCachedKindsConsistent(t *testing.T) {
 	c := newSchemaCache()
 	c.Update("stream_g1/s1", &cacheEntry{group: "g1", name: "s1", latestUpdateAt: 10, kind: schema.KindStream})

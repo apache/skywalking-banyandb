@@ -19,6 +19,18 @@ Release Notes.
   - The `--namespace` CLI flag has been removed (it previously configured the etcd key prefix).
   - The `--node-discovery-mode` flag no longer accepts `etcd` (supported values: `none`, `dns`, `file`). 
   - The `--schema-registry-mode` flag only accepts `property`.
+- Schema consistency (Phase 1): introduce client-observable revision and propagation primitives. All gates are opt-in and zero-valued requests preserve prior behavior.
+  - Add `mod_revision` to Group / IndexRule / IndexRuleBinding / TopNAggregation Create and Update responses.
+  - Add `delete_time` to all `*ServiceDeleteResponse` messages so clients can observe tombstones.
+  - Add `created_at` to Stream / Measure / Trace / Property / IndexRule / IndexRuleBinding / TopNAggregation / Group; preserved across updates.
+  - Add `STATUS_SCHEMA_NOT_APPLIED` (10) for writes/queries whose `mod_revision` is ahead of the server cache.
+  - Add three-way write-path `ModRevision` gate on Stream and Measure write RPCs (`<` expired, `==` succeed, `>` not-applied, `0` skipped).
+  - Add per-group query-path gate via `QueryRequest.group_mod_revisions` and `QueryResponse.group_statuses` for Stream / Measure / Trace queries.
+  - Add automatic time-range clamp `max(time_range.start, schema.created_at)`; multi-group uses the maximum across queried groups; nil for pre-upgrade schemas is a no-op.
+  - Add `SchemaBarrierService` with `AwaitRevisionApplied`, `AwaitSchemaApplied`, `AwaitSchemaDeleted` (10 000-key cap, timeout-bounded, returns laggards on expiry).
+  - Add tombstone retention/GC (default 7 days, configurable via `--schema-server-tombstone-retention`) with a per-cache count cap to bound memory under bulk deletes.
+  - Reject `Create` with `updated_at <= tombstone.delete_time` to prevent replayed creates from overwriting newer deletes.
+  - Guard `pkg/schema/cache` against out-of-order `EventDelete` events; expose monotonic `LatestModRevision` watermark.
 
 ### Bug Fixes
 

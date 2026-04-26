@@ -444,11 +444,14 @@ func TestParsePropID(t *testing.T) {
 }
 
 func TestBuildDeleteRequest(t *testing.T) {
-	req := buildDeleteRequest(schema.KindMeasure, "g1", "m1")
+	deleteTime := int64(1_700_000_000_000_000_000)
+	req := buildDeleteRequest(schema.KindMeasure, "g1", "m1", deleteTime)
 	assert.Equal(t, schema.SchemaGroup, req.GetDelete().GetGroup())
 	assert.Equal(t, "measure", req.GetDelete().GetName())
 	assert.Equal(t, "measure_g1/m1", req.GetDelete().GetId())
 	assert.NotNil(t, req.GetUpdateAt())
+	assert.Equal(t, deleteTime, req.GetUpdateAt().AsTime().UnixNano(),
+		"UpdateAt must reflect the caller-supplied deleteTime so the persisted tombstone matches the returned value")
 }
 
 func TestNewMessageForKind_AllKinds(t *testing.T) {

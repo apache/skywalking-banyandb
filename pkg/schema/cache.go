@@ -39,7 +39,10 @@ import (
 	"github.com/apache/skywalking-banyandb/pkg/run"
 )
 
-var _ Resource = (*resourceSpec)(nil)
+var (
+	_ Resource           = (*resourceSpec)(nil)
+	_ RevisionRepository = (*schemaRepo)(nil)
+)
 
 type resourceSpec struct {
 	schema    ResourceSchema
@@ -87,20 +90,99 @@ type schemaRepo struct {
 	indexRuleMap           sync.Map
 	bindingForwardMap      sync.Map
 	bindingBackwardMap     sync.Map
+	latestModRevision      atomic.Int64
 	workerNum              int
 	resourceMutex          sync.Mutex
 	groupMux               sync.Mutex
 }
 
+// SendMetadataEvent applies the given event synchronously. When the downstream
+// caches (e.g. pkg/schema.schemaRepo.groupMap and resourceMap) must be coherent
+// before the caller returns — for example, when SchemaBarrierService delegates
+// through notifyHandlers → this handler → SendMetadataEvent — the caller relies
+// on the event being fully applied here. Only transient errors queue the event
+// for retry via the background worker; the success path does not touch the
+// channel.
 func (sr *schemaRepo) SendMetadataEvent(event MetadataEvent) {
 	if !sr.closer.AddSender() {
 		return
 	}
 	defer sr.closer.SenderDone()
-	select {
-	case sr.eventCh <- event:
-	case <-sr.closer.CloseNotify():
+	if err := sr.processEvent(event); err != nil && !errors.Is(err, schema.ErrClosed) {
+		select {
+		case <-sr.closer.CloseNotify():
+			return
+		default:
+		}
+		sr.l.Err(err).Interface("event", event).Msg("fail to handle the metadata event. retry...")
+		sr.metrics.totalErrs.Inc(1)
+		select {
+		case sr.eventCh <- event:
+		case <-sr.closer.CloseNotify():
+		}
 	}
+}
+
+// processEvent applies the event in-place, bumping latestModRevision on success
+// so the barrier's downstream-handler watermark catches up before notifyHandlers
+// returns to its caller.
+func (sr *schemaRepo) processEvent(evt MetadataEvent) error {
+	if e := sr.l.Debug(); e.Enabled() {
+		e.Interface("event", evt).Msg("received an event")
+	}
+	var err error
+	switch evt.Typ {
+	case EventAddOrUpdate:
+		switch evt.Kind {
+		case EventKindGroup:
+			_, err = sr.storeGroup(evt.Metadata.GetMetadata())
+			if errors.Is(err, schema.ErrGRPCResourceNotFound) {
+				err = nil
+			}
+		case EventKindResource:
+			err = sr.storeResource(evt.Metadata)
+		case EventKindIndexRule:
+			indexRule := evt.Metadata.(*databasev1.IndexRule)
+			sr.storeIndexRule(indexRule)
+		case EventKindIndexRuleBinding:
+			indexRuleBinding := evt.Metadata.(*databasev1.IndexRuleBinding)
+			sr.storeIndexRuleBinding(indexRuleBinding)
+		}
+	case EventDelete:
+		switch evt.Kind {
+		case EventKindGroup:
+			err = sr.deleteGroup(evt.Metadata.GetMetadata())
+		case EventKindResource:
+			sr.deleteResource(evt)
+		case EventKindIndexRule:
+			key := getKey(evt.Metadata.GetMetadata())
+			sr.indexRuleMap.Delete(key)
+		case EventKindIndexRuleBinding:
+			indexRuleBinding := evt.Metadata.(*databasev1.IndexRuleBinding)
+			col, _ := sr.bindingForwardMap.Load(getKey(&commonv1.Metadata{
+				Name:  indexRuleBinding.Subject.GetName(),
+				Group: indexRuleBinding.GetMetadata().GetGroup(),
+			}))
+			if col == nil {
+				break
+			}
+			tMap := col.(*sync.Map)
+			key := getKey(indexRuleBinding.GetMetadata())
+			tMap.Delete(key)
+			for i := range indexRuleBinding.Rules {
+				col, _ := sr.bindingBackwardMap.Load(getKey(&commonv1.Metadata{
+					Name:  indexRuleBinding.Rules[i],
+					Group: indexRuleBinding.GetMetadata().GetGroup(),
+				}))
+				if col == nil {
+					continue
+				}
+				tMap := col.(*sync.Map)
+				tMap.Delete(key)
+			}
+		}
+	}
+	return err
 }
 
 // StopCh implements Repository.
@@ -160,84 +242,25 @@ func (sr *schemaRepo) Watcher() {
 				}
 				sr.metrics.totalPanics.Inc(1)
 			}()
+			// The Watcher drains events retried via the channel after transient
+			// processing errors. The fast path runs synchronously in SendMetadataEvent
+			// so the barrier's downstream-handler watermark advances correctly.
 			for {
 				select {
 				case evt, more := <-sr.eventCh:
 					if !more {
 						return
 					}
-					if e := sr.l.Debug(); e.Enabled() {
-						e.Interface("event", evt).Msg("received an event")
-					}
-					var err error
-					switch evt.Typ {
-					case EventAddOrUpdate:
-						switch evt.Kind {
-						case EventKindGroup:
-							_, err = sr.storeGroup(evt.Metadata.GetMetadata())
-							if errors.As(err, schema.ErrGRPCResourceNotFound) {
-								err = nil
-							}
-						case EventKindResource:
-							err = sr.storeResource(evt.Metadata)
-						case EventKindIndexRule:
-							indexRule := evt.Metadata.(*databasev1.IndexRule)
-							if indexRule.GetMetadata().GetGroup() == "test-trace-group" {
-								sr.l.Info().Str("group", indexRule.GetMetadata().GetGroup()).Msg("index rule")
-							}
-							sr.storeIndexRule(indexRule)
-						case EventKindIndexRuleBinding:
-							indexRuleBinding := evt.Metadata.(*databasev1.IndexRuleBinding)
-							if indexRuleBinding.GetMetadata().GetGroup() == "test-trace-group" {
-								sr.l.Info().Str("group", indexRuleBinding.GetMetadata().GetGroup()).Msg("index rule binding")
-							}
-							sr.storeIndexRuleBinding(indexRuleBinding)
-						}
-					case EventDelete:
-						switch evt.Kind {
-						case EventKindGroup:
-							err = sr.deleteGroup(evt.Metadata.GetMetadata())
-						case EventKindResource:
-							sr.deleteResource(evt.Metadata.GetMetadata())
-						case EventKindIndexRule:
-							key := getKey(evt.Metadata.GetMetadata())
-							sr.indexRuleMap.Delete(key)
-						case EventKindIndexRuleBinding:
-							indexRuleBinding := evt.Metadata.(*databasev1.IndexRuleBinding)
-							col, _ := sr.bindingForwardMap.Load(getKey(&commonv1.Metadata{
-								Name:  indexRuleBinding.Subject.GetName(),
-								Group: indexRuleBinding.GetMetadata().GetGroup(),
-							}))
-							if col == nil {
-								break
-							}
-							tMap := col.(*sync.Map)
-							key := getKey(indexRuleBinding.GetMetadata())
-							tMap.Delete(key)
-							for i := range indexRuleBinding.Rules {
-								col, _ := sr.bindingBackwardMap.Load(getKey(&commonv1.Metadata{
-									Name:  indexRuleBinding.Rules[i],
-									Group: indexRuleBinding.GetMetadata().GetGroup(),
-								}))
-								if col == nil {
-									continue
-								}
-								tMap := col.(*sync.Map)
-								tMap.Delete(key)
-							}
-						}
-					}
-					if err != nil && !errors.Is(err, schema.ErrClosed) {
+					if retryErr := sr.processEvent(evt); retryErr != nil && !errors.Is(retryErr, schema.ErrClosed) {
 						select {
 						case <-sr.closer.CloseNotify():
 							return
 						default:
 						}
-						sr.l.Err(err).Interface("event", evt).Msg("fail to handle the metadata event. retry...")
-						sr.metrics.totalErrs.Inc(1)
+						sr.l.Err(retryErr).Interface("event", evt).Msg("retry processing failed, requeueing")
+						sr.metrics.totalRetries.Inc(1)
 						go func() {
 							sr.SendMetadataEvent(evt)
-							sr.metrics.totalRetries.Inc(1)
 						}()
 					}
 				case <-sr.closer.CloseNotify():
@@ -259,11 +282,17 @@ func (sr *schemaRepo) storeGroup(groupMeta *commonv1.Metadata) (*group, error) {
 		if err := g.init(name); err != nil {
 			return nil, err
 		}
+		if gs := g.GetSchema(); gs != nil {
+			sr.updateLatestModRevision(gs.GetMetadata().GetModRevision())
+		}
 		return g, nil
 	}
 	if !g.isInit() {
 		if err := g.init(name); err != nil {
 			return nil, err
+		}
+		if gs := g.GetSchema(); gs != nil {
+			sr.updateLatestModRevision(gs.GetMetadata().GetModRevision())
 		}
 		return g, nil
 	}
@@ -278,6 +307,7 @@ func (sr *schemaRepo) storeGroup(groupMeta *commonv1.Metadata) (*group, error) {
 		return g, nil
 	}
 	g.groupSchema.Store(groupSchema)
+	sr.updateLatestModRevision(groupSchema.GetMetadata().GetModRevision())
 	if proto.Equal(groupSchema, prevGroupSchema) {
 		return g, nil
 	}
@@ -365,6 +395,7 @@ func (sr *schemaRepo) storeResource(resourceSchema ResourceSchema) error {
 	sm.OnIndexUpdate(sr.indexRules(resourceSchema))
 	resource.delegated = sm
 	sr.resourceMap.Store(key, resource)
+	sr.updateLatestModRevision(resourceSchema.GetMetadata().GetModRevision())
 	return nil
 }
 
@@ -373,6 +404,7 @@ func (sr *schemaRepo) storeIndexRule(indexRule *databasev1.IndexRule) {
 	if prev, loaded := sr.indexRuleMap.LoadOrStore(key, indexRule); loaded {
 		if prev.(*databasev1.IndexRule).GetMetadata().ModRevision <= indexRule.GetMetadata().ModRevision {
 			sr.indexRuleMap.Store(key, indexRule)
+			sr.updateLatestModRevision(indexRule.GetMetadata().GetModRevision())
 			if col, _ := sr.bindingBackwardMap.Load(key); col != nil {
 				col.(*sync.Map).Range(func(_, value any) bool {
 					sr.updateIndex(value.(*databasev1.IndexRuleBinding))
@@ -381,6 +413,7 @@ func (sr *schemaRepo) storeIndexRule(indexRule *databasev1.IndexRule) {
 			}
 		}
 	} else {
+		sr.updateLatestModRevision(indexRule.GetMetadata().GetModRevision())
 		if col, _ := sr.bindingBackwardMap.Load(key); col != nil {
 			col.(*sync.Map).Range(func(_, value any) bool {
 				sr.updateIndex(value.(*databasev1.IndexRuleBinding))
@@ -425,6 +458,7 @@ func (sr *schemaRepo) storeIndexRuleBinding(indexRuleBinding *databasev1.IndexRu
 	if !changed {
 		return
 	}
+	sr.updateLatestModRevision(indexRuleBinding.GetMetadata().GetModRevision())
 	sr.updateIndex(indexRuleBinding)
 }
 
@@ -468,9 +502,72 @@ func getKey(metadata *commonv1.Metadata) string {
 	return path.Join(metadata.GetGroup(), metadata.GetName())
 }
 
-func (sr *schemaRepo) deleteResource(metadata *commonv1.Metadata) {
-	key := getKey(metadata)
+func (sr *schemaRepo) deleteResource(evt MetadataEvent) {
+	key := getKey(evt.Metadata.GetMetadata())
+	// Hold resourceMutex across the load/check/delete to keep the revision-guard atomic.
+	// storeResource takes the same lock, so a concurrent newer store cannot interleave
+	// between the staleness check and LoadAndDelete and have its entry wiped.
+	sr.resourceMutex.Lock()
+	defer sr.resourceMutex.Unlock()
+	if evt.DeleteRevision != 0 {
+		if v, ok := sr.resourceMap.Load(key); ok {
+			stored := v.(*resourceSpec)
+			if evt.DeleteRevision < stored.maxRevision() {
+				return
+			}
+		}
+	}
 	_, _ = sr.resourceMap.LoadAndDelete(key)
+}
+
+func (sr *schemaRepo) updateLatestModRevision(incoming int64) {
+	for {
+		cur := sr.latestModRevision.Load()
+		if incoming <= cur {
+			return
+		}
+		if sr.latestModRevision.CompareAndSwap(cur, incoming) {
+			return
+		}
+	}
+}
+
+// LatestModRevision returns the highest mod_revision seen across all stored kinds.
+func (sr *schemaRepo) LatestModRevision() int64 {
+	return sr.latestModRevision.Load()
+}
+
+// ResourceRevision returns the mod_revision for a stored resource and whether it was found.
+func (sr *schemaRepo) ResourceRevision(kind schema.Kind, groupName, name string) (int64, bool) {
+	key := path.Join(groupName, name)
+	switch kind {
+	case schema.KindStream, schema.KindMeasure, schema.KindTrace:
+		if v, ok := sr.resourceMap.Load(key); ok {
+			return v.(*resourceSpec).maxRevision(), true
+		}
+	case schema.KindIndexRule:
+		if v, ok := sr.indexRuleMap.Load(key); ok {
+			return v.(*databasev1.IndexRule).GetMetadata().GetModRevision(), true
+		}
+	case schema.KindGroup:
+		if v, ok := sr.groupMap.Load(name); ok {
+			grp := v.(*group)
+			if gs := grp.GetSchema(); gs != nil {
+				return gs.GetMetadata().GetModRevision(), true
+			}
+		}
+	case schema.KindIndexRuleBinding, schema.KindTopNAggregation,
+		schema.KindNode, schema.KindProperty, schema.KindMask:
+		// schemaRepo only caches resources, index rules, and groups; other kinds
+		// (bindings, top-n aggregations, nodes, properties, masks) have no entry here.
+	}
+	return 0, false
+}
+
+// IsAbsent returns true when the given resource is not present in the local cache.
+func (sr *schemaRepo) IsAbsent(kind schema.Kind, groupName, name string) bool {
+	_, ok := sr.ResourceRevision(kind, groupName, name)
+	return !ok
 }
 
 func (sr *schemaRepo) Close() {

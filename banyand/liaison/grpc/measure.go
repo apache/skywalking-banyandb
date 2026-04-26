@@ -25,6 +25,7 @@ import (
 	"github.com/pkg/errors"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
+	"google.golang.org/protobuf/types/known/timestamppb"
 
 	"github.com/apache/skywalking-banyandb/api/common"
 	"github.com/apache/skywalking-banyandb/api/data"
@@ -189,16 +190,32 @@ func (ms *measureService) validateWriteRequest(writeRequest *measurev1.WriteRequ
 	}
 
 	if metadata.ModRevision > 0 {
-		measureCache, existed := ms.entityRepo.getLocator(getID(metadata))
+		id := getID(metadata)
+		measureCache, existed := ms.entityRepo.getLocator(id)
 		if !existed {
 			ms.l.Error().Stringer("written", writeRequest).Msg("measure schema not found")
 			ms.sendReply(metadata, modelv1.Status_STATUS_NOT_FOUND, writeRequest.GetMessageId(), measure)
 			return modelv1.Status_STATUS_NOT_FOUND
 		}
-		if metadata.ModRevision != measureCache.ModRevision {
+		clientRev := metadata.ModRevision
+		cacheRev := measureCache.ModRevision
+		if clientRev < cacheRev {
 			ms.l.Error().Stringer("written", writeRequest).Msg("the measure schema is expired")
 			ms.sendReply(metadata, modelv1.Status_STATUS_EXPIRED_SCHEMA, writeRequest.GetMessageId(), measure)
 			return modelv1.Status_STATUS_EXPIRED_SCHEMA
+		}
+		if clientRev > cacheRev {
+			reached := awaitRevisionReached(func() int64 {
+				loc, ok := ms.entityRepo.getLocator(id)
+				if !ok {
+					return 0
+				}
+				return loc.ModRevision
+			}, clientRev, ms.maxWaitDuration)
+			if !reached {
+				ms.sendReply(metadata, modelv1.Status_STATUS_SCHEMA_NOT_APPLIED, writeRequest.GetMessageId(), measure)
+				return modelv1.Status_STATUS_SCHEMA_NOT_APPLIED
+			}
 		}
 	}
 
@@ -419,6 +436,44 @@ func (ms *measureService) Query(ctx context.Context, req *measurev1.QueryRequest
 			}
 		}()
 	}
+	gatedStatuses, shortCircuit := checkQueryGate(req.Groups, req.Name, req.GroupModRevisions,
+		func(name, group string) (int64, bool) {
+			loc, ok := ms.entityRepo.getLocator(identity{name: name, group: group})
+			return loc.ModRevision, ok
+		}, ms.maxWaitDuration)
+	if shortCircuit {
+		return &measurev1.QueryResponse{GroupStatuses: gatedStatuses}, nil
+	}
+	// Gate the clamp on the same opt-in trigger as the query gate (GroupModRevisions
+	// non-empty). Schema-aware clients that pass per-group revisions also accept
+	// pre-creation filtering; legacy clients that omit GroupModRevisions retain the
+	// pre-Step-1.6 behavior where data with timestamps preceding CreatedAt is still
+	// returned. This keeps backward compatibility for fixtures that write historical
+	// data into a freshly-created measure.
+	if req.TimeRange != nil && len(req.GroupModRevisions) > 0 {
+		createdAts := make([]time.Time, 0, len(req.Groups))
+		for _, group := range req.Groups {
+			measureEntity, measureOK := ms.entityRepo.getMeasure(identity{name: req.Name, group: group})
+			if measureOK && measureEntity.GetCreatedAt() != nil {
+				createdAts = append(createdAts, measureEntity.GetCreatedAt().AsTime())
+			}
+		}
+		endTime := time.Time{}
+		if req.TimeRange.GetEnd() != nil {
+			endTime = req.TimeRange.GetEnd().AsTime()
+		}
+		originalBegin := req.TimeRange.GetBegin().AsTime()
+		newBegin, rangeEmpty := clampTimeRangeBegin(originalBegin, endTime, createdAts)
+		if rangeEmpty {
+			if len(gatedStatuses) > 0 {
+				return &measurev1.QueryResponse{GroupStatuses: gatedStatuses}, nil
+			}
+			return emptyMeasureQueryResponse, nil
+		}
+		if newBegin != originalBegin {
+			req.TimeRange.Begin = timestamppb.New(newBegin)
+		}
+	}
 	feat, err := ms.broadcaster.Publish(ctx, data.TopicMeasureQuery, bus.NewMessage(bus.MessageID(now.UnixNano()), req))
 	if err != nil {
 		return nil, err
@@ -434,6 +489,9 @@ func (ms *measureService) Query(ctx context.Context, req *measurev1.QueryRequest
 	switch d := data.(type) {
 	case *measurev1.QueryResponse:
 		responseDataPointCount = len(d.DataPoints)
+		if len(gatedStatuses) > 0 {
+			d.GroupStatuses = gatedStatuses
+		}
 		return d, nil
 	case *common.Error:
 		return nil, errors.WithMessage(errQueryMsg, d.Error())

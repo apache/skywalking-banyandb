@@ -64,6 +64,10 @@ var _ schema.Registry = (*SchemaRegistry)(nil)
 
 var errNoActiveServers = fmt.Errorf("no active schema servers available")
 
+// DefaultTombstoneRetention is the default duration that tombstone entries are
+// retained in the client cache before the GC loop removes them.
+const DefaultTombstoneRetention = 7 * 24 * time.Hour
+
 // ClientConfig holds configuration for the property-based schema registry client.
 type ClientConfig struct {
 	OMR                 observability.MetricsRegistry
@@ -76,6 +80,15 @@ type ClientConfig struct {
 	WatchMaxBackoff     time.Duration
 	InitWaitTime        time.Duration
 	HealthCheckInterval time.Duration
+	// TombstoneRetention is how long tombstone entries are kept in the client cache
+	// before the GC loop purges them. Defaults to DefaultTombstoneRetention (7 days).
+	// Should match the schema server's tombstone-retention setting.
+	TombstoneRetention time.Duration
+	// MaxTombstoneEntries caps the in-memory tombstone index. Defaults to
+	// DefaultMaxTombstoneEntries (100k). When the cap is reached, the oldest
+	// tombstone is evicted to admit a new delete — defends against OOM under
+	// pathological churn that exceeds the GC interval.
+	MaxTombstoneEntries int
 	FullReconcileEvery  uint64
 	MaxRecvMsgSize      int
 	TLSEnabled          bool
@@ -120,6 +133,7 @@ type SchemaRegistry struct {
 	syncInterval       time.Duration
 	syncTimeout        time.Duration
 	watchMaxBackoff    time.Duration
+	tombstoneRetention time.Duration
 	fullReconcileEvery uint64
 	syncRound          uint64
 	mux                sync.RWMutex
@@ -174,17 +188,26 @@ func NewSchemaRegistryClient(cfg *ClientConfig) (*SchemaRegistry, error) {
 	if watchMaxBackoff == 0 {
 		watchMaxBackoff = defaultWatchMaxBackoff
 	}
+	tombstoneRetention := cfg.TombstoneRetention
+	if tombstoneRetention <= 0 {
+		tombstoneRetention = DefaultTombstoneRetention
+	}
+	maxTombstones := cfg.MaxTombstoneEntries
+	if maxTombstones <= 0 {
+		maxTombstones = DefaultMaxTombstoneEntries
+	}
 	reg := &SchemaRegistry{
 		connMgr:            connMgr,
 		closer:             run.NewCloser(1),
 		l:                  l,
-		cache:              newSchemaCache(),
+		cache:              newSchemaCacheWithLimit(maxTombstones),
 		caCertReloader:     caCertReloader,
 		handlers:           make(map[schema.Kind][]schema.EventHandler),
 		watchSessions:      make(map[string]*watchSession),
 		syncInterval:       syncInterval,
 		syncTimeout:        syncTimeout,
 		watchMaxBackoff:    watchMaxBackoff,
+		tombstoneRetention: tombstoneRetention,
 		fullReconcileEvery: fullReconcileEvery,
 	}
 	handler.registry = reg
@@ -355,11 +378,14 @@ func (r *SchemaRegistry) querySchemasFromClient(ctx context.Context,
 	return results, nil
 }
 
-func (r *SchemaRegistry) queryAndRepairSchemas(ctx context.Context,
+// collectSchemas queries all active nodes for the given property query and returns the best
+// schema per propID together with the set of nodes that responded. It does NOT repair
+// inconsistencies — call repairInconsistentNodes separately when repair is desired.
+func (r *SchemaRegistry) collectSchemas(ctx context.Context,
 	query *propertyv1.QueryRequest,
-) (map[string]*propInfo, error) {
-	propMap := make(map[string]*propInfo)
-	respondedNodes := make(map[string]bool)
+) (propMap map[string]*propInfo, respondedNodes map[string]bool, err error) {
+	propMap = make(map[string]*propInfo)
+	respondedNodes = make(map[string]bool)
 	var mu sync.Mutex
 	broadcastErr := r.broadcastAll(func(currentNode string, c *schemaClient) error {
 		schemas, queryErr := r.querySchemasFromClient(ctx, c.management, query)
@@ -391,10 +417,20 @@ func (r *SchemaRegistry) queryAndRepairSchemas(ctx context.Context,
 		}
 		return nil
 	})
-	r.repairInconsistentNodes(ctx, respondedNodes, propMap)
 	if broadcastErr != nil && len(propMap) == 0 {
-		return nil, broadcastErr
+		err = broadcastErr
 	}
+	return
+}
+
+func (r *SchemaRegistry) queryAndRepairSchemas(ctx context.Context,
+	query *propertyv1.QueryRequest,
+) (map[string]*propInfo, error) {
+	propMap, respondedNodes, collectErr := r.collectSchemas(ctx, query)
+	if collectErr != nil {
+		return nil, collectErr
+	}
+	r.repairInconsistentNodes(ctx, respondedNodes, propMap)
 	return propMap, nil
 }
 
@@ -468,8 +504,9 @@ func (r *SchemaRegistry) listSchemas(ctx context.Context, kind schema.Kind,
 	return result, nil
 }
 
-func (r *SchemaRegistry) broadcastDelete(ctx context.Context, kind schema.Kind, group, name string) (bool, error) {
-	req := buildDeleteRequest(kind, group, name)
+func (r *SchemaRegistry) broadcastDelete(ctx context.Context, kind schema.Kind, group, name string) (bool, int64, error) {
+	deleteTime := time.Now().UnixNano()
+	req := buildDeleteRequest(kind, group, name, deleteTime)
 	var found atomic.Bool
 	writeErr := r.broadcastAll(func(_ string, c *schemaClient) error {
 		resp, rpcErr := c.management.DeleteSchema(ctx, req)
@@ -481,7 +518,10 @@ func (r *SchemaRegistry) broadcastDelete(ctx context.Context, kind schema.Kind, 
 		}
 		return nil
 	})
-	return found.Load(), writeErr
+	if writeErr != nil {
+		return found.Load(), 0, writeErr
+	}
+	return found.Load(), deleteTime, nil
 }
 
 func getResource[T proto.Message](ctx context.Context, r *SchemaRegistry,
@@ -552,6 +592,43 @@ func (r *SchemaRegistry) validateGroup(ctx context.Context, kind schema.Kind, gr
 	}
 }
 
+// getSchemaWithDeleteTime returns the best stored property for (kind, group, name) together with
+// its delete time in unix nanoseconds (non-zero when the entry is a tombstone).
+// It does NOT trigger repairs so it is safe to call inside createResource before broadcastInsert.
+func (r *SchemaRegistry) getSchemaWithDeleteTime(ctx context.Context, kind schema.Kind, group, name string) (*propertyv1.Property, int64, error) {
+	query := buildSchemaQuery(kind, group, name, 0)
+	propMap, _, collectErr := r.collectSchemas(ctx, query)
+	if collectErr != nil {
+		return nil, 0, collectErr
+	}
+	propID := query.Ids[0]
+	info := propMap[propID]
+	if info == nil || info.best == nil {
+		return nil, 0, nil
+	}
+	return info.best.property, info.best.deleteTime, nil
+}
+
+// checkTombstoneInvariant rejects a Create when a tombstone exists for the same (group, name)
+// and spec.UpdatedAt <= tombstone.deleteTime.
+func (r *SchemaRegistry) checkTombstoneInvariant(ctx context.Context, kind schema.Kind, group, name string, spec proto.Message) error {
+	_, deleteTime, getErr := r.getSchemaWithDeleteTime(ctx, kind, group, name)
+	if getErr != nil {
+		return getErr
+	}
+	if deleteTime == 0 {
+		return nil
+	}
+	updatedAt, updErr := getUpdatedAtFromSpec(kind, spec)
+	if updErr != nil || updatedAt == nil {
+		return nil
+	}
+	if updatedAt.AsTime().UnixNano() <= deleteTime {
+		return status.Error(codes.InvalidArgument, "updated_at_before_tombstone")
+	}
+	return nil
+}
+
 func createResource[T proto.Message](ctx context.Context, r *SchemaRegistry,
 	kind schema.Kind, spec T,
 ) error {
@@ -561,6 +638,15 @@ func createResource[T proto.Message](ctx context.Context, r *SchemaRegistry,
 	}
 	if validateErr := r.validateGroup(ctx, kind, metadata.GetGroup()); validateErr != nil {
 		return validateErr
+	}
+	if tombstoneErr := r.checkTombstoneInvariant(ctx, kind, metadata.GetGroup(), metadata.GetName(), spec); tombstoneErr != nil {
+		return tombstoneErr
+	}
+	// Stamp created_at = UpdatedAt when not already set by the caller.
+	if getCreatedAtFromSpec(kind, spec) == nil {
+		if updatedAt, updErr := getUpdatedAtFromSpec(kind, spec); updErr == nil && updatedAt != nil {
+			setCreatedAtOnSpec(kind, spec, updatedAt)
+		}
 	}
 	prop, convErr := SchemaToProperty(kind, spec)
 	if convErr != nil {
@@ -598,6 +684,10 @@ func updateResource[T proto.Message](ctx context.Context, r *SchemaRegistry,
 		if validateErr := v(prev); validateErr != nil {
 			return validateErr
 		}
+	}
+	// Preserve created_at from the stored schema; the caller must not override it.
+	if prevCreatedAt := getCreatedAtFromSpec(kind, prev); prevCreatedAt != nil {
+		setCreatedAtOnSpec(kind, spec, prevCreatedAt)
 	}
 	if checker, checkerOk := schema.CheckerMap[kind]; checkerOk && checker(prev, spec) {
 		return nil
@@ -650,7 +740,7 @@ func (r *SchemaRegistry) UpdateStream(ctx context.Context, stream *databasev1.St
 }
 
 // DeleteStream deletes a stream schema.
-func (r *SchemaRegistry) DeleteStream(ctx context.Context, metadata *commonv1.Metadata) (bool, error) {
+func (r *SchemaRegistry) DeleteStream(ctx context.Context, metadata *commonv1.Metadata) (bool, int64, error) {
 	return r.broadcastDelete(ctx, schema.KindStream, metadata.GetGroup(), metadata.GetName())
 }
 
@@ -702,7 +792,7 @@ func (r *SchemaRegistry) UpdateMeasure(ctx context.Context, measure *databasev1.
 }
 
 // DeleteMeasure deletes a measure schema.
-func (r *SchemaRegistry) DeleteMeasure(ctx context.Context, metadata *commonv1.Metadata) (bool, error) {
+func (r *SchemaRegistry) DeleteMeasure(ctx context.Context, metadata *commonv1.Metadata) (bool, int64, error) {
 	return r.broadcastDelete(ctx, schema.KindMeasure, metadata.GetGroup(), metadata.GetName())
 }
 
@@ -759,7 +849,7 @@ func (r *SchemaRegistry) UpdateTrace(ctx context.Context, trace *databasev1.Trac
 }
 
 // DeleteTrace deletes a trace schema.
-func (r *SchemaRegistry) DeleteTrace(ctx context.Context, metadata *commonv1.Metadata) (bool, error) {
+func (r *SchemaRegistry) DeleteTrace(ctx context.Context, metadata *commonv1.Metadata) (bool, int64, error) {
 	return r.broadcastDelete(ctx, schema.KindTrace, metadata.GetGroup(), metadata.GetName())
 }
 
@@ -774,32 +864,32 @@ func (r *SchemaRegistry) ListGroup(ctx context.Context) ([]*commonv1.Group, erro
 }
 
 // CreateGroup creates a group schema.
-func (r *SchemaRegistry) CreateGroup(ctx context.Context, group *commonv1.Group) error {
+func (r *SchemaRegistry) CreateGroup(ctx context.Context, group *commonv1.Group) (int64, error) {
 	if validateErr := validate.Group(group); validateErr != nil {
-		return validateErr
+		return 0, validateErr
 	}
 	now := time.Now().UnixNano()
 	group.Metadata.ModRevision = now
 	group.UpdatedAt = timestamppb.Now()
-	return createResource(ctx, r, schema.KindGroup, group)
+	return now, createResource(ctx, r, schema.KindGroup, group)
 }
 
 // UpdateGroup updates a group schema.
-func (r *SchemaRegistry) UpdateGroup(ctx context.Context, group *commonv1.Group) error {
+func (r *SchemaRegistry) UpdateGroup(ctx context.Context, group *commonv1.Group) (int64, error) {
 	if validateErr := validate.Group(group); validateErr != nil {
-		return validateErr
+		return 0, validateErr
 	}
 	now := time.Now().UnixNano()
 	group.Metadata.ModRevision = now
 	group.UpdatedAt = timestamppb.Now()
-	return updateResource(ctx, r, schema.KindGroup, group)
+	return now, updateResource(ctx, r, schema.KindGroup, group)
 }
 
 // DeleteGroup deletes a group and all its resources.
-func (r *SchemaRegistry) DeleteGroup(ctx context.Context, group string) (bool, error) {
+func (r *SchemaRegistry) DeleteGroup(ctx context.Context, group string) (bool, int64, error) {
 	_, groupErr := r.GetGroup(ctx, group)
 	if groupErr != nil {
-		return false, fmt.Errorf("%s: %w", group, groupErr)
+		return false, 0, fmt.Errorf("%s: %w", group, groupErr)
 	}
 	var deleteErr error
 	for _, kind := range schema.AllKinds() {
@@ -816,17 +906,19 @@ func (r *SchemaRegistry) DeleteGroup(ctx context.Context, group string) (bool, e
 			if parsed.Name == "" {
 				continue
 			}
-			_, broadcastErr := r.broadcastDelete(ctx, kind, group, parsed.Name)
-			if broadcastErr != nil {
+			if _, _, broadcastErr := r.broadcastDelete(ctx, kind, group, parsed.Name); broadcastErr != nil {
 				deleteErr = multierr.Append(deleteErr, broadcastErr)
 			}
 		}
 	}
-	_, broadcastErr := r.broadcastDelete(ctx, schema.KindGroup, "", group)
+	_, deleteTime, broadcastErr := r.broadcastDelete(ctx, schema.KindGroup, "", group)
 	if broadcastErr != nil {
 		deleteErr = multierr.Append(deleteErr, broadcastErr)
 	}
-	return deleteErr == nil, deleteErr
+	if deleteErr != nil {
+		return false, 0, deleteErr
+	}
+	return true, deleteTime, nil
 }
 
 // GetIndexRule retrieves an index rule schema.
@@ -840,39 +932,39 @@ func (r *SchemaRegistry) ListIndexRule(ctx context.Context, opt schema.ListOpt) 
 }
 
 // CreateIndexRule creates an index rule schema.
-func (r *SchemaRegistry) CreateIndexRule(ctx context.Context, indexRule *databasev1.IndexRule) error {
+func (r *SchemaRegistry) CreateIndexRule(ctx context.Context, indexRule *databasev1.IndexRule) (int64, error) {
 	if indexRule.Metadata.Id == 0 {
 		indexRule.Metadata.Id = generateCRC32ID(indexRule.Metadata.Group, indexRule.Metadata.Name)
 	}
 	if validateErr := validate.IndexRule(indexRule); validateErr != nil {
-		return validateErr
+		return 0, validateErr
 	}
 	now := time.Now().UnixNano()
 	indexRule.Metadata.ModRevision = now
 	indexRule.UpdatedAt = timestamppb.Now()
-	return createResource(ctx, r, schema.KindIndexRule, indexRule)
+	return now, createResource(ctx, r, schema.KindIndexRule, indexRule)
 }
 
 // UpdateIndexRule updates an index rule schema.
-func (r *SchemaRegistry) UpdateIndexRule(ctx context.Context, indexRule *databasev1.IndexRule) error {
+func (r *SchemaRegistry) UpdateIndexRule(ctx context.Context, indexRule *databasev1.IndexRule) (int64, error) {
 	if indexRule.Metadata.Id == 0 {
 		existing, getErr := r.GetIndexRule(ctx, indexRule.Metadata)
 		if getErr != nil {
-			return getErr
+			return 0, getErr
 		}
 		indexRule.Metadata.Id = existing.Metadata.Id
 	}
 	if validateErr := validate.IndexRule(indexRule); validateErr != nil {
-		return validateErr
+		return 0, validateErr
 	}
 	now := time.Now().UnixNano()
 	indexRule.Metadata.ModRevision = now
 	indexRule.UpdatedAt = timestamppb.Now()
-	return updateResource(ctx, r, schema.KindIndexRule, indexRule)
+	return now, updateResource(ctx, r, schema.KindIndexRule, indexRule)
 }
 
 // DeleteIndexRule deletes an index rule schema.
-func (r *SchemaRegistry) DeleteIndexRule(ctx context.Context, metadata *commonv1.Metadata) (bool, error) {
+func (r *SchemaRegistry) DeleteIndexRule(ctx context.Context, metadata *commonv1.Metadata) (bool, int64, error) {
 	return r.broadcastDelete(ctx, schema.KindIndexRule, metadata.GetGroup(), metadata.GetName())
 }
 
@@ -887,29 +979,29 @@ func (r *SchemaRegistry) ListIndexRuleBinding(ctx context.Context, opt schema.Li
 }
 
 // CreateIndexRuleBinding creates an index rule binding schema.
-func (r *SchemaRegistry) CreateIndexRuleBinding(ctx context.Context, indexRuleBinding *databasev1.IndexRuleBinding) error {
+func (r *SchemaRegistry) CreateIndexRuleBinding(ctx context.Context, indexRuleBinding *databasev1.IndexRuleBinding) (int64, error) {
 	if validateErr := validate.IndexRuleBinding(indexRuleBinding); validateErr != nil {
-		return validateErr
+		return 0, validateErr
 	}
 	now := time.Now().UnixNano()
 	indexRuleBinding.Metadata.ModRevision = now
 	indexRuleBinding.UpdatedAt = timestamppb.Now()
-	return createResource(ctx, r, schema.KindIndexRuleBinding, indexRuleBinding)
+	return now, createResource(ctx, r, schema.KindIndexRuleBinding, indexRuleBinding)
 }
 
 // UpdateIndexRuleBinding updates an index rule binding schema.
-func (r *SchemaRegistry) UpdateIndexRuleBinding(ctx context.Context, indexRuleBinding *databasev1.IndexRuleBinding) error {
+func (r *SchemaRegistry) UpdateIndexRuleBinding(ctx context.Context, indexRuleBinding *databasev1.IndexRuleBinding) (int64, error) {
 	if validateErr := validate.IndexRuleBinding(indexRuleBinding); validateErr != nil {
-		return validateErr
+		return 0, validateErr
 	}
 	now := time.Now().UnixNano()
 	indexRuleBinding.Metadata.ModRevision = now
 	indexRuleBinding.UpdatedAt = timestamppb.Now()
-	return updateResource(ctx, r, schema.KindIndexRuleBinding, indexRuleBinding)
+	return now, updateResource(ctx, r, schema.KindIndexRuleBinding, indexRuleBinding)
 }
 
 // DeleteIndexRuleBinding deletes an index rule binding schema.
-func (r *SchemaRegistry) DeleteIndexRuleBinding(ctx context.Context, metadata *commonv1.Metadata) (bool, error) {
+func (r *SchemaRegistry) DeleteIndexRuleBinding(ctx context.Context, metadata *commonv1.Metadata) (bool, int64, error) {
 	return r.broadcastDelete(ctx, schema.KindIndexRuleBinding, metadata.GetGroup(), metadata.GetName())
 }
 
@@ -924,29 +1016,29 @@ func (r *SchemaRegistry) ListTopNAggregation(ctx context.Context, opt schema.Lis
 }
 
 // CreateTopNAggregation creates a TopN aggregation schema.
-func (r *SchemaRegistry) CreateTopNAggregation(ctx context.Context, topN *databasev1.TopNAggregation) error {
+func (r *SchemaRegistry) CreateTopNAggregation(ctx context.Context, topN *databasev1.TopNAggregation) (int64, error) {
 	if validateErr := validate.TopNAggregation(topN); validateErr != nil {
-		return validateErr
+		return 0, validateErr
 	}
 	now := time.Now().UnixNano()
 	topN.Metadata.ModRevision = now
 	topN.UpdatedAt = timestamppb.Now()
-	return createResource(ctx, r, schema.KindTopNAggregation, topN)
+	return now, createResource(ctx, r, schema.KindTopNAggregation, topN)
 }
 
 // UpdateTopNAggregation updates a TopN aggregation schema.
-func (r *SchemaRegistry) UpdateTopNAggregation(ctx context.Context, topN *databasev1.TopNAggregation) error {
+func (r *SchemaRegistry) UpdateTopNAggregation(ctx context.Context, topN *databasev1.TopNAggregation) (int64, error) {
 	if validateErr := validate.TopNAggregation(topN); validateErr != nil {
-		return validateErr
+		return 0, validateErr
 	}
 	now := time.Now().UnixNano()
 	topN.Metadata.ModRevision = now
 	topN.UpdatedAt = timestamppb.Now()
-	return updateResource(ctx, r, schema.KindTopNAggregation, topN)
+	return now, updateResource(ctx, r, schema.KindTopNAggregation, topN)
 }
 
 // DeleteTopNAggregation deletes a TopN aggregation schema.
-func (r *SchemaRegistry) DeleteTopNAggregation(ctx context.Context, metadata *commonv1.Metadata) (bool, error) {
+func (r *SchemaRegistry) DeleteTopNAggregation(ctx context.Context, metadata *commonv1.Metadata) (bool, int64, error) {
 	return r.broadcastDelete(ctx, schema.KindTopNAggregation, metadata.GetGroup(), metadata.GetName())
 }
 
@@ -981,7 +1073,7 @@ func (r *SchemaRegistry) UpdateProperty(ctx context.Context, property *databasev
 }
 
 // DeleteProperty deletes a property schema.
-func (r *SchemaRegistry) DeleteProperty(ctx context.Context, metadata *commonv1.Metadata) (bool, error) {
+func (r *SchemaRegistry) DeleteProperty(ctx context.Context, metadata *commonv1.Metadata) (bool, int64, error) {
 	return r.broadcastDelete(ctx, schema.KindProperty, metadata.GetGroup(), metadata.GetName())
 }
 
@@ -1064,6 +1156,7 @@ func (r *SchemaRegistry) Start(ctx context.Context) error {
 	// registered. This explicit replay ensures handlers see every entry.
 	r.notifyHandlersFromCache()
 	go r.syncLoop(ctx)
+	go r.tombstoneGCLoop(ctx)
 	return nil
 }
 
@@ -1090,6 +1183,44 @@ func (r *SchemaRegistry) syncLoop(ctx context.Context) {
 				r.performIncrementalSync(ctx)
 			}
 		}
+	}
+}
+
+func (r *SchemaRegistry) tombstoneGCLoop(ctx context.Context) {
+	if !r.closer.AddRunning() {
+		return
+	}
+	defer r.closer.Done()
+	// Aim to fire ~10 times per retention window so an expired tombstone is purged
+	// well within retention. Cap at 1 minute so production retention (e.g. 7d) still
+	// reacts within bounded wall-clock time. Floor at 100ms so very short retentions
+	// (e.g. integration tests at 2s) actually exercise the GC path without thrashing.
+	interval := r.tombstoneRetention / 10
+	if interval > time.Minute {
+		interval = time.Minute
+	}
+	if interval < 100*time.Millisecond {
+		interval = 100 * time.Millisecond
+	}
+	ticker := time.NewTicker(interval)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-r.closer.CloseNotify():
+			return
+		case <-ticker.C:
+			r.runTombstoneGC()
+		}
+	}
+}
+
+func (r *SchemaRegistry) runTombstoneGC() {
+	expired := r.cache.TombstoneEntries(r.tombstoneRetention)
+	for _, propID := range expired {
+		r.cache.RemoveTombstone(propID)
+		r.l.Debug().Str("propID", propID).Msg("tombstone GC: removed expired tombstone from cache")
 	}
 }
 
@@ -1293,6 +1424,9 @@ func (r *SchemaRegistry) handleWatchEvent(resp *schemav1.WatchSchemasResponse) {
 				return
 			}
 			r.notifyHandlers(kind, md, true)
+			// Advance the barrier watermark past the delete event's mod_revision after handlers
+			// have processed it, keeping the barrier coherent with downstream caches.
+			r.cache.AdvanceNotified(prop.GetMetadata().GetModRevision())
 		}
 	case schemav1.SchemaEventType_SCHEMA_EVENT_TYPE_REPLAY_DONE, schemav1.SchemaEventType_SCHEMA_EVENT_TYPE_UNSPECIFIED:
 		// handled by processWatchSession, not expected here
@@ -1471,6 +1605,7 @@ func (r *SchemaRegistry) processInitialResourceFromProperty(kind schema.Kind, pr
 		group:          parsed.Group,
 		name:           parsed.Name,
 		latestUpdateAt: parsed.UpdatedAt,
+		modRevision:    prop.GetMetadata().GetModRevision(),
 		kind:           kind,
 	}
 	updated := r.cache.Update(propID, entry)
@@ -1485,6 +1620,11 @@ func (r *SchemaRegistry) processInitialResourceFromProperty(kind schema.Kind, pr
 			},
 			Spec: spec,
 		}, false)
+		// Advance the barrier watermark only after every handler (groupRepo, entityRepo,
+		// pkg/schema.schemaRepo, etc.) has been notified. Without this gate, the barrier
+		// could return applied=true while downstream caches still lag, letting a client
+		// issue a query that hits "group not found".
+		r.cache.AdvanceNotified(entry.modRevision)
 	}
 }
 
@@ -1500,6 +1640,9 @@ func (r *SchemaRegistry) handleDeletion(kind schema.Kind, propID string, entry *
 			},
 			Spec: entry.spec,
 		}, true)
+		// Advance the barrier watermark past the deleted entry's mod_revision so callers
+		// awaiting that revision see the delete once handlers have processed it.
+		r.cache.AdvanceNotified(entry.modRevision)
 	}
 }
 
@@ -1521,6 +1664,7 @@ func (r *SchemaRegistry) notifyHandlers(kind schema.Kind, md schema.Metadata, is
 func (r *SchemaRegistry) notifyHandlersFromCache() {
 	entries := r.cache.GetAllEntries()
 	r.l.Debug().Int("entryCount", len(entries)).Msg("notifyHandlersFromCache: replaying cached entries to handlers")
+	var maxRev int64
 	for _, entry := range entries {
 		r.notifyHandlers(entry.kind, schema.Metadata{
 			TypeMeta: schema.TypeMeta{
@@ -1530,12 +1674,50 @@ func (r *SchemaRegistry) notifyHandlersFromCache() {
 			},
 			Spec: entry.spec,
 		}, false)
+		if entry.modRevision > maxRev {
+			maxRev = entry.modRevision
+		}
+	}
+	// Advance the barrier watermark to cover every replayed entry. Without this, a server
+	// restart that hydrates the cache from the property store before handlers register
+	// leaves notifiedModRevision at zero — AwaitRevisionApplied(R) would block for any
+	// pre-restart revision even though handlers have processed it.
+	if maxRev > 0 {
+		r.cache.AdvanceNotified(maxRev)
 	}
 }
 
 // ActiveNodeNames returns the names of all active schema server nodes.
 func (r *SchemaRegistry) ActiveNodeNames() []string {
 	return r.connMgr.ActiveNames()
+}
+
+// GetMaxModRevision returns the maximum modRevision across all cached entries.
+func (r *SchemaRegistry) GetMaxModRevision() int64 {
+	return r.cache.GetMaxModRevision()
+}
+
+// GetKeyModRevision returns the modRevision for the given propID.
+// The second return value is false when the propID is not in the live-entry map.
+func (r *SchemaRegistry) GetKeyModRevision(propID string) (int64, bool) {
+	return r.cache.GetKeyModRevision(propID)
+}
+
+// LatestModRevision returns the highest modRevision seen across all cached entries.
+func (r *SchemaRegistry) LatestModRevision() int64 {
+	return r.cache.GetMaxModRevision()
+}
+
+// ResourceRevision returns the modRevision for the cached entry matching (kind, group, name).
+// The second return value is false when no such entry is present in the local cache.
+func (r *SchemaRegistry) ResourceRevision(kind schema.Kind, group, name string) (int64, bool) {
+	return r.cache.GetModRevisionByKey(kind, group, name)
+}
+
+// IsAbsent returns true when the given (kind, group, name) triple is not present in the local cache.
+func (r *SchemaRegistry) IsAbsent(kind schema.Kind, group, name string) bool {
+	_, found := r.cache.GetModRevisionByKey(kind, group, name)
+	return !found
 }
 
 // Close stops all watchers and gracefully stops ConnManager.

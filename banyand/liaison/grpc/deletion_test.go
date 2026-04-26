@@ -63,16 +63,16 @@ func (s *stubIndexRuleBinding) ListIndexRuleBinding(_ context.Context, _ schema.
 	return nil, nil
 }
 
-func (s *stubIndexRuleBinding) CreateIndexRuleBinding(_ context.Context, _ *databasev1.IndexRuleBinding) error {
-	return nil
+func (s *stubIndexRuleBinding) CreateIndexRuleBinding(_ context.Context, _ *databasev1.IndexRuleBinding) (int64, error) {
+	return 0, nil
 }
 
-func (s *stubIndexRuleBinding) UpdateIndexRuleBinding(_ context.Context, _ *databasev1.IndexRuleBinding) error {
-	return nil
+func (s *stubIndexRuleBinding) UpdateIndexRuleBinding(_ context.Context, _ *databasev1.IndexRuleBinding) (int64, error) {
+	return 0, nil
 }
 
-func (s *stubIndexRuleBinding) DeleteIndexRuleBinding(_ context.Context, _ *commonv1.Metadata) (bool, error) {
-	return true, nil
+func (s *stubIndexRuleBinding) DeleteIndexRuleBinding(_ context.Context, _ *commonv1.Metadata) (bool, int64, error) {
+	return true, 0, nil
 }
 
 // stubIndexRule implements schema.IndexRule returning empty results.
@@ -86,16 +86,16 @@ func (s *stubIndexRule) ListIndexRule(_ context.Context, _ schema.ListOpt) ([]*d
 	return nil, nil
 }
 
-func (s *stubIndexRule) CreateIndexRule(_ context.Context, _ *databasev1.IndexRule) error {
-	return nil
+func (s *stubIndexRule) CreateIndexRule(_ context.Context, _ *databasev1.IndexRule) (int64, error) {
+	return 0, nil
 }
 
-func (s *stubIndexRule) UpdateIndexRule(_ context.Context, _ *databasev1.IndexRule) error {
-	return nil
+func (s *stubIndexRule) UpdateIndexRule(_ context.Context, _ *databasev1.IndexRule) (int64, error) {
+	return 0, nil
 }
 
-func (s *stubIndexRule) DeleteIndexRule(_ context.Context, _ *commonv1.Metadata) (bool, error) {
-	return true, nil
+func (s *stubIndexRule) DeleteIndexRule(_ context.Context, _ *commonv1.Metadata) (bool, int64, error) {
+	return true, 0, nil
 }
 
 func TestHasNonEmptyResources(t *testing.T) {
@@ -223,7 +223,7 @@ func TestDeletion(t *testing.T) {
 		}, nil)
 		mockRepo.EXPECT().DropGroup(gomock.Any(), commonv1.Catalog_CATALOG_STREAM, group).Return(nil)
 		mockGroup.EXPECT().DeleteGroup(gomock.Any(), group).DoAndReturn(
-			func(_ context.Context, g string) (bool, error) {
+			func(_ context.Context, g string) (bool, int64, error) {
 				go func() {
 					time.Sleep(10 * time.Millisecond)
 					gr.OnDelete(schema.Metadata{
@@ -235,7 +235,7 @@ func TestDeletion(t *testing.T) {
 						},
 					})
 				}()
-				return true, nil
+				return true, 0, nil
 			},
 		)
 		mockRepo.EXPECT().GroupRegistry().Return(mockGroup).Times(2)

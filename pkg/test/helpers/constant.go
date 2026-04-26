@@ -33,8 +33,9 @@ import (
 
 // SharedContext is the context shared between test cases in the integration testing.
 type SharedContext struct {
-	Connection *grpclib.ClientConn
 	BaseTime   time.Time
+	Connection *grpclib.ClientConn
+	Mode       string
 }
 
 // Args is a wrapper seals all necessary info for table specs.

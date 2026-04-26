@@ -82,7 +82,7 @@ func (m *groupDeletionTaskManager) initPropertyStorage(ctx context.Context) erro
 		if !errors.Is(getGroupErr, schema.ErrGRPCResourceNotFound) {
 			return fmt.Errorf("failed to get internal deletion task group: %w", getGroupErr)
 		}
-		if createErr := m.schemaRegistry.GroupRegistry().CreateGroup(ctx, group); createErr != nil {
+		if _, createErr := m.schemaRegistry.GroupRegistry().CreateGroup(ctx, group); createErr != nil {
 			return fmt.Errorf("failed to create internal deletion task group: %w", createErr)
 		}
 	}
@@ -241,7 +241,7 @@ func (m *groupDeletionTaskManager) deleteIndexRuleBindings(
 	}
 	task.TotalCounts["index_rule_binding"] = int32(len(bindings))
 	for _, binding := range bindings {
-		if _, deleteErr := m.schemaRegistry.IndexRuleBindingRegistry().DeleteIndexRuleBinding(ctx, binding.GetMetadata()); deleteErr != nil {
+		if _, _, deleteErr := m.schemaRegistry.IndexRuleBindingRegistry().DeleteIndexRuleBinding(ctx, binding.GetMetadata()); deleteErr != nil {
 			return fmt.Errorf("index rule binding %s: %w", binding.GetMetadata().GetName(), deleteErr)
 		}
 	}
@@ -258,7 +258,7 @@ func (m *groupDeletionTaskManager) deleteIndexRules(
 	}
 	task.TotalCounts["index_rule"] = int32(len(indexRules))
 	for _, rule := range indexRules {
-		if _, deleteErr := m.schemaRegistry.IndexRuleRegistry().DeleteIndexRule(ctx, rule.GetMetadata()); deleteErr != nil {
+		if _, _, deleteErr := m.schemaRegistry.IndexRuleRegistry().DeleteIndexRule(ctx, rule.GetMetadata()); deleteErr != nil {
 			return fmt.Errorf("index rule %s: %w", rule.GetMetadata().GetName(), deleteErr)
 		}
 	}
@@ -275,7 +275,7 @@ func (m *groupDeletionTaskManager) deleteProperties(
 	}
 	task.TotalCounts["property"] = int32(len(properties))
 	for _, prop := range properties {
-		if _, deleteErr := m.schemaRegistry.PropertyRegistry().DeleteProperty(ctx, prop.GetMetadata()); deleteErr != nil {
+		if _, _, deleteErr := m.schemaRegistry.PropertyRegistry().DeleteProperty(ctx, prop.GetMetadata()); deleteErr != nil {
 			return fmt.Errorf("property %s: %w", prop.GetMetadata().GetName(), deleteErr)
 		}
 	}
@@ -292,7 +292,7 @@ func (m *groupDeletionTaskManager) deleteStreams(
 	}
 	task.TotalCounts["stream"] = int32(len(streams))
 	for _, stream := range streams {
-		if _, deleteErr := m.schemaRegistry.StreamRegistry().DeleteStream(ctx, stream.GetMetadata()); deleteErr != nil {
+		if _, _, deleteErr := m.schemaRegistry.StreamRegistry().DeleteStream(ctx, stream.GetMetadata()); deleteErr != nil {
 			return fmt.Errorf("stream %s: %w", stream.GetMetadata().GetName(), deleteErr)
 		}
 	}
@@ -309,7 +309,7 @@ func (m *groupDeletionTaskManager) deleteMeasures(
 	}
 	task.TotalCounts["measure"] = int32(len(measures))
 	for _, measure := range measures {
-		if _, deleteErr := m.schemaRegistry.MeasureRegistry().DeleteMeasure(ctx, measure.GetMetadata()); deleteErr != nil {
+		if _, _, deleteErr := m.schemaRegistry.MeasureRegistry().DeleteMeasure(ctx, measure.GetMetadata()); deleteErr != nil {
 			return fmt.Errorf("measure %s: %w", measure.GetMetadata().GetName(), deleteErr)
 		}
 	}
@@ -326,7 +326,7 @@ func (m *groupDeletionTaskManager) deleteTraces(
 	}
 	task.TotalCounts["trace"] = int32(len(traces))
 	for _, trace := range traces {
-		if _, deleteErr := m.schemaRegistry.TraceRegistry().DeleteTrace(ctx, trace.GetMetadata()); deleteErr != nil {
+		if _, _, deleteErr := m.schemaRegistry.TraceRegistry().DeleteTrace(ctx, trace.GetMetadata()); deleteErr != nil {
 			return fmt.Errorf("trace %s: %w", trace.GetMetadata().GetName(), deleteErr)
 		}
 	}
@@ -343,7 +343,7 @@ func (m *groupDeletionTaskManager) deleteTopNAggregations(
 	}
 	task.TotalCounts["topn_aggregation"] = int32(len(topNAggs))
 	for _, agg := range topNAggs {
-		if _, deleteErr := m.schemaRegistry.TopNAggregationRegistry().DeleteTopNAggregation(ctx, agg.GetMetadata()); deleteErr != nil {
+		if _, _, deleteErr := m.schemaRegistry.TopNAggregationRegistry().DeleteTopNAggregation(ctx, agg.GetMetadata()); deleteErr != nil {
 			return fmt.Errorf("topN aggregation %s: %w", agg.GetMetadata().GetName(), deleteErr)
 		}
 	}
@@ -352,7 +352,7 @@ func (m *groupDeletionTaskManager) deleteTopNAggregations(
 }
 
 func (m *groupDeletionTaskManager) deleteGroup(ctx context.Context, group string) error {
-	_, deleteErr := m.schemaRegistry.GroupRegistry().DeleteGroup(ctx, group)
+	_, _, deleteErr := m.schemaRegistry.GroupRegistry().DeleteGroup(ctx, group)
 	if deleteErr != nil && !errors.Is(deleteErr, schema.ErrGRPCResourceNotFound) {
 		return fmt.Errorf("failed to delete group %s: %w", group, deleteErr)
 	}

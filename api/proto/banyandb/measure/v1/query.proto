@@ -22,6 +22,7 @@ package banyandb.measure.v1;
 import "banyandb/common/v1/trace.proto";
 import "banyandb/model/v1/common.proto";
 import "banyandb/model/v1/query.proto";
+import "banyandb/model/v1/write.proto";
 import "google/protobuf/timestamp.proto";
 import "validate/validate.proto";
 
@@ -53,6 +54,9 @@ message QueryResponse {
   repeated DataPoint data_points = 1;
   // trace contains the trace information of the query when trace is enabled
   common.v1.Trace trace = 2;
+  // group_statuses reports the per-group gate outcome. Populated even when the query
+  // short-circuits because any group failed the gate.
+  map<string, model.v1.Status> group_statuses = 50;
 }
 
 // InternalDataPoint wraps DataPoint with shard information for internal use.
@@ -142,4 +146,8 @@ message QueryRequest {
   repeated string stages = 14;
   // rewrite_agg_top_n_result will rewrite agg result to raw data
   bool rewrite_agg_top_n_result = 15;
+  // group_mod_revisions gates the query per group. Keys match entries in `groups`;
+  // values are the client's known mod_revision for that group. Empty map or value 0
+  // means "don't gate". A group not listed in the map is not gated.
+  map<string, int64> group_mod_revisions = 50;
 }

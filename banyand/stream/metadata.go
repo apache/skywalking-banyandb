@@ -204,10 +204,12 @@ func (sr *schemaRepo) OnDelete(metadata schema.Metadata) {
 			Metadata: g,
 		})
 	case schema.KindStream:
+		streamSpec := metadata.Spec.(*databasev1.Stream)
 		sr.SendMetadataEvent(resourceSchema.MetadataEvent{
-			Typ:      resourceSchema.EventDelete,
-			Kind:     resourceSchema.EventKindResource,
-			Metadata: metadata.Spec.(*databasev1.Stream),
+			Typ:            resourceSchema.EventDelete,
+			Kind:           resourceSchema.EventKindResource,
+			DeleteRevision: streamSpec.GetMetadata().GetModRevision(),
+			Metadata:       streamSpec,
 		})
 	case schema.KindIndexRuleBinding:
 		if binding, ok := metadata.Spec.(*databasev1.IndexRuleBinding); ok {
