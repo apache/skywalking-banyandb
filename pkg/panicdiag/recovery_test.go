@@ -109,8 +109,8 @@ func TestWithRecoveryRecoversAndWritesArtifacts(t *testing.T) {
 		if result.ArtifactDir == "" {
 			t.Fatal("expected artifact dir")
 		}
-		if _, err := os.Stat(filepath.Join(result.ArtifactDir, panicRecordFileName)); err != nil {
-			t.Fatalf("missing panic record file: %v", err)
+		if _, err := os.Stat(filepath.Join(result.ArtifactDir, panicRecordFileName)); !os.IsNotExist(err) {
+			t.Fatalf("panic record file should not be written: %v", err)
 		}
 		if _, err := os.Stat(filepath.Join(result.ArtifactDir, crashTextFileName)); err != nil {
 			t.Fatalf("missing crash summary file: %v", err)
@@ -166,16 +166,6 @@ func TestWithRecoveryWritesStateDump(t *testing.T) {
 	}
 	if !strings.Contains(string(data), `"pod": "banyand-0"`) {
 		t.Fatalf("unexpected deep dump content: %s", string(data))
-	}
-	if result.Record.StateDump.SpewPath == "" {
-		t.Fatal("expected spew dump path to be set")
-	}
-	spewData, spewErr := os.ReadFile(result.Record.StateDump.SpewPath)
-	if spewErr != nil {
-		t.Fatalf("read spew dump: %v", spewErr)
-	}
-	if !strings.Contains(string(spewData), "banyand-0") {
-		t.Fatalf("unexpected spew dump content: %s", string(spewData))
 	}
 }
 

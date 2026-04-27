@@ -31,10 +31,15 @@ func writeMinimalArtifact(t *testing.T, rootDir, name string) {
 	if mkdirErr := os.MkdirAll(artifactDir, 0o755); mkdirErr != nil {
 		t.Fatalf("create artifact dir: %v", mkdirErr)
 	}
-	record := PanicRecord{
-		OccurredAt: time.Now().UTC(),
-		Component:  "test",
-		PanicValue: "boom",
+	if writeErr := os.WriteFile(filepath.Join(artifactDir, crashTextFileName), []byte("panic\n"), 0o600); writeErr != nil {
+		t.Fatalf("write crash text: %v", writeErr)
+	}
+}
+
+func writeLegacyArtifact(t *testing.T, artifactDir string, record PanicRecord) {
+	t.Helper()
+	if mkdirErr := os.MkdirAll(artifactDir, 0o755); mkdirErr != nil {
+		t.Fatalf("create artifact dir: %v", mkdirErr)
 	}
 	recordData, marshalErr := json.Marshal(record)
 	if marshalErr != nil {
@@ -42,6 +47,9 @@ func writeMinimalArtifact(t *testing.T, rootDir, name string) {
 	}
 	if writeErr := os.WriteFile(filepath.Join(artifactDir, panicRecordFileName), append(recordData, '\n'), 0o600); writeErr != nil {
 		t.Fatalf("write panic record: %v", writeErr)
+	}
+	if writeErr := os.WriteFile(filepath.Join(artifactDir, crashTextFileName), []byte("panic\n"), 0o600); writeErr != nil {
+		t.Fatalf("write crash text: %v", writeErr)
 	}
 }
 
@@ -110,7 +118,7 @@ func TestPruneArtifactsIgnoresNonArtifactDirs(t *testing.T) {
 	t.Helper()
 
 	rootDir := t.TempDir()
-	// Non-artifact dir (no panic.json).
+	// Non-artifact dir (no crash.txt).
 	if mkdirErr := os.MkdirAll(filepath.Join(rootDir, "not-an-artifact"), 0o755); mkdirErr != nil {
 		t.Fatalf("create non-artifact dir: %v", mkdirErr)
 	}
@@ -136,9 +144,6 @@ func TestListCollections(t *testing.T) {
 
 	rootDir := t.TempDir()
 	artifactDir := filepath.Join(rootDir, "20260413T120000.000000000Z-measure-1234")
-	if err := os.MkdirAll(artifactDir, 0o755); err != nil {
-		t.Fatalf("create artifact dir: %v", err)
-	}
 	record := PanicRecord{
 		OccurredAt:     time.Date(2026, time.April, 13, 12, 0, 0, 0, time.UTC),
 		Component:      "measure",
@@ -146,16 +151,7 @@ func TestListCollections(t *testing.T) {
 		Recovered:      true,
 		GoroutineStack: "stack",
 	}
-	recordData, err := json.Marshal(record)
-	if err != nil {
-		t.Fatalf("marshal panic record: %v", err)
-	}
-	if writeErr := os.WriteFile(filepath.Join(artifactDir, panicRecordFileName), append(recordData, '\n'), 0o600); writeErr != nil {
-		t.Fatalf("write panic record: %v", writeErr)
-	}
-	if writeErr := os.WriteFile(filepath.Join(artifactDir, crashTextFileName), []byte("panic\n"), 0o600); writeErr != nil {
-		t.Fatalf("write crash text: %v", writeErr)
-	}
+	writeLegacyArtifact(t, artifactDir, record)
 
 	collections, err := ListCollections(rootDir)
 	if err != nil {
@@ -168,6 +164,30 @@ func TestListCollections(t *testing.T) {
 		t.Fatalf("artifact dir mismatch: got %s want %s", collections[0].ArtifactDir, filepath.Base(artifactDir))
 	}
 	if collections[0].Record == nil || collections[0].Record.Component != "measure" {
+		t.Fatalf("unexpected record: %#v", collections[0].Record)
+	}
+}
+
+func TestListCollectionsWithoutPanicRecord(t *testing.T) {
+	t.Helper()
+
+	rootDir := t.TempDir()
+	artifactDir := filepath.Join(rootDir, "20260413T120000.000000000Z-measure-1234")
+	if mkdirErr := os.MkdirAll(artifactDir, 0o755); mkdirErr != nil {
+		t.Fatalf("create artifact dir: %v", mkdirErr)
+	}
+	if writeErr := os.WriteFile(filepath.Join(artifactDir, crashTextFileName), []byte("panic\n"), 0o600); writeErr != nil {
+		t.Fatalf("write crash text: %v", writeErr)
+	}
+
+	collections, err := ListCollections(rootDir)
+	if err != nil {
+		t.Fatalf("list collections: %v", err)
+	}
+	if len(collections) != 1 {
+		t.Fatalf("collection count mismatch: got %d want 1", len(collections))
+	}
+	if collections[0].Record != nil {
 		t.Fatalf("unexpected record: %#v", collections[0].Record)
 	}
 }

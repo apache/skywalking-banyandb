@@ -75,7 +75,6 @@ type Breadcrumb struct {
 type StateDumpStatus struct {
 	Path      string `json:"path,omitempty"`
 	Error     string `json:"error,omitempty"`
-	SpewPath  string `json:"spewPath,omitempty"`
 	Truncated bool   `json:"truncated,omitempty"`
 }
 

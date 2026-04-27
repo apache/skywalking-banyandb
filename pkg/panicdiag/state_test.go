@@ -45,59 +45,6 @@ func TestBoundedStateWriterWriteJSON(t *testing.T) {
 	}
 }
 
-// privateState has unexported fields to verify that go-spew reflects them.
-type privateState struct {
-	name    string
-	counter int
-}
-
-func TestBoundedSpewWriterWriteSpew(t *testing.T) {
-	t.Helper()
-
-	path := filepath.Join(t.TempDir(), deepDumpSpewFileName)
-	state := &privateState{name: "worker-1", counter: 42}
-	truncated, err := NewBoundedSpewWriter().WriteSpew(path, state, 1024)
-	if err != nil {
-		t.Fatalf("write spew state dump: %v", err)
-	}
-	if truncated {
-		t.Fatal("state dump should not be truncated")
-	}
-
-	data, err := os.ReadFile(path)
-	if err != nil {
-		t.Fatalf("read state dump: %v", err)
-	}
-	dump := string(data)
-	if !strings.Contains(dump, "worker-1") {
-		t.Fatalf("expected unexported 'name' in spew dump, got: %s", dump)
-	}
-	if !strings.Contains(dump, "42") {
-		t.Fatalf("expected unexported 'counter' in spew dump, got: %s", dump)
-	}
-}
-
-func TestBoundedSpewWriterWriteSpewLimitExceeded(t *testing.T) {
-	t.Helper()
-
-	path := filepath.Join(t.TempDir(), deepDumpSpewFileName)
-	truncated, err := NewBoundedSpewWriter().WriteSpew(path, strings.Repeat("x", 256), 32)
-	if err != nil {
-		t.Fatalf("unexpected error when truncating spew dump: %v", err)
-	}
-	if !truncated {
-		t.Fatal("expected truncated flag when limit exceeded")
-	}
-
-	data, err := os.ReadFile(path)
-	if err != nil {
-		t.Fatalf("read truncated state dump: %v", err)
-	}
-	if int64(len(data)) > 32 {
-		t.Fatalf("expected at most 32 bytes written, got %d", len(data))
-	}
-}
-
 func TestBoundedStateWriterWriteJSONLimitExceeded(t *testing.T) {
 	t.Helper()
 

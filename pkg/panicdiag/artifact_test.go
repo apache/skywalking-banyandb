@@ -18,7 +18,6 @@
 package panicdiag
 
 import (
-	"encoding/json"
 	"os"
 	"path/filepath"
 	"strings"
@@ -60,20 +59,8 @@ func TestArtifactWriterWrite(t *testing.T) {
 	}
 
 	recordPath := filepath.Join(artifactDir, panicRecordFileName)
-	recordData, err := os.ReadFile(recordPath)
-	if err != nil {
-		t.Fatalf("read panic record: %v", err)
-	}
-
-	var decoded PanicRecord
-	if unmarshalErr := json.Unmarshal(recordData, &decoded); unmarshalErr != nil {
-		t.Fatalf("unmarshal panic record: %v", unmarshalErr)
-	}
-	if decoded.Component != record.Component {
-		t.Fatalf("component mismatch: got %s want %s", decoded.Component, record.Component)
-	}
-	if decoded.PanicValue != record.PanicValue {
-		t.Fatalf("panic value mismatch: got %s want %s", decoded.PanicValue, record.PanicValue)
+	if _, statErr := os.Stat(recordPath); !os.IsNotExist(statErr) {
+		t.Fatalf("panic record should not be written: %v", statErr)
 	}
 
 	summaryPath := filepath.Join(artifactDir, crashTextFileName)

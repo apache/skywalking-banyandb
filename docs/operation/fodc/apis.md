@@ -188,18 +188,18 @@ Records are deduplicated by agent and artifact directory across requests.
 		"role": "ROLE_DATA",
 		"source_endpoint": "file:///crash",
 		"artifact_dir": "20260420T095930.000000000Z-watchdog-1234",
-		"files": ["crash.txt", "panic.json", "deep-dump.json", "deep-dump.spew"]
+		"files": ["crash.txt", "deep-dump.json"]
 	}
 ]
 ```
 
 **Field notes**
 
-- `panic_record` is omitted when no structured panic record was captured (e.g. bare runtime crash with only a text dump).
+- `panic_record` is omitted when no structured panic record was captured. Filesystem-backed crash artifacts derive this record from `crash.txt`; in-process reports can include richer fields.
 - `goroutine_stack` is the stack trace of the panicking goroutine at the time of capture.
 - `source_endpoint` is `file:///` for filesystem-watched artifacts or `fodc-agent` for in-process captures.
 - `artifact_dir` is the name of the crash artifact directory relative to the watched crash source directory.
-- `files` lists the files present in the artifact directory (e.g., `panic.json`, `crash.txt`, `deep-dump.json`, `deep-dump.spew`).
+- `files` lists the files present in the artifact directory (e.g., `crash.txt`, `deep-dump.json`).
 
 **Example**
 

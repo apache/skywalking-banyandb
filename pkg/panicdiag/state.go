@@ -23,15 +23,11 @@ import (
 	"errors"
 	"fmt"
 	"os"
-
-	"github.com/davecgh/go-spew/spew"
 )
 
 const (
 	defaultStateLimitBytes = 5 * 1024 * 1024 // 5 MiB
 	deepDumpFileName       = "deep-dump.json"
-	deepDumpSpewFileName   = "deep-dump.spew"
-	spewMaxDepth           = 8 // limits recursion depth on cyclic structures
 )
 
 // errStateLimitExceeded is returned by limitedWriter when a write would push the buffer past max.
@@ -61,50 +57,6 @@ type jsonStateWriter struct{}
 // NewBoundedStateWriter returns the default bounded JSON state writer.
 func NewBoundedStateWriter() BoundedStateWriter {
 	return jsonStateWriter{}
-}
-
-// BoundedSpewWriter writes reflection-based state snapshots under a fixed size limit.
-// Unlike BoundedStateWriter, it serializes all struct fields including unexported ones
-// via go-spew, making it suitable for dumping complex internal database state.
-type BoundedSpewWriter interface {
-	WriteSpew(path string, value any, limitBytes int64) (truncated bool, err error)
-}
-
-type spewStateWriter struct{}
-
-// NewBoundedSpewWriter returns the default bounded reflection-based state writer.
-func NewBoundedSpewWriter() BoundedSpewWriter {
-	return spewStateWriter{}
-}
-
-// WriteSpew dumps value using go-spew reflection and writes it to path.
-// The dump is truncated at limitBytes if the full output exceeds the cap.
-// Unlike WriteJSON, a partial spew dump is still written when truncated since
-// partial text remains useful, whereas partial JSON would be invalid.
-// Sdump is used instead of Fdump because go-spew does not propagate io.Writer
-// errors internally, so a limitedWriter cannot intercept the boundary mid-write.
-func (spewStateWriter) WriteSpew(path string, value any, limitBytes int64) (bool, error) {
-	if limitBytes <= 0 {
-		limitBytes = defaultStateLimitBytes
-	}
-	conf := &spew.ConfigState{
-		Indent:                  "  ",
-		MaxDepth:                spewMaxDepth,
-		DisableMethods:          false,
-		DisablePointerAddresses: true,
-		DisableCapacities:       true,
-		SortKeys:                true,
-	}
-	dump := conf.Sdump(value)
-	truncated := false
-	if int64(len(dump)) > limitBytes {
-		dump = dump[:limitBytes]
-		truncated = true
-	}
-	if writeErr := os.WriteFile(path, []byte(dump), 0o600); writeErr != nil {
-		return truncated, fmt.Errorf("write spew dump: %w", writeErr)
-	}
-	return truncated, nil
 }
 
 // WriteJSON encodes value as indented JSON and writes it to path if the result

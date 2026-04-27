@@ -23,7 +23,10 @@ import (
 	"os"
 	"path/filepath"
 	"sort"
+	"strconv"
+	"strings"
 	"sync"
+	"time"
 )
 
 var defaultArtifactRootHolder struct {
@@ -53,7 +56,7 @@ func DefaultMaxArtifacts() int {
 }
 
 // PruneArtifacts removes the oldest crash artifact directories under rootDir
-// until at most maxArtifacts remain. Only directories containing a panic.json
+// until at most maxArtifacts remain. Only directories containing a crash.txt
 // are considered; other directories are left untouched. When maxArtifacts is
 // zero the call is a no-op.
 func PruneArtifacts(rootDir string, maxArtifacts int) error {
@@ -77,7 +80,7 @@ func PruneArtifacts(rootDir string, maxArtifacts int) error {
 		if !entry.IsDir() {
 			continue
 		}
-		if _, statErr := os.Stat(filepath.Join(rootDir, entry.Name(), panicRecordFileName)); os.IsNotExist(statErr) {
+		if _, statErr := os.Stat(filepath.Join(rootDir, entry.Name(), crashTextFileName)); os.IsNotExist(statErr) {
 			continue
 		}
 		artifactDirs = append(artifactDirs, entry.Name())
@@ -156,29 +159,76 @@ func ListCollections(root string) ([]Collection, error) {
 }
 
 func readCollection(artifactDir string) (*Collection, error) {
-	recordPath := filepath.Join(artifactDir, panicRecordFileName)
-	recordData, err := os.ReadFile(recordPath)
-	if err != nil {
-		if os.IsNotExist(err) {
+	if _, statErr := os.Stat(filepath.Join(artifactDir, crashTextFileName)); statErr != nil {
+		if os.IsNotExist(statErr) {
 			return nil, nil
 		}
-		return nil, fmt.Errorf("read panic record: %w", err)
-	}
-
-	var record PanicRecord
-	if unmarshalErr := json.Unmarshal(recordData, &record); unmarshalErr != nil {
-		return nil, fmt.Errorf("unmarshal panic record: %w", unmarshalErr)
+		return nil, fmt.Errorf("stat crash summary: %w", statErr)
 	}
 
 	files, err := listArtifactFiles(artifactDir)
 	if err != nil {
 		return nil, err
 	}
-	return &Collection{
+	collection := &Collection{
 		ArtifactDir: filepath.Base(artifactDir),
 		Files:       files,
-		Record:      &record,
-	}, nil
+	}
+	parsedRecord, parseErr := readCrashSummaryRecord(artifactDir)
+	if parseErr != nil {
+		return nil, parseErr
+	}
+	collection.Record = parsedRecord
+	recordPath := filepath.Join(artifactDir, panicRecordFileName)
+	recordData, readErr := os.ReadFile(recordPath)
+	if readErr != nil {
+		if os.IsNotExist(readErr) {
+			return collection, nil
+		}
+		return nil, fmt.Errorf("read panic record: %w", readErr)
+	}
+	var legacyRecord PanicRecord
+	if unmarshalErr := json.Unmarshal(recordData, &legacyRecord); unmarshalErr != nil {
+		return nil, fmt.Errorf("unmarshal panic record: %w", unmarshalErr)
+	}
+	collection.Record = &legacyRecord
+	return collection, nil
+}
+
+func readCrashSummaryRecord(artifactDir string) (*PanicRecord, error) {
+	summaryData, err := os.ReadFile(filepath.Join(artifactDir, crashTextFileName))
+	if err != nil {
+		return nil, fmt.Errorf("read crash summary: %w", err)
+	}
+	summary := string(summaryData)
+	record := &PanicRecord{}
+	for _, line := range strings.Split(summary, "\n") {
+		switch {
+		case strings.HasPrefix(line, "OccurredAt: "):
+			occurredAt, parseErr := time.Parse(time.RFC3339Nano, strings.TrimPrefix(line, "OccurredAt: "))
+			if parseErr != nil {
+				return nil, fmt.Errorf("parse crash summary occurredAt: %w", parseErr)
+			}
+			record.OccurredAt = occurredAt
+		case strings.HasPrefix(line, "Component: "):
+			record.Component = strings.TrimPrefix(line, "Component: ")
+		case strings.HasPrefix(line, "Recovered: "):
+			recovered, parseErr := strconv.ParseBool(strings.TrimPrefix(line, "Recovered: "))
+			if parseErr != nil {
+				return nil, fmt.Errorf("parse crash summary recovered: %w", parseErr)
+			}
+			record.Recovered = recovered
+		case strings.HasPrefix(line, "Panic: "):
+			record.PanicValue = strings.TrimPrefix(line, "Panic: ")
+		}
+	}
+	if stackIdx := strings.Index(summary, "\nStack:\n"); stackIdx >= 0 {
+		record.GoroutineStack = summary[stackIdx+len("\nStack:\n"):]
+	}
+	if record.OccurredAt.IsZero() && record.Component == "" && record.PanicValue == "" && record.GoroutineStack == "" {
+		return nil, nil
+	}
+	return record, nil
 }
 
 func listArtifactFiles(artifactDir string) ([]string, error) {

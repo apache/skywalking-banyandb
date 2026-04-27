@@ -18,7 +18,6 @@
 package panicdiag
 
 import (
-	"encoding/json"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -74,10 +73,6 @@ func (aw *ArtifactWriter) Write(record *PanicRecord) (string, error) {
 		return "", fmt.Errorf("create artifact dir: %w", err)
 	}
 
-	if writeErr := aw.rewritePanicRecord(artifactDir, record); writeErr != nil {
-		return "", fmt.Errorf("write panic record: %w", writeErr)
-	}
-
 	summaryPath := filepath.Join(artifactDir, crashTextFileName)
 	summary := buildCrashSummary(record)
 	if writeErr := os.WriteFile(summaryPath, []byte(summary), 0o600); writeErr != nil {
@@ -91,35 +86,6 @@ func (aw *ArtifactWriter) Write(record *PanicRecord) (string, error) {
 	}
 
 	return artifactDir, nil
-}
-
-func (aw *ArtifactWriter) rewritePanicRecord(artifactDir string, record *PanicRecord) error {
-	recordPath := filepath.Join(artifactDir, panicRecordFileName)
-	recordData, marshalErr := json.MarshalIndent(record, "", "  ")
-	if marshalErr != nil {
-		return fmt.Errorf("marshal panic record: %w", marshalErr)
-	}
-	recordData = append(recordData, '\n')
-	if writeErr := os.WriteFile(recordPath, recordData, 0o600); writeErr != nil {
-		return fmt.Errorf("write panic record: %w", writeErr)
-	}
-	return nil
-}
-
-// WriteSpewDump persists a go-spew reflection dump into an existing artifact directory.
-func (aw *ArtifactWriter) WriteSpewDump(artifactDir string, value any, limitBytes int64) (bool, string, error) {
-	if aw == nil {
-		return false, "", fmt.Errorf("artifact writer is nil")
-	}
-	if artifactDir == "" {
-		return false, "", fmt.Errorf("artifact dir is empty")
-	}
-	dumpPath := filepath.Join(artifactDir, deepDumpSpewFileName)
-	truncated, dumpErr := NewBoundedSpewWriter().WriteSpew(dumpPath, value, limitBytes)
-	if dumpErr != nil {
-		return truncated, "", dumpErr
-	}
-	return truncated, dumpPath, nil
 }
 
 // WriteStateDump persists a deep state dump into an existing artifact directory.

@@ -19,7 +19,6 @@ package watchdog
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"net/http"
@@ -555,16 +554,13 @@ func TestWatchdog_Serve_PanicWritesStateDump(t *testing.T) {
 
 	artifactDir := filepath.Join(artifactRoot, entries[0].Name())
 	panicRecordPath := filepath.Join(artifactDir, "panic.json")
+	crashTextPath := filepath.Join(artifactDir, "crash.txt")
 	deepDumpPath := filepath.Join(artifactDir, "deep-dump.json")
 
-	recordData, err := os.ReadFile(panicRecordPath)
+	assert.NoFileExists(t, panicRecordPath)
+	crashData, err := os.ReadFile(crashTextPath)
 	require.NoError(t, err)
-	var record panicdiag.PanicRecord
-	require.NoError(t, json.Unmarshal(recordData, &record))
-	require.NotNil(t, record.StateDump)
-	assert.Contains(t, record.PanicValue, "recorder panic")
-	assert.NotEmpty(t, record.StateDump.Path)
-	assert.Equal(t, deepDumpPath, record.StateDump.Path)
+	assert.Contains(t, string(crashData), "Panic: recorder panic")
 
 	deepDumpData, err := os.ReadFile(deepDumpPath)
 	require.NoError(t, err)

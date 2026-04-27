@@ -19,7 +19,6 @@ package integration_test
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -42,8 +41,7 @@ func diagnosticLogger(t *testing.T) *logger.Logger {
 
 // TestStateDumpFilesDetectedByWatcher verifies that when a panic is recovered with a
 // StateDumperFunc, the resulting artifact directory contains deep-dump.json and
-// deep-dump.spew, and that DirectoryWatcher correctly surfaces both files in
-// Collection.Files alongside the mandatory panic.json and crash.txt.
+// that DirectoryWatcher surfaces it in Collection.Files alongside the mandatory crash.txt.
 func TestStateDumpFilesDetectedByWatcher(t *testing.T) {
 	t.Helper()
 
@@ -71,46 +69,31 @@ func TestStateDumpFilesDetectedByWatcher(t *testing.T) {
 	require.Len(t, records, 1, "expected exactly one crash collection")
 
 	files := records[0].Collection.Files
-	assert.Contains(t, files, "panic.json")
+	assert.NotContains(t, files, "panic.json")
 	assert.Contains(t, files, "crash.txt")
 	assert.Contains(t, files, "deep-dump.json", "state dump JSON should appear in Collection.Files")
-	assert.Contains(t, files, "deep-dump.spew", "spew dump should appear in Collection.Files")
 
 	rec := records[0].Collection.Record
 	require.NotNil(t, rec)
 	assert.Equal(t, "storage-engine", rec.Component)
 	assert.Equal(t, "simulated storage fault", rec.PanicValue)
-	require.NotNil(t, rec.StateDump, "StateDump status should be populated in the persisted PanicRecord")
-	assert.NotEmpty(t, rec.StateDump.Path, "state dump path must be recorded")
-	assert.NotEmpty(t, rec.StateDump.SpewPath, "spew dump path must be recorded")
-	assert.Empty(t, rec.StateDump.Error, "no serialization error expected for a small payload")
-	assert.False(t, rec.StateDump.Truncated, "small payload should not be truncated")
+	assert.Nil(t, rec.StateDump, "state dump status is no longer persisted to panic.json")
 }
 
 // TestIncompleteArtifactIgnoredUntilComplete verifies that an artifact directory
-// that contains panic.json but not crash.txt (e.g. interrupted mid-write) is
-// not stored in the ring buffer until the artifact becomes complete. A
-// directory with no panic.json at all must be silently ignored by
-// ListCollections.
+// that contains auxiliary files but not crash.txt is not stored in the ring
+// buffer until the artifact becomes complete. A directory with no crash.txt at
+// all must be silently ignored by ListCollections.
 func TestIncompleteArtifactIgnoredUntilComplete(t *testing.T) {
 	t.Helper()
 
 	dir := t.TempDir()
 	log := diagnosticLogger(t)
 
-	// Create a subdirectory that has panic.json but no crash.txt.
+	// Create a subdirectory that has auxiliary data but no crash.txt.
 	artifactSubdir := filepath.Join(dir, "20260420T080000.000000000Z-incomplete-99999")
 	require.NoError(t, os.MkdirAll(artifactSubdir, 0o755))
-
-	record := &panicdiag.PanicRecord{
-		OccurredAt: time.Date(2026, time.April, 20, 8, 0, 0, 0, time.UTC),
-		Component:  "incomplete-component",
-		PanicValue: "partial write",
-		Recovered:  false,
-	}
-	data, marshalErr := json.MarshalIndent(record, "", "  ")
-	require.NoError(t, marshalErr)
-	require.NoError(t, os.WriteFile(filepath.Join(artifactSubdir, "panic.json"), append(data, '\n'), 0o600))
+	require.NoError(t, os.WriteFile(filepath.Join(artifactSubdir, "deep-dump.json"), []byte(`{"state":"partial"}`), 0o600))
 
 	watcher := crashcollector.NewDirectoryWatcher(log, dir, crashcollector.Config{})
 	watcher.Scan()
@@ -118,15 +101,23 @@ func TestIncompleteArtifactIgnoredUntilComplete(t *testing.T) {
 	records := watcher.ListCollections()
 	require.Empty(t, records, "incomplete artifact should not be stored in the ring buffer")
 
-	// A directory with no panic.json must be silently ignored.
+	// A directory with no crash.txt must be silently ignored.
 	emptySubdir := filepath.Join(dir, "20260420T090000.000000000Z-no-record-88888")
 	require.NoError(t, os.MkdirAll(emptySubdir, 0o755))
 	watcher.Scan()
 
 	records = watcher.ListCollections()
-	require.Empty(t, records, "directory without panic.json should be silently skipped")
+	require.Empty(t, records, "directory without crash.txt should be silently skipped")
 
-	require.NoError(t, os.WriteFile(filepath.Join(artifactSubdir, "crash.txt"), []byte("summary"), 0o600))
+	require.NoError(t, os.WriteFile(filepath.Join(artifactSubdir, "crash.txt"), []byte(`BanyanDB panic recovered
+OccurredAt: 2026-04-20T08:00:00Z
+Component: incomplete-component
+Recovered: false
+Panic: partial write
+
+Stack:
+goroutine 1 [running]:
+`), 0o600))
 	watcher.Scan()
 
 	records = watcher.ListCollections()
@@ -247,14 +238,14 @@ func TestMultipleComponentCrashesPreserveMetadata(t *testing.T) {
 	}
 }
 
-// TestBreadcrumbsPreservedInCollectedArtifact verifies that breadcrumbs appended
-// inside a WithRecovery-protected function are written to panic.json and correctly
-// deserialized by DirectoryWatcher into Collection.Record.Breadcrumbs.
-func TestBreadcrumbsPreservedInCollectedArtifact(t *testing.T) {
+// TestBreadcrumbsStayInReporterWithoutPanicJSON verifies that breadcrumbs appended
+// inside a WithRecovery-protected function are reported in process without
+// writing panic.json to the artifact directory.
+func TestBreadcrumbsStayInReporterWithoutPanicJSON(t *testing.T) {
 	t.Helper()
 
 	artifactRoot := t.TempDir()
-	log := diagnosticLogger(t)
+	reported := make(chan panicdiag.RecoveryResult, 1)
 
 	// Install a mutable store so breadcrumbs appended inside fn are visible to
 	// the recovery defer, which captures ctx before fn executes.
@@ -263,7 +254,9 @@ func TestBreadcrumbsPreservedInCollectedArtifact(t *testing.T) {
 	panicdiag.WithRecovery(ctx, panicdiag.RecoveryOptions{
 		Component:    "query-executor",
 		ArtifactRoot: artifactRoot,
-	}, nil, func(ctxp *context.Context) {
+	}, func(_ context.Context, result panicdiag.RecoveryResult) {
+		reported <- result
+	}, func(ctxp *context.Context) {
 		*ctxp = panicdiag.WithBreadcrumb(*ctxp, "parse-query", "query-parser",
 			map[string]string{"query_id": "q-42", "table": "metrics"})
 		*ctxp = panicdiag.WithBreadcrumb(*ctxp, "build-plan", "planner", nil)
@@ -272,17 +265,12 @@ func TestBreadcrumbsPreservedInCollectedArtifact(t *testing.T) {
 		panic("breadcrumb integration panic")
 	})
 
-	watcher := crashcollector.NewDirectoryWatcher(log, artifactRoot, crashcollector.Config{})
-	watcher.Scan()
-
-	records := watcher.ListCollections()
-	require.Len(t, records, 1)
-
-	rec := records[0].Collection.Record
+	result := <-reported
+	rec := result.Record
 	require.NotNil(t, rec)
 	assert.Equal(t, "query-executor", rec.Component)
 
-	require.Len(t, rec.Breadcrumbs, 3, "all three breadcrumbs should be persisted to panic.json")
+	require.Len(t, rec.Breadcrumbs, 3, "all three breadcrumbs should stay in the reported panic record")
 	assert.Equal(t, "parse-query", rec.Breadcrumbs[0].Stage)
 	assert.Equal(t, "query-parser", rec.Breadcrumbs[0].Component)
 	assert.Equal(t, "q-42", rec.Breadcrumbs[0].Fields["query_id"])
@@ -291,4 +279,5 @@ func TestBreadcrumbsPreservedInCollectedArtifact(t *testing.T) {
 	assert.Empty(t, rec.Breadcrumbs[1].Fields, "planner breadcrumb has no fields")
 	assert.Equal(t, "execute-scan", rec.Breadcrumbs[2].Stage)
 	assert.Equal(t, "shard-3", rec.Breadcrumbs[2].Fields["shard"])
+	assert.NoFileExists(t, filepath.Join(result.ArtifactDir, "panic.json"))
 }

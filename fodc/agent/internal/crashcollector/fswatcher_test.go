@@ -143,19 +143,21 @@ func TestDirectoryWatcherScanWaitsForCompleteArtifacts(t *testing.T) {
 	dir := t.TempDir()
 	artifactDir := filepath.Join(dir, "20260415T080000.000000000Z-fs-notify-test-123")
 	require.NoError(t, os.MkdirAll(artifactDir, 0o755))
-	require.NoError(t, os.WriteFile(filepath.Join(artifactDir, "panic.json"), []byte(`{
-  "occurredAt": "2026-04-15T08:00:00Z",
-  "component": "fs-notify-test",
-  "panicValue": "detected via fsnotify",
-  "goroutineStack": "goroutine 1 [running]:\n",
-  "recovered": true
-}`), 0o600))
+	require.NoError(t, os.WriteFile(filepath.Join(artifactDir, "deep-dump.json"), []byte(`{"state":"partial"}`), 0o600))
 
 	watcher := NewDirectoryWatcher(testLogger(t), dir, Config{})
 	watcher.Scan()
 	assert.Empty(t, watcher.ListCollections(), "incomplete artifacts should not be stored")
 
-	require.NoError(t, os.WriteFile(filepath.Join(artifactDir, "crash.txt"), []byte("summary"), 0o600))
+	require.NoError(t, os.WriteFile(filepath.Join(artifactDir, "crash.txt"), []byte(`BanyanDB panic recovered
+OccurredAt: 2026-04-15T08:00:00Z
+Component: fs-notify-test
+Recovered: true
+Panic: detected via fsnotify
+
+Stack:
+goroutine 1 [running]:
+`), 0o600))
 
 	watcher.Scan()
 	records := watcher.ListCollections()
@@ -169,7 +171,7 @@ func TestAnalyzeCrashArtifactComplete(t *testing.T) {
 
 	collection := &panicdiag.Collection{
 		ArtifactDir: "20260415T080000.000000000Z-test-123",
-		Files:       []string{"crash.txt", "panic.json"},
+		Files:       []string{"crash.txt"},
 	}
 	analysis := analyzeCrashArtifact(collection)
 	assert.True(t, analysis.Complete)
@@ -181,7 +183,7 @@ func TestAnalyzeCrashArtifactIncomplete(t *testing.T) {
 
 	collection := &panicdiag.Collection{
 		ArtifactDir: "20260415T080000.000000000Z-test-123",
-		Files:       []string{"panic.json"},
+		Files:       []string{"deep-dump.json"},
 	}
 	analysis := analyzeCrashArtifact(collection)
 	assert.False(t, analysis.Complete)
