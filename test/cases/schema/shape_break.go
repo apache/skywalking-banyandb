@@ -31,6 +31,7 @@ import (
 	databasev1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/database/v1"
 	measurev1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/measure/v1"
 	modelv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/model/v1"
+	"github.com/apache/skywalking-banyandb/pkg/test/helpers"
 	"github.com/apache/skywalking-banyandb/pkg/timestamp"
 )
 
@@ -165,7 +166,7 @@ var _ = g.Describe("Schema shape-break rejection", func() {
 		// tsTable readiness or query-side index refresh, racing the immediate Write→Query.
 		// Cluster-wide barrier semantics ship in Phase 2 via NodeSchemaStatusService + liaison
 		// fan-out (plan Steps 2.1–2.2); re-enable this spec in distributed mode once those land.
-		if SharedContext.Mode == "distributed" {
+		if SharedContext.Mode == helpers.ModeDistributed {
 			g.Skip("§6.8 requires cluster-wide propagation barrier (Phase 2)")
 		}
 		groupName := fmt.Sprintf("sb-new-%d", time.Now().UnixNano())
@@ -415,7 +416,7 @@ var _ = g.Describe("Schema shape-break rejection", func() {
 		// by this spec races the data-node tsTable rebuild on slow CI runners. Cluster-wide
 		// barrier semantics ship in Phase 2 via NodeSchemaStatusService + liaison fan-out
 		// (plan Steps 2.1–2.2); re-enable this spec in distributed mode once those land.
-		if SharedContext.Mode == "distributed" {
+		if SharedContext.Mode == helpers.ModeDistributed {
 			g.Skip("§6.11 requires cluster-wide propagation barrier (Phase 2)")
 		}
 		groupName := fmt.Sprintf("sb-same-%d", time.Now().UnixNano())

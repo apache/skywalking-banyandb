@@ -31,6 +31,7 @@ import (
 	measurev1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/measure/v1"
 	modelv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/model/v1"
 	streamv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/stream/v1"
+	"github.com/apache/skywalking-banyandb/pkg/test/helpers"
 	"github.com/apache/skywalking-banyandb/pkg/timestamp"
 )
 
@@ -123,7 +124,7 @@ var _ = g.Describe("Schema time-range clamp", func() {
 		// causing the dispatched query to fail with "group not found". Cluster-wide barrier
 		// semantics ship in Phase 2 via NodeSchemaStatusService + liaison fan-out (plan
 		// Steps 2.1–2.2); re-enable this spec in distributed mode once those land.
-		if SharedContext.Mode == "distributed" {
+		if SharedContext.Mode == helpers.ModeDistributed {
 			g.Skip("§4.6.2 requires cluster-wide propagation barrier (Phase 2)")
 		}
 		groupName := fmt.Sprintf("clamp-span-%d", time.Now().UnixNano())
@@ -232,7 +233,7 @@ var _ = g.Describe("Schema time-range clamp", func() {
 		// Cluster-wide barrier semantics ship in Phase 2 via NodeSchemaStatusService +
 		// liaison fan-out (plan Steps 2.1–2.2); re-enable this spec in distributed mode
 		// once those land.
-		if SharedContext.Mode == "distributed" {
+		if SharedContext.Mode == helpers.ModeDistributed {
 			g.Skip("§4.6.4 requires cluster-wide propagation barrier (Phase 2)")
 		}
 		group1 := fmt.Sprintf("clamp-leak1-%d", time.Now().UnixNano())
