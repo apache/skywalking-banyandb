@@ -55,9 +55,10 @@ type Group interface {
 
 // MetadataEvent is the syncing message between metadata repo and this framework.
 type MetadataEvent struct {
-	Metadata ResourceSchema
-	Typ      EventType
-	Kind     EventKind
+	Metadata       ResourceSchema
+	DeleteRevision int64 // non-zero only for EventDelete; carries the tombstone mod_revision
+	Typ            EventType
+	Kind           EventKind
 }
 
 // ResourceSchema allows get the metadata.
@@ -111,4 +112,13 @@ type Repository interface {
 	Close()
 	StopCh() <-chan struct{}
 	DropGroup(groupName string) error
+}
+
+// RevisionRepository extends Repository with revision-query methods used by
+// the write/query gates and the barrier implementation.
+type RevisionRepository interface {
+	Repository
+	LatestModRevision() int64
+	ResourceRevision(kind schema.Kind, group, name string) (int64, bool)
+	IsAbsent(kind schema.Kind, group, name string) bool
 }

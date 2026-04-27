@@ -18,3 +18,8 @@ For stream writes, `element_id` is optional.
 - If the client omits `element_id`, BanyanDB generates a server-side element ID for that write. This is convenient for append-only ingestion, but repeated writes without a stable `element_id` are treated as different elements.
 
 See [Query Streams](./bydbctl/query/stream.md#element-identity-and-deduplication) for how element identity affects query results.
+See [Server-Generated Element ID](./bydbctl/schema/stream.md#server-generated-element-id) for writing stream data without an explicit element ID.
+
+## Write Specifications
+
+As of 0.10.0, BanyanDB supports write specifications for [Stream](../concept/data-model.md#streams), [Measure](../concept/data-model.md#measures), and [Trace](../concept/data-model.md#traces) models. These specifications describe how the write payload maps to the schema, such as tag and field ordering, enabling the server to correctly interpret and validate the write operation.

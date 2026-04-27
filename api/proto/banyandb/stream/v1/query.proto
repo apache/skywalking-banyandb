@@ -21,6 +21,7 @@ package banyandb.stream.v1;
 
 import "banyandb/common/v1/trace.proto";
 import "banyandb/model/v1/query.proto";
+import "banyandb/model/v1/write.proto";
 import "google/protobuf/timestamp.proto";
 import "validate/validate.proto";
 
@@ -52,6 +53,9 @@ message QueryResponse {
   repeated Element elements = 1;
   // trace contains the trace information of the query when trace is enabled
   common.v1.Trace trace = 2;
+  // group_statuses reports the per-group gate outcome. Populated even when the query
+  // short-circuits because any group failed the gate.
+  map<string, model.v1.Status> group_statuses = 50;
 }
 
 // QueryRequest is the request contract for query.
@@ -79,4 +83,8 @@ message QueryRequest {
   bool trace = 9;
   // stage is used to specify the stage of the query in the lifecycle
   repeated string stages = 10;
+  // group_mod_revisions gates the query per group. Keys match entries in `groups`;
+  // values are the client's known mod_revision for that group. Empty map or value 0
+  // means "don't gate". A group not listed in the map is not gated.
+  map<string, int64> group_mod_revisions = 50;
 }

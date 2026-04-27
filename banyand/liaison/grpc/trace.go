@@ -25,6 +25,7 @@ import (
 	"github.com/pkg/errors"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
+	"google.golang.org/protobuf/types/known/timestamppb"
 
 	"github.com/apache/skywalking-banyandb/api/common"
 	"github.com/apache/skywalking-banyandb/api/data"
@@ -144,10 +145,25 @@ func (s *traceService) validateWriteRequest(writeEntity *tracev1.WriteRequest,
 	}
 
 	if metadata.ModRevision > 0 {
-		if metadata.ModRevision != traceEntity.GetMetadata().GetModRevision() {
+		clientRev := metadata.ModRevision
+		cacheRev := traceEntity.GetMetadata().GetModRevision()
+		if clientRev < cacheRev {
 			s.l.Error().Stringer("written", writeEntity).Msg("the trace schema is expired")
 			s.sendReply(metadata, modelv1.Status_STATUS_EXPIRED_SCHEMA, writeEntity.GetVersion(), stream)
 			return modelv1.Status_STATUS_EXPIRED_SCHEMA
+		}
+		if clientRev > cacheRev {
+			reached := awaitRevisionReached(func() int64 {
+				e, ok := s.entityRepo.getTrace(id)
+				if !ok {
+					return 0
+				}
+				return e.GetMetadata().GetModRevision()
+			}, clientRev, s.maxWaitDuration)
+			if !reached {
+				s.sendReply(metadata, modelv1.Status_STATUS_SCHEMA_NOT_APPLIED, writeEntity.GetVersion(), stream)
+				return modelv1.Status_STATUS_SCHEMA_NOT_APPLIED
+			}
 		}
 	}
 
@@ -417,6 +433,36 @@ func (s *traceService) Write(stream tracev1.TraceService_WriteServer) error {
 
 var emptyTraceQueryResponse = &tracev1.QueryResponse{Traces: make([]*tracev1.Trace, 0)}
 
+// applyClamp rewrites req.TimeRange.Begin to schema.CreatedAt for schema-aware
+// queries (those carrying GroupModRevisions). Returns true when the clamped
+// range is empty, in which case the caller should short-circuit with an empty
+// response. See measure.go for the rationale on the GroupModRevisions opt-in.
+func (s *traceService) applyClamp(req *tracev1.QueryRequest) bool {
+	if req.TimeRange == nil || len(req.GroupModRevisions) == 0 {
+		return false
+	}
+	createdAts := make([]time.Time, 0, len(req.Groups))
+	for _, group := range req.Groups {
+		traceEntity, traceOK := s.entityRepo.getTrace(identity{name: req.Name, group: group})
+		if traceOK && traceEntity.GetCreatedAt() != nil {
+			createdAts = append(createdAts, traceEntity.GetCreatedAt().AsTime())
+		}
+	}
+	endTime := time.Time{}
+	if req.TimeRange.GetEnd() != nil {
+		endTime = req.TimeRange.GetEnd().AsTime()
+	}
+	originalBegin := req.TimeRange.GetBegin().AsTime()
+	newBegin, rangeEmpty := clampTimeRangeBegin(originalBegin, endTime, createdAts)
+	if rangeEmpty {
+		return true
+	}
+	if newBegin != originalBegin {
+		req.TimeRange.Begin = timestamppb.New(newBegin)
+	}
+	return false
+}
+
 func (s *traceService) Query(ctx context.Context, req *tracev1.QueryRequest) (resp *tracev1.QueryResponse, err error) {
 	for _, g := range req.Groups {
 		if acquireErr := s.groupRepo.acquireRequest(g); acquireErr != nil {
@@ -475,6 +521,20 @@ func (s *traceService) Query(ctx context.Context, req *tracev1.QueryRequest) (re
 			}
 		}()
 	}
+	gatedStatuses, shortCircuit := checkQueryGate(req.Groups, req.Name, req.GroupModRevisions,
+		func(name, group string) (int64, bool) {
+			loc, ok := s.entityRepo.getLocator(identity{name: name, group: group})
+			return loc.ModRevision, ok
+		}, s.maxWaitDuration)
+	if shortCircuit {
+		return &tracev1.QueryResponse{GroupStatuses: gatedStatuses}, nil
+	}
+	if rangeEmpty := s.applyClamp(req); rangeEmpty {
+		if len(gatedStatuses) > 0 {
+			return &tracev1.QueryResponse{GroupStatuses: gatedStatuses}, nil
+		}
+		return emptyTraceQueryResponse, nil
+	}
 	message := bus.NewMessage(bus.MessageID(now.UnixNano()), req)
 	var future bus.Future
 	future, err = s.broadcaster.Publish(ctx, data.TopicTraceQuery, message)
@@ -500,10 +560,14 @@ func (s *traceService) Query(ctx context.Context, req *tracev1.QueryRequest) (re
 			traces = append(traces, trace)
 		}
 		responseTraceCount = len(traces)
-		return &tracev1.QueryResponse{
+		queryResp := &tracev1.QueryResponse{
 			Traces:           traces,
 			TraceQueryResult: d.TraceQueryResult,
-		}, nil
+		}
+		if len(gatedStatuses) > 0 {
+			queryResp.GroupStatuses = gatedStatuses
+		}
+		return queryResp, nil
 	case *common.Error:
 		return nil, errors.WithMessage(errQueryMsg, d.Error())
 	}

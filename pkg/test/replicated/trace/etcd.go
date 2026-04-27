@@ -41,7 +41,8 @@ var store embed.FS
 // PreloadSchema loads schemas from files in the booting process.
 func PreloadSchema(ctx context.Context, e schema.Registry) error {
 	if err := loadSchema(groupDir, &commonv1.Group{}, func(group *commonv1.Group) error {
-		return e.CreateGroup(ctx, group)
+		_, createErr := e.CreateGroup(ctx, group)
+		return createErr
 	}); err != nil {
 		return errors.WithStack(err)
 	}

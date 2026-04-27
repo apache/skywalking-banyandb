@@ -384,9 +384,9 @@ func (s *dataSVC) createDataNativeObservabilityGroup(ctx context.Context) error 
 			},
 		},
 	}
-	if err := s.metadata.GroupRegistry().CreateGroup(ctx, g); err != nil &&
-		!errors.Is(err, schema.ErrGRPCAlreadyExists) {
-		return errors.WithMessage(err, "failed to create native observability group")
+	if _, createGroupErr := s.metadata.GroupRegistry().CreateGroup(ctx, g); createGroupErr != nil &&
+		!errors.Is(createGroupErr, schema.ErrGRPCAlreadyExists) {
+		return errors.WithMessage(createGroupErr, "failed to create native observability group")
 	}
 	return nil
 }

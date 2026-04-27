@@ -301,9 +301,10 @@ func (sr *schemaRepo) OnDelete(metadata schema.Metadata) {
 	case schema.KindMeasure:
 		m := metadata.Spec.(*databasev1.Measure)
 		sr.SendMetadataEvent(resourceSchema.MetadataEvent{
-			Typ:      resourceSchema.EventDelete,
-			Kind:     resourceSchema.EventKindResource,
-			Metadata: m,
+			Typ:            resourceSchema.EventDelete,
+			Kind:           resourceSchema.EventKindResource,
+			DeleteRevision: m.GetMetadata().GetModRevision(),
+			Metadata:       m,
 		})
 		sr.stopSteamingManager(m.GetMetadata())
 	case schema.KindIndexRuleBinding:

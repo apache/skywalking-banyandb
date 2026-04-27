@@ -44,19 +44,6 @@ import (
 // SharedContext is set by the test environment (standalone or distributed).
 var SharedContext helpers.SharedContext
 
-// Clients holds all necessary gRPC clients for deletion tests.
-type Clients struct {
-	GroupClient            databasev1.GroupRegistryServiceClient
-	MeasureRegClient       databasev1.MeasureRegistryServiceClient
-	StreamRegClient        databasev1.StreamRegistryServiceClient
-	TraceRegClient         databasev1.TraceRegistryServiceClient
-	IndexRuleClient        databasev1.IndexRuleRegistryServiceClient
-	IndexRuleBindingClient databasev1.IndexRuleBindingRegistryServiceClient
-	MeasureWriteClient     measurev1.MeasureServiceClient
-	StreamWriteClient      streamv1.StreamServiceClient
-	TraceWriteClient       tracev1.TraceServiceClient
-}
-
 // Shared test cases. Automatically registered when this package is imported.
 var _ = g.Describe("Schema deletion", func() {
 	var (
@@ -66,18 +53,7 @@ var _ = g.Describe("Schema deletion", func() {
 
 	g.BeforeEach(func() {
 		ctx = context.Background()
-		conn := SharedContext.Connection
-		clients = &Clients{
-			GroupClient:            databasev1.NewGroupRegistryServiceClient(conn),
-			MeasureRegClient:       databasev1.NewMeasureRegistryServiceClient(conn),
-			StreamRegClient:        databasev1.NewStreamRegistryServiceClient(conn),
-			TraceRegClient:         databasev1.NewTraceRegistryServiceClient(conn),
-			IndexRuleClient:        databasev1.NewIndexRuleRegistryServiceClient(conn),
-			IndexRuleBindingClient: databasev1.NewIndexRuleBindingRegistryServiceClient(conn),
-			MeasureWriteClient:     measurev1.NewMeasureServiceClient(conn),
-			StreamWriteClient:      streamv1.NewStreamServiceClient(conn),
-			TraceWriteClient:       tracev1.NewTraceServiceClient(conn),
-		}
+		clients = NewClients(SharedContext.Connection)
 	})
 
 	g.It("should delete measure correctly", func() {

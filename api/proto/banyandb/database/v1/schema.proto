@@ -59,6 +59,8 @@ message Stream {
   Entity entity = 3 [(validate.rules).message.required = true];
   // updated_at indicates when the stream is updated
   google.protobuf.Timestamp updated_at = 4;
+  // created_at is the first-appearance timestamp; survives updates unchanged.
+  google.protobuf.Timestamp created_at = 5;
 }
 
 message Entity {
@@ -119,6 +121,8 @@ message Measure {
   bool index_mode = 7;
   // sharding_key determines the distribution of TopN-related data.
   ShardingKey sharding_key = 8;
+  // created_at is the first-appearance timestamp; survives updates unchanged.
+  google.protobuf.Timestamp created_at = 9;
 }
 
 // TopNAggregation generates offline TopN statistics for a measure's TopN approximation
@@ -145,6 +149,8 @@ message TopNAggregation {
   int32 lru_size = 8;
   // updated_at indicates when the measure is updated
   google.protobuf.Timestamp updated_at = 9;
+  // created_at is the first-appearance timestamp; survives updates unchanged.
+  google.protobuf.Timestamp created_at = 10;
 }
 
 // IndexRule defines how to generate indices based on tags and the index type
@@ -180,6 +186,8 @@ message IndexRule {
   string analyzer = 5;
   // no_sort indicates whether the index is not for sorting.
   bool no_sort = 6;
+  // created_at is the first-appearance timestamp; survives updates unchanged.
+  google.protobuf.Timestamp created_at = 7;
 }
 
 // Subject defines which stream or measure would generate indices
@@ -208,6 +216,8 @@ message IndexRuleBinding {
   google.protobuf.Timestamp expire_at = 5 [(validate.rules).timestamp.required = true];
   // updated_at indicates when the IndexRuleBinding is updated
   google.protobuf.Timestamp updated_at = 6;
+  // created_at is the first-appearance timestamp; survives updates unchanged.
+  google.protobuf.Timestamp created_at = 7;
 }
 
 // Property stores the user defined data
@@ -218,6 +228,8 @@ message Property {
   repeated TagSpec tags = 2 [(validate.rules).repeated.min_items = 1];
   // updated_at indicates when the property is updated
   google.protobuf.Timestamp updated_at = 6;
+  // created_at is the first-appearance timestamp; survives updates unchanged.
+  google.protobuf.Timestamp created_at = 7;
 }
 
 // TraceTagSpec defines the specification of a tag in a trace.
@@ -245,4 +257,6 @@ message Trace {
   google.protobuf.Timestamp updated_at = 5;
   // span_id_tag_name is the name of the tag that stores the span ID.
   string span_id_tag_name = 6 [(validate.rules).string.min_len = 1];
+  // created_at is the first-appearance timestamp; survives updates unchanged.
+  google.protobuf.Timestamp created_at = 7;
 }

@@ -52,6 +52,10 @@ message StreamRegistryServiceDeleteRequest {
 
 message StreamRegistryServiceDeleteResponse {
   bool deleted = 1;
+  // delete_time is the server-assigned tombstone timestamp in unix nanos.
+  int64 delete_time = 2;
+  // mod_revision is the etcd revision of the tombstone; zero if the server did not record one.
+  int64 mod_revision = 3;
 }
 
 message StreamRegistryServiceGetRequest {
@@ -114,13 +118,19 @@ message IndexRuleBindingRegistryServiceCreateRequest {
   banyandb.database.v1.IndexRuleBinding index_rule_binding = 1;
 }
 
-message IndexRuleBindingRegistryServiceCreateResponse {}
+message IndexRuleBindingRegistryServiceCreateResponse {
+  // mod_revision is the etcd revision assigned by the server on successful create/update.
+  int64 mod_revision = 1;
+}
 
 message IndexRuleBindingRegistryServiceUpdateRequest {
   banyandb.database.v1.IndexRuleBinding index_rule_binding = 1;
 }
 
-message IndexRuleBindingRegistryServiceUpdateResponse {}
+message IndexRuleBindingRegistryServiceUpdateResponse {
+  // mod_revision is the etcd revision assigned by the server on successful create/update.
+  int64 mod_revision = 1;
+}
 
 message IndexRuleBindingRegistryServiceDeleteRequest {
   banyandb.common.v1.Metadata metadata = 1;
@@ -128,6 +138,10 @@ message IndexRuleBindingRegistryServiceDeleteRequest {
 
 message IndexRuleBindingRegistryServiceDeleteResponse {
   bool deleted = 1;
+  // delete_time is the server-assigned tombstone timestamp in unix nanos.
+  int64 delete_time = 2;
+  // mod_revision is the etcd revision of the tombstone; zero if the server did not record one.
+  int64 mod_revision = 3;
 }
 
 message IndexRuleBindingRegistryServiceGetRequest {
@@ -190,13 +204,19 @@ message IndexRuleRegistryServiceCreateRequest {
   banyandb.database.v1.IndexRule index_rule = 1;
 }
 
-message IndexRuleRegistryServiceCreateResponse {}
+message IndexRuleRegistryServiceCreateResponse {
+  // mod_revision is the etcd revision assigned by the server on successful create/update.
+  int64 mod_revision = 1;
+}
 
 message IndexRuleRegistryServiceUpdateRequest {
   banyandb.database.v1.IndexRule index_rule = 1;
 }
 
-message IndexRuleRegistryServiceUpdateResponse {}
+message IndexRuleRegistryServiceUpdateResponse {
+  // mod_revision is the etcd revision assigned by the server on successful create/update.
+  int64 mod_revision = 1;
+}
 
 message IndexRuleRegistryServiceDeleteRequest {
   banyandb.common.v1.Metadata metadata = 1;
@@ -204,6 +224,10 @@ message IndexRuleRegistryServiceDeleteRequest {
 
 message IndexRuleRegistryServiceDeleteResponse {
   bool deleted = 1;
+  // delete_time is the server-assigned tombstone timestamp in unix nanos.
+  int64 delete_time = 2;
+  // mod_revision is the etcd revision of the tombstone; zero if the server did not record one.
+  int64 mod_revision = 3;
 }
 
 message IndexRuleRegistryServiceGetRequest {
@@ -284,6 +308,10 @@ message MeasureRegistryServiceDeleteRequest {
 
 message MeasureRegistryServiceDeleteResponse {
   bool deleted = 1;
+  // delete_time is the server-assigned tombstone timestamp in unix nanos.
+  int64 delete_time = 2;
+  // mod_revision is the etcd revision of the tombstone; zero if the server did not record one.
+  int64 mod_revision = 3;
 }
 
 message MeasureRegistryServiceGetRequest {
@@ -346,13 +374,19 @@ message GroupRegistryServiceCreateRequest {
   banyandb.common.v1.Group group = 1;
 }
 
-message GroupRegistryServiceCreateResponse {}
+message GroupRegistryServiceCreateResponse {
+  // mod_revision is the etcd revision assigned by the server on successful create/update.
+  int64 mod_revision = 1;
+}
 
 message GroupRegistryServiceUpdateRequest {
   banyandb.common.v1.Group group = 1;
 }
 
-message GroupRegistryServiceUpdateResponse {}
+message GroupRegistryServiceUpdateResponse {
+  // mod_revision is the etcd revision assigned by the server on successful create/update.
+  int64 mod_revision = 1;
+}
 
 // GroupRegistryServiceDeleteRequest is the request for deleting a group.
 message GroupRegistryServiceDeleteRequest {
@@ -373,6 +407,10 @@ message GroupRegistryServiceDeleteRequest {
 message GroupRegistryServiceDeleteResponse {
   // schema_info contains the schema resources that would be deleted (populated in dry-run mode).
   SchemaInfo schema_info = 1;
+  // delete_time is the server-assigned tombstone timestamp in unix nanos.
+  int64 delete_time = 2;
+  // mod_revision is the etcd revision of the tombstone; zero if the server did not record one.
+  int64 mod_revision = 3;
 }
 
 // GroupDeletionTask represents the status of a group deletion operation.
@@ -604,13 +642,19 @@ message TopNAggregationRegistryServiceCreateRequest {
   banyandb.database.v1.TopNAggregation top_n_aggregation = 1;
 }
 
-message TopNAggregationRegistryServiceCreateResponse {}
+message TopNAggregationRegistryServiceCreateResponse {
+  // mod_revision is the etcd revision assigned by the server on successful create/update.
+  int64 mod_revision = 1;
+}
 
 message TopNAggregationRegistryServiceUpdateRequest {
   banyandb.database.v1.TopNAggregation top_n_aggregation = 1;
 }
 
-message TopNAggregationRegistryServiceUpdateResponse {}
+message TopNAggregationRegistryServiceUpdateResponse {
+  // mod_revision is the etcd revision assigned by the server on successful create/update.
+  int64 mod_revision = 1;
+}
 
 message TopNAggregationRegistryServiceDeleteRequest {
   banyandb.common.v1.Metadata metadata = 1;
@@ -618,6 +662,10 @@ message TopNAggregationRegistryServiceDeleteRequest {
 
 message TopNAggregationRegistryServiceDeleteResponse {
   bool deleted = 1;
+  // delete_time is the server-assigned tombstone timestamp in unix nanos.
+  int64 delete_time = 2;
+  // mod_revision is the etcd revision of the tombstone; zero if the server did not record one.
+  int64 mod_revision = 3;
 }
 
 message TopNAggregationRegistryServiceGetRequest {
@@ -723,6 +771,10 @@ message PropertyRegistryServiceDeleteRequest {
 
 message PropertyRegistryServiceDeleteResponse {
   bool deleted = 1;
+  // delete_time is the server-assigned tombstone timestamp in unix nanos.
+  int64 delete_time = 2;
+  // mod_revision is the etcd revision of the tombstone; zero if the server did not record one.
+  int64 mod_revision = 3;
 }
 
 message PropertyRegistryServiceGetRequest {
@@ -803,6 +855,10 @@ message TraceRegistryServiceDeleteRequest {
 
 message TraceRegistryServiceDeleteResponse {
   bool deleted = 1;
+  // delete_time is the server-assigned tombstone timestamp in unix nanos.
+  int64 delete_time = 2;
+  // mod_revision is the etcd revision of the tombstone; zero if the server did not record one.
+  int64 mod_revision = 3;
 }
 
 message TraceRegistryServiceGetRequest {

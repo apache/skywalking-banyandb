@@ -119,25 +119,25 @@ type Stream interface {
 	ListStream(ctx context.Context, opt ListOpt) ([]*databasev1.Stream, error)
 	CreateStream(ctx context.Context, stream *databasev1.Stream) (int64, error)
 	UpdateStream(ctx context.Context, stream *databasev1.Stream) (int64, error)
-	DeleteStream(ctx context.Context, metadata *commonv1.Metadata) (bool, error)
+	DeleteStream(ctx context.Context, metadata *commonv1.Metadata) (bool, int64, error)
 }
 
 // IndexRule allows CRUD index rule schemas in a group.
 type IndexRule interface {
 	GetIndexRule(ctx context.Context, metadata *commonv1.Metadata) (*databasev1.IndexRule, error)
 	ListIndexRule(ctx context.Context, opt ListOpt) ([]*databasev1.IndexRule, error)
-	CreateIndexRule(ctx context.Context, indexRule *databasev1.IndexRule) error
-	UpdateIndexRule(ctx context.Context, indexRule *databasev1.IndexRule) error
-	DeleteIndexRule(ctx context.Context, metadata *commonv1.Metadata) (bool, error)
+	CreateIndexRule(ctx context.Context, indexRule *databasev1.IndexRule) (int64, error)
+	UpdateIndexRule(ctx context.Context, indexRule *databasev1.IndexRule) (int64, error)
+	DeleteIndexRule(ctx context.Context, metadata *commonv1.Metadata) (bool, int64, error)
 }
 
 // IndexRuleBinding allows CRUD index rule binding schemas in a group.
 type IndexRuleBinding interface {
 	GetIndexRuleBinding(ctx context.Context, metadata *commonv1.Metadata) (*databasev1.IndexRuleBinding, error)
 	ListIndexRuleBinding(ctx context.Context, opt ListOpt) ([]*databasev1.IndexRuleBinding, error)
-	CreateIndexRuleBinding(ctx context.Context, indexRuleBinding *databasev1.IndexRuleBinding) error
-	UpdateIndexRuleBinding(ctx context.Context, indexRuleBinding *databasev1.IndexRuleBinding) error
-	DeleteIndexRuleBinding(ctx context.Context, metadata *commonv1.Metadata) (bool, error)
+	CreateIndexRuleBinding(ctx context.Context, indexRuleBinding *databasev1.IndexRuleBinding) (int64, error)
+	UpdateIndexRuleBinding(ctx context.Context, indexRuleBinding *databasev1.IndexRuleBinding) (int64, error)
+	DeleteIndexRuleBinding(ctx context.Context, metadata *commonv1.Metadata) (bool, int64, error)
 }
 
 // Measure allows CRUD measure schemas in a group.
@@ -148,7 +148,7 @@ type Measure interface {
 	ListMeasure(ctx context.Context, opt ListOpt) ([]*databasev1.Measure, error)
 	CreateMeasure(ctx context.Context, measure *databasev1.Measure) (int64, error)
 	UpdateMeasure(ctx context.Context, measure *databasev1.Measure) (int64, error)
-	DeleteMeasure(ctx context.Context, metadata *commonv1.Metadata) (bool, error)
+	DeleteMeasure(ctx context.Context, metadata *commonv1.Metadata) (bool, int64, error)
 	TopNAggregations(ctx context.Context, metadata *commonv1.Metadata) ([]*databasev1.TopNAggregation, error)
 }
 
@@ -160,7 +160,7 @@ type Trace interface {
 	ListTrace(ctx context.Context, opt ListOpt) ([]*databasev1.Trace, error)
 	CreateTrace(ctx context.Context, trace *databasev1.Trace) (int64, error)
 	UpdateTrace(ctx context.Context, trace *databasev1.Trace) (int64, error)
-	DeleteTrace(ctx context.Context, metadata *commonv1.Metadata) (bool, error)
+	DeleteTrace(ctx context.Context, metadata *commonv1.Metadata) (bool, int64, error)
 }
 
 // Group allows CRUD groups which is namespaces of resources.
@@ -170,9 +170,9 @@ type Group interface {
 	GetGroup(ctx context.Context, group string) (*commonv1.Group, error)
 	ListGroup(ctx context.Context) ([]*commonv1.Group, error)
 	// DeleteGroup delete all items belonging to the group
-	DeleteGroup(ctx context.Context, group string) (bool, error)
-	CreateGroup(ctx context.Context, group *commonv1.Group) error
-	UpdateGroup(ctx context.Context, group *commonv1.Group) error
+	DeleteGroup(ctx context.Context, group string) (bool, int64, error)
+	CreateGroup(ctx context.Context, group *commonv1.Group) (int64, error)
+	UpdateGroup(ctx context.Context, group *commonv1.Group) (int64, error)
 }
 
 // TopNAggregation allows CRUD top-n aggregation schemas in a group.
@@ -181,9 +181,9 @@ type Group interface {
 type TopNAggregation interface {
 	GetTopNAggregation(ctx context.Context, metadata *commonv1.Metadata) (*databasev1.TopNAggregation, error)
 	ListTopNAggregation(ctx context.Context, opt ListOpt) ([]*databasev1.TopNAggregation, error)
-	CreateTopNAggregation(ctx context.Context, measure *databasev1.TopNAggregation) error
-	UpdateTopNAggregation(ctx context.Context, measure *databasev1.TopNAggregation) error
-	DeleteTopNAggregation(ctx context.Context, metadata *commonv1.Metadata) (bool, error)
+	CreateTopNAggregation(ctx context.Context, measure *databasev1.TopNAggregation) (int64, error)
+	UpdateTopNAggregation(ctx context.Context, measure *databasev1.TopNAggregation) (int64, error)
+	DeleteTopNAggregation(ctx context.Context, metadata *commonv1.Metadata) (bool, int64, error)
 }
 
 // Node allows CRUD node schemas in a group.
@@ -202,5 +202,5 @@ type Property interface {
 	ListProperty(ctx context.Context, opt ListOpt) ([]*databasev1.Property, error)
 	CreateProperty(ctx context.Context, property *databasev1.Property) error
 	UpdateProperty(ctx context.Context, property *databasev1.Property) error
-	DeleteProperty(ctx context.Context, metadata *commonv1.Metadata) (bool, error)
+	DeleteProperty(ctx context.Context, metadata *commonv1.Metadata) (bool, int64, error)
 }

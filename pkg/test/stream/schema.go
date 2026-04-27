@@ -94,7 +94,7 @@ func loadSchemas(ctx context.Context, e schema.Registry) error {
 		if err != nil {
 			return err
 		}
-		if innerErr := e.CreateIndexRule(ctx, &idxRule); innerErr != nil {
+		if _, innerErr := e.CreateIndexRule(ctx, &idxRule); innerErr != nil {
 			return innerErr
 		}
 	}
@@ -112,7 +112,7 @@ func loadSchemas(ctx context.Context, e schema.Registry) error {
 		if err != nil {
 			return err
 		}
-		if innerErr := e.CreateIndexRuleBinding(ctx, &idxRuleBinding); innerErr != nil {
+		if _, innerErr := e.CreateIndexRuleBinding(ctx, &idxRuleBinding); innerErr != nil {
 			return innerErr
 		}
 	}
@@ -139,7 +139,7 @@ func LoadSchemaWithStages(ctx context.Context, e schema.Registry) error {
 			logger.Infof("group %s already exists", g.Metadata.Name)
 			return nil
 		}
-		if innerErr := e.CreateGroup(ctx, g); innerErr != nil {
+		if _, innerErr := e.CreateGroup(ctx, g); innerErr != nil {
 			return innerErr
 		}
 	}
@@ -166,7 +166,7 @@ func PreloadSchema(ctx context.Context, e schema.Registry) error {
 			logger.Infof("group %s already exists", g.Metadata.Name)
 			return nil
 		}
-		if innerErr := e.CreateGroup(ctx, g); innerErr != nil {
+		if _, innerErr := e.CreateGroup(ctx, g); innerErr != nil {
 			return innerErr
 		}
 	}

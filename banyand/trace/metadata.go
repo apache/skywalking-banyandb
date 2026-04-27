@@ -213,10 +213,12 @@ func (sr *schemaRepo) OnDelete(metadata schema.Metadata) {
 			Metadata: g,
 		})
 	case schema.KindTrace:
+		traceSpec := metadata.Spec.(*databasev1.Trace)
 		sr.SendMetadataEvent(resourceSchema.MetadataEvent{
-			Typ:      resourceSchema.EventDelete,
-			Kind:     resourceSchema.EventKindResource,
-			Metadata: metadata.Spec.(*databasev1.Trace),
+			Typ:            resourceSchema.EventDelete,
+			Kind:           resourceSchema.EventKindResource,
+			DeleteRevision: traceSpec.GetMetadata().GetModRevision(),
+			Metadata:       traceSpec,
 		})
 	case schema.KindIndexRuleBinding:
 		if binding, ok := metadata.Spec.(*databasev1.IndexRuleBinding); ok {
