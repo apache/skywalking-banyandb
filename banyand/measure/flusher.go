@@ -204,10 +204,7 @@ func (tst *tsTable) flush(snapshot *snapshot, flushCh chan *flusherIntroduction)
 	case <-tst.loopCloser.CloseNotify():
 		return
 	}
-	select {
-	case <-ind.applied:
-	case <-tst.loopCloser.CloseNotify():
-	}
+	<-ind.applied
 	tst.incTotalFlushIntroLatency(time.Since(end).Seconds())
 }
 
