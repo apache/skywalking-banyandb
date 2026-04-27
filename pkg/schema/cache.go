@@ -105,11 +105,15 @@ type schemaRepo struct {
 // for retry via the background worker; the success path does not touch the
 // channel.
 func (sr *schemaRepo) SendMetadataEvent(event MetadataEvent) {
+	sr.sendMetadataEvent(sr.closer.Ctx(), event)
+}
+
+func (sr *schemaRepo) sendMetadataEvent(ctx context.Context, event MetadataEvent) {
 	if !sr.closer.AddSender() {
 		return
 	}
 	defer sr.closer.SenderDone()
-	if err := sr.processEvent(event); err != nil && !errors.Is(err, schema.ErrClosed) {
+	if err := sr.processEvent(ctx, event); err != nil && !errors.Is(err, schema.ErrClosed) {
 		select {
 		case <-sr.closer.CloseNotify():
 			return
@@ -127,7 +131,7 @@ func (sr *schemaRepo) SendMetadataEvent(event MetadataEvent) {
 // processEvent applies the event in-place, bumping latestModRevision on success
 // so the barrier's downstream-handler watermark catches up before notifyHandlers
 // returns to its caller.
-func (sr *schemaRepo) processEvent(evt MetadataEvent) error {
+func (sr *schemaRepo) processEvent(ctx context.Context, evt MetadataEvent) error {
 	if e := sr.l.Debug(); e.Enabled() {
 		e.Interface("event", evt).Msg("received an event")
 	}
@@ -136,7 +140,7 @@ func (sr *schemaRepo) processEvent(evt MetadataEvent) error {
 	case EventAddOrUpdate:
 		switch evt.Kind {
 		case EventKindGroup:
-			_, err = sr.storeGroup(evt.Metadata.GetMetadata())
+			_, err = sr.storeGroup(ctx, evt.Metadata.GetMetadata())
 			if errors.Is(err, schema.ErrGRPCResourceNotFound) {
 				err = nil
 			}
@@ -241,7 +245,7 @@ func (sr *schemaRepo) Watcher() {
 				Logger:    sr.l,
 			}, func(_ context.Context, _ panicdiag.RecoveryResult) {
 				sr.metrics.totalPanics.Inc(1)
-			}, func(_ *context.Context) {
+			}, func(ctxp *context.Context) {
 				defer sr.closer.ReceiverDone()
 				// The Watcher drains events retried via the channel after transient
 				// processing errors. The fast path runs synchronously in SendMetadataEvent
@@ -252,7 +256,7 @@ func (sr *schemaRepo) Watcher() {
 						if !more {
 							return
 						}
-						if retryErr := sr.processEvent(evt); retryErr != nil && !errors.Is(retryErr, schema.ErrClosed) {
+						if retryErr := sr.processEvent(*ctxp, evt); retryErr != nil && !errors.Is(retryErr, schema.ErrClosed) {
 							select {
 							case <-sr.closer.CloseNotify():
 								return
@@ -260,9 +264,10 @@ func (sr *schemaRepo) Watcher() {
 							}
 							sr.l.Err(retryErr).Interface("event", evt).Msg("retry processing failed, requeueing")
 							sr.metrics.totalRetries.Inc(1)
-							go func(retryEvent MetadataEvent) {
-								sr.SendMetadataEvent(retryEvent)
-							}(evt)
+							retryCtx := *ctxp
+							go func(ctx context.Context, retryEvent MetadataEvent) {
+								sr.sendMetadataEvent(ctx, retryEvent)
+							}(retryCtx, evt)
 						}
 					case <-sr.closer.CloseNotify():
 						return
@@ -273,7 +278,7 @@ func (sr *schemaRepo) Watcher() {
 	}
 }
 
-func (sr *schemaRepo) storeGroup(groupMeta *commonv1.Metadata) (*group, error) {
+func (sr *schemaRepo) storeGroup(ctx context.Context, groupMeta *commonv1.Metadata) (*group, error) {
 	name := groupMeta.GetName()
 	sr.groupMux.Lock()
 	defer sr.groupMux.Unlock()
@@ -281,7 +286,7 @@ func (sr *schemaRepo) storeGroup(groupMeta *commonv1.Metadata) (*group, error) {
 	if !ok {
 		sr.l.Info().Str("group", name).Msg("creating a tsdb")
 		g = sr.createGroup(name)
-		if err := g.init(name); err != nil {
+		if err := g.init(ctx, name); err != nil {
 			return nil, err
 		}
 		if gs := g.GetSchema(); gs != nil {
@@ -290,7 +295,7 @@ func (sr *schemaRepo) storeGroup(groupMeta *commonv1.Metadata) (*group, error) {
 		return g, nil
 	}
 	if !g.isInit() {
-		if err := g.init(name); err != nil {
+		if err := g.init(ctx, name); err != nil {
 			return nil, err
 		}
 		if gs := g.GetSchema(); gs != nil {
@@ -627,8 +632,8 @@ func newGroup(
 	return g
 }
 
-func (g *group) init(name string) error {
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+func (g *group) init(ctx context.Context, name string) error {
+	ctx, cancel := context.WithTimeout(ctx, 5*time.Second)
 	defer cancel()
 	groupSchema, err := g.metadata.GroupRegistry().GetGroup(ctx, name)
 	if errors.As(err, schema.ErrGRPCResourceNotFound) {
