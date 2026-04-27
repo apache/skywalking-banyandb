@@ -257,6 +257,7 @@ Release Notes.
 - UI: Update BanyanDB UI to Integrate New Property Query API.
 - UI: Fix the Stream List.
 - Fix the oom issue when loading too many unnecessary parts into memory.
+- Fix data race between flusher/merger/syncer senders and the introducer loop during shutdown, caught by the Go race detector under CI pressure.
 - bydbctl: Fix the bug that the bydbctl can't parse the absolute time flag.
 
 ### Documentation

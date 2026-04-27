@@ -466,11 +466,7 @@ func (tst *tsTable) sendSyncIntroduction(partsToSync []*part, syncCh chan *syncI
 	case <-tst.loopCloser.CloseNotify():
 		return errClosed
 	}
-	select {
-	case <-si.applied:
-	case <-tst.loopCloser.CloseNotify():
-		return errClosed
-	}
+	<-si.applied
 
 	return nil
 }

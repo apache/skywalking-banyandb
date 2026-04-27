@@ -159,7 +159,23 @@ func (tst *tsTable) introducerLoop(flushCh chan *flusherIntroduction, mergeCh ch
 	for {
 		select {
 		case <-tst.loopCloser.CloseNotify():
-			return
+			// Drain pending introductions so senders don't block on applied.
+			for {
+				select {
+				case next := <-tst.introductions:
+					tst.introducePart(next, epoch)
+					epoch++
+				case next := <-flushCh:
+					tst.introduceFlushed(next, epoch)
+					epoch++
+				case next := <-mergeCh:
+					tst.introduceMerged(next, epoch)
+					epoch++
+				default:
+					tst.gc.clean()
+					return
+				}
+			}
 		case next := <-tst.introductions:
 			tst.incTotalIntroduceLoopStarted("mem")
 			tst.introducePart(next, epoch)
@@ -193,7 +209,26 @@ func (tst *tsTable) introducerLoopWithSync(flushCh chan *flusherIntroduction, me
 	for {
 		select {
 		case <-tst.loopCloser.CloseNotify():
-			return
+			// Drain pending introductions so senders don't block on applied.
+			for {
+				select {
+				case next := <-tst.introductions:
+					tst.introducePart(next, epoch)
+					epoch++
+				case next := <-flushCh:
+					tst.introduceFlushedForSync(next, epoch)
+					epoch++
+				case next := <-mergeCh:
+					tst.introduceMerged(next, epoch)
+					epoch++
+				case next := <-syncCh:
+					tst.introduceSync(next, epoch)
+					epoch++
+				default:
+					tst.gc.clean()
+					return
+				}
+			}
 		case next := <-tst.introductions:
 			tst.incTotalIntroduceLoopStarted("mem")
 			tst.introducePart(next, epoch)

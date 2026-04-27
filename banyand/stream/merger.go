@@ -162,11 +162,7 @@ func (tst *tsTable) mergePartsThenSendIntroduction(creator snapshotCreator, part
 	case <-tst.loopCloser.CloseNotify():
 		return newPart, errClosed
 	}
-	select {
-	case <-mi.applied:
-	case <-tst.loopCloser.CloseNotify():
-		return newPart, errClosed
-	}
+	<-mi.applied
 	return newPart, nil
 }
 
