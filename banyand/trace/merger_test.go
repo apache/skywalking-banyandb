@@ -1678,6 +1678,9 @@ func Test_mergeLaneWorker_cleansUpInFlight(t *testing.T) {
 	go func() {
 		defer close(mockIntroducerDone)
 		for mi := range merges {
+			if mi.newPart != nil {
+				mi.newPart.decRef()
+			}
 			if mi.applied != nil {
 				close(mi.applied)
 			}

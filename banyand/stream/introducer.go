@@ -159,6 +159,7 @@ func (tst *tsTable) introducerLoop(flushCh chan *flusherIntroduction, mergeCh ch
 					tst.introduceMerged(next, epoch)
 					epoch++
 				default:
+					tst.gc.clean()
 					return
 				}
 			}
@@ -211,6 +212,7 @@ func (tst *tsTable) introducerLoopWithSync(flushCh chan *flusherIntroduction, me
 					tst.introduceSync(next, epoch)
 					epoch++
 				default:
+					tst.gc.clean()
 					return
 				}
 			}
