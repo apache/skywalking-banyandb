@@ -33,6 +33,7 @@ import (
 
 const (
 	periodicRescanInterval = 30 * time.Second
+	fsNotifyRescanDelay    = 100 * time.Millisecond
 	fsSourcePrefix         = "file://"
 )
 
@@ -132,6 +133,12 @@ func (w *DirectoryWatcher) watch(ctx context.Context, readyCh chan<- struct{}) {
 			}
 			if event.Has(fsnotify.Create) || event.Has(fsnotify.Write) {
 				w.Scan()
+				select {
+				case <-ctx.Done():
+					return
+				case <-time.After(fsNotifyRescanDelay):
+					w.Scan()
+				}
 			}
 		case watcherErr, ok := <-fsWatcher.Errors:
 			if !ok {
