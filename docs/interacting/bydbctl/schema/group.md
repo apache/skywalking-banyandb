@@ -154,6 +154,42 @@ The list operation shows all groups' schema.
 bydbctl group list
 ```
 
+## Delete Entire Group
+
+The group deletion operation removes an entire group along with all its associated resources (measures, streams, traces, or properties) and data. This operation supports several flags to control the deletion behavior.
+
+### Flags
+
+- `--force`: Skip confirmation prompts and force deletion.
+- `--dry-run`: Preview what would be deleted without actually performing the deletion. Use this to verify the scope before executing.
+- `--data-only`: Delete the group's data but retain the schema metadata. This is useful when you want to clear data while preserving the group configuration.
+
+### Examples of dry-run preview
+
+Preview what would be deleted without executing:
+
+```shell
+bydbctl group delete -g sw_metric --dry-run
+```
+
+### Examples of force deletion with data-only
+
+Delete the group's data while keeping the schema:
+
+```shell
+bydbctl group delete -g sw_metric --force --data-only
+```
+
+### Examples of full deletion
+
+Delete the entire group including schema and data:
+
+```shell
+bydbctl group delete -g sw_metric --force
+```
+
+> **Warning**: Entire group deletion is irreversible. Always use `--dry-run` first to verify the scope of deletion.
+
 ## API Reference
 
 - [Group Registration Operations](../../../api-reference.md#banyandb-database-v1-GroupRegistryService)
