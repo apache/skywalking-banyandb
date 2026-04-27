@@ -33,6 +33,12 @@ import (
 	"github.com/apache/skywalking-banyandb/pkg/logger"
 )
 
+// inspectBroadcastTimeout caps how long the inspection query path waits for
+// data and liaison nodes to answer a CollectDataInfo / CollectLiaisonInfo
+// broadcast. Picked to leave headroom for busy nodes (sw_zipkinTrace under
+// merge/flush load can take several seconds) while still bounding the call.
+const inspectBroadcastTimeout = 30 * time.Second
+
 // GroupGetter provides method to get group metadata.
 type GroupGetter interface {
 	GetGroup(ctx context.Context, group string) (*commonv1.Group, error)
@@ -101,7 +107,7 @@ func (icr *InfoCollectorRegistry) CollectDataInfo(ctx context.Context, group str
 
 func (icr *InfoCollectorRegistry) broadcastCollectDataInfo(topic bus.Topic, group string) []*databasev1.DataInfo {
 	message := bus.NewMessage(bus.MessageID(time.Now().UnixNano()), &databasev1.GroupRegistryServiceInspectRequest{Group: group})
-	futures, broadcastErr := icr.dataBroadcaster.Broadcast(5*time.Second, topic, message)
+	futures, broadcastErr := icr.dataBroadcaster.Broadcast(inspectBroadcastTimeout, topic, message)
 	if broadcastErr != nil {
 		icr.l.Warn().Err(broadcastErr).Str("group", group).Msg("failed to broadcast collect data info request")
 		return []*databasev1.DataInfo{}
@@ -172,7 +178,7 @@ func (icr *InfoCollectorRegistry) CollectLiaisonInfo(ctx context.Context, group 
 
 func (icr *InfoCollectorRegistry) broadcastCollectLiaisonInfo(topic bus.Topic, group string) []*databasev1.LiaisonInfo {
 	message := bus.NewMessage(bus.MessageID(time.Now().UnixNano()), &databasev1.GroupRegistryServiceInspectRequest{Group: group})
-	futures, broadcastErr := icr.liaisonBroadcaster.Broadcast(5*time.Second, topic, message)
+	futures, broadcastErr := icr.liaisonBroadcaster.Broadcast(inspectBroadcastTimeout, topic, message)
 	if broadcastErr != nil {
 		icr.l.Warn().Err(broadcastErr).Str("group", group).Msg("failed to broadcast collect liaison info request")
 		return []*databasev1.LiaisonInfo{}

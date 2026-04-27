@@ -20,12 +20,21 @@ package sub
 import (
 	"context"
 	"fmt"
+	"sync"
 
 	commonv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/common/v1"
 	fodcv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/fodc/v1"
 )
 
+// maxInspectGroupConcurrency caps how many groups InspectAll will inspect
+// in parallel. Picked high enough to fan out all groups in a single wave
+// for typical clusters (BanyanDB rarely has more than a few dozen groups)
+// while still bounding load on the data nodes.
+const maxInspectGroupConcurrency = 32
+
 // InspectAll lists all groups and returns their full lifecycle info.
+// Per-group inspections run in parallel (bounded), so a single slow group
+// cannot consume budget that other groups need.
 func (s *server) InspectAll(ctx context.Context, _ *fodcv1.InspectAllRequest) (*fodcv1.InspectAllResponse, error) {
 	if s.metadataRepo == nil {
 		return nil, fmt.Errorf("metadata repository not available")
@@ -34,15 +43,31 @@ func (s *server) InspectAll(ctx context.Context, _ *fodcv1.InspectAllRequest) (*
 	if err != nil {
 		return nil, fmt.Errorf("failed to list groups: %w", err)
 	}
-	result := make([]*fodcv1.GroupLifecycleInfo, 0, len(groups))
-	for _, group := range groups {
+	results := make([]*fodcv1.GroupLifecycleInfo, len(groups))
+	limit := max(min(len(groups), maxInspectGroupConcurrency), 1)
+	sem := make(chan struct{}, limit)
+	var wg sync.WaitGroup
+	for i, group := range groups {
 		if group == nil || group.Metadata == nil {
 			continue
 		}
-		info := s.inspectGroup(ctx, group)
-		result = append(result, info)
+		sem <- struct{}{}
+		wg.Add(1)
+		go func(idx int, g *commonv1.Group) {
+			defer wg.Done()
+			defer func() { <-sem }()
+			results[idx] = s.inspectGroup(ctx, g)
+		}(i, group)
 	}
-	return &fodcv1.InspectAllResponse{Groups: result}, nil
+	wg.Wait()
+
+	out := make([]*fodcv1.GroupLifecycleInfo, 0, len(results))
+	for _, r := range results {
+		if r != nil {
+			out = append(out, r)
+		}
+	}
+	return &fodcv1.InspectAllResponse{Groups: out}, nil
 }
 
 func (s *server) inspectGroup(ctx context.Context, group *commonv1.Group) *fodcv1.GroupLifecycleInfo {

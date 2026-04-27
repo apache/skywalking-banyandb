@@ -20,7 +20,9 @@ package sub
 import (
 	"context"
 	"fmt"
+	"sync/atomic"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -48,6 +50,10 @@ type mockMetadataRepo struct {
 	groupRegistry *mockGroupRegistry
 	dataInfoMap   map[string][]*databasev1.DataInfo
 	dataInfoErr   map[string]error
+	slowGroups    map[string]time.Duration
+	collectStarts atomic.Int32
+	concurrentMax atomic.Int32
+	concurrentNow atomic.Int32
 }
 
 func (m *mockMetadataRepo) GroupRegistry() schema.Group {
@@ -55,6 +61,20 @@ func (m *mockMetadataRepo) GroupRegistry() schema.Group {
 }
 
 func (m *mockMetadataRepo) CollectDataInfo(_ context.Context, group string) ([]*databasev1.DataInfo, error) {
+	m.collectStarts.Add(1)
+	current := m.concurrentNow.Add(1)
+	defer m.concurrentNow.Add(-1)
+	for {
+		hi := m.concurrentMax.Load()
+		if current <= hi || m.concurrentMax.CompareAndSwap(hi, current) {
+			break
+		}
+	}
+	if m.slowGroups != nil {
+		if d, ok := m.slowGroups[group]; ok && d > 0 {
+			time.Sleep(d)
+		}
+	}
 	if m.dataInfoErr != nil {
 		if err, ok := m.dataInfoErr[group]; ok {
 			return nil, err
@@ -207,4 +227,41 @@ func TestInspectAll_MultipleGroups(t *testing.T) {
 	assert.Equal(t, "sw_record", resp.Groups[1].Name)
 	assert.Equal(t, "CATALOG_STREAM", resp.Groups[1].Catalog)
 	assert.Nil(t, resp.Groups[1].DataInfo)
+}
+
+func TestInspectAll_RunsGroupsInParallel(t *testing.T) {
+	const groupCount = 8
+	const sleep = 80 * time.Millisecond
+	groups := make([]*commonv1.Group, 0, groupCount)
+	slow := make(map[string]time.Duration, groupCount)
+	for i := range groupCount {
+		name := fmt.Sprintf("g_%d", i)
+		groups = append(groups, &commonv1.Group{
+			Metadata: &commonv1.Metadata{Name: name},
+			Catalog:  commonv1.Catalog_CATALOG_STREAM,
+		})
+		slow[name] = sleep
+	}
+	repo := &mockMetadataRepo{
+		groupRegistry: &mockGroupRegistry{groups: groups},
+		slowGroups:    slow,
+	}
+	s := &server{
+		log:          logger.GetLogger("test"),
+		metadataRepo: repo,
+	}
+
+	start := time.Now()
+	resp, err := s.InspectAll(context.Background(), &fodcv1.InspectAllRequest{})
+	elapsed := time.Since(start)
+	require.NoError(t, err)
+	require.Len(t, resp.Groups, groupCount)
+
+	// Sequential execution would take groupCount*sleep; parallel must finish
+	// in roughly one sleep interval. Allow 4x headroom for CI jitter.
+	assert.Less(t, elapsed, 4*sleep, "InspectAll must run groups in parallel; total wall time was %s", elapsed)
+	assert.Equal(t, int32(groupCount), repo.collectStarts.Load())
+	assert.GreaterOrEqual(t, repo.concurrentMax.Load(), int32(2),
+		"at least two CollectDataInfo invocations must overlap; observed max concurrency was %d",
+		repo.concurrentMax.Load())
 }
