@@ -1673,6 +1673,20 @@ func Test_mergeLaneWorker_cleansUpInFlight(t *testing.T) {
 	ch := make(chan *mergeDispatchRequest, 1)
 	merges := make(chan *mergerIntroduction, 1)
 
+	// Start a mock introducer to consume from merges and close applied.
+	mockIntroducerDone := make(chan struct{})
+	go func() {
+		defer close(mockIntroducerDone)
+		for mi := range merges {
+			if mi.newPart != nil {
+				mi.newPart.decRef()
+			}
+			if mi.applied != nil {
+				close(mi.applied)
+			}
+		}
+	}()
+
 	// Start worker in background
 	workerDone := make(chan struct{})
 	go func() {
@@ -1689,9 +1703,7 @@ func Test_mergeLaneWorker_cleansUpInFlight(t *testing.T) {
 	}
 	close(ch)
 
-	// The worker will try to merge and send introduction.
-	// Since there's no introducerLoop, mergePartsThenSendIntroduction
-	// will block on mi.applied. Close the closer to unblock it.
+	// Close the closer to signal shutdown.
 	time.Sleep(100 * time.Millisecond)
 	closer.Done()
 	closer.CloseThenWait()
@@ -1702,6 +1714,8 @@ func Test_mergeLaneWorker_cleansUpInFlight(t *testing.T) {
 	case <-time.After(5 * time.Second):
 		t.Fatal("worker did not finish")
 	}
+	close(merges)
+	<-mockIntroducerDone
 
 	// Verify inFlight was cleaned up
 	tst.inFlightMu.RLock()
