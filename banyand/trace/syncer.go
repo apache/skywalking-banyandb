@@ -475,11 +475,7 @@ func (tst *tsTable) handleSyncIntroductions(partsToSync []*part, syncCh chan *sy
 		return errClosed
 	}
 
-	select {
-	case <-si.applied:
-	case <-tst.loopCloser.CloseNotify():
-		return errClosed
-	}
+	<-si.applied
 	return nil
 }
 

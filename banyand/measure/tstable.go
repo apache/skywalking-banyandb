@@ -364,10 +364,7 @@ func (tst *tsTable) mustAddFilePart(partID uint64) {
 		ind.part.decRef()
 		return
 	}
-	select {
-	case <-ind.applied:
-	case <-tst.loopCloser.CloseNotify():
-	}
+	<-ind.applied
 }
 
 func (tst *tsTable) mustAddMemPart(mp *memPart) {
@@ -388,10 +385,7 @@ func (tst *tsTable) mustAddMemPart(mp *memPart) {
 		ind.part.decRef()
 		return
 	}
-	select {
-	case <-ind.applied:
-	case <-tst.loopCloser.CloseNotify():
-	}
+	<-ind.applied
 	tst.incTotalWritten(int(totalCount))
 	tst.incTotalBatch(1)
 	tst.incTotalBatchIntroLatency(time.Since(startTime).Seconds())

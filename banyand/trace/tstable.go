@@ -518,10 +518,7 @@ func (tst *tsTable) mustAddFilePart(partID uint64, sidxFilePartsMap map[string]s
 		ind.part.decRef()
 		return
 	}
-	select {
-	case <-ind.applied:
-	case <-tst.loopCloser.CloseNotify():
-	}
+	<-ind.applied
 }
 
 func (tst *tsTable) mustAddMemPart(mp *memPart, sidxReqsMap map[string]*sidx.MemPart) {
@@ -543,10 +540,7 @@ func (tst *tsTable) mustAddMemPart(mp *memPart, sidxReqsMap map[string]*sidx.Mem
 		ind.part.decRef()
 		return
 	}
-	select {
-	case <-ind.applied:
-	case <-tst.loopCloser.CloseNotify():
-	}
+	<-ind.applied
 	tst.incTotalWritten(int(totalCount))
 	tst.incTotalBatch(1)
 	tst.incTotalBatchIntroLatency(time.Since(startTime).Seconds())
