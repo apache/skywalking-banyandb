@@ -303,9 +303,9 @@ func (sr *schemaRepo) storeGroup(ctx context.Context, groupMeta *commonv1.Metada
 		}
 		return g, nil
 	}
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	timeoutCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
 	defer cancel()
-	groupSchema, err := g.metadata.GroupRegistry().GetGroup(ctx, name)
+	groupSchema, err := g.metadata.GroupRegistry().GetGroup(timeoutCtx, name)
 	if err != nil {
 		return nil, err
 	}
