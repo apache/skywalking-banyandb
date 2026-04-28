@@ -22,6 +22,12 @@ Release Notes.
 - Add validation for MATCH and IN conditions in inverted index query builder, and handle nil OR branch when all entities are specific.
 - Fix wrong backup path of schema property.
 - Fix lifecycle migration failure when the target stage has `close: true`.
+- Fix stale sync request blocking watch session channel, causing repeated "channel full, skipping session" errors when a watch stream is in backoff.
+- Fix nil pointer panic in disk monitor when group schema is not yet initialized during early startup, and ensure monitor loop survives recovered panics.
+- Fix `FileSystemError` not satisfying `errors.Is(err, io/fs.ErrNotExist)`, which prevented the segment controller from cleaning up half-born segment directories and left groups in a permanent zombie state after a crash or partial sync.
+- Fix lifecycle migration panic when a stream shard's snapshot has no element index (`idx/`) directory.
+- Avoid FODC lifecycle inspection failing on busy data nodes by raising the per-broadcast `CollectDataInfo` / `CollectLiaisonInfo` deadline from 5s to 30s and parallelizing per-group inspection in the cluster-internal `InspectAll`.
+- Fix flaky `file_snapshot` subtest in measure/stream/trace by waiting until every introduced mem part has been flushed to disk, instead of only checking the latest snapshot creator.
 
 ### Chores
 
