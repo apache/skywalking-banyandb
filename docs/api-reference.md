@@ -4451,6 +4451,7 @@ ShardInfo contains information about a specific shard.
 | part_count | [int64](#int64) |  | part_count is the number of parts in this shard. |
 | inverted_index_info | [InvertedIndexInfo](#banyandb-database-v1-InvertedIndexInfo) |  | inverted_index_info contains information about the inverted index. |
 | sidx_info | [SIDXInfo](#banyandb-database-v1-SIDXInfo) |  | sidx_info contains information about sidx. |
+| file_part_count | [int64](#int64) |  | file_part_count is the number of file parts (excluding in-memory parts) in this shard. |
 
 
 

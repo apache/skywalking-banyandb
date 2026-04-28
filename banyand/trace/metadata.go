@@ -355,13 +355,14 @@ func (sr *schemaRepo) collectShardInfo(ctx context.Context, table any, shardID u
 		}
 	}
 	defer snapshot.decRef()
-	var totalCount, compressedSize, uncompressedSize, partCount uint64
+	var totalCount, compressedSize, uncompressedSize, partCount, filePartCount uint64
 	for _, pw := range snapshot.parts {
 		if pw.p != nil {
 			totalCount += pw.p.partMetadata.TotalCount
 			compressedSize += pw.p.partMetadata.CompressedSizeBytes
 			uncompressedSize += pw.p.partMetadata.UncompressedSpanSizeBytes
 			partCount++
+			filePartCount++
 		} else if pw.mp != nil {
 			totalCount += pw.mp.partMetadata.TotalCount
 			compressedSize += pw.mp.partMetadata.CompressedSizeBytes
@@ -377,6 +378,7 @@ func (sr *schemaRepo) collectShardInfo(ctx context.Context, table any, shardID u
 		PartCount:         int64(partCount),
 		InvertedIndexInfo: &databasev1.InvertedIndexInfo{},
 		SidxInfo:          sidxInfo,
+		FilePartCount:     int64(filePartCount),
 	}
 }
 
