@@ -18,9 +18,9 @@
 package panicdiag
 
 import (
+	"encoding/json"
 	"os"
 	"path/filepath"
-	"strings"
 	"testing"
 	"time"
 )
@@ -58,16 +58,19 @@ func TestArtifactWriterWrite(t *testing.T) {
 		t.Fatalf("artifact dir mismatch: got %s want %s", artifactDir, expectedDir)
 	}
 
-	summaryPath := filepath.Join(artifactDir, crashTextFileName)
+	summaryPath := filepath.Join(artifactDir, panicJSONFileName)
 	summaryData, err := os.ReadFile(summaryPath)
 	if err != nil {
 		t.Fatalf("read crash summary: %v", err)
 	}
-	summary := string(summaryData)
-	if !strings.Contains(summary, "Component: query/worker") {
-		t.Fatalf("summary missing component: %s", summary)
+	var decoded PanicRecord
+	if decodeErr := json.Unmarshal(summaryData, &decoded); decodeErr != nil {
+		t.Fatalf("decode crash json: %v", decodeErr)
 	}
-	if !strings.Contains(summary, "Panic: boom") {
-		t.Fatalf("summary missing panic value: %s", summary)
+	if decoded.Component != "query/worker" {
+		t.Fatalf("summary missing component: %s", decoded.Component)
+	}
+	if decoded.PanicValue != "boom" {
+		t.Fatalf("summary missing panic value: %s", decoded.PanicValue)
 	}
 }

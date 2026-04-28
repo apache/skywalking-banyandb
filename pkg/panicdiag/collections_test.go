@@ -18,6 +18,7 @@
 package panicdiag
 
 import (
+	"encoding/json"
 	"os"
 	"path/filepath"
 	"testing"
@@ -30,8 +31,8 @@ func writeMinimalArtifact(t *testing.T, rootDir, name string) {
 	if mkdirErr := os.MkdirAll(artifactDir, 0o755); mkdirErr != nil {
 		t.Fatalf("create artifact dir: %v", mkdirErr)
 	}
-	if writeErr := os.WriteFile(filepath.Join(artifactDir, crashTextFileName), []byte("panic\n"), 0o600); writeErr != nil {
-		t.Fatalf("write crash text: %v", writeErr)
+	if writeErr := os.WriteFile(filepath.Join(artifactDir, panicJSONFileName), []byte("{}"), 0o600); writeErr != nil {
+		t.Fatalf("write crash json: %v", writeErr)
 	}
 }
 
@@ -40,8 +41,12 @@ func writeArtifact(t *testing.T, artifactDir string, record PanicRecord) {
 	if mkdirErr := os.MkdirAll(artifactDir, 0o755); mkdirErr != nil {
 		t.Fatalf("create artifact dir: %v", mkdirErr)
 	}
-	if writeErr := os.WriteFile(filepath.Join(artifactDir, crashTextFileName), []byte(buildCrashSummary(&record)), 0o600); writeErr != nil {
-		t.Fatalf("write crash text: %v", writeErr)
+	data, marshalErr := json.Marshal(&record)
+	if marshalErr != nil {
+		t.Fatalf("marshal record: %v", marshalErr)
+	}
+	if writeErr := os.WriteFile(filepath.Join(artifactDir, panicJSONFileName), data, 0o600); writeErr != nil {
+		t.Fatalf("write crash json: %v", writeErr)
 	}
 }
 
@@ -110,7 +115,7 @@ func TestPruneArtifactsIgnoresNonArtifactDirs(t *testing.T) {
 	t.Helper()
 
 	rootDir := t.TempDir()
-	// Non-artifact dir (no crash.txt).
+	// Non-artifact dir (no panic.json).
 	if mkdirErr := os.MkdirAll(filepath.Join(rootDir, "not-an-artifact"), 0o755); mkdirErr != nil {
 		t.Fatalf("create non-artifact dir: %v", mkdirErr)
 	}
@@ -168,8 +173,8 @@ func TestListCollectionsWithPlainCrashText(t *testing.T) {
 	if mkdirErr := os.MkdirAll(artifactDir, 0o755); mkdirErr != nil {
 		t.Fatalf("create artifact dir: %v", mkdirErr)
 	}
-	if writeErr := os.WriteFile(filepath.Join(artifactDir, crashTextFileName), []byte("panic\n"), 0o600); writeErr != nil {
-		t.Fatalf("write crash text: %v", writeErr)
+	if writeErr := os.WriteFile(filepath.Join(artifactDir, panicJSONFileName), []byte("not-valid-json"), 0o600); writeErr != nil {
+		t.Fatalf("write crash json: %v", writeErr)
 	}
 
 	collections, err := ListCollections(rootDir)

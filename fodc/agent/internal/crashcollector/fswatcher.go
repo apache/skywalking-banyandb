@@ -211,7 +211,7 @@ func (w *DirectoryWatcher) analyzeAndStore(collection panicdiag.Collection) {
 	w.seenKeys[key] = struct{}{}
 }
 
-var requiredArtifactFiles = []string{"crash.txt"}
+var requiredArtifactFiles = []string{"panic.json"}
 
 func analyzeCrashArtifact(collection *panicdiag.Collection) CrashAnalysis {
 	fileSet := make(map[string]struct{}, len(collection.Files))

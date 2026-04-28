@@ -41,7 +41,7 @@ func diagnosticLogger(t *testing.T) *logger.Logger {
 
 // TestStateDumpFilesDetectedByWatcher verifies that when a panic is recovered with a
 // StateDumperFunc, the resulting artifact directory contains deep-dump.json and
-// that DirectoryWatcher surfaces it in Collection.Files alongside the mandatory crash.txt.
+// that DirectoryWatcher surfaces it in Collection.Files alongside the mandatory panic.json.
 func TestStateDumpFilesDetectedByWatcher(t *testing.T) {
 	t.Helper()
 
@@ -69,7 +69,7 @@ func TestStateDumpFilesDetectedByWatcher(t *testing.T) {
 	require.Len(t, records, 1, "expected exactly one crash collection")
 
 	files := records[0].Collection.Files
-	assert.Contains(t, files, "crash.txt")
+	assert.Contains(t, files, "panic.json")
 	assert.Contains(t, files, "deep-dump.json", "state dump JSON should appear in Collection.Files")
 
 	rec := records[0].Collection.Record
@@ -79,8 +79,8 @@ func TestStateDumpFilesDetectedByWatcher(t *testing.T) {
 }
 
 // TestIncompleteArtifactIgnoredUntilComplete verifies that an artifact directory
-// that contains auxiliary files but not crash.txt is not stored in the ring
-// buffer until the artifact becomes complete. A directory with no crash.txt at
+// that contains auxiliary files but not panic.json is not stored in the ring
+// buffer until the artifact becomes complete. A directory with no panic.json at
 // all must be silently ignored by ListCollections.
 func TestIncompleteArtifactIgnoredUntilComplete(t *testing.T) {
 	t.Helper()
@@ -88,7 +88,7 @@ func TestIncompleteArtifactIgnoredUntilComplete(t *testing.T) {
 	dir := t.TempDir()
 	log := diagnosticLogger(t)
 
-	// Create a subdirectory that has auxiliary data but no crash.txt.
+	// Create a subdirectory that has auxiliary data but no panic.json.
 	artifactSubdir := filepath.Join(dir, "20260420T080000.000000000Z-incomplete-99999")
 	require.NoError(t, os.MkdirAll(artifactSubdir, 0o755))
 	require.NoError(t, os.WriteFile(filepath.Join(artifactSubdir, "deep-dump.json"), []byte(`{"state":"partial"}`), 0o600))
@@ -99,23 +99,17 @@ func TestIncompleteArtifactIgnoredUntilComplete(t *testing.T) {
 	records := watcher.ListCollections()
 	require.Empty(t, records, "incomplete artifact should not be stored in the ring buffer")
 
-	// A directory with no crash.txt must be silently ignored.
+	// A directory with no panic.json must be silently ignored.
 	emptySubdir := filepath.Join(dir, "20260420T090000.000000000Z-no-record-88888")
 	require.NoError(t, os.MkdirAll(emptySubdir, 0o755))
 	watcher.Scan()
 
 	records = watcher.ListCollections()
-	require.Empty(t, records, "directory without crash.txt should be silently skipped")
+	require.Empty(t, records, "directory without panic.json should be silently skipped")
 
-	require.NoError(t, os.WriteFile(filepath.Join(artifactSubdir, "crash.txt"), []byte(`BanyanDB panic recovered
-OccurredAt: 2026-04-20T08:00:00Z
-Component: incomplete-component
-Recovered: false
-Panic: partial write
-
-Stack:
-goroutine 1 [running]:
-`), 0o600))
+	panicJSON := []byte(`{"component":"incomplete-component","panicValue":"partial write",` +
+		`"goroutineStack":"goroutine 1 [running]:\n","occurredAt":"2026-04-20T08:00:00Z","recovered":false}`)
+	require.NoError(t, os.WriteFile(filepath.Join(artifactSubdir, "panic.json"), panicJSON, 0o600))
 	watcher.Scan()
 
 	records = watcher.ListCollections()

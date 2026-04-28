@@ -18,14 +18,12 @@
 package panicdiag
 
 import (
+	"encoding/json"
 	"fmt"
 	"os"
 	"path/filepath"
 	"sort"
-	"strconv"
-	"strings"
 	"sync"
-	"time"
 )
 
 var defaultArtifactRootHolder struct {
@@ -55,7 +53,7 @@ func DefaultMaxArtifacts() int {
 }
 
 // PruneArtifacts removes the oldest crash artifact directories under rootDir
-// until at most maxArtifacts remain. Only directories containing a crash.txt
+// until at most maxArtifacts remain. Only directories containing a panic.json
 // are considered; other directories are left untouched. When maxArtifacts is
 // zero the call is a no-op.
 func PruneArtifacts(rootDir string, maxArtifacts int) error {
@@ -79,7 +77,7 @@ func PruneArtifacts(rootDir string, maxArtifacts int) error {
 		if !entry.IsDir() {
 			continue
 		}
-		if _, statErr := os.Stat(filepath.Join(rootDir, entry.Name(), crashTextFileName)); os.IsNotExist(statErr) {
+		if _, statErr := os.Stat(filepath.Join(rootDir, entry.Name(), panicJSONFileName)); os.IsNotExist(statErr) {
 			continue
 		}
 		artifactDirs = append(artifactDirs, entry.Name())
@@ -158,7 +156,7 @@ func ListCollections(root string) ([]Collection, error) {
 }
 
 func readCollection(artifactDir string) (*Collection, error) {
-	if _, statErr := os.Stat(filepath.Join(artifactDir, crashTextFileName)); statErr != nil {
+	if _, statErr := os.Stat(filepath.Join(artifactDir, panicJSONFileName)); statErr != nil {
 		if os.IsNotExist(statErr) {
 			return nil, nil
 		}
@@ -182,39 +180,18 @@ func readCollection(artifactDir string) (*Collection, error) {
 }
 
 func readCrashSummaryRecord(artifactDir string) (*PanicRecord, error) {
-	summaryData, err := os.ReadFile(filepath.Join(artifactDir, crashTextFileName))
+	summaryData, err := os.ReadFile(filepath.Join(artifactDir, panicJSONFileName))
 	if err != nil {
 		return nil, fmt.Errorf("read crash summary: %w", err)
 	}
-	summary := string(summaryData)
-	record := &PanicRecord{}
-	for _, line := range strings.Split(summary, "\n") {
-		switch {
-		case strings.HasPrefix(line, "OccurredAt: "):
-			occurredAt, parseErr := time.Parse(time.RFC3339Nano, strings.TrimPrefix(line, "OccurredAt: "))
-			if parseErr != nil {
-				return nil, fmt.Errorf("parse crash summary occurredAt: %w", parseErr)
-			}
-			record.OccurredAt = occurredAt
-		case strings.HasPrefix(line, "Component: "):
-			record.Component = strings.TrimPrefix(line, "Component: ")
-		case strings.HasPrefix(line, "Recovered: "):
-			recovered, parseErr := strconv.ParseBool(strings.TrimPrefix(line, "Recovered: "))
-			if parseErr != nil {
-				return nil, fmt.Errorf("parse crash summary recovered: %w", parseErr)
-			}
-			record.Recovered = recovered
-		case strings.HasPrefix(line, "Panic: "):
-			record.PanicValue = strings.TrimPrefix(line, "Panic: ")
-		}
-	}
-	if stackIdx := strings.Index(summary, "\nStack:\n"); stackIdx >= 0 {
-		record.GoroutineStack = summary[stackIdx+len("\nStack:\n"):]
+	var record PanicRecord
+	if jsonErr := json.Unmarshal(summaryData, &record); jsonErr != nil {
+		return nil, nil
 	}
 	if record.OccurredAt.IsZero() && record.Component == "" && record.PanicValue == "" && record.GoroutineStack == "" {
 		return nil, nil
 	}
-	return record, nil
+	return &record, nil
 }
 
 func listArtifactFiles(artifactDir string) ([]string, error) {

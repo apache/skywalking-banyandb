@@ -201,7 +201,7 @@ var _ = Describe("Diagnostic Integration", func() {
 			_ = client.Disconnect()
 		}()
 
-		By("writing a crash artifact directory with crash.txt")
+		By("writing a crash artifact directory with panic.json")
 		artifactDir := writeCrashArtifact(crashDir, crashArtifact{
 			occurredAt: time.Date(2026, time.April, 20, 10, 0, 0, 0, time.UTC),
 			component:  "storage-engine",
@@ -219,7 +219,7 @@ var _ = Describe("Diagnostic Integration", func() {
 			g.Expect(record.PodName).To(Equal("pod-diag-single"))
 			g.Expect(record.SourceEndpoint).To(Equal("file://" + crashDir))
 			g.Expect(record.ArtifactDir).To(Equal(artifactDir))
-			g.Expect(record.Files).To(ContainElements("crash.txt", "deep-dump.json"))
+			g.Expect(record.Files).To(ContainElements("panic.json", "deep-dump.json"))
 			g.Expect(record.PanicRecord).NotTo(BeNil())
 			g.Expect(record.PanicRecord.Component).To(Equal("storage-engine"))
 			g.Expect(record.PanicRecord.PanicValue).To(Equal("nil pointer dereference in compaction"))

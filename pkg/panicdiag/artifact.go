@@ -18,6 +18,7 @@
 package panicdiag
 
 import (
+	"encoding/json"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -25,7 +26,7 @@ import (
 	"time"
 )
 
-const crashTextFileName = "crash.txt"
+const panicJSONFileName = "panic.json"
 
 // ArtifactWriter writes panic artifacts to disk.
 type ArtifactWriter struct {
@@ -70,9 +71,12 @@ func (aw *ArtifactWriter) Write(record *PanicRecord) (string, error) {
 		return "", fmt.Errorf("create artifact dir: %w", err)
 	}
 
-	summaryPath := filepath.Join(artifactDir, crashTextFileName)
-	summary := buildCrashSummary(record)
-	if writeErr := os.WriteFile(summaryPath, []byte(summary), 0o600); writeErr != nil {
+	summaryData, marshalErr := json.Marshal(record)
+	if marshalErr != nil {
+		return "", fmt.Errorf("marshal crash record: %w", marshalErr)
+	}
+	summaryPath := filepath.Join(artifactDir, panicJSONFileName)
+	if writeErr := os.WriteFile(summaryPath, summaryData, 0o600); writeErr != nil {
 		return "", fmt.Errorf("write crash summary: %w", writeErr)
 	}
 
@@ -123,19 +127,4 @@ func sanitizeComponent(component string) string {
 		return "unknown"
 	}
 	return component
-}
-
-func buildCrashSummary(record *PanicRecord) string {
-	var builder strings.Builder
-	builder.WriteString("BanyanDB panic recovered\n")
-	builder.WriteString(fmt.Sprintf("OccurredAt: %s\n", record.OccurredAt.UTC().Format(time.RFC3339Nano)))
-	builder.WriteString(fmt.Sprintf("Component: %s\n", record.Component))
-	builder.WriteString(fmt.Sprintf("Recovered: %t\n", record.Recovered))
-	builder.WriteString(fmt.Sprintf("Panic: %s\n\n", record.PanicValue))
-	builder.WriteString("Stack:\n")
-	builder.WriteString(record.GoroutineStack)
-	if !strings.HasSuffix(record.GoroutineStack, "\n") {
-		builder.WriteByte('\n')
-	}
-	return builder.String()
 }

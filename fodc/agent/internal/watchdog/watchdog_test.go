@@ -553,12 +553,13 @@ func TestWatchdog_Serve_PanicWritesStateDump(t *testing.T) {
 	require.Len(t, entries, 1)
 
 	artifactDir := filepath.Join(artifactRoot, entries[0].Name())
-	crashTextPath := filepath.Join(artifactDir, "crash.txt")
+	panicJSONPath := filepath.Join(artifactDir, "panic.json")
 	deepDumpPath := filepath.Join(artifactDir, "deep-dump.json")
 
-	crashData, err := os.ReadFile(crashTextPath)
+	crashData, err := os.ReadFile(panicJSONPath)
 	require.NoError(t, err)
-	assert.Contains(t, string(crashData), "Panic: recorder panic")
+	assert.Contains(t, string(crashData), `"panicValue"`)
+	assert.Contains(t, string(crashData), "recorder panic")
 
 	deepDumpData, err := os.ReadFile(deepDumpPath)
 	require.NoError(t, err)

@@ -149,15 +149,9 @@ func TestDirectoryWatcherScanWaitsForCompleteArtifacts(t *testing.T) {
 	watcher.Scan()
 	assert.Empty(t, watcher.ListCollections(), "incomplete artifacts should not be stored")
 
-	require.NoError(t, os.WriteFile(filepath.Join(artifactDir, "crash.txt"), []byte(`BanyanDB panic recovered
-OccurredAt: 2026-04-15T08:00:00Z
-Component: fs-notify-test
-Recovered: true
-Panic: detected via fsnotify
-
-Stack:
-goroutine 1 [running]:
-`), 0o600))
+	panicJSON := []byte(`{"component":"fs-notify-test","panicValue":"detected via fsnotify",` +
+		`"goroutineStack":"goroutine 1 [running]:\n","occurredAt":"2026-04-15T08:00:00Z","recovered":true}`)
+	require.NoError(t, os.WriteFile(filepath.Join(artifactDir, "panic.json"), panicJSON, 0o600))
 
 	watcher.Scan()
 	records := watcher.ListCollections()
@@ -171,7 +165,7 @@ func TestAnalyzeCrashArtifactComplete(t *testing.T) {
 
 	collection := &panicdiag.Collection{
 		ArtifactDir: "20260415T080000.000000000Z-test-123",
-		Files:       []string{"crash.txt"},
+		Files:       []string{"panic.json"},
 	}
 	analysis := analyzeCrashArtifact(collection)
 	assert.True(t, analysis.Complete)
@@ -187,5 +181,5 @@ func TestAnalyzeCrashArtifactIncomplete(t *testing.T) {
 	}
 	analysis := analyzeCrashArtifact(collection)
 	assert.False(t, analysis.Complete)
-	assert.Equal(t, []string{"crash.txt"}, analysis.MissingFiles)
+	assert.Equal(t, []string{"panic.json"}, analysis.MissingFiles)
 }
