@@ -25,6 +25,8 @@ import (
 )
 
 // Go launches fn in a new goroutine protected by panic recovery.
+// A mutable breadcrumb store is installed before fn runs so breadcrumbs added
+// inside fn are captured if fn panics.
 // Panics are intercepted, and the panic value and localized stack trace are logged.
 // When a panic counter is configured via RecoveryOptions.Counter or
 // panicdiag.SetDefaultPanicCounter, banyandb_panic_total is incremented with
@@ -34,6 +36,10 @@ func Go(ctx context.Context, component string, log *logger.Logger, fn func(conte
 		Component: component,
 		Logger:    log,
 	}, nil, func(ctxPtr *context.Context) {
+		// Install a mutable breadcrumb store so breadcrumbs added inside
+		// fn are visible to the recovery defer (which reads *ctxPtr after
+		// fn returns or panics).
+		*ctxPtr = panicdiag.WithMutableBreadcrumbs(*ctxPtr)
 		fn(*ctxPtr)
 	})
 }

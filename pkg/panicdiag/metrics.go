@@ -45,6 +45,7 @@ func SetDefaultPanicCounter(counter meter.Counter) {
 // caller passes nil as the reporter argument. Call once during process initialization.
 func SetDefaultReporter(r Reporter) {
 	if r == nil {
+		defaultReporterPtr.Store(nil)
 		return
 	}
 	defaultReporterPtr.Store(&r)

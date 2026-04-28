@@ -64,7 +64,13 @@ func WithMutableBreadcrumbs(ctx context.Context) context.Context {
 	if ctx == nil {
 		ctx = context.Background()
 	}
-	return context.WithValue(ctx, mutableBreadcrumbContextKey{}, &mutableBreadcrumbStore{})
+	if _, ok := ctx.Value(mutableBreadcrumbContextKey{}).(*mutableBreadcrumbStore); ok {
+		return ctx
+	}
+	existingBreadcrumbs := BreadcrumbsFromContext(ctx)
+	return context.WithValue(ctx, mutableBreadcrumbContextKey{}, &mutableBreadcrumbStore{
+		breadcrumbs: existingBreadcrumbs,
+	})
 }
 
 // WithBreadcrumb appends a semantic breadcrumb to the context.
