@@ -25,10 +25,7 @@ import (
 	"time"
 )
 
-const (
-	panicRecordFileName = "panic.json"
-	crashTextFileName   = "crash.txt"
-)
+const crashTextFileName = "crash.txt"
 
 // ArtifactWriter writes panic artifacts to disk.
 type ArtifactWriter struct {

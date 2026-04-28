@@ -23,9 +23,7 @@ import (
 	"fmt"
 	"net"
 	"net/http"
-	"os"
 	"path/filepath"
-	"strings"
 	"time"
 
 	. "github.com/onsi/ginkgo/v2"
@@ -33,6 +31,7 @@ import (
 
 	"github.com/apache/skywalking-banyandb/fodc/agent/testhelper"
 	"github.com/apache/skywalking-banyandb/fodc/proxy/internal/api"
+	"github.com/apache/skywalking-banyandb/fodc/proxy/internal/diagnostics"
 	grpcproxy "github.com/apache/skywalking-banyandb/fodc/proxy/internal/grpc"
 	proxylifecycle "github.com/apache/skywalking-banyandb/fodc/proxy/internal/lifecycle"
 	metricsproxy "github.com/apache/skywalking-banyandb/fodc/proxy/internal/metrics"
@@ -42,30 +41,35 @@ import (
 	"github.com/apache/skywalking-banyandb/pkg/test/flags"
 )
 
-// writePanicReport serializes a PanicRecord as a lifecycle report JSON file in dir.
-func writePanicReport(dir, filename string, rec *panicdiag.PanicRecord) {
-	data, marshalErr := json.MarshalIndent(rec, "", "  ")
-	Expect(marshalErr).NotTo(HaveOccurred())
-	Expect(os.WriteFile(filepath.Join(dir, filename), append(data, '\n'), 0o600)).To(Succeed())
+type crashArtifact struct {
+	occurredAt time.Time
+	component  string
+	panicValue string
+	recovered  bool
+	stateDump  map[string]string
 }
 
 var _ = Describe("Diagnostic Integration", func() {
 	var (
-		proxyGRPCAddr string
-		proxyHTTPAddr string
-		grpcServer    *grpcproxy.Server
-		httpServer    *api.Server
-		agentRegistry *registry.AgentRegistry
-		metricsAgg    *metricsproxy.Aggregator
-		grpcService   *grpcproxy.FODCService
-		lifecycleMgr  *proxylifecycle.Manager
-		httpClient    *http.Client
-		testLogger    *logger.Logger
+		proxyGRPCAddr       string
+		proxyHTTPAddr       string
+		grpcServer          *grpcproxy.Server
+		httpServer          *api.Server
+		agentRegistry       *registry.AgentRegistry
+		metricsAgg          *metricsproxy.Aggregator
+		diagnosticsAgg      *diagnostics.Aggregator
+		grpcService         *grpcproxy.FODCService
+		lifecycleMgr        *proxylifecycle.Manager
+		httpClient          *http.Client
+		testLogger          *logger.Logger
+		defaultMaxArtifacts int
 	)
 
 	BeforeEach(func() {
 		testLogger = logger.GetLogger("test", "diagnostic-integration")
 		httpClient = &http.Client{Timeout: 5 * time.Second}
+		defaultMaxArtifacts = panicdiag.DefaultMaxArtifacts()
+		panicdiag.SetDefaultMaxArtifacts(0)
 
 		heartbeatTimeout := 5 * time.Second
 		cleanupTimeout := 10 * time.Second
@@ -74,9 +78,11 @@ var _ = Describe("Diagnostic Integration", func() {
 
 		lifecycleMgr = proxylifecycle.NewManager(agentRegistry, nil, testLogger)
 		metricsAgg = metricsproxy.NewAggregator(agentRegistry, nil, testLogger)
-		grpcService = grpcproxy.NewFODCService(agentRegistry, metricsAgg, nil, lifecycleMgr, nil, testLogger, heartbeatInterval)
+		diagnosticsAgg = diagnostics.NewAggregator(agentRegistry, nil, testLogger)
+		grpcService = grpcproxy.NewFODCService(agentRegistry, metricsAgg, nil, lifecycleMgr, diagnosticsAgg, testLogger, heartbeatInterval)
 		metricsAgg.SetGRPCService(grpcService)
 		lifecycleMgr.SetGRPCService(grpcService)
+		diagnosticsAgg.SetGRPCService(grpcService)
 
 		grpcListener, listenErr := net.Listen("tcp", "localhost:0")
 		Expect(listenErr).NotTo(HaveOccurred())
@@ -91,7 +97,7 @@ var _ = Describe("Diagnostic Integration", func() {
 		Expect(httpListenErr).NotTo(HaveOccurred())
 		proxyHTTPAddr = httpListener.Addr().String()
 		_ = httpListener.Close()
-		httpServer = api.NewServer(metricsAgg, nil, lifecycleMgr, agentRegistry, nil, testLogger)
+		httpServer = api.NewServer(metricsAgg, nil, lifecycleMgr, agentRegistry, diagnosticsAgg, testLogger)
 		Expect(httpServer.Start(proxyHTTPAddr, 10*time.Second, 10*time.Second)).To(Succeed())
 
 		Eventually(func() error {
@@ -105,6 +111,7 @@ var _ = Describe("Diagnostic Integration", func() {
 	})
 
 	AfterEach(func() {
+		panicdiag.SetDefaultMaxArtifacts(defaultMaxArtifacts)
 		if httpServer != nil {
 			_ = httpServer.Stop()
 		}
@@ -116,25 +123,24 @@ var _ = Describe("Diagnostic Integration", func() {
 		}
 	})
 
-	// getLifecycleResult queries /cluster/lifecycle and decodes the result.
-	getLifecycleResult := func() *proxylifecycle.InspectionResult {
-		resp, getErr := httpClient.Get(fmt.Sprintf("http://%s/cluster/lifecycle", proxyHTTPAddr))
+	getDiagnostics := func(query string) []diagnostics.AggregatedCrashRecord {
+		url := fmt.Sprintf("http://%s/diagnostics", proxyHTTPAddr)
+		if query != "" {
+			url += "?" + query
+		}
+		resp, getErr := httpClient.Get(url)
 		Expect(getErr).NotTo(HaveOccurred())
 		defer resp.Body.Close()
 		Expect(resp.StatusCode).To(Equal(http.StatusOK))
-		var result proxylifecycle.InspectionResult
-		Expect(json.NewDecoder(resp.Body).Decode(&result)).To(Succeed())
-		return &result
+		var records []diagnostics.AggregatedCrashRecord
+		Expect(json.NewDecoder(resp.Body).Decode(&records)).To(Succeed())
+		return records
 	}
 
-	// connectAgentWithLifecycleStream registers an agent, establishes its lifecycle stream,
-	// and waits until the stream is visible in the gRPC service. Returns cancel for cleanup.
-	connectAgentWithLifecycleStream := func(
-		podName, role, reportDir string,
-	) (*testhelper.ProxyClientWrapper, context.CancelFunc) {
+	connectAgentWithCrashStream := func(podName, role, crashDir string) (*testhelper.ProxyClientWrapper, context.CancelFunc) {
 		agentCtx, agentCancel := context.WithCancel(context.Background())
 		fr := testhelper.NewFlightRecorder(int64(10 * 1024 * 1024))
-		client := testhelper.NewProxyClientWrapper(
+		client := testhelper.NewProxyClientWrapperWithCrashDir(
 			proxyGRPCAddr,
 			role,
 			podName,
@@ -144,26 +150,24 @@ var _ = Describe("Diagnostic Integration", func() {
 			1*time.Second,
 			fr,
 			testLogger,
-			reportDir,
+			crashDir,
 		)
 		Expect(client).NotTo(BeNil())
 		Expect(client.Connect(agentCtx)).To(Succeed())
 		Expect(client.StartRegistrationStream(agentCtx)).To(Succeed())
-		Expect(client.StartLifecycleStream(agentCtx)).To(Succeed())
+		Expect(client.StartCrashStream(agentCtx)).To(Succeed())
 
-		// Wait until the registry sees this agent.
 		Eventually(func() int {
 			return len(agentRegistry.ListAgents())
 		}, flags.EventuallyTimeout, 100*time.Millisecond).Should(BeNumerically(">=", 1))
 
-		// Wait until the lifecycle stream is active for this agent.
 		Eventually(func(g Gomega) {
 			agents := agentRegistry.ListAgents()
 			found := false
-			for _, a := range agents {
-				if a.AgentIdentity.PodName == podName {
+			for _, agentInfo := range agents {
+				if agentInfo.AgentIdentity.PodName == podName {
 					found = true
-					g.Expect(grpcService.HasLifecycleStream(a.AgentID)).To(BeTrue())
+					g.Expect(grpcService.HasCrashDiagnosticsStream(agentInfo.AgentID)).To(BeTrue())
 				}
 			}
 			g.Expect(found).To(BeTrue())
@@ -172,47 +176,62 @@ var _ = Describe("Diagnostic Integration", func() {
 		return client, agentCancel
 	}
 
-	// TestPanicRecordSurvivedThroughProxyLifecycle verifies that a PanicRecord written as a
-	// lifecycle report JSON file is surfaced unmodified via /cluster/lifecycle, and that the
-	// proxy preserves the component, panicValue, and recovered fields in the embedded ReportJson.
-	It("surfaces a single-agent panic record via /cluster/lifecycle", func() {
-		reportDir := GinkgoT().TempDir()
-		client, cancel := connectAgentWithLifecycleStream("pod-diag-single", "storage-engine", reportDir)
+	writeCrashArtifact := func(rootDir string, artifact crashArtifact) string {
+		writer := panicdiag.NewArtifactWriter(rootDir)
+		artifactDir, writeErr := writer.Write(&panicdiag.PanicRecord{
+			OccurredAt:     artifact.occurredAt,
+			Component:      artifact.component,
+			PanicValue:     artifact.panicValue,
+			Recovered:      artifact.recovered,
+			GoroutineStack: "goroutine 42 [running]:\nmain.foo(...)\n\t/src/main.go:17\n",
+		})
+		Expect(writeErr).NotTo(HaveOccurred())
+		if artifact.stateDump != nil {
+			_, _, dumpErr := writer.WriteStateDump(artifactDir, artifact.stateDump, 1024)
+			Expect(dumpErr).NotTo(HaveOccurred())
+		}
+		return filepath.Base(artifactDir)
+	}
+
+	It("surfaces a single-agent crash artifact via /diagnostics", func() {
+		crashDir := GinkgoT().TempDir()
+		client, cancel := connectAgentWithCrashStream("pod-diag-single", "storage-engine", crashDir)
 		defer func() {
 			cancel()
 			_ = client.Disconnect()
 		}()
 
-		By("writing a panic record as a lifecycle report file")
-		rec := &panicdiag.PanicRecord{
-			OccurredAt: time.Date(2026, time.April, 20, 10, 0, 0, 0, time.UTC),
-			Component:  "storage-engine",
-			PanicValue: "nil pointer dereference in compaction",
-			Recovered:  true,
-		}
-		writePanicReport(reportDir, "2026-04-20T100000Z-panic.json", rec)
+		By("writing a crash artifact directory with crash.txt")
+		artifactDir := writeCrashArtifact(crashDir, crashArtifact{
+			occurredAt: time.Date(2026, time.April, 20, 10, 0, 0, 0, time.UTC),
+			component:  "storage-engine",
+			panicValue: "nil pointer dereference in compaction",
+			recovered:  true,
+			stateDump:  map[string]string{"shard": "shard-1"},
+		})
+		client.ScanCrashDirectory()
 
-		By("verifying the proxy surfaces the panic record in the lifecycle response")
+		By("verifying the proxy surfaces the crash record in /diagnostics")
 		Eventually(func(g Gomega) {
-			result := getLifecycleResult()
-			g.Expect(len(result.LifecycleStatuses)).To(Equal(1))
-			status := result.LifecycleStatuses[0]
-			g.Expect(status.PodName).To(Equal("pod-diag-single"))
-			g.Expect(len(status.Reports)).To(Equal(1))
-			reportJSON := status.Reports[0].ReportJson
-			g.Expect(reportJSON).To(ContainSubstring("storage-engine"))
-			g.Expect(reportJSON).To(ContainSubstring("nil pointer dereference in compaction"))
-		}, "5s", "100ms").Should(Succeed())
+			records := getDiagnostics("")
+			g.Expect(records).To(HaveLen(1))
+			record := records[0]
+			g.Expect(record.PodName).To(Equal("pod-diag-single"))
+			g.Expect(record.SourceEndpoint).To(Equal("file://" + crashDir))
+			g.Expect(record.ArtifactDir).To(Equal(artifactDir))
+			g.Expect(record.Files).To(ContainElements("crash.txt", "deep-dump.json"))
+			g.Expect(record.PanicRecord).NotTo(BeNil())
+			g.Expect(record.PanicRecord.Component).To(Equal("storage-engine"))
+			g.Expect(record.PanicRecord.PanicValue).To(Equal("nil pointer dereference in compaction"))
+			g.Expect(record.PanicRecord.Recovered).To(BeTrue())
+		}, "8s", "100ms").Should(Succeed())
 	})
 
-	// TestMultipleAgentCrashesAggregatedByProxy verifies that when two agents — a liaison
-	// and a data-node — both have panic records in their report directories, the proxy
-	// aggregates lifecycle statuses from both, preserving the pod names and component fields.
-	It("aggregates panic reports from two agents with distinct components", func() {
-		reportDirLiaison := GinkgoT().TempDir()
-		reportDirData := GinkgoT().TempDir()
+	It("aggregates crash artifacts from two agents with distinct components", func() {
+		crashDirLiaison := GinkgoT().TempDir()
+		crashDirData := GinkgoT().TempDir()
 
-		clientLiaison, cancelLiaison := connectAgentWithLifecycleStream("pod-liaison", "liaison", reportDirLiaison)
+		clientLiaison, cancelLiaison := connectAgentWithCrashStream("pod-liaison", "liaison", crashDirLiaison)
 		defer func() {
 			cancelLiaison()
 			_ = clientLiaison.Disconnect()
@@ -222,7 +241,7 @@ var _ = Describe("Diagnostic Integration", func() {
 			return len(agentRegistry.ListAgents())
 		}, flags.EventuallyTimeout, 100*time.Millisecond).Should(Equal(1))
 
-		clientData, cancelData := connectAgentWithLifecycleStream("pod-data", "datanode", reportDirData)
+		clientData, cancelData := connectAgentWithCrashStream("pod-data", "datanode", crashDirData)
 		defer func() {
 			cancelData()
 			_ = clientData.Disconnect()
@@ -232,196 +251,136 @@ var _ = Describe("Diagnostic Integration", func() {
 			return len(agentRegistry.ListAgents())
 		}, flags.EventuallyTimeout, 100*time.Millisecond).Should(Equal(2))
 
-		By("writing distinct panic records for each agent")
-		writePanicReport(reportDirLiaison, "2026-04-20T100000Z-panic.json", &panicdiag.PanicRecord{
-			OccurredAt: time.Date(2026, time.April, 20, 10, 0, 0, 0, time.UTC),
-			Component:  "liaison",
-			PanicValue: "concurrent map write in routing table",
-			Recovered:  true,
+		By("writing distinct crash artifacts for each agent")
+		writeCrashArtifact(crashDirLiaison, crashArtifact{
+			occurredAt: time.Date(2026, time.April, 20, 10, 0, 0, 0, time.UTC),
+			component:  "liaison",
+			panicValue: "concurrent map write in routing table",
+			recovered:  true,
 		})
-		writePanicReport(reportDirData, "2026-04-20T100001Z-panic.json", &panicdiag.PanicRecord{
-			OccurredAt: time.Date(2026, time.April, 20, 10, 0, 1, 0, time.UTC),
-			Component:  "datanode",
-			PanicValue: "index out of range in flush buffer",
-			Recovered:  false,
+		writeCrashArtifact(crashDirData, crashArtifact{
+			occurredAt: time.Date(2026, time.April, 20, 10, 0, 1, 0, time.UTC),
+			component:  "datanode",
+			panicValue: "index out of range in flush buffer",
+			recovered:  false,
 		})
+		clientLiaison.ScanCrashDirectory()
+		clientData.ScanCrashDirectory()
 
 		By("verifying the proxy aggregates both pods")
 		Eventually(func(g Gomega) {
-			result := getLifecycleResult()
-			g.Expect(len(result.LifecycleStatuses)).To(Equal(2))
+			records := getDiagnostics("")
+			g.Expect(records).To(HaveLen(2))
 
-			byPod := make(map[string]*proxylifecycle.PodLifecycleStatus, 2)
-			for _, podStatus := range result.LifecycleStatuses {
-				byPod[podStatus.PodName] = podStatus
+			byPod := make(map[string]diagnostics.AggregatedCrashRecord, 2)
+			for _, record := range records {
+				byPod[record.PodName] = record
 			}
 
-			liaisonStatus, exists := byPod["pod-liaison"]
-			g.Expect(exists).To(BeTrue(), "liaison pod must appear in lifecycle statuses")
-			g.Expect(len(liaisonStatus.Reports)).To(Equal(1))
-			g.Expect(liaisonStatus.Reports[0].ReportJson).To(ContainSubstring("concurrent map write in routing table"))
+			liaisonRecord, exists := byPod["pod-liaison"]
+			g.Expect(exists).To(BeTrue(), "liaison pod must appear in diagnostics")
+			g.Expect(liaisonRecord.PanicRecord).NotTo(BeNil())
+			g.Expect(liaisonRecord.PanicRecord.PanicValue).To(Equal("concurrent map write in routing table"))
 
-			dataStatus, exists := byPod["pod-data"]
-			g.Expect(exists).To(BeTrue(), "data pod must appear in lifecycle statuses")
-			g.Expect(len(dataStatus.Reports)).To(Equal(1))
-			g.Expect(dataStatus.Reports[0].ReportJson).To(ContainSubstring("index out of range in flush buffer"))
-		}, "5s", "100ms").Should(Succeed())
+			dataRecord, exists := byPod["pod-data"]
+			g.Expect(exists).To(BeTrue(), "data pod must appear in diagnostics")
+			g.Expect(dataRecord.PanicRecord).NotTo(BeNil())
+			g.Expect(dataRecord.PanicRecord.PanicValue).To(Equal("index out of range in flush buffer"))
+			g.Expect(dataRecord.PanicRecord.Recovered).To(BeFalse())
+		}, "8s", "100ms").Should(Succeed())
 	})
 
-	// TestBreadcrumbsPreservedThroughProxyLifecycle verifies that a PanicRecord containing
-	// breadcrumbs written as a lifecycle report JSON is relayed unmodified to the caller of
-	// /cluster/lifecycle, so operators can trace the execution path that led to the crash.
-	It("preserves panic record breadcrumbs through the proxy lifecycle pipeline", func() {
-		reportDir := GinkgoT().TempDir()
-		client, cancel := connectAgentWithLifecycleStream("pod-breadcrumb", "query-engine", reportDir)
+	It("limits crash artifacts to the five newest directories per agent", func() {
+		panicdiag.SetDefaultMaxArtifacts(5)
+		crashDir := GinkgoT().TempDir()
+		client, cancel := connectAgentWithCrashStream("pod-cap", "storage-compactor", crashDir)
 		defer func() {
 			cancel()
 			_ = client.Disconnect()
 		}()
 
-		By("writing a panic record with three breadcrumbs to the report directory")
-		rec := &panicdiag.PanicRecord{
-			OccurredAt: time.Date(2026, time.April, 20, 11, 0, 0, 0, time.UTC),
-			Component:  "query-engine",
-			PanicValue: "invalid memory address or nil pointer dereference",
-			Recovered:  true,
-			Breadcrumbs: []panicdiag.Breadcrumb{
-				{
-					Stage:     "parse-query",
-					Component: "query-parser",
-					Fields:    map[string]string{"query_id": "q-100", "table": "trace_segments"},
-				},
-				{
-					Stage:     "build-plan",
-					Component: "planner",
-					Fields:    nil,
-				},
-				{
-					Stage:     "execute-scan",
-					Component: "executor",
-					Fields:    map[string]string{"shard": "shard-2"},
-				},
-			},
+		By("writing six crash artifact directories in chronological name order")
+		timestamps := []time.Time{
+			time.Date(2026, time.April, 20, 6, 0, 0, 0, time.UTC),
+			time.Date(2026, time.April, 20, 7, 0, 0, 0, time.UTC),
+			time.Date(2026, time.April, 20, 8, 0, 0, 0, time.UTC),
+			time.Date(2026, time.April, 20, 9, 0, 0, 0, time.UTC),
+			time.Date(2026, time.April, 20, 10, 0, 0, 0, time.UTC),
+			time.Date(2026, time.April, 20, 11, 0, 0, 0, time.UTC),
 		}
-		writePanicReport(reportDir, "2026-04-20T110000Z-panic.json", rec)
+		artifactDirs := make([]string, 0, len(timestamps))
+		for idx, occurredAt := range timestamps {
+			artifactDirs = append(artifactDirs, writeCrashArtifact(crashDir, crashArtifact{
+				occurredAt: occurredAt,
+				component:  "storage-compactor",
+				panicValue: fmt.Sprintf("crash %d", idx),
+				recovered:  true,
+			}))
+		}
+		client.ScanCrashDirectory()
 
-		By("verifying breadcrumbs are present in the JSON surfaced by the proxy")
+		By("verifying the proxy surfaces exactly five artifacts and the oldest is absent")
 		Eventually(func(g Gomega) {
-			result := getLifecycleResult()
-			g.Expect(len(result.LifecycleStatuses)).To(Equal(1))
-			g.Expect(len(result.LifecycleStatuses[0].Reports)).To(Equal(1))
-			reportJSON := result.LifecycleStatuses[0].Reports[0].ReportJson
+			records := getDiagnostics("")
+			g.Expect(records).To(HaveLen(5))
 
-			g.Expect(reportJSON).To(ContainSubstring("parse-query"))
-			g.Expect(reportJSON).To(ContainSubstring("build-plan"))
-			g.Expect(reportJSON).To(ContainSubstring("execute-scan"))
-			g.Expect(reportJSON).To(ContainSubstring("q-100"))
-			g.Expect(reportJSON).To(ContainSubstring("shard-2"))
-		}, "5s", "100ms").Should(Succeed())
+			seenDirs := make([]string, 0, len(records))
+			for _, record := range records {
+				seenDirs = append(seenDirs, record.ArtifactDir)
+			}
+			g.Expect(seenDirs).NotTo(ContainElement(artifactDirs[0]), "oldest artifact must be pruned by the 5-directory cap")
+			for _, artifactDir := range artifactDirs[1:] {
+				g.Expect(seenDirs).To(ContainElement(artifactDir), "newer artifacts must appear in /diagnostics")
+			}
+		}, "8s", "100ms").Should(Succeed())
 	})
 
-	// TestProxyLifecycleReportsCapAt5Files verifies that the agent's lifecycle collector
-	// enforces the maxReportFiles=5 limit before sending to the proxy.  When six crash
-	// report files are present, only the five lexicographically newest filenames must
-	// appear in the proxy's /cluster/lifecycle response; the oldest must be absent.
-	It("limits lifecycle reports to the five newest files per agent", func() {
-		reportDir := GinkgoT().TempDir()
-		client, cancel := connectAgentWithLifecycleStream("pod-cap", "storage-compactor", reportDir)
+	It("returns updated crash diagnostics after a new artifact is written", func() {
+		crashDir := GinkgoT().TempDir()
+		client, cancel := connectAgentWithCrashStream("pod-refresh", "compactor", crashDir)
 		defer func() {
 			cancel()
 			_ = client.Disconnect()
 		}()
 
-		By("writing six crash report files in chronological name order")
-		timestamps := []string{
-			"2026-04-20T060000Z",
-			"2026-04-20T070000Z",
-			"2026-04-20T080000Z",
-			"2026-04-20T090000Z",
-			"2026-04-20T100000Z",
-			"2026-04-20T110000Z",
-		}
-		for idx, ts := range timestamps {
-			writePanicReport(reportDir, ts+"-panic.json", &panicdiag.PanicRecord{
-				OccurredAt: time.Date(2026, time.April, 20, 6+idx, 0, 0, 0, time.UTC),
-				Component:  "storage-compactor",
-				PanicValue: fmt.Sprintf("crash %d", idx),
-				Recovered:  true,
-			})
-		}
-
-		By("verifying the proxy surfaces exactly five reports and the oldest is absent")
-		Eventually(func(g Gomega) {
-			result := getLifecycleResult()
-			g.Expect(len(result.LifecycleStatuses)).To(Equal(1))
-			reports := result.LifecycleStatuses[0].Reports
-			g.Expect(len(reports)).To(Equal(5))
-
-			filenames := make([]string, 0, len(reports))
-			for _, r := range reports {
-				filenames = append(filenames, r.Filename)
-			}
-			g.Expect(filenames).NotTo(ContainElement("2026-04-20T060000Z-panic.json"),
-				"oldest report must be evicted by the 5-file cap")
-			for _, ts := range timestamps[1:] {
-				g.Expect(filenames).To(ContainElement(ts+"-panic.json"),
-					"newer reports must appear in the lifecycle response")
-			}
-		}, "5s", "100ms").Should(Succeed())
-	})
-
-	// TestProxyLifecycleFreshDataAfterNewCrash verifies that a second call to
-	// /cluster/lifecycle made after a new panic report file is written returns the new
-	// file — i.e., the proxy does not cache stale lifecycle data across requests.
-	It("returns updated crash reports after a new panic is written", func() {
-		reportDir := GinkgoT().TempDir()
-		client, cancel := connectAgentWithLifecycleStream("pod-refresh", "compactor", reportDir)
-		defer func() {
-			cancel()
-			_ = client.Disconnect()
-		}()
-
-		By("writing the first crash report and waiting for the proxy to surface it")
-		writePanicReport(reportDir, "2026-04-20T080000Z-panic.json", &panicdiag.PanicRecord{
-			OccurredAt: time.Date(2026, time.April, 20, 8, 0, 0, 0, time.UTC),
-			Component:  "compactor",
-			PanicValue: "first crash: out of memory",
-			Recovered:  true,
+		By("writing the first crash artifact and waiting for the proxy to surface it")
+		firstArtifactDir := writeCrashArtifact(crashDir, crashArtifact{
+			occurredAt: time.Date(2026, time.April, 20, 8, 0, 0, 0, time.UTC),
+			component:  "compactor",
+			panicValue: "first crash: out of memory",
+			recovered:  true,
 		})
+		client.ScanCrashDirectory()
 
 		Eventually(func(g Gomega) {
-			result := getLifecycleResult()
-			g.Expect(len(result.LifecycleStatuses)).To(Equal(1))
-			g.Expect(result.LifecycleStatuses[0].Reports[0].ReportJson).
-				To(ContainSubstring("first crash: out of memory"))
-		}, "5s", "100ms").Should(Succeed())
+			records := getDiagnostics("")
+			g.Expect(records).To(HaveLen(1))
+			g.Expect(records[0].ArtifactDir).To(Equal(firstArtifactDir))
+			g.Expect(records[0].PanicRecord).NotTo(BeNil())
+			g.Expect(records[0].PanicRecord.PanicValue).To(Equal("first crash: out of memory"))
+		}, "8s", "100ms").Should(Succeed())
 
-		By("writing a second crash report and verifying the proxy now surfaces both")
-		writePanicReport(reportDir, "2026-04-20T090000Z-panic.json", &panicdiag.PanicRecord{
-			OccurredAt: time.Date(2026, time.April, 20, 9, 0, 0, 0, time.UTC),
-			Component:  "compactor",
-			PanicValue: "second crash: index out of range",
-			Recovered:  false,
+		By("writing a second crash artifact and verifying the proxy now surfaces both")
+		secondArtifactDir := writeCrashArtifact(crashDir, crashArtifact{
+			occurredAt: time.Date(2026, time.April, 20, 9, 0, 0, 0, time.UTC),
+			component:  "compactor",
+			panicValue: "second crash: index out of range",
+			recovered:  false,
 		})
+		client.ScanCrashDirectory()
 
 		Eventually(func(g Gomega) {
-			result := getLifecycleResult()
-			g.Expect(len(result.LifecycleStatuses)).To(Equal(1))
-			filenames := make([]string, 0)
-			for _, r := range result.LifecycleStatuses[0].Reports {
-				filenames = append(filenames, r.Filename)
+			records := getDiagnostics("")
+			g.Expect(records).To(HaveLen(2))
+			byDir := make(map[string]diagnostics.AggregatedCrashRecord, len(records))
+			for _, record := range records {
+				byDir[record.ArtifactDir] = record
 			}
-			g.Expect(filenames).To(ContainElements(
-				"2026-04-20T080000Z-panic.json",
-				"2026-04-20T090000Z-panic.json",
-			))
-			reportJSONs := make([]string, 0)
-			for _, r := range result.LifecycleStatuses[0].Reports {
-				reportJSONs = append(reportJSONs, r.ReportJson)
-			}
-			combined := strings.Join(reportJSONs, " ")
-			g.Expect(combined).To(ContainSubstring("first crash: out of memory"))
-			g.Expect(combined).To(ContainSubstring("second crash: index out of range"))
-		}, "5s", "100ms").Should(Succeed())
+			g.Expect(byDir).To(HaveKey(firstArtifactDir))
+			g.Expect(byDir).To(HaveKey(secondArtifactDir))
+			g.Expect(byDir[secondArtifactDir].PanicRecord).NotTo(BeNil())
+			g.Expect(byDir[secondArtifactDir].PanicRecord.PanicValue).To(Equal("second crash: index out of range"))
+			g.Expect(byDir[secondArtifactDir].PanicRecord.Recovered).To(BeFalse())
+		}, "8s", "100ms").Should(Succeed())
 	})
 })

@@ -58,11 +58,6 @@ func TestArtifactWriterWrite(t *testing.T) {
 		t.Fatalf("artifact dir mismatch: got %s want %s", artifactDir, expectedDir)
 	}
 
-	recordPath := filepath.Join(artifactDir, panicRecordFileName)
-	if _, statErr := os.Stat(recordPath); !os.IsNotExist(statErr) {
-		t.Fatalf("panic record should not be written: %v", statErr)
-	}
-
 	summaryPath := filepath.Join(artifactDir, crashTextFileName)
 	summaryData, err := os.ReadFile(summaryPath)
 	if err != nil {

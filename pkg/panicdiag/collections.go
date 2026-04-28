@@ -18,7 +18,6 @@
 package panicdiag
 
 import (
-	"encoding/json"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -179,19 +178,6 @@ func readCollection(artifactDir string) (*Collection, error) {
 		return nil, parseErr
 	}
 	collection.Record = parsedRecord
-	recordPath := filepath.Join(artifactDir, panicRecordFileName)
-	recordData, readErr := os.ReadFile(recordPath)
-	if readErr != nil {
-		if os.IsNotExist(readErr) {
-			return collection, nil
-		}
-		return nil, fmt.Errorf("read panic record: %w", readErr)
-	}
-	var legacyRecord PanicRecord
-	if unmarshalErr := json.Unmarshal(recordData, &legacyRecord); unmarshalErr != nil {
-		return nil, fmt.Errorf("unmarshal panic record: %w", unmarshalErr)
-	}
-	collection.Record = &legacyRecord
 	return collection, nil
 }
 

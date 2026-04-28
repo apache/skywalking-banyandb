@@ -109,9 +109,6 @@ func TestWithRecoveryRecoversAndWritesArtifacts(t *testing.T) {
 		if result.ArtifactDir == "" {
 			t.Fatal("expected artifact dir")
 		}
-		if _, err := os.Stat(filepath.Join(result.ArtifactDir, panicRecordFileName)); !os.IsNotExist(err) {
-			t.Fatalf("panic record file should not be written: %v", err)
-		}
 		if _, err := os.Stat(filepath.Join(result.ArtifactDir, crashTextFileName)); err != nil {
 			t.Fatalf("missing crash summary file: %v", err)
 		}

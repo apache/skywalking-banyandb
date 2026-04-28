@@ -18,7 +18,6 @@
 package panicdiag
 
 import (
-	"encoding/json"
 	"os"
 	"path/filepath"
 	"testing"
@@ -36,19 +35,12 @@ func writeMinimalArtifact(t *testing.T, rootDir, name string) {
 	}
 }
 
-func writeLegacyArtifact(t *testing.T, artifactDir string, record PanicRecord) {
+func writeArtifact(t *testing.T, artifactDir string, record PanicRecord) {
 	t.Helper()
 	if mkdirErr := os.MkdirAll(artifactDir, 0o755); mkdirErr != nil {
 		t.Fatalf("create artifact dir: %v", mkdirErr)
 	}
-	recordData, marshalErr := json.Marshal(record)
-	if marshalErr != nil {
-		t.Fatalf("marshal panic record: %v", marshalErr)
-	}
-	if writeErr := os.WriteFile(filepath.Join(artifactDir, panicRecordFileName), append(recordData, '\n'), 0o600); writeErr != nil {
-		t.Fatalf("write panic record: %v", writeErr)
-	}
-	if writeErr := os.WriteFile(filepath.Join(artifactDir, crashTextFileName), []byte("panic\n"), 0o600); writeErr != nil {
+	if writeErr := os.WriteFile(filepath.Join(artifactDir, crashTextFileName), []byte(buildCrashSummary(&record)), 0o600); writeErr != nil {
 		t.Fatalf("write crash text: %v", writeErr)
 	}
 }
@@ -151,7 +143,7 @@ func TestListCollections(t *testing.T) {
 		Recovered:      true,
 		GoroutineStack: "stack",
 	}
-	writeLegacyArtifact(t, artifactDir, record)
+	writeArtifact(t, artifactDir, record)
 
 	collections, err := ListCollections(rootDir)
 	if err != nil {
@@ -168,7 +160,7 @@ func TestListCollections(t *testing.T) {
 	}
 }
 
-func TestListCollectionsWithoutPanicRecord(t *testing.T) {
+func TestListCollectionsWithPlainCrashText(t *testing.T) {
 	t.Helper()
 
 	rootDir := t.TempDir()

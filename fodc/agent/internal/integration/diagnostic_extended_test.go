@@ -69,7 +69,6 @@ func TestStateDumpFilesDetectedByWatcher(t *testing.T) {
 	require.Len(t, records, 1, "expected exactly one crash collection")
 
 	files := records[0].Collection.Files
-	assert.NotContains(t, files, "panic.json")
 	assert.Contains(t, files, "crash.txt")
 	assert.Contains(t, files, "deep-dump.json", "state dump JSON should appear in Collection.Files")
 
@@ -77,7 +76,6 @@ func TestStateDumpFilesDetectedByWatcher(t *testing.T) {
 	require.NotNil(t, rec)
 	assert.Equal(t, "storage-engine", rec.Component)
 	assert.Equal(t, "simulated storage fault", rec.PanicValue)
-	assert.Nil(t, rec.StateDump, "state dump status is no longer persisted to panic.json")
 }
 
 // TestIncompleteArtifactIgnoredUntilComplete verifies that an artifact directory
@@ -238,10 +236,9 @@ func TestMultipleComponentCrashesPreserveMetadata(t *testing.T) {
 	}
 }
 
-// TestBreadcrumbsStayInReporterWithoutPanicJSON verifies that breadcrumbs appended
-// inside a WithRecovery-protected function are reported in process without
-// writing panic.json to the artifact directory.
-func TestBreadcrumbsStayInReporterWithoutPanicJSON(t *testing.T) {
+// TestBreadcrumbsStayInReporter verifies that breadcrumbs appended inside a
+// WithRecovery-protected function are reported in process.
+func TestBreadcrumbsStayInReporter(t *testing.T) {
 	t.Helper()
 
 	artifactRoot := t.TempDir()
@@ -279,5 +276,4 @@ func TestBreadcrumbsStayInReporterWithoutPanicJSON(t *testing.T) {
 	assert.Empty(t, rec.Breadcrumbs[1].Fields, "planner breadcrumb has no fields")
 	assert.Equal(t, "execute-scan", rec.Breadcrumbs[2].Stage)
 	assert.Equal(t, "shard-3", rec.Breadcrumbs[2].Fields["shard"])
-	assert.NoFileExists(t, filepath.Join(result.ArtifactDir, "panic.json"))
 }

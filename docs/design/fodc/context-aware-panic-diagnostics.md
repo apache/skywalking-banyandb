@@ -299,7 +299,6 @@ goroutine 9123 [running]:
 
 - `crash.txt` is the required human-readable summary written by the artifact writer. Filesystem collection parses its core fields into `panic_record`.
 - `deep-dump.json` is optional.
-- Legacy artifact directories may still include `panic.json`; when present, it is parsed for backward compatibility.
 - A runtime-level fatal crash may also produce `runtime-crash-<pid>.txt` in the artifact root.
 
 ### Completeness Rules
@@ -404,7 +403,7 @@ These flags are part of the FODC agent's CLI surface. Agent crash collection als
 
 - `WithRecovery` captures panic value, stack trace, breadcrumbs, and optional state dump status.
 - Breadcrumb helpers preserve ordering and clone field maps.
-- Artifact writing creates `crash.txt` and does not create `panic.json`.
+- Artifact writing creates `crash.txt`.
 - Crash output installation calls `debug.SetCrashOutput` when enabled.
 - Directory watching detects artifact directories once `crash.txt` is present.
 - Proxy aggregation returns a cached snapshot when the gRPC service is unset.
