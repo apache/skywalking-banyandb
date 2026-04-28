@@ -24,13 +24,10 @@ import (
 	"github.com/apache/skywalking-banyandb/pkg/meter"
 )
 
-// defaultPanicCounterPtr is a process-wide fallback used when RecoveryOptions.Counter is nil.
-// Set it once at process startup via SetDefaultPanicCounter.
-var defaultPanicCounterPtr atomic.Pointer[meter.Counter]
-
-// defaultReporterPtr is a process-wide fallback used when the Reporter passed to WithRecovery is nil.
-// Set it once at process startup via SetDefaultReporter.
-var defaultReporterPtr atomic.Pointer[Reporter]
+var (
+	defaultPanicCounterPtr atomic.Pointer[meter.Counter]
+	defaultReporterPtr     atomic.Pointer[Reporter]
+)
 
 // SetDefaultPanicCounter registers a process-wide panic counter used by WithRecovery
 // when RecoveryOptions.Counter is nil. Call once during process initialization.

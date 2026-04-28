@@ -80,9 +80,3 @@ func (c CrashOutputConfig) InstallGlobalCrashOutput() error {
 
 	return nil
 }
-
-// CleanupGlobalCrashOutput is retained for callers that used to clean up runtime
-// crash output files. Runtime crash text files are no longer generated.
-func CleanupGlobalCrashOutput() error {
-	return nil
-}

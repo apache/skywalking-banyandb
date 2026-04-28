@@ -140,11 +140,3 @@ func TestCrashOutputConfigInstallGlobalCrashOutputRequiresDir(t *testing.T) {
 		t.Fatal("expected empty dir to fail")
 	}
 }
-
-func TestCleanupGlobalCrashOutput(t *testing.T) {
-	t.Helper()
-
-	if cleanupErr := CleanupGlobalCrashOutput(); cleanupErr != nil {
-		t.Fatalf("cleanup global crash output: %v", cleanupErr)
-	}
-}
