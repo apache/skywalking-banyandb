@@ -42,10 +42,10 @@ import (
 )
 
 type crashArtifact struct {
-	component  string
-	panicValue string
 	stateDump  map[string]string
 	occurredAt time.Time
+	component  string
+	panicValue string
 	recovered  bool
 }
 

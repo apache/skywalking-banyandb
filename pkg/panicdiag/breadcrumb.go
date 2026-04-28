@@ -35,8 +35,8 @@ type mutableBreadcrumbContextKey struct{}
 // a new context value. A pointer to this struct is stored in the context so that
 // mutation is visible through the original context reference.
 type mutableBreadcrumbStore struct {
-	mu          sync.Mutex
 	breadcrumbs []Breadcrumb
+	mu          sync.Mutex
 }
 
 // maxBreadcrumbDepth is the maximum number of breadcrumbs a single context chain
