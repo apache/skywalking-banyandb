@@ -231,7 +231,8 @@ func TestMultipleComponentCrashesPreserveMetadata(t *testing.T) {
 }
 
 // TestBreadcrumbsStayInReporter verifies that breadcrumbs appended inside a
-// WithRecovery-protected function are reported in process.
+// WithRecovery-protected function are reported in process and survive postmortem
+// artifact reads.
 func TestBreadcrumbsStayInReporter(t *testing.T) {
 	t.Helper()
 
@@ -270,4 +271,13 @@ func TestBreadcrumbsStayInReporter(t *testing.T) {
 	assert.Empty(t, rec.Breadcrumbs[1].Fields, "planner breadcrumb has no fields")
 	assert.Equal(t, "execute-scan", rec.Breadcrumbs[2].Stage)
 	assert.Equal(t, "shard-3", rec.Breadcrumbs[2].Fields["shard"])
+
+	collections, listErr := panicdiag.ListCollections(artifactRoot)
+	require.NoError(t, listErr)
+	require.Len(t, collections, 1)
+	require.NotNil(t, collections[0].Record)
+	require.Len(t, collections[0].Record.Breadcrumbs, 3, "breadcrumbs should survive postmortem artifact reads")
+	assert.Equal(t, "parse-query", collections[0].Record.Breadcrumbs[0].Stage)
+	assert.Equal(t, "build-plan", collections[0].Record.Breadcrumbs[1].Stage)
+	assert.Equal(t, "execute-scan", collections[0].Record.Breadcrumbs[2].Stage)
 }

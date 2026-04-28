@@ -335,7 +335,10 @@
   
 - [banyandb/fodc/v1/rpc.proto](#banyandb_fodc_v1_rpc-proto)
     - [Call](#banyandb-fodc-v1-Call)
+    - [CrashBreadcrumb](#banyandb-fodc-v1-CrashBreadcrumb)
+    - [CrashBreadcrumb.FieldsEntry](#banyandb-fodc-v1-CrashBreadcrumb-FieldsEntry)
     - [CrashPanicRecord](#banyandb-fodc-v1-CrashPanicRecord)
+    - [CrashPanicRecord.ProcessMetadataEntry](#banyandb-fodc-v1-CrashPanicRecord-ProcessMetadataEntry)
     - [GroupLifecycleInfo](#banyandb-fodc-v1-GroupLifecycleInfo)
     - [InspectAllRequest](#banyandb-fodc-v1-InspectAllRequest)
     - [InspectAllResponse](#banyandb-fodc-v1-InspectAllResponse)
@@ -5272,6 +5275,40 @@ Phase represents the current phase of the deletion task.
 
 
 
+<a name="banyandb-fodc-v1-CrashBreadcrumb"></a>
+
+### CrashBreadcrumb
+
+
+
+| Field | Type | Label | Description |
+| ----- | ---- | ----- | ----------- |
+| time | [google.protobuf.Timestamp](#google-protobuf-Timestamp) |  |  |
+| stage | [string](#string) |  |  |
+| component | [string](#string) |  |  |
+| fields | [CrashBreadcrumb.FieldsEntry](#banyandb-fodc-v1-CrashBreadcrumb-FieldsEntry) | repeated |  |
+
+
+
+
+
+
+<a name="banyandb-fodc-v1-CrashBreadcrumb-FieldsEntry"></a>
+
+### CrashBreadcrumb.FieldsEntry
+
+
+
+| Field | Type | Label | Description |
+| ----- | ---- | ----- | ----------- |
+| key | [string](#string) |  |  |
+| value | [string](#string) |  |  |
+
+
+
+
+
+
 <a name="banyandb-fodc-v1-CrashPanicRecord"></a>
 
 ### CrashPanicRecord
@@ -5285,6 +5322,24 @@ Phase represents the current phase of the deletion task.
 | panic_value | [string](#string) |  |  |
 | recovered | [bool](#bool) |  |  |
 | goroutine_stack | [string](#string) |  |  |
+| breadcrumbs | [CrashBreadcrumb](#banyandb-fodc-v1-CrashBreadcrumb) | repeated |  |
+| process_metadata | [CrashPanicRecord.ProcessMetadataEntry](#banyandb-fodc-v1-CrashPanicRecord-ProcessMetadataEntry) | repeated |  |
+
+
+
+
+
+
+<a name="banyandb-fodc-v1-CrashPanicRecord-ProcessMetadataEntry"></a>
+
+### CrashPanicRecord.ProcessMetadataEntry
+
+
+
+| Field | Type | Label | Description |
+| ----- | ---- | ----- | ----------- |
+| key | [string](#string) |  |  |
+| value | [string](#string) |  |  |
 
 
 

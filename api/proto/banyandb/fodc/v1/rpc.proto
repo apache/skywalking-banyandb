@@ -125,12 +125,21 @@ message LifecycleReport {
   string report_json = 2;
 }
 
+message CrashBreadcrumb {
+  google.protobuf.Timestamp time = 1;
+  string stage = 2;
+  string component = 3;
+  map<string, string> fields = 4;
+}
+
 message CrashPanicRecord {
   google.protobuf.Timestamp occurred_at = 1;
   string component = 2;
   string panic_value = 3;
   bool recovered = 4;
   string goroutine_stack = 5;
+  repeated CrashBreadcrumb breadcrumbs = 6;
+  map<string, string> process_metadata = 7;
 }
 
 message StreamCrashDiagnosticsRequest {

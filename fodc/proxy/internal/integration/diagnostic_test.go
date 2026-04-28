@@ -42,11 +42,13 @@ import (
 )
 
 type crashArtifact struct {
-	stateDump  map[string]string
-	occurredAt time.Time
-	component  string
-	panicValue string
-	recovered  bool
+	occurredAt      time.Time
+	stateDump       map[string]string
+	processMetadata map[string]string
+	component       string
+	panicValue      string
+	breadcrumbs     []panicdiag.Breadcrumb
+	recovered       bool
 }
 
 var _ = Describe("Diagnostic Integration", func() {
@@ -179,11 +181,13 @@ var _ = Describe("Diagnostic Integration", func() {
 	writeCrashArtifact := func(rootDir string, artifact crashArtifact) string {
 		writer := panicdiag.NewArtifactWriter(rootDir)
 		artifactDir, writeErr := writer.Write(&panicdiag.PanicRecord{
-			OccurredAt:     artifact.occurredAt,
-			Component:      artifact.component,
-			PanicValue:     artifact.panicValue,
-			Recovered:      artifact.recovered,
-			GoroutineStack: "goroutine 42 [running]:\nmain.foo(...)\n\t/src/main.go:17\n",
+			OccurredAt:      artifact.occurredAt,
+			Component:       artifact.component,
+			PanicValue:      artifact.panicValue,
+			Recovered:       artifact.recovered,
+			GoroutineStack:  "goroutine 42 [running]:\nmain.foo(...)\n\t/src/main.go:17\n",
+			Breadcrumbs:     artifact.breadcrumbs,
+			ProcessMetadata: artifact.processMetadata,
 		})
 		Expect(writeErr).NotTo(HaveOccurred())
 		if artifact.stateDump != nil {
@@ -208,6 +212,23 @@ var _ = Describe("Diagnostic Integration", func() {
 			panicValue: "nil pointer dereference in compaction",
 			recovered:  true,
 			stateDump:  map[string]string{"shard": "shard-1"},
+			processMetadata: map[string]string{
+				"node": "storage-0",
+				"role": "data",
+			},
+			breadcrumbs: []panicdiag.Breadcrumb{
+				{
+					Time:      time.Date(2026, time.April, 20, 9, 59, 58, 0, time.UTC),
+					Stage:     "select segment",
+					Component: "storage",
+					Fields:    map[string]string{"segment": "seg-1"},
+				},
+				{
+					Time:      time.Date(2026, time.April, 20, 9, 59, 59, 0, time.UTC),
+					Stage:     "compact blocks",
+					Component: "storage",
+				},
+			},
 		})
 		client.ScanCrashDirectory()
 
@@ -224,6 +245,12 @@ var _ = Describe("Diagnostic Integration", func() {
 			g.Expect(record.PanicRecord.Component).To(Equal("storage-engine"))
 			g.Expect(record.PanicRecord.PanicValue).To(Equal("nil pointer dereference in compaction"))
 			g.Expect(record.PanicRecord.Recovered).To(BeTrue())
+			g.Expect(record.PanicRecord.ProcessMetadata).To(HaveKeyWithValue("node", "storage-0"))
+			g.Expect(record.PanicRecord.ProcessMetadata).To(HaveKeyWithValue("role", "data"))
+			g.Expect(record.PanicRecord.Breadcrumbs).To(HaveLen(2))
+			g.Expect(record.PanicRecord.Breadcrumbs[0].Stage).To(Equal("select segment"))
+			g.Expect(record.PanicRecord.Breadcrumbs[0].Fields).To(HaveKeyWithValue("segment", "seg-1"))
+			g.Expect(record.PanicRecord.Breadcrumbs[1].Stage).To(Equal("compact blocks"))
 		}, "8s", "100ms").Should(Succeed())
 	})
 

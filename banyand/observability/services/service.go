@@ -329,11 +329,17 @@ func (p *metricService) handleDebugPanic(w http.ResponseWriter, r *http.Request)
 			"artifactDir": p.panicArtifactDir,
 		}, nil
 	})
-	panicdiag.GoWithRecovery(r.Context(), panicdiag.RecoveryOptions{
+	panicCtx := panicdiag.WithMutableBreadcrumbs(r.Context())
+	panicdiag.GoWithRecovery(panicCtx, panicdiag.RecoveryOptions{
 		Component:   component,
 		Logger:      p.l,
 		StateDumper: dumper,
-	}, nil, func(_ *context.Context) {
+	}, nil, func(ctx *context.Context) {
+		panicdiag.WithBreadcrumb(*ctx, "received debug panic request", component, map[string]string{
+			"method": r.Method,
+			"path":   r.URL.Path,
+		})
+		panicdiag.WithBreadcrumb(*ctx, "trigger debug panic", component, nil)
 		panic("diagnostic test panic triggered via /debug/panic")
 	})
 	w.WriteHeader(http.StatusAccepted)

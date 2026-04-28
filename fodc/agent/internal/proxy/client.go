@@ -476,11 +476,13 @@ func (c *Client) sendCrashCollections() error {
 		}
 		if record.Collection.Record != nil {
 			req.PanicRecord = &fodcv1.CrashPanicRecord{
-				OccurredAt:     timestamppb.New(record.Collection.Record.OccurredAt),
-				Component:      record.Collection.Record.Component,
-				PanicValue:     record.Collection.Record.PanicValue,
-				Recovered:      record.Collection.Record.Recovered,
-				GoroutineStack: record.Collection.Record.GoroutineStack,
+				OccurredAt:      timestamppb.New(record.Collection.Record.OccurredAt),
+				Component:       record.Collection.Record.Component,
+				PanicValue:      record.Collection.Record.PanicValue,
+				Recovered:       record.Collection.Record.Recovered,
+				GoroutineStack:  record.Collection.Record.GoroutineStack,
+				Breadcrumbs:     buildCrashBreadcrumbs(record.Collection.Record.Breadcrumbs),
+				ProcessMetadata: cloneStringMap(record.Collection.Record.ProcessMetadata),
 			}
 		}
 		c.streamsMu.Lock()
@@ -499,6 +501,37 @@ func (c *Client) sendCrashCollections() error {
 		Int("records_count", len(records)).
 		Msg("Successfully sent crash collections to proxy")
 	return nil
+}
+
+func buildCrashBreadcrumbs(breadcrumbs []panicdiag.Breadcrumb) []*fodcv1.CrashBreadcrumb {
+	if len(breadcrumbs) == 0 {
+		return nil
+	}
+	result := make([]*fodcv1.CrashBreadcrumb, 0, len(breadcrumbs))
+	for _, breadcrumb := range breadcrumbs {
+		result = append(result, &fodcv1.CrashBreadcrumb{
+			Time:      timestamppb.New(breadcrumb.Time),
+			Stage:     breadcrumb.Stage,
+			Component: breadcrumb.Component,
+			Fields:    cloneBreadcrumbFields(breadcrumb.Fields),
+		})
+	}
+	return result
+}
+
+func cloneBreadcrumbFields(fields map[string]string) map[string]string {
+	return cloneStringMap(fields)
+}
+
+func cloneStringMap(src map[string]string) map[string]string {
+	if len(src) == 0 {
+		return nil
+	}
+	cloned := make(map[string]string, len(src))
+	for key, value := range src {
+		cloned[key] = value
+	}
+	return cloned
 }
 
 // handleCrashStream handles the crash diagnostics stream.

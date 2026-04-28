@@ -37,11 +37,21 @@ const refreshWait = 2 * time.Second
 
 // CrashPanicInfo holds the panic details from a crash record.
 type CrashPanicInfo struct {
-	OccurredAt     time.Time `json:"occurred_at"`
-	Component      string    `json:"component"`
-	GoroutineStack string    `json:"goroutine_stack,omitempty"`
-	PanicValue     string    `json:"panic_value"`
-	Recovered      bool      `json:"recovered"`
+	Component       string                `json:"component"`
+	GoroutineStack  string                `json:"goroutine_stack,omitempty"`
+	PanicValue      string                `json:"panic_value"`
+	OccurredAt      time.Time             `json:"occurred_at"`
+	ProcessMetadata map[string]string     `json:"process_metadata,omitempty"`
+	Breadcrumbs     []CrashBreadcrumbInfo `json:"breadcrumbs,omitempty"`
+	Recovered       bool                  `json:"recovered"`
+}
+
+// CrashBreadcrumbInfo holds one panic breadcrumb from a crash record.
+type CrashBreadcrumbInfo struct {
+	OccurredAt time.Time         `json:"occurred_at"`
+	Fields     map[string]string `json:"fields,omitempty"`
+	Stage      string            `json:"stage"`
+	Component  string            `json:"component,omitempty"`
 }
 
 // AggregatedCrashRecord enriches a crash collection with agent identity.
@@ -131,10 +141,12 @@ func (a *Aggregator) ProcessCrashFromAgent(agentID string, agentInfo *registry.A
 	}
 	if req.PanicRecord != nil {
 		info := &CrashPanicInfo{
-			Component:      req.PanicRecord.Component,
-			PanicValue:     req.PanicRecord.PanicValue,
-			Recovered:      req.PanicRecord.Recovered,
-			GoroutineStack: req.PanicRecord.GoroutineStack,
+			Component:       req.PanicRecord.Component,
+			PanicValue:      req.PanicRecord.PanicValue,
+			Recovered:       req.PanicRecord.Recovered,
+			GoroutineStack:  req.PanicRecord.GoroutineStack,
+			Breadcrumbs:     buildCrashBreadcrumbInfos(req.PanicRecord.Breadcrumbs),
+			ProcessMetadata: cloneStringMap(req.PanicRecord.ProcessMetadata),
 		}
 		if req.PanicRecord.OccurredAt != nil {
 			info.OccurredAt = req.PanicRecord.OccurredAt.AsTime()
@@ -146,6 +158,43 @@ func (a *Aggregator) ProcessCrashFromAgent(agentID string, agentInfo *registry.A
 	a.cacheMu.Lock()
 	a.cache[cacheKey] = record
 	a.cacheMu.Unlock()
+}
+
+func buildCrashBreadcrumbInfos(breadcrumbs []*fodcv1.CrashBreadcrumb) []CrashBreadcrumbInfo {
+	if len(breadcrumbs) == 0 {
+		return nil
+	}
+	result := make([]CrashBreadcrumbInfo, 0, len(breadcrumbs))
+	for _, breadcrumb := range breadcrumbs {
+		if breadcrumb == nil {
+			continue
+		}
+		info := CrashBreadcrumbInfo{
+			Stage:     breadcrumb.Stage,
+			Component: breadcrumb.Component,
+			Fields:    cloneBreadcrumbFields(breadcrumb.Fields),
+		}
+		if breadcrumb.Time != nil {
+			info.OccurredAt = breadcrumb.Time.AsTime()
+		}
+		result = append(result, info)
+	}
+	return result
+}
+
+func cloneBreadcrumbFields(fields map[string]string) map[string]string {
+	return cloneStringMap(fields)
+}
+
+func cloneStringMap(src map[string]string) map[string]string {
+	if len(src) == 0 {
+		return nil
+	}
+	cloned := make(map[string]string, len(src))
+	for key, value := range src {
+		cloned[key] = value
+	}
+	return cloned
 }
 
 // CollectDiagnostics triggers a refresh from all matching agents, waits a short
