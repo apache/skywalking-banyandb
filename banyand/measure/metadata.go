@@ -467,12 +467,13 @@ func (sr *schemaRepo) collectShardInfo(table any, shardID uint32) *databasev1.Sh
 		}
 	}
 	defer snapshot.decRef()
-	var totalCount, compressedSize, partCount uint64
+	var totalCount, compressedSize, partCount, filePartCount uint64
 	for _, pw := range snapshot.parts {
 		if pw.p != nil {
 			totalCount += pw.p.partMetadata.TotalCount
 			compressedSize += pw.p.partMetadata.CompressedSizeBytes
 			partCount++
+			filePartCount++
 		} else if pw.mp != nil {
 			totalCount += pw.mp.partMetadata.TotalCount
 			compressedSize += pw.mp.partMetadata.CompressedSizeBytes
