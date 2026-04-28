@@ -186,7 +186,7 @@ func readCrashSummaryRecord(artifactDir string) (*PanicRecord, error) {
 	}
 	var record PanicRecord
 	if jsonErr := json.Unmarshal(summaryData, &record); jsonErr != nil {
-		return nil, nil
+		return nil, fmt.Errorf("unmarshal panic json: %w", jsonErr)
 	}
 	if record.OccurredAt.IsZero() && record.Component == "" && record.PanicValue == "" && record.GoroutineStack == "" {
 		return nil, nil

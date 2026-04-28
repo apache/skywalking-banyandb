@@ -44,8 +44,10 @@ func NewArtifactWriter(rootDir string) *ArtifactWriter {
 	}
 }
 
-// Write persists the given panic record and returns the artifact directory.
-func (aw *ArtifactWriter) Write(record *PanicRecord) (string, error) {
+// MkdirArtifact creates the artifact directory for the given record and returns
+// its path. OccurredAt is back-filled when zero. Call WriteRecord once all
+// fields (including StateDump) have been populated.
+func (aw *ArtifactWriter) MkdirArtifact(record *PanicRecord) (string, error) {
 	if aw == nil {
 		return "", fmt.Errorf("artifact writer is nil")
 	}
@@ -55,38 +57,53 @@ func (aw *ArtifactWriter) Write(record *PanicRecord) (string, error) {
 	if aw.rootDir == "" {
 		return "", fmt.Errorf("artifact root is empty")
 	}
-
 	if err := os.MkdirAll(aw.rootDir, 0o755); err != nil {
 		return "", fmt.Errorf("create artifact root: %w", err)
 	}
-
-	recordedAt := record.OccurredAt
-	if recordedAt.IsZero() {
-		recordedAt = aw.nowFn().UTC()
-		record.OccurredAt = recordedAt
+	if record.OccurredAt.IsZero() {
+		record.OccurredAt = aw.nowFn().UTC()
 	}
-
-	artifactDir := filepath.Join(aw.rootDir, aw.dirName(record.Component, recordedAt))
+	artifactDir := filepath.Join(aw.rootDir, aw.dirName(record.Component, record.OccurredAt))
 	if err := os.MkdirAll(artifactDir, 0o755); err != nil {
 		return "", fmt.Errorf("create artifact dir: %w", err)
 	}
+	return artifactDir, nil
+}
 
+// WriteRecord serializes record as panic.json inside artifactDir.
+func (aw *ArtifactWriter) WriteRecord(artifactDir string, record *PanicRecord) error {
+	if aw == nil {
+		return fmt.Errorf("artifact writer is nil")
+	}
 	summaryData, marshalErr := json.Marshal(record)
 	if marshalErr != nil {
-		return "", fmt.Errorf("marshal crash record: %w", marshalErr)
+		return fmt.Errorf("marshal crash record: %w", marshalErr)
 	}
-	summaryPath := filepath.Join(artifactDir, panicJSONFileName)
-	if writeErr := os.WriteFile(summaryPath, summaryData, 0o600); writeErr != nil {
-		return "", fmt.Errorf("write crash summary: %w", writeErr)
+	if writeErr := os.WriteFile(filepath.Join(artifactDir, panicJSONFileName), summaryData, 0o600); writeErr != nil {
+		return fmt.Errorf("write panic json: %w", writeErr)
 	}
+	return nil
+}
 
-	// Best-effort: prune old artifact directories to honor the disk quota.
-	// Errors here are non-fatal; the caller already has the new artifact path.
+// Write persists the given panic record and returns the artifact directory.
+// Use MkdirArtifact + WriteRecord directly when additional fields (e.g.
+// StateDump) must be populated before the file is written.
+func (aw *ArtifactWriter) Write(record *PanicRecord) (string, error) {
+	artifactDir, err := aw.MkdirArtifact(record)
+	if err != nil {
+		return "", err
+	}
+	if writeErr := aw.WriteRecord(artifactDir, record); writeErr != nil {
+		return "", writeErr
+	}
+	aw.pruneArtifacts()
+	return artifactDir, nil
+}
+
+func (aw *ArtifactWriter) pruneArtifacts() {
 	if maxArtifacts := DefaultMaxArtifacts(); maxArtifacts > 0 {
 		_ = PruneArtifacts(aw.rootDir, maxArtifacts)
 	}
-
-	return artifactDir, nil
 }
 
 // WriteStateDump persists a deep state dump into an existing artifact directory.

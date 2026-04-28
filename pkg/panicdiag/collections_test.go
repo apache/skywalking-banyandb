@@ -136,6 +136,31 @@ func TestPruneArtifactsIgnoresNonArtifactDirs(t *testing.T) {
 	}
 }
 
+func TestPruneArtifactsRecognizesPartialPanicJSON(t *testing.T) {
+	t.Helper()
+
+	rootDir := t.TempDir()
+	partialArtifactDir := filepath.Join(rootDir, "20260101T000000.000000000Z-comp-1")
+	if mkdirErr := os.MkdirAll(partialArtifactDir, 0o755); mkdirErr != nil {
+		t.Fatalf("create partial artifact dir: %v", mkdirErr)
+	}
+	if writeErr := os.WriteFile(filepath.Join(partialArtifactDir, panicJSONFileName), []byte(`{"component":`), 0o600); writeErr != nil {
+		t.Fatalf("write partial panic json: %v", writeErr)
+	}
+	writeMinimalArtifact(t, rootDir, "20260102T000000.000000000Z-comp-1")
+
+	if pruneErr := PruneArtifacts(rootDir, 1); pruneErr != nil {
+		t.Fatalf("PruneArtifacts: %v", pruneErr)
+	}
+
+	if _, statErr := os.Stat(partialArtifactDir); !os.IsNotExist(statErr) {
+		t.Fatal("expected partial artifact with panic.json to be pruned")
+	}
+	if _, statErr := os.Stat(filepath.Join(rootDir, "20260102T000000.000000000Z-comp-1")); statErr != nil {
+		t.Fatalf("newest artifact should remain: %v", statErr)
+	}
+}
+
 func TestListCollections(t *testing.T) {
 	t.Helper()
 
@@ -165,7 +190,7 @@ func TestListCollections(t *testing.T) {
 	}
 }
 
-func TestListCollectionsWithPlainCrashText(t *testing.T) {
+func TestListCollectionsReturnsErrorForInvalidPanicJSON(t *testing.T) {
 	t.Helper()
 
 	rootDir := t.TempDir()
@@ -178,13 +203,10 @@ func TestListCollectionsWithPlainCrashText(t *testing.T) {
 	}
 
 	collections, err := ListCollections(rootDir)
-	if err != nil {
-		t.Fatalf("list collections: %v", err)
+	if err == nil {
+		t.Fatal("expected list collections to fail")
 	}
-	if len(collections) != 1 {
-		t.Fatalf("collection count mismatch: got %d want 1", len(collections))
-	}
-	if collections[0].Record != nil {
-		t.Fatalf("unexpected record: %#v", collections[0].Record)
+	if collections != nil {
+		t.Fatalf("unexpected collections: %#v", collections)
 	}
 }

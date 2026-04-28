@@ -23,6 +23,8 @@ import (
 	"path/filepath"
 	"testing"
 	"time"
+
+	"github.com/stretchr/testify/require"
 )
 
 func TestArtifactWriterWrite(t *testing.T) {
@@ -73,4 +75,34 @@ func TestArtifactWriterWrite(t *testing.T) {
 	if decoded.PanicValue != "boom" {
 		t.Fatalf("summary missing panic value: %s", decoded.PanicValue)
 	}
+}
+
+func TestArtifactWriter_PersistsBreadcrumbs(t *testing.T) {
+	t.Helper()
+
+	dir := t.TempDir()
+	artifactWriter := NewArtifactWriter(dir)
+	record := &PanicRecord{
+		Component:  "test",
+		PanicValue: "boom",
+		Breadcrumbs: []Breadcrumb{
+			{Stage: "handle", Component: "grpc"},
+		},
+		ProcessMetadata: map[string]string{
+			"pod": "p1",
+		},
+	}
+
+	out, err := artifactWriter.Write(record)
+	require.NoError(t, err)
+
+	collections, err := ListCollections(dir)
+	require.NoError(t, err)
+	require.Len(t, collections, 1)
+	require.Equal(t, filepath.Base(out), collections[0].ArtifactDir)
+	require.NotNil(t, collections[0].Record)
+	require.Len(t, collections[0].Record.Breadcrumbs, 1)
+	require.Equal(t, "handle", collections[0].Record.Breadcrumbs[0].Stage)
+	require.Equal(t, "grpc", collections[0].Record.Breadcrumbs[0].Component)
+	require.Equal(t, "p1", collections[0].Record.ProcessMetadata["pod"])
 }

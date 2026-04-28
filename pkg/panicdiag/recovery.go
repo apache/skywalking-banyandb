@@ -69,11 +69,11 @@ func WithRecovery(ctx context.Context, opts RecoveryOptions, reporter Reporter, 
 		var artifactDir string
 		artifactWriter := NewArtifactWriter(artifactRoot)
 		if artifactRoot != "" {
-			writtenDir, writeErr := artifactWriter.Write(record)
-			if writeErr != nil {
-				log.Error().Err(writeErr).Str("component", opts.Component).Msg("failed to write panic artifacts")
+			mkdirDir, mkdirErr := artifactWriter.MkdirArtifact(record)
+			if mkdirErr != nil {
+				log.Error().Err(mkdirErr).Str("component", opts.Component).Msg("failed to create panic artifact dir")
 			} else {
-				artifactDir = writtenDir
+				artifactDir = mkdirDir
 				if opts.StateDumper != nil {
 					stateDump, dumpErr := opts.StateDumper.DumpState(ctx)
 					if dumpErr != nil {
@@ -90,6 +90,11 @@ func WithRecovery(ctx context.Context, opts RecoveryOptions, reporter Reporter, 
 						}
 						record.StateDump = dumpStatus
 					}
+				}
+				if writeErr := artifactWriter.WriteRecord(artifactDir, record); writeErr != nil {
+					log.Error().Err(writeErr).Str("component", opts.Component).Msg("failed to write panic record")
+				} else {
+					artifactWriter.pruneArtifacts()
 				}
 			}
 		}
