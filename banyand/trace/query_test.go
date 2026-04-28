@@ -202,7 +202,9 @@ func TestQueryResult(t *testing.T) {
 					tst.mustAddTraces(traces, nil)
 					time.Sleep(100 * time.Millisecond)
 				}
-				// wait until the introducer is done
+				// wait until every introduced mem part has been flushed to disk;
+				// inspecting only snapshot.creator races with concurrent introductions
+				// (a flush of part N can land while part N+1 is still a mem part).
 				if len(tt.tracesList) > 0 {
 					for {
 						snp := tst.currentSnapshot()
@@ -210,12 +212,18 @@ func TestQueryResult(t *testing.T) {
 							time.Sleep(100 * time.Millisecond)
 							continue
 						}
-						if snp.creator == snapshotCreatorMemPart {
-							snp.decRef()
+						hasMemPart := false
+						for _, pw := range snp.parts {
+							if pw.mp != nil {
+								hasMemPart = true
+								break
+							}
+						}
+						snp.decRef()
+						if hasMemPart {
 							time.Sleep(100 * time.Millisecond)
 							continue
 						}
-						snp.decRef()
 						tst.Close()
 						break
 					}
