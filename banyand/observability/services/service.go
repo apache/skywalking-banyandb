@@ -334,6 +334,12 @@ func (p *metricService) handleDebugPanic(w http.ResponseWriter, r *http.Request)
 		Component:   component,
 		Logger:      p.l,
 		StateDumper: dumper,
+		ProcessMetadata: map[string]string{
+			"listenAddr":  p.listenAddr,
+			"nodeType":    p.nodeType,
+			"component":   component,
+			"artifactDir": p.panicArtifactDir,
+		},
 	}, nil, func(ctx *context.Context) {
 		panicdiag.WithBreadcrumb(*ctx, "received debug panic request", component, map[string]string{
 			"method": r.Method,

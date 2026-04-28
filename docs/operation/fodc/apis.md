@@ -188,18 +188,18 @@ Records are deduplicated by agent and artifact directory across requests.
 		"role": "ROLE_DATA",
 		"source_endpoint": "file:///crash",
 		"artifact_dir": "20260420T095930.000000000Z-watchdog-1234",
-		"files": ["crash.txt", "deep-dump.json"]
+		"files": ["panic.json", "deep-dump.json"]
 	}
 ]
 ```
 
 **Field notes**
 
-- `panic_record` is omitted when no structured panic record was captured. Filesystem-backed crash artifacts derive this record from `crash.txt`; in-process reports can include richer fields.
+- `panic_record` is omitted when no structured panic record was captured. Filesystem-backed crash artifacts derive this record from `panic.json`; in-process reports can include richer fields.
 - `goroutine_stack` is the stack trace of the panicking goroutine at the time of capture.
 - `source_endpoint` is `file:///` for filesystem-watched artifacts or `fodc-agent` for in-process captures.
 - `artifact_dir` is the name of the crash artifact directory relative to the watched crash source directory.
-- `files` lists the files present in the artifact directory (e.g., `crash.txt`, `deep-dump.json`).
+- `files` lists the files present in the artifact directory (e.g., `panic.json`, `deep-dump.json`).
 
 **Example**
 
@@ -284,8 +284,8 @@ The agent binary is `fodc` (see `fodc/agent/cmd/agent`).
 | `--diagnosis-listen-addr` | `:9091` | Address on which the agent exposes its local diagnosis collection HTTP endpoint. |
 | `--max-fodc-diagnosis-memory-usage-percentage` | `5` | Maximum percentage of cgroup memory used for the agent crash-diagnosis collector ring buffer. |
 | `--crash-source-dir` | _empty_ | Shared volume directory watched for BanyanDB crash artifacts via filesystem notifications. |
-| `--panic-diagnostics-enabled` | `true` | Enable runtime crash output persistence for fatal panics. |
-| `--panic-diagnostics-dir` | `crash` | Directory used to store runtime crash output and recovered panic artifacts. |
+| `--panic-diagnostics-enabled` | `true` | Enable structured panic diagnostics. |
+| `--panic-diagnostics-dir` | `crash` | Directory used to store recovered panic artifacts. |
 | `--panic-diagnostics-max-artifacts` | `10` | Maximum number of crash artifact directories to retain; oldest are removed first (0 disables pruning). |
 | `--max-diagnosis-memory-usage-percentage` | `50` | Set `GOMEMLIMIT` to this percentage of the cgroup memory limit, reserving headroom for post-panic diagnostics (0 disables). |
 

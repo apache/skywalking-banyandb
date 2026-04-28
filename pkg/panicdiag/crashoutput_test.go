@@ -19,8 +19,6 @@ package panicdiag
 
 import (
 	"os"
-	"path/filepath"
-	"runtime/debug"
 	"testing"
 )
 
@@ -29,7 +27,7 @@ func TestNewCrashOutputConfigDefaultsToEnabled(t *testing.T) {
 
 	cfg := NewCrashOutputConfig()
 	if !cfg.Enabled {
-		t.Fatal("NewCrashOutputConfig must default to Enabled=true — crash output is the final safety net")
+		t.Fatal("NewCrashOutputConfig must default to Enabled=true")
 	}
 	if cfg.Dir == "" {
 		t.Fatal("NewCrashOutputConfig must set a default Dir")
@@ -53,40 +51,18 @@ func TestCrashOutputConfigInstallGlobalCrashOutput(t *testing.T) {
 		GoMemLimitPct: 0, // disable to avoid cgroup calls in test
 	}
 
-	called := false
-	var capturedName string
-	originalSetCrashOutput := setCrashOutput
-	setCrashOutput = func(file *os.File, _ debug.CrashOptions) error {
-		called = true
-		if file == nil {
-			t.Fatal("expected crash file")
-		}
-		capturedName = file.Name()
-		return nil
-	}
-	defer func() {
-		setCrashOutput = originalSetCrashOutput
-	}()
-
 	if err := cfg.InstallGlobalCrashOutput(); err != nil {
 		t.Fatalf("install global crash output: %v", err)
 	}
-
-	if !called {
-		t.Fatal("expected SetCrashOutput to be called")
+	if got := DefaultArtifactRoot(); got != tempDir {
+		t.Fatalf("DefaultArtifactRoot: got %s want %s", got, tempDir)
 	}
-
-	expectedPath := filepath.Join(tempDir, runtimeCrashFileName())
-	if capturedName != expectedPath {
-		t.Fatalf("crash output path mismatch: got %s want %s", capturedName, expectedPath)
+	entries, readErr := os.ReadDir(tempDir)
+	if readErr != nil {
+		t.Fatalf("read diagnostics dir: %v", readErr)
 	}
-
-	info, err := os.Stat(expectedPath)
-	if err != nil {
-		t.Fatalf("stat crash output file: %v", err)
-	}
-	if info.IsDir() {
-		t.Fatal("expected crash output file, got directory")
+	if len(entries) != 0 {
+		t.Fatalf("expected no runtime crash files, got %d entries", len(entries))
 	}
 }
 
@@ -98,15 +74,6 @@ func TestCrashOutputConfigInstallGlobalCrashOutputDisabled(t *testing.T) {
 		Dir:     t.TempDir(),
 	}
 
-	originalSetCrashOutput := setCrashOutput
-	setCrashOutput = func(_ *os.File, _ debug.CrashOptions) error {
-		t.Fatal("SetCrashOutput should not be called when disabled")
-		return nil
-	}
-	defer func() {
-		setCrashOutput = originalSetCrashOutput
-	}()
-
 	if err := cfg.InstallGlobalCrashOutput(); err != nil {
 		t.Fatalf("install global crash output: %v", err)
 	}
@@ -114,10 +81,6 @@ func TestCrashOutputConfigInstallGlobalCrashOutputDisabled(t *testing.T) {
 
 func TestCrashOutputConfigInstallSetsMaxArtifacts(t *testing.T) {
 	t.Helper()
-
-	originalSetCrashOutput := setCrashOutput
-	setCrashOutput = func(_ *os.File, _ debug.CrashOptions) error { return nil }
-	defer func() { setCrashOutput = originalSetCrashOutput }()
 
 	cfg := CrashOutputConfig{
 		Enabled:       true,
@@ -135,10 +98,6 @@ func TestCrashOutputConfigInstallSetsMaxArtifacts(t *testing.T) {
 
 func TestCrashOutputConfigInstallAppliesGoMemLimit(t *testing.T) {
 	t.Helper()
-
-	originalSetCrashOutput := setCrashOutput
-	setCrashOutput = func(_ *os.File, _ debug.CrashOptions) error { return nil }
-	defer func() { setCrashOutput = originalSetCrashOutput }()
 
 	origCgroup := cgroupMemLimit
 	origSet := setMemoryLimit
@@ -182,53 +141,10 @@ func TestCrashOutputConfigInstallGlobalCrashOutputRequiresDir(t *testing.T) {
 	}
 }
 
-func TestCleanupGlobalCrashOutputRemovesEmptyFile(t *testing.T) {
+func TestCleanupGlobalCrashOutput(t *testing.T) {
 	t.Helper()
-
-	tempDir := t.TempDir()
-	crashPath := filepath.Join(tempDir, runtimeCrashFileName())
-	crashFile, openErr := os.OpenFile(crashPath, os.O_CREATE|os.O_WRONLY, 0o644)
-	if openErr != nil {
-		t.Fatalf("open crash output file: %v", openErr)
-	}
-
-	globalCrashFile = crashFile
-	globalCrashPath = crashPath
 
 	if cleanupErr := CleanupGlobalCrashOutput(); cleanupErr != nil {
 		t.Fatalf("cleanup global crash output: %v", cleanupErr)
-	}
-
-	if _, statErr := os.Stat(crashPath); !os.IsNotExist(statErr) {
-		t.Fatalf("expected crash output file to be removed, got stat err: %v", statErr)
-	}
-}
-
-func TestCleanupGlobalCrashOutputKeepsNonEmptyFile(t *testing.T) {
-	t.Helper()
-
-	tempDir := t.TempDir()
-	crashPath := filepath.Join(tempDir, runtimeCrashFileName())
-	crashFile, openErr := os.OpenFile(crashPath, os.O_CREATE|os.O_WRONLY, 0o644)
-	if openErr != nil {
-		t.Fatalf("open crash output file: %v", openErr)
-	}
-	if _, writeErr := crashFile.WriteString("fatal runtime output\n"); writeErr != nil {
-		t.Fatalf("write crash output file: %v", writeErr)
-	}
-
-	globalCrashFile = crashFile
-	globalCrashPath = crashPath
-
-	if cleanupErr := CleanupGlobalCrashOutput(); cleanupErr != nil {
-		t.Fatalf("cleanup global crash output: %v", cleanupErr)
-	}
-
-	info, statErr := os.Stat(crashPath)
-	if statErr != nil {
-		t.Fatalf("stat crash output file: %v", statErr)
-	}
-	if info.Size() == 0 {
-		t.Fatal("expected non-empty crash output file to be preserved")
 	}
 }

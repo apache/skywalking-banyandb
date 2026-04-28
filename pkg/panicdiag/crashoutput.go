@@ -19,9 +19,6 @@ package panicdiag
 
 import (
 	"fmt"
-	"os"
-	"path/filepath"
-	"runtime/debug"
 
 	"github.com/spf13/pflag"
 )
@@ -32,18 +29,7 @@ const (
 	defaultGoMemLimitPct  = 50
 )
 
-var (
-	setCrashOutput = debug.SetCrashOutput
-	// globalCrashFile retains the *os.File returned by os.OpenFile so that its
-	// finalizer does not close the original fd while the process is running.
-	// debug.SetCrashOutput internally duplicates the file descriptor, so the
-	// runtime's crash-output fd is independent; however keeping this reference
-	// also enables us to close the previous file cleanly on reinstall.
-	globalCrashFile *os.File
-	globalCrashPath string
-)
-
-// CrashOutputConfig controls whether runtime crash output is persisted to disk.
+// CrashOutputConfig controls structured panic diagnostics.
 type CrashOutputConfig struct {
 	Dir           string
 	Enabled       bool
@@ -52,8 +38,7 @@ type CrashOutputConfig struct {
 }
 
 // NewCrashOutputConfig returns the default global crash-output configuration.
-// Crash output is enabled by default; it is the final safety net for unrecoverable
-// runtime failures and should always be active in production.
+// Structured panic diagnostics are enabled by default.
 func NewCrashOutputConfig() CrashOutputConfig {
 	return CrashOutputConfig{
 		Enabled:       true,
@@ -66,16 +51,16 @@ func NewCrashOutputConfig() CrashOutputConfig {
 // RegisterFlags registers the crash-output flags on the provided flag set.
 func (c *CrashOutputConfig) RegisterFlags(flags *pflag.FlagSet) {
 	flags.BoolVar(&c.Enabled, "panic-diagnostics-enabled", c.Enabled,
-		"enable runtime crash output persistence for fatal panics")
+		"enable structured panic diagnostics")
 	flags.StringVar(&c.Dir, "panic-diagnostics-dir", c.Dir,
-		"directory used to store panic diagnostics and runtime crash output")
+		"directory used to store structured panic diagnostics")
 	flags.IntVar(&c.MaxArtifacts, "panic-diagnostics-max-artifacts", c.MaxArtifacts,
 		"maximum number of crash artifact directories to retain; oldest are removed first (0 disables pruning)")
 	flags.IntVar(&c.GoMemLimitPct, "max-diagnosis-memory-usage-percentage", c.GoMemLimitPct,
 		"set GOMEMLIMIT to this percentage of the cgroup memory limit, reserving headroom for post-panic diagnostics (0 disables)")
 }
 
-// InstallGlobalCrashOutput registers runtime/debug crash output when enabled.
+// InstallGlobalCrashOutput configures structured panic diagnostics when enabled.
 func (c CrashOutputConfig) InstallGlobalCrashOutput() error {
 	if !c.Enabled {
 		return nil
@@ -84,30 +69,7 @@ func (c CrashOutputConfig) InstallGlobalCrashOutput() error {
 		return fmt.Errorf("panic diagnostics dir is empty")
 	}
 
-	if err := os.MkdirAll(c.Dir, 0o755); err != nil {
-		return fmt.Errorf("create panic diagnostics dir: %w", err)
-	}
 	SetDefaultArtifactRoot(c.Dir)
-
-	filePath := filepath.Join(c.Dir, runtimeCrashFileName())
-	crashFile, err := os.OpenFile(filePath, os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0o644)
-	if err != nil {
-		return fmt.Errorf("open runtime crash output file: %w", err)
-	}
-
-	if setCrashErr := setCrashOutput(crashFile, debug.CrashOptions{}); setCrashErr != nil {
-		_ = crashFile.Close()
-		return fmt.Errorf("set runtime crash output: %w", setCrashErr)
-	}
-
-	// Close the previous file (safe because SetCrashOutput already dup'd its fd)
-	// and store the new one so its finalizer doesn't run close() on us.
-	if globalCrashFile != nil {
-		_ = globalCrashFile.Close()
-	}
-	globalCrashFile = crashFile
-	globalCrashPath = filePath
-
 	SetDefaultMaxArtifacts(c.MaxArtifacts)
 
 	if c.GoMemLimitPct > 0 {
@@ -119,41 +81,8 @@ func (c CrashOutputConfig) InstallGlobalCrashOutput() error {
 	return nil
 }
 
-func runtimeCrashFileName() string {
-	return fmt.Sprintf("runtime-crash-%d.txt", os.Getpid())
-}
-
-// CleanupGlobalCrashOutput removes the current runtime crash output file when it
-// exists but remained empty for the lifetime of the process.
+// CleanupGlobalCrashOutput is retained for callers that used to clean up runtime
+// crash output files. Runtime crash text files are no longer generated.
 func CleanupGlobalCrashOutput() error {
-	if globalCrashFile == nil {
-		return nil
-	}
-
-	crashFile := globalCrashFile
-	crashPath := globalCrashPath
-	globalCrashFile = nil
-	globalCrashPath = ""
-
-	if closeErr := crashFile.Close(); closeErr != nil {
-		return fmt.Errorf("close runtime crash output file: %w", closeErr)
-	}
-	if crashPath == "" {
-		return nil
-	}
-
-	info, statErr := os.Stat(crashPath)
-	if statErr != nil {
-		if os.IsNotExist(statErr) {
-			return nil
-		}
-		return fmt.Errorf("stat runtime crash output file: %w", statErr)
-	}
-	if info.IsDir() || info.Size() > 0 {
-		return nil
-	}
-	if removeErr := os.Remove(crashPath); removeErr != nil && !os.IsNotExist(removeErr) {
-		return fmt.Errorf("remove empty runtime crash output file: %w", removeErr)
-	}
 	return nil
 }

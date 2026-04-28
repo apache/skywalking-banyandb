@@ -35,7 +35,7 @@ This document describes the current behavior implemented in code and highlights 
 - `panicdiag.WithRecovery` and `panicdiag.GoWithRecovery` recover panics, capture stack traces, and persist structured artifacts.
 - `panicdiag.WithBreadcrumb` and `panicdiag.BreadcrumbsFromContext` preserve semantic execution markers.
 - `panicdiag.StateDumper` supports bounded JSON state dumps.
-- `panicdiag.CrashOutputConfig.InstallGlobalCrashOutput` installs `debug.SetCrashOutput` and configures the default artifact root and retention for processes that enable crash output.
+- `panicdiag.CrashOutputConfig.InstallGlobalCrashOutput` configures the default artifact root and retention for structured panic artifacts.
 - The FODC agent aggregates crash collections from:
   - An in-process panic reporter.
   - An optional filesystem watcher over the configured crash directory.
@@ -68,7 +68,7 @@ Managed goroutine / instrumented code path
                 ├── Optionally dump bounded state
                 └── Write artifact directory on disk
                         │
-                        ├── crash.txt
+                        ├── panic.json
                         └── deep-dump.json         (optional)
 
 FODC agent
@@ -143,20 +143,19 @@ type PanicRecord struct {
 - `WithRecovery` recovers panics with `defer` and `recover`.
 - The active `context.Context` is passed by pointer so breadcrumbs appended during execution are visible to recovery.
 - If configured, a panic counter is incremented with a `component` label.
-- If an artifact root is available, `crash.txt` is written immediately.
+- If an artifact root is available, `panic.json` is written immediately.
 - If a `StateDumper` is configured, the runtime writes:
   - `deep-dump.json`
-- The in-process panic report includes breadcrumbs and state-dump status. Filesystem-backed collections derive their structured record from `crash.txt` and list dump files separately.
+- The in-process panic report includes breadcrumbs and state-dump status. Filesystem-backed collections derive their structured record from `panic.json` and list dump files separately.
 
-### 2. Global Crash Output
+### 2. Global Panic Diagnostics
 
-**Purpose**: Persist unrecoverable runtime crash output for failures that do not pass through `WithRecovery`.
+**Purpose**: Configure structured panic artifacts for failures that pass through `WithRecovery`.
 
 #### Current Behavior
 
-- `CrashOutputConfig.InstallGlobalCrashOutput` registers `debug.SetCrashOutput`.
-- The runtime crash output file is `runtime-crash-<pid>.txt` under `--panic-diagnostics-dir`.
-- Installing crash output also sets:
+- `CrashOutputConfig.InstallGlobalCrashOutput` does not create `runtime-crash-<pid>.txt` files.
+- Installing panic diagnostics sets:
   - the default artifact root used by `panicdiag`
   - the default maximum number of retained artifact directories
 - `--max-diagnosis-memory-usage-percentage` can reserve memory headroom for post-panic diagnostics.
@@ -216,9 +215,8 @@ type StateDumpStatus struct {
 
 ```text
 <panic-diagnostics-dir>/
-  runtime-crash-<pid>.txt
   <timestamp>-<component>-<pid>/
-    crash.txt
+    panic.json
     deep-dump.json        (optional)
 ```
 
@@ -227,7 +225,7 @@ type StateDumpStatus struct {
 - Artifact directories are named as `<UTC timestamp>-<sanitized component>-<pid>`.
 - Components are sanitized for safe filesystem names.
 - Retention pruning removes the oldest artifact directories first.
-- Only directories containing `crash.txt` are treated as crash artifacts for pruning.
+- Only directories containing `panic.json` are treated as crash artifacts for pruning.
 
 ### 6. FODC Agent Collection
 
@@ -239,7 +237,7 @@ type StateDumpStatus struct {
   - receives reports directly from `panicdiag` through the default reporter
 - `DirectoryWatcher`
   - scans a crash directory using filesystem notifications plus periodic rescans
-  - waits until `crash.txt` exists before storing a filesystem-backed collection
+  - waits until `panic.json` exists before storing a filesystem-backed collection
 
 #### Merging
 
@@ -281,7 +279,7 @@ type CollectionRecord struct {
 
 ## Crash Artifacts
 
-### Persisted `crash.txt` Example
+### Persisted `panic.json` Example
 
 ```text
 BanyanDB panic recovered
@@ -297,15 +295,14 @@ goroutine 9123 [running]:
 
 ### Files in a Collection
 
-- `crash.txt` is the required human-readable summary written by the artifact writer. Filesystem collection parses its core fields into `panic_record`.
+- `panic.json` is the required structured summary written by the artifact writer. Filesystem collection parses its core fields into `panic_record`.
 - `deep-dump.json` is optional.
-- A runtime-level fatal crash may also produce `runtime-crash-<pid>.txt` in the artifact root.
 
 ### Completeness Rules
 
-- `crash.txt` is required for a directory to be recognized as a crash collection by `panicdiag.ListCollections`.
-- The agent-side `DirectoryWatcher` treats `crash.txt` as the required file for a complete artifact.
-- Directories without `crash.txt` are ignored until a later scan observes the summary file.
+- `panic.json` is required for a directory to be recognized as a crash collection by `panicdiag.ListCollections`.
+- The agent-side `DirectoryWatcher` treats `panic.json` as the required file for a complete artifact.
+- Directories without `panic.json` are ignored until a later scan observes the summary file.
 
 ## Proxy API and Collection Semantics
 
@@ -340,7 +337,7 @@ The endpoint returns an array of aggregated records.
   "source_endpoint": "file:///crash",
   "artifact_dir": "20260420T095930.000000000Z-watchdog-1234",
   "files": [
-    "crash.txt",
+    "panic.json",
     "deep-dump.json"
   ]
 }
@@ -366,7 +363,7 @@ The local crash artifact directory is still important, but it now primarily feed
 | BanyanDB / FODC process   |        | FODC agent               |
 |                           |        |                           |
 | panicdiag writes artifacts| -----> | In-process store          |
-| and runtime crash output  | local  | Directory watcher         |
+|                           | local  | Directory watcher         |
 |                           | dir    | gRPC crash stream client  |
 +---------------------------+        +-------------+-------------+
                                                   |
@@ -403,16 +400,16 @@ These flags are part of the FODC agent's CLI surface. Agent crash collection als
 
 - `WithRecovery` captures panic value, stack trace, breadcrumbs, and optional state dump status.
 - Breadcrumb helpers preserve ordering and clone field maps.
-- Artifact writing creates `crash.txt`.
-- Crash output installation calls `debug.SetCrashOutput` when enabled.
-- Directory watching detects artifact directories once `crash.txt` is present.
+- Artifact writing creates `panic.json`.
+- Panic diagnostics installation does not create runtime crash text files.
+- Directory watching detects artifact directories once `panic.json` is present.
 - Proxy aggregation returns a cached snapshot when the gRPC service is unset.
 
 ### Integration Tests
 
 - State dump files are surfaced in collection `Files`.
 - Breadcrumbs written during recovered panics remain available through the in-process panic report.
-- Incomplete artifact directories are ignored until `crash.txt` appears.
+- Incomplete artifact directories are ignored until `panic.json` appears.
 - Proxy diagnostics requests collect records from connected agents and expose them through `GET /diagnostics`.
 
 ## Appendix
@@ -421,8 +418,8 @@ These flags are part of the FODC agent's CLI surface. Agent crash collection als
 
 | Layer | Name | Current Outcome |
 |-------|------|-----------------|
-| 0 | Recovery Runtime | Recover managed panics and persist `crash.txt` |
-| 1 | Global Crash Output | Persist fatal runtime crash output to `runtime-crash-<pid>.txt` |
+| 0 | Recovery Runtime | Recover managed panics and persist `panic.json` |
+| 1 | Global Panic Diagnostics | Configure artifact root, retention, and memory headroom |
 | 2 | Breadcrumbs | Preserve semantic execution history in the in-process panic report |
 | 3 | State Dump | Persist bounded JSON state snapshots |
 | 4 | Agent Collection | Merge in-process and filesystem-backed crash collections |
@@ -431,5 +428,5 @@ These flags are part of the FODC agent's CLI surface. Agent crash collection als
 ### Expected Operator Value
 
 - Faster root-cause analysis because crash records include stack traces, breadcrumbs, and optional state dumps.
-- Better resilience because fatal runtime crash output is persisted even when recovery wrappers are bypassed.
+- Less filesystem noise because runtime crash text files are not created for normal recovered panic diagnostics.
 - Fleet-level visibility because the proxy can serve crash diagnostics aggregated from connected agents through a single endpoint.
