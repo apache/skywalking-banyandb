@@ -150,11 +150,15 @@ func (s *Scheduler) Closed() bool {
 // Close the Scheduler and shut down all registered tasks.
 func (s *Scheduler) Close() {
 	s.Lock()
-	defer s.Unlock()
 	s.closed = true
+	tasks := make([]*task, 0, len(s.tasks))
 	for k, t := range s.tasks {
-		t.close()
+		tasks = append(tasks, t)
 		delete(s.tasks, k)
+	}
+	s.Unlock()
+	for _, t := range tasks {
+		t.close()
 	}
 }
 

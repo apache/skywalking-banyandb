@@ -553,6 +553,8 @@ message ShardInfo {
   InvertedIndexInfo inverted_index_info = 5;
   // sidx_info contains information about sidx.
   SIDXInfo sidx_info = 6;
+  // file_part_count is the number of file parts (excluding in-memory parts) in this shard.
+  int64 file_part_count = 7;
 }
 
 // SeriesIndexInfo contains information about the series index.

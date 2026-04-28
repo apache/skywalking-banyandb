@@ -366,6 +366,12 @@ var _ = Describe("Metadata", func() {
 				env := setupSchemaChangeTrace(svcs, traceName, groupName, traceSetupOptions{withExtraTag: true})
 				writeSchemaChangeTraceData(svcs, traceName, groupName, now.Add(-2*time.Hour), 5,
 					writeTraceDataOptions{extraTag: extraTagInt})
+				// Wait for the first batch to flush to disk before writing the second batch.
+				// This ensures each shard has at least one file part from the first batch,
+				// so the second batch creates additional parts that can be merged.
+				Eventually(func() int64 {
+					return getFilePartCount(svcs, groupName)
+				}, flags.EventuallyTimeout).Should(BeNumerically(">=", 1))
 				changeTraceExtraTagType(svcs, traceName, groupName)
 				writeSchemaChangeTraceData(svcs, traceName, groupName, now.Add(-1*time.Hour), 3,
 					writeTraceDataOptions{extraTag: extraTagString, traceIDPrefix: "trace_new_"})
@@ -747,6 +753,20 @@ func getTotalPartCount(svcs *services, group string) int64 {
 	for _, seg := range dataInfo.SegmentInfo {
 		for _, shard := range seg.ShardInfo {
 			total += shard.PartCount
+		}
+	}
+	return total
+}
+
+func getFilePartCount(svcs *services, group string) int64 {
+	dataInfo, err := svcs.trace.CollectDataInfo(context.TODO(), group)
+	if err != nil || dataInfo == nil {
+		return 0
+	}
+	var total int64
+	for _, seg := range dataInfo.SegmentInfo {
+		for _, shard := range seg.ShardInfo {
+			total += shard.FilePartCount
 		}
 	}
 	return total
