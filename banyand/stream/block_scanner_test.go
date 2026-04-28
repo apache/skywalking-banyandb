@@ -91,27 +91,9 @@ func TestBlockScanner_QuotaExceeded(t *testing.T) {
 			// inspecting only snapshot.creator races with concurrent introductions
 			// (a flush of part N can land while part N+1 is still a mem part).
 			if len(tt.esList) > 0 {
-				for {
-					snp := tst.currentSnapshot()
-					if snp == nil {
-						time.Sleep(100 * time.Millisecond)
-						continue
-					}
-					hasMemPart := false
-					for _, pw := range snp.parts {
-						if pw.mp != nil {
-							hasMemPart = true
-							break
-						}
-					}
-					snp.decRef()
-					if hasMemPart {
-						time.Sleep(100 * time.Millisecond)
-						continue
-					}
-					tst.Close()
-					break
-				}
+				require.Eventually(t, allPartsFlushed(tst), 30*time.Second, 100*time.Millisecond,
+					"mem parts not flushed to disk in time")
+				tst.Close()
 			}
 
 			// reopen the table
@@ -210,5 +192,25 @@ func TestBlockScanner_QuotaExceeded(t *testing.T) {
 				t.Errorf("Unexpected blockMetadata (-got +want):\n%s", diff)
 			}
 		})
+	}
+}
+
+// allPartsFlushed returns a predicate that is true once tst's current
+// snapshot exists and every part is file-backed (no mp != nil).
+// It is used by file_snapshot tests to wait until every introduced mem
+// part has been flushed before closing/reopening the table.
+func allPartsFlushed(tst *tsTable) func() bool {
+	return func() bool {
+		snp := tst.currentSnapshot()
+		if snp == nil {
+			return false
+		}
+		defer snp.decRef()
+		for _, pw := range snp.parts {
+			if pw.mp != nil {
+				return false
+			}
+		}
+		return true
 	}
 }
