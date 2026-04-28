@@ -42,11 +42,11 @@ import (
 )
 
 type crashArtifact struct {
-	occurredAt time.Time
 	component  string
 	panicValue string
-	recovered  bool
 	stateDump  map[string]string
+	occurredAt time.Time
+	recovered  bool
 }
 
 var _ = Describe("Diagnostic Integration", func() {
