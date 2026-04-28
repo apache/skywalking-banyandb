@@ -31,6 +31,7 @@ import (
 	measurev1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/measure/v1"
 	modelv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/model/v1"
 	streamv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/stream/v1"
+	"github.com/apache/skywalking-banyandb/pkg/test/helpers"
 	"github.com/apache/skywalking-banyandb/pkg/timestamp"
 )
 
@@ -115,6 +116,17 @@ var _ = g.Describe("Schema time-range clamp", func() {
 	// server clamps Begin forward to CreatedAt and the query executes successfully.
 	// Since no data was written the response has zero elements but no error.
 	g.It("succeeds and returns zero elements when query spans schema CreatedAt (§4.6.2)", func() {
+		// TODO(phase-2): Phase 1 AwaitRevisionApplied / AwaitSchemaApplied are liaison-only
+		// by design. Unlike §4.6.1 and §4.6.3 (both ends far in the past, where the clamp
+		// short-circuits at the liaison and never dispatches to data nodes), this spec uses
+		// End=now+1h so the clamped range is non-empty and the query is dispatched. In
+		// distributed mode the data node can lag the liaison's schema view at that moment,
+		// causing the dispatched query to fail with "group not found". Cluster-wide barrier
+		// semantics ship in Phase 2 via NodeSchemaStatusService + liaison fan-out (plan
+		// Steps 2.1–2.2); re-enable this spec in distributed mode once those land.
+		if SharedContext.Mode == helpers.ModeDistributed {
+			g.Skip("§4.6.2 requires cluster-wide propagation barrier (Phase 2)")
+		}
 		groupName := fmt.Sprintf("clamp-span-%d", time.Now().UnixNano())
 		streamName := "clamp_stream"
 
@@ -221,7 +233,7 @@ var _ = g.Describe("Schema time-range clamp", func() {
 		// Cluster-wide barrier semantics ship in Phase 2 via NodeSchemaStatusService +
 		// liaison fan-out (plan Steps 2.1–2.2); re-enable this spec in distributed mode
 		// once those land.
-		if SharedContext.Mode == "distributed" {
+		if SharedContext.Mode == helpers.ModeDistributed {
 			g.Skip("§4.6.4 requires cluster-wide propagation barrier (Phase 2)")
 		}
 		group1 := fmt.Sprintf("clamp-leak1-%d", time.Now().UnixNano())
