@@ -19,6 +19,8 @@ package panicdiag
 
 import (
 	"context"
+	"fmt"
+	"sync"
 	"testing"
 	"time"
 )
@@ -81,5 +83,38 @@ func TestBreadcrumbsFromContextClonesFieldMaps(t *testing.T) {
 	again := BreadcrumbsFromContext(ctx)
 	if again[0].Fields["pod"] != "banyand-0" {
 		t.Fatalf("returned breadcrumbs should be cloned, got %s", again[0].Fields["pod"])
+	}
+}
+
+func TestMutableBreadcrumbStoreConcurrentAccess(t *testing.T) {
+	t.Helper()
+
+	ctx := WithMutableBreadcrumbs(context.Background())
+	const goroutineCount = 8
+	const breadcrumbsPerGoroutine = 16
+
+	var wg sync.WaitGroup
+	wg.Add(goroutineCount + 1)
+	for goroutineIdx := 0; goroutineIdx < goroutineCount; goroutineIdx++ {
+		go func(workerIdx int) {
+			defer wg.Done()
+			for breadcrumbIdx := 0; breadcrumbIdx < breadcrumbsPerGoroutine; breadcrumbIdx++ {
+				WithBreadcrumb(ctx, fmt.Sprintf("stage-%d-%d", workerIdx, breadcrumbIdx), "worker", map[string]string{
+					"worker": fmt.Sprint(workerIdx),
+				})
+			}
+		}(goroutineIdx)
+	}
+	go func() {
+		defer wg.Done()
+		for readIdx := 0; readIdx < goroutineCount*breadcrumbsPerGoroutine; readIdx++ {
+			_ = BreadcrumbsFromContext(ctx)
+		}
+	}()
+	wg.Wait()
+
+	breadcrumbs := BreadcrumbsFromContext(ctx)
+	if len(breadcrumbs) != maxBreadcrumbDepth {
+		t.Fatalf("breadcrumb count mismatch: got %d want %d", len(breadcrumbs), maxBreadcrumbDepth)
 	}
 }

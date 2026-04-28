@@ -19,6 +19,7 @@ package panicdiag
 
 import (
 	"context"
+	"sync"
 	"time"
 )
 
@@ -34,6 +35,7 @@ type mutableBreadcrumbContextKey struct{}
 // a new context value. A pointer to this struct is stored in the context so that
 // mutation is visible through the original context reference.
 type mutableBreadcrumbStore struct {
+	mu          sync.Mutex
 	breadcrumbs []Breadcrumb
 }
 
@@ -77,6 +79,8 @@ func WithBreadcrumb(ctx context.Context, stage string, component string, fields 
 	// Mutable-store path: append in-place so the breadcrumb is visible through
 	// any context reference that was captured before WithBreadcrumb was called.
 	if store, ok := ctx.Value(mutableBreadcrumbContextKey{}).(*mutableBreadcrumbStore); ok {
+		store.mu.Lock()
+		defer store.mu.Unlock()
 		if len(store.breadcrumbs) < maxBreadcrumbDepth {
 			store.breadcrumbs = append(store.breadcrumbs, Breadcrumb{
 				Time:      nowBreadcrumbTime(),
@@ -116,6 +120,8 @@ func BreadcrumbsFromContext(ctx context.Context) []Breadcrumb {
 	}
 	// Mutable-store path.
 	if store, ok := ctx.Value(mutableBreadcrumbContextKey{}).(*mutableBreadcrumbStore); ok {
+		store.mu.Lock()
+		defer store.mu.Unlock()
 		if len(store.breadcrumbs) == 0 {
 			return nil
 		}
