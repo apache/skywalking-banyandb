@@ -2,7 +2,7 @@
 
 BanyanD is the BanyanDB server. There are two ways to configure BanyanD: using a bootstrap flag or using environment variables. The environment variable name has a prefix `BYDB_` followed by the flag name in uppercase. For example, the flag `--port` can be set using the environment variable `BYDB_PORT`.
 
-> BanyanDB supports both absolute and relative paths for directory and file configurations (such as data directories, TLS certificates, keys, etc.). Relative paths are resolved against the current working directory where the BanyanD process is started. This feature is available since 0.10.0.
+> BanyanDB supports both absolute and relative paths for directory and file configurations (such as data directories, TLS certificates, keys, etc.). Relative paths are resolved against the current working directory where the BanyanD process is started. Available as of v0.10.0.
 
 ## Commands
 
@@ -156,7 +156,7 @@ Each service supports a minimum snapshot age configuration to prevent recently c
 - `--property-min-file-snapshot-age duration`: Minimum age for property snapshots (default: 1h).
 - `--schema-server-min-file-snapshot-age duration`: Minimum age for schema server snapshots (default: 1h).
 
-Snapshots can only be deleted after the configured minimum age has elapsed. This ensures that recent snapshots remain available for backup and recovery operations.
+During normal snapshot cleanup (triggered when a new snapshot is created), a snapshot is only deleted if it is older than the configured minimum age **and** the total snapshot count exceeds `*-max-file-snapshot-num` (default: 10). This ensures that recent snapshots remain available for backup and recovery operations.
 
 ### Observability
 
