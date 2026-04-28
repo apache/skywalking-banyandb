@@ -42,6 +42,18 @@ type InspectionResult struct {
 	LifecycleStatuses []*PodLifecycleStatus        `json:"lifecycle_statuses"`
 }
 
+// AgentSummary describes how many agents the most recent CollectLifecycle invocation saw,
+// requested data from, and actually got data back from. It lets callers tell apart "the
+// cluster has nothing to report" (cluster-side empty) from "the proxy could not reach any
+// agent" (infrastructure-side empty), which look identical when only the InspectionResult
+// is observed.
+type AgentSummary struct {
+	Total        int `json:"total"`
+	Requested    int `json:"requested"`
+	Responded    int `json:"responded"`
+	NotResponded int `json:"not_responded"`
+}
+
 func emptyResult() *InspectionResult {
 	return &InspectionResult{
 		Groups:            make([]*fodcv1.GroupLifecycleInfo, 0),
@@ -124,20 +136,27 @@ func (m *Manager) unregisterSession(agentID string, collectChs map[string]chan *
 	delete(collectChs, agentID)
 }
 
-// CollectLifecycle requests and collects lifecycle data from all agents.
-func (m *Manager) CollectLifecycle(ctx context.Context) *InspectionResult {
+// CollectLifecycle requests and collects lifecycle data from all agents and returns
+// both the aggregated result and the agent summary captured atomically during the same
+// invocation. Returning the summary as a second value (rather than via a separate
+// "LastSummary" accessor) avoids a read-after-write race between the result and the
+// summary when concurrent HTTP requests trigger overlapping collections.
+func (m *Manager) CollectLifecycle(ctx context.Context) (*InspectionResult, AgentSummary) {
 	m.collectingOp.Lock()
 	defer m.collectingOp.Unlock()
 
+	summary := AgentSummary{}
+
 	if m.registry == nil || m.grpcService == nil {
 		m.log.Info().Msg("CollectLifecycle: registry or grpcService is nil, returning empty")
-		return emptyResult()
+		return emptyResult(), summary
 	}
 
 	agents := m.registry.ListAgents()
+	summary.Total = len(agents)
 	if len(agents) == 0 {
 		m.log.Info().Msg("CollectLifecycle: no agents registered, returning empty")
-		return emptyResult()
+		return emptyResult(), summary
 	}
 
 	m.log.Info().Int("agent_count", len(agents)).Msg("CollectLifecycle: starting collection")
@@ -145,15 +164,19 @@ func (m *Manager) CollectLifecycle(ctx context.Context) *InspectionResult {
 	collectChs := make(map[string]chan *agentLifecycleData)
 	defer m.cleanupSessions(collectChs)
 
-	requestedCount := m.requestAllAgents(ctx, agents, collectChs)
-	m.log.Info().Int("requested", requestedCount).Int("waiting_for", len(collectChs)).
+	summary.Requested = m.requestAllAgents(ctx, agents, collectChs)
+	m.log.Info().Int("requested", summary.Requested).Int("waiting_for", len(collectChs)).
 		Msg("CollectLifecycle: requests sent, waiting for responses")
 
 	allData := m.waitForResponses(ctx, collectChs)
+	summary.Responded = len(allData)
+	if summary.Requested >= summary.Responded {
+		summary.NotResponded = summary.Requested - summary.Responded
+	}
 	m.log.Info().Int("responses_with_data", len(allData)).
 		Msg("CollectLifecycle: all responses collected, aggregating")
 
-	return m.buildInspectionResult(allData)
+	return m.buildInspectionResult(allData), summary
 }
 
 func (m *Manager) requestAllAgents(ctx context.Context, agents []*registry.AgentInfo,

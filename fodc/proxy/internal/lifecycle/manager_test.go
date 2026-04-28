@@ -117,19 +117,21 @@ func TestManager_CollectLifecycle_NoAgents(t *testing.T) {
 	testRegistry := registry.NewAgentRegistry(log, 5*time.Second, 10*time.Second, 100)
 	mgr := NewManager(testRegistry, nil, log)
 
-	result := mgr.CollectLifecycle(context.Background())
+	result, summary := mgr.CollectLifecycle(context.Background())
 	require.NotNil(t, result)
 	assert.Empty(t, result.Groups)
 	assert.Empty(t, result.LifecycleStatuses)
+	assert.Equal(t, AgentSummary{}, summary, "summary must be zero when no agents are registered")
 }
 
 func TestManager_CollectLifecycle_NilRegistry(t *testing.T) {
 	log := initTestLogger(t)
 	mgr := NewManager(nil, nil, log)
 
-	result := mgr.CollectLifecycle(context.Background())
+	result, summary := mgr.CollectLifecycle(context.Background())
 	require.NotNil(t, result)
 	assert.Empty(t, result.Groups)
+	assert.Equal(t, AgentSummary{}, summary, "summary must be zero when registry is nil")
 }
 
 func TestManager_CollectLifecycle_MultipleAgents(t *testing.T) {
@@ -169,9 +171,12 @@ func TestManager_CollectLifecycle_MultipleAgents(t *testing.T) {
 		},
 	}
 
+	var capturedSummary AgentSummary
 	done := make(chan *InspectionResult)
 	go func() {
-		done <- mgr.CollectLifecycle(ctx)
+		result, summary := mgr.CollectLifecycle(ctx)
+		capturedSummary = summary
+		done <- result
 	}()
 
 	time.Sleep(50 * time.Millisecond)
@@ -194,6 +199,11 @@ func TestManager_CollectLifecycle_MultipleAgents(t *testing.T) {
 		podNames := []string{result.LifecycleStatuses[0].PodName, result.LifecycleStatuses[1].PodName}
 		assert.Contains(t, podNames, "pod-1")
 		assert.Contains(t, podNames, "pod-2")
+		// Verify summary reflects what actually happened
+		assert.Equal(t, 2, capturedSummary.Total, "summary.Total should match registered agents")
+		assert.Equal(t, 2, capturedSummary.Requested, "summary.Requested should match agents that accepted the request")
+		assert.Equal(t, 2, capturedSummary.Responded, "summary.Responded should match agents that returned data")
+		assert.Equal(t, 0, capturedSummary.NotResponded, "summary.NotResponded should be zero when all agents respond")
 
 	case <-time.After(5 * time.Second):
 		t.Fatal("Collection timed out")
@@ -219,7 +229,7 @@ func TestManager_CollectLifecycle_RequestError(t *testing.T) {
 
 	mockSender.SetRequestError(agentID, fmt.Errorf("connection refused"))
 
-	result := mgr.CollectLifecycle(ctx)
+	result, _ := mgr.CollectLifecycle(ctx)
 	require.NotNil(t, result)
 	// Should return empty data since request failed
 	assert.Empty(t, result.Groups)
@@ -298,7 +308,10 @@ func TestManager_CollectLifecycle_WithGroups(t *testing.T) {
 	require.NoError(t, err)
 
 	done := make(chan *InspectionResult)
-	go func() { done <- mgr.CollectLifecycle(ctx) }()
+	go func() {
+		result, _ := mgr.CollectLifecycle(ctx)
+		done <- result
+	}()
 	time.Sleep(50 * time.Millisecond)
 
 	mgr.UpdateLifecycle(agentID, "liaison-pod", &fodcv1.LifecycleData{
@@ -339,7 +352,10 @@ func TestManager_CollectLifecycle_GroupsFromFirstAgent(t *testing.T) {
 	require.NoError(t, err)
 
 	done := make(chan *InspectionResult)
-	go func() { done <- mgr.CollectLifecycle(ctx) }()
+	go func() {
+		result, _ := mgr.CollectLifecycle(ctx)
+		done <- result
+	}()
 	time.Sleep(50 * time.Millisecond)
 
 	mgr.UpdateLifecycle(agentID1, "liaison-1", &fodcv1.LifecycleData{
@@ -374,6 +390,6 @@ func TestManager_CollectLifecycle_ContextCanceled(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel() // Cancel immediately
 
-	result := mgr.CollectLifecycle(ctx)
+	result, _ := mgr.CollectLifecycle(ctx)
 	require.NotNil(t, result)
 }

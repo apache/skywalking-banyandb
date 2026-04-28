@@ -85,13 +85,20 @@ func (m *mockFODCServiceClient) StreamLifecycle(_ context.Context, _ ...grpc.Cal
 }
 
 // mockRegisterAgentClient implements fodcv1.FODCService_RegisterAgentClient for testing.
+// When sendBlock is non-nil, Send blocks on it until the channel is closed (used by tests
+// that reproduce the wedged-Send scenario). When sendEntered is non-nil, it is closed once
+// the first time Send is invoked, letting tests synchronize with the goroutine reaching
+// the blocking call.
 type mockRegisterAgentClient struct {
 	ctx           context.Context
 	recvChan      chan *fodcv1.RegisterAgentResponse
+	sendBlock     chan struct{}
+	sendEntered   chan struct{}
 	sendErr       error
 	recvErr       error
 	sentRequests  []*fodcv1.RegisterAgentRequest
 	recvResponses []*fodcv1.RegisterAgentResponse
+	enterOnce     sync.Once
 	mu            sync.RWMutex
 }
 
@@ -105,6 +112,12 @@ func newMockRegisterAgentClient(ctx context.Context) *mockRegisterAgentClient {
 }
 
 func (m *mockRegisterAgentClient) Send(req *fodcv1.RegisterAgentRequest) error {
+	if m.sendEntered != nil {
+		m.enterOnce.Do(func() { close(m.sendEntered) })
+	}
+	if m.sendBlock != nil {
+		<-m.sendBlock
+	}
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	if m.sendErr != nil {

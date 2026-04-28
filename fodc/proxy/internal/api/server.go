@@ -476,6 +476,12 @@ type timeSeriesMetric struct {
 }
 
 // handleClusterLifecycle handles GET /cluster/lifecycle endpoint.
+//
+// When no agent is registered or no agent responded within the collection window the handler
+// adds an "error" field to the response body so the client can distinguish an
+// infrastructure-layer outage (e.g. proxy pod restart with every agent failing to reconnect)
+// from a cluster that genuinely has no groups. The HTTP status stays 200 either way; the
+// distinguishing signal is in the body, not in the status code.
 func (s *Server) handleClusterLifecycle(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
 		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
@@ -485,10 +491,21 @@ func (s *Server) handleClusterLifecycle(w http.ResponseWriter, r *http.Request) 
 		http.Error(w, "Lifecycle manager not available", http.StatusServiceUnavailable)
 		return
 	}
-	lifecycleData := s.lifecycleManager.CollectLifecycle(r.Context())
+	lifecycleData, agentSummary := s.lifecycleManager.CollectLifecycle(r.Context())
+
+	body := map[string]interface{}{
+		"groups":             lifecycleData.Groups,
+		"lifecycle_statuses": lifecycleData.LifecycleStatuses,
+		"agent_summary":      agentSummary,
+	}
+	if agentSummary.Total == 0 || agentSummary.Responded == 0 {
+		body["error"] = fmt.Sprintf("FODC unavailable: %d/%d agents responded",
+			agentSummary.Responded, agentSummary.Total)
+	}
+
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusOK)
-	if encodeErr := json.NewEncoder(w).Encode(lifecycleData); encodeErr != nil {
+	if encodeErr := json.NewEncoder(w).Encode(body); encodeErr != nil {
 		s.logger.Error().Err(encodeErr).Msg("Failed to encode lifecycle response")
 	}
 }
