@@ -801,6 +801,7 @@ func TestHandleClusterLifecycle_NoAgents_FlagsErrorInBody(t *testing.T) {
 	initTestLogger(t)
 	testLogger := logger.GetLogger("test", "api")
 	testRegistry := registry.NewAgentRegistry(testLogger, 5*time.Second, 10*time.Second, 100)
+	defer testRegistry.Stop()
 	mockSender := &mockRequestSender{}
 	aggregator := metrics.NewAggregator(testRegistry, mockSender, testLogger)
 

@@ -115,6 +115,7 @@ func TestManager_UpdateLifecycle_NoActiveCollection(t *testing.T) {
 func TestManager_CollectLifecycle_NoAgents(t *testing.T) {
 	log := initTestLogger(t)
 	testRegistry := registry.NewAgentRegistry(log, 5*time.Second, 10*time.Second, 100)
+	defer testRegistry.Stop()
 	mgr := NewManager(testRegistry, nil, log)
 
 	result, summary := mgr.CollectLifecycle(context.Background())
