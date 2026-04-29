@@ -435,32 +435,32 @@ func newMetrics(factory observability.Factory) *metrics {
 		totalMsgSentErr:     factory.NewCounter("total_msg_sent_err", "topic"),
 
 		// Chunk ordering metrics
-		outOfOrderChunksReceived: factory.NewCounter("out_of_order_chunks_received", "session_id"),
-		chunksBuffered:           factory.NewCounter("chunks_buffered", "session_id"),
-		bufferTimeouts:           factory.NewCounter("buffer_timeouts", "session_id"),
-		largeGapsRejected:        factory.NewCounter("large_gaps_rejected", "session_id"),
-		bufferCapacityExceeded:   factory.NewCounter("buffer_capacity_exceeded", "session_id"),
-		finishSyncErr:            factory.NewCounter("finish_sync_err", "session_id"),
+		outOfOrderChunksReceived: factory.NewCounter("out_of_order_chunks_received", "topic"),
+		chunksBuffered:           factory.NewCounter("chunks_buffered", "topic"),
+		bufferTimeouts:           factory.NewCounter("buffer_timeouts", "topic"),
+		largeGapsRejected:        factory.NewCounter("large_gaps_rejected", "topic"),
+		bufferCapacityExceeded:   factory.NewCounter("buffer_capacity_exceeded", "topic"),
+		finishSyncErr:            factory.NewCounter("finish_sync_err", "topic"),
 	}
 }
 
 // updateChunkOrderMetrics updates chunk ordering metrics.
-func (s *server) updateChunkOrderMetrics(event, sessionID string) {
+func (s *server) updateChunkOrderMetrics(event, topic string) {
 	if s.metrics == nil {
 		return // Skip metrics if not initialized (e.g., during tests)
 	}
 	switch event {
 	case "out_of_order_received":
-		s.metrics.outOfOrderChunksReceived.Inc(1, sessionID)
+		s.metrics.outOfOrderChunksReceived.Inc(1, topic)
 	case "chunk_buffered":
-		s.metrics.chunksBuffered.Inc(1, sessionID)
+		s.metrics.chunksBuffered.Inc(1, topic)
 	case "buffer_timeout":
-		s.metrics.bufferTimeouts.Inc(1, sessionID)
+		s.metrics.bufferTimeouts.Inc(1, topic)
 	case "gap_too_large":
-		s.metrics.largeGapsRejected.Inc(1, sessionID)
+		s.metrics.largeGapsRejected.Inc(1, topic)
 	case "buffer_full":
-		s.metrics.bufferCapacityExceeded.Inc(1, sessionID)
+		s.metrics.bufferCapacityExceeded.Inc(1, topic)
 	case "finish_sync_err":
-		s.metrics.finishSyncErr.Inc(1, sessionID)
+		s.metrics.finishSyncErr.Inc(1, topic)
 	}
 }
