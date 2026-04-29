@@ -575,7 +575,7 @@ func TestCollectWithPartialClosedSegments(t *testing.T) {
 		TTL:                IntervalRule{Unit: DAY, Num: 7},
 		ShardNum:           2,
 		TSTableCreator:     MockTSTableCreator,
-		SegmentIdleTimeout: 100 * time.Millisecond, // Short idle timeout for testing
+		SegmentIdleTimeout: time.Hour, // Long enough that only segments with manually backdated lastAccessed are idle
 	}
 
 	ctx := context.Background()
@@ -627,7 +627,7 @@ func TestCollectWithPartialClosedSegments(t *testing.T) {
 	for _, s := range ss {
 		// Find segments we want to mark as idle (first and third)
 		if s.Start.Equal(segmentDates[0]) || s.Start.Equal(segmentDates[2]) {
-			s.lastAccessed.Store(time.Now().Add(-time.Hour).UnixNano())
+			s.lastAccessed.Store(time.Now().Add(-2 * time.Hour).UnixNano())
 			s.DecRef() // Force close
 		}
 		s.DecRef() // Release our reference from segments()
