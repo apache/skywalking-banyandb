@@ -194,6 +194,59 @@ func (c *schemaCache) GetKeyModRevision(propID string) (int64, bool) {
 	return entry.modRevision, true
 }
 
+// KeyRevision pairs a property ID with its observed mod_revision and a
+// presence flag. Returned by GetKeyRevisions in the same order the caller
+// supplied propIDs so the cluster RPC handler can join the result with its
+// proto SchemaKey input slice.
+type KeyRevision struct {
+	PropID      string
+	ModRevision int64
+	Present     bool
+}
+
+// GetKeyRevisions returns presence + mod_revision for each propID in a single
+// read-lock pass. It applies the same downstream-coherence gate as
+// GetKeyModRevision: an entry present in the cache map whose mod_revision
+// exceeds notifiedModRevision is reported as Present=false, ModRevision=0.
+// An empty input returns a non-nil empty slice.
+func (c *schemaCache) GetKeyRevisions(propIDs []string) []KeyRevision {
+	out := make([]KeyRevision, len(propIDs))
+	c.mu.RLock()
+	defer c.mu.RUnlock()
+	for i, pid := range propIDs {
+		out[i].PropID = pid
+		entry, ok := c.entries[pid]
+		if !ok {
+			continue
+		}
+		if entry.modRevision > c.notifiedModRevision {
+			continue
+		}
+		out[i].ModRevision = entry.modRevision
+		out[i].Present = true
+	}
+	return out
+}
+
+// IsAbsent partitions propIDs into "absent from the cache" and "still present"
+// in a single read-lock pass. The split mirrors GetKeyModRevision's gate:
+// entries whose mod_revision exceeds notifiedModRevision count as absent
+// because downstream handlers have not yet observed them. The returned slices
+// preserve input order within each subset.
+func (c *schemaCache) IsAbsent(propIDs []string) (absent, present []string) {
+	c.mu.RLock()
+	defer c.mu.RUnlock()
+	for _, pid := range propIDs {
+		entry, ok := c.entries[pid]
+		if !ok || entry.modRevision > c.notifiedModRevision {
+			absent = append(absent, pid)
+			continue
+		}
+		present = append(present, pid)
+	}
+	return absent, present
+}
+
 // AdvanceNotified pushes the downstream-handler watermark forward monotonically.
 // Callers must invoke this only after notifyHandlers returns for the given revision,
 // so downstream caches (groupRepo, entityRepo, pkg/schema.schemaRepo, …) are coherent

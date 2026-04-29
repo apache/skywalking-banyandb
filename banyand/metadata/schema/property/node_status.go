@@ -1,0 +1,161 @@
+// Licensed to Apache Software Foundation (ASF) under one or more contributor
+// license agreements. See the NOTICE file distributed with
+// this work for additional information regarding copyright
+// ownership. Apache Software Foundation (ASF) licenses this file to you under
+// the Apache License, Version 2.0 (the "License"); you may
+// not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing,
+// software distributed under the License is distributed on an
+// "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
+// KIND, either express or implied.  See the License for the
+// specific language governing permissions and limitations
+// under the License.
+
+package property
+
+import (
+	"context"
+
+	clusterv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/cluster/v1"
+	schemav1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/schema/v1"
+)
+
+// NodeSchemaStatusServer implements clusterv1.NodeSchemaStatusServiceServer
+// against a local SchemaRegistry cache. The same implementation runs on every
+// cluster member that holds a schema cache: liaisons (Role_ROLE_LIAISON) and
+// data nodes (Role_ROLE_DATA). The "Node" prefix in the service name is a
+// misnomer inherited from the original proto draft — treat the service as
+// "cluster-member schema status" regardless of the role serving it.
+//
+// The cache the server reads (the SchemaRegistry's schemaCache) is the same
+// one downstream consumers (pkg/schema.schemaRepo, groupRepo, entityRepo)
+// observe through the property watch loop. The schemaCache.notifiedModRevision
+// watermark only advances after every registered handler has processed the
+// relevant event, so a positive answer from this server (Present=true,
+// rev=R) implies every downstream cache has also observed R. This is the
+// load-bearing prerequisite for the Phase 2 cluster barrier — without it,
+// the barrier would confirm a cache the data-node query executor never reads.
+type NodeSchemaStatusServer struct {
+	clusterv1.UnimplementedNodeSchemaStatusServiceServer
+	cacheProvider func() *schemaCache
+}
+
+// NewNodeSchemaStatusServer wires the server to a cache provider. The
+// provider is called per request so the server tolerates SchemaRegistry
+// initialisation racing the gRPC server boot — an early call simply gets a
+// nil cache and returns zero-valued results, which liaison-side fan-out
+// treats as "node not yet ready, retry on the next backoff iteration"
+// rather than a hard error.
+func NewNodeSchemaStatusServer(cacheProvider func() *schemaCache) *NodeSchemaStatusServer {
+	return &NodeSchemaStatusServer{cacheProvider: cacheProvider}
+}
+
+// NewNodeSchemaStatusServerForRegistry is a convenience constructor for the
+// common case where the caller has a *SchemaRegistry instance and wants the
+// server to read its cache directly.
+func NewNodeSchemaStatusServerForRegistry(reg *SchemaRegistry) *NodeSchemaStatusServer {
+	return &NodeSchemaStatusServer{
+		cacheProvider: func() *schemaCache {
+			if reg == nil {
+				return nil
+			}
+			return reg.cache
+		},
+	}
+}
+
+// GetMaxRevision returns the highest mod_revision currently observed by the
+// node's local schema cache. When the cache is not yet initialised the
+// response carries 0, which the liaison's barrier loop interprets as
+// "node not yet caught up" and continues polling.
+func (s *NodeSchemaStatusServer) GetMaxRevision(_ context.Context, _ *clusterv1.GetMaxRevisionRequest) (*clusterv1.GetMaxRevisionResponse, error) {
+	c := s.cacheProvider()
+	if c == nil {
+		return &clusterv1.GetMaxRevisionResponse{}, nil
+	}
+	return &clusterv1.GetMaxRevisionResponse{MaxModRevision: c.GetMaxModRevision()}, nil
+}
+
+// GetKeyRevisions returns per-key (mod_revision, present) pairs in the same
+// order the caller supplied keys. A key referencing a group the node has
+// not observed maps to mod_revision=0, present=false — the call does not
+// error on missing groups so the liaison can treat group-not-yet-registered
+// as a normal laggard rather than a server fault.
+//
+// An empty request is valid and produces an empty response.
+func (s *NodeSchemaStatusServer) GetKeyRevisions(_ context.Context, req *clusterv1.GetKeyRevisionsRequest) (*clusterv1.GetKeyRevisionsResponse, error) {
+	keys := req.GetKeys()
+	resp := &clusterv1.GetKeyRevisionsResponse{
+		Revisions: make([]*clusterv1.KeyRevision, len(keys)),
+	}
+	for i, key := range keys {
+		resp.Revisions[i] = &clusterv1.KeyRevision{Key: key}
+	}
+	c := s.cacheProvider()
+	if c == nil || len(keys) == 0 {
+		return resp, nil
+	}
+	propIDs := schemaKeysToPropIDs(keys)
+	statuses := c.GetKeyRevisions(propIDs)
+	for i, status := range statuses {
+		resp.Revisions[i].ModRevision = status.ModRevision
+		resp.Revisions[i].Present = status.Present
+	}
+	return resp, nil
+}
+
+// GetAbsentKeys partitions the requested keys into "absent" (i.e. not in the
+// node's live cache or pending downstream notification) and "still_present".
+// A SchemaKey with an unknown kind value is reported in absent_keys without
+// erroring so the caller can rely on the partition adding up to the input.
+func (s *NodeSchemaStatusServer) GetAbsentKeys(_ context.Context, req *clusterv1.GetAbsentKeysRequest) (*clusterv1.GetAbsentKeysResponse, error) {
+	keys := req.GetKeys()
+	resp := &clusterv1.GetAbsentKeysResponse{}
+	if len(keys) == 0 {
+		return resp, nil
+	}
+	c := s.cacheProvider()
+	if c == nil {
+		// Cache not yet initialised — every requested key is treated as absent
+		// from the local perspective. The liaison's barrier will retry on the
+		// next backoff iteration once the cache is online.
+		resp.AbsentKeys = append([]*schemav1.SchemaKey(nil), keys...)
+		return resp, nil
+	}
+	propIDs := schemaKeysToPropIDs(keys)
+	for i, key := range keys {
+		propID := propIDs[i]
+		if propID == "" {
+			// Unknown kind — treat as absent so the caller's "every key absent"
+			// invariant holds without surfacing a parse error.
+			resp.AbsentKeys = append(resp.AbsentKeys, key)
+			continue
+		}
+		// GetKeyModRevision handles both the cache-map lookup and the
+		// notifiedModRevision gate atomically under the cache's read lock,
+		// matching the semantics that AwaitSchemaDeleted's collectPresentKeys
+		// already relies on.
+		if _, ok := c.GetKeyModRevision(propID); !ok {
+			resp.AbsentKeys = append(resp.AbsentKeys, key)
+			continue
+		}
+		resp.StillPresentKeys = append(resp.StillPresentKeys, key)
+	}
+	return resp, nil
+}
+
+// schemaKeysToPropIDs converts a slice of SchemaKey messages into the
+// internal propID strings used by the schema cache. Keys with unknown kind
+// strings produce an empty propID at the corresponding index — callers
+// must check for "" before using the result as a cache lookup key.
+func schemaKeysToPropIDs(keys []*schemav1.SchemaKey) []string {
+	out := make([]string, len(keys))
+	for i, key := range keys {
+		out[i] = BuildPropertyIDFromSchemaKey(key)
+	}
+	return out
+}

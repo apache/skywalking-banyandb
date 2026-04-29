@@ -48,6 +48,7 @@ import (
 	tracev1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/trace/v1"
 	"github.com/apache/skywalking-banyandb/banyand/liaison/grpc/route"
 	"github.com/apache/skywalking-banyandb/banyand/metadata"
+	"github.com/apache/skywalking-banyandb/banyand/metadata/schema/property"
 	"github.com/apache/skywalking-banyandb/banyand/observability"
 	"github.com/apache/skywalking-banyandb/banyand/queue"
 	"github.com/apache/skywalking-banyandb/pkg/bus"
@@ -291,6 +292,17 @@ func (s *server) Serve() run.StopNotify {
 	tracev1.RegisterTraceServiceServer(s.ser, &traceService{ser: s})
 	if s.metadataRepo != nil {
 		fodcv1.RegisterGroupLifecycleServiceServer(s.ser, s)
+		// Phase 2 Step 2.1: data nodes expose NodeSchemaStatusService so the
+		// liaison's barrier fan-out (Step 2.2) can probe each node's local
+		// schema cache. The cache the server reads is the same SchemaRegistry
+		// instance the data-node query executor consults — see
+		// banyand/metadata/schema/property/node_status.go for the coherence
+		// argument.
+		if svc, svcOk := s.metadataRepo.(metadata.Service); svcOk {
+			if reg, regOk := svc.SchemaRegistry().(*property.SchemaRegistry); regOk && reg != nil {
+				clusterv1.RegisterNodeSchemaStatusServiceServer(s.ser, property.NewNodeSchemaStatusServerForRegistry(reg))
+			}
+		}
 	}
 
 	var ctx context.Context
