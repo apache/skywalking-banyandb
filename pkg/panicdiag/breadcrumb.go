@@ -82,8 +82,6 @@ func WithBreadcrumb(ctx context.Context, stage string, component string, fields 
 	if ctx == nil {
 		ctx = context.Background()
 	}
-	// Mutable-store path: append in-place so the breadcrumb is visible through
-	// any context reference that was captured before WithBreadcrumb was called.
 	if store, ok := ctx.Value(mutableBreadcrumbContextKey{}).(*mutableBreadcrumbStore); ok {
 		store.mu.Lock()
 		defer store.mu.Unlock()
@@ -97,7 +95,6 @@ func WithBreadcrumb(ctx context.Context, stage string, component string, fields 
 		}
 		return ctx
 	}
-	// Immutable linked-list path (default when no mutable store is present).
 	node, _ := ctx.Value(breadcrumbContextKey{}).(*breadcrumbNode)
 	nextDepth := 0
 	if node != nil {
@@ -124,7 +121,6 @@ func BreadcrumbsFromContext(ctx context.Context) []Breadcrumb {
 	if ctx == nil {
 		return nil
 	}
-	// Mutable-store path.
 	if store, ok := ctx.Value(mutableBreadcrumbContextKey{}).(*mutableBreadcrumbStore); ok {
 		store.mu.Lock()
 		defer store.mu.Unlock()
@@ -138,20 +134,17 @@ func BreadcrumbsFromContext(ctx context.Context) []Breadcrumb {
 		}
 		return result
 	}
-	// Immutable linked-list path.
 	node, _ := ctx.Value(breadcrumbContextKey{}).(*breadcrumbNode)
 	if node == nil {
 		return nil
 	}
-	reversed := make([]Breadcrumb, 0, 8)
+	n := node.depth + 1
+	breadcrumbs := make([]Breadcrumb, n)
 	for current := node; current != nil; current = current.parent {
-		breadcrumb := current.breadcrumb
-		breadcrumb.Fields = cloneStringMap(breadcrumb.Fields)
-		reversed = append(reversed, breadcrumb)
-	}
-	breadcrumbs := make([]Breadcrumb, len(reversed))
-	for idx := range reversed {
-		breadcrumbs[len(reversed)-1-idx] = reversed[idx]
+		n--
+		bc := current.breadcrumb
+		bc.Fields = cloneStringMap(bc.Fields)
+		breadcrumbs[n] = bc
 	}
 	return breadcrumbs
 }
