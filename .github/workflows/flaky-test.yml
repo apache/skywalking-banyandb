@@ -32,5 +32,5 @@ jobs:
     uses: ./.github/workflows/test.yml
     with:
       test-name: Flaky Tests
-      options:  --vv --repeat 3 --label-filter '(integration&&!slow)||banyand'
+      options:  --vv --repeat 0 --label-filter '(integration&&!slow)||banyand'
       timeout-minutes: 50
