@@ -781,3 +781,55 @@ func TestHandleClusterLifecycle_NoLifecycleManager(t *testing.T) {
 
 	assert.Equal(t, http.StatusServiceUnavailable, resp.Code)
 }
+
+// TestHandleClusterLifecycle_NoAgents_FlagsErrorInBody reproduces the bug where the proxy
+// silently returns 200 + an empty payload when no agents are registered. This makes the
+// caller (e.g. the SRE inspection agent) unable to distinguish two semantically very
+// different states:
+//   - the BanyanDB cluster genuinely has no groups (a real cluster-side problem); or
+//   - the FODC proxy lost all of its agents (an infrastructure-layer outage caused by a
+//     proxy pod restart, every agent stuck on reconnect, etc.).
+//
+// In production the second case is what triggered the lifecycle critical alert, but the
+// HTTP layer presented it identically to the first.
+//
+// Pre-fix behavior: handleClusterLifecycle writes 200 with body
+// `{"groups":[],"lifecycle_statuses":[]}` and no way to tell the two cases apart.
+// Post-fix behavior: HTTP status is still 200, but the body now carries an "error" field
+// when agent_summary reports total=0 or responded=0, plus the agent_summary itself.
+func TestHandleClusterLifecycle_NoAgents_FlagsErrorInBody(t *testing.T) {
+	initTestLogger(t)
+	testLogger := logger.GetLogger("test", "api")
+	testRegistry := registry.NewAgentRegistry(testLogger, 5*time.Second, 10*time.Second, 100)
+	defer testRegistry.Stop()
+	mockSender := &mockRequestSender{}
+	aggregator := metrics.NewAggregator(testRegistry, mockSender, testLogger)
+
+	mockLifecycleRequester := &mockLifecycleDataRequester{
+		dataByAgent: make(map[string]*fodcv1.LifecycleData),
+		podByAgent:  make(map[string]string),
+	}
+	lifecycleMgr := lifecycle.NewManager(testRegistry, mockLifecycleRequester, testLogger)
+	mockLifecycleRequester.lifecycleMgr = lifecycleMgr
+
+	server := NewServer(aggregator, nil, lifecycleMgr, testRegistry, testLogger)
+
+	req := httptest.NewRequest(http.MethodGet, "/cluster/lifecycle", nil)
+	resp := httptest.NewRecorder()
+	server.handleClusterLifecycle(resp, req)
+
+	assert.Equal(t, http.StatusOK, resp.Code, "status code stays 200 even when zero agents are registered")
+
+	var body map[string]interface{}
+	require.NoError(t, json.NewDecoder(resp.Body).Decode(&body))
+
+	errMsg, hasError := body["error"]
+	assert.Truef(t, hasError, "body must include an error field when zero agents are registered, got: %v", body)
+	assert.Containsf(t, errMsg, "FODC unavailable",
+		"error field should describe the infrastructure-layer failure, got: %v", errMsg)
+
+	summary, hasSummary := body["agent_summary"].(map[string]interface{})
+	require.Truef(t, hasSummary, "body must include agent_summary, got: %v", body)
+	assert.EqualValues(t, 0, summary["total"], "agent_summary.total should be 0 when no agents are registered")
+	assert.EqualValues(t, 0, summary["responded"], "agent_summary.responded should be 0 when no agents are registered")
+}
