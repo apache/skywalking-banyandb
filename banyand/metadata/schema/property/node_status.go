@@ -69,7 +69,7 @@ func NewNodeSchemaStatusServerForRegistry(reg *SchemaRegistry) *NodeSchemaStatus
 }
 
 // GetMaxRevision returns the highest mod_revision currently observed by the
-// node's local schema cache. When the cache is not yet initialised the
+// node's local schema cache. When the cache is not yet initialized the
 // response carries 0, which the liaison's barrier loop interprets as
 // "node not yet caught up" and continues polling.
 func (s *NodeSchemaStatusServer) GetMaxRevision(_ context.Context, _ *clusterv1.GetMaxRevisionRequest) (*clusterv1.GetMaxRevisionResponse, error) {
@@ -120,7 +120,7 @@ func (s *NodeSchemaStatusServer) GetAbsentKeys(_ context.Context, req *clusterv1
 	}
 	c := s.cacheProvider()
 	if c == nil {
-		// Cache not yet initialised — every requested key is treated as absent
+		// Cache not yet initialized — every requested key is treated as absent
 		// from the local perspective. The liaison's barrier will retry on the
 		// next backoff iteration once the cache is online.
 		resp.AbsentKeys = append([]*schemav1.SchemaKey(nil), keys...)

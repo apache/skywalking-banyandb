@@ -180,7 +180,7 @@ func kindFromProtoString(protoKind string) schema.Kind {
 
 // BuildPropertyIDFromSchemaKey converts a SchemaKey from the cluster
 // node-status proto into the property-ID string used internally by the
-// schema cache. Returns an empty string when the kind is unrecognised so
+// schema cache. Returns an empty string when the kind is unrecognized so
 // the caller can short-circuit instead of looking up a malformed propID.
 func BuildPropertyIDFromSchemaKey(key *schemav1.SchemaKey) string {
 	kind := kindFromProtoString(key.GetKind())

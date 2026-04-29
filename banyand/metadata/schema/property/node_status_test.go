@@ -52,15 +52,17 @@ func nodeStatusFixture(t *testing.T, entries map[string]*cacheEntry) *NodeSchema
 	return NewNodeSchemaStatusServer(func() *schemaCache { return c })
 }
 
-func makeEntry(kind schema.Kind, group, name string, rev int64) (string, *cacheEntry) {
+const testGroup = "g1"
+
+func makeEntry(kind schema.Kind, name string, rev int64) (string, *cacheEntry) {
 	propID := kind.String() + "_"
 	if kind == schema.KindGroup {
 		propID += name
 	} else {
-		propID += group + "/" + name
+		propID += testGroup + "/" + name
 	}
 	return propID, &cacheEntry{
-		group:          group,
+		group:          testGroup,
 		name:           name,
 		kind:           kind,
 		modRevision:    rev,
@@ -69,7 +71,7 @@ func makeEntry(kind schema.Kind, group, name string, rev int64) (string, *cacheE
 }
 
 func TestGetMaxRevision_ReflectsLatestApply(t *testing.T) {
-	id, entry := makeEntry(schema.KindMeasure, "g1", "m1", 42)
+	id, entry := makeEntry(schema.KindMeasure, "m1", 42)
 	srv := nodeStatusFixture(t, map[string]*cacheEntry{id: entry})
 
 	resp, err := srv.GetMaxRevision(context.Background(), &clusterv1.GetMaxRevisionRequest{})
@@ -78,7 +80,7 @@ func TestGetMaxRevision_ReflectsLatestApply(t *testing.T) {
 }
 
 func TestGetMaxRevision_UnchangedByQuery(t *testing.T) {
-	id, entry := makeEntry(schema.KindStream, "g1", "s1", 100)
+	id, entry := makeEntry(schema.KindStream, "s1", 100)
 	srv := nodeStatusFixture(t, map[string]*cacheEntry{id: entry})
 
 	first, err := srv.GetMaxRevision(context.Background(), &clusterv1.GetMaxRevisionRequest{})
@@ -101,8 +103,8 @@ func TestGetMaxRevision_NilCache_ReturnsZero(t *testing.T) {
 }
 
 func TestGetKeyRevisions_PresentAndAbsent(t *testing.T) {
-	idMeasure, entryMeasure := makeEntry(schema.KindMeasure, "g1", "m1", 50)
-	idStream, entryStream := makeEntry(schema.KindStream, "g1", "s1", 70)
+	idMeasure, entryMeasure := makeEntry(schema.KindMeasure, "m1", 50)
+	idStream, entryStream := makeEntry(schema.KindStream, "s1", 70)
 	srv := nodeStatusFixture(t, map[string]*cacheEntry{
 		idMeasure: entryMeasure,
 		idStream:  entryStream,
@@ -155,7 +157,7 @@ func TestGetKeyRevisions_NotYetNotified_ReportedAbsent(t *testing.T) {
 	// downstream handlers have not yet processed it. Per the gate semantics in
 	// GetKeyModRevision, the server must report it as not present.
 	c := newSchemaCache()
-	id, entry := makeEntry(schema.KindMeasure, "g1", "m1", 100)
+	id, entry := makeEntry(schema.KindMeasure, "m1", 100)
 	c.entries[id] = entry
 	c.notifiedModRevision = 50 // below entry's rev
 	srv := NewNodeSchemaStatusServer(func() *schemaCache { return c })
@@ -179,8 +181,8 @@ func TestGetAbsentKeys_PostDelete(t *testing.T) {
 	// entry that never existed. Expectation: the deleted key and the
 	// never-existed key end up in absent_keys; the surviving key in
 	// still_present_keys.
-	idAlive, entryAlive := makeEntry(schema.KindMeasure, "g1", "alive", 30)
-	idDead, entryDead := makeEntry(schema.KindMeasure, "g1", "dead", 40)
+	idAlive, entryAlive := makeEntry(schema.KindMeasure, "alive", 30)
+	idDead, entryDead := makeEntry(schema.KindMeasure, "dead", 40)
 	c := newSchemaCache()
 	c.entries[idAlive] = entryAlive
 	c.entries[idDead] = entryDead
@@ -240,7 +242,7 @@ func TestGetKeyRevisions_ChunkedAtLimit(t *testing.T) {
 	keys := make([]*schemav1.SchemaKey, total)
 	for i := range total {
 		name := "m" + strconv.Itoa(i)
-		id, entry := makeEntry(schema.KindMeasure, "g1", name, int64(i+1))
+		id, entry := makeEntry(schema.KindMeasure, name, int64(i+1))
 		entries[id] = entry
 		keys[i] = &schemav1.SchemaKey{Kind: "measure", Group: "g1", Name: name}
 	}
