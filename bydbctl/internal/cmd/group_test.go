@@ -58,6 +58,7 @@ resource_opts:
     num: 7`))
 		var buf bytes.Buffer
 		rootCmd.SetOut(&buf)
+		rootCmd.SetErr(&buf)
 		err := rootCmd.Execute()
 		Expect(err).NotTo(HaveOccurred())
 		Expect(buf.String()).To(ContainSubstring("group group1 is created"))
@@ -67,6 +68,7 @@ resource_opts:
 		rootCmd.SetArgs([]string{"group", "get", "-g", "group1"})
 		var buf bytes.Buffer
 		rootCmd.SetOut(&buf)
+		rootCmd.SetErr(&buf)
 		err := rootCmd.Execute()
 		Expect(err).NotTo(HaveOccurred())
 		out := buf.String()
@@ -91,6 +93,7 @@ resource_opts:
     num: 7`))
 		var buf bytes.Buffer
 		rootCmd.SetOut(&buf)
+		rootCmd.SetErr(&buf)
 		err := rootCmd.Execute()
 		Expect(err).NotTo(HaveOccurred())
 		Expect(buf.String()).To(ContainSubstring("group group1 is updated"))
@@ -101,6 +104,7 @@ resource_opts:
 			rootCmd.SetArgs([]string{"group", "delete", "-g", "group1"})
 			var buf bytes.Buffer
 			rootCmd.SetOut(&buf)
+			rootCmd.SetErr(&buf)
 			g.Expect(rootCmd.Execute()).NotTo(HaveOccurred())
 			g.Expect(buf.String()).To(ContainSubstring("group group1 is deleted"))
 		}).Should(Succeed())
@@ -110,6 +114,7 @@ resource_opts:
 		rootCmd.SetArgs([]string{"group", "delete", "-g", "group1", "--dry-run"})
 		var buf bytes.Buffer
 		rootCmd.SetOut(&buf)
+		rootCmd.SetErr(&buf)
 		err := rootCmd.Execute()
 		Expect(err).NotTo(HaveOccurred())
 		out := buf.String()
@@ -136,6 +141,7 @@ resource_opts:
     num: 7`))
 		var buf bytes.Buffer
 		rootCmd.SetOut(&buf)
+		rootCmd.SetErr(&buf)
 		err := rootCmd.Execute()
 		Expect(err).NotTo(HaveOccurred())
 		Expect(buf.String()).To(ContainSubstring("group group2 is created"))
@@ -143,6 +149,7 @@ resource_opts:
 		rootCmd.SetArgs([]string{"group", "list"})
 		buf.Reset()
 		rootCmd.SetOut(&buf)
+		rootCmd.SetErr(&buf)
 		err = rootCmd.Execute()
 		Expect(err).NotTo(HaveOccurred())
 		out := buf.String()

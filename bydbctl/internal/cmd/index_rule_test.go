@@ -58,6 +58,7 @@ resource_opts:
     num: 7`))
 			var buf bytes.Buffer
 			rootCmd.SetOut(&buf)
+			rootCmd.SetErr(&buf)
 
 			err := rootCmd.Execute()
 			if err != nil {
@@ -76,6 +77,7 @@ tags: ["layer"]
 type: TYPE_INVERTED`))
 			var buf bytes.Buffer
 			rootCmd.SetOut(&buf)
+			rootCmd.SetErr(&buf)
 
 			err := rootCmd.Execute()
 			if err != nil {
@@ -90,6 +92,7 @@ type: TYPE_INVERTED`))
 		rootCmd.SetArgs([]string{"indexRule", "get", "-g", "group1", "-n", "name1"})
 		var buf bytes.Buffer
 		rootCmd.SetOut(&buf)
+		rootCmd.SetErr(&buf)
 
 		err := rootCmd.Execute()
 		Expect(err).NotTo(HaveOccurred())
@@ -111,6 +114,7 @@ tags: ["layer"]
 type: TYPE_INVERTED`))
 		var buf bytes.Buffer
 		rootCmd.SetOut(&buf)
+		rootCmd.SetErr(&buf)
 
 		err := rootCmd.Execute()
 		Expect(err).NotTo(HaveOccurred())
@@ -119,6 +123,7 @@ type: TYPE_INVERTED`))
 		rootCmd.SetArgs([]string{"indexRule", "get", "-g", "group1", "-n", "name1"})
 		buf.Reset()
 		rootCmd.SetOut(&buf)
+		rootCmd.SetErr(&buf)
 
 		err = rootCmd.Execute()
 		Expect(err).NotTo(HaveOccurred())
@@ -134,6 +139,7 @@ type: TYPE_INVERTED`))
 		rootCmd.SetArgs([]string{"indexRule", "delete", "-g", "group1", "-n", "name1"})
 		var buf bytes.Buffer
 		rootCmd.SetOut(&buf)
+		rootCmd.SetErr(&buf)
 
 		err := rootCmd.Execute()
 		Expect(err).NotTo(HaveOccurred())
@@ -156,6 +162,7 @@ tags: ["layer"]
 type: TYPE_INVERTED`))
 		var buf bytes.Buffer
 		rootCmd.SetOut(&buf)
+		rootCmd.SetErr(&buf)
 
 		err := rootCmd.Execute()
 		Expect(err).NotTo(HaveOccurred())
@@ -165,6 +172,7 @@ type: TYPE_INVERTED`))
 		rootCmd.SetArgs([]string{"indexRule", "list", "-g", "group1"})
 		buf.Reset()
 		rootCmd.SetOut(&buf)
+		rootCmd.SetErr(&buf)
 
 		err = rootCmd.Execute()
 		Expect(err).NotTo(HaveOccurred())

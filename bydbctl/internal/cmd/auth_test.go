@@ -121,6 +121,7 @@ resource_opts:
     num: 7`))
 		var buf bytes.Buffer
 		rootCmd.SetOut(&buf)
+		rootCmd.SetErr(&buf)
 
 		err = rootCmd.Execute()
 		gm.Expect(err).NotTo(gm.HaveOccurred())
@@ -130,6 +131,7 @@ resource_opts:
 		rootCmd.SetArgs([]string{"--config", bydbctlCfgFile, "group", "-a", httpAddr, "get", "-g", "group1"})
 		buf.Reset()
 		rootCmd.SetOut(&buf)
+		rootCmd.SetErr(&buf)
 
 		err = rootCmd.Execute()
 		gm.Expect(err).NotTo(gm.HaveOccurred())

@@ -50,6 +50,7 @@ var _ = Describe("health check after launching banyandb server with gRPC and HTT
 		rootCmd.SetArgs([]string{"health", "--addr", "https://" + httpAddr, "--cert", certFile, "--enable-tls", "true"})
 		var buf bytes.Buffer
 		rootCmd.SetOut(&buf)
+		rootCmd.SetErr(&buf)
 
 		err := rootCmd.Execute()
 		Expect(err).NotTo(HaveOccurred())
@@ -61,6 +62,7 @@ var _ = Describe("health check after launching banyandb server with gRPC and HTT
 		rootCmd.SetArgs([]string{"health", "--addr", "https://" + httpAddr, "--insecure", "true", "--enable-tls", "true"})
 		var buf bytes.Buffer
 		rootCmd.SetOut(&buf)
+		rootCmd.SetErr(&buf)
 
 		err := rootCmd.Execute()
 		Expect(err).NotTo(HaveOccurred())
@@ -78,6 +80,7 @@ var _ = Describe("health check after launching banyandb server with gRPC and HTT
 		rootCmd.SetArgs([]string{"health", "--grpc-addr", grpcAddr, "--cert", certFile, "--enable-tls", "true"})
 		var buf bytes.Buffer
 		rootCmd.SetOut(&buf)
+		rootCmd.SetErr(&buf)
 
 		err := rootCmd.Execute()
 		Expect(err).NotTo(HaveOccurred())
@@ -89,6 +92,7 @@ var _ = Describe("health check after launching banyandb server with gRPC and HTT
 		rootCmd.SetArgs([]string{"health", "--grpc-addr", grpcAddr, "--insecure", "true", "--enable-tls", "true"})
 		var buf bytes.Buffer
 		rootCmd.SetOut(&buf)
+		rootCmd.SetErr(&buf)
 
 		err := rootCmd.Execute()
 		Expect(err).NotTo(HaveOccurred())
@@ -121,6 +125,7 @@ var _ = Describe("health check after launching banyandb server", func() {
 		rootCmd.SetArgs([]string{"health", "--addr", "http://" + httpAddr})
 		var buf bytes.Buffer
 		rootCmd.SetOut(&buf)
+		rootCmd.SetErr(&buf)
 
 		err := rootCmd.Execute()
 		Expect(err).NotTo(HaveOccurred())
@@ -132,6 +137,7 @@ var _ = Describe("health check after launching banyandb server", func() {
 		rootCmd.SetArgs([]string{"health", "--grpc-addr", grpcAddr})
 		var buf bytes.Buffer
 		rootCmd.SetOut(&buf)
+		rootCmd.SetErr(&buf)
 
 		err := rootCmd.Execute()
 		Expect(err).NotTo(HaveOccurred())

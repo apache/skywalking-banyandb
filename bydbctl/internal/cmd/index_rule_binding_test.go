@@ -58,6 +58,7 @@ resource_opts:
     num: 7`))
 			var buf bytes.Buffer
 			rootCmd.SetOut(&buf)
+			rootCmd.SetErr(&buf)
 
 			err := rootCmd.Execute()
 			if err != nil {
@@ -83,6 +84,7 @@ begin_at: 2021-04-15T01:30:15.01Z
 expire_at: 2121-04-15T01:30:15.01Z`))
 			var buf bytes.Buffer
 			rootCmd.SetOut(&buf)
+			rootCmd.SetErr(&buf)
 
 			err := rootCmd.Execute()
 			if err != nil {
@@ -97,6 +99,7 @@ expire_at: 2121-04-15T01:30:15.01Z`))
 		rootCmd.SetArgs([]string{"indexRuleBinding", "get", "-g", "group1", "-n", "name1"})
 		var buf bytes.Buffer
 		rootCmd.SetOut(&buf)
+		rootCmd.SetErr(&buf)
 
 		err := rootCmd.Execute()
 		Expect(err).NotTo(HaveOccurred())
@@ -126,6 +129,7 @@ begin_at: 2021-04-15T01:30:15.01Z
 expire_at: 2121-04-15T01:30:15.01Z`))
 		var buf bytes.Buffer
 		rootCmd.SetOut(&buf)
+		rootCmd.SetErr(&buf)
 
 		err := rootCmd.Execute()
 		Expect(err).NotTo(HaveOccurred())
@@ -134,6 +138,7 @@ expire_at: 2121-04-15T01:30:15.01Z`))
 		rootCmd.SetArgs([]string{"indexRuleBinding", "get", "-g", "group1", "-n", "name1"})
 		buf.Reset()
 		rootCmd.SetOut(&buf)
+		rootCmd.SetErr(&buf)
 
 		err = rootCmd.Execute()
 		Expect(err).NotTo(HaveOccurred())
@@ -150,6 +155,7 @@ expire_at: 2121-04-15T01:30:15.01Z`))
 		rootCmd.SetArgs([]string{"indexRuleBinding", "delete", "-g", "group1", "-n", "name1"})
 		var buf bytes.Buffer
 		rootCmd.SetOut(&buf)
+		rootCmd.SetErr(&buf)
 
 		err := rootCmd.Execute()
 		Expect(err).NotTo(HaveOccurred())
@@ -179,6 +185,7 @@ begin_at: 2021-04-15T01:30:15.01Z
 expire_at: 2121-04-15T01:30:15.01Z`))
 		var buf bytes.Buffer
 		rootCmd.SetOut(&buf)
+		rootCmd.SetErr(&buf)
 
 		err := rootCmd.Execute()
 		Expect(err).NotTo(HaveOccurred())
@@ -188,6 +195,7 @@ expire_at: 2121-04-15T01:30:15.01Z`))
 		rootCmd.SetArgs([]string{"indexRuleBinding", "list", "-g", "group1"})
 		buf.Reset()
 		rootCmd.SetOut(&buf)
+		rootCmd.SetErr(&buf)
 
 		err = rootCmd.Execute()
 		Expect(err).NotTo(HaveOccurred())

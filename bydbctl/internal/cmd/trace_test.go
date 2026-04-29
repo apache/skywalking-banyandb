@@ -65,6 +65,7 @@ resource_opts:
     num: 7`))
 			var buf bytes.Buffer
 			rootCmd.SetOut(&buf)
+			rootCmd.SetErr(&buf)
 
 			err := rootCmd.Execute()
 			if err != nil {
@@ -91,6 +92,7 @@ span_id_tag_name: span_id
 timestamp_tag_name: timestamp`))
 			var buf bytes.Buffer
 			rootCmd.SetOut(&buf)
+			rootCmd.SetErr(&buf)
 
 			err := rootCmd.Execute()
 			if err != nil {
@@ -105,6 +107,7 @@ timestamp_tag_name: timestamp`))
 		rootCmd.SetArgs([]string{"trace", "get", "-g", "group1", "-n", "name1"})
 		var buf bytes.Buffer
 		rootCmd.SetOut(&buf)
+		rootCmd.SetErr(&buf)
 
 		err := rootCmd.Execute()
 		Expect(err).NotTo(HaveOccurred())
@@ -140,6 +143,7 @@ span_id_tag_name: span_id
 timestamp_tag_name: timestamp`))
 		var buf bytes.Buffer
 		rootCmd.SetOut(&buf)
+		rootCmd.SetErr(&buf)
 
 		err := rootCmd.Execute()
 		Expect(err).NotTo(HaveOccurred())
@@ -148,6 +152,7 @@ timestamp_tag_name: timestamp`))
 		rootCmd.SetArgs([]string{"trace", "get", "-g", "group1", "-n", "name1"})
 		buf.Reset()
 		rootCmd.SetOut(&buf)
+		rootCmd.SetErr(&buf)
 
 		err = rootCmd.Execute()
 		Expect(err).NotTo(HaveOccurred())
@@ -165,6 +170,7 @@ timestamp_tag_name: timestamp`))
 		rootCmd.SetArgs([]string{"trace", "delete", "-g", "group1", "-n", "name1"})
 		var buf bytes.Buffer
 		rootCmd.SetOut(&buf)
+		rootCmd.SetErr(&buf)
 
 		err := rootCmd.Execute()
 		Expect(err).NotTo(HaveOccurred())
@@ -195,6 +201,7 @@ span_id_tag_name: span_id
 timestamp_tag_name: timestamp`))
 		var buf bytes.Buffer
 		rootCmd.SetOut(&buf)
+		rootCmd.SetErr(&buf)
 
 		err := rootCmd.Execute()
 		Expect(err).NotTo(HaveOccurred())
@@ -204,6 +211,7 @@ timestamp_tag_name: timestamp`))
 		rootCmd.SetArgs([]string{"trace", "list", "-g", "group1"})
 		buf.Reset()
 		rootCmd.SetOut(&buf)
+		rootCmd.SetErr(&buf)
 
 		err = rootCmd.Execute()
 		Expect(err).NotTo(HaveOccurred())
@@ -261,6 +269,7 @@ orderBy:
 			rootCmd.SetIn(strings.NewReader(sprintf))
 			var buf bytes.Buffer
 			rootCmd.SetOut(&buf)
+			rootCmd.SetErr(&buf)
 
 			err := rootCmd.Execute()
 			Expect(err).NotTo(HaveOccurred())
@@ -299,6 +308,7 @@ orderBy:
   sort: SORT_DESC`))
 			var buf bytes.Buffer
 			rootCmd.SetOut(&buf)
+			rootCmd.SetErr(&buf)
 
 			err := rootCmd.Execute()
 			Expect(err).NotTo(HaveOccurred())

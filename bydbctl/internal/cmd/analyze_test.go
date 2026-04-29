@@ -66,6 +66,7 @@ var _ = Describe("Measure Data Query", func() {
 		rootCmd.SetArgs([]string{"analyze", "series", path.Join(directory, "measure/sw_metric/seg-20210901/sidx")})
 		var buf bytes.Buffer
 		rootCmd.SetOut(&buf)
+		rootCmd.SetErr(&buf)
 
 		err = rootCmd.Execute()
 		Expect(err).NotTo(HaveOccurred())

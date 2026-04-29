@@ -144,6 +144,7 @@ var _ = Describe("Property Operation", func() {
 		rootCmd.SetArgs([]string{"property", "data", "delete", "-g", "ui-template", "-n", "service", "-i", "kubernetes"})
 		var buf bytes.Buffer
 		rootCmd.SetOut(&buf)
+		rootCmd.SetErr(&buf)
 
 		err := rootCmd.Execute()
 		Expect(err).NotTo(HaveOccurred())
@@ -163,6 +164,7 @@ var _ = Describe("Property Operation", func() {
 		rootCmd.SetArgs([]string{"property", "data", "delete", "-g", "ui-template", "-n", "service", "-i", "kubernetes"})
 		var buf bytes.Buffer
 		rootCmd.SetOut(&buf)
+		rootCmd.SetErr(&buf)
 
 		err := rootCmd.Execute()
 		Expect(err).NotTo(HaveOccurred())
@@ -197,6 +199,7 @@ resource_opts:
 `))
 			var buf bytes.Buffer
 			rootCmd.SetOut(&buf)
+			rootCmd.SetErr(&buf)
 
 			err := rootCmd.Execute()
 			if err != nil {
@@ -221,6 +224,7 @@ tags:
 `))
 		var buf bytes.Buffer
 		rootCmd.SetOut(&buf)
+		rootCmd.SetErr(&buf)
 
 		err := rootCmd.Execute()
 		Expect(err).NotTo(HaveOccurred())
@@ -243,6 +247,7 @@ tags:
 `))
 		var buf bytes.Buffer
 		rootCmd.SetOut(&buf)
+		rootCmd.SetErr(&buf)
 
 		err := rootCmd.Execute()
 		Expect(err).NotTo(HaveOccurred())
@@ -253,6 +258,7 @@ tags:
 		rootCmd.SetArgs([]string{"property", "schema", "get", "-g", "ui-template", "-n", "service"})
 		buf.Reset()
 		rootCmd.SetOut(&buf)
+		rootCmd.SetErr(&buf)
 
 		err = rootCmd.Execute()
 		Expect(err).NotTo(HaveOccurred())
@@ -281,6 +287,7 @@ tags:
 `))
 		var buf bytes.Buffer
 		rootCmd.SetOut(&buf)
+		rootCmd.SetErr(&buf)
 
 		err := rootCmd.Execute()
 		Expect(err).NotTo(HaveOccurred())
@@ -303,6 +310,7 @@ tags:
 `))
 		buf.Reset()
 		rootCmd.SetOut(&buf)
+		rootCmd.SetErr(&buf)
 
 		err = rootCmd.Execute()
 		Expect(err).NotTo(HaveOccurred())
@@ -313,6 +321,7 @@ tags:
 		rootCmd.SetArgs([]string{"property", "schema", "get", "-g", "ui-template", "-n", "service"})
 		buf.Reset()
 		rootCmd.SetOut(&buf)
+		rootCmd.SetErr(&buf)
 
 		err = rootCmd.Execute()
 		Expect(err).NotTo(HaveOccurred())
@@ -338,6 +347,7 @@ tags:
 `))
 		var buf bytes.Buffer
 		rootCmd.SetOut(&buf)
+		rootCmd.SetErr(&buf)
 
 		err := rootCmd.Execute()
 		Expect(err).NotTo(HaveOccurred())
@@ -348,6 +358,7 @@ tags:
 		rootCmd.SetArgs([]string{"property", "schema", "delete", "-g", "ui-template", "-n", "service"})
 		buf.Reset()
 		rootCmd.SetOut(&buf)
+		rootCmd.SetErr(&buf)
 
 		err = rootCmd.Execute()
 		Expect(err).NotTo(HaveOccurred())
@@ -375,6 +386,7 @@ tags:
 `))
 		var buf bytes.Buffer
 		rootCmd.SetOut(&buf)
+		rootCmd.SetErr(&buf)
 
 		err := rootCmd.Execute()
 		Expect(err).NotTo(HaveOccurred())
@@ -392,6 +404,7 @@ tags:
 `))
 		buf.Reset()
 		rootCmd.SetOut(&buf)
+		rootCmd.SetErr(&buf)
 
 		err = rootCmd.Execute()
 		Expect(err).NotTo(HaveOccurred())
@@ -402,6 +415,7 @@ tags:
 		rootCmd.SetArgs([]string{"property", "schema", "list", "-g", "ui-template"})
 		buf.Reset()
 		rootCmd.SetOut(&buf)
+		rootCmd.SetErr(&buf)
 
 		err = rootCmd.Execute()
 		Expect(err).NotTo(HaveOccurred())
@@ -696,6 +710,7 @@ projection:
         - trace_id`))
 			var buf bytes.Buffer
 			rootCmd.SetOut(&buf)
+			rootCmd.SetErr(&buf)
 
 			err := rootCmd.Execute()
 			Expect(err).NotTo(HaveOccurred())
@@ -955,6 +970,7 @@ resource_opts:
 `, shardCount, replicas)))
 		var buf bytes.Buffer
 		rootCmd.SetOut(&buf)
+		rootCmd.SetErr(&buf)
 
 		err := rootCmd.Execute()
 		if err != nil {
@@ -978,6 +994,7 @@ tags:
 `))
 		var buf bytes.Buffer
 		rootCmd.SetOut(&buf)
+		rootCmd.SetErr(&buf)
 
 		err := rootCmd.Execute()
 		if err != nil {
@@ -993,6 +1010,7 @@ func applyData(rootCmd *cobra.Command, addr, data string, created bool, tagsNum 
 	rootCmd.SetIn(strings.NewReader(data))
 	var buf bytes.Buffer
 	rootCmd.SetOut(&buf)
+	rootCmd.SetErr(&buf)
 
 	err := rootCmd.Execute()
 	Expect(err).NotTo(HaveOccurred())
@@ -1012,6 +1030,7 @@ func queryData(rootCmd *cobra.Command, addr, group, id string, dataCount int, ve
 		rootCmd.SetIn(strings.NewReader(query))
 		var buf bytes.Buffer
 		rootCmd.SetOut(&buf)
+		rootCmd.SetErr(&buf)
 
 		err := rootCmd.Execute()
 		Expect(err).NotTo(HaveOccurred())
@@ -1041,6 +1060,7 @@ func deleteData(rootCmd *cobra.Command, addr, group, name, id string, success bo
 	rootCmd.SetArgs([]string{"property", "data", "delete", "-a", addr, "-g", group, "-n", name, "-i", id})
 	var buf bytes.Buffer
 	rootCmd.SetOut(&buf)
+	rootCmd.SetErr(&buf)
 
 	err := rootCmd.Execute()
 	Expect(err).NotTo(HaveOccurred())

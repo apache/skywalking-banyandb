@@ -65,6 +65,7 @@ resource_opts:
     num: 7`))
 			var buf bytes.Buffer
 			rootCmd.SetOut(&buf)
+			rootCmd.SetErr(&buf)
 
 			err := rootCmd.Execute()
 			if err != nil {
@@ -88,6 +89,7 @@ entity:
   tagNames: ["tag1"]`))
 			var buf bytes.Buffer
 			rootCmd.SetOut(&buf)
+			rootCmd.SetErr(&buf)
 
 			err := rootCmd.Execute()
 			if err != nil {
@@ -102,6 +104,7 @@ entity:
 		rootCmd.SetArgs([]string{"stream", "get", "-g", "group1", "-n", "name1"})
 		var buf bytes.Buffer
 		rootCmd.SetOut(&buf)
+		rootCmd.SetErr(&buf)
 
 		err := rootCmd.Execute()
 		Expect(err).NotTo(HaveOccurred())
@@ -130,6 +133,7 @@ entity:
   tagNames: ["tag1"]`))
 		var buf bytes.Buffer
 		rootCmd.SetOut(&buf)
+		rootCmd.SetErr(&buf)
 
 		err := rootCmd.Execute()
 		Expect(err).NotTo(HaveOccurred())
@@ -138,6 +142,7 @@ entity:
 		rootCmd.SetArgs([]string{"stream", "get", "-g", "group1", "-n", "name1"})
 		buf.Reset()
 		rootCmd.SetOut(&buf)
+		rootCmd.SetErr(&buf)
 
 		err = rootCmd.Execute()
 		Expect(err).NotTo(HaveOccurred())
@@ -154,6 +159,7 @@ entity:
 		rootCmd.SetArgs([]string{"stream", "delete", "-g", "group1", "-n", "name1"})
 		var buf bytes.Buffer
 		rootCmd.SetOut(&buf)
+		rootCmd.SetErr(&buf)
 
 		err := rootCmd.Execute()
 		Expect(err).NotTo(HaveOccurred())
@@ -181,6 +187,7 @@ entity:
   tagNames: ["tag1"]`))
 		var buf bytes.Buffer
 		rootCmd.SetOut(&buf)
+		rootCmd.SetErr(&buf)
 
 		err := rootCmd.Execute()
 		Expect(err).NotTo(HaveOccurred())
@@ -190,6 +197,7 @@ entity:
 		rootCmd.SetArgs([]string{"stream", "list", "-g", "group1"})
 		buf.Reset()
 		rootCmd.SetOut(&buf)
+		rootCmd.SetErr(&buf)
 
 		err = rootCmd.Execute()
 		Expect(err).NotTo(HaveOccurred())
@@ -247,6 +255,7 @@ projection:
         - trace_id`, nowStr, endStr)))
 			var buf bytes.Buffer
 			rootCmd.SetOut(&buf)
+			rootCmd.SetErr(&buf)
 
 			err := rootCmd.Execute()
 			Expect(err).NotTo(HaveOccurred())
@@ -286,6 +295,7 @@ projection:
         - trace_id`))
 			var buf bytes.Buffer
 			rootCmd.SetOut(&buf)
+			rootCmd.SetErr(&buf)
 
 			err := rootCmd.Execute()
 			Expect(err).NotTo(HaveOccurred())
