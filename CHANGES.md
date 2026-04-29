@@ -34,6 +34,7 @@ Release Notes.
 
 ### Bug Fixes
 
+- Fix bydbctl command tests using global stdout capture, which caused race-enabled runs to corrupt captured command output.
 - Use `topic` instead of `session_id` as the Prometheus label on liaison `queue_sub` chunk-ordering counters to avoid unbounded metric cardinality.
 - Fix flaky trace query filtering caused by non-deterministic sidx tag ordering and add consistency checks for integration query cases.
 - Fix index-mode measure queries returning documents outside the requested time range when a widened segment overlaps the query window.
