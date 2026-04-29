@@ -18,12 +18,12 @@
 package cmd_test
 
 import (
+	"bytes"
 	"strings"
 
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 	"github.com/spf13/cobra"
-	"github.com/zenizh/go-capturer"
 
 	databasev1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/database/v1"
 	"github.com/apache/skywalking-banyandb/bydbctl/internal/cmd"
@@ -56,12 +56,14 @@ resource_opts:
   ttl:
     unit: UNIT_DAY
     num: 7`))
-			return capturer.CaptureStdout(func() {
-				err := rootCmd.Execute()
-				if err != nil {
-					GinkgoWriter.Printf("execution fails:%v", err)
-				}
-			})
+			var buf bytes.Buffer
+			rootCmd.SetOut(&buf)
+
+			err := rootCmd.Execute()
+			if err != nil {
+				GinkgoWriter.Printf("execution fails:%v", err)
+			}
+			return buf.String()
 		}
 		Eventually(createGroup, flags.EventuallyTimeout).Should(ContainSubstring("group group1 is created"))
 		rootCmd.SetArgs([]string{"indexRule", "create", "-a", addr, "-f", "-"})
@@ -72,22 +74,26 @@ metadata:
   group: group1
 tags: ["layer"]
 type: TYPE_INVERTED`))
-			return capturer.CaptureStdout(func() {
-				err := rootCmd.Execute()
-				if err != nil {
-					GinkgoWriter.Printf("execution fails:%v", err)
-				}
-			})
+			var buf bytes.Buffer
+			rootCmd.SetOut(&buf)
+
+			err := rootCmd.Execute()
+			if err != nil {
+				GinkgoWriter.Printf("execution fails:%v", err)
+			}
+			return buf.String()
 		}
 		Eventually(createIndexRule, flags.EventuallyTimeout).Should(ContainSubstring("indexRule group1.name1 is created"))
 	})
 
 	It("get indexRule schema", func() {
 		rootCmd.SetArgs([]string{"indexRule", "get", "-g", "group1", "-n", "name1"})
-		out := capturer.CaptureStdout(func() {
-			err := rootCmd.Execute()
-			Expect(err).NotTo(HaveOccurred())
-		})
+		var buf bytes.Buffer
+		rootCmd.SetOut(&buf)
+
+		err := rootCmd.Execute()
+		Expect(err).NotTo(HaveOccurred())
+		out := buf.String()
 		GinkgoWriter.Println(out)
 		resp := new(databasev1.IndexRuleRegistryServiceGetResponse)
 		helpers.UnmarshalYAML([]byte(out), resp)
@@ -103,16 +109,20 @@ metadata:
   group: group1
 tags: ["layer"]
 type: TYPE_INVERTED`))
-		out := capturer.CaptureStdout(func() {
-			err := rootCmd.Execute()
-			Expect(err).NotTo(HaveOccurred())
-		})
+		var buf bytes.Buffer
+		rootCmd.SetOut(&buf)
+
+		err := rootCmd.Execute()
+		Expect(err).NotTo(HaveOccurred())
+		out := buf.String()
 		Expect(out).To(ContainSubstring("indexRule group1.name1 is updated"))
 		rootCmd.SetArgs([]string{"indexRule", "get", "-g", "group1", "-n", "name1"})
-		out = capturer.CaptureStdout(func() {
-			err := rootCmd.Execute()
-			Expect(err).NotTo(HaveOccurred())
-		})
+		buf.Reset()
+		rootCmd.SetOut(&buf)
+
+		err = rootCmd.Execute()
+		Expect(err).NotTo(HaveOccurred())
+		out = buf.String()
 		resp := new(databasev1.IndexRuleRegistryServiceGetResponse)
 		helpers.UnmarshalYAML([]byte(out), resp)
 		Expect(resp.IndexRule.Metadata.Group).To(Equal("group1"))
@@ -122,14 +132,16 @@ type: TYPE_INVERTED`))
 	It("delete indexRule schema", func() {
 		// delete
 		rootCmd.SetArgs([]string{"indexRule", "delete", "-g", "group1", "-n", "name1"})
-		out := capturer.CaptureStdout(func() {
-			err := rootCmd.Execute()
-			Expect(err).NotTo(HaveOccurred())
-		})
+		var buf bytes.Buffer
+		rootCmd.SetOut(&buf)
+
+		err := rootCmd.Execute()
+		Expect(err).NotTo(HaveOccurred())
+		out := buf.String()
 		Expect(out).To(ContainSubstring("indexRule group1.name1 is deleted"))
 		// get again
 		rootCmd.SetArgs([]string{"indexRule", "get", "-g", "group1", "-n", "name1"})
-		err := rootCmd.Execute()
+		err = rootCmd.Execute()
 		Expect(err).To(MatchError("rpc error: code = NotFound desc = banyandb: resource not found"))
 	})
 
@@ -142,17 +154,21 @@ metadata:
   group: group1
 tags: ["layer"]
 type: TYPE_INVERTED`))
-		out := capturer.CaptureStdout(func() {
-			err := rootCmd.Execute()
-			Expect(err).NotTo(HaveOccurred())
-		})
+		var buf bytes.Buffer
+		rootCmd.SetOut(&buf)
+
+		err := rootCmd.Execute()
+		Expect(err).NotTo(HaveOccurred())
+		out := buf.String()
 		Expect(out).To(ContainSubstring("indexRule group1.name2 is created"))
 		// list
 		rootCmd.SetArgs([]string{"indexRule", "list", "-g", "group1"})
-		out = capturer.CaptureStdout(func() {
-			err := rootCmd.Execute()
-			Expect(err).NotTo(HaveOccurred())
-		})
+		buf.Reset()
+		rootCmd.SetOut(&buf)
+
+		err = rootCmd.Execute()
+		Expect(err).NotTo(HaveOccurred())
+		out = buf.String()
 		resp := new(databasev1.IndexRuleRegistryServiceListResponse)
 		helpers.UnmarshalYAML([]byte(out), resp)
 		Expect(resp.IndexRule).To(HaveLen(2))

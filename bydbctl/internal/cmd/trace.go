@@ -19,6 +19,7 @@ package cmd
 
 import (
 	"fmt"
+	"io"
 
 	"github.com/go-resty/resty/v2"
 	"github.com/spf13/cobra"
@@ -48,25 +49,22 @@ func newTraceCmd() *cobra.Command {
 		Version: version.Build(),
 		Short:   "Create traces from files",
 		RunE: func(cmd *cobra.Command, _ []string) error {
-			return rest(func() ([]reqBody, error) { return parseNameAndGroupFromYAML(cmd.InOrStdin()) },
+			return rest(cmd.OutOrStdout(), func() ([]reqBody, error) { return parseNameAndGroupFromYAML(cmd.InOrStdin()) },
 				func(request request) (*resty.Response, error) {
 					s := new(databasev1.Trace)
 					err := protojson.Unmarshal(request.data, s)
 					if err != nil {
 						return nil, err
 					}
-					cr := &databasev1.TraceRegistryServiceCreateRequest{
-						Trace: s,
-					}
+					cr := &databasev1.TraceRegistryServiceCreateRequest{Trace: s}
 					b, err := protojson.Marshal(cr)
 					if err != nil {
 						return nil, err
 					}
 					return request.req.SetBody(b).Post(getPath(traceSchemaPath))
 				},
-				func(_ int, reqBody reqBody, _ []byte) error {
-					fmt.Printf("trace %s.%s is created", reqBody.group, reqBody.name)
-					fmt.Println()
+				func(w io.Writer, _ int, reqBody reqBody, _ []byte) error {
+					fmt.Fprintf(w, "trace %s.%s is created\n", reqBody.group, reqBody.name)
 					return nil
 				}, enableTLS, insecure, cert)
 		},
@@ -77,16 +75,14 @@ func newTraceCmd() *cobra.Command {
 		Version: version.Build(),
 		Short:   "Update traces from files",
 		RunE: func(cmd *cobra.Command, _ []string) (err error) {
-			return rest(func() ([]reqBody, error) { return parseNameAndGroupFromYAML(cmd.InOrStdin()) },
+			return rest(cmd.OutOrStdout(), func() ([]reqBody, error) { return parseNameAndGroupFromYAML(cmd.InOrStdin()) },
 				func(request request) (*resty.Response, error) {
 					s := new(databasev1.Trace)
 					err := protojson.Unmarshal(request.data, s)
 					if err != nil {
 						return nil, err
 					}
-					cr := &databasev1.TraceRegistryServiceUpdateRequest{
-						Trace: s,
-					}
+					cr := &databasev1.TraceRegistryServiceUpdateRequest{Trace: s}
 					b, err := protojson.Marshal(cr)
 					if err != nil {
 						return nil, err
@@ -95,9 +91,8 @@ func newTraceCmd() *cobra.Command {
 						SetPathParam("name", request.name).SetPathParam("group", request.group).
 						Put(getPath(traceSchemaPathWithParams))
 				},
-				func(_ int, reqBody reqBody, _ []byte) error {
-					fmt.Printf("trace %s.%s is updated", reqBody.group, reqBody.name)
-					fmt.Println()
+				func(w io.Writer, _ int, reqBody reqBody, _ []byte) error {
+					fmt.Fprintf(w, "trace %s.%s is updated\n", reqBody.group, reqBody.name)
 					return nil
 				}, enableTLS, insecure, cert)
 		},
@@ -107,8 +102,8 @@ func newTraceCmd() *cobra.Command {
 		Use:     "get [-g group] -n name",
 		Version: version.Build(),
 		Short:   "Get a trace",
-		RunE: func(_ *cobra.Command, _ []string) (err error) {
-			return rest(parseFromFlags, func(request request) (*resty.Response, error) {
+		RunE: func(cmd *cobra.Command, _ []string) (err error) {
+			return rest(cmd.OutOrStdout(), parseFromFlags, func(request request) (*resty.Response, error) {
 				return request.req.SetPathParam("name", request.name).SetPathParam("group", request.group).Get(getPath(traceSchemaPathWithParams))
 			}, yamlPrinter, enableTLS, insecure, cert)
 		},
@@ -118,12 +113,11 @@ func newTraceCmd() *cobra.Command {
 		Use:     "delete [-g group] -n name",
 		Version: version.Build(),
 		Short:   "Delete a trace",
-		RunE: func(_ *cobra.Command, _ []string) (err error) {
-			return rest(parseFromFlags, func(request request) (*resty.Response, error) {
+		RunE: func(cmd *cobra.Command, _ []string) (err error) {
+			return rest(cmd.OutOrStdout(), parseFromFlags, func(request request) (*resty.Response, error) {
 				return request.req.SetPathParam("name", request.name).SetPathParam("group", request.group).Delete(getPath(traceSchemaPathWithParams))
-			}, func(_ int, reqBody reqBody, _ []byte) error {
-				fmt.Printf("trace %s.%s is deleted", reqBody.group, reqBody.name)
-				fmt.Println()
+			}, func(w io.Writer, _ int, reqBody reqBody, _ []byte) error {
+				fmt.Fprintf(w, "trace %s.%s is deleted\n", reqBody.group, reqBody.name)
 				return nil
 			}, enableTLS, insecure, cert)
 		},
@@ -134,8 +128,8 @@ func newTraceCmd() *cobra.Command {
 		Use:     "list [-g group]",
 		Version: version.Build(),
 		Short:   "List traces",
-		RunE: func(_ *cobra.Command, _ []string) (err error) {
-			return rest(parseFromFlags, func(request request) (*resty.Response, error) {
+		RunE: func(cmd *cobra.Command, _ []string) (err error) {
+			return rest(cmd.OutOrStdout(), parseFromFlags, func(request request) (*resty.Response, error) {
 				return request.req.SetPathParam("group", request.group).Get(getPath(traceListPath))
 			}, yamlPrinter, enableTLS, insecure, cert)
 		},
@@ -147,7 +141,7 @@ func newTraceCmd() *cobra.Command {
 		Short:   "Query data in a trace",
 		Long:    timeRangeUsage,
 		RunE: func(cmd *cobra.Command, _ []string) (err error) {
-			return rest(func() ([]reqBody, error) { return parseTimeRangeFromFlagAndYAML(cmd.InOrStdin()) },
+			return rest(cmd.OutOrStdout(), func() ([]reqBody, error) { return parseTimeRangeFromFlagAndYAML(cmd.InOrStdin()) },
 				func(request request) (*resty.Response, error) {
 					return request.req.SetBody(request.data).Post(getPath(traceQueryPath))
 				}, yamlPrinter, enableTLS, insecure, cert)

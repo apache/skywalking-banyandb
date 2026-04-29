@@ -18,6 +18,7 @@
 package cmd_test
 
 import (
+	"bytes"
 	"fmt"
 	"strings"
 	"time"
@@ -25,7 +26,6 @@ import (
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 	"github.com/spf13/cobra"
-	"github.com/zenizh/go-capturer"
 	grpclib "google.golang.org/grpc"
 	"google.golang.org/grpc/credentials/insecure"
 
@@ -63,12 +63,14 @@ resource_opts:
   ttl:
     unit: UNIT_DAY
     num: 7`))
-			return capturer.CaptureStdout(func() {
-				err := rootCmd.Execute()
-				if err != nil {
-					GinkgoWriter.Printf("execution fails:%v", err)
-				}
-			})
+			var buf bytes.Buffer
+			rootCmd.SetOut(&buf)
+
+			err := rootCmd.Execute()
+			if err != nil {
+				GinkgoWriter.Printf("execution fails:%v", err)
+			}
+			return buf.String()
 		}
 		Eventually(createGroup, flags.EventuallyTimeout).Should(ContainSubstring("group group1 is created"))
 		rootCmd.SetArgs([]string{"measure", "create", "-a", addr, "-f", "-"})
@@ -97,12 +99,14 @@ fields:
 entity:
   tag_names:
   - id`))
-			return capturer.CaptureStdout(func() {
-				err := rootCmd.Execute()
-				if err != nil {
-					GinkgoWriter.Printf("execution fails:%v", err)
-				}
-			})
+			var buf bytes.Buffer
+			rootCmd.SetOut(&buf)
+
+			err := rootCmd.Execute()
+			if err != nil {
+				GinkgoWriter.Printf("execution fails:%v", err)
+			}
+			return buf.String()
 		}
 		Eventually(createMeasure, flags.EventuallyTimeout).Should(ContainSubstring("measure group1.name1 is created"))
 		rootCmd.SetArgs([]string{"topn", "create", "-a", addr, "-f", "-"})
@@ -120,22 +124,26 @@ group_by_tag_names:
   - id
 counters_number: 10000
 lru_size: 10`))
-			return capturer.CaptureStdout(func() {
-				err := rootCmd.Execute()
-				if err != nil {
-					GinkgoWriter.Printf("execution fails:%v", err)
-				}
-			})
+			var buf bytes.Buffer
+			rootCmd.SetOut(&buf)
+
+			err := rootCmd.Execute()
+			if err != nil {
+				GinkgoWriter.Printf("execution fails:%v", err)
+			}
+			return buf.String()
 		}
 		Eventually(createTopn, flags.EventuallyTimeout).Should(ContainSubstring("topn group1.name2 is created"))
 	})
 
 	It("get topn schema", func() {
 		rootCmd.SetArgs([]string{"topn", "get", "-g", "group1", "-n", "name2"})
-		out := capturer.CaptureStdout(func() {
-			err := rootCmd.Execute()
-			Expect(err).NotTo(HaveOccurred())
-		})
+		var buf bytes.Buffer
+		rootCmd.SetOut(&buf)
+
+		err := rootCmd.Execute()
+		Expect(err).NotTo(HaveOccurred())
+		out := buf.String()
 		resp := new(databasev1.TopNAggregationRegistryServiceGetResponse)
 		helpers.UnmarshalYAML([]byte(out), resp)
 		Expect(resp.TopNAggregation.Metadata.Group).To(Equal("group1"))
@@ -158,16 +166,20 @@ group_by_tag_names:
   - entity_id
 counters_number: 10000
 lru_size: 10`))
-		out := capturer.CaptureStdout(func() {
-			err := rootCmd.Execute()
-			Expect(err).NotTo(HaveOccurred())
-		})
+		var buf bytes.Buffer
+		rootCmd.SetOut(&buf)
+
+		err := rootCmd.Execute()
+		Expect(err).NotTo(HaveOccurred())
+		out := buf.String()
 		Expect(out).To(ContainSubstring("topn group1.name2 is updated"))
 		rootCmd.SetArgs([]string{"topn", "get", "-g", "group1", "-n", "name2"})
-		out = capturer.CaptureStdout(func() {
-			err := rootCmd.Execute()
-			Expect(err).NotTo(HaveOccurred())
-		})
+		buf.Reset()
+		rootCmd.SetOut(&buf)
+
+		err = rootCmd.Execute()
+		Expect(err).NotTo(HaveOccurred())
+		out = buf.String()
 		resp := new(databasev1.TopNAggregationRegistryServiceGetResponse)
 		helpers.UnmarshalYAML([]byte(out), resp)
 		Expect(resp.TopNAggregation.Metadata.Group).To(Equal("group1"))
@@ -178,14 +190,16 @@ lru_size: 10`))
 	It("delete topn schema", func() {
 		// delete
 		rootCmd.SetArgs([]string{"topn", "delete", "-g", "group1", "-n", "name2"})
-		out := capturer.CaptureStdout(func() {
-			err := rootCmd.Execute()
-			Expect(err).NotTo(HaveOccurred())
-		})
+		var buf bytes.Buffer
+		rootCmd.SetOut(&buf)
+
+		err := rootCmd.Execute()
+		Expect(err).NotTo(HaveOccurred())
+		out := buf.String()
 		Expect(out).To(ContainSubstring("topn group1.name2 is deleted"))
 		// get again
 		rootCmd.SetArgs([]string{"topn", "get", "-g", "group1", "-n", "name2"})
-		err := rootCmd.Execute()
+		err = rootCmd.Execute()
 		Expect(err).To(MatchError("rpc error: code = NotFound desc = banyandb: resource not found"))
 	})
 
@@ -205,17 +219,21 @@ group_by_tag_names:
   - id
 counters_number: 10000
 lru_size: 10`))
-		out := capturer.CaptureStdout(func() {
-			err := rootCmd.Execute()
-			Expect(err).NotTo(HaveOccurred())
-		})
+		var buf bytes.Buffer
+		rootCmd.SetOut(&buf)
+
+		err := rootCmd.Execute()
+		Expect(err).NotTo(HaveOccurred())
+		out := buf.String()
 		Expect(out).To(ContainSubstring("topn group1.name3 is created"))
 		// list
 		rootCmd.SetArgs([]string{"topn", "list", "-g", "group1"})
-		out = capturer.CaptureStdout(func() {
-			err := rootCmd.Execute()
-			Expect(err).NotTo(HaveOccurred())
-		})
+		buf.Reset()
+		rootCmd.SetOut(&buf)
+
+		err = rootCmd.Execute()
+		Expect(err).NotTo(HaveOccurred())
+		out = buf.String()
 		resp := new(databasev1.TopNAggregationRegistryServiceListResponse)
 		helpers.UnmarshalYAML([]byte(out), resp)
 		Expect(resp.TopNAggregation).To(HaveLen(2))
@@ -268,10 +286,12 @@ tagProjection:
         - id
         - entity_id
         - service_id`, startStr, endStr)))
-			return capturer.CaptureStdout(func() {
-				err := rootCmd.Execute()
-				Expect(err).NotTo(HaveOccurred())
-			})
+			var buf bytes.Buffer
+			rootCmd.SetOut(&buf)
+
+			err := rootCmd.Execute()
+			Expect(err).NotTo(HaveOccurred())
+			return buf.String()
 		}
 		Eventually(issue, flags.EventuallyTimeout).ShouldNot(ContainSubstring("code:"))
 		Eventually(func() int {
@@ -294,10 +314,12 @@ timeRange:
 topN: 3
 agg: 2
 fieldValueSort: 1`, startStr, endStr)))
-			return capturer.CaptureStdout(func() {
-				err := rootCmd.Execute()
-				Expect(err).NotTo(HaveOccurred())
-			})
+			var buf bytes.Buffer
+			rootCmd.SetOut(&buf)
+
+			err := rootCmd.Execute()
+			Expect(err).NotTo(HaveOccurred())
+			return buf.String()
 		}
 		Eventually(issue1, flags.EventuallyTimeout).ShouldNot(ContainSubstring("code:"))
 		Eventually(func() int {
@@ -331,10 +353,12 @@ groups: ["sw_metric"]
 topN: 3
 agg: 2
 fieldValueSort: 1`))
-			return capturer.CaptureStdout(func() {
-				err := rootCmd.Execute()
-				Expect(err).NotTo(HaveOccurred())
-			})
+			var buf bytes.Buffer
+			rootCmd.SetOut(&buf)
+
+			err := rootCmd.Execute()
+			Expect(err).NotTo(HaveOccurred())
+			return buf.String()
 		}
 		Eventually(issue1, flags.EventuallyTimeout).ShouldNot(ContainSubstring("code:"))
 		Eventually(func() int {

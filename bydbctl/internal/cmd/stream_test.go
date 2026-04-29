@@ -18,6 +18,7 @@
 package cmd_test
 
 import (
+	"bytes"
 	"fmt"
 	"strings"
 	"time"
@@ -25,7 +26,6 @@ import (
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 	"github.com/spf13/cobra"
-	"github.com/zenizh/go-capturer"
 	grpclib "google.golang.org/grpc"
 	"google.golang.org/grpc/credentials/insecure"
 
@@ -63,12 +63,14 @@ resource_opts:
   ttl:
     unit: UNIT_DAY
     num: 7`))
-			return capturer.CaptureStdout(func() {
-				err := rootCmd.Execute()
-				if err != nil {
-					GinkgoWriter.Printf("execution fails:%v", err)
-				}
-			})
+			var buf bytes.Buffer
+			rootCmd.SetOut(&buf)
+
+			err := rootCmd.Execute()
+			if err != nil {
+				GinkgoWriter.Printf("execution fails:%v", err)
+			}
+			return buf.String()
 		}
 		Eventually(createGroup, flags.EventuallyTimeout).Should(ContainSubstring("group group1 is created"))
 		rootCmd.SetArgs([]string{"stream", "create", "-a", addr, "-f", "-"})
@@ -84,22 +86,26 @@ tagFamilies:
         type: TAG_TYPE_STRING
 entity:
   tagNames: ["tag1"]`))
-			return capturer.CaptureStdout(func() {
-				err := rootCmd.Execute()
-				if err != nil {
-					GinkgoWriter.Printf("execution fails:%v", err)
-				}
-			})
+			var buf bytes.Buffer
+			rootCmd.SetOut(&buf)
+
+			err := rootCmd.Execute()
+			if err != nil {
+				GinkgoWriter.Printf("execution fails:%v", err)
+			}
+			return buf.String()
 		}
 		Eventually(createStream, flags.EventuallyTimeout).Should(ContainSubstring("stream group1.name1 is created"))
 	})
 
 	It("get stream schema", func() {
 		rootCmd.SetArgs([]string{"stream", "get", "-g", "group1", "-n", "name1"})
-		out := capturer.CaptureStdout(func() {
-			err := rootCmd.Execute()
-			Expect(err).NotTo(HaveOccurred())
-		})
+		var buf bytes.Buffer
+		rootCmd.SetOut(&buf)
+
+		err := rootCmd.Execute()
+		Expect(err).NotTo(HaveOccurred())
+		out := buf.String()
 		GinkgoWriter.Println(out)
 		resp := new(databasev1.StreamRegistryServiceGetResponse)
 		helpers.UnmarshalYAML([]byte(out), resp)
@@ -122,16 +128,20 @@ tagFamilies:
         type: TAG_TYPE_STRING
 entity:
   tagNames: ["tag1"]`))
-		out := capturer.CaptureStdout(func() {
-			err := rootCmd.Execute()
-			Expect(err).NotTo(HaveOccurred())
-		})
+		var buf bytes.Buffer
+		rootCmd.SetOut(&buf)
+
+		err := rootCmd.Execute()
+		Expect(err).NotTo(HaveOccurred())
+		out := buf.String()
 		Expect(out).To(ContainSubstring("stream group1.name1 is updated"))
 		rootCmd.SetArgs([]string{"stream", "get", "-g", "group1", "-n", "name1"})
-		out = capturer.CaptureStdout(func() {
-			err := rootCmd.Execute()
-			Expect(err).NotTo(HaveOccurred())
-		})
+		buf.Reset()
+		rootCmd.SetOut(&buf)
+
+		err = rootCmd.Execute()
+		Expect(err).NotTo(HaveOccurred())
+		out = buf.String()
 		resp := new(databasev1.StreamRegistryServiceGetResponse)
 		helpers.UnmarshalYAML([]byte(out), resp)
 		Expect(resp.Stream.Metadata.Group).To(Equal("group1"))
@@ -142,14 +152,16 @@ entity:
 	It("delete stream schema", func() {
 		// delete
 		rootCmd.SetArgs([]string{"stream", "delete", "-g", "group1", "-n", "name1"})
-		out := capturer.CaptureStdout(func() {
-			err := rootCmd.Execute()
-			Expect(err).NotTo(HaveOccurred())
-		})
+		var buf bytes.Buffer
+		rootCmd.SetOut(&buf)
+
+		err := rootCmd.Execute()
+		Expect(err).NotTo(HaveOccurred())
+		out := buf.String()
 		Expect(out).To(ContainSubstring("stream group1.name1 is deleted"))
 		// get again
 		rootCmd.SetArgs([]string{"stream", "get", "-g", "group1", "-n", "name1"})
-		err := rootCmd.Execute()
+		err = rootCmd.Execute()
 		Expect(err).To(MatchError("rpc error: code = NotFound desc = banyandb: resource not found"))
 	})
 
@@ -167,17 +179,21 @@ tagFamilies:
         type: TAG_TYPE_STRING
 entity:
   tagNames: ["tag1"]`))
-		out := capturer.CaptureStdout(func() {
-			err := rootCmd.Execute()
-			Expect(err).NotTo(HaveOccurred())
-		})
+		var buf bytes.Buffer
+		rootCmd.SetOut(&buf)
+
+		err := rootCmd.Execute()
+		Expect(err).NotTo(HaveOccurred())
+		out := buf.String()
 		Expect(out).To(ContainSubstring("stream group1.name2 is created"))
 		// list
 		rootCmd.SetArgs([]string{"stream", "list", "-g", "group1"})
-		out = capturer.CaptureStdout(func() {
-			err := rootCmd.Execute()
-			Expect(err).NotTo(HaveOccurred())
-		})
+		buf.Reset()
+		rootCmd.SetOut(&buf)
+
+		err = rootCmd.Execute()
+		Expect(err).NotTo(HaveOccurred())
+		out = buf.String()
 		resp := new(databasev1.StreamRegistryServiceListResponse)
 		helpers.UnmarshalYAML([]byte(out), resp)
 		Expect(resp.Stream).To(HaveLen(2))
@@ -229,10 +245,12 @@ projection:
     - name: searchable
       tags:
         - trace_id`, nowStr, endStr)))
-			return capturer.CaptureStdout(func() {
-				err := rootCmd.Execute()
-				Expect(err).NotTo(HaveOccurred())
-			})
+			var buf bytes.Buffer
+			rootCmd.SetOut(&buf)
+
+			err := rootCmd.Execute()
+			Expect(err).NotTo(HaveOccurred())
+			return buf.String()
 		}
 		Eventually(issue, flags.EventuallyTimeout).ShouldNot(ContainSubstring("code:"))
 		Eventually(func() int {
@@ -266,10 +284,12 @@ projection:
     - name: searchable
       tags:
         - trace_id`))
-			return capturer.CaptureStdout(func() {
-				err := rootCmd.Execute()
-				Expect(err).NotTo(HaveOccurred())
-			})
+			var buf bytes.Buffer
+			rootCmd.SetOut(&buf)
+
+			err := rootCmd.Execute()
+			Expect(err).NotTo(HaveOccurred())
+			return buf.String()
 		}
 		Eventually(issue, flags.EventuallyTimeout).ShouldNot(ContainSubstring("code:"))
 		Eventually(func() int {

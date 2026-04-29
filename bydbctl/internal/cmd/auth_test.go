@@ -18,6 +18,7 @@
 package cmd_test
 
 import (
+	"bytes"
 	"embed"
 	"fmt"
 	"os"
@@ -28,7 +29,6 @@ import (
 	g "github.com/onsi/ginkgo/v2"
 	gm "github.com/onsi/gomega"
 	"github.com/spf13/cobra"
-	"github.com/zenizh/go-capturer"
 	"sigs.k8s.io/yaml"
 
 	databasev1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/database/v1"
@@ -119,17 +119,21 @@ resource_opts:
   ttl:
     unit: UNIT_DAY
     num: 7`))
-		out := capturer.CaptureStdout(func() {
-			err = rootCmd.Execute()
-			gm.Expect(err).NotTo(gm.HaveOccurred())
-		})
+		var buf bytes.Buffer
+		rootCmd.SetOut(&buf)
+
+		err = rootCmd.Execute()
+		gm.Expect(err).NotTo(gm.HaveOccurred())
+		out := buf.String()
 		gm.Expect(out).To(gm.ContainSubstring("group group1 is created"))
 
 		rootCmd.SetArgs([]string{"--config", bydbctlCfgFile, "group", "-a", httpAddr, "get", "-g", "group1"})
-		out = capturer.CaptureStdout(func() {
-			err = rootCmd.Execute()
-			gm.Expect(err).NotTo(gm.HaveOccurred())
-		})
+		buf.Reset()
+		rootCmd.SetOut(&buf)
+
+		err = rootCmd.Execute()
+		gm.Expect(err).NotTo(gm.HaveOccurred())
+		out = buf.String()
 		resp := new(databasev1.GroupRegistryServiceGetResponse)
 		helpers.UnmarshalYAML([]byte(out), resp)
 		gm.Expect(resp.Group.Metadata.Name).To(gm.Equal("group1"))

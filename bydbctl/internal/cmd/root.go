@@ -123,7 +123,7 @@ func initConfig() {
 			return fmt.Errorf("unable to stat config file: %w", err)
 		}
 		if info.Mode().Perm() != 0o600 {
-			fmt.Printf("config file %s has unsafe permissions: %o (expected 0600)", configFile, info.Mode().Perm())
+			fmt.Fprintf(os.Stderr, "config file %s has unsafe permissions: %o (expected 0600)\n", configFile, info.Mode().Perm())
 		}
 		// Dump this to stderr in case of mixing up response yaml
 		fmt.Fprintln(os.Stderr, "Using config file:", configFile)

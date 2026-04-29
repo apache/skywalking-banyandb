@@ -18,12 +18,12 @@
 package cmd_test
 
 import (
+	"bytes"
 	"strings"
 
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 	"github.com/spf13/cobra"
-	"github.com/zenizh/go-capturer"
 
 	databasev1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/database/v1"
 	"github.com/apache/skywalking-banyandb/bydbctl/internal/cmd"
@@ -56,19 +56,20 @@ resource_opts:
   ttl:
     unit: UNIT_DAY
     num: 7`))
-		out := capturer.CaptureStdout(func() {
-			err := rootCmd.Execute()
-			Expect(err).NotTo(HaveOccurred())
-		})
-		Expect(out).To(ContainSubstring("group group1 is created"))
+		var buf bytes.Buffer
+		rootCmd.SetOut(&buf)
+		err := rootCmd.Execute()
+		Expect(err).NotTo(HaveOccurred())
+		Expect(buf.String()).To(ContainSubstring("group group1 is created"))
 	})
 
 	It("get group", func() {
 		rootCmd.SetArgs([]string{"group", "get", "-g", "group1"})
-		out := capturer.CaptureStdout(func() {
-			err := rootCmd.Execute()
-			Expect(err).NotTo(HaveOccurred())
-		})
+		var buf bytes.Buffer
+		rootCmd.SetOut(&buf)
+		err := rootCmd.Execute()
+		Expect(err).NotTo(HaveOccurred())
+		out := buf.String()
 		resp := new(databasev1.GroupRegistryServiceGetResponse)
 		helpers.UnmarshalYAML([]byte(out), resp)
 		Expect(resp.Group.Metadata.Name).To(Equal("group1"))
@@ -88,29 +89,30 @@ resource_opts:
   ttl:
     unit: UNIT_DAY
     num: 7`))
-		out := capturer.CaptureStdout(func() {
-			err := rootCmd.Execute()
-			Expect(err).NotTo(HaveOccurred())
-		})
-		Expect(out).To(ContainSubstring("group group1 is updated"))
+		var buf bytes.Buffer
+		rootCmd.SetOut(&buf)
+		err := rootCmd.Execute()
+		Expect(err).NotTo(HaveOccurred())
+		Expect(buf.String()).To(ContainSubstring("group group1 is updated"))
 	})
 
 	It("delete group", func() {
 		Eventually(func(g Gomega) {
 			rootCmd.SetArgs([]string{"group", "delete", "-g", "group1"})
-			out := capturer.CaptureStdout(func() {
-				g.Expect(rootCmd.Execute()).NotTo(HaveOccurred())
-			})
-			g.Expect(out).To(ContainSubstring("group group1 is deleted"))
+			var buf bytes.Buffer
+			rootCmd.SetOut(&buf)
+			g.Expect(rootCmd.Execute()).NotTo(HaveOccurred())
+			g.Expect(buf.String()).To(ContainSubstring("group group1 is deleted"))
 		}).Should(Succeed())
 	})
 
 	It("delete group with dry-run flag", func() {
 		rootCmd.SetArgs([]string{"group", "delete", "-g", "group1", "--dry-run"})
-		out := capturer.CaptureStdout(func() {
-			err := rootCmd.Execute()
-			Expect(err).NotTo(HaveOccurred())
-		})
+		var buf bytes.Buffer
+		rootCmd.SetOut(&buf)
+		err := rootCmd.Execute()
+		Expect(err).NotTo(HaveOccurred())
+		out := buf.String()
 		Expect(out).To(ContainSubstring("group group1 dry-run deletion result:"))
 		resp := new(databasev1.GroupRegistryServiceDeleteResponse)
 		helpers.UnmarshalYAML([]byte(out[strings.Index(out, "\n")+1:]), resp)
@@ -132,17 +134,18 @@ resource_opts:
   ttl:
     unit: UNIT_DAY
     num: 7`))
-		out := capturer.CaptureStdout(func() {
-			err := rootCmd.Execute()
-			Expect(err).NotTo(HaveOccurred())
-		})
-		Expect(out).To(ContainSubstring("group group2 is created"))
+		var buf bytes.Buffer
+		rootCmd.SetOut(&buf)
+		err := rootCmd.Execute()
+		Expect(err).NotTo(HaveOccurred())
+		Expect(buf.String()).To(ContainSubstring("group group2 is created"))
 		// list
 		rootCmd.SetArgs([]string{"group", "list"})
-		out = capturer.CaptureStdout(func() {
-			err := rootCmd.Execute()
-			Expect(err).NotTo(HaveOccurred())
-		})
+		buf.Reset()
+		rootCmd.SetOut(&buf)
+		err = rootCmd.Execute()
+		Expect(err).NotTo(HaveOccurred())
+		out := buf.String()
 		resp := new(databasev1.GroupRegistryServiceListResponse)
 		helpers.UnmarshalYAML([]byte(out), resp)
 		Expect(resp.Group).To(HaveLen(3)) // group1, group2, _deletion_task (internal group)

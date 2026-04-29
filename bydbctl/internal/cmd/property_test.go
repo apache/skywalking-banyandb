@@ -18,6 +18,7 @@
 package cmd_test
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"fmt"
@@ -30,7 +31,6 @@ import (
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 	"github.com/spf13/cobra"
-	"github.com/zenizh/go-capturer"
 	"google.golang.org/protobuf/encoding/protojson"
 
 	"github.com/apache/skywalking-banyandb/api/common"
@@ -142,10 +142,12 @@ var _ = Describe("Property Operation", func() {
 	It("apply same property after delete", func() {
 		// delete
 		rootCmd.SetArgs([]string{"property", "data", "delete", "-g", "ui-template", "-n", "service", "-i", "kubernetes"})
-		out := capturer.CaptureStdout(func() {
-			err := rootCmd.Execute()
-			Expect(err).NotTo(HaveOccurred())
-		})
+		var buf bytes.Buffer
+		rootCmd.SetOut(&buf)
+
+		err := rootCmd.Execute()
+		Expect(err).NotTo(HaveOccurred())
+		out := buf.String()
 		Expect(out).To(ContainSubstring("deleted: true"))
 
 		// apply property(created should be true)
@@ -159,10 +161,12 @@ var _ = Describe("Property Operation", func() {
 	It("delete property", func() {
 		// delete
 		rootCmd.SetArgs([]string{"property", "data", "delete", "-g", "ui-template", "-n", "service", "-i", "kubernetes"})
-		out := capturer.CaptureStdout(func() {
-			err := rootCmd.Execute()
-			Expect(err).NotTo(HaveOccurred())
-		})
+		var buf bytes.Buffer
+		rootCmd.SetOut(&buf)
+
+		err := rootCmd.Execute()
+		Expect(err).NotTo(HaveOccurred())
+		out := buf.String()
 		Expect(out).To(ContainSubstring("deleted: true"))
 
 		queryData(rootCmd, addr, propertyGroup, "", 0, nil)
@@ -191,12 +195,14 @@ catalog: CATALOG_PROPERTY
 resource_opts:
   shard_num: 2
 `))
-			return capturer.CaptureStdout(func() {
-				err := rootCmd.Execute()
-				if err != nil {
-					GinkgoWriter.Printf("execution fails:%v", err)
-				}
-			})
+			var buf bytes.Buffer
+			rootCmd.SetOut(&buf)
+
+			err := rootCmd.Execute()
+			if err != nil {
+				GinkgoWriter.Printf("execution fails:%v", err)
+			}
+			return buf.String()
 		}
 		Eventually(createGroup, flags.EventuallyTimeout).Should(ContainSubstring("group ui-template is created"))
 	})
@@ -213,10 +219,12 @@ tags:
   - name: state
     type: TAG_TYPE_INT
 `))
-		out := capturer.CaptureStdout(func() {
-			err := rootCmd.Execute()
-			Expect(err).NotTo(HaveOccurred())
-		})
+		var buf bytes.Buffer
+		rootCmd.SetOut(&buf)
+
+		err := rootCmd.Execute()
+		Expect(err).NotTo(HaveOccurred())
+		out := buf.String()
 		Expect(out).To(ContainSubstring("property schema ui-template.service is created"))
 	})
 
@@ -233,18 +241,22 @@ tags:
   - name: state
     type: TAG_TYPE_INT
 `))
-		out := capturer.CaptureStdout(func() {
-			err := rootCmd.Execute()
-			Expect(err).NotTo(HaveOccurred())
-		})
+		var buf bytes.Buffer
+		rootCmd.SetOut(&buf)
+
+		err := rootCmd.Execute()
+		Expect(err).NotTo(HaveOccurred())
+		out := buf.String()
 		Expect(out).To(ContainSubstring("property schema ui-template.service is created"))
 
 		// Then get the schema
 		rootCmd.SetArgs([]string{"property", "schema", "get", "-g", "ui-template", "-n", "service"})
-		out = capturer.CaptureStdout(func() {
-			err := rootCmd.Execute()
-			Expect(err).NotTo(HaveOccurred())
-		})
+		buf.Reset()
+		rootCmd.SetOut(&buf)
+
+		err = rootCmd.Execute()
+		Expect(err).NotTo(HaveOccurred())
+		out = buf.String()
 		resp := new(databasev1.PropertyRegistryServiceGetResponse)
 		helpers.UnmarshalYAML([]byte(out), resp)
 		Expect(resp.Property.Metadata.Group).To(Equal("ui-template"))
@@ -267,10 +279,12 @@ tags:
   - name: state
     type: TAG_TYPE_INT
 `))
-		out := capturer.CaptureStdout(func() {
-			err := rootCmd.Execute()
-			Expect(err).NotTo(HaveOccurred())
-		})
+		var buf bytes.Buffer
+		rootCmd.SetOut(&buf)
+
+		err := rootCmd.Execute()
+		Expect(err).NotTo(HaveOccurred())
+		out := buf.String()
 		Expect(out).To(ContainSubstring("property schema ui-template.service is created"))
 
 		// Then update the schema
@@ -287,18 +301,22 @@ tags:
   - name: version
     type: TAG_TYPE_STRING
 `))
-		out = capturer.CaptureStdout(func() {
-			err := rootCmd.Execute()
-			Expect(err).NotTo(HaveOccurred())
-		})
+		buf.Reset()
+		rootCmd.SetOut(&buf)
+
+		err = rootCmd.Execute()
+		Expect(err).NotTo(HaveOccurred())
+		out = buf.String()
 		Expect(out).To(ContainSubstring("property schema ui-template.service is updated"))
 
 		// Verify the update
 		rootCmd.SetArgs([]string{"property", "schema", "get", "-g", "ui-template", "-n", "service"})
-		out = capturer.CaptureStdout(func() {
-			err := rootCmd.Execute()
-			Expect(err).NotTo(HaveOccurred())
-		})
+		buf.Reset()
+		rootCmd.SetOut(&buf)
+
+		err = rootCmd.Execute()
+		Expect(err).NotTo(HaveOccurred())
+		out = buf.String()
 		resp := new(databasev1.PropertyRegistryServiceGetResponse)
 		helpers.UnmarshalYAML([]byte(out), resp)
 		Expect(resp.Property.Tags).To(HaveLen(3))
@@ -318,23 +336,27 @@ tags:
   - name: state
     type: TAG_TYPE_INT
 `))
-		out := capturer.CaptureStdout(func() {
-			err := rootCmd.Execute()
-			Expect(err).NotTo(HaveOccurred())
-		})
+		var buf bytes.Buffer
+		rootCmd.SetOut(&buf)
+
+		err := rootCmd.Execute()
+		Expect(err).NotTo(HaveOccurred())
+		out := buf.String()
 		Expect(out).To(ContainSubstring("property schema ui-template.service is created"))
 
 		// Delete the schema
 		rootCmd.SetArgs([]string{"property", "schema", "delete", "-g", "ui-template", "-n", "service"})
-		out = capturer.CaptureStdout(func() {
-			err := rootCmd.Execute()
-			Expect(err).NotTo(HaveOccurred())
-		})
+		buf.Reset()
+		rootCmd.SetOut(&buf)
+
+		err = rootCmd.Execute()
+		Expect(err).NotTo(HaveOccurred())
+		out = buf.String()
 		Expect(out).To(ContainSubstring("property schema ui-template.service is deleted"))
 
 		// Verify deletion
 		rootCmd.SetArgs([]string{"property", "schema", "get", "-g", "ui-template", "-n", "service"})
-		err := rootCmd.Execute()
+		err = rootCmd.Execute()
 		Expect(err).To(MatchError(ContainSubstring("not found")))
 	})
 
@@ -351,10 +373,12 @@ tags:
   - name: state
     type: TAG_TYPE_INT
 `))
-		out := capturer.CaptureStdout(func() {
-			err := rootCmd.Execute()
-			Expect(err).NotTo(HaveOccurred())
-		})
+		var buf bytes.Buffer
+		rootCmd.SetOut(&buf)
+
+		err := rootCmd.Execute()
+		Expect(err).NotTo(HaveOccurred())
+		out := buf.String()
 		Expect(out).To(ContainSubstring("property schema ui-template.service is created"))
 
 		rootCmd.SetArgs([]string{"property", "schema", "create", "-a", addr, "-f", "-"})
@@ -366,18 +390,22 @@ tags:
 - name: content
   type: TAG_TYPE_STRING
 `))
-		out = capturer.CaptureStdout(func() {
-			err := rootCmd.Execute()
-			Expect(err).NotTo(HaveOccurred())
-		})
+		buf.Reset()
+		rootCmd.SetOut(&buf)
+
+		err = rootCmd.Execute()
+		Expect(err).NotTo(HaveOccurred())
+		out = buf.String()
 		Expect(out).To(ContainSubstring("property schema ui-template.endpoint is created"))
 
 		// List all schemas
 		rootCmd.SetArgs([]string{"property", "schema", "list", "-g", "ui-template"})
-		out = capturer.CaptureStdout(func() {
-			err := rootCmd.Execute()
-			Expect(err).NotTo(HaveOccurred())
-		})
+		buf.Reset()
+		rootCmd.SetOut(&buf)
+
+		err = rootCmd.Execute()
+		Expect(err).NotTo(HaveOccurred())
+		out = buf.String()
 		resp := new(databasev1.PropertyRegistryServiceListResponse)
 		helpers.UnmarshalYAML([]byte(out), resp)
 		Expect(resp.Properties).To(HaveLen(2))
@@ -666,10 +694,12 @@ projection:
     - name: searchable
       tags:
         - trace_id`))
-			return capturer.CaptureStdout(func() {
-				err := rootCmd.Execute()
-				Expect(err).NotTo(HaveOccurred())
-			})
+			var buf bytes.Buffer
+			rootCmd.SetOut(&buf)
+
+			err := rootCmd.Execute()
+			Expect(err).NotTo(HaveOccurred())
+			return buf.String()
 		}
 		Eventually(issue, flags.EventuallyTimeout).ShouldNot(ContainSubstring("code:"))
 		Eventually(func() int {
@@ -923,12 +953,14 @@ resource_opts:
   shard_num: %d
   replicas: %d
 `, shardCount, replicas)))
-		return capturer.CaptureStdout(func() {
-			err := rootCmd.Execute()
-			if err != nil {
-				GinkgoWriter.Printf("execution fails:%v", err)
-			}
-		})
+		var buf bytes.Buffer
+		rootCmd.SetOut(&buf)
+
+		err := rootCmd.Execute()
+		if err != nil {
+			GinkgoWriter.Printf("execution fails:%v", err)
+		}
+		return buf.String()
 	}
 	Eventually(createGroup, flags.EventuallyTimeout).Should(ContainSubstring("group ui-template is created"))
 
@@ -944,12 +976,14 @@ tags:
   - name: state
     type: TAG_TYPE_INT
 `))
-		return capturer.CaptureStdout(func() {
-			err := rootCmd.Execute()
-			if err != nil {
-				GinkgoWriter.Printf("execution fails:%v", err)
-			}
-		})
+		var buf bytes.Buffer
+		rootCmd.SetOut(&buf)
+
+		err := rootCmd.Execute()
+		if err != nil {
+			GinkgoWriter.Printf("execution fails:%v", err)
+		}
+		return buf.String()
 	}
 	Eventually(createPropertySchema, flags.EventuallyTimeout).Should(ContainSubstring("property schema ui-template.service is created"))
 }
@@ -957,10 +991,12 @@ tags:
 func applyData(rootCmd *cobra.Command, addr, data string, created bool, tagsNum int) {
 	rootCmd.SetArgs([]string{"property", "data", "apply", "-a", addr, "-f", "-"})
 	rootCmd.SetIn(strings.NewReader(data))
-	out := capturer.CaptureStdout(func() {
-		err := rootCmd.Execute()
-		Expect(err).NotTo(HaveOccurred())
-	})
+	var buf bytes.Buffer
+	rootCmd.SetOut(&buf)
+
+	err := rootCmd.Execute()
+	Expect(err).NotTo(HaveOccurred())
+	out := buf.String()
 	GinkgoWriter.Println(out)
 	Expect(out).To(ContainSubstring(fmt.Sprintf("created: %t", created)))
 	Expect(out).To(ContainSubstring(fmt.Sprintf("tagsNum: %d", tagsNum)))
@@ -974,10 +1010,12 @@ func queryData(rootCmd *cobra.Command, addr, group, id string, dataCount int, ve
 			query += fmt.Sprintf("\nids: [\"%s\"]", id)
 		}
 		rootCmd.SetIn(strings.NewReader(query))
-		return capturer.CaptureStdout(func() {
-			err := rootCmd.Execute()
-			Expect(err).NotTo(HaveOccurred())
-		})
+		var buf bytes.Buffer
+		rootCmd.SetOut(&buf)
+
+		err := rootCmd.Execute()
+		Expect(err).NotTo(HaveOccurred())
+		return buf.String()
 	}
 	Eventually(func() error {
 		out := issue()
@@ -1001,10 +1039,12 @@ func queryData(rootCmd *cobra.Command, addr, group, id string, dataCount int, ve
 
 func deleteData(rootCmd *cobra.Command, addr, group, name, id string, success bool) {
 	rootCmd.SetArgs([]string{"property", "data", "delete", "-a", addr, "-g", group, "-n", name, "-i", id})
-	out := capturer.CaptureStdout(func() {
-		err := rootCmd.Execute()
-		Expect(err).NotTo(HaveOccurred())
-	})
+	var buf bytes.Buffer
+	rootCmd.SetOut(&buf)
+
+	err := rootCmd.Execute()
+	Expect(err).NotTo(HaveOccurred())
+	out := buf.String()
 	Expect(out).To(ContainSubstring("deleted: %t", success))
 }
 
