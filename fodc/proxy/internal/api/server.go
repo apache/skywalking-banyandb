@@ -28,12 +28,24 @@ import (
 	"strings"
 	"time"
 
+	"google.golang.org/protobuf/encoding/protojson"
+
+	fodcv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/fodc/v1"
 	"github.com/apache/skywalking-banyandb/fodc/proxy/internal/cluster"
 	"github.com/apache/skywalking-banyandb/fodc/proxy/internal/lifecycle"
 	"github.com/apache/skywalking-banyandb/fodc/proxy/internal/metrics"
 	"github.com/apache/skywalking-banyandb/fodc/proxy/internal/registry"
 	"github.com/apache/skywalking-banyandb/pkg/logger"
 )
+
+// lifecycleGroupMarshaler emits zero-value protobuf fields (replicas=0, close=false, empty
+// stages, etc.) as explicit JSON keys instead of dropping them. The default encoding/json +
+// protoc-gen-go combination would silence those fields via `omitempty`, leaving downstream
+// consumers (SRE agent) unable to tell "field absent" from "value is zero".
+var lifecycleGroupMarshaler = protojson.MarshalOptions{
+	UseProtoNames:   true,
+	EmitUnpopulated: true,
+}
 
 // Server exposes REST and Prometheus-style endpoints for external consumption.
 type Server struct {
@@ -496,9 +508,23 @@ func (s *Server) handleClusterLifecycle(w http.ResponseWriter, r *http.Request) 
 	}
 	lifecycleData, agentSummary := s.lifecycleManager.CollectLifecycle(r.Context())
 
+	groupsJSON, err := marshalLifecycleGroups(lifecycleData.Groups)
+	if err != nil {
+		s.logger.Error().Err(err).Msg("Failed to marshal lifecycle groups")
+		http.Error(w, "Failed to serialize lifecycle groups", http.StatusInternalServerError)
+		return
+	}
+
+	statusesJSON, err := marshalLifecycleStatuses(lifecycleData.LifecycleStatuses)
+	if err != nil {
+		s.logger.Error().Err(err).Msg("Failed to marshal lifecycle statuses")
+		http.Error(w, "Failed to serialize lifecycle statuses", http.StatusInternalServerError)
+		return
+	}
+
 	body := map[string]interface{}{
-		"groups":             lifecycleData.Groups,
-		"lifecycle_statuses": lifecycleData.LifecycleStatuses,
+		"groups":             groupsJSON,
+		"lifecycle_statuses": statusesJSON,
 		"agent_summary":      agentSummary,
 	}
 	switch {
@@ -517,6 +543,42 @@ func (s *Server) handleClusterLifecycle(w http.ResponseWriter, r *http.Request) 
 	if encodeErr := json.NewEncoder(w).Encode(body); encodeErr != nil {
 		s.logger.Error().Err(encodeErr).Msg("Failed to encode lifecycle response")
 	}
+}
+
+func marshalLifecycleGroups(groups []*fodcv1.GroupLifecycleInfo) ([]json.RawMessage, error) {
+	out := make([]json.RawMessage, 0, len(groups))
+	for _, g := range groups {
+		raw, err := lifecycleGroupMarshaler.Marshal(g)
+		if err != nil {
+			return nil, fmt.Errorf("marshal group %q: %w", g.GetName(), err)
+		}
+		out = append(out, raw)
+	}
+	return out, nil
+}
+
+// lifecycleStatusJSON mirrors lifecycle.PodLifecycleStatus but holds each report as a
+// pre-marshaled protojson blob so the LifecycleReport's protobuf zero-value fields are
+// emitted consistently with the groups payload.
+type lifecycleStatusJSON struct {
+	PodName string            `json:"pod_name"`
+	Reports []json.RawMessage `json:"reports"`
+}
+
+func marshalLifecycleStatuses(statuses []*lifecycle.PodLifecycleStatus) ([]lifecycleStatusJSON, error) {
+	out := make([]lifecycleStatusJSON, 0, len(statuses))
+	for _, s := range statuses {
+		reports := make([]json.RawMessage, 0, len(s.Reports))
+		for _, r := range s.Reports {
+			raw, err := lifecycleGroupMarshaler.Marshal(r)
+			if err != nil {
+				return nil, fmt.Errorf("marshal report %q: %w", r.GetFilename(), err)
+			}
+			reports = append(reports, raw)
+		}
+		out = append(out, lifecycleStatusJSON{PodName: s.PodName, Reports: reports})
+	}
+	return out, nil
 }
 
 // handleClusterTopology handles GET /cluster/topology endpoint.
