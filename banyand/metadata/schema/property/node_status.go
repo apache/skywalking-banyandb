@@ -64,12 +64,21 @@ func NewNodeSchemaStatusServer(cacheProvider func() *schemaCache) *NodeSchemaSta
 	return &NodeSchemaStatusServer{cacheProvider: cacheProvider}
 }
 
-// NewNodeSchemaStatusServerForRegistry is a convenience constructor for the
-// common case where the caller has a *SchemaRegistry instance and wants the
-// server to read its cache directly.
-func NewNodeSchemaStatusServerForRegistry(reg *SchemaRegistry) *NodeSchemaStatusServer {
+// NewNodeSchemaStatusServerForRegistry wires the server through a registry
+// provider resolved per request. Construction-time wiring (which happens
+// before the metadata service's PreRun has populated the registry) would
+// otherwise capture a nil snapshot and skip registration permanently. The
+// provider lets the server tolerate a still-initializing registry the same
+// way the barrierSVC closure in banyand/liaison/grpc/server.go does — a nil
+// registry surfaces through cacheProvider as a nil schemaCache and the
+// fail-closed nil-cache contract takes over.
+func NewNodeSchemaStatusServerForRegistry(provider func() *SchemaRegistry) *NodeSchemaStatusServer {
 	return &NodeSchemaStatusServer{
 		cacheProvider: func() *schemaCache {
+			if provider == nil {
+				return nil
+			}
+			reg := provider()
 			if reg == nil {
 				return nil
 			}
@@ -162,8 +171,11 @@ func (s *NodeSchemaStatusServer) GetAbsentKeys(_ context.Context, req *clusterv1
 
 // schemaKeysToPropIDs converts a slice of SchemaKey messages into the
 // internal propID strings used by the schema cache. Keys with unknown kind
-// strings produce an empty propID at the corresponding index — callers
-// must check for "" before using the result as a cache lookup key.
+// strings produce an empty propID at the corresponding index; callers may
+// pass empty propIDs straight to schemaCache.GetKeyRevisions, which reports
+// them as Present=false (the cache map never holds an entry under "").
+// This matches the proto contract: an unknown kind is "absent from this
+// node's perspective" rather than a parse error.
 func schemaKeysToPropIDs(keys []*schemav1.SchemaKey) []string {
 	out := make([]string, len(keys))
 	for i, key := range keys {

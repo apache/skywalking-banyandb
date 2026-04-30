@@ -202,10 +202,17 @@ func NewServer(_ context.Context, tir1Client, tir2Client, broadcaster queue.Clie
 		// NodeSchemaStatusService so peer liaisons (Step 2.2 fan-out) can
 		// probe this liaison's cache identically to a data node. The receiving
 		// liaison probes itself in-process via the barrier above; remote peers
-		// reach this same cache through the gRPC service.
-		if reg, regOk := svc.SchemaRegistry().(*property.SchemaRegistry); regOk && reg != nil {
-			nodeStatusSVC = property.NewNodeSchemaStatusServerForRegistry(reg)
-		}
+		// reach this same cache through the gRPC service. Resolution is
+		// deferred to request time (closure) because the metadata service
+		// populates SchemaRegistry in PreRun, after NewServer has already
+		// run — capturing a snapshot here would skip registration permanently.
+		nodeStatusSVC = property.NewNodeSchemaStatusServerForRegistry(func() *property.SchemaRegistry {
+			reg, regOk := svc.SchemaRegistry().(*property.SchemaRegistry)
+			if !regOk {
+				return nil
+			}
+			return reg
+		})
 	}
 	s := &server{
 		omr:           omr,

@@ -297,11 +297,18 @@ func (s *server) Serve() run.StopNotify {
 		// schema cache. The cache the server reads is the same SchemaRegistry
 		// instance the data-node query executor consults — see
 		// banyand/metadata/schema/property/node_status.go for the coherence
-		// argument.
+		// argument. The registry is resolved per request (closure) so the
+		// service registers even when SchemaRegistry isn't ready at Serve
+		// time; the fail-closed nil-cache contract handles in-flight probes
+		// during initialization.
 		if svc, svcOk := s.metadataRepo.(metadata.Service); svcOk {
-			if reg, regOk := svc.SchemaRegistry().(*property.SchemaRegistry); regOk && reg != nil {
-				clusterv1.RegisterNodeSchemaStatusServiceServer(s.ser, property.NewNodeSchemaStatusServerForRegistry(reg))
-			}
+			clusterv1.RegisterNodeSchemaStatusServiceServer(s.ser, property.NewNodeSchemaStatusServerForRegistry(func() *property.SchemaRegistry {
+				reg, regOk := svc.SchemaRegistry().(*property.SchemaRegistry)
+				if !regOk {
+					return nil
+				}
+				return reg
+			}))
 		}
 	}
 
