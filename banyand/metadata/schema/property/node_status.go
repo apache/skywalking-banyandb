@@ -20,9 +20,19 @@ package property
 import (
 	"context"
 
+	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/status"
+
 	clusterv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/cluster/v1"
 	schemav1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/schema/v1"
 )
+
+// nodeStatusMaxKeys caps the per-request key count to match SchemaBarrierService
+// (barrierMaxKeys in banyand/liaison/grpc/barrier.go). The proto leaves this
+// uncapped so chunking is the caller's responsibility, but the server still
+// enforces the same bound the SchemaBarrierService does so a misbehaving peer
+// cannot allocate unbounded memory.
+const nodeStatusMaxKeys = 10000
 
 // NodeSchemaStatusServer implements clusterv1.NodeSchemaStatusServiceServer
 // against a local SchemaRegistry cache. The same implementation runs on every
@@ -89,6 +99,9 @@ func (s *NodeSchemaStatusServer) GetMaxRevision(_ context.Context, _ *clusterv1.
 // An empty request is valid and produces an empty response.
 func (s *NodeSchemaStatusServer) GetKeyRevisions(_ context.Context, req *clusterv1.GetKeyRevisionsRequest) (*clusterv1.GetKeyRevisionsResponse, error) {
 	keys := req.GetKeys()
+	if len(keys) > nodeStatusMaxKeys {
+		return nil, status.Errorf(codes.InvalidArgument, "too many keys: max=%d", nodeStatusMaxKeys)
+	}
 	resp := &clusterv1.GetKeyRevisionsResponse{
 		Revisions: make([]*clusterv1.KeyRevision, len(keys)),
 	}
@@ -101,9 +114,9 @@ func (s *NodeSchemaStatusServer) GetKeyRevisions(_ context.Context, req *cluster
 	}
 	propIDs := schemaKeysToPropIDs(keys)
 	statuses := c.GetKeyRevisions(propIDs)
-	for i, status := range statuses {
-		resp.Revisions[i].ModRevision = status.ModRevision
-		resp.Revisions[i].Present = status.Present
+	for i, keyStatus := range statuses {
+		resp.Revisions[i].ModRevision = keyStatus.ModRevision
+		resp.Revisions[i].Present = keyStatus.Present
 	}
 	return resp, nil
 }
@@ -114,36 +127,35 @@ func (s *NodeSchemaStatusServer) GetKeyRevisions(_ context.Context, req *cluster
 // erroring so the caller can rely on the partition adding up to the input.
 func (s *NodeSchemaStatusServer) GetAbsentKeys(_ context.Context, req *clusterv1.GetAbsentKeysRequest) (*clusterv1.GetAbsentKeysResponse, error) {
 	keys := req.GetKeys()
+	if len(keys) > nodeStatusMaxKeys {
+		return nil, status.Errorf(codes.InvalidArgument, "too many keys: max=%d", nodeStatusMaxKeys)
+	}
 	resp := &clusterv1.GetAbsentKeysResponse{}
 	if len(keys) == 0 {
 		return resp, nil
 	}
 	c := s.cacheProvider()
 	if c == nil {
-		// Cache not yet initialized — every requested key is treated as absent
-		// from the local perspective. The liaison's barrier will retry on the
-		// next backoff iteration once the cache is online.
-		resp.AbsentKeys = append([]*schemav1.SchemaKey(nil), keys...)
+		// Cache not yet initialized — the node has not observed any schema
+		// state, so it cannot claim deletion has been applied. Report every
+		// key as still present so the liaison's AwaitSchemaDeleted barrier
+		// keeps polling until the cache is online. Mirrors the Phase 1
+		// collectPresentKeys nil-cache contract in
+		// banyand/liaison/grpc/barrier.go.
+		resp.StillPresentKeys = append([]*schemav1.SchemaKey(nil), keys...)
 		return resp, nil
 	}
 	propIDs := schemaKeysToPropIDs(keys)
-	for i, key := range keys {
-		propID := propIDs[i]
-		if propID == "" {
-			// Unknown kind — treat as absent so the caller's "every key absent"
-			// invariant holds without surfacing a parse error.
-			resp.AbsentKeys = append(resp.AbsentKeys, key)
+	// One read-lock pass over the cache; an empty propID (unknown kind) maps
+	// to Present=false in c.GetKeyRevisions because c.entries[""] never
+	// matches, which is the same "absent" partition the proto requires.
+	statuses := c.GetKeyRevisions(propIDs)
+	for i, keyStatus := range statuses {
+		if keyStatus.Present {
+			resp.StillPresentKeys = append(resp.StillPresentKeys, keys[i])
 			continue
 		}
-		// GetKeyModRevision handles both the cache-map lookup and the
-		// notifiedModRevision gate atomically under the cache's read lock,
-		// matching the semantics that AwaitSchemaDeleted's collectPresentKeys
-		// already relies on.
-		if _, ok := c.GetKeyModRevision(propID); !ok {
-			resp.AbsentKeys = append(resp.AbsentKeys, key)
-			continue
-		}
-		resp.StillPresentKeys = append(resp.StillPresentKeys, key)
+		resp.AbsentKeys = append(resp.AbsentKeys, keys[i])
 	}
 	return resp, nil
 }

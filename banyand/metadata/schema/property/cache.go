@@ -228,25 +228,6 @@ func (c *schemaCache) GetKeyRevisions(propIDs []string) []KeyRevision {
 	return out
 }
 
-// IsAbsent partitions propIDs into "absent from the cache" and "still present"
-// in a single read-lock pass. The split mirrors GetKeyModRevision's gate:
-// entries whose mod_revision exceeds notifiedModRevision count as absent
-// because downstream handlers have not yet observed them. The returned slices
-// preserve input order within each subset.
-func (c *schemaCache) IsAbsent(propIDs []string) (absent, present []string) {
-	c.mu.RLock()
-	defer c.mu.RUnlock()
-	for _, pid := range propIDs {
-		entry, ok := c.entries[pid]
-		if !ok || entry.modRevision > c.notifiedModRevision {
-			absent = append(absent, pid)
-			continue
-		}
-		present = append(present, pid)
-	}
-	return absent, present
-}
-
 // AdvanceNotified pushes the downstream-handler watermark forward monotonically.
 // Callers must invoke this only after notifyHandlers returns for the given revision,
 // so downstream caches (groupRepo, entityRepo, pkg/schema.schemaRepo, …) are coherent

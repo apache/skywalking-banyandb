@@ -24,6 +24,8 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/status"
 
 	clusterv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/cluster/v1"
 	schemav1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/schema/v1"
@@ -215,7 +217,12 @@ func TestGetAbsentKeys_PostDelete(t *testing.T) {
 	assert.Contains(t, absentNames, "never")
 }
 
-func TestGetAbsentKeys_NilCache_AllAbsent(t *testing.T) {
+func TestGetAbsentKeys_NilCache_AllStillPresent(t *testing.T) {
+	// A nil cache means the node has not observed any schema state. The node
+	// must therefore report every requested key as still-present so the
+	// liaison's AwaitSchemaDeleted barrier keeps polling rather than falsely
+	// concluding deletion has been applied. Mirrors the Phase 1 collectPresentKeys
+	// nil-cache contract in banyand/liaison/grpc/barrier.go.
 	srv := NewNodeSchemaStatusServer(func() *schemaCache { return nil })
 
 	req := &clusterv1.GetAbsentKeysRequest{
@@ -227,9 +234,35 @@ func TestGetAbsentKeys_NilCache_AllAbsent(t *testing.T) {
 
 	resp, err := srv.GetAbsentKeys(context.Background(), req)
 	require.NoError(t, err)
-	assert.Len(t, resp.GetAbsentKeys(), 2,
-		"nil cache reports every requested key as absent so the liaison fan-out retries")
-	assert.Empty(t, resp.GetStillPresentKeys())
+	assert.Len(t, resp.GetStillPresentKeys(), 2,
+		"nil cache reports every requested key as still-present so the liaison barrier keeps polling")
+	assert.Empty(t, resp.GetAbsentKeys())
+}
+
+func TestGetKeyRevisions_OverLimit_RejectsWithInvalidArgument(t *testing.T) {
+	srv := nodeStatusFixture(t, map[string]*cacheEntry{})
+	keys := make([]*schemav1.SchemaKey, nodeStatusMaxKeys+1)
+	for i := range keys {
+		keys[i] = &schemav1.SchemaKey{Kind: "measure", Group: "g1", Name: strconv.Itoa(i)}
+	}
+
+	resp, err := srv.GetKeyRevisions(context.Background(), &clusterv1.GetKeyRevisionsRequest{Keys: keys})
+	require.Error(t, err)
+	assert.Nil(t, resp)
+	assert.Equal(t, codes.InvalidArgument, status.Code(err))
+}
+
+func TestGetAbsentKeys_OverLimit_RejectsWithInvalidArgument(t *testing.T) {
+	srv := nodeStatusFixture(t, map[string]*cacheEntry{})
+	keys := make([]*schemav1.SchemaKey, nodeStatusMaxKeys+1)
+	for i := range keys {
+		keys[i] = &schemav1.SchemaKey{Kind: "measure", Group: "g1", Name: strconv.Itoa(i)}
+	}
+
+	resp, err := srv.GetAbsentKeys(context.Background(), &clusterv1.GetAbsentKeysRequest{Keys: keys})
+	require.Error(t, err)
+	assert.Nil(t, resp)
+	assert.Equal(t, codes.InvalidArgument, status.Code(err))
 }
 
 func TestGetKeyRevisions_ChunkedAtLimit(t *testing.T) {
