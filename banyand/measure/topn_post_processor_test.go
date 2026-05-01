@@ -32,16 +32,16 @@ import (
 
 func TestBlockCursor_MergeTopNResult(t *testing.T) {
 	tests := []struct {
-		srcTopNVal  *TopNValue
-		destTopNVal *TopNValue
-		wantTopNVal *TopNValue
+		srcTopNVal  *TopNValue[int64]
+		destTopNVal *TopNValue[int64]
+		wantTopNVal *TopNValue[int64]
 		name        string
 		sort        modelv1.Sort
 		topN        int32
 	}{
 		{
 			name: "Test block merge TopN result",
-			srcTopNVal: &TopNValue{
+			srcTopNVal: &TopNValue[int64]{
 				valueName:      "value",
 				entityTagNames: []string{"entity_id"},
 				values:         []int64{1000, 200, 300, 400, 500},
@@ -53,7 +53,7 @@ func TestBlockCursor_MergeTopNResult(t *testing.T) {
 					{{Value: &modelv1.TagValue_Str{Str: &modelv1.Str{Value: "entity_5"}}}},
 				},
 			},
-			destTopNVal: &TopNValue{
+			destTopNVal: &TopNValue[int64]{
 				valueName:      "value",
 				entityTagNames: []string{"entity_id"},
 				values:         []int64{550, 200, 500, 600, 400},
@@ -67,7 +67,7 @@ func TestBlockCursor_MergeTopNResult(t *testing.T) {
 			},
 			sort: modelv1.Sort_SORT_DESC,
 			topN: 3,
-			wantTopNVal: &TopNValue{
+			wantTopNVal: &TopNValue[int64]{
 				valueName:      "value",
 				entityTagNames: []string{"entity_id"},
 				values:         []int64{550, 600, 1000},
@@ -118,7 +118,168 @@ func TestBlockCursor_MergeTopNResult(t *testing.T) {
 				},
 			}
 
-			topNPostAggregator := CreateTopNPostProcessor(tt.topN, modelv1.AggregationFunction_AGGREGATION_FUNCTION_UNSPECIFIED, tt.sort)
+			expectedTagValue := "endpoint_resp_time-service"
+			storedIndexValue := map[common.SeriesID]map[string]*modelv1.TagValue{
+				1: {
+					"name": {
+						Value: &modelv1.TagValue_Str{
+							Str: &modelv1.Str{Value: expectedTagValue},
+						},
+					},
+				},
+			}
+
+			bc.mergeTopNResult(result, storedIndexValue, tt.topN, tt.sort)
+
+			tagValue := result.TagFamilies[0].Tags[0].Values[0]
+			require.Equal(t, expectedTagValue, tagValue.GetStr().GetValue())
+
+			mergedFieldValue := result.Fields[0].Values[0]
+			require.NotNil(t, mergedFieldValue.GetBinaryData())
+
+			gotTopNVal := GenerateTopNValueInt()
+			defer ReleaseTopNValueInt(gotTopNVal)
+			decoder := GenerateTopNValuesDecoder()
+			defer ReleaseTopNValuesDecoder(decoder)
+
+			err = gotTopNVal.Unmarshal(mergedFieldValue.GetBinaryData(), decoder)
+			require.NoError(t, err)
+
+			require.Equal(t, tt.wantTopNVal.valueName, gotTopNVal.valueName)
+			require.Equal(t, tt.wantTopNVal.entityTagNames, gotTopNVal.entityTagNames)
+			require.Equal(t, tt.wantTopNVal.values, gotTopNVal.values)
+			diff := cmp.Diff(tt.wantTopNVal.entities, gotTopNVal.entities, protocmp.Transform())
+			require.Empty(t, diff, "entities differ: %s", diff)
+		})
+	}
+}
+
+func TestBlockCursor_MergeTopNResult_Float64(t *testing.T) {
+	tests := []struct {
+		name        string
+		srcTopNVal  *TopNValue[float64]
+		destTopNVal *TopNValue[float64]
+		wantTopNVal *TopNValue[float64]
+		sort        modelv1.Sort
+		topN        int32
+	}{
+		{
+			name: "Test block merge TopN result with float64 DESC",
+			srcTopNVal: &TopNValue[float64]{
+				valueName:      "latency",
+				entityTagNames: []string{"entity_id"},
+				values:         []float64{100.5, 200.3, 300.1, 400.8, 50.2},
+				entities: [][]*modelv1.TagValue{
+					{{Value: &modelv1.TagValue_Str{Str: &modelv1.Str{Value: "entity_1"}}}},
+					{{Value: &modelv1.TagValue_Str{Str: &modelv1.Str{Value: "entity_2"}}}},
+					{{Value: &modelv1.TagValue_Str{Str: &modelv1.Str{Value: "entity_3"}}}},
+					{{Value: &modelv1.TagValue_Str{Str: &modelv1.Str{Value: "entity_4"}}}},
+					{{Value: &modelv1.TagValue_Str{Str: &modelv1.Str{Value: "entity_5"}}}},
+				},
+			},
+			destTopNVal: &TopNValue[float64]{
+				valueName:      "latency",
+				entityTagNames: []string{"entity_id"},
+				values:         []float64{350.7, 200.3, 50.2, 600.9, 400.8},
+				entities: [][]*modelv1.TagValue{
+					{{Value: &modelv1.TagValue_Str{Str: &modelv1.Str{Value: "entity_3"}}}},
+					{{Value: &modelv1.TagValue_Str{Str: &modelv1.Str{Value: "entity_4"}}}},
+					{{Value: &modelv1.TagValue_Str{Str: &modelv1.Str{Value: "entity_5"}}}},
+					{{Value: &modelv1.TagValue_Str{Str: &modelv1.Str{Value: "entity_6"}}}},
+					{{Value: &modelv1.TagValue_Str{Str: &modelv1.Str{Value: "entity_7"}}}},
+				},
+			},
+			sort: modelv1.Sort_SORT_DESC,
+			topN: 3,
+			wantTopNVal: &TopNValue[float64]{
+				valueName:      "latency",
+				entityTagNames: []string{"entity_id"},
+				values:         []float64{350.7, 400.8, 600.9},
+				entities: [][]*modelv1.TagValue{
+					{{Value: &modelv1.TagValue_Str{Str: &modelv1.Str{Value: "entity_3"}}}},
+					{{Value: &modelv1.TagValue_Str{Str: &modelv1.Str{Value: "entity_7"}}}},
+					{{Value: &modelv1.TagValue_Str{Str: &modelv1.Str{Value: "entity_6"}}}},
+				},
+			},
+		},
+		{
+			name: "Test block merge TopN result with float64 ASC",
+			srcTopNVal: &TopNValue[float64]{
+				valueName:      "latency",
+				entityTagNames: []string{"entity_id"},
+				values:         []float64{100.5, 200.3, 300.1, 400.8, 50.2},
+				entities: [][]*modelv1.TagValue{
+					{{Value: &modelv1.TagValue_Str{Str: &modelv1.Str{Value: "entity_1"}}}},
+					{{Value: &modelv1.TagValue_Str{Str: &modelv1.Str{Value: "entity_2"}}}},
+					{{Value: &modelv1.TagValue_Str{Str: &modelv1.Str{Value: "entity_3"}}}},
+					{{Value: &modelv1.TagValue_Str{Str: &modelv1.Str{Value: "entity_4"}}}},
+					{{Value: &modelv1.TagValue_Str{Str: &modelv1.Str{Value: "entity_5"}}}},
+				},
+			},
+			destTopNVal: &TopNValue[float64]{
+				valueName:      "latency",
+				entityTagNames: []string{"entity_id"},
+				values:         []float64{350.7, 200.3, 50.2, 600.9, 400.8},
+				entities: [][]*modelv1.TagValue{
+					{{Value: &modelv1.TagValue_Str{Str: &modelv1.Str{Value: "entity_3"}}}},
+					{{Value: &modelv1.TagValue_Str{Str: &modelv1.Str{Value: "entity_4"}}}},
+					{{Value: &modelv1.TagValue_Str{Str: &modelv1.Str{Value: "entity_5"}}}},
+					{{Value: &modelv1.TagValue_Str{Str: &modelv1.Str{Value: "entity_6"}}}},
+					{{Value: &modelv1.TagValue_Str{Str: &modelv1.Str{Value: "entity_7"}}}},
+				},
+			},
+			sort: modelv1.Sort_SORT_ASC,
+			topN: 3,
+			wantTopNVal: &TopNValue[float64]{
+				valueName:      "latency",
+				entityTagNames: []string{"entity_id"},
+				values:         []float64{200.3, 100.5, 50.2},
+				entities: [][]*modelv1.TagValue{
+					{{Value: &modelv1.TagValue_Str{Str: &modelv1.Str{Value: "entity_2"}}}},
+					{{Value: &modelv1.TagValue_Str{Str: &modelv1.Str{Value: "entity_1"}}}},
+					{{Value: &modelv1.TagValue_Str{Str: &modelv1.Str{Value: "entity_5"}}}},
+				},
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			srcBuf, err := tt.srcTopNVal.marshal(make([]byte, 0, 256))
+			require.NoError(t, err)
+
+			destBuf, err := tt.destTopNVal.marshal(make([]byte, 0, 256))
+			require.NoError(t, err)
+
+			bc := &blockCursor{
+				bm:          blockMetadata{seriesID: 1},
+				tagFamilies: nil,
+				fields: columnFamily{
+					columns: []column{
+						{name: "latency", valueType: pbv1.ValueTypeBinaryData, values: [][]byte{destBuf}},
+					},
+				},
+				timestamps:     []int64{1},
+				versions:       []int64{2},
+				idx:            0,
+				schemaTagTypes: map[string]pbv1.ValueType{},
+			}
+
+			result := &model.MeasureResult{
+				Timestamps: []int64{1},
+				Versions:   []int64{1},
+				TagFamilies: []model.TagFamily{
+					{Name: "_topN", Tags: []model.Tag{
+						{Name: "name", Values: []*modelv1.TagValue{pbv1.NullTagValue}},
+					}},
+				},
+				Fields: []model.Field{
+					{
+						Name:   "latency",
+						Values: []*modelv1.FieldValue{{Value: &modelv1.FieldValue_BinaryData{BinaryData: srcBuf}}},
+					},
+				},
+			}
 
 			expectedTagValue := "endpoint_resp_time-service"
 			storedIndexValue := map[common.SeriesID]map[string]*modelv1.TagValue{
@@ -131,7 +292,7 @@ func TestBlockCursor_MergeTopNResult(t *testing.T) {
 				},
 			}
 
-			bc.mergeTopNResult(result, storedIndexValue, topNPostAggregator)
+			bc.mergeTopNResult(result, storedIndexValue, tt.topN, tt.sort)
 
 			tagValue := result.TagFamilies[0].Tags[0].Values[0]
 			require.Equal(t, expectedTagValue, tagValue.GetStr().GetValue())
@@ -139,8 +300,8 @@ func TestBlockCursor_MergeTopNResult(t *testing.T) {
 			mergedFieldValue := result.Fields[0].Values[0]
 			require.NotNil(t, mergedFieldValue.GetBinaryData())
 
-			gotTopNVal := GenerateTopNValue()
-			defer ReleaseTopNValue(gotTopNVal)
+			gotTopNVal := GenerateTopNValueFloat()
+			defer ReleaseTopNValueFloat(gotTopNVal)
 			decoder := GenerateTopNValuesDecoder()
 			defer ReleaseTopNValuesDecoder(decoder)
 

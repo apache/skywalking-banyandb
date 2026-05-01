@@ -28,10 +28,12 @@ import (
 	"go.uber.org/multierr"
 	"google.golang.org/protobuf/types/known/timestamppb"
 
+	databasev1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/database/v1"
 	measurev1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/measure/v1"
 	modelv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/model/v1"
 	"github.com/apache/skywalking-banyandb/banyand/measure"
 	pbv1 "github.com/apache/skywalking-banyandb/pkg/pb/v1"
+	"github.com/apache/skywalking-banyandb/pkg/query/aggregation"
 	"github.com/apache/skywalking-banyandb/pkg/query/executor"
 	"github.com/apache/skywalking-banyandb/pkg/query/logical"
 	"github.com/apache/skywalking-banyandb/pkg/query/model"
@@ -175,9 +177,11 @@ func (i *localScan) Schema() logical.Schema {
 }
 
 type topNMIterator struct {
-	result  model.MeasureQueryResult
-	err     error
-	current []*measurev1.InternalDataPoint
+	result         model.MeasureQueryResult
+	err            error
+	current        []*measurev1.InternalDataPoint
+	topNValueFloat *measure.TopNValue[float64]
+	topNValueInt   *measure.TopNValue[int64]
 }
 
 func (ei *topNMIterator) Next() bool {
@@ -194,8 +198,6 @@ func (ei *topNMIterator) Next() bool {
 		return false
 	}
 	ei.current = ei.current[:0]
-	topNValue := measure.GenerateTopNValue()
-	defer measure.ReleaseTopNValue(topNValue)
 	decoder := measure.GenerateTopNValuesDecoder()
 	defer measure.ReleaseTopNValuesDecoder(decoder)
 
@@ -207,47 +209,78 @@ func (ei *topNMIterator) Next() bool {
 			return false
 		}
 		ts := timestamppb.New(time.Unix(0, r.Timestamps[i]))
-		topNValue.Reset()
-		err := topNValue.Unmarshal(bd, decoder)
-		if err != nil {
-			ei.err = multierr.Append(ei.err, errors.WithMessagef(err, "failed to unmarshal topN values[%d]:[%s]%s", i, ts, hex.EncodeToString(fv.GetBinaryData())))
+
+		fieldType, detectErr := measure.DetectFieldTypeFromBinary(bd)
+		if detectErr != nil {
+			ei.err = multierr.Append(ei.err, errors.WithMessagef(detectErr,
+				"failed to detect field type for topN values[%d]:[%s]%s", i, ts, hex.EncodeToString(fv.GetBinaryData())))
 			continue
 		}
-		shardID := uint32(0)
-		if i < len(r.ShardIDs) {
-			shardID = uint32(r.ShardIDs[i])
-		}
-		fieldName, entityNames, values, entities := topNValue.Values()
-		for j := range entities {
-			dp := &measurev1.DataPoint{
-				Timestamp: ts,
-				Sid:       uint64(r.SID),
-				Version:   r.Versions[i],
+
+		if fieldType == databasev1.FieldType_FIELD_TYPE_FLOAT {
+			if ei.topNValueFloat == nil {
+				ei.topNValueFloat = measure.GenerateTopNValueFloat()
 			}
-			tagFamily := &modelv1.TagFamily{
-				Name: measure.TopNTagFamily,
+			ei.topNValueFloat.Reset()
+			unmarshalErr := ei.topNValueFloat.Unmarshal(bd, decoder)
+			if unmarshalErr != nil {
+				ei.err = multierr.Append(ei.err, errors.WithMessagef(unmarshalErr, "failed to unmarshal topN values[%d]:[%s]%s", i, ts, hex.EncodeToString(fv.GetBinaryData())))
+				continue
 			}
-			dp.TagFamilies = append(dp.TagFamilies, tagFamily)
-			for k, entityName := range entityNames {
-				tagFamily.Tags = append(tagFamily.Tags, &modelv1.Tag{
-					Key:   entityName,
-					Value: entities[j][k],
-				})
+			if procErr := processTopNValue(ei, ei.topNValueFloat, r, i, ts); procErr != nil {
+				ei.err = multierr.Append(ei.err, procErr)
 			}
-			dp.Fields = append(dp.Fields, &measurev1.DataPoint_Field{
-				Name: fieldName,
-				Value: &modelv1.FieldValue{
-					Value: &modelv1.FieldValue_Int{
-						Int: &modelv1.Int{
-							Value: values[j],
-						},
-					},
-				},
-			})
-			ei.current = append(ei.current, &measurev1.InternalDataPoint{DataPoint: dp, ShardId: shardID})
+		} else {
+			if ei.topNValueInt == nil {
+				ei.topNValueInt = measure.GenerateTopNValueInt()
+			}
+			ei.topNValueInt.Reset()
+			unmarshalErr := ei.topNValueInt.Unmarshal(bd, decoder)
+			if unmarshalErr != nil {
+				ei.err = multierr.Append(ei.err, errors.WithMessagef(unmarshalErr, "failed to unmarshal topN values[%d]:[%s]%s", i, ts, hex.EncodeToString(fv.GetBinaryData())))
+				continue
+			}
+			if procErr := processTopNValue(ei, ei.topNValueInt, r, i, ts); procErr != nil {
+				ei.err = multierr.Append(ei.err, procErr)
+			}
 		}
 	}
 	return true
+}
+
+func processTopNValue[K measure.TopSortKey](ei *topNMIterator, topNValue *measure.TopNValue[K], r *model.MeasureResult, idx int, ts *timestamppb.Timestamp) error {
+	shardID := uint32(0)
+	if idx < len(r.ShardIDs) {
+		shardID = uint32(r.ShardIDs[idx])
+	}
+	fieldName, entityNames, values, entities := topNValue.Values()
+	for j := range entities {
+		dp := &measurev1.DataPoint{
+			Timestamp: ts,
+			Sid:       uint64(r.SID),
+			Version:   r.Versions[idx],
+		}
+		tagFamily := &modelv1.TagFamily{
+			Name: measure.TopNTagFamily,
+		}
+		dp.TagFamilies = append(dp.TagFamilies, tagFamily)
+		for k, entityName := range entityNames {
+			tagFamily.Tags = append(tagFamily.Tags, &modelv1.Tag{
+				Key:   entityName,
+				Value: entities[j][k],
+			})
+		}
+		fieldValue, convErr := aggregation.ToFieldValue(values[j])
+		if convErr != nil {
+			return convErr
+		}
+		dp.Fields = append(dp.Fields, &measurev1.DataPoint_Field{
+			Name:  fieldName,
+			Value: fieldValue,
+		})
+		ei.current = append(ei.current, &measurev1.InternalDataPoint{DataPoint: dp, ShardId: shardID})
+	}
+	return nil
 }
 
 func (ei *topNMIterator) Current() []*measurev1.InternalDataPoint {
@@ -258,6 +291,14 @@ func (ei *topNMIterator) Close() error {
 	if ei.result != nil {
 		ei.result.Release()
 		ei.result = nil
+	}
+	if ei.topNValueFloat != nil {
+		measure.ReleaseTopNValueFloat(ei.topNValueFloat)
+		ei.topNValueFloat = nil
+	}
+	if ei.topNValueInt != nil {
+		measure.ReleaseTopNValueInt(ei.topNValueInt)
+		ei.topNValueInt = nil
 	}
 	return ei.err
 }

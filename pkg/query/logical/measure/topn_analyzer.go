@@ -109,7 +109,15 @@ func TopNAnalyze(criteria *measurev1.TopNRequest, sourceMeasureSchemaList []*dat
 		return nil, err
 	}
 
-	plan = topNDistinct(plan, criteria.GetTopN(), criteria.GetFieldValueSort(), topNAggSchema.FieldName)
+	var fieldType databasev1.FieldType
+	for _, field := range sourceMeasureSchema.GetFields() {
+		if field.GetName() == topNAggSchema.FieldName {
+			fieldType = field.GetFieldType()
+			break
+		}
+	}
+
+	plan = topNDistinct(plan, criteria.GetTopN(), criteria.GetFieldValueSort(), topNAggSchema.FieldName, fieldType)
 
 	p, err := plan.Analyze(s)
 	if err != nil {
