@@ -564,3 +564,17 @@ func (p *pub) NewChunkedSyncClientWithConfig(node string, config *ChunkedSyncCli
 func (p *pub) HealthyNodes() []string {
 	return p.connMgr.ActiveNames()
 }
+
+// NewNodeSchemaStatusClient borrows the underlying *grpc.ClientConn from the
+// connection pool and wraps it as a clusterv1.NodeSchemaStatusServiceClient
+// so the cluster-barrier fan-out (Step 2.2) can probe peer caches without
+// opening parallel connections. The returned client shares the conn's HTTP/2
+// streams with normal queue traffic; per-RPC contexts carry their own
+// deadlines.
+func (p *pub) NewNodeSchemaStatusClient(node string) (clusterv1.NodeSchemaStatusServiceClient, error) {
+	c, ok := p.connMgr.GetClient(node)
+	if !ok {
+		return nil, fmt.Errorf("no active client for node %s", node)
+	}
+	return clusterv1.NewNodeSchemaStatusServiceClient(c.conn), nil
+}
