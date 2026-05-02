@@ -156,10 +156,10 @@ func TestBlockCursor_MergeTopNResult(t *testing.T) {
 
 func TestBlockCursor_MergeTopNResult_Float64(t *testing.T) {
 	tests := []struct {
-		name        string
 		srcTopNVal  *TopNValue[float64]
 		destTopNVal *TopNValue[float64]
 		wantTopNVal *TopNValue[float64]
+		name        string
 		sort        modelv1.Sort
 		topN        int32
 	}{

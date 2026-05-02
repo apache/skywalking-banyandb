@@ -119,6 +119,9 @@ func (h *entityDedupTopN[K]) Put(key string, val K, idp *measurev1.InternalDataP
 }
 
 func (h *entityDedupTopN[K]) tryAddToHeap(key string, val K, idp *measurev1.InternalDataPoint) {
+	if h.topN <= 0 {
+		return
+	}
 	if len(h.items) < h.topN {
 		heap.Push(h, &dedupHeapItem[K]{key: key, val: val, idp: idp})
 		return

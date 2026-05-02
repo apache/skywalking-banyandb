@@ -1105,19 +1105,23 @@ func MergeTopNBinaryValues(
 	timestamp uint64, leftVersion, rightVersion int64,
 ) ([]byte, error) {
 	leftFieldType, leftErr := DetectFieldTypeFromBinary(left)
-	if leftErr != nil {
-		return nil, fmt.Errorf("failed to detect left field type: %w", leftErr)
-	}
 	rightFieldType, rightErr := DetectFieldTypeFromBinary(right)
-	if rightErr != nil {
-		return nil, fmt.Errorf("failed to detect right field type: %w", rightErr)
+
+	if leftErr != nil && rightErr != nil {
+		return []byte{}, nil
 	}
 
-	if leftFieldType != rightFieldType {
+	fieldType := leftFieldType
+	switch {
+	case leftErr != nil:
+		fieldType = rightFieldType
+	case rightErr != nil:
+		fieldType = leftFieldType
+	case leftFieldType != rightFieldType:
 		return nil, fmt.Errorf("field type mismatch between left (%s) and right (%s)", leftFieldType.String(), rightFieldType.String())
 	}
 
-	if leftFieldType == databasev1.FieldType_FIELD_TYPE_FLOAT {
+	if fieldType == databasev1.FieldType_FIELD_TYPE_FLOAT {
 		topNPostAggregator := CreateTopNPostProcessorFloat(topN, modelv1.AggregationFunction_AGGREGATION_FUNCTION_UNSPECIFIED, sort)
 		return mergeTopNBinaryValues[float64](left, right, topNPostAggregator, decoder, timestamp, leftVersion, rightVersion)
 	}

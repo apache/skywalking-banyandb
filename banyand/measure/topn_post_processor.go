@@ -277,6 +277,7 @@ func (taggr *topNPostProcessor[K]) Flush() ([]*topNAggregatorItem[K], error) {
 			for _, item := range timeline.items {
 				if exist, found := taggr.cache[item.key]; found {
 					exist.mapFunc.In(item.val)
+					heap.Fix(taggr, exist.index)
 					continue
 				}
 

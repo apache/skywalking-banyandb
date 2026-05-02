@@ -179,9 +179,9 @@ func (i *localScan) Schema() logical.Schema {
 type topNMIterator struct {
 	result         model.MeasureQueryResult
 	err            error
-	current        []*measurev1.InternalDataPoint
 	topNValueFloat *measure.TopNValue[float64]
 	topNValueInt   *measure.TopNValue[int64]
+	current        []*measurev1.InternalDataPoint
 }
 
 func (ei *topNMIterator) Next() bool {
