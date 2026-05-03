@@ -256,13 +256,22 @@ func NewServer(_ context.Context, tir1Client, tir2Client, broadcaster queue.Clie
 	// Tier1 (peer liaisons) and tier2 (data nodes) connection pools are
 	// borrowed via the queue.Client interface added in #1109; the receiving
 	// liaison's name is read from s.curNode, which initCurrentNode populates
-	// during PreRun — hence the closure indirection.
+	// during PreRun — hence the closure indirection. The explicit nil check
+	// covers the test-context case where ContextNodeKey is unset and
+	// initCurrentNode leaves curNode nil; an empty selfName makes the
+	// barrier exclude self from the watched set, which is the correct
+	// behavior for headless test fixtures.
 	if cacheProvider != nil {
 		s.barrierSVC = newBarrierServiceCluster(
 			cacheProvider,
 			func() queue.Client { return tir1Client },
 			func() queue.Client { return tir2Client },
-			func() string { return s.curNode.GetMetadata().GetName() },
+			func() string {
+				if s.curNode == nil {
+					return ""
+				}
+				return s.curNode.GetMetadata().GetName()
+			},
 		)
 	}
 	s.accessLogRecorders = []accessLogRecorder{streamSVC, measureSVC, traceSVC, s.propertyServer}
