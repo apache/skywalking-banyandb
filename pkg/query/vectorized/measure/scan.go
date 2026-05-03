@@ -112,10 +112,7 @@ func (s *BatchScan) fillFromCurrent(b *vectorized.RecordBatch, n int) error {
 	if fillErr := fillTags(b, s.schema, cur, pos, offset, n); fillErr != nil {
 		return fillErr
 	}
-	if fillErr := fillFields(b, s.schema, cur, pos, offset, n); fillErr != nil {
-		return fillErr
-	}
-	return nil
+	return fillFields(b, s.schema, cur, pos, offset, n)
 }
 
 // fillMetadata populates the timestamp, version, series-id, and shard-id

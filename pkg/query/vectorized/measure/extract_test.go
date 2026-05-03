@@ -85,7 +85,7 @@ func preallocInt64(c *vectorized.TypedColumn[int64], n int) {
 	}
 }
 
-// === extractTagRow positives ===
+// extractTagRow positives.
 
 func TestExtractTagRow_Int_WritesValue(t *testing.T) {
 	col := vectorized.NewInt64Column(4)
@@ -125,7 +125,7 @@ func TestExtractTagRow_Timestamp_WritesUnixNano(t *testing.T) {
 	}
 }
 
-// === extractTagRow defensive-copy parity-killers ===
+// extractTagRow defensive-copy parity-killers.
 
 func TestExtractTagRow_BinaryData_DefensiveCopy(t *testing.T) {
 	src := []byte("abc")
@@ -169,7 +169,7 @@ func TestExtractTagRow_StrArray_DefensiveCopy(t *testing.T) {
 	}
 }
 
-// === extractTagRow Null ===
+// extractTagRow Null.
 
 func TestExtractTagRow_Null_MarksValidityWithoutGrowingLen(t *testing.T) {
 	col := vectorized.NewInt64Column(4)
@@ -186,7 +186,7 @@ func TestExtractTagRow_Null_MarksValidityWithoutGrowingLen(t *testing.T) {
 	}
 }
 
-// === extractTagRow error paths ===
+// extractTagRow error paths.
 
 func TestExtractTagRow_UnknownVariant_ReturnsError(t *testing.T) {
 	tv := &modelv1.TagValue{} // Value is nil — no oneof set
@@ -213,7 +213,7 @@ func TestExtractTagRow_ColumnTypeMismatch_ReturnsError(t *testing.T) {
 	}
 }
 
-// === extractFieldRow positives ===
+// extractFieldRow positives.
 
 func TestExtractFieldRow_Int_WritesValue(t *testing.T) {
 	col := vectorized.NewInt64Column(2)
@@ -273,7 +273,7 @@ func TestExtractFieldRow_Null_MarksValidity(t *testing.T) {
 	}
 }
 
-// === extractFieldRow error paths ===
+// extractFieldRow error paths.
 
 func TestExtractFieldRow_UnknownVariant_ReturnsError(t *testing.T) {
 	fv := &modelv1.FieldValue{}
@@ -300,7 +300,7 @@ func TestExtractFieldRow_ColumnTypeMismatch_ReturnsError(t *testing.T) {
 	}
 }
 
-// === extract*Bulk ===
+// extract bulk variants.
 
 func TestExtractTagBulk_HappyPath(t *testing.T) {
 	col := vectorized.NewStringColumn(4)

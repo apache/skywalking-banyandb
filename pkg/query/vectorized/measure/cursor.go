@@ -92,14 +92,16 @@ func (c *SeriesCursor) Advance(n int) {
 	}
 }
 
-// NextRow returns the next row across series boundaries.
+// nextRow returns the next row across series boundaries. It is unexported
+// because seriesRow is package-private; BatchScan reads rows via the public
+// Current/Advance bulk API.
 //
 // Returns:
 //   - (row, nil)         when a row is available;
 //   - (zero, nil)        on clean EOF;
 //   - (zero, stickyErr)  if a storage error has been observed; subsequent calls
 //     return the same error until Init is called again.
-func (c *SeriesCursor) NextRow() (seriesRow, error) {
+func (c *SeriesCursor) nextRow() (seriesRow, error) {
 	if c.err != nil {
 		return seriesRow{}, c.err
 	}

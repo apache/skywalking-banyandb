@@ -37,18 +37,18 @@ func TestSeriesCursor_NextRow_AdvancesWithinSeries(t *testing.T) {
 	qr := &fakeMeasureQueryResult{seq: []*model.MeasureResult{mkResult(1, 10, 20, 30)}}
 	var c SeriesCursor
 	c.Init(qr)
-	r1, err := c.NextRow()
+	r1, err := c.nextRow()
 	if err != nil {
 		t.Fatal(err)
 	}
 	if r1.timestamp != 10 || r1.sid != 1 {
 		t.Fatalf("row 1: ts=%d sid=%d", r1.timestamp, r1.sid)
 	}
-	r2, _ := c.NextRow()
+	r2, _ := c.nextRow()
 	if r2.timestamp != 20 {
 		t.Fatalf("row 2: ts=%d", r2.timestamp)
 	}
-	r3, _ := c.NextRow()
+	r3, _ := c.nextRow()
 	if r3.timestamp != 30 {
 		t.Fatalf("row 3: ts=%d", r3.timestamp)
 	}
@@ -61,9 +61,9 @@ func TestSeriesCursor_NextRow_CrossesSeriesBoundary(t *testing.T) {
 	}}
 	var c SeriesCursor
 	c.Init(qr)
-	_, _ = c.NextRow() // ts=100, sid=1
-	_, _ = c.NextRow() // ts=200, sid=1
-	r, err := c.NextRow()
+	_, _ = c.nextRow() // ts=100, sid=1
+	_, _ = c.nextRow() // ts=200, sid=1
+	r, err := c.nextRow()
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -75,13 +75,13 @@ func TestSeriesCursor_NextRow_CrossesSeriesBoundary(t *testing.T) {
 func TestSeriesCursor_NextRow_SkipsEmptyMeasureResult(t *testing.T) {
 	qr := &fakeMeasureQueryResult{seq: []*model.MeasureResult{
 		mkResult(1, 100),
-		mkResult(2),       // empty — must be skipped
+		mkResult(2), // empty — must be skipped
 		mkResult(3, 300),
 	}}
 	var c SeriesCursor
 	c.Init(qr)
-	_, _ = c.NextRow() // sid=1
-	r, _ := c.NextRow()
+	_, _ = c.nextRow() // sid=1
+	r, _ := c.nextRow()
 	if r.sid != 3 || r.timestamp != 300 {
 		t.Fatalf("expected to skip empty series 2; got sid=%d ts=%d", r.sid, r.timestamp)
 	}
@@ -91,8 +91,8 @@ func TestSeriesCursor_NextRow_EOF_ReturnsZeroValueAndNilErr(t *testing.T) {
 	qr := &fakeMeasureQueryResult{seq: []*model.MeasureResult{mkResult(1, 100)}}
 	var c SeriesCursor
 	c.Init(qr)
-	_, _ = c.NextRow()
-	r, err := c.NextRow()
+	_, _ = c.nextRow()
+	r, err := c.nextRow()
 	if err != nil {
 		t.Fatalf("EOF must return nil err, got %v", err)
 	}
@@ -106,7 +106,7 @@ func TestSeriesCursor_StorageError_StickyOnFirstCall(t *testing.T) {
 	qr := &fakeMeasureQueryResult{seq: []*model.MeasureResult{mkResultErr(boom)}}
 	var c SeriesCursor
 	c.Init(qr)
-	_, err := c.NextRow()
+	_, err := c.nextRow()
 	if !errors.Is(err, boom) {
 		t.Fatalf("first NextRow must surface storage error, got %v", err)
 	}
@@ -120,7 +120,7 @@ func TestSeriesCursor_StorageError_StickyOnSubsequentCalls(t *testing.T) {
 	var c SeriesCursor
 	c.Init(qr)
 	for i := range 3 {
-		_, err := c.NextRow()
+		_, err := c.nextRow()
 		if !errors.Is(err, boom) {
 			t.Fatalf("call %d: storage error must remain sticky, got %v", i, err)
 		}
@@ -134,11 +134,11 @@ func TestSeriesCursor_RemainingInSeries_DropsAsPosAdvances(t *testing.T) {
 	if c.RemainingInSeries() != 3 {
 		t.Fatalf("initial RemainingInSeries: want 3, got %d", c.RemainingInSeries())
 	}
-	_, _ = c.NextRow()
+	_, _ = c.nextRow()
 	if c.RemainingInSeries() != 2 {
 		t.Fatalf("after 1 NextRow: want 2, got %d", c.RemainingInSeries())
 	}
-	_, _ = c.NextRow()
+	_, _ = c.nextRow()
 	if c.RemainingInSeries() != 1 {
 		t.Fatalf("after 2 NextRows: want 1, got %d", c.RemainingInSeries())
 	}
@@ -152,7 +152,7 @@ func TestSeriesCursor_Current_ReturnsCurrentResultAndPos(t *testing.T) {
 	if cur == nil || cur.SID != 7 || pos != 0 {
 		t.Fatalf("Current after Init: got cur=%v pos=%d", cur, pos)
 	}
-	_, _ = c.NextRow()
+	_, _ = c.nextRow()
 	cur, pos = c.Current()
 	if cur == nil || pos != 1 {
 		t.Fatalf("Current after 1 NextRow: pos=%d", pos)
@@ -167,7 +167,7 @@ func TestSeriesCursor_Advance_CrossesSeriesWhenPosReachesEnd(t *testing.T) {
 	var c SeriesCursor
 	c.Init(qr)
 	c.Advance(3) // exhaust series 1
-	r, err := c.NextRow()
+	r, err := c.nextRow()
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -180,8 +180,8 @@ func TestSeriesCursor_Close_Idempotent_SafeAfterEOF(t *testing.T) {
 	qr := &fakeMeasureQueryResult{seq: []*model.MeasureResult{mkResult(1, 100)}}
 	var c SeriesCursor
 	c.Init(qr)
-	_, _ = c.NextRow()
-	_, _ = c.NextRow() // EOF
+	_, _ = c.nextRow()
+	_, _ = c.nextRow() // EOF
 	defer func() {
 		if r := recover(); r != nil {
 			t.Fatalf("Close must not panic: %v", r)
