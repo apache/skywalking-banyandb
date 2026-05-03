@@ -73,8 +73,8 @@ func TestPipelineBuilder_FromOnly_BuildsSingleFusedStage(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := p.head.Init(context.Background()); err != nil {
-		t.Fatal(err)
+	if initErr := p.head.Init(context.Background()); initErr != nil {
+		t.Fatal(initErr)
 	}
 	out, err := p.Next(context.Background())
 	if err != nil || out == nil {

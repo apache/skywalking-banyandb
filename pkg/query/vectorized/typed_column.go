@@ -17,12 +17,12 @@
 
 package vectorized
 
-// TypedColumn[T] is a generic Column with element type T.
-// One instance per supported T. Use the typed constructors below.
+// TypedColumn is a generic Column with element type T.
+// One instance per supported T — use the typed constructors below.
 type TypedColumn[T any] struct {
+	zero     T
 	data     []T
 	validity validityBitmap
-	zero     T
 	typ      ColumnType
 }
 
