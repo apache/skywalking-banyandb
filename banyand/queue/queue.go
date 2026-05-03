@@ -19,6 +19,7 @@ package queue
 
 import (
 	"context"
+	"errors"
 	"sync"
 	"time"
 
@@ -31,6 +32,13 @@ import (
 	"github.com/apache/skywalking-banyandb/pkg/fs"
 	"github.com/apache/skywalking-banyandb/pkg/run"
 )
+
+// ErrNotImplemented is returned by Client implementations that have no peers
+// to dial — notably the standalone local pipeline. Callers (e.g. the cluster
+// barrier fan-out) treat this sentinel as "no peer to probe; skip" rather
+// than as a hard failure, so the standalone path degrades to in-process
+// self-probing without a special-cased branch in the caller.
+var ErrNotImplemented = errors.New("not implemented")
 
 // Queue builds a data transmission tunnel between subscribers and publishers.
 //
@@ -51,6 +59,12 @@ type Client interface {
 	route.TableProvider
 	NewBatchPublisher(timeout time.Duration) BatchPublisher
 	NewChunkedSyncClient(node string, chunkSize uint32) (ChunkedSyncClient, error)
+	// NewNodeSchemaStatusClient returns a client for the cluster.v1
+	// NodeSchemaStatusService against the named node, sharing the underlying
+	// *grpc.ClientConn from this queue client's existing connection pool.
+	// The standalone local pipeline returns ErrNotImplemented so callers can
+	// treat it as "no peer to probe" without a type-switch.
+	NewNodeSchemaStatusClient(node string) (clusterv1.NodeSchemaStatusServiceClient, error)
 	Register(bus.Topic, schema.EventHandler)
 	OnAddOrUpdate(md schema.Metadata)
 	GracefulStop()
