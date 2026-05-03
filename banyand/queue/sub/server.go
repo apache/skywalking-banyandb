@@ -440,6 +440,16 @@ type metrics struct {
 	largeGapsRejected        meter.Counter
 	bufferCapacityExceeded   meter.Counter
 	finishSyncErr            meter.Counter
+
+	// Chunked sync saturation metrics
+	activeSyncSessions meter.Gauge
+	reorderBuffered    meter.Gauge
+
+	// Chunked sync outcome metrics
+	chunkedSyncAbortedTotal meter.Counter
+	chunkedSyncFailedParts  meter.Counter
+	chunkedSyncTotalBytes   meter.Counter
+	chunkedSyncDurationSecs meter.Histogram
 }
 
 func newMetrics(factory observability.Factory) *metrics {
@@ -460,6 +470,16 @@ func newMetrics(factory observability.Factory) *metrics {
 		largeGapsRejected:        factory.NewCounter("large_gaps_rejected", "topic"),
 		bufferCapacityExceeded:   factory.NewCounter("buffer_capacity_exceeded", "topic"),
 		finishSyncErr:            factory.NewCounter("finish_sync_err", "topic"),
+
+		// Chunked sync saturation metrics
+		activeSyncSessions: factory.NewGauge("chunked_sync_active_sessions", "topic"),
+		reorderBuffered:    factory.NewGauge("chunk_reorder_buffered_chunks", "topic"),
+
+		// Chunked sync outcome metrics
+		chunkedSyncAbortedTotal: factory.NewCounter("chunked_sync_aborted_total", "topic", "reason"),
+		chunkedSyncFailedParts:  factory.NewCounter("chunked_sync_failed_parts_total", "topic"),
+		chunkedSyncTotalBytes:   factory.NewCounter("chunked_sync_total_bytes_received", "topic"),
+		chunkedSyncDurationSecs: factory.NewHistogram("chunked_sync_duration_seconds", meter.DefBuckets, "topic"),
 	}
 }
 

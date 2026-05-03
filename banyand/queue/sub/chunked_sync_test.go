@@ -238,17 +238,12 @@ func TestChunkOrderingMetricsAreLabeledByTopic_NotSessionID(t *testing.T) {
 	mockHandler := &MockChunkedSyncHandler{}
 	s.chunkedSyncHandlers[data.TopicStreamPartSync] = mockHandler
 
-	// metrics: this test will trigger at least two events:
-	// - out_of_order_received
-	// - chunk_buffered
-	// so must put both counters, otherwise nil.Inc will panic.
 	outOfOrder := &capturingCounter{}
 	buffered := &capturingCounter{}
-	s.metrics = &metrics{
-		outOfOrderChunksReceived: outOfOrder,
-		chunksBuffered:           buffered,
-		// other counters will not be triggered in this test, leave them nil
-	}
+	testMetrics := newTestMetrics()
+	testMetrics.outOfOrderChunksReceived = outOfOrder
+	testMetrics.chunksBuffered = buffered
+	s.metrics = testMetrics
 
 	topic := data.TopicStreamPartSync.String()
 
