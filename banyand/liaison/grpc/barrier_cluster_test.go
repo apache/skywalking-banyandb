@@ -40,17 +40,22 @@ import (
 
 // fakeNodeStatusClient is a minimal clusterv1.NodeSchemaStatusServiceClient.
 // Only GetMaxRevision is implemented for Phase 2.2 tests; the other RPCs
-// land in 2.3/2.4 and panic if a test accidentally invokes them.
+// land in 2.3/2.4 and panic if a test accidentally invokes them. revs lets
+// frozen-snapshot tests vary the returned revision per call (call k returns
+// revs[min(k, len-1)]) so the barrier can observe a member catching up
+// across iterations.
 type fakeNodeStatusClient struct {
 	err      error
 	callsRef *int32
+	revs     []int64
 	maxRev   int64
 	delay    time.Duration
 }
 
 func (f *fakeNodeStatusClient) GetMaxRevision(ctx context.Context, _ *clusterv1.GetMaxRevisionRequest, _ ...grpc.CallOption) (*clusterv1.GetMaxRevisionResponse, error) {
+	n := int32(0)
 	if f.callsRef != nil {
-		atomic.AddInt32(f.callsRef, 1)
+		n = atomic.AddInt32(f.callsRef, 1) - 1
 	}
 	if f.delay > 0 {
 		select {
@@ -61,6 +66,13 @@ func (f *fakeNodeStatusClient) GetMaxRevision(ctx context.Context, _ *clusterv1.
 	}
 	if f.err != nil {
 		return nil, f.err
+	}
+	if len(f.revs) > 0 {
+		idx := int(n)
+		if idx >= len(f.revs) {
+			idx = len(f.revs) - 1
+		}
+		return &clusterv1.GetMaxRevisionResponse{MaxModRevision: f.revs[idx]}, nil
 	}
 	return &clusterv1.GetMaxRevisionResponse{MaxModRevision: f.maxRev}, nil
 }
@@ -75,14 +87,19 @@ func (*fakeNodeStatusClient) GetAbsentKeys(_ context.Context, _ *clusterv1.GetAb
 
 // fakeQueueClient embeds queue.Client (a nil interface) so unused methods
 // panic at runtime; only the two methods the barrier fan-out actually calls
-// are overridden.
+// are overridden. routeTableFn (when set) overrides routeTable per call so
+// frozen-snapshot tests can mutate cluster membership between iterations.
 type fakeQueueClient struct {
 	queue.Client
 	routeTable    *databasev1.RouteTable
+	routeTableFn  func() *databasev1.RouteTable
 	statusClients map[string]clusterv1.NodeSchemaStatusServiceClient
 }
 
 func (f *fakeQueueClient) GetRouteTable() *databasev1.RouteTable {
+	if f.routeTableFn != nil {
+		return f.routeTableFn()
+	}
 	if f.routeTable == nil {
 		return &databasev1.RouteTable{}
 	}
@@ -318,4 +335,119 @@ func TestFanOut_NodeReturnsUnimplemented_TreatedAsReady(t *testing.T) {
 	assert.True(t, resp.GetApplied(),
 		"Unimplemented from a Phase-1 peer must not block a v0.13 barrier caller")
 	assert.Empty(t, resp.GetLaggards())
+}
+
+// mutatingRouteTable returns a closure that produces `first` for the first
+// two GetRouteTable calls and `rest` for every call thereafter. The two-call
+// threshold lines up with the production sequence: snapshotMembers consumes
+// call 1 (initial freeze), iteration 1's currentMembership consumes call 2,
+// and iteration 2 onwards observes the mutated state. This means the first
+// probe round runs against `first` (so per-member revs are recorded into
+// lastRev) before the transition fires — matching the production assumption
+// that eviction follows at least one probe of the member.
+func mutatingRouteTable(first, rest *databasev1.RouteTable) func() *databasev1.RouteTable {
+	var calls atomic.Int32
+	return func() *databasev1.RouteTable {
+		if calls.Add(1) <= 2 {
+			return first
+		}
+		return rest
+	}
+}
+
+// TestFanOut_NodeEvictedMidWait_DropsAndAnnotates verifies that when a member
+// transitions Active → Evictable mid-call, the barrier drops it from
+// subsequent probes, records exactly one laggard with reason
+// "evicted_during_poll" carrying the last-observed mod_revision, and
+// converges based on the remaining members.
+func TestFanOut_NodeEvictedMidWait_DropsAndAnnotates(t *testing.T) {
+	cache := &staticBarrierCache{maxModRevision: 100}
+	tier1 := &fakeQueueClient{
+		routeTableFn: mutatingRouteTable(
+			&databasev1.RouteTable{Active: []string{"peer-A", "peer-B"}},
+			&databasev1.RouteTable{Active: []string{"peer-B"}, Evictable: []string{"peer-A"}},
+		),
+		statusClients: map[string]clusterv1.NodeSchemaStatusServiceClient{
+			"peer-A": &fakeNodeStatusClient{maxRev: 50},  // permanently behind
+			"peer-B": &fakeNodeStatusClient{maxRev: 100}, // already caught up
+		},
+	}
+	svc := (&clusterFixture{cache: cache, tier1: tier1, tier2: newFakeTier(nil, nil), self: "self-liaison"}).build()
+
+	resp, err := svc.AwaitRevisionApplied(context.Background(), &schemav1.AwaitRevisionAppliedRequest{
+		MinRevision: 100,
+		Timeout:     durationpb.New(200 * time.Millisecond),
+	})
+	require.NoError(t, err)
+	assert.True(t, resp.GetApplied(),
+		"barrier should converge once peer-A is evicted (peer-B + self both at 100)")
+	require.Len(t, resp.GetLaggards(), 1, "exactly one evicted laggard expected")
+	assert.Equal(t, "liaison-peer-A", resp.GetLaggards()[0].GetNode())
+	assert.Equal(t, "evicted_during_poll", resp.GetLaggards()[0].GetReason())
+	assert.Equal(t, int64(50), resp.GetLaggards()[0].GetCurrentModRevision(),
+		"laggard should carry the last-observed revision before eviction")
+}
+
+// TestFanOut_NodeSetChangesMidWait_SkipsDepartedNodes verifies that when a
+// member's name disappears from BOTH active and evictable mid-call (graceful
+// leave), the barrier drops it silently — no laggard entry — and converges
+// on the remaining members.
+func TestFanOut_NodeSetChangesMidWait_SkipsDepartedNodes(t *testing.T) {
+	cache := &staticBarrierCache{maxModRevision: 100}
+	tier1 := &fakeQueueClient{
+		routeTableFn: mutatingRouteTable(
+			&databasev1.RouteTable{Active: []string{"peer-A", "peer-B"}},
+			&databasev1.RouteTable{Active: []string{"peer-B"}}, // peer-A simply gone
+		),
+		statusClients: map[string]clusterv1.NodeSchemaStatusServiceClient{
+			"peer-A": &fakeNodeStatusClient{maxRev: 50}, // would block if probed
+			"peer-B": &fakeNodeStatusClient{maxRev: 100},
+		},
+	}
+	svc := (&clusterFixture{cache: cache, tier1: tier1, tier2: newFakeTier(nil, nil), self: "self-liaison"}).build()
+
+	resp, err := svc.AwaitRevisionApplied(context.Background(), &schemav1.AwaitRevisionAppliedRequest{
+		MinRevision: 100,
+		Timeout:     durationpb.New(200 * time.Millisecond),
+	})
+	require.NoError(t, err)
+	assert.True(t, resp.GetApplied(),
+		"barrier should converge once peer-A leaves (peer-B + self both at 100)")
+	assert.Empty(t, resp.GetLaggards(),
+		"a graceful leave (Active → Removed) should not produce a laggard entry")
+}
+
+// TestFanOut_LateJoiner_Excluded verifies that nodes entering Active after
+// the call's initial snapshot are NOT added to the watched set. A late
+// joiner with max_revision=0 must not cause spurious timeouts; barrier
+// returns Applied=true once the original watched set is ready.
+//
+// peer-A starts behind (rev=50) and catches up to 100 on its second probe;
+// peer-B is the late joiner — deliberately omitted from statusClients so
+// any erroneous probe attempt would surface as a laggard rather than a
+// silent pass.
+func TestFanOut_LateJoiner_Excluded(t *testing.T) {
+	cache := &staticBarrierCache{maxModRevision: 100}
+	var peerACalls int32
+	tier1 := &fakeQueueClient{
+		routeTableFn: mutatingRouteTable(
+			&databasev1.RouteTable{Active: []string{"peer-A"}},
+			&databasev1.RouteTable{Active: []string{"peer-A", "peer-B"}}, // peer-B joins
+		),
+		statusClients: map[string]clusterv1.NodeSchemaStatusServiceClient{
+			"peer-A": &fakeNodeStatusClient{revs: []int64{50, 100}, callsRef: &peerACalls},
+			// peer-B intentionally absent — any probe would error.
+		},
+	}
+	svc := (&clusterFixture{cache: cache, tier1: tier1, tier2: newFakeTier(nil, nil), self: "self-liaison"}).build()
+
+	resp, err := svc.AwaitRevisionApplied(context.Background(), &schemav1.AwaitRevisionAppliedRequest{
+		MinRevision: 100,
+		Timeout:     durationpb.New(200 * time.Millisecond),
+	})
+	require.NoError(t, err)
+	assert.True(t, resp.GetApplied(),
+		"frozen snapshot should converge based on peer-A only; late-joiner peer-B is ignored")
+	assert.Empty(t, resp.GetLaggards(),
+		"laggards list must not contain the late joiner peer-B")
 }

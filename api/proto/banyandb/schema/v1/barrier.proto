@@ -55,14 +55,18 @@ message AwaitRevisionAppliedRequest {
   google.protobuf.Duration timeout = 2;
 }
 
-// NodeLaggard reports a single data node that has not caught up to the
-// requested schema state. missing_keys is populated by AwaitSchemaApplied
-// responses; still_present_keys is populated by AwaitSchemaDeleted responses.
+// NodeLaggard reports a single cluster member (peer liaison or data node)
+// that has not caught up to the requested schema state. missing_keys is
+// populated by AwaitSchemaApplied responses; still_present_keys by
+// AwaitSchemaDeleted responses. reason is set when the laggard exists for a
+// non-default cause (e.g. "evicted_during_poll" when the cluster transitioned
+// the member from Active to Evictable mid-call); empty otherwise.
 message NodeLaggard {
   string node = 1;
   int64 current_mod_revision = 2;
   repeated SchemaKey missing_keys = 3;
   repeated SchemaKey still_present_keys = 4;
+  string reason = 5;
 }
 
 // AwaitRevisionAppliedResponse reports whether every node reached the target
