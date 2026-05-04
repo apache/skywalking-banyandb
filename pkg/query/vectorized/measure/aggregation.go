@@ -91,9 +91,9 @@ type BatchAggregation struct {
 
 // aggGroup carries one bucket's reduction state plus a copy of its key column values.
 type aggGroup struct {
-	keyCols []vectorized.Column // each holds exactly one row — the representative key
-	slots   []aggSlot           // one per AggSpec
 	key     string
+	keyCols []vectorized.Column
+	slots   []aggSlot
 }
 
 // aggSlot holds an aggregation.Map of either int64 or float64. Whether int or
@@ -363,7 +363,8 @@ func aggOutputType(in vectorized.ColumnType, fn AggFunc) vectorized.ColumnType {
 		return vectorized.ColumnTypeInt64
 	case AggMean:
 		return vectorized.ColumnTypeFloat64
+	case AggSum, AggMin, AggMax:
+		return in
 	}
 	return in
 }
-

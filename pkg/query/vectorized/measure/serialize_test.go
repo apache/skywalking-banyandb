@@ -42,11 +42,13 @@ func serializeFullSchema() *vectorized.BatchSchema {
 	})
 }
 
-func mkSerializeRow(b *vectorized.RecordBatch, ts, ver, sid int64, svc string,
+// mkSerializeRow builds one row in the serializeFullSchema layout. Version is
+// pinned to 1 — tests don't exercise version-specific behavior.
+func mkSerializeRow(b *vectorized.RecordBatch, ts, sid int64, svc string,
 	vInt int64, vFloat float64, vStr string, vBytes []byte,
 ) {
 	b.Columns[0].(*vectorized.TypedColumn[int64]).Append(ts)
-	b.Columns[1].(*vectorized.TypedColumn[int64]).Append(ver)
+	b.Columns[1].(*vectorized.TypedColumn[int64]).Append(1)
 	b.Columns[2].(*vectorized.TypedColumn[int64]).Append(sid)
 	b.Columns[3].(*vectorized.TypedColumn[string]).Append(svc)
 	b.Columns[4].(*vectorized.TypedColumn[int64]).Append(vInt)
@@ -59,7 +61,7 @@ func mkSerializeRow(b *vectorized.RecordBatch, ts, ver, sid int64, svc string,
 func TestSerializeBatchToProto_RoundTrips_AllScalarVariants(t *testing.T) {
 	s := serializeFullSchema()
 	b := vectorized.NewRecordBatch(s, 2)
-	mkSerializeRow(b, 100, 1, 7, "svcA", 42, 3.14, "hello", []byte("xyz"))
+	mkSerializeRow(b, 100, 7, "svcA", 42, 3.14, "hello", []byte("xyz"))
 
 	out := serializeBatchToProto(b, nil)
 	if len(out) != 1 {
@@ -98,9 +100,9 @@ func TestSerializeBatchToProto_RoundTrips_AllScalarVariants(t *testing.T) {
 func TestSerializeBatchToProto_RespectsSelectionVector(t *testing.T) {
 	s := serializeFullSchema()
 	b := vectorized.NewRecordBatch(s, 4)
-	mkSerializeRow(b, 100, 1, 1, "a", 10, 1.0, "", nil)
-	mkSerializeRow(b, 200, 1, 2, "b", 20, 2.0, "", nil)
-	mkSerializeRow(b, 300, 1, 3, "c", 30, 3.0, "", nil)
+	mkSerializeRow(b, 100, 1, "a", 10, 1.0, "", nil)
+	mkSerializeRow(b, 200, 2, "b", 20, 2.0, "", nil)
+	mkSerializeRow(b, 300, 3, "c", 30, 3.0, "", nil)
 	b.Selection = []uint16{0, 2} // only rows 0 and 2 are active
 
 	out := serializeBatchToProto(b, nil)
@@ -143,7 +145,7 @@ func TestSerializeBatchToProto_RowOrderMatchesRowPath(t *testing.T) {
 	s := serializeFullSchema()
 	b := vectorized.NewRecordBatch(s, 5)
 	for i := range 5 {
-		mkSerializeRow(b, int64(i*100), 1, int64(i+1), "svc", 0, 0, "", nil)
+		mkSerializeRow(b, int64(i*100), int64(i+1), "svc", 0, 0, "", nil)
 	}
 
 	out := serializeBatchToProto(b, nil)
@@ -158,7 +160,7 @@ func TestSerializeBatchToProto_RowOrderMatchesRowPath(t *testing.T) {
 func TestSerializeBatchToProto_ReusesDestinationSlice(t *testing.T) {
 	s := serializeFullSchema()
 	b := vectorized.NewRecordBatch(s, 1)
-	mkSerializeRow(b, 100, 1, 7, "x", 0, 0, "", nil)
+	mkSerializeRow(b, 100, 7, "x", 0, 0, "", nil)
 
 	dst := make([]*measurev1.InternalDataPoint, 0, 16)
 	beforeCap := cap(dst)

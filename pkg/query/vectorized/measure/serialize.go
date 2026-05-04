@@ -85,6 +85,10 @@ func buildDataPoint(b *vectorized.RecordBatch, schema *vectorized.BatchSchema, r
 				Name:  def.Name,
 				Value: columnValueToFieldValue(b.Columns[colIdx], rowIdx),
 			})
+		case vectorized.RoleTimestamp, vectorized.RoleVersion,
+			vectorized.RoleSeriesID, vectorized.RoleShardID:
+			// Metadata roles are handled before the loop (Timestamp/Version/Sid)
+			// or via the InternalDataPoint wrapper (ShardId). Skip here.
 		}
 	}
 	return dp

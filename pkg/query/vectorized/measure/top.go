@@ -129,7 +129,7 @@ func NewBatchTop(schema *vectorized.BatchSchema, fieldCol, n int, asc bool, batc
 	}
 }
 
-// Init initialises the heap.
+// Init initializes the heap.
 func (t *BatchTop) Init(_ context.Context) error {
 	t.heapState = &topHeap{asc: t.asc}
 	return nil
