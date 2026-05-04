@@ -113,15 +113,17 @@ func TestExtractTagRow_Str_WritesValue(t *testing.T) {
 	}
 }
 
-func TestExtractTagRow_Timestamp_WritesUnixNano(t *testing.T) {
-	ts := time.Date(2026, 5, 3, 12, 34, 56, 789, time.UTC)
-	col := vectorized.NewInt64Column(2)
+// Per Copilot G3 review (option A): TagValue_Timestamp is unsupported in v1.
+// Without schema-level tag-kind metadata, extract+serialize cannot round-trip
+// the variant; the row path's mustDecodeTagValue panics on Timestamp tags
+// anyway. This test pins the explicit-error contract — silent degradation is
+// forbidden.
+func TestExtractTagRow_Timestamp_ReturnsError(t *testing.T) {
+	ts := time.Date(2026, 5, 4, 12, 34, 56, 789, time.UTC)
+	col := vectorized.NewInt64Column(1)
 	preallocInt64(col, 1)
-	if err := extractTagRow(col, 0, tvTimestamp(ts)); err != nil {
-		t.Fatal(err)
-	}
-	if got := col.Data()[0]; got != ts.UnixNano() {
-		t.Fatalf("timestamp roundtrip: got %d, want %d", got, ts.UnixNano())
+	if err := extractTagRow(col, 0, tvTimestamp(ts)); err == nil {
+		t.Fatal("Timestamp variant unsupported in v1 — extract must return error, not silently degrade")
 	}
 }
 

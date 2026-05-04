@@ -80,14 +80,12 @@ func extractTagRow(col vectorized.Column, rowIdx int, tv *modelv1.TagValue) erro
 		}
 		c.Data()[rowIdx] = slices.Clone(v.StrArray.GetValue())
 		return nil
-	case *modelv1.TagValue_Timestamp:
-		c, ok := col.(*vectorized.TypedColumn[int64])
-		if !ok {
-			return columnTypeMismatch(col, "int64", rowIdx)
-		}
-		c.Data()[rowIdx] = v.Timestamp.AsTime().UnixNano()
-		return nil
 	default:
+		// TagValue_Timestamp falls through here in v1: the schema doesn't
+		// carry tag-kind metadata, so a timestamp variant cannot round-trip
+		// to TagValue_Timestamp on serialize. Failing fast here keeps the
+		// vectorized path consistent with the row-path's mustDecodeTagValue
+		// (which panics on Timestamp value type).
 		return fmt.Errorf("vectorized.measure: unsupported TagValue variant %T at row %d", tv.Value, rowIdx)
 	}
 }
