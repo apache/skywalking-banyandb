@@ -138,8 +138,14 @@ func (b *barrierService) AwaitRevisionApplied(ctx context.Context, req *schemav1
 }
 
 // AwaitSchemaApplied blocks until all requested keys are present at or above their
-// per-key min_revisions, or the timeout elapses.
+// per-key min_revisions, or the timeout elapses. When the cluster fan-out
+// dependencies are wired (production), the call probes the frozen tier1 +
+// tier2 + self watched set in parallel via GetKeyRevisions; without them
+// (Phase 1 unit-test path), it falls back to a single in-process cache poll.
 func (b *barrierService) AwaitSchemaApplied(ctx context.Context, req *schemav1.AwaitSchemaAppliedRequest) (*schemav1.AwaitSchemaAppliedResponse, error) {
+	if b.peerLiaisons != nil && b.dataNodes != nil && b.selfName != nil {
+		return b.awaitSchemaAppliedCluster(ctx, req)
+	}
 	if len(req.GetKeys()) > barrierMaxKeys {
 		return nil, status.Errorf(codes.InvalidArgument, "too many keys: max=%d", barrierMaxKeys)
 	}

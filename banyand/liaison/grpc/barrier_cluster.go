@@ -329,6 +329,234 @@ func (b *barrierService) probeOne(ctx context.Context, m member, minRev int64) p
 	return probeResult{member: m, rev: rev, ready: rev >= minRev}
 }
 
+// keyProbeResult is the per-iteration outcome of a GetKeyRevisions probe for
+// one member. missingKeys carries only the keys that failed the apply check
+// (absent or below their target revision). ready=true when missingKeys is
+// empty after the probe; err!=nil means the probe is a transient laggard for
+// this iteration only.
+type keyProbeResult struct {
+	err         error
+	missingKeys []*schemav1.SchemaKey
+	member      member
+	ready       bool
+}
+
+// barrierKeyChunkSize matches the plan §2.3 chunking policy: each peer probe
+// for AwaitSchemaApplied / AwaitSchemaDeleted issues at most 1000 keys per
+// RPC. The server-side cap (nodeStatusMaxKeys = 10000) is the absolute limit;
+// 1000 is a soft chunking threshold that keeps individual RPC payloads well
+// under typical gRPC max-message-size defaults and fans the work out across
+// multiple round-trips for large requests.
+const barrierKeyChunkSize = 1000
+
+// awaitSchemaAppliedCluster runs the cluster-wide fan-out for
+// AwaitSchemaApplied. Self is probed in-process via the cache; peers are
+// probed via GetKeyRevisions over the *grpc.ClientConn borrowed from
+// queue.Client. Per-member probes chunk keys at barrierKeyChunkSize per RPC,
+// each chunk inheriting the call-wide deadline (shared, not divided across
+// chunks or members). Frozen-snapshot semantics — eviction / leave / late
+// joiner exclusion — match awaitRevisionAppliedCluster's behavior.
+func (b *barrierService) awaitSchemaAppliedCluster(ctx context.Context, req *schemav1.AwaitSchemaAppliedRequest) (*schemav1.AwaitSchemaAppliedResponse, error) {
+	if len(req.GetKeys()) > barrierMaxKeys {
+		return nil, status.Errorf(codes.InvalidArgument, "too many keys: max=%d", barrierMaxKeys)
+	}
+	frozen := b.snapshotMembers()
+	if len(frozen) == 0 {
+		return nil, status.Errorf(codes.Unavailable, "no active cluster members")
+	}
+
+	deadline := time.Now().Add(barrierDeadlineDuration(req.GetTimeout()))
+	pollCtx, cancel := context.WithDeadline(ctx, deadline)
+	defer cancel()
+
+	alive := frozen
+	var evictedLaggards []*schemav1.NodeLaggard
+	interval := barrierInitInterval
+	var lastResults []keyProbeResult
+	for {
+		view := b.currentMembership()
+		var newlyEvicted []*schemav1.NodeLaggard
+		alive, newlyEvicted = applyTransitionsApplied(alive, view)
+		evictedLaggards = append(evictedLaggards, newlyEvicted...)
+
+		if len(alive) == 0 {
+			return &schemav1.AwaitSchemaAppliedResponse{Applied: true, Laggards: evictedLaggards}, nil
+		}
+
+		lastResults = b.probeKeyRevisions(pollCtx, alive, req.GetKeys(), req.GetMinRevisions(), deadline)
+		if allKeysApplied(lastResults) {
+			return &schemav1.AwaitSchemaAppliedResponse{Applied: true, Laggards: evictedLaggards}, nil
+		}
+		if time.Now().After(deadline) {
+			return &schemav1.AwaitSchemaAppliedResponse{
+				Applied:  false,
+				Laggards: append(keyLaggards(lastResults), evictedLaggards...),
+			}, nil
+		}
+		select {
+		case <-time.After(interval):
+		case <-pollCtx.Done():
+			return &schemav1.AwaitSchemaAppliedResponse{
+				Applied:  false,
+				Laggards: append(keyLaggards(lastResults), evictedLaggards...),
+			}, nil
+		}
+		interval = barrierBackoff(interval)
+	}
+}
+
+// applyTransitionsApplied is the AwaitSchemaApplied / AwaitSchemaDeleted
+// sibling of applyTransitions. Eviction laggards for the per-key barriers
+// carry only the role-prefixed name and Reason; missing_keys /
+// still_present_keys are intentionally empty because the cluster has
+// already removed the member from the watched set, so its outstanding key
+// state is no longer something the call is waiting on.
+func applyTransitionsApplied(alive []member, view membershipView) (kept []member, newlyEvicted []*schemav1.NodeLaggard) {
+	for _, m := range alive {
+		if m.isSelf {
+			kept = append(kept, m)
+			continue
+		}
+		if _, evicted := view.evictable[m.name]; evicted {
+			newlyEvicted = append(newlyEvicted, &schemav1.NodeLaggard{
+				Node:   m.laggardName(),
+				Reason: evictedLaggardReason,
+			})
+			continue
+		}
+		if _, active := view.active[m.name]; !active {
+			continue
+		}
+		kept = append(kept, m)
+	}
+	return kept, newlyEvicted
+}
+
+// probeKeyRevisions runs one parallel iteration of GetKeyRevisions probes
+// against the watched set. Each per-member probe chunks the key list into
+// blocks of barrierKeyChunkSize and aggregates per-chunk responses into a
+// single missingKeys slice; the call-wide deadline is shared across all
+// chunks of all members.
+func (b *barrierService) probeKeyRevisions(ctx context.Context, members []member, keys []*schemav1.SchemaKey, minRevs []int64, deadline time.Time) []keyProbeResult {
+	results := make([]keyProbeResult, len(members))
+	var wg sync.WaitGroup
+	probeCtx, cancel := context.WithDeadline(ctx, deadline)
+	defer cancel()
+	for i := range members {
+		wg.Add(1)
+		go func(idx int) {
+			defer wg.Done()
+			results[idx] = b.probeKeysOne(probeCtx, members[idx], keys, minRevs)
+		}(i)
+	}
+	wg.Wait()
+	return results
+}
+
+// probeKeysOne returns the per-member outcome for one iteration of
+// AwaitSchemaApplied's per-key probe. Self uses an in-process cache scan;
+// peers use GetKeyRevisions chunked at barrierKeyChunkSize.
+func (b *barrierService) probeKeysOne(ctx context.Context, m member, keys []*schemav1.SchemaKey, minRevs []int64) keyProbeResult {
+	if m.isSelf {
+		c := b.cache()
+		if c == nil {
+			// Fail-closed: nil cache → every key is missing so the loop
+			// keeps polling until the cache is online.
+			missing := make([]*schemav1.SchemaKey, len(keys))
+			copy(missing, keys)
+			return keyProbeResult{member: m, missingKeys: missing}
+		}
+		var missing []*schemav1.SchemaKey
+		for idx, key := range keys {
+			propID := schemaKeyToPropID(key)
+			rev, ok := c.GetKeyModRevision(propID)
+			var minRev int64
+			if idx < len(minRevs) {
+				minRev = minRevs[idx]
+			}
+			if !ok || (minRev > 0 && rev < minRev) {
+				missing = append(missing, key)
+			}
+		}
+		return keyProbeResult{member: m, missingKeys: missing, ready: len(missing) == 0}
+	}
+
+	tier := b.peerLiaisons
+	if m.role == roleData {
+		tier = b.dataNodes
+	}
+	if tier == nil {
+		return keyProbeResult{member: m, err: errors.New("no tier client wired")}
+	}
+	client := tier()
+	if client == nil {
+		return keyProbeResult{member: m, err: errors.New("tier client unavailable")}
+	}
+	statusClient, err := client.NewNodeSchemaStatusClient(m.name)
+	if err != nil {
+		return keyProbeResult{member: m, err: err}
+	}
+
+	var missing []*schemav1.SchemaKey
+	for chunkStart := 0; chunkStart < len(keys); chunkStart += barrierKeyChunkSize {
+		chunkEnd := chunkStart + barrierKeyChunkSize
+		if chunkEnd > len(keys) {
+			chunkEnd = len(keys)
+		}
+		chunkKeys := keys[chunkStart:chunkEnd]
+		resp, rpcErr := statusClient.GetKeyRevisions(ctx, &clusterv1.GetKeyRevisionsRequest{Keys: chunkKeys})
+		if rpcErr != nil {
+			// Cross-version: a Phase-1 peer answers Unimplemented; treat
+			// that member as ready (assume every key applied).
+			if status.Code(rpcErr) == codes.Unimplemented {
+				return keyProbeResult{member: m, ready: true}
+			}
+			// Other RPC errors are transient laggards for this iteration.
+			return keyProbeResult{member: m, err: rpcErr}
+		}
+		revisions := resp.GetRevisions()
+		for i, kr := range revisions {
+			globalIdx := chunkStart + i
+			var minRev int64
+			if globalIdx < len(minRevs) {
+				minRev = minRevs[globalIdx]
+			}
+			if !kr.GetPresent() || (minRev > 0 && kr.GetModRevision() < minRev) {
+				missing = append(missing, chunkKeys[i])
+			}
+		}
+	}
+	return keyProbeResult{member: m, missingKeys: missing, ready: len(missing) == 0}
+}
+
+// allKeysApplied reports whether every member's most recent probe found
+// every key applied at or above its target revision.
+func allKeysApplied(results []keyProbeResult) bool {
+	for _, r := range results {
+		if !r.ready {
+			return false
+		}
+	}
+	return true
+}
+
+// keyLaggards builds the laggards list for the timeout response. Members
+// that succeeded this iteration are excluded so the list contains only
+// the actual stragglers (each carrying their per-node missing_keys).
+func keyLaggards(results []keyProbeResult) []*schemav1.NodeLaggard {
+	laggards := make([]*schemav1.NodeLaggard, 0)
+	for _, r := range results {
+		if r.ready {
+			continue
+		}
+		laggards = append(laggards, &schemav1.NodeLaggard{
+			Node:        r.member.laggardName(),
+			MissingKeys: r.missingKeys,
+		})
+	}
+	return laggards
+}
+
 // allReady reports whether every member's most recent probe returned ready.
 func allReady(results []probeResult) bool {
 	for _, r := range results {
