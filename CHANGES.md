@@ -31,10 +31,13 @@ Release Notes.
   - Add tombstone retention/GC (default 7 days, configurable via `--schema-server-tombstone-retention`) with a per-cache count cap to bound memory under bulk deletes.
   - Reject `Create` with `updated_at <= tombstone.delete_time` to prevent replayed creates from overwriting newer deletes.
   - Guard `pkg/schema/cache` against out-of-order `EventDelete` events; expose monotonic `LatestModRevision` watermark.
-- Schema consistency (Phase 2 in progress): cluster-wide barrier groundwork. Internal-only; no client-facing surface impact yet.
-  - Add `NodeSchemaStatusService` (`GetMaxRevision`, `GetKeyRevisions`, `GetAbsentKeys`) registered on every cluster member that holds a schema cache, so peer liaisons and data nodes can be probed identically by the upcoming barrier fan-out (#1108).
+- Schema consistency (Phase 2 in progress): cluster-wide barrier. Internal-only; no client-facing surface impact yet.
+  - Add `NodeSchemaStatusService` (`GetMaxRevision`, `GetKeyRevisions`, `GetAbsentKeys`) registered on every cluster member that holds a schema cache, so peer liaisons and data nodes can be probed identically by the barrier fan-out (#1108).
   - Extend `queue.Client` with `NewNodeSchemaStatusClient(node)` so the barrier fan-out can borrow the existing tier1/tier2 connection pools instead of opening a parallel mesh (#1109).
   - `AwaitRevisionApplied` now fans out across the receiving liaison's frozen tier1 (peer-liaison) + tier2 (data-node) Active set, probing each member in parallel via `GetMaxRevision` with shared per-call deadline. Cross-version peers returning `codes.Unimplemented` are treated as ready so partial-upgrade clusters do not deadlock; transient RPC errors count as per-iteration laggards. Empty Active set fails fast with `codes.Unavailable`.
+  - Frozen-snapshot mid-call semantics: members that transition `Active → Evictable` during a call are dropped from subsequent probes and surfaced once as a `NodeLaggard{reason="evicted_during_poll"}`; members that disappear from the route table altogether are dropped silently; late joiners are excluded from the watched set until the next call. Adds `reason` field (5) to `NodeLaggard` proto.
+  - `AwaitSchemaApplied` and `AwaitSchemaDeleted` follow the same fan-out shape using `GetKeyRevisions` / `GetAbsentKeys` respectively, with per-node calls chunked at 1000 keys and a shared call-wide deadline (no equal-slice division across chunks). Per-node laggards carry the per-member `missing_keys` / `still_present_keys` they observed.
+  - Re-enable §4.6.2 distributed spec (no Write→Query baseline). §6.8, §6.11, §4.6.4 remain skipped pending Step 2.5's cluster query gate.
 
 ### Bug Fixes
 

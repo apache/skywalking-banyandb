@@ -116,17 +116,6 @@ var _ = g.Describe("Schema time-range clamp", func() {
 	// server clamps Begin forward to CreatedAt and the query executes successfully.
 	// Since no data was written the response has zero elements but no error.
 	g.It("succeeds and returns zero elements when query spans schema CreatedAt (§4.6.2)", func() {
-		// TODO(phase-2): Phase 1 AwaitRevisionApplied / AwaitSchemaApplied are liaison-only
-		// by design. Unlike §4.6.1 and §4.6.3 (both ends far in the past, where the clamp
-		// short-circuits at the liaison and never dispatches to data nodes), this spec uses
-		// End=now+1h so the clamped range is non-empty and the query is dispatched. In
-		// distributed mode the data node can lag the liaison's schema view at that moment,
-		// causing the dispatched query to fail with "group not found". Cluster-wide barrier
-		// semantics ship in Phase 2 via NodeSchemaStatusService + liaison fan-out (plan
-		// Steps 2.1–2.2); re-enable this spec in distributed mode once those land.
-		if SharedContext.Mode == helpers.ModeDistributed {
-			g.Skip("§4.6.2 requires cluster-wide propagation barrier (Phase 2)")
-		}
 		groupName := fmt.Sprintf("clamp-span-%d", time.Now().UnixNano())
 		streamName := "clamp_stream"
 
@@ -226,15 +215,12 @@ var _ = g.Describe("Schema time-range clamp", func() {
 	// inside [Begin, End] and the datum would leak — proving the clamp is actually
 	// applied rather than merely consistent with an already-in-range write.
 	g.It("clips TimeRange.Begin to max(CreatedAt) and excludes pre-creation data (§4.6.4)", func() {
-		// TODO(phase-2): Phase 1 AwaitRevisionApplied is liaison-only by design. This spec's
-		// baseline sanity check (Create → AwaitRevision → Write → Query expecting HaveLen(1))
-		// races the data-node tsTable readiness in distributed mode. The actual clamp
-		// falsification is sound; only the prerequisite Write→Query round-trip flakes.
-		// Cluster-wide barrier semantics ship in Phase 2 via NodeSchemaStatusService +
-		// liaison fan-out (plan Steps 2.1–2.2); re-enable this spec in distributed mode
-		// once those land.
+		// Phase 2.2 barrier ensures schema is on every node, but this spec's
+		// baseline sanity step (Create → Write → Query expecting 1 datum)
+		// still races the data-node write path in distributed mode. Re-enable
+		// once Step 2.5 (cluster query gate) lands.
 		if SharedContext.Mode == helpers.ModeDistributed {
-			g.Skip("§4.6.4 requires cluster-wide propagation barrier (Phase 2)")
+			g.Skip("§4.6.4 requires the cluster-wide query gate (Phase 2 Step 2.5)")
 		}
 		group1 := fmt.Sprintf("clamp-leak1-%d", time.Now().UnixNano())
 		group2 := fmt.Sprintf("clamp-leak2-%d", time.Now().UnixNano())
