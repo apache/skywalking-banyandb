@@ -21,6 +21,7 @@ import (
 	"context"
 	"errors"
 	"sort"
+	"strconv"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -38,18 +39,27 @@ import (
 	"github.com/apache/skywalking-banyandb/banyand/queue"
 )
 
+// fakeKeyState backs the GetKeyRevisions fake response for a single key.
+// Keys absent from the keyState map default to Present=false (the natural
+// "node hasn't seen this key" semantic).
+type fakeKeyState struct {
+	rev     int64
+	present bool
+}
+
 // fakeNodeStatusClient is a minimal clusterv1.NodeSchemaStatusServiceClient.
-// Only GetMaxRevision is implemented for Phase 2.2 tests; the other RPCs
-// land in 2.3/2.4 and panic if a test accidentally invokes them. revs lets
-// frozen-snapshot tests vary the returned revision per call (call k returns
-// revs[min(k, len-1)]) so the barrier can observe a member catching up
-// across iterations.
+// GetMaxRevision and GetKeyRevisions are implemented; GetAbsentKeys remains
+// a panic stub until Phase 2.4 (FD-1/FD-2). Per-call counters and delays let
+// tests verify chunking + shared-deadline regression behavior.
 type fakeNodeStatusClient struct {
-	err      error
-	callsRef *int32
-	revs     []int64
-	maxRev   int64
-	delay    time.Duration
+	err          error
+	callsRef     *int32
+	keyState     map[string]fakeKeyState
+	keyRevsCalls *int32
+	revs         []int64
+	maxRev       int64
+	delay        time.Duration
+	keyRevsDelay time.Duration
 }
 
 func (f *fakeNodeStatusClient) GetMaxRevision(ctx context.Context, _ *clusterv1.GetMaxRevisionRequest, _ ...grpc.CallOption) (*clusterv1.GetMaxRevisionResponse, error) {
@@ -77,8 +87,43 @@ func (f *fakeNodeStatusClient) GetMaxRevision(ctx context.Context, _ *clusterv1.
 	return &clusterv1.GetMaxRevisionResponse{MaxModRevision: f.maxRev}, nil
 }
 
-func (*fakeNodeStatusClient) GetKeyRevisions(_ context.Context, _ *clusterv1.GetKeyRevisionsRequest, _ ...grpc.CallOption) (*clusterv1.GetKeyRevisionsResponse, error) {
-	panic("GetKeyRevisions: unused in Phase 2.2 tests")
+func (f *fakeNodeStatusClient) GetKeyRevisions(
+	ctx context.Context, req *clusterv1.GetKeyRevisionsRequest, _ ...grpc.CallOption,
+) (*clusterv1.GetKeyRevisionsResponse, error) {
+	if f.keyRevsCalls != nil {
+		atomic.AddInt32(f.keyRevsCalls, 1)
+	}
+	if f.keyRevsDelay > 0 {
+		select {
+		case <-time.After(f.keyRevsDelay):
+		case <-ctx.Done():
+			return nil, ctx.Err()
+		}
+	}
+	if f.err != nil {
+		return nil, f.err
+	}
+	keys := req.GetKeys()
+	revs := make([]*clusterv1.KeyRevision, len(keys))
+	for i, k := range keys {
+		mapKey := k.GetKind() + "|" + k.GetGroup() + "|" + k.GetName()
+		if state, ok := f.keyState[mapKey]; ok {
+			revs[i] = &clusterv1.KeyRevision{Key: k, Present: state.present, ModRevision: state.rev}
+			continue
+		}
+		revs[i] = &clusterv1.KeyRevision{Key: k}
+	}
+	return &clusterv1.GetKeyRevisionsResponse{Revisions: revs}, nil
+}
+
+// keyStateKey produces the deterministic map key used by fakeNodeStatusClient
+// to look up per-(kind,group,name) state. Tests currently exercise only the
+// "stream" kind; extend the signature when other kinds need direct state
+// injection.
+//
+//nolint:unparam // kind/group/name kept symmetric with SchemaKey for clarity.
+func keyStateKey(kind, group, name string) string {
+	return kind + "|" + group + "|" + name
 }
 
 func (*fakeNodeStatusClient) GetAbsentKeys(_ context.Context, _ *clusterv1.GetAbsentKeysRequest, _ ...grpc.CallOption) (*clusterv1.GetAbsentKeysResponse, error) {
@@ -450,4 +495,195 @@ func TestFanOut_LateJoiner_Excluded(t *testing.T) {
 		"frozen snapshot should converge based on peer-A only; late-joiner peer-B is ignored")
 	assert.Empty(t, resp.GetLaggards(),
 		"laggards list must not contain the late joiner peer-B")
+}
+
+// presentAt builds a fakeKeyState shorthand for "key is present on this
+// member at the given revision."
+//
+//nolint:unparam // tests currently target rev=100 only; the parameter is kept for clarity.
+func presentAt(rev int64) fakeKeyState { return fakeKeyState{rev: rev, present: true} }
+
+// streamKey is a SchemaKey constructor for the cluster fan-out tests.
+//
+//nolint:unparam // tests currently use a single group "g"; group remains in the signature for readability.
+func streamKey(group, name string) *schemav1.SchemaKey {
+	return &schemav1.SchemaKey{Kind: "stream", Group: group, Name: name}
+}
+
+// laggardByNode returns the NodeLaggard whose Node field matches `name`, or
+// nil if not found. Used to assert per-node laggard payloads without
+// depending on slice ordering.
+func laggardByNode(laggards []*schemav1.NodeLaggard, name string) *schemav1.NodeLaggard {
+	for _, l := range laggards {
+		if l.GetNode() == name {
+			return l
+		}
+	}
+	return nil
+}
+
+// TestAwaitSchemaApplied_FanOut_PerKeyLaggards verifies that the timeout
+// response carries per-node missing_keys with role-prefixed identifiers, so
+// the caller can see exactly which keys are outstanding on which member.
+func TestAwaitSchemaApplied_FanOut_PerKeyLaggards(t *testing.T) {
+	keys := []*schemav1.SchemaKey{
+		streamKey("g", "k0"),
+		streamKey("g", "k1"),
+		streamKey("g", "k2"),
+		streamKey("g", "k3"),
+		streamKey("g", "k4"),
+	}
+	cache := &staticBarrierCache{
+		maxModRevision: 100,
+		keys: map[string]int64{
+			"stream_g/k0": 100, "stream_g/k1": 100,
+			"stream_g/k2": 100, "stream_g/k3": 100, "stream_g/k4": 100,
+		},
+	}
+	peerA := &fakeNodeStatusClient{keyState: map[string]fakeKeyState{
+		keyStateKey("stream", "g", "k0"): presentAt(100),
+		keyStateKey("stream", "g", "k1"): presentAt(100),
+	}} // missing: k2, k3, k4
+	peerB := &fakeNodeStatusClient{keyState: map[string]fakeKeyState{
+		keyStateKey("stream", "g", "k0"): presentAt(100),
+		keyStateKey("stream", "g", "k1"): presentAt(100),
+		keyStateKey("stream", "g", "k2"): presentAt(100),
+		keyStateKey("stream", "g", "k3"): presentAt(100),
+	}} // missing: k4
+	tier1 := newFakeTier([]string{"peer-A", "peer-B"}, map[string]clusterv1.NodeSchemaStatusServiceClient{
+		"peer-A": peerA,
+		"peer-B": peerB,
+	})
+	svc := (&clusterFixture{cache: cache, tier1: tier1, tier2: newFakeTier(nil, nil), self: "self-liaison"}).build()
+
+	resp, err := svc.AwaitSchemaApplied(context.Background(), &schemav1.AwaitSchemaAppliedRequest{
+		Keys:    keys,
+		Timeout: durationpb.New(60 * time.Millisecond),
+	})
+	require.NoError(t, err)
+	assert.False(t, resp.GetApplied())
+	require.Len(t, resp.GetLaggards(), 2)
+
+	la := laggardByNode(resp.GetLaggards(), "liaison-peer-A")
+	require.NotNil(t, la, "laggard for peer-A must be present")
+	assert.Equal(t, []string{"k2", "k3", "k4"}, schemaKeyNames(la.GetMissingKeys()))
+
+	lb := laggardByNode(resp.GetLaggards(), "liaison-peer-B")
+	require.NotNil(t, lb, "laggard for peer-B must be present")
+	assert.Equal(t, []string{"k4"}, schemaKeyNames(lb.GetMissingKeys()))
+}
+
+// schemaKeyNames extracts the Name field from each SchemaKey for assertion
+// readability.
+func schemaKeyNames(keys []*schemav1.SchemaKey) []string {
+	out := make([]string, len(keys))
+	for i, k := range keys {
+		out[i] = k.GetName()
+	}
+	sort.Strings(out)
+	return out
+}
+
+// TestAwaitSchemaApplied_FanOut_ChunkedKeys verifies that a request whose
+// key count exceeds barrierKeyChunkSize (1000) triggers multiple per-peer
+// RPCs, with the per-chunk responses correctly aggregated into a single
+// missing_keys slice for that peer.
+func TestAwaitSchemaApplied_FanOut_ChunkedKeys(t *testing.T) {
+	const total = 1500
+	keys := make([]*schemav1.SchemaKey, total)
+	cacheKeys := make(map[string]int64, total)
+	for i := range total {
+		name := "k" + strconv.Itoa(i)
+		keys[i] = streamKey("g", name)
+		cacheKeys["stream_g/"+name] = 100 // self has them all
+	}
+	cache := &staticBarrierCache{maxModRevision: 100, keys: cacheKeys}
+
+	var peerCalls int32
+	peer := &fakeNodeStatusClient{
+		keyState:     map[string]fakeKeyState{}, // peer has nothing → every key missing
+		keyRevsCalls: &peerCalls,
+	}
+	tier1 := newFakeTier([]string{"peer"}, map[string]clusterv1.NodeSchemaStatusServiceClient{"peer": peer})
+	svc := (&clusterFixture{cache: cache, tier1: tier1, tier2: newFakeTier(nil, nil), self: "self-liaison"}).build()
+
+	resp, err := svc.AwaitSchemaApplied(context.Background(), &schemav1.AwaitSchemaAppliedRequest{
+		Keys:    keys,
+		Timeout: durationpb.New(40 * time.Millisecond),
+	})
+	require.NoError(t, err)
+	assert.False(t, resp.GetApplied())
+
+	// Expect 2 chunks (1000 + 500) per iteration. The loop may run multiple
+	// iterations within the timeout; assert at least one full pass happened.
+	assert.GreaterOrEqual(t, atomic.LoadInt32(&peerCalls), int32(2),
+		"a 1500-key request must produce >= 2 GetKeyRevisions calls per peer (chunked at 1000)")
+	assert.Equal(t, int32(0), atomic.LoadInt32(&peerCalls)%2,
+		"chunks per iteration is 2 (1000 + 500); call count should be a multiple of 2")
+
+	// All 1500 keys missing from peer; aggregated across both chunks.
+	la := laggardByNode(resp.GetLaggards(), "liaison-peer")
+	require.NotNil(t, la)
+	assert.Len(t, la.GetMissingKeys(), total,
+		"per-peer missing_keys aggregates both chunks")
+}
+
+// TestAwaitSchemaApplied_FanOut_SharedDeadline regresses the plan §2.3
+// contract that each per-node, per-chunk RPC inherits time.Until(deadline)
+// rather than req.Timeout / N. With per-chunk delays larger than the call's
+// total budget, the call must complete around req.Timeout — NOT N × delay.
+func TestAwaitSchemaApplied_FanOut_SharedDeadline(t *testing.T) {
+	const total = 1500
+	keys := make([]*schemav1.SchemaKey, total)
+	for i := range total {
+		keys[i] = streamKey("g", "k"+strconv.Itoa(i))
+	}
+	cache := &staticBarrierCache{maxModRevision: 100} // no keys → self also missing
+
+	peer := &fakeNodeStatusClient{
+		keyState:     map[string]fakeKeyState{},
+		keyRevsDelay: 100 * time.Millisecond, // each chunk is slow
+	}
+	tier1 := newFakeTier([]string{"peer"}, map[string]clusterv1.NodeSchemaStatusServiceClient{"peer": peer})
+	svc := (&clusterFixture{cache: cache, tier1: tier1, tier2: newFakeTier(nil, nil), self: "self-liaison"}).build()
+
+	start := time.Now()
+	resp, err := svc.AwaitSchemaApplied(context.Background(), &schemav1.AwaitSchemaAppliedRequest{
+		Keys:    keys,
+		Timeout: durationpb.New(50 * time.Millisecond),
+	})
+	elapsed := time.Since(start)
+	require.NoError(t, err)
+	assert.False(t, resp.GetApplied())
+	// Without shared deadline the call would take 2 × 100ms = 200ms.
+	// With shared deadline the entire call respects req.Timeout (50ms)
+	// regardless of how many chunks would otherwise be issued.
+	assert.Less(t, elapsed, 180*time.Millisecond,
+		"shared deadline must bound total wall-clock at req.Timeout, not N × per-chunk delay")
+}
+
+// TestAwaitSchemaApplied_FanOut_PeerUnimplemented_TreatedAsReady locks the
+// cross-version policy: a peer (or data node) that returns
+// codes.Unimplemented from GetKeyRevisions — i.e. a Phase-1 v0.11 / v0.12
+// node — is treated as ready (assume every key applied) so partial-upgrade
+// clusters do not deadlock barrier callers.
+func TestAwaitSchemaApplied_FanOut_PeerUnimplemented_TreatedAsReady(t *testing.T) {
+	keys := []*schemav1.SchemaKey{streamKey("g", "k0"), streamKey("g", "k1")}
+	cache := &staticBarrierCache{maxModRevision: 100, keys: map[string]int64{
+		"stream_g/k0": 100, "stream_g/k1": 100,
+	}}
+	legacy := &fakeNodeStatusClient{err: status.Error(codes.Unimplemented, "phase 1 node")}
+	tier1 := newFakeTier([]string{"phase1"}, map[string]clusterv1.NodeSchemaStatusServiceClient{
+		"phase1": legacy,
+	})
+	svc := (&clusterFixture{cache: cache, tier1: tier1, tier2: newFakeTier(nil, nil), self: "self-liaison"}).build()
+
+	resp, err := svc.AwaitSchemaApplied(context.Background(), &schemav1.AwaitSchemaAppliedRequest{
+		Keys:    keys,
+		Timeout: durationpb.New(50 * time.Millisecond),
+	})
+	require.NoError(t, err)
+	assert.True(t, resp.GetApplied(),
+		"Unimplemented from a Phase-1 peer must not block AwaitSchemaApplied")
+	assert.Empty(t, resp.GetLaggards())
 }
