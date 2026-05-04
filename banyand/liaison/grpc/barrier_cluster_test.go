@@ -55,6 +55,7 @@ type fakeNodeStatusClient struct {
 	err          error
 	callsRef     *int32
 	keyState     map[string]fakeKeyState
+	keyStateFn   func() map[string]fakeKeyState
 	keyRevsCalls *int32
 	revs         []int64
 	maxRev       int64
@@ -126,8 +127,37 @@ func keyStateKey(kind, group, name string) string {
 	return kind + "|" + group + "|" + name
 }
 
-func (*fakeNodeStatusClient) GetAbsentKeys(_ context.Context, _ *clusterv1.GetAbsentKeysRequest, _ ...grpc.CallOption) (*clusterv1.GetAbsentKeysResponse, error) {
-	panic("GetAbsentKeys: unused in Phase 2.2 tests")
+func (f *fakeNodeStatusClient) GetAbsentKeys(
+	ctx context.Context, req *clusterv1.GetAbsentKeysRequest, _ ...grpc.CallOption,
+) (*clusterv1.GetAbsentKeysResponse, error) {
+	if f.keyRevsCalls != nil {
+		atomic.AddInt32(f.keyRevsCalls, 1)
+	}
+	if f.keyRevsDelay > 0 {
+		select {
+		case <-time.After(f.keyRevsDelay):
+		case <-ctx.Done():
+			return nil, ctx.Err()
+		}
+	}
+	if f.err != nil {
+		return nil, f.err
+	}
+	state := f.keyState
+	if f.keyStateFn != nil {
+		state = f.keyStateFn()
+	}
+	keys := req.GetKeys()
+	var absent, present []*schemav1.SchemaKey
+	for _, k := range keys {
+		mapKey := k.GetKind() + "|" + k.GetGroup() + "|" + k.GetName()
+		if s, ok := state[mapKey]; ok && s.present {
+			present = append(present, k)
+			continue
+		}
+		absent = append(absent, k)
+	}
+	return &clusterv1.GetAbsentKeysResponse{AbsentKeys: absent, StillPresentKeys: present}, nil
 }
 
 // fakeQueueClient embeds queue.Client (a nil interface) so unused methods
@@ -686,4 +716,116 @@ func TestAwaitSchemaApplied_FanOut_PeerUnimplemented_TreatedAsReady(t *testing.T
 	assert.True(t, resp.GetApplied(),
 		"Unimplemented from a Phase-1 peer must not block AwaitSchemaApplied")
 	assert.Empty(t, resp.GetLaggards())
+}
+
+// TestAwaitSchemaDeleted_FanOut_ReportsStillPresent verifies that the
+// timeout response carries per-node still_present_keys with role-prefixed
+// identifiers — exact mirror of the AwaitSchemaApplied missing-keys layout
+// for the deletion barrier.
+func TestAwaitSchemaDeleted_FanOut_ReportsStillPresent(t *testing.T) {
+	keys := []*schemav1.SchemaKey{
+		streamKey("g", "k0"),
+		streamKey("g", "k1"),
+		streamKey("g", "k2"),
+	}
+	cache := &staticBarrierCache{maxModRevision: 100} // self has nothing → all absent
+	peerA := &fakeNodeStatusClient{keyState: map[string]fakeKeyState{
+		keyStateKey("stream", "g", "k0"): presentAt(100),
+		keyStateKey("stream", "g", "k1"): presentAt(100),
+	}} // still_present: k0, k1
+	peerB := &fakeNodeStatusClient{keyState: map[string]fakeKeyState{
+		keyStateKey("stream", "g", "k2"): presentAt(100),
+	}} // still_present: k2
+	tier1 := newFakeTier([]string{"peer-A", "peer-B"}, map[string]clusterv1.NodeSchemaStatusServiceClient{
+		"peer-A": peerA,
+		"peer-B": peerB,
+	})
+	svc := (&clusterFixture{cache: cache, tier1: tier1, tier2: newFakeTier(nil, nil), self: "self-liaison"}).build()
+
+	resp, err := svc.AwaitSchemaDeleted(context.Background(), &schemav1.AwaitSchemaDeletedRequest{
+		Keys:    keys,
+		Timeout: durationpb.New(60 * time.Millisecond),
+	})
+	require.NoError(t, err)
+	assert.False(t, resp.GetApplied())
+	require.Len(t, resp.GetLaggards(), 2)
+
+	la := laggardByNode(resp.GetLaggards(), "liaison-peer-A")
+	require.NotNil(t, la, "laggard for peer-A must be present")
+	assert.Equal(t, []string{"k0", "k1"}, schemaKeyNames(la.GetStillPresentKeys()))
+
+	lb := laggardByNode(resp.GetLaggards(), "liaison-peer-B")
+	require.NotNil(t, lb, "laggard for peer-B must be present")
+	assert.Equal(t, []string{"k2"}, schemaKeyNames(lb.GetStillPresentKeys()))
+}
+
+// TestAwaitSchemaDeleted_FanOut_SucceedsAfterAllNodesDrain verifies that
+// once every member reports the keys absent, applied=true is returned. The
+// peer's keyState is mutated on the second probe call to simulate a drain
+// completing mid-call (real production: the watch event finally landed).
+func TestAwaitSchemaDeleted_FanOut_SucceedsAfterAllNodesDrain(t *testing.T) {
+	keys := []*schemav1.SchemaKey{streamKey("g", "k0"), streamKey("g", "k1")}
+	cache := &staticBarrierCache{maxModRevision: 100} // self drained from start
+	var calls int32
+	peer := &fakeNodeStatusClient{
+		keyRevsCalls: &calls,
+		keyStateFn: func() map[string]fakeKeyState {
+			// Call 1: both keys still present; call 2+: both drained.
+			if atomic.LoadInt32(&calls) <= 1 {
+				return map[string]fakeKeyState{
+					keyStateKey("stream", "g", "k0"): presentAt(100),
+					keyStateKey("stream", "g", "k1"): presentAt(100),
+				}
+			}
+			return map[string]fakeKeyState{}
+		},
+	}
+	tier1 := newFakeTier([]string{"peer"}, map[string]clusterv1.NodeSchemaStatusServiceClient{"peer": peer})
+	svc := (&clusterFixture{cache: cache, tier1: tier1, tier2: newFakeTier(nil, nil), self: "self-liaison"}).build()
+
+	resp, err := svc.AwaitSchemaDeleted(context.Background(), &schemav1.AwaitSchemaDeletedRequest{
+		Keys:    keys,
+		Timeout: durationpb.New(200 * time.Millisecond),
+	})
+	require.NoError(t, err)
+	assert.True(t, resp.GetApplied(),
+		"barrier must converge once peer reports both keys absent on the second probe")
+	assert.Empty(t, resp.GetLaggards())
+	assert.GreaterOrEqual(t, atomic.LoadInt32(&calls), int32(2),
+		"the loop must have probed at least twice for the drain to be observed")
+}
+
+// TestAwaitSchemaDeleted_FanOut_MixedOldAndNewSchemasOnSameKey verifies
+// that after a delete + recreate at a higher revision, the absence probe
+// recognizes the new live row on every member and returns applied=false
+// with that key in still_present_keys (the new instance is alive — the
+// caller's deletion request is no longer accurate for it).
+//
+// Setup: key "k0" was deleted then recreated at rev=200. peer's cache
+// reports it Present with rev=200. Self's cache also reports it present.
+// The barrier must therefore time out and surface the still-present key.
+func TestAwaitSchemaDeleted_FanOut_MixedOldAndNewSchemasOnSameKey(t *testing.T) {
+	keys := []*schemav1.SchemaKey{streamKey("g", "k0")}
+	cache := &staticBarrierCache{
+		maxModRevision: 200,
+		keys:           map[string]int64{"stream_g/k0": 200}, // recreated at higher rev
+	}
+	peer := &fakeNodeStatusClient{keyState: map[string]fakeKeyState{
+		keyStateKey("stream", "g", "k0"): presentAt(200),
+	}}
+	tier1 := newFakeTier([]string{"peer"}, map[string]clusterv1.NodeSchemaStatusServiceClient{"peer": peer})
+	svc := (&clusterFixture{cache: cache, tier1: tier1, tier2: newFakeTier(nil, nil), self: "self-liaison"}).build()
+
+	resp, err := svc.AwaitSchemaDeleted(context.Background(), &schemav1.AwaitSchemaDeletedRequest{
+		Keys:    keys,
+		Timeout: durationpb.New(40 * time.Millisecond),
+	})
+	require.NoError(t, err)
+	assert.False(t, resp.GetApplied(),
+		"a recreated-at-higher-rev key is alive on every member; deletion barrier must NOT report applied=true")
+	require.NotEmpty(t, resp.GetLaggards())
+	for _, l := range resp.GetLaggards() {
+		assert.Equal(t, []string{"k0"}, schemaKeyNames(l.GetStillPresentKeys()),
+			"every member's laggard entry must list k0 as still present")
+	}
 }
