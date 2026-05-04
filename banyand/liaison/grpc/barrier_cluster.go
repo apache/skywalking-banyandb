@@ -124,13 +124,98 @@ type probeResult struct {
 	ready  bool
 }
 
+// evictedLaggardReason is the laggard.reason value attached to a member that
+// transitioned Active → Evictable while a barrier call was in flight. The
+// cluster has already decided the node is unreliable; the barrier defers to
+// that decision rather than try to override it, but surfaces the eviction
+// once so callers see why the watched set shrank mid-call.
+const evictedLaggardReason = "evicted_during_poll"
+
+// membershipView is a snapshot of the tier1 + tier2 route tables collapsed
+// into name-keyed sets. The barrier loop refreshes this each iteration to
+// detect Active → Evictable / Active → Removed transitions on the frozen
+// member set built at call start.
+type membershipView struct {
+	active    map[string]struct{}
+	evictable map[string]struct{}
+}
+
+// currentMembership reads tier1 and tier2 route tables and merges their
+// Active and Evictable lists into name sets. Both providers contribute to
+// both sets — dedup is by name, so a hybrid host appearing in both tiers
+// counts once. The connection-pool layer guarantees that GetRouteTable()
+// returns a copy, so this read is safe to call concurrently without locking.
+func (b *barrierService) currentMembership() membershipView {
+	view := membershipView{
+		active:    map[string]struct{}{},
+		evictable: map[string]struct{}{},
+	}
+	addFromTier := func(provider func() queue.Client) {
+		if provider == nil {
+			return
+		}
+		client := provider()
+		if client == nil {
+			return
+		}
+		rt := client.GetRouteTable()
+		if rt == nil {
+			return
+		}
+		for _, n := range rt.GetActive() {
+			view.active[n] = struct{}{}
+		}
+		for _, n := range rt.GetEvictable() {
+			view.evictable[n] = struct{}{}
+		}
+	}
+	addFromTier(b.peerLiaisons)
+	addFromTier(b.dataNodes)
+	return view
+}
+
+// applyTransitions walks the alive members against the current membership
+// view and partitions them into "still alive" (kept for the next probe) and
+// "newly evicted" (surfaced as one-time laggards with reason="evicted_during_poll").
+// Members whose names disappear from BOTH active and evictable are treated
+// as having left the cluster (graceful leave) and are dropped without a
+// laggard entry, per the frozen-snapshot policy. Self is always kept — the
+// in-process member never transitions.
+func applyTransitions(alive []member, view membershipView, lastRev map[string]int64) (kept []member, newlyEvicted []*schemav1.NodeLaggard) {
+	for _, m := range alive {
+		if m.isSelf {
+			kept = append(kept, m)
+			continue
+		}
+		if _, evicted := view.evictable[m.name]; evicted {
+			newlyEvicted = append(newlyEvicted, &schemav1.NodeLaggard{
+				Node:               m.laggardName(),
+				CurrentModRevision: lastRev[m.name],
+				Reason:             evictedLaggardReason,
+			})
+			continue
+		}
+		if _, active := view.active[m.name]; !active {
+			// Absent from both sets: graceful leave. Drop silently per
+			// the frozen-snapshot leave-during-poll branch.
+			continue
+		}
+		kept = append(kept, m)
+	}
+	return kept, newlyEvicted
+}
+
 // awaitRevisionAppliedCluster runs the cluster-wide fan-out for
 // AwaitRevisionApplied. The receiving liaison's own cache is probed
 // in-process; peers are probed via clusterv1.NodeSchemaStatusService over the
-// *grpc.ClientConn borrowed from queue.Client.
+// *grpc.ClientConn borrowed from queue.Client. The frozen watched set built
+// at call start is shrunk mid-call when members transition Active → Evictable
+// (recorded as one-time `evicted_during_poll` laggards) or Active → Removed
+// (silent leave). Late joiners — nodes that enter Active after the snapshot
+// — are excluded; they show up in subsequent calls.
 func (b *barrierService) awaitRevisionAppliedCluster(ctx context.Context, req *schemav1.AwaitRevisionAppliedRequest) (*schemav1.AwaitRevisionAppliedResponse, error) {
-	members := b.snapshotMembers()
-	if len(members) == 0 {
+	frozen := b.snapshotMembers()
+	if len(frozen) == 0 {
 		return nil, status.Errorf(codes.Unavailable, "no active cluster members")
 	}
 
@@ -138,17 +223,35 @@ func (b *barrierService) awaitRevisionAppliedCluster(ctx context.Context, req *s
 	pollCtx, cancel := context.WithDeadline(ctx, deadline)
 	defer cancel()
 
+	alive := frozen
+	lastRev := map[string]int64{}
+	var evictedLaggards []*schemav1.NodeLaggard
 	interval := barrierInitInterval
 	var lastResults []probeResult
 	for {
-		lastResults = b.probeMembers(pollCtx, members, req.GetMinRevision(), deadline)
+		view := b.currentMembership()
+		var newlyEvicted []*schemav1.NodeLaggard
+		alive, newlyEvicted = applyTransitions(alive, view, lastRev)
+		evictedLaggards = append(evictedLaggards, newlyEvicted...)
+
+		if len(alive) == 0 {
+			// Every frozen member departed mid-call. The remaining cluster
+			// has no objection to the target revision; surface the eviction
+			// notices and return applied=true so callers can act.
+			return &schemav1.AwaitRevisionAppliedResponse{Applied: true, Laggards: evictedLaggards}, nil
+		}
+
+		lastResults = b.probeMembers(pollCtx, alive, req.GetMinRevision(), deadline)
+		for _, r := range lastResults {
+			lastRev[r.member.name] = r.rev
+		}
 		if allReady(lastResults) {
-			return &schemav1.AwaitRevisionAppliedResponse{Applied: true}, nil
+			return &schemav1.AwaitRevisionAppliedResponse{Applied: true, Laggards: evictedLaggards}, nil
 		}
 		if time.Now().After(deadline) {
 			return &schemav1.AwaitRevisionAppliedResponse{
 				Applied:  false,
-				Laggards: revisionLaggards(lastResults),
+				Laggards: append(revisionLaggards(lastResults), evictedLaggards...),
 			}, nil
 		}
 		select {
@@ -156,7 +259,7 @@ func (b *barrierService) awaitRevisionAppliedCluster(ctx context.Context, req *s
 		case <-pollCtx.Done():
 			return &schemav1.AwaitRevisionAppliedResponse{
 				Applied:  false,
-				Laggards: revisionLaggards(lastResults),
+				Laggards: append(revisionLaggards(lastResults), evictedLaggards...),
 			}, nil
 		}
 		interval = barrierBackoff(interval)
