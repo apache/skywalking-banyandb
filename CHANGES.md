@@ -37,7 +37,7 @@ Release Notes.
   - `AwaitRevisionApplied` now fans out across the receiving liaison's frozen tier1 (peer-liaison) + tier2 (data-node) Active set, probing each member in parallel via `GetMaxRevision` with shared per-call deadline. Cross-version peers returning `codes.Unimplemented` are treated as ready so partial-upgrade clusters do not deadlock; transient RPC errors count as per-iteration laggards. Empty Active set fails fast with `codes.Unavailable`.
   - Frozen-snapshot mid-call semantics: members that transition `Active → Evictable` during a call are dropped from subsequent probes and surfaced once as a `NodeLaggard{reason="evicted_during_poll"}`; members that disappear from the route table altogether are dropped silently; late joiners are excluded from the watched set until the next call. Adds `reason` field (5) to `NodeLaggard` proto.
   - `AwaitSchemaApplied` and `AwaitSchemaDeleted` follow the same fan-out shape using `GetKeyRevisions` / `GetAbsentKeys` respectively, with per-node calls chunked at 1000 keys and a shared call-wide deadline (no equal-slice division across chunks). Per-node laggards carry the per-member `missing_keys` / `still_present_keys` they observed.
-  - Re-enable §4.6.2 distributed spec (no Write→Query baseline). §6.8, §6.11, §4.6.4 remain skipped pending Step 2.5's cluster query gate.
+  - First-attempt re-enable of the four Phase-1-deferred distributed specs (§6.8, §6.11, §4.6.4, §4.6.2) confirmed all four still flake under the cluster barrier alone (first run had §4.6.2 passing; second run reproduced the `group not found` race). All four guards stay in place pending Step 2.5's cluster query gate; comments updated to cite the gate as the next prerequisite.
 
 ### Bug Fixes
 
