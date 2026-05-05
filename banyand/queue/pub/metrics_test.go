@@ -19,6 +19,7 @@ package pub
 
 import (
 	"context"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -27,6 +28,7 @@ import (
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
 
+	"github.com/apache/skywalking-banyandb/api/data"
 	clusterv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/cluster/v1"
 	modelv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/model/v1"
 	"github.com/apache/skywalking-banyandb/banyand/metadata/schema"
@@ -128,6 +130,42 @@ func (g *valGauge) value() float64 {
 	g.mu.Lock()
 	defer g.mu.Unlock()
 	return g.val
+}
+
+// inflightKeyedGauge tracks inflight_requests Add deltas per (topic, node) label pair.
+type inflightKeyedGauge struct {
+	vals map[string]float64
+	mu   sync.Mutex
+}
+
+func newInflightKeyedGauge() *inflightKeyedGauge {
+	return &inflightKeyedGauge{vals: make(map[string]float64)}
+}
+
+func inflightReqKey(topic, node string) string {
+	return strings.Join([]string{topic, node}, "|")
+}
+
+func (g *inflightKeyedGauge) Add(delta float64, labels ...string) {
+	if len(labels) < 2 {
+		return
+	}
+	k := inflightReqKey(labels[0], labels[1])
+	g.mu.Lock()
+	g.vals[k] += delta
+	g.mu.Unlock()
+}
+
+func (*inflightKeyedGauge) Set(_ float64, _ ...string) {}
+
+func (*inflightKeyedGauge) Delete(_ ...string) bool {
+	return true
+}
+
+func (g *inflightKeyedGauge) net(topic, node string) float64 {
+	g.mu.Lock()
+	defer g.mu.Unlock()
+	return g.vals[inflightReqKey(topic, node)]
 }
 
 type noopHistogram struct{}
@@ -402,4 +440,53 @@ func TestCloseDecrementsInflightStreams(t *testing.T) {
 	_, closeErr := bp.Close()
 	require.NoError(t, closeErr)
 	require.Equal(t, float64(0), streamGauge.value(), "Close should decrement inflight_streams once per open stream")
+}
+
+// TestPublishInflightRequestsBalancedWhenStreamPreexists checks that Publish increments then decrements
+// inflight_requests (via defer) when reusing an existing stream, without requiring GetClient / new stream setup.
+func TestPublishInflightRequestsBalancedWhenStreamPreexists(t *testing.T) {
+	inflightReq := newInflightKeyedGauge()
+	sendErrCap := newErrReasonCapturer()
+	attempts := &countingCounter{}
+	pm := &pubMetrics{
+		sendAttemptsTotal:   attempts,
+		sendErrTotal:        sendErrCap,
+		sendBytesTotal:      &countingCounter{},
+		sendDurationSeconds: &noopHistogram{},
+		sendRetryAttempts:   &countingCounter{},
+		sendRetryExhausted:  &countingCounter{},
+		sendBackoffSeconds:  &countingCounter{},
+		inflightStreams:     &noopGauge{},
+		inflightRequests:    inflightReq,
+	}
+	p := newPubWithConnMgrForMetrics(t, pm)
+
+	ctx := context.Background()
+	mockStream := NewMockSendClient(ctx)
+	mockStream.SetSendFunc(func(*clusterv1.SendRequest) error {
+		return nil
+	})
+
+	doneCh := make(chan struct{})
+	close(doneCh)
+
+	const nodeName = "node-a"
+	topic := data.TopicMeasureWrite
+	topicStr := topic.String()
+
+	bp := p.NewBatchPublisher(10 * time.Second).(*batchPublisher)
+	bp.streams[nodeName] = writeStream{
+		client:    mockStream,
+		ctxDoneCh: doneCh,
+	}
+
+	msg := bus.NewMessageWithNode(1, nodeName, []byte("payload"))
+
+	_, publishErr := bp.Publish(ctx, topic, msg)
+	require.NoError(t, publishErr)
+
+	require.Equal(t, float64(1), attempts.count, "successful retrySend should record send_attempts_total")
+	require.Equal(t, float64(0), inflightReq.net(topicStr, nodeName),
+		"inflight_requests defer must balance +1/-1 for topic/node")
+	require.Equal(t, float64(0), sendErrCap.sum(sendErrReasonRetryExhausted))
 }
