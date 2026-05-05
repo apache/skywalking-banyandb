@@ -42,13 +42,17 @@ import (
 	"github.com/apache/skywalking-banyandb/banyand/internal/storage"
 	"github.com/apache/skywalking-banyandb/banyand/metadata"
 	"github.com/apache/skywalking-banyandb/banyand/metadata/schema"
+	"github.com/apache/skywalking-banyandb/banyand/observability"
 	"github.com/apache/skywalking-banyandb/banyand/queue"
 	"github.com/apache/skywalking-banyandb/pkg/bus"
 	"github.com/apache/skywalking-banyandb/pkg/grpchelper"
 	"github.com/apache/skywalking-banyandb/pkg/logger"
+	"github.com/apache/skywalking-banyandb/pkg/meter"
 	"github.com/apache/skywalking-banyandb/pkg/run"
 	pkgtls "github.com/apache/skywalking-banyandb/pkg/tls"
 )
+
+var queuePubScope = observability.RootScope.SubScope("queue_pub")
 
 // ChunkedSyncClientConfig configures chunked sync client behavior.
 type ChunkedSyncClientConfig struct {
@@ -71,6 +75,7 @@ type pub struct {
 	metadata        metadata.Repo
 	handlers        map[bus.Topic]schema.EventHandler
 	log             *logger.Logger
+	metrics         *pubMetrics
 	connMgr         *grpchelper.ConnManager[*client]
 	closer          *run.Closer
 	writableProbe   map[string]map[string]struct{}
@@ -81,6 +86,34 @@ type pub struct {
 	allowedRoles    []databasev1.Role
 	writableProbeMu sync.Mutex
 	tlsEnabled      bool
+}
+
+type pubMetrics struct {
+	sendAttemptsTotal   meter.Counter
+	sendErrTotal        meter.Counter
+	sendBytesTotal      meter.Counter
+	sendDurationSeconds meter.Histogram
+
+	sendRetryAttempts  meter.Counter
+	sendRetryExhausted meter.Counter
+	sendBackoffSeconds meter.Counter
+	inflightStreams    meter.Gauge
+	inflightRequests   meter.Gauge
+}
+
+func newPubMetrics(factory observability.Factory) *pubMetrics {
+	return &pubMetrics{
+		sendAttemptsTotal:   factory.NewCounter("send_attempts_total", "topic", "node"),
+		sendErrTotal:        factory.NewCounter("send_err_total", "topic", "node", "reason"),
+		sendBytesTotal:      factory.NewCounter("send_bytes_total", "topic", "node"),
+		sendDurationSeconds: factory.NewHistogram("send_duration_seconds", meter.DefBuckets, "topic", "node"),
+
+		sendRetryAttempts:  factory.NewCounter("send_retry_attempts_total", "topic", "node"),
+		sendRetryExhausted: factory.NewCounter("send_retry_exhausted_total", "topic", "node"),
+		sendBackoffSeconds: factory.NewCounter("send_backoff_seconds_total", "topic", "node"),
+		inflightStreams:    factory.NewGauge("inflight_streams", "node"),
+		inflightRequests:   factory.NewGauge("inflight_requests", "topic", "node"),
+	}
 }
 
 // AddressOf implements grpchelper.ConnectionHandler.
@@ -386,6 +419,18 @@ func (p *pub) PreRun(context.Context) error {
 	}
 
 	p.log = logger.GetLogger("server-queue-pub-" + p.prefix)
+
+	if p.metrics == nil {
+		if svc, ok := p.metadata.(metadata.Service); ok {
+			if omr := svc.MetricsRegistry(); omr != nil {
+				p.metrics = newPubMetrics(omr.With(queuePubScope))
+			} else {
+				p.log.Warn().Msg("queue_pub metrics disabled: MetricsRegistry returned nil")
+			}
+		} else {
+			p.log.Warn().Msg("queue_pub metrics disabled: metadata does not implement metadata.Service")
+		}
+	}
 
 	// Initialize connection manager with the pub as the handler
 	p.connMgr = grpchelper.NewConnManager(grpchelper.ConnManagerConfig[*client]{ //nolint:contextcheck // health check runs in background goroutine

@@ -65,6 +65,7 @@ type Service interface {
 	run.Config
 	SchemaRegistry() schema.Registry
 	SetMetricsRegistry(omr observability.MetricsRegistry)
+	MetricsRegistry() observability.MetricsRegistry
 	SetDataBroadcaster(broadcaster bus.Broadcaster)
 	SetLiaisonBroadcaster(broadcaster bus.Broadcaster)
 	RegisterDataCollector(catalog commonv1.Catalog, collector schema.DataInfoCollector)
