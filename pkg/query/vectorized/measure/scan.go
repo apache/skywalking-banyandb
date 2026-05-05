@@ -153,43 +153,77 @@ func fillMetadata(b *vectorized.RecordBatch, schema *vectorized.BatchSchema,
 }
 
 // fillTags extracts every tag column for n rows starting at pos into the batch
-// at offset. Tag families and tag names are matched against the BatchSchema;
-// unmatched tags in cur are skipped.
+// at offset. Schema-declared tag columns missing from cur are grown with
+// explicit nulls so a downstream serializer sees the same shape the row path
+// emits when the projected tag is absent (which the multi-group flow
+// produces — one group's schema may lack a tag the other group has).
 func fillTags(b *vectorized.RecordBatch, schema *vectorized.BatchSchema,
 	cur *model.MeasureResult, pos, offset, n int,
 ) error {
-	for _, tf := range cur.TagFamilies {
-		for _, tag := range tf.Tags {
-			colIdx, ok := schema.TagIndex(tf.Name, tag.Name)
-			if !ok {
-				continue
+	resultTags := make(map[int]*model.Tag, len(cur.TagFamilies))
+	for tfIdx := range cur.TagFamilies {
+		tf := &cur.TagFamilies[tfIdx]
+		for tagIdx := range tf.Tags {
+			tag := &tf.Tags[tagIdx]
+			if colIdx, ok := schema.TagIndex(tf.Name, tag.Name); ok {
+				resultTags[colIdx] = tag
 			}
-			col := b.Columns[colIdx]
-			growColumn(col, n)
-			if extractErr := extractTagBulk(col, offset, tag.Values[pos:pos+n], n); extractErr != nil {
-				return extractErr
-			}
+		}
+	}
+	for colIdx, def := range schema.Columns {
+		if def.Role != vectorized.RoleTag {
+			continue
+		}
+		col := b.Columns[colIdx]
+		growColumn(col, n)
+		tag, present := resultTags[colIdx]
+		if !present {
+			markRowsNull(col, offset, n)
+			continue
+		}
+		if extractErr := extractTagBulk(col, offset, tag.Values[pos:pos+n], n); extractErr != nil {
+			return extractErr
 		}
 	}
 	return nil
 }
 
-// fillFields is the field-side counterpart of fillTags.
+// fillFields is the field-side counterpart of fillTags. Same null-fill rule
+// applies for projection entries that the active result lacks.
 func fillFields(b *vectorized.RecordBatch, schema *vectorized.BatchSchema,
 	cur *model.MeasureResult, pos, offset, n int,
 ) error {
-	for _, f := range cur.Fields {
-		colIdx, ok := schema.FieldIndex(f.Name)
-		if !ok {
+	resultFields := make(map[int]*model.Field, len(cur.Fields))
+	for fIdx := range cur.Fields {
+		f := &cur.Fields[fIdx]
+		if colIdx, ok := schema.FieldIndex(f.Name); ok {
+			resultFields[colIdx] = f
+		}
+	}
+	for colIdx, def := range schema.Columns {
+		if def.Role != vectorized.RoleField {
 			continue
 		}
 		col := b.Columns[colIdx]
 		growColumn(col, n)
+		f, present := resultFields[colIdx]
+		if !present {
+			markRowsNull(col, offset, n)
+			continue
+		}
 		if extractErr := extractFieldBulk(col, offset, f.Values[pos:pos+n], n); extractErr != nil {
 			return extractErr
 		}
 	}
 	return nil
+}
+
+// markRowsNull marks rows [offset, offset+n) in col as null without otherwise
+// touching the underlying data slice.
+func markRowsNull(col vectorized.Column, offset, n int) {
+	for k := range n {
+		col.MarkNullAt(offset + k)
+	}
 }
 
 func appendInt64Zeros(c *vectorized.TypedColumn[int64], n int) {

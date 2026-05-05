@@ -26,6 +26,7 @@ import (
 
 	"github.com/apache/skywalking-banyandb/api/common"
 	commonv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/common/v1"
+	databasev1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/database/v1"
 	measurev1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/measure/v1"
 	modelv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/model/v1"
 	"github.com/apache/skywalking-banyandb/pkg/index"
@@ -36,8 +37,18 @@ import (
 	"github.com/apache/skywalking-banyandb/pkg/query/executor"
 	"github.com/apache/skywalking-banyandb/pkg/query/logical"
 	"github.com/apache/skywalking-banyandb/pkg/query/model"
+	vmeasure "github.com/apache/skywalking-banyandb/pkg/query/vectorized/measure"
 	"github.com/apache/skywalking-banyandb/pkg/timestamp"
 )
+
+// vectorizedExecutionContext is an optional capability the executor may
+// expose. When set and Enabled, localIndexScan wraps the row-path
+// MeasureQueryResult in a vectorized adapter instead of the legacy
+// resultMIterator. The bool guard keeps the row path mechanically untouched
+// when the flag is off — confirming C1 (zero regression).
+type vectorizedExecutionContext interface {
+	VectorizedConfig() vmeasure.VectorizedConfig
+}
 
 var _ logical.UnresolvedPlan = (*unresolvedIndexScan)(nil)
 
@@ -218,7 +229,7 @@ func (i *localIndexScan) Execute(ctx context.Context) (mit executor.MIterator, e
 	}
 	ctx, stop := i.startSpan(ctx, query.GetTracer(ctx), orderBy)
 	defer stop(err)
-	result, err := i.ec.Query(ctx, model.MeasureQueryOptions{
+	opts := model.MeasureQueryOptions{
 		Name:            i.metadata.GetName(),
 		TimeRange:       &i.timeRange,
 		Entities:        i.entities,
@@ -226,9 +237,15 @@ func (i *localIndexScan) Execute(ctx context.Context) (mit executor.MIterator, e
 		Order:           orderBy,
 		TagProjection:   i.projectionTags,
 		FieldProjection: i.projectionFields,
-	})
+	}
+	result, err := i.ec.Query(ctx, opts)
 	if err != nil {
 		return nil, fmt.Errorf("failed to query measure: %w", err)
+	}
+	if vit, vok, vErr := i.maybeVectorized(ctx, result, opts); vErr != nil {
+		return nil, vErr
+	} else if vok {
+		return vit, nil
 	}
 	return &resultMIterator{
 		result:           result,
@@ -236,6 +253,85 @@ func (i *localIndexScan) Execute(ctx context.Context) (mit executor.MIterator, e
 		projectionFields: i.projectionFields,
 		hiddenTags:       i.hiddenTags,
 	}, nil
+}
+
+// maybeVectorized returns a vectorized MIterator iff every gate is met:
+//   - the executor exposes a VectorizedConfig.
+//   - the config is Enabled.
+//   - the underlying result is non-nil (the row path returns a typed-nil result
+//     for empty queries; routing that through the vectorized scan would NPE).
+//   - the logical schema exposes the *databasev1.Measure needed to type the
+//     batch columns.
+//
+// Any negative answer falls through to the row path, so flag-off behavior is
+// byte-identical to the pre-G4 codepath.
+func (i *localIndexScan) maybeVectorized(ctx context.Context, result model.MeasureQueryResult,
+	opts model.MeasureQueryOptions,
+) (executor.MIterator, bool, error) {
+	if result == nil {
+		return nil, false, nil
+	}
+	src, ok := i.ec.(vectorizedExecutionContext)
+	if !ok {
+		return nil, false, nil
+	}
+	cfg := src.VectorizedConfig()
+	if !cfg.Enabled {
+		return nil, false, nil
+	}
+	measureSchema := i.measureSchema()
+	if measureSchema == nil {
+		return nil, false, nil
+	}
+	it, buildErr := vmeasure.NewMIterator(ctx, result, measureSchema, opts, cfg)
+	if buildErr != nil {
+		// NewMIterator does not take ownership of result on failure; the
+		// row-path code releases on Close, so without this Release the
+		// snapshots / segments behind result leak.
+		result.Release()
+		return nil, false, fmt.Errorf("failed to build vectorized iterator: %w", buildErr)
+	}
+	if i.hiddenTags.IsEmpty() {
+		return it, true, nil
+	}
+	return &hiddenTagsMIterator{inner: it, hiddenTags: i.hiddenTags}, true, nil
+}
+
+// hiddenTagsMIterator wraps an MIterator and strips hidden criteria tags from
+// each Current() result. The row path applies the same strip inside
+// resultMIterator.Next; this decorator keeps the vectorized path's contract
+// identical without duplicating filter logic into the vectorized package.
+type hiddenTagsMIterator struct {
+	inner      executor.MIterator
+	hiddenTags logical.HiddenTagSet
+}
+
+func (h *hiddenTagsMIterator) Next() bool { return h.inner.Next() }
+
+func (h *hiddenTagsMIterator) Current() []*measurev1.InternalDataPoint {
+	dps := h.inner.Current()
+	for _, dp := range dps {
+		if dp == nil || dp.DataPoint == nil {
+			continue
+		}
+		dp.DataPoint.TagFamilies = h.hiddenTags.StripHiddenTags(dp.DataPoint.TagFamilies)
+	}
+	return dps
+}
+
+func (h *hiddenTagsMIterator) Close() error { return h.inner.Close() }
+
+// measureSchema extracts the *databasev1.Measure from the logical schema. The
+// vectorized path needs it to type each projected column.
+func (i *localIndexScan) measureSchema() *databasev1.Measure {
+	if i.schema == nil {
+		return nil
+	}
+	ms, ok := i.schema.(*schema)
+	if !ok {
+		return nil
+	}
+	return ms.measure
 }
 
 func (i *localIndexScan) String() string {

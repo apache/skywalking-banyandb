@@ -18,6 +18,7 @@
 package measure
 
 import (
+	"slices"
 	"time"
 
 	"google.golang.org/protobuf/types/known/timestamppb"
@@ -94,6 +95,10 @@ func buildDataPoint(b *vectorized.RecordBatch, schema *vectorized.BatchSchema, r
 	return dp
 }
 
+// columnValueToTagValue materializes a *modelv1.TagValue from one row of col.
+// Slice-typed values (BinaryData, IntArray, StrArray) are defensively copied
+// so the produced TagValue does not alias the column's backing slice — pooled
+// batches re-overwrite that slice on the next iteration.
 func columnValueToTagValue(col vectorized.Column, rowIdx int) *modelv1.TagValue {
 	if col.IsNull(rowIdx) {
 		return &modelv1.TagValue{Value: &modelv1.TagValue_Null{}}
@@ -104,15 +109,20 @@ func columnValueToTagValue(col vectorized.Column, rowIdx int) *modelv1.TagValue 
 	case *vectorized.TypedColumn[string]:
 		return &modelv1.TagValue{Value: &modelv1.TagValue_Str{Str: &modelv1.Str{Value: c.Data()[rowIdx]}}}
 	case *vectorized.TypedColumn[[]byte]:
-		return &modelv1.TagValue{Value: &modelv1.TagValue_BinaryData{BinaryData: c.Data()[rowIdx]}}
+		src := c.Data()[rowIdx]
+		buf := make([]byte, len(src))
+		copy(buf, src)
+		return &modelv1.TagValue{Value: &modelv1.TagValue_BinaryData{BinaryData: buf}}
 	case *vectorized.TypedColumn[[]int64]:
-		return &modelv1.TagValue{Value: &modelv1.TagValue_IntArray{IntArray: &modelv1.IntArray{Value: c.Data()[rowIdx]}}}
+		return &modelv1.TagValue{Value: &modelv1.TagValue_IntArray{IntArray: &modelv1.IntArray{Value: slices.Clone(c.Data()[rowIdx])}}}
 	case *vectorized.TypedColumn[[]string]:
-		return &modelv1.TagValue{Value: &modelv1.TagValue_StrArray{StrArray: &modelv1.StrArray{Value: c.Data()[rowIdx]}}}
+		return &modelv1.TagValue{Value: &modelv1.TagValue_StrArray{StrArray: &modelv1.StrArray{Value: slices.Clone(c.Data()[rowIdx])}}}
 	}
 	return &modelv1.TagValue{Value: &modelv1.TagValue_Null{}}
 }
 
+// columnValueToFieldValue is the field-side counterpart. Same defensive copy
+// rule for BinaryData.
 func columnValueToFieldValue(col vectorized.Column, rowIdx int) *modelv1.FieldValue {
 	if col.IsNull(rowIdx) {
 		return &modelv1.FieldValue{Value: &modelv1.FieldValue_Null{}}
@@ -125,7 +135,10 @@ func columnValueToFieldValue(col vectorized.Column, rowIdx int) *modelv1.FieldVa
 	case *vectorized.TypedColumn[string]:
 		return &modelv1.FieldValue{Value: &modelv1.FieldValue_Str{Str: &modelv1.Str{Value: c.Data()[rowIdx]}}}
 	case *vectorized.TypedColumn[[]byte]:
-		return &modelv1.FieldValue{Value: &modelv1.FieldValue_BinaryData{BinaryData: c.Data()[rowIdx]}}
+		src := c.Data()[rowIdx]
+		buf := make([]byte, len(src))
+		copy(buf, src)
+		return &modelv1.FieldValue{Value: &modelv1.FieldValue_BinaryData{BinaryData: buf}}
 	}
 	return &modelv1.FieldValue{Value: &modelv1.FieldValue_Null{}}
 }

@@ -27,8 +27,9 @@ import (
 )
 
 // buildAdapterPipeline wires a BatchScan into a minimal Pipeline against the
-// supplied fake MeasureQueryResult.
-func buildAdapterPipeline(t *testing.T, qr model.MeasureQueryResult) *vectorized.Pipeline {
+// supplied fake MeasureQueryResult and returns both the pipeline and its pool
+// so the adapter can recycle batches.
+func buildAdapterPipeline(t *testing.T, qr model.MeasureQueryResult) (*vectorized.Pipeline, *vectorized.BatchPool) {
 	t.Helper()
 	schema := minimalSchema()
 	pool := vectorized.NewBatchPool(schema, 4)
@@ -40,28 +41,32 @@ func buildAdapterPipeline(t *testing.T, qr model.MeasureQueryResult) *vectorized
 	if err := scan.Init(context.Background()); err != nil {
 		t.Fatal(err)
 	}
-	return p
+	return p, pool
 }
 
 func TestVectorizedMIterator_Next_PullsAndSerializes(t *testing.T) {
 	qr := &fakeMeasureQueryResult{seq: []*model.MeasureResult{mkResult(1, 100, 200)}}
-	p := buildAdapterPipeline(t, qr)
-	it := newVectorizedMIterator(context.Background(), p)
+	p, pool := buildAdapterPipeline(t, qr)
+	it := newVectorizedMIterator(context.Background(), p, pool)
 	defer it.Close()
 
-	if !it.Next() {
-		t.Fatalf("Next must return true while pipeline has data; err=%v", it.Err())
+	count := 0
+	for it.Next() {
+		dps := it.Current()
+		if len(dps) != 1 {
+			t.Fatalf("Current length: want 1, got %d", len(dps))
+		}
+		count++
 	}
-	dps := it.Current()
-	if len(dps) != 2 {
-		t.Fatalf("Current length: want 2, got %d", len(dps))
+	if count != 2 {
+		t.Fatalf("iterations: want 2, got %d", count)
 	}
 }
 
 func TestVectorizedMIterator_Next_ReturnsFalseOnEOF(t *testing.T) {
 	qr := &fakeMeasureQueryResult{seq: nil}
-	p := buildAdapterPipeline(t, qr)
-	it := newVectorizedMIterator(context.Background(), p)
+	p, pool := buildAdapterPipeline(t, qr)
+	it := newVectorizedMIterator(context.Background(), p, pool)
 	defer it.Close()
 
 	if it.Next() {
@@ -75,8 +80,8 @@ func TestVectorizedMIterator_Next_ReturnsFalseOnEOF(t *testing.T) {
 func TestVectorizedMIterator_Next_ReturnsFalseOnError_ErrExposedViaErr(t *testing.T) {
 	boom := errors.New("storage boom")
 	qr := &fakeMeasureQueryResult{seq: []*model.MeasureResult{mkResultErr(boom)}}
-	p := buildAdapterPipeline(t, qr)
-	it := newVectorizedMIterator(context.Background(), p)
+	p, pool := buildAdapterPipeline(t, qr)
+	it := newVectorizedMIterator(context.Background(), p, pool)
 	defer it.Close()
 
 	if it.Next() {
@@ -87,10 +92,10 @@ func TestVectorizedMIterator_Next_ReturnsFalseOnError_ErrExposedViaErr(t *testin
 	}
 }
 
-func TestVectorizedMIterator_Current_ReturnsLastSerializedBatch(t *testing.T) {
+func TestVectorizedMIterator_Current_ReturnsCurrentRow(t *testing.T) {
 	qr := &fakeMeasureQueryResult{seq: []*model.MeasureResult{mkResult(1, 100)}}
-	p := buildAdapterPipeline(t, qr)
-	it := newVectorizedMIterator(context.Background(), p)
+	p, pool := buildAdapterPipeline(t, qr)
+	it := newVectorizedMIterator(context.Background(), p, pool)
 	defer it.Close()
 
 	_ = it.Next()
@@ -98,16 +103,16 @@ func TestVectorizedMIterator_Current_ReturnsLastSerializedBatch(t *testing.T) {
 	if len(first) != 1 {
 		t.Fatalf("first Current len: want 1, got %d", len(first))
 	}
-	// Current called repeatedly should keep returning the last batch.
+	// Current called repeatedly without Next must keep returning the same row.
 	if got := it.Current(); len(got) != 1 {
-		t.Fatalf("repeat Current must return same batch; got len %d", len(got))
+		t.Fatalf("repeat Current must return same row; got len %d", len(got))
 	}
 }
 
 func TestVectorizedMIterator_Close_DelegatesToPipelineClose_Idempotent(t *testing.T) {
 	qr := &fakeMeasureQueryResult{seq: []*model.MeasureResult{mkResult(1, 100)}}
-	p := buildAdapterPipeline(t, qr)
-	it := newVectorizedMIterator(context.Background(), p)
+	p, pool := buildAdapterPipeline(t, qr)
+	it := newVectorizedMIterator(context.Background(), p, pool)
 	if err := it.Close(); err != nil {
 		t.Fatal(err)
 	}

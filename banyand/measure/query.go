@@ -39,6 +39,7 @@ import (
 	pbv1 "github.com/apache/skywalking-banyandb/pkg/pb/v1"
 	"github.com/apache/skywalking-banyandb/pkg/pool"
 	"github.com/apache/skywalking-banyandb/pkg/query/model"
+	vmeasure "github.com/apache/skywalking-banyandb/pkg/query/vectorized/measure"
 	resourceSchema "github.com/apache/skywalking-banyandb/pkg/schema"
 	"github.com/apache/skywalking-banyandb/pkg/timestamp"
 )
@@ -71,6 +72,7 @@ var _ Measure = (*measure)(nil)
 type queryOptions struct {
 	schemaTagTypes map[string]pbv1.ValueType
 	model.MeasureQueryOptions
+	vectorized   vmeasure.VectorizedConfig
 	minTimestamp int64
 	maxTimestamp int64
 }
@@ -183,6 +185,7 @@ func (m *measure) Query(ctx context.Context, mqo model.MeasureQueryOptions) (mqr
 		schemaTagTypes:      schemaTagTypes,
 		minTimestamp:        mqo.TimeRange.Start.UnixNano(),
 		maxTimestamp:        mqo.TimeRange.End.UnixNano(),
+		vectorized:          m.vectorized,
 	}
 	var n int
 	for i := range tables {

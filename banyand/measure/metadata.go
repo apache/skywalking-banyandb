@@ -671,7 +671,7 @@ func (s *supplier) OpenResource(spec resourceSchema.Resource) (resourceSchema.In
 	measureSchema := spec.Schema().(*databasev1.Measure)
 	return openMeasure(measureSpec{
 		schema: measureSchema,
-	}, s.l, s.c, s.pm, s.schemaRepo, s.queryMetrics.Load())
+	}, s.l, s.c, s.pm, s.schemaRepo, s.queryMetrics.Load(), s.option.vectorized)
 }
 
 func (s *supplier) ResourceSchema(md *commonv1.Metadata) (resourceSchema.ResourceSchema, error) {
@@ -785,7 +785,7 @@ func (s *queueSupplier) OpenResource(spec resourceSchema.Resource) (resourceSche
 	measureSchema := spec.Schema().(*databasev1.Measure)
 	return openMeasure(measureSpec{
 		schema: measureSchema,
-	}, s.l, nil, s.pm, s.schemaRepo, nil)
+	}, s.l, nil, s.pm, s.schemaRepo, nil, s.option.vectorized)
 }
 
 func (s *queueSupplier) ResourceSchema(md *commonv1.Metadata) (resourceSchema.ResourceSchema, error) {
