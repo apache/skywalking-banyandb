@@ -143,8 +143,11 @@ type membershipView struct {
 // currentMembership reads tier1 and tier2 route tables and merges their
 // Active and Evictable lists into name sets. Both providers contribute to
 // both sets — dedup is by name, so a hybrid host appearing in both tiers
-// counts once. The connection-pool layer guarantees that GetRouteTable()
-// returns a copy, so this read is safe to call concurrently without locking.
+// counts once. ConnManager.GetRouteTable (pkg/grpchelper/connmanager.go:308)
+// holds the manager's RLock for the duration of the read and returns a
+// freshly allocated *databasev1.RouteTable whose Active/Evictable slices
+// are built per call, so concurrent invocation from the barrier loop is
+// race-free without additional locking at this layer.
 func (b *barrierService) currentMembership() membershipView {
 	view := membershipView{
 		active:    map[string]struct{}{},
@@ -172,6 +175,53 @@ func (b *barrierService) currentMembership() membershipView {
 	addFromTier(b.peerLiaisons)
 	addFromTier(b.dataNodes)
 	return view
+}
+
+// aliveSet returns a name-keyed set of the supplied alive slice for O(1)
+// post-probe filtering.
+func aliveSet(alive []member) map[string]struct{} {
+	out := make(map[string]struct{}, len(alive))
+	for _, m := range alive {
+		out[m.name] = struct{}{}
+	}
+	return out
+}
+
+// pruneRevResults filters probeResult slice to only entries whose member
+// is still in the alive set. Used by the post-probe membership refresh in
+// awaitRevisionAppliedCluster to avoid reporting an in-flight evicted
+// member as a normal revision laggard on the timeout/cancel return path.
+func pruneRevResults(results []probeResult, set map[string]struct{}) []probeResult {
+	out := results[:0]
+	for _, r := range results {
+		if _, ok := set[r.member.name]; ok {
+			out = append(out, r)
+		}
+	}
+	return out
+}
+
+// pruneKeyResults is the keyProbeResult sibling of pruneRevResults.
+func pruneKeyResults(results []keyProbeResult, set map[string]struct{}) []keyProbeResult {
+	out := results[:0]
+	for _, r := range results {
+		if _, ok := set[r.member.name]; ok {
+			out = append(out, r)
+		}
+	}
+	return out
+}
+
+// pruneStillPresentResults is the stillPresentResult sibling of
+// pruneRevResults.
+func pruneStillPresentResults(results []stillPresentResult, set map[string]struct{}) []stillPresentResult {
+	out := results[:0]
+	for _, r := range results {
+		if _, ok := set[r.member.name]; ok {
+			out = append(out, r)
+		}
+	}
+	return out
 }
 
 // applyTransitions walks the alive members against the current membership
@@ -246,6 +296,19 @@ func (b *barrierService) awaitRevisionAppliedCluster(ctx context.Context, req *s
 			lastRev[r.member.name] = r.rev
 		}
 		if allReady(lastResults) {
+			return &schemav1.AwaitRevisionAppliedResponse{Applied: true, Laggards: evictedLaggards}, nil
+		}
+		// Post-probe membership refresh: a member can transition Active →
+		// Evictable between probe completion and the timeout/cancel branch.
+		// Without this second snapshot the member would be reported as a
+		// normal revision laggard instead of a one-time eviction laggard,
+		// and if it was the last blocked member the call would return
+		// applied=false when applied=true is correct.
+		view = b.currentMembership()
+		alive, newlyEvicted = applyTransitions(alive, view, lastRev)
+		evictedLaggards = append(evictedLaggards, newlyEvicted...)
+		lastResults = pruneRevResults(lastResults, aliveSet(alive))
+		if len(alive) == 0 || allReady(lastResults) {
 			return &schemav1.AwaitRevisionAppliedResponse{Applied: true, Laggards: evictedLaggards}, nil
 		}
 		if time.Now().After(deadline) {
@@ -387,6 +450,19 @@ func (b *barrierService) awaitSchemaAppliedCluster(ctx context.Context, req *sch
 		if allKeysApplied(lastResults) {
 			return &schemav1.AwaitSchemaAppliedResponse{Applied: true, Laggards: evictedLaggards}, nil
 		}
+		// Post-probe membership refresh — see awaitRevisionAppliedCluster
+		// for the rationale. Same race window applies to the per-key
+		// barrier: a member that flips Active → Evictable after the
+		// GetKeyRevisions probe finishes but before the timeout branch
+		// must surface as an eviction laggard, not as a missing-keys
+		// laggard.
+		view = b.currentMembership()
+		alive, newlyEvicted = applyTransitionsApplied(alive, view)
+		evictedLaggards = append(evictedLaggards, newlyEvicted...)
+		lastResults = pruneKeyResults(lastResults, aliveSet(alive))
+		if len(alive) == 0 || allKeysApplied(lastResults) {
+			return &schemav1.AwaitSchemaAppliedResponse{Applied: true, Laggards: evictedLaggards}, nil
+		}
 		if time.Now().After(deadline) {
 			return &schemav1.AwaitSchemaAppliedResponse{
 				Applied:  false,
@@ -499,10 +575,7 @@ func (b *barrierService) probeKeysOne(ctx context.Context, m member, keys []*sch
 
 	var missing []*schemav1.SchemaKey
 	for chunkStart := 0; chunkStart < len(keys); chunkStart += barrierKeyChunkSize {
-		chunkEnd := chunkStart + barrierKeyChunkSize
-		if chunkEnd > len(keys) {
-			chunkEnd = len(keys)
-		}
+		chunkEnd := min(chunkStart+barrierKeyChunkSize, len(keys))
 		chunkKeys := keys[chunkStart:chunkEnd]
 		resp, rpcErr := statusClient.GetKeyRevisions(ctx, &clusterv1.GetKeyRevisionsRequest{Keys: chunkKeys})
 		if rpcErr != nil {
@@ -576,6 +649,17 @@ func (b *barrierService) awaitSchemaDeletedCluster(ctx context.Context, req *sch
 
 		lastResults = b.probeAbsentKeys(pollCtx, alive, req.GetKeys(), deadline)
 		if allKeysAbsent(lastResults) {
+			return &schemav1.AwaitSchemaDeletedResponse{Applied: true, Laggards: evictedLaggards}, nil
+		}
+		// Post-probe membership refresh — see awaitRevisionAppliedCluster.
+		// A member that flips Active → Evictable after GetAbsentKeys
+		// finishes must surface as an eviction laggard, not as a
+		// still-present-keys laggard.
+		view = b.currentMembership()
+		alive, newlyEvicted = applyTransitionsApplied(alive, view)
+		evictedLaggards = append(evictedLaggards, newlyEvicted...)
+		lastResults = pruneStillPresentResults(lastResults, aliveSet(alive))
+		if len(alive) == 0 || allKeysAbsent(lastResults) {
 			return &schemav1.AwaitSchemaDeletedResponse{Applied: true, Laggards: evictedLaggards}, nil
 		}
 		if time.Now().After(deadline) {
@@ -656,10 +740,7 @@ func (b *barrierService) probeAbsentOne(ctx context.Context, m member, keys []*s
 
 	var present []*schemav1.SchemaKey
 	for chunkStart := 0; chunkStart < len(keys); chunkStart += barrierKeyChunkSize {
-		chunkEnd := chunkStart + barrierKeyChunkSize
-		if chunkEnd > len(keys) {
-			chunkEnd = len(keys)
-		}
+		chunkEnd := min(chunkStart+barrierKeyChunkSize, len(keys))
 		chunkKeys := keys[chunkStart:chunkEnd]
 		resp, rpcErr := statusClient.GetAbsentKeys(ctx, &clusterv1.GetAbsentKeysRequest{Keys: chunkKeys})
 		if rpcErr != nil {

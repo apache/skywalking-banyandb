@@ -829,3 +829,184 @@ func TestAwaitSchemaDeleted_FanOut_MixedOldAndNewSchemasOnSameKey(t *testing.T) 
 			"every member's laggard entry must list k0 as still present")
 	}
 }
+
+// TestFanOut_AllNodesEvictedMidCall_ReturnsAppliedTrue verifies the
+// post-probe membership refresh's `len(alive) == 0` early-exit: if every
+// frozen member transitions to Evictable mid-call, the barrier surfaces the
+// eviction notices and returns Applied=true (the cluster has no remaining
+// objection to the target revision). Driven without a self entry so the
+// alive set is purely the two data nodes.
+func TestFanOut_AllNodesEvictedMidCall_ReturnsAppliedTrue(t *testing.T) {
+	cache := &staticBarrierCache{maxModRevision: 100}
+	tier2 := &fakeQueueClient{
+		routeTableFn: mutatingRouteTable(
+			&databasev1.RouteTable{Active: []string{"d1", "d2"}},
+			&databasev1.RouteTable{Evictable: []string{"d1", "d2"}}, // both flip
+		),
+		statusClients: map[string]clusterv1.NodeSchemaStatusServiceClient{
+			"d1": &fakeNodeStatusClient{maxRev: 50}, // both behind initially
+			"d2": &fakeNodeStatusClient{maxRev: 50},
+		},
+	}
+	svc := (&clusterFixture{cache: cache, tier1: newFakeTier(nil, nil), tier2: tier2, self: ""}).build()
+
+	resp, err := svc.AwaitRevisionApplied(context.Background(), &schemav1.AwaitRevisionAppliedRequest{
+		MinRevision: 100,
+		Timeout:     durationpb.New(200 * time.Millisecond),
+	})
+	require.NoError(t, err)
+	assert.True(t, resp.GetApplied(),
+		"every frozen member evicted → cluster has no objection → applied=true")
+	require.Len(t, resp.GetLaggards(), 2, "both members must surface as eviction laggards")
+	for _, l := range resp.GetLaggards() {
+		assert.Equal(t, "evicted_during_poll", l.GetReason())
+	}
+}
+
+// TestFanOut_AllPeersUnimplemented_AllReady locks the cross-version policy
+// when every peer answers Unimplemented (a fully Phase-1 fleet under a
+// v0.13 liaison). The single-peer case is covered by
+// TestFanOut_NodeReturnsUnimplemented_TreatedAsReady; this test extends to
+// multiple peers + a data node so the "all-Unimplemented" branch is
+// regression-locked.
+func TestFanOut_AllPeersUnimplemented_AllReady(t *testing.T) {
+	cache := &staticBarrierCache{maxModRevision: 100}
+	legacy := func() *fakeNodeStatusClient {
+		return &fakeNodeStatusClient{err: status.Error(codes.Unimplemented, "phase 1 node")}
+	}
+	tier1 := newFakeTier([]string{"peer-l1", "peer-l2"}, map[string]clusterv1.NodeSchemaStatusServiceClient{
+		"peer-l1": legacy(),
+		"peer-l2": legacy(),
+	})
+	tier2 := newFakeTier([]string{"phase1-data"}, map[string]clusterv1.NodeSchemaStatusServiceClient{
+		"phase1-data": legacy(),
+	})
+	svc := (&clusterFixture{cache: cache, tier1: tier1, tier2: tier2, self: "self-liaison"}).build()
+
+	resp, err := svc.AwaitRevisionApplied(context.Background(), &schemav1.AwaitRevisionAppliedRequest{
+		MinRevision: 100,
+		Timeout:     durationpb.New(50 * time.Millisecond),
+	})
+	require.NoError(t, err)
+	assert.True(t, resp.GetApplied(),
+		"every peer Unimplemented + self ready → applied=true (Phase-1 fleet treated as ready)")
+	assert.Empty(t, resp.GetLaggards())
+}
+
+// TestFanOut_NilRouteTable_FallsBackToSelf verifies that when both tier
+// queue clients return a nil *RouteTable from GetRouteTable, the snapshot
+// degenerates to {self} and the call converges via the in-process probe
+// without trying to dial any peer.
+func TestFanOut_NilRouteTable_FallsBackToSelf(t *testing.T) {
+	cache := &staticBarrierCache{maxModRevision: 100}
+	tier1 := &fakeQueueClient{routeTableFn: func() *databasev1.RouteTable { return nil }}
+	tier2 := &fakeQueueClient{routeTableFn: func() *databasev1.RouteTable { return nil }}
+	svc := (&clusterFixture{cache: cache, tier1: tier1, tier2: tier2, self: "self-liaison"}).build()
+
+	resp, err := svc.AwaitRevisionApplied(context.Background(), &schemav1.AwaitRevisionAppliedRequest{
+		MinRevision: 100,
+		Timeout:     durationpb.New(50 * time.Millisecond),
+	})
+	require.NoError(t, err)
+	assert.True(t, resp.GetApplied(), "nil route tables + self ready → applied=true")
+	assert.Empty(t, resp.GetLaggards())
+}
+
+// TestFanOut_NilRouteTable_NoSelf_ReturnsUnavailable verifies that when
+// both tier clients return nil AND the receiving liaison has no curNode
+// (test-context fixture, ContextNodeKey unset), the call fails fast with
+// codes.Unavailable rather than blocking on an empty watched set.
+func TestFanOut_NilRouteTable_NoSelf_ReturnsUnavailable(t *testing.T) {
+	tier1 := &fakeQueueClient{routeTableFn: func() *databasev1.RouteTable { return nil }}
+	tier2 := &fakeQueueClient{routeTableFn: func() *databasev1.RouteTable { return nil }}
+	svc := (&clusterFixture{cache: &staticBarrierCache{}, tier1: tier1, tier2: tier2, self: ""}).build()
+
+	resp, err := svc.AwaitRevisionApplied(context.Background(), &schemav1.AwaitRevisionAppliedRequest{
+		MinRevision: 1,
+		Timeout:     durationpb.New(20 * time.Millisecond),
+	})
+	require.Error(t, err)
+	assert.Nil(t, resp)
+	assert.Equal(t, codes.Unavailable, status.Code(err))
+}
+
+// TestFanOut_MemberMissingFromStatusClients verifies that a member listed
+// in tier Active but absent from the per-tier statusClients map (i.e. the
+// borrowed *grpc.ClientConn is unavailable for that node) is treated as a
+// transient laggard for this iteration only — same path as a generic
+// gRPC error — and surfaces in the timeout response.
+func TestFanOut_MemberMissingFromStatusClients(t *testing.T) {
+	cache := &staticBarrierCache{maxModRevision: 100}
+	tier2 := newFakeTier([]string{"missing-conn"}, nil) // active but no client
+	svc := (&clusterFixture{cache: cache, tier1: newFakeTier(nil, nil), tier2: tier2, self: "self-liaison"}).build()
+
+	resp, err := svc.AwaitRevisionApplied(context.Background(), &schemav1.AwaitRevisionAppliedRequest{
+		MinRevision: 100,
+		Timeout:     durationpb.New(60 * time.Millisecond),
+	})
+	require.NoError(t, err)
+	assert.False(t, resp.GetApplied(),
+		"member without a connection client must block convergence until timeout")
+	require.Len(t, resp.GetLaggards(), 1)
+	assert.Equal(t, "data-missing-conn", resp.GetLaggards()[0].GetNode())
+}
+
+// TestAwaitSchemaApplied_ChunkingBoundaries pins the per-peer chunking
+// math at boundaries that the existing 1500-key test doesn't cover:
+//   - 999 keys → 1 chunk (just under the threshold).
+//   - 1000 keys → 1 chunk (exact boundary; second iteration must NOT fire).
+//   - 1001 keys → 2 chunks (smallest second chunk).
+//   - 2000 keys → 2 chunks (exact double).
+//
+// Each subtest verifies (a) the GetKeyRevisions call count per peer per
+// iteration matches the expected chunk count, and (b) every key shows up
+// exactly once in the aggregated missing_keys laggard. The peer state
+// reports every key absent so the call times out and the aggregated
+// missing_keys is checkable end-to-end.
+func TestAwaitSchemaApplied_ChunkingBoundaries(t *testing.T) {
+	cases := []struct {
+		name           string
+		keys           int
+		expectedChunks int32
+	}{
+		{"BelowThreshold", 999, 1},
+		{"ExactBoundary", 1000, 1},
+		{"OneOverThreshold", 1001, 2},
+		{"ExactDouble", 2000, 2},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			keys := make([]*schemav1.SchemaKey, tc.keys)
+			for i := range tc.keys {
+				keys[i] = streamKey("g", "k"+strconv.Itoa(i))
+			}
+			cache := &staticBarrierCache{maxModRevision: 100} // self has no keys → also missing
+			var calls int32
+			peer := &fakeNodeStatusClient{
+				keyState:     map[string]fakeKeyState{}, // peer has nothing → every key missing
+				keyRevsCalls: &calls,
+			}
+			tier1 := newFakeTier([]string{"peer"}, map[string]clusterv1.NodeSchemaStatusServiceClient{"peer": peer})
+			svc := (&clusterFixture{cache: cache, tier1: tier1, tier2: newFakeTier(nil, nil), self: "self-liaison"}).build()
+
+			resp, err := svc.AwaitSchemaApplied(context.Background(), &schemav1.AwaitSchemaAppliedRequest{
+				Keys:    keys,
+				Timeout: durationpb.New(40 * time.Millisecond),
+			})
+			require.NoError(t, err)
+			assert.False(t, resp.GetApplied())
+
+			final := atomic.LoadInt32(&calls)
+			assert.Equal(t, int32(0), final%tc.expectedChunks,
+				"call count must be a multiple of expected chunks per iteration (got %d, expected_per_iter=%d)",
+				final, tc.expectedChunks)
+			assert.GreaterOrEqual(t, final, tc.expectedChunks,
+				"at least one full iteration of chunks must have run")
+
+			la := laggardByNode(resp.GetLaggards(), "liaison-peer")
+			require.NotNil(t, la, "peer must be a laggard")
+			assert.Len(t, la.GetMissingKeys(), tc.keys,
+				"missing_keys must aggregate every key across chunks (no double-count, no drop)")
+		})
+	}
+}
