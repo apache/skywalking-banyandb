@@ -447,6 +447,7 @@ func newDataSchemaRepo(path string, svc *dataSVC, nodeLabels map[string]string, 
 		resourceSchema.NewMetrics(svc.omr.With(metadataScope)),
 	)
 	sr.start()
+	sr.registerWithNodeRepo()
 	return sr
 }
 

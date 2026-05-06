@@ -47,8 +47,16 @@ import (
 	"github.com/apache/skywalking-banyandb/pkg/logger"
 	"github.com/apache/skywalking-banyandb/pkg/meter"
 	resourceSchema "github.com/apache/skywalking-banyandb/pkg/schema"
+	"github.com/apache/skywalking-banyandb/pkg/schema/registry"
 	"github.com/apache/skywalking-banyandb/pkg/timestamp"
 )
+
+// measureRegistryKinds is the kind set the measure schemaRepo registers with
+// the per-node NodeRepoRegistry. TopNAggregation is intentionally excluded —
+// schemaRepo does not store TopN entries, so the cluster barrier reads TopN
+// keys via the property schemaCache instead. Property kinds are similarly
+// out-of-scope for the per-service repos.
+const measureRegistryKinds = schema.KindGroup | schema.KindMeasure | schema.KindIndexRule | schema.KindIndexRuleBinding
 
 const (
 	// TopNSchemaName is the name of the top n result schema.
@@ -112,6 +120,7 @@ func newSchemaRepo(path string, svc *standalone, nodeLabels map[string]string, n
 		resourceSchema.NewMetrics(svc.omr.With(metadataScope)),
 	)
 	sr.start()
+	sr.registerWithNodeRepo()
 	return sr
 }
 
@@ -134,6 +143,7 @@ func newLiaisonSchemaRepo(path string, svc *liaison, measureDataNodeRegistry grp
 		resourceSchema.NewMetrics(svc.omr.With(metadataScope)),
 	)
 	sr.start()
+	sr.registerWithNodeRepo()
 	return sr
 }
 
@@ -167,6 +177,19 @@ func (sr *schemaRepo) start() {
 	sr.metadata.
 		RegisterHandler("measure", schema.KindGroup|schema.KindMeasure|schema.KindIndexRuleBinding|schema.KindIndexRule|schema.KindTopNAggregation,
 			sr)
+}
+
+// registerWithNodeRepo joins this schemaRepo to the per-node aggregator so the
+// cluster barrier and NodeSchemaStatusService route Group/Measure/IndexRule/
+// IndexRuleBinding lookups through the same cache the executor consults via
+// LoadGroup / LoadResource. Idempotent and safe to call from every measure
+// constructor (standalone / data / liaison).
+func (sr *schemaRepo) registerWithNodeRepo() {
+	metaSvc, ok := sr.metadata.(metadata.Service)
+	if !ok {
+		return
+	}
+	registry.MaybeRegister(metaSvc.NodeRepoRegistry(), measureRegistryKinds, sr.Repository)
 }
 
 func (sr *schemaRepo) Measure(metadata *commonv1.Metadata) (Measure, error) {
