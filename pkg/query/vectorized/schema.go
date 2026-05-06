@@ -47,15 +47,26 @@ type tagKey struct {
 	name   string
 }
 
+// TagFamilyGroup pre-computes the (family, [column indices]) layout used by
+// the row-by-row serializer. Storing it on the schema lets the hot path
+// stamp out one TagFamily per family per row without re-grouping or
+// allocating a `map[string]*modelv1.TagFamily` on every row.
+type TagFamilyGroup struct {
+	Family  string
+	Columns []int
+}
+
 // BatchSchema is the immutable column layout shared by every RecordBatch in a pipeline.
 type BatchSchema struct {
-	tagByPath    map[tagKey]int
-	fieldByName  map[string]int
-	Columns      []ColumnDef
-	timestampIdx int
-	versionIdx   int
-	seriesIDIdx  int
-	shardIDIdx   int
+	tagByPath       map[tagKey]int
+	fieldByName     map[string]int
+	Columns         []ColumnDef
+	TagFamilyGroups []TagFamilyGroup // ordered tag-column groups by family
+	FieldColumns    []int            // ordered field column indices
+	timestampIdx    int
+	versionIdx      int
+	seriesIDIdx     int
+	shardIDIdx      int
 }
 
 // NewBatchSchema builds a BatchSchema and precomputes lookup indices.
@@ -69,6 +80,7 @@ func NewBatchSchema(cols []ColumnDef) *BatchSchema {
 		tagByPath:    make(map[tagKey]int),
 		fieldByName:  make(map[string]int),
 	}
+	familyIdx := make(map[string]int)
 	for i, c := range cols {
 		switch c.Role {
 		case RoleTimestamp:
@@ -81,8 +93,16 @@ func NewBatchSchema(cols []ColumnDef) *BatchSchema {
 			s.shardIDIdx = i
 		case RoleTag:
 			s.tagByPath[tagKey{family: c.TagFamily, name: c.Name}] = i
+			groupIdx, ok := familyIdx[c.TagFamily]
+			if !ok {
+				groupIdx = len(s.TagFamilyGroups)
+				familyIdx[c.TagFamily] = groupIdx
+				s.TagFamilyGroups = append(s.TagFamilyGroups, TagFamilyGroup{Family: c.TagFamily})
+			}
+			s.TagFamilyGroups[groupIdx].Columns = append(s.TagFamilyGroups[groupIdx].Columns, i)
 		case RoleField:
 			s.fieldByName[c.Name] = i
+			s.FieldColumns = append(s.FieldColumns, i)
 		}
 	}
 	return s

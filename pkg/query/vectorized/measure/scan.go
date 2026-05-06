@@ -20,8 +20,17 @@ package measure
 import (
 	"context"
 
+	modelv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/model/v1"
+	pbv1 "github.com/apache/skywalking-banyandb/pkg/pb/v1"
 	"github.com/apache/skywalking-banyandb/pkg/query/model"
 	"github.com/apache/skywalking-banyandb/pkg/query/vectorized"
+)
+
+// Singletons reused for null fills in passthrough columns. Matches what the
+// row path emits for projection entries the active result lacks.
+var (
+	pbv1NullTagValueRef   = pbv1.NullTagValue
+	pbv1NullFieldValueRef = pbv1.NullFieldValue
 )
 
 // BatchScan is the v1 PullOperator that wraps a MeasureQueryResult and
@@ -157,6 +166,9 @@ func fillMetadata(b *vectorized.RecordBatch, schema *vectorized.BatchSchema,
 // explicit nulls so a downstream serializer sees the same shape the row path
 // emits when the projected tag is absent (which the multi-group flow
 // produces — one group's schema may lack a tag the other group has).
+//
+// Passthrough columns (ColumnTypeTagValue) take a fast path: the original
+// *modelv1.TagValue pointer is stored directly, no decode/re-encode.
 func fillTags(b *vectorized.RecordBatch, schema *vectorized.BatchSchema,
 	cur *model.MeasureResult, pos, offset, n int,
 ) error {
@@ -175,6 +187,15 @@ func fillTags(b *vectorized.RecordBatch, schema *vectorized.BatchSchema,
 			continue
 		}
 		col := b.Columns[colIdx]
+		if pc, ok := col.(*vectorized.TypedColumn[*modelv1.TagValue]); ok {
+			tag, present := resultTags[colIdx]
+			if !present {
+				appendNullTagValues(pc, n)
+				continue
+			}
+			appendTagValuesPassthrough(pc, tag.Values[pos:pos+n])
+			continue
+		}
 		growColumn(col, n)
 		tag, present := resultTags[colIdx]
 		if !present {
@@ -189,7 +210,8 @@ func fillTags(b *vectorized.RecordBatch, schema *vectorized.BatchSchema,
 }
 
 // fillFields is the field-side counterpart of fillTags. Same null-fill rule
-// applies for projection entries that the active result lacks.
+// applies for projection entries that the active result lacks. Same fast
+// path for passthrough columns.
 func fillFields(b *vectorized.RecordBatch, schema *vectorized.BatchSchema,
 	cur *model.MeasureResult, pos, offset, n int,
 ) error {
@@ -205,6 +227,15 @@ func fillFields(b *vectorized.RecordBatch, schema *vectorized.BatchSchema,
 			continue
 		}
 		col := b.Columns[colIdx]
+		if pc, ok := col.(*vectorized.TypedColumn[*modelv1.FieldValue]); ok {
+			f, present := resultFields[colIdx]
+			if !present {
+				appendNullFieldValues(pc, n)
+				continue
+			}
+			appendFieldValuesPassthrough(pc, f.Values[pos:pos+n])
+			continue
+		}
 		growColumn(col, n)
 		f, present := resultFields[colIdx]
 		if !present {
@@ -216,6 +247,35 @@ func fillFields(b *vectorized.RecordBatch, schema *vectorized.BatchSchema,
 		}
 	}
 	return nil
+}
+
+// appendTagValuesPassthrough copies n *modelv1.TagValue pointers from src into
+// the column, advancing its length by n. No protobuf decoding happens.
+func appendTagValuesPassthrough(c *vectorized.TypedColumn[*modelv1.TagValue], src []*modelv1.TagValue) {
+	for _, v := range src {
+		c.Append(v)
+	}
+}
+
+func appendFieldValuesPassthrough(c *vectorized.TypedColumn[*modelv1.FieldValue], src []*modelv1.FieldValue) {
+	for _, v := range src {
+		c.Append(v)
+	}
+}
+
+// appendNullTagValues / appendNullFieldValues grow the passthrough column by
+// n rows pinned to pbv1.Null{Tag,Field}Value singletons. Matches the row
+// path's null fill for projections absent from the source.
+func appendNullTagValues(c *vectorized.TypedColumn[*modelv1.TagValue], n int) {
+	for range n {
+		c.Append(pbv1NullTagValueRef)
+	}
+}
+
+func appendNullFieldValues(c *vectorized.TypedColumn[*modelv1.FieldValue], n int) {
+	for range n {
+		c.Append(pbv1NullFieldValueRef)
+	}
 }
 
 // markRowsNull marks rows [offset, offset+n) in col as null without otherwise

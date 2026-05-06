@@ -17,6 +17,10 @@
 
 package vectorized
 
+import (
+	modelv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/model/v1"
+)
+
 // TypedColumn is a generic Column with element type T.
 // One instance per supported T — use the typed constructors below.
 type TypedColumn[T any] struct {
@@ -89,6 +93,20 @@ func NewStrArrayColumn(capacity int) *TypedColumn[[]string] {
 	return &TypedColumn[[]string]{typ: ColumnTypeStrArray, data: make([][]string, 0, capacity)}
 }
 
+// NewTagValueColumn constructs a TypedColumn[*modelv1.TagValue] passthrough
+// column. Cells hold the original *modelv1.TagValue pointers from the scan
+// source; the egress serializer returns those pointers directly, avoiding
+// the decode-into-typed / re-encode-into-protobuf round trip that otherwise
+// dominates allocation cost when no operator consumes the column.
+func NewTagValueColumn(capacity int) *TypedColumn[*modelv1.TagValue] {
+	return &TypedColumn[*modelv1.TagValue]{typ: ColumnTypeTagValue, data: make([]*modelv1.TagValue, 0, capacity)}
+}
+
+// NewFieldValueColumn is the field-side counterpart of NewTagValueColumn.
+func NewFieldValueColumn(capacity int) *TypedColumn[*modelv1.FieldValue] {
+	return &TypedColumn[*modelv1.FieldValue]{typ: ColumnTypeFieldValue, data: make([]*modelv1.FieldValue, 0, capacity)}
+}
+
 // NewColumnForType constructs a Column with the given type and capacity.
 // Panics on unknown type — programmer error, not data error.
 func NewColumnForType(t ColumnType, capacity int) Column {
@@ -105,6 +123,10 @@ func NewColumnForType(t ColumnType, capacity int) Column {
 		return NewInt64ArrayColumn(capacity)
 	case ColumnTypeStrArray:
 		return NewStrArrayColumn(capacity)
+	case ColumnTypeTagValue:
+		return NewTagValueColumn(capacity)
+	case ColumnTypeFieldValue:
+		return NewFieldValueColumn(capacity)
 	}
 	panic("vectorized: unknown ColumnType " + t.String())
 }

@@ -21,6 +21,13 @@ package vectorized
 type ColumnType int
 
 // ColumnType variants. Each value corresponds to a TypedColumn[T] specialization.
+//
+// The TagValue / FieldValue variants are passthrough columns: they hold
+// the original *modelv1.TagValue / *modelv1.FieldValue pointers from the
+// scan source unchanged, eliminating the decode/re-encode round trip
+// when no operator consumes the typed value. They are only useful when
+// the scan output is destined for the egress serializer; an operator that
+// needs typed primitives should pick a typed column type instead.
 const (
 	ColumnTypeInt64 ColumnType = iota
 	ColumnTypeFloat64
@@ -28,6 +35,8 @@ const (
 	ColumnTypeBytes
 	ColumnTypeInt64Array
 	ColumnTypeStrArray
+	ColumnTypeTagValue
+	ColumnTypeFieldValue
 )
 
 // String returns a human label used in diagnostics and error messages.
@@ -45,6 +54,10 @@ func (c ColumnType) String() string {
 		return "int64[]"
 	case ColumnTypeStrArray:
 		return "string[]"
+	case ColumnTypeTagValue:
+		return "tagvalue"
+	case ColumnTypeFieldValue:
+		return "fieldvalue"
 	}
 	return "unknown"
 }

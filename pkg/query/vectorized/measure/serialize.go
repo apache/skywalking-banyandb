@@ -53,8 +53,9 @@ func serializeBatchToProto(b *vectorized.RecordBatch, dst []*measurev1.InternalD
 }
 
 // buildDataPoint materializes one DataPoint from row rowIdx of b. Tags are
-// grouped into TagFamilies by their TagFamily name; field columns become
-// DataPoint_Field entries in schema order.
+// emitted family-by-family using the schema's pre-computed TagFamilyGroups
+// layout — no per-row map allocation. Field columns become DataPoint_Field
+// entries in schema order.
 func buildDataPoint(b *vectorized.RecordBatch, schema *vectorized.BatchSchema, rowIdx int) *measurev1.DataPoint {
 	dp := &measurev1.DataPoint{}
 	if i := schema.TimestampIndex(); i >= 0 {
@@ -67,39 +68,51 @@ func buildDataPoint(b *vectorized.RecordBatch, schema *vectorized.BatchSchema, r
 	if i := schema.SeriesIDIndex(); i >= 0 {
 		dp.Sid = uint64(b.Columns[i].(*vectorized.TypedColumn[int64]).Data()[rowIdx])
 	}
-	tagFamilies := map[string]*modelv1.TagFamily{}
-	for colIdx, def := range schema.Columns {
-		switch def.Role {
-		case vectorized.RoleTag:
-			tf, exists := tagFamilies[def.TagFamily]
-			if !exists {
-				tf = &modelv1.TagFamily{Name: def.TagFamily}
-				tagFamilies[def.TagFamily] = tf
-				dp.TagFamilies = append(dp.TagFamilies, tf)
+	if len(schema.TagFamilyGroups) > 0 {
+		dp.TagFamilies = make([]*modelv1.TagFamily, 0, len(schema.TagFamilyGroups))
+		for _, group := range schema.TagFamilyGroups {
+			tf := &modelv1.TagFamily{
+				Name: group.Family,
+				Tags: make([]*modelv1.Tag, 0, len(group.Columns)),
 			}
-			tf.Tags = append(tf.Tags, &modelv1.Tag{
-				Key:   def.Name,
-				Value: columnValueToTagValue(b.Columns[colIdx], rowIdx),
-			})
-		case vectorized.RoleField:
+			for _, colIdx := range group.Columns {
+				tf.Tags = append(tf.Tags, &modelv1.Tag{
+					Key:   schema.Columns[colIdx].Name,
+					Value: columnValueToTagValue(b.Columns[colIdx], rowIdx),
+				})
+			}
+			dp.TagFamilies = append(dp.TagFamilies, tf)
+		}
+	}
+	if len(schema.FieldColumns) > 0 {
+		dp.Fields = make([]*measurev1.DataPoint_Field, 0, len(schema.FieldColumns))
+		for _, colIdx := range schema.FieldColumns {
 			dp.Fields = append(dp.Fields, &measurev1.DataPoint_Field{
-				Name:  def.Name,
+				Name:  schema.Columns[colIdx].Name,
 				Value: columnValueToFieldValue(b.Columns[colIdx], rowIdx),
 			})
-		case vectorized.RoleTimestamp, vectorized.RoleVersion,
-			vectorized.RoleSeriesID, vectorized.RoleShardID:
-			// Metadata roles are handled before the loop (Timestamp/Version/Sid)
-			// or via the InternalDataPoint wrapper (ShardId). Skip here.
 		}
 	}
 	return dp
 }
 
 // columnValueToTagValue materializes a *modelv1.TagValue from one row of col.
-// Slice-typed values (BinaryData, IntArray, StrArray) are defensively copied
-// so the produced TagValue does not alias the column's backing slice — pooled
-// batches re-overwrite that slice on the next iteration.
+//
+// Passthrough columns (TypedColumn[*modelv1.TagValue]) take a fast path:
+// the original protobuf pointer from the scan source is returned directly
+// — zero allocation, byte-identical to what the row path emits.
+//
+// Typed columns reconstruct the protobuf wrapper. Slice-typed values
+// (BinaryData, IntArray, StrArray) are defensively copied so the produced
+// TagValue does not alias the column's backing slice across pool reuse.
 func columnValueToTagValue(col vectorized.Column, rowIdx int) *modelv1.TagValue {
+	if pc, ok := col.(*vectorized.TypedColumn[*modelv1.TagValue]); ok {
+		v := pc.Data()[rowIdx]
+		if v == nil {
+			return pbv1NullTagValueRef
+		}
+		return v
+	}
 	if col.IsNull(rowIdx) {
 		return &modelv1.TagValue{Value: &modelv1.TagValue_Null{}}
 	}
@@ -121,9 +134,18 @@ func columnValueToTagValue(col vectorized.Column, rowIdx int) *modelv1.TagValue 
 	return &modelv1.TagValue{Value: &modelv1.TagValue_Null{}}
 }
 
-// columnValueToFieldValue is the field-side counterpart. Same defensive copy
-// rule for BinaryData.
+// columnValueToFieldValue is the field-side counterpart. Passthrough columns
+// for FieldValue return the source pointer directly; typed columns
+// reconstruct the protobuf wrapper with the same defensive-copy rule for
+// BinaryData.
 func columnValueToFieldValue(col vectorized.Column, rowIdx int) *modelv1.FieldValue {
+	if pc, ok := col.(*vectorized.TypedColumn[*modelv1.FieldValue]); ok {
+		v := pc.Data()[rowIdx]
+		if v == nil {
+			return pbv1NullFieldValueRef
+		}
+		return v
+	}
 	if col.IsNull(rowIdx) {
 		return &modelv1.FieldValue{Value: &modelv1.FieldValue_Null{}}
 	}

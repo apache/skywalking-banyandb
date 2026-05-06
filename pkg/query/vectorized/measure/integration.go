@@ -58,30 +58,29 @@ func BuildBatchSchema(measureSchema *databasev1.Measure, opts model.MeasureQuery
 		tagSpecs[tf.GetName()] = byName
 	}
 
-	// Projection entries whose names are absent from the Measure schema get a
-	// nullable placeholder column so the serializer can still emit a
-	// NullTagValue / NullFieldValue slot — matching the row path, which fills
-	// missing projections with pbv1.Null{Tag,Field}Value. The placeholder type
-	// is irrelevant: validity-bit-only access via MarkNullAt + IsNull means
-	// the value bytes are never read.
+	// Tag and field projections become passthrough columns: the column cell
+	// type is *modelv1.TagValue / *modelv1.FieldValue, holding the original
+	// protobuf pointer from the scan source unchanged. The egress serializer
+	// returns those pointers directly, matching the row path's zero-alloc
+	// per-cell behavior. We still validate that the schema declares each
+	// projected name with a supported variant so the row-path null fill
+	// (for projection entries absent from a multi-group result) carries
+	// known semantics.
 	for _, tp := range opts.TagProjection {
 		family := tagSpecs[tp.Family]
 		for _, name := range tp.Names {
-			ct := vectorized.ColumnTypeInt64
 			if family != nil {
 				if spec, found := family[name]; found {
-					mapped, mapErr := tagTypeToColumnType(spec.GetType())
-					if mapErr != nil {
+					if _, mapErr := tagTypeToColumnType(spec.GetType()); mapErr != nil {
 						return nil, fmt.Errorf("vectorized.measure: tag %s.%s: %w", tp.Family, name, mapErr)
 					}
-					ct = mapped
 				}
 			}
 			cols = append(cols, vectorized.ColumnDef{
 				Role:      vectorized.RoleTag,
 				TagFamily: tp.Family,
 				Name:      name,
-				Type:      ct,
+				Type:      vectorized.ColumnTypeTagValue,
 			})
 		}
 	}
@@ -91,18 +90,15 @@ func BuildBatchSchema(measureSchema *databasev1.Measure, opts model.MeasureQuery
 		fieldSpecs[fs.GetName()] = fs
 	}
 	for _, name := range opts.FieldProjection {
-		ct := vectorized.ColumnTypeInt64
 		if spec, found := fieldSpecs[name]; found {
-			mapped, mapErr := fieldTypeToColumnType(spec.GetFieldType())
-			if mapErr != nil {
+			if _, mapErr := fieldTypeToColumnType(spec.GetFieldType()); mapErr != nil {
 				return nil, fmt.Errorf("vectorized.measure: field %s: %w", name, mapErr)
 			}
-			ct = mapped
 		}
 		cols = append(cols, vectorized.ColumnDef{
 			Role: vectorized.RoleField,
 			Name: name,
-			Type: ct,
+			Type: vectorized.ColumnTypeFieldValue,
 		})
 	}
 
