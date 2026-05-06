@@ -27,6 +27,7 @@ import (
 
 	schemav1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/schema/v1"
 	"github.com/apache/skywalking-banyandb/banyand/metadata/schema"
+	"github.com/apache/skywalking-banyandb/banyand/queue"
 )
 
 const (
@@ -52,10 +53,36 @@ type barrierCacheReader interface {
 type barrierService struct {
 	schemav1.UnimplementedSchemaBarrierServiceServer
 	cacheProvider func() barrierCacheReader
+	// peerLiaisons / dataNodes / selfName are the Phase 2.2 cluster fan-out
+	// dependencies. When all three are set, AwaitRevisionApplied probes the
+	// frozen tier1+tier2 watched set in parallel; when any are nil it falls
+	// back to the legacy in-process loop (used by Phase 1 unit tests).
+	peerLiaisons func() queue.Client
+	dataNodes    func() queue.Client
+	selfName     func() string
 }
 
 func newBarrierService(cacheProvider func() barrierCacheReader) *barrierService {
 	return &barrierService{cacheProvider: cacheProvider}
+}
+
+// newBarrierServiceCluster wires the Phase 2.2 cluster fan-out dependencies
+// alongside the cache provider. The receiving liaison's name and the per-tier
+// queue clients are resolved via closures so they can be captured at gRPC
+// server construction time and lazily evaluated once PreRun finishes
+// populating curNode and the connection pools.
+func newBarrierServiceCluster(
+	cacheProvider func() barrierCacheReader,
+	peerLiaisons func() queue.Client,
+	dataNodes func() queue.Client,
+	selfName func() string,
+) *barrierService {
+	return &barrierService{
+		cacheProvider: cacheProvider,
+		peerLiaisons:  peerLiaisons,
+		dataNodes:     dataNodes,
+		selfName:      selfName,
+	}
 }
 
 // cache resolves the current barrier cache reader. It returns nil if the
@@ -67,11 +94,17 @@ func (b *barrierService) cache() barrierCacheReader {
 	return b.cacheProvider()
 }
 
-// AwaitRevisionApplied blocks until the cache's max modRevision is >= req.MinRevision
-// or the timeout elapses. In standalone mode there is one node, so Laggards carries a
-// single entry whose current_mod_revision reports the cache watermark — this lets
-// callers diagnose how far behind the standalone cache is even when applied=false.
+// AwaitRevisionApplied blocks until every node in the watched set reports a
+// max modRevision at or above req.MinRevision. When the cluster fan-out
+// dependencies are wired (production), the call probes the frozen tier1 +
+// tier2 + self watched set in parallel via NodeSchemaStatusService; without
+// those dependencies (Phase 1 unit-test path), it falls back to a single
+// in-process cache poll, returning a self-only laggard on timeout so callers
+// can diagnose how far behind the standalone cache is.
 func (b *barrierService) AwaitRevisionApplied(ctx context.Context, req *schemav1.AwaitRevisionAppliedRequest) (*schemav1.AwaitRevisionAppliedResponse, error) {
+	if b.peerLiaisons != nil && b.dataNodes != nil && b.selfName != nil {
+		return b.awaitRevisionAppliedCluster(ctx, req)
+	}
 	deadline := time.Now().Add(barrierDeadlineDuration(req.GetTimeout()))
 	pollCtx, cancel := context.WithDeadline(ctx, deadline)
 	defer cancel()
