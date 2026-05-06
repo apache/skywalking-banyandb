@@ -27,6 +27,7 @@ import (
 var (
 	defaultPanicCounterPtr atomic.Pointer[meter.Counter]
 	defaultReporterPtr     atomic.Pointer[Reporter]
+	defaultAbortFuncPtr    atomic.Pointer[AbortFunc]
 )
 
 // SetDefaultPanicCounter registers a process-wide panic counter used by WithRecovery
@@ -38,8 +39,10 @@ func SetDefaultPanicCounter(counter meter.Counter) {
 	defaultPanicCounterPtr.Store(&counter)
 }
 
-// SetDefaultReporter registers a process-wide Reporter used by WithRecovery when the
-// caller passes nil as the reporter argument. Call once during process initialization.
+// SetDefaultReporter registers a process-wide Reporter that WithRecovery
+// invokes for every recovered panic, in addition to any per-call reporter
+// supplied by the caller. Pass nil to clear a previously registered default.
+// Call once during process initialization.
 func SetDefaultReporter(r Reporter) {
 	if r == nil {
 		defaultReporterPtr.Store(nil)
@@ -61,12 +64,44 @@ func incPanicCounter(counter meter.Counter, component string) {
 	c.Inc(1, component)
 }
 
+// callReporter invokes both the process-wide default reporter (if any) and the
+// per-call reporter (if any) so that callers supplying their own reporter do
+// not silently bypass the default, for example, the FODC agent's in-process
+// panic store registered via SetDefaultReporter must observe every recovered
+// panic regardless of whether a particular WithRecovery caller also passes a
+// local reporter. The default fires first so its bookkeeping is unaffected by
+// any error or panic in the per-call reporter.
 func callReporter(ctx context.Context, reporter Reporter, result RecoveryResult) {
-	if reporter != nil {
-		reporter(ctx, result)
-		return
-	}
 	if ptr := defaultReporterPtr.Load(); ptr != nil {
 		(*ptr)(ctx, result)
+	}
+	if reporter != nil {
+		reporter(ctx, result)
+	}
+}
+
+// SetDefaultAbortFunc registers a process-wide AbortFunc that WithRecovery
+// invokes for every recovered panic, in addition to any per-call OnAbort
+// supplied via RecoveryOptions. Pass nil to clear a previously registered
+// default. Call once during process initialization.
+func SetDefaultAbortFunc(f AbortFunc) {
+	if f == nil {
+		defaultAbortFuncPtr.Store(nil)
+		return
+	}
+	defaultAbortFuncPtr.Store(&f)
+}
+
+// callAbort invokes both the process-wide default abort hook (if any) and the
+// per-call hook (if any). The default fires first so its bookkeeping is
+// unaffected by anything the per-call hook does. Aborts run after every
+// Reporter and before any Repanic, giving callers a single point to fail the
+// parent: cancel a context, signal a lifecycle group, etc.
+func callAbort(ctx context.Context, abort AbortFunc, result RecoveryResult) {
+	if ptr := defaultAbortFuncPtr.Load(); ptr != nil {
+		(*ptr)(ctx, result)
+	}
+	if abort != nil {
+		abort(ctx, result)
 	}
 }

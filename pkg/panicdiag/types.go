@@ -43,6 +43,7 @@ type RecoveryOptions struct {
 	Counter         meter.Counter
 	Logger          *logger.Logger
 	StateDumper     StateDumper
+	OnAbort         AbortFunc
 	ProcessMetadata map[string]string
 	Component       string
 	ArtifactRoot    string
@@ -56,8 +57,17 @@ type RecoveryResult struct {
 	ArtifactDir string
 }
 
-// Reporter receives the result of a recovered panic.
+// Reporter receives the result of a recovered panic. Reporters are intended
+// for observability: recording, logging, or shipping the panic record, and
+// must not block. Use AbortFunc when control flow needs to react to a panic.
 type Reporter func(context.Context, RecoveryResult)
+
+// AbortFunc is invoked after panic diagnostics are captured to give callers a
+// control-flow hook for failing the parent: cancelling a supervising context,
+// signalling a lifecycle group to stop, closing a notify channel, etc.
+// It runs after every Reporter and before any Repanic, so callers may both
+// abort the parent and re-raise the panic. Implementations must not block.
+type AbortFunc func(context.Context, RecoveryResult)
 
 // StateDumper returns a bounded diagnostic snapshot after a recovered panic.
 type StateDumper interface {

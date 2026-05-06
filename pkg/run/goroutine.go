@@ -28,9 +28,17 @@ import (
 // A mutable breadcrumb store is installed before fn runs so breadcrumbs added
 // inside fn are captured if fn panics.
 // Panics are intercepted, the panic value and localized stack trace are logged,
-// and the panic is raised again after diagnostics are captured.
-// When reporter is provided, it is called after diagnostics are captured and
-// before the panic is raised again.
+// and the panic is raised again after diagnostics are captured. Re-raising
+// inside a goroutine cannot propagate to the launcher, so callers that need to
+// fail the parent lifecycle should register a process-wide AbortFunc via
+// panicdiag.SetDefaultAbortFunc, for example, one that cancels a supervising
+// context — which is invoked from every recovery defer before the goroutine
+// dies.
+// When a reporter is supplied, it is invoked after diagnostics are captured and
+// before the panic is raised again. The process-wide default reporter
+// registered via panicdiag.SetDefaultReporter is always invoked as well, so
+// per-call reporters compose with the default rather than shadowing it.
+// At most one reporter is supported; additional values are ignored.
 // When a panic counter is configured via RecoveryOptions.Counter or
 // panicdiag.SetDefaultPanicCounter, banyandb_panic_total is incremented with
 // component as the label.

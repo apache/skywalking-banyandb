@@ -302,3 +302,185 @@ func TestGoWithRecovery(t *testing.T) {
 		t.Fatalf("counter calls mismatch: got %d want 1", counter.calls)
 	}
 }
+
+// TestReporterCompositionWithDefault pins the contract that a per-call reporter
+// composes with, rather than shadows, the process-wide default reporter.
+// This protects the FODC agent path where SetDefaultReporter installs an
+// in-process panic store that must observe every recovered panic.
+func TestReporterCompositionWithDefault(t *testing.T) {
+	t.Helper()
+
+	previousDefault := defaultReporterPtr.Load()
+	t.Cleanup(func() {
+		if previousDefault == nil {
+			defaultReporterPtr.Store(nil)
+			return
+		}
+		defaultReporterPtr.Store(previousDefault)
+	})
+
+	defaultCalls := make(chan RecoveryResult, 1)
+	perCallCalls := make(chan RecoveryResult, 1)
+	SetDefaultReporter(func(_ context.Context, result RecoveryResult) {
+		defaultCalls <- result
+	})
+
+	WithRecovery(context.Background(), RecoveryOptions{
+		Component: "compose",
+	}, func(_ context.Context, result RecoveryResult) {
+		perCallCalls <- result
+	}, func(_ *context.Context) {
+		panic("compose-boom")
+	})
+
+	select {
+	case got := <-defaultCalls:
+		if got.Record == nil || got.Record.PanicValue != "compose-boom" {
+			t.Fatalf("default reporter received unexpected record: %#v", got.Record)
+		}
+	default:
+		t.Fatal("expected default reporter to be invoked")
+	}
+
+	select {
+	case got := <-perCallCalls:
+		if got.Record == nil || got.Record.PanicValue != "compose-boom" {
+			t.Fatalf("per-call reporter received unexpected record: %#v", got.Record)
+		}
+	default:
+		t.Fatal("expected per-call reporter to be invoked")
+	}
+}
+
+// TestOnAbortRunsAfterReporterAndComposesWithDefault pins three contracts at once:
+// the OnAbort hook fires on a recovered panic, the process-wide default abort
+// composes with the per-call abort, and abort runs after every reporter so
+// observability is complete before any control-flow side effect happens.
+func TestOnAbortRunsAfterReporterAndComposesWithDefault(t *testing.T) {
+	t.Helper()
+
+	previousReporter := defaultReporterPtr.Load()
+	previousAbort := defaultAbortFuncPtr.Load()
+	t.Cleanup(func() {
+		if previousReporter == nil {
+			defaultReporterPtr.Store(nil)
+		} else {
+			defaultReporterPtr.Store(previousReporter)
+		}
+		if previousAbort == nil {
+			defaultAbortFuncPtr.Store(nil)
+		} else {
+			defaultAbortFuncPtr.Store(previousAbort)
+		}
+	})
+
+	var (
+		mu    sync.Mutex
+		order []string
+	)
+	record := func(label string) {
+		mu.Lock()
+		defer mu.Unlock()
+		order = append(order, label)
+	}
+
+	SetDefaultReporter(func(_ context.Context, _ RecoveryResult) {
+		record("default-reporter")
+	})
+	SetDefaultAbortFunc(func(_ context.Context, _ RecoveryResult) {
+		record("default-abort")
+	})
+
+	WithRecovery(context.Background(), RecoveryOptions{
+		Component: "abort",
+		OnAbort: func(_ context.Context, result RecoveryResult) {
+			if result.Record == nil || result.Record.PanicValue != "abort-boom" {
+				t.Fatalf("per-call abort got unexpected record: %#v", result.Record)
+			}
+			record("per-call-abort")
+		},
+	}, func(_ context.Context, _ RecoveryResult) {
+		record("per-call-reporter")
+	}, func(_ *context.Context) {
+		panic("abort-boom")
+	})
+
+	mu.Lock()
+	defer mu.Unlock()
+	want := []string{"default-reporter", "per-call-reporter", "default-abort", "per-call-abort"}
+	if len(order) != len(want) {
+		t.Fatalf("hook count mismatch: got %v want %v", order, want)
+	}
+	for idx, label := range want {
+		if order[idx] != label {
+			t.Fatalf("hook order at %d: got %s want %s (full %v)", idx, order[idx], label, order)
+		}
+	}
+}
+
+// TestOnAbortFiresBeforeRepanic ensures abort runs before Repanic so callers
+// can both fail the parent lifecycle and re-raise the panic.
+func TestOnAbortFiresBeforeRepanic(t *testing.T) {
+	t.Helper()
+
+	aborted := make(chan RecoveryResult, 1)
+	defer func() {
+		if rec := recover(); rec != "abort-then-repanic" {
+			t.Fatalf("expected repanic, got %v", rec)
+		}
+		select {
+		case got := <-aborted:
+			if got.Record == nil {
+				t.Fatal("expected abort record")
+			}
+		default:
+			t.Fatal("expected OnAbort to fire before repanic")
+		}
+	}()
+
+	WithRecovery(context.Background(), RecoveryOptions{
+		Component: "abort-repanic",
+		Repanic:   true,
+		OnAbort: func(_ context.Context, result RecoveryResult) {
+			aborted <- result
+		},
+	}, nil, func(_ *context.Context) {
+		panic("abort-then-repanic")
+	})
+	t.Fatal("expected panic to be raised again")
+}
+
+// TestReporterDefaultFiresWithoutPerCall confirms the default reporter still
+// runs when callers do not supply their own reporter (the prior behavior).
+func TestReporterDefaultFiresWithoutPerCall(t *testing.T) {
+	t.Helper()
+
+	previousDefault := defaultReporterPtr.Load()
+	t.Cleanup(func() {
+		if previousDefault == nil {
+			defaultReporterPtr.Store(nil)
+			return
+		}
+		defaultReporterPtr.Store(previousDefault)
+	})
+
+	defaultCalls := make(chan RecoveryResult, 1)
+	SetDefaultReporter(func(_ context.Context, result RecoveryResult) {
+		defaultCalls <- result
+	})
+
+	WithRecovery(context.Background(), RecoveryOptions{
+		Component: "default-only",
+	}, nil, func(_ *context.Context) {
+		panic("default-only-boom")
+	})
+
+	select {
+	case got := <-defaultCalls:
+		if got.Record == nil || got.Record.PanicValue != "default-only-boom" {
+			t.Fatalf("default reporter received unexpected record: %#v", got.Record)
+		}
+	default:
+		t.Fatal("expected default reporter to be invoked")
+	}
+}
