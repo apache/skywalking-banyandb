@@ -39,6 +39,7 @@ import (
 
 	"github.com/apache/skywalking-banyandb/api/common"
 	bydbqlv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/bydbql/v1"
+	clusterv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/cluster/v1"
 	commonv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/common/v1"
 	databasev1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/database/v1"
 	measurev1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/measure/v1"
@@ -51,6 +52,7 @@ import (
 	"github.com/apache/skywalking-banyandb/banyand/liaison/pkg/auth"
 	"github.com/apache/skywalking-banyandb/banyand/metadata"
 	"github.com/apache/skywalking-banyandb/banyand/metadata/schema"
+	"github.com/apache/skywalking-banyandb/banyand/metadata/schema/property"
 	"github.com/apache/skywalking-banyandb/banyand/observability"
 	"github.com/apache/skywalking-banyandb/banyand/protector"
 	"github.com/apache/skywalking-banyandb/banyand/queue"
@@ -106,8 +108,9 @@ type server struct {
 	stopCh     chan struct{}
 	*indexRuleRegistryServer
 	*measureRegistryServer
-	streamSVC  *streamService
-	barrierSVC *barrierService
+	streamSVC     *streamService
+	barrierSVC    *barrierService
+	nodeStatusSVC *property.NodeSchemaStatusServer
 	*streamRegistryServer
 	measureSVC *measureService
 	bydbQLSVC  *bydbQLService
@@ -183,6 +186,7 @@ func NewServer(_ context.Context, tir1Client, tir2Client, broadcaster queue.Clie
 	}
 
 	var barrierSVC *barrierService
+	var nodeStatusSVC *property.NodeSchemaStatusServer
 	if svc, svcOk := schemaRegistry.(metadata.Service); svcOk {
 		barrierSVC = newBarrierService(func() barrierCacheReader {
 			inner := svc.SchemaRegistry()
@@ -195,15 +199,31 @@ func NewServer(_ context.Context, tir1Client, tir2Client, broadcaster queue.Clie
 			}
 			return bc
 		})
+		// Phase 2 Step 2.1: every cluster member with a schema cache exposes
+		// NodeSchemaStatusService so peer liaisons (Step 2.2 fan-out) can
+		// probe this liaison's cache identically to a data node. The receiving
+		// liaison probes itself in-process via the barrier above; remote peers
+		// reach this same cache through the gRPC service. Resolution is
+		// deferred to request time (closure) because the metadata service
+		// populates SchemaRegistry in PreRun, after NewServer has already
+		// run — capturing a snapshot here would skip registration permanently.
+		nodeStatusSVC = property.NewNodeSchemaStatusServerForRegistry(func() *property.SchemaRegistry {
+			reg, regOk := svc.SchemaRegistry().(*property.SchemaRegistry)
+			if !regOk {
+				return nil
+			}
+			return reg
+		})
 	}
 	s := &server{
-		omr:        omr,
-		streamSVC:  streamSVC,
-		measureSVC: measureSVC,
-		traceSVC:   traceSVC,
-		bydbQLSVC:  bydbQLSVC,
-		groupRepo:  gr,
-		barrierSVC: barrierSVC,
+		omr:           omr,
+		streamSVC:     streamSVC,
+		measureSVC:    measureSVC,
+		traceSVC:      traceSVC,
+		bydbQLSVC:     bydbQLSVC,
+		groupRepo:     gr,
+		barrierSVC:    barrierSVC,
+		nodeStatusSVC: nodeStatusSVC,
 		streamRegistryServer: &streamRegistryServer{
 			schemaRegistry: schemaRegistry,
 		},
@@ -516,6 +536,9 @@ func (s *server) Serve() run.StopNotify {
 	databasev1.RegisterNodeQueryServiceServer(s.ser, s)
 	if s.barrierSVC != nil {
 		schemav1.RegisterSchemaBarrierServiceServer(s.ser, s.barrierSVC)
+	}
+	if s.nodeStatusSVC != nil {
+		clusterv1.RegisterNodeSchemaStatusServiceServer(s.ser, s.nodeStatusSVC)
 	}
 	grpc_health_v1.RegisterHealthServer(s.ser, health.NewServer())
 

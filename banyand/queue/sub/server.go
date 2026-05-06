@@ -48,6 +48,7 @@ import (
 	tracev1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/trace/v1"
 	"github.com/apache/skywalking-banyandb/banyand/liaison/grpc/route"
 	"github.com/apache/skywalking-banyandb/banyand/metadata"
+	"github.com/apache/skywalking-banyandb/banyand/metadata/schema/property"
 	"github.com/apache/skywalking-banyandb/banyand/observability"
 	"github.com/apache/skywalking-banyandb/banyand/queue"
 	"github.com/apache/skywalking-banyandb/pkg/bus"
@@ -298,6 +299,24 @@ func (s *server) Serve() run.StopNotify {
 	tracev1.RegisterTraceServiceServer(s.ser, &traceService{ser: s})
 	if s.metadataRepo != nil {
 		fodcv1.RegisterGroupLifecycleServiceServer(s.ser, s)
+		// Phase 2 Step 2.1: data nodes expose NodeSchemaStatusService so the
+		// liaison's barrier fan-out (Step 2.2) can probe each node's local
+		// schema cache. The cache the server reads is the same SchemaRegistry
+		// instance the data-node query executor consults — see
+		// banyand/metadata/schema/property/node_status.go for the coherence
+		// argument. The registry is resolved per request (closure) so the
+		// service registers even when SchemaRegistry isn't ready at Serve
+		// time; the fail-closed nil-cache contract handles in-flight probes
+		// during initialization.
+		if svc, svcOk := s.metadataRepo.(metadata.Service); svcOk {
+			clusterv1.RegisterNodeSchemaStatusServiceServer(s.ser, property.NewNodeSchemaStatusServerForRegistry(func() *property.SchemaRegistry {
+				reg, regOk := svc.SchemaRegistry().(*property.SchemaRegistry)
+				if !regOk {
+					return nil
+				}
+				return reg
+			}))
+		}
 	}
 
 	var ctx context.Context
@@ -428,6 +447,16 @@ type metrics struct {
 	largeGapsRejected        meter.Counter
 	bufferCapacityExceeded   meter.Counter
 	finishSyncErr            meter.Counter
+
+	// Chunked sync saturation metrics
+	activeSyncSessions meter.Gauge
+	reorderBuffered    meter.Gauge
+
+	// Chunked sync outcome metrics
+	chunkedSyncAbortedTotal meter.Counter
+	chunkedSyncFailedParts  meter.Counter
+	chunkedSyncTotalBytes   meter.Counter
+	chunkedSyncDurationSecs meter.Histogram
 }
 
 func newMetrics(factory observability.Factory) *metrics {
@@ -442,32 +471,42 @@ func newMetrics(factory observability.Factory) *metrics {
 		totalMsgSentErr:     factory.NewCounter("total_msg_sent_err", "topic"),
 
 		// Chunk ordering metrics
-		outOfOrderChunksReceived: factory.NewCounter("out_of_order_chunks_received", "session_id"),
-		chunksBuffered:           factory.NewCounter("chunks_buffered", "session_id"),
-		bufferTimeouts:           factory.NewCounter("buffer_timeouts", "session_id"),
-		largeGapsRejected:        factory.NewCounter("large_gaps_rejected", "session_id"),
-		bufferCapacityExceeded:   factory.NewCounter("buffer_capacity_exceeded", "session_id"),
-		finishSyncErr:            factory.NewCounter("finish_sync_err", "session_id"),
+		outOfOrderChunksReceived: factory.NewCounter("out_of_order_chunks_received", "topic"),
+		chunksBuffered:           factory.NewCounter("chunks_buffered", "topic"),
+		bufferTimeouts:           factory.NewCounter("buffer_timeouts", "topic"),
+		largeGapsRejected:        factory.NewCounter("large_gaps_rejected", "topic"),
+		bufferCapacityExceeded:   factory.NewCounter("buffer_capacity_exceeded", "topic"),
+		finishSyncErr:            factory.NewCounter("finish_sync_err", "topic"),
+
+		// Chunked sync saturation metrics
+		activeSyncSessions: factory.NewGauge("chunked_sync_active_sessions", "topic"),
+		reorderBuffered:    factory.NewGauge("chunk_reorder_buffered_chunks", "topic"),
+
+		// Chunked sync outcome metrics
+		chunkedSyncAbortedTotal: factory.NewCounter("chunked_sync_aborted_total", "topic", "reason"),
+		chunkedSyncFailedParts:  factory.NewCounter("chunked_sync_failed_parts_total", "topic"),
+		chunkedSyncTotalBytes:   factory.NewCounter("chunked_sync_total_bytes_received", "topic"),
+		chunkedSyncDurationSecs: factory.NewHistogram("chunked_sync_duration_seconds", meter.DefBuckets, "topic"),
 	}
 }
 
 // updateChunkOrderMetrics updates chunk ordering metrics.
-func (s *server) updateChunkOrderMetrics(event, sessionID string) {
+func (s *server) updateChunkOrderMetrics(event, topic string) {
 	if s.metrics == nil {
 		return // Skip metrics if not initialized (e.g., during tests)
 	}
 	switch event {
 	case "out_of_order_received":
-		s.metrics.outOfOrderChunksReceived.Inc(1, sessionID)
+		s.metrics.outOfOrderChunksReceived.Inc(1, topic)
 	case "chunk_buffered":
-		s.metrics.chunksBuffered.Inc(1, sessionID)
+		s.metrics.chunksBuffered.Inc(1, topic)
 	case "buffer_timeout":
-		s.metrics.bufferTimeouts.Inc(1, sessionID)
+		s.metrics.bufferTimeouts.Inc(1, topic)
 	case "gap_too_large":
-		s.metrics.largeGapsRejected.Inc(1, sessionID)
+		s.metrics.largeGapsRejected.Inc(1, topic)
 	case "buffer_full":
-		s.metrics.bufferCapacityExceeded.Inc(1, sessionID)
+		s.metrics.bufferCapacityExceeded.Inc(1, topic)
 	case "finish_sync_err":
-		s.metrics.finishSyncErr.Inc(1, sessionID)
+		s.metrics.finishSyncErr.Inc(1, topic)
 	}
 }

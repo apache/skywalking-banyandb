@@ -32,9 +32,13 @@ Release Notes.
   - Add tombstone retention/GC (default 7 days, configurable via `--schema-server-tombstone-retention`) with a per-cache count cap to bound memory under bulk deletes.
   - Reject `Create` with `updated_at <= tombstone.delete_time` to prevent replayed creates from overwriting newer deletes.
   - Guard `pkg/schema/cache` against out-of-order `EventDelete` events; expose monotonic `LatestModRevision` watermark.
+- Schema consistency (Phase 2 in progress): cluster-wide barrier groundwork. Internal-only; no client-facing surface impact yet.
+  - Add `NodeSchemaStatusService` (`GetMaxRevision`, `GetKeyRevisions`, `GetAbsentKeys`) registered on every cluster member that holds a schema cache, so peer liaisons and data nodes can be probed identically by the upcoming barrier fan-out (#1108).
+  - Extend `queue.Client` with `NewNodeSchemaStatusClient(node)` so the barrier fan-out can borrow the existing tier1/tier2 connection pools instead of opening a parallel mesh.
 
 ### Bug Fixes
 
+- Use `topic` instead of `session_id` as the Prometheus label on liaison `queue_sub` chunk-ordering counters to avoid unbounded metric cardinality.
 - Fix flaky trace query filtering caused by non-deterministic sidx tag ordering and add consistency checks for integration query cases.
 - Fix index-mode measure queries returning documents outside the requested time range when a widened segment overlaps the query window.
 - MCP: Add validation for properties and harden the mcp server.
@@ -59,6 +63,8 @@ Release Notes.
 - Fix flaky `file_snapshot` subtest in measure/stream/trace by waiting until every introduced mem part has been flushed to disk, instead of only checking the latest snapshot creator.
 - Fix deadlock when fodc-agent reconnects to fodc-proxy after a pod rotation.
 - Fix flaky `TestCollectWithPartialClosedSegments` by raising `SegmentIdleTimeout` so wall-clock variance on slow CI does not mark still-open segments as idle.
+- Fix FODC lifecycle cache poisoning where transient `InspectAll` failures were cached for 10 minutes and masked liaison recovery; raise FODC agent and proxy timeouts from 10s to 40s.
+- Fix FODC `/cluster/lifecycle` dropping zero-valued group fields (e.g. `replicas=0`, `close=false`) under `encoding/json` + `omitempty`; switch to `protojson` so all fields are emitted (nil nested messages serialize as `null`).
 
 ### Chores
 

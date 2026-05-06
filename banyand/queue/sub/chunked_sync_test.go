@@ -21,6 +21,7 @@ import (
 	"context"
 	"fmt"
 	"hash/crc32"
+	"sync"
 	"testing"
 	"time"
 
@@ -120,6 +121,9 @@ func TestChunkedSyncOutOfOrderHandling(t *testing.T) {
 				enableChunkReordering: tt.enableChunkReordering,
 				maxChunkBufferSize:    tt.maxChunkBufferSize,
 				maxChunkGapSize:       tt.maxChunkGapSize,
+				// Avoid accidental immediate buffer-timeout when bufferTimeout is zero.
+				// Some tests buffer out-of-order chunks and expect no error.
+				chunkBufferTimeout: time.Hour,
 			}
 
 			// Register a mock handler
@@ -187,6 +191,122 @@ func TestChunkedSyncOutOfOrderHandling(t *testing.T) {
 			assert.Equal(t, tt.expectedBuffered, bufferedCount, "Unexpected number of buffered chunks")
 		})
 	}
+}
+
+type capturingCounter struct {
+	labelValues [][]string
+	mu          sync.Mutex
+}
+
+func (c *capturingCounter) Inc(_ float64, labelValues ...string) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+
+	cp := make([]string, len(labelValues))
+	copy(cp, labelValues)
+	c.labelValues = append(c.labelValues, cp)
+}
+
+func (c *capturingCounter) Delete(_ ...string) bool {
+	return true
+}
+
+func (c *capturingCounter) uniqueFirstLabelValues() map[string]struct{} {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+
+	m := make(map[string]struct{})
+	for _, lv := range c.labelValues {
+		if len(lv) > 0 {
+			m[lv[0]] = struct{}{}
+		}
+	}
+	return m
+}
+
+func TestChunkOrderingMetricsAreLabeledByTopic_NotSessionID(t *testing.T) {
+	// enable reordering, otherwise the chunk-ordering metrics will not be triggered.
+	s := &server{
+		log:                   logger.GetLogger("test-server-metrics-label"),
+		chunkedSyncHandlers:   make(map[bus.Topic]queue.ChunkedSyncHandler),
+		enableChunkReordering: true,
+		maxChunkBufferSize:    10,
+		maxChunkGapSize:       5,
+	}
+
+	// handler: avoid "no handler registered" in processExpectedChunk.
+	mockHandler := &MockChunkedSyncHandler{}
+	s.chunkedSyncHandlers[data.TopicStreamPartSync] = mockHandler
+
+	outOfOrder := &capturingCounter{}
+	buffered := &capturingCounter{}
+	testMetrics := newTestMetrics()
+	testMetrics.outOfOrderChunksReceived = outOfOrder
+	testMetrics.chunksBuffered = buffered
+	s.metrics = testMetrics
+
+	topic := data.TopicStreamPartSync.String()
+
+	drive := func(sessionID string) {
+		mockStream := &MockSyncPartStream{}
+		session := &syncSession{
+			sessionID:      sessionID,
+			startTime:      time.Now(),
+			chunksReceived: 0,
+			partsProgress:  make(map[int]*partProgress),
+			metadata: &clusterv1.SyncMetadata{
+				Group: "test-group",
+				Topic: topic,
+			},
+		}
+
+		// send chunk 0 (establish buffer.expectedIndex=1)
+		req0 := &clusterv1.SyncPartRequest{
+			SessionId:     sessionID,
+			ChunkIndex:    0,
+			ChunkData:     []byte("chunk-0"),
+			ChunkChecksum: fmt.Sprintf("%x", crc32.ChecksumIEEE([]byte("chunk-0"))),
+			PartsInfo: []*clusterv1.PartInfo{
+				{Id: 1, Files: []*clusterv1.FileInfo{{Name: "f", Offset: 0, Size: 7}}},
+			},
+		}
+		require.NoError(t, s.processChunk(mockStream, session, req0))
+
+		// send chunk 2 (out-of-order: expected 1 got 2),
+		// will trigger out_of_order_received + chunk_buffered.
+		req2 := &clusterv1.SyncPartRequest{
+			SessionId:     sessionID,
+			ChunkIndex:    2,
+			ChunkData:     []byte("chunk-2"),
+			ChunkChecksum: fmt.Sprintf("%x", crc32.ChecksumIEEE([]byte("chunk-2"))),
+			PartsInfo: []*clusterv1.PartInfo{
+				{Id: 2, Files: []*clusterv1.FileInfo{{Name: "f", Offset: 0, Size: 7}}},
+			},
+		}
+		require.NoError(t, s.processChunk(mockStream, session, req2))
+	}
+
+	drive("test-session-A")
+	drive("test-session-B")
+
+	// assert: labelValues[0] must be topic; and unique label must be only one (topic)
+	uniqOut := outOfOrder.uniqueFirstLabelValues()
+	uniqBuf := buffered.uniqueFirstLabelValues()
+
+	assert.Equal(t, 1, len(uniqOut))
+	assert.Equal(t, 1, len(uniqBuf))
+
+	_, okOut := uniqOut[topic]
+	_, okBuf := uniqBuf[topic]
+	assert.True(t, okOut, "out_of_order_received label must be topic")
+	assert.True(t, okBuf, "chunk_buffered label must be topic")
+
+	// assert: never should have session_id as label
+	_, bad1 := uniqOut["test-session-A"]
+	_, bad2 := uniqOut["test-session-B"]
+	_, bad3 := uniqBuf["test-session-A"]
+	_, bad4 := uniqBuf["test-session-B"]
+	assert.False(t, bad1 || bad2 || bad3 || bad4, "metrics must not be labeled by session_id")
 }
 
 // MockChunkedSyncHandler implements queue.ChunkedSyncHandler for testing.
@@ -264,6 +384,10 @@ func TestChunkedSyncBufferTimeout(t *testing.T) {
 	session := &syncSession{
 		sessionID: "test-session-timeout",
 		startTime: time.Now(),
+		metadata: &clusterv1.SyncMetadata{
+			Topic: data.TopicStreamPartSync.String(),
+			Group: "test-group",
+		},
 		chunkBuffer: &chunkBuffer{
 			chunks:        make(map[uint32]*clusterv1.SyncPartRequest),
 			expectedIndex: 1, // Waiting for chunk 1

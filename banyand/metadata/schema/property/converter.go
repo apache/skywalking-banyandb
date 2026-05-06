@@ -149,6 +149,47 @@ func KindFromString(kindStr string) (schema.Kind, error) {
 	return 0, fmt.Errorf("unknown kind string: %s", kindStr)
 }
 
+// kindFromProtoString maps the proto-style kind string from SchemaKey
+// (underscore_case for compound kinds) to the corresponding schema.Kind. The
+// proto schema keeps SchemaKey.kind on a fixed set of values: "stream",
+// "measure", "trace", "property", "index_rule", "index_rule_binding",
+// "group", "top_n_aggregation". An unknown value returns 0 and the caller
+// should treat the SchemaKey as referring to no live entry.
+func kindFromProtoString(protoKind string) schema.Kind {
+	switch protoKind {
+	case "stream":
+		return schema.KindStream
+	case "measure":
+		return schema.KindMeasure
+	case "trace":
+		return schema.KindTrace
+	case "property":
+		return schema.KindProperty
+	case "index_rule":
+		return schema.KindIndexRule
+	case "index_rule_binding":
+		return schema.KindIndexRuleBinding
+	case "group":
+		return schema.KindGroup
+	case "top_n_aggregation":
+		return schema.KindTopNAggregation
+	default:
+		return 0
+	}
+}
+
+// BuildPropertyIDFromSchemaKey converts a SchemaKey from the cluster
+// node-status proto into the property-ID string used internally by the
+// schema cache. Returns an empty string when the kind is unrecognized so
+// the caller can short-circuit instead of looking up a malformed propID.
+func BuildPropertyIDFromSchemaKey(key *schemav1.SchemaKey) string {
+	kind := kindFromProtoString(key.GetKind())
+	if kind == 0 {
+		return ""
+	}
+	return BuildPropertyID(kind, &commonv1.Metadata{Group: key.GetGroup(), Name: key.GetName()})
+}
+
 // ParsedTags holds pre-extracted tag values from a property.
 type ParsedTags struct {
 	Group     string
