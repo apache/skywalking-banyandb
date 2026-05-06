@@ -32,6 +32,7 @@ import (
 	commonv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/common/v1"
 	modelv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/model/v1"
 	streamv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/stream/v1"
+	"github.com/apache/skywalking-banyandb/banyand/metadata/schema"
 	"github.com/apache/skywalking-banyandb/banyand/queue"
 	"github.com/apache/skywalking-banyandb/pkg/accesslog"
 	"github.com/apache/skywalking-banyandb/pkg/bus"
@@ -104,8 +105,13 @@ func (s *streamService) validateWriteRequest(writeEntity *streamv1.WriteRequest,
 			s.sendReply(metadata, modelv1.Status_STATUS_NOT_FOUND, writeEntity.GetMessageId(), stream)
 			return modelv1.Status_STATUS_NOT_FOUND
 		}
+		// See banyand/liaison/grpc/measure.go for the rationale: the gate
+		// reads through the per-node NodeRepoRegistry so its verdict tracks
+		// the same cache the AwaitXXX barrier and the data-node executor
+		// consult; the locator's ModRevision serves as the legacy fallback.
+		reg := schemaRevisionRegistry(s.metadataRepo)
 		clientRev := metadata.ModRevision
-		cacheRev := streamCache.ModRevision
+		cacheRev := resolveSchemaRevision(reg, schema.KindStream, metadata.GetGroup(), metadata.GetName(), streamCache.ModRevision)
 		if clientRev < cacheRev {
 			s.l.Error().Stringer("written", writeEntity).Msg("the stream schema is expired")
 			s.sendReply(metadata, modelv1.Status_STATUS_EXPIRED_SCHEMA, writeEntity.GetMessageId(), stream)
@@ -113,11 +119,11 @@ func (s *streamService) validateWriteRequest(writeEntity *streamv1.WriteRequest,
 		}
 		if clientRev > cacheRev {
 			reached := awaitRevisionReached(func() int64 {
-				loc, ok := s.entityRepo.getLocator(id)
-				if !ok {
-					return 0
+				fallback := int64(0)
+				if loc, ok := s.entityRepo.getLocator(id); ok {
+					fallback = loc.ModRevision
 				}
-				return loc.ModRevision
+				return resolveSchemaRevision(reg, schema.KindStream, metadata.GetGroup(), metadata.GetName(), fallback)
 			}, clientRev, s.maxWaitDuration)
 			if !reached {
 				s.sendReply(metadata, modelv1.Status_STATUS_SCHEMA_NOT_APPLIED, writeEntity.GetMessageId(), stream)
@@ -403,10 +409,11 @@ func (s *streamService) Query(ctx context.Context, req *streamv1.QueryRequest) (
 			}
 		}()
 	}
+	streamReg := schemaRevisionRegistry(s.metadataRepo)
 	gatedStatuses, shortCircuit := checkQueryGate(req.Groups, req.Name, req.GroupModRevisions,
 		func(name, group string) (int64, bool) {
 			loc, ok := s.entityRepo.getLocator(identity{name: name, group: group})
-			return loc.ModRevision, ok
+			return resolveQueryGateRevision(streamReg, schema.KindStream, group, name, loc.ModRevision, ok)
 		}, s.maxWaitDuration)
 	if shortCircuit {
 		return &streamv1.QueryResponse{GroupStatuses: gatedStatuses}, nil

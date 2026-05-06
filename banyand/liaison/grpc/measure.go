@@ -32,6 +32,7 @@ import (
 	commonv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/common/v1"
 	measurev1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/measure/v1"
 	modelv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/model/v1"
+	"github.com/apache/skywalking-banyandb/banyand/metadata/schema"
 	"github.com/apache/skywalking-banyandb/banyand/queue"
 	"github.com/apache/skywalking-banyandb/pkg/accesslog"
 	"github.com/apache/skywalking-banyandb/pkg/bus"
@@ -197,8 +198,15 @@ func (ms *measureService) validateWriteRequest(writeRequest *measurev1.WriteRequ
 			ms.sendReply(metadata, modelv1.Status_STATUS_NOT_FOUND, writeRequest.GetMessageId(), measure)
 			return modelv1.Status_STATUS_NOT_FOUND
 		}
+		// Read the cache revision from the per-node NodeRepoRegistry — the
+		// same view AwaitRevisionApplied / AwaitSchemaApplied consult — so the
+		// gate's verdict is in lockstep with the barrier on this node and the
+		// data-node executor cannot miss a key the gate just certified. The
+		// locator's ModRevision is the legacy fallback for fixtures where the
+		// metadata service does not implement metadata.Service.
+		reg := schemaRevisionRegistry(ms.metadataRepo)
 		clientRev := metadata.ModRevision
-		cacheRev := measureCache.ModRevision
+		cacheRev := resolveSchemaRevision(reg, schema.KindMeasure, metadata.GetGroup(), metadata.GetName(), measureCache.ModRevision)
 		if clientRev < cacheRev {
 			ms.l.Error().Stringer("written", writeRequest).Msg("the measure schema is expired")
 			ms.sendReply(metadata, modelv1.Status_STATUS_EXPIRED_SCHEMA, writeRequest.GetMessageId(), measure)
@@ -206,11 +214,11 @@ func (ms *measureService) validateWriteRequest(writeRequest *measurev1.WriteRequ
 		}
 		if clientRev > cacheRev {
 			reached := awaitRevisionReached(func() int64 {
-				loc, ok := ms.entityRepo.getLocator(id)
-				if !ok {
-					return 0
+				fallback := int64(0)
+				if loc, ok := ms.entityRepo.getLocator(id); ok {
+					fallback = loc.ModRevision
 				}
-				return loc.ModRevision
+				return resolveSchemaRevision(reg, schema.KindMeasure, metadata.GetGroup(), metadata.GetName(), fallback)
 			}, clientRev, ms.maxWaitDuration)
 			if !reached {
 				ms.sendReply(metadata, modelv1.Status_STATUS_SCHEMA_NOT_APPLIED, writeRequest.GetMessageId(), measure)
@@ -436,10 +444,11 @@ func (ms *measureService) Query(ctx context.Context, req *measurev1.QueryRequest
 			}
 		}()
 	}
+	measureReg := schemaRevisionRegistry(ms.metadataRepo)
 	gatedStatuses, shortCircuit := checkQueryGate(req.Groups, req.Name, req.GroupModRevisions,
 		func(name, group string) (int64, bool) {
 			loc, ok := ms.entityRepo.getLocator(identity{name: name, group: group})
-			return loc.ModRevision, ok
+			return resolveQueryGateRevision(measureReg, schema.KindMeasure, group, name, loc.ModRevision, ok)
 		}, ms.maxWaitDuration)
 	if shortCircuit {
 		return &measurev1.QueryResponse{GroupStatuses: gatedStatuses}, nil
