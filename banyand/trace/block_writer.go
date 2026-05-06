@@ -149,10 +149,8 @@ type blockWriter struct {
 	primaryBlockMetadata           primaryBlockMetadata
 	totalUncompressedSpanSizeBytes uint64
 	totalCount                     uint64
-	minTimestamp                   int64
 	totalMinTimestamp              int64
 	totalMaxTimestamp              int64
-	maxTimestamp                   int64
 	totalBlocksCount               uint64
 	hasWrittenBlocks               bool
 }
@@ -168,8 +166,6 @@ func (bw *blockWriter) reset() {
 	} else {
 		bw.tagType.reset()
 	}
-	bw.minTimestamp = 0
-	bw.maxTimestamp = 0
 	bw.totalUncompressedSpanSizeBytes = 0
 	bw.totalCount = 0
 	bw.totalBlocksCount = 0
@@ -228,8 +224,7 @@ func (bw *blockWriter) mustWriteBlock(tid string, b *block) {
 	if tid < bw.tidLast {
 		logger.Panicf("the tid=%s cannot be smaller than the previously written tid=%s", tid, bw.tidLast)
 	}
-	hasWrittenBlocks := bw.hasWrittenBlocks
-	if !hasWrittenBlocks {
+	if !bw.hasWrittenBlocks {
 		bw.tidFirst = tid
 		bw.hasWrittenBlocks = true
 	}
@@ -247,12 +242,6 @@ func (bw *blockWriter) mustWriteBlock(tid string, b *block) {
 	}
 	if bw.totalCount == 0 || tm.max > bw.totalMaxTimestamp {
 		bw.totalMaxTimestamp = tm.max
-	}
-	if !hasWrittenBlocks || tm.min < bw.minTimestamp {
-		bw.minTimestamp = tm.min
-	}
-	if !hasWrittenBlocks || tm.max > bw.maxTimestamp {
-		bw.maxTimestamp = tm.max
 	}
 
 	bw.totalUncompressedSpanSizeBytes += bm.uncompressedSpanSizeBytes
@@ -273,8 +262,6 @@ func (bw *blockWriter) mustFlushPrimaryBlock(data []byte) {
 		bw.metaData = bw.primaryBlockMetadata.marshal(bw.metaData)
 	}
 	bw.hasWrittenBlocks = false
-	bw.minTimestamp = 0
-	bw.maxTimestamp = 0
 	bw.tidFirst = ""
 }
 
@@ -286,8 +273,7 @@ func (bw *blockWriter) mustWriteRawBlock(r *rawBlock) {
 	if bm.traceID < bw.tidLast {
 		logger.Panicf("the tid=%s cannot be smaller than the previously written tid=%s", bm.traceID, bw.tidLast)
 	}
-	hasWrittenBlocks := bw.hasWrittenBlocks
-	if !hasWrittenBlocks {
+	if !bw.hasWrittenBlocks {
 		bw.tidFirst = bm.traceID
 		bw.hasWrittenBlocks = true
 	}
@@ -303,12 +289,6 @@ func (bw *blockWriter) mustWriteRawBlock(r *rawBlock) {
 	}
 	if bw.totalCount == 0 || tm.max > bw.totalMaxTimestamp {
 		bw.totalMaxTimestamp = tm.max
-	}
-	if !hasWrittenBlocks || tm.min < bw.minTimestamp {
-		bw.minTimestamp = tm.min
-	}
-	if !hasWrittenBlocks || tm.max > bw.maxTimestamp {
-		bw.maxTimestamp = tm.max
 	}
 
 	bw.totalUncompressedSpanSizeBytes += bm.uncompressedSpanSizeBytes
