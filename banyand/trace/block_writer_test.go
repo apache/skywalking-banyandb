@@ -199,8 +199,8 @@ func TestBlockWriter_OutOfOrderTimestampsSameTraceID(t *testing.T) {
 	// First batch: minTS=1_777_994_129_833_000_000.
 	mustWrite([]int64{1_777_994_129_833_000_000, 1_777_994_129_900_000_000})
 	// Second batch for the same tid carries an earlier minTS — this used to
-	// trip block_writer's `tm.min < bw.minTimestampLast` panic and discard
-	// the batch on production traffic.
+	// fail the per-traceID timestamp monotonicity check and discard the batch
+	// on production traffic.
 	require.NotPanics(t, func() {
 		mustWrite([]int64{1_777_994_129_064_000_000})
 	})
