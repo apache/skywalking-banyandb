@@ -768,7 +768,7 @@ func (rs *groupRegistryServer) Inspect(ctx context.Context, req *databasev1.Grou
 		rs.metrics.totalRegistryErr.Inc(1, g, "group", "inspect")
 		return nil, schemaErr
 	}
-	dataInfo, dataErr := rs.schemaRegistry.CollectDataInfo(ctx, g)
+	dataInfo, _, dataErr := rs.schemaRegistry.CollectDataInfo(ctx, g)
 	if dataErr != nil {
 		rs.metrics.totalRegistryErr.Inc(1, g, "group", "inspect")
 		return nil, dataErr

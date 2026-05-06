@@ -158,7 +158,7 @@ func (m *groupDeletionTaskManager) startDeletion(ctx context.Context, group stri
 		return fmt.Errorf("deletion task for group %s is already in progress", group)
 	}
 
-	dataInfo, dataErr := m.schemaRegistry.CollectDataInfo(ctx, group)
+	dataInfo, _, dataErr := m.schemaRegistry.CollectDataInfo(ctx, group)
 	if dataErr != nil {
 		m.tasks.Delete(group)
 		return fmt.Errorf("failed to collect data info for group %s: %w", group, dataErr)
@@ -452,7 +452,7 @@ func (m *groupDeletionTaskManager) getDeletionTask(ctx context.Context, group st
 }
 
 func (m *groupDeletionTaskManager) hasNonEmptyResources(ctx context.Context, group string) (bool, error) {
-	dataInfo, dataErr := m.schemaRegistry.CollectDataInfo(ctx, group)
+	dataInfo, _, dataErr := m.schemaRegistry.CollectDataInfo(ctx, group)
 	if dataErr != nil {
 		return false, fmt.Errorf("failed to collect data info: %w", dataErr)
 	}

@@ -37,11 +37,24 @@ import (
 const seriesIndexDirName = "sidx"
 
 func (s *segment[T, O]) IndexDB() IndexDB {
-	return s.index
+	// Snapshot s.index into a local: the field can be flipped to nil by
+	// performCleanup at any time, so a second read could see a different
+	// value. Returning the local also avoids boxing a nil *seriesIndex
+	// into a typed-nil IndexDB interface, which would defeat the
+	// `if indexDB == nil` guard on the caller side.
+	idx := s.index
+	if idx == nil {
+		return nil
+	}
+	return idx
 }
 
 func (s *segment[T, O]) Lookup(ctx context.Context, series []*pbv1.Series) (pbv1.SeriesList, error) {
-	sl, err := s.index.filter(ctx, series, nil, nil, nil)
+	idx := s.index
+	if idx == nil {
+		return nil, ErrSegmentClosed
+	}
+	sl, err := idx.filter(ctx, series, nil, nil, nil)
 	return sl.SeriesList, err
 }
 
@@ -79,28 +92,45 @@ func newSeriesIndex(ctx context.Context, root string, flushTimeoutSeconds int64,
 }
 
 func (s *seriesIndex) Insert(docs index.Documents) error {
+	if s == nil {
+		return ErrSegmentClosed
+	}
 	return s.store.InsertSeriesBatch(index.Batch{
 		Documents: docs,
 	})
 }
 
 func (s *seriesIndex) Update(docs index.Documents) error {
+	if s == nil {
+		return ErrSegmentClosed
+	}
 	return s.store.UpdateSeriesBatch(index.Batch{
 		Documents: docs,
 	})
 }
 
 func (s *seriesIndex) EnableExternalSegments() (index.ExternalSegmentStreamer, error) {
+	if s == nil {
+		return nil, ErrSegmentClosed
+	}
 	return s.store.EnableExternalSegments()
 }
 
+// Stats degrades to (0, 0) on a nil receiver as defense-in-depth in case
+// a typed-nil interface leaks past segment.IndexDB().
 func (s *seriesIndex) Stats() (dataCount int64, dataSizeBytes int64) {
+	if s == nil {
+		return 0, 0
+	}
 	return s.store.Stats()
 }
 
 func (s *seriesIndex) filter(ctx context.Context, series []*pbv1.Series,
 	projection []index.FieldKey, secondaryQuery index.Query, timeRange *timestamp.TimeRange,
 ) (data SeriesData, err error) {
+	if s == nil {
+		return SeriesData{}, ErrSegmentClosed
+	}
 	if len(series) == 0 && secondaryQuery == nil && timeRange == nil {
 		return data, nil
 	}
@@ -231,6 +261,9 @@ func convertIndexSeriesToSeriesList(indexSeries []index.SeriesDocument, hasField
 
 func (s *seriesIndex) Search(ctx context.Context, series []*pbv1.Series, opts IndexSearchOpts,
 ) (sd SeriesData, sortedValues [][]byte, err error) {
+	if s == nil {
+		return SeriesData{}, nil, ErrSegmentClosed
+	}
 	tracer := query.GetTracer(ctx)
 	if tracer != nil {
 		var span *query.Span
@@ -309,6 +342,9 @@ func (s *seriesIndex) Search(ctx context.Context, series []*pbv1.Series, opts In
 }
 
 func (s *seriesIndex) SearchWithoutSeries(ctx context.Context, opts IndexSearchOpts) (sd SeriesData, sortedValues [][]byte, err error) {
+	if s == nil {
+		return SeriesData{}, nil, ErrSegmentClosed
+	}
 	tracer := query.GetTracer(ctx)
 	if tracer != nil {
 		var span *query.Span
@@ -384,6 +420,9 @@ func (s *seriesIndex) SearchWithoutSeries(ctx context.Context, opts IndexSearchO
 }
 
 func (s *seriesIndex) Close() error {
+	if s == nil {
+		return nil
+	}
 	s.metrics.DeleteAll(s.p.SegLabelValues()...)
 	return s.store.Close()
 }

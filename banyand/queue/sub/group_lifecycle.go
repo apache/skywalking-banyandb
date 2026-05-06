@@ -32,6 +32,11 @@ import (
 // while still bounding load on the data nodes.
 const maxInspectGroupConcurrency = 32
 
+// topLevelErrorPrefix tags an entry in GroupLifecycleInfo.errors that
+// originated from a top-level CollectDataInfo failure (GetGroup, missing
+// collector, dial failure) rather than a per-node broadcast failure.
+const topLevelErrorPrefix = "top-level: "
+
 // InspectAll lists all groups and returns their full lifecycle info.
 // Per-group inspections run in parallel (bounded), so a single slow group
 // cannot consume budget that other groups need.
@@ -77,12 +82,14 @@ func (s *server) inspectGroup(ctx context.Context, group *commonv1.Group) *fodcv
 		Catalog:      catalogToString(group.Catalog),
 		ResourceOpts: group.ResourceOpts,
 	}
-	dataInfo, err := s.metadataRepo.CollectDataInfo(ctx, groupName)
+	dataInfo, collectionErrs, err := s.metadataRepo.CollectDataInfo(ctx, groupName)
+	info.Errors = collectionErrs
 	if err != nil {
 		s.log.Warn().Err(err).Str("group", groupName).Msg("Failed to collect data info")
-	} else {
-		info.DataInfo = dataInfo
+		info.Errors = append([]string{topLevelErrorPrefix + err.Error()}, info.Errors...)
+		return info
 	}
+	info.DataInfo = dataInfo
 	return info
 }
 

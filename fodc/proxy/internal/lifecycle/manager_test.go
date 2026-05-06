@@ -394,3 +394,64 @@ func TestManager_CollectLifecycle_ContextCanceled(t *testing.T) {
 	result, _ := mgr.CollectLifecycle(ctx)
 	require.NotNil(t, result)
 }
+
+// TestManager_MergeGroups_UnionsErrorsAcrossAgents verifies that when
+// multiple agents report the same group, the errors observed by each
+// agent are unioned (deduped, sorted) rather than overwritten last-wins,
+// so downstream consumers see every per-node failure regardless of which
+// agent's view they happened to land on.
+func TestManager_MergeGroups_UnionsErrorsAcrossAgents(t *testing.T) {
+	log := initTestLogger(t)
+	mgr := NewManager(nil, nil, log)
+
+	groupName := "sw_metric"
+	agentA := &agentLifecycleData{
+		PodName: "liaison-0",
+		Data: &fodcv1.LifecycleData{
+			Groups: []*fodcv1.GroupLifecycleInfo{{
+				Name:    groupName,
+				Catalog: "CATALOG_MEASURE",
+				Errors: []string{
+					"node error: cold-0 panic",
+					"future error: rpc deadline",
+				},
+			}},
+		},
+	}
+	agentB := &agentLifecycleData{
+		PodName: "liaison-1",
+		Data: &fodcv1.LifecycleData{
+			Groups: []*fodcv1.GroupLifecycleInfo{{
+				Name:    groupName,
+				Catalog: "CATALOG_MEASURE",
+				Errors: []string{
+					"node error: cold-0 panic", // duplicate of A's first
+					"broadcast failed: dial timeout",
+				},
+			}},
+		},
+	}
+	agentC := &agentLifecycleData{
+		PodName: "liaison-2",
+		Data: &fodcv1.LifecycleData{
+			Groups: []*fodcv1.GroupLifecycleInfo{{
+				Name:    groupName,
+				Catalog: "CATALOG_MEASURE",
+				// no errors
+			}},
+		},
+	}
+
+	merged := mgr.mergeGroups([]*agentLifecycleData{agentA, agentB, agentC})
+	require.Len(t, merged, 1)
+	g := merged[0]
+	assert.Equal(t, groupName, g.Name)
+	assert.Equal(t,
+		[]string{
+			"broadcast failed: dial timeout",
+			"future error: rpc deadline",
+			"node error: cold-0 panic",
+		},
+		g.Errors,
+		"errors must be the deduped, sorted union of every agent's view")
+}
