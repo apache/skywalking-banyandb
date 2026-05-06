@@ -118,8 +118,11 @@ func newStandaloneCmd(runners ...run.Unit) *cobra.Command {
 				return err
 			}
 			logger.GetLogger().Info().Msg("starting as a standalone server")
-			// Spawn our go routines and wait for shutdown.
-			if err := standaloneGroup.Run(context.WithValue(context.Background(), common.ContextNodeKey, nodeID)); err != nil {
+			// Spawn our go routines and wait for shutdown. The Run context is
+			// derived from SupervisorContext so that a panic recovered anywhere
+			// in the process, including goroutines spawned via run.Go, fires
+			// cancellation here.
+			if err := standaloneGroup.Run(context.WithValue(SupervisorContext(), common.ContextNodeKey, nodeID)); err != nil {
 				logger.GetLogger().Error().Err(err).Stack().Str("name", standaloneGroup.Name()).Msg("Exit")
 				os.Exit(-1)
 			}

@@ -57,6 +57,9 @@ BanyanDB, as an observability database, aims to ingest, analyze and store Metric
 			if err = crashOutputConfig.InstallGlobalCrashOutput(); err != nil {
 				return err
 			}
+			// Install the supervising context after the crash-output config so
+			// panicdiag is fully wired before any goroutine could panic.
+			initSupervisor()
 			if err = config.Load("logging", cmd.Flags()); err != nil {
 				return err
 			}
