@@ -52,8 +52,17 @@ var _ = ginkgo.Describe("vectorized parity", ginkgo.Ordered, func() {
 	var (
 		vectorizedConn *grpc.ClientConn
 		stopFn         func()
+		// Save the package-global SharedContexts so AfterAll can restore
+		// them. Sibling Describes may run *between* this AfterAll and the
+		// next BeforeAll (e.g. the top-level "TopN Tests" / "Scanning
+		// Measures" tables); leaving SharedContext pointing at our
+		// closed-down cluster makes those siblings time out.
+		savedMeasureCtx helpers.SharedContext
+		savedTopNCtx    helpers.SharedContext
 	)
 	ginkgo.BeforeAll(func() {
+		savedMeasureCtx = casesmeasure.SharedContext
+		savedTopNCtx = casestopn.SharedContext
 		path, diskCleanupFn, pathErr := test.NewSpace()
 		gomega.Expect(pathErr).NotTo(gomega.HaveOccurred())
 		ports, portsErr := test.AllocateFreePorts(5)
@@ -85,6 +94,12 @@ var _ = ginkgo.Describe("vectorized parity", ginkgo.Ordered, func() {
 		casestopn.SharedContext = sharedCtx
 	})
 	ginkgo.AfterAll(func() {
+		// Restore the saved SharedContexts BEFORE tearing the cluster down
+		// so any sibling Describe that runs between this AfterAll and its
+		// own BeforeAll observes a live connection (the original cluster
+		// #1 from SynchronizedBeforeSuite is still up at this point).
+		casesmeasure.SharedContext = savedMeasureCtx
+		casestopn.SharedContext = savedTopNCtx
 		if vectorizedConn != nil {
 			gomega.Expect(vectorizedConn.Close()).To(gomega.Succeed())
 		}
