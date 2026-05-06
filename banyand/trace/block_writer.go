@@ -152,7 +152,6 @@ type blockWriter struct {
 	minTimestamp                   int64
 	totalMinTimestamp              int64
 	totalMaxTimestamp              int64
-	minTimestampLast               int64
 	maxTimestamp                   int64
 	totalBlocksCount               uint64
 	hasWrittenBlocks               bool
@@ -169,7 +168,6 @@ func (bw *blockWriter) reset() {
 	} else {
 		bw.tagType.reset()
 	}
-	bw.minTimestampLast = 0
 	bw.minTimestamp = 0
 	bw.maxTimestamp = 0
 	bw.totalUncompressedSpanSizeBytes = 0
@@ -235,7 +233,6 @@ func (bw *blockWriter) mustWriteBlock(tid string, b *block) {
 		bw.tidFirst = tid
 		bw.hasWrittenBlocks = true
 	}
-	isSeenTid := tid == bw.tidLast
 	bw.tidLast = tid
 
 	bm := generateBlockMetadata()
@@ -257,10 +254,6 @@ func (bw *blockWriter) mustWriteBlock(tid string, b *block) {
 	if !hasWrittenBlocks || tm.max > bw.maxTimestamp {
 		bw.maxTimestamp = tm.max
 	}
-	if isSeenTid && tm.min < bw.minTimestampLast {
-		logger.Panicf("the block for tid=%s cannot contain timestamp smaller than %d, but it contains timestamp %d", tid, bw.minTimestampLast, tm.min)
-	}
-	bw.minTimestampLast = tm.min
 
 	bw.totalUncompressedSpanSizeBytes += bm.uncompressedSpanSizeBytes
 	bw.totalCount += bm.count
@@ -298,7 +291,6 @@ func (bw *blockWriter) mustWriteRawBlock(r *rawBlock) {
 		bw.tidFirst = bm.traceID
 		bw.hasWrittenBlocks = true
 	}
-	isSeenTid := bm.traceID == bw.tidLast
 	bw.tidLast = bm.traceID
 	if bw.traceIDFilter != nil && bw.traceIDFilter.filter != nil {
 		bw.traceIDFilter.filter.Add(convert.StringToBytes(bm.traceID))
@@ -318,10 +310,6 @@ func (bw *blockWriter) mustWriteRawBlock(r *rawBlock) {
 	if !hasWrittenBlocks || tm.max > bw.maxTimestamp {
 		bw.maxTimestamp = tm.max
 	}
-	if isSeenTid && tm.min < bw.minTimestampLast {
-		logger.Panicf("the block for tid=%s cannot contain timestamp smaller than %d, but it contains timestamp %d", bm.traceID, bw.minTimestampLast, tm.min)
-	}
-	bw.minTimestampLast = tm.min
 
 	bw.totalUncompressedSpanSizeBytes += bm.uncompressedSpanSizeBytes
 	bw.totalCount += bm.count
