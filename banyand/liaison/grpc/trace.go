@@ -156,6 +156,7 @@ func (s *traceService) validateWriteRequest(writeEntity *tracev1.WriteRequest,
 		cacheRev := resolveSchemaRevision(reg, schema.KindTrace, metadata.GetGroup(), metadata.GetName(), traceEntity.GetMetadata().GetModRevision())
 		if clientRev < cacheRev {
 			s.l.Error().Stringer("written", writeEntity).Msg("the trace schema is expired")
+			s.metrics.emitStatusExpired(rpcLabelTraceWrite, metadata.GetGroup())
 			s.sendReply(metadata, modelv1.Status_STATUS_EXPIRED_SCHEMA, writeEntity.GetVersion(), stream)
 			return modelv1.Status_STATUS_EXPIRED_SCHEMA
 		}
@@ -168,6 +169,7 @@ func (s *traceService) validateWriteRequest(writeEntity *tracev1.WriteRequest,
 				return resolveSchemaRevision(reg, schema.KindTrace, metadata.GetGroup(), metadata.GetName(), fallback)
 			}, clientRev, s.maxWaitDuration)
 			if !reached {
+				s.metrics.emitStatusNotAppliedTimeout(rpcLabelTraceWrite, metadata.GetGroup())
 				s.sendReply(metadata, modelv1.Status_STATUS_SCHEMA_NOT_APPLIED, writeEntity.GetVersion(), stream)
 				return modelv1.Status_STATUS_SCHEMA_NOT_APPLIED
 			}
@@ -534,6 +536,7 @@ func (s *traceService) Query(ctx context.Context, req *tracev1.QueryRequest) (re
 			loc, ok := s.entityRepo.getLocator(identity{name: name, group: group})
 			return resolveQueryGateRevision(traceReg, schema.KindTrace, group, name, loc.ModRevision, ok)
 		}, s.maxWaitDuration)
+	recordQueryGateStatuses(s.metrics, rpcLabelTraceQuery, gatedStatuses)
 	if shortCircuit {
 		return &tracev1.QueryResponse{GroupStatuses: gatedStatuses}, nil
 	}

@@ -364,6 +364,10 @@ func (s *server) PreRun(ctx context.Context) error {
 	s.traceSVC.metrics = metrics
 	s.bydbQLSVC.metrics = metrics
 	s.propertyServer.metrics = metrics
+	if s.barrierSVC != nil {
+		s.barrierSVC.metrics = metrics
+		s.barrierSVC.l = s.log.Named("barrier")
+	}
 	s.streamRegistryServer.metrics = metrics
 	s.indexRuleBindingRegistryServer.metrics = metrics
 	s.indexRuleRegistryServer.metrics = metrics

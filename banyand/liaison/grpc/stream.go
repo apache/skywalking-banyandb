@@ -114,6 +114,7 @@ func (s *streamService) validateWriteRequest(writeEntity *streamv1.WriteRequest,
 		cacheRev := resolveSchemaRevision(reg, schema.KindStream, metadata.GetGroup(), metadata.GetName(), streamCache.ModRevision)
 		if clientRev < cacheRev {
 			s.l.Error().Stringer("written", writeEntity).Msg("the stream schema is expired")
+			s.metrics.emitStatusExpired(rpcLabelStreamWrite, metadata.GetGroup())
 			s.sendReply(metadata, modelv1.Status_STATUS_EXPIRED_SCHEMA, writeEntity.GetMessageId(), stream)
 			return modelv1.Status_STATUS_EXPIRED_SCHEMA
 		}
@@ -126,6 +127,7 @@ func (s *streamService) validateWriteRequest(writeEntity *streamv1.WriteRequest,
 				return resolveSchemaRevision(reg, schema.KindStream, metadata.GetGroup(), metadata.GetName(), fallback)
 			}, clientRev, s.maxWaitDuration)
 			if !reached {
+				s.metrics.emitStatusNotAppliedTimeout(rpcLabelStreamWrite, metadata.GetGroup())
 				s.sendReply(metadata, modelv1.Status_STATUS_SCHEMA_NOT_APPLIED, writeEntity.GetMessageId(), stream)
 				return modelv1.Status_STATUS_SCHEMA_NOT_APPLIED
 			}
@@ -415,6 +417,7 @@ func (s *streamService) Query(ctx context.Context, req *streamv1.QueryRequest) (
 			loc, ok := s.entityRepo.getLocator(identity{name: name, group: group})
 			return resolveQueryGateRevision(streamReg, schema.KindStream, group, name, loc.ModRevision, ok)
 		}, s.maxWaitDuration)
+	recordQueryGateStatuses(s.metrics, rpcLabelStreamQuery, gatedStatuses)
 	if shortCircuit {
 		return &streamv1.QueryResponse{GroupStatuses: gatedStatuses}, nil
 	}

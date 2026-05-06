@@ -209,6 +209,7 @@ func (ms *measureService) validateWriteRequest(writeRequest *measurev1.WriteRequ
 		cacheRev := resolveSchemaRevision(reg, schema.KindMeasure, metadata.GetGroup(), metadata.GetName(), measureCache.ModRevision)
 		if clientRev < cacheRev {
 			ms.l.Error().Stringer("written", writeRequest).Msg("the measure schema is expired")
+			ms.metrics.emitStatusExpired(rpcLabelMeasureWrite, metadata.GetGroup())
 			ms.sendReply(metadata, modelv1.Status_STATUS_EXPIRED_SCHEMA, writeRequest.GetMessageId(), measure)
 			return modelv1.Status_STATUS_EXPIRED_SCHEMA
 		}
@@ -221,6 +222,7 @@ func (ms *measureService) validateWriteRequest(writeRequest *measurev1.WriteRequ
 				return resolveSchemaRevision(reg, schema.KindMeasure, metadata.GetGroup(), metadata.GetName(), fallback)
 			}, clientRev, ms.maxWaitDuration)
 			if !reached {
+				ms.metrics.emitStatusNotAppliedTimeout(rpcLabelMeasureWrite, metadata.GetGroup())
 				ms.sendReply(metadata, modelv1.Status_STATUS_SCHEMA_NOT_APPLIED, writeRequest.GetMessageId(), measure)
 				return modelv1.Status_STATUS_SCHEMA_NOT_APPLIED
 			}
@@ -450,6 +452,7 @@ func (ms *measureService) Query(ctx context.Context, req *measurev1.QueryRequest
 			loc, ok := ms.entityRepo.getLocator(identity{name: name, group: group})
 			return resolveQueryGateRevision(measureReg, schema.KindMeasure, group, name, loc.ModRevision, ok)
 		}, ms.maxWaitDuration)
+	recordQueryGateStatuses(ms.metrics, rpcLabelMeasureQuery, gatedStatuses)
 	if shortCircuit {
 		return &measurev1.QueryResponse{GroupStatuses: gatedStatuses}, nil
 	}
