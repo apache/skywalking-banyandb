@@ -81,11 +81,13 @@ func NewInfoCollectorRegistry(l *logger.Logger, groupGetter GroupGetter) *InfoCo
 }
 
 // CollectDataInfo collects data information from both local and remote data
-// nodes. Returns the aggregated DataInfo slice plus a parallel slice of
+// nodes. Returns the aggregated DataInfo slice plus a separate slice of
 // per-node collection errors observed during broadcast (broadcast failure,
-// future errors, listener-side common.Error responses). The error return
-// is reserved for top-level failures that prevent any aggregation
-// (GetGroup failure, local collector failure, unsupported catalog).
+// future errors, listener-side common.Error responses); the two slices
+// are independent -- the errors slice only contains failures and is not
+// positionally aligned with DataInfo. The error return is reserved for
+// top-level failures that prevent any aggregation (GetGroup failure,
+// local collector failure, unsupported catalog).
 func (icr *InfoCollectorRegistry) CollectDataInfo(ctx context.Context, group string) ([]*databasev1.DataInfo, []string, error) {
 	g, getErr := icr.groupGetter.GetGroup(ctx, group)
 	if getErr != nil {
