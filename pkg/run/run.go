@@ -418,20 +418,9 @@ func (g *Group) Run(ctx context.Context) (err error) {
 		g.log.Debug().Uint32("total", uint32(len(g.s))).Uint32("ran", uint32(idx+1)).Str("name", s.Name()).Msg("serve")
 		g.r.Add(func() error {
 			readyNotified := false
-			var serveErr error
-			panicdiag.WithRecovery(ctx, panicdiag.RecoveryOptions{
+			outcome := panicdiag.WithRecovery(ctx, panicdiag.RecoveryOptions{
 				Component: s.Name(),
 				Logger:    g.log,
-				OnAbort: func(_ context.Context, result panicdiag.RecoveryResult) {
-					// Surface the panic as a service error so oklog/run pops
-					// the group and triggers GracefulStop on every other
-					// service, instead of silently leaving this service dead.
-					var panicValue string
-					if result.Record != nil {
-						panicValue = result.Record.PanicValue
-					}
-					serveErr = errors.Errorf("service %q panicked: %s", s.Name(), panicValue)
-				},
 			}, nil, func(_ *context.Context) {
 				notify := s.Serve()
 				readyNotified = true
@@ -441,7 +430,17 @@ func (g *Group) Run(ctx context.Context) (err error) {
 			if !readyNotified {
 				swg.Done()
 			}
-			return serveErr
+			// Surface the panic as a service error so oklog/run pops the
+			// group and triggers GracefulStop on every other service,
+			// instead of silently leaving this service dead.
+			if outcome.Panicked {
+				panicValue := ""
+				if outcome.Result.Record != nil {
+					panicValue = outcome.Result.Record.PanicValue
+				}
+				return errors.Errorf("service %q panicked: %s", s.Name(), panicValue)
+			}
+			return nil
 		}, func(_ error) {
 			g.log.Warn().Uint32("total", uint32(len(g.s))).Uint32("ran", uint32(idx+1)).Str("name", s.Name()).Msg("stopping")
 			startTime := time.Now()

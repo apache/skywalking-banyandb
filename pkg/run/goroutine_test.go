@@ -21,6 +21,7 @@ import (
 	"context"
 	"os"
 	"os/exec"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -30,34 +31,122 @@ import (
 	"github.com/apache/skywalking-banyandb/pkg/panicdiag"
 )
 
+// TestGo_DefaultRecoversWithoutTerminatingProcess pins the new default Go
+// behavior: a panic inside the launched goroutine is recovered, diagnostics
+// are captured, and the process continues. Callers that need fatal semantics
+// must opt in via WithRepanic(true).
+func TestGo_DefaultRecoversWithoutTerminatingProcess(t *testing.T) {
+	t.Helper()
+
+	task := Go(context.Background(), "default-recovery", logger.GetLogger("test"), func(_ context.Context) {
+		panic("non-fatal boom")
+	})
+
+	select {
+	case <-task.Done():
+	case <-time.After(2 * time.Second):
+		t.Fatal("goroutine did not finish after panic; Done was expected to close")
+	}
+
+	outcome := task.Outcome()
+	require.NotNil(t, outcome, "Outcome must be populated for the default (non-repanic) path")
+	require.True(t, outcome.Panicked, "expected outcome.Panicked = true after recovered panic")
+	require.NotNil(t, outcome.Result.Record)
+	require.Equal(t, "non-fatal boom", outcome.Result.Record.PanicValue)
+}
+
+// TestGo_OutcomeAfterCleanRun pins that a goroutine that returns normally
+// produces a non-nil outcome with Panicked=false. Callers that watch
+// Done()+Outcome() must be able to distinguish "ran clean" from "panicked".
+func TestGo_OutcomeAfterCleanRun(t *testing.T) {
+	t.Helper()
+
+	executed := atomic.Bool{}
+	task := Go(context.Background(), "clean-run", logger.GetLogger("test"), func(_ context.Context) {
+		executed.Store(true)
+	})
+
+	outcome := task.Wait()
+	require.True(t, executed.Load())
+	require.NotNil(t, outcome)
+	require.False(t, outcome.Panicked)
+	require.Nil(t, outcome.Result.Record)
+}
+
+// TestGo_PerCallOnAbortFires pins that WithOnAbort fires from the recovery
+// defer of the launched goroutine, giving callers a per-call hook to fail
+// only their parent without disturbing the process-wide supervisor.
+func TestGo_PerCallOnAbortFires(t *testing.T) {
+	t.Helper()
+
+	aborted := make(chan panicdiag.RecoveryResult, 1)
+	task := Go(context.Background(), "abort-hook", logger.GetLogger("test"),
+		func(_ context.Context) { panic("abort-hook-boom") },
+		WithOnAbort(func(_ context.Context, result panicdiag.RecoveryResult) {
+			aborted <- result
+		}),
+	)
+
+	<-task.Done()
+
+	select {
+	case got := <-aborted:
+		require.NotNil(t, got.Record)
+		require.Equal(t, "abort-hook-boom", got.Record.PanicValue)
+	case <-time.After(time.Second):
+		t.Fatal("expected per-call OnAbort to fire after recovered panic")
+	}
+}
+
+// TestGo_PerCallReporterFires pins that WithReporter delivers the recovery
+// result without resorting to the variadic API the previous Go signature
+// exposed.
+func TestGo_PerCallReporterFires(t *testing.T) {
+	t.Helper()
+
+	reported := make(chan panicdiag.RecoveryResult, 1)
+	task := Go(context.Background(), "reporter-hook", logger.GetLogger("test"),
+		func(_ context.Context) { panic("reporter-boom") },
+		WithReporter(func(_ context.Context, result panicdiag.RecoveryResult) {
+			reported <- result
+		}),
+	)
+	<-task.Done()
+
+	select {
+	case got := <-reported:
+		require.Equal(t, "reporter-boom", got.Record.PanicValue)
+	case <-time.After(time.Second):
+		t.Fatal("expected per-call reporter to fire")
+	}
+}
+
+// TestGo_RecoveryCapturesBreadcrumbsAddedInFn keeps the assertion that
+// breadcrumbs added inside fn show up in the captured artifact, but adapts to
+// the new default: no process termination is required, so we read the
+// outcome directly via Wait() instead of running a subprocess.
 func TestGo_RecoveryCapturesBreadcrumbsAddedInFn(t *testing.T) {
 	t.Helper()
 
-	if os.Getenv("BANYANDB_RUN_GO_REPANIC_HELPER") == "1" {
-		artifactRoot := os.Getenv("BANYANDB_RUN_GO_ARTIFACT_ROOT")
-		require.NotEmpty(t, artifactRoot)
-		panicdiag.SetDefaultArtifactRoot(artifactRoot)
-
-		Go(context.Background(), "test", logger.GetLogger("test"), func(ctx context.Context) {
-			panicdiag.WithBreadcrumb(ctx, "stage-A", "component", nil)
-			panicdiag.WithBreadcrumb(ctx, "stage-B", "component", nil)
-			panic("boom")
-		})
-
-		time.Sleep(5 * time.Second)
-		t.Fatal("expected run.Go panic to terminate helper process")
-	}
-
 	artifactRoot := t.TempDir()
-	testCmd := exec.Command(os.Args[0], "-test.run=TestGo_RecoveryCapturesBreadcrumbsAddedInFn")
-	testCmd.Env = append(os.Environ(),
-		"BANYANDB_RUN_GO_REPANIC_HELPER=1",
-		"BANYANDB_RUN_GO_ARTIFACT_ROOT="+artifactRoot,
-	)
-	runErr := testCmd.Run()
-	require.Error(t, runErr)
-	var exitErr *exec.ExitError
-	require.ErrorAs(t, runErr, &exitErr)
+	previousRoot := panicdiag.DefaultArtifactRoot()
+	panicdiag.SetDefaultArtifactRoot(artifactRoot)
+	t.Cleanup(func() { panicdiag.SetDefaultArtifactRoot(previousRoot) })
+
+	task := Go(context.Background(), "test", logger.GetLogger("test"), func(ctx context.Context) {
+		panicdiag.WithBreadcrumb(ctx, "stage-A", "component", nil)
+		panicdiag.WithBreadcrumb(ctx, "stage-B", "component", nil)
+		panic("boom")
+	})
+
+	outcome := task.Wait()
+	require.NotNil(t, outcome)
+	require.True(t, outcome.Panicked)
+	require.NotNil(t, outcome.Result.Record)
+	require.Equal(t, "boom", outcome.Result.Record.PanicValue)
+	require.Len(t, outcome.Result.Record.Breadcrumbs, 2)
+	require.Equal(t, "stage-A", outcome.Result.Record.Breadcrumbs[0].Stage)
+	require.Equal(t, "stage-B", outcome.Result.Record.Breadcrumbs[1].Stage)
 
 	collections, listErr := panicdiag.ListCollections(artifactRoot)
 	require.NoError(t, listErr)
@@ -65,42 +154,30 @@ func TestGo_RecoveryCapturesBreadcrumbsAddedInFn(t *testing.T) {
 	require.NotNil(t, collections[0].Record)
 	require.Equal(t, "boom", collections[0].Record.PanicValue)
 	require.Len(t, collections[0].Record.Breadcrumbs, 2)
-	require.Equal(t, "stage-A", collections[0].Record.Breadcrumbs[0].Stage)
-	require.Equal(t, "stage-B", collections[0].Record.Breadcrumbs[1].Stage)
 }
 
-func TestGo_ReportsBeforeRepanic(t *testing.T) {
+// TestGo_WithRepanicTerminatesProcess pins that WithRepanic(true) restores
+// the previous fatal-on-panic behavior for callers that need it. We exec a
+// subprocess so we can assert the process actually dies.
+func TestGo_WithRepanicTerminatesProcess(t *testing.T) {
 	t.Helper()
 
-	if os.Getenv("BANYANDB_RUN_GO_REPORTER_HELPER") == "1" {
-		reportPath := os.Getenv("BANYANDB_RUN_GO_REPORT_PATH")
-		require.NotEmpty(t, reportPath)
-
+	if os.Getenv("BANYANDB_RUN_GO_REPANIC_HELPER") == "1" {
 		Go(context.Background(), "test", logger.GetLogger("test"), func(_ context.Context) {
-			panic("reported boom")
-		}, func(_ context.Context, result panicdiag.RecoveryResult) {
-			if result.Record == nil {
-				return
-			}
-			_ = os.WriteFile(reportPath, []byte(result.Record.PanicValue), 0o600)
-		})
+			panic("repanic-boom")
+		}, WithRepanic(true))
 
+		// Repanic kills the process; this sleep guards against a regression
+		// where Repanic silently becomes a no-op.
 		time.Sleep(5 * time.Second)
-		t.Fatal("expected run.Go panic to terminate helper process")
+		t.Fatal("expected WithRepanic(true) to terminate the helper process")
 	}
 
-	reportPath := t.TempDir() + "/panic-report"
-	testCmd := exec.Command(os.Args[0], "-test.run=TestGo_ReportsBeforeRepanic")
-	testCmd.Env = append(os.Environ(),
-		"BANYANDB_RUN_GO_REPORTER_HELPER=1",
-		"BANYANDB_RUN_GO_REPORT_PATH="+reportPath,
-	)
+	// #nosec G204 -- self-exec of the running test binary; arguments are constant.
+	testCmd := exec.Command(os.Args[0], "-test.run=TestGo_WithRepanicTerminatesProcess")
+	testCmd.Env = append(os.Environ(), "BANYANDB_RUN_GO_REPANIC_HELPER=1")
 	runErr := testCmd.Run()
 	require.Error(t, runErr)
 	var exitErr *exec.ExitError
 	require.ErrorAs(t, runErr, &exitErr)
-
-	reportData, readErr := os.ReadFile(reportPath)
-	require.NoError(t, readErr)
-	require.Equal(t, "reported boom", string(reportData))
 }

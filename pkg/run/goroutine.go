@@ -19,43 +19,133 @@ package run
 
 import (
 	"context"
+	"sync/atomic"
 
 	"github.com/apache/skywalking-banyandb/pkg/logger"
+	"github.com/apache/skywalking-banyandb/pkg/meter"
 	"github.com/apache/skywalking-banyandb/pkg/panicdiag"
 )
 
-// Go launches fn in a new goroutine protected by panic recovery.
-// A mutable breadcrumb store is installed before fn runs so breadcrumbs added
-// inside fn are captured if fn panics.
-// Panics are intercepted, the panic value and localized stack trace are logged,
-// and the panic is raised again after diagnostics are captured. Re-raising
-// inside a goroutine cannot propagate to the launcher, so callers that need to
-// fail the parent lifecycle should register a process-wide AbortFunc via
-// panicdiag.SetDefaultAbortFunc, for example, one that cancels a supervising
-// context — which is invoked from every recovery defer before the goroutine
-// dies.
-// When a reporter is supplied, it is invoked after diagnostics are captured and
-// before the panic is raised again. The process-wide default reporter
-// registered via panicdiag.SetDefaultReporter is always invoked as well, so
-// per-call reporters compose with the default rather than shadowing it.
-// At most one reporter is supported; additional values are ignored.
-// When a panic counter is configured via RecoveryOptions.Counter or
-// panicdiag.SetDefaultPanicCounter, banyandb_panic_total is incremented with
-// component as the label.
-func Go(ctx context.Context, component string, log *logger.Logger, fn func(context.Context), reporters ...panicdiag.Reporter) {
-	var reporter panicdiag.Reporter
-	if len(reporters) > 0 {
-		reporter = reporters[0]
+// Task tracks a goroutine launched by Go.
+//
+// Done closes when the goroutine exits. Outcome is nil until then, then holds
+// the recovery result. WithRepanic(true) still closes Done, but may leave
+// Outcome nil because the panic is re-raised before it can be stored.
+type Task struct {
+	outcome atomic.Pointer[panicdiag.RecoveryOutcome]
+	done    chan struct{}
+}
+
+// Done returns a channel closed when the goroutine launched by Go exits.
+func (t *Task) Done() <-chan struct{} {
+	return t.done
+}
+
+// Outcome returns the panic-recovery outcome, or nil if the goroutine has
+// not yet exited (or re-raised a panic via WithRepanic).
+func (t *Task) Outcome() *panicdiag.RecoveryOutcome {
+	return t.outcome.Load()
+}
+
+// Wait blocks until the goroutine exits and returns the outcome.
+func (t *Task) Wait() *panicdiag.RecoveryOutcome {
+	<-t.done
+	return t.outcome.Load()
+}
+
+// goConfig holds the resolved options for a Go call. All fields are optional
+// and, except where noted, fall back to panicdiag's process-wide defaults.
+type goConfig struct {
+	reporter        panicdiag.Reporter
+	onAbort         panicdiag.AbortFunc
+	stateDumper     panicdiag.StateDumper
+	counter         meter.Counter
+	processMetadata map[string]string
+	artifactRoot    string
+	stateLimitBytes int64
+	repanic         bool
+}
+
+// Option configures a single Go call. Options compose with panicdiag defaults.
+type Option func(*goConfig)
+
+// WithReporter installs a non-blocking per-call reporter for recovered panics.
+func WithReporter(r panicdiag.Reporter) Option {
+	return func(c *goConfig) { c.reporter = r }
+}
+
+// WithOnAbort installs a non-blocking per-call abort hook.
+func WithOnAbort(f panicdiag.AbortFunc) Option {
+	return func(c *goConfig) { c.onAbort = f }
+}
+
+// WithRepanic re-raises recovered panics after diagnostics. Default is false.
+func WithRepanic(repanic bool) Option {
+	return func(c *goConfig) { c.repanic = repanic }
+}
+
+// WithStateDumper attaches a StateDumper that runs during recovery to capture
+// a bounded snapshot of caller-defined state alongside the panic record.
+func WithStateDumper(d panicdiag.StateDumper) Option {
+	return func(c *goConfig) { c.stateDumper = d }
+}
+
+// WithCounter overrides the panic counter for this call. When unset, the
+// process-wide counter from panicdiag.SetDefaultPanicCounter is used.
+func WithCounter(c meter.Counter) Option {
+	return func(g *goConfig) { g.counter = c }
+}
+
+// WithProcessMetadata attaches static labels to the panic record.
+func WithProcessMetadata(meta map[string]string) Option {
+	return func(c *goConfig) { c.processMetadata = meta }
+}
+
+// WithArtifactRoot overrides the directory that artifacts are written to.
+func WithArtifactRoot(root string) Option {
+	return func(c *goConfig) { c.artifactRoot = root }
+}
+
+// WithStateLimitBytes caps the size of the deep state dump.
+func WithStateLimitBytes(n int64) Option {
+	return func(c *goConfig) { c.stateLimitBytes = n }
+}
+
+// Go launches fn in a panic-recovered goroutine.
+//
+// Recovered panics are logged with diagnostics, reported to process-wide
+// panicdiag hooks, and exposed through the returned Task. Per-call reporter
+// and abort hooks compose with process-wide defaults.
+//
+// WithRepanic(true) restores process-fatal behavior after diagnostics. Panic
+// counters configured by option or default are incremented with component.
+func Go(ctx context.Context, component string, log *logger.Logger, fn func(context.Context), opts ...Option) *Task {
+	cfg := goConfig{}
+	for _, o := range opts {
+		o(&cfg)
 	}
-	panicdiag.GoWithRecovery(ctx, panicdiag.RecoveryOptions{
-		Component: component,
-		Logger:    log,
-		Repanic:   true,
-	}, reporter, func(ctxPtr *context.Context) {
-		// Install a mutable breadcrumb store so breadcrumbs added inside
-		// fn are visible to the recovery defer (which reads *ctxPtr after
-		// fn returns or panics).
-		*ctxPtr = panicdiag.WithMutableBreadcrumbs(*ctxPtr)
-		fn(*ctxPtr)
-	})
+
+	task := &Task{done: make(chan struct{})}
+	go func() {
+		defer close(task.done)
+		outcome := panicdiag.WithRecovery(ctx, panicdiag.RecoveryOptions{
+			Component:       component,
+			Logger:          log,
+			Counter:         cfg.counter,
+			StateDumper:     cfg.stateDumper,
+			OnAbort:         cfg.onAbort,
+			ProcessMetadata: cfg.processMetadata,
+			ArtifactRoot:    cfg.artifactRoot,
+			StateLimitBytes: cfg.stateLimitBytes,
+			Repanic:         cfg.repanic,
+		}, cfg.reporter, func(ctxPtr *context.Context) {
+			// Install a mutable breadcrumb store so breadcrumbs added inside
+			// fn are visible to the recovery defer (which reads *ctxPtr after
+			// fn returns or panics).
+			*ctxPtr = panicdiag.WithMutableBreadcrumbs(*ctxPtr)
+			fn(*ctxPtr)
+		})
+		task.outcome.Store(outcome)
+	}()
+	return task
 }

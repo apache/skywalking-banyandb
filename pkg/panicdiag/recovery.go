@@ -26,18 +26,18 @@ import (
 	"github.com/apache/skywalking-banyandb/pkg/logger"
 )
 
-// WithRecovery executes fn and recovers any panic with structured diagnostics.
-// fn receives a pointer to the active context so it can enrich it with
-// breadcrumbs; the recovery defer reads through the pointer and therefore
-// captures every marker added during fn's execution. When RecoveryOptions.Repanic
-// is true, the original panic is raised again after diagnostics are captured.
-func WithRecovery(ctx context.Context, opts RecoveryOptions, reporter Reporter, fn func(*context.Context)) {
+// WithRecovery executes fn and recovers panics with structured diagnostics.
+// fn may update the context pointer to add breadcrumbs before recovery reads
+// it. The returned outcome is non-nil unless Repanic re-raises the panic before
+// the caller can observe it.
+func WithRecovery(ctx context.Context, opts RecoveryOptions, reporter Reporter, fn func(*context.Context)) (outcome *RecoveryOutcome) {
+	outcome = &RecoveryOutcome{}
 	if ctx == nil {
 		//nolint:contextcheck // nil caller context has no parent to inherit from; background is the safe root fallback
 		ctx = context.Background()
 	}
 	if fn == nil {
-		return
+		return outcome
 	}
 
 	log := opts.Logger
@@ -116,6 +116,8 @@ func WithRecovery(ctx context.Context, opts RecoveryOptions, reporter Reporter, 
 			Record:      record,
 			ArtifactDir: artifactDir,
 		}
+		outcome.Panicked = true
+		outcome.Result = recoveryResult
 		callReporter(ctx, reporter, recoveryResult)
 		callAbort(ctx, opts.OnAbort, recoveryResult)
 		if opts.Repanic {
@@ -124,9 +126,11 @@ func WithRecovery(ctx context.Context, opts RecoveryOptions, reporter Reporter, 
 	}()
 
 	fn(&ctx)
+	return
 }
 
-// GoWithRecovery starts fn in a goroutine protected by WithRecovery.
+// GoWithRecovery starts fn in a goroutine protected by WithRecovery. Use
+// pkg/run.Go when the launcher needs a Task outcome.
 func GoWithRecovery(ctx context.Context, opts RecoveryOptions, reporter Reporter, fn func(*context.Context)) {
 	go WithRecovery(ctx, opts, reporter, fn)
 }

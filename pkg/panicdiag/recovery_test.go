@@ -450,6 +450,53 @@ func TestOnAbortFiresBeforeRepanic(t *testing.T) {
 	t.Fatal("expected panic to be raised again")
 }
 
+// TestWithRecoveryOutcomeOnPanic pins that the synchronous return value carries
+// the recovered panic record so callers can react locally without having to
+// smuggle state through an OnAbort closure.
+func TestWithRecoveryOutcomeOnPanic(t *testing.T) {
+	t.Helper()
+
+	outcome := WithRecovery(context.Background(), RecoveryOptions{
+		Component: "outcome-panic",
+	}, nil, func(_ *context.Context) {
+		panic("outcome-boom")
+	})
+
+	if outcome == nil {
+		t.Fatal("expected non-nil outcome")
+	}
+	if !outcome.Panicked {
+		t.Fatal("expected outcome.Panicked = true after recovered panic")
+	}
+	if outcome.Result.Record == nil {
+		t.Fatal("expected outcome.Result.Record to be populated")
+	}
+	if outcome.Result.Record.PanicValue != "outcome-boom" {
+		t.Fatalf("PanicValue = %q, want outcome-boom", outcome.Result.Record.PanicValue)
+	}
+}
+
+// TestWithRecoveryOutcomeOnSuccess pins that a clean run yields a non-nil
+// outcome whose Panicked flag is false. This lets callers branch on a single
+// field rather than checking nilness or string-matching log lines.
+func TestWithRecoveryOutcomeOnSuccess(t *testing.T) {
+	t.Helper()
+
+	outcome := WithRecovery(context.Background(), RecoveryOptions{
+		Component: "outcome-clean",
+	}, nil, func(_ *context.Context) {})
+
+	if outcome == nil {
+		t.Fatal("expected non-nil outcome even on clean run")
+	}
+	if outcome.Panicked {
+		t.Fatal("expected outcome.Panicked = false on clean run")
+	}
+	if outcome.Result.Record != nil {
+		t.Fatalf("expected nil Record on clean run, got %#v", outcome.Result.Record)
+	}
+}
+
 // TestReporterDefaultFiresWithoutPerCall confirms the default reporter still
 // runs when callers do not supply their own reporter (the prior behavior).
 func TestReporterDefaultFiresWithoutPerCall(t *testing.T) {

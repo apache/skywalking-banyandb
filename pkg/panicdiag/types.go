@@ -57,6 +57,17 @@ type RecoveryResult struct {
 	ArtifactDir string
 }
 
+// RecoveryOutcome describes whether a recovered panic occurred during a
+// WithRecovery call. The pointer return makes the result composable: callers
+// that want to inspect outcomes locally, fail a parent lifecycle, signal a
+// notify channel, or set an error variable can read fields directly instead of
+// smuggling state through an OnAbort closure. A non-nil outcome is always
+// returned; Panicked is false when fn ran to completion without recovery.
+type RecoveryOutcome struct {
+	Result   RecoveryResult
+	Panicked bool
+}
+
 // Reporter receives the result of a recovered panic. Reporters are intended
 // for observability: recording, logging, or shipping the panic record, and
 // must not block. Use AbortFunc when control flow needs to react to a panic.
