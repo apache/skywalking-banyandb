@@ -24,6 +24,7 @@ import (
 	"time"
 
 	"github.com/apache/skywalking-banyandb/api/common"
+	clusterv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/cluster/v1"
 	databasev1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/database/v1"
 	"github.com/apache/skywalking-banyandb/banyand/liaison/grpc/route"
 	"github.com/apache/skywalking-banyandb/banyand/metadata"
@@ -177,6 +178,13 @@ func (l *local) RegisterChunkedSyncHandler(_ bus.Topic, _ ChunkedSyncHandler) {
 
 func (l *local) NewChunkedSyncClient(node string, _ uint32) (ChunkedSyncClient, error) {
 	return &localChunkedSyncClient{local: l.local, node: node}, nil
+}
+
+// NewNodeSchemaStatusClient returns ErrNotImplemented because the standalone
+// pipeline has no peer to dial. The cluster barrier fan-out (Step 2.2) treats
+// this sentinel as a signal to degrade to in-process self-probing.
+func (*local) NewNodeSchemaStatusClient(_ string) (clusterv1.NodeSchemaStatusServiceClient, error) {
+	return nil, ErrNotImplemented
 }
 
 type localChunkedSyncClient struct {
