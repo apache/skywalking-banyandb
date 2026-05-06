@@ -19,6 +19,7 @@ package cmd
 
 import (
 	"fmt"
+	"io"
 
 	"github.com/go-resty/resty/v2"
 	"github.com/spf13/cobra"
@@ -41,7 +42,7 @@ func newGroupCmd() *cobra.Command {
 		Version: version.Build(),
 		Short:   "Create groups from files",
 		RunE: func(cmd *cobra.Command, _ []string) (err error) {
-			return rest(func() ([]reqBody, error) { return parseNameFromYAML(cmd.InOrStdin()) },
+			return rest(cmd.OutOrStdout(), func() ([]reqBody, error) { return parseNameFromYAML(cmd.InOrStdin()) },
 				func(request request) (*resty.Response, error) {
 					g := new(commonv1.Group)
 					err := protojson.Unmarshal(request.data, g)
@@ -57,9 +58,8 @@ func newGroupCmd() *cobra.Command {
 					}
 					return request.req.SetBody(b).Post(getPath("/api/v1/group/schema"))
 				},
-				func(_ int, reqBody reqBody, _ []byte) error {
-					fmt.Printf("group %s is created", reqBody.name)
-					fmt.Println()
+				func(w io.Writer, _ int, reqBody reqBody, _ []byte) error {
+					fmt.Fprintf(w, "group %s is created\n", reqBody.name)
 					return nil
 				}, enableTLS, insecure, cert)
 		},
@@ -70,7 +70,7 @@ func newGroupCmd() *cobra.Command {
 		Version: version.Build(),
 		Short:   "Update groups from files",
 		RunE: func(cmd *cobra.Command, _ []string) (err error) {
-			return rest(func() ([]reqBody, error) { return parseNameFromYAML(cmd.InOrStdin()) },
+			return rest(cmd.OutOrStdout(), func() ([]reqBody, error) { return parseNameFromYAML(cmd.InOrStdin()) },
 				func(request request) (*resty.Response, error) {
 					g := new(commonv1.Group)
 					err := protojson.Unmarshal(request.data, g)
@@ -86,9 +86,8 @@ func newGroupCmd() *cobra.Command {
 					}
 					return request.req.SetBody(b).SetPathParam("group", request.name).Put(getPath("/api/v1/group/schema/{group}"))
 				},
-				func(_ int, reqBody reqBody, _ []byte) error {
-					fmt.Printf("group %s is updated", reqBody.name)
-					fmt.Println()
+				func(w io.Writer, _ int, reqBody reqBody, _ []byte) error {
+					fmt.Fprintf(w, "group %s is updated\n", reqBody.name)
 					return nil
 				}, enableTLS, insecure, cert)
 		},
@@ -99,8 +98,8 @@ func newGroupCmd() *cobra.Command {
 		Use:     "get [-g group]",
 		Version: version.Build(),
 		Short:   "Get a group",
-		RunE: func(_ *cobra.Command, _ []string) (err error) {
-			return rest(parseFromFlags, func(request request) (*resty.Response, error) {
+		RunE: func(cmd *cobra.Command, _ []string) (err error) {
+			return rest(cmd.OutOrStdout(), parseFromFlags, func(request request) (*resty.Response, error) {
 				return request.req.SetPathParam("group", request.group).Get(getPath("/api/v1/group/schema/{group}"))
 			}, yamlPrinter, enableTLS, insecure, cert)
 		},
@@ -111,8 +110,8 @@ func newGroupCmd() *cobra.Command {
 		Use:     "delete [-g group] [--force] [--dry-run] [--data-only]",
 		Version: version.Build(),
 		Short:   "Delete a group",
-		RunE: func(_ *cobra.Command, _ []string) (err error) {
-			return rest(parseFromFlags, func(request request) (*resty.Response, error) {
+		RunE: func(cmd *cobra.Command, _ []string) (err error) {
+			return rest(cmd.OutOrStdout(), parseFromFlags, func(request request) (*resty.Response, error) {
 				return request.req.
 					SetPathParam("group", request.group).
 					SetQueryParam("force", fmt.Sprintf("%v", force)).
@@ -120,14 +119,12 @@ func newGroupCmd() *cobra.Command {
 					SetQueryParam("data_only", fmt.Sprintf("%v", dataOnly)).
 					Delete(getPath("/api/v1/group/schema/{group}"))
 			},
-				func(_ int, reqBody reqBody, respBody []byte) error {
+				func(w io.Writer, _ int, reqBody reqBody, respBody []byte) error {
 					if dryRun {
-						fmt.Printf("group %s dry-run deletion result:", reqBody.group)
-						fmt.Println()
-						return yamlPrinter(0, reqBody, respBody)
+						fmt.Fprintf(w, "group %s dry-run deletion result:\n", reqBody.group)
+						return yamlPrinter(w, 0, reqBody, respBody)
 					}
-					fmt.Printf("group %s is deleted", reqBody.group)
-					fmt.Println()
+					fmt.Fprintf(w, "group %s is deleted\n", reqBody.group)
 					return nil
 				}, enableTLS, insecure, cert)
 		},
@@ -140,8 +137,8 @@ func newGroupCmd() *cobra.Command {
 		Use:     "list",
 		Version: version.Build(),
 		Short:   "List all groups",
-		RunE: func(_ *cobra.Command, _ []string) (err error) {
-			return rest(nil, func(request request) (*resty.Response, error) {
+		RunE: func(cmd *cobra.Command, _ []string) (err error) {
+			return rest(cmd.OutOrStdout(), nil, func(request request) (*resty.Response, error) {
 				return request.req.Get(getPath("/api/v1/group/schema/lists"))
 			}, yamlPrinter, enableTLS, insecure, cert)
 		},

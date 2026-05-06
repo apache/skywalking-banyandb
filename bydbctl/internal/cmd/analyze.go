@@ -44,7 +44,7 @@ func newAnalyzeCmd() *cobra.Command {
 		Use:     "series",
 		Version: version.Build(),
 		Short:   "Analyze series cardinality and distribution",
-		RunE: func(_ *cobra.Command, args []string) (err error) {
+		RunE: func(cmd *cobra.Command, args []string) (err error) {
 			if len(args) == 0 {
 				return errors.New("series index directory is required, its name should be 'sidx' in a segment 'seg-xxxxxx'")
 			}
@@ -74,9 +74,9 @@ func newAnalyzeCmd() *cobra.Command {
 					if s.Subject == subjectName {
 						found = true
 						for i := range s.EntityValues {
-							fmt.Printf("%s,", pbv1.MustTagValueToStr(s.EntityValues[i]))
+							fmt.Fprintf(cmd.OutOrStdout(), "%s,", pbv1.MustTagValueToStr(s.EntityValues[i]))
 						}
-						fmt.Println()
+						fmt.Fprintln(cmd.OutOrStdout())
 						continue
 					}
 					if found {
@@ -95,7 +95,7 @@ func newAnalyzeCmd() *cobra.Command {
 				}
 				if s.Subject != subject {
 					if subject != "" {
-						fmt.Printf("%s, %d\n", subject, count)
+						fmt.Fprintf(cmd.OutOrStdout(), "%s, %d\n", subject, count)
 					}
 					subject = s.Subject
 					count = 1
@@ -104,9 +104,9 @@ func newAnalyzeCmd() *cobra.Command {
 				}
 			}
 			if subject != "" {
-				fmt.Printf("%s, %d\n", subject, count)
+				fmt.Fprintf(cmd.OutOrStdout(), "%s, %d\n", subject, count)
 			}
-			fmt.Printf("total, %d\n", total)
+			fmt.Fprintf(cmd.OutOrStdout(), "total, %d\n", total)
 			return nil
 		},
 	}
