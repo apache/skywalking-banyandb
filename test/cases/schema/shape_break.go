@@ -31,7 +31,6 @@ import (
 	databasev1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/database/v1"
 	measurev1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/measure/v1"
 	modelv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/model/v1"
-	"github.com/apache/skywalking-banyandb/pkg/test/helpers"
 	"github.com/apache/skywalking-banyandb/pkg/timestamp"
 )
 
@@ -160,13 +159,6 @@ var _ = g.Describe("Schema shape-break rejection", func() {
 
 	// §6.8: shape-break — delete+apply new shape creates the new measure (Rule 7 clamp end-to-end).
 	g.It("shape-break: delete+apply new shape creates the new measure (§6.8)", func() {
-		// Phase 2.2 cluster barrier confirms schema propagation across nodes,
-		// but this spec's Write→Query baseline races the data-node write path
-		// independently of the schema barrier. Re-enable in distributed mode
-		// once Step 2.5 (cluster query gate) lands.
-		if SharedContext.Mode == helpers.ModeDistributed {
-			g.Skip("§6.8 requires the cluster-wide query gate (Phase 2 Step 2.5)")
-		}
 		groupName := fmt.Sprintf("sb-new-%d", time.Now().UnixNano())
 		measureName := "throughput"
 
@@ -209,10 +201,24 @@ var _ = g.Describe("Schema shape-break rejection", func() {
 			"initial write must return STATUS_SUCCEED")
 
 		g.By("Querying [CreatedAt1, now+1h] — must return exactly 1 data point")
-		queryResp1, queryErr1 := queryMeasureRange(ctx, clients.MeasureWriteClient, groupName, measureName,
-			createdAt1.AsTime(), time.Now().Add(time.Hour), r1)
-		gm.Expect(queryErr1).ShouldNot(gm.HaveOccurred())
-		gm.Expect(queryResp1.GetDataPoints()).Should(gm.HaveLen(1), "sanity baseline: pre-delete query must return 1 data point")
+		// In distributed mode the write→query path is asynchronous: the
+		// data-node write callback returns after mustAddMemPart's applied
+		// channel fires, but the write batch round-trip and the query
+		// fan-out can still race for a few hundred milliseconds before the
+		// new memPart is visible across every queryable shard. The
+		// schema-consistency suite already uses this Eventually pattern
+		// in deletion.go for the same reason; mirror it here.
+		var queryResp1 *measurev1.QueryResponse
+		gm.Eventually(func() int {
+			var queryErr1 error
+			queryResp1, queryErr1 = queryMeasureRange(ctx, clients.MeasureWriteClient, groupName, measureName,
+				createdAt1.AsTime(), time.Now().Add(time.Hour), r1)
+			if queryErr1 != nil {
+				return -1
+			}
+			return len(queryResp1.GetDataPoints())
+		}, 5*time.Second, 50*time.Millisecond).Should(gm.Equal(1),
+			"sanity baseline: pre-delete query must return 1 data point")
 
 		g.By("Deleting measure → T_del; awaiting deletion")
 		deleteResp, deleteErr := clients.MeasureRegClient.Delete(ctx, &databasev1.MeasureRegistryServiceDeleteRequest{
@@ -408,12 +414,6 @@ var _ = g.Describe("Schema shape-break rejection", func() {
 
 	// §6.11: delete-then-recreate original shape drops old data (Rule 7 clamp).
 	g.It("delete-then-recreate original shape drops old data (§6.11)", func() {
-		// Same write→query race as §6.8 — Phase 2.2's barrier ensures schema
-		// coherence but the post-recreate Write→Query baseline still flakes
-		// without the cluster query gate. Re-enable once Step 2.5 lands.
-		if SharedContext.Mode == helpers.ModeDistributed {
-			g.Skip("§6.11 requires the cluster-wide query gate (Phase 2 Step 2.5)")
-		}
 		groupName := fmt.Sprintf("sb-same-%d", time.Now().UnixNano())
 		measureName := "throughput"
 
@@ -453,10 +453,17 @@ var _ = g.Describe("Schema shape-break rejection", func() {
 		gm.Expect(writeErr1).ShouldNot(gm.HaveOccurred())
 		gm.Expect(writeStatus1).Should(gm.Equal(modelv1.Status_STATUS_SUCCEED.String()))
 
-		queryResp1, queryErr1 := queryMeasureRange(ctx, clients.MeasureWriteClient, groupName, measureName,
-			createdAt1.AsTime(), time.Now().Add(time.Hour), r1)
-		gm.Expect(queryErr1).ShouldNot(gm.HaveOccurred())
-		gm.Expect(queryResp1.GetDataPoints()).Should(gm.HaveLen(1), "baseline: pre-delete query returns 1 data point")
+		// Eventually retry — see the §6.8 baseline above for the
+		// distributed write→query visibility race.
+		gm.Eventually(func() int {
+			queryResp1, queryErr1 := queryMeasureRange(ctx, clients.MeasureWriteClient, groupName, measureName,
+				createdAt1.AsTime(), time.Now().Add(time.Hour), r1)
+			if queryErr1 != nil {
+				return -1
+			}
+			return len(queryResp1.GetDataPoints())
+		}, 5*time.Second, 50*time.Millisecond).Should(gm.Equal(1),
+			"baseline: pre-delete query returns 1 data point")
 
 		g.By("Deleting measure → T_del; awaiting deletion")
 		deleteResp, deleteErr := clients.MeasureRegClient.Delete(ctx, &databasev1.MeasureRegistryServiceDeleteRequest{
@@ -508,10 +515,15 @@ var _ = g.Describe("Schema shape-break rejection", func() {
 			"write with R2 must succeed")
 
 		// Post-write query [CreatedAt2, now+1h] must return the newly-written point.
-		queryResp3, queryErr3 := queryMeasureRange(ctx, clients.MeasureWriteClient, groupName, measureName,
-			createdAt2.AsTime(), time.Now().Add(time.Hour), r2)
-		gm.Expect(queryErr3).ShouldNot(gm.HaveOccurred())
-		gm.Expect(queryResp3.GetDataPoints()).Should(gm.HaveLen(1),
+		// Same write→query visibility race as the §6.8 baseline.
+		gm.Eventually(func() int {
+			queryResp3, queryErr3 := queryMeasureRange(ctx, clients.MeasureWriteClient, groupName, measureName,
+				createdAt2.AsTime(), time.Now().Add(time.Hour), r2)
+			if queryErr3 != nil {
+				return -1
+			}
+			return len(queryResp3.GetDataPoints())
+		}, 5*time.Second, 50*time.Millisecond).Should(gm.Equal(1),
 			"post-creation write must be queryable after AwaitRevision(R2)")
 
 		_, _ = clients.GroupClient.Delete(ctx, &databasev1.GroupRegistryServiceDeleteRequest{Group: groupName})

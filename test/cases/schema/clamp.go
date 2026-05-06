@@ -31,7 +31,6 @@ import (
 	measurev1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/measure/v1"
 	modelv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/model/v1"
 	streamv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/stream/v1"
-	"github.com/apache/skywalking-banyandb/pkg/test/helpers"
 	"github.com/apache/skywalking-banyandb/pkg/timestamp"
 )
 
@@ -116,15 +115,6 @@ var _ = g.Describe("Schema time-range clamp", func() {
 	// server clamps Begin forward to CreatedAt and the query executes successfully.
 	// Since no data was written the response has zero elements but no error.
 	g.It("succeeds and returns zero elements when query spans schema CreatedAt (§4.6.2)", func() {
-		// Phase 2.2 cluster barrier converges schema state across nodes, but
-		// this spec's dispatched query still races the data-node cache update
-		// in distributed mode (`group not found` returned by the executor).
-		// First-attempt re-enable in §RE-1 surfaced the flake on the second
-		// distributed run; restored until Step 2.5's cluster query gate
-		// removes the residual race.
-		if SharedContext.Mode == helpers.ModeDistributed {
-			g.Skip("§4.6.2 requires the cluster-wide query gate (Phase 2 Step 2.5)")
-		}
 		groupName := fmt.Sprintf("clamp-span-%d", time.Now().UnixNano())
 		streamName := "clamp_stream"
 
@@ -224,13 +214,6 @@ var _ = g.Describe("Schema time-range clamp", func() {
 	// inside [Begin, End] and the datum would leak — proving the clamp is actually
 	// applied rather than merely consistent with an already-in-range write.
 	g.It("clips TimeRange.Begin to max(CreatedAt) and excludes pre-creation data (§4.6.4)", func() {
-		// Phase 2.2 barrier ensures schema is on every node, but this spec's
-		// baseline sanity step (Create → Write → Query expecting 1 datum)
-		// still races the data-node write path in distributed mode. Re-enable
-		// once Step 2.5 (cluster query gate) lands.
-		if SharedContext.Mode == helpers.ModeDistributed {
-			g.Skip("§4.6.4 requires the cluster-wide query gate (Phase 2 Step 2.5)")
-		}
 		group1 := fmt.Sprintf("clamp-leak1-%d", time.Now().UnixNano())
 		group2 := fmt.Sprintf("clamp-leak2-%d", time.Now().UnixNano())
 		measureName := "clamp_measure"
@@ -261,10 +244,18 @@ var _ = g.Describe("Schema time-range clamp", func() {
 			"write at T_data1 must return STATUS_SUCCEED")
 
 		g.By("Sanity-checking that querying group1 alone returns the datum (legacy unclamped baseline — pass modRevision=0)")
-		baselineResp, baselineErr := queryMeasureRange(ctx, clients.MeasureWriteClient, group1, measureName,
-			tData1.Add(-time.Hour), time.Now().Add(time.Hour), 0)
-		gm.Expect(baselineErr).ShouldNot(gm.HaveOccurred())
-		gm.Expect(baselineResp.GetDataPoints()).Should(gm.HaveLen(1),
+		// In distributed mode the write→query path is asynchronous: the
+		// data-node ack returns when mustAddMemPart's applied channel
+		// fires, but the query fan-out can still race the new memPart
+		// becoming visible. Mirrors the deletion.go retry pattern.
+		gm.Eventually(func() int {
+			baselineResp, baselineErr := queryMeasureRange(ctx, clients.MeasureWriteClient, group1, measureName,
+				tData1.Add(-time.Hour), time.Now().Add(time.Hour), 0)
+			if baselineErr != nil {
+				return -1
+			}
+			return len(baselineResp.GetDataPoints())
+		}, 5*time.Second, 50*time.Millisecond).Should(gm.Equal(1),
 			"baseline single-group query must return the written datum — otherwise §4.6.4 is not falsifying anything")
 
 		g.By("Creating newer group2 and measure (CreatedAt2 > T_data1)")
