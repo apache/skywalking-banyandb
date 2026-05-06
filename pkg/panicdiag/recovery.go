@@ -29,7 +29,8 @@ import (
 // WithRecovery executes fn and recovers any panic with structured diagnostics.
 // fn receives a pointer to the active context so it can enrich it with
 // breadcrumbs; the recovery defer reads through the pointer and therefore
-// captures every marker added during fn's execution.
+// captures every marker added during fn's execution. When RecoveryOptions.Repanic
+// is true, the original panic is raised again after diagnostics are captured.
 func WithRecovery(ctx context.Context, opts RecoveryOptions, reporter Reporter, fn func(*context.Context)) {
 	if ctx == nil {
 		//nolint:contextcheck // nil caller context has no parent to inherit from; background is the safe root fallback
@@ -115,6 +116,9 @@ func WithRecovery(ctx context.Context, opts RecoveryOptions, reporter Reporter, 
 			Record:      record,
 			ArtifactDir: artifactDir,
 		})
+		if opts.Repanic {
+			panic(panicValue)
+		}
 	}()
 
 	fn(&ctx)

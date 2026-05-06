@@ -47,6 +47,7 @@ type RecoveryOptions struct {
 	Component       string
 	ArtifactRoot    string
 	StateLimitBytes int64
+	Repanic         bool
 }
 
 // RecoveryResult contains the outcome of a recovered panic.

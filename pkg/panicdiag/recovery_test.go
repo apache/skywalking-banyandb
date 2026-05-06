@@ -243,6 +243,39 @@ func TestWithRecoveryNoPanic(t *testing.T) {
 	}
 }
 
+func TestWithRecoveryRepanicsAfterReporting(t *testing.T) {
+	t.Helper()
+
+	reported := make(chan RecoveryResult, 1)
+	defer func() {
+		panicValue := recover()
+		if panicValue != "boom" {
+			t.Fatalf("panic value mismatch: got %v want boom", panicValue)
+		}
+		select {
+		case result := <-reported:
+			if result.Record == nil {
+				t.Fatal("expected recovery record")
+			}
+			if result.Record.PanicValue != "boom" {
+				t.Fatalf("record panic value mismatch: got %s", result.Record.PanicValue)
+			}
+		default:
+			t.Fatal("expected recovery reporter to be called before repanic")
+		}
+	}()
+
+	WithRecovery(context.Background(), RecoveryOptions{
+		Component: "watchdog",
+		Repanic:   true,
+	}, func(_ context.Context, result RecoveryResult) {
+		reported <- result
+	}, func(_ *context.Context) {
+		panic("boom")
+	})
+	t.Fatal("expected panic to be raised again")
+}
+
 func TestGoWithRecovery(t *testing.T) {
 	t.Helper()
 

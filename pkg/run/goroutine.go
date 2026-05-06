@@ -27,15 +27,23 @@ import (
 // Go launches fn in a new goroutine protected by panic recovery.
 // A mutable breadcrumb store is installed before fn runs so breadcrumbs added
 // inside fn are captured if fn panics.
-// Panics are intercepted, and the panic value and localized stack trace are logged.
+// Panics are intercepted, the panic value and localized stack trace are logged,
+// and the panic is raised again after diagnostics are captured.
+// When reporter is provided, it is called after diagnostics are captured and
+// before the panic is raised again.
 // When a panic counter is configured via RecoveryOptions.Counter or
 // panicdiag.SetDefaultPanicCounter, banyandb_panic_total is incremented with
 // component as the label.
-func Go(ctx context.Context, component string, log *logger.Logger, fn func(context.Context)) {
+func Go(ctx context.Context, component string, log *logger.Logger, fn func(context.Context), reporters ...panicdiag.Reporter) {
+	var reporter panicdiag.Reporter
+	if len(reporters) > 0 {
+		reporter = reporters[0]
+	}
 	panicdiag.GoWithRecovery(ctx, panicdiag.RecoveryOptions{
 		Component: component,
 		Logger:    log,
-	}, nil, func(ctxPtr *context.Context) {
+		Repanic:   true,
+	}, reporter, func(ctxPtr *context.Context) {
 		// Install a mutable breadcrumb store so breadcrumbs added inside
 		// fn are visible to the recovery defer (which reads *ctxPtr after
 		// fn returns or panics).
