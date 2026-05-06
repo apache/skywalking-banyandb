@@ -206,13 +206,16 @@ func NewServer(_ context.Context, tir1Client, tir2Client, broadcaster queue.Clie
 		// deferred to request time (closure) because the metadata service
 		// populates SchemaRegistry in PreRun, after NewServer has already
 		// run — capturing a snapshot here would skip registration permanently.
-		nodeStatusSVC = property.NewNodeSchemaStatusServerForRegistry(func() *property.SchemaRegistry {
-			reg, regOk := svc.SchemaRegistry().(*property.SchemaRegistry)
-			if !regOk {
-				return nil
-			}
-			return reg
-		})
+		nodeStatusSVC = property.NewNodeSchemaStatusServerForRegistryWithNodeRepo(
+			func() *property.SchemaRegistry {
+				reg, regOk := svc.SchemaRegistry().(*property.SchemaRegistry)
+				if !regOk {
+					return nil
+				}
+				return reg
+			},
+			svc.NodeRepoRegistry,
+		)
 	}
 	s := &server{
 		omr:           omr,

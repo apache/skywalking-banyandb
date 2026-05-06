@@ -302,13 +302,16 @@ func (s *server) Serve() run.StopNotify {
 		// time; the fail-closed nil-cache contract handles in-flight probes
 		// during initialization.
 		if svc, svcOk := s.metadataRepo.(metadata.Service); svcOk {
-			clusterv1.RegisterNodeSchemaStatusServiceServer(s.ser, property.NewNodeSchemaStatusServerForRegistry(func() *property.SchemaRegistry {
-				reg, regOk := svc.SchemaRegistry().(*property.SchemaRegistry)
-				if !regOk {
-					return nil
-				}
-				return reg
-			}))
+			clusterv1.RegisterNodeSchemaStatusServiceServer(s.ser, property.NewNodeSchemaStatusServerForRegistryWithNodeRepo(
+				func() *property.SchemaRegistry {
+					reg, regOk := svc.SchemaRegistry().(*property.SchemaRegistry)
+					if !regOk {
+						return nil
+					}
+					return reg
+				},
+				svc.NodeRepoRegistry,
+			))
 		}
 	}
 
