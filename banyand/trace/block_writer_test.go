@@ -165,6 +165,56 @@ func TestMultiplePrimaryBlockFlushWithPartIter(t *testing.T) {
 	}
 }
 
+// TestBlockWriter_OutOfOrderTimestampsSameTraceID exercises the scenario from
+// https://github.com/apache/skywalking/issues/13860: SkyWalking OAP forwards
+// segments produced by multiple agents whose wall clocks drift relative to
+// each other, so a later batch for the same traceID can carry timestamps
+// earlier than an earlier batch. Spans of one trace have no meaningful order
+// here — the writer must accept them without panicking.
+func TestBlockWriter_OutOfOrderTimestampsSameTraceID(t *testing.T) {
+	const tid = "6359c73a002c425785500f958cdc4007.661.17779941290647127"
+
+	mp := &memPart{}
+	mp.reset()
+	bw := generateBlockWriter()
+	bw.MustInitForMemPart(mp, 1)
+
+	tagsFor := func(i int) []*tagValue {
+		return []*tagValue{
+			{tag: "service", valueType: pbv1.ValueTypeStr, value: []byte(fmt.Sprintf("svc-%d", i))},
+		}
+	}
+	mustWrite := func(timestamps []int64) {
+		spans := make([][]byte, len(timestamps))
+		spanIDs := make([]string, len(timestamps))
+		tagSets := make([][]*tagValue, len(timestamps))
+		for i, ts := range timestamps {
+			spans[i] = []byte(fmt.Sprintf("span-%d", ts))
+			spanIDs[i] = fmt.Sprintf("span-%d", ts)
+			tagSets[i] = tagsFor(i)
+		}
+		bw.MustWriteTrace(tid, spans, tagSets, timestamps, spanIDs)
+	}
+
+	// First batch: minTS=1_777_994_129_833_000_000.
+	mustWrite([]int64{1_777_994_129_833_000_000, 1_777_994_129_900_000_000})
+	// Second batch for the same tid carries an earlier minTS — this used to
+	// fail the per-traceID timestamp monotonicity check and discard the batch
+	// on production traffic.
+	require.NotPanics(t, func() {
+		mustWrite([]int64{1_777_994_129_064_000_000})
+	})
+
+	bw.Flush(&mp.partMetadata, &mp.traceIDFilter, &mp.tagType)
+	releaseBlockWriter(bw)
+
+	assert.Equal(t, uint64(3), mp.partMetadata.TotalCount, "all 3 spans must be persisted")
+	assert.Equal(t, uint64(2), mp.partMetadata.BlocksCount, "two MustWriteTrace calls produce two blocks")
+	assert.Equal(t, int64(1_777_994_129_064_000_000), mp.partMetadata.MinTimestamp,
+		"part-level MinTimestamp aggregates across batches regardless of arrival order")
+	assert.Equal(t, int64(1_777_994_129_900_000_000), mp.partMetadata.MaxTimestamp)
+}
+
 func generateLargeTraceSet() *traces {
 	// maxUncompressedPrimaryBlockSize = 128KB
 	// Block metadata contains: traceID, timestamps, count, uncompressed size, and tag metadata
