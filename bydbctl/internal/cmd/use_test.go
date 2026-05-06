@@ -18,28 +18,40 @@
 package cmd
 
 import (
-	"fmt"
+	"bytes"
+	"os"
+	"path/filepath"
+	"testing"
 
 	"github.com/spf13/cobra"
 	"github.com/spf13/viper"
-
-	"github.com/apache/skywalking-banyandb/pkg/version"
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
-func newUseCmd() *cobra.Command {
-	return &cobra.Command{
-		Use:     "use group",
-		Version: version.Build(),
-		Short:   "Select a group",
-		Args:    cobra.ExactArgs(1),
-		RunE: func(cmd *cobra.Command, args []string) (err error) {
-			viper.Set("group", args[0])
-			err = viper.WriteConfig()
-			if err != nil {
-				return err
-			}
-			fmt.Fprintf(cmd.OutOrStdout(), "Switched to [%s]", viper.GetString("group"))
-			return nil
-		},
-	}
+func TestUseCommandWritesToConfiguredWriter(t *testing.T) {
+	t.Cleanup(func() {
+		cfgFile = ""
+		viper.Reset()
+	})
+
+	configPath := filepath.Join(t.TempDir(), ".bydbctl.yaml")
+	err := os.WriteFile(configPath, []byte("addr: http://localhost:17913\n"), 0o600)
+	require.NoError(t, err)
+
+	command := &cobra.Command{Use: "root"}
+	RootCmdFlags(command)
+	command.SetArgs([]string{"--config", configPath, "use", "sw"})
+	var outBuf bytes.Buffer
+	var errBuf bytes.Buffer
+	command.SetOut(&outBuf)
+	command.SetErr(&errBuf)
+
+	err = command.Execute()
+	require.NoError(t, err)
+	assert.Contains(t, outBuf.String(), "Switched to [sw]")
+
+	cfgBytes, err := os.ReadFile(configPath)
+	require.NoError(t, err)
+	assert.Contains(t, string(cfgBytes), "group: sw")
 }
