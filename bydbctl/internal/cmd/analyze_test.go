@@ -18,13 +18,13 @@
 package cmd_test
 
 import (
+	"bytes"
 	"path"
 	"time"
 
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 	"github.com/spf13/cobra"
-	"github.com/zenizh/go-capturer"
 	grpclib "google.golang.org/grpc"
 	"google.golang.org/grpc/credentials/insecure"
 
@@ -64,10 +64,13 @@ var _ = Describe("Measure Data Query", func() {
 		serverDeferFunc()
 
 		rootCmd.SetArgs([]string{"analyze", "series", path.Join(directory, "measure/sw_metric/seg-20210901/sidx")})
-		out := capturer.CaptureStdout(func() {
-			err := rootCmd.Execute()
-			Expect(err).NotTo(HaveOccurred())
-		})
+		var buf bytes.Buffer
+		rootCmd.SetOut(&buf)
+		rootCmd.SetErr(&buf)
+
+		err = rootCmd.Execute()
+		Expect(err).NotTo(HaveOccurred())
+		out := buf.String()
 		GinkgoWriter.Println(out)
 		Expect(out).To(ContainSubstring("total"))
 	})
