@@ -112,6 +112,12 @@ func mustOpenPart(partID uint64, path string, fileSystem fs.FileSystem) *part {
 		fileSystem: fileSystem,
 	}
 
+	// Remove safe post-rename leftovers (<file>.tmp next to a healthy <file>)
+	// before opening any of the part's files. A .tmp without its final stays
+	// in place so the existing panic-on-missing-metadata fires for operator
+	// intervention.
+	fs.CleanupLeftoverTmp(fileSystem, path)
+
 	// Open standard files.
 	p.primary = mustOpenReader(filepath.Join(path, primaryFilename), fileSystem)
 	p.data = mustOpenReader(filepath.Join(path, dataFilename), fileSystem)
