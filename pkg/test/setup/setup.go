@@ -595,6 +595,7 @@ func startDataNode(config *ClusterConfig, dataDir string, flags ...string) (stri
 		config.AddSchemaServerAddr(schemaAddr)
 	}
 
+	beforeCount := property.CountSchemaRegistries()
 	rawCloseFn := CMD(flags...)
 
 	gomega.Eventually(
@@ -606,10 +607,24 @@ func startDataNode(config *ClusterConfig, dataDir string, flags ...string) (stri
 		config.NodeDiscovery.FileWriter.AddNode(nodeAddr, nodeAddr)
 	}
 
+	// Bind the data node's SchemaRegistry to its gRPC address so the test
+	// harness can call PauseDataNodeWatch / ResumeDataNodeWatch later. The
+	// metadata.clientService's PreRun creates exactly one SchemaRegistry,
+	// and the health check above guarantees PreRun has completed before we
+	// reach here — so taking the most recently registered roster slot is
+	// safe.
+	afterCount := property.CountSchemaRegistries()
+	if afterCount > beforeCount {
+		if reg := property.SchemaRegistryByIndex(afterCount - 1); reg != nil {
+			bindNodeWatchControl(nodeAddr, reg)
+		}
+	}
+
 	closeFn := func() {
 		if config.NodeDiscovery.FileWriter != nil {
 			config.NodeDiscovery.FileWriter.RemoveNode(nodeAddr)
 		}
+		unbindNodeWatchControl(nodeAddr)
 		rawCloseFn()
 	}
 

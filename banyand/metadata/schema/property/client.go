@@ -130,6 +130,7 @@ type SchemaRegistry struct {
 	caCertReloader     *pkgtls.Reloader
 	handlers           map[schema.Kind][]schema.EventHandler
 	watchSessions      map[string]*watchSession
+	pauseQueue         []*schemav1.WatchSchemasResponse
 	syncInterval       time.Duration
 	syncTimeout        time.Duration
 	watchMaxBackoff    time.Duration
@@ -138,6 +139,8 @@ type SchemaRegistry struct {
 	syncRound          uint64
 	mux                sync.RWMutex
 	watchMu            sync.Mutex
+	pauseMu            sync.Mutex
+	paused             bool
 }
 
 // NewSchemaRegistryClient creates a new property-based schema registry client.
@@ -211,6 +214,7 @@ func NewSchemaRegistryClient(cfg *ClientConfig) (*SchemaRegistry, error) {
 		fullReconcileEvery: fullReconcileEvery,
 	}
 	handler.registry = reg
+	registerForWatchControl(reg)
 
 	if cfg.CurNode != nil && isPropertySchemaNode(cfg.CurNode) {
 		connMgr.OnAddOrUpdate(cfg.CurNode)
@@ -1395,6 +1399,19 @@ func (r *SchemaRegistry) handleWatchEvent(resp *schemav1.WatchSchemasResponse) {
 	if prop == nil {
 		return
 	}
+	// Pause gate (test-only): when PauseNotifications has been called on this
+	// registry, queue the event for replay on ResumeNotifications. Used by
+	// pkg/test/setup.PauseDataNodeWatch to exercise cluster-only specs
+	// (§6.12) that require a single data node falling behind the cluster.
+	// Production code never reaches the queue path because PauseNotifications
+	// is only invoked from the test harness.
+	r.pauseMu.Lock()
+	if r.paused {
+		r.pauseQueue = append(r.pauseQueue, resp)
+		r.pauseMu.Unlock()
+		return
+	}
+	r.pauseMu.Unlock()
 	parsed := ParseTags(prop.GetTags())
 	kindStr := parsed.Kind
 	if kindStr == "" {
@@ -1747,4 +1764,34 @@ func isPropertySchemaNode(node *databasev1.Node) bool {
 		}
 	}
 	return false
+}
+
+// PauseNotifications halts watch-event processing on this registry — events
+// that arrive while paused accumulate in an internal queue. Used by
+// pkg/test/setup.PauseDataNodeWatch for cluster-only schema-consistency
+// specs that need a single data node to fall behind the cluster. Production
+// code never calls this; the only caller is the test harness.
+func (r *SchemaRegistry) PauseNotifications() {
+	r.pauseMu.Lock()
+	r.paused = true
+	r.pauseMu.Unlock()
+}
+
+// ResumeNotifications resumes watch-event processing and drains the queue
+// accumulated while paused. Events are replayed in arrival order so
+// downstream handlers (entityRepo / schemaRepo) see the same sequence they
+// would have observed if pause had never happened. A no-op when not paused.
+func (r *SchemaRegistry) ResumeNotifications() {
+	r.pauseMu.Lock()
+	if !r.paused {
+		r.pauseMu.Unlock()
+		return
+	}
+	r.paused = false
+	queue := r.pauseQueue
+	r.pauseQueue = nil
+	r.pauseMu.Unlock()
+	for _, evt := range queue {
+		r.handleWatchEvent(evt)
+	}
 }
