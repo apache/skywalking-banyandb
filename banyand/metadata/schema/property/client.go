@@ -1404,6 +1404,21 @@ func (r *SchemaRegistry) handleWatchEvent(resp *schemav1.WatchSchemasResponse) {
 	if prop == nil {
 		return
 	}
+	// Pause gate: queue the entire watch event for replay on resume. Covers
+	// the DELETE branch which calls r.cache.Delete directly (without going
+	// through handleDeletion); INSERT/UPDATE flows already short-circuit at
+	// processInitialResourceFromProperty's gate, but gating here as well
+	// keeps the queue ordering exactly mirroring arrival order regardless
+	// of branch.
+	r.pauseMu.Lock()
+	if r.paused {
+		r.pauseQueue = append(r.pauseQueue, func() {
+			r.handleWatchEvent(resp)
+		})
+		r.pauseMu.Unlock()
+		return
+	}
+	r.pauseMu.Unlock()
 	parsed := ParseTags(prop.GetTags())
 	kindStr := parsed.Kind
 	if kindStr == "" {
@@ -1798,9 +1813,10 @@ func (r *SchemaRegistry) PauseNotifications() {
 
 // ResumeNotifications resumes watch-event processing and drains the queue
 // accumulated while paused. Each queued closure replays the original
-// processInitialResourceFromProperty / handleDeletion call so downstream
-// handlers (entityRepo / schemaRepo) and the schemaCache catch up to the
-// state the schema-server already reflects. A no-op when not paused.
+// handleWatchEvent / processInitialResourceFromProperty / handleDeletion
+// call so downstream handlers (entityRepo / schemaRepo) and the
+// schemaCache catch up to the state the schema-server already reflects.
+// A no-op when not paused.
 func (r *SchemaRegistry) ResumeNotifications() {
 	r.pauseMu.Lock()
 	if !r.paused {

@@ -93,6 +93,7 @@ var _ = ginkgo.SynchronizedBeforeSuite(func() []byte {
 		Mode:          helpers.ModeDistributed,
 		BaseTime:      now,
 		DataNodeAddrs: dataNodeAddrs,
+		LiaisonAddr:   string(address),
 	}
 	gomega.Expect(err).NotTo(gomega.HaveOccurred())
 })
