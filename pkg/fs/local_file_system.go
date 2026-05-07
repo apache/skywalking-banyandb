@@ -294,7 +294,11 @@ func (fs *localFileSystem) WriteAtomic(buffer []byte, name string, permission Mo
 	}
 	invokeTestHookAfterTmpFsync()
 	if renameErr := os.Rename(tmpName, name); renameErr != nil {
-		_ = os.Remove(tmpName)
+		// Do NOT remove the .tmp on rename failure: it is fully written
+		// and fsynced — the only durable record of what we tried to
+		// commit — and an operator may need it for forensic recovery.
+		// The next successful WriteAtomic call to the same name will
+		// overwrite it via O_TRUNC, so no orphan accumulates.
 		return size, &FileSystemError{
 			Code:    otherError,
 			Message: fmt.Sprintf("Rename %s -> %s return error: %s", tmpName, name, renameErr),

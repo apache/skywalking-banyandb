@@ -304,8 +304,9 @@ func (mp *memPart) mustFlush(fileSystem fs.FileSystem, path string) {
 	mp.partMetadata.mustWriteMetadata(fileSystem, path)
 	mp.tagType.mustWriteTagType(fileSystem, path)
 	mp.traceIDFilter.mustWriteTraceIDFilter(fileSystem, path)
-
-	fileSystem.SyncPath(path)
+	// No SyncPath: each mustWrite* helper uses WriteAtomic which fsyncs the
+	// parent directory after rename, covering all prior dirent changes
+	// (data file creations).
 }
 
 func generateMemPart() *memPart {

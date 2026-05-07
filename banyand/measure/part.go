@@ -224,8 +224,9 @@ func (mp *memPart) mustFlush(fileSystem fs.FileSystem, path string) {
 	}
 
 	mp.partMetadata.mustWriteMetadata(fileSystem, path)
-
-	fileSystem.SyncPath(path)
+	// No SyncPath: mustWriteMetadata goes through WriteAtomic which already
+	// fsyncs the parent directory after rename, covering the dirent changes
+	// for all data files written above.
 }
 
 func uncompressedDataPointSizeBytes(index int, dps *dataPoints) uint64 {
