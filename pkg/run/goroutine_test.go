@@ -73,31 +73,6 @@ func TestGo_OutcomeAfterCleanRun(t *testing.T) {
 	require.Nil(t, outcome.Result.Record)
 }
 
-// TestGo_PerCallOnAbortFires pins that WithOnAbort fires from the recovery
-// defer of the launched goroutine, giving callers a per-call hook to fail
-// only their parent without disturbing the process-wide supervisor.
-func TestGo_PerCallOnAbortFires(t *testing.T) {
-	t.Helper()
-
-	aborted := make(chan panicdiag.RecoveryResult, 1)
-	task := Go(context.Background(), "abort-hook", logger.GetLogger("test"),
-		func(_ context.Context) { panic("abort-hook-boom") },
-		WithOnAbort(func(_ context.Context, result panicdiag.RecoveryResult) {
-			aborted <- result
-		}),
-	)
-
-	<-task.Done()
-
-	select {
-	case got := <-aborted:
-		require.NotNil(t, got.Record)
-		require.Equal(t, "abort-hook-boom", got.Record.PanicValue)
-	case <-time.After(time.Second):
-		t.Fatal("expected per-call OnAbort to fire after recovered panic")
-	}
-}
-
 // TestGo_PerCallReporterFires pins that WithReporter delivers the recovery
 // result without resorting to the variadic API the previous Go signature
 // exposed.

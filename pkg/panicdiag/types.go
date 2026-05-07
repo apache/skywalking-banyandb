@@ -43,7 +43,6 @@ type RecoveryOptions struct {
 	Counter         meter.Counter
 	Logger          *logger.Logger
 	StateDumper     StateDumper
-	OnAbort         AbortFunc
 	ProcessMetadata map[string]string
 	Component       string
 	ArtifactRoot    string
@@ -73,11 +72,15 @@ type RecoveryOutcome struct {
 // must not block. Use AbortFunc when control flow needs to react to a panic.
 type Reporter func(context.Context, RecoveryResult)
 
-// AbortFunc is invoked after panic diagnostics are captured to give callers a
-// control-flow hook for failing the parent: cancelling a supervising context,
-// signalling a lifecycle group to stop, closing a notify channel, etc.
-// It runs after every Reporter and before any Repanic, so callers may both
-// abort the parent and re-raise the panic. Implementations must not block.
+// AbortFunc is the process-wide control-flow hook fired once per recovered
+// panic. It is registered through SetDefaultAbortFunc and intended for
+// process-level concerns: canceling a supervising context, signaling
+// lifecycle groups to stop, closing a notify channel that gates shutdown.
+// It runs after every Reporter and before any Repanic, so the registered
+// hook may both fail the supervisor and re-raise the panic. Per-call
+// AbortFunc is not supported; use the *RecoveryOutcome returned by
+// WithRecovery, or pkg/run.Task, to react locally. Implementations must
+// not block.
 type AbortFunc func(context.Context, RecoveryResult)
 
 // StateDumper returns a bounded diagnostic snapshot after a recovered panic.

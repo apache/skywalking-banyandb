@@ -27,6 +27,8 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+const testPanicValue = "boom"
+
 func TestArtifactWriterWrite(t *testing.T) {
 	t.Helper()
 
@@ -42,7 +44,7 @@ func TestArtifactWriterWrite(t *testing.T) {
 	record := &PanicRecord{
 		OccurredAt:     now,
 		Component:      "query/worker",
-		PanicValue:     "boom",
+		PanicValue:     testPanicValue,
 		Recovered:      true,
 		GoroutineStack: "goroutine 1 [running]:\nstack",
 		ProcessMetadata: map[string]string{
@@ -72,7 +74,7 @@ func TestArtifactWriterWrite(t *testing.T) {
 	if decoded.Component != "query/worker" {
 		t.Fatalf("summary missing component: %s", decoded.Component)
 	}
-	if decoded.PanicValue != "boom" {
+	if decoded.PanicValue != testPanicValue {
 		t.Fatalf("summary missing panic value: %s", decoded.PanicValue)
 	}
 }
@@ -84,7 +86,7 @@ func TestArtifactWriter_PersistsBreadcrumbs(t *testing.T) {
 	artifactWriter := NewArtifactWriter(dir)
 	record := &PanicRecord{
 		Component:  "test",
-		PanicValue: "boom",
+		PanicValue: testPanicValue,
 		Breadcrumbs: []Breadcrumb{
 			{Stage: "handle", Component: "grpc"},
 		},

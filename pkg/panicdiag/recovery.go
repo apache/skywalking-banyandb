@@ -119,7 +119,7 @@ func WithRecovery(ctx context.Context, opts RecoveryOptions, reporter Reporter, 
 		outcome.Panicked = true
 		outcome.Result = recoveryResult
 		callReporter(ctx, reporter, recoveryResult)
-		callAbort(ctx, opts.OnAbort, recoveryResult)
+		callDefaultAbort(ctx, recoveryResult)
 		if opts.Repanic {
 			panic(panicValue)
 		}

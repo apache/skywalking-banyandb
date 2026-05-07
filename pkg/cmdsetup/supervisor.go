@@ -25,7 +25,7 @@ import (
 	"github.com/apache/skywalking-banyandb/pkg/panicdiag"
 )
 
-// supervisor owns a process-wide cancellable context that is signalled when
+// supervisor owns a process-wide cancellable context that is signaled when
 // any goroutine wrapped by panicdiag.WithRecovery (or run.Go) recovers a
 // panic. Subcommands derive their Group.Run contexts from supervisorCtx so
 // that callers watching ctx.Done() can wind down gracefully when something
@@ -55,17 +55,17 @@ func initSupervisor() {
 			logger.GetLogger("supervisor").Error().
 				Str("component", component).
 				Str("panic", panicValue).
-				Msg("cancelling supervising context due to recovered panic")
+				Msg("canceling supervising context due to recovered panic")
 			supervisorCancel()
 		})
 	})
 }
 
 // SupervisorContext returns the process-wide supervising context. It is
-// cancelled when any panicdiag-protected goroutine recovers a panic, allowing
+// canceled when any panicdiag-protected goroutine recovers a panic, allowing
 // long-running work elsewhere in the process to wind down gracefully.
-// The context is initialised by NewRoot's PersistentPreRunE; callers that
-// fetch it before initialisation receive a never-cancelled context.Background.
+// The context is initialized by NewRoot's PersistentPreRunE; callers that
+// fetch it before initialization receive a never-canceled context.Background.
 func SupervisorContext() context.Context {
 	if supervisorCtx == nil {
 		return context.Background()

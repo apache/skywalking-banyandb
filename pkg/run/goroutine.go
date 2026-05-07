@@ -57,7 +57,6 @@ func (t *Task) Wait() *panicdiag.RecoveryOutcome {
 // and, except where noted, fall back to panicdiag's process-wide defaults.
 type goConfig struct {
 	reporter        panicdiag.Reporter
-	onAbort         panicdiag.AbortFunc
 	stateDumper     panicdiag.StateDumper
 	counter         meter.Counter
 	processMetadata map[string]string
@@ -72,11 +71,6 @@ type Option func(*goConfig)
 // WithReporter installs a non-blocking per-call reporter for recovered panics.
 func WithReporter(r panicdiag.Reporter) Option {
 	return func(c *goConfig) { c.reporter = r }
-}
-
-// WithOnAbort installs a non-blocking per-call abort hook.
-func WithOnAbort(f panicdiag.AbortFunc) Option {
-	return func(c *goConfig) { c.onAbort = f }
 }
 
 // WithRepanic re-raises recovered panics after diagnostics. Default is false.
@@ -114,8 +108,9 @@ func WithStateLimitBytes(n int64) Option {
 // Go launches fn in a panic-recovered goroutine.
 //
 // Recovered panics are logged with diagnostics, reported to process-wide
-// panicdiag hooks, and exposed through the returned Task. Per-call reporter
-// and abort hooks compose with process-wide defaults.
+// panicdiag hooks, and exposed through the returned Task. A per-call reporter
+// composes with the process-wide default; callers that need to react to a
+// panic should consume Task.Wait or Task.Done.
 //
 // WithRepanic(true) restores process-fatal behavior after diagnostics. Panic
 // counters configured by option or default are incremented with component.
@@ -133,7 +128,6 @@ func Go(ctx context.Context, component string, log *logger.Logger, fn func(conte
 			Logger:          log,
 			Counter:         cfg.counter,
 			StateDumper:     cfg.stateDumper,
-			OnAbort:         cfg.onAbort,
 			ProcessMetadata: cfg.processMetadata,
 			ArtifactRoot:    cfg.artifactRoot,
 			StateLimitBytes: cfg.stateLimitBytes,

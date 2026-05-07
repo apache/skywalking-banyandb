@@ -49,7 +49,7 @@ func TestSupervisorContextBeforeInitIsBackground(t *testing.T) {
 	ctx := SupervisorContext()
 	select {
 	case <-ctx.Done():
-		t.Fatal("expected uninitialised supervisor context to behave like context.Background")
+		t.Fatal("expected uninitialized supervisor context to behave like context.Background")
 	default:
 	}
 }
@@ -79,7 +79,7 @@ func TestInitSupervisorCancelsOnRecoveredPanic(t *testing.T) {
 	select {
 	case <-ctx.Done():
 	case <-time.After(time.Second):
-		t.Fatal("expected supervisor context to be cancelled after a recovered panic")
+		t.Fatal("expected supervisor context to be canceled after a recovered panic")
 	}
 }
 

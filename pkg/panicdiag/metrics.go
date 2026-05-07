@@ -80,9 +80,8 @@ func callReporter(ctx context.Context, reporter Reporter, result RecoveryResult)
 	}
 }
 
-// SetDefaultAbortFunc registers a process-wide AbortFunc that WithRecovery
-// invokes for every recovered panic, in addition to any per-call OnAbort
-// supplied via RecoveryOptions. Pass nil to clear a previously registered
+// SetDefaultAbortFunc registers the process-wide AbortFunc that WithRecovery
+// invokes once per recovered panic. Pass nil to clear a previously registered
 // default. Call once during process initialization.
 func SetDefaultAbortFunc(f AbortFunc) {
 	if f == nil {
@@ -92,16 +91,11 @@ func SetDefaultAbortFunc(f AbortFunc) {
 	defaultAbortFuncPtr.Store(&f)
 }
 
-// callAbort invokes both the process-wide default abort hook (if any) and the
-// per-call hook (if any). The default fires first so its bookkeeping is
-// unaffected by anything the per-call hook does. Aborts run after every
-// Reporter and before any Repanic, giving callers a single point to fail the
-// parent: cancel a context, signal a lifecycle group, etc.
-func callAbort(ctx context.Context, abort AbortFunc, result RecoveryResult) {
+// callDefaultAbort invokes the process-wide default abort hook (if any).
+// Aborts run after every Reporter and before any Repanic so the hook can
+// both fail the parent supervisor and re-raise the panic.
+func callDefaultAbort(ctx context.Context, result RecoveryResult) {
 	if ptr := defaultAbortFuncPtr.Load(); ptr != nil {
 		(*ptr)(ctx, result)
-	}
-	if abort != nil {
-		abort(ctx, result)
 	}
 }
