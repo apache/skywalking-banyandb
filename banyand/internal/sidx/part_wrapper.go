@@ -111,7 +111,7 @@ func (pw *partWrapper) cleanup() {
 		partPath := pw.p.path
 		fileSystem := pw.p.fileSystem
 		l := logger.GetLogger("storage-part-removal")
-		run.Go(context.Background(), "storage-part-removal", l, func(_ context.Context) {
+		run.GoOrDie(context.Background(), "storage-part-removal", l, func(_ context.Context) {
 			// Use a goroutine for potentially slow disk operations
 			// to avoid blocking the caller
 			if rmFS, ok := fileSystem.(interface{ MustRMAll(string) }); ok {

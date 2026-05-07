@@ -444,13 +444,24 @@ func (g *Group) Run(ctx context.Context) (err error) {
 		}, func(_ error) {
 			g.log.Warn().Uint32("total", uint32(len(g.s))).Uint32("ran", uint32(idx+1)).Str("name", s.Name()).Msg("stopping")
 			startTime := time.Now()
-			s.GracefulStop()
+			gracefulStopWithRecovery(ctx, g.log, s)
 			g.log.Warn().Dur("elapsed", time.Since(startTime)).Str("name", s.Name()).Msg("stopped")
 		})
 	}
 
 	// start registered services and block
 	return g.r.Run()
+}
+
+// gracefulStopWithRecovery records shutdown panics without interrupting peer
+// teardown. The ".stop" suffix marks the lifecycle phase in diagnostics.
+func gracefulStopWithRecovery(ctx context.Context, log *logger.Logger, s Service) {
+	panicdiag.WithRecovery(ctx, panicdiag.RecoveryOptions{
+		Component: s.Name() + ".stop",
+		Logger:    log,
+	}, nil, func(_ *context.Context) {
+		s.GracefulStop()
+	})
 }
 
 // ListUnits returns a list of all Group phases and the Units registered to each
