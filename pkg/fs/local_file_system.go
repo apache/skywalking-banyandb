@@ -245,26 +245,27 @@ var invokeTestHookAfterTmpFsync = func() {}
 
 // WriteAtomic writes buffer to name+".tmp", fsyncs it, renames over name, and
 // fsyncs the parent directory. See FileSystem.WriteAtomic for semantics.
+//
+// On a re-tried call after a prior crash mid-rename, a stale ".tmp" sibling
+// from the prior attempt is overwritten via O_TRUNC. The "next-boot
+// inspection" semantics in the FileSystem interface docstring still hold:
+// CleanupLeftoverTmp on the next part open will remove the .tmp once a
+// matching final exists, and a .tmp without its final remains until the
+// next successful WriteAtomic to the same name.
 func (fs *localFileSystem) WriteAtomic(buffer []byte, name string, permission Mode) (int, error) {
 	tmpName := name + ".tmp"
+	parentDir := filepath.Dir(name)
 	file, err := os.OpenFile(tmpName, os.O_RDWR|os.O_CREATE|os.O_TRUNC, os.FileMode(permission))
 	if err != nil {
-		switch {
-		case os.IsExist(err):
-			return 0, &FileSystemError{
-				Code:    isExistError,
-				Message: fmt.Sprintf("Tmp file is exist, file name: %s, error message: %s", tmpName, err),
-			}
-		case os.IsPermission(err):
+		if os.IsPermission(err) {
 			return 0, &FileSystemError{
 				Code:    permissionError,
 				Message: fmt.Sprintf("There is not enough permission, file name: %s, permission: %d, error message: %s", tmpName, permission, err),
 			}
-		default:
-			return 0, &FileSystemError{
-				Code:    otherError,
-				Message: fmt.Sprintf("Create tmp file return error, file name: %s, error message: %s", tmpName, err),
-			}
+		}
+		return 0, &FileSystemError{
+			Code:    otherError,
+			Message: fmt.Sprintf("Create tmp file return error, file name: %s, error message: %s", tmpName, err),
 		}
 	}
 	size, writeErr := file.Write(buffer)
@@ -299,24 +300,24 @@ func (fs *localFileSystem) WriteAtomic(buffer []byte, name string, permission Mo
 			Message: fmt.Sprintf("Rename %s -> %s return error: %s", tmpName, name, renameErr),
 		}
 	}
-	dir, err := os.Open(filepath.Dir(name))
+	dir, err := os.Open(parentDir)
 	if err != nil {
 		return size, &FileSystemError{
 			Code:    otherError,
-			Message: fmt.Sprintf("Open parent dir for fsync, dir name: %s, error message: %s", filepath.Dir(name), err),
+			Message: fmt.Sprintf("Open parent dir for fsync, dir name: %s, error message: %s", parentDir, err),
 		}
 	}
 	if syncErr := dir.Sync(); syncErr != nil {
 		_ = dir.Close()
 		return size, &FileSystemError{
 			Code:    flushError,
-			Message: fmt.Sprintf("Sync parent dir return error, dir name: %s, error message: %s", filepath.Dir(name), syncErr),
+			Message: fmt.Sprintf("Sync parent dir return error, dir name: %s, error message: %s", parentDir, syncErr),
 		}
 	}
 	if closeErr := dir.Close(); closeErr != nil {
 		return size, &FileSystemError{
 			Code:    closeError,
-			Message: fmt.Sprintf("Close parent dir return error, dir name: %s, error message: %s", filepath.Dir(name), closeErr),
+			Message: fmt.Sprintf("Close parent dir return error, dir name: %s, error message: %s", parentDir, closeErr),
 		}
 	}
 	return size, nil

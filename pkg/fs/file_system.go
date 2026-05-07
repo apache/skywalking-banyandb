@@ -198,6 +198,10 @@ func MustFlushAtomic(fs FileSystem, buffer []byte, name string, permission Mode)
 // between WriteAtomic's fsync(tmp) and rename — that case is left alone so
 // the engine's existing panic-on-missing-metadata fires for operator
 // intervention, per BanyanDB's canonical fail-fast contract.
+//
+// Symlinks ending in ".tmp" are skipped: BanyanDB part directories never
+// contain symlinks, so encountering one is unexpected and we do not want to
+// follow it during cleanup.
 func CleanupLeftoverTmp(fs FileSystem, partPath string) {
 	for _, e := range fs.ReadDir(partPath) {
 		if e.IsDir() {
@@ -207,9 +211,16 @@ func CleanupLeftoverTmp(fs FileSystem, partPath string) {
 		if !strings.HasSuffix(name, ".tmp") {
 			continue
 		}
+		tmpFull := filepath.Join(partPath, name)
+		info, lstatErr := os.Lstat(tmpFull)
+		if lstatErr != nil || info.Mode()&os.ModeSymlink != 0 {
+			continue
+		}
 		final := name[:len(name)-len(".tmp")]
 		if _, err := os.Stat(filepath.Join(partPath, final)); err == nil {
-			_ = os.Remove(filepath.Join(partPath, name))
+			if removeErr := os.Remove(tmpFull); removeErr != nil {
+				logger.GetLogger().Debug().Err(removeErr).Str("path", tmpFull).Msg("CleanupLeftoverTmp: cannot remove leftover .tmp")
+			}
 		}
 	}
 }

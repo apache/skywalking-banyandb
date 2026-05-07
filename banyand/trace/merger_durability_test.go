@@ -61,27 +61,41 @@ func Test_partFlush_atomicMetadata_noTmpLeftover(t *testing.T) {
 
 // Test_mustOpenFilePart_removesLeftoverTmp asserts that mustOpenFilePart
 // removes a stray <file>.tmp sibling whose matching final exists. This is the
-// post-rename cleanup hook into fs.CleanupLeftoverTmp.
+// post-rename cleanup hook into fs.CleanupLeftoverTmp. Trace writes three
+// metadata files via WriteAtomic — metadata.json, traceID.filter, tag.type —
+// so all three .tmp shapes must be cleaned up on open.
 func Test_mustOpenFilePart_removesLeftoverTmp(t *testing.T) {
-	tmpPath, defFn := test.Space(require.New(t))
-	defer defFn()
-	fileSystem := fs.NewLocalFileSystem()
-	epoch := uint64(1)
+	cases := []string{"metadata.json.tmp", "traceID.filter.tmp", "tag.type.tmp"}
+	for _, strayName := range cases {
+		t.Run(strayName, func(t *testing.T) {
+			tmpPath, defFn := test.Space(require.New(t))
+			defer defFn()
+			fileSystem := fs.NewLocalFileSystem()
+			epoch := uint64(1)
 
-	mp := generateMemPart()
-	mp.mustInitFromTraces(ts)
-	mp.mustFlush(fileSystem, partPath(tmpPath, epoch))
-	releaseMemPart(mp)
+			mp := generateMemPart()
+			mp.mustInitFromTraces(ts)
+			mp.mustFlush(fileSystem, partPath(tmpPath, epoch))
+			releaseMemPart(mp)
 
-	pp := partPath(tmpPath, epoch)
-	stray := filepath.Join(pp, "metadata.json.tmp")
-	require.NoError(t, os.WriteFile(stray, []byte("stale-leftover"), 0o600))
+			pp := partPath(tmpPath, epoch)
+			// Skip the case where the matching final file doesn't exist on
+			// disk for this fixture — without a healthy <file>, the cleanup
+			// helper is correct to leave the .tmp in place.
+			final := strings.TrimSuffix(strayName, ".tmp")
+			if _, err := os.Stat(filepath.Join(pp, final)); err != nil {
+				t.Skipf("fixture did not produce %s; cleanup behavior covered by other cases", final)
+			}
+			stray := filepath.Join(pp, strayName)
+			require.NoError(t, os.WriteFile(stray, []byte("stale-leftover"), 0o600))
 
-	p := mustOpenFilePart(epoch, tmpPath, fileSystem)
-	defer p.close()
+			p := mustOpenFilePart(epoch, tmpPath, fileSystem)
+			defer p.close()
 
-	_, statErr := os.Stat(stray)
-	assert.Truef(t, os.IsNotExist(statErr), "expected stray .tmp removed, got err=%v", statErr)
+			_, statErr := os.Stat(stray)
+			assert.Truef(t, os.IsNotExist(statErr), "expected %s removed, got err=%v", strayName, statErr)
+		})
+	}
 }
 
 // Test_merger_tornSpansBin_stillPanics is the reproducer described in the body
