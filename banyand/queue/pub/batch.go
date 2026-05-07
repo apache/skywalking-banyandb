@@ -358,7 +358,7 @@ func (bp *batchPublisher) retrySend(ctx context.Context, stream clusterv1.Servic
 
 		if sendErr == nil {
 			if bp.hasMetrics() {
-				bp.pub.metrics.sendAttemptsTotal.Inc(1, topic, node)
+				bp.pub.metrics.sendSuccessTotal.Inc(1, topic, node)
 				bp.pub.metrics.sendBytesTotal.Inc(float64(len(r.Body)), topic, node)
 			}
 			// Success writing to the local stream; end-to-end ack is observed in listenBatchResponse.

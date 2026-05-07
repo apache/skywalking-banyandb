@@ -89,7 +89,7 @@ type pub struct {
 }
 
 type pubMetrics struct {
-	sendAttemptsTotal   meter.Counter
+	sendSuccessTotal    meter.Counter
 	sendErrTotal        meter.Counter
 	sendBytesTotal      meter.Counter
 	sendDurationSeconds meter.Histogram
@@ -103,7 +103,7 @@ type pubMetrics struct {
 
 func newPubMetrics(factory observability.Factory) *pubMetrics {
 	return &pubMetrics{
-		sendAttemptsTotal:   factory.NewCounter("send_attempts_total", "topic", "node"),
+		sendSuccessTotal:    factory.NewCounter("send_success_total", "topic", "node"),
 		sendErrTotal:        factory.NewCounter("send_err_total", "topic", "node", "reason"),
 		sendBytesTotal:      factory.NewCounter("send_bytes_total", "topic", "node"),
 		sendDurationSeconds: factory.NewHistogram("send_duration_seconds", meter.DefBuckets, "topic", "node"),
@@ -420,7 +420,7 @@ func (p *pub) PreRun(context.Context) error {
 
 	p.log = logger.GetLogger("server-queue-pub-" + p.prefix)
 
-	if p.metrics == nil {
+	if p.metrics == nil && p.metadata != nil {
 		if svc, ok := p.metadata.(metadata.Service); ok {
 			if omr := svc.MetricsRegistry(); omr != nil {
 				p.metrics = newPubMetrics(omr.With(queuePubScope))

@@ -34,6 +34,7 @@ Release Notes.
 - Schema consistency (Phase 2 in progress): cluster-wide barrier groundwork. Internal-only; no client-facing surface impact yet.
   - Add `NodeSchemaStatusService` (`GetMaxRevision`, `GetKeyRevisions`, `GetAbsentKeys`) registered on every cluster member that holds a schema cache, so peer liaisons and data nodes can be probed identically by the upcoming barrier fan-out (#1108).
   - Extend `queue.Client` with `NewNodeSchemaStatusClient(node)` so the barrier fan-out can borrow the existing tier1/tier2 connection pools instead of opening a parallel mesh.
+- Add end-to-end observability for liaison internal queue pipelines with per-topic metrics for queue_sub and queue_pub, along with Grafana panels and troubleshooting docs.
 
 ### Bug Fixes
 

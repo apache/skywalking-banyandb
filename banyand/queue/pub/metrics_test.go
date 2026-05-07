@@ -175,7 +175,7 @@ func (*noopHistogram) Delete(_ ...string) bool        { return true }
 
 func newPubMetricsWithErrCapture(sendErr *errReasonCapturer) *pubMetrics {
 	return &pubMetrics{
-		sendAttemptsTotal:   &countingCounter{},
+		sendSuccessTotal:    &countingCounter{},
 		sendErrTotal:        sendErr,
 		sendBytesTotal:      &countingCounter{},
 		sendDurationSeconds: &noopHistogram{},
@@ -214,7 +214,7 @@ func TestRetryMetrics(t *testing.T) {
 			sendRetryExhausted:  &countingCounter{},
 			sendErrTotal:        sendErrCap,
 			sendBackoffSeconds:  &countingCounter{},
-			sendAttemptsTotal:   &countingCounter{},
+			sendSuccessTotal:    &countingCounter{},
 			sendBytesTotal:      &countingCounter{},
 			sendDurationSeconds: &noopHistogram{},
 			inflightStreams:     &noopGauge{},
@@ -412,7 +412,7 @@ func TestListenBatchResponseDiskFullSendsFailoverEvent(t *testing.T) {
 func TestCloseDecrementsInflightStreams(t *testing.T) {
 	streamGauge := &valGauge{}
 	pm := &pubMetrics{
-		sendAttemptsTotal:   &countingCounter{},
+		sendSuccessTotal:    &countingCounter{},
 		sendErrTotal:        newErrReasonCapturer(),
 		sendBytesTotal:      &countingCounter{},
 		sendDurationSeconds: &noopHistogram{},
@@ -449,7 +449,7 @@ func TestPublishInflightRequestsBalancedWhenStreamPreexists(t *testing.T) {
 	sendErrCap := newErrReasonCapturer()
 	attempts := &countingCounter{}
 	pm := &pubMetrics{
-		sendAttemptsTotal:   attempts,
+		sendSuccessTotal:    attempts,
 		sendErrTotal:        sendErrCap,
 		sendBytesTotal:      &countingCounter{},
 		sendDurationSeconds: &noopHistogram{},
@@ -485,7 +485,7 @@ func TestPublishInflightRequestsBalancedWhenStreamPreexists(t *testing.T) {
 	_, publishErr := bp.Publish(ctx, topic, msg)
 	require.NoError(t, publishErr)
 
-	require.Equal(t, float64(1), attempts.count, "successful retrySend should record send_attempts_total")
+	require.Equal(t, float64(1), attempts.count, "successful retrySend should record send_success_total")
 	require.Equal(t, float64(0), inflightReq.net(topicStr, nodeName),
 		"inflight_requests defer must balance +1/-1 for topic/node")
 	require.Equal(t, float64(0), sendErrCap.sum(sendErrReasonRetryExhausted))

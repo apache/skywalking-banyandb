@@ -194,7 +194,13 @@ func (s *server) SetMetricsRegistry(omr observability.MetricsRegistry) {
 
 // MetricsRegistry returns the metrics registry held by this server or the embedded client.
 func (s *server) MetricsRegistry() observability.MetricsRegistry {
-	return s.omr
+	if s.omr != nil {
+		return s.omr
+	}
+	if s.Service != nil {
+		return s.Service.MetricsRegistry()
+	}
+	return nil
 }
 
 // GetSchemaServerPort returns the schema server gRPC port.
