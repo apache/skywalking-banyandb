@@ -24,6 +24,7 @@ import (
 
 	commonv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/common/v1"
 	fodcv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/fodc/v1"
+	"github.com/apache/skywalking-banyandb/banyand/metadata/schema"
 )
 
 // maxInspectGroupConcurrency caps how many groups InspectAll will inspect
@@ -77,12 +78,19 @@ func (s *server) inspectGroup(ctx context.Context, group *commonv1.Group) *fodcv
 		Catalog:      catalogToString(group.Catalog),
 		ResourceOpts: group.ResourceOpts,
 	}
-	dataInfo, err := s.metadataRepo.CollectDataInfo(ctx, groupName)
+	// CollectDataInfo's contract: a non-nil err means no DataInfo and nil
+	// collectionErrs (per banyand/metadata/schema/collector.go); a nil err
+	// means DataInfo is populated and collectionErrs may carry per-node
+	// broadcast failures. The two paths never overlap, so the top-level
+	// branch sets a fresh single-element Errors slice.
+	dataInfo, collectionErrs, err := s.metadataRepo.CollectDataInfo(ctx, groupName)
 	if err != nil {
 		s.log.Warn().Err(err).Str("group", groupName).Msg("Failed to collect data info")
-	} else {
-		info.DataInfo = dataInfo
+		info.Errors = []string{schema.TopLevelErrorPrefix + err.Error()}
+		return info
 	}
+	info.DataInfo = dataInfo
+	info.Errors = collectionErrs
 	return info
 }
 
