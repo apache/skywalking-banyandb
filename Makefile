@@ -100,7 +100,18 @@ test-docker: ## Run tests in Docker with constrained resources (2 CPU cores, 4GB
 
 lint: TARGET=lint
 lint: PROJECTS:=api $(PROJECTS) pkg scripts/ci/check test
-lint: default ## Run the linters on all projects
+lint: default lint-rawgo ## Run the linters on all projects
+
+# lint-rawgo enforces the project's "no raw goroutines" rule. New `go`
+# statements in code outside the recovery wrappers must either go
+# through run.Go / run.GoOrDie / run.GoWithSignal or carry an explicit
+# `//panicdiag:allow-rawgo <reason>` directive. Pre-existing sites are
+# tracked in pkg/panicdiag/lintrawgo/baseline.txt; that list only ever
+# shrinks. Runs once at the module root rather than per-subproject.
+.PHONY: lint-rawgo
+lint-rawgo: ## Enforce panic-recovery wrappers for goroutine launches
+	go run ./scripts/lint/rawgo \
+	  -baseline=pkg/panicdiag/lintrawgo/baseline.txt ./...
 
 ##@ Vendor update
 

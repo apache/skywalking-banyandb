@@ -84,5 +84,10 @@ fodc/agent/internal/ktm/iomonitor/ebpf/generated/vmlinux.h
 # OpenSSL serial files
 *.srl
 
-# Runtime crash output files created by panic diagnostics
-**/crash/runtime-crash-*.txt
+# rawgo linter: the baseline of pre-existing raw-`go` sites is
+# generated locally and not tracked in git. To regenerate:
+#   go run ./scripts/lint/rawgo ./... 2> baseline.raw &&
+#     grep 'raw `go`' baseline.raw |
+#     sed -E "s|^$(pwd)/||; s|:([0-9]+):[0-9]+:.*|:\\1|" | sort -u \
+#     > pkg/panicdiag/lintrawgo/baseline.txt
+pkg/panicdiag/lintrawgo/baseline.txt

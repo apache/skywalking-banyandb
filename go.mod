@@ -202,7 +202,7 @@ require (
 	golang.org/x/sys v0.43.0
 	golang.org/x/text v0.35.0 // indirect
 	golang.org/x/time v0.15.0 // indirect
-	golang.org/x/tools v0.43.0 // indirect
+	golang.org/x/tools v0.43.0
 	google.golang.org/genproto v0.0.0-20260406210006-6f92a3bedf2d // indirect
 	gopkg.in/yaml.v3 v3.0.1
 )
