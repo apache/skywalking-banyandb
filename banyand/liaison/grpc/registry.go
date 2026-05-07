@@ -20,6 +20,8 @@ package grpc
 import (
 	"context"
 	"errors"
+	"fmt"
+	"strings"
 	"time"
 
 	"google.golang.org/grpc/codes"
@@ -768,10 +770,15 @@ func (rs *groupRegistryServer) Inspect(ctx context.Context, req *databasev1.Grou
 		rs.metrics.totalRegistryErr.Inc(1, g, "group", "inspect")
 		return nil, schemaErr
 	}
-	dataInfo, _, dataErr := rs.schemaRegistry.CollectDataInfo(ctx, g)
+	dataInfo, collectionErrs, dataErr := rs.schemaRegistry.CollectDataInfo(ctx, g)
 	if dataErr != nil {
 		rs.metrics.totalRegistryErr.Inc(1, g, "group", "inspect")
 		return nil, dataErr
+	}
+	if len(collectionErrs) > 0 {
+		rs.metrics.totalRegistryErr.Inc(1, g, "group", "inspect")
+		return nil, fmt.Errorf("incomplete data info for group %s: %s",
+			g, strings.Join(collectionErrs, "; "))
 	}
 	liaisonInfo, liaisonErr := rs.schemaRegistry.CollectLiaisonInfo(ctx, g)
 	if liaisonErr != nil {

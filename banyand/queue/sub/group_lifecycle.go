@@ -24,6 +24,7 @@ import (
 
 	commonv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/common/v1"
 	fodcv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/fodc/v1"
+	"github.com/apache/skywalking-banyandb/banyand/metadata/schema"
 )
 
 // maxInspectGroupConcurrency caps how many groups InspectAll will inspect
@@ -31,11 +32,6 @@ import (
 // for typical clusters (BanyanDB rarely has more than a few dozen groups)
 // while still bounding load on the data nodes.
 const maxInspectGroupConcurrency = 32
-
-// topLevelErrorPrefix tags an entry in GroupLifecycleInfo.errors that
-// originated from a top-level CollectDataInfo failure (GetGroup, missing
-// collector, dial failure) rather than a per-node broadcast failure.
-const topLevelErrorPrefix = "top-level: "
 
 // InspectAll lists all groups and returns their full lifecycle info.
 // Per-group inspections run in parallel (bounded), so a single slow group
@@ -82,14 +78,19 @@ func (s *server) inspectGroup(ctx context.Context, group *commonv1.Group) *fodcv
 		Catalog:      catalogToString(group.Catalog),
 		ResourceOpts: group.ResourceOpts,
 	}
+	// CollectDataInfo's contract: a non-nil err means no DataInfo and nil
+	// collectionErrs (per banyand/metadata/schema/collector.go); a nil err
+	// means DataInfo is populated and collectionErrs may carry per-node
+	// broadcast failures. The two paths never overlap, so the top-level
+	// branch sets a fresh single-element Errors slice.
 	dataInfo, collectionErrs, err := s.metadataRepo.CollectDataInfo(ctx, groupName)
-	info.Errors = collectionErrs
 	if err != nil {
 		s.log.Warn().Err(err).Str("group", groupName).Msg("Failed to collect data info")
-		info.Errors = append([]string{topLevelErrorPrefix + err.Error()}, info.Errors...)
+		info.Errors = []string{schema.TopLevelErrorPrefix + err.Error()}
 		return info
 	}
 	info.DataInfo = dataInfo
+	info.Errors = collectionErrs
 	return info
 }
 

@@ -39,12 +39,18 @@ import (
 // merge/flush load can take several seconds) while still bounding the call.
 const inspectBroadcastTimeout = 30 * time.Second
 
-// Prefixes used in CollectDataInfo's per-node collection_errors slice so
-// downstream consumers can categorize failures by source via prefix match.
+// Prefixes used by every producer that writes into
+// GroupLifecycleInfo.errors so downstream consumers can categorize
+// failures via a stable prefix match. The full vocabulary lives here:
+// BroadcastErrorPrefix / FutureErrorPrefix / NodeErrorPrefix are written
+// by broadcastCollectDataInfo below; TopLevelErrorPrefix is written by
+// the InspectAll RPC handler in banyand/queue/sub/group_lifecycle.go,
+// which observes the top-level error returned by CollectDataInfo.
 const (
-	broadcastErrorPrefix = "broadcast failed: "
-	futureErrorPrefix    = "future error: "
-	nodeErrorPrefix      = "node error: "
+	BroadcastErrorPrefix = "broadcast failed: "
+	FutureErrorPrefix    = "future error: "
+	NodeErrorPrefix      = "node error: "
+	TopLevelErrorPrefix  = "top-level: "
 )
 
 // GroupGetter provides method to get group metadata.
@@ -125,7 +131,7 @@ func (icr *InfoCollectorRegistry) broadcastCollectDataInfo(topic bus.Topic, grou
 	futures, broadcastErr := icr.dataBroadcaster.Broadcast(inspectBroadcastTimeout, topic, message)
 	if broadcastErr != nil {
 		icr.l.Warn().Err(broadcastErr).Str("group", group).Msg("failed to broadcast collect data info request")
-		return []*databasev1.DataInfo{}, []string{broadcastErrorPrefix + broadcastErr.Error()}
+		return []*databasev1.DataInfo{}, []string{BroadcastErrorPrefix + broadcastErr.Error()}
 	}
 
 	dataInfoList := make([]*databasev1.DataInfo, 0, len(futures))
@@ -134,7 +140,7 @@ func (icr *InfoCollectorRegistry) broadcastCollectDataInfo(topic bus.Topic, grou
 		msg, getErr := future.Get()
 		if getErr != nil {
 			icr.l.Warn().Err(getErr).Str("group", group).Msg("failed to get collect data info response")
-			collectionErrors = append(collectionErrors, futureErrorPrefix+getErr.Error())
+			collectionErrors = append(collectionErrors, FutureErrorPrefix+getErr.Error())
 			continue
 		}
 		msgData := msg.Data()
@@ -145,7 +151,7 @@ func (icr *InfoCollectorRegistry) broadcastCollectDataInfo(topic bus.Topic, grou
 			}
 		case *common.Error:
 			icr.l.Warn().Str("error", d.Error()).Str("group", group).Msg("error collecting data info from node")
-			collectionErrors = append(collectionErrors, nodeErrorPrefix+d.Error())
+			collectionErrors = append(collectionErrors, NodeErrorPrefix+d.Error())
 		}
 	}
 	return dataInfoList, collectionErrors

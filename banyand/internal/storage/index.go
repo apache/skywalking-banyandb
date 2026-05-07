@@ -58,6 +58,12 @@ func (s *segment[T, O]) Lookup(ctx context.Context, series []*pbv1.Series) (pbv1
 	return sl.SeriesList, err
 }
 
+// seriesIndex is the per-segment series index. Every method on this type
+// starts with `if s == nil { ... }` purely to absorb the typed-nil leak
+// that `segment.IndexDB()` could expose if a caller bypassed the producer
+// guard there. The guards intentionally do NOT make the type fully
+// nil-safe -- they assume that on a non-nil receiver, store / l / metrics
+// / p are all populated by newSeriesIndex (the only constructor).
 type seriesIndex struct {
 	store   index.SeriesStore
 	l       *logger.Logger
