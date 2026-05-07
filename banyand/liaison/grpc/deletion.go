@@ -21,6 +21,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"strings"
 	"sync"
 	"time"
 
@@ -158,10 +159,15 @@ func (m *groupDeletionTaskManager) startDeletion(ctx context.Context, group stri
 		return fmt.Errorf("deletion task for group %s is already in progress", group)
 	}
 
-	dataInfo, dataErr := m.schemaRegistry.CollectDataInfo(ctx, group)
+	dataInfo, collectionErrs, dataErr := m.schemaRegistry.CollectDataInfo(ctx, group)
 	if dataErr != nil {
 		m.tasks.Delete(group)
 		return fmt.Errorf("failed to collect data info for group %s: %w", group, dataErr)
+	}
+	if len(collectionErrs) > 0 {
+		m.tasks.Delete(group)
+		return fmt.Errorf("incomplete data info for group %s, refusing to start deletion: %s",
+			group, strings.Join(collectionErrs, "; "))
 	}
 	var totalDataSize int64
 	for _, di := range dataInfo {
@@ -452,9 +458,13 @@ func (m *groupDeletionTaskManager) getDeletionTask(ctx context.Context, group st
 }
 
 func (m *groupDeletionTaskManager) hasNonEmptyResources(ctx context.Context, group string) (bool, error) {
-	dataInfo, dataErr := m.schemaRegistry.CollectDataInfo(ctx, group)
+	dataInfo, collectionErrs, dataErr := m.schemaRegistry.CollectDataInfo(ctx, group)
 	if dataErr != nil {
 		return false, fmt.Errorf("failed to collect data info: %w", dataErr)
+	}
+	if len(collectionErrs) > 0 {
+		return false, fmt.Errorf("incomplete data info for group %s, cannot determine emptiness: %s",
+			group, strings.Join(collectionErrs, "; "))
 	}
 	for _, di := range dataInfo {
 		if di.GetDataSizeBytes() > 0 {

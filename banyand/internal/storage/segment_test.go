@@ -24,6 +24,8 @@ import (
 	"os"
 	"path/filepath"
 	"strconv"
+	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -858,5 +860,321 @@ func TestOpenFallbackOldFormatMetadata(t *testing.T) {
 
 	for _, seg := range sc.lst {
 		seg.DecRef()
+	}
+}
+
+// TestSegment_IndexDB_ReturnsUntypedNilWhenClosed is a regression guard for
+// the cold-tier nil-pointer panic. After a segment has been idle-closed
+// (s.index == nil), segment.IndexDB() must return an untyped nil interface
+// so that the standard caller pattern `if indexDB == nil { ... }` short
+// circuits correctly. Returning the underlying *seriesIndex would box a
+// typed-nil interface, defeat the nil check, and crash on the next method
+// call.
+func TestSegment_IndexDB_ReturnsUntypedNilWhenClosed(t *testing.T) {
+	tempDir, cleanup := setupTestEnvironment(t)
+	defer cleanup()
+
+	ctx := context.Background()
+	l := logger.GetLogger("test-untyped-nil")
+	ctx = context.WithValue(ctx, logger.ContextKey, l)
+	ctx = common.SetPosition(ctx, func(_ common.Position) common.Position {
+		return common.Position{Database: "test-db", Stage: "test-stage"}
+	})
+
+	opts := TSDBOpts[mockTSTable, mockTSTableOpener]{
+		TSTableCreator: func(_ fs.FileSystem, _ string, _ common.Position, _ *logger.Logger,
+			_ timestamp.TimeRange, _ mockTSTableOpener, _ any,
+		) (mockTSTable, error) {
+			return mockTSTable{ID: common.ShardID(0)}, nil
+		},
+		ShardNum:                       1,
+		SegmentInterval:                IntervalRule{Unit: DAY, Num: 1},
+		TTL:                            IntervalRule{Unit: DAY, Num: 7},
+		SeriesIndexFlushTimeoutSeconds: 10,
+		SeriesIndexCacheMaxBytes:       1024 * 1024,
+	}
+
+	serviceCache := NewServiceCache().(*serviceCache)
+	sc := newSegmentController[mockTSTable, mockTSTableOpener](
+		ctx, tempDir, l, opts, nil, nil, time.Second,
+		fs.NewLocalFileSystemWithLoggerAndLimit(logger.GetLogger("storage"), opts.MemoryLimit),
+		serviceCache, group,
+	)
+
+	now := time.Now().UTC()
+	startTime := time.Date(now.Year(), now.Month(), now.Day(), 0, 0, 0, 0, time.UTC)
+	endTime := startTime.Add(24 * time.Hour)
+
+	segPath := filepath.Join(tempDir, "segment-"+startTime.Format(dayFormat))
+	require.NoError(t, os.MkdirAll(segPath, DirPerm))
+	require.NoError(t, os.WriteFile(
+		filepath.Join(segPath, metadataFilename),
+		[]byte(currentVersion), FilePerm))
+
+	seg, err := sc.openSegment(ctx, startTime, endTime, segPath,
+		startTime.Format(dayFormat), sc.groupCache)
+	require.NoError(t, err)
+
+	// Idle-close: drop the only reference so performCleanup runs and the
+	// segment ends up in the residual state seen on cold-tier nodes
+	// (refCount=0, s.index=nil, but segment still reachable for reopen).
+	seg.DecRef()
+	require.Nil(t, seg.index)
+	require.Equal(t, int32(0), atomic.LoadInt32(&seg.refCount))
+
+	indexDB := seg.IndexDB()
+	require.True(t, indexDB == nil,
+		"IndexDB() must return untyped nil after idle close so the caller's "+
+			"`if indexDB == nil` guard fires")
+
+	// Drive the exact caller pattern from collectSeriesIndexInfo. It must
+	// short-circuit on the nil check and never dispatch Stats() on a nil
+	// receiver.
+	var dataCount, dataSize int64
+	func() {
+		defer func() {
+			if r := recover(); r != nil {
+				t.Fatalf("caller pattern must not panic but got: %v", r)
+			}
+		}()
+		if indexDB != nil {
+			dataCount, dataSize = indexDB.Stats()
+		}
+	}()
+	assert.Equal(t, int64(0), dataCount)
+	assert.Equal(t, int64(0), dataSize)
+}
+
+// TestSegment_ConcurrentReopen_RefCountConsistent stress-tests the
+// reference-count contract of segment.incRef under concurrent reopen.
+// Before the fix, segment.initialize() returned without AddInt32 when
+// another goroutine had already reopened the segment, so the second caller
+// "owned" a reference it had never accounted for. The first DecRef would
+// then trigger performCleanup while another goroutine was still using the
+// segment.
+//
+// After the fix, every concurrent incRef must add exactly one reference
+// regardless of which path it takes.
+//
+// Reliability note: a single 64-goroutine round can occasionally serialize
+// well enough that only the first caller enters the slow path
+// (initialize) and the rest take the fast path (CAS+1). That serialized
+// shape would also pass on the buggy code. To make the test deterministic
+// across machines, the experiment is repeated for `rounds` cycles, each
+// starting from the residual state. The bug becomes effectively
+// impossible to miss across all rounds combined.
+func TestSegment_ConcurrentReopen_RefCountConsistent(t *testing.T) {
+	tempDir, cleanup := setupTestEnvironment(t)
+	defer cleanup()
+
+	ctx := context.Background()
+	l := logger.GetLogger("test-concurrent-reopen")
+	ctx = context.WithValue(ctx, logger.ContextKey, l)
+	ctx = common.SetPosition(ctx, func(_ common.Position) common.Position {
+		return common.Position{Database: "test-db", Stage: "test-stage"}
+	})
+
+	opts := TSDBOpts[mockTSTable, mockTSTableOpener]{
+		TSTableCreator: func(_ fs.FileSystem, _ string, _ common.Position, _ *logger.Logger,
+			_ timestamp.TimeRange, _ mockTSTableOpener, _ any,
+		) (mockTSTable, error) {
+			return mockTSTable{ID: common.ShardID(0)}, nil
+		},
+		ShardNum:                       2,
+		SegmentInterval:                IntervalRule{Unit: DAY, Num: 1},
+		TTL:                            IntervalRule{Unit: DAY, Num: 7},
+		SeriesIndexFlushTimeoutSeconds: 10,
+		SeriesIndexCacheMaxBytes:       1024 * 1024,
+	}
+
+	serviceCache := NewServiceCache().(*serviceCache)
+	sc := newSegmentController[mockTSTable, mockTSTableOpener](
+		ctx, tempDir, l, opts, nil, nil, time.Second,
+		fs.NewLocalFileSystemWithLoggerAndLimit(logger.GetLogger("storage"), opts.MemoryLimit),
+		serviceCache, group,
+	)
+
+	now := time.Now().UTC()
+	startTime := time.Date(now.Year(), now.Month(), now.Day(), 0, 0, 0, 0, time.UTC)
+	endTime := startTime.Add(24 * time.Hour)
+
+	segPath := filepath.Join(tempDir, "segment-"+startTime.Format(dayFormat))
+	require.NoError(t, os.MkdirAll(segPath, DirPerm))
+	require.NoError(t, os.WriteFile(
+		filepath.Join(segPath, metadataFilename),
+		[]byte(currentVersion), FilePerm))
+
+	seg, err := sc.openSegment(ctx, startTime, endTime, segPath,
+		startTime.Format(dayFormat), sc.groupCache)
+	require.NoError(t, err)
+
+	// Bring the segment into the cold-tier residual state.
+	seg.DecRef()
+	require.Nil(t, seg.index)
+	require.Equal(t, int32(0), atomic.LoadInt32(&seg.refCount))
+
+	const (
+		N      = 64
+		rounds = 10
+	)
+	for r := 0; r < rounds; r++ {
+		require.Equal(t, int32(0), atomic.LoadInt32(&seg.refCount),
+			"round %d: segment must start at refCount=0", r)
+		require.Nil(t, seg.index, "round %d: segment.index must start nil", r)
+
+		var (
+			wg     sync.WaitGroup
+			start  = make(chan struct{})
+			errCnt int64
+		)
+		wg.Add(N)
+		for i := 0; i < N; i++ {
+			go func() {
+				defer wg.Done()
+				<-start
+				if incErr := seg.incRef(ctx); incErr != nil {
+					atomic.AddInt64(&errCnt, 1)
+				}
+			}()
+		}
+		close(start)
+		wg.Wait()
+
+		require.Equal(t, int64(0), atomic.LoadInt64(&errCnt),
+			"round %d: incRef must not error", r)
+		require.Equal(t, int32(N), atomic.LoadInt32(&seg.refCount),
+			"round %d: every concurrent incRef must add exactly one reference", r)
+		require.NotNil(t, seg.index, "round %d: segment.index must be reopened", r)
+
+		// Drain references; the last DecRef must trigger performCleanup
+		// and bring the segment back to the residual state for the next
+		// round.
+		for i := 0; i < N; i++ {
+			seg.DecRef()
+		}
+		require.Equal(t, int32(0), atomic.LoadInt32(&seg.refCount),
+			"round %d", r)
+		require.Nil(t, seg.index,
+			"round %d: segment.index must be cleared by performCleanup", r)
+	}
+}
+
+// TestSegment_ConcurrentReopenAndClose_NoPanic exercises the cold-tier
+// reopen pattern under heavy concurrency: many goroutines repeatedly call
+// selectSegments, exercise IndexDB().Stats() on each returned segment, and
+// release with DecRef. With idle-closed segments as the starting state,
+// each iteration triggers initialize() to reopen the segment and the final
+// DecRef triggers performCleanup() to close it again, so closes and
+// reopens are interleaved across goroutines.
+//
+// Verifies (run with -race):
+//   - no goroutine panics (covers both the typed-nil and refcount fixes)
+//   - no data race is detected on the segment lifecycle
+//   - all segments end up cleanly closed (refCount == 0, index == nil)
+func TestSegment_ConcurrentReopenAndClose_NoPanic(t *testing.T) {
+	tempDir, cleanup := setupTestEnvironment(t)
+	defer cleanup()
+
+	ctx := context.Background()
+	l := logger.GetLogger("test-concurrent-reopen-close")
+	ctx = context.WithValue(ctx, logger.ContextKey, l)
+	ctx = common.SetPosition(ctx, func(_ common.Position) common.Position {
+		return common.Position{Database: "test-db", Stage: "test-stage"}
+	})
+
+	opts := TSDBOpts[mockTSTable, mockTSTableOpener]{
+		TSTableCreator: func(_ fs.FileSystem, _ string, _ common.Position, _ *logger.Logger,
+			_ timestamp.TimeRange, _ mockTSTableOpener, _ any,
+		) (mockTSTable, error) {
+			return mockTSTable{ID: common.ShardID(0)}, nil
+		},
+		ShardNum:                       2,
+		SegmentInterval:                IntervalRule{Unit: DAY, Num: 1},
+		TTL:                            IntervalRule{Unit: DAY, Num: 7},
+		SeriesIndexFlushTimeoutSeconds: 10,
+		SeriesIndexCacheMaxBytes:       1024 * 1024,
+	}
+
+	serviceCache := NewServiceCache().(*serviceCache)
+	sc := newSegmentController[mockTSTable, mockTSTableOpener](
+		ctx, tempDir, l, opts, nil, nil, time.Second,
+		fs.NewLocalFileSystemWithLoggerAndLimit(logger.GetLogger("storage"), opts.MemoryLimit),
+		serviceCache, group,
+	)
+
+	now := time.Now().UTC()
+	day1 := time.Date(now.Year(), now.Month(), now.Day(), 0, 0, 0, 0, time.UTC)
+	day2 := day1.Add(24 * time.Hour)
+	day3 := day2.Add(24 * time.Hour)
+	days := []time.Time{day1, day2, day3}
+
+	for _, d := range days {
+		segPath := filepath.Join(tempDir, "segment-"+d.Format(dayFormat))
+		require.NoError(t, os.MkdirAll(segPath, DirPerm))
+		require.NoError(t, os.WriteFile(
+			filepath.Join(segPath, metadataFilename),
+			[]byte(currentVersion), FilePerm))
+		seg, openErr := sc.openSegment(ctx, d, d.Add(24*time.Hour),
+			segPath, d.Format(dayFormat), sc.groupCache)
+		require.NoError(t, openErr)
+		sc.Lock()
+		sc.lst = append(sc.lst, seg)
+		sc.sortLst()
+		sc.Unlock()
+		// Drop the open reference so each segment starts in the residual state.
+		seg.DecRef()
+		require.Nil(t, seg.index)
+	}
+
+	timeRange := timestamp.NewInclusiveTimeRange(day1, day3.Add(24*time.Hour))
+
+	const (
+		goroutines = 8
+		cycles     = 200
+	)
+	var (
+		wg       sync.WaitGroup
+		start    = make(chan struct{})
+		panicCnt int64
+	)
+	for i := 0; i < goroutines; i++ {
+		wg.Add(1)
+		go func(id int) {
+			defer wg.Done()
+			defer func() {
+				if r := recover(); r != nil {
+					atomic.AddInt64(&panicCnt, 1)
+					t.Errorf("goroutine-%d panicked: %v", id, r)
+				}
+			}()
+			<-start
+			for c := 0; c < cycles; c++ {
+				segs, selErr := sc.selectSegments(timeRange)
+				if selErr != nil {
+					t.Errorf("goroutine-%d cycle %d selectSegments: %v", id, c, selErr)
+					return
+				}
+				for _, s := range segs {
+					if idx := s.IndexDB(); idx != nil {
+						_, _ = idx.Stats()
+					}
+					s.DecRef()
+				}
+			}
+		}(i)
+	}
+	close(start)
+	wg.Wait()
+
+	require.Equal(t, int64(0), atomic.LoadInt64(&panicCnt),
+		"no goroutine should panic during the concurrent reopen/close cycle")
+
+	sc.RLock()
+	final := append([]*segment[mockTSTable, mockTSTableOpener]{}, sc.lst...)
+	sc.RUnlock()
+	for _, s := range final {
+		require.Equal(t, int32(0), atomic.LoadInt32(&s.refCount),
+			"segment %s leaked references", s.suffix)
+		require.Nil(t, s.index, "segment %s should be cleaned up", s.suffix)
 	}
 }

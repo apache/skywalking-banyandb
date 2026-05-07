@@ -121,7 +121,7 @@ func TestHasNonEmptyResources(t *testing.T) {
 			defer ctrl.Finish()
 
 			mockRepo := metadata.NewMockRepo(ctrl)
-			mockRepo.EXPECT().CollectDataInfo(gomock.Any(), "test-group").Return(tt.infos, nil)
+			mockRepo.EXPECT().CollectDataInfo(gomock.Any(), "test-group").Return(tt.infos, nil, nil)
 
 			m := &groupDeletionTaskManager{schemaRegistry: mockRepo}
 			hasResources, checkErr := m.hasNonEmptyResources(context.Background(), "test-group")
@@ -129,6 +129,30 @@ func TestHasNonEmptyResources(t *testing.T) {
 			assert.Equal(t, tt.expected, hasResources)
 		})
 	}
+
+	// Partial-failure path: when CollectDataInfo reports per-node errors,
+	// hasNonEmptyResources must refuse to answer (returning an error)
+	// rather than silently treating the half-populated DataInfo as
+	// authoritative. A wrong "false" here would let the caller delete
+	// data on the silent node.
+	t.Run("partial failure refuses to answer", func(t *testing.T) {
+		ctrl := gomock.NewController(t)
+		defer ctrl.Finish()
+
+		mockRepo := metadata.NewMockRepo(ctrl)
+		mockRepo.EXPECT().CollectDataInfo(gomock.Any(), "test-group").Return(
+			[]*databasev1.DataInfo{{DataSizeBytes: 0}}, // looks empty
+			[]string{"node error: cold-0 panic"},       // but cold-0 did not report
+			nil,
+		)
+
+		m := &groupDeletionTaskManager{schemaRegistry: mockRepo}
+		hasResources, checkErr := m.hasNonEmptyResources(context.Background(), "test-group")
+		require.Error(t, checkErr, "partial collection failure must surface as an error, not (false, nil)")
+		assert.Contains(t, checkErr.Error(), "incomplete data info")
+		assert.Contains(t, checkErr.Error(), "cold-0 panic")
+		assert.False(t, hasResources, "the bool return is irrelevant when the error is non-nil; caller must check err first")
+	})
 }
 
 func TestDeletion(t *testing.T) {
@@ -192,7 +216,7 @@ func TestDeletion(t *testing.T) {
 		}
 
 		mockRepo := metadata.NewMockRepo(ctrl)
-		mockRepo.EXPECT().CollectDataInfo(gomock.Any(), group).Return([]*databasev1.DataInfo{{DataSizeBytes: 512}}, nil)
+		mockRepo.EXPECT().CollectDataInfo(gomock.Any(), group).Return([]*databasev1.DataInfo{{DataSizeBytes: 512}}, nil, nil)
 		mockRepo.EXPECT().IndexRuleBindingRegistry().Return(&stubIndexRuleBinding{})
 		mockRepo.EXPECT().IndexRuleRegistry().Return(&stubIndexRule{})
 
