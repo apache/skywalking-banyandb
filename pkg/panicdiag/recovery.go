@@ -20,6 +20,7 @@ package panicdiag
 import (
 	"context"
 	"fmt"
+	"os"
 	"runtime/debug"
 	"time"
 
@@ -44,6 +45,22 @@ func WithRecovery(ctx context.Context, opts RecoveryOptions, reporter Reporter, 
 	}
 
 	defer func() {
+		// Second-tier net: the recovery defer body runs user-provided hooks
+		// (Reporter, AbortFunc, StateDumper, Counter) and panicdiag-internal
+		// code (artifact writer, logger). User hooks are isolated below via
+		// safeCall, but a panic in panicdiag's own code or in a code path we
+		// have not yet wrapped must not escape as a fresh panic; that would
+		// destroy the original recovered panic value, leave outcome partially
+		// populated, and skip whatever ran afterward. Fall back to stderr
+		// because the regular logger may itself have been the source.
+		defer func() {
+			if rec := recover(); rec != nil {
+				fmt.Fprintf(os.Stderr,
+					"panicdiag: panic in recovery defer (suppressed): %v\n%s\n",
+					rec, debug.Stack())
+			}
+		}()
+
 		panicValue := recover()
 		if panicValue == nil {
 			return
@@ -59,7 +76,7 @@ func WithRecovery(ctx context.Context, opts RecoveryOptions, reporter Reporter, 
 			ProcessMetadata: cloneStringMap(opts.ProcessMetadata),
 		}
 
-		incPanicCounter(opts.Counter, opts.Component)
+		incPanicCounter(log, opts.Counter, opts.Component)
 
 		artifactRoot := opts.ArtifactRoot
 		if artifactRoot == "" {
@@ -74,7 +91,15 @@ func WithRecovery(ctx context.Context, opts RecoveryOptions, reporter Reporter, 
 			} else {
 				artifactDir = mkdirDir
 				if opts.StateDumper != nil {
-					stateDump, dumpErr := opts.StateDumper.DumpState(ctx)
+					var (
+						stateDump any
+						dumpErr   error
+					)
+					// StateDumper is user-provided; isolate it so a panicking
+					// dumper does not abort the artifact write that follows.
+					safeCall(log, "state-dumper", func() {
+						stateDump, dumpErr = opts.StateDumper.DumpState(ctx)
+					})
 					if dumpErr != nil {
 						record.StateDump = &StateDumpStatus{
 							Error: dumpErr.Error(),
@@ -117,8 +142,8 @@ func WithRecovery(ctx context.Context, opts RecoveryOptions, reporter Reporter, 
 		outcome.Panicked = true
 		outcome.PanicValue = panicValue
 		outcome.Result = recoveryResult
-		callReporter(ctx, reporter, recoveryResult)
-		callDefaultAbort(ctx, recoveryResult)
+		callReporter(log, ctx, reporter, recoveryResult)
+		callDefaultAbort(log, ctx, recoveryResult)
 	}()
 
 	fn(&ctx)

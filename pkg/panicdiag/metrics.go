@@ -21,6 +21,7 @@ import (
 	"context"
 	"sync/atomic"
 
+	"github.com/apache/skywalking-banyandb/pkg/logger"
 	"github.com/apache/skywalking-banyandb/pkg/meter"
 )
 
@@ -51,7 +52,27 @@ func SetDefaultReporter(r Reporter) {
 	defaultReporterPtr.Store(&r)
 }
 
-func incPanicCounter(counter meter.Counter, component string) {
+// safeCall invokes a user-provided hook under panic recovery so a buggy hook
+// cannot abort the rest of the recovery defer (e.g. a panicking Reporter
+// must not skip the AbortFunc). Panics are logged and swallowed; they never
+// propagate. log may be nil, in which case a panicdiag-named logger is used.
+func safeCall(log *logger.Logger, hook string, fn func()) {
+	defer func() {
+		if rec := recover(); rec != nil {
+			lg := log
+			if lg == nil {
+				lg = logger.GetLogger("panicdiag")
+			}
+			lg.Error().
+				Interface("panic", rec).
+				Str("hook", hook).
+				Msg("panic in recovery hook (suppressed)")
+		}
+	}()
+	fn()
+}
+
+func incPanicCounter(log *logger.Logger, counter meter.Counter, component string) {
 	c := counter
 	if c == nil {
 		if ptr := defaultPanicCounterPtr.Load(); ptr != nil {
@@ -61,7 +82,7 @@ func incPanicCounter(counter meter.Counter, component string) {
 	if c == nil {
 		return
 	}
-	c.Inc(1, component)
+	safeCall(log, "panic-counter", func() { c.Inc(1, component) })
 }
 
 // callReporter invokes both the process-wide default reporter (if any) and the
@@ -70,13 +91,14 @@ func incPanicCounter(counter meter.Counter, component string) {
 // panic store registered via SetDefaultReporter must observe every recovered
 // panic regardless of whether a particular WithRecovery caller also passes a
 // local reporter. The default fires first so its bookkeeping is unaffected by
-// any error or panic in the per-call reporter.
-func callReporter(ctx context.Context, reporter Reporter, result RecoveryResult) {
+// any error or panic in the per-call reporter. Each reporter is isolated under
+// safeCall so a panic in one cannot prevent the other from running.
+func callReporter(log *logger.Logger, ctx context.Context, reporter Reporter, result RecoveryResult) {
 	if ptr := defaultReporterPtr.Load(); ptr != nil {
-		(*ptr)(ctx, result)
+		safeCall(log, "default-reporter", func() { (*ptr)(ctx, result) })
 	}
 	if reporter != nil {
-		reporter(ctx, result)
+		safeCall(log, "per-call-reporter", func() { reporter(ctx, result) })
 	}
 }
 
@@ -93,9 +115,11 @@ func SetDefaultAbortFunc(f AbortFunc) {
 
 // callDefaultAbort invokes the process-wide default abort hook (if any).
 // Aborts run after every Reporter and before any Repanic so the hook can
-// both fail the parent supervisor and re-raise the panic.
-func callDefaultAbort(ctx context.Context, result RecoveryResult) {
+// both fail the parent supervisor and re-raise the panic. The hook is
+// isolated under safeCall so a panicking abort cannot prevent the recovery
+// defer from completing.
+func callDefaultAbort(log *logger.Logger, ctx context.Context, result RecoveryResult) {
 	if ptr := defaultAbortFuncPtr.Load(); ptr != nil {
-		(*ptr)(ctx, result)
+		safeCall(log, "default-abort", func() { (*ptr)(ctx, result) })
 	}
 }

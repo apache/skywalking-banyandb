@@ -533,3 +533,186 @@ func TestReporterDefaultFiresWithoutPerCall(t *testing.T) {
 		t.Fatal("expected default reporter to be invoked")
 	}
 }
+
+// originalPanicValue names the original panic used across the isolation tests
+// below; goconst flags repeated literals, and a name also makes assertions
+// clearer (the contract is: WithRecovery records the *original* panic, not
+// whatever a buggy hook later panicked with).
+const originalPanicValue = "original-boom"
+
+// TestPanickingPerCallReporterDoesNotEscape pins that a buggy per-call reporter
+// is isolated: it does not propagate as a fresh panic, and the default abort
+// still fires afterward. This is the primary defense-in-depth contract: one
+// bad hook must not break the rest of the recovery defer.
+func TestPanickingPerCallReporterDoesNotEscape(t *testing.T) {
+	t.Helper()
+
+	previousAbort := defaultAbortFuncPtr.Load()
+	t.Cleanup(func() {
+		if previousAbort == nil {
+			defaultAbortFuncPtr.Store(nil)
+			return
+		}
+		defaultAbortFuncPtr.Store(previousAbort)
+	})
+
+	abortFired := make(chan struct{}, 1)
+	SetDefaultAbortFunc(func(_ context.Context, _ RecoveryResult) {
+		abortFired <- struct{}{}
+	})
+
+	var outcome *RecoveryOutcome
+	require := func(cond bool, msg string) {
+		if !cond {
+			t.Fatal(msg)
+		}
+	}
+
+	// The whole call must not panic; the per-call reporter's panic must be
+	// absorbed by safeCall.
+	func() {
+		defer func() {
+			if rec := recover(); rec != nil {
+				t.Fatalf("WithRecovery propagated a fresh panic from a buggy reporter: %v", rec)
+			}
+		}()
+		outcome = WithRecovery(context.Background(), RecoveryOptions{
+			Component: "isolation-reporter",
+		}, func(_ context.Context, _ RecoveryResult) {
+			panic("buggy-reporter-boom")
+		}, func(_ *context.Context) {
+			panic(originalPanicValue)
+		})
+	}()
+
+	require(outcome != nil, "outcome must be populated even when reporter panics")
+	require(outcome.Panicked, "Panicked must be true for the original panic")
+	require(outcome.Result.Record != nil, "Record must be populated")
+	require(outcome.Result.Record.PanicValue == originalPanicValue,
+		"recorded panic must be the original, not the reporter's panic")
+
+	// Default abort must still have fired even though the reporter panicked.
+	select {
+	case <-abortFired:
+	default:
+		t.Fatal("default abort did not fire: reporter panic broke isolation")
+	}
+}
+
+// TestPanickingDefaultAbortDoesNotEscape pins that a buggy default abort hook
+// does not propagate as a fresh panic.
+func TestPanickingDefaultAbortDoesNotEscape(t *testing.T) {
+	t.Helper()
+
+	previousAbort := defaultAbortFuncPtr.Load()
+	t.Cleanup(func() {
+		if previousAbort == nil {
+			defaultAbortFuncPtr.Store(nil)
+			return
+		}
+		defaultAbortFuncPtr.Store(previousAbort)
+	})
+
+	SetDefaultAbortFunc(func(_ context.Context, _ RecoveryResult) {
+		panic("buggy-abort-boom")
+	})
+
+	var outcome *RecoveryOutcome
+	func() {
+		defer func() {
+			if rec := recover(); rec != nil {
+				t.Fatalf("WithRecovery propagated a fresh panic from a buggy abort: %v", rec)
+			}
+		}()
+		outcome = WithRecovery(context.Background(), RecoveryOptions{
+			Component: "isolation-abort",
+		}, nil, func(_ *context.Context) {
+			panic(originalPanicValue)
+		})
+	}()
+
+	if outcome == nil || !outcome.Panicked {
+		t.Fatal("outcome must report the original panic even when abort panics")
+	}
+	if outcome.Result.Record.PanicValue != originalPanicValue {
+		t.Fatalf("recorded panic must be the original, got %s", outcome.Result.Record.PanicValue)
+	}
+}
+
+// TestPanickingStateDumperDoesNotEscape pins that a buggy StateDumper does not
+// propagate, and the recovery defer still produces a complete outcome and
+// writes the artifact record (sans the failed state dump).
+func TestPanickingStateDumperDoesNotEscape(t *testing.T) {
+	t.Helper()
+
+	type panickingDumper struct{}
+	dumper := stateDumperFunc(func(_ context.Context) (any, error) {
+		panic("buggy-dumper-boom")
+	})
+	_ = panickingDumper{}
+
+	var outcome *RecoveryOutcome
+	func() {
+		defer func() {
+			if rec := recover(); rec != nil {
+				t.Fatalf("WithRecovery propagated a fresh panic from a buggy state dumper: %v", rec)
+			}
+		}()
+		outcome = WithRecovery(context.Background(), RecoveryOptions{
+			Component:    "isolation-dumper",
+			ArtifactRoot: t.TempDir(),
+			StateDumper:  dumper,
+		}, nil, func(_ *context.Context) {
+			panic(originalPanicValue)
+		})
+	}()
+
+	if outcome == nil || !outcome.Panicked {
+		t.Fatal("outcome must be populated when StateDumper panics")
+	}
+	if outcome.Result.Record.PanicValue != originalPanicValue {
+		t.Fatalf("recorded panic must be the original, got %s", outcome.Result.Record.PanicValue)
+	}
+}
+
+// stateDumperFunc adapts a func to the StateDumper interface for tests.
+type stateDumperFunc func(context.Context) (any, error)
+
+func (f stateDumperFunc) DumpState(ctx context.Context) (any, error) { return f(ctx) }
+
+// TestPanickingCounterDoesNotEscape pins that a buggy panic-counter does not
+// propagate. The Counter.Inc call lives early in the recovery defer; a
+// pre-isolation panic here would skip everything that follows (artifact
+// write, log line, reporters, abort).
+func TestPanickingCounterDoesNotEscape(t *testing.T) {
+	t.Helper()
+
+	counter := panickingCounter{}
+
+	var outcome *RecoveryOutcome
+	func() {
+		defer func() {
+			if rec := recover(); rec != nil {
+				t.Fatalf("WithRecovery propagated a fresh panic from a buggy counter: %v", rec)
+			}
+		}()
+		outcome = WithRecovery(context.Background(), RecoveryOptions{
+			Component: "isolation-counter",
+			Counter:   counter,
+		}, nil, func(_ *context.Context) {
+			panic(originalPanicValue)
+		})
+	}()
+
+	if outcome == nil || !outcome.Panicked {
+		t.Fatal("outcome must be populated when Counter.Inc panics")
+	}
+	if outcome.Result.Record == nil || outcome.Result.Record.PanicValue != originalPanicValue {
+		t.Fatalf("recorded panic must be the original, got %#v", outcome.Result.Record)
+	}
+}
+
+type panickingCounter struct{}
+
+func (panickingCounter) Inc(_ float64, _ ...string) { panic("buggy-counter-boom") }
+func (panickingCounter) Delete(_ ...string) bool    { return false }
