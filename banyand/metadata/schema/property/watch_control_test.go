@@ -24,73 +24,53 @@ import (
 	"github.com/stretchr/testify/require"
 
 	propertyv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/property/v1"
-	schemav1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/schema/v1"
+	"github.com/apache/skywalking-banyandb/banyand/metadata/schema"
 	"github.com/apache/skywalking-banyandb/pkg/logger"
 )
 
 // newTestSchemaRegistry returns a minimally-initialized SchemaRegistry
-// suitable for the gate tests below — only the logger is required so the
-// post-resume dispatch tail (ParseTags / KindFromString warnings) does
-// not panic on nil logger access. The connection manager / cache /
-// handler map stay zero-valued because these tests only exercise the
-// pause / queue / drain paths, which short-circuit before any of those
-// fields are touched.
+// suitable for the gate tests below. Only the logger is required because
+// each test exercises an early-return path: the pause gate fires before
+// any code that would touch the schemaCache or handler map.
 func newTestSchemaRegistry() *SchemaRegistry {
 	return &SchemaRegistry{l: logger.GetLogger("test-watch-control")}
 }
 
-// fakeWatchEvent returns a minimally non-nil WatchSchemasResponse so the
-// gate path runs to completion. The event payload is intentionally bare —
-// these tests exercise the pause / queue / drain mechanism, not the
-// downstream parse / dispatch path.
-func fakeWatchEvent(id string) *schemav1.WatchSchemasResponse {
-	return &schemav1.WatchSchemasResponse{
-		Property: &propertyv1.Property{Id: id},
-	}
-}
-
-// TestPauseNotifications_QueuesEventsWhilePaused verifies that
-// handleWatchEvent appends to pauseQueue (and does not invoke the parse /
-// dispatch tail) while paused=true.
-func TestPauseNotifications_QueuesEventsWhilePaused(t *testing.T) {
+// TestPauseNotifications_FlipsFlag verifies that PauseNotifications sets
+// the internal paused flag (the only state the test harness inspects).
+func TestPauseNotifications_FlipsFlag(t *testing.T) {
 	r := newTestSchemaRegistry()
 	r.PauseNotifications()
-
-	r.handleWatchEvent(fakeWatchEvent("a"))
-	r.handleWatchEvent(fakeWatchEvent("b"))
-	r.handleWatchEvent(fakeWatchEvent("c"))
-
 	r.pauseMu.Lock()
-	queueLen := len(r.pauseQueue)
-	pausedFlag := r.paused
-	r.pauseMu.Unlock()
-
-	assert.True(t, pausedFlag, "PauseNotifications must flip paused=true")
-	require.Equal(t, 3, queueLen, "all three events must be queued while paused")
-	assert.Equal(t, "a", r.pauseQueue[0].GetProperty().GetId())
-	assert.Equal(t, "c", r.pauseQueue[2].GetProperty().GetId())
+	defer r.pauseMu.Unlock()
+	assert.True(t, r.paused, "PauseNotifications must flip paused=true")
 }
 
-// TestResumeNotifications_DrainsQueueAndClearsPauseState verifies that
-// ResumeNotifications flips paused=false, replays the queued events
-// (handleWatchEvent runs to completion for each), and leaves an empty
-// queue. Replay correctness for a malformed payload is out of scope —
-// handleWatchEvent's existing nil/parse guards already cover that.
-func TestResumeNotifications_DrainsQueueAndClearsPauseState(t *testing.T) {
+// TestResumeNotifications_ClearsFlagAndDrainsQueue verifies that
+// ResumeNotifications flips paused=false and drains every queued replay
+// closure in arrival order.
+func TestResumeNotifications_ClearsFlagAndDrainsQueue(t *testing.T) {
 	r := newTestSchemaRegistry()
 	r.PauseNotifications()
-	r.handleWatchEvent(fakeWatchEvent("a"))
-	r.handleWatchEvent(fakeWatchEvent("b"))
+
+	var replays []int
+	r.pauseMu.Lock()
+	for i := 0; i < 3; i++ {
+		idx := i
+		r.pauseQueue = append(r.pauseQueue, func() { replays = append(replays, idx) })
+	}
+	r.pauseMu.Unlock()
 
 	r.ResumeNotifications()
 
 	r.pauseMu.Lock()
-	queueLen := len(r.pauseQueue)
 	pausedFlag := r.paused
+	queueLen := len(r.pauseQueue)
 	r.pauseMu.Unlock()
 
 	assert.False(t, pausedFlag, "ResumeNotifications must flip paused=false")
 	assert.Equal(t, 0, queueLen, "ResumeNotifications must drain the queue")
+	assert.Equal(t, []int{0, 1, 2}, replays, "drained closures must run in arrival order")
 }
 
 // TestResumeNotifications_NotPaused_NoOp verifies that calling
@@ -101,45 +81,43 @@ func TestResumeNotifications_NotPaused_NoOp(t *testing.T) {
 	r.ResumeNotifications()
 
 	r.pauseMu.Lock()
-	queueLen := len(r.pauseQueue)
-	pausedFlag := r.paused
-	r.pauseMu.Unlock()
-
-	assert.False(t, pausedFlag)
-	assert.Equal(t, 0, queueLen)
+	defer r.pauseMu.Unlock()
+	assert.False(t, r.paused)
+	assert.Equal(t, 0, len(r.pauseQueue))
 }
 
-// TestHandleWatchEvent_AfterResume_RunsImmediately verifies that events
-// arriving after ResumeNotifications skip the queue path and run through
-// the dispatch tail synchronously, matching pre-pause behavior.
-func TestHandleWatchEvent_AfterResume_RunsImmediately(t *testing.T) {
-	r := newTestSchemaRegistry()
-	r.PauseNotifications()
-	r.ResumeNotifications()
-
-	r.handleWatchEvent(fakeWatchEvent("after-resume"))
-
-	r.pauseMu.Lock()
-	queueLen := len(r.pauseQueue)
-	r.pauseMu.Unlock()
-
-	assert.Equal(t, 0, queueLen, "post-resume events must not be queued")
-}
-
-// TestPauseNotifications_NilPropertyShortCircuits verifies that the
-// existing prop==nil guard short-circuits before the gate, so a nil
-// payload does not pollute the queue.
-func TestPauseNotifications_NilPropertyShortCircuits(t *testing.T) {
+// TestProcessInitialResourceFromProperty_PausedQueuesAndSkipsCacheUpdate
+// verifies the load-bearing gate: when paused, processInitialResourceFromProperty
+// returns early so the schemaCache (nil here, would panic on access) is
+// untouched and the closure is queued for replay.
+func TestProcessInitialResourceFromProperty_PausedQueuesAndSkipsCacheUpdate(t *testing.T) {
 	r := newTestSchemaRegistry()
 	r.PauseNotifications()
 
-	r.handleWatchEvent(&schemav1.WatchSchemasResponse{Property: nil})
+	prop := &propertyv1.Property{Id: "queued"}
+	// nil cache would panic if the gate did not short-circuit here.
+	r.processInitialResourceFromProperty(schema.KindMeasure, prop, nil)
 
 	r.pauseMu.Lock()
-	queueLen := len(r.pauseQueue)
-	r.pauseMu.Unlock()
+	defer r.pauseMu.Unlock()
+	require.Equal(t, 1, len(r.pauseQueue),
+		"paused processInitialResourceFromProperty must queue a replay closure")
+}
 
-	assert.Equal(t, 0, queueLen, "nil-property events must not enter the pause queue")
+// TestHandleDeletion_PausedQueuesAndSkipsCacheDelete verifies the
+// counterpart gate on handleDeletion. cache.Delete is never invoked under
+// pause (the cache is nil here), so the entry remains visible to
+// GetAbsentKeys — exactly the behavior §6.12c relies on.
+func TestHandleDeletion_PausedQueuesAndSkipsCacheDelete(t *testing.T) {
+	r := newTestSchemaRegistry()
+	r.PauseNotifications()
+
+	r.handleDeletion(schema.KindStream, "p_g/s", &cacheEntry{}, 1)
+
+	r.pauseMu.Lock()
+	defer r.pauseMu.Unlock()
+	require.Equal(t, 1, len(r.pauseQueue),
+		"paused handleDeletion must queue a replay closure")
 }
 
 // TestSchemaRegistryRoster_RegisterAndIndex verifies that
@@ -150,7 +128,7 @@ func TestSchemaRegistryRoster_RegisterAndIndex(t *testing.T) {
 	before := CountSchemaRegistries()
 	r := newTestSchemaRegistry()
 	registerForWatchControl(r)
-	r2 := &SchemaRegistry{}
+	r2 := newTestSchemaRegistry()
 	registerForWatchControl(r2)
 
 	require.Equal(t, before+2, CountSchemaRegistries())

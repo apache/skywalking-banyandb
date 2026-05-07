@@ -130,7 +130,7 @@ type SchemaRegistry struct {
 	caCertReloader     *pkgtls.Reloader
 	handlers           map[schema.Kind][]schema.EventHandler
 	watchSessions      map[string]*watchSession
-	pauseQueue         []*schemav1.WatchSchemasResponse
+	pauseQueue         []func()
 	syncInterval       time.Duration
 	syncTimeout        time.Duration
 	watchMaxBackoff    time.Duration
@@ -214,7 +214,6 @@ func NewSchemaRegistryClient(cfg *ClientConfig) (*SchemaRegistry, error) {
 		fullReconcileEvery: fullReconcileEvery,
 	}
 	handler.registry = reg
-	registerForWatchControl(reg)
 
 	if cfg.CurNode != nil && isPropertySchemaNode(cfg.CurNode) {
 		connMgr.OnAddOrUpdate(cfg.CurNode)
@@ -247,6 +246,12 @@ func NewSchemaRegistryClient(cfg *ClientConfig) (*SchemaRegistry, error) {
 			return nil, fmt.Errorf("no schema servers reachable after %s", initWaitTime)
 		}
 	}
+	// Register only on success — failed attempts (e.g. ListNode error,
+	// no reachable schema server) close their reg and return nil. Pre-error
+	// registration would leak orphan entries that the test harness would
+	// then mistake for the working SchemaRegistry, so the watch-control
+	// roster only sees fully-initialized registries.
+	registerForWatchControl(reg)
 	return reg, nil
 }
 
@@ -1399,19 +1404,6 @@ func (r *SchemaRegistry) handleWatchEvent(resp *schemav1.WatchSchemasResponse) {
 	if prop == nil {
 		return
 	}
-	// Pause gate (test-only): when PauseNotifications has been called on this
-	// registry, queue the event for replay on ResumeNotifications. Used by
-	// pkg/test/setup.PauseDataNodeWatch to exercise cluster-only specs
-	// (§6.12) that require a single data node falling behind the cluster.
-	// Production code never reaches the queue path because PauseNotifications
-	// is only invoked from the test harness.
-	r.pauseMu.Lock()
-	if r.paused {
-		r.pauseQueue = append(r.pauseQueue, resp)
-		r.pauseMu.Unlock()
-		return
-	}
-	r.pauseMu.Unlock()
 	parsed := ParseTags(prop.GetTags())
 	kindStr := parsed.Kind
 	if kindStr == "" {
@@ -1615,6 +1607,21 @@ func (r *SchemaRegistry) mergeDigests(allDigests map[string][]*digestEntry) map[
 }
 
 func (r *SchemaRegistry) processInitialResourceFromProperty(kind schema.Kind, prop *propertyv1.Property, spec proto.Message) {
+	// Pause gate (test-only): when PauseNotifications has been called, defer
+	// the cache mutation + handler dispatch until ResumeNotifications drains
+	// the queue. Covers both the watch path and the full-reconcile path —
+	// every event funnels through this function before the schemaCache is
+	// updated and notifiedModRevision advances. Used by
+	// pkg/test/setup.PauseDataNodeWatch for §6.12 partial-cluster specs.
+	r.pauseMu.Lock()
+	if r.paused {
+		r.pauseQueue = append(r.pauseQueue, func() {
+			r.processInitialResourceFromProperty(kind, prop, spec)
+		})
+		r.pauseMu.Unlock()
+		return
+	}
+	r.pauseMu.Unlock()
 	propID := prop.GetId()
 	parsed := ParseTags(prop.GetTags())
 	entry := &cacheEntry{
@@ -1646,6 +1653,18 @@ func (r *SchemaRegistry) processInitialResourceFromProperty(kind schema.Kind, pr
 }
 
 func (r *SchemaRegistry) handleDeletion(kind schema.Kind, propID string, entry *cacheEntry, revision int64) {
+	// Pause gate: same rationale as processInitialResourceFromProperty.
+	// Skipping cache.Delete keeps the entry visible to GetAbsentKeys so
+	// AwaitSchemaDeleted reports the paused node as still_present_keys.
+	r.pauseMu.Lock()
+	if r.paused {
+		r.pauseQueue = append(r.pauseQueue, func() {
+			r.handleDeletion(kind, propID, entry, revision)
+		})
+		r.pauseMu.Unlock()
+		return
+	}
+	r.pauseMu.Unlock()
 	r.l.Debug().Stringer("kind", kind).Str("propID", propID).Int64("revision", revision).
 		Msg("handleDeletion: attempting to delete from cache")
 	if r.cache.Delete(propID, revision) {
@@ -1778,9 +1797,10 @@ func (r *SchemaRegistry) PauseNotifications() {
 }
 
 // ResumeNotifications resumes watch-event processing and drains the queue
-// accumulated while paused. Events are replayed in arrival order so
-// downstream handlers (entityRepo / schemaRepo) see the same sequence they
-// would have observed if pause had never happened. A no-op when not paused.
+// accumulated while paused. Each queued closure replays the original
+// processInitialResourceFromProperty / handleDeletion call so downstream
+// handlers (entityRepo / schemaRepo) and the schemaCache catch up to the
+// state the schema-server already reflects. A no-op when not paused.
 func (r *SchemaRegistry) ResumeNotifications() {
 	r.pauseMu.Lock()
 	if !r.paused {
@@ -1791,7 +1811,7 @@ func (r *SchemaRegistry) ResumeNotifications() {
 	queue := r.pauseQueue
 	r.pauseQueue = nil
 	r.pauseMu.Unlock()
-	for _, evt := range queue {
-		r.handleWatchEvent(evt)
+	for _, replay := range queue {
+		replay()
 	}
 }

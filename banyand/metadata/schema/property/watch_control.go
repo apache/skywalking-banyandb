@@ -35,8 +35,8 @@ var (
 	schemaRegistryRoster   []*SchemaRegistry
 )
 
-// registerForWatchControl appends r to the per-process roster and returns
-// its index. Called from NewSchemaRegistryClient. Thread-safe.
+// registerForWatchControl appends r to the per-process roster. Called from
+// NewSchemaRegistryClient. Thread-safe.
 func registerForWatchControl(r *SchemaRegistry) {
 	schemaRegistryRosterMu.Lock()
 	schemaRegistryRoster = append(schemaRegistryRoster, r)

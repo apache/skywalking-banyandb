@@ -44,10 +44,11 @@ import (
 )
 
 var (
-	now        time.Time
-	stopFunc   func()
-	connection *grpc.ClientConn
-	goods      []gleak.Goroutine
+	now           time.Time
+	stopFunc      func()
+	connection    *grpc.ClientConn
+	goods         []gleak.Goroutine
+	dataNodeAddrs []string
 )
 
 var _ = ginkgo.SynchronizedBeforeSuite(func() []byte {
@@ -62,9 +63,10 @@ var _ = ginkgo.SynchronizedBeforeSuite(func() []byte {
 	dfWriter := setup.NewDiscoveryFileWriter(tmpDir)
 	config := setup.PropertyClusterConfig(dfWriter)
 	ginkgo.By("Starting data node 0")
-	closeDataNode0 := setup.DataNode(config)
+	addrDataNode0, _, closeDataNode0 := setup.DataNodeWithAddrAndDir(config)
 	ginkgo.By("Starting data node 1")
-	closeDataNode1 := setup.DataNode(config)
+	addrDataNode1, _, closeDataNode1 := setup.DataNodeWithAddrAndDir(config)
+	dataNodeAddrs = []string{addrDataNode0, addrDataNode1}
 	ginkgo.By("Loading schema via property")
 	setup.PreloadSchemaViaProperty(config, test_stream.PreloadSchema, test_measure.PreloadSchema, test_trace.PreloadSchema)
 	config.AddLoadedKinds(schemapkg.KindStream, schemapkg.KindMeasure, schemapkg.KindTrace)
@@ -87,9 +89,10 @@ var _ = ginkgo.SynchronizedBeforeSuite(func() []byte {
 	connection, err = grpchelper.Conn(string(address), 10*time.Second,
 		grpc.WithTransportCredentials(insecure.NewCredentials()))
 	casesschema.SharedContext = helpers.SharedContext{
-		Connection: connection,
-		Mode:       "distributed",
-		BaseTime:   now,
+		Connection:    connection,
+		Mode:          helpers.ModeDistributed,
+		BaseTime:      now,
+		DataNodeAddrs: dataNodeAddrs,
 	}
 	gomega.Expect(err).NotTo(gomega.HaveOccurred())
 })

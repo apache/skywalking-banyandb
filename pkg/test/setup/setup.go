@@ -607,16 +607,20 @@ func startDataNode(config *ClusterConfig, dataDir string, flags ...string) (stri
 		config.NodeDiscovery.FileWriter.AddNode(nodeAddr, nodeAddr)
 	}
 
-	// Bind the data node's SchemaRegistry to its gRPC address so the test
-	// harness can call PauseDataNodeWatch / ResumeDataNodeWatch later. The
-	// metadata.clientService's PreRun creates exactly one SchemaRegistry,
-	// and the health check above guarantees PreRun has completed before we
-	// reach here — so taking the most recently registered roster slot is
-	// safe.
+	// Bind the data node's SchemaRegistry to both the host-prefixed addr
+	// returned to the caller and the nodeHost-prefixed nodeAddr the route
+	// table uses internally, so PauseDataNodeWatch / ResumeDataNodeWatch
+	// accept either form. The metadata.clientService's PreRun creates
+	// exactly one SchemaRegistry, and the health check above guarantees
+	// PreRun has completed — so the most recently registered roster slot
+	// is the right one for this node.
 	afterCount := property.CountSchemaRegistries()
 	if afterCount > beforeCount {
 		if reg := property.SchemaRegistryByIndex(afterCount - 1); reg != nil {
-			bindNodeWatchControl(nodeAddr, reg)
+			bindNodeWatchControl(addr, reg)
+			if nodeAddr != addr {
+				bindNodeWatchControl(nodeAddr, reg)
+			}
 		}
 	}
 
@@ -624,7 +628,10 @@ func startDataNode(config *ClusterConfig, dataDir string, flags ...string) (stri
 		if config.NodeDiscovery.FileWriter != nil {
 			config.NodeDiscovery.FileWriter.RemoveNode(nodeAddr)
 		}
-		unbindNodeWatchControl(nodeAddr)
+		unbindNodeWatchControl(addr)
+		if nodeAddr != addr {
+			unbindNodeWatchControl(nodeAddr)
+		}
 		rawCloseFn()
 	}
 
