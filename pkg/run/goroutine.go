@@ -20,11 +20,18 @@ package run
 import (
 	"context"
 	"sync/atomic"
+	"time"
 
 	"github.com/apache/skywalking-banyandb/pkg/logger"
 	"github.com/apache/skywalking-banyandb/pkg/meter"
 	"github.com/apache/skywalking-banyandb/pkg/panicdiag"
 )
+
+// goOrDieArtifactDeadline bounds how long GoOrDie waits for the artifact
+// write to drain before re-raising. A stuck disk should never indefinitely
+// block the fatal path; if the artifact has not landed in this window it is
+// dropped with a warning and the re-raise proceeds.
+const goOrDieArtifactDeadline = 5 * time.Second
 
 // Task tracks a goroutine launched by Go or GoOrDie. Done closes on exit;
 // Outcome is nil until then.
@@ -140,6 +147,18 @@ func launchTask(ctx context.Context, component string, log *logger.Logger, fn fu
 		task.outcome.Store(outcome)
 		// Store before re-raise so observers can still see the outcome.
 		if repanic && outcome.Panicked {
+			if outcome.ArtifactDone != nil {
+				select {
+				case <-outcome.ArtifactDone:
+				case <-time.After(goOrDieArtifactDeadline):
+					if log != nil {
+						log.Warn().
+							Str("component", component).
+							Dur("deadline", goOrDieArtifactDeadline).
+							Msg("artifact write did not complete before re-raise; proceeding anyway")
+					}
+				}
+			}
 			panic(outcome.PanicValue)
 		}
 	}()

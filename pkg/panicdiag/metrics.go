@@ -29,7 +29,31 @@ var (
 	defaultPanicCounterPtr atomic.Pointer[meter.Counter]
 	defaultReporterPtr     atomic.Pointer[Reporter]
 	defaultAbortFuncPtr    atomic.Pointer[AbortFunc]
+	defaultArtifactSinkPtr atomic.Pointer[ArtifactSink]
 )
+
+// SetDefaultArtifactSink registers a process-wide ArtifactSink that
+// WithRecovery uses to write panic artifacts asynchronously. When set, the
+// recovery defer fires signals (counter, log, reporter, default abort)
+// before submitting the artifact job to the sink, so a stuck disk no longer
+// pins the recovering goroutine while observers wait for the panic signal.
+// Pass nil to clear a previously registered sink (recovery falls back to
+// synchronous writes, the pre-sink behavior). Call once during process
+// initialization. The caller is responsible for invoking Sink.Start() before
+// registering and Sink.Close() during shutdown.
+func SetDefaultArtifactSink(s *ArtifactSink) {
+	if s == nil {
+		defaultArtifactSinkPtr.Store(nil)
+		return
+	}
+	defaultArtifactSinkPtr.Store(s)
+}
+
+// DefaultArtifactSink returns the process-wide sink registered via
+// SetDefaultArtifactSink, or nil when none is set.
+func DefaultArtifactSink() *ArtifactSink {
+	return defaultArtifactSinkPtr.Load()
+}
 
 // SetDefaultPanicCounter registers a process-wide panic counter used by WithRecovery
 // when RecoveryOptions.Counter is nil. Call once during process initialization.

@@ -74,10 +74,14 @@ type RecoveryResult struct {
 // It is intended for callers that need to re-raise with full fidelity, e.g.
 // `panic(outcome.PanicValue)` after WithRecovery returns. The string-form is
 // available via Result.Record.PanicValue for logging and reporting.
+//
+// ArtifactDone is closed when the artifact write completes or is skipped.
+// It is nil when no panic was recovered.
 type RecoveryOutcome struct {
-	PanicValue any
-	Result     RecoveryResult
-	Panicked   bool
+	PanicValue   any
+	ArtifactDone <-chan struct{}
+	Result       RecoveryResult
+	Panicked     bool
 }
 
 // Reporter receives the result of a recovered panic. Reporters are intended

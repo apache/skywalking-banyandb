@@ -44,6 +44,22 @@ func NewArtifactWriter(rootDir string) *ArtifactWriter {
 	}
 }
 
+// ArtifactDirPath returns the deterministic artifact directory path for the
+// given record without performing any I/O. The recovery defer uses this to
+// populate RecoveryResult.ArtifactDir before the synchronous mkdir runs (or
+// before the sink worker creates the directory asynchronously), so observers
+// see a path even when the actual files have not been written yet.
+func (aw *ArtifactWriter) ArtifactDirPath(record *PanicRecord) string {
+	if aw == nil || record == nil || aw.rootDir == "" {
+		return ""
+	}
+	occurredAt := record.OccurredAt
+	if occurredAt.IsZero() {
+		occurredAt = aw.nowFn().UTC()
+	}
+	return filepath.Join(aw.rootDir, aw.dirName(record.Component, occurredAt))
+}
+
 // MkdirArtifact creates the artifact directory for the given record and returns
 // its path. OccurredAt is back-filled when zero. Call WriteRecord once all
 // fields (including StateDump) have been populated.

@@ -29,18 +29,25 @@ import (
 // resetSupervisorForTest clears the package-level supervisor state and the
 // panicdiag default abort hook so tests can drive initSupervisor in isolation.
 // Tests in this package do not run in parallel, so a simple reset is enough.
+// The artifact sink is also drained and cleared so each test starts with the
+// process-wide default unset.
 func resetSupervisorForTest(t *testing.T) {
 	t.Helper()
-	t.Cleanup(func() {
+	doReset := func() {
+		if supervisorSink != nil {
+			drainCtx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+			_ = supervisorSink.Close(drainCtx)
+			cancel()
+		}
 		supervisorOnce = sync.Once{}
 		supervisorCtx = nil
 		supervisorCancel = nil
+		supervisorSink = nil
 		panicdiag.SetDefaultAbortFunc(nil)
-	})
-	supervisorOnce = sync.Once{}
-	supervisorCtx = nil
-	supervisorCancel = nil
-	panicdiag.SetDefaultAbortFunc(nil)
+		panicdiag.SetDefaultArtifactSink(nil)
+	}
+	t.Cleanup(doReset)
+	doReset()
 }
 
 func TestSupervisorContextBeforeInitIsBackground(t *testing.T) {
@@ -93,4 +100,47 @@ func TestInitSupervisorIsIdempotent(t *testing.T) {
 	if first != second {
 		t.Fatal("initSupervisor must be idempotent: SupervisorContext should return the same context on repeated init")
 	}
+}
+
+// TestInitSupervisorRegistersArtifactSink pins sink registration.
+func TestInitSupervisorRegistersArtifactSink(t *testing.T) {
+	resetSupervisorForTest(t)
+
+	if got := panicdiag.DefaultArtifactSink(); got != nil {
+		t.Fatal("expected no sink before initSupervisor")
+	}
+	initSupervisor()
+	if got := panicdiag.DefaultArtifactSink(); got == nil {
+		t.Fatal("initSupervisor must register a process-wide ArtifactSink")
+	}
+}
+
+// TestShutdownSupervisorDrainsSink pins shutdown cleanup.
+func TestShutdownSupervisorDrainsSink(t *testing.T) {
+	resetSupervisorForTest(t)
+
+	initSupervisor()
+	sink := panicdiag.DefaultArtifactSink()
+	if sink == nil {
+		t.Fatal("sink must be registered after initSupervisor")
+	}
+
+	ShutdownSupervisor()
+
+	if got := panicdiag.DefaultArtifactSink(); got != nil {
+		t.Fatal("ShutdownSupervisor must clear the registered default sink")
+	}
+	// Submit on the closed sink must return false rather than panic.
+	if sink.Submit(panicdiag.ArtifactJob{}) {
+		t.Fatal("Submit on a closed sink returned true; should be rejected")
+	}
+}
+
+// TestShutdownSupervisorSafeWithoutInit pins that calling ShutdownSupervisor
+// before initSupervisor (or in tests that skipped init) is a no-op rather
+// than a panic.
+func TestShutdownSupervisorSafeWithoutInit(t *testing.T) {
+	resetSupervisorForTest(t)
+
+	ShutdownSupervisor()
 }

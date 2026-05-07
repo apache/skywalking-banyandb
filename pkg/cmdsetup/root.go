@@ -71,6 +71,11 @@ BanyanDB, as an observability database, aims to ingest, analyze and store Metric
 			logger.Infof("CPU Number: %d", cgroups.CPUs())
 			return nil
 		},
+		// Drain queued panic artifacts on the normal exit path.
+		PersistentPostRunE: func(_ *cobra.Command, _ []string) error {
+			ShutdownSupervisor()
+			return nil
+		},
 	}
 	cmd.PersistentFlags().Var(&nodeIDProviderValue{&common.FlagNodeHostProvider},
 		"node-host-provider", "the node host provider, can be hostname, ip or flag, default is hostname")

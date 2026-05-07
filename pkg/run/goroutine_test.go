@@ -308,3 +308,44 @@ func TestGoWithSignal_DoesNotTerminateProcessOnPanic(t *testing.T) {
 	// pinning. A regression that turned GoWithSignal into a fatal primitive
 	// would never reach this assertion (the test process would have died).
 }
+
+// TestGoOrDie_WaitsForArtifactBeforeRepanic pins artifact-before-repanic.
+func TestGoOrDie_WaitsForArtifactBeforeRepanic(t *testing.T) {
+	t.Helper()
+
+	if os.Getenv("BANYANDB_RUN_GOORDIE_SINK_HELPER") == "1" {
+		artifactRoot := os.Getenv("BANYANDB_RUN_GOORDIE_ARTIFACT_ROOT")
+		require.NotEmpty(t, artifactRoot)
+
+		sink := panicdiag.NewArtifactSink(0)
+		sink.Start()
+		panicdiag.SetDefaultArtifactSink(sink)
+		panicdiag.SetDefaultArtifactRoot(artifactRoot)
+
+		GoOrDie(context.Background(), "test", logger.GetLogger("test"), func(_ context.Context) {
+			panic("ordie-sink-boom")
+		})
+
+		time.Sleep(5 * time.Second)
+		t.Fatal("expected GoOrDie to terminate the helper process")
+	}
+
+	artifactRoot := t.TempDir()
+	// #nosec G204 -- self-exec of the running test binary; arguments are constant.
+	testCmd := exec.Command(os.Args[0], "-test.run=TestGoOrDie_WaitsForArtifactBeforeRepanic")
+	testCmd.Env = append(os.Environ(),
+		"BANYANDB_RUN_GOORDIE_SINK_HELPER=1",
+		"BANYANDB_RUN_GOORDIE_ARTIFACT_ROOT="+artifactRoot,
+	)
+	runErr := testCmd.Run()
+	require.Error(t, runErr)
+	var exitErr *exec.ExitError
+	require.ErrorAs(t, runErr, &exitErr)
+
+	// GoOrDie waited on ArtifactDone before re-raising.
+	collections, listErr := panicdiag.ListCollections(artifactRoot)
+	require.NoError(t, listErr)
+	require.Len(t, collections, 1, "GoOrDie must persist the artifact even when the write is async via the sink")
+	require.NotNil(t, collections[0].Record)
+	require.Equal(t, "ordie-sink-boom", collections[0].Record.PanicValue)
+}

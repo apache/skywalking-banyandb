@@ -20,28 +20,24 @@ package cmdsetup
 import (
 	"context"
 	"sync"
+	"time"
 
 	"github.com/apache/skywalking-banyandb/pkg/logger"
 	"github.com/apache/skywalking-banyandb/pkg/panicdiag"
 )
 
-// supervisor owns a process-wide cancellable context that is signaled when
-// any goroutine wrapped by panicdiag.WithRecovery (or run.Go) recovers a
-// panic. Subcommands derive their Group.Run contexts from supervisorCtx so
-// that callers watching ctx.Done() can wind down gracefully when something
-// crashes elsewhere in the process.
+// supervisor owns the process-wide panic cancel context and artifact sink.
 var (
 	supervisorOnce   sync.Once
 	supervisorCtx    context.Context
 	supervisorCancel context.CancelFunc
+	supervisorSink   *panicdiag.ArtifactSink
 )
 
-// initSupervisor installs the process-wide cancellable supervising context and
-// registers a panicdiag.SetDefaultAbortFunc that cancels it. This extends the
-// lifecycle-failing default established for run.Group services to every
-// goroutine wrapped by panicdiag, including those launched by run.Go that do
-// not belong to any Group-managed Service. Idempotent: only the first call
-// builds the context.
+// supervisorShutdownDeadline bounds artifact sink drain during shutdown.
+const supervisorShutdownDeadline = 10 * time.Second
+
+// initSupervisor installs the process-wide panic cancel hook and sink.
 func initSupervisor() {
 	supervisorOnce.Do(func() {
 		supervisorCtx, supervisorCancel = context.WithCancel(context.Background())
@@ -58,6 +54,10 @@ func initSupervisor() {
 				Msg("canceling supervising context due to recovered panic")
 			supervisorCancel()
 		})
+
+		supervisorSink = panicdiag.NewArtifactSink(0)
+		supervisorSink.Start()
+		panicdiag.SetDefaultArtifactSink(supervisorSink)
 	})
 }
 
@@ -71,4 +71,20 @@ func SupervisorContext() context.Context {
 		return context.Background()
 	}
 	return supervisorCtx
+}
+
+// ShutdownSupervisor drains and unregisters the process-wide artifact sink.
+func ShutdownSupervisor() {
+	if supervisorSink == nil {
+		return
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), supervisorShutdownDeadline)
+	defer cancel()
+	if err := supervisorSink.Close(ctx); err != nil {
+		logger.GetLogger("supervisor").Warn().
+			Err(err).
+			Dur("deadline", supervisorShutdownDeadline).
+			Msg("artifact sink did not drain before shutdown deadline; pending artifacts dropped")
+	}
+	panicdiag.SetDefaultArtifactSink(nil)
 }

@@ -82,45 +82,22 @@ func WithRecovery(ctx context.Context, opts RecoveryOptions, reporter Reporter, 
 		if artifactRoot == "" {
 			artifactRoot = DefaultArtifactRoot()
 		}
+
+		var (
+			stateDump    any
+			stateErr     error
+			hasStateDump bool
+		)
+		if opts.StateDumper != nil && artifactRoot != "" {
+			hasStateDump = true
+			safeCall(log, "state-dumper", func() {
+				stateDump, stateErr = opts.StateDumper.DumpState(ctx)
+			})
+		}
+
 		var artifactDir string
-		artifactWriter := NewArtifactWriter(artifactRoot)
 		if artifactRoot != "" {
-			mkdirDir, mkdirErr := artifactWriter.MkdirArtifact(record)
-			if mkdirErr != nil {
-				log.Error().Err(mkdirErr).Str("component", opts.Component).Msg("failed to create panic artifact dir")
-			} else {
-				artifactDir = mkdirDir
-				if opts.StateDumper != nil {
-					var (
-						stateDump any
-						dumpErr   error
-					)
-					// StateDumper is user-provided; isolate it so a panicking
-					// dumper does not abort the artifact write that follows.
-					safeCall(log, "state-dumper", func() {
-						stateDump, dumpErr = opts.StateDumper.DumpState(ctx)
-					})
-					if dumpErr != nil {
-						record.StateDump = &StateDumpStatus{
-							Error: dumpErr.Error(),
-						}
-					} else {
-						truncated, dumpPath, writeDumpErr := artifactWriter.WriteStateDump(artifactDir, stateDump, opts.StateLimitBytes)
-						dumpStatus := &StateDumpStatus{Truncated: truncated}
-						if writeDumpErr != nil {
-							dumpStatus.Error = writeDumpErr.Error()
-						} else {
-							dumpStatus.Path = dumpPath
-						}
-						record.StateDump = dumpStatus
-					}
-				}
-				if writeErr := artifactWriter.WriteRecord(artifactDir, record); writeErr != nil {
-					log.Error().Err(writeErr).Str("component", opts.Component).Msg("failed to write panic record")
-				} else {
-					artifactWriter.pruneArtifacts()
-				}
-			}
+			artifactDir = NewArtifactWriter(artifactRoot).ArtifactDirPath(record)
 		}
 
 		stages := make([]string, len(record.Breadcrumbs))
@@ -144,6 +121,50 @@ func WithRecovery(ctx context.Context, opts RecoveryOptions, reporter Reporter, 
 		outcome.Result = recoveryResult
 		callReporter(log, ctx, reporter, recoveryResult)
 		callDefaultAbort(log, ctx, recoveryResult)
+
+		// Signal artifact completion for callers such as GoOrDie.
+		artifactDone := make(chan struct{})
+		outcome.ArtifactDone = artifactDone
+
+		if artifactRoot == "" {
+			// No artifact will be written.
+			close(artifactDone)
+			return
+		}
+		if sink := defaultArtifactSinkPtr.Load(); sink != nil {
+			// Clone so the async worker never mutates caller-visible state.
+			sinkRecord := *record
+			sinkRecord.StateDump = nil
+			sinkJob := ArtifactJob{
+				Record:       &sinkRecord,
+				RootDir:      artifactRoot,
+				StateDump:    stateDump,
+				StateErr:     stateErr,
+				StateLimit:   opts.StateLimitBytes,
+				Logger:       log,
+				HasStateDump: hasStateDump,
+				Done:         artifactDone,
+			}
+			if !sink.Submit(sinkJob) {
+				log.Warn().Str("component", opts.Component).
+					Int("queue_depth", sink.QueueDepth()).
+					Msg("artifact sink saturated; dropping artifact")
+				// Submit did not take ownership of Done.
+				close(artifactDone)
+			}
+			return
+		}
+		// Sync fallback preserves caller-visible StateDump status.
+		writeArtifactSync(ArtifactJob{
+			Record:       record,
+			RootDir:      artifactRoot,
+			StateDump:    stateDump,
+			StateErr:     stateErr,
+			StateLimit:   opts.StateLimitBytes,
+			Logger:       log,
+			HasStateDump: hasStateDump,
+			Done:         artifactDone,
+		})
 	}()
 
 	fn(&ctx)

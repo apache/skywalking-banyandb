@@ -163,7 +163,7 @@ func TestForkMutableBreadcrumbsIsolatesSiblings(t *testing.T) {
 }
 
 // TestForkMutableBreadcrumbsInheritsExisting pins that a fork seeds the new
-// store with breadcrumbs already on the parent — the child should see its
+// store with breadcrumbs already on the parent; the child should see its
 // causal context, just not share future additions.
 func TestForkMutableBreadcrumbsInheritsExisting(t *testing.T) {
 	t.Helper()
@@ -186,7 +186,7 @@ func TestForkMutableBreadcrumbsInheritsExisting(t *testing.T) {
 
 // TestForkMutableBreadcrumbsAlwaysAllocatesNewStore pins the non-idempotent
 // behavior. Two consecutive Fork calls on the same ctx must produce contexts
-// whose stores are independent — adding to one does not affect the other.
+// whose stores are independent; adding to one does not affect the other.
 // This is the key distinction from WithMutableBreadcrumbs.
 func TestForkMutableBreadcrumbsAlwaysAllocatesNewStore(t *testing.T) {
 	t.Helper()
