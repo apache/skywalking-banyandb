@@ -320,6 +320,55 @@ var _ = ginkgo.Describe("Local File System", func() {
 			closeErr := sw.Close()
 			gomega.Expect(closeErr).To(gomega.HaveOccurred())
 		})
+
+		ginkgo.It("WriteAtomic leaves no .tmp on success", func() {
+			target := filepath.Join(dirName, "metadata.json")
+			n, err := fs.WriteAtomic([]byte(`{"v":1}`), target, 0o600)
+			gomega.Expect(err).ToNot(gomega.HaveOccurred())
+			gomega.Expect(n).To(gomega.Equal(7))
+			final, readErr := os.ReadFile(target)
+			gomega.Expect(readErr).ToNot(gomega.HaveOccurred())
+			gomega.Expect(string(final)).To(gomega.Equal(`{"v":1}`))
+			_, statErr := os.Stat(target + ".tmp")
+			gomega.Expect(os.IsNotExist(statErr)).To(gomega.BeTrue())
+		})
+
+		ginkgo.It("WriteAtomic leaves only .tmp on a forged crash", func() {
+			target := filepath.Join(dirName, "metadata.json")
+			prev := testHookAfterTmpFsync
+			testHookAfterTmpFsync = func() { panic("simulated crash") }
+			defer func() {
+				testHookAfterTmpFsync = prev
+				recovered := recover()
+				gomega.Expect(recovered).ToNot(gomega.BeNil(), "hook should have caused a panic")
+				// After the forged crash, .tmp must remain (was fsynced) and
+				// the final file must not exist (rename never ran).
+				_, statTmp := os.Stat(target + ".tmp")
+				gomega.Expect(statTmp).ToNot(gomega.HaveOccurred(), "tmp must remain after crash")
+				_, statFinal := os.Stat(target)
+				gomega.Expect(os.IsNotExist(statFinal)).To(gomega.BeTrue(), "final must not exist if rename never ran")
+			}()
+			_, _ = fs.WriteAtomic([]byte("data"), target, 0o600)
+		})
+
+		ginkgo.It("CleanupLeftoverTmp removes .tmp when the final file exists", func() {
+			final := filepath.Join(dirName, "metadata.json")
+			gomega.Expect(os.WriteFile(final, []byte("ok"), 0o600)).To(gomega.Succeed())
+			gomega.Expect(os.WriteFile(final+".tmp", []byte("stale"), 0o600)).To(gomega.Succeed())
+			CleanupLeftoverTmp(fs, dirName)
+			_, statErr := os.Stat(final + ".tmp")
+			gomega.Expect(os.IsNotExist(statErr)).To(gomega.BeTrue())
+			_, statFinal := os.Stat(final)
+			gomega.Expect(statFinal).ToNot(gomega.HaveOccurred())
+		})
+
+		ginkgo.It("CleanupLeftoverTmp leaves .tmp when no final exists", func() {
+			final := filepath.Join(dirName, "metadata.json")
+			gomega.Expect(os.WriteFile(final+".tmp", []byte("stranded"), 0o600)).To(gomega.Succeed())
+			CleanupLeftoverTmp(fs, dirName)
+			_, statErr := os.Stat(final + ".tmp")
+			gomega.Expect(statErr).ToNot(gomega.HaveOccurred())
+		})
 	})
 
 	ginkgo.Context("Hard Link Operations", func() {

@@ -238,6 +238,90 @@ func (fs *localFileSystem) Write(buffer []byte, name string, permission Mode) (i
 	return size, nil
 }
 
+// invokeTestHookAfterTmpFsync is a no-op in production. The test build
+// overrides it via pkg/fs/local_file_system_testhook_test.go to simulate a
+// crash between WriteAtomic's fsync(tmp) and rename.
+var invokeTestHookAfterTmpFsync = func() {}
+
+// WriteAtomic writes buffer to name+".tmp", fsyncs it, renames over name, and
+// fsyncs the parent directory. See FileSystem.WriteAtomic for semantics.
+func (fs *localFileSystem) WriteAtomic(buffer []byte, name string, permission Mode) (int, error) {
+	tmpName := name + ".tmp"
+	file, err := os.OpenFile(tmpName, os.O_RDWR|os.O_CREATE|os.O_TRUNC, os.FileMode(permission))
+	if err != nil {
+		switch {
+		case os.IsExist(err):
+			return 0, &FileSystemError{
+				Code:    isExistError,
+				Message: fmt.Sprintf("Tmp file is exist, file name: %s, error message: %s", tmpName, err),
+			}
+		case os.IsPermission(err):
+			return 0, &FileSystemError{
+				Code:    permissionError,
+				Message: fmt.Sprintf("There is not enough permission, file name: %s, permission: %d, error message: %s", tmpName, permission, err),
+			}
+		default:
+			return 0, &FileSystemError{
+				Code:    otherError,
+				Message: fmt.Sprintf("Create tmp file return error, file name: %s, error message: %s", tmpName, err),
+			}
+		}
+	}
+	size, writeErr := file.Write(buffer)
+	if writeErr != nil {
+		_ = file.Close()
+		_ = os.Remove(tmpName)
+		return size, &FileSystemError{
+			Code:    flushError,
+			Message: fmt.Sprintf("Write tmp file return error, file name: %s, error message: %s", tmpName, writeErr),
+		}
+	}
+	if syncErr := file.Sync(); syncErr != nil {
+		_ = file.Close()
+		_ = os.Remove(tmpName)
+		return size, &FileSystemError{
+			Code:    flushError,
+			Message: fmt.Sprintf("Sync tmp file return error, file name: %s, error message: %s", tmpName, syncErr),
+		}
+	}
+	if closeErr := file.Close(); closeErr != nil {
+		_ = os.Remove(tmpName)
+		return size, &FileSystemError{
+			Code:    closeError,
+			Message: fmt.Sprintf("Close tmp file return error, file name: %s, error message: %s", tmpName, closeErr),
+		}
+	}
+	invokeTestHookAfterTmpFsync()
+	if renameErr := os.Rename(tmpName, name); renameErr != nil {
+		_ = os.Remove(tmpName)
+		return size, &FileSystemError{
+			Code:    otherError,
+			Message: fmt.Sprintf("Rename %s -> %s return error: %s", tmpName, name, renameErr),
+		}
+	}
+	dir, err := os.Open(filepath.Dir(name))
+	if err != nil {
+		return size, &FileSystemError{
+			Code:    otherError,
+			Message: fmt.Sprintf("Open parent dir for fsync, dir name: %s, error message: %s", filepath.Dir(name), err),
+		}
+	}
+	if syncErr := dir.Sync(); syncErr != nil {
+		_ = dir.Close()
+		return size, &FileSystemError{
+			Code:    flushError,
+			Message: fmt.Sprintf("Sync parent dir return error, dir name: %s, error message: %s", filepath.Dir(name), syncErr),
+		}
+	}
+	if closeErr := dir.Close(); closeErr != nil {
+		return size, &FileSystemError{
+			Code:    closeError,
+			Message: fmt.Sprintf("Close parent dir return error, dir name: %s, error message: %s", filepath.Dir(name), closeErr),
+		}
+	}
+	return size, nil
+}
+
 // Read is used to read the entire file using streaming read.
 func (fs *localFileSystem) Read(name string) ([]byte, error) {
 	data, err := os.ReadFile(name)
