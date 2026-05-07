@@ -307,6 +307,19 @@ var _ = ginkgo.Describe("Local File System", func() {
 			_, err = os.Stat(fileName)
 			gomega.Expect(err).To(gomega.HaveOccurred())
 		})
+
+		ginkgo.It("SeqWriter Close propagates sync error", func() {
+			sw := file.SequentialWrite()
+			// Force the underlying *os.File closed before sw.Close() runs so
+			// SyncAndDropCache (or the bufio Flush) sees a bad fd. The fix
+			// requires the resulting error to surface from sw.Close() instead
+			// of being silently dropped.
+			localFile, ok := file.(*LocalFile)
+			gomega.Expect(ok).To(gomega.BeTrue())
+			gomega.Expect(localFile.file.Close()).To(gomega.Succeed())
+			closeErr := sw.Close()
+			gomega.Expect(closeErr).To(gomega.HaveOccurred())
+		})
 	})
 
 	ginkgo.Context("Hard Link Operations", func() {

@@ -661,9 +661,21 @@ func (w *seqWriter) Close() error {
 			Message: fmt.Sprintf("Flush File error, directory name: %s, error message: %s", w.fileName, err),
 		}
 	}
-
-	if w.file != nil && !w.skipFadvise {
-		_ = SyncAndDropCache(w.file.Fd(), 0, 0)
+	if w.file == nil {
+		return nil
+	}
+	if !w.skipFadvise {
+		if syncErr := SyncAndDropCache(w.file.Fd(), 0, 0); syncErr != nil {
+			return &FileSystemError{
+				Code:    flushError,
+				Message: fmt.Sprintf("Sync File error, directory name: %s, error message: %s", w.fileName, syncErr),
+			}
+		}
+	} else if syncErr := w.file.Sync(); syncErr != nil {
+		return &FileSystemError{
+			Code:    flushError,
+			Message: fmt.Sprintf("Sync File error, directory name: %s, error message: %s", w.fileName, syncErr),
+		}
 	}
 	return nil
 }
