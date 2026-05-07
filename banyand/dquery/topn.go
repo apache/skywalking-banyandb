@@ -34,6 +34,7 @@ import (
 	"github.com/apache/skywalking-banyandb/banyand/measure"
 	"github.com/apache/skywalking-banyandb/pkg/bus"
 	"github.com/apache/skywalking-banyandb/pkg/convert"
+	"github.com/apache/skywalking-banyandb/pkg/flow/streaming"
 	"github.com/apache/skywalking-banyandb/pkg/iter/sort"
 	"github.com/apache/skywalking-banyandb/pkg/logger"
 	pbv1 "github.com/apache/skywalking-banyandb/pkg/pb/v1"
@@ -217,7 +218,7 @@ func (s *sortedTopNList) Val() *comparableTopNItem {
 	return &comparableTopNItem{s.Items[s.index-1]}
 }
 
-func processTopNResponse[K measure.TopSortKey](
+func processTopNResponse[K streaming.TopSortKey](
 	ff []bus.Future,
 	topN int32,
 	agg modelv1.AggregationFunction,

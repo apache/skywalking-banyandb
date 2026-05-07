@@ -131,6 +131,13 @@ func Float64ToBytes(f float64) []byte {
 	return bs
 }
 
+// AppendFloat64Bytes appends the big-endian IEEE-754 representation of f to dst.
+func AppendFloat64Bytes(dst []byte, f float64) []byte {
+	var buf [8]byte
+	binary.BigEndian.PutUint64(buf[:], math.Float64bits(f))
+	return append(dst, buf[:]...)
+}
+
 // BytesToFloat64 converts bytes to float64.
 func BytesToFloat64(b []byte) float64 {
 	return math.Float64frombits(binary.BigEndian.Uint64(b))

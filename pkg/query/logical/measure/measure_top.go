@@ -23,17 +23,17 @@ import (
 	"sort"
 
 	measurev1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/measure/v1"
-	"github.com/apache/skywalking-banyandb/banyand/measure"
+	"github.com/apache/skywalking-banyandb/pkg/flow/streaming"
 )
 
 // TopElement seals a sortable value and its data point which this value belongs to.
-type TopElement[K measure.TopSortKey] struct {
+type TopElement[K streaming.TopSortKey] struct {
 	idp   *measurev1.InternalDataPoint
 	value K
 }
 
 // NewTopElement returns a TopElement.
-func NewTopElement[K measure.TopSortKey](idp *measurev1.InternalDataPoint, value K) TopElement[K] {
+func NewTopElement[K streaming.TopSortKey](idp *measurev1.InternalDataPoint, value K) TopElement[K] {
 	return TopElement[K]{
 		idp:   idp,
 		value: value,
@@ -45,7 +45,7 @@ func (e TopElement[K]) Val() K {
 	return e.value
 }
 
-type topSortedList[K measure.TopSortKey] struct {
+type topSortedList[K streaming.TopSortKey] struct {
 	elements []TopElement[K]
 	reverted bool
 }
@@ -65,7 +65,7 @@ func (h *topSortedList[K]) Swap(i, j int) {
 	h.elements[i], h.elements[j] = h.elements[j], h.elements[i]
 }
 
-type topHeap[K measure.TopSortKey] struct {
+type topHeap[K streaming.TopSortKey] struct {
 	elements []TopElement[K]
 	reverted bool
 }
@@ -96,13 +96,13 @@ func (h *topHeap[K]) Pop() interface{} {
 }
 
 // TopQueue is a sortable queue only keeps top-n members when pushed new elements.
-type TopQueue[K measure.TopSortKey] struct {
+type TopQueue[K streaming.TopSortKey] struct {
 	th topHeap[K]
 	n  int
 }
 
 // NewTopQueue returns a new TopQueue.
-func NewTopQueue[K measure.TopSortKey](n int, reverted bool) *TopQueue[K] {
+func NewTopQueue[K streaming.TopSortKey](n int, reverted bool) *TopQueue[K] {
 	return &TopQueue[K]{
 		n: n,
 		th: topHeap[K]{

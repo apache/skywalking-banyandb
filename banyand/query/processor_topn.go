@@ -33,6 +33,7 @@ import (
 	modelv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/model/v1"
 	"github.com/apache/skywalking-banyandb/banyand/measure"
 	"github.com/apache/skywalking-banyandb/pkg/bus"
+	"github.com/apache/skywalking-banyandb/pkg/flow/streaming"
 	"github.com/apache/skywalking-banyandb/pkg/logger"
 	pbv1 "github.com/apache/skywalking-banyandb/pkg/pb/v1"
 	"github.com/apache/skywalking-banyandb/pkg/query"
@@ -237,7 +238,7 @@ func (t *topNQueryProcessor) Rev(ctx context.Context, message bus.Message) (resp
 }
 
 // aggregateTopNResults aggregates TopN data points using the given post processor and value extractor.
-func aggregateTopNResults[K measure.TopSortKey](
+func aggregateTopNResults[K streaming.TopSortKey](
 	aggregator measure.PostProcessor[K],
 	result []*measurev1.DataPoint,
 	extractValue func(*measurev1.DataPoint) K,

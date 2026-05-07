@@ -29,14 +29,14 @@ import (
 	databasev1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/database/v1"
 	measurev1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/measure/v1"
 	modelv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/model/v1"
-	"github.com/apache/skywalking-banyandb/banyand/measure"
+	"github.com/apache/skywalking-banyandb/pkg/flow/streaming"
 	pbv1 "github.com/apache/skywalking-banyandb/pkg/pb/v1"
 	"github.com/apache/skywalking-banyandb/pkg/query/executor"
 	"github.com/apache/skywalking-banyandb/pkg/query/logical"
 )
 
 // dedupHeapItem tracks an entity's best value and position in the deduplication heap.
-type dedupHeapItem[K measure.TopSortKey] struct {
+type dedupHeapItem[K streaming.TopSortKey] struct {
 	val   K
 	idp   *measurev1.InternalDataPoint
 	key   string
@@ -47,7 +47,7 @@ type dedupHeapItem[K measure.TopSortKey] struct {
 // For DESC sorting, it uses a min-heap (root = smallest of top N).
 // For ASC sorting, it uses a max-heap (root = largest of top N).
 // The entityMap only tracks entities currently in the heap, so memory is bounded to O(topN).
-type entityDedupTopN[K measure.TopSortKey] struct {
+type entityDedupTopN[K streaming.TopSortKey] struct {
 	entityMap map[string]*dedupHeapItem[K]
 	items     []*dedupHeapItem[K]
 	topN      int
@@ -55,7 +55,7 @@ type entityDedupTopN[K measure.TopSortKey] struct {
 }
 
 // newEntityDedupTopN creates a new entity deduplication heap.
-func newEntityDedupTopN[K measure.TopSortKey](topN int, sortDesc bool) *entityDedupTopN[K] {
+func newEntityDedupTopN[K streaming.TopSortKey](topN int, sortDesc bool) *entityDedupTopN[K] {
 	return &entityDedupTopN[K]{
 		entityMap: make(map[string]*dedupHeapItem[K]),
 		items:     make([]*dedupHeapItem[K], 0, topN),
@@ -153,7 +153,7 @@ func (h *entityDedupTopN[K]) Elements() []*measurev1.InternalDataPoint {
 var _ logical.UnresolvedPlan = (*unresolvedTopNDistinct[int64])(nil)
 
 // unresolvedTopNDistinct is an unresolved plan for top N distinct entity selection.
-type unresolvedTopNDistinct[K measure.TopSortKey] struct {
+type unresolvedTopNDistinct[K streaming.TopSortKey] struct {
 	unresolvedInput logical.UnresolvedPlan
 	fieldName       string
 	topN            int32
@@ -204,7 +204,7 @@ func (u *unresolvedTopNDistinct[K]) Analyze(measureSchema logical.Schema) (logic
 var _ logical.Plan = (*topNDistinctOp[int64])(nil)
 
 // topNDistinctOp selects top N distinct entities by best value.
-type topNDistinctOp[K measure.TopSortKey] struct {
+type topNDistinctOp[K streaming.TopSortKey] struct {
 	*logical.Parent
 	topN     int
 	sortDesc bool

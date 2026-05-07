@@ -27,7 +27,7 @@ import (
 	databasev1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/database/v1"
 	measurev1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/measure/v1"
 	modelv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/model/v1"
-	"github.com/apache/skywalking-banyandb/banyand/measure"
+	"github.com/apache/skywalking-banyandb/pkg/flow/streaming"
 	"github.com/apache/skywalking-banyandb/pkg/query/executor"
 	"github.com/apache/skywalking-banyandb/pkg/query/logical"
 )
@@ -78,7 +78,7 @@ func (gba *unresolvedTop) Analyze(measureSchema logical.Schema) (logical.Plan, e
 	}
 }
 
-func newTopOp[K measure.TopSortKey](gba *unresolvedTop, prevPlan logical.Plan, fieldRef *logical.FieldRef, reverted bool) *topOp[K] {
+func newTopOp[K streaming.TopSortKey](gba *unresolvedTop, prevPlan logical.Plan, fieldRef *logical.FieldRef, reverted bool) *topOp[K] {
 	return &topOp[K]{
 		Parent: &logical.Parent{
 			UnresolvedInput: gba.unresolvedInput,
@@ -89,7 +89,7 @@ func newTopOp[K measure.TopSortKey](gba *unresolvedTop, prevPlan logical.Plan, f
 	}
 }
 
-type topOp[K measure.TopSortKey] struct {
+type topOp[K streaming.TopSortKey] struct {
 	*logical.Parent
 	topNStream *TopQueue[K]
 	fieldRef   *logical.FieldRef
@@ -139,12 +139,12 @@ func (g *topOp[K]) Execute(ec context.Context) (mit executor.MIterator, err erro
 	return newTopIterator[K](g.topNStream.Elements()), nil
 }
 
-type topIterator[K measure.TopSortKey] struct {
+type topIterator[K streaming.TopSortKey] struct {
 	elements []TopElement[K]
 	index    int
 }
 
-func newTopIterator[K measure.TopSortKey](elements []TopElement[K]) executor.MIterator {
+func newTopIterator[K streaming.TopSortKey](elements []TopElement[K]) executor.MIterator {
 	return &topIterator[K]{
 		elements: elements,
 		index:    -1,

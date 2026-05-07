@@ -23,6 +23,7 @@ import (
 	"sort"
 
 	"github.com/apache/skywalking-banyandb/api/common"
+	databasev1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/database/v1"
 	modelv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/model/v1"
 	"github.com/apache/skywalking-banyandb/pkg/bytes"
 	"github.com/apache/skywalking-banyandb/pkg/encoding"
@@ -672,7 +673,7 @@ func (bc *blockCursor) copyTo(r *model.MeasureResult, storedIndexValue map[commo
 }
 
 func (bc *blockCursor) mergeTopNResult(r *model.MeasureResult, storedIndexValue map[common.SeriesID]map[string]*modelv1.TagValue,
-	topN int32, sort modelv1.Sort,
+	topN int32, sort modelv1.Sort, fieldType databasev1.FieldType,
 ) {
 	r.SID = bc.bm.seriesID
 	var indexValue map[string]*modelv1.TagValue
@@ -728,6 +729,7 @@ func (bc *blockCursor) mergeTopNResult(r *model.MeasureResult, storedIndexValue 
 			uTimestamps,
 			r.Versions[len(r.Versions)-1],
 			bc.versions[bc.idx],
+			fieldType,
 		)
 		if mergeErr != nil {
 			log.Error().Err(mergeErr).Msg("failed to merge topN values, skip current batch")
@@ -1105,7 +1107,10 @@ func fullFieldAppend(bi, b *blockPointer, offset int) {
 	}
 }
 
-func (bi *blockPointer) mergeAndAppendTopN(left *blockPointer, leftIdx int, right *blockPointer, rightIdx int, topN int32, sort modelv1.Sort) {
+func (bi *blockPointer) mergeAndAppendTopN(
+	left *blockPointer, leftIdx int, right *blockPointer, rightIdx int,
+	topN int32, sort modelv1.Sort, fieldType databasev1.FieldType,
+) {
 	decoder := GenerateTopNValuesDecoder()
 	defer ReleaseTopNValuesDecoder(decoder)
 
@@ -1132,6 +1137,7 @@ func (bi *blockPointer) mergeAndAppendTopN(left *blockPointer, leftIdx int, righ
 			uTimestamp,
 			leftVer,
 			rightVer,
+			fieldType,
 		)
 		if mergeErr != nil {
 			log.Error().Err(mergeErr).Msg("both sides of topN value are malformed, append empty value")

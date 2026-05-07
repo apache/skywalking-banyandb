@@ -310,12 +310,7 @@ type topNProcessor interface {
 	TopNSchema() *databasev1.TopNAggregation
 }
 
-// TopSortKey is a type constraint for top-N sortable key types.
-type TopSortKey interface {
-	int64 | float64
-}
-
-type topNStreamingProcessor[K TopSortKey] struct {
+type topNStreamingProcessor[K streaming.TopSortKey] struct {
 	pipeline      queue.Client
 	streamingFlow flow.Flow
 	in            chan flow.StreamRecord
@@ -329,10 +324,9 @@ type topNStreamingProcessor[K TopSortKey] struct {
 	flow.ComponentState
 	interval      time.Duration
 	sortDirection modelv1.Sort
-	fieldType     databasev1.FieldType
 }
 
-func newTopNStreamingProcessor[K TopSortKey](
+func newTopNStreamingProcessor[K streaming.TopSortKey](
 	m *databasev1.Measure,
 	l *logger.Logger,
 	interval time.Duration,
@@ -342,7 +336,6 @@ func newTopNStreamingProcessor[K TopSortKey](
 	streamingFlow flow.Flow,
 	pipeline queue.Client,
 	nodeID string,
-	fieldType databasev1.FieldType,
 ) *topNStreamingProcessor[K] {
 	return &topNStreamingProcessor[K]{
 		m:             m,
@@ -356,7 +349,6 @@ func newTopNStreamingProcessor[K TopSortKey](
 		streamingFlow: streamingFlow,
 		pipeline:      pipeline,
 		nodeID:        nodeID,
-		fieldType:     fieldType,
 	}
 }
 
@@ -415,7 +407,7 @@ func (t *topNStreamingProcessor[K]) TopNSchema() *databasev1.TopNAggregation {
 }
 
 func (t *topNStreamingProcessor[K]) writeStreamRecord(record flow.StreamRecord, buf []byte) error {
-	tuplesGroups, ok := record.Data().(map[string][]*streaming.Tuple2)
+	tuplesGroups, ok := record.Data().(map[string][]*streaming.Tuple2[K])
 	if !ok {
 		return errors.New("invalid data type")
 	}
@@ -424,14 +416,14 @@ func (t *topNStreamingProcessor[K]) writeStreamRecord(record flow.StreamRecord, 
 	publisher := t.pipeline.NewBatchPublisher(resultPersistencyTimeout)
 	defer publisher.Close()
 
-	topNValue := generateTopNValue[K]()
-	defer releaseTopNValue(topNValue)
+	topNValue := GenerateTopNValue[K]()
+	defer ReleaseTopNValue(topNValue)
 	var err error
 	for group, tuples := range tuplesGroups {
 		for i := range tuples {
 			if e := t.l.Debug(); e.Enabled() {
 				tuple := tuples[i]
-				data := tuple.V2.(flow.StreamRecord).Data().(flow.Data)
+				data := tuple.V2.Data().(flow.Data)
 				e.
 					Int("rankNums", i+1).
 					Str("entityValues", fmt.Sprintf("%v", data[0])).
@@ -444,13 +436,23 @@ func (t *topNStreamingProcessor[K]) writeStreamRecord(record flow.StreamRecord, 
 		topNValue.setMetadata(t.topNSchema.GetFieldName(), t.m.Entity.TagNames)
 		var shardID uint32
 		for _, tuple := range tuples {
-			data := tuple.V2.(flow.StreamRecord).Data().(flow.Data)
-			topNValue.addValue(tuple.V1.(K), data[0].([]*modelv1.TagValue))
+			data := tuple.V2.Data().(flow.Data)
+			topNValue.addValue(tuple.V1, data[0].([]*modelv1.TagValue))
 			shardID = data[3].(uint32)
 		}
 
+		var fieldType databasev1.FieldType
+		var k K
+		switch any(k).(type) {
+		case float64:
+			fieldType = databasev1.FieldType_FIELD_TYPE_FLOAT
+		default:
+			fieldType = databasev1.FieldType_FIELD_TYPE_INT
+		}
+
 		params := &TopNParameters{
-			Limit: int64(t.topNSchema.CountersNumber),
+			Limit:     int64(t.topNSchema.CountersNumber),
+			FieldType: fieldType,
 		}
 		paramsStr := params.String()
 
@@ -528,21 +530,21 @@ func (t *topNStreamingProcessor[K]) start() *topNStreamingProcessor[K] {
 	if flushInterval > maxFlushInterval {
 		flushInterval = maxFlushInterval
 	}
-	t.errCh = t.streamingFlow.Window(streaming.NewTumblingTimeWindows(t.interval, flushInterval)).
-		AllowedMaxWindows(int(t.topNSchema.GetLruSize())).
-		TopN(int(t.topNSchema.GetCountersNumber()),
-			streaming.WithKeyExtractor(func(record flow.StreamRecord) uint64 {
-				return record.Data().(flow.Data)[4].(uint64)
-			}),
-			streaming.WithSortKeyExtractor(func(record flow.StreamRecord) interface{} {
-				return record.Data().(flow.Data)[2]
-			}),
-			orderBy(t.topNSchema.GetFieldValueSort()),
-			streaming.WithGroupKeyExtractor(func(record flow.StreamRecord) string {
-				return record.Data().(flow.Data)[1].(string)
-			}),
-			streaming.WithFieldType(t.fieldType),
-		).To(t).Open()
+	wf := t.streamingFlow.Window(streaming.NewTumblingTimeWindows(t.interval, flushInterval)).
+		AllowedMaxWindows(int(t.topNSchema.GetLruSize()))
+	t.errCh = streaming.TopN[K](wf,
+		int(t.topNSchema.GetCountersNumber()),
+		func(record flow.StreamRecord) K {
+			return record.Data().(flow.Data)[2].(K)
+		},
+		streaming.WithKeyExtractor(func(record flow.StreamRecord) uint64 {
+			return record.Data().(flow.Data)[4].(uint64)
+		}),
+		orderBy(t.topNSchema.GetFieldValueSort()),
+		streaming.WithGroupKeyExtractor(func(record flow.StreamRecord) string {
+			return record.Data().(flow.Data)[1].(string)
+		}),
+	).To(t).Open()
 	go t.handleError()
 	return t
 }
@@ -715,11 +717,11 @@ func (manager *topNProcessorManager) start(topNSchema *databasev1.TopNAggregatio
 
 		if fieldType == databasev1.FieldType_FIELD_TYPE_FLOAT {
 			processorList[i] = newTopNStreamingProcessor[float64](
-				manager.m, manager.l, interval, topNSchema, sortDirection, srcCh, streamingFlow, manager.pipeline, manager.nodeID, fieldType,
+				manager.m, manager.l, interval, topNSchema, sortDirection, srcCh, streamingFlow, manager.pipeline, manager.nodeID,
 			).start()
 		} else {
 			processorList[i] = newTopNStreamingProcessor[int64](
-				manager.m, manager.l, interval, topNSchema, sortDirection, srcCh, streamingFlow, manager.pipeline, manager.nodeID, fieldType,
+				manager.m, manager.l, interval, topNSchema, sortDirection, srcCh, streamingFlow, manager.pipeline, manager.nodeID,
 			).start()
 		}
 	}
@@ -895,7 +897,8 @@ var (
 	topNValueFloatPool = pool.Register[*TopNValue[float64]]("measure-topNValue-float")
 )
 
-func generateTopNValue[K TopSortKey]() *TopNValue[K] {
+// GenerateTopNValue allocates a new TopNValue from the pool.
+func GenerateTopNValue[K streaming.TopSortKey]() *TopNValue[K] {
 	var k K
 	switch any(k).(type) {
 	case int64:
@@ -903,11 +906,12 @@ func generateTopNValue[K TopSortKey]() *TopNValue[K] {
 	case float64:
 		return any(GenerateTopNValueFloat()).(*TopNValue[K])
 	default:
-		return &TopNValue[K]{}
+		panic("unreachable: K is constrained to int64 | float64")
 	}
 }
 
-func releaseTopNValue[K TopSortKey](v *TopNValue[K]) {
+// ReleaseTopNValue returns a TopNValue to the pool.
+func ReleaseTopNValue[K streaming.TopSortKey](v *TopNValue[K]) {
 	var k K
 	switch any(k).(type) {
 	case int64:
@@ -918,7 +922,7 @@ func releaseTopNValue[K TopSortKey](v *TopNValue[K]) {
 }
 
 // TopNValue represents the topN value.
-type TopNValue[K TopSortKey] struct {
+type TopNValue[K streaming.TopSortKey] struct {
 	valueName       string
 	entityTagNames  []string
 	values          []K
@@ -926,6 +930,7 @@ type TopNValue[K TopSortKey] struct {
 	entityValues    [][]byte
 	entityValuesBuf [][]byte
 	buf             []byte
+	intScratch      []int64
 	firstValue      int64
 	exponent        int16
 	encodeType      encoding.EncodeType
@@ -958,6 +963,7 @@ func (t *TopNValue[K]) Reset() {
 	}
 	t.entities = t.entities[:0]
 	t.buf = t.buf[:0]
+	t.intScratch = t.intScratch[:0]
 	t.encodeType = encoding.EncodeTypeUnknown
 	t.firstValue = 0
 	t.exponent = 0
@@ -1003,58 +1009,57 @@ func (t *TopNValue[K]) marshal(dst []byte) ([]byte, error) {
 	}
 }
 
-func (t *TopNValue[K]) marshalInt64(dst []byte) ([]byte, error) {
+func (t *TopNValue[K]) appendEntityValues(dst []byte) ([]byte, error) {
+	evv := t.resizeEntityValues(len(t.entities))
+	for i, tvv := range t.entities {
+		ev := evv[i]
+		ev, marshalErr := pbv1.MarshalTagValues(ev[:0], tvv)
+		if marshalErr != nil {
+			return nil, marshalErr
+		}
+		evv[i] = ev
+	}
+	return encoding.EncodeBytesBlock(dst, evv), nil
+}
+
+func (t *TopNValue[K]) marshalHeader(dst []byte) []byte {
 	dst = encoding.EncodeBytes(dst, convert.StringToBytes(t.valueName))
 	dst = encoding.VarUint64ToBytes(dst, uint64(len(t.entityTagNames)))
 	for _, entityTagName := range t.entityTagNames {
 		dst = encoding.EncodeBytes(dst, convert.StringToBytes(entityTagName))
 	}
+	return encoding.VarUint64ToBytes(dst, uint64(len(t.values)))
+}
 
-	dst = encoding.VarUint64ToBytes(dst, uint64(len(t.values)))
+func (t *TopNValue[K]) marshalInt64(dst []byte) ([]byte, error) {
+	dst = t.marshalHeader(dst)
 
-	intValues := make([]int64, len(t.values))
-	for i, v := range t.values {
-		intValues[i] = int64(v)
-	}
+	intValues := any(t.values).([]int64)
 	t.buf, t.encodeType, t.firstValue = encoding.Int64ListToBytes(t.buf, intValues)
 	dst = append(dst, byte(t.encodeType))
 	dst = encoding.VarInt64ToBytes(dst, t.firstValue)
 	dst = encoding.VarUint64ToBytes(dst, uint64(len(t.buf)))
 	dst = append(dst, t.buf...)
 
-	var err error
-	evv := t.resizeEntityValues(len(t.entities))
-	for i, tvv := range t.entities {
-		ev := evv[i]
-		ev, err = pbv1.MarshalTagValues(ev[:0], tvv)
-		if err != nil {
-			return nil, err
-		}
-		evv[i] = ev
-	}
-	dst = encoding.EncodeBytesBlock(dst, evv)
-	return dst, nil
+	return t.appendEntityValues(dst)
 }
 
 func (t *TopNValue[K]) marshalFloat64(dst []byte) ([]byte, error) {
-	dst = encoding.EncodeBytes(dst, convert.StringToBytes(t.valueName))
-	dst = encoding.VarUint64ToBytes(dst, uint64(len(t.entityTagNames)))
-	for _, entityTagName := range t.entityTagNames {
-		dst = encoding.EncodeBytes(dst, convert.StringToBytes(entityTagName))
-	}
+	dst = t.marshalHeader(dst)
 
-	valuesCount := uint64(len(t.values)) | (uint64(1) << 63)
-	dst = encoding.VarUint64ToBytes(dst, valuesCount)
+	floatValues := any(t.values).([]float64)
 
-	floatValues := make([]float64, len(t.values))
-	for i, v := range t.values {
-		floatValues[i] = float64(v)
-	}
+	intValues, exponent, convErr := encoding.Float64ListToDecimalIntList(t.intScratch[:0], floatValues)
+	if convErr != nil {
+		// Lossless-fails fallback: raw IEEE-754, 8 bytes/value.
+		dst = append(dst, byte(encoding.EncodeTypePlain))
+		for _, f := range floatValues {
+			dst = convert.AppendFloat64Bytes(dst, f)
+		}
 
-	intValues, exponent, err := encoding.Float64ListToDecimalIntList(nil, floatValues)
-	if err != nil {
-		return nil, fmt.Errorf("failed to convert float64 to decimal int: %w", err)
+		return t.appendEntityValues(dst)
 	}
+	t.intScratch = intValues
 	t.exponent = exponent
 
 	t.buf, t.encodeType, t.firstValue = encoding.Int64ListToBytes(t.buf, intValues)
@@ -1064,63 +1069,14 @@ func (t *TopNValue[K]) marshalFloat64(dst []byte) ([]byte, error) {
 	dst = encoding.VarUint64ToBytes(dst, uint64(len(t.buf)))
 	dst = append(dst, t.buf...)
 
-	evv := t.resizeEntityValues(len(t.entities))
-	for i, tvv := range t.entities {
-		ev := evv[i]
-		ev, err = pbv1.MarshalTagValues(ev[:0], tvv)
-		if err != nil {
-			return nil, err
-		}
-		evv[i] = ev
-	}
-	dst = encoding.EncodeBytesBlock(dst, evv)
-	return dst, nil
-}
-
-// DetectFieldTypeFromBinary detects the field type from binary data.
-func DetectFieldTypeFromBinary(src []byte) (databasev1.FieldType, error) {
-	var err error
-	src, _, err = encoding.DecodeBytes(src)
-	if err != nil {
-		return databasev1.FieldType_FIELD_TYPE_UNSPECIFIED, err
-	}
-	var count uint64
-	src, count = encoding.BytesToVarUint64(src)
-	for i := uint64(0); i < count; i++ {
-		src, _, err = encoding.DecodeBytes(src)
-		if err != nil {
-			return databasev1.FieldType_FIELD_TYPE_UNSPECIFIED, err
-		}
-	}
-	_, count = encoding.BytesToVarUint64(src)
-	if (count & (uint64(1) << 63)) != 0 {
-		return databasev1.FieldType_FIELD_TYPE_FLOAT, nil
-	}
-	return databasev1.FieldType_FIELD_TYPE_INT, nil
+	return t.appendEntityValues(dst)
 }
 
 // MergeTopNBinaryValues merges two TopN binary values and returns the merged binary value.
 func MergeTopNBinaryValues(
 	left, right []byte, topN int32, sort modelv1.Sort, decoder *encoding.BytesBlockDecoder,
-	timestamp uint64, leftVersion, rightVersion int64,
+	timestamp uint64, leftVersion, rightVersion int64, fieldType databasev1.FieldType,
 ) ([]byte, error) {
-	leftFieldType, leftErr := DetectFieldTypeFromBinary(left)
-	rightFieldType, rightErr := DetectFieldTypeFromBinary(right)
-
-	if leftErr != nil && rightErr != nil {
-		return []byte{}, nil
-	}
-
-	fieldType := leftFieldType
-	switch {
-	case leftErr != nil:
-		fieldType = rightFieldType
-	case rightErr != nil:
-		fieldType = leftFieldType
-	case leftFieldType != rightFieldType:
-		return nil, fmt.Errorf("field type mismatch between left (%s) and right (%s)", leftFieldType.String(), rightFieldType.String())
-	}
-
 	if fieldType == databasev1.FieldType_FIELD_TYPE_FLOAT {
 		topNPostAggregator := CreateTopNPostProcessorFloat(topN, modelv1.AggregationFunction_AGGREGATION_FUNCTION_UNSPECIFIED, sort)
 		return mergeTopNBinaryValues[float64](left, right, topNPostAggregator, decoder, timestamp, leftVersion, rightVersion)
@@ -1129,12 +1085,12 @@ func MergeTopNBinaryValues(
 	return mergeTopNBinaryValues[int64](left, right, topNPostAggregator, decoder, timestamp, leftVersion, rightVersion)
 }
 
-func mergeTopNBinaryValues[K TopSortKey](
+func mergeTopNBinaryValues[K streaming.TopSortKey](
 	left, right []byte, topNPostAggregator PostProcessor[K], decoder *encoding.BytesBlockDecoder,
 	timestamp uint64, leftVersion, rightVersion int64,
 ) ([]byte, error) {
-	topNValue := generateTopNValue[K]()
-	defer releaseTopNValue(topNValue)
+	topNValue := GenerateTopNValue[K]()
+	defer ReleaseTopNValue(topNValue)
 
 	topNPostAggregator.Reset()
 
@@ -1182,7 +1138,7 @@ func mergeTopNBinaryValues[K TopSortKey](
 	return topNValue.marshal(make([]byte, 0, 128))
 }
 
-func putEntitiesToAggregator[K TopSortKey](topNValue *TopNValue[K], aggregator PostProcessor[K], timestamp uint64, version int64) {
+func putEntitiesToAggregator[K streaming.TopSortKey](topNValue *TopNValue[K], aggregator PostProcessor[K], timestamp uint64, version int64) {
 	for i, entityList := range topNValue.entities {
 		entityValues := make(pbv1.EntityValues, len(entityList))
 		copy(entityValues, entityList)
@@ -1217,11 +1173,31 @@ func (t *TopNValue[K]) Unmarshal(src []byte, decoder *encoding.BytesBlockDecoder
 	var k K
 	switch any(k).(type) {
 	case float64:
-		valuesCount &^= (uint64(1) << 63)
 		return t.unmarshalFloat64(src, decoder, valuesCount, int(entityTagNamesCount))
 	default:
 		return t.unmarshalInt64(src, decoder, valuesCount, int(entityTagNamesCount))
 	}
+}
+
+func (t *TopNValue[K]) unmarshalEntities(decoder *encoding.BytesBlockDecoder, src []byte, valuesCount uint64, entityTagNamesCount int) error {
+	decoder.Reset()
+	evv := t.entityValuesBuf
+	evv, decodeErr := decoder.Decode(evv[:0], src, valuesCount)
+	if decodeErr != nil {
+		return fmt.Errorf("cannot unmarshal topNValue.entityValues: %w", decodeErr)
+	}
+	t.resizeEntities(len(evv), entityTagNamesCount)
+	for i, ev := range evv {
+		var unmarshalErr error
+		t.buf, t.entities[i], unmarshalErr = pbv1.UnmarshalTagValues(t.buf, t.entities[i], ev)
+		if unmarshalErr != nil {
+			return fmt.Errorf("cannot unmarshal topNValue.entityValues[%d]:%s %w", i, hex.EncodeToString(ev), unmarshalErr)
+		}
+		if len(t.entities[i]) != len(t.entityTagNames) {
+			return fmt.Errorf("entityValues[%d] length is not equal to entityTagNames", i)
+		}
+	}
+	return nil
 }
 
 func (t *TopNValue[K]) unmarshalInt64(src []byte, decoder *encoding.BytesBlockDecoder, valuesCount uint64, entityTagNamesCount int) error {
@@ -1253,28 +1229,16 @@ func (t *TopNValue[K]) unmarshalInt64(src []byte, decoder *encoding.BytesBlockDe
 	if err != nil {
 		return fmt.Errorf("cannot unmarshal topNValue.values: %w", err)
 	}
-	t.values = make([]K, len(intValues))
-	for i, v := range intValues {
-		t.values[i] = K(v)
+	if vals, ok := any(intValues).([]K); ok {
+		t.values = vals
+	} else {
+		t.values = make([]K, len(intValues))
+		for i, v := range intValues {
+			t.values[i] = K(v)
+		}
 	}
 
-	decoder.Reset()
-	evv := t.entityValuesBuf
-	evv, err = decoder.Decode(evv[:0], src[valueLen:], valuesCount)
-	if err != nil {
-		return fmt.Errorf("cannot unmarshal topNValue.entityValues: %w", err)
-	}
-	t.resizeEntities(len(evv), entityTagNamesCount)
-	for i, ev := range evv {
-		t.buf, t.entities[i], err = pbv1.UnmarshalTagValues(t.buf, t.entities[i], ev)
-		if err != nil {
-			return fmt.Errorf("cannot unmarshal topNValue.entityValues[%d]:%s %w", i, hex.EncodeToString(ev), err)
-		}
-		if len(t.entities[i]) != len(t.entityTagNames) {
-			return fmt.Errorf("entityValues[%d] length is not equal to entityTagNames", i)
-		}
-	}
-	return nil
+	return t.unmarshalEntities(decoder, src[valueLen:], valuesCount, entityTagNamesCount)
 }
 
 func (t *TopNValue[K]) unmarshalFloat64(src []byte, decoder *encoding.BytesBlockDecoder, valuesCount uint64, entityTagNamesCount int) error {
@@ -1284,6 +1248,25 @@ func (t *TopNValue[K]) unmarshalFloat64(src []byte, decoder *encoding.BytesBlock
 	}
 	t.encodeType = encoding.EncodeType(src[0])
 	src = src[1:]
+
+	if t.encodeType == encoding.EncodeTypePlain {
+		expectedBytes := int(valuesCount) * 8
+		if len(src) < expectedBytes {
+			return fmt.Errorf("src is too short for reading %d plain float64 values; need %d bytes, got %d", valuesCount, expectedBytes, len(src))
+		}
+		n := int(valuesCount)
+		if cap(t.values) < n {
+			t.values = make([]K, n)
+		} else {
+			t.values = t.values[:n]
+		}
+		for i := 0; i < n; i++ {
+			t.values[i] = K(convert.BytesToFloat64(src[i*8 : (i+1)*8]))
+		}
+		src = src[expectedBytes:]
+
+		return t.unmarshalEntities(decoder, src, valuesCount, entityTagNamesCount)
+	}
 
 	if len(src) < 1 {
 		return fmt.Errorf("cannot unmarshal topNValue.firstValue: src is too short")
@@ -1322,28 +1305,16 @@ func (t *TopNValue[K]) unmarshalFloat64(src []byte, decoder *encoding.BytesBlock
 	if err != nil {
 		return fmt.Errorf("cannot unmarshal topNValue.floatValues: %w", err)
 	}
-	t.values = make([]K, len(floatValues))
-	for i, v := range floatValues {
-		t.values[i] = K(v)
+	if vals, ok := any(floatValues).([]K); ok {
+		t.values = vals
+	} else {
+		t.values = make([]K, len(floatValues))
+		for i, v := range floatValues {
+			t.values[i] = K(v)
+		}
 	}
 
-	decoder.Reset()
-	evv := t.entityValuesBuf
-	evv, err = decoder.Decode(evv[:0], src[valueLen:], valuesCount)
-	if err != nil {
-		return fmt.Errorf("cannot unmarshal topNValue.entityValues: %w", err)
-	}
-	t.resizeEntities(len(evv), entityTagNamesCount)
-	for i, ev := range evv {
-		t.buf, t.entities[i], err = pbv1.UnmarshalTagValues(t.buf, t.entities[i], ev)
-		if err != nil {
-			return fmt.Errorf("cannot unmarshal topNValue.entityValues[%d]:%s %w", i, hex.EncodeToString(ev), err)
-		}
-		if len(t.entities[i]) != len(t.entityTagNames) {
-			return fmt.Errorf("entityValues[%d] length is not equal to entityTagNames", i)
-		}
-	}
-	return nil
+	return t.unmarshalEntities(decoder, src[valueLen:], valuesCount, entityTagNamesCount)
 }
 
 // GroupName returns the group name.

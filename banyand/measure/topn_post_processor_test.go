@@ -25,7 +25,9 @@ import (
 	"google.golang.org/protobuf/testing/protocmp"
 
 	"github.com/apache/skywalking-banyandb/api/common"
+	databasev1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/database/v1"
 	modelv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/model/v1"
+	"github.com/apache/skywalking-banyandb/pkg/convert"
 	pbv1 "github.com/apache/skywalking-banyandb/pkg/pb/v1"
 	"github.com/apache/skywalking-banyandb/pkg/query/model"
 )
@@ -129,7 +131,7 @@ func TestBlockCursor_MergeTopNResult(t *testing.T) {
 				},
 			}
 
-			bc.mergeTopNResult(result, storedIndexValue, tt.topN, tt.sort)
+			bc.mergeTopNResult(result, storedIndexValue, tt.topN, tt.sort, databasev1.FieldType_FIELD_TYPE_INT)
 
 			tagValue := result.TagFamilies[0].Tags[0].Values[0]
 			require.Equal(t, expectedTagValue, tagValue.GetStr().GetValue())
@@ -252,8 +254,26 @@ func TestBlockCursor_MergeTopNResult_Float64(t *testing.T) {
 			require.NoError(t, err)
 
 			bc := &blockCursor{
-				bm:          blockMetadata{seriesID: 1},
-				tagFamilies: nil,
+				bm: blockMetadata{seriesID: 1},
+				tagFamilies: []columnFamily{
+					{
+						columns: []column{
+							{name: "name", valueType: pbv1.ValueTypeStr, values: [][]byte{[]byte("latency")}},
+							{name: "direction", valueType: pbv1.ValueTypeInt64, values: [][]byte{convert.Int64ToBytes(int64(tt.sort))}},
+							{name: "group", valueType: pbv1.ValueTypeStr, values: [][]byte{[]byte("")}},
+							{
+								name:      "parameters",
+								valueType: pbv1.ValueTypeStr,
+								values: [][]byte{
+									[]byte((&TopNParameters{
+										Limit:     int64(tt.topN),
+										FieldType: databasev1.FieldType_FIELD_TYPE_FLOAT,
+									}).String()),
+								},
+							},
+						},
+					},
+				},
 				fields: columnFamily{
 					columns: []column{
 						{name: "latency", valueType: pbv1.ValueTypeBinaryData, values: [][]byte{destBuf}},
@@ -292,7 +312,7 @@ func TestBlockCursor_MergeTopNResult_Float64(t *testing.T) {
 				},
 			}
 
-			bc.mergeTopNResult(result, storedIndexValue, tt.topN, tt.sort)
+			bc.mergeTopNResult(result, storedIndexValue, tt.topN, tt.sort, databasev1.FieldType_FIELD_TYPE_FLOAT)
 
 			tagValue := result.TagFamilies[0].Tags[0].Values[0]
 			require.Equal(t, expectedTagValue, tagValue.GetStr().GetValue())

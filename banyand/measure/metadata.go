@@ -19,9 +19,9 @@ package measure
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"path"
-	"strconv"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -913,10 +913,12 @@ func getKey(metadata *commonv1.Metadata) string {
 	return path.Join(metadata.GetGroup(), metadata.GetName())
 }
 
-// TopNParameters defines the structure for the "parameters" tag value (JSON).
+// TopNParameters defines the structure for the "parameters" tag value.
 type TopNParameters struct {
 	// Limit defines the number of top items to be kept.
-	Limit int64
+	Limit int64 `json:"limit"`
+	// FieldType indicates whether the topN values are int or float.
+	FieldType databasev1.FieldType `json:"field_type"`
 }
 
 // String implements the fmt.Stringer interface.
@@ -924,7 +926,11 @@ func (p *TopNParameters) String() string {
 	if p == nil {
 		return ""
 	}
-	return strconv.FormatInt(p.Limit, 10)
+	b, marshalErr := json.Marshal(p)
+	if marshalErr != nil {
+		return ""
+	}
+	return string(b)
 }
 
 // ParseTopNParameters decodes the JSON metadata.
@@ -932,13 +938,9 @@ func ParseTopNParameters(val string) (*TopNParameters, error) {
 	if val == "" {
 		return &TopNParameters{}, nil
 	}
-
-	limit, err := strconv.ParseInt(val, 10, 64)
-	if err != nil {
-		return nil, err
+	var params TopNParameters
+	if unmarshalErr := json.Unmarshal([]byte(val), &params); unmarshalErr != nil {
+		return nil, fmt.Errorf("invalid TopNParameters %q: %w", val, unmarshalErr)
 	}
-
-	return &TopNParameters{
-		Limit: limit,
-	}, nil
+	return &params, nil
 }

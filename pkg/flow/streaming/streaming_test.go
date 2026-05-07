@@ -25,7 +25,6 @@ import (
 	g "github.com/onsi/ginkgo/v2"
 	"github.com/onsi/gomega"
 
-	databasev1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/database/v1"
 	"github.com/apache/skywalking-banyandb/pkg/convert"
 	"github.com/apache/skywalking-banyandb/pkg/flow"
 	"github.com/apache/skywalking-banyandb/pkg/test/flags"
@@ -145,21 +144,21 @@ var _ = g.Describe("Streaming", func() {
 		g.JustBeforeEach(func() {
 			snk = newSlice()
 
-			f = New("test", flowTest.NewSlice(input)).
+			wf := New("test", flowTest.NewSlice(input)).
 				Map(flow.UnaryFunc[any](func(_ context.Context, item interface{}) interface{} {
 					// groupBy
 					return flow.Data{item.(*record).service, int64(item.(*record).value), item.(*record).service + item.(*record).instance}
 				})).
-				Window(NewTumblingTimeWindows(15*time.Second, 15*time.Second)).
-				TopN(3, WithKeyExtractor(func(record flow.StreamRecord) uint64 {
+				Window(NewTumblingTimeWindows(15*time.Second, 15*time.Second))
+			f = TopN[int64](wf, 3, func(record flow.StreamRecord) int64 {
+				return record.Data().(flow.Data)[1].(int64)
+			},
+				WithKeyExtractor(func(record flow.StreamRecord) uint64 {
 					return convert.HashStr(record.Data().(flow.Data)[2].(string))
+				}), OrderBy(ASC), WithGroupKeyExtractor(func(record flow.StreamRecord) string {
+					return record.Data().(flow.Data)[0].(string)
 				}),
-					WithSortKeyExtractor(func(record flow.StreamRecord) interface{} {
-						return record.Data().(flow.Data)[1].(int64)
-					}), OrderBy(ASC), WithGroupKeyExtractor(func(record flow.StreamRecord) string {
-						return record.Data().(flow.Data)[0].(string)
-					}), WithFieldType(databasev1.FieldType_FIELD_TYPE_INT)).
-				To(snk)
+			).To(snk)
 
 			errCh = f.Open()
 			gomega.Expect(errCh).ShouldNot(gomega.BeNil())
@@ -183,16 +182,16 @@ var _ = g.Describe("Streaming", func() {
 				gomega.Eventually(func(g gomega.Gomega) {
 					g.Expect(len(snk.Value())).Should(gomega.BeNumerically(">=", 1))
 					// e2e-service-consumer Group
-					g.Expect(snk.Value()[0].(flow.StreamRecord).Data().(map[string][]*Tuple2)["e2e-service-consumer"]).Should(gomega.BeEquivalentTo([]*Tuple2{
-						{int64(9500), flow.NewStreamRecord(flow.Data{"e2e-service-consumer", int64(9500), "e2e-service-consumerinstance-001"}, 7000)},
-						{int64(9600), flow.NewStreamRecord(flow.Data{"e2e-service-consumer", int64(9600), "e2e-service-consumerinstance-004"}, 6000)},
-						{int64(9700), flow.NewStreamRecord(flow.Data{"e2e-service-consumer", int64(9700), "e2e-service-consumerinstance-002"}, 4000)},
+					g.Expect(snk.Value()[0].(flow.StreamRecord).Data().(map[string][]*Tuple2[int64])["e2e-service-consumer"]).Should(gomega.BeEquivalentTo([]*Tuple2[int64]{
+						{V1: int64(9500), V2: flow.NewStreamRecord(flow.Data{"e2e-service-consumer", int64(9500), "e2e-service-consumerinstance-001"}, 7000)},
+						{V1: int64(9600), V2: flow.NewStreamRecord(flow.Data{"e2e-service-consumer", int64(9600), "e2e-service-consumerinstance-004"}, 6000)},
+						{V1: int64(9700), V2: flow.NewStreamRecord(flow.Data{"e2e-service-consumer", int64(9700), "e2e-service-consumerinstance-002"}, 4000)},
 					}))
 					// e2e-service-provider Group
-					g.Expect(snk.Value()[0].(flow.StreamRecord).Data().(map[string][]*Tuple2)["e2e-service-provider"]).Should(gomega.BeEquivalentTo([]*Tuple2{
-						{int64(9700), flow.NewStreamRecord(flow.Data{"e2e-service-provider", int64(9700), "e2e-service-providerinstance-003"}, 5000)},
-						{int64(9800), flow.NewStreamRecord(flow.Data{"e2e-service-provider", int64(9800), "e2e-service-providerinstance-002"}, 3000)},
-						{int64(10000), flow.NewStreamRecord(flow.Data{"e2e-service-provider", int64(10000), "e2e-service-providerinstance-001"}, 1000)},
+					g.Expect(snk.Value()[0].(flow.StreamRecord).Data().(map[string][]*Tuple2[int64])["e2e-service-provider"]).Should(gomega.BeEquivalentTo([]*Tuple2[int64]{
+						{V1: int64(9700), V2: flow.NewStreamRecord(flow.Data{"e2e-service-provider", int64(9700), "e2e-service-providerinstance-003"}, 5000)},
+						{V1: int64(9800), V2: flow.NewStreamRecord(flow.Data{"e2e-service-provider", int64(9800), "e2e-service-providerinstance-002"}, 3000)},
+						{V1: int64(10000), V2: flow.NewStreamRecord(flow.Data{"e2e-service-provider", int64(10000), "e2e-service-providerinstance-001"}, 1000)},
 					}))
 				}).WithTimeout(flags.EventuallyTimeout).Should(gomega.Succeed())
 			})
@@ -211,20 +210,21 @@ var _ = g.Describe("Streaming", func() {
 		g.JustBeforeEach(func() {
 			snk = newSlice()
 
-			f = New("test", flowTest.NewSlice(input)).
+			wf := New("test", flowTest.NewSlice(input)).
 				Map(flow.UnaryFunc[any](func(_ context.Context, item interface{}) interface{} {
 					// groupBy
 					return flow.Data{item.(*record).service, int64(item.(*record).value), item.(*record).service + item.(*record).instance}
 				})).
-				Window(NewTumblingTimeWindows(15*time.Second, 15*time.Second)).
-				TopN(3, WithKeyExtractor(func(record flow.StreamRecord) uint64 {
+				Window(NewTumblingTimeWindows(15*time.Second, 15*time.Second))
+			f = TopN[int64](wf, 3, func(record flow.StreamRecord) int64 {
+				return record.Data().(flow.Data)[1].(int64)
+			},
+				WithKeyExtractor(func(record flow.StreamRecord) uint64 {
 					return convert.HashStr(record.Data().(flow.Data)[2].(string))
-				}), WithSortKeyExtractor(func(record flow.StreamRecord) interface{} {
-					return record.Data().(flow.Data)[1].(int64)
 				}), WithGroupKeyExtractor(func(record flow.StreamRecord) string {
 					return record.Data().(flow.Data)[0].(string)
-				}), WithFieldType(databasev1.FieldType_FIELD_TYPE_INT)).
-				To(snk)
+				}),
+			).To(snk)
 
 			errCh = f.Open()
 			gomega.Expect(errCh).ShouldNot(gomega.BeNil())
@@ -248,16 +248,16 @@ var _ = g.Describe("Streaming", func() {
 				gomega.Eventually(func(g gomega.Gomega) {
 					g.Expect(len(snk.Value())).Should(gomega.BeNumerically(">=", 1))
 					// e2e-service-consumer Group
-					g.Expect(snk.Value()[0].(flow.StreamRecord).Data().(map[string][]*Tuple2)["e2e-service-consumer"]).Should(gomega.BeEquivalentTo([]*Tuple2{
-						{int64(9700), flow.NewStreamRecord(flow.Data{"e2e-service-consumer", int64(9700), "e2e-service-consumerinstance-002"}, 4000)},
-						{int64(9600), flow.NewStreamRecord(flow.Data{"e2e-service-consumer", int64(9600), "e2e-service-consumerinstance-004"}, 6000)},
-						{int64(9500), flow.NewStreamRecord(flow.Data{"e2e-service-consumer", int64(9500), "e2e-service-consumerinstance-001"}, 7000)},
+					g.Expect(snk.Value()[0].(flow.StreamRecord).Data().(map[string][]*Tuple2[int64])["e2e-service-consumer"]).Should(gomega.BeEquivalentTo([]*Tuple2[int64]{
+						{V1: int64(9700), V2: flow.NewStreamRecord(flow.Data{"e2e-service-consumer", int64(9700), "e2e-service-consumerinstance-002"}, 4000)},
+						{V1: int64(9600), V2: flow.NewStreamRecord(flow.Data{"e2e-service-consumer", int64(9600), "e2e-service-consumerinstance-004"}, 6000)},
+						{V1: int64(9500), V2: flow.NewStreamRecord(flow.Data{"e2e-service-consumer", int64(9500), "e2e-service-consumerinstance-001"}, 7000)},
 					}))
 					// e2e-service-provider Group
-					g.Expect(snk.Value()[0].(flow.StreamRecord).Data().(map[string][]*Tuple2)["e2e-service-provider"]).Should(gomega.BeEquivalentTo([]*Tuple2{
-						{int64(10000), flow.NewStreamRecord(flow.Data{"e2e-service-provider", int64(10000), "e2e-service-providerinstance-001"}, 1000)},
-						{int64(9800), flow.NewStreamRecord(flow.Data{"e2e-service-provider", int64(9800), "e2e-service-providerinstance-002"}, 3000)},
-						{int64(9700), flow.NewStreamRecord(flow.Data{"e2e-service-provider", int64(9700), "e2e-service-providerinstance-003"}, 5000)},
+					g.Expect(snk.Value()[0].(flow.StreamRecord).Data().(map[string][]*Tuple2[int64])["e2e-service-provider"]).Should(gomega.BeEquivalentTo([]*Tuple2[int64]{
+						{V1: int64(10000), V2: flow.NewStreamRecord(flow.Data{"e2e-service-provider", int64(10000), "e2e-service-providerinstance-001"}, 1000)},
+						{V1: int64(9800), V2: flow.NewStreamRecord(flow.Data{"e2e-service-provider", int64(9800), "e2e-service-providerinstance-002"}, 3000)},
+						{V1: int64(9700), V2: flow.NewStreamRecord(flow.Data{"e2e-service-provider", int64(9700), "e2e-service-providerinstance-003"}, 5000)},
 					}))
 				}).WithTimeout(flags.EventuallyTimeout).Should(gomega.Succeed())
 			})

@@ -27,6 +27,7 @@ import (
 	measurev1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/measure/v1"
 	modelv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/model/v1"
 	"github.com/apache/skywalking-banyandb/pkg/flow"
+	"github.com/apache/skywalking-banyandb/pkg/flow/streaming"
 	pbv1 "github.com/apache/skywalking-banyandb/pkg/pb/v1"
 	"github.com/apache/skywalking-banyandb/pkg/query/aggregation"
 )
@@ -42,7 +43,7 @@ func FieldValueToFloat(fv *modelv1.FieldValue) float64 {
 }
 
 // PostProcessor defines necessary methods for Top-N post processor with or without aggregation.
-type PostProcessor[K TopSortKey] interface {
+type PostProcessor[K streaming.TopSortKey] interface {
 	Put(entityValues pbv1.EntityValues, val K, timestampMillis uint64, version int64)
 	Flush() ([]*topNAggregatorItem[K], error)
 	Val([]string) ([]*measurev1.TopNList, error)
@@ -59,7 +60,7 @@ func CreateTopNPostProcessorFloat(topN int32, aggrFunc modelv1.AggregationFuncti
 	return createTopNPostProcessor[float64](topN, aggrFunc, sort)
 }
 
-func createTopNPostProcessor[K TopSortKey](topN int32, aggrFunc modelv1.AggregationFunction, sort modelv1.Sort) PostProcessor[K] {
+func createTopNPostProcessor[K streaming.TopSortKey](topN int32, aggrFunc modelv1.AggregationFunction, sort modelv1.Sort) PostProcessor[K] {
 	if aggrFunc == modelv1.AggregationFunction_AGGREGATION_FUNCTION_UNSPECIFIED {
 		// if aggregation is not specified, we have to keep all timelines
 		return &topNPostProcessor[K]{
@@ -140,7 +141,7 @@ var (
 	_ flow.Element = (*topNAggregatorItem[float64])(nil)
 )
 
-type topNAggregatorItem[K TopSortKey] struct {
+type topNAggregatorItem[K streaming.TopSortKey] struct {
 	mapFunc aggregation.Map[K]
 	val     K
 	key     string
@@ -168,12 +169,12 @@ func (n *topNAggregatorItem[K]) SetIndex(i int) {
 	n.index = i
 }
 
-type topNTimelineItem[K TopSortKey] struct {
+type topNTimelineItem[K streaming.TopSortKey] struct {
 	queue *flow.DedupPriorityQueue
 	items map[string]*topNAggregatorItem[K]
 }
 
-type topNPostProcessor[K TopSortKey] struct {
+type topNPostProcessor[K streaming.TopSortKey] struct {
 	cache     map[string]*topNAggregatorItem[K]
 	timelines map[uint64]*topNTimelineItem[K]
 	items     []*topNAggregatorItem[K]
