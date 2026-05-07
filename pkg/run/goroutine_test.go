@@ -131,28 +131,180 @@ func TestGo_RecoveryCapturesBreadcrumbsAddedInFn(t *testing.T) {
 	require.Len(t, collections[0].Record.Breadcrumbs, 2)
 }
 
-// TestGo_WithRepanicTerminatesProcess pins that WithRepanic(true) restores
-// the previous fatal-on-panic behavior for callers that need it. We exec a
-// subprocess so we can assert the process actually dies.
-func TestGo_WithRepanicTerminatesProcess(t *testing.T) {
+// TestGoOrDie_TerminatesProcessAndWritesArtifact pins both halves of GoOrDie's
+// contract: the process exits non-zero on a recovered panic AND the diagnostic
+// artifact is fully written before the re-raise kills the process. We exec a
+// helper subprocess so we can observe the exit code, then read the artifact
+// directory the helper was told to use.
+func TestGoOrDie_TerminatesProcessAndWritesArtifact(t *testing.T) {
 	t.Helper()
 
-	if os.Getenv("BANYANDB_RUN_GO_REPANIC_HELPER") == "1" {
-		Go(context.Background(), "test", logger.GetLogger("test"), func(_ context.Context) {
-			panic("repanic-boom")
-		}, WithRepanic(true))
+	if os.Getenv("BANYANDB_RUN_GOORDIE_HELPER") == "1" {
+		artifactRoot := os.Getenv("BANYANDB_RUN_GOORDIE_ARTIFACT_ROOT")
+		require.NotEmpty(t, artifactRoot)
+		panicdiag.SetDefaultArtifactRoot(artifactRoot)
 
-		// Repanic kills the process; this sleep guards against a regression
-		// where Repanic silently becomes a no-op.
+		GoOrDie(context.Background(), "test", logger.GetLogger("test"), func(_ context.Context) {
+			panic("ordie-boom")
+		})
+
+		// GoOrDie kills the process via re-panic; this sleep guards against
+		// a regression where the goroutine returns normally instead.
 		time.Sleep(5 * time.Second)
-		t.Fatal("expected WithRepanic(true) to terminate the helper process")
+		t.Fatal("expected GoOrDie to terminate the helper process")
 	}
 
+	artifactRoot := t.TempDir()
 	// #nosec G204 -- self-exec of the running test binary; arguments are constant.
-	testCmd := exec.Command(os.Args[0], "-test.run=TestGo_WithRepanicTerminatesProcess")
-	testCmd.Env = append(os.Environ(), "BANYANDB_RUN_GO_REPANIC_HELPER=1")
+	testCmd := exec.Command(os.Args[0], "-test.run=TestGoOrDie_TerminatesProcessAndWritesArtifact")
+	testCmd.Env = append(os.Environ(),
+		"BANYANDB_RUN_GOORDIE_HELPER=1",
+		"BANYANDB_RUN_GOORDIE_ARTIFACT_ROOT="+artifactRoot,
+	)
 	runErr := testCmd.Run()
 	require.Error(t, runErr)
 	var exitErr *exec.ExitError
 	require.ErrorAs(t, runErr, &exitErr)
+
+	collections, listErr := panicdiag.ListCollections(artifactRoot)
+	require.NoError(t, listErr)
+	require.Len(t, collections, 1, "GoOrDie must persist the artifact before re-raising")
+	require.NotNil(t, collections[0].Record)
+	require.Equal(t, "ordie-boom", collections[0].Record.PanicValue)
+	require.Equal(t, "test", collections[0].Record.Component)
+}
+
+// TestGoOrDie_RunsCleanFnToCompletion pins that GoOrDie does not introduce any
+// fatal behavior for non-panicking fns: a clean run must yield Panicked=false
+// just like Go.
+func TestGoOrDie_RunsCleanFnToCompletion(t *testing.T) {
+	t.Helper()
+
+	executed := atomic.Bool{}
+	task := GoOrDie(context.Background(), "ordie-clean", logger.GetLogger("test"), func(_ context.Context) {
+		executed.Store(true)
+	})
+
+	outcome := task.Wait()
+	require.True(t, executed.Load())
+	require.NotNil(t, outcome)
+	require.False(t, outcome.Panicked)
+}
+
+// TestGoWithSignal_DeliversPanicOutcome pins the primary use case: the channel
+// carries a SignalResult whose Outcome reports the recovered panic when fn
+// panics. The caller can pick it up inside a select. This is what makes the
+// scheduler-style "panic vs result vs timeout" pattern correct.
+func TestGoWithSignal_DeliversPanicOutcome(t *testing.T) {
+	t.Helper()
+
+	ch := GoWithSignal(context.Background(), "signal-panic", logger.GetLogger("test"),
+		func(_ context.Context) string {
+			panic("signal-boom")
+		})
+
+	select {
+	case r := <-ch:
+		require.NotNil(t, r.Outcome)
+		require.True(t, r.Outcome.Panicked)
+		require.NotNil(t, r.Outcome.Result.Record)
+		require.Equal(t, "signal-boom", r.Outcome.Result.Record.PanicValue)
+		got, ok := r.Outcome.PanicValue.(string)
+		require.True(t, ok)
+		require.Equal(t, "signal-boom", got)
+		// Value is the zero value of T because fn never returned.
+		require.Equal(t, "", r.Value)
+	case <-time.After(2 * time.Second):
+		t.Fatal("expected outcome to be delivered on the signal channel")
+	}
+}
+
+// TestGoWithSignal_DeliversTypedValue pins that fn's typed return value flows
+// through the same channel as the outcome, so callers no longer need to plumb
+// a separate result channel.
+func TestGoWithSignal_DeliversTypedValue(t *testing.T) {
+	t.Helper()
+
+	ch := GoWithSignal(context.Background(), "signal-typed", logger.GetLogger("test"),
+		func(_ context.Context) bool {
+			return true
+		})
+
+	select {
+	case r := <-ch:
+		require.NotNil(t, r.Outcome)
+		require.False(t, r.Outcome.Panicked)
+		require.True(t, r.Value)
+	case <-time.After(2 * time.Second):
+		t.Fatal("expected SignalResult to be delivered on the channel")
+	}
+}
+
+// TestGoWithSignal_DeliversCleanOutcome pins that a clean fn still yields one
+// SignalResult on the channel, with Panicked=false. Callers that always read
+// the channel can branch on outcome.Panicked.
+func TestGoWithSignal_DeliversCleanOutcome(t *testing.T) {
+	t.Helper()
+
+	executed := atomic.Bool{}
+	ch := GoWithSignal(context.Background(), "signal-clean", logger.GetLogger("test"),
+		func(_ context.Context) struct{} {
+			executed.Store(true)
+			return struct{}{}
+		})
+
+	select {
+	case r := <-ch:
+		require.True(t, executed.Load())
+		require.NotNil(t, r.Outcome)
+		require.False(t, r.Outcome.Panicked)
+	case <-time.After(2 * time.Second):
+		t.Fatal("expected outcome to be delivered on the signal channel")
+	}
+}
+
+// TestGoWithSignal_ChannelIsBufferedAndClosed pins two contracts callers rely
+// on inside selects: the channel is buffered so the goroutine never blocks on
+// send (so a slow caller cannot deadlock the goroutine), and the channel is
+// closed after delivery so a "drain after timeout" pattern with a second read
+// does not block forever.
+func TestGoWithSignal_ChannelIsBufferedAndClosed(t *testing.T) {
+	t.Helper()
+
+	ch := GoWithSignal(context.Background(), "signal-closed", logger.GetLogger("test"),
+		func(_ context.Context) struct{} { return struct{}{} })
+
+	// Pause briefly so the goroutine has time to send and close. We are not
+	// trying to race anything; we only need to guarantee the goroutine is
+	// done before the next reads.
+	time.Sleep(50 * time.Millisecond)
+
+	first, ok := <-ch
+	require.True(t, ok, "expected at least one value on the channel")
+	require.NotNil(t, first.Outcome)
+	require.False(t, first.Outcome.Panicked)
+
+	// Second read should observe the channel as closed (zero value, ok=false),
+	// not block.
+	_, ok = <-ch
+	require.False(t, ok, "expected channel to be closed after one delivery")
+}
+
+// TestGoWithSignal_DoesNotTerminateProcessOnPanic pins that a recovered panic
+// stays recovered: process continues, fn's panic does not propagate. This is
+// the critical distinction from GoOrDie.
+func TestGoWithSignal_DoesNotTerminateProcessOnPanic(t *testing.T) {
+	t.Helper()
+
+	ch := GoWithSignal(context.Background(), "signal-non-fatal", logger.GetLogger("test"),
+		func(_ context.Context) int {
+			panic("non-fatal-boom")
+		})
+
+	r := <-ch
+	require.NotNil(t, r.Outcome)
+	require.True(t, r.Outcome.Panicked)
+	// If we reach here the process did not die: that is the contract we are
+	// pinning. A regression that turned GoWithSignal into a fatal primitive
+	// would never reach this assertion (the test process would have died).
 }

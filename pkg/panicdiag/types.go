@@ -39,6 +39,14 @@ type PanicRecord struct {
 }
 
 // RecoveryOptions configures how panic recovery writes diagnostics.
+//
+// Neither AbortFunc nor a Repanic toggle is configurable per-call: callers
+// that need to react to a recovered panic should consume the *RecoveryOutcome
+// returned by WithRecovery, or watch a Task launched by pkg/run.Go.
+// Process-wide abort behavior remains available via SetDefaultAbortFunc;
+// callers that need to re-raise the panic with full fidelity can do so
+// themselves with the typed RecoveryOutcome.PanicValue after WithRecovery
+// returns.
 type RecoveryOptions struct {
 	Counter         meter.Counter
 	Logger          *logger.Logger
@@ -47,7 +55,6 @@ type RecoveryOptions struct {
 	Component       string
 	ArtifactRoot    string
 	StateLimitBytes int64
-	Repanic         bool
 }
 
 // RecoveryResult contains the outcome of a recovered panic.
@@ -62,9 +69,15 @@ type RecoveryResult struct {
 // notify channel, or set an error variable can read fields directly instead of
 // smuggling state through an OnAbort closure. A non-nil outcome is always
 // returned; Panicked is false when fn ran to completion without recovery.
+//
+// PanicValue holds the original (typed) panic argument when Panicked is true.
+// It is intended for callers that need to re-raise with full fidelity, e.g.
+// `panic(outcome.PanicValue)` after WithRecovery returns. The string-form is
+// available via Result.Record.PanicValue for logging and reporting.
 type RecoveryOutcome struct {
-	Result   RecoveryResult
-	Panicked bool
+	PanicValue any
+	Result     RecoveryResult
+	Panicked   bool
 }
 
 // Reporter receives the result of a recovered panic. Reporters are intended

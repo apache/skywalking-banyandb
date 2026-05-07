@@ -226,22 +226,32 @@ func (t *task) run() {
 				defer func() {
 					t.metrics.TotalTasksFinished.Add(1)
 					t.metrics.TotalTaskLatencyInNanoseconds.Add(time.Since(start).Nanoseconds())
+					// Defense-in-depth: action panics are caught and counted
+					// via the signalCh path below. This recover only fires if
+					// the select code itself panics.
 					if r := recover(); r != nil {
 						t.l.Error().Str("name", t.name).Interface("panic", r).Str("stack", string(debug.Stack())).Msg("panic")
 						ret = true
 						t.metrics.TotalTasksPanic.Add(1)
 					}
 				}()
-				resultCh := make(chan bool, 1)
 				timeoutCh := t.clock.Timer(5 * time.Minute).C
 
-				run.Go(t.parentCtx, "scheduler-action-"+t.name, t.l, func(ctx context.Context) {
-					resultCh <- t.action(ctx, now, t.l)
-				})
+				signalCh := run.GoWithSignal(t.parentCtx, "scheduler-action-"+t.name, t.l,
+					func(ctx context.Context) bool {
+						return t.action(ctx, now, t.l)
+					})
 
 				select {
-				case result := <-resultCh:
-					return result
+				case r := <-signalCh:
+					// panicdiag has already logged the panic and persisted
+					// the artifact; here we surface the failure to the
+					// scheduler instead of stalling on timeoutCh for 5min.
+					if r.Outcome != nil && r.Outcome.Panicked {
+						t.metrics.TotalTasksPanic.Add(1)
+						return true
+					}
+					return r.Value
 				case <-timeoutCh:
 					t.l.Error().Str("name", t.name).Msg("action timed out")
 					t.metrics.TotalTasksTimeout.Add(1)

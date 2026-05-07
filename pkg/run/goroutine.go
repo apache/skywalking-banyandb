@@ -26,11 +26,8 @@ import (
 	"github.com/apache/skywalking-banyandb/pkg/panicdiag"
 )
 
-// Task tracks a goroutine launched by Go.
-//
-// Done closes when the goroutine exits. Outcome is nil until then, then holds
-// the recovery result. WithRepanic(true) still closes Done, but may leave
-// Outcome nil because the panic is re-raised before it can be stored.
+// Task tracks a goroutine launched by Go or GoOrDie. Done closes on exit;
+// Outcome is nil until then.
 type Task struct {
 	outcome atomic.Pointer[panicdiag.RecoveryOutcome]
 	done    chan struct{}
@@ -41,8 +38,8 @@ func (t *Task) Done() <-chan struct{} {
 	return t.done
 }
 
-// Outcome returns the panic-recovery outcome, or nil if the goroutine has
-// not yet exited (or re-raised a panic via WithRepanic).
+// Outcome returns the panic-recovery outcome, or nil if the goroutine has not
+// yet exited.
 func (t *Task) Outcome() *panicdiag.RecoveryOutcome {
 	return t.outcome.Load()
 }
@@ -53,8 +50,7 @@ func (t *Task) Wait() *panicdiag.RecoveryOutcome {
 	return t.outcome.Load()
 }
 
-// goConfig holds the resolved options for a Go call. All fields are optional
-// and, except where noted, fall back to panicdiag's process-wide defaults.
+// goConfig holds resolved options for Go, GoOrDie, and GoWithSignal.
 type goConfig struct {
 	reporter        panicdiag.Reporter
 	stateDumper     panicdiag.StateDumper
@@ -62,20 +58,14 @@ type goConfig struct {
 	processMetadata map[string]string
 	artifactRoot    string
 	stateLimitBytes int64
-	repanic         bool
 }
 
-// Option configures a single Go call. Options compose with panicdiag defaults.
+// Option configures Go, GoOrDie, or GoWithSignal.
 type Option func(*goConfig)
 
 // WithReporter installs a non-blocking per-call reporter for recovered panics.
 func WithReporter(r panicdiag.Reporter) Option {
 	return func(c *goConfig) { c.reporter = r }
-}
-
-// WithRepanic re-raises recovered panics after diagnostics. Default is false.
-func WithRepanic(repanic bool) Option {
-	return func(c *goConfig) { c.repanic = repanic }
 }
 
 // WithStateDumper attaches a StateDumper that runs during recovery to capture
@@ -105,41 +95,111 @@ func WithStateLimitBytes(n int64) Option {
 	return func(c *goConfig) { c.stateLimitBytes = n }
 }
 
-// Go launches fn in a panic-recovered goroutine.
-//
-// Recovered panics are logged with diagnostics, reported to process-wide
-// panicdiag hooks, and exposed through the returned Task. A per-call reporter
-// composes with the process-wide default; callers that need to react to a
-// panic should consume Task.Wait or Task.Done.
-//
-// WithRepanic(true) restores process-fatal behavior after diagnostics. Panic
-// counters configured by option or default are incremented with component.
+// Go launches fn in a recovered goroutine.
+// Panics are logged, reported, and exposed through the returned Task. Use
+// GoOrDie for fatal panics and GoWithSignal when a select needs the outcome.
 func Go(ctx context.Context, component string, log *logger.Logger, fn func(context.Context), opts ...Option) *Task {
+	return launchTask(ctx, component, log, fn, false, opts)
+}
+
+// GoOrDie launches fn with recovery, then re-raises recovered panics after
+// diagnostics and reporters complete.
+func GoOrDie(ctx context.Context, component string, log *logger.Logger, fn func(context.Context), opts ...Option) *Task {
+	return launchTask(ctx, component, log, fn, true, opts)
+}
+
+// SignalResult bundles fn's typed return with the recovery outcome so the
+// parent receives both on a single channel. Value is the zero value of T when
+// Outcome.Panicked is true (fn never returned). Outcome is always non-nil.
+type SignalResult[T any] struct {
+	Outcome *panicdiag.RecoveryOutcome
+	Value   T
+}
+
+// GoWithSignal launches fn under panic recovery and delivers fn's typed return
+// alongside the recovery outcome on the returned channel exactly once, then
+// closes the channel. Use it when the launcher needs to react synchronously
+// to fn's completion inside a select alongside other channels, such as
+// timeouts or parent cancellation, and wants both value and panic in-band.
+//
+// The channel is buffered (size 1) so the goroutine never blocks on send and
+// closes after delivery so a "drain after timeout" pattern is safe. Recovery
+// is non-fatal: panics are logged and reported to process-wide hooks like
+// with Go, never re-raised. Use Go for fire-and-forget background helpers
+// that don't return a value; use GoOrDie when the panic must be fatal.
+//
+// When fn panics, Value is the zero value of T and the caller should branch
+// on result.Outcome.Panicked before reading result.Value.
+func GoWithSignal[T any](ctx context.Context, component string, log *logger.Logger, fn func(context.Context) T, opts ...Option) <-chan SignalResult[T] {
+	cfg := buildGoConfig(opts)
+	ch := make(chan SignalResult[T], 1)
+	go func() {
+		defer close(ch)
+		value, outcome := runRecoveredT(ctx, component, log, fn, cfg)
+		ch <- SignalResult[T]{Value: value, Outcome: outcome}
+	}()
+	return ch
+}
+
+// launchTask starts the shared Go and GoOrDie goroutine.
+func launchTask(ctx context.Context, component string, log *logger.Logger, fn func(context.Context), repanic bool, opts []Option) *Task {
+	cfg := buildGoConfig(opts)
+	task := &Task{done: make(chan struct{})}
+	go func() {
+		defer close(task.done)
+		outcome := runRecovered(ctx, component, log, fn, cfg)
+		task.outcome.Store(outcome)
+		// Store before re-raise so observers can still see the outcome.
+		if repanic && outcome.Panicked {
+			panic(outcome.PanicValue)
+		}
+	}()
+	return task
+}
+
+// buildGoConfig folds caller options into a goConfig.
+func buildGoConfig(opts []Option) goConfig {
 	cfg := goConfig{}
 	for _, o := range opts {
 		o(&cfg)
 	}
+	return cfg
+}
 
-	task := &Task{done: make(chan struct{})}
-	go func() {
-		defer close(task.done)
-		outcome := panicdiag.WithRecovery(ctx, panicdiag.RecoveryOptions{
-			Component:       component,
-			Logger:          log,
-			Counter:         cfg.counter,
-			StateDumper:     cfg.stateDumper,
-			ProcessMetadata: cfg.processMetadata,
-			ArtifactRoot:    cfg.artifactRoot,
-			StateLimitBytes: cfg.stateLimitBytes,
-			Repanic:         cfg.repanic,
-		}, cfg.reporter, func(ctxPtr *context.Context) {
-			// Install a mutable breadcrumb store so breadcrumbs added inside
-			// fn are visible to the recovery defer (which reads *ctxPtr after
-			// fn returns or panics).
-			*ctxPtr = panicdiag.WithMutableBreadcrumbs(*ctxPtr)
-			fn(*ctxPtr)
-		})
-		task.outcome.Store(outcome)
-	}()
-	return task
+// runRecovered applies pkg/run recovery options and breadcrumbs.
+func runRecovered(ctx context.Context, component string, log *logger.Logger, fn func(context.Context), cfg goConfig) *panicdiag.RecoveryOutcome {
+	return panicdiag.WithRecovery(ctx, panicdiag.RecoveryOptions{
+		Component:       component,
+		Logger:          log,
+		Counter:         cfg.counter,
+		StateDumper:     cfg.stateDumper,
+		ProcessMetadata: cfg.processMetadata,
+		ArtifactRoot:    cfg.artifactRoot,
+		StateLimitBytes: cfg.stateLimitBytes,
+	}, cfg.reporter, func(ctxPtr *context.Context) {
+		// Let recovery read breadcrumbs added by fn.
+		*ctxPtr = panicdiag.WithMutableBreadcrumbs(*ctxPtr)
+		fn(*ctxPtr)
+	})
+}
+
+// runRecoveredT is the generic counterpart to runRecovered: it captures fn's
+// typed return value via closure write so callers (GoWithSignal) can deliver
+// it alongside the outcome. If fn panics before completing, value remains the
+// zero value of T and the caller should branch on outcome.Panicked first.
+func runRecoveredT[T any](ctx context.Context, component string, log *logger.Logger, fn func(context.Context) T, cfg goConfig) (T, *panicdiag.RecoveryOutcome) {
+	var value T
+	outcome := panicdiag.WithRecovery(ctx, panicdiag.RecoveryOptions{
+		Component:       component,
+		Logger:          log,
+		Counter:         cfg.counter,
+		StateDumper:     cfg.stateDumper,
+		ProcessMetadata: cfg.processMetadata,
+		ArtifactRoot:    cfg.artifactRoot,
+		StateLimitBytes: cfg.stateLimitBytes,
+	}, cfg.reporter, func(ctxPtr *context.Context) {
+		*ctxPtr = panicdiag.WithMutableBreadcrumbs(*ctxPtr)
+		value = fn(*ctxPtr)
+	})
+	return value, outcome
 }

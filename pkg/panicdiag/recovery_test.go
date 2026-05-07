@@ -243,39 +243,6 @@ func TestWithRecoveryNoPanic(t *testing.T) {
 	}
 }
 
-func TestWithRecoveryRepanicsAfterReporting(t *testing.T) {
-	t.Helper()
-
-	reported := make(chan RecoveryResult, 1)
-	defer func() {
-		panicValue := recover()
-		if panicValue != "boom" {
-			t.Fatalf("panic value mismatch: got %v want boom", panicValue)
-		}
-		select {
-		case result := <-reported:
-			if result.Record == nil {
-				t.Fatal("expected recovery record")
-			}
-			if result.Record.PanicValue != "boom" {
-				t.Fatalf("record panic value mismatch: got %s", result.Record.PanicValue)
-			}
-		default:
-			t.Fatal("expected recovery reporter to be called before repanic")
-		}
-	}()
-
-	WithRecovery(context.Background(), RecoveryOptions{
-		Component: "watchdog",
-		Repanic:   true,
-	}, func(_ context.Context, result RecoveryResult) {
-		reported <- result
-	}, func(_ *context.Context) {
-		panic("boom")
-	})
-	t.Fatal("expected panic to be raised again")
-}
-
 func TestGoWithRecovery(t *testing.T) {
 	t.Helper()
 
@@ -415,10 +382,12 @@ func TestDefaultAbortRunsAfterReporters(t *testing.T) {
 	}
 }
 
-// TestDefaultAbortFiresBeforeRepanic ensures the default abort runs before
-// Repanic so the registered hook may both fail the supervisor and re-raise
-// the panic.
-func TestDefaultAbortFiresBeforeRepanic(t *testing.T) {
+// TestDefaultAbortFiresBeforeReturn pins that the default abort runs inside
+// the recovery defer, so it has executed before WithRecovery returns to the
+// caller. Callers that re-raise from the outcome (or that the supervisor
+// cancels) can rely on the abort having been observed by the time control
+// returns.
+func TestDefaultAbortFiresBeforeReturn(t *testing.T) {
 	t.Helper()
 
 	previousAbort := defaultAbortFuncPtr.Load()
@@ -435,27 +404,23 @@ func TestDefaultAbortFiresBeforeRepanic(t *testing.T) {
 		aborted <- result
 	})
 
-	defer func() {
-		if rec := recover(); rec != "abort-then-repanic" {
-			t.Fatalf("expected repanic, got %v", rec)
-		}
-		select {
-		case got := <-aborted:
-			if got.Record == nil {
-				t.Fatal("expected abort record")
-			}
-		default:
-			t.Fatal("expected default abort to fire before repanic")
-		}
-	}()
-
-	WithRecovery(context.Background(), RecoveryOptions{
-		Component: "abort-repanic",
-		Repanic:   true,
+	outcome := WithRecovery(context.Background(), RecoveryOptions{
+		Component: "abort-before-return",
 	}, nil, func(_ *context.Context) {
-		panic("abort-then-repanic")
+		panic("abort-before-return-boom")
 	})
-	t.Fatal("expected panic to be raised again")
+
+	if outcome == nil || !outcome.Panicked {
+		t.Fatal("expected recovered outcome")
+	}
+	select {
+	case got := <-aborted:
+		if got.Record == nil || got.Record.PanicValue != "abort-before-return-boom" {
+			t.Fatalf("default abort got unexpected record: %#v", got.Record)
+		}
+	default:
+		t.Fatal("expected default abort to have fired before WithRecovery returned")
+	}
 }
 
 // TestWithRecoveryOutcomeOnPanic pins that the synchronous return value carries
@@ -481,6 +446,35 @@ func TestWithRecoveryOutcomeOnPanic(t *testing.T) {
 	}
 	if outcome.Result.Record.PanicValue != "outcome-boom" {
 		t.Fatalf("PanicValue = %q, want outcome-boom", outcome.Result.Record.PanicValue)
+	}
+	if got, ok := outcome.PanicValue.(string); !ok || got != "outcome-boom" {
+		t.Fatalf("typed PanicValue = %#v, want %q (string)", outcome.PanicValue, "outcome-boom")
+	}
+}
+
+// TestWithRecoveryOutcomePreservesTypedPanicValue pins that the typed
+// PanicValue carries the original (non-stringified) panic argument, which is
+// what callers need to re-raise with full fidelity.
+func TestWithRecoveryOutcomePreservesTypedPanicValue(t *testing.T) {
+	t.Helper()
+
+	type customPanic struct{ msg string }
+
+	outcome := WithRecovery(context.Background(), RecoveryOptions{
+		Component: "outcome-typed",
+	}, nil, func(_ *context.Context) {
+		panic(customPanic{msg: "typed"})
+	})
+
+	if outcome == nil || !outcome.Panicked {
+		t.Fatal("expected recovered outcome")
+	}
+	got, ok := outcome.PanicValue.(customPanic)
+	if !ok {
+		t.Fatalf("PanicValue should be customPanic, got %T", outcome.PanicValue)
+	}
+	if got.msg != "typed" {
+		t.Fatalf("customPanic.msg = %q, want %q", got.msg, "typed")
 	}
 }
 

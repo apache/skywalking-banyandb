@@ -26,10 +26,8 @@ import (
 	"github.com/apache/skywalking-banyandb/pkg/logger"
 )
 
-// WithRecovery executes fn and recovers panics with structured diagnostics.
-// fn may update the context pointer to add breadcrumbs before recovery reads
-// it. The returned outcome is non-nil unless Repanic re-raises the panic before
-// the caller can observe it.
+// WithRecovery executes fn and recovers panics with diagnostics. fn may update
+// the context pointer before recovery reads it. The outcome is always non-nil.
 func WithRecovery(ctx context.Context, opts RecoveryOptions, reporter Reporter, fn func(*context.Context)) (outcome *RecoveryOutcome) {
 	outcome = &RecoveryOutcome{}
 	if ctx == nil {
@@ -117,12 +115,10 @@ func WithRecovery(ctx context.Context, opts RecoveryOptions, reporter Reporter, 
 			ArtifactDir: artifactDir,
 		}
 		outcome.Panicked = true
+		outcome.PanicValue = panicValue
 		outcome.Result = recoveryResult
 		callReporter(ctx, reporter, recoveryResult)
 		callDefaultAbort(ctx, recoveryResult)
-		if opts.Repanic {
-			panic(panicValue)
-		}
 	}()
 
 	fn(&ctx)
