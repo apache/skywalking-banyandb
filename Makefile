@@ -96,6 +96,11 @@ test-docker: ## Run tests in Docker with constrained resources (2 CPU cores, 4GB
 	  -ldflags "-X github.com/apache/skywalking-banyandb/pkg/test/flags.eventuallyTimeout=30s -X github.com/apache/skywalking-banyandb/pkg/test/flags.consistentlyTimeout=10s -X github.com/apache/skywalking-banyandb/pkg/test/flags.LogLevel=error" \
 	  $(PKG)
 
+load-test-barrier: ## Run the schema-barrier CP-6 SLO load harness (3 data nodes + 1 liaison, 100 callers, 5m measurement). Override with LOAD_FLAGS="-loadtest.measure=30s ..." for smoke runs.
+	@echo "Running schema-barrier load harness (CP-6 SLO profile)"
+	@echo "Override profile via LOAD_FLAGS, e.g. LOAD_FLAGS='-loadtest.measure=30s -loadtest.callers=20'"
+	go test -tags=loadtest -timeout 30m -count=1 -v ./test/load/schema_barrier/... $(LOAD_FLAGS)
+
 ##@ Code quality targets
 
 lint: TARGET=lint
