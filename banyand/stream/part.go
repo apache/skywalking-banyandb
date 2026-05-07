@@ -223,9 +223,12 @@ func (mp *memPart) mustFlush(fileSystem fs.FileSystem, path string) {
 		fs.MustFlush(fileSystem, tfh.Buf, filepath.Join(path, name+tagFamiliesFilterFilenameExt), storage.FilePerm)
 	}
 
-	// Flush series metadata if available
+	// Flush series metadata if available. Goes through MustFlushAtomic
+	// because the file is read at part open by mustOpenFilePart and a
+	// crash during a non-atomic write could leave a partial file that
+	// reads as corrupt.
 	if len(mp.seriesMetadata.Buf) > 0 {
-		fs.MustFlush(fileSystem, mp.seriesMetadata.Buf, filepath.Join(path, seriesMetadataFilename), storage.FilePerm)
+		fs.MustFlushAtomic(fileSystem, mp.seriesMetadata.Buf, filepath.Join(path, seriesMetadataFilename), storage.FilePerm)
 	}
 
 	mp.partMetadata.mustWriteMetadata(fileSystem, path)
