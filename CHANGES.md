@@ -33,11 +33,13 @@ Release Notes.
   - Guard `pkg/schema/cache` against out-of-order `EventDelete` events; expose monotonic `LatestModRevision` watermark.
 - Schema consistency (Phase 2 in progress): cluster-wide barrier groundwork. Internal-only; no client-facing surface impact yet.
   - Add `NodeSchemaStatusService` (`GetMaxRevision`, `GetKeyRevisions`, `GetAbsentKeys`) registered on every cluster member that holds a schema cache, so peer liaisons and data nodes can be probed identically by the upcoming barrier fan-out (#1108).
-  - Extend `queue.Client` with `NewNodeSchemaStatusClient(node)` so the barrier fan-out can borrow the existing tier1/tier2 connection pools instead of opening a parallel mesh.
-- Add end-to-end observability for liaison internal queue pipelines with per-topic metrics for queue_sub and queue_pub, along with Grafana panels and troubleshooting docs.
+  - Extend `queue.Client` with `NewNodeSchemaStatusClient(node)` so the barrier fan-out can borrow the existing tier1/tier2 connection pools instead of opening a parallel mesh (#1109).
+  - `AwaitRevisionApplied` now fans out across the receiving liaison's frozen tier1 (peer-liaison) + tier2 (data-node) Active set, probing each member in parallel via `GetMaxRevision` with shared per-call deadline. Cross-version peers returning `codes.Unimplemented` are treated as ready so partial-upgrade clusters do not deadlock; transient RPC errors count as per-iteration laggards. Empty Active set fails fast with `codes.Unavailable`.
+  - Add end-to-end observability for liaison internal queue pipelines with per-topic metrics for queue_sub and queue_pub, along with Grafana panels and troubleshooting docs.
 
 ### Bug Fixes
 
+- Fix bydbctl command tests using global stdout capture, which caused race-enabled runs to corrupt captured command output.
 - Use `topic` instead of `session_id` as the Prometheus label on liaison `queue_sub` chunk-ordering counters to avoid unbounded metric cardinality.
 - Fix flaky trace query filtering caused by non-deterministic sidx tag ordering and add consistency checks for integration query cases.
 - Fix index-mode measure queries returning documents outside the requested time range when a widened segment overlaps the query window.
@@ -65,6 +67,7 @@ Release Notes.
 - Fix flaky `TestCollectWithPartialClosedSegments` by raising `SegmentIdleTimeout` so wall-clock variance on slow CI does not mark still-open segments as idle.
 - Fix FODC lifecycle cache poisoning where transient `InspectAll` failures were cached for 10 minutes and masked liaison recovery; raise FODC agent and proxy timeouts from 10s to 40s.
 - Fix FODC `/cluster/lifecycle` dropping zero-valued group fields (e.g. `replicas=0`, `close=false`) under `encoding/json` + `omitempty`; switch to `protojson` so all fields are emitted (nil nested messages serialize as `null`).
+- Fix trace `block_writer` panic on out-of-order timestamps within the same traceID, which dropped one trace-write batch per panic in multi-agent SkyWalking deployments. Spans of a single trace originate from independently-clocked services, and trace storage is organized by traceID rather than timestamp, so per-traceID timestamp monotonicity is not a writer invariant.
 
 ### Chores
 
