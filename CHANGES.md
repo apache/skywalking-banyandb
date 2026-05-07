@@ -69,6 +69,7 @@ Release Notes.
 - Fix trace `block_writer` panic on out-of-order timestamps within the same traceID, which dropped one trace-write batch per panic in multi-agent SkyWalking deployments. Spans of a single trace originate from independently-clocked services, and trace storage is organized by traceID rather than timestamp, so per-traceID timestamp monotonicity is not a writer invariant.
 - Fix nil-pointer panic on cold-tier data nodes when FODC `InspectAll` raced with idle-segment cleanup.
 - Add `GroupLifecycleInfo.errors` to surface per-group collection failures from FODC `InspectAll` instead of silently dropping the affected node entry.
+- Fix `CollectDataInfo` and `CollectLiaisonInfo` not handling `CATALOG_PROPERTY` groups.
 
 ### Chores
 

@@ -99,6 +99,13 @@ func (icr *InfoCollectorRegistry) CollectDataInfo(ctx context.Context, group str
 	if getErr != nil {
 		return nil, nil, getErr
 	}
+	// PROPERTY groups are key-value metadata: no DataInfoCollector is
+	// registered for them and no Topic*CollectDataInfo broadcast applies.
+	// Skip the entire pipeline so the inspector reports nothing instead
+	// of falling into the unsupported-catalog default branch.
+	if g.Catalog == commonv1.Catalog_CATALOG_PROPERTY {
+		return nil, nil, nil
+	}
 	localInfo, localErr := icr.collectDataInfoLocal(ctx, g.Catalog, group)
 	if localErr != nil {
 		return nil, nil, localErr
@@ -172,6 +179,13 @@ func (icr *InfoCollectorRegistry) CollectLiaisonInfo(ctx context.Context, group 
 	g, getErr := icr.groupGetter.GetGroup(ctx, group)
 	if getErr != nil {
 		return nil, getErr
+	}
+	// PROPERTY groups are key-value metadata: no LiaisonInfoCollector is
+	// registered for them and no Topic*CollectLiaisonInfo broadcast applies.
+	// Skip the entire pipeline so the inspector reports nothing instead of
+	// falling into the unsupported-catalog default branch.
+	if g.Catalog == commonv1.Catalog_CATALOG_PROPERTY {
+		return nil, nil
 	}
 	localInfo, localErr := icr.collectLiaisonInfoLocal(ctx, g.Catalog, group)
 	if localErr != nil {
