@@ -18,6 +18,7 @@
 package trace
 
 import (
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -26,6 +27,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
+	"github.com/apache/skywalking-banyandb/banyand/protector"
 	"github.com/apache/skywalking-banyandb/pkg/fs"
 	"github.com/apache/skywalking-banyandb/pkg/test"
 )
@@ -80,4 +82,79 @@ func Test_mustOpenFilePart_removesLeftoverTmp(t *testing.T) {
 
 	_, statErr := os.Stat(stray)
 	assert.Truef(t, os.IsNotExist(statErr), "expected stray .tmp removed, got err=%v", statErr)
+}
+
+// Test_merger_tornSpansBin_stillPanics is the reproducer described in the body
+// of apache/skywalking#13862. It forges the production-shape on-disk state —
+// a part directory whose metadata.json claims N blocks but whose spans.bin is
+// truncated — and feeds it to mergeParts. The expected outcome under the
+// merge-durability fix is *unchanged* from before the fix: the merger panics
+// with "offset must be equal to bytesRead", because that is BanyanDB's
+// canonical fail-fast contract for a corrupt source part.
+//
+// The fix prevents torn parts from being CREATED via a clean-crash path
+// (atomic metadata commit makes that impossible). It does NOT prevent the
+// panic when an externally-corrupt part is forced onto disk (rsync, manual
+// file copy, host disk failure, pre-fix-deployment leftovers). This test
+// guards against accidental panic suppression by future refactors.
+func Test_merger_tornSpansBin_stillPanics(t *testing.T) {
+	tmpPath, defFn := test.Space(require.New(t))
+	defer defFn()
+	fileSystem := fs.NewLocalFileSystem()
+
+	// Build two healthy parts with multiple blocks.
+	mp1 := generateMemPart()
+	mp1.mustInitFromTraces(ts)
+	mp1.mustFlush(fileSystem, partPath(tmpPath, 1))
+	releaseMemPart(mp1)
+
+	mp2 := generateMemPart()
+	mp2.mustInitFromTraces(ts)
+	mp2.mustFlush(fileSystem, partPath(tmpPath, 2))
+	releaseMemPart(mp2)
+
+	// Forge the torn shape: truncate part 1's spans.bin so primary.bin's
+	// block-metadata claims more bytes than spans.bin actually contains.
+	spansPath := filepath.Join(partPath(tmpPath, 1), "spans.bin")
+	stat, err := os.Stat(spansPath)
+	require.NoError(t, err)
+	require.Greater(t, stat.Size(), int64(0), "test fixture must produce non-empty spans.bin")
+	tornAt := stat.Size() - 1
+	require.NoError(t, os.Truncate(spansPath, tornAt))
+
+	// mustOpenFilePart succeeds because metadata.json is intact — the
+	// truncation is only in spans.bin.
+	p1 := mustOpenFilePart(1, tmpPath, fileSystem)
+	p1.partMetadata.ID = 1
+	p2 := mustOpenFilePart(2, tmpPath, fileSystem)
+	p2.partMetadata.ID = 2
+
+	tst := &tsTable{pm: protector.Nop{}, fileSystem: fileSystem, root: tmpPath}
+	closeCh := make(chan struct{})
+	defer close(closeCh)
+
+	defer func() {
+		r := recover()
+		require.NotNilf(t, r, "merger must panic on torn spans.bin (canonical fail-fast contract)")
+		// Accept any panic from the merger's read path. The exact message
+		// depends on which block boundary the truncation hit; valid shapes:
+		//   "offset N must be equal to bytesRead M"
+		//   "cannot read full data: ..."
+		//   "cannot read data: ..."
+		//   "cannot decode spans: ..."
+		got := fmt.Sprint(r)
+		t.Logf("captured panic: %s", got)
+		valid := strings.Contains(got, "offset") ||
+			strings.Contains(got, "cannot read") ||
+			strings.Contains(got, "cannot decode") ||
+			strings.Contains(got, "EOF")
+		assert.Truef(t, valid, "panic message did not match canonical fail-fast shapes: %s", got)
+	}()
+
+	_, _ = tst.mergeParts(fileSystem, closeCh, []*partWrapper{
+		newPartWrapper(nil, p1),
+		newPartWrapper(nil, p2),
+	}, 99, tmpPath)
+
+	t.Fatal("mergeParts returned without panicking — torn-part fail-fast contract is broken")
 }
