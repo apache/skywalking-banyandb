@@ -19,7 +19,6 @@ package grpc
 
 import (
 	"sync"
-	"sync/atomic"
 	"testing"
 	"time"
 
@@ -37,15 +36,12 @@ import (
 )
 
 // fakeRevisionRepo implements registry.RevisionRepository with a controllable
-// per-key map and an atomically advancing latestModRevision watermark. Tests
-// use it to simulate the eventCh-retry leak the gate must close: a state
-// where the entityRepo locator already advanced to R but the schemaRepo (and
-// therefore the registry) has not — in production this is the data-node
-// executor lag the cluster barrier already accounts for via NodeRepoRegistry.
+// per-key map. Tests use it to simulate the eventCh-retry leak the gate must
+// close: a state where the entityRepo locator already advanced to R but the
+// schemaRepo (and therefore the registry) has not.
 type fakeRevisionRepo struct {
-	keys   map[string]int64
-	latest atomic.Int64
-	mu     sync.RWMutex
+	keys map[string]int64
+	mu   sync.RWMutex
 }
 
 func newFakeRevisionRepo() *fakeRevisionRepo {
@@ -60,16 +56,7 @@ func (f *fakeRevisionRepo) set(kind schema.Kind, group, name string, rev int64) 
 	f.mu.Lock()
 	f.keys[f.keyOf(kind, group, name)] = rev
 	f.mu.Unlock()
-	for {
-		cur := f.latest.Load()
-		if rev <= cur || f.latest.CompareAndSwap(cur, rev) {
-			return
-		}
-	}
 }
-
-// LatestModRevision implements registry.RevisionRepository.
-func (f *fakeRevisionRepo) LatestModRevision() int64 { return f.latest.Load() }
 
 // ResourceRevision implements registry.RevisionRepository.
 func (f *fakeRevisionRepo) ResourceRevision(kind schema.Kind, group, name string) (int64, bool) {

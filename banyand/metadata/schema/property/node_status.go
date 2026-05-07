@@ -145,35 +145,18 @@ func (s *NodeSchemaStatusServer) registry() *registry.NodeRepoRegistry {
 	return s.registryProvider()
 }
 
-// GetMaxRevision returns the minimum mod_revision across the schemaCache
-// watermark and the per-service NodeRepoRegistry. Either source contributes
-// only when present and non-empty; a registry with no registered repos is
-// treated as "no executor cache to gate on" and skipped (otherwise its
-// LatestModRevision()=0 would gate every verdict to 0 on a metadata-only
-// host).
-//
-// When neither source has data the response carries 0, which the liaison's
-// barrier loop interprets as "node not yet caught up" and continues polling.
+// GetMaxRevision returns the schemaCache's notifiedModRevision watermark.
+// The cache observes every catalog's events, so it is the correct global
+// watermark — symmetric with the receiving liaison's selfName probe at
+// barrier_cluster.go:354-360 which also reads cache-only. Per-key gating
+// (executor-cache routing by kind) is handled by GetKeyRevisions /
+// GetAbsentKeys via the NodeRepoRegistry.
 func (s *NodeSchemaStatusServer) GetMaxRevision(_ context.Context, _ *clusterv1.GetMaxRevisionRequest) (*clusterv1.GetMaxRevisionResponse, error) {
-	var (
-		minRev    int64
-		hasSource bool
-	)
-	if c := s.cache(); c != nil {
-		minRev = c.GetMaxModRevision()
-		hasSource = true
-	}
-	if reg := s.registry(); reg != nil && !reg.Empty() {
-		regRev := reg.LatestModRevision()
-		if !hasSource || regRev < minRev {
-			minRev = regRev
-		}
-		hasSource = true
-	}
-	if !hasSource {
+	c := s.cache()
+	if c == nil {
 		return &clusterv1.GetMaxRevisionResponse{}, nil
 	}
-	return &clusterv1.GetMaxRevisionResponse{MaxModRevision: minRev}, nil
+	return &clusterv1.GetMaxRevisionResponse{MaxModRevision: c.GetMaxModRevision()}, nil
 }
 
 // GetKeyRevisions returns per-key (mod_revision, present) pairs in the same

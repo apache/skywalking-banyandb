@@ -29,12 +29,10 @@ import (
 // fakeRevRepo is a minimal RevisionRepository for registry unit tests.
 type fakeRevRepo struct {
 	resources map[string]map[string]int64
-	latest    int64
 }
 
-func newFakeRevRepo(latest int64) *fakeRevRepo {
+func newFakeRevRepo() *fakeRevRepo {
 	return &fakeRevRepo{
-		latest:    latest,
 		resources: make(map[string]map[string]int64),
 	}
 }
@@ -44,10 +42,6 @@ func (f *fakeRevRepo) put(group, name string, rev int64) {
 		f.resources[group] = make(map[string]int64)
 	}
 	f.resources[group][name] = rev
-}
-
-func (f *fakeRevRepo) LatestModRevision() int64 {
-	return f.latest
 }
 
 func (f *fakeRevRepo) ResourceRevision(_ metaschema.Kind, group, name string) (int64, bool) {
@@ -64,36 +58,28 @@ func (f *fakeRevRepo) IsAbsent(kind metaschema.Kind, group, name string) bool {
 	return !ok
 }
 
-func TestNodeRepoRegistry_EmptyReturnsZero(t *testing.T) {
+func TestNodeRepoRegistry_EmptyHasNoKindsAndAbsentKeys(t *testing.T) {
 	r := NewNodeRepoRegistry()
-	assert.Equal(t, int64(0), r.LatestModRevision())
 	rev, ok := r.ResourceRevision(metaschema.KindStream, "g", "n")
 	assert.Equal(t, int64(0), rev)
 	assert.False(t, ok)
 	assert.True(t, r.IsAbsent(metaschema.KindStream, "g", "n"))
 	assert.False(t, r.HasKind(metaschema.KindStream))
+	assert.True(t, r.Empty())
 }
 
 func TestNodeRepoRegistry_NilRepoOrZeroKindIsNoop(t *testing.T) {
 	r := NewNodeRepoRegistry()
 	r.Register(metaschema.KindStream, nil)
-	r.Register(0, newFakeRevRepo(5))
-	assert.Equal(t, int64(0), r.LatestModRevision())
-}
-
-func TestNodeRepoRegistry_LatestModRevisionTakesMin(t *testing.T) {
-	r := NewNodeRepoRegistry()
-	r.Register(metaschema.KindMeasure|metaschema.KindIndexRule, newFakeRevRepo(10))
-	r.Register(metaschema.KindStream, newFakeRevRepo(7))
-	r.Register(metaschema.KindTrace, newFakeRevRepo(15))
-
-	assert.Equal(t, int64(7), r.LatestModRevision(), "min over registered repos wins")
+	r.Register(0, newFakeRevRepo())
+	assert.True(t, r.Empty())
+	assert.False(t, r.HasKind(metaschema.KindStream))
 }
 
 func TestNodeRepoRegistry_ResourceRevisionRoutesByKind(t *testing.T) {
-	measureRepo := newFakeRevRepo(10)
+	measureRepo := newFakeRevRepo()
 	measureRepo.put("g1", "m1", 9)
-	streamRepo := newFakeRevRepo(7)
+	streamRepo := newFakeRevRepo()
 	streamRepo.put("g1", "s1", 5)
 
 	r := NewNodeRepoRegistry()
@@ -116,9 +102,9 @@ func TestNodeRepoRegistry_ResourceRevisionRoutesByKind(t *testing.T) {
 }
 
 func TestNodeRepoRegistry_GroupKindFanOut(t *testing.T) {
-	measureRepo := newFakeRevRepo(10)
+	measureRepo := newFakeRevRepo()
 	measureRepo.put("measure-only", "measure-only", 8)
-	streamRepo := newFakeRevRepo(7)
+	streamRepo := newFakeRevRepo()
 	streamRepo.put("stream-only", "stream-only", 6)
 
 	r := NewNodeRepoRegistry()
@@ -137,13 +123,13 @@ func TestNodeRepoRegistry_GroupKindFanOut(t *testing.T) {
 }
 
 func TestNodeRepoRegistry_DuplicateRegistrationIsIdempotent(t *testing.T) {
-	repo := newFakeRevRepo(4)
+	repo := newFakeRevRepo()
 	r := NewNodeRepoRegistry()
 	r.Register(metaschema.KindStream, repo)
 	r.Register(metaschema.KindStream, repo)
 	r.Register(metaschema.KindStream|metaschema.KindIndexRule, repo)
 
-	assert.Equal(t, int64(4), r.LatestModRevision())
+	assert.False(t, r.Empty())
 	assert.True(t, r.HasKind(metaschema.KindStream))
 	assert.True(t, r.HasKind(metaschema.KindIndexRule))
 	assert.False(t, r.HasKind(metaschema.KindMeasure))
@@ -151,7 +137,7 @@ func TestNodeRepoRegistry_DuplicateRegistrationIsIdempotent(t *testing.T) {
 
 func TestNodeRepoRegistry_HasKind(t *testing.T) {
 	r := NewNodeRepoRegistry()
-	r.Register(metaschema.KindMeasure|metaschema.KindIndexRule|metaschema.KindIndexRuleBinding|metaschema.KindGroup, newFakeRevRepo(1))
+	r.Register(metaschema.KindMeasure|metaschema.KindIndexRule|metaschema.KindIndexRuleBinding|metaschema.KindGroup, newFakeRevRepo())
 
 	assert.True(t, r.HasKind(metaschema.KindMeasure))
 	assert.True(t, r.HasKind(metaschema.KindIndexRule))
@@ -163,7 +149,7 @@ func TestNodeRepoRegistry_HasKind(t *testing.T) {
 
 func TestNodeRepoRegistry_ConcurrentRegisterAndLookup(t *testing.T) {
 	r := NewNodeRepoRegistry()
-	repos := []*fakeRevRepo{newFakeRevRepo(1), newFakeRevRepo(2), newFakeRevRepo(3), newFakeRevRepo(4)}
+	repos := []*fakeRevRepo{newFakeRevRepo(), newFakeRevRepo(), newFakeRevRepo(), newFakeRevRepo()}
 	for _, repo := range repos {
 		repo.put("g", "n", 10)
 	}
@@ -184,7 +170,6 @@ func TestNodeRepoRegistry_ConcurrentRegisterAndLookup(t *testing.T) {
 	done := make(chan struct{})
 	go func() {
 		for range 1000 {
-			_ = r.LatestModRevision()
 			_, _ = r.ResourceRevision(metaschema.KindStream, "g", "n")
 			_ = r.HasKind(metaschema.KindMeasure)
 		}
@@ -194,7 +179,7 @@ func TestNodeRepoRegistry_ConcurrentRegisterAndLookup(t *testing.T) {
 	wg.Wait()
 	<-done
 
-	assert.Equal(t, int64(1), r.LatestModRevision())
+	assert.False(t, r.Empty())
 	assert.True(t, r.HasKind(metaschema.KindStream))
 	assert.True(t, r.HasKind(metaschema.KindMeasure))
 }

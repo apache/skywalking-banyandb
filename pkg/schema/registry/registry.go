@@ -34,7 +34,6 @@ import (
 // keeping the interface here (alongside the registry) instead of importing
 // pkg/schema avoids a dependency cycle through banyand/metadata.
 type RevisionRepository interface {
-	LatestModRevision() int64
 	ResourceRevision(kind schema.Kind, group, name string) (int64, bool)
 	IsAbsent(kind schema.Kind, group, name string) bool
 }
@@ -42,13 +41,20 @@ type RevisionRepository interface {
 // NodeRepoRegistry aggregates per-service RevisionRepository instances on a
 // single node (liaison or data). Each banyand service (measure, stream, trace,
 // …) registers its schemaRepo during PreRun with a kind bitmask describing the
-// kinds the repo tracks. The registry routes barrier and node-status lookups to
-// the same caches the executor consults during query plan execution, so a
-// positive answer from LatestModRevision implies every registered repo has
+// kinds the repo tracks. The registry routes per-key barrier and node-status
+// lookups (GetKeyRevisions / GetAbsentKeys) to the same caches the executor
+// consults during query plan execution, so a positive answer from
+// ResourceRevision / IsAbsent implies the registered repo for that kind has
 // applied the revision and any executor cache the node exposes is at least at
 // that point. This is the load-bearing prerequisite for the Phase 2
 // single-cache invariant — without it the cluster barrier would certify a
 // cache the data-node executor never reads.
+//
+// The aggregate global watermark belongs to the schemaCache
+// (notifiedModRevision), not to the registry: per-service schemaRepos filter
+// events by catalog (pkg/schema/init.go), so their per-repo latestModRevision
+// is incomparable across repos and a min/max aggregate cannot represent a
+// meaningful node-wide watermark.
 //
 // Safe for concurrent registration during PreRun and concurrent lookup.
 type NodeRepoRegistry struct {
@@ -92,25 +98,6 @@ func (r *NodeRepoRegistry) Register(kinds schema.Kind, repo RevisionRepository) 
 	}
 }
 
-// LatestModRevision returns the minimum LatestModRevision across every
-// registered repo. A registry with no repos returns 0, matching the
-// "node not yet caught up" semantic the cluster-barrier loop interprets as
-// "keep polling".
-func (r *NodeRepoRegistry) LatestModRevision() int64 {
-	r.mu.RLock()
-	defer r.mu.RUnlock()
-	if len(r.repos) == 0 {
-		return 0
-	}
-	minRev := r.repos[0].LatestModRevision()
-	for _, repo := range r.repos[1:] {
-		if rev := repo.LatestModRevision(); rev < minRev {
-			minRev = rev
-		}
-	}
-	return minRev
-}
-
 // ResourceRevision routes the lookup to repos registered against the given
 // kind and returns the first match. Returns (0, false) when no repo is
 // registered for the kind or no registered repo holds the resource — the same
@@ -149,11 +136,9 @@ func (r *NodeRepoRegistry) HasKind(kind schema.Kind) bool {
 	return len(r.byKind[kind]) > 0
 }
 
-// Empty reports whether any repo has been registered. The node-status server
-// uses this to skip the registry's min-rev contribution on a node where no
-// per-service schemaRepo runs (e.g. a property-only metadata host) — without
-// the check, an empty registry's LatestModRevision()=0 would gate every
-// barrier verdict to 0.
+// Empty reports whether any repo has been registered. GetAbsentKeys uses
+// this to route through the schemaCache on a node where no per-service
+// schemaRepo runs (e.g. a property-only metadata host).
 func (r *NodeRepoRegistry) Empty() bool {
 	r.mu.RLock()
 	defer r.mu.RUnlock()

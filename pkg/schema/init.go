@@ -29,9 +29,9 @@ import (
 )
 
 // schemaRepo satisfies the registry.RevisionRepository contract via its
-// LatestModRevision / ResourceRevision / IsAbsent methods. The compile-time
-// assertion lives here (next to RevisionRepository) so a future API drift
-// breaks the build before the cluster barrier silently degrades.
+// ResourceRevision / IsAbsent methods. The compile-time assertion lives here
+// so a future API drift breaks the build before the cluster barrier's
+// per-key gating silently degrades.
 var _ registry.RevisionRepository = (*schemaRepo)(nil)
 
 var initTimeout = 10 * time.Second

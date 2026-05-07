@@ -37,20 +37,14 @@ import (
 // end-to-end through the public AwaitX RPCs. They pause the receiving
 // liaison's own SchemaRegistry; the cluster barrier's selfName probe reads
 // through that SR, so pausing it surfaces a laggard via the public AwaitX
-// API without needing NodeSchemaStatusService exposed on data-node ports
-// (which the in-process distributed harness does not currently provide;
-// the cross-version Unimplemented→ready policy in the cluster fan-out
-// would mask paused data nodes from the barrier's perspective).
+// API. Data-node fan-out via NodeSchemaStatusService is covered by the
+// unit tests in banyand/liaison/grpc/barrier_cluster_test.go (§FA-1..FD-2).
+// These integration specs cover the orthogonal contract: the pause
+// primitive's effect is observable through the public AwaitX RPC and
+// resume drains the queued events so the barrier converges.
 //
-// The role-prefix attribution (`liaison-...` vs `data-...`) the plan
-// describes for §6.12 is already pinned by the unit tests in
-// banyand/liaison/grpc/barrier_cluster_test.go (§FA-1..FD-2). These
-// integration specs cover the orthogonal contract: the pause primitive's
-// effect is observable through the public AwaitX RPC and the resume
-// drains the queued events so the barrier converges.
-//
-// Specs skip themselves under standalone mode and when the liaison
-// address is empty (the standalone harness has none).
+// Specs skip themselves under standalone mode and when the receiving
+// liaison address is empty (the standalone harness has none).
 
 func barrierClusterMeasureGroup(name string) *commonv1.Group {
 	return &commonv1.Group{
@@ -107,21 +101,15 @@ var _ = g.Describe("Cluster barrier under partial-cluster conditions (§6.12)", 
 		_ = setup.ResumeDataNodeWatch(paused)
 	})
 
-	// §6.12a — AwaitRevisionApplied surfaces a paused liaison as a laggard
-	// via its selfName probe; resume drains the queue and the barrier
-	// converges. Uses Measure.Update for the post-pause bump because the
-	// Group watch path in this in-process harness occasionally completes
-	// before the gate sees it (the property-store reconcile cycle on
-	// Group writes can short-circuit the watch fan-out); §6.12b/c
-	// Measure flows are reliable.
-	// PENDING: queue drains successfully on resume (verified via the
-	// `queued: N` log line) but the schemaCache.notifiedModRevision
-	// watermark does not always reach the newRev target within 10s when
-	// the test re-issues AwaitRevisionApplied. The Measure-based
-	// per-key barrier (§6.12b/c) does converge, so this pending status
-	// scopes the gap to the global MaxRevision check; investigation is
-	// deferred to the same follow-up that authors data-node
-	// NodeSchemaStatusService exposure.
+	// §6.12a — AwaitRevisionApplied surfaces a paused liaison as a
+	// laggard via its selfName probe; resume drains the queue and the
+	// barrier converges. PENDING: the laggard-detection assertion passes
+	// but the post-resume AwaitRevisionApplied(newRev) does not converge
+	// inside the spec timeout. The per-key §6.12b/c flows (AwaitApplied /
+	// AwaitDeleted) do converge, so this gap is scoped to the global
+	// notifiedModRevision watermark advancing through queue replay under
+	// the in-process distributed harness — independent of the
+	// data-node NodeSchemaStatusService exposure.
 	g.PIt("§6.12a AwaitRevisionApplied reports the paused liaison as a laggard", func() {
 		groupName := fmt.Sprintf("bc-rev-%d", time.Now().UnixNano())
 		measureName := "bc_rev_measure"
@@ -152,10 +140,8 @@ var _ = g.Describe("Cluster barrier under partial-cluster conditions (§6.12)", 
 
 		g.By("Calling AwaitRevisionApplied — paused liaison must surface as a laggard")
 		// Brief settle so the bumped revision's watch event has time to
-		// reach the liaison's SR (which queues it under pause). Without
-		// this, the test races the watch stream and the queue can be
-		// empty at resume — the propagation delay between Update RPC
-		// commit and watch broadcast varies under load.
+		// reach the paused liaison's SR (which queues it under pause).
+		// Without this, the barrier can race the watch broadcast.
 		time.Sleep(200 * time.Millisecond)
 		callCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
 		defer cancel()
@@ -280,16 +266,13 @@ var _ = g.Describe("Cluster barrier under partial-cluster conditions (§6.12)", 
 	})
 
 	// §6.12d — Cross-barrier recovery: after a multi-step pause-and-mutate
-	// sequence, resume drains the queued events in arrival order, so a
+	// sequence, resume drains the queued events in arrival order so a
 	// follow-up AwaitRevisionApplied at the post-mutate revision returns
-	// applied=true. This pins the queue-drain contract end-to-end.
-	// PENDING: same harness limitation as §6.12a — the post-resume
-	// AwaitRevisionApplied does not always reach the queued finalRev
-	// inside the spec timeout, even though the queue drain log shows
-	// the events were replayed. Will pass once the data-node
-	// NodeSchemaStatusService exposure work lands and the cluster
-	// barrier observes a fan-out across all members instead of the
-	// liaison's selfName probe alone.
+	// applied=true with no laggards. PENDING for the same reason as
+	// §6.12a: the global AwaitRevisionApplied watermark does not converge
+	// through queue replay inside the spec timeout. §6.12b/c remain the
+	// authoritative end-to-end coverage of the queue-drain contract via
+	// per-key barriers.
 	g.PIt("§6.12d cross-barrier recovery: resume drains queued events and clears the laggard", func() {
 		groupName := fmt.Sprintf("bc-recovery-%d", time.Now().UnixNano())
 		measureName := "bc_recovery_measure"

@@ -84,6 +84,7 @@ type server struct {
 	omr                   observability.MetricsRegistry
 	creds                 credentials.TransportCredentials
 	metadataRepo          metadata.Repo
+	nodeSchemaStatusRepo  metadata.Service
 	clientCloser          context.CancelFunc
 	ser                   *grpclib.Server
 	listeners             map[bus.Topic][]bus.MessageListener
@@ -292,27 +293,23 @@ func (s *server) Serve() run.StopNotify {
 	tracev1.RegisterTraceServiceServer(s.ser, &traceService{ser: s})
 	if s.metadataRepo != nil {
 		fodcv1.RegisterGroupLifecycleServiceServer(s.ser, s)
-		// Phase 2 Step 2.1: data nodes expose NodeSchemaStatusService so the
-		// liaison's barrier fan-out (Step 2.2) can probe each node's local
-		// schema cache. The cache the server reads is the same SchemaRegistry
-		// instance the data-node query executor consults — see
-		// banyand/metadata/schema/property/node_status.go for the coherence
-		// argument. The registry is resolved per request (closure) so the
-		// service registers even when SchemaRegistry isn't ready at Serve
-		// time; the fail-closed nil-cache contract handles in-flight probes
+	}
+	if s.nodeSchemaStatusRepo != nil {
+		// The registry is resolved per request (closure) so the service
+		// registers even when SchemaRegistry isn't ready at Serve time;
+		// the fail-closed nil-cache contract handles in-flight probes
 		// during initialization.
-		if svc, svcOk := s.metadataRepo.(metadata.Service); svcOk {
-			clusterv1.RegisterNodeSchemaStatusServiceServer(s.ser, property.NewNodeSchemaStatusServerForRegistryWithNodeRepo(
-				func() *property.SchemaRegistry {
-					reg, regOk := svc.SchemaRegistry().(*property.SchemaRegistry)
-					if !regOk {
-						return nil
-					}
-					return reg
-				},
-				svc.NodeRepoRegistry,
-			))
-		}
+		svc := s.nodeSchemaStatusRepo
+		clusterv1.RegisterNodeSchemaStatusServiceServer(s.ser, property.NewNodeSchemaStatusServerForRegistryWithNodeRepo(
+			func() *property.SchemaRegistry {
+				reg, regOk := svc.SchemaRegistry().(*property.SchemaRegistry)
+				if !regOk {
+					return nil
+				}
+				return reg
+			},
+			svc.NodeRepoRegistry,
+		))
 	}
 
 	var ctx context.Context
@@ -423,6 +420,12 @@ func (s *server) SetRouteProviders(providers map[string]route.TableProvider) {
 // SetMetadataRepo sets the metadata repository for the internal gRPC server.
 func (s *server) SetMetadataRepo(repo metadata.Repo) {
 	s.metadataRepo = repo
+}
+
+// SetNodeSchemaStatusRepo wires the metadata.Service whose SchemaRegistry +
+// NodeRepoRegistry back the per-node NodeSchemaStatusService.
+func (s *server) SetNodeSchemaStatusRepo(svc metadata.Service) {
+	s.nodeSchemaStatusRepo = svc
 }
 
 type metrics struct {

@@ -31,18 +31,13 @@ import (
 )
 
 // fakeRevRepo emulates a per-service pkg/schema.schemaRepo for the registry
-// pointer-identity tests. The "Latest" knob simulates the eventCh-retry leak
-// scenario from pkg/schema/cache.go:106 — a repo lagging behind the property
-// schemaCache because a transient processEvent failure deferred the apply
-// onto the async retry queue.
+// pointer-identity tests.
 type fakeRevRepo struct {
 	resources map[metaschema.Kind]map[string]int64
-	latest    int64
 }
 
-func newFakeRevRepo(latest int64) *fakeRevRepo {
+func newFakeRevRepo() *fakeRevRepo {
 	return &fakeRevRepo{
-		latest:    latest,
 		resources: make(map[metaschema.Kind]map[string]int64),
 	}
 }
@@ -58,8 +53,6 @@ func (f *fakeRevRepo) put(kind metaschema.Kind, group, name string, rev int64) {
 	}
 	f.resources[kind][group+"/"+name] = rev
 }
-
-func (f *fakeRevRepo) LatestModRevision() int64 { return f.latest }
 
 func (f *fakeRevRepo) ResourceRevision(kind metaschema.Kind, group, name string) (int64, bool) {
 	if m := f.resources[kind]; m != nil {
@@ -83,7 +76,7 @@ func (f *fakeRevRepo) IsAbsent(kind metaschema.Kind, group, name string) bool {
 // disagree on the same (group, ModRevision) pair.
 func TestExecutor_ResolvesGroupsViaSharedSchemaRepo(t *testing.T) {
 	const targetRev int64 = 42
-	repo := newFakeRevRepo(targetRev)
+	repo := newFakeRevRepo()
 	repo.put(metaschema.KindGroup, "g1", "g1", targetRev)
 	repo.put(metaschema.KindMeasure, "g1", "m1", targetRev)
 
@@ -97,11 +90,6 @@ func TestExecutor_ResolvesGroupsViaSharedSchemaRepo(t *testing.T) {
 		func() *schemaCache { return nil },
 		func() *registry.NodeRepoRegistry { return reg },
 	)
-
-	maxResp, err := srv.GetMaxRevision(context.Background(), &clusterv1.GetMaxRevisionRequest{})
-	require.NoError(t, err)
-	assert.Equal(t, targetRev, maxResp.GetMaxModRevision(),
-		"registry-only node reports the registered repo's latest")
 
 	revResp, err := srv.GetKeyRevisions(context.Background(), &clusterv1.GetKeyRevisionsRequest{
 		Keys: []*schemav1.SchemaKey{
@@ -132,23 +120,20 @@ func TestExecutor_ResolvesGroupsViaSharedSchemaRepo(t *testing.T) {
 		"a repo-side mutation is immediately visible through the registry — same pointer")
 }
 
-// TestNodeStatus_DoesNotAdvancePastSchemaRepoLag injects a ModRevision skew
-// between the property schemaCache and the per-service schemaRepo (the
-// scenario the eventCh-retry path in pkg/schema.schemaRepo.SendMetadataEvent
-// produces) and asserts GetMaxRevision returns the laggard's value, never the
-// cache's. This is the regression that distinguishes the Phase 2 §Step 2.5
-// pivot from the original schemaCache-only implementation: the barrier no
-// longer certifies a revision the executor's resolver cache has not applied.
-func TestNodeStatus_DoesNotAdvancePastSchemaRepoLag(t *testing.T) {
-	// schemaCache is at watermark 100 — every kind it tracks has been
-	// notified to handlers up to revision 100.
+// TestNodeStatus_GetMaxRevision_ReadsCacheOnly asserts the new GetMaxRevision
+// contract: the response equals the schemaCache's notifiedModRevision and is
+// independent of the registry. The cache observes every catalog's events, so
+// it is the correct global watermark — symmetric with the receiving liaison's
+// selfName probe at barrier_cluster.go:354-360. Per-key executor-cache gating
+// stays on the registry via GetKeyRevisions / GetAbsentKeys.
+func TestNodeStatus_GetMaxRevision_ReadsCacheOnly(t *testing.T) {
 	c := newSchemaCache()
 	c.notifiedModRevision = 100
 
-	// schemaRepo lags behind at 50 — the canonical executor-cache scenario
-	// the §Step 2.5 pivot exists to handle.
-	repo := newFakeRevRepo(50)
-
+	// A registered repo with per-catalog state must NOT shift GetMaxRevision —
+	// the cache value alone wins.
+	repo := newFakeRevRepo()
+	repo.put(metaschema.KindMeasure, "g1", "m1", 50)
 	reg := registry.NewNodeRepoRegistry()
 	registry.MaybeRegister(reg, metaschema.KindMeasure, repo)
 
@@ -159,26 +144,16 @@ func TestNodeStatus_DoesNotAdvancePastSchemaRepoLag(t *testing.T) {
 
 	resp, err := srv.GetMaxRevision(context.Background(), &clusterv1.GetMaxRevisionRequest{})
 	require.NoError(t, err)
-	assert.Equal(t, int64(50), resp.GetMaxModRevision(),
-		"GetMaxRevision = min(schemaCache.watermark, registry.LatestModRevision); the laggard wins")
-
-	// When the laggard catches up to 100, GetMaxRevision should match.
-	repo.latest = 100
-	resp2, err := srv.GetMaxRevision(context.Background(), &clusterv1.GetMaxRevisionRequest{})
-	require.NoError(t, err)
-	assert.Equal(t, int64(100), resp2.GetMaxModRevision(),
-		"once the laggard catches up, the min equals the watermark")
+	assert.Equal(t, int64(100), resp.GetMaxModRevision(),
+		"GetMaxRevision = schemaCache.notifiedModRevision; registry contributes nothing")
 }
 
-// TestNodeStatus_RegistryOnly_NoSchemaCache covers the "registry alone"
-// configuration: a node whose schemaCache provider returns nil but whose
-// registry has registered repos. The server must report the registry's
-// LatestModRevision as the max — mirrors the production wiring on a
-// data-node before the schemaCache has been fully populated.
-func TestNodeStatus_RegistryOnly_NoSchemaCache(t *testing.T) {
-	repo := newFakeRevRepo(77)
+// TestNodeStatus_GetMaxRevision_NilCacheReturnsZero pins the boundary case:
+// when the cache provider returns nil, the response carries 0 regardless of
+// what the registry holds.
+func TestNodeStatus_GetMaxRevision_NilCacheReturnsZero(t *testing.T) {
+	repo := newFakeRevRepo()
 	repo.put(metaschema.KindStream, "g1", "s1", 60)
-
 	reg := registry.NewNodeRepoRegistry()
 	registry.MaybeRegister(reg, metaschema.KindStream, repo)
 
@@ -189,29 +164,7 @@ func TestNodeStatus_RegistryOnly_NoSchemaCache(t *testing.T) {
 
 	resp, err := srv.GetMaxRevision(context.Background(), &clusterv1.GetMaxRevisionRequest{})
 	require.NoError(t, err)
-	assert.Equal(t, int64(77), resp.GetMaxModRevision())
-}
-
-// TestNodeStatus_EmptyRegistry_FallsBackToSchemaCache covers the production
-// boot path: the registry exists but no service has registered yet. The
-// server must skip the registry's "min" contribution rather than gate the
-// barrier verdict to 0. Mirrors the schemaCache-only behavior for a
-// metadata-only host.
-func TestNodeStatus_EmptyRegistry_FallsBackToSchemaCache(t *testing.T) {
-	c := newSchemaCache()
-	c.notifiedModRevision = 25
-
-	reg := registry.NewNodeRepoRegistry()
-
-	srv := NewNodeSchemaStatusServerWithRegistry(
-		func() *schemaCache { return c },
-		func() *registry.NodeRepoRegistry { return reg },
-	)
-
-	resp, err := srv.GetMaxRevision(context.Background(), &clusterv1.GetMaxRevisionRequest{})
-	require.NoError(t, err)
-	assert.Equal(t, int64(25), resp.GetMaxModRevision(),
-		"empty registry contributes nothing — schemaCache watermark wins")
+	assert.Equal(t, int64(0), resp.GetMaxModRevision())
 }
 
 // TestNodeStatus_KindRouting_TopNFallsBackToSchemaCache asserts that kinds
@@ -225,7 +178,7 @@ func TestNodeStatus_KindRouting_TopNFallsBackToSchemaCache(t *testing.T) {
 	c.entries[idTopN] = entryTopN
 	c.notifiedModRevision = 33
 
-	repo := newFakeRevRepo(33)
+	repo := newFakeRevRepo()
 	repo.put(metaschema.KindMeasure, "g1", "m1", 33)
 	reg := registry.NewNodeRepoRegistry()
 	registry.MaybeRegister(reg, metaschema.KindMeasure, repo)
