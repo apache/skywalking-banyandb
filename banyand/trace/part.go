@@ -373,6 +373,7 @@ func mustOpenFilePart(id uint64, root string, fileSystem fs.FileSystem) *part {
 	partPath := partPath(root, id)
 	p.path = partPath
 	p.fileSystem = fileSystem
+	fs.CleanupLeftoverTmp(fileSystem, partPath)
 	p.partMetadata.mustReadMetadata(fileSystem, partPath)
 	p.partMetadata.ID = id
 
