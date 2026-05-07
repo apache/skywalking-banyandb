@@ -228,6 +228,12 @@ func (fs *localFileSystem) Write(buffer []byte, name string, permission Mode) (i
 			Message: fmt.Sprintf("Flush file return error, file name: %s,error message: %s", name, err),
 		}
 	}
+	if syncErr := file.Sync(); syncErr != nil {
+		return size, &FileSystemError{
+			Code:    flushError,
+			Message: fmt.Sprintf("Sync file return error, file name: %s, error message: %s", name, syncErr),
+		}
+	}
 
 	return size, nil
 }
