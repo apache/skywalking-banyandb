@@ -301,22 +301,22 @@ func parseFromYAMLForProperty(reader io.Reader) (requests []reqBody, err error) 
 	return requests, nil
 }
 
-type printer func(index int, reqBody reqBody, body []byte) error
+type printer func(w io.Writer, index int, reqBody reqBody, body []byte) error
 
-func yamlPrinter(index int, _ reqBody, body []byte) error {
+func yamlPrinter(w io.Writer, index int, _ reqBody, body []byte) error {
 	yamlResult, err := yaml.JSONToYAML(body)
 	if err != nil {
 		return err
 	}
 	if index > 0 {
-		fmt.Println("---")
+		fmt.Fprintln(w, "---")
 	}
-	fmt.Print(string(yamlResult))
-	fmt.Println()
+	fmt.Fprint(w, string(yamlResult))
+	fmt.Fprintln(w)
 	return nil
 }
 
-func rest(pfn paramsFn, fn reqFn, printer printer, enableTLS bool, insecure bool, cert string) (err error) {
+func rest(w io.Writer, pfn paramsFn, fn reqFn, printer printer, enableTLS bool, insecure bool, cert string) (err error) {
 	var requests []reqBody
 	if pfn == nil {
 		requests = []reqBody{{}}
@@ -370,7 +370,7 @@ func rest(pfn paramsFn, fn reqFn, printer printer, enableTLS bool, insecure bool
 		if resp.StatusCode() != http.StatusOK {
 			return fmt.Errorf("unexpected HTTP status code: %d", resp.StatusCode())
 		}
-		err = printer(i, r, bd)
+		err = printer(w, i, r, bd)
 		if err != nil {
 			return err
 		}

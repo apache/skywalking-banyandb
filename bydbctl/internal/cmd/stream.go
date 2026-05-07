@@ -19,6 +19,7 @@ package cmd
 
 import (
 	"fmt"
+	"io"
 
 	"github.com/go-resty/resty/v2"
 	"github.com/spf13/cobra"
@@ -53,7 +54,7 @@ func newStreamCmd() *cobra.Command {
 		Version: version.Build(),
 		Short:   "Create streams from files",
 		RunE: func(cmd *cobra.Command, _ []string) error {
-			return rest(func() ([]reqBody, error) { return parseNameAndGroupFromYAML(cmd.InOrStdin()) },
+			return rest(cmd.OutOrStdout(), func() ([]reqBody, error) { return parseNameAndGroupFromYAML(cmd.InOrStdin()) },
 				func(request request) (*resty.Response, error) {
 					s := new(databasev1.Stream)
 					err := protojson.Unmarshal(request.data, s)
@@ -69,9 +70,8 @@ func newStreamCmd() *cobra.Command {
 					}
 					return request.req.SetBody(b).Post(getPath(streamSchemaPath))
 				},
-				func(_ int, reqBody reqBody, _ []byte) error {
-					fmt.Printf("stream %s.%s is created", reqBody.group, reqBody.name)
-					fmt.Println()
+				func(w io.Writer, _ int, reqBody reqBody, _ []byte) error {
+					fmt.Fprintf(w, "stream %s.%s is created\n", reqBody.group, reqBody.name)
 					return nil
 				}, enableTLS, insecure, cert)
 		},
@@ -82,7 +82,7 @@ func newStreamCmd() *cobra.Command {
 		Version: version.Build(),
 		Short:   "Update streams from files",
 		RunE: func(cmd *cobra.Command, _ []string) (err error) {
-			return rest(func() ([]reqBody, error) { return parseNameAndGroupFromYAML(cmd.InOrStdin()) },
+			return rest(cmd.OutOrStdout(), func() ([]reqBody, error) { return parseNameAndGroupFromYAML(cmd.InOrStdin()) },
 				func(request request) (*resty.Response, error) {
 					s := new(databasev1.Stream)
 					err := protojson.Unmarshal(request.data, s)
@@ -100,9 +100,8 @@ func newStreamCmd() *cobra.Command {
 						SetPathParam("name", request.name).SetPathParam("group", request.group).
 						Put(getPath(streamSchemaPathWithParams))
 				},
-				func(_ int, reqBody reqBody, _ []byte) error {
-					fmt.Printf("stream %s.%s is updated", reqBody.group, reqBody.name)
-					fmt.Println()
+				func(w io.Writer, _ int, reqBody reqBody, _ []byte) error {
+					fmt.Fprintf(w, "stream %s.%s is updated\n", reqBody.group, reqBody.name)
 					return nil
 				}, enableTLS, insecure, cert)
 		},
@@ -112,8 +111,8 @@ func newStreamCmd() *cobra.Command {
 		Use:     "get [-g group] -n name",
 		Version: version.Build(),
 		Short:   "Get a stream",
-		RunE: func(_ *cobra.Command, _ []string) (err error) {
-			return rest(parseFromFlags, func(request request) (*resty.Response, error) {
+		RunE: func(cmd *cobra.Command, _ []string) (err error) {
+			return rest(cmd.OutOrStdout(), parseFromFlags, func(request request) (*resty.Response, error) {
 				return request.req.SetPathParam("name", request.name).SetPathParam("group", request.group).Get(getPath(streamSchemaPathWithParams))
 			}, yamlPrinter, enableTLS, insecure, cert)
 		},
@@ -123,12 +122,11 @@ func newStreamCmd() *cobra.Command {
 		Use:     "delete [-g group] -n name",
 		Version: version.Build(),
 		Short:   "Delete a stream",
-		RunE: func(_ *cobra.Command, _ []string) (err error) {
-			return rest(parseFromFlags, func(request request) (*resty.Response, error) {
+		RunE: func(cmd *cobra.Command, _ []string) (err error) {
+			return rest(cmd.OutOrStdout(), parseFromFlags, func(request request) (*resty.Response, error) {
 				return request.req.SetPathParam("name", request.name).SetPathParam("group", request.group).Delete(getPath(streamSchemaPathWithParams))
-			}, func(_ int, reqBody reqBody, _ []byte) error {
-				fmt.Printf("stream %s.%s is deleted", reqBody.group, reqBody.name)
-				fmt.Println()
+			}, func(w io.Writer, _ int, reqBody reqBody, _ []byte) error {
+				fmt.Fprintf(w, "stream %s.%s is deleted\n", reqBody.group, reqBody.name)
 				return nil
 			}, enableTLS, insecure, cert)
 		},
@@ -139,8 +137,8 @@ func newStreamCmd() *cobra.Command {
 		Use:     "list [-g group]",
 		Version: version.Build(),
 		Short:   "List streams",
-		RunE: func(_ *cobra.Command, _ []string) (err error) {
-			return rest(parseFromFlags, func(request request) (*resty.Response, error) {
+		RunE: func(cmd *cobra.Command, _ []string) (err error) {
+			return rest(cmd.OutOrStdout(), parseFromFlags, func(request request) (*resty.Response, error) {
 				return request.req.SetPathParam("group", request.group).Get(getPath(streamListPath))
 			}, yamlPrinter, enableTLS, insecure, cert)
 		},
@@ -152,7 +150,7 @@ func newStreamCmd() *cobra.Command {
 		Short:   "Query data in a stream",
 		Long:    timeRangeUsage,
 		RunE: func(cmd *cobra.Command, _ []string) (err error) {
-			return rest(func() ([]reqBody, error) { return parseTimeRangeFromFlagAndYAML(cmd.InOrStdin()) },
+			return rest(cmd.OutOrStdout(), func() ([]reqBody, error) { return parseTimeRangeFromFlagAndYAML(cmd.InOrStdin()) },
 				func(request request) (*resty.Response, error) {
 					return request.req.SetBody(request.data).Post(getPath(streamQueryPath))
 				}, yamlPrinter, enableTLS, insecure, cert)

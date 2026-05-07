@@ -47,20 +47,21 @@ func (m *mockGroupRegistry) ListGroup(_ context.Context) ([]*commonv1.Group, err
 
 type mockMetadataRepo struct {
 	metadata.Repo
-	groupRegistry *mockGroupRegistry
-	dataInfoMap   map[string][]*databasev1.DataInfo
-	dataInfoErr   map[string]error
-	slowGroups    map[string]time.Duration
-	collectStarts atomic.Int32
-	concurrentMax atomic.Int32
-	concurrentNow atomic.Int32
+	groupRegistry    *mockGroupRegistry
+	dataInfoMap      map[string][]*databasev1.DataInfo
+	dataInfoErr      map[string]error
+	collectionErrors map[string][]string
+	slowGroups       map[string]time.Duration
+	collectStarts    atomic.Int32
+	concurrentMax    atomic.Int32
+	concurrentNow    atomic.Int32
 }
 
 func (m *mockMetadataRepo) GroupRegistry() schema.Group {
 	return m.groupRegistry
 }
 
-func (m *mockMetadataRepo) CollectDataInfo(_ context.Context, group string) ([]*databasev1.DataInfo, error) {
+func (m *mockMetadataRepo) CollectDataInfo(_ context.Context, group string) ([]*databasev1.DataInfo, []string, error) {
 	m.collectStarts.Add(1)
 	current := m.concurrentNow.Add(1)
 	defer m.concurrentNow.Add(-1)
@@ -77,13 +78,18 @@ func (m *mockMetadataRepo) CollectDataInfo(_ context.Context, group string) ([]*
 	}
 	if m.dataInfoErr != nil {
 		if err, ok := m.dataInfoErr[group]; ok {
-			return nil, err
+			return nil, nil, err
 		}
 	}
+	var dataInfo []*databasev1.DataInfo
 	if m.dataInfoMap != nil {
-		return m.dataInfoMap[group], nil
+		dataInfo = m.dataInfoMap[group]
 	}
-	return nil, nil
+	var collectionErrs []string
+	if m.collectionErrors != nil {
+		collectionErrs = m.collectionErrors[group]
+	}
+	return dataInfo, collectionErrs, nil
 }
 
 func TestCatalogToString(t *testing.T) {
@@ -264,4 +270,92 @@ func TestInspectAll_RunsGroupsInParallel(t *testing.T) {
 	assert.GreaterOrEqual(t, repo.concurrentMax.Load(), int32(2),
 		"at least two CollectDataInfo invocations must overlap; observed max concurrency was %d",
 		repo.concurrentMax.Load())
+	for _, g := range resp.Groups {
+		assert.Empty(t, g.Errors, "successful group %s must not carry errors", g.Name)
+	}
+}
+
+// TestInspectAll_SurfacesTopLevelError asserts that a top-level
+// CollectDataInfo error is reported through GroupLifecycleInfo.errors with
+// a "top-level:" prefix and that DataInfo stays empty for that group.
+func TestInspectAll_SurfacesTopLevelError(t *testing.T) {
+	repo := &mockMetadataRepo{
+		groupRegistry: &mockGroupRegistry{
+			groups: []*commonv1.Group{
+				{Metadata: &commonv1.Metadata{Name: "ok_group"}, Catalog: commonv1.Catalog_CATALOG_MEASURE},
+				{Metadata: &commonv1.Metadata{Name: "bad_group"}, Catalog: commonv1.Catalog_CATALOG_STREAM},
+			},
+		},
+		dataInfoMap: map[string][]*databasev1.DataInfo{
+			"ok_group": {{DataSizeBytes: 1024}},
+		},
+		dataInfoErr: map[string]error{
+			"bad_group": fmt.Errorf("metadataRepo: simulated load failure"),
+		},
+	}
+	s := &server{log: logger.GetLogger("test"), metadataRepo: repo}
+
+	resp, err := s.InspectAll(context.Background(), &fodcv1.InspectAllRequest{})
+	require.NoError(t, err)
+	require.Len(t, resp.Groups, 2)
+
+	byName := map[string]*fodcv1.GroupLifecycleInfo{}
+	for _, g := range resp.Groups {
+		byName[g.Name] = g
+	}
+
+	ok := byName["ok_group"]
+	require.NotNil(t, ok)
+	assert.Empty(t, ok.Errors, "ok_group must not carry errors")
+	assert.NotEmpty(t, ok.DataInfo)
+
+	bad := byName["bad_group"]
+	require.NotNil(t, bad)
+	assert.Empty(t, bad.DataInfo, "failed group must not expose stale DataInfo")
+	require.NotEmpty(t, bad.Errors, "failed group must surface the CollectDataInfo error")
+	assert.Contains(t, bad.Errors[0], "top-level:",
+		"top-level failures must be tagged with the top-level prefix")
+	assert.Contains(t, bad.Errors[0], "simulated load failure",
+		"the original error message must be preserved")
+}
+
+// TestInspectAll_PropagatesPartialFailureErrors asserts that per-node
+// failures reported by mockMetadataRepo.collectionErrors are passed
+// through to GroupLifecycleInfo.errors for the originating group, while
+// DataInfo still carries the entries from nodes that succeeded.
+func TestInspectAll_PropagatesPartialFailureErrors(t *testing.T) {
+	repo := &mockMetadataRepo{
+		groupRegistry: &mockGroupRegistry{
+			groups: []*commonv1.Group{
+				{Metadata: &commonv1.Metadata{Name: "partial_group"}, Catalog: commonv1.Catalog_CATALOG_MEASURE},
+			},
+		},
+		dataInfoMap: map[string][]*databasev1.DataInfo{
+			"partial_group": {{DataSizeBytes: 512}},
+		},
+		collectionErrors: map[string][]string{
+			"partial_group": {
+				"future error: rpc error: nil pointer dereference",
+				"node error: cold-0 panic",
+			},
+		},
+	}
+	s := &server{log: logger.GetLogger("test"), metadataRepo: repo}
+
+	resp, err := s.InspectAll(context.Background(), &fodcv1.InspectAllRequest{})
+	require.NoError(t, err)
+	require.Len(t, resp.Groups, 1)
+	g := resp.Groups[0]
+	assert.NotEmpty(t, g.DataInfo, "partial success must still expose the DataInfo entries it did get")
+	assert.Equal(t,
+		[]string{
+			"future error: rpc error: nil pointer dereference",
+			"node error: cold-0 panic",
+		},
+		g.Errors,
+		"per-node collection errors must be passed through to GroupLifecycleInfo.errors")
+	for _, e := range g.Errors {
+		assert.NotContains(t, e, "top-level:",
+			"partial-success errors must not carry the top-level: prefix")
+	}
 }
