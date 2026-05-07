@@ -118,3 +118,116 @@ func TestMutableBreadcrumbStoreConcurrentAccess(t *testing.T) {
 		t.Fatalf("breadcrumb count mismatch: got %d want %d", len(breadcrumbs), maxBreadcrumbDepth)
 	}
 }
+
+// TestForkMutableBreadcrumbsIsolatesSiblings pins the bug fix: two children
+// forked from the same parent ctx must not share a mutable store. Each
+// child's additions stay invisible to the other and to the parent.
+func TestForkMutableBreadcrumbsIsolatesSiblings(t *testing.T) {
+	t.Helper()
+
+	parent := WithMutableBreadcrumbs(context.Background())
+	parent = WithBreadcrumb(parent, "parent-stage", "parent", nil)
+
+	childA := ForkMutableBreadcrumbs(parent)
+	childA = WithBreadcrumb(childA, "stage-A1", "A", nil)
+	childA = WithBreadcrumb(childA, "stage-A2", "A", nil)
+
+	childB := ForkMutableBreadcrumbs(parent)
+	childB = WithBreadcrumb(childB, "stage-B1", "B", nil)
+
+	a := BreadcrumbsFromContext(childA)
+	b := BreadcrumbsFromContext(childB)
+	p := BreadcrumbsFromContext(parent)
+
+	wantA := []string{"parent-stage", "stage-A1", "stage-A2"}
+	wantB := []string{"parent-stage", "stage-B1"}
+	wantP := []string{"parent-stage"}
+
+	stages := func(bcs []Breadcrumb) []string {
+		out := make([]string, len(bcs))
+		for i, bc := range bcs {
+			out[i] = bc.Stage
+		}
+		return out
+	}
+
+	if got := stages(a); !equalStringSlice(got, wantA) {
+		t.Fatalf("childA stages = %v, want %v", got, wantA)
+	}
+	if got := stages(b); !equalStringSlice(got, wantB) {
+		t.Fatalf("childB stages = %v, want %v (siblings must be isolated)", got, wantB)
+	}
+	if got := stages(p); !equalStringSlice(got, wantP) {
+		t.Fatalf("parent stages = %v, want %v (children must not write back)", got, wantP)
+	}
+}
+
+// TestForkMutableBreadcrumbsInheritsExisting pins that a fork seeds the new
+// store with breadcrumbs already on the parent — the child should see its
+// causal context, just not share future additions.
+func TestForkMutableBreadcrumbsInheritsExisting(t *testing.T) {
+	t.Helper()
+
+	parent := context.Background()
+	parent = WithBreadcrumb(parent, "p1", "p", nil)
+	parent = WithBreadcrumb(parent, "p2", "p", nil)
+
+	child := ForkMutableBreadcrumbs(parent)
+	bcs := BreadcrumbsFromContext(child)
+
+	if len(bcs) != 2 {
+		t.Fatalf("child should inherit 2 parent breadcrumbs, got %d: %v", len(bcs), bcs)
+	}
+	if bcs[0].Stage != "p1" || bcs[1].Stage != "p2" {
+		t.Fatalf("child seed order wrong: got [%s, %s], want [p1, p2]",
+			bcs[0].Stage, bcs[1].Stage)
+	}
+}
+
+// TestForkMutableBreadcrumbsAlwaysAllocatesNewStore pins the non-idempotent
+// behavior. Two consecutive Fork calls on the same ctx must produce contexts
+// whose stores are independent — adding to one does not affect the other.
+// This is the key distinction from WithMutableBreadcrumbs.
+func TestForkMutableBreadcrumbsAlwaysAllocatesNewStore(t *testing.T) {
+	t.Helper()
+
+	parent := WithMutableBreadcrumbs(context.Background())
+
+	first := ForkMutableBreadcrumbs(parent)
+	WithBreadcrumb(first, "first-only", "first", nil)
+
+	second := ForkMutableBreadcrumbs(parent)
+	if got := BreadcrumbsFromContext(second); len(got) != 0 {
+		t.Fatalf("second fork should not see first fork's breadcrumb, got %v", got)
+	}
+}
+
+// TestWithMutableBreadcrumbsStillIdempotent guards the interceptor pattern:
+// repeated calls within a single goroutine's call chain must keep sharing
+// the same store, so an outer interceptor sees breadcrumbs added by the
+// handler.
+func TestWithMutableBreadcrumbsStillIdempotent(t *testing.T) {
+	t.Helper()
+
+	outer := WithMutableBreadcrumbs(context.Background())
+	inner := WithMutableBreadcrumbs(outer)
+
+	WithBreadcrumb(inner, "from-handler", "handler", nil)
+
+	got := BreadcrumbsFromContext(outer)
+	if len(got) != 1 || got[0].Stage != "from-handler" {
+		t.Fatalf("interceptor pattern broke: outer sees %v, want [from-handler]", got)
+	}
+}
+
+func equalStringSlice(a, b []string) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	for i := range a {
+		if a[i] != b[i] {
+			return false
+		}
+	}
+	return true
+}

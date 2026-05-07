@@ -116,20 +116,9 @@ type SignalResult[T any] struct {
 	Value   T
 }
 
-// GoWithSignal launches fn under panic recovery and delivers fn's typed return
-// alongside the recovery outcome on the returned channel exactly once, then
-// closes the channel. Use it when the launcher needs to react synchronously
-// to fn's completion inside a select alongside other channels, such as
-// timeouts or parent cancellation, and wants both value and panic in-band.
-//
-// The channel is buffered (size 1) so the goroutine never blocks on send and
-// closes after delivery so a "drain after timeout" pattern is safe. Recovery
-// is non-fatal: panics are logged and reported to process-wide hooks like
-// with Go, never re-raised. Use Go for fire-and-forget background helpers
-// that don't return a value; use GoOrDie when the panic must be fatal.
-//
-// When fn panics, Value is the zero value of T and the caller should branch
-// on result.Outcome.Panicked before reading result.Value.
+// GoWithSignal launches fn with recovery and sends one SignalResult, then
+// closes the buffered channel. Use it when select logic needs both value and
+// panic outcome in-band.
 func GoWithSignal[T any](ctx context.Context, component string, log *logger.Logger, fn func(context.Context) T, opts ...Option) <-chan SignalResult[T] {
 	cfg := buildGoConfig(opts)
 	ch := make(chan SignalResult[T], 1)
@@ -177,16 +166,13 @@ func runRecovered(ctx context.Context, component string, log *logger.Logger, fn 
 		ArtifactRoot:    cfg.artifactRoot,
 		StateLimitBytes: cfg.stateLimitBytes,
 	}, cfg.reporter, func(ctxPtr *context.Context) {
-		// Let recovery read breadcrumbs added by fn.
-		*ctxPtr = panicdiag.WithMutableBreadcrumbs(*ctxPtr)
+		// Fork to keep sibling goroutine breadcrumbs isolated.
+		*ctxPtr = panicdiag.ForkMutableBreadcrumbs(*ctxPtr)
 		fn(*ctxPtr)
 	})
 }
 
-// runRecoveredT is the generic counterpart to runRecovered: it captures fn's
-// typed return value via closure write so callers (GoWithSignal) can deliver
-// it alongside the outcome. If fn panics before completing, value remains the
-// zero value of T and the caller should branch on outcome.Panicked first.
+// runRecoveredT returns fn's value alongside the recovery outcome.
 func runRecoveredT[T any](ctx context.Context, component string, log *logger.Logger, fn func(context.Context) T, cfg goConfig) (T, *panicdiag.RecoveryOutcome) {
 	var value T
 	outcome := panicdiag.WithRecovery(ctx, panicdiag.RecoveryOptions{
@@ -198,7 +184,7 @@ func runRecoveredT[T any](ctx context.Context, component string, log *logger.Log
 		ArtifactRoot:    cfg.artifactRoot,
 		StateLimitBytes: cfg.stateLimitBytes,
 	}, cfg.reporter, func(ctxPtr *context.Context) {
-		*ctxPtr = panicdiag.WithMutableBreadcrumbs(*ctxPtr)
+		*ctxPtr = panicdiag.ForkMutableBreadcrumbs(*ctxPtr)
 		value = fn(*ctxPtr)
 	})
 	return value, outcome

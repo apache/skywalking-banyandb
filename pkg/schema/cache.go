@@ -236,45 +236,40 @@ func NewPortableRepository(
 
 func (sr *schemaRepo) Watcher() {
 	for i := 0; i < sr.workerNum; i++ {
-		go func() {
+		run.Go(sr.closer.Ctx(), "schema-watcher", sr.l, func(ctx context.Context) {
 			if !sr.closer.AddReceiver() {
 				return
 			}
-			panicdiag.WithRecovery(sr.closer.Ctx(), panicdiag.RecoveryOptions{
-				Component: "schema-watcher",
-				Logger:    sr.l,
-			}, func(_ context.Context, _ panicdiag.RecoveryResult) {
-				sr.metrics.totalPanics.Inc(1)
-			}, func(ctxp *context.Context) {
-				defer sr.closer.ReceiverDone()
-				// The Watcher drains events retried via the channel after transient
-				// processing errors. The fast path runs synchronously in SendMetadataEvent
-				// so the barrier's downstream-handler watermark advances correctly.
-				for {
-					select {
-					case evt, more := <-sr.eventCh:
-						if !more {
-							return
-						}
-						if retryErr := sr.processEvent(*ctxp, evt); retryErr != nil && !errors.Is(retryErr, schema.ErrClosed) {
-							select {
-							case <-sr.closer.CloseNotify():
-								return
-							default:
-							}
-							sr.l.Err(retryErr).Interface("event", evt).Msg("retry processing failed, requeueing")
-							sr.metrics.totalRetries.Inc(1)
-							retryCtx := *ctxp
-							go func(ctx context.Context, retryEvent MetadataEvent) {
-								sr.sendMetadataEvent(ctx, retryEvent)
-							}(retryCtx, evt)
-						}
-					case <-sr.closer.CloseNotify():
+			defer sr.closer.ReceiverDone()
+			// The Watcher drains events retried via the channel after transient
+			// processing errors. The fast path runs synchronously in SendMetadataEvent
+			// so the barrier's downstream-handler watermark advances correctly.
+			for {
+				select {
+				case evt, more := <-sr.eventCh:
+					if !more {
 						return
 					}
+					if retryErr := sr.processEvent(ctx, evt); retryErr != nil && !errors.Is(retryErr, schema.ErrClosed) {
+						select {
+						case <-sr.closer.CloseNotify():
+							return
+						default:
+						}
+						sr.l.Err(retryErr).Interface("event", evt).Msg("retry processing failed, requeueing")
+						sr.metrics.totalRetries.Inc(1)
+						retryEvent := evt
+						run.Go(ctx, "schema-watcher-retry", sr.l, func(retryCtx context.Context) {
+							sr.sendMetadataEvent(retryCtx, retryEvent)
+						})
+					}
+				case <-sr.closer.CloseNotify():
+					return
 				}
-			})
-		}()
+			}
+		}, run.WithReporter(func(_ context.Context, _ panicdiag.RecoveryResult) {
+			sr.metrics.totalPanics.Inc(1)
+		}))
 	}
 }
 

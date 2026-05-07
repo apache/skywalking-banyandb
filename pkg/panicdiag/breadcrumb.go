@@ -25,23 +25,16 @@ import (
 
 type breadcrumbContextKey struct{}
 
-// mutableBreadcrumbContextKey is the context key for a mutable breadcrumb store.
-// When present it takes precedence over the immutable linked-list path so that
-// gRPC recovery interceptors — which capture the context at interceptor entry,
-// before the handler runs — can still read breadcrumbs appended inside the handler.
+// mutableBreadcrumbContextKey stores appendable breadcrumbs in context.
 type mutableBreadcrumbContextKey struct{}
 
-// mutableBreadcrumbStore holds breadcrumbs that can be appended without creating
-// a new context value. A pointer to this struct is stored in the context so that
-// mutation is visible through the original context reference.
+// mutableBreadcrumbStore holds breadcrumbs visible through the original context.
 type mutableBreadcrumbStore struct {
 	breadcrumbs []Breadcrumb
 	mu          sync.Mutex
 }
 
-// maxBreadcrumbDepth is the maximum number of breadcrumbs a single context chain
-// may hold. Additions beyond this limit are silently dropped, preserving the
-// oldest markers so the earliest causal context is never lost.
+// maxBreadcrumbDepth caps breadcrumbs retained per context chain.
 const maxBreadcrumbDepth = 64
 
 type breadcrumbNode struct {
@@ -54,12 +47,9 @@ var nowBreadcrumbTime = func() time.Time {
 	return time.Now().UTC()
 }
 
-// WithMutableBreadcrumbs installs a mutable breadcrumb store into ctx and returns
-// the enriched context. Subsequent WithBreadcrumb calls on ctx or any context
-// derived from it will append to the store in-place rather than creating a new
-// immutable node. The same pointer is visible through the original context value,
-// so a gRPC recovery interceptor that captures ctx before calling the handler
-// will read all breadcrumbs added inside the handler via BreadcrumbsFromContext.
+// WithMutableBreadcrumbs installs an idempotent mutable breadcrumb store.
+// Use it within one call chain; use ForkMutableBreadcrumbs at goroutine
+// boundaries.
 func WithMutableBreadcrumbs(ctx context.Context) context.Context {
 	if ctx == nil {
 		ctx = context.Background()
@@ -73,11 +63,20 @@ func WithMutableBreadcrumbs(ctx context.Context) context.Context {
 	})
 }
 
+// ForkMutableBreadcrumbs returns ctx with a fresh breadcrumb store seeded from
+// ctx. Use it at goroutine boundaries to prevent sibling breadcrumb leakage.
+func ForkMutableBreadcrumbs(ctx context.Context) context.Context {
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	existing := BreadcrumbsFromContext(ctx)
+	return context.WithValue(ctx, mutableBreadcrumbContextKey{}, &mutableBreadcrumbStore{
+		breadcrumbs: existing,
+	})
+}
+
 // WithBreadcrumb appends a semantic breadcrumb to the context.
-// If a mutable store was pre-installed via WithMutableBreadcrumbs, the breadcrumb
-// is appended to it in-place and the same context is returned unchanged.
-// Otherwise the call is O(1) via a single linked-list node allocation.
-// When the chain reaches maxBreadcrumbDepth the call is a no-op.
+// It mutates an installed store, or otherwise adds an immutable node.
 func WithBreadcrumb(ctx context.Context, stage string, component string, fields map[string]string) context.Context {
 	if ctx == nil {
 		ctx = context.Background()
@@ -115,8 +114,7 @@ func WithBreadcrumb(ctx context.Context, stage string, component string, fields 
 	})
 }
 
-// BreadcrumbsFromContext returns breadcrumbs ordered from oldest to newest.
-// It checks the mutable store first, then falls back to the immutable linked list.
+// BreadcrumbsFromContext returns breadcrumbs ordered oldest to newest.
 func BreadcrumbsFromContext(ctx context.Context) []Breadcrumb {
 	if ctx == nil {
 		return nil
