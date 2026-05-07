@@ -159,13 +159,41 @@ func (s *segment[T, O]) TablesWithShardIDs() (tt []T, shardIDs []common.ShardID,
 	return tt, shardIDs, cc
 }
 
+// incRef acquires one reference on the segment, opening it via initialize
+// if it is currently closed (refCount<=0). On return, the caller is
+// guaranteed that the segment is alive (s.index != nil, shards loaded) and
+// will stay alive until the matching DecRef.
+//
+// The CAS loop closes a TOCTOU race that the older "Load + AddInt32"
+// shape suffered from: a goroutine could read refCount=1, race against a
+// concurrent DecRef that drives it to 0 and triggers performCleanup
+// (which sets s.index=nil and tears down shards), and then AddInt32 it
+// back to 1. The caller would walk away with refCount=1 -- formally a
+// valid reference -- but pointing at an already-cleaned-up segment, so
+// every subsequent IndexDB() / Tables() call would observe zero state.
+//
+// The CAS variant retries whenever a concurrent DecRef beats us to the
+// counter: if CAS fails, we re-Load and either succeed at the new value
+// or fall through to initialize() to reopen the segment under s.mu.
+// Symmetric to the CAS loop in DecRef, which guarantees the dual: a
+// DecRef that drives refCount to 0 sees no concurrent +1 sneak in
+// before performCleanup runs.
 func (s *segment[T, O]) incRef(ctx context.Context) error {
 	s.lastAccessed.Store(time.Now().UnixNano())
-	if atomic.LoadInt32(&s.refCount) <= 0 {
-		return s.initialize(ctx)
+	for {
+		current := atomic.LoadInt32(&s.refCount)
+		if current <= 0 {
+			// Either the segment was never opened or DecRef just drove
+			// refCount to 0; reopen under the mutex.
+			return s.initialize(ctx)
+		}
+		// CAS so a concurrent DecRef cannot flip refCount to 0 and run
+		// performCleanup between our Load and our increment. On failure
+		// we re-Load and re-evaluate the branch.
+		if atomic.CompareAndSwapInt32(&s.refCount, current, current+1) {
+			return nil
+		}
 	}
-	atomic.AddInt32(&s.refCount, 1)
-	return nil
 }
 
 func (s *segment[T, O]) initialize(ctx context.Context) error {
@@ -173,6 +201,12 @@ func (s *segment[T, O]) initialize(ctx context.Context) error {
 	defer s.mu.Unlock()
 
 	if atomic.LoadInt32(&s.refCount) > 0 {
+		// Another goroutine reopened the segment while we waited for the
+		// mutex. Add the +1 our caller (incRef) skipped before entering
+		// the slow path; otherwise concurrent reopens would share one
+		// refCount and the first DecRef would cleanup while we are still
+		// using it.
+		atomic.AddInt32(&s.refCount, 1)
 		return nil
 	}
 

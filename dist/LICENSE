@@ -405,7 +405,6 @@ MIT licenses
     github.com/urfave/cli/v2 v2.27.7 MIT
     github.com/xrash/smetrics v0.0.0-20250705151800-55b8f293f342 MIT
     github.com/yusufpapurcu/wmi v1.2.4 MIT
-    github.com/zenizh/go-capturer v0.0.0-20211219060012-52ea6c8fed04 MIT
     go.uber.org/automaxprocs v1.6.0 MIT
     go.uber.org/multierr v1.11.0 MIT
     go.uber.org/zap v1.27.1 MIT

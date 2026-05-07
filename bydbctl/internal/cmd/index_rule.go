@@ -19,6 +19,7 @@ package cmd
 
 import (
 	"fmt"
+	"io"
 
 	"github.com/go-resty/resty/v2"
 	"github.com/spf13/cobra"
@@ -44,25 +45,22 @@ func newIndexRuleCmd() *cobra.Command {
 		Version: version.Build(),
 		Short:   "Create indexRules from files",
 		RunE: func(cmd *cobra.Command, _ []string) error {
-			return rest(func() ([]reqBody, error) { return parseNameAndGroupFromYAML(cmd.InOrStdin()) },
+			return rest(cmd.OutOrStdout(), func() ([]reqBody, error) { return parseNameAndGroupFromYAML(cmd.InOrStdin()) },
 				func(request request) (*resty.Response, error) {
 					s := new(databasev1.IndexRule)
 					err := protojson.Unmarshal(request.data, s)
 					if err != nil {
 						return nil, err
 					}
-					cr := &databasev1.IndexRuleRegistryServiceCreateRequest{
-						IndexRule: s,
-					}
+					cr := &databasev1.IndexRuleRegistryServiceCreateRequest{IndexRule: s}
 					b, err := protojson.Marshal(cr)
 					if err != nil {
 						return nil, err
 					}
 					return request.req.SetBody(b).Post(getPath(indexRuleSchemaPath))
 				},
-				func(_ int, reqBody reqBody, _ []byte) error {
-					fmt.Printf("indexRule %s.%s is created", reqBody.group, reqBody.name)
-					fmt.Println()
+				func(w io.Writer, _ int, reqBody reqBody, _ []byte) error {
+					fmt.Fprintf(w, "indexRule %s.%s is created\n", reqBody.group, reqBody.name)
 					return nil
 				}, enableTLS, insecure, cert)
 		},
@@ -73,16 +71,14 @@ func newIndexRuleCmd() *cobra.Command {
 		Version: version.Build(),
 		Short:   "Update indexRules from files",
 		RunE: func(cmd *cobra.Command, _ []string) (err error) {
-			return rest(func() ([]reqBody, error) { return parseNameAndGroupFromYAML(cmd.InOrStdin()) },
+			return rest(cmd.OutOrStdout(), func() ([]reqBody, error) { return parseNameAndGroupFromYAML(cmd.InOrStdin()) },
 				func(request request) (*resty.Response, error) {
 					s := new(databasev1.IndexRule)
 					err := protojson.Unmarshal(request.data, s)
 					if err != nil {
 						return nil, err
 					}
-					cr := &databasev1.IndexRuleRegistryServiceUpdateRequest{
-						IndexRule: s,
-					}
+					cr := &databasev1.IndexRuleRegistryServiceUpdateRequest{IndexRule: s}
 					b, err := protojson.Marshal(cr)
 					if err != nil {
 						return nil, err
@@ -91,9 +87,8 @@ func newIndexRuleCmd() *cobra.Command {
 						SetPathParam("name", request.name).SetPathParam("group", request.group).
 						Put(getPath(indexRuleSchemaPathWithParams))
 				},
-				func(_ int, reqBody reqBody, _ []byte) error {
-					fmt.Printf("indexRule %s.%s is updated", reqBody.group, reqBody.name)
-					fmt.Println()
+				func(w io.Writer, _ int, reqBody reqBody, _ []byte) error {
+					fmt.Fprintf(w, "indexRule %s.%s is updated\n", reqBody.group, reqBody.name)
 					return nil
 				}, enableTLS, insecure, cert)
 		},
@@ -103,8 +98,8 @@ func newIndexRuleCmd() *cobra.Command {
 		Use:     "get [-g group] -n name",
 		Version: version.Build(),
 		Short:   "Get a indexRule",
-		RunE: func(_ *cobra.Command, _ []string) (err error) {
-			return rest(parseFromFlags, func(request request) (*resty.Response, error) {
+		RunE: func(cmd *cobra.Command, _ []string) (err error) {
+			return rest(cmd.OutOrStdout(), parseFromFlags, func(request request) (*resty.Response, error) {
 				return request.req.SetPathParam("name", request.name).SetPathParam("group", request.group).Get(getPath(indexRuleSchemaPathWithParams))
 			}, yamlPrinter, enableTLS, insecure, cert)
 		},
@@ -114,12 +109,11 @@ func newIndexRuleCmd() *cobra.Command {
 		Use:     "delete [-g group] -n name",
 		Version: version.Build(),
 		Short:   "Delete a indexRule",
-		RunE: func(_ *cobra.Command, _ []string) (err error) {
-			return rest(parseFromFlags, func(request request) (*resty.Response, error) {
+		RunE: func(cmd *cobra.Command, _ []string) (err error) {
+			return rest(cmd.OutOrStdout(), parseFromFlags, func(request request) (*resty.Response, error) {
 				return request.req.SetPathParam("name", request.name).SetPathParam("group", request.group).Delete(getPath(indexRuleSchemaPathWithParams))
-			}, func(_ int, reqBody reqBody, _ []byte) error {
-				fmt.Printf("indexRule %s.%s is deleted", reqBody.group, reqBody.name)
-				fmt.Println()
+			}, func(w io.Writer, _ int, reqBody reqBody, _ []byte) error {
+				fmt.Fprintf(w, "indexRule %s.%s is deleted\n", reqBody.group, reqBody.name)
 				return nil
 			}, enableTLS, insecure, cert)
 		},
@@ -130,8 +124,8 @@ func newIndexRuleCmd() *cobra.Command {
 		Use:     "list [-g group]",
 		Version: version.Build(),
 		Short:   "List indexRules",
-		RunE: func(_ *cobra.Command, _ []string) (err error) {
-			return rest(parseFromFlags, func(request request) (*resty.Response, error) {
+		RunE: func(cmd *cobra.Command, _ []string) (err error) {
+			return rest(cmd.OutOrStdout(), parseFromFlags, func(request request) (*resty.Response, error) {
 				return request.req.SetPathParam("group", request.group).Get(getPath("/api/v1/index-rule/schema/lists/{group}"))
 			}, yamlPrinter, enableTLS, insecure, cert)
 		},

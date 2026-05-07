@@ -5359,6 +5359,7 @@ Phase represents the current phase of the deletion task.
 | catalog | [string](#string) |  |  |
 | resource_opts | [banyandb.common.v1.ResourceOpts](#banyandb-common-v1-ResourceOpts) |  |  |
 | data_info | [banyandb.database.v1.DataInfo](#banyandb-database-v1-DataInfo) | repeated |  |
+| errors | [string](#string) | repeated | errors lists every failure observed while collecting data_info for this group: top-level CollectDataInfo failures (GetGroup, missing collector, dial failure -- prefixed &#34;top-level: &#34;) and per-node broadcast failures (prefixed &#34;future error: &#34;, &#34;node error: &#34;, &#34;broadcast failed: &#34;). Combined with len(data_info), consumers can tell the following four states apart: - data_info empty &amp;&amp; errors empty -&gt; no nodes reported (group inactive) - data_info empty &amp;&amp; errors non-empty -&gt; total failure - data_info non-empty &amp;&amp; errors empty -&gt; full success - data_info non-empty &amp;&amp; errors non-empty -&gt; partial failure |
 
 
 
