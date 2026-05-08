@@ -202,41 +202,6 @@ func (ir IntervalRule) NextTime(current time.Time) time.Time {
 	panic("invalid interval unit")
 }
 
-// epochUTC is the Unix epoch as a UTC time. Used as the anchor for the
-// grid produced by IntervalRule.Standard.
-var epochUTC = time.Date(1970, 1, 1, 0, 0, 0, 0, time.UTC)
-
-// Standard aligns t down to the nearest Num*Unit boundary. The grid origin
-// is anchored at the Unix epoch in UTC for cross-node consistency, but the
-// returned time is in t.Location() so callers see their own timezone. For
-// Num<=1 it delegates to IntervalUnit.Standard, preserving the existing
-// per-unit local alignment.
-func (ir IntervalRule) Standard(t time.Time) time.Time {
-	if ir.Num <= 1 {
-		return ir.Unit.Standard(t)
-	}
-	var bucketWidth time.Duration
-	switch ir.Unit {
-	case DAY:
-		bucketWidth = time.Duration(ir.Num) * 24 * time.Hour
-	case HOUR:
-		bucketWidth = time.Duration(ir.Num) * time.Hour
-	default:
-		panic("invalid interval unit")
-	}
-	width := bucketWidth.Nanoseconds()
-	nanos := t.Sub(epochUTC).Nanoseconds()
-	return epochUTC.Add(time.Duration(floorDiv(nanos, width) * width)).In(t.Location())
-}
-
-func floorDiv(a, b int64) int64 {
-	q := a / b
-	if a%b != 0 && (a < 0) != (b < 0) {
-		q--
-	}
-	return q
-}
-
 func (ir IntervalRule) estimatedDuration() time.Duration {
 	switch ir.Unit {
 	case HOUR:

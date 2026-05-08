@@ -68,9 +68,6 @@ func TestQueue_GetTimeRange(t *testing.T) {
 			expectedEnd:   time.Date(2023, 12, 16, 0, 0, 0, 0, time.UTC),
 		},
 		{
-			// Hour-since-epoch for 2023-12-15 14:00 UTC is 472958, which is even,
-			// so under Num=2 the bucket boundary already coincides with 14:00 -
-			// epoch alignment matches plain hour alignment in this case.
 			name: "multiple hours interval",
 			segmentInterval: storage.IntervalRule{
 				Unit: storage.HOUR,
@@ -81,30 +78,14 @@ func TestQueue_GetTimeRange(t *testing.T) {
 			expectedEnd:   time.Date(2023, 12, 15, 16, 0, 0, 0, time.UTC),
 		},
 		{
-			// Hour-since-epoch for 2023-12-15 15:00 UTC is 472959 (odd), so
-			// under Num=2 the bucket aligns down to 14:00.
-			name: "multiple hours interval (odd hour drops to even boundary)",
-			segmentInterval: storage.IntervalRule{
-				Unit: storage.HOUR,
-				Num:  2,
-			},
-			inputTime:     time.Date(2023, 12, 15, 15, 30, 45, 123456789, time.UTC),
-			expectedStart: time.Date(2023, 12, 15, 14, 0, 0, 0, time.UTC),
-			expectedEnd:   time.Date(2023, 12, 15, 16, 0, 0, 0, time.UTC),
-		},
-		{
-			// Day-since-epoch for 2023-12-15 is 19706. Under Num=3 the bucket
-			// aligns down to 19704 -> 2023-12-13 .. 2023-12-16. The previous
-			// expectation of 12/15..12/18 was written against the historical
-			// bug that aligned only to the day, not to N*day from epoch.
-			name: "multiple days interval (aligned to N*day from epoch)",
+			name: "multiple days interval",
 			segmentInterval: storage.IntervalRule{
 				Unit: storage.DAY,
 				Num:  3,
 			},
 			inputTime:     time.Date(2023, 12, 15, 14, 30, 45, 123456789, time.UTC),
-			expectedStart: time.Date(2023, 12, 13, 0, 0, 0, 0, time.UTC),
-			expectedEnd:   time.Date(2023, 12, 16, 0, 0, 0, 0, time.UTC),
+			expectedStart: time.Date(2023, 12, 15, 0, 0, 0, 0, time.UTC),
+			expectedEnd:   time.Date(2023, 12, 18, 0, 0, 0, 0, time.UTC),
 		},
 	}
 

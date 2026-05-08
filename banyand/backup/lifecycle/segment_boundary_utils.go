@@ -29,11 +29,26 @@ func calculateTargetSegments(partMinTS, partMaxTS int64, targetInterval storage.
 	maxTime := time.Unix(0, partMaxTS).UTC()
 
 	var targetSegments []time.Time
-	// current starts at the bucket containing minTime, so segmentEnd is
-	// always > minTime and the loop guard already excludes anything past
-	// maxTime - every iteration produces a real overlap.
-	for current := targetInterval.Standard(minTime); !current.After(maxTime); current = targetInterval.NextTime(current) {
-		targetSegments = append(targetSegments, current)
+	var segmentStart time.Time
+	switch targetInterval.Unit {
+	case storage.DAY:
+		daysSinceEpoch := minTime.Sub(time.Date(1970, 1, 1, 0, 0, 0, 0, time.UTC)).Hours() / 24
+		segmentIndex := int(daysSinceEpoch) / targetInterval.Num
+		segmentStart = time.Date(1970, 1, 1+segmentIndex*targetInterval.Num, 0, 0, 0, 0, time.UTC)
+	case storage.HOUR:
+		hoursSinceEpoch := minTime.Sub(time.Date(1970, 1, 1, 0, 0, 0, 0, time.UTC)).Hours()
+		segmentIndex := int(hoursSinceEpoch) / targetInterval.Num
+		segmentStart = time.Date(1970, 1, 1, segmentIndex*targetInterval.Num, 0, 0, 0, time.UTC)
+	default:
+		segmentStart = targetInterval.Unit.Standard(minTime)
+	}
+	current := segmentStart
+	for !current.After(maxTime) {
+		segmentEnd := targetInterval.NextTime(current)
+		if !(segmentEnd.Before(minTime) || current.After(maxTime)) {
+			targetSegments = append(targetSegments, current)
+		}
+		current = segmentEnd
 	}
 	return targetSegments
 }
