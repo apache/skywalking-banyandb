@@ -51,9 +51,9 @@ const nodeStatusMaxKeys = 10000
 //     KindIndexRuleBinding. Reading from the registry guarantees the
 //     barrier and the executor see a consistent answer for the same
 //     (group, ModRevision) pair — closing the eventCh-retry leak in
-//     pkg/schema.schemaRepo.SendMetadataEvent that produced the 
+//     pkg/schema.schemaRepo.SendMetadataEvent that produced the
 //     second-run flake (commit 47006561). This is the load-bearing
-//     invariant of Phase 2  2.5.
+//     invariant of Phase 2 Step 2.5.
 //
 //  2. The property schemaCache — the upstream watch cache. Used only for
 //     KindTopNAggregation and KindProperty, which schemaRepo does not
