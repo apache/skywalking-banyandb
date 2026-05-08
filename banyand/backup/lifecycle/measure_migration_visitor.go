@@ -197,10 +197,17 @@ func (mv *measureMigrationVisitor) VisitSeries(segmentTR *timestamp.TimeRange, s
 		}
 
 		// Send segment file to each shard in shardIDs for this target segment
-		segmentIDStr := getSegmentTimeRange(targetSegmentTime, mv.targetStageInterval).String()
+		targetTR := getSegmentTimeRange(targetSegmentTime, mv.targetStageInterval)
+		segmentIDStr := targetTR.String()
 		for _, shardID := range shardIDs {
 			targetShardID := mv.calculateTargetShardID(uint32(shardID))
 			partData := mv.createStreamingSegmentFromFiles(targetShardID, files, segmentTR, data.TopicMeasureSeriesSync.String())
+			// Route per target bucket so the receiver creates one warm segment per
+			// bucket (otherwise all iterations share segmentTR.Start and end up in
+			// a single warm segment whose nominal range may not cover query times
+			// for other buckets).
+			partData.MinTimestamp = targetTR.Start.UnixNano()
+			partData.MaxTimestamp = targetTR.End.UnixNano()
 
 			// Stream segment to target shard replicas
 			if err := mv.streamPartToTargetShard(partData); err != nil {
@@ -273,6 +280,13 @@ func (mv *measureMigrationVisitor) VisitPart(_ *timestamp.TimeRange, sourceShard
 		targetPartData.ShardID = targetShardID
 		targetPartData.Topic = data.TopicMeasurePartSync.String()
 		targetPartData.Files = files
+		// Route per target bucket so the receiver creates the warm segment that
+		// covers this bucket; otherwise parts that span a bucket boundary all
+		// land in the source-MinTimestamp bucket and the data past the boundary
+		// becomes unreachable to queries against the next bucket.
+		targetTR := getSegmentTimeRange(targetSegmentTime, mv.targetStageInterval)
+		targetPartData.MinTimestamp = targetTR.Start.UnixNano()
+		targetPartData.MaxTimestamp = targetTR.End.UnixNano()
 
 		// Stream part to target segment
 		if err := mv.streamPartToTargetShard(targetPartData); err != nil {

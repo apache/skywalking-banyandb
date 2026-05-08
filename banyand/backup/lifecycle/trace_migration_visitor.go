@@ -198,7 +198,8 @@ func (mv *traceMigrationVisitor) VisitSeries(segmentTR *timestamp.TimeRange, ser
 		}
 
 		// Send segment file to each shard in shardIDs for this target segment
-		segmentIDStr := getSegmentTimeRange(targetSegmentTime, mv.targetStageInterval).String()
+		targetTR := getSegmentTimeRange(targetSegmentTime, mv.targetStageInterval)
+		segmentIDStr := targetTR.String()
 		for _, shardID := range shardIDs {
 			targetShardID := mv.calculateTargetShardID(uint32(shardID))
 			ff := make([]queue.FileInfo, 0, len(files))
@@ -209,6 +210,12 @@ func (mv *traceMigrationVisitor) VisitSeries(segmentTR *timestamp.TimeRange, ser
 				})
 			}
 			partData := mv.createStreamingSegmentFromFiles(targetShardID, ff, segmentTR, data.TopicTraceSeriesSync.String())
+			// Route per target bucket so the receiver creates one warm segment per
+			// bucket (otherwise all iterations share segmentTR.Start and end up in
+			// a single warm segment whose nominal range may not cover query times
+			// for other buckets).
+			partData.MinTimestamp = targetTR.Start.UnixNano()
+			partData.MaxTimestamp = targetTR.End.UnixNano()
 
 			// Stream segment to target shard replicas
 			if err := mv.streamPartToTargetShard(targetShardID, []queue.StreamingPartData{partData}); err != nil {
@@ -293,6 +300,16 @@ func (mv *traceMigrationVisitor) generateAllSidxPartData(
 	if !mv.lfs.IsExist(sidxPath) {
 		return nil, nil, nil
 	}
+	// Compute target buckets the source segment overlaps so each sidx part can
+	// be routed to every warm segment that may serve queries for this range.
+	targetSegments := calculateTargetSegments(
+		segmentTR.Start.UnixNano(),
+		segmentTR.End.UnixNano(),
+		mv.targetStageInterval,
+	)
+	if len(targetSegments) == 0 {
+		return nil, nil, nil
+	}
 	// Sidx structure: sidx/{index-name}/{part-id}/files
 	// Find all index directories in the sidx directory
 	entries := mv.lfs.ReadDir(sidxPath)
@@ -353,38 +370,44 @@ func (mv *traceMigrationVisitor) generateAllSidxPartData(
 			Str("path", indexDirPath).
 			Msg("found trace sidx parts for index")
 
-		// Process each part directory
+		// Process each part directory; emit one sidx part per target bucket so
+		// every warm segment that may serve queries for this range gets a copy.
 		for _, partDirName := range partDirs {
 			partID, _ := strconv.ParseUint(partDirName, 16, 64)
 			partPath := filepath.Join(indexDirPath, partDirName)
 
-			// Create file readers for this sidx part
-			files, release := sidx.CreatePartFileReaderFromPath(partPath, mv.lfs)
+			for _, targetSegmentTime := range targetSegments {
+				// Re-open file readers per target since chunked-sync consumes them.
+				files, release := sidx.CreatePartFileReaderFromPath(partPath, mv.lfs)
 
-			// Create StreamingPartData with PartType = index name
-			partData, err := sidx.ParsePartMetadata(mv.lfs, partPath)
-			if err != nil {
-				return nil, nil, fmt.Errorf("failed to parse sidx part metadata: %s: %w", partPath, err)
+				// Create StreamingPartData with PartType = index name
+				partData, err := sidx.ParsePartMetadata(mv.lfs, partPath)
+				if err != nil {
+					release()
+					return nil, nil, fmt.Errorf("failed to parse sidx part metadata: %s: %w", partPath, err)
+				}
+				partData.Group = mv.group
+				partData.ShardID = targetShardID
+				partData.Topic = data.TopicTracePartSync.String()
+				partData.ID = partID
+				partData.PartType = indexName // Use index name as PartType (not "core")
+				partData.Files = files
+				targetTR := getSegmentTimeRange(targetSegmentTime, mv.targetStageInterval)
+				partData.MinTimestamp = targetTR.Start.UnixNano()
+				partData.MaxTimestamp = targetTR.End.UnixNano()
+
+				mv.logger.Debug().
+					Str("index_name", indexName).
+					Uint64("part_id", partID).
+					Uint32("source_shard", uint32(sourceShardID)).
+					Uint32("target_shard", targetShardID).
+					Time("target_segment", targetSegmentTime).
+					Str("group", mv.group).
+					Msg("generated trace sidx part data")
+
+				parts = append(parts, *partData)
+				releases = append(releases, release)
 			}
-			partData.Group = mv.group
-			partData.ShardID = targetShardID
-			partData.Topic = data.TopicTracePartSync.String()
-			partData.ID = partID
-			partData.PartType = indexName // Use index name as PartType (not "core")
-			partData.Files = files
-			partData.MinTimestamp = segmentTR.Start.UnixNano()
-			partData.MaxTimestamp = segmentTR.End.UnixNano()
-
-			mv.logger.Debug().
-				Str("index_name", indexName).
-				Uint64("part_id", partID).
-				Uint32("source_shard", uint32(sourceShardID)).
-				Uint32("target_shard", targetShardID).
-				Str("group", mv.group).
-				Msg("generated trace sidx part data")
-
-			parts = append(parts, *partData)
-			releases = append(releases, release)
 		}
 	}
 
@@ -466,6 +489,13 @@ func (mv *traceMigrationVisitor) generatePartData(sourceShardID common.ShardID, 
 		targetPartData.Topic = data.TopicTracePartSync.String()
 		targetPartData.Files = files
 		targetPartData.PartType = trace.PartTypeCore
+		// Route per target bucket so the receiver creates the warm segment that
+		// covers this bucket; otherwise parts spanning a bucket boundary all
+		// share the same MinTimestamp and the data past the boundary becomes
+		// unreachable to queries against the next bucket.
+		targetTR := getSegmentTimeRange(targetSegmentTime, mv.targetStageInterval)
+		targetPartData.MinTimestamp = targetTR.Start.UnixNano()
+		targetPartData.MaxTimestamp = targetTR.End.UnixNano()
 		parts = append(parts, targetPartData)
 		releases = append(releases, release)
 
