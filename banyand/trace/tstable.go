@@ -157,27 +157,12 @@ func (tst *tsTable) mustWriteSnapshot(snapshot uint64, partNames []string) {
 		logger.Panicf("cannot marshal partNames to JSON: %s", err)
 	}
 	snapshotPath := filepath.Join(tst.root, snapshotName(snapshot))
-	snapshotTempPath := snapshotPath + ".tmp"
-	lf, err := tst.fileSystem.CreateLockFile(snapshotTempPath, storage.FilePerm)
-	if err != nil {
-		logger.Panicf("cannot create lock file %s: %s", snapshotTempPath, err)
-	}
-	n, err := lf.Write(data)
-	if err != nil {
-		_ = lf.Close()
-		logger.Panicf("cannot write snapshot %s: %s", snapshotTempPath, err)
-	}
-	if n != len(data) {
-		_ = lf.Close()
-		logger.Panicf("unexpected number of bytes written to %s; got %d; want %d", snapshotTempPath, n, len(data))
-	}
-	if closeErr := lf.Close(); closeErr != nil {
-		logger.Panicf("cannot close snapshot temp file %s: %s", snapshotTempPath, closeErr)
-	}
-	if renameErr := tst.fileSystem.Rename(snapshotTempPath, snapshotPath); renameErr != nil {
-		logger.Panicf("cannot rename snapshot %s to %s: %s", snapshotTempPath, snapshotPath, renameErr)
-	}
-	tst.fileSystem.SyncPath(tst.root)
+	// WriteAtomic does write-tmp -> file.Sync -> rename -> dir.Sync, so a
+	// crash leaves either the previous valid snapshot or only <name>.tmp,
+	// never a renamed-but-not-durable snapshot. The orphan-cleanup logic
+	// at startup depends on snapshots being authoritative; this closes the
+	// last metadata-style write site that could undermine that assumption.
+	fs.MustFlushAtomic(tst.fileSystem, data, snapshotPath, storage.FilePerm)
 }
 
 func (tst *tsTable) readSnapshot(snapshot uint64) ([]uint64, error) {

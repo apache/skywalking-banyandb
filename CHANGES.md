@@ -8,6 +8,9 @@ Release Notes.
 
 - Fix reuse of byte arrays in min/max implementation causing data corruption.
 - Fix index-mode measure queries returning documents outside requested time range.
+- Close BanyanDB merge write-path durability gap that allowed torn parts to be created by a crash between data write and metadata commit. Metadata files (`metadata.json` for trace/measure/stream, `manifest.json` for sidx, plus `traceID.filter` and `tag.type`) now go through a new `WriteAtomic` (write-tmp + fsync + rename + fsync-dir) sequence; data writers (`seqWriter.Close`, `localFileSystem.Write`) now propagate fdatasync errors instead of silently dropping them. `mustOpenFilePart` / `mustOpenPart` in each engine cleans up safe post-rename `.tmp` leftovers on open. (#13862, root cause for #13861)
+- Fix bydbctl command tests using global stdout capture, which caused race-enabled runs to corrupt captured command output.
+- Use `topic` instead of `session_id` as the Prometheus label on liaison `queue_sub` chunk-ordering counters to avoid unbounded metric cardinality.
 - Fix flaky trace query filtering caused by non-deterministic sidx tag ordering and add consistency checks for integration query cases.
 - MCP: Add validation for properties and harden the mcp server.
 - Fix property schema client connection not stable after data node restarted.

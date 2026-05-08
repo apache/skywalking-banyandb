@@ -126,7 +126,8 @@ func (s *sidx) mergeParts(fileSystem fs.FileSystem, closeCh <-chan struct{}, par
 		pm.MaxTimestamp = &maxVal
 	}
 	pm.mustWriteMetadata(fileSystem, dstPath)
-	fileSystem.SyncPath(dstPath)
+	// No SyncPath: mustWriteMetadata goes through MustFlushAtomic which
+	// already fsyncs the parent directory after rename.
 	p := mustOpenPart(partID, dstPath, fileSystem)
 
 	return newPartWrapper(nil, p), nil
