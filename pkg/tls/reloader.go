@@ -137,7 +137,7 @@ func NewClientCertReloader(certFile string, log *logger.Logger) (*Reloader, erro
 }
 
 // Start begins monitoring the TLS certificate and key files for changes.
-func (r *Reloader) Start() error {
+func (r *Reloader) Start(ctx context.Context) error {
 	r.log.Info().Str("certFile", r.certFile).Str("keyFile", r.keyFile).Msg("Starting TLS file monitoring")
 
 	err := r.watcher.Add(r.certFile)
@@ -153,7 +153,7 @@ func (r *Reloader) Start() error {
 		}
 	}
 
-	run.Go(context.Background(), "tls.reloader.watcher", r.log, func(_ context.Context) {
+	run.Go(ctx, "tls.reloader.watcher", r.log, func(_ context.Context) {
 		r.watchFiles()
 	})
 

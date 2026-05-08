@@ -474,7 +474,7 @@ func (s *server) Validate() error {
 func (s *server) Serve() run.StopNotify {
 	var opts []grpclib.ServerOption
 	if s.tls {
-		if err := s.tlsReloader.Start(); err != nil {
+		if err := s.tlsReloader.Start(context.Background()); err != nil {
 			s.log.Error().Err(err).Msg("Failed to start TLSReloader for gRPC")
 			close(s.stopCh)
 			return s.stopCh

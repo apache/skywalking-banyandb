@@ -241,7 +241,7 @@ func (s *server) Serve() run.StopNotify {
 	if s.tls {
 		// Start TLS reloader if enabled
 		if s.tlsReloader != nil {
-			if err := s.tlsReloader.Start(); err != nil {
+			if err := s.tlsReloader.Start(context.Background()); err != nil {
 				s.log.Error().Err(err).Msg("Failed to start TLS reloader for queue server")
 				stopCh := make(chan struct{})
 				close(stopCh)

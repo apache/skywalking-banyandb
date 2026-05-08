@@ -164,7 +164,7 @@ func (p *pub) GracefulStop() {
 func (p *pub) Serve() run.StopNotify {
 	// Start CA certificate reloader if enabled
 	if p.caCertReloader != nil {
-		if err := p.caCertReloader.Start(); err != nil {
+		if err := p.caCertReloader.Start(context.Background()); err != nil {
 			p.log.Error().Err(err).Msg("Failed to start CA certificate reloader")
 			stopCh := p.closer.CloseNotify()
 			return stopCh

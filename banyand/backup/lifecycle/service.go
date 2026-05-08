@@ -304,7 +304,7 @@ func (l *lifecycleService) startServers() {
 	// Setup gRPC server
 	var opts []grpclib.ServerOption
 	if l.lifecycleTLS && l.tlsReloader != nil {
-		if startErr := l.tlsReloader.Start(); startErr != nil {
+		if startErr := l.tlsReloader.Start(context.Background()); startErr != nil {
 			l.l.Error().Err(startErr).Msg("Failed to start TLS reloader")
 			close(l.stopCh)
 			return

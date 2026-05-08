@@ -193,7 +193,7 @@ func (s *server) Validate() error {
 	return nil
 }
 
-func (s *server) PreRun(_ context.Context) error {
+func (s *server) PreRun(ctx context.Context) error {
 	s.l = logger.GetLogger("schema-server")
 	var err error
 	if s.root, err = banyandbpath.Get(s.root); err != nil {
@@ -277,7 +277,7 @@ func (s *server) PreRun(_ context.Context) error {
 	var opts []grpclib.ServerOption
 	if s.tls {
 		if s.tlsReloader != nil {
-			if startErr := s.tlsReloader.Start(); startErr != nil {
+			if startErr := s.tlsReloader.Start(ctx); startErr != nil {
 				return errors.Wrap(startErr, "failed to start TLS reloader for schema server")
 			}
 			s.l.Info().Str("certFile", s.certFile).Str("keyFile", s.keyFile).
