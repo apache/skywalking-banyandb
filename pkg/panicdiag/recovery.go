@@ -119,8 +119,8 @@ func WithRecovery(ctx context.Context, opts RecoveryOptions, reporter Reporter, 
 		outcome.Panicked = true
 		outcome.PanicValue = panicValue
 		outcome.Result = recoveryResult
-		callReporter(log, ctx, reporter, recoveryResult)
-		callDefaultAbort(log, ctx, recoveryResult)
+		callReporter(ctx, log, reporter, recoveryResult)
+		callDefaultAbort(ctx, log, recoveryResult)
 
 		// Signal artifact completion for callers such as GoOrDie.
 		artifactDone := make(chan struct{})

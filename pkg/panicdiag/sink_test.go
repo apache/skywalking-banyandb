@@ -189,7 +189,7 @@ func TestRecoverySignalsFireBeforeSinkDrains(t *testing.T) {
 		defer close(s.drained)
 		<-gate
 		for range s.queue {
-			// drain remaining jobs after the gate releases
+			continue
 		}
 	}()
 	t.Cleanup(func() {

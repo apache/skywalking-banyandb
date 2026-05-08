@@ -117,7 +117,7 @@ func incPanicCounter(log *logger.Logger, counter meter.Counter, component string
 // local reporter. The default fires first so its bookkeeping is unaffected by
 // any error or panic in the per-call reporter. Each reporter is isolated under
 // safeCall so a panic in one cannot prevent the other from running.
-func callReporter(log *logger.Logger, ctx context.Context, reporter Reporter, result RecoveryResult) {
+func callReporter(ctx context.Context, log *logger.Logger, reporter Reporter, result RecoveryResult) {
 	if ptr := defaultReporterPtr.Load(); ptr != nil {
 		safeCall(log, "default-reporter", func() { (*ptr)(ctx, result) })
 	}
@@ -142,7 +142,7 @@ func SetDefaultAbortFunc(f AbortFunc) {
 // both fail the parent supervisor and re-raise the panic. The hook is
 // isolated under safeCall so a panicking abort cannot prevent the recovery
 // defer from completing.
-func callDefaultAbort(log *logger.Logger, ctx context.Context, result RecoveryResult) {
+func callDefaultAbort(ctx context.Context, log *logger.Logger, result RecoveryResult) {
 	if ptr := defaultAbortFuncPtr.Load(); ptr != nil {
 		safeCall(log, "default-abort", func() { (*ptr)(ctx, result) })
 	}

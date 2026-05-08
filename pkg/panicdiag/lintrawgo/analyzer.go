@@ -70,7 +70,7 @@ const modulePrefix = "github.com/apache/skywalking-banyandb/"
 // whose entire package is exempt. These are the modules that *implement*
 // panic recovery; raw `go` is unavoidable inside them.
 var allowedPackagePaths = []string{
-	"pkg/panicdiag",          // Recovery primitives.
+	"pkg/panicdiag",           // Recovery primitives.
 	"pkg/panicdiag/lintrawgo", // This analyzer (uses raw `go` in tests).
 }
 
@@ -121,14 +121,17 @@ func (c *Checker) Check(fset *token.FileSet, importPath string, f *ast.File) ([]
 }
 
 // state is the per-Analyzer mutable configuration. It is private so the
-// only mutators are the registered flags.
+// only mutators are the registered flags. Fields are ordered for
+// govet's fieldalignment: error (two pointer words) first, then the
+// map (one pointer word), then the string (whose pointer word is at
+// the front), so the GC's pointer scan ends at offset 32 rather than
+// running past sync.Once. Non-pointer fields trail.
 type state struct {
+	loadErr      error
+	baseline     map[string]map[int]bool // module-relative path -> line -> allowed
 	baselinePath string
+	once         sync.Once
 	includeTests bool
-
-	once     sync.Once
-	loadErr  error
-	baseline map[string]map[int]bool // module-relative path → line → allowed
 }
 
 func newAnalyzer() *analysis.Analyzer {
