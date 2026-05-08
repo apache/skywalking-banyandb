@@ -149,6 +149,11 @@ func Test_merger_tornSpansBin_stillPanics(t *testing.T) {
 
 	defer func() {
 		r := recover()
+		// Release fds even on the panic path. mustOpenFilePart opens
+		// many underlying files; without explicit close here the panic
+		// would leak them for the lifetime of the test process.
+		p1.close()
+		p2.close()
 		require.NotNilf(t, r, "merger must panic on torn spans.bin (canonical fail-fast contract)")
 		// Accept any panic from the merger's read path. The exact message
 		// depends on which block boundary the truncation hit; valid shapes:

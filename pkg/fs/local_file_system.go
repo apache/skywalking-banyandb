@@ -304,24 +304,10 @@ func (fs *localFileSystem) WriteAtomic(buffer []byte, name string, permission Mo
 			Message: fmt.Sprintf("Rename %s -> %s return error: %s", tmpName, name, renameErr),
 		}
 	}
-	dir, err := os.Open(parentDir)
-	if err != nil {
-		return size, &FileSystemError{
-			Code:    otherError,
-			Message: fmt.Sprintf("Open parent dir for fsync, dir name: %s, error message: %s", parentDir, err),
-		}
-	}
-	if syncErr := dir.Sync(); syncErr != nil {
-		_ = dir.Close()
+	if err := syncDir(parentDir); err != nil {
 		return size, &FileSystemError{
 			Code:    flushError,
-			Message: fmt.Sprintf("Sync parent dir return error, dir name: %s, error message: %s", parentDir, syncErr),
-		}
-	}
-	if closeErr := dir.Close(); closeErr != nil {
-		return size, &FileSystemError{
-			Code:    closeError,
-			Message: fmt.Sprintf("Close parent dir return error, dir name: %s, error message: %s", parentDir, closeErr),
+			Message: fmt.Sprintf("Sync parent dir return error, dir name: %s, error message: %s", parentDir, err),
 		}
 	}
 	return size, nil
