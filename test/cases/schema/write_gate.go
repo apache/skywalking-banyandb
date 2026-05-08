@@ -260,7 +260,7 @@ func sendMeasureWriteAtTime(
 	return firstStatus, nil
 }
 
-// Schema write gate smoke tests —  /  / 
+// Schema write gate smoke tests —  /  /
 // Each spec exercises a distinct branch of the three-way ModRevision split.
 var _ = g.Describe("Schema write gate", func() {
 	var (

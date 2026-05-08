@@ -38,7 +38,7 @@ import (
 // configured in the integration suite setup. Keep in sync with common.go.
 const tombstoneRetentionForTest = 2 * time.Second
 
-// Schema tombstone GC specs —  / 
+// Schema tombstone GC specs —  /
 // The integration suite wires the standalone server with
 // --schema-server-tombstone-retention=tombstoneRetentionForTest in BeforeSuite,
 // so these specs run without any environment-variable setup.

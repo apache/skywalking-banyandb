@@ -70,7 +70,7 @@ func sendStreamQuery(
 // queryGateStreamName is the fixture stream name reused across  specs.
 const queryGateStreamName = "qg_stream"
 
-// Schema query gate smoke tests —  /  / 
+// Schema query gate smoke tests —  /  /
 // Each spec exercises a distinct branch of the per-group ModRevision gate on the
 // query path.
 var _ = g.Describe("Schema query gate", func() {

@@ -62,7 +62,7 @@ func sendStreamQueryWithRange(
 	})
 }
 
-// Schema time-range clamp smoke tests — Rule 7 / 
+// Schema time-range clamp smoke tests — Rule 7 /
 //  writes real data and verifies no pre-creation leakage.
 // Each spec exercises a distinct outcome of clamping the query TimeRange.Begin to
 // the maximum schema.CreatedAt across all queried groups.
