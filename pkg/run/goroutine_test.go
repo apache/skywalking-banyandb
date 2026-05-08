@@ -131,6 +131,80 @@ func TestGo_RecoveryCapturesBreadcrumbsAddedInFn(t *testing.T) {
 	require.Len(t, collections[0].Record.Breadcrumbs, 2)
 }
 
+// TestGo_SiblingsHaveIsolatedBreadcrumbs pins the per-goroutine isolation
+// contract that callers rely on: when two goroutines are launched via Go
+// from the same parent ctx, each goroutine's panic record contains the
+// inherited parent breadcrumbs plus only its own additions, never the
+// sibling's. This is what allows panicdiag artifacts to be useful in a
+// fan-out workload: without isolation, racy interleaving would smear
+// every sibling's stages into every record.
+func TestGo_SiblingsHaveIsolatedBreadcrumbs(t *testing.T) {
+	t.Helper()
+
+	require.NoError(t, logger.Init(logger.Logging{Env: "dev", Level: "error"}))
+	log := logger.GetLogger("test")
+
+	// Parent context carries one breadcrumb both children should inherit.
+	parent := panicdiag.WithMutableBreadcrumbs(context.Background())
+	parent = panicdiag.WithBreadcrumb(parent, "shared", "parent", nil)
+
+	// Use a barrier so both goroutines have entered fn before either
+	// adds its own breadcrumb. This makes the race the test is guarding
+	// against (cross-sibling visibility) actually exercisable.
+	start := make(chan struct{})
+
+	taskA := Go(parent, "child-A", log, func(ctx context.Context) {
+		<-start
+		panicdiag.WithBreadcrumb(ctx, "stage-A", "child-A", nil)
+		panic("a-boom")
+	})
+	taskB := Go(parent, "child-B", log, func(ctx context.Context) {
+		<-start
+		panicdiag.WithBreadcrumb(ctx, "stage-B", "child-B", nil)
+		panic("b-boom")
+	})
+
+	close(start)
+
+	outcomeA := taskA.Wait()
+	outcomeB := taskB.Wait()
+
+	require.True(t, outcomeA.Panicked, "taskA must have panicked")
+	require.True(t, outcomeB.Panicked, "taskB must have panicked")
+	require.NotNil(t, outcomeA.Result.Record)
+	require.NotNil(t, outcomeB.Result.Record)
+
+	stagesOf := func(bcs []panicdiag.Breadcrumb) []string {
+		out := make([]string, len(bcs))
+		for idx, bc := range bcs {
+			out[idx] = bc.Stage
+		}
+		return out
+	}
+	stagesA := stagesOf(outcomeA.Result.Record.Breadcrumbs)
+	stagesB := stagesOf(outcomeB.Result.Record.Breadcrumbs)
+
+	// Both children must inherit the parent's breadcrumb...
+	require.Contains(t, stagesA, "shared", "child-A must inherit parent stages")
+	require.Contains(t, stagesB, "shared", "child-B must inherit parent stages")
+
+	// ...each child must see its own addition...
+	require.Contains(t, stagesA, "stage-A", "child-A's own breadcrumb must be in its record")
+	require.Contains(t, stagesB, "stage-B", "child-B's own breadcrumb must be in its record")
+
+	// ...and crucially, neither child must see the sibling's addition.
+	require.NotContains(t, stagesA, "stage-B",
+		"child-A's record contains child-B's breadcrumb: sibling stores are not isolated")
+	require.NotContains(t, stagesB, "stage-A",
+		"child-B's record contains child-A's breadcrumb: sibling stores are not isolated")
+
+	// And the parent's view must remain pristine: child additions must
+	// not write back through the shared parent ctx.
+	parentStages := stagesOf(panicdiag.BreadcrumbsFromContext(parent))
+	require.NotContains(t, parentStages, "stage-A", "child-A wrote back into parent's store")
+	require.NotContains(t, parentStages, "stage-B", "child-B wrote back into parent's store")
+}
+
 // TestGoOrDie_TerminatesProcessAndWritesArtifact pins both halves of GoOrDie's
 // contract: the process exits non-zero on a recovered panic AND the diagnostic
 // artifact is fully written before the re-raise kills the process. We exec a
