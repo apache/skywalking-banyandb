@@ -1538,27 +1538,23 @@ func TestCreateSegment_ConcurrentCreates_DeterministicAlignment(t *testing.T) {
 	}
 }
 
-// TestCreateSegment_LegacyOffGridNeighbour_NoMisroute makes sure that during
-// the legacy transition (a pre-fix off-grid segment still on disk), a write
-// past the legacy segment's End does NOT get routed back into the legacy
-// segment by the alignment logic. The aligned start can land deep inside the
-// legacy segment because the new grid moves boundaries backward; the create()
-// path must still return a segment whose nominal range contains the raw
-// timestamp the caller asked about.
-func TestCreateSegment_LegacyOffGridNeighbour_NoMisroute(t *testing.T) {
+// TestCreateSegment_LegacyOffGridNeighbour_TransitionThenGrid: a pre-fix
+// off-grid segment on disk must produce a transition segment that ends on
+// the global grid, so subsequent segments self-heal back to it.
+func TestCreateSegment_LegacyOffGridNeighbour_TransitionThenGrid(t *testing.T) {
 	sc, tempDir, cleanup := newAlignmentTestController(t, IntervalRule{Unit: DAY, Num: 15})
 	defer cleanup()
 
 	ctx := context.Background()
-	l := logger.GetLogger("test-legacy-misroute")
+	l := logger.GetLogger("test-legacy-transition")
 	ctx = context.WithValue(ctx, logger.ContextKey, l)
 	ctx = common.SetPosition(ctx, func(_ common.Position) common.Position {
 		return common.Position{Database: "test-db", Stage: "cold"}
 	})
 
-	// Inject a legacy off-grid segment [2026-05-01, 2026-05-16). Note the
-	// new 15d-from-epoch grid puts that range across two buckets:
-	// [04/22, 05/07) and [05/07, 05/22).
+	// Inject a legacy off-grid segment [2026-05-01, 2026-05-16). The new 15d
+	// epoch grid puts buckets at 04/22, 05/07, 05/22, 06/06, ...; legacy
+	// straddles 05/07 and ends inside [05/07, 05/22).
 	legacyStart := time.Date(2026, 5, 1, 0, 0, 0, 0, time.UTC)
 	legacyEnd := time.Date(2026, 5, 16, 0, 0, 0, 0, time.UTC)
 	suffix := legacyStart.Format(dayFormat)
@@ -1570,22 +1566,41 @@ func TestCreateSegment_LegacyOffGridNeighbour_NoMisroute(t *testing.T) {
 	sc.lst = append(sc.lst, legacy)
 	sc.sortLst()
 
-	// A write arriving with timestamp 2026-05-17 - past legacy.End (05/16).
-	// The write needs a segment whose range contains 2026-05-17.
+	// First write past legacy.End: aligned start (05/07) is inside legacy,
+	// bump pushes start to 05/16 (legacy.End), but stdEnd was locked to the
+	// original grid bucket end (05/22). So the transition segment is shorter
+	// than 15d but still ends on the grid.
 	probe := time.Date(2026, 5, 17, 6, 0, 0, 0, time.UTC)
-	got, err := sc.create(probe)
+	transition, err := sc.create(probe)
 	require.NoError(t, err)
-	require.NotNil(t, got)
-	defer func() {
-		if got != legacy {
-			got.DecRef()
-		}
-	}()
+	require.NotNil(t, transition)
+	defer transition.DecRef()
 
-	assert.True(t, got.Contains(probe.UnixNano()),
-		"create(2026-05-17) returned segment [%s, %s) which does NOT contain the probe; "+
-			"alignment moved start back into the legacy segment and create misrouted the write",
-		got.Start.Format(time.RFC3339), got.End.Format(time.RFC3339))
+	gridBoundary := time.Date(2026, 5, 22, 0, 0, 0, 0, time.UTC)
+	assert.True(t, transition.Contains(probe.UnixNano()),
+		"transition segment must cover the probe; got [%s, %s)",
+		transition.Start.Format(time.RFC3339), transition.End.Format(time.RFC3339))
+	assert.Equal(t, legacyEnd, transition.Start,
+		"start must be bumped to legacy.End (no overlap, no misroute)")
+	assert.Equal(t, gridBoundary, transition.End,
+		"end must land on the next 15d-from-epoch boundary, not legacy.End+15d")
+	assert.Less(t, transition.End.Sub(transition.Start), 15*24*time.Hour,
+		"transition segment span is expected to be shorter than the configured SegmentInterval")
+
+	// Second write past the transition segment: aligned start lands cleanly
+	// on the next grid bucket [05/22, 06/06) and produces a full 15d segment.
+	postProbe := time.Date(2026, 5, 25, 6, 0, 0, 0, time.UTC)
+	gridSeg, err := sc.create(postProbe)
+	require.NoError(t, err)
+	require.NotNil(t, gridSeg)
+	defer gridSeg.DecRef()
+
+	assert.Equal(t, gridBoundary, gridSeg.Start,
+		"first post-transition segment must start on the global grid")
+	assert.Equal(t, time.Date(2026, 6, 6, 0, 0, 0, 0, time.UTC), gridSeg.End,
+		"first post-transition segment must span a full 15d on the grid")
+	assert.Equal(t, 15*24*time.Hour, gridSeg.End.Sub(gridSeg.Start),
+		"transition self-heals: subsequent segments are full Num*Unit")
 }
 
 // TestCreateSegment_PersistedMetadataReflectsAlignedRange writes a segment

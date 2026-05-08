@@ -130,11 +130,20 @@ func parseGroup(
 	if len(ro.Stages) == 0 {
 		return nil, fmt.Errorf("no stages in group %s", g.Metadata.Name)
 	}
+	if ro.Ttl == nil {
+		return nil, fmt.Errorf("group %s: missing ttl", g.Metadata.Name)
+	}
 	ttlTime := proto.Clone(ro.Ttl).(*commonv1.IntervalRule)
 	segmentInterval := cloneIntervalRule(ro.SegmentInterval)
 	var nst *commonv1.LifecycleStage
 	var targetSegmentInterval *commonv1.IntervalRule
 	for i, st := range ro.Stages {
+		if st.SegmentInterval == nil {
+			return nil, fmt.Errorf("group %s stage %s: missing segment_interval", g.Metadata.Name, st.Name)
+		}
+		if st.Ttl == nil {
+			return nil, fmt.Errorf("group %s stage %s: missing ttl", g.Metadata.Name, st.Name)
+		}
 		selector, err := pub.ParseLabelSelector(st.NodeSelector)
 		if err != nil {
 			return nil, errors.WithMessagef(err, "failed to parse node selector %s", st.NodeSelector)
