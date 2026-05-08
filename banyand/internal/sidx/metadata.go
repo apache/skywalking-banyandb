@@ -455,5 +455,5 @@ func (pm *partMetadata) mustWriteMetadata(fileSystem fs.FileSystem, partPath str
 	if err != nil {
 		logger.GetLogger().Panic().Err(err).Str("path", partPath).Msg("failed to marshal part metadata")
 	}
-	fs.MustFlush(fileSystem, manifestData, filepath.Join(partPath, manifestFilename), storage.FilePerm)
+	fs.MustFlushAtomic(fileSystem, manifestData, filepath.Join(partPath, manifestFilename), storage.FilePerm)
 }

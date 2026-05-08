@@ -260,7 +260,8 @@ func (tst *tsTable) mergeParts(fileSystem fs.FileSystem, closeCh <-chan struct{}
 		return nil, err
 	}
 	pm.mustWriteMetadata(fileSystem, dstPath)
-	fileSystem.SyncPath(dstPath)
+	// No SyncPath: mustWriteMetadata goes through WriteAtomic which already
+	// fsyncs the parent directory after rename.
 	p := mustOpenFilePart(partID, root, fileSystem)
 	return newPartWrapper(nil, p), nil
 }

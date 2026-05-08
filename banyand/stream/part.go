@@ -223,14 +223,18 @@ func (mp *memPart) mustFlush(fileSystem fs.FileSystem, path string) {
 		fs.MustFlush(fileSystem, tfh.Buf, filepath.Join(path, name+tagFamiliesFilterFilenameExt), storage.FilePerm)
 	}
 
-	// Flush series metadata if available
+	// Flush series metadata if available. Goes through MustFlushAtomic
+	// because the file is read at part open by mustOpenFilePart and a
+	// crash during a non-atomic write could leave a partial file that
+	// reads as corrupt.
 	if len(mp.seriesMetadata.Buf) > 0 {
-		fs.MustFlush(fileSystem, mp.seriesMetadata.Buf, filepath.Join(path, seriesMetadataFilename), storage.FilePerm)
+		fs.MustFlushAtomic(fileSystem, mp.seriesMetadata.Buf, filepath.Join(path, seriesMetadataFilename), storage.FilePerm)
 	}
 
 	mp.partMetadata.mustWriteMetadata(fileSystem, path)
-
-	fileSystem.SyncPath(path)
+	// No SyncPath: mustWriteMetadata goes through WriteAtomic which already
+	// fsyncs the parent directory after rename, covering the dirent changes
+	// for all data files written above.
 }
 
 func uncompressedElementSizeBytes(index int, es *elements) uint64 {
@@ -311,6 +315,7 @@ func mustOpenFilePart(id uint64, root string, fileSystem fs.FileSystem) *part {
 	partPath := partPath(root, id)
 	p.path = partPath
 	p.fileSystem = fileSystem
+	fs.CleanupLeftoverTmp(fileSystem, partPath)
 	p.partMetadata.mustReadMetadata(fileSystem, partPath)
 	p.partMetadata.ID = id
 

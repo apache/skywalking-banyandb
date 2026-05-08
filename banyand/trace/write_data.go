@@ -102,13 +102,14 @@ func (s *syncPartContext) FinishSync() error {
 	s.releaseCoreWriters()
 
 	if len(s.traceIDFilterBuffer) > 0 {
-		fs.MustFlush(s.fileSystem, s.traceIDFilterBuffer, filepath.Join(s.partPath, traceIDFilterFilename), storage.FilePerm)
+		fs.MustFlushAtomic(s.fileSystem, s.traceIDFilterBuffer, filepath.Join(s.partPath, traceIDFilterFilename), storage.FilePerm)
 	}
 	if len(s.tagTypeBuffer) > 0 {
-		fs.MustFlush(s.fileSystem, s.tagTypeBuffer, filepath.Join(s.partPath, tagTypeFilename), storage.FilePerm)
+		fs.MustFlushAtomic(s.fileSystem, s.tagTypeBuffer, filepath.Join(s.partPath, tagTypeFilename), storage.FilePerm)
 	}
 	s.partMeta.mustWriteMetadata(s.fileSystem, s.partPath)
-	s.fileSystem.SyncPath(s.partPath)
+	// No SyncPath: mustWriteMetadata goes through WriteAtomic which already
+	// fsyncs the parent directory after rename.
 
 	// Finish SIDX writers and collect file paths for file-backed parts.
 	sidxFilePartsMap := make(map[string]string, len(s.sidxPartContexts))
