@@ -28,6 +28,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/apache/skywalking-banyandb/api/common"
+	databasev1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/database/v1"
 	modelv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/model/v1"
 	"github.com/apache/skywalking-banyandb/banyand/protector"
 	"github.com/apache/skywalking-banyandb/pkg/convert"
@@ -246,8 +247,8 @@ func Test_mergeTwoBlocks(t *testing.T) {
 								{
 									name: "parameters", valueType: pbv1.ValueTypeStr,
 									values: [][]byte{
-										[]byte("1000"),
-										[]byte("2000"),
+										topNParams1000,
+										topNParams2000,
 									},
 								},
 							},
@@ -292,8 +293,8 @@ func Test_mergeTwoBlocks(t *testing.T) {
 								{
 									name: "parameters", valueType: pbv1.ValueTypeStr,
 									values: [][]byte{
-										[]byte("1000"),
-										[]byte("2000"),
+										topNParams1000,
+										topNParams2000,
 									},
 								},
 							},
@@ -342,8 +343,8 @@ func Test_mergeTwoBlocks(t *testing.T) {
 								{
 									name: "parameters", valueType: pbv1.ValueTypeStr,
 									values: [][]byte{
-										[]byte("1000"),
-										[]byte("1000"),
+										topNParams1000,
+										topNParams1000,
 									},
 								},
 							},
@@ -388,8 +389,8 @@ func Test_mergeTwoBlocks(t *testing.T) {
 								{
 									name: "parameters", valueType: pbv1.ValueTypeStr,
 									values: [][]byte{
-										[]byte("1000"),
-										[]byte("1000"),
+										topNParams1000,
+										topNParams1000,
 									},
 								},
 							},
@@ -438,8 +439,8 @@ func Test_mergeTwoBlocks(t *testing.T) {
 								{
 									name: "parameters", valueType: pbv1.ValueTypeStr,
 									values: [][]byte{
-										[]byte("1000"),
-										[]byte("1000"),
+										topNParams1000,
+										topNParams1000,
 									},
 								},
 							},
@@ -484,8 +485,8 @@ func Test_mergeTwoBlocks(t *testing.T) {
 								{
 									name: "parameters", valueType: pbv1.ValueTypeStr,
 									values: [][]byte{
-										[]byte("1000"),
-										[]byte("1000"),
+										topNParams1000,
+										topNParams1000,
 									},
 								},
 							},
@@ -534,8 +535,8 @@ func Test_mergeTwoBlocks(t *testing.T) {
 								{
 									name: "parameters", valueType: pbv1.ValueTypeStr,
 									values: [][]byte{
-										[]byte("1000"),
-										[]byte("1000"),
+										topNParams1000,
+										topNParams1000,
 									},
 								},
 							},
@@ -580,8 +581,8 @@ func Test_mergeTwoBlocks(t *testing.T) {
 								{
 									name: "parameters", valueType: pbv1.ValueTypeStr,
 									values: [][]byte{
-										[]byte("1000"),
-										[]byte("1000"),
+										topNParams1000,
+										topNParams1000,
 									},
 								},
 							},
@@ -662,6 +663,9 @@ var (
 		b, _ := mergedTopNValue.marshal(make([]byte, 0, 256))
 		return b
 	}()
+
+	topNParams1000 = []byte((&TopNParameters{Limit: 1000, FieldType: databasev1.FieldType_FIELD_TYPE_INT}).String())
+	topNParams2000 = []byte((&TopNParameters{Limit: 2000, FieldType: databasev1.FieldType_FIELD_TYPE_INT}).String())
 )
 
 // Test_mergeTwoBlocks_edgeCase tests the edge case that previously caused panic:
@@ -804,9 +808,9 @@ var mergedTopNBlock = block{
 				{
 					name: "parameters", valueType: pbv1.ValueTypeStr,
 					values: [][]byte{
-						[]byte("1000"),
-						[]byte("1000"),
-						[]byte("2000"),
+						topNParams1000,
+						topNParams1000,
+						topNParams2000,
 					},
 				},
 			},
@@ -853,9 +857,9 @@ var mergedTopNBlock2 = block{
 				{
 					name: "parameters", valueType: pbv1.ValueTypeStr,
 					values: [][]byte{
-						[]byte("1000"),
-						[]byte("1000"),
-						[]byte("1000"),
+						topNParams1000,
+						topNParams1000,
+						topNParams1000,
 					},
 				},
 			},
@@ -902,9 +906,9 @@ var mergedTopNBlock3 = block{
 				{
 					name: "parameters", valueType: pbv1.ValueTypeStr,
 					values: [][]byte{
-						[]byte("1000"),
-						[]byte("1000"),
-						[]byte("1000"),
+						topNParams1000,
+						topNParams1000,
+						topNParams1000,
 					},
 				},
 			},
@@ -951,9 +955,9 @@ var mergedTopNBlock4 = block{
 				{
 					name: "parameters", valueType: pbv1.ValueTypeStr,
 					values: [][]byte{
-						[]byte("1000"),
-						[]byte("1000"),
-						[]byte("1000"),
+						topNParams1000,
+						topNParams1000,
+						topNParams1000,
 					},
 				},
 			},

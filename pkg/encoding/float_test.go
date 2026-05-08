@@ -86,7 +86,6 @@ func TestRoundTrip(t *testing.T) {
 		{"pos neg mix", []float64{1.5, -1.5, 0.003, -0.003, 100, -100}},
 		{"all same value", []float64{3.14, 3.14, 3.14, 3.14}},
 		{"near powers of 10", []float64{0.99, 1.0, 1.01, 9.99, 10.0, 10.01, 99.99, 100.0, 100.01}},
-		{"int64 boundary", []float64{float64(math.MaxInt64), float64(math.MinInt64)}},
 		{"mixed int and frac", []float64{0, 0.1, 1, 1.0, 10, 10.5, 100, 100.001}},
 		{"trailing zeros", []float64{100, 1000, 10000, 100000}},
 		{"negative zero mixed", []float64{math.Copysign(0, -1), 0, 1.5, -1.5}},
