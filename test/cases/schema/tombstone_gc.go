@@ -17,7 +17,7 @@
 
 // Package schema contains shared test cases for schema-related functionality.
 //
-//  and  exercise tombstone retention behavior. The test suites wire
+// Tombstone GC specs exercise tombstone retention behavior. The test suites wire
 // the standalone server with --schema-server-tombstone-retention=2s in the
 // BeforeSuite, so the specs run without requiring any environment variable.
 package schema

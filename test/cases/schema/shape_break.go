@@ -145,7 +145,7 @@ func queryMeasureRange(
 	return client.Query(ctx, req)
 }
 
-//  /  /  / Shape-break and delete-then-recreate scenarios.
+// Shape-break and delete-then-recreate scenarios.
 var _ = g.Describe("Schema shape-break rejection", func() {
 	var (
 		ctx     context.Context
