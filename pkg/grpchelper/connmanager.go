@@ -123,7 +123,9 @@ func NewConnManager[C Client](cfg ConnManagerConfig[C]) *ConnManager[C] {
 		healthCheckInterval: cfg.HealthCheckInterval,
 	}
 	if m.healthCheckInterval > 0 && m.closer.AddRunning() {
-		go m.periodicHealthCheck()
+		run.Go(context.Background(), "grpchelper.connmanager.health-check", m.log, func(_ context.Context) {
+			m.periodicHealthCheck()
+		})
 	}
 	return m
 }
