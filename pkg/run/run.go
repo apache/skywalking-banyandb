@@ -389,13 +389,14 @@ func (g *Group) Run(ctx context.Context) (err error) {
 		ctx = context.Background()
 	}
 	// execute pre run stage and exit on error
+	preRunCtx := context.WithValue(ctx, common.ContextNodeRolesKey, rr)
 	for idx := range g.p {
 		// a PreRunner might have been deregistered during Run
 		if g.p[idx] == nil {
 			continue
 		}
 		startTime := time.Now()
-		if err := g.p[idx].PreRun(context.WithValue(ctx, common.ContextNodeRolesKey, rr)); err != nil {
+		if err := preRunWithRecovery(preRunCtx, g.log, g.p[idx]); err != nil {
 			return errors.WithMessage(err, fmt.Sprintf("pre-run module[%s]", g.p[idx].Name()))
 		}
 		g.log.Info().Dur("elapsed", time.Since(startTime)).Str("name", g.p[idx].Name()).Msg("pre-run completed")
@@ -403,10 +404,11 @@ func (g *Group) Run(ctx context.Context) (err error) {
 
 	swg := &sync.WaitGroup{}
 	swg.Add(len(g.s))
-	go func() {
+	// Recover any panic from the readiness watcher.
+	Go(ctx, "rungroup.ready", g.log, func(_ context.Context) {
 		swg.Wait()
 		close(g.readyCh)
-	}()
+	})
 	// feed our registered services to our internal run.Group
 	for idx := range g.s {
 		// a Service might have been deregistered during Run
@@ -462,6 +464,25 @@ func gracefulStopWithRecovery(ctx context.Context, log *logger.Logger, s Service
 	}, nil, func(_ *context.Context) {
 		s.GracefulStop()
 	})
+}
+
+// preRunWithRecovery records PreRun panics and returns them as errors.
+func preRunWithRecovery(ctx context.Context, log *logger.Logger, p PreRunner) error {
+	var preRunErr error
+	outcome := panicdiag.WithRecovery(ctx, panicdiag.RecoveryOptions{
+		Component: p.Name() + ".prerun",
+		Logger:    log,
+	}, nil, func(_ *context.Context) {
+		preRunErr = p.PreRun(ctx)
+	})
+	if outcome.Panicked {
+		panicValue := ""
+		if outcome.Result.Record != nil {
+			panicValue = outcome.Result.Record.PanicValue
+		}
+		return errors.Errorf("panicked: %s", panicValue)
+	}
+	return preRunErr
 }
 
 // ListUnits returns a list of all Group phases and the Units registered to each
