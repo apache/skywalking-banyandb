@@ -519,7 +519,9 @@ func (tst *tsTable) mergeParts(fileSystem fs.FileSystem, closeCh <-chan struct{}
 	tf.mustWriteTraceIDFilter(fileSystem, dstPath)
 	tf.reset()
 	tt.mustWriteTagType(fileSystem, dstPath)
-	fileSystem.SyncPath(dstPath)
+	// No SyncPath here: each mustWrite* helper goes through fileSystem.WriteAtomic
+	// which already fsyncs the parent directory after rename. The last atomic
+	// metadata write covers all prior dirent changes (data file creations).
 	p := mustOpenFilePart(partID, root, fileSystem)
 	return newPartWrapper(nil, p), nil
 }

@@ -102,7 +102,7 @@ func (pm *partMetadata) mustWriteMetadata(fileSystem fs.FileSystem, partPath str
 		return
 	}
 	metadataPath := filepath.Join(partPath, metadataFilename)
-	n, err := fileSystem.Write(metadata, metadataPath, storage.FilePerm)
+	n, err := fileSystem.WriteAtomic(metadata, metadataPath, storage.FilePerm)
 	if err != nil {
 		logger.Panicf("cannot write metadata: %s", err)
 		return
@@ -199,7 +199,7 @@ func (tt tagType) mustWriteTagType(fileSystem fs.FileSystem, partPath string) {
 	data = tt.marshal(data)
 
 	tagTypePath := filepath.Join(partPath, tagTypeFilename)
-	n, err := fileSystem.Write(data, tagTypePath, storage.FilePerm)
+	n, err := fileSystem.WriteAtomic(data, tagTypePath, storage.FilePerm)
 	if err != nil {
 		logger.Panicf("cannot write tagType: %s", err)
 		return
@@ -249,7 +249,7 @@ func (tf *traceIDFilter) mustWriteTraceIDFilter(fileSystem fs.FileSystem, partPa
 	data = encodeBloomFilter(data, tf.filter)
 
 	traceIDFilterPath := filepath.Join(partPath, traceIDFilterFilename)
-	n, err := fileSystem.Write(data, traceIDFilterPath, storage.FilePerm)
+	n, err := fileSystem.WriteAtomic(data, traceIDFilterPath, storage.FilePerm)
 	if err != nil {
 		logger.Panicf("cannot write traceIDFilter: %s", err)
 		return
