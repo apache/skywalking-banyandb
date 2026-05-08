@@ -1638,7 +1638,7 @@ func (r *SchemaRegistry) processInitialResourceFromProperty(kind schema.Kind, pr
 	// the queue. Covers both the watch path and the full-reconcile path —
 	// every event funnels through this function before the schemaCache is
 	// updated and notifiedModRevision advances. Used by
-	// pkg/test/setup.PauseDataNodeWatch for §6.12 partial-cluster specs.
+	// pkg/test/setup.PauseDataNodeWatch for  partial-cluster specs.
 	r.pauseMu.Lock()
 	if r.paused {
 		r.pauseQueue = append(r.pauseQueue, func() {

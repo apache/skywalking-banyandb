@@ -107,7 +107,7 @@ func TestProcessInitialResourceFromProperty_PausedQueuesAndSkipsCacheUpdate(t *t
 // TestHandleDeletion_PausedQueuesAndSkipsCacheDelete verifies the
 // counterpart gate on handleDeletion. cache.Delete is never invoked under
 // pause (the cache is nil here), so the entry remains visible to
-// GetAbsentKeys — exactly the behavior §6.12c relies on.
+// GetAbsentKeys — exactly the behavior  relies on.
 func TestHandleDeletion_PausedQueuesAndSkipsCacheDelete(t *testing.T) {
 	r := newTestSchemaRegistry()
 	r.PauseNotifications()

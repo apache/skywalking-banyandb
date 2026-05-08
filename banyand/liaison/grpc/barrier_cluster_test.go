@@ -658,7 +658,7 @@ func TestAwaitSchemaApplied_FanOut_ChunkedKeys(t *testing.T) {
 		"per-peer missing_keys aggregates both chunks")
 }
 
-// TestAwaitSchemaApplied_FanOut_SharedDeadline regresses the plan §2.3
+// TestAwaitSchemaApplied_FanOut_SharedDeadline regresses the plan 
 // contract that each per-node, per-chunk RPC inherits time.Until(deadline)
 // rather than req.Timeout / N. With per-chunk delays larger than the call's
 // total budget, the call must complete around req.Timeout — NOT N × delay.

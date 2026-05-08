@@ -33,12 +33,12 @@ import (
 	"github.com/apache/skywalking-banyandb/pkg/test/setup"
 )
 
-// §6.12 — Cluster-only specs that exercise the schema-watch pause primitive
+// Cluster-only specs that exercise the schema-watch pause primitive
 // end-to-end through the public AwaitX RPCs. They pause the receiving
 // liaison's own SchemaRegistry; the cluster barrier's selfName probe reads
 // through that SR, so pausing it surfaces a laggard via the public AwaitX
 // API. Data-node fan-out via NodeSchemaStatusService is covered by the
-// unit tests in banyand/liaison/grpc/barrier_cluster_test.go (§FA-1..FD-2).
+// unit tests in banyand/liaison/grpc/barrier_cluster_test.go.
 // These integration specs cover the orthogonal contract: the pause
 // primitive's effect is observable through the public AwaitX RPC and
 // resume drains the queued events so the barrier converges.
@@ -73,7 +73,7 @@ func barrierClusterMeasureSpec(group, name string) *databasev1.Measure {
 	}
 }
 
-var _ = g.Describe("Cluster barrier under partial-cluster conditions (§6.12)", func() {
+var _ = g.Describe("Cluster barrier under partial-cluster conditions", func() {
 	var (
 		ctx     context.Context
 		clients *Clients
@@ -82,10 +82,10 @@ var _ = g.Describe("Cluster barrier under partial-cluster conditions (§6.12)", 
 
 	g.BeforeEach(func() {
 		if SharedContext.Mode != helpers.ModeDistributed {
-			g.Skip("§6.12 cluster barrier specs are distributed-only")
+			g.Skip("cluster barrier specs are distributed-only")
 		}
 		if SharedContext.LiaisonAddr == "" {
-			g.Skip("§6.12 specs need a registered liaison address (set by the distributed BeforeSuite)")
+			g.Skip("specs need a registered liaison address (set by the distributed BeforeSuite)")
 		}
 		ctx = context.Background()
 		clients = NewClients(SharedContext.Connection)
@@ -101,13 +101,13 @@ var _ = g.Describe("Cluster barrier under partial-cluster conditions (§6.12)", 
 		_ = setup.ResumeDataNodeWatch(paused)
 	})
 
-		// §6.12a — AwaitRevisionApplied surfaces a paused liaison as a
-		// laggard via its selfName probe; resume drains the queue and the
-		// barrier converges. The GetMaxRevision min-aggregation regression
-		// that caused post-resume laggards:3 timeouts has been repaired
-		// (removed LatestModRevision from NodeRepoRegistry; GetMaxRevision
-		// now reads cache-only).
-	g.It("§6.12a AwaitRevisionApplied reports the paused liaison as a laggard", func() {
+	// AwaitRevisionApplied surfaces a paused liaison as a
+	// laggard via its selfName probe; resume drains the queue and the
+	// barrier converges. The GetMaxRevision min-aggregation regression
+	// that caused post-resume laggards:3 timeouts has been repaired
+	// (removed LatestModRevision from NodeRepoRegistry; GetMaxRevision
+	// now reads cache-only).
+	g.It("AwaitRevisionApplied reports the paused liaison as a laggard", func() {
 		groupName := fmt.Sprintf("bc-rev-%d", time.Now().UnixNano())
 		measureName := "bc_rev_measure"
 
@@ -163,10 +163,10 @@ var _ = g.Describe("Cluster barrier under partial-cluster conditions (§6.12)", 
 		_, _ = clients.GroupClient.Delete(ctx, &databasev1.GroupRegistryServiceDeleteRequest{Group: groupName})
 	})
 
-	// §6.12b — AwaitSchemaApplied surfaces a paused liaison as a laggard
+	// AwaitSchemaApplied surfaces a paused liaison as a laggard
 	// when a measure's mod_revision has bumped but the liaison's SR has
 	// queued the watch event.
-	g.It("§6.12b AwaitSchemaApplied reports the paused liaison as a laggard", func() {
+	g.It("AwaitSchemaApplied reports the paused liaison as a laggard", func() {
 		groupName := fmt.Sprintf("bc-applied-%d", time.Now().UnixNano())
 		measureName := "bc_measure"
 
@@ -220,10 +220,10 @@ var _ = g.Describe("Cluster barrier under partial-cluster conditions (§6.12)", 
 		_, _ = clients.GroupClient.Delete(ctx, &databasev1.GroupRegistryServiceDeleteRequest{Group: groupName})
 	})
 
-	// §6.12c — AwaitSchemaDeleted surfaces a paused liaison as a laggard
+	// AwaitSchemaDeleted surfaces a paused liaison as a laggard
 	// when a measure was deleted but the liaison's SR has queued the
 	// delete event (so its cache still holds the entry).
-	g.It("§6.12c AwaitSchemaDeleted reports the paused liaison as a laggard", func() {
+	g.It("AwaitSchemaDeleted reports the paused liaison as a laggard", func() {
 		groupName := fmt.Sprintf("bc-deleted-%d", time.Now().UnixNano())
 		measureName := "bc_del_measure"
 
@@ -268,11 +268,11 @@ var _ = g.Describe("Cluster barrier under partial-cluster conditions (§6.12)", 
 		_, _ = clients.GroupClient.Delete(ctx, &databasev1.GroupRegistryServiceDeleteRequest{Group: groupName})
 	})
 
-		// §6.12d — Cross-barrier recovery: after a multi-step pause-and-mutate
-		// sequence, resume drains the queued events in arrival order so a
-		// follow-up AwaitRevisionApplied at the post-mutate revision returns
-		// applied=true with no laggards.
-	g.It("§6.12d cross-barrier recovery: resume drains queued events and clears the laggard", func() {
+	// Cross-barrier recovery: after a multi-step pause-and-mutate
+	// sequence, resume drains the queued events in arrival order so a
+	// follow-up AwaitRevisionApplied at the post-mutate revision returns
+	// applied=true with no laggards.
+	g.It("cross-barrier recovery: resume drains queued events and clears the laggard", func() {
 		groupName := fmt.Sprintf("bc-recovery-%d", time.Now().UnixNano())
 		measureName := "bc_recovery_measure"
 
@@ -294,15 +294,15 @@ var _ = g.Describe("Cluster barrier under partial-cluster conditions (§6.12)", 
 			Metadata: &commonv1.Metadata{Group: groupName, Name: measureName},
 		})
 		gm.Expect(getErr).ShouldNot(gm.HaveOccurred())
-			measure := getResp.GetMeasure()
-			measure.TagFamilies[0].Tags = append(measure.TagFamilies[0].Tags,
-				&databasev1.TagSpec{Name: "region", Type: databasev1.TagType_TAG_TYPE_STRING})
-			_, firstErr := clients.MeasureRegClient.Update(ctx, &databasev1.MeasureRegistryServiceUpdateRequest{Measure: measure})
-			gm.Expect(firstErr).ShouldNot(gm.HaveOccurred())
-			measure.TagFamilies[0].Tags = append(measure.TagFamilies[0].Tags,
-				&databasev1.TagSpec{Name: "zone", Type: databasev1.TagType_TAG_TYPE_STRING})
-			secondResp, secondErr := clients.MeasureRegClient.Update(ctx, &databasev1.MeasureRegistryServiceUpdateRequest{Measure: measure})
-			gm.Expect(secondErr).ShouldNot(gm.HaveOccurred())
+		measure := getResp.GetMeasure()
+		measure.TagFamilies[0].Tags = append(measure.TagFamilies[0].Tags,
+			&databasev1.TagSpec{Name: "region", Type: databasev1.TagType_TAG_TYPE_STRING})
+		_, firstErr := clients.MeasureRegClient.Update(ctx, &databasev1.MeasureRegistryServiceUpdateRequest{Measure: measure})
+		gm.Expect(firstErr).ShouldNot(gm.HaveOccurred())
+		measure.TagFamilies[0].Tags = append(measure.TagFamilies[0].Tags,
+			&databasev1.TagSpec{Name: "zone", Type: databasev1.TagType_TAG_TYPE_STRING})
+		secondResp, secondErr := clients.MeasureRegClient.Update(ctx, &databasev1.MeasureRegistryServiceUpdateRequest{Measure: measure})
+		gm.Expect(secondErr).ShouldNot(gm.HaveOccurred())
 		finalRev := secondResp.GetModRevision()
 
 		g.By("Verifying the barrier reports the paused liaison before resume")

@@ -49,7 +49,7 @@ type SharedContext struct {
 	Connection *grpclib.ClientConn
 	// DataNodeAddrs lists the gRPC addresses of the cluster's data nodes.
 	// Populated by the distributed BeforeSuite; nil for standalone runs.
-	// Cluster-only specs (§6.12 partial-cluster barrier scenarios) pass
+	// Cluster-only specs ( partial-cluster barrier scenarios) pass
 	// entries from this slice to setup.PauseDataNodeWatch /
 	// ResumeDataNodeWatch to drive a single node out of sync while the
 	// rest of the cluster stays caught up.

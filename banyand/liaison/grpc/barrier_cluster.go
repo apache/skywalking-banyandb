@@ -404,7 +404,7 @@ type keyProbeResult struct {
 	ready       bool
 }
 
-// barrierKeyChunkSize matches the plan §2.3 chunking policy: each peer probe
+// barrierKeyChunkSize matches the plan  chunking policy: each peer probe
 // for AwaitSchemaApplied / AwaitSchemaDeleted issues at most 1000 keys per
 // RPC. The server-side cap (nodeStatusMaxKeys = 10000) is the absolute limit;
 // 1000 is a soft chunking threshold that keeps individual RPC payloads well
@@ -614,7 +614,7 @@ type stillPresentResult struct {
 }
 
 // awaitSchemaDeletedCluster runs the cluster-wide fan-out for
-// AwaitSchemaDeleted. Per the §5.0 differences table the only deltas from
+// AwaitSchemaDeleted. Per the  differences table the only deltas from
 // AwaitSchemaApplied are the per-member probe RPC (GetAbsentKeys instead of
 // GetKeyRevisions) and the decision rule (`every key absent on every member`
 // instead of `every key present at or above target rev`). Membership

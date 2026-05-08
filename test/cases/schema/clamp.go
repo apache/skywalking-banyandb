@@ -62,8 +62,8 @@ func sendStreamQueryWithRange(
 	})
 }
 
-// Schema time-range clamp smoke tests — Rule 7 / §4.6.
-// §4.6.4 writes real data and verifies no pre-creation leakage.
+// Schema time-range clamp smoke tests — Rule 7 / 
+//  writes real data and verifies no pre-creation leakage.
 // Each spec exercises a distinct outcome of clamping the query TimeRange.Begin to
 // the maximum schema.CreatedAt across all queried groups.
 var _ = g.Describe("Schema time-range clamp", func() {
@@ -77,10 +77,10 @@ var _ = g.Describe("Schema time-range clamp", func() {
 		clients = NewClients(SharedContext.Connection)
 	})
 
-	// §4.6.1: when both Begin and End fall before the schema's CreatedAt, the server
+	// when both Begin and End fall before the schema's CreatedAt, the server
 	// clamps Begin forward to CreatedAt; since clamped Begin > End the response is
 	// immediately empty (no data can exist in the resulting range).
-	g.It("returns empty result when query End is before schema CreatedAt (§4.6.1)", func() {
+	g.It("returns empty result when query End is before schema CreatedAt", func() {
 		groupName := fmt.Sprintf("clamp-past-%d", time.Now().UnixNano())
 		streamName := "clamp_stream"
 
@@ -111,10 +111,10 @@ var _ = g.Describe("Schema time-range clamp", func() {
 		_, _ = clients.GroupClient.Delete(ctx, &databasev1.GroupRegistryServiceDeleteRequest{Group: groupName})
 	})
 
-	// §4.6.2: when Begin is before schema.CreatedAt but End is in the future, the
+	// when Begin is before schema.CreatedAt but End is in the future, the
 	// server clamps Begin forward to CreatedAt and the query executes successfully.
 	// Since no data was written the response has zero elements but no error.
-	g.It("succeeds and returns zero elements when query spans schema CreatedAt (§4.6.2)", func() {
+	g.It("succeeds and returns zero elements when query spans schema CreatedAt", func() {
 		groupName := fmt.Sprintf("clamp-span-%d", time.Now().UnixNano())
 		streamName := "clamp_stream"
 
@@ -149,10 +149,10 @@ var _ = g.Describe("Schema time-range clamp", func() {
 		_, _ = clients.GroupClient.Delete(ctx, &databasev1.GroupRegistryServiceDeleteRequest{Group: groupName})
 	})
 
-	// §4.6.3: when multiple groups are queried and each has a different CreatedAt,
+	// when multiple groups are queried and each has a different CreatedAt,
 	// Begin is clamped to the maximum CreatedAt across all groups.
 	// An End in the far past produces an empty response.
-	g.It("clamps to the maximum CreatedAt across multiple groups (§4.6.3)", func() {
+	g.It("clamps to the maximum CreatedAt across multiple groups", func() {
 		group1 := fmt.Sprintf("clamp-multi1-%d", time.Now().UnixNano())
 		group2 := fmt.Sprintf("clamp-multi2-%d", time.Now().UnixNano())
 		streamName := "clamp_stream"
@@ -206,14 +206,14 @@ var _ = g.Describe("Schema time-range clamp", func() {
 		}
 	})
 
-	// §4.6.4: PRIMARY Rule 7 correctness test — falsifies the unclamped case.
+	// PRIMARY Rule 7 correctness test — falsifies the unclamped case.
 	// Writes one datum at T_data1 in group1 (older CreatedAt1), then creates group2
 	// with CreatedAt2 > T_data1. Querying both groups with a wide Begin must return
 	// ZERO data points: the clamp forwards Begin to max(CreatedAt1, CreatedAt2) =
 	// CreatedAt2 > T_data1, so the datum is excluded. Without clamp, T_data1 falls
 	// inside [Begin, End] and the datum would leak — proving the clamp is actually
 	// applied rather than merely consistent with an already-in-range write.
-	g.It("clips TimeRange.Begin to max(CreatedAt) and excludes pre-creation data (§4.6.4)", func() {
+	g.It("clips TimeRange.Begin to max(CreatedAt) and excludes pre-creation data", func() {
 		group1 := fmt.Sprintf("clamp-leak1-%d", time.Now().UnixNano())
 		group2 := fmt.Sprintf("clamp-leak2-%d", time.Now().UnixNano())
 		measureName := "clamp_measure"
@@ -256,7 +256,7 @@ var _ = g.Describe("Schema time-range clamp", func() {
 			}
 			return len(baselineResp.GetDataPoints())
 		}, 5*time.Second, 50*time.Millisecond).Should(gm.Equal(1),
-			"baseline single-group query must return the written datum — otherwise §4.6.4 is not falsifying anything")
+			"baseline single-group query must return the written datum — otherwise  is not falsifying anything")
 
 		g.By("Creating newer group2 and measure (CreatedAt2 > T_data1)")
 		_, createGroup2Err := clients.GroupClient.Create(ctx, &databasev1.GroupRegistryServiceCreateRequest{

@@ -145,7 +145,7 @@ func queryMeasureRange(
 	return client.Query(ctx, req)
 }
 
-// §6.8 / §6.9 / §6.10 / §6.11 — Shape-break and delete-then-recreate scenarios.
+//  /  /  / Shape-break and delete-then-recreate scenarios.
 var _ = g.Describe("Schema shape-break rejection", func() {
 	var (
 		ctx     context.Context
@@ -157,8 +157,8 @@ var _ = g.Describe("Schema shape-break rejection", func() {
 		clients = NewClients(SharedContext.Connection)
 	})
 
-	// §6.8: shape-break — delete+apply new shape creates the new measure (Rule 7 clamp end-to-end).
-	g.It("shape-break: delete+apply new shape creates the new measure (§6.8)", func() {
+	// shape-break — delete+apply new shape creates the new measure (Rule 7 clamp end-to-end).
+	g.It("shape-break: delete+apply new shape creates the new measure", func() {
 		groupName := fmt.Sprintf("sb-new-%d", time.Now().UnixNano())
 		measureName := "throughput"
 
@@ -292,8 +292,8 @@ var _ = g.Describe("Schema shape-break rejection", func() {
 		_, _ = clients.GroupClient.Delete(ctx, &databasev1.GroupRegistryServiceDeleteRequest{Group: groupName})
 	})
 
-	// §6.9: entity-change update is rejected; the error mentions "entity"; ModRevision is unchanged.
-	g.It("rejects a measure entity-change update and leaves ModRevision unchanged (§6.9)", func() {
+	// entity-change update is rejected; the error mentions "entity"; ModRevision is unchanged.
+	g.It("rejects a measure entity-change update and leaves ModRevision unchanged", func() {
 		groupName := fmt.Sprintf("sb1-measure-%d", time.Now().UnixNano())
 		measureName := "sb1_measure"
 
@@ -340,9 +340,9 @@ var _ = g.Describe("Schema shape-break rejection", func() {
 		_, _ = clients.GroupClient.Delete(ctx, &databasev1.GroupRegistryServiceDeleteRequest{Group: groupName})
 	})
 
-	// §6.10: full measure content (entity, tag families, fields, created_at, updated_at, mod_revision)
+	// full measure content (entity, tag families, fields, created_at, updated_at, mod_revision)
 	// is unchanged after a rejected entity-change update.
-	g.It("leaves the full measure schema unchanged after a rejected entity-change update (§6.10)", func() {
+	g.It("leaves the full measure schema unchanged after a rejected entity-change update", func() {
 		groupName := fmt.Sprintf("sb2-measure-%d", time.Now().UnixNano())
 		measureName := "sb2_measure"
 
@@ -412,8 +412,8 @@ var _ = g.Describe("Schema shape-break rejection", func() {
 		_, _ = clients.GroupClient.Delete(ctx, &databasev1.GroupRegistryServiceDeleteRequest{Group: groupName})
 	})
 
-	// §6.11: delete-then-recreate original shape drops old data (Rule 7 clamp).
-	g.It("delete-then-recreate original shape drops old data (§6.11)", func() {
+	// delete-then-recreate original shape drops old data (Rule 7 clamp).
+	g.It("delete-then-recreate original shape drops old data", func() {
 		groupName := fmt.Sprintf("sb-same-%d", time.Now().UnixNano())
 		measureName := "throughput"
 
@@ -453,7 +453,7 @@ var _ = g.Describe("Schema shape-break rejection", func() {
 		gm.Expect(writeErr1).ShouldNot(gm.HaveOccurred())
 		gm.Expect(writeStatus1).Should(gm.Equal(modelv1.Status_STATUS_SUCCEED.String()))
 
-		// Eventually retry — see the §6.8 baseline above for the
+		// Eventually retry — see the  baseline above for the
 		// distributed write→query visibility race.
 		gm.Eventually(func() int {
 			queryResp1, queryErr1 := queryMeasureRange(ctx, clients.MeasureWriteClient, groupName, measureName,
@@ -515,7 +515,7 @@ var _ = g.Describe("Schema shape-break rejection", func() {
 			"write with R2 must succeed")
 
 		// Post-write query [CreatedAt2, now+1h] must return the newly-written point.
-		// Same write→query visibility race as the §6.8 baseline.
+		// Same write→query visibility race as the  baseline.
 		gm.Eventually(func() int {
 			queryResp3, queryErr3 := queryMeasureRange(ctx, clients.MeasureWriteClient, groupName, measureName,
 				createdAt2.AsTime(), time.Now().Add(time.Hour), r2)

@@ -727,10 +727,10 @@ func startLiaisonNode(config *ClusterConfig, path string, flags ...string) (stri
 
 	// Bind the liaison's SchemaRegistry to its gRPC address so cluster-only
 	// specs can call PauseDataNodeWatch / ResumeDataNodeWatch on the
-	// receiving liaison itself — pausing the liaison's own SR makes its
-	// barrier selfName probe lag, which is the §6.12 contract since the
-	// in-process distributed harness does not expose
-	// NodeSchemaStatusService on data-node ports.
+	// receiving liaison itself - pausing the liaison's own SR makes its
+	// barrier selfName probe lag. The in-process distributed harness
+	// exposes NodeSchemaStatusService on data-node ports via
+	// SetNodeSchemaStatusRepo.
 	afterCount := property.CountSchemaRegistries()
 	if afterCount > beforeCount {
 		if reg := property.SchemaRegistryByIndex(afterCount - 1); reg != nil {

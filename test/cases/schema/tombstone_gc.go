@@ -17,7 +17,7 @@
 
 // Package schema contains shared test cases for schema-related functionality.
 //
-// §4.7.1 and §4.7.2 exercise tombstone retention behavior. The test suites wire
+//  and  exercise tombstone retention behavior. The test suites wire
 // the standalone server with --schema-server-tombstone-retention=2s in the
 // BeforeSuite, so the specs run without requiring any environment variable.
 package schema
@@ -38,7 +38,7 @@ import (
 // configured in the integration suite setup. Keep in sync with common.go.
 const tombstoneRetentionForTest = 2 * time.Second
 
-// Schema tombstone GC specs — §4.7.1 / §4.7.2.
+// Schema tombstone GC specs —  / 
 // The integration suite wires the standalone server with
 // --schema-server-tombstone-retention=tombstoneRetentionForTest in BeforeSuite,
 // so these specs run without any environment-variable setup.
@@ -53,11 +53,11 @@ var _ = g.Describe("Schema tombstone GC", func() {
 		clients = NewClients(SharedContext.Connection)
 	})
 
-	// §4.7.1 — retains tombstone within retention window.
+	// retains tombstone within retention window.
 	// The tombstone invariant (Step 1.3): server stamps updated_at = now() which is always
 	// after delete_time, so a normal recreate within the retention window always succeeds.
 	// This spec verifies that the recreate succeeds and CreatedAt2 is after T_del.
-	g.It("retains tombstone within retention window — recreate succeeds with fresh CreatedAt (§4.7.1)", func() {
+	g.It("retains tombstone within retention window — recreate succeeds with fresh CreatedAt", func() {
 		retention := tombstoneRetentionForTest
 
 		groupName := fmt.Sprintf("tgc-retain-%d", time.Now().UnixNano())
@@ -126,10 +126,10 @@ var _ = g.Describe("Schema tombstone GC", func() {
 		_, _ = clients.GroupClient.Delete(ctx, &databasev1.GroupRegistryServiceDeleteRequest{Group: groupName})
 	})
 
-	// §4.7.2 — physically removes tombstone after retention.
+	// physically removes tombstone after retention.
 	// After retention + 1s, the GC loop purges the tombstone. A recreate succeeds
 	// without any constraint from the (now-expired) tombstone.
-	g.It("physically removes tombstone after retention — recreate succeeds cleanly (§4.7.2)", func() {
+	g.It("physically removes tombstone after retention — recreate succeeds cleanly", func() {
 		retention := tombstoneRetentionForTest
 
 		groupName := fmt.Sprintf("tgc-gc-%d", time.Now().UnixNano())

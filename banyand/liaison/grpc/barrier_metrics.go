@@ -73,8 +73,8 @@ const (
 // Node identifier per the cluster barrier's `<role>-<Metadata.Name>`
 // convention (see member.laggardName in barrier_cluster.go). Unprefixed
 // values — emitted by the standalone barrier path on timeout — map to
-// role="self" and name="" so the laggard counter still increments without
-// dropping the observation.
+// role="self" with name set to the raw node string so the laggard counter
+// still increments without dropping the observation.
 func splitRoleNode(node string) (role, name string) {
 	if i := strings.IndexByte(node, '-'); i >= 0 {
 		return node[:i], node[i+1:]
@@ -129,19 +129,24 @@ func (b *barrierService) recordAwaitRevisionAppliedResult(
 	err error,
 ) {
 	duration := time.Since(start)
-	result := barrierResultLabel(resp.GetApplied(), err)
+	applied := resp != nil && resp.GetApplied()
+	var laggards []*schemav1.NodeLaggard
+	if resp != nil {
+		laggards = resp.GetLaggards()
+	}
+	result := barrierResultLabel(applied, err)
 	if b.metrics != nil {
 		if h := b.metrics.schemaAwaitRevisionAppliedDuration; h != nil {
 			h.Observe(duration.Seconds(), result)
 		}
-		recordBarrierLaggards(b.metrics.schemaBarrierLaggards, barrierLabelRevisionApplied, resp.GetLaggards())
+		recordBarrierLaggards(b.metrics.schemaBarrierLaggards, barrierLabelRevisionApplied, laggards)
 	}
 	if b.l != nil {
 		b.l.Info().
 			Str("barrier", barrierLabelRevisionApplied).
 			Str("result", result).
 			Int64("min_revision", req.GetMinRevision()).
-			Int("laggards", len(resp.GetLaggards())).
+			Int("laggards", len(laggards)).
 			Dur("duration", duration).
 			Msg("schema barrier completed")
 	}
@@ -158,19 +163,24 @@ func (b *barrierService) recordAwaitSchemaAppliedResult(
 	err error,
 ) {
 	duration := time.Since(start)
-	result := barrierResultLabel(resp.GetApplied(), err)
+	applied := resp != nil && resp.GetApplied()
+	var laggards []*schemav1.NodeLaggard
+	if resp != nil {
+		laggards = resp.GetLaggards()
+	}
+	result := barrierResultLabel(applied, err)
 	if b.metrics != nil {
 		if h := b.metrics.schemaAwaitSchemaAppliedDuration; h != nil {
 			h.Observe(duration.Seconds(), result)
 		}
-		recordBarrierLaggards(b.metrics.schemaBarrierLaggards, barrierLabelSchemaApplied, resp.GetLaggards())
+		recordBarrierLaggards(b.metrics.schemaBarrierLaggards, barrierLabelSchemaApplied, laggards)
 	}
 	if b.l != nil {
 		b.l.Info().
 			Str("barrier", barrierLabelSchemaApplied).
 			Str("result", result).
 			Int("keys", len(req.GetKeys())).
-			Int("laggards", len(resp.GetLaggards())).
+			Int("laggards", len(laggards)).
 			Dur("duration", duration).
 			Msg("schema barrier completed")
 	}
@@ -231,19 +241,24 @@ func (b *barrierService) recordAwaitSchemaDeletedResult(
 	err error,
 ) {
 	duration := time.Since(start)
-	result := barrierResultLabel(resp.GetApplied(), err)
+	applied := resp != nil && resp.GetApplied()
+	var laggards []*schemav1.NodeLaggard
+	if resp != nil {
+		laggards = resp.GetLaggards()
+	}
+	result := barrierResultLabel(applied, err)
 	if b.metrics != nil {
 		if h := b.metrics.schemaAwaitSchemaDeletedDuration; h != nil {
 			h.Observe(duration.Seconds(), result)
 		}
-		recordBarrierLaggards(b.metrics.schemaBarrierLaggards, barrierLabelSchemaDeleted, resp.GetLaggards())
+		recordBarrierLaggards(b.metrics.schemaBarrierLaggards, barrierLabelSchemaDeleted, laggards)
 	}
 	if b.l != nil {
 		b.l.Info().
 			Str("barrier", barrierLabelSchemaDeleted).
 			Str("result", result).
 			Int("keys", len(req.GetKeys())).
-			Int("laggards", len(resp.GetLaggards())).
+			Int("laggards", len(laggards)).
 			Dur("duration", duration).
 			Msg("schema barrier completed")
 	}

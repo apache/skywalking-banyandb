@@ -122,6 +122,11 @@ type profile struct {
 func TestSchemaBarrierLoad(t *testing.T) {
 	gomega.RegisterTestingT(t)
 
+	require.Positive(t, *flagMutateRate, "loadtest.mutate-rate must be > 0")
+	require.Positive(t, *flagCallers, "loadtest.callers must be > 0")
+	require.Positive(t, flagWarmUp.Milliseconds(), "loadtest.warm-up must be > 0")
+	require.Positive(t, flagMeasure.Milliseconds(), "loadtest.measure must be > 0")
+
 	tmpDir, tmpDirCleanup, err := test.NewSpace()
 	require.NoError(t, err, "allocate tmp dir for cluster")
 	defer tmpDirCleanup()
@@ -210,7 +215,10 @@ func TestSchemaBarrierLoad(t *testing.T) {
 	// when the body is identical, so latestRev advances at the configured
 	// rate as long as the cluster is healthy.
 	mutateInterval := time.Second / time.Duration(*flagMutateRate)
+	var mutatorWg sync.WaitGroup
+	mutatorWg.Add(1)
 	go func() {
+		defer mutatorWg.Done()
 		ticker := time.NewTicker(mutateInterval)
 		defer ticker.Stop()
 		idx := 0
@@ -310,6 +318,7 @@ func TestSchemaBarrierLoad(t *testing.T) {
 	t.Logf("measurement window finished after %s; cooling down callers", time.Since(measureStart))
 
 	harnessCancel()
+	mutatorWg.Wait()
 	callerWg.Wait()
 
 	// Take a stable snapshot — no further appends can happen because

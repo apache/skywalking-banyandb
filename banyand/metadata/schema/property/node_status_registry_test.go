@@ -70,7 +70,7 @@ func (f *fakeRevRepo) IsAbsent(kind metaschema.Kind, group, name string) bool {
 
 // TestExecutor_ResolvesGroupsViaSharedSchemaRepo asserts the cluster barrier's
 // per-node probe reads the same schemaRepo instance the executor consults via
-// LoadGroup. Pointer identity is the load-bearing Phase 2 §Step 2.5 invariant:
+// LoadGroup. Pointer identity is the load-bearing Phase 2  2.5 invariant:
 // the registry returns a positive answer for (KindGroup, group, name) only
 // when the same repo holds the group, so the barrier and the executor cannot
 // disagree on the same (group, ModRevision) pair.
@@ -169,7 +169,7 @@ func TestNodeStatus_GetMaxRevision_NilCacheReturnsZero(t *testing.T) {
 
 // TestNodeStatus_KindRouting_TopNFallsBackToSchemaCache asserts that kinds
 // the registry does NOT track (TopNAggregation, Property) fall through to the
-// schemaCache lookup unchanged. The Phase 2 §Step 2.5 invariant covers only
+// schemaCache lookup unchanged. The Phase 2  2.5 invariant covers only
 // the kinds schemaRepo holds; TopN/Property barrier reads remain on the
 // schemaCache.notifiedModRevision watermark.
 func TestNodeStatus_KindRouting_TopNFallsBackToSchemaCache(t *testing.T) {
