@@ -224,3 +224,106 @@ func TestBuildMeasureBatchFromResult_FieldValueLengthMismatchErrors(t *testing.T
 		t.Fatal("length-invariant violation must return an error")
 	}
 }
+
+// schemaNativeTypedColumns mirrors schemaSingleTagSingleField but declares
+// native typed columns instead of the G5a passthrough types. Used to
+// exercise BuildMeasureBatchFromResult's native dispatch path.
+func schemaNativeTypedColumns() *vectorized.BatchSchema {
+	return vectorized.NewBatchSchema([]vectorized.ColumnDef{
+		{Role: vectorized.RoleTimestamp, Type: vectorized.ColumnTypeInt64},
+		{Role: vectorized.RoleVersion, Type: vectorized.ColumnTypeInt64},
+		{Role: vectorized.RoleSeriesID, Type: vectorized.ColumnTypeInt64},
+		{Role: vectorized.RoleTag, TagFamily: "default", Name: "svc", Type: vectorized.ColumnTypeString},
+		{Role: vectorized.RoleField, Name: "value", Type: vectorized.ColumnTypeInt64},
+	})
+}
+
+func TestBuildMeasureBatchFromResult_NativeTypedDispatch(t *testing.T) {
+	svcVal := &modelv1.TagValue{Value: &modelv1.TagValue_Str{Str: &modelv1.Str{Value: "alpha"}}}
+	valueFld := &modelv1.FieldValue{Value: &modelv1.FieldValue_Int{Int: &modelv1.Int{Value: 42}}}
+	r := &model.MeasureResult{
+		SID:        7,
+		Timestamps: []int64{100, 200},
+		Versions:   []int64{1, 1},
+		ShardIDs:   []common.ShardID{0, 0},
+		TagFamilies: []model.TagFamily{
+			{Name: "default", Tags: []model.Tag{
+				{Name: "svc", Values: []*modelv1.TagValue{svcVal, svcVal}},
+			}},
+		},
+		Fields: []model.Field{
+			{Name: "value", Values: []*modelv1.FieldValue{valueFld, valueFld}},
+		},
+	}
+	batch, err := BuildMeasureBatchFromResult(r, schemaNativeTypedColumns())
+	if err != nil {
+		t.Fatalf("BuildMeasureBatchFromResult (native): %v", err)
+	}
+	tagCol, ok := batch.Tags[0].(*vectorized.TypedColumn[string])
+	if !ok {
+		t.Fatalf("Tags[0]: want TypedColumn[string], got %T", batch.Tags[0])
+	}
+	for i, v := range tagCol.Data() {
+		if v != "alpha" {
+			t.Fatalf("Tags[0][%d]: want \"alpha\", got %q", i, v)
+		}
+	}
+	fldCol, ok := batch.Fields[0].(*vectorized.TypedColumn[int64])
+	if !ok {
+		t.Fatalf("Fields[0]: want TypedColumn[int64], got %T", batch.Fields[0])
+	}
+	for i, v := range fldCol.Data() {
+		if v != 42 {
+			t.Fatalf("Fields[0][%d]: want 42, got %d", i, v)
+		}
+	}
+}
+
+func TestBuildMeasureBatchFromResult_NativeMissingTagNullFilled(t *testing.T) {
+	// Native column with missing tag must yield col.IsNull(i) == true for
+	// every row, matching the multi-group projection contract.
+	valueFld := &modelv1.FieldValue{Value: &modelv1.FieldValue_Int{Int: &modelv1.Int{Value: 1}}}
+	r := &model.MeasureResult{
+		SID:        1,
+		Timestamps: []int64{10, 20},
+		Versions:   []int64{1, 1},
+		ShardIDs:   []common.ShardID{0, 0},
+		Fields: []model.Field{
+			{Name: "value", Values: []*modelv1.FieldValue{valueFld, valueFld}},
+		},
+	}
+	batch, err := BuildMeasureBatchFromResult(r, schemaNativeTypedColumns())
+	if err != nil {
+		t.Fatalf("BuildMeasureBatchFromResult: %v", err)
+	}
+	for i := range batch.Timestamps {
+		if !batch.Tags[0].IsNull(i) {
+			t.Fatalf("Tags[0].IsNull(%d): want true (missing tag null fill)", i)
+		}
+	}
+}
+
+func TestBuildMeasureBatchFromResult_NativeOneofMismatchYieldsNull(t *testing.T) {
+	// The schema declares svc as ColumnTypeString, but the result delivers
+	// an Int TagValue. The converter must emit AppendNull rather than
+	// panicking — degrades gracefully on heterogeneous projections.
+	wrongTag := &modelv1.TagValue{Value: &modelv1.TagValue_Int{Int: &modelv1.Int{Value: 7}}}
+	r := &model.MeasureResult{
+		SID:        1,
+		Timestamps: []int64{1},
+		Versions:   []int64{1},
+		ShardIDs:   []common.ShardID{0},
+		TagFamilies: []model.TagFamily{
+			{Name: "default", Tags: []model.Tag{
+				{Name: "svc", Values: []*modelv1.TagValue{wrongTag}},
+			}},
+		},
+	}
+	batch, err := BuildMeasureBatchFromResult(r, schemaNativeTypedColumns())
+	if err != nil {
+		t.Fatalf("BuildMeasureBatchFromResult: %v", err)
+	}
+	if !batch.Tags[0].IsNull(0) {
+		t.Fatal("oneof mismatch must yield IsNull(0)=true")
+	}
+}

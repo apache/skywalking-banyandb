@@ -21,6 +21,7 @@ import (
 	"fmt"
 
 	"github.com/apache/skywalking-banyandb/api/common"
+	modelv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/model/v1"
 	pbv1 "github.com/apache/skywalking-banyandb/pkg/pb/v1"
 	"github.com/apache/skywalking-banyandb/pkg/query/model"
 	"github.com/apache/skywalking-banyandb/pkg/query/vectorized"
@@ -85,37 +86,17 @@ func BuildMeasureBatchFromResult(r *model.MeasureResult, schema *vectorized.Batc
 	for _, def := range schema.Columns {
 		switch def.Role {
 		case vectorized.RoleTag:
-			col := vectorized.NewTagValueColumn(n)
-			tag, present := resultTags[def.TagFamily+"\x00"+def.Name]
-			if !present {
-				for range n {
-					col.Append(pbv1.NullTagValue)
-				}
-			} else {
-				if len(tag.Values) < n {
-					return nil, fmt.Errorf("BuildMeasureBatchFromResult: tag %s.%s has %d values, expected %d",
-						def.TagFamily, def.Name, len(tag.Values), n)
-				}
-				for k := range n {
-					col.Append(tag.Values[k])
-				}
+			tag := resultTags[def.TagFamily+"\x00"+def.Name]
+			col, fillErr := buildTagColumn(def, tag, n)
+			if fillErr != nil {
+				return nil, fillErr
 			}
 			tagCols = append(tagCols, col)
 		case vectorized.RoleField:
-			col := vectorized.NewFieldValueColumn(n)
-			fld, present := resultFields[def.Name]
-			if !present {
-				for range n {
-					col.Append(pbv1.NullFieldValue)
-				}
-			} else {
-				if len(fld.Values) < n {
-					return nil, fmt.Errorf("BuildMeasureBatchFromResult: field %s has %d values, expected %d",
-						def.Name, len(fld.Values), n)
-				}
-				for k := range n {
-					col.Append(fld.Values[k])
-				}
+			fld := resultFields[def.Name]
+			col, fillErr := buildFieldColumn(def, fld, n)
+			if fillErr != nil {
+				return nil, fillErr
 			}
 			fieldCols = append(fieldCols, col)
 		case vectorized.RoleTimestamp, vectorized.RoleVersion,
@@ -134,4 +115,179 @@ func BuildMeasureBatchFromResult(r *model.MeasureResult, schema *vectorized.Batc
 		Tags:       tagCols,
 		Fields:     fieldCols,
 	}, nil
+}
+
+// buildTagColumn allocates the typed Column corresponding to def and fills
+// it from tag (or null-fills it when tag is nil — the multi-group "schema
+// declares but result lacks" case). Dispatches on def.Type so the same
+// helper handles passthrough columns (G5a, ColumnTypeTagValue) and native
+// typed columns (G5c+, Int64 / String / Bytes / Int64Array / StrArray).
+//
+// Length-invariant violations surface as errors rather than truncation;
+// callers see a clean failure path during dual-emit.
+func buildTagColumn(def vectorized.ColumnDef, tag *model.Tag, n int) (vectorized.Column, error) {
+	if def.Type == vectorized.ColumnTypeTagValue {
+		col := vectorized.NewTagValueColumn(n)
+		if tag == nil {
+			for range n {
+				col.Append(pbv1.NullTagValue)
+			}
+			return col, nil
+		}
+		if len(tag.Values) < n {
+			return nil, fmt.Errorf("BuildMeasureBatchFromResult: tag %s.%s has %d values, expected %d",
+				def.TagFamily, def.Name, len(tag.Values), n)
+		}
+		for k := range n {
+			col.Append(tag.Values[k])
+		}
+		return col, nil
+	}
+	col := vectorized.NewColumnForType(def.Type, n)
+	if tag == nil {
+		for range n {
+			appendTagValueAsTyped(col, pbv1.NullTagValue)
+		}
+		return col, nil
+	}
+	if len(tag.Values) < n {
+		return nil, fmt.Errorf("BuildMeasureBatchFromResult: tag %s.%s has %d values, expected %d",
+			def.TagFamily, def.Name, len(tag.Values), n)
+	}
+	for k := range n {
+		appendTagValueAsTyped(col, tag.Values[k])
+	}
+	return col, nil
+}
+
+// buildFieldColumn is the field-side counterpart of buildTagColumn.
+func buildFieldColumn(def vectorized.ColumnDef, fld *model.Field, n int) (vectorized.Column, error) {
+	if def.Type == vectorized.ColumnTypeFieldValue {
+		col := vectorized.NewFieldValueColumn(n)
+		if fld == nil {
+			for range n {
+				col.Append(pbv1.NullFieldValue)
+			}
+			return col, nil
+		}
+		if len(fld.Values) < n {
+			return nil, fmt.Errorf("BuildMeasureBatchFromResult: field %s has %d values, expected %d",
+				def.Name, len(fld.Values), n)
+		}
+		for k := range n {
+			col.Append(fld.Values[k])
+		}
+		return col, nil
+	}
+	col := vectorized.NewColumnForType(def.Type, n)
+	if fld == nil {
+		for range n {
+			appendFieldValueAsTyped(col, pbv1.NullFieldValue)
+		}
+		return col, nil
+	}
+	if len(fld.Values) < n {
+		return nil, fmt.Errorf("BuildMeasureBatchFromResult: field %s has %d values, expected %d",
+			def.Name, len(fld.Values), n)
+	}
+	for k := range n {
+		appendFieldValueAsTyped(col, fld.Values[k])
+	}
+	return col, nil
+}
+
+// appendTagValueAsTyped projects a pre-decoded *modelv1.TagValue onto a
+// native typed column. On a oneof / column-type mismatch the column
+// receives an AppendNull rather than panicking, matching the existing
+// copyAllTo behavior of substituting NullTagValue for unsatisfied
+// projections in heterogeneous multi-group results.
+func appendTagValueAsTyped(col vectorized.Column, v *modelv1.TagValue) {
+	if v == nil {
+		col.AppendNull()
+		return
+	}
+	switch x := v.Value.(type) {
+	case *modelv1.TagValue_Null:
+		col.AppendNull()
+	case *modelv1.TagValue_Int:
+		if c, ok := col.(*vectorized.TypedColumn[int64]); ok {
+			c.Append(x.Int.GetValue())
+			return
+		}
+		col.AppendNull()
+	case *modelv1.TagValue_Str:
+		if c, ok := col.(*vectorized.TypedColumn[string]); ok {
+			c.Append(x.Str.GetValue())
+			return
+		}
+		col.AppendNull()
+	case *modelv1.TagValue_BinaryData:
+		if c, ok := col.(*vectorized.TypedColumn[[]byte]); ok {
+			buf := make([]byte, len(x.BinaryData))
+			copy(buf, x.BinaryData)
+			c.Append(buf)
+			return
+		}
+		col.AppendNull()
+	case *modelv1.TagValue_IntArray:
+		if c, ok := col.(*vectorized.TypedColumn[[]int64]); ok {
+			out := make([]int64, len(x.IntArray.GetValue()))
+			copy(out, x.IntArray.GetValue())
+			c.Append(out)
+			return
+		}
+		col.AppendNull()
+	case *modelv1.TagValue_StrArray:
+		if c, ok := col.(*vectorized.TypedColumn[[]string]); ok {
+			out := make([]string, len(x.StrArray.GetValue()))
+			copy(out, x.StrArray.GetValue())
+			c.Append(out)
+			return
+		}
+		col.AppendNull()
+	default:
+		col.AppendNull()
+	}
+}
+
+// appendFieldValueAsTyped is the field-side counterpart of
+// appendTagValueAsTyped. FieldValue has fewer variants (no Int64Array /
+// StrArray) — the rest mirror.
+func appendFieldValueAsTyped(col vectorized.Column, v *modelv1.FieldValue) {
+	if v == nil {
+		col.AppendNull()
+		return
+	}
+	switch x := v.Value.(type) {
+	case *modelv1.FieldValue_Null:
+		col.AppendNull()
+	case *modelv1.FieldValue_Int:
+		if c, ok := col.(*vectorized.TypedColumn[int64]); ok {
+			c.Append(x.Int.GetValue())
+			return
+		}
+		col.AppendNull()
+	case *modelv1.FieldValue_Float:
+		if c, ok := col.(*vectorized.TypedColumn[float64]); ok {
+			c.Append(x.Float.GetValue())
+			return
+		}
+		col.AppendNull()
+	case *modelv1.FieldValue_Str:
+		if c, ok := col.(*vectorized.TypedColumn[string]); ok {
+			c.Append(x.Str.GetValue())
+			return
+		}
+		col.AppendNull()
+	case *modelv1.FieldValue_BinaryData:
+		if c, ok := col.(*vectorized.TypedColumn[[]byte]); ok {
+			buf := make([]byte, len(x.BinaryData))
+			copy(buf, x.BinaryData)
+			c.Append(buf)
+			return
+		}
+		col.AppendNull()
+	default:
+		col.AppendNull()
+	}
 }
