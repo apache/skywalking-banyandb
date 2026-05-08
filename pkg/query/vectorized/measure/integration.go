@@ -62,10 +62,23 @@ func BuildBatchSchema(measureSchema *databasev1.Measure, opts model.MeasureQuery
 	// type is *modelv1.TagValue / *modelv1.FieldValue, holding the original
 	// protobuf pointer from the scan source unchanged. The egress serializer
 	// returns those pointers directly, matching the row path's zero-alloc
-	// per-cell behavior. We still validate that the schema declares each
-	// projected name with a supported variant so the row-path null fill
-	// (for projection entries absent from a multi-group result) carries
-	// known semantics.
+	// per-cell behavior.
+	//
+	// Why passthrough beats native here: with the gRPC wire format frozen
+	// (`*measurev1.InternalDataPoint` is row-shaped), egress must produce
+	// a *modelv1.TagValue per cell. Passthrough lets the cell flow through
+	// the pipeline pre-built; native columns force the egress to
+	// reconstruct the protobuf wrapper (3 allocs/cell), regressing the
+	// G5a bench gates by ~1.5–2× ns/op. Native column types only pay off
+	// when downstream operators (BatchGroupBy / BatchAggregation /
+	// BatchTop, planned for G6) consume the typed primitives — at which
+	// point the operator output reduces row count enough to amortize the
+	// reconstruction. Until then, passthrough is the production-correct
+	// choice.
+	//
+	// We still validate that the schema declares each projected name with
+	// a supported variant so the row-path null fill (for projection
+	// entries absent from a multi-group result) carries known semantics.
 	for _, tp := range opts.TagProjection {
 		family := tagSpecs[tp.Family]
 		for _, name := range tp.Names {

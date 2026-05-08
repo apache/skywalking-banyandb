@@ -198,9 +198,17 @@ func (s *BatchSourceFromBatchResult) Close() error {
 // (appending). Both columns must share the same TypedColumn[T] type;
 // returns an error on mismatch. Validity bits are propagated cell-by-cell
 // via dst.MarkNullAt when src.IsNull reports null at the corresponding
-// row. Slice-typed values ([]byte / []int64 / []string) are deeply
-// copied so the source MeasureBatch can be released independently of the
-// produced RecordBatch.
+// row.
+//
+// Slice-typed cell values ([]byte / []int64 / []string) are *not*
+// deep-copied here. The upstream storage decode (in
+// banyand/measure/batch_decode.go::appendDecodedTagBytesAsTyped et al.
+// or the row-shape converter via slices.Clone) already produced a fresh
+// owned slice, and each MeasureBatch column uses its own data backing —
+// no pooling between MeasureBatch and the consumer's RecordBatch — so
+// sharing the slice reference is safe and avoids a redundant double
+// copy that would regress the egress bench gates by ~3 allocs per
+// slice-typed cell.
 func appendColumnRange(dst, src vectorized.Column, srcPos, n int) error {
 	startLen := dst.Len()
 	switch d := dst.(type) {
@@ -238,10 +246,7 @@ func appendColumnRange(dst, src vectorized.Column, srcPos, n int) error {
 		}
 		sData := sCol.Data()
 		for k := range n {
-			origin := sData[srcPos+k]
-			buf := make([]byte, len(origin))
-			copy(buf, origin)
-			d.Append(buf)
+			d.Append(sData[srcPos+k])
 		}
 	case *vectorized.TypedColumn[[]int64]:
 		sCol, ok := src.(*vectorized.TypedColumn[[]int64])
@@ -250,10 +255,7 @@ func appendColumnRange(dst, src vectorized.Column, srcPos, n int) error {
 		}
 		sData := sCol.Data()
 		for k := range n {
-			origin := sData[srcPos+k]
-			buf := make([]int64, len(origin))
-			copy(buf, origin)
-			d.Append(buf)
+			d.Append(sData[srcPos+k])
 		}
 	case *vectorized.TypedColumn[[]string]:
 		sCol, ok := src.(*vectorized.TypedColumn[[]string])
@@ -262,10 +264,7 @@ func appendColumnRange(dst, src vectorized.Column, srcPos, n int) error {
 		}
 		sData := sCol.Data()
 		for k := range n {
-			origin := sData[srcPos+k]
-			buf := make([]string, len(origin))
-			copy(buf, origin)
-			d.Append(buf)
+			d.Append(sData[srcPos+k])
 		}
 	case *vectorized.TypedColumn[*modelv1.TagValue]:
 		sCol, ok := src.(*vectorized.TypedColumn[*modelv1.TagValue])
