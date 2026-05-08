@@ -31,7 +31,6 @@ import (
 
 	"github.com/apache/skywalking-banyandb/banyand/backup/lifecycle"
 	"github.com/apache/skywalking-banyandb/pkg/grpchelper"
-	"github.com/apache/skywalking-banyandb/pkg/test/flags"
 	"github.com/apache/skywalking-banyandb/pkg/test/helpers"
 	measureTestData "github.com/apache/skywalking-banyandb/test/cases/measure/data"
 	streamTestData "github.com/apache/skywalking-banyandb/test/cases/stream/data"
@@ -196,7 +195,7 @@ func verifyLifecycleStages(sc helpers.SharedContext, verifyFn func(gomega.Gomega
 			Stages:          []string{"hot", "warm"},
 			IgnoreElementID: args.IgnoreElementID,
 		})
-	}, flags.EventuallyTimeout).Should(gomega.Succeed())
+	}, 90*time.Second).Should(gomega.Succeed())
 
 	// Verify warm stage only after retention
 	gomega.Eventually(func(innerGm gomega.Gomega) {
@@ -207,7 +206,7 @@ func verifyLifecycleStages(sc helpers.SharedContext, verifyFn func(gomega.Gomega
 			Stages:          []string{"warm"},
 			IgnoreElementID: args.IgnoreElementID,
 		})
-	}, flags.EventuallyTimeout).Should(gomega.Succeed())
+	}, 90*time.Second).Should(gomega.Succeed())
 
 	// Verify hot stage is empty after retention
 	verifyFn(gomega.Default, sc, helpers.Args{
