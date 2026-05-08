@@ -11,6 +11,9 @@
       },
       {
         "pattern": "^#"
+      },
+      {
+        "pattern": "^https://cwiki.apache.org"
       }
     ],
     "timeout": "10s",
