@@ -666,32 +666,32 @@ func createResource[T proto.Message](ctx context.Context, r *SchemaRegistry,
 
 func updateResource[T proto.Message](ctx context.Context, r *SchemaRegistry,
 	kind schema.Kind, spec T, validators ...func(prev T) error,
-) error {
+) (int64, error) {
 	metadata, metaErr := getMetadataFromSpec(kind, spec)
 	if metaErr != nil {
-		return metaErr
+		return 0, metaErr
 	}
 	if validateErr := r.validateGroup(ctx, kind, metadata.GetGroup()); validateErr != nil {
-		return validateErr
+		return 0, validateErr
 	}
 	originalProp, getErr := r.getSchema(ctx, kind, metadata.GetGroup(), metadata.GetName())
 	if getErr != nil {
-		return getErr
+		return 0, getErr
 	}
 	if originalProp == nil {
-		return fmt.Errorf("schema %s/%s not exist", metadata.GetGroup(), metadata.GetName())
+		return 0, fmt.Errorf("schema %s/%s not exist", metadata.GetGroup(), metadata.GetName())
 	}
 	prevMd, convErr := ToSchema(kind, originalProp)
 	if convErr != nil {
-		return convErr
+		return 0, convErr
 	}
 	prev, ok := prevMd.Spec.(T)
 	if !ok {
-		return fmt.Errorf("unexpected spec type for kind %s", kind)
+		return 0, fmt.Errorf("unexpected spec type for kind %s", kind)
 	}
 	for _, v := range validators {
 		if validateErr := v(prev); validateErr != nil {
-			return validateErr
+			return 0, validateErr
 		}
 	}
 	// Preserve created_at from the stored schema; the caller must not override it.
@@ -699,16 +699,23 @@ func updateResource[T proto.Message](ctx context.Context, r *SchemaRegistry,
 		setCreatedAtOnSpec(kind, spec, prevCreatedAt)
 	}
 	if checker, checkerOk := schema.CheckerMap[kind]; checkerOk && checker(prev, spec) {
-		return nil
+		// No-op update: content unchanged. Return the existing property's
+		// modRevision so callers observe the revision the barrier will see.
+		// The caller's fabricated modRevision was never written to the property
+		// store, so returning it would cause AwaitRevisionApplied to hang.
+		return originalProp.GetMetadata().GetModRevision(), nil
 	}
 	prop, propErr := SchemaToProperty(kind, spec)
 	if propErr != nil {
-		return propErr
+		return 0, propErr
 	}
-	return r.broadcastAll(func(_ string, c *schemaClient) error {
+	if broadcastErr := r.broadcastAll(func(_ string, c *schemaClient) error {
 		_, rpcErr := c.management.UpdateSchema(ctx, &schemav1.UpdateSchemaRequest{Property: prop})
 		return rpcErr
-	})
+	}); broadcastErr != nil {
+		return 0, broadcastErr
+	}
+	return metadata.GetModRevision(), nil
 }
 
 // GetStream retrieves a stream schema.
@@ -740,7 +747,7 @@ func (r *SchemaRegistry) UpdateStream(ctx context.Context, stream *databasev1.St
 	now := time.Now().UnixNano()
 	stream.Metadata.ModRevision = now
 	stream.UpdatedAt = timestamppb.Now()
-	return now, updateResource(ctx, r, schema.KindStream, stream, func(prev *databasev1.Stream) error {
+	return updateResource(ctx, r, schema.KindStream, stream, func(prev *databasev1.Stream) error {
 		if err := validateStreamUpdate(prev, stream); err != nil {
 			return fmt.Errorf("validation failed: %w", err)
 		}
@@ -792,7 +799,7 @@ func (r *SchemaRegistry) UpdateMeasure(ctx context.Context, measure *databasev1.
 	now := time.Now().UnixNano()
 	measure.Metadata.ModRevision = now
 	measure.UpdatedAt = timestamppb.Now()
-	return now, updateResource(ctx, r, schema.KindMeasure, measure, func(prev *databasev1.Measure) error {
+	return updateResource(ctx, r, schema.KindMeasure, measure, func(prev *databasev1.Measure) error {
 		if err := validateMeasureUpdate(prev, measure); err != nil {
 			return fmt.Errorf("validation failed: %w", err)
 		}
@@ -849,7 +856,7 @@ func (r *SchemaRegistry) UpdateTrace(ctx context.Context, trace *databasev1.Trac
 	now := time.Now().UnixNano()
 	trace.Metadata.ModRevision = now
 	trace.UpdatedAt = timestamppb.Now()
-	return now, updateResource(ctx, r, schema.KindTrace, trace, func(prev *databasev1.Trace) error {
+	return updateResource(ctx, r, schema.KindTrace, trace, func(prev *databasev1.Trace) error {
 		if err := validate.TraceUpdate(prev, trace); err != nil {
 			return fmt.Errorf("validation failed: %w", err)
 		}
@@ -891,7 +898,7 @@ func (r *SchemaRegistry) UpdateGroup(ctx context.Context, group *commonv1.Group)
 	now := time.Now().UnixNano()
 	group.Metadata.ModRevision = now
 	group.UpdatedAt = timestamppb.Now()
-	return now, updateResource(ctx, r, schema.KindGroup, group)
+	return updateResource(ctx, r, schema.KindGroup, group)
 }
 
 // DeleteGroup deletes a group and all its resources.
@@ -969,7 +976,7 @@ func (r *SchemaRegistry) UpdateIndexRule(ctx context.Context, indexRule *databas
 	now := time.Now().UnixNano()
 	indexRule.Metadata.ModRevision = now
 	indexRule.UpdatedAt = timestamppb.Now()
-	return now, updateResource(ctx, r, schema.KindIndexRule, indexRule)
+	return updateResource(ctx, r, schema.KindIndexRule, indexRule)
 }
 
 // DeleteIndexRule deletes an index rule schema.
@@ -1006,7 +1013,7 @@ func (r *SchemaRegistry) UpdateIndexRuleBinding(ctx context.Context, indexRuleBi
 	now := time.Now().UnixNano()
 	indexRuleBinding.Metadata.ModRevision = now
 	indexRuleBinding.UpdatedAt = timestamppb.Now()
-	return now, updateResource(ctx, r, schema.KindIndexRuleBinding, indexRuleBinding)
+	return updateResource(ctx, r, schema.KindIndexRuleBinding, indexRuleBinding)
 }
 
 // DeleteIndexRuleBinding deletes an index rule binding schema.
@@ -1043,7 +1050,7 @@ func (r *SchemaRegistry) UpdateTopNAggregation(ctx context.Context, topN *databa
 	now := time.Now().UnixNano()
 	topN.Metadata.ModRevision = now
 	topN.UpdatedAt = timestamppb.Now()
-	return now, updateResource(ctx, r, schema.KindTopNAggregation, topN)
+	return updateResource(ctx, r, schema.KindTopNAggregation, topN)
 }
 
 // DeleteTopNAggregation deletes a TopN aggregation schema.
@@ -1078,7 +1085,8 @@ func (r *SchemaRegistry) UpdateProperty(ctx context.Context, property *databasev
 	}
 	now := time.Now().UnixNano()
 	property.Metadata.ModRevision = now
-	return updateResource(ctx, r, schema.KindProperty, property)
+	_, updateErr := updateResource(ctx, r, schema.KindProperty, property)
+	return updateErr
 }
 
 // DeleteProperty deletes a property schema.

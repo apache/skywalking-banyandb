@@ -130,12 +130,6 @@ var _ = g.Describe("Cluster barrier under partial-cluster conditions (§6.12)", 
 			Metadata: &commonv1.Metadata{Group: groupName, Name: measureName},
 		})
 		gm.Expect(getErr).ShouldNot(gm.HaveOccurred())
-		// Add a new tag to force a real content change so the property
-		// system creates a new property revision. A no-op Get→Update
-		// bumps the metadata server's etcd revision but the property
-		// store may not create a new revision for unchanged content,
-		// leaving AwaitRevisionApplied waiting for a revision that never
-		// arrives in the watch stream.
 		measure := getResp.GetMeasure()
 		measure.TagFamilies[0].Tags = append(measure.TagFamilies[0].Tags,
 			&databasev1.TagSpec{Name: "region", Type: databasev1.TagType_TAG_TYPE_STRING})
@@ -144,7 +138,7 @@ var _ = g.Describe("Cluster barrier under partial-cluster conditions (§6.12)", 
 		newRev := updResp.GetModRevision()
 		gm.Expect(newRev).Should(gm.BeNumerically(">", baselineRev))
 
-		g.By("Calling AwaitRevisionApplied — paused liaison must surface as a laggard")
+		g.By("Calling awaitRevisionApplied — paused liaison must surface as a laggard")
 		// Brief settle so the bumped revision's watch event has time to
 		// reach the paused liaison's SR (which queues it under pause).
 		// Without this, the barrier can race the watch broadcast.
@@ -300,15 +294,15 @@ var _ = g.Describe("Cluster barrier under partial-cluster conditions (§6.12)", 
 			Metadata: &commonv1.Metadata{Group: groupName, Name: measureName},
 		})
 		gm.Expect(getErr).ShouldNot(gm.HaveOccurred())
-		measure := getResp.GetMeasure()
-		measure.TagFamilies[0].Tags = append(measure.TagFamilies[0].Tags,
-			&databasev1.TagSpec{Name: "region", Type: databasev1.TagType_TAG_TYPE_STRING})
-		_, firstErr := clients.MeasureRegClient.Update(ctx, &databasev1.MeasureRegistryServiceUpdateRequest{Measure: measure})
-		gm.Expect(firstErr).ShouldNot(gm.HaveOccurred())
-		measure.TagFamilies[0].Tags = append(measure.TagFamilies[0].Tags,
-			&databasev1.TagSpec{Name: "zone", Type: databasev1.TagType_TAG_TYPE_STRING})
-		secondResp, secondErr := clients.MeasureRegClient.Update(ctx, &databasev1.MeasureRegistryServiceUpdateRequest{Measure: measure})
-		gm.Expect(secondErr).ShouldNot(gm.HaveOccurred())
+			measure := getResp.GetMeasure()
+			measure.TagFamilies[0].Tags = append(measure.TagFamilies[0].Tags,
+				&databasev1.TagSpec{Name: "region", Type: databasev1.TagType_TAG_TYPE_STRING})
+			_, firstErr := clients.MeasureRegClient.Update(ctx, &databasev1.MeasureRegistryServiceUpdateRequest{Measure: measure})
+			gm.Expect(firstErr).ShouldNot(gm.HaveOccurred())
+			measure.TagFamilies[0].Tags = append(measure.TagFamilies[0].Tags,
+				&databasev1.TagSpec{Name: "zone", Type: databasev1.TagType_TAG_TYPE_STRING})
+			secondResp, secondErr := clients.MeasureRegClient.Update(ctx, &databasev1.MeasureRegistryServiceUpdateRequest{Measure: measure})
+			gm.Expect(secondErr).ShouldNot(gm.HaveOccurred())
 		finalRev := secondResp.GetModRevision()
 
 		g.By("Verifying the barrier reports the paused liaison before resume")
