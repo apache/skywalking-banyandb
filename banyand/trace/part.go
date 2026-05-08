@@ -296,16 +296,20 @@ func (mp *memPart) mustFlush(fileSystem fs.FileSystem, path string) {
 		fs.MustFlush(fileSystem, tm.Buf, filepath.Join(path, name+tagsMetadataFilenameExt), storage.FilePerm)
 	}
 
-	// Flush series metadata if available
+	// Flush series metadata if available. Goes through MustFlushAtomic
+	// because the file is read at part open by mustOpenFilePart and a
+	// crash during a non-atomic write could leave a partial file that
+	// reads as corrupt.
 	if len(mp.seriesMetadata.Buf) > 0 {
-		fs.MustFlush(fileSystem, mp.seriesMetadata.Buf, filepath.Join(path, seriesMetadataFilename), storage.FilePerm)
+		fs.MustFlushAtomic(fileSystem, mp.seriesMetadata.Buf, filepath.Join(path, seriesMetadataFilename), storage.FilePerm)
 	}
 
 	mp.partMetadata.mustWriteMetadata(fileSystem, path)
 	mp.tagType.mustWriteTagType(fileSystem, path)
 	mp.traceIDFilter.mustWriteTraceIDFilter(fileSystem, path)
-
-	fileSystem.SyncPath(path)
+	// No SyncPath: each mustWrite* helper uses WriteAtomic which fsyncs the
+	// parent directory after rename, covering all prior dirent changes
+	// (data file creations).
 }
 
 func generateMemPart() *memPart {
@@ -373,6 +377,7 @@ func mustOpenFilePart(id uint64, root string, fileSystem fs.FileSystem) *part {
 	partPath := partPath(root, id)
 	p.path = partPath
 	p.fileSystem = fileSystem
+	fs.CleanupLeftoverTmp(fileSystem, partPath)
 	p.partMetadata.mustReadMetadata(fileSystem, partPath)
 	p.partMetadata.ID = id
 

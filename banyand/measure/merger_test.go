@@ -1457,9 +1457,9 @@ func Test_mergeParts_fileBased(t *testing.T) {
 		fileSystem := fs.NewLocalFileSystem()
 		for i := 0; i < numParts; i++ {
 			startTS := int64(i)*totalPerPart + 1
-			dps := generateDatapointsWithMultipleBlocks(startTS, countPerBlock, blocksPerPart)
+			partDPs := generateDatapointsWithMultipleBlocks(startTS, countPerBlock, blocksPerPart)
 			mp := generateMemPart()
-			mp.mustInitFromDataPoints(dps)
+			mp.mustInitFromDataPoints(partDPs)
 			mp.mustFlush(fileSystem, partPath(tmpPath, uint64(i+1)))
 			filePW := newPartWrapper(nil, mustOpenFilePart(uint64(i+1), tmpPath, fileSystem))
 			filePW.p.partMetadata.ID = uint64(i + 1)
