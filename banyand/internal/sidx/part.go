@@ -20,6 +20,7 @@ package sidx
 import (
 	"encoding/json"
 	"fmt"
+	"os"
 	"path"
 	"path/filepath"
 	"sort"
@@ -112,6 +113,12 @@ func mustOpenPart(partID uint64, path string, fileSystem fs.FileSystem) *part {
 		fileSystem: fileSystem,
 	}
 
+	// Remove safe post-rename leftovers (<file>.tmp next to a healthy <file>)
+	// before opening any of the part's files. A .tmp without its final stays
+	// in place so the existing panic-on-missing-metadata fires for operator
+	// intervention.
+	fs.CleanupLeftoverTmp(fileSystem, path)
+
 	// Open standard files.
 	p.primary = mustOpenReader(filepath.Join(path, primaryFilename), fileSystem)
 	p.data = mustOpenReader(filepath.Join(path, dataFilename), fileSystem)
@@ -147,6 +154,15 @@ func (p *part) loadPartMetadata() error {
 		}
 		p.partMetadata = pm
 		return nil
+	}
+
+	// If a stranded manifest.json.tmp exists without its final, the most
+	// recent atomic commit crashed between fsync(tmp) and rename. Falling
+	// back to meta.bin would silently hide the incomplete-commit state
+	// from the operator. Surface it as an error instead — the canonical
+	// fail-fast contract.
+	if _, statErr := os.Stat(manifestPath + ".tmp"); statErr == nil {
+		return fmt.Errorf("found stranded %s.tmp without %s — incomplete atomic commit, manual recovery required", manifestPath, manifestPath)
 	}
 
 	// Fallback to meta.bin for backward compatibility
@@ -906,7 +922,8 @@ func (spc *SyncPartContext) Finish() string {
 	}
 	if spc.fileSystem != nil && spc.partPath != "" {
 		spc.partMeta.mustWriteMetadata(spc.fileSystem, spc.partPath)
-		spc.fileSystem.SyncPath(spc.partPath)
+		// No SyncPath: mustWriteMetadata goes through MustFlushAtomic which
+		// already fsyncs the parent directory after rename.
 	}
 	p := spc.partPath
 	spc.partPath = ""

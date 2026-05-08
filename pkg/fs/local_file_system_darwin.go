@@ -84,6 +84,23 @@ func syncFile(file *os.File) error {
 	return nil
 }
 
+// syncDir opens the directory at path, fsyncs it, and closes it. Used by
+// WriteAtomic to make a rename durable on POSIX filesystems. Returns the
+// underlying error rather than panicking so callers can wrap it in a
+// FileSystemError. The Windows implementation is a no-op (NTFS does not
+// expose directory fsync; os.Rename is atomic on its own).
+func syncDir(path string) error {
+	dir, err := os.Open(path)
+	if err != nil {
+		return err
+	}
+	if syncErr := dir.Sync(); syncErr != nil {
+		_ = dir.Close()
+		return syncErr
+	}
+	return dir.Close()
+}
+
 func mustGetFileStat(path string) (*syscall.Stat_t, error) {
 	fi, err := os.Stat(path)
 	if err != nil {

@@ -66,6 +66,12 @@ func syncFile(_ *os.File) error {
 	return nil
 }
 
+// syncDir is a no-op on Windows. NTFS does not expose directory fsync via
+// os.File.Sync the way ext4/xfs/apfs do; os.Rename on NTFS is atomic on its
+// own and the existing SyncPath has the same no-op pattern. Linux/Darwin
+// implementations open the dir and call file.Sync.
+func syncDir(_ string) error { return nil }
+
 func CompareINode(srcPath, destPath string) error {
 	return nil
 }

@@ -509,7 +509,7 @@ func (s *clientService) Subjects(ctx context.Context, indexRule *databasev1.Inde
 	return foundSubjects, subjectErr
 }
 
-func (s *clientService) CollectDataInfo(ctx context.Context, group string) ([]*databasev1.DataInfo, error) {
+func (s *clientService) CollectDataInfo(ctx context.Context, group string) ([]*databasev1.DataInfo, []string, error) {
 	return s.infoCollectorRegistry.CollectDataInfo(ctx, group)
 }
 
