@@ -1441,17 +1441,20 @@ func (r *SchemaRegistry) handleWatchEvent(resp *schemav1.WatchSchemasResponse) {
 		r.processInitialResourceFromProperty(kind, prop, md.Spec.(proto.Message))
 	case schemav1.SchemaEventType_SCHEMA_EVENT_TYPE_DELETE:
 		propID := prop.GetId()
-		if r.cache.Delete(propID, resp.GetDeleteTime()) {
+		deleted := r.cache.Delete(propID, resp.GetDeleteTime())
+		if deleted {
 			md, convErr := ToSchema(kind, prop)
 			if convErr != nil {
 				r.l.Warn().Err(convErr).Stringer("kind", kind).Msg("watch: failed to convert deleted property")
 				return
 			}
 			r.notifyHandlers(kind, md, true)
-			// Advance the barrier watermark past the delete event's mod_revision after handlers
-			// have processed it, keeping the barrier coherent with downstream caches.
-			r.cache.AdvanceNotified(prop.GetMetadata().GetModRevision())
 		}
+		// Advance the barrier watermark past the delete event's mod_revision regardless
+		// of whether the cache entry was actually removed. Mirrors the
+		// processInitialResourceFromProperty fix: the watermark tracks modRevision
+		// (etcd revision), not cache mutation outcome.
+		r.cache.AdvanceNotified(prop.GetMetadata().GetModRevision())
 	case schemav1.SchemaEventType_SCHEMA_EVENT_TYPE_REPLAY_DONE, schemav1.SchemaEventType_SCHEMA_EVENT_TYPE_UNSPECIFIED:
 		// handled by processWatchSession, not expected here
 	}
@@ -1659,12 +1662,8 @@ func (r *SchemaRegistry) processInitialResourceFromProperty(kind schema.Kind, pr
 			},
 			Spec: spec,
 		}, false)
-		// Advance the barrier watermark only after every handler (groupRepo, entityRepo,
-		// pkg/schema.schemaRepo, etc.) has been notified. Without this gate, the barrier
-		// could return applied=true while downstream caches still lag, letting a client
-		// issue a query that hits "group not found".
-		r.cache.AdvanceNotified(entry.modRevision)
 	}
+	r.cache.AdvanceNotified(entry.modRevision)
 }
 
 func (r *SchemaRegistry) handleDeletion(kind schema.Kind, propID string, entry *cacheEntry, revision int64) {
@@ -1691,10 +1690,12 @@ func (r *SchemaRegistry) handleDeletion(kind schema.Kind, propID string, entry *
 			},
 			Spec: entry.spec,
 		}, true)
-		// Advance the barrier watermark past the deleted entry's mod_revision so callers
-		// awaiting that revision see the delete once handlers have processed it.
-		r.cache.AdvanceNotified(entry.modRevision)
 	}
+	// Advance the barrier watermark past the delete event's mod_revision regardless
+	// of whether the cache entry was actually removed. Mirrors the
+	// processInitialResourceFromProperty fix: the watermark tracks modRevision
+	// (etcd revision), not cache mutation outcome.
+	r.cache.AdvanceNotified(entry.modRevision)
 }
 
 func (r *SchemaRegistry) notifyHandlers(kind schema.Kind, md schema.Metadata, isDelete bool) {

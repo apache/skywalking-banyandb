@@ -101,16 +101,13 @@ var _ = g.Describe("Cluster barrier under partial-cluster conditions (§6.12)", 
 		_ = setup.ResumeDataNodeWatch(paused)
 	})
 
-	// §6.12a — AwaitRevisionApplied surfaces a paused liaison as a
-	// laggard via its selfName probe; resume drains the queue and the
-	// barrier converges. PENDING: the laggard-detection assertion passes
-	// but the post-resume AwaitRevisionApplied(newRev) does not converge
-	// inside the spec timeout. The per-key §6.12b/c flows (AwaitApplied /
-	// AwaitDeleted) do converge, so this gap is scoped to the global
-	// notifiedModRevision watermark advancing through queue replay under
-	// the in-process distributed harness — independent of the
-	// data-node NodeSchemaStatusService exposure.
-	g.PIt("§6.12a AwaitRevisionApplied reports the paused liaison as a laggard", func() {
+		// §6.12a — AwaitRevisionApplied surfaces a paused liaison as a
+		// laggard via its selfName probe; resume drains the queue and the
+		// barrier converges. The GetMaxRevision min-aggregation regression
+		// that caused post-resume laggards:3 timeouts has been repaired
+		// (removed LatestModRevision from NodeRepoRegistry; GetMaxRevision
+		// now reads cache-only).
+	g.It("§6.12a AwaitRevisionApplied reports the paused liaison as a laggard", func() {
 		groupName := fmt.Sprintf("bc-rev-%d", time.Now().UnixNano())
 		measureName := "bc_rev_measure"
 
@@ -133,7 +130,16 @@ var _ = g.Describe("Cluster barrier under partial-cluster conditions (§6.12)", 
 			Metadata: &commonv1.Metadata{Group: groupName, Name: measureName},
 		})
 		gm.Expect(getErr).ShouldNot(gm.HaveOccurred())
-		updResp, updErr := clients.MeasureRegClient.Update(ctx, &databasev1.MeasureRegistryServiceUpdateRequest{Measure: getResp.GetMeasure()})
+		// Add a new tag to force a real content change so the property
+		// system creates a new property revision. A no-op Get→Update
+		// bumps the metadata server's etcd revision but the property
+		// store may not create a new revision for unchanged content,
+		// leaving AwaitRevisionApplied waiting for a revision that never
+		// arrives in the watch stream.
+		measure := getResp.GetMeasure()
+		measure.TagFamilies[0].Tags = append(measure.TagFamilies[0].Tags,
+			&databasev1.TagSpec{Name: "region", Type: databasev1.TagType_TAG_TYPE_STRING})
+		updResp, updErr := clients.MeasureRegClient.Update(ctx, &databasev1.MeasureRegistryServiceUpdateRequest{Measure: measure})
 		gm.Expect(updErr).ShouldNot(gm.HaveOccurred())
 		newRev := updResp.GetModRevision()
 		gm.Expect(newRev).Should(gm.BeNumerically(">", baselineRev))
@@ -189,7 +195,10 @@ var _ = g.Describe("Cluster barrier under partial-cluster conditions (§6.12)", 
 			Metadata: &commonv1.Metadata{Group: groupName, Name: measureName},
 		})
 		gm.Expect(getErr).ShouldNot(gm.HaveOccurred())
-		updResp, updErr := clients.MeasureRegClient.Update(ctx, &databasev1.MeasureRegistryServiceUpdateRequest{Measure: getResp.GetMeasure()})
+		measure := getResp.GetMeasure()
+		measure.TagFamilies[0].Tags = append(measure.TagFamilies[0].Tags,
+			&databasev1.TagSpec{Name: "region", Type: databasev1.TagType_TAG_TYPE_STRING})
+		updResp, updErr := clients.MeasureRegClient.Update(ctx, &databasev1.MeasureRegistryServiceUpdateRequest{Measure: measure})
 		gm.Expect(updErr).ShouldNot(gm.HaveOccurred())
 		newRev := updResp.GetModRevision()
 		gm.Expect(newRev).Should(gm.BeNumerically(">", baselineRev))
@@ -265,15 +274,11 @@ var _ = g.Describe("Cluster barrier under partial-cluster conditions (§6.12)", 
 		_, _ = clients.GroupClient.Delete(ctx, &databasev1.GroupRegistryServiceDeleteRequest{Group: groupName})
 	})
 
-	// §6.12d — Cross-barrier recovery: after a multi-step pause-and-mutate
-	// sequence, resume drains the queued events in arrival order so a
-	// follow-up AwaitRevisionApplied at the post-mutate revision returns
-	// applied=true with no laggards. PENDING for the same reason as
-	// §6.12a: the global AwaitRevisionApplied watermark does not converge
-	// through queue replay inside the spec timeout. §6.12b/c remain the
-	// authoritative end-to-end coverage of the queue-drain contract via
-	// per-key barriers.
-	g.PIt("§6.12d cross-barrier recovery: resume drains queued events and clears the laggard", func() {
+		// §6.12d — Cross-barrier recovery: after a multi-step pause-and-mutate
+		// sequence, resume drains the queued events in arrival order so a
+		// follow-up AwaitRevisionApplied at the post-mutate revision returns
+		// applied=true with no laggards.
+	g.It("§6.12d cross-barrier recovery: resume drains queued events and clears the laggard", func() {
 		groupName := fmt.Sprintf("bc-recovery-%d", time.Now().UnixNano())
 		measureName := "bc_recovery_measure"
 
@@ -295,9 +300,14 @@ var _ = g.Describe("Cluster barrier under partial-cluster conditions (§6.12)", 
 			Metadata: &commonv1.Metadata{Group: groupName, Name: measureName},
 		})
 		gm.Expect(getErr).ShouldNot(gm.HaveOccurred())
-		_, firstErr := clients.MeasureRegClient.Update(ctx, &databasev1.MeasureRegistryServiceUpdateRequest{Measure: getResp.GetMeasure()})
+		measure := getResp.GetMeasure()
+		measure.TagFamilies[0].Tags = append(measure.TagFamilies[0].Tags,
+			&databasev1.TagSpec{Name: "region", Type: databasev1.TagType_TAG_TYPE_STRING})
+		_, firstErr := clients.MeasureRegClient.Update(ctx, &databasev1.MeasureRegistryServiceUpdateRequest{Measure: measure})
 		gm.Expect(firstErr).ShouldNot(gm.HaveOccurred())
-		secondResp, secondErr := clients.MeasureRegClient.Update(ctx, &databasev1.MeasureRegistryServiceUpdateRequest{Measure: getResp.GetMeasure()})
+		measure.TagFamilies[0].Tags = append(measure.TagFamilies[0].Tags,
+			&databasev1.TagSpec{Name: "zone", Type: databasev1.TagType_TAG_TYPE_STRING})
+		secondResp, secondErr := clients.MeasureRegClient.Update(ctx, &databasev1.MeasureRegistryServiceUpdateRequest{Measure: measure})
 		gm.Expect(secondErr).ShouldNot(gm.HaveOccurred())
 		finalRev := secondResp.GetModRevision()
 
