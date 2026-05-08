@@ -1503,7 +1503,7 @@ func TestCreateSegment_ConcurrentCreates_DeterministicAlignment(t *testing.T) {
 					t.Errorf("create(%s) returned nil segment", ts.Format(time.RFC3339))
 					return
 				}
-				if !ts.Before(seg.Start.Add(15*24*time.Hour)) || ts.Before(seg.Start) {
+				if !seg.Contains(ts.UnixNano()) {
 					t.Errorf("probe %s landed in segment [%s, %s) which does not contain it",
 						ts.Format(time.RFC3339), seg.Start.Format(time.RFC3339), seg.End.Format(time.RFC3339))
 				}

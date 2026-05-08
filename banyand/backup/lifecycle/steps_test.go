@@ -62,14 +62,24 @@ func TestParseGroup_RejectsMissingIntervals(t *testing.T) {
 			errFrag: "group test-group: missing ttl",
 		},
 		{
+			name:    "top-level segment_interval missing",
+			mutate:  func(ro *commonv1.ResourceOpts) { ro.SegmentInterval = nil },
+			errFrag: "group test-group: missing segment_interval",
+		},
+		{
 			name:    "stage segment_interval missing",
 			mutate:  func(ro *commonv1.ResourceOpts) { ro.Stages[0].SegmentInterval = nil },
-			errFrag: "stage warm: missing segment_interval",
+			errFrag: "group test-group stage warm: missing segment_interval",
 		},
 		{
 			name:    "stage ttl missing",
 			mutate:  func(ro *commonv1.ResourceOpts) { ro.Stages[0].Ttl = nil },
-			errFrag: "stage warm: missing ttl",
+			errFrag: "group test-group stage warm: missing ttl",
+		},
+		{
+			name:    "next stage segment_interval missing",
+			mutate:  func(ro *commonv1.ResourceOpts) { ro.Stages[1].SegmentInterval = nil },
+			errFrag: "group test-group stage cold: missing segment_interval",
 		},
 	}
 	for _, c := range cases {
