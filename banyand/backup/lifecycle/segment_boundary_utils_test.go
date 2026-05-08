@@ -18,11 +18,13 @@
 package lifecycle
 
 import (
+	"sync"
 	"testing"
 	"time"
 
 	"github.com/stretchr/testify/assert"
 
+	commonv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/common/v1"
 	"github.com/apache/skywalking-banyandb/banyand/internal/storage"
 )
 
@@ -135,4 +137,199 @@ func TestGetSegmentTimeRange(t *testing.T) {
 			assert.Equal(t, tt.expectedEnd, result.End)
 		})
 	}
+}
+
+const (
+	stageWarm      = "warm"
+	stageCold      = "cold"
+	stageFrozen    = "frozen"
+	selectorWarm   = "type=warm"
+	selectorCold   = "type=cold"
+	selectorFrozen = "type=frozen"
+)
+
+func dayInterval(num uint32) *commonv1.IntervalRule {
+	return &commonv1.IntervalRule{Unit: commonv1.IntervalRule_UNIT_DAY, Num: num}
+}
+
+func stage(name, selector string, segNum, ttlNum uint32) *commonv1.LifecycleStage {
+	return &commonv1.LifecycleStage{
+		Name:            name,
+		SegmentInterval: dayInterval(segNum),
+		Ttl:             dayInterval(ttlNum),
+		NodeSelector:    selector,
+	}
+}
+
+// TestGetTargetStageInterval pins every branch of getTargetStageInterval:
+// the explicit TargetSegmentInterval, the ResourceOpts.SegmentInterval
+// fallback, and the final 1d default.
+func TestGetTargetStageInterval(t *testing.T) {
+	//nolint:govet // fieldalignment: test struct optimization not critical
+	type tc struct {
+		name     string
+		group    *GroupConfig
+		expected storage.IntervalRule
+	}
+
+	cases := []tc{
+		{
+			name: "3-stage warm->cold returns cold's 15d (sw_metricsHour)",
+			group: &GroupConfig{
+				Group: &commonv1.Group{
+					ResourceOpts: &commonv1.ResourceOpts{
+						SegmentInterval: dayInterval(5),
+						Stages: []*commonv1.LifecycleStage{
+							stage(stageWarm, selectorWarm, 7, 7),
+							stage(stageCold, selectorCold, 15, 30),
+						},
+					},
+				},
+				SegmentInterval:       dayInterval(7),
+				TargetSegmentInterval: dayInterval(15),
+			},
+			expected: storage.IntervalRule{Unit: storage.DAY, Num: 15},
+		},
+		{
+			name: "3-stage warm->cold returns cold's 5d (sw_metricsMinute)",
+			group: &GroupConfig{
+				Group: &commonv1.Group{
+					ResourceOpts: &commonv1.ResourceOpts{
+						SegmentInterval: dayInterval(1),
+						Stages: []*commonv1.LifecycleStage{
+							stage(stageWarm, selectorWarm, 3, 7),
+							stage(stageCold, selectorCold, 5, 30),
+						},
+					},
+				},
+				SegmentInterval:       dayInterval(3),
+				TargetSegmentInterval: dayInterval(5),
+			},
+			expected: storage.IntervalRule{Unit: storage.DAY, Num: 5},
+		},
+		{
+			name: "2-stage hot->cold returns cold's interval",
+			group: &GroupConfig{
+				Group: &commonv1.Group{
+					ResourceOpts: &commonv1.ResourceOpts{
+						SegmentInterval: dayInterval(1),
+						Stages: []*commonv1.LifecycleStage{
+							stage(stageCold, selectorCold, 15, 30),
+						},
+					},
+				},
+				SegmentInterval:       dayInterval(1),
+				TargetSegmentInterval: dayInterval(15),
+			},
+			expected: storage.IntervalRule{Unit: storage.DAY, Num: 15},
+		},
+		{
+			name: "4-stage chain warm->cold picks cold, not the last stage",
+			group: &GroupConfig{
+				Group: &commonv1.Group{
+					ResourceOpts: &commonv1.ResourceOpts{
+						SegmentInterval: dayInterval(1),
+						Stages: []*commonv1.LifecycleStage{
+							stage(stageWarm, selectorWarm, 3, 7),
+							stage(stageCold, selectorCold, 15, 30),
+							stage(stageFrozen, selectorFrozen, 30, 365),
+						},
+					},
+				},
+				SegmentInterval:       dayInterval(3),
+				TargetSegmentInterval: dayInterval(15),
+			},
+			expected: storage.IntervalRule{Unit: storage.DAY, Num: 15},
+		},
+		{
+			name: "fallback to ResourceOpts.SegmentInterval when TargetSegmentInterval is nil",
+			group: &GroupConfig{
+				Group: &commonv1.Group{
+					ResourceOpts: &commonv1.ResourceOpts{
+						SegmentInterval: dayInterval(7),
+					},
+				},
+			},
+			expected: storage.IntervalRule{Unit: storage.DAY, Num: 7},
+		},
+		{
+			name: "fallback to default 1d when nothing is set",
+			group: &GroupConfig{
+				Group: &commonv1.Group{ResourceOpts: &commonv1.ResourceOpts{}},
+			},
+			expected: storage.IntervalRule{Unit: storage.DAY, Num: 1},
+		},
+		{
+			name: "fallback handles nil ResourceOpts",
+			group: &GroupConfig{
+				Group: &commonv1.Group{},
+			},
+			expected: storage.IntervalRule{Unit: storage.DAY, Num: 1},
+		},
+		{
+			name: "TargetSegmentInterval wins over ResourceOpts.SegmentInterval",
+			group: &GroupConfig{
+				Group: &commonv1.Group{
+					ResourceOpts: &commonv1.ResourceOpts{
+						SegmentInterval: dayInterval(1),
+						Stages: []*commonv1.LifecycleStage{
+							stage(stageWarm, selectorWarm, 7, 7),
+							stage(stageCold, selectorCold, 15, 30),
+						},
+					},
+				},
+				SegmentInterval:       dayInterval(7),
+				TargetSegmentInterval: dayInterval(15),
+			},
+			expected: storage.IntervalRule{Unit: storage.DAY, Num: 15},
+		},
+	}
+
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			got := getTargetStageInterval(c.group)
+			assert.Equal(t, c.expected, got,
+				"target stage interval mismatch: expected %d(%s), got %d(%s)",
+				c.expected.Num, c.expected.Unit.String(),
+				got.Num, got.Unit.String())
+		})
+	}
+}
+
+// TestGetTargetStageInterval_ConcurrentReaders pins down that the function is
+// safe for concurrent readers - lifecycle migration code calls it from
+// multiple goroutines (per-shard / per-group fan-out).
+func TestGetTargetStageInterval_ConcurrentReaders(t *testing.T) {
+	group := &GroupConfig{
+		Group: &commonv1.Group{
+			ResourceOpts: &commonv1.ResourceOpts{
+				SegmentInterval: dayInterval(5),
+				Stages: []*commonv1.LifecycleStage{
+					stage(stageWarm, selectorWarm, 7, 7),
+					stage(stageCold, selectorCold, 15, 30),
+				},
+			},
+		},
+		SegmentInterval:       dayInterval(7),
+		TargetSegmentInterval: dayInterval(15),
+	}
+	expected := storage.IntervalRule{Unit: storage.DAY, Num: 15}
+
+	const goroutines = 64
+	const iterations = 1000
+	var wg sync.WaitGroup
+	wg.Add(goroutines)
+	for g := 0; g < goroutines; g++ {
+		go func() {
+			defer wg.Done()
+			for i := 0; i < iterations; i++ {
+				got := getTargetStageInterval(group)
+				if got != expected {
+					t.Errorf("concurrent read returned %v, expected %v", got, expected)
+					return
+				}
+			}
+		}()
+	}
+	wg.Wait()
 }

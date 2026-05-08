@@ -86,12 +86,18 @@ func (l *lifecycleService) getSnapshots(groups []*commonv1.Group, p *Progress) (
 // It contains all necessary information for migration and deletion operations.
 type GroupConfig struct {
 	*commonv1.Group
-	NodeSelector    node.Selector
-	QueueClient     queue.Client
-	AccumulatedTTL  *commonv1.IntervalRule
+	NodeSelector   node.Selector
+	QueueClient    queue.Client
+	AccumulatedTTL *commonv1.IntervalRule
+	// SegmentInterval is the current stage's segment interval, used to read
+	// source segments on this node.
 	SegmentInterval *commonv1.IntervalRule
-	TargetShardNum  uint32
-	TargetReplicas  uint32
+	// TargetSegmentInterval is the next stage's segment interval. It differs
+	// from SegmentInterval on 3-stage deployments (e.g. warm->cold), so any
+	// computation against the target tier's segment grid must use this field.
+	TargetSegmentInterval *commonv1.IntervalRule
+	TargetShardNum        uint32
+	TargetReplicas        uint32
 }
 
 // Close releases resources held by the GroupConfig.
@@ -99,6 +105,17 @@ func (gc *GroupConfig) Close() {
 	if gc.QueueClient != nil {
 		gc.QueueClient.GracefulStop()
 	}
+}
+
+// cloneIntervalRule returns a deep copy of ir, or nil if ir is nil. proto.Clone
+// applied to a typed-nil *commonv1.IntervalRule yields a non-nil zero value
+// (Num=0, Unit=UNIT_UNSPECIFIED) that downstream MustToIntervalRule rejects;
+// short-circuiting on nil keeps the GroupConfig fallback chain intact.
+func cloneIntervalRule(ir *commonv1.IntervalRule) *commonv1.IntervalRule {
+	if ir == nil {
+		return nil
+	}
+	return proto.Clone(ir).(*commonv1.IntervalRule)
 }
 
 //nolint:contextcheck // health check goroutine uses context.Background()
@@ -114,8 +131,9 @@ func parseGroup(
 		return nil, fmt.Errorf("no stages in group %s", g.Metadata.Name)
 	}
 	ttlTime := proto.Clone(ro.Ttl).(*commonv1.IntervalRule)
-	segmentInterval := proto.Clone(ro.SegmentInterval).(*commonv1.IntervalRule)
+	segmentInterval := cloneIntervalRule(ro.SegmentInterval)
 	var nst *commonv1.LifecycleStage
+	var targetSegmentInterval *commonv1.IntervalRule
 	for i, st := range ro.Stages {
 		selector, err := pub.ParseLabelSelector(st.NodeSelector)
 		if err != nil {
@@ -130,14 +148,21 @@ func parseGroup(
 			return nil, nil
 		}
 		nst = ro.Stages[i+1]
-		segmentInterval = st.SegmentInterval
-		l.Info().Msgf("migrating group %s at stage %s to stage %s, segment interval: %d(%s), total ttl needs: %d(%s)",
-			g.Metadata.Name, st.Name, nst.Name, segmentInterval.Num, segmentInterval.Unit.String(), ttlTime.Num, ttlTime.Unit.String())
+		// Clone before exposing through GroupConfig so callers cannot mutate
+		// the shared proto Stages[*] sub-objects.
+		segmentInterval = cloneIntervalRule(st.SegmentInterval)
+		targetSegmentInterval = cloneIntervalRule(nst.SegmentInterval)
+		l.Info().Msgf("migrating group %s at stage %s to stage %s, source segment interval: %d(%s), target segment interval: %d(%s), total ttl needs: %d(%s)",
+			g.Metadata.Name, st.Name, nst.Name,
+			segmentInterval.Num, segmentInterval.Unit.String(),
+			targetSegmentInterval.Num, targetSegmentInterval.Unit.String(),
+			ttlTime.Num, ttlTime.Unit.String())
 		break
 	}
 	if nst == nil {
 		nst = ro.Stages[0]
 		ttlTime = proto.Clone(ro.Ttl).(*commonv1.IntervalRule)
+		targetSegmentInterval = cloneIntervalRule(nst.SegmentInterval)
 		l.Info().Msgf("no matching stage for group %s, defaulting to first stage %s segment interval: %d(%s), total ttl needs: %d(%s)",
 			g.Metadata.Name, nst.Name, segmentInterval.Num, segmentInterval.Unit.String(), ttlTime.Num, ttlTime.Unit.String())
 	}
@@ -179,13 +204,14 @@ func parseGroup(
 		clusterStateMgr.addRouteTable(t)
 	}
 	return &GroupConfig{
-		Group:           g,
-		TargetShardNum:  nst.ShardNum,
-		TargetReplicas:  nst.Replicas,
-		AccumulatedTTL:  ttlTime,
-		SegmentInterval: segmentInterval,
-		NodeSelector:    nodeSel,
-		QueueClient:     client,
+		Group:                 g,
+		TargetShardNum:        nst.ShardNum,
+		TargetReplicas:        nst.Replicas,
+		AccumulatedTTL:        ttlTime,
+		SegmentInterval:       segmentInterval,
+		TargetSegmentInterval: targetSegmentInterval,
+		NodeSelector:          nodeSel,
+		QueueClient:           client,
 	}, nil
 }
 

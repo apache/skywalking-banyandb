@@ -579,11 +579,17 @@ func (sc *segmentController[T, O]) create(start time.Time) (*segment[T, O], erro
 		}
 	}
 	options := sc.getOptions()
-	start = options.SegmentInterval.Unit.Standard(start)
+	start = options.SegmentInterval.Standard(start)
+	// Alignment can shift start backward into a legacy off-grid neighbor
+	// that does not cover the raw timestamp. Walk sc.lst in ascending order
+	// (it is sorted by id, i.e. by start time, with non-overlapping ranges)
+	// and bump start past any segment that swallows it. A single pass
+	// suffices because each subsequent segment.Start >= previous.End.
 	var next *segment[T, O]
 	for _, s := range sc.lst {
 		if s.Contains(start.UnixNano()) {
-			return s, nil
+			start = s.End
+			continue
 		}
 		if next == nil && s.Start.After(start) {
 			next = s
@@ -592,6 +598,18 @@ func (sc *segmentController[T, O]) create(start time.Time) (*segment[T, O], erro
 	stdEnd := options.SegmentInterval.NextTime(start)
 	var end time.Time
 	if next != nil && next.Start.Before(stdEnd) {
+		// In steady state next.Start == stdEnd because all segments share
+		// the same Num*Unit-from-epoch grid; a strict inequality means
+		// `next` is a legacy non-aligned segment whose TTL hasn't elapsed,
+		// and the new segment is forced into a shorter-than-configured span
+		// to avoid overlapping it. Surfacing this at Info level lets
+		// operators see the abnormal span as it happens; the condition
+		// self-heals once the legacy neighbor ages out.
+		sc.l.Info().
+			Stringer("alignedStart", start).
+			Stringer("nextStart", next.Start).
+			Stringer("stdEnd", stdEnd).
+			Msg("new segment span is shorter than configured SegmentInterval due to an unaligned legacy neighbor")
 		end = next.Start
 	} else {
 		end = stdEnd
