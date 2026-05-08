@@ -41,6 +41,7 @@ import (
 	"github.com/apache/skywalking-banyandb/fodc/agent/internal/metrics"
 	"github.com/apache/skywalking-banyandb/pkg/logger"
 	"github.com/apache/skywalking-banyandb/pkg/panicdiag"
+	"github.com/apache/skywalking-banyandb/pkg/run"
 )
 
 // MetricsRequestFilter defines filters for metrics requests.
@@ -208,7 +209,9 @@ func (c *Client) StartRegistrationStream(ctx context.Context) error {
 
 	c.startHeartbeat(ctx)
 
-	go c.handleRegistrationStream(ctx, stream)
+	run.Go(ctx, "fodc.agent.proxy.registration-stream", c.logger, func(ctx context.Context) {
+		c.handleRegistrationStream(ctx, stream)
+	})
 
 	return nil
 }
@@ -240,7 +243,9 @@ func (c *Client) StartMetricsStream(ctx context.Context) error {
 	c.metricsStream = stream
 	c.streamsMu.Unlock()
 
-	go c.handleMetricsStream(ctx, stream)
+	run.Go(ctx, "fodc.agent.proxy.metrics-stream", c.logger, func(ctx context.Context) {
+		c.handleMetricsStream(ctx, stream)
+	})
 
 	c.logger.Info().
 		Str("agent_id", agentID).
@@ -276,7 +281,9 @@ func (c *Client) StartClusterStateStream(ctx context.Context) error {
 	c.clusterStateStream = stream
 	c.streamsMu.Unlock()
 
-	go c.handleClusterStateStream(ctx, stream)
+	run.Go(ctx, "fodc.agent.proxy.cluster-state-stream", c.logger, func(ctx context.Context) {
+		c.handleClusterStateStream(ctx, stream)
+	})
 
 	c.logger.Info().
 		Str("agent_id", agentID).
@@ -359,7 +366,9 @@ func (c *Client) StartLifecycleStream(ctx context.Context) error {
 	c.lifecycleStream = stream
 	c.streamsMu.Unlock()
 
-	go c.handleLifecycleStream(ctx, stream)
+	run.Go(ctx, "fodc.agent.proxy.lifecycle-stream", c.logger, func(ctx context.Context) {
+		c.handleLifecycleStream(ctx, stream)
+	})
 
 	c.logger.Info().
 		Str("agent_id", agentID).
@@ -438,7 +447,9 @@ func (c *Client) StartCrashStream(ctx context.Context) error {
 	c.crashStream = stream
 	c.streamsMu.Unlock()
 
-	go c.handleCrashStream(ctx, stream)
+	run.Go(ctx, "fodc.agent.proxy.crash-stream", c.logger, func(ctx context.Context) {
+		c.handleCrashStream(ctx, stream)
+	})
 
 	c.logger.Info().
 		Str("agent_id", agentID).
@@ -552,7 +563,9 @@ func (c *Client) handleCrashStream(ctx context.Context, stream fodcv1.FODCServic
 		resp, recvErr := stream.Recv()
 		if errors.Is(recvErr, io.EOF) {
 			c.logger.Warn().Msg("Crash diagnostics stream closed by Proxy, reconnecting...")
-			go c.reconnect(ctx)
+			run.Go(ctx, "fodc.agent.proxy.reconnect", c.logger, func(ctx context.Context) {
+				c.reconnect(ctx)
+			})
 			return
 		}
 		if recvErr != nil {
@@ -564,7 +577,9 @@ func (c *Client) handleCrashStream(ctx context.Context, stream fodcv1.FODCServic
 				return
 			}
 			c.logger.Error().Err(recvErr).Msg("Error receiving from crash diagnostics stream, reconnecting...")
-			go c.reconnect(ctx)
+			run.Go(ctx, "fodc.agent.proxy.reconnect", c.logger, func(ctx context.Context) {
+				c.reconnect(ctx)
+			})
 			return
 		}
 		if resp != nil && resp.RequestDiagnostics {
@@ -592,7 +607,9 @@ func (c *Client) handleLifecycleStream(ctx context.Context, stream fodcv1.FODCSe
 		resp, recvErr := stream.Recv()
 		if errors.Is(recvErr, io.EOF) {
 			c.logger.Warn().Msg("Lifecycle stream closed by Proxy, reconnecting...")
-			go c.reconnect(ctx)
+			run.Go(ctx, "fodc.agent.proxy.reconnect", c.logger, func(ctx context.Context) {
+				c.reconnect(ctx)
+			})
 			return
 		}
 		if recvErr != nil {
@@ -604,7 +621,9 @@ func (c *Client) handleLifecycleStream(ctx context.Context, stream fodcv1.FODCSe
 				return
 			}
 			c.logger.Error().Err(recvErr).Msg("Error receiving from lifecycle stream, reconnecting...")
-			go c.reconnect(ctx)
+			run.Go(ctx, "fodc.agent.proxy.reconnect", c.logger, func(ctx context.Context) {
+				c.reconnect(ctx)
+			})
 			return
 		}
 		if resp != nil && resp.RequestLifecycle {
@@ -632,7 +651,9 @@ func (c *Client) handleClusterStateStream(ctx context.Context, stream fodcv1.FOD
 		resp, recvErr := stream.Recv()
 		if errors.Is(recvErr, io.EOF) {
 			c.logger.Warn().Msg("Cluster state stream closed by Proxy, reconnecting...")
-			go c.reconnect(ctx)
+			run.Go(ctx, "fodc.agent.proxy.reconnect", c.logger, func(ctx context.Context) {
+				c.reconnect(ctx)
+			})
 			return
 		}
 		if recvErr != nil {
@@ -644,7 +665,9 @@ func (c *Client) handleClusterStateStream(ctx context.Context, stream fodcv1.FOD
 				return
 			}
 			c.logger.Error().Err(recvErr).Msg("Error receiving from cluster state stream, reconnecting...")
-			go c.reconnect(ctx)
+			run.Go(ctx, "fodc.agent.proxy.reconnect", c.logger, func(ctx context.Context) {
+				c.reconnect(ctx)
+			})
 			return
 		}
 		if resp != nil && resp.RequestTopology {
@@ -894,7 +917,9 @@ func (c *Client) SendHeartbeat(ctx context.Context) error {
 	// channel and exit. Without an upstream tear-down the orphan would persist, so the
 	// reliability of the heartbeatWaitTimeout-bounded cleanup paths is load-bearing here.
 	sendErrCh := make(chan error, 1)
-	go func() { sendErrCh <- registrationStream.Send(req) }()
+	run.Go(ctx, "fodc.agent.proxy.heartbeat-send", c.logger, func(_ context.Context) {
+		sendErrCh <- registrationStream.Send(req)
+	})
 
 	var sendErr error
 	select {
@@ -1132,7 +1157,9 @@ func (c *Client) handleRegistrationStream(ctx context.Context, stream fodcv1.FOD
 		_, recvErr := stream.Recv()
 		if errors.Is(recvErr, io.EOF) {
 			c.logger.Warn().Msg("Registration stream closed by Proxy, reconnecting...")
-			go c.reconnect(ctx)
+			run.Go(ctx, "fodc.agent.proxy.reconnect", c.logger, func(ctx context.Context) {
+				c.reconnect(ctx)
+			})
 			return
 		}
 		if recvErr != nil {
@@ -1144,7 +1171,9 @@ func (c *Client) handleRegistrationStream(ctx context.Context, stream fodcv1.FOD
 				return
 			}
 			c.logger.Error().Err(recvErr).Msg("Error receiving from registration stream, reconnecting...")
-			go c.reconnect(ctx)
+			run.Go(ctx, "fodc.agent.proxy.reconnect", c.logger, func(ctx context.Context) {
+				c.reconnect(ctx)
+			})
 			return
 		}
 	}
@@ -1168,7 +1197,9 @@ func (c *Client) handleMetricsStream(ctx context.Context, stream fodcv1.FODCServ
 		resp, recvErr := stream.Recv()
 		if errors.Is(recvErr, io.EOF) {
 			c.logger.Warn().Msg("Metrics stream closed by Proxy, reconnecting...")
-			go c.reconnect(ctx)
+			run.Go(ctx, "fodc.agent.proxy.reconnect", c.logger, func(ctx context.Context) {
+				c.reconnect(ctx)
+			})
 			return
 		}
 		if recvErr != nil {
@@ -1180,7 +1211,9 @@ func (c *Client) handleMetricsStream(ctx context.Context, stream fodcv1.FODCServ
 				return
 			}
 			c.logger.Error().Err(recvErr).Msg("Error receiving from metrics stream, reconnecting...")
-			go c.reconnect(ctx)
+			run.Go(ctx, "fodc.agent.proxy.reconnect", c.logger, func(ctx context.Context) {
+				c.reconnect(ctx)
+			})
 			return
 		}
 
