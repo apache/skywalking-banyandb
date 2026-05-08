@@ -270,7 +270,7 @@ var _ = Describe("Metadata", func() {
 
 				Eventually(func(innerGm Gomega) {
 					spans := querySchemaChangeTraceData(svcs, traceName, groupName, now.Add(-3*time.Hour), now,
-						[]string{"trace_id", "service_id", "duration"}, nil)
+						[]string{"trace_id", "service_id", "duration"})
 					innerGm.Expect(spans).To(HaveLen(8))
 
 					for _, span := range spans {
@@ -297,7 +297,7 @@ var _ = Describe("Metadata", func() {
 
 				Eventually(func(innerGm Gomega) {
 					spans := querySchemaChangeTraceData(svcs, traceName, groupName, now.Add(-3*time.Hour), now,
-						[]string{"trace_id", "service_id", "duration", "extra_tag"}, nil)
+						[]string{"trace_id", "service_id", "duration", "extra_tag"})
 					innerGm.Expect(spans).To(HaveLen(8))
 
 					oldDataCount := 0
@@ -333,7 +333,7 @@ var _ = Describe("Metadata", func() {
 
 				Eventually(func(innerGm Gomega) {
 					spans := querySchemaChangeTraceData(svcs, traceName, groupName, now.Add(-3*time.Hour), now,
-						[]string{"trace_id", "service_id", "duration", "extra_tag"}, nil)
+						[]string{"trace_id", "service_id", "duration", "extra_tag"})
 					innerGm.Expect(spans).To(HaveLen(8))
 
 					nullCount := 0
@@ -383,7 +383,7 @@ var _ = Describe("Metadata", func() {
 				Eventually(func(innerGm Gomega) {
 					spans := querySchemaChangeTraceData(svcs, traceName, groupName,
 						now.Add(-3*time.Hour), now,
-						[]string{"trace_id", "service_id", "duration", "extra_tag"}, nil)
+						[]string{"trace_id", "service_id", "duration", "extra_tag"})
 					innerGm.Expect(spans).To(HaveLen(8))
 
 					nullCount := 0
@@ -704,7 +704,7 @@ func writeSchemaChangeTraceData(svcs *services, name, group string, baseTime tim
 	}
 }
 
-func querySchemaChangeTraceData(svcs *services, name, group string, begin, end time.Time, tags []string, criteria *modelv1.Criteria) []*tracev1.Span {
+func querySchemaChangeTraceData(svcs *services, name, group string, begin, end time.Time, tags []string) []*tracev1.Span {
 	req := &tracev1.QueryRequest{
 		Groups: []string{group},
 		Name:   name,
@@ -717,9 +717,6 @@ func querySchemaChangeTraceData(svcs *services, name, group string, begin, end t
 			IndexRuleName: name + "-duration",
 			Sort:          modelv1.Sort_SORT_DESC,
 		},
-	}
-	if criteria != nil {
-		req.Criteria = criteria
 	}
 	var spans []*tracev1.Span
 	Eventually(func() bool {
@@ -774,4 +771,3 @@ func getFilePartCount(svcs *services, group string) int64 {
 	}
 	return total
 }
-
