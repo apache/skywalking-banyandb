@@ -38,6 +38,7 @@ Release Notes.
 
 ### Bug Fixes
 
+- Close BanyanDB merge write-path durability gap that allowed torn parts to be created by a crash between data write and metadata commit. Metadata files (`metadata.json` for trace/measure/stream, `manifest.json` for sidx, plus `traceID.filter` and `tag.type`) now go through a new `WriteAtomic` (write-tmp + fsync + rename + fsync-dir) sequence; data writers (`seqWriter.Close`, `localFileSystem.Write`) now propagate fdatasync errors instead of silently dropping them. `mustOpenFilePart` / `mustOpenPart` in each engine cleans up safe post-rename `.tmp` leftovers on open. (#13862, root cause for #13861)
 - Fix bydbctl command tests using global stdout capture, which caused race-enabled runs to corrupt captured command output.
 - Use `topic` instead of `session_id` as the Prometheus label on liaison `queue_sub` chunk-ordering counters to avoid unbounded metric cardinality.
 - Fix flaky trace query filtering caused by non-deterministic sidx tag ordering and add consistency checks for integration query cases.
@@ -69,6 +70,7 @@ Release Notes.
 - Fix trace `block_writer` panic on out-of-order timestamps within the same traceID, which dropped one trace-write batch per panic in multi-agent SkyWalking deployments. Spans of a single trace originate from independently-clocked services, and trace storage is organized by traceID rather than timestamp, so per-traceID timestamp monotonicity is not a writer invariant.
 - Fix nil-pointer panic on cold-tier data nodes when FODC `InspectAll` raced with idle-segment cleanup.
 - Add `GroupLifecycleInfo.errors` to surface per-group collection failures from FODC `InspectAll` instead of silently dropping the affected node entry.
+- Fix `CollectDataInfo` and `CollectLiaisonInfo` not handling `CATALOG_PROPERTY` groups.
 - Fix lifecycle migration where the receiving node could create segments shorter than the configured `SegmentInterval`.
 
 ### Chores
