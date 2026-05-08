@@ -159,15 +159,32 @@ func NewMIterator(ctx context.Context, qr model.MeasureQueryResult,
 		return nil, schemaErr
 	}
 	pool := vectorized.NewBatchPool(schema, cfg.BatchSize)
-	scan := NewBatchScan(qr, schema, pool, cfg.BatchSize)
-	pipeline, buildErr := vectorized.NewPipelineBuilder().From(scan).Build()
+
+	// G5c (US-007): when the storage result also satisfies
+	// MeasureBatchResult, drive the pipeline from PullBatch directly via
+	// BatchSourceFromBatchResult. This bypasses extract.go's per-cell
+	// decode pass — the source columns are already typed (passthrough or
+	// native, depending on BuildBatchSchema's column type choice).
+	//
+	// The fallback is the original BatchScan path that consumes
+	// MeasureQueryResult.Pull and runs extract* on each cell. It stays
+	// alive for any future caller that produces a query result not
+	// satisfying MeasureBatchResult; v1's storage layer satisfies both.
+	var source vectorized.PullOperator
+	if br, ok := qr.(model.MeasureBatchResult); ok {
+		source = NewBatchSourceFromBatchResult(br, schema, pool, cfg.BatchSize)
+	} else {
+		source = NewBatchScan(qr, schema, pool, cfg.BatchSize)
+	}
+
+	pipeline, buildErr := vectorized.NewPipelineBuilder().From(source).Build()
 	if buildErr != nil {
-		// scan was constructed but never wired into a Pipeline; close it
-		// directly to release qr through the cursor.
-		_ = scan.Close()
+		// source was constructed but never wired into a Pipeline; close
+		// it directly to release qr through the source.
+		_ = source.Close()
 		return nil, buildErr
 	}
-	if initErr := scan.Init(ctx); initErr != nil {
+	if initErr := source.Init(ctx); initErr != nil {
 		_ = pipeline.Close()
 		return nil, initErr
 	}

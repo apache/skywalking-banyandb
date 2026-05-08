@@ -219,9 +219,19 @@ func (m *measure) Query(ctx context.Context, mqo model.MeasureQueryOptions) (mqr
 	}
 
 	// Build the columnar BatchSchema once for PullBatch consumers (G5b).
-	// Falls back to nil on schema-build failure; PullBatch checks for nil
-	// and returns a clean error rather than degrading the row-path Pull().
-	result.batchSchema, _ = vmeasure.BuildBatchSchema(m.schema, mqo)
+	// IMPORTANT: use result.tagProjection (the *original* projection
+	// captured before the entity/index tag strip) rather than mqo —
+	// mqo.TagProjection was rewritten to newTagProjection above and no
+	// longer carries entity-tag slots that the row path's copyAllTo
+	// fills via storedIndexValue. The batch path's column layout must
+	// match the vec adapter's expectation, which is the original
+	// projection. Falls back to nil on schema-build failure; PullBatch
+	// checks for nil and returns a clean error rather than degrading
+	// the row-path Pull().
+	result.batchSchema, _ = vmeasure.BuildBatchSchema(m.schema, model.MeasureQueryOptions{
+		TagProjection:   result.tagProjection,
+		FieldProjection: mqo.FieldProjection,
+	})
 
 	return &result, nil
 }
