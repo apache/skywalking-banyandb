@@ -39,6 +39,7 @@ import (
 	pbv1 "github.com/apache/skywalking-banyandb/pkg/pb/v1"
 	"github.com/apache/skywalking-banyandb/pkg/pool"
 	"github.com/apache/skywalking-banyandb/pkg/query/model"
+	"github.com/apache/skywalking-banyandb/pkg/query/vectorized"
 	vmeasure "github.com/apache/skywalking-banyandb/pkg/query/vectorized/measure"
 	resourceSchema "github.com/apache/skywalking-banyandb/pkg/schema"
 	"github.com/apache/skywalking-banyandb/pkg/timestamp"
@@ -216,6 +217,11 @@ func (m *measure) Query(ctx context.Context, mqo model.MeasureQueryOptions) (mqr
 	if m.queryMetrics != nil {
 		m.queryMetrics.resultPoints.Observe(float64(len(result.data)))
 	}
+
+	// Build the columnar BatchSchema once for PullBatch consumers (G5b).
+	// Falls back to nil on schema-build failure; PullBatch checks for nil
+	// and returns a clean error rather than degrading the row-path Pull().
+	result.batchSchema, _ = vmeasure.BuildBatchSchema(m.schema, mqo)
 
 	return &result, nil
 }
@@ -535,6 +541,11 @@ func (m *measure) buildIndexQueryResult(ctx context.Context, mqo model.MeasureQu
 		r.segResults.sortDesc = true
 	}
 
+	// G5b — build the columnar BatchSchema once for PullBatch consumers.
+	// Errors here are non-fatal for the row-path Pull(); PullBatch will
+	// return a clean error if batchSchema is nil at call time.
+	r.batchSchema, _ = vmeasure.BuildBatchSchema(m.schema, mqo)
+
 	heap.Init(&r.segResults)
 	return r, nil
 }
@@ -743,6 +754,7 @@ type queryResult struct {
 	topNQueryOptions *topNQueryOptions
 	sidToIndex       map[common.SeriesID]int
 	storedIndexValue map[common.SeriesID]map[string]*modelv1.TagValue
+	batchSchema      *vectorized.BatchSchema
 	tagProjection    []model.TagProjection
 	data             []*blockCursor
 	snapshots        []*snapshot
@@ -959,8 +971,9 @@ func (qr *queryResult) merge(storedIndexValue map[common.SeriesID]map[string]*mo
 }
 
 type indexSortResult struct {
-	tfl        []tagFamilyLocation
-	segResults segResultHeap
+	batchSchema *vectorized.BatchSchema
+	tfl         []tagFamilyLocation
+	segResults  segResultHeap
 }
 
 // Pull implements model.MeasureQueryResult.
