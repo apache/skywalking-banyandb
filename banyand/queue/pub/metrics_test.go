@@ -372,10 +372,17 @@ func TestListenBatchResponseServerRejectedWithoutFailover(t *testing.T) {
 	require.Equal(t, float64(1), sendErrCap.sum(sendErrReasonServerRejected))
 	require.Equal(t, float64(0), sendErrCap.sum(sendErrReasonRecvError))
 
-	// listenBatchResponse always closes bc in defer; a closed empty channel yields (zero, false).
-	evt, ok := <-bc
-	if ok {
-		t.Fatalf("unexpected failover event: %+v", evt)
+	// Non-failover server rejections are now surfaced to the caller via batchEvent
+	// so that send_err_total{reason="server_rejected"} stays consistent with visible errors.
+	// The event must carry the rejection but must NOT trigger a circuit-breaker failover.
+	select {
+	case evt, ok := <-bc:
+		require.True(t, ok, "expected a batchEvent for non-failover server rejection")
+		require.Equal(t, "node-a", evt.n)
+		require.NotNil(t, evt.e)
+		require.Equal(t, modelv1.Status_STATUS_INTERNAL_ERROR, evt.e.Status())
+	default:
+		t.Fatal("expected batchEvent for server_rejected but channel was empty")
 	}
 }
 

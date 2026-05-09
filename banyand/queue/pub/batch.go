@@ -225,7 +225,7 @@ func (bp *batchPublisher) listenBatchResponse(ctx context.Context, s clusterv1.S
 		}
 		return
 	}
-	if resp == nil || resp.Error == "" {
+	if resp == nil || resp.Error == "" || resp.Status == modelv1.Status_STATUS_SUCCEED {
 		return
 	}
 	if bp.hasMetrics() {
