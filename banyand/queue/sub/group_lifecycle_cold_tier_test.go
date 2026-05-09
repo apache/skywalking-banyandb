@@ -20,6 +20,7 @@ package sub
 import (
 	"context"
 	"fmt"
+	"runtime"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -51,6 +52,12 @@ type coldTierRepo struct {
 	concurrentNow atomic.Int32
 	concurrentMax atomic.Int32
 	panicCount    atomic.Int32
+	// expectOverlap, when > 1, makes CollectDataInfo yield until
+	// concurrentMax has reached the configured value. The C subtest sets
+	// this to 2 so the "at least two simultaneous calls" assertion is
+	// observed deterministically rather than depending on the Go
+	// scheduler interleaving short-lived goroutines.
+	expectOverlap int32
 }
 
 func (r *coldTierRepo) GroupRegistry() schema.Group {
@@ -78,7 +85,22 @@ func (r *coldTierRepo) CollectDataInfo(_ context.Context, group string) (out []*
 	if r.hook != nil {
 		return r.hook(group, int(idx-1))
 	}
-	time.Sleep(50 * time.Microsecond)
+	// Eventually-style overlap barrier: yield cooperatively until
+	// concurrentMax has reached expectOverlap, so the C_ConcurrentInspectAll
+	// assertion deterministically observes concurrent fan-out even when
+	// the runtime serializes short-lived goroutines (e.g. GOMAXPROCS=1).
+	// This replaces an arbitrary time.Sleep -- both wasteful when overlap
+	// happens fast and racy when the scheduler serializes calls. Polling
+	// concurrentMax (which only grows) lets every goroutine return as
+	// soon as overlap was observed at any point, not only while it is
+	// still happening. The wait is bounded so a regression that genuinely
+	// serializes InspectAll fails the assertion rather than hanging.
+	if target := atomic.LoadInt32(&r.expectOverlap); target > 1 {
+		deadline := time.Now().Add(time.Second)
+		for r.concurrentMax.Load() < target && time.Now().Before(deadline) {
+			runtime.Gosched()
+		}
+	}
 	return coldTierEmptyDataInfo(), nil, nil
 }
 
@@ -192,7 +214,10 @@ func TestInspectAll_ColdTier_Integration(t *testing.T) {
 	})
 
 	t.Run("C_ConcurrentInspectAll", func(t *testing.T) {
-		repo := &coldTierRepo{groupRegistry: &mockGroupRegistry{groups: groups}}
+		repo := &coldTierRepo{
+			groupRegistry: &mockGroupRegistry{groups: groups},
+			expectOverlap: 2,
+		}
 		s := &server{log: logger.GetLogger("cold-tier-C"), metadataRepo: repo}
 
 		const callers = 8
