@@ -1303,12 +1303,6 @@ func TestIntervalRule_Standard_AlignsToEpochGrid(t *testing.T) {
 			expected: []time.Time{time.Date(2026, 4, 19, 0, 0, 0, 0, time.UTC)},
 		},
 		{
-			name:     "Num=0 falls back to Unit.Standard",
-			ir:       IntervalRule{Unit: DAY, Num: 0},
-			probes:   []time.Time{time.Date(2026, 4, 19, 6, 30, 0, 0, time.UTC)},
-			expected: []time.Time{time.Date(2026, 4, 19, 0, 0, 0, 0, time.UTC)},
-		},
-		{
 			// Pre-epoch inputs: floor division puts them in the bucket below
 			// rather than collapsing to epoch as truncated division would.
 			name: "DAY Num=15 pre-epoch uses floor division",
@@ -1338,9 +1332,9 @@ func TestIntervalRule_Standard_AlignsToEpochGrid(t *testing.T) {
 }
 
 // TestIntervalRule_Standard_PreservesLocation verifies that the returned
-// time keeps the input's Location while the bucket instant stays invariant
-// across timezones - the grid is anchored in UTC for cross-node consistency
-// but presented in the caller's local time.
+// time keeps the input's Location and lands on a local-day midnight (DAY)
+// or local-hour boundary (HOUR) anchored in the caller's timezone. Under the
+// per-timezone grid, the absolute instant naturally differs across timezones.
 func TestIntervalRule_Standard_PreservesLocation(t *testing.T) {
 	shanghai := time.FixedZone("CST", 8*3600)
 	losAngeles := time.FixedZone("PST", -8*3600)
@@ -1353,14 +1347,19 @@ func TestIntervalRule_Standard_PreservesLocation(t *testing.T) {
 		{time.Date(2026, 4, 19, 11, 30, 0, 0, time.UTC), IntervalRule{Unit: HOUR, Num: 6}},
 	}
 	for _, c := range cases {
-		want := c.ir.Standard(c.probe)
 		for _, loc := range []*time.Location{time.UTC, shanghai, losAngeles} {
 			got := c.ir.Standard(c.probe.In(loc))
 			assert.Equal(t, loc, got.Location(),
 				"Standard must return time in input.Location(); ir=%+v loc=%s", c.ir, loc)
-			assert.True(t, got.Equal(want),
-				"bucket instant must be timezone-invariant; ir=%+v loc=%s utc=%s got=%s",
-				c.ir, loc, want.Format(time.RFC3339), got.Format(time.RFC3339))
+			switch c.ir.Unit {
+			case DAY:
+				assert.Equal(t, 0, got.Hour(), "DAY bucket must align to local-day midnight")
+				assert.Equal(t, 0, got.Minute())
+				assert.Equal(t, 0, got.Second())
+			case HOUR:
+				assert.Equal(t, 0, got.Minute(), "HOUR bucket must align to local-hour boundary")
+				assert.Equal(t, 0, got.Second())
+			}
 		}
 	}
 }

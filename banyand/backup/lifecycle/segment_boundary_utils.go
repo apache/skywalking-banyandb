@@ -25,8 +25,10 @@ import (
 )
 
 func calculateTargetSegments(partMinTS, partMaxTS int64, targetInterval storage.IntervalRule) []time.Time {
-	minTime := time.Unix(0, partMinTS).UTC()
-	maxTime := time.Unix(0, partMaxTS).UTC()
+	// Use time.Local so sender's bucket math stays on the same per-timezone
+	// grid as the receiver, which sees ctx.MinTimestamp as time.Local too.
+	minTime := time.Unix(0, partMinTS)
+	maxTime := time.Unix(0, partMaxTS)
 
 	var targetSegments []time.Time
 	// current starts at the bucket containing minTime, so segmentEnd is

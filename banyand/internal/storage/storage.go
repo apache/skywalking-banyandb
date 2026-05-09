@@ -202,31 +202,32 @@ func (ir IntervalRule) NextTime(current time.Time) time.Time {
 	panic("invalid interval unit")
 }
 
-// epochUTC is the Unix epoch as a UTC time. Used as the anchor for the
-// grid produced by IntervalRule.Standard.
-var epochUTC = time.Date(1970, 1, 1, 0, 0, 0, 0, time.UTC)
-
-// Standard aligns t down to the nearest Num*Unit boundary. The grid origin
-// is anchored at the Unix epoch in UTC for cross-node consistency, but the
-// returned time is in t.Location() so callers see their own timezone. For
-// Num<=1 it delegates to IntervalUnit.Standard, preserving the existing
-// per-unit local alignment.
+// Standard aligns t down to the nearest Num*Unit boundary on a grid anchored
+// at 1970-01-01 in t.Location(). Boundaries always fall on local-day midnight
+// (DAY) or local-hour boundaries (HOUR), so the result format/parses cleanly
+// in t.Location() and Num=1 reduces to IntervalUnit.Standard's local alignment.
+// The grid is per-timezone, so two nodes in different geographic timezones may
+// produce different bucket starts for the same instant.
 func (ir IntervalRule) Standard(t time.Time) time.Time {
-	if ir.Num <= 1 {
-		return ir.Unit.Standard(t)
+	if ir.Num <= 0 {
+		logger.Panicf("interval rule Num must be positive: %+v", ir)
 	}
-	var bucketWidth time.Duration
+	epochLocal := time.Date(1970, 1, 1, 0, 0, 0, 0, t.Location())
 	switch ir.Unit {
 	case DAY:
-		bucketWidth = time.Duration(ir.Num) * 24 * time.Hour
+		todayMidnight := time.Date(t.Year(), t.Month(), t.Day(), 0, 0, 0, 0, t.Location())
+		// +12 absorbs DST-affected days that are 23 or 25 absolute hours;
+		// floorDiv handles pre-epoch (negative) inputs correctly.
+		days := floorDiv(int64(todayMidnight.Sub(epochLocal).Hours()+12), 24)
+		bucketIdx := floorDiv(days, int64(ir.Num))
+		return time.Date(1970, 1, 1+int(bucketIdx)*ir.Num, 0, 0, 0, 0, t.Location())
 	case HOUR:
-		bucketWidth = time.Duration(ir.Num) * time.Hour
-	default:
-		panic("invalid interval unit")
+		todayHour := time.Date(t.Year(), t.Month(), t.Day(), t.Hour(), 0, 0, 0, t.Location())
+		hours := floorDiv(int64(todayHour.Sub(epochLocal)), int64(time.Hour))
+		bucketIdx := floorDiv(hours, int64(ir.Num))
+		return time.Date(1970, 1, 1, int(bucketIdx)*ir.Num, 0, 0, 0, t.Location())
 	}
-	width := bucketWidth.Nanoseconds()
-	nanos := t.Sub(epochUTC).Nanoseconds()
-	return epochUTC.Add(time.Duration(floorDiv(nanos, width) * width)).In(t.Location())
+	panic("invalid interval unit")
 }
 
 func floorDiv(a, b int64) int64 {

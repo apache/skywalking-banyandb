@@ -197,8 +197,7 @@ func (mv *streamMigrationVisitor) VisitSeries(segmentTR *timestamp.TimeRange, se
 		}
 
 		// Send segment file to each shard in shardIDs for this target segment
-		targetTR := getSegmentTimeRange(targetSegmentTime, mv.targetStageInterval)
-		segmentIDStr := targetTR.String()
+		segmentIDStr := getSegmentTimeRange(targetSegmentTime, mv.targetStageInterval).String()
 		for _, shardID := range shardIDs {
 			targetShardID := mv.calculateTargetShardID(uint32(shardID))
 			ff := make([]queue.FileInfo, 0, len(files))
@@ -209,12 +208,6 @@ func (mv *streamMigrationVisitor) VisitSeries(segmentTR *timestamp.TimeRange, se
 				})
 			}
 			partData := mv.createStreamingSegmentFromFiles(targetShardID, ff, segmentTR, data.TopicStreamSeriesSync.String())
-			// Route per target bucket so the receiver creates one warm segment per
-			// bucket (otherwise all iterations share segmentTR.Start and end up in
-			// a single warm segment whose nominal range may not cover query times
-			// for other buckets).
-			partData.MinTimestamp = targetTR.Start.UnixNano()
-			partData.MaxTimestamp = targetTR.End.UnixNano()
 
 			// Stream segment to target shard replicas
 			if err := mv.streamPartToTargetShard(partData); err != nil {
@@ -287,13 +280,6 @@ func (mv *streamMigrationVisitor) VisitPart(_ *timestamp.TimeRange, sourceShardI
 		targetPartData.ShardID = targetShardID
 		targetPartData.Topic = data.TopicStreamPartSync.String()
 		targetPartData.Files = files
-		// Route per target bucket so the receiver creates the warm segment that
-		// covers this bucket; otherwise parts that span a bucket boundary all
-		// land in the source-MinTimestamp bucket and the data past the boundary
-		// becomes unreachable to queries against the next bucket.
-		targetTR := getSegmentTimeRange(targetSegmentTime, mv.targetStageInterval)
-		targetPartData.MinTimestamp = targetTR.Start.UnixNano()
-		targetPartData.MaxTimestamp = targetTR.End.UnixNano()
 
 		// Stream part to target segment
 		if err := mv.streamPartToTargetShard(targetPartData); err != nil {
@@ -363,83 +349,64 @@ func (mv *streamMigrationVisitor) VisitElementIndex(segmentTR *timestamp.TimeRan
 		Uint32("target_shard", targetShardID).
 		Msg("found element index segment files for migration")
 
-	// Compute target buckets the source segment overlaps so element index files
-	// land in every warm segment that may serve queries for this range.
-	targetSegments := calculateTargetSegments(
-		segmentTR.Start.UnixNano(),
-		segmentTR.End.UnixNano(),
-		mv.targetStageInterval,
-	)
-	if len(targetSegments) == 0 {
-		return nil
+	// Create FileInfo for this segment file
+	files := make([]queue.FileInfo, 0, len(segmentFiles))
+	// Process each segment file
+	for _, segmentFileName := range segmentFiles {
+		// Extract segment ID from filename (remove .seg extension)
+		fileSegmentIDStr := strings.TrimSuffix(segmentFileName, ".seg")
+
+		// Parse hex segment ID
+		segmentID, err := strconv.ParseUint(fileSegmentIDStr, 16, 64)
+		if err != nil {
+			mv.logger.Error().
+				Str("filename", segmentFileName).
+				Str("id_str", fileSegmentIDStr).
+				Err(err).
+				Msg("failed to parse segment ID from filename")
+			continue
+		}
+
+		mv.logger.Info().
+			Uint64("segment_id", segmentID).
+			Str("filename", segmentFileName).
+			Str("group", mv.group).
+			Msg("migrating element index segment file")
+
+		// Create file reader for the segment file
+		segmentFilePath := filepath.Join(indexPath, segmentFileName)
+		segmentFile, err := mv.lfs.OpenFile(segmentFilePath)
+		if err != nil {
+			mv.logger.Error().
+				Str("path", segmentFilePath).
+				Err(err).
+				Msg("failed to open element index segment file")
+			return fmt.Errorf("failed to open element index segment file %s: %w", segmentFilePath, err)
+		}
+
+		// Close the file reader
+		defer segmentFile.Close()
+
+		files = append(files, queue.FileInfo{
+			Name:   segmentFileName,
+			Reader: segmentFile.SequentialRead(),
+		})
+
+		mv.logger.Info().
+			Uint64("segment_id", segmentID).
+			Str("filename", segmentFileName).
+			Str("group", mv.group).
+			Int("completed_segments", mv.progress.GetStreamElementIndexProgress(mv.group)).
+			Int("total_segments", mv.progress.GetStreamElementIndexCount(mv.group)).
+			Msg("element index segment migration completed successfully")
 	}
+	partData := mv.createStreamingSegmentFromFiles(targetShardID, files, segmentTR, data.TopicStreamElementIndexSync.String())
 
-	for _, targetSegmentTime := range targetSegments {
-		// Re-open file readers per target since chunked-sync consumes them.
-		files := make([]queue.FileInfo, 0, len(segmentFiles))
-		// Process each segment file
-		for _, segmentFileName := range segmentFiles {
-			// Extract segment ID from filename (remove .seg extension)
-			fileSegmentIDStr := strings.TrimSuffix(segmentFileName, ".seg")
-
-			// Parse hex segment ID
-			segmentID, err := strconv.ParseUint(fileSegmentIDStr, 16, 64)
-			if err != nil {
-				mv.logger.Error().
-					Str("filename", segmentFileName).
-					Str("id_str", fileSegmentIDStr).
-					Err(err).
-					Msg("failed to parse segment ID from filename")
-				continue
-			}
-
-			mv.logger.Info().
-				Uint64("segment_id", segmentID).
-				Str("filename", segmentFileName).
-				Str("group", mv.group).
-				Msg("migrating element index segment file")
-
-			// Create file reader for the segment file
-			segmentFilePath := filepath.Join(indexPath, segmentFileName)
-			segmentFile, err := mv.lfs.OpenFile(segmentFilePath)
-			if err != nil {
-				mv.logger.Error().
-					Str("path", segmentFilePath).
-					Err(err).
-					Msg("failed to open element index segment file")
-				return fmt.Errorf("failed to open element index segment file %s: %w", segmentFilePath, err)
-			}
-
-			// Close the file reader
-			defer segmentFile.Close()
-
-			files = append(files, queue.FileInfo{
-				Name:   segmentFileName,
-				Reader: segmentFile.SequentialRead(),
-			})
-
-			mv.logger.Info().
-				Uint64("segment_id", segmentID).
-				Str("filename", segmentFileName).
-				Str("group", mv.group).
-				Int("completed_segments", mv.progress.GetStreamElementIndexProgress(mv.group)).
-				Int("total_segments", mv.progress.GetStreamElementIndexCount(mv.group)).
-				Msg("element index segment migration completed successfully")
-		}
-		partData := mv.createStreamingSegmentFromFiles(targetShardID, files, segmentTR, data.TopicStreamElementIndexSync.String())
-		// Route per target bucket so the receiver creates one warm segment per
-		// bucket; element index queries against the next bucket would otherwise
-		// see an empty index.
-		targetTR := getSegmentTimeRange(targetSegmentTime, mv.targetStageInterval)
-		partData.MinTimestamp = targetTR.Start.UnixNano()
-		partData.MaxTimestamp = targetTR.End.UnixNano()
-
-		// Stream segment file to target shard replicas
-		if err := mv.streamPartToTargetShard(partData); err != nil {
-			errorMsg := fmt.Sprintf("failed to stream element index to target shard: %v", err)
-			mv.progress.MarkStreamElementIndexError(mv.group, segmentIDStr, sourceShardID, errorMsg)
-			return fmt.Errorf("failed to stream element index to target shard: %w", err)
-		}
+	// Stream segment file to target shard replicas
+	if err := mv.streamPartToTargetShard(partData); err != nil {
+		errorMsg := fmt.Sprintf("failed to stream element index to target shard: %v", err)
+		mv.progress.MarkStreamElementIndexError(mv.group, segmentIDStr, sourceShardID, errorMsg)
+		return fmt.Errorf("failed to stream element index to target shard: %w", err)
 	}
 
 	// Mark segment as completed

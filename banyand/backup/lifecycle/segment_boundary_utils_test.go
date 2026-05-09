@@ -39,54 +39,54 @@ func TestCalculateTargetSegments(t *testing.T) {
 	}{
 		{
 			name:      "2-day to 3-day segments - part spans multiple segments",
-			partMinTS: time.Date(2024, 1, 2, 0, 0, 0, 0, time.UTC).UnixNano(), // Day 2
-			partMaxTS: time.Date(2024, 1, 4, 0, 0, 0, 0, time.UTC).UnixNano(), // Day 4
+			partMinTS: time.Date(2024, 1, 2, 0, 0, 0, 0, time.Local).UnixNano(), // Day 2
+			partMaxTS: time.Date(2024, 1, 4, 0, 0, 0, 0, time.Local).UnixNano(), // Day 4
 			targetInterval: storage.IntervalRule{
 				Unit: storage.DAY,
 				Num:  3,
 			},
 			expected: []time.Time{
-				time.Date(2024, 1, 0, 0, 0, 0, 0, time.UTC), // Day 0-3
-				time.Date(2024, 1, 3, 0, 0, 0, 0, time.UTC), // Day 3-6
+				time.Date(2023, 12, 31, 0, 0, 0, 0, time.Local), // Day 0-3
+				time.Date(2024, 1, 3, 0, 0, 0, 0, time.Local),   // Day 3-6
 			},
 		},
 		{
 			name:      "2-day to 3-day segments - part fits in single segment",
-			partMinTS: time.Date(2024, 1, 1, 0, 0, 0, 0, time.UTC).UnixNano(), // Day 1
-			partMaxTS: time.Date(2024, 1, 2, 0, 0, 0, 0, time.UTC).UnixNano(), // Day 2
+			partMinTS: time.Date(2024, 1, 1, 0, 0, 0, 0, time.Local).UnixNano(), // Day 1
+			partMaxTS: time.Date(2024, 1, 2, 0, 0, 0, 0, time.Local).UnixNano(), // Day 2
 			targetInterval: storage.IntervalRule{
 				Unit: storage.DAY,
 				Num:  3,
 			},
 			expected: []time.Time{
-				time.Date(2024, 1, 0, 0, 0, 0, 0, time.UTC), // Day 0-3
+				time.Date(2023, 12, 31, 0, 0, 0, 0, time.Local), // Day 0-3
 			},
 		},
 		{
 			name:      "hour to day segments - part spans multiple segments",
-			partMinTS: time.Date(2024, 1, 1, 12, 0, 0, 0, time.UTC).UnixNano(), // Hour 12
-			partMaxTS: time.Date(2024, 1, 1, 18, 0, 0, 0, time.UTC).UnixNano(), // Hour 18
+			partMinTS: time.Date(2024, 1, 1, 12, 0, 0, 0, time.Local).UnixNano(), // Hour 12
+			partMaxTS: time.Date(2024, 1, 1, 18, 0, 0, 0, time.Local).UnixNano(), // Hour 18
 			targetInterval: storage.IntervalRule{
 				Unit: storage.DAY,
 				Num:  1,
 			},
 			expected: []time.Time{
-				time.Date(2024, 1, 1, 0, 0, 0, 0, time.UTC), // Day 1
+				time.Date(2024, 1, 1, 0, 0, 0, 0, time.Local), // Day 1
 			},
 		},
 		{
 			name:      "day to hour segments - part spans multiple segments",
-			partMinTS: time.Date(2024, 1, 1, 0, 0, 0, 0, time.UTC).UnixNano(),    // Day 1
-			partMaxTS: time.Date(2024, 1, 1, 23, 59, 59, 0, time.UTC).UnixNano(), // End of Day 1
+			partMinTS: time.Date(2024, 1, 1, 0, 0, 0, 0, time.Local).UnixNano(),    // Day 1
+			partMaxTS: time.Date(2024, 1, 1, 23, 59, 59, 0, time.Local).UnixNano(), // End of Day 1
 			targetInterval: storage.IntervalRule{
 				Unit: storage.HOUR,
 				Num:  6,
 			},
 			expected: []time.Time{
-				time.Date(2024, 1, 1, 0, 0, 0, 0, time.UTC),  // Hour 0-6
-				time.Date(2024, 1, 1, 6, 0, 0, 0, time.UTC),  // Hour 6-12
-				time.Date(2024, 1, 1, 12, 0, 0, 0, time.UTC), // Hour 12-18
-				time.Date(2024, 1, 1, 18, 0, 0, 0, time.UTC), // Hour 18-24
+				time.Date(2024, 1, 1, 0, 0, 0, 0, time.Local),  // Hour 0-6
+				time.Date(2024, 1, 1, 6, 0, 0, 0, time.Local),  // Hour 6-12
+				time.Date(2024, 1, 1, 12, 0, 0, 0, time.Local), // Hour 12-18
+				time.Date(2024, 1, 1, 18, 0, 0, 0, time.Local), // Hour 18-24
 			},
 		},
 	}
