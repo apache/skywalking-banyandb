@@ -35,6 +35,7 @@ import (
 	"github.com/apache/skywalking-banyandb/banyand/metadata"
 	"github.com/apache/skywalking-banyandb/banyand/metadata/schema"
 	"github.com/apache/skywalking-banyandb/pkg/cgroups"
+	"github.com/apache/skywalking-banyandb/pkg/initerror"
 	"github.com/apache/skywalking-banyandb/pkg/logger"
 	"github.com/apache/skywalking-banyandb/pkg/run"
 )
@@ -108,7 +109,35 @@ func (sr *schemaRepo) SendMetadataEvent(event MetadataEvent) {
 		return
 	}
 	defer sr.closer.SenderDone()
+	// SendMetadataEvent runs synchronously on the caller goroutine (e.g. an
+	// etcd-watch handler such as (*schemaRepo).OnAddOrUpdate). A panic from
+	// processEvent — string-typed today, error-typed once Step 1b lands —
+	// would otherwise propagate to a caller that has no recover() of its own.
+	// The classifier branch escalates permanent errors to .Fatal() so
+	// runtime registration of an incompatible group exits the process the
+	// same way the boot path does; non-permanent panics are logged and
+	// requeued onto eventCh so the Watcher worker can retry, mirroring the
+	// transient error-return path below.
+	defer func() {
+		if recovered := recover(); recovered != nil {
+			if recErr, isErr := recovered.(error); isErr && initerror.IsPermanent(recErr) {
+				sr.l.Fatal().Err(recErr).Interface("event", event).Str("stack", string(debug.Stack())).
+					Msg("SendMetadataEvent hit a permanent error, refusing to continue")
+			}
+			sr.l.Warn().Interface("err", recovered).Interface("event", event).Str("stack", string(debug.Stack())).
+				Msg("recovered from SendMetadataEvent panic; requeueing")
+			sr.metrics.totalErrs.Inc(1)
+			select {
+			case sr.eventCh <- event:
+			case <-sr.closer.CloseNotify():
+			}
+		}
+	}()
 	if err := sr.processEvent(event); err != nil && !errors.Is(err, schema.ErrClosed) {
+		if initerror.IsPermanent(err) {
+			sr.l.Fatal().Err(err).Interface("event", event).
+				Msg("SendMetadataEvent hit a permanent error, refusing to continue")
+		}
 		select {
 		case <-sr.closer.CloseNotify():
 			return
@@ -237,10 +266,25 @@ func (sr *schemaRepo) Watcher() {
 			}
 			defer func() {
 				sr.closer.ReceiverDone()
+				// Bump the panic metric BEFORE the classifier branch: .Fatal()
+				// calls os.Exit(1) and the deferred Inc would otherwise be
+				// skipped on the permanent-error escalation path. Do NOT move
+				// this line under the if-branch.
+				sr.metrics.totalPanics.Inc(1)
 				if err := recover(); err != nil {
+					// Classifier is dormant on string-typed panics (today's
+					// Panicf sites outside this PR's scope still panic with
+					// strings); tsdb.go:176/242 are converted in Step 1b so
+					// permanent errors reaching this recover are error-typed.
+					// We use .Fatal() not panic() because this is a worker
+					// goroutine: panic() would only kill this goroutine and
+					// leave the Watcher partially alive.
+					if recErr, isErr := err.(error); isErr && initerror.IsPermanent(recErr) {
+						sr.l.Fatal().Err(recErr).Str("stack", string(debug.Stack())).
+							Msg("Watcher hit a permanent error, refusing to continue")
+					}
 					sr.l.Warn().Interface("err", err).Str("stack", string(debug.Stack())).Msg("watching the events")
 				}
-				sr.metrics.totalPanics.Inc(1)
 			}()
 			// The Watcher drains events retried via the channel after transient
 			// processing errors. The fast path runs synchronously in SendMetadataEvent
@@ -252,6 +296,10 @@ func (sr *schemaRepo) Watcher() {
 						return
 					}
 					if retryErr := sr.processEvent(evt); retryErr != nil && !errors.Is(retryErr, schema.ErrClosed) {
+						if initerror.IsPermanent(retryErr) {
+							sr.l.Fatal().Err(retryErr).Interface("event", evt).
+								Msg("Watcher hit a permanent error, refusing to continue")
+						}
 						select {
 						case <-sr.closer.CloseNotify():
 							return
