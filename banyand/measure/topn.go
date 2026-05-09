@@ -57,6 +57,7 @@ const (
 	timeBucketFormat         = "200601021504"
 	resultPersistencyTimeout = 10 * time.Second
 	maxFlushInterval         = time.Minute
+	maxTopNValuesCount       = 1 << 17 // sanity upper bound: 131072 elements = ~1MB per unmarshal, far above TopN CountersNumber
 )
 
 var (
@@ -1157,7 +1158,11 @@ func (t *TopNValue[K]) Unmarshal(src []byte, decoder *encoding.BytesBlockDecoder
 
 	var entityTagNamesCount uint64
 	src, entityTagNamesCount = encoding.BytesToVarUint64(src)
-	t.entityTagNames = make([]string, 0, entityTagNamesCount)
+	if cap(t.entityTagNames) < int(entityTagNamesCount) {
+		t.entityTagNames = make([]string, 0, entityTagNamesCount)
+	} else {
+		t.entityTagNames = t.entityTagNames[:0]
+	}
 	var entityTagNameBytes []byte
 	for i := uint64(0); i < entityTagNamesCount; i++ {
 		src, entityTagNameBytes, err = encoding.DecodeBytes(src)
@@ -1169,6 +1174,9 @@ func (t *TopNValue[K]) Unmarshal(src []byte, decoder *encoding.BytesBlockDecoder
 
 	var valuesCount uint64
 	src, valuesCount = encoding.BytesToVarUint64(src)
+	if valuesCount > maxTopNValuesCount {
+		return fmt.Errorf("valuesCount %d exceeds maximum allowed %d", valuesCount, maxTopNValuesCount)
+	}
 
 	var k K
 	switch any(k).(type) {
@@ -1225,10 +1233,11 @@ func (t *TopNValue[K]) unmarshalInt64(src []byte, decoder *encoding.BytesBlockDe
 		return fmt.Errorf("src is too short for reading string with size %d; len(src)=%d", valueLen, len(src))
 	}
 
-	intValues, err := encoding.BytesToInt64List(nil, src[:valueLen], t.encodeType, t.firstValue, int(valuesCount))
+	intValues, err := encoding.BytesToInt64List(t.intScratch[:0], src[:valueLen], t.encodeType, t.firstValue, int(valuesCount))
 	if err != nil {
 		return fmt.Errorf("cannot unmarshal topNValue.values: %w", err)
 	}
+	t.intScratch = intValues
 	if vals, ok := any(intValues).([]K); ok {
 		t.values = vals
 	} else {
@@ -1296,23 +1305,17 @@ func (t *TopNValue[K]) unmarshalFloat64(src []byte, decoder *encoding.BytesBlock
 		return fmt.Errorf("src is too short for reading float values with size %d; len(src)=%d", valueLen, len(src))
 	}
 
-	intValues, err := encoding.BytesToInt64List(nil, src[:valueLen], t.encodeType, t.firstValue, int(valuesCount))
+	intValues, err := encoding.BytesToInt64List(t.intScratch[:0], src[:valueLen], t.encodeType, t.firstValue, int(valuesCount))
 	if err != nil {
 		return fmt.Errorf("cannot unmarshal topNValue.intValues: %w", err)
 	}
+	t.intScratch = intValues
 
-	floatValues, err := encoding.DecimalIntListToFloat64List(nil, intValues, t.exponent, int(valuesCount))
+	floatValues, err := encoding.DecimalIntListToFloat64List(any(t.values[:0]).([]float64), intValues, t.exponent, int(valuesCount))
 	if err != nil {
 		return fmt.Errorf("cannot unmarshal topNValue.floatValues: %w", err)
 	}
-	if vals, ok := any(floatValues).([]K); ok {
-		t.values = vals
-	} else {
-		t.values = make([]K, len(floatValues))
-		for i, v := range floatValues {
-			t.values[i] = K(v)
-		}
-	}
+	t.values = any(floatValues).([]K)
 
 	return t.unmarshalEntities(decoder, src[valueLen:], valuesCount, entityTagNamesCount)
 }

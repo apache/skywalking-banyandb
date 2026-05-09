@@ -133,6 +133,11 @@ func (t *topNQueryProcessor) Rev(ctx context.Context, message bus.Message) (resp
 			span.Stop()
 		}()
 	}
+	fieldType, fieldTypeErr := t.getTopNFieldType(ctx, request.Groups[0], request.GetName())
+	if fieldTypeErr != nil {
+		resp = bus.NewMessage(now, common.NewError("failed to determine field type for topN query %s: %v", request.GetName(), fieldTypeErr))
+		return
+	}
 	agg := request.Agg
 	request.Agg = modelv1.AggregationFunction_AGGREGATION_FUNCTION_UNSPECIFIED
 	ff, err := t.broadcaster.Broadcast(defaultTopNQueryTimeout, data.TopicTopNQuery, bus.NewMessageWithNodeSelectors(now, nodeSelectors, request.TimeRange, request))
@@ -141,11 +146,6 @@ func (t *topNQueryProcessor) Rev(ctx context.Context, message bus.Message) (resp
 		return
 	}
 	var allErr error
-	fieldType, fieldTypeErr := t.getTopNFieldType(ctx, request.Groups[0], request.GetName())
-	if fieldTypeErr != nil {
-		resp = bus.NewMessage(now, common.NewError("failed to determine field type for topN query %s: %v", request.GetName(), fieldTypeErr))
-		return
-	}
 	var lists []*measurev1.TopNList
 	var responseCount int
 	if fieldType == databasev1.FieldType_FIELD_TYPE_FLOAT {
