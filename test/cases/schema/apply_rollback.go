@@ -66,10 +66,10 @@ func arMeasureSpec(group, name string) *databasev1.Measure {
 	}
 }
 
-// applyRollbackMeasureName is the fixture measure name reused across the §6.1–§6.7 specs.
+// applyRollbackMeasureName is the fixture measure name reused across the specs.
 const applyRollbackMeasureName = "cpu_total"
 
-// Schema apply-rollback tests — §6.1 through §6.7.
+// Schema apply-rollback tests.
 var _ = g.Describe("Schema apply rollback", func() {
 	var (
 		ctx     context.Context
@@ -81,8 +81,8 @@ var _ = g.Describe("Schema apply rollback", func() {
 		clients = NewClients(SharedContext.Connection)
 	})
 
-	// §6.1 — creates a measure visible end-to-end.
-	g.It("creates a measure visible end-to-end (§6.1)", func() {
+	// creates a measure visible end-to-end.
+	g.It("creates a measure visible end-to-end", func() {
 		groupName := fmt.Sprintf("ar-vm-%d", time.Now().UnixNano())
 		measureName := applyRollbackMeasureName
 
@@ -131,9 +131,9 @@ var _ = g.Describe("Schema apply rollback", func() {
 		_, _ = clients.GroupClient.Delete(ctx, &databasev1.GroupRegistryServiceDeleteRequest{Group: groupName})
 	})
 
-	// §6.2 — Apply-rollback: a rejected schema update must leave the full schema state intact,
+	// Apply-rollback: a rejected schema update must leave the full schema state intact,
 	// including mod_revision, created_at, updated_at, and the entity definition.
-	g.It("preserves mod_revision, created_at, updated_at, and entity after a rejected entity-change update (§6.2)", func() {
+	g.It("preserves mod_revision, created_at, updated_at, and entity after a rejected entity-change update", func() {
 		groupName := fmt.Sprintf("ar-measure-%d", time.Now().UnixNano())
 		measureName := "ar_measure"
 
@@ -223,8 +223,8 @@ var _ = g.Describe("Schema apply rollback", func() {
 		_, _ = clients.GroupClient.Delete(ctx, &databasev1.GroupRegistryServiceDeleteRequest{Group: groupName})
 	})
 
-	// §6.3 — lists groups and measures after create.
-	g.It("lists groups and measures after create (§6.3)", func() {
+	// lists groups and measures after create.
+	g.It("lists groups and measures after create", func() {
 		groupName := fmt.Sprintf("ar-list-%d", time.Now().UnixNano())
 		measureName := applyRollbackMeasureName
 
@@ -287,8 +287,8 @@ var _ = g.Describe("Schema apply rollback", func() {
 		_, _ = clients.GroupClient.Delete(ctx, &databasev1.GroupRegistryServiceDeleteRequest{Group: groupName})
 	})
 
-	// §6.4 — adds a second measure and keeps the first.
-	g.It("adds a second measure and keeps the first (§6.4)", func() {
+	// adds a second measure and keeps the first.
+	g.It("adds a second measure and keeps the first", func() {
 		groupName := fmt.Sprintf("ar-two-%d", time.Now().UnixNano())
 
 		g.By("Creating measure group")
@@ -352,8 +352,8 @@ var _ = g.Describe("Schema apply rollback", func() {
 		_, _ = clients.GroupClient.Delete(ctx, &databasev1.GroupRegistryServiceDeleteRequest{Group: groupName})
 	})
 
-	// §6.5 — drops measure from BanyanDB on delete.
-	g.It("drops measure from BanyanDB on delete (§6.5)", func() {
+	// drops measure from BanyanDB on delete.
+	g.It("drops measure from BanyanDB on delete", func() {
 		groupName := fmt.Sprintf("ar-del-%d", time.Now().UnixNano())
 		measureName := applyRollbackMeasureName
 
@@ -409,8 +409,8 @@ var _ = g.Describe("Schema apply rollback", func() {
 		_, _ = clients.GroupClient.Delete(ctx, &databasev1.GroupRegistryServiceDeleteRequest{Group: groupName})
 	})
 
-	// §6.6 — delete-then-recreate is idempotent for identical shape.
-	g.It("delete-then-recreate is idempotent for identical shape (§6.6)", func() {
+	// delete-then-recreate is idempotent for identical shape.
+	g.It("delete-then-recreate is idempotent for identical shape", func() {
 		groupName := fmt.Sprintf("ar-recreate-%d", time.Now().UnixNano())
 		measureName := applyRollbackMeasureName
 
@@ -481,8 +481,8 @@ var _ = g.Describe("Schema apply rollback", func() {
 		_, _ = clients.GroupClient.Delete(ctx, &databasev1.GroupRegistryServiceDeleteRequest{Group: groupName})
 	})
 
-	// §6.7 — produces no measures when nothing is created.
-	g.It("produces no measures when nothing is created (§6.7)", func() {
+	// produces no measures when nothing is created.
+	g.It("produces no measures when nothing is created", func() {
 		groupName := fmt.Sprintf("ar-empty-%d", time.Now().UnixNano())
 
 		g.By("Creating group only — no measures")

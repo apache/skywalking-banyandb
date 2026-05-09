@@ -31,7 +31,6 @@ import (
 	databasev1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/database/v1"
 	measurev1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/measure/v1"
 	modelv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/model/v1"
-	"github.com/apache/skywalking-banyandb/pkg/test/helpers"
 	"github.com/apache/skywalking-banyandb/pkg/timestamp"
 )
 
@@ -146,7 +145,7 @@ func queryMeasureRange(
 	return client.Query(ctx, req)
 }
 
-// §6.8 / §6.9 / §6.10 / §6.11 — Shape-break and delete-then-recreate scenarios.
+// Shape-break and delete-then-recreate scenarios.
 var _ = g.Describe("Schema shape-break rejection", func() {
 	var (
 		ctx     context.Context
@@ -158,17 +157,8 @@ var _ = g.Describe("Schema shape-break rejection", func() {
 		clients = NewClients(SharedContext.Connection)
 	})
 
-	// §6.8: shape-break — delete+apply new shape creates the new measure (Rule 7 clamp end-to-end).
-	g.It("shape-break: delete+apply new shape creates the new measure (§6.8)", func() {
-		// TODO(phase-2): Phase 1 AwaitRevisionApplied is liaison-only by design. Both this spec
-		// and §6.11 perform an end-to-end data Write+Query round-trip through the liaison after
-		// a schema mutation; in distributed mode the data node can lag the liaison briefly on
-		// tsTable readiness or query-side index refresh, racing the immediate Write→Query.
-		// Cluster-wide barrier semantics ship in Phase 2 via NodeSchemaStatusService + liaison
-		// fan-out (plan Steps 2.1–2.2); re-enable this spec in distributed mode once those land.
-		if SharedContext.Mode == helpers.ModeDistributed {
-			g.Skip("§6.8 requires cluster-wide propagation barrier (Phase 2)")
-		}
+	// shape-break — delete+apply new shape creates the new measure (Rule 7 clamp end-to-end).
+	g.It("shape-break: delete+apply new shape creates the new measure", func() {
 		groupName := fmt.Sprintf("sb-new-%d", time.Now().UnixNano())
 		measureName := "throughput"
 
@@ -211,10 +201,24 @@ var _ = g.Describe("Schema shape-break rejection", func() {
 			"initial write must return STATUS_SUCCEED")
 
 		g.By("Querying [CreatedAt1, now+1h] — must return exactly 1 data point")
-		queryResp1, queryErr1 := queryMeasureRange(ctx, clients.MeasureWriteClient, groupName, measureName,
-			createdAt1.AsTime(), time.Now().Add(time.Hour), r1)
-		gm.Expect(queryErr1).ShouldNot(gm.HaveOccurred())
-		gm.Expect(queryResp1.GetDataPoints()).Should(gm.HaveLen(1), "sanity baseline: pre-delete query must return 1 data point")
+		// In distributed mode the write→query path is asynchronous: the
+		// data-node write callback returns after mustAddMemPart's applied
+		// channel fires, but the write batch round-trip and the query
+		// fan-out can still race for a few hundred milliseconds before the
+		// new memPart is visible across every queryable shard. The
+		// schema-consistency suite already uses this Eventually pattern
+		// in deletion.go for the same reason; mirror it here.
+		var queryResp1 *measurev1.QueryResponse
+		gm.Eventually(func() int {
+			var queryErr1 error
+			queryResp1, queryErr1 = queryMeasureRange(ctx, clients.MeasureWriteClient, groupName, measureName,
+				createdAt1.AsTime(), time.Now().Add(time.Hour), r1)
+			if queryErr1 != nil {
+				return -1
+			}
+			return len(queryResp1.GetDataPoints())
+		}, 5*time.Second, 50*time.Millisecond).Should(gm.Equal(1),
+			"sanity baseline: pre-delete query must return 1 data point")
 
 		g.By("Deleting measure → T_del; awaiting deletion")
 		deleteResp, deleteErr := clients.MeasureRegClient.Delete(ctx, &databasev1.MeasureRegistryServiceDeleteRequest{
@@ -288,8 +292,8 @@ var _ = g.Describe("Schema shape-break rejection", func() {
 		_, _ = clients.GroupClient.Delete(ctx, &databasev1.GroupRegistryServiceDeleteRequest{Group: groupName})
 	})
 
-	// §6.9: entity-change update is rejected; the error mentions "entity"; ModRevision is unchanged.
-	g.It("rejects a measure entity-change update and leaves ModRevision unchanged (§6.9)", func() {
+	// entity-change update is rejected; the error mentions "entity"; ModRevision is unchanged.
+	g.It("rejects a measure entity-change update and leaves ModRevision unchanged", func() {
 		groupName := fmt.Sprintf("sb1-measure-%d", time.Now().UnixNano())
 		measureName := "sb1_measure"
 
@@ -336,9 +340,9 @@ var _ = g.Describe("Schema shape-break rejection", func() {
 		_, _ = clients.GroupClient.Delete(ctx, &databasev1.GroupRegistryServiceDeleteRequest{Group: groupName})
 	})
 
-	// §6.10: full measure content (entity, tag families, fields, created_at, updated_at, mod_revision)
+	// full measure content (entity, tag families, fields, created_at, updated_at, mod_revision)
 	// is unchanged after a rejected entity-change update.
-	g.It("leaves the full measure schema unchanged after a rejected entity-change update (§6.10)", func() {
+	g.It("leaves the full measure schema unchanged after a rejected entity-change update", func() {
 		groupName := fmt.Sprintf("sb2-measure-%d", time.Now().UnixNano())
 		measureName := "sb2_measure"
 
@@ -408,17 +412,8 @@ var _ = g.Describe("Schema shape-break rejection", func() {
 		_, _ = clients.GroupClient.Delete(ctx, &databasev1.GroupRegistryServiceDeleteRequest{Group: groupName})
 	})
 
-	// §6.11: delete-then-recreate original shape drops old data (Rule 7 clamp).
-	g.It("delete-then-recreate original shape drops old data (§6.11)", func() {
-		// TODO(phase-2): Phase 1 AwaitRevisionApplied is liaison-only by design — it confirms
-		// the liaison cache observes R2 but not that every data node has rebuilt the tsTable
-		// after the delete-then-recreate. The post-recreate Write+Query round-trip exercised
-		// by this spec races the data-node tsTable rebuild on slow CI runners. Cluster-wide
-		// barrier semantics ship in Phase 2 via NodeSchemaStatusService + liaison fan-out
-		// (plan Steps 2.1–2.2); re-enable this spec in distributed mode once those land.
-		if SharedContext.Mode == helpers.ModeDistributed {
-			g.Skip("§6.11 requires cluster-wide propagation barrier (Phase 2)")
-		}
+	// delete-then-recreate original shape drops old data (Rule 7 clamp).
+	g.It("delete-then-recreate original shape drops old data", func() {
 		groupName := fmt.Sprintf("sb-same-%d", time.Now().UnixNano())
 		measureName := "throughput"
 
@@ -458,10 +453,17 @@ var _ = g.Describe("Schema shape-break rejection", func() {
 		gm.Expect(writeErr1).ShouldNot(gm.HaveOccurred())
 		gm.Expect(writeStatus1).Should(gm.Equal(modelv1.Status_STATUS_SUCCEED.String()))
 
-		queryResp1, queryErr1 := queryMeasureRange(ctx, clients.MeasureWriteClient, groupName, measureName,
-			createdAt1.AsTime(), time.Now().Add(time.Hour), r1)
-		gm.Expect(queryErr1).ShouldNot(gm.HaveOccurred())
-		gm.Expect(queryResp1.GetDataPoints()).Should(gm.HaveLen(1), "baseline: pre-delete query returns 1 data point")
+		// Eventually retry — see the  baseline above for the
+		// distributed write→query visibility race.
+		gm.Eventually(func() int {
+			queryResp1, queryErr1 := queryMeasureRange(ctx, clients.MeasureWriteClient, groupName, measureName,
+				createdAt1.AsTime(), time.Now().Add(time.Hour), r1)
+			if queryErr1 != nil {
+				return -1
+			}
+			return len(queryResp1.GetDataPoints())
+		}, 5*time.Second, 50*time.Millisecond).Should(gm.Equal(1),
+			"baseline: pre-delete query returns 1 data point")
 
 		g.By("Deleting measure → T_del; awaiting deletion")
 		deleteResp, deleteErr := clients.MeasureRegClient.Delete(ctx, &databasev1.MeasureRegistryServiceDeleteRequest{
@@ -513,10 +515,15 @@ var _ = g.Describe("Schema shape-break rejection", func() {
 			"write with R2 must succeed")
 
 		// Post-write query [CreatedAt2, now+1h] must return the newly-written point.
-		queryResp3, queryErr3 := queryMeasureRange(ctx, clients.MeasureWriteClient, groupName, measureName,
-			createdAt2.AsTime(), time.Now().Add(time.Hour), r2)
-		gm.Expect(queryErr3).ShouldNot(gm.HaveOccurred())
-		gm.Expect(queryResp3.GetDataPoints()).Should(gm.HaveLen(1),
+		// Same write→query visibility race as the  baseline.
+		gm.Eventually(func() int {
+			queryResp3, queryErr3 := queryMeasureRange(ctx, clients.MeasureWriteClient, groupName, measureName,
+				createdAt2.AsTime(), time.Now().Add(time.Hour), r2)
+			if queryErr3 != nil {
+				return -1
+			}
+			return len(queryResp3.GetDataPoints())
+		}, 5*time.Second, 50*time.Millisecond).Should(gm.Equal(1),
 			"post-creation write must be queryable after AwaitRevision(R2)")
 
 		_, _ = clients.GroupClient.Delete(ctx, &databasev1.GroupRegistryServiceDeleteRequest{Group: groupName})

@@ -25,6 +25,7 @@ import (
 
 	clusterv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/cluster/v1"
 	schemav1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/schema/v1"
+	"github.com/apache/skywalking-banyandb/pkg/schema/registry"
 )
 
 // nodeStatusMaxKeys caps the per-request key count to match SchemaBarrierService
@@ -35,43 +36,72 @@ import (
 const nodeStatusMaxKeys = 10000
 
 // NodeSchemaStatusServer implements clusterv1.NodeSchemaStatusServiceServer
-// against a local SchemaRegistry cache. The same implementation runs on every
+// against the per-node schema caches. The same implementation runs on every
 // cluster member that holds a schema cache: liaisons (Role_ROLE_LIAISON) and
 // data nodes (Role_ROLE_DATA). The "Node" prefix in the service name is a
 // misnomer inherited from the original proto draft — treat the service as
 // "cluster-member schema status" regardless of the role serving it.
 //
-// The cache the server reads (the SchemaRegistry's schemaCache) is the same
-// one downstream consumers (pkg/schema.schemaRepo, groupRepo, entityRepo)
-// observe through the property watch loop. The schemaCache.notifiedModRevision
-// watermark only advances after every registered handler has processed the
-// relevant event, so a positive answer from this server (Present=true,
-// rev=R) implies every downstream cache has also observed R. This is the
-// load-bearing prerequisite for the Phase 2 cluster barrier — without it,
-// the barrier would confirm a cache the data-node query executor never reads.
+// Two underlying caches feed this server:
+//
+//  1. The per-service NodeRepoRegistry (pkg/schema/registry) — the same
+//     pkg/schema.schemaRepo instances the data-node executor's
+//     LoadGroup / LoadResource resolve through. Registered against
+//     KindGroup, KindStream, KindMeasure, KindTrace, KindIndexRule,
+//     KindIndexRuleBinding. Reading from the registry guarantees the
+//     barrier and the executor see a consistent answer for the same
+//     (group, ModRevision) pair — closing the eventCh-retry leak in
+//     pkg/schema.schemaRepo.SendMetadataEvent that produced the
+//     second-run flake (commit 47006561). This is the load-bearing
+//     invariant of Phase 2 Step 2.5.
+//
+//  2. The property schemaCache — the upstream watch cache. Used only for
+//     KindTopNAggregation and KindProperty, which schemaRepo does not
+//     track (no executor race there because TopN/Property are not
+//     consulted in the data-node query path the same way the per-service
+//     resources are). The schemaCache.notifiedModRevision watermark is
+//     still load-bearing for those kinds.
+//
+// GetMaxRevision returns the minimum across both sources so the barrier never
+// certifies a revision until every cache the node exposes has applied it.
 type NodeSchemaStatusServer struct {
 	clusterv1.UnimplementedNodeSchemaStatusServiceServer
-	cacheProvider func() *schemaCache
+	cacheProvider    func() *schemaCache
+	registryProvider func() *registry.NodeRepoRegistry
 }
 
-// NewNodeSchemaStatusServer wires the server to a cache provider. The
-// provider is called per request so the server tolerates SchemaRegistry
-// initialisation racing the gRPC server boot — an early call simply gets a
-// nil cache and returns zero-valued results, which liaison-side fan-out
-// treats as "node not yet ready, retry on the next backoff iteration"
-// rather than a hard error.
+// NewNodeSchemaStatusServer wires the server to a schemaCache provider only.
+// Used by tests that fix a hand-built cache; production wiring uses the
+// registry-aware constructors below so the cluster barrier reads the same
+// schemaRepo the executor consults.
 func NewNodeSchemaStatusServer(cacheProvider func() *schemaCache) *NodeSchemaStatusServer {
 	return &NodeSchemaStatusServer{cacheProvider: cacheProvider}
 }
 
-// NewNodeSchemaStatusServerForRegistry wires the server through a registry
-// provider resolved per request. Construction-time wiring (which happens
-// before the metadata service's PreRun has populated the registry) would
-// otherwise capture a nil snapshot and skip registration permanently. The
-// provider lets the server tolerate a still-initializing registry the same
-// way the barrierSVC closure in banyand/liaison/grpc/server.go does — a nil
-// registry surfaces through cacheProvider as a nil schemaCache and the
-// fail-closed nil-cache contract takes over.
+// NewNodeSchemaStatusServerWithRegistry wires the server to both a schemaCache
+// provider (for TopN/Property kinds) and a NodeRepoRegistry provider (for the
+// per-service kinds the executor reads). Either provider may transiently
+// return nil while metadata.PreRun is still running; the per-call closures
+// tolerate that the same way the standalone fail-closed contract does.
+func NewNodeSchemaStatusServerWithRegistry(
+	cacheProvider func() *schemaCache,
+	registryProvider func() *registry.NodeRepoRegistry,
+) *NodeSchemaStatusServer {
+	return &NodeSchemaStatusServer{
+		cacheProvider:    cacheProvider,
+		registryProvider: registryProvider,
+	}
+}
+
+// NewNodeSchemaStatusServerForRegistry wires the server through a property
+// SchemaRegistry provider resolved per request. Construction-time wiring
+// (which happens before the metadata service's PreRun has populated the
+// registry) would otherwise capture a nil snapshot and skip registration
+// permanently. The provider lets the server tolerate a still-initializing
+// registry the same way the barrierSVC closure in
+// banyand/liaison/grpc/server.go does — a nil registry surfaces through
+// cacheProvider as a nil schemaCache and the fail-closed nil-cache contract
+// takes over.
 func NewNodeSchemaStatusServerForRegistry(provider func() *SchemaRegistry) *NodeSchemaStatusServer {
 	return &NodeSchemaStatusServer{
 		cacheProvider: func() *schemaCache {
@@ -87,12 +117,42 @@ func NewNodeSchemaStatusServerForRegistry(provider func() *SchemaRegistry) *Node
 	}
 }
 
-// GetMaxRevision returns the highest mod_revision currently observed by the
-// node's local schema cache. When the cache is not yet initialized the
-// response carries 0, which the liaison's barrier loop interprets as
-// "node not yet caught up" and continues polling.
+// NewNodeSchemaStatusServerForRegistryWithNodeRepo wires both the property
+// SchemaRegistry provider (for the schemaCache) and a NodeRepoRegistry
+// provider (for the per-service schemaRepo aggregator) through per-call
+// closures. The metadata Service exposes the NodeRepoRegistry via
+// Service.NodeRepoRegistry(); pass the bound method here.
+func NewNodeSchemaStatusServerForRegistryWithNodeRepo(
+	provider func() *SchemaRegistry,
+	registryProvider func() *registry.NodeRepoRegistry,
+) *NodeSchemaStatusServer {
+	srv := NewNodeSchemaStatusServerForRegistry(provider)
+	srv.registryProvider = registryProvider
+	return srv
+}
+
+func (s *NodeSchemaStatusServer) cache() *schemaCache {
+	if s.cacheProvider == nil {
+		return nil
+	}
+	return s.cacheProvider()
+}
+
+func (s *NodeSchemaStatusServer) registry() *registry.NodeRepoRegistry {
+	if s.registryProvider == nil {
+		return nil
+	}
+	return s.registryProvider()
+}
+
+// GetMaxRevision returns the schemaCache's notifiedModRevision watermark.
+// The cache observes every catalog's events, so it is the correct global
+// watermark — symmetric with the receiving liaison's selfName probe at
+// barrier_cluster.go:354-360 which also reads cache-only. Per-key gating
+// (executor-cache routing by kind) is handled by GetKeyRevisions /
+// GetAbsentKeys via the NodeRepoRegistry.
 func (s *NodeSchemaStatusServer) GetMaxRevision(_ context.Context, _ *clusterv1.GetMaxRevisionRequest) (*clusterv1.GetMaxRevisionResponse, error) {
-	c := s.cacheProvider()
+	c := s.cache()
 	if c == nil {
 		return &clusterv1.GetMaxRevisionResponse{}, nil
 	}
@@ -100,12 +160,16 @@ func (s *NodeSchemaStatusServer) GetMaxRevision(_ context.Context, _ *clusterv1.
 }
 
 // GetKeyRevisions returns per-key (mod_revision, present) pairs in the same
-// order the caller supplied keys. A key referencing a group the node has
-// not observed maps to mod_revision=0, present=false — the call does not
-// error on missing groups so the liaison can treat group-not-yet-registered
-// as a normal laggard rather than a server fault.
+// order the caller supplied keys. Each key is routed by Kind: kinds tracked
+// by some registered schemaRepo are answered from the NodeRepoRegistry (so
+// the response matches what the executor's LoadResource would resolve);
+// remaining kinds (TopN, Property) fall through to the schemaCache.
 //
-// An empty request is valid and produces an empty response.
+// A key referencing a group the node has not observed maps to
+// mod_revision=0, present=false — the call does not error on missing groups
+// so the liaison can treat group-not-yet-registered as a normal laggard
+// rather than a server fault. An empty request is valid and produces an
+// empty response.
 func (s *NodeSchemaStatusServer) GetKeyRevisions(_ context.Context, req *clusterv1.GetKeyRevisionsRequest) (*clusterv1.GetKeyRevisionsResponse, error) {
 	keys := req.GetKeys()
 	if len(keys) > nodeStatusMaxKeys {
@@ -117,16 +181,11 @@ func (s *NodeSchemaStatusServer) GetKeyRevisions(_ context.Context, req *cluster
 	for i, key := range keys {
 		resp.Revisions[i] = &clusterv1.KeyRevision{Key: key}
 	}
-	c := s.cacheProvider()
-	if c == nil || len(keys) == 0 {
+	if len(keys) == 0 {
 		return resp, nil
 	}
-	propIDs := schemaKeysToPropIDs(keys)
-	statuses := c.GetKeyRevisions(propIDs)
-	for i, keyStatus := range statuses {
-		resp.Revisions[i].ModRevision = keyStatus.ModRevision
-		resp.Revisions[i].Present = keyStatus.Present
-	}
+	cacheIndices := s.routeKeysByKind(keys, resp.Revisions)
+	s.fillCacheKeyRevisions(keys, cacheIndices, resp.Revisions)
 	return resp, nil
 }
 
@@ -134,6 +193,10 @@ func (s *NodeSchemaStatusServer) GetKeyRevisions(_ context.Context, req *cluster
 // node's live cache or pending downstream notification) and "still_present".
 // A SchemaKey with an unknown kind value is reported in absent_keys without
 // erroring so the caller can rely on the partition adding up to the input.
+//
+// Routing follows GetKeyRevisions: registry-routed kinds consult the
+// per-service schemaRepo (so absence here means absence in the executor's
+// resolver cache too); TopN/Property fall through to the schemaCache.
 func (s *NodeSchemaStatusServer) GetAbsentKeys(_ context.Context, req *clusterv1.GetAbsentKeysRequest) (*clusterv1.GetAbsentKeysResponse, error) {
 	keys := req.GetKeys()
 	if len(keys) > nodeStatusMaxKeys {
@@ -143,24 +206,29 @@ func (s *NodeSchemaStatusServer) GetAbsentKeys(_ context.Context, req *clusterv1
 	if len(keys) == 0 {
 		return resp, nil
 	}
-	c := s.cacheProvider()
-	if c == nil {
-		// Cache not yet initialized — the node has not observed any schema
-		// state, so it cannot claim deletion has been applied. Report every
-		// key as still present so the liaison's AwaitSchemaDeleted barrier
-		// keeps polling until the cache is online. Mirrors the Phase 1
+	c := s.cache()
+	reg := s.registry()
+	if c == nil && (reg == nil || reg.Empty()) {
+		// Neither source initialized — the node has not observed any
+		// schema state, so it cannot claim deletion has been applied.
+		// Report every key as still present so the liaison's
+		// AwaitSchemaDeleted barrier keeps polling. Mirrors the Phase 1
 		// collectPresentKeys nil-cache contract in
 		// banyand/liaison/grpc/barrier.go.
 		resp.StillPresentKeys = append([]*schemav1.SchemaKey(nil), keys...)
 		return resp, nil
 	}
-	propIDs := schemaKeysToPropIDs(keys)
-	// One read-lock pass over the cache; an empty propID (unknown kind) maps
-	// to Present=false in c.GetKeyRevisions because c.entries[""] never
-	// matches, which is the same "absent" partition the proto requires.
-	statuses := c.GetKeyRevisions(propIDs)
-	for i, keyStatus := range statuses {
-		if keyStatus.Present {
+	// Reuse the GetKeyRevisions routing to obtain a per-key Present flag,
+	// then partition by that flag. The two RPCs share a routing rule by
+	// design; keeping the implementation in one place avoids drift.
+	revisions := make([]*clusterv1.KeyRevision, len(keys))
+	for i, key := range keys {
+		revisions[i] = &clusterv1.KeyRevision{Key: key}
+	}
+	cacheIndices := s.routeKeysByKind(keys, revisions)
+	s.fillCacheKeyRevisions(keys, cacheIndices, revisions)
+	for i, kr := range revisions {
+		if kr.Present {
 			resp.StillPresentKeys = append(resp.StillPresentKeys, keys[i])
 			continue
 		}
@@ -169,17 +237,52 @@ func (s *NodeSchemaStatusServer) GetAbsentKeys(_ context.Context, req *clusterv1
 	return resp, nil
 }
 
-// schemaKeysToPropIDs converts a slice of SchemaKey messages into the
-// internal propID strings used by the schema cache. Keys with unknown kind
-// strings produce an empty propID at the corresponding index; callers may
-// pass empty propIDs straight to schemaCache.GetKeyRevisions, which reports
-// them as Present=false (the cache map never holds an entry under "").
-// This matches the proto contract: an unknown kind is "absent from this
-// node's perspective" rather than a parse error.
-func schemaKeysToPropIDs(keys []*schemav1.SchemaKey) []string {
-	out := make([]string, len(keys))
-	for i, key := range keys {
-		out[i] = BuildPropertyIDFromSchemaKey(key)
+// routeKeysByKind fills in revisions[i] for every key whose Kind is tracked
+// by a registered schemaRepo and returns the indices of the remaining keys
+// that need to be answered from the schemaCache. The split is positional so
+// the caller can preserve the request key order in its response.
+func (s *NodeSchemaStatusServer) routeKeysByKind(keys []*schemav1.SchemaKey, revisions []*clusterv1.KeyRevision) []int {
+	reg := s.registry()
+	if reg == nil {
+		cacheIndices := make([]int, len(keys))
+		for i := range keys {
+			cacheIndices[i] = i
+		}
+		return cacheIndices
 	}
-	return out
+	cacheIndices := make([]int, 0, len(keys))
+	for i, key := range keys {
+		kind := kindFromProtoString(key.GetKind())
+		if kind == 0 || !reg.HasKind(kind) {
+			cacheIndices = append(cacheIndices, i)
+			continue
+		}
+		rev, ok := reg.ResourceRevision(kind, key.GetGroup(), key.GetName())
+		revisions[i].ModRevision = rev
+		revisions[i].Present = ok
+	}
+	return cacheIndices
+}
+
+// fillCacheKeyRevisions answers the schemaCache-routed indices in a single
+// read-lock pass. A nil cache leaves the revisions untouched (Present=false,
+// ModRevision=0) which is the correct "node hasn't seen this key" answer.
+func (s *NodeSchemaStatusServer) fillCacheKeyRevisions(keys []*schemav1.SchemaKey, cacheIndices []int, revisions []*clusterv1.KeyRevision) {
+	if len(cacheIndices) == 0 {
+		return
+	}
+	c := s.cache()
+	if c == nil {
+		return
+	}
+	propIDs := make([]string, len(cacheIndices))
+	for j, i := range cacheIndices {
+		propIDs[j] = BuildPropertyIDFromSchemaKey(keys[i])
+	}
+	statuses := c.GetKeyRevisions(propIDs)
+	for j, keyStatus := range statuses {
+		i := cacheIndices[j]
+		revisions[i].ModRevision = keyStatus.ModRevision
+		revisions[i].Present = keyStatus.Present
+	}
 }
