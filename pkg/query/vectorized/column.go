@@ -99,6 +99,16 @@ func (v *validityBitmap) MarkNull(i int) {
 	v.bits[word] |= 1 << uint(i%64)
 }
 
+// ClearNull clears bit i (marks row i as valid). No-op if i is beyond
+// the current bitmap length (meaning it was never marked null).
+func (v *validityBitmap) ClearNull(i int) {
+	word := i / 64
+	if word >= len(v.bits) {
+		return
+	}
+	v.bits[word] &^= 1 << uint(i%64)
+}
+
 // Reset clears every null mark but keeps the underlying slice for reuse.
 func (v *validityBitmap) Reset() {
 	for i := range v.bits {

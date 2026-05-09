@@ -25,7 +25,10 @@ import (
 
 	"github.com/pkg/errors"
 
+	"github.com/apache/skywalking-banyandb/api/common"
+	modelv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/model/v1"
 	"github.com/apache/skywalking-banyandb/pkg/query/model"
+	"github.com/apache/skywalking-banyandb/pkg/query/vectorized"
 	vmeasure "github.com/apache/skywalking-banyandb/pkg/query/vectorized/measure"
 )
 
@@ -81,17 +84,99 @@ func (qr *queryResult) PullBatch(_ context.Context) (*model.MeasureBatch, error)
 		releaseBlockCursor(bc)
 		return b, nil
 	}
-	// Multi-block: heap-merge via Pull's existing path, then convert.
-	// The protobuf intermediate is transient here — eliminating it
-	// requires a batch-aware merge variant deferred to a follow-on.
-	r := qr.merge(qr.storedIndexValue, qr.tagProjection)
-	if r == nil {
+	// Multi-block: TopN aggregation requires mergeTopNResult which rewrites
+	// field binary payloads via the row path's PostProcessor. The vectorized
+	// batch path defers TopN merge support; fall back to the row path so
+	// correctness is preserved. Non-topN queries take the native batch merge.
+	if qr.topNQueryOptions != nil {
+		r := qr.merge(qr.storedIndexValue, qr.tagProjection)
+		if r == nil {
+			return nil, nil
+		}
+		if r.Error != nil {
+			return nil, r.Error
+		}
+		return vmeasure.BuildMeasureBatchFromResult(r, qr.batchSchema)
+	}
+	return qr.mergeBatch(qr.storedIndexValue, qr.batchSchema)
+}
+
+// mergeBatch is the batch-aware counterpart of queryResult.merge (query.go).
+// It consumes the heap with the same semantics — version-replacement for
+// duplicate timestamps within the same series, series-boundary stop — but
+// writes directly into a *model.MeasureBatch via the typed column helpers in
+// block_batch.go, bypassing the *modelv1.TagValue / *modelv1.FieldValue row
+// intermediate that the original merge → BuildMeasureBatchFromResult path
+// allocates.
+//
+// TopN aggregation (mergeTopNResult) is NOT implemented here; callers must
+// check topNQueryOptions and fall back to the row path before calling
+// mergeBatch. See the PullBatch dispatch above.
+//
+// Batch sizing: mergeBatch emits at most mergeBatchMaxRows rows per call so
+// that large multi-series results do not exceed a reasonable working-set.
+// The batchsource (BatchSourceFromBatchResult) slices the returned batch
+// further to its configured batchSize, so any value here that is at least as
+// large as the caller's batchSize is fine. 4096 is chosen conservatively.
+const mergeBatchMaxRows = 4096
+
+func (qr *queryResult) mergeBatch(
+	storedIndexValue map[common.SeriesID]map[string]*modelv1.TagValue,
+	schema *vectorized.BatchSchema,
+) (*model.MeasureBatch, error) {
+	if qr.Len() == 0 {
 		return nil, nil
 	}
-	if r.Error != nil {
-		return nil, r.Error
+	step := 1
+	if qr.orderByTimestampDesc() {
+		step = -1
 	}
-	return vmeasure.BuildMeasureBatchFromResult(r, qr.batchSchema)
+
+	b := newMeasureBatchForSchema(schema, mergeBatchMaxRows)
+	var lastVersion int64
+	var lastSid common.SeriesID
+
+	for qr.Len() > 0 && b.RowCount() < mergeBatchMaxRows {
+		topBC := qr.data[0]
+		// Series boundary: stop and let the caller call again for the next series.
+		if lastSid != 0 && topBC.bm.seriesID != lastSid {
+			break
+		}
+		lastSid = topBC.bm.seriesID
+
+		if b.RowCount() > 0 &&
+			topBC.timestamps[topBC.idx] == b.Timestamps[len(b.Timestamps)-1] {
+			// Duplicate timestamp within the same series: keep the higher version.
+			if topBC.versions[topBC.idx] > lastVersion {
+				topBC.replaceInBatch(b, schema, storedIndexValue)
+				lastVersion = topBC.versions[topBC.idx]
+			}
+		} else {
+			topBC.copyToBatch(b, schema, storedIndexValue)
+			lastVersion = topBC.versions[topBC.idx]
+		}
+
+		topBC.idx += step
+
+		if qr.orderByTimestampDesc() {
+			if topBC.idx < 0 {
+				heap.Pop(qr)
+			} else {
+				heap.Fix(qr, 0)
+			}
+		} else {
+			if topBC.idx >= len(topBC.timestamps) {
+				heap.Pop(qr)
+			} else {
+				heap.Fix(qr, 0)
+			}
+		}
+	}
+
+	if b.RowCount() == 0 {
+		return nil, nil
+	}
+	return b, nil
 }
 
 // loadCursorsForBatch is the lazy load step replicated from Pull(). It is

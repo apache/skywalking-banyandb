@@ -57,6 +57,16 @@ func (c *TypedColumn[T]) MarkNullAt(i int) {
 	c.validity.MarkNull(i)
 }
 
+// SetAt overwrites the value at index i without changing length or validity.
+// The validity bit at i is cleared (row becomes valid). Panics if i is out
+// of range — matches the same contract as a direct slice write.
+func (c *TypedColumn[T]) SetAt(i int, v T) {
+	c.data[i] = v
+	if c.validity.IsNull(i) {
+		c.validity.ClearNull(i)
+	}
+}
+
 // Reset clears length and validity. Capacity is retained.
 func (c *TypedColumn[T]) Reset() {
 	c.data = c.data[:0]

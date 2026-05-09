@@ -20,6 +20,8 @@ package measure
 import (
 	"github.com/apache/skywalking-banyandb/api/common"
 	modelv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/model/v1"
+	"github.com/apache/skywalking-banyandb/pkg/convert"
+	"github.com/apache/skywalking-banyandb/pkg/logger"
 	pbv1 "github.com/apache/skywalking-banyandb/pkg/pb/v1"
 	"github.com/apache/skywalking-banyandb/pkg/query/model"
 	"github.com/apache/skywalking-banyandb/pkg/query/vectorized"
@@ -243,6 +245,327 @@ func fillFieldCell(col vectorized.Column, def vectorized.ColumnDef, valueType pb
 		return
 	}
 	appendDecodedFieldBytesAsTyped(col, valueType, raw)
+}
+
+// copyToBatch appends the single row at bc.idx into b's parallel slices and
+// typed columns. It is the batch-path mirror of blockCursor.copyTo (block.go)
+// and is used by mergeBatch when emitting a fresh (non-duplicate) row.
+//
+// Schema/column indexing contract matches copyAllToBatch: Tags[tagIdx]
+// aligns with the tagIdx-th RoleTag entry in schema.Columns, Fields similarly.
+func (bc *blockCursor) copyToBatch(b *model.MeasureBatch, schema *vectorized.BatchSchema,
+	storedIndexValue map[common.SeriesID]map[string]*modelv1.TagValue,
+) {
+	sid := bc.bm.seriesID
+	b.Timestamps = append(b.Timestamps, bc.timestamps[bc.idx])
+	b.Versions = append(b.Versions, bc.versions[bc.idx])
+	b.ShardIDs = append(b.ShardIDs, bc.shardID)
+	b.SeriesIDs = append(b.SeriesIDs, sid)
+
+	var indexValue map[string]*modelv1.TagValue
+	if storedIndexValue != nil {
+		indexValue = storedIndexValue[sid]
+	}
+
+	tagIdx, fieldIdx := 0, 0
+	for _, def := range schema.Columns {
+		switch def.Role {
+		case vectorized.RoleTag:
+			col := b.Tags[tagIdx]
+			tagIdx++
+			bc.fillTagCell(col, def, bc.idx, indexValue)
+		case vectorized.RoleField:
+			col := b.Fields[fieldIdx]
+			fieldIdx++
+			bc.fillFieldCell(col, def, bc.idx)
+		case vectorized.RoleTimestamp, vectorized.RoleVersion,
+			vectorized.RoleSeriesID, vectorized.RoleShardID:
+			// Metadata handled via the parallel slices above.
+		}
+	}
+}
+
+// fillTagCell appends a single tag cell at row rowIdx from bc into col.
+func (bc *blockCursor) fillTagCell(col vectorized.Column, def vectorized.ColumnDef,
+	rowIdx int, indexValue map[string]*modelv1.TagValue,
+) {
+	if indexValue != nil && indexValue[def.Name] != nil {
+		appendTagValueAt(col, def, indexValue[def.Name])
+		return
+	}
+	cf := bc.findTagFamily(def.TagFamily)
+	if cf == nil {
+		appendNullTagN(col, def, 1)
+		return
+	}
+	column := cf.findColumn(def.Name)
+	if column == nil {
+		appendNullTagN(col, def, 1)
+		return
+	}
+	schemaType, hasSchemaType := bc.schemaTagTypes[def.Name]
+	if !hasSchemaType || column.valueType != schemaType {
+		appendNullTagN(col, def, 1)
+		return
+	}
+	fillTagCell(col, def, column.valueType, column.values[rowIdx])
+}
+
+// fillFieldCell appends a single field cell at row rowIdx from bc into col.
+func (bc *blockCursor) fillFieldCell(col vectorized.Column, def vectorized.ColumnDef, rowIdx int) {
+	column := bc.findFieldColumn(def.Name)
+	if column == nil {
+		appendNullFieldN(col, def, 1)
+		return
+	}
+	fillFieldCell(col, def, column.valueType, column.values[rowIdx])
+}
+
+// replaceInBatch overwrites the LAST row of b (at index lastRow) with the
+// data from bc.idx. It is the batch-path mirror of blockCursor.replace
+// (block.go) and is called by mergeBatch when a duplicate timestamp with a
+// newer version is encountered.
+//
+// The parallel metadata slices are updated in-place; typed column cells are
+// overwritten via setTagCellAt / setFieldCellAt.
+func (bc *blockCursor) replaceInBatch(b *model.MeasureBatch, schema *vectorized.BatchSchema,
+	storedIndexValue map[common.SeriesID]map[string]*modelv1.TagValue,
+) {
+	sid := bc.bm.seriesID
+	lastRow := len(b.Timestamps) - 1
+	b.Versions[lastRow] = bc.versions[bc.idx]
+
+	var indexValue map[string]*modelv1.TagValue
+	if storedIndexValue != nil {
+		indexValue = storedIndexValue[sid]
+	}
+
+	tagIdx, fieldIdx := 0, 0
+	for _, def := range schema.Columns {
+		switch def.Role {
+		case vectorized.RoleTag:
+			col := b.Tags[tagIdx]
+			tagIdx++
+			bc.setTagCellAt(col, def, bc.idx, lastRow, indexValue)
+		case vectorized.RoleField:
+			col := b.Fields[fieldIdx]
+			fieldIdx++
+			bc.setFieldCellAt(col, def, bc.idx, lastRow)
+		case vectorized.RoleTimestamp, vectorized.RoleVersion,
+			vectorized.RoleSeriesID, vectorized.RoleShardID:
+			// Metadata handled above.
+		}
+	}
+}
+
+// setTagCellAt overwrites column position destRow with the tag value decoded
+// from bc at srcRow.
+func (bc *blockCursor) setTagCellAt(col vectorized.Column, def vectorized.ColumnDef,
+	srcRow, destRow int, indexValue map[string]*modelv1.TagValue,
+) {
+	if indexValue != nil && indexValue[def.Name] != nil {
+		setTagValueAt(col, def, destRow, indexValue[def.Name])
+		return
+	}
+	cf := bc.findTagFamily(def.TagFamily)
+	if cf == nil {
+		setNullTagAt(col, def, destRow)
+		return
+	}
+	column := cf.findColumn(def.Name)
+	if column == nil {
+		setNullTagAt(col, def, destRow)
+		return
+	}
+	schemaType, hasSchemaType := bc.schemaTagTypes[def.Name]
+	if !hasSchemaType || column.valueType != schemaType {
+		setNullTagAt(col, def, destRow)
+		return
+	}
+	setTagCellAt(col, def, column.valueType, column.values[srcRow], destRow)
+}
+
+// setFieldCellAt overwrites column position destRow with the field value
+// decoded from bc at srcRow.
+func (bc *blockCursor) setFieldCellAt(col vectorized.Column, def vectorized.ColumnDef, srcRow, destRow int) {
+	column := bc.findFieldColumn(def.Name)
+	if column == nil {
+		setNullFieldAt(col, def, destRow)
+		return
+	}
+	setFieldCellAt(col, def, column.valueType, column.values[srcRow], destRow)
+}
+
+// setTagCellAt overwrites one cell in col at destRow. Mirrors fillTagCell but
+// uses SetAt instead of Append.
+func setTagCellAt(col vectorized.Column, def vectorized.ColumnDef, valueType pbv1.ValueType, raw []byte, destRow int) {
+	if def.Type == vectorized.ColumnTypeTagValue {
+		c := col.(*vectorized.TypedColumn[*modelv1.TagValue])
+		c.SetAt(destRow, mustDecodeTagValue(valueType, raw))
+		return
+	}
+	setDecodedTagBytesAt(col, valueType, raw, destRow)
+}
+
+// setFieldCellAt overwrites one field cell in col at destRow.
+func setFieldCellAt(col vectorized.Column, def vectorized.ColumnDef, valueType pbv1.ValueType, raw []byte, destRow int) {
+	if def.Type == vectorized.ColumnTypeFieldValue {
+		c := col.(*vectorized.TypedColumn[*modelv1.FieldValue])
+		c.SetAt(destRow, mustDecodeFieldValue(valueType, raw))
+		return
+	}
+	setDecodedFieldBytesAt(col, valueType, raw, destRow)
+}
+
+// setTagValueAt overwrites one passthrough/native tag cell with a pre-decoded
+// *modelv1.TagValue, dispatching on def.Type.
+func setTagValueAt(col vectorized.Column, def vectorized.ColumnDef, destRow int, v *modelv1.TagValue) {
+	if def.Type == vectorized.ColumnTypeTagValue {
+		c := col.(*vectorized.TypedColumn[*modelv1.TagValue])
+		c.SetAt(destRow, v)
+		return
+	}
+	setTagValueTypedAt(col, v, destRow)
+}
+
+// setNullTagAt marks destRow null in a tag column.
+func setNullTagAt(col vectorized.Column, def vectorized.ColumnDef, destRow int) {
+	if def.Type == vectorized.ColumnTypeTagValue {
+		c := col.(*vectorized.TypedColumn[*modelv1.TagValue])
+		c.SetAt(destRow, pbv1.NullTagValue)
+		return
+	}
+	col.MarkNullAt(destRow)
+}
+
+// setNullFieldAt marks destRow null in a field column.
+func setNullFieldAt(col vectorized.Column, def vectorized.ColumnDef, destRow int) {
+	if def.Type == vectorized.ColumnTypeFieldValue {
+		c := col.(*vectorized.TypedColumn[*modelv1.FieldValue])
+		c.SetAt(destRow, pbv1.NullFieldValue)
+		return
+	}
+	col.MarkNullAt(destRow)
+}
+
+// setDecodedTagBytesAt overwrites a native typed tag column at destRow by
+// decoding raw bytes of the given valueType.
+func setDecodedTagBytesAt(col vectorized.Column, valueType pbv1.ValueType, raw []byte, destRow int) {
+	if raw == nil {
+		col.MarkNullAt(destRow)
+		return
+	}
+	switch valueType {
+	case pbv1.ValueTypeInt64:
+		col.(*vectorized.TypedColumn[int64]).SetAt(destRow, convert.BytesToInt64(raw))
+	case pbv1.ValueTypeStr:
+		col.(*vectorized.TypedColumn[string]).SetAt(destRow, string(raw))
+	case pbv1.ValueTypeBinaryData:
+		buf := make([]byte, len(raw))
+		copy(buf, raw)
+		col.(*vectorized.TypedColumn[[]byte]).SetAt(destRow, buf)
+	case pbv1.ValueTypeInt64Arr:
+		var values []int64
+		for i := 0; i < len(raw); i += 8 {
+			values = append(values, convert.BytesToInt64(raw[i:i+8]))
+		}
+		col.(*vectorized.TypedColumn[[]int64]).SetAt(destRow, values)
+	case pbv1.ValueTypeStrArr:
+		bb := bigValuePool.Generate()
+		var values []string
+		buf := raw
+		var unmarshalErr error
+		for len(buf) > 0 {
+			bb.Buf, buf, unmarshalErr = unmarshalVarArray(bb.Buf[:0], buf)
+			if unmarshalErr != nil {
+				logger.Panicf("setDecodedTagBytesAt unmarshalVarArray failed: %v", unmarshalErr)
+			}
+			values = append(values, string(bb.Buf))
+		}
+		col.(*vectorized.TypedColumn[[]string]).SetAt(destRow, values)
+	default:
+		col.MarkNullAt(destRow)
+	}
+}
+
+// setDecodedFieldBytesAt overwrites a native typed field column at destRow.
+func setDecodedFieldBytesAt(col vectorized.Column, valueType pbv1.ValueType, raw []byte, destRow int) {
+	if raw == nil {
+		switch valueType {
+		case pbv1.ValueTypeStr:
+			col.(*vectorized.TypedColumn[string]).SetAt(destRow, "")
+		case pbv1.ValueTypeBinaryData:
+			col.(*vectorized.TypedColumn[[]byte]).SetAt(destRow, []byte{})
+		default:
+			col.MarkNullAt(destRow)
+		}
+		return
+	}
+	switch valueType {
+	case pbv1.ValueTypeInt64:
+		col.(*vectorized.TypedColumn[int64]).SetAt(destRow, convert.BytesToInt64(raw))
+	case pbv1.ValueTypeFloat64:
+		col.(*vectorized.TypedColumn[float64]).SetAt(destRow, convert.BytesToFloat64(raw))
+	case pbv1.ValueTypeStr:
+		col.(*vectorized.TypedColumn[string]).SetAt(destRow, string(raw))
+	case pbv1.ValueTypeBinaryData:
+		buf := make([]byte, len(raw))
+		copy(buf, raw)
+		col.(*vectorized.TypedColumn[[]byte]).SetAt(destRow, buf)
+	default:
+		col.MarkNullAt(destRow)
+	}
+}
+
+// setTagValueTypedAt projects a pre-decoded *modelv1.TagValue onto a native
+// typed column at destRow.
+func setTagValueTypedAt(col vectorized.Column, v *modelv1.TagValue, destRow int) {
+	if v == nil {
+		col.MarkNullAt(destRow)
+		return
+	}
+	switch x := v.Value.(type) {
+	case *modelv1.TagValue_Null:
+		col.MarkNullAt(destRow)
+	case *modelv1.TagValue_Int:
+		if c, ok := col.(*vectorized.TypedColumn[int64]); ok {
+			c.SetAt(destRow, x.Int.GetValue())
+			return
+		}
+		col.MarkNullAt(destRow)
+	case *modelv1.TagValue_Str:
+		if c, ok := col.(*vectorized.TypedColumn[string]); ok {
+			c.SetAt(destRow, x.Str.GetValue())
+			return
+		}
+		col.MarkNullAt(destRow)
+	case *modelv1.TagValue_BinaryData:
+		if c, ok := col.(*vectorized.TypedColumn[[]byte]); ok {
+			buf := make([]byte, len(x.BinaryData))
+			copy(buf, x.BinaryData)
+			c.SetAt(destRow, buf)
+			return
+		}
+		col.MarkNullAt(destRow)
+	case *modelv1.TagValue_IntArray:
+		if c, ok := col.(*vectorized.TypedColumn[[]int64]); ok {
+			out := make([]int64, len(x.IntArray.GetValue()))
+			copy(out, x.IntArray.GetValue())
+			c.SetAt(destRow, out)
+			return
+		}
+		col.MarkNullAt(destRow)
+	case *modelv1.TagValue_StrArray:
+		if c, ok := col.(*vectorized.TypedColumn[[]string]); ok {
+			out := make([]string, len(x.StrArray.GetValue()))
+			copy(out, x.StrArray.GetValue())
+			c.SetAt(destRow, out)
+			return
+		}
+		col.MarkNullAt(destRow)
+	default:
+		col.MarkNullAt(destRow)
+	}
 }
 
 // appendTagValueAt projects a pre-decoded *modelv1.TagValue onto col,
