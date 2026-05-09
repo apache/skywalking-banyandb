@@ -235,7 +235,7 @@ func (q *Queue[S, O]) getShard(shardID common.ShardID) *Shard[S] {
 // It uses the Queue's SegmentInterval to generate the time range.
 func (q *Queue[S, O]) GetTimeRange(ts time.Time) timestamp.TimeRange {
 	opts := q.getOpts()
-	start := opts.SegmentInterval.Unit.Standard(ts)
+	start := opts.SegmentInterval.Standard(ts)
 	end := opts.SegmentInterval.NextTime(start)
 	return timestamp.NewSectionTimeRange(start, end)
 }

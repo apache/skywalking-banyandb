@@ -38,6 +38,7 @@ Release Notes.
 - Fix nil-pointer panic on cold-tier data nodes when FODC `InspectAll` raced with idle-segment cleanup.
 - Add `GroupLifecycleInfo.errors` to surface per-group collection failures from FODC `InspectAll` instead of silently dropping the affected node entry.
 - Fix `CollectDataInfo` and `CollectLiaisonInfo` not handling `CATALOG_PROPERTY` groups.
+- Fix lifecycle migration where the receiving node could create segments shorter than the configured `SegmentInterval`.
 
 ### Chores
 
