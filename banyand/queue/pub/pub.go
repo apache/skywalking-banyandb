@@ -106,7 +106,7 @@ func newPubMetrics(factory observability.Factory) *pubMetrics {
 		sendSuccessTotal:    factory.NewCounter("send_success_total", "topic", "node"),
 		sendErrTotal:        factory.NewCounter("send_err_total", "topic", "node", "reason"),
 		sendBytesTotal:      factory.NewCounter("send_bytes_total", "topic", "node"),
-		sendDurationSeconds: factory.NewHistogram("send_duration_seconds", meter.DefBuckets, "topic", "node"),
+		sendDurationSeconds: factory.NewHistogram("send_duration_seconds", meter.DefBuckets, "topic", "node", "result"),
 
 		sendRetryAttempts:  factory.NewCounter("send_retry_attempts_total", "topic", "node"),
 		sendRetryExhausted: factory.NewCounter("send_retry_exhausted_total", "topic", "node"),

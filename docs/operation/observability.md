@@ -285,7 +285,7 @@ Liaison nodes run an internal gRPC **queue server** (`server-queue-sub`, wired v
 | --- | --- | --- | --- |
 | `send_success_total` | Counter | `topic`, `node` | Successful `Send` on the client stream (local write, not end-to-end ack). |
 | `send_bytes_total` | Counter | `topic`, `node` | Payload bytes on successful `Send`. |
-| `send_duration_seconds` | Histogram | `topic`, `node` | Time spent in the send path including retries. |
+| `send_duration_seconds` | Histogram | `topic`, `node`, `result` | Time spent in the send path including retries. `result` is one of `success`, `non_transient`, `canceled`, `stream_canceled`, `retry_exhausted`; filter to `result="success"` (and optionally `retry_exhausted`) when isolating end-to-end send latency. |
 | `send_err_total` | Counter | `topic`, `node`, `reason` | Send/recv side errors; `reason` includes `non_transient`, `canceled`, `stream_canceled`, `retry_exhausted`, `recv_error`, `server_rejected`. |
 | `send_retry_attempts_total`, `send_retry_exhausted_total`, `send_backoff_seconds_total` | Counter | `topic`, `node` | Retry/backoff behavior before giving up. |
 | `inflight_streams` | Gauge | `node` | Open send streams per downstream node. |
