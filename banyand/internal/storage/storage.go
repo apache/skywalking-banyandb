@@ -212,6 +212,9 @@ func (ir IntervalRule) Standard(t time.Time) time.Time {
 	if ir.Num <= 0 {
 		logger.Panicf("interval rule Num must be positive: %+v", ir)
 	}
+	if ir.Num == 1 {
+		return ir.Unit.Standard(t)
+	}
 	epochLocal := time.Date(1970, 1, 1, 0, 0, 0, 0, t.Location())
 	switch ir.Unit {
 	case DAY:
