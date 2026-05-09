@@ -87,3 +87,7 @@ fodc/agent/internal/ktm/iomonitor/ebpf/generated/vmlinux.h
 # Vectorized benchmark report artifacts (G5a)
 dist/bench/
 
+# G5d soak harness runtime artifacts
+dist/soak/
+test/soak/data/
+
