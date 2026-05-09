@@ -106,6 +106,9 @@ func (*local) SetRouteProviders(_ map[string]route.TableProvider) {
 func (*local) SetMetadataRepo(_ metadata.Repo) {
 }
 
+func (*local) SetNodeSchemaStatusRepo(_ metadata.Service) {
+}
+
 func (*local) Register(bus.Topic, schema.EventHandler) {
 }
 

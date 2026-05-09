@@ -28,6 +28,7 @@ import (
 	schemav1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/schema/v1"
 	"github.com/apache/skywalking-banyandb/banyand/metadata/schema"
 	"github.com/apache/skywalking-banyandb/banyand/queue"
+	"github.com/apache/skywalking-banyandb/pkg/logger"
 )
 
 const (
@@ -60,6 +61,13 @@ type barrierService struct {
 	peerLiaisons func() queue.Client
 	dataNodes    func() queue.Client
 	selfName     func() string
+	// metrics and l are wired in during PreRun (server.go) so the barrier
+	// can record schema_await_*_duration_seconds histograms,
+	// schema_barrier_laggard_nodes_total counters, and structured access-log
+	// lines on every call. Both are nil for legacy fixtures that exercise
+	// the standalone path with newBarrierService directly.
+	metrics *metrics
+	l       *logger.Logger
 }
 
 func newBarrierService(cacheProvider func() barrierCacheReader) *barrierService {
@@ -101,7 +109,11 @@ func (b *barrierService) cache() barrierCacheReader {
 // those dependencies (Phase 1 unit-test path), it falls back to a single
 // in-process cache poll, returning a self-only laggard on timeout so callers
 // can diagnose how far behind the standalone cache is.
-func (b *barrierService) AwaitRevisionApplied(ctx context.Context, req *schemav1.AwaitRevisionAppliedRequest) (*schemav1.AwaitRevisionAppliedResponse, error) {
+func (b *barrierService) AwaitRevisionApplied(ctx context.Context, req *schemav1.AwaitRevisionAppliedRequest) (resp *schemav1.AwaitRevisionAppliedResponse, err error) {
+	start := time.Now()
+	defer func() {
+		b.recordAwaitRevisionAppliedResult(start, req, resp, err)
+	}()
 	if b.peerLiaisons != nil && b.dataNodes != nil && b.selfName != nil {
 		return b.awaitRevisionAppliedCluster(ctx, req)
 	}
@@ -138,8 +150,18 @@ func (b *barrierService) AwaitRevisionApplied(ctx context.Context, req *schemav1
 }
 
 // AwaitSchemaApplied blocks until all requested keys are present at or above their
-// per-key min_revisions, or the timeout elapses.
-func (b *barrierService) AwaitSchemaApplied(ctx context.Context, req *schemav1.AwaitSchemaAppliedRequest) (*schemav1.AwaitSchemaAppliedResponse, error) {
+// per-key min_revisions, or the timeout elapses. When the cluster fan-out
+// dependencies are wired (production), the call probes the frozen tier1 +
+// tier2 + self watched set in parallel via GetKeyRevisions; without them
+// (Phase 1 unit-test path), it falls back to a single in-process cache poll.
+func (b *barrierService) AwaitSchemaApplied(ctx context.Context, req *schemav1.AwaitSchemaAppliedRequest) (resp *schemav1.AwaitSchemaAppliedResponse, err error) {
+	start := time.Now()
+	defer func() {
+		b.recordAwaitSchemaAppliedResult(start, req, resp, err)
+	}()
+	if b.peerLiaisons != nil && b.dataNodes != nil && b.selfName != nil {
+		return b.awaitSchemaAppliedCluster(ctx, req)
+	}
 	if len(req.GetKeys()) > barrierMaxKeys {
 		return nil, status.Errorf(codes.InvalidArgument, "too many keys: max=%d", barrierMaxKeys)
 	}
@@ -170,9 +192,19 @@ func (b *barrierService) AwaitSchemaApplied(ctx context.Context, req *schemav1.A
 	}
 }
 
-// AwaitSchemaDeleted blocks until all requested keys are absent from the cache,
-// or the timeout elapses.
-func (b *barrierService) AwaitSchemaDeleted(ctx context.Context, req *schemav1.AwaitSchemaDeletedRequest) (*schemav1.AwaitSchemaDeletedResponse, error) {
+// AwaitSchemaDeleted blocks until all requested keys are absent from the
+// cache, or the timeout elapses. When the cluster fan-out dependencies are
+// wired (production), the call probes the frozen tier1 + tier2 + self
+// watched set in parallel via GetAbsentKeys; without them (Phase 1
+// unit-test path), it falls back to a single in-process cache poll.
+func (b *barrierService) AwaitSchemaDeleted(ctx context.Context, req *schemav1.AwaitSchemaDeletedRequest) (resp *schemav1.AwaitSchemaDeletedResponse, err error) {
+	start := time.Now()
+	defer func() {
+		b.recordAwaitSchemaDeletedResult(start, req, resp, err)
+	}()
+	if b.peerLiaisons != nil && b.dataNodes != nil && b.selfName != nil {
+		return b.awaitSchemaDeletedCluster(ctx, req)
+	}
 	if len(req.GetKeys()) > barrierMaxKeys {
 		return nil, status.Errorf(codes.InvalidArgument, "too many keys: max=%d", barrierMaxKeys)
 	}

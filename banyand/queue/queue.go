@@ -78,7 +78,13 @@ type Server interface {
 	RegisterChunkedSyncHandler(topic bus.Topic, handler ChunkedSyncHandler)
 	GetPort() *uint32
 	SetRouteProviders(providers map[string]route.TableProvider)
+	// SetMetadataRepo enables fodc.v1.GroupLifecycleService — liaison-only
+	// by design; data-node processes must not call it.
 	SetMetadataRepo(repo metadata.Repo)
+	// SetNodeSchemaStatusRepo enables cluster.v1.NodeSchemaStatusService —
+	// per-node by design (reports the local schema cache); liaison and
+	// data-node processes both call it.
+	SetNodeSchemaStatusRepo(svc metadata.Service)
 }
 
 // BatchPublisher is the interface for publishing data in batch.
