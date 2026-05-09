@@ -686,6 +686,57 @@ func newTestSegmentSkeleton(t *testing.T, dir, version string) {
 	require.NoError(t, os.WriteFile(metaPath, []byte(version), 0o600))
 }
 
+// TestTSDBOpen_LockReleasedAfterFailedOpen reproduces the lock-file leak that
+// the F5 v2 lock-fix targets. Prior to the fix, OpenTSDB acquired the lock
+// file but never released it on the segmentController.open() error path, so
+// a second OpenTSDB call against the same directory failed with
+// "resource temporarily unavailable" from CreateLockFile. The fix adds a
+// defer-release with a `released` boolean flipped to true only on the
+// success path. This test seeds an incompatible segment to force the first
+// OpenTSDB to fail, then removes the segment and asserts the second
+// OpenTSDB succeeds — which is only possible if the lock fd was released.
+func TestTSDBOpen_LockReleasedAfterFailedOpen(t *testing.T) {
+	logger.Init(logger.Logging{Env: "dev", Level: flags.LogLevel})
+
+	dir, defFn := test.Space(require.New(t))
+	defer defFn()
+
+	newTestSegmentSkeleton(t, dir, "1.3.0")
+
+	opts := TSDBOpts[*MockTSTable, any]{
+		Location:        dir,
+		SegmentInterval: IntervalRule{Unit: DAY, Num: 1},
+		TTL:             IntervalRule{Unit: DAY, Num: 3},
+		ShardNum:        1,
+		TSTableCreator:  MockTSTableCreator,
+	}
+
+	ctx := context.Background()
+	mc := timestamp.NewMockClock()
+	ts, parseErr := time.ParseInLocation("2006-01-02 15:04:05", "2024-05-01 00:00:00", time.Local)
+	require.NoError(t, parseErr)
+	mc.Set(ts)
+	ctx = timestamp.SetClock(ctx, mc)
+
+	// First open fails on the incompatible segment. With the leak fix the
+	// defer in OpenTSDB releases the lock fd before returning the error.
+	serviceCache := NewServiceCache()
+	_, openErr := OpenTSDB(ctx, opts, serviceCache, group)
+	require.Error(t, openErr, "first OpenTSDB must fail on the incompatible segment")
+	require.True(t, initerror.IsPermanent(openErr), "first OpenTSDB error must be permanent")
+
+	// Remove the bad segment so the second open's segmentController scan succeeds.
+	require.NoError(t, os.RemoveAll(filepath.Join(dir, "seg-20240501")))
+
+	// Second open against the same dir must succeed — only possible if the
+	// lock fd from the first attempt was released. Without the fix this
+	// returns "resource temporarily unavailable" from CreateLockFile.
+	tsdb, reopenErr := OpenTSDB(ctx, opts, serviceCache, group)
+	require.NoError(t, reopenErr, "second OpenTSDB must succeed after the failed first attempt")
+	require.NotNil(t, tsdb)
+	require.NoError(t, tsdb.Close())
+}
+
 // TestTSDBOpen_RejectsIncompatibleSegment verifies that opening a TSDB whose
 // on-disk segment is stamped with an incompatible version surfaces a permanent
 // initialization error so the caller fails fast instead of silently dropping
