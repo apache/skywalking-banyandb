@@ -19,6 +19,8 @@ package storage
 
 import (
 	"context"
+	"errors"
+	"os"
 	"path/filepath"
 	"testing"
 	"time"
@@ -28,6 +30,7 @@ import (
 
 	commonv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/common/v1"
 	"github.com/apache/skywalking-banyandb/pkg/fs"
+	"github.com/apache/skywalking-banyandb/pkg/initerror"
 	"github.com/apache/skywalking-banyandb/pkg/logger"
 	"github.com/apache/skywalking-banyandb/pkg/meter"
 	"github.com/apache/skywalking-banyandb/pkg/test"
@@ -669,4 +672,50 @@ func TestCollectWithPartialClosedSegments(t *testing.T) {
 
 	// Clean up
 	require.NoError(t, tsdb.Close())
+}
+
+// newTestSegmentSkeleton seeds a minimal on-disk segment layout under dir with
+// the supplied storage version stamp. The layout matches readSegmentMeta's
+// "old format" (version-only file body), which is sufficient to exercise
+// checkVersion at TSDB open time.
+func newTestSegmentSkeleton(t *testing.T, dir, version string) {
+	t.Helper()
+	segDir := filepath.Join(dir, "seg-20240501")
+	require.NoError(t, os.MkdirAll(segDir, 0o755))
+	metaPath := filepath.Join(segDir, metadataFilename)
+	require.NoError(t, os.WriteFile(metaPath, []byte(version), 0o600))
+}
+
+// TestTSDBOpen_RejectsIncompatibleSegment verifies that opening a TSDB whose
+// on-disk segment is stamped with an incompatible version surfaces a permanent
+// initialization error so the caller fails fast instead of silently dropping
+// the affected group.
+func TestTSDBOpen_RejectsIncompatibleSegment(t *testing.T) {
+	logger.Init(logger.Logging{Env: "dev", Level: flags.LogLevel})
+
+	dir, defFn := test.Space(require.New(t))
+	defer defFn()
+
+	newTestSegmentSkeleton(t, dir, "1.3.0")
+
+	opts := TSDBOpts[*MockTSTable, any]{
+		Location:        dir,
+		SegmentInterval: IntervalRule{Unit: DAY, Num: 1},
+		TTL:             IntervalRule{Unit: DAY, Num: 3},
+		ShardNum:        1,
+		TSTableCreator:  MockTSTableCreator,
+	}
+
+	ctx := context.Background()
+	mc := timestamp.NewMockClock()
+	ts, parseErr := time.ParseInLocation("2006-01-02 15:04:05", "2024-05-01 00:00:00", time.Local)
+	require.NoError(t, parseErr)
+	mc.Set(ts)
+	ctx = timestamp.SetClock(ctx, mc)
+
+	serviceCache := NewServiceCache()
+	_, openErr := OpenTSDB(ctx, opts, serviceCache, group)
+	require.Error(t, openErr, "OpenTSDB must reject an incompatible-version segment")
+	require.True(t, initerror.IsPermanent(openErr), "incompatible-version error must surface as permanent")
+	require.True(t, errors.Is(openErr, errVersionIncompatible), "error must still match the version-incompatible sentinel")
 }

@@ -636,8 +636,8 @@ func (g *group) init(name string) error {
 }
 
 func (g *group) initBySchema(groupSchema *commonv1.Group) error {
-	g.groupSchema.Store(groupSchema)
 	if g.isPortable() {
+		g.groupSchema.Store(groupSchema)
 		return nil
 	}
 	db, err := g.resourceSupplier.OpenDB(groupSchema)
@@ -645,7 +645,8 @@ func (g *group) initBySchema(groupSchema *commonv1.Group) error {
 		return err
 	}
 	g.db.Store(db)
-	return err
+	g.groupSchema.Store(groupSchema)
+	return nil
 }
 
 func (g *group) isInit() bool {
@@ -671,7 +672,11 @@ func (g *group) close() (err error) {
 	if !g.isInit() || g.isPortable() {
 		return nil
 	}
-	return multierr.Append(err, g.SupplyTSDB().Close())
+	tsdb := g.SupplyTSDB()
+	if tsdb == nil {
+		return nil
+	}
+	return multierr.Append(err, tsdb.Close())
 }
 
 func (g *group) drop() error {
