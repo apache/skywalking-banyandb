@@ -18,13 +18,13 @@
 package cmd_test
 
 import (
+	"bytes"
 	"path/filepath"
 	"runtime"
 
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 	"github.com/spf13/cobra"
-	"github.com/zenizh/go-capturer"
 
 	"github.com/apache/skywalking-banyandb/bydbctl/internal/cmd"
 	"github.com/apache/skywalking-banyandb/pkg/test/setup"
@@ -48,19 +48,25 @@ var _ = Describe("health check after launching banyandb server with gRPC and HTT
 
 	It("http health check should pass", func() {
 		rootCmd.SetArgs([]string{"health", "--addr", "https://" + httpAddr, "--cert", certFile, "--enable-tls", "true"})
-		out := capturer.CaptureStdout(func() {
-			err := rootCmd.Execute()
-			Expect(err).NotTo(HaveOccurred())
-		})
+		var buf bytes.Buffer
+		rootCmd.SetOut(&buf)
+		rootCmd.SetErr(&buf)
+
+		err := rootCmd.Execute()
+		Expect(err).NotTo(HaveOccurred())
+		out := buf.String()
 		Expect(out).To(ContainSubstring("SERVING"))
 	})
 
 	It("http health check should pass with insecure flag set", func() {
 		rootCmd.SetArgs([]string{"health", "--addr", "https://" + httpAddr, "--insecure", "true", "--enable-tls", "true"})
-		out := capturer.CaptureStdout(func() {
-			err := rootCmd.Execute()
-			Expect(err).NotTo(HaveOccurred())
-		})
+		var buf bytes.Buffer
+		rootCmd.SetOut(&buf)
+		rootCmd.SetErr(&buf)
+
+		err := rootCmd.Execute()
+		Expect(err).NotTo(HaveOccurred())
+		out := buf.String()
 		Expect(out).To(ContainSubstring("SERVING"))
 	})
 
@@ -72,19 +78,25 @@ var _ = Describe("health check after launching banyandb server with gRPC and HTT
 
 	It("grpc health check should pass", func() {
 		rootCmd.SetArgs([]string{"health", "--grpc-addr", grpcAddr, "--cert", certFile, "--enable-tls", "true"})
-		out := capturer.CaptureStdout(func() {
-			err := rootCmd.Execute()
-			Expect(err).NotTo(HaveOccurred())
-		})
+		var buf bytes.Buffer
+		rootCmd.SetOut(&buf)
+		rootCmd.SetErr(&buf)
+
+		err := rootCmd.Execute()
+		Expect(err).NotTo(HaveOccurred())
+		out := buf.String()
 		Expect(out).To(ContainSubstring("connected"))
 	})
 
 	It("grpc health check should pass with insecure flag set", func() {
 		rootCmd.SetArgs([]string{"health", "--grpc-addr", grpcAddr, "--insecure", "true", "--enable-tls", "true"})
-		out := capturer.CaptureStdout(func() {
-			err := rootCmd.Execute()
-			Expect(err).NotTo(HaveOccurred())
-		})
+		var buf bytes.Buffer
+		rootCmd.SetOut(&buf)
+		rootCmd.SetErr(&buf)
+
+		err := rootCmd.Execute()
+		Expect(err).NotTo(HaveOccurred())
+		out := buf.String()
 		Expect(out).To(ContainSubstring("connected"))
 	})
 
@@ -111,19 +123,25 @@ var _ = Describe("health check after launching banyandb server", func() {
 
 	It("http health check should pass", func() {
 		rootCmd.SetArgs([]string{"health", "--addr", "http://" + httpAddr})
-		out := capturer.CaptureStdout(func() {
-			err := rootCmd.Execute()
-			Expect(err).NotTo(HaveOccurred())
-		})
+		var buf bytes.Buffer
+		rootCmd.SetOut(&buf)
+		rootCmd.SetErr(&buf)
+
+		err := rootCmd.Execute()
+		Expect(err).NotTo(HaveOccurred())
+		out := buf.String()
 		Expect(out).To(ContainSubstring("SERVING"))
 	})
 
 	It("grpc health check should pass", func() {
 		rootCmd.SetArgs([]string{"health", "--grpc-addr", grpcAddr})
-		out := capturer.CaptureStdout(func() {
-			err := rootCmd.Execute()
-			Expect(err).NotTo(HaveOccurred())
-		})
+		var buf bytes.Buffer
+		rootCmd.SetOut(&buf)
+		rootCmd.SetErr(&buf)
+
+		err := rootCmd.Execute()
+		Expect(err).NotTo(HaveOccurred())
+		out := buf.String()
 		Expect(out).To(ContainSubstring("connected"))
 	})
 

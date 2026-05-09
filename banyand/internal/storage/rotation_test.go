@@ -249,7 +249,11 @@ func TestRotationDisabled(t *testing.T) {
 		}
 		ctx := context.Background()
 		mc := timestamp.NewMockClock()
-		ts, err := time.ParseInLocation("2006-01-02 15:04:05", "2024-05-01 00:00:00", time.Local)
+		// 2024-05-02 is day 19845 since the Unix epoch which is divisible by 3,
+		// so it lies on the 3-day epoch-aligned grid produced by
+		// IntervalRule.Standard. Picking an aligned day keeps the assertions
+		// simple: 6 consecutive days collapse into exactly two 3-day segments.
+		ts, err := time.ParseInLocation("2006-01-02 15:04:05", "2024-05-02 00:00:00", time.UTC)
 		require.NoError(t, err)
 		mc.Set(ts)
 		ctx = timestamp.SetClock(ctx, mc)
@@ -267,11 +271,11 @@ func TestRotationDisabled(t *testing.T) {
 		db := tsdb.(*database[*MockTSTable, any])
 		segCtrl := db.segmentController
 
-		// Simulate data arriving day by day for 6 days (mimicking lifecycle migration)
-		// Day 1 (05-01): already in segment [05-01, 05-04)
-		// Day 2 (05-02): still in [05-01, 05-04)
-		// Day 3 (05-03): still in [05-01, 05-04)
-		// Day 4 (05-04): need new segment [05-04, 05-07)
+		// Simulate data arriving day by day for 6 days (mimicking lifecycle migration).
+		// Day 1 (05-02): already in segment [05-02, 05-05)
+		// Day 2 (05-03): still in [05-02, 05-05)
+		// Day 3 (05-04): still in [05-02, 05-05)
+		// Day 4 (05-05): need new segment [05-05, 05-08)
 		for day := 0; day < 6; day++ {
 			dayTime := ts.AddDate(0, 0, day)
 			mc.Set(dayTime)
@@ -284,7 +288,7 @@ func TestRotationDisabled(t *testing.T) {
 			tsdb.Tick(maxTS.UnixNano())
 		}
 
-		// Verify: only 2 segments created, both with correct 3-day boundaries
+		// Verify: only 2 segments created, both on the 3-day epoch-aligned grid.
 		segments, _ := segCtrl.segments(false)
 		defer func() {
 			for i := range segments {
@@ -293,13 +297,13 @@ func TestRotationDisabled(t *testing.T) {
 		}()
 		require.Equal(t, 2, len(segments), "expected 2 segments for 6 days with 3-day interval")
 
-		// First segment: [05-01, 05-04)
-		assert.Equal(t, "2024-05-01 00:00:00", segments[0].Start.Format("2006-01-02 15:04:05"))
-		assert.Equal(t, "2024-05-04 00:00:00", segments[0].End.Format("2006-01-02 15:04:05"))
+		// First segment: [05-02, 05-05)
+		assert.Equal(t, "2024-05-02 00:00:00", segments[0].Start.UTC().Format("2006-01-02 15:04:05"))
+		assert.Equal(t, "2024-05-05 00:00:00", segments[0].End.UTC().Format("2006-01-02 15:04:05"))
 
-		// Second segment: [05-04, 05-07)
-		assert.Equal(t, "2024-05-04 00:00:00", segments[1].Start.Format("2006-01-02 15:04:05"))
-		assert.Equal(t, "2024-05-07 00:00:00", segments[1].End.Format("2006-01-02 15:04:05"))
+		// Second segment: [05-05, 05-08)
+		assert.Equal(t, "2024-05-05 00:00:00", segments[1].Start.UTC().Format("2006-01-02 15:04:05"))
+		assert.Equal(t, "2024-05-08 00:00:00", segments[1].End.UTC().Format("2006-01-02 15:04:05"))
 	})
 }
 

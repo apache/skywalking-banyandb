@@ -40,10 +40,10 @@ func newHealthCheckCmd() *cobra.Command {
 		Short:         "Health check",
 		SilenceErrors: true,
 		SilenceUsage:  true,
-		RunE: func(_ *cobra.Command, _ []string) (err error) {
+		RunE: func(cmd *cobra.Command, _ []string) (err error) {
 			opts := make([]grpc.DialOption, 0, 1)
 			if grpcAddr == "" {
-				return rest(nil, func(request request) (*resty.Response, error) {
+				return rest(cmd.OutOrStdout(), nil, func(request request) (*resty.Response, error) {
 					return request.req.Get(getPath("/api/healthz"))
 				}, yamlPrinter, enableTLS, insecure, cert)
 			}
@@ -53,7 +53,7 @@ func newHealthCheckCmd() *cobra.Command {
 			}
 			err = healthCheck(grpcAddr, 10*time.Second, 10*time.Second, username, password, opts...)
 			if err == nil {
-				fmt.Println("connected")
+				fmt.Fprintln(cmd.OutOrStdout(), "connected")
 			}
 			return err
 		},

@@ -57,7 +57,8 @@ func (s *syncPartContext) FinishSync() error {
 	s.releaseCoreWriters()
 
 	s.partMeta.mustWriteMetadata(s.fileSystem, s.partPath)
-	s.fileSystem.SyncPath(s.partPath)
+	// No SyncPath: mustWriteMetadata goes through WriteAtomic which already
+	// fsyncs the parent directory after rename.
 
 	s.tsTable.mustAddFilePart(s.partID)
 	s.partPath = ""

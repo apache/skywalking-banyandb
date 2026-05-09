@@ -184,10 +184,10 @@ func NewServer(_ context.Context, tir1Client, tir2Client, broadcaster queue.Clie
 		propertyServer: propertyService,
 	}
 
-	var barrierSVC *barrierService
 	var nodeStatusSVC *property.NodeSchemaStatusServer
+	var cacheProvider func() barrierCacheReader
 	if svc, svcOk := schemaRegistry.(metadata.Service); svcOk {
-		barrierSVC = newBarrierService(func() barrierCacheReader {
+		cacheProvider = func() barrierCacheReader {
 			inner := svc.SchemaRegistry()
 			if inner == nil {
 				return nil
@@ -197,7 +197,7 @@ func NewServer(_ context.Context, tir1Client, tir2Client, broadcaster queue.Clie
 				return nil
 			}
 			return bc
-		})
+		}
 		// Phase 2 Step 2.1: every cluster member with a schema cache exposes
 		// NodeSchemaStatusService so peer liaisons (Step 2.2 fan-out) can
 		// probe this liaison's cache identically to a data node. The receiving
@@ -206,13 +206,16 @@ func NewServer(_ context.Context, tir1Client, tir2Client, broadcaster queue.Clie
 		// deferred to request time (closure) because the metadata service
 		// populates SchemaRegistry in PreRun, after NewServer has already
 		// run — capturing a snapshot here would skip registration permanently.
-		nodeStatusSVC = property.NewNodeSchemaStatusServerForRegistry(func() *property.SchemaRegistry {
-			reg, regOk := svc.SchemaRegistry().(*property.SchemaRegistry)
-			if !regOk {
-				return nil
-			}
-			return reg
-		})
+		nodeStatusSVC = property.NewNodeSchemaStatusServerForRegistryWithNodeRepo(
+			func() *property.SchemaRegistry {
+				reg, regOk := svc.SchemaRegistry().(*property.SchemaRegistry)
+				if !regOk {
+					return nil
+				}
+				return reg
+			},
+			svc.NodeRepoRegistry,
+		)
 	}
 	s := &server{
 		omr:           omr,
@@ -221,7 +224,6 @@ func NewServer(_ context.Context, tir1Client, tir2Client, broadcaster queue.Clie
 		traceSVC:      traceSVC,
 		bydbQLSVC:     bydbQLSVC,
 		groupRepo:     gr,
-		barrierSVC:    barrierSVC,
 		nodeStatusSVC: nodeStatusSVC,
 		streamRegistryServer: &streamRegistryServer{
 			schemaRegistry: schemaRegistry,
@@ -252,6 +254,28 @@ func NewServer(_ context.Context, tir1Client, tir2Client, broadcaster queue.Clie
 		authReloader:        auth.InitAuthReloader(),
 		protector:           protectorService,
 		routeTableProviders: routeProviders,
+	}
+	// Phase 2 Step 2.2: wire the cluster-wide AwaitRevisionApplied fan-out.
+	// Tier1 (peer liaisons) and tier2 (data nodes) connection pools are
+	// borrowed via the queue.Client interface added in #1109; the receiving
+	// liaison's name is read from s.curNode, which initCurrentNode populates
+	// during PreRun — hence the closure indirection. The explicit nil check
+	// covers the test-context case where ContextNodeKey is unset and
+	// initCurrentNode leaves curNode nil; an empty selfName makes the
+	// barrier exclude self from the watched set, which is the correct
+	// behavior for headless test fixtures.
+	if cacheProvider != nil {
+		s.barrierSVC = newBarrierServiceCluster(
+			cacheProvider,
+			func() queue.Client { return tir1Client },
+			func() queue.Client { return tir2Client },
+			func() string {
+				if s.curNode == nil {
+					return ""
+				}
+				return s.curNode.GetMetadata().GetName()
+			},
+		)
 	}
 	s.accessLogRecorders = []accessLogRecorder{streamSVC, measureSVC, traceSVC, s.propertyServer}
 	s.queryAccessLogRecorders = []queryAccessLogRecorder{streamSVC, measureSVC, traceSVC, s.propertyServer}
@@ -340,6 +364,10 @@ func (s *server) PreRun(ctx context.Context) error {
 	s.traceSVC.metrics = metrics
 	s.bydbQLSVC.metrics = metrics
 	s.propertyServer.metrics = metrics
+	if s.barrierSVC != nil {
+		s.barrierSVC.metrics = metrics
+		s.barrierSVC.l = s.log.Named("barrier")
+	}
 	s.streamRegistryServer.metrics = metrics
 	s.indexRuleBindingRegistryServer.metrics = metrics
 	s.indexRuleRegistryServer.metrics = metrics

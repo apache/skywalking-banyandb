@@ -25,7 +25,14 @@ import (
 	commonv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/common/v1"
 	"github.com/apache/skywalking-banyandb/banyand/metadata/schema"
 	"github.com/apache/skywalking-banyandb/pkg/logger"
+	"github.com/apache/skywalking-banyandb/pkg/schema/registry"
 )
+
+// schemaRepo satisfies the registry.RevisionRepository contract via its
+// ResourceRevision / IsAbsent methods. The compile-time assertion lives here
+// so a future API drift breaks the build before the cluster barrier's
+// per-key gating silently degrades.
+var _ registry.RevisionRepository = (*schemaRepo)(nil)
 
 var initTimeout = 10 * time.Second
 
