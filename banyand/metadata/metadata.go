@@ -27,6 +27,7 @@ import (
 	"github.com/apache/skywalking-banyandb/banyand/observability"
 	"github.com/apache/skywalking-banyandb/pkg/bus"
 	"github.com/apache/skywalking-banyandb/pkg/run"
+	"github.com/apache/skywalking-banyandb/pkg/schema/registry"
 )
 
 // IndexFilter provides methods to find a specific index related objects and vice versa.
@@ -64,6 +65,13 @@ type Service interface {
 	run.Service
 	run.Config
 	SchemaRegistry() schema.Registry
+	// NodeRepoRegistry returns the per-node aggregator the cluster barrier
+	// and NodeSchemaStatusService consult so they read from the same caches
+	// the per-service query executor resolves through. Each banyand service
+	// (measure / stream / trace / property) registers its schemaRepo here
+	// during PreRun. Returns the same instance for the lifetime of this
+	// Service.
+	NodeRepoRegistry() *registry.NodeRepoRegistry
 	SetMetricsRegistry(omr observability.MetricsRegistry)
 	MetricsRegistry() observability.MetricsRegistry
 	SetDataBroadcaster(broadcaster bus.Broadcaster)
