@@ -42,10 +42,27 @@ const (
 )
 
 // SharedContext is the context shared between test cases in the integration testing.
+//
+//nolint:govet // fieldalignment cannot reduce the pointer-byte run further; readability beats the 8-byte saving for a test-only struct.
 type SharedContext struct {
 	BaseTime   time.Time
 	Connection *grpclib.ClientConn
-	Mode       string
+	// DataNodeAddrs lists the gRPC addresses of the cluster's data nodes.
+	// Populated by the distributed BeforeSuite; nil for standalone runs.
+	// Cluster-only specs ( partial-cluster barrier scenarios) pass
+	// entries from this slice to setup.PauseDataNodeWatch /
+	// ResumeDataNodeWatch to drive a single node out of sync while the
+	// rest of the cluster stays caught up.
+	DataNodeAddrs []string
+	// LiaisonAddr is the receiving liaison's gRPC address. Populated by
+	// the distributed BeforeSuite; empty for standalone runs. Specs use
+	// it with setup.PauseDataNodeWatch when they need to pause the
+	// receiving liaison's own SchemaRegistry — the cluster barrier's
+	// selfName probe reads through this SR, so pausing it surfaces a
+	// laggard via the public AwaitX RPCs without needing
+	// NodeSchemaStatusService exposed on data-node ports.
+	LiaisonAddr string
+	Mode        string
 }
 
 // Args is a wrapper seals all necessary info for table specs.

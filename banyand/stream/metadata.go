@@ -41,8 +41,14 @@ import (
 	"github.com/apache/skywalking-banyandb/pkg/logger"
 	"github.com/apache/skywalking-banyandb/pkg/meter"
 	resourceSchema "github.com/apache/skywalking-banyandb/pkg/schema"
+	"github.com/apache/skywalking-banyandb/pkg/schema/registry"
 	"github.com/apache/skywalking-banyandb/pkg/timestamp"
 )
+
+// streamRegistryKinds is the kind set the stream schemaRepo registers with
+// the per-node NodeRepoRegistry; mirrors the stream variant in
+// banyand/measure/metadata.go.
+const streamRegistryKinds = schema.KindGroup | schema.KindStream | schema.KindIndexRule | schema.KindIndexRuleBinding
 
 var metadataScope = streamScope.SubScope("metadata")
 
@@ -77,6 +83,7 @@ func newSchemaRepo(path string, svc *standalone, nodeLabels map[string]string, n
 		),
 	}
 	sr.start()
+	sr.registerWithNodeRepo()
 	return sr
 }
 
@@ -96,6 +103,7 @@ func newLiaisonSchemaRepo(path string, svc *liaison, streamDataNodeRegistry grpc
 		),
 	}
 	sr.start()
+	sr.registerWithNodeRepo()
 	return sr
 }
 
@@ -104,6 +112,18 @@ func (sr *schemaRepo) start() {
 	sr.metadata.
 		RegisterHandler("stream", schema.KindGroup|schema.KindStream|schema.KindIndexRuleBinding|schema.KindIndexRule,
 			sr)
+}
+
+// registerWithNodeRepo joins this schemaRepo to the per-node aggregator so the
+// cluster barrier and NodeSchemaStatusService route Group/Stream/IndexRule/
+// IndexRuleBinding lookups through the same cache the executor consults via
+// LoadGroup / LoadResource.
+func (sr *schemaRepo) registerWithNodeRepo() {
+	metaSvc, ok := sr.metadata.(metadata.Service)
+	if !ok {
+		return
+	}
+	registry.MaybeRegister(metaSvc.NodeRepoRegistry(), streamRegistryKinds, sr.Repository)
 }
 
 func (sr *schemaRepo) Stream(metadata *commonv1.Metadata) (Stream, error) {
