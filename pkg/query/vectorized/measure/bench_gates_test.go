@@ -50,11 +50,14 @@ type benchGate struct {
 // 1.05 to match the other scan-shape gates; tighten back to 1.00 once
 // BatchAggregation/BatchGroupBy execute end-to-end (post-G6b).
 var benchGates = map[string]benchGate{
-	"W1": {id: "W1", maxNsRatio: 1.05, maxAllocRatio: 1.005, maxBytesRatio: 1.20},
-	"W2": {id: "W2", maxNsRatio: 1.05, maxAllocRatio: 1.005, maxBytesRatio: 1.20},
-	"W3": {id: "W3", maxNsRatio: 1.05, maxAllocRatio: 1.005, maxBytesRatio: 1.20},
-	"W4": {id: "W4", maxNsRatio: 1.05, maxAllocRatio: 1.005, maxBytesRatio: 1.20},
-	"W5": {id: "W5", maxNsRatio: 1.05, maxAllocRatio: 1.005, maxBytesRatio: 1.20},
+	"W1":    {id: "W1", maxNsRatio: 1.05, maxAllocRatio: 1.005, maxBytesRatio: 1.20},
+	"W2":    {id: "W2", maxNsRatio: 1.05, maxAllocRatio: 1.005, maxBytesRatio: 1.20},
+	"W3":    {id: "W3", maxNsRatio: 1.05, maxAllocRatio: 1.005, maxBytesRatio: 1.20},
+	"W4":    {id: "W4", maxNsRatio: 1.05, maxAllocRatio: 1.005, maxBytesRatio: 1.20},
+	"W5":    {id: "W5", maxNsRatio: 1.05, maxAllocRatio: 1.005, maxBytesRatio: 1.20},
+	"W2-MB": {id: "W2-MB", maxNsRatio: 1.05, maxAllocRatio: 1.005, maxBytesRatio: 1.20},
+	"W4-MB": {id: "W4-MB", maxNsRatio: 1.05, maxAllocRatio: 1.005, maxBytesRatio: 1.20},
+	"W5-MB": {id: "W5-MB", maxNsRatio: 1.05, maxAllocRatio: 1.005, maxBytesRatio: 1.20},
 }
 
 // TestBenchGates_PerWorkload runs both serialization paths inside testing.B
