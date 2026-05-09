@@ -78,6 +78,7 @@ func (r *coldTierRepo) CollectDataInfo(_ context.Context, group string) (out []*
 	if r.hook != nil {
 		return r.hook(group, int(idx-1))
 	}
+	time.Sleep(50 * time.Microsecond)
 	return coldTierEmptyDataInfo(), nil, nil
 }
 
