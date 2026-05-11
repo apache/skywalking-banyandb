@@ -105,7 +105,30 @@ load-test-barrier: ## Run the schema-barrier CP-6 SLO load harness (3 data nodes
 
 lint: TARGET=lint
 lint: PROJECTS:=api $(PROJECTS) pkg scripts/ci/check test
+lint: check-import-boundaries
 lint: default ## Run the linters on all projects
+
+# check-import-boundaries enforces the layering invariants documented in
+# pkg/initerror/initerror.go: the leaf permanent-error contract must not gain
+# project-internal dependencies, and the property schema-registry classifier
+# must not import the storage internals it classifies via the leaf interface.
+.PHONY: check-import-boundaries
+check-import-boundaries: ## Enforce import-boundary invariants for the version-incompat fix
+	@bad=0; \
+	if grep -rln 'banyand/internal/storage' banyand/metadata/schema/property/ 2>/dev/null; then \
+		echo "FAIL: banyand/metadata/schema/property/ must not import banyand/internal/storage"; \
+		bad=1; \
+	fi; \
+	if grep -rln 'banyand/internal/storage' pkg/schema/ 2>/dev/null; then \
+		echo "FAIL: pkg/schema/ must not import banyand/internal/storage"; \
+		bad=1; \
+	fi; \
+	if grep -rln 'github.com/apache/skywalking-banyandb/' pkg/initerror/*.go 2>/dev/null | grep -v _test.go; then \
+		echo "FAIL: pkg/initerror/ must remain a leaf with zero project-internal imports (test files excepted)"; \
+		bad=1; \
+	fi; \
+	if [ $$bad -ne 0 ]; then exit 1; fi; \
+	echo "import boundaries OK"
 
 ##@ Vendor update
 
@@ -231,7 +254,7 @@ release-push-candidate: ## Push release candidate
 	${PUSH_RELEASE_SCRIPTS}
 	
 .PHONY: all $(PROJECTS) clean build  default nuke
-.PHONY: lint check tidy format pre-push generate-test-cases
+.PHONY: lint check tidy format pre-push generate-test-cases check-import-boundaries
 .PHONY: test test-race test-coverage test-ci test-docker
 .PHONY: license-check license-fix license-dep
 .PHONY: release release-binary release-source release-sign release-assembly
