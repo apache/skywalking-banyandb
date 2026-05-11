@@ -28,10 +28,13 @@ import (
 	"go.uber.org/multierr"
 	"google.golang.org/protobuf/types/known/timestamppb"
 
+	databasev1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/database/v1"
 	measurev1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/measure/v1"
 	modelv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/model/v1"
 	"github.com/apache/skywalking-banyandb/banyand/measure"
+	"github.com/apache/skywalking-banyandb/pkg/flow/streaming"
 	pbv1 "github.com/apache/skywalking-banyandb/pkg/pb/v1"
+	"github.com/apache/skywalking-banyandb/pkg/query/aggregation"
 	"github.com/apache/skywalking-banyandb/pkg/query/executor"
 	"github.com/apache/skywalking-banyandb/pkg/query/logical"
 	"github.com/apache/skywalking-banyandb/pkg/query/model"
@@ -39,11 +42,12 @@ import (
 )
 
 var (
-	_               logical.UnresolvedPlan = (*unresolvedLocalScan)(nil)
+	_               logical.UnresolvedPlan = (*unresolvedLocalScan[int64])(nil)
+	_               logical.UnresolvedPlan = (*unresolvedLocalScan[float64])(nil)
 	fieldProjection                        = []string{measure.TopNFieldName}
 )
 
-type unresolvedLocalScan struct {
+type unresolvedLocalScan[K streaming.TopSortKey] struct {
 	startTime   time.Time
 	endTime     time.Time
 	ec          executor.MeasureExecutionContext
@@ -54,7 +58,7 @@ type unresolvedLocalScan struct {
 	number      int32
 }
 
-func (uls *unresolvedLocalScan) Analyze(s logical.Schema) (logical.Plan, error) {
+func (uls *unresolvedLocalScan[K]) Analyze(s logical.Schema) (logical.Plan, error) {
 	tr := timestamp.NewInclusiveTimeRange(uls.startTime, uls.endTime)
 	groupByTags, err := uls.parseGroupByTags()
 	if err != nil {
@@ -89,7 +93,15 @@ func (uls *unresolvedLocalScan) Analyze(s logical.Schema) (logical.Plan, error) 
 			},
 		}
 	}
-	return &localScan{
+	var topNFieldType databasev1.FieldType
+	var zero K
+	switch any(zero).(type) {
+	case float64:
+		topNFieldType = databasev1.FieldType_FIELD_TYPE_FLOAT
+	default:
+		topNFieldType = databasev1.FieldType_FIELD_TYPE_INT
+	}
+	return &localScan[K]{
 		s: s,
 		options: model.MeasureQueryOptions{
 			Name:      measure.TopNSchemaName,
@@ -104,12 +116,13 @@ func (uls *unresolvedLocalScan) Analyze(s logical.Schema) (logical.Plan, error) 
 			FieldProjection: fieldProjection,
 			Sort:            uls.sort,
 			Number:          uls.number,
+			TopNFieldType:   topNFieldType,
 		},
 		ec: uls.ec,
 	}, nil
 }
 
-func (uls *unresolvedLocalScan) parseGroupByTags() ([]string, error) {
+func (uls *unresolvedLocalScan[K]) parseGroupByTags() ([]string, error) {
 	if len(uls.conditions) == 0 {
 		return nil, nil
 	}
@@ -142,45 +155,45 @@ func (uls *unresolvedLocalScan) parseGroupByTags() ([]string, error) {
 	return entity, nil
 }
 
-var _ logical.Plan = (*localScan)(nil)
+var _ logical.Plan = (*localScan[int64])(nil)
 
-type localScan struct {
+type localScan[K streaming.TopSortKey] struct {
 	s       logical.Schema
 	ec      executor.MeasureExecutionContext
 	options model.MeasureQueryOptions
 }
 
-func (i *localScan) Execute(ctx context.Context) (mit executor.MIterator, err error) {
+func (i *localScan[K]) Execute(ctx context.Context) (executor.MIterator, error) {
 	result, err := i.ec.Query(ctx, i.options)
 	if err != nil {
 		return nil, fmt.Errorf("failed to query measure: %w", err)
 	}
-	return &topNMIterator{
+	return &topNMIterator[K]{
 		result: result,
 	}, nil
 }
 
-func (i *localScan) String() string {
+func (i *localScan[K]) String() string {
 	return fmt.Sprintf("TopNAggScan: %s startTime=%d,endTime=%d, entity=%s;",
 		i.options.Name, i.options.TimeRange.Start.Unix(), i.options.TimeRange.End.Unix(),
 		i.options.Entities)
 }
 
-func (i *localScan) Children() []logical.Plan {
+func (i *localScan[K]) Children() []logical.Plan {
 	return []logical.Plan{}
 }
 
-func (i *localScan) Schema() logical.Schema {
+func (i *localScan[K]) Schema() logical.Schema {
 	return i.s
 }
 
-type topNMIterator struct {
+type topNMIterator[K streaming.TopSortKey] struct {
 	result  model.MeasureQueryResult
 	err     error
 	current []*measurev1.InternalDataPoint
 }
 
-func (ei *topNMIterator) Next() bool {
+func (ei *topNMIterator[K]) Next() bool {
 	if ei.result == nil {
 		return false
 	}
@@ -194,10 +207,10 @@ func (ei *topNMIterator) Next() bool {
 		return false
 	}
 	ei.current = ei.current[:0]
-	topNValue := measure.GenerateTopNValue()
-	defer measure.ReleaseTopNValue(topNValue)
 	decoder := measure.GenerateTopNValuesDecoder()
 	defer measure.ReleaseTopNValuesDecoder(decoder)
+	tv := measure.GenerateTopNValue[K]()
+	defer measure.ReleaseTopNValue[K](tv)
 
 	for i := range r.Timestamps {
 		fv := r.Fields[0].Values[i]
@@ -207,54 +220,58 @@ func (ei *topNMIterator) Next() bool {
 			return false
 		}
 		ts := timestamppb.New(time.Unix(0, r.Timestamps[i]))
-		topNValue.Reset()
-		err := topNValue.Unmarshal(bd, decoder)
-		if err != nil {
-			ei.err = multierr.Append(ei.err, errors.WithMessagef(err, "failed to unmarshal topN values[%d]:[%s]%s", i, ts, hex.EncodeToString(fv.GetBinaryData())))
+		tv.Reset()
+		if unmarshalErr := tv.Unmarshal(bd, decoder); unmarshalErr != nil {
+			ei.err = multierr.Append(ei.err, errors.WithMessagef(unmarshalErr, "failed to unmarshal topN values[%d]:[%s]%s", i, ts, hex.EncodeToString(fv.GetBinaryData())))
 			continue
 		}
-		shardID := uint32(0)
-		if i < len(r.ShardIDs) {
-			shardID = uint32(r.ShardIDs[i])
-		}
-		fieldName, entityNames, values, entities := topNValue.Values()
-		for j := range entities {
-			dp := &measurev1.DataPoint{
-				Timestamp: ts,
-				Sid:       uint64(r.SID),
-				Version:   r.Versions[i],
-			}
-			tagFamily := &modelv1.TagFamily{
-				Name: measure.TopNTagFamily,
-			}
-			dp.TagFamilies = append(dp.TagFamilies, tagFamily)
-			for k, entityName := range entityNames {
-				tagFamily.Tags = append(tagFamily.Tags, &modelv1.Tag{
-					Key:   entityName,
-					Value: entities[j][k],
-				})
-			}
-			dp.Fields = append(dp.Fields, &measurev1.DataPoint_Field{
-				Name: fieldName,
-				Value: &modelv1.FieldValue{
-					Value: &modelv1.FieldValue_Int{
-						Int: &modelv1.Int{
-							Value: values[j],
-						},
-					},
-				},
-			})
-			ei.current = append(ei.current, &measurev1.InternalDataPoint{DataPoint: dp, ShardId: shardID})
+		if err := processTopNValue(ei, tv, r, i, ts); err != nil {
+			ei.err = multierr.Append(ei.err, err)
 		}
 	}
 	return true
 }
 
-func (ei *topNMIterator) Current() []*measurev1.InternalDataPoint {
+func processTopNValue[K streaming.TopSortKey](ei *topNMIterator[K], topNValue *measure.TopNValue[K], r *model.MeasureResult, idx int, ts *timestamppb.Timestamp) error {
+	shardID := uint32(0)
+	if idx < len(r.ShardIDs) {
+		shardID = uint32(r.ShardIDs[idx])
+	}
+	fieldName, entityNames, values, entities := topNValue.Values()
+	for j := range entities {
+		dp := &measurev1.DataPoint{
+			Timestamp: ts,
+			Sid:       uint64(r.SID),
+			Version:   r.Versions[idx],
+		}
+		tagFamily := &modelv1.TagFamily{
+			Name: measure.TopNTagFamily,
+		}
+		dp.TagFamilies = append(dp.TagFamilies, tagFamily)
+		for k, entityName := range entityNames {
+			tagFamily.Tags = append(tagFamily.Tags, &modelv1.Tag{
+				Key:   entityName,
+				Value: entities[j][k],
+			})
+		}
+		fieldValue, convErr := aggregation.ToFieldValue(values[j])
+		if convErr != nil {
+			return convErr
+		}
+		dp.Fields = append(dp.Fields, &measurev1.DataPoint_Field{
+			Name:  fieldName,
+			Value: fieldValue,
+		})
+		ei.current = append(ei.current, &measurev1.InternalDataPoint{DataPoint: dp, ShardId: shardID})
+	}
+	return nil
+}
+
+func (ei *topNMIterator[K]) Current() []*measurev1.InternalDataPoint {
 	return ei.current
 }
 
-func (ei *topNMIterator) Close() error {
+func (ei *topNMIterator[K]) Close() error {
 	if ei.result != nil {
 		ei.result.Release()
 		ei.result = nil

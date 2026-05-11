@@ -24,6 +24,8 @@ import (
 	"strings"
 	"time"
 
+	"golang.org/x/exp/slices"
+
 	"github.com/apache/skywalking-banyandb/api/common"
 	commonv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/common/v1"
 	databasev1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/database/v1"
@@ -31,6 +33,7 @@ import (
 	modelv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/model/v1"
 	"github.com/apache/skywalking-banyandb/banyand/measure"
 	"github.com/apache/skywalking-banyandb/pkg/bus"
+	"github.com/apache/skywalking-banyandb/pkg/flow/streaming"
 	"github.com/apache/skywalking-banyandb/pkg/logger"
 	pbv1 "github.com/apache/skywalking-banyandb/pkg/pb/v1"
 	"github.com/apache/skywalking-banyandb/pkg/query"
@@ -188,33 +191,36 @@ func (t *topNQueryProcessor) Rev(ctx context.Context, message bus.Message) (resp
 			resp = bus.NewMessage(bus.MessageID(now), &measurev1.TopNResponse{})
 			return
 		}
-		aggregator := measure.CreateTopNPostProcessor(
-			request.GetTopN(),
-			request.GetAgg(),
-			request.GetFieldValueSort(),
-		)
-		var tags []string
-		for _, dp := range result {
-			dpTags := dp.GetTagFamilies()[0].GetTags()
-			if tags == nil {
-				tags = make([]string, len(dpTags))
-				for i, tag := range dpTags {
-					tags[i] = tag.Key
-				}
-			}
-			entityValues := make(pbv1.EntityValues, 0, len(dpTags))
-			for _, tag := range dpTags {
-				entityValues = append(entityValues, tag.Value)
-			}
-			aggregator.Put(entityValues,
-				dp.GetFields()[0].GetValue().GetInt().GetValue(),
-				uint64(dp.GetTimestamp().AsTime().UnixMilli()),
-				dp.GetVersion())
+		fieldName := qc.topNSchemas[0].GetFieldName()
+		isFloatField := false
+		fieldIdx := slices.IndexFunc(qc.sourceMeasureSchemas[0].GetFields(), func(spec *databasev1.FieldSpec) bool {
+			return spec.GetName() == fieldName
+		})
+		if fieldIdx >= 0 {
+			isFloatField = qc.sourceMeasureSchemas[0].GetFields()[fieldIdx].GetFieldType() == databasev1.FieldType_FIELD_TYPE_FLOAT
 		}
-		lists, err := aggregator.Val(tags)
-		if err != nil {
-			ml.Error().Err(err).RawJSON("req", logger.Proto(request)).Msg("fail to aggregate topN results")
-			resp = bus.NewMessage(bus.MessageID(now), common.NewError("fail to aggregate topN results for measure %s: %v", request.Name, err))
+		var lists []*measurev1.TopNList
+		var aggErr error
+		if isFloatField {
+			lists, aggErr = aggregateTopNResults(
+				measure.CreateTopNPostProcessorFloat(request.GetTopN(), request.GetAgg(), request.GetFieldValueSort()),
+				result,
+				func(dp *measurev1.DataPoint) float64 {
+					return dp.GetFields()[0].GetValue().GetFloat().GetValue()
+				},
+			)
+		} else {
+			lists, aggErr = aggregateTopNResults(
+				measure.CreateTopNPostProcessorInt(request.GetTopN(), request.GetAgg(), request.GetFieldValueSort()),
+				result,
+				func(dp *measurev1.DataPoint) int64 {
+					return dp.GetFields()[0].GetValue().GetInt().GetValue()
+				},
+			)
+		}
+		if aggErr != nil {
+			ml.Error().Err(aggErr).RawJSON("req", logger.Proto(request)).Msg("fail to aggregate topN results")
+			resp = bus.NewMessage(bus.MessageID(now), common.NewError("fail to aggregate topN results for measure %s: %v", request.Name, aggErr))
 			return
 		}
 		resp = bus.NewMessage(bus.MessageID(now), &measurev1.TopNResponse{Lists: lists})
@@ -229,6 +235,33 @@ func (t *topNQueryProcessor) Rev(ctx context.Context, message bus.Message) (resp
 		}
 	}
 	return
+}
+
+// aggregateTopNResults aggregates TopN data points using the given post processor and value extractor.
+func aggregateTopNResults[K streaming.TopSortKey](
+	aggregator measure.PostProcessor[K],
+	result []*measurev1.DataPoint,
+	extractValue func(*measurev1.DataPoint) K,
+) ([]*measurev1.TopNList, error) {
+	var tags []string
+	for _, dp := range result {
+		dpTags := dp.GetTagFamilies()[0].GetTags()
+		if tags == nil {
+			tags = make([]string, len(dpTags))
+			for i, tag := range dpTags {
+				tags[i] = tag.Key
+			}
+		}
+		entityValues := make(pbv1.EntityValues, 0, len(dpTags))
+		for _, tag := range dpTags {
+			entityValues = append(entityValues, tag.Value)
+		}
+		aggregator.Put(entityValues,
+			extractValue(dp),
+			uint64(dp.GetTimestamp().AsTime().UnixMilli()),
+			dp.GetVersion())
+	}
+	return aggregator.Val(tags)
 }
 
 func toTopNResponse(dps []*measurev1.DataPoint) *measurev1.TopNResponse {

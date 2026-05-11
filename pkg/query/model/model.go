@@ -23,6 +23,7 @@ import (
 	"context"
 
 	"github.com/apache/skywalking-banyandb/api/common"
+	databasev1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/database/v1"
 	modelv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/model/v1"
 	"github.com/apache/skywalking-banyandb/pkg/index"
 	"github.com/apache/skywalking-banyandb/pkg/logger"
@@ -66,6 +67,7 @@ type MeasureQueryOptions struct {
 	FieldProjection []string
 	Sort            modelv1.Sort
 	Number          int32
+	TopNFieldType   databasev1.FieldType
 }
 
 // MeasureResult is the result of a query.
