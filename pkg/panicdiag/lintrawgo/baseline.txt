@@ -98,11 +98,11 @@ banyand/metadata/service/server.go:149
 banyand/metadata/service/server.go:156
 banyand/observability/services/service.go:243
 banyand/property/db/repair.go:1186
-banyand/queue/pub/batch.go:257
+banyand/queue/pub/batch.go:305
 banyand/queue/pub/chunked_sync_test.go:112
 banyand/queue/pub/chunked_sync_test.go:251
-banyand/queue/pub/pub.go:247
-banyand/queue/pub/pub.go:253
+banyand/queue/pub/pub.go:280
+banyand/queue/pub/pub.go:286
 banyand/queue/pub/pub_suite_test.go:160
 banyand/queue/pub/pub_suite_test.go:184
 banyand/queue/pub/retry_test.go:285

@@ -281,7 +281,7 @@ func (r *SchemaRegistry) OnInit(_ []schema.Kind) (bool, []int64) {
 	return false, nil
 }
 
-func (r *SchemaRegistry) broadcastAll(fn func(nodeName string, c *schemaClient) error) error {
+func (r *SchemaRegistry) broadcastAll(ctx context.Context, fn func(nodeName string, c *schemaClient) error) error {
 	names := r.connMgr.ActiveNames()
 	if len(names) == 0 {
 		return errNoActiveServers
@@ -292,7 +292,7 @@ func (r *SchemaRegistry) broadcastAll(fn func(nodeName string, c *schemaClient) 
 	for _, nodeName := range names {
 		currentNode := nodeName
 		wg.Add(1)
-		run.GoOrDie(r.closer.Ctx(), "property.schema.broadcast", r.l, func(_ context.Context) {
+		run.GoOrDie(ctx, "property.schema.broadcast", r.l, func(_ context.Context) {
 			defer wg.Done()
 			execErr := r.connMgr.Execute(currentNode, func(c *schemaClient) error {
 				return fn(currentNode, c)
@@ -399,7 +399,7 @@ func (r *SchemaRegistry) collectSchemas(ctx context.Context,
 	propMap = make(map[string]*propInfo)
 	respondedNodes = make(map[string]bool)
 	var mu sync.Mutex
-	broadcastErr := r.broadcastAll(func(currentNode string, c *schemaClient) error {
+	broadcastErr := r.broadcastAll(ctx, func(currentNode string, c *schemaClient) error {
 		schemas, queryErr := r.querySchemasFromClient(ctx, c.management, query)
 		if queryErr != nil {
 			return queryErr
@@ -520,7 +520,7 @@ func (r *SchemaRegistry) broadcastDelete(ctx context.Context, kind schema.Kind, 
 	deleteTime := time.Now().UnixNano()
 	req := buildDeleteRequest(kind, group, name, deleteTime)
 	var found atomic.Bool
-	writeErr := r.broadcastAll(func(_ string, c *schemaClient) error {
+	writeErr := r.broadcastAll(ctx, func(_ string, c *schemaClient) error {
 		resp, rpcErr := c.management.DeleteSchema(ctx, req)
 		if rpcErr != nil {
 			return rpcErr
@@ -712,7 +712,7 @@ func updateResource[T proto.Message](ctx context.Context, r *SchemaRegistry,
 	if propErr != nil {
 		return 0, propErr
 	}
-	if broadcastErr := r.broadcastAll(func(_ string, c *schemaClient) error {
+	if broadcastErr := r.broadcastAll(ctx, func(_ string, c *schemaClient) error {
 		_, rpcErr := c.management.UpdateSchema(ctx, &schemav1.UpdateSchemaRequest{Property: prop})
 		return rpcErr
 	}); broadcastErr != nil {
