@@ -21,6 +21,7 @@ import (
 	"context"
 	"io"
 	"path"
+	"runtime/debug"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -34,6 +35,7 @@ import (
 	"github.com/apache/skywalking-banyandb/banyand/metadata"
 	"github.com/apache/skywalking-banyandb/banyand/metadata/schema"
 	"github.com/apache/skywalking-banyandb/pkg/cgroups"
+	"github.com/apache/skywalking-banyandb/pkg/initerror"
 	"github.com/apache/skywalking-banyandb/pkg/logger"
 	"github.com/apache/skywalking-banyandb/pkg/panicdiag"
 	"github.com/apache/skywalking-banyandb/pkg/run"
@@ -113,7 +115,35 @@ func (sr *schemaRepo) sendMetadataEvent(ctx context.Context, event MetadataEvent
 		return
 	}
 	defer sr.closer.SenderDone()
+	// SendMetadataEvent runs synchronously on the caller goroutine (e.g. an
+	// etcd-watch handler such as (*schemaRepo).OnAddOrUpdate). A panic from
+	// processEvent — string-typed today, error-typed once Step 1b lands —
+	// would otherwise propagate to a caller that has no recover() of its own.
+	// The classifier branch escalates permanent errors to .Fatal() so
+	// runtime registration of an incompatible group exits the process the
+	// same way the boot path does; non-permanent panics are logged and
+	// requeued onto eventCh so the Watcher worker can retry, mirroring the
+	// transient error-return path below.
+	defer func() {
+		if recovered := recover(); recovered != nil {
+			if recErr, isErr := recovered.(error); isErr && initerror.IsPermanent(recErr) {
+				sr.l.Fatal().Err(recErr).Interface("event", event).Str("stack", string(debug.Stack())).
+					Msg("SendMetadataEvent hit a permanent error, refusing to continue")
+			}
+			sr.l.Warn().Interface("err", recovered).Interface("event", event).Str("stack", string(debug.Stack())).
+				Msg("recovered from SendMetadataEvent panic; requeueing")
+			sr.metrics.totalErrs.Inc(1)
+			select {
+			case sr.eventCh <- event:
+			case <-sr.closer.CloseNotify():
+			}
+		}
+	}()
 	if err := sr.processEvent(ctx, event); err != nil && !errors.Is(err, schema.ErrClosed) {
+		if initerror.IsPermanent(err) {
+			sr.l.Fatal().Err(err).Interface("event", event).
+				Msg("SendMetadataEvent hit a permanent error, refusing to continue")
+		}
 		select {
 		case <-sr.closer.CloseNotify():
 			return
@@ -240,7 +270,27 @@ func (sr *schemaRepo) Watcher() {
 			if !sr.closer.AddReceiver() {
 				return
 			}
-			defer sr.closer.ReceiverDone()
+			defer func() {
+				sr.closer.ReceiverDone()
+				if recovered := recover(); recovered != nil {
+					// Bump the panic metric before the classifier branch:
+					// .Fatal() calls os.Exit(1), so a deferred Inc would be
+					// skipped on the permanent-error escalation path.
+					sr.metrics.totalPanics.Inc(1)
+					// Classifier is dormant on string-typed panics (today's
+					// Panicf sites outside this PR's scope still panic with
+					// strings); tsdb.go:176/242 are converted in Step 1b so
+					// permanent errors reaching this recover are error-typed.
+					// We use .Fatal() not panic() because this is a worker
+					// goroutine: panic() would only kill this goroutine and
+					// leave the Watcher partially alive.
+					if recErr, isErr := recovered.(error); isErr && initerror.IsPermanent(recErr) {
+						sr.l.Fatal().Err(recErr).Str("stack", string(debug.Stack())).
+							Msg("Watcher hit a permanent error, refusing to continue")
+					}
+					sr.l.Warn().Interface("err", recovered).Str("stack", string(debug.Stack())).Msg("watching the events")
+				}
+			}()
 			// The Watcher drains events retried via the channel after transient
 			// processing errors. The fast path runs synchronously in SendMetadataEvent
 			// so the barrier's downstream-handler watermark advances correctly.
@@ -251,6 +301,10 @@ func (sr *schemaRepo) Watcher() {
 						return
 					}
 					if retryErr := sr.processEvent(ctx, evt); retryErr != nil && !errors.Is(retryErr, schema.ErrClosed) {
+						if initerror.IsPermanent(retryErr) {
+							sr.l.Fatal().Err(retryErr).Interface("event", evt).
+								Msg("Watcher hit a permanent error, refusing to continue")
+						}
 						select {
 						case <-sr.closer.CloseNotify():
 							return
@@ -641,8 +695,8 @@ func (g *group) init(ctx context.Context, name string) error {
 }
 
 func (g *group) initBySchema(groupSchema *commonv1.Group) error {
-	g.groupSchema.Store(groupSchema)
 	if g.isPortable() {
+		g.groupSchema.Store(groupSchema)
 		return nil
 	}
 	db, err := g.resourceSupplier.OpenDB(groupSchema)
@@ -650,7 +704,8 @@ func (g *group) initBySchema(groupSchema *commonv1.Group) error {
 		return err
 	}
 	g.db.Store(db)
-	return err
+	g.groupSchema.Store(groupSchema)
+	return nil
 }
 
 func (g *group) isInit() bool {
@@ -676,7 +731,11 @@ func (g *group) close() (err error) {
 	if !g.isInit() || g.isPortable() {
 		return nil
 	}
-	return multierr.Append(err, g.SupplyTSDB().Close())
+	tsdb := g.SupplyTSDB()
+	if tsdb == nil {
+		return nil
+	}
+	return multierr.Append(err, tsdb.Close())
 }
 
 func (g *group) drop() error {

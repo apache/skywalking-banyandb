@@ -114,7 +114,7 @@ func (sr *schemaRepo) getSteamingManager(ctx context.Context, source *commonv1.M
 		pre.RUnlock()
 		if modRevision < sourceMeasure.schema.GetMetadata().GetModRevision() {
 			// nolint:contextcheck // Close spawns cleanup goroutines that must
-			// outlive the caller's ctx (which may already be cancelled).
+			// outlive the caller's ctx (which may already be canceled).
 			defer pre.Close()
 			manager = &topNProcessorManager{
 				l:        sr.l,

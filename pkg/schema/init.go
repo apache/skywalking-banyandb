@@ -101,9 +101,9 @@ func (sr *schemaRepo) getCatalog(kind schema.Kind) commonv1.Catalog {
 }
 
 func (sr *schemaRepo) processGroup(ctx context.Context, g *commonv1.Group, catalog commonv1.Catalog) {
-	_, err := sr.initGroup(g)
-	if err != nil {
-		logger.Panicf("fails to init the group: %v", err)
+	if _, initErr := sr.initGroup(g); initErr != nil {
+		sr.l.Error().Err(initErr).Str("group", g.Metadata.GetName()).Msg("fails to init the group")
+		panic(fmt.Errorf("fails to init the group %s: %w", g.Metadata.GetName(), initErr))
 	}
 	sr.processRules(ctx, g.Metadata.GetName())
 	sr.processBindings(ctx, g.Metadata.GetName())
@@ -223,6 +223,12 @@ func (sr *schemaRepo) initGroup(groupSchema *commonv1.Group) (*group, error) {
 	defer sr.groupMux.Unlock()
 	g, ok := sr.getGroup(groupSchema.Metadata.Name)
 	if ok {
+		if g.isInit() {
+			return g, nil
+		}
+		if reinitErr := g.initBySchema(groupSchema); reinitErr != nil {
+			return nil, reinitErr
+		}
 		return g, nil
 	}
 	sr.l.Info().Str("group", groupSchema.Metadata.Name).Msg("creating a tsdb")

@@ -18,6 +18,7 @@
 package schema
 
 import (
+	"errors"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -26,7 +27,14 @@ import (
 	commonv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/common/v1"
 	databasev1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/database/v1"
 	"github.com/apache/skywalking-banyandb/banyand/metadata/schema"
+	pkglogger "github.com/apache/skywalking-banyandb/pkg/logger"
 )
+
+// testLogger returns a logger suitable for unit tests in this package.
+func testLogger() *pkglogger.Logger {
+	_ = pkglogger.Init(pkglogger.Logging{Env: "dev", Level: "warn"})
+	return pkglogger.GetLogger("test", "schema-cache")
+}
 
 // noopIndexListener satisfies IndexListener and discards all index updates.
 type noopIndexListener struct{}
@@ -167,4 +175,123 @@ func TestIsAbsent_AfterDelete(t *testing.T) {
 	})
 
 	assert.True(t, sr.IsAbsent(schema.KindMeasure, "g", "m"), "resource must be absent after a valid delete")
+}
+
+// fakeDB satisfies pkg/schema.DB for unit tests that only exercise group caching.
+type fakeDB struct{}
+
+func (fakeDB) Close() error                           { return nil }
+func (fakeDB) UpdateOptions(_ *commonv1.ResourceOpts) {}
+func (fakeDB) Drop() error                            { return nil }
+
+// fakeResourceSupplier is a programmable ResourceSupplier whose OpenDB returns
+// a configurable error or DB. openCalls counts invocations so retry tests can
+// assert that initBySchema actually re-attempted OpenDB.
+type fakeResourceSupplier struct {
+	openErr   error
+	openCalls int
+}
+
+func (s *fakeResourceSupplier) ResourceSchema(_ *commonv1.Metadata) (ResourceSchema, error) {
+	return nil, nil
+}
+
+func (s *fakeResourceSupplier) OpenResource(_ Resource) (IndexListener, error) {
+	return noopIndexListener{}, nil
+}
+
+func (s *fakeResourceSupplier) OpenDB(_ *commonv1.Group) (DB, error) {
+	s.openCalls++
+	if s.openErr != nil {
+		return nil, s.openErr
+	}
+	return fakeDB{}, nil
+}
+
+func buildGroup(name string) *commonv1.Group {
+	return &commonv1.Group{
+		Metadata: &commonv1.Metadata{Name: name},
+	}
+}
+
+// TestInitBySchema_FailedOpenDB_LeavesGroupUninit asserts that when OpenDB
+// fails, the group is left in an un-initialized state so a later retry can
+// reattempt OpenDB. Previously the schema was stored before OpenDB ran, which
+// caused isInit() to return true even though db was nil.
+func TestInitBySchema_FailedOpenDB_LeavesGroupUninit(t *testing.T) {
+	openErr := errors.New("boom")
+	supplier := &fakeResourceSupplier{openErr: openErr}
+	g := newGroup(nil, nil, supplier)
+
+	err := g.initBySchema(buildGroup("g1"))
+	require.Error(t, err)
+	assert.True(t, errors.Is(err, openErr))
+	assert.False(t, g.isInit(), "group must not be initialized after a failed OpenDB")
+	assert.Nil(t, g.GetSchema(), "groupSchema must not be stored after a failed OpenDB")
+	assert.Nil(t, g.SupplyTSDB(), "SupplyTSDB must be nil after a failed OpenDB")
+}
+
+// TestInitBySchema_PortableGroupOK asserts that a portable group (nil
+// resourceSupplier) stores the schema and is considered initialized without
+// invoking OpenDB.
+func TestInitBySchema_PortableGroupOK(t *testing.T) {
+	g := newGroup(nil, nil, nil)
+	require.NoError(t, g.initBySchema(buildGroup("portable")))
+	assert.True(t, g.isInit(), "portable group must be initialized after initBySchema")
+	assert.Nil(t, g.SupplyTSDB(), "portable group must have no underlying tsdb")
+}
+
+// TestInitBySchema_SuccessStoresSchema asserts the success path stores schema
+// after OpenDB returns.
+func TestInitBySchema_SuccessStoresSchema(t *testing.T) {
+	supplier := &fakeResourceSupplier{}
+	g := newGroup(nil, nil, supplier)
+	require.NoError(t, g.initBySchema(buildGroup("g1")))
+	assert.True(t, g.isInit())
+	assert.Equal(t, 1, supplier.openCalls)
+}
+
+// TestInitGroup_RetryAfterFailedOpenDB asserts that initGroup retries OpenDB on
+// the second pass when the first attempt left the group un-initialized — the
+// fix for the silent-fail bug where a half-broken group survived in the cache.
+func TestInitGroup_RetryAfterFailedOpenDB(t *testing.T) {
+	openErr := errors.New("transient")
+	supplier := &fakeResourceSupplier{openErr: openErr}
+	repo := &schemaRepo{
+		l:                testLogger(),
+		resourceSupplier: supplier,
+	}
+
+	gs := buildGroup("g1")
+	_, firstErr := repo.initGroup(gs)
+	require.Error(t, firstErr)
+	require.Equal(t, 1, supplier.openCalls)
+
+	cached, ok := repo.getGroup("g1")
+	require.True(t, ok)
+	require.False(t, cached.isInit())
+
+	supplier.openErr = nil
+	g, secondErr := repo.initGroup(gs)
+	require.NoError(t, secondErr)
+	require.NotNil(t, g)
+	assert.True(t, g.isInit())
+	assert.Equal(t, 2, supplier.openCalls, "OpenDB must be re-attempted when the cached group is not initialized")
+}
+
+// TestInitGroup_AlreadyInit_NoReopen asserts that an already-initialized group
+// is returned without reinvoking OpenDB.
+func TestInitGroup_AlreadyInit_NoReopen(t *testing.T) {
+	supplier := &fakeResourceSupplier{}
+	repo := &schemaRepo{
+		l:                testLogger(),
+		resourceSupplier: supplier,
+	}
+	gs := buildGroup("g1")
+	_, err := repo.initGroup(gs)
+	require.NoError(t, err)
+	require.Equal(t, 1, supplier.openCalls)
+	_, err = repo.initGroup(gs)
+	require.NoError(t, err)
+	assert.Equal(t, 1, supplier.openCalls, "already-initialized group must not re-invoke OpenDB")
 }

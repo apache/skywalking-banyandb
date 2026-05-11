@@ -41,6 +41,7 @@ import (
 	"github.com/apache/skywalking-banyandb/banyand/metadata/schema"
 	"github.com/apache/skywalking-banyandb/banyand/observability"
 	"github.com/apache/skywalking-banyandb/pkg/grpchelper"
+	"github.com/apache/skywalking-banyandb/pkg/initerror"
 	"github.com/apache/skywalking-banyandb/pkg/logger"
 	"github.com/apache/skywalking-banyandb/pkg/run"
 	"github.com/apache/skywalking-banyandb/pkg/timestamp"
@@ -128,6 +129,7 @@ type SchemaRegistry struct {
 	l                  *logger.Logger
 	cache              *schemaCache
 	caCertReloader     *pkgtls.Reloader
+	clock              timestamp.Clock
 	handlers           map[schema.Kind][]schema.EventHandler
 	watchSessions      map[string]*watchSession
 	pauseQueue         []func()
@@ -205,6 +207,7 @@ func NewSchemaRegistryClient(cfg *ClientConfig) (*SchemaRegistry, error) {
 		l:                  l,
 		cache:              newSchemaCacheWithLimit(maxTombstones),
 		caCertReloader:     caCertReloader,
+		clock:              timestamp.NewClock(),
 		handlers:           make(map[schema.Kind][]schema.EventHandler),
 		watchSessions:      make(map[string]*watchSession),
 		syncInterval:       syncInterval,
@@ -1116,31 +1119,48 @@ func (r *SchemaRegistry) RegisterHandler(name string, kind schema.Kind, handler 
 }
 
 func (r *SchemaRegistry) initHandlerWithRetry(name string, handler schema.EventHandler, kinds []schema.Kind) {
-	deadline := time.Now().Add(time.Minute)
+	deadline := r.clock.Now().Add(time.Minute)
 	var lastErr interface{}
 	for {
-		if tryCallOnInit(handler, kinds, &lastErr) {
+		ok, permanent := tryCallOnInit(handler, kinds, &lastErr)
+		if ok {
 			return
 		}
-		if time.Now().After(deadline) {
-			r.l.Panic().Str("name", name).Interface("error", lastErr).
+		if permanent {
+			r.l.Error().Str("name", name).Str("error", fmt.Sprintf("%+v", lastErr)).
+				Msg("OnInit hit a permanent error, refusing to start")
+			if recErr, isErr := lastErr.(error); isErr {
+				panic(fmt.Errorf("OnInit %s: %w", name, recErr))
+			}
+			panic(fmt.Errorf("OnInit %s: %v", name, lastErr))
+		}
+		if r.clock.Now().After(deadline) {
+			r.l.Error().Str("name", name).Interface("error", lastErr).
 				Msg("handler OnInit failed after 1m, giving up")
+			panic(fmt.Errorf("OnInit %s exceeded deadline: %v", name, lastErr))
 		}
 		r.l.Warn().Str("name", name).Interface("error", lastErr).
 			Msg("handler OnInit panicked due to transient error, retrying in 1s")
-		time.Sleep(time.Second)
+		r.clock.Sleep(time.Second)
 	}
 }
 
-func tryCallOnInit(handler schema.EventHandler, kinds []schema.Kind, lastErr *interface{}) (ok bool) {
+// tryCallOnInit invokes handler.OnInit and recovers any panic. Do not wrap the
+// recovered value with multierr before classification; multierr.Append's
+// Unwrap() []error is traversed by errors.As, but extra wrapping changes which
+// concrete type is returned first and breaks IsPermanent's interface lookup.
+func tryCallOnInit(handler schema.EventHandler, kinds []schema.Kind, lastErr *interface{}) (ok, permanent bool) {
 	defer func() {
 		if rec := recover(); rec != nil {
 			*lastErr = rec
 			ok = false
+			if recErr, isErr := rec.(error); isErr {
+				permanent = initerror.IsPermanent(recErr)
+			}
 		}
 	}()
 	handler.OnInit(kinds)
-	return true
+	return true, false
 }
 
 // Start starts a single goroutine that periodically syncs schemas.
