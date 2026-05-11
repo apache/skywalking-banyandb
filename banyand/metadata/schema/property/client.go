@@ -783,6 +783,9 @@ func (r *SchemaRegistry) CreateMeasure(ctx context.Context, measure *databasev1.
 	if validateErr := validate.Measure(measure); validateErr != nil {
 		return 0, validateErr
 	}
+	if subsetWarn := validate.CheckShardingKeySubset(measure); subsetWarn != nil {
+		r.l.Warn().Err(subsetWarn).Str("measure", measure.GetMetadata().GetName()).Msg("sharding key is not a subset of entity tags")
+	}
 	now := time.Now().UnixNano()
 	measure.Metadata.ModRevision = now
 	measure.UpdatedAt = timestamppb.Now()
@@ -798,6 +801,9 @@ func (r *SchemaRegistry) UpdateMeasure(ctx context.Context, measure *databasev1.
 	}
 	if validateErr := validate.Measure(measure); validateErr != nil {
 		return 0, validateErr
+	}
+	if subsetWarn := validate.CheckShardingKeySubset(measure); subsetWarn != nil {
+		r.l.Warn().Err(subsetWarn).Str("measure", measure.GetMetadata().GetName()).Msg("sharding key is not a subset of entity tags")
 	}
 	now := time.Now().UnixNano()
 	measure.Metadata.ModRevision = now
