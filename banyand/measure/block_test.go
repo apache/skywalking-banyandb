@@ -328,7 +328,7 @@ func Test_marshalAndUnmarshalTagFamily(t *testing.T) {
 	unmarshaled.timestamps = make([]int64, len(b.timestamps))
 	unmarshaled.resizeTagFamilies(1)
 
-	unmarshaled.unmarshalTagFamily(decoder, tfIndex, name, bm.getTagFamilyMetadata(name), tagProjection[name], metaBuffer, dataBuffer, 1)
+	unmarshaled.unmarshalTagFamily(decoder, tfIndex, name, bm.getTagFamilyMetadata(name), tagProjection[name], metaBuffer, dataBuffer, 1, nil)
 
 	if diff := cmp.Diff(unmarshaled.tagFamilies[0], b.tagFamilies[0],
 		cmp.AllowUnexported(columnFamily{}, column{}),
@@ -405,7 +405,7 @@ func Test_marshalAndUnmarshalBlock(t *testing.T) {
 		})
 	}
 	bm.tagProjection = tp
-	unmarshaled.mustReadFrom(decoder, p, bm)
+	unmarshaled.mustReadFrom(decoder, p, bm, nil)
 	// blockMetadata is using a map, so the order of tag families is not guaranteed
 	unmarshaled.sortTagFamilies()
 

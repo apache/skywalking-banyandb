@@ -261,3 +261,32 @@ func TestTag_HighCardinalityStringEncoding(t *testing.T) {
 		})
 	}
 }
+
+func TestEncodeTypedTag(t *testing.T) {
+	assert.Equal(t, "state#int", encodeTypedTag("state", pbv1.ValueTypeInt64))
+	assert.Equal(t, "state#str", encodeTypedTag("state", pbv1.ValueTypeStr))
+	assert.Equal(t, "http.status#int", encodeTypedTag("http.status", pbv1.ValueTypeInt64))
+	assert.Equal(t, "data#bin", encodeTypedTag("data", pbv1.ValueTypeBinaryData))
+	assert.Equal(t, "unknown", encodeTypedTag("unknown", pbv1.ValueTypeUnknown))
+}
+
+func TestDecodeTypedTag(t *testing.T) {
+	assert.Equal(t, "state", decodeTypedTag("state#int"))
+	assert.Equal(t, "state", decodeTypedTag("state#str"))
+	assert.Equal(t, "http.status", decodeTypedTag("http.status#int"))
+	assert.Equal(t, "http.status", decodeTypedTag("http.status"))
+	assert.Equal(t, "simple", decodeTypedTag("simple"))
+	assert.Equal(t, "my.str", decodeTypedTag("my.str"))
+	assert.Equal(t, "arr.int", decodeTypedTag("arr.int"))
+	assert.Equal(t, "data.bin", decodeTypedTag("data.bin"))
+}
+
+func TestHasTypeSuffix(t *testing.T) {
+	assert.True(t, hasTypeSuffix("state#int"))
+	assert.True(t, hasTypeSuffix("state#str"))
+	assert.True(t, hasTypeSuffix("http.status#int"))
+	assert.True(t, hasTypeSuffix("data#bin"))
+	assert.False(t, hasTypeSuffix("simple"))
+	assert.False(t, hasTypeSuffix("my.str"))
+	assert.False(t, hasTypeSuffix("data.bin"))
+}

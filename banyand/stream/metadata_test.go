@@ -402,7 +402,7 @@ var _ = Describe("Schema Change", func() {
 
 				for _, elem := range elements {
 					for _, tf := range elem.TagFamilies {
-						if tf.Name == "searchable" {
+						if tf.Name == searchableTagFamily {
 							for _, tag := range tf.Tags {
 								innerGm.Expect(tag.Key).NotTo(Equal("extra_tag"),
 									"deleted tag should not be returned in query results")
@@ -435,7 +435,7 @@ var _ = Describe("Schema Change", func() {
 				newDataCount := 0
 				for _, elem := range elements {
 					for _, tf := range elem.TagFamilies {
-						if tf.Name == "searchable" {
+						if tf.Name == searchableTagFamily {
 							for _, tag := range tf.Tags {
 								if tag.Key == "extra_tag" {
 									if tag.Value.GetInt() != nil {
@@ -475,7 +475,7 @@ var _ = Describe("Schema Change", func() {
 				stringCount := 0
 				for _, elem := range elements {
 					for _, tf := range elem.TagFamilies {
-						if tf.Name == "searchable" {
+						if tf.Name == searchableTagFamily {
 							for _, tag := range tf.Tags {
 								if tag.Key == "extra_tag" {
 									switch tag.Value.GetValue().(type) {
@@ -491,6 +491,56 @@ var _ = Describe("Schema Change", func() {
 				}
 				innerGm.Expect(nullCount).To(Equal(5), "old data with INT type should return null after schema changed to STRING")
 				innerGm.Expect(stringCount).To(Equal(3), "new data should have STRING extra_tag values")
+			}, flags.EventuallyTimeout).Should(Succeed())
+
+			env.cleanup()
+		})
+	})
+
+	Context("Stream schema with changed tag type after merge", func() {
+		It("querying data should return correct values after parts with different types are merged", func() {
+			streamName := "schema_change_tag_type_merge"
+			now := timestamp.NowMilli()
+
+			env := setupSchemaChangeStream(svcs, streamName, groupName, streamSetupOptions{withExtraTag: true})
+			writeSchemaChangeData(svcs, streamName, groupName, now.Add(-2*time.Hour), 5,
+				writeDataOptions{extraTag: extraTagInt})
+			changeExtraTagType(svcs, streamName, groupName)
+			writeSchemaChangeData(svcs, streamName, groupName, now.Add(-1*time.Hour), 3,
+				writeDataOptions{extraTag: extraTagString, traceIDPrefix: "trace_new_", elementIDOffset: 5})
+			partCountBeforeMerge := getTotalStreamPartCount(svcs, groupName)
+			Eventually(func() int64 {
+				return getTotalStreamPartCount(svcs, groupName)
+			}, flags.EventuallyTimeout).Should(BeNumerically("<", partCountBeforeMerge))
+
+			Eventually(func(innerGm Gomega) {
+				elements := querySchemaChangeData(svcs, streamName, groupName,
+					now.Add(-3*time.Hour), now,
+					[]string{"trace_id", "service_id", "duration", "extra_tag"}, nil)
+				innerGm.Expect(elements).To(HaveLen(8))
+
+				nullCount := 0
+				stringCount := 0
+				for _, elem := range elements {
+					for _, tf := range elem.TagFamilies {
+						if tf.Name == searchableTagFamily {
+							for _, tag := range tf.Tags {
+								if tag.Key == "extra_tag" {
+									switch tag.Value.GetValue().(type) {
+									case *modelv1.TagValue_Null:
+										nullCount++
+									case *modelv1.TagValue_Str:
+										stringCount++
+									}
+								}
+							}
+						}
+					}
+				}
+				innerGm.Expect(nullCount).To(Equal(5),
+					"old data with int type should return null after schema changed to STRING and parts merged")
+				innerGm.Expect(stringCount).To(Equal(3),
+					"new data should have string extra_tag values after merge")
 			}, flags.EventuallyTimeout).Should(Succeed())
 
 			env.cleanup()
@@ -607,6 +657,8 @@ var _ = Describe("Schema Change", func() {
 		})
 	})
 })
+
+const searchableTagFamily = "searchable"
 
 type extraTagType int
 
@@ -907,4 +959,18 @@ func querySchemaChangeData(svcs *services, name, group string, begin, end time.T
 		return false
 	}).WithTimeout(flags.EventuallyTimeout).Should(BeTrue())
 	return resp.Elements
+}
+
+func getTotalStreamPartCount(svcs *services, group string) int64 {
+	dataInfo, err := svcs.stream.CollectDataInfo(context.TODO(), group)
+	if err != nil || dataInfo == nil {
+		return 0
+	}
+	var total int64
+	for _, seg := range dataInfo.SegmentInfo {
+		for _, shard := range seg.ShardInfo {
+			total += shard.PartCount
+		}
+	}
+	return total
 }

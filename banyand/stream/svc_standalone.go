@@ -178,6 +178,7 @@ func (s *standalone) FlagSet() *run.FlagSet {
 	flagS.DurationVar(&s.option.flushTimeout, "stream-flush-timeout", defaultFlushTimeout, "the memory data timeout of stream")
 	flagS.DurationVar(&s.option.elementIndexFlushTimeout, "element-index-flush-timeout", defaultFlushTimeout, "the elementIndex timeout of stream")
 	s.option.mergePolicy = newDefaultMergePolicy()
+	flagS.IntVar(&s.option.mergePolicy.maxParts, "stream-max-merge-parts", s.option.mergePolicy.maxParts, "the maximum number of parts to merge at once")
 	flagS.VarP(&s.option.mergePolicy.maxFanOutSize, "stream-max-fan-out-size", "", "the upper bound of a single file size after merge of stream")
 	s.option.seriesCacheMaxSize = run.Bytes(32 << 20)
 	flagS.VarP(&s.option.seriesCacheMaxSize, "stream-series-cache-max-size", "", "the max size of series cache in each group")

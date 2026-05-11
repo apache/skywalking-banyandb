@@ -25,9 +25,11 @@ import (
 
 	"github.com/dustin/go-humanize"
 
+	pkgbytes "github.com/apache/skywalking-banyandb/pkg/bytes"
 	"github.com/apache/skywalking-banyandb/pkg/cgroups"
 	"github.com/apache/skywalking-banyandb/pkg/encoding"
 	"github.com/apache/skywalking-banyandb/pkg/fs"
+	pbv1 "github.com/apache/skywalking-banyandb/pkg/pb/v1"
 	"github.com/apache/skywalking-banyandb/pkg/watcher"
 )
 
@@ -235,6 +237,7 @@ func (tst *tsTable) mergeParts(fileSystem fs.FileSystem, closeCh <-chan struct{}
 		return nil, errNoPartToMerge
 	}
 	dstPath := partPath(root, partID)
+	conflictTags := collectConflictTags(parts)
 	var totalSize int64
 	pii := make([]*partMergeIter, 0, len(parts))
 	for i := range parts {
@@ -249,7 +252,7 @@ func (tst *tsTable) mergeParts(fileSystem fs.FileSystem, closeCh <-chan struct{}
 	bw := generateBlockWriter()
 	bw.mustInitForFilePart(fileSystem, dstPath, shouldCache)
 
-	pm, err := mergeBlocks(closeCh, bw, br)
+	pm, err := mergeBlocks(closeCh, bw, br, conflictTags)
 	releaseBlockWriter(bw)
 	releaseBlockReader(br)
 	for i := range pii {
@@ -268,7 +271,7 @@ func (tst *tsTable) mergeParts(fileSystem fs.FileSystem, closeCh <-chan struct{}
 
 var errClosed = fmt.Errorf("the merger is closed")
 
-func mergeBlocks(closeCh <-chan struct{}, bw *blockWriter, br *blockReader) (*partMetadata, error) {
+func mergeBlocks(closeCh <-chan struct{}, bw *blockWriter, br *blockReader, conflictTags map[string]map[string]struct{}) (*partMetadata, error) {
 	pendingBlockIsEmpty := true
 	pendingBlock := generateBlockPointer()
 	defer releaseBlockPointer(pendingBlock)
@@ -286,6 +289,10 @@ func mergeBlocks(closeCh <-chan struct{}, bw *blockWriter, br *blockReader) (*pa
 			decoder = nil
 		}
 	}
+	loadAndRename := func() {
+		br.loadBlockData(getDecoder())
+		renameConflictTags(&br.block.block, conflictTags)
+	}
 	for br.nextBlockMetadata() {
 		select {
 		case <-closeCh:
@@ -295,7 +302,7 @@ func mergeBlocks(closeCh <-chan struct{}, bw *blockWriter, br *blockReader) (*pa
 		b := br.block
 
 		if pendingBlockIsEmpty {
-			br.loadBlockData(getDecoder())
+			loadAndRename()
 			pendingBlock.copyFrom(b)
 			pendingBlockIsEmpty = false
 			continue
@@ -306,7 +313,7 @@ func mergeBlocks(closeCh <-chan struct{}, bw *blockWriter, br *blockReader) (*pa
 			bw.mustWriteBlock(pendingBlock.bm.seriesID, &pendingBlock.block)
 			releaseDecoder()
 			pendingBlock.reset()
-			br.loadBlockData(getDecoder())
+			loadAndRename()
 			pendingBlock.copyFrom(b)
 			continue
 		}
@@ -317,7 +324,7 @@ func mergeBlocks(closeCh <-chan struct{}, bw *blockWriter, br *blockReader) (*pa
 		}
 		tmpBlock.reset()
 		tmpBlock.bm.seriesID = b.bm.seriesID
-		br.loadBlockData(getDecoder())
+		loadAndRename()
 		mergeTwoBlocks(tmpBlock, pendingBlock, b)
 		if tmpBlock.uncompressedSizeBytes() <= maxUncompressedBlockSize {
 			if len(tmpBlock.timestamps) == 0 {
@@ -342,6 +349,101 @@ func mergeBlocks(closeCh <-chan struct{}, bw *blockWriter, br *blockReader) (*pa
 	var result partMetadata
 	bw.Flush(&result)
 	return &result, nil
+}
+
+func renameConflictTags(b *block, conflictTags map[string]map[string]struct{}) {
+	if len(conflictTags) == 0 {
+		return
+	}
+	for i := range b.tagFamilies {
+		tags := conflictTags[b.tagFamilies[i].name]
+		if tags == nil {
+			continue
+		}
+		tt := b.tagFamilies[i].tags
+		for j := range tt {
+			if _, ok := tags[tt[j].name]; ok {
+				tt[j].name = encodeTypedTag(tt[j].name, tt[j].valueType)
+			}
+		}
+	}
+}
+
+func collectConflictTags(parts []*partWrapper) map[string]map[string]struct{} {
+	familyTagTypes := make(map[string]map[string]map[pbv1.ValueType]struct{})
+	for _, pw := range parts {
+		partTypes := readPartTagTypes(pw.p)
+		for tf, tt := range partTypes {
+			tagTypes := familyTagTypes[tf]
+			if tagTypes == nil {
+				tagTypes = make(map[string]map[pbv1.ValueType]struct{})
+				familyTagTypes[tf] = tagTypes
+			}
+			for name, vt := range tt {
+				decoded := decodeTypedTag(name)
+				valueTypes := tagTypes[decoded]
+				if valueTypes == nil {
+					valueTypes = make(map[pbv1.ValueType]struct{})
+					tagTypes[decoded] = valueTypes
+				}
+				valueTypes[vt] = struct{}{}
+			}
+		}
+	}
+	var conflictTags map[string]map[string]struct{}
+	for tf, tagTypes := range familyTagTypes {
+		for name, valueTypes := range tagTypes {
+			if len(valueTypes) <= 1 {
+				continue
+			}
+			if conflictTags == nil {
+				conflictTags = make(map[string]map[string]struct{})
+			}
+			if conflictTags[tf] == nil {
+				conflictTags[tf] = make(map[string]struct{})
+			}
+			conflictTags[tf][name] = struct{}{}
+		}
+	}
+	return conflictTags
+}
+
+func readPartTagTypes(p *part) map[string]map[string]pbv1.ValueType {
+	if len(p.tagFamilyMetadata) == 0 || len(p.primaryBlockMetadata) == 0 {
+		return nil
+	}
+	pmi := generatePartMergeIter()
+	defer releasePartMergeIter(pmi)
+	pmi.mustInitFromPart(p)
+
+	result := make(map[string]map[string]pbv1.ValueType)
+	bb := bigValuePool.Generate()
+	defer bigValuePool.Release(bb)
+	for pmi.nextBlockMetadata() {
+		for tf, db := range pmi.block.bm.tagFamilies {
+			reader, ok := p.tagFamilyMetadata[tf]
+			if !ok {
+				continue
+			}
+			bb.Buf = pkgbytes.ResizeExact(bb.Buf, int(db.size))
+			fs.MustReadData(reader, int64(db.offset), bb.Buf)
+			tfm := generateTagFamilyMetadata()
+			if err := tfm.unmarshal(bb.Buf); err != nil {
+				releaseTagFamilyMetadata(tfm)
+				continue
+			}
+			tft := result[tf]
+			if tft == nil {
+				tft = make(map[string]pbv1.ValueType)
+				result[tf] = tft
+			}
+			for i := range tfm.tagMetadata {
+				tft[tfm.tagMetadata[i].name] = tfm.tagMetadata[i].valueType
+			}
+			releaseTagFamilyMetadata(tfm)
+		}
+	}
+	return result
 }
 
 func mergeTwoBlocks(target, left, right *blockPointer) {
