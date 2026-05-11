@@ -101,13 +101,22 @@ while true; do
   tick=$(( tick + 1 ))
   ts="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
 
-  # banyand.log freshness
-  last_log_ts="$(stat -c %Y "${RUN}/banyand.log" 2>/dev/null || echo 0)"
-  log_age=$(( $(date +%s) - last_log_ts ))
+  # banyand.log freshness. During Phase 0 the file does not yet exist
+  # — treat that as "fresh" so the alert doesn't fire prematurely.
+  if [[ -f "${RUN}/banyand.log" ]]; then
+    last_log_ts="$(stat -c %Y "${RUN}/banyand.log" 2>/dev/null || echo 0)"
+    log_age=$(( $(date +%s) - last_log_ts ))
+  else
+    log_age=0
+  fi
 
-  # MemoryTracker exhaustion lines
-  mem_alerts="$(wc -l < "${RUN}/memory-alerts.log" 2>/dev/null | tr -d ' ')"
-  mem_alerts="${mem_alerts:-0}"
+  # MemoryTracker exhaustion lines (file appears only in Phase 1).
+  if [[ -f "${RUN}/memory-alerts.log" ]]; then
+    mem_alerts="$(wc -l < "${RUN}/memory-alerts.log" 2>/dev/null | tr -d ' ')"
+    mem_alerts="${mem_alerts:-0}"
+  else
+    mem_alerts=0
+  fi
 
   # Parity divergence reports
   diff_fail="$(count_or_zero "grep -l '\"pass\": *false' ${RUN}/diff-*.json")"
