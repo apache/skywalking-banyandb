@@ -281,7 +281,7 @@ func (r *SchemaRegistry) OnInit(_ []schema.Kind) (bool, []int64) {
 	return false, nil
 }
 
-func (r *SchemaRegistry) broadcastAll(ctx context.Context, fn func(nodeName string, c *schemaClient) error) error {
+func (r *SchemaRegistry) broadcastAll(fn func(nodeName string, c *schemaClient) error) error {
 	names := r.connMgr.ActiveNames()
 	if len(names) == 0 {
 		return errNoActiveServers
@@ -292,7 +292,7 @@ func (r *SchemaRegistry) broadcastAll(ctx context.Context, fn func(nodeName stri
 	for _, nodeName := range names {
 		currentNode := nodeName
 		wg.Add(1)
-		run.GoOrDie(ctx, "property.schema.broadcast", r.l, func(_ context.Context) {
+		go func() {
 			defer wg.Done()
 			execErr := r.connMgr.Execute(currentNode, func(c *schemaClient) error {
 				return fn(currentNode, c)
@@ -302,7 +302,7 @@ func (r *SchemaRegistry) broadcastAll(ctx context.Context, fn func(nodeName stri
 				broadcastErr = multierr.Append(broadcastErr, fmt.Errorf("node %s: %w", currentNode, execErr))
 				mu.Unlock()
 			}
-		})
+		}()
 	}
 	wg.Wait()
 	return broadcastErr
@@ -320,7 +320,7 @@ func (r *SchemaRegistry) broadcastInsert(ctx context.Context, prop *propertyv1.P
 	for _, nodeName := range names {
 		currentNode := nodeName
 		wg.Add(1)
-		run.GoOrDie(ctx, "property.schema.broadcast-insert", r.l, func(_ context.Context) {
+		go func() {
 			defer wg.Done()
 			execErr := r.connMgr.Execute(currentNode, func(c *schemaClient) error {
 				_, rpcErr := c.management.InsertSchema(ctx, &schemav1.InsertSchemaRequest{Property: prop})
@@ -336,7 +336,7 @@ func (r *SchemaRegistry) broadcastInsert(ctx context.Context, prop *propertyv1.P
 				realErrors = multierr.Append(realErrors, fmt.Errorf("node %s: %w", currentNode, execErr))
 				mu.Unlock()
 			}
-		})
+		}()
 	}
 	wg.Wait()
 	if realErrors != nil {
@@ -399,7 +399,7 @@ func (r *SchemaRegistry) collectSchemas(ctx context.Context,
 	propMap = make(map[string]*propInfo)
 	respondedNodes = make(map[string]bool)
 	var mu sync.Mutex
-	broadcastErr := r.broadcastAll(ctx, func(currentNode string, c *schemaClient) error {
+	broadcastErr := r.broadcastAll(func(currentNode string, c *schemaClient) error {
 		schemas, queryErr := r.querySchemasFromClient(ctx, c.management, query)
 		if queryErr != nil {
 			return queryErr
@@ -520,7 +520,7 @@ func (r *SchemaRegistry) broadcastDelete(ctx context.Context, kind schema.Kind, 
 	deleteTime := time.Now().UnixNano()
 	req := buildDeleteRequest(kind, group, name, deleteTime)
 	var found atomic.Bool
-	writeErr := r.broadcastAll(ctx, func(_ string, c *schemaClient) error {
+	writeErr := r.broadcastAll(func(_ string, c *schemaClient) error {
 		resp, rpcErr := c.management.DeleteSchema(ctx, req)
 		if rpcErr != nil {
 			return rpcErr
@@ -712,7 +712,7 @@ func updateResource[T proto.Message](ctx context.Context, r *SchemaRegistry,
 	if propErr != nil {
 		return 0, propErr
 	}
-	if broadcastErr := r.broadcastAll(ctx, func(_ string, c *schemaClient) error {
+	if broadcastErr := r.broadcastAll(func(_ string, c *schemaClient) error {
 		_, rpcErr := c.management.UpdateSchema(ctx, &schemav1.UpdateSchemaRequest{Property: prop})
 		return rpcErr
 	}); broadcastErr != nil {
@@ -1177,7 +1177,7 @@ func (r *SchemaRegistry) Start(ctx context.Context) error {
 		} else {
 			certUpdateCh := r.caCertReloader.GetUpdateChannel()
 			if r.closer.AddRunning() {
-				run.GoOrDie(ctx, "property.schema.ca-cert-reconnect", r.l, func(_ context.Context) {
+				go func() {
 					defer r.closer.Done()
 					for {
 						select {
@@ -1190,7 +1190,7 @@ func (r *SchemaRegistry) Start(ctx context.Context) error {
 							return
 						}
 					}
-				})
+				}()
 			}
 		}
 	}
@@ -1198,12 +1198,8 @@ func (r *SchemaRegistry) Start(ctx context.Context) error {
 	// OnActive in PreRun) may have populated the cache before handlers were
 	// registered. This explicit replay ensures handlers see every entry.
 	r.notifyHandlersFromCache()
-	run.GoOrDie(ctx, "property.schema.sync-loop", r.l, func(syncCtx context.Context) {
-		r.syncLoop(syncCtx)
-	})
-	run.GoOrDie(ctx, "property.schema.tombstone-gc-loop", r.l, func(gcCtx context.Context) {
-		r.tombstoneGCLoop(gcCtx)
-	})
+	go r.syncLoop(ctx)
+	go r.tombstoneGCLoop(ctx)
 	return nil
 }
 
@@ -1287,10 +1283,10 @@ func (r *SchemaRegistry) launchWatch(nodeName string, client *schemaClient) {
 	r.watchSessions[nodeName] = session
 	r.l.Debug().Str("node", nodeName).Msg("launchWatch: starting new watch session")
 	if r.closer.AddRunning() {
-		run.GoOrDie(ctx, "property.schema.watch-loop", r.l, func(_ context.Context) {
+		go func() {
 			defer r.closer.Done()
 			r.watchLoop(ctx, nodeName, client.update, session)
-		})
+		}()
 	} else {
 		cancel()
 		delete(r.watchSessions, nodeName)
@@ -1363,7 +1359,7 @@ func (r *SchemaRegistry) processWatchSession(ctx context.Context,
 
 	recvCh := make(chan *schemav1.WatchSchemasResponse, 64)
 	recvErrCh := make(chan error, 1)
-	run.GoOrDie(ctx, "property.schema.watch-recv", r.l, func(_ context.Context) {
+	go func() {
 		for {
 			resp, recvErr := stream.Recv()
 			if recvErr != nil {
@@ -1373,7 +1369,7 @@ func (r *SchemaRegistry) processWatchSession(ctx context.Context,
 			}
 			recvCh <- resp
 		}
-	})
+	}()
 
 	var inSync bool
 	var metadataOnly bool

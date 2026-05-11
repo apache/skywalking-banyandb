@@ -87,6 +87,13 @@ banyand/metadata/discovery/file/file.go:177
 banyand/metadata/discovery/file/file.go:178
 banyand/metadata/discovery/file/file_test.go:336
 banyand/metadata/discovery/file/file_test.go:430
+banyand/metadata/schema/property/client.go:295
+banyand/metadata/schema/property/client.go:323
+banyand/metadata/schema/property/client.go:1180
+banyand/metadata/schema/property/client.go:1201
+banyand/metadata/schema/property/client.go:1202
+banyand/metadata/schema/property/client.go:1286
+banyand/metadata/schema/property/client.go:1362
 banyand/metadata/schema/property/client_test.go:1444
 banyand/metadata/schema/property/init_handler_test.go:96
 banyand/metadata/schema/property/init_handler_test.go:133
