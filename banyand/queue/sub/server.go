@@ -354,7 +354,7 @@ func (s *server) Serve() run.StopNotify {
 	}
 	var wg sync.WaitGroup
 	wg.Add(2)
-	go func() {
+	run.Go(context.Background(), "queue.sub.grpc-server", s.log, func(_ context.Context) {
 		lis, err := net.Listen("tcp", s.addr)
 		if err != nil {
 			s.log.Error().Err(err).Msg("Failed to listen")
@@ -367,20 +367,20 @@ func (s *server) Serve() run.StopNotify {
 			s.log.Error().Err(err).Msg("server is interrupted")
 		}
 		wg.Done()
-	}()
-	go func() {
+	})
+	run.Go(context.Background(), "queue.sub.healthz-http", s.log, func(_ context.Context) {
 		s.log.Info().Str("listenAddr", s.httpAddr).Msg("Start healthz http server")
 		err := s.httpSrv.ListenAndServe()
 		if err != http.ErrServerClosed {
 			s.log.Error().Err(err)
 		}
 		wg.Done()
-	}()
-	go func() {
+	})
+	run.Go(context.Background(), "queue.sub.shutdown-watcher", s.log, func(_ context.Context) {
 		wg.Wait()
 		s.log.Info().Msg("All servers are stopped")
 		close(stopCh)
-	}()
+	})
 	return stopCh
 }
 
@@ -397,10 +397,10 @@ func (s *server) GracefulStop() {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 	_ = s.httpSrv.Shutdown(ctx)
-	go func() {
+	run.Go(context.Background(), "queue.sub.graceful-stop", s.log, func(_ context.Context) {
 		s.ser.GracefulStop()
 		close(stopped)
-	}()
+	})
 
 	t := time.NewTimer(10 * time.Second)
 	select {

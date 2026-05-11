@@ -151,7 +151,12 @@ func (s *service) PreRun(ctx context.Context) error {
 		s.metadata.RegisterHandler(s.prefix+"-groups", schema.KindGroup, s)
 	}
 	s.protocolHandler = newProtocolHandler(s)
-	go s.protocolHandler.processPropagation()
+	// nolint:contextcheck // The propagation goroutine outlives PreRun. Its
+	// lifetime is owned by s.closer (see processPropagation's CloseNotify
+	// loop), not by the PreRun ctx, which is short-lived.
+	run.Go(s.closer.Ctx(), "property.gossip.propagation", s.log, func(_ context.Context) {
+		s.protocolHandler.processPropagation()
+	})
 	return nil
 }
 
@@ -263,7 +268,7 @@ func (s *service) Serve(closer *run.Closer) {
 	}
 	var wg sync.WaitGroup
 	wg.Add(1)
-	go func() {
+	run.Go(context.Background(), "property.gossip.grpc-server", s.log, func(_ context.Context) {
 		lis, err := net.Listen("tcp", s.addr)
 		if err != nil {
 			s.log.Error().Err(err).Msg("Failed to listen")
@@ -276,11 +281,11 @@ func (s *service) Serve(closer *run.Closer) {
 			s.log.Error().Err(err).Msg("server is interrupted")
 		}
 		wg.Done()
-	}()
-	go func() {
+	})
+	run.Go(context.Background(), "property.gossip.shutdown-watcher", s.log, func(_ context.Context) {
 		wg.Wait()
 		s.log.Info().Msg("GRPC server is stopped")
-	}()
+	})
 }
 
 // GetRouteTable implements RouteTableProvider interface.
@@ -313,10 +318,10 @@ func (s *service) GracefulStop() {
 	s.closer.CloseThenWait()
 
 	stopped := make(chan struct{})
-	go func() {
+	run.Go(context.Background(), "property.gossip.graceful-stop", s.log, func(_ context.Context) {
 		s.ser.GracefulStop()
 		close(stopped)
-	}()
+	})
 	t := time.NewTimer(10 * time.Second)
 	select {
 	case <-t.C:

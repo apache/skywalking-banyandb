@@ -1380,12 +1380,12 @@ func TestCreateSegment_OutOfOrderArrival_SameBucket(t *testing.T) {
 	expectedBucketStart := time.Date(2026, 4, 7, 0, 0, 0, 0, time.UTC)
 	expectedBucketEnd := time.Date(2026, 4, 22, 0, 0, 0, 0, time.UTC)
 
-	seg1, err := sc.create(laterFirst)
+	seg1, err := sc.create(context.Background(), laterFirst)
 	require.NoError(t, err)
 	require.NotNil(t, seg1)
 	defer seg1.DecRef()
 
-	seg2, err := sc.create(earlierAfter)
+	seg2, err := sc.create(context.Background(), earlierAfter)
 	require.NoError(t, err)
 	require.NotNil(t, seg2)
 
@@ -1410,7 +1410,7 @@ func TestCreateSegment_OutOfOrderArrival_AdjacentBuckets(t *testing.T) {
 	laterFirst := time.Date(2026, 5, 5, 6, 0, 0, 0, time.UTC)    // bucket [04/22, 05/07)
 	earlierAfter := time.Date(2026, 4, 15, 6, 0, 0, 0, time.UTC) // bucket [04/07, 04/22)
 
-	seg1, err := sc.create(laterFirst)
+	seg1, err := sc.create(context.Background(), laterFirst)
 	require.NoError(t, err)
 	require.NotNil(t, seg1)
 	defer seg1.DecRef()
@@ -1418,7 +1418,7 @@ func TestCreateSegment_OutOfOrderArrival_AdjacentBuckets(t *testing.T) {
 	assert.Equal(t, time.Date(2026, 5, 7, 0, 0, 0, 0, time.UTC), seg1.End)
 	assert.Equal(t, 15*24*time.Hour, seg1.End.Sub(seg1.Start))
 
-	seg2, err := sc.create(earlierAfter)
+	seg2, err := sc.create(context.Background(), earlierAfter)
 	require.NoError(t, err)
 	require.NotNil(t, seg2)
 	defer seg2.DecRef()
@@ -1440,17 +1440,17 @@ func TestCreateSegment_HourInterval_OutOfOrder(t *testing.T) {
 	t2 := time.Date(2026, 4, 19, 8, 15, 0, 0, time.UTC)  // same bucket
 	t3 := time.Date(2026, 4, 19, 13, 0, 0, 0, time.UTC)  // bucket [12:00, 18:00)
 
-	seg1, err := sc.create(t1)
+	seg1, err := sc.create(context.Background(), t1)
 	require.NoError(t, err)
 	defer seg1.DecRef()
 	assert.Equal(t, time.Date(2026, 4, 19, 6, 0, 0, 0, time.UTC), seg1.Start)
 	assert.Equal(t, 6*time.Hour, seg1.End.Sub(seg1.Start))
 
-	seg2, err := sc.create(t2)
+	seg2, err := sc.create(context.Background(), t2)
 	require.NoError(t, err)
 	assert.Same(t, seg1, seg2, "08:15 must reuse the [06:00, 12:00) segment")
 
-	seg3, err := sc.create(t3)
+	seg3, err := sc.create(context.Background(), t3)
 	require.NoError(t, err)
 	defer seg3.DecRef()
 	assert.NotSame(t, seg1, seg3)
@@ -1493,7 +1493,7 @@ func TestCreateSegment_ConcurrentCreates_DeterministicAlignment(t *testing.T) {
 			start := idx * probesPerGoroutine
 			end := start + probesPerGoroutine
 			for _, ts := range probes[start:end] {
-				seg, err := sc.create(ts)
+				seg, err := sc.create(context.Background(), ts)
 				if err != nil {
 					t.Errorf("create(%s) returned error: %v", ts.Format(time.RFC3339), err)
 					return
@@ -1570,7 +1570,7 @@ func TestCreateSegment_LegacyOffGridNeighbour_TransitionThenGrid(t *testing.T) {
 	// original grid bucket end (05/22). So the transition segment is shorter
 	// than 15d but still ends on the grid.
 	probe := time.Date(2026, 5, 17, 6, 0, 0, 0, time.UTC)
-	transition, err := sc.create(probe)
+	transition, err := sc.create(ctx, probe)
 	require.NoError(t, err)
 	require.NotNil(t, transition)
 	defer transition.DecRef()
@@ -1589,7 +1589,7 @@ func TestCreateSegment_LegacyOffGridNeighbour_TransitionThenGrid(t *testing.T) {
 	// Second write past the transition segment: aligned start lands cleanly
 	// on the next grid bucket [05/22, 06/06) and produces a full 15d segment.
 	postProbe := time.Date(2026, 5, 25, 6, 0, 0, 0, time.UTC)
-	gridSeg, err := sc.create(postProbe)
+	gridSeg, err := sc.create(ctx, postProbe)
 	require.NoError(t, err)
 	require.NotNil(t, gridSeg)
 	defer gridSeg.DecRef()
@@ -1614,7 +1614,7 @@ func TestCreateSegment_PersistedMetadataReflectsAlignedRange(t *testing.T) {
 	expectedStart := time.Date(2026, 4, 7, 0, 0, 0, 0, time.UTC)
 	expectedEnd := time.Date(2026, 4, 22, 0, 0, 0, 0, time.UTC)
 
-	seg, err := sc.create(probe)
+	seg, err := sc.create(context.Background(), probe)
 	require.NoError(t, err)
 	require.NotNil(t, seg)
 	assert.Equal(t, expectedStart, seg.Start)

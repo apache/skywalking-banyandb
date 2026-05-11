@@ -294,12 +294,12 @@ func (sr *schemaRepo) OnAddOrUpdate(metadata schema.Metadata) {
 			sr.l.Warn().Err(err).Msg("topNAggregation is ignored")
 			return
 		}
-		manager := sr.getSteamingManager(topNSchema.SourceMeasure, sr.pipeline)
+		manager := sr.getSteamingManager(sr.ctx, topNSchema.SourceMeasure, sr.pipeline)
 		if manager == nil {
 			// group is closing; skip registering
 			return
 		}
-		manager.register(topNSchema)
+		manager.register(sr.ctx, topNSchema)
 	default:
 	}
 }
