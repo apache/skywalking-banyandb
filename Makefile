@@ -118,6 +118,12 @@ lint: default ## Run the linters on all projects
 lint-rawgo: ## Enforce panic-recovery wrappers for goroutine launches
 	go run ./scripts/lint/rawgo \
 	  -baseline=pkg/panicdiag/lintrawgo/baseline.txt ./...
+
+.PHONY: update-rawgo-baseline
+update-rawgo-baseline: ## Regenerate the raw-go baseline from the current tree
+	go run ./scripts/lint/rawgo-baseline \
+	  -baseline=pkg/panicdiag/lintrawgo/baseline.txt ./...
+
 # check-import-boundaries enforces the layering invariants documented in
 # pkg/initerror/initerror.go: the leaf permanent-error contract must not gain
 # project-internal dependencies, and the property schema-registry classifier
