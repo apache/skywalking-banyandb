@@ -40,6 +40,17 @@ const (
 	defaultPerRequestTimeout = 2 * time.Second
 	defaultBackoffBase       = 500 * time.Millisecond
 	defaultBackoffMax        = 30 * time.Second
+
+	// Local send-side failures (before the frame leaves the publisher).
+	sendErrReasonNonTransient   = "non_transient"
+	sendErrReasonCanceled       = "canceled"
+	sendErrReasonStreamCanceled = "stream_canceled"
+	sendErrReasonRetryExhausted = "retry_exhausted"
+	// Remote-side failures (observed after the frame was written to the stream).
+	sendErrReasonRecvError      = "recv_error"      // s.Recv returned an error (connection/protocol layer).
+	sendErrReasonServerRejected = "server_rejected" // Server responded with a non-empty Error (includes failover statuses).
+
+	sendResultSuccess = "success"
 )
 
 type writeStream struct {
@@ -85,13 +96,22 @@ func (bp *batchPublisher) Publish(ctx context.Context, topic bus.Topic, messages
 			continue
 		}
 
+		topicStr := topic.String()
 		sendData := func() (success bool) {
 			if stream, ok := bp.streams[node]; ok {
+				hasMetrics := bp.hasMetrics()
 				defer func() {
 					if !success {
 						delete(bp.streams, node)
+						if hasMetrics {
+							bp.pub.metrics.inflightStreams.Add(-1, node)
+						}
 					}
 				}()
+				if hasMetrics {
+					bp.pub.metrics.inflightRequests.Add(1, topicStr, node)
+					defer bp.pub.metrics.inflightRequests.Add(-1, topicStr, node)
+				}
 				select {
 				case <-ctx.Done():
 					return false
@@ -99,7 +119,7 @@ func (bp *batchPublisher) Publish(ctx context.Context, topic bus.Topic, messages
 					return false
 				default:
 				}
-				errSend := bp.retrySend(ctx, stream.client, r, node)
+				errSend := bp.retrySend(ctx, stream.client, r, node, topicStr)
 				if errSend != nil {
 					err = multierr.Append(err, fmt.Errorf("failed to send message to node %s: %w", node, errSend))
 					// Record failure for circuit breaker (only for transient/internal errors)
@@ -155,6 +175,10 @@ func (bp *batchPublisher) Publish(ctx context.Context, topic bus.Topic, messages
 		deferFn := cancel
 		stream, errCreateStream := nodeClient.client.Send(streamCtx)
 		if errCreateStream != nil {
+			// Release the timeout context when Send() fails; otherwise listenBatchResponse,
+			// which normally invokes deferFn on exit, is never spawned and streamCtx leaks
+			// until bp.timeout expires, accumulating timer goroutines under repeated failures.
+			cancel()
 			err = multierr.Append(err, fmt.Errorf("failed to get stream for node %s: %w", node, errCreateStream))
 			continue
 		}
@@ -162,48 +186,70 @@ func (bp *batchPublisher) Publish(ctx context.Context, topic bus.Topic, messages
 			client:    stream,
 			ctxDoneCh: streamCtx.Done(),
 		}
+		if bp.hasMetrics() {
+			bp.pub.metrics.inflightStreams.Add(1, node)
+		}
 		bp.f.events = append(bp.f.events, make(chan batchEvent))
 		_ = sendData()
 		nodeName := node
-		go func(s clusterv1.Service_SendClient, deferFn func(), bc chan batchEvent, curNode string) {
-			defer func() {
-				close(bc)
-				deferFn()
-			}()
-			select {
-			case <-ctx.Done():
-				return
-			default:
-			}
-			resp, errRecv := s.Recv()
-			if errRecv != nil {
-				if grpchelper.IsFailoverError(errRecv) {
-					// Record circuit breaker failure before creating failover event
-					bp.pub.connMgr.RecordFailure(curNode, errRecv)
-					bc <- batchEvent{n: curNode, e: common.NewErrorWithStatus(modelv1.Status_STATUS_INTERNAL_ERROR, errRecv.Error())}
-				}
-				return
-			}
-			if resp == nil {
-				return
-			}
-			if resp.Error == "" {
-				return
-			}
-			if isFailoverStatus(resp.Status) {
-				ce := common.NewErrorWithStatus(resp.Status, resp.Error)
-				// Record circuit breaker failure before creating failover event
-				bp.pub.connMgr.RecordFailure(curNode, ce)
-				bc <- batchEvent{n: curNode, e: ce}
-			}
-		}(stream, deferFn, bp.f.events[len(bp.f.events)-1], nodeName)
+		go bp.listenBatchResponse(ctx, stream, deferFn, bp.f.events[len(bp.f.events)-1], nodeName, topicStr)
 	}
 	return nil, err
 }
 
+func (bp *batchPublisher) hasMetrics() bool {
+	return bp.pub != nil && bp.pub.metrics != nil
+}
+
+// listenBatchResponse receives the server response and records failover events and end-to-end failure metrics.
+func (bp *batchPublisher) listenBatchResponse(ctx context.Context, s clusterv1.Service_SendClient, deferFn func(), bc chan batchEvent, curNode, topic string) {
+	defer func() {
+		close(bc)
+		deferFn()
+	}()
+	select {
+	case <-ctx.Done():
+		return
+	default:
+	}
+
+	resp, errRecv := s.Recv()
+	if errRecv != nil {
+		if bp.hasMetrics() {
+			bp.pub.metrics.sendErrTotal.Inc(1, topic, curNode, sendErrReasonRecvError)
+		}
+		if grpchelper.IsFailoverError(errRecv) {
+			// Record circuit breaker failure before creating failover event
+			bp.pub.connMgr.RecordFailure(curNode, errRecv)
+			bc <- batchEvent{n: curNode, e: common.NewErrorWithStatus(modelv1.Status_STATUS_INTERNAL_ERROR, errRecv.Error())}
+		}
+		return
+	}
+	if resp == nil || resp.Error == "" || resp.Status == modelv1.Status_STATUS_SUCCEED {
+		return
+	}
+	if bp.hasMetrics() {
+		bp.pub.metrics.sendErrTotal.Inc(1, topic, curNode, sendErrReasonServerRejected)
+	}
+	ce := common.NewErrorWithStatus(resp.Status, resp.Error)
+	// Only failover statuses trigger circuit-breaker accounting; other server-side
+	// rejections (e.g. invalid argument) are surfaced to the caller but do not count
+	// toward node health.
+	if isFailoverStatus(resp.Status) {
+		bp.pub.connMgr.RecordFailure(curNode, ce)
+	}
+	// Always surface a batchEvent for any non-empty resp.Error so that Close() exposes
+	// the rejection to the caller. Otherwise the send_err_total{reason="server_rejected"}
+	// counter would rise on dashboards while callers silently treat the batch as successful.
+	bc <- batchEvent{n: curNode, e: ce}
+}
+
 func (bp *batchPublisher) Close() (cee map[string]*common.Error, err error) {
-	for i := range bp.streams {
-		err = multierr.Append(err, bp.streams[i].client.CloseSend())
+	for nodeName, stream := range bp.streams {
+		err = multierr.Append(err, stream.client.CloseSend())
+		if bp.hasMetrics() {
+			bp.pub.metrics.inflightStreams.Add(-1, nodeName)
+		}
 	}
 	for i := range bp.streams {
 		<-bp.streams[i].ctxDoneCh
@@ -280,8 +326,14 @@ func isFailoverStatus(s modelv1.Status) bool {
 }
 
 // retrySend implements bounded retries for client streaming sends with exponential backoff and jitter.
-func (bp *batchPublisher) retrySend(ctx context.Context, stream clusterv1.Service_SendClient, r *clusterv1.SendRequest, node string) error {
+func (bp *batchPublisher) retrySend(ctx context.Context, stream clusterv1.Service_SendClient, r *clusterv1.SendRequest, node string, topic string) error {
 	var lastErr error
+	start := time.Now()
+	observeDuration := func(result string) {
+		if bp.hasMetrics() {
+			bp.pub.metrics.sendDurationSeconds.Observe(time.Since(start).Seconds(), topic, node, result)
+		}
+	}
 
 	for attempt := 0; attempt <= defaultMaxRetries; attempt++ {
 		// Create per-attempt timeout context
@@ -291,9 +343,17 @@ func (bp *batchPublisher) retrySend(ctx context.Context, stream clusterv1.Servic
 		select {
 		case <-ctx.Done():
 			cancel()
+			if bp.hasMetrics() {
+				bp.pub.metrics.sendErrTotal.Inc(1, topic, node, sendErrReasonCanceled)
+			}
+			observeDuration(sendErrReasonCanceled)
 			return ctx.Err()
 		case <-stream.Context().Done():
 			cancel()
+			if bp.hasMetrics() {
+				bp.pub.metrics.sendErrTotal.Inc(1, topic, node, sendErrReasonStreamCanceled)
+			}
+			observeDuration(sendErrReasonStreamCanceled)
 			return stream.Context().Err()
 		case <-attemptCtx.Done():
 			cancel()
@@ -310,7 +370,12 @@ func (bp *batchPublisher) retrySend(ctx context.Context, stream clusterv1.Servic
 		cancel()
 
 		if sendErr == nil {
-			// Success
+			if bp.hasMetrics() {
+				bp.pub.metrics.sendSuccessTotal.Inc(1, topic, node)
+				bp.pub.metrics.sendBytesTotal.Inc(float64(len(r.Body)), topic, node)
+			}
+			// Success writing to the local stream; end-to-end ack is observed in listenBatchResponse.
+			observeDuration(sendResultSuccess)
 			return nil
 		}
 
@@ -319,7 +384,15 @@ func (bp *batchPublisher) retrySend(ctx context.Context, stream clusterv1.Servic
 		// Check if error is retryable
 		if !grpchelper.IsTransientError(sendErr) {
 			// Non-transient error, don't retry
+			if bp.hasMetrics() {
+				bp.pub.metrics.sendErrTotal.Inc(1, topic, node, sendErrReasonNonTransient)
+			}
+			observeDuration(sendErrReasonNonTransient)
 			return sendErr
+		}
+
+		if bp.hasMetrics() {
+			bp.pub.metrics.sendRetryAttempts.Inc(1, topic, node)
 		}
 
 		// If this was the last attempt, don't sleep
@@ -334,13 +407,29 @@ func (bp *batchPublisher) retrySend(ctx context.Context, stream clusterv1.Servic
 		select {
 		case <-time.After(backoff):
 			// Continue to next attempt
+			if bp.hasMetrics() {
+				bp.pub.metrics.sendBackoffSeconds.Inc(backoff.Seconds(), topic, node)
+			}
 		case <-ctx.Done():
+			if bp.hasMetrics() {
+				bp.pub.metrics.sendErrTotal.Inc(1, topic, node, sendErrReasonCanceled)
+			}
+			observeDuration(sendErrReasonCanceled)
 			return ctx.Err()
 		case <-stream.Context().Done():
+			if bp.hasMetrics() {
+				bp.pub.metrics.sendErrTotal.Inc(1, topic, node, sendErrReasonStreamCanceled)
+			}
+			observeDuration(sendErrReasonStreamCanceled)
 			return stream.Context().Err()
 		}
 	}
 
 	// All retries exhausted
+	if bp.hasMetrics() {
+		bp.pub.metrics.sendRetryExhausted.Inc(1, topic, node)
+		bp.pub.metrics.sendErrTotal.Inc(1, topic, node, sendErrReasonRetryExhausted)
+	}
+	observeDuration(sendErrReasonRetryExhausted)
 	return fmt.Errorf("retry exhausted for node %s after %d attempts, last error: %w", node, defaultMaxRetries+1, lastErr)
 }
