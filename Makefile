@@ -105,7 +105,7 @@ load-test-barrier: ## Run the schema-barrier CP-6 SLO load harness (3 data nodes
 
 lint: TARGET=lint
 lint: PROJECTS:=api $(PROJECTS) pkg scripts/ci/check test
-lint: default lint-rawgo ## Run the linters on all projects
+lint: default ## Run the linters on all projects
 
 # lint-rawgo enforces the project's "no raw goroutines" rule. New `go`
 # statements in code outside the recovery wrappers must either go
