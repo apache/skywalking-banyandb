@@ -224,10 +224,10 @@ func (l *lifecycleService) GracefulStop() {
 	// Stop gRPC server
 	if l.grpcServer != nil {
 		stopped := make(chan struct{})
-		go func() {
+		run.Go(context.Background(), "backup.lifecycle.graceful-stop", l.l, func(_ context.Context) {
 			l.grpcServer.GracefulStop()
 			close(stopped)
-		}()
+		})
 
 		t := time.NewTimer(10 * time.Second)
 		select {
@@ -287,7 +287,7 @@ func (l *lifecycleService) Serve() run.StopNotify {
 	}
 
 	// Wait for either migration completion or server stop
-	go func() {
+	run.Go(context.Background(), "backup.lifecycle.stop-watcher", l.l, func(_ context.Context) {
 		select {
 		case <-done:
 			// Migration completed
@@ -295,7 +295,7 @@ func (l *lifecycleService) Serve() run.StopNotify {
 			// Server stopped
 			close(done)
 		}
-	}()
+	})
 
 	return done
 }
@@ -366,7 +366,7 @@ func (l *lifecycleService) startServers() {
 	wg.Add(2)
 
 	// gRPC server goroutine
-	go func() {
+	run.Go(context.Background(), "backup.lifecycle.grpc-server", l.l, func(_ context.Context) {
 		defer wg.Done()
 		lis, listenErr := net.Listen("tcp", l.lifecycleGRPCAddr)
 		if listenErr != nil {
@@ -377,10 +377,10 @@ func (l *lifecycleService) startServers() {
 		if serveErr := l.grpcServer.Serve(lis); serveErr != nil {
 			l.l.Error().Err(serveErr).Msg("gRPC server error")
 		}
-	}()
+	})
 
 	// HTTP server goroutine
-	go func() {
+	run.Go(context.Background(), "backup.lifecycle.http-server", l.l, func(_ context.Context) {
 		defer wg.Done()
 		l.l.Info().Str("addr", l.lifecycleHTTPAddr).Msg("Lifecycle HTTP server listening")
 		var serveErr error
@@ -393,13 +393,13 @@ func (l *lifecycleService) startServers() {
 		if serveErr != nil && serveErr != http.ErrServerClosed {
 			l.l.Error().Err(serveErr).Msg("HTTP server error")
 		}
-	}()
+	})
 
 	// Wait for both servers to stop
-	go func() {
+	run.Go(context.Background(), "backup.lifecycle.shutdown-watcher", l.l, func(_ context.Context) {
 		wg.Wait()
 		close(l.stopCh)
-	}()
+	})
 }
 
 func (l *lifecycleService) action(ctx context.Context) error {

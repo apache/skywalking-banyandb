@@ -17,11 +17,6 @@
 # Generated initially from `make lint-rawgo` output; keep sorted.
 
 banyand/backup/lifecycle/segment_boundary_utils_test.go:323
-banyand/backup/lifecycle/service.go:227
-banyand/backup/lifecycle/service.go:290
-banyand/backup/lifecycle/service.go:369
-banyand/backup/lifecycle/service.go:383
-banyand/backup/lifecycle/service.go:399
 banyand/internal/sidx/block_scanner_test.go:83
 banyand/internal/sidx/block_scanner_test.go:199
 banyand/internal/sidx/block_scanner_test.go:273
@@ -92,14 +87,10 @@ banyand/metadata/discovery/file/file.go:177
 banyand/metadata/discovery/file/file.go:178
 banyand/metadata/discovery/file/file_test.go:336
 banyand/metadata/discovery/file/file_test.go:430
-banyand/metadata/schema/property/client.go:292
-banyand/metadata/schema/property/client.go:320
-banyand/metadata/schema/property/client.go:1154
-banyand/metadata/schema/property/client.go:1175
-banyand/metadata/schema/property/client.go:1176
-banyand/metadata/schema/property/client.go:1260
-banyand/metadata/schema/property/client.go:1336
 banyand/metadata/schema/property/client_test.go:1444
+banyand/metadata/schema/property/init_handler_test.go:96
+banyand/metadata/schema/property/init_handler_test.go:133
+banyand/metadata/schema/property/init_handler_test.go:180
 banyand/metadata/schema/schemaserver/service.go:329
 banyand/metadata/schema/schemaserver/service.go:366
 banyand/metadata/schema/schemaserver/watcher_test.go:83

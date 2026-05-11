@@ -292,7 +292,7 @@ func (r *SchemaRegistry) broadcastAll(fn func(nodeName string, c *schemaClient) 
 	for _, nodeName := range names {
 		currentNode := nodeName
 		wg.Add(1)
-		go func() {
+		run.GoOrDie(r.closer.Ctx(), "property.schema.broadcast", r.l, func(_ context.Context) {
 			defer wg.Done()
 			execErr := r.connMgr.Execute(currentNode, func(c *schemaClient) error {
 				return fn(currentNode, c)
@@ -302,7 +302,7 @@ func (r *SchemaRegistry) broadcastAll(fn func(nodeName string, c *schemaClient) 
 				broadcastErr = multierr.Append(broadcastErr, fmt.Errorf("node %s: %w", currentNode, execErr))
 				mu.Unlock()
 			}
-		}()
+		})
 	}
 	wg.Wait()
 	return broadcastErr
@@ -320,7 +320,7 @@ func (r *SchemaRegistry) broadcastInsert(ctx context.Context, prop *propertyv1.P
 	for _, nodeName := range names {
 		currentNode := nodeName
 		wg.Add(1)
-		go func() {
+		run.GoOrDie(ctx, "property.schema.broadcast-insert", r.l, func(_ context.Context) {
 			defer wg.Done()
 			execErr := r.connMgr.Execute(currentNode, func(c *schemaClient) error {
 				_, rpcErr := c.management.InsertSchema(ctx, &schemav1.InsertSchemaRequest{Property: prop})
@@ -336,7 +336,7 @@ func (r *SchemaRegistry) broadcastInsert(ctx context.Context, prop *propertyv1.P
 				realErrors = multierr.Append(realErrors, fmt.Errorf("node %s: %w", currentNode, execErr))
 				mu.Unlock()
 			}
-		}()
+		})
 	}
 	wg.Wait()
 	if realErrors != nil {
@@ -1177,7 +1177,7 @@ func (r *SchemaRegistry) Start(ctx context.Context) error {
 		} else {
 			certUpdateCh := r.caCertReloader.GetUpdateChannel()
 			if r.closer.AddRunning() {
-				go func() {
+				run.GoOrDie(ctx, "property.schema.ca-cert-reconnect", r.l, func(_ context.Context) {
 					defer r.closer.Done()
 					for {
 						select {
@@ -1190,7 +1190,7 @@ func (r *SchemaRegistry) Start(ctx context.Context) error {
 							return
 						}
 					}
-				}()
+				})
 			}
 		}
 	}
@@ -1198,8 +1198,12 @@ func (r *SchemaRegistry) Start(ctx context.Context) error {
 	// OnActive in PreRun) may have populated the cache before handlers were
 	// registered. This explicit replay ensures handlers see every entry.
 	r.notifyHandlersFromCache()
-	go r.syncLoop(ctx)
-	go r.tombstoneGCLoop(ctx)
+	run.GoOrDie(ctx, "property.schema.sync-loop", r.l, func(syncCtx context.Context) {
+		r.syncLoop(syncCtx)
+	})
+	run.GoOrDie(ctx, "property.schema.tombstone-gc-loop", r.l, func(gcCtx context.Context) {
+		r.tombstoneGCLoop(gcCtx)
+	})
 	return nil
 }
 
@@ -1283,10 +1287,10 @@ func (r *SchemaRegistry) launchWatch(nodeName string, client *schemaClient) {
 	r.watchSessions[nodeName] = session
 	r.l.Debug().Str("node", nodeName).Msg("launchWatch: starting new watch session")
 	if r.closer.AddRunning() {
-		go func() {
+		run.GoOrDie(ctx, "property.schema.watch-loop", r.l, func(_ context.Context) {
 			defer r.closer.Done()
 			r.watchLoop(ctx, nodeName, client.update, session)
-		}()
+		})
 	} else {
 		cancel()
 		delete(r.watchSessions, nodeName)
@@ -1359,7 +1363,7 @@ func (r *SchemaRegistry) processWatchSession(ctx context.Context,
 
 	recvCh := make(chan *schemav1.WatchSchemasResponse, 64)
 	recvErrCh := make(chan error, 1)
-	go func() {
+	run.GoOrDie(ctx, "property.schema.watch-recv", r.l, func(_ context.Context) {
 		for {
 			resp, recvErr := stream.Recv()
 			if recvErr != nil {
@@ -1369,7 +1373,7 @@ func (r *SchemaRegistry) processWatchSession(ctx context.Context,
 			}
 			recvCh <- resp
 		}
-	}()
+	})
 
 	var inSync bool
 	var metadataOnly bool
