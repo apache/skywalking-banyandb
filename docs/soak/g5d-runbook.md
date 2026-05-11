@@ -96,7 +96,32 @@ Key environment variables:
 | `PPROF_INTERVAL_MIN` | 30 | Minutes between heap/goroutine captures |
 | `PARITY_INTERVAL_MIN` | 5 | Minutes between replay-and-diff runs |
 
-Monitoring during the run:
+### Tapered monitor (recommended for unattended runs)
+
+In a separate pane, kick off the monitor — it polls every 15 min for the
+first 2 hours, then drops to every hour for the rest of the window, and
+emits one `OK` or `ALERT` status line per tick:
+
+```bash
+./scripts/soak-monitor.sh                          # watches the most recent run
+./scripts/soak-monitor.sh dist/soak/<ts>           # watches a specific run
+```
+
+`ALERT` fires on any of:
+- `banyand.log` untouched for >10 min (container hung)
+- `memory-alerts.log` gained a line (criterion 3 violation)
+- any `diff-*.json` has `"pass": false` (criterion 2 violation)
+- `docker compose` reports an unhealthy/exited service
+
+The monitor exits with code 0 when `summary.json` appears and no alerts
+were emitted, code 2 if any alert fired during the window, or non-zero
+on configuration error. Pipe to your notification mechanism of choice:
+
+```bash
+./scripts/soak-monitor.sh; rc=$?; [[ $rc -ne 0 ]] && notify-send "soak alert ($rc)"
+```
+
+Manual one-off checks (drop into a tail pane if you want raw visibility):
 
 ```bash
 # Live BanyanDB logs
