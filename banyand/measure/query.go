@@ -78,6 +78,7 @@ type queryOptions struct {
 type topNQueryOptions struct {
 	sortDirection modelv1.Sort
 	number        int32
+	fieldType     databasev1.FieldType
 }
 
 func (m *measure) Query(ctx context.Context, mqo model.MeasureQueryOptions) (mqr model.MeasureQueryResult, err error) {
@@ -253,6 +254,7 @@ func applyTopNOptions(mqo model.MeasureQueryOptions, result *queryResult) {
 	result.topNQueryOptions = &topNQueryOptions{
 		sortDirection: mqo.Sort,
 		number:        mqo.Number,
+		fieldType:     mqo.TopNFieldType,
 	}
 }
 
@@ -909,11 +911,16 @@ func (qr *queryResult) merge(storedIndexValue map[common.SeriesID]map[string]*mo
 	var lastVersion int64
 	var lastSid common.SeriesID
 
-	var topNPostAggregator PostProcessor
+	var isTopN bool
+	var topNLimit int32
+	var topNSort modelv1.Sort
+	var topNFieldType databasev1.FieldType
 
 	if qr.topNQueryOptions != nil {
-		topNPostAggregator = CreateTopNPostProcessor(qr.topNQueryOptions.number, modelv1.AggregationFunction_AGGREGATION_FUNCTION_UNSPECIFIED,
-			qr.topNQueryOptions.sortDirection)
+		isTopN = true
+		topNLimit = qr.topNQueryOptions.number
+		topNSort = qr.topNQueryOptions.sortDirection
+		topNFieldType = qr.topNQueryOptions.fieldType
 	}
 
 	for qr.Len() > 0 {
@@ -925,8 +932,8 @@ func (qr *queryResult) merge(storedIndexValue map[common.SeriesID]map[string]*mo
 
 		if len(result.Timestamps) > 0 &&
 			topBC.timestamps[topBC.idx] == result.Timestamps[len(result.Timestamps)-1] {
-			if topNPostAggregator != nil {
-				topBC.mergeTopNResult(result, storedIndexValue, topNPostAggregator)
+			if isTopN {
+				topBC.mergeTopNResult(result, storedIndexValue, topNLimit, topNSort, topNFieldType)
 			} else if topBC.versions[topBC.idx] > lastVersion {
 				topBC.replace(result, storedIndexValue)
 			}

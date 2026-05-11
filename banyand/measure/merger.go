@@ -25,6 +25,7 @@ import (
 
 	"github.com/dustin/go-humanize"
 
+	databasev1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/database/v1"
 	modelv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/model/v1"
 	"github.com/apache/skywalking-banyandb/pkg/cgroups"
 	"github.com/apache/skywalking-banyandb/pkg/encoding"
@@ -388,17 +389,21 @@ func mergeTwoBlocks(target, left, right *blockPointer) {
 		left, right = right, left
 	}
 
-	var topNProcessor PostProcessor
 	var isTopN bool
+	var topNLimit int32
+	var topNSort modelv1.Sort
+	var topNFieldType databasev1.FieldType
 
 	if isTopNBlock(left) {
-		sort, limit, err := parseTopNMeta(left)
+		sort, limit, ft, err := parseTopNMeta(left)
 		if err != nil {
 			log.Error().Err(err).Msg("failed to parse TopN metadata, falling back to normal merge")
 			isTopN = false
 		} else {
 			isTopN = true
-			topNProcessor = CreateTopNPostProcessor(limit, modelv1.AggregationFunction_AGGREGATION_FUNCTION_UNSPECIFIED, sort)
+			topNLimit = limit
+			topNSort = sort
+			topNFieldType = ft
 		}
 	}
 
@@ -411,7 +416,7 @@ func mergeTwoBlocks(target, left, right *blockPointer) {
 		if i > left.idx && left.timestamps[i-1] == ts2 {
 			if isTopN {
 				target.append(left, i-1)
-				target.mergeAndAppendTopN(left, i-1, right, right.idx, topNProcessor)
+				target.mergeAndAppendTopN(left, i-1, right, right.idx, topNLimit, topNSort, topNFieldType)
 			} else {
 				if left.versions[i-1] >= right.versions[right.idx] {
 					target.append(left, i)
@@ -450,7 +455,7 @@ func isTopNBlock(b *blockPointer) bool {
 	return false
 }
 
-func parseTopNMeta(b *blockPointer) (modelv1.Sort, int32, error) {
+func parseTopNMeta(b *blockPointer) (modelv1.Sort, int32, databasev1.FieldType, error) {
 	tf := b.tagFamilies[0]
 
 	sortVal := mustDecodeTagValue(tf.columns[1].valueType, tf.columns[1].values[b.idx])
@@ -459,8 +464,8 @@ func parseTopNMeta(b *blockPointer) (modelv1.Sort, int32, error) {
 	paramStr := paramsVal.GetStr().Value
 	params, err := ParseTopNParameters(paramStr)
 	if err != nil {
-		return modelv1.Sort_SORT_UNSPECIFIED, 0, fmt.Errorf("failed to parse topN parameters : %w", err)
+		return modelv1.Sort_SORT_UNSPECIFIED, 0, databasev1.FieldType_FIELD_TYPE_UNSPECIFIED, fmt.Errorf("failed to parse topN parameters : %w", err)
 	}
 
-	return modelv1.Sort(sortVal.GetInt().Value), int32(params.Limit), nil
+	return modelv1.Sort(sortVal.GetInt().Value), int32(params.Limit), params.FieldType, nil
 }
