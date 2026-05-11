@@ -176,7 +176,7 @@ func (s *server) Validate() error {
 	// Short retention values (<1h) are unusual in production but required by integration tests
 	// that verify the physical-removal path of tombstone GC. Accept the value as given so
 	// operators (and the test harness) retain control; silent clamping previously hid the
-	// §4.7.2 test case.
+	// test case.
 	s.addr = net.JoinHostPort(s.host, strconv.FormatUint(uint64(s.port), 10))
 	if s.addr == ":" {
 		return errors.New("no address")

@@ -105,6 +105,7 @@ func newLiaisonCmd(runners ...run.Unit) *cobra.Command {
 		TraceLiaisonNodeRegistry:   grpc.NewClusterNodeRegistry(data.TopicTraceWrite, tire1Client, traceLiaisonNodeSel),
 	}, metricSvc, pm, routeProviders)
 	internalPipeline.SetMetadataRepo(metaSvc)
+	internalPipeline.SetNodeSchemaStatusRepo(metaSvc)
 	profSvc := observability.NewProfService()
 	httpServer := http.NewServer(grpcServer.GetAuthReloader())
 	var units []run.Unit

@@ -2171,9 +2171,12 @@ requested keys.
 <a name="banyandb-schema-v1-NodeLaggard"></a>
 
 ### NodeLaggard
-NodeLaggard reports a single data node that has not caught up to the
-requested schema state. missing_keys is populated by AwaitSchemaApplied
-responses; still_present_keys is populated by AwaitSchemaDeleted responses.
+NodeLaggard reports a single cluster member (peer liaison or data node)
+that has not caught up to the requested schema state. missing_keys is
+populated by AwaitSchemaApplied responses; still_present_keys by
+AwaitSchemaDeleted responses. reason is set when the laggard exists for a
+non-default cause (e.g. &#34;evicted_during_poll&#34; when the cluster transitioned
+the member from Active to Evictable mid-call); empty otherwise.
 
 
 | Field | Type | Label | Description |
@@ -2182,6 +2185,7 @@ responses; still_present_keys is populated by AwaitSchemaDeleted responses.
 | current_mod_revision | [int64](#int64) |  |  |
 | missing_keys | [SchemaKey](#banyandb-schema-v1-SchemaKey) | repeated |  |
 | still_present_keys | [SchemaKey](#banyandb-schema-v1-SchemaKey) | repeated |  |
+| reason | [string](#string) |  |  |
 
 
 

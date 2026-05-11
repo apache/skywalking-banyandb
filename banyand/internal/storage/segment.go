@@ -579,19 +579,37 @@ func (sc *segmentController[T, O]) create(ctx context.Context, start time.Time) 
 		}
 	}
 	options := sc.getOptions()
-	start = options.SegmentInterval.Unit.Standard(start)
+	// Anchor stdEnd to the aligned start before any bump so end stays on the
+	// global grid even when start is bumped past a legacy off-grid neighbor;
+	// subsequent segments then self-heal back to the grid.
+	alignedStart := options.SegmentInterval.Standard(start)
+	stdEnd := options.SegmentInterval.NextTime(alignedStart)
+	start = alignedStart
+	// sc.lst is sorted ascending by start time with non-overlapping ranges;
+	// a single pass bumps start past every legacy segment that swallows it
+	// (each next segment.Start >= previous.End).
 	var next *segment[T, O]
 	for _, s := range sc.lst {
 		if s.Contains(start.UnixNano()) {
-			return s, nil
+			start = s.End
+			continue
 		}
 		if next == nil && s.Start.After(start) {
 			next = s
 		}
 	}
-	stdEnd := options.SegmentInterval.NextTime(start)
 	var end time.Time
 	if next != nil && next.Start.Before(stdEnd) {
+		// `next` starts inside the current grid bucket - a legacy off-grid
+		// segment whose TTL hasn't elapsed. Cap end at next.Start to avoid
+		// overlap; surfacing this at Info level lets operators see the
+		// abnormal span until the legacy neighbor ages out.
+		sc.l.Info().
+			Stringer("alignedStart", alignedStart).
+			Stringer("bumpedStart", start).
+			Stringer("nextStart", next.Start).
+			Stringer("stdEnd", stdEnd).
+			Msg("new segment span is shorter than configured SegmentInterval due to an unaligned legacy neighbor")
 		end = next.Start
 	} else {
 		end = stdEnd
