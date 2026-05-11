@@ -24,6 +24,8 @@ import (
 
 	"github.com/pkg/errors"
 	"sigs.k8s.io/yaml"
+
+	"github.com/apache/skywalking-banyandb/pkg/initerror"
 )
 
 const (
@@ -46,7 +48,8 @@ func checkVersion(version string) error {
 			return nil
 		}
 	}
-	return errors.WithMessagef(errVersionIncompatible, "incompatible version %s, supported versions: %s", version, strings.Join(compatibleVersions, ", "))
+	return initerror.AsPermanent(errors.WithMessagef(errVersionIncompatible,
+		"incompatible version %s, supported versions: %s", version, strings.Join(compatibleVersions, ", ")))
 }
 
 type segmentMeta struct {
