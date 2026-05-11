@@ -19,6 +19,7 @@ package storage
 
 import (
 	"context"
+	"fmt"
 	"path/filepath"
 	"strings"
 	"sync"
@@ -172,7 +173,7 @@ func (d *database[T, O]) Close() error {
 	d.segmentController.close()
 	d.lock.Close()
 	if err := d.lfs.DeleteFile(d.lock.Path()); err != nil {
-		logger.Panicf("cannot delete lock file %s: %s", d.lock.Path(), err)
+		panic(fmt.Errorf("cannot delete lock file %s: %w", d.lock.Path(), err))
 	}
 	return nil
 }
@@ -233,14 +234,30 @@ func OpenTSDB[T TSTable, O any](ctx context.Context, opts TSDBOpts[T, O], cache 
 	lockPath := filepath.Join(opts.Location, lockFilename)
 	lock, err := tsdbLfs.CreateLockFile(lockPath, FilePerm)
 	if err != nil {
-		logger.Panicf("cannot create lock file %s: %s", lockPath, err)
+		panic(fmt.Errorf("cannot create lock file %s: %w", lockPath, err))
 	}
 	db.lock = lock
+	// Release the lock fd if any subsequent step in OpenTSDB returns an error.
+	// Otherwise the file descriptor leaks until process exit and a retry on the
+	// same data dir hits "resource temporarily unavailable" from the next
+	// CreateLockFile call. Ownership transfers to (*database).Close() only on
+	// success — released = true is set on the success return below.
+	released := false
+	defer func() {
+		if !released {
+			_ = lock.Close()
+			_ = tsdbLfs.DeleteFile(lockPath)
+		}
+	}()
 	if err := db.segmentController.open(); err != nil {
 		return nil, err
 	}
 	obsservice.MetricsCollector.Register(location, db.collect)
 	db.disableRotation = opts.DisableRotation
+	// db (and its lock fd) is now owned by the caller; on rotation-task error
+	// the partially-initialized db is still returned so the caller can Close
+	// it and unregister the metrics collector.
+	released = true
 	return db, db.startRotationTask()
 }
 
