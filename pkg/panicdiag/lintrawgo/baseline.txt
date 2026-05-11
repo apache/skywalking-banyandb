@@ -71,7 +71,7 @@ banyand/liaison/http/server.go:188
 banyand/liaison/http/server.go:277
 banyand/liaison/pkg/auth/reloader.go:143
 banyand/measure/part.go:295
-banyand/measure/query.go:791
+banyand/measure/query.go:793
 banyand/measure/query_test.go:1318
 banyand/measure/tstable_test.go:109
 banyand/measure/tstable_test.go:260
@@ -206,7 +206,7 @@ pkg/flow/streaming/streaming.go:83
 pkg/flow/streaming/streaming.go:89
 pkg/flow/streaming/streaming.go:96
 pkg/flow/streaming/streaming.go:103
-pkg/flow/streaming/streaming_test.go:294
+pkg/flow/streaming/streaming_test.go:295
 pkg/flow/streaming/unary.go:58
 pkg/flow/streaming/unary.go:65
 pkg/flow/streaming/unary.go:95

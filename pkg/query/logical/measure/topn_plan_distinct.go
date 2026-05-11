@@ -26,18 +26,20 @@ import (
 	"github.com/pkg/errors"
 	"go.uber.org/multierr"
 
+	databasev1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/database/v1"
 	measurev1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/measure/v1"
 	modelv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/model/v1"
+	"github.com/apache/skywalking-banyandb/pkg/flow/streaming"
 	pbv1 "github.com/apache/skywalking-banyandb/pkg/pb/v1"
 	"github.com/apache/skywalking-banyandb/pkg/query/executor"
 	"github.com/apache/skywalking-banyandb/pkg/query/logical"
 )
 
 // dedupHeapItem tracks an entity's best value and position in the deduplication heap.
-type dedupHeapItem struct {
+type dedupHeapItem[K streaming.TopSortKey] struct {
+	val   K
 	idp   *measurev1.InternalDataPoint
 	key   string
-	val   int64
 	index int
 }
 
@@ -45,46 +47,46 @@ type dedupHeapItem struct {
 // For DESC sorting, it uses a min-heap (root = smallest of top N).
 // For ASC sorting, it uses a max-heap (root = largest of top N).
 // The entityMap only tracks entities currently in the heap, so memory is bounded to O(topN).
-type entityDedupTopN struct {
-	entityMap map[string]*dedupHeapItem
-	items     []*dedupHeapItem
+type entityDedupTopN[K streaming.TopSortKey] struct {
+	entityMap map[string]*dedupHeapItem[K]
+	items     []*dedupHeapItem[K]
 	topN      int
 	sortDesc  bool
 }
 
 // newEntityDedupTopN creates a new entity deduplication heap.
-func newEntityDedupTopN(topN int, sortDesc bool) *entityDedupTopN {
-	return &entityDedupTopN{
-		entityMap: make(map[string]*dedupHeapItem),
-		items:     make([]*dedupHeapItem, 0, topN),
+func newEntityDedupTopN[K streaming.TopSortKey](topN int, sortDesc bool) *entityDedupTopN[K] {
+	return &entityDedupTopN[K]{
+		entityMap: make(map[string]*dedupHeapItem[K]),
+		items:     make([]*dedupHeapItem[K], 0, topN),
 		topN:      topN,
 		sortDesc:  sortDesc,
 	}
 }
 
-func (h *entityDedupTopN) Len() int { return len(h.items) }
+func (h *entityDedupTopN[K]) Len() int { return len(h.items) }
 
-func (h *entityDedupTopN) Less(i, j int) bool {
+func (h *entityDedupTopN[K]) Less(i, j int) bool {
 	if h.sortDesc {
 		return h.items[i].val < h.items[j].val
 	}
 	return h.items[i].val > h.items[j].val
 }
 
-func (h *entityDedupTopN) Swap(i, j int) {
+func (h *entityDedupTopN[K]) Swap(i, j int) {
 	h.items[i], h.items[j] = h.items[j], h.items[i]
 	h.items[i].index = i
 	h.items[j].index = j
 }
 
-func (h *entityDedupTopN) Push(x any) {
-	item := x.(*dedupHeapItem)
+func (h *entityDedupTopN[K]) Push(x any) {
+	item := x.(*dedupHeapItem[K])
 	item.index = len(h.items)
 	h.entityMap[item.key] = item
 	h.items = append(h.items, item)
 }
 
-func (h *entityDedupTopN) Pop() any {
+func (h *entityDedupTopN[K]) Pop() any {
 	old := h.items
 	n := len(old)
 	item := old[n-1]
@@ -95,7 +97,7 @@ func (h *entityDedupTopN) Pop() any {
 	return item
 }
 
-func (h *entityDedupTopN) isBetter(newVal, existingVal int64) bool {
+func (h *entityDedupTopN[K]) isBetter(newVal, existingVal K) bool {
 	if h.sortDesc {
 		return newVal > existingVal
 	}
@@ -103,7 +105,7 @@ func (h *entityDedupTopN) isBetter(newVal, existingVal int64) bool {
 }
 
 // Put inserts or updates an entity in the deduplication heap.
-func (h *entityDedupTopN) Put(key string, val int64, idp *measurev1.InternalDataPoint) {
+func (h *entityDedupTopN[K]) Put(key string, val K, idp *measurev1.InternalDataPoint) {
 	if item, exists := h.entityMap[key]; exists {
 		if !h.isBetter(val, item.val) {
 			return
@@ -116,24 +118,24 @@ func (h *entityDedupTopN) Put(key string, val int64, idp *measurev1.InternalData
 	h.tryAddToHeap(key, val, idp)
 }
 
-func (h *entityDedupTopN) tryAddToHeap(key string, val int64, idp *measurev1.InternalDataPoint) {
+func (h *entityDedupTopN[K]) tryAddToHeap(key string, val K, idp *measurev1.InternalDataPoint) {
 	if h.topN <= 0 {
 		return
 	}
 	if len(h.items) < h.topN {
-		heap.Push(h, &dedupHeapItem{key: key, val: val, idp: idp})
+		heap.Push(h, &dedupHeapItem[K]{key: key, val: val, idp: idp})
 		return
 	}
 	root := h.items[0]
 	if h.isBetter(val, root.val) {
 		heap.Pop(h)
-		heap.Push(h, &dedupHeapItem{key: key, val: val, idp: idp})
+		heap.Push(h, &dedupHeapItem[K]{key: key, val: val, idp: idp})
 	}
 }
 
 // Elements returns the top N distinct entities sorted by best value.
-func (h *entityDedupTopN) Elements() []*measurev1.InternalDataPoint {
-	result := make([]*dedupHeapItem, len(h.items))
+func (h *entityDedupTopN[K]) Elements() []*measurev1.InternalDataPoint {
+	result := make([]*dedupHeapItem[K], len(h.items))
 	copy(result, h.items)
 	sort.Slice(result, func(i, j int) bool {
 		if h.sortDesc {
@@ -148,18 +150,26 @@ func (h *entityDedupTopN) Elements() []*measurev1.InternalDataPoint {
 	return idps
 }
 
-var _ logical.UnresolvedPlan = (*unresolvedTopNDistinct)(nil)
+var _ logical.UnresolvedPlan = (*unresolvedTopNDistinct[int64])(nil)
 
 // unresolvedTopNDistinct is an unresolved plan for top N distinct entity selection.
-type unresolvedTopNDistinct struct {
+type unresolvedTopNDistinct[K streaming.TopSortKey] struct {
 	unresolvedInput logical.UnresolvedPlan
 	fieldName       string
 	topN            int32
 	sort            modelv1.Sort
 }
 
-func topNDistinct(input logical.UnresolvedPlan, topN int32, sort modelv1.Sort, fieldName string) logical.UnresolvedPlan {
-	return &unresolvedTopNDistinct{
+func topNDistinct(input logical.UnresolvedPlan, topN int32, sort modelv1.Sort, fieldName string, fieldType databasev1.FieldType) logical.UnresolvedPlan {
+	if fieldType == databasev1.FieldType_FIELD_TYPE_FLOAT {
+		return &unresolvedTopNDistinct[float64]{
+			unresolvedInput: input,
+			topN:            topN,
+			sort:            sort,
+			fieldName:       fieldName,
+		}
+	}
+	return &unresolvedTopNDistinct[int64]{
 		unresolvedInput: input,
 		topN:            topN,
 		sort:            sort,
@@ -167,7 +177,7 @@ func topNDistinct(input logical.UnresolvedPlan, topN int32, sort modelv1.Sort, f
 	}
 }
 
-func (u *unresolvedTopNDistinct) Analyze(measureSchema logical.Schema) (logical.Plan, error) {
+func (u *unresolvedTopNDistinct[K]) Analyze(measureSchema logical.Schema) (logical.Plan, error) {
 	prevPlan, analyzeErr := u.unresolvedInput.Analyze(measureSchema)
 	if analyzeErr != nil {
 		return nil, analyzeErr
@@ -180,7 +190,7 @@ func (u *unresolvedTopNDistinct) Analyze(measureSchema logical.Schema) (logical.
 		return nil, errors.New("no field ref found for topN distinct")
 	}
 	sortDesc := u.sort == modelv1.Sort_SORT_DESC
-	return &topNDistinctOp{
+	return &topNDistinctOp[K]{
 		Parent: &logical.Parent{
 			UnresolvedInput: u.unresolvedInput,
 			Input:           prevPlan,
@@ -191,17 +201,17 @@ func (u *unresolvedTopNDistinct) Analyze(measureSchema logical.Schema) (logical.
 	}, nil
 }
 
-var _ logical.Plan = (*topNDistinctOp)(nil)
+var _ logical.Plan = (*topNDistinctOp[int64])(nil)
 
 // topNDistinctOp selects top N distinct entities by best value.
-type topNDistinctOp struct {
+type topNDistinctOp[K streaming.TopSortKey] struct {
 	*logical.Parent
 	topN     int
 	sortDesc bool
 	fieldIdx int
 }
 
-func (t *topNDistinctOp) String() string {
+func (t *topNDistinctOp[K]) String() string {
 	dir := "DESC"
 	if !t.sortDesc {
 		dir = "ASC"
@@ -209,15 +219,15 @@ func (t *topNDistinctOp) String() string {
 	return fmt.Sprintf("TopNDistinct(topN=%d,sort=%s)", t.topN, dir)
 }
 
-func (t *topNDistinctOp) Children() []logical.Plan {
+func (t *topNDistinctOp[K]) Children() []logical.Plan {
 	return []logical.Plan{t.Input}
 }
 
-func (t *topNDistinctOp) Schema() logical.Schema {
+func (t *topNDistinctOp[K]) Schema() logical.Schema {
 	return t.Input.Schema()
 }
 
-func (t *topNDistinctOp) Execute(ctx context.Context) (mit executor.MIterator, err error) {
+func (t *topNDistinctOp[K]) Execute(ctx context.Context) (mit executor.MIterator, err error) {
 	iter, execErr := t.Input.(executor.MeasureExecutable).Execute(ctx)
 	if execErr != nil {
 		return nil, execErr
@@ -225,7 +235,19 @@ func (t *topNDistinctOp) Execute(ctx context.Context) (mit executor.MIterator, e
 	defer func() {
 		err = multierr.Append(err, iter.Close())
 	}()
-	edHeap := newEntityDedupTopN(t.topN, t.sortDesc)
+	edHeap := newEntityDedupTopN[K](t.topN, t.sortDesc)
+	var zero K
+	var extractValue func(dp *measurev1.DataPoint) K
+	switch any(zero).(type) {
+	case float64:
+		extractValue = func(dp *measurev1.DataPoint) K {
+			return K(dp.GetFields()[t.fieldIdx].GetValue().GetFloat().GetValue())
+		}
+	default:
+		extractValue = func(dp *measurev1.DataPoint) K {
+			return K(dp.GetFields()[t.fieldIdx].GetValue().GetInt().GetValue())
+		}
+	}
 	for iter.Next() {
 		dataPoints := iter.Current()
 		for _, idp := range dataPoints {
@@ -238,8 +260,7 @@ func (t *topNDistinctOp) Execute(ctx context.Context) (mit executor.MIterator, e
 				entityValues = append(entityValues, tag.Value)
 			}
 			entityKey := entityValues.String()
-			fieldVal := dp.GetFields()[t.fieldIdx].GetValue().GetInt().GetValue()
-			edHeap.Put(entityKey, fieldVal, idp)
+			edHeap.Put(entityKey, extractValue(dp), idp)
 		}
 	}
 	return &topNDistinctIterator{
