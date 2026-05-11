@@ -5,7 +5,7 @@ Release Notes.
 ## 0.11.0
 
 ### Features
-
+- Add validation to ensure Measure's ShardingKey contains all Entity tags to guarantee entity locality. 
 - Organize access logs under a dedicated "accesslog" subdirectory to improve log organization and separation from other application data.
 - Collect BanyanDB data on e2e test failure for CI debugging.
 - Add log query e2e test.
