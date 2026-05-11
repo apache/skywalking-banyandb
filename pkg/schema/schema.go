@@ -114,11 +114,10 @@ type Repository interface {
 	DropGroup(groupName string) error
 }
 
-// RevisionRepository extends Repository with revision-query methods used by
-// the write/query gates and the barrier implementation.
+// RevisionRepository extends Repository with per-key revision-query methods
+// used by the write/query gates and the barrier implementation.
 type RevisionRepository interface {
 	Repository
-	LatestModRevision() int64
 	ResourceRevision(kind schema.Kind, group, name string) (int64, bool)
 	IsAbsent(kind schema.Kind, group, name string) bool
 }

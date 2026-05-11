@@ -67,10 +67,10 @@ func sendStreamQuery(
 	return st, nil
 }
 
-// queryGateStreamName is the fixture stream name reused across §4.5 specs.
+// queryGateStreamName is the fixture stream name reused across  specs.
 const queryGateStreamName = "qg_stream"
 
-// Schema query gate smoke tests — §4.5.1 / §4.5.2 / §4.5.3.
+// Schema query gate smoke tests —  /  /
 // Each spec exercises a distinct branch of the per-group ModRevision gate on the
 // query path.
 var _ = g.Describe("Schema query gate", func() {
@@ -84,9 +84,9 @@ var _ = g.Describe("Schema query gate", func() {
 		clients = NewClients(SharedContext.Connection)
 	})
 
-	// §4.5.1: a query carrying a group ModRevision below the cached schema revision
+	// a query carrying a group ModRevision below the cached schema revision
 	// is short-circuited and returns STATUS_EXPIRED_SCHEMA for that group.
-	g.It("returns STATUS_EXPIRED_SCHEMA for stale group ModRevision (§4.5.1)", func() {
+	g.It("returns STATUS_EXPIRED_SCHEMA for stale group ModRevision", func() {
 		groupName := fmt.Sprintf("qg-stale-%d", time.Now().UnixNano())
 		streamName := queryGateStreamName
 
@@ -131,9 +131,9 @@ var _ = g.Describe("Schema query gate", func() {
 		_, _ = clients.GroupClient.Delete(ctx, &databasev1.GroupRegistryServiceDeleteRequest{Group: groupName})
 	})
 
-	// §4.5.2: a query carrying a group ModRevision far ahead of the cache is held
+	// a query carrying a group ModRevision far ahead of the cache is held
 	// until the configured wait duration and then returned with STATUS_SCHEMA_NOT_APPLIED.
-	g.It("returns STATUS_SCHEMA_NOT_APPLIED for ahead group ModRevision that never applies (§4.5.2)", func() {
+	g.It("returns STATUS_SCHEMA_NOT_APPLIED for ahead group ModRevision that never applies", func() {
 		groupName := fmt.Sprintf("qg-ahead-%d", time.Now().UnixNano())
 		streamName := queryGateStreamName
 
@@ -163,9 +163,9 @@ var _ = g.Describe("Schema query gate", func() {
 		_, _ = clients.GroupClient.Delete(ctx, &databasev1.GroupRegistryServiceDeleteRequest{Group: groupName})
 	})
 
-	// §4.5.3: a query whose group ModRevision matches the cached revision passes the gate
+	// a query whose group ModRevision matches the cached revision passes the gate
 	// and returns STATUS_SUCCEED for that group.
-	g.It("passes the gate and returns STATUS_SUCCEED when ModRevision matches cache (§4.5.3)", func() {
+	g.It("passes the gate and returns STATUS_SUCCEED when ModRevision matches cache", func() {
 		groupName := fmt.Sprintf("qg-match-%d", time.Now().UnixNano())
 		streamName := queryGateStreamName
 
@@ -194,9 +194,9 @@ var _ = g.Describe("Schema query gate", func() {
 		_, _ = clients.GroupClient.Delete(ctx, &databasev1.GroupRegistryServiceDeleteRequest{Group: groupName})
 	})
 
-	// §4.5.4: mixed groups — one at current rev (SUCCEED), one stale (EXPIRED_SCHEMA);
+	// mixed groups — one at current rev (SUCCEED), one stale (EXPIRED_SCHEMA);
 	// query short-circuits and returns empty elements.
-	g.It("returns mixed group_statuses and empty elements when one group is stale (§4.5.4)", func() {
+	g.It("returns mixed group_statuses and empty elements when one group is stale", func() {
 		group1 := fmt.Sprintf("qg-mixed1-%d", time.Now().UnixNano())
 		group2 := fmt.Sprintf("qg-mixed2-%d", time.Now().UnixNano())
 		streamName := queryGateStreamName
@@ -288,9 +288,9 @@ var _ = g.Describe("Schema query gate", func() {
 		_, _ = clients.GroupClient.Delete(ctx, &databasev1.GroupRegistryServiceDeleteRequest{Group: group2})
 	})
 
-	// §4.5.5: partial coverage opt-in — group2 not in GroupModRevisions map → ungated.
+	// partial coverage opt-in — group2 not in GroupModRevisions map → ungated.
 	// Query executes; group1 gated (SUCCEED); group2 either absent or SUCCEED in statuses.
-	g.It("executes query when one group is ungated (not in GroupModRevisions) (§4.5.5)", func() {
+	g.It("executes query when one group is ungated (not in GroupModRevisions)", func() {
 		group1 := fmt.Sprintf("qg-partial1-%d", time.Now().UnixNano())
 		group2 := fmt.Sprintf("qg-partial2-%d", time.Now().UnixNano())
 		streamName := queryGateStreamName
