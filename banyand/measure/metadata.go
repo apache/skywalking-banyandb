@@ -247,6 +247,9 @@ func (sr *schemaRepo) OnAddOrUpdate(metadata schema.Metadata) {
 			sr.l.Warn().Err(err).Msg("measure is ignored")
 			return
 		}
+		if subsetWarn := validate.CheckShardingKeySubset(m); subsetWarn != nil {
+			sr.l.Warn().Err(subsetWarn).Str("measure", m.GetMetadata().GetName()).Msg("sharding key is not a subset of entity tags")
+		}
 		sr.SendMetadataEvent(resourceSchema.MetadataEvent{
 			Typ:      resourceSchema.EventAddOrUpdate,
 			Kind:     resourceSchema.EventKindResource,
