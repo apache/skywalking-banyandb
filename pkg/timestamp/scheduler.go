@@ -176,26 +176,36 @@ func (s *Scheduler) Metrics() map[string]*SchedulerMetrics {
 }
 
 type task struct {
-	parentCtx context.Context
-	clock     Clock
-	schedule  cron.Schedule
-	closer    *run.Closer
-	l         *logger.Logger
-	action    SchedulerAction
-	metrics   *SchedulerMetrics
-	name      string
+	// taskCtx is a child of the caller-supplied parent context, derived
+	// via context.WithCancel. SchedulerAction's contract is that its ctx
+	// is canceled when the scheduler is closed; cancelTaskCtx() is what
+	// fulfills that promise (task.close calls it before CloseThenWait).
+	// Cancellation of the parent context still propagates through this
+	// child, so both shutdown paths (caller cancel and Scheduler.Close)
+	// reach long-running actions.
+	taskCtx       context.Context
+	cancelTaskCtx context.CancelFunc
+	clock         Clock
+	schedule      cron.Schedule
+	closer        *run.Closer
+	l             *logger.Logger
+	action        SchedulerAction
+	metrics       *SchedulerMetrics
+	name          string
 }
 
 func newTask(parentCtx context.Context, l *logger.Logger, name string, clock clock.Clock, schedule cron.Schedule, action SchedulerAction) *task {
+	taskCtx, cancel := context.WithCancel(parentCtx)
 	return &task{
-		parentCtx: parentCtx,
-		l:         l,
-		name:      name,
-		clock:     clock,
-		schedule:  schedule,
-		action:    action,
-		closer:    run.NewCloser(0),
-		metrics:   &SchedulerMetrics{},
+		taskCtx:       taskCtx,
+		cancelTaskCtx: cancel,
+		l:             l,
+		name:          name,
+		clock:         clock,
+		schedule:      schedule,
+		action:        action,
+		closer:        run.NewCloser(0),
+		metrics:       &SchedulerMetrics{},
 	}
 }
 
@@ -237,7 +247,7 @@ func (t *task) run() {
 				}()
 				timeoutCh := t.clock.Timer(5 * time.Minute).C
 
-				signalCh := run.GoWithSignal(t.parentCtx, "scheduler-action-"+t.name, t.l,
+				signalCh := run.GoWithSignal(t.taskCtx, "scheduler-action-"+t.name, t.l,
 					func(ctx context.Context) bool {
 						return t.action(ctx, now, t.l)
 					})
@@ -270,6 +280,12 @@ func (t *task) run() {
 }
 
 func (t *task) close() {
+	// Cancel before CloseThenWait so any in-flight SchedulerAction
+	// observing ctx.Done() can unblock and return, which lets the
+	// run() loop's signalCh fire instead of stalling on the 5-minute
+	// timeoutCh. Without this, Scheduler.Close() could pin tasks for
+	// up to 5 minutes even when actions are well-behaved on ctx.
+	t.cancelTaskCtx()
 	t.closer.CloseThenWait()
 }
 

@@ -19,7 +19,6 @@ package cmdsetup
 
 import (
 	"context"
-	"os"
 
 	"github.com/spf13/cobra"
 
@@ -140,6 +139,10 @@ func newLiaisonCmd(runners ...run.Unit) *cobra.Command {
 		Version: version.Build(),
 		Short:   "Run as the liaison server",
 		RunE: func(_ *cobra.Command, _ []string) (err error) {
+			// See standalone.go for the rationale: Cobra short-circuits
+			// PersistentPostRunE on a non-nil RunE error, so we must
+			// drain the artifact sink here.
+			defer ShutdownSupervisor()
 			// Derive from SupervisorContext so that a panic recovered anywhere
 			// in the process, including goroutines spawned via run.Go, fires
 			// cancellation here.
@@ -164,7 +167,7 @@ func newLiaisonCmd(runners ...run.Unit) *cobra.Command {
 			// Spawn our go routines and wait for shutdown.
 			if err := liaisonGroup.Run(runCtx); err != nil {
 				logger.GetLogger().Error().Err(err).Stack().Str("name", liaisonGroup.Name()).Msg("Exit")
-				os.Exit(-1)
+				return err
 			}
 			return nil
 		},

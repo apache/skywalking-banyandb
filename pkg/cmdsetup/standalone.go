@@ -19,7 +19,6 @@ package cmdsetup
 
 import (
 	"context"
-	"os"
 
 	grpcprom "github.com/grpc-ecosystem/go-grpc-middleware/providers/prometheus"
 	"github.com/spf13/cobra"
@@ -112,6 +111,14 @@ func newStandaloneCmd(runners ...run.Unit) *cobra.Command {
 		Version: version.Build(),
 		Short:   "Run as the standalone server",
 		RunE: func(_ *cobra.Command, _ []string) (err error) {
+			// Cobra short-circuits the post-run hooks on a non-nil RunE
+			// return (command.go: `if err := c.RunE(...); err != nil { return err }`),
+			// so PersistentPostRunE in root.go does not fire on the
+			// error path. Drain the artifact sink here so queued panic
+			// records make it to disk before main exits with non-zero.
+			// ShutdownSupervisor is idempotent; the success-path call
+			// in PersistentPostRunE is harmless.
+			defer ShutdownSupervisor()
 			nodeID, err := common.GenerateNode(grpcServer.GetPort(), httpServer.GetPort(), nil,
 				metaSvc.GetSchemaServerPort(), metaSvc.GetSchemaGossipPort())
 			if err != nil {
@@ -124,7 +131,7 @@ func newStandaloneCmd(runners ...run.Unit) *cobra.Command {
 			// cancellation here.
 			if err := standaloneGroup.Run(context.WithValue(SupervisorContext(), common.ContextNodeKey, nodeID)); err != nil {
 				logger.GetLogger().Error().Err(err).Stack().Str("name", standaloneGroup.Name()).Msg("Exit")
-				os.Exit(-1)
+				return err
 			}
 			return nil
 		},
