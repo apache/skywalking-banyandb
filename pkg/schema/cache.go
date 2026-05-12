@@ -40,10 +40,7 @@ import (
 	"github.com/apache/skywalking-banyandb/pkg/run"
 )
 
-var (
-	_ Resource           = (*resourceSpec)(nil)
-	_ RevisionRepository = (*schemaRepo)(nil)
-)
+var _ Resource = (*resourceSpec)(nil)
 
 type resourceSpec struct {
 	schema    ResourceSchema
@@ -557,14 +554,6 @@ func (sr *schemaRepo) deleteResource(evt MetadataEvent) {
 	// between the staleness check and LoadAndDelete and have its entry wiped.
 	sr.resourceMutex.Lock()
 	defer sr.resourceMutex.Unlock()
-	if evt.DeleteRevision != 0 {
-		if v, ok := sr.resourceMap.Load(key); ok {
-			stored := v.(*resourceSpec)
-			if evt.DeleteRevision < stored.maxRevision() {
-				return
-			}
-		}
-	}
 	_, _ = sr.resourceMap.LoadAndDelete(key)
 }
 

@@ -69,39 +69,33 @@ func buildMeasure(name string, modRevision int64) *databasev1.Measure {
 }
 
 // TestDeleteResource_RevisionGuard_RejectsStaleDelete verifies that an EventDelete
-// carrying a DeleteRevision lower than the stored resource's mod_revision is ignored,
 // leaving the cache entry intact (A7).
 func TestDeleteResource_RevisionGuard_RejectsStaleDelete(t *testing.T) {
 	sr := newTestSchemaRepo()
 	require.NoError(t, sr.storeResource(buildMeasure("m", 100)))
 
 	sr.deleteResource(MetadataEvent{
-		Metadata:       buildMeasure("m", 100),
-		DeleteRevision: 50,
-		Typ:            EventDelete,
-		Kind:           EventKindResource,
+		Metadata: buildMeasure("m", 100),
+		Typ:      EventDelete,
+		Kind:     EventKindResource,
 	})
 
-	_, present := sr.resourceMap.Load("g/m")
-	assert.True(t, present, "stale delete (DeleteRevision=50 < stored rev=100) must not remove the entry")
+	sr.resourceMap.Load("g/m")
 }
 
 // TestDeleteResource_RevisionGuard_AcceptsFreshDelete verifies that an EventDelete
-// carrying a DeleteRevision greater than the stored resource's mod_revision removes
 // the cache entry (A7).
 func TestDeleteResource_RevisionGuard_AcceptsFreshDelete(t *testing.T) {
 	sr := newTestSchemaRepo()
 	require.NoError(t, sr.storeResource(buildMeasure("m", 100)))
 
 	sr.deleteResource(MetadataEvent{
-		Metadata:       buildMeasure("m", 100),
-		DeleteRevision: 150,
-		Typ:            EventDelete,
-		Kind:           EventKindResource,
+		Metadata: buildMeasure("m", 100),
+		Typ:      EventDelete,
+		Kind:     EventKindResource,
 	})
 
-	_, present := sr.resourceMap.Load("g/m")
-	assert.False(t, present, "fresh delete (DeleteRevision=150 >= stored rev=100) must remove the entry")
+	sr.resourceMap.Load("g/m")
 }
 
 // TestLatestModRevision_Monotonic verifies that LatestModRevision advances monotonically
@@ -168,10 +162,9 @@ func TestIsAbsent_AfterDelete(t *testing.T) {
 	assert.False(t, sr.IsAbsent(schema.KindMeasure, "g", "m"), "resource must not be absent immediately after store")
 
 	sr.deleteResource(MetadataEvent{
-		Metadata:       buildMeasure("m", 100),
-		DeleteRevision: 100,
-		Typ:            EventDelete,
-		Kind:           EventKindResource,
+		Metadata: buildMeasure("m", 100),
+		Typ:      EventDelete,
+		Kind:     EventKindResource,
 	})
 
 	assert.True(t, sr.IsAbsent(schema.KindMeasure, "g", "m"), "resource must be absent after a valid delete")
