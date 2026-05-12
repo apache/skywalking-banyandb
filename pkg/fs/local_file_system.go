@@ -228,7 +228,88 @@ func (fs *localFileSystem) Write(buffer []byte, name string, permission Mode) (i
 			Message: fmt.Sprintf("Flush file return error, file name: %s,error message: %s", name, err),
 		}
 	}
+	if syncErr := file.Sync(); syncErr != nil {
+		return size, &FileSystemError{
+			Code:    flushError,
+			Message: fmt.Sprintf("Sync file return error, file name: %s, error message: %s", name, syncErr),
+		}
+	}
 
+	return size, nil
+}
+
+// invokeTestHookAfterTmpFsync is a no-op in production. The test build
+// overrides it via pkg/fs/local_file_system_testhook_test.go to simulate a
+// crash between WriteAtomic's fsync(tmp) and rename.
+var invokeTestHookAfterTmpFsync = func() {}
+
+// WriteAtomic writes buffer to name+".tmp", fsyncs it, renames over name, and
+// fsyncs the parent directory. See FileSystem.WriteAtomic for semantics.
+//
+// On a re-tried call after a prior crash mid-rename, a stale ".tmp" sibling
+// from the prior attempt is overwritten via O_TRUNC. The "next-boot
+// inspection" semantics in the FileSystem interface docstring still hold:
+// CleanupLeftoverTmp on the next part open will remove the .tmp once a
+// matching final exists, and a .tmp without its final remains until the
+// next successful WriteAtomic to the same name.
+func (fs *localFileSystem) WriteAtomic(buffer []byte, name string, permission Mode) (int, error) {
+	tmpName := name + ".tmp"
+	parentDir := filepath.Dir(name)
+	file, err := os.OpenFile(tmpName, os.O_RDWR|os.O_CREATE|os.O_TRUNC, os.FileMode(permission))
+	if err != nil {
+		if os.IsPermission(err) {
+			return 0, &FileSystemError{
+				Code:    permissionError,
+				Message: fmt.Sprintf("There is not enough permission, file name: %s, permission: %d, error message: %s", tmpName, permission, err),
+			}
+		}
+		return 0, &FileSystemError{
+			Code:    otherError,
+			Message: fmt.Sprintf("Create tmp file return error, file name: %s, error message: %s", tmpName, err),
+		}
+	}
+	size, writeErr := file.Write(buffer)
+	if writeErr != nil {
+		_ = file.Close()
+		_ = os.Remove(tmpName)
+		return size, &FileSystemError{
+			Code:    flushError,
+			Message: fmt.Sprintf("Write tmp file return error, file name: %s, error message: %s", tmpName, writeErr),
+		}
+	}
+	if syncErr := file.Sync(); syncErr != nil {
+		_ = file.Close()
+		_ = os.Remove(tmpName)
+		return size, &FileSystemError{
+			Code:    flushError,
+			Message: fmt.Sprintf("Sync tmp file return error, file name: %s, error message: %s", tmpName, syncErr),
+		}
+	}
+	if closeErr := file.Close(); closeErr != nil {
+		_ = os.Remove(tmpName)
+		return size, &FileSystemError{
+			Code:    closeError,
+			Message: fmt.Sprintf("Close tmp file return error, file name: %s, error message: %s", tmpName, closeErr),
+		}
+	}
+	invokeTestHookAfterTmpFsync()
+	if renameErr := os.Rename(tmpName, name); renameErr != nil {
+		// Do NOT remove the .tmp on rename failure: it is fully written
+		// and fsynced — the only durable record of what we tried to
+		// commit — and an operator may need it for forensic recovery.
+		// The next successful WriteAtomic call to the same name will
+		// overwrite it via O_TRUNC, so no orphan accumulates.
+		return size, &FileSystemError{
+			Code:    otherError,
+			Message: fmt.Sprintf("Rename %s -> %s return error: %s", tmpName, name, renameErr),
+		}
+	}
+	if err := syncDir(parentDir); err != nil {
+		return size, &FileSystemError{
+			Code:    flushError,
+			Message: fmt.Sprintf("Sync parent dir return error, dir name: %s, error message: %s", parentDir, err),
+		}
+	}
 	return size, nil
 }
 
@@ -661,9 +742,21 @@ func (w *seqWriter) Close() error {
 			Message: fmt.Sprintf("Flush File error, directory name: %s, error message: %s", w.fileName, err),
 		}
 	}
-
-	if w.file != nil && !w.skipFadvise {
-		_ = SyncAndDropCache(w.file.Fd(), 0, 0)
+	if w.file == nil {
+		return nil
+	}
+	if !w.skipFadvise {
+		if syncErr := SyncAndDropCache(w.file.Fd(), 0, 0); syncErr != nil {
+			return &FileSystemError{
+				Code:    flushError,
+				Message: fmt.Sprintf("Sync File error, directory name: %s, error message: %s", w.fileName, syncErr),
+			}
+		}
+	} else if syncErr := w.file.Sync(); syncErr != nil {
+		return &FileSystemError{
+			Code:    flushError,
+			Message: fmt.Sprintf("Sync File error, directory name: %s, error message: %s", w.fileName, syncErr),
+		}
 	}
 	return nil
 }

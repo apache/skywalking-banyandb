@@ -18,14 +18,21 @@
 package lifecycle
 
 import (
+	"context"
+	"net"
 	"os"
 	"path/filepath"
+	"sync"
 	"testing"
 	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"google.golang.org/grpc"
+	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/status"
 
+	fodcv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/fodc/v1"
 	"github.com/apache/skywalking-banyandb/pkg/logger"
 )
 
@@ -34,6 +41,73 @@ func initTestLogger(t *testing.T) *logger.Logger {
 	err := logger.Init(logger.Logging{Env: "dev", Level: "debug"})
 	require.NoError(t, err)
 	return logger.GetLogger("test", "lifecycle")
+}
+
+// fakeLifecycleService is a programmable test double for GroupLifecycleService.InspectAll.
+// Each registered behavior is consumed in order; the call counter lets tests assert how
+// many times Collect actually reached the gRPC server (i.e. whether the cache served the
+// request without an RPC).
+type fakeLifecycleService struct {
+	fodcv1.UnimplementedGroupLifecycleServiceServer
+	behaviors []func() (*fodcv1.InspectAllResponse, error)
+	mu        sync.Mutex
+	callCount int
+}
+
+func (f *fakeLifecycleService) InspectAll(_ context.Context, _ *fodcv1.InspectAllRequest) (*fodcv1.InspectAllResponse, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if f.callCount >= len(f.behaviors) {
+		f.callCount++
+		return nil, status.Error(codes.Internal, "fakeLifecycleService: behavior list exhausted")
+	}
+	behavior := f.behaviors[f.callCount]
+	f.callCount++
+	return behavior()
+}
+
+func (f *fakeLifecycleService) calls() int {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return f.callCount
+}
+
+func returnGroups(groups []*fodcv1.GroupLifecycleInfo) func() (*fodcv1.InspectAllResponse, error) {
+	return func() (*fodcv1.InspectAllResponse, error) {
+		return &fodcv1.InspectAllResponse{Groups: groups}, nil
+	}
+}
+
+func returnError(code codes.Code, msg string) func() (*fodcv1.InspectAllResponse, error) {
+	return func() (*fodcv1.InspectAllResponse, error) {
+		return nil, status.Error(code, msg)
+	}
+}
+
+// startLocalServer spins up a real gRPC server on a random localhost port hosting the
+// supplied fake and returns the listen address. The server is torn down via t.Cleanup.
+func startLocalServer(t *testing.T, fake *fakeLifecycleService) string {
+	t.Helper()
+	lis, err := net.Listen("tcp", "127.0.0.1:0")
+	require.NoError(t, err)
+	srv := grpc.NewServer()
+	fodcv1.RegisterGroupLifecycleServiceServer(srv, fake)
+	go func() {
+		_ = srv.Serve(lis)
+	}()
+	t.Cleanup(srv.Stop)
+	return lis.Addr().String()
+}
+
+// newCollectorForFake constructs a Collector wired to a fresh local gRPC server backed by fake.
+func newCollectorForFake(t *testing.T, fake *fakeLifecycleService, cacheTTL time.Duration) *Collector {
+	t.Helper()
+	addr := startLocalServer(t, fake)
+	return NewCollector(initTestLogger(t), addr, t.TempDir(), cacheTTL)
+}
+
+func sampleGroup(name string) *fodcv1.GroupLifecycleInfo {
+	return &fodcv1.GroupLifecycleInfo{Name: name}
 }
 
 func TestNewCollector(t *testing.T) {
@@ -51,11 +125,10 @@ func TestCollector_ReadReportFiles_EmptyDir(t *testing.T) {
 	assert.Empty(t, reports)
 }
 
-func TestCollector_Collect(t *testing.T) {
+func TestCollector_Collect_NoGRPC(t *testing.T) {
 	log := initTestLogger(t)
 	collector := NewCollector(log, "", "", 0)
-	ctx := t.Context()
-	data, err := collector.Collect(ctx)
+	data, err := collector.Collect(t.Context())
 	require.NoError(t, err)
 	require.NotNil(t, data)
 	assert.NotNil(t, collector.currentData)
@@ -88,20 +161,19 @@ func TestCollector_CacheTTL(t *testing.T) {
 	assert.NotSame(t, data1, data3)
 }
 
-func TestCollector_GrpcUnimplemented_SkipsFutureCalls(t *testing.T) {
+func TestCollector_ZeroTTL_AlwaysRefreshes(t *testing.T) {
 	log := initTestLogger(t)
-	collector := NewCollector(log, "localhost:0", "", 0)
+	collector := NewCollector(log, "", "", 0)
+	ctx := t.Context()
 
-	assert.False(t, collector.grpcUnimplemented.Load())
+	data1, err := collector.Collect(ctx)
+	require.NoError(t, err)
+	require.NotNil(t, data1)
 
-	groups := collector.collectGroups(t.Context())
-	assert.Nil(t, groups)
-	assert.False(t, collector.grpcUnimplemented.Load())
-
-	collector.grpcUnimplemented.Store(true)
-	groups = collector.collectGroups(t.Context())
-	assert.Nil(t, groups)
-	assert.True(t, collector.grpcUnimplemented.Load())
+	data2, err := collector.Collect(ctx)
+	require.NoError(t, err)
+	require.NotNil(t, data2)
+	assert.NotSame(t, data1, data2)
 }
 
 func TestCollector_ReadReportFiles_MaxFiles(t *testing.T) {
@@ -109,7 +181,6 @@ func TestCollector_ReadReportFiles_MaxFiles(t *testing.T) {
 	dir := t.TempDir()
 	collector := NewCollector(log, "", dir, 0)
 
-	// Create 7 files with timestamp-like names so sort order is predictable
 	for idx, name := range []string{
 		"2026-03-20.json",
 		"2026-03-21.json",
@@ -165,18 +236,172 @@ func TestCollector_ReadReportFiles_OversizedFile(t *testing.T) {
 	assert.Equal(t, "2026-03-26.json", reports[0].Filename)
 }
 
-func TestCollector_ZeroTTL_AlwaysRefreshes(t *testing.T) {
+func TestCollectGroups_NoGRPCAddrShortCircuits(t *testing.T) {
 	log := initTestLogger(t)
 	collector := NewCollector(log, "", "", 0)
+	groups, err := collector.collectGroups(t.Context())
+	require.NoError(t, err)
+	assert.Nil(t, groups)
+}
+
+func TestCollectGroups_UnimplementedSetsFlagAndCachesNil(t *testing.T) {
+	fake := &fakeLifecycleService{
+		behaviors: []func() (*fodcv1.InspectAllResponse, error){
+			returnError(codes.Unimplemented, "not supported"),
+		},
+	}
+	collector := newCollectorForFake(t, fake, time.Minute)
+
+	groups, err := collector.collectGroups(t.Context())
+	require.NoError(t, err)
+	assert.Nil(t, groups)
+	assert.True(t, collector.grpcUnimplemented.Load())
+
+	// Subsequent direct calls short-circuit without touching the server.
+	groups2, err := collector.collectGroups(t.Context())
+	require.NoError(t, err)
+	assert.Nil(t, groups2)
+	assert.Equal(t, 1, fake.calls())
+}
+
+func TestCollectGroups_NilResponseGroupsBecomesEmptySlice(t *testing.T) {
+	fake := &fakeLifecycleService{
+		behaviors: []func() (*fodcv1.InspectAllResponse, error){
+			returnGroups(nil),
+		},
+	}
+	collector := newCollectorForFake(t, fake, time.Minute)
+
+	groups, err := collector.collectGroups(t.Context())
+	require.NoError(t, err)
+	require.NotNil(t, groups, "successful InspectAll with empty groups must return non-nil empty slice, not nil")
+	assert.Empty(t, groups)
+}
+
+func TestCollect_CachesSuccessfulResult(t *testing.T) {
+	fake := &fakeLifecycleService{
+		behaviors: []func() (*fodcv1.InspectAllResponse, error){
+			returnGroups([]*fodcv1.GroupLifecycleInfo{sampleGroup("g1"), sampleGroup("g2")}),
+		},
+	}
+	collector := newCollectorForFake(t, fake, time.Minute)
 	ctx := t.Context()
 
 	data1, err := collector.Collect(ctx)
 	require.NoError(t, err)
-	require.NotNil(t, data1)
+	require.Len(t, data1.Groups, 2)
 
 	// With zero TTL, every call should re-collect
 	data2, err := collector.Collect(ctx)
 	require.NoError(t, err)
-	require.NotNil(t, data2)
-	assert.NotSame(t, data1, data2)
+	assert.Same(t, data1, data2, "second Collect within TTL must return the cached pointer")
+	assert.Equal(t, 1, fake.calls(), "InspectAll must not be invoked on cache hit")
+}
+
+func TestCollect_DoesNotCacheTransientFailure(t *testing.T) {
+	fake := &fakeLifecycleService{
+		behaviors: []func() (*fodcv1.InspectAllResponse, error){
+			returnError(codes.DeadlineExceeded, "simulated timeout"),
+			returnGroups([]*fodcv1.GroupLifecycleInfo{sampleGroup("g1")}),
+		},
+	}
+	collector := newCollectorForFake(t, fake, 10*time.Minute)
+	ctx := t.Context()
+
+	data1, err := collector.Collect(ctx)
+	require.Error(t, err, "transient failure must propagate to caller")
+	assert.Nil(t, data1, "no LifecycleData on failure")
+
+	collector.mu.RLock()
+	cachedData := collector.currentData
+	cachedTime := collector.lastCollectTime
+	collector.mu.RUnlock()
+	assert.Nil(t, cachedData, "transient failure must not write to cache")
+	assert.True(t, cachedTime.IsZero(), "lastCollectTime must remain zero after transient failure")
+
+	data2, err := collector.Collect(ctx)
+	require.NoError(t, err)
+	require.Len(t, data2.Groups, 1, "next call must retry InspectAll, not return stale empty")
+	assert.Equal(t, "g1", data2.Groups[0].Name)
+	assert.Equal(t, 2, fake.calls(), "InspectAll must be invoked twice")
+}
+
+func TestCollect_FailurePropagatesError(t *testing.T) {
+	successGroups := []*fodcv1.GroupLifecycleInfo{sampleGroup("g1"), sampleGroup("g2"), sampleGroup("g3")}
+	fake := &fakeLifecycleService{
+		behaviors: []func() (*fodcv1.InspectAllResponse, error){
+			returnGroups(successGroups),
+			returnError(codes.DeadlineExceeded, "simulated timeout"),
+		},
+	}
+	collector := newCollectorForFake(t, fake, 0) // zero TTL forces both calls to hit the server
+	ctx := t.Context()
+
+	data1, err := collector.Collect(ctx)
+	require.NoError(t, err)
+	require.Len(t, data1.Groups, 3)
+
+	data2, err := collector.Collect(ctx)
+	require.Error(t, err, "transient failure after a successful collect must still surface as an error")
+	assert.Nil(t, data2, "caller must not receive a LifecycleData payload on failure")
+	assert.Equal(t, 2, fake.calls())
+}
+
+func TestCollect_TransientFailureDoesNotAdvanceLastCollectTime(t *testing.T) {
+	fake := &fakeLifecycleService{
+		behaviors: []func() (*fodcv1.InspectAllResponse, error){
+			returnGroups([]*fodcv1.GroupLifecycleInfo{sampleGroup("g1")}),
+			returnError(codes.Unavailable, "simulated outage"),
+			returnGroups([]*fodcv1.GroupLifecycleInfo{sampleGroup("g1"), sampleGroup("g2")}),
+		},
+	}
+	collector := newCollectorForFake(t, fake, time.Hour)
+	ctx := t.Context()
+
+	now := time.Unix(1_000_000_000, 0)
+	collector.nowFunc = func() time.Time { return now }
+
+	_, err := collector.Collect(ctx)
+	require.NoError(t, err)
+	collector.mu.RLock()
+	successTime := collector.lastCollectTime
+	collector.mu.RUnlock()
+	assert.Equal(t, now, successTime)
+
+	now = now.Add(2 * time.Hour) // expire the cache to force a new RPC
+	_, err = collector.Collect(ctx)
+	require.Error(t, err, "transient failure must surface as an error to the caller")
+	collector.mu.RLock()
+	failureTime := collector.lastCollectTime
+	collector.mu.RUnlock()
+	assert.Equal(t, successTime, failureTime, "transient failure must not advance lastCollectTime")
+
+	data, err := collector.Collect(ctx)
+	require.NoError(t, err)
+	require.Len(t, data.Groups, 2, "after recovery, fresh groups must be cached")
+	assert.Equal(t, 3, fake.calls())
+}
+
+func TestCollect_UnimplementedCachesAndStops(t *testing.T) {
+	fake := &fakeLifecycleService{
+		behaviors: []func() (*fodcv1.InspectAllResponse, error){
+			returnError(codes.Unimplemented, "not supported"),
+		},
+	}
+	collector := newCollectorForFake(t, fake, 10*time.Minute)
+	ctx := t.Context()
+
+	data1, err := collector.Collect(ctx)
+	require.NoError(t, err)
+	assert.Nil(t, data1.Groups)
+	assert.True(t, collector.grpcUnimplemented.Load())
+
+	collector.mu.RLock()
+	require.NotNil(t, collector.currentData, "Unimplemented is a known terminal state and must be cached")
+	collector.mu.RUnlock()
+
+	data2, err := collector.Collect(ctx)
+	require.NoError(t, err)
+	assert.Same(t, data1, data2, "subsequent calls within TTL must hit cache")
+	assert.Equal(t, 1, fake.calls(), "Unimplemented must short-circuit subsequent RPCs")
 }

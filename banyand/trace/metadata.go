@@ -41,8 +41,13 @@ import (
 	"github.com/apache/skywalking-banyandb/pkg/logger"
 	"github.com/apache/skywalking-banyandb/pkg/meter"
 	resourceSchema "github.com/apache/skywalking-banyandb/pkg/schema"
+	"github.com/apache/skywalking-banyandb/pkg/schema/registry"
 	"github.com/apache/skywalking-banyandb/pkg/timestamp"
 )
+
+// traceRegistryKinds is the kind set the trace schemaRepo registers with the
+// per-node NodeRepoRegistry.
+const traceRegistryKinds = schema.KindGroup | schema.KindTrace | schema.KindIndexRule | schema.KindIndexRuleBinding
 
 var (
 	metadataScope = traceScope.SubScope("metadata")
@@ -81,6 +86,7 @@ func newSchemaRepo(path string, svc *standalone, nodeLabels map[string]string, n
 		),
 	}
 	sr.start()
+	sr.registerWithNodeRepo()
 	return sr
 }
 
@@ -101,6 +107,7 @@ func newLiaisonSchemaRepo(path string, svc *liaison, traceDataNodeRegistry grpc.
 		sr.onGroupDelete = svc.handoffCtrl.deletePartsByGroup
 	}
 	sr.start()
+	sr.registerWithNodeRepo()
 	return sr
 }
 
@@ -109,6 +116,18 @@ func (sr *schemaRepo) start() {
 	sr.metadata.
 		RegisterHandler("trace", schema.KindGroup|schema.KindTrace|schema.KindIndexRuleBinding|schema.KindIndexRule,
 			sr)
+}
+
+// registerWithNodeRepo joins this schemaRepo to the per-node aggregator so the
+// cluster barrier and NodeSchemaStatusService route Group/Trace/IndexRule/
+// IndexRuleBinding lookups through the same cache the executor consults via
+// LoadGroup / LoadResource.
+func (sr *schemaRepo) registerWithNodeRepo() {
+	metaSvc, ok := sr.metadata.(metadata.Service)
+	if !ok {
+		return
+	}
+	registry.MaybeRegister(metaSvc.NodeRepoRegistry(), traceRegistryKinds, sr.Repository)
 }
 
 func (sr *schemaRepo) Trace(metadata *commonv1.Metadata) (*trace, bool) {
@@ -355,13 +374,14 @@ func (sr *schemaRepo) collectShardInfo(ctx context.Context, table any, shardID u
 		}
 	}
 	defer snapshot.decRef()
-	var totalCount, compressedSize, uncompressedSize, partCount uint64
+	var totalCount, compressedSize, uncompressedSize, partCount, filePartCount uint64
 	for _, pw := range snapshot.parts {
 		if pw.p != nil {
 			totalCount += pw.p.partMetadata.TotalCount
 			compressedSize += pw.p.partMetadata.CompressedSizeBytes
 			uncompressedSize += pw.p.partMetadata.UncompressedSpanSizeBytes
 			partCount++
+			filePartCount++
 		} else if pw.mp != nil {
 			totalCount += pw.mp.partMetadata.TotalCount
 			compressedSize += pw.mp.partMetadata.CompressedSizeBytes
@@ -377,6 +397,7 @@ func (sr *schemaRepo) collectShardInfo(ctx context.Context, table any, shardID u
 		PartCount:         int64(partCount),
 		InvertedIndexInfo: &databasev1.InvertedIndexInfo{},
 		SidxInfo:          sidxInfo,
+		FilePartCount:     int64(filePartCount),
 	}
 }
 

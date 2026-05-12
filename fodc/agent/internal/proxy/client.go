@@ -130,7 +130,9 @@ func (c *Client) Connect(ctx context.Context) error {
 	c.streamsMu.Unlock()
 
 	if wasDisconnected {
-		c.heartbeatWg.Wait()
+		if !waitWaitGroupWithTimeout(&c.heartbeatWg, heartbeatWaitTimeout) {
+			c.logger.Warn().Msg("Heartbeat goroutine did not exit in time during Connect, proceeding anyway")
+		}
 	}
 
 	c.streamsMu.Lock()
@@ -693,8 +695,11 @@ func (c *Client) sendFilteredMetrics(
 	return nil
 }
 
-// SendHeartbeat sends heartbeat to Proxy.
-func (c *Client) SendHeartbeat(_ context.Context) error {
+// SendHeartbeat sends heartbeat to Proxy. The provided context bounds the wait so that a
+// stream whose Send is wedged (for example, after the proxy entered graceful_stop and the
+// underlying TCP write queue is no longer being drained) cannot pin the heartbeat goroutine
+// indefinitely.
+func (c *Client) SendHeartbeat(ctx context.Context) error {
 	c.streamsMu.RLock()
 	if c.disconnected || c.registrationStream == nil {
 		c.streamsMu.RUnlock()
@@ -710,7 +715,23 @@ func (c *Client) SendHeartbeat(_ context.Context) error {
 		ContainerNames: c.containerNames,
 	}
 
-	if sendErr := registrationStream.Send(req); sendErr != nil {
+	// gRPC client-stream Send does not accept a context, so wrap it in a goroutine and
+	// race the result against ctx.Done(). When ctx fires first the in-flight Send is
+	// orphaned. The leak is bounded: every reconnect/cleanupStreams/Disconnect path
+	// closes the registration stream after waiting on heartbeatWg with bounded timeout,
+	// which forces Send to return so the orphan goroutine can write to the (buffered)
+	// channel and exit. Without an upstream tear-down the orphan would persist, so the
+	// reliability of the heartbeatWaitTimeout-bounded cleanup paths is load-bearing here.
+	sendErrCh := make(chan error, 1)
+	go func() { sendErrCh <- registrationStream.Send(req) }()
+
+	var sendErr error
+	select {
+	case sendErr = <-sendErrCh:
+	case <-ctx.Done():
+		return fmt.Errorf("heartbeat send aborted: %w", ctx.Err())
+	}
+	if sendErr != nil {
 		// Check if error is due to stream being closed/disconnected
 		if errors.Is(sendErr, io.EOF) || errors.Is(sendErr, context.Canceled) {
 			return fmt.Errorf("registration stream closed")
@@ -738,15 +759,11 @@ func (c *Client) cleanupStreams() {
 	c.stopCh = make(chan struct{})
 	c.streamsMu.Unlock()
 
-	if oldStopCh != nil {
-		select {
-		case <-oldStopCh:
-		default:
-			close(oldStopCh)
-		}
-	}
+	safeClose(oldStopCh)
 
-	c.heartbeatWg.Wait()
+	if !waitWaitGroupWithTimeout(&c.heartbeatWg, heartbeatWaitTimeout) {
+		c.logger.Warn().Msg("Heartbeat goroutine did not exit in time during cleanupStreams, proceeding anyway")
+	}
 
 	c.streamsMu.Lock()
 	if c.registrationStream != nil {
@@ -798,8 +815,11 @@ func (c *Client) Disconnect() error {
 
 	c.streamsMu.Unlock()
 
-	// Wait for heartbeat goroutine to exit before closing streams
-	c.heartbeatWg.Wait()
+	// Wait for heartbeat goroutine to exit before closing streams. Bounded so a wedged
+	// in-flight Send cannot keep Disconnect from progressing.
+	if !waitWaitGroupWithTimeout(&c.heartbeatWg, heartbeatWaitTimeout) {
+		c.logger.Warn().Msg("Heartbeat goroutine did not exit in time during Disconnect, proceeding anyway")
+	}
 
 	c.streamsMu.Lock()
 	if c.registrationStream != nil {
@@ -1017,15 +1037,22 @@ func (c *Client) reconnect(ctx context.Context) {
 		c.heartbeatTicker = nil
 	}
 
+	// Swap the stop channel under the lock so subsequent callers see the new one, then
+	// release the lock and close the old channel from outside the critical section.
+	// This is what allows the heartbeat goroutine to exit via <-stopCh BEFORE we wait on
+	// heartbeatWg; closing stopCh AFTER the wait (the previous behavior) deadlocks any
+	// heartbeat goroutine that is parked on the select.
+	oldStopCh := c.stopCh
+	c.stopCh = make(chan struct{})
 	c.streamsMu.Unlock()
 
-	c.heartbeatWg.Wait()
-	c.streamsMu.Lock()
+	safeClose(oldStopCh)
 
-	if !c.disconnected {
-		close(c.stopCh)
+	if !waitWaitGroupWithTimeout(&c.heartbeatWg, heartbeatWaitTimeout) {
+		c.logger.Warn().Msg("Heartbeat goroutine did not exit in time during reconnect, proceeding anyway")
 	}
-	c.stopCh = make(chan struct{})
+
+	c.streamsMu.Lock()
 	if c.registrationStream != nil {
 		_ = c.registrationStream.CloseSend()
 		c.registrationStream = nil

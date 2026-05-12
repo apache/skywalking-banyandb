@@ -39,6 +39,20 @@ import (
 // merge/flush load can take several seconds) while still bounding the call.
 const inspectBroadcastTimeout = 30 * time.Second
 
+// Prefixes used by every producer that writes into
+// GroupLifecycleInfo.errors so downstream consumers can categorize
+// failures via a stable prefix match. The full vocabulary lives here:
+// BroadcastErrorPrefix / FutureErrorPrefix / NodeErrorPrefix are written
+// by broadcastCollectDataInfo below; TopLevelErrorPrefix is written by
+// the InspectAll RPC handler in banyand/queue/sub/group_lifecycle.go,
+// which observes the top-level error returned by CollectDataInfo.
+const (
+	BroadcastErrorPrefix = "broadcast failed: "
+	FutureErrorPrefix    = "future error: "
+	NodeErrorPrefix      = "node error: "
+	TopLevelErrorPrefix  = "top-level: "
+)
+
 // GroupGetter provides method to get group metadata.
 type GroupGetter interface {
 	GetGroup(ctx context.Context, group string) (*commonv1.Group, error)
@@ -72,22 +86,38 @@ func NewInfoCollectorRegistry(l *logger.Logger, groupGetter GroupGetter) *InfoCo
 	}
 }
 
-// CollectDataInfo collects data information from both local and remote data nodes.
-func (icr *InfoCollectorRegistry) CollectDataInfo(ctx context.Context, group string) ([]*databasev1.DataInfo, error) {
+// CollectDataInfo collects data information from both local and remote data
+// nodes. Returns the aggregated DataInfo slice plus a separate slice of
+// per-node collection errors observed during broadcast (broadcast failure,
+// future errors, listener-side common.Error responses); the two slices
+// are independent -- the errors slice only contains failures and is not
+// positionally aligned with DataInfo. The error return is reserved for
+// top-level failures that prevent any aggregation (GetGroup failure,
+// local collector failure, unsupported catalog).
+func (icr *InfoCollectorRegistry) CollectDataInfo(ctx context.Context, group string) ([]*databasev1.DataInfo, []string, error) {
 	g, getErr := icr.groupGetter.GetGroup(ctx, group)
 	if getErr != nil {
-		return nil, getErr
+		return nil, nil, getErr
+	}
+	// PROPERTY groups are key-value metadata: no DataInfoCollector is
+	// registered for them and no Topic*CollectDataInfo broadcast applies.
+	// Skip the entire pipeline so the inspector reports nothing instead
+	// of falling into the unsupported-catalog default branch. Return a
+	// non-nil empty slice to match the shape of every other success path
+	// in this method (see localInfoList and broadcastCollectDataInfo).
+	if g.Catalog == commonv1.Catalog_CATALOG_PROPERTY {
+		return []*databasev1.DataInfo{}, nil, nil
 	}
 	localInfo, localErr := icr.collectDataInfoLocal(ctx, g.Catalog, group)
 	if localErr != nil {
-		return nil, localErr
+		return nil, nil, localErr
 	}
 	localInfoList := []*databasev1.DataInfo{}
 	if localInfo != nil {
 		localInfoList = []*databasev1.DataInfo{localInfo}
 	}
 	if icr.dataBroadcaster == nil {
-		return localInfoList, nil
+		return localInfoList, nil, nil
 	}
 
 	var topic bus.Topic
@@ -99,25 +129,27 @@ func (icr *InfoCollectorRegistry) CollectDataInfo(ctx context.Context, group str
 	case commonv1.Catalog_CATALOG_TRACE:
 		topic = data.TopicTraceCollectDataInfo
 	default:
-		return nil, fmt.Errorf("unsupported catalog type: %v", g.Catalog)
+		return nil, nil, fmt.Errorf("unsupported catalog type: %v", g.Catalog)
 	}
-	remoteInfo := icr.broadcastCollectDataInfo(topic, group)
-	return append(localInfoList, remoteInfo...), nil
+	remoteInfo, collectionErrors := icr.broadcastCollectDataInfo(topic, group)
+	return append(localInfoList, remoteInfo...), collectionErrors, nil
 }
 
-func (icr *InfoCollectorRegistry) broadcastCollectDataInfo(topic bus.Topic, group string) []*databasev1.DataInfo {
+func (icr *InfoCollectorRegistry) broadcastCollectDataInfo(topic bus.Topic, group string) ([]*databasev1.DataInfo, []string) {
 	message := bus.NewMessage(bus.MessageID(time.Now().UnixNano()), &databasev1.GroupRegistryServiceInspectRequest{Group: group})
 	futures, broadcastErr := icr.dataBroadcaster.Broadcast(inspectBroadcastTimeout, topic, message)
 	if broadcastErr != nil {
 		icr.l.Warn().Err(broadcastErr).Str("group", group).Msg("failed to broadcast collect data info request")
-		return []*databasev1.DataInfo{}
+		return []*databasev1.DataInfo{}, []string{BroadcastErrorPrefix + broadcastErr.Error()}
 	}
 
 	dataInfoList := make([]*databasev1.DataInfo, 0, len(futures))
+	var collectionErrors []string
 	for _, future := range futures {
 		msg, getErr := future.Get()
 		if getErr != nil {
 			icr.l.Warn().Err(getErr).Str("group", group).Msg("failed to get collect data info response")
+			collectionErrors = append(collectionErrors, FutureErrorPrefix+getErr.Error())
 			continue
 		}
 		msgData := msg.Data()
@@ -128,9 +160,10 @@ func (icr *InfoCollectorRegistry) broadcastCollectDataInfo(topic bus.Topic, grou
 			}
 		case *common.Error:
 			icr.l.Warn().Str("error", d.Error()).Str("group", group).Msg("error collecting data info from node")
+			collectionErrors = append(collectionErrors, NodeErrorPrefix+d.Error())
 		}
 	}
-	return dataInfoList
+	return dataInfoList, collectionErrors
 }
 
 func (icr *InfoCollectorRegistry) collectDataInfoLocal(ctx context.Context, catalog commonv1.Catalog, group string) (*databasev1.DataInfo, error) {
@@ -148,6 +181,15 @@ func (icr *InfoCollectorRegistry) CollectLiaisonInfo(ctx context.Context, group 
 	g, getErr := icr.groupGetter.GetGroup(ctx, group)
 	if getErr != nil {
 		return nil, getErr
+	}
+	// PROPERTY groups are key-value metadata: no LiaisonInfoCollector is
+	// registered for them and no Topic*CollectLiaisonInfo broadcast applies.
+	// Skip the entire pipeline so the inspector reports nothing instead of
+	// falling into the unsupported-catalog default branch. Return a non-nil
+	// empty slice to match the shape of every other success path in this
+	// method (see localInfoList and broadcastCollectLiaisonInfo).
+	if g.Catalog == commonv1.Catalog_CATALOG_PROPERTY {
+		return []*databasev1.LiaisonInfo{}, nil
 	}
 	localInfo, localErr := icr.collectLiaisonInfoLocal(ctx, g.Catalog, group)
 	if localErr != nil {

@@ -781,3 +781,251 @@ func TestHandleClusterLifecycle_NoLifecycleManager(t *testing.T) {
 
 	assert.Equal(t, http.StatusServiceUnavailable, resp.Code)
 }
+
+// TestHandleClusterLifecycle_NoAgents_FlagsErrorInBody reproduces the bug where the proxy
+// silently returns 200 + an empty payload when no agents are registered. This makes the
+// caller (e.g. the SRE inspection agent) unable to distinguish two semantically very
+// different states:
+//   - the BanyanDB cluster genuinely has no groups (a real cluster-side problem); or
+//   - the FODC proxy lost all of its agents (an infrastructure-layer outage caused by a
+//     proxy pod restart, every agent stuck on reconnect, etc.).
+//
+// In production the second case is what triggered the lifecycle critical alert, but the
+// HTTP layer presented it identically to the first.
+//
+// Pre-fix behavior: handleClusterLifecycle writes 200 with body
+// `{"groups":[],"lifecycle_statuses":[]}` and no way to tell the two cases apart.
+// Post-fix behavior: HTTP status is still 200, but the body now carries an "error" field
+// when agent_summary reports total=0 or responded=0, plus the agent_summary itself.
+func TestHandleClusterLifecycle_NoAgents_FlagsErrorInBody(t *testing.T) {
+	initTestLogger(t)
+	testLogger := logger.GetLogger("test", "api")
+	testRegistry := registry.NewAgentRegistry(testLogger, 5*time.Second, 10*time.Second, 100)
+	defer testRegistry.Stop()
+	mockSender := &mockRequestSender{}
+	aggregator := metrics.NewAggregator(testRegistry, mockSender, testLogger)
+
+	mockLifecycleRequester := &mockLifecycleDataRequester{
+		dataByAgent: make(map[string]*fodcv1.LifecycleData),
+		podByAgent:  make(map[string]string),
+	}
+	lifecycleMgr := lifecycle.NewManager(testRegistry, mockLifecycleRequester, testLogger)
+	mockLifecycleRequester.lifecycleMgr = lifecycleMgr
+
+	server := NewServer(aggregator, nil, lifecycleMgr, testRegistry, testLogger)
+
+	req := httptest.NewRequest(http.MethodGet, "/cluster/lifecycle", nil)
+	resp := httptest.NewRecorder()
+	server.handleClusterLifecycle(resp, req)
+
+	assert.Equal(t, http.StatusOK, resp.Code, "status code stays 200 even when zero agents are registered")
+
+	var body map[string]interface{}
+	require.NoError(t, json.NewDecoder(resp.Body).Decode(&body))
+
+	errMsg, hasError := body["error"]
+	assert.Truef(t, hasError, "body must include an error field when zero agents are registered, got: %v", body)
+	assert.Containsf(t, errMsg, "FODC unavailable",
+		"error field should describe the infrastructure-layer failure, got: %v", errMsg)
+
+	summary, hasSummary := body["agent_summary"].(map[string]interface{})
+	require.Truef(t, hasSummary, "body must include agent_summary, got: %v", body)
+	assert.EqualValues(t, 0, summary["total"], "agent_summary.total should be 0 when no agents are registered")
+	assert.EqualValues(t, 0, summary["responded"], "agent_summary.responded should be 0 when no agents are registered")
+}
+
+// runLifecycleHandlerWithGroup wires up a lifecycle manager backed by a single agent that
+// reports the supplied group, invokes the HTTP handler, and returns the parsed response
+// body so callers can inspect raw JSON keys.
+func runLifecycleHandlerWithGroup(t *testing.T, group *fodcv1.GroupLifecycleInfo) map[string]interface{} {
+	t.Helper()
+	initTestLogger(t)
+	testLogger := logger.GetLogger("test", "api")
+	testRegistry := registry.NewAgentRegistry(testLogger, 5*time.Second, 10*time.Second, 100)
+	t.Cleanup(testRegistry.Stop)
+	mockSender := &mockRequestSender{}
+	aggregator := metrics.NewAggregator(testRegistry, mockSender, testLogger)
+
+	mockLifecycleRequester := &mockLifecycleDataRequester{
+		dataByAgent: make(map[string]*fodcv1.LifecycleData),
+		podByAgent:  make(map[string]string),
+	}
+	lifecycleMgr := lifecycle.NewManager(testRegistry, mockLifecycleRequester, testLogger)
+	mockLifecycleRequester.lifecycleMgr = lifecycleMgr
+
+	identity := registry.AgentIdentity{
+		PodName:        "test-pod-1",
+		Role:           "datanode",
+		ContainerNames: []string{"banyandb"},
+	}
+	agentID, registerErr := testRegistry.RegisterAgent(context.Background(), identity)
+	require.NoError(t, registerErr)
+
+	mockLifecycleRequester.dataByAgent[agentID] = &fodcv1.LifecycleData{
+		Groups: []*fodcv1.GroupLifecycleInfo{group},
+	}
+	mockLifecycleRequester.podByAgent[agentID] = "test-pod-1"
+
+	server := NewServer(aggregator, nil, lifecycleMgr, testRegistry, testLogger)
+	req := httptest.NewRequest(http.MethodGet, "/cluster/lifecycle", nil)
+	resp := httptest.NewRecorder()
+	server.handleClusterLifecycle(resp, req)
+	require.Equal(t, http.StatusOK, resp.Code)
+
+	var body map[string]interface{}
+	require.NoError(t, json.NewDecoder(resp.Body).Decode(&body))
+	return body
+}
+
+// firstGroup pulls the first group from the decoded response body and asserts the basic shape.
+func firstGroup(t *testing.T, body map[string]interface{}) map[string]interface{} {
+	t.Helper()
+	groups, ok := body["groups"].([]interface{})
+	require.True(t, ok, "response body must contain a groups array")
+	require.NotEmpty(t, groups, "groups array must not be empty")
+	g, ok := groups[0].(map[string]interface{})
+	require.True(t, ok, "first group must decode to an object")
+	return g
+}
+
+func TestHandleClusterLifecycle_UsesSnakeCase(t *testing.T) {
+	group := &fodcv1.GroupLifecycleInfo{
+		Name: "g1",
+		ResourceOpts: &commonv1.ResourceOpts{
+			ShardNum: 4,
+		},
+	}
+	body := runLifecycleHandlerWithGroup(t, group)
+	g := firstGroup(t, body)
+
+	resourceOpts, ok := g["resource_opts"].(map[string]interface{})
+	require.True(t, ok, "field name must be snake_case 'resource_opts', not 'resourceOpts'")
+	assert.Equal(t, float64(4), resourceOpts["shard_num"], "field name must be snake_case 'shard_num'")
+	_, hasCamel := g["resourceOpts"]
+	assert.False(t, hasCamel, "camelCase key must not be emitted")
+}
+
+func TestHandleClusterLifecycle_EmitsZeroValueFields(t *testing.T) {
+	group := &fodcv1.GroupLifecycleInfo{
+		Name: "g1",
+		ResourceOpts: &commonv1.ResourceOpts{
+			ShardNum: 4,
+			Replicas: 0, // zero value must still appear in JSON output
+			Stages: []*commonv1.LifecycleStage{
+				{
+					Name:     "warm",
+					ShardNum: 2,
+					Close:    false, // zero value must still appear
+					Replicas: 0,     // zero value must still appear
+				},
+			},
+		},
+	}
+	body := runLifecycleHandlerWithGroup(t, group)
+	g := firstGroup(t, body)
+
+	resourceOpts := g["resource_opts"].(map[string]interface{})
+	_, hasReplicas := resourceOpts["replicas"]
+	assert.True(t, hasReplicas, "zero-value replicas at ResourceOpts level must be emitted, not omitted")
+	assert.Equal(t, float64(0), resourceOpts["replicas"])
+
+	stages, ok := resourceOpts["stages"].([]interface{})
+	require.True(t, ok)
+	require.Len(t, stages, 1)
+	stage := stages[0].(map[string]interface{})
+
+	_, hasClose := stage["close"]
+	assert.True(t, hasClose, "zero-value close=false in LifecycleStage must be emitted")
+	assert.Equal(t, false, stage["close"])
+
+	_, hasStageReplicas := stage["replicas"]
+	assert.True(t, hasStageReplicas, "zero-value replicas in LifecycleStage must be emitted")
+	assert.Equal(t, float64(0), stage["replicas"])
+}
+
+func TestHandleClusterLifecycle_NilResourceOptsIsNull(t *testing.T) {
+	group := &fodcv1.GroupLifecycleInfo{
+		Name: "g1",
+		// ResourceOpts intentionally nil
+	}
+	body := runLifecycleHandlerWithGroup(t, group)
+	g := firstGroup(t, body)
+
+	require.Contains(t, g, "resource_opts", "EmitUnpopulated must surface the absent message as a key")
+	assert.Nil(t, g["resource_opts"], "nil protobuf message marshals to JSON null under EmitUnpopulated")
+}
+
+func TestHandleClusterLifecycle_DataInfoEmitted(t *testing.T) {
+	group := &fodcv1.GroupLifecycleInfo{
+		Name: "g1",
+		DataInfo: []*databasev1.DataInfo{
+			{DataSizeBytes: 1024},
+		},
+	}
+	body := runLifecycleHandlerWithGroup(t, group)
+	g := firstGroup(t, body)
+
+	dataInfo, ok := g["data_info"].([]interface{})
+	require.True(t, ok, "data_info must be encoded as snake_case array")
+	require.Len(t, dataInfo, 1)
+}
+
+func TestHandleClusterLifecycle_StatusReportsUseProtoJSON(t *testing.T) {
+	initTestLogger(t)
+	testLogger := logger.GetLogger("test", "api")
+	testRegistry := registry.NewAgentRegistry(testLogger, 5*time.Second, 10*time.Second, 100)
+	t.Cleanup(testRegistry.Stop)
+	mockSender := &mockRequestSender{}
+	aggregator := metrics.NewAggregator(testRegistry, mockSender, testLogger)
+
+	mockLifecycleRequester := &mockLifecycleDataRequester{
+		dataByAgent: make(map[string]*fodcv1.LifecycleData),
+		podByAgent:  make(map[string]string),
+	}
+	lifecycleMgr := lifecycle.NewManager(testRegistry, mockLifecycleRequester, testLogger)
+	mockLifecycleRequester.lifecycleMgr = lifecycleMgr
+
+	identity := registry.AgentIdentity{
+		PodName:        "test-pod-1",
+		Role:           "datanode",
+		ContainerNames: []string{"banyandb"},
+	}
+	agentID, registerErr := testRegistry.RegisterAgent(context.Background(), identity)
+	require.NoError(t, registerErr)
+
+	mockLifecycleRequester.dataByAgent[agentID] = &fodcv1.LifecycleData{
+		Reports: []*fodcv1.LifecycleReport{
+			{Filename: "2026-04-29.json", ReportJson: `{"status":"ok"}`},
+			{Filename: "2026-04-28.json", ReportJson: ""}, // empty value must still be emitted
+		},
+	}
+	mockLifecycleRequester.podByAgent[agentID] = "test-pod-1"
+
+	server := NewServer(aggregator, nil, lifecycleMgr, testRegistry, testLogger)
+	req := httptest.NewRequest(http.MethodGet, "/cluster/lifecycle", nil)
+	resp := httptest.NewRecorder()
+	server.handleClusterLifecycle(resp, req)
+	require.Equal(t, http.StatusOK, resp.Code)
+
+	var body map[string]interface{}
+	require.NoError(t, json.NewDecoder(resp.Body).Decode(&body))
+
+	statuses, ok := body["lifecycle_statuses"].([]interface{})
+	require.True(t, ok)
+	require.Len(t, statuses, 1)
+	status := statuses[0].(map[string]interface{})
+	assert.Equal(t, "test-pod-1", status["pod_name"])
+
+	reports, ok := status["reports"].([]interface{})
+	require.True(t, ok)
+	require.Len(t, reports, 2)
+
+	first := reports[0].(map[string]interface{})
+	assert.Equal(t, "2026-04-29.json", first["filename"])
+	assert.Equal(t, `{"status":"ok"}`, first["report_json"], "field must be snake_case 'report_json'")
+
+	second := reports[1].(map[string]interface{})
+	_, hasReportJSON := second["report_json"]
+	assert.True(t, hasReportJSON, "empty report_json must still be emitted under EmitUnpopulated")
+	assert.Equal(t, "", second["report_json"])
+}

@@ -97,7 +97,7 @@ func (pm *partMetadata) mustWriteMetadata(fileSystem fs.FileSystem, partPath str
 		return
 	}
 	metadataPath := filepath.Join(partPath, metadataFilename)
-	n, err := fileSystem.Write(metadata, metadataPath, storage.FilePerm)
+	n, err := fileSystem.WriteAtomic(metadata, metadataPath, storage.FilePerm)
 	if err != nil {
 		logger.Panicf("cannot write metadata: %s", err)
 		return

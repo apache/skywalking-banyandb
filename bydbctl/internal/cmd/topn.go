@@ -19,6 +19,7 @@ package cmd
 
 import (
 	"fmt"
+	"io"
 
 	"github.com/go-resty/resty/v2"
 	"github.com/spf13/cobra"
@@ -49,7 +50,7 @@ func newTopnCmd() *cobra.Command {
 		Version: version.Build(),
 		Short:   "Create topn from files",
 		RunE: func(cmd *cobra.Command, _ []string) error {
-			return rest(func() ([]reqBody, error) { return parseNameAndGroupFromYAML(cmd.InOrStdin()) },
+			return rest(cmd.OutOrStdout(), func() ([]reqBody, error) { return parseNameAndGroupFromYAML(cmd.InOrStdin()) },
 				func(request request) (*resty.Response, error) {
 					s := new(databasev1.TopNAggregation)
 					err := protojson.Unmarshal(request.data, s)
@@ -65,9 +66,8 @@ func newTopnCmd() *cobra.Command {
 					}
 					return request.req.SetBody(b).Post(getPath(topnSchemaPath))
 				},
-				func(_ int, reqBody reqBody, _ []byte) error {
-					fmt.Printf("topn %s.%s is created", reqBody.group, reqBody.name)
-					fmt.Println()
+				func(w io.Writer, _ int, reqBody reqBody, _ []byte) error {
+					fmt.Fprintf(w, "topn %s.%s is created\n", reqBody.group, reqBody.name)
 					return nil
 				}, enableTLS, insecure, cert)
 		},
@@ -79,7 +79,7 @@ func newTopnCmd() *cobra.Command {
 		Version: version.Build(),
 		Short:   "Update topn from files",
 		RunE: func(cmd *cobra.Command, _ []string) (err error) {
-			return rest(func() ([]reqBody, error) { return parseNameAndGroupFromYAML(cmd.InOrStdin()) },
+			return rest(cmd.OutOrStdout(), func() ([]reqBody, error) { return parseNameAndGroupFromYAML(cmd.InOrStdin()) },
 				func(request request) (*resty.Response, error) {
 					s := new(databasev1.TopNAggregation)
 					err := protojson.Unmarshal(request.data, s)
@@ -97,9 +97,8 @@ func newTopnCmd() *cobra.Command {
 						SetPathParam("name", request.name).SetPathParam("group", request.group).
 						Put(getPath(topnSchemaPathWithParams))
 				},
-				func(_ int, reqBody reqBody, _ []byte) error {
-					fmt.Printf("topn %s.%s is updated", reqBody.group, reqBody.name)
-					fmt.Println()
+				func(w io.Writer, _ int, reqBody reqBody, _ []byte) error {
+					fmt.Fprintf(w, "topn %s.%s is updated\n", reqBody.group, reqBody.name)
 					return nil
 				}, enableTLS, insecure, cert)
 		},
@@ -110,8 +109,8 @@ func newTopnCmd() *cobra.Command {
 		Use:     "get [-g group] -n name",
 		Version: version.Build(),
 		Short:   "Get a topn",
-		RunE: func(_ *cobra.Command, _ []string) (err error) {
-			return rest(parseFromFlags, func(request request) (*resty.Response, error) {
+		RunE: func(cmd *cobra.Command, _ []string) (err error) {
+			return rest(cmd.OutOrStdout(), parseFromFlags, func(request request) (*resty.Response, error) {
 				return request.req.SetPathParam("name", request.name).SetPathParam("group", request.group).Get(getPath(topnSchemaPathWithParams))
 			}, yamlPrinter, enableTLS, insecure, cert)
 		},
@@ -121,12 +120,11 @@ func newTopnCmd() *cobra.Command {
 		Use:     "delete [-g group] -n name",
 		Version: version.Build(),
 		Short:   "Delete a topn",
-		RunE: func(_ *cobra.Command, _ []string) (err error) {
-			return rest(parseFromFlags, func(request request) (*resty.Response, error) {
+		RunE: func(cmd *cobra.Command, _ []string) (err error) {
+			return rest(cmd.OutOrStdout(), parseFromFlags, func(request request) (*resty.Response, error) {
 				return request.req.SetPathParam("name", request.name).SetPathParam("group", request.group).Delete(getPath(topnSchemaPathWithParams))
-			}, func(_ int, reqBody reqBody, _ []byte) error {
-				fmt.Printf("topn %s.%s is deleted", reqBody.group, reqBody.name)
-				fmt.Println()
+			}, func(w io.Writer, _ int, reqBody reqBody, _ []byte) error {
+				fmt.Fprintf(w, "topn %s.%s is deleted\n", reqBody.group, reqBody.name)
 				return nil
 			}, enableTLS, insecure, cert)
 		},
@@ -138,8 +136,8 @@ func newTopnCmd() *cobra.Command {
 		Use:     "list [-g group]",
 		Version: version.Build(),
 		Short:   "List topn",
-		RunE: func(_ *cobra.Command, _ []string) (err error) {
-			return rest(parseFromFlags, func(request request) (*resty.Response, error) {
+		RunE: func(cmd *cobra.Command, _ []string) (err error) {
+			return rest(cmd.OutOrStdout(), parseFromFlags, func(request request) (*resty.Response, error) {
 				return request.req.SetPathParam("group", request.group).Get(getPath(topnListPath))
 			}, yamlPrinter, enableTLS, insecure, cert)
 		},
@@ -152,7 +150,7 @@ func newTopnCmd() *cobra.Command {
 		Short:   "Query data in a topn",
 		Long:    timeRangeUsage,
 		RunE: func(cmd *cobra.Command, _ []string) (err error) {
-			return rest(func() ([]reqBody, error) { return parseTimeRangeFromFlagAndYAML(cmd.InOrStdin()) },
+			return rest(cmd.OutOrStdout(), func() ([]reqBody, error) { return parseTimeRangeFromFlagAndYAML(cmd.InOrStdin()) },
 				func(request request) (*resty.Response, error) {
 					return request.req.SetBody(request.data).Post(getPath(topnQueryPath))
 				}, yamlPrinter, enableTLS, insecure, cert)

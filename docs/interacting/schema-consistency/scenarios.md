@@ -153,7 +153,7 @@ queryResp, _ := measureClient.Query(ctx, &measurev1.QueryRequest{
 })
 ```
 
-The integration suite §6.8 (`shape-break: delete+apply new shape creates the new measure`) is the canonical regression for this pattern.
+The integration suite  (`shape-break: delete+apply new shape creates the new measure`) is the canonical regression for this pattern.
 
 **Pitfall:** Issuing queries without `group_mod_revisions` opts out of the clamp. After a shape-break, ungated queries can return mixed-shape elements until TTL eventually expires the old data. Either gate the query or wait for TTL.
 
@@ -203,7 +203,7 @@ GroupModRevisions: map[string]int64{
 },
 ```
 
-The §4.5.4 and §4.5.5 integration tests in `test/cases/schema/query_gate.go` exercise the mixed-status and partial-coverage variants.
+The  and  integration tests in `test/cases/schema/query_gate.go` exercise the mixed-status and partial-coverage variants.
 
 **Pitfall:** Building `group_mod_revisions` from a single global watermark forces every group to wait for the slowest. Either populate per-group revisions or omit the slow group from the map entirely.
 

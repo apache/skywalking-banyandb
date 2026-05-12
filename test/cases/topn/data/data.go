@@ -121,13 +121,8 @@ var VerifyFn = func(innerGm gm.Gomega, sharedContext helpers.SharedContext, args
 // compareTopNItems compares two TopNList_Item by value first, then by entity tags for deterministic ordering.
 func compareTopNItems(a, b *measurev1.TopNList_Item) int {
 	// Primary: sort by value to preserve ranking verification.
-	aVal := a.GetValue().GetInt().GetValue()
-	bVal := b.GetValue().GetInt().GetValue()
-	if aVal < bVal {
-		return -1
-	}
-	if aVal > bVal {
-		return 1
+	if cmp := compareFieldValues(a.GetValue(), b.GetValue()); cmp != 0 {
+		return cmp
 	}
 	// Secondary: sort by entity tags as tie-breaker for equal values.
 	for tagIdx, aTag := range a.Entity {
@@ -142,6 +137,36 @@ func compareTopNItems(a, b *measurev1.TopNList_Item) int {
 		return -1
 	}
 	return 0
+}
+
+// compareFieldValues compares two FieldValue instances in a type-aware manner without converting int to float.
+func compareFieldValues(a, b *modelv1.FieldValue) int {
+	switch aVal := a.GetValue().(type) {
+	case *modelv1.FieldValue_Float:
+		aF := aVal.Float.GetValue()
+		bF := b.GetFloat().GetValue()
+		switch {
+		case aF < bF:
+			return -1
+		case aF > bF:
+			return 1
+		default:
+			return 0
+		}
+	case *modelv1.FieldValue_Int:
+		aI := aVal.Int.GetValue()
+		bI := b.GetInt().GetValue()
+		switch {
+		case aI < bI:
+			return -1
+		case aI > bI:
+			return 1
+		default:
+			return 0
+		}
+	default:
+		return 0
+	}
 }
 
 // compareTagValue compares two TagValue instances in a type-aware manner.
