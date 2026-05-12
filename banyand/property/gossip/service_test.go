@@ -21,6 +21,7 @@ import (
 	"context"
 	"fmt"
 	"net"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -141,6 +142,268 @@ var _ = ginkgo.Describe("Propagation Messenger", func() {
 		nodeListenFromVerify(node1, []string{node1.nodeID})
 		nodeListenFromVerify(node2, []string{node1.nodeID})
 		nodeListenFromVerify(node3, []string{node1.nodeID})
+	})
+
+	// Latest scheduled round must reach Rev when the worker is busy.
+	ginkgo.It("does not silently drop scheduled rounds when handler is slow", func() {
+		nodes = startNodes(3)
+		svc := nodes[0].messenger.(*service)
+
+		coalesced := newRecordingCounter()
+		svc.serverMetrics.totalCoalesced = coalesced
+
+		blocking := newBlockingListener()
+		svc.listenersLock.Lock()
+		svc.listeners = []MessageListener{blocking}
+		svc.listenersLock.Unlock()
+
+		nodeList := []string{nodes[0].nodeID, nodes[1].nodeID, nodes[2].nodeID}
+		const totalRounds = 5
+		buildRequest := func(roundIndex int32) *propertyv1.PropagationRequest {
+			return &propertyv1.PropagationRequest{
+				Context: &propertyv1.PropagationContext{
+					Nodes:                   nodeList,
+					OriginNode:              nodes[0].nodeID,
+					MaxPropagationCount:     int32(len(nodeList)*2 - 3),
+					CurrentPropagationCount: roundIndex,
+				},
+				Group:   mockGroup,
+				ShardId: 0,
+			}
+		}
+
+		_, sendErr := svc.protocolHandler.Propagation(context.Background(), buildRequest(0))
+		gomega.Expect(sendErr).NotTo(gomega.HaveOccurred())
+		gomega.Eventually(func() bool {
+			select {
+			case <-blocking.entered:
+				return true
+			default:
+				return false
+			}
+		}, flags.EventuallyTimeout, "10ms").Should(gomega.BeTrue(),
+			"worker should have drained the first request and entered listener.Rev")
+
+		_, sendErr = svc.protocolHandler.Propagation(context.Background(), buildRequest(1))
+		gomega.Expect(sendErr).NotTo(gomega.HaveOccurred())
+		for i := int32(2); i < int32(totalRounds); i++ {
+			_, sendErr = svc.protocolHandler.Propagation(context.Background(), buildRequest(i))
+			gomega.Expect(sendErr).NotTo(gomega.HaveOccurred())
+		}
+		gomega.Expect(coalesced.get(mockGroup)).To(gomega.Equal(3.0),
+			"3 same-round overwrites of a non-nil pending must each increment totalCoalesced")
+
+		close(blocking.release)
+		gomega.Eventually(func() int32 {
+			return blocking.maxObservedCount()
+		}, flags.EventuallyTimeout, "100ms").Should(gomega.Equal(int32(4)),
+			"latest scheduled round must reach Rev under latest-wins semantics")
+		gomega.Expect(blocking.count()).To(gomega.BeNumerically(">=", 2),
+			"at least the in-flight round and the coalesced latest round should reach Rev")
+	})
+
+	// TTL takeover wires the new originator into pending when it is empty.
+	ginkgo.It("TTL-expired branch takes over to new originator with empty pending", func() {
+		nodes = startNodes(2)
+		svc := nodes[0].messenger.(*service)
+		svc.scheduleInterval = 50 * time.Millisecond
+
+		blocking := newBlockingListener()
+		svc.listenersLock.Lock()
+		svc.listeners = []MessageListener{blocking}
+		svc.listenersLock.Unlock()
+
+		nodeList := []string{nodes[0].nodeID, nodes[1].nodeID}
+		buildReq := func(origin string, idx int32) *propertyv1.PropagationRequest {
+			return &propertyv1.PropagationRequest{
+				Context: &propertyv1.PropagationContext{
+					Nodes:                   nodeList,
+					OriginNode:              origin,
+					MaxPropagationCount:     1,
+					CurrentPropagationCount: idx,
+				},
+				Group:   mockGroup,
+				ShardId: 0,
+			}
+		}
+
+		_, err := svc.protocolHandler.Propagation(context.Background(), buildReq(nodes[0].nodeID, 0))
+		gomega.Expect(err).NotTo(gomega.HaveOccurred())
+		gomega.Eventually(func() bool {
+			select {
+			case <-blocking.entered:
+				return true
+			default:
+				return false
+			}
+		}, flags.EventuallyTimeout, "10ms").Should(gomega.BeTrue())
+
+		time.Sleep(250 * time.Millisecond)
+
+		_, err = svc.protocolHandler.Propagation(context.Background(), buildReq(nodes[1].nodeID, 99))
+		gomega.Expect(err).NotTo(gomega.HaveOccurred())
+		close(blocking.release)
+		gomega.Eventually(func() int32 {
+			return blocking.maxObservedCount()
+		}, flags.EventuallyTimeout, "100ms").Should(gomega.Equal(int32(99)),
+			"round-B must reach Rev — confirms the TTL-expired branch ran and wired pending correctly")
+	})
+
+	// TTL takeover overwrites a non-nil pending and bumps totalCoalesced.
+	ginkgo.It("TTL-expired branch coalesces when pending is non-nil", func() {
+		nodes = startNodes(2)
+		svc := nodes[0].messenger.(*service)
+		svc.scheduleInterval = 50 * time.Millisecond
+		coalesced := newRecordingCounter()
+		svc.serverMetrics.totalCoalesced = coalesced
+
+		blocking := newBlockingListener()
+		svc.listenersLock.Lock()
+		svc.listeners = []MessageListener{blocking}
+		svc.listenersLock.Unlock()
+
+		nodeList := []string{nodes[0].nodeID, nodes[1].nodeID}
+		buildReq := func(origin string, idx int32) *propertyv1.PropagationRequest {
+			return &propertyv1.PropagationRequest{
+				Context: &propertyv1.PropagationContext{
+					Nodes:                   nodeList,
+					OriginNode:              origin,
+					MaxPropagationCount:     1,
+					CurrentPropagationCount: idx,
+				},
+				Group:   mockGroup,
+				ShardId: 0,
+			}
+		}
+
+		_, err := svc.protocolHandler.Propagation(context.Background(), buildReq(nodes[0].nodeID, 0))
+		gomega.Expect(err).NotTo(gomega.HaveOccurred())
+		gomega.Eventually(func() bool {
+			select {
+			case <-blocking.entered:
+				return true
+			default:
+				return false
+			}
+		}, flags.EventuallyTimeout, "10ms").Should(gomega.BeTrue())
+
+		_, err = svc.protocolHandler.Propagation(context.Background(), buildReq(nodes[0].nodeID, 1))
+		gomega.Expect(err).NotTo(gomega.HaveOccurred())
+		gomega.Expect(coalesced.get(mockGroup)).To(gomega.Equal(0.0),
+			"first same-origin round writes pending without coalescing")
+
+		time.Sleep(250 * time.Millisecond)
+
+		_, err = svc.protocolHandler.Propagation(context.Background(), buildReq(nodes[1].nodeID, 99))
+		gomega.Expect(err).NotTo(gomega.HaveOccurred())
+		gomega.Expect(coalesced.get(mockGroup)).To(gomega.Equal(1.0),
+			"TTL-expired branch must increment totalCoalesced when overwriting a non-nil pending")
+
+		close(blocking.release)
+		gomega.Eventually(func() int32 {
+			return blocking.maxObservedCount()
+		}, flags.EventuallyTimeout, "100ms").Should(gomega.Equal(int32(99)),
+			"round-B (the latest take-over) must reach Rev")
+	})
+
+	// drain-all flushes every queued pending even when groupNotify drops signals.
+	ginkgo.It("does not strand pending entries when groupNotify is saturated", func() {
+		nodes = startNodes(2)
+		svc := nodes[0].messenger.(*service)
+
+		blocking := newBlockingListener()
+		svc.listenersLock.Lock()
+		svc.listeners = []MessageListener{blocking}
+		svc.listenersLock.Unlock()
+
+		nodeList := []string{nodes[0].nodeID, nodes[1].nodeID}
+		buildReq := func(shardID uint32, idx int32) *propertyv1.PropagationRequest {
+			return &propertyv1.PropagationRequest{
+				Context: &propertyv1.PropagationContext{
+					Nodes:                   nodeList,
+					OriginNode:              nodes[0].nodeID,
+					MaxPropagationCount:     1,
+					CurrentPropagationCount: idx,
+				},
+				Group:   mockGroup,
+				ShardId: shardID,
+			}
+		}
+
+		_, err := svc.protocolHandler.Propagation(context.Background(), buildReq(0, 0))
+		gomega.Expect(err).NotTo(gomega.HaveOccurred())
+		gomega.Eventually(func() bool {
+			select {
+			case <-blocking.entered:
+				return true
+			default:
+				return false
+			}
+		}, flags.EventuallyTimeout, "10ms").Should(gomega.BeTrue(),
+			"worker should drain the initial request and enter listener.Rev")
+
+		const extraShards uint32 = 12
+		for i := uint32(1); i <= extraShards; i++ {
+			_, err = svc.protocolHandler.Propagation(context.Background(), buildReq(i, int32(i)))
+			gomega.Expect(err).NotTo(gomega.HaveOccurred())
+		}
+
+		close(blocking.release)
+		gomega.Eventually(func() int {
+			return blocking.count()
+		}, flags.EventuallyTimeout, "100ms").Should(gomega.Equal(int(extraShards)+1),
+			"drain-all on each wake-up must flush every pending shard even when notifyNewRequest dropped some signals")
+	})
+
+	// CloseNotify must abort the drain loop between handles.
+	ginkgo.It("worker honors CloseNotify in drain loop even with backlog", func() {
+		nodes = startNodes(2)
+		// Slow listener so each handle takes a measurable amount of time.
+		nodes[0].listener.delay = 200 * time.Millisecond
+
+		svc := nodes[0].messenger.(*service)
+		listener := nodes[0].listener
+		nodeList := []string{nodes[0].nodeID, nodes[1].nodeID}
+		const backlogShards uint32 = 10
+
+		for i := uint32(0); i < backlogShards; i++ {
+			req := &propertyv1.PropagationRequest{
+				Context: &propertyv1.PropagationContext{
+					Nodes:               nodeList,
+					OriginNode:          nodes[0].nodeID,
+					MaxPropagationCount: 1,
+				},
+				Group:   mockGroup,
+				ShardId: i,
+			}
+			_, err := svc.protocolHandler.Propagation(context.Background(), req)
+			gomega.Expect(err).NotTo(gomega.HaveOccurred())
+		}
+
+		// Give the worker a moment to start the first handle so the listener
+		// delay is in flight when we trigger close.
+		time.Sleep(250 * time.Millisecond)
+
+		listener.mu.RLock()
+		countAtClose := len(listener.messages)
+		listener.mu.RUnlock()
+
+		// Trigger close. Without the close check in the drain loop, the worker
+		// would keep processing every queued shard before exiting.
+		svc.GracefulStop()
+		nodes[0] = nil // suite-level AfterEach must not double-stop
+
+		// Wait long enough that an unfixed worker would have drained the full
+		// backlog: backlogShards * 200ms = 2s. Use 2.5s safety margin.
+		time.Sleep(2500 * time.Millisecond)
+
+		listener.mu.RLock()
+		extraHandles := len(listener.messages) - countAtClose
+		listener.mu.RUnlock()
+
+		gomega.Expect(extraHandles).To(gomega.BeNumerically("<=", 2),
+			"worker should exit within ~one in-flight handle after CloseNotify; saw %d extra handles after close (full backlog would be ~%d)",
+			extraHandles, int(backlogShards))
 	})
 })
 
@@ -271,4 +534,85 @@ func (m *mockListener) Rev(_ context.Context, _ Trace, nextNode *grpc.ClientConn
 	m.messages = append(m.messages, req)
 	m.fromNodes = append(m.fromNodes, req.Context.OriginNode)
 	return nil
+}
+
+// blockingListener.Rev blocks on release; propCounts records which rounds reached Rev.
+type blockingListener struct {
+	release     chan struct{}
+	entered     chan struct{}
+	enteredOnce sync.Once
+	mu          sync.RWMutex
+	propCounts  []int32
+}
+
+func newBlockingListener() *blockingListener {
+	return &blockingListener{
+		release: make(chan struct{}),
+		entered: make(chan struct{}),
+	}
+}
+
+func (b *blockingListener) Rev(_ context.Context, _ Trace, _ *grpc.ClientConn, req *propertyv1.PropagationRequest) error {
+	b.enteredOnce.Do(func() { close(b.entered) })
+	<-b.release
+	b.mu.Lock()
+	b.propCounts = append(b.propCounts, req.Context.CurrentPropagationCount)
+	b.mu.Unlock()
+	return nil
+}
+
+func (b *blockingListener) count() int {
+	b.mu.RLock()
+	defer b.mu.RUnlock()
+	return len(b.propCounts)
+}
+
+func (b *blockingListener) maxObservedCount() int32 {
+	b.mu.RLock()
+	defer b.mu.RUnlock()
+	if len(b.propCounts) == 0 {
+		return 0
+	}
+	maxCount := b.propCounts[0]
+	for _, c := range b.propCounts[1:] {
+		if c > maxCount {
+			maxCount = c
+		}
+	}
+	return maxCount
+}
+
+// recordingCounter exposes Inc deltas — the bypass registry cannot be introspected.
+type recordingCounter struct {
+	mu     sync.RWMutex
+	totals map[string]float64
+}
+
+func newRecordingCounter() *recordingCounter {
+	return &recordingCounter{totals: make(map[string]float64)}
+}
+
+func (c *recordingCounter) Inc(delta float64, labelValues ...string) {
+	key := strings.Join(labelValues, "\x00")
+	c.mu.Lock()
+	c.totals[key] += delta
+	c.mu.Unlock()
+}
+
+func (c *recordingCounter) Delete(labelValues ...string) bool {
+	key := strings.Join(labelValues, "\x00")
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if _, ok := c.totals[key]; !ok {
+		return false
+	}
+	delete(c.totals, key)
+	return true
+}
+
+func (c *recordingCounter) get(labelValues ...string) float64 {
+	key := strings.Join(labelValues, "\x00")
+	c.mu.RLock()
+	defer c.mu.RUnlock()
+	return c.totals[key]
 }

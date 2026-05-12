@@ -62,12 +62,22 @@ var PrometheusEndpoints = []string{
 
 // NodeMetrics represents the metrics for a data node.
 type NodeMetrics struct {
-	LastScrapeTime        time.Time
-	NodeName              string
-	ErrorMessage          string
-	TotalPropagationCount int64
-	RepairSuccessCount    int64
-	IsHealthy             bool
+	LastScrapeTime                time.Time
+	NodeName                      string
+	ErrorMessage                  string
+	TotalPropagationCount         int64
+	RepairSuccessCount            int64
+	RepairFailureCount            int64
+	RepairPerPropertyTimeoutCount int64
+	TotalCoalesced                int64
+	// RepairSuccessLatencyCount / SumSeconds come from the success-path
+	// histogram: every err == nil call is sampled (including no-op cases
+	// where the remote was already newer). Failures and per-property
+	// timeouts are NOT sampled, so a round where every repair times out
+	// shows count=0 here.
+	RepairSuccessLatencyCount      int64
+	RepairSuccessLatencySumSeconds float64
+	IsHealthy                     bool
 }
 
 // GenerateLargeData creates a string of specified size filled with random characters.
@@ -287,9 +297,19 @@ func GetNodeMetrics(endpoint string, nodeIndex int) *NodeMetrics {
 	content := string(body)
 	totalPropagationCount := parseTotalPropagationCount(content)
 	repairSuccessCount := parseRepairSuccessCount(content)
+	repairFailureCount := parseRepairFailureCount(content)
+	repairPerPropertyTimeoutCount := parseRepairPerPropertyTimeoutCount(content)
+	totalCoalesced := parseTotalCoalesced(content)
+	repairSuccessLatencyCount := parseRepairSuccessLatencyCount(content)
+	repairSuccessLatencySumSeconds := parseRepairSuccessLatencySum(content)
 
 	metrics.TotalPropagationCount = totalPropagationCount
 	metrics.RepairSuccessCount = repairSuccessCount
+	metrics.RepairFailureCount = repairFailureCount
+	metrics.RepairPerPropertyTimeoutCount = repairPerPropertyTimeoutCount
+	metrics.TotalCoalesced = totalCoalesced
+	metrics.RepairSuccessLatencyCount = repairSuccessLatencyCount
+	metrics.RepairSuccessLatencySumSeconds = repairSuccessLatencySumSeconds
 	metrics.IsHealthy = true
 	return metrics
 }
@@ -332,6 +352,106 @@ func parseRepairSuccessCount(content string) int64 {
 	}
 
 	return totalCount
+}
+
+// parseRepairFailureCount parses the repair_failure_count from prometheus metrics text.
+func parseRepairFailureCount(content string) int64 {
+	// Look for metric lines like: banyandb_property_scheduler_property_repair_failure_count{group="perf-test-group",shard="0"} 5
+	re := regexp.MustCompile(`banyandb_property_scheduler_property_repair_failure_count\{[^}]+\}\s+(\d+(?:\.\d+)?)`)
+	matches := re.FindAllStringSubmatch(content, -1)
+
+	var totalCount int64
+	for _, match := range matches {
+		if len(match) >= 2 {
+			value, err := strconv.ParseFloat(match[1], 64)
+			if err != nil {
+				continue
+			}
+			totalCount += int64(value)
+		}
+	}
+
+	return totalCount
+}
+
+// parseRepairPerPropertyTimeoutCount parses the property_repair_per_property_timeout from prometheus metrics text.
+func parseRepairPerPropertyTimeoutCount(content string) int64 {
+	// Look for metric lines like: banyandb_property_scheduler_property_repair_per_property_timeout{group="perf-test-group",shard="0"} 3
+	re := regexp.MustCompile(`banyandb_property_scheduler_property_repair_per_property_timeout\{[^}]+\}\s+(\d+(?:\.\d+)?)`)
+	matches := re.FindAllStringSubmatch(content, -1)
+
+	var totalCount int64
+	for _, match := range matches {
+		if len(match) >= 2 {
+			value, err := strconv.ParseFloat(match[1], 64)
+			if err != nil {
+				continue
+			}
+			totalCount += int64(value)
+		}
+	}
+
+	return totalCount
+}
+
+// parseTotalCoalesced parses the gossip total_coalesced from prometheus metrics text.
+func parseTotalCoalesced(content string) int64 {
+	// Look for metric lines like: banyandb_property_repair_gossip_server_total_coalesced{group="perf-test-group"} 7
+	re := regexp.MustCompile(`banyandb_property_repair_gossip_server_total_coalesced\{[^}]+\}\s+(\d+(?:\.\d+)?)`)
+	matches := re.FindAllStringSubmatch(content, -1)
+
+	var totalCount int64
+	for _, match := range matches {
+		if len(match) >= 2 {
+			value, err := strconv.ParseFloat(match[1], 64)
+			if err != nil {
+				continue
+			}
+			totalCount += int64(value)
+		}
+	}
+
+	return totalCount
+}
+
+// parseRepairSuccessLatencyCount parses the histogram _count of property_repair_success_latency_seconds.
+func parseRepairSuccessLatencyCount(content string) int64 {
+	// Look for metric lines like: banyandb_property_scheduler_property_repair_success_latency_seconds_count{group="perf-test-group",shard="0"} 100
+	re := regexp.MustCompile(`banyandb_property_scheduler_property_repair_success_latency_seconds_count\{[^}]+\}\s+(\d+(?:\.\d+)?)`)
+	matches := re.FindAllStringSubmatch(content, -1)
+
+	var totalCount int64
+	for _, match := range matches {
+		if len(match) >= 2 {
+			value, err := strconv.ParseFloat(match[1], 64)
+			if err != nil {
+				continue
+			}
+			totalCount += int64(value)
+		}
+	}
+
+	return totalCount
+}
+
+// parseRepairSuccessLatencySum parses the histogram _sum (seconds) of property_repair_success_latency_seconds.
+func parseRepairSuccessLatencySum(content string) float64 {
+	// Look for metric lines like: banyandb_property_scheduler_property_repair_success_latency_seconds_sum{group="perf-test-group",shard="0"} 12.34
+	re := regexp.MustCompile(`banyandb_property_scheduler_property_repair_success_latency_seconds_sum\{[^}]+\}\s+(\d+(?:\.\d+)?)`)
+	matches := re.FindAllStringSubmatch(content, -1)
+
+	var totalSum float64
+	for _, match := range matches {
+		if len(match) >= 2 {
+			value, err := strconv.ParseFloat(match[1], 64)
+			if err != nil {
+				continue
+			}
+			totalSum += value
+		}
+	}
+
+	return totalSum
 }
 
 // GetAllNodeMetrics fetches metrics from all data nodes concurrently.
@@ -381,24 +501,47 @@ func VerifyPropagationCountIncreased(beforeMetrics, afterMetrics []*NodeMetrics)
 // PrintMetricsComparison prints a comparison of metrics before and after.
 func PrintMetricsComparison(beforeMetrics, afterMetrics []*NodeMetrics) {
 	fmt.Println("=== Prometheus Metrics Comparison ===")
-	fmt.Printf("%-12s | %-29s | %-29s | %-7s\n", "Node", "Propagation Count", "Repair Success Count", "Healthy")
-	fmt.Printf("%-12s | %-9s %-9s %-9s | %-9s %-9s %-9s | %-7s\n", "", "Before", "After", "Delta", "Before", "After", "Delta", "")
-	fmt.Println(strings.Repeat("-", 85))
+	fmt.Printf("%-12s | %-29s | %-29s | %-29s | %-29s | %-29s | %-12s | %-7s\n",
+		"Node", "Propagation Count", "Repair Success Count", "Repair Failure Count",
+		"Per-Property Timeout", "Coalesced (gossip)", "Succ Mean Lat", "Healthy")
+	fmt.Printf("%-12s | %-9s %-9s %-9s | %-9s %-9s %-9s | %-9s %-9s %-9s | %-9s %-9s %-9s | %-9s %-9s %-9s | %-12s | %-7s\n",
+		"",
+		"Before", "After", "Delta",
+		"Before", "After", "Delta",
+		"Before", "After", "Delta",
+		"Before", "After", "Delta",
+		"Before", "After", "Delta",
+		"ThisRound(sec)",
+		"")
+	fmt.Println(strings.Repeat("-", 190))
 
 	for i, after := range afterMetrics {
 		if i < len(beforeMetrics) {
 			before := beforeMetrics[i]
 			propagationDelta := after.TotalPropagationCount - before.TotalPropagationCount
 			repairDelta := after.RepairSuccessCount - before.RepairSuccessCount
+			failureDelta := after.RepairFailureCount - before.RepairFailureCount
+			timeoutDelta := after.RepairPerPropertyTimeoutCount - before.RepairPerPropertyTimeoutCount
+			coalescedDelta := after.TotalCoalesced - before.TotalCoalesced
+			meanLatency := 0.0
+			countDelta := after.RepairSuccessLatencyCount - before.RepairSuccessLatencyCount
+			sumDelta := after.RepairSuccessLatencySumSeconds - before.RepairSuccessLatencySumSeconds
+			if countDelta > 0 {
+				meanLatency = sumDelta / float64(countDelta)
+			}
 			healthStatus := "✓"
 			if !after.IsHealthy {
 				healthStatus = "✗"
 			}
 
-			fmt.Printf("%-12s | %-9d %-9d %-9d | %-9d %-9d %-9d | %-7s\n",
+			fmt.Printf("%-12s | %-9d %-9d %-9d | %-9d %-9d %-9d | %-9d %-9d %-9d | %-9d %-9d %-9d | %-9d %-9d %-9d | %-12.4f | %-7s\n",
 				after.NodeName,
 				before.TotalPropagationCount, after.TotalPropagationCount, propagationDelta,
 				before.RepairSuccessCount, after.RepairSuccessCount, repairDelta,
+				before.RepairFailureCount, after.RepairFailureCount, failureDelta,
+				before.RepairPerPropertyTimeoutCount, after.RepairPerPropertyTimeoutCount, timeoutDelta,
+				before.TotalCoalesced, after.TotalCoalesced, coalescedDelta,
+				meanLatency,
 				healthStatus)
 		}
 	}

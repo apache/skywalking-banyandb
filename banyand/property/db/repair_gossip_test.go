@@ -19,6 +19,7 @@ package db
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"net"
 	"path"
@@ -580,6 +581,49 @@ type nodeContext struct {
 	stopMutex sync.RWMutex
 }
 
+// inspectCounter exposes Inc deltas — BypassRegistry would swallow them.
+type inspectCounter struct {
+	mu     sync.RWMutex
+	totals map[string]float64
+}
+
+func newInspectCounter() *inspectCounter {
+	return &inspectCounter{totals: make(map[string]float64)}
+}
+
+// Inc satisfies meter.Counter.
+func (c *inspectCounter) Inc(delta float64, labelValues ...string) {
+	key := fmt.Sprintf("%v", labelValues)
+	c.mu.Lock()
+	c.totals[key] += delta
+	c.mu.Unlock()
+}
+
+// Delete satisfies meter.Counter / meter.Histogram (both embed Instrument).
+func (c *inspectCounter) Delete(labelValues ...string) bool {
+	key := fmt.Sprintf("%v", labelValues)
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if _, ok := c.totals[key]; !ok {
+		return false
+	}
+	delete(c.totals, key)
+	return true
+}
+
+// Observe satisfies meter.Histogram. We treat the call count itself as the
+// observable signal — callers assert get(labels) == expected sample count.
+func (c *inspectCounter) Observe(_ float64, labelValues ...string) {
+	c.Inc(1, labelValues...)
+}
+
+func (c *inspectCounter) get(labelValues ...string) float64 {
+	key := fmt.Sprintf("%v", labelValues)
+	c.mu.RLock()
+	defer c.mu.RUnlock()
+	return c.totals[key]
+}
+
 func (n *nodeContext) appendStop(f func()) {
 	n.stopMutex.Lock()
 	defer n.stopMutex.Unlock()
@@ -602,4 +646,298 @@ func nodeContextToParentSlice(ncs []*nodeContext) []node {
 		nodes = append(nodes, nc.node)
 	}
 	return nodes
+}
+
+// Shrinking the var must force timeout; counter assertions fail if the wrap is dropped.
+// Only the server-side path (processPropertySync) is exercised here; the client-side
+// wrap inside processDifferTreeSummary is currently covered by code review only.
+func TestProcessPropertySyncRespectsPerPropertySearchTimeout(t *testing.T) {
+	prev := repairPerPropertyCtxBudget
+	repairPerPropertyCtxBudget = -time.Hour
+	t.Cleanup(func() { repairPerPropertyCtxBudget = prev })
+
+	var defers []func()
+	defer func() {
+		for _, f := range defers {
+			f()
+		}
+	}()
+
+	dataDir, dataDeferFunc, err := test.NewSpace()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defers = append(defers, dataDeferFunc)
+	snapshotDir, snapshotDeferFunc, err := test.NewSpace()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defers = append(defers, snapshotDeferFunc)
+
+	dbInstance, err := OpenDB(context.Background(), Config{
+		Location:               dataDir,
+		MetricsScopeName:       "property_test_timeout_wiring",
+		FlushInterval:          3 * time.Second,
+		ExpireToDeleteDuration: 1 * time.Hour,
+		Repair: RepairConfig{
+			Enabled:            true,
+			Location:           snapshotDir,
+			BuildTreeCron:      "@every 10m",
+			QuickBuildTreeTime: time.Second * 10,
+			TreeSlotCount:      32,
+		},
+	}, observability.BypassRegistry, fs.NewLocalFileSystem())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defers = append(defers, func() { _ = dbInstance.Close() })
+
+	db := dbInstance.(*database)
+
+	// Install inspect-able counters so the test can assert the timeout
+	// branch incremented the metric — not merely that "some error" occurred.
+	timeoutCounter := newInspectCounter()
+	failedCounter := newInspectCounter()
+	successCounter := newInspectCounter()
+	db.repairScheduler.metrics.totalRepairPerPropertyTimeout = timeoutCounter
+	db.repairScheduler.metrics.totalRepairFailedCount = failedCounter
+	db.repairScheduler.metrics.totalRepairSuccessCount = successCounter
+
+	property := generateProperty("test-id-timeout-wiring", time.Now().UnixNano(), 0)
+	if updateErr := db.Update(context.Background(), 0, GetPropertyID(property), property); updateErr != nil {
+		t.Fatal(updateErr)
+	}
+
+	syncShard, loadErr := db.loadShard(context.Background(), testPropertyGroup, common.ShardID(0))
+	if loadErr != nil {
+		t.Fatal(loadErr)
+	}
+
+	// Sanity probe: a fresh ctx with the pathological timeout must already be Done.
+	probeCtx, probeCancel := context.WithTimeout(context.Background(), repairPerPropertyCtxBudget)
+	probeCancel()
+	if !errors.Is(probeCtx.Err(), context.DeadlineExceeded) {
+		t.Fatalf("expected probe ctx to be DeadlineExceeded, got %v", probeCtx.Err())
+	}
+
+	server := newRepairGossipServer(db.repairScheduler)
+	sync := &propertyv1.PropertySync{
+		Id:         GetPropertyID(property),
+		Property:   property,
+		DeleteTime: 0,
+	}
+
+	// typed-nil stream is safe: the err path in processPropertySync returns
+	// before touching it. If a future refactor reorders the code so the
+	// stream is used before the err check, this test would panic — that
+	// panic is the desired alarm.
+	var nilStream grpc.BidiStreamingServer[propertyv1.RepairRequest, propertyv1.RepairResponse]
+	result := server.processPropertySync(context.Background(), syncShard, sync, nilStream, testPropertyGroup)
+	if result {
+		t.Fatalf("expected processPropertySync to return false when per-property search timeout fires, got true")
+	}
+
+	// The timeout-specific branch must have incremented the per-property
+	// timeout counter. Without this assertion the test would pass for any
+	// error — including non-timeout regressions like an index corruption —
+	// and the Task 4 wiring would still appear "green".
+	shardLabel := fmt.Sprintf("%d", syncShard.id)
+	if got := timeoutCounter.get(testPropertyGroup, shardLabel); got != 1 {
+		t.Fatalf("expected totalRepairPerPropertyTimeout(%s,%s) == 1, got %v",
+			testPropertyGroup, shardLabel, got)
+	}
+	if got := failedCounter.get(testPropertyGroup, shardLabel); got != 1 {
+		t.Fatalf("expected totalRepairFailedCount(%s,%s) == 1, got %v",
+			testPropertyGroup, shardLabel, got)
+	}
+	// Protective 0 check: success must not move on a forced-timeout call.
+	// If a future refactor adds a retry-on-timeout path this assertion needs
+	// to relax, but the timeout/failed counters above must still hold.
+	if got := successCounter.get(testPropertyGroup, shardLabel); got != 0 {
+		t.Fatalf("expected totalRepairSuccessCount(%s,%s) == 0, got %v",
+			testPropertyGroup, shardLabel, got)
+	}
+}
+
+// openTestRepairBase boots an in-process database and returns a fresh
+// repairGossipBase whose metrics are replaced by inspect counters for the
+// caller to assert on. Used by executeRepairWithBudget unit tests so they
+// can exercise client+server-shared timeout/latency semantics in one place.
+func openTestRepairBase(t *testing.T) (
+	base *repairGossipBase,
+	timeoutCounter *inspectCounter,
+	successLatency *inspectCounter,
+	cleanup func(),
+) {
+	t.Helper()
+	var defers []func()
+	cleanup = func() {
+		for _, f := range defers {
+			f()
+		}
+	}
+
+	dataDir, dataDeferFunc, err := test.NewSpace()
+	if err != nil {
+		cleanup()
+		t.Fatal(err)
+	}
+	defers = append(defers, dataDeferFunc)
+	snapshotDir, snapshotDeferFunc, err := test.NewSpace()
+	if err != nil {
+		cleanup()
+		t.Fatal(err)
+	}
+	defers = append(defers, snapshotDeferFunc)
+
+	dbInstance, err := OpenDB(context.Background(), Config{
+		Location:               dataDir,
+		MetricsScopeName:       "property_test_helper",
+		FlushInterval:          3 * time.Second,
+		ExpireToDeleteDuration: 1 * time.Hour,
+		Repair: RepairConfig{
+			Enabled:            true,
+			Location:           snapshotDir,
+			BuildTreeCron:      "@every 10m",
+			QuickBuildTreeTime: time.Second * 10,
+			TreeSlotCount:      32,
+		},
+	}, observability.BypassRegistry, fs.NewLocalFileSystem())
+	if err != nil {
+		cleanup()
+		t.Fatal(err)
+	}
+	defers = append(defers, func() { _ = dbInstance.Close() })
+
+	db := dbInstance.(*database)
+	timeoutCounter = newInspectCounter()
+	successLatency = newInspectCounter()
+	db.repairScheduler.metrics.totalRepairPerPropertyTimeout = timeoutCounter
+	db.repairScheduler.metrics.repairSuccessLatency = successLatency
+	base = &repairGossipBase{scheduler: db.repairScheduler}
+	return base, timeoutCounter, successLatency, cleanup
+}
+
+// TestExecuteRepairWithBudget covers the per-property repair helper that both
+// client (processDifferTreeSummary) and server (processPropertySync) call
+// into. Each subtest pins one observability invariant; deleting the matching
+// branch in executeRepairWithBudget makes the corresponding assertion fail.
+func TestExecuteRepairWithBudget(t *testing.T) {
+	shardLabel := "0"
+
+	t.Run("child budget fires under healthy parent ctx → timeout counter +1", func(t *testing.T) {
+		prev := repairPerPropertyCtxBudget
+		repairPerPropertyCtxBudget = -time.Hour
+		t.Cleanup(func() { repairPerPropertyCtxBudget = prev })
+
+		base, timeoutCounter, successLatency, cleanup := openTestRepairBase(t)
+		defer cleanup()
+
+		syncShard, err := base.scheduler.db.loadShard(context.Background(), testPropertyGroup, common.ShardID(0))
+		if err != nil {
+			t.Fatal(err)
+		}
+		property := generateProperty("test-id-budget", time.Now().UnixNano(), 0)
+
+		_, _, repairErr := base.executeRepairWithBudget(context.Background(), syncShard,
+			GetPropertyID(property), property, 0, testPropertyGroup)
+		if repairErr == nil {
+			t.Fatalf("expected err under negative budget, got nil")
+		}
+		if !errors.Is(repairErr, context.DeadlineExceeded) {
+			t.Fatalf("expected wrapped DeadlineExceeded, got %v", repairErr)
+		}
+		if got := timeoutCounter.get(testPropertyGroup, shardLabel); got != 1 {
+			t.Fatalf("expected per-property timeout counter == 1, got %v", got)
+		}
+		if got := successLatency.get(testPropertyGroup, shardLabel); got != 0 {
+			t.Fatalf("expected success latency not sampled on err, got %v", got)
+		}
+	})
+
+	t.Run("parent ctx already done → timeout counter not incremented (parent-not-child)", func(t *testing.T) {
+		base, timeoutCounter, _, cleanup := openTestRepairBase(t)
+		defer cleanup()
+
+		syncShard, err := base.scheduler.db.loadShard(context.Background(), testPropertyGroup, common.ShardID(0))
+		if err != nil {
+			t.Fatal(err)
+		}
+		property := generateProperty("test-id-parent", time.Now().UnixNano(), 0)
+
+		// Parent ctx already expired: DeadlineExceeded reaches the helper
+		// but it is NOT from the per-property budget — must not be counted.
+		parentCtx, parentCancel := context.WithDeadline(context.Background(), time.Now().Add(-time.Hour))
+		defer parentCancel()
+
+		_, _, repairErr := base.executeRepairWithBudget(parentCtx, syncShard,
+			GetPropertyID(property), property, 0, testPropertyGroup)
+		if repairErr == nil {
+			t.Fatalf("expected err under already-expired parent ctx, got nil")
+		}
+		if got := timeoutCounter.get(testPropertyGroup, shardLabel); got != 0 {
+			t.Fatalf("parent-ctx expiry must not count as per-property timeout, got %v", got)
+		}
+	})
+
+	t.Run("success path with updated=true → latency sampled once", func(t *testing.T) {
+		base, timeoutCounter, successLatency, cleanup := openTestRepairBase(t)
+		defer cleanup()
+
+		syncShard, err := base.scheduler.db.loadShard(context.Background(), testPropertyGroup, common.ShardID(0))
+		if err != nil {
+			t.Fatal(err)
+		}
+		// Empty db → shard.repair takes the "no older properties" branch,
+		// updateDocuments runs, and returns updated == true.
+		property := generateProperty("test-id-success", time.Now().UnixNano(), 0)
+
+		updated, _, repairErr := base.executeRepairWithBudget(context.Background(), syncShard,
+			GetPropertyID(property), property, 0, testPropertyGroup)
+		if repairErr != nil {
+			t.Fatalf("expected nil err on healthy repair, got %v", repairErr)
+		}
+		if !updated {
+			t.Fatalf("expected updated == true on empty-db first repair, got false")
+		}
+		if got := successLatency.get(testPropertyGroup, shardLabel); got != 1 {
+			t.Fatalf("expected success latency sample count == 1, got %v", got)
+		}
+		if got := timeoutCounter.get(testPropertyGroup, shardLabel); got != 0 {
+			t.Fatalf("timeout counter must not move on success, got %v", got)
+		}
+	})
+
+	t.Run("no-op path with updated=false → latency still sampled (every err == nil counts)", func(t *testing.T) {
+		base, _, successLatency, cleanup := openTestRepairBase(t)
+		defer cleanup()
+
+		now := time.Now().UnixNano()
+		// Seed a newer revision so the repair finds an older-or-equal "self"
+		// already present and returns updated == false.
+		existing := generateProperty("test-id-noop", now, 0)
+		if err := base.scheduler.db.Update(context.Background(), 0, GetPropertyID(existing), existing); err != nil {
+			t.Fatal(err)
+		}
+		syncShard, err := base.scheduler.db.loadShard(context.Background(), testPropertyGroup, common.ShardID(0))
+		if err != nil {
+			t.Fatal(err)
+		}
+		// Re-repair with an older revision: helper returns nil err but
+		// updated == false. The success-latency histogram still samples
+		// because a no-op decision is still a successful sync cycle whose
+		// ctx-aware cost operators care about.
+		olderOrEqual := generateProperty("test-id-noop", now-1, 0)
+		updated, _, repairErr := base.executeRepairWithBudget(context.Background(), syncShard,
+			GetPropertyID(olderOrEqual), olderOrEqual, 0, testPropertyGroup)
+		if repairErr != nil {
+			t.Fatalf("expected nil err on no-op repair, got %v", repairErr)
+		}
+		if updated {
+			t.Fatalf("expected updated == false on older-or-equal repair, got true")
+		}
+		if got := successLatency.get(testPropertyGroup, shardLabel); got != 1 {
+			t.Fatalf("success latency must be sampled once even when updated == false (err == nil semantics), got %v", got)
+		}
+	})
 }
