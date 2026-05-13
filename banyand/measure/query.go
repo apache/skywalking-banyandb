@@ -228,9 +228,17 @@ func (m *measure) Query(ctx context.Context, mqo model.MeasureQueryOptions) (mqr
 	// projection. Falls back to nil on schema-build failure; PullBatch
 	// checks for nil and returns a clean error rather than degrading
 	// the row-path Pull().
+	// G8d.2: thread GroupBy + Agg through so BuildBatchSchema emits native
+	// column types for the agg-relevant columns. Plain queries get
+	// passthrough as before; queries that the vec subsystem will fold
+	// over get native int64/float64/string/etc. columns ready for the
+	// BatchAggregation operator (computeKey + fold). The storage decoders
+	// (banyand/measure/batch_decode.go) already handle both column shapes.
 	result.batchSchema, _ = vmeasure.BuildBatchSchema(m.schema, model.MeasureQueryOptions{
 		TagProjection:   result.tagProjection,
 		FieldProjection: mqo.FieldProjection,
+		GroupBy:         mqo.GroupBy,
+		Agg:             mqo.Agg,
 	})
 
 	return &result, nil

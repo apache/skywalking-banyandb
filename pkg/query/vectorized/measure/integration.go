@@ -38,6 +38,25 @@ import (
 // dropped — the row path silently skips unknown tags as well, so this matches
 // existing semantics. Fields not present in the schema yield a Null-typed
 // column so projection still produces a slot in the output.
+//
+// Column types — passthrough vs native (G8d.2):
+//
+// Tag and field projections default to passthrough columns: the column
+// cell type is *modelv1.TagValue / *modelv1.FieldValue, holding the
+// original protobuf pointer from the scan source unchanged. The egress
+// serializer returns those pointers directly, matching the row path's
+// zero-alloc per-cell behavior. With the gRPC wire format frozen
+// (`*measurev1.InternalDataPoint` is row-shaped), passthrough wins for
+// plain scans because native columns would force egress to reconstruct
+// the protobuf wrapper (3 allocs/cell), regressing the G5a bench gates.
+//
+// When opts.GroupBy or opts.Agg name a projected tag or field, that
+// specific column is emitted as a NATIVE typed column instead. The
+// downstream BatchAggregation operator reads typed primitives directly
+// from those columns (computeKey / fold) and produces aggregated rows
+// whose count is bounded by group cardinality, amortizing the eventual
+// wrapper reconstruction at egress. Columns not referenced by GroupBy /
+// Agg remain passthrough.
 func BuildBatchSchema(measureSchema *databasev1.Measure, opts model.MeasureQueryOptions) (*vectorized.BatchSchema, error) {
 	if measureSchema == nil {
 		return nil, fmt.Errorf("vectorized.measure: nil Measure schema")
@@ -58,34 +77,21 @@ func BuildBatchSchema(measureSchema *databasev1.Measure, opts model.MeasureQuery
 		tagSpecs[tf.GetName()] = byName
 	}
 
-	// Tag and field projections become passthrough columns: the column cell
-	// type is *modelv1.TagValue / *modelv1.FieldValue, holding the original
-	// protobuf pointer from the scan source unchanged. The egress serializer
-	// returns those pointers directly, matching the row path's zero-alloc
-	// per-cell behavior.
-	//
-	// Why passthrough beats native here: with the gRPC wire format frozen
-	// (`*measurev1.InternalDataPoint` is row-shaped), egress must produce
-	// a *modelv1.TagValue per cell. Passthrough lets the cell flow through
-	// the pipeline pre-built; native columns force the egress to
-	// reconstruct the protobuf wrapper (3 allocs/cell), regressing the
-	// G5a bench gates by ~1.5–2× ns/op. Native column types only pay off
-	// when downstream operators (BatchGroupBy / BatchAggregation /
-	// BatchTop, planned for G6) consume the typed primitives — at which
-	// point the operator output reduces row count enough to amortize the
-	// reconstruction. Until then, passthrough is the production-correct
-	// choice.
-	//
-	// We still validate that the schema declares each projected name with
-	// a supported variant so the row-path null fill (for projection
-	// entries absent from a multi-group result) carries known semantics.
+	nativeTagSet := buildNativeTagSet(opts.GroupBy)
+	nativeFieldSet := buildNativeFieldSet(opts.Agg)
+
 	for _, tp := range opts.TagProjection {
 		family := tagSpecs[tp.Family]
 		for _, name := range tp.Names {
+			colType := vectorized.ColumnTypeTagValue
 			if family != nil {
 				if spec, found := family[name]; found {
-					if _, mapErr := tagTypeToColumnType(spec.GetType()); mapErr != nil {
+					mapped, mapErr := tagTypeToColumnType(spec.GetType())
+					if mapErr != nil {
 						return nil, fmt.Errorf("vectorized.measure: tag %s.%s: %w", tp.Family, name, mapErr)
+					}
+					if _, native := nativeTagSet[nativeKey(tp.Family, name)]; native {
+						colType = mapped
 					}
 				}
 			}
@@ -93,7 +99,7 @@ func BuildBatchSchema(measureSchema *databasev1.Measure, opts model.MeasureQuery
 				Role:      vectorized.RoleTag,
 				TagFamily: tp.Family,
 				Name:      name,
-				Type:      vectorized.ColumnTypeTagValue,
+				Type:      colType,
 			})
 		}
 	}
@@ -103,19 +109,54 @@ func BuildBatchSchema(measureSchema *databasev1.Measure, opts model.MeasureQuery
 		fieldSpecs[fs.GetName()] = fs
 	}
 	for _, name := range opts.FieldProjection {
+		colType := vectorized.ColumnTypeFieldValue
 		if spec, found := fieldSpecs[name]; found {
-			if _, mapErr := fieldTypeToColumnType(spec.GetFieldType()); mapErr != nil {
+			mapped, mapErr := fieldTypeToColumnType(spec.GetFieldType())
+			if mapErr != nil {
 				return nil, fmt.Errorf("vectorized.measure: field %s: %w", name, mapErr)
+			}
+			if _, native := nativeFieldSet[name]; native {
+				colType = mapped
 			}
 		}
 		cols = append(cols, vectorized.ColumnDef{
 			Role: vectorized.RoleField,
 			Name: name,
-			Type: vectorized.ColumnTypeFieldValue,
+			Type: colType,
 		})
 	}
 
 	return vectorized.NewBatchSchema(cols), nil
+}
+
+// nativeKey produces the composite key used to look up tag (family, name)
+// pairs in the native-tag set without allocating.
+func nativeKey(family, name string) string { return family + "\x00" + name }
+
+// buildNativeTagSet collects the (family, name) tuples that should be
+// materialized as native typed columns because a GroupBy clause keys
+// off them. Returns an empty set when GroupBy is unset.
+func buildNativeTagSet(gb *model.MeasureGroupBy) map[string]struct{} {
+	out := make(map[string]struct{})
+	if gb == nil || gb.TagFamily == "" {
+		return out
+	}
+	for _, name := range gb.TagNames {
+		out[nativeKey(gb.TagFamily, name)] = struct{}{}
+	}
+	return out
+}
+
+// buildNativeFieldSet collects the field names whose columns must be
+// native because Agg reduces over them. Returns an empty set when Agg is
+// unset.
+func buildNativeFieldSet(agg *model.MeasureAgg) map[string]struct{} {
+	out := make(map[string]struct{})
+	if agg == nil || agg.FieldName == "" {
+		return out
+	}
+	out[agg.FieldName] = struct{}{}
+	return out
 }
 
 func tagTypeToColumnType(t databasev1.TagType) (vectorized.ColumnType, error) {
