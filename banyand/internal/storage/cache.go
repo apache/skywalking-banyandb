@@ -19,6 +19,7 @@ package storage
 
 import (
 	"container/heap"
+	"context"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -138,11 +139,11 @@ type serviceCache struct {
 
 // NewServiceCache creates a cache for service with default configuration.
 func NewServiceCache() Cache {
-	return NewServiceCacheWithConfig(DefaultCacheConfig())
+	return NewServiceCacheWithConfig(context.Background(), DefaultCacheConfig())
 }
 
 // NewServiceCacheWithConfig creates a cache for service with custom configuration.
-func NewServiceCacheWithConfig(config CacheConfig) Cache {
+func NewServiceCacheWithConfig(ctx context.Context, config CacheConfig) Cache {
 	h := &entryIndexHeap{}
 	heap.Init(h)
 	sc := &serviceCache{
@@ -157,15 +158,16 @@ func NewServiceCacheWithConfig(config CacheConfig) Cache {
 		currentSize:     0,
 	}
 	sc.wg.Add(1)
-	sc.startCleaner()
+	sc.startCleaner(ctx)
 	return sc
 }
 
-func (sc *serviceCache) startCleaner() {
-	go func() {
+func (sc *serviceCache) startCleaner(ctx context.Context) {
+	l := logger.GetLogger("storage-cache-cleaner")
+	run.Go(ctx, "storage-cache-cleaner", l, func(_ context.Context) {
 		defer sc.wg.Done()
 		sc.clean()
-	}()
+	})
 }
 
 func (sc *serviceCache) removeEntry(key EntryKey) {

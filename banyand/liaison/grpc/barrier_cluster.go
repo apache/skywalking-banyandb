@@ -29,6 +29,7 @@ import (
 	clusterv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/cluster/v1"
 	schemav1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/schema/v1"
 	"github.com/apache/skywalking-banyandb/banyand/queue"
+	"github.com/apache/skywalking-banyandb/pkg/run"
 )
 
 // memberRole identifies the role under which a watched-set member was discovered.
@@ -340,10 +341,11 @@ func (b *barrierService) probeMembers(ctx context.Context, members []member, min
 	defer cancel()
 	for i := range members {
 		wg.Add(1)
-		go func(idx int) {
+		idx := i
+		run.Go(probeCtx, "liaison.grpc.barrier.probe-member", b.l, func(_ context.Context) {
 			defer wg.Done()
 			results[idx] = b.probeOne(probeCtx, members[idx], minRev)
-		}(i)
+		})
 	}
 	wg.Wait()
 	return results
@@ -520,10 +522,11 @@ func (b *barrierService) probeKeyRevisions(ctx context.Context, members []member
 	defer cancel()
 	for i := range members {
 		wg.Add(1)
-		go func(idx int) {
+		idx := i
+		run.Go(probeCtx, "liaison.grpc.barrier.probe-keys", b.l, func(_ context.Context) {
 			defer wg.Done()
 			results[idx] = b.probeKeysOne(probeCtx, members[idx], keys, minRevs)
-		}(i)
+		})
 	}
 	wg.Wait()
 	return results
@@ -690,10 +693,11 @@ func (b *barrierService) probeAbsentKeys(ctx context.Context, members []member, 
 	defer cancel()
 	for i := range members {
 		wg.Add(1)
-		go func(idx int) {
+		idx := i
+		run.Go(probeCtx, "liaison.grpc.barrier.probe-absent", b.l, func(_ context.Context) {
 			defer wg.Done()
 			results[idx] = b.probeAbsentOne(probeCtx, members[idx], keys)
-		}(i)
+		})
 	}
 	wg.Wait()
 	return results

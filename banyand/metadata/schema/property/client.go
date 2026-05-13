@@ -1172,7 +1172,7 @@ func tryCallOnInit(handler schema.EventHandler, kinds []schema.Kind, lastErr *in
 // Start starts a single goroutine that periodically syncs schemas.
 func (r *SchemaRegistry) Start(ctx context.Context) error {
 	if r.caCertReloader != nil {
-		if startErr := r.caCertReloader.Start(); startErr != nil {
+		if startErr := r.caCertReloader.Start(ctx); startErr != nil {
 			r.l.Error().Err(startErr).Msg("failed to start CA certificate reloader")
 		} else {
 			certUpdateCh := r.caCertReloader.GetUpdateChannel()

@@ -123,7 +123,7 @@ func TestOpenTSDB(t *testing.T) {
 		defer seg.DecRef()
 
 		db := tsdb.(*database[*MockTSTable, any])
-		ss, _ := db.segmentController.segments(false)
+		ss, _ := db.segmentController.segments(context.Background(), false)
 		require.Equal(t, len(ss), 1)
 		tsdb.Close()
 	})
@@ -158,7 +158,7 @@ func TestOpenTSDB(t *testing.T) {
 		seg.DecRef()
 
 		db := tsdb.(*database[*MockTSTable, any])
-		segs, _ := db.segmentController.segments(false)
+		segs, _ := db.segmentController.segments(context.Background(), false)
 		require.Equal(t, len(segs), 1)
 		for i := range segs {
 			segs[i].DecRef()
@@ -171,7 +171,7 @@ func TestOpenTSDB(t *testing.T) {
 		require.NotNil(t, tsdb)
 
 		db = tsdb.(*database[*MockTSTable, any])
-		segs, _ = db.segmentController.segments(false)
+		segs, _ = db.segmentController.segments(context.Background(), false)
 		require.Equal(t, len(segs), 1)
 		for i := range segs {
 			segs[i].DecRef()
@@ -454,7 +454,7 @@ func TestHalfBornSegmentCleanupOnOpen(t *testing.T) {
 	require.NoDirExists(t, halfBornDir, "half-born segment should be removed on open")
 
 	db := tsdb2.(*database[*MockTSTable, any])
-	segs, _ := db.segmentController.segments(false)
+	segs, _ := db.segmentController.segments(context.Background(), false)
 	require.Equal(t, 1, len(segs), "only the valid segment should remain after cleanup")
 	for i := range segs {
 		segs[i].DecRef()
@@ -626,7 +626,7 @@ func TestCollectWithPartialClosedSegments(t *testing.T) {
 
 	// Manually set the closed segments to have idle time in the past
 	sc := db.segmentController
-	ss, _ := sc.segments(false)
+	ss, _ := sc.segments(context.Background(), false)
 	for _, s := range ss {
 		// Find segments we want to mark as idle (first and third)
 		if s.Start.Equal(segmentDates[0]) || s.Start.Equal(segmentDates[2]) {
@@ -637,11 +637,11 @@ func TestCollectWithPartialClosedSegments(t *testing.T) {
 	}
 
 	// Call closeIdleSegments to ensure our target segments are closed
-	closedCount := sc.closeIdleSegments()
+	closedCount := sc.closeIdleSegments(context.Background())
 	require.Equal(t, 2, closedCount, "Should have closed 2 segments")
 
 	// Verify segments 0 and 2 are closed, 1 and 3 are open
-	ss, _ = sc.segments(false)
+	ss, _ = sc.segments(context.Background(), false)
 	for _, s := range ss {
 		if s.Start.Equal(segmentDates[0]) || s.Start.Equal(segmentDates[2]) {
 			require.Equal(t, int32(0), s.refCount, "Segment should be closed")

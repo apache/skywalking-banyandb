@@ -19,6 +19,7 @@ package measure
 
 import (
 	"container/heap"
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -160,9 +161,22 @@ func (tst *tsTable) startLoopWithConditionalMerge(cur uint64) {
 	syncCh := make(chan *syncIntroduction)
 	introducerWatcher := make(watcher.Channel, 1)
 	flusherWatcher := make(watcher.Channel, 1)
-	go tst.introducerLoopWithSync(flushCh, mergeCh, syncCh, introducerWatcher, cur+1)
-	go tst.flusherLoop(flushCh, mergeCh, introducerWatcher, flusherWatcher, cur)
-	go tst.syncLoop(syncCh, flusherWatcher)
+	// Each loop already calls tst.loopCloser.Done via defer, so a panic
+	// captured by run.Go still decrements the closer; lifecycle ordering
+	// for tsTable shutdown is preserved. The syncLoop callgraph reaches
+	// executeSyncWithRetry, which uses its own context internally rather
+	// than threading one through; the recovery ctx is intentionally not
+	// propagated.
+	ctx := context.Background()
+	run.Go(ctx, "measure.tstable.introducer-sync", tst.l, func(_ context.Context) {
+		tst.introducerLoopWithSync(flushCh, mergeCh, syncCh, introducerWatcher, cur+1)
+	})
+	run.Go(ctx, "measure.tstable.flusher", tst.l, func(_ context.Context) {
+		tst.flusherLoop(flushCh, mergeCh, introducerWatcher, flusherWatcher, cur)
+	})
+	run.Go(ctx, "measure.tstable.syncer", tst.l, func(_ context.Context) {
+		tst.syncLoop(syncCh, flusherWatcher) //nolint:contextcheck
+	})
 }
 
 type tsTable struct {
@@ -240,9 +254,18 @@ func (tst *tsTable) startLoop(cur uint64) {
 	mergeCh := make(chan *mergerIntroduction)
 	introducerWatcher := make(watcher.Channel, 1)
 	flusherWatcher := make(watcher.Channel, 1)
-	go tst.introducerLoop(flushCh, mergeCh, introducerWatcher, cur+1)
-	go tst.flusherLoop(flushCh, mergeCh, introducerWatcher, flusherWatcher, cur)
-	go tst.mergeLoop(mergeCh, flusherWatcher)
+	// See startLoopWithConditionalMerge for the rationale on routing
+	// through run.Go.
+	ctx := context.Background()
+	run.Go(ctx, "measure.tstable.introducer", tst.l, func(_ context.Context) {
+		tst.introducerLoop(flushCh, mergeCh, introducerWatcher, cur+1)
+	})
+	run.Go(ctx, "measure.tstable.flusher", tst.l, func(_ context.Context) {
+		tst.flusherLoop(flushCh, mergeCh, introducerWatcher, flusherWatcher, cur)
+	})
+	run.Go(ctx, "measure.tstable.merger", tst.l, func(_ context.Context) {
+		tst.mergeLoop(mergeCh, flusherWatcher)
+	})
 }
 
 func parseEpoch(epochStr string) (uint64, error) {

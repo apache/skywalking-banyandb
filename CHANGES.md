@@ -19,6 +19,7 @@ Release Notes.
   - The `--namespace` CLI flag has been removed (it previously configured the etcd key prefix).
   - The `--node-discovery-mode` flag no longer accepts `etcd` (supported values: `none`, `dns`, `file`). 
   - The `--schema-registry-mode` flag only accepts `property`.
+- implement panic diagnostics and FODC crash reporting pipeline.
 - Schema consistency (Phase 1): introduce client-observable revision and propagation primitives. All gates are opt-in and zero-valued requests preserve prior behavior.
   - Add `mod_revision` to Group / IndexRule / IndexRuleBinding / TopNAggregation Create and Update responses.
   - Add `delete_time` to all `*ServiceDeleteResponse` messages so clients can observe tombstones.

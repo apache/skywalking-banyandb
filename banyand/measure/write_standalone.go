@@ -119,7 +119,7 @@ func processDataPoint(dpt *dataPointsInTable, req *measurev1.WriteRequest, write
 	return uint64(series.ID), nil
 }
 
-func (w *writeCallback) handle(dst map[string]*dataPointsInGroup, writeEvent *measurev1.InternalWriteRequest,
+func (w *writeCallback) handle(ctx context.Context, dst map[string]*dataPointsInGroup, writeEvent *measurev1.InternalWriteRequest,
 	metadata *commonv1.Metadata, spec *measurev1.DataPointSpec,
 ) (map[string]*dataPointsInGroup, error) {
 	req := writeEvent.Request
@@ -199,7 +199,7 @@ func (w *writeCallback) handle(dst map[string]*dataPointsInGroup, writeEvent *me
 	if err != nil {
 		return nil, err
 	}
-	w.schemaRepo.inFlow(stm.GetSchema(), sid, writeEvent.ShardId, writeEvent.EntityValues, req.DataPoint, spec)
+	w.schemaRepo.inFlow(ctx, stm.GetSchema(), sid, writeEvent.ShardId, writeEvent.EntityValues, req.DataPoint, spec)
 	return dst, nil
 }
 
@@ -442,7 +442,7 @@ func appendEntityTagsToIndexFields(fields []index.Field, stm *measure, series *p
 	return fields
 }
 
-func (w *writeCallback) Rev(_ context.Context, message bus.Message) (resp bus.Message) {
+func (w *writeCallback) Rev(ctx context.Context, message bus.Message) (resp bus.Message) {
 	events, ok := message.Data().([]any)
 	if !ok {
 		w.l.Warn().Msg("invalid event data type")
@@ -477,7 +477,7 @@ func (w *writeCallback) Rev(_ context.Context, message bus.Message) (resp bus.Me
 		if req != nil && req.GetDataPointSpec() != nil {
 			spec = req.GetDataPointSpec()
 		}
-		newGroups, handleErr := w.handle(groups, writeEvent, metadata, spec)
+		newGroups, handleErr := w.handle(ctx, groups, writeEvent, metadata, spec)
 		if handleErr != nil {
 			w.l.Error().Err(handleErr).RawJSON("written", logger.Proto(writeEvent)).Msg("cannot handle write event")
 			continue

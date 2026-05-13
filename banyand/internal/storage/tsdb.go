@@ -293,7 +293,7 @@ func (d *database[T, O]) TakeFileSnapshot(dst string) (success bool, err error) 
 		return false, errors.New("database is closed")
 	}
 
-	segments, segErr := d.segmentController.segments(true)
+	segments, segErr := d.segmentController.segments(context.Background(), true)
 	if segErr != nil {
 		return false, errors.Wrap(segErr, "failed to get segments")
 	}
@@ -411,7 +411,7 @@ func (d *database[T, O]) collect() {
 	}
 	d.metrics.lastTickTime.Set(float64(d.latestTickTime.Load()))
 	refCount := int32(0)
-	ss, _ := d.segmentController.segments(false)
+	ss, _ := d.segmentController.segments(context.Background(), false)
 	for _, s := range ss {
 		if atomic.LoadInt32(&s.refCount) <= 0 {
 			continue

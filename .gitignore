@@ -83,4 +83,3 @@ fodc/agent/internal/ktm/iomonitor/ebpf/generated/vmlinux.h
 
 # OpenSSL serial files
 *.srl
-

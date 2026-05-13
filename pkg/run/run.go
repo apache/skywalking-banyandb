@@ -36,6 +36,7 @@ import (
 	databasev1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/database/v1"
 	"github.com/apache/skywalking-banyandb/pkg/config"
 	"github.com/apache/skywalking-banyandb/pkg/logger"
+	"github.com/apache/skywalking-banyandb/pkg/panicdiag"
 )
 
 // FlagSet holds a pflag.FlagSet as well as an exported Name variable for
@@ -388,13 +389,14 @@ func (g *Group) Run(ctx context.Context) (err error) {
 		ctx = context.Background()
 	}
 	// execute pre run stage and exit on error
+	preRunCtx := context.WithValue(ctx, common.ContextNodeRolesKey, rr)
 	for idx := range g.p {
 		// a PreRunner might have been deregistered during Run
 		if g.p[idx] == nil {
 			continue
 		}
 		startTime := time.Now()
-		if err := g.p[idx].PreRun(context.WithValue(ctx, common.ContextNodeRolesKey, rr)); err != nil {
+		if err := preRunWithRecovery(preRunCtx, g.log, g.p[idx]); err != nil {
 			return errors.WithMessage(err, fmt.Sprintf("pre-run module[%s]", g.p[idx].Name()))
 		}
 		g.log.Info().Dur("elapsed", time.Since(startTime)).Str("name", g.p[idx].Name()).Msg("pre-run completed")
@@ -402,10 +404,11 @@ func (g *Group) Run(ctx context.Context) (err error) {
 
 	swg := &sync.WaitGroup{}
 	swg.Add(len(g.s))
-	go func() {
+	// Recover any panic from the readiness watcher.
+	Go(ctx, "rungroup.ready", g.log, func(_ context.Context) {
 		swg.Wait()
 		close(g.readyCh)
-	}()
+	})
 	// feed our registered services to our internal run.Group
 	for idx := range g.s {
 		// a Service might have been deregistered during Run
@@ -416,20 +419,70 @@ func (g *Group) Run(ctx context.Context) (err error) {
 
 		g.log.Debug().Uint32("total", uint32(len(g.s))).Uint32("ran", uint32(idx+1)).Str("name", s.Name()).Msg("serve")
 		g.r.Add(func() error {
-			notify := s.Serve()
-			swg.Done()
-			<-notify
+			readyNotified := false
+			outcome := panicdiag.WithRecovery(ctx, panicdiag.RecoveryOptions{
+				Component: s.Name(),
+				Logger:    g.log,
+			}, nil, func(_ *context.Context) {
+				notify := s.Serve()
+				readyNotified = true
+				swg.Done()
+				<-notify
+			})
+			if !readyNotified {
+				swg.Done()
+			}
+			// Surface the panic as a service error so oklog/run pops the
+			// group and triggers GracefulStop on every other service,
+			// instead of silently leaving this service dead.
+			if outcome.Panicked {
+				panicValue := ""
+				if outcome.Result.Record != nil {
+					panicValue = outcome.Result.Record.PanicValue
+				}
+				return errors.Errorf("service %q panicked: %s", s.Name(), panicValue)
+			}
 			return nil
 		}, func(_ error) {
 			g.log.Warn().Uint32("total", uint32(len(g.s))).Uint32("ran", uint32(idx+1)).Str("name", s.Name()).Msg("stopping")
 			startTime := time.Now()
-			s.GracefulStop()
+			gracefulStopWithRecovery(ctx, g.log, s)
 			g.log.Warn().Dur("elapsed", time.Since(startTime)).Str("name", s.Name()).Msg("stopped")
 		})
 	}
 
 	// start registered services and block
 	return g.r.Run()
+}
+
+// gracefulStopWithRecovery records shutdown panics without interrupting peer
+// teardown. The ".stop" suffix marks the lifecycle phase in diagnostics.
+func gracefulStopWithRecovery(ctx context.Context, log *logger.Logger, s Service) {
+	panicdiag.WithRecovery(ctx, panicdiag.RecoveryOptions{
+		Component: s.Name() + ".stop",
+		Logger:    log,
+	}, nil, func(_ *context.Context) {
+		s.GracefulStop()
+	})
+}
+
+// preRunWithRecovery records PreRun panics and returns them as errors.
+func preRunWithRecovery(ctx context.Context, log *logger.Logger, p PreRunner) error {
+	var preRunErr error
+	outcome := panicdiag.WithRecovery(ctx, panicdiag.RecoveryOptions{
+		Component: p.Name() + ".prerun",
+		Logger:    log,
+	}, nil, func(_ *context.Context) {
+		preRunErr = p.PreRun(ctx)
+	})
+	if outcome.Panicked {
+		panicValue := ""
+		if outcome.Result.Record != nil {
+			panicValue = outcome.Result.Record.PanicValue
+		}
+		return errors.Errorf("panicked: %s", panicValue)
+	}
+	return preRunErr
 }
 
 // ListUnits returns a list of all Group phases and the Units registered to each

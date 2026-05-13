@@ -18,6 +18,7 @@
 package schema
 
 import (
+	"context"
 	stderrors "errors"
 	"fmt"
 	"os"
@@ -251,6 +252,6 @@ func TestSendMetadataEvent_TransientErrorRequeues(t *testing.T) {
 
 	// Second pass: drive the requeued event through processEvent directly to
 	// confirm OpenResource is reattempted and succeeds.
-	require.NoError(t, repo.processEvent(evt))
+	require.NoError(t, repo.processEvent(context.Background(), evt))
 	require.EqualValues(t, 2, supplier.openCalls.Load(), "second pass must reattempt OpenResource")
 }

@@ -266,7 +266,7 @@ func (m *memory) Serve() run.StopNotify {
 	if m.limit.Load() == 0 {
 		return m.closed
 	}
-	go func() {
+	run.Go(context.Background(), "memory-protector", m.l, func(_ context.Context) {
 		ticker := time.NewTicker(5 * time.Second)
 		defer ticker.Stop()
 
@@ -297,7 +297,7 @@ func (m *memory) Serve() run.StopNotify {
 				}
 			}
 		}
-	}()
+	})
 	return m.closed
 }
 
