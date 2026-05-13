@@ -123,7 +123,9 @@ func NewConnManager[C Client](cfg ConnManagerConfig[C]) *ConnManager[C] {
 		healthCheckInterval: cfg.HealthCheckInterval,
 	}
 	if m.healthCheckInterval > 0 && m.closer.AddRunning() {
-		go m.periodicHealthCheck()
+		run.Go(context.Background(), "grpchelper.connmanager.health-check", m.log, func(_ context.Context) {
+			m.periodicHealthCheck()
+		})
 	}
 	return m
 }
@@ -205,7 +207,7 @@ func (m *ConnManager[C]) OnDelete(node *databasev1.Node) {
 		if !m.closer.AddRunning() {
 			return
 		}
-		go func() {
+		run.Go(context.Background(), "connmanager-reconnect", m.log, func(_ context.Context) {
 			defer m.closer.Done()
 			var elapsed time.Duration
 			attempt := 0
@@ -213,7 +215,7 @@ func (m *ConnManager[C]) OnDelete(node *databasev1.Node) {
 				backoff := JitteredBackoff(InitBackoff, MaxBackoff, attempt, DefaultJitterFactor)
 				select {
 				case <-time.After(backoff):
-					if func() bool {
+					if func() bool { //nolint:contextcheck // healthCheck uses its own timeout via context.Background()
 						elapsed += backoff
 						m.mu.Lock()
 						defer m.mu.Unlock()
@@ -233,7 +235,7 @@ func (m *ConnManager[C]) OnDelete(node *databasev1.Node) {
 				}
 				attempt++
 			}
-		}()
+		})
 	}
 }
 
@@ -446,7 +448,8 @@ func (m *ConnManager[C]) checkHealthAndReconnect(conn *grpc.ClientConn, node *da
 	name := node.Metadata.Name
 	m.evictable[name] = evictNode{n: node, c: make(chan struct{})}
 	m.handler.OnInactive(name, client)
-	go func(name string, en evictNode) {
+	en := m.evictable[name]
+	run.Go(context.Background(), "connmanager-evict-reconnect", m.log, func(_ context.Context) {
 		defer m.closer.Done()
 		attempt := 0
 		for {
@@ -463,7 +466,7 @@ func (m *ConnManager[C]) checkHealthAndReconnect(conn *grpc.ClientConn, node *da
 				allOpts = append(allOpts, credOpts...)
 				allOpts = append(allOpts, m.dialOpts...)
 				connEvict, errEvict := grpc.NewClient(address, allOpts...)
-				if errEvict == nil && m.healthCheck(en.n.String(), connEvict) {
+				if errEvict == nil && m.healthCheck(en.n.String(), connEvict) { //nolint:contextcheck // healthCheck uses its own timeout via context.Background()
 					func() {
 						m.mu.Lock()
 						defer m.mu.Unlock()
@@ -504,7 +507,7 @@ func (m *ConnManager[C]) checkHealthAndReconnect(conn *grpc.ClientConn, node *da
 			}
 			attempt++
 		}
-	}(name, m.evictable[name])
+	})
 	delete(m.active, name)
 	return false
 }

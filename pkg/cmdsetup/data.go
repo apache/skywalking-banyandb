@@ -19,7 +19,6 @@ package cmdsetup
 
 import (
 	"context"
-	"os"
 
 	"github.com/spf13/cobra"
 
@@ -106,15 +105,22 @@ func newDataCmd(runners ...run.Unit) *cobra.Command {
 		Version: version.Build(),
 		Short:   "Run as the data server",
 		RunE: func(_ *cobra.Command, _ []string) (err error) {
+			// See standalone.go for the rationale: Cobra short-circuits
+			// PersistentPostRunE on a non-nil RunE error, so we must
+			// drain the artifact sink here.
+			defer ShutdownSupervisor()
 			node, err := common.GenerateNode(pipeline.GetPort(), nil, propertySvc.GetGossIPGrpcPort(), metaSvc.GetSchemaServerPort(), metaSvc.GetSchemaGossipPort())
 			if err != nil {
 				return err
 			}
 			logger.GetLogger().Info().Msg("starting as a data server")
-			// Spawn our go routines and wait for shutdown.
-			if err := dataGroup.Run(context.WithValue(context.Background(), common.ContextNodeKey, node)); err != nil {
+			// Spawn our go routines and wait for shutdown. The Run context is
+			// derived from SupervisorContext so that a panic recovered anywhere
+			// in the process, including goroutines spawned via run.Go, fires
+			// cancellation here.
+			if err := dataGroup.Run(context.WithValue(SupervisorContext(), common.ContextNodeKey, node)); err != nil {
 				logger.GetLogger().Error().Err(err).Stack().Str("name", dataGroup.Name()).Msg("Exit")
-				os.Exit(-1)
+				return err
 			}
 			return nil
 		},

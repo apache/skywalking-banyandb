@@ -37,6 +37,7 @@ import (
 	"github.com/apache/skywalking-banyandb/pkg/cgroups"
 	"github.com/apache/skywalking-banyandb/pkg/initerror"
 	"github.com/apache/skywalking-banyandb/pkg/logger"
+	"github.com/apache/skywalking-banyandb/pkg/panicdiag"
 	"github.com/apache/skywalking-banyandb/pkg/run"
 )
 
@@ -93,6 +94,7 @@ type schemaRepo struct {
 	bindingBackwardMap     sync.Map
 	latestModRevision      atomic.Int64
 	workerNum              int
+	closeEventChOnce       sync.Once
 	resourceMutex          sync.Mutex
 	groupMux               sync.Mutex
 }
@@ -105,6 +107,10 @@ type schemaRepo struct {
 // for retry via the background worker; the success path does not touch the
 // channel.
 func (sr *schemaRepo) SendMetadataEvent(event MetadataEvent) {
+	sr.sendMetadataEvent(sr.closer.Ctx(), event)
+}
+
+func (sr *schemaRepo) sendMetadataEvent(ctx context.Context, event MetadataEvent) {
 	if !sr.closer.AddSender() {
 		return
 	}
@@ -133,7 +139,7 @@ func (sr *schemaRepo) SendMetadataEvent(event MetadataEvent) {
 			}
 		}
 	}()
-	if err := sr.processEvent(event); err != nil && !errors.Is(err, schema.ErrClosed) {
+	if err := sr.processEvent(ctx, event); err != nil && !errors.Is(err, schema.ErrClosed) {
 		if initerror.IsPermanent(err) {
 			sr.l.Fatal().Err(err).Interface("event", event).
 				Msg("SendMetadataEvent hit a permanent error, refusing to continue")
@@ -155,7 +161,7 @@ func (sr *schemaRepo) SendMetadataEvent(event MetadataEvent) {
 // processEvent applies the event in-place, bumping latestModRevision on success
 // so the barrier's downstream-handler watermark catches up before notifyHandlers
 // returns to its caller.
-func (sr *schemaRepo) processEvent(evt MetadataEvent) error {
+func (sr *schemaRepo) processEvent(ctx context.Context, evt MetadataEvent) error {
 	if e := sr.l.Debug(); e.Enabled() {
 		e.Interface("event", evt).Msg("received an event")
 	}
@@ -164,7 +170,7 @@ func (sr *schemaRepo) processEvent(evt MetadataEvent) error {
 	case EventAddOrUpdate:
 		switch evt.Kind {
 		case EventKindGroup:
-			_, err = sr.storeGroup(evt.Metadata.GetMetadata())
+			_, err = sr.storeGroup(ctx, evt.Metadata.GetMetadata())
 			if errors.Is(err, schema.ErrGRPCResourceNotFound) {
 				err = nil
 			}
@@ -260,18 +266,17 @@ func NewPortableRepository(
 
 func (sr *schemaRepo) Watcher() {
 	for i := 0; i < sr.workerNum; i++ {
-		go func() {
+		run.Go(sr.closer.Ctx(), "schema-watcher", sr.l, func(ctx context.Context) {
 			if !sr.closer.AddReceiver() {
 				return
 			}
 			defer func() {
 				sr.closer.ReceiverDone()
-				// Bump the panic metric BEFORE the classifier branch: .Fatal()
-				// calls os.Exit(1) and the deferred Inc would otherwise be
-				// skipped on the permanent-error escalation path. Do NOT move
-				// this line under the if-branch.
-				sr.metrics.totalPanics.Inc(1)
-				if err := recover(); err != nil {
+				if recovered := recover(); recovered != nil {
+					// Bump the panic metric before the classifier branch:
+					// .Fatal() calls os.Exit(1), so a deferred Inc would be
+					// skipped on the permanent-error escalation path.
+					sr.metrics.totalPanics.Inc(1)
 					// Classifier is dormant on string-typed panics (today's
 					// Panicf sites outside this PR's scope still panic with
 					// strings); tsdb.go:176/242 are converted in Step 1b so
@@ -279,11 +284,11 @@ func (sr *schemaRepo) Watcher() {
 					// We use .Fatal() not panic() because this is a worker
 					// goroutine: panic() would only kill this goroutine and
 					// leave the Watcher partially alive.
-					if recErr, isErr := err.(error); isErr && initerror.IsPermanent(recErr) {
+					if recErr, isErr := recovered.(error); isErr && initerror.IsPermanent(recErr) {
 						sr.l.Fatal().Err(recErr).Str("stack", string(debug.Stack())).
 							Msg("Watcher hit a permanent error, refusing to continue")
 					}
-					sr.l.Warn().Interface("err", err).Str("stack", string(debug.Stack())).Msg("watching the events")
+					sr.l.Warn().Interface("err", recovered).Str("stack", string(debug.Stack())).Msg("watching the events")
 				}
 			}()
 			// The Watcher drains events retried via the channel after transient
@@ -295,7 +300,7 @@ func (sr *schemaRepo) Watcher() {
 					if !more {
 						return
 					}
-					if retryErr := sr.processEvent(evt); retryErr != nil && !errors.Is(retryErr, schema.ErrClosed) {
+					if retryErr := sr.processEvent(ctx, evt); retryErr != nil && !errors.Is(retryErr, schema.ErrClosed) {
 						if initerror.IsPermanent(retryErr) {
 							sr.l.Fatal().Err(retryErr).Interface("event", evt).
 								Msg("Watcher hit a permanent error, refusing to continue")
@@ -307,19 +312,22 @@ func (sr *schemaRepo) Watcher() {
 						}
 						sr.l.Err(retryErr).Interface("event", evt).Msg("retry processing failed, requeueing")
 						sr.metrics.totalRetries.Inc(1)
-						go func() {
-							sr.SendMetadataEvent(evt)
-						}()
+						retryEvent := evt
+						run.Go(ctx, "schema-watcher-retry", sr.l, func(retryCtx context.Context) {
+							sr.sendMetadataEvent(retryCtx, retryEvent)
+						})
 					}
 				case <-sr.closer.CloseNotify():
 					return
 				}
 			}
-		}()
+		}, run.WithReporter(func(_ context.Context, _ panicdiag.RecoveryResult) {
+			sr.metrics.totalPanics.Inc(1)
+		}))
 	}
 }
 
-func (sr *schemaRepo) storeGroup(groupMeta *commonv1.Metadata) (*group, error) {
+func (sr *schemaRepo) storeGroup(ctx context.Context, groupMeta *commonv1.Metadata) (*group, error) {
 	name := groupMeta.GetName()
 	sr.groupMux.Lock()
 	defer sr.groupMux.Unlock()
@@ -327,7 +335,7 @@ func (sr *schemaRepo) storeGroup(groupMeta *commonv1.Metadata) (*group, error) {
 	if !ok {
 		sr.l.Info().Str("group", name).Msg("creating a tsdb")
 		g = sr.createGroup(name)
-		if err := g.init(name); err != nil {
+		if err := g.init(ctx, name); err != nil {
 			return nil, err
 		}
 		if gs := g.GetSchema(); gs != nil {
@@ -336,7 +344,7 @@ func (sr *schemaRepo) storeGroup(groupMeta *commonv1.Metadata) (*group, error) {
 		return g, nil
 	}
 	if !g.isInit() {
-		if err := g.init(name); err != nil {
+		if err := g.init(ctx, name); err != nil {
 			return nil, err
 		}
 		if gs := g.GetSchema(); gs != nil {
@@ -344,9 +352,9 @@ func (sr *schemaRepo) storeGroup(groupMeta *commonv1.Metadata) (*group, error) {
 		}
 		return g, nil
 	}
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	timeoutCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
 	defer cancel()
-	groupSchema, err := g.metadata.GroupRegistry().GetGroup(ctx, name)
+	groupSchema, err := g.metadata.GroupRegistry().GetGroup(timeoutCtx, name)
 	if err != nil {
 		return nil, err
 	}
@@ -624,8 +632,11 @@ func (sr *schemaRepo) Close() {
 			sr.l.Warn().Interface("err", err).Msg("closing resource")
 		}
 	}()
-	sr.closer.CloseThenWait()
-	close(sr.eventCh)
+	sr.closer.Close()
+	sr.closeEventChOnce.Do(func() {
+		close(sr.eventCh)
+	})
+	sr.closer.Wait()
 
 	sr.groupMux.Lock()
 	defer sr.groupMux.Unlock()
@@ -670,8 +681,8 @@ func newGroup(
 	return g
 }
 
-func (g *group) init(name string) error {
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+func (g *group) init(ctx context.Context, name string) error {
+	ctx, cancel := context.WithTimeout(ctx, 5*time.Second)
 	defer cancel()
 	groupSchema, err := g.metadata.GroupRegistry().GetGroup(ctx, name)
 	if errors.As(err, schema.ErrGRPCResourceNotFound) {

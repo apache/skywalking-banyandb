@@ -1,0 +1,131 @@
+// Licensed to Apache Software Foundation (ASF) under one or more contributor
+// license agreements. See the NOTICE file distributed with
+// this work for additional information regarding copyright
+// ownership. Apache Software Foundation (ASF) licenses this file to you under
+// the Apache License, Version 2.0 (the "License"); you may
+// not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing,
+// software distributed under the License is distributed on an
+// "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
+// KIND, either express or implied.  See the License for the
+// specific language governing permissions and limitations
+// under the License.
+
+// Package panicdiag provides panic recovery helpers and crash artifact writing.
+package panicdiag
+
+import (
+	"context"
+	"time"
+
+	"github.com/apache/skywalking-banyandb/pkg/logger"
+	"github.com/apache/skywalking-banyandb/pkg/meter"
+)
+
+// PanicRecord stores the structured panic information captured by recovery helpers.
+type PanicRecord struct {
+	ProcessMetadata map[string]string `json:"processMetadata,omitempty"`
+	StateDump       *StateDumpStatus  `json:"stateDump,omitempty"`
+	Component       string            `json:"component"`
+	PanicValue      string            `json:"panicValue"`
+	GoroutineStack  string            `json:"goroutineStack"`
+	OccurredAt      time.Time         `json:"occurredAt"`
+	Breadcrumbs     []Breadcrumb      `json:"breadcrumbs,omitempty"`
+	Recovered       bool              `json:"recovered"`
+}
+
+// RecoveryOptions configures how panic recovery writes diagnostics.
+//
+// Neither AbortFunc nor a Repanic toggle is configurable per-call: callers
+// that need to react to a recovered panic should consume the *RecoveryOutcome
+// returned by WithRecovery, or watch a Task launched by pkg/run.Go.
+// Process-wide abort behavior remains available via SetDefaultAbortFunc;
+// callers that need to re-raise the panic with full fidelity can do so
+// themselves with the typed RecoveryOutcome.PanicValue after WithRecovery
+// returns.
+type RecoveryOptions struct {
+	Counter         meter.Counter
+	Logger          *logger.Logger
+	StateDumper     StateDumper
+	ProcessMetadata map[string]string
+	Component       string
+	ArtifactRoot    string
+	StateLimitBytes int64
+}
+
+// RecoveryResult contains the outcome of a recovered panic.
+type RecoveryResult struct {
+	Record      *PanicRecord
+	ArtifactDir string
+}
+
+// RecoveryOutcome describes whether a recovered panic occurred during a
+// WithRecovery call. The pointer return makes the result composable: callers
+// that want to inspect outcomes locally, fail a parent lifecycle, signal a
+// notify channel, or set an error variable can read fields directly instead of
+// smuggling state through an OnAbort closure. A non-nil outcome is always
+// returned; Panicked is false when fn ran to completion without recovery.
+//
+// PanicValue holds the original (typed) panic argument when Panicked is true.
+// It is intended for callers that need to re-raise with full fidelity, e.g.
+// `panic(outcome.PanicValue)` after WithRecovery returns. The string-form is
+// available via Result.Record.PanicValue for logging and reporting.
+//
+// ArtifactDone is closed when the artifact write completes or is skipped.
+// It is nil when no panic was recovered.
+type RecoveryOutcome struct {
+	PanicValue   any
+	ArtifactDone <-chan struct{}
+	Result       RecoveryResult
+	Panicked     bool
+}
+
+// Reporter receives the result of a recovered panic. Reporters are intended
+// for observability: recording, logging, or shipping the panic record, and
+// must not block. Use AbortFunc when control flow needs to react to a panic.
+type Reporter func(context.Context, RecoveryResult)
+
+// AbortFunc is the process-wide control-flow hook fired once per recovered
+// panic. It is registered through SetDefaultAbortFunc and intended for
+// process-level concerns: canceling a supervising context, signaling
+// lifecycle groups to stop, closing a notify channel that gates shutdown.
+// It runs after every Reporter and before any Repanic, so the registered
+// hook may both fail the supervisor and re-raise the panic. Per-call
+// AbortFunc is not supported; use the *RecoveryOutcome returned by
+// WithRecovery, or pkg/run.Task, to react locally. Implementations must
+// not block.
+type AbortFunc func(context.Context, RecoveryResult)
+
+// StateDumper returns a bounded diagnostic snapshot after a recovered panic.
+type StateDumper interface {
+	DumpState(context.Context) (any, error)
+}
+
+// Breadcrumb stores a semantic execution marker attached to a context.
+type Breadcrumb struct {
+	Fields    map[string]string `json:"fields,omitempty"`
+	Time      time.Time         `json:"time"`
+	Stage     string            `json:"stage"`
+	Component string            `json:"component,omitempty"`
+}
+
+// StateDumpStatus describes the result of deep state serialization.
+type StateDumpStatus struct {
+	Path      string `json:"path,omitempty"`
+	Error     string `json:"error,omitempty"`
+	Truncated bool   `json:"truncated,omitempty"`
+}
+
+// StateDumperFunc is a function adapter for StateDumper.
+// Closures that capture named-return variables can be used directly as a
+// StateDumper, preserving function-local state across a panic boundary.
+type StateDumperFunc func(context.Context) (any, error)
+
+// DumpState implements StateDumper.
+func (f StateDumperFunc) DumpState(ctx context.Context) (any, error) {
+	return f(ctx)
+}

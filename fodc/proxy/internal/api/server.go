@@ -32,6 +32,7 @@ import (
 
 	fodcv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/fodc/v1"
 	"github.com/apache/skywalking-banyandb/fodc/proxy/internal/cluster"
+	"github.com/apache/skywalking-banyandb/fodc/proxy/internal/diagnostics"
 	"github.com/apache/skywalking-banyandb/fodc/proxy/internal/lifecycle"
 	"github.com/apache/skywalking-banyandb/fodc/proxy/internal/metrics"
 	"github.com/apache/skywalking-banyandb/fodc/proxy/internal/registry"
@@ -49,13 +50,14 @@ var lifecycleGroupMarshaler = protojson.MarshalOptions{
 
 // Server exposes REST and Prometheus-style endpoints for external consumption.
 type Server struct {
-	metricsAggregator     *metrics.Aggregator
-	clusterStateCollector *cluster.Manager
-	lifecycleManager      *lifecycle.Manager
-	registry              *registry.AgentRegistry
-	server                *http.Server
-	logger                *logger.Logger
-	startTime             time.Time
+	metricsAggregator          *metrics.Aggregator
+	clusterStateCollector      *cluster.Manager
+	lifecycleManager           *lifecycle.Manager
+	crashDiagnosticsAggregator *diagnostics.Aggregator
+	registry                   *registry.AgentRegistry
+	server                     *http.Server
+	logger                     *logger.Logger
+	startTime                  time.Time
 }
 
 // NewServer creates a new Server instance.
@@ -64,15 +66,17 @@ func NewServer(
 	clusterStateCollector *cluster.Manager,
 	lifecycleManager *lifecycle.Manager,
 	registry *registry.AgentRegistry,
+	crashDiagnosticsAggregator *diagnostics.Aggregator,
 	logger *logger.Logger,
 ) *Server {
 	return &Server{
-		metricsAggregator:     metricsAggregator,
-		clusterStateCollector: clusterStateCollector,
-		lifecycleManager:      lifecycleManager,
-		registry:              registry,
-		logger:                logger,
-		startTime:             time.Now(),
+		metricsAggregator:          metricsAggregator,
+		clusterStateCollector:      clusterStateCollector,
+		lifecycleManager:           lifecycleManager,
+		crashDiagnosticsAggregator: crashDiagnosticsAggregator,
+		registry:                   registry,
+		logger:                     logger,
+		startTime:                  time.Now(),
 	}
 }
 
@@ -85,6 +89,7 @@ func (s *Server) Start(listenAddr string, readTimeout, writeTimeout time.Duratio
 	mux.HandleFunc("/health", s.handleHealth)
 	mux.HandleFunc("/cluster/topology", s.handleClusterTopology)
 	mux.HandleFunc("/cluster/lifecycle", s.handleClusterLifecycle)
+	mux.HandleFunc("/diagnostics", s.handleDiagnostics)
 
 	s.server = &http.Server{
 		Addr:         listenAddr,
@@ -542,6 +547,33 @@ func (s *Server) handleClusterLifecycle(w http.ResponseWriter, r *http.Request) 
 	w.WriteHeader(http.StatusOK)
 	if encodeErr := json.NewEncoder(w).Encode(body); encodeErr != nil {
 		s.logger.Error().Err(encodeErr).Msg("Failed to encode lifecycle response")
+	}
+}
+
+// handleDiagnostics handles GET /diagnostics endpoint.
+func (s *Server) handleDiagnostics(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	if s.crashDiagnosticsAggregator == nil {
+		http.Error(w, "Diagnostics aggregator not available", http.StatusServiceUnavailable)
+		return
+	}
+	filter := &diagnostics.Filter{
+		Role:    r.URL.Query().Get("role"),
+		PodName: r.URL.Query().Get("pod_name"),
+	}
+	records, collectErr := s.crashDiagnosticsAggregator.CollectDiagnostics(r.Context(), filter)
+	if collectErr != nil {
+		s.logger.Error().Err(collectErr).Msg("Failed to collect diagnostics")
+		http.Error(w, "Failed to collect diagnostics", http.StatusInternalServerError)
+		return
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusOK)
+	if encodeErr := json.NewEncoder(w).Encode(records); encodeErr != nil {
+		s.logger.Error().Err(encodeErr).Msg("Failed to encode diagnostics response")
 	}
 }
 

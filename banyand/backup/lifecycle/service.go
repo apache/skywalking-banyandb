@@ -224,10 +224,10 @@ func (l *lifecycleService) GracefulStop() {
 	// Stop gRPC server
 	if l.grpcServer != nil {
 		stopped := make(chan struct{})
-		go func() {
+		run.Go(context.Background(), "backup.lifecycle.graceful-stop", l.l, func(_ context.Context) {
 			l.grpcServer.GracefulStop()
 			close(stopped)
-		}()
+		})
 
 		t := time.NewTimer(10 * time.Second)
 		select {
@@ -258,7 +258,7 @@ func (l *lifecycleService) Serve() run.StopNotify {
 	if l.schedule == "" {
 		defer close(done)
 		l.l.Info().Msg("starting lifecycle migration without schedule")
-		if err := l.action(); err != nil {
+		if err := l.action(context.Background()); err != nil {
 			logger.Panicf("failed to run lifecycle migration: %v", err)
 		}
 		return done
@@ -267,9 +267,9 @@ func (l *lifecycleService) Serve() run.StopNotify {
 	clockInstance := clock.New()
 	l.sch = timestamp.NewScheduler(l.l, clockInstance)
 	var executionCount int
-	err := l.sch.Register("lifecycle", cron.Descriptor, l.schedule, func(triggerTime time.Time, _ *logger.Logger) bool {
+	err := l.sch.Register(context.Background(), "lifecycle", cron.Descriptor, l.schedule, func(ctx context.Context, triggerTime time.Time, _ *logger.Logger) bool {
 		l.l.Info().Msgf("lifecycle migration triggered at %s", triggerTime)
-		if err := l.action(); err != nil {
+		if err := l.action(ctx); err != nil {
 			l.l.Error().Err(err).Msg("failed to run lifecycle migration action")
 		}
 		executionCount++
@@ -287,7 +287,7 @@ func (l *lifecycleService) Serve() run.StopNotify {
 	}
 
 	// Wait for either migration completion or server stop
-	go func() {
+	run.Go(context.Background(), "backup.lifecycle.stop-watcher", l.l, func(_ context.Context) {
 		select {
 		case <-done:
 			// Migration completed
@@ -295,7 +295,7 @@ func (l *lifecycleService) Serve() run.StopNotify {
 			// Server stopped
 			close(done)
 		}
-	}()
+	})
 
 	return done
 }
@@ -304,7 +304,7 @@ func (l *lifecycleService) startServers() {
 	// Setup gRPC server
 	var opts []grpclib.ServerOption
 	if l.lifecycleTLS && l.tlsReloader != nil {
-		if startErr := l.tlsReloader.Start(); startErr != nil {
+		if startErr := l.tlsReloader.Start(context.Background()); startErr != nil {
 			l.l.Error().Err(startErr).Msg("Failed to start TLS reloader")
 			close(l.stopCh)
 			return
@@ -366,7 +366,7 @@ func (l *lifecycleService) startServers() {
 	wg.Add(2)
 
 	// gRPC server goroutine
-	go func() {
+	run.Go(context.Background(), "backup.lifecycle.grpc-server", l.l, func(_ context.Context) {
 		defer wg.Done()
 		lis, listenErr := net.Listen("tcp", l.lifecycleGRPCAddr)
 		if listenErr != nil {
@@ -377,10 +377,10 @@ func (l *lifecycleService) startServers() {
 		if serveErr := l.grpcServer.Serve(lis); serveErr != nil {
 			l.l.Error().Err(serveErr).Msg("gRPC server error")
 		}
-	}()
+	})
 
 	// HTTP server goroutine
-	go func() {
+	run.Go(context.Background(), "backup.lifecycle.http-server", l.l, func(_ context.Context) {
 		defer wg.Done()
 		l.l.Info().Str("addr", l.lifecycleHTTPAddr).Msg("Lifecycle HTTP server listening")
 		var serveErr error
@@ -393,17 +393,16 @@ func (l *lifecycleService) startServers() {
 		if serveErr != nil && serveErr != http.ErrServerClosed {
 			l.l.Error().Err(serveErr).Msg("HTTP server error")
 		}
-	}()
+	})
 
 	// Wait for both servers to stop
-	go func() {
+	run.Go(context.Background(), "backup.lifecycle.shutdown-watcher", l.l, func(_ context.Context) {
 		wg.Wait()
 		close(l.stopCh)
-	}()
+	})
 }
 
-func (l *lifecycleService) action() error {
-	ctx := context.Background()
+func (l *lifecycleService) action(ctx context.Context) error {
 	progress := LoadProgress(l.progressFilePath, l.l)
 	progress.ClearErrors()
 
@@ -422,7 +421,7 @@ func (l *lifecycleService) action() error {
 	}
 
 	// Pass progress to getSnapshots
-	streamDir, measureDir, traceDir, err := l.getSnapshots(groups, progress)
+	streamDir, measureDir, traceDir, err := l.getSnapshots(ctx, groups, progress)
 	if err != nil {
 		l.l.Error().Err(err).Msg("failed to get snapshots")
 		return err

@@ -18,6 +18,7 @@
 package trace
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"path/filepath"
@@ -32,6 +33,7 @@ import (
 	"github.com/apache/skywalking-banyandb/pkg/encoding"
 	"github.com/apache/skywalking-banyandb/pkg/fs"
 	pbv1 "github.com/apache/skywalking-banyandb/pkg/pb/v1"
+	"github.com/apache/skywalking-banyandb/pkg/run"
 	"github.com/apache/skywalking-banyandb/pkg/watcher"
 )
 
@@ -89,22 +91,22 @@ func (tst *tsTable) mergeLoop(merges chan *mergerIntroduction, flusherNotifier w
 
 	for i := 0; i < fastWorkers; i++ {
 		workersWg.Add(1)
-		go func() {
+		run.Go(context.Background(), "trace.merger.fast-lane", tst.l, func(_ context.Context) {
 			defer workersWg.Done()
-			tst.mergeLaneWorker(fastCh, merges)
-		}()
+			tst.mergeLaneWorker(fastCh, merges) //nolint:contextcheck
+		})
 	}
 	workersWg.Add(1)
-	go func() {
+	run.Go(context.Background(), "trace.merger.slow-lane", tst.l, func(_ context.Context) {
 		defer workersWg.Done()
-		tst.mergeLaneWorker(slowCh, merges)
-	}()
+		tst.mergeLaneWorker(slowCh, merges) //nolint:contextcheck
+	})
 
 	dispatcherWg.Add(1)
-	go func() {
+	run.Go(context.Background(), "trace.merger.dispatcher", tst.l, func(_ context.Context) {
 		defer dispatcherWg.Done()
 		tst.dispatcherLoop(triggerCh, threshold, fastCh, slowCh)
-	}()
+	})
 
 	// Shutdown order: stop dispatcher first so no new work enters the lane
 	// channels, then close the lane channels so idle workers exit their range

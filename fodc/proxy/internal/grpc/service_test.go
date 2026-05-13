@@ -221,7 +221,7 @@ func newTestService(t *testing.T) (*FODCService, *registry.AgentRegistry) {
 	testRegistry := registry.NewAgentRegistry(testLogger, 5*time.Second, 10*time.Second, 100)
 	mockSender := &mockRequestSender{}
 	aggregator := metrics.NewAggregator(testRegistry, mockSender, testLogger)
-	service := NewFODCService(testRegistry, aggregator, nil, nil, testLogger, 30*time.Second)
+	service := NewFODCService(testRegistry, aggregator, nil, nil, nil, testLogger, 30*time.Second)
 	return service, testRegistry
 }
 
@@ -238,7 +238,7 @@ func TestNewFODCService(t *testing.T) {
 	mockSender := &mockRequestSender{}
 	aggregator := metrics.NewAggregator(testRegistry, mockSender, testLogger)
 
-	service := NewFODCService(testRegistry, aggregator, nil, nil, testLogger, 30*time.Second)
+	service := NewFODCService(testRegistry, aggregator, nil, nil, nil, testLogger, 30*time.Second)
 
 	assert.NotNil(t, service)
 	assert.Equal(t, testRegistry, service.registry)
