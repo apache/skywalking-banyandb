@@ -357,6 +357,37 @@ func (s *shard) search(ctx context.Context, q index.Query, orderBy *propertyv1.Q
 }
 
 func (s *shard) repair(ctx context.Context, id []byte, property *propertyv1.Property, deleteTime int64) (updated bool, selfNewer *queryProperty, err error) {
+	start := time.Now()
+	var (
+		search1Elapsed     time.Duration
+		deletePhaseElapsed time.Duration
+		updateElapsed      time.Duration
+		olderCount         int
+		deleteCount        int
+	)
+	defer func() {
+		elapsed := time.Since(start)
+		switch {
+		case err != nil:
+			s.l.Warn().Int64("elapsed_ms", elapsed.Milliseconds()).Str("group", property.Metadata.Group).
+				Str("name", property.Metadata.Name).Str("id", property.Id).Err(err).
+				Int64("search1_ms", search1Elapsed.Milliseconds()).
+				Int64("delete_phase_ms", deletePhaseElapsed.Milliseconds()).
+				Int64("update_ms", updateElapsed.Milliseconds()).
+				Int("older_count", olderCount).
+				Int("delete_count", deleteCount).
+				Msg("property repair failed")
+		case elapsed >= 5*time.Second:
+			s.l.Warn().Int64("elapsed_ms", elapsed.Milliseconds()).Str("group", property.Metadata.Group).
+				Str("name", property.Metadata.Name).Str("id", property.Id).
+				Int64("search1_ms", search1Elapsed.Milliseconds()).
+				Int64("delete_phase_ms", deletePhaseElapsed.Milliseconds()).
+				Int64("update_ms", updateElapsed.Milliseconds()).
+				Int("older_count", olderCount).
+				Int("delete_count", deleteCount).
+				Msg("slow property repair")
+		}
+	}()
 	iq, err := inverted.BuildPropertyQuery(&propertyv1.QueryRequest{
 		Groups: []string{property.Metadata.Group},
 		Name:   property.Metadata.Name,
@@ -365,10 +396,13 @@ func (s *shard) repair(ctx context.Context, id []byte, property *propertyv1.Prop
 	if err != nil {
 		return false, nil, fmt.Errorf("build property query failure: %w", err)
 	}
+	search1Start := time.Now()
 	olderProperties, err := s.search(ctx, iq, nil, 100)
+	search1Elapsed = time.Since(search1Start)
 	if err != nil {
 		return false, nil, fmt.Errorf("query older properties failed: %w", err)
 	}
+	olderCount = len(olderProperties)
 	sort.Sort(queryPropertySlice(olderProperties))
 	// if there no older properties, we can insert the latest document.
 	if len(olderProperties) == 0 {
@@ -377,7 +411,9 @@ func (s *shard) repair(ctx context.Context, id []byte, property *propertyv1.Prop
 		if err != nil {
 			return false, nil, fmt.Errorf("build update document failed: %w", err)
 		}
+		updateStart := time.Now()
 		err = s.updateDocuments(index.Documents{*doc})
+		updateElapsed = time.Since(updateStart)
 		if err != nil {
 			return false, nil, fmt.Errorf("update document failed: %w", err)
 		}
@@ -393,10 +429,13 @@ func (s *shard) repair(ctx context.Context, id []byte, property *propertyv1.Prop
 	}
 
 	docIDList := s.buildNotDeletedDocIDList(olderProperties)
+	deletePhaseStart := time.Now()
 	deletedDocuments, err := s.buildDeleteFromTimeDocuments(ctx, docIDList, time.Now().UnixNano())
+	deletePhaseElapsed = time.Since(deletePhaseStart)
 	if err != nil {
 		return false, nil, fmt.Errorf("build delete older documents failed: %w", err)
 	}
+	deleteCount = len(deletedDocuments)
 	// update the property to mark it as delete
 	updateDoc, err := s.buildUpdateDocument(id, property, deleteTime)
 	if err != nil {
@@ -405,7 +444,9 @@ func (s *shard) repair(ctx context.Context, id []byte, property *propertyv1.Prop
 	result := make([]index.Document, 0, len(deletedDocuments)+1)
 	result = append(result, deletedDocuments...)
 	result = append(result, *updateDoc)
+	updateStart := time.Now()
 	err = s.updateDocuments(result)
+	updateElapsed = time.Since(updateStart)
 	if err != nil {
 		return false, nil, fmt.Errorf("update documents failed: %w", err)
 	}
