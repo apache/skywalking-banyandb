@@ -1219,8 +1219,16 @@ type repairSchedulerMetrics struct {
 	totalRepairBuildTreeLatency   meter.Counter
 	totalRepairBuildTreeConflicts meter.Counter
 
-	totalRepairSuccessCount meter.Counter
-	totalRepairFailedCount  meter.Counter
+	totalRepairSuccessCount       meter.Counter
+	totalRepairFailedCount        meter.Counter
+	totalRepairPerPropertyTimeout meter.Counter
+	// repairSuccessLatency samples one full sync-attempt cycle whenever the
+	// per-property repair returned without error (success path AND no-op
+	// path where the remote was already newer). Failures and per-property
+	// timeouts are NOT sampled — operators relying on this metric for
+	// "is the system slow?" must read totalRepairPerPropertyTimeout in
+	// parallel.
+	repairSuccessLatency meter.Histogram
 }
 
 func newRepairSchedulerMetrics(omr observability.Factory) *repairSchedulerMetrics {
@@ -1231,7 +1239,10 @@ func newRepairSchedulerMetrics(omr observability.Factory) *repairSchedulerMetric
 		totalRepairBuildTreeLatency:   omr.NewCounter("repair_build_tree_latency"),
 		totalRepairBuildTreeConflicts: omr.NewCounter("repair_build_tree_conflicts"),
 
-		totalRepairSuccessCount: omr.NewCounter("property_repair_success_count", "group", "shard"),
-		totalRepairFailedCount:  omr.NewCounter("property_repair_failure_count", "group", "shard"),
+		totalRepairSuccessCount:       omr.NewCounter("property_repair_success_count", "group", "shard"),
+		totalRepairFailedCount:        omr.NewCounter("property_repair_failure_count", "group", "shard"),
+		totalRepairPerPropertyTimeout: omr.NewCounter("property_repair_per_property_timeout", "group", "shard"),
+		repairSuccessLatency: omr.NewHistogram("property_repair_success_latency_seconds",
+			meter.Buckets{0.005, 0.01, 0.05, 0.1, 0.5, 1, 2, 5, 10, 30}, "group", "shard"),
 	}
 }

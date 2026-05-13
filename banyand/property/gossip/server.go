@@ -86,7 +86,7 @@ func (s *service) getServiceRegisters() []func(server *grpc.Server) {
 
 type groupWithShardPropagation struct {
 	latestTime     time.Time
-	channel        chan *handlingRequest
+	pending        *handlingRequest
 	originalNodeID string
 }
 
@@ -117,16 +117,24 @@ func (q *protocolHandler) processPropagation() {
 	for {
 		select {
 		case <-q.groupNotify:
-			request := q.findUnProcessRequest()
-			if request == nil {
-				continue
-			}
-			timeoutCtx, cancelFunc := context.WithTimeout(q.s.closer.Ctx(), perNodeSyncTimeout)
-			err := q.handle(timeoutCtx, request)
-			cancelFunc()
-			if err != nil {
-				q.s.log.Warn().Err(err).Stringer("request", request.PropagationRequest).
-					Msgf("handle propagation request failure")
+			// Drain every pending per wake-up; re-check CloseNotify between handles.
+			for {
+				select {
+				case <-q.s.closer.CloseNotify():
+					return
+				default:
+				}
+				request := q.findUnProcessRequest()
+				if request == nil {
+					break
+				}
+				timeoutCtx, cancelFunc := context.WithTimeout(q.s.closer.Ctx(), perNodeSyncTimeout)
+				err := q.handle(timeoutCtx, request)
+				cancelFunc()
+				if err != nil {
+					q.s.log.Warn().Err(err).Stringer("request", request.PropagationRequest).
+						Msgf("handle propagation request failure")
+				}
 			}
 		case <-q.s.closer.CloseNotify():
 			return
@@ -138,11 +146,10 @@ func (q *protocolHandler) findUnProcessRequest() *handlingRequest {
 	q.mu.Lock()
 	defer q.mu.Unlock()
 	for _, g := range q.groupWithShards {
-		select {
-		case d := <-g.channel:
-			return d
-		default:
-			continue
+		if g.pending != nil {
+			req := g.pending
+			g.pending = nil
+			return req
 		}
 	}
 	return nil
@@ -302,6 +309,8 @@ func (q *protocolHandler) contextIsDone(ctx context.Context) bool {
 	}
 }
 
+// addToProcess enqueues the request with latest-wins coalesce on pending;
+// returns false when a different originator arrives within TTL.
 func (q *protocolHandler) addToProcess(request *propertyv1.PropagationRequest, tracer Trace, span Span) bool {
 	q.mu.Lock()
 	defer q.mu.Unlock()
@@ -315,11 +324,10 @@ func (q *protocolHandler) addToProcess(request *propertyv1.PropagationRequest, t
 	}
 	if !exist {
 		groupShard = &groupWithShardPropagation{
-			channel:        make(chan *handlingRequest, 1),
+			pending:        handlingRequestData,
 			originalNodeID: request.Context.OriginNode,
 			latestTime:     time.Now(),
 		}
-		groupShard.channel <- handlingRequestData
 		q.groupWithShards[shardKey] = groupShard
 		q.notifyNewRequest()
 		return true
@@ -328,23 +336,31 @@ func (q *protocolHandler) addToProcess(request *propertyv1.PropagationRequest, t
 	// if the latest round is out of ttl, then needs to change to current node to executing
 	if time.Since(groupShard.latestTime) > q.s.scheduleInterval/2 {
 		groupShard.originalNodeID = request.Context.OriginNode
-		select {
-		case groupShard.channel <- handlingRequestData:
-			q.notifyNewRequest()
-		default:
-			q.s.log.Error().Msgf("ready to added propagation into group shard %s(%d) in a new round, but it's full", request.Group, request.ShardId)
+		if groupShard.pending != nil {
+			q.s.serverMetrics.totalCoalesced.Inc(1, request.Group)
+			q.s.log.Info().
+				Str("group", request.Group).
+				Uint32("shardID", request.ShardId).
+				Str("originNode", request.Context.OriginNode).
+				Msg("propagation request coalesced into pending (TTL takeover)")
 		}
+		groupShard.pending = handlingRequestData
+		q.notifyNewRequest()
 		return true
 	}
 
 	// if the original node ID are a same node, means which from the same round
 	if groupShard.originalNodeID == request.Context.OriginNode {
-		select {
-		case groupShard.channel <- handlingRequestData:
-			q.notifyNewRequest()
-		default:
-			q.s.log.Error().Msgf("ready to added propagation into group shard %s(%d) in a same round, but it's full", request.Group, request.ShardId)
+		if groupShard.pending != nil {
+			q.s.serverMetrics.totalCoalesced.Inc(1, request.Group)
+			q.s.log.Info().
+				Str("group", request.Group).
+				Uint32("shardID", request.ShardId).
+				Str("originNode", request.Context.OriginNode).
+				Msg("propagation request coalesced into pending (same-round latest-wins)")
 		}
+		groupShard.pending = handlingRequestData
+		q.notifyNewRequest()
 		return true
 	}
 
@@ -419,6 +435,7 @@ type serverMetrics struct {
 	totalReceived     meter.Counter
 	totalAddProcessed meter.Counter
 	totalSkipProcess  meter.Counter
+	totalCoalesced    meter.Counter
 
 	totalStarted  meter.Counter
 	totalFinished meter.Counter
@@ -439,6 +456,7 @@ func newServerMetrics(factory observability.Factory) *serverMetrics {
 		totalReceived:     factory.NewCounter("total_received", "group"),
 		totalAddProcessed: factory.NewCounter("total_add_processed", "group"),
 		totalSkipProcess:  factory.NewCounter("total_skip_process", "group"),
+		totalCoalesced:    factory.NewCounter("total_coalesced", "group"),
 
 		totalStarted:  factory.NewCounter("total_started", "group"),
 		totalFinished: factory.NewCounter("total_finished", "group"),
