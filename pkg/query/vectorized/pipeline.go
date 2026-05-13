@@ -30,6 +30,14 @@ type Pipeline struct {
 	closed  bool
 }
 
+// Init cascades initialization down through every stage to the source.
+// Must be called once before the first Next, after Build. Re-calling is
+// safe but pointless — each stage's Init is idempotent only if its
+// underlying operator's Init is.
+func (p *Pipeline) Init(ctx context.Context) error {
+	return p.head.Init(ctx)
+}
+
 // Next returns the next batch from the head stage.
 func (p *Pipeline) Next(ctx context.Context) (*RecordBatch, error) {
 	return p.head.NextBatch(ctx)
