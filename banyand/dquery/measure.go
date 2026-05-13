@@ -74,6 +74,7 @@ func (p *measureQueryProcessor) Rev(ctx context.Context, message bus.Message) (r
 		schemas = append(schemas, s)
 	}
 
+	// nolint:staticcheck // SA1019 — row-path DistributedAnalyze is the only production path until G8 ships.
 	plan, err := logical_measure.DistributedAnalyze(queryCriteria, schemas)
 	if err != nil {
 		resp = bus.NewMessage(bus.MessageID(now), common.NewError("fail to analyze the query request for measure %s: %v", queryCriteria.Name, err))

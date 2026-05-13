@@ -209,6 +209,7 @@ func executeMeasurePlan(
 	mctx *measureExecutionContext,
 	emitPartial bool,
 ) (executor.MIterator, logical.Plan, error) {
+	// nolint:staticcheck // SA1019 — row-path Analyze is the only production path until G8 ships.
 	plan, planErr := logical_measure.Analyze(queryCriteria, mctx.metadata, mctx.schemas, mctx.ecc, emitPartial)
 	if planErr != nil {
 		return nil, nil, fmt.Errorf("fail to analyze the query request for measure %s: %w", queryCriteria.GetName(), planErr)
