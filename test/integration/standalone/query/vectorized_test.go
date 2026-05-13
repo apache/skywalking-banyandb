@@ -26,6 +26,7 @@ import (
 	"google.golang.org/grpc/credentials/insecure"
 
 	"github.com/apache/skywalking-banyandb/pkg/grpchelper"
+	vecplan "github.com/apache/skywalking-banyandb/pkg/query/vectorized/measure/plan"
 	"github.com/apache/skywalking-banyandb/pkg/test"
 	"github.com/apache/skywalking-banyandb/pkg/test/helpers"
 	"github.com/apache/skywalking-banyandb/pkg/test/setup"
@@ -35,7 +36,7 @@ import (
 	casestopn "github.com/apache/skywalking-banyandb/test/cases/topn"
 )
 
-// Vectorized parity gate (G4 §"Integration Test Plan").
+// Vectorized parity gate (G4 §"Integration Test Plan"; updated for G8e).
 //
 // Boots a *separate* standalone with --measure-vectorized-enabled=true and
 // replays the same Measure / TopN test entries the row-path integration suite
@@ -43,6 +44,15 @@ import (
 // output, so every greenness here is a parity check: vectorized produced the
 // row-path's reference InternalDataPoints. The cluster is fresh and isolated
 // so neither side observes the other's state.
+//
+// With G8d (top-level vec dispatch) wired, plain measure queries take the
+// new pkg/query/vectorized/measure/plan.Dispatch path instead of the legacy
+// leaf-substitution at localIndexScan.maybeVectorized. GroupBy/Agg/Top and
+// queries with hidden criteria tags continue through the row plan with leaf
+// substitution. The AfterAll assertion below uses vecplan.HandledCount to
+// confirm dispatch actually fires for at least one query — protecting
+// against a silent regression where the eligibility gate excludes
+// everything.
 //
 // This block runs after the on-disk-data Describe in round2.go, which closes
 // the original cluster. The integration suite remains a release-candidate
@@ -52,6 +62,10 @@ var _ = ginkgo.Describe("vectorized parity", ginkgo.Ordered, func() {
 	var (
 		vectorizedConn *grpc.ClientConn
 		stopFn         func()
+		// Snapshot dispatch counters so the AfterAll can compute the
+		// delta this Describe's specs produced.
+		startHandledCount     int64
+		startFellThroughCount int64
 		// Save the package-global SharedContexts so AfterAll can restore
 		// them. Sibling Describes may run *between* this AfterAll and the
 		// next BeforeAll (e.g. the top-level "TopN Tests" / "Scanning
@@ -63,6 +77,8 @@ var _ = ginkgo.Describe("vectorized parity", ginkgo.Ordered, func() {
 	ginkgo.BeforeAll(func() {
 		savedMeasureCtx = casesmeasure.SharedContext
 		savedTopNCtx = casestopn.SharedContext
+		startHandledCount = vecplan.HandledCount()
+		startFellThroughCount = vecplan.FellThroughCount()
 		path, diskCleanupFn, pathErr := test.NewSpace()
 		gomega.Expect(pathErr).NotTo(gomega.HaveOccurred())
 		ports, portsErr := test.AllocateFreePorts(5)
@@ -100,6 +116,19 @@ var _ = ginkgo.Describe("vectorized parity", ginkgo.Ordered, func() {
 		// #1 from SynchronizedBeforeSuite is still up at this point).
 		casesmeasure.SharedContext = savedMeasureCtx
 		casestopn.SharedContext = savedTopNCtx
+		// G8e observability: dispatch MUST fire for at least one of the
+		// replayed cases. If this assertion ever drops to zero, the
+		// vec subsystem is silently 0%-covered — either the dispatch
+		// eligibility gate is too tight or the wire-up regressed.
+		handledDelta := vecplan.HandledCount() - startHandledCount
+		fellThroughDelta := vecplan.FellThroughCount() - startFellThroughCount
+		ginkgo.GinkgoWriter.Printf(
+			"vec dispatch: handled=%d fell_through=%d (deltas across vectorized-parity table)\n",
+			handledDelta, fellThroughDelta,
+		)
+		gomega.Expect(handledDelta).To(gomega.BeNumerically(">", int64(0)),
+			"vec dispatch did not fire for any case in the parity table; "+
+				"either the eligibility gate is too tight or processor.go's tryVecDispatch regressed")
 		if vectorizedConn != nil {
 			gomega.Expect(vectorizedConn.Close()).To(gomega.Succeed())
 		}
