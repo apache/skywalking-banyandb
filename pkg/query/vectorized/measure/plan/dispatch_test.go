@@ -36,6 +36,14 @@ func dispatchCfg(enabled bool) measure.VectorizedConfig {
 	return measure.VectorizedConfig{Enabled: enabled, BatchSize: 1024, QueryMemoryMiB: 16}
 }
 
+// dispatchCfgWithAgg returns a vec-enabled config with the G8d.2
+// aggregation gate flipped on so dispatch handles GroupBy+Agg requests.
+func dispatchCfgWithAgg() measure.VectorizedConfig {
+	cfg := dispatchCfg(true)
+	cfg.AggregationEnabled = true
+	return cfg
+}
+
 func bareReq() *measurev1.QueryRequest {
 	return &measurev1.QueryRequest{
 		Name:            "demo",
@@ -65,8 +73,12 @@ func TestDispatch_NotEnabled_FallsThrough(t *testing.T) {
 	}
 }
 
-// TestDispatch_GroupBy_FallsThrough covers the column-bridging gate.
-func TestDispatch_GroupBy_FallsThrough(t *testing.T) {
+// TestDispatch_GroupByAgg_FlagOff_FallsThrough pins the G8d.2 default:
+// even a fully-covered GroupBy+Agg request falls through when
+// AggregationEnabled is false (the default). This is the load-bearing
+// behavior that keeps the integration parity suite green while the
+// vec aggregation egress is engineered to match row-path output.
+func TestDispatch_GroupByAgg_FlagOff_FallsThrough(t *testing.T) {
 	req := bareReq()
 	req.GroupBy = &measurev1.QueryRequest_GroupBy{
 		TagProjection: projTagProj(),
@@ -77,30 +89,110 @@ func TestDispatch_GroupBy_FallsThrough(t *testing.T) {
 		FieldName: "value",
 	}
 	_, _, handled, err := Dispatch(context.Background(),
-		req, nil, nil, nil, nil, dispatchCfg(true))
+		req, nil, nil, nil, nil, dispatchCfg(true)) // AggregationEnabled = false (default)
 	if err != nil {
-		t.Fatalf("GroupBy fallthrough must not error: %v", err)
+		t.Fatalf("flag-off fallthrough must not error: %v", err)
 	}
 	if handled {
-		t.Fatal("GroupBy+Agg must fall through to row path in G8d.1")
+		t.Fatal("GroupBy+Agg must fall through when AggregationEnabled is false")
 	}
 }
 
-// TestDispatch_Agg_FallsThrough covers Agg-without-GroupBy (which the
-// analyzer would reject, but the dispatch gate fires before Analyze).
-func TestDispatch_Agg_FallsThrough(t *testing.T) {
+// TestDispatch_GroupByWithoutAgg_FallsThrough covers the pair check
+// (GroupBy and Agg must travel together). Uses the agg-enabled config
+// so we reach the pair check rather than the flag-off gate.
+func TestDispatch_GroupByWithoutAgg_FallsThrough(t *testing.T) {
+	req := bareReq()
+	req.GroupBy = &measurev1.QueryRequest_GroupBy{
+		TagProjection: projTagProj(),
+		FieldName:     "value",
+	}
+	_, _, handled, err := Dispatch(context.Background(),
+		req, nil, nil, nil, nil, dispatchCfgWithAgg())
+	if err != nil {
+		t.Fatalf("GroupBy-without-Agg fallthrough must not error: %v", err)
+	}
+	if handled {
+		t.Fatal("GroupBy without Agg must fall through to row path")
+	}
+}
+
+// TestDispatch_AggWithoutGroupBy_FallsThrough is the Agg-only counterpart.
+// Scalar reduce is deferred; Agg without GroupBy falls through.
+func TestDispatch_AggWithoutGroupBy_FallsThrough(t *testing.T) {
 	req := bareReq()
 	req.Agg = &measurev1.QueryRequest_Aggregation{
 		Function:  modelv1.AggregationFunction_AGGREGATION_FUNCTION_SUM,
 		FieldName: "value",
 	}
 	_, _, handled, err := Dispatch(context.Background(),
-		req, nil, nil, nil, nil, dispatchCfg(true))
+		req, nil, nil, nil, nil, dispatchCfgWithAgg())
 	if err != nil {
-		t.Fatalf("Agg fallthrough must not error: %v", err)
+		t.Fatalf("Agg-without-GroupBy fallthrough must not error: %v", err)
 	}
 	if handled {
-		t.Fatal("Agg must fall through to row path in G8d.1")
+		t.Fatal("Agg without GroupBy must fall through to row path")
+	}
+}
+
+// TestDispatch_GroupByAggUncoveredProjection_FallsThrough covers the
+// G8d.2 projection-coverage gate. BatchAggregation locates its key +
+// value columns by name inside the BatchSchema, which is built from
+// TagProjection + FieldProjection. When GroupBy keys or the Agg field
+// are not in the request's projection, dispatch falls through so the
+// row path can either extend projection implicitly or surface its
+// canonical error.
+func TestDispatch_GroupByAggUncoveredProjection_FallsThrough(t *testing.T) {
+	cases := []struct {
+		name    string
+		mutate  func(*measurev1.QueryRequest)
+		comment string
+	}{
+		{
+			name: "groupby_tag_not_in_projection",
+			mutate: func(req *measurev1.QueryRequest) {
+				// GroupBy references "region" but TagProjection only carries "svc".
+				req.GroupBy = &measurev1.QueryRequest_GroupBy{
+					TagProjection: &modelv1.TagProjection{TagFamilies: []*modelv1.TagProjection_TagFamily{
+						{Name: "default", Tags: []string{"region"}},
+					}},
+					FieldName: "value",
+				}
+				req.Agg = &measurev1.QueryRequest_Aggregation{
+					Function:  modelv1.AggregationFunction_AGGREGATION_FUNCTION_SUM,
+					FieldName: "value",
+				}
+			},
+		},
+		{
+			name: "agg_field_not_in_projection",
+			mutate: func(req *measurev1.QueryRequest) {
+				req.GroupBy = &measurev1.QueryRequest_GroupBy{
+					TagProjection: projTagProj(),
+					FieldName:     "value",
+				}
+				req.Agg = &measurev1.QueryRequest_Aggregation{
+					Function:  modelv1.AggregationFunction_AGGREGATION_FUNCTION_SUM,
+					FieldName: "value",
+				}
+				// Strip "value" from FieldProjection so the Agg field is uncovered.
+				req.FieldProjection = nil
+			},
+		},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			req := bareReq()
+			c.mutate(req)
+			_, _, handled, err := Dispatch(context.Background(),
+				req, nil, nil, nil, nil, dispatchCfgWithAgg())
+			if err != nil {
+				t.Fatalf("uncovered projection must not error: %v", err)
+			}
+			if handled {
+				t.Fatal("uncovered GroupBy / Agg projection must fall through")
+			}
+		})
 	}
 }
 
@@ -290,18 +382,14 @@ func TestDispatch_Counters_TrackFellThroughCalls(t *testing.T) {
 	startHandled := HandledCount()
 	startFellThrough := FellThroughCount()
 
-	// Three fallthroughs of distinct shapes.
-	groupByReq := bareReq()
-	groupByReq.GroupBy = &measurev1.QueryRequest_GroupBy{
-		TagProjection: projTagProj(), FieldName: "value",
-	}
-	groupByReq.Agg = &measurev1.QueryRequest_Aggregation{
-		Function: modelv1.AggregationFunction_AGGREGATION_FUNCTION_SUM, FieldName: "value",
-	}
+	// Three fallthroughs of distinct shapes, each tripping a different
+	// gate so the counter is exercised across the eligibility branches.
+	topReq := bareReq()
+	topReq.Top = &measurev1.QueryRequest_Top{Number: 5, FieldName: "value"}
 	noTimeReq := bareReq()
 	noTimeReq.TimeRange = nil
 
-	for _, req := range []*measurev1.QueryRequest{groupByReq, noTimeReq, bareReq() /* nil ec */} {
+	for _, req := range []*measurev1.QueryRequest{topReq, noTimeReq, bareReq() /* nil ec */} {
 		_, _, handled, dispatchErr := Dispatch(context.Background(),
 			req, nil, nil, nil, nil, dispatchCfg(true))
 		if dispatchErr != nil {
@@ -317,6 +405,47 @@ func TestDispatch_Counters_TrackFellThroughCalls(t *testing.T) {
 	}
 	if got := FellThroughCount() - startFellThrough; got != 3 {
 		t.Fatalf("FellThroughCount delta: want 3, got %d", got)
+	}
+}
+
+// TestDispatch_GroupByAggCovered_ReachesEcQuery confirms G8d.2 has
+// opened the dispatch gate for GroupBy+Agg requests whose projection
+// covers both the GroupBy keys and the Agg field. The fakeEC returns
+// nil so dispatch falls through after ec.Query (matching the empty-
+// result branch) — what matters is that ec.Query was invoked at all,
+// proving the eligibility gate let the request through. With G8d.1
+// this would have been rejected before any ec interaction.
+func TestDispatch_GroupByAggCovered_ReachesEcQuery(t *testing.T) {
+	measureSchema := testMeasureSchema()
+	// nolint:staticcheck // SA1019 — row-path BuildSchema is the only schema builder until G8 replaces it.
+	logicalSchema, schemaErr := logicalmeasure.BuildSchema(measureSchema, nil)
+	if schemaErr != nil {
+		t.Fatalf("BuildSchema: %v", schemaErr)
+	}
+	metadata := &commonv1.Metadata{Name: "demo", Group: "default"}
+	ec := &fakeEC{wantResult: nil, wantErr: nil}
+
+	req := bareReq()
+	req.GroupBy = &measurev1.QueryRequest_GroupBy{
+		TagProjection: projTagProj(),
+		FieldName:     "value",
+	}
+	req.Agg = &measurev1.QueryRequest_Aggregation{
+		Function:  modelv1.AggregationFunction_AGGREGATION_FUNCTION_SUM,
+		FieldName: "value",
+	}
+
+	iter, planStr, handled, err := Dispatch(context.Background(),
+		req, metadata, measureSchema, logicalSchema, ec, dispatchCfgWithAgg())
+	if err != nil {
+		t.Fatalf("covered GroupBy+Agg must not error before ec.Query: %v", err)
+	}
+	if !ec.called {
+		// Surface the other return values for debugging when the gate
+		// regression resurfaces — they're all zero-valued today because
+		// ec.Query returned (nil, nil) and dispatch fell through.
+		t.Fatalf("covered GroupBy+Agg must reach ec.Query (G8d.2 gate); "+
+			"got iter=%v planStr=%q handled=%v", iter, planStr, handled)
 	}
 }
 

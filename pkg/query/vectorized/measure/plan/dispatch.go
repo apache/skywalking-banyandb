@@ -122,11 +122,38 @@ func Dispatch(
 	if req == nil {
 		return nil, "", false, nil
 	}
-	if req.GetGroupBy() != nil || req.GetAgg() != nil || req.GetTop() != nil {
-		// G8d.2 will lift GroupBy/Agg once the scan-source column type
-		// bridging is in place. Top awaits per-timestamp partitioning of
-		// BatchTop.
+	if req.GetTop() != nil {
+		// Top awaits per-timestamp partitioning of BatchTop; the row
+		// path's TopN semantic differs from BatchTop's single-heap
+		// today.
 		return nil, "", false, nil
+	}
+	hasGroupBy := req.GetGroupBy() != nil
+	hasAgg := req.GetAgg() != nil
+	if hasGroupBy || hasAgg {
+		// G8d.2 wires the schema/storage bridge (BuildBatchSchema emits
+		// native columns for GroupBy keys + Agg field, storage decoders
+		// honor it) so the operator pipeline is ready when the egress
+		// reaches row-path parity. Until then, AggregationEnabled gates
+		// the dispatch gate; default false keeps GroupBy+Agg on the row
+		// path so the parity suite stays green.
+		if !cfg.AggregationEnabled {
+			return nil, "", false, nil
+		}
+		// GroupBy and Agg must travel as a pair (scalar reduce + raw
+		// groupby are deferred). Either alone falls through.
+		if hasGroupBy != hasAgg {
+			return nil, "", false, nil
+		}
+		// Projection coverage: BatchAggregation locates its key + value
+		// columns by name inside the BatchSchema, which is built from
+		// TagProjection + FieldProjection. Missing coverage means the
+		// operator would fail at construction; fall through so the row
+		// path can extend projection implicitly or surface its
+		// canonical error.
+		if !aggProjectionCoverage(req) {
+			return nil, "", false, nil
+		}
 	}
 	if req.GetOrderBy() != nil {
 		// The row path resolves order_by via the PushDownOrder optimizer
@@ -325,4 +352,65 @@ func findSchemaTagFamily(m *databasev1.Measure, name string) *databasev1.TagFami
 		}
 	}
 	return nil
+}
+
+// aggProjectionCoverage reports whether the request's GroupBy keys and
+// Agg field are all present in the request's projections. Required by
+// the dispatch eligibility gate: the BatchAggregation operator locates
+// its key + value columns by name inside the BatchSchema, and the
+// BatchSchema is built from TagProjection + FieldProjection. Missing
+// coverage means the operator would fail at construction; dispatch
+// instead falls through so the row path can handle the request.
+//
+// v1 requires GroupBy.tag_projection to name a single family; that
+// family must appear in req.TagProjection with every tag in GroupBy
+// present. Agg.field_name must appear in req.FieldProjection.
+func aggProjectionCoverage(req *measurev1.QueryRequest) bool {
+	gb := req.GetGroupBy()
+	if gb == nil {
+		return false
+	}
+	gbFamilies := gb.GetTagProjection().GetTagFamilies()
+	if len(gbFamilies) != 1 {
+		return false
+	}
+	gbFamily := gbFamilies[0]
+	projected := projectedTagsByFamily(req.GetTagProjection())
+	present, ok := projected[gbFamily.GetName()]
+	if !ok {
+		return false
+	}
+	for _, name := range gbFamily.GetTags() {
+		if _, hit := present[name]; !hit {
+			return false
+		}
+	}
+	// Agg field must be in FieldProjection.
+	aggField := req.GetAgg().GetFieldName()
+	if aggField == "" {
+		return false
+	}
+	for _, name := range req.GetFieldProjection().GetNames() {
+		if name == aggField {
+			return true
+		}
+	}
+	return false
+}
+
+// projectedTagsByFamily flattens a TagProjection into family → name-set.
+func projectedTagsByFamily(tp *modelv1.TagProjection) map[string]map[string]struct{} {
+	out := make(map[string]map[string]struct{})
+	if tp == nil {
+		return out
+	}
+	for _, tf := range tp.GetTagFamilies() {
+		family := tf.GetName()
+		names := make(map[string]struct{}, len(tf.GetTags()))
+		for _, n := range tf.GetTags() {
+			names[n] = struct{}{}
+		}
+		out[family] = names
+	}
+	return out
 }

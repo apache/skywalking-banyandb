@@ -24,12 +24,20 @@ type VectorizedConfig struct {
 	BatchSize      int
 	QueryMemoryMiB int
 	Enabled        bool
+	// AggregationEnabled opens the dispatch gate to GroupBy+Agg requests
+	// (G8d.2 ships the schema/storage bridge but parity-preserving
+	// aggregation egress is still being engineered). Default false so
+	// production keeps routing GroupBy+Agg through the row path until
+	// the egress contract matches row-path output byte-for-byte.
+	AggregationEnabled bool
 }
 
 // DefaultConfig returns the v1 default — enabled, 1024-row batches, 256 MiB
-// per-query memory budget. v1 ships with Enabled true post-soak/bench-gate
-// rollout (G5e). To roll back, pass --measure-vectorized-enabled=false on
-// the standalone or data-node command line and restart.
+// per-query memory budget, aggregation gate off. v1 ships Enabled true post-
+// soak/bench-gate rollout (G5e); AggregationEnabled stays false until the
+// vec aggregation egress reaches row-path parity. To roll back the vec
+// path entirely, pass --measure-vectorized-enabled=false on the standalone
+// or data-node command line and restart.
 func DefaultConfig() VectorizedConfig {
 	return VectorizedConfig{Enabled: true, BatchSize: 1024, QueryMemoryMiB: 256}
 }
