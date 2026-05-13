@@ -122,6 +122,83 @@ func TestDispatch_Top_FallsThrough(t *testing.T) {
 	}
 }
 
+// TestDispatch_OrderBy_FallsThrough covers the order_by gap. The row
+// path resolves OrderBy via the PushDownOrder optimizer rule which the
+// vec dispatch does not invoke. Until dispatch threads OrderBy into
+// MeasureQueryOptions.Order, requests with OrderBy must fall through.
+func TestDispatch_OrderBy_FallsThrough(t *testing.T) {
+	req := bareReq()
+	req.OrderBy = &modelv1.QueryOrder{
+		Sort: modelv1.Sort_SORT_DESC,
+	}
+	_, _, handled, err := Dispatch(context.Background(),
+		req, nil, nil, nil, nil, dispatchCfg(true))
+	if err != nil {
+		t.Fatalf("OrderBy fallthrough must not error: %v", err)
+	}
+	if handled {
+		t.Fatal("OrderBy must fall through (row path applies it via PushDownOrder)")
+	}
+}
+
+// TestDispatch_UnknownTagProjection_FallsThrough covers the parity gap
+// for WantErr=true fixtures: the row path rejects unknown tags via
+// ValidateProjectionTags and returns a descriptive error. Dispatch
+// falls through so the row path surfaces that canonical error.
+func TestDispatch_UnknownTagProjection_FallsThrough(t *testing.T) {
+	measureSchema := testMeasureSchema()
+	// nolint:staticcheck // SA1019 — row-path BuildSchema is the only schema builder until G8 replaces it.
+	logicalSchema, schemaErr := logicalmeasure.BuildSchema(measureSchema, nil)
+	if schemaErr != nil {
+		t.Fatalf("BuildSchema: %v", schemaErr)
+	}
+	metadata := &commonv1.Metadata{Name: "demo", Group: "default"}
+	ec := &fakeEC{wantResult: nil, wantErr: nil}
+
+	req := bareReq()
+	req.TagProjection = &modelv1.TagProjection{TagFamilies: []*modelv1.TagProjection_TagFamily{
+		{Name: "default", Tags: []string{"ghost"}},
+	}}
+	_, _, handled, err := Dispatch(context.Background(),
+		req, metadata, measureSchema, logicalSchema, ec, dispatchCfg(true))
+	if err != nil {
+		t.Fatalf("unknown tag fallthrough must not error: %v", err)
+	}
+	if handled {
+		t.Fatal("unknown tag in projection must fall through (row path returns WantErr)")
+	}
+	if ec.called {
+		t.Fatal("ec.Query must not be invoked when projection is invalid")
+	}
+}
+
+// TestDispatch_UnknownFieldProjection_FallsThrough is the field-side
+// counterpart of UnknownTagProjection.
+func TestDispatch_UnknownFieldProjection_FallsThrough(t *testing.T) {
+	measureSchema := testMeasureSchema()
+	// nolint:staticcheck // SA1019 — row-path BuildSchema is the only schema builder until G8 replaces it.
+	logicalSchema, schemaErr := logicalmeasure.BuildSchema(measureSchema, nil)
+	if schemaErr != nil {
+		t.Fatalf("BuildSchema: %v", schemaErr)
+	}
+	metadata := &commonv1.Metadata{Name: "demo", Group: "default"}
+	ec := &fakeEC{wantResult: nil, wantErr: nil}
+
+	req := bareReq()
+	req.FieldProjection = &measurev1.QueryRequest_FieldProjection{Names: []string{"ghost"}}
+	_, _, handled, err := Dispatch(context.Background(),
+		req, metadata, measureSchema, logicalSchema, ec, dispatchCfg(true))
+	if err != nil {
+		t.Fatalf("unknown field fallthrough must not error: %v", err)
+	}
+	if handled {
+		t.Fatal("unknown field in projection must fall through (row path returns WantErr)")
+	}
+	if ec.called {
+		t.Fatal("ec.Query must not be invoked when projection is invalid")
+	}
+}
+
 // TestDispatch_NoTimeRange_FallsThrough covers the bounded-window
 // requirement.
 func TestDispatch_NoTimeRange_FallsThrough(t *testing.T) {
@@ -201,6 +278,45 @@ func TestDispatch_EmptyResult_FallsThrough(t *testing.T) {
 	}
 	if ec.lastOpts.TimeRange == nil {
 		t.Fatal("opts.TimeRange must be set from req.TimeRange")
+	}
+}
+
+// TestDispatch_Counters_TrackFellThroughCalls confirms the
+// FellThroughCount counter increments on every non-error fallthrough.
+// HandledCount must not move when dispatch declines. This is the unit-
+// level half of the G8e parity-gate observability — integration runs
+// assert HandledCount > 0 after replaying the measure/topn cases.
+func TestDispatch_Counters_TrackFellThroughCalls(t *testing.T) {
+	startHandled := HandledCount()
+	startFellThrough := FellThroughCount()
+
+	// Three fallthroughs of distinct shapes.
+	groupByReq := bareReq()
+	groupByReq.GroupBy = &measurev1.QueryRequest_GroupBy{
+		TagProjection: projTagProj(), FieldName: "value",
+	}
+	groupByReq.Agg = &measurev1.QueryRequest_Aggregation{
+		Function: modelv1.AggregationFunction_AGGREGATION_FUNCTION_SUM, FieldName: "value",
+	}
+	noTimeReq := bareReq()
+	noTimeReq.TimeRange = nil
+
+	for _, req := range []*measurev1.QueryRequest{groupByReq, noTimeReq, bareReq() /* nil ec */} {
+		_, _, handled, dispatchErr := Dispatch(context.Background(),
+			req, nil, nil, nil, nil, dispatchCfg(true))
+		if dispatchErr != nil {
+			t.Fatalf("fallthrough must not error: %v", dispatchErr)
+		}
+		if handled {
+			t.Fatal("test expected fallthrough; got handled=true")
+		}
+	}
+
+	if got := HandledCount() - startHandled; got != 0 {
+		t.Fatalf("HandledCount delta: want 0, got %d", got)
+	}
+	if got := FellThroughCount() - startFellThrough; got != 3 {
+		t.Fatalf("FellThroughCount delta: want 3, got %d", got)
 	}
 }
 

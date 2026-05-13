@@ -20,6 +20,7 @@ package plan
 import (
 	"context"
 	"fmt"
+	"sync/atomic"
 
 	commonv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/common/v1"
 	databasev1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/database/v1"
@@ -35,6 +36,29 @@ import (
 	measure "github.com/apache/skywalking-banyandb/pkg/query/vectorized/measure"
 	"github.com/apache/skywalking-banyandb/pkg/timestamp"
 )
+
+// Process-wide observability counters for G8e parity testing. Tests
+// assert HandledCount > 0 to prove dispatch fires (vs silently falling
+// through), and FellThroughCount > 0 to prove the row path still serves
+// queries Dispatch is not yet ready to take.
+//
+// Counters are best-effort: under concurrent queries the deltas are
+// accurate, but a test reading them across a workload may observe
+// updates from unrelated queries. Snapshot via Load() before the test
+// workload and compute the delta.
+var (
+	handledCount     atomic.Int64
+	fellThroughCount atomic.Int64
+)
+
+// HandledCount returns the cumulative number of vec dispatch successes
+// observed by this process.
+func HandledCount() int64 { return handledCount.Load() }
+
+// FellThroughCount returns the cumulative number of times Dispatch
+// declined to handle a request (returned handled=false, err=nil) in
+// this process.
+func FellThroughCount() int64 { return fellThroughCount.Load() }
 
 // Dispatch is the G8d top-level entry into the vec measure subsystem.
 //
@@ -78,7 +102,20 @@ func Dispatch(
 	logicalSchema logical.Schema,
 	ec executor.MeasureExecutionContext,
 	cfg measure.VectorizedConfig,
-) (executor.MIterator, string, bool, error) {
+) (iter executor.MIterator, planStr string, handled bool, err error) {
+	defer func() {
+		// Errors are surfaced as-is; only count clean handled / fall-
+		// through outcomes so observability matches the caller's
+		// branching contract.
+		if err != nil {
+			return
+		}
+		if handled {
+			handledCount.Add(1)
+		} else {
+			fellThroughCount.Add(1)
+		}
+	}()
 	if !cfg.Enabled {
 		return nil, "", false, nil
 	}
@@ -91,6 +128,14 @@ func Dispatch(
 		// BatchTop.
 		return nil, "", false, nil
 	}
+	if req.GetOrderBy() != nil {
+		// The row path resolves order_by via the PushDownOrder optimizer
+		// rule (logical.NewPushDownOrder applied after Analyze). The vec
+		// dispatch does not invoke those rules, so it would silently
+		// drop OrderBy and return unsorted rows. Fall through until
+		// dispatch threads order_by into model.MeasureQueryOptions.Order.
+		return nil, "", false, nil
+	}
 	if req.GetTimeRange() == nil {
 		return nil, "", false, nil
 	}
@@ -98,6 +143,15 @@ func Dispatch(
 	// in production paths — buildMeasureContext populates all of them —
 	// but a defensive fallthrough is safer than a nil dereference.
 	if measureSchema == nil || logicalSchema == nil || ec == nil || metadata == nil {
+		return nil, "", false, nil
+	}
+
+	// Projection validation. The row path's Analyze rejects unknown
+	// projection names via ValidateProjectionTags / ValidateProjectionFields
+	// and surfaces a descriptive error. Dispatch falls through so the
+	// row path produces that canonical error (test fixtures with
+	// WantErr=true depend on it).
+	if !projectionsExistInSchema(req, measureSchema) {
 		return nil, "", false, nil
 	}
 
@@ -223,4 +277,52 @@ func projectedNames(tp *modelv1.TagProjection) map[string]struct{} {
 		}
 	}
 	return out
+}
+
+// projectionsExistInSchema returns false if any tag (in any requested tag
+// family) or field name in the request's projection is absent from the
+// Measure schema. Callers use the result as an eligibility gate: missing
+// names route through the row path, which surfaces a descriptive error
+// via logical_measure.Analyze.
+func projectionsExistInSchema(req *measurev1.QueryRequest, m *databasev1.Measure) bool {
+	if tp := req.GetTagProjection(); tp != nil {
+		for _, reqFamily := range tp.GetTagFamilies() {
+			schemaFamily := findSchemaTagFamily(m, reqFamily.GetName())
+			if schemaFamily == nil {
+				return false
+			}
+			known := make(map[string]struct{}, len(schemaFamily.GetTags()))
+			for _, ts := range schemaFamily.GetTags() {
+				known[ts.GetName()] = struct{}{}
+			}
+			for _, name := range reqFamily.GetTags() {
+				if _, ok := known[name]; !ok {
+					return false
+				}
+			}
+		}
+	}
+	if fp := req.GetFieldProjection(); fp != nil && len(fp.GetNames()) > 0 {
+		known := make(map[string]struct{}, len(m.GetFields()))
+		for _, fs := range m.GetFields() {
+			known[fs.GetName()] = struct{}{}
+		}
+		for _, name := range fp.GetNames() {
+			if _, ok := known[name]; !ok {
+				return false
+			}
+		}
+	}
+	return true
+}
+
+// findSchemaTagFamily returns the schema-defined tag family with the
+// given name, or nil if no such family exists.
+func findSchemaTagFamily(m *databasev1.Measure, name string) *databasev1.TagFamilySpec {
+	for _, tf := range m.GetTagFamilies() {
+		if tf.GetName() == name {
+			return tf
+		}
+	}
+	return nil
 }
