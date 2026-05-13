@@ -583,8 +583,8 @@ type nodeContext struct {
 
 // inspectCounter exposes Inc deltas — BypassRegistry would swallow them.
 type inspectCounter struct {
-	mu     sync.RWMutex
 	totals map[string]float64
+	mu     sync.RWMutex
 }
 
 func newInspectCounter() *inspectCounter {

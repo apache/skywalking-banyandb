@@ -53,6 +53,11 @@ const (
 	PropertyName = "perf-test-property"
 )
 
+// promFloatPattern matches a Prometheus exposition value: scientific
+// notation (e.g. 1.23e+06), plain decimal, [+-]Inf or NaN. The previous
+// `\d+(?:\.\d+)?` form silently missed large counters and histogram sums.
+const promFloatPattern = `(-?(?:\d+(?:\.\d+)?(?:[eE][+-]?\d+)?|[+-]?Inf|NaN))`
+
 // PrometheusEndpoints defines the prometheus endpoints for data nodes.
 var PrometheusEndpoints = []string{
 	"http://localhost:2122/metrics", // data-node-1
@@ -77,7 +82,7 @@ type NodeMetrics struct {
 	// shows count=0 here.
 	RepairSuccessLatencyCount      int64
 	RepairSuccessLatencySumSeconds float64
-	IsHealthy                     bool
+	IsHealthy                      bool
 }
 
 // GenerateLargeData creates a string of specified size filled with random characters.
@@ -317,7 +322,7 @@ func GetNodeMetrics(endpoint string, nodeIndex int) *NodeMetrics {
 // parseTotalPropagationCount parses the total_propagation_count from prometheus metrics text.
 func parseTotalPropagationCount(content string) int64 {
 	// Look for metric lines like: banyandb_property_repair_gossip_server_total_propagation_count{group="perf-test-group",original_node="data-node-1:17912"} 3
-	re := regexp.MustCompile(`banyandb_property_repair_gossip_server_total_propagation_count\{[^}]+\}\s+(\d+(?:\.\d+)?)`)
+	re := regexp.MustCompile(`banyandb_property_repair_gossip_server_total_propagation_count\{[^}]+\}\s+` + promFloatPattern)
 	matches := re.FindAllStringSubmatch(content, -1)
 
 	var totalCount int64
@@ -337,7 +342,7 @@ func parseTotalPropagationCount(content string) int64 {
 // parseRepairSuccessCount parses the repair_success_count from prometheus metrics text.
 func parseRepairSuccessCount(content string) int64 {
 	// Look for metric lines like: banyandb_property_scheduler_property_repair_success_count{group="perf-test-group",shard="0"} 100
-	re := regexp.MustCompile(`banyandb_property_scheduler_property_repair_success_count\{[^}]+\}\s+(\d+(?:\.\d+)?)`)
+	re := regexp.MustCompile(`banyandb_property_scheduler_property_repair_success_count\{[^}]+\}\s+` + promFloatPattern)
 	matches := re.FindAllStringSubmatch(content, -1)
 
 	var totalCount int64
@@ -357,7 +362,7 @@ func parseRepairSuccessCount(content string) int64 {
 // parseRepairFailureCount parses the repair_failure_count from prometheus metrics text.
 func parseRepairFailureCount(content string) int64 {
 	// Look for metric lines like: banyandb_property_scheduler_property_repair_failure_count{group="perf-test-group",shard="0"} 5
-	re := regexp.MustCompile(`banyandb_property_scheduler_property_repair_failure_count\{[^}]+\}\s+(\d+(?:\.\d+)?)`)
+	re := regexp.MustCompile(`banyandb_property_scheduler_property_repair_failure_count\{[^}]+\}\s+` + promFloatPattern)
 	matches := re.FindAllStringSubmatch(content, -1)
 
 	var totalCount int64
@@ -377,7 +382,7 @@ func parseRepairFailureCount(content string) int64 {
 // parseRepairPerPropertyTimeoutCount parses the property_repair_per_property_timeout from prometheus metrics text.
 func parseRepairPerPropertyTimeoutCount(content string) int64 {
 	// Look for metric lines like: banyandb_property_scheduler_property_repair_per_property_timeout{group="perf-test-group",shard="0"} 3
-	re := regexp.MustCompile(`banyandb_property_scheduler_property_repair_per_property_timeout\{[^}]+\}\s+(\d+(?:\.\d+)?)`)
+	re := regexp.MustCompile(`banyandb_property_scheduler_property_repair_per_property_timeout\{[^}]+\}\s+` + promFloatPattern)
 	matches := re.FindAllStringSubmatch(content, -1)
 
 	var totalCount int64
@@ -397,7 +402,7 @@ func parseRepairPerPropertyTimeoutCount(content string) int64 {
 // parseTotalCoalesced parses the gossip total_coalesced from prometheus metrics text.
 func parseTotalCoalesced(content string) int64 {
 	// Look for metric lines like: banyandb_property_repair_gossip_server_total_coalesced{group="perf-test-group"} 7
-	re := regexp.MustCompile(`banyandb_property_repair_gossip_server_total_coalesced\{[^}]+\}\s+(\d+(?:\.\d+)?)`)
+	re := regexp.MustCompile(`banyandb_property_repair_gossip_server_total_coalesced\{[^}]+\}\s+` + promFloatPattern)
 	matches := re.FindAllStringSubmatch(content, -1)
 
 	var totalCount int64
@@ -417,7 +422,7 @@ func parseTotalCoalesced(content string) int64 {
 // parseRepairSuccessLatencyCount parses the histogram _count of property_repair_success_latency_seconds.
 func parseRepairSuccessLatencyCount(content string) int64 {
 	// Look for metric lines like: banyandb_property_scheduler_property_repair_success_latency_seconds_count{group="perf-test-group",shard="0"} 100
-	re := regexp.MustCompile(`banyandb_property_scheduler_property_repair_success_latency_seconds_count\{[^}]+\}\s+(\d+(?:\.\d+)?)`)
+	re := regexp.MustCompile(`banyandb_property_scheduler_property_repair_success_latency_seconds_count\{[^}]+\}\s+` + promFloatPattern)
 	matches := re.FindAllStringSubmatch(content, -1)
 
 	var totalCount int64
@@ -437,7 +442,7 @@ func parseRepairSuccessLatencyCount(content string) int64 {
 // parseRepairSuccessLatencySum parses the histogram _sum (seconds) of property_repair_success_latency_seconds.
 func parseRepairSuccessLatencySum(content string) float64 {
 	// Look for metric lines like: banyandb_property_scheduler_property_repair_success_latency_seconds_sum{group="perf-test-group",shard="0"} 12.34
-	re := regexp.MustCompile(`banyandb_property_scheduler_property_repair_success_latency_seconds_sum\{[^}]+\}\s+(\d+(?:\.\d+)?)`)
+	re := regexp.MustCompile(`banyandb_property_scheduler_property_repair_success_latency_seconds_sum\{[^}]+\}\s+` + promFloatPattern)
 	matches := re.FindAllStringSubmatch(content, -1)
 
 	var totalSum float64

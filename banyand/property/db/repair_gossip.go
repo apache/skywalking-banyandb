@@ -402,8 +402,8 @@ func (r *repairGossipClient) Rev(ctx context.Context, tracer gossip.Trace, nextN
 					syncSpan.Error(err.Error())
 					r.scheduler.l.Warn().Err(err).Msgf("failed to send newer property sync response to server, entity: %s", newer.id)
 				}
-				syncSpan.End()
 			}
+			syncSpan.End()
 		default:
 			r.scheduler.l.Warn().Msgf("unexpected response type: %T, expected DifferTreeSummary or PropertySync", resp)
 		}

@@ -540,9 +540,9 @@ func (m *mockListener) Rev(_ context.Context, _ Trace, nextNode *grpc.ClientConn
 type blockingListener struct {
 	release     chan struct{}
 	entered     chan struct{}
+	propCounts  []int32
 	enteredOnce sync.Once
 	mu          sync.RWMutex
-	propCounts  []int32
 }
 
 func newBlockingListener() *blockingListener {
@@ -584,8 +584,8 @@ func (b *blockingListener) maxObservedCount() int32 {
 
 // recordingCounter exposes Inc deltas — the bypass registry cannot be introspected.
 type recordingCounter struct {
-	mu     sync.RWMutex
 	totals map[string]float64
+	mu     sync.RWMutex
 }
 
 func newRecordingCounter() *recordingCounter {
