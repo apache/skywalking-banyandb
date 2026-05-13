@@ -190,42 +190,18 @@ func NewMIterator(ctx context.Context, qr model.MeasureQueryResult,
 		source = NewBatchScan(qr, schema, pool, cfg.BatchSize)
 	}
 
-	// G7e: when opts carries GroupBy + Agg, BuildOperators emits the
-	// BatchAggregation breaker that does both grouping and folding. The
-	// per-pipeline MemoryTracker drawn from cfg.QueryMemoryMiB is shared
-	// across operators so reservations stack against one budget (G7a).
-	tracker := vectorized.NewMemoryTracker(int64(cfg.QueryMemoryMiB) * 1024 * 1024)
-	ops, opsErr := BuildOperators(opts, schema, tracker, cfg.BatchSize)
-	if opsErr != nil {
-		_ = source.Close()
-		return nil, opsErr
-	}
-
-	builder := vectorized.NewPipelineBuilder().From(source).WithMemoryTracker(tracker)
-	for _, op := range ops {
-		builder = builder.Break(op)
-	}
-	pipeline, buildErr := builder.Build()
+	pipeline, buildErr := vectorized.NewPipelineBuilder().From(source).Build()
 	if buildErr != nil {
 		// source was constructed but never wired into a Pipeline; close
 		// it directly to release qr through the source.
 		_ = source.Close()
 		return nil, buildErr
 	}
-	// When operators are present, choose the egress pool based on the
-	// terminal operator's output schema — its column layout differs from
-	// the source schema (e.g., agg output drops timestamp and adds the
-	// agg result field). The serializer reads each batch's own Schema so
-	// pooling is the only schema-coupled concern here.
-	egressPool := pool
-	if len(ops) > 0 {
-		egressPool = vectorized.NewBatchPool(ops[len(ops)-1].OutputSchema(), cfg.BatchSize)
-	}
 	if initErr := source.Init(ctx); initErr != nil {
 		_ = pipeline.Close()
 		return nil, initErr
 	}
-	return &VectorizedMIterator{inner: newVectorizedMIterator(ctx, pipeline, egressPool)}, nil
+	return &VectorizedMIterator{inner: newVectorizedMIterator(ctx, pipeline, pool)}, nil
 }
 
 // VectorizedMIterator is the public adapter exposed to other packages. It is
