@@ -311,7 +311,7 @@ func (iqr *indexSortResult) copyToBatch(b *model.MeasureBatch, schema *vectorize
 	b.Timestamps = append(b.Timestamps, src.Timestamps[rowIdx])
 	b.Versions = append(b.Versions, src.Versions[rowIdx])
 	b.SeriesIDs = append(b.SeriesIDs, src.SeriesList[rowIdx].ID)
-	// indexSortResult has no shardID; use zero value (matches copyTo behaviour).
+	// indexSortResult has no shardID; use zero value (matches copyTo behavior).
 	b.ShardIDs = append(b.ShardIDs, 0)
 
 	var fr storage.FieldResult
@@ -379,7 +379,7 @@ func (iqr *indexSortResult) fillSegFieldCell(col vectorized.Column, def vectoriz
 		appendNullFieldN(col, def, 1)
 		return
 	}
-	// Fields in the FieldResult are keyed by the marshalled index key (tnt.fieldName).
+	// Fields in the FieldResult are keyed by the marshaled index key (tnt.fieldName).
 	// Walk all tfl entries to find the field's valueType.
 	for tfIdx := range iqr.tfl {
 		if tnt, ok := iqr.tfl[tfIdx].fieldToValueType[def.Name]; ok {
