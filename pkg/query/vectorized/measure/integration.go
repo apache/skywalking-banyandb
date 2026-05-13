@@ -204,6 +204,17 @@ func NewMIterator(ctx context.Context, qr model.MeasureQueryResult,
 	return &VectorizedMIterator{inner: newVectorizedMIterator(ctx, pipeline, pool)}, nil
 }
 
+// NewIteratorFromPipeline wraps an already-built *vectorized.Pipeline (with
+// its source/operators already attached and Pipeline.Init called) as a
+// VectorizedMIterator. Used by the G8 vec executor at
+// pkg/query/vectorized/measure/plan to compose plan trees into the public
+// MIterator contract without going through NewMIterator's leaf-substitution
+// path. pool is the egress BatchPool the adapter recycles consumed batches
+// into; it must match the pipeline's terminal output schema.
+func NewIteratorFromPipeline(ctx context.Context, pipeline *vectorized.Pipeline, pool *vectorized.BatchPool) *VectorizedMIterator {
+	return &VectorizedMIterator{inner: newVectorizedMIterator(ctx, pipeline, pool)}
+}
+
 // VectorizedMIterator is the public adapter exposed to other packages. It is
 // a thin facade over the unexported vectorizedMIterator so the executor
 // interface is satisfied without leaking the package-private type.
