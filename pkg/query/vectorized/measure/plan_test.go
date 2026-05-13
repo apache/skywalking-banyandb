@@ -63,31 +63,35 @@ func TestBuildOperators_GroupByPlusAgg_EmitsBatchAggregation(t *testing.T) {
 	}
 }
 
-func TestBuildOperators_AggOutputName_IsFieldUnderscoreFunc(t *testing.T) {
-	cases := []struct {
-		want string
-		fn   modelv1.AggregationFunction
-	}{
-		{"value_sum", modelv1.AggregationFunction_AGGREGATION_FUNCTION_SUM},
-		{"value_count", modelv1.AggregationFunction_AGGREGATION_FUNCTION_COUNT},
-		{"value_min", modelv1.AggregationFunction_AGGREGATION_FUNCTION_MIN},
-		{"value_max", modelv1.AggregationFunction_AGGREGATION_FUNCTION_MAX},
-		{"value_mean", modelv1.AggregationFunction_AGGREGATION_FUNCTION_MEAN},
+// TestBuildOperators_AggOutputName_InheritsInputFieldName pins the
+// G8d.2 row-path-parity name: the agg result column reuses the input
+// field name (e.g. "value") for every AggFunc, matching the row-path
+// aggGroupIterator.Current() that emits a single DataPoint_Field named
+// after the original input field. Any auto-derived "<field>_<func>"
+// suffix would break proto.Equal parity in the integration suite.
+func TestBuildOperators_AggOutputName_InheritsInputFieldName(t *testing.T) {
+	fns := []modelv1.AggregationFunction{
+		modelv1.AggregationFunction_AGGREGATION_FUNCTION_SUM,
+		modelv1.AggregationFunction_AGGREGATION_FUNCTION_COUNT,
+		modelv1.AggregationFunction_AGGREGATION_FUNCTION_MIN,
+		modelv1.AggregationFunction_AGGREGATION_FUNCTION_MAX,
+		modelv1.AggregationFunction_AGGREGATION_FUNCTION_MEAN,
 	}
-	for _, c := range cases {
+	const wantName = "value"
+	for _, fn := range fns {
 		opts := model.MeasureQueryOptions{
 			GroupBy: &model.MeasureGroupBy{TagFamily: "default", TagNames: []string{"svc"}},
-			Agg:     &model.MeasureAgg{FieldName: "value", Func: c.fn},
+			Agg:     &model.MeasureAgg{FieldName: "value", Func: fn},
 		}
 		ops, err := BuildOperators(opts, planSchema(), vectorized.NewMemoryTracker(1<<20), 1024)
 		if err != nil {
-			t.Fatalf("%v: BuildOperators error: %v", c.fn, err)
+			t.Fatalf("%v: BuildOperators error: %v", fn, err)
 		}
 		agg := ops[0].(*BatchAggregation)
-		// Output schema's last column is the agg result; its Name is the auto-derived output name.
+		// Output schema layout: key columns then the agg result column.
 		got := agg.OutputSchema().Columns[len(agg.OutputSchema().Columns)-1].Name
-		if got != c.want {
-			t.Fatalf("%v: want output column name %q, got %q", c.fn, c.want, got)
+		if got != wantName {
+			t.Fatalf("%v: want output column name %q (row-path parity), got %q", fn, wantName, got)
 		}
 	}
 }

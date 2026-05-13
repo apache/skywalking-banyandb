@@ -19,7 +19,6 @@ package measure
 
 import (
 	"fmt"
-	"strings"
 
 	modelv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/model/v1"
 	"github.com/apache/skywalking-banyandb/pkg/query/model"
@@ -86,10 +85,18 @@ func BuildOperators(
 		return nil, fnErr
 	}
 
+	// The agg result column inherits the input field's name to match the
+	// row-path aggregator (aggGroupIterator.Current() in
+	// pkg/query/logical/measure/measure_plan_aggregation.go). Row-path
+	// fixtures expect a single output field named after the original
+	// input (e.g. "value"), not an auto-derived "<field>_<func>" suffix
+	// like "value_sum" — the suffix would break proto.Equal parity in the
+	// integration suite. The aggregation function lives on the operator
+	// spec, not in the column name.
 	spec := AggSpec{
 		Func:     aggFn,
 		InputCol: fieldIdx,
-		Output:   aggOutputName(opts.Agg.FieldName, aggFn),
+		Output:   opts.Agg.FieldName,
 	}
 	agg := NewBatchAggregation(schema, keyIndices, []AggSpec{spec},
 		AggModeAll, batchSize, tracker, aggEntrySize)
@@ -148,20 +155,3 @@ func protoAggFuncToInternal(f modelv1.AggregationFunction) (AggFunc, error) {
 	return 0, fmt.Errorf("vectorized.measure: unknown AggregationFunction %v", f)
 }
 
-// aggOutputName derives the agg result column name: <field>_<func> (lowercase).
-func aggOutputName(fieldName string, fn AggFunc) string {
-	suffix := ""
-	switch fn {
-	case AggSum:
-		suffix = "sum"
-	case AggCount:
-		suffix = "count"
-	case AggMin:
-		suffix = "min"
-	case AggMax:
-		suffix = "max"
-	case AggMean:
-		suffix = "mean"
-	}
-	return strings.Join([]string{fieldName, suffix}, "_")
-}

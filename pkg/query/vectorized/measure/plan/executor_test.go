@@ -110,8 +110,8 @@ func TestExecute_GroupByAgg_EmitsAggregatedRowsWithNilTimestamp(t *testing.T) {
 			t.Fatalf("want one Tag 'svc', got %+v", tags)
 		}
 		svc := tags[0].Value.GetStr().GetValue()
-		if len(idp.DataPoint.Fields) != 1 || idp.DataPoint.Fields[0].Name != "value_sum" {
-			t.Fatalf("want one Field 'value_sum', got %+v", idp.DataPoint.Fields)
+		if len(idp.DataPoint.Fields) != 1 || idp.DataPoint.Fields[0].Name != "value" {
+			t.Fatalf("want one Field 'value' (row-path parity), got %+v", idp.DataPoint.Fields)
 		}
 		bySvc[svc] = idp.DataPoint.Fields[0].Value.GetInt().GetValue()
 	}

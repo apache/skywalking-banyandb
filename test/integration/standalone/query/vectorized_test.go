@@ -89,6 +89,11 @@ var _ = ginkgo.Describe("vectorized parity", ginkgo.Ordered, func() {
 		config := setup.PropertyClusterConfig(dfWriter)
 		addr, _, closeFn := setup.ClosableStandalone(config, path, ports,
 			"--measure-vectorized-enabled=true",
+			// G8d.3 will add --measure-vectorized-aggregation-enabled=true
+			// here once the MAX-specific egress parity gap is closed.
+			// 8 of 9 GroupBy+Agg cases already pass with the gate on; the
+			// remaining failure (group_max timeout) is tracked separately
+			// before this flag flips in the parity gate too.
 		)
 		stopFn = func() {
 			closeFn()

@@ -218,14 +218,14 @@ func TestGroupByAgg_Schema_DropsTimestampAddsAggField(t *testing.T) {
 	if out.TimestampIndex() >= 0 {
 		t.Fatalf("aggregation output must drop timestamp (D2); got index %d", out.TimestampIndex())
 	}
-	// 2 columns: svc key + value_sum agg result.
+	// 2 columns: svc key + value agg result (row-path parity name).
 	if len(out.Columns) != 2 {
 		t.Fatalf("want 2 output columns (key + agg result), got %d", len(out.Columns))
 	}
 	if out.Columns[0].Name != "svc" {
 		t.Fatalf("col 0 should be the svc key, got %s", out.Columns[0].Name)
 	}
-	if out.Columns[1].Name != "value_sum" {
-		t.Fatalf("col 1 should be value_sum, got %s", out.Columns[1].Name)
+	if out.Columns[1].Name != "value" {
+		t.Fatalf("col 1 should be 'value' (row-path parity), got %s", out.Columns[1].Name)
 	}
 }
