@@ -26,12 +26,17 @@ import (
 )
 
 // TopElement seals a sortable value and its data point which this value belongs to.
+//
+// Deprecated: row-path measure plan; see .omc/g8-plan.md. The vec
+// subsystem implements top-N via pkg/query/vectorized/measure.BatchTop.
 type TopElement struct {
 	idp   *measurev1.InternalDataPoint
 	value int64
 }
 
 // NewTopElement returns a TopElement.
+//
+// Deprecated: row-path measure plan; see .omc/g8-plan.md.
 func NewTopElement(idp *measurev1.InternalDataPoint, value int64) TopElement {
 	return TopElement{
 		idp:   idp,
@@ -95,12 +100,16 @@ func (h *topHeap) Pop() interface{} {
 }
 
 // TopQueue is a sortable queue only keeps top-n members when pushed new elements.
+//
+// Deprecated: row-path measure plan; see .omc/g8-plan.md.
 type TopQueue struct {
 	th topHeap
 	n  int
 }
 
 // NewTopQueue returns a new TopQueue.
+//
+// Deprecated: row-path measure plan; see .omc/g8-plan.md.
 func NewTopQueue(n int, reverted bool) *TopQueue {
 	return &TopQueue{
 		n: n,

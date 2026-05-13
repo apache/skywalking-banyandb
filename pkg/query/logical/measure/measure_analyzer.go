@@ -31,6 +31,11 @@ import (
 const defaultLimit uint32 = 100
 
 // BuildSchema returns Schema loaded from the metadata repository.
+//
+// Deprecated: row-path measure plan; see .omc/g8-plan.md. The vec
+// measure analyzer (pkg/query/vectorized/measure/plan.Analyze) consumes
+// *databasev1.Measure directly via measure.BuildBatchSchema and does
+// not produce a logical.Schema.
 func BuildSchema(md *databasev1.Measure, indexRules []*databasev1.IndexRule) (logical.Schema, error) {
 	md.GetEntity()
 

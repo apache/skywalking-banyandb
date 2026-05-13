@@ -185,6 +185,7 @@ func buildMeasureContext(measureService measure.Service, log *logger.Logger, que
 		if ecErr != nil {
 			return nil, fmt.Errorf("fail to get execution context for measure %s: %w", meta.GetName(), ecErr)
 		}
+		// nolint:staticcheck // SA1019 — row-path BuildSchema is the only production path until G8 ships.
 		s, schemaErr := logical_measure.BuildSchema(ec.GetSchema(), ec.GetIndexRules())
 		if schemaErr != nil {
 			return nil, fmt.Errorf("fail to build schema for measure %s: %w", meta.GetName(), schemaErr)

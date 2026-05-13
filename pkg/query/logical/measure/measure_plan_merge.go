@@ -34,6 +34,9 @@ import (
 
 var _ logical.UnresolvedPlan = (*unresolvedMerger)(nil)
 
+// Deprecated: row-path measure plan; see .omc/g8-plan.md. The vec
+// subsystem composes a single Pipeline rather than merging separate
+// per-source row plans.
 type unresolvedMerger struct {
 	criteria      *measurev1.QueryRequest
 	metadata      []*commonv1.Metadata

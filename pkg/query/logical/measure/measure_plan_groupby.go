@@ -38,6 +38,10 @@ var (
 	_ logical.Plan           = (*groupBy)(nil)
 )
 
+// Deprecated: row-path measure plan; see .omc/g8-plan.md. The vec
+// subsystem fuses GroupBy + Aggregation into one BatchAggregation
+// operator (planned by pkg/query/vectorized/measure/plan.GroupByAgg)
+// rather than emitting a row-iterator wrapper.
 type unresolvedGroup struct {
 	unresolvedInput logical.UnresolvedPlan
 	// groupBy should be a subset of tag projection

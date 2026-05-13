@@ -66,6 +66,7 @@ func (p *measureQueryProcessor) Rev(ctx context.Context, message bus.Message) (r
 			resp = bus.NewMessage(bus.MessageID(now), common.NewError("fail to get execution context for measure %s: %v", meta.GetName(), err))
 			return
 		}
+		// nolint:staticcheck // SA1019 — row-path BuildSchema is the only production path until G8 ships.
 		s, err := logical_measure.BuildSchema(ec.GetSchema(), ec.GetIndexRules())
 		if err != nil {
 			resp = bus.NewMessage(bus.MessageID(now), common.NewError("fail to build schema for measure %s: %v", meta.GetName(), err))

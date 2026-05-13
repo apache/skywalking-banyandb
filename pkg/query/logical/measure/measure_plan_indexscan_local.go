@@ -185,6 +185,10 @@ var (
 	_ logical.Sorter = (*localIndexScan)(nil)
 )
 
+// Deprecated: row-path measure plan; see .omc/g8-plan.md. The vec
+// subsystem scans via pkg/query/vectorized/measure/plan.Scan and does
+// not perform leaf substitution — maybeVectorized will be deleted in
+// G8h once top-level dispatch supersedes the row plan entirely.
 type localIndexScan struct {
 	ec                   executor.MeasureExecutionContext
 	schema               logical.Schema
