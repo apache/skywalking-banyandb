@@ -6,6 +6,7 @@ Release Notes.
 
 ### Features
 
+- Vectorized measure query path is now enabled by default. The columnar pipeline replaces per-row protobuf serialization in `NewMIterator`, cutting allocations and ns/op for scan-heavy measure queries; gRPC wire format (`*measurev1.InternalDataPoint`) is byte-identical. Rollback: pass `--measure-vectorized-enabled=false` on the standalone or data-node command line and restart; the row path resumes immediately.
 - Organize access logs under a dedicated "accesslog" subdirectory to improve log organization and separation from other application data.
 - Collect BanyanDB data on e2e test failure for CI debugging.
 - Add log query e2e test.

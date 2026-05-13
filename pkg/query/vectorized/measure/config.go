@@ -26,11 +26,12 @@ type VectorizedConfig struct {
 	Enabled        bool
 }
 
-// DefaultConfig returns the v1 default — disabled, 1024-row batches, 256 MiB
-// per-query memory budget. v1 ships with Enabled false; the rollout PR flips
-// the default after soak and bench gates pass.
+// DefaultConfig returns the v1 default — enabled, 1024-row batches, 256 MiB
+// per-query memory budget. v1 ships with Enabled true post-soak/bench-gate
+// rollout (G5e). To roll back, pass --measure-vectorized-enabled=false on
+// the standalone or data-node command line and restart.
 func DefaultConfig() VectorizedConfig {
-	return VectorizedConfig{Enabled: false, BatchSize: 1024, QueryMemoryMiB: 256}
+	return VectorizedConfig{Enabled: true, BatchSize: 1024, QueryMemoryMiB: 256}
 }
 
 // Validate rejects nonsense configurations.
