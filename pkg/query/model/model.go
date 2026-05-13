@@ -55,11 +55,29 @@ type TagProjection struct {
 	Names  []string
 }
 
+// MeasureGroupBy describes a GroupBy clause for a measure query. v1 supports
+// a single tag family; each entry in TagNames is a key column. An empty
+// TagNames slice means the query carries no GroupBy clause.
+type MeasureGroupBy struct {
+	TagFamily string
+	TagNames  []string
+}
+
+// MeasureAgg describes a single aggregation for a measure query. v1 supports
+// one aggregation per query — matches the singular QueryRequest.agg proto
+// field. FieldName must reference a field in MeasureQueryOptions.FieldProjection.
+type MeasureAgg struct {
+	FieldName string
+	Func      modelv1.AggregationFunction
+}
+
 // MeasureQueryOptions is the options of a measure query.
 type MeasureQueryOptions struct {
 	Query           index.Query
 	TimeRange       *timestamp.TimeRange
 	Order           *index.OrderBy
+	GroupBy         *MeasureGroupBy
+	Agg             *MeasureAgg
 	Name            string
 	Entities        [][]*modelv1.TagValue
 	TagProjection   []TagProjection
