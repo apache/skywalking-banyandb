@@ -79,11 +79,14 @@ type BatchAggregation struct {
 	inputSchema  *vectorized.BatchSchema
 	outputSchema *vectorized.BatchSchema
 	pool         *vectorized.BatchPool
+	tracker      *vectorized.MemoryTracker
 	groups       map[string]*aggGroup
 	insertion    []*aggGroup
 	keyIndices   []int
 	aggs         []AggSpec
 	mode         AggMode
+	entrySize    int64
+	reserved     int64
 	batchSize    int
 	cursor       int
 	closed       bool
@@ -113,19 +116,27 @@ type aggSlot struct {
 
 // NewBatchAggregation constructs a BatchAggregation. It builds the output
 // schema internally (keys + agg outputs) and owns its output BatchPool.
+//
+// tracker carries the per-pipeline memory budget; entrySize is the bytes
+// reserved per new group bucket (key columns + slots + map entry overhead).
+// Pass entrySize=0 to disable per-group bookkeeping. tracker must not be nil
+// — use a large NewMemoryTracker for unit tests that don't care about budget.
 func NewBatchAggregation(
 	input *vectorized.BatchSchema, keyIndices []int,
 	aggs []AggSpec, mode AggMode, batchSize int,
+	tracker *vectorized.MemoryTracker, entrySize int64,
 ) *BatchAggregation {
 	outputSchema := buildAggOutputSchema(input, keyIndices, aggs)
 	return &BatchAggregation{
 		inputSchema:  input,
 		outputSchema: outputSchema,
 		pool:         vectorized.NewBatchPool(outputSchema, batchSize),
+		tracker:      tracker,
 		keyIndices:   slices.Clone(keyIndices),
 		aggs:         slices.Clone(aggs),
 		mode:         mode,
 		batchSize:    batchSize,
+		entrySize:    entrySize,
 	}
 }
 
@@ -143,6 +154,10 @@ func (a *BatchAggregation) OutputSchema() *vectorized.BatchSchema { return a.out
 
 // Consume folds every active row into its group's accumulator. Null values are
 // excluded from aggregation (count not incremented; sum/min/max unchanged).
+//
+// Each new group reserves entrySize bytes from the shared MemoryTracker. If
+// the budget is exhausted, Consume returns the wrapped tracker error and the
+// row's group is not added — partial-batch state is consistent.
 func (a *BatchAggregation) Consume(_ context.Context, b *vectorized.RecordBatch) error {
 	if a.mode != AggModeAll {
 		return ErrAggModeNotImplemented
@@ -152,6 +167,12 @@ func (a *BatchAggregation) Consume(_ context.Context, b *vectorized.RecordBatch)
 		key := a.computeKey(b, int(rowIdx))
 		group, exists := a.groups[key]
 		if !exists {
+			if a.entrySize > 0 {
+				if reserveErr := a.tracker.Reserve(a.entrySize); reserveErr != nil {
+					return fmt.Errorf("aggregation memory budget exceeded: %w", reserveErr)
+				}
+				a.reserved += a.entrySize
+			}
 			newGroup, newErr := a.newGroup(b, int(rowIdx), key)
 			if newErr != nil {
 				return newErr
@@ -198,12 +219,17 @@ func (a *BatchAggregation) NextBatch(_ context.Context) (*vectorized.RecordBatch
 	return out, nil
 }
 
-// Close releases the group map. Idempotent.
+// Close releases the group map and refunds the outstanding memory
+// reservation. Idempotent.
 func (a *BatchAggregation) Close() error {
 	if a.closed {
 		return nil
 	}
 	a.closed = true
+	if a.reserved > 0 {
+		a.tracker.Release(a.reserved)
+		a.reserved = 0
+	}
 	a.groups = nil
 	a.insertion = nil
 	return nil

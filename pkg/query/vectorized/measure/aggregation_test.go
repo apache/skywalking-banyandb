@@ -82,7 +82,7 @@ func findAggRow(t *testing.T, b *vectorized.RecordBatch, key string) int {
 func TestBatchAggregation_AggModeAll_SumInt64(t *testing.T) {
 	s := aggIntSchema()
 	op := NewBatchAggregation(s, []int{0},
-		[]AggSpec{{Func: AggSum, InputCol: 1, Output: "sum_v"}}, AggModeAll, 8)
+		[]AggSpec{{Func: AggSum, InputCol: 1, Output: "sum_v"}}, AggModeAll, 8, vectorized.NewMemoryTracker(1<<30), 0)
 	_ = op.Init(context.Background())
 	defer op.Close()
 
@@ -125,7 +125,7 @@ func TestBatchAggregation_AggModeAll_SumInt64(t *testing.T) {
 func TestBatchAggregation_AggModeAll_SumFloat64(t *testing.T) {
 	s := aggFloatSchema()
 	op := NewBatchAggregation(s, []int{0},
-		[]AggSpec{{Func: AggSum, InputCol: 1, Output: "sum_v"}}, AggModeAll, 8)
+		[]AggSpec{{Func: AggSum, InputCol: 1, Output: "sum_v"}}, AggModeAll, 8, vectorized.NewMemoryTracker(1<<30), 0)
 	_ = op.Init(context.Background())
 	defer op.Close()
 
@@ -151,7 +151,7 @@ func TestBatchAggregation_AggModeAll_SumFloat64(t *testing.T) {
 func TestBatchAggregation_AggModeAll_Count(t *testing.T) {
 	s := aggIntSchema()
 	op := NewBatchAggregation(s, []int{0},
-		[]AggSpec{{Func: AggCount, InputCol: 1, Output: "n"}}, AggModeAll, 8)
+		[]AggSpec{{Func: AggCount, InputCol: 1, Output: "n"}}, AggModeAll, 8, vectorized.NewMemoryTracker(1<<30), 0)
 	_ = op.Init(context.Background())
 	defer op.Close()
 
@@ -191,7 +191,7 @@ func TestBatchAggregation_AggModeAll_Count(t *testing.T) {
 func TestBatchAggregation_AggModeAll_Min_Int64(t *testing.T) {
 	s := aggIntSchema()
 	op := NewBatchAggregation(s, []int{0},
-		[]AggSpec{{Func: AggMin, InputCol: 1, Output: "min_v"}}, AggModeAll, 8)
+		[]AggSpec{{Func: AggMin, InputCol: 1, Output: "min_v"}}, AggModeAll, 8, vectorized.NewMemoryTracker(1<<30), 0)
 	_ = op.Init(context.Background())
 	defer op.Close()
 	feedAggInt(t, op, s,
@@ -222,7 +222,7 @@ func TestBatchAggregation_AggModeAll_Min_Int64(t *testing.T) {
 func TestBatchAggregation_AggModeAll_Max_Float64(t *testing.T) {
 	s := aggFloatSchema()
 	op := NewBatchAggregation(s, []int{0},
-		[]AggSpec{{Func: AggMax, InputCol: 1, Output: "max_v"}}, AggModeAll, 8)
+		[]AggSpec{{Func: AggMax, InputCol: 1, Output: "max_v"}}, AggModeAll, 8, vectorized.NewMemoryTracker(1<<30), 0)
 	_ = op.Init(context.Background())
 	defer op.Close()
 
@@ -246,7 +246,7 @@ func TestBatchAggregation_AggModeAll_Max_Float64(t *testing.T) {
 func TestBatchAggregation_AggModeAll_Mean_Float64(t *testing.T) {
 	s := aggFloatSchema()
 	op := NewBatchAggregation(s, []int{0},
-		[]AggSpec{{Func: AggMean, InputCol: 1, Output: "mean_v"}}, AggModeAll, 8)
+		[]AggSpec{{Func: AggMean, InputCol: 1, Output: "mean_v"}}, AggModeAll, 8, vectorized.NewMemoryTracker(1<<30), 0)
 	_ = op.Init(context.Background())
 	defer op.Close()
 
@@ -275,7 +275,7 @@ func TestBatchAggregation_AggModeAll_NullField_ExcludedFromAggregation(t *testin
 		[]AggSpec{
 			{Func: AggSum, InputCol: 1, Output: "sum_v"},
 			{Func: AggCount, InputCol: 1, Output: "n"},
-		}, AggModeAll, 8)
+		}, AggModeAll, 8, vectorized.NewMemoryTracker(1<<30), 0)
 	_ = op.Init(context.Background())
 	defer op.Close()
 	feedAggInt(t, op, s,
@@ -317,7 +317,7 @@ func TestBatchAggregation_NULInStringKey_NoCollision(t *testing.T) {
 		{Role: vectorized.RoleField, Name: "v", Type: vectorized.ColumnTypeInt64},
 	})
 	op := NewBatchAggregation(s, []int{0, 1},
-		[]AggSpec{{Func: AggSum, InputCol: 2, Output: "sum"}}, AggModeAll, 8)
+		[]AggSpec{{Func: AggSum, InputCol: 2, Output: "sum"}}, AggModeAll, 8, vectorized.NewMemoryTracker(1<<30), 0)
 	_ = op.Init(context.Background())
 	defer op.Close()
 
@@ -341,7 +341,7 @@ func TestBatchAggregation_NULInStringKey_NoCollision(t *testing.T) {
 func TestBatchAggregation_AggModeMap_ReturnsErrNotImplemented(t *testing.T) {
 	s := aggIntSchema()
 	op := NewBatchAggregation(s, []int{0},
-		[]AggSpec{{Func: AggSum, InputCol: 1, Output: "sum_v"}}, AggModeMap, 8)
+		[]AggSpec{{Func: AggSum, InputCol: 1, Output: "sum_v"}}, AggModeMap, 8, vectorized.NewMemoryTracker(1<<30), 0)
 	if err := op.Init(context.Background()); err != nil {
 		t.Fatalf("Init must succeed regardless of mode; got %v", err)
 	}
@@ -364,7 +364,7 @@ func TestBatchAggregation_AggModeMap_ReturnsErrNotImplemented(t *testing.T) {
 func TestBatchAggregation_AggModeReduce_ReturnsErrNotImplemented(t *testing.T) {
 	s := aggIntSchema()
 	op := NewBatchAggregation(s, []int{0},
-		[]AggSpec{{Func: AggSum, InputCol: 1, Output: "sum_v"}}, AggModeReduce, 8)
+		[]AggSpec{{Func: AggSum, InputCol: 1, Output: "sum_v"}}, AggModeReduce, 8, vectorized.NewMemoryTracker(1<<30), 0)
 	if err := op.Init(context.Background()); err != nil {
 		t.Fatalf("Init must succeed regardless of mode; got %v", err)
 	}
@@ -392,7 +392,7 @@ func TestBatchAggregation_AggModeReduce_ReturnsErrNotImplemented(t *testing.T) {
 func TestBatchAggregation_DelegatesToAggregationPackage(t *testing.T) {
 	s := aggIntSchema()
 	op := NewBatchAggregation(s, []int{0},
-		[]AggSpec{{Func: AggSum, InputCol: 1, Output: "sum_v"}}, AggModeAll, 8)
+		[]AggSpec{{Func: AggSum, InputCol: 1, Output: "sum_v"}}, AggModeAll, 8, vectorized.NewMemoryTracker(1<<30), 0)
 	_ = op.Init(context.Background())
 	defer op.Close()
 
@@ -432,7 +432,7 @@ func TestBatchAggregation_Correctness_MatchesManualComputation(t *testing.T) {
 			{Func: AggSum, InputCol: 1, Output: "sum_v"},
 			{Func: AggMin, InputCol: 1, Output: "min_v"},
 			{Func: AggMax, InputCol: 1, Output: "max_v"},
-		}, AggModeAll, 8)
+		}, AggModeAll, 8, vectorized.NewMemoryTracker(1<<30), 0)
 	_ = op.Init(context.Background())
 	defer op.Close()
 	feedAggInt(t, op, s,

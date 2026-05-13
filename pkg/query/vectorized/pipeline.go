@@ -25,14 +25,20 @@ import (
 // Pipeline is the composed sequence of stages from source to final breaker.
 // It exposes a single PullOperator-shaped Next method to the driver.
 type Pipeline struct {
-	head   PullOperator
-	closed bool
+	head    PullOperator
+	tracker *MemoryTracker
+	closed  bool
 }
 
 // Next returns the next batch from the head stage.
 func (p *Pipeline) Next(ctx context.Context) (*RecordBatch, error) {
 	return p.head.NextBatch(ctx)
 }
+
+// Tracker returns the shared per-pipeline MemoryTracker, or nil if the builder
+// did not set one. Operators that bookkeep memory should be constructed with
+// this tracker so they all draw from a single budget.
+func (p *Pipeline) Tracker() *MemoryTracker { return p.tracker }
 
 // Close closes the head stage. Idempotent — repeat calls are no-ops.
 func (p *Pipeline) Close() error {
@@ -46,6 +52,7 @@ func (p *Pipeline) Close() error {
 // PipelineBuilder fluently composes a Pipeline.
 type PipelineBuilder struct {
 	source       PullOperator
+	tracker      *MemoryTracker
 	pendingFused []FusibleOperator
 	breakers     []BreakerOperator
 }
@@ -55,6 +62,14 @@ func NewPipelineBuilder() *PipelineBuilder { return &PipelineBuilder{} }
 
 // From sets the leaf source.
 func (b *PipelineBuilder) From(p PullOperator) *PipelineBuilder { b.source = p; return b }
+
+// WithMemoryTracker attaches a shared MemoryTracker to the pipeline. Operators
+// that bookkeep memory (BatchGroupBy, BatchAggregation) should be constructed
+// with this same tracker so reservations stack against a single budget.
+func (b *PipelineBuilder) WithMemoryTracker(t *MemoryTracker) *PipelineBuilder {
+	b.tracker = t
+	return b
+}
 
 // Apply queues a FusibleOperator to fold into the next stage.
 func (b *PipelineBuilder) Apply(f FusibleOperator) *PipelineBuilder {
@@ -77,7 +92,7 @@ func (b *PipelineBuilder) Build() (*Pipeline, error) {
 	for _, br := range b.breakers {
 		head = newBreakerStage(head, br)
 	}
-	return &Pipeline{head: head}, nil
+	return &Pipeline{head: head, tracker: b.tracker}, nil
 }
 
 // breakerStage wraps a BreakerOperator so it acts as a PullOperator for the next stage.
