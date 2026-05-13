@@ -185,4 +185,8 @@ func bindVectorizedFlags(flagS *run.FlagSet, cfg *vmeasure.VectorizedConfig) {
 		"row count per vectorized batch")
 	flagS.IntVar(&cfg.QueryMemoryMiB, "measure-vectorized-query-memory-mib", defaults.QueryMemoryMiB,
 		"per-query memory budget for the vectorized path, in MiB")
+	flagS.BoolVar(&cfg.AggregationEnabled, "measure-vectorized-aggregation-enabled",
+		defaults.AggregationEnabled,
+		"route GroupBy+Agg requests through the vectorized aggregation pipeline "+
+			"instead of the row-path aggregator (default false; flip after egress parity is verified)")
 }
