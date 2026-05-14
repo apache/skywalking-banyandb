@@ -234,7 +234,7 @@ func executeMeasurePlan(
 	mctx *measureExecutionContext,
 	emitPartial bool,
 ) (executor.MIterator, string, error) {
-	if mit, planStr, handled, dispatchErr := tryVecDispatch(ctx, queryCriteria, mctx); dispatchErr != nil {
+	if mit, planStr, handled, dispatchErr := tryVecDispatch(ctx, queryCriteria, mctx, emitPartial); dispatchErr != nil {
 		return nil, "", fmt.Errorf("fail to dispatch the query request for measure %s: %w", queryCriteria.GetName(), dispatchErr)
 	} else if handled {
 		if e := mctx.ml.Debug(); e.Enabled() {
@@ -262,12 +262,23 @@ func executeMeasurePlan(
 // tryVecDispatch is the thin adapter from measureExecutionContext into
 // the vec dispatch inputs. Multi-measure queries are not yet wired (G8
 // follow-up), so they fall through to the row path.
+//
+// Distributed Map-mode GroupBy+Agg requests (emitPartial=true) also fall
+// through: the vec subsystem only implements AggModeAll (single-node full
+// reduce), so emitting AggModeAll results on each data node and letting
+// the liaison naively merge them would double-count groups. The row path
+// handles the Map/Reduce split via measure_plan_aggregation.go's
+// emitPartial flag.
 func tryVecDispatch(
 	ctx context.Context,
 	queryCriteria *measurev1.QueryRequest,
 	mctx *measureExecutionContext,
+	emitPartial bool,
 ) (executor.MIterator, string, bool, error) {
 	if len(mctx.ecc) != 1 {
+		return nil, "", false, nil
+	}
+	if emitPartial && (queryCriteria.GetGroupBy() != nil || queryCriteria.GetAgg() != nil) {
 		return nil, "", false, nil
 	}
 	vec, ok := mctx.ecc[0].(vecExecutionContext)
