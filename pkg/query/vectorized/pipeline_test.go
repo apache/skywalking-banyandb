@@ -229,3 +229,47 @@ func TestPipeline_Close_Idempotent(t *testing.T) {
 		t.Fatalf("second Close must not propagate to source: got %d", src.closeCnt)
 	}
 }
+
+// TestPipelineBuilder_ApplyAfterBreak_RunsAfterBreaker pins the
+// observable Apply/Break stage ordering. A fusible added after a Break
+// must execute on the breaker's output, not on the raw source rows —
+// otherwise a Limit Apply'd after a GroupByAgg Break would clip source
+// batches before aggregation and silently return wrong groups.
+func TestPipelineBuilder_ApplyAfterBreak_RunsAfterBreaker(t *testing.T) {
+	s := NewBatchSchema([]ColumnDef{{Role: RoleTimestamp, Type: ColumnTypeInt64}})
+	src := &fakePull{schema: s, batches: []*RecordBatch{mkInt64Batch(s, 1, 2)}}
+	var preSeen, postSeen []int64
+	pre := &fakeFusible{schema: s, processFn: func(b *RecordBatch) error {
+		c := b.Columns[0].(*TypedColumn[int64])
+		preSeen = append(preSeen, c.Data()...)
+		return nil
+	}}
+	br := &fakeBreaker{schema: s, output: []*RecordBatch{mkInt64Batch(s, 99)}}
+	post := &fakeFusible{schema: s, processFn: func(b *RecordBatch) error {
+		c := b.Columns[0].(*TypedColumn[int64])
+		postSeen = append(postSeen, c.Data()...)
+		return nil
+	}}
+	p, err := NewPipelineBuilder().From(src).Apply(pre).Break(br).Apply(post).Build()
+	if err != nil {
+		t.Fatal(err)
+	}
+	_ = p.head.Init(context.Background())
+	for {
+		next, e := p.Next(context.Background())
+		if e != nil {
+			t.Fatal(e)
+		}
+		if next == nil {
+			break
+		}
+	}
+	wantPre := []int64{1, 2}
+	if len(preSeen) != len(wantPre) || preSeen[0] != wantPre[0] || preSeen[1] != wantPre[1] {
+		t.Fatalf("pre-break fusible should see source rows %v, got %v", wantPre, preSeen)
+	}
+	wantPost := []int64{99}
+	if len(postSeen) != len(wantPost) || postSeen[0] != wantPost[0] {
+		t.Fatalf("post-break fusible should see breaker output %v (not source rows), got %v", wantPost, postSeen)
+	}
+}

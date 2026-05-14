@@ -58,11 +58,27 @@ func (p *Pipeline) Close() error {
 }
 
 // PipelineBuilder fluently composes a Pipeline.
+//
+// Apply/Break ordering: every Apply call queues a fusible into the
+// currently-open fused segment. Break closes that segment, wraps it with
+// the supplied breaker, and starts a new (empty) segment on top. So the
+// observable stage order matches the call order: each fusible runs
+// before any breaker that was added later, and after any breaker that
+// was added earlier. Plan-tree builders rely on this — e.g. a Limit
+// Apply'd after a GroupByAgg Break must execute on the aggregated
+// output, not on the raw source rows.
 type PipelineBuilder struct {
 	source       PullOperator
 	tracker      *MemoryTracker
 	pendingFused []FusibleOperator
-	breakers     []BreakerOperator
+	steps        []builderStep
+}
+
+// builderStep captures one closed segment: the fusibles queued before
+// the breaker plus the breaker itself.
+type builderStep struct {
+	breaker  BreakerOperator
+	preFused []FusibleOperator
 }
 
 // NewPipelineBuilder starts a builder.
@@ -79,26 +95,40 @@ func (b *PipelineBuilder) WithMemoryTracker(t *MemoryTracker) *PipelineBuilder {
 	return b
 }
 
-// Apply queues a FusibleOperator to fold into the next stage.
+// Apply queues a FusibleOperator into the current open fused segment.
 func (b *PipelineBuilder) Apply(f FusibleOperator) *PipelineBuilder {
 	b.pendingFused = append(b.pendingFused, f)
 	return b
 }
 
-// Break appends a breaker, finalizing the current fused-stage prefix.
+// Break closes the current fused segment and wraps it with br, starting
+// a new empty segment for subsequent Apply calls to attach above the
+// breaker.
 func (b *PipelineBuilder) Break(br BreakerOperator) *PipelineBuilder {
-	b.breakers = append(b.breakers, br)
+	step := builderStep{breaker: br}
+	if len(b.pendingFused) > 0 {
+		step.preFused = append([]FusibleOperator(nil), b.pendingFused...)
+		b.pendingFused = b.pendingFused[:0]
+	}
+	b.steps = append(b.steps, step)
 	return b
 }
 
-// Build validates and constructs the Pipeline.
+// Build validates and constructs the Pipeline. Each closed segment
+// becomes fusedStage(prev, preFused) → breakerStage(_, breaker); any
+// fusibles still queued after the last Break form a final fused stage
+// on top of the chain.
 func (b *PipelineBuilder) Build() (*Pipeline, error) {
 	if b.source == nil {
 		return nil, errors.New("vectorized: pipeline missing source (use From)")
 	}
-	var head PullOperator = newFusedStage(b.source, b.pendingFused)
-	for _, br := range b.breakers {
-		head = newBreakerStage(head, br)
+	head := b.source
+	for _, step := range b.steps {
+		head = newFusedStage(head, step.preFused)
+		head = newBreakerStage(head, step.breaker)
+	}
+	if len(b.pendingFused) > 0 || len(b.steps) == 0 {
+		head = newFusedStage(head, b.pendingFused)
 	}
 	return &Pipeline{head: head, tracker: b.tracker}, nil
 }
