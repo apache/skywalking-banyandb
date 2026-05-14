@@ -40,16 +40,31 @@ func serializeBatchToProto(b *vectorized.RecordBatch, dst []*measurev1.InternalD
 		dst = make([]*measurev1.InternalDataPoint, 0, b.ActiveLen())
 	}
 	schema := b.Schema
-	active := activeIndices(b)
-	for _, rowIdx := range active {
-		dp := buildDataPoint(b, schema, int(rowIdx))
-		idp := &measurev1.InternalDataPoint{DataPoint: dp}
-		if i := schema.ShardIDIndex(); i >= 0 {
-			idp.ShardId = uint32(b.Columns[i].(*vectorized.TypedColumn[int64]).Data()[rowIdx])
+	shardIdx := schema.ShardIDIndex()
+	// Fast path: BatchScan / BatchSourceFromBatchResult emit
+	// nil-Selection batches on the scan hot path. Iterating Len directly
+	// avoids the per-batch []uint16 materialization activeIndices would
+	// otherwise allocate.
+	if b.Selection == nil {
+		for rowIdx := 0; rowIdx < b.Len; rowIdx++ {
+			dst = append(dst, makeInternalDataPoint(b, schema, rowIdx, shardIdx))
 		}
-		dst = append(dst, idp)
+		return dst
+	}
+	for _, rowIdx := range b.Selection {
+		dst = append(dst, makeInternalDataPoint(b, schema, int(rowIdx), shardIdx))
 	}
 	return dst
+}
+
+func makeInternalDataPoint(b *vectorized.RecordBatch, schema *vectorized.BatchSchema,
+	rowIdx, shardIdx int,
+) *measurev1.InternalDataPoint {
+	idp := &measurev1.InternalDataPoint{DataPoint: buildDataPoint(b, schema, rowIdx)}
+	if shardIdx >= 0 {
+		idp.ShardId = uint32(b.Columns[shardIdx].(*vectorized.TypedColumn[int64]).Data()[rowIdx])
+	}
+	return idp
 }
 
 // buildDataPoint materializes one DataPoint from row rowIdx of b. Tags are
@@ -114,7 +129,7 @@ func columnValueToTagValue(col vectorized.Column, rowIdx int) *modelv1.TagValue 
 		return v
 	}
 	if col.IsNull(rowIdx) {
-		return &modelv1.TagValue{Value: &modelv1.TagValue_Null{}}
+		return pbv1NullTagValueRef
 	}
 	switch c := col.(type) {
 	case *vectorized.TypedColumn[int64]:
@@ -131,7 +146,7 @@ func columnValueToTagValue(col vectorized.Column, rowIdx int) *modelv1.TagValue 
 	case *vectorized.TypedColumn[[]string]:
 		return &modelv1.TagValue{Value: &modelv1.TagValue_StrArray{StrArray: &modelv1.StrArray{Value: slices.Clone(c.Data()[rowIdx])}}}
 	}
-	return &modelv1.TagValue{Value: &modelv1.TagValue_Null{}}
+	return pbv1NullTagValueRef
 }
 
 // columnValueToFieldValue is the field-side counterpart. Passthrough columns
@@ -147,7 +162,7 @@ func columnValueToFieldValue(col vectorized.Column, rowIdx int) *modelv1.FieldVa
 		return v
 	}
 	if col.IsNull(rowIdx) {
-		return &modelv1.FieldValue{Value: &modelv1.FieldValue_Null{}}
+		return pbv1NullFieldValueRef
 	}
 	switch c := col.(type) {
 	case *vectorized.TypedColumn[int64]:
@@ -162,5 +177,5 @@ func columnValueToFieldValue(col vectorized.Column, rowIdx int) *modelv1.FieldVa
 		copy(buf, src)
 		return &modelv1.FieldValue{Value: &modelv1.FieldValue_BinaryData{BinaryData: buf}}
 	}
-	return &modelv1.FieldValue{Value: &modelv1.FieldValue_Null{}}
+	return pbv1NullFieldValueRef
 }
