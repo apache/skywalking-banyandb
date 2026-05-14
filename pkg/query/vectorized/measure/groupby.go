@@ -26,6 +26,7 @@ import (
 	"math"
 	"slices"
 
+	modelv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/model/v1"
 	"github.com/apache/skywalking-banyandb/pkg/query/vectorized"
 )
 
@@ -268,7 +269,11 @@ func newGroupBucket(schema *vectorized.BatchSchema) *groupBucket {
 	return &groupBucket{cols: cols}
 }
 
-// copyOneValue appends src[rowIdx] to dst, preserving null status.
+// copyOneValue appends src[rowIdx] to dst, preserving null status. The
+// passthrough TagValue / FieldValue cases let BatchAggregation carry
+// non-key projected tag columns forward unchanged (the pointer is
+// owned by the upstream MeasureBatch, which the pipeline keeps live for
+// the duration of aggregation).
 func copyOneValue(dst, src vectorized.Column, rowIdx int) {
 	if src.IsNull(rowIdx) {
 		dst.AppendNull()
@@ -287,5 +292,9 @@ func copyOneValue(dst, src vectorized.Column, rowIdx int) {
 		dst.(*vectorized.TypedColumn[[]int64]).Append(s.Data()[rowIdx])
 	case *vectorized.TypedColumn[[]string]:
 		dst.(*vectorized.TypedColumn[[]string]).Append(s.Data()[rowIdx])
+	case *vectorized.TypedColumn[*modelv1.TagValue]:
+		dst.(*vectorized.TypedColumn[*modelv1.TagValue]).Append(s.Data()[rowIdx])
+	case *vectorized.TypedColumn[*modelv1.FieldValue]:
+		dst.(*vectorized.TypedColumn[*modelv1.FieldValue]).Append(s.Data()[rowIdx])
 	}
 }
