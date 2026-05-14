@@ -154,4 +154,3 @@ func protoAggFuncToInternal(f modelv1.AggregationFunction) (AggFunc, error) {
 	}
 	return 0, fmt.Errorf("vectorized.measure: unknown AggregationFunction %v", f)
 }
-

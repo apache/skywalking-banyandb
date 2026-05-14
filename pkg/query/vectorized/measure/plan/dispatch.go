@@ -424,4 +424,3 @@ func projectedTagsByFamily(tp *modelv1.TagProjection) map[string]map[string]stru
 	}
 	return out
 }
-
