@@ -89,11 +89,14 @@ var _ = ginkgo.Describe("vectorized parity", ginkgo.Ordered, func() {
 		config := setup.PropertyClusterConfig(dfWriter)
 		addr, _, closeFn := setup.ClosableStandalone(config, path, ports,
 			"--measure-vectorized-enabled=true",
-			// G8d.3 will add --measure-vectorized-aggregation-enabled=true
-			// here once the MAX-specific egress parity gap is closed.
-			// 8 of 9 GroupBy+Agg cases already pass with the gate on; the
-			// remaining failure (group_max timeout) is tracked separately
-			// before this flag flips in the parity gate too.
+			// G8d.3 left --measure-vectorized-aggregation-enabled=false here
+			// because the egress parity work surfaced a deeper bug than
+			// just field naming: GroupBy+Agg vec dispatch panics at
+			// BatchAggregation.fold (line 268, *TypedColumn[int64] assertion
+			// against a passthrough source column) regardless of whether
+			// storage threads opts.GroupBy/Agg. The schema/storage native-
+			// column bridge in commit 253c5653 is not yet end-to-end
+			// correct. Re-flip this flag when that root cause is closed.
 		)
 		stopFn = func() {
 			closeFn()
