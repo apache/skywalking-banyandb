@@ -56,10 +56,10 @@ LOG_STALE_SEC="${LOG_STALE_SEC:-600}"
 if (( $# >= 1 )); then
   RUN="$1"
 else
-  RUN="$(ls -td "${REPO_ROOT}"/dist/soak/2026* 2>/dev/null | head -1 || true)"
+  RUN="$(ls -td "${REPO_ROOT}"/dist/soak/20* 2>/dev/null | head -1 || true)"
 fi
 if [[ -z "${RUN:-}" || ! -d "${RUN}" ]]; then
-  echo "[soak-monitor] ERROR: no soak run directory found (looked under dist/soak/2026*)"
+  echo "[soak-monitor] ERROR: no soak run directory found (looked under dist/soak/20*)"
   exit 1
 fi
 
@@ -70,10 +70,16 @@ echo "[soak-monitor] writing status to ${LOG}"
 # Tee from this point on so the status log persists alongside the run.
 exec > >(tee -a "${LOG}") 2>&1
 
-count_or_zero() {
-  local n
-  n="$(eval "$1" 2>/dev/null | wc -l | tr -d ' ')"
-  echo "${n:-0}"
+# count_matches_pass_false returns the number of supplied diff-*.json
+# files that contain a `"pass": false` line. Callers expand the glob
+# themselves (with nullglob enabled) so this helper never sees an
+# unexpanded pattern and never executes user-supplied strings.
+count_matches_pass_false() {
+  if (( $# == 0 )); then
+    echo 0
+    return
+  fi
+  grep -l '"pass": *false' "$@" 2>/dev/null | wc -l | tr -d ' '
 }
 
 # Compose health: true if every service shows "healthy" (or has no
@@ -118,11 +124,14 @@ while true; do
     mem_alerts=0
   fi
 
-  # Parity divergence reports
-  diff_fail="$(count_or_zero "grep -l '\"pass\": *false' ${RUN}/diff-*.json")"
-
-  # pprof captures so far
-  pprof_n="$(count_or_zero "ls -d ${RUN}/pprof-*")"
+  # Parity divergence reports — glob with nullglob so an empty match
+  # produces an empty array rather than the literal pattern.
+  shopt -s nullglob
+  diff_files=("${RUN}"/diff-*.json)
+  pprof_dirs=("${RUN}"/pprof-*)
+  shopt -u nullglob
+  diff_fail="$(count_matches_pass_false "${diff_files[@]}")"
+  pprof_n="${#pprof_dirs[@]}"
 
   # Summary present means soak finished
   summary_present="no"
