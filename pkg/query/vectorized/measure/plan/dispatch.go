@@ -86,8 +86,8 @@ func FellThroughCount() int64 { return fellThroughCount.Load() }
 //
 // Eligibility gate (v1):
 //   - cfg.Enabled must be true
-//   - request must NOT carry GroupBy or Agg (column-type bridging at the
-//     scan source still pending; see executor.go's TODO(G8d))
+//   - request may carry GroupBy+Agg as a pair (scalar reduce + raw
+//     GroupBy are deferred); aggProjectionCoverage must also hold
 //   - request must NOT carry Top (BatchTop's single-heap semantic differs
 //     from the row path's per-timestamp top-N)
 //   - request must carry TimeRange (storage requires a bounded window)
@@ -131,15 +131,6 @@ func Dispatch(
 	hasGroupBy := req.GetGroupBy() != nil
 	hasAgg := req.GetAgg() != nil
 	if hasGroupBy || hasAgg {
-		// G8d.2 wires the schema/storage bridge (BuildBatchSchema emits
-		// native columns for GroupBy keys + Agg field, storage decoders
-		// honor it) so the operator pipeline is ready when the egress
-		// reaches row-path parity. Until then, AggregationEnabled gates
-		// the dispatch gate; default false keeps GroupBy+Agg on the row
-		// path so the parity suite stays green.
-		if !cfg.AggregationEnabled {
-			return nil, "", false, nil
-		}
 		// GroupBy and Agg must travel as a pair (scalar reduce + raw
 		// groupby are deferred). Either alone falls through.
 		if hasGroupBy != hasAgg {

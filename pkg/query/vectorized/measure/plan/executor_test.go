@@ -123,19 +123,6 @@ func TestExecute_GroupByAgg_EmitsAggregatedRowsWithNilTimestamp(t *testing.T) {
 	}
 }
 
-// TODO(G8d): an end-to-end Analyze+Execute test against the analyzer-
-// produced BatchSchema would exercise the agg pipeline against the same
-// column layout the scan source emits in production. Today
-// BuildBatchSchema uses passthrough *modelv1.FieldValue columns (to keep
-// row-path egress zero-alloc), but BatchAggregation.fold requires native
-// int64/float64. G8d must either:
-//   - convert passthrough → native via a fusible at the scan-source
-//     boundary when the pipeline contains a fold operator, or
-//   - teach BatchAggregation to fold over *modelv1.FieldValue.
-// Until that bridge lands, the executor tests above use a hand-built
-// schema with native typed columns to verify executor correctness in
-// isolation.
-
 func TestExecute_BuildError_SurfacesAsExecuteError(t *testing.T) {
 	schema, _ := buildScanInput(t)
 	scan := NewScan(schema, ScanParams{}) // Source intentionally unset

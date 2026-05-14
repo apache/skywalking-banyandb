@@ -89,7 +89,6 @@ var _ = ginkgo.Describe("vectorized parity", ginkgo.Ordered, func() {
 		config := setup.PropertyClusterConfig(dfWriter)
 		addr, _, closeFn := setup.ClosableStandalone(config, path, ports,
 			"--measure-vectorized-enabled=true",
-			"--measure-vectorized-aggregation-enabled=true",
 		)
 		stopFn = func() {
 			closeFn()

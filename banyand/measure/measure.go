@@ -174,19 +174,13 @@ func (m *measure) VectorizedConfig() vmeasure.VectorizedConfig {
 }
 
 // bindVectorizedFlags wires VectorizedConfig fields to a run.FlagSet. The
-// defaults match vmeasure.DefaultConfig — Enabled=false, BatchSize=1024,
-// QueryMemoryMiB=256 — so config loaders that omit these flags retain the
-// pre-G4 row-only behavior.
+// defaults match vmeasure.DefaultConfig.
 func bindVectorizedFlags(flagS *run.FlagSet, cfg *vmeasure.VectorizedConfig) {
 	defaults := vmeasure.DefaultConfig()
 	flagS.BoolVar(&cfg.Enabled, "measure-vectorized-enabled", defaults.Enabled,
-		"enable the vectorized measure query path (off by default; flip after soak)")
+		"enable the vectorized measure query path")
 	flagS.IntVar(&cfg.BatchSize, "measure-vectorized-batch-size", defaults.BatchSize,
 		"row count per vectorized batch")
 	flagS.IntVar(&cfg.QueryMemoryMiB, "measure-vectorized-query-memory-mib", defaults.QueryMemoryMiB,
 		"per-query memory budget for the vectorized path, in MiB")
-	flagS.BoolVar(&cfg.AggregationEnabled, "measure-vectorized-aggregation-enabled",
-		defaults.AggregationEnabled,
-		"route GroupBy+Agg requests through the vectorized aggregation pipeline "+
-			"instead of the row-path aggregator (default false; flip after egress parity is verified)")
 }
