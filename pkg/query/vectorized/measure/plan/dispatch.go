@@ -239,11 +239,20 @@ func Dispatch(
 
 	// Execute the storage query. The vec source is constructed from the
 	// returned MeasureQueryResult and threaded into the Scan node.
+	//
+	// GroupBy/Agg must be threaded into opts so banyand/measure/query.go
+	// rebuilds result.batchSchema with the same native typed columns the
+	// analyzer baked into scan.BatchSchema. Mismatched halves (one side
+	// native, the other passthrough) surface as a type-assert panic in
+	// BatchAggregation.fold or a TypedColumn[T] mismatch in
+	// BatchSourceFromBatchResult.appendColumnRange.
 	opts := model.MeasureQueryOptions{
 		Name:            metadata.GetName(),
 		TimeRange:       scan.Params.TimeRange,
 		Entities:        entities,
 		Query:           query,
+		GroupBy:         scan.Params.GroupBy,
+		Agg:             scan.Params.Agg,
 		TagProjection:   scan.Params.TagProjection,
 		FieldProjection: scan.Params.FieldProjection,
 	}
@@ -364,7 +373,9 @@ func findSchemaTagFamily(m *databasev1.Measure, name string) *databasev1.TagFami
 //
 // v1 requires GroupBy.tag_projection to name a single family; that
 // family must appear in req.TagProjection with every tag in GroupBy
-// present. Agg.field_name must appear in req.FieldProjection.
+// present. Agg.field_name must appear in req.FieldProjection. Non-key
+// projected tags are allowed; BatchAggregation carries them forward as
+// first-seen-per-group, matching the row path.
 func aggProjectionCoverage(req *measurev1.QueryRequest) bool {
 	gb := req.GetGroupBy()
 	if gb == nil {
@@ -385,7 +396,6 @@ func aggProjectionCoverage(req *measurev1.QueryRequest) bool {
 			return false
 		}
 	}
-	// Agg field must be in FieldProjection.
 	aggField := req.GetAgg().GetFieldName()
 	if aggField == "" {
 		return false
@@ -414,3 +424,4 @@ func projectedTagsByFamily(tp *modelv1.TagProjection) map[string]map[string]stru
 	}
 	return out
 }
+

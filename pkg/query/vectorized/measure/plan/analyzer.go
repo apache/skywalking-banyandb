@@ -60,9 +60,30 @@ func Analyze(req *measurev1.QueryRequest, measureSchema *databasev1.Measure) (Ve
 
 	tagProjection := buildTagProjection(req)
 	fieldProjection := req.GetFieldProjection().GetNames()
+
+	// GroupBy + Agg must be resolved BEFORE BuildBatchSchema so the Scan
+	// node's BatchSchema declares native typed columns for the GroupBy
+	// keys and Agg field. The operator (BatchAggregation.fold) hard-casts
+	// those columns to TypedColumn[int64] / [float64]; passthrough
+	// columns would panic. Storage's queryResult.batchSchema is rebuilt
+	// from the same opts in banyand/measure/query.go, so both halves of
+	// the bridge agree on column types.
+	hasGroupBy := req.GetGroupBy() != nil
+	hasAgg := req.GetAgg() != nil
+	var gbModel *model.MeasureGroupBy
+	var aggModel *model.MeasureAgg
+	if hasGroupBy && hasAgg {
+		var translateErr error
+		gbModel, aggModel, translateErr = translateGroupByAgg(req, measureSchema)
+		if translateErr != nil {
+			return nil, translateErr
+		}
+	}
 	opts := model.MeasureQueryOptions{
 		TagProjection:   tagProjection,
 		FieldProjection: fieldProjection,
+		GroupBy:         gbModel,
+		Agg:             aggModel,
 	}
 	batchSchema, schemaErr := measure.BuildBatchSchema(measureSchema, opts)
 	if schemaErr != nil {
@@ -80,19 +101,13 @@ func Analyze(req *measurev1.QueryRequest, measureSchema *databasev1.Measure) (Ve
 		TimeRange:       tr,
 		TagProjection:   tagProjection,
 		FieldProjection: fieldProjection,
+		GroupBy:         gbModel,
+		Agg:             aggModel,
 	})
 
-	// GroupBy + Agg coalesced into a single GroupByAgg node. Validation
-	// matches the G7d planner's contract.
-	hasGroupBy := req.GetGroupBy() != nil
-	hasAgg := req.GetAgg() != nil
 	switch {
 	case hasGroupBy && hasAgg:
-		gb, aggSpec, validateErr := translateGroupByAgg(req, measureSchema)
-		if validateErr != nil {
-			return nil, validateErr
-		}
-		gba, gbaErr := NewGroupByAgg(plan, gb, aggSpec)
+		gba, gbaErr := NewGroupByAgg(plan, gbModel, aggModel)
 		if gbaErr != nil {
 			return nil, gbaErr
 		}

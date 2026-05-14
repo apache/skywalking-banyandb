@@ -39,6 +39,8 @@ type ScanParams struct {
 	TimeRange       *timestamp.TimeRange
 	Query           index.Query
 	Entities        [][]*modelv1.TagValue
+	GroupBy         *model.MeasureGroupBy
+	Agg             *model.MeasureAgg
 	TagProjection   []model.TagProjection
 	FieldProjection []string
 }
