@@ -63,12 +63,64 @@ func TestTopNStream(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			s := measure.NewTopQueue(tt.fields.n, tt.fields.reverted)
+			s := measure.NewTopQueue[int64](tt.fields.n, tt.fields.reverted)
 			for _, v := range tt.args.elements {
-				s.Insert(measure.NewTopElement(nil, v))
+				s.Insert(measure.NewTopElement[int64](nil, v))
 			}
 			ee := s.Elements()
 			got := make([]int64, 0, len(ee))
+			for _, e := range ee {
+				got = append(got, e.Val())
+			}
+			assert.Equal(t, tt.wants, got)
+		})
+	}
+}
+
+func TestTopNStreamFloat64(t *testing.T) {
+	type fields struct {
+		n        int
+		reverted bool
+	}
+	type args struct {
+		elements []float64
+	}
+	tests := []struct {
+		name   string
+		args   args
+		wants  []float64
+		fields fields
+	}{
+		{
+			name: "float64 top 3",
+			fields: fields{
+				n: 3,
+			},
+			args: args{
+				elements: []float64{1.5, 3.2, 6.7, 8.1, 4.3, 5.9},
+			},
+			wants: []float64{8.1, 6.7, 5.9},
+		},
+		{
+			name: "float64 bottom 3",
+			fields: fields{
+				n:        3,
+				reverted: true,
+			},
+			args: args{
+				elements: []float64{1.5, 3.2, 6.7, 8.1, 4.3, 5.9},
+			},
+			wants: []float64{1.5, 3.2, 4.3},
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			s := measure.NewTopQueue[float64](tt.fields.n, tt.fields.reverted)
+			for _, v := range tt.args.elements {
+				s.Insert(measure.NewTopElement[float64](nil, v))
+			}
+			ee := s.Elements()
+			got := make([]float64, 0, len(ee))
 			for _, e := range ee {
 				got = append(got, e.Val())
 			}

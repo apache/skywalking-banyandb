@@ -33,6 +33,7 @@ import (
 	"github.com/spf13/cobra"
 
 	"github.com/apache/skywalking-banyandb/fodc/agent/internal/cluster"
+	"github.com/apache/skywalking-banyandb/fodc/agent/internal/crashcollector"
 	"github.com/apache/skywalking-banyandb/fodc/agent/internal/exporter"
 	"github.com/apache/skywalking-banyandb/fodc/agent/internal/flightrecorder"
 	"github.com/apache/skywalking-banyandb/fodc/agent/internal/ktm"
@@ -43,38 +44,47 @@ import (
 	"github.com/apache/skywalking-banyandb/fodc/agent/internal/watchdog"
 	"github.com/apache/skywalking-banyandb/pkg/cgroups"
 	"github.com/apache/skywalking-banyandb/pkg/logger"
+	"github.com/apache/skywalking-banyandb/pkg/meter"
+	"github.com/apache/skywalking-banyandb/pkg/meter/prom"
+	"github.com/apache/skywalking-banyandb/pkg/panicdiag"
 	"github.com/apache/skywalking-banyandb/pkg/version"
 )
 
 const (
-	defaultMetricsPollInterval          = 10 * time.Second
-	defaultPollMetricsPorts             = "2121"
-	defaultMaxMetricsMemoryUsagePercent = 10
-	defaultPrometheusListenAddr         = ":9090"
-	defaultProxyAddr                    = "localhost:17900"
-	defaultHeartbeatInterval            = 10 * time.Second
-	defaultReconnectInterval            = 5 * time.Second
-	defaultClusterStatePollInterval     = 30 * time.Second
+	defaultMetricsPollInterval            = 10 * time.Second
+	defaultPollMetricsPorts               = "2121"
+	defaultMaxMetricsMemoryUsagePercent   = 10
+	defaultPrometheusListenAddr           = ":9090"
+	defaultDiagnosisListenAddr            = ":9091"
+	defaultProxyAddr                      = "localhost:17900"
+	defaultHeartbeatInterval              = 10 * time.Second
+	defaultReconnectInterval              = 5 * time.Second
+	defaultClusterStatePollInterval       = 30 * time.Second
+	defaultMaxDiagnosisMemoryUsagePercent = 5
 )
 
 var (
-	metricsPollInterval          time.Duration
-	pollMetricsPorts             []string
-	maxMetricsMemoryUsagePercent int
-	prometheusListenAddr         string
-	ktmEnabled                   bool
-	ktmInterval                  time.Duration
-	proxyAddr                    string
-	podName                      string
-	containerNames               []string
-	heartbeatInterval            time.Duration
-	reconnectInterval            time.Duration
-	clusterStatePorts            []string
-	clusterStatePollInterval     time.Duration
-	lifecyclePort                int
-	lifecycleReportDir           string
-	lifecycleCacheTTL            time.Duration
-	rootCmd                      = &cobra.Command{
+	metricsPollInterval                time.Duration
+	pollMetricsPorts                   []string
+	maxMetricsMemoryUsagePercent       int
+	prometheusListenAddr               string
+	diagnosisListenAddr                string
+	ktmEnabled                         bool
+	ktmInterval                        time.Duration
+	proxyAddr                          string
+	podName                            string
+	containerNames                     []string
+	heartbeatInterval                  time.Duration
+	reconnectInterval                  time.Duration
+	clusterStatePorts                  []string
+	clusterStatePollInterval           time.Duration
+	crashSourceDir                     string
+	crashOutputCfg                     = panicdiag.NewCrashOutputConfig()
+	maxFODCDiagnosisMemoryUsagePercent int
+	lifecyclePort                      int
+	lifecycleReportDir                 string
+	lifecycleCacheTTL                  time.Duration
+	rootCmd                            = &cobra.Command{
 		Use:     "fodc",
 		Short:   "First Occurrence Data Collection (FODC) agent",
 		Version: version.Build(),
@@ -99,6 +109,8 @@ func init() {
 		"Maximum percentage of available memory (based on cgroup memory limit) that can be used for storing metrics in the Flight Recorder. Valid range: 0-100.")
 	rootCmd.Flags().StringVar(&prometheusListenAddr, "prometheus-listen-addr", defaultPrometheusListenAddr,
 		"Address on which to expose Prometheus metrics endpoint (e.g., :9090)")
+	rootCmd.Flags().StringVar(&diagnosisListenAddr, "diagnosis-listen-addr", defaultDiagnosisListenAddr,
+		"Address on which to expose diagnosis collection endpoint (e.g., :9091)")
 	rootCmd.Flags().StringVar(&proxyAddr, "proxy-addr", defaultProxyAddr,
 		"FODC Proxy gRPC address")
 	rootCmd.Flags().StringVar(&podName, "pod-name", "",
@@ -115,6 +127,12 @@ func init() {
 		"Ports of the BanyanDB node's gRPC endpoints to poll cluster state from. If empty, cluster state polling is disabled.")
 	rootCmd.Flags().DurationVar(&clusterStatePollInterval, "cluster-state-poll-interval", defaultClusterStatePollInterval,
 		"Interval at which to poll cluster state from the BanyanDB nodes")
+	rootCmd.Flags().StringVar(&crashSourceDir, "crash-source-dir", "",
+		"Shared volume directory to watch for BanyanDB crash artifacts via filesystem notifications")
+	crashOutputCfg.RegisterFlags(rootCmd.Flags())
+	rootCmd.Flags().IntVar(&maxFODCDiagnosisMemoryUsagePercent, "max-fodc-diagnosis-memory-usage-percentage",
+		defaultMaxDiagnosisMemoryUsagePercent,
+		"Maximum percentage of available memory (based on cgroup memory limit) that can be used for storing diagnosis data in the FODC ring buffer. Valid range: 0-100.")
 	rootCmd.Flags().IntVar(&lifecyclePort, "lifecycle-port", 18912,
 		"gRPC port for lifecycle InspectAll service. Set to 0 to disable lifecycle collection")
 	rootCmd.Flags().StringVar(&lifecycleReportDir, "lifecycle-report-dir", lifecycle.DefaultReportDir,
@@ -145,6 +163,31 @@ func calculateCapacity(log *logger.Logger) int64 {
 		Int("memory-usage-percent", maxMetricsMemoryUsagePercent).
 		Int64("capacity-size-bytes", capacitySize).
 		Msg("Flight Recorder capacity configured")
+	return capacitySize
+}
+
+func calculateDiagnosisCapacity(log *logger.Logger) int64 {
+	memoryLimit, memErr := cgroups.MemoryLimit()
+	if memErr != nil {
+		if runtime.GOOS != "linux" || strings.Contains(memErr.Error(), "mountinfo") {
+			log.Debug().Err(memErr).Msg("Cgroup memory limit not available (expected on non-Linux systems), using default diagnosis capacity")
+		} else {
+			log.Warn().Err(memErr).Msg("Failed to get cgroup memory limit for diagnosis storage, using default capacity")
+		}
+		memoryLimit = 1024 * 1024 * 1024
+	}
+	var capacitySize int64
+	if memoryLimit > 0 {
+		capacitySize = (memoryLimit * int64(maxFODCDiagnosisMemoryUsagePercent)) / 100
+	} else {
+		capacitySize = 50 * 1024 * 1024
+		log.Info().Msg("Memory limit is unlimited or invalid, using default diagnosis capacity of 50MB")
+	}
+	log.Info().
+		Int64("memory-limit-bytes", memoryLimit).
+		Int("memory-usage-percent", maxFODCDiagnosisMemoryUsagePercent).
+		Int64("capacity-size-bytes", capacitySize).
+		Msg("Diagnosis collector capacity configured")
 	return capacitySize
 }
 
@@ -186,6 +229,9 @@ func initializeKTM(ctx context.Context, log *logger.Logger, fr *flightrecorder.F
 
 // runFODC is the main function for the FODC agent.
 func runFODC(_ *cobra.Command, _ []string) error {
+	if installErr := crashOutputCfg.InstallGlobalCrashOutput(); installErr != nil {
+		return fmt.Errorf("failed to install crash output: %w", installErr)
+	}
 	if initErr := logger.Init(logger.Logging{Env: "prod", Level: "info"}); initErr != nil {
 		return fmt.Errorf("failed to initialize logger: %w", initErr)
 	}
@@ -199,18 +245,22 @@ func runFODC(_ *cobra.Command, _ []string) error {
 
 	capacitySize := calculateCapacity(log)
 	fr := flightrecorder.NewFlightRecorder(capacitySize)
+	diagnosisCapacitySize := calculateDiagnosisCapacity(log)
+
+	reg := prometheus.NewRegistry()
+	panicScope := meter.NewHierarchicalScope("fodc_agent", "_")
+	panicdiag.SetDefaultPanicCounter(prom.NewProvider(panicScope, reg).Counter("panic_total", "component"))
+	panicStore := crashcollector.NewInProcessPanicStore(0)
+	panicdiag.SetDefaultReporter(panicStore.Reporter())
 
 	metricsServer, serverErr := server.NewServer(server.Config{
-		ListenAddr:        prometheusListenAddr,
-		ReadHeaderTimeout: 3 * time.Second,
-		ShutdownTimeout:   5 * time.Second,
+		ListenAddr:          prometheusListenAddr,
+		DiagnosisListenAddr: diagnosisListenAddr,
+		ReadHeaderTimeout:   3 * time.Second,
+		ShutdownTimeout:     5 * time.Second,
 	})
 	if serverErr != nil {
 		return fmt.Errorf("failed to create metrics server: %w", serverErr)
-	}
-	serverErrCh, startErr := metricsServer.Start(prometheus.NewRegistry(), exporter.NewDatasourceCollector(fr))
-	if startErr != nil {
-		return fmt.Errorf("failed to start metrics server: %w", startErr)
 	}
 
 	ctx := context.Background()
@@ -240,8 +290,27 @@ func runFODC(_ *cobra.Command, _ []string) error {
 		return fmt.Errorf("failed to initialize watchdog: %w", preRunErr)
 	}
 	stopCh := wd.Serve()
-
-	proxyClient := startProxyClient(ctx, log, fr, nodeRole, nodeLabels, clusterCollector)
+	collectorCfg := crashcollector.Config{
+		CapacitySizeBytes: diagnosisCapacitySize,
+	}
+	var stopDirWatcher func()
+	providers := []crashcollector.CollectionLister{panicStore}
+	if crashSourceDir != "" {
+		dirWatcher := crashcollector.NewDirectoryWatcher(log, crashSourceDir, collectorCfg)
+		stopDirWatcher = dirWatcher.Start(ctx)
+		providers = append(providers, dirWatcher)
+	}
+	multi := crashcollector.NewMultiCollectionProvider(providers...)
+	var collectionProvider server.CollectionProvider = multi
+	var crashCollectionLister crashcollector.CollectionLister = multi
+	serverErrCh, startErr := metricsServer.Start(reg, exporter.NewDatasourceCollector(fr), collectionProvider)
+	if startErr != nil {
+		if stopDirWatcher != nil {
+			stopDirWatcher()
+		}
+		return fmt.Errorf("failed to start metrics server: %w", startErr)
+	}
+	proxyClient := startProxyClient(ctx, log, fr, nodeRole, nodeLabels, clusterCollector, crashCollectionLister)
 
 	sigCh := make(chan os.Signal, 1)
 	signal.Notify(sigCh, os.Interrupt, syscall.SIGTERM)
@@ -255,6 +324,9 @@ func runFODC(_ *cobra.Command, _ []string) error {
 	}
 
 	wd.GracefulStop()
+	if stopDirWatcher != nil {
+		stopDirWatcher()
+	}
 
 	if stopKTM != nil {
 		stopKTM()
@@ -294,7 +366,9 @@ func startKTM(ctx context.Context, log zerolog.Logger, fr *flightrecorder.Flight
 	}
 
 	stopBridgeCh := make(chan struct{})
-	go func() {
+	panicdiag.GoWithRecovery(ctx, panicdiag.RecoveryOptions{
+		Component: "fodc-agent-ktm-bridge",
+	}, nil, func(_ *context.Context) {
 		ticker := time.NewTicker(ktmInterval)
 		defer ticker.Stop()
 
@@ -320,7 +394,7 @@ func startKTM(ctx context.Context, log zerolog.Logger, fr *flightrecorder.Flight
 				}
 			}
 		}
-	}()
+	})
 
 	return func() {
 		close(stopBridgeCh)
@@ -341,11 +415,18 @@ func validateFlags() error {
 	if maxMetricsMemoryUsagePercent < 0 || maxMetricsMemoryUsagePercent > 100 {
 		return fmt.Errorf("max-metrics-memory-usage-percentage must be between 0 and 100")
 	}
+	if diagnosisListenAddr == "" {
+		return fmt.Errorf("diagnosis-listen-addr cannot be empty")
+	}
+	if maxFODCDiagnosisMemoryUsagePercent < 0 || maxFODCDiagnosisMemoryUsagePercent > 100 {
+		return fmt.Errorf("max-fodc-diagnosis-memory-usage-percentage must be between 0 and 100")
+	}
 	return nil
 }
 
 func startProxyClient(ctx context.Context, log *logger.Logger, fr *flightrecorder.FlightRecorder,
 	nodeRole string, nodeLabels map[string]string, collector *cluster.Collector,
+	collectionLister crashcollector.CollectionLister,
 ) *proxy.Client {
 	if proxyAddr == "" || podName == "" || nodeRole == "" {
 		log.Info().Msg("Proxy client not started (missing: --proxy-addr, --pod-name, and --node-role)")
@@ -358,12 +439,15 @@ func startProxyClient(ctx context.Context, log *logger.Logger, fr *flightrecorde
 		log.Info().Str("grpc_addr", grpcAddr).Msg("Lifecycle collector initialized")
 	}
 	client := proxy.NewClient(proxyAddr, nodeRole, podName, containerNames, nodeLabels,
-		heartbeatInterval, reconnectInterval, fr, collector, lifecycleCollector, log)
-	go func() {
+		heartbeatInterval, reconnectInterval, fr, collector, lifecycleCollector, collectionLister, log)
+	panicdiag.GoWithRecovery(ctx, panicdiag.RecoveryOptions{
+		Component: "fodc-agent-proxy-client",
+		Logger:    log,
+	}, nil, func(_ *context.Context) {
 		if startErr := client.Start(ctx); startErr != nil {
 			log.Error().Err(startErr).Msg("Proxy client error")
 		}
-	}()
+	})
 	log.Info().Str("proxy_addr", proxyAddr).Str("pod_name", podName).Str("node_role", nodeRole).Msg("Proxy client started")
 	return client
 }

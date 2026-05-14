@@ -18,17 +18,19 @@
 package streaming
 
 import (
+	"sort"
 	"strconv"
 	"strings"
 	"time"
 
-	"github.com/emirpasic/gods/maps/treemap"
-	"github.com/emirpasic/gods/utils"
-	"github.com/pkg/errors"
-
 	"github.com/apache/skywalking-banyandb/pkg/flow"
 	"github.com/apache/skywalking-banyandb/pkg/logger"
 )
+
+// TopSortKey defines the constraint for sort keys in TopN operations.
+type TopSortKey interface {
+	int64 | float64
+}
 
 // TopNSort defines the order of sorting.
 type TopNSort uint8
@@ -45,94 +47,96 @@ type windowedFlow struct {
 	l  *logger.Logger
 }
 
-func (s *windowedFlow) TopN(topNum int, opts ...any) flow.Flow {
+// TopN creates a TopN flow from a windowed flow.
+func TopN[K TopSortKey](wf flow.WindowedFlow, topNum int, sortKeyExtractor func(flow.StreamRecord) K, opts ...any) flow.Flow {
+	s := wf.(*windowedFlow)
+	config := s.buildTopNConfig(topNum, opts)
 	s.wa.(*tumblingTimeWindows).aggregationFactory = func() flow.AggregationOp {
-		topNAggrFunc := &topNAggregatorGroup{
-			cacheSize: topNum,
-			sort:      DESC,
-			l:         s.l,
-		}
-		// apply user customized options
-		for _, opt := range opts {
-			if applier, ok := opt.(TopNOption); ok {
-				applier(topNAggrFunc)
-			}
-		}
-		if topNAggrFunc.sortKeyExtractor == nil {
-			s.f.drainErr(errors.New("sortKeyExtractor must be specified"))
-		}
-		if topNAggrFunc.sort == ASC {
-			topNAggrFunc.comparator = utils.Int64Comparator
-		} else { // DESC
-			topNAggrFunc.comparator = func(a, b interface{}) int {
-				return utils.Int64Comparator(b, a)
-			}
-		}
-		topNAggrFunc.aggregatorGroup = make(map[string]*topNAggregator)
-		return topNAggrFunc
+		return newTopNAggregatorGroup[K](config, sortKeyExtractor)
 	}
 	return s.f
 }
 
-type topNAggregatorGroup struct {
-	aggregatorGroup   map[string]*topNAggregator
-	keyExtractor      func(flow.StreamRecord) uint64
-	sortKeyExtractor  func(flow.StreamRecord) int64
-	groupKeyExtractor func(flow.StreamRecord) string
-	comparator        utils.Comparator
-	l                 *logger.Logger
-	cacheSize         int
-	sort              TopNSort
-}
-
-type topNAggregator struct {
-	*topNAggregatorGroup
-	treeMap *treemap.Map
-	dict    map[uint64]int64
-	dirty   bool
-}
-
-// TopNOption is the option to set up a top-n aggregator group.
-type TopNOption func(aggregator *topNAggregatorGroup)
-
-// WithSortKeyExtractor sets a closure to extract the sorting key.
-func WithSortKeyExtractor(sortKeyExtractor func(flow.StreamRecord) int64) TopNOption {
-	return func(aggregator *topNAggregatorGroup) {
-		aggregator.sortKeyExtractor = sortKeyExtractor
+func (s *windowedFlow) buildTopNConfig(topNum int, opts []any) *topNConfig {
+	config := &topNConfig{
+		cacheSize: topNum,
+		sort:      DESC,
+		l:         s.l,
 	}
+	for _, opt := range opts {
+		if applier, ok := opt.(TopNOption); ok {
+			applier(config)
+		}
+	}
+	return config
 }
+
+type topNAggregatorGroup[K TopSortKey] struct {
+	aggregatorGroup  map[string]*topNAggregator[K]
+	sortKeyExtractor func(flow.StreamRecord) K
+	config           topNConfig
+}
+
+// topNAggregator implements TopN aggregation using a generic heap.
+type topNAggregator[K TopSortKey] struct {
+	group *topNAggregatorGroup[K]
+	heap  *topNHeap[K]
+	dict  map[uint64]K
+	dirty bool
+}
+
+// topNConfig holds configuration for TopN aggregation.
+type topNConfig struct {
+	groupKeyExtractor func(flow.StreamRecord) string
+	keyExtractor      func(flow.StreamRecord) uint64
+	l                 *logger.Logger
+	sort              TopNSort
+	cacheSize         int
+}
+
+// TopNOption is the option to set up a TopN config.
+type TopNOption func(*topNConfig)
 
 // WithKeyExtractor sets a closure to extract the key.
 func WithKeyExtractor(keyExtractor func(flow.StreamRecord) uint64) TopNOption {
-	return func(aggregator *topNAggregatorGroup) {
-		aggregator.keyExtractor = keyExtractor
+	return func(config *topNConfig) {
+		config.keyExtractor = keyExtractor
 	}
 }
 
 // WithGroupKeyExtractor extract group key from the StreamRecord.
 func WithGroupKeyExtractor(groupKeyExtractor func(flow.StreamRecord) string) TopNOption {
-	return func(aggregator *topNAggregatorGroup) {
-		aggregator.groupKeyExtractor = groupKeyExtractor
+	return func(config *topNConfig) {
+		config.groupKeyExtractor = groupKeyExtractor
 	}
 }
 
 // OrderBy sets the sorting order.
 func OrderBy(sort TopNSort) TopNOption {
-	return func(aggregator *topNAggregatorGroup) {
-		aggregator.sort = sort
+	return func(config *topNConfig) {
+		config.sort = sort
 	}
 }
 
-func (t *topNAggregatorGroup) Add(input []flow.StreamRecord) {
+// newTopNAggregatorGroup creates a new TopN aggregator group.
+func newTopNAggregatorGroup[K TopSortKey](config *topNConfig, sortKeyExtractor func(flow.StreamRecord) K) *topNAggregatorGroup[K] {
+	return &topNAggregatorGroup[K]{
+		config:           *config,
+		aggregatorGroup:  make(map[string]*topNAggregator[K]),
+		sortKeyExtractor: sortKeyExtractor,
+	}
+}
+
+func (t *topNAggregatorGroup[K]) Add(input []flow.StreamRecord) {
 	for _, item := range input {
-		key := t.keyExtractor(item)
+		key := t.config.keyExtractor(item)
 		sortKey := t.sortKeyExtractor(item)
-		groupKey := t.groupKeyExtractor(item)
+		groupKey := t.config.groupKeyExtractor(item)
 		aggregator := t.getOrCreateGroup(groupKey)
 		aggregator.removeExistedItem(key)
 		if aggregator.checkSortKeyInBufferRange(sortKey) {
-			if t.l != nil {
-				if e := t.l.Debug(); e.Enabled() {
+			if t.config.l != nil {
+				if e := t.config.l.Debug(); e.Enabled() {
 					e.Str("group", groupKey).Uint64("key", key).Time("elem_ts", time.Unix(0, item.TimestampMillis()*int64(time.Millisecond))).Msg("put into topN buffer")
 				}
 			}
@@ -142,26 +146,35 @@ func (t *topNAggregatorGroup) Add(input []flow.StreamRecord) {
 	}
 }
 
-func (t *topNAggregatorGroup) Snapshot() interface{} {
-	groupRanks := make(map[string][]*Tuple2)
+func (t *topNAggregatorGroup[K]) Snapshot() interface{} {
+	groupRanks := make(map[string][]*Tuple2[K])
 	for group, aggregator := range t.aggregatorGroup {
 		if !aggregator.dirty {
 			continue
 		}
 		aggregator.dirty = false
-		iter := aggregator.treeMap.Iterator()
-		items := make([]*Tuple2, 0, aggregator.size())
-		for iter.Next() {
-			list := iter.Value().([]interface{})
-			for _, item := range list {
-				items = append(items, &Tuple2{iter.Key(), item})
+		entries := aggregator.heap.iterAll()
+		items := make([]*Tuple2[K], 0, aggregator.heap.totalRecords())
+		for _, entry := range entries {
+			for _, record := range entry.records {
+				items = append(items, &Tuple2[K]{V1: entry.sortKey, V2: record})
 			}
+		}
+		// Sort items based on sort order
+		if t.config.sort == ASC {
+			sort.Slice(items, func(i, j int) bool {
+				return items[i].V1 < items[j].V1
+			})
+		} else {
+			sort.Slice(items, func(i, j int) bool {
+				return items[i].V1 > items[j].V1
+			})
 		}
 		groupRanks[group] = items
 	}
 	if len(groupRanks) > 0 {
-		if t.l != nil {
-			if e := t.l.Debug(); e.Enabled() {
+		if t.config.l != nil {
+			if e := t.config.l.Debug(); e.Enabled() {
 				sb := strings.Builder{}
 				for g, item := range groupRanks {
 					sb.WriteString("{")
@@ -170,14 +183,14 @@ func (t *topNAggregatorGroup) Snapshot() interface{} {
 					sb.WriteString(strconv.Itoa(len(item)))
 					sb.WriteString("}")
 				}
-				t.l.Debug().Interface("snapshot", sb.String()).Msg("taken a topN snapshot")
+				t.config.l.Debug().Interface("snapshot", sb.String()).Msg("taken a topN snapshot")
 			}
 		}
 	}
 	return groupRanks
 }
 
-func (t *topNAggregatorGroup) Dirty() bool {
+func (t *topNAggregatorGroup[K]) Dirty() bool {
 	for _, aggregator := range t.aggregatorGroup {
 		if aggregator.dirty {
 			return true
@@ -186,105 +199,109 @@ func (t *topNAggregatorGroup) Dirty() bool {
 	return false
 }
 
-func (t *topNAggregatorGroup) getOrCreateGroup(group string) *topNAggregator {
+func (t *topNAggregatorGroup[K]) getOrCreateGroup(group string) *topNAggregator[K] {
 	aggregator, groupExist := t.aggregatorGroup[group]
 	if groupExist {
 		return aggregator
 	}
-	t.aggregatorGroup[group] = &topNAggregator{
-		topNAggregatorGroup: t,
-		treeMap:             treemap.NewWith(t.comparator),
-		dict:                make(map[uint64]int64),
+	var lessFn func(a, b K) bool
+	if t.config.sort == ASC {
+		lessFn = func(a, b K) bool { return a > b }
+	} else {
+		lessFn = func(a, b K) bool { return a < b }
+	}
+	t.aggregatorGroup[group] = &topNAggregator[K]{
+		group: t,
+		heap:  newTopNHeap(lessFn),
+		dict:  make(map[uint64]K),
 	}
 	return t.aggregatorGroup[group]
 }
 
-func (t *topNAggregator) doCleanUp() {
-	// do cleanup: maintain the treeMap windowSize
-	if t.size() > t.cacheSize {
-		lastKey, lastValues := t.treeMap.Max()
-		l := lastValues.([]interface{})
-		delete(t.dict, t.keyExtractor(l[len(l)-1].(flow.StreamRecord)))
-		// remove last one
-		if len(l) <= 1 {
-			t.treeMap.Remove(lastKey)
-		} else {
-			t.treeMap.Put(lastKey, l[:len(l)-1])
-		}
+func (t *topNAggregator[K]) doCleanUp() {
+	if t.size() <= t.group.config.cacheSize {
+		return
+	}
+	worst := t.heap.peek()
+	if worst == nil {
+		return
+	}
+	l := worst.records
+	delete(t.dict, t.group.config.keyExtractor(l[len(l)-1]))
+	if len(l) <= 1 {
+		t.heap.popWorst()
+	} else {
+		worst.records = l[:len(l)-1]
 	}
 }
 
-func (t *topNAggregator) put(key uint64, sortKey int64, data flow.StreamRecord) {
+func (t *topNAggregator[K]) put(key uint64, sortKey K, data flow.StreamRecord) {
 	t.dirty = true
-	if existingList, ok := t.treeMap.Get(sortKey); ok {
-		existingList = append(existingList.([]interface{}), data)
-		t.treeMap.Put(sortKey, existingList)
-	} else {
-		t.treeMap.Put(sortKey, []interface{}{data})
-	}
+	t.heap.put(sortKey, data)
 	t.dict[key] = sortKey
 }
 
-func (t *topNAggregator) checkSortKeyInBufferRange(sortKey int64) bool {
+func (t *topNAggregator[K]) checkSortKeyInBufferRange(sortKey K) bool {
 	// get the "maximum" item
 	// - if ASC, the maximum item
 	// - else DESC, the minimum item
-	worstKey, _ := t.treeMap.Max()
-	if worstKey == nil {
-		// return true if the buffer is empty.
+	worst := t.heap.peek()
+	if worst == nil {
 		return true
 	}
-	if t.comparator(sortKey, worstKey.(int64)) < 0 {
-		return true
+	if t.group.config.sort == ASC {
+		if sortKey < worst.sortKey {
+			return true
+		}
+	} else {
+		if sortKey > worst.sortKey {
+			return true
+		}
 	}
-	return t.size() < t.cacheSize
+	return t.size() < t.group.config.cacheSize
 }
 
-func (t *topNAggregator) removeExistedItem(key uint64) {
-	existed, ok := t.dict[key]
+func (t *topNAggregator[K]) removeExistedItem(key uint64) {
+	existedSortKey, ok := t.dict[key]
 	if !ok {
 		return
 	}
 	delete(t.dict, key)
-	list, ok := t.treeMap.Get(existed)
-	if !ok {
+	entry := t.heap.get(existedSortKey)
+	if entry == nil {
 		return
 	}
-	l := list.([]interface{})
-	for i := 0; i < len(l); i++ {
-		if t.keyExtractor(l[i].(flow.StreamRecord)) == key {
-			l = append(l[:i], l[i+1:]...)
+	l := entry.records
+	for idx := range l {
+		if t.group.config.keyExtractor(l[idx]) == key {
+			l = append(l[:idx], l[idx+1:]...)
+			break
 		}
 	}
 	if len(l) == 0 {
-		t.treeMap.Remove(existed)
-		return
+		t.heap.remove(existedSortKey)
+	} else {
+		t.heap.update(existedSortKey, l)
 	}
-	t.treeMap.Put(existed, l)
 }
 
-func (t *topNAggregator) size() int {
+func (t *topNAggregator[K]) size() int {
 	return len(t.dict)
 }
 
-func (t *topNAggregatorGroup) leakCheck() {
+func (t *topNAggregatorGroup[K]) leakCheck() {
 	for g, agg := range t.aggregatorGroup {
-		if agg.size() > t.cacheSize {
+		if agg.size() > t.config.cacheSize {
 			panic(g + "leak detected: topN buffer size exceed the cache size")
 		}
-		iter := agg.treeMap.Iterator()
-		count := 0
-		for iter.Next() {
-			count += len(iter.Value().([]interface{}))
-		}
-		if count != agg.size() {
-			panic(g + "leak detected: treeMap size not match dictionary size")
+		if agg.heap.totalRecords() != agg.size() {
+			panic(g + " leak detected: heap size not match dictionary size")
 		}
 	}
 }
 
-// Tuple2 is a tuple with 2 fields. Each field may be a separate type.
-type Tuple2 struct {
-	V1 interface{} `json:"v1"`
-	V2 interface{} `json:"v2"`
+// Tuple2 is a tuple with 2 fields. V1 is the sort key (K), V2 is the record.
+type Tuple2[K TopSortKey] struct {
+	V1 K                 `json:"v1"`
+	V2 flow.StreamRecord `json:"v2"`
 }

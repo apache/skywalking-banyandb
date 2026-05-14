@@ -36,6 +36,7 @@ import (
 	"github.com/apache/skywalking-banyandb/pkg/index"
 	"github.com/apache/skywalking-banyandb/pkg/index/posting/roaring"
 	"github.com/apache/skywalking-banyandb/pkg/logger"
+	"github.com/apache/skywalking-banyandb/pkg/panicdiag"
 	pbv1 "github.com/apache/skywalking-banyandb/pkg/pb/v1"
 	"github.com/apache/skywalking-banyandb/pkg/pool"
 	"github.com/apache/skywalking-banyandb/pkg/query/model"
@@ -81,10 +82,15 @@ type queryOptions struct {
 type topNQueryOptions struct {
 	sortDirection modelv1.Sort
 	number        int32
+	fieldType     databasev1.FieldType
 }
 
 func (m *measure) Query(ctx context.Context, mqo model.MeasureQueryOptions) (mqr model.MeasureQueryResult, err error) {
 	startTime := time.Now()
+	ctx = panicdiag.WithBreadcrumb(ctx, "start measure query", "measure", map[string]string{
+		"group":   m.group,
+		"measure": mqo.Name,
+	})
 	defer func() {
 		if m.queryMetrics != nil {
 			m.queryMetrics.queryLatency.Observe(time.Since(startTime).Seconds())
@@ -117,6 +123,10 @@ func (m *measure) Query(ctx context.Context, mqo model.MeasureQueryOptions) (mqr
 	if len(segments) < 1 {
 		return nilResult, nil
 	}
+	ctx = panicdiag.WithBreadcrumb(ctx, "selected measure segments", "measure", map[string]string{
+		"group":    m.group,
+		"segments": fmt.Sprintf("%d", len(segments)),
+	})
 	segmentsNeedRelease := true
 	defer func() {
 		if !segmentsNeedRelease {
@@ -129,6 +139,10 @@ func (m *measure) Query(ctx context.Context, mqo model.MeasureQueryOptions) (mqr
 
 	if m.schema.IndexMode {
 		segmentsNeedRelease = false
+		ctx = panicdiag.WithBreadcrumb(ctx, "build indexed measure query result", "measure", map[string]string{
+			"group":   m.group,
+			"measure": mqo.Name,
+		})
 		return m.buildIndexQueryResult(ctx, mqo, segments)
 	}
 
@@ -151,6 +165,10 @@ func (m *measure) Query(ctx context.Context, mqo model.MeasureQueryOptions) (mqr
 	if len(sids) < 1 {
 		return nilResult, nil
 	}
+	ctx = panicdiag.WithBreadcrumb(ctx, "resolved measure series", "measure", map[string]string{
+		"group":  m.group,
+		"series": fmt.Sprintf("%d", len(sids)),
+	})
 	result := queryResult{
 		ctx:              ctx,
 		qm:               m.queryMetrics,
@@ -207,6 +225,10 @@ func (m *measure) Query(ctx context.Context, mqo model.MeasureQueryOptions) (mqr
 		result.snapshots = append(result.snapshots, s)
 	}
 
+	ctx = panicdiag.WithBreadcrumb(ctx, "search measure blocks", "measure", map[string]string{
+		"group": m.group,
+		"parts": fmt.Sprintf("%d", len(parts)),
+	})
 	if err = m.searchBlocks(ctx, &result, sids, parts, qo); err != nil {
 		return nil, err
 	}
@@ -280,6 +302,7 @@ func applyTopNOptions(mqo model.MeasureQueryOptions, result *queryResult) {
 	result.topNQueryOptions = &topNQueryOptions{
 		sortDirection: mqo.Sort,
 		number:        mqo.Number,
+		fieldType:     mqo.TopNFieldType,
 	}
 }
 
@@ -797,25 +820,33 @@ func (qr *queryResult) Pull() *model.MeasureResult {
 		}
 
 		cursorChan := make(chan int, len(qr.data))
+		measureBlockLogger := logger.GetLogger("measure-query-block-loader")
 		for i := 0; i < len(qr.data); i++ {
-			go func(i int) {
+			idx := i
+			go func() {
+				defer func() {
+					if r := recover(); r != nil {
+						measureBlockLogger.Error().Interface("panic", r).Msg("panic in parallel block loader")
+						cursorChan <- idx
+					}
+				}()
 				select {
 				case <-qr.ctx.Done():
-					cursorChan <- i
+					cursorChan <- idx
 					return
 				default:
 				}
 				tmpBlock := generateBlock()
 				defer releaseBlock(tmpBlock)
-				if !qr.data[i].loadData(tmpBlock) {
-					cursorChan <- i
+				if !qr.data[idx].loadData(tmpBlock) {
+					cursorChan <- idx
 					return
 				}
 				if qr.orderByTimestampDesc() {
-					qr.data[i].idx = len(qr.data[i].timestamps) - 1
+					qr.data[idx].idx = len(qr.data[idx].timestamps) - 1
 				}
 				cursorChan <- -1
-			}(i)
+			}()
 		}
 
 		blankCursorList := []int{}
@@ -942,11 +973,16 @@ func (qr *queryResult) merge(storedIndexValue map[common.SeriesID]map[string]*mo
 	var lastVersion int64
 	var lastSid common.SeriesID
 
-	var topNPostAggregator PostProcessor
+	var isTopN bool
+	var topNLimit int32
+	var topNSort modelv1.Sort
+	var topNFieldType databasev1.FieldType
 
 	if qr.topNQueryOptions != nil {
-		topNPostAggregator = CreateTopNPostProcessor(qr.topNQueryOptions.number, modelv1.AggregationFunction_AGGREGATION_FUNCTION_UNSPECIFIED,
-			qr.topNQueryOptions.sortDirection)
+		isTopN = true
+		topNLimit = qr.topNQueryOptions.number
+		topNSort = qr.topNQueryOptions.sortDirection
+		topNFieldType = qr.topNQueryOptions.fieldType
 	}
 
 	for qr.Len() > 0 {
@@ -958,8 +994,8 @@ func (qr *queryResult) merge(storedIndexValue map[common.SeriesID]map[string]*mo
 
 		if len(result.Timestamps) > 0 &&
 			topBC.timestamps[topBC.idx] == result.Timestamps[len(result.Timestamps)-1] {
-			if topNPostAggregator != nil {
-				topBC.mergeTopNResult(result, storedIndexValue, topNPostAggregator)
+			if isTopN {
+				topBC.mergeTopNResult(result, storedIndexValue, topNLimit, topNSort, topNFieldType)
 			} else if topBC.versions[topBC.idx] > lastVersion {
 				topBC.replace(result, storedIndexValue)
 			}

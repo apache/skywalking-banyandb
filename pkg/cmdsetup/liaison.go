@@ -19,7 +19,6 @@ package cmdsetup
 
 import (
 	"context"
-	"os"
 
 	"github.com/spf13/cobra"
 
@@ -105,6 +104,7 @@ func newLiaisonCmd(runners ...run.Unit) *cobra.Command {
 		TraceLiaisonNodeRegistry:   grpc.NewClusterNodeRegistry(data.TopicTraceWrite, tire1Client, traceLiaisonNodeSel),
 	}, metricSvc, pm, routeProviders)
 	internalPipeline.SetMetadataRepo(metaSvc)
+	internalPipeline.SetNodeSchemaStatusRepo(metaSvc)
 	profSvc := observability.NewProfService()
 	httpServer := http.NewServer(grpcServer.GetAuthReloader())
 	var units []run.Unit
@@ -139,9 +139,16 @@ func newLiaisonCmd(runners ...run.Unit) *cobra.Command {
 		Version: version.Build(),
 		Short:   "Run as the liaison server",
 		RunE: func(_ *cobra.Command, _ []string) (err error) {
-			ctx := context.Background()
+			// See standalone.go for the rationale: Cobra short-circuits
+			// PersistentPostRunE on a non-nil RunE error, so we must
+			// drain the artifact sink here.
+			defer ShutdownSupervisor()
+			// Derive from SupervisorContext so that a panic recovered anywhere
+			// in the process, including goroutines spawned via run.Go, fires
+			// cancellation here.
+			runCtx := SupervisorContext()
 			if nodeSelector != "" {
-				ctx = context.WithValue(ctx, common.ContextNodeSelectorKey, nodeSelector)
+				runCtx = context.WithValue(runCtx, common.ContextNodeSelectorKey, nodeSelector)
 				var ls *pub.LabelSelector
 				ls, err = pub.ParseLabelSelector(nodeSelector)
 				if err != nil {
@@ -156,11 +163,11 @@ func newLiaisonCmd(runners ...run.Unit) *cobra.Command {
 				return err
 			}
 			logger.GetLogger().Info().Msg("starting as a liaison server")
-			ctx = context.WithValue(ctx, common.ContextNodeKey, node)
+			runCtx = context.WithValue(runCtx, common.ContextNodeKey, node)
 			// Spawn our go routines and wait for shutdown.
-			if err := liaisonGroup.Run(ctx); err != nil {
+			if err := liaisonGroup.Run(runCtx); err != nil {
 				logger.GetLogger().Error().Err(err).Stack().Str("name", liaisonGroup.Name()).Msg("Exit")
-				os.Exit(-1)
+				return err
 			}
 			return nil
 		},

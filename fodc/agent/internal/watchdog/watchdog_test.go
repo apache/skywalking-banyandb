@@ -23,6 +23,8 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"path/filepath"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -33,6 +35,7 @@ import (
 
 	"github.com/apache/skywalking-banyandb/fodc/agent/internal/flightrecorder"
 	"github.com/apache/skywalking-banyandb/fodc/agent/internal/metrics"
+	"github.com/apache/skywalking-banyandb/pkg/panicdiag"
 )
 
 const testMetricsCPUUsage = "cpu_usage 75.5"
@@ -86,6 +89,12 @@ func (m *mockMetricsRecorder) SetUpdateErrors(errors []error) {
 	defer m.mu.Unlock()
 
 	m.updateErrors = errors
+}
+
+type panicMetricsRecorder struct{}
+
+func (panicMetricsRecorder) Update(_ []metrics.RawMetric) error {
+	panic("recorder panic")
 }
 
 func TestNewWatchdogWithConfig(t *testing.T) {
@@ -286,7 +295,7 @@ http_requests_total{method="GET"} 100`
 	preRunErr := wd.PreRun(ctx)
 	require.NoError(t, preRunErr)
 
-	err := wd.pollAndForward()
+	_, err := wd.pollAndForward(context.Background())
 
 	require.NoError(t, err)
 	assert.Equal(t, 1, recorder.GetUpdateCallCount())
@@ -311,7 +320,7 @@ func TestWatchdog_PollAndForward_NoRecorder(t *testing.T) {
 	preRunErr := wd.PreRun(ctx)
 	require.NoError(t, preRunErr)
 
-	err := wd.pollAndForward()
+	_, err := wd.pollAndForward(context.Background())
 
 	require.NoError(t, err)
 }
@@ -334,7 +343,7 @@ func TestWatchdog_PollAndForward_RecorderError(t *testing.T) {
 	preRunErr := wd.PreRun(ctx)
 	require.NoError(t, preRunErr)
 
-	err := wd.pollAndForward()
+	_, err := wd.pollAndForward(context.Background())
 
 	assert.Error(t, err)
 	assert.Contains(t, err.Error(), "failed to forward metrics to recorder")
@@ -348,7 +357,7 @@ func TestWatchdog_PollAndForward_PollError(t *testing.T) {
 	preRunErr := wd.PreRun(ctx)
 	require.NoError(t, preRunErr)
 
-	err := wd.pollAndForward()
+	_, err := wd.pollAndForward(context.Background())
 
 	assert.Error(t, err)
 	assert.Contains(t, err.Error(), "failed to poll metrics")
@@ -517,6 +526,47 @@ func TestWatchdog_GracefulStop_NotRunning(t *testing.T) {
 	wd.GracefulStop()
 }
 
+func TestWatchdog_Serve_PanicWritesStateDump(t *testing.T) {
+	metricsText := testMetricsCPUUsage
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte(metricsText))
+	}))
+	defer server.Close()
+
+	artifactRoot := t.TempDir()
+	panicdiag.SetDefaultArtifactRoot(artifactRoot)
+	wd := NewWatchdogWithConfig(panicMetricsRecorder{}, []string{server.URL}, 10*time.Millisecond, "datanode-cold", "pod-1", []string{"data"})
+
+	preRunErr := wd.PreRun(context.Background())
+	require.NoError(t, preRunErr)
+
+	stopCh := wd.Serve()
+	select {
+	case <-stopCh:
+	case <-time.After(3 * time.Second):
+		t.Fatal("watchdog panic did not stop in time")
+	}
+
+	entries, err := os.ReadDir(artifactRoot)
+	require.NoError(t, err)
+	require.Len(t, entries, 1)
+
+	artifactDir := filepath.Join(artifactRoot, entries[0].Name())
+	panicJSONPath := filepath.Join(artifactDir, "panic.json")
+	deepDumpPath := filepath.Join(artifactDir, "deep-dump.json")
+
+	crashData, err := os.ReadFile(panicJSONPath)
+	require.NoError(t, err)
+	assert.Contains(t, string(crashData), `"panicValue"`)
+	assert.Contains(t, string(crashData), "recorder panic")
+
+	deepDumpData, err := os.ReadFile(deepDumpPath)
+	require.NoError(t, err)
+	assert.Contains(t, string(deepDumpData), `"podName": "pod-1"`)
+	assert.Contains(t, string(deepDumpData), `"nodeRole": "datanode-cold"`)
+}
+
 func TestWatchdog_HTTPClientConnectionReuse(t *testing.T) {
 	metricsText := testMetricsCPUUsage
 
@@ -577,7 +627,7 @@ http_requests_total{method="POST"} 200
 	preRunErr := wd.PreRun(ctx)
 	require.NoError(t, preRunErr)
 
-	err := wd.pollAndForward()
+	_, err := wd.pollAndForward(context.Background())
 
 	require.NoError(t, err)
 
@@ -690,7 +740,7 @@ func TestWatchdog_EmptyMetricsResponse(t *testing.T) {
 	preRunErr := wd.PreRun(ctx)
 	require.NoError(t, preRunErr)
 
-	err := wd.pollAndForward()
+	_, err := wd.pollAndForward(context.Background())
 
 	require.NoError(t, err)
 	assert.Equal(t, 1, recorder.GetUpdateCallCount())

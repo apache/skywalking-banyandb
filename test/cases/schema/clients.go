@@ -126,7 +126,7 @@ func (c *Clients) AwaitDeleted(ctx context.Context, keys []string, timeout time.
 
 // internalTopNResultMeasureName is the auto-created measure that backs TopN
 // aggregations. The measure subsystem provisions it in every measure group, so
-// list assertions in the §6 specs need to skip it.
+// list assertions in the  specs need to skip it.
 const internalTopNResultMeasureName = "_top_n_result"
 
 // userMeasures returns measures with the auto-provisioned _top_n_result entry

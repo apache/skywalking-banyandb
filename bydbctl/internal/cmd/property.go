@@ -19,6 +19,7 @@ package cmd
 
 import (
 	"fmt"
+	"io"
 
 	"github.com/go-resty/resty/v2"
 	"github.com/spf13/cobra"
@@ -68,7 +69,7 @@ func newPropertyCmd() *cobra.Command {
 		Version: version.Build(),
 		Short:   "Create property schemas from files",
 		RunE: func(cmd *cobra.Command, _ []string) error {
-			return rest(func() ([]reqBody, error) { return parseNameAndGroupFromYAML(cmd.InOrStdin()) },
+			return rest(cmd.OutOrStdout(), func() ([]reqBody, error) { return parseNameAndGroupFromYAML(cmd.InOrStdin()) },
 				func(request request) (*resty.Response, error) {
 					s := new(databasev1.Property)
 					err := protojson.Unmarshal(request.data, s)
@@ -84,9 +85,8 @@ func newPropertyCmd() *cobra.Command {
 					}
 					return request.req.SetBody(b).Post(getPath(propertySchemaPath))
 				},
-				func(_ int, reqBody reqBody, _ []byte) error {
-					fmt.Printf("property schema %s.%s is created", reqBody.group, reqBody.name)
-					fmt.Println()
+				func(w io.Writer, _ int, reqBody reqBody, _ []byte) error {
+					fmt.Fprintf(w, "property schema %s.%s is created\n", reqBody.group, reqBody.name)
 					return nil
 				}, enableTLS, insecure, cert)
 		},
@@ -97,7 +97,7 @@ func newPropertyCmd() *cobra.Command {
 		Version: version.Build(),
 		Short:   "Update property schemas from files",
 		RunE: func(cmd *cobra.Command, _ []string) error {
-			return rest(func() ([]reqBody, error) { return parseNameAndGroupFromYAML(cmd.InOrStdin()) },
+			return rest(cmd.OutOrStdout(), func() ([]reqBody, error) { return parseNameAndGroupFromYAML(cmd.InOrStdin()) },
 				func(request request) (*resty.Response, error) {
 					s := new(databasev1.Property)
 					err := protojson.Unmarshal(request.data, s)
@@ -115,9 +115,8 @@ func newPropertyCmd() *cobra.Command {
 						SetPathParam("name", request.name).SetPathParam("group", request.group).
 						Put(getPath(propertySchemaPathWithParams))
 				},
-				func(_ int, reqBody reqBody, _ []byte) error {
-					fmt.Printf("property schema %s.%s is updated", reqBody.group, reqBody.name)
-					fmt.Println()
+				func(w io.Writer, _ int, reqBody reqBody, _ []byte) error {
+					fmt.Fprintf(w, "property schema %s.%s is updated\n", reqBody.group, reqBody.name)
 					return nil
 				}, enableTLS, insecure, cert)
 		},
@@ -127,8 +126,8 @@ func newPropertyCmd() *cobra.Command {
 		Use:     "get [-g group] -n name",
 		Version: version.Build(),
 		Short:   "Get a property schema",
-		RunE: func(_ *cobra.Command, _ []string) (err error) {
-			return rest(parseFromFlags, func(request request) (*resty.Response, error) {
+		RunE: func(cmd *cobra.Command, _ []string) (err error) {
+			return rest(cmd.OutOrStdout(), parseFromFlags, func(request request) (*resty.Response, error) {
 				return request.req.SetPathParam("name", request.name).SetPathParam("group", request.group).Get(getPath(propertySchemaPathWithParams))
 			}, yamlPrinter, enableTLS, insecure, cert)
 		},
@@ -138,12 +137,11 @@ func newPropertyCmd() *cobra.Command {
 		Use:     "delete [-g group] -n name",
 		Version: version.Build(),
 		Short:   "Delete a property schema",
-		RunE: func(_ *cobra.Command, _ []string) (err error) {
-			return rest(parseFromFlags, func(request request) (*resty.Response, error) {
+		RunE: func(cmd *cobra.Command, _ []string) (err error) {
+			return rest(cmd.OutOrStdout(), parseFromFlags, func(request request) (*resty.Response, error) {
 				return request.req.SetPathParam("name", request.name).SetPathParam("group", request.group).Delete(getPath(propertySchemaPathWithParams))
-			}, func(_ int, reqBody reqBody, _ []byte) error {
-				fmt.Printf("property schema %s.%s is deleted", reqBody.group, reqBody.name)
-				fmt.Println()
+			}, func(w io.Writer, _ int, reqBody reqBody, _ []byte) error {
+				fmt.Fprintf(w, "property schema %s.%s is deleted\n", reqBody.group, reqBody.name)
 				return nil
 			}, enableTLS, insecure, cert)
 		},
@@ -154,8 +152,8 @@ func newPropertyCmd() *cobra.Command {
 		Use:     "list [-g group]",
 		Version: version.Build(),
 		Short:   "List property schemas",
-		RunE: func(_ *cobra.Command, _ []string) (err error) {
-			return rest(parseFromFlags, func(request request) (*resty.Response, error) {
+		RunE: func(cmd *cobra.Command, _ []string) (err error) {
+			return rest(cmd.OutOrStdout(), parseFromFlags, func(request request) (*resty.Response, error) {
 				return request.req.SetPathParam("group", request.group).Get(getPath("/api/v1/property/schema/lists/{group}"))
 			}, yamlPrinter, enableTLS, insecure, cert)
 		},
@@ -168,7 +166,7 @@ func newPropertyCmd() *cobra.Command {
 		Version: version.Build(),
 		Short:   "Apply(Create or Update) properties data from files",
 		RunE: func(cmd *cobra.Command, _ []string) error {
-			return rest(func() ([]reqBody, error) { return parseFromYAMLForProperty(cmd.InOrStdin()) },
+			return rest(cmd.OutOrStdout(), func() ([]reqBody, error) { return parseFromYAMLForProperty(cmd.InOrStdin()) },
 				func(request request) (*resty.Response, error) {
 					s := new(propertyv1.Property)
 					err := protojson.Unmarshal(request.data, s)
@@ -193,8 +191,8 @@ func newPropertyCmd() *cobra.Command {
 		Use:     "delete -g group -n name [-i id]",
 		Version: version.Build(),
 		Short:   "Delete property data",
-		RunE: func(_ *cobra.Command, _ []string) (err error) {
-			return rest(parseFromFlags, func(request request) (*resty.Response, error) {
+		RunE: func(cmd *cobra.Command, _ []string) (err error) {
+			return rest(cmd.OutOrStdout(), parseFromFlags, func(request request) (*resty.Response, error) {
 				return request.req.SetPathParam("name", request.name).SetPathParam("group", request.group).
 					SetPathParam("id", request.id).Delete(getPath(propertyDataPath))
 			}, yamlPrinter, enableTLS, insecure, cert)
@@ -208,7 +206,7 @@ func newPropertyCmd() *cobra.Command {
 		Short:   "Query property data from files",
 		Long:    timeRangeUsage,
 		RunE: func(cmd *cobra.Command, _ []string) (err error) {
-			return rest(func() ([]reqBody, error) { return simpleParseFromYAML(cmd.InOrStdin()) },
+			return rest(cmd.OutOrStdout(), func() ([]reqBody, error) { return simpleParseFromYAML(cmd.InOrStdin()) },
 				func(request request) (*resty.Response, error) {
 					return request.req.SetBody(request.data).Post(getPath(propertyQueryPath))
 				}, yamlPrinter, enableTLS, insecure, cert)

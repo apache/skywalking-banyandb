@@ -23,78 +23,79 @@ import (
 	"sort"
 
 	measurev1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/measure/v1"
+	"github.com/apache/skywalking-banyandb/pkg/flow/streaming"
 )
 
 // TopElement seals a sortable value and its data point which this value belongs to.
 //
 // Deprecated: row-path measure plan; see .omc/g8-plan.md. The vec
 // subsystem implements top-N via pkg/query/vectorized/measure.BatchTop.
-type TopElement struct {
+type TopElement[K streaming.TopSortKey] struct {
 	idp   *measurev1.InternalDataPoint
-	value int64
+	value K
 }
 
 // NewTopElement returns a TopElement.
 //
 // Deprecated: row-path measure plan; see .omc/g8-plan.md.
-func NewTopElement(idp *measurev1.InternalDataPoint, value int64) TopElement {
-	return TopElement{
+func NewTopElement[K streaming.TopSortKey](idp *measurev1.InternalDataPoint, value K) TopElement[K] {
+	return TopElement[K]{
 		idp:   idp,
 		value: value,
 	}
 }
 
 // Val returns the sortable value.
-func (e TopElement) Val() int64 {
+func (e TopElement[K]) Val() K {
 	return e.value
 }
 
-type topSortedList struct {
-	elements []TopElement
+type topSortedList[K streaming.TopSortKey] struct {
+	elements []TopElement[K]
 	reverted bool
 }
 
-func (h topSortedList) Len() int {
+func (h topSortedList[K]) Len() int {
 	return len(h.elements)
 }
 
-func (h topSortedList) Less(i, j int) bool {
+func (h topSortedList[K]) Less(i, j int) bool {
 	if h.reverted {
 		return h.elements[i].value < h.elements[j].value
 	}
 	return h.elements[i].value > h.elements[j].value
 }
 
-func (h *topSortedList) Swap(i, j int) {
+func (h *topSortedList[K]) Swap(i, j int) {
 	h.elements[i], h.elements[j] = h.elements[j], h.elements[i]
 }
 
-type topHeap struct {
-	elements []TopElement
+type topHeap[K streaming.TopSortKey] struct {
+	elements []TopElement[K]
 	reverted bool
 }
 
-func (h topHeap) Len() int {
+func (h topHeap[K]) Len() int {
 	return len(h.elements)
 }
 
-func (h topHeap) Less(i, j int) bool {
+func (h topHeap[K]) Less(i, j int) bool {
 	if h.reverted {
 		return h.elements[i].value > h.elements[j].value
 	}
 	return h.elements[i].value < h.elements[j].value
 }
 
-func (h *topHeap) Swap(i, j int) {
+func (h *topHeap[K]) Swap(i, j int) {
 	h.elements[i], h.elements[j] = h.elements[j], h.elements[i]
 }
 
-func (h *topHeap) Push(x interface{}) {
-	h.elements = append(h.elements, x.(TopElement))
+func (h *topHeap[K]) Push(x interface{}) {
+	h.elements = append(h.elements, x.(TopElement[K]))
 }
 
-func (h *topHeap) Pop() interface{} {
-	var e TopElement
+func (h *topHeap[K]) Pop() interface{} {
+	var e TopElement[K]
 	e, h.elements = h.elements[len(h.elements)-1], h.elements[:len(h.elements)-1]
 	return e
 }
@@ -102,19 +103,19 @@ func (h *topHeap) Pop() interface{} {
 // TopQueue is a sortable queue only keeps top-n members when pushed new elements.
 //
 // Deprecated: row-path measure plan; see .omc/g8-plan.md.
-type TopQueue struct {
-	th topHeap
+type TopQueue[K streaming.TopSortKey] struct {
+	th topHeap[K]
 	n  int
 }
 
 // NewTopQueue returns a new TopQueue.
 //
 // Deprecated: row-path measure plan; see .omc/g8-plan.md.
-func NewTopQueue(n int, reverted bool) *TopQueue {
-	return &TopQueue{
+func NewTopQueue[K streaming.TopSortKey](n int, reverted bool) *TopQueue[K] {
+	return &TopQueue[K]{
 		n: n,
-		th: topHeap{
-			elements: make([]TopElement, 0, n),
+		th: topHeap[K]{
+			elements: make([]TopElement[K], 0, n),
 			reverted: reverted,
 		},
 	}
@@ -123,12 +124,12 @@ func NewTopQueue(n int, reverted bool) *TopQueue {
 // Insert pushes a new element to the queue.
 // It returns true if the element are accepted by the queue,
 // returns false if it's evicted.
-func (s *TopQueue) Insert(element TopElement) bool {
+func (s *TopQueue[K]) Insert(element TopElement[K]) bool {
 	if len(s.th.elements) < s.n {
 		heap.Push(&s.th, element)
 		return true
 	}
-	minElement := heap.Pop(&s.th).(TopElement)
+	minElement := heap.Pop(&s.th).(TopElement[K])
 	if s.th.reverted {
 		if minElement.value < element.value {
 			heap.Push(&s.th, minElement)
@@ -145,14 +146,14 @@ func (s *TopQueue) Insert(element TopElement) bool {
 }
 
 // Purge resets the queue.
-func (s *TopQueue) Purge() {
+func (s *TopQueue[K]) Purge() {
 	s.th.elements = s.th.elements[:0]
 }
 
 // Elements returns all elements accepted by the queue.
-func (s *TopQueue) Elements() []TopElement {
-	l := &topSortedList{
-		elements: append([]TopElement(nil), s.th.elements...),
+func (s *TopQueue[K]) Elements() []TopElement[K] {
+	l := &topSortedList[K]{
+		elements: append([]TopElement[K](nil), s.th.elements...),
 		reverted: s.th.reverted,
 	}
 	sort.Sort(l)
@@ -160,7 +161,7 @@ func (s *TopQueue) Elements() []TopElement {
 }
 
 // Strings shows the string represent.
-func (s TopQueue) String() string {
+func (s TopQueue[K]) String() string {
 	if s.th.reverted {
 		return fmt.Sprintf("bottom(%d)", s.n)
 	}
@@ -168,6 +169,6 @@ func (s TopQueue) String() string {
 }
 
 // Equal reports whether s and other have the queue's max acceptable number and sorting order.
-func (s *TopQueue) Equal(other *TopQueue) bool {
+func (s *TopQueue[K]) Equal(other *TopQueue[K]) bool {
 	return s.th.reverted == other.th.reverted && s.n == other.n
 }

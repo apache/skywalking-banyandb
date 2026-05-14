@@ -26,45 +26,49 @@ import (
 	"go.uber.org/multierr"
 
 	measurev1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/measure/v1"
+	"github.com/apache/skywalking-banyandb/pkg/flow/streaming"
 	"github.com/apache/skywalking-banyandb/pkg/query/executor"
 	"github.com/apache/skywalking-banyandb/pkg/query/logical"
 )
 
-var _ logical.UnresolvedPlan = (*unresolvedTopNMerger)(nil)
+var (
+	_ logical.UnresolvedPlan = (*unresolvedTopNMerger[int64])(nil)
+	_ logical.UnresolvedPlan = (*unresolvedTopNMerger[float64])(nil)
+)
 
-type unresolvedTopNMerger struct {
-	subPlans []*unresolvedLocalScan
+type unresolvedTopNMerger[K streaming.TopSortKey] struct {
+	subPlans []*unresolvedLocalScan[K]
 }
 
 // Analyze implements logical.UnresolvedPlan.
-func (u *unresolvedTopNMerger) Analyze(s logical.Schema) (logical.Plan, error) {
-	subPlans := make([]*localScan, 0, len(u.subPlans))
+func (u *unresolvedTopNMerger[K]) Analyze(s logical.Schema) (logical.Plan, error) {
+	subPlans := make([]*localScan[K], 0, len(u.subPlans))
 	for _, subPlan := range u.subPlans {
 		analyzed, err := subPlan.Analyze(s)
 		if err != nil {
 			return nil, errors.Wrap(err, "failed to analyze sub plan")
 		}
-		ls, ok := analyzed.(*localScan)
+		ls, ok := analyzed.(*localScan[K])
 		if !ok {
 			return nil, errors.New("sub plan must be localScan")
 		}
 		subPlans = append(subPlans, ls)
 	}
 
-	return &topNMerger{
+	return &topNMerger[K]{
 		subPlans: subPlans,
 		schema:   s,
 	}, nil
 }
 
-var _ logical.Plan = (*topNMerger)(nil)
+var _ logical.Plan = (*topNMerger[int64])(nil)
 
-type topNMerger struct {
+type topNMerger[K streaming.TopSortKey] struct {
 	schema   logical.Schema
-	subPlans []*localScan
+	subPlans []*localScan[K]
 }
 
-func (t *topNMerger) Execute(ctx context.Context) (executor.MIterator, error) {
+func (t *topNMerger[K]) Execute(ctx context.Context) (executor.MIterator, error) {
 	iters := make([]executor.MIterator, 0, len(t.subPlans))
 	for _, subPlan := range t.subPlans {
 		iter, err := subPlan.Execute(ctx)
@@ -79,11 +83,11 @@ func (t *topNMerger) Execute(ctx context.Context) (executor.MIterator, error) {
 	}, nil
 }
 
-func (t *topNMerger) String() string {
+func (t *topNMerger[K]) String() string {
 	return fmt.Sprintf("TopNMerge: %d sub plans", len(t.subPlans))
 }
 
-func (t *topNMerger) Children() []logical.Plan {
+func (t *topNMerger[K]) Children() []logical.Plan {
 	children := make([]logical.Plan, 0, len(t.subPlans))
 	for _, sp := range t.subPlans {
 		children = append(children, sp)
@@ -91,7 +95,7 @@ func (t *topNMerger) Children() []logical.Plan {
 	return children
 }
 
-func (t *topNMerger) Schema() logical.Schema {
+func (t *topNMerger[K]) Schema() logical.Schema {
 	return t.schema
 }
 

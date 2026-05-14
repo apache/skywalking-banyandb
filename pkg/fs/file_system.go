@@ -20,6 +20,9 @@ package fs
 
 import (
 	"io"
+	"os"
+	"path/filepath"
+	"strings"
 
 	"github.com/apache/skywalking-banyandb/pkg/logger"
 )
@@ -110,6 +113,17 @@ type FileSystem interface {
 	OpenFile(name string) (File, error)
 	// Flush mode, which flushes all data to one file.
 	Write(buffer []byte, name string, permission Mode) (int, error)
+	// WriteAtomic writes buffer to a fresh ".tmp" sibling, fsyncs it, renames it
+	// over name, and fsyncs the parent directory. After a successful return the
+	// content is durable on a POSIX-compliant local filesystem (ext4, xfs, apfs,
+	// ntfs). On any error the .tmp file may be left behind for next-boot cleanup
+	// (when the matching final file exists) or operator intervention (when only
+	// the .tmp exists, indicating a crash before rename).
+	//
+	// Atomicity caveat: os.Rename is not guaranteed atomic on network-mounted
+	// filesystems (NFS, SMB, FUSE-based S3 gateways). BanyanDB targets local
+	// disks; do not run on a network FS without verifying the mount semantics.
+	WriteAtomic(buffer []byte, name string, permission Mode) (int, error)
 	// Read the entire file using streaming read.
 	Read(name string) ([]byte, error)
 	// Delete the file.
@@ -163,6 +177,51 @@ func MustFlush(fs FileSystem, buffer []byte, name string, permission Mode) {
 	}
 	if n != len(buffer) {
 		logger.GetLogger().Panic().Int("written", n).Int("expected", len(buffer)).Str("path", name).Msg("BUG: writer wrote wrong number of bytes")
+	}
+}
+
+// MustFlushAtomic writes buffer to name via WriteAtomic and panics on error.
+// Same panic-on-error semantics as MustFlush; use this when the caller needs
+// crash-safety on the file (metadata.json, manifest.json, etc.).
+func MustFlushAtomic(fs FileSystem, buffer []byte, name string, permission Mode) {
+	n, err := fs.WriteAtomic(buffer, name, permission)
+	if err != nil {
+		logger.GetLogger().Panic().Err(err).Str("path", name).Msg("cannot write data atomically")
+	}
+	if n != len(buffer) {
+		logger.GetLogger().Panic().Int("written", n).Int("expected", len(buffer)).Str("path", name).Msg("BUG: WriteAtomic wrote wrong number of bytes")
+	}
+}
+
+// CleanupLeftoverTmp removes any "<file>.tmp" sibling under partPath whose
+// matching final "<file>" exists. A .tmp without its final indicates a crash
+// between WriteAtomic's fsync(tmp) and rename — that case is left alone so
+// the engine's existing panic-on-missing-metadata fires for operator
+// intervention, per BanyanDB's canonical fail-fast contract.
+//
+// Symlinks ending in ".tmp" are skipped: BanyanDB part directories never
+// contain symlinks, so encountering one is unexpected and we do not want to
+// follow it during cleanup.
+func CleanupLeftoverTmp(fs FileSystem, partPath string) {
+	for _, e := range fs.ReadDir(partPath) {
+		if e.IsDir() {
+			continue
+		}
+		name := e.Name()
+		if !strings.HasSuffix(name, ".tmp") {
+			continue
+		}
+		tmpFull := filepath.Join(partPath, name)
+		info, lstatErr := os.Lstat(tmpFull)
+		if lstatErr != nil || info.Mode()&os.ModeSymlink != 0 {
+			continue
+		}
+		final := name[:len(name)-len(".tmp")]
+		if _, err := os.Stat(filepath.Join(partPath, final)); err == nil {
+			if removeErr := os.Remove(tmpFull); removeErr != nil {
+				logger.GetLogger().Debug().Err(removeErr).Str("path", tmpFull).Msg("CleanupLeftoverTmp: cannot remove leftover .tmp")
+			}
+		}
 	}
 }
 

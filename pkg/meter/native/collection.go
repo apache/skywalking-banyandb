@@ -68,7 +68,7 @@ func (m *MetricCollection) AddCollector(c collector) {
 }
 
 // FlushMetrics write all the metrics by flushing.
-func (m *MetricCollection) FlushMetrics() {
+func (m *MetricCollection) FlushMetrics(ctx context.Context) {
 	m.mu.RLock()
 	if len(m.collectors) == 0 {
 		m.mu.RUnlock()
@@ -103,7 +103,7 @@ func (m *MetricCollection) FlushMetrics() {
 			messages = append(messages, bus.NewBatchMessageWithNode(bus.MessageID(time.Now().UnixNano()), nodeID, iwr))
 		}
 	}
-	_, err := publisher.Publish(context.TODO(), data.TopicMeasureWrite, messages...)
+	_, err := publisher.Publish(ctx, data.TopicMeasureWrite, messages...)
 	if err != nil {
 		log.Error().Err(err).Msg("Failed to publish messages")
 		return

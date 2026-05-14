@@ -20,12 +20,15 @@ package lifecycle
 
 import (
 	"context"
+	"fmt"
+	"sort"
 	"sync"
 
 	fodcv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/fodc/v1"
 	"github.com/apache/skywalking-banyandb/fodc/internal/timeouts"
 	"github.com/apache/skywalking-banyandb/fodc/proxy/internal/registry"
 	"github.com/apache/skywalking-banyandb/pkg/logger"
+	"github.com/apache/skywalking-banyandb/pkg/panicdiag"
 )
 
 // defaultCollectionTimeout bounds how long the proxy waits for each agent to push back
@@ -163,6 +166,9 @@ func (m *Manager) CollectLifecycle(ctx context.Context) (*InspectionResult, Agen
 		m.log.Info().Msg("CollectLifecycle: no agents registered, returning empty")
 		return emptyResult(), summary
 	}
+	ctx = panicdiag.WithBreadcrumb(ctx, "collect lifecycle from agents", "fodc-proxy-lifecycle", map[string]string{
+		"agent_count": fmt.Sprintf("%d", len(agents)),
+	})
 
 	m.log.Info().Int("agent_count", len(agents)).Msg("CollectLifecycle: starting collection")
 
@@ -170,6 +176,10 @@ func (m *Manager) CollectLifecycle(ctx context.Context) (*InspectionResult, Agen
 	defer m.cleanupSessions(collectChs)
 
 	summary.Requested = m.requestAllAgents(ctx, agents, collectChs)
+	ctx = panicdiag.WithBreadcrumb(ctx, "requested lifecycle reports", "fodc-proxy-lifecycle", map[string]string{
+		"requested_count": fmt.Sprintf("%d", summary.Requested),
+		"waiting_for":     fmt.Sprintf("%d", len(collectChs)),
+	})
 	m.log.Info().Int("requested", summary.Requested).Int("waiting_for", len(collectChs)).
 		Msg("CollectLifecycle: requests sent, waiting for responses")
 
@@ -258,16 +268,41 @@ func (m *Manager) buildInspectionResult(allData []*agentLifecycleData) *Inspecti
 
 func (m *Manager) mergeGroups(allData []*agentLifecycleData) []*fodcv1.GroupLifecycleInfo {
 	groupMap := make(map[string]*fodcv1.GroupLifecycleInfo)
+	// Errors are unioned across agents because each agent may observe a
+	// different subset of per-node failures (e.g. liaison-0 sees cold-0
+	// time out while liaison-1 sees cold-0 panic). Last-wins on the rest
+	// of the GroupLifecycleInfo is fine -- name/catalog/resource_opts are
+	// agent-invariant -- but errors must be the deduped union.
+	mergedErrors := make(map[string]map[string]struct{})
 	for _, ad := range allData {
 		if ad == nil || ad.Data == nil {
 			continue
 		}
 		for _, g := range ad.Data.Groups {
 			groupMap[g.Name] = g
+			if len(g.Errors) == 0 {
+				continue
+			}
+			set, ok := mergedErrors[g.Name]
+			if !ok {
+				set = make(map[string]struct{})
+				mergedErrors[g.Name] = set
+			}
+			for _, e := range g.Errors {
+				set[e] = struct{}{}
+			}
 		}
 	}
 	groups := make([]*fodcv1.GroupLifecycleInfo, 0, len(groupMap))
-	for _, g := range groupMap {
+	for name, g := range groupMap {
+		if set := mergedErrors[name]; len(set) > 0 {
+			errs := make([]string, 0, len(set))
+			for e := range set {
+				errs = append(errs, e)
+			}
+			sort.Strings(errs)
+			g.Errors = errs
+		}
 		groups = append(groups, g)
 	}
 	return groups

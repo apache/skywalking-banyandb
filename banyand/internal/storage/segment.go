@@ -159,13 +159,41 @@ func (s *segment[T, O]) TablesWithShardIDs() (tt []T, shardIDs []common.ShardID,
 	return tt, shardIDs, cc
 }
 
+// incRef acquires one reference on the segment, opening it via initialize
+// if it is currently closed (refCount<=0). On return, the caller is
+// guaranteed that the segment is alive (s.index != nil, shards loaded) and
+// will stay alive until the matching DecRef.
+//
+// The CAS loop closes a TOCTOU race that the older "Load + AddInt32"
+// shape suffered from: a goroutine could read refCount=1, race against a
+// concurrent DecRef that drives it to 0 and triggers performCleanup
+// (which sets s.index=nil and tears down shards), and then AddInt32 it
+// back to 1. The caller would walk away with refCount=1 -- formally a
+// valid reference -- but pointing at an already-cleaned-up segment, so
+// every subsequent IndexDB() / Tables() call would observe zero state.
+//
+// The CAS variant retries whenever a concurrent DecRef beats us to the
+// counter: if CAS fails, we re-Load and either succeed at the new value
+// or fall through to initialize() to reopen the segment under s.mu.
+// Symmetric to the CAS loop in DecRef, which guarantees the dual: a
+// DecRef that drives refCount to 0 sees no concurrent +1 sneak in
+// before performCleanup runs.
 func (s *segment[T, O]) incRef(ctx context.Context) error {
 	s.lastAccessed.Store(time.Now().UnixNano())
-	if atomic.LoadInt32(&s.refCount) <= 0 {
-		return s.initialize(ctx)
+	for {
+		current := atomic.LoadInt32(&s.refCount)
+		if current <= 0 {
+			// Either the segment was never opened or DecRef just drove
+			// refCount to 0; reopen under the mutex.
+			return s.initialize(ctx)
+		}
+		// CAS so a concurrent DecRef cannot flip refCount to 0 and run
+		// performCleanup between our Load and our increment. On failure
+		// we re-Load and re-evaluate the branch.
+		if atomic.CompareAndSwapInt32(&s.refCount, current, current+1) {
+			return nil
+		}
 	}
-	atomic.AddInt32(&s.refCount, 1)
-	return nil
 }
 
 func (s *segment[T, O]) initialize(ctx context.Context) error {
@@ -173,6 +201,12 @@ func (s *segment[T, O]) initialize(ctx context.Context) error {
 	defer s.mu.Unlock()
 
 	if atomic.LoadInt32(&s.refCount) > 0 {
+		// Another goroutine reopened the segment while we waited for the
+		// mutex. Add the +1 our caller (incRef) skipped before entering
+		// the slow path; otherwise concurrent reopens would share one
+		// refCount and the first DecRef would cleanup while we are still
+		// using it.
+		atomic.AddInt32(&s.refCount, 1)
 		return nil
 	}
 
@@ -402,18 +436,18 @@ func (sc *segmentController[T, O]) selectSegments(timeRange timestamp.TimeRange)
 }
 
 func (sc *segmentController[T, O]) createSegment(ts time.Time) (*segment[T, O], error) {
-	s, err := sc.create(ts)
+	s, err := sc.create(context.Background(), ts)
 	if err != nil {
 		return nil, err
 	}
 	return s, s.incRef(context.WithValue(context.Background(), logger.ContextKey, sc.l))
 }
 
-func (sc *segmentController[T, O]) segments(reopenClosed bool) (ss []*segment[T, O], err error) {
+func (sc *segmentController[T, O]) segments(ctx context.Context, reopenClosed bool) (ss []*segment[T, O], err error) {
 	sc.RLock()
 	defer sc.RUnlock()
 	r := make([]*segment[T, O], len(sc.lst))
-	ctx := context.WithValue(context.Background(), logger.ContextKey, sc.l)
+	ctx = context.WithValue(ctx, logger.ContextKey, sc.l)
 	for i := range sc.lst {
 		if reopenClosed {
 			if err = sc.lst[i].incRef(ctx); err != nil {
@@ -429,13 +463,13 @@ func (sc *segmentController[T, O]) segments(reopenClosed bool) (ss []*segment[T,
 	return r, nil
 }
 
-func (sc *segmentController[T, O]) closeIdleSegments() int {
+func (sc *segmentController[T, O]) closeIdleSegments(ctx context.Context) int {
 	maxIdleTime := sc.idleTimeout
 
 	now := time.Now().UnixNano()
 	idleThreshold := now - maxIdleTime.Nanoseconds()
 
-	segs, _ := sc.segments(false)
+	segs, _ := sc.segments(ctx, false)
 	closedCount := 0
 
 	for _, seg := range segs {
@@ -517,7 +551,7 @@ func (sc *segmentController[T, O]) open() error {
 			}
 			segmentEnd = parsedEnd
 		}
-		_, loadErr := sc.load(start, segmentEnd, sc.location)
+		_, loadErr := sc.load(context.Background(), start, segmentEnd, sc.location)
 		return loadErr
 	})
 	if len(invalidSegments) > 0 {
@@ -529,7 +563,7 @@ func (sc *segmentController[T, O]) open() error {
 	return err
 }
 
-func (sc *segmentController[T, O]) create(start time.Time) (*segment[T, O], error) {
+func (sc *segmentController[T, O]) create(ctx context.Context, start time.Time) (*segment[T, O], error) {
 	// Reject epoch/near-epoch timestamps caused by zero MinTimestamp flowing through sync paths.
 	// BanyanDB is an APM database -- no legitimate data predates the year 2000.
 	if start.UnixNano() <= 0 {
@@ -545,19 +579,37 @@ func (sc *segmentController[T, O]) create(start time.Time) (*segment[T, O], erro
 		}
 	}
 	options := sc.getOptions()
-	start = options.SegmentInterval.Unit.Standard(start)
+	// Anchor stdEnd to the aligned start before any bump so end stays on the
+	// global grid even when start is bumped past a legacy off-grid neighbor;
+	// subsequent segments then self-heal back to the grid.
+	alignedStart := options.SegmentInterval.Standard(start)
+	stdEnd := options.SegmentInterval.NextTime(alignedStart)
+	start = alignedStart
+	// sc.lst is sorted ascending by start time with non-overlapping ranges;
+	// a single pass bumps start past every legacy segment that swallows it
+	// (each next segment.Start >= previous.End).
 	var next *segment[T, O]
 	for _, s := range sc.lst {
 		if s.Contains(start.UnixNano()) {
-			return s, nil
+			start = s.End
+			continue
 		}
 		if next == nil && s.Start.After(start) {
 			next = s
 		}
 	}
-	stdEnd := options.SegmentInterval.NextTime(start)
 	var end time.Time
 	if next != nil && next.Start.Before(stdEnd) {
+		// `next` starts inside the current grid bucket - a legacy off-grid
+		// segment whose TTL hasn't elapsed. Cap end at next.Start to avoid
+		// overlap; surfacing this at Info level lets operators see the
+		// abnormal span until the legacy neighbor ages out.
+		sc.l.Info().
+			Stringer("alignedStart", alignedStart).
+			Stringer("bumpedStart", start).
+			Stringer("nextStart", next.Start).
+			Stringer("stdEnd", stdEnd).
+			Msg("new segment span is shorter than configured SegmentInterval due to an unaligned legacy neighbor")
 		end = next.Start
 	} else {
 		end = stdEnd
@@ -584,7 +636,7 @@ func (sc *segmentController[T, O]) create(start time.Time) (*segment[T, O], erro
 	if n != len(data) {
 		logger.Panicf("unexpected number of bytes written to %s; got %d; want %d", metadataPath, n, len(data))
 	}
-	return sc.load(start, end, sc.location)
+	return sc.load(ctx, start, end, sc.location)
 }
 
 func (sc *segmentController[T, O]) sortLst() {
@@ -593,10 +645,10 @@ func (sc *segmentController[T, O]) sortLst() {
 	})
 }
 
-func (sc *segmentController[T, O]) load(start, end time.Time, root string) (seg *segment[T, O], err error) {
+func (sc *segmentController[T, O]) load(ctx context.Context, start, end time.Time, root string) (seg *segment[T, O], err error) {
 	suffix := sc.format(start)
 	segPath := path.Join(root, fmt.Sprintf(segTemplate, suffix))
-	ctx := common.SetPosition(context.WithValue(context.Background(), logger.ContextKey, sc.l), func(_ common.Position) common.Position {
+	ctx = common.SetPosition(context.WithValue(ctx, logger.ContextKey, sc.l), func(_ common.Position) common.Position {
 		return sc.position
 	})
 	seg, err = sc.openSegment(ctx, start, end, segPath, suffix, sc.groupCache)
@@ -609,7 +661,7 @@ func (sc *segmentController[T, O]) load(start, end time.Time, root string) (seg 
 }
 
 func (sc *segmentController[T, O]) remove(deadline time.Time) (hasSegment bool, err error) {
-	ss, _ := sc.segments(false)
+	ss, _ := sc.segments(context.Background(), false)
 	for _, s := range ss {
 		if s.Before(deadline) {
 			hasSegment = true
@@ -631,7 +683,7 @@ func (sc *segmentController[T, O]) getExpiredSegmentsTimeRange() *timestamp.Time
 		IncludeStart: true,
 		IncludeEnd:   false,
 	}
-	ss, _ := sc.segments(false)
+	ss, _ := sc.segments(context.Background(), false)
 	for _, s := range ss {
 		if s.Before(deadline) {
 			if timeRange.Start.IsZero() {
@@ -647,7 +699,7 @@ func (sc *segmentController[T, O]) getExpiredSegmentsTimeRange() *timestamp.Time
 func (sc *segmentController[T, O]) deleteExpiredSegments(segmentSuffixes []string) int64 {
 	deadline := time.Now().Local().Add(-sc.opts.TTL.estimatedDuration())
 	var count int64
-	ss, _ := sc.segments(false)
+	ss, _ := sc.segments(context.Background(), false)
 	sc.l.Info().Str("segment_suffixes", fmt.Sprintf("%s", segmentSuffixes)).
 		Str("ttl", fmt.Sprintf("%d(%s)", sc.opts.TTL.Num, sc.opts.TTL.Unit)).
 		Str("deadline", deadline.String()).

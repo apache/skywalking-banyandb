@@ -95,7 +95,7 @@ var _ = ginkgo.Describe("publish clients register/unregister", func() {
 		p.OnAddOrUpdate(node1)
 		verifyClients(p, 1, 0, 1, 0)
 		closeFn()
-		p.failover("node1", common.NewError("test"), data.TopicCommon)
+		p.failover(context.Background(), "node1", common.NewError("test"), data.TopicCommon)
 		verifyClients(p, 0, 1, 1, 1)
 		p.OnDelete(node1)
 		verifyClients(p, 0, 0, 1, 1)

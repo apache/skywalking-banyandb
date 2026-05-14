@@ -152,9 +152,9 @@ var _ = Describe("Test Case 3: Metrics Export to Prometheus", func() {
 		promReg = prometheus.NewRegistry()
 		datasourceCollector = exporter.NewDatasourceCollector(fr)
 
-		// Create and start Prometheus metrics server for FODC with fixed port for testing
-		// Use a high port number to avoid conflicts
-		metricsServerAddr = defaultLocalhost + ":9091"
+		// Create and start Prometheus metrics server for FODC on an ephemeral port
+		// so the suite never depends on a fixed local port being free.
+		metricsServerAddr = defaultLocalhost + ":0"
 		var serverCreateErr error
 		metricsServer, serverCreateErr = server.NewServer(server.Config{
 			ListenAddr:        metricsServerAddr,
@@ -163,9 +163,10 @@ var _ = Describe("Test Case 3: Metrics Export to Prometheus", func() {
 		})
 		Expect(serverCreateErr).NotTo(HaveOccurred())
 
-		serverErrCh, serverStartErr := metricsServer.Start(promReg, datasourceCollector)
+		serverErrCh, serverStartErr := metricsServer.Start(promReg, datasourceCollector, nil)
 		Expect(serverStartErr).NotTo(HaveOccurred())
 		Expect(serverErrCh).NotTo(BeNil())
+		metricsServerAddr = metricsServer.GetListenAddr()
 
 		// Create Watchdog with short polling interval for testing
 		pollInterval := 2 * time.Second

@@ -39,6 +39,7 @@ import (
 
 	"github.com/apache/skywalking-banyandb/api/common"
 	bydbqlv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/bydbql/v1"
+	clusterv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/cluster/v1"
 	commonv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/common/v1"
 	databasev1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/database/v1"
 	measurev1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/measure/v1"
@@ -51,12 +52,14 @@ import (
 	"github.com/apache/skywalking-banyandb/banyand/liaison/pkg/auth"
 	"github.com/apache/skywalking-banyandb/banyand/metadata"
 	"github.com/apache/skywalking-banyandb/banyand/metadata/schema"
+	"github.com/apache/skywalking-banyandb/banyand/metadata/schema/property"
 	"github.com/apache/skywalking-banyandb/banyand/observability"
 	"github.com/apache/skywalking-banyandb/banyand/protector"
 	"github.com/apache/skywalking-banyandb/banyand/queue"
 	"github.com/apache/skywalking-banyandb/pkg/bydbql"
 	fslib "github.com/apache/skywalking-banyandb/pkg/fs"
 	"github.com/apache/skywalking-banyandb/pkg/logger"
+	"github.com/apache/skywalking-banyandb/pkg/panicdiag"
 	"github.com/apache/skywalking-banyandb/pkg/partition"
 	banyandbpath "github.com/apache/skywalking-banyandb/pkg/path"
 	"github.com/apache/skywalking-banyandb/pkg/run"
@@ -105,8 +108,9 @@ type server struct {
 	stopCh     chan struct{}
 	*indexRuleRegistryServer
 	*measureRegistryServer
-	streamSVC  *streamService
-	barrierSVC *barrierService
+	streamSVC     *streamService
+	barrierSVC    *barrierService
+	nodeStatusSVC *property.NodeSchemaStatusServer
 	*streamRegistryServer
 	measureSVC *measureService
 	bydbQLSVC  *bydbQLService
@@ -181,9 +185,10 @@ func NewServer(_ context.Context, tir1Client, tir2Client, broadcaster queue.Clie
 		propertyServer: propertyService,
 	}
 
-	var barrierSVC *barrierService
+	var nodeStatusSVC *property.NodeSchemaStatusServer
+	var cacheProvider func() barrierCacheReader
 	if svc, svcOk := schemaRegistry.(metadata.Service); svcOk {
-		barrierSVC = newBarrierService(func() barrierCacheReader {
+		cacheProvider = func() barrierCacheReader {
 			inner := svc.SchemaRegistry()
 			if inner == nil {
 				return nil
@@ -193,16 +198,34 @@ func NewServer(_ context.Context, tir1Client, tir2Client, broadcaster queue.Clie
 				return nil
 			}
 			return bc
-		})
+		}
+		// Phase 2 Step 2.1: every cluster member with a schema cache exposes
+		// NodeSchemaStatusService so peer liaisons (Step 2.2 fan-out) can
+		// probe this liaison's cache identically to a data node. The receiving
+		// liaison probes itself in-process via the barrier above; remote peers
+		// reach this same cache through the gRPC service. Resolution is
+		// deferred to request time (closure) because the metadata service
+		// populates SchemaRegistry in PreRun, after NewServer has already
+		// run — capturing a snapshot here would skip registration permanently.
+		nodeStatusSVC = property.NewNodeSchemaStatusServerForRegistryWithNodeRepo(
+			func() *property.SchemaRegistry {
+				reg, regOk := svc.SchemaRegistry().(*property.SchemaRegistry)
+				if !regOk {
+					return nil
+				}
+				return reg
+			},
+			svc.NodeRepoRegistry,
+		)
 	}
 	s := &server{
-		omr:        omr,
-		streamSVC:  streamSVC,
-		measureSVC: measureSVC,
-		traceSVC:   traceSVC,
-		bydbQLSVC:  bydbQLSVC,
-		groupRepo:  gr,
-		barrierSVC: barrierSVC,
+		omr:           omr,
+		streamSVC:     streamSVC,
+		measureSVC:    measureSVC,
+		traceSVC:      traceSVC,
+		bydbQLSVC:     bydbQLSVC,
+		groupRepo:     gr,
+		nodeStatusSVC: nodeStatusSVC,
 		streamRegistryServer: &streamRegistryServer{
 			schemaRegistry: schemaRegistry,
 		},
@@ -232,6 +255,28 @@ func NewServer(_ context.Context, tir1Client, tir2Client, broadcaster queue.Clie
 		authReloader:        auth.InitAuthReloader(),
 		protector:           protectorService,
 		routeTableProviders: routeProviders,
+	}
+	// Phase 2 Step 2.2: wire the cluster-wide AwaitRevisionApplied fan-out.
+	// Tier1 (peer liaisons) and tier2 (data nodes) connection pools are
+	// borrowed via the queue.Client interface added in #1109; the receiving
+	// liaison's name is read from s.curNode, which initCurrentNode populates
+	// during PreRun — hence the closure indirection. The explicit nil check
+	// covers the test-context case where ContextNodeKey is unset and
+	// initCurrentNode leaves curNode nil; an empty selfName makes the
+	// barrier exclude self from the watched set, which is the correct
+	// behavior for headless test fixtures.
+	if cacheProvider != nil {
+		s.barrierSVC = newBarrierServiceCluster(
+			cacheProvider,
+			func() queue.Client { return tir1Client },
+			func() queue.Client { return tir2Client },
+			func() string {
+				if s.curNode == nil {
+					return ""
+				}
+				return s.curNode.GetMetadata().GetName()
+			},
+		)
 	}
 	s.accessLogRecorders = []accessLogRecorder{streamSVC, measureSVC, traceSVC, s.propertyServer}
 	s.queryAccessLogRecorders = []queryAccessLogRecorder{streamSVC, measureSVC, traceSVC, s.propertyServer}
@@ -320,6 +365,10 @@ func (s *server) PreRun(ctx context.Context) error {
 	s.traceSVC.metrics = metrics
 	s.bydbQLSVC.metrics = metrics
 	s.propertyServer.metrics = metrics
+	if s.barrierSVC != nil {
+		s.barrierSVC.metrics = metrics
+		s.barrierSVC.l = s.log.Named("barrier")
+	}
 	s.streamRegistryServer.metrics = metrics
 	s.indexRuleBindingRegistryServer.metrics = metrics
 	s.indexRuleRegistryServer.metrics = metrics
@@ -432,7 +481,7 @@ func (s *server) Validate() error {
 func (s *server) Serve() run.StopNotify {
 	var opts []grpclib.ServerOption
 	if s.tls {
-		if err := s.tlsReloader.Start(); err != nil {
+		if err := s.tlsReloader.Start(context.Background()); err != nil {
 			s.log.Error().Err(err).Msg("Failed to start TLSReloader for gRPC")
 			close(s.stopCh)
 			return s.stopCh
@@ -450,19 +499,26 @@ func (s *server) Serve() run.StopNotify {
 		}
 		s.log.Info().Str("authConfigFile", s.authConfigFile).Msg("Starting auth config file monitoring")
 	}
-	grpcPanicRecoveryHandler := func(p any) (err error) {
-		s.log.Error().Interface("panic", p).Str("stack", string(debug.Stack())).Msg("recovered from panic")
+	grpcPanicRecoveryHandler := func(ctx context.Context, p any) (err error) {
+		breadcrumbs := panicdiag.BreadcrumbsFromContext(ctx)
+		stages := make([]string, len(breadcrumbs))
+		for idx, bc := range breadcrumbs {
+			stages[idx] = bc.Stage
+		}
+		s.log.Error().Interface("panic", p).Str("stack", string(debug.Stack())).Strs("breadcrumbs", stages).Msg("recovered from panic")
 		s.metrics.totalPanic.Inc(1)
 		return status.Errorf(codes.Internal, "%s", p)
 	}
 
 	streamChain := []grpclib.StreamServerInterceptor{
+		panicdiag.BreadcrumbStreamInterceptor(),
 		grpc_validator.StreamServerInterceptor(),
-		recovery.StreamServerInterceptor(recovery.WithRecoveryHandler(grpcPanicRecoveryHandler)),
+		recovery.StreamServerInterceptor(recovery.WithRecoveryHandlerContext(grpcPanicRecoveryHandler)),
 	}
 	unaryChain := []grpclib.UnaryServerInterceptor{
+		panicdiag.BreadcrumbUnaryInterceptor(),
 		grpc_validator.UnaryServerInterceptor(),
-		recovery.UnaryServerInterceptor(recovery.WithRecoveryHandler(grpcPanicRecoveryHandler)),
+		recovery.UnaryServerInterceptor(recovery.WithRecoveryHandlerContext(grpcPanicRecoveryHandler)),
 	}
 	if s.authConfigFile != "" {
 		streamChain = append(streamChain, authStreamInterceptor(s.authReloader))
@@ -508,6 +564,9 @@ func (s *server) Serve() run.StopNotify {
 	databasev1.RegisterNodeQueryServiceServer(s.ser, s)
 	if s.barrierSVC != nil {
 		schemav1.RegisterSchemaBarrierServiceServer(s.ser, s.barrierSVC)
+	}
+	if s.nodeStatusSVC != nil {
+		clusterv1.RegisterNodeSchemaStatusServiceServer(s.ser, s.nodeStatusSVC)
 	}
 	grpc_health_v1.RegisterHealthServer(s.ser, health.NewServer())
 

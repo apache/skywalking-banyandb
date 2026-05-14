@@ -335,6 +335,10 @@
   
 - [banyandb/fodc/v1/rpc.proto](#banyandb_fodc_v1_rpc-proto)
     - [Call](#banyandb-fodc-v1-Call)
+    - [CrashBreadcrumb](#banyandb-fodc-v1-CrashBreadcrumb)
+    - [CrashBreadcrumb.FieldsEntry](#banyandb-fodc-v1-CrashBreadcrumb-FieldsEntry)
+    - [CrashPanicRecord](#banyandb-fodc-v1-CrashPanicRecord)
+    - [CrashPanicRecord.ProcessMetadataEntry](#banyandb-fodc-v1-CrashPanicRecord-ProcessMetadataEntry)
     - [GroupLifecycleInfo](#banyandb-fodc-v1-GroupLifecycleInfo)
     - [InspectAllRequest](#banyandb-fodc-v1-InspectAllRequest)
     - [InspectAllResponse](#banyandb-fodc-v1-InspectAllResponse)
@@ -347,6 +351,8 @@
     - [RegisterAgentResponse](#banyandb-fodc-v1-RegisterAgentResponse)
     - [StreamClusterTopologyRequest](#banyandb-fodc-v1-StreamClusterTopologyRequest)
     - [StreamClusterTopologyResponse](#banyandb-fodc-v1-StreamClusterTopologyResponse)
+    - [StreamCrashDiagnosticsRequest](#banyandb-fodc-v1-StreamCrashDiagnosticsRequest)
+    - [StreamCrashDiagnosticsResponse](#banyandb-fodc-v1-StreamCrashDiagnosticsResponse)
     - [StreamLifecycleRequest](#banyandb-fodc-v1-StreamLifecycleRequest)
     - [StreamLifecycleResponse](#banyandb-fodc-v1-StreamLifecycleResponse)
     - [StreamMetricsRequest](#banyandb-fodc-v1-StreamMetricsRequest)
@@ -2165,9 +2171,12 @@ requested keys.
 <a name="banyandb-schema-v1-NodeLaggard"></a>
 
 ### NodeLaggard
-NodeLaggard reports a single data node that has not caught up to the
-requested schema state. missing_keys is populated by AwaitSchemaApplied
-responses; still_present_keys is populated by AwaitSchemaDeleted responses.
+NodeLaggard reports a single cluster member (peer liaison or data node)
+that has not caught up to the requested schema state. missing_keys is
+populated by AwaitSchemaApplied responses; still_present_keys by
+AwaitSchemaDeleted responses. reason is set when the laggard exists for a
+non-default cause (e.g. &#34;evicted_during_poll&#34; when the cluster transitioned
+the member from Active to Evictable mid-call); empty otherwise.
 
 
 | Field | Type | Label | Description |
@@ -2176,6 +2185,7 @@ responses; still_present_keys is populated by AwaitSchemaDeleted responses.
 | current_mod_revision | [int64](#int64) |  |  |
 | missing_keys | [SchemaKey](#banyandb-schema-v1-SchemaKey) | repeated |  |
 | still_present_keys | [SchemaKey](#banyandb-schema-v1-SchemaKey) | repeated |  |
+| reason | [string](#string) |  |  |
 
 
 
@@ -5270,6 +5280,77 @@ Phase represents the current phase of the deletion task.
 
 
 
+<a name="banyandb-fodc-v1-CrashBreadcrumb"></a>
+
+### CrashBreadcrumb
+
+
+
+| Field | Type | Label | Description |
+| ----- | ---- | ----- | ----------- |
+| time | [google.protobuf.Timestamp](#google-protobuf-Timestamp) |  |  |
+| stage | [string](#string) |  |  |
+| component | [string](#string) |  |  |
+| fields | [CrashBreadcrumb.FieldsEntry](#banyandb-fodc-v1-CrashBreadcrumb-FieldsEntry) | repeated |  |
+
+
+
+
+
+
+<a name="banyandb-fodc-v1-CrashBreadcrumb-FieldsEntry"></a>
+
+### CrashBreadcrumb.FieldsEntry
+
+
+
+| Field | Type | Label | Description |
+| ----- | ---- | ----- | ----------- |
+| key | [string](#string) |  |  |
+| value | [string](#string) |  |  |
+
+
+
+
+
+
+<a name="banyandb-fodc-v1-CrashPanicRecord"></a>
+
+### CrashPanicRecord
+
+
+
+| Field | Type | Label | Description |
+| ----- | ---- | ----- | ----------- |
+| occurred_at | [google.protobuf.Timestamp](#google-protobuf-Timestamp) |  |  |
+| component | [string](#string) |  |  |
+| panic_value | [string](#string) |  |  |
+| recovered | [bool](#bool) |  |  |
+| goroutine_stack | [string](#string) |  |  |
+| breadcrumbs | [CrashBreadcrumb](#banyandb-fodc-v1-CrashBreadcrumb) | repeated |  |
+| process_metadata | [CrashPanicRecord.ProcessMetadataEntry](#banyandb-fodc-v1-CrashPanicRecord-ProcessMetadataEntry) | repeated |  |
+
+
+
+
+
+
+<a name="banyandb-fodc-v1-CrashPanicRecord-ProcessMetadataEntry"></a>
+
+### CrashPanicRecord.ProcessMetadataEntry
+
+
+
+| Field | Type | Label | Description |
+| ----- | ---- | ----- | ----------- |
+| key | [string](#string) |  |  |
+| value | [string](#string) |  |  |
+
+
+
+
+
+
 <a name="banyandb-fodc-v1-GroupLifecycleInfo"></a>
 
 ### GroupLifecycleInfo
@@ -5282,6 +5363,7 @@ Phase represents the current phase of the deletion task.
 | catalog | [string](#string) |  |  |
 | resource_opts | [banyandb.common.v1.ResourceOpts](#banyandb-common-v1-ResourceOpts) |  |  |
 | data_info | [banyandb.database.v1.DataInfo](#banyandb-database-v1-DataInfo) | repeated |  |
+| errors | [string](#string) | repeated | errors lists every failure observed while collecting data_info for this group: top-level CollectDataInfo failures (GetGroup, missing collector, dial failure -- prefixed &#34;top-level: &#34;) and per-node broadcast failures (prefixed &#34;future error: &#34;, &#34;node error: &#34;, &#34;broadcast failed: &#34;). Combined with len(data_info), consumers can tell the following four states apart: - data_info empty &amp;&amp; errors empty -&gt; no nodes reported (group inactive) - data_info empty &amp;&amp; errors non-empty -&gt; total failure - data_info non-empty &amp;&amp; errors empty -&gt; full success - data_info non-empty &amp;&amp; errors non-empty -&gt; partial failure |
 
 
 
@@ -5463,6 +5545,40 @@ Phase represents the current phase of the deletion task.
 
 
 
+<a name="banyandb-fodc-v1-StreamCrashDiagnosticsRequest"></a>
+
+### StreamCrashDiagnosticsRequest
+
+
+
+| Field | Type | Label | Description |
+| ----- | ---- | ----- | ----------- |
+| fetched_at | [google.protobuf.Timestamp](#google-protobuf-Timestamp) |  |  |
+| source_endpoint | [string](#string) |  |  |
+| artifact_dir | [string](#string) |  |  |
+| panic_record | [CrashPanicRecord](#banyandb-fodc-v1-CrashPanicRecord) |  |  |
+| files | [string](#string) | repeated |  |
+
+
+
+
+
+
+<a name="banyandb-fodc-v1-StreamCrashDiagnosticsResponse"></a>
+
+### StreamCrashDiagnosticsResponse
+
+
+
+| Field | Type | Label | Description |
+| ----- | ---- | ----- | ----------- |
+| request_diagnostics | [bool](#bool) |  | Request crash diagnostics from agent |
+
+
+
+
+
+
 <a name="banyandb-fodc-v1-StreamLifecycleRequest"></a>
 
 ### StreamLifecycleRequest
@@ -5560,6 +5676,7 @@ Phase represents the current phase of the deletion task.
 | StreamMetrics | [StreamMetricsRequest](#banyandb-fodc-v1-StreamMetricsRequest) stream | [StreamMetricsResponse](#banyandb-fodc-v1-StreamMetricsResponse) stream | Bi-directional stream for metrics Agent sends StreamMetricsRequest (metrics data), Proxy sends StreamMetricsResponse (metrics requests) |
 | StreamClusterTopology | [StreamClusterTopologyRequest](#banyandb-fodc-v1-StreamClusterTopologyRequest) stream | [StreamClusterTopologyResponse](#banyandb-fodc-v1-StreamClusterTopologyResponse) stream | Bi-directional stream for cluster topology |
 | StreamLifecycle | [StreamLifecycleRequest](#banyandb-fodc-v1-StreamLifecycleRequest) stream | [StreamLifecycleResponse](#banyandb-fodc-v1-StreamLifecycleResponse) stream | Bi-directional stream for lifecycle data |
+| StreamCrashDiagnostics | [StreamCrashDiagnosticsRequest](#banyandb-fodc-v1-StreamCrashDiagnosticsRequest) stream | [StreamCrashDiagnosticsResponse](#banyandb-fodc-v1-StreamCrashDiagnosticsResponse) stream | Bi-directional stream for crash diagnostics Agent sends StreamCrashDiagnosticsRequest (panic collections), Proxy sends StreamCrashDiagnosticsResponse (requests) |
 
 
 <a name="banyandb-fodc-v1-GroupLifecycleService"></a>

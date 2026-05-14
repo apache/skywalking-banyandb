@@ -595,6 +595,7 @@ func startDataNode(config *ClusterConfig, dataDir string, flags ...string) (stri
 		config.AddSchemaServerAddr(schemaAddr)
 	}
 
+	beforeCount := property.CountSchemaRegistries()
 	rawCloseFn := CMD(flags...)
 
 	gomega.Eventually(
@@ -606,9 +607,30 @@ func startDataNode(config *ClusterConfig, dataDir string, flags ...string) (stri
 		config.NodeDiscovery.FileWriter.AddNode(nodeAddr, nodeAddr)
 	}
 
+	// Bind the data node's SchemaRegistry to both the host-prefixed addr
+	// returned to the caller and the nodeHost-prefixed nodeAddr the route
+	// table uses internally, so PauseDataNodeWatch / ResumeDataNodeWatch
+	// accept either form. The metadata.clientService's PreRun creates
+	// exactly one SchemaRegistry, and the health check above guarantees
+	// PreRun has completed — so the most recently registered roster slot
+	// is the right one for this node.
+	afterCount := property.CountSchemaRegistries()
+	if afterCount > beforeCount {
+		if reg := property.SchemaRegistryByIndex(afterCount - 1); reg != nil {
+			bindNodeWatchControl(addr, reg)
+			if nodeAddr != addr {
+				bindNodeWatchControl(nodeAddr, reg)
+			}
+		}
+	}
+
 	closeFn := func() {
 		if config.NodeDiscovery.FileWriter != nil {
 			config.NodeDiscovery.FileWriter.RemoveNode(nodeAddr)
+		}
+		unbindNodeWatchControl(addr)
+		if nodeAddr != addr {
+			unbindNodeWatchControl(nodeAddr)
 		}
 		rawCloseFn()
 	}
@@ -692,6 +714,7 @@ func startLiaisonNode(config *ClusterConfig, path string, flags ...string) (stri
 		flags = append(flags,
 			fmt.Sprintf("--node-discovery-file-path=%s", config.NodeDiscovery.FileWriter.Path()))
 	}
+	beforeCount := property.CountSchemaRegistries()
 	closeFn := CMD(flags...)
 	gomega.Eventually(helpers.HTTPHealthCheck(httpAddr, ""), testflags.EventuallyTimeout).Should(gomega.Succeed())
 	if config.NodeDiscovery.FileWriter != nil {
@@ -701,6 +724,23 @@ func startLiaisonNode(config *ClusterConfig, path string, flags ...string) (stri
 		)
 	}
 	waitForActiveDataNodes(grpcAddr, config)
+
+	// Bind the liaison's SchemaRegistry to its gRPC address so cluster-only
+	// specs can call PauseDataNodeWatch / ResumeDataNodeWatch on the
+	// receiving liaison itself - pausing the liaison's own SR makes its
+	// barrier selfName probe lag. The in-process distributed harness
+	// exposes NodeSchemaStatusService on data-node ports via
+	// SetNodeSchemaStatusRepo.
+	afterCount := property.CountSchemaRegistries()
+	if afterCount > beforeCount {
+		if reg := property.SchemaRegistryByIndex(afterCount - 1); reg != nil {
+			liaisonNodeAddr := fmt.Sprintf("%s:%d", nodeHost, ports[0])
+			bindNodeWatchControl(grpcAddr, reg)
+			if liaisonNodeAddr != grpcAddr {
+				bindNodeWatchControl(liaisonNodeAddr, reg)
+			}
+		}
+	}
 
 	return grpcAddr, httpAddr, func() {
 		fmt.Printf("Liaison %d write queue path: %s\n", ports[0], path)
@@ -712,6 +752,11 @@ func startLiaisonNode(config *ClusterConfig, path string, flags ...string) (stri
 			return nil
 		})
 		fmt.Println("done")
+		unbindNodeWatchControl(grpcAddr)
+		liaisonNodeAddr := fmt.Sprintf("%s:%d", nodeHost, ports[0])
+		if liaisonNodeAddr != grpcAddr {
+			unbindNodeWatchControl(liaisonNodeAddr)
+		}
 		closeFn()
 	}
 }

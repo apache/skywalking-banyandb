@@ -57,6 +57,11 @@ var topnEntries = []any{
 	g.Entry("int64 sum aggregation test", helpers.Args{Input: "topn_sum", Duration: 25 * time.Minute, Offset: -20 * time.Minute}),
 	g.Entry("int64 mean aggregation test", helpers.Args{Input: "topn_mean", Duration: 25 * time.Minute, Offset: -20 * time.Minute}),
 	g.Entry("int64 count aggregation test", helpers.Args{Input: "topn_count", Duration: 25 * time.Minute, Offset: -20 * time.Minute}),
+	g.Entry("float64 sum top3 order by desc", helpers.Args{Input: "float_sum_aggr_desc", Duration: 25 * time.Minute, Offset: -20 * time.Minute}),
+	g.Entry("float64 max top3 order by desc", helpers.Args{Input: "float_max_aggr_desc", Duration: 25 * time.Minute, Offset: -20 * time.Minute}),
+	g.Entry("float64 min top3 order by asc", helpers.Args{Input: "float_min_aggr_asc", Duration: 25 * time.Minute, Offset: -20 * time.Minute}),
+	g.Entry("float64 mean top3 order by desc", helpers.Args{Input: "float_mean_aggr_desc", Duration: 25 * time.Minute, Offset: -20 * time.Minute}),
+	g.Entry("float64 count top3 order by desc", helpers.Args{Input: "float_count_aggr_desc", Duration: 25 * time.Minute, Offset: -20 * time.Minute}),
 }
 
 // RegisterTable registers the topn test table with the given description.

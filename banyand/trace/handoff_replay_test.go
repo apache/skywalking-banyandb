@@ -265,7 +265,7 @@ func TestHandoffController_ReplayBatchForNode(t *testing.T) {
 	assert.Len(t, pending, numParts)
 
 	// Replay batch (should process all 3 parts)
-	count, err := controller.replayBatchForNode(nodeAddr, 10)
+	count, err := controller.replayBatchForNode(context.Background(), nodeAddr, 10)
 	require.NoError(t, err)
 	assert.Equal(t, numParts, count)
 	assert.Equal(t, numParts, mockClient.getSendCount())
@@ -306,7 +306,7 @@ func TestHandoffController_ReplayBatchForNode_WithBatchLimit(t *testing.T) {
 	}
 
 	// Replay with batch limit of 2
-	count, err := controller.replayBatchForNode(nodeAddr, 2)
+	count, err := controller.replayBatchForNode(context.Background(), nodeAddr, 2)
 	require.NoError(t, err)
 	assert.Equal(t, 2, count)
 	assert.Equal(t, 2, mockClient.getSendCount())
@@ -318,7 +318,7 @@ func TestHandoffController_ReplayBatchForNode_WithBatchLimit(t *testing.T) {
 
 	// Replay again
 	mockClient.resetSendCount()
-	count, err = controller.replayBatchForNode(nodeAddr, 2)
+	count, err = controller.replayBatchForNode(context.Background(), nodeAddr, 2)
 	require.NoError(t, err)
 	assert.Equal(t, 2, count)
 
@@ -363,7 +363,7 @@ func TestHandoffController_ReplayBatchForNode_SkipsInFlight(t *testing.T) {
 	controller.markInFlight(nodeAddr, partID1, true)
 
 	// Replay should skip first part and only process second
-	count, err := controller.replayBatchForNode(nodeAddr, 10)
+	count, err := controller.replayBatchForNode(context.Background(), nodeAddr, 10)
 	require.NoError(t, err)
 	assert.Equal(t, 1, count)
 

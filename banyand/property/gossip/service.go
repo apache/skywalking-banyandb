@@ -43,6 +43,7 @@ import (
 	"github.com/apache/skywalking-banyandb/banyand/queue"
 	"github.com/apache/skywalking-banyandb/pkg/logger"
 	"github.com/apache/skywalking-banyandb/pkg/node"
+	"github.com/apache/skywalking-banyandb/pkg/panicdiag"
 	"github.com/apache/skywalking-banyandb/pkg/partition"
 	banyandbpath "github.com/apache/skywalking-banyandb/pkg/path"
 	"github.com/apache/skywalking-banyandb/pkg/run"
@@ -150,7 +151,12 @@ func (s *service) PreRun(ctx context.Context) error {
 		s.metadata.RegisterHandler(s.prefix+"-groups", schema.KindGroup, s)
 	}
 	s.protocolHandler = newProtocolHandler(s)
-	go s.protocolHandler.processPropagation()
+	// nolint:contextcheck // The propagation goroutine outlives PreRun. Its
+	// lifetime is owned by s.closer (see processPropagation's CloseNotify
+	// loop), not by the PreRun ctx, which is short-lived.
+	run.Go(s.closer.Ctx(), "property.gossip.propagation", s.log, func(_ context.Context) {
+		s.protocolHandler.processPropagation()
+	})
 	return nil
 }
 
@@ -232,17 +238,23 @@ func (s *service) Serve(closer *run.Closer) {
 	if s.tls {
 		opts = []grpclib.ServerOption{grpclib.Creds(s.creds)}
 	}
-	grpcPanicRecoveryHandler := func(p any) (err error) {
-		s.log.Error().Interface("panic", p).Str("stack", string(debug.Stack())).Msg("recovered from panic")
-
+	grpcPanicRecoveryHandler := func(ctx context.Context, p any) (err error) {
+		breadcrumbs := panicdiag.BreadcrumbsFromContext(ctx)
+		stages := make([]string, len(breadcrumbs))
+		for idx, bc := range breadcrumbs {
+			stages[idx] = bc.Stage
+		}
+		s.log.Error().Interface("panic", p).Str("stack", string(debug.Stack())).Strs("breadcrumbs", stages).Msg("recovered from panic")
 		return status.Errorf(codes.Internal, "%s", p)
 	}
 	streamChain := []grpclib.StreamServerInterceptor{
-		recovery.StreamServerInterceptor(recovery.WithRecoveryHandler(grpcPanicRecoveryHandler)),
+		panicdiag.BreadcrumbStreamInterceptor(),
+		recovery.StreamServerInterceptor(recovery.WithRecoveryHandlerContext(grpcPanicRecoveryHandler)),
 	}
 	unaryChain := []grpclib.UnaryServerInterceptor{
+		panicdiag.BreadcrumbUnaryInterceptor(),
 		grpc_validator.UnaryServerInterceptor(),
-		recovery.UnaryServerInterceptor(recovery.WithRecoveryHandler(grpcPanicRecoveryHandler)),
+		recovery.UnaryServerInterceptor(recovery.WithRecoveryHandlerContext(grpcPanicRecoveryHandler)),
 	}
 	opts = append(opts, grpclib.MaxRecvMsgSize(int(s.maxRecvMsgSize)),
 		grpclib.ChainUnaryInterceptor(unaryChain...),
@@ -256,7 +268,7 @@ func (s *service) Serve(closer *run.Closer) {
 	}
 	var wg sync.WaitGroup
 	wg.Add(1)
-	go func() {
+	run.Go(context.Background(), "property.gossip.grpc-server", s.log, func(_ context.Context) {
 		lis, err := net.Listen("tcp", s.addr)
 		if err != nil {
 			s.log.Error().Err(err).Msg("Failed to listen")
@@ -269,11 +281,11 @@ func (s *service) Serve(closer *run.Closer) {
 			s.log.Error().Err(err).Msg("server is interrupted")
 		}
 		wg.Done()
-	}()
-	go func() {
+	})
+	run.Go(context.Background(), "property.gossip.shutdown-watcher", s.log, func(_ context.Context) {
 		wg.Wait()
 		s.log.Info().Msg("GRPC server is stopped")
-	}()
+	})
 }
 
 // GetRouteTable implements RouteTableProvider interface.
@@ -306,10 +318,10 @@ func (s *service) GracefulStop() {
 	s.closer.CloseThenWait()
 
 	stopped := make(chan struct{})
-	go func() {
+	run.Go(context.Background(), "property.gossip.graceful-stop", s.log, func(_ context.Context) {
 		s.ser.GracefulStop()
 		close(stopped)
-	}()
+	})
 	t := time.NewTimer(10 * time.Second)
 	select {
 	case <-t.C:

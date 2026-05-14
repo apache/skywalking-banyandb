@@ -18,12 +18,12 @@
 package cmd_test
 
 import (
+	"bytes"
 	"strings"
 
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 	"github.com/spf13/cobra"
-	"github.com/zenizh/go-capturer"
 
 	databasev1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/database/v1"
 	"github.com/apache/skywalking-banyandb/bydbctl/internal/cmd"
@@ -56,12 +56,15 @@ resource_opts:
   ttl:
     unit: UNIT_DAY
     num: 7`))
-			return capturer.CaptureStdout(func() {
-				err := rootCmd.Execute()
-				if err != nil {
-					GinkgoWriter.Printf("execution fails:%v", err)
-				}
-			})
+			var buf bytes.Buffer
+			rootCmd.SetOut(&buf)
+			rootCmd.SetErr(&buf)
+
+			err := rootCmd.Execute()
+			if err != nil {
+				GinkgoWriter.Printf("execution fails:%v", err)
+			}
+			return buf.String()
 		}
 		Eventually(createGroup, flags.EventuallyTimeout).Should(ContainSubstring("group group1 is created"))
 		rootCmd.SetArgs([]string{"indexRuleBinding", "create", "-a", addr, "-f", "-"})
@@ -79,22 +82,28 @@ subject:
   name: stream1
 begin_at: 2021-04-15T01:30:15.01Z
 expire_at: 2121-04-15T01:30:15.01Z`))
-			return capturer.CaptureStdout(func() {
-				err := rootCmd.Execute()
-				if err != nil {
-					GinkgoWriter.Printf("execution fails:%v", err)
-				}
-			})
+			var buf bytes.Buffer
+			rootCmd.SetOut(&buf)
+			rootCmd.SetErr(&buf)
+
+			err := rootCmd.Execute()
+			if err != nil {
+				GinkgoWriter.Printf("execution fails:%v", err)
+			}
+			return buf.String()
 		}
 		Eventually(createIndexRuleBinding, flags.EventuallyTimeout).Should(ContainSubstring("indexRuleBinding group1.name1 is created"))
 	})
 
 	It("get indexRuleBinding schema", func() {
 		rootCmd.SetArgs([]string{"indexRuleBinding", "get", "-g", "group1", "-n", "name1"})
-		out := capturer.CaptureStdout(func() {
-			err := rootCmd.Execute()
-			Expect(err).NotTo(HaveOccurred())
-		})
+		var buf bytes.Buffer
+		rootCmd.SetOut(&buf)
+		rootCmd.SetErr(&buf)
+
+		err := rootCmd.Execute()
+		Expect(err).NotTo(HaveOccurred())
+		out := buf.String()
 		GinkgoWriter.Println(out)
 		resp := new(databasev1.IndexRuleBindingRegistryServiceGetResponse)
 		helpers.UnmarshalYAML([]byte(out), resp)
@@ -118,16 +127,22 @@ subject:
   name: stream2
 begin_at: 2021-04-15T01:30:15.01Z
 expire_at: 2121-04-15T01:30:15.01Z`))
-		out := capturer.CaptureStdout(func() {
-			err := rootCmd.Execute()
-			Expect(err).NotTo(HaveOccurred())
-		})
+		var buf bytes.Buffer
+		rootCmd.SetOut(&buf)
+		rootCmd.SetErr(&buf)
+
+		err := rootCmd.Execute()
+		Expect(err).NotTo(HaveOccurred())
+		out := buf.String()
 		Expect(out).To(ContainSubstring("indexRuleBinding group1.name1 is updated"))
 		rootCmd.SetArgs([]string{"indexRuleBinding", "get", "-g", "group1", "-n", "name1"})
-		out = capturer.CaptureStdout(func() {
-			err := rootCmd.Execute()
-			Expect(err).NotTo(HaveOccurred())
-		})
+		buf.Reset()
+		rootCmd.SetOut(&buf)
+		rootCmd.SetErr(&buf)
+
+		err = rootCmd.Execute()
+		Expect(err).NotTo(HaveOccurred())
+		out = buf.String()
 		resp := new(databasev1.IndexRuleBindingRegistryServiceGetResponse)
 		helpers.UnmarshalYAML([]byte(out), resp)
 		Expect(resp.IndexRuleBinding.Metadata.Group).To(Equal("group1"))
@@ -138,14 +153,17 @@ expire_at: 2121-04-15T01:30:15.01Z`))
 	It("delete indexRuleBinding schema", func() {
 		// delete
 		rootCmd.SetArgs([]string{"indexRuleBinding", "delete", "-g", "group1", "-n", "name1"})
-		out := capturer.CaptureStdout(func() {
-			err := rootCmd.Execute()
-			Expect(err).NotTo(HaveOccurred())
-		})
+		var buf bytes.Buffer
+		rootCmd.SetOut(&buf)
+		rootCmd.SetErr(&buf)
+
+		err := rootCmd.Execute()
+		Expect(err).NotTo(HaveOccurred())
+		out := buf.String()
 		Expect(out).To(ContainSubstring("indexRuleBinding group1.name1 is deleted"))
 		// get again
 		rootCmd.SetArgs([]string{"indexRuleBinding", "get", "-g", "group1", "-n", "name1"})
-		err := rootCmd.Execute()
+		err = rootCmd.Execute()
 		Expect(err).To(MatchError("rpc error: code = NotFound desc = banyandb: resource not found"))
 	})
 
@@ -165,17 +183,23 @@ subject:
   name: stream2
 begin_at: 2021-04-15T01:30:15.01Z
 expire_at: 2121-04-15T01:30:15.01Z`))
-		out := capturer.CaptureStdout(func() {
-			err := rootCmd.Execute()
-			Expect(err).NotTo(HaveOccurred())
-		})
+		var buf bytes.Buffer
+		rootCmd.SetOut(&buf)
+		rootCmd.SetErr(&buf)
+
+		err := rootCmd.Execute()
+		Expect(err).NotTo(HaveOccurred())
+		out := buf.String()
 		Expect(out).To(ContainSubstring("indexRuleBinding group1.name2 is created"))
 		// list
 		rootCmd.SetArgs([]string{"indexRuleBinding", "list", "-g", "group1"})
-		out = capturer.CaptureStdout(func() {
-			err := rootCmd.Execute()
-			Expect(err).NotTo(HaveOccurred())
-		})
+		buf.Reset()
+		rootCmd.SetOut(&buf)
+		rootCmd.SetErr(&buf)
+
+		err = rootCmd.Execute()
+		Expect(err).NotTo(HaveOccurred())
+		out = buf.String()
 		resp := new(databasev1.IndexRuleBindingRegistryServiceListResponse)
 		helpers.UnmarshalYAML([]byte(out), resp)
 		Expect(resp.IndexRuleBinding).To(HaveLen(2))

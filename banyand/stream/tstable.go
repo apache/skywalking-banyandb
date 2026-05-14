@@ -124,9 +124,19 @@ func (tst *tsTable) startLoop(cur uint64) {
 	mergeCh := make(chan *mergerIntroduction)
 	introducerWatcher := make(watcher.Channel, 1)
 	flusherWatcher := make(watcher.Channel, 1)
-	go tst.introducerLoop(flushCh, mergeCh, introducerWatcher, cur+1)
-	go tst.flusherLoop(flushCh, mergeCh, introducerWatcher, flusherWatcher, cur)
-	go tst.mergeLoop(mergeCh, flusherWatcher)
+	// Each loop already calls tst.loopCloser.Done via defer, so a panic
+	// captured by run.Go still decrements the closer; lifecycle ordering
+	// for tsTable shutdown is preserved.
+	ctx := context.Background()
+	run.Go(ctx, "stream.tstable.introducer", tst.l, func(_ context.Context) {
+		tst.introducerLoop(flushCh, mergeCh, introducerWatcher, cur+1)
+	})
+	run.Go(ctx, "stream.tstable.flusher", tst.l, func(_ context.Context) {
+		tst.flusherLoop(flushCh, mergeCh, introducerWatcher, flusherWatcher, cur)
+	})
+	run.Go(ctx, "stream.tstable.merger", tst.l, func(_ context.Context) {
+		tst.mergeLoop(mergeCh, flusherWatcher)
+	})
 }
 
 func (tst *tsTable) startLoopWithConditionalMerge(cur uint64) {
@@ -137,9 +147,20 @@ func (tst *tsTable) startLoopWithConditionalMerge(cur uint64) {
 	syncCh := make(chan *syncIntroduction)
 	introducerWatcher := make(watcher.Channel, 1)
 	flusherWatcher := make(watcher.Channel, 1)
-	go tst.introducerLoopWithSync(flushCh, mergeCh, syncCh, introducerWatcher, cur+1)
-	go tst.flusherLoop(flushCh, mergeCh, introducerWatcher, flusherWatcher, cur)
-	go tst.syncLoop(syncCh, flusherWatcher)
+	// See startLoop for the rationale on routing through run.Go. The
+	// syncLoop callgraph reaches executeSyncWithRetry, which uses its
+	// own context internally rather than threading one through; the
+	// recovery ctx is intentionally not propagated.
+	ctx := context.Background()
+	run.Go(ctx, "stream.tstable.introducer-sync", tst.l, func(_ context.Context) {
+		tst.introducerLoopWithSync(flushCh, mergeCh, syncCh, introducerWatcher, cur+1)
+	})
+	run.Go(ctx, "stream.tstable.flusher", tst.l, func(_ context.Context) {
+		tst.flusherLoop(flushCh, mergeCh, introducerWatcher, flusherWatcher, cur)
+	})
+	run.Go(ctx, "stream.tstable.syncer", tst.l, func(_ context.Context) {
+		tst.syncLoop(syncCh, flusherWatcher) //nolint:contextcheck
+	})
 }
 
 func parseEpoch(epochStr string) (uint64, error) {
@@ -156,27 +177,12 @@ func (tst *tsTable) mustWriteSnapshot(snapshot uint64, partNames []string) {
 		logger.Panicf("cannot marshal partNames to JSON: %s", err)
 	}
 	snapshotPath := filepath.Join(tst.root, snapshotName(snapshot))
-	snapshotTempPath := snapshotPath + ".tmp"
-	lf, err := tst.fileSystem.CreateLockFile(snapshotTempPath, storage.FilePerm)
-	if err != nil {
-		logger.Panicf("cannot create lock file %s: %s", snapshotTempPath, err)
-	}
-	n, err := lf.Write(data)
-	if err != nil {
-		_ = lf.Close()
-		logger.Panicf("cannot write snapshot %s: %s", snapshotTempPath, err)
-	}
-	if n != len(data) {
-		_ = lf.Close()
-		logger.Panicf("unexpected number of bytes written to %s; got %d; want %d", snapshotTempPath, n, len(data))
-	}
-	if closeErr := lf.Close(); closeErr != nil {
-		logger.Panicf("cannot close snapshot temp file %s: %s", snapshotTempPath, closeErr)
-	}
-	if renameErr := tst.fileSystem.Rename(snapshotTempPath, snapshotPath); renameErr != nil {
-		logger.Panicf("cannot rename snapshot %s to %s: %s", snapshotTempPath, snapshotPath, renameErr)
-	}
-	tst.fileSystem.SyncPath(tst.root)
+	// WriteAtomic does write-tmp -> file.Sync -> rename -> dir.Sync, so a
+	// crash leaves either the previous valid snapshot or only <name>.tmp,
+	// never a renamed-but-not-durable snapshot. The orphan-cleanup logic
+	// at startup depends on snapshots being authoritative; this closes the
+	// last metadata-style write site that could undermine that assumption.
+	fs.MustFlushAtomic(tst.fileSystem, data, snapshotPath, storage.FilePerm)
 }
 
 func (tst *tsTable) readSnapshot(snapshot uint64) ([]uint64, error) {

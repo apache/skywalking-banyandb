@@ -30,6 +30,7 @@ import (
 	"github.com/apache/skywalking-banyandb/banyand/metadata/schema"
 	"github.com/apache/skywalking-banyandb/pkg/bus"
 	"github.com/apache/skywalking-banyandb/pkg/grpchelper"
+	"github.com/apache/skywalking-banyandb/pkg/run"
 )
 
 const (
@@ -159,11 +160,11 @@ func (p *pub) OnDelete(md schema.Metadata) {
 	p.connMgr.OnDelete(node)
 }
 
-func (p *pub) checkServiceHealth(svc string, conn *grpc.ClientConn) *common.Error {
+func (p *pub) checkServiceHealth(ctx context.Context, svc string, conn *grpc.ClientConn) *common.Error {
 	serviceClient := clusterv1.NewServiceClient(conn)
-	ctx, cancel := context.WithTimeout(context.Background(), rpcTimeout)
+	timeoutCtx, cancel := context.WithTimeout(ctx, rpcTimeout)
 	defer cancel()
-	resp, err := serviceClient.HealthCheck(ctx, &clusterv1.HealthCheckRequest{
+	resp, err := serviceClient.HealthCheck(timeoutCtx, &clusterv1.HealthCheckRequest{
 		ServiceName: svc,
 	})
 	if err != nil {
@@ -175,15 +176,15 @@ func (p *pub) checkServiceHealth(svc string, conn *grpc.ClientConn) *common.Erro
 	return common.NewErrorWithStatus(resp.Status, resp.Error)
 }
 
-func (p *pub) failover(node string, ce *common.Error, topic bus.Topic) {
+func (p *pub) failover(ctx context.Context, node string, ce *common.Error, topic bus.Topic) {
 	if ce.Status() != modelv1.Status_STATUS_INTERNAL_ERROR {
-		_, _ = p.checkWritable(node, topic)
+		_, _ = p.checkWritable(ctx, node, topic)
 		return
 	}
 	p.connMgr.FailoverNode(node)
 }
 
-func (p *pub) checkWritable(n string, topic bus.Topic) (bool, *common.Error) {
+func (p *pub) checkWritable(ctx context.Context, n string, topic bus.Topic) (bool, *common.Error) {
 	h, ok := p.handlers[topic]
 	if !ok {
 		return false, nil
@@ -193,7 +194,7 @@ func (p *pub) checkWritable(n string, topic bus.Topic) (bool, *common.Error) {
 		return false, nil
 	}
 	topicStr := topic.String()
-	err := p.checkServiceHealth(topicStr, c.conn)
+	err := p.checkServiceHealth(ctx, topicStr, c.conn)
 	if err == nil {
 		return true, nil
 	}
@@ -213,14 +214,15 @@ func (p *pub) checkWritable(n string, topic bus.Topic) (bool, *common.Error) {
 	p.writableProbe[n][topicStr] = struct{}{}
 	p.writableProbeMu.Unlock()
 
-	go func(nodeName, t string) {
+	probeName, probeTopic := n, topicStr
+	run.Go(ctx, "pub-node-probe", p.log, func(probeCtx context.Context) {
 		defer p.closer.Done()
 		defer func() {
 			p.writableProbeMu.Lock()
-			if topics, ok := p.writableProbe[nodeName]; ok {
-				delete(topics, t)
+			if topics, ok := p.writableProbe[probeName]; ok {
+				delete(topics, probeTopic)
 				if len(topics) == 0 {
-					delete(p.writableProbe, nodeName)
+					delete(p.writableProbe, probeName)
 				}
 			}
 			p.writableProbeMu.Unlock()
@@ -230,23 +232,23 @@ func (p *pub) checkWritable(n string, topic bus.Topic) (bool, *common.Error) {
 			backoff := grpchelper.JitteredBackoff(grpchelper.InitBackoff, grpchelper.MaxBackoff, attempt, grpchelper.DefaultJitterFactor)
 			select {
 			case <-time.After(backoff):
-				nodeCur, okCur := p.connMgr.GetClient(nodeName)
+				nodeCur, okCur := p.connMgr.GetClient(probeName)
 				if !okCur {
 					return
 				}
-				errInternal := p.checkServiceHealth(t, nodeCur.conn)
+				errInternal := p.checkServiceHealth(probeCtx, probeTopic, nodeCur.conn)
 				if errInternal == nil {
 					// Record success for circuit breaker
-					p.connMgr.RecordSuccess(nodeName)
+					p.connMgr.RecordSuccess(probeName)
 					h.OnAddOrUpdate(nodeCur.md)
 					return
 				}
-				p.log.Warn().Str("topic", t).Err(errInternal).Str("node", nodeName).Dur("backoff", backoff).Msg("data node can not ingest data")
+				p.log.Warn().Str("topic", probeTopic).Err(errInternal).Str("node", probeName).Dur("backoff", backoff).Msg("data node can not ingest data")
 			case <-p.closer.CloseNotify():
 				return
 			}
 			attempt++
 		}
-	}(n, topicStr)
+	})
 	return false, err
 }
