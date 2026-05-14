@@ -20,6 +20,7 @@ package lifecycle
 
 import (
 	"context"
+	"fmt"
 	"sort"
 	"sync"
 
@@ -27,6 +28,7 @@ import (
 	"github.com/apache/skywalking-banyandb/fodc/internal/timeouts"
 	"github.com/apache/skywalking-banyandb/fodc/proxy/internal/registry"
 	"github.com/apache/skywalking-banyandb/pkg/logger"
+	"github.com/apache/skywalking-banyandb/pkg/panicdiag"
 )
 
 // defaultCollectionTimeout bounds how long the proxy waits for each agent to push back
@@ -164,6 +166,9 @@ func (m *Manager) CollectLifecycle(ctx context.Context) (*InspectionResult, Agen
 		m.log.Info().Msg("CollectLifecycle: no agents registered, returning empty")
 		return emptyResult(), summary
 	}
+	ctx = panicdiag.WithBreadcrumb(ctx, "collect lifecycle from agents", "fodc-proxy-lifecycle", map[string]string{
+		"agent_count": fmt.Sprintf("%d", len(agents)),
+	})
 
 	m.log.Info().Int("agent_count", len(agents)).Msg("CollectLifecycle: starting collection")
 
@@ -171,6 +176,10 @@ func (m *Manager) CollectLifecycle(ctx context.Context) (*InspectionResult, Agen
 	defer m.cleanupSessions(collectChs)
 
 	summary.Requested = m.requestAllAgents(ctx, agents, collectChs)
+	ctx = panicdiag.WithBreadcrumb(ctx, "requested lifecycle reports", "fodc-proxy-lifecycle", map[string]string{
+		"requested_count": fmt.Sprintf("%d", summary.Requested),
+		"waiting_for":     fmt.Sprintf("%d", len(collectChs)),
+	})
 	m.log.Info().Int("requested", summary.Requested).Int("waiting_for", len(collectChs)).
 		Msg("CollectLifecycle: requests sent, waiting for responses")
 

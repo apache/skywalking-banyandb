@@ -34,7 +34,7 @@ func (s *sidx) ScanQuery(ctx context.Context, req ScanQueryRequest) ([]*QueryRes
 	if snap == nil {
 		return nil, nil
 	}
-	defer snap.decRef()
+	defer snap.decRef() //nolint:contextcheck // reference counting cleanup does not require context
 
 	// Set default batch size
 	maxBatchSize := req.MaxBatchSize

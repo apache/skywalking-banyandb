@@ -27,6 +27,7 @@ import (
 	"github.com/apache/skywalking-banyandb/banyand/metadata"
 	"github.com/apache/skywalking-banyandb/pkg/config"
 	"github.com/apache/skywalking-banyandb/pkg/logger"
+	"github.com/apache/skywalking-banyandb/pkg/panicdiag"
 	"github.com/apache/skywalking-banyandb/pkg/run"
 	"github.com/apache/skywalking-banyandb/pkg/signal"
 	"github.com/apache/skywalking-banyandb/pkg/version"
@@ -35,6 +36,7 @@ import (
 // NewCommand creates a new lifecycle command.
 func NewCommand() *cobra.Command {
 	logging := logger.Logging{}
+	crashOutputCfg := panicdiag.NewCrashOutputConfig()
 	metaSvc, err := metadata.NewClient()
 	if err != nil {
 		logger.GetLogger().Err(err).Msg("failed to initiate metadata service")
@@ -47,6 +49,9 @@ func NewCommand() *cobra.Command {
 		DisableAutoGenTag: true,
 		Version:           version.Build(),
 		RunE: func(cmd *cobra.Command, _ []string) error {
+			if installErr := crashOutputCfg.InstallGlobalCrashOutput(); installErr != nil {
+				return installErr
+			}
 			if err = config.Load("logging", cmd.Flags()); err != nil {
 				return err
 			}
@@ -69,5 +74,6 @@ func NewCommand() *cobra.Command {
 	cmd.Flags().AddFlagSet(group.RegisterFlags().FlagSet)
 	cmd.Flags().StringVar(&logging.Env, "logging-env", "prod", "the logging")
 	cmd.Flags().StringVar(&logging.Level, "logging-level", "info", "the root level of logging")
+	crashOutputCfg.RegisterFlags(cmd.Flags())
 	return cmd
 }

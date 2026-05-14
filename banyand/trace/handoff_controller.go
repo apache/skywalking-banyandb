@@ -35,6 +35,7 @@ import (
 	"github.com/apache/skywalking-banyandb/pkg/bytes"
 	"github.com/apache/skywalking-banyandb/pkg/fs"
 	"github.com/apache/skywalking-banyandb/pkg/logger"
+	"github.com/apache/skywalking-banyandb/pkg/run"
 )
 
 // handoffController manages handoff queues for multiple data nodes.
@@ -47,6 +48,7 @@ type handoffController struct {
 	replayTriggerChan       chan string
 	nodeQueues              map[string]*handoffNodeQueue
 	replayStopChan          chan struct{}
+	replayCancel            context.CancelFunc
 	healthyNodes            map[string]struct{}
 	statusChangeChan        chan nodeStatusChange
 	stopMonitor             chan struct{}
@@ -671,7 +673,12 @@ func (hc *handoffController) close() error {
 		hc.monitorWg.Wait()
 	}
 
-	// Stop the replay worker
+	// Stop the replay worker. Cancel the worker context first so any
+	// in-flight sendPartToNode unblocks, then close the channel to break
+	// the loop, then wait for the goroutine to exit.
+	if hc.replayCancel != nil {
+		hc.replayCancel()
+	}
 	if hc.replayStopChan != nil {
 		close(hc.replayStopChan)
 		hc.replayWg.Wait()
@@ -804,10 +811,14 @@ func (hc *handoffController) startMonitor() {
 	hc.monitorWg.Add(2)
 
 	// Goroutine 1: Periodic polling
-	go hc.pollNodeStatus()
+	run.Go(context.Background(), "trace.handoff.poll-node-status", hc.l, func(_ context.Context) {
+		hc.pollNodeStatus()
+	})
 
 	// Goroutine 2: Handle status changes
-	go hc.handleStatusChanges()
+	run.Go(context.Background(), "trace.handoff.status-changes", hc.l, func(_ context.Context) {
+		hc.handleStatusChanges()
+	})
 
 	hc.l.Info().
 		Int("dataNodes", len(hc.allDataNodes)).
@@ -933,8 +944,13 @@ func (hc *handoffController) startReplayWorker() {
 		return
 	}
 
+	ctx, cancel := context.WithCancel(context.Background())
+	hc.replayCancel = cancel
+
 	hc.replayWg.Add(1)
-	go hc.replayWorkerLoop()
+	run.Go(ctx, "trace.handoff.replay-worker", hc.l, func(workerCtx context.Context) {
+		hc.replayWorkerLoop(workerCtx)
+	})
 
 	hc.l.Info().
 		Int("batchSize", hc.replayBatchSize).
@@ -943,7 +959,7 @@ func (hc *handoffController) startReplayWorker() {
 }
 
 // replayWorkerLoop is the main replay worker loop.
-func (hc *handoffController) replayWorkerLoop() {
+func (hc *handoffController) replayWorkerLoop(ctx context.Context) {
 	defer hc.replayWg.Done()
 
 	ticker := time.NewTicker(hc.replayPollInterval)
@@ -988,7 +1004,7 @@ func (hc *handoffController) replayWorkerLoop() {
 				}
 
 				// Process a batch for this node
-				processed, err := hc.replayBatchForNode(nodeAddr, hc.replayBatchSize)
+				processed, err := hc.replayBatchForNode(ctx, nodeAddr, hc.replayBatchSize)
 				if err != nil {
 					hc.l.Warn().Err(err).Str("node", nodeAddr).Msg("replay batch failed")
 				}
@@ -1013,7 +1029,7 @@ func (hc *handoffController) replayWorkerLoop() {
 
 // replayBatchForNode processes a batch of parts for a specific node.
 // Returns the number of parts successfully replayed and any error.
-func (hc *handoffController) replayBatchForNode(nodeAddr string, maxParts int) (int, error) {
+func (hc *handoffController) replayBatchForNode(ctx context.Context, nodeAddr string, maxParts int) (int, error) {
 	// Get pending parts for this node
 	pending, err := hc.listPendingForNode(nodeAddr)
 	if err != nil {
@@ -1030,7 +1046,6 @@ func (hc *handoffController) replayBatchForNode(nodeAddr string, maxParts int) (
 	}
 
 	successCount := 0
-	ctx := context.Background()
 
 	for _, ptp := range pending {
 		// Check if already in-flight

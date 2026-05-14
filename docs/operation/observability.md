@@ -258,6 +258,64 @@ If the value is too large, it may indicate that too many data points are being i
 
 **Expression**: `sum(banyandb_stream_tst_inverted_index_total_doc_count{job=~\"$job\",instance=~\"$instance\"}) by (group)`
 
+### Liaison internal queue (`queue_sub` / `queue_pub`)
+
+Liaison nodes run an internal gRPC **queue server** (`server-queue-sub`, wired via `sub.NewServerWithPorts` in `pkg/cmdsetup/liaison.go`) and **queue clients** (`server-queue-pub`) for tier-1/tier-2 pipelines. Prometheus metrics use the namespaces `banyandb_queue_sub_*` and `banyandb_queue_pub_*` (built from `observability.RootScope` + `queue_sub` / `queue_pub` sub-scopes). Data nodes may expose the same metric families where the corresponding services run.
+
+#### `queue_sub` — inbound server (including chunked sync)
+
+| Metric (suffix after `banyandb_queue_sub_`) | Type | Labels | Meaning |
+| --- | --- | --- | --- |
+| `total_started`, `total_finished`, `total_err`, `total_latency` | Counter | `topic` | Legacy per-topic stream handler lifecycle. |
+| `total_msg_received`, `total_msg_received_err`, `total_msg_sent`, `total_msg_sent_err` | Counter | `topic` | Per-topic message I/O errors (included in high-level error rates below). |
+| `out_of_order_chunks_received`, `chunks_buffered` | Counter | `topic` | Chunk reordering: out-of-order arrivals and buffer events (**`topic` only**, not per session). |
+| `buffer_timeouts`, `large_gaps_rejected`, `buffer_capacity_exceeded`, `finish_sync_err` | Counter | `topic` | Reorder buffer pressure and sync completion issues. |
+| `chunked_sync_active_sessions` | Gauge | `topic` | In-flight chunked sync sessions per topic. |
+| `chunk_reorder_buffered_chunks` | Gauge | `topic` | Chunks waiting in the reorder buffer. |
+| `chunked_sync_aborted_total` | Counter | `topic`, `reason` | Aborted sessions; `reason` is one of `switch`, `stream_error`, `ctx_done`, `eof`. |
+| `chunked_sync_failed_parts_total` | Counter | `topic` | Parts incomplete when a sync completes. |
+| `chunked_sync_total_bytes_received` | Counter | `topic` | Bytes received for completed syncs. |
+| `chunked_sync_duration_seconds` | Histogram | `topic` | Wall-clock duration of completed syncs. |
+
+**Troubleshooting:** rising `chunk_reorder_buffered_chunks` or `buffer_timeouts` suggests sustained out-of-order or slow consumers. Spikes in `chunked_sync_aborted_total` with `reason=switch` often correlate with topic/hand-off changes; `stream_error` / `ctx_done` / `eof` point to RPC lifecycle issues. Use `chunked_sync_failed_parts_total` and the duration histogram to separate partial completion from healthy throughput.
+
+#### `queue_pub` — outbound batch client
+
+| Metric (suffix after `banyandb_queue_pub_`) | Type | Labels | Meaning |
+| --- | --- | --- | --- |
+| `send_success_total` | Counter | `topic`, `node` | Successful `Send` on the client stream (local write, not end-to-end ack). |
+| `send_bytes_total` | Counter | `topic`, `node` | Payload bytes on successful `Send`. |
+| `send_duration_seconds` | Histogram | `topic`, `node`, `result` | Time spent in the send path including retries. `result` is one of `success`, `non_transient`, `canceled`, `stream_canceled`, `retry_exhausted`; filter to `result="success"` (and optionally `retry_exhausted`) when isolating end-to-end send latency. |
+| `send_err_total` | Counter | `topic`, `node`, `reason` | Send/recv side errors; `reason` includes `non_transient`, `canceled`, `stream_canceled`, `retry_exhausted`, `recv_error`, `server_rejected`. |
+| `send_retry_attempts_total`, `send_retry_exhausted_total`, `send_backoff_seconds_total` | Counter | `topic`, `node` | Retry/backoff behavior before giving up. |
+| `inflight_streams` | Gauge | `node` | Open send streams per downstream node. |
+| `inflight_requests` | Gauge | `topic`, `node` | In-flight batch send operations. |
+
+**Troubleshooting:** correlate `send_retry_exhausted_total` and `send_err_total{reason="retry_exhausted"}` with upstream pressure. `recv_error` vs `server_rejected` separates transport failures from application-level `SendResponse` errors. Sustained high `inflight_requests` or `inflight_streams` may indicate slow or unavailable data nodes.
+
+Metrics are only registered when `metadata` implements `metadata.Service` and `MetricsRegistry()` is non-nil (e.g. after `SetMetricsRegistry` in bootstrap). `NewWithoutMetadata()` leaves `queue_pub` metrics disabled without a warning.
+
+#### Example PromQL snippets
+
+Saturation (liaison pod / job variables as in the cluster dashboard):
+
+- **Chunked sync sessions:** `sum(banyandb_queue_sub_chunked_sync_active_sessions{job=~"$job",pod=~"$pod"}) by (topic)`
+- **Reorder buffer depth:** `sum(banyandb_queue_sub_chunk_reorder_buffered_chunks{job=~"$job",pod=~"$pod"}) by (topic)`
+- **Chunked sync abort rate:** `sum(rate(banyandb_queue_sub_chunked_sync_aborted_total{job=~"$job",pod=~"$pod"}[$__rate_interval])) by (topic,reason)`
+- **Publisher success rate:** `sum(rate(banyandb_queue_pub_send_success_total{job=~"$job",pod=~"$pod"}[$__rate_interval])) by (topic)`
+- **Publisher errors by reason:** `sum(rate(banyandb_queue_pub_send_err_total{job=~"$job",pod=~"$pod"}[$__rate_interval])) by (reason)`
+
+**Suggested alerts (tune thresholds per cluster):**
+
+- Non-zero sustained `rate(banyandb_queue_pub_send_retry_exhausted_total[5m])` on liaison.
+- `chunk_reorder_buffered_chunks` or `chunked_sync_active_sessions` above an environment-specific ceiling for a single `topic`.
+
+#### Aggregate pipeline error rate (optional)
+
+To combine legacy queue stream errors with publisher-side failures (per minute scaling as elsewhere in this doc):
+
+**Expression**: `sum(rate(banyandb_queue_sub_total_msg_sent_err{job=~"$job",instance=~"$instance"}[$__rate_interval])*60) + sum(rate(banyandb_queue_sub_total_msg_received_err{job=~"$job",instance=~"$instance"}[$__rate_interval])*60) + sum(rate(banyandb_queue_pub_send_err_total{job=~"$job",instance=~"$instance"}[$__rate_interval])*60)`
+
 ## Metrics Providers
 
 BanyanDB has built-in support for metrics collection. Currently, there are two supported metrics provider: `prometheus` and `native`. These can be enabled through `observability-modes` flag, allowing you to activate one or both of them.
@@ -294,7 +352,7 @@ scrape_configs:
 
 #### Grafana Dashboard
 
-Check out the [BanyanDB Cluster Dashboard](grafana-cluster.json) for monitoring BanyanDB metrics.
+Check out the [BanyanDB Cluster Dashboard](grafana-cluster.json) for monitoring BanyanDB metrics. The dashboard includes a **Liaison internal queue** row (`queue_sub` saturation / aborts and `queue_pub` send and error rates); metric names and PromQL examples are documented in the **Liaison internal queue** subsection above.
 
 ### Native
 

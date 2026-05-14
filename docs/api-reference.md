@@ -335,6 +335,10 @@
   
 - [banyandb/fodc/v1/rpc.proto](#banyandb_fodc_v1_rpc-proto)
     - [Call](#banyandb-fodc-v1-Call)
+    - [CrashBreadcrumb](#banyandb-fodc-v1-CrashBreadcrumb)
+    - [CrashBreadcrumb.FieldsEntry](#banyandb-fodc-v1-CrashBreadcrumb-FieldsEntry)
+    - [CrashPanicRecord](#banyandb-fodc-v1-CrashPanicRecord)
+    - [CrashPanicRecord.ProcessMetadataEntry](#banyandb-fodc-v1-CrashPanicRecord-ProcessMetadataEntry)
     - [GroupLifecycleInfo](#banyandb-fodc-v1-GroupLifecycleInfo)
     - [InspectAllRequest](#banyandb-fodc-v1-InspectAllRequest)
     - [InspectAllResponse](#banyandb-fodc-v1-InspectAllResponse)
@@ -347,6 +351,8 @@
     - [RegisterAgentResponse](#banyandb-fodc-v1-RegisterAgentResponse)
     - [StreamClusterTopologyRequest](#banyandb-fodc-v1-StreamClusterTopologyRequest)
     - [StreamClusterTopologyResponse](#banyandb-fodc-v1-StreamClusterTopologyResponse)
+    - [StreamCrashDiagnosticsRequest](#banyandb-fodc-v1-StreamCrashDiagnosticsRequest)
+    - [StreamCrashDiagnosticsResponse](#banyandb-fodc-v1-StreamCrashDiagnosticsResponse)
     - [StreamLifecycleRequest](#banyandb-fodc-v1-StreamLifecycleRequest)
     - [StreamLifecycleResponse](#banyandb-fodc-v1-StreamLifecycleResponse)
     - [StreamMetricsRequest](#banyandb-fodc-v1-StreamMetricsRequest)
@@ -5274,6 +5280,77 @@ Phase represents the current phase of the deletion task.
 
 
 
+<a name="banyandb-fodc-v1-CrashBreadcrumb"></a>
+
+### CrashBreadcrumb
+
+
+
+| Field | Type | Label | Description |
+| ----- | ---- | ----- | ----------- |
+| time | [google.protobuf.Timestamp](#google-protobuf-Timestamp) |  |  |
+| stage | [string](#string) |  |  |
+| component | [string](#string) |  |  |
+| fields | [CrashBreadcrumb.FieldsEntry](#banyandb-fodc-v1-CrashBreadcrumb-FieldsEntry) | repeated |  |
+
+
+
+
+
+
+<a name="banyandb-fodc-v1-CrashBreadcrumb-FieldsEntry"></a>
+
+### CrashBreadcrumb.FieldsEntry
+
+
+
+| Field | Type | Label | Description |
+| ----- | ---- | ----- | ----------- |
+| key | [string](#string) |  |  |
+| value | [string](#string) |  |  |
+
+
+
+
+
+
+<a name="banyandb-fodc-v1-CrashPanicRecord"></a>
+
+### CrashPanicRecord
+
+
+
+| Field | Type | Label | Description |
+| ----- | ---- | ----- | ----------- |
+| occurred_at | [google.protobuf.Timestamp](#google-protobuf-Timestamp) |  |  |
+| component | [string](#string) |  |  |
+| panic_value | [string](#string) |  |  |
+| recovered | [bool](#bool) |  |  |
+| goroutine_stack | [string](#string) |  |  |
+| breadcrumbs | [CrashBreadcrumb](#banyandb-fodc-v1-CrashBreadcrumb) | repeated |  |
+| process_metadata | [CrashPanicRecord.ProcessMetadataEntry](#banyandb-fodc-v1-CrashPanicRecord-ProcessMetadataEntry) | repeated |  |
+
+
+
+
+
+
+<a name="banyandb-fodc-v1-CrashPanicRecord-ProcessMetadataEntry"></a>
+
+### CrashPanicRecord.ProcessMetadataEntry
+
+
+
+| Field | Type | Label | Description |
+| ----- | ---- | ----- | ----------- |
+| key | [string](#string) |  |  |
+| value | [string](#string) |  |  |
+
+
+
+
+
+
 <a name="banyandb-fodc-v1-GroupLifecycleInfo"></a>
 
 ### GroupLifecycleInfo
@@ -5468,6 +5545,40 @@ Phase represents the current phase of the deletion task.
 
 
 
+<a name="banyandb-fodc-v1-StreamCrashDiagnosticsRequest"></a>
+
+### StreamCrashDiagnosticsRequest
+
+
+
+| Field | Type | Label | Description |
+| ----- | ---- | ----- | ----------- |
+| fetched_at | [google.protobuf.Timestamp](#google-protobuf-Timestamp) |  |  |
+| source_endpoint | [string](#string) |  |  |
+| artifact_dir | [string](#string) |  |  |
+| panic_record | [CrashPanicRecord](#banyandb-fodc-v1-CrashPanicRecord) |  |  |
+| files | [string](#string) | repeated |  |
+
+
+
+
+
+
+<a name="banyandb-fodc-v1-StreamCrashDiagnosticsResponse"></a>
+
+### StreamCrashDiagnosticsResponse
+
+
+
+| Field | Type | Label | Description |
+| ----- | ---- | ----- | ----------- |
+| request_diagnostics | [bool](#bool) |  | Request crash diagnostics from agent |
+
+
+
+
+
+
 <a name="banyandb-fodc-v1-StreamLifecycleRequest"></a>
 
 ### StreamLifecycleRequest
@@ -5565,6 +5676,7 @@ Phase represents the current phase of the deletion task.
 | StreamMetrics | [StreamMetricsRequest](#banyandb-fodc-v1-StreamMetricsRequest) stream | [StreamMetricsResponse](#banyandb-fodc-v1-StreamMetricsResponse) stream | Bi-directional stream for metrics Agent sends StreamMetricsRequest (metrics data), Proxy sends StreamMetricsResponse (metrics requests) |
 | StreamClusterTopology | [StreamClusterTopologyRequest](#banyandb-fodc-v1-StreamClusterTopologyRequest) stream | [StreamClusterTopologyResponse](#banyandb-fodc-v1-StreamClusterTopologyResponse) stream | Bi-directional stream for cluster topology |
 | StreamLifecycle | [StreamLifecycleRequest](#banyandb-fodc-v1-StreamLifecycleRequest) stream | [StreamLifecycleResponse](#banyandb-fodc-v1-StreamLifecycleResponse) stream | Bi-directional stream for lifecycle data |
+| StreamCrashDiagnostics | [StreamCrashDiagnosticsRequest](#banyandb-fodc-v1-StreamCrashDiagnosticsRequest) stream | [StreamCrashDiagnosticsResponse](#banyandb-fodc-v1-StreamCrashDiagnosticsResponse) stream | Bi-directional stream for crash diagnostics Agent sends StreamCrashDiagnosticsRequest (panic collections), Proxy sends StreamCrashDiagnosticsResponse (requests) |
 
 
 <a name="banyandb-fodc-v1-GroupLifecycleService"></a>

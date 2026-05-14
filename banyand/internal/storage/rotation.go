@@ -18,11 +18,13 @@
 package storage
 
 import (
+	"context"
 	"time"
 
 	"github.com/robfig/cron/v3"
 
 	"github.com/apache/skywalking-banyandb/pkg/logger"
+	"github.com/apache/skywalking-banyandb/pkg/run"
 )
 
 var (
@@ -51,7 +53,7 @@ func (d *database[T, O]) startRotationTask() error {
 	if !d.disableRetention {
 		rt = newRetentionTask(d, options.TTL)
 	}
-	go func(rt *retentionTask[T, O]) {
+	run.Go(context.Background(), "storage-rotation", d.logger, func(taskCtx context.Context) {
 		var idleCheckTicker *time.Ticker
 		var idleCheckC <-chan time.Time
 
@@ -87,10 +89,10 @@ func (d *database[T, O]) startRotationTask() error {
 					defer d.rotationProcessOn.Store(false)
 					t := time.Unix(0, ts)
 					if rt != nil {
-						rt.run(t, d.logger)
+						rt.run(taskCtx, t, d.logger)
 					}
 					func() {
-						ss, err := d.segmentController.segments(true) // Ensure segments are open
+						ss, err := d.segmentController.segments(taskCtx, true) // Ensure segments are open
 						if err != nil {
 							d.logger.Error().Err(err).Msg("failed to get segments")
 							return
@@ -119,7 +121,7 @@ func (d *database[T, O]) startRotationTask() error {
 						defer d.incTotalRotationFinished(1)
 						start := options.SegmentInterval.NextTime(t)
 						d.logger.Info().Time("segment_start", start).Time("event_time", t).Msg("create new segment")
-						_, err = d.segmentController.create(start)
+						_, err = d.segmentController.create(taskCtx, start)
 						if err != nil {
 							d.logger.Error().Err(err).Msgf("failed to create new segment.")
 							d.incTotalRotationErr(1)
@@ -129,18 +131,18 @@ func (d *database[T, O]) startRotationTask() error {
 			case <-idleCheckC:
 				func() {
 					d.logger.Debug().Msg("checking for idle segments")
-					closedCount := d.segmentController.closeIdleSegments()
+					closedCount := d.segmentController.closeIdleSegments(taskCtx)
 					if closedCount > 0 {
 						d.logger.Info().Int("count", closedCount).Msg("closed idle segments")
 					}
 				}()
 			}
 		}
-	}(rt)
+	})
 	if rt == nil {
 		return nil
 	}
-	return d.scheduler.Register("retention", rt.option, rt.expr, rt.run)
+	return d.scheduler.Register(context.Background(), "retention", rt.option, rt.expr, rt.run)
 }
 
 type retentionTask[T TSTable, O any] struct {
@@ -162,7 +164,7 @@ func newRetentionTask[T TSTable, O any](database *database[T, O], ttl IntervalRu
 	}
 }
 
-func (rc *retentionTask[T, O]) run(now time.Time, l *logger.Logger) bool {
+func (rc *retentionTask[T, O]) run(_ context.Context, now time.Time, l *logger.Logger) bool {
 	// Use the new retention gate for exclusivity with forced cleanup
 	select {
 	case rc.database.retentionGate <- struct{}{}:

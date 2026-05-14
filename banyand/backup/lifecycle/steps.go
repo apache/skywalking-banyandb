@@ -18,6 +18,7 @@
 package lifecycle
 
 import (
+	"context"
 	"fmt"
 	"os"
 
@@ -38,7 +39,7 @@ import (
 	"github.com/apache/skywalking-banyandb/pkg/node"
 )
 
-func (l *lifecycleService) getSnapshots(groups []*commonv1.Group, p *Progress) (streamDir string, measureDir string, traceDir string, err error) {
+func (l *lifecycleService) getSnapshots(ctx context.Context, groups []*commonv1.Group, p *Progress) (streamDir string, measureDir string, traceDir string, err error) {
 	// If we already have snapshot dirs in Progress, reuse them
 	if p.SnapshotStreamDir != "" || p.SnapshotMeasureDir != "" || p.SnapshotTraceDir != "" {
 		return p.SnapshotStreamDir, p.SnapshotMeasureDir, p.SnapshotTraceDir, nil
@@ -51,7 +52,7 @@ func (l *lifecycleService) getSnapshots(groups []*commonv1.Group, p *Progress) (
 			Catalog: group.Catalog,
 		})
 	}
-	snn, err := snapshot.Get(l.gRPCAddr, l.enableTLS, l.insecure, l.cert, snapshotGroups...)
+	snn, err := snapshot.Get(ctx, l.gRPCAddr, l.enableTLS, l.insecure, l.cert, snapshotGroups...)
 	if err != nil {
 		return "", "", "", err
 	}

@@ -140,7 +140,7 @@ func (p *server) GetPort() *uint32 {
 	return &p.port
 }
 
-func (p *server) PreRun(_ context.Context) error {
+func (p *server) PreRun(ctx context.Context) error {
 	p.l = logger.GetLogger(p.Name())
 	p.l.Info().Str("level", p.l.GetLevel().String()).Msg("Logger initialized")
 
@@ -174,7 +174,7 @@ func (p *server) PreRun(_ context.Context) error {
 		}
 
 		// Start the reloader
-		if err = p.grpcTLSReloader.Start(); err != nil {
+		if err = p.grpcTLSReloader.Start(ctx); err != nil {
 			p.l.Error().Err(err).Msg("Failed to start gRPC TLS reloader")
 			return err
 		}
@@ -260,7 +260,7 @@ func (p *server) Serve() run.StopNotify {
 
 	// Start TLS reloader for HTTP server
 	if p.tls && p.tlsReloader != nil {
-		if err := p.tlsReloader.Start(); err != nil {
+		if err := p.tlsReloader.Start(context.Background()); err != nil {
 			p.l.Error().Err(err).Msg("Failed to start TLSReloader for HTTP")
 			close(p.stopCh)
 			return p.stopCh

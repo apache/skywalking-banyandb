@@ -185,7 +185,7 @@ func TestBackupSnapshot(t *testing.T) {
 	os.WriteFile(filepath.Join(tmpDir, "newfile.txt"), nil, 0o600)
 
 	m := &mockFS{}
-	err := backupSnapshot(m, tmpDir, "test-snapshot", "daily")
+	err := backupSnapshot(context.Background(), m, tmpDir, "test-snapshot", "daily")
 	if err != nil {
 		t.Fatal(err)
 	}

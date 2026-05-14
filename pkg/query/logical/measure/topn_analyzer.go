@@ -24,7 +24,9 @@ import (
 
 	databasev1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/database/v1"
 	measurev1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/measure/v1"
+	modelv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/model/v1"
 	"github.com/apache/skywalking-banyandb/banyand/measure"
+	"github.com/apache/skywalking-banyandb/pkg/flow/streaming"
 	"github.com/apache/skywalking-banyandb/pkg/query/executor"
 	"github.com/apache/skywalking-banyandb/pkg/query/logical"
 )
@@ -45,39 +47,10 @@ func TopNAnalyze(criteria *measurev1.TopNRequest, sourceMeasureSchemaList []*dat
 	var plan logical.UnresolvedPlan
 	var sourceMeasureSchema *databasev1.Measure
 	var topNAggSchema *databasev1.TopNAggregation
-	var ec executor.MeasureExecutionContext
 	if len(sourceMeasureSchemaList) == 1 {
 		sourceMeasureSchema = sourceMeasureSchemaList[0]
 		topNAggSchema = topNAggSchemaList[0]
-		ec = ecc[0]
-		// parse fields
-		plan = &unresolvedLocalScan{
-			name:        criteria.Name,
-			startTime:   timeRange.GetBegin().AsTime(),
-			endTime:     timeRange.GetEnd().AsTime(),
-			conditions:  criteria.Conditions,
-			sort:        criteria.FieldValueSort,
-			groupByTags: topNAggSchema.GetGroupByTagNames(),
-			ec:          ec,
-			number:      criteria.GetTopN(),
-		}
 	} else {
-		subPlans := make([]*unresolvedLocalScan, 0, len(sourceMeasureSchemaList))
-		for i := range sourceMeasureSchemaList {
-			subPlans = append(subPlans, &unresolvedLocalScan{
-				name:        criteria.Name,
-				startTime:   timeRange.GetBegin().AsTime(),
-				endTime:     timeRange.GetEnd().AsTime(),
-				conditions:  criteria.Conditions,
-				sort:        criteria.FieldValueSort,
-				groupByTags: topNAggSchemaList[i].GetGroupByTagNames(),
-				ec:          ecc[i],
-				number:      criteria.GetTopN(),
-			})
-		}
-		plan = &unresolvedTopNMerger{
-			subPlans: subPlans,
-		}
 		baseEntity := sourceMeasureSchemaList[0].GetEntity()
 		baseTagNames := baseEntity.GetTagNames()
 		for i, m := range sourceMeasureSchemaList[1:] {
@@ -109,7 +82,21 @@ func TopNAnalyze(criteria *measurev1.TopNRequest, sourceMeasureSchemaList []*dat
 		return nil, err
 	}
 
-	plan = topNDistinct(plan, criteria.GetTopN(), criteria.GetFieldValueSort(), topNAggSchema.FieldName)
+	var fieldType databasev1.FieldType
+	for _, field := range sourceMeasureSchema.GetFields() {
+		if field.GetName() == topNAggSchema.FieldName {
+			fieldType = field.GetFieldType()
+			break
+		}
+	}
+
+	if fieldType == databasev1.FieldType_FIELD_TYPE_FLOAT {
+		plan = buildTopNPlan[float64](criteria, timeRange, topNAggSchemaList, ecc)
+	} else {
+		plan = buildTopNPlan[int64](criteria, timeRange, topNAggSchemaList, ecc)
+	}
+
+	plan = topNDistinct(plan, criteria.GetTopN(), criteria.GetFieldValueSort(), topNAggSchema.FieldName, fieldType)
 
 	p, err := plan.Analyze(s)
 	if err != nil {
@@ -168,4 +155,35 @@ func buildVirtualSchema(sourceMeasureSchema *databasev1.Measure, fieldName strin
 		ms.registerField(fieldIdx, spec)
 	}
 	return ms, nil
+}
+
+func buildTopNPlan[K streaming.TopSortKey](criteria *measurev1.TopNRequest, timeRange *modelv1.TimeRange,
+	topNAggSchemaList []*databasev1.TopNAggregation, ecc []executor.MeasureExecutionContext,
+) logical.UnresolvedPlan {
+	if len(topNAggSchemaList) == 1 {
+		return &unresolvedLocalScan[K]{
+			name:        criteria.Name,
+			startTime:   timeRange.GetBegin().AsTime(),
+			endTime:     timeRange.GetEnd().AsTime(),
+			conditions:  criteria.Conditions,
+			sort:        criteria.FieldValueSort,
+			groupByTags: topNAggSchemaList[0].GetGroupByTagNames(),
+			ec:          ecc[0],
+			number:      criteria.GetTopN(),
+		}
+	}
+	subPlans := make([]*unresolvedLocalScan[K], 0, len(topNAggSchemaList))
+	for i := range topNAggSchemaList {
+		subPlans = append(subPlans, &unresolvedLocalScan[K]{
+			name:        criteria.Name,
+			startTime:   timeRange.GetBegin().AsTime(),
+			endTime:     timeRange.GetEnd().AsTime(),
+			conditions:  criteria.Conditions,
+			sort:        criteria.FieldValueSort,
+			groupByTags: topNAggSchemaList[i].GetGroupByTagNames(),
+			ec:          ecc[i],
+			number:      criteria.GetTopN(),
+		})
+	}
+	return &unresolvedTopNMerger[K]{subPlans: subPlans}
 }

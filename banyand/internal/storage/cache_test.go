@@ -18,6 +18,7 @@
 package storage
 
 import (
+	"context"
 	"strconv"
 	"sync"
 	"testing"
@@ -113,7 +114,7 @@ func TestCacheClean(t *testing.T) {
 		CleanupInterval: 10 * time.Millisecond,
 		IdleTimeout:     10 * time.Millisecond,
 	}
-	serviceCache := NewServiceCacheWithConfig(config).(*serviceCache)
+	serviceCache := NewServiceCacheWithConfig(context.Background(), config).(*serviceCache)
 	defer serviceCache.Close()
 
 	key := EntryKey{

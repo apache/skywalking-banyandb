@@ -95,8 +95,16 @@ func (c *ChannelCloser) CloseNotify() <-chan struct{} {
 	return c.ctx.Done()
 }
 
-// CloseThenWait closes all tasks then waits till they are done.
-func (c *ChannelCloser) CloseThenWait() {
+// Ctx returns the lifecycle context owned by the ChannelCloser.
+func (c *ChannelCloser) Ctx() context.Context {
+	if c == nil {
+		return context.Background()
+	}
+	return c.ctx
+}
+
+// Close notifies all tasks to stop and prevents new tasks from being added.
+func (c *ChannelCloser) Close() {
 	if c == nil {
 		return
 	}
@@ -105,12 +113,28 @@ func (c *ChannelCloser) CloseThenWait() {
 	c.lock.Lock()
 	c.closed = true
 	c.lock.Unlock()
+}
+
+// Wait waits until all senders and receivers are done.
+func (c *ChannelCloser) Wait() {
+	if c == nil {
+		return
+	}
 
 	c.sender.Done()
 	c.sender.Wait()
 
 	c.receiver.Done()
 	c.receiver.Wait()
+}
+
+// CloseThenWait closes all tasks then waits till they are done.
+func (c *ChannelCloser) CloseThenWait() {
+	if c == nil {
+		return
+	}
+	c.Close()
+	c.Wait()
 }
 
 // Closed returns whether the ChannelCloser is closed.
