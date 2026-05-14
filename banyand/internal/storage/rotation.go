@@ -131,7 +131,7 @@ func (d *database[T, O]) startRotationTask() error {
 			case <-idleCheckC:
 				func() {
 					d.logger.Debug().Msg("checking for idle segments")
-					closedCount := d.segmentController.closeIdleSegments(taskCtx)
+					closedCount := d.segmentController.closeIdleSegments()
 					if closedCount > 0 {
 						d.logger.Info().Int("count", closedCount).Msg("closed idle segments")
 					}

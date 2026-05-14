@@ -476,7 +476,7 @@ func (sc *segmentController[T, O]) segments(ctx context.Context, reopenClosed bo
 	return r, nil
 }
 
-func (sc *segmentController[T, O]) closeIdleSegments(_ context.Context) int {
+func (sc *segmentController[T, O]) closeIdleSegments() int {
 	maxIdleTime := sc.idleTimeout
 
 	now := time.Now().UnixNano()
