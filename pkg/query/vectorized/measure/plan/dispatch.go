@@ -88,8 +88,9 @@ func FellThroughCount() int64 { return fellThroughCount.Load() }
 //
 // Eligibility gate (v1):
 //   - cfg.Enabled must be true
-//   - request may carry GroupBy+Agg as a pair (scalar reduce + raw
-//     GroupBy are deferred); aggProjectionCoverage must also hold
+//   - request may carry GroupBy and/or Agg in any combination (group+agg,
+//     scalar reduce, raw GroupBy); plan.Analyze auto-extends the
+//     projection so the keys / agg field always resolve
 //   - request must NOT carry Top (BatchTop's single-heap semantic differs
 //     from the row path's per-timestamp top-N)
 //   - request must carry TimeRange (storage requires a bounded window)
@@ -131,24 +132,11 @@ func Dispatch(
 		// today.
 		return nil, "", false, nil
 	}
-	hasGroupBy := req.GetGroupBy() != nil
-	hasAgg := req.GetAgg() != nil
-	if hasGroupBy || hasAgg {
-		// GroupBy and Agg must travel as a pair (scalar reduce + raw
-		// groupby are deferred). Either alone falls through.
-		if hasGroupBy != hasAgg {
-			return nil, "", false, nil
-		}
-		// Projection coverage: BatchAggregation locates its key + value
-		// columns by name inside the BatchSchema, which is built from
-		// TagProjection + FieldProjection. Missing coverage means the
-		// operator would fail at construction; fall through so the row
-		// path can extend projection implicitly or surface its
-		// canonical error.
-		if !aggProjectionCoverage(req) {
-			return nil, "", false, nil
-		}
-	}
+	// GroupBy and Agg are handled by the vec subsystem in all three
+	// shapes — group+agg, scalar reduce (Agg only), raw GroupBy (GroupBy
+	// only). plan.Analyze auto-extends the projection so the GroupBy keys
+	// and Agg field always materialize a column, so there is no
+	// projection-coverage gate here anymore (G9b).
 	// G9c #9: a nil TimeRange is NOT a fall-through. The row path does not
 	// reject it — parseFields feeds criteria.GetTimeRange().GetBegin().AsTime()
 	// into the index scan, and a nil *timestamppb.Timestamp resolves to the
@@ -409,65 +397,3 @@ func (emptyMIterator) Next() bool { return false }
 func (emptyMIterator) Current() []*measurev1.InternalDataPoint { return nil }
 
 func (emptyMIterator) Close() error { return nil }
-
-// aggProjectionCoverage reports whether the request's GroupBy keys and
-// Agg field are all present in the request's projections. Required by
-// the dispatch eligibility gate: the BatchAggregation operator locates
-// its key + value columns by name inside the BatchSchema, and the
-// BatchSchema is built from TagProjection + FieldProjection. Missing
-// coverage means the operator would fail at construction; dispatch
-// instead falls through so the row path can handle the request.
-//
-// v1 requires GroupBy.tag_projection to name a single family; that
-// family must appear in req.TagProjection with every tag in GroupBy
-// present. Agg.field_name must appear in req.FieldProjection. Non-key
-// projected tags are allowed; BatchAggregation carries them forward as
-// first-seen-per-group, matching the row path.
-func aggProjectionCoverage(req *measurev1.QueryRequest) bool {
-	gb := req.GetGroupBy()
-	if gb == nil {
-		return false
-	}
-	gbFamilies := gb.GetTagProjection().GetTagFamilies()
-	if len(gbFamilies) != 1 {
-		return false
-	}
-	gbFamily := gbFamilies[0]
-	projected := projectedTagsByFamily(req.GetTagProjection())
-	present, ok := projected[gbFamily.GetName()]
-	if !ok {
-		return false
-	}
-	for _, name := range gbFamily.GetTags() {
-		if _, hit := present[name]; !hit {
-			return false
-		}
-	}
-	aggField := req.GetAgg().GetFieldName()
-	if aggField == "" {
-		return false
-	}
-	for _, name := range req.GetFieldProjection().GetNames() {
-		if name == aggField {
-			return true
-		}
-	}
-	return false
-}
-
-// projectedTagsByFamily flattens a TagProjection into family → name-set.
-func projectedTagsByFamily(tp *modelv1.TagProjection) map[string]map[string]struct{} {
-	out := make(map[string]map[string]struct{})
-	if tp == nil {
-		return out
-	}
-	for _, tf := range tp.GetTagFamilies() {
-		family := tf.GetName()
-		names := make(map[string]struct{}, len(tf.GetTags()))
-		for _, n := range tf.GetTags() {
-			names[n] = struct{}{}
-		}
-		out[family] = names
-	}
-	return out
-}

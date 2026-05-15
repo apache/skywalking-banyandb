@@ -33,15 +33,18 @@ const aggEntrySize int64 = 512
 // into a list of BreakerOperators that, chained after the scan source, form
 // the vectorized aggregation pipeline.
 //
-// Routing rules (v1):
+// Routing rules:
 //   - GroupBy + Agg both set → emit a single BatchAggregation. The operator's
 //     own keyIndex map produces per-group buckets and folds the agg slot;
 //     a separate BatchGroupBy would double the row materialization.
-//   - GroupBy set without Agg → unsupported. The proto field is paired with
-//     `agg` for the existing TopN path; without Agg the result semantic is
-//     ambiguous (selection? deduplication?). Return an error.
-//   - Agg set without GroupBy → unsupported. Scalar reduce → single output
-//     row is deferred to a future increment.
+//   - Agg set without GroupBy → scalar reduce: a BatchAggregation with no
+//     key columns. Every row maps to one group, so a single output row is
+//     emitted carrying the first-seen projected tags plus the agg result,
+//     matching the row path's aggAllIterator.
+//   - GroupBy set without Agg → raw GroupBy: a first-seen-row-per-group
+//     BatchGroupBy. The output preserves the input schema; one row per
+//     group is emitted in group-insertion order, matching the row path's
+//     groupIterator + processor.go's current[0] read.
 //   - Neither set → empty operator list; caller emits raw rows.
 //
 // tracker is the per-pipeline MemoryTracker (G7a); it must be non-nil when
@@ -57,12 +60,6 @@ func BuildOperators(
 	if !hasGroupBy && !hasAgg {
 		return nil, nil
 	}
-	if hasGroupBy && !hasAgg {
-		return nil, fmt.Errorf("vectorized.measure: GroupBy without Agg is not supported in v1")
-	}
-	if hasAgg && !hasGroupBy {
-		return nil, fmt.Errorf("vectorized.measure: Agg without GroupBy (scalar reduce) is not supported in v1")
-	}
 	if tracker == nil {
 		return nil, fmt.Errorf("vectorized.measure: BuildOperators requires a non-nil shared MemoryTracker")
 	}
@@ -70,9 +67,22 @@ func BuildOperators(
 		return nil, fmt.Errorf("vectorized.measure: batchSize must be > 0, got %d", batchSize)
 	}
 
-	keyIndices, keyErr := lookupGroupByKeyIndices(schema, opts.GroupBy)
-	if keyErr != nil {
-		return nil, keyErr
+	var keyIndices []int
+	if hasGroupBy {
+		var keyErr error
+		keyIndices, keyErr = lookupGroupByKeyIndices(schema, opts.GroupBy)
+		if keyErr != nil {
+			return nil, keyErr
+		}
+	}
+
+	if !hasAgg {
+		// Raw GroupBy: emit the first-seen row of each group with the
+		// input schema unchanged. entrySize accounts for the per-group
+		// bucket; rowSize is zero because at most one row is retained.
+		pool := vectorized.NewBatchPool(schema, batchSize)
+		gb := NewBatchGroupByFirst(schema, keyIndices, pool, batchSize, tracker, aggEntrySize)
+		return []vectorized.BreakerOperator{gb}, nil
 	}
 
 	fieldIdx, fieldErr := lookupFieldColumnIndex(schema, opts.Agg.FieldName)
@@ -93,6 +103,12 @@ func BuildOperators(
 	// like "value_sum" — the suffix would break proto.Equal parity in the
 	// integration suite. The aggregation function lives on the operator
 	// spec, not in the column name.
+	//
+	// keyIndices is empty for scalar reduce (Agg without GroupBy):
+	// BatchAggregation.computeKey then returns the same key for every
+	// row, so all rows collapse into a single output row carrying the
+	// first-seen projected tags plus the agg result — the columnar
+	// equivalent of the row path's aggAllIterator.
 	spec := AggSpec{
 		Func:     aggFn,
 		InputCol: fieldIdx,

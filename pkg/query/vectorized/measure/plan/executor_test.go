@@ -123,6 +123,121 @@ func TestExecute_GroupByAgg_EmitsAggregatedRowsWithNilTimestamp(t *testing.T) {
 	}
 }
 
+// TestExecute_ScalarReduce_EmitsSingleRow drives Agg without GroupBy.
+// The whole result collapses into one row carrying the first-seen
+// projected tag plus the agg result, with nil Timestamp — matching the
+// row path's aggAllIterator. Fixture: value column {1,4,2,3,5} → SUM 15.
+func TestExecute_ScalarReduce_EmitsSingleRow(t *testing.T) {
+	schema, batch := buildScanInput(t)
+	src := &fakePullSource{schema: schema, batches: []*vectorized.RecordBatch{batch}}
+	scan := NewScan(schema, ScanParams{})
+	scan.Source = src
+	gba, err := NewGroupByAgg(scan, nil,
+		&model.MeasureAgg{FieldName: "value", Func: modelv1.AggregationFunction_AGGREGATION_FUNCTION_SUM},
+	)
+	if err != nil {
+		t.Fatalf("NewGroupByAgg: %v", err)
+	}
+	root := NewLimit(gba, 0, 10)
+
+	iter, err := Execute(context.Background(), root, execCfg())
+	if err != nil {
+		t.Fatalf("Execute: %v", err)
+	}
+	defer iter.Close()
+
+	rows := 0
+	var sum int64
+	var svc string
+	for iter.Next() {
+		dps := iter.Current()
+		if len(dps) != 1 {
+			t.Fatalf("Current must yield 1 InternalDataPoint per Next, got %d", len(dps))
+		}
+		idp := dps[0]
+		if idp.DataPoint.Timestamp != nil {
+			t.Fatalf("scalar reduce row must have nil Timestamp; got %v", idp.DataPoint.Timestamp)
+		}
+		tags := idp.DataPoint.TagFamilies[0].Tags
+		svc = tags[0].Value.GetStr().GetValue()
+		if len(idp.DataPoint.Fields) != 1 || idp.DataPoint.Fields[0].Name != "value" {
+			t.Fatalf("want one Field 'value', got %+v", idp.DataPoint.Fields)
+		}
+		sum = idp.DataPoint.Fields[0].Value.GetInt().GetValue()
+		rows++
+	}
+	if rows != 1 {
+		t.Fatalf("scalar reduce must emit exactly 1 row, got %d", rows)
+	}
+	if sum != 15 {
+		t.Fatalf("scalar SUM(value): want 15, got %d", sum)
+	}
+	if svc != "a" {
+		t.Fatalf("scalar reduce carries first-seen tag: want svc=a, got %q", svc)
+	}
+}
+
+// TestExecute_RawGroupBy_EmitsFirstRowPerGroup drives GroupBy without
+// Agg. One row per group is emitted in group-insertion order with the
+// input schema preserved (timestamp + field present), matching the row
+// path's groupIterator + processor.go's current[0] read. Fixture groups:
+// a → first row (ts=1,value=1); b → first row (ts=2,value=4).
+func TestExecute_RawGroupBy_EmitsFirstRowPerGroup(t *testing.T) {
+	schema, batch := buildScanInput(t)
+	src := &fakePullSource{schema: schema, batches: []*vectorized.RecordBatch{batch}}
+	scan := NewScan(schema, ScanParams{})
+	scan.Source = src
+	gba, err := NewGroupByAgg(scan,
+		&model.MeasureGroupBy{TagFamily: "default", TagNames: []string{"svc"}}, nil,
+	)
+	if err != nil {
+		t.Fatalf("NewGroupByAgg: %v", err)
+	}
+	root := NewLimit(gba, 0, 10)
+
+	iter, err := Execute(context.Background(), root, execCfg())
+	if err != nil {
+		t.Fatalf("Execute: %v", err)
+	}
+	defer iter.Close()
+
+	type row struct {
+		value int64
+		first bool
+	}
+	got := map[string]row{}
+	order := make([]string, 0, 2)
+	for iter.Next() {
+		dps := iter.Current()
+		if len(dps) != 1 {
+			t.Fatalf("Current must yield 1 InternalDataPoint per Next, got %d", len(dps))
+		}
+		idp := dps[0]
+		// Raw GroupBy preserves the input schema, so the field column
+		// survives (unlike the aggregation shapes).
+		if len(idp.DataPoint.Fields) != 1 || idp.DataPoint.Fields[0].Name != "value" {
+			t.Fatalf("raw GroupBy must preserve the field column, got %+v", idp.DataPoint.Fields)
+		}
+		svc := idp.DataPoint.TagFamilies[0].Tags[0].Value.GetStr().GetValue()
+		if _, seen := got[svc]; !seen {
+			order = append(order, svc)
+		}
+		got[svc] = row{value: idp.DataPoint.Fields[0].Value.GetInt().GetValue(), first: true}
+	}
+	if len(got) != 2 {
+		t.Fatalf("raw GroupBy must emit one row per group (2), got %d", len(got))
+	}
+	if got["a"].value != 1 {
+		t.Fatalf("group a first-seen value: want 1, got %d", got["a"].value)
+	}
+	if got["b"].value != 4 {
+		t.Fatalf("group b first-seen value: want 4, got %d", got["b"].value)
+	}
+	if len(order) != 2 || order[0] != "a" || order[1] != "b" {
+		t.Fatalf("groups must emit in insertion order [a b], got %v", order)
+	}
+}
+
 func TestExecute_BuildError_SurfacesAsExecuteError(t *testing.T) {
 	schema, _ := buildScanInput(t)
 	scan := NewScan(schema, ScanParams{}) // Source intentionally unset

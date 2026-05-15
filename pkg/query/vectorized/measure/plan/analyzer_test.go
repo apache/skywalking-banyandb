@@ -144,7 +144,9 @@ func TestAnalyze_TopBetweenGroupByAggAndLimit(t *testing.T) {
 	}
 }
 
-func TestAnalyze_GroupByWithoutAgg_Errors(t *testing.T) {
+// TestAnalyze_GroupByWithoutAgg_BuildsRawGroupBy verifies the raw
+// GroupBy shape: a GroupByAgg node (Agg nil) below Limit.
+func TestAnalyze_GroupByWithoutAgg_BuildsRawGroupBy(t *testing.T) {
 	req := &measurev1.QueryRequest{
 		Name:            "demo",
 		TagProjection:   projTagProj(),
@@ -154,16 +156,29 @@ func TestAnalyze_GroupByWithoutAgg_Errors(t *testing.T) {
 			FieldName:     "value",
 		},
 	}
-	_, err := Analyze(req, testMeasureSchema())
-	if err == nil {
-		t.Fatal("GroupBy without Agg must error")
+	p, err := Analyze(req, testMeasureSchema())
+	if err != nil {
+		t.Fatalf("GroupBy without Agg (raw groupby) must not error: %v", err)
 	}
-	if !strings.Contains(err.Error(), "Agg") {
-		t.Fatalf("error should mention Agg, got %v", err)
+	limit, ok := p.(*Limit)
+	if !ok {
+		t.Fatalf("root should be *Limit, got %T", p)
+	}
+	gba, ok := limit.Child.(*GroupByAgg)
+	if !ok {
+		t.Fatalf("Limit child should be *GroupByAgg, got %T", limit.Child)
+	}
+	if gba.Agg != nil {
+		t.Fatalf("raw GroupBy must have nil Agg, got %+v", gba.Agg)
+	}
+	if gba.GroupBy == nil || gba.GroupBy.TagNames[0] != "svc" {
+		t.Fatalf("GroupBy.TagNames: want [svc], got %+v", gba.GroupBy)
 	}
 }
 
-func TestAnalyze_AggWithoutGroupBy_Errors(t *testing.T) {
+// TestAnalyze_AggWithoutGroupBy_BuildsScalarReduce verifies the scalar
+// reduce shape: a GroupByAgg node (GroupBy nil) below Limit.
+func TestAnalyze_AggWithoutGroupBy_BuildsScalarReduce(t *testing.T) {
 	req := &measurev1.QueryRequest{
 		Name:            "demo",
 		TagProjection:   projTagProj(),
@@ -173,9 +188,23 @@ func TestAnalyze_AggWithoutGroupBy_Errors(t *testing.T) {
 			FieldName: "value",
 		},
 	}
-	_, err := Analyze(req, testMeasureSchema())
-	if err == nil {
-		t.Fatal("Agg without GroupBy must error (scalar reduce not supported)")
+	p, err := Analyze(req, testMeasureSchema())
+	if err != nil {
+		t.Fatalf("Agg without GroupBy (scalar reduce) must not error: %v", err)
+	}
+	limit, ok := p.(*Limit)
+	if !ok {
+		t.Fatalf("root should be *Limit, got %T", p)
+	}
+	gba, ok := limit.Child.(*GroupByAgg)
+	if !ok {
+		t.Fatalf("Limit child should be *GroupByAgg, got %T", limit.Child)
+	}
+	if gba.GroupBy != nil {
+		t.Fatalf("scalar reduce must have nil GroupBy, got %+v", gba.GroupBy)
+	}
+	if gba.Agg == nil || gba.Agg.FieldName != "value" {
+		t.Fatalf("Agg.FieldName: want value, got %+v", gba.Agg)
 	}
 }
 

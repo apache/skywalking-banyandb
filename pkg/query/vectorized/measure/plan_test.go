@@ -96,23 +96,51 @@ func TestBuildOperators_AggOutputName_InheritsInputFieldName(t *testing.T) {
 	}
 }
 
-func TestBuildOperators_GroupByWithoutAgg_Errors(t *testing.T) {
+// TestBuildOperators_GroupByWithoutAgg_EmitsFirstOnlyGroupBy pins the
+// raw-GroupBy shape: a first-seen-row-per-group BatchGroupBy whose output
+// preserves the input schema. It matches the row path's groupIterator
+// combined with processor.go's current[0] read.
+func TestBuildOperators_GroupByWithoutAgg_EmitsFirstOnlyGroupBy(t *testing.T) {
 	opts := model.MeasureQueryOptions{
 		GroupBy: &model.MeasureGroupBy{TagFamily: "default", TagNames: []string{"svc"}},
 	}
-	_, err := BuildOperators(opts, planSchema(), vectorized.NewMemoryTracker(1<<20), 1024)
-	if err == nil {
-		t.Fatal("GroupBy without Agg must error in v1")
+	ops, err := BuildOperators(opts, planSchema(), vectorized.NewMemoryTracker(1<<20), 1024)
+	if err != nil {
+		t.Fatalf("GroupBy without Agg (raw groupby) must not error: %v", err)
+	}
+	if len(ops) != 1 {
+		t.Fatalf("raw GroupBy should emit 1 operator, got %d", len(ops))
+	}
+	gb, ok := ops[0].(*BatchGroupBy)
+	if !ok {
+		t.Fatalf("operator must be *BatchGroupBy, got %T", ops[0])
+	}
+	if !gb.firstOnly {
+		t.Fatal("raw GroupBy must be first-only (one row per group)")
 	}
 }
 
-func TestBuildOperators_AggWithoutGroupBy_Errors(t *testing.T) {
+// TestBuildOperators_AggWithoutGroupBy_EmitsBatchAggregation pins the
+// scalar-reduce shape: a BatchAggregation with no key columns, so every
+// row collapses into a single output row carrying the first-seen tags
+// plus the agg result, matching the row path's aggAllIterator.
+func TestBuildOperators_AggWithoutGroupBy_EmitsBatchAggregation(t *testing.T) {
 	opts := model.MeasureQueryOptions{
 		Agg: &model.MeasureAgg{FieldName: "value", Func: modelv1.AggregationFunction_AGGREGATION_FUNCTION_SUM},
 	}
-	_, err := BuildOperators(opts, planSchema(), vectorized.NewMemoryTracker(1<<20), 1024)
-	if err == nil {
-		t.Fatal("Agg without GroupBy (scalar reduce) must error in v1")
+	ops, err := BuildOperators(opts, planSchema(), vectorized.NewMemoryTracker(1<<20), 1024)
+	if err != nil {
+		t.Fatalf("Agg without GroupBy (scalar reduce) must not error: %v", err)
+	}
+	if len(ops) != 1 {
+		t.Fatalf("scalar reduce should emit 1 operator, got %d", len(ops))
+	}
+	agg, ok := ops[0].(*BatchAggregation)
+	if !ok {
+		t.Fatalf("operator must be *BatchAggregation, got %T", ops[0])
+	}
+	if len(agg.keyIndices) != 0 {
+		t.Fatalf("scalar reduce must have no key columns, got %d", len(agg.keyIndices))
 	}
 }
 

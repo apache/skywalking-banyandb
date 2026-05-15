@@ -27,14 +27,19 @@ import (
 	vmeasure "github.com/apache/skywalking-banyandb/pkg/query/vectorized/measure"
 )
 
-// GroupByAgg is the v1 vec aggregation node: GroupBy + single Aggregation
-// fused into one BatchAggregation operator (see G7d planner). The
-// operator does its own grouping via keyIndices and folding via aggs.
+// GroupByAgg is the vec aggregation/grouping node. It fuses GroupBy and a
+// single Aggregation into one BatchAggregation operator (see G7d
+// planner), and also covers the two single-sided shapes:
 //
-// Schema-rewriting: output is key columns + one agg result column. The
-// timestamp column is dropped, so serializeBatchToProto emits
-// DataPoint.Timestamp == nil for every output row (per G7 design
-// decision D2).
+//   - GroupBy + Agg → BatchAggregation: key columns + one agg result
+//     column (schema-rewriting; timestamp dropped, per G7 decision D2).
+//   - Agg without GroupBy → scalar reduce: BatchAggregation with no key
+//     columns, a single output row (first-seen tags + agg result).
+//   - GroupBy without Agg → raw GroupBy: a first-seen-row-per-group
+//     BatchGroupBy, schema-preserving.
+//
+// The concrete operator (and therefore the output schema) is chosen by
+// vmeasure.BuildOperators from which of GroupBy/Agg is set.
 type GroupByAgg struct {
 	Child       VecPlan
 	GroupBy     *model.MeasureGroupBy
@@ -42,15 +47,12 @@ type GroupByAgg struct {
 	outputCache *vectorized.BatchSchema
 }
 
-// NewGroupByAgg constructs a GroupByAgg node wrapping child. Returns an
-// error if GroupBy or Agg are nil (v1 requires both: scalar reduce and
-// raw groupby are not supported).
+// NewGroupByAgg constructs a GroupByAgg node wrapping child. At least one
+// of groupBy/agg must be set (BuildOperators routes on which); child must
+// not be nil.
 func NewGroupByAgg(child VecPlan, groupBy *model.MeasureGroupBy, agg *model.MeasureAgg) (*GroupByAgg, error) {
-	if groupBy == nil {
-		return nil, fmt.Errorf("plan.GroupByAgg: GroupBy must not be nil (scalar reduce not supported in v1)")
-	}
-	if agg == nil {
-		return nil, fmt.Errorf("plan.GroupByAgg: Agg must not be nil (raw groupby not supported in v1)")
+	if groupBy == nil && agg == nil {
+		return nil, fmt.Errorf("plan.GroupByAgg: GroupBy and Agg must not both be nil")
 	}
 	if child == nil {
 		return nil, fmt.Errorf("plan.GroupByAgg: Child must not be nil")
@@ -116,9 +118,8 @@ func (g *GroupByAgg) String() string {
 	if g.GroupBy != nil {
 		tagNames = strings.Join(g.GroupBy.TagNames, ",")
 	}
-	field := ""
-	if g.Agg != nil {
-		field = g.Agg.FieldName
+	if g.Agg == nil {
+		return fmt.Sprintf("GroupByAgg(keys=%s, raw)", tagNames)
 	}
-	return fmt.Sprintf("GroupByAgg(keys=%s, fn=%v, field=%s)", tagNames, g.Agg.Func, field)
+	return fmt.Sprintf("GroupByAgg(keys=%s, fn=%v, field=%s)", tagNames, g.Agg.Func, g.Agg.FieldName)
 }

@@ -48,8 +48,11 @@ const defaultLimit uint32 = 100
 //   - tag/field projection naming columns not in the schema
 //   - GroupBy referencing a tag absent from the schema
 //   - Agg referencing a field absent from the schema
-//   - GroupBy set without Agg (raw groupby not supported in v1)
-//   - Agg set without GroupBy (scalar reduce not supported in v1)
+//
+// GroupBy and Agg may travel together (group + aggregate), or either
+// alone: Agg without GroupBy is a scalar reduce (single output row);
+// GroupBy without Agg is a raw GroupBy (first-seen row per group). Both
+// mirror the row path (measure_plan_aggregation.go / measure_plan_groupby.go).
 func Analyze(req *measurev1.QueryRequest, measureSchema *databasev1.Measure) (VecPlan, error) {
 	if req == nil {
 		return nil, fmt.Errorf("plan.Analyze: nil request")
@@ -72,13 +75,30 @@ func Analyze(req *measurev1.QueryRequest, measureSchema *databasev1.Measure) (Ve
 	hasAgg := req.GetAgg() != nil
 	var gbModel *model.MeasureGroupBy
 	var aggModel *model.MeasureAgg
-	if hasGroupBy && hasAgg {
-		var translateErr error
-		gbModel, aggModel, translateErr = translateGroupByAgg(req, measureSchema)
-		if translateErr != nil {
-			return nil, translateErr
+	if hasGroupBy {
+		var gbErr error
+		gbModel, gbErr = translateGroupBy(req, measureSchema)
+		if gbErr != nil {
+			return nil, gbErr
 		}
 	}
+	if hasAgg {
+		var aggErr error
+		aggModel, aggErr = translateAgg(req, measureSchema)
+		if aggErr != nil {
+			return nil, aggErr
+		}
+	}
+
+	// Projection auto-coverage: BatchAggregation / BatchGroupBy locate
+	// their key and value columns by name inside the BatchSchema, which
+	// BuildBatchSchema derives from TagProjection + FieldProjection.
+	// Extend the projection implicitly so the GroupBy keys and the Agg
+	// field always materialize a column, instead of falling through to
+	// the row path when the request omitted them from its projection.
+	tagProjection = ensureGroupByProjected(tagProjection, gbModel)
+	fieldProjection = ensureAggFieldProjected(fieldProjection, aggModel)
+
 	opts := model.MeasureQueryOptions{
 		TagProjection:   tagProjection,
 		FieldProjection: fieldProjection,
@@ -105,17 +125,15 @@ func Analyze(req *measurev1.QueryRequest, measureSchema *databasev1.Measure) (Ve
 		Agg:             aggModel,
 	})
 
-	switch {
-	case hasGroupBy && hasAgg:
+	if hasGroupBy || hasAgg {
+		// One BatchAggregation / BatchGroupBy node covers all three
+		// shapes (group+agg, scalar reduce, raw groupby); BuildOperators
+		// routes on which of gbModel/aggModel is set.
 		gba, gbaErr := NewGroupByAgg(plan, gbModel, aggModel)
 		if gbaErr != nil {
 			return nil, gbaErr
 		}
 		plan = gba
-	case hasGroupBy:
-		return nil, fmt.Errorf("plan.Analyze: GroupBy without Agg is not supported in v1")
-	case hasAgg:
-		return nil, fmt.Errorf("plan.Analyze: Agg without GroupBy (scalar reduce) is not supported in v1")
 	}
 
 	if t := req.GetTop(); t != nil {
@@ -150,44 +168,101 @@ func buildTagProjection(req *measurev1.QueryRequest) []model.TagProjection {
 	return out
 }
 
-// translateGroupByAgg builds the model GroupBy/Agg structs from the proto,
+// translateGroupBy builds the model GroupBy struct from the proto,
 // validating that:
 //   - the GroupBy tag_projection names exactly one family with non-empty tags
 //     (v1 single-family limitation)
 //   - the named GroupBy tags exist in the Measure schema
-//   - the Agg field exists in the Measure schema
-func translateGroupByAgg(req *measurev1.QueryRequest, measureSchema *databasev1.Measure) (
-	*model.MeasureGroupBy, *model.MeasureAgg, error,
-) {
-	gbProto := req.GetGroupBy()
-	families := gbProto.GetTagProjection().GetTagFamilies()
+func translateGroupBy(req *measurev1.QueryRequest, measureSchema *databasev1.Measure) (*model.MeasureGroupBy, error) {
+	families := req.GetGroupBy().GetTagProjection().GetTagFamilies()
 	if len(families) == 0 {
-		return nil, nil, fmt.Errorf("plan.Analyze: GroupBy.tag_projection must list at least one tag family")
+		return nil, fmt.Errorf("plan.Analyze: GroupBy.tag_projection must list at least one tag family")
 	}
 	if len(families) > 1 {
-		return nil, nil, fmt.Errorf("plan.Analyze: GroupBy.tag_projection v1 supports a single tag family, got %d", len(families))
+		return nil, fmt.Errorf("plan.Analyze: GroupBy.tag_projection v1 supports a single tag family, got %d", len(families))
 	}
 	family := families[0]
 	if len(family.GetTags()) == 0 {
-		return nil, nil, fmt.Errorf("plan.Analyze: GroupBy.tag_projection family %q has no tags", family.GetName())
+		return nil, fmt.Errorf("plan.Analyze: GroupBy.tag_projection family %q has no tags", family.GetName())
 	}
 	gb := &model.MeasureGroupBy{
 		TagFamily: family.GetName(),
 		TagNames:  append([]string(nil), family.GetTags()...),
 	}
 	if validateErr := validateGroupByTags(measureSchema, gb); validateErr != nil {
-		return nil, nil, validateErr
+		return nil, validateErr
 	}
+	return gb, nil
+}
 
+// translateAgg builds the model Agg struct from the proto, validating
+// that the Agg field exists in the Measure schema.
+func translateAgg(req *measurev1.QueryRequest, measureSchema *databasev1.Measure) (*model.MeasureAgg, error) {
 	aggProto := req.GetAgg()
 	if validateErr := validateAggField(measureSchema, aggProto.GetFieldName()); validateErr != nil {
-		return nil, nil, validateErr
+		return nil, validateErr
 	}
-	agg := &model.MeasureAgg{
+	return &model.MeasureAgg{
 		FieldName: aggProto.GetFieldName(),
 		Func:      aggProto.GetFunction(),
+	}, nil
+}
+
+// ensureGroupByProjected returns a TagProjection slice guaranteed to
+// include every GroupBy key tag. When the request already projects them
+// the input slice is returned unchanged; otherwise the missing key tags
+// are appended to (or create) the GroupBy family. Mirrors the row path,
+// whose GroupBy resolves its key tag refs against the schema regardless
+// of the request projection.
+func ensureGroupByProjected(tp []model.TagProjection, gb *model.MeasureGroupBy) []model.TagProjection {
+	if gb == nil || gb.TagFamily == "" || len(gb.TagNames) == 0 {
+		return tp
 	}
-	return gb, agg, nil
+	out := append([]model.TagProjection(nil), tp...)
+	familyIdx := -1
+	for i := range out {
+		if out[i].Family == gb.TagFamily {
+			familyIdx = i
+			break
+		}
+	}
+	if familyIdx < 0 {
+		out = append(out, model.TagProjection{
+			Family: gb.TagFamily,
+			Names:  append([]string(nil), gb.TagNames...),
+		})
+		return out
+	}
+	present := make(map[string]struct{}, len(out[familyIdx].Names))
+	for _, n := range out[familyIdx].Names {
+		present[n] = struct{}{}
+	}
+	names := append([]string(nil), out[familyIdx].Names...)
+	for _, n := range gb.TagNames {
+		if _, ok := present[n]; !ok {
+			names = append(names, n)
+		}
+	}
+	out[familyIdx].Names = names
+	return out
+}
+
+// ensureAggFieldProjected returns a FieldProjection slice guaranteed to
+// include the Agg field. When already present the input is returned
+// unchanged; otherwise the field is appended. Mirrors the row path,
+// whose aggregation resolves its field ref against the schema regardless
+// of the request projection.
+func ensureAggFieldProjected(fp []string, agg *model.MeasureAgg) []string {
+	if agg == nil || agg.FieldName == "" {
+		return fp
+	}
+	for _, n := range fp {
+		if n == agg.FieldName {
+			return fp
+		}
+	}
+	out := append([]string(nil), fp...)
+	return append(out, agg.FieldName)
 }
 
 // validateGroupByTags ensures every name in gb.TagNames exists within the
