@@ -118,7 +118,7 @@ func (s *sidx) Stats(_ context.Context) (*Stats, error) {
 	if snap == nil {
 		return &Stats{}, nil
 	}
-	defer snap.decRef()
+	defer snap.decRef() //nolint:contextcheck // reference counting cleanup does not require context
 
 	stats := &Stats{
 		PartCount: int64(snap.getPartCount()),

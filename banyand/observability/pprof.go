@@ -18,6 +18,7 @@
 package observability
 
 import (
+	"context"
 	"errors"
 	"net/http"
 	"net/http/pprof"
@@ -82,11 +83,12 @@ func (p *pprofService) Serve() run.StopNotify {
 		ReadHeaderTimeout: 3 * time.Second,
 		Handler:           mux,
 	}
-	go func() {
+	// Serve returns before the HTTP server goroutine runs, so recover it here.
+	run.Go(context.Background(), "observability.pprof.server", p.l, func(_ context.Context) {
 		defer p.closer.Done()
 		p.l.Info().Str("listenAddr", p.listenAddr).Msg("Start pprof server")
 		_ = p.svr.ListenAndServe()
-	}()
+	})
 	return p.closer.CloseNotify()
 }
 

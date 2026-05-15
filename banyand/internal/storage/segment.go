@@ -436,18 +436,18 @@ func (sc *segmentController[T, O]) selectSegments(timeRange timestamp.TimeRange)
 }
 
 func (sc *segmentController[T, O]) createSegment(ts time.Time) (*segment[T, O], error) {
-	s, err := sc.create(ts)
+	s, err := sc.create(context.Background(), ts)
 	if err != nil {
 		return nil, err
 	}
 	return s, s.incRef(context.WithValue(context.Background(), logger.ContextKey, sc.l))
 }
 
-func (sc *segmentController[T, O]) segments(reopenClosed bool) (ss []*segment[T, O], err error) {
+func (sc *segmentController[T, O]) segments(ctx context.Context, reopenClosed bool) (ss []*segment[T, O], err error) {
 	sc.RLock()
 	defer sc.RUnlock()
 	r := make([]*segment[T, O], len(sc.lst))
-	ctx := context.WithValue(context.Background(), logger.ContextKey, sc.l)
+	ctx = context.WithValue(ctx, logger.ContextKey, sc.l)
 	for i := range sc.lst {
 		if reopenClosed {
 			if err = sc.lst[i].incRef(ctx); err != nil {
@@ -463,13 +463,13 @@ func (sc *segmentController[T, O]) segments(reopenClosed bool) (ss []*segment[T,
 	return r, nil
 }
 
-func (sc *segmentController[T, O]) closeIdleSegments() int {
+func (sc *segmentController[T, O]) closeIdleSegments(ctx context.Context) int {
 	maxIdleTime := sc.idleTimeout
 
 	now := time.Now().UnixNano()
 	idleThreshold := now - maxIdleTime.Nanoseconds()
 
-	segs, _ := sc.segments(false)
+	segs, _ := sc.segments(ctx, false)
 	closedCount := 0
 
 	for _, seg := range segs {
@@ -551,7 +551,7 @@ func (sc *segmentController[T, O]) open() error {
 			}
 			segmentEnd = parsedEnd
 		}
-		_, loadErr := sc.load(start, segmentEnd, sc.location)
+		_, loadErr := sc.load(context.Background(), start, segmentEnd, sc.location)
 		return loadErr
 	})
 	if len(invalidSegments) > 0 {
@@ -563,7 +563,7 @@ func (sc *segmentController[T, O]) open() error {
 	return err
 }
 
-func (sc *segmentController[T, O]) create(start time.Time) (*segment[T, O], error) {
+func (sc *segmentController[T, O]) create(ctx context.Context, start time.Time) (*segment[T, O], error) {
 	// Reject epoch/near-epoch timestamps caused by zero MinTimestamp flowing through sync paths.
 	// BanyanDB is an APM database -- no legitimate data predates the year 2000.
 	if start.UnixNano() <= 0 {
@@ -579,19 +579,37 @@ func (sc *segmentController[T, O]) create(start time.Time) (*segment[T, O], erro
 		}
 	}
 	options := sc.getOptions()
-	start = options.SegmentInterval.Unit.Standard(start)
+	// Anchor stdEnd to the aligned start before any bump so end stays on the
+	// global grid even when start is bumped past a legacy off-grid neighbor;
+	// subsequent segments then self-heal back to the grid.
+	alignedStart := options.SegmentInterval.Standard(start)
+	stdEnd := options.SegmentInterval.NextTime(alignedStart)
+	start = alignedStart
+	// sc.lst is sorted ascending by start time with non-overlapping ranges;
+	// a single pass bumps start past every legacy segment that swallows it
+	// (each next segment.Start >= previous.End).
 	var next *segment[T, O]
 	for _, s := range sc.lst {
 		if s.Contains(start.UnixNano()) {
-			return s, nil
+			start = s.End
+			continue
 		}
 		if next == nil && s.Start.After(start) {
 			next = s
 		}
 	}
-	stdEnd := options.SegmentInterval.NextTime(start)
 	var end time.Time
 	if next != nil && next.Start.Before(stdEnd) {
+		// `next` starts inside the current grid bucket - a legacy off-grid
+		// segment whose TTL hasn't elapsed. Cap end at next.Start to avoid
+		// overlap; surfacing this at Info level lets operators see the
+		// abnormal span until the legacy neighbor ages out.
+		sc.l.Info().
+			Stringer("alignedStart", alignedStart).
+			Stringer("bumpedStart", start).
+			Stringer("nextStart", next.Start).
+			Stringer("stdEnd", stdEnd).
+			Msg("new segment span is shorter than configured SegmentInterval due to an unaligned legacy neighbor")
 		end = next.Start
 	} else {
 		end = stdEnd
@@ -618,7 +636,7 @@ func (sc *segmentController[T, O]) create(start time.Time) (*segment[T, O], erro
 	if n != len(data) {
 		logger.Panicf("unexpected number of bytes written to %s; got %d; want %d", metadataPath, n, len(data))
 	}
-	return sc.load(start, end, sc.location)
+	return sc.load(ctx, start, end, sc.location)
 }
 
 func (sc *segmentController[T, O]) sortLst() {
@@ -627,10 +645,10 @@ func (sc *segmentController[T, O]) sortLst() {
 	})
 }
 
-func (sc *segmentController[T, O]) load(start, end time.Time, root string) (seg *segment[T, O], err error) {
+func (sc *segmentController[T, O]) load(ctx context.Context, start, end time.Time, root string) (seg *segment[T, O], err error) {
 	suffix := sc.format(start)
 	segPath := path.Join(root, fmt.Sprintf(segTemplate, suffix))
-	ctx := common.SetPosition(context.WithValue(context.Background(), logger.ContextKey, sc.l), func(_ common.Position) common.Position {
+	ctx = common.SetPosition(context.WithValue(ctx, logger.ContextKey, sc.l), func(_ common.Position) common.Position {
 		return sc.position
 	})
 	seg, err = sc.openSegment(ctx, start, end, segPath, suffix, sc.groupCache)
@@ -643,7 +661,7 @@ func (sc *segmentController[T, O]) load(start, end time.Time, root string) (seg 
 }
 
 func (sc *segmentController[T, O]) remove(deadline time.Time) (hasSegment bool, err error) {
-	ss, _ := sc.segments(false)
+	ss, _ := sc.segments(context.Background(), false)
 	for _, s := range ss {
 		if s.Before(deadline) {
 			hasSegment = true
@@ -665,7 +683,7 @@ func (sc *segmentController[T, O]) getExpiredSegmentsTimeRange() *timestamp.Time
 		IncludeStart: true,
 		IncludeEnd:   false,
 	}
-	ss, _ := sc.segments(false)
+	ss, _ := sc.segments(context.Background(), false)
 	for _, s := range ss {
 		if s.Before(deadline) {
 			if timeRange.Start.IsZero() {
@@ -681,7 +699,7 @@ func (sc *segmentController[T, O]) getExpiredSegmentsTimeRange() *timestamp.Time
 func (sc *segmentController[T, O]) deleteExpiredSegments(segmentSuffixes []string) int64 {
 	deadline := time.Now().Local().Add(-sc.opts.TTL.estimatedDuration())
 	var count int64
-	ss, _ := sc.segments(false)
+	ss, _ := sc.segments(context.Background(), false)
 	sc.l.Info().Str("segment_suffixes", fmt.Sprintf("%s", segmentSuffixes)).
 		Str("ttl", fmt.Sprintf("%d(%s)", sc.opts.TTL.Num, sc.opts.TTL.Unit)).
 		Str("deadline", deadline.String()).

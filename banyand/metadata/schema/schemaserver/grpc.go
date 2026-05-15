@@ -36,6 +36,7 @@ import (
 	"github.com/apache/skywalking-banyandb/banyand/property/db"
 	"github.com/apache/skywalking-banyandb/pkg/logger"
 	"github.com/apache/skywalking-banyandb/pkg/meter"
+	"github.com/apache/skywalking-banyandb/pkg/run"
 )
 
 var schemaServerScope = observability.RootScope.SubScope("schema_server")
@@ -297,7 +298,7 @@ func (s *schemaUpdateServer) WatchSchemas(
 
 	reqCh := make(chan *schemav1.WatchSchemasRequest, 1)
 	reqErrCh := make(chan error, 1)
-	go func() {
+	run.Go(stream.Context(), "schema-watcher-recv", s.l, func(_ context.Context) {
 		for {
 			req, err := stream.Recv()
 			if err != nil {
@@ -311,7 +312,7 @@ func (s *schemaUpdateServer) WatchSchemas(
 			}
 			reqCh <- req
 		}
-	}()
+	})
 
 	for {
 		select {

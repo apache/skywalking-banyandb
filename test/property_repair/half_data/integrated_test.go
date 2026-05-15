@@ -195,8 +195,11 @@ var _ = ginkgo.Describe("Property Repair Half Data Test", ginkgo.Ordered, func()
 				gomega.Expect(metrics.IsHealthy).To(gomega.BeTrue(),
 					fmt.Sprintf("Node %s should be healthy before verification: %s",
 						metrics.NodeName, metrics.ErrorMessage))
-				fmt.Printf("- %s: total_propagation_count=%d, repair_success_count=%d\n",
-					metrics.NodeName, metrics.TotalPropagationCount, metrics.RepairSuccessCount)
+				fmt.Printf("- %s: total_propagation_count=%d, repair_success_count=%d, repair_failure_count=%d, "+
+					"per_property_timeout=%d, total_coalesced=%d, success_latency_count=%d, success_latency_sum_sec=%.4f\n",
+					metrics.NodeName, metrics.TotalPropagationCount, metrics.RepairSuccessCount,
+					metrics.RepairFailureCount, metrics.RepairPerPropertyTimeoutCount, metrics.TotalCoalesced,
+					metrics.RepairSuccessLatencyCount, metrics.RepairSuccessLatencySumSeconds)
 			}
 
 			fmt.Println("\n=== Triggering property repair by waiting for scheduled repair cycle ===")

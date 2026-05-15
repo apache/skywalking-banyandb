@@ -23,6 +23,8 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"slices"
+	"sort"
 	"strconv"
 	"sync"
 	"sync/atomic"
@@ -350,7 +352,7 @@ func TestCloseIdleAndSelectSegments(t *testing.T) {
 	seg2.lastAccessed.Store(time.Now().UnixNano())
 
 	// Close idle segments
-	closedCount := sc.closeIdleSegments()
+	closedCount := sc.closeIdleSegments(context.Background())
 
 	// We should have closed 2 segments (seg1 and seg3)
 	assert.Equal(t, 2, closedCount)
@@ -609,7 +611,7 @@ func TestDeleteExpiredSegmentsWithClosedSegments(t *testing.T) {
 	segments[5].lastAccessed.Store(activeTime) // day6 - not expired
 
 	// Close idle segments
-	closedCount := sc.closeIdleSegments()
+	closedCount := sc.closeIdleSegments(context.Background())
 	assert.Equal(t, 3, closedCount, "Should have closed 3 segments")
 
 	// Verify segments 0, 2, and 4 are closed
@@ -689,7 +691,7 @@ func TestCreateSegmentWritesJSONMetadata(t *testing.T) {
 	now := time.Now().UTC()
 	startTime := time.Date(now.Year(), now.Month(), now.Day(), 0, 0, 0, 0, time.UTC)
 
-	seg, createErr := sc.create(startTime)
+	seg, createErr := sc.create(context.Background(), startTime)
 	require.NoError(t, createErr)
 	require.NotNil(t, seg)
 
@@ -1177,4 +1179,455 @@ func TestSegment_ConcurrentReopenAndClose_NoPanic(t *testing.T) {
 			"segment %s leaked references", s.suffix)
 		require.Nil(t, s.index, "segment %s should be cleaned up", s.suffix)
 	}
+}
+
+// newAlignmentTestController is a compact helper for tests covering the
+// epoch-aligned segment.create() behavior introduced by the lifecycle fix.
+// It spins up a real segmentController backed by a temp dir, with the given
+// SegmentInterval, and returns the controller plus a cleanup function.
+func newAlignmentTestController(
+	t *testing.T, interval IntervalRule,
+) (*segmentController[mockTSTable, mockTSTableOpener], string, func()) {
+	t.Helper()
+	tempDir, cleanup := setupTestEnvironment(t)
+
+	ctx := context.Background()
+	l := logger.GetLogger("test-alignment")
+	ctx = context.WithValue(ctx, logger.ContextKey, l)
+	ctx = common.SetPosition(ctx, func(_ common.Position) common.Position {
+		return common.Position{
+			Database: "test-db",
+			Stage:    "alignment",
+		}
+	})
+
+	opts := TSDBOpts[mockTSTable, mockTSTableOpener]{
+		TSTableCreator: func(_ fs.FileSystem, _ string, _ common.Position, _ *logger.Logger,
+			_ timestamp.TimeRange, _ mockTSTableOpener, _ any,
+		) (mockTSTable, error) {
+			return mockTSTable{ID: common.ShardID(0)}, nil
+		},
+		ShardNum:                       1,
+		SegmentInterval:                interval,
+		TTL:                            IntervalRule{Unit: DAY, Num: 60},
+		SeriesIndexFlushTimeoutSeconds: 10,
+		SeriesIndexCacheMaxBytes:       1024 * 1024,
+	}
+
+	serviceCache := NewServiceCache().(*serviceCache)
+	sc := newSegmentController[mockTSTable, mockTSTableOpener](
+		ctx,
+		tempDir,
+		l,
+		opts,
+		nil,
+		nil,
+		5*time.Minute,
+		fs.NewLocalFileSystemWithLoggerAndLimit(logger.GetLogger("storage"), opts.MemoryLimit),
+		serviceCache,
+		group,
+	)
+	return sc, tempDir, cleanup
+}
+
+// TestIntervalRule_Standard_AlignsToEpochGrid pins the alignment math itself.
+// Two timestamps in the same N*Unit bucket measured from epoch must round
+// down to the exact same instant; two timestamps in adjacent buckets must
+// round to instants exactly N*Unit apart.
+func TestIntervalRule_Standard_AlignsToEpochGrid(t *testing.T) {
+	//nolint:govet // fieldalignment: test struct optimization not critical
+	cases := []struct {
+		name     string
+		ir       IntervalRule
+		probes   []time.Time
+		expected []time.Time
+	}{
+		{
+			name: "DAY Num=15 matches calculateTargetSegments grid",
+			ir:   IntervalRule{Unit: DAY, Num: 15},
+			probes: []time.Time{
+				time.Date(2026, 4, 7, 0, 0, 0, 0, time.UTC),
+				time.Date(2026, 4, 16, 6, 0, 0, 0, time.UTC),
+				time.Date(2026, 4, 19, 23, 59, 59, 0, time.UTC),
+				time.Date(2026, 4, 22, 0, 0, 0, 0, time.UTC),
+				time.Date(2026, 5, 7, 12, 30, 0, 0, time.UTC),
+			},
+			expected: []time.Time{
+				time.Date(2026, 4, 7, 0, 0, 0, 0, time.UTC),
+				time.Date(2026, 4, 7, 0, 0, 0, 0, time.UTC),
+				time.Date(2026, 4, 7, 0, 0, 0, 0, time.UTC),
+				time.Date(2026, 4, 22, 0, 0, 0, 0, time.UTC),
+				time.Date(2026, 5, 7, 0, 0, 0, 0, time.UTC),
+			},
+		},
+		{
+			name: "DAY Num=5",
+			ir:   IntervalRule{Unit: DAY, Num: 5},
+			// 1970-01-01 + N*5 day boundaries near today: 2026-04-02 (day 20545),
+			// 2026-04-07 (day 20550), 2026-04-12 (day 20555).
+			probes: []time.Time{
+				time.Date(2026, 4, 2, 0, 0, 0, 0, time.UTC),
+				time.Date(2026, 4, 3, 6, 0, 0, 0, time.UTC),
+				time.Date(2026, 4, 6, 23, 0, 0, 0, time.UTC),
+				time.Date(2026, 4, 7, 0, 0, 0, 0, time.UTC),
+			},
+			expected: []time.Time{
+				time.Date(2026, 4, 2, 0, 0, 0, 0, time.UTC),
+				time.Date(2026, 4, 2, 0, 0, 0, 0, time.UTC),
+				time.Date(2026, 4, 2, 0, 0, 0, 0, time.UTC),
+				time.Date(2026, 4, 7, 0, 0, 0, 0, time.UTC),
+			},
+		},
+		{
+			name: "HOUR Num=6",
+			ir:   IntervalRule{Unit: HOUR, Num: 6},
+			probes: []time.Time{
+				time.Date(2026, 4, 19, 0, 0, 0, 0, time.UTC),
+				time.Date(2026, 4, 19, 5, 59, 59, 0, time.UTC),
+				time.Date(2026, 4, 19, 6, 0, 0, 0, time.UTC),
+				time.Date(2026, 4, 19, 11, 30, 0, 0, time.UTC),
+				time.Date(2026, 4, 19, 12, 0, 0, 0, time.UTC),
+			},
+			expected: []time.Time{
+				time.Date(2026, 4, 19, 0, 0, 0, 0, time.UTC),
+				time.Date(2026, 4, 19, 0, 0, 0, 0, time.UTC),
+				time.Date(2026, 4, 19, 6, 0, 0, 0, time.UTC),
+				time.Date(2026, 4, 19, 6, 0, 0, 0, time.UTC),
+				time.Date(2026, 4, 19, 12, 0, 0, 0, time.UTC),
+			},
+		},
+		{
+			name:     "DAY Num=1 matches old Unit.Standard behavior",
+			ir:       IntervalRule{Unit: DAY, Num: 1},
+			probes:   []time.Time{time.Date(2026, 4, 19, 6, 30, 0, 0, time.UTC)},
+			expected: []time.Time{time.Date(2026, 4, 19, 0, 0, 0, 0, time.UTC)},
+		},
+		{
+			// Pre-epoch inputs: floor division puts them in the bucket below
+			// rather than collapsing to epoch as truncated division would.
+			name: "DAY Num=15 pre-epoch uses floor division",
+			ir:   IntervalRule{Unit: DAY, Num: 15},
+			probes: []time.Time{
+				time.Date(1969, 12, 25, 0, 0, 0, 0, time.UTC),
+				time.Date(1969, 12, 31, 23, 59, 59, 0, time.UTC),
+			},
+			expected: []time.Time{
+				time.Date(1969, 12, 17, 0, 0, 0, 0, time.UTC),
+				time.Date(1969, 12, 17, 0, 0, 0, 0, time.UTC),
+			},
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			require.Equal(t, len(tc.probes), len(tc.expected))
+			for i, p := range tc.probes {
+				got := tc.ir.Standard(p)
+				assert.Equal(t, tc.expected[i], got,
+					"Standard(%s) under %d %s expected %s got %s",
+					p.Format(time.RFC3339), tc.ir.Num, tc.ir.Unit.String(),
+					tc.expected[i].Format(time.RFC3339), got.Format(time.RFC3339))
+			}
+		})
+	}
+}
+
+// TestIntervalRule_Standard_PreservesLocation verifies that the returned
+// time keeps the input's Location and lands on a local-day midnight (DAY)
+// or local-hour boundary (HOUR) anchored in the caller's timezone. Under the
+// per-timezone grid, the absolute instant naturally differs across timezones.
+func TestIntervalRule_Standard_PreservesLocation(t *testing.T) {
+	shanghai := time.FixedZone("CST", 8*3600)
+	losAngeles := time.FixedZone("PST", -8*3600)
+
+	cases := []struct {
+		probe time.Time
+		ir    IntervalRule
+	}{
+		{time.Date(2026, 4, 19, 6, 0, 0, 0, time.UTC), IntervalRule{Unit: DAY, Num: 15}},
+		{time.Date(2026, 4, 19, 11, 30, 0, 0, time.UTC), IntervalRule{Unit: HOUR, Num: 6}},
+	}
+	for _, c := range cases {
+		for _, loc := range []*time.Location{time.UTC, shanghai, losAngeles} {
+			got := c.ir.Standard(c.probe.In(loc))
+			assert.Equal(t, loc, got.Location(),
+				"Standard must return time in input.Location(); ir=%+v loc=%s", c.ir, loc)
+			switch c.ir.Unit {
+			case DAY:
+				assert.Equal(t, 0, got.Hour(), "DAY bucket must align to local-day midnight")
+				assert.Equal(t, 0, got.Minute())
+				assert.Equal(t, 0, got.Second())
+			case HOUR:
+				assert.Equal(t, 0, got.Minute(), "HOUR bucket must align to local-hour boundary")
+				assert.Equal(t, 0, got.Second())
+			}
+		}
+	}
+}
+
+// TestCreateSegment_OutOfOrderArrival_SameBucket reproduces the production
+// truncation observed on demo-banyandb-data-cold-0 on 2026-04-30 where a part
+// with MinTimestamp ~2026-04-19 created seg-20260419 first and a later-
+// processed part with MinTimestamp ~2026-04-16 produced a 3-day truncated
+// seg-20260416. With Standard() honoring Num, both timestamps resolve to the
+// same epoch-aligned bucket [04/07, 04/22), so the second create returns the
+// same segment instead of creating a truncated neighbor.
+func TestCreateSegment_OutOfOrderArrival_SameBucket(t *testing.T) {
+	sc, _, cleanup := newAlignmentTestController(t, IntervalRule{Unit: DAY, Num: 15})
+	defer cleanup()
+
+	laterFirst := time.Date(2026, 4, 19, 6, 0, 0, 0, time.UTC)
+	earlierAfter := time.Date(2026, 4, 16, 6, 0, 0, 0, time.UTC)
+	expectedBucketStart := time.Date(2026, 4, 7, 0, 0, 0, 0, time.UTC)
+	expectedBucketEnd := time.Date(2026, 4, 22, 0, 0, 0, 0, time.UTC)
+
+	seg1, err := sc.create(context.Background(), laterFirst)
+	require.NoError(t, err)
+	require.NotNil(t, seg1)
+	defer seg1.DecRef()
+
+	seg2, err := sc.create(context.Background(), earlierAfter)
+	require.NoError(t, err)
+	require.NotNil(t, seg2)
+
+	assert.Same(t, seg1, seg2,
+		"both timestamps fall in the same 15d bucket; create() must reuse the existing segment")
+	assert.Equal(t, expectedBucketStart, seg1.Start,
+		"segment must start at the epoch-aligned bucket boundary, not at the first arrival's day")
+	assert.Equal(t, expectedBucketEnd, seg1.End)
+	assert.Equal(t, 15*24*time.Hour, seg1.End.Sub(seg1.Start))
+}
+
+// TestCreateSegment_OutOfOrderArrival_AdjacentBuckets covers the case where
+// the late-arrival timestamp falls in a strictly different epoch bucket from
+// the first-arrival one. The new segment must occupy a clean N*Unit span
+// without being truncated by the existing later segment - the truncation
+// branch in create() must collapse to "stdEnd == next.Start" exactly, leaving
+// span = N*Unit.
+func TestCreateSegment_OutOfOrderArrival_AdjacentBuckets(t *testing.T) {
+	sc, _, cleanup := newAlignmentTestController(t, IntervalRule{Unit: DAY, Num: 15})
+	defer cleanup()
+
+	laterFirst := time.Date(2026, 5, 5, 6, 0, 0, 0, time.UTC)    // bucket [04/22, 05/07)
+	earlierAfter := time.Date(2026, 4, 15, 6, 0, 0, 0, time.UTC) // bucket [04/07, 04/22)
+
+	seg1, err := sc.create(context.Background(), laterFirst)
+	require.NoError(t, err)
+	require.NotNil(t, seg1)
+	defer seg1.DecRef()
+	assert.Equal(t, time.Date(2026, 4, 22, 0, 0, 0, 0, time.UTC), seg1.Start)
+	assert.Equal(t, time.Date(2026, 5, 7, 0, 0, 0, 0, time.UTC), seg1.End)
+	assert.Equal(t, 15*24*time.Hour, seg1.End.Sub(seg1.Start))
+
+	seg2, err := sc.create(context.Background(), earlierAfter)
+	require.NoError(t, err)
+	require.NotNil(t, seg2)
+	defer seg2.DecRef()
+	assert.NotSame(t, seg1, seg2,
+		"timestamps in different buckets must not collapse to one segment")
+	assert.Equal(t, time.Date(2026, 4, 7, 0, 0, 0, 0, time.UTC), seg2.Start)
+	assert.Equal(t, time.Date(2026, 4, 22, 0, 0, 0, 0, time.UTC), seg2.End,
+		"new earlier segment must abut next.Start with stdEnd==next.Start (no internal truncation)")
+	assert.Equal(t, 15*24*time.Hour, seg2.End.Sub(seg2.Start))
+}
+
+// TestCreateSegment_HourInterval_OutOfOrder verifies the same alignment
+// guarantee for HOUR-based segment intervals (Num=6).
+func TestCreateSegment_HourInterval_OutOfOrder(t *testing.T) {
+	sc, _, cleanup := newAlignmentTestController(t, IntervalRule{Unit: HOUR, Num: 6})
+	defer cleanup()
+
+	t1 := time.Date(2026, 4, 19, 11, 30, 0, 0, time.UTC) // bucket [06:00, 12:00)
+	t2 := time.Date(2026, 4, 19, 8, 15, 0, 0, time.UTC)  // same bucket
+	t3 := time.Date(2026, 4, 19, 13, 0, 0, 0, time.UTC)  // bucket [12:00, 18:00)
+
+	seg1, err := sc.create(context.Background(), t1)
+	require.NoError(t, err)
+	defer seg1.DecRef()
+	assert.Equal(t, time.Date(2026, 4, 19, 6, 0, 0, 0, time.UTC), seg1.Start)
+	assert.Equal(t, 6*time.Hour, seg1.End.Sub(seg1.Start))
+
+	seg2, err := sc.create(context.Background(), t2)
+	require.NoError(t, err)
+	assert.Same(t, seg1, seg2, "08:15 must reuse the [06:00, 12:00) segment")
+
+	seg3, err := sc.create(context.Background(), t3)
+	require.NoError(t, err)
+	defer seg3.DecRef()
+	assert.NotSame(t, seg1, seg3)
+	assert.Equal(t, time.Date(2026, 4, 19, 12, 0, 0, 0, time.UTC), seg3.Start)
+	assert.Equal(t, 6*time.Hour, seg3.End.Sub(seg3.Start))
+}
+
+// TestCreateSegment_ConcurrentCreates_DeterministicAlignment exercises the
+// receiver under contention: many goroutines call create() with random
+// timestamps spread across a window that covers multiple epoch-aligned
+// buckets. Whatever interleaving the scheduler picks, the resulting segment
+// set must (a) cover every probe timestamp, (b) all start on epoch-aligned
+// boundaries, (c) every span be exactly the configured N*Unit, and (d) be
+// non-overlapping. This pins down the property that motivated the fix:
+// alignment is determined by the global grid, not by arrival order.
+func TestCreateSegment_ConcurrentCreates_DeterministicAlignment(t *testing.T) {
+	sc, _, cleanup := newAlignmentTestController(t, IntervalRule{Unit: DAY, Num: 15})
+	defer cleanup()
+
+	// Probe range covers 4 epoch-aligned 15d buckets:
+	// [03/08, 03/23), [03/23, 04/07), [04/07, 04/22), [04/22, 05/07).
+	rangeStart := time.Date(2026, 3, 10, 0, 0, 0, 0, time.UTC)
+	rangeEndExclusive := time.Date(2026, 5, 5, 0, 0, 0, 0, time.UTC)
+	rangeNanos := rangeEndExclusive.UnixNano() - rangeStart.UnixNano()
+
+	const goroutines = 32
+	const probesPerGoroutine = 64
+	const knuthMul = uint64(0x9E3779B97F4A7C15)
+	probes := make([]time.Time, 0, goroutines*probesPerGoroutine)
+	for i := 0; i < goroutines*probesPerGoroutine; i++ {
+		offset := int64((uint64(i+1)*knuthMul)>>1) % rangeNanos
+		probes = append(probes, time.Unix(0, rangeStart.UnixNano()+offset).UTC())
+	}
+
+	var wg sync.WaitGroup
+	wg.Add(goroutines)
+	for g := 0; g < goroutines; g++ {
+		go func(idx int) {
+			defer wg.Done()
+			start := idx * probesPerGoroutine
+			end := start + probesPerGoroutine
+			for _, ts := range probes[start:end] {
+				seg, err := sc.create(context.Background(), ts)
+				if err != nil {
+					t.Errorf("create(%s) returned error: %v", ts.Format(time.RFC3339), err)
+					return
+				}
+				if seg == nil {
+					t.Errorf("create(%s) returned nil segment", ts.Format(time.RFC3339))
+					return
+				}
+				if !seg.Contains(ts.UnixNano()) {
+					t.Errorf("probe %s landed in segment [%s, %s) which does not contain it",
+						ts.Format(time.RFC3339), seg.Start.Format(time.RFC3339), seg.End.Format(time.RFC3339))
+				}
+				seg.DecRef()
+			}
+		}(g)
+	}
+	wg.Wait()
+
+	sc.RLock()
+	segs := slices.Clone(sc.lst)
+	sc.RUnlock()
+
+	require.NotEmpty(t, segs, "concurrent creates must produce at least one segment")
+	sort.Slice(segs, func(i, j int) bool { return segs[i].Start.Before(segs[j].Start) })
+
+	epoch := time.Date(1970, 1, 1, 0, 0, 0, 0, time.UTC)
+	fifteenDays := 15 * 24 * time.Hour
+	for i, seg := range segs {
+		assert.Equal(t, fifteenDays, seg.End.Sub(seg.Start),
+			"segment[%d] %s span must be exactly 15d, got %v",
+			i, seg.suffix, seg.End.Sub(seg.Start))
+		offset := seg.Start.Sub(epoch)
+		assert.Equal(t, time.Duration(0), offset%fifteenDays,
+			"segment[%d] start %s must be on the epoch-aligned 15d grid",
+			i, seg.Start.Format(time.RFC3339))
+		if i > 0 {
+			assert.False(t, segs[i-1].End.After(seg.Start),
+				"segments must not overlap: prev.End=%s next.Start=%s",
+				segs[i-1].End.Format(time.RFC3339), seg.Start.Format(time.RFC3339))
+		}
+	}
+}
+
+// TestCreateSegment_LegacyOffGridNeighbour_TransitionThenGrid: a pre-fix
+// off-grid segment on disk must produce a transition segment that ends on
+// the global grid, so subsequent segments self-heal back to it.
+func TestCreateSegment_LegacyOffGridNeighbour_TransitionThenGrid(t *testing.T) {
+	sc, tempDir, cleanup := newAlignmentTestController(t, IntervalRule{Unit: DAY, Num: 15})
+	defer cleanup()
+
+	ctx := context.Background()
+	l := logger.GetLogger("test-legacy-transition")
+	ctx = context.WithValue(ctx, logger.ContextKey, l)
+	ctx = common.SetPosition(ctx, func(_ common.Position) common.Position {
+		return common.Position{Database: "test-db", Stage: "cold"}
+	})
+
+	// Inject a legacy off-grid segment [2026-05-01, 2026-05-16). The new 15d
+	// epoch grid puts buckets at 04/22, 05/07, 05/22, 06/06, ...; legacy
+	// straddles 05/07 and ends inside [05/07, 05/22).
+	legacyStart := time.Date(2026, 5, 1, 0, 0, 0, 0, time.UTC)
+	legacyEnd := time.Date(2026, 5, 16, 0, 0, 0, 0, time.UTC)
+	suffix := legacyStart.Format(dayFormat)
+	segPath := filepath.Join(tempDir, fmt.Sprintf("seg-%s", suffix))
+	require.NoError(t, os.MkdirAll(segPath, DirPerm))
+	require.NoError(t, os.WriteFile(filepath.Join(segPath, metadataFilename), []byte(currentVersion), FilePerm))
+	legacy, err := sc.openSegment(ctx, legacyStart, legacyEnd, segPath, suffix, sc.groupCache)
+	require.NoError(t, err)
+	sc.lst = append(sc.lst, legacy)
+	sc.sortLst()
+
+	// First write past legacy.End: aligned start (05/07) is inside legacy,
+	// bump pushes start to 05/16 (legacy.End), but stdEnd was locked to the
+	// original grid bucket end (05/22). So the transition segment is shorter
+	// than 15d but still ends on the grid.
+	probe := time.Date(2026, 5, 17, 6, 0, 0, 0, time.UTC)
+	transition, err := sc.create(ctx, probe)
+	require.NoError(t, err)
+	require.NotNil(t, transition)
+	defer transition.DecRef()
+
+	gridBoundary := time.Date(2026, 5, 22, 0, 0, 0, 0, time.UTC)
+	assert.True(t, transition.Contains(probe.UnixNano()),
+		"transition segment must cover the probe; got [%s, %s)",
+		transition.Start.Format(time.RFC3339), transition.End.Format(time.RFC3339))
+	assert.Equal(t, legacyEnd, transition.Start,
+		"start must be bumped to legacy.End (no overlap, no misroute)")
+	assert.Equal(t, gridBoundary, transition.End,
+		"end must land on the next 15d-from-epoch boundary, not legacy.End+15d")
+	assert.Less(t, transition.End.Sub(transition.Start), 15*24*time.Hour,
+		"transition segment span is expected to be shorter than the configured SegmentInterval")
+
+	// Second write past the transition segment: aligned start lands cleanly
+	// on the next grid bucket [05/22, 06/06) and produces a full 15d segment.
+	postProbe := time.Date(2026, 5, 25, 6, 0, 0, 0, time.UTC)
+	gridSeg, err := sc.create(ctx, postProbe)
+	require.NoError(t, err)
+	require.NotNil(t, gridSeg)
+	defer gridSeg.DecRef()
+
+	assert.Equal(t, gridBoundary, gridSeg.Start,
+		"first post-transition segment must start on the global grid")
+	assert.Equal(t, time.Date(2026, 6, 6, 0, 0, 0, 0, time.UTC), gridSeg.End,
+		"first post-transition segment must span a full 15d on the grid")
+	assert.Equal(t, 15*24*time.Hour, gridSeg.End.Sub(gridSeg.Start),
+		"transition self-heals: subsequent segments are full Num*Unit")
+}
+
+// TestCreateSegment_PersistedMetadataReflectsAlignedRange writes a segment
+// via create() with an unaligned timestamp, then verifies that the on-disk
+// metadata records the epoch-aligned start/end - the alignment must survive
+// a process restart.
+func TestCreateSegment_PersistedMetadataReflectsAlignedRange(t *testing.T) {
+	sc, tempDir, cleanup := newAlignmentTestController(t, IntervalRule{Unit: DAY, Num: 15})
+	defer cleanup()
+
+	probe := time.Date(2026, 4, 16, 6, 30, 0, 0, time.UTC)
+	expectedStart := time.Date(2026, 4, 7, 0, 0, 0, 0, time.UTC)
+	expectedEnd := time.Date(2026, 4, 22, 0, 0, 0, 0, time.UTC)
+
+	seg, err := sc.create(context.Background(), probe)
+	require.NoError(t, err)
+	require.NotNil(t, seg)
+	assert.Equal(t, expectedStart, seg.Start)
+	assert.Equal(t, expectedEnd, seg.End)
+	seg.DecRef()
+
+	suffix := expectedStart.Format(dayFormat)
+	metadataPath := filepath.Join(tempDir, fmt.Sprintf("seg-%s", suffix), metadataFilename)
+	rawMeta, readErr := os.ReadFile(metadataPath)
+	require.NoError(t, readErr)
+	meta, parseErr := readSegmentMeta(rawMeta)
+	require.NoError(t, parseErr)
+	assert.Equal(t, currentVersion, meta.Version)
+	assert.Equal(t, expectedEnd.Format(time.RFC3339Nano), meta.EndTime,
+		"persisted endTime must reflect the epoch-aligned bucket end, not start+15d from the probe day")
 }

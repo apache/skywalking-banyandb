@@ -19,9 +19,9 @@ package measure
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"path"
-	"strconv"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -47,8 +47,16 @@ import (
 	"github.com/apache/skywalking-banyandb/pkg/logger"
 	"github.com/apache/skywalking-banyandb/pkg/meter"
 	resourceSchema "github.com/apache/skywalking-banyandb/pkg/schema"
+	"github.com/apache/skywalking-banyandb/pkg/schema/registry"
 	"github.com/apache/skywalking-banyandb/pkg/timestamp"
 )
+
+// measureRegistryKinds is the kind set the measure schemaRepo registers with
+// the per-node NodeRepoRegistry. TopNAggregation is intentionally excluded —
+// schemaRepo does not store TopN entries, so the cluster barrier reads TopN
+// keys via the property schemaCache instead. Property kinds are similarly
+// out-of-scope for the per-service repos.
+const measureRegistryKinds = schema.KindGroup | schema.KindMeasure | schema.KindIndexRule | schema.KindIndexRuleBinding
 
 const (
 	// TopNSchemaName is the name of the top n result schema.
@@ -112,6 +120,7 @@ func newSchemaRepo(path string, svc *standalone, nodeLabels map[string]string, n
 		resourceSchema.NewMetrics(svc.omr.With(metadataScope)),
 	)
 	sr.start()
+	sr.registerWithNodeRepo()
 	return sr
 }
 
@@ -134,6 +143,7 @@ func newLiaisonSchemaRepo(path string, svc *liaison, measureDataNodeRegistry grp
 		resourceSchema.NewMetrics(svc.omr.With(metadataScope)),
 	)
 	sr.start()
+	sr.registerWithNodeRepo()
 	return sr
 }
 
@@ -167,6 +177,19 @@ func (sr *schemaRepo) start() {
 	sr.metadata.
 		RegisterHandler("measure", schema.KindGroup|schema.KindMeasure|schema.KindIndexRuleBinding|schema.KindIndexRule|schema.KindTopNAggregation,
 			sr)
+}
+
+// registerWithNodeRepo joins this schemaRepo to the per-node aggregator so the
+// cluster barrier and NodeSchemaStatusService route Group/Measure/IndexRule/
+// IndexRuleBinding lookups through the same cache the executor consults via
+// LoadGroup / LoadResource. Idempotent and safe to call from every measure
+// constructor (standalone / data / liaison).
+func (sr *schemaRepo) registerWithNodeRepo() {
+	metaSvc, ok := sr.metadata.(metadata.Service)
+	if !ok {
+		return
+	}
+	registry.MaybeRegister(metaSvc.NodeRepoRegistry(), measureRegistryKinds, sr.Repository)
 }
 
 func (sr *schemaRepo) Measure(metadata *commonv1.Metadata) (Measure, error) {
@@ -224,6 +247,9 @@ func (sr *schemaRepo) OnAddOrUpdate(metadata schema.Metadata) {
 			sr.l.Warn().Err(err).Msg("measure is ignored")
 			return
 		}
+		if subsetWarn := validate.CheckShardingKeySubset(m); subsetWarn != nil {
+			sr.l.Warn().Err(subsetWarn).Str("measure", m.GetMetadata().GetName()).Msg("sharding key is not a subset of entity tags")
+		}
 		sr.SendMetadataEvent(resourceSchema.MetadataEvent{
 			Typ:      resourceSchema.EventAddOrUpdate,
 			Kind:     resourceSchema.EventKindResource,
@@ -271,12 +297,12 @@ func (sr *schemaRepo) OnAddOrUpdate(metadata schema.Metadata) {
 			sr.l.Warn().Err(err).Msg("topNAggregation is ignored")
 			return
 		}
-		manager := sr.getSteamingManager(topNSchema.SourceMeasure, sr.pipeline)
+		manager := sr.getSteamingManager(sr.ctx, topNSchema.SourceMeasure, sr.pipeline)
 		if manager == nil {
 			// group is closing; skip registering
 			return
 		}
-		manager.register(topNSchema)
+		manager.register(sr.ctx, topNSchema)
 	default:
 	}
 }
@@ -671,7 +697,7 @@ func (s *supplier) OpenResource(spec resourceSchema.Resource) (resourceSchema.In
 	measureSchema := spec.Schema().(*databasev1.Measure)
 	return openMeasure(measureSpec{
 		schema: measureSchema,
-	}, s.l, s.c, s.pm, s.schemaRepo, s.queryMetrics.Load())
+	}, s.l, s.c, s.pm, s.schemaRepo, s.queryMetrics.Load(), s.option.vectorized)
 }
 
 func (s *supplier) ResourceSchema(md *commonv1.Metadata) (resourceSchema.ResourceSchema, error) {
@@ -785,7 +811,7 @@ func (s *queueSupplier) OpenResource(spec resourceSchema.Resource) (resourceSche
 	measureSchema := spec.Schema().(*databasev1.Measure)
 	return openMeasure(measureSpec{
 		schema: measureSchema,
-	}, s.l, nil, s.pm, s.schemaRepo, nil)
+	}, s.l, nil, s.pm, s.schemaRepo, nil, s.option.vectorized)
 }
 
 func (s *queueSupplier) ResourceSchema(md *commonv1.Metadata) (resourceSchema.ResourceSchema, error) {
@@ -913,10 +939,12 @@ func getKey(metadata *commonv1.Metadata) string {
 	return path.Join(metadata.GetGroup(), metadata.GetName())
 }
 
-// TopNParameters defines the structure for the "parameters" tag value (JSON).
+// TopNParameters defines the structure for the "parameters" tag value.
 type TopNParameters struct {
 	// Limit defines the number of top items to be kept.
-	Limit int64
+	Limit int64 `json:"limit"`
+	// FieldType indicates whether the topN values are int or float.
+	FieldType databasev1.FieldType `json:"field_type"`
 }
 
 // String implements the fmt.Stringer interface.
@@ -924,7 +952,11 @@ func (p *TopNParameters) String() string {
 	if p == nil {
 		return ""
 	}
-	return strconv.FormatInt(p.Limit, 10)
+	b, marshalErr := json.Marshal(p)
+	if marshalErr != nil {
+		return ""
+	}
+	return string(b)
 }
 
 // ParseTopNParameters decodes the JSON metadata.
@@ -932,13 +964,9 @@ func ParseTopNParameters(val string) (*TopNParameters, error) {
 	if val == "" {
 		return &TopNParameters{}, nil
 	}
-
-	limit, err := strconv.ParseInt(val, 10, 64)
-	if err != nil {
-		return nil, err
+	var params TopNParameters
+	if unmarshalErr := json.Unmarshal([]byte(val), &params); unmarshalErr != nil {
+		return nil, fmt.Errorf("invalid TopNParameters %q: %w", val, unmarshalErr)
 	}
-
-	return &TopNParameters{
-		Limit: limit,
-	}, nil
+	return &params, nil
 }

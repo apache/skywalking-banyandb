@@ -32,7 +32,9 @@ import (
 	modelv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/model/v1"
 	"github.com/apache/skywalking-banyandb/banyand/internal/sidx"
 	"github.com/apache/skywalking-banyandb/pkg/convert"
+	"github.com/apache/skywalking-banyandb/pkg/logger"
 	"github.com/apache/skywalking-banyandb/pkg/query"
+	"github.com/apache/skywalking-banyandb/pkg/run"
 )
 
 type traceBatch struct {
@@ -63,8 +65,8 @@ func newTraceBatch(seq int, capacity int) traceBatch {
 
 func staticTraceBatchSource(ctx context.Context, traceIDs []string, maxTraceSize int, keys map[string]int64) <-chan traceBatch {
 	out := make(chan traceBatch)
-
-	go func() {
+	batchSourceLogger := logger.GetLogger("trace-batch-source")
+	run.Go(ctx, "trace-batch-source", batchSourceLogger, func(_ context.Context) {
 		defer close(out)
 
 		if len(traceIDs) == 0 {
@@ -108,7 +110,7 @@ func staticTraceBatchSource(ctx context.Context, traceIDs []string, maxTraceSize
 				seq++
 			}
 		}
-	}()
+	})
 
 	return out
 }
@@ -264,7 +266,7 @@ func (t *trace) streamSIDXTraceBatches(
 	}
 	streamCtx, cancel := context.WithCancel(tracingCtx)
 	runner := newSIDXStreamRunner(ctx, streamCtx, cancel, req, maxTraceSize)
-	go func() {
+	run.Go(tracingCtx, "trace-sidx-stream", t.l, func(_ context.Context) {
 		defer func() {
 			if span != nil {
 				span.Tagf("batches_emitted", "%d", runner.batchesEmitted.Load())
@@ -272,8 +274,8 @@ func (t *trace) streamSIDXTraceBatches(
 				if dups := runner.duplicates.Load(); dups > 0 {
 					span.Tagf("duplicate_trace_ids", "%d", dups)
 				}
-				if err := runner.getSpanErr(); err != nil && !stdErrors.Is(err, context.Canceled) {
-					span.Error(err)
+				if spanErr := runner.getSpanErr(); spanErr != nil && !stdErrors.Is(spanErr, context.Canceled) {
+					span.Error(spanErr)
 				}
 				span.Stop()
 			}
@@ -282,14 +284,14 @@ func (t *trace) streamSIDXTraceBatches(
 			close(done)
 		}()
 
-		if err := runner.prepare(sidxInstances); err != nil {
+		if prepareErr := runner.prepare(sidxInstances); prepareErr != nil {
 			runner.cancel()
-			runner.emitError(out, err)
+			runner.emitError(out, prepareErr)
 			return
 		}
 
 		runner.run(out)
-	}()
+	})
 	return out, done
 }
 
@@ -421,13 +423,14 @@ func (r *sidxStreamRunner) prepare(instances []sidx.SIDX) error {
 	// for ALL error channels, even from shards without data
 	if len(allErrChannels) > 0 {
 		r.errEvents = make(chan sidxStreamError, len(allErrChannels))
-
+		errFwdLogger := logger.GetLogger("trace-sidx-error-forward")
 		for _, errSrc := range allErrChannels {
 			r.errWg.Add(1)
-			go func(index int, ch <-chan error) {
+			errIdx, errCh := errSrc.idx, errSrc.errCh
+			run.Go(r.streamCtx, "trace-sidx-error-forward", errFwdLogger, func(runCtx context.Context) {
 				defer r.errWg.Done()
-				forwardSIDXError(r.streamCtx, index, ch, r.errEvents)
-			}(errSrc.idx, errSrc.errCh)
+				forwardSIDXError(runCtx, errIdx, errCh, r.errEvents)
+			})
 		}
 
 		go func() {
@@ -690,7 +693,7 @@ func (t *trace) startBlockScanStage(
 ) <-chan *scanBatch {
 	out := make(chan *scanBatch)
 
-	go func() {
+	run.Go(ctx, "trace-block-scan", t.l, func(_ context.Context) {
 		defer close(out)
 
 		for batch := range batches {
@@ -795,7 +798,7 @@ func (t *trace) startBlockScanStage(
 			t.scanPartsInline(partSelectionCtx, parts, groupedIDs, qo, cursorCh)
 			close(cursorCh)
 		}
-	}()
+	})
 
 	return out
 }

@@ -41,6 +41,7 @@ import (
 	"github.com/apache/skywalking-banyandb/pkg/logger"
 	banyandbpath "github.com/apache/skywalking-banyandb/pkg/path"
 	"github.com/apache/skywalking-banyandb/pkg/run"
+	"github.com/apache/skywalking-banyandb/pkg/schema/registry"
 )
 
 const (
@@ -69,7 +70,8 @@ const (
 // NewClient returns a new metadata client.
 func NewClient() (Service, error) {
 	return &clientService{
-		closer: run.NewCloser(1),
+		closer:           run.NewCloser(1),
+		nodeRepoRegistry: registry.NewNodeRepoRegistry(),
 	}, nil
 }
 
@@ -80,6 +82,7 @@ type clientService struct {
 	dataBroadcaster                   bus.Broadcaster
 	liaisonBroadcaster                bus.Broadcaster
 	infoCollectorRegistry             *schema.InfoCollectorRegistry
+	nodeRepoRegistry                  *registry.NodeRepoRegistry
 	closer                            *run.Closer
 	nodeDiscoveryMode                 string
 	schemaRegistryMode                string
@@ -105,6 +108,10 @@ type clientService struct {
 
 func (s *clientService) SchemaRegistry() schema.Registry {
 	return s.schemaRegistry
+}
+
+func (s *clientService) NodeRepoRegistry() *registry.NodeRepoRegistry {
+	return s.nodeRepoRegistry
 }
 
 func (s *clientService) FlagSet() *run.FlagSet {
@@ -412,6 +419,11 @@ func (s *clientService) PropertyRegistry() schema.Property {
 
 func (s *clientService) SetMetricsRegistry(omr observability.MetricsRegistry) {
 	s.omr = omr
+}
+
+// MetricsRegistry returns the metrics registry set via SetMetricsRegistry.
+func (s *clientService) MetricsRegistry() observability.MetricsRegistry {
+	return s.omr
 }
 
 func (s *clientService) Name() string {

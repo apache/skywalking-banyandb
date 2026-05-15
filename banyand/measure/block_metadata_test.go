@@ -18,6 +18,7 @@
 package measure
 
 import (
+	"context"
 	"fmt"
 	"runtime"
 	"testing"
@@ -423,7 +424,7 @@ func TestBlockMetadataArrayCacheLimit(t *testing.T) {
 		CleanupInterval: 100 * time.Millisecond,
 		IdleTimeout:     500 * time.Millisecond,
 	}
-	cache := storage.NewServiceCacheWithConfig(cacheConfig)
+	cache := storage.NewServiceCacheWithConfig(context.Background(), cacheConfig)
 	defer cache.Close()
 
 	// Helper function to create a blockMetadataArray with controlled size
@@ -493,7 +494,7 @@ func TestBlockMetadataArrayCacheLimit(t *testing.T) {
 			CleanupInterval: 100 * time.Millisecond,
 			IdleTimeout:     500 * time.Millisecond,
 		}
-		testCache := storage.NewServiceCacheWithConfig(largeCacheConfig)
+		testCache := storage.NewServiceCacheWithConfig(context.Background(), largeCacheConfig)
 		defer testCache.Close()
 
 		// Create objects that will trigger eviction when both are stored
@@ -556,7 +557,7 @@ func TestBlockMetadataArrayCacheLimit(t *testing.T) {
 
 	t.Run("Cache respects max size over time", func(t *testing.T) {
 		// Create a separate cache for this test
-		testCache2 := storage.NewServiceCacheWithConfig(cacheConfig)
+		testCache2 := storage.NewServiceCacheWithConfig(context.Background(), cacheConfig)
 		defer testCache2.Close()
 
 		// Add many small objects to test gradual eviction
@@ -595,7 +596,7 @@ func TestBlockMetadataArrayGarbageCollection(t *testing.T) {
 		CleanupInterval: 10 * time.Millisecond,
 		IdleTimeout:     50 * time.Millisecond,
 	}
-	cache := storage.NewServiceCacheWithConfig(cacheConfig)
+	cache := storage.NewServiceCacheWithConfig(context.Background(), cacheConfig)
 	defer cache.Close()
 
 	// Helper to create moderate-sized objects for eviction testing

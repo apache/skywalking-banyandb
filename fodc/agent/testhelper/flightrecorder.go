@@ -26,6 +26,7 @@ import (
 	databasev1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/database/v1"
 	fodcv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/fodc/v1"
 	agentcluster "github.com/apache/skywalking-banyandb/fodc/agent/internal/cluster"
+	"github.com/apache/skywalking-banyandb/fodc/agent/internal/crashcollector"
 	"github.com/apache/skywalking-banyandb/fodc/agent/internal/flightrecorder"
 	agentlifecycle "github.com/apache/skywalking-banyandb/fodc/agent/internal/lifecycle"
 	agentmetrics "github.com/apache/skywalking-banyandb/fodc/agent/internal/metrics"
@@ -176,6 +177,7 @@ func NewProxyClientWithCollector(
 		frTyped,
 		collector,
 		nil,
+		nil,
 		logger,
 	)
 }
@@ -184,6 +186,7 @@ func NewProxyClientWithCollector(
 type ProxyClientWrapper struct {
 	client             *proxy.Client
 	collector          *agentcluster.Collector
+	crashWatcher       *crashcollector.DirectoryWatcher
 	lifecycleCollector *agentlifecycle.Collector
 	ctx                context.Context
 	connMgrActive      bool
@@ -249,6 +252,19 @@ func (w *ProxyClientWrapper) StartLifecycleStream(ctx context.Context) error {
 	return w.client.StartLifecycleStream(ctx)
 }
 
+// StartCrashStream establishes bi-directional crash diagnostics stream with Proxy.
+func (w *ProxyClientWrapper) StartCrashStream(ctx context.Context) error {
+	return w.client.StartCrashStream(ctx)
+}
+
+// ScanCrashDirectory scans the wrapped client's crash artifact directory.
+func (w *ProxyClientWrapper) ScanCrashDirectory() {
+	if w == nil || w.crashWatcher == nil {
+		return
+	}
+	w.crashWatcher.Scan()
+}
+
 // NewProxyClientWrapper creates a wrapped ProxyClient for testing.
 func NewProxyClientWrapper(
 	proxyAddr string,
@@ -279,11 +295,52 @@ func NewProxyClientWrapper(
 		frTyped,
 		clusterCollector,
 		lifecycleCollector,
+		nil,
 		logger,
 	)
 	return &ProxyClientWrapper{
 		client:             client,
 		collector:          clusterCollector,
 		lifecycleCollector: lifecycleCollector,
+	}
+}
+
+// NewProxyClientWrapperWithCrashDir creates a wrapped ProxyClient for testing with crash artifact collection.
+func NewProxyClientWrapperWithCrashDir(
+	proxyAddr string,
+	nodeRole string,
+	podName string,
+	containerNames []string,
+	labels map[string]string,
+	heartbeatInterval time.Duration,
+	reconnectInterval time.Duration,
+	flightRecorder interface{},
+	logger *logger.Logger,
+	crashDir string,
+) *ProxyClientWrapper {
+	frTyped, ok := flightRecorder.(*flightrecorder.FlightRecorder)
+	if !ok {
+		return nil
+	}
+	clusterCollector := &agentcluster.Collector{}
+	crashWatcher := crashcollector.NewDirectoryWatcher(logger, crashDir, crashcollector.Config{})
+	client := proxy.NewClient(
+		proxyAddr,
+		nodeRole,
+		podName,
+		containerNames,
+		labels,
+		heartbeatInterval,
+		reconnectInterval,
+		frTyped,
+		clusterCollector,
+		nil,
+		crashWatcher,
+		logger,
+	)
+	return &ProxyClientWrapper{
+		client:       client,
+		collector:    clusterCollector,
+		crashWatcher: crashWatcher,
 	}
 }

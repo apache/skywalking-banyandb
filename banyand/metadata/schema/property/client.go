@@ -41,6 +41,7 @@ import (
 	"github.com/apache/skywalking-banyandb/banyand/metadata/schema"
 	"github.com/apache/skywalking-banyandb/banyand/observability"
 	"github.com/apache/skywalking-banyandb/pkg/grpchelper"
+	"github.com/apache/skywalking-banyandb/pkg/initerror"
 	"github.com/apache/skywalking-banyandb/pkg/logger"
 	"github.com/apache/skywalking-banyandb/pkg/run"
 	"github.com/apache/skywalking-banyandb/pkg/timestamp"
@@ -128,8 +129,10 @@ type SchemaRegistry struct {
 	l                  *logger.Logger
 	cache              *schemaCache
 	caCertReloader     *pkgtls.Reloader
+	clock              timestamp.Clock
 	handlers           map[schema.Kind][]schema.EventHandler
 	watchSessions      map[string]*watchSession
+	pauseQueue         []func()
 	syncInterval       time.Duration
 	syncTimeout        time.Duration
 	watchMaxBackoff    time.Duration
@@ -138,6 +141,8 @@ type SchemaRegistry struct {
 	syncRound          uint64
 	mux                sync.RWMutex
 	watchMu            sync.Mutex
+	pauseMu            sync.Mutex
+	paused             bool
 }
 
 // NewSchemaRegistryClient creates a new property-based schema registry client.
@@ -202,6 +207,7 @@ func NewSchemaRegistryClient(cfg *ClientConfig) (*SchemaRegistry, error) {
 		l:                  l,
 		cache:              newSchemaCacheWithLimit(maxTombstones),
 		caCertReloader:     caCertReloader,
+		clock:              timestamp.NewClock(),
 		handlers:           make(map[schema.Kind][]schema.EventHandler),
 		watchSessions:      make(map[string]*watchSession),
 		syncInterval:       syncInterval,
@@ -243,6 +249,12 @@ func NewSchemaRegistryClient(cfg *ClientConfig) (*SchemaRegistry, error) {
 			return nil, fmt.Errorf("no schema servers reachable after %s", initWaitTime)
 		}
 	}
+	// Register only on success — failed attempts (e.g. ListNode error,
+	// no reachable schema server) close their reg and return nil. Pre-error
+	// registration would leak orphan entries that the test harness would
+	// then mistake for the working SchemaRegistry, so the watch-control
+	// roster only sees fully-initialized registries.
+	registerForWatchControl(reg)
 	return reg, nil
 }
 
@@ -657,32 +669,32 @@ func createResource[T proto.Message](ctx context.Context, r *SchemaRegistry,
 
 func updateResource[T proto.Message](ctx context.Context, r *SchemaRegistry,
 	kind schema.Kind, spec T, validators ...func(prev T) error,
-) error {
+) (int64, error) {
 	metadata, metaErr := getMetadataFromSpec(kind, spec)
 	if metaErr != nil {
-		return metaErr
+		return 0, metaErr
 	}
 	if validateErr := r.validateGroup(ctx, kind, metadata.GetGroup()); validateErr != nil {
-		return validateErr
+		return 0, validateErr
 	}
 	originalProp, getErr := r.getSchema(ctx, kind, metadata.GetGroup(), metadata.GetName())
 	if getErr != nil {
-		return getErr
+		return 0, getErr
 	}
 	if originalProp == nil {
-		return fmt.Errorf("schema %s/%s not exist", metadata.GetGroup(), metadata.GetName())
+		return 0, fmt.Errorf("schema %s/%s not exist", metadata.GetGroup(), metadata.GetName())
 	}
 	prevMd, convErr := ToSchema(kind, originalProp)
 	if convErr != nil {
-		return convErr
+		return 0, convErr
 	}
 	prev, ok := prevMd.Spec.(T)
 	if !ok {
-		return fmt.Errorf("unexpected spec type for kind %s", kind)
+		return 0, fmt.Errorf("unexpected spec type for kind %s", kind)
 	}
 	for _, v := range validators {
 		if validateErr := v(prev); validateErr != nil {
-			return validateErr
+			return 0, validateErr
 		}
 	}
 	// Preserve created_at from the stored schema; the caller must not override it.
@@ -690,16 +702,23 @@ func updateResource[T proto.Message](ctx context.Context, r *SchemaRegistry,
 		setCreatedAtOnSpec(kind, spec, prevCreatedAt)
 	}
 	if checker, checkerOk := schema.CheckerMap[kind]; checkerOk && checker(prev, spec) {
-		return nil
+		// No-op update: content unchanged. Return the existing property's
+		// modRevision so callers observe the revision the barrier will see.
+		// The caller's fabricated modRevision was never written to the property
+		// store, so returning it would cause AwaitRevisionApplied to hang.
+		return originalProp.GetMetadata().GetModRevision(), nil
 	}
 	prop, propErr := SchemaToProperty(kind, spec)
 	if propErr != nil {
-		return propErr
+		return 0, propErr
 	}
-	return r.broadcastAll(func(_ string, c *schemaClient) error {
+	if broadcastErr := r.broadcastAll(func(_ string, c *schemaClient) error {
 		_, rpcErr := c.management.UpdateSchema(ctx, &schemav1.UpdateSchemaRequest{Property: prop})
 		return rpcErr
-	})
+	}); broadcastErr != nil {
+		return 0, broadcastErr
+	}
+	return metadata.GetModRevision(), nil
 }
 
 // GetStream retrieves a stream schema.
@@ -731,7 +750,7 @@ func (r *SchemaRegistry) UpdateStream(ctx context.Context, stream *databasev1.St
 	now := time.Now().UnixNano()
 	stream.Metadata.ModRevision = now
 	stream.UpdatedAt = timestamppb.Now()
-	return now, updateResource(ctx, r, schema.KindStream, stream, func(prev *databasev1.Stream) error {
+	return updateResource(ctx, r, schema.KindStream, stream, func(prev *databasev1.Stream) error {
 		if err := validateStreamUpdate(prev, stream); err != nil {
 			return fmt.Errorf("validation failed: %w", err)
 		}
@@ -764,6 +783,9 @@ func (r *SchemaRegistry) CreateMeasure(ctx context.Context, measure *databasev1.
 	if validateErr := validate.Measure(measure); validateErr != nil {
 		return 0, validateErr
 	}
+	if subsetWarn := validate.CheckShardingKeySubset(measure); subsetWarn != nil {
+		r.l.Warn().Err(subsetWarn).Str("measure", measure.GetMetadata().GetName()).Msg("sharding key is not a subset of entity tags")
+	}
 	now := time.Now().UnixNano()
 	measure.Metadata.ModRevision = now
 	measure.UpdatedAt = timestamppb.Now()
@@ -780,10 +802,13 @@ func (r *SchemaRegistry) UpdateMeasure(ctx context.Context, measure *databasev1.
 	if validateErr := validate.Measure(measure); validateErr != nil {
 		return 0, validateErr
 	}
+	if subsetWarn := validate.CheckShardingKeySubset(measure); subsetWarn != nil {
+		r.l.Warn().Err(subsetWarn).Str("measure", measure.GetMetadata().GetName()).Msg("sharding key is not a subset of entity tags")
+	}
 	now := time.Now().UnixNano()
 	measure.Metadata.ModRevision = now
 	measure.UpdatedAt = timestamppb.Now()
-	return now, updateResource(ctx, r, schema.KindMeasure, measure, func(prev *databasev1.Measure) error {
+	return updateResource(ctx, r, schema.KindMeasure, measure, func(prev *databasev1.Measure) error {
 		if err := validateMeasureUpdate(prev, measure); err != nil {
 			return fmt.Errorf("validation failed: %w", err)
 		}
@@ -840,7 +865,7 @@ func (r *SchemaRegistry) UpdateTrace(ctx context.Context, trace *databasev1.Trac
 	now := time.Now().UnixNano()
 	trace.Metadata.ModRevision = now
 	trace.UpdatedAt = timestamppb.Now()
-	return now, updateResource(ctx, r, schema.KindTrace, trace, func(prev *databasev1.Trace) error {
+	return updateResource(ctx, r, schema.KindTrace, trace, func(prev *databasev1.Trace) error {
 		if err := validate.TraceUpdate(prev, trace); err != nil {
 			return fmt.Errorf("validation failed: %w", err)
 		}
@@ -882,7 +907,7 @@ func (r *SchemaRegistry) UpdateGroup(ctx context.Context, group *commonv1.Group)
 	now := time.Now().UnixNano()
 	group.Metadata.ModRevision = now
 	group.UpdatedAt = timestamppb.Now()
-	return now, updateResource(ctx, r, schema.KindGroup, group)
+	return updateResource(ctx, r, schema.KindGroup, group)
 }
 
 // DeleteGroup deletes a group and all its resources.
@@ -960,7 +985,7 @@ func (r *SchemaRegistry) UpdateIndexRule(ctx context.Context, indexRule *databas
 	now := time.Now().UnixNano()
 	indexRule.Metadata.ModRevision = now
 	indexRule.UpdatedAt = timestamppb.Now()
-	return now, updateResource(ctx, r, schema.KindIndexRule, indexRule)
+	return updateResource(ctx, r, schema.KindIndexRule, indexRule)
 }
 
 // DeleteIndexRule deletes an index rule schema.
@@ -997,7 +1022,7 @@ func (r *SchemaRegistry) UpdateIndexRuleBinding(ctx context.Context, indexRuleBi
 	now := time.Now().UnixNano()
 	indexRuleBinding.Metadata.ModRevision = now
 	indexRuleBinding.UpdatedAt = timestamppb.Now()
-	return now, updateResource(ctx, r, schema.KindIndexRuleBinding, indexRuleBinding)
+	return updateResource(ctx, r, schema.KindIndexRuleBinding, indexRuleBinding)
 }
 
 // DeleteIndexRuleBinding deletes an index rule binding schema.
@@ -1034,7 +1059,7 @@ func (r *SchemaRegistry) UpdateTopNAggregation(ctx context.Context, topN *databa
 	now := time.Now().UnixNano()
 	topN.Metadata.ModRevision = now
 	topN.UpdatedAt = timestamppb.Now()
-	return now, updateResource(ctx, r, schema.KindTopNAggregation, topN)
+	return updateResource(ctx, r, schema.KindTopNAggregation, topN)
 }
 
 // DeleteTopNAggregation deletes a TopN aggregation schema.
@@ -1069,7 +1094,8 @@ func (r *SchemaRegistry) UpdateProperty(ctx context.Context, property *databasev
 	}
 	now := time.Now().UnixNano()
 	property.Metadata.ModRevision = now
-	return updateResource(ctx, r, schema.KindProperty, property)
+	_, updateErr := updateResource(ctx, r, schema.KindProperty, property)
+	return updateErr
 }
 
 // DeleteProperty deletes a property schema.
@@ -1099,37 +1125,54 @@ func (r *SchemaRegistry) RegisterHandler(name string, kind schema.Kind, handler 
 }
 
 func (r *SchemaRegistry) initHandlerWithRetry(name string, handler schema.EventHandler, kinds []schema.Kind) {
-	deadline := time.Now().Add(time.Minute)
+	deadline := r.clock.Now().Add(time.Minute)
 	var lastErr interface{}
 	for {
-		if tryCallOnInit(handler, kinds, &lastErr) {
+		ok, permanent := tryCallOnInit(handler, kinds, &lastErr)
+		if ok {
 			return
 		}
-		if time.Now().After(deadline) {
-			r.l.Panic().Str("name", name).Interface("error", lastErr).
+		if permanent {
+			r.l.Error().Str("name", name).Str("error", fmt.Sprintf("%+v", lastErr)).
+				Msg("OnInit hit a permanent error, refusing to start")
+			if recErr, isErr := lastErr.(error); isErr {
+				panic(fmt.Errorf("OnInit %s: %w", name, recErr))
+			}
+			panic(fmt.Errorf("OnInit %s: %v", name, lastErr))
+		}
+		if r.clock.Now().After(deadline) {
+			r.l.Error().Str("name", name).Interface("error", lastErr).
 				Msg("handler OnInit failed after 1m, giving up")
+			panic(fmt.Errorf("OnInit %s exceeded deadline: %v", name, lastErr))
 		}
 		r.l.Warn().Str("name", name).Interface("error", lastErr).
 			Msg("handler OnInit panicked due to transient error, retrying in 1s")
-		time.Sleep(time.Second)
+		r.clock.Sleep(time.Second)
 	}
 }
 
-func tryCallOnInit(handler schema.EventHandler, kinds []schema.Kind, lastErr *interface{}) (ok bool) {
+// tryCallOnInit invokes handler.OnInit and recovers any panic. Do not wrap the
+// recovered value with multierr before classification; multierr.Append's
+// Unwrap() []error is traversed by errors.As, but extra wrapping changes which
+// concrete type is returned first and breaks IsPermanent's interface lookup.
+func tryCallOnInit(handler schema.EventHandler, kinds []schema.Kind, lastErr *interface{}) (ok, permanent bool) {
 	defer func() {
 		if rec := recover(); rec != nil {
 			*lastErr = rec
 			ok = false
+			if recErr, isErr := rec.(error); isErr {
+				permanent = initerror.IsPermanent(recErr)
+			}
 		}
 	}()
 	handler.OnInit(kinds)
-	return true
+	return true, false
 }
 
 // Start starts a single goroutine that periodically syncs schemas.
 func (r *SchemaRegistry) Start(ctx context.Context) error {
 	if r.caCertReloader != nil {
-		if startErr := r.caCertReloader.Start(); startErr != nil {
+		if startErr := r.caCertReloader.Start(ctx); startErr != nil {
 			r.l.Error().Err(startErr).Msg("failed to start CA certificate reloader")
 		} else {
 			certUpdateCh := r.caCertReloader.GetUpdateChannel()
@@ -1395,6 +1438,21 @@ func (r *SchemaRegistry) handleWatchEvent(resp *schemav1.WatchSchemasResponse) {
 	if prop == nil {
 		return
 	}
+	// Pause gate: queue the entire watch event for replay on resume. Covers
+	// the DELETE branch which calls r.cache.Delete directly (without going
+	// through handleDeletion); INSERT/UPDATE flows already short-circuit at
+	// processInitialResourceFromProperty's gate, but gating here as well
+	// keeps the queue ordering exactly mirroring arrival order regardless
+	// of branch.
+	r.pauseMu.Lock()
+	if r.paused {
+		r.pauseQueue = append(r.pauseQueue, func() {
+			r.handleWatchEvent(resp)
+		})
+		r.pauseMu.Unlock()
+		return
+	}
+	r.pauseMu.Unlock()
 	parsed := ParseTags(prop.GetTags())
 	kindStr := parsed.Kind
 	if kindStr == "" {
@@ -1417,17 +1475,20 @@ func (r *SchemaRegistry) handleWatchEvent(resp *schemav1.WatchSchemasResponse) {
 		r.processInitialResourceFromProperty(kind, prop, md.Spec.(proto.Message))
 	case schemav1.SchemaEventType_SCHEMA_EVENT_TYPE_DELETE:
 		propID := prop.GetId()
-		if r.cache.Delete(propID, resp.GetDeleteTime()) {
+		deleted := r.cache.Delete(propID, resp.GetDeleteTime())
+		if deleted {
 			md, convErr := ToSchema(kind, prop)
 			if convErr != nil {
 				r.l.Warn().Err(convErr).Stringer("kind", kind).Msg("watch: failed to convert deleted property")
 				return
 			}
 			r.notifyHandlers(kind, md, true)
-			// Advance the barrier watermark past the delete event's mod_revision after handlers
-			// have processed it, keeping the barrier coherent with downstream caches.
-			r.cache.AdvanceNotified(prop.GetMetadata().GetModRevision())
 		}
+		// Advance the barrier watermark past the delete event's mod_revision regardless
+		// of whether the cache entry was actually removed. Mirrors the
+		// processInitialResourceFromProperty fix: the watermark tracks modRevision
+		// (etcd revision), not cache mutation outcome.
+		r.cache.AdvanceNotified(prop.GetMetadata().GetModRevision())
 	case schemav1.SchemaEventType_SCHEMA_EVENT_TYPE_REPLAY_DONE, schemav1.SchemaEventType_SCHEMA_EVENT_TYPE_UNSPECIFIED:
 		// handled by processWatchSession, not expected here
 	}
@@ -1598,6 +1659,21 @@ func (r *SchemaRegistry) mergeDigests(allDigests map[string][]*digestEntry) map[
 }
 
 func (r *SchemaRegistry) processInitialResourceFromProperty(kind schema.Kind, prop *propertyv1.Property, spec proto.Message) {
+	// Pause gate (test-only): when PauseNotifications has been called, defer
+	// the cache mutation + handler dispatch until ResumeNotifications drains
+	// the queue. Covers both the watch path and the full-reconcile path —
+	// every event funnels through this function before the schemaCache is
+	// updated and notifiedModRevision advances. Used by
+	// pkg/test/setup.PauseDataNodeWatch for  partial-cluster specs.
+	r.pauseMu.Lock()
+	if r.paused {
+		r.pauseQueue = append(r.pauseQueue, func() {
+			r.processInitialResourceFromProperty(kind, prop, spec)
+		})
+		r.pauseMu.Unlock()
+		return
+	}
+	r.pauseMu.Unlock()
 	propID := prop.GetId()
 	parsed := ParseTags(prop.GetTags())
 	entry := &cacheEntry{
@@ -1620,15 +1696,23 @@ func (r *SchemaRegistry) processInitialResourceFromProperty(kind schema.Kind, pr
 			},
 			Spec: spec,
 		}, false)
-		// Advance the barrier watermark only after every handler (groupRepo, entityRepo,
-		// pkg/schema.schemaRepo, etc.) has been notified. Without this gate, the barrier
-		// could return applied=true while downstream caches still lag, letting a client
-		// issue a query that hits "group not found".
-		r.cache.AdvanceNotified(entry.modRevision)
 	}
+	r.cache.AdvanceNotified(entry.modRevision)
 }
 
 func (r *SchemaRegistry) handleDeletion(kind schema.Kind, propID string, entry *cacheEntry, revision int64) {
+	// Pause gate: same rationale as processInitialResourceFromProperty.
+	// Skipping cache.Delete keeps the entry visible to GetAbsentKeys so
+	// AwaitSchemaDeleted reports the paused node as still_present_keys.
+	r.pauseMu.Lock()
+	if r.paused {
+		r.pauseQueue = append(r.pauseQueue, func() {
+			r.handleDeletion(kind, propID, entry, revision)
+		})
+		r.pauseMu.Unlock()
+		return
+	}
+	r.pauseMu.Unlock()
 	r.l.Debug().Stringer("kind", kind).Str("propID", propID).Int64("revision", revision).
 		Msg("handleDeletion: attempting to delete from cache")
 	if r.cache.Delete(propID, revision) {
@@ -1640,10 +1724,12 @@ func (r *SchemaRegistry) handleDeletion(kind schema.Kind, propID string, entry *
 			},
 			Spec: entry.spec,
 		}, true)
-		// Advance the barrier watermark past the deleted entry's mod_revision so callers
-		// awaiting that revision see the delete once handlers have processed it.
-		r.cache.AdvanceNotified(entry.modRevision)
 	}
+	// Advance the barrier watermark past the delete event's mod_revision regardless
+	// of whether the cache entry was actually removed. Mirrors the
+	// processInitialResourceFromProperty fix: the watermark tracks modRevision
+	// (etcd revision), not cache mutation outcome.
+	r.cache.AdvanceNotified(entry.modRevision)
 }
 
 func (r *SchemaRegistry) notifyHandlers(kind schema.Kind, md schema.Metadata, isDelete bool) {
@@ -1747,4 +1833,36 @@ func isPropertySchemaNode(node *databasev1.Node) bool {
 		}
 	}
 	return false
+}
+
+// PauseNotifications halts watch-event processing on this registry — events
+// that arrive while paused accumulate in an internal queue. Used by
+// pkg/test/setup.PauseDataNodeWatch for cluster-only schema-consistency
+// specs that need a single data node to fall behind the cluster. Production
+// code never calls this; the only caller is the test harness.
+func (r *SchemaRegistry) PauseNotifications() {
+	r.pauseMu.Lock()
+	r.paused = true
+	r.pauseMu.Unlock()
+}
+
+// ResumeNotifications resumes watch-event processing and drains the queue
+// accumulated while paused. Each queued closure replays the original
+// handleWatchEvent / processInitialResourceFromProperty / handleDeletion
+// call so downstream handlers (entityRepo / schemaRepo) and the
+// schemaCache catch up to the state the schema-server already reflects.
+// A no-op when not paused.
+func (r *SchemaRegistry) ResumeNotifications() {
+	r.pauseMu.Lock()
+	if !r.paused {
+		r.pauseMu.Unlock()
+		return
+	}
+	r.paused = false
+	queue := r.pauseQueue
+	r.pauseQueue = nil
+	r.pauseMu.Unlock()
+	for _, replay := range queue {
+		replay()
+	}
 }

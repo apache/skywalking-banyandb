@@ -189,6 +189,7 @@ func (s *dataSVC) FlagSet() *run.FlagSet {
 	flagS.VarP(&s.cc.MaxCacheSize, "service-cache-max-size", "", "maximum service cache size (e.g., 100M)")
 	flagS.DurationVar(&s.cc.CleanupInterval, "service-cache-cleanup-interval", 30*time.Second, "service cache cleanup interval")
 	flagS.DurationVar(&s.cc.IdleTimeout, "service-cache-idle-timeout", 2*time.Minute, "service cache entry idle timeout")
+	bindVectorizedFlags(flagS, &s.option.vectorized)
 	return flagS
 }
 
@@ -263,7 +264,7 @@ func (s *dataSVC) PreRun(ctx context.Context) error {
 	if s.cc.MaxCacheSize == 0 {
 		s.c = storage.NewBypassCache()
 	} else {
-		s.c = storage.NewServiceCacheWithConfig(s.cc)
+		s.c = storage.NewServiceCacheWithConfig(ctx, s.cc)
 	}
 	node := val.(common.Node)
 	s.schemaRepo = newDataSchemaRepo(s.dataPath, s, node.Labels, node.NodeID)
@@ -447,6 +448,7 @@ func newDataSchemaRepo(path string, svc *dataSVC, nodeLabels map[string]string, 
 		resourceSchema.NewMetrics(svc.omr.With(metadataScope)),
 	)
 	sr.start()
+	sr.registerWithNodeRepo()
 	return sr
 }
 

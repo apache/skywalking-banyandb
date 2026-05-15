@@ -57,8 +57,6 @@ type Flow interface {
 // The WindowedFlow can be created with a WindowAssigner.
 type WindowedFlow interface {
 	AllowedMaxWindows(windowCnt int) WindowedFlow
-	// TopN applies a TopNAggregation to each Window.
-	TopN(topNum int, opts ...any) Flow
 }
 
 // Window is a bucket of elements with a finite size.

@@ -31,6 +31,7 @@ import (
 	"github.com/apache/skywalking-banyandb/pkg/index"
 	"github.com/apache/skywalking-banyandb/pkg/index/posting/roaring"
 	itersort "github.com/apache/skywalking-banyandb/pkg/iter/sort"
+	"github.com/apache/skywalking-banyandb/pkg/logger"
 	"github.com/apache/skywalking-banyandb/pkg/query"
 	"github.com/apache/skywalking-banyandb/pkg/query/model"
 )
@@ -132,12 +133,20 @@ func (qr *idxResult) load(ctx context.Context, qo queryOptions) *model.StreamRes
 
 	cursorChan := make(chan int, len(qr.data))
 	is := qr.sm.indexSchema.Load().(indexSchema)
+	idxBlockLogger := logger.GetLogger("stream-idx-block-loader")
 	for i := 0; i < len(qr.data); i++ {
-		go func(i int) {
+		idx := i
+		go func() {
+			defer func() {
+				if r := recover(); r != nil {
+					idxBlockLogger.Error().Interface("panic", r).Msg("panic in parallel block loader")
+					cursorChan <- idx
+				}
+			}()
 			select {
 			case <-ctx.Done():
-				releaseBlockCursor(qr.data[i])
-				cursorChan <- i
+				releaseBlockCursor(qr.data[idx])
+				cursorChan <- idx
 				return
 			default:
 			}
@@ -147,12 +156,12 @@ func (qr *idxResult) load(ctx context.Context, qo queryOptions) *model.StreamRes
 			}
 			tmpBlock := generateBlock()
 			defer releaseBlock(tmpBlock)
-			if loadBlockCursor(qr.data[i], tmpBlock, qo, is) {
+			if loadBlockCursor(qr.data[idx], tmpBlock, qo, is) {
 				cursorChan <- -1
 				return
 			}
-			cursorChan <- i
-		}(i)
+			cursorChan <- idx
+		}()
 	}
 
 	blankCursorList := []int{}
