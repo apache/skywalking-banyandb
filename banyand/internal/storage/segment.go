@@ -494,8 +494,10 @@ func (sc *segmentController[T, O]) closeIdleSegments() int {
 	sc.RLock()
 	segs := make([]*segment[T, O], 0, len(sc.lst))
 	bumped := make([]bool, 0, len(sc.lst))
+	refAtBump := make([]int32, 0, len(sc.lst))
 	for _, s := range sc.lst {
 		didBump := false
+		var snapRef int32
 		for {
 			current := atomic.LoadInt32(&s.refCount)
 			if current <= 0 {
@@ -503,25 +505,31 @@ func (sc *segmentController[T, O]) closeIdleSegments() int {
 			}
 			if atomic.CompareAndSwapInt32(&s.refCount, current, current+1) {
 				didBump = true
+				snapRef = current
 				break
 			}
 		}
 		segs = append(segs, s)
 		bumped = append(bumped, didBump)
+		refAtBump = append(refAtBump, snapRef)
 	}
 	sc.RUnlock()
 
 	closedCount := 0
 	for i, seg := range segs {
-		if bumped[i] {
-			if seg.lastAccessed.Load() < idleThreshold {
-				seg.DecRef()
-			}
-			seg.DecRef()
+		if !bumped[i] {
+			continue
 		}
-		if atomic.LoadInt32(&seg.refCount) == 0 {
+		// Only close when the snapshot proved refCount==1 (baseline only):
+		// a higher value means other callers hold active references, and
+		// decrementing past our bump would steal one of their refs,
+		// potentially triggering performCleanup under active use on a
+		// subsequent tick.
+		if refAtBump[i] == 1 && seg.lastAccessed.Load() < idleThreshold {
+			seg.DecRef()
 			closedCount++
 		}
+		seg.DecRef()
 	}
 
 	return closedCount
