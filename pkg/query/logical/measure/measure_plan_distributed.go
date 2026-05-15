@@ -102,6 +102,9 @@ func (as *pushDownAggSchema) Children() []logical.Schema {
 	return as.originalSchema.Children()
 }
 
+// Deprecated: row-path measure plan; see .omc/g8-plan.md. Distributed
+// vec query is a G8 follow-up; for now the dispatcher continues to use
+// this row-path distributed plan even when vec is enabled on standalone.
 type unresolvedDistributed struct {
 	originalQuery *measurev1.QueryRequest
 	groupByEntity bool

@@ -38,6 +38,9 @@ var (
 	_ logical.Plan           = (*topOp[float64])(nil)
 )
 
+// Deprecated: row-path measure plan; see .omc/g8-plan.md. The vec
+// subsystem implements top-N via pkg/query/vectorized/measure.BatchTop,
+// planned by pkg/query/vectorized/measure/plan.Top.
 type unresolvedTop struct {
 	unresolvedInput logical.UnresolvedPlan
 	top             *measurev1.QueryRequest_Top

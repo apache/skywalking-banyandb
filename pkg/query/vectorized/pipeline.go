@@ -1,0 +1,207 @@
+// Licensed to Apache Software Foundation (ASF) under one or more contributor
+// license agreements. See the NOTICE file distributed with
+// this work for additional information regarding copyright
+// ownership. Apache Software Foundation (ASF) licenses this file to you under
+// the Apache License, Version 2.0 (the "License"); you may
+// not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing,
+// software distributed under the License is distributed on an
+// "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
+// KIND, either express or implied.  See the License for the
+// specific language governing permissions and limitations
+// under the License.
+
+package vectorized
+
+import (
+	"context"
+	"errors"
+)
+
+// Pipeline is the composed sequence of stages from source to final breaker.
+// It exposes a single PullOperator-shaped Next method to the driver.
+type Pipeline struct {
+	head    PullOperator
+	tracker *MemoryTracker
+	closed  bool
+}
+
+// Init cascades initialization down through every stage to the source.
+// Must be called once before the first Next, after Build. Re-calling is
+// safe but pointless — each stage's Init is idempotent only if its
+// underlying operator's Init is.
+func (p *Pipeline) Init(ctx context.Context) error {
+	return p.head.Init(ctx)
+}
+
+// Next returns the next batch from the head stage.
+func (p *Pipeline) Next(ctx context.Context) (*RecordBatch, error) {
+	return p.head.NextBatch(ctx)
+}
+
+// Tracker returns the shared per-pipeline MemoryTracker, or nil if the builder
+// did not set one. Operators that bookkeep memory should be constructed with
+// this tracker so they all draw from a single budget.
+func (p *Pipeline) Tracker() *MemoryTracker { return p.tracker }
+
+// Close closes the head stage. Idempotent — repeat calls are no-ops.
+func (p *Pipeline) Close() error {
+	if p.closed {
+		return nil
+	}
+	p.closed = true
+	return p.head.Close()
+}
+
+// PipelineBuilder fluently composes a Pipeline.
+//
+// Apply/Break ordering: every Apply call queues a fusible into the
+// currently-open fused segment. Break closes that segment, wraps it with
+// the supplied breaker, and starts a new (empty) segment on top. So the
+// observable stage order matches the call order: each fusible runs
+// before any breaker that was added later, and after any breaker that
+// was added earlier. Plan-tree builders rely on this — e.g. a Limit
+// Apply'd after a GroupByAgg Break must execute on the aggregated
+// output, not on the raw source rows.
+type PipelineBuilder struct {
+	source       PullOperator
+	tracker      *MemoryTracker
+	pendingFused []FusibleOperator
+	steps        []builderStep
+}
+
+// builderStep captures one closed segment: the fusibles queued before
+// the breaker plus the breaker itself.
+type builderStep struct {
+	breaker  BreakerOperator
+	preFused []FusibleOperator
+}
+
+// NewPipelineBuilder starts a builder.
+func NewPipelineBuilder() *PipelineBuilder { return &PipelineBuilder{} }
+
+// From sets the leaf source.
+func (b *PipelineBuilder) From(p PullOperator) *PipelineBuilder { b.source = p; return b }
+
+// WithMemoryTracker attaches a shared MemoryTracker to the pipeline. Operators
+// that bookkeep memory (BatchGroupBy, BatchAggregation) should be constructed
+// with this same tracker so reservations stack against a single budget.
+func (b *PipelineBuilder) WithMemoryTracker(t *MemoryTracker) *PipelineBuilder {
+	b.tracker = t
+	return b
+}
+
+// Apply queues a FusibleOperator into the current open fused segment.
+func (b *PipelineBuilder) Apply(f FusibleOperator) *PipelineBuilder {
+	b.pendingFused = append(b.pendingFused, f)
+	return b
+}
+
+// Break closes the current fused segment and wraps it with br, starting
+// a new empty segment for subsequent Apply calls to attach above the
+// breaker.
+func (b *PipelineBuilder) Break(br BreakerOperator) *PipelineBuilder {
+	step := builderStep{breaker: br}
+	if len(b.pendingFused) > 0 {
+		step.preFused = append([]FusibleOperator(nil), b.pendingFused...)
+		b.pendingFused = b.pendingFused[:0]
+	}
+	b.steps = append(b.steps, step)
+	return b
+}
+
+// Build validates and constructs the Pipeline. Each closed segment
+// becomes fusedStage(prev, preFused) → breakerStage(_, breaker); any
+// fusibles still queued after the last Break form a final fused stage
+// on top of the chain.
+func (b *PipelineBuilder) Build() (*Pipeline, error) {
+	if b.source == nil {
+		return nil, errors.New("vectorized: pipeline missing source (use From)")
+	}
+	head := b.source
+	for _, step := range b.steps {
+		head = newFusedStage(head, step.preFused)
+		head = newBreakerStage(head, step.breaker)
+	}
+	if len(b.pendingFused) > 0 || len(b.steps) == 0 {
+		head = newFusedStage(head, b.pendingFused)
+	}
+	return &Pipeline{head: head, tracker: b.tracker}, nil
+}
+
+// breakerStage wraps a BreakerOperator so it acts as a PullOperator for the next stage.
+// It drains the upstream PullOperator into the breaker's Consume, calls Finalize once,
+// then serves the breaker's output via NextBatch.
+//
+// Error stickiness: if upstream Pull, Consume, or Finalize fails, the error is
+// stored and returned on every subsequent NextBatch call. drained is set as
+// soon as the consume loop is entered, so a retry never re-runs Consume or
+// Finalize. This guarantees Finalize executes at most once per stage.
+type breakerStage struct {
+	err      error
+	upstream PullOperator
+	breaker  BreakerOperator
+	drained  bool
+	closed   bool
+}
+
+func newBreakerStage(upstream PullOperator, br BreakerOperator) *breakerStage {
+	return &breakerStage{upstream: upstream, breaker: br}
+}
+
+func (s *breakerStage) Init(ctx context.Context) error {
+	if initErr := s.upstream.Init(ctx); initErr != nil {
+		return initErr
+	}
+	return s.breaker.Init(ctx)
+}
+
+func (s *breakerStage) OutputSchema() *BatchSchema { return s.breaker.OutputSchema() }
+
+func (s *breakerStage) NextBatch(ctx context.Context) (*RecordBatch, error) {
+	if s.err != nil {
+		return nil, s.err
+	}
+	if !s.drained {
+		s.drained = true
+		for {
+			b, pullErr := s.upstream.NextBatch(ctx)
+			if pullErr != nil {
+				s.err = pullErr
+				return nil, pullErr
+			}
+			if b == nil {
+				break
+			}
+			if consumeErr := s.breaker.Consume(ctx, b); consumeErr != nil {
+				s.err = consumeErr
+				return nil, consumeErr
+			}
+		}
+		if finalizeErr := s.breaker.Finalize(ctx); finalizeErr != nil {
+			s.err = finalizeErr
+			return nil, finalizeErr
+		}
+	}
+	return s.breaker.NextBatch(ctx)
+}
+
+// Close is idempotent — children are invoked once across repeated calls.
+func (s *breakerStage) Close() error {
+	if s.closed {
+		return nil
+	}
+	s.closed = true
+	var firstErr error
+	if closeErr := s.upstream.Close(); closeErr != nil {
+		firstErr = closeErr
+	}
+	if closeErr := s.breaker.Close(); closeErr != nil && firstErr == nil {
+		firstErr = closeErr
+	}
+	return firstErr
+}

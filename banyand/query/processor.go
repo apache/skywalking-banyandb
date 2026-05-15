@@ -28,6 +28,7 @@ import (
 
 	"github.com/apache/skywalking-banyandb/api/common"
 	commonv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/common/v1"
+	databasev1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/database/v1"
 	measurev1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/measure/v1"
 	modelv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/model/v1"
 	streamv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/stream/v1"
@@ -46,6 +47,8 @@ import (
 	logical_stream "github.com/apache/skywalking-banyandb/pkg/query/logical/stream"
 	logical_trace "github.com/apache/skywalking-banyandb/pkg/query/logical/trace"
 	"github.com/apache/skywalking-banyandb/pkg/query/model"
+	vmeasure "github.com/apache/skywalking-banyandb/pkg/query/vectorized/measure"
+	vecplan "github.com/apache/skywalking-banyandb/pkg/query/vectorized/measure/plan"
 )
 
 const (
@@ -185,6 +188,7 @@ func buildMeasureContext(measureService measure.Service, log *logger.Logger, que
 		if ecErr != nil {
 			return nil, fmt.Errorf("fail to get execution context for measure %s: %w", meta.GetName(), ecErr)
 		}
+		// nolint:staticcheck // SA1019 — row-path BuildSchema is the only production path until G8 ships.
 		s, schemaErr := logical_measure.BuildSchema(ec.GetSchema(), ec.GetIndexRules())
 		if schemaErr != nil {
 			return nil, fmt.Errorf("fail to build schema for measure %s: %w", meta.GetName(), schemaErr)
@@ -202,16 +206,47 @@ func buildMeasureContext(measureService measure.Service, log *logger.Logger, que
 	}, nil
 }
 
+// vecExecutionContext is the optional capability the production
+// MeasureExecutionContext implementation exposes to surface the active
+// VectorizedConfig and the *databasev1.Measure schema needed by the vec
+// dispatch. Production satisfies it; tests that swap the row executor
+// can leave it unimplemented to keep dispatch dormant.
+type vecExecutionContext interface {
+	executor.MeasureExecutionContext
+	VectorizedConfig() vmeasure.VectorizedConfig
+	GetSchema() *databasev1.Measure
+}
+
 // executeMeasurePlan executes the measure query plan and returns the iterator.
+//
+// G8d: the vec subsystem is tried first via vecplan.Dispatch. When the
+// request is vec-eligible (no GroupBy/Agg/Top, has TimeRange, no hidden
+// criteria tags), dispatch returns a vec MIterator and the row-path
+// Analyze is skipped entirely. Otherwise, control flows through to the
+// deprecated row plan unchanged.
+//
+// The second return value is the rendered plan string used by the caller
+// for tracing — abstracted to a string so the vec subsystem (which does
+// not produce a logical.Plan) can participate.
 func executeMeasurePlan(
 	ctx context.Context,
 	queryCriteria *measurev1.QueryRequest,
 	mctx *measureExecutionContext,
 	emitPartial bool,
-) (executor.MIterator, logical.Plan, error) {
+) (executor.MIterator, string, error) {
+	if mit, planStr, handled, dispatchErr := tryVecDispatch(ctx, queryCriteria, mctx, emitPartial); dispatchErr != nil {
+		return nil, "", fmt.Errorf("fail to dispatch the query request for measure %s: %w", queryCriteria.GetName(), dispatchErr)
+	} else if handled {
+		if e := mctx.ml.Debug(); e.Enabled() {
+			e.Str("plan", planStr).Msg("vec query plan")
+		}
+		return mit, planStr, nil
+	}
+
+	// nolint:staticcheck // SA1019 — row-path Analyze is the only production path until G8 ships.
 	plan, planErr := logical_measure.Analyze(queryCriteria, mctx.metadata, mctx.schemas, mctx.ecc, emitPartial)
 	if planErr != nil {
-		return nil, nil, fmt.Errorf("fail to analyze the query request for measure %s: %w", queryCriteria.GetName(), planErr)
+		return nil, "", fmt.Errorf("fail to analyze the query request for measure %s: %w", queryCriteria.GetName(), planErr)
 	}
 	if e := mctx.ml.Debug(); e.Enabled() {
 		e.Str("plan", plan.String()).Msg("query plan")
@@ -219,9 +254,39 @@ func executeMeasurePlan(
 	mIterator, execErr := plan.(executor.MeasureExecutable).Execute(ctx)
 	if execErr != nil {
 		mctx.ml.Error().Err(execErr).RawJSON("req", logger.Proto(queryCriteria)).Msg("fail to query")
-		return nil, nil, fmt.Errorf("fail to execute the query plan for measure %s: %w", queryCriteria.GetName(), execErr)
+		return nil, "", fmt.Errorf("fail to execute the query plan for measure %s: %w", queryCriteria.GetName(), execErr)
 	}
-	return mIterator, plan, nil
+	return mIterator, plan.String(), nil
+}
+
+// tryVecDispatch is the thin adapter from measureExecutionContext into
+// the vec dispatch inputs. Multi-measure queries are not yet wired (G8
+// follow-up), so they fall through to the row path.
+//
+// Distributed Map-mode GroupBy+Agg requests (emitPartial=true) also fall
+// through: the vec subsystem only implements AggModeAll (single-node full
+// reduce), so emitting AggModeAll results on each data node and letting
+// the liaison naively merge them would double-count groups. The row path
+// handles the Map/Reduce split via measure_plan_aggregation.go's
+// emitPartial flag.
+func tryVecDispatch(
+	ctx context.Context,
+	queryCriteria *measurev1.QueryRequest,
+	mctx *measureExecutionContext,
+	emitPartial bool,
+) (executor.MIterator, string, bool, error) {
+	if len(mctx.ecc) != 1 {
+		return nil, "", false, nil
+	}
+	if emitPartial && (queryCriteria.GetGroupBy() != nil || queryCriteria.GetAgg() != nil) {
+		return nil, "", false, nil
+	}
+	vec, ok := mctx.ecc[0].(vecExecutionContext)
+	if !ok {
+		return nil, "", false, nil
+	}
+	return vecplan.Dispatch(ctx, queryCriteria, mctx.metadata[0], vec.GetSchema(),
+		mctx.schemas[0], vec, vec.VectorizedConfig())
 }
 
 // collectInternalDataPoints collects InternalDataPoints from the iterator.
@@ -267,7 +332,7 @@ func (p *measureQueryProcessor) executeQuery(ctx context.Context, queryCriteria 
 		e.RawJSON("req", logger.Proto(queryCriteria)).Msg("received a query event")
 	}
 
-	mIterator, plan, execErr := executeMeasurePlan(ctx, queryCriteria, mctx, false)
+	mIterator, planStr, execErr := executeMeasurePlan(ctx, queryCriteria, mctx, false)
 	if execErr != nil {
 		resp = bus.NewMessage(bus.MessageID(now), common.NewError("%v", execErr))
 		return
@@ -283,7 +348,7 @@ func (p *measureQueryProcessor) executeQuery(ctx context.Context, queryCriteria 
 	if queryCriteria.Trace {
 		tracer, ctx = query.NewTracer(ctx, n.Format(time.RFC3339Nano))
 		span, ctx = tracer.StartSpan(ctx, "data-%s", p.queryService.nodeID)
-		span.Tag("plan", plan.String())
+		span.Tag("plan", planStr)
 		defer func() {
 			data := resp.Data()
 			switch d := data.(type) {
@@ -371,7 +436,7 @@ func (p *measureInternalQueryProcessor) Rev(ctx context.Context, message bus.Mes
 		e.RawJSON("req", logger.Proto(queryCriteria)).Msg("received an internal query event")
 	}
 
-	mIterator, plan, execErr := executeMeasurePlan(ctx, queryCriteria, mctx, internalRequest.GetAggReturnPartial())
+	mIterator, planStr, execErr := executeMeasurePlan(ctx, queryCriteria, mctx, internalRequest.GetAggReturnPartial())
 	if execErr != nil {
 		resp = bus.NewMessage(bus.MessageID(now), common.NewError("%v", execErr))
 		return
@@ -387,7 +452,7 @@ func (p *measureInternalQueryProcessor) Rev(ctx context.Context, message bus.Mes
 	if queryCriteria.Trace {
 		tracer, ctx = query.NewTracer(ctx, n.Format(time.RFC3339Nano))
 		span, _ = tracer.StartSpan(ctx, "data-%s", p.queryService.nodeID)
-		span.Tag("plan", plan.String())
+		span.Tag("plan", planStr)
 		defer func() {
 			respData := resp.Data()
 			switch d := respData.(type) {
