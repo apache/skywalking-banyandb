@@ -27,6 +27,7 @@ import (
 	commonv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/common/v1"
 	measurev1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/measure/v1"
 	modelv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/model/v1"
+	"github.com/apache/skywalking-banyandb/pkg/query/logical"
 	logicalmeasure "github.com/apache/skywalking-banyandb/pkg/query/logical/measure"
 	"github.com/apache/skywalking-banyandb/pkg/query/model"
 	measure "github.com/apache/skywalking-banyandb/pkg/query/vectorized/measure"
@@ -534,6 +535,100 @@ func TestDispatch_GroupByAggCovered_ReachesEcQuery(t *testing.T) {
 			"got iter=%v planStr=%q handled=%v", iter, planStr, handled)
 	}
 }
+
+// TestAugmentRequestWithHiddenTags_AppendsFamiliesAfterVisible covers the
+// G9d projection-extension mechanism: hidden criteria tags (grouped by
+// family) are appended AFTER the visible projection so the visible tags
+// keep their projected order, the caller's request is never mutated, and
+// an empty extras slice returns the request unchanged (no clone).
+func TestAugmentRequestWithHiddenTags_AppendsFamiliesAfterVisible(t *testing.T) {
+	req := bareReq() // TagProjection: default=[svc]
+	extras := [][]*logical.Tag{
+		{logical.NewTag("default", "region")},
+		{logical.NewTag("extra", "zone")},
+	}
+	got := augmentRequestWithHiddenTags(req, extras)
+	if got == req {
+		t.Fatal("augment must return a clone when extras are present")
+	}
+	if len(req.GetTagProjection().GetTagFamilies()) != 1 ||
+		req.GetTagProjection().GetTagFamilies()[0].GetTags()[0] != "svc" {
+		t.Fatalf("caller's req.TagProjection must be untouched, got %+v", req.GetTagProjection())
+	}
+	fams := got.GetTagProjection().GetTagFamilies()
+	if len(fams) != 3 {
+		t.Fatalf("want 3 families (1 visible + 2 hidden), got %d: %+v", len(fams), fams)
+	}
+	if fams[0].GetName() != "default" || fams[0].GetTags()[0] != "svc" {
+		t.Fatalf("visible family must stay first, got %+v", fams[0])
+	}
+	if fams[1].GetName() != "default" || fams[1].GetTags()[0] != "region" {
+		t.Fatalf("first hidden family wrong, got %+v", fams[1])
+	}
+	if fams[2].GetName() != "extra" || fams[2].GetTags()[0] != "zone" {
+		t.Fatalf("second hidden family wrong, got %+v", fams[2])
+	}
+	if same := augmentRequestWithHiddenTags(req, nil); same != req {
+		t.Fatal("augment with no extras must return the original request")
+	}
+}
+
+// TestHiddenTagsMIterator_StripsHiddenTagsFromCurrent proves the egress
+// wrapper removes exactly the hidden tags from each Current() DataPoint,
+// leaving visible tags untouched — the same contract as the row path's
+// hiddenTagsMIterator, which is what keeps the wire bytes identical.
+func TestHiddenTagsMIterator_StripsHiddenTagsFromCurrent(t *testing.T) {
+	build := func() []*measurev1.InternalDataPoint {
+		return []*measurev1.InternalDataPoint{{
+			DataPoint: &measurev1.DataPoint{
+				TagFamilies: []*modelv1.TagFamily{{
+					Name: "default",
+					Tags: []*modelv1.Tag{
+						{Key: "svc", Value: &modelv1.TagValue{Value: &modelv1.TagValue_Str{Str: &modelv1.Str{Value: "a"}}}},
+						{Key: "region", Value: &modelv1.TagValue{Value: &modelv1.TagValue_Str{Str: &modelv1.Str{Value: "us"}}}},
+					},
+				}},
+			},
+		}}
+	}
+	hidden := logical.NewHiddenTagSet()
+	hidden.Add("region")
+	it := &hiddenTagsMIterator{inner: &stubMIterator{rows: build()}, hiddenTags: hidden}
+	if !it.Next() {
+		t.Fatal("Next must advance once")
+	}
+	cur := it.Current()
+	if len(cur) != 1 || len(cur[0].DataPoint.TagFamilies) != 1 {
+		t.Fatalf("expected one family after strip, got %+v", cur)
+	}
+	tags := cur[0].DataPoint.TagFamilies[0].Tags
+	if len(tags) != 1 || tags[0].Key != "svc" {
+		t.Fatalf("only visible tag 'svc' must remain, got %+v", tags)
+	}
+	if it.Close() != nil {
+		t.Fatal("Close must propagate inner Close (nil)")
+	}
+}
+
+// stubMIterator is a one-shot executor.MIterator over a fixed row slice.
+type stubMIterator struct {
+	rows []*measurev1.InternalDataPoint
+	pos  int
+}
+
+func (s *stubMIterator) Next() bool {
+	s.pos++
+	return s.pos <= len(s.rows)
+}
+
+func (s *stubMIterator) Current() []*measurev1.InternalDataPoint {
+	if s.pos < 1 || s.pos > len(s.rows) {
+		return nil
+	}
+	return s.rows[s.pos-1 : s.pos]
+}
+
+func (s *stubMIterator) Close() error { return nil }
 
 // TestDispatch_QueryError_BubblesUp covers the error propagation when
 // the storage query itself fails. Dispatch must report (nil, "", true,

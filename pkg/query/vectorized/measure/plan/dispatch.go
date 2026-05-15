@@ -93,8 +93,9 @@ func FellThroughCount() int64 { return fellThroughCount.Load() }
 //   - request must NOT carry Top (BatchTop's single-heap semantic differs
 //     from the row path's per-timestamp top-N)
 //   - request must carry TimeRange (storage requires a bounded window)
-//   - request must NOT have hidden criteria tags (those need an egress
-//     strip wrapper that v1 dispatch does not implement)
+//   - hidden criteria tags (criteria tags absent from the projection)
+//     are projected for storage-side filtering, then stripped at egress
+//     by hiddenTagsMIterator so the wire format is byte-identical
 //   - measureSchema and logicalSchema must be non-nil
 func Dispatch(
 	ctx context.Context,
@@ -176,9 +177,11 @@ func Dispatch(
 	}
 
 	// Hidden-tag detection: criteria may reference tags that are NOT in
-	// the projection (they're needed only as filter inputs). The row
-	// path strips them at egress via hiddenTagsMIterator. v1 dispatch
-	// does not implement that strip yet, so fall through when present.
+	// the projection (they're needed only as filter inputs). Such tags
+	// are projected so storage can evaluate the criteria, then stripped
+	// at egress by hiddenTagsMIterator so the wire bytes stay identical
+	// to a query without hidden criteria tags (the row path does the
+	// same in unresolvedIndexScan.Analyze + resultMIterator).
 	projectedTagNames := projectedNames(req.GetTagProjection())
 	entityList := logicalSchema.EntityList()
 	entityMap := make(map[string]int, len(entityList))
@@ -191,13 +194,14 @@ func Dispatch(
 	for _, tf := range measureSchema.GetTagFamilies() {
 		familyNames = append(familyNames, tf.GetName())
 	}
-	hidden, _ := logical.CollectHiddenCriteriaTags(
+	hidden, hiddenExtras := logical.CollectHiddenCriteriaTags(
 		req.GetCriteria(), projectedTagNames, entityMap, logicalSchema,
 		func() []string { return familyNames },
 	)
-	if !hidden.IsEmpty() {
-		return nil, "", false, nil
-	}
+	// analyzeReq carries the hidden tags in its TagProjection so the Scan
+	// materializes them for storage-side filtering; req itself is left
+	// unchanged for the index.Query / opts wiring below.
+	analyzeReq := augmentRequestWithHiddenTags(req, hiddenExtras)
 
 	indexOrder, orderErr := resolveOrderBy(req.GetOrderBy(), logicalSchema)
 	if orderErr != nil {
@@ -218,8 +222,9 @@ func Dispatch(
 		return nil, "", true, fmt.Errorf("vec dispatch: build query: %w", qErr)
 	}
 
-	// Build the structural plan tree.
-	p, analyzeErr := Analyze(req, measureSchema)
+	// Build the structural plan tree from analyzeReq so the Scan's
+	// BatchSchema + opts.TagProjection carry the hidden criteria tags.
+	p, analyzeErr := Analyze(analyzeReq, measureSchema)
 	if analyzeErr != nil {
 		return nil, "", true, fmt.Errorf("vec dispatch: analyze: %w", analyzeErr)
 	}
@@ -284,6 +289,11 @@ func Dispatch(
 		// closes the source, which releases result. No extra Release
 		// here.
 		return nil, "", true, fmt.Errorf("vec dispatch: execute: %w", execErr)
+	}
+	if !hidden.IsEmpty() {
+		// Strip the projected-for-filtering hidden tags before
+		// serialization so the wire bytes match a query without them.
+		iter = &hiddenTagsMIterator{inner: iter, hiddenTags: hidden}
 	}
 	return iter, p.String(), true, nil
 }

@@ -47,10 +47,12 @@ import (
 //
 // With G8d (top-level vec dispatch) wired, plain measure queries take the
 // new pkg/query/vectorized/measure/plan.Dispatch path instead of the legacy
-// leaf-substitution at localIndexScan.maybeVectorized. GroupBy/Agg/Top and
-// queries with hidden criteria tags continue through the row plan with leaf
-// substitution. The AfterAll assertion below uses vecplan.HandledCount to
-// confirm dispatch actually fires for at least one query — protecting
+// leaf-substitution at localIndexScan.maybeVectorized. Queries with hidden
+// criteria tags (G9d) also route through Dispatch: the hidden tags are
+// projected for storage filtering and stripped at egress so the wire bytes
+// match the row path. GroupBy/Agg/Top continue through the row plan with
+// leaf substitution. The AfterAll assertion below uses vecplan.HandledCount
+// to confirm dispatch actually fires for at least one query — protecting
 // against a silent regression where the eligibility gate excludes
 // everything.
 //
