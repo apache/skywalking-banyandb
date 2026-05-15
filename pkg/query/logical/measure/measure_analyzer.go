@@ -31,6 +31,11 @@ import (
 const defaultLimit uint32 = 100
 
 // BuildSchema returns Schema loaded from the metadata repository.
+//
+// Deprecated: row-path measure plan; see .omc/g8-plan.md. The vec
+// measure analyzer (pkg/query/vectorized/measure/plan.Analyze) consumes
+// *databasev1.Measure directly via measure.BuildBatchSchema and does
+// not produce a logical.Schema.
 func BuildSchema(md *databasev1.Measure, indexRules []*databasev1.IndexRule) (logical.Schema, error) {
 	md.GetEntity()
 
@@ -54,6 +59,13 @@ func BuildSchema(md *databasev1.Measure, indexRules []*databasev1.IndexRule) (lo
 }
 
 // Analyze converts logical expressions to executable operation tree represented by Plan.
+//
+// Deprecated: This is the row-based measure query analyzer. The vec measure
+// subsystem (.omc/g8-plan.md) will replace this with a separate vec analyzer
+// that produces a vec plan tree (no leaf substitution into the row plan).
+// Do not extend with new features; the dispatch from `banyand/query/processor.go`
+// will route to the vec analyzer when `VectorizedConfig.Enabled` is true once
+// G8 lands.
 func Analyze(criteria *measurev1.QueryRequest, metadata []*commonv1.Metadata, ss []logical.Schema,
 	ecc []executor.MeasureExecutionContext, emitPartial bool,
 ) (logical.Plan, error) {
@@ -150,6 +162,10 @@ func Analyze(criteria *measurev1.QueryRequest, metadata []*commonv1.Metadata, ss
 }
 
 // DistributedAnalyze converts logical expressions to executable operation tree represented by Plan.
+//
+// Deprecated: Row-based distributed-query analyzer; see Analyze for the
+// replacement plan. The vec measure subsystem (G8) will provide a
+// vec-distributed variant once standalone-vec parity is stable.
 func DistributedAnalyze(criteria *measurev1.QueryRequest, ss []logical.Schema) (logical.Plan, error) {
 	var groupByTags [][]*logical.Tag
 	if criteria.GetGroupBy() != nil {

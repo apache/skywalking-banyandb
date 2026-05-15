@@ -115,6 +115,7 @@ func (s *liaison) FlagSet() *run.FlagSet {
 		"percentage of BanyanDB's allowed disk usage allocated to failed parts storage. "+
 			"Calculated as: totalDisk * measure-max-disk-usage-percent * failed-parts-max-size-percent / 10000. "+
 			"Set to 0 to disable copying failed parts. Valid range: 0-100")
+	bindVectorizedFlags(flagS, &s.option.vectorized)
 	return flagS
 }
 

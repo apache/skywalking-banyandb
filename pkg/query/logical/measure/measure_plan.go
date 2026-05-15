@@ -31,6 +31,9 @@ var (
 	_ logical.UnresolvedPlan = (*limitPlan)(nil)
 )
 
+// Deprecated: row-path measure plan; see .omc/g8-plan.md. The vec
+// subsystem replaces row-path limit/offset paging via plan.Limit at
+// pkg/query/vectorized/measure/plan/limit.go.
 type limitPlan struct {
 	*logical.Parent
 	offset uint32

@@ -215,7 +215,13 @@ func (p *pub) checkWritable(ctx context.Context, n string, topic bus.Topic) (boo
 	p.writableProbeMu.Unlock()
 
 	probeName, probeTopic := n, topicStr
-	run.Go(ctx, "pub-node-probe", p.log, func(probeCtx context.Context) {
+	// The probe outlives the caller's request, so it must not inherit the
+	// caller's ctx: when the originating publish returns, that ctx is
+	// canceled and every checkServiceHealth call below would immediately
+	// fail with code=Canceled, latching the node out of the selector
+	// forever. Shutdown is handled by p.closer.CloseNotify() in the
+	// select below.
+	run.Go(context.Background(), "pub-node-probe", p.log, func(probeCtx context.Context) { //nolint:contextcheck // probe is service-lifetime, must not inherit caller ctx
 		defer p.closer.Done()
 		defer func() {
 			p.writableProbeMu.Lock()
