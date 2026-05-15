@@ -22,6 +22,8 @@ import (
 	"fmt"
 	"sync/atomic"
 
+	"github.com/pkg/errors"
+
 	commonv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/common/v1"
 	databasev1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/database/v1"
 	measurev1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/measure/v1"
@@ -146,9 +148,16 @@ func Dispatch(
 			return nil, "", false, nil
 		}
 	}
-	if req.GetTimeRange() == nil {
-		return nil, "", false, nil
-	}
+	// G9c #9: a nil TimeRange is NOT a fall-through. The row path does not
+	// reject it — parseFields feeds criteria.GetTimeRange().GetBegin().AsTime()
+	// into the index scan, and a nil *timestamppb.Timestamp resolves to the
+	// Unix epoch (1970-01-01T00:00:00Z). The query then runs over the
+	// degenerate [epoch, epoch] window and yields an empty result. The
+	// scan.Params.TimeRange construction below mirrors that exactly
+	// (req.GetTimeRange().GetBegin().AsTime() == epoch when TimeRange is
+	// nil), so dispatch produces the row path's canonical empty response
+	// directly instead of borrowing it.
+
 	// Defensive nil guards on the runtime context. These should not fire
 	// in production paths — buildMeasureContext populates all of them —
 	// but a defensive fallthrough is safer than a nil dereference.
@@ -156,13 +165,14 @@ func Dispatch(
 		return nil, "", false, nil
 	}
 
-	// Projection validation. The row path's Analyze rejects unknown
-	// projection names via ValidateProjectionTags / ValidateProjectionFields
-	// and surfaces a descriptive error. Dispatch falls through so the
-	// row path produces that canonical error (test fixtures with
-	// WantErr=true depend on it).
-	if !projectionsExistInSchema(req, measureSchema) {
-		return nil, "", false, nil
+	// G9c #11: projection validation. The row path's Analyze rejects
+	// unknown projection names via ValidateProjectionTags /
+	// ValidateProjectionFields and surfaces a descriptive error
+	// (test fixtures with WantErr=true assert it). Dispatch reproduces
+	// that canonical error byte-for-byte and returns handled=true so the
+	// caller surfaces it rather than falling through.
+	if projErr := validateProjectionParity(req, logicalSchema, measureSchema); projErr != nil {
+		return nil, "", true, projErr
 	}
 
 	// Hidden-tag detection: criteria may reference tags that are NOT in
@@ -250,10 +260,13 @@ func Dispatch(
 		return nil, "", true, fmt.Errorf("vec dispatch: query measure: %w", queryErr)
 	}
 	if result == nil {
-		// Match the row path's typed-nil handling: an empty query result
-		// flows through the row iterator as a no-op. Falling back lets
-		// that machinery surface the empty response unchanged.
-		return nil, "", false, nil
+		// G9c #13: a typed-nil result is the row path's canonical empty
+		// response. The row iterator (resultMIterator{result: nil}) reports
+		// Next()==false immediately and Close()==nil, so the client
+		// observes an empty []*measurev1.InternalDataPoint. Emit the same
+		// empty MIterator directly with handled=true instead of borrowing
+		// the row machinery.
+		return emptyMIterator{}, p.String(), true, nil
 	}
 
 	pool := vectorized.NewBatchPool(scan.BatchSchema, cfg.BatchSize)
@@ -329,53 +342,63 @@ func projectedNames(tp *modelv1.TagProjection) map[string]struct{} {
 	return out
 }
 
-// projectionsExistInSchema returns false if any tag (in any requested tag
-// family) or field name in the request's projection is absent from the
-// Measure schema. Callers use the result as an eligibility gate: missing
-// names route through the row path, which surfaces a descriptive error
-// via logical_measure.Analyze.
-func projectionsExistInSchema(req *measurev1.QueryRequest, m *databasev1.Measure) bool {
+// validateProjectionParity reproduces, byte-for-byte, the projection
+// errors the row path's logical_measure.Analyze raises so dispatch can
+// surface the canonical WantErr=true message directly instead of falling
+// through. It mirrors the row path exactly:
+//
+//   - Tags are validated before fields (measure_analyzer.go:110-119).
+//   - Tag projection is checked only when non-empty; each projected tag
+//     (families in order, tags in order) is looked up schema-wide via the
+//     TagSpec registry — the logical.Schema equivalent of CommonSchema's
+//     TagSpecMap. The first miss returns errors.Wrap(ErrTagNotDefined,
+//     tagName), identical to CommonSchema.ValidateProjectionTags
+//     (schema.go:175): "<tagName>: tag is not defined".
+//   - Field projection is checked only when non-empty; the first name
+//     absent from the Measure schema's fields returns errors.Errorf(
+//     "field %s not found in schema", field), identical to
+//     measure.schema.ValidateProjectionFields (measure/schema.go:77).
+//
+// A nil error means every projected name resolves, so dispatch proceeds.
+func validateProjectionParity(req *measurev1.QueryRequest, logicalSchema logical.Schema, m *databasev1.Measure) error {
 	if tp := req.GetTagProjection(); tp != nil {
 		for _, reqFamily := range tp.GetTagFamilies() {
-			schemaFamily := findSchemaTagFamily(m, reqFamily.GetName())
-			if schemaFamily == nil {
-				return false
-			}
-			known := make(map[string]struct{}, len(schemaFamily.GetTags()))
-			for _, ts := range schemaFamily.GetTags() {
-				known[ts.GetName()] = struct{}{}
-			}
 			for _, name := range reqFamily.GetTags() {
-				if _, ok := known[name]; !ok {
-					return false
+				if logicalSchema.FindTagSpecByName(name) == nil {
+					return errors.Wrap(logical.ErrTagNotDefined, name)
 				}
 			}
 		}
 	}
 	if fp := req.GetFieldProjection(); fp != nil && len(fp.GetNames()) > 0 {
+		// The row path's m.fieldMap is built from md.GetFields() in
+		// logical_measure.BuildSchema, so the Measure schema's field set
+		// is the authoritative lookup the row path's
+		// ValidateProjectionFields consults.
 		known := make(map[string]struct{}, len(m.GetFields()))
 		for _, fs := range m.GetFields() {
 			known[fs.GetName()] = struct{}{}
 		}
 		for _, name := range fp.GetNames() {
 			if _, ok := known[name]; !ok {
-				return false
+				return errors.Errorf("field %s not found in schema", name)
 			}
-		}
-	}
-	return true
-}
-
-// findSchemaTagFamily returns the schema-defined tag family with the
-// given name, or nil if no such family exists.
-func findSchemaTagFamily(m *databasev1.Measure, name string) *databasev1.TagFamilySpec {
-	for _, tf := range m.GetTagFamilies() {
-		if tf.GetName() == name {
-			return tf
 		}
 	}
 	return nil
 }
+
+// emptyMIterator is the vec equivalent of the row path's
+// resultMIterator{result: nil}: Next reports no rows, Current is never
+// reached, and Close is a no-op error. Dispatch returns it for the
+// canonical empty response (G9c #13).
+type emptyMIterator struct{}
+
+func (emptyMIterator) Next() bool { return false }
+
+func (emptyMIterator) Current() []*measurev1.InternalDataPoint { return nil }
+
+func (emptyMIterator) Close() error { return nil }
 
 // aggProjectionCoverage reports whether the request's GroupBy keys and
 // Agg field are all present in the request's projections. Required by

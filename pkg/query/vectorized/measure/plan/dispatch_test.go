@@ -246,11 +246,12 @@ func TestDispatch_OrderBy_UnknownIndexRule_BubblesUpError(t *testing.T) {
 	}
 }
 
-// TestDispatch_UnknownTagProjection_FallsThrough covers the parity gap
-// for WantErr=true fixtures: the row path rejects unknown tags via
-// ValidateProjectionTags and returns a descriptive error. Dispatch
-// falls through so the row path surfaces that canonical error.
-func TestDispatch_UnknownTagProjection_FallsThrough(t *testing.T) {
+// TestDispatch_UnknownTagProjection_SurfacesCanonicalError covers G9c
+// #11: the row path rejects unknown tags via ValidateProjectionTags with
+// errors.Wrap(ErrTagNotDefined, tagName). Dispatch reproduces that exact
+// message and returns handled=true so the caller surfaces it (the
+// WantErr=true fixtures depend on it) instead of borrowing the row path.
+func TestDispatch_UnknownTagProjection_SurfacesCanonicalError(t *testing.T) {
 	measureSchema := testMeasureSchema()
 	// nolint:staticcheck // SA1019 — row-path BuildSchema is the only schema builder until G8 replaces it.
 	logicalSchema, schemaErr := logicalmeasure.BuildSchema(measureSchema, nil)
@@ -266,20 +267,27 @@ func TestDispatch_UnknownTagProjection_FallsThrough(t *testing.T) {
 	}}
 	_, _, handled, err := Dispatch(context.Background(),
 		req, metadata, measureSchema, logicalSchema, ec, dispatchCfg(true))
-	if err != nil {
-		t.Fatalf("unknown tag fallthrough must not error: %v", err)
+	if err == nil {
+		t.Fatal("unknown tag in projection must surface the canonical row-path error")
 	}
-	if handled {
-		t.Fatal("unknown tag in projection must fall through (row path returns WantErr)")
+	// Byte-identical to logical.CommonSchema.ValidateProjectionTags
+	// (pkg/query/logical/schema.go:175): errors.Wrap(ErrTagNotDefined, "ghost").
+	const wantMsg = "ghost: tag is not defined"
+	if err.Error() != wantMsg {
+		t.Fatalf("error message parity: want %q, got %q", wantMsg, err.Error())
+	}
+	if !handled {
+		t.Fatal("projection error must report handled=true so caller surfaces it (no row-path retry)")
 	}
 	if ec.called {
 		t.Fatal("ec.Query must not be invoked when projection is invalid")
 	}
 }
 
-// TestDispatch_UnknownFieldProjection_FallsThrough is the field-side
-// counterpart of UnknownTagProjection.
-func TestDispatch_UnknownFieldProjection_FallsThrough(t *testing.T) {
+// TestDispatch_UnknownFieldProjection_SurfacesCanonicalError is the
+// field-side counterpart: byte-identical to
+// measure.schema.ValidateProjectionFields (measure/schema.go:77).
+func TestDispatch_UnknownFieldProjection_SurfacesCanonicalError(t *testing.T) {
 	measureSchema := testMeasureSchema()
 	// nolint:staticcheck // SA1019 — row-path BuildSchema is the only schema builder until G8 replaces it.
 	logicalSchema, schemaErr := logicalmeasure.BuildSchema(measureSchema, nil)
@@ -293,29 +301,84 @@ func TestDispatch_UnknownFieldProjection_FallsThrough(t *testing.T) {
 	req.FieldProjection = &measurev1.QueryRequest_FieldProjection{Names: []string{"ghost"}}
 	_, _, handled, err := Dispatch(context.Background(),
 		req, metadata, measureSchema, logicalSchema, ec, dispatchCfg(true))
-	if err != nil {
-		t.Fatalf("unknown field fallthrough must not error: %v", err)
+	if err == nil {
+		t.Fatal("unknown field in projection must surface the canonical row-path error")
 	}
-	if handled {
-		t.Fatal("unknown field in projection must fall through (row path returns WantErr)")
+	const wantMsg = "field ghost not found in schema"
+	if err.Error() != wantMsg {
+		t.Fatalf("error message parity: want %q, got %q", wantMsg, err.Error())
+	}
+	if !handled {
+		t.Fatal("projection error must report handled=true so caller surfaces it (no row-path retry)")
 	}
 	if ec.called {
 		t.Fatal("ec.Query must not be invoked when projection is invalid")
 	}
 }
 
-// TestDispatch_NoTimeRange_FallsThrough covers the bounded-window
-// requirement.
-func TestDispatch_NoTimeRange_FallsThrough(t *testing.T) {
+// TestDispatch_TagValidatedBeforeField mirrors the row path's ordering
+// (measure_analyzer.go validates tags before fields): when both
+// projections are unknown, the tag error wins.
+func TestDispatch_TagValidatedBeforeField(t *testing.T) {
+	measureSchema := testMeasureSchema()
+	// nolint:staticcheck // SA1019 — row-path BuildSchema is the only schema builder until G8 replaces it.
+	logicalSchema, schemaErr := logicalmeasure.BuildSchema(measureSchema, nil)
+	if schemaErr != nil {
+		t.Fatalf("BuildSchema: %v", schemaErr)
+	}
+	metadata := &commonv1.Metadata{Name: "demo", Group: "default"}
+	ec := &fakeEC{}
+
+	req := bareReq()
+	req.TagProjection = &modelv1.TagProjection{TagFamilies: []*modelv1.TagProjection_TagFamily{
+		{Name: "default", Tags: []string{"ghost"}},
+	}}
+	req.FieldProjection = &measurev1.QueryRequest_FieldProjection{Names: []string{"phantom"}}
+	_, _, _, err := Dispatch(context.Background(),
+		req, metadata, measureSchema, logicalSchema, ec, dispatchCfg(true))
+	if err == nil || err.Error() != "ghost: tag is not defined" {
+		t.Fatalf("tag error must take precedence over field error; got %v", err)
+	}
+}
+
+// TestDispatch_NoTimeRange_EmptyResultParity covers G9c #9: a nil
+// TimeRange is NOT rejected by the row path. parseFields feeds
+// criteria.GetTimeRange().GetBegin().AsTime() (nil → Unix epoch) into the
+// scan, the query runs over [epoch, epoch], and the client observes an
+// empty response. Dispatch reproduces that exact behavior directly:
+// ec.Query is invoked (over the epoch window) and the canonical empty
+// MIterator is emitted with handled=true.
+func TestDispatch_NoTimeRange_EmptyResultParity(t *testing.T) {
+	measureSchema := testMeasureSchema()
+	// nolint:staticcheck // SA1019 — row-path BuildSchema is the only schema builder until G8 replaces it.
+	logicalSchema, schemaErr := logicalmeasure.BuildSchema(measureSchema, nil)
+	if schemaErr != nil {
+		t.Fatalf("BuildSchema: %v", schemaErr)
+	}
+	metadata := &commonv1.Metadata{Name: "demo", Group: "default"}
+	ec := &fakeEC{wantResult: nil, wantErr: nil}
+
 	req := bareReq()
 	req.TimeRange = nil
-	_, _, handled, err := Dispatch(context.Background(),
-		req, nil, nil, nil, nil, dispatchCfg(true))
+	iter, _, handled, err := Dispatch(context.Background(),
+		req, metadata, measureSchema, logicalSchema, ec, dispatchCfg(true))
 	if err != nil {
-		t.Fatalf("no-TimeRange fallthrough must not error: %v", err)
+		t.Fatalf("nil TimeRange must not error (row path does not reject it): %v", err)
 	}
-	if handled {
-		t.Fatal("missing TimeRange must fall through")
+	if !handled {
+		t.Fatal("nil TimeRange must be handled (row path produces an empty result, not a fall-through)")
+	}
+	if !ec.called {
+		t.Fatal("ec.Query must be invoked over the epoch window (row-path parity)")
+	}
+	if iter == nil {
+		t.Fatal("expected an empty MIterator, got nil")
+	}
+	if iter.Next() {
+		t.Fatal("empty-result MIterator must report Next()==false")
+	}
+	if closeErr := iter.Close(); closeErr != nil {
+		t.Fatalf("empty-result MIterator Close must be nil (row-path parity): %v", closeErr)
 	}
 }
 
@@ -348,13 +411,15 @@ func (f *fakeEC) Query(_ context.Context, opts model.MeasureQueryOptions) (model
 	return f.wantResult, f.wantErr
 }
 
-// TestDispatch_EmptyResult_FallsThrough exercises the full eligibility
-// path: an eligible request reaches ec.Query, ec returns (nil, nil)
-// (empty range), Dispatch reports fallthrough so the row path can surface
-// the empty response. This also confirms the index.Query construction
-// and Analyze invocation complete without error against a real
-// logical.Schema.
-func TestDispatch_EmptyResult_FallsThrough(t *testing.T) {
+// TestDispatch_EmptyResult_CanonicalEmptyIterator covers G9c #13: an
+// eligible request reaches ec.Query, ec returns (nil, nil) (the row
+// path's typed-nil empty result). Dispatch emits the canonical empty
+// MIterator (Next()==false, Close()==nil) with handled=true — the same
+// empty []*measurev1.InternalDataPoint the row iterator
+// (resultMIterator{result: nil}) would surface. This also confirms the
+// index.Query construction and Analyze invocation complete without error
+// against a real logical.Schema.
+func TestDispatch_EmptyResult_CanonicalEmptyIterator(t *testing.T) {
 	measureSchema := testMeasureSchema()
 	// nolint:staticcheck // SA1019 — row-path BuildSchema is the only schema builder until G8 replaces it.
 	logicalSchema, schemaErr := logicalmeasure.BuildSchema(measureSchema, nil)
@@ -364,19 +429,25 @@ func TestDispatch_EmptyResult_FallsThrough(t *testing.T) {
 	metadata := &commonv1.Metadata{Name: "demo", Group: "default"}
 	ec := &fakeEC{wantResult: nil, wantErr: nil}
 
-	iter, planStr, handled, err := Dispatch(context.Background(),
+	iter, _, handled, err := Dispatch(context.Background(),
 		bareReq(), metadata, measureSchema, logicalSchema, ec, dispatchCfg(true))
 	if err != nil {
 		t.Fatalf("dispatch must not error on empty result: %v", err)
 	}
-	if handled {
-		t.Fatal("empty result must fall through to row path")
+	if !handled {
+		t.Fatal("empty result must be handled (canonical empty response, not a fall-through)")
 	}
-	if iter != nil || planStr != "" {
-		t.Fatalf("expect zero outputs on fallthrough, got iter=%v planStr=%q", iter, planStr)
+	if iter == nil {
+		t.Fatal("expected an empty MIterator, got nil")
+	}
+	if iter.Next() {
+		t.Fatal("empty-result MIterator must report Next()==false")
+	}
+	if closeErr := iter.Close(); closeErr != nil {
+		t.Fatalf("empty-result MIterator Close must be nil (row-path parity): %v", closeErr)
 	}
 	if !ec.called {
-		t.Fatal("ec.Query must be invoked before fallthrough decision")
+		t.Fatal("ec.Query must be invoked before the empty-result decision")
 	}
 	if ec.lastOpts.Name != "demo" {
 		t.Fatalf("opts.Name: want demo, got %q", ec.lastOpts.Name)
@@ -395,8 +466,11 @@ func TestDispatch_Counters_TrackFellThroughCalls(t *testing.T) {
 	startHandled := HandledCount()
 	startFellThrough := FellThroughCount()
 
-	// Three fallthroughs of distinct shapes, each tripping a different
-	// gate so the counter is exercised across the eligibility branches.
+	// Three fallthroughs of distinct shapes. topReq trips the Top gate;
+	// the other two trip the PERMANENT nil-runtime-context guard (all-nil
+	// schema/ec/metadata). Note: post-G9c a nil TimeRange is no longer a
+	// fall-through on its own — noTimeReq falls through here only because
+	// the runtime context is nil.
 	topReq := bareReq()
 	topReq.Top = &measurev1.QueryRequest_Top{Number: 5, FieldName: "value"}
 	noTimeReq := bareReq()
