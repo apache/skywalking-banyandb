@@ -1,0 +1,9 @@
+[
+  {
+    "name": "soak_metric",
+    "groups": ["soak"],
+    "field_projection": {
+      "names": ["value", "count"]
+    }
+  }
+]

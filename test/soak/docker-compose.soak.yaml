@@ -1,0 +1,235 @@
+# Licensed to the Apache Software Foundation (ASF) under one
+# or more contributor license agreements.  See the NOTICE file
+# distributed with this work for additional information
+# regarding copyright ownership.  The ASF licenses this file
+# to you under the Apache License, Version 2.0 (the
+# "License"); you may not use this file except in compliance
+# with the License.  You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing,
+# software distributed under the License is distributed on an
+# "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
+# KIND, either express or implied.  See the License for the
+# specific language governing permissions and limitations
+# under the License.
+
+# Soak-test overlay for the G5d vectorized-query gate.
+#
+# Usage (via scripts/soak-vectorized.sh — do not invoke directly):
+#   BANYANDB_VEC_ENABLED=false docker compose -f test/soak/docker-compose.soak.yaml up -d
+#   BANYANDB_VEC_ENABLED=true  docker compose -f test/soak/docker-compose.soak.yaml up -d
+#
+# Key differences from the quick-start compose:
+#  - BanyanDB is built from local source (multi-stage Go build) instead of pulling a hub image.
+#  - The --measure-vectorized-enabled flag is controlled by BANYANDB_VEC_ENABLED (default: false).
+#  - Every container has explicit memory and CPU limits so a 31 GB no-swap host cannot OOM-kill silently.
+#  - SOAK_DATA_DIR (default ./data) is bind-mounted so snapshots can be copied between phases.
+
+services:
+  banyandb:
+    build:
+      context: ../..
+      dockerfile: test/soak/Dockerfile.banyand
+    container_name: banyandb
+    # Run as host UID/GID so the bind-mounted /data dir stays readable
+    # from the host shell — needed for snapshot/restore between phases.
+    # Override via SOAK_UID/SOAK_GID env if your host differs.
+    user: "${SOAK_UID:-1008}:${SOAK_GID:-1009}"
+    command:
+      - standalone
+      - --measure-vectorized-enabled=${BANYANDB_VEC_ENABLED:-false}
+      - --measure-root-path=/data
+      - --stream-root-path=/data
+      - --property-root-path=/data
+      - --trace-root-path=/data
+      - --schema-server-root-path=/data
+    ports:
+      - "17912:17912"   # gRPC — soak-driver record-baseline / replay-and-diff
+      - "17913:17913"   # HTTP/healthz
+      - "6060:6060"     # pprof
+      - "2121:2121"     # observability/metrics
+    volumes:
+      - type: bind
+        source: ${SOAK_DATA_DIR:-./data}
+        target: /data
+    networks:
+      - demo
+    healthcheck:
+      test: ["CMD", "sh", "-c", "wget -qO- http://127.0.0.1:17913/api/healthz >/dev/null 2>&1"]
+      interval: 5s
+      timeout: 120s
+      retries: 120
+    deploy:
+      resources:
+        limits:
+          memory: 2G
+          cpus: "2"
+
+  oap:
+    image: ${OAP_IMAGE:-ghcr.io/apache/skywalking/oap:b4a8811df9f48c66edb61c7b72d0293e3ecfa7cf}
+    container_name: skywalking-oap
+    environment:
+      SW_STORAGE: banyandb
+      SW_STORAGE_BANYANDB_TARGETS: banyandb:17912
+      SW_OTEL_RECEIVER: default
+      SW_OTEL_RECEIVER_ENABLED_OC_RULES: vm
+      SW_OTEL_RECEIVER_ENABLED_OTEL_METRICS_RULES: vm
+      SW_TELEMETRY: prometheus
+      SW_CORE_RECORD_DATA_TTL: 7
+      SW_CORE_METRICS_DATA_TTL: 7
+      JAVA_OPTS: -Xmx1500m
+    expose:
+      - 11800
+      - 12800
+      - 9090
+    ports:
+      - "12800:12800"
+      - "11800:11800"
+    networks:
+      - demo
+    depends_on:
+      banyandb:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "bash", "-c", "cat < /dev/null > /dev/tcp/127.0.0.1/12800"]
+      interval: 10s
+      timeout: 60s
+      retries: 30
+    restart: unless-stopped
+    deploy:
+      resources:
+        limits:
+          memory: 2G
+          cpus: "2"
+
+  oap-ui:
+    image: ${OAP_UI_IMAGE:-ghcr.io/apache/skywalking/ui:b4a8811df9f48c66edb61c7b72d0293e3ecfa7cf}
+    container_name: skywalking-ui
+    ports:
+      - "8080:8080"
+    environment:
+      - SW_OAP_ADDRESS=http://oap:12800
+    networks:
+      - demo
+    depends_on:
+      oap:
+        condition: service_healthy
+    restart: unless-stopped
+    deploy:
+      resources:
+        limits:
+          memory: 256M
+          cpus: "0.5"
+
+  agent:
+    image: ${AGENT_IMAGE:-ghcr.io/apache/skywalking-java/skywalking-java:f750006020249d29a21cae63ae50da67f182c6ab-java8}
+    command: cp -r /skywalking/agent/ /skywalking-java-agent/
+    volumes:
+      - sw_agent:/skywalking-java-agent
+    networks:
+      - demo
+    deploy:
+      resources:
+        limits:
+          memory: 64M
+          cpus: "0.5"
+
+  provider:
+    image: "ghcr.io/apache/skywalking/e2e-service-provider:a2a67ca63084cddf82303155c185e3c24cf07eef"
+    volumes:
+      - sw_agent:/sw-java-agent
+    environment:
+      JAVA_TOOL_OPTIONS: -javaagent:/sw-java-agent/agent/skywalking-agent.jar -Xmx384m
+      SW_AGENT_COLLECTOR_BACKEND_SERVICES: oap:11800
+      SW_LOGGING_OUTPUT: CONSOLE
+      SW_AGENT_NAME: service-provider
+      SW_AGENT_INSTANCE_NAME: provider1
+      SW_AGENT_COLLECTOR_GET_PROFILE_TASK_INTERVAL: 1
+      SW_AGENT_COLLECTOR_GET_AGENT_DYNAMIC_CONFIG_INTERVAL: 1
+    ports:
+      - "9090"
+    networks:
+      - demo
+    depends_on:
+      oap:
+        condition: service_healthy
+      agent:
+        condition: service_completed_successfully
+    healthcheck:
+      test: ["CMD", "bash", "-c", "cat < /dev/null > /dev/tcp/127.0.0.1/9090"]
+      interval: 5s
+      timeout: 60s
+      retries: 120
+    deploy:
+      resources:
+        limits:
+          memory: 1G
+          cpus: "1"
+
+  consumer:
+    image: "ghcr.io/apache/skywalking/e2e-service-consumer:a2a67ca63084cddf82303155c185e3c24cf07eef"
+    volumes:
+      - sw_agent:/sw-java-agent
+    environment:
+      JAVA_TOOL_OPTIONS: -javaagent:/sw-java-agent/agent/skywalking-agent.jar -Xmx384m
+      SW_AGENT_COLLECTOR_BACKEND_SERVICES: oap:11800
+      SW_LOGGING_OUTPUT: CONSOLE
+      PROVIDER_URL: http://provider:9090
+      SW_AGENT_NAME: service-consumer
+      SW_AGENT_INSTANCE_NAME: consumer1
+      SW_AGENT_COLLECTOR_GET_PROFILE_TASK_INTERVAL: 1
+      SW_AGENT_COLLECTOR_GET_AGENT_DYNAMIC_CONFIG_INTERVAL: 1
+    ports:
+      - "9092"
+    networks:
+      - demo
+    depends_on:
+      oap:
+        condition: service_healthy
+      provider:
+        condition: service_healthy
+      agent:
+        condition: service_completed_successfully
+    healthcheck:
+      test: ["CMD", "bash", "-c", "cat < /dev/null > /dev/tcp/127.0.0.1/9092"]
+      interval: 5s
+      timeout: 60s
+      retries: 120
+    deploy:
+      resources:
+        limits:
+          memory: 1G
+          cpus: "1"
+
+  traffic_loader:
+    image: curlimages/curl
+    networks:
+      - demo
+    depends_on:
+      oap:
+        condition: service_healthy
+      provider:
+        condition: service_healthy
+      consumer:
+        condition: service_healthy
+    entrypoint: >
+      sh -c "
+      echo 'Starting traffic generation...';
+      while true; do
+        curl -sf -X POST http://consumer:9092/info || true;
+        sleep 1;
+      done
+      "
+    deploy:
+      resources:
+        limits:
+          memory: 64M
+          cpus: "0.5"
+
+networks:
+  demo:
+
+volumes:
+  sw_agent: {}

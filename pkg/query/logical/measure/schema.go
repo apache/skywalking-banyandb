@@ -29,6 +29,10 @@ import (
 // errFieldNotDefined indicated the field is not defined in the measure schema.
 var errFieldNotDefined = errors.New("field is not defined")
 
+// Deprecated: row-path measure plan; see .omc/g8-plan.md. The vec
+// subsystem consumes *databasev1.Measure directly via
+// measure.BuildBatchSchema and produces a *vectorized.BatchSchema with
+// no intermediate logical.Schema indirection.
 type schema struct {
 	measure  *databasev1.Measure
 	fieldMap map[string]*logical.FieldSpec
