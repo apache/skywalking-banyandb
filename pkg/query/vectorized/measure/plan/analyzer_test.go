@@ -27,8 +27,13 @@ import (
 	modelv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/model/v1"
 )
 
-// testMeasureSchema builds a minimal Measure schema with one "default" tag
-// family containing "svc" + "region" tag specs and one "value" field.
+const (
+	tagSvc     = "svc"
+	fieldValue = "value"
+)
+
+// testMeasureSchema builds a minimal Measure schema with one default tag
+// family containing the svc + region tag specs and one value field.
 func testMeasureSchema() *databasev1.Measure {
 	return &databasev1.Measure{
 		Metadata: &commonv1.Metadata{Name: "demo", Group: "default"},
@@ -36,20 +41,20 @@ func testMeasureSchema() *databasev1.Measure {
 			{
 				Name: "default",
 				Tags: []*databasev1.TagSpec{
-					{Name: "svc", Type: databasev1.TagType_TAG_TYPE_STRING},
+					{Name: tagSvc, Type: databasev1.TagType_TAG_TYPE_STRING},
 					{Name: "region", Type: databasev1.TagType_TAG_TYPE_STRING},
 				},
 			},
 		},
 		Fields: []*databasev1.FieldSpec{
-			{Name: "value", FieldType: databasev1.FieldType_FIELD_TYPE_INT},
+			{Name: fieldValue, FieldType: databasev1.FieldType_FIELD_TYPE_INT},
 		},
 	}
 }
 
 func projTagProj() *modelv1.TagProjection {
 	return &modelv1.TagProjection{TagFamilies: []*modelv1.TagProjection_TagFamily{
-		{Name: "default", Tags: []string{"svc"}},
+		{Name: "default", Tags: []string{tagSvc}},
 	}}
 }
 
@@ -57,7 +62,7 @@ func TestAnalyze_BareRequest_BuildsScanWrappedInLimit(t *testing.T) {
 	req := &measurev1.QueryRequest{
 		Name:            "demo",
 		TagProjection:   projTagProj(),
-		FieldProjection: &measurev1.QueryRequest_FieldProjection{Names: []string{"value"}},
+		FieldProjection: &measurev1.QueryRequest_FieldProjection{Names: []string{fieldValue}},
 	}
 	p, err := Analyze(req, testMeasureSchema())
 	if err != nil {
@@ -75,14 +80,14 @@ func TestAnalyze_GroupByAgg_BuildsGroupByAggBelowLimit(t *testing.T) {
 	req := &measurev1.QueryRequest{
 		Name:            "demo",
 		TagProjection:   projTagProj(),
-		FieldProjection: &measurev1.QueryRequest_FieldProjection{Names: []string{"value"}},
+		FieldProjection: &measurev1.QueryRequest_FieldProjection{Names: []string{fieldValue}},
 		GroupBy: &measurev1.QueryRequest_GroupBy{
 			TagProjection: projTagProj(),
-			FieldName:     "value",
+			FieldName:     fieldValue,
 		},
 		Agg: &measurev1.QueryRequest_Aggregation{
 			Function:  modelv1.AggregationFunction_AGGREGATION_FUNCTION_SUM,
-			FieldName: "value",
+			FieldName: fieldValue,
 		},
 	}
 	p, err := Analyze(req, testMeasureSchema())
@@ -100,10 +105,10 @@ func TestAnalyze_GroupByAgg_BuildsGroupByAggBelowLimit(t *testing.T) {
 	if _, ok := gba.Children()[0].(*Scan); !ok {
 		t.Fatalf("GroupByAgg child should be *Scan, got %T", gba.Children()[0])
 	}
-	if gba.GroupBy.TagNames[0] != "svc" {
+	if gba.GroupBy.TagNames[0] != tagSvc {
 		t.Fatalf("GroupBy.TagNames: want [svc], got %v", gba.GroupBy.TagNames)
 	}
-	if gba.Agg.FieldName != "value" {
+	if gba.Agg.FieldName != fieldValue {
 		t.Fatalf("Agg.FieldName: want value, got %s", gba.Agg.FieldName)
 	}
 }
@@ -112,14 +117,14 @@ func TestAnalyze_TopBetweenGroupByAggAndLimit(t *testing.T) {
 	req := &measurev1.QueryRequest{
 		Name:            "demo",
 		TagProjection:   projTagProj(),
-		FieldProjection: &measurev1.QueryRequest_FieldProjection{Names: []string{"value"}},
+		FieldProjection: &measurev1.QueryRequest_FieldProjection{Names: []string{fieldValue}},
 		GroupBy: &measurev1.QueryRequest_GroupBy{
 			TagProjection: projTagProj(),
-			FieldName:     "value",
+			FieldName:     fieldValue,
 		},
 		Agg: &measurev1.QueryRequest_Aggregation{
 			Function:  modelv1.AggregationFunction_AGGREGATION_FUNCTION_SUM,
-			FieldName: "value",
+			FieldName: fieldValue,
 		},
 		Top: &measurev1.QueryRequest_Top{
 			Number:         5,
@@ -155,10 +160,10 @@ func TestAnalyze_TopSortAsc_MapsToAscending(t *testing.T) {
 	req := &measurev1.QueryRequest{
 		Name:            "demo",
 		TagProjection:   projTagProj(),
-		FieldProjection: &measurev1.QueryRequest_FieldProjection{Names: []string{"value"}},
+		FieldProjection: &measurev1.QueryRequest_FieldProjection{Names: []string{fieldValue}},
 		Top: &measurev1.QueryRequest_Top{
 			Number:         3,
-			FieldName:      "value",
+			FieldName:      fieldValue,
 			FieldValueSort: modelv1.Sort_SORT_ASC,
 		},
 	}
@@ -185,10 +190,10 @@ func TestAnalyze_GroupByWithoutAgg_BuildsRawGroupBy(t *testing.T) {
 	req := &measurev1.QueryRequest{
 		Name:            "demo",
 		TagProjection:   projTagProj(),
-		FieldProjection: &measurev1.QueryRequest_FieldProjection{Names: []string{"value"}},
+		FieldProjection: &measurev1.QueryRequest_FieldProjection{Names: []string{fieldValue}},
 		GroupBy: &measurev1.QueryRequest_GroupBy{
 			TagProjection: projTagProj(),
-			FieldName:     "value",
+			FieldName:     fieldValue,
 		},
 	}
 	p, err := Analyze(req, testMeasureSchema())
@@ -206,7 +211,7 @@ func TestAnalyze_GroupByWithoutAgg_BuildsRawGroupBy(t *testing.T) {
 	if gba.Agg != nil {
 		t.Fatalf("raw GroupBy must have nil Agg, got %+v", gba.Agg)
 	}
-	if gba.GroupBy == nil || gba.GroupBy.TagNames[0] != "svc" {
+	if gba.GroupBy == nil || gba.GroupBy.TagNames[0] != tagSvc {
 		t.Fatalf("GroupBy.TagNames: want [svc], got %+v", gba.GroupBy)
 	}
 }
@@ -217,10 +222,10 @@ func TestAnalyze_AggWithoutGroupBy_BuildsScalarReduce(t *testing.T) {
 	req := &measurev1.QueryRequest{
 		Name:            "demo",
 		TagProjection:   projTagProj(),
-		FieldProjection: &measurev1.QueryRequest_FieldProjection{Names: []string{"value"}},
+		FieldProjection: &measurev1.QueryRequest_FieldProjection{Names: []string{fieldValue}},
 		Agg: &measurev1.QueryRequest_Aggregation{
 			Function:  modelv1.AggregationFunction_AGGREGATION_FUNCTION_SUM,
-			FieldName: "value",
+			FieldName: fieldValue,
 		},
 	}
 	p, err := Analyze(req, testMeasureSchema())
@@ -238,7 +243,7 @@ func TestAnalyze_AggWithoutGroupBy_BuildsScalarReduce(t *testing.T) {
 	if gba.GroupBy != nil {
 		t.Fatalf("scalar reduce must have nil GroupBy, got %+v", gba.GroupBy)
 	}
-	if gba.Agg == nil || gba.Agg.FieldName != "value" {
+	if gba.Agg == nil || gba.Agg.FieldName != fieldValue {
 		t.Fatalf("Agg.FieldName: want value, got %+v", gba.Agg)
 	}
 }
@@ -247,16 +252,16 @@ func TestAnalyze_UnknownGroupByTag_Errors(t *testing.T) {
 	req := &measurev1.QueryRequest{
 		Name:            "demo",
 		TagProjection:   projTagProj(),
-		FieldProjection: &measurev1.QueryRequest_FieldProjection{Names: []string{"value"}},
+		FieldProjection: &measurev1.QueryRequest_FieldProjection{Names: []string{fieldValue}},
 		GroupBy: &measurev1.QueryRequest_GroupBy{
 			TagProjection: &modelv1.TagProjection{TagFamilies: []*modelv1.TagProjection_TagFamily{
 				{Name: "default", Tags: []string{"missing"}},
 			}},
-			FieldName: "value",
+			FieldName: fieldValue,
 		},
 		Agg: &measurev1.QueryRequest_Aggregation{
 			Function:  modelv1.AggregationFunction_AGGREGATION_FUNCTION_SUM,
-			FieldName: "value",
+			FieldName: fieldValue,
 		},
 	}
 	_, err := Analyze(req, testMeasureSchema())
@@ -272,10 +277,10 @@ func TestAnalyze_UnknownAggField_Errors(t *testing.T) {
 	req := &measurev1.QueryRequest{
 		Name:            "demo",
 		TagProjection:   projTagProj(),
-		FieldProjection: &measurev1.QueryRequest_FieldProjection{Names: []string{"value"}},
+		FieldProjection: &measurev1.QueryRequest_FieldProjection{Names: []string{fieldValue}},
 		GroupBy: &measurev1.QueryRequest_GroupBy{
 			TagProjection: projTagProj(),
-			FieldName:     "value",
+			FieldName:     fieldValue,
 		},
 		Agg: &measurev1.QueryRequest_Aggregation{
 			Function:  modelv1.AggregationFunction_AGGREGATION_FUNCTION_SUM,
@@ -310,7 +315,7 @@ func TestAnalyze_DefaultLimit_AppliedWhenZero(t *testing.T) {
 	req := &measurev1.QueryRequest{
 		Name:            "demo",
 		TagProjection:   projTagProj(),
-		FieldProjection: &measurev1.QueryRequest_FieldProjection{Names: []string{"value"}},
+		FieldProjection: &measurev1.QueryRequest_FieldProjection{Names: []string{fieldValue}},
 		// Limit unset (0) → default 100 per defaultLimit constant
 	}
 	p, err := Analyze(req, testMeasureSchema())
@@ -327,14 +332,14 @@ func TestPrintTree_RendersHierarchy(t *testing.T) {
 	req := &measurev1.QueryRequest{
 		Name:            "demo",
 		TagProjection:   projTagProj(),
-		FieldProjection: &measurev1.QueryRequest_FieldProjection{Names: []string{"value"}},
+		FieldProjection: &measurev1.QueryRequest_FieldProjection{Names: []string{fieldValue}},
 		GroupBy: &measurev1.QueryRequest_GroupBy{
 			TagProjection: projTagProj(),
-			FieldName:     "value",
+			FieldName:     fieldValue,
 		},
 		Agg: &measurev1.QueryRequest_Aggregation{
 			Function:  modelv1.AggregationFunction_AGGREGATION_FUNCTION_SUM,
-			FieldName: "value",
+			FieldName: fieldValue,
 		},
 	}
 	p, err := Analyze(req, testMeasureSchema())

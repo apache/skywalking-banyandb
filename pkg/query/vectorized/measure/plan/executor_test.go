@@ -78,8 +78,8 @@ func TestExecute_GroupByAgg_EmitsAggregatedRowsWithNilTimestamp(t *testing.T) {
 	scan := NewScan(schema, ScanParams{})
 	scan.Source = src
 	gba, err := NewGroupByAgg(scan,
-		&model.MeasureGroupBy{TagFamily: "default", TagNames: []string{"svc"}},
-		&model.MeasureAgg{FieldName: "value", Func: modelv1.AggregationFunction_AGGREGATION_FUNCTION_SUM},
+		&model.MeasureGroupBy{TagFamily: "default", TagNames: []string{tagSvc}},
+		&model.MeasureAgg{FieldName: fieldValue, Func: modelv1.AggregationFunction_AGGREGATION_FUNCTION_SUM},
 	)
 	if err != nil {
 		t.Fatalf("NewGroupByAgg: %v", err)
@@ -106,11 +106,11 @@ func TestExecute_GroupByAgg_EmitsAggregatedRowsWithNilTimestamp(t *testing.T) {
 			t.Fatalf("want one TagFamily 'default', got %+v", idp.DataPoint.TagFamilies)
 		}
 		tags := idp.DataPoint.TagFamilies[0].Tags
-		if len(tags) != 1 || tags[0].Key != "svc" {
+		if len(tags) != 1 || tags[0].Key != tagSvc {
 			t.Fatalf("want one Tag 'svc', got %+v", tags)
 		}
 		svc := tags[0].Value.GetStr().GetValue()
-		if len(idp.DataPoint.Fields) != 1 || idp.DataPoint.Fields[0].Name != "value" {
+		if len(idp.DataPoint.Fields) != 1 || idp.DataPoint.Fields[0].Name != fieldValue {
 			t.Fatalf("want one Field 'value' (row-path parity), got %+v", idp.DataPoint.Fields)
 		}
 		bySvc[svc] = idp.DataPoint.Fields[0].Value.GetInt().GetValue()
@@ -133,7 +133,7 @@ func TestExecute_ScalarReduce_EmitsSingleRow(t *testing.T) {
 	scan := NewScan(schema, ScanParams{})
 	scan.Source = src
 	gba, err := NewGroupByAgg(scan, nil,
-		&model.MeasureAgg{FieldName: "value", Func: modelv1.AggregationFunction_AGGREGATION_FUNCTION_SUM},
+		&model.MeasureAgg{FieldName: fieldValue, Func: modelv1.AggregationFunction_AGGREGATION_FUNCTION_SUM},
 	)
 	if err != nil {
 		t.Fatalf("NewGroupByAgg: %v", err)
@@ -160,7 +160,7 @@ func TestExecute_ScalarReduce_EmitsSingleRow(t *testing.T) {
 		}
 		tags := idp.DataPoint.TagFamilies[0].Tags
 		svc = tags[0].Value.GetStr().GetValue()
-		if len(idp.DataPoint.Fields) != 1 || idp.DataPoint.Fields[0].Name != "value" {
+		if len(idp.DataPoint.Fields) != 1 || idp.DataPoint.Fields[0].Name != fieldValue {
 			t.Fatalf("want one Field 'value', got %+v", idp.DataPoint.Fields)
 		}
 		sum = idp.DataPoint.Fields[0].Value.GetInt().GetValue()
@@ -188,7 +188,7 @@ func TestExecute_RawGroupBy_EmitsFirstRowPerGroup(t *testing.T) {
 	scan := NewScan(schema, ScanParams{})
 	scan.Source = src
 	gba, err := NewGroupByAgg(scan,
-		&model.MeasureGroupBy{TagFamily: "default", TagNames: []string{"svc"}}, nil,
+		&model.MeasureGroupBy{TagFamily: "default", TagNames: []string{tagSvc}}, nil,
 	)
 	if err != nil {
 		t.Fatalf("NewGroupByAgg: %v", err)
@@ -215,7 +215,7 @@ func TestExecute_RawGroupBy_EmitsFirstRowPerGroup(t *testing.T) {
 		idp := dps[0]
 		// Raw GroupBy preserves the input schema, so the field column
 		// survives (unlike the aggregation shapes).
-		if len(idp.DataPoint.Fields) != 1 || idp.DataPoint.Fields[0].Name != "value" {
+		if len(idp.DataPoint.Fields) != 1 || idp.DataPoint.Fields[0].Name != fieldValue {
 			t.Fatalf("raw GroupBy must preserve the field column, got %+v", idp.DataPoint.Fields)
 		}
 		svc := idp.DataPoint.TagFamilies[0].Tags[0].Value.GetStr().GetValue()

@@ -42,7 +42,7 @@ func bareReq() *measurev1.QueryRequest {
 		Name:            "demo",
 		Groups:          []string{"default"},
 		TagProjection:   projTagProj(),
-		FieldProjection: &measurev1.QueryRequest_FieldProjection{Names: []string{"value"}},
+		FieldProjection: &measurev1.QueryRequest_FieldProjection{Names: []string{fieldValue}},
 		TimeRange: &modelv1.TimeRange{
 			Begin: timestamppb.New(time.Unix(0, 0)),
 			End:   timestamppb.New(time.Unix(0, 1_000_000)),
@@ -72,7 +72,7 @@ func TestDispatch_GroupByWithoutAgg_FallsThrough(t *testing.T) {
 	req := bareReq()
 	req.GroupBy = &measurev1.QueryRequest_GroupBy{
 		TagProjection: projTagProj(),
-		FieldName:     "value",
+		FieldName:     fieldValue,
 	}
 	_, _, handled, err := Dispatch(context.Background(),
 		req, nil, nil, nil, nil, dispatchCfg(true))
@@ -90,7 +90,7 @@ func TestDispatch_AggWithoutGroupBy_FallsThrough(t *testing.T) {
 	req := bareReq()
 	req.Agg = &measurev1.QueryRequest_Aggregation{
 		Function:  modelv1.AggregationFunction_AGGREGATION_FUNCTION_SUM,
-		FieldName: "value",
+		FieldName: fieldValue,
 	}
 	_, _, handled, err := Dispatch(context.Background(),
 		req, nil, nil, nil, nil, dispatchCfg(true))
@@ -118,16 +118,16 @@ func TestDispatch_GroupByAggUncoveredProjection_FallsThrough(t *testing.T) {
 		{
 			name: "groupby_tag_not_in_projection",
 			mutate: func(req *measurev1.QueryRequest) {
-				// GroupBy references "region" but TagProjection only carries "svc".
+				// GroupBy references region but TagProjection only carries svc.
 				req.GroupBy = &measurev1.QueryRequest_GroupBy{
 					TagProjection: &modelv1.TagProjection{TagFamilies: []*modelv1.TagProjection_TagFamily{
 						{Name: "default", Tags: []string{"region"}},
 					}},
-					FieldName: "value",
+					FieldName: fieldValue,
 				}
 				req.Agg = &measurev1.QueryRequest_Aggregation{
 					Function:  modelv1.AggregationFunction_AGGREGATION_FUNCTION_SUM,
-					FieldName: "value",
+					FieldName: fieldValue,
 				}
 			},
 		},
@@ -136,13 +136,13 @@ func TestDispatch_GroupByAggUncoveredProjection_FallsThrough(t *testing.T) {
 			mutate: func(req *measurev1.QueryRequest) {
 				req.GroupBy = &measurev1.QueryRequest_GroupBy{
 					TagProjection: projTagProj(),
-					FieldName:     "value",
+					FieldName:     fieldValue,
 				}
 				req.Agg = &measurev1.QueryRequest_Aggregation{
 					Function:  modelv1.AggregationFunction_AGGREGATION_FUNCTION_SUM,
-					FieldName: "value",
+					FieldName: fieldValue,
 				}
-				// Strip "value" from FieldProjection so the Agg field is uncovered.
+				// Strip the value field from FieldProjection so the Agg field is uncovered.
 				req.FieldProjection = nil
 			},
 		},
@@ -182,7 +182,7 @@ func TestDispatch_Top_ReachesEcQuery(t *testing.T) {
 	req := bareReq()
 	req.Top = &measurev1.QueryRequest_Top{
 		Number:         5,
-		FieldName:      "value",
+		FieldName:      fieldValue,
 		FieldValueSort: modelv1.Sort_SORT_DESC,
 	}
 
@@ -351,10 +351,13 @@ func TestDispatch_TagValidatedBeforeField(t *testing.T) {
 		{Name: "default", Tags: []string{"ghost"}},
 	}}
 	req.FieldProjection = &measurev1.QueryRequest_FieldProjection{Names: []string{"phantom"}}
-	_, _, _, err := Dispatch(context.Background(),
+	_, _, handled, err := Dispatch(context.Background(),
 		req, metadata, measureSchema, logicalSchema, ec, dispatchCfg(true))
 	if err == nil || err.Error() != "ghost: tag is not defined" {
 		t.Fatalf("tag error must take precedence over field error; got %v", err)
+	}
+	if !handled {
+		t.Fatal("projection parity error must report handled=true (caller must not retry row path)")
 	}
 }
 
@@ -489,7 +492,7 @@ func TestDispatch_Counters_TrackFellThroughCalls(t *testing.T) {
 	// schema/ec/metadata in the loop below). The counter is still
 	// exercised on the clean (non-error) fall-through path.
 	gbReq := bareReq()
-	gbReq.GroupBy = &measurev1.QueryRequest_GroupBy{TagProjection: projTagProj(), FieldName: "value"}
+	gbReq.GroupBy = &measurev1.QueryRequest_GroupBy{TagProjection: projTagProj(), FieldName: fieldValue}
 	noTimeReq := bareReq()
 	noTimeReq.TimeRange = nil
 
@@ -531,11 +534,11 @@ func TestDispatch_GroupByAggCovered_ReachesEcQuery(t *testing.T) {
 	req := bareReq()
 	req.GroupBy = &measurev1.QueryRequest_GroupBy{
 		TagProjection: projTagProj(),
-		FieldName:     "value",
+		FieldName:     fieldValue,
 	}
 	req.Agg = &measurev1.QueryRequest_Aggregation{
 		Function:  modelv1.AggregationFunction_AGGREGATION_FUNCTION_SUM,
-		FieldName: "value",
+		FieldName: fieldValue,
 	}
 
 	iter, planStr, handled, err := Dispatch(context.Background(),
@@ -568,14 +571,14 @@ func TestAugmentRequestWithHiddenTags_AppendsFamiliesAfterVisible(t *testing.T) 
 		t.Fatal("augment must return a clone when extras are present")
 	}
 	if len(req.GetTagProjection().GetTagFamilies()) != 1 ||
-		req.GetTagProjection().GetTagFamilies()[0].GetTags()[0] != "svc" {
+		req.GetTagProjection().GetTagFamilies()[0].GetTags()[0] != tagSvc {
 		t.Fatalf("caller's req.TagProjection must be untouched, got %+v", req.GetTagProjection())
 	}
 	fams := got.GetTagProjection().GetTagFamilies()
 	if len(fams) != 3 {
 		t.Fatalf("want 3 families (1 visible + 2 hidden), got %d: %+v", len(fams), fams)
 	}
-	if fams[0].GetName() != "default" || fams[0].GetTags()[0] != "svc" {
+	if fams[0].GetName() != "default" || fams[0].GetTags()[0] != tagSvc {
 		t.Fatalf("visible family must stay first, got %+v", fams[0])
 	}
 	if fams[1].GetName() != "default" || fams[1].GetTags()[0] != "region" {
@@ -600,7 +603,7 @@ func TestHiddenTagsMIterator_StripsHiddenTagsFromCurrent(t *testing.T) {
 				TagFamilies: []*modelv1.TagFamily{{
 					Name: "default",
 					Tags: []*modelv1.Tag{
-						{Key: "svc", Value: &modelv1.TagValue{Value: &modelv1.TagValue_Str{Str: &modelv1.Str{Value: "a"}}}},
+						{Key: tagSvc, Value: &modelv1.TagValue{Value: &modelv1.TagValue_Str{Str: &modelv1.Str{Value: "a"}}}},
 						{Key: "region", Value: &modelv1.TagValue{Value: &modelv1.TagValue_Str{Str: &modelv1.Str{Value: "us"}}}},
 					},
 				}},
@@ -618,7 +621,7 @@ func TestHiddenTagsMIterator_StripsHiddenTagsFromCurrent(t *testing.T) {
 		t.Fatalf("expected one family after strip, got %+v", cur)
 	}
 	tags := cur[0].DataPoint.TagFamilies[0].Tags
-	if len(tags) != 1 || tags[0].Key != "svc" {
+	if len(tags) != 1 || tags[0].Key != tagSvc {
 		t.Fatalf("only visible tag 'svc' must remain, got %+v", tags)
 	}
 	if it.Close() != nil {
