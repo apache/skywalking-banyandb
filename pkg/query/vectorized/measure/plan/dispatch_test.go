@@ -180,22 +180,69 @@ func TestDispatch_Top_FallsThrough(t *testing.T) {
 	}
 }
 
-// TestDispatch_OrderBy_FallsThrough covers the order_by gap. The row
-// path resolves OrderBy via the PushDownOrder optimizer rule which the
-// vec dispatch does not invoke. Until dispatch threads OrderBy into
-// MeasureQueryOptions.Order, requests with OrderBy must fall through.
-func TestDispatch_OrderBy_FallsThrough(t *testing.T) {
+// TestDispatch_OrderBy_ReachesEcQuery confirms dispatch resolves
+// req.OrderBy via logical.ParseOrderBy and threads it into
+// MeasureQueryOptions.Order, instead of falling through to the row
+// path. fakeEC returns nil so dispatch falls through after ec.Query
+// — what matters is that ec.Query was reached at all, proving the
+// OrderBy gate no longer rejects the request.
+func TestDispatch_OrderBy_ReachesEcQuery(t *testing.T) {
+	measureSchema := testMeasureSchema()
+	// nolint:staticcheck // SA1019 — row-path BuildSchema is the only schema builder until G8 replaces it.
+	logicalSchema, schemaErr := logicalmeasure.BuildSchema(measureSchema, nil)
+	if schemaErr != nil {
+		t.Fatalf("BuildSchema: %v", schemaErr)
+	}
+	metadata := &commonv1.Metadata{Name: "demo", Group: "default"}
+	ec := &fakeEC{wantResult: nil, wantErr: nil}
+
 	req := bareReq()
 	req.OrderBy = &modelv1.QueryOrder{
 		Sort: modelv1.Sort_SORT_DESC,
 	}
-	_, _, handled, err := Dispatch(context.Background(),
-		req, nil, nil, nil, nil, dispatchCfg(true))
+
+	iter, planStr, handled, err := Dispatch(context.Background(),
+		req, metadata, measureSchema, logicalSchema, ec, dispatchCfg(true))
 	if err != nil {
-		t.Fatalf("OrderBy fallthrough must not error: %v", err)
+		t.Fatalf("OrderBy must not error before ec.Query: %v", err)
 	}
-	if handled {
-		t.Fatal("OrderBy must fall through (row path applies it via PushDownOrder)")
+	if !ec.called {
+		t.Fatalf("OrderBy must reach ec.Query (no longer falls through); "+
+			"got iter=%v planStr=%q handled=%v", iter, planStr, handled)
+	}
+}
+
+// TestDispatch_OrderBy_UnknownIndexRule_BubblesUpError covers the
+// error branch dispatch added when threading OrderBy through
+// logical.ParseOrderBy: an unknown index rule name must surface as a
+// dispatch error with handled=true so the caller does not silently
+// retry the row path (which would produce the same canonical error).
+func TestDispatch_OrderBy_UnknownIndexRule_BubblesUpError(t *testing.T) {
+	measureSchema := testMeasureSchema()
+	// nolint:staticcheck // SA1019 — row-path BuildSchema is the only schema builder until G8 replaces it.
+	logicalSchema, schemaErr := logicalmeasure.BuildSchema(measureSchema, nil)
+	if schemaErr != nil {
+		t.Fatalf("BuildSchema: %v", schemaErr)
+	}
+	metadata := &commonv1.Metadata{Name: "demo", Group: "default"}
+	ec := &fakeEC{wantResult: nil, wantErr: nil}
+
+	req := bareReq()
+	req.OrderBy = &modelv1.QueryOrder{
+		IndexRuleName: "no_such_index_rule",
+		Sort:          modelv1.Sort_SORT_ASC,
+	}
+
+	_, _, handled, err := Dispatch(context.Background(),
+		req, metadata, measureSchema, logicalSchema, ec, dispatchCfg(true))
+	if err == nil {
+		t.Fatal("unknown OrderBy index rule must surface as a dispatch error")
+	}
+	if !handled {
+		t.Fatal("unknown OrderBy index rule must report handled=true so caller does not re-try row path")
+	}
+	if ec.called {
+		t.Fatal("unknown OrderBy index rule must error before ec.Query is invoked")
 	}
 }
 

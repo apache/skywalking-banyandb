@@ -146,14 +146,6 @@ func Dispatch(
 			return nil, "", false, nil
 		}
 	}
-	if req.GetOrderBy() != nil {
-		// The row path resolves order_by via the PushDownOrder optimizer
-		// rule (logical.NewPushDownOrder applied after Analyze). The vec
-		// dispatch does not invoke those rules, so it would silently
-		// drop OrderBy and return unsorted rows. Fall through until
-		// dispatch threads order_by into model.MeasureQueryOptions.Order.
-		return nil, "", false, nil
-	}
 	if req.GetTimeRange() == nil {
 		return nil, "", false, nil
 	}
@@ -195,6 +187,11 @@ func Dispatch(
 	)
 	if !hidden.IsEmpty() {
 		return nil, "", false, nil
+	}
+
+	indexOrder, orderErr := resolveOrderBy(req.GetOrderBy(), logicalSchema)
+	if orderErr != nil {
+		return nil, "", true, orderErr
 	}
 
 	// Resolve the index.Query + entities the same way the row path does
@@ -242,6 +239,7 @@ func Dispatch(
 		TimeRange:       scan.Params.TimeRange,
 		Entities:        entities,
 		Query:           query,
+		Order:           indexOrder,
 		GroupBy:         scan.Params.GroupBy,
 		Agg:             scan.Params.Agg,
 		TagProjection:   scan.Params.TagProjection,
@@ -275,6 +273,31 @@ func Dispatch(
 		return nil, "", true, fmt.Errorf("vec dispatch: execute: %w", execErr)
 	}
 	return iter, p.String(), true, nil
+}
+
+// resolveOrderBy mirrors the row path's PushDownOrder optimizer rule.
+// Empty index rule + UNSPECIFIED sort yields (nil, nil) so dispatch
+// leaves opts.Order unset, matching the row path's no-order default.
+// ParseOrderBy errors on an unknown index rule or one with NoSort=true
+// — surface that error so dispatch reports handled=true rather than
+// silently retrying the row path, which would produce the same error
+// downstream.
+func resolveOrderBy(reqOrder *modelv1.QueryOrder, schema logical.Schema) (*index.OrderBy, error) {
+	if reqOrder == nil {
+		return nil, nil
+	}
+	parsed, err := logical.ParseOrderBy(schema, reqOrder.GetIndexRuleName(), reqOrder.GetSort())
+	if err != nil {
+		return nil, fmt.Errorf("vec dispatch: parse order_by: %w", err)
+	}
+	if parsed == nil {
+		return nil, nil
+	}
+	out := &index.OrderBy{Sort: parsed.Sort, Index: parsed.Index, Type: index.OrderByTypeIndex}
+	if parsed.Index == nil {
+		out.Type = index.OrderByTypeTime
+	}
+	return out, nil
 }
 
 // locateScan walks a vec plan tree to find the leaf Scan node. Today there
