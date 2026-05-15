@@ -163,21 +163,37 @@ func TestDispatch_GroupByAggUncoveredProjection_FallsThrough(t *testing.T) {
 	}
 }
 
-// TestDispatch_Top_FallsThrough covers the per-timestamp top-N gap.
-func TestDispatch_Top_FallsThrough(t *testing.T) {
+// TestDispatch_Top_ReachesEcQuery confirms G9a removed the Top gate:
+// req.Top no longer triggers an eligibility fall-through. The request
+// proceeds to ec.Query, where the analyzer has emitted
+// Scan → Top → Limit. fakeEC returns nil so dispatch falls through after
+// ec.Query (the empty-result branch) — what matters is that ec.Query was
+// invoked at all, proving the Top gate no longer rejects the request.
+func TestDispatch_Top_ReachesEcQuery(t *testing.T) {
+	measureSchema := testMeasureSchema()
+	// nolint:staticcheck // SA1019 — row-path BuildSchema is the only schema builder until G8 replaces it.
+	logicalSchema, schemaErr := logicalmeasure.BuildSchema(measureSchema, nil)
+	if schemaErr != nil {
+		t.Fatalf("BuildSchema: %v", schemaErr)
+	}
+	metadata := &commonv1.Metadata{Name: "demo", Group: "default"}
+	ec := &fakeEC{wantResult: nil, wantErr: nil}
+
 	req := bareReq()
 	req.Top = &measurev1.QueryRequest_Top{
 		Number:         5,
 		FieldName:      "value",
 		FieldValueSort: modelv1.Sort_SORT_DESC,
 	}
-	_, _, handled, err := Dispatch(context.Background(),
-		req, nil, nil, nil, nil, dispatchCfg(true))
+
+	iter, planStr, handled, err := Dispatch(context.Background(),
+		req, metadata, measureSchema, logicalSchema, ec, dispatchCfg(true))
 	if err != nil {
-		t.Fatalf("Top fallthrough must not error: %v", err)
+		t.Fatalf("Top request must not error before ec.Query: %v", err)
 	}
-	if handled {
-		t.Fatal("Top must fall through (BatchTop semantics differ from row TopN)")
+	if !ec.called {
+		t.Fatalf("Top request must reach ec.Query (G9a removed the Top gate); "+
+			"got iter=%v planStr=%q handled=%v", iter, planStr, handled)
 	}
 }
 
@@ -467,17 +483,17 @@ func TestDispatch_Counters_TrackFellThroughCalls(t *testing.T) {
 	startHandled := HandledCount()
 	startFellThrough := FellThroughCount()
 
-	// Three fallthroughs of distinct shapes. topReq trips the Top gate;
-	// the other two trip the PERMANENT nil-runtime-context guard (all-nil
-	// schema/ec/metadata). Note: post-G9c a nil TimeRange is no longer a
-	// fall-through on its own — noTimeReq falls through here only because
-	// the runtime context is nil.
-	topReq := bareReq()
-	topReq.Top = &measurev1.QueryRequest_Top{Number: 5, FieldName: "value"}
+	// Post-G9 the Top / GroupBy / nil-TimeRange shapes are all handled by
+	// the vec subsystem, so these requests fall through only via the
+	// PERMANENT nil-runtime-context guard (Dispatch is called with all-nil
+	// schema/ec/metadata in the loop below). The counter is still
+	// exercised on the clean (non-error) fall-through path.
+	gbReq := bareReq()
+	gbReq.GroupBy = &measurev1.QueryRequest_GroupBy{TagProjection: projTagProj(), FieldName: "value"}
 	noTimeReq := bareReq()
 	noTimeReq.TimeRange = nil
 
-	for _, req := range []*measurev1.QueryRequest{topReq, noTimeReq, bareReq() /* nil ec */} {
+	for _, req := range []*measurev1.QueryRequest{gbReq, noTimeReq, bareReq() /* nil ec */} {
 		_, _, handled, dispatchErr := Dispatch(context.Background(),
 			req, nil, nil, nil, nil, dispatchCfg(true))
 		if dispatchErr != nil {

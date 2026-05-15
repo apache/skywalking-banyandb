@@ -142,6 +142,41 @@ func TestAnalyze_TopBetweenGroupByAggAndLimit(t *testing.T) {
 	if _, ok := top.Child.(*GroupByAgg); !ok {
 		t.Fatalf("Top child: want *GroupByAgg, got %T", top.Child)
 	}
+	// SORT_DESC must map to a descending top (asc=false) so the vec
+	// analyzer matches the row path's reverted semantics. Sort enum
+	// values are SORT_UNSPECIFIED=0, SORT_DESC=1, SORT_ASC=2 — a naive
+	// "==1 means asc" inverts every Top fixture.
+	if top.Asc {
+		t.Fatal("SORT_DESC must produce a descending Top (Asc=false)")
+	}
+}
+
+func TestAnalyze_TopSortAsc_MapsToAscending(t *testing.T) {
+	req := &measurev1.QueryRequest{
+		Name:            "demo",
+		TagProjection:   projTagProj(),
+		FieldProjection: &measurev1.QueryRequest_FieldProjection{Names: []string{"value"}},
+		Top: &measurev1.QueryRequest_Top{
+			Number:         3,
+			FieldName:      "value",
+			FieldValueSort: modelv1.Sort_SORT_ASC,
+		},
+	}
+	p, err := Analyze(req, testMeasureSchema())
+	if err != nil {
+		t.Fatalf("Analyze: %v", err)
+	}
+	limit, ok := p.(*Limit)
+	if !ok {
+		t.Fatalf("root: want *Limit, got %T", p)
+	}
+	top, ok := limit.Child.(*Top)
+	if !ok {
+		t.Fatalf("Limit child: want *Top, got %T", limit.Child)
+	}
+	if !top.Asc {
+		t.Fatal("SORT_ASC must produce an ascending Top (Asc=true)")
+	}
 }
 
 // TestAnalyze_GroupByWithoutAgg_BuildsRawGroupBy verifies the raw

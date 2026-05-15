@@ -21,6 +21,7 @@ import (
 	"container/heap"
 	"context"
 
+	modelv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/model/v1"
 	"github.com/apache/skywalking-banyandb/pkg/query/vectorized"
 )
 
@@ -147,9 +148,8 @@ func (t *BatchTop) Consume(_ context.Context, b *vectorized.RecordBatch) error {
 		return nil
 	}
 	active := activeIndices(b)
-	isFloat := t.schema.Columns[t.fieldCol].Type == vectorized.ColumnTypeFloat64
 	for _, rowIdx := range active {
-		candidate := t.materialize(b, int(rowIdx), isFloat)
+		candidate := t.materialize(b, int(rowIdx))
 		candidate.seq = t.inputCount
 		t.inputCount++
 		if t.heapState.Len() < t.n {
@@ -226,22 +226,54 @@ func (t *BatchTop) Close() error {
 
 // materialize copies row rowIdx of b into a new topRow, reading the sort key
 // from the configured field column.
-func (t *BatchTop) materialize(b *vectorized.RecordBatch, rowIdx int, isFloat bool) *topRow {
+//
+// The key column may be a native typed column (ColumnTypeInt64 /
+// ColumnTypeFloat64 — promoted when an Agg reduces over the field) or a
+// passthrough *modelv1.FieldValue column (ColumnTypeFieldValue — the
+// non-Agg Scan→Top→Limit path, where BuildBatchSchema leaves projected
+// fields as passthrough). Both are handled so the float/int decision is
+// per-column-shape, matching the row path's schema-field-type dispatch
+// (pkg/query/logical/measure.topOp.Execute).
+func (t *BatchTop) materialize(b *vectorized.RecordBatch, rowIdx int) *topRow {
 	cols := make([]vectorized.Column, len(t.schema.Columns))
 	for i, def := range t.schema.Columns {
 		cols[i] = vectorized.NewColumnForType(def.Type, 1)
 		copyOneValue(cols[i], b.Columns[i], rowIdx)
 	}
-	row := &topRow{cols: cols, isFloat: isFloat}
+	row := &topRow{cols: cols}
 	keyCol := b.Columns[t.fieldCol]
-	if keyCol.IsNull(rowIdx) {
+	switch c := keyCol.(type) {
+	case *vectorized.TypedColumn[float64]:
+		row.isFloat = true
+		if c.IsNull(rowIdx) {
+			row.isNull = true
+			return row
+		}
+		row.floatVal = c.Data()[rowIdx]
+	case *vectorized.TypedColumn[int64]:
+		if c.IsNull(rowIdx) {
+			row.isNull = true
+			return row
+		}
+		row.intVal = c.Data()[rowIdx]
+	case *vectorized.TypedColumn[*modelv1.FieldValue]:
+		fv := c.Data()[rowIdx]
+		switch v := fv.GetValue().(type) {
+		case *modelv1.FieldValue_Float:
+			row.isFloat = true
+			row.floatVal = v.Float.GetValue()
+		case *modelv1.FieldValue_Int:
+			row.intVal = v.Int.GetValue()
+		default:
+			// Null / unset / non-numeric field value: treat as lowest,
+			// matching the native-column null handling and the row path.
+			row.isNull = true
+		}
+	default:
+		// Unexpected key column shape (string / bytes / arrays): no
+		// numeric sort key. Treat as lowest so the query still completes
+		// rather than panicking.
 		row.isNull = true
-		return row
-	}
-	if isFloat {
-		row.floatVal = keyCol.(*vectorized.TypedColumn[float64]).Data()[rowIdx]
-	} else {
-		row.intVal = keyCol.(*vectorized.TypedColumn[int64]).Data()[rowIdx]
 	}
 	return row
 }

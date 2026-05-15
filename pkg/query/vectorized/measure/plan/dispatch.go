@@ -91,8 +91,9 @@ func FellThroughCount() int64 { return fellThroughCount.Load() }
 //   - request may carry GroupBy and/or Agg in any combination (group+agg,
 //     scalar reduce, raw GroupBy); plan.Analyze auto-extends the
 //     projection so the keys / agg field always resolve
-//   - request must NOT carry Top (BatchTop's single-heap semantic differs
-//     from the row path's per-timestamp top-N)
+//   - request may carry Top: the analyzer emits Scan → Top → Limit
+//     (or Scan → GroupByAgg → Top → Limit) and BatchTop reproduces the
+//     row path's top-N (G9a)
 //   - request must carry TimeRange (storage requires a bounded window)
 //   - hidden criteria tags (criteria tags absent from the projection)
 //     are projected for storage-side filtering, then stripped at egress
@@ -126,12 +127,9 @@ func Dispatch(
 	if req == nil {
 		return nil, "", false, nil
 	}
-	if req.GetTop() != nil {
-		// Top awaits per-timestamp partitioning of BatchTop; the row
-		// path's TopN semantic differs from BatchTop's single-heap
-		// today.
-		return nil, "", false, nil
-	}
+	// Top is handled by the vec subsystem: plan.Analyze emits
+	// Scan → Top → Limit (or Scan → GroupByAgg → Top → Limit) and
+	// BatchTop reproduces the row path's top-N (G9a).
 	// GroupBy and Agg are handled by the vec subsystem in all three
 	// shapes — group+agg, scalar reduce (Agg only), raw GroupBy (GroupBy
 	// only). plan.Analyze auto-extends the projection so the GroupBy keys

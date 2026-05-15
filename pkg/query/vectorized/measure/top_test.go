@@ -21,6 +21,7 @@ import (
 	"context"
 	"testing"
 
+	modelv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/model/v1"
 	"github.com/apache/skywalking-banyandb/pkg/query/vectorized"
 )
 
@@ -202,6 +203,49 @@ func TestBatchTop_ZeroN_NoOp(t *testing.T) {
 	}
 	if out != nil {
 		t.Fatalf("BatchTop with n=0 must yield no output; got batch with Len=%d", out.Len)
+	}
+}
+
+// TestBatchTop_FieldValuePassthroughKey_Float pins the G9a regression: the
+// non-Agg Scan→Top→Limit path leaves the projected field as a passthrough
+// ColumnTypeFieldValue column (BuildBatchSchema only promotes Agg fields to
+// native typed columns). BatchTop must read the float sort key out of the
+// *modelv1.FieldValue rather than panicking on a TypedColumn[int64] cast.
+func TestBatchTop_FieldValuePassthroughKey_Float(t *testing.T) {
+	s := vectorized.NewBatchSchema([]vectorized.ColumnDef{
+		{Role: vectorized.RoleField, Name: "value", Type: vectorized.ColumnTypeFieldValue},
+	})
+	top := NewBatchTop(s, 0, 3, false, 8) // desc top-3
+	_ = top.Init(context.Background())
+	defer top.Close()
+
+	vals := []float64{12.5, 3.0, 99.25, 7.1, 42.0, 88.0}
+	b := vectorized.NewRecordBatch(s, len(vals))
+	col := b.Columns[0].(*vectorized.TypedColumn[*modelv1.FieldValue])
+	for _, v := range vals {
+		col.Append(&modelv1.FieldValue{Value: &modelv1.FieldValue_Float{Float: &modelv1.Float{Value: v}}})
+	}
+	b.Len = len(vals)
+
+	if err := top.Consume(context.Background(), b); err != nil {
+		t.Fatalf("Consume must not panic on passthrough FieldValue key: %v", err)
+	}
+	if err := top.Finalize(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	out, err := top.NextBatch(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if out == nil || out.Len != 3 {
+		t.Fatalf("want 3 rows, got %v", out)
+	}
+	got := out.Columns[0].(*vectorized.TypedColumn[*modelv1.FieldValue]).Data()
+	want := []float64{99.25, 88.0, 42.0} // highest 3, descending
+	for i := range want {
+		if g := got[i].GetFloat().GetValue(); g != want[i] {
+			t.Fatalf("row %d: want %v, got %v", i, want[i], g)
+		}
 	}
 }
 

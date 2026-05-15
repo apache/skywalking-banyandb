@@ -22,6 +22,7 @@ import (
 
 	databasev1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/database/v1"
 	measurev1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/measure/v1"
+	modelv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/model/v1"
 	"github.com/apache/skywalking-banyandb/pkg/query/model"
 	measure "github.com/apache/skywalking-banyandb/pkg/query/vectorized/measure"
 	"github.com/apache/skywalking-banyandb/pkg/timestamp"
@@ -137,7 +138,10 @@ func Analyze(req *measurev1.QueryRequest, measureSchema *databasev1.Measure) (Ve
 	}
 
 	if t := req.GetTop(); t != nil {
-		asc := t.GetFieldValueSort() == 1 // SORT_ASC == 1 in modelv1.Sort
+		// Match the row path (pkg/query/logical/measure.unresolvedTop):
+		// FieldValueSort==SORT_ASC keeps the lowest N (BatchTop asc=true);
+		// anything else (SORT_DESC / SORT_UNSPECIFIED) keeps the highest N.
+		asc := t.GetFieldValueSort() == modelv1.Sort_SORT_ASC
 		plan = NewTop(plan, t.GetFieldName(), int(t.GetNumber()), asc)
 	}
 
