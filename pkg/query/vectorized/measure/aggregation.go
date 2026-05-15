@@ -345,18 +345,14 @@ func newAggSlot(fn AggFunc, inputIsFloat bool) (aggSlot, error) {
 		return aggSlot{}, modelErr
 	}
 	slot := aggSlot{fn: fn, inputIsFloat: inputIsFloat}
-	useFloat := false
-	switch fn {
-	case AggCount:
-		useFloat = false
-	default:
-		// MEAN follows input type to match the row path's
-		// aggregation.NewMap[int64] / [float64] dispatch in
-		// pkg/query/logical/measure/measure_plan_aggregation.go
-		// (FIELD_TYPE_INT → int64 truncation; FIELD_TYPE_FLOAT →
-		// float64). Same handling for SUM/MIN/MAX.
-		useFloat = inputIsFloat
-	}
+	// All functions follow the input type to match the row path, whose
+	// aggregation.NewMap[int64] / [float64] is dispatched on the field's
+	// declared type in pkg/query/logical/measure/measure_plan_aggregation.go
+	// (FIELD_TYPE_INT → int64; FIELD_TYPE_FLOAT → float64). COUNT is
+	// included: the row path's countFunc[N] is parameterized by N and
+	// ToFieldValue[N] emits FieldValue_Int / FieldValue_Float by N, so
+	// COUNT on a float field must emit a float (e.g. float_top_count).
+	useFloat := inputIsFloat
 	if useFloat {
 		m, mapErr := aggregation.NewMap[float64](af)
 		if mapErr != nil {
@@ -417,14 +413,12 @@ func buildAggOutputSchema(
 }
 
 // aggOutputType maps (input type, agg func) to the output column type.
-//   - COUNT is always int64.
-//   - MEAN, SUM, MIN, MAX preserve the input type so vec egress emits the
-//     same FieldValue oneof variant the row path uses (its accumulator is
-//     dispatched on FIELD_TYPE_INT → Map[int64] / FIELD_TYPE_FLOAT →
-//     Map[float64]; see measure_plan_aggregation.go).
-func aggOutputType(in vectorized.ColumnType, fn AggFunc) vectorized.ColumnType {
-	if fn == AggCount {
-		return vectorized.ColumnTypeInt64
-	}
+// Every function (COUNT included) preserves the input type so vec egress
+// emits the same FieldValue oneof variant the row path uses: the row
+// path's accumulator and ToFieldValue[N] are dispatched on the field's
+// declared type (FIELD_TYPE_INT → int64 → FieldValue_Int;
+// FIELD_TYPE_FLOAT → float64 → FieldValue_Float; see
+// measure_plan_aggregation.go and pkg/query/aggregation).
+func aggOutputType(in vectorized.ColumnType, _ AggFunc) vectorized.ColumnType {
 	return in
 }
