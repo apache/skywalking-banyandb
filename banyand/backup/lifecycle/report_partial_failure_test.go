@@ -198,6 +198,64 @@ func TestBuildMigrationReport_PartialFailure(t *testing.T) {
 	}
 }
 
+// TestBuildMigrationReport_CompletedScopedToScheduledSet pins down the
+// resume-safety invariant: when CompletedGroups carries entries from a
+// prior cycle that are no longer in the current GroupsToProcess set,
+// completed_groups must count only the intersection so the rate stays
+// bounded by total_groups (no completed > total, no rate > 100).
+func TestBuildMigrationReport_CompletedScopedToScheduledSet(t *testing.T) {
+	p := NewProgress("", logger.GetLogger("test"))
+
+	// Simulate a resume scenario: prior cycle finished groups A..E (still
+	// in CompletedGroups thanks to progress.json reload). The current
+	// cycle is only scheduled to retry groups F, G, H.
+	p.MarkGroupCompleted("sw_a")
+	p.MarkGroupCompleted("sw_b")
+	p.MarkGroupCompleted("sw_c")
+	p.MarkGroupCompleted("sw_d")
+	p.MarkGroupCompleted("sw_e")
+	p.SetGroupsToProcess([]string{"sw_f", "sw_g", "sw_h"})
+	// All three scheduled groups complete in this cycle.
+	p.MarkGroupCompleted("sw_f")
+	p.MarkGroupCompleted("sw_g")
+	p.MarkGroupCompleted("sw_h")
+
+	svc := &lifecycleService{l: logger.GetLogger("test")}
+	report := svc.buildMigrationReport(p)
+	summary := report["summary"].(map[string]interface{})
+	ms := summary["migration_status"].(map[string]interface{})
+
+	assert.Equal(t, 3, ms["total_groups"], "must reflect this cycle's scheduled set")
+	assert.Equal(t, 3, ms["completed_groups"], "must intersect CompletedGroups with GroupsToProcess (not 8)")
+	assert.InDelta(t, 100.0, ms["completion_rate"], 1e-9, "rate must be bounded at 100")
+}
+
+// TestBuildMigrationReport_EmptyCycleHonestTotalGroups pins down the
+// stale-denominator invariant: when this cycle has no scheduled work
+// (e.g. snapshots came up empty), the report must surface
+// total_groups=0 and rate=0 instead of inheriting a denominator from a
+// prior cycle's GroupsToProcess.
+func TestBuildMigrationReport_EmptyCycleHonestTotalGroups(t *testing.T) {
+	p := NewProgress("", logger.GetLogger("test"))
+
+	// Prior cycle leftover state.
+	p.MarkGroupCompleted("sw_a")
+	p.MarkGroupCompleted("sw_b")
+	// The empty-snapshot path in action() resets GroupsToProcess to nil
+	// before calling generateReport. SetGroupsToProcess(nil) emulates
+	// that reset.
+	p.SetGroupsToProcess(nil)
+
+	svc := &lifecycleService{l: logger.GetLogger("test")}
+	report := svc.buildMigrationReport(p)
+	summary := report["summary"].(map[string]interface{})
+	ms := summary["migration_status"].(map[string]interface{})
+
+	assert.Equal(t, 0, ms["total_groups"], "no scheduled groups this cycle")
+	assert.Equal(t, 0, ms["completed_groups"], "intersection with empty scope is empty")
+	assert.InDelta(t, 0.0, ms["completion_rate"], 1e-9, "rate is 0 when total is 0")
+}
+
 // assertResource pins down a single resource sub-block (parts | series |
 // element_index) under a catalog (stream | measure | trace)_migration.
 func assertResource(t *testing.T, summary map[string]interface{}, catalog, resource string, total, completed int, rate float64, errors int) {

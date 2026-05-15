@@ -428,6 +428,10 @@ func (l *lifecycleService) action(ctx context.Context) error {
 	}
 	if streamDir == "" && measureDir == "" && traceDir == "" {
 		l.l.Warn().Msg("no snapshots found, skipping lifecycle migration")
+		// Clear any GroupsToProcess persisted from a prior cycle so the
+		// emitted report honestly reports total_groups=0 for this empty
+		// cycle instead of inheriting a stale denominator.
+		progress.SetGroupsToProcess(nil)
 		l.generateReport(progress)
 		return nil
 	}
@@ -549,9 +553,18 @@ func (l *lifecycleService) buildMigrationReport(p *Progress) map[string]interfac
 func (l *lifecycleService) buildSummaryStats(p *Progress) map[string]interface{} {
 	// total_groups reflects the cycle's scheduled set captured at the top of
 	// action(); completed_groups counts groups that ran the full
-	// processXxxGroup → MarkGroupCompleted path.
+	// processXxxGroup → MarkGroupCompleted path. The intersection guards
+	// against resume from a partial-failure progress.json where
+	// CompletedGroups carries entries from prior cycles that are not in
+	// the current scheduled set, which would otherwise yield
+	// completed_groups > total_groups.
 	totalGroups := len(p.GroupsToProcess)
-	completedGroups := len(p.CompletedGroups)
+	completedGroups := 0
+	for _, name := range p.GroupsToProcess {
+		if p.CompletedGroups[name] {
+			completedGroups++
+		}
+	}
 
 	// Calculate total parts and series across all groups
 	totalStreamParts, completedStreamParts := l.calculateTotalCounts(p.StreamPartCounts, p.StreamPartProgress)
