@@ -25,6 +25,7 @@ import (
 	"google.golang.org/protobuf/types/known/timestamppb"
 
 	commonv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/common/v1"
+	databasev1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/database/v1"
 	measurev1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/measure/v1"
 	modelv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/model/v1"
 	"github.com/apache/skywalking-banyandb/pkg/query/logical"
@@ -66,54 +67,77 @@ func TestDispatch_NotEnabled_FallsThrough(t *testing.T) {
 	}
 }
 
-// TestDispatch_GroupByWithoutAgg_FallsThrough covers the pair check
-// (GroupBy and Agg must travel together).
-func TestDispatch_GroupByWithoutAgg_FallsThrough(t *testing.T) {
+// dispatchSchemaFixture builds the (measureSchema, logicalSchema,
+// metadata, fakeEC) tuple the post-G9 ReachesEcQuery tests share. fakeEC
+// returns (nil, nil) so dispatch falls through after ec.Query (empty
+// result); what each test asserts is that ec.Query was reached at all,
+// proving the eligibility gate admitted the request.
+func dispatchSchemaFixture(t *testing.T) (*databasev1.Measure, logical.Schema, *commonv1.Metadata, *fakeEC) {
+	t.Helper()
+	measureSchema := testMeasureSchema()
+	// nolint:staticcheck // SA1019 — row-path BuildSchema is the only schema builder until G8 replaces it.
+	logicalSchema, schemaErr := logicalmeasure.BuildSchema(measureSchema, nil)
+	if schemaErr != nil {
+		t.Fatalf("BuildSchema: %v", schemaErr)
+	}
+	return measureSchema, logicalSchema, &commonv1.Metadata{Name: "demo", Group: "default"}, &fakeEC{}
+}
+
+// TestDispatch_RawGroupBy_ReachesEcQuery confirms G9b: GroupBy without
+// Agg (raw grouping) is now handled by the vec subsystem rather than
+// falling through to the row path.
+func TestDispatch_RawGroupBy_ReachesEcQuery(t *testing.T) {
+	measureSchema, logicalSchema, metadata, ec := dispatchSchemaFixture(t)
+
 	req := bareReq()
 	req.GroupBy = &measurev1.QueryRequest_GroupBy{
 		TagProjection: projTagProj(),
 		FieldName:     fieldValue,
 	}
 	_, _, handled, err := Dispatch(context.Background(),
-		req, nil, nil, nil, nil, dispatchCfg(true))
+		req, metadata, measureSchema, logicalSchema, ec, dispatchCfg(true))
 	if err != nil {
-		t.Fatalf("GroupBy-without-Agg fallthrough must not error: %v", err)
+		t.Fatalf("raw GroupBy must not error before ec.Query: %v", err)
 	}
-	if handled {
-		t.Fatal("GroupBy without Agg must fall through to row path")
+	if !ec.called {
+		t.Fatal("raw GroupBy (no Agg) must reach ec.Query post-G9b, not fall through")
+	}
+	if !handled {
+		t.Fatal("raw GroupBy reached ec.Query (empty result) — dispatch must report handled=true")
 	}
 }
 
-// TestDispatch_AggWithoutGroupBy_FallsThrough is the Agg-only counterpart.
-// Scalar reduce is deferred; Agg without GroupBy falls through.
-func TestDispatch_AggWithoutGroupBy_FallsThrough(t *testing.T) {
+// TestDispatch_ScalarReduce_ReachesEcQuery confirms G9b: Agg without
+// GroupBy (scalar reduce) is now handled by the vec subsystem.
+func TestDispatch_ScalarReduce_ReachesEcQuery(t *testing.T) {
+	measureSchema, logicalSchema, metadata, ec := dispatchSchemaFixture(t)
+
 	req := bareReq()
 	req.Agg = &measurev1.QueryRequest_Aggregation{
 		Function:  modelv1.AggregationFunction_AGGREGATION_FUNCTION_SUM,
 		FieldName: fieldValue,
 	}
 	_, _, handled, err := Dispatch(context.Background(),
-		req, nil, nil, nil, nil, dispatchCfg(true))
+		req, metadata, measureSchema, logicalSchema, ec, dispatchCfg(true))
 	if err != nil {
-		t.Fatalf("Agg-without-GroupBy fallthrough must not error: %v", err)
+		t.Fatalf("scalar reduce must not error before ec.Query: %v", err)
 	}
-	if handled {
-		t.Fatal("Agg without GroupBy must fall through to row path")
+	if !ec.called {
+		t.Fatal("scalar reduce (Agg, no GroupBy) must reach ec.Query post-G9b, not fall through")
+	}
+	if !handled {
+		t.Fatal("scalar reduce reached ec.Query (empty result) — dispatch must report handled=true")
 	}
 }
 
-// TestDispatch_GroupByAggUncoveredProjection_FallsThrough covers the
-// G8d.2 projection-coverage gate. BatchAggregation locates its key +
-// value columns by name inside the BatchSchema, which is built from
-// TagProjection + FieldProjection. When GroupBy keys or the Agg field
-// are not in the request's projection, dispatch falls through so the
-// row path can either extend projection implicitly or surface its
-// canonical error.
-func TestDispatch_GroupByAggUncoveredProjection_FallsThrough(t *testing.T) {
+// TestDispatch_GroupByAggUncoveredProjection_ReachesEcQuery confirms
+// G9b's projection auto-coverage: when GroupBy keys or the Agg field are
+// absent from the request's projection, plan.Analyze extends the
+// projection so the request is admitted instead of falling through.
+func TestDispatch_GroupByAggUncoveredProjection_ReachesEcQuery(t *testing.T) {
 	cases := []struct {
-		name    string
-		mutate  func(*measurev1.QueryRequest)
-		comment string
+		mutate func(*measurev1.QueryRequest)
+		name   string
 	}{
 		{
 			name: "groupby_tag_not_in_projection",
@@ -142,22 +166,26 @@ func TestDispatch_GroupByAggUncoveredProjection_FallsThrough(t *testing.T) {
 					Function:  modelv1.AggregationFunction_AGGREGATION_FUNCTION_SUM,
 					FieldName: fieldValue,
 				}
-				// Strip the value field from FieldProjection so the Agg field is uncovered.
+				// Strip the value field from FieldProjection; G9b auto-coverage re-adds it.
 				req.FieldProjection = nil
 			},
 		},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
+			measureSchema, logicalSchema, metadata, ec := dispatchSchemaFixture(t)
 			req := bareReq()
 			c.mutate(req)
 			_, _, handled, err := Dispatch(context.Background(),
-				req, nil, nil, nil, nil, dispatchCfg(true))
-			if err != nil {
-				t.Fatalf("uncovered projection must not error: %v", err)
+				req, metadata, measureSchema, logicalSchema, ec, dispatchCfg(true))
+			if err == nil && !handled {
+				t.Fatal("auto-covered projection must reach ec.Query (handled=true), not fall through")
 			}
-			if handled {
-				t.Fatal("uncovered GroupBy / Agg projection must fall through")
+			if err != nil {
+				t.Fatalf("auto-covered projection must not error: %v", err)
+			}
+			if !ec.called {
+				t.Fatal("uncovered GroupBy/Agg projection must reach ec.Query post-G9b (auto-coverage)")
 			}
 		})
 	}

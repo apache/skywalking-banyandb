@@ -256,7 +256,9 @@ func Dispatch(
 		// Next()==false immediately and Close()==nil, so the client
 		// observes an empty []*measurev1.InternalDataPoint. Emit the same
 		// empty MIterator directly with handled=true instead of borrowing
-		// the row machinery.
+		// the row machinery. Hidden-tag egress strip (below) is
+		// intentionally skipped here: an empty result has no DataPoints,
+		// so there is nothing to strip.
 		return emptyMIterator{}, p.String(), true, nil
 	}
 
