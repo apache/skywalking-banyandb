@@ -20,9 +20,11 @@ package local
 
 import (
 	"context"
+	"fmt"
 	"io"
 	"os"
 	"path/filepath"
+	"strings"
 
 	"github.com/apache/skywalking-banyandb/pkg/fs/remote"
 )
@@ -40,13 +42,20 @@ func NewFS(baseDir string) (remote.FS, error) {
 	if err := os.MkdirAll(baseDir, dirPerm); err != nil {
 		return nil, err
 	}
-	return &fs{baseDir: baseDir}, nil
+	cleanBaseDir, err := filepath.Abs(baseDir)
+	if err != nil {
+		return nil, err
+	}
+	return &fs{baseDir: cleanBaseDir}, nil
 }
 
 func (l *fs) Upload(_ context.Context, path string, data io.Reader) error {
-	fullPath := filepath.Join(l.baseDir, path)
-	if err := os.MkdirAll(filepath.Dir(fullPath), dirPerm); err != nil {
+	fullPath, err := l.fullPath(path)
+	if err != nil {
 		return err
+	}
+	if mkdirErr := os.MkdirAll(filepath.Dir(fullPath), dirPerm); mkdirErr != nil {
+		return mkdirErr
 	}
 
 	file, err := os.Create(fullPath)
@@ -60,15 +69,21 @@ func (l *fs) Upload(_ context.Context, path string, data io.Reader) error {
 }
 
 func (l *fs) Download(_ context.Context, path string) (io.ReadCloser, error) {
-	fullPath := filepath.Join(l.baseDir, path)
+	fullPath, err := l.fullPath(path)
+	if err != nil {
+		return nil, err
+	}
 	return os.Open(fullPath)
 }
 
 func (l *fs) List(_ context.Context, prefix string) ([]string, error) {
 	var files []string
-	fullPath := filepath.Join(l.baseDir, prefix)
+	fullPath, err := l.fullPath(prefix)
+	if err != nil {
+		return nil, err
+	}
 
-	err := filepath.Walk(fullPath, func(path string, info os.FileInfo, err error) error {
+	err = filepath.Walk(fullPath, func(path string, info os.FileInfo, err error) error {
 		if err != nil {
 			return err
 		}
@@ -89,10 +104,32 @@ func (l *fs) List(_ context.Context, prefix string) ([]string, error) {
 }
 
 func (l *fs) Delete(_ context.Context, path string) error {
-	fullPath := filepath.Join(l.baseDir, path)
+	fullPath, err := l.fullPath(path)
+	if err != nil {
+		return err
+	}
 	return os.Remove(fullPath)
 }
 
 func (l *fs) Close() error {
 	return nil
+}
+
+func (l *fs) fullPath(path string) (string, error) {
+	if filepath.IsAbs(path) {
+		return "", fmt.Errorf("path %q escapes base directory", path)
+	}
+	cleanPath := filepath.Clean(path)
+	if cleanPath == ".." || strings.HasPrefix(cleanPath, ".."+string(filepath.Separator)) {
+		return "", fmt.Errorf("path %q escapes base directory", path)
+	}
+	fullPath := filepath.Join(l.baseDir, cleanPath)
+	relPath, err := filepath.Rel(l.baseDir, fullPath)
+	if err != nil {
+		return "", err
+	}
+	if relPath == ".." || strings.HasPrefix(relPath, ".."+string(filepath.Separator)) || filepath.IsAbs(relPath) {
+		return "", fmt.Errorf("path %q escapes base directory", path)
+	}
+	return fullPath, nil
 }

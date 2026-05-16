@@ -19,6 +19,7 @@ package backup
 
 import (
 	"context"
+	"io"
 	"os"
 	"path/filepath"
 	"strings"
@@ -191,4 +192,48 @@ func TestRestoreSame(t *testing.T) {
 	if err != nil {
 		t.Fatalf("expected extra file %q exist", extraFilePath)
 	}
+}
+
+func TestRestoreRejectsRemotePathTraversal(t *testing.T) {
+	timeDir := testTimeDir
+	catalogName := snapshot.CatalogName(commonv1.Catalog_CATALOG_STREAM)
+	localRestoreDir := t.TempDir()
+	escapedFile := filepath.Join(localRestoreDir, catalogName, "escaped.txt")
+	fs := &restoreTraversalFS{
+		files: []string{
+			filepath.ToSlash(filepath.Join(timeDir, catalogName, "..", "escaped.txt")),
+		},
+	}
+
+	err := restoreByName(fs, timeDir, localRestoreDir, catalogName)
+	if err == nil {
+		t.Fatal("expected restoreByName to reject remote path traversal")
+	}
+	if _, statErr := os.Stat(escapedFile); !os.IsNotExist(statErr) {
+		t.Fatalf("escaped file exists or stat failed with unexpected error: %v", statErr)
+	}
+}
+
+type restoreTraversalFS struct {
+	files []string
+}
+
+func (r *restoreTraversalFS) Upload(_ context.Context, _ string, _ io.Reader) error {
+	return nil
+}
+
+func (r *restoreTraversalFS) Download(_ context.Context, _ string) (io.ReadCloser, error) {
+	return io.NopCloser(strings.NewReader("escape")), nil
+}
+
+func (r *restoreTraversalFS) List(_ context.Context, _ string) ([]string, error) {
+	return r.files, nil
+}
+
+func (r *restoreTraversalFS) Delete(_ context.Context, _ string) error {
+	return nil
+}
+
+func (r *restoreTraversalFS) Close() error {
+	return nil
 }
