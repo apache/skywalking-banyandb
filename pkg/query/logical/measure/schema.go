@@ -136,6 +136,7 @@ func mergeSchema(schemas []logical.Schema) (logical.Schema, error) {
 
 	var commonSchemas []*logical.CommonSchema
 	var tagFamilies []*databasev1.TagFamilySpec
+	var canonicalMeasure *databasev1.Measure
 	fieldMap := make(map[string]*logical.FieldSpec)
 
 	for _, sm := range schemas {
@@ -148,6 +149,10 @@ func mergeSchema(schemas []logical.Schema) (logical.Schema, error) {
 		}
 
 		tagFamilies = logical.MergeTagFamilySpecs(tagFamilies, mSchema.measure.GetTagFamilies())
+
+		if canonicalMeasure == nil {
+			canonicalMeasure = mSchema.measure
+		}
 
 		commonSchemas = append(commonSchemas, mSchema.common)
 
@@ -180,6 +185,7 @@ func mergeSchema(schemas []logical.Schema) (logical.Schema, error) {
 	}
 
 	ret := &schema{
+		measure:  canonicalMeasure,
 		common:   mergedCommon,
 		children: schemas,
 		fieldMap: fieldMap,

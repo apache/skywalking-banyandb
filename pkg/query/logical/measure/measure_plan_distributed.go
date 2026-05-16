@@ -116,6 +116,7 @@ func newUnresolvedDistributed(query *measurev1.QueryRequest, pushDownAgg bool) l
 }
 
 func (ud *unresolvedDistributed) Analyze(s logical.Schema) (logical.Plan, error) {
+	indexMode := s.(*schema).measure.IndexMode
 	projectionTags := logical.ToTags(ud.originalQuery.GetTagProjection())
 	if len(projectionTags) > 0 {
 		var err error
@@ -178,6 +179,7 @@ func (ud *unresolvedDistributed) Analyze(s logical.Schema) (logical.Plan, error)
 			sortTagSpec:     *sortTagSpec,
 			pushDownAgg:     ud.pushDownAgg,
 			groupByTagsRefs: groupByTagsRefs,
+			indexMode:       indexMode,
 		}
 		if ud.originalQuery.OrderBy != nil && ud.originalQuery.OrderBy.Sort == modelv1.Sort_SORT_DESC {
 			result.desc = true
@@ -191,6 +193,7 @@ func (ud *unresolvedDistributed) Analyze(s logical.Schema) (logical.Plan, error)
 			sortByTime:      true,
 			pushDownAgg:     ud.pushDownAgg,
 			groupByTagsRefs: groupByTagsRefs,
+			indexMode:       indexMode,
 		}, nil
 	}
 	if ud.originalQuery.OrderBy.IndexRuleName == "" {
@@ -200,6 +203,7 @@ func (ud *unresolvedDistributed) Analyze(s logical.Schema) (logical.Plan, error)
 			sortByTime:      true,
 			pushDownAgg:     ud.pushDownAgg,
 			groupByTagsRefs: groupByTagsRefs,
+			indexMode:       indexMode,
 		}
 		if ud.originalQuery.OrderBy.Sort == modelv1.Sort_SORT_DESC {
 			result.desc = true
@@ -224,6 +228,7 @@ func (ud *unresolvedDistributed) Analyze(s logical.Schema) (logical.Plan, error)
 		sortTagSpec:     *sortTagSpec,
 		pushDownAgg:     ud.pushDownAgg,
 		groupByTagsRefs: groupByTagsRefs,
+		indexMode:       indexMode,
 	}
 	if ud.originalQuery.OrderBy.Sort == modelv1.Sort_SORT_DESC {
 		result.desc = true
@@ -240,6 +245,7 @@ type distributedPlan struct {
 	sortByTime        bool
 	desc              bool
 	pushDownAgg       bool
+	indexMode         bool
 }
 
 func (t *distributedPlan) Execute(ctx context.Context) (mi executor.MIterator, err error) {
@@ -311,7 +317,8 @@ func (t *distributedPlan) Execute(ctx context.Context) (mi executor.MIterator, e
 		return &pushedDownAggregatedIterator{dataPoints: deduplicatedDps}, err
 	}
 	smi := &sortedMIterator{
-		Iterator: sort.NewItemIter(see, t.desc),
+		Iterator:  sort.NewItemIter(see, t.desc),
+		indexMode: t.indexMode,
 	}
 	smi.init()
 	return smi, err
@@ -421,9 +428,11 @@ type sortedMIterator struct {
 	data        *list.List
 	uniqueData  map[uint64]*measurev1.InternalDataPoint
 	cur         *measurev1.InternalDataPoint
+	seenSids    map[uint64]struct{}
 	initialized bool
 	exhausted   bool
 	closed      bool
+	indexMode   bool
 }
 
 func (s *sortedMIterator) init() {
@@ -437,6 +446,9 @@ func (s *sortedMIterator) init() {
 	}
 	s.data = list.New()
 	s.uniqueData = make(map[uint64]*measurev1.InternalDataPoint)
+	if s.indexMode {
+		s.seenSids = make(map[uint64]struct{})
+	}
 	s.loadDps()
 }
 
@@ -456,10 +468,23 @@ func (s *sortedMIterator) Next() bool {
 	return true
 }
 
+// loadDps consumes sort-field-equal groups from the underlying iterator and
+// pushes their deduplicated rows into s.data. When indexMode is true, rows
+// whose Sid was already emitted in a prior group are skipped — without this,
+// cross-node duplicates that carry different per-node "last-write" timestamps
+// would slip past hashDataPoint (which keys on Sid+timestamp) because they
+// land in different sort-field groups. When every row in a group is filtered,
+// the loop advances to the next group so callers see continued iteration.
 func (s *sortedMIterator) loadDps() {
-	if s.exhausted {
-		return
+	for !s.exhausted {
+		s.loadOneGroup()
+		if s.data.Len() > 0 {
+			return
+		}
 	}
+}
+
+func (s *sortedMIterator) loadOneGroup() {
 	for k := range s.uniqueData {
 		delete(s.uniqueData, k)
 	}
@@ -485,6 +510,13 @@ func (s *sortedMIterator) loadDps() {
 		}
 	}
 	for _, v := range s.uniqueData {
+		if s.indexMode {
+			sid := v.GetDataPoint().GetSid()
+			if _, dup := s.seenSids[sid]; dup {
+				continue
+			}
+			s.seenSids[sid] = struct{}{}
+		}
 		s.data.PushBack(v)
 	}
 }
@@ -501,6 +533,7 @@ func (s *sortedMIterator) Close() error {
 	s.exhausted = true
 	s.data = nil
 	s.uniqueData = nil
+	s.seenSids = nil
 	s.cur = nil
 	if s.Iterator == nil {
 		return nil
