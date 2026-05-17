@@ -260,33 +260,75 @@ func executeMeasurePlan(
 }
 
 // tryVecDispatch is the thin adapter from measureExecutionContext into
-// the vec dispatch inputs. Multi-measure queries are not yet wired (G8
-// follow-up), so they fall through to the row path.
+// the vec dispatch inputs. Multi-measure queries (len(ecc) > 1) are
+// handled per-group: each group is dispatched to vec individually and
+// the per-group iterators are merged through the row path's exact
+// cross-group ordering via logical_measure.MergeGroupMIterators (G9f.1,
+// reusing the row sortableDataPoints + sortedMIterator stack so the
+// cross-group order and version dedup are reproduced by construction,
+// not by parallel reimplementation). If any group's executor context is
+// not vec-capable, or any group's dispatch declines to handle the
+// request, the whole multi-measure request falls through to the row
+// path — mixing vec for some groups with row for others would produce a
+// merged result the row path cannot validate.
 //
-// Distributed Map-mode GroupBy+Agg requests (emitPartial=true) also fall
-// through: the vec subsystem only implements AggModeAll (single-node full
-// reduce), so emitting AggModeAll results on each data node and letting
-// the liaison naively merge them would double-count groups. The row path
-// handles the Map/Reduce split via measure_plan_aggregation.go's
-// emitPartial flag.
+// Distributed Map-mode GroupBy+Agg requests (emitPartial=true) still
+// fall through: the vec subsystem only implements AggModeAll today
+// (G9f.2 brings AggModeMap with a vec-native binary cluster frame); the
+// row path handles the Map/Reduce split via
+// measure_plan_aggregation.go's emitPartial flag until then.
 func tryVecDispatch(
 	ctx context.Context,
 	queryCriteria *measurev1.QueryRequest,
 	mctx *measureExecutionContext,
 	emitPartial bool,
 ) (executor.MIterator, string, bool, error) {
-	if len(mctx.ecc) != 1 {
+	if len(mctx.ecc) == 0 {
 		return nil, "", false, nil
 	}
 	if emitPartial && (queryCriteria.GetGroupBy() != nil || queryCriteria.GetAgg() != nil) {
 		return nil, "", false, nil
 	}
-	vec, ok := mctx.ecc[0].(vecExecutionContext)
-	if !ok {
-		return nil, "", false, nil
+	vecs := make([]vecExecutionContext, len(mctx.ecc))
+	for groupIdx, ec := range mctx.ecc {
+		vec, ok := ec.(vecExecutionContext)
+		if !ok {
+			return nil, "", false, nil
+		}
+		vecs[groupIdx] = vec
 	}
-	return vecplan.Dispatch(ctx, queryCriteria, mctx.metadata[0], vec.GetSchema(),
-		mctx.schemas[0], vec, vec.VectorizedConfig())
+	if len(mctx.ecc) == 1 {
+		return vecplan.Dispatch(ctx, queryCriteria, mctx.metadata[0], vecs[0].GetSchema(),
+			mctx.schemas[0], vecs[0], vecs[0].VectorizedConfig())
+	}
+	iters := make([]executor.MIterator, 0, len(mctx.ecc))
+	planStrs := make([]string, 0, len(mctx.ecc))
+	closeOpened := func() {
+		for _, opened := range iters {
+			_ = opened.Close()
+		}
+	}
+	for groupIdx, vec := range vecs {
+		mit, planStr, handled, dispatchErr := vecplan.Dispatch(ctx, queryCriteria,
+			mctx.metadata[groupIdx], vec.GetSchema(), mctx.schemas[groupIdx], vec, vec.VectorizedConfig())
+		if dispatchErr != nil {
+			closeOpened()
+			return nil, "", false, dispatchErr
+		}
+		if !handled {
+			closeOpened()
+			return nil, "", false, nil
+		}
+		iters = append(iters, mit)
+		planStrs = append(planStrs, planStr)
+	}
+	order, orderErr := logical_measure.ResolveCrossGroupMergeOrder(queryCriteria, mctx.schemas)
+	if orderErr != nil {
+		closeOpened()
+		return nil, "", false, orderErr
+	}
+	merged := logical_measure.MergeGroupMIterators(iters, order)
+	return merged, fmt.Sprintf("vec-multi-measure%v", planStrs), true, nil
 }
 
 // collectInternalDataPoints collects InternalDataPoints from the iterator.
