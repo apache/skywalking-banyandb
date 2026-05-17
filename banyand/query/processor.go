@@ -272,14 +272,16 @@ func executeMeasurePlan(
 // path — mixing vec for some groups with row for others would produce a
 // merged result the row path cannot validate.
 //
-// Distributed Map-mode GroupBy+Agg (emitPartial=true) now routes to vec
-// via AggModeMap (G9f.2): vecplan.Dispatch receives emitPartial and the
-// BatchAggregation operator emits typed-column partials. The narrowed
-// :281 guard only falls through for distributed Top-over-Agg today
-// (Top column-merge lands in G9f.4; pushDownAgg is set whenever
+// Distributed Map-mode GroupBy+Agg (emitPartial=true) routes to vec via
+// AggModeMap (G9f.2): vecplan.Dispatch receives emitPartial and the
+// BatchAggregation operator emits typed-column partials. As of G9f.4 the
+// data-node side handles distributed Top-over-Agg too — the vec plan emits
+// Scan → GroupByAgg(Map) → Top → Limit per node, BatchTop sorts on the
+// partial value column, and the row-path liaison's distributedPlan dedupes
+// + applies the global Top across the per-node partial top-Ns (mirrors the
+// row path's two-pass distributed Top approach; pushDownAgg is set whenever
 // Agg != nil, see measure_analyzer.go:179, and Top is applied AFTER
-// aggregation at :205-207, so an emitPartial+Top request needs the row
-// path's distributed-Top merge until G9f.4).
+// aggregation at :205-207).
 func tryVecDispatch(
 	ctx context.Context,
 	queryCriteria *measurev1.QueryRequest,
@@ -287,13 +289,6 @@ func tryVecDispatch(
 	emitPartial bool,
 ) (executor.MIterator, string, bool, error) {
 	if len(mctx.ecc) == 0 {
-		return nil, "", false, nil
-	}
-	// G9f.2 narrowing: the only emitPartial case that still falls through to
-	// row is distributed Top-over-Agg (G9f.4 removes this clause and lands
-	// the vec distributed-Top columnar merge). GroupBy/Agg/scalar-reduce
-	// with emitPartial=true now route to vec Map mode.
-	if emitPartial && queryCriteria.GetTop() != nil {
 		return nil, "", false, nil
 	}
 	vecs := make([]vecExecutionContext, len(mctx.ecc))

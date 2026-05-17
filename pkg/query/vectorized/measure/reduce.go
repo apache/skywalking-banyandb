@@ -36,6 +36,19 @@ type AggReduceSpec struct {
 	Func       AggFunc
 }
 
+// ReduceTopSpec configures an optional post-Reduce Top-N step. FieldName
+// names the agg output column to sort by; N is the number of rows to
+// retain; Asc=true keeps the lowest N, Asc=false keeps the highest N
+// (mirrors the row path's distributed Top-over-Agg pattern — see
+// pkg/query/logical/measure/measure_plan_distributed.go's
+// DistributedAnalyze, where Top is applied AFTER the distributedPlan on
+// the liaison).
+type ReduceTopSpec struct {
+	FieldName string
+	N         int
+	Asc       bool
+}
+
 // ReduceRawFrames runs the liaison-side Reduce phase on a sequence of vec
 // partial frame bodies. Each frame is decoded into a RecordBatch and fed
 // to a single AggModeReduce BatchAggregation that dedupes (shard_id,
@@ -213,6 +226,63 @@ func schemaCompatible(want, got *vectorized.BatchSchema) error {
 		}
 	}
 	return nil
+}
+
+// ApplyTopToReduce composes the Reduce output through a BatchTop operator,
+// returning the top-N rows by FieldName. This is the liaison-side
+// completion of the distributed Top-over-Agg pattern: data nodes emit
+// AggModeMap partials (optionally pre-topped via the per-node BatchTop),
+// the liaison Reduces them, then a second BatchTop selects the global
+// top-N. Mirrors the row path's two-pass Top approach — sorting by
+// partial value on each node, then re-sorting the merged reductions on
+// the coordinator.
+//
+// fieldName MUST match a RoleField column in the reduced output schema
+// (typically the AggReduceSpec.OutputName). N <= 0 returns reduced input
+// unchanged.
+func ApplyTopToReduce(reduced []*vectorized.RecordBatch, spec ReduceTopSpec, batchSize int) ([]*vectorized.RecordBatch, error) {
+	if spec.N <= 0 || len(reduced) == 0 {
+		return reduced, nil
+	}
+	schema := reduced[0].Schema
+	fieldIdx := -1
+	for i, def := range schema.Columns {
+		if def.Role == vectorized.RoleField && def.Name == spec.FieldName {
+			fieldIdx = i
+			break
+		}
+	}
+	if fieldIdx < 0 {
+		return nil, fmt.Errorf("ApplyTopToReduce: field %q not present in reduced schema", spec.FieldName)
+	}
+	top := NewBatchTop(schema, fieldIdx, spec.N, spec.Asc, batchSize)
+	defer top.Close()
+	if initErr := top.Init(context.Background()); initErr != nil {
+		return nil, fmt.Errorf("ApplyTopToReduce: init: %w", initErr)
+	}
+	for i, b := range reduced {
+		if compatErr := schemaCompatible(schema, b.Schema); compatErr != nil {
+			return nil, fmt.Errorf("ApplyTopToReduce: batch %d schema mismatch: %w", i, compatErr)
+		}
+		if consumeErr := top.Consume(context.Background(), b); consumeErr != nil {
+			return nil, fmt.Errorf("ApplyTopToReduce: consume batch %d: %w", i, consumeErr)
+		}
+	}
+	if finalErr := top.Finalize(context.Background()); finalErr != nil {
+		return nil, fmt.Errorf("ApplyTopToReduce: finalize: %w", finalErr)
+	}
+	var out []*vectorized.RecordBatch
+	for {
+		nb, nextErr := top.NextBatch(context.Background())
+		if nextErr != nil {
+			return nil, fmt.Errorf("ApplyTopToReduce: next: %w", nextErr)
+		}
+		if nb == nil {
+			break
+		}
+		out = append(out, nb)
+	}
+	return out, nil
 }
 
 // FormatReduceOutput is a debug helper for the topology matrix harness:

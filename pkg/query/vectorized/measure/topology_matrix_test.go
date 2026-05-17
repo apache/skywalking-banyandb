@@ -294,3 +294,114 @@ func mapsEqual(a, b map[string]string) bool {
 func numericallyEqual(a, b string) bool {
 	return strings.EqualFold(a, b)
 }
+
+// TestTopologyMatrix_WithTop is the G9f.4 proof: distributed Top-over-Agg
+// (the case the previous :281 narrowing fell back to row) now passes
+// through the vec stack end-to-end. Per cell, the data nodes emit Map
+// partials (one row per (shard, group)), the liaison Reduces them and
+// applies a final BatchTop. The oracle is AggModeAll over the full
+// dataset followed by the same BatchTop — both must converge to the
+// same top-N rows, irrespective of (shards, replicas) topology.
+//
+// Covered: SUM ASC/DESC with N ∈ {1, 3, 6}. Replica duplication tests the
+// (shard, group) dedup; cross-shard combination tests Reduce's
+// aggregation.Reduce[N].Combine semantics; the final BatchTop tests
+// ApplyTopToReduce's bind-by-name + heap consistency.
+func TestTopologyMatrix_WithTop(t *testing.T) {
+	rows := []topologyRow{
+		{group: "a", value: 10}, {group: "b", value: 20},
+		{group: "c", value: 30}, {group: "d", value: 40},
+		{group: "e", value: 50}, {group: "f", value: 60},
+		{group: "a", value: 100}, {group: "b", value: 100},
+		{group: "c", value: 100}, {group: "d", value: 100},
+		{group: "e", value: 100}, {group: "f", value: 100},
+	}
+	cases := []struct {
+		name string
+		topN int
+		asc  bool
+	}{
+		{name: "Top1_DESC", topN: 1, asc: false},
+		{name: "Top3_DESC", topN: 3, asc: false},
+		{name: "Top6_DESC", topN: 6, asc: false},
+		{name: "Top1_ASC", topN: 1, asc: true},
+		{name: "Top3_ASC", topN: 3, asc: true},
+		{name: "Top6_ASC", topN: 6, asc: true},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			oracle := computeOracleWithTop(t, rows, AggSum, tc.topN, tc.asc)
+			for shards := 1; shards <= 6; shards++ {
+				for replicas := 1; replicas <= 6; replicas++ {
+					name := fmt.Sprintf("S%d_R%d", shards, replicas)
+					t.Run(name, func(t *testing.T) {
+						frames := buildPartialFrames(t, rows, shards, replicas, AggSum)
+						reduced, reduceErr := ReduceRawFrames(frames,
+							[]string{"g"},
+							[]AggReduceSpec{{OutputName: "out", Func: AggSum}},
+							1024, vectorized.NewMemoryTracker(1<<30))
+						if reduceErr != nil {
+							t.Fatalf("ReduceRawFrames: %v", reduceErr)
+						}
+						topped, topErr := ApplyTopToReduce(reduced,
+							ReduceTopSpec{FieldName: "out", N: tc.topN, Asc: tc.asc}, 1024)
+						if topErr != nil {
+							t.Fatalf("ApplyTopToReduce: %v", topErr)
+						}
+						got := flattenReduce(topped)
+						if !mapsEqual(got, oracle) {
+							t.Fatalf("Top-Reduce mismatch:\n  got    %v\n  oracle %v", got, oracle)
+						}
+					})
+				}
+			}
+		})
+	}
+}
+
+// computeOracleWithTop runs an AggModeAll + BatchTop over the full row
+// set and returns the canonical top-N group→value map.
+func computeOracleWithTop(t *testing.T, rows []topologyRow, fn AggFunc, topN int, asc bool) map[string]string {
+	t.Helper()
+	s := topologyRawSchema()
+	op := NewBatchAggregation(s, []int{1},
+		[]AggSpec{{Func: fn, InputCol: 2, Output: "out"}},
+		AggModeAll, 1024, vectorized.NewMemoryTracker(1<<30), 0)
+	defer op.Close()
+	if initErr := op.Init(context.Background()); initErr != nil {
+		t.Fatalf("oracle init: %v", initErr)
+	}
+	b := vectorized.NewRecordBatch(s, len(rows))
+	shardCol := b.Columns[0].(*vectorized.TypedColumn[int64])
+	gCol := b.Columns[1].(*vectorized.TypedColumn[string])
+	vCol := b.Columns[2].(*vectorized.TypedColumn[int64])
+	for _, r := range rows {
+		shardCol.Append(0)
+		gCol.Append(r.group)
+		vCol.Append(r.value)
+	}
+	b.Len = len(rows)
+	if consumeErr := op.Consume(context.Background(), b); consumeErr != nil {
+		t.Fatalf("oracle consume: %v", consumeErr)
+	}
+	if finalErr := op.Finalize(context.Background()); finalErr != nil {
+		t.Fatalf("oracle finalize: %v", finalErr)
+	}
+	var batches []*vectorized.RecordBatch
+	for {
+		nb, nextErr := op.NextBatch(context.Background())
+		if nextErr != nil {
+			t.Fatalf("oracle next: %v", nextErr)
+		}
+		if nb == nil {
+			break
+		}
+		batches = append(batches, nb)
+	}
+	topped, topErr := ApplyTopToReduce(batches,
+		ReduceTopSpec{FieldName: "out", N: topN, Asc: asc}, 1024)
+	if topErr != nil {
+		t.Fatalf("oracle top: %v", topErr)
+	}
+	return flattenReduce(topped)
+}
