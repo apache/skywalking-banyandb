@@ -36,14 +36,20 @@ import (
 	casestopn "github.com/apache/skywalking-banyandb/test/cases/topn"
 )
 
-// Vectorized parity gate (G4 §"Integration Test Plan"; updated for G8e).
+// Vec independent verification on a standalone process.
 //
 // Boots a *separate* standalone with --measure-vectorized-enabled=true and
-// replays the same Measure / TopN test entries the row-path integration suite
-// already covers in suite_test.go. Each case asserts the row-path's expected
-// output, so every greenness here is a parity check: vectorized produced the
-// row-path's reference InternalDataPoints. The cluster is fresh and isolated
-// so neither side observes the other's state.
+// replays the same Measure / TopN test entries the row-path integration
+// suite already covers in suite_test.go. Each case asserts the row-path's
+// expected output, so every greenness here is an INDEPENDENT verification
+// that vec produces the same reference InternalDataPoints on its own
+// merits — not a row-vec same-process diff, but vec running against the
+// reference yaml the row path agreed with first. The cluster is fresh
+// and isolated so neither side observes the other's state.
+//
+// This is the standalone twin of test/integration/distributed/query/
+// vectorized_test.go. Together they satisfy the directive that integration
+// standalone and distributed verify row and vec independently.
 //
 // With G8d (top-level vec dispatch) wired, plain measure queries take the
 // new pkg/query/vectorized/measure/plan.Dispatch path instead of the legacy
@@ -60,7 +66,7 @@ import (
 // the original cluster. The integration suite remains a release-candidate
 // gate; the unit-level differential tests in pkg/query/vectorized/measure
 // gate every PR.
-var _ = ginkgo.Describe("vectorized parity", ginkgo.Ordered, func() {
+var _ = ginkgo.Describe("vec independent verification (standalone)", ginkgo.Ordered, func() {
 	var (
 		vectorizedConn *grpc.ClientConn
 		stopFn         func()
@@ -125,11 +131,11 @@ var _ = ginkgo.Describe("vectorized parity", ginkgo.Ordered, func() {
 		handledDelta := vecplan.HandledCount() - startHandledCount
 		fellThroughDelta := vecplan.FellThroughCount() - startFellThroughCount
 		ginkgo.GinkgoWriter.Printf(
-			"vec dispatch: handled=%d fell_through=%d (deltas across vectorized-parity table)\n",
+			"vec dispatch (standalone): handled=%d fell_through=%d (deltas across vec-standalone table)\n",
 			handledDelta, fellThroughDelta,
 		)
 		gomega.Expect(handledDelta).To(gomega.BeNumerically(">", int64(0)),
-			"vec dispatch did not fire for any case in the parity table; "+
+			"vec dispatch did not fire for any case in the vec-standalone table; "+
 				"either the eligibility gate is too tight or processor.go's tryVecDispatch regressed")
 		if vectorizedConn != nil {
 			gomega.Expect(vectorizedConn.Close()).To(gomega.Succeed())
@@ -139,6 +145,6 @@ var _ = ginkgo.Describe("vectorized parity", ginkgo.Ordered, func() {
 		}
 	})
 
-	casesmeasure.RegisterTable("Vectorized: scanning measures")
-	casestopn.RegisterTable("Vectorized: TopN")
+	casesmeasure.RegisterTable("Vec (standalone): scanning measures")
+	casestopn.RegisterTable("Vec (standalone): TopN")
 })

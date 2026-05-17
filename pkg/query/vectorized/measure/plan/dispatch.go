@@ -134,11 +134,17 @@ func Dispatch(
 			fellThroughCount.Add(1)
 		}
 	}()
+	// The ONLY legitimate fall-through to the row path is flag-off
+	// (--measure-vectorized-enabled=false), i.e. the rollback rail. Once
+	// vec is enabled, Dispatch is contract-bound to either return a
+	// handled iterator or surface a hard error — no silent retry on row.
+	// (User directive: "the vec path does not have any fall-through to
+	// row path".)
 	if !cfg.Enabled {
 		return nil, "", false, nil
 	}
 	if req == nil {
-		return nil, "", false, nil
+		return nil, "", true, fmt.Errorf("vec dispatch: nil request under flag-on")
 	}
 	// Top is handled by the vec subsystem: plan.Analyze emits
 	// Scan → Top → Limit (or Scan → GroupByAgg → Top → Limit) and
@@ -158,11 +164,12 @@ func Dispatch(
 	// nil), so dispatch produces the row path's canonical empty response
 	// directly instead of borrowing it.
 
-	// Defensive nil guards on the runtime context. These should not fire
-	// in production paths — buildMeasureContext populates all of them —
-	// but a defensive fallthrough is safer than a nil dereference.
+	// Under flag-on, missing runtime context is a programming error — the
+	// caller (banyand/query/processor.go::buildMeasureContext) must
+	// populate all four. Surface it loudly instead of silently retrying
+	// on the row path.
 	if measureSchema == nil || logicalSchema == nil || ec == nil || metadata == nil {
-		return nil, "", false, nil
+		return nil, "", true, fmt.Errorf("vec dispatch: missing runtime context (measureSchema/logicalSchema/ec/metadata)")
 	}
 
 	// G9c #11: projection validation. The row path's Analyze rejects

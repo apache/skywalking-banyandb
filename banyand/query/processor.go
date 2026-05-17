@@ -289,16 +289,35 @@ func tryVecDispatch(
 	mctx *measureExecutionContext,
 	emitPartial bool,
 ) (executor.MIterator, string, bool, error) {
+	// Empty execution context = no measures to query. Fall through to row
+	// in both flag states — the row path handles the degenerate empty
+	// case identically (returns an empty MIterator). This is NOT a vec
+	// fall-through under flag-on (we never entered vec); it is the
+	// "no work to do" exit.
 	if len(mctx.ecc) == 0 {
 		return nil, "", false, nil
 	}
 	vecs := make([]vecExecutionContext, len(mctx.ecc))
+	flagOn := false
 	for groupIdx, ec := range mctx.ecc {
 		vec, ok := ec.(vecExecutionContext)
 		if !ok {
+			// A non-vec execution context can legitimately appear only on
+			// the flag-off rollback path (production storage satisfies
+			// vecExecutionContext). If ANY group's executor lacks the
+			// capability and the cluster is flag-on, that is a botched
+			// rollout and must fail loud — no proto/row fall-through.
+			if flagOn {
+				return nil, "", true, fmt.Errorf("vec dispatch: group %d execution context not vec-capable under flag-on (rollout skew?)", groupIdx)
+			}
 			return nil, "", false, nil
 		}
 		vecs[groupIdx] = vec
+		// Detect flag-on as soon as the first vec config is observable.
+		// Per-process flag means every group's config agrees in practice.
+		if groupIdx == 0 && vec.VectorizedConfig().Enabled {
+			flagOn = true
+		}
 	}
 	if len(mctx.ecc) == 1 {
 		return vecplan.Dispatch(ctx, queryCriteria, mctx.metadata[0], vecs[0].GetSchema(),
@@ -330,10 +349,15 @@ func tryVecDispatch(
 			mctx.metadata[groupIdx], vec.GetSchema(), mctx.schemas[groupIdx], vec, vec.VectorizedConfig(), emitPartial, true)
 		if dispatchErr != nil {
 			closeOpened()
-			return nil, "", false, dispatchErr
+			// handled=true so the caller surfaces the error rather than
+			// retrying on row (no fall-through under flag-on).
+			return nil, "", true, dispatchErr
 		}
 		if !handled {
 			closeOpened()
+			// Per-group vec config is flag-off (rollback rail). Forward
+			// the rollback decision to the caller so the entire
+			// multi-measure request runs row-side end-to-end.
 			return nil, "", false, nil
 		}
 		iters = append(iters, mit)
@@ -506,39 +530,50 @@ func (p *measureInternalQueryProcessor) Rev(ctx context.Context, message bus.Mes
 		}
 	}()
 
-	// G9f.5.b raw-frame emit path. Activated when:
-	//   - data.MeasureWireModeRaw() is true (the per-process flag-on wire
-	//     mode for TopicInternalMeasureQuery, set at PreRun from
-	//     --measure-vectorized-enabled)
-	//   - the iterator exposes vmeasure.RawFrameSource (vec single-group
-	//     dispatch — the multi-group merger and hidden-tag wrapper do
-	//     not implement it; trace queries skip raw-frame because the
-	//     columnar frame format has no trace-bytes slot)
+	// G9f.5.b raw-frame emit path under flag-on. No-fall-through directive:
+	// under data.MeasureWireModeRaw() the wire codec is RawFrameCodec, so
+	// the data-node Rev MUST emit a raw frame body (or a nil empty body
+	// — the codec carve-out). A proto body would be silently rejected by
+	// the liaison's RawFrameCodec.Unmarshal bad-magic guard.
 	//
-	// Under those conditions, DrainPipelineToFrame consumes the pipeline
-	// end-to-end, frame.Encode-s every active row into a single columnar
-	// raw body, and returns it as []byte. sub.go's switch then forwards
-	// the body unchanged on the TopicInternalMeasureQuery wire (under
-	// flag-on, the per-topic codec dispatcher is RawFrameCodec). On the
-	// liaison side, the body is fed to pkg/query/vectorized/measure.ReduceRawFrames
-	// (G9f.5.c) which decodes, dedupes (shard,group), and Combine-s the
-	// partials.
-	if !queryCriteria.Trace && data.MeasureWireModeRaw() {
-		if rfs, ok := mIterator.(vmeasure.RawFrameSource); ok {
-			rawBody, drainErr := vmeasure.DrainPipelineToFrame(ctx, rfs.Pipeline(), rfs.Schema())
-			if drainErr != nil {
-				resp = bus.NewMessage(bus.MessageID(now), common.NewError("vec raw-frame emit: %v", drainErr))
-				return
-			}
-			resp = bus.NewMessage(bus.MessageID(now), rawBody)
-			if p.slowQuery > 0 {
-				latency := time.Since(n)
-				if latency > p.slowQuery {
-					p.log.Warn().Dur("latency", latency).RawJSON("req", logger.Proto(queryCriteria)).Int("resp_bytes", len(rawBody)).Msg("internal measure slow query (raw frame)")
-				}
-			}
+	// Cases that cannot satisfy raw-frame emit fail loud here rather than
+	// silently falling through to a proto body the liaison can't decode:
+	//
+	//   - queryCriteria.Trace=true: the columnar frame format has no
+	//     trace-bytes slot, so trace-enabled distributed queries are
+	//     unsupported under flag-on. The runbook documents this.
+	//   - iterator not RawFrameSource: the multi-group merger and
+	//     hidden-tag wrapper do not expose Pipeline()/Schema(); they
+	//     require row-side iteration. Surfacing the error means the
+	//     vec-only cluster test catches the gap and operators get a clear
+	//     signal rather than corrupt wire bytes.
+	if data.MeasureWireModeRaw() {
+		if queryCriteria.Trace {
+			resp = bus.NewMessage(bus.MessageID(now), common.NewError(
+				"vec wire mode (flag-on) does not support trace=true on TopicInternalMeasureQuery; "+
+					"disable --measure-vectorized-enabled or omit trace from the query"))
 			return
 		}
+		rfs, ok := mIterator.(vmeasure.RawFrameSource)
+		if !ok {
+			resp = bus.NewMessage(bus.MessageID(now), common.NewError(
+				"vec wire mode (flag-on) requires RawFrameSource iterator; "+
+					"got %T — multi-measure / hidden-criteria-tag queries are unsupported on the cluster wire today", mIterator))
+			return
+		}
+		rawBody, drainErr := vmeasure.DrainPipelineToFrame(ctx, rfs.Pipeline(), rfs.Schema())
+		if drainErr != nil {
+			resp = bus.NewMessage(bus.MessageID(now), common.NewError("vec raw-frame emit: %v", drainErr))
+			return
+		}
+		resp = bus.NewMessage(bus.MessageID(now), rawBody)
+		if p.slowQuery > 0 {
+			latency := time.Since(n)
+			if latency > p.slowQuery {
+				p.log.Warn().Dur("latency", latency).RawJSON("req", logger.Proto(queryCriteria)).Int("resp_bytes", len(rawBody)).Msg("internal measure slow query (raw frame)")
+			}
+		}
+		return
 	}
 
 	var tracer *query.Tracer

@@ -430,17 +430,19 @@ func TestDispatch_NoTimeRange_EmptyResultParity(t *testing.T) {
 	}
 }
 
-// TestDispatch_NilRuntimeContext_FallsThrough covers the defensive guard
-// against nil ec / schema / metadata. These should not arise in
-// production but a fallthrough is safer than a nil dereference.
-func TestDispatch_NilRuntimeContext_FallsThrough(t *testing.T) {
+// TestDispatch_NilRuntimeContext_FailsLoud asserts the no-fall-through
+// contract: under flag-on, a nil runtime context is a programming error
+// (the caller MUST populate it) and Dispatch returns handled=true with
+// a hard error instead of silently retrying on row. This pins the
+// "vec path does not have any fall-through to row path" directive.
+func TestDispatch_NilRuntimeContext_FailsLoud(t *testing.T) {
 	_, _, handled, err := Dispatch(context.Background(),
 		bareReq(), nil, nil, nil, nil, dispatchCfg(true), false, false)
-	if err != nil {
-		t.Fatalf("nil runtime ctx must not error, got %v", err)
+	if err == nil {
+		t.Fatal("nil runtime ctx under flag-on must surface a hard error, not fall through")
 	}
-	if handled {
-		t.Fatal("nil runtime ctx must fall through")
+	if !handled {
+		t.Fatal("nil runtime ctx error must be reported as handled=true so the caller surfaces it rather than retrying row")
 	}
 }
 
@@ -506,32 +508,26 @@ func TestDispatch_EmptyResult_CanonicalEmptyIterator(t *testing.T) {
 }
 
 // TestDispatch_Counters_TrackFellThroughCalls confirms the
-// FellThroughCount counter increments on every non-error fallthrough.
+// FellThroughCount counter increments on the flag-off rollback path —
+// the ONLY legitimate fall-through after the no-fall-through directive.
 // HandledCount must not move when dispatch declines. This is the unit-
-// level half of the G8e parity-gate observability — integration runs
-// assert HandledCount > 0 after replaying the measure/topn cases.
+// level half of the parity-gate observability; integration runs assert
+// HandledCount > 0 in the vec-enabled cluster.
 func TestDispatch_Counters_TrackFellThroughCalls(t *testing.T) {
 	startHandled := HandledCount()
 	startFellThrough := FellThroughCount()
 
-	// Post-G9 the Top / GroupBy / nil-TimeRange shapes are all handled by
-	// the vec subsystem, so these requests fall through only via the
-	// PERMANENT nil-runtime-context guard (Dispatch is called with all-nil
-	// schema/ec/metadata in the loop below). The counter is still
-	// exercised on the clean (non-error) fall-through path.
-	gbReq := bareReq()
-	gbReq.GroupBy = &measurev1.QueryRequest_GroupBy{TagProjection: projTagProj(), FieldName: fieldValue}
-	noTimeReq := bareReq()
-	noTimeReq.TimeRange = nil
-
-	for _, req := range []*measurev1.QueryRequest{gbReq, noTimeReq, bareReq() /* nil ec */} {
+	// Flag-off is the SOLE remaining fall-through (the rollback rail).
+	// Calling Dispatch three times with cfg.Enabled=false produces three
+	// fall-throughs.
+	for range 3 {
 		_, _, handled, dispatchErr := Dispatch(context.Background(),
-			req, nil, nil, nil, nil, dispatchCfg(true), false, false)
+			bareReq(), nil, nil, nil, nil, dispatchCfg(false), false, false)
 		if dispatchErr != nil {
-			t.Fatalf("fallthrough must not error: %v", dispatchErr)
+			t.Fatalf("flag-off fall-through must not error: %v", dispatchErr)
 		}
 		if handled {
-			t.Fatal("test expected fallthrough; got handled=true")
+			t.Fatal("flag-off must fall through; got handled=true")
 		}
 	}
 
