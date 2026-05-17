@@ -238,18 +238,19 @@ func (s *dataSVC) Role() databasev1.Role {
 func (s *dataSVC) PreRun(ctx context.Context) error {
 	s.l = logger.GetLogger(s.Name())
 	s.l.Info().Msg("memory protector is initialized in PreRun")
-	// Publish the per-process wire mode for TopicInternalMeasureQuery so the
-	// queue's per-topic ResponseCodec dispatcher selects RawFrameCodec when
-	// this process is flag-on (vec raw columnar frame body) and ProtoCodec
-	// when flag-off — topic-AND-process-wire-mode selection, G9f spec G9f.0.
-	// Flags have been parsed by the time PreRun fires. Without this call,
-	// a distributed data node would silently emit proto on the cluster wire
-	// even when --measure-vectorized-enabled is set, defeating the cutover.
-	data.SetMeasureWireModeRaw(s.option.vectorized.Enabled)
+	// G9f deliberately does NOT call data.SetMeasureWireModeRaw here today.
+	// Doing so would flip the wire codec to RawFrameCodec while the
+	// data-node Rev path still emits proto InternalQueryResponse, which
+	// the liaison's flag-on RawFrameCodec.Unmarshal would reject with
+	// bad-magic errors. The wire-mode flip needs to land together with
+	// the data-node raw-frame emit (G9f.5.b) and the liaison raw-frame
+	// receive (G9f.5.c) so the synchronized cutover preserves the
+	// hard-cutover contract. Until then, distributed deployments stay on
+	// the proto codec regardless of --measure-vectorized-enabled.
 	s.l.Info().
 		Bool("measure_vectorized_enabled", s.option.vectorized.Enabled).
 		Bool("measure_wire_mode_raw", data.MeasureWireModeRaw()).
-		Msg("G9f wire mode published for TopicInternalMeasureQuery (data svc)")
+		Msg("G9f wire mode (data svc; raw flip held until wire emit/receive land in G9f.5.b/c)")
 	s.lfs = fs.NewLocalFileSystemWithLoggerAndLimit(s.l, s.pm.GetLimit())
 	var err error
 	if s.root, err = banyandbpath.Get(s.root); err != nil {

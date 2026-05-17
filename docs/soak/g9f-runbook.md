@@ -48,7 +48,7 @@ distributed result.
 Every measure service announces its wire mode at PreRun:
 
 ```
-G9f wire mode published for TopicInternalMeasureQuery
+G9f wire mode (...)
   measure_vectorized_enabled=<bool>
   measure_wire_mode_raw=<bool>
 ```
@@ -63,6 +63,16 @@ journalctl -u banyandb-liaison | grep -F 'G9f wire mode'
 ```
 
 Mixed values across the cluster ⇒ partial rollout ⇒ on-call action.
+
+**Current state (G9f.5.a, this gate):** standalone publishes
+`measure_wire_mode_raw` from `--measure-vectorized-enabled`. Distributed
+data svc / liaison emit the log line but deliberately leave
+`measure_wire_mode_raw=false` — the codec flip is held until the
+synchronized data-node raw-frame emit (G9f.5.b) and liaison raw-frame
+receive (G9f.5.c) land. Flipping the codec without the producer/consumer
+flip would fail every flag-on distributed response with bad-magic at
+`RawFrameCodec.Unmarshal`. So in distributed mode today, vec runs locally
+on each data node when the flag is on, but the cluster wire stays proto.
 
 ## Detecting a botched partial rollout
 
