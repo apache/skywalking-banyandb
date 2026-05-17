@@ -110,6 +110,7 @@ func Dispatch(
 	ec executor.MeasureExecutionContext,
 	cfg measure.VectorizedConfig,
 	emitPartial bool,
+	skipProjectionValidation bool,
 ) (iter executor.MIterator, planStr string, handled bool, err error) {
 	// emitPartial selects the BatchAggregation strategy when GroupBy/Agg is
 	// in the plan: false → AggModeAll (single-node final reduce); true →
@@ -170,8 +171,19 @@ func Dispatch(
 	// (test fixtures with WantErr=true assert it). Dispatch reproduces
 	// that canonical error byte-for-byte and returns handled=true so the
 	// caller surfaces it rather than falling through.
-	if projErr := validateProjectionParity(req, logicalSchema, measureSchema); projErr != nil {
-		return nil, "", true, projErr
+	//
+	// skipProjectionValidation is set by the multi-measure caller after
+	// it pre-validates against the UNION of all groups' schemas via
+	// ValidateMultiGroupProjection — a tag/field present in any group's
+	// schema is valid for the whole query, matching the row path's
+	// mergeSchema(ss) semantics in measure_analyzer.Analyze. Running the
+	// per-group validation here under multi-measure would reject the
+	// schema-evolution case where one group has a tag the others lack
+	// (the `multi_group_new_tag_field` integration fixture pins this).
+	if !skipProjectionValidation {
+		if projErr := validateProjectionParity(req, logicalSchema, measureSchema); projErr != nil {
+			return nil, "", true, projErr
+		}
 	}
 
 	// Hidden-tag detection: criteria may reference tags that are NOT in
@@ -369,6 +381,51 @@ func projectedNames(tp *modelv1.TagProjection) map[string]struct{} {
 //     "field %s not found in schema", field), identical to
 //     measure.schema.ValidateProjectionFields (measure/schema.go:77).
 //
+// ValidateMultiGroupProjection is the multi-measure counterpart of the
+// single-group validation Dispatch runs inline. A projected tag/field is
+// accepted if it resolves in ANY group's schema/measure — mirroring the
+// row path's measure_analyzer.Analyze, which calls mergeSchema(ss) to
+// union the per-group schemas before validating the projection. Without
+// this, a multi-measure query that projects a tag/field added to one
+// group but not another (the classic schema-evolution case the
+// `multi_group_new_tag_field` integration test pins) would be rejected
+// per-group inside Dispatch even though the row path accepts it. Returns
+// the same byte-identical error message ("<tag>: tag is not defined" /
+// "field <name> not found in schema") as the single-group path so test
+// fixtures and operator-facing errors match across the two routes.
+func ValidateMultiGroupProjection(req *measurev1.QueryRequest, schemas []logical.Schema, measures []*databasev1.Measure) error {
+	if tp := req.GetTagProjection(); tp != nil {
+		for _, reqFamily := range tp.GetTagFamilies() {
+			for _, name := range reqFamily.GetTags() {
+				found := false
+				for _, s := range schemas {
+					if s != nil && s.FindTagSpecByName(name) != nil {
+						found = true
+						break
+					}
+				}
+				if !found {
+					return errors.Wrap(logical.ErrTagNotDefined, name)
+				}
+			}
+		}
+	}
+	if fp := req.GetFieldProjection(); fp != nil && len(fp.GetNames()) > 0 {
+		known := make(map[string]struct{})
+		for _, m := range measures {
+			for _, fs := range m.GetFields() {
+				known[fs.GetName()] = struct{}{}
+			}
+		}
+		for _, name := range fp.GetNames() {
+			if _, ok := known[name]; !ok {
+				return errors.Errorf("field %s not found in schema", name)
+			}
+		}
+	}
+	return nil
+}
+
 // A nil error means every projected name resolves, so dispatch proceeds.
 func validateProjectionParity(req *measurev1.QueryRequest, logicalSchema logical.Schema, m *databasev1.Measure) error {
 	if tp := req.GetTagProjection(); tp != nil {

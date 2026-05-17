@@ -55,7 +55,7 @@ func bareReq() *measurev1.QueryRequest {
 // (nil, "", false, nil) immediately, before any other check.
 func TestDispatch_NotEnabled_FallsThrough(t *testing.T) {
 	iter, planStr, handled, err := Dispatch(context.Background(),
-		bareReq(), nil, nil, nil, nil, dispatchCfg(false), false)
+		bareReq(), nil, nil, nil, nil, dispatchCfg(false), false, false)
 	if err != nil {
 		t.Fatalf("disabled config should not error: %v", err)
 	}
@@ -95,7 +95,7 @@ func TestDispatch_RawGroupBy_ReachesEcQuery(t *testing.T) {
 		FieldName:     fieldValue,
 	}
 	_, _, handled, err := Dispatch(context.Background(),
-		req, metadata, measureSchema, logicalSchema, ec, dispatchCfg(true), false)
+		req, metadata, measureSchema, logicalSchema, ec, dispatchCfg(true), false, false)
 	if err != nil {
 		t.Fatalf("raw GroupBy must not error before ec.Query: %v", err)
 	}
@@ -118,7 +118,7 @@ func TestDispatch_ScalarReduce_ReachesEcQuery(t *testing.T) {
 		FieldName: fieldValue,
 	}
 	_, _, handled, err := Dispatch(context.Background(),
-		req, metadata, measureSchema, logicalSchema, ec, dispatchCfg(true), false)
+		req, metadata, measureSchema, logicalSchema, ec, dispatchCfg(true), false, false)
 	if err != nil {
 		t.Fatalf("scalar reduce must not error before ec.Query: %v", err)
 	}
@@ -177,7 +177,7 @@ func TestDispatch_GroupByAggUncoveredProjection_ReachesEcQuery(t *testing.T) {
 			req := bareReq()
 			c.mutate(req)
 			_, _, handled, err := Dispatch(context.Background(),
-				req, metadata, measureSchema, logicalSchema, ec, dispatchCfg(true), false)
+				req, metadata, measureSchema, logicalSchema, ec, dispatchCfg(true), false, false)
 			if err == nil && !handled {
 				t.Fatal("auto-covered projection must reach ec.Query (handled=true), not fall through")
 			}
@@ -215,7 +215,7 @@ func TestDispatch_Top_ReachesEcQuery(t *testing.T) {
 	}
 
 	iter, planStr, handled, err := Dispatch(context.Background(),
-		req, metadata, measureSchema, logicalSchema, ec, dispatchCfg(true), false)
+		req, metadata, measureSchema, logicalSchema, ec, dispatchCfg(true), false, false)
 	if err != nil {
 		t.Fatalf("Top request must not error before ec.Query: %v", err)
 	}
@@ -247,7 +247,7 @@ func TestDispatch_OrderBy_ReachesEcQuery(t *testing.T) {
 	}
 
 	iter, planStr, handled, err := Dispatch(context.Background(),
-		req, metadata, measureSchema, logicalSchema, ec, dispatchCfg(true), false)
+		req, metadata, measureSchema, logicalSchema, ec, dispatchCfg(true), false, false)
 	if err != nil {
 		t.Fatalf("OrderBy must not error before ec.Query: %v", err)
 	}
@@ -279,7 +279,7 @@ func TestDispatch_OrderBy_UnknownIndexRule_BubblesUpError(t *testing.T) {
 	}
 
 	_, _, handled, err := Dispatch(context.Background(),
-		req, metadata, measureSchema, logicalSchema, ec, dispatchCfg(true), false)
+		req, metadata, measureSchema, logicalSchema, ec, dispatchCfg(true), false, false)
 	if err == nil {
 		t.Fatal("unknown OrderBy index rule must surface as a dispatch error")
 	}
@@ -311,7 +311,7 @@ func TestDispatch_UnknownTagProjection_SurfacesCanonicalError(t *testing.T) {
 		{Name: "default", Tags: []string{"ghost"}},
 	}}
 	_, _, handled, err := Dispatch(context.Background(),
-		req, metadata, measureSchema, logicalSchema, ec, dispatchCfg(true), false)
+		req, metadata, measureSchema, logicalSchema, ec, dispatchCfg(true), false, false)
 	if err == nil {
 		t.Fatal("unknown tag in projection must surface the canonical row-path error")
 	}
@@ -345,7 +345,7 @@ func TestDispatch_UnknownFieldProjection_SurfacesCanonicalError(t *testing.T) {
 	req := bareReq()
 	req.FieldProjection = &measurev1.QueryRequest_FieldProjection{Names: []string{"ghost"}}
 	_, _, handled, err := Dispatch(context.Background(),
-		req, metadata, measureSchema, logicalSchema, ec, dispatchCfg(true), false)
+		req, metadata, measureSchema, logicalSchema, ec, dispatchCfg(true), false, false)
 	if err == nil {
 		t.Fatal("unknown field in projection must surface the canonical row-path error")
 	}
@@ -380,7 +380,7 @@ func TestDispatch_TagValidatedBeforeField(t *testing.T) {
 	}}
 	req.FieldProjection = &measurev1.QueryRequest_FieldProjection{Names: []string{"phantom"}}
 	_, _, handled, err := Dispatch(context.Background(),
-		req, metadata, measureSchema, logicalSchema, ec, dispatchCfg(true), false)
+		req, metadata, measureSchema, logicalSchema, ec, dispatchCfg(true), false, false)
 	if err == nil || err.Error() != "ghost: tag is not defined" {
 		t.Fatalf("tag error must take precedence over field error; got %v", err)
 	}
@@ -409,7 +409,7 @@ func TestDispatch_NoTimeRange_EmptyResultParity(t *testing.T) {
 	req := bareReq()
 	req.TimeRange = nil
 	iter, _, handled, err := Dispatch(context.Background(),
-		req, metadata, measureSchema, logicalSchema, ec, dispatchCfg(true), false)
+		req, metadata, measureSchema, logicalSchema, ec, dispatchCfg(true), false, false)
 	if err != nil {
 		t.Fatalf("nil TimeRange must not error (row path does not reject it): %v", err)
 	}
@@ -435,7 +435,7 @@ func TestDispatch_NoTimeRange_EmptyResultParity(t *testing.T) {
 // production but a fallthrough is safer than a nil dereference.
 func TestDispatch_NilRuntimeContext_FallsThrough(t *testing.T) {
 	_, _, handled, err := Dispatch(context.Background(),
-		bareReq(), nil, nil, nil, nil, dispatchCfg(true), false)
+		bareReq(), nil, nil, nil, nil, dispatchCfg(true), false, false)
 	if err != nil {
 		t.Fatalf("nil runtime ctx must not error, got %v", err)
 	}
@@ -478,7 +478,7 @@ func TestDispatch_EmptyResult_CanonicalEmptyIterator(t *testing.T) {
 	ec := &fakeEC{wantResult: nil, wantErr: nil}
 
 	iter, _, handled, err := Dispatch(context.Background(),
-		bareReq(), metadata, measureSchema, logicalSchema, ec, dispatchCfg(true), false)
+		bareReq(), metadata, measureSchema, logicalSchema, ec, dispatchCfg(true), false, false)
 	if err != nil {
 		t.Fatalf("dispatch must not error on empty result: %v", err)
 	}
@@ -526,7 +526,7 @@ func TestDispatch_Counters_TrackFellThroughCalls(t *testing.T) {
 
 	for _, req := range []*measurev1.QueryRequest{gbReq, noTimeReq, bareReq() /* nil ec */} {
 		_, _, handled, dispatchErr := Dispatch(context.Background(),
-			req, nil, nil, nil, nil, dispatchCfg(true), false)
+			req, nil, nil, nil, nil, dispatchCfg(true), false, false)
 		if dispatchErr != nil {
 			t.Fatalf("fallthrough must not error: %v", dispatchErr)
 		}
@@ -570,7 +570,7 @@ func TestDispatch_GroupByAggCovered_ReachesEcQuery(t *testing.T) {
 	}
 
 	iter, planStr, handled, err := Dispatch(context.Background(),
-		req, metadata, measureSchema, logicalSchema, ec, dispatchCfg(true), false)
+		req, metadata, measureSchema, logicalSchema, ec, dispatchCfg(true), false, false)
 	if err != nil {
 		t.Fatalf("covered GroupBy+Agg must not error before ec.Query: %v", err)
 	}
@@ -693,7 +693,7 @@ func TestDispatch_QueryError_BubblesUp(t *testing.T) {
 	ec := &fakeEC{wantErr: wantErr}
 
 	_, _, handled, err := Dispatch(context.Background(),
-		bareReq(), metadata, measureSchema, logicalSchema, ec, dispatchCfg(true), false)
+		bareReq(), metadata, measureSchema, logicalSchema, ec, dispatchCfg(true), false, false)
 	if err == nil {
 		t.Fatal("ec.Query error must surface as a dispatch error")
 	}

@@ -302,7 +302,21 @@ func tryVecDispatch(
 	}
 	if len(mctx.ecc) == 1 {
 		return vecplan.Dispatch(ctx, queryCriteria, mctx.metadata[0], vecs[0].GetSchema(),
-			mctx.schemas[0], vecs[0], vecs[0].VectorizedConfig(), emitPartial)
+			mctx.schemas[0], vecs[0], vecs[0].VectorizedConfig(), emitPartial, false)
+	}
+	// Multi-measure projection validation: a tag/field is valid if it
+	// resolves in ANY group's schema (mirrors measure_analyzer.Analyze's
+	// mergeSchema(ss) union). Running the per-group validation inside
+	// Dispatch would reject the schema-evolution case where one group
+	// added a tag/field the others lack (multi_group_new_tag_field
+	// integration fixture). We pre-validate here against the union once,
+	// then skip the per-group validation inside Dispatch.
+	measureSchemas := make([]*databasev1.Measure, len(vecs))
+	for i, v := range vecs {
+		measureSchemas[i] = v.GetSchema()
+	}
+	if projErr := vecplan.ValidateMultiGroupProjection(queryCriteria, mctx.schemas, measureSchemas); projErr != nil {
+		return nil, "", true, projErr
 	}
 	iters := make([]executor.MIterator, 0, len(mctx.ecc))
 	planStrs := make([]string, 0, len(mctx.ecc))
@@ -313,7 +327,7 @@ func tryVecDispatch(
 	}
 	for groupIdx, vec := range vecs {
 		mit, planStr, handled, dispatchErr := vecplan.Dispatch(ctx, queryCriteria,
-			mctx.metadata[groupIdx], vec.GetSchema(), mctx.schemas[groupIdx], vec, vec.VectorizedConfig(), emitPartial)
+			mctx.metadata[groupIdx], vec.GetSchema(), mctx.schemas[groupIdx], vec, vec.VectorizedConfig(), emitPartial, true)
 		if dispatchErr != nil {
 			closeOpened()
 			return nil, "", false, dispatchErr
