@@ -50,8 +50,14 @@ import (
 // Returns the encoded frame body and the close error from pipeline.Close
 // joined into a single error (mirrors vectorizedMIterator.Close).
 func DrainPipelineToFrame(ctx context.Context, p *vectorized.Pipeline, schema *vectorized.BatchSchema) ([]byte, error) {
+	// A nil pipeline is the canonical empty-result signal — emptyMIterator
+	// returns nil from Pipeline() so the data-node Rev can short-circuit
+	// to an empty raw frame body. The codec layer's RawFrameCodec treats
+	// a nil/empty body as a legitimate empty distributed result (the
+	// magic-byte guard is skipped on decode), so returning nil here is
+	// what the wire contract expects.
 	if p == nil {
-		return nil, fmt.Errorf("DrainPipelineToFrame: nil pipeline")
+		return nil, nil
 	}
 	if schema == nil {
 		return nil, fmt.Errorf("DrainPipelineToFrame: nil schema")

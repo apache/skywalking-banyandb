@@ -466,10 +466,23 @@ func validateProjectionParity(req *measurev1.QueryRequest, logicalSchema logical
 // resultMIterator{result: nil}: Next reports no rows, Current is never
 // reached, and Close is a no-op error. Dispatch returns it for the
 // canonical empty response (G9c #13).
+//
+// It implements vmeasure.RawFrameSource so the data-node Rev under
+// flag-on can short-circuit to an empty raw frame body without
+// constructing a pipeline. nil Pipeline / Schema is the signal that
+// DrainPipelineToFrame interprets as "no rows" and returns a nil body
+// — matching the codec layer's RawFrameCodec empty-body carve-out.
 type emptyMIterator struct{}
 
 func (emptyMIterator) Next() bool { return false }
 
 func (emptyMIterator) Current() []*measurev1.InternalDataPoint { return nil }
+
+// Pipeline returns nil so DrainPipelineToFrame emits an empty body.
+func (emptyMIterator) Pipeline() *vectorized.Pipeline { return nil }
+
+// Schema returns nil; with a nil pipeline DrainPipelineToFrame never
+// inspects the schema, so this is just an interface marker.
+func (emptyMIterator) Schema() *vectorized.BatchSchema { return nil }
 
 func (emptyMIterator) Close() error { return nil }
