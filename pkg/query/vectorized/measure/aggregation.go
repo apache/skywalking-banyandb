@@ -43,8 +43,15 @@ import (
 //     path's aggAllIterator.Current() at :364). The partial batch is then
 //     serialised by pkg/query/vectorized/measure/frame.Encode for cluster
 //     transport.
-//   - AggModeReduce — coordinator's Reduce phase (G9f.3). Still returns
-//     ErrAggModeNotImplemented today; lands when the decode side ships.
+//   - AggModeReduce — coordinator's Reduce phase (G9f.3). Consumes the
+//     typed-column partial batches emitted by AggModeMap (one row per
+//     (shard, group)), dedupes them on (shard_id, group_key) — replica
+//     duplicates of the same shard collapse to one contribution, mirroring
+//     the row path's deduplicateAggregatedDataPointsWithShard — and combines
+//     them through aggregation.Reduce[N] into a final batch shaped like
+//     AggModeAll (tags + final value column, no shard column, no count
+//     sidecar). The aggregation.Reduce[N].Val() handles MEAN finalisation
+//     (sum÷count) so the emit path stays type-symmetric with AggModeAll.
 type AggMode int
 
 // AggMode values.
@@ -67,10 +74,12 @@ const (
 )
 
 // ErrAggModeNotImplemented is returned by Consume / Finalize / NextBatch when
-// AggMode is Reduce — the distributed coordinator phase that consumes vec
-// partial frames; it lands with the decode side in G9f.3. AggModeMap is now
-// implemented (G9f.2).
-var ErrAggModeNotImplemented = errors.New("vectorized.measure: AggModeReduce not implemented yet (G9f.3)")
+// AggMode falls outside the implemented modes. AggModeAll and AggModeMap
+// have been implemented since G9f.2; AggModeReduce ships in G9f.3. The
+// error remains for any future mode addition that lands without operator
+// support, so an out-of-range mode fails loud rather than silently
+// degrading.
+var ErrAggModeNotImplemented = errors.New("vectorized.measure: BatchAggregation mode not implemented")
 
 // shardIDOutputName is the AggModeMap output column name for the leading
 // RoleShardID column. The receiving end identifies it by role rather than
@@ -126,23 +135,40 @@ type BatchAggregation struct {
 	// outputShardIdx is the output-batch column index for the leading
 	// RoleShardID column. AggModeAll: -1 (no shard column emitted, matching
 	// the existing single-node contract). AggModeMap: 0 (the partial batch
-	// always carries shard id as its first column).
+	// always carries shard id as its first column). AggModeReduce: -1 (the
+	// final reduce batch matches AggModeAll's shape — no shard column).
 	outputShardIdx int
 	// tagOutOffset is where the tag columns start in the output batch
-	// (0 in AggModeAll; 1 in AggModeMap because the shard column comes first).
+	// (0 in AggModeAll / AggModeReduce; 1 in AggModeMap because the shard
+	// column comes first).
 	tagOutOffset int
 	// shardIDIdx is the input-batch column index of the RoleShardID column;
 	// -1 if input has none. AggModeMap consults this in newGroup to capture
-	// the first-fed-idp shard per group (G9f.2.a). Unit-test fixtures that
+	// the first-fed-idp shard per group (G9f.2.a). AggModeReduce uses it to
+	// key the (shard, group) replica-dedup map. Unit-test fixtures that
 	// pre-date the storage bridge may lack one — Map mode then emits the
-	// per-group shard as zero, consistent with the scalar-reduce contract.
+	// per-group shard as zero (consistent with scalar-reduce), and Reduce
+	// dedups on group key alone (a missing shard column means there is no
+	// way to distinguish replicas, so dedup falls back to one entry per key).
 	shardIDIdx int
-	mode       AggMode
-	entrySize  int64
-	reserved   int64
-	batchSize  int
-	cursor     int
-	closed     bool
+	// aggInputCountIdx[i] is the input-batch column index of the i-th agg's
+	// PartialCount sidecar (for MEAN — see meanCountSuffix), or -1 if the
+	// agg has no count sidecar (non-MEAN, or any agg in AggModeAll). Only
+	// populated for AggModeReduce; AggModeAll/AggModeMap ignore the slot.
+	aggInputCountIdx []int
+	// dedupSeen is the (shard, group_key) replica-dedup map for
+	// AggModeReduce. Nil in AggModeAll/AggModeMap. Built lazily in Init so
+	// re-init resets it deterministically. Mirrors row path semantics from
+	// measure_plan_distributed.go's deduplicateAggregatedDataPointsWithShard:
+	// same shard + same group_key ⇒ drop the duplicate; different shards
+	// with the same group_key are KEPT and combined into one final value.
+	dedupSeen map[string]struct{}
+	mode      AggMode
+	entrySize int64
+	reserved  int64
+	batchSize int
+	cursor    int
+	closed    bool
 }
 
 // aggGroup carries one bucket's reduction state plus a copy of every
@@ -164,17 +190,28 @@ type aggGroup struct {
 	shardID int64
 }
 
-// aggSlot holds an aggregation.Map of either int64 or float64. Whether int or
-// float is decided at construction time by AggFunc + input column type:
+// aggSlot holds either:
+//
+//   - AggModeAll / AggModeMap: an aggregation.Map of int64 or float64
+//     (Consume folds raw values; emit reads Val() / Partial()).
+//   - AggModeReduce:           an aggregation.Reduce of int64 or float64
+//     (Consume reads Partial state from the input columns and Combine()s;
+//     emit reads Val() to produce the final reduced value).
+//
+// Whether int or float is decided at construction time by AggFunc + input
+// column type:
 //
 //   - SUM/MIN/MAX: matches input type (preserve precision).
 //   - COUNT:        always int64.
 //   - MEAN:         always float64 (so int inputs yield fractional means).
 //
-// Exactly one of intMap/floatMap is non-nil per slot.
+// Exactly one of intMap/floatMap is non-nil in Map/All mode; exactly one of
+// intReduce/floatReduce is non-nil in Reduce mode.
 type aggSlot struct {
 	intMap       aggregation.Map[int64]
 	floatMap     aggregation.Map[float64]
+	intReduce    aggregation.Reduce[int64]
+	floatReduce  aggregation.Reduce[float64]
 	fn           AggFunc
 	inputIsFloat bool
 }
@@ -194,21 +231,22 @@ func NewBatchAggregation(
 	tagIndices := collectTagIndices(input, keyIndices)
 	layout := buildAggOutputLayout(input, tagIndices, aggs, mode)
 	return &BatchAggregation{
-		inputSchema:    input,
-		outputSchema:   layout.schema,
-		pool:           vectorized.NewBatchPool(layout.schema, batchSize),
-		tracker:        tracker,
-		keyIndices:     slices.Clone(keyIndices),
-		tagIndices:     tagIndices,
-		aggs:           slices.Clone(aggs),
-		aggOutOffsets:  layout.aggOutOffsets,
-		aggHasCount:    layout.aggHasCount,
-		outputShardIdx: layout.outputShardIdx,
-		tagOutOffset:   layout.tagOutOffset,
-		shardIDIdx:     findShardIDIndex(input),
-		mode:           mode,
-		batchSize:      batchSize,
-		entrySize:      entrySize,
+		inputSchema:      input,
+		outputSchema:     layout.schema,
+		pool:             vectorized.NewBatchPool(layout.schema, batchSize),
+		tracker:          tracker,
+		keyIndices:       slices.Clone(keyIndices),
+		tagIndices:       tagIndices,
+		aggs:             slices.Clone(aggs),
+		aggOutOffsets:    layout.aggOutOffsets,
+		aggHasCount:      layout.aggHasCount,
+		outputShardIdx:   layout.outputShardIdx,
+		tagOutOffset:     layout.tagOutOffset,
+		shardIDIdx:       findShardIDIndex(input),
+		aggInputCountIdx: buildAggInputCountIdx(input, aggs, mode),
+		mode:             mode,
+		batchSize:        batchSize,
+		entrySize:        entrySize,
 	}
 }
 
@@ -233,9 +271,15 @@ func collectTagIndices(input *vectorized.BatchSchema, keyIndices []int) []int {
 
 // Init prepares the group map. It does NOT validate the mode — mode rejection
 // happens at the per-method level (Consume/Finalize/NextBatch) so the
-// dispatcher matches the spec's distributed forward-compat language.
+// dispatcher matches the spec's distributed forward-compat language. For
+// AggModeReduce, Init also resets the (shard, group_key) replica-dedup map
+// so the operator can be reused across distributed reduce runs without a
+// fresh allocation per call.
 func (a *BatchAggregation) Init(_ context.Context) error {
 	a.groups = make(map[string]*aggGroup)
+	if a.mode == AggModeReduce {
+		a.dedupSeen = make(map[string]struct{})
+	}
 	return nil
 }
 
@@ -251,14 +295,25 @@ func (a *BatchAggregation) OutputSchema() *vectorized.BatchSchema { return a.out
 // row's group is not added — partial-batch state is consistent.
 //
 // AggModeAll and AggModeMap share the per-row fold path; they diverge only at
-// emit time (NextBatch). AggModeReduce remains unimplemented (G9f.3).
+// emit time (NextBatch). AggModeReduce uses a parallel combinePartial path:
+// each input row is one (shard, group) partial; replica duplicates (same
+// shard + same group_key) are dropped via dedupSeen, then the Partial is
+// Combine'd into the group's Reduce accumulator. Cross-shard rows that share
+// a group_key are KEPT and combined, matching the row path's
+// deduplicateAggregatedDataPointsWithShard semantics.
 func (a *BatchAggregation) Consume(_ context.Context, b *vectorized.RecordBatch) error {
-	if a.mode != AggModeAll && a.mode != AggModeMap {
+	if a.mode != AggModeAll && a.mode != AggModeMap && a.mode != AggModeReduce {
 		return ErrAggModeNotImplemented
 	}
 	active := activeIndices(b)
 	for _, rowIdx := range active {
 		key := a.computeKey(b, int(rowIdx))
+		if a.mode == AggModeReduce && a.markDedupSeen(b, int(rowIdx), key) {
+			// markDedupSeen returns true ⇒ this (shard, group_key) pair
+			// already arrived from a replica of the same shard; skip the
+			// row so it does not double-count.
+			continue
+		}
 		group, exists := a.groups[key]
 		if !exists {
 			if a.entrySize > 0 {
@@ -276,17 +331,21 @@ func (a *BatchAggregation) Consume(_ context.Context, b *vectorized.RecordBatch)
 			group = newGroup
 		}
 		for slotIdx, spec := range a.aggs {
+			if a.mode == AggModeReduce {
+				a.combinePartial(b, int(rowIdx), &group.slots[slotIdx], spec, a.aggInputCountIdx[slotIdx])
+				continue
+			}
 			a.fold(b, int(rowIdx), &group.slots[slotIdx], spec)
 		}
 	}
 	return nil
 }
 
-// Finalize is a no-op for both AggModeAll and AggModeMap — Consume eagerly
-// maintains every group's aggregation.Map state, so there is no batched
-// flush step. AggModeReduce remains unimplemented (G9f.3).
+// Finalize is a no-op for AggModeAll, AggModeMap, and AggModeReduce —
+// Consume eagerly maintains every group's accumulator state (Map or
+// Reduce), so there is no batched flush step.
 func (a *BatchAggregation) Finalize(_ context.Context) error {
-	if a.mode != AggModeAll && a.mode != AggModeMap {
+	if a.mode != AggModeAll && a.mode != AggModeMap && a.mode != AggModeReduce {
 		return ErrAggModeNotImplemented
 	}
 	return nil
@@ -295,9 +354,11 @@ func (a *BatchAggregation) Finalize(_ context.Context) error {
 // NextBatch emits one row per group in group-insertion order, paginated by
 // batchSize. AggModeAll emits final values; AggModeMap emits typed-column
 // partial state plus a leading shard-id column (see AggMode docs).
-// AggModeReduce remains unimplemented (G9f.3).
+// AggModeReduce emits the same shape as AggModeAll — tags + final reduced
+// value — but draws the value from aggregation.Reduce[N].Val() so MEAN
+// finalisation (sum÷count) happens inside the reducer.
 func (a *BatchAggregation) NextBatch(_ context.Context) (*vectorized.RecordBatch, error) {
-	if a.mode != AggModeAll && a.mode != AggModeMap {
+	if a.mode != AggModeAll && a.mode != AggModeMap && a.mode != AggModeReduce {
 		return nil, ErrAggModeNotImplemented
 	}
 	if a.cursor >= len(a.insertion) {
@@ -342,7 +403,7 @@ func (a *BatchAggregation) newGroup(b *vectorized.RecordBatch, rowIdx int, key s
 	slots := make([]aggSlot, len(a.aggs))
 	for i, spec := range a.aggs {
 		inputIsFloat := a.inputSchema.Columns[spec.InputCol].Type == vectorized.ColumnTypeFloat64
-		slot, slotErr := newAggSlot(spec.Func, inputIsFloat)
+		slot, slotErr := newAggSlot(spec.Func, inputIsFloat, a.mode)
 		if slotErr != nil {
 			return nil, slotErr
 		}
@@ -405,20 +466,24 @@ func (a *BatchAggregation) emitGroupRow(out *vectorized.RecordBatch, group *aggG
 	}
 	// Agg output columns. AggModeAll emits one Val() per slot; AggModeMap
 	// emits Partial().Value plus a sidecar Partial().Count for MEAN (per
-	// aggHasCount). Offsets are precomputed in aggOutOffsets so the emit
-	// loop does no per-row schema walking.
+	// aggHasCount); AggModeReduce emits one Reduce.Val() per slot — same
+	// shape as AggModeAll. Offsets are precomputed in aggOutOffsets so the
+	// emit loop does no per-row schema walking.
 	for slotIdx := range a.aggs {
 		slot := &group.slots[slotIdx]
 		valueIdx := a.aggOutOffsets[slotIdx]
-		if a.mode == AggModeMap {
+		switch a.mode {
+		case AggModeMap:
 			countIdx := -1
 			if a.aggHasCount[slotIdx] {
 				countIdx = valueIdx + 1
 			}
 			slot.writePartial(out, valueIdx, countIdx)
-			continue
+		case AggModeReduce:
+			slot.writeReduce(out.Columns[valueIdx])
+		default:
+			slot.write(out.Columns[valueIdx])
 		}
-		slot.write(out.Columns[valueIdx])
 	}
 }
 
@@ -433,10 +498,12 @@ func (a *BatchAggregation) computeKey(b *vectorized.RecordBatch, rowIdx int) str
 	return string(buf)
 }
 
-// newAggSlot builds an aggregation.Map of the appropriate numeric type for the
-// (function, input type) pair. The mapping rules mirror aggOutputType so the
-// slot's value can be Append'd directly to the typed output column.
-func newAggSlot(fn AggFunc, inputIsFloat bool) (aggSlot, error) {
+// newAggSlot builds the accumulator for the (function, input type, mode)
+// triple. AggModeAll / AggModeMap allocate an aggregation.Map (raw fold +
+// optional Partial export); AggModeReduce allocates an aggregation.Reduce
+// (Combine partials + final Val). The numeric type mirrors aggOutputType so
+// the slot's value can be Append'd directly to the typed output column.
+func newAggSlot(fn AggFunc, inputIsFloat bool, mode AggMode) (aggSlot, error) {
 	af, modelErr := toModelAggFunc(fn)
 	if modelErr != nil {
 		return aggSlot{}, modelErr
@@ -450,6 +517,22 @@ func newAggSlot(fn AggFunc, inputIsFloat bool) (aggSlot, error) {
 	// ToFieldValue[N] emits FieldValue_Int / FieldValue_Float by N, so
 	// COUNT on a float field must emit a float (e.g. float_top_count).
 	useFloat := inputIsFloat
+	if mode == AggModeReduce {
+		if useFloat {
+			r, reduceErr := aggregation.NewReduce[float64](af)
+			if reduceErr != nil {
+				return aggSlot{}, reduceErr
+			}
+			slot.floatReduce = r
+		} else {
+			r, reduceErr := aggregation.NewReduce[int64](af)
+			if reduceErr != nil {
+				return aggSlot{}, reduceErr
+			}
+			slot.intReduce = r
+		}
+		return slot, nil
+	}
 	if useFloat {
 		m, mapErr := aggregation.NewMap[float64](af)
 		if mapErr != nil {

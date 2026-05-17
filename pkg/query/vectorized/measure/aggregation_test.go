@@ -19,7 +19,6 @@ package measure
 
 import (
 	"context"
-	"errors"
 	"testing"
 
 	modelv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/model/v1"
@@ -576,26 +575,168 @@ func TestBatchAggregation_AggModeMap_NonMean_EmitsValueOnly(t *testing.T) {
 }
 
 
-func TestBatchAggregation_AggModeReduce_ReturnsErrNotImplemented(t *testing.T) {
-	s := aggIntSchema()
-	op := NewBatchAggregation(s, []int{0},
-		[]AggSpec{{Func: AggSum, InputCol: 1, Output: "sum_v"}}, AggModeReduce, 8, vectorized.NewMemoryTracker(1<<30), 0)
+// aggReduceSchema builds the canonical AggModeMap output schema used as
+// AggModeReduce input: [shard_id, g (tag), sum_v (int64)]. shard_id is
+// int64 RoleShardID; g is a string RoleTag (single group key). For pure
+// non-MEAN aggs the count sidecar is omitted (matches AggModeMap output
+// for SUM/MIN/MAX/COUNT).
+func aggReduceSchema() *vectorized.BatchSchema {
+	return vectorized.NewBatchSchema([]vectorized.ColumnDef{
+		{Role: vectorized.RoleShardID, Name: shardIDOutputName, Type: vectorized.ColumnTypeInt64},
+		{Role: vectorized.RoleTag, TagFamily: "f", Name: "g", Type: vectorized.ColumnTypeString},
+		{Role: vectorized.RoleField, Name: "sum_v", Type: vectorized.ColumnTypeInt64},
+	})
+}
+
+// aggReduceSchemaWithCount is the MEAN variant: an extra count sidecar
+// column at offset 3 (matches AggModeMap output for AggMean — value
+// then "__agg_count").
+func aggReduceSchemaWithCount() *vectorized.BatchSchema {
+	return vectorized.NewBatchSchema([]vectorized.ColumnDef{
+		{Role: vectorized.RoleShardID, Name: shardIDOutputName, Type: vectorized.ColumnTypeInt64},
+		{Role: vectorized.RoleTag, TagFamily: "f", Name: "g", Type: vectorized.ColumnTypeString},
+		{Role: vectorized.RoleField, Name: "mean_v", Type: vectorized.ColumnTypeFloat64},
+		{Role: vectorized.RoleField, Name: "mean_v" + meanCountSuffix, Type: vectorized.ColumnTypeFloat64},
+	})
+}
+
+// feedReduce runs Init/Consume/Finalize and drains NextBatch into a slice.
+func feedReduce(t *testing.T, op *BatchAggregation, b *vectorized.RecordBatch) []*vectorized.RecordBatch {
+	t.Helper()
 	if err := op.Init(context.Background()); err != nil {
-		t.Fatalf("Init must succeed regardless of mode; got %v", err)
+		t.Fatalf("Init: %v", err)
 	}
+	if err := op.Consume(context.Background(), b); err != nil {
+		t.Fatalf("Consume: %v", err)
+	}
+	if err := op.Finalize(context.Background()); err != nil {
+		t.Fatalf("Finalize: %v", err)
+	}
+	var out []*vectorized.RecordBatch
+	for {
+		nb, err := op.NextBatch(context.Background())
+		if err != nil {
+			t.Fatalf("NextBatch: %v", err)
+		}
+		if nb == nil {
+			break
+		}
+		out = append(out, nb)
+	}
+	return out
+}
+
+// TestBatchAggregation_AggModeReduce_OutputSchema_ShardIDDropped asserts the
+// Reduce output matches AggModeAll's shape: tags + final value column, no
+// leading shard_id and no count sidecar. Mirrors the row path's final
+// QueryResponse shape (one DataPoint per group; no shard echo).
+func TestBatchAggregation_AggModeReduce_OutputSchema_ShardIDDropped(t *testing.T) {
+	s := aggReduceSchema()
+	op := NewBatchAggregation(s, []int{1},
+		[]AggSpec{{Func: AggSum, InputCol: 2, Output: "sum_v"}}, AggModeReduce, 8,
+		vectorized.NewMemoryTracker(1<<30), 0)
 	defer op.Close()
-	b := vectorized.NewRecordBatch(s, 1)
-	b.Columns[0].(*vectorized.TypedColumn[string]).Append("a")
-	b.Columns[1].(*vectorized.TypedColumn[int64]).Append(1)
-	b.Len = 1
-	if err := op.Consume(context.Background(), b); !errors.Is(err, ErrAggModeNotImplemented) {
-		t.Fatalf("Consume(AggModeReduce) must surface ErrAggModeNotImplemented, got %v", err)
+	got := op.OutputSchema().Columns
+	if len(got) != 2 {
+		t.Fatalf("Reduce output column count = %d, want 2 (g + sum_v)", len(got))
 	}
-	if err := op.Finalize(context.Background()); !errors.Is(err, ErrAggModeNotImplemented) {
-		t.Fatalf("Finalize(AggModeReduce) must surface ErrAggModeNotImplemented, got %v", err)
+	if got[0].Role != vectorized.RoleTag || got[0].Name != "g" {
+		t.Fatalf("col 0 = %+v, want RoleTag/g", got[0])
 	}
-	if _, err := op.NextBatch(context.Background()); !errors.Is(err, ErrAggModeNotImplemented) {
-		t.Fatalf("NextBatch(AggModeReduce) must surface ErrAggModeNotImplemented, got %v", err)
+	if got[1].Role != vectorized.RoleField || got[1].Name != "sum_v" {
+		t.Fatalf("col 1 = %+v, want RoleField/sum_v", got[1])
+	}
+}
+
+// TestBatchAggregation_AggModeReduce_CombinesPartialsAcrossShards asserts
+// partials from DIFFERENT shards sharing the same group key are COMBINED
+// (not dedup'd) — the row path's deduplicateAggregatedDataPointsWithShard
+// preserves cross-shard rows for the same group, and the vec path must too.
+// SUM(10@shard=1) + SUM(20@shard=2) for group "a" yields 30.
+func TestBatchAggregation_AggModeReduce_CombinesPartialsAcrossShards(t *testing.T) {
+	s := aggReduceSchema()
+	op := NewBatchAggregation(s, []int{1},
+		[]AggSpec{{Func: AggSum, InputCol: 2, Output: "sum_v"}}, AggModeReduce, 8,
+		vectorized.NewMemoryTracker(1<<30), 0)
+	defer op.Close()
+
+	b := vectorized.NewRecordBatch(s, 2)
+	b.Columns[0].(*vectorized.TypedColumn[int64]).Append(1)
+	b.Columns[1].(*vectorized.TypedColumn[string]).Append("a")
+	b.Columns[2].(*vectorized.TypedColumn[int64]).Append(10)
+	b.Columns[0].(*vectorized.TypedColumn[int64]).Append(2)
+	b.Columns[1].(*vectorized.TypedColumn[string]).Append("a")
+	b.Columns[2].(*vectorized.TypedColumn[int64]).Append(20)
+	b.Len = 2
+
+	batches := feedReduce(t, op, b)
+	if len(batches) != 1 || batches[0].Len != 1 {
+		t.Fatalf("expected 1 output batch with 1 row, got %d batches", len(batches))
+	}
+	if g := batches[0].Columns[0].(*vectorized.TypedColumn[string]).Data()[0]; g != "a" {
+		t.Fatalf("group = %q, want \"a\"", g)
+	}
+	if sum := batches[0].Columns[1].(*vectorized.TypedColumn[int64]).Data()[0]; sum != 30 {
+		t.Fatalf("sum_v = %d, want 30 (10@shard=1 + 20@shard=2)", sum)
+	}
+}
+
+// TestBatchAggregation_AggModeReduce_DedupsSameShardSameGroup asserts replica
+// duplicates — same shard_id + same group_key — collapse to a single
+// contribution. Two identical (shard=1, g=a, sum_v=10) rows yield sum=10.
+func TestBatchAggregation_AggModeReduce_DedupsSameShardSameGroup(t *testing.T) {
+	s := aggReduceSchema()
+	op := NewBatchAggregation(s, []int{1},
+		[]AggSpec{{Func: AggSum, InputCol: 2, Output: "sum_v"}}, AggModeReduce, 8,
+		vectorized.NewMemoryTracker(1<<30), 0)
+	defer op.Close()
+
+	b := vectorized.NewRecordBatch(s, 2)
+	b.Columns[0].(*vectorized.TypedColumn[int64]).Append(1)
+	b.Columns[1].(*vectorized.TypedColumn[string]).Append("a")
+	b.Columns[2].(*vectorized.TypedColumn[int64]).Append(10)
+	b.Columns[0].(*vectorized.TypedColumn[int64]).Append(1)
+	b.Columns[1].(*vectorized.TypedColumn[string]).Append("a")
+	b.Columns[2].(*vectorized.TypedColumn[int64]).Append(10)
+	b.Len = 2
+
+	batches := feedReduce(t, op, b)
+	if len(batches) != 1 || batches[0].Len != 1 {
+		t.Fatalf("expected 1 output batch with 1 row, got %d batches", len(batches))
+	}
+	if got := batches[0].Columns[1].(*vectorized.TypedColumn[int64]).Data()[0]; got != 10 {
+		t.Fatalf("sum_v = %d, want 10 (replica duplicate must be dropped)", got)
+	}
+}
+
+// TestBatchAggregation_AggModeReduce_MeanFinalises asserts MEAN finalisation
+// happens inside Reduce.Val(): partials carry (Sum, Count) and the final
+// value is Sum/Count. Two shards: (sum=10,count=2) + (sum=20,count=3) ⇒
+// 30/5 = 6.
+func TestBatchAggregation_AggModeReduce_MeanFinalises(t *testing.T) {
+	s := aggReduceSchemaWithCount()
+	op := NewBatchAggregation(s, []int{1},
+		[]AggSpec{{Func: AggMean, InputCol: 2, Output: "mean_v"}}, AggModeReduce, 8,
+		vectorized.NewMemoryTracker(1<<30), 0)
+	defer op.Close()
+
+	b := vectorized.NewRecordBatch(s, 2)
+	b.Columns[0].(*vectorized.TypedColumn[int64]).Append(1)
+	b.Columns[1].(*vectorized.TypedColumn[string]).Append("a")
+	b.Columns[2].(*vectorized.TypedColumn[float64]).Append(10)
+	b.Columns[3].(*vectorized.TypedColumn[float64]).Append(2)
+	b.Columns[0].(*vectorized.TypedColumn[int64]).Append(2)
+	b.Columns[1].(*vectorized.TypedColumn[string]).Append("a")
+	b.Columns[2].(*vectorized.TypedColumn[float64]).Append(20)
+	b.Columns[3].(*vectorized.TypedColumn[float64]).Append(3)
+	b.Len = 2
+
+	batches := feedReduce(t, op, b)
+	if len(batches) != 1 || batches[0].Len != 1 {
+		t.Fatalf("expected 1 output batch with 1 row, got %d batches", len(batches))
+	}
+	if got := batches[0].Columns[1].(*vectorized.TypedColumn[float64]).Data()[0]; got != 6 {
+		t.Fatalf("mean_v = %v, want 6 ((10+20)/(2+3))", got)
 	}
 }
 
