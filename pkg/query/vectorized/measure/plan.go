@@ -126,7 +126,7 @@ func BuildOperators(
 		Output:   opts.Agg.FieldName,
 	}
 	agg := NewBatchAggregation(schema, keyIndices, []AggSpec{spec},
-		AggModeAll, batchSize, tracker, aggEntrySize)
+		mode, batchSize, tracker, aggEntrySize)
 	return []vectorized.BreakerOperator{agg}, nil
 }
 

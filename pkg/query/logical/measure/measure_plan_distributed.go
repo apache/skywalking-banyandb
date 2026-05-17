@@ -40,7 +40,6 @@ import (
 	"github.com/apache/skywalking-banyandb/pkg/query"
 	"github.com/apache/skywalking-banyandb/pkg/query/executor"
 	"github.com/apache/skywalking-banyandb/pkg/query/logical"
-	"github.com/apache/skywalking-banyandb/pkg/query/vectorized"
 	vmeasure "github.com/apache/skywalking-banyandb/pkg/query/vectorized/measure"
 )
 
@@ -373,104 +372,33 @@ func (t *distributedPlan) Execute(ctx context.Context) (mi executor.MIterator, e
 }
 
 // consumeRawFramesForAgg decodes the per-data-node vec raw frame bodies
-// for the pushDownAgg path into a flat []*measurev1.InternalDataPoint:
-// the frames carry per-(shard, group) AggModeMap partials and the
-// pipeline runs ReduceFramesToInternalDataPoints (frame.Decode →
-// AggModeReduce with (shard, group) replica dedup → optional liaison-
-// side BatchTop → reverse-serialise to proto datapoints).
+// for the pushDownAgg path into a flat []*measurev1.InternalDataPoint
+// IN PARTIAL FORMAT: each row carries the AggModeMap output fields —
+// the partial value plus, for MEAN, the partial count sidecar named
+// "<output>__agg_count" — so the OUTER row-side aggregator (set up by
+// DistributedAnalyze with reduceMode=true) can combine them into final
+// values exactly like it does for the proto path.
 //
-// The non-agg path uses vmeasure.DecodeFramesPerSource directly so the
-// per-data-node grouping survives the round-trip and the row-side
-// sortedMIterator's cross-iterator merge + (sid, timestamp) dedup keeps
-// working unchanged.
+// Replica dedup runs here via deduplicateAggregatedDataPointsWithShard,
+// matching the proto path's (shard_id, group_key) drop. WITHOUT this
+// dedup, two replicas of the same shard would each contribute their
+// partial to the outer reduce and double the result.
+//
+// Earlier revisions reduced fully inside this helper. That collapsed
+// the partial into a single-field final value, which the outer
+// reduceMode aggregator then mis-interpreted as Partial{Value: v,
+// Count: 0} → Val = v / 0 → 0. The vec-native AggModeReduce that the
+// frame already supports is therefore deliberately NOT invoked here;
+// the receive side just plays the row-path's "decode partials, dedup
+// by shard+group, hand to outer reduce" contract.
 func (t *distributedPlan) consumeRawFramesForAgg(frames [][]byte) ([]*measurev1.InternalDataPoint, error) {
-	keyTagNames := t.rawFrameKeyTagNames()
-	aggSpecs, aggErr := t.rawFrameAggSpecs()
-	if aggErr != nil {
-		return nil, aggErr
+	idps, decodeErr := vmeasure.DecodeFramesToInternalDataPoints(frames)
+	if decodeErr != nil {
+		return nil, decodeErr
 	}
-	topSpec := t.rawFrameTopSpec()
-	// Liaison-side tracker matches the row path's batch sizes; vec uses a
-	// fixed 1024-row batch under ReduceRawFrames so each reduced batch
-	// stays bounded. A large NewMemoryTracker keeps the reduce free of
-	// budget rejections — the row path's distributed reduce is similarly
-	// unbounded.
-	tracker := vectorized.NewMemoryTracker(1 << 30)
-	return vmeasure.ReduceFramesToInternalDataPoints(frames, keyTagNames, aggSpecs, topSpec, 1024, tracker)
+	return deduplicateAggregatedDataPointsWithShard(idps, t.groupByTagsRefs)
 }
 
-// rawFrameKeyTagNames returns the GroupBy tag names from the
-// queryTemplate, in projection order. Empty result means scalar reduce
-// (no group key) which Reduce handles as a single output row.
-func (t *distributedPlan) rawFrameKeyTagNames() []string {
-	gb := t.queryTemplate.GetGroupBy()
-	if gb == nil {
-		return nil
-	}
-	tp := gb.GetTagProjection()
-	if tp == nil {
-		return nil
-	}
-	var names []string
-	for _, fam := range tp.GetTagFamilies() {
-		names = append(names, fam.GetTags()...)
-	}
-	return names
-}
-
-// rawFrameAggSpecs builds the per-agg AggReduceSpec list from the
-// queryTemplate.Agg. v1 supports a single agg; OutputName mirrors the
-// data-node side's AggSpec.Output (the Agg.FieldName, matching
-// vmeasure.plan.BuildOperators).
-func (t *distributedPlan) rawFrameAggSpecs() ([]vmeasure.AggReduceSpec, error) {
-	agg := t.queryTemplate.GetAgg()
-	if agg == nil {
-		return nil, nil
-	}
-	fn, mapErr := rawFrameAggFunc(agg.GetFunction())
-	if mapErr != nil {
-		return nil, mapErr
-	}
-	return []vmeasure.AggReduceSpec{{
-		OutputName: agg.GetFieldName(),
-		Func:       fn,
-	}}, nil
-}
-
-// rawFrameTopSpec returns an optional Top spec when the queryTemplate
-// carries a Top clause. asc/desc mirrors the analyzer's mapping
-// (modelv1.Sort_SORT_ASC → asc=true, anything else → desc).
-func (t *distributedPlan) rawFrameTopSpec() *vmeasure.ReduceTopSpec {
-	top := t.queryTemplate.GetTop()
-	if top == nil {
-		return nil
-	}
-	asc := top.GetFieldValueSort() == modelv1.Sort_SORT_ASC
-	return &vmeasure.ReduceTopSpec{
-		FieldName: top.GetFieldName(),
-		N:         int(top.GetNumber()),
-		Asc:       asc,
-	}
-}
-
-// rawFrameAggFunc translates the proto-level AggregationFunction to the
-// vec-level AggFunc consumed by the liaison Reduce. Mirrors
-// vmeasure.toModelAggFunc in reverse.
-func rawFrameAggFunc(af modelv1.AggregationFunction) (vmeasure.AggFunc, error) {
-	switch af {
-	case modelv1.AggregationFunction_AGGREGATION_FUNCTION_SUM:
-		return vmeasure.AggSum, nil
-	case modelv1.AggregationFunction_AGGREGATION_FUNCTION_COUNT:
-		return vmeasure.AggCount, nil
-	case modelv1.AggregationFunction_AGGREGATION_FUNCTION_MIN:
-		return vmeasure.AggMin, nil
-	case modelv1.AggregationFunction_AGGREGATION_FUNCTION_MAX:
-		return vmeasure.AggMax, nil
-	case modelv1.AggregationFunction_AGGREGATION_FUNCTION_MEAN:
-		return vmeasure.AggMean, nil
-	}
-	return 0, fmt.Errorf("measure: unknown AggregationFunction %v for vec reduce", af)
-}
 
 func (t *distributedPlan) String() string {
 	return fmt.Sprintf("distributed:%s", t.queryTemplate.String())

@@ -330,6 +330,88 @@ func TestConvertPassthroughForFrame_NoOpForNativeColumns(t *testing.T) {
 	}
 }
 
+// TestReduceFramesToInternalDataPoints_MeanInt reproduces the failing
+// distributed integration scenario where MEAN over an int field returned
+// 0 instead of the computed mean. The wire flow:
+//
+//   data-node: BatchAggregation(AggModeMap, MEAN) → frame.Encode →
+//   liaison: frame.Decode → BatchAggregation(AggModeReduce, MEAN) →
+//   serializeBatchToProto → InternalDataPoint
+//
+// Sample: group "a" with values {1, 2, 3} → mean 2; group "b" with {4,
+// 5, 6} → mean 5. After the round trip the final InternalDataPoint must
+// carry these means (not zero).
+func TestReduceFramesToInternalDataPoints_MeanInt(t *testing.T) {
+	inputSchema := vectorized.NewBatchSchema([]vectorized.ColumnDef{
+		{Role: vectorized.RoleShardID, Name: shardIDOutputName, Type: vectorized.ColumnTypeInt64},
+		{Role: vectorized.RoleTag, TagFamily: "default", Name: "g", Type: vectorized.ColumnTypeString},
+		{Role: vectorized.RoleField, Name: "value", Type: vectorized.ColumnTypeInt64},
+	})
+	source := newLiteralBatchSource(t, inputSchema, []literalRow{
+		{shard: 1, g: "a", v: 1},
+		{shard: 1, g: "a", v: 2},
+		{shard: 1, g: "a", v: 3},
+		{shard: 1, g: "b", v: 4},
+		{shard: 1, g: "b", v: 5},
+		{shard: 1, g: "b", v: 6},
+	})
+	agg := NewBatchAggregation(inputSchema, []int{1},
+		[]AggSpec{{Func: AggMean, InputCol: 2, Output: "value"}},
+		AggModeMap, 1024, vectorized.NewMemoryTracker(1<<30), 0)
+	defer agg.Close()
+	pipeline, buildErr := vectorized.NewPipelineBuilder().From(source).Break(agg).Build()
+	if buildErr != nil {
+		t.Fatalf("Build: %v", buildErr)
+	}
+	if initErr := pipeline.Init(context.Background()); initErr != nil {
+		t.Fatalf("Init: %v", initErr)
+	}
+	body, drainErr := DrainPipelineToFrame(context.Background(), pipeline, agg.OutputSchema())
+	if drainErr != nil {
+		t.Fatalf("Drain: %v", drainErr)
+	}
+	_ = pipeline.Close()
+	if len(body) == 0 {
+		t.Fatal("empty frame body")
+	}
+
+	idps, reduceErr := ReduceFramesToInternalDataPoints([][]byte{body},
+		[]string{"g"},
+		[]AggReduceSpec{{OutputName: "value", Func: AggMean}},
+		nil, 1024, vectorized.NewMemoryTracker(1<<30))
+	if reduceErr != nil {
+		t.Fatalf("Reduce: %v", reduceErr)
+	}
+	if len(idps) != 2 {
+		t.Fatalf("idp count = %d, want 2 (groups a, b)", len(idps))
+	}
+	seen := make(map[string]int64)
+	for _, idp := range idps {
+		dp := idp.GetDataPoint()
+		var groupVal string
+		for _, fam := range dp.GetTagFamilies() {
+			for _, tag := range fam.GetTags() {
+				if tag.GetKey() == "g" {
+					groupVal = tag.GetValue().GetStr().GetValue()
+				}
+			}
+		}
+		var meanVal int64
+		for _, f := range dp.GetFields() {
+			if f.GetName() == "value" {
+				meanVal = f.GetValue().GetInt().GetValue()
+			}
+		}
+		seen[groupVal] = meanVal
+	}
+	if seen["a"] != 2 {
+		t.Fatalf("group a mean = %d, want 2 ((1+2+3)/3)", seen["a"])
+	}
+	if seen["b"] != 5 {
+		t.Fatalf("group b mean = %d, want 5 ((4+5+6)/3)", seen["b"])
+	}
+}
+
 // literalRow is the synthetic source row used by newLiteralBatchSource.
 type literalRow struct {
 	g     string

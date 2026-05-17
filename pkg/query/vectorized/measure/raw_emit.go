@@ -364,12 +364,36 @@ func convertTagValueColumn(def vectorized.ColumnDef, col vectorized.Column, n in
 			newCol.(interface{ AppendNull() }).AppendNull()
 			continue
 		}
+		// Each cell's variant must match the column's inferred wireType.
+		// Mixed-variant cells (e.g. a cross-group sortedMIterator that
+		// merges sw_metric where entity_id is STRING with sw_updated
+		// where entity_id is INT) cannot share a single typed wire
+		// column. Detect the mismatch and surface a clean error rather
+		// than crashing on the type assertion that follows — the proper
+		// fix is a frame extension that carries proto-bytes per cell
+		// for type-divergent tag/field columns; for now the operator
+		// sees a clear "unsupported" message.
 		switch payload := v.GetValue().(type) {
 		case *modelv1.TagValue_Str:
+			if wireType != vectorized.ColumnTypeString {
+				return vectorized.ColumnDef{}, nil, fmt.Errorf(
+					"TagValue column %q has mixed variants (wire %v vs cell Str); "+
+						"cross-group queries with type-divergent tags are not yet supported on the cluster wire", def.Name, wireType)
+			}
 			newCol.(*vectorized.TypedColumn[string]).Append(payload.Str.GetValue())
 		case *modelv1.TagValue_Int:
+			if wireType != vectorized.ColumnTypeInt64 {
+				return vectorized.ColumnDef{}, nil, fmt.Errorf(
+					"TagValue column %q has mixed variants (wire %v vs cell Int); "+
+						"cross-group queries with type-divergent tags are not yet supported on the cluster wire", def.Name, wireType)
+			}
 			newCol.(*vectorized.TypedColumn[int64]).Append(payload.Int.GetValue())
 		case *modelv1.TagValue_BinaryData:
+			if wireType != vectorized.ColumnTypeBytes {
+				return vectorized.ColumnDef{}, nil, fmt.Errorf(
+					"TagValue column %q has mixed variants (wire %v vs cell BinaryData); "+
+						"cross-group queries with type-divergent tags are not yet supported on the cluster wire", def.Name, wireType)
+			}
 			newCol.(*vectorized.TypedColumn[[]byte]).Append(append([]byte(nil), payload.BinaryData...))
 		case *modelv1.TagValue_Null:
 			newCol.(interface{ AppendNull() }).AppendNull()
@@ -436,14 +460,38 @@ func convertFieldValueColumn(def vectorized.ColumnDef, col vectorized.Column, n 
 			newCol.(interface{ AppendNull() }).AppendNull()
 			continue
 		}
+		// Same mixed-variant guard as convertTagValueColumn: surface
+		// type-divergent cells with a clean error rather than panic on
+		// a wrong-type cast. The frame-format follow-up that carries
+		// proto-bytes per cell is what lifts this restriction.
 		switch payload := v.GetValue().(type) {
 		case *modelv1.FieldValue_Int:
+			if wireType != vectorized.ColumnTypeInt64 {
+				return vectorized.ColumnDef{}, nil, fmt.Errorf(
+					"FieldValue column %q has mixed variants (wire %v vs cell Int); "+
+						"cross-group queries with type-divergent fields are not yet supported on the cluster wire", def.Name, wireType)
+			}
 			newCol.(*vectorized.TypedColumn[int64]).Append(payload.Int.GetValue())
 		case *modelv1.FieldValue_Float:
+			if wireType != vectorized.ColumnTypeFloat64 {
+				return vectorized.ColumnDef{}, nil, fmt.Errorf(
+					"FieldValue column %q has mixed variants (wire %v vs cell Float); "+
+						"cross-group queries with type-divergent fields are not yet supported on the cluster wire", def.Name, wireType)
+			}
 			newCol.(*vectorized.TypedColumn[float64]).Append(payload.Float.GetValue())
 		case *modelv1.FieldValue_Str:
+			if wireType != vectorized.ColumnTypeString {
+				return vectorized.ColumnDef{}, nil, fmt.Errorf(
+					"FieldValue column %q has mixed variants (wire %v vs cell Str); "+
+						"cross-group queries with type-divergent fields are not yet supported on the cluster wire", def.Name, wireType)
+			}
 			newCol.(*vectorized.TypedColumn[string]).Append(payload.Str.GetValue())
 		case *modelv1.FieldValue_BinaryData:
+			if wireType != vectorized.ColumnTypeBytes {
+				return vectorized.ColumnDef{}, nil, fmt.Errorf(
+					"FieldValue column %q has mixed variants (wire %v vs cell BinaryData); "+
+						"cross-group queries with type-divergent fields are not yet supported on the cluster wire", def.Name, wireType)
+			}
 			newCol.(*vectorized.TypedColumn[[]byte]).Append(append([]byte(nil), payload.BinaryData...))
 		case *modelv1.FieldValue_Null:
 			newCol.(interface{ AppendNull() }).AppendNull()
