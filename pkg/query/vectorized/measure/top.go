@@ -267,7 +267,20 @@ func (t *BatchTop) extractKey(b *vectorized.RecordBatch, rowIdx int, row *topRow
 		}
 		row.intVal = c.Data()[rowIdx]
 	case *vectorized.TypedColumn[*modelv1.FieldValue]:
+		// Passthrough FieldValue columns can carry a nil pointer at a row
+		// without the validity bitmap being set (a non-Agg Scan→Top→Limit
+		// upstream may forward the source row's nil *modelv1.FieldValue
+		// directly). Treat both shapes as null/lowest before touching
+		// fv to keep the float64/int64 cases' "IsNull-first" discipline.
+		if c.IsNull(rowIdx) {
+			row.isNull = true
+			return
+		}
 		fv := c.Data()[rowIdx]
+		if fv == nil {
+			row.isNull = true
+			return
+		}
 		switch v := fv.GetValue().(type) {
 		case *modelv1.FieldValue_Float:
 			row.isFloat = true

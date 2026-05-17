@@ -249,6 +249,54 @@ func TestBatchTop_FieldValuePassthroughKey_Float(t *testing.T) {
 	}
 }
 
+// TestBatchTop_FieldValuePassthroughKey_NilFieldValue_TreatedAsLowest pins
+// the Copilot-flagged bug fix: a TypedColumn[*modelv1.FieldValue] can carry
+// a nil pointer at a row without the validity bitmap being set (a non-Agg
+// Scan→Top→Limit forwards the source row's nil *FieldValue directly).
+// extractKey must guard fv==nil and treat the row as null/lowest, never
+// dereference and panic. Here a nil row sits alongside two valid floats
+// with a descending top-2: the two floats must survive, the nil row must
+// be evicted as lowest, and Consume must not panic.
+func TestBatchTop_FieldValuePassthroughKey_NilFieldValue_TreatedAsLowest(t *testing.T) {
+	s := vectorized.NewBatchSchema([]vectorized.ColumnDef{
+		{Role: vectorized.RoleField, Name: "value", Type: vectorized.ColumnTypeFieldValue},
+	})
+	top := NewBatchTop(s, 0, 2, false, 8) // desc top-2
+	_ = top.Init(context.Background())
+	defer top.Close()
+
+	b := vectorized.NewRecordBatch(s, 3)
+	col := b.Columns[0].(*vectorized.TypedColumn[*modelv1.FieldValue])
+	col.Append(&modelv1.FieldValue{Value: &modelv1.FieldValue_Float{Float: &modelv1.Float{Value: 12.5}}})
+	col.Append(nil) // nil *FieldValue — validity bitmap NOT marked.
+	col.Append(&modelv1.FieldValue{Value: &modelv1.FieldValue_Float{Float: &modelv1.Float{Value: 99.25}}})
+	b.Len = 3
+
+	if err := top.Consume(context.Background(), b); err != nil {
+		t.Fatalf("Consume must not panic on nil passthrough FieldValue: %v", err)
+	}
+	if err := top.Finalize(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	out, err := top.NextBatch(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if out == nil || out.Len != 2 {
+		t.Fatalf("want 2 rows (nil treated as lowest, evicted from desc top-2), got %v", out)
+	}
+	got := out.Columns[0].(*vectorized.TypedColumn[*modelv1.FieldValue]).Data()
+	want := []float64{99.25, 12.5}
+	for i := range want {
+		if got[i] == nil {
+			t.Fatalf("row %d: surfaced the nil FieldValue in desc top-2 output; nil should have been evicted as lowest", i)
+		}
+		if g := got[i].GetFloat().GetValue(); g != want[i] {
+			t.Fatalf("row %d: want %v, got %v", i, want[i], g)
+		}
+	}
+}
+
 func TestBatchTop_Close_AfterPartialConsume_ReleasesHeapAllocation(t *testing.T) {
 	s := topTestSchema()
 	top := NewBatchTop(s, 0, 3, true, 8)
