@@ -27,9 +27,9 @@ import (
 )
 
 // buildAdapterPipeline wires a BatchScan into a minimal Pipeline against the
-// supplied fake MeasureQueryResult and returns both the pipeline and its pool
-// so the adapter can recycle batches.
-func buildAdapterPipeline(t *testing.T, qr model.MeasureQueryResult) (*vectorized.Pipeline, *vectorized.BatchPool) {
+// supplied fake MeasureQueryResult and returns the pipeline, its terminal
+// schema, and its pool so the adapter can recycle batches.
+func buildAdapterPipeline(t *testing.T, qr model.MeasureQueryResult) (*vectorized.Pipeline, *vectorized.BatchSchema, *vectorized.BatchPool) {
 	t.Helper()
 	schema := minimalSchema()
 	pool := vectorized.NewBatchPool(schema, 4)
@@ -41,13 +41,13 @@ func buildAdapterPipeline(t *testing.T, qr model.MeasureQueryResult) (*vectorize
 	if err := scan.Init(context.Background()); err != nil {
 		t.Fatal(err)
 	}
-	return p, pool
+	return p, schema, pool
 }
 
 func TestVectorizedMIterator_Next_PullsAndSerializes(t *testing.T) {
 	qr := &fakeMeasureQueryResult{seq: []*model.MeasureResult{mkResult(1, 100, 200)}}
-	p, pool := buildAdapterPipeline(t, qr)
-	it := newVectorizedMIterator(context.Background(), p, pool)
+	p, schema, pool := buildAdapterPipeline(t, qr)
+	it := newVectorizedMIterator(context.Background(), p, schema, pool)
 	defer it.Close()
 
 	count := 0
@@ -65,8 +65,8 @@ func TestVectorizedMIterator_Next_PullsAndSerializes(t *testing.T) {
 
 func TestVectorizedMIterator_Next_ReturnsFalseOnEOF(t *testing.T) {
 	qr := &fakeMeasureQueryResult{seq: nil}
-	p, pool := buildAdapterPipeline(t, qr)
-	it := newVectorizedMIterator(context.Background(), p, pool)
+	p, schema, pool := buildAdapterPipeline(t, qr)
+	it := newVectorizedMIterator(context.Background(), p, schema, pool)
 	defer it.Close()
 
 	if it.Next() {
@@ -80,8 +80,8 @@ func TestVectorizedMIterator_Next_ReturnsFalseOnEOF(t *testing.T) {
 func TestVectorizedMIterator_Next_ReturnsFalseOnError_ErrExposedViaErr(t *testing.T) {
 	boom := errors.New("storage boom")
 	qr := &fakeMeasureQueryResult{seq: []*model.MeasureResult{mkResultErr(boom)}}
-	p, pool := buildAdapterPipeline(t, qr)
-	it := newVectorizedMIterator(context.Background(), p, pool)
+	p, schema, pool := buildAdapterPipeline(t, qr)
+	it := newVectorizedMIterator(context.Background(), p, schema, pool)
 	defer it.Close()
 
 	if it.Next() {
@@ -94,8 +94,8 @@ func TestVectorizedMIterator_Next_ReturnsFalseOnError_ErrExposedViaErr(t *testin
 
 func TestVectorizedMIterator_Current_ReturnsCurrentRow(t *testing.T) {
 	qr := &fakeMeasureQueryResult{seq: []*model.MeasureResult{mkResult(1, 100)}}
-	p, pool := buildAdapterPipeline(t, qr)
-	it := newVectorizedMIterator(context.Background(), p, pool)
+	p, schema, pool := buildAdapterPipeline(t, qr)
+	it := newVectorizedMIterator(context.Background(), p, schema, pool)
 	defer it.Close()
 
 	_ = it.Next()
@@ -111,8 +111,8 @@ func TestVectorizedMIterator_Current_ReturnsCurrentRow(t *testing.T) {
 
 func TestVectorizedMIterator_Close_DelegatesToPipelineClose_Idempotent(t *testing.T) {
 	qr := &fakeMeasureQueryResult{seq: []*model.MeasureResult{mkResult(1, 100)}}
-	p, pool := buildAdapterPipeline(t, qr)
-	it := newVectorizedMIterator(context.Background(), p, pool)
+	p, schema, pool := buildAdapterPipeline(t, qr)
+	it := newVectorizedMIterator(context.Background(), p, schema, pool)
 	if err := it.Close(); err != nil {
 		t.Fatal(err)
 	}

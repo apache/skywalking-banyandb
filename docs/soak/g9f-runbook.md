@@ -64,15 +64,27 @@ journalctl -u banyandb-liaison | grep -F 'G9f wire mode'
 
 Mixed values across the cluster ⇒ partial rollout ⇒ on-call action.
 
-**Current state (G9f.5.a, this gate):** standalone publishes
-`measure_wire_mode_raw` from `--measure-vectorized-enabled`. Distributed
-data svc / liaison emit the log line but deliberately leave
-`measure_wire_mode_raw=false` — the codec flip is held until the
-synchronized data-node raw-frame emit (G9f.5.b) and liaison raw-frame
-receive (G9f.5.c) land. Flipping the codec without the producer/consumer
-flip would fail every flag-on distributed response with bad-magic at
-`RawFrameCodec.Unmarshal`. So in distributed mode today, vec runs locally
-on each data node when the flag is on, but the cluster wire stays proto.
+**Current state (G9f.5 complete):** all three services — standalone,
+distributed data svc, distributed liaison — publish
+`measure_wire_mode_raw` from `--measure-vectorized-enabled` at PreRun.
+The data-node Rev (`banyand/query/processor.go::measureInternalQueryProcessor.Rev`)
+detects flag-on + the vec MIterator's `RawFrameSource` capability and
+emits the response as a raw columnar frame body (G9f.5.b's
+`DrainPipelineToFrame`). The liaison's distributedPlan
+(`pkg/query/logical/measure/measure_plan_distributed.go`) detects the
+`[]byte` body shape and routes it through `ReduceFramesToInternalDataPoints`
+(agg path) or `DecodeFramesToInternalDataPoints` (non-agg path), then
+flows the decoded data points into the row-side
+`pushedDownAggregatedIterator` / `sortableElements` so the existing
+downstream merge surface is preserved.
+
+The raw-frame path is engaged only when the iterator exposes
+`RawFrameSource` — multi-group merger / hidden-tag wrapper / trace
+queries fall through to the proto path inside `Rev`. Under flag-on,
+those proto fall-throughs would then fail the liaison codec's bad-magic
+guard; if you hit a query that triggers one of those wrappers under
+flag-on, the runbook recommends turning the flag back off until the
+follow-up gate (full vec-distributed-plan replacement) lands.
 
 ## Detecting a botched partial rollout
 

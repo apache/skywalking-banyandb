@@ -27,6 +27,7 @@ import (
 	"golang.org/x/exp/slices"
 
 	"github.com/apache/skywalking-banyandb/api/common"
+	"github.com/apache/skywalking-banyandb/api/data"
 	commonv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/common/v1"
 	databasev1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/database/v1"
 	measurev1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/measure/v1"
@@ -490,6 +491,41 @@ func (p *measureInternalQueryProcessor) Rev(ctx context.Context, message bus.Mes
 			mctx.ml.Error().Err(closeErr).Dur("latency", time.Since(n)).RawJSON("req", logger.Proto(queryCriteria)).Msg("fail to close the query plan")
 		}
 	}()
+
+	// G9f.5.b raw-frame emit path. Activated when:
+	//   - data.MeasureWireModeRaw() is true (the per-process flag-on wire
+	//     mode for TopicInternalMeasureQuery, set at PreRun from
+	//     --measure-vectorized-enabled)
+	//   - the iterator exposes vmeasure.RawFrameSource (vec single-group
+	//     dispatch — the multi-group merger and hidden-tag wrapper do
+	//     not implement it; trace queries skip raw-frame because the
+	//     columnar frame format has no trace-bytes slot)
+	//
+	// Under those conditions, DrainPipelineToFrame consumes the pipeline
+	// end-to-end, frame.Encode-s every active row into a single columnar
+	// raw body, and returns it as []byte. sub.go's switch then forwards
+	// the body unchanged on the TopicInternalMeasureQuery wire (under
+	// flag-on, the per-topic codec dispatcher is RawFrameCodec). On the
+	// liaison side, the body is fed to pkg/query/vectorized/measure.ReduceRawFrames
+	// (G9f.5.c) which decodes, dedupes (shard,group), and Combine-s the
+	// partials.
+	if !queryCriteria.Trace && data.MeasureWireModeRaw() {
+		if rfs, ok := mIterator.(vmeasure.RawFrameSource); ok {
+			rawBody, drainErr := vmeasure.DrainPipelineToFrame(ctx, rfs.Pipeline(), rfs.Schema())
+			if drainErr != nil {
+				resp = bus.NewMessage(bus.MessageID(now), common.NewError("vec raw-frame emit: %v", drainErr))
+				return
+			}
+			resp = bus.NewMessage(bus.MessageID(now), rawBody)
+			if p.slowQuery > 0 {
+				latency := time.Since(n)
+				if latency > p.slowQuery {
+					p.log.Warn().Dur("latency", latency).RawJSON("req", logger.Proto(queryCriteria)).Int("resp_bytes", len(rawBody)).Msg("internal measure slow query (raw frame)")
+				}
+			}
+			return
+		}
+	}
 
 	var tracer *query.Tracer
 	var span *query.Span

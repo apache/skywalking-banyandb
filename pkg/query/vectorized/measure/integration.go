@@ -242,7 +242,7 @@ func NewMIterator(ctx context.Context, qr model.MeasureQueryResult,
 		_ = pipeline.Close()
 		return nil, initErr
 	}
-	return &VectorizedMIterator{inner: newVectorizedMIterator(ctx, pipeline, pool)}, nil
+	return &VectorizedMIterator{inner: newVectorizedMIterator(ctx, pipeline, schema, pool)}, nil
 }
 
 // NewIteratorFromPipeline wraps an already-built *vectorized.Pipeline (with
@@ -251,10 +251,20 @@ func NewMIterator(ctx context.Context, qr model.MeasureQueryResult,
 // pkg/query/vectorized/measure/plan to compose plan trees into the public
 // MIterator contract without going through NewMIterator's leaf-substitution
 // path. pool is the egress BatchPool the adapter recycles consumed batches
-// into; it must match the pipeline's terminal output schema.
-func NewIteratorFromPipeline(ctx context.Context, pipeline *vectorized.Pipeline, pool *vectorized.BatchPool) *VectorizedMIterator {
-	return &VectorizedMIterator{inner: newVectorizedMIterator(ctx, pipeline, pool)}
+// into; schema is the terminal-operator output schema — same shape every
+// batch will carry — used by the RawFrameSource capability path (G9f.5.b)
+// to drain the pipeline into a single columnar raw frame body.
+func NewIteratorFromPipeline(ctx context.Context, pipeline *vectorized.Pipeline, schema *vectorized.BatchSchema, pool *vectorized.BatchPool) *VectorizedMIterator {
+	return &VectorizedMIterator{inner: newVectorizedMIterator(ctx, pipeline, schema, pool)}
 }
+
+// Pipeline implements RawFrameSource on the public adapter — delegates
+// to the inner iterator so callers (e.g. the data-node Rev under
+// flag-on) can drain the pipeline directly.
+func (v *VectorizedMIterator) Pipeline() *vectorized.Pipeline { return v.inner.Pipeline() }
+
+// Schema implements RawFrameSource on the public adapter.
+func (v *VectorizedMIterator) Schema() *vectorized.BatchSchema { return v.inner.Schema() }
 
 // VectorizedMIterator is the public adapter exposed to other packages. It is
 // a thin facade over the unexported vectorizedMIterator so the executor

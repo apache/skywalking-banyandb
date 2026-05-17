@@ -715,7 +715,7 @@ func runVectorizedPath(spec workloadSpec, results []*model.MeasureResult,
 		panic(initErr)
 	}
 	egressPool := vectorized.NewBatchPool(terminalSchema, cfg.BatchSize)
-	it := NewIteratorFromPipeline(context.Background(), pipeline, egressPool)
+	it := NewIteratorFromPipeline(context.Background(), pipeline, terminalSchema, egressPool)
 	if spec.shape == shapeHiddenTags {
 		hidden := hiddenSet(spec)
 		for it.Next() {
