@@ -245,6 +245,12 @@ func (s *standalone) Role() databasev1.Role {
 func (s *standalone) PreRun(ctx context.Context) error {
 	s.l = logger.GetLogger(s.Name())
 	s.l.Info().Msg("memory protector is initialized in PreRun")
+	// Publish the per-process wire mode for TopicInternalMeasureQuery so the
+	// queue's per-topic ResponseCodec dispatcher selects RawFrameCodec when
+	// this process is flag-on (vec raw columnar frame body) and ProtoCodec
+	// when flag-off — topic-AND-process-wire-mode selection, G9f spec G9f.0.
+	// Flags have been parsed by the time PreRun fires.
+	data.SetMeasureWireModeRaw(s.option.vectorized.Enabled)
 	s.lfs = fs.NewLocalFileSystemWithLoggerAndLimit(s.l, s.pm.GetLimit())
 	var err error
 	if s.root, err = banyandbpath.Get(s.root); err != nil {
