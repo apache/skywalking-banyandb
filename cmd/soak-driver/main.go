@@ -128,9 +128,11 @@ func dialInsecure(addr string) (*grpc.ClientConn, error) {
 }
 
 // loadCatalog reads the JSON catalog file and returns its entries. The
-// catalog is a JSON array of QueryRequest objects; each element is parsed
-// with protojson so proto oneofs/enums round-trip. stdlib json splits the
-// array, protojson decodes each element.
+// catalog is a JSON array of {id, request} objects (rawCatalogEntry on
+// disk): stdlib json splits the outer array and pulls out each entry's
+// id plus its raw request bytes; protojson then decodes the request
+// bytes into a *measurev1.QueryRequest so proto oneofs/enums (which
+// stdlib encoding/json cannot round-trip) decode correctly.
 func loadCatalog(path string) ([]catalogEntry, error) {
 	raw, readErr := os.ReadFile(path)
 	if readErr != nil {

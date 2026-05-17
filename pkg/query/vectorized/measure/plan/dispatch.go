@@ -94,7 +94,9 @@ func FellThroughCount() int64 { return fellThroughCount.Load() }
 //   - request may carry Top: the analyzer emits Scan → Top → Limit
 //     (or Scan → GroupByAgg → Top → Limit) and BatchTop reproduces the
 //     row path's top-N (G9a)
-//   - request must carry TimeRange (storage requires a bounded window)
+//   - a nil request.TimeRange is accepted: Dispatch normalises it to an
+//     epoch→epoch window for row-path parity (G9c), so callers do not
+//     need to pre-populate one
 //   - hidden criteria tags (criteria tags absent from the projection)
 //     are projected for storage-side filtering, then stripped at egress
 //     by hiddenTagsMIterator so the wire format is byte-identical

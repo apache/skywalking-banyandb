@@ -379,8 +379,11 @@ func buildSchema(spec workloadSpec) *databasev1.Measure {
 // buildOpts derives MeasureQueryOptions matching the workload's projection,
 // including GroupBy/Agg so BuildBatchSchema promotes the referenced columns
 // to native typed columns exactly as the production planner does. For the
-// hidden-tags shape the criteria tag IS materialized (storage-side filter
-// input) but is removed from the *visible* projection by buildVisibleOpts.
+// hidden-tags shape the criteria tag IS materialized in TagProjection
+// (storage-side filter input); the visible-vs-hidden distinction happens
+// at egress through hiddenSet() + logical.HiddenTagSet.StripHiddenTags
+// (mirroring hiddenTagsMIterator on the production path), not via any
+// "buildVisibleOpts" helper.
 func buildOpts(spec workloadSpec) model.MeasureQueryOptions {
 	opts := model.MeasureQueryOptions{GroupBy: spec.groupBy, Agg: spec.agg}
 	if len(spec.tagFamilies) > 0 {
