@@ -21,6 +21,7 @@ import (
 	"context"
 	"testing"
 
+	modelv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/model/v1"
 	"github.com/apache/skywalking-banyandb/pkg/query/vectorized"
 	"github.com/apache/skywalking-banyandb/pkg/query/vectorized/measure/frame"
 )
@@ -198,6 +199,134 @@ func TestDecodeFramesToInternalDataPoints_NonAgg(t *testing.T) {
 	}
 	if idps[0].GetShardId() != 1 {
 		t.Fatalf("row 0 shard_id = %d, want 1", idps[0].GetShardId())
+	}
+}
+
+// TestDrainPipelineToFrame_PassthroughColumnsConverted exercises the
+// throughput-and-efficiency path the hidden_tags / non-native scan flow
+// depends on: the storage adapter emits ColumnTypeTagValue and
+// ColumnTypeFieldValue passthrough columns (zero allocation in-process)
+// and DrainPipelineToFrame must transparently decode them into typed
+// columns the wire frame can carry. The round-trip then reconstructs the
+// original TagValue / FieldValue protos at the receive-side, so the
+// downstream InternalDataPoint is byte-equivalent.
+func TestDrainPipelineToFrame_PassthroughColumnsConverted(t *testing.T) {
+	inputSchema := vectorized.NewBatchSchema([]vectorized.ColumnDef{
+		{Role: vectorized.RoleShardID, Name: shardIDOutputName, Type: vectorized.ColumnTypeInt64},
+		{Role: vectorized.RoleTag, TagFamily: "default", Name: "svc", Type: vectorized.ColumnTypeTagValue},
+		{Role: vectorized.RoleTag, TagFamily: "default", Name: "n", Type: vectorized.ColumnTypeTagValue},
+		{Role: vectorized.RoleField, Name: "value", Type: vectorized.ColumnTypeFieldValue},
+	})
+	b := vectorized.NewRecordBatch(inputSchema, 2)
+	b.Columns[0].(*vectorized.TypedColumn[int64]).Append(7)
+	b.Columns[0].(*vectorized.TypedColumn[int64]).Append(7)
+	b.Columns[1].(*vectorized.TypedColumn[*modelv1.TagValue]).Append(
+		&modelv1.TagValue{Value: &modelv1.TagValue_Str{Str: &modelv1.Str{Value: "svc-a"}}})
+	b.Columns[1].(*vectorized.TypedColumn[*modelv1.TagValue]).Append(
+		&modelv1.TagValue{Value: &modelv1.TagValue_Str{Str: &modelv1.Str{Value: "svc-b"}}})
+	b.Columns[2].(*vectorized.TypedColumn[*modelv1.TagValue]).Append(
+		&modelv1.TagValue{Value: &modelv1.TagValue_Int{Int: &modelv1.Int{Value: 42}}})
+	b.Columns[2].(*vectorized.TypedColumn[*modelv1.TagValue]).Append(
+		&modelv1.TagValue{Value: &modelv1.TagValue_Int{Int: &modelv1.Int{Value: 43}}})
+	b.Columns[3].(*vectorized.TypedColumn[*modelv1.FieldValue]).Append(
+		&modelv1.FieldValue{Value: &modelv1.FieldValue_Float{Float: &modelv1.Float{Value: 3.14}}})
+	b.Columns[3].(*vectorized.TypedColumn[*modelv1.FieldValue]).Append(
+		&modelv1.FieldValue{Value: &modelv1.FieldValue_Float{Float: &modelv1.Float{Value: 2.72}}})
+	b.Len = 2
+
+	converted, err := convertPassthroughForFrame(b)
+	if err != nil {
+		t.Fatalf("convertPassthroughForFrame: %v", err)
+	}
+	if converted.Schema.Columns[1].Type != vectorized.ColumnTypeString {
+		t.Fatalf("svc col type = %v, want String (Str-variant TagValue)", converted.Schema.Columns[1].Type)
+	}
+	if converted.Schema.Columns[2].Type != vectorized.ColumnTypeInt64 {
+		t.Fatalf("n col type = %v, want Int64 (Int-variant TagValue)", converted.Schema.Columns[2].Type)
+	}
+	if converted.Schema.Columns[3].Type != vectorized.ColumnTypeFloat64 {
+		t.Fatalf("value col type = %v, want Float64 (Float-variant FieldValue)", converted.Schema.Columns[3].Type)
+	}
+
+	body, encodeErr := frame.Encode(converted)
+	if encodeErr != nil {
+		t.Fatalf("frame.Encode: %v", encodeErr)
+	}
+	decoded, decodeErr := frame.Decode(body)
+	if decodeErr != nil {
+		t.Fatalf("frame.Decode: %v", decodeErr)
+	}
+	if decoded.Len != 2 {
+		t.Fatalf("decoded.Len = %d, want 2", decoded.Len)
+	}
+	svcs := decoded.Columns[1].(*vectorized.TypedColumn[string]).Data()
+	if svcs[0] != "svc-a" || svcs[1] != "svc-b" {
+		t.Fatalf("svc round trip = %v, want [svc-a svc-b]", svcs)
+	}
+	ns := decoded.Columns[2].(*vectorized.TypedColumn[int64]).Data()
+	if ns[0] != 42 || ns[1] != 43 {
+		t.Fatalf("n round trip = %v, want [42 43]", ns)
+	}
+	vs := decoded.Columns[3].(*vectorized.TypedColumn[float64]).Data()
+	if vs[0] != 3.14 || vs[1] != 2.72 {
+		t.Fatalf("value round trip = %v, want [3.14 2.72]", vs)
+	}
+}
+
+// TestConvertPassthroughForFrame_NullCellsPreserved pins the validity
+// bitmap as the source of truth: a TagValue column with a null in the
+// middle must produce a typed column that reports IsNull(1) and emits
+// a typed TagValue null when the receive side reconstructs the proto.
+func TestConvertPassthroughForFrame_NullCellsPreserved(t *testing.T) {
+	schema := vectorized.NewBatchSchema([]vectorized.ColumnDef{
+		{Role: vectorized.RoleTag, TagFamily: "default", Name: "svc", Type: vectorized.ColumnTypeTagValue},
+	})
+	b := vectorized.NewRecordBatch(schema, 3)
+	tc := b.Columns[0].(*vectorized.TypedColumn[*modelv1.TagValue])
+	tc.Append(&modelv1.TagValue{Value: &modelv1.TagValue_Str{Str: &modelv1.Str{Value: "first"}}})
+	tc.AppendNull()
+	tc.Append(&modelv1.TagValue{Value: &modelv1.TagValue_Str{Str: &modelv1.Str{Value: "third"}}})
+	b.Len = 3
+
+	converted, err := convertPassthroughForFrame(b)
+	if err != nil {
+		t.Fatalf("convertPassthroughForFrame: %v", err)
+	}
+	outCol := converted.Columns[0].(*vectorized.TypedColumn[string])
+	if outCol.IsNull(0) {
+		t.Fatal("row 0 should be non-null")
+	}
+	if !outCol.IsNull(1) {
+		t.Fatal("row 1 should be null (middle-of-batch null cell)")
+	}
+	if outCol.IsNull(2) {
+		t.Fatal("row 2 should be non-null")
+	}
+}
+
+// TestConvertPassthroughForFrame_NoOpForNativeColumns confirms the fast
+// path: when no passthrough column appears, the function returns the
+// input pointer unchanged (no allocation, no schema rebuild). This keeps
+// agg/GroupBy queries — which already build native typed key + value
+// columns — free of conversion overhead.
+func TestConvertPassthroughForFrame_NoOpForNativeColumns(t *testing.T) {
+	schema := vectorized.NewBatchSchema([]vectorized.ColumnDef{
+		{Role: vectorized.RoleShardID, Name: shardIDOutputName, Type: vectorized.ColumnTypeInt64},
+		{Role: vectorized.RoleTag, TagFamily: "default", Name: "g", Type: vectorized.ColumnTypeString},
+		{Role: vectorized.RoleField, Name: "sum_v", Type: vectorized.ColumnTypeInt64},
+	})
+	b := vectorized.NewRecordBatch(schema, 1)
+	b.Columns[0].(*vectorized.TypedColumn[int64]).Append(1)
+	b.Columns[1].(*vectorized.TypedColumn[string]).Append("a")
+	b.Columns[2].(*vectorized.TypedColumn[int64]).Append(10)
+	b.Len = 1
+
+	converted, err := convertPassthroughForFrame(b)
+	if err != nil {
+		t.Fatalf("convertPassthroughForFrame: %v", err)
+	}
+	if converted != b {
+		t.Fatal("native-columns-only batch should be returned unchanged (fast-path pointer equality)")
 	}
 }
 

@@ -22,6 +22,7 @@ import (
 	"fmt"
 
 	measurev1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/measure/v1"
+	modelv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/model/v1"
 	"github.com/apache/skywalking-banyandb/pkg/query/vectorized"
 	"github.com/apache/skywalking-banyandb/pkg/query/vectorized/measure/frame"
 )
@@ -69,7 +70,245 @@ func DrainPipelineToFrame(ctx context.Context, p *vectorized.Pipeline, schema *v
 		}
 		appendActive(out, b)
 	}
-	return frame.Encode(out)
+	// Decode any TagValue / FieldValue passthrough columns into their
+	// typed equivalents before frame.Encode. Storage's vec adapter emits
+	// passthrough columns (TypedColumn[*modelv1.TagValue / *FieldValue])
+	// as the in-process fast path — egress consumers reuse the original
+	// proto pointer with zero allocation. For the cluster wire, however,
+	// the frame format only carries int64/float64/string/bytes; passing a
+	// passthrough column directly to frame.Encode fails with
+	// ErrUnsupportedColumnType. The conversion picks the smallest-typed
+	// wire encoding by inspecting each oneof variant, which is also the
+	// most efficient choice: typed wire ≪ proto bytes per cell, both in
+	// size (no field-tag overhead per row) and CPU (no proto.Marshal per
+	// cell). The receive side's serializeBatchToProto already handles
+	// typed columns; the typed-cell → TagValue/FieldValue reconstruction
+	// happens at the row-egress (one allocation per surviving row, vs the
+	// scan-time decode the storage avoided via passthrough — but the
+	// trade is favourable when the wire crossing in between would
+	// otherwise dominate).
+	converted, convErr := convertPassthroughForFrame(out)
+	if convErr != nil {
+		return nil, fmt.Errorf("DrainPipelineToFrame: %w", convErr)
+	}
+	return frame.Encode(converted)
+}
+
+// convertPassthroughForFrame returns a RecordBatch in which every
+// TagValue / FieldValue passthrough column has been decoded to its typed
+// equivalent. Other column types (RoleShardID/timestamp/version/seriesID
+// or already-typed tag/field columns produced by GroupBy + Agg paths)
+// pass through unchanged. The fast path returns the input unchanged when
+// the schema has no passthrough columns at all — agg/GroupBy queries
+// typically allocate native typed columns for the keys + reduce outputs
+// so this is a no-op.
+//
+// Wire-type selection is variant-driven: the first non-null cell decides
+// what typed column to materialise (a Str variant ⇒ string column, Int ⇒
+// int64, BinaryData ⇒ bytes). All-null columns default to bytes — the
+// receiver's reconstruction uses the validity bitmap, not the data, so
+// the chosen wire type is irrelevant for purely-null columns and bytes
+// has the smallest empty-cell encoding (uvarint(0)).
+//
+// IntArray / StrArray variants of TagValue are NOT yet representable by
+// frame.Encode (the format lacks array column types); the helper returns
+// a typed error so the caller can surface it as a hard failure rather
+// than silently mis-encoding. Adding native array column types to the
+// frame format is the natural follow-up; until then, scans that materialise
+// array-typed tags on the cluster wire are unsupported.
+func convertPassthroughForFrame(b *vectorized.RecordBatch) (*vectorized.RecordBatch, error) {
+	if !hasPassthroughColumn(b.Schema) {
+		return b, nil
+	}
+	newDefs := make([]vectorized.ColumnDef, 0, len(b.Schema.Columns))
+	newCols := make([]vectorized.Column, 0, len(b.Schema.Columns))
+	for i, def := range b.Schema.Columns {
+		col := b.Columns[i]
+		switch def.Type {
+		case vectorized.ColumnTypeTagValue:
+			newDef, newCol, err := convertTagValueColumn(def, col, b.Len)
+			if err != nil {
+				return nil, fmt.Errorf("column %d (%q): %w", i, def.Name, err)
+			}
+			newDefs = append(newDefs, newDef)
+			newCols = append(newCols, newCol)
+		case vectorized.ColumnTypeFieldValue:
+			newDef, newCol, err := convertFieldValueColumn(def, col, b.Len)
+			if err != nil {
+				return nil, fmt.Errorf("column %d (%q): %w", i, def.Name, err)
+			}
+			newDefs = append(newDefs, newDef)
+			newCols = append(newCols, newCol)
+		default:
+			newDefs = append(newDefs, def)
+			newCols = append(newCols, col)
+		}
+	}
+	return &vectorized.RecordBatch{
+		Schema:  vectorized.NewBatchSchema(newDefs),
+		Columns: newCols,
+		Len:     b.Len,
+	}, nil
+}
+
+// hasPassthroughColumn reports whether any column declares a proto-
+// passthrough type that frame.Encode cannot consume directly.
+func hasPassthroughColumn(s *vectorized.BatchSchema) bool {
+	for _, def := range s.Columns {
+		if def.Type == vectorized.ColumnTypeTagValue || def.Type == vectorized.ColumnTypeFieldValue {
+			return true
+		}
+	}
+	return false
+}
+
+// convertTagValueColumn picks a wire-typed column for a TagValue
+// passthrough by inspecting the first non-null cell's oneof variant, then
+// converts every cell (null cells retain their validity bit; non-null
+// cells write the underlying typed value into the new column). Returns
+// ErrUnsupportedColumnType when the variant cannot be carried by the
+// current frame format (IntArray / StrArray today).
+func convertTagValueColumn(def vectorized.ColumnDef, col vectorized.Column, n int) (vectorized.ColumnDef, vectorized.Column, error) {
+	tc, ok := col.(*vectorized.TypedColumn[*modelv1.TagValue])
+	if !ok {
+		return vectorized.ColumnDef{}, nil, fmt.Errorf("declared TagValue passthrough but column is %T", col)
+	}
+	wireType, err := inferTagValueWireType(tc, n)
+	if err != nil {
+		return vectorized.ColumnDef{}, nil, err
+	}
+	newCol := vectorized.NewColumnForType(wireType, n)
+	for i := range n {
+		if tc.IsNull(i) {
+			newCol.(interface{ AppendNull() }).AppendNull()
+			continue
+		}
+		v := tc.Data()[i]
+		if v == nil {
+			newCol.(interface{ AppendNull() }).AppendNull()
+			continue
+		}
+		switch payload := v.GetValue().(type) {
+		case *modelv1.TagValue_Str:
+			newCol.(*vectorized.TypedColumn[string]).Append(payload.Str.GetValue())
+		case *modelv1.TagValue_Int:
+			newCol.(*vectorized.TypedColumn[int64]).Append(payload.Int.GetValue())
+		case *modelv1.TagValue_BinaryData:
+			newCol.(*vectorized.TypedColumn[[]byte]).Append(append([]byte(nil), payload.BinaryData...))
+		case *modelv1.TagValue_Null:
+			newCol.(interface{ AppendNull() }).AppendNull()
+		default:
+			return vectorized.ColumnDef{}, nil, fmt.Errorf("TagValue variant %T not yet supported on the cluster wire", payload)
+		}
+	}
+	return vectorized.ColumnDef{
+		Role:      def.Role,
+		TagFamily: def.TagFamily,
+		Name:      def.Name,
+		Type:      wireType,
+	}, newCol, nil
+}
+
+// inferTagValueWireType walks col looking for the first non-null cell
+// whose payload identifies the column's wire type. Returns
+// ColumnTypeBytes for all-null columns — a benign default since the
+// validity bitmap (not the data section) drives null reconstruction at
+// the receive side. IntArray / StrArray variants are rejected here.
+func inferTagValueWireType(tc *vectorized.TypedColumn[*modelv1.TagValue], n int) (vectorized.ColumnType, error) {
+	for i := range n {
+		if tc.IsNull(i) {
+			continue
+		}
+		v := tc.Data()[i]
+		if v == nil {
+			continue
+		}
+		switch v.GetValue().(type) {
+		case *modelv1.TagValue_Str:
+			return vectorized.ColumnTypeString, nil
+		case *modelv1.TagValue_Int:
+			return vectorized.ColumnTypeInt64, nil
+		case *modelv1.TagValue_BinaryData:
+			return vectorized.ColumnTypeBytes, nil
+		case *modelv1.TagValue_IntArray, *modelv1.TagValue_StrArray:
+			return 0, fmt.Errorf("TagValue array variants not yet supported on the cluster wire (array column types are a frame-format follow-up)")
+		case *modelv1.TagValue_Null:
+			continue
+		}
+	}
+	return vectorized.ColumnTypeBytes, nil
+}
+
+// convertFieldValueColumn is the FieldValue counterpart of
+// convertTagValueColumn. FieldValue's oneof maps cleanly to the four
+// supported frame types (Int → int64, Float → float64, Str → string,
+// BinaryData → bytes) so there is no unsupported-variant branch.
+func convertFieldValueColumn(def vectorized.ColumnDef, col vectorized.Column, n int) (vectorized.ColumnDef, vectorized.Column, error) {
+	fc, ok := col.(*vectorized.TypedColumn[*modelv1.FieldValue])
+	if !ok {
+		return vectorized.ColumnDef{}, nil, fmt.Errorf("declared FieldValue passthrough but column is %T", col)
+	}
+	wireType := inferFieldValueWireType(fc, n)
+	newCol := vectorized.NewColumnForType(wireType, n)
+	for i := range n {
+		if fc.IsNull(i) {
+			newCol.(interface{ AppendNull() }).AppendNull()
+			continue
+		}
+		v := fc.Data()[i]
+		if v == nil {
+			newCol.(interface{ AppendNull() }).AppendNull()
+			continue
+		}
+		switch payload := v.GetValue().(type) {
+		case *modelv1.FieldValue_Int:
+			newCol.(*vectorized.TypedColumn[int64]).Append(payload.Int.GetValue())
+		case *modelv1.FieldValue_Float:
+			newCol.(*vectorized.TypedColumn[float64]).Append(payload.Float.GetValue())
+		case *modelv1.FieldValue_Str:
+			newCol.(*vectorized.TypedColumn[string]).Append(payload.Str.GetValue())
+		case *modelv1.FieldValue_BinaryData:
+			newCol.(*vectorized.TypedColumn[[]byte]).Append(append([]byte(nil), payload.BinaryData...))
+		case *modelv1.FieldValue_Null:
+			newCol.(interface{ AppendNull() }).AppendNull()
+		default:
+			return vectorized.ColumnDef{}, nil, fmt.Errorf("FieldValue variant %T not yet supported on the cluster wire", payload)
+		}
+	}
+	return vectorized.ColumnDef{
+		Role:      def.Role,
+		TagFamily: def.TagFamily,
+		Name:      def.Name,
+		Type:      wireType,
+	}, newCol, nil
+}
+
+// inferFieldValueWireType is the FieldValue counterpart of
+// inferTagValueWireType. FieldValue's oneof has no array variant so the
+// helper is total over the value space.
+func inferFieldValueWireType(fc *vectorized.TypedColumn[*modelv1.FieldValue], n int) vectorized.ColumnType {
+	for i := range n {
+		if fc.IsNull(i) {
+			continue
+		}
+		v := fc.Data()[i]
+		if v == nil {
+			continue
+		}
+		switch v.GetValue().(type) {
+		case *modelv1.FieldValue_Int:
+			return vectorized.ColumnTypeInt64
+		case *modelv1.FieldValue_Float:
+			return vectorized.ColumnTypeFloat64
+		case *modelv1.FieldValue_Str:
+			return vectorized.ColumnTypeString
+		case *modelv1.FieldValue_BinaryData:
+			return vectorized.ColumnTypeBytes
+		case *modelv1.FieldValue_Null:
+			continue
+		}
+	}
+	return vectorized.ColumnTypeBytes
 }
 
 // appendActive copies every active row of src into dst's columns,
