@@ -251,6 +251,15 @@ func (s *standalone) PreRun(ctx context.Context) error {
 	// when flag-off — topic-AND-process-wire-mode selection, G9f spec G9f.0.
 	// Flags have been parsed by the time PreRun fires.
 	data.SetMeasureWireModeRaw(s.option.vectorized.Enabled)
+	// Loud announcement so operators see the cluster wire mode at boot.
+	// G9f is a hard cutover — a botched partial rollout (some nodes
+	// flag-on, some flag-off) is the load-bearing failure mode the runbook
+	// covers. Surfacing the mode at startup makes the rollout state
+	// auditable from logs (G9f spec Principle 3 — fail loud).
+	s.l.Info().
+		Bool("measure_vectorized_enabled", s.option.vectorized.Enabled).
+		Bool("measure_wire_mode_raw", data.MeasureWireModeRaw()).
+		Msg("G9f wire mode published for TopicInternalMeasureQuery")
 	s.lfs = fs.NewLocalFileSystemWithLoggerAndLimit(s.l, s.pm.GetLimit())
 	var err error
 	if s.root, err = banyandbpath.Get(s.root); err != nil {

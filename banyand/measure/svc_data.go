@@ -238,6 +238,18 @@ func (s *dataSVC) Role() databasev1.Role {
 func (s *dataSVC) PreRun(ctx context.Context) error {
 	s.l = logger.GetLogger(s.Name())
 	s.l.Info().Msg("memory protector is initialized in PreRun")
+	// Publish the per-process wire mode for TopicInternalMeasureQuery so the
+	// queue's per-topic ResponseCodec dispatcher selects RawFrameCodec when
+	// this process is flag-on (vec raw columnar frame body) and ProtoCodec
+	// when flag-off — topic-AND-process-wire-mode selection, G9f spec G9f.0.
+	// Flags have been parsed by the time PreRun fires. Without this call,
+	// a distributed data node would silently emit proto on the cluster wire
+	// even when --measure-vectorized-enabled is set, defeating the cutover.
+	data.SetMeasureWireModeRaw(s.option.vectorized.Enabled)
+	s.l.Info().
+		Bool("measure_vectorized_enabled", s.option.vectorized.Enabled).
+		Bool("measure_wire_mode_raw", data.MeasureWireModeRaw()).
+		Msg("G9f wire mode published for TopicInternalMeasureQuery (data svc)")
 	s.lfs = fs.NewLocalFileSystemWithLoggerAndLimit(s.l, s.pm.GetLimit())
 	var err error
 	if s.root, err = banyandbpath.Get(s.root); err != nil {

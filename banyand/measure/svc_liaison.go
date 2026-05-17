@@ -146,6 +146,21 @@ func (s *liaison) Role() databasev1.Role {
 func (s *liaison) PreRun(ctx context.Context) error {
 	s.l = logger.GetLogger(s.Name())
 	s.l.Info().Msg("memory protector is initialized in PreRun")
+	// Publish the per-process wire mode for TopicInternalMeasureQuery so the
+	// queue's per-topic ResponseCodec dispatcher selects RawFrameCodec when
+	// this process is flag-on and ProtoCodec when flag-off (G9f spec G9f.0).
+	// On the liaison this controls the DECODE side: an incoming response
+	// body on TopicInternalMeasureQuery is parsed as raw frame bytes
+	// under flag-on, or proto under flag-off. Without this call, a
+	// flag-on data node's raw frame body fed to a flag-off liaison would
+	// silently mis-decode as an empty proto — G9f's load-bearing failure
+	// mode. SetMeasureWireModeRaw must match the data nodes' mode; the
+	// runbook covers detection + recovery for a partial-rollout skew.
+	data.SetMeasureWireModeRaw(s.option.vectorized.Enabled)
+	s.l.Info().
+		Bool("measure_vectorized_enabled", s.option.vectorized.Enabled).
+		Bool("measure_wire_mode_raw", data.MeasureWireModeRaw()).
+		Msg("G9f wire mode published for TopicInternalMeasureQuery (liaison)")
 	s.lfs = fs.NewLocalFileSystemWithLoggerAndLimit(s.l, s.pm.GetLimit())
 	var err error
 	if s.root, err = banyandbpath.Get(s.root); err != nil {
