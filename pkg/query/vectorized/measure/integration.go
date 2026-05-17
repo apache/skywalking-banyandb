@@ -266,6 +266,16 @@ func (v *VectorizedMIterator) Pipeline() *vectorized.Pipeline { return v.inner.P
 // Schema implements RawFrameSource on the public adapter.
 func (v *VectorizedMIterator) Schema() *vectorized.BatchSchema { return v.inner.Schema() }
 
+// EmitFrame implements FrameEmitter on the public adapter — delegates to
+// the inner iterator's vec-native DrainPipelineToFrame path so the
+// data-node Rev under flag-on emits a columnar raw frame body directly
+// without proto materialisation. The exported facade must implement the
+// method too because that is the type processor.go sees from the
+// vec dispatch return.
+func (v *VectorizedMIterator) EmitFrame(ctx context.Context) ([]byte, error) {
+	return v.inner.EmitFrame(ctx)
+}
+
 // VectorizedMIterator is the public adapter exposed to other packages. It is
 // a thin facade over the unexported vectorizedMIterator so the executor
 // interface is satisfied without leaking the package-private type.

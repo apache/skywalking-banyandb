@@ -25,6 +25,7 @@ import (
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials/insecure"
 
+	"github.com/apache/skywalking-banyandb/api/data"
 	"github.com/apache/skywalking-banyandb/banyand/metadata/schema"
 	"github.com/apache/skywalking-banyandb/pkg/grpchelper"
 	vecplan "github.com/apache/skywalking-banyandb/pkg/query/vectorized/measure/plan"
@@ -69,10 +70,18 @@ var _ = ginkgo.Describe("vec independent verification (distributed)", ginkgo.Ord
 		startFellThroughCount int64
 		savedMeasureCtx       helpers.SharedContext
 		savedTopNCtx          helpers.SharedContext
+		savedWireModeRaw      bool
 	)
 	ginkgo.BeforeAll(func() {
 		savedMeasureCtx = casesmeasure.SharedContext
 		savedTopNCtx = casestopn.SharedContext
+		// data.MeasureWireModeRaw is a per-process atomic — the vec
+		// cluster's PreRun flips it to true and the row baseline cluster
+		// (alive in the same test binary) would then start hitting the
+		// flag-on raw-frame guard for its own responses. Save the
+		// current value here and restore it in AfterAll so the row
+		// baseline keeps its proto-codec contract end-to-end.
+		savedWireModeRaw = data.MeasureWireModeRaw()
 		startHandledCount = vecplan.HandledCount()
 		startFellThroughCount = vecplan.FellThroughCount()
 
@@ -108,6 +117,10 @@ var _ = ginkgo.Describe("vec independent verification (distributed)", ginkgo.Ord
 	ginkgo.AfterAll(func() {
 		casesmeasure.SharedContext = savedMeasureCtx
 		casestopn.SharedContext = savedTopNCtx
+		// Restore the per-process wire-mode flag BEFORE tearing down so
+		// any subsequent test that targets the row baseline cluster (same
+		// process) sees the original proto codec contract.
+		data.SetMeasureWireModeRaw(savedWireModeRaw)
 		// Observability gate: vec dispatch must fire for at least one
 		// case in the table. If this drops to zero the vec subsystem is
 		// silently 0%-covered on the distributed cluster — either the

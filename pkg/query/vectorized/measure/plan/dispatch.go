@@ -485,4 +485,9 @@ func (emptyMIterator) Pipeline() *vectorized.Pipeline { return nil }
 // inspects the schema, so this is just an interface marker.
 func (emptyMIterator) Schema() *vectorized.BatchSchema { return nil }
 
+// EmitFrame implements vmeasure.FrameEmitter: an empty result emits a
+// nil body, which is the codec layer's RawFrameCodec carve-out for an
+// empty distributed result (magic-byte guard skipped on decode).
+func (emptyMIterator) EmitFrame(_ context.Context) ([]byte, error) { return nil, nil }
+
 func (emptyMIterator) Close() error { return nil }

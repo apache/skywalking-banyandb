@@ -18,12 +18,15 @@
 package plan
 
 import (
+	"context"
+
 	"google.golang.org/protobuf/proto"
 
 	measurev1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/measure/v1"
 	modelv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/model/v1"
 	"github.com/apache/skywalking-banyandb/pkg/query/executor"
 	"github.com/apache/skywalking-banyandb/pkg/query/logical"
+	vmeasure "github.com/apache/skywalking-banyandb/pkg/query/vectorized/measure"
 )
 
 // augmentRequestWithHiddenTags returns a request whose TagProjection also
@@ -92,3 +95,23 @@ func (h *hiddenTagsMIterator) Current() []*measurev1.InternalDataPoint {
 }
 
 func (h *hiddenTagsMIterator) Close() error { return h.inner.Close() }
+
+// EmitFrame implements vmeasure.FrameEmitter. Draining via the wrapper's
+// own Next / Current keeps the hidden-tag strip as the single source of
+// truth — Current already removes the hidden criteria tags from each
+// emitted DataPoint, so the reverse-serialised RecordBatch carries only
+// the projected columns. The columnar wire then matches what a query
+// without hidden criteria tags would have emitted, byte-identical to
+// the row path.
+func (h *hiddenTagsMIterator) EmitFrame(_ context.Context) ([]byte, error) {
+	var idps []*measurev1.InternalDataPoint
+	for h.Next() {
+		current := h.Current()
+		for _, dp := range current {
+			if dp != nil {
+				idps = append(idps, dp)
+			}
+		}
+	}
+	return vmeasure.SerializeDataPointsToFrame(idps)
+}

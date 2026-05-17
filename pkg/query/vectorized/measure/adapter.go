@@ -83,6 +83,15 @@ type vectorizedMIterator struct {
 // called afterwards, only Close().
 func (i *vectorizedMIterator) Pipeline() *vectorized.Pipeline { return i.pipeline }
 
+// EmitFrame implements FrameEmitter: drain the underlying vec pipeline
+// directly via DrainPipelineToFrame. This is the throughput-optimal
+// wire-emit path — no proto materialisation, columnar end-to-end. The
+// data-node Rev prefers this over the row-side reverse-serialise that
+// wrapper iterators fall back on.
+func (i *vectorizedMIterator) EmitFrame(ctx context.Context) ([]byte, error) {
+	return DrainPipelineToFrame(ctx, i.pipeline, i.schema)
+}
+
 // Schema implements RawFrameSource: returns the terminal-operator output
 // schema, the same schema every emitted batch carries.
 func (i *vectorizedMIterator) Schema() *vectorized.BatchSchema { return i.schema }

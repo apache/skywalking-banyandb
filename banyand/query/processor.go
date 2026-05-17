@@ -530,23 +530,28 @@ func (p *measureInternalQueryProcessor) Rev(ctx context.Context, message bus.Mes
 		}
 	}()
 
-	// G9f.5.b raw-frame emit path under flag-on. No-fall-through directive:
-	// under data.MeasureWireModeRaw() the wire codec is RawFrameCodec, so
-	// the data-node Rev MUST emit a raw frame body (or a nil empty body
-	// — the codec carve-out). A proto body would be silently rejected by
-	// the liaison's RawFrameCodec.Unmarshal bad-magic guard.
+	// Raw-frame wire-emit path under flag-on. No-fall-through directive:
+	// data.MeasureWireModeRaw() means the cluster wire codec is
+	// RawFrameCodec, so the data-node Rev MUST emit a raw frame body
+	// (or a nil empty body — the codec carve-out). A proto body would
+	// be silently rejected by the liaison's RawFrameCodec.Unmarshal
+	// bad-magic guard.
 	//
-	// Cases that cannot satisfy raw-frame emit fail loud here rather than
-	// silently falling through to a proto body the liaison can't decode:
+	// Iterators encapsulate their own drain + encode via FrameEmitter:
 	//
-	//   - queryCriteria.Trace=true: the columnar frame format has no
-	//     trace-bytes slot, so trace-enabled distributed queries are
-	//     unsupported under flag-on. The runbook documents this.
-	//   - iterator not RawFrameSource: the multi-group merger and
-	//     hidden-tag wrapper do not expose Pipeline()/Schema(); they
-	//     require row-side iteration. Surfacing the error means the
-	//     vec-only cluster test catches the gap and operators get a clear
-	//     signal rather than corrupt wire bytes.
+	//   - vectorizedMIterator drains the vec Pipeline directly
+	//     (throughput-optimal: no proto materialisation, columnar
+	//     end-to-end).
+	//   - emptyMIterator emits a nil body (codec empty-result carve-out).
+	//   - hiddenTagsMIterator drains via Next/Current (its strip stays
+	//     the source of truth) and reverse-serialises.
+	//   - sortedMIterator drains via Next/Current (its cross-group sort
+	//     + version dedup stay the source of truth) and reverse-
+	//     serialises.
+	//
+	// queryCriteria.Trace=true still hard-errors: the columnar frame
+	// has no trace-bytes slot, so trace-enabled distributed queries are
+	// unsupported under flag-on (documented in the runbook).
 	if data.MeasureWireModeRaw() {
 		if queryCriteria.Trace {
 			resp = bus.NewMessage(bus.MessageID(now), common.NewError(
@@ -554,14 +559,14 @@ func (p *measureInternalQueryProcessor) Rev(ctx context.Context, message bus.Mes
 					"disable --measure-vectorized-enabled or omit trace from the query"))
 			return
 		}
-		rfs, ok := mIterator.(vmeasure.RawFrameSource)
+		emitter, ok := mIterator.(vmeasure.FrameEmitter)
 		if !ok {
 			resp = bus.NewMessage(bus.MessageID(now), common.NewError(
-				"vec wire mode (flag-on) requires RawFrameSource iterator; "+
-					"got %T — multi-measure / hidden-criteria-tag queries are unsupported on the cluster wire today", mIterator))
+				"vec wire mode (flag-on) requires FrameEmitter iterator; "+
+					"got %T — this iterator type has no wire-emit implementation", mIterator))
 			return
 		}
-		rawBody, drainErr := vmeasure.DrainPipelineToFrame(ctx, rfs.Pipeline(), rfs.Schema())
+		rawBody, drainErr := emitter.EmitFrame(ctx)
 		if drainErr != nil {
 			resp = bus.NewMessage(bus.MessageID(now), common.NewError("vec raw-frame emit: %v", drainErr))
 			return

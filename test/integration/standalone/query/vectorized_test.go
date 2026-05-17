@@ -25,6 +25,7 @@ import (
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials/insecure"
 
+	"github.com/apache/skywalking-banyandb/api/data"
 	"github.com/apache/skywalking-banyandb/pkg/grpchelper"
 	vecplan "github.com/apache/skywalking-banyandb/pkg/query/vectorized/measure/plan"
 	"github.com/apache/skywalking-banyandb/pkg/test"
@@ -79,12 +80,18 @@ var _ = ginkgo.Describe("vec independent verification (standalone)", ginkgo.Orde
 		// next BeforeAll (e.g. the top-level "TopN Tests" / "Scanning
 		// Measures" tables); leaving SharedContext pointing at our
 		// closed-down cluster makes those siblings time out.
-		savedMeasureCtx helpers.SharedContext
-		savedTopNCtx    helpers.SharedContext
+		savedMeasureCtx  helpers.SharedContext
+		savedTopNCtx     helpers.SharedContext
+		savedWireModeRaw bool
 	)
 	ginkgo.BeforeAll(func() {
 		savedMeasureCtx = casesmeasure.SharedContext
 		savedTopNCtx = casestopn.SharedContext
+		// data.MeasureWireModeRaw is a per-process atomic — the vec
+		// cluster's PreRun flips it to true and the original row-baseline
+		// cluster (still alive in the same test binary) would then start
+		// hitting the flag-on raw-frame guard for its own responses.
+		savedWireModeRaw = data.MeasureWireModeRaw()
 		startHandledCount = vecplan.HandledCount()
 		startFellThroughCount = vecplan.FellThroughCount()
 		path, diskCleanupFn, pathErr := test.NewSpace()
@@ -124,6 +131,10 @@ var _ = ginkgo.Describe("vec independent verification (standalone)", ginkgo.Orde
 		// #1 from SynchronizedBeforeSuite is still up at this point).
 		casesmeasure.SharedContext = savedMeasureCtx
 		casestopn.SharedContext = savedTopNCtx
+		// Restore the per-process wire-mode flag BEFORE tearing down so
+		// any later test that targets the row baseline cluster (same
+		// process) sees the original proto codec contract.
+		data.SetMeasureWireModeRaw(savedWireModeRaw)
 		// G8e observability: dispatch MUST fire for at least one of the
 		// replayed cases. If this assertion ever drops to zero, the
 		// vec subsystem is silently 0%-covered — either the dispatch

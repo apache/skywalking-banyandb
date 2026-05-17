@@ -27,6 +27,35 @@ import (
 	"github.com/apache/skywalking-banyandb/pkg/query/vectorized/measure/frame"
 )
 
+// FrameEmitter is the data-node wire-emit contract under flag-on:
+// any MIterator that participates in a TopicInternalMeasureQuery
+// response must encapsulate its own drain + encode strategy via this
+// method, so the processor.go Rev can dispatch uniformly without
+// case-by-case knowledge of each wrapper.
+//
+// Implementations:
+//
+//   - VectorizedMIterator: drains the underlying vec Pipeline directly
+//     via DrainPipelineToFrame — the throughput-optimal path that
+//     never materialises proto datapoints.
+//   - emptyMIterator: returns a nil body (matches the codec layer's
+//     RawFrameCodec carve-out for empty distributed results).
+//   - hiddenTagsMIterator: drains via Next / Current (which already
+//     strips hidden criteria tags from the egress datapoints), then
+//     reverse-serialises the surviving rows into a passthrough
+//     RecordBatch through SerializeDataPointsToFrame.
+//   - sortedMIterator: drains via Next / Current (which already
+//     applies cross-group merge + version dedup), then reverse-
+//     serialises through SerializeDataPointsToFrame.
+//
+// The reverse-serialise path is less efficient than draining a vec
+// Pipeline (one allocation per cell during passthrough rebuild) but
+// keeps the wrapper's row-side semantics — hidden-tag strip, sort,
+// dedup — as the single source of truth on the wire.
+type FrameEmitter interface {
+	EmitFrame(ctx context.Context) ([]byte, error)
+}
+
 // DrainPipelineToFrame consumes a vec Pipeline end-to-end, concatenates
 // every emitted batch into a single RecordBatch, and frame.Encode-s the
 // result. It is the data-node side of the G9f throughout-vec wire: under
@@ -98,6 +127,147 @@ func DrainPipelineToFrame(ctx context.Context, p *vectorized.Pipeline, schema *v
 		return nil, fmt.Errorf("DrainPipelineToFrame: %w", convErr)
 	}
 	return frame.Encode(converted)
+}
+
+// SerializeDataPointsToFrame is the fallback wire-emit path for iterator
+// wrappers (hiddenTagsMIterator, sortedMIterator) whose internal sort /
+// strip / cross-group merge logic operates on []*InternalDataPoint
+// rather than on a vec Pipeline. The wrapper drains itself via the
+// row-side Next / Current API (so its existing strip / merge / dedup
+// logic still runs); the resulting rows are reverse-serialised into a
+// passthrough RecordBatch, convertPassthroughForFrame decodes the
+// passthrough columns to typed wire columns, and frame.Encode produces
+// the body.
+//
+// This path is less efficient than the vec native pipeline drain — it
+// allocates a *modelv1.TagValue / *FieldValue per cell during reverse-
+// serialise — but it keeps the wrapper's egress semantics intact end-
+// to-end on the wire (hidden tags stripped, cross-group order honoured,
+// version dedup applied) without re-implementing each one in columnar
+// form.
+//
+// idps in the empty/zero case yields a nil body, matching the codec
+// layer's RawFrameCodec carve-out for empty distributed results.
+func SerializeDataPointsToFrame(idps []*measurev1.InternalDataPoint) ([]byte, error) {
+	if len(idps) == 0 {
+		return nil, nil
+	}
+	b, batchErr := buildPassthroughBatchFromDataPoints(idps)
+	if batchErr != nil {
+		return nil, fmt.Errorf("SerializeDataPointsToFrame: %w", batchErr)
+	}
+	converted, convErr := convertPassthroughForFrame(b)
+	if convErr != nil {
+		return nil, fmt.Errorf("SerializeDataPointsToFrame: %w", convErr)
+	}
+	return frame.Encode(converted)
+}
+
+// buildPassthroughBatchFromDataPoints walks idps to derive a unified
+// schema (the first non-empty row defines the column layout) and emits
+// a RecordBatch with passthrough TagValue / FieldValue columns plus
+// timestamp / version / sid / shard_id native columns. The passthrough
+// columns are then handed to convertPassthroughForFrame to pick wire
+// types from each cell's oneof variant — matching the storage adapter's
+// passthrough emit shape so the rest of the wire pipeline is identical
+// to a fresh vec scan.
+func buildPassthroughBatchFromDataPoints(idps []*measurev1.InternalDataPoint) (*vectorized.RecordBatch, error) {
+	var sample *measurev1.DataPoint
+	for _, idp := range idps {
+		if idp == nil {
+			continue
+		}
+		dp := idp.GetDataPoint()
+		if dp != nil {
+			sample = dp
+			break
+		}
+	}
+	if sample == nil {
+		return nil, fmt.Errorf("buildPassthroughBatchFromDataPoints: no non-nil datapoint to derive schema from")
+	}
+	defs := []vectorized.ColumnDef{
+		{Role: vectorized.RoleShardID, Name: shardIDOutputName, Type: vectorized.ColumnTypeInt64},
+		{Role: vectorized.RoleTimestamp, Name: "_timestamp", Type: vectorized.ColumnTypeInt64},
+		{Role: vectorized.RoleVersion, Name: "_version", Type: vectorized.ColumnTypeInt64},
+		{Role: vectorized.RoleSeriesID, Name: "_sid", Type: vectorized.ColumnTypeInt64},
+	}
+	type tagSlot struct{ family, name string }
+	tagOrder := make([]tagSlot, 0)
+	for _, fam := range sample.GetTagFamilies() {
+		for _, tag := range fam.GetTags() {
+			tagOrder = append(tagOrder, tagSlot{family: fam.GetName(), name: tag.GetKey()})
+			defs = append(defs, vectorized.ColumnDef{
+				Role:      vectorized.RoleTag,
+				TagFamily: fam.GetName(),
+				Name:      tag.GetKey(),
+				Type:      vectorized.ColumnTypeTagValue,
+			})
+		}
+	}
+	fieldOrder := make([]string, 0)
+	for _, f := range sample.GetFields() {
+		fieldOrder = append(fieldOrder, f.GetName())
+		defs = append(defs, vectorized.ColumnDef{
+			Role: vectorized.RoleField,
+			Name: f.GetName(),
+			Type: vectorized.ColumnTypeFieldValue,
+		})
+	}
+	schema := vectorized.NewBatchSchema(defs)
+	b := vectorized.NewRecordBatch(schema, len(idps))
+	shardCol := b.Columns[0].(*vectorized.TypedColumn[int64])
+	tsCol := b.Columns[1].(*vectorized.TypedColumn[int64])
+	verCol := b.Columns[2].(*vectorized.TypedColumn[int64])
+	sidCol := b.Columns[3].(*vectorized.TypedColumn[int64])
+	tagColStart := 4
+	fieldColStart := tagColStart + len(tagOrder)
+	for _, idp := range idps {
+		dp := idp.GetDataPoint()
+		if dp == nil {
+			shardCol.AppendNull()
+			tsCol.AppendNull()
+			verCol.AppendNull()
+			sidCol.AppendNull()
+			for i := range tagOrder {
+				b.Columns[tagColStart+i].(*vectorized.TypedColumn[*modelv1.TagValue]).Append(nil)
+			}
+			for i := range fieldOrder {
+				b.Columns[fieldColStart+i].(*vectorized.TypedColumn[*modelv1.FieldValue]).Append(nil)
+			}
+			continue
+		}
+		shardCol.Append(int64(idp.GetShardId()))
+		if dp.GetTimestamp() != nil {
+			tsCol.Append(dp.GetTimestamp().AsTime().UnixNano())
+		} else {
+			tsCol.AppendNull()
+		}
+		verCol.Append(dp.GetVersion())
+		sidCol.Append(int64(dp.GetSid()))
+		tagLookup := make(map[string]*modelv1.TagValue, len(tagOrder))
+		for _, fam := range dp.GetTagFamilies() {
+			for _, tag := range fam.GetTags() {
+				tagLookup[fam.GetName()+"\x00"+tag.GetKey()] = tag.GetValue()
+			}
+		}
+		for i, slot := range tagOrder {
+			b.Columns[tagColStart+i].(*vectorized.TypedColumn[*modelv1.TagValue]).Append(
+				tagLookup[slot.family+"\x00"+slot.name],
+			)
+		}
+		fieldLookup := make(map[string]*modelv1.FieldValue, len(fieldOrder))
+		for _, f := range dp.GetFields() {
+			fieldLookup[f.GetName()] = f.GetValue()
+		}
+		for i, name := range fieldOrder {
+			b.Columns[fieldColStart+i].(*vectorized.TypedColumn[*modelv1.FieldValue]).Append(
+				fieldLookup[name],
+			)
+		}
+	}
+	b.Len = len(idps)
+	return b, nil
 }
 
 // convertPassthroughForFrame returns a RecordBatch in which every

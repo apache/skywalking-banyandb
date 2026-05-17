@@ -689,6 +689,31 @@ func (s *sortedMIterator) Close() error {
 	return s.Iterator.Close()
 }
 
+// EmitFrame implements vmeasure.FrameEmitter so the data-node Rev under
+// flag-on can wire-emit a multi-measure response without bypassing this
+// iterator's cross-group sort + (sid, timestamp) version dedup. We
+// drain via the existing Next / Current API — which already runs the
+// sort-merge and dedup — then reverse-serialise the surviving rows
+// into a passthrough RecordBatch via SerializeDataPointsToFrame.
+//
+// The proto-then-batch round trip is the price of preserving the
+// row-side merge as the single source of truth on the cluster wire.
+// The vec-native cross-group merge that would let this path drain a
+// vec Pipeline directly is a follow-up (it requires a vec equivalent
+// of sortableDataPoints + ItemIter operating on RecordBatch rows).
+func (s *sortedMIterator) EmitFrame(_ context.Context) ([]byte, error) {
+	var idps []*measurev1.InternalDataPoint
+	for s.Next() {
+		current := s.Current()
+		for _, dp := range current {
+			if dp != nil {
+				idps = append(idps, dp)
+			}
+		}
+	}
+	return vmeasure.SerializeDataPointsToFrame(idps)
+}
+
 const (
 	offset64 = 14695981039346656037
 	prime64  = 1099511628211
