@@ -39,25 +39,34 @@ import (
 //     BatchGroupBy, schema-preserving.
 //
 // The concrete operator (and therefore the output schema) is chosen by
-// vmeasure.BuildOperators from which of GroupBy/Agg is set.
+// vmeasure.BuildOperators from which of GroupBy/Agg is set. Mode selects
+// AggModeAll (single-node final reduce) vs AggModeMap (G9f.2 distributed
+// Map phase emitting typed-column partials). Mode is irrelevant for raw
+// GroupBy (BatchGroupBy doesn't carry partial state).
 type GroupByAgg struct {
 	Child       VecPlan
 	GroupBy     *model.MeasureGroupBy
 	Agg         *model.MeasureAgg
 	outputCache *vectorized.BatchSchema
+	Mode        vmeasure.AggMode
 }
 
 // NewGroupByAgg constructs a GroupByAgg node wrapping child. At least one
 // of groupBy/agg must be set (BuildOperators routes on which); child must
-// not be nil.
-func NewGroupByAgg(child VecPlan, groupBy *model.MeasureGroupBy, agg *model.MeasureAgg) (*GroupByAgg, error) {
+// not be nil. mode selects AggModeAll for the single-node path or
+// AggModeMap for the distributed Map phase (G9f.2); AggModeReduce is
+// rejected here (the reduce plan is built liaison-side in G9f.3).
+func NewGroupByAgg(child VecPlan, groupBy *model.MeasureGroupBy, agg *model.MeasureAgg, mode vmeasure.AggMode) (*GroupByAgg, error) {
 	if groupBy == nil && agg == nil {
 		return nil, fmt.Errorf("plan.GroupByAgg: GroupBy and Agg must not both be nil")
 	}
 	if child == nil {
 		return nil, fmt.Errorf("plan.GroupByAgg: Child must not be nil")
 	}
-	return &GroupByAgg{Child: child, GroupBy: groupBy, Agg: agg}, nil
+	if mode == vmeasure.AggModeReduce {
+		return nil, fmt.Errorf("plan.GroupByAgg: AggModeReduce is built by the liaison reduce plan (G9f.3), not here")
+	}
+	return &GroupByAgg{Child: child, GroupBy: groupBy, Agg: agg, Mode: mode}, nil
 }
 
 // Schema returns the aggregation output schema. The schema is computed
@@ -79,7 +88,7 @@ func (g *GroupByAgg) Schema() *vectorized.BatchSchema {
 	// A throwaway tracker; we only need the resulting operator's
 	// OutputSchema, not its bookkeeping.
 	tracker := vectorized.NewMemoryTracker(1 << 30)
-	ops, err := vmeasure.BuildOperators(opts, inputSchema, tracker, 1024)
+	ops, err := vmeasure.BuildOperators(opts, inputSchema, tracker, 1024, g.Mode)
 	if err != nil || len(ops) != 1 {
 		return nil
 	}
@@ -99,7 +108,7 @@ func (g *GroupByAgg) Build(ctx context.Context, bc *BuildContext) error {
 	}
 	inputSchema := g.Child.Schema()
 	opts := model.MeasureQueryOptions{GroupBy: g.GroupBy, Agg: g.Agg}
-	ops, opsErr := vmeasure.BuildOperators(opts, inputSchema, bc.Tracker, bc.Config.BatchSize)
+	ops, opsErr := vmeasure.BuildOperators(opts, inputSchema, bc.Tracker, bc.Config.BatchSize, g.Mode)
 	if opsErr != nil {
 		return fmt.Errorf("plan.GroupByAgg.Build: %w", opsErr)
 	}

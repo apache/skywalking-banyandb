@@ -37,7 +37,7 @@ func planSchema() *vectorized.BatchSchema {
 
 func TestBuildOperators_NoGroupByNoAgg_ReturnsEmpty(t *testing.T) {
 	ops, err := BuildOperators(model.MeasureQueryOptions{}, planSchema(),
-		vectorized.NewMemoryTracker(1<<20), 1024)
+		vectorized.NewMemoryTracker(1<<20), 1024, AggModeAll)
 	if err != nil {
 		t.Fatalf("empty opts should not error: %v", err)
 	}
@@ -51,7 +51,7 @@ func TestBuildOperators_GroupByPlusAgg_EmitsBatchAggregation(t *testing.T) {
 		GroupBy: &model.MeasureGroupBy{TagFamily: "default", TagNames: []string{"svc"}},
 		Agg:     &model.MeasureAgg{FieldName: "value", Func: modelv1.AggregationFunction_AGGREGATION_FUNCTION_SUM},
 	}
-	ops, err := BuildOperators(opts, planSchema(), vectorized.NewMemoryTracker(1<<20), 1024)
+	ops, err := BuildOperators(opts, planSchema(), vectorized.NewMemoryTracker(1<<20), 1024, AggModeAll)
 	if err != nil {
 		t.Fatalf("BuildOperators error: %v", err)
 	}
@@ -83,7 +83,7 @@ func TestBuildOperators_AggOutputName_InheritsInputFieldName(t *testing.T) {
 			GroupBy: &model.MeasureGroupBy{TagFamily: "default", TagNames: []string{"svc"}},
 			Agg:     &model.MeasureAgg{FieldName: "value", Func: fn},
 		}
-		ops, err := BuildOperators(opts, planSchema(), vectorized.NewMemoryTracker(1<<20), 1024)
+		ops, err := BuildOperators(opts, planSchema(), vectorized.NewMemoryTracker(1<<20), 1024, AggModeAll)
 		if err != nil {
 			t.Fatalf("%v: BuildOperators error: %v", fn, err)
 		}
@@ -104,7 +104,7 @@ func TestBuildOperators_GroupByWithoutAgg_EmitsFirstOnlyGroupBy(t *testing.T) {
 	opts := model.MeasureQueryOptions{
 		GroupBy: &model.MeasureGroupBy{TagFamily: "default", TagNames: []string{"svc"}},
 	}
-	ops, err := BuildOperators(opts, planSchema(), vectorized.NewMemoryTracker(1<<20), 1024)
+	ops, err := BuildOperators(opts, planSchema(), vectorized.NewMemoryTracker(1<<20), 1024, AggModeAll)
 	if err != nil {
 		t.Fatalf("GroupBy without Agg (raw groupby) must not error: %v", err)
 	}
@@ -128,7 +128,7 @@ func TestBuildOperators_AggWithoutGroupBy_EmitsBatchAggregation(t *testing.T) {
 	opts := model.MeasureQueryOptions{
 		Agg: &model.MeasureAgg{FieldName: "value", Func: modelv1.AggregationFunction_AGGREGATION_FUNCTION_SUM},
 	}
-	ops, err := BuildOperators(opts, planSchema(), vectorized.NewMemoryTracker(1<<20), 1024)
+	ops, err := BuildOperators(opts, planSchema(), vectorized.NewMemoryTracker(1<<20), 1024, AggModeAll)
 	if err != nil {
 		t.Fatalf("Agg without GroupBy (scalar reduce) must not error: %v", err)
 	}
@@ -149,7 +149,7 @@ func TestBuildOperators_UnknownGroupByTag_Errors(t *testing.T) {
 		GroupBy: &model.MeasureGroupBy{TagFamily: "default", TagNames: []string{"missing"}},
 		Agg:     &model.MeasureAgg{FieldName: "value", Func: modelv1.AggregationFunction_AGGREGATION_FUNCTION_SUM},
 	}
-	_, err := BuildOperators(opts, planSchema(), vectorized.NewMemoryTracker(1<<20), 1024)
+	_, err := BuildOperators(opts, planSchema(), vectorized.NewMemoryTracker(1<<20), 1024, AggModeAll)
 	if err == nil {
 		t.Fatal("unknown groupby tag must error")
 	}
@@ -163,7 +163,7 @@ func TestBuildOperators_UnknownAggField_Errors(t *testing.T) {
 		GroupBy: &model.MeasureGroupBy{TagFamily: "default", TagNames: []string{"svc"}},
 		Agg:     &model.MeasureAgg{FieldName: "ghost", Func: modelv1.AggregationFunction_AGGREGATION_FUNCTION_SUM},
 	}
-	_, err := BuildOperators(opts, planSchema(), vectorized.NewMemoryTracker(1<<20), 1024)
+	_, err := BuildOperators(opts, planSchema(), vectorized.NewMemoryTracker(1<<20), 1024, AggModeAll)
 	if err == nil {
 		t.Fatal("unknown agg field must error")
 	}
@@ -177,7 +177,7 @@ func TestBuildOperators_AggUnspecified_Errors(t *testing.T) {
 		GroupBy: &model.MeasureGroupBy{TagFamily: "default", TagNames: []string{"svc"}},
 		Agg:     &model.MeasureAgg{FieldName: "value", Func: modelv1.AggregationFunction_AGGREGATION_FUNCTION_UNSPECIFIED},
 	}
-	_, err := BuildOperators(opts, planSchema(), vectorized.NewMemoryTracker(1<<20), 1024)
+	_, err := BuildOperators(opts, planSchema(), vectorized.NewMemoryTracker(1<<20), 1024, AggModeAll)
 	if err == nil {
 		t.Fatal("UNSPECIFIED Agg.Func must error")
 	}
@@ -188,7 +188,7 @@ func TestBuildOperators_NilTracker_Errors(t *testing.T) {
 		GroupBy: &model.MeasureGroupBy{TagFamily: "default", TagNames: []string{"svc"}},
 		Agg:     &model.MeasureAgg{FieldName: "value", Func: modelv1.AggregationFunction_AGGREGATION_FUNCTION_SUM},
 	}
-	_, err := BuildOperators(opts, planSchema(), nil, 1024)
+	_, err := BuildOperators(opts, planSchema(), nil, 1024, AggModeAll)
 	if err == nil {
 		t.Fatal("nil tracker must error when operators are emitted")
 	}
@@ -204,7 +204,7 @@ func TestBuildOperators_MultiKeyGroupBy_PreservesKeyOrder(t *testing.T) {
 		GroupBy: &model.MeasureGroupBy{TagFamily: "default", TagNames: []string{"region", "svc"}},
 		Agg:     &model.MeasureAgg{FieldName: "value", Func: modelv1.AggregationFunction_AGGREGATION_FUNCTION_SUM},
 	}
-	ops, err := BuildOperators(opts, schema, vectorized.NewMemoryTracker(1<<20), 1024)
+	ops, err := BuildOperators(opts, schema, vectorized.NewMemoryTracker(1<<20), 1024, AggModeAll)
 	if err != nil {
 		t.Fatalf("BuildOperators error: %v", err)
 	}

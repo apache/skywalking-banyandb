@@ -25,6 +25,7 @@ import (
 	databasev1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/database/v1"
 	measurev1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/measure/v1"
 	modelv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/model/v1"
+	measure "github.com/apache/skywalking-banyandb/pkg/query/vectorized/measure"
 )
 
 const (
@@ -64,7 +65,7 @@ func TestAnalyze_BareRequest_BuildsScanWrappedInLimit(t *testing.T) {
 		TagProjection:   projTagProj(),
 		FieldProjection: &measurev1.QueryRequest_FieldProjection{Names: []string{fieldValue}},
 	}
-	p, err := Analyze(req, testMeasureSchema())
+	p, err := Analyze(req, testMeasureSchema(), measure.AggModeAll)
 	if err != nil {
 		t.Fatalf("Analyze: %v", err)
 	}
@@ -90,7 +91,7 @@ func TestAnalyze_GroupByAgg_BuildsGroupByAggBelowLimit(t *testing.T) {
 			FieldName: fieldValue,
 		},
 	}
-	p, err := Analyze(req, testMeasureSchema())
+	p, err := Analyze(req, testMeasureSchema(), measure.AggModeAll)
 	if err != nil {
 		t.Fatalf("Analyze: %v", err)
 	}
@@ -132,7 +133,7 @@ func TestAnalyze_TopBetweenGroupByAggAndLimit(t *testing.T) {
 			FieldValueSort: modelv1.Sort_SORT_DESC,
 		},
 	}
-	p, err := Analyze(req, testMeasureSchema())
+	p, err := Analyze(req, testMeasureSchema(), measure.AggModeAll)
 	if err != nil {
 		t.Fatalf("Analyze: %v", err)
 	}
@@ -167,7 +168,7 @@ func TestAnalyze_TopSortAsc_MapsToAscending(t *testing.T) {
 			FieldValueSort: modelv1.Sort_SORT_ASC,
 		},
 	}
-	p, err := Analyze(req, testMeasureSchema())
+	p, err := Analyze(req, testMeasureSchema(), measure.AggModeAll)
 	if err != nil {
 		t.Fatalf("Analyze: %v", err)
 	}
@@ -196,7 +197,7 @@ func TestAnalyze_GroupByWithoutAgg_BuildsRawGroupBy(t *testing.T) {
 			FieldName:     fieldValue,
 		},
 	}
-	p, err := Analyze(req, testMeasureSchema())
+	p, err := Analyze(req, testMeasureSchema(), measure.AggModeAll)
 	if err != nil {
 		t.Fatalf("GroupBy without Agg (raw groupby) must not error: %v", err)
 	}
@@ -228,7 +229,7 @@ func TestAnalyze_AggWithoutGroupBy_BuildsScalarReduce(t *testing.T) {
 			FieldName: fieldValue,
 		},
 	}
-	p, err := Analyze(req, testMeasureSchema())
+	p, err := Analyze(req, testMeasureSchema(), measure.AggModeAll)
 	if err != nil {
 		t.Fatalf("Agg without GroupBy (scalar reduce) must not error: %v", err)
 	}
@@ -264,7 +265,7 @@ func TestAnalyze_UnknownGroupByTag_Errors(t *testing.T) {
 			FieldName: fieldValue,
 		},
 	}
-	_, err := Analyze(req, testMeasureSchema())
+	_, err := Analyze(req, testMeasureSchema(), measure.AggModeAll)
 	if err == nil {
 		t.Fatal("unknown groupby tag must error")
 	}
@@ -287,7 +288,7 @@ func TestAnalyze_UnknownAggField_Errors(t *testing.T) {
 			FieldName: "ghost",
 		},
 	}
-	_, err := Analyze(req, testMeasureSchema())
+	_, err := Analyze(req, testMeasureSchema(), measure.AggModeAll)
 	if err == nil {
 		t.Fatal("unknown agg field must error")
 	}
@@ -297,7 +298,7 @@ func TestAnalyze_UnknownAggField_Errors(t *testing.T) {
 }
 
 func TestAnalyze_NilRequest_Errors(t *testing.T) {
-	_, err := Analyze(nil, testMeasureSchema())
+	_, err := Analyze(nil, testMeasureSchema(), measure.AggModeAll)
 	if err == nil {
 		t.Fatal("nil request must error")
 	}
@@ -305,7 +306,7 @@ func TestAnalyze_NilRequest_Errors(t *testing.T) {
 
 func TestAnalyze_NilSchema_Errors(t *testing.T) {
 	req := &measurev1.QueryRequest{Name: "demo"}
-	_, err := Analyze(req, nil)
+	_, err := Analyze(req, nil, measure.AggModeAll)
 	if err == nil {
 		t.Fatal("nil schema must error")
 	}
@@ -318,7 +319,7 @@ func TestAnalyze_DefaultLimit_AppliedWhenZero(t *testing.T) {
 		FieldProjection: &measurev1.QueryRequest_FieldProjection{Names: []string{fieldValue}},
 		// Limit unset (0) → default 100 per defaultLimit constant
 	}
-	p, err := Analyze(req, testMeasureSchema())
+	p, err := Analyze(req, testMeasureSchema(), measure.AggModeAll)
 	if err != nil {
 		t.Fatalf("Analyze: %v", err)
 	}
@@ -342,7 +343,7 @@ func TestPrintTree_RendersHierarchy(t *testing.T) {
 			FieldName: fieldValue,
 		},
 	}
-	p, err := Analyze(req, testMeasureSchema())
+	p, err := Analyze(req, testMeasureSchema(), measure.AggModeAll)
 	if err != nil {
 		t.Fatal(err)
 	}

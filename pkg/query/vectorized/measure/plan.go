@@ -50,9 +50,17 @@ const aggEntrySize int64 = 512
 // tracker is the per-pipeline MemoryTracker (G7a); it must be non-nil when
 // any operator is emitted so per-group reservations route to the shared
 // budget. batchSize controls the operator's output pagination.
+//
+// mode selects the BatchAggregation strategy when an agg operator is built
+// (Agg set): AggModeAll for single-node final reduce; AggModeMap for the
+// distributed Map phase (G9f.2) that emits typed-column partials. mode is
+// ignored for the raw-GroupBy branch (BatchGroupBy doesn't carry partial
+// state — first-seen-row per group is already the final shape).
+// AggModeReduce is rejected here loudly; its operator is built by the
+// liaison-side reduce plan (G9f.3), not via BuildOperators.
 func BuildOperators(
 	opts model.MeasureQueryOptions, schema *vectorized.BatchSchema,
-	tracker *vectorized.MemoryTracker, batchSize int,
+	tracker *vectorized.MemoryTracker, batchSize int, mode AggMode,
 ) ([]vectorized.BreakerOperator, error) {
 	hasGroupBy := opts.GroupBy != nil && opts.GroupBy.TagFamily != "" && len(opts.GroupBy.TagNames) > 0
 	hasAgg := opts.Agg != nil
@@ -65,6 +73,9 @@ func BuildOperators(
 	}
 	if batchSize <= 0 {
 		return nil, fmt.Errorf("vectorized.measure: batchSize must be > 0, got %d", batchSize)
+	}
+	if mode == AggModeReduce {
+		return nil, fmt.Errorf("vectorized.measure: BuildOperators does not build AggModeReduce — that operator is built by the liaison reduce plan (G9f.3)")
 	}
 
 	var keyIndices []int

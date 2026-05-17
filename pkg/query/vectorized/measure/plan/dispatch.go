@@ -109,7 +109,17 @@ func Dispatch(
 	logicalSchema logical.Schema,
 	ec executor.MeasureExecutionContext,
 	cfg measure.VectorizedConfig,
+	emitPartial bool,
 ) (iter executor.MIterator, planStr string, handled bool, err error) {
+	// emitPartial selects the BatchAggregation strategy when GroupBy/Agg is
+	// in the plan: false → AggModeAll (single-node final reduce); true →
+	// AggModeMap (G9f.2 distributed Map phase emitting typed-column
+	// partials). The caller in banyand/query/processor.go sets emitPartial
+	// from internalRequest.AggReturnPartial on the distributed path.
+	mode := measure.AggModeAll
+	if emitPartial {
+		mode = measure.AggModeMap
+	}
 	defer func() {
 		// Errors are surfaced as-is; only count clean handled / fall-
 		// through outcomes so observability matches the caller's
@@ -212,7 +222,7 @@ func Dispatch(
 
 	// Build the structural plan tree from analyzeReq so the Scan's
 	// BatchSchema + opts.TagProjection carry the hidden criteria tags.
-	p, analyzeErr := Analyze(analyzeReq, measureSchema)
+	p, analyzeErr := Analyze(analyzeReq, measureSchema, mode)
 	if analyzeErr != nil {
 		return nil, "", true, fmt.Errorf("vec dispatch: analyze: %w", analyzeErr)
 	}

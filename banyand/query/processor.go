@@ -272,11 +272,14 @@ func executeMeasurePlan(
 // path — mixing vec for some groups with row for others would produce a
 // merged result the row path cannot validate.
 //
-// Distributed Map-mode GroupBy+Agg requests (emitPartial=true) still
-// fall through: the vec subsystem only implements AggModeAll today
-// (G9f.2 brings AggModeMap with a vec-native binary cluster frame); the
-// row path handles the Map/Reduce split via
-// measure_plan_aggregation.go's emitPartial flag until then.
+// Distributed Map-mode GroupBy+Agg (emitPartial=true) now routes to vec
+// via AggModeMap (G9f.2): vecplan.Dispatch receives emitPartial and the
+// BatchAggregation operator emits typed-column partials. The narrowed
+// :281 guard only falls through for distributed Top-over-Agg today
+// (Top column-merge lands in G9f.4; pushDownAgg is set whenever
+// Agg != nil, see measure_analyzer.go:179, and Top is applied AFTER
+// aggregation at :205-207, so an emitPartial+Top request needs the row
+// path's distributed-Top merge until G9f.4).
 func tryVecDispatch(
 	ctx context.Context,
 	queryCriteria *measurev1.QueryRequest,
@@ -286,7 +289,11 @@ func tryVecDispatch(
 	if len(mctx.ecc) == 0 {
 		return nil, "", false, nil
 	}
-	if emitPartial && (queryCriteria.GetGroupBy() != nil || queryCriteria.GetAgg() != nil) {
+	// G9f.2 narrowing: the only emitPartial case that still falls through to
+	// row is distributed Top-over-Agg (G9f.4 removes this clause and lands
+	// the vec distributed-Top columnar merge). GroupBy/Agg/scalar-reduce
+	// with emitPartial=true now route to vec Map mode.
+	if emitPartial && queryCriteria.GetTop() != nil {
 		return nil, "", false, nil
 	}
 	vecs := make([]vecExecutionContext, len(mctx.ecc))
@@ -299,7 +306,7 @@ func tryVecDispatch(
 	}
 	if len(mctx.ecc) == 1 {
 		return vecplan.Dispatch(ctx, queryCriteria, mctx.metadata[0], vecs[0].GetSchema(),
-			mctx.schemas[0], vecs[0], vecs[0].VectorizedConfig())
+			mctx.schemas[0], vecs[0], vecs[0].VectorizedConfig(), emitPartial)
 	}
 	iters := make([]executor.MIterator, 0, len(mctx.ecc))
 	planStrs := make([]string, 0, len(mctx.ecc))
@@ -310,7 +317,7 @@ func tryVecDispatch(
 	}
 	for groupIdx, vec := range vecs {
 		mit, planStr, handled, dispatchErr := vecplan.Dispatch(ctx, queryCriteria,
-			mctx.metadata[groupIdx], vec.GetSchema(), mctx.schemas[groupIdx], vec, vec.VectorizedConfig())
+			mctx.metadata[groupIdx], vec.GetSchema(), mctx.schemas[groupIdx], vec, vec.VectorizedConfig(), emitPartial)
 		if dispatchErr != nil {
 			closeOpened()
 			return nil, "", false, dispatchErr

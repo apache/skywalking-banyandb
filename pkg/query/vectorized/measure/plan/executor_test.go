@@ -80,6 +80,7 @@ func TestExecute_GroupByAgg_EmitsAggregatedRowsWithNilTimestamp(t *testing.T) {
 	gba, err := NewGroupByAgg(scan,
 		&model.MeasureGroupBy{TagFamily: "default", TagNames: []string{tagSvc}},
 		&model.MeasureAgg{FieldName: fieldValue, Func: modelv1.AggregationFunction_AGGREGATION_FUNCTION_SUM},
+		measure.AggModeAll,
 	)
 	if err != nil {
 		t.Fatalf("NewGroupByAgg: %v", err)
@@ -134,6 +135,7 @@ func TestExecute_ScalarReduce_EmitsSingleRow(t *testing.T) {
 	scan.Source = src
 	gba, err := NewGroupByAgg(scan, nil,
 		&model.MeasureAgg{FieldName: fieldValue, Func: modelv1.AggregationFunction_AGGREGATION_FUNCTION_SUM},
+		measure.AggModeAll,
 	)
 	if err != nil {
 		t.Fatalf("NewGroupByAgg: %v", err)
@@ -189,6 +191,7 @@ func TestExecute_RawGroupBy_EmitsFirstRowPerGroup(t *testing.T) {
 	scan.Source = src
 	gba, err := NewGroupByAgg(scan,
 		&model.MeasureGroupBy{TagFamily: "default", TagNames: []string{tagSvc}}, nil,
+		measure.AggModeAll,
 	)
 	if err != nil {
 		t.Fatalf("NewGroupByAgg: %v", err)

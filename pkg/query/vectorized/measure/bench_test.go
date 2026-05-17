@@ -693,7 +693,7 @@ func runVectorizedPath(spec workloadSpec, results []*model.MeasureResult,
 		}
 		builder.Break(NewBatchTop(batchSchema, fieldIdx, spec.topN, spec.topAsc, cfg.BatchSize))
 	case shapeScalarReduce, shapeRawGroupBy, shapeGroupByAgg, shapeCountFloat:
-		ops, opsErr := BuildOperators(opts, batchSchema, tracker, cfg.BatchSize)
+		ops, opsErr := BuildOperators(opts, batchSchema, tracker, cfg.BatchSize, AggModeAll)
 		if opsErr != nil {
 			panic(opsErr)
 		}

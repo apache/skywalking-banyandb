@@ -54,7 +54,12 @@ const defaultLimit uint32 = 100
 // alone: Agg without GroupBy is a scalar reduce (single output row);
 // GroupBy without Agg is a raw GroupBy (first-seen row per group). Both
 // mirror the row path (measure_plan_aggregation.go / measure_plan_groupby.go).
-func Analyze(req *measurev1.QueryRequest, measureSchema *databasev1.Measure) (VecPlan, error) {
+//
+// mode selects the BatchAggregation strategy when an agg operator is built:
+// AggModeAll for single-node final reduce, AggModeMap for the distributed
+// Map phase (G9f.2) that emits typed-column partials. AggModeReduce is
+// rejected (the reduce plan is built liaison-side in G9f.3).
+func Analyze(req *measurev1.QueryRequest, measureSchema *databasev1.Measure, mode measure.AggMode) (VecPlan, error) {
 	if req == nil {
 		return nil, fmt.Errorf("plan.Analyze: nil request")
 	}
@@ -130,7 +135,7 @@ func Analyze(req *measurev1.QueryRequest, measureSchema *databasev1.Measure) (Ve
 		// One BatchAggregation / BatchGroupBy node covers all three
 		// shapes (group+agg, scalar reduce, raw groupby); BuildOperators
 		// routes on which of gbModel/aggModel is set.
-		gba, gbaErr := NewGroupByAgg(plan, gbModel, aggModel)
+		gba, gbaErr := NewGroupByAgg(plan, gbModel, aggModel, mode)
 		if gbaErr != nil {
 			return nil, gbaErr
 		}

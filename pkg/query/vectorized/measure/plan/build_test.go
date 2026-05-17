@@ -137,6 +137,7 @@ func TestScanGroupByAggLimit_Build_AggregatesByKey(t *testing.T) {
 	gba, err := NewGroupByAgg(scan,
 		&model.MeasureGroupBy{TagFamily: "default", TagNames: []string{tagSvc}},
 		&model.MeasureAgg{FieldName: fieldValue, Func: modelv1.AggregationFunction_AGGREGATION_FUNCTION_SUM},
+		measure.AggModeAll,
 	)
 	if err != nil {
 		t.Fatalf("NewGroupByAgg: %v", err)
@@ -207,6 +208,7 @@ func TestGroupByAgg_Schema_DropsTimestampAddsAggField(t *testing.T) {
 	gba, err := NewGroupByAgg(scan,
 		&model.MeasureGroupBy{TagFamily: "default", TagNames: []string{tagSvc}},
 		&model.MeasureAgg{FieldName: fieldValue, Func: modelv1.AggregationFunction_AGGREGATION_FUNCTION_SUM},
+		measure.AggModeAll,
 	)
 	if err != nil {
 		t.Fatalf("NewGroupByAgg: %v", err)
