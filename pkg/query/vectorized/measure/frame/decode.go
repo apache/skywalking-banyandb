@@ -100,7 +100,17 @@ func decodeColumn(b []byte, nrows uint64) (vectorized.ColumnDef, vectorized.Colu
 	}
 	name := string(b[offset : offset+int(nameLen)])
 	offset += int(nameLen)
-	def := vectorized.ColumnDef{Role: role, Type: ctype, Name: name}
+	tagFamilyLen, tagFamilyLenSize := binary.Uvarint(b[offset:])
+	if tagFamilyLenSize <= 0 {
+		return vectorized.ColumnDef{}, nil, 0, fmt.Errorf("%w: malformed TagFamilyLen varint", ErrTruncated)
+	}
+	offset += tagFamilyLenSize
+	if uint64(len(b)-offset) < tagFamilyLen {
+		return vectorized.ColumnDef{}, nil, 0, fmt.Errorf("%w: TagFamilyLen=%d exceeds remaining %d bytes", ErrTruncated, tagFamilyLen, len(b)-offset)
+	}
+	tagFamily := string(b[offset : offset+int(tagFamilyLen)])
+	offset += int(tagFamilyLen)
+	def := vectorized.ColumnDef{Role: role, Type: ctype, Name: name, TagFamily: tagFamily}
 
 	validity, validityConsumed, validityErr := readValidityBitmap(b[offset:], nrows)
 	if validityErr != nil {

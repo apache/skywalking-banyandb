@@ -54,7 +54,7 @@ func TestEncode_HeaderOnly_EmptyBatch_GoldenBytes(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Encode: %v", err)
 	}
-	want := []byte{0x00, 'V', 'F', 'R', 0x01, 0x00, 0x00}
+	want := []byte{0x00, 'V', 'F', 'R', 0x02, 0x00, 0x00}
 	if !bytes.Equal(got, want) {
 		t.Fatalf("Encode mismatch:\n  got  %#x\n  want %#x", got, want)
 	}
@@ -79,12 +79,13 @@ func TestEncode_SingleInt64Column_GoldenBytes(t *testing.T) {
 	}
 	want := []byte{
 		0x00, 'V', 'F', 'R', // magic
-		0x01,             // version
+		0x02,             // version (v2: TagFamily-on-the-wire)
 		0x03,             // nrows uvarint
 		0x01,             // ncols uvarint
 		0x06,             // role = Field
 		0x01,             // type = Int64
 		0x01, 'n',        // name length + name
+		0x00,             // TagFamilyLen = 0 (RoleField has no family)
 		0x00,             // validity bitmap (1 byte, all valid)
 		10, 0, 0, 0, 0, 0, 0, 0, // LE int64 10
 		20, 0, 0, 0, 0, 0, 0, 0, // LE int64 20
@@ -114,9 +115,10 @@ func TestEncode_NullInMiddle_ValidityBitmap(t *testing.T) {
 		t.Fatalf("Encode: %v", err)
 	}
 	// Locate the validity byte: it lives right after the column header
-	// (1 role + 1 type + 1 namelen + 1 name byte = 4 bytes) and the 7-byte
-	// frame header — so byte 11 is the validity bitmap.
-	const validityOffset = 7 + 4
+	// (1 role + 1 type + 1 namelen + 1 name + 1 tagfamilylen = 5 bytes for
+	// an empty-family RoleField column) and the 7-byte frame header — so
+	// byte 12 is the validity bitmap.
+	const validityOffset = 7 + 5
 	if got[validityOffset] != 0x02 {
 		t.Fatalf("validity byte = %#x, want 0x02 (bit 1 = null)", got[validityOffset])
 	}
@@ -141,12 +143,13 @@ func TestEncode_StringColumn_LengthPrefixedRows(t *testing.T) {
 	}
 	want := []byte{
 		0x00, 'V', 'F', 'R', // magic
-		0x01,                                          // version
+		0x02,                                          // version (v2: TagFamily-on-the-wire)
 		0x02,                                          // nrows
 		0x01,                                          // ncols
 		0x05,                                          // role = Tag
 		0x03,                                          // type = String
 		0x06, 'r', 'e', 'g', 'i', 'o', 'n',            // name "region"
+		0x03, 'g', 'e', 'o',                            // tag family "geo"
 		0x00,                                          // validity (2 rows, all valid)
 		0x07, 'u', 's', '-', 'e', 'a', 's', 't',        // row 0: "us-east"
 		0x07, 'u', 's', '-', 'w', 'e', 's', 't',        // row 1: "us-west"
@@ -179,12 +182,13 @@ func TestEncode_RespectsSelection(t *testing.T) {
 	if got[5] != 0x03 {
 		t.Fatalf("nrows byte = %#x, want 0x03 (3 active rows from Selection)", got[5])
 	}
-	// Validity bitmap is at offset 11; data follows. Read first int64.
-	first := readLEUint64(t, got, 7+4+1)
+	// Validity bitmap is at offset 7+5=12 (header 7 + col header 5 with
+	// empty TagFamilyLen for RoleField); data section follows immediately.
+	first := readLEUint64(t, got, 7+5+1)
 	if first != 10 {
 		t.Fatalf("first emitted row value = %d, want 10 (source row 0)", first)
 	}
-	last := readLEUint64(t, got, 7+4+1+16)
+	last := readLEUint64(t, got, 7+5+1+16)
 	if last != 50 {
 		t.Fatalf("last emitted row value = %d, want 50 (source row 4)", last)
 	}
@@ -312,7 +316,7 @@ func TestValidateHeader_Negatives(t *testing.T) {
 		{name: "short-of-min", body: []byte{0x00, 'V', 'F'}, wantErr: ErrTruncated},
 		{name: "bad-magic-first-byte", body: []byte{0x08, 'V', 'F', 'R', 0x01, 0x00, 0x00}, wantErr: ErrBadMagic},
 		{name: "bad-magic-signature", body: []byte{0x00, 'X', 'Y', 'Z', 0x01, 0x00, 0x00}, wantErr: ErrBadMagic},
-		{name: "bad-version", body: []byte{0x00, 'V', 'F', 'R', 0x02, 0x00, 0x00}, wantErr: ErrBadVersion},
+		{name: "bad-version", body: []byte{0x00, 'V', 'F', 'R', 0x03, 0x00, 0x00}, wantErr: ErrBadVersion},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {

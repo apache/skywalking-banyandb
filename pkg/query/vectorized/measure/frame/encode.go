@@ -72,6 +72,14 @@ func Encode(b *vectorized.RecordBatch) ([]byte, error) {
 		buf = append(buf, byte(role), byte(ctype))
 		buf = binary.AppendUvarint(buf, uint64(len(def.Name)))
 		buf = append(buf, def.Name...)
+		// TagFamily survives the wire: the row path's BuildBatchSchema
+		// groups RoleTag columns by family for serializeBatchToProto's
+		// TagFamilyGroups output. Dropping it on the wire collapsed
+		// every projected tag family into the empty-name family on the
+		// receive side, producing `tagFamilies[].name == ""` and
+		// breaking the integration fixture's expected YAML.
+		buf = binary.AppendUvarint(buf, uint64(len(def.TagFamily)))
+		buf = append(buf, def.TagFamily...)
 
 		col := b.Columns[colIdx]
 		buf = appendValidityBitmap(buf, col, active)

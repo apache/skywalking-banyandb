@@ -47,6 +47,9 @@
 //	                                vectorized.ColumnType.
 //	  2  uvarint   NameLen          length of the UTF-8 column name.
 //	  ?  NameLen   Name             column name bytes.
+//	  ?  uvarint   TagFamilyLen     length of the UTF-8 tag family name (v2).
+//	                                Empty for non-RoleTag columns.
+//	  ?  TFL       TagFamily        tag family name bytes.
 //	  ?  ⌈N/8⌉     Validity bitmap  N = NumRows; bit i set ⇒ row i is NULL
 //	                                (matches the project's validityBitmap: bit=1
 //	                                means null). Empty for N=0.
@@ -85,11 +88,18 @@ import (
 var Magic = [4]byte{data.RawFrameMagicLeadingByte, 'V', 'F', 'R'}
 
 // WireVersion is the on-wire frame format version emitted by Encode. The
-// flag-on decoder (G9f.3) MUST reject frames carrying any other version
-// with a loud typed error: the G9f hard-cutover model forbids dual-wire,
-// so a version skew on the wire is by definition a botched operator
-// rollout, not a coexistence to negotiate.
-const WireVersion uint8 = 1
+// flag-on decoder MUST reject frames carrying any other version with a
+// loud typed error: the G9f hard-cutover model forbids dual-wire, so a
+// version skew on the wire is by definition a botched operator rollout,
+// not a coexistence to negotiate.
+//
+// v1 → v2: each column block now also carries a uvarint(TagFamilyLen) +
+// TagFamily byte run right after the Name. Without it, the row-side
+// serializer's TagFamilyGroups grouping collapsed every projected tag
+// family into the empty-name family on the receive side and produced
+// `tagFamilies[].name == ""` on the wire, diverging from the row path's
+// expected output.
+const WireVersion uint8 = 2
 
 // MagicLen is the length of Magic in bytes.
 const MagicLen = 4

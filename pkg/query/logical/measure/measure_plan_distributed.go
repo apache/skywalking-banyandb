@@ -332,22 +332,30 @@ func (t *distributedPlan) Execute(ctx context.Context) (mi executor.MIterator, e
 		span.Tagf("data_point_count", "%d", dataPointCount)
 	}
 	if len(rawFrames) > 0 {
-		idps, vecErr := t.consumeRawFrames(rawFrames)
-		if vecErr != nil {
-			return nil, multierr.Append(err, vecErr)
-		}
 		if t.pushDownAgg {
+			idps, vecErr := t.consumeRawFramesForAgg(rawFrames)
+			if vecErr != nil {
+				return nil, multierr.Append(err, vecErr)
+			}
 			// Frames already carry per-(shard,group) partials that
 			// ReduceFramesToInternalDataPoints has (shard,group)-deduped
 			// + Combine-d + (optionally) Top-N'd inside vec. No further
-			// dedup is needed here — the dedup matches
-			// deduplicateAggregatedDataPointsWithShard semantics.
+			// dedup is needed here.
 			return &pushedDownAggregatedIterator{dataPoints: idps}, err
 		}
-		// Non-agg vec path: feed the decoded rows into the existing
-		// sortableElements/sortedMIterator stack so cross-node ordering +
-		// version dedup reuses the row-path machinery.
-		see = append(see, newSortableElements(idps, t.sortByTime, t.sortTagSpec))
+		// Non-agg vec path: decode per-source so the sortedMIterator's
+		// cross-iterator merge + (sid, timestamp) dedup machinery sees
+		// the same per-data-node grouping the row path's proto branch
+		// builds. Flattening the rows into a single sortableElements
+		// defeats the dedup because duplicate rows from different sources
+		// land in different sortField groups across the flat sequence.
+		perSource, vecErr := vmeasure.DecodeFramesPerSource(rawFrames)
+		if vecErr != nil {
+			return nil, multierr.Append(err, vecErr)
+		}
+		for _, idps := range perSource {
+			see = append(see, newSortableElements(idps, t.sortByTime, t.sortTagSpec))
+		}
 	}
 	if t.pushDownAgg {
 		deduplicatedDps, dedupErr := deduplicateAggregatedDataPointsWithShard(pushedDownAggDps, t.groupByTagsRefs)
@@ -364,24 +372,18 @@ func (t *distributedPlan) Execute(ctx context.Context) (mi executor.MIterator, e
 	return smi, err
 }
 
-// consumeRawFrames decodes the per-data-node vec raw frame bodies into a
-// flat []*measurev1.InternalDataPoint. For the pushDownAgg path the
-// frames carry per-(shard, group) AggModeMap partials and consumption
-// runs ReduceFramesToInternalDataPoints (frame.Decode → AggModeReduce
-// with (shard, group) replica dedup → optional liaison-side BatchTop →
-// reverse-serialise to proto datapoints). For the non-agg path the
-// frames carry plain scan rows and consumption is a straight
-// decode + concat via DecodeFramesToInternalDataPoints.
+// consumeRawFramesForAgg decodes the per-data-node vec raw frame bodies
+// for the pushDownAgg path into a flat []*measurev1.InternalDataPoint:
+// the frames carry per-(shard, group) AggModeMap partials and the
+// pipeline runs ReduceFramesToInternalDataPoints (frame.Decode →
+// AggModeReduce with (shard, group) replica dedup → optional liaison-
+// side BatchTop → reverse-serialise to proto datapoints).
 //
-// This is the load-bearing receive surface for G9f.5.c. The proto
-// round-trip back to InternalDataPoint exists so the row-side
-// pushedDownAggregatedIterator / sortableElements stack stays unchanged
-// — the full vec-distributed plan that drops the round trip is a
-// follow-up.
-func (t *distributedPlan) consumeRawFrames(frames [][]byte) ([]*measurev1.InternalDataPoint, error) {
-	if !t.pushDownAgg {
-		return vmeasure.DecodeFramesToInternalDataPoints(frames)
-	}
+// The non-agg path uses vmeasure.DecodeFramesPerSource directly so the
+// per-data-node grouping survives the round-trip and the row-side
+// sortedMIterator's cross-iterator merge + (sid, timestamp) dedup keeps
+// working unchanged.
+func (t *distributedPlan) consumeRawFramesForAgg(frames [][]byte) ([]*measurev1.InternalDataPoint, error) {
 	keyTagNames := t.rawFrameKeyTagNames()
 	aggSpecs, aggErr := t.rawFrameAggSpecs()
 	if aggErr != nil {

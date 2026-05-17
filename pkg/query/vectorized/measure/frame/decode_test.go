@@ -29,7 +29,7 @@ import (
 // TestDecode_EmptyFrame_GoldenBytes covers the smallest legal frame: 0 rows,
 // 0 cols. The decoded batch has a nil/empty schema and Len=0.
 func TestDecode_EmptyFrame_GoldenBytes(t *testing.T) {
-	raw := []byte{0x00, 'V', 'F', 'R', 0x01, 0x00, 0x00}
+	raw := []byte{0x00, 'V', 'F', 'R', 0x02, 0x00, 0x00}
 	b, err := Decode(raw)
 	if err != nil {
 		t.Fatalf("Decode: %v", err)
@@ -308,7 +308,7 @@ func TestDecode_BadMagic_FailsLoud(t *testing.T) {
 // The hard-cutover model forbids dual-wire so version skew is a botched
 // rollout, not coexistence.
 func TestDecode_BadVersion_FailsLoud(t *testing.T) {
-	body := []byte{0x00, 'V', 'F', 'R', 0x02, 0x00, 0x00}
+	body := []byte{0x00, 'V', 'F', 'R', 0x03, 0x00, 0x00}
 	_, err := Decode(body)
 	if err == nil {
 		t.Fatal("Decode returned nil error; want ErrBadVersion")
@@ -324,12 +324,13 @@ func TestDecode_TruncatedColumnData_FailsLoud(t *testing.T) {
 	// 3 rows declared but only 2 int64 worth of data.
 	body := []byte{
 		0x00, 'V', 'F', 'R',
-		0x01,                  // version
+		0x02,                  // version (v2: TagFamily-on-the-wire)
 		0x03,                  // nrows = 3
 		0x01,                  // ncols = 1
 		0x06,                  // role = Field
 		0x01,                  // type = Int64
 		0x01, 'n',             // name "n"
+		0x00,                  // TagFamilyLen = 0 (RoleField has no family)
 		0x00,                  // validity (1 byte, all valid)
 		1, 0, 0, 0, 0, 0, 0, 0, // row 0
 		2, 0, 0, 0, 0, 0, 0, 0, // row 1 — row 2 missing
@@ -373,10 +374,10 @@ func TestDecode_TrailingBytes_FailsLoud(t *testing.T) {
 func TestDecode_UnknownRoleByte_FailsLoud(t *testing.T) {
 	body := []byte{
 		0x00, 'V', 'F', 'R',
-		0x01,         // version
+		0x02,         // version (v2)
 		0x00,         // nrows = 0
 		0x01,         // ncols = 1
-		0xFE,         // role byte 254 — unassigned
+		0xFE,         // role byte 254 — unassigned (rejected before TagFamily read)
 		0x01,         // type = Int64
 		0x01, 'n',    // name "n"
 	}

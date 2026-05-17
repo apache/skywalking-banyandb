@@ -374,18 +374,17 @@ func ReduceFramesToInternalDataPoints(
 // DecodeFramesToInternalDataPoints decodes a sequence of vec raw frame
 // bodies and concatenates their active rows into a single
 // []*measurev1.InternalDataPoint, ready to feed the row-side
-// distributedPlan's sortableElements / sortedMIterator merger (non-agg
-// path) or pushedDownAggregatedIterator (agg path's flatten step).
+// pushedDownAggregatedIterator (agg path's flatten step).
+//
+// For the NON-agg distributed merge path use DecodeFramesPerSource
+// instead — concatenation here destroys the per-source ordering the
+// sortedMIterator's cross-iterator merge + (sid, timestamp) dedup
+// depends on, which is what caused replica duplicates to slip past
+// the dedup map under flag-on.
 //
 // nil/empty bodies are skipped — the codec layer's RawFrameCodec carve-out
 // returns nil for an empty distributed result and the decoder is below
-// that carve-out (ReducePartialBatches has the same semantics).
-//
-// Schema introspection: serializeBatchToProto consults the decoded
-// schema's ShardIDIndex to populate InternalDataPoint.ShardId, so the
-// frame's shard_id column survives the round-trip back to proto. The
-// per-frame schemas MUST all agree — under flag-on this is guaranteed
-// because every data node runs the same vec plan.
+// that carve-out.
 func DecodeFramesToInternalDataPoints(frames [][]byte) ([]*measurev1.InternalDataPoint, error) {
 	var out []*measurev1.InternalDataPoint
 	for i, body := range frames {
@@ -397,6 +396,37 @@ func DecodeFramesToInternalDataPoints(frames [][]byte) ([]*measurev1.InternalDat
 			return nil, fmt.Errorf("DecodeFramesToInternalDataPoints: decode frame %d: %w", i, decodeErr)
 		}
 		out = serializeBatchToProto(b, out)
+	}
+	return out, nil
+}
+
+// DecodeFramesPerSource decodes a sequence of vec raw frame bodies and
+// returns one []*measurev1.InternalDataPoint slice per non-empty frame —
+// preserving the per-data-node grouping the row path's sortedMIterator
+// + sort.NewItemIter merger needs to dedup replicas. Each data node's
+// scan output is internally sort-field ordered; sort.NewItemIter merges
+// the per-source streams and loadOneGroup's hashDataPoint map removes
+// (sid, timestamp) duplicates within each equal-sortField group.
+// Concatenating into a single slice (as DecodeFramesToInternalDataPoints
+// does) defeats the dedup because duplicate rows from different sources
+// end up in different sortField groups across the flat sequence.
+//
+// nil / empty frame bodies produce no slice in the output — the codec
+// carve-out for empty bodies is honoured here too.
+func DecodeFramesPerSource(frames [][]byte) ([][]*measurev1.InternalDataPoint, error) {
+	out := make([][]*measurev1.InternalDataPoint, 0, len(frames))
+	for i, body := range frames {
+		if len(body) == 0 {
+			continue
+		}
+		b, decodeErr := frame.Decode(body)
+		if decodeErr != nil {
+			return nil, fmt.Errorf("DecodeFramesPerSource: decode frame %d: %w", i, decodeErr)
+		}
+		idps := serializeBatchToProto(b, nil)
+		if len(idps) > 0 {
+			out = append(out, idps)
+		}
 	}
 	return out, nil
 }
