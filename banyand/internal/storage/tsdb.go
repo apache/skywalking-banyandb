@@ -275,6 +275,10 @@ func (d *database[T, O]) SelectSegments(timeRange timestamp.TimeRange) ([]Segmen
 	return d.segmentController.selectSegments(timeRange)
 }
 
+func (d *database[T, O]) SegmentInterval() IntervalRule {
+	return d.segmentController.getSegmentInterval()
+}
+
 func (d *database[T, O]) UpdateOptions(resourceOpts *commonv1.ResourceOpts) {
 	if d.closed.Load() {
 		return
