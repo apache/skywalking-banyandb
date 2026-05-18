@@ -131,7 +131,7 @@ func (s *BatchSourceFromBatchResult) NextBatch(ctx context.Context) (*vectorized
 
 // copyRowsInto copies n rows starting at srcPos from mb into the
 // RecordBatch out (appending). Metadata roles read mb's parallel slices;
-// tag/field roles delegate to appendColumnRange for each typed column.
+// tag/field roles delegate to AppendColumnRange for each typed column.
 func (s *BatchSourceFromBatchResult) copyRowsInto(out *vectorized.RecordBatch,
 	mb *model.MeasureBatch, srcPos, n int,
 ) error {
@@ -167,7 +167,7 @@ func (s *BatchSourceFromBatchResult) copyRowsInto(out *vectorized.RecordBatch,
 				return fmt.Errorf("BatchSourceFromBatchResult: schema declares %d tag columns but MeasureBatch has %d",
 					tagIdx+1, len(mb.Tags))
 			}
-			if copyErr := appendColumnRange(out.Columns[outColIdx], mb.Tags[tagIdx], srcPos, n); copyErr != nil {
+			if copyErr := AppendColumnRange(out.Columns[outColIdx], mb.Tags[tagIdx], srcPos, n); copyErr != nil {
 				return fmt.Errorf("tag %s.%s: %w", def.TagFamily, def.Name, copyErr)
 			}
 			tagIdx++
@@ -176,7 +176,7 @@ func (s *BatchSourceFromBatchResult) copyRowsInto(out *vectorized.RecordBatch,
 				return fmt.Errorf("BatchSourceFromBatchResult: schema declares %d field columns but MeasureBatch has %d",
 					fieldIdx+1, len(mb.Fields))
 			}
-			if copyErr := appendColumnRange(out.Columns[outColIdx], mb.Fields[fieldIdx], srcPos, n); copyErr != nil {
+			if copyErr := AppendColumnRange(out.Columns[outColIdx], mb.Fields[fieldIdx], srcPos, n); copyErr != nil {
 				return fmt.Errorf("field %s: %w", def.Name, copyErr)
 			}
 			fieldIdx++
@@ -206,7 +206,7 @@ func (s *BatchSourceFromBatchResult) Close() error {
 	return nil
 }
 
-// appendColumnRange copies n rows starting at srcPos from src into dst
+// AppendColumnRange copies n rows starting at srcPos from src into dst
 // (appending). Both columns must share the same TypedColumn[T] type;
 // returns an error on mismatch. Validity bits are propagated cell-by-cell
 // via dst.MarkNullAt when src.IsNull reports null at the corresponding
@@ -221,13 +221,13 @@ func (s *BatchSourceFromBatchResult) Close() error {
 // sharing the slice reference is safe and avoids a redundant double
 // copy that would regress the egress bench gates by ~3 allocs per
 // slice-typed cell.
-func appendColumnRange(dst, src vectorized.Column, srcPos, n int) error {
+func AppendColumnRange(dst, src vectorized.Column, srcPos, n int) error {
 	startLen := dst.Len()
 	switch d := dst.(type) {
 	case *vectorized.TypedColumn[int64]:
 		sCol, ok := src.(*vectorized.TypedColumn[int64])
 		if !ok {
-			return fmt.Errorf("appendColumnRange: dst int64 vs src %s", src.Type())
+			return fmt.Errorf("AppendColumnRange: dst int64 vs src %s", src.Type())
 		}
 		sData := sCol.Data()
 		for k := range n {
@@ -236,7 +236,7 @@ func appendColumnRange(dst, src vectorized.Column, srcPos, n int) error {
 	case *vectorized.TypedColumn[float64]:
 		sCol, ok := src.(*vectorized.TypedColumn[float64])
 		if !ok {
-			return fmt.Errorf("appendColumnRange: dst float64 vs src %s", src.Type())
+			return fmt.Errorf("AppendColumnRange: dst float64 vs src %s", src.Type())
 		}
 		sData := sCol.Data()
 		for k := range n {
@@ -245,7 +245,7 @@ func appendColumnRange(dst, src vectorized.Column, srcPos, n int) error {
 	case *vectorized.TypedColumn[string]:
 		sCol, ok := src.(*vectorized.TypedColumn[string])
 		if !ok {
-			return fmt.Errorf("appendColumnRange: dst string vs src %s", src.Type())
+			return fmt.Errorf("AppendColumnRange: dst string vs src %s", src.Type())
 		}
 		sData := sCol.Data()
 		for k := range n {
@@ -254,7 +254,7 @@ func appendColumnRange(dst, src vectorized.Column, srcPos, n int) error {
 	case *vectorized.TypedColumn[[]byte]:
 		sCol, ok := src.(*vectorized.TypedColumn[[]byte])
 		if !ok {
-			return fmt.Errorf("appendColumnRange: dst bytes vs src %s", src.Type())
+			return fmt.Errorf("AppendColumnRange: dst bytes vs src %s", src.Type())
 		}
 		sData := sCol.Data()
 		for k := range n {
@@ -263,7 +263,7 @@ func appendColumnRange(dst, src vectorized.Column, srcPos, n int) error {
 	case *vectorized.TypedColumn[[]int64]:
 		sCol, ok := src.(*vectorized.TypedColumn[[]int64])
 		if !ok {
-			return fmt.Errorf("appendColumnRange: dst int64[] vs src %s", src.Type())
+			return fmt.Errorf("AppendColumnRange: dst int64[] vs src %s", src.Type())
 		}
 		sData := sCol.Data()
 		for k := range n {
@@ -272,7 +272,7 @@ func appendColumnRange(dst, src vectorized.Column, srcPos, n int) error {
 	case *vectorized.TypedColumn[[]string]:
 		sCol, ok := src.(*vectorized.TypedColumn[[]string])
 		if !ok {
-			return fmt.Errorf("appendColumnRange: dst string[] vs src %s", src.Type())
+			return fmt.Errorf("AppendColumnRange: dst string[] vs src %s", src.Type())
 		}
 		sData := sCol.Data()
 		for k := range n {
@@ -281,7 +281,7 @@ func appendColumnRange(dst, src vectorized.Column, srcPos, n int) error {
 	case *vectorized.TypedColumn[*modelv1.TagValue]:
 		sCol, ok := src.(*vectorized.TypedColumn[*modelv1.TagValue])
 		if !ok {
-			return fmt.Errorf("appendColumnRange: dst tagvalue vs src %s", src.Type())
+			return fmt.Errorf("AppendColumnRange: dst tagvalue vs src %s", src.Type())
 		}
 		sData := sCol.Data()
 		for k := range n {
@@ -290,14 +290,14 @@ func appendColumnRange(dst, src vectorized.Column, srcPos, n int) error {
 	case *vectorized.TypedColumn[*modelv1.FieldValue]:
 		sCol, ok := src.(*vectorized.TypedColumn[*modelv1.FieldValue])
 		if !ok {
-			return fmt.Errorf("appendColumnRange: dst fieldvalue vs src %s", src.Type())
+			return fmt.Errorf("AppendColumnRange: dst fieldvalue vs src %s", src.Type())
 		}
 		sData := sCol.Data()
 		for k := range n {
 			d.Append(sData[srcPos+k])
 		}
 	default:
-		return fmt.Errorf("appendColumnRange: unsupported dst type %s", dst.Type())
+		return fmt.Errorf("AppendColumnRange: unsupported dst type %s", dst.Type())
 	}
 	for k := range n {
 		if src.IsNull(srcPos + k) {

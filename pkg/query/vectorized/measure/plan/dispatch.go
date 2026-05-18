@@ -265,7 +265,7 @@ func Dispatch(
 	// analyzer baked into scan.BatchSchema. Mismatched halves (one side
 	// native, the other passthrough) surface as a type-assert panic in
 	// BatchAggregation.fold or a TypedColumn[T] mismatch in
-	// BatchSourceFromBatchResult.appendColumnRange.
+	// BatchSourceFromBatchResult.AppendColumnRange.
 	opts := model.MeasureQueryOptions{
 		Name:            metadata.GetName(),
 		TimeRange:       scan.Params.TimeRange,
