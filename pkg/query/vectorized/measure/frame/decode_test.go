@@ -23,13 +23,14 @@ import (
 	"math"
 	"testing"
 
+	modelv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/model/v1"
 	"github.com/apache/skywalking-banyandb/pkg/query/vectorized"
 )
 
 // TestDecode_EmptyFrame_GoldenBytes covers the smallest legal frame: 0 rows,
 // 0 cols. The decoded batch has a nil/empty schema and Len=0.
 func TestDecode_EmptyFrame_GoldenBytes(t *testing.T) {
-	raw := []byte{0x00, 'V', 'F', 'R', 0x02, 0x00, 0x00}
+	raw := []byte{0x00, 'V', 'F', 'R', 0x03, 0x00, 0x00}
 	b, err := Decode(raw)
 	if err != nil {
 		t.Fatalf("Decode: %v", err)
@@ -308,7 +309,7 @@ func TestDecode_BadMagic_FailsLoud(t *testing.T) {
 // The hard-cutover model forbids dual-wire so version skew is a botched
 // rollout, not coexistence.
 func TestDecode_BadVersion_FailsLoud(t *testing.T) {
-	body := []byte{0x00, 'V', 'F', 'R', 0x03, 0x00, 0x00}
+	body := []byte{0x00, 'V', 'F', 'R', 0x04, 0x00, 0x00}
 	_, err := Decode(body)
 	if err == nil {
 		t.Fatal("Decode returned nil error; want ErrBadVersion")
@@ -324,7 +325,7 @@ func TestDecode_TruncatedColumnData_FailsLoud(t *testing.T) {
 	// 3 rows declared but only 2 int64 worth of data.
 	body := []byte{
 		0x00, 'V', 'F', 'R',
-		0x02,                  // version (v2: TagFamily-on-the-wire)
+		0x03,                  // version (v3: TagValue/FieldValue proto-bytes)
 		0x03,                  // nrows = 3
 		0x01,                  // ncols = 1
 		0x06,                  // role = Field
@@ -374,7 +375,7 @@ func TestDecode_TrailingBytes_FailsLoud(t *testing.T) {
 func TestDecode_UnknownRoleByte_FailsLoud(t *testing.T) {
 	body := []byte{
 		0x00, 'V', 'F', 'R',
-		0x02,         // version (v2)
+		0x03,         // version (v3)
 		0x00,         // nrows = 0
 		0x01,         // ncols = 1
 		0xFE,         // role byte 254 — unassigned (rejected before TagFamily read)
@@ -387,6 +388,48 @@ func TestDecode_UnknownRoleByte_FailsLoud(t *testing.T) {
 	}
 	if !errors.Is(err, ErrUnsupportedColumnRole) {
 		t.Fatalf("Decode error = %v; want ErrUnsupportedColumnRole", err)
+	}
+}
+
+// TestDecode_RoundTrip_TagValueMixedVariants pins the cross-group
+// type-divergence case: the same tag column carries Str cells from one
+// group and Int cells from another. Frame v3 carries the column as
+// proto-bytes per cell (ColumnTypeTagValue passthrough), preserving the
+// TagValue oneof per cell across the wire.
+func TestDecode_RoundTrip_TagValueMixedVariants(t *testing.T) {
+	schema := vectorized.NewBatchSchema([]vectorized.ColumnDef{
+		{Role: vectorized.RoleTag, TagFamily: "default", Name: "entity_id", Type: vectorized.ColumnTypeTagValue},
+	})
+	in := vectorized.NewRecordBatch(schema, 3)
+	tc := in.Columns[0].(*vectorized.TypedColumn[*modelv1.TagValue])
+	tc.Append(&modelv1.TagValue{Value: &modelv1.TagValue_Str{Str: &modelv1.Str{Value: "entity_1"}}})
+	tc.Append(&modelv1.TagValue{Value: &modelv1.TagValue_Int{Int: &modelv1.Int{Value: 42}}})
+	tc.Append(&modelv1.TagValue{Value: &modelv1.TagValue_Str{Str: &modelv1.Str{Value: "entity_3"}}})
+	in.Len = 3
+
+	raw, err := Encode(in)
+	if err != nil {
+		t.Fatalf("Encode: %v", err)
+	}
+	out, decodeErr := Decode(raw)
+	if decodeErr != nil {
+		t.Fatalf("Decode: %v", decodeErr)
+	}
+	if out.Len != 3 {
+		t.Fatalf("Len = %d, want 3", out.Len)
+	}
+	if out.Schema.Columns[0].Type != vectorized.ColumnTypeTagValue {
+		t.Fatalf("col type = %v, want ColumnTypeTagValue", out.Schema.Columns[0].Type)
+	}
+	outCol := out.Columns[0].(*vectorized.TypedColumn[*modelv1.TagValue])
+	if s := outCol.Data()[0].GetStr().GetValue(); s != "entity_1" {
+		t.Fatalf("row 0 = %q, want entity_1", s)
+	}
+	if v := outCol.Data()[1].GetInt().GetValue(); v != 42 {
+		t.Fatalf("row 1 = %d, want 42", v)
+	}
+	if s := outCol.Data()[2].GetStr().GetValue(); s != "entity_3" {
+		t.Fatalf("row 2 = %q, want entity_3", s)
 	}
 }
 

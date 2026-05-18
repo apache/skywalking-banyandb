@@ -99,7 +99,17 @@ var Magic = [4]byte{data.RawFrameMagicLeadingByte, 'V', 'F', 'R'}
 // family into the empty-name family on the receive side and produced
 // `tagFamilies[].name == ""` on the wire, diverging from the row path's
 // expected output.
-const WireVersion uint8 = 2
+//
+// v2 → v3: adds two column types — frameColTagValueProto (5) and
+// frameColFieldValueProto (6) — that carry proto-marshaled TagValue /
+// FieldValue bytes per cell. These let cross-group queries with
+// type-divergent tag/field declarations (e.g. entity_id is STRING in
+// sw_metric vs INT in sw_updated) cross the wire intact: a typed wire
+// column can't represent mixed oneof variants, but proto-bytes-per-cell
+// can. The decoder reconstructs them as TypedColumn[*modelv1.TagValue]
+// / [*FieldValue] passthrough columns so serializeBatchToProto handles
+// them via the fast pointer-return path.
+const WireVersion uint8 = 3
 
 // MagicLen is the length of Magic in bytes.
 const MagicLen = 4
@@ -154,10 +164,12 @@ type frameColType uint8
 
 // Frame column-type values. Add new types at the end; never reorder.
 const (
-	frameColInt64   frameColType = 1
-	frameColFloat64 frameColType = 2
-	frameColString  frameColType = 3
-	frameColBytes   frameColType = 4
+	frameColInt64           frameColType = 1
+	frameColFloat64         frameColType = 2
+	frameColString          frameColType = 3
+	frameColBytes           frameColType = 4
+	frameColTagValueProto   frameColType = 5
+	frameColFieldValueProto frameColType = 6
 )
 
 // frameColRole is the explicit-value, wire-stable column-role discriminator.

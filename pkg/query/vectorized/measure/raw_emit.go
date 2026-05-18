@@ -156,11 +156,16 @@ func SerializeDataPointsToFrame(idps []*measurev1.InternalDataPoint) ([]byte, er
 	if batchErr != nil {
 		return nil, fmt.Errorf("SerializeDataPointsToFrame: %w", batchErr)
 	}
-	converted, convErr := convertPassthroughForFrame(b)
-	if convErr != nil {
-		return nil, fmt.Errorf("SerializeDataPointsToFrame: %w", convErr)
-	}
-	return frame.Encode(converted)
+	// Deliberately skip convertPassthroughForFrame: this path is the
+	// wrapper-iterator drain (sortedMIterator, hiddenTagsMIterator) where
+	// cross-group rows can carry the same logical tag/field with divergent
+	// oneof variants. Typed wire columns can't represent mixed variants;
+	// frame.Encode now carries ColumnTypeTagValue / ColumnTypeFieldValue
+	// natively as proto-bytes per cell (wire format v3) so the round trip
+	// is intact. The vec-native DrainPipelineToFrame path keeps the
+	// typed-conversion fast path for AggModeMap output where columns are
+	// uniform.
+	return frame.Encode(b)
 }
 
 // buildPassthroughBatchFromDataPoints walks idps to derive a unified
@@ -339,11 +344,13 @@ func hasPassthroughColumn(s *vectorized.BatchSchema) bool {
 }
 
 // convertTagValueColumn picks a wire-typed column for a TagValue
-// passthrough by inspecting the first non-null cell's oneof variant, then
-// converts every cell (null cells retain their validity bit; non-null
-// cells write the underlying typed value into the new column). Returns
-// ErrUnsupportedColumnType when the variant cannot be carried by the
-// current frame format (IntArray / StrArray today).
+// passthrough by inspecting the first non-null cell's oneof variant,
+// then converts every cell (null cells retain their validity bit;
+// non-null cells write the underlying typed value into the new column).
+// When the inferred wire type is ColumnTypeTagValue (all-null column,
+// array variant, or — as detected mid-conversion — a mixed-variant
+// cell), the function returns the original passthrough column so
+// frame.Encode emits it as proto-bytes-per-cell (wire format v3).
 func convertTagValueColumn(def vectorized.ColumnDef, col vectorized.Column, n int) (vectorized.ColumnDef, vectorized.Column, error) {
 	tc, ok := col.(*vectorized.TypedColumn[*modelv1.TagValue])
 	if !ok {
@@ -352,6 +359,9 @@ func convertTagValueColumn(def vectorized.ColumnDef, col vectorized.Column, n in
 	wireType, err := inferTagValueWireType(tc, n)
 	if err != nil {
 		return vectorized.ColumnDef{}, nil, err
+	}
+	if wireType == vectorized.ColumnTypeTagValue {
+		return def, col, nil
 	}
 	newCol := vectorized.NewColumnForType(wireType, n)
 	for i := range n {
@@ -365,40 +375,33 @@ func convertTagValueColumn(def vectorized.ColumnDef, col vectorized.Column, n in
 			continue
 		}
 		// Each cell's variant must match the column's inferred wireType.
-		// Mixed-variant cells (e.g. a cross-group sortedMIterator that
-		// merges sw_metric where entity_id is STRING with sw_updated
-		// where entity_id is INT) cannot share a single typed wire
-		// column. Detect the mismatch and surface a clean error rather
-		// than crashing on the type assertion that follows — the proper
-		// fix is a frame extension that carries proto-bytes per cell
-		// for type-divergent tag/field columns; for now the operator
-		// sees a clear "unsupported" message.
+		// Mixed-variant cells (e.g. a cross-group merged iterator where
+		// the same tag has divergent variants across groups) fall back
+		// to passthrough so frame.Encode emits the column as
+		// ColumnTypeTagValue (proto-bytes per cell, wire format v3).
 		switch payload := v.GetValue().(type) {
 		case *modelv1.TagValue_Str:
 			if wireType != vectorized.ColumnTypeString {
-				return vectorized.ColumnDef{}, nil, fmt.Errorf(
-					"TagValue column %q has mixed variants (wire %v vs cell Str); "+
-						"cross-group queries with type-divergent tags are not yet supported on the cluster wire", def.Name, wireType)
+				return def, col, nil
 			}
 			newCol.(*vectorized.TypedColumn[string]).Append(payload.Str.GetValue())
 		case *modelv1.TagValue_Int:
 			if wireType != vectorized.ColumnTypeInt64 {
-				return vectorized.ColumnDef{}, nil, fmt.Errorf(
-					"TagValue column %q has mixed variants (wire %v vs cell Int); "+
-						"cross-group queries with type-divergent tags are not yet supported on the cluster wire", def.Name, wireType)
+				return def, col, nil
 			}
 			newCol.(*vectorized.TypedColumn[int64]).Append(payload.Int.GetValue())
 		case *modelv1.TagValue_BinaryData:
 			if wireType != vectorized.ColumnTypeBytes {
-				return vectorized.ColumnDef{}, nil, fmt.Errorf(
-					"TagValue column %q has mixed variants (wire %v vs cell BinaryData); "+
-						"cross-group queries with type-divergent tags are not yet supported on the cluster wire", def.Name, wireType)
+				return def, col, nil
 			}
 			newCol.(*vectorized.TypedColumn[[]byte]).Append(append([]byte(nil), payload.BinaryData...))
 		case *modelv1.TagValue_Null:
 			newCol.(interface{ AppendNull() }).AppendNull()
 		default:
-			return vectorized.ColumnDef{}, nil, fmt.Errorf("TagValue variant %T not yet supported on the cluster wire", payload)
+			// Array variants (IntArray / StrArray) or anything else not yet
+			// representable as a typed wire column. Fall back to passthrough
+			// (proto-bytes wire) which preserves the variant intact.
+			return def, col, nil
 		}
 	}
 	return vectorized.ColumnDef{
@@ -410,10 +413,12 @@ func convertTagValueColumn(def vectorized.ColumnDef, col vectorized.Column, n in
 }
 
 // inferTagValueWireType walks col looking for the first non-null cell
-// whose payload identifies the column's wire type. Returns
-// ColumnTypeBytes for all-null columns — a benign default since the
-// validity bitmap (not the data section) drives null reconstruction at
-// the receive side. IntArray / StrArray variants are rejected here.
+// whose payload identifies a scalar wire type (Str / Int / BinaryData).
+// Returns ColumnTypeTagValue for all-null columns and for array variants
+// (IntArray / StrArray) — these go through the proto-bytes-per-cell wire
+// (frame v3 ColumnTypeTagValue) which preserves the oneof intact. The
+// receive side reconstructs them as TagValue passthrough so
+// serializeBatchToProto handles them via the pointer-return fast path.
 func inferTagValueWireType(tc *vectorized.TypedColumn[*modelv1.TagValue], n int) (vectorized.ColumnType, error) {
 	for i := range n {
 		if tc.IsNull(i) {
@@ -431,24 +436,29 @@ func inferTagValueWireType(tc *vectorized.TypedColumn[*modelv1.TagValue], n int)
 		case *modelv1.TagValue_BinaryData:
 			return vectorized.ColumnTypeBytes, nil
 		case *modelv1.TagValue_IntArray, *modelv1.TagValue_StrArray:
-			return 0, fmt.Errorf("TagValue array variants not yet supported on the cluster wire (array column types are a frame-format follow-up)")
+			return vectorized.ColumnTypeTagValue, nil
 		case *modelv1.TagValue_Null:
 			continue
 		}
 	}
-	return vectorized.ColumnTypeBytes, nil
+	return vectorized.ColumnTypeTagValue, nil
 }
 
 // convertFieldValueColumn is the FieldValue counterpart of
-// convertTagValueColumn. FieldValue's oneof maps cleanly to the four
-// supported frame types (Int → int64, Float → float64, Str → string,
-// BinaryData → bytes) so there is no unsupported-variant branch.
+// convertTagValueColumn. Same uniform-typed-wire vs mixed-passthrough
+// dispatch: when the column has a uniform Int / Float / Str / BinaryData
+// variant the function returns a typed wire column; otherwise (all-null
+// or mid-conversion variant mismatch) it returns the original passthrough
+// so frame v3 carries it as proto-bytes per cell.
 func convertFieldValueColumn(def vectorized.ColumnDef, col vectorized.Column, n int) (vectorized.ColumnDef, vectorized.Column, error) {
 	fc, ok := col.(*vectorized.TypedColumn[*modelv1.FieldValue])
 	if !ok {
 		return vectorized.ColumnDef{}, nil, fmt.Errorf("declared FieldValue passthrough but column is %T", col)
 	}
 	wireType := inferFieldValueWireType(fc, n)
+	if wireType == vectorized.ColumnTypeFieldValue {
+		return def, col, nil
+	}
 	newCol := vectorized.NewColumnForType(wireType, n)
 	for i := range n {
 		if fc.IsNull(i) {
@@ -460,43 +470,35 @@ func convertFieldValueColumn(def vectorized.ColumnDef, col vectorized.Column, n 
 			newCol.(interface{ AppendNull() }).AppendNull()
 			continue
 		}
-		// Same mixed-variant guard as convertTagValueColumn: surface
-		// type-divergent cells with a clean error rather than panic on
-		// a wrong-type cast. The frame-format follow-up that carries
-		// proto-bytes per cell is what lifts this restriction.
+		// Same dispatch as convertTagValueColumn: uniform-variant cells
+		// take the typed wire optimization; mixed-variant cells return
+		// the original passthrough column so frame.Encode emits it as
+		// ColumnTypeFieldValue (proto-bytes per cell, wire format v3).
 		switch payload := v.GetValue().(type) {
 		case *modelv1.FieldValue_Int:
 			if wireType != vectorized.ColumnTypeInt64 {
-				return vectorized.ColumnDef{}, nil, fmt.Errorf(
-					"FieldValue column %q has mixed variants (wire %v vs cell Int); "+
-						"cross-group queries with type-divergent fields are not yet supported on the cluster wire", def.Name, wireType)
+				return def, col, nil
 			}
 			newCol.(*vectorized.TypedColumn[int64]).Append(payload.Int.GetValue())
 		case *modelv1.FieldValue_Float:
 			if wireType != vectorized.ColumnTypeFloat64 {
-				return vectorized.ColumnDef{}, nil, fmt.Errorf(
-					"FieldValue column %q has mixed variants (wire %v vs cell Float); "+
-						"cross-group queries with type-divergent fields are not yet supported on the cluster wire", def.Name, wireType)
+				return def, col, nil
 			}
 			newCol.(*vectorized.TypedColumn[float64]).Append(payload.Float.GetValue())
 		case *modelv1.FieldValue_Str:
 			if wireType != vectorized.ColumnTypeString {
-				return vectorized.ColumnDef{}, nil, fmt.Errorf(
-					"FieldValue column %q has mixed variants (wire %v vs cell Str); "+
-						"cross-group queries with type-divergent fields are not yet supported on the cluster wire", def.Name, wireType)
+				return def, col, nil
 			}
 			newCol.(*vectorized.TypedColumn[string]).Append(payload.Str.GetValue())
 		case *modelv1.FieldValue_BinaryData:
 			if wireType != vectorized.ColumnTypeBytes {
-				return vectorized.ColumnDef{}, nil, fmt.Errorf(
-					"FieldValue column %q has mixed variants (wire %v vs cell BinaryData); "+
-						"cross-group queries with type-divergent fields are not yet supported on the cluster wire", def.Name, wireType)
+				return def, col, nil
 			}
 			newCol.(*vectorized.TypedColumn[[]byte]).Append(append([]byte(nil), payload.BinaryData...))
 		case *modelv1.FieldValue_Null:
 			newCol.(interface{ AppendNull() }).AppendNull()
 		default:
-			return vectorized.ColumnDef{}, nil, fmt.Errorf("FieldValue variant %T not yet supported on the cluster wire", payload)
+			return def, col, nil
 		}
 	}
 	return vectorized.ColumnDef{
@@ -508,8 +510,9 @@ func convertFieldValueColumn(def vectorized.ColumnDef, col vectorized.Column, n 
 }
 
 // inferFieldValueWireType is the FieldValue counterpart of
-// inferTagValueWireType. FieldValue's oneof has no array variant so the
-// helper is total over the value space.
+// inferTagValueWireType. Returns ColumnTypeFieldValue for an all-null
+// column so the caller leaves the passthrough column as-is — frame v3
+// carries it as proto-bytes per cell.
 func inferFieldValueWireType(fc *vectorized.TypedColumn[*modelv1.FieldValue], n int) vectorized.ColumnType {
 	for i := range n {
 		if fc.IsNull(i) {
@@ -532,7 +535,7 @@ func inferFieldValueWireType(fc *vectorized.TypedColumn[*modelv1.FieldValue], n 
 			continue
 		}
 	}
-	return vectorized.ColumnTypeBytes
+	return vectorized.ColumnTypeFieldValue
 }
 
 // appendActive copies every active row of src into dst's columns,

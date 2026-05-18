@@ -22,6 +22,9 @@ import (
 	"fmt"
 	"math"
 
+	"google.golang.org/protobuf/proto"
+
+	modelv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/model/v1"
 	"github.com/apache/skywalking-banyandb/pkg/query/vectorized"
 )
 
@@ -222,6 +225,61 @@ func readColumnData(b []byte, t vectorized.ColumnType, nrows int, nulls []bool) 
 			offset += int(vlen)
 		}
 		return col, offset, nil
+	case vectorized.ColumnTypeTagValue:
+		// proto-bytes per cell: each cell is uvarint(len) + proto.Marshal(TagValue).
+		// Reconstructed as TypedColumn[*modelv1.TagValue] passthrough so
+		// serializeBatchToProto's pointer-return fast path picks it up.
+		col := vectorized.NewTagValueColumn(nrows)
+		offset := 0
+		for i := range nrows {
+			vlen, vlenSize := binary.Uvarint(b[offset:])
+			if vlenSize <= 0 {
+				return nil, 0, fmt.Errorf("%w: malformed TagValue length varint at row %d", ErrTruncated, i)
+			}
+			offset += vlenSize
+			if uint64(len(b)-offset) < vlen {
+				return nil, 0, fmt.Errorf("%w: TagValue row %d needs %d bytes, have %d", ErrTruncated, i, vlen, len(b)-offset)
+			}
+			if i < len(nulls) && nulls[i] {
+				col.AppendNull()
+			} else {
+				tv := &modelv1.TagValue{}
+				if vlen > 0 {
+					if unmarshalErr := proto.Unmarshal(b[offset:offset+int(vlen)], tv); unmarshalErr != nil {
+						return nil, 0, fmt.Errorf("vectorized.measure.frame: TagValue cell unmarshal row %d: %w", i, unmarshalErr)
+					}
+				}
+				col.Append(tv)
+			}
+			offset += int(vlen)
+		}
+		return col, offset, nil
+	case vectorized.ColumnTypeFieldValue:
+		col := vectorized.NewFieldValueColumn(nrows)
+		offset := 0
+		for i := range nrows {
+			vlen, vlenSize := binary.Uvarint(b[offset:])
+			if vlenSize <= 0 {
+				return nil, 0, fmt.Errorf("%w: malformed FieldValue length varint at row %d", ErrTruncated, i)
+			}
+			offset += vlenSize
+			if uint64(len(b)-offset) < vlen {
+				return nil, 0, fmt.Errorf("%w: FieldValue row %d needs %d bytes, have %d", ErrTruncated, i, vlen, len(b)-offset)
+			}
+			if i < len(nulls) && nulls[i] {
+				col.AppendNull()
+			} else {
+				fv := &modelv1.FieldValue{}
+				if vlen > 0 {
+					if unmarshalErr := proto.Unmarshal(b[offset:offset+int(vlen)], fv); unmarshalErr != nil {
+						return nil, 0, fmt.Errorf("vectorized.measure.frame: FieldValue cell unmarshal row %d: %w", i, unmarshalErr)
+					}
+				}
+				col.Append(fv)
+			}
+			offset += int(vlen)
+		}
+		return col, offset, nil
 	}
 	return nil, 0, fmt.Errorf("%w: %s", ErrUnsupportedColumnType, t.String())
 }
@@ -260,6 +318,10 @@ func unmapColumnType(t frameColType) (vectorized.ColumnType, error) {
 		return vectorized.ColumnTypeString, nil
 	case frameColBytes:
 		return vectorized.ColumnTypeBytes, nil
+	case frameColTagValueProto:
+		return vectorized.ColumnTypeTagValue, nil
+	case frameColFieldValueProto:
+		return vectorized.ColumnTypeFieldValue, nil
 	}
 	return 0, fmt.Errorf("%w: %d", ErrUnsupportedColumnType, t)
 }

@@ -54,7 +54,7 @@ func TestEncode_HeaderOnly_EmptyBatch_GoldenBytes(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Encode: %v", err)
 	}
-	want := []byte{0x00, 'V', 'F', 'R', 0x02, 0x00, 0x00}
+	want := []byte{0x00, 'V', 'F', 'R', 0x03, 0x00, 0x00}
 	if !bytes.Equal(got, want) {
 		t.Fatalf("Encode mismatch:\n  got  %#x\n  want %#x", got, want)
 	}
@@ -79,7 +79,7 @@ func TestEncode_SingleInt64Column_GoldenBytes(t *testing.T) {
 	}
 	want := []byte{
 		0x00, 'V', 'F', 'R', // magic
-		0x02,             // version (v2: TagFamily-on-the-wire)
+		0x03,             // version (v3: TagValue/FieldValue proto-bytes)
 		0x03,             // nrows uvarint
 		0x01,             // ncols uvarint
 		0x06,             // role = Field
@@ -143,7 +143,7 @@ func TestEncode_StringColumn_LengthPrefixedRows(t *testing.T) {
 	}
 	want := []byte{
 		0x00, 'V', 'F', 'R', // magic
-		0x02,                                          // version (v2: TagFamily-on-the-wire)
+		0x03,                                          // version (v3: TagValue/FieldValue proto-bytes)
 		0x02,                                          // nrows
 		0x01,                                          // ncols
 		0x05,                                          // role = Tag
@@ -316,7 +316,7 @@ func TestValidateHeader_Negatives(t *testing.T) {
 		{name: "short-of-min", body: []byte{0x00, 'V', 'F'}, wantErr: ErrTruncated},
 		{name: "bad-magic-first-byte", body: []byte{0x08, 'V', 'F', 'R', 0x01, 0x00, 0x00}, wantErr: ErrBadMagic},
 		{name: "bad-magic-signature", body: []byte{0x00, 'X', 'Y', 'Z', 0x01, 0x00, 0x00}, wantErr: ErrBadMagic},
-		{name: "bad-version", body: []byte{0x00, 'V', 'F', 'R', 0x03, 0x00, 0x00}, wantErr: ErrBadVersion},
+		{name: "bad-version", body: []byte{0x00, 'V', 'F', 'R', 0x04, 0x00, 0x00}, wantErr: ErrBadVersion},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -335,8 +335,10 @@ func TestValidateHeader_Negatives(t *testing.T) {
 // encoder a column whose type has no frame mapping yields a loud typed
 // error at encode time — never silently-wrong wire bytes downstream.
 func TestEncode_UnsupportedColumnType_FailsLoud(t *testing.T) {
+	// Array column types (Int64Array / StrArray) remain unsupported by
+	// frame v3; only scalar-or-passthrough types are encodable today.
 	schema := vectorized.NewBatchSchema([]vectorized.ColumnDef{
-		{Role: vectorized.RoleTag, Name: "tag", Type: vectorized.ColumnTypeTagValue},
+		{Role: vectorized.RoleTag, Name: "tag", Type: vectorized.ColumnTypeInt64Array},
 	})
 	b := vectorized.NewRecordBatch(schema, 0)
 	_, err := Encode(b)

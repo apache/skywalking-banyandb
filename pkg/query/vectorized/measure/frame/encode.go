@@ -23,6 +23,9 @@ import (
 	"fmt"
 	"math"
 
+	"google.golang.org/protobuf/proto"
+
+	modelv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/model/v1"
 	"github.com/apache/skywalking-banyandb/pkg/query/vectorized"
 )
 
@@ -199,6 +202,53 @@ func appendColumnData(buf []byte, col vectorized.Column, t vectorized.ColumnType
 			buf = append(buf, v...)
 		}
 		return buf, nil
+	case vectorized.ColumnTypeTagValue:
+		// proto-bytes per cell. Carries the TagValue oneof intact so
+		// cross-group queries where the same logical tag has divergent
+		// variants across groups (e.g. entity_id is STRING in sw_metric
+		// vs INT in sw_updated) survive the wire — a typed wire column
+		// couldn't represent a column whose cells span multiple oneof
+		// variants. Null cells write len=0 + 0 bytes; the validity
+		// bitmap disambiguates null from "TagValue with default-zero
+		// proto bytes".
+		tc, ok := col.(*vectorized.TypedColumn[*modelv1.TagValue])
+		if !ok {
+			return nil, fmt.Errorf("%w: declared TagValue passthrough but column is %T", ErrUnsupportedColumnType, col)
+		}
+		data := tc.Data()
+		for _, srcRow := range active {
+			var raw []byte
+			if !col.IsNull(srcRow) && srcRow >= 0 && srcRow < len(data) && data[srcRow] != nil {
+				marshaled, marshalErr := proto.Marshal(data[srcRow])
+				if marshalErr != nil {
+					return nil, fmt.Errorf("vectorized.measure.frame: TagValue cell marshal: %w", marshalErr)
+				}
+				raw = marshaled
+			}
+			buf = binary.AppendUvarint(buf, uint64(len(raw)))
+			buf = append(buf, raw...)
+		}
+		return buf, nil
+	case vectorized.ColumnTypeFieldValue:
+		// Same proto-bytes shape as ColumnTypeTagValue, FieldValue oneof.
+		tc, ok := col.(*vectorized.TypedColumn[*modelv1.FieldValue])
+		if !ok {
+			return nil, fmt.Errorf("%w: declared FieldValue passthrough but column is %T", ErrUnsupportedColumnType, col)
+		}
+		data := tc.Data()
+		for _, srcRow := range active {
+			var raw []byte
+			if !col.IsNull(srcRow) && srcRow >= 0 && srcRow < len(data) && data[srcRow] != nil {
+				marshaled, marshalErr := proto.Marshal(data[srcRow])
+				if marshalErr != nil {
+					return nil, fmt.Errorf("vectorized.measure.frame: FieldValue cell marshal: %w", marshalErr)
+				}
+				raw = marshaled
+			}
+			buf = binary.AppendUvarint(buf, uint64(len(raw)))
+			buf = append(buf, raw...)
+		}
+		return buf, nil
 	}
 	return nil, fmt.Errorf("%w: %s", ErrUnsupportedColumnType, t.String())
 }
@@ -216,6 +266,10 @@ func mapColumnType(t vectorized.ColumnType) (frameColType, error) {
 		return frameColString, nil
 	case vectorized.ColumnTypeBytes:
 		return frameColBytes, nil
+	case vectorized.ColumnTypeTagValue:
+		return frameColTagValueProto, nil
+	case vectorized.ColumnTypeFieldValue:
+		return frameColFieldValueProto, nil
 	}
 	return 0, fmt.Errorf("%w: %s", ErrUnsupportedColumnType, t.String())
 }
