@@ -395,13 +395,9 @@ func TestSegmentCreateTS_ConsistencyAcrossPaths(t *testing.T) {
 func openTestTSDBWithInterval(t *testing.T, tmpPath, groupName string, ir storage.IntervalRule) storage.TSDB[*tsTable, option] {
 	t.Helper()
 	opts := storage.TSDBOpts[*tsTable, option]{
-		ShardNum: 1,
-		Location: filepath.Join(tmpPath, "tab"),
-		TSTableCreator: func(fileSystem fs.FileSystem, root string, p common.Position,
-			l *logger.Logger, tr timestamp.TimeRange, opt option, m any,
-		) (*tsTable, error) {
-			return newTSTable(fileSystem, root, p, l, tr, opt, m)
-		},
+		ShardNum:        1,
+		Location:        filepath.Join(tmpPath, "tab"),
+		TSTableCreator:  newTSTable,
 		SegmentInterval: ir,
 		TTL:             storage.IntervalRule{Unit: ir.Unit, Num: 60},
 		Option:          option{protector: protector.Nop{}, mergePolicy: newDefaultMergePolicyForTesting()},

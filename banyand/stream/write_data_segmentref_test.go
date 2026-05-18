@@ -116,9 +116,10 @@ func TestSyncReceiver_SegmentRefOwnership(t *testing.T) {
 // actually DecRefs. See trace package for rationale.
 // In each StoresSegment test, segTime must use time.Local because the
 // callback path runs time.Unix(0,ns) -> Standard -> CreateSegmentIfNotExist
-// in Local tz. A UTC warmup segment would land on a different calendar
-// day under +0800 (etc), causing the callback to try to create a new
-// segment whose path collides with the warmup's path.
+// in Local tz. If the warmup segment were created in UTC, the two calls
+// could represent the same instant but format to different segment-suffix
+// strings, causing a directory-name mismatch instead of reusing the same
+// segment.
 func TestSyncChunkCallback_CreatePartHandler_StoresSegment(t *testing.T) {
 	tmpPath, cleanup := test.Space(require.New(t))
 	defer cleanup()
@@ -360,13 +361,9 @@ func TestSegmentCreateTS_ConsistencyAcrossPaths(t *testing.T) {
 func openTestTSDBWithInterval(t *testing.T, tmpPath, groupName string, ir storage.IntervalRule) storage.TSDB[*tsTable, option] {
 	t.Helper()
 	opts := storage.TSDBOpts[*tsTable, option]{
-		ShardNum: 1,
-		Location: filepath.Join(tmpPath, "tab"),
-		TSTableCreator: func(fileSystem fs.FileSystem, root string, p common.Position,
-			l *logger.Logger, tr timestamp.TimeRange, opt option, m any,
-		) (*tsTable, error) {
-			return newTSTable(fileSystem, root, p, l, tr, opt, m)
-		},
+		ShardNum:        1,
+		Location:        filepath.Join(tmpPath, "tab"),
+		TSTableCreator:  newTSTable,
 		SegmentInterval: ir,
 		TTL:             storage.IntervalRule{Unit: ir.Unit, Num: 60},
 		Option:          option{protector: protector.Nop{}, mergePolicy: newDefaultMergePolicyForTesting()},
