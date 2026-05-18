@@ -24,7 +24,9 @@ import (
 	"time"
 
 	"github.com/apache/skywalking-banyandb/api/common"
+	"github.com/apache/skywalking-banyandb/api/data"
 	commonv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/common/v1"
+	databasev1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/database/v1"
 	measurev1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/measure/v1"
 	"github.com/apache/skywalking-banyandb/banyand/measure"
 	"github.com/apache/skywalking-banyandb/pkg/bus"
@@ -33,6 +35,8 @@ import (
 	"github.com/apache/skywalking-banyandb/pkg/query/executor"
 	"github.com/apache/skywalking-banyandb/pkg/query/logical"
 	logical_measure "github.com/apache/skywalking-banyandb/pkg/query/logical/measure"
+	vmeasure "github.com/apache/skywalking-banyandb/pkg/query/vectorized/measure"
+	vecplan "github.com/apache/skywalking-banyandb/pkg/query/vectorized/measure/plan"
 )
 
 type measureQueryProcessor struct {
@@ -40,6 +44,19 @@ type measureQueryProcessor struct {
 	broadcaster    bus.Broadcaster
 	*queryService
 	*bus.UnImplementedHealthyListener
+}
+
+type measureVectorizedExecutionContext interface {
+	VectorizedConfig() vmeasure.VectorizedConfig
+}
+
+type measureDistributedExecutable interface {
+	executor.MeasureExecutable
+	fmt.Stringer
+}
+
+func useVecDistributedMeasurePlan(rawWireMode bool, req *measurev1.QueryRequest) bool {
+	return rawWireMode && req != nil && (req.GetAgg() != nil || vecplan.SupportsDistributedRows(req))
 }
 
 func (p *measureQueryProcessor) Rev(ctx context.Context, message bus.Message) (resp bus.Message) {
@@ -56,27 +73,72 @@ func (p *measureQueryProcessor) Rev(ctx context.Context, message bus.Message) (r
 	}
 
 	var schemas []logical.Schema
-	for _, g := range queryCriteria.Groups {
+	var measureSchemas []*databasev1.Measure
+	var vecCfg vmeasure.VectorizedConfig
+	for groupIdx, g := range queryCriteria.Groups {
 		meta := &commonv1.Metadata{
 			Name:  queryCriteria.Name,
 			Group: g,
 		}
-		ec, err := p.measureService.Measure(meta)
-		if err != nil {
-			resp = bus.NewMessage(bus.MessageID(now), common.NewError("fail to get execution context for measure %s: %v", meta.GetName(), err))
+		ec, measureErr := p.measureService.Measure(meta)
+		if measureErr != nil {
+			resp = bus.NewMessage(bus.MessageID(now), common.NewError("fail to get execution context for measure %s: %v", meta.GetName(), measureErr))
 			return
 		}
-		// nolint:staticcheck // SA1019 — row-path BuildSchema is the only production path until G8 ships.
-		s, err := logical_measure.BuildSchema(ec.GetSchema(), ec.GetIndexRules())
-		if err != nil {
-			resp = bus.NewMessage(bus.MessageID(now), common.NewError("fail to build schema for measure %s: %v", meta.GetName(), err))
+		// nolint:staticcheck // SA1019 - row schema is still used for the flag-off rollback path.
+		s, schemaErr := logical_measure.BuildSchema(ec.GetSchema(), ec.GetIndexRules())
+		if schemaErr != nil {
+			resp = bus.NewMessage(bus.MessageID(now), common.NewError("fail to build schema for measure %s: %v", meta.GetName(), schemaErr))
 			return
 		}
 		schemas = append(schemas, s)
+		measureSchemas = append(measureSchemas, ec.GetSchema())
+		if vecEC, ok := ec.(measureVectorizedExecutionContext); ok {
+			if groupIdx == 0 {
+				vecCfg = vecEC.VectorizedConfig()
+			}
+		} else if data.MeasureWireModeRaw() {
+			resp = bus.NewMessage(bus.MessageID(now), common.NewError("measure %s is not vectorized-capable under raw wire mode", meta.GetName()))
+			return
+		}
 	}
 
-	// nolint:staticcheck // SA1019 — row-path DistributedAnalyze is the only production path until G8 ships.
-	plan, err := logical_measure.DistributedAnalyze(queryCriteria, schemas)
+	var plan measureDistributedExecutable
+	var err error
+	// Routing contract:
+	//   - Raw wire mode + Agg -> vec distributed plan. executeAgg consumes
+	//     per-(shard,group) partials emitted by AggModeMap nodes and is the
+	//     only code path that finalises distributed aggregation correctly
+	//     under flag-on.
+	//   - Raw wire mode + supported non-agg -> vec distributed plan.
+	//     executeRows performs a native columnar cross-source merge/dedup
+	//     before liaison-side paging.
+	//   - Otherwise (unsupported raw non-agg, or flag-off) -> row-path
+	//     DistributedAnalyze. It still accepts raw vec frames via
+	//     vmeasure.DecodeFramesPerSource and runs the sortedMIterator
+	//     fallback for shapes not yet covered by native row merge.
+	useVecDistributed := useVecDistributedMeasurePlan(data.MeasureWireModeRaw(), queryCriteria)
+	if useVecDistributed {
+		if len(measureSchemas) == 0 {
+			resp = bus.NewMessage(bus.MessageID(now), common.NewError("vec distributed plan requires at least one measure schema"))
+			return
+		}
+		plan, err = vecplan.AnalyzeDistributed(queryCriteria, measureSchemas[0], vecCfg)
+	} else {
+		// nolint:staticcheck // SA1019 - row distributed plan also serves
+		// non-agg distributed scans under raw wire mode (see routing
+		// contract above).
+		rowPlan, analyzeErr := logical_measure.DistributedAnalyze(queryCriteria, schemas)
+		if analyzeErr != nil {
+			err = analyzeErr
+		} else {
+			var ok bool
+			plan, ok = rowPlan.(measureDistributedExecutable)
+			if !ok {
+				err = fmt.Errorf("distributed measure plan %T is not executable", rowPlan)
+			}
+		}
+	}
 	if err != nil {
 		resp = bus.NewMessage(bus.MessageID(now), common.NewError("fail to analyze the query request for measure %s: %v", queryCriteria.Name, err))
 		return
