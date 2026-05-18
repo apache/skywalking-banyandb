@@ -46,30 +46,14 @@ import (
 // newMeasureBatchForSchema) before the first copyAllToBatch / copyToBatch
 // call so this function only appends rows.
 
-// newMeasureBatchForSchema allocates an empty *MeasureBatch with all
-// per-column TypedColumn instances pre-created at the requested capacity.
+// newMeasureBatchForSchema returns a *MeasureBatch wired to schema with
+// per-column TypedColumn instances pre-acquired at the requested capacity.
 // Tag/Field column types are taken from the schema's ColumnDef entries —
 // callers can mix passthrough and native types within a single batch.
+// The batch and its columns come from the model.MeasureBatch pool; the
+// consumer must call MeasureBatch.Release once finished with it.
 func newMeasureBatchForSchema(schema *vectorized.BatchSchema, capacity int) *model.MeasureBatch {
-	b := &model.MeasureBatch{Schema: schema}
-	if capacity > 0 {
-		b.Timestamps = make([]int64, 0, capacity)
-		b.Versions = make([]int64, 0, capacity)
-		b.ShardIDs = make([]common.ShardID, 0, capacity)
-		b.SeriesIDs = make([]common.SeriesID, 0, capacity)
-	}
-	for _, def := range schema.Columns {
-		switch def.Role {
-		case vectorized.RoleTag:
-			b.Tags = append(b.Tags, vectorized.NewColumnForType(def.Type, capacity))
-		case vectorized.RoleField:
-			b.Fields = append(b.Fields, vectorized.NewColumnForType(def.Type, capacity))
-		case vectorized.RoleTimestamp, vectorized.RoleVersion,
-			vectorized.RoleSeriesID, vectorized.RoleShardID:
-			// Metadata roles use the parallel slices on the batch.
-		}
-	}
-	return b
+	return model.AcquireMeasureBatch(schema, capacity)
 }
 
 // copyAllToBatch is the multi-row counterpart of copyAllTo. It appends every

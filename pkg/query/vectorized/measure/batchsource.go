@@ -89,6 +89,13 @@ func (s *BatchSourceFromBatchResult) NextBatch(ctx context.Context) (*vectorized
 	out := s.pool.Get()
 	for out.Len < s.batchSize {
 		if s.pending == nil || s.pendPos >= s.pending.RowCount() {
+			// Return the exhausted batch to the per-type column pool
+			// before pulling the next one; otherwise the storage layer's
+			// allocations leak to GC every batch boundary.
+			if s.pending != nil {
+				s.pending.Release()
+				s.pending = nil
+			}
 			mb, pullErr := s.br.PullBatch(ctx)
 			if pullErr != nil {
 				s.err = pullErr
@@ -99,7 +106,7 @@ func (s *BatchSourceFromBatchResult) NextBatch(ctx context.Context) (*vectorized
 				break
 			}
 			if mb.RowCount() == 0 {
-				s.pending = nil
+				mb.Release()
 				s.pendPos = 0
 				continue
 			}
@@ -181,12 +188,17 @@ func (s *BatchSourceFromBatchResult) copyRowsInto(out *vectorized.RecordBatch,
 	return nil
 }
 
-// Close releases the underlying MeasureBatchResult exactly once. Idempotent.
+// Close releases any in-flight pending MeasureBatch back to the column pool
+// and then the underlying MeasureBatchResult exactly once. Idempotent.
 func (s *BatchSourceFromBatchResult) Close() error {
 	if s.closed {
 		return nil
 	}
 	s.closed = true
+	if s.pending != nil {
+		s.pending.Release()
+		s.pending = nil
+	}
 	if s.br != nil {
 		s.br.Release()
 		s.br = nil
