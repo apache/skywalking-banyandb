@@ -116,7 +116,8 @@ func (s *syncCallback) CreatePartHandler(ctx *queue.ChunkedSyncPartContext) (que
 		s.l.Error().Err(err).Str("group", ctx.Group).Msg("failed to load TSDB for group")
 		return nil, err
 	}
-	segmentTime := time.Unix(0, ctx.MinTimestamp)
+	// Align to the segment grid so part-chunk sync and sidx land in the same segment.
+	segmentTime := tsdb.SegmentInterval().Standard(time.Unix(0, ctx.MinTimestamp))
 	segment, err := tsdb.CreateSegmentIfNotExist(segmentTime)
 	if err != nil {
 		s.l.Error().Err(err).Str("group", ctx.Group).Time("segmentTime", segmentTime).Msg("failed to create segment")

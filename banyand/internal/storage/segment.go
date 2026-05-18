@@ -402,6 +402,12 @@ func (sc *segmentController[T, O]) getOptions() *TSDBOpts[T, O] {
 	return sc.opts
 }
 
+func (sc *segmentController[T, O]) getSegmentInterval() IntervalRule {
+	sc.optsMutex.RLock()
+	defer sc.optsMutex.RUnlock()
+	return sc.opts.SegmentInterval
+}
+
 func (sc *segmentController[T, O]) updateOptions(resourceOpts *commonv1.ResourceOpts) {
 	sc.optsMutex.Lock()
 	defer sc.optsMutex.Unlock()
