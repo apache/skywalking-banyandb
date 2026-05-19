@@ -22,6 +22,8 @@ import (
 	"strings"
 	"testing"
 
+	commonv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/common/v1"
+	databasev1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/database/v1"
 	measurev1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/measure/v1"
 	modelv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/model/v1"
 	vmeasure "github.com/apache/skywalking-banyandb/pkg/query/vectorized/measure"
@@ -43,7 +45,7 @@ func TestAnalyzeDistributed_RejectsUnsupportedNonAgg(t *testing.T) {
 		Limit:  7,
 		Offset: 3,
 	}
-	_, analyzeErr := AnalyzeDistributed(req, testMeasureSchema(), vmeasure.VectorizedConfig{Enabled: true, BatchSize: 4, QueryMemoryMiB: 1})
+	_, analyzeErr := AnalyzeDistributed(req, testMeasureSchema(), nil, vmeasure.VectorizedConfig{Enabled: true, BatchSize: 4, QueryMemoryMiB: 1})
 	if analyzeErr == nil {
 		t.Fatal("AnalyzeDistributed should reject unsupported non-agg scans")
 	}
@@ -61,7 +63,7 @@ func TestAnalyzeDistributed_AllowsSupportedNonAggRows(t *testing.T) {
 		Limit:           7,
 		Offset:          3,
 	}
-	p, analyzeErr := AnalyzeDistributed(req, testMeasureSchema(), vmeasure.VectorizedConfig{Enabled: true, BatchSize: 4, QueryMemoryMiB: 1})
+	p, analyzeErr := AnalyzeDistributed(req, testMeasureSchema(), nil, vmeasure.VectorizedConfig{Enabled: true, BatchSize: 4, QueryMemoryMiB: 1})
 	if analyzeErr != nil {
 		t.Fatalf("AnalyzeDistributed: %v", analyzeErr)
 	}
@@ -112,7 +114,7 @@ func TestSupportsDistributedRows(t *testing.T) {
 				req.OrderBy = &modelv1.QueryOrder{IndexRuleName: "idx"}
 				return req
 			}(),
-			want: false,
+			want: true,
 		},
 		{
 			name: "time order",
@@ -148,7 +150,7 @@ func TestAnalyzeDistributed_NodeTemplatePushesAggPartials(t *testing.T) {
 			FieldValueSort: modelv1.Sort_SORT_ASC,
 		},
 	}
-	p, analyzeErr := AnalyzeDistributed(req, testMeasureSchema(), vmeasure.VectorizedConfig{Enabled: true, BatchSize: 4, QueryMemoryMiB: 1})
+	p, analyzeErr := AnalyzeDistributed(req, testMeasureSchema(), nil, vmeasure.VectorizedConfig{Enabled: true, BatchSize: 4, QueryMemoryMiB: 1})
 	if analyzeErr != nil {
 		t.Fatalf("AnalyzeDistributed: %v", analyzeErr)
 	}
@@ -213,7 +215,7 @@ func TestAnalyzeDistributed_TopAggUnboundsNodeLimit_Matrix(t *testing.T) {
 				Limit:  tc.limit,
 				Offset: tc.offset,
 			}
-			p, analyzeErr := AnalyzeDistributed(req, testMeasureSchema(), vmeasure.VectorizedConfig{Enabled: true, BatchSize: 4, QueryMemoryMiB: 1})
+			p, analyzeErr := AnalyzeDistributed(req, testMeasureSchema(), nil, vmeasure.VectorizedConfig{Enabled: true, BatchSize: 4, QueryMemoryMiB: 1})
 			if analyzeErr != nil {
 				t.Fatalf("AnalyzeDistributed: %v", analyzeErr)
 			}
@@ -228,5 +230,127 @@ func TestAnalyzeDistributed_TopAggUnboundsNodeLimit_Matrix(t *testing.T) {
 				t.Fatalf("node template must not carry Top; global Top is the liaison's job")
 			}
 		})
+	}
+}
+
+// testIndexRuleOnTag returns an index rule named ruleName that indexes a
+// single tag identified by tagName, ready to thread through
+// AnalyzeDistributed as the indexRules parameter.
+func testIndexRuleOnTag(ruleName, tagName string) *databasev1.IndexRule {
+	return &databasev1.IndexRule{
+		Metadata: &commonv1.Metadata{Name: ruleName, Group: "default"},
+		Tags:     []string{tagName},
+	}
+}
+
+// TestAnalyzeDistributed_OrderByByIndexRule_AcceptedNatively is the Phase 2
+// gate proving the analyzer no longer rejects an OrderBy.IndexRuleName,
+// resolves it to a (family, tag) on the supplied indexRules slice, and the
+// resulting plan executes via the native row path (SupportsDistributedRows
+// must return true for the same request shape).
+func TestAnalyzeDistributed_OrderByByIndexRule_AcceptedNatively(t *testing.T) {
+	req := &measurev1.QueryRequest{
+		Name:            "demo",
+		Groups:          []string{"default"},
+		TagProjection:   projTagProj(), // already projects "svc"
+		FieldProjection: &measurev1.QueryRequest_FieldProjection{Names: []string{fieldValue}},
+		OrderBy:         &modelv1.QueryOrder{IndexRuleName: "svc_idx", Sort: modelv1.Sort_SORT_ASC},
+		Limit:           5,
+	}
+	indexRules := []*databasev1.IndexRule{testIndexRuleOnTag("svc_idx", tagSvc)}
+	if !SupportsDistributedRows(req) {
+		t.Fatal("Phase 2: SupportsDistributedRows must accept OrderBy by index rule")
+	}
+	p, analyzeErr := AnalyzeDistributed(req, testMeasureSchema(), indexRules, vmeasure.VectorizedConfig{Enabled: true, BatchSize: 4, QueryMemoryMiB: 1})
+	if analyzeErr != nil {
+		t.Fatalf("AnalyzeDistributed: %v", analyzeErr)
+	}
+	if p.orderByTag == nil {
+		t.Fatal("DistributedPlan.orderByTag must be populated when an index rule resolves")
+	}
+	if p.orderByTag.family != "default" || p.orderByTag.tag != tagSvc {
+		t.Fatalf("orderByTag got %+v want default/%s", *p.orderByTag, tagSvc)
+	}
+	if !p.hiddenOrderBy.IsEmpty() {
+		t.Fatalf("hiddenOrderBy must be empty when the OrderBy tag is already in the visible projection; got %+v", p.hiddenOrderBy)
+	}
+	// The node template must keep the OrderBy projected (it was visible to
+	// begin with) and must not carry GroupBy/Top/Agg.
+	if p.nodeTemplate.GetTop() != nil || p.nodeTemplate.GetGroupBy() != nil || p.nodeTemplate.GetAgg() != nil {
+		t.Fatalf("OrderBy-by-index-rule node template must stay a plain scan, got %+v", p.nodeTemplate)
+	}
+}
+
+// TestAnalyzeDistributed_OrderByByIndexRule_HiddenProjectionAdded covers
+// the augmentation path: when the OrderBy tag is NOT in the request's
+// TagProjection, AnalyzeDistributed must append it to the nodeTemplate's
+// projection (so data nodes materialize the column on the wire) and record
+// it on hiddenOrderBy so the egress strip removes it before the response.
+func TestAnalyzeDistributed_OrderByByIndexRule_HiddenProjectionAdded(t *testing.T) {
+	// Projection visible to the user: only "region" — the OrderBy tag
+	// "svc" is NOT projected, so the analyzer must hide-project it.
+	visibleProjection := &modelv1.TagProjection{TagFamilies: []*modelv1.TagProjection_TagFamily{
+		{Name: "default", Tags: []string{"region"}},
+	}}
+	req := &measurev1.QueryRequest{
+		Name:            "demo",
+		Groups:          []string{"default"},
+		TagProjection:   visibleProjection,
+		FieldProjection: &measurev1.QueryRequest_FieldProjection{Names: []string{fieldValue}},
+		OrderBy:         &modelv1.QueryOrder{IndexRuleName: "svc_idx", Sort: modelv1.Sort_SORT_DESC},
+		Limit:           5,
+	}
+	indexRules := []*databasev1.IndexRule{testIndexRuleOnTag("svc_idx", tagSvc)}
+	p, analyzeErr := AnalyzeDistributed(req, testMeasureSchema(), indexRules, vmeasure.VectorizedConfig{Enabled: true, BatchSize: 4, QueryMemoryMiB: 1})
+	if analyzeErr != nil {
+		t.Fatalf("AnalyzeDistributed: %v", analyzeErr)
+	}
+	if p.orderByTag == nil || p.orderByTag.family != "default" || p.orderByTag.tag != tagSvc {
+		t.Fatalf("orderByTag got %+v want default/%s", p.orderByTag, tagSvc)
+	}
+	if p.hiddenOrderBy.IsEmpty() {
+		t.Fatal("hiddenOrderBy must be populated when OrderBy is not in visible projection")
+	}
+	if !p.hiddenOrderBy.Contains(tagSvc) {
+		t.Fatalf("hiddenOrderBy must contain %q; got %+v", tagSvc, p.hiddenOrderBy)
+	}
+	// The user's request TagProjection must be untouched (the analyzer
+	// clones before mutating).
+	if reqFams := req.GetTagProjection().GetTagFamilies(); len(reqFams) != 1 ||
+		len(reqFams[0].GetTags()) != 1 || reqFams[0].GetTags()[0] != "region" {
+		t.Fatalf("user request must be untouched, got %+v", reqFams)
+	}
+	// The node template's TagProjection must include the OrderBy tag.
+	nodeFams := p.nodeTemplate.GetTagProjection().GetTagFamilies()
+	if len(nodeFams) != 1 || nodeFams[0].GetName() != "default" {
+		t.Fatalf("node template projection wrong shape, got %+v", nodeFams)
+	}
+	saw := map[string]bool{}
+	for _, tag := range nodeFams[0].GetTags() {
+		saw[tag] = true
+	}
+	if !saw["region"] || !saw[tagSvc] {
+		t.Fatalf("node template must project both 'region' and %q, got %+v", tagSvc, nodeFams[0].GetTags())
+	}
+}
+
+// TestAnalyzeDistributed_OrderByByIndexRule_UnknownRuleErrors proves the
+// resolver's parity error: an unknown indexRuleName surfaces the row-path's
+// canonical "index rule %s not found" text byte-for-byte. Test fixtures
+// asserting WantErr across paths rely on this byte-equivalence.
+func TestAnalyzeDistributed_OrderByByIndexRule_UnknownRuleErrors(t *testing.T) {
+	req := &measurev1.QueryRequest{
+		Name:            "demo",
+		Groups:          []string{"default"},
+		TagProjection:   projTagProj(),
+		FieldProjection: &measurev1.QueryRequest_FieldProjection{Names: []string{fieldValue}},
+		OrderBy:         &modelv1.QueryOrder{IndexRuleName: "nope"},
+	}
+	_, analyzeErr := AnalyzeDistributed(req, testMeasureSchema(), nil, vmeasure.VectorizedConfig{Enabled: true, BatchSize: 4, QueryMemoryMiB: 1})
+	if analyzeErr == nil {
+		t.Fatal("AnalyzeDistributed must reject an unknown index rule")
+	}
+	if got := analyzeErr.Error(); got != "index rule nope not found" {
+		t.Fatalf("error text got %q want %q (row-path parity)", got, "index rule nope not found")
 	}
 }

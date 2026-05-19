@@ -21,6 +21,7 @@ import (
 	"context"
 	"fmt"
 	"math"
+	"slices"
 	"strings"
 	"time"
 
@@ -34,6 +35,7 @@ import (
 	modelv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/model/v1"
 	"github.com/apache/skywalking-banyandb/pkg/bus"
 	"github.com/apache/skywalking-banyandb/pkg/query/executor"
+	"github.com/apache/skywalking-banyandb/pkg/query/logical"
 	"github.com/apache/skywalking-banyandb/pkg/query/vectorized"
 	vmeasure "github.com/apache/skywalking-banyandb/pkg/query/vectorized/measure"
 )
@@ -41,7 +43,11 @@ import (
 const distributedQueryTimeout = 15 * time.Second
 
 // SupportsDistributedRows reports whether a non-aggregation request can use
-// the native vectorized distributed row merge.
+// the native vectorized distributed row merge. Phase 2 of vec-distributed-
+// full-native lifts the OrderBy.IndexRuleName != "" gate: data nodes emit
+// per-shard pre-sorted by the OrderBy field and the liaison's k-way heap
+// merger now compares on the OrderBy column instead of timestamp when an
+// index rule is present.
 func SupportsDistributedRows(req *measurev1.QueryRequest) bool {
 	if req == nil || req.GetAgg() != nil || req.GetGroupBy() != nil || req.GetTop() != nil {
 		return false
@@ -49,8 +55,7 @@ func SupportsDistributedRows(req *measurev1.QueryRequest) bool {
 	if len(req.GetGroups()) > 1 {
 		return false
 	}
-	orderBy := req.GetOrderBy()
-	return orderBy == nil || orderBy.GetIndexRuleName() == ""
+	return true
 }
 
 // DistributedPlan is the vectorized liaison-side distributed measure plan.
@@ -58,14 +63,22 @@ func SupportsDistributedRows(req *measurev1.QueryRequest) bool {
 // decodes them into vectorized batches, and runs the liaison operators without
 // routing through the row-compatible logical distributedPlan.
 type DistributedPlan struct {
-	queryTemplate *measurev1.QueryRequest
-	nodeTemplate  *measurev1.QueryRequest
-	measureSchema *databasev1.Measure
-	cfg           vmeasure.VectorizedConfig
+	queryTemplate  *measurev1.QueryRequest
+	nodeTemplate   *measurev1.QueryRequest
+	measureSchema  *databasev1.Measure
+	orderByTag     *resolvedOrderByTag
+	hiddenOrderBy  logical.HiddenTagSet
+	cfg            vmeasure.VectorizedConfig
 }
 
-// AnalyzeDistributed builds the vectorized distributed liaison plan.
-func AnalyzeDistributed(req *measurev1.QueryRequest, measureSchema *databasev1.Measure, cfg vmeasure.VectorizedConfig) (*DistributedPlan, error) {
+// AnalyzeDistributed builds the vectorized distributed liaison plan. The
+// indexRules parameter is the executor-side index rule slice
+// (ec.GetIndexRules()), threaded through so an OrderBy.IndexRuleName can be
+// resolved to a (family, tag) pair without binding the vec plan layer to
+// the logical schema. When indexRules is nil and req.OrderBy.IndexRuleName
+// is non-empty, the resolver surfaces an "index rule X not found" error
+// byte-equivalent to the row path.
+func AnalyzeDistributed(req *measurev1.QueryRequest, measureSchema *databasev1.Measure, indexRules []*databasev1.IndexRule, cfg vmeasure.VectorizedConfig) (*DistributedPlan, error) {
 	if req == nil {
 		return nil, fmt.Errorf("vec distributed analyze: nil request")
 	}
@@ -101,7 +114,73 @@ func AnalyzeDistributed(req *measurev1.QueryRequest, measureSchema *databasev1.M
 	if hadTop && nodeTemplate.GetAgg() != nil {
 		nodeTemplate.Limit = math.MaxUint32
 	}
-	return &DistributedPlan{queryTemplate: queryTemplate, nodeTemplate: nodeTemplate, measureSchema: measureSchema, cfg: cfg}, nil
+	plan := &DistributedPlan{queryTemplate: queryTemplate, nodeTemplate: nodeTemplate, measureSchema: measureSchema, cfg: cfg}
+	// Resolve OrderBy by index rule for the non-agg row path. Agg requests
+	// reduce on the liaison anyway and so do not need the cross-source
+	// sort-column wiring; their OrderBy on the row stream is ignored.
+	if req.GetAgg() == nil {
+		orderBy := req.GetOrderBy()
+		if orderBy != nil && orderBy.GetIndexRuleName() != "" {
+			resolved, resolveErr := resolveOrderByTag(measureSchema, indexRules, orderBy.GetIndexRuleName())
+			if resolveErr != nil {
+				return nil, resolveErr
+			}
+			plan.orderByTag = &resolved
+			// Hidden-projection augmentation: when the OrderBy tag is not
+			// in the request's TagProjection, append it on the nodeTemplate
+			// so data nodes materialize the column on the wire. The
+			// liaison strips it at egress so the visible response matches
+			// what a query without the OrderBy projection would emit.
+			if !orderByProjectionVisible(req.GetTagProjection(), resolved) {
+				nodeTemplate.TagProjection = appendOrderByToProjection(nodeTemplate.GetTagProjection(), resolved)
+				plan.hiddenOrderBy = logical.NewHiddenTagSet()
+				plan.hiddenOrderBy.Add(resolved.tag)
+			}
+		}
+	}
+	return plan, nil
+}
+
+// orderByProjectionVisible reports whether the OrderBy tag is already
+// projected on the user-facing TagProjection. When false, the analyzer
+// augments the node template so data nodes materialize the column.
+func orderByProjectionVisible(projection *modelv1.TagProjection, want resolvedOrderByTag) bool {
+	if projection == nil {
+		return false
+	}
+	for _, family := range projection.GetTagFamilies() {
+		if family.GetName() == want.family && slices.Contains(family.GetTags(), want.tag) {
+			return true
+		}
+	}
+	return false
+}
+
+// appendOrderByToProjection clones the supplied projection and appends the
+// OrderBy tag to its family (or appends a fresh family if needed). Mirrors
+// augmentRequestWithHiddenTags's family-append shape: visible families keep
+// their order and the OrderBy column lands at the end so the BatchSchema
+// keeps the user-facing projection columns up front.
+func appendOrderByToProjection(projection *modelv1.TagProjection, want resolvedOrderByTag) *modelv1.TagProjection {
+	families := make([]*modelv1.TagProjection_TagFamily, 0)
+	familyFound := false
+	if projection != nil {
+		for _, family := range projection.GetTagFamilies() {
+			if family.GetName() == want.family {
+				familyFound = true
+				tags := append([]string(nil), family.GetTags()...)
+				tags = append(tags, want.tag)
+				families = append(families, &modelv1.TagProjection_TagFamily{Name: family.GetName(), Tags: tags})
+				continue
+			}
+			tags := append([]string(nil), family.GetTags()...)
+			families = append(families, &modelv1.TagProjection_TagFamily{Name: family.GetName(), Tags: tags})
+		}
+	}
+	if !familyFound {
+		families = append(families, &modelv1.TagProjection_TagFamily{Name: want.family, Tags: []string{want.tag}})
+	}
+	return &modelv1.TagProjection{TagFamilies: families}
 }
 
 // Execute broadcasts the internal query and executes the liaison-side vectorized plan.
@@ -192,12 +271,18 @@ func (p *DistributedPlan) executeRows(ctx context.Context, frames [][]byte, req 
 		return nil, fmt.Errorf("vec distributed plan: unsupported non-aggregation scan requires row distributed merge")
 	}
 	tracker := vectorized.NewMemoryTracker(int64(p.cfg.QueryMemoryMiB) * 1024 * 1024)
-	batches, mergeErr := mergeDistributedRows(frames, distributedRowsSpec{
-		Desc:      req.GetOrderBy().GetSort() == modelv1.Sort_SORT_DESC,
-		IndexMode: p.measureSchema.GetIndexMode(),
-		BatchSize: p.cfg.BatchSize,
-		Tracker:   tracker,
-	})
+	spec := distributedRowsSpec{
+		Desc:          req.GetOrderBy().GetSort() == modelv1.Sort_SORT_DESC,
+		IndexMode:     p.measureSchema.GetIndexMode(),
+		BatchSize:     p.cfg.BatchSize,
+		Tracker:       tracker,
+		OrderByColIdx: -1,
+	}
+	if p.orderByTag != nil {
+		spec.OrderByFamily = p.orderByTag.family
+		spec.OrderByTagName = p.orderByTag.tag
+	}
+	batches, mergeErr := mergeDistributedRows(frames, spec)
 	if mergeErr != nil {
 		return nil, fmt.Errorf("vec distributed plan: merge rows: %w", mergeErr)
 	}
@@ -235,7 +320,14 @@ func (p *DistributedPlan) iteratorFromBatches(ctx context.Context, batches []*ve
 		return nil, fmt.Errorf("vec distributed plan: init output pipeline: %w", initErr)
 	}
 	pool := vectorized.NewBatchPool(schema, p.cfg.BatchSize)
-	return vmeasure.NewIteratorFromPipeline(ctx, pipeline, schema, pool), nil
+	var iter executor.MIterator = vmeasure.NewIteratorFromPipeline(ctx, pipeline, schema, pool)
+	if !p.hiddenOrderBy.IsEmpty() {
+		// Strip the OrderBy tag projected as a hidden column for native
+		// cross-source merge sorting. The visible response matches what a
+		// query without the OrderBy projection would emit byte-for-byte.
+		iter = &hiddenTagsMIterator{inner: iter, hiddenTags: p.hiddenOrderBy}
+	}
+	return iter, nil
 }
 
 func distributedGroupByTagNames(groupBy *measurev1.QueryRequest_GroupBy) []string {

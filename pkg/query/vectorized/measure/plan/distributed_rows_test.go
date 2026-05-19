@@ -238,6 +238,180 @@ func distributedRowsTestSchema() *vectorized.BatchSchema {
 	})
 }
 
+// distributedRowsOrderBySchema extends the base schema with a string tag
+// column (for OrderBy_String tests) and an int64 tag column (for OrderBy_
+// Int64 tests). The merger looks up the OrderBy column by tag name on the
+// merged batch schema, so the tag columns must be declared at indices the
+// tests can address via TagIndex.
+func distributedRowsOrderBySchema() *vectorized.BatchSchema {
+	return vectorized.NewBatchSchema([]vectorized.ColumnDef{
+		{Role: vectorized.RoleTimestamp, Name: "_timestamp", Type: vectorized.ColumnTypeInt64},
+		{Role: vectorized.RoleVersion, Name: "_version", Type: vectorized.ColumnTypeInt64},
+		{Role: vectorized.RoleSeriesID, Name: "_sid", Type: vectorized.ColumnTypeInt64},
+		{Role: vectorized.RoleShardID, Name: "shard_id", Type: vectorized.ColumnTypeInt64},
+		{Role: vectorized.RoleField, Name: fieldValue, Type: vectorized.ColumnTypeInt64},
+		{Role: vectorized.RoleTag, TagFamily: "default", Name: "svc", Type: vectorized.ColumnTypeString},
+		{Role: vectorized.RoleTag, TagFamily: "default", Name: "rank", Type: vectorized.ColumnTypeInt64},
+	})
+}
+
+type orderByRow struct {
+	svc   string
+	ts    int64
+	ver   int64
+	sid   int64
+	value int64
+	rank  int64
+}
+
+func encodeOrderByRows(t *testing.T, schema *vectorized.BatchSchema, rows ...orderByRow) []byte {
+	t.Helper()
+	batch := vectorized.NewRecordBatch(schema, len(rows))
+	for _, row := range rows {
+		batch.Columns[0].(*vectorized.TypedColumn[int64]).Append(row.ts)
+		batch.Columns[1].(*vectorized.TypedColumn[int64]).Append(row.ver)
+		batch.Columns[2].(*vectorized.TypedColumn[int64]).Append(row.sid)
+		batch.Columns[3].(*vectorized.TypedColumn[int64]).Append(1)
+		batch.Columns[4].(*vectorized.TypedColumn[int64]).Append(row.value)
+		batch.Columns[5].(*vectorized.TypedColumn[string]).Append(row.svc)
+		batch.Columns[6].(*vectorized.TypedColumn[int64]).Append(row.rank)
+		batch.Len++
+	}
+	body, encodeErr := frame.Encode(batch)
+	if encodeErr != nil {
+		t.Fatalf("frame.Encode: %v", encodeErr)
+	}
+	return body
+}
+
+func collectOrderByRows(batches []*vectorized.RecordBatch) []orderByRow {
+	var rows []orderByRow
+	for _, batch := range batches {
+		tsCol := batch.Columns[0].(*vectorized.TypedColumn[int64])
+		verCol := batch.Columns[1].(*vectorized.TypedColumn[int64])
+		sidCol := batch.Columns[2].(*vectorized.TypedColumn[int64])
+		fieldCol := batch.Columns[4].(*vectorized.TypedColumn[int64])
+		svcCol := batch.Columns[5].(*vectorized.TypedColumn[string])
+		rankCol := batch.Columns[6].(*vectorized.TypedColumn[int64])
+		for rowIdx := 0; rowIdx < batch.Len; rowIdx++ {
+			rows = append(rows, orderByRow{
+				ts:    tsCol.Data()[rowIdx],
+				ver:   verCol.Data()[rowIdx],
+				sid:   sidCol.Data()[rowIdx],
+				value: fieldCol.Data()[rowIdx],
+				svc:   svcCol.Data()[rowIdx],
+				rank:  rankCol.Data()[rowIdx],
+			})
+		}
+	}
+	return rows
+}
+
+// TestMergeDistributedRows_OrderByString_AscDescAcrossSources proves the
+// k-way heap merger compares on the configured OrderBy string column
+// instead of the timestamp when OrderByFamily/OrderByTagName are set:
+//   - ascending: the surviving rows are emitted in ascending tag value;
+//   - descending: same set, reversed.
+// Two sources contribute rows that arrive interleaved in input order to
+// exercise the cross-source ordering invariant.
+func TestMergeDistributedRows_OrderByString_AscDescAcrossSources(t *testing.T) {
+	schema := distributedRowsOrderBySchema()
+	frameA := encodeOrderByRows(t, schema,
+		orderByRow{ts: 10, ver: 1, sid: 1, value: 100, svc: "delta", rank: 0},
+		orderByRow{ts: 20, ver: 1, sid: 2, value: 200, svc: "alpha", rank: 0},
+	)
+	frameB := encodeOrderByRows(t, schema,
+		orderByRow{ts: 11, ver: 1, sid: 3, value: 300, svc: "charlie", rank: 0},
+		orderByRow{ts: 21, ver: 1, sid: 4, value: 400, svc: "bravo", rank: 0},
+	)
+
+	specAsc := distributedRowsSpec{
+		BatchSize:      4,
+		OrderByColIdx:  -1,
+		OrderByFamily:  "default",
+		OrderByTagName: "svc",
+	}
+	batchesAsc, mergeAscErr := mergeDistributedRows([][]byte{frameA, frameB}, specAsc)
+	if mergeAscErr != nil {
+		t.Fatalf("mergeDistributedRows asc: %v", mergeAscErr)
+	}
+	gotAsc := collectOrderByRows(batchesAsc)
+	wantAsc := []string{"alpha", "bravo", "charlie", "delta"}
+	if len(gotAsc) != len(wantAsc) {
+		t.Fatalf("asc row count got %d want %d", len(gotAsc), len(wantAsc))
+	}
+	for i, want := range wantAsc {
+		if gotAsc[i].svc != want {
+			t.Fatalf("asc row %d svc got %q want %q (all rows: %+v)", i, gotAsc[i].svc, want, gotAsc)
+		}
+	}
+
+	specDesc := distributedRowsSpec{
+		Desc:           true,
+		BatchSize:      4,
+		OrderByColIdx:  -1,
+		OrderByFamily:  "default",
+		OrderByTagName: "svc",
+	}
+	batchesDesc, mergeDescErr := mergeDistributedRows([][]byte{frameA, frameB}, specDesc)
+	if mergeDescErr != nil {
+		t.Fatalf("mergeDistributedRows desc: %v", mergeDescErr)
+	}
+	gotDesc := collectOrderByRows(batchesDesc)
+	wantDesc := []string{"delta", "charlie", "bravo", "alpha"}
+	if len(gotDesc) != len(wantDesc) {
+		t.Fatalf("desc row count got %d want %d", len(gotDesc), len(wantDesc))
+	}
+	for i, want := range wantDesc {
+		if gotDesc[i].svc != want {
+			t.Fatalf("desc row %d svc got %q want %q (all rows: %+v)", i, gotDesc[i].svc, want, gotDesc)
+		}
+	}
+}
+
+// TestMergeDistributedRows_OrderByInt64_PreservesPhase15Invariants asserts
+// that switching the sort column to an OrderBy tag does NOT regress
+// Phase 1.5's (sid, ts) dedup invariant: when two sources emit a row with
+// the same (sid, ts) inside the same OrderBy-equal-value sort group, the
+// surviving row is the one with the highest version, and rows belonging
+// to different OrderBy-equal-value groups remain distinct even when their
+// (sid, ts) collide across groups.
+func TestMergeDistributedRows_OrderByInt64_PreservesPhase15Invariants(t *testing.T) {
+	schema := distributedRowsOrderBySchema()
+	frameA := encodeOrderByRows(t, schema,
+		// Group rank=1: two collisions on (sid=7, ts=10) — highest ver wins.
+		orderByRow{ts: 10, ver: 1, sid: 7, value: 100, svc: "a", rank: 1},
+		// Group rank=2: same (sid=7, ts=10) under a different sort group is
+		// a distinct emit (no cross-group dedup).
+		orderByRow{ts: 10, ver: 1, sid: 7, value: 999, svc: "a", rank: 2},
+	)
+	frameB := encodeOrderByRows(t, schema,
+		orderByRow{ts: 10, ver: 5, sid: 7, value: 555, svc: "a", rank: 1},
+	)
+	spec := distributedRowsSpec{
+		BatchSize:      4,
+		OrderByColIdx:  -1,
+		OrderByFamily:  "default",
+		OrderByTagName: "rank",
+	}
+	batches, mergeErr := mergeDistributedRows([][]byte{frameA, frameB}, spec)
+	if mergeErr != nil {
+		t.Fatalf("mergeDistributedRows: %v", mergeErr)
+	}
+	got := collectOrderByRows(batches)
+	// rank=1 group emits the highest-version row (ver=5); rank=2 group
+	// emits its own distinct row.
+	if len(got) != 2 {
+		t.Fatalf("row count got %d want 2 (rows: %+v)", len(got), got)
+	}
+	if got[0].rank != 1 || got[0].ver != 5 || got[0].value != 555 {
+		t.Fatalf("rank=1 surviving row got %+v want rank=1 ver=5 value=555", got[0])
+	}
+	if got[1].rank != 2 || got[1].ver != 1 || got[1].value != 999 {
+		t.Fatalf("rank=2 distinct row got %+v want rank=2 ver=1 value=999", got[1])
+	}
+}
+
 func encodeDistributedRows(t *testing.T, schema *vectorized.BatchSchema, rows ...rowMergeOutput) []byte {
 	t.Helper()
 	batch := vectorized.NewRecordBatch(schema, len(rows))

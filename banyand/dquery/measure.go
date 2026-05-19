@@ -74,6 +74,7 @@ func (p *measureQueryProcessor) Rev(ctx context.Context, message bus.Message) (r
 
 	var schemas []logical.Schema
 	var measureSchemas []*databasev1.Measure
+	var measureIndexRules [][]*databasev1.IndexRule
 	var vecCfg vmeasure.VectorizedConfig
 	for groupIdx, g := range queryCriteria.Groups {
 		meta := &commonv1.Metadata{
@@ -93,6 +94,7 @@ func (p *measureQueryProcessor) Rev(ctx context.Context, message bus.Message) (r
 		}
 		schemas = append(schemas, s)
 		measureSchemas = append(measureSchemas, ec.GetSchema())
+		measureIndexRules = append(measureIndexRules, ec.GetIndexRules())
 		if vecEC, ok := ec.(measureVectorizedExecutionContext); ok {
 			if groupIdx == 0 {
 				vecCfg = vecEC.VectorizedConfig()
@@ -123,7 +125,7 @@ func (p *measureQueryProcessor) Rev(ctx context.Context, message bus.Message) (r
 			resp = bus.NewMessage(bus.MessageID(now), common.NewError("vec distributed plan requires at least one measure schema"))
 			return
 		}
-		plan, err = vecplan.AnalyzeDistributed(queryCriteria, measureSchemas[0], vecCfg)
+		plan, err = vecplan.AnalyzeDistributed(queryCriteria, measureSchemas[0], measureIndexRules[0], vecCfg)
 	} else {
 		// nolint:staticcheck // SA1019 - row distributed plan also serves
 		// non-agg distributed scans under raw wire mode (see routing
