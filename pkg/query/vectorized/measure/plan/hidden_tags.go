@@ -115,3 +115,59 @@ func (h *hiddenTagsMIterator) EmitFrame(_ context.Context) ([]byte, error) {
 	}
 	return vmeasure.SerializeDataPointsToFrame(idps)
 }
+
+// hiddenFieldsMIterator wraps an MIterator and strips a single hidden field
+// from each Current() result. It is the Phase 4 parallel of hiddenTagsMIterator:
+// when Top.FieldName is not in the user-visible FieldProjection, the analyzer
+// appends it to the nodeTemplate so data nodes materialise it for BatchTop
+// sorting. This wrapper removes it at egress so the wire bytes match a query
+// without the extra field projection — byte-identical to the row path's
+// hidden-projection strip for criteria tags.
+type hiddenFieldsMIterator struct {
+	inner       executor.MIterator
+	hiddenField string
+}
+
+func (h *hiddenFieldsMIterator) Next() bool { return h.inner.Next() }
+
+func (h *hiddenFieldsMIterator) Current() []*measurev1.InternalDataPoint {
+	dps := h.inner.Current()
+	for _, dp := range dps {
+		if dp == nil || dp.DataPoint == nil {
+			continue
+		}
+		dp.DataPoint.Fields = stripHiddenField(dp.DataPoint.Fields, h.hiddenField)
+	}
+	return dps
+}
+
+func (h *hiddenFieldsMIterator) Close() error { return h.inner.Close() }
+
+// EmitFrame implements vmeasure.FrameEmitter — mirrors hiddenTagsMIterator.EmitFrame.
+func (h *hiddenFieldsMIterator) EmitFrame(_ context.Context) ([]byte, error) {
+	var idps []*measurev1.InternalDataPoint
+	for h.Next() {
+		current := h.Current()
+		for _, dp := range current {
+			if dp != nil {
+				idps = append(idps, dp)
+			}
+		}
+	}
+	return vmeasure.SerializeDataPointsToFrame(idps)
+}
+
+// stripHiddenField removes the field named hiddenField from a slice of
+// DataPoint_Field values. The slice is edited in-place (backed by the same
+// slice header) so no allocation occurs for the common case where the hidden
+// field is the last element (appended by appendTopFieldToProjection).
+func stripHiddenField(fields []*measurev1.DataPoint_Field, hiddenField string) []*measurev1.DataPoint_Field {
+	out := fields[:0]
+	for _, f := range fields {
+		if f != nil && f.GetName() == hiddenField {
+			continue
+		}
+		out = append(out, f)
+	}
+	return out
+}
