@@ -48,8 +48,18 @@ const distributedQueryTimeout = 15 * time.Second
 // per-shard pre-sorted by the OrderBy field and the liaison's k-way heap
 // merger now compares on the OrderBy column instead of timestamp when an
 // index rule is present.
+//
+// Phase 4 carve-out: multi-group + Top-without-Agg falls through to the row
+// path until Phase 5 lands per-group Top.N Limit calibration. The Phase 4
+// node-template sets Limit = MaxUint32 whenever hadTop is true; under
+// multi-group fanout that becomes N_groups × MaxUint32 of per-node response
+// size, a real OOM vector on data nodes. Until Phase 5 calibrates the per-
+// group cap to (Top.N + safety_margin / N_groups), reject this combination.
 func SupportsDistributedRows(req *measurev1.QueryRequest) bool {
-	if req == nil || req.GetAgg() != nil || req.GetGroupBy() != nil || req.GetTop() != nil {
+	if req == nil || req.GetAgg() != nil || req.GetGroupBy() != nil {
+		return false
+	}
+	if len(req.GetGroups()) > 1 && req.GetTop() != nil {
 		return false
 	}
 	return true
@@ -66,6 +76,13 @@ type DistributedPlan struct {
 	indexRules      [][]*databasev1.IndexRule
 	orderByTag      *resolvedOrderByTag
 	hiddenOrderBy   logical.HiddenTagSet
+	// hiddenTopField is the field name appended to the nodeTemplate's
+	// FieldProjection for Top-without-Agg queries when the Top.FieldName
+	// is not already in the user-visible FieldProjection. Data nodes
+	// materialise the column so BatchTop can sort on it; the egress
+	// hiddenFieldsMIterator strips it so the wire bytes match a query
+	// without the extra projection.
+	hiddenTopField  string
 	cfg             vmeasure.VectorizedConfig
 }
 
@@ -112,7 +129,16 @@ func AnalyzeDistributed(req *measurev1.QueryRequest, measureSchemas []*databasev
 	if nodeTemplate.GetAgg() == nil {
 		nodeTemplate.GroupBy = nil
 	}
-	if hadTop && nodeTemplate.GetAgg() != nil {
+	if hadTop {
+		// Unbind the per-node Limit whenever the original query carries Top so
+		// no data node can silently prune rows before the liaison's global
+		// BatchTop or ApplyTopToReduce selects the true global top-N.
+		// For Top+Agg this was already the case; Phase 4 extends it to
+		// Top-without-Agg so per-node Limit cannot drop global winners.
+		//
+		// TODO(Phase 5): For Top+multi-group requests calibrate per-group
+		// Limit to (Top.N + safety_margin / N_groups) instead of MaxUint32
+		// to bound the per-node response size when group cardinality is high.
 		nodeTemplate.Limit = math.MaxUint32
 	}
 	plan := &DistributedPlan{
@@ -146,6 +172,24 @@ func AnalyzeDistributed(req *measurev1.QueryRequest, measureSchemas []*databasev
 				plan.hiddenOrderBy = logical.NewHiddenTagSet()
 				plan.hiddenOrderBy.Add(resolved.tag)
 			}
+		}
+	}
+	// Phase 4: Top-without-Agg field validation and hidden-projection augmentation.
+	// Loud-failure rule: if Top.FieldName does not exist in any group's schema
+	// the request is malformed and must not silently pass through.
+	if top := req.GetTop(); top != nil && req.GetAgg() == nil {
+		topFieldName := top.GetFieldName()
+		if !topFieldExistsInSchemas(measureSchemas, topFieldName) {
+			return nil, fmt.Errorf("vec distributed analyze: top field %s not found in schema", topFieldName)
+		}
+		// Hidden-projection augmentation: when the Top field is not in the
+		// user-visible FieldProjection, append it to the nodeTemplate so data
+		// nodes materialise the column for BatchTop sorting. The egress
+		// hiddenFieldsMIterator strips it so the response matches a query
+		// without the extra projection.
+		if !topFieldProjectionVisible(req.GetFieldProjection(), topFieldName) {
+			nodeTemplate.FieldProjection = appendTopFieldToProjection(nodeTemplate.GetFieldProjection(), topFieldName)
+			plan.hiddenTopField = topFieldName
 		}
 	}
 	return plan, nil
@@ -210,6 +254,43 @@ func appendOrderByToProjection(projection *modelv1.TagProjection, want resolvedO
 		families = append(families, &modelv1.TagProjection_TagFamily{Name: want.family, Tags: []string{want.tag}})
 	}
 	return &modelv1.TagProjection{TagFamilies: families}
+}
+
+// topFieldProjectionVisible reports whether fieldName is already present in the
+// user-facing FieldProjection. When false, the analyzer augments the node
+// template so data nodes materialise the column on the wire for BatchTop sorting.
+func topFieldProjectionVisible(fp *measurev1.QueryRequest_FieldProjection, fieldName string) bool {
+	if fp == nil {
+		return false
+	}
+	return slices.Contains(fp.GetNames(), fieldName)
+}
+
+// appendTopFieldToProjection clones the supplied FieldProjection and appends
+// fieldName to its names list. Mirrors appendOrderByToProjection's clone-before-
+// mutate discipline: the user-facing FieldProjection is left untouched and only
+// the nodeTemplate's copy is extended.
+func appendTopFieldToProjection(fp *measurev1.QueryRequest_FieldProjection, fieldName string) *measurev1.QueryRequest_FieldProjection {
+	var names []string
+	if fp != nil {
+		names = append([]string(nil), fp.GetNames()...)
+	}
+	names = append(names, fieldName)
+	return &measurev1.QueryRequest_FieldProjection{Names: names}
+}
+
+// topFieldExistsInSchemas returns true iff fieldName is declared as a field in
+// at least one of the supplied measure schemas. Used by AnalyzeDistributed to
+// enforce the loud-failure rule for missing Top.FieldName.
+func topFieldExistsInSchemas(measureSchemas []*databasev1.Measure, fieldName string) bool {
+	for _, ms := range measureSchemas {
+		for _, fs := range ms.GetFields() {
+			if fs.GetName() == fieldName {
+				return true
+			}
+		}
+	}
+	return false
 }
 
 // intersectTagProjection returns a TagProjection that contains only the tags that
@@ -431,6 +512,13 @@ func (p *DistributedPlan) executeRows(ctx context.Context, frames [][]byte, req 
 	if mergeErr != nil {
 		return nil, fmt.Errorf("vec distributed plan: merge rows: %w", mergeErr)
 	}
+	if top := req.GetTop(); top != nil {
+		var topErr error
+		batches, topErr = applyBatchTopToRows(batches, top, p.cfg.BatchSize)
+		if topErr != nil {
+			return nil, fmt.Errorf("vec distributed plan: apply top to rows: %w", topErr)
+		}
+	}
 	return p.iteratorFromBatches(ctx, batches, req)
 }
 
@@ -468,7 +556,68 @@ func (p *DistributedPlan) executeRowsMultiGroup(ctx context.Context, groupFrames
 	if mergeErr != nil {
 		return nil, fmt.Errorf("vec distributed plan: merge multi-group rows: %w", mergeErr)
 	}
+	if top := req.GetTop(); top != nil {
+		var topErr error
+		batches, topErr = applyBatchTopToRows(batches, top, p.cfg.BatchSize)
+		if topErr != nil {
+			return nil, fmt.Errorf("vec distributed plan: apply top to multi-group rows: %w", topErr)
+		}
+	}
 	return p.iteratorFromBatchesWithSchema(ctx, batches, req, mergedSchema)
+}
+
+// applyBatchTopToRows runs a BatchTop operator over the merged row batches,
+// returning the top-N rows by top.FieldName. The schema is derived from the
+// first non-nil batch; if there are no batches the input is returned unchanged.
+// Loud-failure: if top.FieldName does not resolve on the merged schema's field
+// columns, an error is returned rather than silently passing through.
+func applyBatchTopToRows(batches []*vectorized.RecordBatch, top *measurev1.QueryRequest_Top, batchSize int) ([]*vectorized.RecordBatch, error) {
+	if top == nil || top.GetNumber() <= 0 || len(batches) == 0 {
+		return batches, nil
+	}
+	var schema *vectorized.BatchSchema
+	for _, b := range batches {
+		if b != nil && b.Schema != nil {
+			schema = b.Schema
+			break
+		}
+	}
+	if schema == nil {
+		return batches, nil
+	}
+	fieldIdx, ok := schema.FieldIndex(top.GetFieldName())
+	if !ok {
+		return nil, fmt.Errorf("top field %s not found in schema", top.GetFieldName())
+	}
+	asc := top.GetFieldValueSort() == modelv1.Sort_SORT_ASC
+	topOp := vmeasure.NewBatchTop(schema, fieldIdx, int(top.GetNumber()), asc, batchSize)
+	defer topOp.Close()
+	if initErr := topOp.Init(context.Background()); initErr != nil {
+		return nil, fmt.Errorf("applyBatchTopToRows: init: %w", initErr)
+	}
+	for idx, b := range batches {
+		if b == nil || b.Len == 0 {
+			continue
+		}
+		if consumeErr := topOp.Consume(context.Background(), b); consumeErr != nil {
+			return nil, fmt.Errorf("applyBatchTopToRows: consume batch %d: %w", idx, consumeErr)
+		}
+	}
+	if finalErr := topOp.Finalize(context.Background()); finalErr != nil {
+		return nil, fmt.Errorf("applyBatchTopToRows: finalize: %w", finalErr)
+	}
+	var out []*vectorized.RecordBatch
+	for {
+		nb, nextErr := topOp.NextBatch(context.Background())
+		if nextErr != nil {
+			return nil, fmt.Errorf("applyBatchTopToRows: next: %w", nextErr)
+		}
+		if nb == nil {
+			break
+		}
+		out = append(out, nb)
+	}
+	return out, nil
 }
 
 func (p *DistributedPlan) iteratorFromBatches(ctx context.Context, batches []*vectorized.RecordBatch, req *measurev1.QueryRequest) (executor.MIterator, error) {
@@ -509,6 +658,12 @@ func (p *DistributedPlan) iteratorFromBatches(ctx context.Context, batches []*ve
 		// query without the OrderBy projection would emit byte-for-byte.
 		iter = &hiddenTagsMIterator{inner: iter, hiddenTags: p.hiddenOrderBy}
 	}
+	if p.hiddenTopField != "" {
+		// Strip the Top field appended to the nodeTemplate's FieldProjection
+		// for BatchTop sorting. The visible response matches a query without
+		// the extra field projection.
+		iter = &hiddenFieldsMIterator{inner: iter, hiddenField: p.hiddenTopField}
+	}
 	return iter, nil
 }
 
@@ -537,6 +692,9 @@ func (p *DistributedPlan) iteratorFromBatchesWithSchema(ctx context.Context, bat
 	var iter executor.MIterator = vmeasure.NewIteratorFromPipeline(ctx, pipeline, schema, pool)
 	if !p.hiddenOrderBy.IsEmpty() {
 		iter = &hiddenTagsMIterator{inner: iter, hiddenTags: p.hiddenOrderBy}
+	}
+	if p.hiddenTopField != "" {
+		iter = &hiddenFieldsMIterator{inner: iter, hiddenField: p.hiddenTopField}
 	}
 	return iter, nil
 }

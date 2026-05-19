@@ -19,10 +19,13 @@ package plan
 
 import (
 	"runtime"
+	"strings"
 	"sync"
 	"testing"
 	"time"
 
+	measurev1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/measure/v1"
+	modelv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/model/v1"
 	"github.com/apache/skywalking-banyandb/pkg/query/vectorized"
 	"github.com/apache/skywalking-banyandb/pkg/query/vectorized/measure/frame"
 )
@@ -594,5 +597,99 @@ func TestMergeDistributedRows_IndexMode_PerGroupSidIsolation(t *testing.T) {
 	// different groups, so the (group, sid) key is distinct.
 	if len(got) != 2 {
 		t.Fatalf("expected 2 rows (both sid=7 from different groups), got %d: %+v", len(got), got)
+	}
+}
+
+// TestMergeDistributedRows_TopWithoutAgg_LiaisonSelectsTopN is the Phase 4
+// gate proving that applyBatchTopToRows selects the correct global top-N
+// rows from a merged multi-source stream. Two sources contribute rows with
+// different value fields; the liaison-side BatchTop must pick the global
+// winners regardless of source order, in both ascending and descending modes.
+func TestMergeDistributedRows_TopWithoutAgg_LiaisonSelectsTopN(t *testing.T) {
+	schema := distributedRowsTestSchema()
+	// Source A: values 300, 100
+	frameA := encodeDistributedRows(t, schema,
+		rowMergeOutput{ts: 10, ver: 1, sid: 1, value: 300},
+		rowMergeOutput{ts: 20, ver: 1, sid: 2, value: 100},
+	)
+	// Source B: values 500, 200, 400
+	frameB := encodeDistributedRows(t, schema,
+		rowMergeOutput{ts: 11, ver: 1, sid: 3, value: 500},
+		rowMergeOutput{ts: 21, ver: 1, sid: 4, value: 200},
+		rowMergeOutput{ts: 31, ver: 1, sid: 5, value: 400},
+	)
+
+	mergedBatches, mergeErr := mergeDistributedRows([][]byte{frameA, frameB}, distributedRowsSpec{BatchSize: 8})
+	if mergeErr != nil {
+		t.Fatalf("mergeDistributedRows: %v", mergeErr)
+	}
+
+	top := &measurev1.QueryRequest_Top{
+		Number:         3,
+		FieldName:      fieldValue,
+		FieldValueSort: modelv1.Sort_SORT_DESC,
+	}
+
+	// Desc: top 3 highest values — 500, 400, 300.
+	toppedDesc, topDescErr := applyBatchTopToRows(mergedBatches, top, 8)
+	if topDescErr != nil {
+		t.Fatalf("applyBatchTopToRows desc: %v", topDescErr)
+	}
+	gotDesc := collectDistributedRows(toppedDesc)
+	if len(gotDesc) != 3 {
+		t.Fatalf("desc top-3: got %d rows, want 3: %+v", len(gotDesc), gotDesc)
+	}
+	wantDescValues := []int64{500, 400, 300}
+	for rowIdx, wantVal := range wantDescValues {
+		if gotDesc[rowIdx].value != wantVal {
+			t.Fatalf("desc top-3 row %d: got value=%d, want %d (all: %+v)", rowIdx, gotDesc[rowIdx].value, wantVal, gotDesc)
+		}
+	}
+
+	// Asc: top 3 lowest values — 100, 200, 300.
+	topAsc := &measurev1.QueryRequest_Top{
+		Number:         3,
+		FieldName:      fieldValue,
+		FieldValueSort: modelv1.Sort_SORT_ASC,
+	}
+	toppedAsc, topAscErr := applyBatchTopToRows(mergedBatches, topAsc, 8)
+	if topAscErr != nil {
+		t.Fatalf("applyBatchTopToRows asc: %v", topAscErr)
+	}
+	gotAsc := collectDistributedRows(toppedAsc)
+	if len(gotAsc) != 3 {
+		t.Fatalf("asc top-3: got %d rows, want 3: %+v", len(gotAsc), gotAsc)
+	}
+	wantAscValues := []int64{100, 200, 300}
+	for rowIdx, wantVal := range wantAscValues {
+		if gotAsc[rowIdx].value != wantVal {
+			t.Fatalf("asc top-3 row %d: got value=%d, want %d (all: %+v)", rowIdx, gotAsc[rowIdx].value, wantVal, gotAsc)
+		}
+	}
+}
+
+// TestMergeDistributedRows_TopWithoutAgg_UnknownFieldErrors proves the loud-failure
+// rule: applyBatchTopToRows returns an error when Top.FieldName does not resolve
+// on the merged schema's field columns.
+func TestMergeDistributedRows_TopWithoutAgg_UnknownFieldErrors(t *testing.T) {
+	schema := distributedRowsTestSchema()
+	body := encodeDistributedRows(t, schema,
+		rowMergeOutput{ts: 10, ver: 1, sid: 1, value: 100},
+	)
+	batches, mergeErr := mergeDistributedRows([][]byte{body}, distributedRowsSpec{BatchSize: 4})
+	if mergeErr != nil {
+		t.Fatalf("mergeDistributedRows: %v", mergeErr)
+	}
+	top := &measurev1.QueryRequest_Top{
+		Number:         2,
+		FieldName:      "no_such_field",
+		FieldValueSort: modelv1.Sort_SORT_DESC,
+	}
+	_, topErr := applyBatchTopToRows(batches, top, 4)
+	if topErr == nil {
+		t.Fatal("applyBatchTopToRows must return an error for an unknown field name")
+	}
+	if !strings.Contains(topErr.Error(), "no_such_field") {
+		t.Fatalf("error must mention the missing field name; got %v", topErr)
 	}
 }

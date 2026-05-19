@@ -99,9 +99,18 @@ func TestSupportsDistributedRows(t *testing.T) {
 			want: false,
 		},
 		{
-			name: "top",
+			name: "top without agg (Phase 4: native raw top scan)",
 			req: func() *measurev1.QueryRequest {
 				req := base()
+				req.Top = &measurev1.QueryRequest_Top{Number: 2, FieldName: fieldValue}
+				return req
+			}(),
+			want: true,
+		},
+		{
+			name: "multi group + top (Phase 5 carve-out: row-path fallback)",
+			req: func() *measurev1.QueryRequest {
+				req := &measurev1.QueryRequest{Name: "demo", Groups: []string{"a", "b"}}
 				req.Top = &measurev1.QueryRequest_Top{Number: 2, FieldName: fieldValue}
 				return req
 			}(),
@@ -230,6 +239,148 @@ func TestAnalyzeDistributed_TopAggUnboundsNodeLimit_Matrix(t *testing.T) {
 				t.Fatalf("node template must not carry Top; global Top is the liaison's job")
 			}
 		})
+	}
+}
+
+// TestAnalyzeDistributed_TopWithoutAgg_UnboundsNodeLimit verifies that Phase 4
+// sets nodeTemplate.Limit = MaxUint32 for Top-without-Agg requests, mirroring
+// the Top+Agg behaviour so per-node truncation cannot drop global winners.
+func TestAnalyzeDistributed_TopWithoutAgg_UnboundsNodeLimit(t *testing.T) {
+	cases := []struct {
+		name  string
+		topN  int32
+		limit uint32
+		asc   bool
+	}{
+		{name: "Top3_Desc_DefaultLimit", topN: 3, limit: 0, asc: false},
+		{name: "Top3_Asc_ExplicitLimit", topN: 3, limit: 10, asc: true},
+		{name: "Top1_Desc_Limit1", topN: 1, limit: 1, asc: false},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			sort := modelv1.Sort_SORT_DESC
+			if tc.asc {
+				sort = modelv1.Sort_SORT_ASC
+			}
+			req := &measurev1.QueryRequest{
+				Name:            "demo",
+				Groups:          []string{"default"},
+				TagProjection:   projTagProj(),
+				FieldProjection: &measurev1.QueryRequest_FieldProjection{Names: []string{fieldValue}},
+				Top: &measurev1.QueryRequest_Top{
+					Number:         tc.topN,
+					FieldName:      fieldValue,
+					FieldValueSort: sort,
+				},
+				Limit: tc.limit,
+			}
+			p, analyzeErr := AnalyzeDistributed(req, []*databasev1.Measure{testMeasureSchema()}, nil,
+				vmeasure.VectorizedConfig{Enabled: true, BatchSize: 4, QueryMemoryMiB: 1})
+			if analyzeErr != nil {
+				t.Fatalf("AnalyzeDistributed: %v", analyzeErr)
+			}
+			if got, want := p.nodeTemplate.GetLimit(), uint32(math.MaxUint32); got != want {
+				t.Fatalf("Top-without-Agg node limit: got %d, want unbounded (%d)", got, want)
+			}
+			if p.nodeTemplate.GetTop() != nil {
+				t.Fatal("node template must not carry Top; global BatchTop is the liaison's job")
+			}
+			if p.nodeTemplate.GetAgg() != nil {
+				t.Fatal("node template must not carry Agg for a Top-without-Agg request")
+			}
+		})
+	}
+}
+
+// TestAnalyzeDistributed_TopWithoutAgg_HiddenFieldProjectionAdded covers
+// the Phase 4 augmentation path: when Top.FieldName is NOT in the request's
+// FieldProjection, AnalyzeDistributed must append it to the nodeTemplate so
+// data nodes materialise the column, and record hiddenTopField so the egress
+// strip removes it before the response.
+func TestAnalyzeDistributed_TopWithoutAgg_HiddenFieldProjectionAdded(t *testing.T) {
+	// Visible field projection: only "total" — "value" (Top.FieldName) is absent.
+	req := &measurev1.QueryRequest{
+		Name:   "demo",
+		Groups: []string{"default"},
+		TagProjection: &modelv1.TagProjection{TagFamilies: []*modelv1.TagProjection_TagFamily{
+			{Name: "default", Tags: []string{tagSvc}},
+		}},
+		FieldProjection: &measurev1.QueryRequest_FieldProjection{Names: []string{"total"}},
+		Top: &measurev1.QueryRequest_Top{
+			Number:         3,
+			FieldName:      fieldValue, // "value" — NOT in FieldProjection
+			FieldValueSort: modelv1.Sort_SORT_DESC,
+		},
+		Limit: 10,
+	}
+	// Schema must have both "total" and "value" fields.
+	ms := &databasev1.Measure{
+		Metadata: &commonv1.Metadata{Name: "demo", Group: "default"},
+		TagFamilies: []*databasev1.TagFamilySpec{
+			{Name: "default", Tags: []*databasev1.TagSpec{
+				{Name: tagSvc, Type: databasev1.TagType_TAG_TYPE_STRING},
+			}},
+		},
+		Fields: []*databasev1.FieldSpec{
+			{Name: "total", FieldType: databasev1.FieldType_FIELD_TYPE_INT},
+			{Name: fieldValue, FieldType: databasev1.FieldType_FIELD_TYPE_INT},
+		},
+	}
+	p, analyzeErr := AnalyzeDistributed(req, []*databasev1.Measure{ms}, nil,
+		vmeasure.VectorizedConfig{Enabled: true, BatchSize: 4, QueryMemoryMiB: 1})
+	if analyzeErr != nil {
+		t.Fatalf("AnalyzeDistributed: %v", analyzeErr)
+	}
+	if p.hiddenTopField == "" {
+		t.Fatal("hiddenTopField must be set when Top.FieldName is absent from FieldProjection")
+	}
+	if p.hiddenTopField != fieldValue {
+		t.Fatalf("hiddenTopField: got %q, want %q", p.hiddenTopField, fieldValue)
+	}
+	// Node template must project the Top field so data nodes materialise it.
+	nodeNames := p.nodeTemplate.GetFieldProjection().GetNames()
+	sawTotal, sawValue := false, false
+	for _, n := range nodeNames {
+		if n == "total" {
+			sawTotal = true
+		}
+		if n == fieldValue {
+			sawValue = true
+		}
+	}
+	if !sawTotal || !sawValue {
+		t.Fatalf("nodeTemplate FieldProjection must contain both 'total' and %q; got %v", fieldValue, nodeNames)
+	}
+	// The original request must be untouched.
+	origNames := req.GetFieldProjection().GetNames()
+	if len(origNames) != 1 || origNames[0] != "total" {
+		t.Fatalf("original request FieldProjection must be untouched; got %v", origNames)
+	}
+}
+
+// TestAnalyzeDistributed_TopWithoutAgg_FieldNotInSchema verifies the loud-failure
+// rule: when Top.FieldName does not resolve on the merged schema, AnalyzeDistributed
+// returns an error rather than silently passing through.
+func TestAnalyzeDistributed_TopWithoutAgg_FieldNotInSchema(t *testing.T) {
+	req := &measurev1.QueryRequest{
+		Name:            "demo",
+		Groups:          []string{"default"},
+		TagProjection:   projTagProj(),
+		FieldProjection: &measurev1.QueryRequest_FieldProjection{Names: []string{fieldValue}},
+		Top: &measurev1.QueryRequest_Top{
+			Number:         3,
+			FieldName:      "no_such_field",
+			FieldValueSort: modelv1.Sort_SORT_DESC,
+		},
+		Limit: 10,
+	}
+	_, analyzeErr := AnalyzeDistributed(req, []*databasev1.Measure{testMeasureSchema()}, nil,
+		vmeasure.VectorizedConfig{Enabled: true, BatchSize: 4, QueryMemoryMiB: 1})
+	if analyzeErr == nil {
+		t.Fatal("AnalyzeDistributed must return an error when Top.FieldName is not in the schema")
+	}
+	if !strings.Contains(analyzeErr.Error(), "top field") || !strings.Contains(analyzeErr.Error(), "no_such_field") {
+		t.Fatalf("error must mention the missing field name; got %v", analyzeErr)
 	}
 }
 
@@ -455,3 +606,79 @@ func TestAnalyzeDistributed_MultiGroup_UnionsSchemaAcrossGroups(t *testing.T) {
 		t.Fatalf("plan.measureSchemas[1] must be groupB schema, got %s", p.measureSchemas[1].GetMetadata().GetGroup())
 	}
 }
+
+// TestHiddenFieldsMIterator_StripsHiddenTopField verifies that
+// hiddenFieldsMIterator removes the named hidden field from each DataPoint's
+// Fields slice while leaving all other fields intact. This is the Phase 4
+// egress strip: the hidden Top field was appended to the nodeTemplate's
+// FieldProjection so BatchTop could sort on it; this wrapper removes it from
+// the final response so the wire bytes match a query without the extra projection.
+func TestHiddenFieldsMIterator_StripsHiddenTopField(t *testing.T) {
+	// Construct a synthetic MIterator that emits two DataPoints, each with
+	// two fields: "value" (visible) and "hidden_score" (to be stripped).
+	makeField := func(name string, intVal int64) *measurev1.DataPoint_Field {
+		return &measurev1.DataPoint_Field{
+			Name:  name,
+			Value: &modelv1.FieldValue{Value: &modelv1.FieldValue_Int{Int: &modelv1.Int{Value: intVal}}},
+		}
+	}
+	dp1 := &measurev1.InternalDataPoint{
+		DataPoint: &measurev1.DataPoint{
+			Fields: []*measurev1.DataPoint_Field{
+				makeField("value", 100),
+				makeField("hidden_score", 999),
+			},
+		},
+	}
+	dp2 := &measurev1.InternalDataPoint{
+		DataPoint: &measurev1.DataPoint{
+			Fields: []*measurev1.DataPoint_Field{
+				makeField("value", 200),
+				makeField("hidden_score", 888),
+			},
+		},
+	}
+	inner := &sliceMIterator{items: [][]*measurev1.InternalDataPoint{{dp1}, {dp2}}}
+	wrapped := &hiddenFieldsMIterator{inner: inner, hiddenField: "hidden_score"}
+
+	var collected []*measurev1.InternalDataPoint
+	for wrapped.Next() {
+		collected = append(collected, wrapped.Current()...)
+	}
+	if len(collected) != 2 {
+		t.Fatalf("expected 2 data points, got %d", len(collected))
+	}
+	for dpIdx, dp := range collected {
+		if len(dp.DataPoint.Fields) != 1 {
+			t.Fatalf("dp %d: expected 1 field after strip, got %d: %+v", dpIdx, len(dp.DataPoint.Fields), dp.DataPoint.Fields)
+		}
+		if dp.DataPoint.Fields[0].GetName() != "value" {
+			t.Fatalf("dp %d: remaining field must be 'value', got %q", dpIdx, dp.DataPoint.Fields[0].GetName())
+		}
+		if dp.DataPoint.Fields[0].GetValue().GetInt().GetValue() != int64(100*(dpIdx+1)) {
+			t.Fatalf("dp %d: field value got %d, want %d", dpIdx, dp.DataPoint.Fields[0].GetValue().GetInt().GetValue(), 100*(dpIdx+1))
+		}
+	}
+}
+
+// sliceMIterator is a test-only MIterator over a pre-built slice of DataPoint
+// groups, used to drive hidden-field strip tests without requiring a full
+// pipeline build.
+type sliceMIterator struct {
+	items [][]*measurev1.InternalDataPoint
+	idx   int
+}
+
+func (s *sliceMIterator) Next() bool {
+	if s.idx >= len(s.items) {
+		return false
+	}
+	s.idx++
+	return true
+}
+
+func (s *sliceMIterator) Current() []*measurev1.InternalDataPoint {
+	return s.items[s.idx-1]
+}
+
+func (s *sliceMIterator) Close() error { return nil }
