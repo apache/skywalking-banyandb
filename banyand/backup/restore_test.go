@@ -251,6 +251,10 @@ func TestValidatedRemoteRelPathRejectsInvalidPaths(t *testing.T) {
 			name:       "parent traversal",
 			remoteFile: filepath.ToSlash(filepath.Join(timeDir, catalogName, "..", "escaped.txt")),
 		},
+		{
+			name:       "volume name",
+			remoteFile: `C:/backup/file.txt`,
+		},
 	}
 
 	for _, testCase := range tests {

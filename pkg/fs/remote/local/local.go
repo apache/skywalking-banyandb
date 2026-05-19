@@ -46,7 +46,11 @@ func NewFS(baseDir string) (remote.FS, error) {
 	if err != nil {
 		return nil, err
 	}
-	return &fs{baseDir: cleanBaseDir}, nil
+	realBaseDir, err := filepath.EvalSymlinks(cleanBaseDir)
+	if err != nil {
+		return nil, err
+	}
+	return &fs{baseDir: realBaseDir}, nil
 }
 
 func (l *fs) Upload(_ context.Context, path string, data io.Reader) error {
@@ -116,11 +120,11 @@ func (l *fs) Close() error {
 }
 
 func (l *fs) fullPath(path string) (string, error) {
-	if filepath.IsAbs(path) {
+	if filepath.IsAbs(path) || hasVolumeName(path) {
 		return "", fmt.Errorf("path %q escapes base directory", path)
 	}
 	cleanPath := filepath.Clean(path)
-	if cleanPath == ".." || strings.HasPrefix(cleanPath, ".."+string(filepath.Separator)) {
+	if hasVolumeName(cleanPath) || cleanPath == ".." || strings.HasPrefix(cleanPath, ".."+string(filepath.Separator)) {
 		return "", fmt.Errorf("path %q escapes base directory", path)
 	}
 	fullPath := filepath.Join(l.baseDir, cleanPath)
@@ -131,5 +135,48 @@ func (l *fs) fullPath(path string) (string, error) {
 	if relPath == ".." || strings.HasPrefix(relPath, ".."+string(filepath.Separator)) || filepath.IsAbs(relPath) {
 		return "", fmt.Errorf("path %q escapes base directory", path)
 	}
+	if err := l.ensureResolvedWithinBase(fullPath); err != nil {
+		return "", fmt.Errorf("path %q escapes base directory: %w", path, err)
+	}
 	return fullPath, nil
+}
+
+func (l *fs) ensureResolvedWithinBase(path string) error {
+	existingPath := path
+	for {
+		if _, err := os.Lstat(existingPath); err == nil {
+			break
+		} else if !os.IsNotExist(err) {
+			return err
+		}
+		parentPath := filepath.Dir(existingPath)
+		if parentPath == existingPath {
+			return os.ErrNotExist
+		}
+		existingPath = parentPath
+	}
+
+	realPath, err := filepath.EvalSymlinks(existingPath)
+	if err != nil {
+		return err
+	}
+	relPath, err := filepath.Rel(l.baseDir, realPath)
+	if err != nil {
+		return err
+	}
+	if relPath == ".." || strings.HasPrefix(relPath, ".."+string(filepath.Separator)) || filepath.IsAbs(relPath) {
+		return fmt.Errorf("resolved path %q is outside base directory %q", realPath, l.baseDir)
+	}
+	return nil
+}
+
+func hasVolumeName(path string) bool {
+	if filepath.VolumeName(path) != "" {
+		return true
+	}
+	return len(path) >= 2 && isASCIILetter(path[0]) && path[1] == ':'
+}
+
+func isASCIILetter(c byte) bool {
+	return (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z')
 }

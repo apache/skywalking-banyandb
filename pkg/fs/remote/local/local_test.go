@@ -157,3 +157,76 @@ func TestFSRejectsAbsolutePath(t *testing.T) {
 		t.Fatalf("absolute path was written or stat failed with unexpected error: %v", statErr)
 	}
 }
+
+func TestFSRejectsVolumeName(t *testing.T) {
+	fs, err := NewFS(t.TempDir())
+	if err != nil {
+		t.Fatalf("NewFS failed: %v", err)
+	}
+
+	if err = fs.Upload(context.Background(), `C:escaped.txt`, strings.NewReader("escape")); err == nil {
+		t.Fatal("expected volume-name path to be rejected")
+	}
+}
+
+func TestFSRejectsSymlinkEscape(t *testing.T) {
+	baseDir := filepath.Join(t.TempDir(), "remote")
+	outsideDir := filepath.Join(t.TempDir(), "outside")
+	if err := os.MkdirAll(outsideDir, dirPerm); err != nil {
+		t.Fatalf("failed to create outside directory: %v", err)
+	}
+	fs, err := NewFS(baseDir)
+	if err != nil {
+		t.Fatalf("NewFS failed: %v", err)
+	}
+	if err = os.Symlink(outsideDir, filepath.Join(baseDir, "link")); err != nil {
+		t.Skipf("symlinks are not available: %v", err)
+	}
+
+	escapedPath := filepath.Join("link", "escaped.txt")
+	tests := []struct {
+		run  func() error
+		name string
+	}{
+		{
+			name: "upload",
+			run: func() error {
+				return fs.Upload(context.Background(), escapedPath, strings.NewReader("escape"))
+			},
+		},
+		{
+			name: "download",
+			run: func() error {
+				reader, downloadErr := fs.Download(context.Background(), escapedPath)
+				if reader != nil {
+					reader.Close()
+				}
+				return downloadErr
+			},
+		},
+		{
+			name: "list",
+			run: func() error {
+				_, listErr := fs.List(context.Background(), "link")
+				return listErr
+			},
+		},
+		{
+			name: "delete",
+			run: func() error {
+				return fs.Delete(context.Background(), escapedPath)
+			},
+		},
+	}
+
+	for _, testCase := range tests {
+		t.Run(testCase.name, func(t *testing.T) {
+			if err := testCase.run(); err == nil {
+				t.Fatal("expected symlink escape to be rejected")
+			}
+			if _, statErr := os.Stat(filepath.Join(outsideDir, "escaped.txt")); !errors.Is(statErr, os.ErrNotExist) {
+				t.Fatalf("escaped file exists or stat failed with unexpected error: %v", statErr)
+			}
+		})
+	}
+}

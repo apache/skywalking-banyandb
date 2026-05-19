@@ -208,7 +208,7 @@ func restoreByName(fs remote.FS, timeDir, rootPath, catalogName string) error {
 	}
 
 	for _, localRelPath := range localFiles {
-		localRelPathWithCatalog := filepath.Join(catalogName, localRelPath)
+		localRelPathWithCatalog := path.Join(catalogName, filepath.ToSlash(localRelPath))
 		if !remoteRelSet[localRelPathWithCatalog] {
 			localPath := filepath.Join(localDir, localRelPath)
 			logger.Infof("found local file: %s not exist in the remote storage, so delete it", localRelPathWithCatalog)
@@ -245,12 +245,12 @@ func restoreByName(fs remote.FS, timeDir, rootPath, catalogName string) error {
 
 func validatedRemoteRelPath(timeDir, catalogName, remoteFile string) (string, error) {
 	remotePath := filepath.ToSlash(remoteFile)
-	if path.IsAbs(remotePath) {
+	if path.IsAbs(remotePath) || hasRemoteVolumeName(remotePath) {
 		return "", fmt.Errorf("remote file %q escapes backup prefix", remoteFile)
 	}
 	prefix := path.Clean(filepath.ToSlash(filepath.Join(timeDir, catalogName)))
 	cleanRemotePath := path.Clean(remotePath)
-	if cleanRemotePath == "." || prefix == "." {
+	if hasRemoteVolumeName(cleanRemotePath) || cleanRemotePath == "." || prefix == "." {
 		return "", fmt.Errorf("remote file %q escapes backup prefix", remoteFile)
 	}
 	relPath, err := filepath.Rel(filepath.FromSlash(prefix), filepath.FromSlash(cleanRemotePath))
@@ -262,6 +262,17 @@ func validatedRemoteRelPath(timeDir, catalogName, remoteFile string) (string, er
 		return "", fmt.Errorf("remote file %q escapes backup prefix", remoteFile)
 	}
 	return relPath, nil
+}
+
+func hasRemoteVolumeName(path string) bool {
+	if filepath.VolumeName(filepath.FromSlash(path)) != "" {
+		return true
+	}
+	return len(path) >= 2 && isASCIILetter(path[0]) && path[1] == ':'
+}
+
+func isASCIILetter(c byte) bool {
+	return (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z')
 }
 
 func cleanEmptyDirs(dir, stopDir string) {
