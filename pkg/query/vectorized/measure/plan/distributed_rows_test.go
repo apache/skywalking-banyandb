@@ -415,6 +415,108 @@ func TestMergeDistributedRows_OrderByInt64_PreservesPhase15Invariants(t *testing
 	}
 }
 
+// TestMergeDistributedRows_RawGroupBy_FirstSeenPerGroup verifies the Phase 5
+// liaison-side GroupBy pass: applyBatchGroupByFirstToRows retains the
+// first-seen row per group from the k-way heap-merged stream. Two sources
+// each emit rows from the same two svc groups; the merged stream is ordered
+// by timestamp (ascending), so the first-seen row for each group is the
+// one with the smallest timestamp.
+func TestMergeDistributedRows_RawGroupBy_FirstSeenPerGroup(t *testing.T) {
+	schema := distributedRowsOrderBySchema()
+	// Source A: svc=alpha at ts=10, svc=beta at ts=30
+	frameA := encodeOrderByRows(t, schema,
+		orderByRow{ts: 10, ver: 1, sid: 1, value: 100, svc: "alpha", rank: 0},
+		orderByRow{ts: 30, ver: 1, sid: 3, value: 300, svc: "beta", rank: 0},
+	)
+	// Source B: svc=alpha at ts=20 (later — must be dropped), svc=beta at ts=40 (later — must be dropped)
+	frameB := encodeOrderByRows(t, schema,
+		orderByRow{ts: 20, ver: 1, sid: 2, value: 200, svc: "alpha", rank: 0},
+		orderByRow{ts: 40, ver: 1, sid: 4, value: 400, svc: "beta", rank: 0},
+	)
+
+	// Merge: k-way heap produces ascending-ts order:
+	// ts=10 (alpha,100), ts=20 (alpha,200), ts=30 (beta,300), ts=40 (beta,400)
+	batches, mergeErr := mergeDistributedRows([][]byte{frameA, frameB}, distributedRowsSpec{BatchSize: 8})
+	if mergeErr != nil {
+		t.Fatalf("mergeDistributedRows: %v", mergeErr)
+	}
+
+	// GroupBy on the svc tag (family "default", tag "svc" — column index 5).
+	groupBy := &measurev1.QueryRequest_GroupBy{
+		TagProjection: &modelv1.TagProjection{
+			TagFamilies: []*modelv1.TagProjection_TagFamily{
+				{Name: "default", Tags: []string{"svc"}},
+			},
+		},
+	}
+	tracker := vectorized.NewMemoryTracker(64 * 1024 * 1024)
+	grouped, gbErr := applyBatchGroupByFirstToRows(batches, groupBy, 8, tracker)
+	if gbErr != nil {
+		t.Fatalf("applyBatchGroupByFirstToRows: %v", gbErr)
+	}
+
+	// Collect grouped rows.
+	type groupedRow struct {
+		ts    int64
+		value int64
+		svc   string
+	}
+	var rows []groupedRow
+	for _, batch := range grouped {
+		tsCol := batch.Columns[0].(*vectorized.TypedColumn[int64])
+		fieldCol := batch.Columns[4].(*vectorized.TypedColumn[int64])
+		svcCol := batch.Columns[5].(*vectorized.TypedColumn[string])
+		for rowIdx := range batch.Len {
+			rows = append(rows, groupedRow{
+				ts:    tsCol.Data()[rowIdx],
+				value: fieldCol.Data()[rowIdx],
+				svc:   svcCol.Data()[rowIdx],
+			})
+		}
+	}
+
+	// Expect exactly 2 rows: first-seen alpha (ts=10, value=100) and first-seen beta (ts=30, value=300).
+	if len(rows) != 2 {
+		t.Fatalf("GroupByFirst: expected 2 rows (one per group), got %d: %+v", len(rows), rows)
+	}
+	if rows[0].svc != "alpha" || rows[0].ts != 10 || rows[0].value != 100 {
+		t.Fatalf("first row: got %+v, want svc=alpha ts=10 value=100", rows[0])
+	}
+	if rows[1].svc != "beta" || rows[1].ts != 30 || rows[1].value != 300 {
+		t.Fatalf("second row: got %+v, want svc=beta ts=30 value=300", rows[1])
+	}
+}
+
+// TestApplyBatchGroupByFirstToRows_UnknownTag verifies the loud-failure rule:
+// if a GroupBy tag name does not exist in the schema an error is returned
+// rather than silently dropping the column.
+func TestApplyBatchGroupByFirstToRows_UnknownTag(t *testing.T) {
+	schema := distributedRowsTestSchema() // no tag columns
+	batch := vectorized.NewRecordBatch(schema, 1)
+	batch.Columns[0].(*vectorized.TypedColumn[int64]).Append(1)
+	batch.Columns[1].(*vectorized.TypedColumn[int64]).Append(1)
+	batch.Columns[2].(*vectorized.TypedColumn[int64]).Append(1)
+	batch.Columns[3].(*vectorized.TypedColumn[int64]).Append(1)
+	batch.Columns[4].(*vectorized.TypedColumn[int64]).Append(42)
+	batch.Len = 1
+
+	groupBy := &measurev1.QueryRequest_GroupBy{
+		TagProjection: &modelv1.TagProjection{
+			TagFamilies: []*modelv1.TagProjection_TagFamily{
+				{Name: "default", Tags: []string{"no_such_tag"}},
+			},
+		},
+	}
+	tracker := vectorized.NewMemoryTracker(64 * 1024 * 1024)
+	_, gbErr := applyBatchGroupByFirstToRows([]*vectorized.RecordBatch{batch}, groupBy, 8, tracker)
+	if gbErr == nil {
+		t.Fatal("expected an error for unknown GroupBy tag, got nil")
+	}
+	if !strings.Contains(gbErr.Error(), "no_such_tag") {
+		t.Fatalf("error must mention the missing tag name; got %v", gbErr)
+	}
+}
+
 func encodeDistributedRows(t *testing.T, schema *vectorized.BatchSchema, rows ...rowMergeOutput) []byte {
 	t.Helper()
 	batch := vectorized.NewRecordBatch(schema, len(rows))

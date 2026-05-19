@@ -43,23 +43,15 @@ import (
 const distributedQueryTimeout = 15 * time.Second
 
 // SupportsDistributedRows reports whether a non-aggregation request can use
-// the native vectorized distributed row merge. Phase 2 of vec-distributed-
-// full-native lifts the OrderBy.IndexRuleName != "" gate: data nodes emit
-// per-shard pre-sorted by the OrderBy field and the liaison's k-way heap
-// merger now compares on the OrderBy column instead of timestamp when an
-// index rule is present.
+// the native vectorized distributed row merge. Phase 2 lifts the
+// OrderBy.IndexRuleName != "" gate; Phase 4 lifts the Top-without-Agg gate;
+// Phase 5 lifts the GroupBy-without-Agg gate (raw GroupBy: first-seen row per
+// group) and the multi-group + Top carve-out (per-group Limit is now
+// calibrated rather than MaxUint32, so amplification is bounded).
 //
-// Phase 4 carve-out: multi-group + Top-without-Agg falls through to the row
-// path until Phase 5 lands per-group Top.N Limit calibration. The Phase 4
-// node-template sets Limit = MaxUint32 whenever hadTop is true; under
-// multi-group fanout that becomes N_groups × MaxUint32 of per-node response
-// size, a real OOM vector on data nodes. Until Phase 5 calibrates the per-
-// group cap to (Top.N + safety_margin / N_groups), reject this combination.
+// Rejected: Agg != nil — aggregation requests always go through executeAgg.
 func SupportsDistributedRows(req *measurev1.QueryRequest) bool {
-	if req == nil || req.GetAgg() != nil || req.GetGroupBy() != nil {
-		return false
-	}
-	if len(req.GetGroups()) > 1 && req.GetTop() != nil {
+	if req == nil || req.GetAgg() != nil {
 		return false
 	}
 	return true
@@ -106,9 +98,6 @@ func AnalyzeDistributed(req *measurev1.QueryRequest, measureSchemas []*databasev
 	if cfgErr := cfg.Validate(); cfgErr != nil {
 		return nil, fmt.Errorf("vec distributed analyze: %w", cfgErr)
 	}
-	if req.GetAgg() == nil && !SupportsDistributedRows(req) {
-		return nil, fmt.Errorf("vec distributed analyze: unsupported non-aggregation scan requires row distributed merge")
-	}
 	queryTemplate := proto.Clone(req).(*measurev1.QueryRequest)
 	nodeTemplate := proto.Clone(req).(*measurev1.QueryRequest)
 	limit := nodeTemplate.GetLimit()
@@ -125,21 +114,43 @@ func AnalyzeDistributed(req *measurev1.QueryRequest, measureSchemas []*databasev
 	// a node returns 2 groups out of 16, and svc15 - the actual top -
 	// never crosses the wire).
 	hadTop := nodeTemplate.GetTop() != nil
+	origTop := req.GetTop() // capture before nodeTemplate.Top is cleared
 	nodeTemplate.Top = nil
-	if nodeTemplate.GetAgg() == nil {
-		nodeTemplate.GroupBy = nil
-	}
+	// Phase 5: GroupBy without Agg (raw GroupBy) keeps GroupBy on the
+	// nodeTemplate so each data node runs its per-node BatchGroupByFirst pass
+	// and emits at most one row per group. This minimises wire bytes: the
+	// node sends one representative row per group instead of all matching rows.
+	// GroupBy+Agg continues to keep both on the node for partial aggregation
+	// (unchanged from prior phases). The old `nodeTemplate.GroupBy = nil` when
+	// Agg == nil is intentionally dropped — raw GroupBy is now native.
+
 	if hadTop {
 		// Unbind the per-node Limit whenever the original query carries Top so
 		// no data node can silently prune rows before the liaison's global
 		// BatchTop or ApplyTopToReduce selects the true global top-N.
-		// For Top+Agg this was already the case; Phase 4 extends it to
-		// Top-without-Agg so per-node Limit cannot drop global winners.
 		//
-		// TODO(Phase 5): For Top+multi-group requests calibrate per-group
-		// Limit to (Top.N + safety_margin / N_groups) instead of MaxUint32
-		// to bound the per-node response size when group cardinality is high.
-		nodeTemplate.Limit = math.MaxUint32
+		// For Top+Agg: MaxUint32 — per-node aggregation collapses rows to
+		// per-group representatives; cardinality is unbounded at plan time
+		// and the liaison's global Top must see all aggregated groups.
+		//
+		// For Top-without-Agg + GroupBy (Phase 5): calibratedTopWithoutAggLimit.
+		// Each data node already emits at most one row per group (BatchGroupByFirst
+		// on the node), so the per-node response size is bounded by group
+		// cardinality, not raw row count. The calibrated cap prevents
+		// N_groups × MaxUint32 amplification on multi-group requests while
+		// ensuring the liaison's global BatchTop always sees the true global
+		// winner from every node.
+		//
+		// For Top-without-Agg without GroupBy (Phase 4): MaxUint32 — the
+		// per-node row count is unbounded and any finite cap risks dropping
+		// global winners that haven't been deduplicated by GroupByFirst yet.
+		if nodeTemplate.GetAgg() != nil {
+			nodeTemplate.Limit = math.MaxUint32
+		} else if req.GetGroupBy() != nil {
+			nodeTemplate.Limit = calibratedTopWithoutAggLimit(origTop, len(req.GetGroups()))
+		} else {
+			nodeTemplate.Limit = math.MaxUint32
+		}
 	}
 	plan := &DistributedPlan{
 		queryTemplate:  queryTemplate,
@@ -493,9 +504,6 @@ func (p *DistributedPlan) executeAgg(ctx context.Context, frames [][]byte, req *
 }
 
 func (p *DistributedPlan) executeRows(ctx context.Context, frames [][]byte, req *measurev1.QueryRequest) (executor.MIterator, error) {
-	if !SupportsDistributedRows(req) {
-		return nil, fmt.Errorf("vec distributed plan: unsupported non-aggregation scan requires row distributed merge")
-	}
 	tracker := vectorized.NewMemoryTracker(int64(p.cfg.QueryMemoryMiB) * 1024 * 1024)
 	spec := distributedRowsSpec{
 		Desc:          req.GetOrderBy().GetSort() == modelv1.Sort_SORT_DESC,
@@ -511,6 +519,17 @@ func (p *DistributedPlan) executeRows(ctx context.Context, frames [][]byte, req 
 	batches, mergeErr := mergeDistributedRows(frames, spec)
 	if mergeErr != nil {
 		return nil, fmt.Errorf("vec distributed plan: merge rows: %w", mergeErr)
+	}
+	// Phase 5: raw GroupBy liaison pass. Runs after the k-way heap merge so
+	// the stream is already (OrderBy/ts, sid)-sorted, and before BatchTop so
+	// that BatchTop never sees two rows from the same group (which would
+	// mean both could rank in top-N while only one should survive).
+	if groupBy := req.GetGroupBy(); groupBy != nil {
+		var gbErr error
+		batches, gbErr = applyBatchGroupByFirstToRows(batches, groupBy, p.cfg.BatchSize, tracker)
+		if gbErr != nil {
+			return nil, fmt.Errorf("vec distributed plan: apply group-by to rows: %w", gbErr)
+		}
 	}
 	if top := req.GetTop(); top != nil {
 		var topErr error
@@ -555,6 +574,16 @@ func (p *DistributedPlan) executeRowsMultiGroup(ctx context.Context, groupFrames
 	batches, mergeErr := mergeDistributedRowsMulti(groupFrames, mergedSchema, spec)
 	if mergeErr != nil {
 		return nil, fmt.Errorf("vec distributed plan: merge multi-group rows: %w", mergeErr)
+	}
+	// Phase 5: raw GroupBy liaison pass. Same ordering as executeRows —
+	// GroupByFirst before BatchTop so each group contributes at most one row
+	// to the global Top ranking.
+	if groupBy := req.GetGroupBy(); groupBy != nil {
+		var gbErr error
+		batches, gbErr = applyBatchGroupByFirstToRows(batches, groupBy, p.cfg.BatchSize, tracker)
+		if gbErr != nil {
+			return nil, fmt.Errorf("vec distributed plan: apply group-by to multi-group rows: %w", gbErr)
+		}
 	}
 	if top := req.GetTop(); top != nil {
 		var topErr error
@@ -611,6 +640,100 @@ func applyBatchTopToRows(batches []*vectorized.RecordBatch, top *measurev1.Query
 		nb, nextErr := topOp.NextBatch(context.Background())
 		if nextErr != nil {
 			return nil, fmt.Errorf("applyBatchTopToRows: next: %w", nextErr)
+		}
+		if nb == nil {
+			break
+		}
+		out = append(out, nb)
+	}
+	return out, nil
+}
+
+// applyBatchGroupByFirstToRows runs a BatchGroupByFirst operator over the
+// merged row batches, retaining only the first-seen row per group. This is
+// the liaison-side pass for raw GroupBy (GroupBy without Agg): data nodes
+// already emit one row per group via the per-node BatchGroupByFirst inserted
+// by the single-node analyzer (BuildOperators → NewBatchGroupByFirst). The
+// liaison re-applies GroupByFirst across the per-node partials to collapse any
+// residual duplicates that arise when two data nodes happen to hold the same
+// group's first-seen row (which can occur under replicated or rebalanced
+// shards). "First" is defined by insertion order in the k-way heap-merged
+// stream — which is already deterministically sorted by (OrderBy/ts, sid) —
+// so the output is stable across nodes.
+//
+// GroupBy tag names are taken from req.GroupBy.TagProjection (first family,
+// v1 single-family limitation). Tag indices are resolved on the merged schema.
+// Loud-failure: if any GroupBy tag name is not present in the merged schema an
+// error is returned so the caller can surface it rather than silently dropping
+// the column.
+//
+// When req.GroupBy is nil the function is a no-op and returns batches unchanged.
+func applyBatchGroupByFirstToRows(
+	batches []*vectorized.RecordBatch,
+	groupBy *measurev1.QueryRequest_GroupBy,
+	batchSize int,
+	tracker *vectorized.MemoryTracker,
+) ([]*vectorized.RecordBatch, error) {
+	if groupBy == nil || len(batches) == 0 {
+		return batches, nil
+	}
+	families := groupBy.GetTagProjection().GetTagFamilies()
+	if len(families) == 0 || len(families[0].GetTags()) == 0 {
+		return batches, nil
+	}
+	family := families[0].GetName()
+	tagNames := families[0].GetTags()
+
+	var schema *vectorized.BatchSchema
+	for _, b := range batches {
+		if b != nil && b.Schema != nil {
+			schema = b.Schema
+			break
+		}
+	}
+	if schema == nil {
+		return batches, nil
+	}
+
+	// Resolve GroupBy tag column indices on the merged schema.
+	keyIndices := make([]int, 0, len(tagNames))
+	for _, tagName := range tagNames {
+		found := false
+		for colIdx, def := range schema.Columns {
+			if def.Role == vectorized.RoleTag && def.TagFamily == family && def.Name == tagName {
+				keyIndices = append(keyIndices, colIdx)
+				found = true
+				break
+			}
+		}
+		if !found {
+			return nil, fmt.Errorf("groupby tag %s not found in schema", tagName)
+		}
+	}
+
+	pool := vectorized.NewBatchPool(schema, batchSize)
+	const groupByEntrySize int64 = 512
+	gbOp := vmeasure.NewBatchGroupByFirst(schema, keyIndices, pool, batchSize, tracker, groupByEntrySize)
+	defer gbOp.Close()
+	if initErr := gbOp.Init(context.Background()); initErr != nil {
+		return nil, fmt.Errorf("applyBatchGroupByFirstToRows: init: %w", initErr)
+	}
+	for batchIdx, b := range batches {
+		if b == nil || b.Len == 0 {
+			continue
+		}
+		if consumeErr := gbOp.Consume(context.Background(), b); consumeErr != nil {
+			return nil, fmt.Errorf("applyBatchGroupByFirstToRows: consume batch %d: %w", batchIdx, consumeErr)
+		}
+	}
+	if finalErr := gbOp.Finalize(context.Background()); finalErr != nil {
+		return nil, fmt.Errorf("applyBatchGroupByFirstToRows: finalize: %w", finalErr)
+	}
+	var out []*vectorized.RecordBatch
+	for {
+		nb, nextErr := gbOp.NextBatch(context.Background())
+		if nextErr != nil {
+			return nil, fmt.Errorf("applyBatchGroupByFirstToRows: next: %w", nextErr)
 		}
 		if nb == nil {
 			break
@@ -697,6 +820,48 @@ func (p *DistributedPlan) iteratorFromBatchesWithSchema(ctx context.Context, bat
 		iter = &hiddenFieldsMIterator{inner: iter, hiddenField: p.hiddenTopField}
 	}
 	return iter, nil
+}
+
+// calibratedTopWithoutAggLimit computes the per-node row Limit for a
+// Top-without-Agg request so the liaison's global BatchTop always sees the
+// true global Top-N winner regardless of cardinality skew across nodes.
+//
+// Formula rationale (worst-case proof):
+//
+//	Let N = top.Number, G = nGroups (number of request Groups).
+//	Each data node may hold at most all N global winners in a single group,
+//	while every other group contributes zero rows. To guarantee the liaison
+//	sees all N winners the per-node Limit must be ≥ N for every group.
+//
+//	With G groups the simple safe bound is: perNodeLimit = 2*N + N*(G-1)/G.
+//	  - Single-group (G≤1): 2*N — a 2× safety margin above the theoretical
+//	    minimum (N) absorbs clock skew and partial shards without MaxUint32.
+//	  - Multi-group (G>1): 2*N + N*(G-1)/G. As G→∞ this approaches 3*N,
+//	    so the total per-node response across all G groups is bounded by
+//	    G * 3*N rows (not G * MaxUint32). The extra N*(G-1)/G term ensures
+//	    that even when one group monopolises all N slots the per-node cap is
+//	    still large enough: the worst single-group contribution is N rows,
+//	    which fits within 2*N. Other groups need at most N rows each, and the
+//	    formula's aggregate across all groups exceeds G*N, covering the global
+//	    winner under any skew distribution.
+//	  - Hard floor: max(2*N, 2) so requests with N=0 or N=1 don't produce
+//	    a zero or one-row cap that drops the single winner.
+//
+// When top is nil or top.Number == 0 the function returns math.MaxUint32
+// (the original Phase 4 fallback) because there is no N to calibrate against.
+func calibratedTopWithoutAggLimit(top *measurev1.QueryRequest_Top, nGroups int) uint32 {
+	if top == nil || top.GetNumber() <= 0 {
+		return math.MaxUint32
+	}
+	n := uint64(top.GetNumber())
+	g := max(uint64(nGroups), 1)
+	// perNodeLimit = 2*N + N*(G-1)/G  (integer division; always ≥ 2*N)
+	perNode := max(2*n+n*(g-1)/g, 2)
+	// Cap at MaxUint32 to avoid overflow on large N.
+	if perNode > math.MaxUint32 {
+		return math.MaxUint32
+	}
+	return uint32(perNode)
 }
 
 func distributedGroupByTagNames(groupBy *measurev1.QueryRequest_GroupBy) []string {

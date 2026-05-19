@@ -29,9 +29,13 @@ import (
 	vmeasure "github.com/apache/skywalking-banyandb/pkg/query/vectorized/measure"
 )
 
-func TestAnalyzeDistributed_RejectsUnsupportedNonAgg(t *testing.T) {
+// TestAnalyzeDistributed_AllowsGroupByTopWithoutAgg verifies that Phase 5
+// accepts GroupBy + Top without Agg natively (no longer falls through to the
+// row path). This was the Phase 4 carve-out that Phase 5 drops.
+func TestAnalyzeDistributed_AllowsGroupByTopWithoutAgg(t *testing.T) {
 	req := &measurev1.QueryRequest{
 		Name:            "demo",
+		Groups:          []string{"default"},
 		TagProjection:   projTagProj(),
 		FieldProjection: &measurev1.QueryRequest_FieldProjection{Names: []string{fieldValue}},
 		GroupBy: &measurev1.QueryRequest_GroupBy{
@@ -46,11 +50,8 @@ func TestAnalyzeDistributed_RejectsUnsupportedNonAgg(t *testing.T) {
 		Offset: 3,
 	}
 	_, analyzeErr := AnalyzeDistributed(req, []*databasev1.Measure{testMeasureSchema()}, nil, vmeasure.VectorizedConfig{Enabled: true, BatchSize: 4, QueryMemoryMiB: 1})
-	if analyzeErr == nil {
-		t.Fatal("AnalyzeDistributed should reject unsupported non-agg scans")
-	}
-	if !strings.Contains(analyzeErr.Error(), "unsupported non-aggregation scan") {
-		t.Fatalf("AnalyzeDistributed error should point at the row merge fallback, got %v", analyzeErr)
+	if analyzeErr != nil {
+		t.Fatalf("AnalyzeDistributed must accept GroupBy+Top without Agg natively (Phase 5): %v", analyzeErr)
 	}
 }
 
@@ -90,10 +91,23 @@ func TestSupportsDistributedRows(t *testing.T) {
 		{name: "plain", req: base(), want: true},
 		{name: "multi group", req: &measurev1.QueryRequest{Name: "demo", Groups: []string{"a", "b"}}, want: true},
 		{
-			name: "group by",
+			name: "group by without agg (Phase 5: native raw GroupBy)",
 			req: func() *measurev1.QueryRequest {
 				req := base()
 				req.GroupBy = &measurev1.QueryRequest_GroupBy{TagProjection: projTagProj()}
+				return req
+			}(),
+			want: true,
+		},
+		{
+			name: "group by with agg (always routes to executeAgg)",
+			req: func() *measurev1.QueryRequest {
+				req := base()
+				req.GroupBy = &measurev1.QueryRequest_GroupBy{TagProjection: projTagProj()}
+				req.Agg = &measurev1.QueryRequest_Aggregation{
+					Function:  modelv1.AggregationFunction_AGGREGATION_FUNCTION_SUM,
+					FieldName: fieldValue,
+				}
 				return req
 			}(),
 			want: false,
@@ -108,13 +122,13 @@ func TestSupportsDistributedRows(t *testing.T) {
 			want: true,
 		},
 		{
-			name: "multi group + top (Phase 5 carve-out: row-path fallback)",
+			name: "multi group + top (Phase 5: native with calibrated per-group limit)",
 			req: func() *measurev1.QueryRequest {
 				req := &measurev1.QueryRequest{Name: "demo", Groups: []string{"a", "b"}}
 				req.Top = &measurev1.QueryRequest_Top{Number: 2, FieldName: fieldValue}
 				return req
 			}(),
-			want: false,
+			want: true,
 		},
 		{
 			name: "index order",
@@ -242,10 +256,13 @@ func TestAnalyzeDistributed_TopAggUnboundsNodeLimit_Matrix(t *testing.T) {
 	}
 }
 
-// TestAnalyzeDistributed_TopWithoutAgg_UnboundsNodeLimit verifies that Phase 4
-// sets nodeTemplate.Limit = MaxUint32 for Top-without-Agg requests, mirroring
-// the Top+Agg behaviour so per-node truncation cannot drop global winners.
-func TestAnalyzeDistributed_TopWithoutAgg_UnboundsNodeLimit(t *testing.T) {
+// TestAnalyzeDistributed_TopWithoutAgg_NodeLimitIsUnbounded verifies that
+// Top-without-Agg requests without GroupBy use MaxUint32 as the per-node Limit.
+// The calibrated limit (2*N + N*(G-1)/G) only applies when GroupBy is present,
+// because GroupByFirst collapses per-node rows to at most one per group. Without
+// GroupBy the per-node row count is unbounded and any finite cap risks dropping
+// global winners before the liaison's BatchTop can select them.
+func TestAnalyzeDistributed_TopWithoutAgg_NodeLimitIsUnbounded(t *testing.T) {
 	cases := []struct {
 		name  string
 		topN  int32
@@ -279,8 +296,10 @@ func TestAnalyzeDistributed_TopWithoutAgg_UnboundsNodeLimit(t *testing.T) {
 			if analyzeErr != nil {
 				t.Fatalf("AnalyzeDistributed: %v", analyzeErr)
 			}
+			// Top-without-Agg without GroupBy: per-node limit must be MaxUint32.
+			// The calibrated limit only applies when GroupBy is present (Phase 5).
 			if got, want := p.nodeTemplate.GetLimit(), uint32(math.MaxUint32); got != want {
-				t.Fatalf("Top-without-Agg node limit: got %d, want unbounded (%d)", got, want)
+				t.Fatalf("Top-without-Agg (no GroupBy) node limit: got %d, want unbounded (%d)", got, want)
 			}
 			if p.nodeTemplate.GetTop() != nil {
 				t.Fatal("node template must not carry Top; global BatchTop is the liaison's job")
@@ -658,6 +677,122 @@ func TestHiddenFieldsMIterator_StripsHiddenTopField(t *testing.T) {
 		if dp.DataPoint.Fields[0].GetValue().GetInt().GetValue() != int64(100*(dpIdx+1)) {
 			t.Fatalf("dp %d: field value got %d, want %d", dpIdx, dp.DataPoint.Fields[0].GetValue().GetInt().GetValue(), 100*(dpIdx+1))
 		}
+	}
+}
+
+// TestAnalyzeDistributed_TopNonAggUnboundsNodeLimit_MultiGroup is the Phase 5
+// gate for the per-group Limit calibration. For GroupBy + Top-without-Agg
+// the per-node Limit must be calibrated (not MaxUint32) so that data nodes
+// do not amplify their per-node response to N_groups × MaxUint32 rows.
+// GroupByFirst collapses each node's output to at most one row per group,
+// so the calibration formula 2*N + N*(G-1)/G (always ≥ 2*N, ≤ 3*N) is a safe
+// bound: the liaison's global BatchTop always sees the true top-N winners.
+//
+// Without GroupBy, the per-node limit remains MaxUint32 (see
+// TestAnalyzeDistributed_TopWithoutAgg_NodeLimitIsUnbounded).
+func TestAnalyzeDistributed_TopNonAggUnboundsNodeLimit_MultiGroup(t *testing.T) {
+	cases := []struct {
+		name      string
+		topN      int32
+		groups    []string
+		wantLimit uint32
+	}{
+		{
+			name:      "MultiGroup2_Top3_WithGroupBy",
+			topN:      3,
+			groups:    []string{"a", "b"},
+			wantLimit: calibratedTopWithoutAggLimit(&measurev1.QueryRequest_Top{Number: 3, FieldName: fieldValue}, 2),
+		},
+		{
+			name:      "MultiGroup5_Top10_WithGroupBy",
+			topN:      10,
+			groups:    []string{"a", "b", "c", "d", "e"},
+			wantLimit: calibratedTopWithoutAggLimit(&measurev1.QueryRequest_Top{Number: 10, FieldName: fieldValue}, 5),
+		},
+		{
+			name:      "SingleGroup_Top5_WithGroupBy",
+			topN:      5,
+			groups:    []string{"default"},
+			wantLimit: calibratedTopWithoutAggLimit(&measurev1.QueryRequest_Top{Number: 5, FieldName: fieldValue}, 1),
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			schemas := make([]*databasev1.Measure, len(tc.groups))
+			for groupIdx, g := range tc.groups {
+				schemas[groupIdx] = testMeasureSchemaForGroup(g)
+			}
+			req := &measurev1.QueryRequest{
+				Name:   "demo",
+				Groups: tc.groups,
+				// GroupBy is required: calibration only applies when GroupByFirst
+				// collapses per-node output to at most one row per group.
+				GroupBy: &measurev1.QueryRequest_GroupBy{
+					TagProjection: projTagProj(),
+				},
+				TagProjection:   projTagProj(),
+				FieldProjection: &measurev1.QueryRequest_FieldProjection{Names: []string{fieldValue}},
+				Top: &measurev1.QueryRequest_Top{
+					Number:         tc.topN,
+					FieldName:      fieldValue,
+					FieldValueSort: modelv1.Sort_SORT_DESC,
+				},
+				Limit: 10,
+			}
+			p, analyzeErr := AnalyzeDistributed(req, schemas, nil,
+				vmeasure.VectorizedConfig{Enabled: true, BatchSize: 4, QueryMemoryMiB: 1})
+			if analyzeErr != nil {
+				t.Fatalf("AnalyzeDistributed: %v", analyzeErr)
+			}
+			if got := p.nodeTemplate.GetLimit(); got != tc.wantLimit {
+				t.Fatalf("Top-without-Agg %d-group (with GroupBy) node limit: got %d, want calibrated %d",
+					len(tc.groups), got, tc.wantLimit)
+			}
+			if p.nodeTemplate.GetTop() != nil {
+				t.Fatal("node template must not carry Top; global BatchTop is the liaison's job")
+			}
+			if p.nodeTemplate.GetAgg() != nil {
+				t.Fatal("node template must not carry Agg for a Top-without-Agg request")
+			}
+			// Verify the calibrated limit is strictly less than MaxUint32 when
+			// Top.Number is small — the whole point is to avoid the OOM vector.
+			if tc.topN < 1000 && p.nodeTemplate.GetLimit() == math.MaxUint32 {
+				t.Fatal("calibrated limit must not be MaxUint32 for small Top.Number with GroupBy; that defeats the carve-out")
+			}
+		})
+	}
+}
+
+// TestAnalyzeDistributed_RawGroupBy_NodeTemplateKeepsGroupBy verifies that
+// Phase 5 propagates GroupBy to data nodes for raw GroupBy requests (GroupBy
+// without Agg). Data nodes must receive the GroupBy so they run their per-node
+// BatchGroupByFirst pass and emit at most one row per group, minimising wire
+// bytes. The old behaviour (clearing nodeTemplate.GroupBy when Agg is nil) is
+// intentionally dropped in Phase 5.
+func TestAnalyzeDistributed_RawGroupBy_NodeTemplateKeepsGroupBy(t *testing.T) {
+	req := &measurev1.QueryRequest{
+		Name:            "demo",
+		Groups:          []string{"default"},
+		TagProjection:   projTagProj(),
+		FieldProjection: &measurev1.QueryRequest_FieldProjection{Names: []string{fieldValue}},
+		GroupBy: &measurev1.QueryRequest_GroupBy{
+			TagProjection: projTagProj(),
+		},
+		Limit: 10,
+	}
+	p, analyzeErr := AnalyzeDistributed(req, []*databasev1.Measure{testMeasureSchema()}, nil,
+		vmeasure.VectorizedConfig{Enabled: true, BatchSize: 4, QueryMemoryMiB: 1})
+	if analyzeErr != nil {
+		t.Fatalf("AnalyzeDistributed: %v", analyzeErr)
+	}
+	if p.nodeTemplate.GetGroupBy() == nil {
+		t.Fatal("Phase 5: nodeTemplate must retain GroupBy for raw GroupBy (GroupBy without Agg) so data nodes run per-node BatchGroupByFirst")
+	}
+	if p.nodeTemplate.GetAgg() != nil {
+		t.Fatal("nodeTemplate must not carry Agg for a raw GroupBy request")
+	}
+	if p.nodeTemplate.GetTop() != nil {
+		t.Fatal("nodeTemplate must not carry Top; Top is applied liaison-side")
 	}
 }
 
