@@ -637,7 +637,7 @@ func TestCollectWithPartialClosedSegments(t *testing.T) {
 	}
 
 	// Call closeIdleSegments to ensure our target segments are closed
-	closedCount := sc.closeIdleSegments(context.Background())
+	closedCount := sc.closeIdleSegments()
 	require.Equal(t, 2, closedCount, "Should have closed 2 segments")
 
 	// Verify segments 0 and 2 are closed, 1 and 3 are open
