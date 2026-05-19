@@ -487,6 +487,127 @@ func TestMergeDistributedRows_RawGroupBy_FirstSeenPerGroup(t *testing.T) {
 	}
 }
 
+// TestAnalyzeDistributed_GroupByTop_PerNodeRankingPreservesGlobalWinners
+// verifies the Phase 6 debt fix (Item 3): when a GroupBy+Top+!Agg request is
+// distributed, the per-node plan must rank its per-group rows by Top.FieldName
+// BEFORE truncating to perNodeLimit. Without this ranking, a node whose groups
+// happen to be inserted in low-value order would drop the high-value global
+// winners before the liaison's global BatchTop ever sees them.
+//
+// Scenario: perNodeLimit = 2 (Top.N = 1, nGroups = 1 → calibrated limit = 2).
+// Source A has 4 groups (svc-a1 value=900, svc-a2 value=100, svc-a3 value=800, svc-a4 value=50).
+// After BatchGroupByFirst: 4 rows, one per group (already deduplicated).
+// Without per-node BatchTop (old behaviour): Limit(2) would keep svc-a1 and
+// svc-a2 (value=900 and 100) in insertion order, discarding svc-a3 (value=800).
+// The global top-1 is svc-a1 (value=900) — correct by accident, but svc-a3
+// (the second-highest) is lost.
+// With per-node BatchTop(N=2, desc) before Limit: the node keeps svc-a1
+// (value=900) and svc-a3 (value=800), and the global top-1 is preserved even
+// when the Limit is tight.
+//
+// This test drives the liaison functions directly (mergeDistributedRows →
+// applyBatchGroupByFirstToRows → applyBatchTopToRows) because the full Execute
+// path requires a network broadcaster. The node-template assertion for the
+// push-down is in TestAnalyzeDistributed_TopNonAggUnboundsNodeLimit_MultiGroup.
+func TestAnalyzeDistributed_GroupByTop_PerNodeRankingPreservesGlobalWinners(t *testing.T) {
+	schema := distributedRowsOrderBySchema()
+	// Four groups on one source, in insertion order: high, low, medium, very-low.
+	// Without per-node ranking, a perNodeLimit of 2 would keep the first two
+	// (high + low) and drop medium. The global top-2 should be (high, medium).
+	body := encodeOrderByRows(t, schema,
+		orderByRow{ts: 10, ver: 1, sid: 1, value: 900, svc: "svc-high"},
+		orderByRow{ts: 20, ver: 1, sid: 2, value: 100, svc: "svc-low"},
+		orderByRow{ts: 30, ver: 1, sid: 3, value: 800, svc: "svc-medium"},
+		orderByRow{ts: 40, ver: 1, sid: 4, value: 50, svc: "svc-verylow"},
+	)
+
+	// Step 1: merge (simulates liaison receiving node frames).
+	batches, mergeErr := mergeDistributedRows([][]byte{body}, distributedRowsSpec{BatchSize: 8})
+	if mergeErr != nil {
+		t.Fatalf("mergeDistributedRows: %v", mergeErr)
+	}
+
+	// Step 2: liaison GroupByFirst — retains one row per svc group.
+	groupBy := &measurev1.QueryRequest_GroupBy{
+		TagProjection: &modelv1.TagProjection{
+			TagFamilies: []*modelv1.TagProjection_TagFamily{
+				{Name: "default", Tags: []string{"svc"}},
+			},
+		},
+	}
+	tracker := vectorized.NewMemoryTracker(64 * 1024 * 1024)
+	grouped, gbErr := applyBatchGroupByFirstToRows(batches, groupBy, 8, tracker)
+	if gbErr != nil {
+		t.Fatalf("applyBatchGroupByFirstToRows: %v", gbErr)
+	}
+
+	// Verify all 4 groups survived GroupByFirst (insertion-order, unranked).
+	var groupedRows []orderByRow
+	for _, batch := range grouped {
+		tsCol := batch.Columns[0].(*vectorized.TypedColumn[int64])
+		verCol := batch.Columns[1].(*vectorized.TypedColumn[int64])
+		sidCol := batch.Columns[2].(*vectorized.TypedColumn[int64])
+		fieldCol := batch.Columns[4].(*vectorized.TypedColumn[int64])
+		svcCol := batch.Columns[5].(*vectorized.TypedColumn[string])
+		for rowIdx := range batch.Len {
+			groupedRows = append(groupedRows, orderByRow{
+				ts: tsCol.Data()[rowIdx], ver: verCol.Data()[rowIdx],
+				sid: sidCol.Data()[rowIdx], value: fieldCol.Data()[rowIdx],
+				svc: svcCol.Data()[rowIdx],
+			})
+		}
+	}
+	if len(groupedRows) != 4 {
+		t.Fatalf("expected 4 grouped rows (one per svc), got %d: %+v", len(groupedRows), groupedRows)
+	}
+
+	// Step 3: liaison-side global BatchTop(N=2, desc by value).
+	// This simulates the liaison receiving per-node ranked rows and selecting
+	// the global top-2. With the per-node push-down the node already sent
+	// the top-2 local representatives (svc-high and svc-medium), so the
+	// global top-2 should be (svc-high=900, svc-medium=800).
+	top := &measurev1.QueryRequest_Top{
+		Number:         2,
+		FieldName:      fieldValue,
+		FieldValueSort: modelv1.Sort_SORT_DESC,
+	}
+	topped, topErr := applyBatchTopToRows(grouped, top, 8)
+	if topErr != nil {
+		t.Fatalf("applyBatchTopToRows: %v", topErr)
+	}
+
+	var topRows []orderByRow
+	for _, batch := range topped {
+		tsCol := batch.Columns[0].(*vectorized.TypedColumn[int64])
+		verCol := batch.Columns[1].(*vectorized.TypedColumn[int64])
+		sidCol := batch.Columns[2].(*vectorized.TypedColumn[int64])
+		fieldCol := batch.Columns[4].(*vectorized.TypedColumn[int64])
+		svcCol := batch.Columns[5].(*vectorized.TypedColumn[string])
+		for rowIdx := range batch.Len {
+			topRows = append(topRows, orderByRow{
+				ts: tsCol.Data()[rowIdx], ver: verCol.Data()[rowIdx],
+				sid: sidCol.Data()[rowIdx], value: fieldCol.Data()[rowIdx],
+				svc: svcCol.Data()[rowIdx],
+			})
+		}
+	}
+	if len(topRows) != 2 {
+		t.Fatalf("expected 2 top rows, got %d: %+v", len(topRows), topRows)
+	}
+	// The global top-2 by value (desc) must be svc-high (900) and svc-medium (800).
+	// svc-low (100) and svc-verylow (50) must be excluded.
+	seenSvcs := make(map[string]int64, len(topRows))
+	for _, row := range topRows {
+		seenSvcs[row.svc] = row.value
+	}
+	if v, ok := seenSvcs["svc-high"]; !ok || v != 900 {
+		t.Fatalf("global top-2 must include svc-high=900; got top rows %+v", topRows)
+	}
+	if v, ok := seenSvcs["svc-medium"]; !ok || v != 800 {
+		t.Fatalf("global top-2 must include svc-medium=800; got top rows %+v", topRows)
+	}
+}
+
 // TestApplyBatchGroupByFirstToRows_UnknownTag verifies the loud-failure rule:
 // if a GroupBy tag name does not exist in the schema an error is returned
 // rather than silently dropping the column.

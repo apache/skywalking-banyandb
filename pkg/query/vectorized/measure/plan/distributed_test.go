@@ -748,8 +748,16 @@ func TestAnalyzeDistributed_TopNonAggUnboundsNodeLimit_MultiGroup(t *testing.T) 
 				t.Fatalf("Top-without-Agg %d-group (with GroupBy) node limit: got %d, want calibrated %d",
 					len(tc.groups), got, tc.wantLimit)
 			}
-			if p.nodeTemplate.GetTop() != nil {
-				t.Fatal("node template must not carry Top; global BatchTop is the liaison's job")
+			// Phase 6 debt (Item 3): Top is pushed to the node template for
+			// GroupBy+Top+!Agg so data nodes run BatchTop after BatchGroupByFirst,
+			// emitting rows ranked by Top.FieldName instead of insertion-order-
+			// truncated. The liaison's global BatchTop then selects the global top-N
+			// from the per-node ranked representatives.
+			if p.nodeTemplate.GetTop() == nil {
+				t.Fatal("node template must carry Top for GroupBy+Top+!Agg so data nodes rank their per-group rows")
+			}
+			if got, want := p.nodeTemplate.GetTop().GetNumber(), int32(tc.wantLimit); got != want {
+				t.Fatalf("node template Top.Number: got %d, want perNodeLimit %d", got, want)
 			}
 			if p.nodeTemplate.GetAgg() != nil {
 				t.Fatal("node template must not carry Agg for a Top-without-Agg request")

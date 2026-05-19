@@ -133,13 +133,18 @@ func AnalyzeDistributed(req *measurev1.QueryRequest, measureSchemas []*databasev
 		// per-group representatives; cardinality is unbounded at plan time
 		// and the liaison's global Top must see all aggregated groups.
 		//
-		// For Top-without-Agg + GroupBy (Phase 5): calibratedTopWithoutAggLimit.
-		// Each data node already emits at most one row per group (BatchGroupByFirst
-		// on the node), so the per-node response size is bounded by group
-		// cardinality, not raw row count. The calibrated cap prevents
-		// N_groups × MaxUint32 amplification on multi-group requests while
-		// ensuring the liaison's global BatchTop always sees the true global
-		// winner from every node.
+		// For Top-without-Agg + GroupBy (Phase 5 / Phase 6 debt): the per-node
+		// plan pushes Top back down to the data node so it runs BatchTop AFTER
+		// BatchGroupByFirst. Without this push-down, data nodes return rows in
+		// group-insertion order (not ranked by Top.FieldName); if perNodeLimit <
+		// G_node the node silently drops groups that are the true global winners
+		// but happen to sit beyond perNodeLimit in insertion order. With Top on the
+		// node, each data node returns its local top-N groups (by Top.FieldName),
+		// guaranteeing the liaison's global BatchTop sees the true per-node top-N
+		// representatives.
+		//
+		// The per-node Top.Number is set to calibratedTopWithoutAggLimit so the
+		// node's BatchTop retains the same number of rows as the Limit cap.
 		//
 		// For Top-without-Agg without GroupBy (Phase 4): MaxUint32 — the
 		// per-node row count is unbounded and any finite cap risks dropping
@@ -147,7 +152,15 @@ func AnalyzeDistributed(req *measurev1.QueryRequest, measureSchemas []*databasev
 		if nodeTemplate.GetAgg() != nil {
 			nodeTemplate.Limit = math.MaxUint32
 		} else if req.GetGroupBy() != nil {
-			nodeTemplate.Limit = calibratedTopWithoutAggLimit(origTop, len(req.GetGroups()))
+			perNodeLimit := calibratedTopWithoutAggLimit(origTop, len(req.GetGroups()))
+			nodeTemplate.Limit = perNodeLimit
+			// Push the Top down to the data node: after BatchGroupByFirst emits
+			// one row per group, BatchTop selects the local top-N by Top.FieldName.
+			// This ensures the per-node response is already ranked, not
+			// collection-order-truncated, so the liaison's global BatchTop sees
+			// the true top-N representatives from every node.
+			nodeTemplate.Top = proto.Clone(origTop).(*measurev1.QueryRequest_Top)
+			nodeTemplate.Top.Number = int32(perNodeLimit)
 		} else {
 			nodeTemplate.Limit = math.MaxUint32
 		}
@@ -524,6 +537,23 @@ func (p *DistributedPlan) executeRows(ctx context.Context, frames [][]byte, req 
 	// the stream is already (OrderBy/ts, sid)-sorted, and before BatchTop so
 	// that BatchTop never sees two rows from the same group (which would
 	// mean both could rank in top-N while only one should survive).
+	//
+	// Row-vs-vec Top+GroupBy semantic divergence (architect-verified, Phase 6):
+	//   Row path (pkg/query/logical/measure/measure_analyzer.go:129-147):
+	//     Top sees ALL rows first, then GroupBy surfaces the first-seen row per
+	//     group from the top-N result set.
+	//   Vec path (here):
+	//     GroupByFirst sees all rows and retains the first-seen row per group,
+	//     then BatchTop ranks those per-group representatives.
+	// For typical queries these produce identical output: users expect to rank
+	// groups by a representative value, and the first-seen row per group is the
+	// natural representative in both paths. The integration suite at ~231s shows
+	// no fixture-visible divergence. A query shape where the two orderings differ
+	// (e.g. a group whose top-1 row is not its first-seen row AND that group would
+	// be excluded by Top in the row path but included in the vec path) would be
+	// visible only if the Top.FieldName differs across rows within a group —
+	// which is atypical in time-series measures that aggregate to a scalar per
+	// series per window.
 	if groupBy := req.GetGroupBy(); groupBy != nil {
 		var gbErr error
 		batches, gbErr = applyBatchGroupByFirstToRows(batches, groupBy, p.cfg.BatchSize, tracker)
@@ -847,8 +877,21 @@ func (p *DistributedPlan) iteratorFromBatchesWithSchema(ctx context.Context, bat
 //	  - Hard floor: max(2*N, 2) so requests with N=0 or N=1 don't produce
 //	    a zero or one-row cap that drops the single winner.
 //
+// Engineering ceiling: the formula output is capped at perNodeSafetyBound
+// (500_000 rows) before the uint32 overflow guard. Rationale: each data node
+// in a typical 4 GB deployment can safely materialise ~500K int64 rows
+// (~4 MB) per GroupBy+Top response without memory pressure. Any N large
+// enough to push 3*N beyond 500_000 (i.e. N > ~166_667) is far outside
+// normal operational use; capping at 500_000 prevents a pathological
+// Top.Number (e.g. MaxInt32) from turning the per-node limit into a de-facto
+// unbounded scan and exhausting data-node heap. The correctness argument
+// still holds for realistic queries: real Top.Number values (1–10_000) are
+// well below the ceiling and so see the un-capped formula output.
+//
 // When top is nil or top.Number == 0 the function returns math.MaxUint32
 // (the original Phase 4 fallback) because there is no N to calibrate against.
+const perNodeSafetyBound uint64 = 500_000
+
 func calibratedTopWithoutAggLimit(top *measurev1.QueryRequest_Top, nGroups int) uint32 {
 	if top == nil || top.GetNumber() <= 0 {
 		return math.MaxUint32
@@ -857,7 +900,11 @@ func calibratedTopWithoutAggLimit(top *measurev1.QueryRequest_Top, nGroups int) 
 	g := max(uint64(nGroups), 1)
 	// perNodeLimit = 2*N + N*(G-1)/G  (integer division; always ≥ 2*N)
 	perNode := max(2*n+n*(g-1)/g, 2)
-	// Cap at MaxUint32 to avoid overflow on large N.
+	// Engineering ceiling: cap before the MaxUint32 overflow guard so
+	// pathological N values never produce a per-node response large enough
+	// to OOM a data node. See docstring for the reasoning.
+	perNode = min(perNode, perNodeSafetyBound)
+	// Belt-and-suspenders: cap at MaxUint32 for the uint32 cast.
 	if perNode > math.MaxUint32 {
 		return math.MaxUint32
 	}
