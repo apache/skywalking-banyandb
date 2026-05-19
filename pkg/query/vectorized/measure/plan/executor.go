@@ -75,6 +75,7 @@ func Execute(ctx context.Context, plan VecPlan, cfg measure.VectorizedConfig) (e
 	// schema-rewriting breaker (BatchAggregation), that is the agg output
 	// (keys + agg field); for schema-preserving plans, it is the scan
 	// schema. plan.Schema() walks to the root node.
-	egressPool := vectorized.NewBatchPool(plan.Schema(), cfg.BatchSize)
-	return measure.NewIteratorFromPipeline(ctx, pipeline, egressPool), nil
+	terminalSchema := plan.Schema()
+	egressPool := vectorized.NewBatchPool(terminalSchema, cfg.BatchSize)
+	return measure.NewIteratorFromPipeline(ctx, pipeline, terminalSchema, egressPool), nil
 }

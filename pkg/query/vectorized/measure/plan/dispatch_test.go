@@ -25,8 +25,10 @@ import (
 	"google.golang.org/protobuf/types/known/timestamppb"
 
 	commonv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/common/v1"
+	databasev1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/database/v1"
 	measurev1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/measure/v1"
 	modelv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/model/v1"
+	"github.com/apache/skywalking-banyandb/pkg/query/logical"
 	logicalmeasure "github.com/apache/skywalking-banyandb/pkg/query/logical/measure"
 	"github.com/apache/skywalking-banyandb/pkg/query/model"
 	measure "github.com/apache/skywalking-banyandb/pkg/query/vectorized/measure"
@@ -41,7 +43,7 @@ func bareReq() *measurev1.QueryRequest {
 		Name:            "demo",
 		Groups:          []string{"default"},
 		TagProjection:   projTagProj(),
-		FieldProjection: &measurev1.QueryRequest_FieldProjection{Names: []string{"value"}},
+		FieldProjection: &measurev1.QueryRequest_FieldProjection{Names: []string{fieldValue}},
 		TimeRange: &modelv1.TimeRange{
 			Begin: timestamppb.New(time.Unix(0, 0)),
 			End:   timestamppb.New(time.Unix(0, 1_000_000)),
@@ -53,7 +55,7 @@ func bareReq() *measurev1.QueryRequest {
 // (nil, "", false, nil) immediately, before any other check.
 func TestDispatch_NotEnabled_FallsThrough(t *testing.T) {
 	iter, planStr, handled, err := Dispatch(context.Background(),
-		bareReq(), nil, nil, nil, nil, dispatchCfg(false))
+		bareReq(), nil, nil, nil, nil, dispatchCfg(false), false, false)
 	if err != nil {
 		t.Fatalf("disabled config should not error: %v", err)
 	}
@@ -65,68 +67,91 @@ func TestDispatch_NotEnabled_FallsThrough(t *testing.T) {
 	}
 }
 
-// TestDispatch_GroupByWithoutAgg_FallsThrough covers the pair check
-// (GroupBy and Agg must travel together).
-func TestDispatch_GroupByWithoutAgg_FallsThrough(t *testing.T) {
+// dispatchSchemaFixture builds the (measureSchema, logicalSchema,
+// metadata, fakeEC) tuple the post-G9 ReachesEcQuery tests share. fakeEC
+// returns (nil, nil) so dispatch falls through after ec.Query (empty
+// result); what each test asserts is that ec.Query was reached at all,
+// proving the eligibility gate admitted the request.
+func dispatchSchemaFixture(t *testing.T) (*databasev1.Measure, logical.Schema, *commonv1.Metadata, *fakeEC) {
+	t.Helper()
+	measureSchema := testMeasureSchema()
+	// nolint:staticcheck // SA1019 — row-path BuildSchema is the only schema builder until G8 replaces it.
+	logicalSchema, schemaErr := logicalmeasure.BuildSchema(measureSchema, nil)
+	if schemaErr != nil {
+		t.Fatalf("BuildSchema: %v", schemaErr)
+	}
+	return measureSchema, logicalSchema, &commonv1.Metadata{Name: "demo", Group: "default"}, &fakeEC{}
+}
+
+// TestDispatch_RawGroupBy_ReachesEcQuery confirms G9b: GroupBy without
+// Agg (raw grouping) is now handled by the vec subsystem rather than
+// falling through to the row path.
+func TestDispatch_RawGroupBy_ReachesEcQuery(t *testing.T) {
+	measureSchema, logicalSchema, metadata, ec := dispatchSchemaFixture(t)
+
 	req := bareReq()
 	req.GroupBy = &measurev1.QueryRequest_GroupBy{
 		TagProjection: projTagProj(),
-		FieldName:     "value",
+		FieldName:     fieldValue,
 	}
 	_, _, handled, err := Dispatch(context.Background(),
-		req, nil, nil, nil, nil, dispatchCfg(true))
+		req, metadata, measureSchema, logicalSchema, ec, dispatchCfg(true), false, false)
 	if err != nil {
-		t.Fatalf("GroupBy-without-Agg fallthrough must not error: %v", err)
+		t.Fatalf("raw GroupBy must not error before ec.Query: %v", err)
 	}
-	if handled {
-		t.Fatal("GroupBy without Agg must fall through to row path")
+	if !ec.called {
+		t.Fatal("raw GroupBy (no Agg) must reach ec.Query post-G9b, not fall through")
+	}
+	if !handled {
+		t.Fatal("raw GroupBy reached ec.Query (empty result) — dispatch must report handled=true")
 	}
 }
 
-// TestDispatch_AggWithoutGroupBy_FallsThrough is the Agg-only counterpart.
-// Scalar reduce is deferred; Agg without GroupBy falls through.
-func TestDispatch_AggWithoutGroupBy_FallsThrough(t *testing.T) {
+// TestDispatch_ScalarReduce_ReachesEcQuery confirms G9b: Agg without
+// GroupBy (scalar reduce) is now handled by the vec subsystem.
+func TestDispatch_ScalarReduce_ReachesEcQuery(t *testing.T) {
+	measureSchema, logicalSchema, metadata, ec := dispatchSchemaFixture(t)
+
 	req := bareReq()
 	req.Agg = &measurev1.QueryRequest_Aggregation{
 		Function:  modelv1.AggregationFunction_AGGREGATION_FUNCTION_SUM,
-		FieldName: "value",
+		FieldName: fieldValue,
 	}
 	_, _, handled, err := Dispatch(context.Background(),
-		req, nil, nil, nil, nil, dispatchCfg(true))
+		req, metadata, measureSchema, logicalSchema, ec, dispatchCfg(true), false, false)
 	if err != nil {
-		t.Fatalf("Agg-without-GroupBy fallthrough must not error: %v", err)
+		t.Fatalf("scalar reduce must not error before ec.Query: %v", err)
 	}
-	if handled {
-		t.Fatal("Agg without GroupBy must fall through to row path")
+	if !ec.called {
+		t.Fatal("scalar reduce (Agg, no GroupBy) must reach ec.Query post-G9b, not fall through")
+	}
+	if !handled {
+		t.Fatal("scalar reduce reached ec.Query (empty result) — dispatch must report handled=true")
 	}
 }
 
-// TestDispatch_GroupByAggUncoveredProjection_FallsThrough covers the
-// G8d.2 projection-coverage gate. BatchAggregation locates its key +
-// value columns by name inside the BatchSchema, which is built from
-// TagProjection + FieldProjection. When GroupBy keys or the Agg field
-// are not in the request's projection, dispatch falls through so the
-// row path can either extend projection implicitly or surface its
-// canonical error.
-func TestDispatch_GroupByAggUncoveredProjection_FallsThrough(t *testing.T) {
+// TestDispatch_GroupByAggUncoveredProjection_ReachesEcQuery confirms
+// G9b's projection auto-coverage: when GroupBy keys or the Agg field are
+// absent from the request's projection, plan.Analyze extends the
+// projection so the request is admitted instead of falling through.
+func TestDispatch_GroupByAggUncoveredProjection_ReachesEcQuery(t *testing.T) {
 	cases := []struct {
-		name    string
-		mutate  func(*measurev1.QueryRequest)
-		comment string
+		mutate func(*measurev1.QueryRequest)
+		name   string
 	}{
 		{
 			name: "groupby_tag_not_in_projection",
 			mutate: func(req *measurev1.QueryRequest) {
-				// GroupBy references "region" but TagProjection only carries "svc".
+				// GroupBy references region but TagProjection only carries svc.
 				req.GroupBy = &measurev1.QueryRequest_GroupBy{
 					TagProjection: &modelv1.TagProjection{TagFamilies: []*modelv1.TagProjection_TagFamily{
 						{Name: "default", Tags: []string{"region"}},
 					}},
-					FieldName: "value",
+					FieldName: fieldValue,
 				}
 				req.Agg = &measurev1.QueryRequest_Aggregation{
 					Function:  modelv1.AggregationFunction_AGGREGATION_FUNCTION_SUM,
-					FieldName: "value",
+					FieldName: fieldValue,
 				}
 			},
 		},
@@ -135,75 +160,143 @@ func TestDispatch_GroupByAggUncoveredProjection_FallsThrough(t *testing.T) {
 			mutate: func(req *measurev1.QueryRequest) {
 				req.GroupBy = &measurev1.QueryRequest_GroupBy{
 					TagProjection: projTagProj(),
-					FieldName:     "value",
+					FieldName:     fieldValue,
 				}
 				req.Agg = &measurev1.QueryRequest_Aggregation{
 					Function:  modelv1.AggregationFunction_AGGREGATION_FUNCTION_SUM,
-					FieldName: "value",
+					FieldName: fieldValue,
 				}
-				// Strip "value" from FieldProjection so the Agg field is uncovered.
+				// Strip the value field from FieldProjection; G9b auto-coverage re-adds it.
 				req.FieldProjection = nil
 			},
 		},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
+			measureSchema, logicalSchema, metadata, ec := dispatchSchemaFixture(t)
 			req := bareReq()
 			c.mutate(req)
 			_, _, handled, err := Dispatch(context.Background(),
-				req, nil, nil, nil, nil, dispatchCfg(true))
-			if err != nil {
-				t.Fatalf("uncovered projection must not error: %v", err)
+				req, metadata, measureSchema, logicalSchema, ec, dispatchCfg(true), false, false)
+			if err == nil && !handled {
+				t.Fatal("auto-covered projection must reach ec.Query (handled=true), not fall through")
 			}
-			if handled {
-				t.Fatal("uncovered GroupBy / Agg projection must fall through")
+			if err != nil {
+				t.Fatalf("auto-covered projection must not error: %v", err)
+			}
+			if !ec.called {
+				t.Fatal("uncovered GroupBy/Agg projection must reach ec.Query post-G9b (auto-coverage)")
 			}
 		})
 	}
 }
 
-// TestDispatch_Top_FallsThrough covers the per-timestamp top-N gap.
-func TestDispatch_Top_FallsThrough(t *testing.T) {
+// TestDispatch_Top_ReachesEcQuery confirms G9a removed the Top gate:
+// req.Top no longer triggers an eligibility fall-through. The request
+// proceeds to ec.Query, where the analyzer has emitted
+// Scan → Top → Limit. fakeEC returns nil so dispatch falls through after
+// ec.Query (the empty-result branch) — what matters is that ec.Query was
+// invoked at all, proving the Top gate no longer rejects the request.
+func TestDispatch_Top_ReachesEcQuery(t *testing.T) {
+	measureSchema := testMeasureSchema()
+	// nolint:staticcheck // SA1019 — row-path BuildSchema is the only schema builder until G8 replaces it.
+	logicalSchema, schemaErr := logicalmeasure.BuildSchema(measureSchema, nil)
+	if schemaErr != nil {
+		t.Fatalf("BuildSchema: %v", schemaErr)
+	}
+	metadata := &commonv1.Metadata{Name: "demo", Group: "default"}
+	ec := &fakeEC{wantResult: nil, wantErr: nil}
+
 	req := bareReq()
 	req.Top = &measurev1.QueryRequest_Top{
 		Number:         5,
-		FieldName:      "value",
+		FieldName:      fieldValue,
 		FieldValueSort: modelv1.Sort_SORT_DESC,
 	}
-	_, _, handled, err := Dispatch(context.Background(),
-		req, nil, nil, nil, nil, dispatchCfg(true))
+
+	iter, planStr, handled, err := Dispatch(context.Background(),
+		req, metadata, measureSchema, logicalSchema, ec, dispatchCfg(true), false, false)
 	if err != nil {
-		t.Fatalf("Top fallthrough must not error: %v", err)
+		t.Fatalf("Top request must not error before ec.Query: %v", err)
 	}
-	if handled {
-		t.Fatal("Top must fall through (BatchTop semantics differ from row TopN)")
+	if !ec.called {
+		t.Fatalf("Top request must reach ec.Query (G9a removed the Top gate); "+
+			"got iter=%v planStr=%q handled=%v", iter, planStr, handled)
 	}
 }
 
-// TestDispatch_OrderBy_FallsThrough covers the order_by gap. The row
-// path resolves OrderBy via the PushDownOrder optimizer rule which the
-// vec dispatch does not invoke. Until dispatch threads OrderBy into
-// MeasureQueryOptions.Order, requests with OrderBy must fall through.
-func TestDispatch_OrderBy_FallsThrough(t *testing.T) {
+// TestDispatch_OrderBy_ReachesEcQuery confirms dispatch resolves
+// req.OrderBy via logical.ParseOrderBy and threads it into
+// MeasureQueryOptions.Order, instead of falling through to the row
+// path. fakeEC returns nil so dispatch falls through after ec.Query
+// — what matters is that ec.Query was reached at all, proving the
+// OrderBy gate no longer rejects the request.
+func TestDispatch_OrderBy_ReachesEcQuery(t *testing.T) {
+	measureSchema := testMeasureSchema()
+	// nolint:staticcheck // SA1019 — row-path BuildSchema is the only schema builder until G8 replaces it.
+	logicalSchema, schemaErr := logicalmeasure.BuildSchema(measureSchema, nil)
+	if schemaErr != nil {
+		t.Fatalf("BuildSchema: %v", schemaErr)
+	}
+	metadata := &commonv1.Metadata{Name: "demo", Group: "default"}
+	ec := &fakeEC{wantResult: nil, wantErr: nil}
+
 	req := bareReq()
 	req.OrderBy = &modelv1.QueryOrder{
 		Sort: modelv1.Sort_SORT_DESC,
 	}
-	_, _, handled, err := Dispatch(context.Background(),
-		req, nil, nil, nil, nil, dispatchCfg(true))
+
+	iter, planStr, handled, err := Dispatch(context.Background(),
+		req, metadata, measureSchema, logicalSchema, ec, dispatchCfg(true), false, false)
 	if err != nil {
-		t.Fatalf("OrderBy fallthrough must not error: %v", err)
+		t.Fatalf("OrderBy must not error before ec.Query: %v", err)
 	}
-	if handled {
-		t.Fatal("OrderBy must fall through (row path applies it via PushDownOrder)")
+	if !ec.called {
+		t.Fatalf("OrderBy must reach ec.Query (no longer falls through); "+
+			"got iter=%v planStr=%q handled=%v", iter, planStr, handled)
 	}
 }
 
-// TestDispatch_UnknownTagProjection_FallsThrough covers the parity gap
-// for WantErr=true fixtures: the row path rejects unknown tags via
-// ValidateProjectionTags and returns a descriptive error. Dispatch
-// falls through so the row path surfaces that canonical error.
-func TestDispatch_UnknownTagProjection_FallsThrough(t *testing.T) {
+// TestDispatch_OrderBy_UnknownIndexRule_BubblesUpError covers the
+// error branch dispatch added when threading OrderBy through
+// logical.ParseOrderBy: an unknown index rule name must surface as a
+// dispatch error with handled=true so the caller does not silently
+// retry the row path (which would produce the same canonical error).
+func TestDispatch_OrderBy_UnknownIndexRule_BubblesUpError(t *testing.T) {
+	measureSchema := testMeasureSchema()
+	// nolint:staticcheck // SA1019 — row-path BuildSchema is the only schema builder until G8 replaces it.
+	logicalSchema, schemaErr := logicalmeasure.BuildSchema(measureSchema, nil)
+	if schemaErr != nil {
+		t.Fatalf("BuildSchema: %v", schemaErr)
+	}
+	metadata := &commonv1.Metadata{Name: "demo", Group: "default"}
+	ec := &fakeEC{wantResult: nil, wantErr: nil}
+
+	req := bareReq()
+	req.OrderBy = &modelv1.QueryOrder{
+		IndexRuleName: "no_such_index_rule",
+		Sort:          modelv1.Sort_SORT_ASC,
+	}
+
+	_, _, handled, err := Dispatch(context.Background(),
+		req, metadata, measureSchema, logicalSchema, ec, dispatchCfg(true), false, false)
+	if err == nil {
+		t.Fatal("unknown OrderBy index rule must surface as a dispatch error")
+	}
+	if !handled {
+		t.Fatal("unknown OrderBy index rule must report handled=true so caller does not re-try row path")
+	}
+	if ec.called {
+		t.Fatal("unknown OrderBy index rule must error before ec.Query is invoked")
+	}
+}
+
+// TestDispatch_UnknownTagProjection_SurfacesCanonicalError covers G9c
+// #11: the row path rejects unknown tags via ValidateProjectionTags with
+// errors.Wrap(ErrTagNotDefined, tagName). Dispatch reproduces that exact
+// message and returns handled=true so the caller surfaces it (the
+// WantErr=true fixtures depend on it) instead of borrowing the row path.
+func TestDispatch_UnknownTagProjection_SurfacesCanonicalError(t *testing.T) {
 	measureSchema := testMeasureSchema()
 	// nolint:staticcheck // SA1019 — row-path BuildSchema is the only schema builder until G8 replaces it.
 	logicalSchema, schemaErr := logicalmeasure.BuildSchema(measureSchema, nil)
@@ -218,21 +311,28 @@ func TestDispatch_UnknownTagProjection_FallsThrough(t *testing.T) {
 		{Name: "default", Tags: []string{"ghost"}},
 	}}
 	_, _, handled, err := Dispatch(context.Background(),
-		req, metadata, measureSchema, logicalSchema, ec, dispatchCfg(true))
-	if err != nil {
-		t.Fatalf("unknown tag fallthrough must not error: %v", err)
+		req, metadata, measureSchema, logicalSchema, ec, dispatchCfg(true), false, false)
+	if err == nil {
+		t.Fatal("unknown tag in projection must surface the canonical row-path error")
 	}
-	if handled {
-		t.Fatal("unknown tag in projection must fall through (row path returns WantErr)")
+	// Byte-identical to logical.CommonSchema.ValidateProjectionTags
+	// (pkg/query/logical/schema.go:175): errors.Wrap(ErrTagNotDefined, "ghost").
+	const wantMsg = "ghost: tag is not defined"
+	if err.Error() != wantMsg {
+		t.Fatalf("error message parity: want %q, got %q", wantMsg, err.Error())
+	}
+	if !handled {
+		t.Fatal("projection error must report handled=true so caller surfaces it (no row-path retry)")
 	}
 	if ec.called {
 		t.Fatal("ec.Query must not be invoked when projection is invalid")
 	}
 }
 
-// TestDispatch_UnknownFieldProjection_FallsThrough is the field-side
-// counterpart of UnknownTagProjection.
-func TestDispatch_UnknownFieldProjection_FallsThrough(t *testing.T) {
+// TestDispatch_UnknownFieldProjection_SurfacesCanonicalError is the
+// field-side counterpart: byte-identical to
+// measure.schema.ValidateProjectionFields (measure/schema.go:77).
+func TestDispatch_UnknownFieldProjection_SurfacesCanonicalError(t *testing.T) {
 	measureSchema := testMeasureSchema()
 	// nolint:staticcheck // SA1019 — row-path BuildSchema is the only schema builder until G8 replaces it.
 	logicalSchema, schemaErr := logicalmeasure.BuildSchema(measureSchema, nil)
@@ -245,44 +345,104 @@ func TestDispatch_UnknownFieldProjection_FallsThrough(t *testing.T) {
 	req := bareReq()
 	req.FieldProjection = &measurev1.QueryRequest_FieldProjection{Names: []string{"ghost"}}
 	_, _, handled, err := Dispatch(context.Background(),
-		req, metadata, measureSchema, logicalSchema, ec, dispatchCfg(true))
-	if err != nil {
-		t.Fatalf("unknown field fallthrough must not error: %v", err)
+		req, metadata, measureSchema, logicalSchema, ec, dispatchCfg(true), false, false)
+	if err == nil {
+		t.Fatal("unknown field in projection must surface the canonical row-path error")
 	}
-	if handled {
-		t.Fatal("unknown field in projection must fall through (row path returns WantErr)")
+	const wantMsg = "field ghost not found in schema"
+	if err.Error() != wantMsg {
+		t.Fatalf("error message parity: want %q, got %q", wantMsg, err.Error())
+	}
+	if !handled {
+		t.Fatal("projection error must report handled=true so caller surfaces it (no row-path retry)")
 	}
 	if ec.called {
 		t.Fatal("ec.Query must not be invoked when projection is invalid")
 	}
 }
 
-// TestDispatch_NoTimeRange_FallsThrough covers the bounded-window
-// requirement.
-func TestDispatch_NoTimeRange_FallsThrough(t *testing.T) {
-	req := bareReq()
-	req.TimeRange = nil
-	_, _, handled, err := Dispatch(context.Background(),
-		req, nil, nil, nil, nil, dispatchCfg(true))
-	if err != nil {
-		t.Fatalf("no-TimeRange fallthrough must not error: %v", err)
+// TestDispatch_TagValidatedBeforeField mirrors the row path's ordering
+// (measure_analyzer.go validates tags before fields): when both
+// projections are unknown, the tag error wins.
+func TestDispatch_TagValidatedBeforeField(t *testing.T) {
+	measureSchema := testMeasureSchema()
+	// nolint:staticcheck // SA1019 — row-path BuildSchema is the only schema builder until G8 replaces it.
+	logicalSchema, schemaErr := logicalmeasure.BuildSchema(measureSchema, nil)
+	if schemaErr != nil {
+		t.Fatalf("BuildSchema: %v", schemaErr)
 	}
-	if handled {
-		t.Fatal("missing TimeRange must fall through")
+	metadata := &commonv1.Metadata{Name: "demo", Group: "default"}
+	ec := &fakeEC{}
+
+	req := bareReq()
+	req.TagProjection = &modelv1.TagProjection{TagFamilies: []*modelv1.TagProjection_TagFamily{
+		{Name: "default", Tags: []string{"ghost"}},
+	}}
+	req.FieldProjection = &measurev1.QueryRequest_FieldProjection{Names: []string{"phantom"}}
+	_, _, handled, err := Dispatch(context.Background(),
+		req, metadata, measureSchema, logicalSchema, ec, dispatchCfg(true), false, false)
+	if err == nil || err.Error() != "ghost: tag is not defined" {
+		t.Fatalf("tag error must take precedence over field error; got %v", err)
+	}
+	if !handled {
+		t.Fatal("projection parity error must report handled=true (caller must not retry row path)")
 	}
 }
 
-// TestDispatch_NilRuntimeContext_FallsThrough covers the defensive guard
-// against nil ec / schema / metadata. These should not arise in
-// production but a fallthrough is safer than a nil dereference.
-func TestDispatch_NilRuntimeContext_FallsThrough(t *testing.T) {
-	_, _, handled, err := Dispatch(context.Background(),
-		bareReq(), nil, nil, nil, nil, dispatchCfg(true))
-	if err != nil {
-		t.Fatalf("nil runtime ctx must not error, got %v", err)
+// TestDispatch_NoTimeRange_EmptyResultParity covers G9c #9: a nil
+// TimeRange is NOT rejected by the row path. parseFields feeds
+// criteria.GetTimeRange().GetBegin().AsTime() (nil → Unix epoch) into the
+// scan, the query runs over [epoch, epoch], and the client observes an
+// empty response. Dispatch reproduces that exact behavior directly:
+// ec.Query is invoked (over the epoch window) and the canonical empty
+// MIterator is emitted with handled=true.
+func TestDispatch_NoTimeRange_EmptyResultParity(t *testing.T) {
+	measureSchema := testMeasureSchema()
+	// nolint:staticcheck // SA1019 — row-path BuildSchema is the only schema builder until G8 replaces it.
+	logicalSchema, schemaErr := logicalmeasure.BuildSchema(measureSchema, nil)
+	if schemaErr != nil {
+		t.Fatalf("BuildSchema: %v", schemaErr)
 	}
-	if handled {
-		t.Fatal("nil runtime ctx must fall through")
+	metadata := &commonv1.Metadata{Name: "demo", Group: "default"}
+	ec := &fakeEC{wantResult: nil, wantErr: nil}
+
+	req := bareReq()
+	req.TimeRange = nil
+	iter, _, handled, err := Dispatch(context.Background(),
+		req, metadata, measureSchema, logicalSchema, ec, dispatchCfg(true), false, false)
+	if err != nil {
+		t.Fatalf("nil TimeRange must not error (row path does not reject it): %v", err)
+	}
+	if !handled {
+		t.Fatal("nil TimeRange must be handled (row path produces an empty result, not a fall-through)")
+	}
+	if !ec.called {
+		t.Fatal("ec.Query must be invoked over the epoch window (row-path parity)")
+	}
+	if iter == nil {
+		t.Fatal("expected an empty MIterator, got nil")
+	}
+	if iter.Next() {
+		t.Fatal("empty-result MIterator must report Next()==false")
+	}
+	if closeErr := iter.Close(); closeErr != nil {
+		t.Fatalf("empty-result MIterator Close must be nil (row-path parity): %v", closeErr)
+	}
+}
+
+// TestDispatch_NilRuntimeContext_FailsLoud asserts the no-fall-through
+// contract: under flag-on, a nil runtime context is a programming error
+// (the caller MUST populate it) and Dispatch returns handled=true with
+// a hard error instead of silently retrying on row. This pins the
+// "vec path does not have any fall-through to row path" directive.
+func TestDispatch_NilRuntimeContext_FailsLoud(t *testing.T) {
+	_, _, handled, err := Dispatch(context.Background(),
+		bareReq(), nil, nil, nil, nil, dispatchCfg(true), false, false)
+	if err == nil {
+		t.Fatal("nil runtime ctx under flag-on must surface a hard error, not fall through")
+	}
+	if !handled {
+		t.Fatal("nil runtime ctx error must be reported as handled=true so the caller surfaces it rather than retrying row")
 	}
 }
 
@@ -301,13 +461,15 @@ func (f *fakeEC) Query(_ context.Context, opts model.MeasureQueryOptions) (model
 	return f.wantResult, f.wantErr
 }
 
-// TestDispatch_EmptyResult_FallsThrough exercises the full eligibility
-// path: an eligible request reaches ec.Query, ec returns (nil, nil)
-// (empty range), Dispatch reports fallthrough so the row path can surface
-// the empty response. This also confirms the index.Query construction
-// and Analyze invocation complete without error against a real
-// logical.Schema.
-func TestDispatch_EmptyResult_FallsThrough(t *testing.T) {
+// TestDispatch_EmptyResult_CanonicalEmptyIterator covers G9c #13: an
+// eligible request reaches ec.Query, ec returns (nil, nil) (the row
+// path's typed-nil empty result). Dispatch emits the canonical empty
+// MIterator (Next()==false, Close()==nil) with handled=true — the same
+// empty []*measurev1.InternalDataPoint the row iterator
+// (resultMIterator{result: nil}) would surface. This also confirms the
+// index.Query construction and Analyze invocation complete without error
+// against a real logical.Schema.
+func TestDispatch_EmptyResult_CanonicalEmptyIterator(t *testing.T) {
 	measureSchema := testMeasureSchema()
 	// nolint:staticcheck // SA1019 — row-path BuildSchema is the only schema builder until G8 replaces it.
 	logicalSchema, schemaErr := logicalmeasure.BuildSchema(measureSchema, nil)
@@ -317,19 +479,25 @@ func TestDispatch_EmptyResult_FallsThrough(t *testing.T) {
 	metadata := &commonv1.Metadata{Name: "demo", Group: "default"}
 	ec := &fakeEC{wantResult: nil, wantErr: nil}
 
-	iter, planStr, handled, err := Dispatch(context.Background(),
-		bareReq(), metadata, measureSchema, logicalSchema, ec, dispatchCfg(true))
+	iter, _, handled, err := Dispatch(context.Background(),
+		bareReq(), metadata, measureSchema, logicalSchema, ec, dispatchCfg(true), false, false)
 	if err != nil {
 		t.Fatalf("dispatch must not error on empty result: %v", err)
 	}
-	if handled {
-		t.Fatal("empty result must fall through to row path")
+	if !handled {
+		t.Fatal("empty result must be handled (canonical empty response, not a fall-through)")
 	}
-	if iter != nil || planStr != "" {
-		t.Fatalf("expect zero outputs on fallthrough, got iter=%v planStr=%q", iter, planStr)
+	if iter == nil {
+		t.Fatal("expected an empty MIterator, got nil")
+	}
+	if iter.Next() {
+		t.Fatal("empty-result MIterator must report Next()==false")
+	}
+	if closeErr := iter.Close(); closeErr != nil {
+		t.Fatalf("empty-result MIterator Close must be nil (row-path parity): %v", closeErr)
 	}
 	if !ec.called {
-		t.Fatal("ec.Query must be invoked before fallthrough decision")
+		t.Fatal("ec.Query must be invoked before the empty-result decision")
 	}
 	if ec.lastOpts.Name != "demo" {
 		t.Fatalf("opts.Name: want demo, got %q", ec.lastOpts.Name)
@@ -340,29 +508,26 @@ func TestDispatch_EmptyResult_FallsThrough(t *testing.T) {
 }
 
 // TestDispatch_Counters_TrackFellThroughCalls confirms the
-// FellThroughCount counter increments on every non-error fallthrough.
+// FellThroughCount counter increments on the flag-off rollback path —
+// the ONLY legitimate fall-through after the no-fall-through directive.
 // HandledCount must not move when dispatch declines. This is the unit-
-// level half of the G8e parity-gate observability — integration runs
-// assert HandledCount > 0 after replaying the measure/topn cases.
+// level half of the parity-gate observability; integration runs assert
+// HandledCount > 0 in the vec-enabled cluster.
 func TestDispatch_Counters_TrackFellThroughCalls(t *testing.T) {
 	startHandled := HandledCount()
 	startFellThrough := FellThroughCount()
 
-	// Three fallthroughs of distinct shapes, each tripping a different
-	// gate so the counter is exercised across the eligibility branches.
-	topReq := bareReq()
-	topReq.Top = &measurev1.QueryRequest_Top{Number: 5, FieldName: "value"}
-	noTimeReq := bareReq()
-	noTimeReq.TimeRange = nil
-
-	for _, req := range []*measurev1.QueryRequest{topReq, noTimeReq, bareReq() /* nil ec */} {
+	// Flag-off is the SOLE remaining fall-through (the rollback rail).
+	// Calling Dispatch three times with cfg.Enabled=false produces three
+	// fall-throughs.
+	for range 3 {
 		_, _, handled, dispatchErr := Dispatch(context.Background(),
-			req, nil, nil, nil, nil, dispatchCfg(true))
+			bareReq(), nil, nil, nil, nil, dispatchCfg(false), false, false)
 		if dispatchErr != nil {
-			t.Fatalf("fallthrough must not error: %v", dispatchErr)
+			t.Fatalf("flag-off fall-through must not error: %v", dispatchErr)
 		}
 		if handled {
-			t.Fatal("test expected fallthrough; got handled=true")
+			t.Fatal("flag-off must fall through; got handled=true")
 		}
 	}
 
@@ -393,15 +558,15 @@ func TestDispatch_GroupByAggCovered_ReachesEcQuery(t *testing.T) {
 	req := bareReq()
 	req.GroupBy = &measurev1.QueryRequest_GroupBy{
 		TagProjection: projTagProj(),
-		FieldName:     "value",
+		FieldName:     fieldValue,
 	}
 	req.Agg = &measurev1.QueryRequest_Aggregation{
 		Function:  modelv1.AggregationFunction_AGGREGATION_FUNCTION_SUM,
-		FieldName: "value",
+		FieldName: fieldValue,
 	}
 
 	iter, planStr, handled, err := Dispatch(context.Background(),
-		req, metadata, measureSchema, logicalSchema, ec, dispatchCfg(true))
+		req, metadata, measureSchema, logicalSchema, ec, dispatchCfg(true), false, false)
 	if err != nil {
 		t.Fatalf("covered GroupBy+Agg must not error before ec.Query: %v", err)
 	}
@@ -413,6 +578,100 @@ func TestDispatch_GroupByAggCovered_ReachesEcQuery(t *testing.T) {
 			"got iter=%v planStr=%q handled=%v", iter, planStr, handled)
 	}
 }
+
+// TestAugmentRequestWithHiddenTags_AppendsFamiliesAfterVisible covers the
+// G9d projection-extension mechanism: hidden criteria tags (grouped by
+// family) are appended AFTER the visible projection so the visible tags
+// keep their projected order, the caller's request is never mutated, and
+// an empty extras slice returns the request unchanged (no clone).
+func TestAugmentRequestWithHiddenTags_AppendsFamiliesAfterVisible(t *testing.T) {
+	req := bareReq() // TagProjection: default=[svc]
+	extras := [][]*logical.Tag{
+		{logical.NewTag("default", "region")},
+		{logical.NewTag("extra", "zone")},
+	}
+	got := augmentRequestWithHiddenTags(req, extras)
+	if got == req {
+		t.Fatal("augment must return a clone when extras are present")
+	}
+	if len(req.GetTagProjection().GetTagFamilies()) != 1 ||
+		req.GetTagProjection().GetTagFamilies()[0].GetTags()[0] != tagSvc {
+		t.Fatalf("caller's req.TagProjection must be untouched, got %+v", req.GetTagProjection())
+	}
+	fams := got.GetTagProjection().GetTagFamilies()
+	if len(fams) != 3 {
+		t.Fatalf("want 3 families (1 visible + 2 hidden), got %d: %+v", len(fams), fams)
+	}
+	if fams[0].GetName() != "default" || fams[0].GetTags()[0] != tagSvc {
+		t.Fatalf("visible family must stay first, got %+v", fams[0])
+	}
+	if fams[1].GetName() != "default" || fams[1].GetTags()[0] != "region" {
+		t.Fatalf("first hidden family wrong, got %+v", fams[1])
+	}
+	if fams[2].GetName() != "extra" || fams[2].GetTags()[0] != "zone" {
+		t.Fatalf("second hidden family wrong, got %+v", fams[2])
+	}
+	if same := augmentRequestWithHiddenTags(req, nil); same != req {
+		t.Fatal("augment with no extras must return the original request")
+	}
+}
+
+// TestHiddenTagsMIterator_StripsHiddenTagsFromCurrent proves the egress
+// wrapper removes exactly the hidden tags from each Current() DataPoint,
+// leaving visible tags untouched — the same contract as the row path's
+// hiddenTagsMIterator, which is what keeps the wire bytes identical.
+func TestHiddenTagsMIterator_StripsHiddenTagsFromCurrent(t *testing.T) {
+	build := func() []*measurev1.InternalDataPoint {
+		return []*measurev1.InternalDataPoint{{
+			DataPoint: &measurev1.DataPoint{
+				TagFamilies: []*modelv1.TagFamily{{
+					Name: "default",
+					Tags: []*modelv1.Tag{
+						{Key: tagSvc, Value: &modelv1.TagValue{Value: &modelv1.TagValue_Str{Str: &modelv1.Str{Value: "a"}}}},
+						{Key: "region", Value: &modelv1.TagValue{Value: &modelv1.TagValue_Str{Str: &modelv1.Str{Value: "us"}}}},
+					},
+				}},
+			},
+		}}
+	}
+	hidden := logical.NewHiddenTagSet()
+	hidden.Add("region")
+	it := &hiddenTagsMIterator{inner: &stubMIterator{rows: build()}, hiddenTags: hidden}
+	if !it.Next() {
+		t.Fatal("Next must advance once")
+	}
+	cur := it.Current()
+	if len(cur) != 1 || len(cur[0].DataPoint.TagFamilies) != 1 {
+		t.Fatalf("expected one family after strip, got %+v", cur)
+	}
+	tags := cur[0].DataPoint.TagFamilies[0].Tags
+	if len(tags) != 1 || tags[0].Key != tagSvc {
+		t.Fatalf("only visible tag 'svc' must remain, got %+v", tags)
+	}
+	if it.Close() != nil {
+		t.Fatal("Close must propagate inner Close (nil)")
+	}
+}
+
+// stubMIterator is a one-shot executor.MIterator over a fixed row slice.
+type stubMIterator struct {
+	rows []*measurev1.InternalDataPoint
+	pos  int
+}
+
+func (s *stubMIterator) Next() bool {
+	s.pos++
+	return s.pos <= len(s.rows)
+}
+
+func (s *stubMIterator) Current() []*measurev1.InternalDataPoint {
+	if s.pos < 1 || s.pos > len(s.rows) {
+		return nil
+	}
+	return s.rows[s.pos-1 : s.pos]
+}
+
+func (s *stubMIterator) Close() error { return nil }
 
 // TestDispatch_QueryError_BubblesUp covers the error propagation when
 // the storage query itself fails. Dispatch must report (nil, "", true,
@@ -430,7 +689,7 @@ func TestDispatch_QueryError_BubblesUp(t *testing.T) {
 	ec := &fakeEC{wantErr: wantErr}
 
 	_, _, handled, err := Dispatch(context.Background(),
-		bareReq(), metadata, measureSchema, logicalSchema, ec, dispatchCfg(true))
+		bareReq(), metadata, measureSchema, logicalSchema, ec, dispatchCfg(true), false, false)
 	if err == nil {
 		t.Fatal("ec.Query error must surface as a dispatch error")
 	}

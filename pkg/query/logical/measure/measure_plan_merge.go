@@ -25,7 +25,6 @@ import (
 
 	commonv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/common/v1"
 	measurev1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/measure/v1"
-	modelv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/model/v1"
 	"github.com/apache/skywalking-banyandb/pkg/iter/sort"
 	"github.com/apache/skywalking-banyandb/pkg/query/executor"
 	"github.com/apache/skywalking-banyandb/pkg/query/logical"
@@ -79,38 +78,19 @@ func (u *unresolvedMerger) Analyze(s logical.Schema) (logical.Plan, error) {
 		mp.subPlans = append(mp.subPlans, sp)
 	}
 
-	if u.criteria.OrderBy == nil {
-		mp.sortByTime = true
-		return mp, nil
+	// The cross-group ordering is resolved against the projected merged
+	// schema s so an index-rule OrderBy's TagFamilyIdx/TagIdx match the
+	// projected InternalDataPoint layout newComparableElement indexes
+	// into. resolveCrossGroupMergeOrder holds this logic verbatim so the
+	// vec multi-group processor path (banyand/query/processor.go, G9f.1)
+	// reproduces the row cross-group order from identical code.
+	order, orderErr := resolveCrossGroupMergeOrder(u.criteria.OrderBy, s)
+	if orderErr != nil {
+		return nil, orderErr
 	}
-
-	if u.criteria.OrderBy.IndexRuleName == "" {
-		mp.sortByTime = true
-		if u.criteria.OrderBy.Sort == modelv1.Sort_SORT_DESC {
-			mp.desc = true
-		}
-		return mp, nil
-	}
-
-	ok, indexRule := s.IndexRuleDefined(u.criteria.OrderBy.IndexRuleName)
-	if !ok {
-		return nil, fmt.Errorf("index rule %s not found", u.criteria.OrderBy.IndexRuleName)
-	}
-
-	if len(indexRule.Tags) != 1 {
-		return nil, fmt.Errorf("index rule %s should have one tag", u.criteria.OrderBy.IndexRuleName)
-	}
-
-	sortTagSpec := s.FindTagSpecByName(indexRule.Tags[0])
-	if sortTagSpec == nil {
-		return nil, fmt.Errorf("tag %s not found", indexRule.Tags[0])
-	}
-
-	mp.sortTagSpec = *sortTagSpec
-	if u.criteria.OrderBy.Sort == modelv1.Sort_SORT_DESC {
-		mp.desc = true
-	}
-
+	mp.sortTagSpec = order.sortTagSpec
+	mp.sortByTime = order.sortByTime
+	mp.desc = order.desc
 	return mp, nil
 }
 

@@ -519,11 +519,10 @@ func (l *future) Get() (bus.Message, error) {
 	if resp.Body == nil {
 		return bus.NewMessageWithNode(bus.MessageID(resp.MessageId), n, nil), nil
 	}
-	if messageSupplier, ok := data.TopicResponseMap[t]; ok {
-		m := messageSupplier()
-		err = proto.Unmarshal(resp.Body, m)
-		if err != nil {
-			return bus.Message{}, err
+	if codec, ok := data.TopicResponseMap[t]; ok {
+		m, decodeErr := codec.Unmarshal(resp.Body)
+		if decodeErr != nil {
+			return bus.Message{}, decodeErr
 		}
 		return bus.NewMessageWithNode(
 			bus.MessageID(resp.MessageId),

@@ -21,6 +21,7 @@ import (
 	"container/heap"
 	"context"
 
+	modelv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/model/v1"
 	"github.com/apache/skywalking-banyandb/pkg/query/vectorized"
 )
 
@@ -147,18 +148,31 @@ func (t *BatchTop) Consume(_ context.Context, b *vectorized.RecordBatch) error {
 		return nil
 	}
 	active := activeIndices(b)
-	isFloat := t.schema.Columns[t.fieldCol].Type == vectorized.ColumnTypeFloat64
 	for _, rowIdx := range active {
-		candidate := t.materialize(b, int(rowIdx), isFloat)
-		candidate.seq = t.inputCount
+		ri := int(rowIdx)
+		seq := t.inputCount
 		t.inputCount++
+		// Heap not yet full: the row is retained, so pay the full
+		// per-column deep copy now (the batch is recycled after Consume
+		// returns, so a retained row cannot defer its copy).
 		if t.heapState.Len() < t.n {
-			heap.Push(t.heapState, candidate)
+			row := &topRow{seq: seq}
+			t.extractKey(b, ri, row)
+			row.cols = t.materializeCols(b, ri)
+			heap.Push(t.heapState, row)
 			continue
 		}
+		// Heap full: extract only the cheap sort key and compare against
+		// the root. The expensive per-column materialize is deferred
+		// until the row actually displaces the root — for high-input /
+		// low-N top-N the vast majority of rows lose here and never pay
+		// the copy. cmpTopVal/shouldReplace read only the key fields.
+		cand := topRow{seq: seq}
+		t.extractKey(b, ri, &cand)
 		root := t.heapState.rows[0]
-		if t.shouldReplace(candidate, root) {
-			t.heapState.rows[0] = candidate
+		if t.shouldReplace(&cand, root) {
+			cand.cols = t.materializeCols(b, ri)
+			t.heapState.rows[0] = &cand
 			heap.Fix(t.heapState, 0)
 		}
 	}
@@ -224,24 +238,76 @@ func (t *BatchTop) Close() error {
 	return nil
 }
 
-// materialize copies row rowIdx of b into a new topRow, reading the sort key
-// from the configured field column.
-func (t *BatchTop) materialize(b *vectorized.RecordBatch, rowIdx int, isFloat bool) *topRow {
+// extractKey reads only the sort key for row rowIdx from the configured
+// field column into row — no per-column deep copy. This is the cheap
+// half of the old materialize: it runs for every input row, while the
+// expensive materializeCols runs only for rows admitted to the heap.
+//
+// The key column may be a native typed column (ColumnTypeInt64 /
+// ColumnTypeFloat64 — promoted when an Agg reduces over the field) or a
+// passthrough *modelv1.FieldValue column (ColumnTypeFieldValue — the
+// non-Agg Scan→Top→Limit path, where BuildBatchSchema leaves projected
+// fields as passthrough). Both are handled so the float/int decision is
+// per-column-shape, matching the row path's schema-field-type dispatch
+// (pkg/query/logical/measure.topOp.Execute).
+func (t *BatchTop) extractKey(b *vectorized.RecordBatch, rowIdx int, row *topRow) {
+	keyCol := b.Columns[t.fieldCol]
+	switch c := keyCol.(type) {
+	case *vectorized.TypedColumn[float64]:
+		row.isFloat = true
+		if c.IsNull(rowIdx) {
+			row.isNull = true
+			return
+		}
+		row.floatVal = c.Data()[rowIdx]
+	case *vectorized.TypedColumn[int64]:
+		if c.IsNull(rowIdx) {
+			row.isNull = true
+			return
+		}
+		row.intVal = c.Data()[rowIdx]
+	case *vectorized.TypedColumn[*modelv1.FieldValue]:
+		// Passthrough FieldValue columns can carry a nil pointer at a row
+		// without the validity bitmap being set (a non-Agg Scan→Top→Limit
+		// upstream may forward the source row's nil *modelv1.FieldValue
+		// directly). Treat both shapes as null/lowest before touching
+		// fv to keep the float64/int64 cases' "IsNull-first" discipline.
+		if c.IsNull(rowIdx) {
+			row.isNull = true
+			return
+		}
+		fv := c.Data()[rowIdx]
+		if fv == nil {
+			row.isNull = true
+			return
+		}
+		switch v := fv.GetValue().(type) {
+		case *modelv1.FieldValue_Float:
+			row.isFloat = true
+			row.floatVal = v.Float.GetValue()
+		case *modelv1.FieldValue_Int:
+			row.intVal = v.Int.GetValue()
+		default:
+			// Null / unset / non-numeric field value: treat as lowest,
+			// matching the native-column null handling and the row path.
+			row.isNull = true
+		}
+	default:
+		// Unexpected key column shape (string / bytes / arrays): no
+		// numeric sort key. Treat as lowest so the query still completes
+		// rather than panicking.
+		row.isNull = true
+	}
+}
+
+// materializeCols deep-copies row rowIdx of b into schema-shaped 1-row
+// columns. Only called for rows admitted to the bounded heap (heap not
+// full, or the row displaces the root) — rejected rows never pay this.
+func (t *BatchTop) materializeCols(b *vectorized.RecordBatch, rowIdx int) []vectorized.Column {
 	cols := make([]vectorized.Column, len(t.schema.Columns))
 	for i, def := range t.schema.Columns {
 		cols[i] = vectorized.NewColumnForType(def.Type, 1)
 		copyOneValue(cols[i], b.Columns[i], rowIdx)
 	}
-	row := &topRow{cols: cols, isFloat: isFloat}
-	keyCol := b.Columns[t.fieldCol]
-	if keyCol.IsNull(rowIdx) {
-		row.isNull = true
-		return row
-	}
-	if isFloat {
-		row.floatVal = keyCol.(*vectorized.TypedColumn[float64]).Data()[rowIdx]
-	} else {
-		row.intVal = keyCol.(*vectorized.TypedColumn[int64]).Data()[rowIdx]
-	}
-	return row
+	return cols
 }

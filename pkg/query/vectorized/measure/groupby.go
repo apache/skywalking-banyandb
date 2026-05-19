@@ -35,6 +35,13 @@ import (
 // emitted in group-insertion order, with all rows of the first group flushed
 // before the next group begins.
 //
+// When firstOnly is set the operator keeps only the first-seen row of each
+// group and drops subsequent rows. This reproduces the row path's raw
+// GroupBy egress: the row aggregator wraps every group in a single
+// InternalDataPoint slice and banyand/query/processor.go reads only
+// current[0] per Next, so a raw GroupBy surfaces exactly one row (the
+// first-seen) per group in group-insertion order.
+//
 // Memory accounting follows a pessimistic-reserve, refund-unused pattern:
 //
 //   - entrySize is the per-new-group bucket overhead.
@@ -58,6 +65,7 @@ type BatchGroupBy struct {
 	cursorBucket int
 	cursorRow    int
 	closed       bool
+	firstOnly    bool
 }
 
 type groupBucket struct {
@@ -86,6 +94,22 @@ func NewBatchGroupBy(
 		entrySize:  entrySize,
 		rowSize:    rowSize,
 	}
+}
+
+// NewBatchGroupByFirst constructs a BatchGroupBy that emits only the
+// first-seen row of each group (raw GroupBy without aggregation). It
+// matches the row path: groupBy.Execute produces a groupIterator whose
+// Current() returns the whole group, and processor.go keeps only
+// current[0], so each group surfaces a single row in group-insertion
+// order with the input schema unchanged.
+func NewBatchGroupByFirst(
+	schema *vectorized.BatchSchema, keyIndices []int,
+	pool *vectorized.BatchPool, batchSize int,
+	tracker *vectorized.MemoryTracker, entrySize int64,
+) *BatchGroupBy {
+	g := NewBatchGroupBy(schema, keyIndices, pool, batchSize, tracker, entrySize, 0)
+	g.firstOnly = true
+	return g
 }
 
 // Init prepares the group map.
@@ -120,16 +144,23 @@ func (g *BatchGroupBy) Consume(_ context.Context, b *vectorized.RecordBatch) err
 
 func (g *BatchGroupBy) consumeRows(b *vectorized.RecordBatch, active []uint16) int64 {
 	var newGroups int64
+	var copiedRows int64
 	for _, rowIdx := range active {
 		bucket, isNew := g.findOrCreate(b, int(rowIdx))
 		if isNew {
 			newGroups++
 		}
+		if g.firstOnly && !isNew {
+			// Raw GroupBy keeps only the first-seen row per group;
+			// drop every later row in the same group.
+			continue
+		}
 		for colIdx, srcCol := range b.Columns {
 			copyOneValue(bucket.cols[colIdx], srcCol, int(rowIdx))
 		}
+		copiedRows++
 	}
-	return newGroups*g.entrySize + int64(len(active))*g.rowSize
+	return newGroups*g.entrySize + copiedRows*g.rowSize
 }
 
 // findOrCreate locates the bucket for the row's key, creating it if absent.
