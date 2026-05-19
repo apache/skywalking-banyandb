@@ -102,9 +102,6 @@ func (mv *measureMigrationVisitor) VisitSeries(segmentTR *timestamp.TimeRange, s
 		Str("path", seriesIndexPath).
 		Msg("found measure segment files for migration")
 
-	// Set the total number of series segments for progress tracking
-	mv.SetMeasureSeriesCount(len(segmentFiles))
-
 	// Calculate ALL target segments this series index should go to
 	targetSegments := calculateTargetSegments(
 		segmentTR.Start.UnixNano(),
@@ -397,26 +394,4 @@ func (mv *measureMigrationVisitor) createStreamingSegmentFromFiles(
 	}
 
 	return segmentData
-}
-
-// SetMeasurePartCount sets the total number of parts for the current measure.
-func (mv *measureMigrationVisitor) SetMeasurePartCount(totalParts int) {
-	if mv.progress != nil {
-		mv.progress.SetMeasurePartCount(mv.group, totalParts)
-		mv.logger.Info().
-			Str("group", mv.group).
-			Int("total_parts", totalParts).
-			Msg("set measure part count for progress tracking")
-	}
-}
-
-// SetMeasureSeriesCount sets the total number of series segments for the current measure.
-func (mv *measureMigrationVisitor) SetMeasureSeriesCount(totalSegments int) {
-	if mv.progress != nil {
-		mv.progress.SetMeasureSeriesCount(mv.group, totalSegments)
-		mv.logger.Info().
-			Str("group", mv.group).
-			Int("total_segments", totalSegments).
-			Msg("set measure series count for progress tracking")
-	}
 }

@@ -92,6 +92,7 @@ Release Notes.
 - Fix `CollectDataInfo` and `CollectLiaisonInfo` not handling `CATALOG_PROPERTY` groups.
 - Fix lifecycle migration where the receiving node could create segments shorter than the configured `SegmentInterval`.
 - Fail fast on incompatible storage version at boot. Previously the server would start in a degraded `SERVING` state with affected groups un-loaded because the property schema-registry retry loop swallowed the version-incompatibility panic. Compatible versions are listed in `banyand/internal/storage/versions.yml`.
+- Fix incorrect counts and missing trace fields in the lifecycle migration report.
 
 ### Chores
 

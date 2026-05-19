@@ -102,9 +102,6 @@ func (mv *streamMigrationVisitor) VisitSeries(segmentTR *timestamp.TimeRange, se
 		Str("path", seriesIndexPath).
 		Msg("found segment files for migration")
 
-	// Set the total number of series segments for progress tracking
-	mv.SetStreamSeriesCount(len(segmentFiles))
-
 	// Calculate ALL target segments this series index should go to
 	targetSegments := calculateTargetSegments(
 		segmentTR.Start.UnixNano(),
@@ -337,9 +334,6 @@ func (mv *streamMigrationVisitor) VisitElementIndex(segmentTR *timestamp.TimeRan
 		return nil
 	}
 
-	// Set the total number of element index segment files for progress tracking
-	mv.SetStreamElementIndexCount(len(segmentFiles))
-
 	// Calculate target shard ID (using a simple approach for element index)
 	targetShardID := mv.calculateTargetShardID(uint32(sourceShardID))
 	mv.logger.Info().
@@ -511,39 +505,6 @@ func (mv *streamMigrationVisitor) createStreamingSegmentFromFiles(
 	}
 
 	return segmentData
-}
-
-// SetStreamPartCount sets the total number of parts for the current stream.
-func (mv *streamMigrationVisitor) SetStreamPartCount(totalParts int) {
-	if mv.progress != nil {
-		mv.progress.SetStreamPartCount(mv.group, totalParts)
-		mv.logger.Info().
-			Str("group", mv.group).
-			Int("total_parts", totalParts).
-			Msg("set stream part count for progress tracking")
-	}
-}
-
-// SetStreamSeriesCount sets the total number of series segments for the current stream.
-func (mv *streamMigrationVisitor) SetStreamSeriesCount(totalSegments int) {
-	if mv.progress != nil {
-		mv.progress.SetStreamSeriesCount(mv.group, totalSegments)
-		mv.logger.Info().
-			Str("group", mv.group).
-			Int("total_segments", totalSegments).
-			Msg("set stream series count for progress tracking")
-	}
-}
-
-// SetStreamElementIndexCount sets the total number of element index segment files for the current stream.
-func (mv *streamMigrationVisitor) SetStreamElementIndexCount(totalSegmentFiles int) {
-	if mv.progress != nil {
-		mv.progress.SetStreamElementIndexCount(mv.group, totalSegmentFiles)
-		mv.logger.Info().
-			Str("group", mv.group).
-			Int("total_segment_files", totalSegmentFiles).
-			Msg("set stream element index segment count for progress tracking")
-	}
 }
 
 // calculateTargetShardID maps source shard ID to target shard ID using proportional mapping.

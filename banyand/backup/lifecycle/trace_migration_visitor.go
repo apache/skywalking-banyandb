@@ -103,9 +103,6 @@ func (mv *traceMigrationVisitor) VisitSeries(segmentTR *timestamp.TimeRange, ser
 		Str("path", seriesIndexPath).
 		Msg("found trace segment files for migration")
 
-	// Set the total number of series segments for progress tracking
-	mv.SetTraceSeriesCount(len(segmentFiles))
-
 	// Calculate ALL target segments this series index should go to
 	targetSegments := calculateTargetSegments(
 		segmentTR.Start.UnixNano(),
@@ -227,7 +224,10 @@ func (mv *traceMigrationVisitor) VisitSeries(segmentTR *timestamp.TimeRange, ser
 // VisitShard implements trace.Visitor - core and sidx migration logic.
 func (mv *traceMigrationVisitor) VisitShard(timestampTR *timestamp.TimeRange, sourceShardID common.ShardID, shardPath string) error {
 	segmentIDStr := timestampTR.String()
-	if mv.progress.IsTraceShardCompleted(mv.group, shardPath, sourceShardID) {
+	// Match the key used by Mark below; using shardPath here would always
+	// miss on resume and re-run the migration even though the shard had
+	// completed, wasting bandwidth and writing duplicates to the target.
+	if mv.progress.IsTraceShardCompleted(mv.group, segmentIDStr, sourceShardID) {
 		mv.logger.Debug().
 			Str("shard_path", shardPath).
 			Str("group", mv.group).
@@ -572,26 +572,4 @@ func (mv *traceMigrationVisitor) createStreamingSegmentFromFiles(
 	}
 
 	return segmentData
-}
-
-// SetTraceShardCount sets the total number of shards for the current trace.
-func (mv *traceMigrationVisitor) SetTraceShardCount(totalShards int) {
-	if mv.progress != nil {
-		mv.progress.SetTraceShardCount(mv.group, totalShards)
-		mv.logger.Info().
-			Str("group", mv.group).
-			Int("total_shards", totalShards).
-			Msg("set trace part count for progress tracking")
-	}
-}
-
-// SetTraceSeriesCount sets the total number of series segments for the current trace.
-func (mv *traceMigrationVisitor) SetTraceSeriesCount(totalSegments int) {
-	if mv.progress != nil {
-		mv.progress.SetTraceSeriesCount(mv.group, totalSegments)
-		mv.logger.Info().
-			Str("group", mv.group).
-			Int("total_segments", totalSegments).
-			Msg("set trace series count for progress tracking")
-	}
 }
