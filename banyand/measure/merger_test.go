@@ -1507,3 +1507,191 @@ func Test_mergeParts_fileBased(t *testing.T) {
 			"should have at least one block per seriesID")
 	})
 }
+
+func Test_mergePartsWithConflictingTagTypes(t *testing.T) {
+	type wantColumn struct {
+		value     []byte
+		valueType pbv1.ValueType
+	}
+	type wantBlock struct {
+		columns  map[string]wantColumn
+		seriesID common.SeriesID
+	}
+	tests := []struct {
+		name       string
+		dpsList    []*dataPoints
+		wantBlocks []wantBlock
+	}{
+		{
+			name: "two parts with same tag name and conflicting valueTypes",
+			dpsList: []*dataPoints{
+				{
+					seriesIDs:  []common.SeriesID{1},
+					timestamps: []int64{1},
+					versions:   []int64{1},
+					tagFamilies: [][]nameValues{
+						{
+							{name: "searchable", values: []*nameValue{
+								{name: "extra_tag", valueType: pbv1.ValueTypeInt64, value: convert.Int64ToBytes(100)},
+							}},
+						},
+					},
+					fields: []nameValues{{}},
+				},
+				{
+					seriesIDs:  []common.SeriesID{2},
+					timestamps: []int64{2},
+					versions:   []int64{1},
+					tagFamilies: [][]nameValues{
+						{
+							{name: "searchable", values: []*nameValue{
+								{name: "extra_tag", valueType: pbv1.ValueTypeStr, value: []byte("active")},
+							}},
+						},
+					},
+					fields: []nameValues{{}},
+				},
+			},
+			wantBlocks: []wantBlock{
+				{
+					seriesID: 1,
+					columns: map[string]wantColumn{
+						"searchable/extra_tag#int": {valueType: pbv1.ValueTypeInt64, value: convert.Int64ToBytes(100)},
+					},
+				},
+				{
+					seriesID: 2,
+					columns: map[string]wantColumn{
+						"searchable/extra_tag#str": {valueType: pbv1.ValueTypeStr, value: []byte("active")},
+					},
+				},
+			},
+		},
+		{
+			name: "merge typed-suffix part with plain part",
+			dpsList: []*dataPoints{
+				{
+					seriesIDs:  []common.SeriesID{1},
+					timestamps: []int64{1},
+					versions:   []int64{1},
+					tagFamilies: [][]nameValues{
+						{
+							{name: "searchable", values: []*nameValue{
+								{name: "extra_tag#int", valueType: pbv1.ValueTypeInt64, value: convert.Int64ToBytes(100)},
+							}},
+						},
+					},
+					fields: []nameValues{{}},
+				},
+				{
+					seriesIDs:  []common.SeriesID{2},
+					timestamps: []int64{2},
+					versions:   []int64{1},
+					tagFamilies: [][]nameValues{
+						{
+							{name: "searchable", values: []*nameValue{
+								{name: "extra_tag", valueType: pbv1.ValueTypeStr, value: []byte("pending")},
+							}},
+						},
+					},
+					fields: []nameValues{{}},
+				},
+			},
+			wantBlocks: []wantBlock{
+				{
+					seriesID: 1,
+					columns: map[string]wantColumn{
+						"searchable/extra_tag#int": {valueType: pbv1.ValueTypeInt64, value: convert.Int64ToBytes(100)},
+					},
+				},
+				{
+					seriesID: 2,
+					columns: map[string]wantColumn{
+						"searchable/extra_tag#str": {valueType: pbv1.ValueTypeStr, value: []byte("pending")},
+					},
+				},
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			tmpPath, defFn := test.Space(require.New(t))
+			defer defFn()
+			fileSystem := fs.NewLocalFileSystem()
+
+			var fpp []*partWrapper
+			defer func() {
+				for _, pw := range fpp {
+					pw.decRef()
+				}
+			}()
+			for i, dps := range tt.dpsList {
+				mp := generateMemPart()
+				mp.mustInitFromDataPoints(dps)
+				mp.mustFlush(fileSystem, partPath(tmpPath, uint64(i+1)))
+				filePW := newPartWrapper(nil, mustOpenFilePart(uint64(i+1), tmpPath, fileSystem))
+				filePW.p.partMetadata.ID = uint64(i + 1)
+				fpp = append(fpp, filePW)
+				releaseMemPart(mp)
+			}
+
+			conflictColumns := collectConflictColumns(fpp)
+			require.NotNil(t, conflictColumns, "expected conflict columns to be collected")
+			require.Contains(t, conflictColumns, "searchable")
+			require.Contains(t, conflictColumns["searchable"], "extra_tag")
+
+			closeCh := make(chan struct{})
+			defer close(closeCh)
+			tst := &tsTable{pm: protector.Nop{}}
+			merged, err := tst.mergeParts(fileSystem, closeCh, fpp, uint64(len(tt.dpsList)+1), tmpPath)
+			require.NoError(t, err)
+			defer merged.decRef()
+
+			pmi := &partMergeIter{}
+			pmi.mustInitFromPart(merged.p)
+			reader := &blockReader{}
+			reader.init([]*partMergeIter{pmi})
+			decoder := generateColumnValuesDecoder()
+			defer releaseColumnValuesDecoder(decoder)
+
+			gotBlocks := make(map[common.SeriesID]map[string]wantColumn)
+			for reader.nextBlockMetadata() {
+				reader.loadBlockData(decoder)
+				bp := reader.block
+				cc := make(map[string]wantColumn)
+				for i := range bp.tagFamilies {
+					tf := &bp.tagFamilies[i]
+					for j := range tf.columns {
+						c := &tf.columns[j]
+						require.NotEmpty(t, c.values, "column %q in family %q should have values", c.name, tf.name)
+						cc[tf.name+"/"+c.name] = wantColumn{
+							valueType: c.valueType,
+							value:     c.values[0],
+						}
+					}
+				}
+				gotBlocks[bp.bm.seriesID] = cc
+			}
+			require.NoError(t, reader.error())
+
+			require.Len(t, gotBlocks, len(tt.wantBlocks))
+			for _, wb := range tt.wantBlocks {
+				got, ok := gotBlocks[wb.seriesID]
+				require.True(t, ok, "missing block for seriesID %d", wb.seriesID)
+				for key, want := range wb.columns {
+					gotColumn, exists := got[key]
+					require.True(t, exists, "seriesID %d: missing column %q", wb.seriesID, key)
+					require.Equal(t, want.valueType, gotColumn.valueType,
+						"seriesID %d: valueType mismatch for %q", wb.seriesID, key)
+					require.True(t, reflect.DeepEqual(want.value, gotColumn.value),
+						"seriesID %d: value mismatch for %q: got %v, want %v",
+						wb.seriesID, key, gotColumn.value, want.value)
+				}
+				_, hasPlain := got["searchable/extra_tag"]
+				require.False(t, hasPlain,
+					"seriesID %d: plain-named conflict column should not exist after merge", wb.seriesID)
+			}
+		})
+	}
+}

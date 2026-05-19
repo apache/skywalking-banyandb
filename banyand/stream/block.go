@@ -210,6 +210,7 @@ func (b *block) marshalTagFamily(tf tagFamily, bm *blockMetadata, ww *writers) {
 
 func (b *block) unmarshalTagFamily(decoder *encoding.BytesBlockDecoder, tfIndex int, name string,
 	tagFamilyMetadataBlock *dataBlock, tagProjection []string, metaReader, valueReader fs.Reader, count int,
+	schemaTagTypes map[string]pbv1.ValueType,
 ) {
 	if len(tagProjection) < 1 {
 		return
@@ -228,13 +229,24 @@ func (b *block) unmarshalTagFamily(decoder *encoding.BytesBlockDecoder, tfIndex 
 	cc := b.tagFamilies[tfIndex].resizeTags(len(tagProjection))
 NEXT:
 	for j := range tagProjection {
+		tp := tagProjection[j]
+		if schemaType, ok := schemaTagTypes[tp]; ok {
+			typedName := encodeTypedTag(tp, schemaType)
+			for i := range tfm.tagMetadata {
+				if tfm.tagMetadata[i].name == typedName {
+					cc[j].mustReadValues(decoder, valueReader, tfm.tagMetadata[i], uint64(b.Len()))
+					cc[j].name = tp
+					continue NEXT
+				}
+			}
+		}
 		for i := range tfm.tagMetadata {
-			if tagProjection[j] == tfm.tagMetadata[i].name {
+			if tfm.tagMetadata[i].name == tp {
 				cc[j].mustReadValues(decoder, valueReader, tfm.tagMetadata[i], uint64(b.Len()))
 				continue NEXT
 			}
 		}
-		cc[j].name = tagProjection[j]
+		cc[j].name = tp
 		cc[j].valueType = pbv1.ValueTypeUnknown
 		cc[j].resizeValues(count)
 		for k := range cc[j].values {
@@ -288,7 +300,7 @@ func (b *block) uncompressedSizeBytes() uint64 {
 	return n
 }
 
-func (b *block) mustReadFrom(decoder *encoding.BytesBlockDecoder, p *part, bm blockMetadata) {
+func (b *block) mustReadFrom(decoder *encoding.BytesBlockDecoder, p *part, bm blockMetadata, schemaTagTypes map[string]pbv1.ValueType) {
 	b.reset()
 
 	b.timestamps, b.elementIDs = mustReadTimestampsFrom(b.timestamps, b.elementIDs, &bm.timestamps, int(bm.count), p.timestamps)
@@ -312,7 +324,7 @@ func (b *block) mustReadFrom(decoder *encoding.BytesBlockDecoder, p *part, bm bl
 		}
 		b.unmarshalTagFamily(decoder, i, name, block,
 			bm.tagProjection[i].Names, p.tagFamilyMetadata[name],
-			p.tagFamilies[name], int(bm.count))
+			p.tagFamilies[name], int(bm.count), schemaTagTypes)
 	}
 }
 
@@ -567,7 +579,7 @@ func (bc *blockCursor) loadData(tmpBlock *block) bool {
 	}
 
 	bc.bm.tagFamilies = tf
-	tmpBlock.mustReadFrom(&bc.tagValuesDecoder, bc.p, bc.bm)
+	tmpBlock.mustReadFrom(&bc.tagValuesDecoder, bc.p, bc.bm, bc.schemaTagTypes)
 	if len(tmpBlock.timestamps) == 0 {
 		return false
 	}
@@ -708,6 +720,10 @@ func fastTagAppend(bi, b *blockPointer, offset int) error {
 				return fmt.Errorf("unexpected tag name for tag family %q: got %q; want %q",
 					bi.tagFamilies[i].name, b.tagFamilies[i].tags[j].name, bi.tagFamilies[i].tags[j].name)
 			}
+		}
+	}
+	for i := range bi.tagFamilies {
+		for j := range bi.tagFamilies[i].tags {
 			assertIdxAndOffset(b.tagFamilies[i].tags[j].name, len(b.tagFamilies[i].tags[j].values), b.idx, offset)
 			bi.tagFamilies[i].tags[j].values = append(bi.tagFamilies[i].tags[j].values, b.tagFamilies[i].tags[j].values[b.idx:offset]...)
 		}
