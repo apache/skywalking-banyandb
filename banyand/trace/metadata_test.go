@@ -372,9 +372,17 @@ var _ = Describe("Metadata", func() {
 				Eventually(func() int64 {
 					return getFilePartCount(svcs, groupName)
 				}, flags.EventuallyTimeout).Should(BeNumerically(">=", 1))
+				filePartCountAfterFirstBatch := getFilePartCount(svcs, groupName)
 				changeTraceExtraTagType(svcs, traceName, groupName)
 				writeSchemaChangeTraceData(svcs, traceName, groupName, now.Add(-1*time.Hour), 3,
 					writeTraceDataOptions{extraTag: extraTagString, traceIDPrefix: "trace_new_"})
+				// Wait for the second batch to flush to disk, creating additional
+				// file parts that the merge loop can pick up. Without this gate the
+				// merge Eventually below also has to absorb flush latency, which can
+				// exceed 30 s on resource-constrained CI runners with -race.
+				Eventually(func() int64 {
+					return getFilePartCount(svcs, groupName)
+				}, flags.EventuallyTimeout).Should(BeNumerically(">", filePartCountAfterFirstBatch))
 				partCountBeforeMerge := getTotalPartCount(svcs, groupName)
 				Eventually(func() int64 {
 					return getTotalPartCount(svcs, groupName)
