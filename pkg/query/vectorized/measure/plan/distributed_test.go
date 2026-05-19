@@ -45,7 +45,7 @@ func TestAnalyzeDistributed_RejectsUnsupportedNonAgg(t *testing.T) {
 		Limit:  7,
 		Offset: 3,
 	}
-	_, analyzeErr := AnalyzeDistributed(req, testMeasureSchema(), nil, vmeasure.VectorizedConfig{Enabled: true, BatchSize: 4, QueryMemoryMiB: 1})
+	_, analyzeErr := AnalyzeDistributed(req, []*databasev1.Measure{testMeasureSchema()}, nil, vmeasure.VectorizedConfig{Enabled: true, BatchSize: 4, QueryMemoryMiB: 1})
 	if analyzeErr == nil {
 		t.Fatal("AnalyzeDistributed should reject unsupported non-agg scans")
 	}
@@ -63,7 +63,7 @@ func TestAnalyzeDistributed_AllowsSupportedNonAggRows(t *testing.T) {
 		Limit:           7,
 		Offset:          3,
 	}
-	p, analyzeErr := AnalyzeDistributed(req, testMeasureSchema(), nil, vmeasure.VectorizedConfig{Enabled: true, BatchSize: 4, QueryMemoryMiB: 1})
+	p, analyzeErr := AnalyzeDistributed(req, []*databasev1.Measure{testMeasureSchema()}, nil, vmeasure.VectorizedConfig{Enabled: true, BatchSize: 4, QueryMemoryMiB: 1})
 	if analyzeErr != nil {
 		t.Fatalf("AnalyzeDistributed: %v", analyzeErr)
 	}
@@ -88,7 +88,7 @@ func TestSupportsDistributedRows(t *testing.T) {
 		want bool
 	}{
 		{name: "plain", req: base(), want: true},
-		{name: "multi group", req: &measurev1.QueryRequest{Name: "demo", Groups: []string{"a", "b"}}, want: false},
+		{name: "multi group", req: &measurev1.QueryRequest{Name: "demo", Groups: []string{"a", "b"}}, want: true},
 		{
 			name: "group by",
 			req: func() *measurev1.QueryRequest {
@@ -150,7 +150,7 @@ func TestAnalyzeDistributed_NodeTemplatePushesAggPartials(t *testing.T) {
 			FieldValueSort: modelv1.Sort_SORT_ASC,
 		},
 	}
-	p, analyzeErr := AnalyzeDistributed(req, testMeasureSchema(), nil, vmeasure.VectorizedConfig{Enabled: true, BatchSize: 4, QueryMemoryMiB: 1})
+	p, analyzeErr := AnalyzeDistributed(req, []*databasev1.Measure{testMeasureSchema()}, nil, vmeasure.VectorizedConfig{Enabled: true, BatchSize: 4, QueryMemoryMiB: 1})
 	if analyzeErr != nil {
 		t.Fatalf("AnalyzeDistributed: %v", analyzeErr)
 	}
@@ -215,7 +215,7 @@ func TestAnalyzeDistributed_TopAggUnboundsNodeLimit_Matrix(t *testing.T) {
 				Limit:  tc.limit,
 				Offset: tc.offset,
 			}
-			p, analyzeErr := AnalyzeDistributed(req, testMeasureSchema(), nil, vmeasure.VectorizedConfig{Enabled: true, BatchSize: 4, QueryMemoryMiB: 1})
+			p, analyzeErr := AnalyzeDistributed(req, []*databasev1.Measure{testMeasureSchema()}, nil, vmeasure.VectorizedConfig{Enabled: true, BatchSize: 4, QueryMemoryMiB: 1})
 			if analyzeErr != nil {
 				t.Fatalf("AnalyzeDistributed: %v", analyzeErr)
 			}
@@ -261,7 +261,7 @@ func TestAnalyzeDistributed_OrderByByIndexRule_AcceptedNatively(t *testing.T) {
 	if !SupportsDistributedRows(req) {
 		t.Fatal("Phase 2: SupportsDistributedRows must accept OrderBy by index rule")
 	}
-	p, analyzeErr := AnalyzeDistributed(req, testMeasureSchema(), indexRules, vmeasure.VectorizedConfig{Enabled: true, BatchSize: 4, QueryMemoryMiB: 1})
+	p, analyzeErr := AnalyzeDistributed(req, []*databasev1.Measure{testMeasureSchema()}, [][]*databasev1.IndexRule{indexRules}, vmeasure.VectorizedConfig{Enabled: true, BatchSize: 4, QueryMemoryMiB: 1})
 	if analyzeErr != nil {
 		t.Fatalf("AnalyzeDistributed: %v", analyzeErr)
 	}
@@ -301,7 +301,7 @@ func TestAnalyzeDistributed_OrderByByIndexRule_HiddenProjectionAdded(t *testing.
 		Limit:           5,
 	}
 	indexRules := []*databasev1.IndexRule{testIndexRuleOnTag("svc_idx", tagSvc)}
-	p, analyzeErr := AnalyzeDistributed(req, testMeasureSchema(), indexRules, vmeasure.VectorizedConfig{Enabled: true, BatchSize: 4, QueryMemoryMiB: 1})
+	p, analyzeErr := AnalyzeDistributed(req, []*databasev1.Measure{testMeasureSchema()}, [][]*databasev1.IndexRule{indexRules}, vmeasure.VectorizedConfig{Enabled: true, BatchSize: 4, QueryMemoryMiB: 1})
 	if analyzeErr != nil {
 		t.Fatalf("AnalyzeDistributed: %v", analyzeErr)
 	}
@@ -346,11 +346,112 @@ func TestAnalyzeDistributed_OrderByByIndexRule_UnknownRuleErrors(t *testing.T) {
 		FieldProjection: &measurev1.QueryRequest_FieldProjection{Names: []string{fieldValue}},
 		OrderBy:         &modelv1.QueryOrder{IndexRuleName: "nope"},
 	}
-	_, analyzeErr := AnalyzeDistributed(req, testMeasureSchema(), nil, vmeasure.VectorizedConfig{Enabled: true, BatchSize: 4, QueryMemoryMiB: 1})
+	_, analyzeErr := AnalyzeDistributed(req, []*databasev1.Measure{testMeasureSchema()}, nil, vmeasure.VectorizedConfig{Enabled: true, BatchSize: 4, QueryMemoryMiB: 1})
 	if analyzeErr == nil {
 		t.Fatal("AnalyzeDistributed must reject an unknown index rule")
 	}
 	if got := analyzeErr.Error(); got != "index rule nope not found" {
 		t.Fatalf("error text got %q want %q (row-path parity)", got, "index rule nope not found")
+	}
+}
+
+// testMeasureSchemaForGroup builds a Measure schema for the given group name,
+// sharing the same tag family + field layout as testMeasureSchema so the two
+// can be unioned without field-type divergence.
+func testMeasureSchemaForGroup(group string) *databasev1.Measure {
+	return &databasev1.Measure{
+		Metadata: &commonv1.Metadata{Name: "demo", Group: group},
+		TagFamilies: []*databasev1.TagFamilySpec{
+			{
+				Name: "default",
+				Tags: []*databasev1.TagSpec{
+					{Name: tagSvc, Type: databasev1.TagType_TAG_TYPE_STRING},
+					{Name: "region", Type: databasev1.TagType_TAG_TYPE_STRING},
+				},
+			},
+		},
+		Fields: []*databasev1.FieldSpec{
+			{Name: fieldValue, FieldType: databasev1.FieldType_FIELD_TYPE_INT},
+		},
+	}
+}
+
+// TestAnalyzeDistributed_MultiGroup_AcceptedNatively verifies that Phase 3
+// SupportsDistributedRows now returns true for multi-group requests and that
+// AnalyzeDistributed with two groups succeeds and produces a valid plan.
+func TestAnalyzeDistributed_MultiGroup_AcceptedNatively(t *testing.T) {
+	req := &measurev1.QueryRequest{
+		Name:            "demo",
+		Groups:          []string{"groupA", "groupB"},
+		TagProjection:   projTagProj(),
+		FieldProjection: &measurev1.QueryRequest_FieldProjection{Names: []string{fieldValue}},
+		Limit:           10,
+	}
+	if !SupportsDistributedRows(req) {
+		t.Fatal("Phase 3: SupportsDistributedRows must accept multi-group requests")
+	}
+	msA := testMeasureSchemaForGroup("groupA")
+	msB := testMeasureSchemaForGroup("groupB")
+	p, analyzeErr := AnalyzeDistributed(
+		req,
+		[]*databasev1.Measure{msA, msB},
+		nil,
+		vmeasure.VectorizedConfig{Enabled: true, BatchSize: 4, QueryMemoryMiB: 1},
+	)
+	if analyzeErr != nil {
+		t.Fatalf("AnalyzeDistributed multi-group: %v", analyzeErr)
+	}
+	if p.nodeTemplate.GetTop() != nil || p.nodeTemplate.GetGroupBy() != nil || p.nodeTemplate.GetAgg() != nil {
+		t.Fatalf("multi-group node template must stay a plain scan: %+v", p.nodeTemplate)
+	}
+	if len(p.measureSchemas) != 2 {
+		t.Fatalf("plan must store both measure schemas, got %d", len(p.measureSchemas))
+	}
+}
+
+// TestAnalyzeDistributed_MultiGroup_UnionsSchemaAcrossGroups verifies that
+// when two groups have the same measure layout the plan stores both schemas.
+// The merged schema is built at execute-time by BuildMultiGroupBatchSchema;
+// this test just confirms the plan state is correct after Analyze.
+func TestAnalyzeDistributed_MultiGroup_UnionsSchemaAcrossGroups(t *testing.T) {
+	msA := testMeasureSchemaForGroup("groupA")
+	// msB has an extra tag "extra_tag" not present in msA.
+	msB := &databasev1.Measure{
+		Metadata: &commonv1.Metadata{Name: "demo", Group: "groupB"},
+		TagFamilies: []*databasev1.TagFamilySpec{
+			{
+				Name: "default",
+				Tags: []*databasev1.TagSpec{
+					{Name: tagSvc, Type: databasev1.TagType_TAG_TYPE_STRING},
+					{Name: "region", Type: databasev1.TagType_TAG_TYPE_STRING},
+					{Name: "extra_tag", Type: databasev1.TagType_TAG_TYPE_STRING},
+				},
+			},
+		},
+		Fields: []*databasev1.FieldSpec{
+			{Name: fieldValue, FieldType: databasev1.FieldType_FIELD_TYPE_INT},
+		},
+	}
+	req := &measurev1.QueryRequest{
+		Name:   "demo",
+		Groups: []string{"groupA", "groupB"},
+		Limit:  10,
+	}
+	p, analyzeErr := AnalyzeDistributed(
+		req,
+		[]*databasev1.Measure{msA, msB},
+		nil,
+		vmeasure.VectorizedConfig{Enabled: true, BatchSize: 4, QueryMemoryMiB: 1},
+	)
+	if analyzeErr != nil {
+		t.Fatalf("AnalyzeDistributed: %v", analyzeErr)
+	}
+	if len(p.measureSchemas) != 2 {
+		t.Fatalf("plan must store both schemas, got %d", len(p.measureSchemas))
+	}
+	// The schema union is performed at execute time; verify the plan records
+	// the second group's schema so BuildMultiGroupBatchSchema can union them.
+	if p.measureSchemas[1].GetMetadata().GetGroup() != "groupB" {
+		t.Fatalf("plan.measureSchemas[1] must be groupB schema, got %s", p.measureSchemas[1].GetMetadata().GetGroup())
 	}
 }

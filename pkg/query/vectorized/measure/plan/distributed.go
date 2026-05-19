@@ -52,9 +52,6 @@ func SupportsDistributedRows(req *measurev1.QueryRequest) bool {
 	if req == nil || req.GetAgg() != nil || req.GetGroupBy() != nil || req.GetTop() != nil {
 		return false
 	}
-	if len(req.GetGroups()) > 1 {
-		return false
-	}
 	return true
 }
 
@@ -63,27 +60,31 @@ func SupportsDistributedRows(req *measurev1.QueryRequest) bool {
 // decodes them into vectorized batches, and runs the liaison operators without
 // routing through the row-compatible logical distributedPlan.
 type DistributedPlan struct {
-	queryTemplate  *measurev1.QueryRequest
-	nodeTemplate   *measurev1.QueryRequest
-	measureSchema  *databasev1.Measure
-	orderByTag     *resolvedOrderByTag
-	hiddenOrderBy  logical.HiddenTagSet
-	cfg            vmeasure.VectorizedConfig
+	queryTemplate   *measurev1.QueryRequest
+	nodeTemplate    *measurev1.QueryRequest
+	measureSchemas  []*databasev1.Measure
+	indexRules      [][]*databasev1.IndexRule
+	orderByTag      *resolvedOrderByTag
+	hiddenOrderBy   logical.HiddenTagSet
+	cfg             vmeasure.VectorizedConfig
 }
 
-// AnalyzeDistributed builds the vectorized distributed liaison plan. The
-// indexRules parameter is the executor-side index rule slice
-// (ec.GetIndexRules()), threaded through so an OrderBy.IndexRuleName can be
-// resolved to a (family, tag) pair without binding the vec plan layer to
-// the logical schema. When indexRules is nil and req.OrderBy.IndexRuleName
-// is non-empty, the resolver surfaces an "index rule X not found" error
-// byte-equivalent to the row path.
-func AnalyzeDistributed(req *measurev1.QueryRequest, measureSchema *databasev1.Measure, indexRules []*databasev1.IndexRule, cfg vmeasure.VectorizedConfig) (*DistributedPlan, error) {
+// AnalyzeDistributed builds the vectorized distributed liaison plan.
+// measureSchemas is the per-group slice of Measure schemas (one entry per
+// req.Groups element). indexRules is the corresponding per-group slice of
+// index rule sets (ec.GetIndexRules() for each group). Both slices must be
+// in request-group order. Single-group callers may pass a length-1 slice for
+// each (the existing behaviour is preserved byte-for-byte).
+//
+// When indexRules is nil or empty and req.OrderBy.IndexRuleName is non-empty,
+// the resolver surfaces an "index rule X not found" error byte-equivalent to
+// the row path.
+func AnalyzeDistributed(req *measurev1.QueryRequest, measureSchemas []*databasev1.Measure, indexRules [][]*databasev1.IndexRule, cfg vmeasure.VectorizedConfig) (*DistributedPlan, error) {
 	if req == nil {
 		return nil, fmt.Errorf("vec distributed analyze: nil request")
 	}
-	if measureSchema == nil {
-		return nil, fmt.Errorf("vec distributed analyze: nil measure schema")
+	if len(measureSchemas) == 0 {
+		return nil, fmt.Errorf("vec distributed analyze: no measure schemas supplied")
 	}
 	if cfgErr := cfg.Validate(); cfgErr != nil {
 		return nil, fmt.Errorf("vec distributed analyze: %w", cfgErr)
@@ -114,14 +115,23 @@ func AnalyzeDistributed(req *measurev1.QueryRequest, measureSchema *databasev1.M
 	if hadTop && nodeTemplate.GetAgg() != nil {
 		nodeTemplate.Limit = math.MaxUint32
 	}
-	plan := &DistributedPlan{queryTemplate: queryTemplate, nodeTemplate: nodeTemplate, measureSchema: measureSchema, cfg: cfg}
+	plan := &DistributedPlan{
+		queryTemplate:  queryTemplate,
+		nodeTemplate:   nodeTemplate,
+		measureSchemas: measureSchemas,
+		indexRules:     indexRules,
+		cfg:            cfg,
+	}
 	// Resolve OrderBy by index rule for the non-agg row path. Agg requests
 	// reduce on the liaison anyway and so do not need the cross-source
 	// sort-column wiring; their OrderBy on the row stream is ignored.
 	if req.GetAgg() == nil {
 		orderBy := req.GetOrderBy()
 		if orderBy != nil && orderBy.GetIndexRuleName() != "" {
-			resolved, resolveErr := resolveOrderByTag(measureSchema, indexRules, orderBy.GetIndexRuleName())
+			// For multi-group requests, search all groups' index rules and
+			// accept the first match (mirrors the row path's mergeSchema-then-
+			// resolve flow). Error text matches the row path byte-for-byte.
+			resolved, resolveErr := resolveOrderByTagMultiGroup(measureSchemas, indexRules, orderBy.GetIndexRuleName())
 			if resolveErr != nil {
 				return nil, resolveErr
 			}
@@ -139,6 +149,25 @@ func AnalyzeDistributed(req *measurev1.QueryRequest, measureSchema *databasev1.M
 		}
 	}
 	return plan, nil
+}
+
+// resolveOrderByTagMultiGroup iterates per-group schemas and index-rule sets,
+// accepting the first group in which indexRuleName resolves successfully.
+// Error text on a total miss is byte-identical to the row path's resolver in
+// pkg/query/logical/measure/cross_group_merge.go so distributed fixtures
+// asserting WantErr land on identical messages across paths.
+func resolveOrderByTagMultiGroup(measureSchemas []*databasev1.Measure, indexRules [][]*databasev1.IndexRule, indexRuleName string) (resolvedOrderByTag, error) {
+	for groupIdx, ms := range measureSchemas {
+		var rules []*databasev1.IndexRule
+		if groupIdx < len(indexRules) {
+			rules = indexRules[groupIdx]
+		}
+		resolved, resolveErr := resolveOrderByTag(ms, rules, indexRuleName)
+		if resolveErr == nil {
+			return resolved, nil
+		}
+	}
+	return resolvedOrderByTag{}, fmt.Errorf("index rule %s not found", indexRuleName)
 }
 
 // orderByProjectionVisible reports whether the OrderBy tag is already
@@ -183,30 +212,146 @@ func appendOrderByToProjection(projection *modelv1.TagProjection, want resolvedO
 	return &modelv1.TagProjection{TagFamilies: families}
 }
 
+// intersectTagProjection returns a TagProjection that contains only the tags that
+// exist in the given group's schema. Tags in the request projection that are not
+// defined in the group's schema are silently dropped so data nodes do not reject
+// the request for unknown tag names.
+func intersectTagProjection(proj *modelv1.TagProjection, ms *databasev1.Measure) *modelv1.TagProjection {
+	if proj == nil || ms == nil {
+		return proj
+	}
+	// Build lookup set from schema.
+	schemaTagSet := make(map[string]struct{})
+	for _, tf := range ms.GetTagFamilies() {
+		for _, ts := range tf.GetTags() {
+			schemaTagSet[tf.GetName()+"\x00"+ts.GetName()] = struct{}{}
+		}
+	}
+	filteredFamilies := make([]*modelv1.TagProjection_TagFamily, 0, len(proj.GetTagFamilies()))
+	for _, fam := range proj.GetTagFamilies() {
+		filteredTags := make([]string, 0, len(fam.GetTags()))
+		for _, tagName := range fam.GetTags() {
+			if _, exists := schemaTagSet[fam.GetName()+"\x00"+tagName]; exists {
+				filteredTags = append(filteredTags, tagName)
+			}
+		}
+		if len(filteredTags) > 0 {
+			filteredFamilies = append(filteredFamilies, &modelv1.TagProjection_TagFamily{
+				Name: fam.GetName(),
+				Tags: filteredTags,
+			})
+		}
+	}
+	if len(filteredFamilies) == 0 {
+		return nil
+	}
+	return &modelv1.TagProjection{TagFamilies: filteredFamilies}
+}
+
+// intersectFieldProjection returns a FieldProjection that contains only the fields
+// that exist in the given group's schema. Unknown fields are silently dropped.
+func intersectFieldProjection(proj *measurev1.QueryRequest_FieldProjection, ms *databasev1.Measure) *measurev1.QueryRequest_FieldProjection {
+	if proj == nil || ms == nil {
+		return proj
+	}
+	schemaFieldSet := make(map[string]struct{}, len(ms.GetFields()))
+	for _, fs := range ms.GetFields() {
+		schemaFieldSet[fs.GetName()] = struct{}{}
+	}
+	filteredNames := make([]string, 0, len(proj.GetNames()))
+	for _, name := range proj.GetNames() {
+		if _, exists := schemaFieldSet[name]; exists {
+			filteredNames = append(filteredNames, name)
+		}
+	}
+	if len(filteredNames) == 0 {
+		return nil
+	}
+	return &measurev1.QueryRequest_FieldProjection{Names: filteredNames}
+}
+
 // Execute broadcasts the internal query and executes the liaison-side vectorized plan.
+// For single-group requests, one broadcast is issued for all groups (existing
+// behaviour). For multi-group requests, one broadcast is issued per group,
+// each carrying a single-element Groups slice, so data nodes can answer with
+// a schema that matches only their local group's columns.
 func (p *DistributedPlan) Execute(ctx context.Context) (executor.MIterator, error) {
 	if !data.MeasureWireModeRaw() {
 		return nil, fmt.Errorf("vec distributed plan requires raw measure wire mode")
 	}
 	dctx := executor.FromDistributedExecutionContext(ctx)
 	queryRequest := proto.Clone(p.queryTemplate).(*measurev1.QueryRequest)
-	nodeRequest := proto.Clone(p.nodeTemplate).(*measurev1.QueryRequest)
 	queryRequest.TimeRange = dctx.TimeRange()
-	nodeRequest.TimeRange = dctx.TimeRange()
-	internalRequest := &measurev1.InternalQueryRequest{Request: nodeRequest, AggReturnPartial: queryRequest.GetAgg() != nil}
-	ff, broadcastErr := dctx.Broadcast(distributedQueryTimeout, data.TopicInternalMeasureQuery,
-		bus.NewMessageWithNodeSelectors(bus.MessageID(dctx.TimeRange().Begin.Nanos), dctx.NodeSelectors(), dctx.TimeRange(), internalRequest))
-	if broadcastErr != nil {
-		return nil, fmt.Errorf("vec distributed plan: broadcast: %w", broadcastErr)
+
+	groups := queryRequest.GetGroups()
+	if len(groups) <= 1 {
+		// Single-group fast path — unchanged behaviour.
+		nodeRequest := proto.Clone(p.nodeTemplate).(*measurev1.QueryRequest)
+		nodeRequest.TimeRange = dctx.TimeRange()
+		internalRequest := &measurev1.InternalQueryRequest{Request: nodeRequest, AggReturnPartial: queryRequest.GetAgg() != nil}
+		ff, broadcastErr := dctx.Broadcast(distributedQueryTimeout, data.TopicInternalMeasureQuery,
+			bus.NewMessageWithNodeSelectors(bus.MessageID(dctx.TimeRange().Begin.Nanos), dctx.NodeSelectors(), dctx.TimeRange(), internalRequest))
+		if broadcastErr != nil {
+			return nil, fmt.Errorf("vec distributed plan: broadcast: %w", broadcastErr)
+		}
+		frames, responseErr := collectRawFrameResponses(ff)
+		if responseErr != nil {
+			return nil, responseErr
+		}
+		if queryRequest.GetAgg() == nil {
+			return p.executeRows(ctx, frames, queryRequest)
+		}
+		return p.executeAgg(ctx, frames, queryRequest)
 	}
-	frames, responseErr := collectRawFrameResponses(ff)
-	if responseErr != nil {
-		return nil, responseErr
+
+	// Multi-group path: one broadcast per group so each data node returns a
+	// frame whose schema reflects only its local group's column layout.
+	var perGroupErr error
+	allGroupFrames := make([]groupFrame, 0, len(groups)*4)
+	for groupIdx, groupName := range groups {
+		nodeRequest := proto.Clone(p.nodeTemplate).(*measurev1.QueryRequest)
+		nodeRequest.TimeRange = dctx.TimeRange()
+		nodeRequest.Groups = []string{groupName}
+		// Filter TagProjection and FieldProjection to only include columns that
+		// exist in this group's schema. Data nodes reject tags/fields that are
+		// not defined in their local schema, so the liaison must not broadcast
+		// columns belonging to a different group's schema.
+		var groupSchema *databasev1.Measure
+		if groupIdx < len(p.measureSchemas) {
+			groupSchema = p.measureSchemas[groupIdx]
+		}
+		if groupSchema != nil {
+			nodeRequest.TagProjection = intersectTagProjection(nodeRequest.GetTagProjection(), groupSchema)
+			nodeRequest.FieldProjection = intersectFieldProjection(nodeRequest.GetFieldProjection(), groupSchema)
+		}
+		internalRequest := &measurev1.InternalQueryRequest{Request: nodeRequest, AggReturnPartial: queryRequest.GetAgg() != nil}
+		ff, broadcastErr := dctx.Broadcast(distributedQueryTimeout, data.TopicInternalMeasureQuery,
+			bus.NewMessageWithNodeSelectors(bus.MessageID(dctx.TimeRange().Begin.Nanos), dctx.NodeSelectors(), dctx.TimeRange(), internalRequest))
+		if broadcastErr != nil {
+			perGroupErr = multierr.Append(perGroupErr, fmt.Errorf("vec distributed plan: broadcast group %s: %w", groupName, broadcastErr))
+			continue
+		}
+		rawFrames, responseErr := collectRawFrameResponses(ff)
+		if responseErr != nil {
+			perGroupErr = multierr.Append(perGroupErr, responseErr)
+			continue
+		}
+		for _, body := range rawFrames {
+			allGroupFrames = append(allGroupFrames, groupFrame{body: body, group: groupIdx})
+		}
+	}
+	if perGroupErr != nil {
+		return nil, perGroupErr
 	}
 	if queryRequest.GetAgg() == nil {
-		return p.executeRows(ctx, frames, queryRequest)
+		return p.executeRowsMultiGroup(ctx, allGroupFrames, queryRequest)
 	}
-	return p.executeAgg(ctx, frames, queryRequest)
+	// Multi-group agg: collect all frames as flat []byte and reduce.
+	flatFrames := make([][]byte, 0, len(allGroupFrames))
+	for _, gf := range allGroupFrames {
+		flatFrames = append(flatFrames, gf.body)
+	}
+	return p.executeAgg(ctx, flatFrames, queryRequest)
 }
 
 func collectRawFrameResponses(ff []bus.Future) ([][]byte, error) {
@@ -273,7 +418,7 @@ func (p *DistributedPlan) executeRows(ctx context.Context, frames [][]byte, req 
 	tracker := vectorized.NewMemoryTracker(int64(p.cfg.QueryMemoryMiB) * 1024 * 1024)
 	spec := distributedRowsSpec{
 		Desc:          req.GetOrderBy().GetSort() == modelv1.Sort_SORT_DESC,
-		IndexMode:     p.measureSchema.GetIndexMode(),
+		IndexMode:     p.measureSchemas[0].GetIndexMode(),
 		BatchSize:     p.cfg.BatchSize,
 		Tracker:       tracker,
 		OrderByColIdx: -1,
@@ -289,6 +434,43 @@ func (p *DistributedPlan) executeRows(ctx context.Context, frames [][]byte, req 
 	return p.iteratorFromBatches(ctx, batches, req)
 }
 
+// executeRowsMultiGroup is the multi-group non-agg row merge path. It builds
+// the merged BatchSchema by unioning all per-group schemas, then runs the
+// k-way heap merger over all per-group frames decoded into that merged schema.
+func (p *DistributedPlan) executeRowsMultiGroup(ctx context.Context, groupFrames []groupFrame, req *measurev1.QueryRequest) (executor.MIterator, error) {
+	mergedSchema, schemaErr := BuildMultiGroupBatchSchema(p.measureSchemas, req)
+	if schemaErr != nil {
+		return nil, fmt.Errorf("vec distributed plan: build multi-group schema: %w", schemaErr)
+	}
+	tracker := vectorized.NewMemoryTracker(int64(p.cfg.QueryMemoryMiB) * 1024 * 1024)
+	// IndexMode is true when ALL groups are index-mode. A mixed-mode
+	// configuration is treated as non-index-mode to avoid over-suppressing rows
+	// from non-index-mode groups.
+	indexMode := len(p.measureSchemas) > 0
+	for _, ms := range p.measureSchemas {
+		if !ms.GetIndexMode() {
+			indexMode = false
+			break
+		}
+	}
+	spec := distributedRowsSpec{
+		Desc:          req.GetOrderBy().GetSort() == modelv1.Sort_SORT_DESC,
+		IndexMode:     indexMode,
+		BatchSize:     p.cfg.BatchSize,
+		Tracker:       tracker,
+		OrderByColIdx: -1,
+	}
+	if p.orderByTag != nil {
+		spec.OrderByFamily = p.orderByTag.family
+		spec.OrderByTagName = p.orderByTag.tag
+	}
+	batches, mergeErr := mergeDistributedRowsMulti(groupFrames, mergedSchema, spec)
+	if mergeErr != nil {
+		return nil, fmt.Errorf("vec distributed plan: merge multi-group rows: %w", mergeErr)
+	}
+	return p.iteratorFromBatchesWithSchema(ctx, batches, req, mergedSchema)
+}
+
 func (p *DistributedPlan) iteratorFromBatches(ctx context.Context, batches []*vectorized.RecordBatch, req *measurev1.QueryRequest) (executor.MIterator, error) {
 	var schema *vectorized.BatchSchema
 	for _, batch := range batches {
@@ -298,7 +480,7 @@ func (p *DistributedPlan) iteratorFromBatches(ctx context.Context, batches []*ve
 		}
 	}
 	if schema == nil {
-		vecPlan, analyzeErr := Analyze(req, p.measureSchema, vmeasure.AggModeAll)
+		vecPlan, analyzeErr := Analyze(req, p.measureSchemas[0], vmeasure.AggModeAll)
 		if analyzeErr != nil {
 			return nil, fmt.Errorf("vec distributed plan: analyze empty output: %w", analyzeErr)
 		}
@@ -325,6 +507,35 @@ func (p *DistributedPlan) iteratorFromBatches(ctx context.Context, batches []*ve
 		// Strip the OrderBy tag projected as a hidden column for native
 		// cross-source merge sorting. The visible response matches what a
 		// query without the OrderBy projection would emit byte-for-byte.
+		iter = &hiddenTagsMIterator{inner: iter, hiddenTags: p.hiddenOrderBy}
+	}
+	return iter, nil
+}
+
+// iteratorFromBatchesWithSchema is the multi-group variant of
+// iteratorFromBatches. The merged BatchSchema is supplied by the caller
+// (already computed by BuildMultiGroupBatchSchema) so this function does not
+// fall back to Analyze on empty output — an empty multi-group result simply
+// returns no rows rather than re-deriving a schema from a single group.
+func (p *DistributedPlan) iteratorFromBatchesWithSchema(ctx context.Context, batches []*vectorized.RecordBatch, req *measurev1.QueryRequest, schema *vectorized.BatchSchema) (executor.MIterator, error) {
+	builder := vectorized.NewPipelineBuilder().WithMemoryTracker(vectorized.NewMemoryTracker(int64(p.cfg.QueryMemoryMiB) * 1024 * 1024))
+	builder.From(&batchSliceSource{batches: batches, schema: schema})
+	limit := req.GetLimit()
+	if limit == 0 {
+		limit = defaultLimit
+	}
+	builder.Apply(vmeasure.NewBatchLimit(schema, req.GetOffset(), limit))
+	pipeline, buildErr := builder.Build()
+	if buildErr != nil {
+		return nil, fmt.Errorf("vec distributed plan: build output pipeline: %w", buildErr)
+	}
+	if initErr := pipeline.Init(ctx); initErr != nil {
+		_ = pipeline.Close()
+		return nil, fmt.Errorf("vec distributed plan: init output pipeline: %w", initErr)
+	}
+	pool := vectorized.NewBatchPool(schema, p.cfg.BatchSize)
+	var iter executor.MIterator = vmeasure.NewIteratorFromPipeline(ctx, pipeline, schema, pool)
+	if !p.hiddenOrderBy.IsEmpty() {
 		iter = &hiddenTagsMIterator{inner: iter, hiddenTags: p.hiddenOrderBy}
 	}
 	return iter, nil

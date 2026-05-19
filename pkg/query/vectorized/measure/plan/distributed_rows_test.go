@@ -460,3 +460,139 @@ func assertRowsEqual(t *testing.T, got, want []rowMergeOutput) {
 		}
 	}
 }
+
+// multiGroupMergedSchema builds a merged schema that unions the base
+// distributedRowsTestSchema with an extra string tag column "extra_tag".
+// Group 0 frames use the base schema; group 1 frames use the extended schema.
+// After null-fill, rows from group 0 must have IsNull(extra_tag)==true and
+// rows from group 1 must have IsNull(extra_tag)==false.
+func multiGroupMergedSchema() *vectorized.BatchSchema {
+	return vectorized.NewBatchSchema([]vectorized.ColumnDef{
+		{Role: vectorized.RoleTimestamp, Name: "_timestamp", Type: vectorized.ColumnTypeInt64},
+		{Role: vectorized.RoleVersion, Name: "_version", Type: vectorized.ColumnTypeInt64},
+		{Role: vectorized.RoleSeriesID, Name: "_sid", Type: vectorized.ColumnTypeInt64},
+		{Role: vectorized.RoleShardID, Name: "shard_id", Type: vectorized.ColumnTypeInt64},
+		{Role: vectorized.RoleField, Name: fieldValue, Type: vectorized.ColumnTypeInt64},
+		{Role: vectorized.RoleTag, TagFamily: "default", Name: "extra_tag", Type: vectorized.ColumnTypeString},
+	})
+}
+
+// encodeMultiGroupRows builds a frame using the specified schema so each test
+// group can produce frames with different column layouts.
+func encodeMultiGroupRows(t *testing.T, schema *vectorized.BatchSchema, rows ...rowMergeOutput) []byte {
+	t.Helper()
+	return encodeDistributedRows(t, schema, rows...)
+}
+
+// TestMergeDistributedRows_MultiGroup_NullFillsMissingColumn verifies that
+// when group 0 frames are missing the "extra_tag" column (their schema only
+// has the base 5 columns), the merged output has IsNull==true for that column
+// for all group-0 rows, while group-1 rows (which carry the column) are non-null.
+func TestMergeDistributedRows_MultiGroup_NullFillsMissingColumn(t *testing.T) {
+	baseSchema := distributedRowsTestSchema()   // 5 cols, no extra_tag
+	mergedSchema := multiGroupMergedSchema()    // 6 cols, with extra_tag
+
+	// Group 0: uses base schema — no extra_tag column.
+	frameGroup0 := encodeMultiGroupRows(t, baseSchema,
+		rowMergeOutput{ts: 10, ver: 1, sid: 1, value: 100},
+	)
+	// Group 1: uses merged schema — has extra_tag column (non-null).
+	// We need to build this frame manually with extra_tag set.
+	batchGroup1 := vectorized.NewRecordBatch(mergedSchema, 1)
+	batchGroup1.Columns[0].(*vectorized.TypedColumn[int64]).Append(20)
+	batchGroup1.Columns[1].(*vectorized.TypedColumn[int64]).Append(1)
+	batchGroup1.Columns[2].(*vectorized.TypedColumn[int64]).Append(2)
+	batchGroup1.Columns[3].(*vectorized.TypedColumn[int64]).Append(1)
+	batchGroup1.Columns[4].(*vectorized.TypedColumn[int64]).Append(200)
+	batchGroup1.Columns[5].(*vectorized.TypedColumn[string]).Append("zone-a")
+	batchGroup1.Len = 1
+	frameGroup1, encodeErr := frame.Encode(batchGroup1)
+	if encodeErr != nil {
+		t.Fatalf("frame.Encode group1: %v", encodeErr)
+	}
+
+	groupFrames := []groupFrame{
+		{body: frameGroup0, group: 0},
+		{body: frameGroup1, group: 1},
+	}
+	spec := distributedRowsSpec{BatchSize: 4}
+	batches, mergeErr := mergeDistributedRowsMulti(groupFrames, mergedSchema, spec)
+	if mergeErr != nil {
+		t.Fatalf("mergeDistributedRowsMulti: %v", mergeErr)
+	}
+	if len(batches) == 0 {
+		t.Fatal("expected non-empty output batches")
+	}
+
+	// Collect rows and verify null-fill behaviour.
+	type mergedRow struct {
+		ts       int64
+		sid      int64
+		extraTag string
+		nullTag  bool
+	}
+	var rows []mergedRow
+	for _, batch := range batches {
+		tsCol := batch.Columns[0].(*vectorized.TypedColumn[int64])
+		sidCol := batch.Columns[2].(*vectorized.TypedColumn[int64])
+		extraTagCol := batch.Columns[5].(*vectorized.TypedColumn[string])
+		for rowIdx := range batch.Len {
+			rows = append(rows, mergedRow{
+				ts:       tsCol.Data()[rowIdx],
+				sid:      sidCol.Data()[rowIdx],
+				nullTag:  extraTagCol.IsNull(rowIdx),
+				extraTag: extraTagCol.Data()[rowIdx],
+			})
+		}
+	}
+	if len(rows) != 2 {
+		t.Fatalf("expected 2 rows, got %d", len(rows))
+	}
+	// Row 0: ts=10, sid=1 from group 0 — extra_tag must be null.
+	if rows[0].ts != 10 || rows[0].sid != 1 {
+		t.Fatalf("row 0: got ts=%d sid=%d, want ts=10 sid=1", rows[0].ts, rows[0].sid)
+	}
+	if !rows[0].nullTag {
+		t.Fatal("row 0 (group 0): extra_tag must be null (column absent in source)")
+	}
+	// Row 1: ts=20, sid=2 from group 1 — extra_tag must be non-null ("zone-a").
+	if rows[1].ts != 20 || rows[1].sid != 2 {
+		t.Fatalf("row 1: got ts=%d sid=%d, want ts=20 sid=2", rows[1].ts, rows[1].sid)
+	}
+	if rows[1].nullTag {
+		t.Fatal("row 1 (group 1): extra_tag must not be null (column present in source)")
+	}
+	if rows[1].extraTag != "zone-a" {
+		t.Fatalf("row 1 extra_tag: got %q, want %q", rows[1].extraTag, "zone-a")
+	}
+}
+
+// TestMergeDistributedRows_IndexMode_PerGroupSidIsolation verifies that in
+// index-mode, two groups that both emit sid=7 are NOT deduplicated — each
+// (group, sid) pair is treated independently.
+func TestMergeDistributedRows_IndexMode_PerGroupSidIsolation(t *testing.T) {
+	schema := distributedRowsTestSchema()
+	// Both groups emit sid=7; under per-group keying both rows should survive.
+	frameGroup0 := encodeDistributedRows(t, schema,
+		rowMergeOutput{ts: 10, ver: 1, sid: 7, value: 100},
+	)
+	frameGroup1 := encodeDistributedRows(t, schema,
+		rowMergeOutput{ts: 20, ver: 1, sid: 7, value: 200},
+	)
+	mergedSchema := distributedRowsTestSchema() // same schema for both groups
+	groupFrames := []groupFrame{
+		{body: frameGroup0, group: 0},
+		{body: frameGroup1, group: 1},
+	}
+	spec := distributedRowsSpec{IndexMode: true, BatchSize: 4}
+	batches, mergeErr := mergeDistributedRowsMulti(groupFrames, mergedSchema, spec)
+	if mergeErr != nil {
+		t.Fatalf("mergeDistributedRowsMulti: %v", mergeErr)
+	}
+	got := collectDistributedRows(batches)
+	// Both rows must survive — they have the same sid=7 but belong to
+	// different groups, so the (group, sid) key is distinct.
+	if len(got) != 2 {
+		t.Fatalf("expected 2 rows (both sid=7 from different groups), got %d: %+v", len(got), got)
+	}
+}

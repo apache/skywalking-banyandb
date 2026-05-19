@@ -21,13 +21,31 @@ import (
 	"bytes"
 	"encoding/binary"
 	"fmt"
+	"slices"
 	"sort"
 
+	modelv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/model/v1"
 	itersort "github.com/apache/skywalking-banyandb/pkg/iter/sort"
 	"github.com/apache/skywalking-banyandb/pkg/query/vectorized"
 	measure "github.com/apache/skywalking-banyandb/pkg/query/vectorized/measure"
 	"github.com/apache/skywalking-banyandb/pkg/query/vectorized/measure/frame"
 )
+
+// groupFrame pairs a decoded source body with its group index (0-based into
+// req.Groups). The merger uses group to route each frame to the right
+// per-group schema and to key the (group, sid) dedup map in index-mode.
+type groupFrame struct {
+	body  []byte
+	group int
+}
+
+// seenSIDKey is the composite dedup key for index-mode queries. Two groups
+// may legally share the same sid value (their sid spaces are per-group), so
+// the key is (group, sid) rather than sid alone.
+type seenSIDKey struct {
+	group int
+	sid   int64
+}
 
 // distributedRowsSpec configures mergeDistributedRows.
 //
@@ -74,6 +92,7 @@ type distributedRowItem struct {
 	rowIdx    int
 	source    int
 	seq       int
+	group     int
 	sid       int64
 	ts        int64
 	ver       int64
@@ -94,6 +113,7 @@ type distributedRowSourceIter struct {
 	sortKeys     [][]byte
 	indices      []int
 	source       int
+	group        int
 	sidIdx       int
 	tsIdx        int
 	verIdx       int
@@ -108,12 +128,13 @@ type distributedRowSourceIter struct {
 // pre-encodes each active row's sort key via encodeSortKey, stable-sorts
 // indices by that encoding (respecting desc), and reuses the cached keys
 // in Next() to avoid re-encoding per heap pop.
-func newDistributedRowSourceIter(batch *vectorized.RecordBatch, schema *vectorized.BatchSchema, source int, desc bool, sortColIdx int) (*distributedRowSourceIter, error) {
+func newDistributedRowSourceIter(batch *vectorized.RecordBatch, schema *vectorized.BatchSchema, source, group int, desc bool, sortColIdx int) (*distributedRowSourceIter, error) {
 	tsIdx := schema.TimestampIndex()
 	indices := activeDistributedRows(batch)
 	iter := &distributedRowSourceIter{
 		batch:      batch,
 		source:     source,
+		group:      group,
 		sidIdx:     schema.SeriesIDIndex(),
 		tsIdx:      tsIdx,
 		verIdx:     schema.VersionIndex(),
@@ -196,6 +217,7 @@ func (s *distributedRowSourceIter) Next() bool {
 		batch:     s.batch,
 		rowIdx:    rowIdx,
 		source:    s.source,
+		group:     s.group,
 		seq:       s.seq,
 		sid:       sidCol.Data()[rowIdx],
 		ts:        tsCol.Data()[rowIdx],
@@ -251,6 +273,14 @@ func mergeDistributedRows(frames [][]byte, spec distributedRowsSpec) ([]*vectori
 	if buildErr != nil {
 		return nil, buildErr
 	}
+	return runDistributedRowMerge(iters, schema, spec, batchSize)
+}
+
+// runDistributedRowMerge drives the k-way heap over iters and emits output
+// batches. Extracted so both the single-group path (mergeDistributedRows) and
+// the multi-group path (mergeDistributedRowsMulti) share the same merge loop
+// without duplication.
+func runDistributedRowMerge(iters []itersort.Iterator[*distributedRowItem], schema *vectorized.BatchSchema, spec distributedRowsSpec, batchSize int) ([]*vectorized.RecordBatch, error) {
 	merger := itersort.NewItemIter(iters, spec.Desc)
 	defer func() { _ = merger.Close() }()
 
@@ -263,7 +293,7 @@ func mergeDistributedRows(frames [][]byte, spec distributedRowsSpec) ([]*vectori
 		batchSize: batchSize,
 		tracker:   spec.Tracker,
 		rowWidth:  rowWidth,
-		seenSID:   make(map[int64]struct{}),
+		seenSID:   make(map[seenSIDKey]struct{}),
 		indexMode: spec.IndexMode,
 		window:    make(map[distributedRowKey]*distributedRowItem),
 	}
@@ -289,22 +319,29 @@ func mergeDistributedRows(frames [][]byte, spec distributedRowsSpec) ([]*vectori
 	return emitter.output, nil
 }
 
-// buildDistributedRowSourceIters wires one iterator per non-empty source
-// batch. The k-way merger consumes these directly. desc is forwarded so each
+// decodedBatchSource pairs a decoded RecordBatch with its source index and
+// group index so the k-way merger can populate both fields on every emitted
+// item for correct emit-order stability (source) and index-mode dedup (group).
+type decodedBatchSource struct {
+	batch  *vectorized.RecordBatch
+	source int
+	group  int
+}
+
+// buildDistributedRowSourceIters wires one iterator per non-empty decoded
+// source. The k-way merger consumes these directly. desc is forwarded so each
 // per-source iterator sorts its own row indices in the same direction the
 // heap expects (largest-first for desc, smallest-first for asc). sortColIdx
 // selects the comparator: < 0 means time-sort (Phase 1.5), >= 0 means the
 // OrderBy column at that index in the merged-batch schema (Phase 2).
-func buildDistributedRowSourceIters(sources [][]*vectorized.RecordBatch, schema *vectorized.BatchSchema, desc bool, sortColIdx int) ([]itersort.Iterator[*distributedRowItem], error) {
+func buildDistributedRowSourceIters(sources []decodedBatchSource, schema *vectorized.BatchSchema, desc bool, sortColIdx int) ([]itersort.Iterator[*distributedRowItem], error) {
 	iters := make([]itersort.Iterator[*distributedRowItem], 0, len(sources))
-	for sourceIdx, batches := range sources {
-		for _, batch := range batches {
-			iter, buildErr := newDistributedRowSourceIter(batch, schema, sourceIdx, desc, sortColIdx)
-			if buildErr != nil {
-				return nil, buildErr
-			}
-			iters = append(iters, iter)
+	for _, src := range sources {
+		iter, buildErr := newDistributedRowSourceIter(src.batch, schema, src.source, src.group, desc, sortColIdx)
+		if buildErr != nil {
+			return nil, buildErr
 		}
+		iters = append(iters, iter)
 	}
 	return iters, nil
 }
@@ -339,7 +376,7 @@ type distributedRowEmitter struct {
 	pool         *vectorized.BatchPool
 	schema       *vectorized.BatchSchema
 	tracker      *vectorized.MemoryTracker
-	seenSID      map[int64]struct{}
+	seenSID      map[seenSIDKey]struct{}
 	window       map[distributedRowKey]*distributedRowItem
 	current      *vectorized.RecordBatch
 	windowKey    []byte
@@ -389,10 +426,11 @@ func (e *distributedRowEmitter) flushWindow() error {
 	})
 	for _, row := range emit {
 		if e.indexMode {
-			if _, dup := e.seenSID[row.sid]; dup {
+			sidKey := seenSIDKey{group: row.group, sid: row.sid}
+			if _, dup := e.seenSID[sidKey]; dup {
 				continue
 			}
-			e.seenSID[row.sid] = struct{}{}
+			e.seenSID[sidKey] = struct{}{}
 		}
 		if err := e.appendRowToCurrent(row); err != nil {
 			return err
@@ -478,11 +516,11 @@ func estimateRowWidth(schema *vectorized.BatchSchema) int64 {
 }
 
 // decodeDistributedRowSources decodes every non-empty frame body into a
-// RecordBatch and groups them per source. Schema parity across sources is
-// asserted — a frame produced under a divergent schema means a producer
-// mis-rollout, not a recoverable data error.
-func decodeDistributedRowSources(frames [][]byte) ([][]*vectorized.RecordBatch, *vectorized.BatchSchema, error) {
-	sources := make([][]*vectorized.RecordBatch, 0, len(frames))
+// decodedBatchSource (group=0 for all frames on the single-group path).
+// Schema parity across sources is asserted — a frame produced under a
+// divergent schema means a producer mis-rollout, not a recoverable data error.
+func decodeDistributedRowSources(frames [][]byte) ([]decodedBatchSource, *vectorized.BatchSchema, error) {
+	sources := make([]decodedBatchSource, 0, len(frames))
 	var schema *vectorized.BatchSchema
 	for frameIdx, body := range frames {
 		if len(body) == 0 {
@@ -500,9 +538,196 @@ func decodeDistributedRowSources(frames [][]byte) ([][]*vectorized.RecordBatch, 
 		} else if !distributedRowSchemasEqual(schema, batch.Schema) {
 			return nil, nil, fmt.Errorf("frame %d schema mismatch", frameIdx)
 		}
-		sources = append(sources, []*vectorized.RecordBatch{batch})
+		sources = append(sources, decodedBatchSource{batch: batch, source: frameIdx, group: 0})
 	}
 	return sources, schema, nil
+}
+
+// appendColumnRangeCoerced copies n rows starting at srcPos from src into dst.
+// When dst and src share the same underlying type it delegates to
+// measure.AppendColumnRange for the fast path. When dst is
+// ColumnTypeTagValue and src is a native column type, each source cell is
+// promoted to a *modelv1.TagValue wrapper so the merged schema remains
+// type-consistent even across groups whose schemas diverged on this column.
+// The symmetric ColumnTypeFieldValue coercion is handled similarly. Any other
+// type mismatch delegates to measure.AppendColumnRange so the existing error
+// path is preserved.
+//
+// Directional invariant: BuildMultiGroupBatchSchema only ever promotes
+// (native → TagValue/FieldValue) on type divergence; it never demotes the
+// other direction. So this helper handles "src is native, dst is passthrough"
+// — never the inverse. If a future phase introduces a passthrough-to-native
+// reshape it will surface here via the delegate's "dst <type> vs src
+// tagvalue" error, which is the correct loud-failure outcome.
+func appendColumnRangeCoerced(dst, src vectorized.Column, srcPos, n int) error {
+	dTagCol, dIsTag := dst.(*vectorized.TypedColumn[*modelv1.TagValue])
+	if dIsTag {
+		if _, sameType := src.(*vectorized.TypedColumn[*modelv1.TagValue]); sameType {
+			return measure.AppendColumnRange(dst, src, srcPos, n)
+		}
+		for k := range n {
+			rowIdx := srcPos + k
+			if src.IsNull(rowIdx) {
+				dTagCol.Append(nil)
+				dTagCol.MarkNullAt(dTagCol.Len() - 1)
+				continue
+			}
+			var tv *modelv1.TagValue
+			switch sc := src.(type) {
+			case *vectorized.TypedColumn[int64]:
+				tv = &modelv1.TagValue{Value: &modelv1.TagValue_Int{Int: &modelv1.Int{Value: sc.Data()[rowIdx]}}}
+			case *vectorized.TypedColumn[string]:
+				tv = &modelv1.TagValue{Value: &modelv1.TagValue_Str{Str: &modelv1.Str{Value: sc.Data()[rowIdx]}}}
+			case *vectorized.TypedColumn[[]byte]:
+				raw := sc.Data()[rowIdx]
+				buf := make([]byte, len(raw))
+				copy(buf, raw)
+				tv = &modelv1.TagValue{Value: &modelv1.TagValue_BinaryData{BinaryData: buf}}
+			case *vectorized.TypedColumn[[]int64]:
+				tv = &modelv1.TagValue{Value: &modelv1.TagValue_IntArray{IntArray: &modelv1.IntArray{Value: slices.Clone(sc.Data()[rowIdx])}}}
+			case *vectorized.TypedColumn[[]string]:
+				tv = &modelv1.TagValue{Value: &modelv1.TagValue_StrArray{StrArray: &modelv1.StrArray{Value: slices.Clone(sc.Data()[rowIdx])}}}
+			default:
+				return fmt.Errorf("appendColumnRangeCoerced: cannot coerce %s to tagvalue", src.Type())
+			}
+			dTagCol.Append(tv)
+		}
+		return nil
+	}
+	dFieldCol, dIsField := dst.(*vectorized.TypedColumn[*modelv1.FieldValue])
+	if dIsField {
+		if _, sameType := src.(*vectorized.TypedColumn[*modelv1.FieldValue]); sameType {
+			return measure.AppendColumnRange(dst, src, srcPos, n)
+		}
+		for k := range n {
+			rowIdx := srcPos + k
+			if src.IsNull(rowIdx) {
+				dFieldCol.Append(nil)
+				dFieldCol.MarkNullAt(dFieldCol.Len() - 1)
+				continue
+			}
+			var fv *modelv1.FieldValue
+			switch sc := src.(type) {
+			case *vectorized.TypedColumn[int64]:
+				fv = &modelv1.FieldValue{Value: &modelv1.FieldValue_Int{Int: &modelv1.Int{Value: sc.Data()[rowIdx]}}}
+			case *vectorized.TypedColumn[float64]:
+				fv = &modelv1.FieldValue{Value: &modelv1.FieldValue_Float{Float: &modelv1.Float{Value: sc.Data()[rowIdx]}}}
+			case *vectorized.TypedColumn[string]:
+				fv = &modelv1.FieldValue{Value: &modelv1.FieldValue_Str{Str: &modelv1.Str{Value: sc.Data()[rowIdx]}}}
+			case *vectorized.TypedColumn[[]byte]:
+				raw := sc.Data()[rowIdx]
+				buf := make([]byte, len(raw))
+				copy(buf, raw)
+				fv = &modelv1.FieldValue{Value: &modelv1.FieldValue_BinaryData{BinaryData: buf}}
+			default:
+				return fmt.Errorf("appendColumnRangeCoerced: cannot coerce %s to fieldvalue", src.Type())
+			}
+			dFieldCol.Append(fv)
+		}
+		return nil
+	}
+	return measure.AppendColumnRange(dst, src, srcPos, n)
+}
+
+// decodeMultiGroupSources decodes each groupFrame body and reshapes the
+// resulting batch into the merged schema by null-filling columns that exist
+// in the merged schema but are absent from the source group's frame schema.
+// The column layout of each source frame is taken directly from the decoded
+// batch's own schema (rawBatch.Schema), so no per-group schema argument is
+// needed — the frame carries its schema on the wire. The returned
+// decodedBatchSource slice has one entry per non-empty frame; source is the
+// global frame index for deterministic emit ordering.
+func decodeMultiGroupSources(groupFrames []groupFrame, mergedSchema *vectorized.BatchSchema) ([]decodedBatchSource, error) {
+	sources := make([]decodedBatchSource, 0, len(groupFrames))
+	for frameIdx, gf := range groupFrames {
+		if len(gf.body) == 0 {
+			continue
+		}
+		rawBatch, decodeErr := frame.Decode(gf.body)
+		if decodeErr != nil {
+			return nil, fmt.Errorf("decode group %d frame %d: %w", gf.group, frameIdx, decodeErr)
+		}
+		if rawBatch == nil || rawBatch.ActiveLen() == 0 {
+			continue
+		}
+		// Build a column-index map from the source schema so we can look up
+		// which source column corresponds to each merged-schema destination
+		// column by (role, family, name) key.
+		srcColMap := make(map[string]int, len(rawBatch.Schema.Columns))
+		for ci, cd := range rawBatch.Schema.Columns {
+			srcColMap[schemaColKey(cd)] = ci
+		}
+		// Reshape the source batch into the merged schema. Columns present in
+		// the source are copied; columns absent from the source are null-filled.
+		reshapedBatch := vectorized.NewRecordBatch(mergedSchema, rawBatch.Len)
+		reshapedBatch.Len = rawBatch.Len
+		reshapedBatch.Selection = rawBatch.Selection
+		for destColIdx, destDef := range mergedSchema.Columns {
+			destKey := schemaColKey(destDef)
+			srcColIdx, hasSrc := srcColMap[destKey]
+			if hasSrc {
+				if copyErr := appendColumnRangeCoerced(
+					reshapedBatch.Columns[destColIdx],
+					rawBatch.Columns[srcColIdx],
+					0, rawBatch.Len,
+				); copyErr != nil {
+					return nil, fmt.Errorf("reshape group %d frame %d col %d: %w", gf.group, frameIdx, destColIdx, copyErr)
+				}
+			} else {
+				for range rawBatch.Len {
+					reshapedBatch.Columns[destColIdx].AppendNull()
+				}
+			}
+		}
+		sources = append(sources, decodedBatchSource{
+			batch:  reshapedBatch,
+			source: frameIdx,
+			group:  gf.group,
+		})
+	}
+	return sources, nil
+}
+
+// schemaColKey returns a string key that uniquely identifies a column within a
+// BatchSchema for the multi-group reshape map in decodeMultiGroupSources. The
+// key encodes role, tag-family, and name with two separator bytes (0x01, 0x02)
+// that are not valid in user-provided names, preventing false collisions.
+func schemaColKey(cd vectorized.ColumnDef) string {
+	return fmt.Sprintf("%d\x01%s\x02%s", int(cd.Role), cd.TagFamily, cd.Name)
+}
+
+// mergeDistributedRowsMulti is the multi-group variant of mergeDistributedRows.
+// It accepts pre-computed per-group frame bodies (each tagged with a group
+// index) and a pre-built merged BatchSchema. Each frame is decoded into the
+// merged schema via null-fill for missing columns, then the standard k-way
+// heap merger runs over all decoded batches.
+func mergeDistributedRowsMulti(groupFrames []groupFrame, mergedSchema *vectorized.BatchSchema, spec distributedRowsSpec) ([]*vectorized.RecordBatch, error) {
+	if mergedSchema == nil {
+		return nil, nil
+	}
+	if mergedSchema.SeriesIDIndex() < 0 || mergedSchema.TimestampIndex() < 0 || mergedSchema.VersionIndex() < 0 {
+		return nil, fmt.Errorf("row merge requires series-id, timestamp, and version columns")
+	}
+	batchSize := spec.BatchSize
+	if batchSize <= 0 {
+		batchSize = vectorized.DefaultBatchSize
+	}
+	sources, decodeErr := decodeMultiGroupSources(groupFrames, mergedSchema)
+	if decodeErr != nil {
+		return nil, decodeErr
+	}
+	if len(sources) == 0 {
+		return nil, nil
+	}
+	sortColIdx, sortErr := resolveDistributedSortColumn(mergedSchema, spec)
+	if sortErr != nil {
+		return nil, sortErr
+	}
+	iters, buildErr := buildDistributedRowSourceIters(sources, mergedSchema, spec.Desc, sortColIdx)
+	if buildErr != nil {
+		return nil, buildErr
+	}
+	return runDistributedRowMerge(iters, mergedSchema, spec, batchSize)
 }
 
 // activeDistributedRows returns the in-order list of active row indices for a
