@@ -55,10 +55,6 @@ type measureDistributedExecutable interface {
 	fmt.Stringer
 }
 
-func useVecDistributedMeasurePlan(rawWireMode bool, req *measurev1.QueryRequest) bool {
-	return rawWireMode && req != nil && (req.GetAgg() != nil || vecplan.SupportsDistributedRows(req))
-}
-
 func (p *measureQueryProcessor) Rev(ctx context.Context, message bus.Message) (resp bus.Message) {
 	queryCriteria, ok := message.Data().(*measurev1.QueryRequest)
 	n := time.Now()
@@ -107,19 +103,14 @@ func (p *measureQueryProcessor) Rev(ctx context.Context, message bus.Message) (r
 
 	var plan measureDistributedExecutable
 	var err error
-	// Routing contract:
-	//   - Raw wire mode + Agg -> vec distributed plan. executeAgg consumes
-	//     per-(shard,group) partials emitted by AggModeMap nodes and is the
-	//     only code path that finalises distributed aggregation correctly
-	//     under flag-on.
-	//   - Raw wire mode + supported non-agg -> vec distributed plan.
-	//     executeRows performs a native columnar cross-source merge/dedup
-	//     before liaison-side paging.
-	//   - Otherwise (unsupported raw non-agg, or flag-off) -> row-path
-	//     DistributedAnalyze. It still accepts raw vec frames via
-	//     vmeasure.DecodeFramesPerSource and runs the sortedMIterator
-	//     fallback for shapes not yet covered by native row merge.
-	useVecDistributed := useVecDistributedMeasurePlan(data.MeasureWireModeRaw(), queryCriteria)
+	// Routing contract (Phase 6 — see docs/operation/troubleshooting/measure-vec-flag-off-rollback.md):
+	//   - Raw wire mode (data.MeasureWireModeRaw() == true) -> vec distributed plan.
+	//     vecplan.AnalyzeDistributed handles all request shapes: non-agg, Agg,
+	//     OrderBy-by-index-rule, multi-group, Top, GroupBy, and combinations.
+	//   - Flag-off (data.MeasureWireModeRaw() == false) -> row-path DistributedAnalyze.
+	//     This is the kill-switch / rollback path; latency is higher and multi-group
+	//     native merge is unavailable. Use only during incident response.
+	useVecDistributed := data.MeasureWireModeRaw()
 	if useVecDistributed {
 		if len(measureSchemas) == 0 {
 			resp = bus.NewMessage(bus.MessageID(now), common.NewError("vec distributed plan requires at least one measure schema"))
@@ -127,9 +118,7 @@ func (p *measureQueryProcessor) Rev(ctx context.Context, message bus.Message) (r
 		}
 		plan, err = vecplan.AnalyzeDistributed(queryCriteria, measureSchemas, measureIndexRules, vecCfg)
 	} else {
-		// nolint:staticcheck // SA1019 - row distributed plan also serves
-		// non-agg distributed scans under raw wire mode (see routing
-		// contract above).
+		// nolint:staticcheck // SA1019 - row distributed plan is the flag-off rollback path only.
 		rowPlan, analyzeErr := logical_measure.DistributedAnalyze(queryCriteria, schemas)
 		if analyzeErr != nil {
 			err = analyzeErr

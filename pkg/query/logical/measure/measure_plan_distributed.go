@@ -283,13 +283,6 @@ func (t *distributedPlan) Execute(ctx context.Context) (mi executor.MIterator, e
 	}
 	var see []sort.Iterator[*comparableDataPoint]
 	var pushedDownAggDps []*measurev1.InternalDataPoint
-	// rawFrames collects vec raw frame bodies that arrive under flag-on
-	// (TopicInternalMeasureQuery's per-process wire mode is RawFrameCodec
-	// and pub.go returns []byte from m.Data()). The loop accumulates all
-	// non-empty bodies; nil/empty bodies are the codec's legitimate empty
-	// distributed result and are skipped (matches the row-path proto path
-	// where an empty InternalQueryResponse adds zero rows).
-	var rawFrames [][]byte
 	var responseCount int
 	var dataPointCount int
 	for _, f := range ff {
@@ -311,16 +304,6 @@ func (t *distributedPlan) Execute(ctx context.Context) (mi executor.MIterator, e
 				see = append(see,
 					newSortableElements(d.DataPoints,
 						t.sortByTime, t.sortTagSpec))
-			case []byte:
-				// G9f.5.c flag-on path: vec raw frame body. Empty body =
-				// legitimate empty result (codec carve-out). The reduce /
-				// decode happens after the loop so we can run a single
-				// (shard, group)-deduped Reduce + optional Top across all
-				// frames at once, matching the row path's batched dedup.
-				responseCount++
-				if len(d) > 0 {
-					rawFrames = append(rawFrames, d)
-				}
 			case *common.Error:
 				err = multierr.Append(err, fmt.Errorf("data node error: %s", d.Error()))
 			}
@@ -329,32 +312,6 @@ func (t *distributedPlan) Execute(ctx context.Context) (mi executor.MIterator, e
 	if span != nil {
 		span.Tagf("response_count", "%d", responseCount)
 		span.Tagf("data_point_count", "%d", dataPointCount)
-	}
-	if len(rawFrames) > 0 {
-		if t.pushDownAgg {
-			idps, vecErr := t.consumeRawFramesForAgg(rawFrames)
-			if vecErr != nil {
-				return nil, multierr.Append(err, vecErr)
-			}
-			// Frames already carry per-(shard,group) partials that
-			// ReduceFramesToInternalDataPoints has (shard,group)-deduped
-			// + Combine-d + (optionally) Top-N'd inside vec. No further
-			// dedup is needed here.
-			return &pushedDownAggregatedIterator{dataPoints: idps}, err
-		}
-		// Non-agg vec path: decode per-source so the sortedMIterator's
-		// cross-iterator merge + (sid, timestamp) dedup machinery sees
-		// the same per-data-node grouping the row path's proto branch
-		// builds. Flattening the rows into a single sortableElements
-		// defeats the dedup because duplicate rows from different sources
-		// land in different sortField groups across the flat sequence.
-		perSource, vecErr := vmeasure.DecodeFramesPerSource(rawFrames)
-		if vecErr != nil {
-			return nil, multierr.Append(err, vecErr)
-		}
-		for _, idps := range perSource {
-			see = append(see, newSortableElements(idps, t.sortByTime, t.sortTagSpec))
-		}
 	}
 	if t.pushDownAgg {
 		deduplicatedDps, dedupErr := deduplicateAggregatedDataPointsWithShard(pushedDownAggDps, t.groupByTagsRefs)
@@ -370,35 +327,6 @@ func (t *distributedPlan) Execute(ctx context.Context) (mi executor.MIterator, e
 	smi.init()
 	return smi, err
 }
-
-// consumeRawFramesForAgg decodes the per-data-node vec raw frame bodies
-// for the pushDownAgg path into a flat []*measurev1.InternalDataPoint
-// IN PARTIAL FORMAT: each row carries the AggModeMap output fields —
-// the partial value plus, for MEAN, the partial count sidecar named
-// "<output>__agg_count" — so the OUTER row-side aggregator (set up by
-// DistributedAnalyze with reduceMode=true) can combine them into final
-// values exactly like it does for the proto path.
-//
-// Replica dedup runs here via deduplicateAggregatedDataPointsWithShard,
-// matching the proto path's (shard_id, group_key) drop. WITHOUT this
-// dedup, two replicas of the same shard would each contribute their
-// partial to the outer reduce and double the result.
-//
-// Earlier revisions reduced fully inside this helper. That collapsed
-// the partial into a single-field final value, which the outer
-// reduceMode aggregator then mis-interpreted as Partial{Value: v,
-// Count: 0} → Val = v / 0 → 0. The vec-native AggModeReduce that the
-// frame already supports is therefore deliberately NOT invoked here;
-// the receive side just plays the row-path's "decode partials, dedup
-// by shard+group, hand to outer reduce" contract.
-func (t *distributedPlan) consumeRawFramesForAgg(frames [][]byte) ([]*measurev1.InternalDataPoint, error) {
-	idps, decodeErr := vmeasure.DecodeFramesToInternalDataPoints(frames)
-	if decodeErr != nil {
-		return nil, decodeErr
-	}
-	return deduplicateAggregatedDataPointsWithShard(idps, t.groupByTagsRefs)
-}
-
 
 func (t *distributedPlan) String() string {
 	return fmt.Sprintf("distributed:%s", t.queryTemplate.String())
