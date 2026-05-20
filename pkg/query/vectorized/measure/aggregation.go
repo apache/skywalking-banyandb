@@ -41,7 +41,7 @@ import (
 //     path's incidental "first-idp" rule, measure_plan_aggregation.go:285);
 //     scalar reduce (len(keyIndices)==0) emits shard_id=0 (matching the row
 //     path's aggAllIterator.Current() at :364). The partial batch is then
-//     serialised by pkg/query/vectorized/measure/frame.Encode for cluster
+//     serialized by pkg/query/vectorized/measure/frame.Encode for cluster
 //     transport.
 //   - AggModeReduce — coordinator's Reduce phase (G9f.3). Consumes the
 //     typed-column partial batches emitted by AggModeMap (one row per
@@ -50,7 +50,7 @@ import (
 //     the row path's deduplicateAggregatedDataPointsWithShard — and combines
 //     them through aggregation.Reduce[N] into a final batch shaped like
 //     AggModeAll (tags + final value column, no shard column, no count
-//     sidecar). The aggregation.Reduce[N].Val() handles MEAN finalisation
+//     sidecar). The aggregation.Reduce[N].Val() handles MEAN finalization
 //     (sum÷count) so the emit path stays type-symmetric with AggModeAll.
 type AggMode int
 
@@ -117,58 +117,28 @@ type AggSpec struct {
 // Output rows are emitted one per group, in group-insertion order,
 // paginated by batchSize.
 type BatchAggregation struct {
-	inputSchema  *vectorized.BatchSchema
-	outputSchema *vectorized.BatchSchema
-	pool         *vectorized.BatchPool
-	tracker      *vectorized.MemoryTracker
-	groups       map[string]*aggGroup
-	insertion    []*aggGroup
-	keyIndices   []int
-	tagIndices   []int
-	aggs         []AggSpec
-	// aggOutOffsets[i] is the output-batch column index of the i-th agg's
-	// VALUE column. In AggModeMap, when aggHasCount[i] is true (i.e. AggMean),
-	// the agg's count sidecar lives at aggOutOffsets[i]+1. Cached on the
-	// operator so emitGroupRow does no per-row schema walking.
-	aggOutOffsets []int
-	aggHasCount   []bool
-	// outputShardIdx is the output-batch column index for the leading
-	// RoleShardID column. AggModeAll: -1 (no shard column emitted, matching
-	// the existing single-node contract). AggModeMap: 0 (the partial batch
-	// always carries shard id as its first column). AggModeReduce: -1 (the
-	// final reduce batch matches AggModeAll's shape — no shard column).
-	outputShardIdx int
-	// tagOutOffset is where the tag columns start in the output batch
-	// (0 in AggModeAll / AggModeReduce; 1 in AggModeMap because the shard
-	// column comes first).
-	tagOutOffset int
-	// shardIDIdx is the input-batch column index of the RoleShardID column;
-	// -1 if input has none. AggModeMap consults this in newGroup to capture
-	// the first-fed-idp shard per group (G9f.2.a). AggModeReduce uses it to
-	// key the (shard, group) replica-dedup map. Unit-test fixtures that
-	// pre-date the storage bridge may lack one — Map mode then emits the
-	// per-group shard as zero (consistent with scalar-reduce), and Reduce
-	// dedups on group key alone (a missing shard column means there is no
-	// way to distinguish replicas, so dedup falls back to one entry per key).
-	shardIDIdx int
-	// aggInputCountIdx[i] is the input-batch column index of the i-th agg's
-	// PartialCount sidecar (for MEAN — see meanCountSuffix), or -1 if the
-	// agg has no count sidecar (non-MEAN, or any agg in AggModeAll). Only
-	// populated for AggModeReduce; AggModeAll/AggModeMap ignore the slot.
+	dedupSeen        map[string]struct{}
+	outputSchema     *vectorized.BatchSchema
+	pool             *vectorized.BatchPool
+	tracker          *vectorized.MemoryTracker
+	groups           map[string]*aggGroup
+	inputSchema      *vectorized.BatchSchema
+	insertion        []*aggGroup
+	tagIndices       []int
+	aggs             []AggSpec
+	aggOutOffsets    []int
+	aggHasCount      []bool
+	keyIndices       []int
 	aggInputCountIdx []int
-	// dedupSeen is the (shard, group_key) replica-dedup map for
-	// AggModeReduce. Nil in AggModeAll/AggModeMap. Built lazily in Init so
-	// re-init resets it deterministically. Mirrors row path semantics from
-	// measure_plan_distributed.go's deduplicateAggregatedDataPointsWithShard:
-	// same shard + same group_key ⇒ drop the duplicate; different shards
-	// with the same group_key are KEPT and combined into one final value.
-	dedupSeen map[string]struct{}
-	mode      AggMode
-	entrySize int64
-	reserved  int64
-	batchSize int
-	cursor    int
-	closed    bool
+	shardIDIdx       int
+	tagOutOffset     int
+	outputShardIdx   int
+	mode             AggMode
+	entrySize        int64
+	reserved         int64
+	batchSize        int
+	cursor           int
+	closed           bool
 }
 
 // aggGroup carries one bucket's reduction state plus a copy of every
@@ -356,7 +326,7 @@ func (a *BatchAggregation) Finalize(_ context.Context) error {
 // partial state plus a leading shard-id column (see AggMode docs).
 // AggModeReduce emits the same shape as AggModeAll — tags + final reduced
 // value — but draws the value from aggregation.Reduce[N].Val() so MEAN
-// finalisation (sum÷count) happens inside the reducer.
+// finalization (sum÷count) happens inside the reducer.
 func (a *BatchAggregation) NextBatch(_ context.Context) (*vectorized.RecordBatch, error) {
 	if a.mode != AggModeAll && a.mode != AggModeMap && a.mode != AggModeReduce {
 		return nil, ErrAggModeNotImplemented

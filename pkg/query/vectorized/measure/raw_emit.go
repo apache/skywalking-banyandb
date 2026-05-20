@@ -37,18 +37,18 @@ import (
 //
 //   - VectorizedMIterator: drains the underlying vec Pipeline directly
 //     via DrainPipelineToFrame — the throughput-optimal path that
-//     never materialises proto datapoints.
+//     never materializes proto datapoints.
 //   - emptyMIterator: returns a nil body (matches the codec layer's
 //     RawFrameCodec carve-out for empty distributed results).
 //   - hiddenTagsMIterator: drains via Next / Current (which already
 //     strips hidden criteria tags from the egress datapoints), then
-//     reverse-serialises the surviving rows into a passthrough
+//     reverse-serializes the surviving rows into a passthrough
 //     RecordBatch through SerializeDataPointsToFrame.
 //   - sortedMIterator: drains via Next / Current (which already
 //     applies cross-group merge + version dedup), then reverse-
-//     serialises through SerializeDataPointsToFrame.
+//     serializes through SerializeDataPointsToFrame.
 //
-// The reverse-serialise path is less efficient than draining a vec
+// The reverse-serialize path is less efficient than draining a vec
 // Pipeline (one allocation per cell during passthrough rebuild) but
 // keeps the wrapper's row-side semantics — hidden-tag strip, sort,
 // dedup — as the single source of truth on the wire.
@@ -120,7 +120,7 @@ func DrainPipelineToFrame(ctx context.Context, p *vectorized.Pipeline, schema *v
 	// typed columns; the typed-cell → TagValue/FieldValue reconstruction
 	// happens at the row-egress (one allocation per surviving row, vs the
 	// scan-time decode the storage avoided via passthrough — but the
-	// trade is favourable when the wire crossing in between would
+	// trade is favorable when the wire crossing in between would
 	// otherwise dominate).
 	converted, convErr := convertPassthroughForFrame(out)
 	if convErr != nil {
@@ -134,15 +134,15 @@ func DrainPipelineToFrame(ctx context.Context, p *vectorized.Pipeline, schema *v
 // strip / cross-group merge logic operates on []*InternalDataPoint
 // rather than on a vec Pipeline. The wrapper drains itself via the
 // row-side Next / Current API (so its existing strip / merge / dedup
-// logic still runs); the resulting rows are reverse-serialised into a
+// logic still runs); the resulting rows are reverse-serialized into a
 // passthrough RecordBatch, convertPassthroughForFrame decodes the
 // passthrough columns to typed wire columns, and frame.Encode produces
 // the body.
 //
 // This path is less efficient than the vec native pipeline drain — it
 // allocates a *modelv1.TagValue / *FieldValue per cell during reverse-
-// serialise — but it keeps the wrapper's egress semantics intact end-
-// to-end on the wire (hidden tags stripped, cross-group order honoured,
+// serialize — but it keeps the wrapper's egress semantics intact end-
+// to-end on the wire (hidden tags stripped, cross-group order honored,
 // version dedup applied) without re-implementing each one in columnar
 // form.
 //
@@ -285,7 +285,7 @@ func buildPassthroughBatchFromDataPoints(idps []*measurev1.InternalDataPoint) (*
 // so this is a no-op.
 //
 // Wire-type selection is variant-driven: the first non-null cell decides
-// what typed column to materialise (a Str variant ⇒ string column, Int ⇒
+// what typed column to materialize (a Str variant ⇒ string column, Int ⇒
 // int64, BinaryData ⇒ bytes). All-null columns default to bytes — the
 // receiver's reconstruction uses the validity bitmap, not the data, so
 // the chosen wire type is irrelevant for purely-null columns and bytes
@@ -295,7 +295,7 @@ func buildPassthroughBatchFromDataPoints(idps []*measurev1.InternalDataPoint) (*
 // frame.Encode (the format lacks array column types); the helper returns
 // a typed error so the caller can surface it as a hard failure rather
 // than silently mis-encoding. Adding native array column types to the
-// frame format is the natural follow-up; until then, scans that materialise
+// frame format is the natural follow-up; until then, scans that materialize
 // array-typed tags on the cluster wire are unsupported.
 func convertPassthroughForFrame(b *vectorized.RecordBatch) (*vectorized.RecordBatch, error) {
 	if !hasPassthroughColumn(b.Schema) {
@@ -356,10 +356,7 @@ func convertTagValueColumn(def vectorized.ColumnDef, col vectorized.Column, n in
 	if !ok {
 		return vectorized.ColumnDef{}, nil, fmt.Errorf("declared TagValue passthrough but column is %T", col)
 	}
-	wireType, err := inferTagValueWireType(tc, n)
-	if err != nil {
-		return vectorized.ColumnDef{}, nil, err
-	}
+	wireType := inferTagValueWireType(tc, n)
 	if wireType == vectorized.ColumnTypeTagValue {
 		return def, col, nil
 	}
@@ -419,7 +416,7 @@ func convertTagValueColumn(def vectorized.ColumnDef, col vectorized.Column, n in
 // (frame v3 ColumnTypeTagValue) which preserves the oneof intact. The
 // receive side reconstructs them as TagValue passthrough so
 // serializeBatchToProto handles them via the pointer-return fast path.
-func inferTagValueWireType(tc *vectorized.TypedColumn[*modelv1.TagValue], n int) (vectorized.ColumnType, error) {
+func inferTagValueWireType(tc *vectorized.TypedColumn[*modelv1.TagValue], n int) vectorized.ColumnType {
 	for i := range n {
 		if tc.IsNull(i) {
 			continue
@@ -430,18 +427,18 @@ func inferTagValueWireType(tc *vectorized.TypedColumn[*modelv1.TagValue], n int)
 		}
 		switch v.GetValue().(type) {
 		case *modelv1.TagValue_Str:
-			return vectorized.ColumnTypeString, nil
+			return vectorized.ColumnTypeString
 		case *modelv1.TagValue_Int:
-			return vectorized.ColumnTypeInt64, nil
+			return vectorized.ColumnTypeInt64
 		case *modelv1.TagValue_BinaryData:
-			return vectorized.ColumnTypeBytes, nil
+			return vectorized.ColumnTypeBytes
 		case *modelv1.TagValue_IntArray, *modelv1.TagValue_StrArray:
-			return vectorized.ColumnTypeTagValue, nil
+			return vectorized.ColumnTypeTagValue
 		case *modelv1.TagValue_Null:
 			continue
 		}
 	}
-	return vectorized.ColumnTypeTagValue, nil
+	return vectorized.ColumnTypeTagValue
 }
 
 // convertFieldValueColumn is the FieldValue counterpart of
@@ -567,7 +564,7 @@ func appendActive(dst, src *vectorized.RecordBatch) {
 // scope for G9f.5), this round trip drops out.
 //
 // Empty input (no non-empty frames) returns an empty slice with no
-// error — matches the row path's behaviour when every data node returned
+// error — matches the row path's behavior when every data node returned
 // an empty distributed result.
 func ReduceFramesToInternalDataPoints(
 	frames [][]byte,
@@ -639,7 +636,7 @@ func DecodeFramesToInternalDataPoints(frames [][]byte) ([]*measurev1.InternalDat
 // end up in different sortField groups across the flat sequence.
 //
 // nil / empty frame bodies produce no slice in the output — the codec
-// carve-out for empty bodies is honoured here too.
+// carve-out for empty bodies is honored here too.
 func DecodeFramesPerSource(frames [][]byte) ([][]*measurev1.InternalDataPoint, error) {
 	out := make([][]*measurev1.InternalDataPoint, 0, len(frames))
 	for i, body := range frames {

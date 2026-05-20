@@ -43,7 +43,7 @@ import (
 // distributedQueryTimeout is the historical hard-coded broadcast deadline.
 // Retained as a fallback when DistributedPlan.cfg.BroadcastTimeout is zero
 // so call sites that build a VectorizedConfig by hand (most existing
-// tests) keep their prior behaviour. Production deployments thread the
+// tests) keep their prior behavior. Production deployments thread the
 // operator's --dst-broadcast-timeout through cfg.BroadcastTimeout.
 const distributedQueryTimeout = 15 * time.Second
 
@@ -79,20 +79,20 @@ func SupportsDistributedRows(req *measurev1.QueryRequest) bool {
 // decodes them into vectorized batches, and runs the liaison operators without
 // routing through the row-compatible logical distributedPlan.
 type DistributedPlan struct {
-	queryTemplate   *measurev1.QueryRequest
-	nodeTemplate    *measurev1.QueryRequest
-	measureSchemas  []*databasev1.Measure
-	indexRules      [][]*databasev1.IndexRule
-	orderByTag      *resolvedOrderByTag
-	hiddenOrderBy   logical.HiddenTagSet
+	queryTemplate  *measurev1.QueryRequest
+	nodeTemplate   *measurev1.QueryRequest
+	orderByTag     *resolvedOrderByTag
+	hiddenOrderBy  logical.HiddenTagSet
+	measureSchemas []*databasev1.Measure
 	// hiddenTopField is the field name appended to the nodeTemplate's
 	// FieldProjection for Top-without-Agg queries when the Top.FieldName
 	// is not already in the user-visible FieldProjection. Data nodes
-	// materialise the column so BatchTop can sort on it; the egress
+	// materialize the column so BatchTop can sort on it; the egress
 	// hiddenFieldsMIterator strips it so the wire bytes match a query
 	// without the extra projection.
-	hiddenTopField  string
-	cfg             vmeasure.VectorizedConfig
+	hiddenTopField string
+	indexRules     [][]*databasev1.IndexRule
+	cfg            vmeasure.VectorizedConfig
 }
 
 // AnalyzeDistributed builds the vectorized distributed liaison plan.
@@ -100,12 +100,17 @@ type DistributedPlan struct {
 // req.Groups element). indexRules is the corresponding per-group slice of
 // index rule sets (ec.GetIndexRules() for each group). Both slices must be
 // in request-group order. Single-group callers may pass a length-1 slice for
-// each (the existing behaviour is preserved byte-for-byte).
+// each (the existing behavior is preserved byte-for-byte).
 //
 // When indexRules is nil or empty and req.OrderBy.IndexRuleName is non-empty,
 // the resolver surfaces an "index rule X not found" error byte-equivalent to
 // the row path.
-func AnalyzeDistributed(req *measurev1.QueryRequest, measureSchemas []*databasev1.Measure, indexRules [][]*databasev1.IndexRule, cfg vmeasure.VectorizedConfig) (*DistributedPlan, error) {
+func AnalyzeDistributed(
+	req *measurev1.QueryRequest,
+	measureSchemas []*databasev1.Measure,
+	indexRules [][]*databasev1.IndexRule,
+	cfg vmeasure.VectorizedConfig,
+) (*DistributedPlan, error) {
 	if req == nil {
 		return nil, fmt.Errorf("vec distributed analyze: nil request")
 	}
@@ -135,7 +140,7 @@ func AnalyzeDistributed(req *measurev1.QueryRequest, measureSchemas []*databasev
 	nodeTemplate.Top = nil
 	// Phase 5: GroupBy without Agg (raw GroupBy) keeps GroupBy on the
 	// nodeTemplate so each data node runs its per-node BatchGroupByFirst pass
-	// and emits at most one row per group. This minimises wire bytes: the
+	// and emits at most one row per group. This minimizes wire bytes: the
 	// node sends one representative row per group instead of all matching rows.
 	// GroupBy+Agg continues to keep both on the node for partial aggregation
 	// (unchanged from prior phases). The old `nodeTemplate.GroupBy = nil` when
@@ -166,9 +171,10 @@ func AnalyzeDistributed(req *measurev1.QueryRequest, measureSchemas []*databasev
 		// For Top-without-Agg without GroupBy (Phase 4): MaxUint32 — the
 		// per-node row count is unbounded and any finite cap risks dropping
 		// global winners that haven't been deduplicated by GroupByFirst yet.
-		if nodeTemplate.GetAgg() != nil {
+		switch {
+		case nodeTemplate.GetAgg() != nil:
 			nodeTemplate.Limit = math.MaxUint32
-		} else if req.GetGroupBy() != nil {
+		case req.GetGroupBy() != nil:
 			perNodeLimit := calibratedTopWithoutAggLimit(origTop, len(req.GetGroups()))
 			nodeTemplate.Limit = perNodeLimit
 			// Push the Top down to the data node: after BatchGroupByFirst emits
@@ -178,7 +184,7 @@ func AnalyzeDistributed(req *measurev1.QueryRequest, measureSchemas []*databasev
 			// the true top-N representatives from every node.
 			nodeTemplate.Top = proto.Clone(origTop).(*measurev1.QueryRequest_Top)
 			nodeTemplate.Top.Number = int32(perNodeLimit)
-		} else {
+		default:
 			nodeTemplate.Limit = math.MaxUint32
 		}
 	}
@@ -225,7 +231,7 @@ func AnalyzeDistributed(req *measurev1.QueryRequest, measureSchemas []*databasev
 		}
 		// Hidden-projection augmentation: when the Top field is not in the
 		// user-visible FieldProjection, append it to the nodeTemplate so data
-		// nodes materialise the column for BatchTop sorting. The egress
+		// nodes materialize the column for BatchTop sorting. The egress
 		// hiddenFieldsMIterator strips it so the response matches a query
 		// without the extra projection.
 		if !topFieldProjectionVisible(req.GetFieldProjection(), topFieldName) {
@@ -299,7 +305,7 @@ func appendOrderByToProjection(projection *modelv1.TagProjection, want resolvedO
 
 // topFieldProjectionVisible reports whether fieldName is already present in the
 // user-facing FieldProjection. When false, the analyzer augments the node
-// template so data nodes materialise the column on the wire for BatchTop sorting.
+// template so data nodes materialize the column on the wire for BatchTop sorting.
 func topFieldProjectionVisible(fp *measurev1.QueryRequest_FieldProjection, fieldName string) bool {
 	if fp == nil {
 		return false
@@ -394,7 +400,7 @@ func intersectFieldProjection(proj *measurev1.QueryRequest_FieldProjection, ms *
 
 // Execute broadcasts the internal query and executes the liaison-side vectorized plan.
 // For single-group requests, one broadcast is issued for all groups (existing
-// behaviour). For multi-group requests, one broadcast is issued per group,
+// behavior). For multi-group requests, one broadcast is issued per group,
 // each carrying a single-element Groups slice, so data nodes can answer with
 // a schema that matches only their local group's columns.
 func (p *DistributedPlan) Execute(ctx context.Context) (executor.MIterator, error) {
@@ -407,7 +413,7 @@ func (p *DistributedPlan) Execute(ctx context.Context) (executor.MIterator, erro
 
 	groups := queryRequest.GetGroups()
 	if len(groups) <= 1 {
-		// Single-group fast path — unchanged behaviour.
+		// Single-group fast path — unchanged behavior.
 		nodeRequest := proto.Clone(p.nodeTemplate).(*measurev1.QueryRequest)
 		nodeRequest.TimeRange = dctx.TimeRange()
 		internalRequest := &measurev1.InternalQueryRequest{Request: nodeRequest, AggReturnPartial: queryRequest.GetAgg() != nil}
@@ -519,11 +525,13 @@ func (p *DistributedPlan) executeAgg(ctx context.Context, frames [][]byte, req *
 		topSpec = &vmeasure.ReduceTopSpec{FieldName: top.GetFieldName(), N: int(top.GetNumber()), Asc: top.GetFieldValueSort() == modelv1.Sort_SORT_ASC}
 	}
 	tracker := vectorized.NewMemoryTracker(int64(p.cfg.QueryMemoryMiB) * 1024 * 1024)
+	// nolint:contextcheck // pure in-memory reducer; no cancelable I/O downstream
 	batches, reduceErr := vmeasure.ReduceRawFrames(frames, keyTagNames, aggSpecs, p.cfg.BatchSize, tracker)
 	if reduceErr != nil {
 		return nil, fmt.Errorf("vec distributed plan: reduce raw frames: %w", reduceErr)
 	}
 	if topSpec != nil && topSpec.N > 0 && len(batches) > 0 {
+		// nolint:contextcheck // pure in-memory top selection; no cancelable I/O downstream
 		topped, topErr := vmeasure.ApplyTopToReduce(batches, *topSpec, p.cfg.BatchSize)
 		if topErr != nil {
 			return nil, fmt.Errorf("vec distributed plan: top reduced frames: %w", topErr)
@@ -573,6 +581,7 @@ func (p *DistributedPlan) executeRows(ctx context.Context, frames [][]byte, req 
 	// series per window.
 	if groupBy := req.GetGroupBy(); groupBy != nil {
 		var gbErr error
+		// nolint:contextcheck // pure in-memory dedup; no cancelable I/O downstream
 		batches, gbErr = applyBatchGroupByFirstToRows(batches, groupBy, p.cfg.BatchSize, tracker)
 		if gbErr != nil {
 			return nil, fmt.Errorf("vec distributed plan: apply group-by to rows: %w", gbErr)
@@ -580,6 +589,7 @@ func (p *DistributedPlan) executeRows(ctx context.Context, frames [][]byte, req 
 	}
 	if top := req.GetTop(); top != nil {
 		var topErr error
+		// nolint:contextcheck // pure in-memory top selection; no cancelable I/O downstream
 		batches, topErr = applyBatchTopToRows(batches, top, p.cfg.BatchSize)
 		if topErr != nil {
 			return nil, fmt.Errorf("vec distributed plan: apply top to rows: %w", topErr)
@@ -627,6 +637,7 @@ func (p *DistributedPlan) executeRowsMultiGroup(ctx context.Context, groupFrames
 	// to the global Top ranking.
 	if groupBy := req.GetGroupBy(); groupBy != nil {
 		var gbErr error
+		// nolint:contextcheck // pure in-memory dedup; no cancelable I/O downstream
 		batches, gbErr = applyBatchGroupByFirstToRows(batches, groupBy, p.cfg.BatchSize, tracker)
 		if gbErr != nil {
 			return nil, fmt.Errorf("vec distributed plan: apply group-by to multi-group rows: %w", gbErr)
@@ -634,6 +645,7 @@ func (p *DistributedPlan) executeRowsMultiGroup(ctx context.Context, groupFrames
 	}
 	if top := req.GetTop(); top != nil {
 		var topErr error
+		// nolint:contextcheck // pure in-memory top selection; no cancelable I/O downstream
 		batches, topErr = applyBatchTopToRows(batches, top, p.cfg.BatchSize)
 		if topErr != nil {
 			return nil, fmt.Errorf("vec distributed plan: apply top to multi-group rows: %w", topErr)
@@ -842,7 +854,12 @@ func (p *DistributedPlan) iteratorFromBatches(ctx context.Context, batches []*ve
 // (already computed by BuildMultiGroupBatchSchema) so this function does not
 // fall back to Analyze on empty output — an empty multi-group result simply
 // returns no rows rather than re-deriving a schema from a single group.
-func (p *DistributedPlan) iteratorFromBatchesWithSchema(ctx context.Context, batches []*vectorized.RecordBatch, req *measurev1.QueryRequest, schema *vectorized.BatchSchema) (executor.MIterator, error) {
+func (p *DistributedPlan) iteratorFromBatchesWithSchema(
+	ctx context.Context,
+	batches []*vectorized.RecordBatch,
+	req *measurev1.QueryRequest,
+	schema *vectorized.BatchSchema,
+) (executor.MIterator, error) {
 	builder := vectorized.NewPipelineBuilder().WithMemoryTracker(vectorized.NewMemoryTracker(int64(p.cfg.QueryMemoryMiB) * 1024 * 1024))
 	builder.From(&batchSliceSource{batches: batches, schema: schema})
 	limit := req.GetLimit()
@@ -896,7 +913,7 @@ func (p *DistributedPlan) iteratorFromBatchesWithSchema(ctx context.Context, bat
 //
 // Engineering ceiling: the formula output is capped at perNodeSafetyBound
 // (500_000 rows) before the uint32 overflow guard. Rationale: each data node
-// in a typical 4 GB deployment can safely materialise ~500K int64 rows
+// in a typical 4 GB deployment can safely materialize ~500K int64 rows
 // (~4 MB) per GroupBy+Top response without memory pressure. Any N large
 // enough to push 3*N beyond 500_000 (i.e. N > ~166_667) is far outside
 // normal operational use; capping at 500_000 prevents a pathological
@@ -973,8 +990,8 @@ func (p *DistributedPlan) String() string {
 }
 
 type batchSliceSource struct {
-	batches []*vectorized.RecordBatch
 	schema  *vectorized.BatchSchema
+	batches []*vectorized.RecordBatch
 	idx     int
 }
 

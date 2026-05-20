@@ -149,7 +149,7 @@ func (s *liaison) PreRun(ctx context.Context) error {
 	// Publish the per-process wire mode for TopicInternalMeasureQuery.
 	// On the liaison this controls the DECODE side: an incoming response
 	// body on TopicInternalMeasureQuery is parsed as raw frame bytes
-	// under flag-on (G9f.5.c's distributedPlan recognises the []byte
+	// under flag-on (G9f.5.c's distributedPlan recognizes the []byte
 	// shape and runs ReduceFramesToInternalDataPoints /
 	// DecodeFramesToInternalDataPoints) or proto under flag-off. The
 	// per-process modes MUST match across the cluster — the runbook

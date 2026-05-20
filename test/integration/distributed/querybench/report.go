@@ -33,8 +33,8 @@ import (
 type Report struct {
 	GeneratedAt time.Time   `json:"generated_at"`
 	Environment Environment `json:"environment"`
-	Config      ConfigView  `json:"config"`
 	Results     []Result    `json:"results"`
+	Config      ConfigView  `json:"config"`
 }
 
 // ConfigView is a JSON-friendly copy of Config.
@@ -54,68 +54,63 @@ type Environment struct {
 	GoVersion    string `json:"go_version"`
 	GOOS         string `json:"goos"`
 	GOARCH       string `json:"goarch"`
-	NumCPU       int    `json:"num_cpu"`
 	DockerImage  string `json:"docker_image,omitempty"`
 	CPULimit     string `json:"cpu_limit,omitempty"`
 	MemoryLimit  string `json:"memory_limit,omitempty"`
 	Cgroup       string `json:"cgroup,omitempty"`
 	ContainerID  string `json:"container_id,omitempty"`
 	ResourceNote string `json:"resource_note,omitempty"`
+	NumCPU       int    `json:"num_cpu"`
 }
 
 // Result records one mode/scenario/cardinality benchmark outcome.
 type Result struct {
-	Mode             string            `json:"mode"`
-	Scenario         Scenario          `json:"scenario"`
-	Cardinality      int               `json:"cardinality"`
-	Entities         int               `json:"entities"`
-	PointsEach       int               `json:"points_each"`
-	ResponseRows     int               `json:"response_rows"`
-	Correctness      string            `json:"correctness"`
-	QueryIterations  int               `json:"query_iterations"`
-	QueryWorkers     int               `json:"query_workers"`
-	Latency          LatencyStats      `json:"latency"`
-	QPS              float64           `json:"qps"`
-	Resources        ResourceStats     `json:"resources"`
-	Allocations      AllocationStats   `json:"allocations"`
-	Profiles         map[string]string `json:"profiles,omitempty"`
-	Error            string            `json:"error,omitempty"`
-	ApproxResultHash uint64            `json:"approx_result_hash,omitempty"`
-	// SampleDataPointText is the prototext of the first DataPoint of the
-	// first response. Captured so the merge pass can dump row vs vec
-	// shapes side by side when the correctness gate fires on a hash
-	// mismatch — the row counts can match while the proto byte layout
-	// diverges (TagFamily order, oneof variant choice, etc.).
-	SampleDataPointText string `json:"sample_data_point_text,omitempty"`
+	Profiles            map[string]string `json:"profiles,omitempty"`
+	Scenario            Scenario          `json:"scenario"`
+	SampleDataPointText string            `json:"sample_data_point_text,omitempty"`
+	Error               string            `json:"error,omitempty"`
+	Mode                string            `json:"mode"`
+	Correctness         string            `json:"correctness"`
+	Allocations         AllocationStats   `json:"allocations"`
+	Resources           ResourceStats     `json:"resources"`
+	Latency             LatencyStats      `json:"latency"`
+	PointsEach          int               `json:"points_each"`
+	QPS                 float64           `json:"qps"`
+	QueryWorkers        int               `json:"query_workers"`
+	QueryIterations     int               `json:"query_iterations"`
+	ResponseRows        int               `json:"response_rows"`
+	Entities            int               `json:"entities"`
+	ApproxResultHash    uint64            `json:"approx_result_hash,omitempty"`
+	Cardinality         int               `json:"cardinality"`
 }
 
 // LatencyStats contains latency percentiles in milliseconds.
 type LatencyStats struct {
-	P50Ms float64 `json:"p50_ms"`
-	P90Ms float64 `json:"p90_ms"`
-	P95Ms float64 `json:"p95_ms"`
-	P99Ms float64 `json:"p99_ms"`
-	MaxMs float64 `json:"max_ms"`
+	P50Ms  float64 `json:"p50_ms"`
+	P90Ms  float64 `json:"p90_ms"`
+	P95Ms  float64 `json:"p95_ms"`
+	P99Ms  float64 `json:"p99_ms"`
+	MaxMs  float64 `json:"max_ms"`
 	MeanMs float64 `json:"mean_ms"`
 }
 
 // ResourceStats records process-level resource deltas for the in-process cluster harness.
 type ResourceStats struct {
+	MetricSource    string  `json:"metric_source"`
 	CPUSecondsDelta float64 `json:"cpu_seconds_delta,omitempty"`
 	RSSBytes        uint64  `json:"rss_bytes,omitempty"`
 	HeapAllocBytes  uint64  `json:"heap_alloc_bytes,omitempty"`
 	HeapSysBytes    uint64  `json:"heap_sys_bytes,omitempty"`
 	NumGC           uint32  `json:"num_gc,omitempty"`
-	MetricSource    string  `json:"metric_source"`
 }
 
 // AllocationStats records allocation counters for the timed read phase.
 type AllocationStats struct {
-	MallocsDelta      uint64  `json:"mallocs_delta"`
-	TotalAllocDelta   uint64  `json:"total_alloc_delta"`
-	MallocsPerQuery   float64 `json:"mallocs_per_query"`
+	MetricSource       string  `json:"metric_source"`
+	MallocsDelta       uint64  `json:"mallocs_delta"`
+	TotalAllocDelta    uint64  `json:"total_alloc_delta"`
+	MallocsPerQuery    float64 `json:"mallocs_per_query"`
 	AllocBytesPerQuery float64 `json:"alloc_bytes_per_query"`
-	MetricSource      string  `json:"metric_source"`
 }
 
 // newReportFromShards builds the unified Report from the shard set the
@@ -178,7 +173,7 @@ func newReportFromShards(cfg Config, results []Result) Report {
 	}
 }
 
-// writeShard serialises a single single-shot Result to ReportDir/shards/.
+// writeShard serializes a single single-shot Result to ReportDir/shards/.
 // The filename encodes mode_scenario_cardinality so merge can pair vec
 // shards with their row counterparts without parsing the JSON.
 func writeShard(result Result, reportDir string) (string, error) {
@@ -192,7 +187,7 @@ func writeShard(result Result, reportDir string) (string, error) {
 	if marshalErr != nil {
 		return "", fmt.Errorf("marshal shard: %w", marshalErr)
 	}
-	if writeErr := os.WriteFile(shardPath, append(body, '\n'), 0o644); writeErr != nil {
+	if writeErr := os.WriteFile(shardPath, append(body, '\n'), 0o600); writeErr != nil {
 		return "", fmt.Errorf("write shard: %w", writeErr)
 	}
 	return shardPath, nil
@@ -235,11 +230,11 @@ func summarizeLatencies(latencies []time.Duration, elapsed time.Duration) (Laten
 		total += latency
 	}
 	stats := LatencyStats{
-		P50Ms: percentile(sorted, 0.50),
-		P90Ms: percentile(sorted, 0.90),
-		P95Ms: percentile(sorted, 0.95),
-		P99Ms: percentile(sorted, 0.99),
-		MaxMs: float64(sorted[len(sorted)-1].Microseconds()) / 1000,
+		P50Ms:  percentile(sorted, 0.50),
+		P90Ms:  percentile(sorted, 0.90),
+		P95Ms:  percentile(sorted, 0.95),
+		P99Ms:  percentile(sorted, 0.99),
+		MaxMs:  float64(sorted[len(sorted)-1].Microseconds()) / 1000,
 		MeanMs: float64(total.Microseconds()) / 1000 / float64(len(sorted)),
 	}
 	qps := 0.0
@@ -272,11 +267,11 @@ func writeReport(report Report, dir string) (string, string, error) {
 	if marshalErr != nil {
 		return "", "", marshalErr
 	}
-	if writeErr := os.WriteFile(jsonPath, append(jsonBody, '\n'), 0o644); writeErr != nil {
+	if writeErr := os.WriteFile(jsonPath, append(jsonBody, '\n'), 0o600); writeErr != nil {
 		return "", "", writeErr
 	}
 	mdPath := filepath.Join(dir, "distributed-querybench.md")
-	if writeErr := os.WriteFile(mdPath, []byte(renderMarkdown(report)), 0o644); writeErr != nil {
+	if writeErr := os.WriteFile(mdPath, []byte(renderMarkdown(report)), 0o600); writeErr != nil {
 		return "", "", writeErr
 	}
 	return jsonPath, mdPath, nil

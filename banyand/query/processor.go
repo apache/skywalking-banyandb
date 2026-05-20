@@ -540,14 +540,14 @@ func (p *measureInternalQueryProcessor) Rev(ctx context.Context, message bus.Mes
 	// Iterators encapsulate their own drain + encode via FrameEmitter:
 	//
 	//   - vectorizedMIterator drains the vec Pipeline directly
-	//     (throughput-optimal: no proto materialisation, columnar
+	//     (throughput-optimal: no proto materialization, columnar
 	//     end-to-end).
 	//   - emptyMIterator emits a nil body (codec empty-result carve-out).
 	//   - hiddenTagsMIterator drains via Next/Current (its strip stays
-	//     the source of truth) and reverse-serialises.
+	//     the source of truth) and reverse-serializes.
 	//   - sortedMIterator drains via Next/Current (its cross-group sort
 	//     + version dedup stay the source of truth) and reverse-
-	//     serialises.
+	//     serializes.
 	//
 	// queryCriteria.Trace=true still hard-errors: the columnar frame
 	// has no trace-bytes slot, so trace-enabled distributed queries are

@@ -574,7 +574,6 @@ func TestBatchAggregation_AggModeMap_NonMean_EmitsValueOnly(t *testing.T) {
 	}
 }
 
-
 // aggReduceSchema builds the canonical AggModeMap output schema used as
 // AggModeReduce input: [shard_id, g (tag), sum_v (int64)]. shard_id is
 // int64 RoleShardID; g is a string RoleTag (single group key). For pure
@@ -709,7 +708,7 @@ func TestBatchAggregation_AggModeReduce_DedupsSameShardSameGroup(t *testing.T) {
 	}
 }
 
-// TestBatchAggregation_AggModeReduce_MeanFinalises asserts MEAN finalisation
+// TestBatchAggregation_AggModeReduce_MeanFinalises asserts MEAN finalization
 // happens inside Reduce.Val(): partials carry (Sum, Count) and the final
 // value is Sum/Count. Two shards: (sum=10,count=2) + (sum=20,count=3) ⇒
 // 30/5 = 6.

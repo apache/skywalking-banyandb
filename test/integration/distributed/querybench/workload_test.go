@@ -49,7 +49,11 @@ func TestBuildScenarioQueryTopWithFilterMatchesFixtureShape(t *testing.T) {
 	if condition.GetName() != benchTagID || condition.GetOp() != modelv1.Condition_BINARY_OP_NE || condition.GetValue().GetStr().GetValue() != "svc3" {
 		t.Fatalf("top-with-filter condition does not match fixture: %+v", condition)
 	}
-	if req.GetAgg().GetFunction() != modelv1.AggregationFunction_AGGREGATION_FUNCTION_MEAN || req.GetTop().GetNumber() != 2 || req.GetTop().GetFieldValueSort() != modelv1.Sort_SORT_DESC {
+	agg := req.GetAgg()
+	top := req.GetTop()
+	if agg.GetFunction() != modelv1.AggregationFunction_AGGREGATION_FUNCTION_MEAN ||
+		top.GetNumber() != 2 ||
+		top.GetFieldValueSort() != modelv1.Sort_SORT_DESC {
 		t.Fatalf("top-with-filter agg/top does not match fixture: %+v", req)
 	}
 }

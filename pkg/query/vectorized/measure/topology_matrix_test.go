@@ -34,7 +34,7 @@ import (
 // harness specified in the G9f spec (Principle 4): the row path / vec
 // AggModeAll defines the truth, and the distributed vec pipeline must
 // agree byte-for-byte (well, value-for-value) under any topology a
-// production cluster can realise.
+// production cluster can realize.
 //
 // Per cell:
 //   - Split the source rows across S shards (rows i → shard i%S).
@@ -49,7 +49,7 @@ import (
 // times. With dedup, the answer must be identical regardless of R.
 //
 // Aggs covered: SUM, COUNT, MIN, MAX, MEAN. Each runs as its own subtest;
-// MEAN exercises the count sidecar + Reduce.Val finalisation.
+// MEAN exercises the count sidecar + Reduce.Val finalization.
 func TestTopologyMatrix(t *testing.T) {
 	rows := []topologyRow{
 		{group: "a", value: 10},
@@ -246,7 +246,7 @@ func flattenReduce(batches []*vectorized.RecordBatch) map[string]string {
 	out := make(map[string]string)
 	for _, b := range batches {
 		// First RoleTag column is "g"; first RoleField column is "out".
-		var gIdx, outIdx = -1, -1
+		gIdx, outIdx := -1, -1
 		for i, def := range b.Schema.Columns {
 			if def.Role == vectorized.RoleTag && gIdx < 0 {
 				gIdx = i
@@ -309,12 +309,18 @@ func numericallyEqual(a, b string) bool {
 // ApplyTopToReduce's bind-by-name + heap consistency.
 func TestTopologyMatrix_WithTop(t *testing.T) {
 	rows := []topologyRow{
-		{group: "a", value: 10}, {group: "b", value: 20},
-		{group: "c", value: 30}, {group: "d", value: 40},
-		{group: "e", value: 50}, {group: "f", value: 60},
-		{group: "a", value: 100}, {group: "b", value: 100},
-		{group: "c", value: 100}, {group: "d", value: 100},
-		{group: "e", value: 100}, {group: "f", value: 100},
+		{group: "a", value: 10},
+		{group: "b", value: 20},
+		{group: "c", value: 30},
+		{group: "d", value: 40},
+		{group: "e", value: 50},
+		{group: "f", value: 60},
+		{group: "a", value: 100},
+		{group: "b", value: 100},
+		{group: "c", value: 100},
+		{group: "d", value: 100},
+		{group: "e", value: 100},
+		{group: "f", value: 100},
 	}
 	cases := []struct {
 		name string

@@ -39,8 +39,16 @@ func TestWriteReportFromShards(t *testing.T) {
 	dir := t.TempDir()
 	cfg := Config{ReportDir: dir, QueryWorkers: 1, QueryIterations: 5, WarmupIterations: 0, Writers: 1}
 	results := []Result{
-		{Mode: modeRow, Scenario: ScenarioScanAll, Cardinality: 1024, ResponseRows: 1024, Latency: LatencyStats{P50Ms: 1}, Allocations: AllocationStats{MallocsPerQuery: 2}, QueryIterations: 5, QueryWorkers: 1},
-		{Mode: modeVec, Scenario: ScenarioScanAll, Cardinality: 1024, ResponseRows: 1024, Latency: LatencyStats{P50Ms: 2}, Allocations: AllocationStats{MallocsPerQuery: 4}, QueryIterations: 5, QueryWorkers: 1, Correctness: "matched"},
+		{
+			Mode: modeRow, Scenario: ScenarioScanAll, Cardinality: 1024, ResponseRows: 1024,
+			Latency: LatencyStats{P50Ms: 1}, Allocations: AllocationStats{MallocsPerQuery: 2},
+			QueryIterations: 5, QueryWorkers: 1,
+		},
+		{
+			Mode: modeVec, Scenario: ScenarioScanAll, Cardinality: 1024, ResponseRows: 1024,
+			Latency: LatencyStats{P50Ms: 2}, Allocations: AllocationStats{MallocsPerQuery: 4},
+			QueryIterations: 5, QueryWorkers: 1, Correctness: "matched",
+		},
 	}
 	report := newReportFromShards(cfg, results)
 	if len(report.Config.Cardinalities) != 1 || report.Config.Cardinalities[0] != 1024 {

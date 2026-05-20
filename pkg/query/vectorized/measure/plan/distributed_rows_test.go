@@ -315,6 +315,7 @@ func collectOrderByRows(batches []*vectorized.RecordBatch) []orderByRow {
 // instead of the timestamp when OrderByFamily/OrderByTagName are set:
 //   - ascending: the surviving rows are emitted in ascending tag value;
 //   - descending: same set, reversed.
+//
 // Two sources contribute rows that arrive interleaved in input order to
 // exercise the cross-source ordering invariant.
 func TestMergeDistributedRows_OrderByString_AscDescAcrossSources(t *testing.T) {
@@ -457,9 +458,9 @@ func TestMergeDistributedRows_RawGroupBy_FirstSeenPerGroup(t *testing.T) {
 
 	// Collect grouped rows.
 	type groupedRow struct {
+		svc   string
 		ts    int64
 		value int64
-		svc   string
 	}
 	var rows []groupedRow
 	for _, batch := range grouped {
@@ -497,7 +498,7 @@ func TestMergeDistributedRows_RawGroupBy_FirstSeenPerGroup(t *testing.T) {
 // Scenario: perNodeLimit = 2 (Top.N = 1, nGroups = 1 → calibrated limit = 2).
 // Source A has 4 groups (svc-a1 value=900, svc-a2 value=100, svc-a3 value=800, svc-a4 value=50).
 // After BatchGroupByFirst: 4 rows, one per group (already deduplicated).
-// Without per-node BatchTop (old behaviour): Limit(2) would keep svc-a1 and
+// Without per-node BatchTop (old behavior): Limit(2) would keep svc-a1 and
 // svc-a2 (value=900 and 100) in insertion order, discarding svc-a3 (value=800).
 // The global top-1 is svc-a1 (value=900) — correct by accident, but svc-a3
 // (the second-highest) is lost.
@@ -715,8 +716,8 @@ func encodeMultiGroupRows(t *testing.T, schema *vectorized.BatchSchema, rows ...
 // has the base 5 columns), the merged output has IsNull==true for that column
 // for all group-0 rows, while group-1 rows (which carry the column) are non-null.
 func TestMergeDistributedRows_MultiGroup_NullFillsMissingColumn(t *testing.T) {
-	baseSchema := distributedRowsTestSchema()   // 5 cols, no extra_tag
-	mergedSchema := multiGroupMergedSchema()    // 6 cols, with extra_tag
+	baseSchema := distributedRowsTestSchema() // 5 cols, no extra_tag
+	mergedSchema := multiGroupMergedSchema()  // 6 cols, with extra_tag
 
 	// Group 0: uses base schema — no extra_tag column.
 	frameGroup0 := encodeMultiGroupRows(t, baseSchema,
@@ -750,11 +751,11 @@ func TestMergeDistributedRows_MultiGroup_NullFillsMissingColumn(t *testing.T) {
 		t.Fatal("expected non-empty output batches")
 	}
 
-	// Collect rows and verify null-fill behaviour.
+	// Collect rows and verify null-fill behavior.
 	type mergedRow struct {
+		extraTag string
 		ts       int64
 		sid      int64
-		extraTag string
 		nullTag  bool
 	}
 	var rows []mergedRow

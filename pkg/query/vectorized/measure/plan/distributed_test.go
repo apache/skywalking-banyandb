@@ -35,7 +35,7 @@ import (
 func TestAnalyzeDistributed_AllowsGroupByTopWithoutAgg(t *testing.T) {
 	req := &measurev1.QueryRequest{
 		Name:            "demo",
-		Groups:          []string{"default"},
+		Groups:          []string{defaultName},
 		TagProjection:   projTagProj(),
 		FieldProjection: &measurev1.QueryRequest_FieldProjection{Names: []string{fieldValue}},
 		GroupBy: &measurev1.QueryRequest_GroupBy{
@@ -58,7 +58,7 @@ func TestAnalyzeDistributed_AllowsGroupByTopWithoutAgg(t *testing.T) {
 func TestAnalyzeDistributed_AllowsSupportedNonAggRows(t *testing.T) {
 	req := &measurev1.QueryRequest{
 		Name:            "demo",
-		Groups:          []string{"default"},
+		Groups:          []string{defaultName},
 		TagProjection:   projTagProj(),
 		FieldProjection: &measurev1.QueryRequest_FieldProjection{Names: []string{fieldValue}},
 		Limit:           7,
@@ -81,11 +81,11 @@ func TestAnalyzeDistributed_AllowsSupportedNonAggRows(t *testing.T) {
 
 func TestSupportsDistributedRows(t *testing.T) {
 	base := func() *measurev1.QueryRequest {
-		return &measurev1.QueryRequest{Name: "demo", Groups: []string{"default"}}
+		return &measurev1.QueryRequest{Name: "demo", Groups: []string{defaultName}}
 	}
 	cases := []struct {
-		name string
 		req  *measurev1.QueryRequest
+		name string
 		want bool
 	}{
 		{name: "plain", req: base(), want: true},
@@ -281,7 +281,7 @@ func TestAnalyzeDistributed_TopWithoutAgg_NodeLimitIsUnbounded(t *testing.T) {
 			}
 			req := &measurev1.QueryRequest{
 				Name:            "demo",
-				Groups:          []string{"default"},
+				Groups:          []string{defaultName},
 				TagProjection:   projTagProj(),
 				FieldProjection: &measurev1.QueryRequest_FieldProjection{Names: []string{fieldValue}},
 				Top: &measurev1.QueryRequest_Top{
@@ -314,15 +314,15 @@ func TestAnalyzeDistributed_TopWithoutAgg_NodeLimitIsUnbounded(t *testing.T) {
 // TestAnalyzeDistributed_TopWithoutAgg_HiddenFieldProjectionAdded covers
 // the Phase 4 augmentation path: when Top.FieldName is NOT in the request's
 // FieldProjection, AnalyzeDistributed must append it to the nodeTemplate so
-// data nodes materialise the column, and record hiddenTopField so the egress
+// data nodes materialize the column, and record hiddenTopField so the egress
 // strip removes it before the response.
 func TestAnalyzeDistributed_TopWithoutAgg_HiddenFieldProjectionAdded(t *testing.T) {
 	// Visible field projection: only "total" — "value" (Top.FieldName) is absent.
 	req := &measurev1.QueryRequest{
 		Name:   "demo",
-		Groups: []string{"default"},
+		Groups: []string{defaultName},
 		TagProjection: &modelv1.TagProjection{TagFamilies: []*modelv1.TagProjection_TagFamily{
-			{Name: "default", Tags: []string{tagSvc}},
+			{Name: defaultName, Tags: []string{tagSvc}},
 		}},
 		FieldProjection: &measurev1.QueryRequest_FieldProjection{Names: []string{"total"}},
 		Top: &measurev1.QueryRequest_Top{
@@ -334,9 +334,9 @@ func TestAnalyzeDistributed_TopWithoutAgg_HiddenFieldProjectionAdded(t *testing.
 	}
 	// Schema must have both "total" and "value" fields.
 	ms := &databasev1.Measure{
-		Metadata: &commonv1.Metadata{Name: "demo", Group: "default"},
+		Metadata: &commonv1.Metadata{Name: "demo", Group: defaultName},
 		TagFamilies: []*databasev1.TagFamilySpec{
-			{Name: "default", Tags: []*databasev1.TagSpec{
+			{Name: defaultName, Tags: []*databasev1.TagSpec{
 				{Name: tagSvc, Type: databasev1.TagType_TAG_TYPE_STRING},
 			}},
 		},
@@ -356,7 +356,7 @@ func TestAnalyzeDistributed_TopWithoutAgg_HiddenFieldProjectionAdded(t *testing.
 	if p.hiddenTopField != fieldValue {
 		t.Fatalf("hiddenTopField: got %q, want %q", p.hiddenTopField, fieldValue)
 	}
-	// Node template must project the Top field so data nodes materialise it.
+	// Node template must project the Top field so data nodes materialize it.
 	nodeNames := p.nodeTemplate.GetFieldProjection().GetNames()
 	sawTotal, sawValue := false, false
 	for _, n := range nodeNames {
@@ -383,7 +383,7 @@ func TestAnalyzeDistributed_TopWithoutAgg_HiddenFieldProjectionAdded(t *testing.
 func TestAnalyzeDistributed_TopWithoutAgg_FieldNotInSchema(t *testing.T) {
 	req := &measurev1.QueryRequest{
 		Name:            "demo",
-		Groups:          []string{"default"},
+		Groups:          []string{defaultName},
 		TagProjection:   projTagProj(),
 		FieldProjection: &measurev1.QueryRequest_FieldProjection{Names: []string{fieldValue}},
 		Top: &measurev1.QueryRequest_Top{
@@ -408,7 +408,7 @@ func TestAnalyzeDistributed_TopWithoutAgg_FieldNotInSchema(t *testing.T) {
 // AnalyzeDistributed as the indexRules parameter.
 func testIndexRuleOnTag(ruleName, tagName string) *databasev1.IndexRule {
 	return &databasev1.IndexRule{
-		Metadata: &commonv1.Metadata{Name: ruleName, Group: "default"},
+		Metadata: &commonv1.Metadata{Name: ruleName, Group: defaultName},
 		Tags:     []string{tagName},
 	}
 }
@@ -421,7 +421,7 @@ func testIndexRuleOnTag(ruleName, tagName string) *databasev1.IndexRule {
 func TestAnalyzeDistributed_OrderByByIndexRule_AcceptedNatively(t *testing.T) {
 	req := &measurev1.QueryRequest{
 		Name:            "demo",
-		Groups:          []string{"default"},
+		Groups:          []string{defaultName},
 		TagProjection:   projTagProj(), // already projects "svc"
 		FieldProjection: &measurev1.QueryRequest_FieldProjection{Names: []string{fieldValue}},
 		OrderBy:         &modelv1.QueryOrder{IndexRuleName: "svc_idx", Sort: modelv1.Sort_SORT_ASC},
@@ -431,14 +431,19 @@ func TestAnalyzeDistributed_OrderByByIndexRule_AcceptedNatively(t *testing.T) {
 	if !SupportsDistributedRows(req) {
 		t.Fatal("Phase 2: SupportsDistributedRows must accept OrderBy by index rule")
 	}
-	p, analyzeErr := AnalyzeDistributed(req, []*databasev1.Measure{testMeasureSchema()}, [][]*databasev1.IndexRule{indexRules}, vmeasure.VectorizedConfig{Enabled: true, BatchSize: 4, QueryMemoryMiB: 1})
+	p, analyzeErr := AnalyzeDistributed(
+		req,
+		[]*databasev1.Measure{testMeasureSchema()},
+		[][]*databasev1.IndexRule{indexRules},
+		vmeasure.VectorizedConfig{Enabled: true, BatchSize: 4, QueryMemoryMiB: 1},
+	)
 	if analyzeErr != nil {
 		t.Fatalf("AnalyzeDistributed: %v", analyzeErr)
 	}
 	if p.orderByTag == nil {
 		t.Fatal("DistributedPlan.orderByTag must be populated when an index rule resolves")
 	}
-	if p.orderByTag.family != "default" || p.orderByTag.tag != tagSvc {
+	if p.orderByTag.family != defaultName || p.orderByTag.tag != tagSvc {
 		t.Fatalf("orderByTag got %+v want default/%s", *p.orderByTag, tagSvc)
 	}
 	if !p.hiddenOrderBy.IsEmpty() {
@@ -460,22 +465,27 @@ func TestAnalyzeDistributed_OrderByByIndexRule_HiddenProjectionAdded(t *testing.
 	// Projection visible to the user: only "region" — the OrderBy tag
 	// "svc" is NOT projected, so the analyzer must hide-project it.
 	visibleProjection := &modelv1.TagProjection{TagFamilies: []*modelv1.TagProjection_TagFamily{
-		{Name: "default", Tags: []string{"region"}},
+		{Name: defaultName, Tags: []string{"region"}},
 	}}
 	req := &measurev1.QueryRequest{
 		Name:            "demo",
-		Groups:          []string{"default"},
+		Groups:          []string{defaultName},
 		TagProjection:   visibleProjection,
 		FieldProjection: &measurev1.QueryRequest_FieldProjection{Names: []string{fieldValue}},
 		OrderBy:         &modelv1.QueryOrder{IndexRuleName: "svc_idx", Sort: modelv1.Sort_SORT_DESC},
 		Limit:           5,
 	}
 	indexRules := []*databasev1.IndexRule{testIndexRuleOnTag("svc_idx", tagSvc)}
-	p, analyzeErr := AnalyzeDistributed(req, []*databasev1.Measure{testMeasureSchema()}, [][]*databasev1.IndexRule{indexRules}, vmeasure.VectorizedConfig{Enabled: true, BatchSize: 4, QueryMemoryMiB: 1})
+	p, analyzeErr := AnalyzeDistributed(
+		req,
+		[]*databasev1.Measure{testMeasureSchema()},
+		[][]*databasev1.IndexRule{indexRules},
+		vmeasure.VectorizedConfig{Enabled: true, BatchSize: 4, QueryMemoryMiB: 1},
+	)
 	if analyzeErr != nil {
 		t.Fatalf("AnalyzeDistributed: %v", analyzeErr)
 	}
-	if p.orderByTag == nil || p.orderByTag.family != "default" || p.orderByTag.tag != tagSvc {
+	if p.orderByTag == nil || p.orderByTag.family != defaultName || p.orderByTag.tag != tagSvc {
 		t.Fatalf("orderByTag got %+v want default/%s", p.orderByTag, tagSvc)
 	}
 	if p.hiddenOrderBy.IsEmpty() {
@@ -492,7 +502,7 @@ func TestAnalyzeDistributed_OrderByByIndexRule_HiddenProjectionAdded(t *testing.
 	}
 	// The node template's TagProjection must include the OrderBy tag.
 	nodeFams := p.nodeTemplate.GetTagProjection().GetTagFamilies()
-	if len(nodeFams) != 1 || nodeFams[0].GetName() != "default" {
+	if len(nodeFams) != 1 || nodeFams[0].GetName() != defaultName {
 		t.Fatalf("node template projection wrong shape, got %+v", nodeFams)
 	}
 	saw := map[string]bool{}
@@ -511,7 +521,7 @@ func TestAnalyzeDistributed_OrderByByIndexRule_HiddenProjectionAdded(t *testing.
 func TestAnalyzeDistributed_OrderByByIndexRule_UnknownRuleErrors(t *testing.T) {
 	req := &measurev1.QueryRequest{
 		Name:            "demo",
-		Groups:          []string{"default"},
+		Groups:          []string{defaultName},
 		TagProjection:   projTagProj(),
 		FieldProjection: &measurev1.QueryRequest_FieldProjection{Names: []string{fieldValue}},
 		OrderBy:         &modelv1.QueryOrder{IndexRuleName: "nope"},
@@ -533,7 +543,7 @@ func testMeasureSchemaForGroup(group string) *databasev1.Measure {
 		Metadata: &commonv1.Metadata{Name: "demo", Group: group},
 		TagFamilies: []*databasev1.TagFamilySpec{
 			{
-				Name: "default",
+				Name: defaultName,
 				Tags: []*databasev1.TagSpec{
 					{Name: tagSvc, Type: databasev1.TagType_TAG_TYPE_STRING},
 					{Name: "region", Type: databasev1.TagType_TAG_TYPE_STRING},
@@ -590,7 +600,7 @@ func TestAnalyzeDistributed_MultiGroup_UnionsSchemaAcrossGroups(t *testing.T) {
 		Metadata: &commonv1.Metadata{Name: "demo", Group: "groupB"},
 		TagFamilies: []*databasev1.TagFamilySpec{
 			{
-				Name: "default",
+				Name: defaultName,
 				Tags: []*databasev1.TagSpec{
 					{Name: tagSvc, Type: databasev1.TagType_TAG_TYPE_STRING},
 					{Name: "region", Type: databasev1.TagType_TAG_TYPE_STRING},
@@ -693,8 +703,8 @@ func TestHiddenFieldsMIterator_StripsHiddenTopField(t *testing.T) {
 func TestAnalyzeDistributed_TopNonAggUnboundsNodeLimit_MultiGroup(t *testing.T) {
 	cases := []struct {
 		name      string
-		topN      int32
 		groups    []string
+		topN      int32
 		wantLimit uint32
 	}{
 		{
@@ -712,7 +722,7 @@ func TestAnalyzeDistributed_TopNonAggUnboundsNodeLimit_MultiGroup(t *testing.T) 
 		{
 			name:      "SingleGroup_Top5_WithGroupBy",
 			topN:      5,
-			groups:    []string{"default"},
+			groups:    []string{defaultName},
 			wantLimit: calibratedTopWithoutAggLimit(&measurev1.QueryRequest_Top{Number: 5, FieldName: fieldValue}, 1),
 		},
 	}
@@ -774,13 +784,13 @@ func TestAnalyzeDistributed_TopNonAggUnboundsNodeLimit_MultiGroup(t *testing.T) 
 // TestAnalyzeDistributed_RawGroupBy_NodeTemplateKeepsGroupBy verifies that
 // Phase 5 propagates GroupBy to data nodes for raw GroupBy requests (GroupBy
 // without Agg). Data nodes must receive the GroupBy so they run their per-node
-// BatchGroupByFirst pass and emit at most one row per group, minimising wire
-// bytes. The old behaviour (clearing nodeTemplate.GroupBy when Agg is nil) is
+// BatchGroupByFirst pass and emit at most one row per group, minimizing wire
+// bytes. The old behavior (clearing nodeTemplate.GroupBy when Agg is nil) is
 // intentionally dropped in Phase 5.
 func TestAnalyzeDistributed_RawGroupBy_NodeTemplateKeepsGroupBy(t *testing.T) {
 	req := &measurev1.QueryRequest{
 		Name:            "demo",
-		Groups:          []string{"default"},
+		Groups:          []string{defaultName},
 		TagProjection:   projTagProj(),
 		FieldProjection: &measurev1.QueryRequest_FieldProjection{Names: []string{fieldValue}},
 		GroupBy: &measurev1.QueryRequest_GroupBy{

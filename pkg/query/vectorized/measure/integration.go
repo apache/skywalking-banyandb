@@ -269,7 +269,7 @@ func (v *VectorizedMIterator) Schema() *vectorized.BatchSchema { return v.inner.
 // EmitFrame implements FrameEmitter on the public adapter — delegates to
 // the inner iterator's vec-native DrainPipelineToFrame path so the
 // data-node Rev under flag-on emits a columnar raw frame body directly
-// without proto materialisation. The exported facade must implement the
+// without proto materialization. The exported facade must implement the
 // method too because that is the type processor.go sees from the
 // vec dispatch return.
 func (v *VectorizedMIterator) EmitFrame(ctx context.Context) ([]byte, error) {

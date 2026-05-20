@@ -15,6 +15,8 @@
 // specific language governing permissions and limitations
 // under the License.
 
+// Package querybench is the docker-gated distributed-query benchmark harness
+// that drives row vs vec mode comparisons across scenarios and cardinalities.
 package querybench
 
 import (
@@ -97,10 +99,10 @@ type Config struct {
 // LoadConfig reads benchmark settings from environment variables.
 func LoadConfig() Config {
 	return Config{
-		RunBench:         getBool(envRunBench, false),
-		InContainer:      getBool(envInContainer, false),
-		Profile:          getBool(envProfile, false),
-		Merge:            getBool(envMerge, false),
+		RunBench:         getBool(envRunBench),
+		InContainer:      getBool(envInContainer),
+		Profile:          getBool(envProfile),
+		Merge:            getBool(envMerge),
 		ReportDir:        getString(envReportDir, defaultReportDir),
 		DockerImage:      getString(envDockerImage, ""),
 		CPULimit:         getString(envCPULimit, ""),
@@ -184,16 +186,16 @@ func getString(key, def string) string {
 	return def
 }
 
-func getBool(key string, def bool) bool {
-	if value := os.Getenv(key); value != "" {
-		switch strings.ToLower(strings.TrimSpace(value)) {
-		case "1", "true", "yes", "on":
-			return true
-		case "0", "false", "no", "off":
-			return false
-		}
+func getBool(key string) bool {
+	value := os.Getenv(key)
+	if value == "" {
+		return false
 	}
-	return def
+	switch strings.ToLower(strings.TrimSpace(value)) {
+	case "1", "true", "yes", "on":
+		return true
+	}
+	return false
 }
 
 func getInt(key string, def int) int {

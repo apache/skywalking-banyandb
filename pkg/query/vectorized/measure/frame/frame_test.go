@@ -32,7 +32,7 @@ import (
 // TestMagic_LeadingByteIs00 pins the codec contract at the package boundary:
 // frame.Magic[0] MUST equal api/data.RawFrameMagicLeadingByte (0x00). The
 // remaining bytes are the distinctive 'VFR' signature so a flag-on decoder
-// can recognise the frame, but the load-bearing safety property is that the
+// can recognize the frame, but the load-bearing safety property is that the
 // first byte is the field-0 varint tag.
 func TestMagic_LeadingByteIs00(t *testing.T) {
 	if Magic[0] != data.RawFrameMagicLeadingByte {
@@ -79,14 +79,14 @@ func TestEncode_SingleInt64Column_GoldenBytes(t *testing.T) {
 	}
 	want := []byte{
 		0x00, 'V', 'F', 'R', // magic
-		0x03,             // version (v3: TagValue/FieldValue proto-bytes)
-		0x03,             // nrows uvarint
-		0x01,             // ncols uvarint
-		0x06,             // role = Field
-		0x01,             // type = Int64
-		0x01, 'n',        // name length + name
-		0x00,             // TagFamilyLen = 0 (RoleField has no family)
-		0x00,             // validity bitmap (1 byte, all valid)
+		0x03,      // version (v3: TagValue/FieldValue proto-bytes)
+		0x03,      // nrows uvarint
+		0x01,      // ncols uvarint
+		0x06,      // role = Field
+		0x01,      // type = Int64
+		0x01, 'n', // name length + name
+		0x00,                    // TagFamilyLen = 0 (RoleField has no family)
+		0x00,                    // validity bitmap (1 byte, all valid)
 		10, 0, 0, 0, 0, 0, 0, 0, // LE int64 10
 		20, 0, 0, 0, 0, 0, 0, 0, // LE int64 20
 		30, 0, 0, 0, 0, 0, 0, 0, // LE int64 30
@@ -143,23 +143,23 @@ func TestEncode_StringColumn_LengthPrefixedRows(t *testing.T) {
 	}
 	want := []byte{
 		0x00, 'V', 'F', 'R', // magic
-		0x03,                                          // version (v3: TagValue/FieldValue proto-bytes)
-		0x02,                                          // nrows
-		0x01,                                          // ncols
-		0x05,                                          // role = Tag
-		0x03,                                          // type = String
-		0x06, 'r', 'e', 'g', 'i', 'o', 'n',            // name "region"
-		0x03, 'g', 'e', 'o',                            // tag family "geo"
-		0x00,                                          // validity (2 rows, all valid)
-		0x07, 'u', 's', '-', 'e', 'a', 's', 't',        // row 0: "us-east"
-		0x07, 'u', 's', '-', 'w', 'e', 's', 't',        // row 1: "us-west"
+		0x03,                               // version (v3: TagValue/FieldValue proto-bytes)
+		0x02,                               // nrows
+		0x01,                               // ncols
+		0x05,                               // role = Tag
+		0x03,                               // type = String
+		0x06, 'r', 'e', 'g', 'i', 'o', 'n', // name "region"
+		0x03, 'g', 'e', 'o', // tag family "geo"
+		0x00,                                    // validity (2 rows, all valid)
+		0x07, 'u', 's', '-', 'e', 'a', 's', 't', // row 0: "us-east"
+		0x07, 'u', 's', '-', 'w', 'e', 's', 't', // row 1: "us-west"
 	}
 	if !bytes.Equal(got, want) {
 		t.Fatalf("Encode mismatch:\n  got  %#x\n  want %#x", got, want)
 	}
 }
 
-// TestEncode_RespectsSelection asserts the encoder honours RecordBatch.Selection
+// TestEncode_RespectsSelection asserts the encoder honors RecordBatch.Selection
 // — only the listed rows are emitted, and in the listed order. With Len=5 and
 // Selection={0,2,4} the frame contains 3 rows pulled from those source indices.
 func TestEncode_RespectsSelection(t *testing.T) {
@@ -205,8 +205,8 @@ func TestEncode_RespectsSelection(t *testing.T) {
 // model safe against a botched partial restart.
 func TestEncode_ProtoUnmarshal_FailsLoud(t *testing.T) {
 	cases := []struct {
-		name  string
 		build func() *vectorized.RecordBatch
+		name  string
 	}{
 		{
 			name:  "header-only",
@@ -308,9 +308,9 @@ func TestValidateHeader_Roundtrip(t *testing.T) {
 // error — never silently succeed.
 func TestValidateHeader_Negatives(t *testing.T) {
 	cases := []struct {
+		wantErr error
 		name    string
 		body    []byte
-		wantErr error
 	}{
 		{name: "empty", body: nil, wantErr: ErrTruncated},
 		{name: "short-of-min", body: []byte{0x00, 'V', 'F'}, wantErr: ErrTruncated},

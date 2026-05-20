@@ -57,11 +57,11 @@ type writeSummary struct {
 }
 
 type queryRunSummary struct {
-	Latencies     []time.Duration
-	SampleDPText  string
-	Rows          int
-	Hash          uint64
-	Elapsed       time.Duration
+	SampleDPText string
+	Latencies    []time.Duration
+	Rows         int
+	Hash         uint64
+	Elapsed      time.Duration
 }
 
 func writeBenchmarkData(ctx context.Context, conn *grpc.ClientConn, cfg Config, cardinality int, base time.Time) (writeSummary, error) {
@@ -146,10 +146,7 @@ func writeEntityRange(ctx context.Context, client measurev1.MeasureServiceClient
 	if closeErr := stream.CloseSend(); closeErr != nil {
 		return fmt.Errorf("close measure write stream: %w", closeErr)
 	}
-	if recvErr := <-recvErrCh; recvErr != nil {
-		return recvErr
-	}
-	return nil
+	return <-recvErrCh
 }
 
 func benchmarkDataPointSpec() *measurev1.DataPointSpec {

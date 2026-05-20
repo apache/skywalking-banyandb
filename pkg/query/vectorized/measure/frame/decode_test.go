@@ -85,7 +85,7 @@ func TestDecode_RoundTrip_Int64(t *testing.T) {
 }
 
 // TestDecode_RoundTrip_NullInMiddle verifies the validity bitmap survives
-// the wire: a middle null row decodes as IsNull(1) and untouched neighbours.
+// the wire: a middle null row decodes as IsNull(1) and untouched neighbors.
 func TestDecode_RoundTrip_NullInMiddle(t *testing.T) {
 	schema := vectorized.NewBatchSchema([]vectorized.ColumnDef{
 		{Role: vectorized.RoleField, Name: "v", Type: vectorized.ColumnTypeInt64},
@@ -325,14 +325,14 @@ func TestDecode_TruncatedColumnData_FailsLoud(t *testing.T) {
 	// 3 rows declared but only 2 int64 worth of data.
 	body := []byte{
 		0x00, 'V', 'F', 'R',
-		0x03,                  // version (v3: TagValue/FieldValue proto-bytes)
-		0x03,                  // nrows = 3
-		0x01,                  // ncols = 1
-		0x06,                  // role = Field
-		0x01,                  // type = Int64
-		0x01, 'n',             // name "n"
-		0x00,                  // TagFamilyLen = 0 (RoleField has no family)
-		0x00,                  // validity (1 byte, all valid)
+		0x03,      // version (v3: TagValue/FieldValue proto-bytes)
+		0x03,      // nrows = 3
+		0x01,      // ncols = 1
+		0x06,      // role = Field
+		0x01,      // type = Int64
+		0x01, 'n', // name "n"
+		0x00,                   // TagFamilyLen = 0 (RoleField has no family)
+		0x00,                   // validity (1 byte, all valid)
 		1, 0, 0, 0, 0, 0, 0, 0, // row 0
 		2, 0, 0, 0, 0, 0, 0, 0, // row 1 — row 2 missing
 	}
@@ -359,6 +359,7 @@ func TestDecode_TrailingBytes_FailsLoud(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Encode: %v", err)
 	}
+	// nolint:gocritic // intentional: 3-index slice forces allocation of a new backing array so `raw` stays untouched
 	corrupt := append(raw[:len(raw):len(raw)], 0xFF, 0xAA)
 	_, decodeErr := Decode(corrupt)
 	if decodeErr == nil {
@@ -375,12 +376,12 @@ func TestDecode_TrailingBytes_FailsLoud(t *testing.T) {
 func TestDecode_UnknownRoleByte_FailsLoud(t *testing.T) {
 	body := []byte{
 		0x00, 'V', 'F', 'R',
-		0x03,         // version (v3)
-		0x00,         // nrows = 0
-		0x01,         // ncols = 1
-		0xFE,         // role byte 254 — unassigned (rejected before TagFamily read)
-		0x01,         // type = Int64
-		0x01, 'n',    // name "n"
+		0x03,      // version (v3)
+		0x00,      // nrows = 0
+		0x01,      // ncols = 1
+		0xFE,      // role byte 254 — unassigned (rejected before TagFamily read)
+		0x01,      // type = Int64
+		0x01, 'n', // name "n"
 	}
 	_, err := Decode(body)
 	if err == nil {

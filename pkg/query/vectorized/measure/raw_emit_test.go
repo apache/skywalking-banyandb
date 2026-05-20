@@ -108,7 +108,7 @@ func TestDrainPipelineToFrame_AggModeMap(t *testing.T) {
 // counterpart of TestDrainPipelineToFrame_AggModeMap: it pipes a vec
 // pipeline's frame body through the liaison's vmeasure receive path
 // (frame.Decode → AggModeReduce + (shard,group) dedup → optional Top →
-// serialise to InternalDataPoint) and asserts the final values match an
+// serialize to InternalDataPoint) and asserts the final values match an
 // AggModeAll oracle.
 //
 // Replica duplication (the frame is appended twice for shard=1) verifies
@@ -334,9 +334,9 @@ func TestConvertPassthroughForFrame_NoOpForNativeColumns(t *testing.T) {
 // distributed integration scenario where MEAN over an int field returned
 // 0 instead of the computed mean. The wire flow:
 //
-//   data-node: BatchAggregation(AggModeMap, MEAN) → frame.Encode →
-//   liaison: frame.Decode → BatchAggregation(AggModeReduce, MEAN) →
-//   serializeBatchToProto → InternalDataPoint
+//	data-node: BatchAggregation(AggModeMap, MEAN) → frame.Encode →
+//	liaison: frame.Decode → BatchAggregation(AggModeReduce, MEAN) →
+//	serializeBatchToProto → InternalDataPoint
 //
 // Sample: group "a" with values {1, 2, 3} → mean 2; group "b" with {4,
 // 5, 6} → mean 5. After the round trip the final InternalDataPoint must

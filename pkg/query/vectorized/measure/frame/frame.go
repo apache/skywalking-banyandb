@@ -62,8 +62,8 @@
 //   - Int64:     N × 8 bytes little-endian.
 //   - Float64:   N × 8 bytes IEEE-754 little-endian.
 //   - String:    For each row in order: uvarint(len) + len UTF-8 bytes.
-//                Null rows have len=0 and 0 bytes; the validity bitmap
-//                disambiguates "null" from "empty string".
+//     Null rows have len=0 and 0 bytes; the validity bitmap
+//     disambiguates "null" from "empty string".
 //   - Bytes:     Same shape as String, opaque bytes.
 package frame
 
@@ -84,7 +84,7 @@ import (
 // the "garbage-but-parsed silently-empty" failure mode into an unmistakable
 // hard decode error (G9f spec Principle 3, codec contract). The remaining
 // three bytes 'V','F','R' are a distinctive signature so a flag-on decoder
-// can recognise a valid frame from random noise on the same wire.
+// can recognize a valid frame from random noise on the same wire.
 var Magic = [4]byte{data.RawFrameMagicLeadingByte, 'V', 'F', 'R'}
 
 // WireVersion is the on-wire frame format version emitted by Encode. The
@@ -122,9 +122,9 @@ const MinHeaderLen = MagicLen + 1 + 1 + 1
 // Header is the parsed frame header (everything up to but not including the
 // first column block).
 type Header struct {
-	Magic       [4]byte
 	NumRows     uint64
 	NumCols     uint64
+	Magic       [4]byte
 	WireVersion uint8
 }
 

@@ -38,7 +38,7 @@ import (
 // IMPORTANT: a caller that drains the Pipeline directly MUST NOT also
 // drive Next() on the MIterator afterwards — the pipeline is now empty
 // and the iterator's internal cursor is stale. The data-node processor
-// honours this by branching on RawFrameSource BEFORE the iterator's
+// honors this by branching on RawFrameSource BEFORE the iterator's
 // proto-collection loop.
 type RawFrameSource interface {
 	// Pipeline returns the vec pipeline the iterator wraps. Drain it via
@@ -85,8 +85,8 @@ func (i *vectorizedMIterator) Pipeline() *vectorized.Pipeline { return i.pipelin
 
 // EmitFrame implements FrameEmitter: drain the underlying vec pipeline
 // directly via DrainPipelineToFrame. This is the throughput-optimal
-// wire-emit path — no proto materialisation, columnar end-to-end. The
-// data-node Rev prefers this over the row-side reverse-serialise that
+// wire-emit path — no proto materialization, columnar end-to-end. The
+// data-node Rev prefers this over the row-side reverse-serialize that
 // wrapper iterators fall back on.
 func (i *vectorizedMIterator) EmitFrame(ctx context.Context) ([]byte, error) {
 	return DrainPipelineToFrame(ctx, i.pipeline, i.schema)

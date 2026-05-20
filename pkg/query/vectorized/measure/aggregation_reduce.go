@@ -76,7 +76,7 @@ func buildAggInputCountIdx(input *vectorized.BatchSchema, aggs []AggSpec, mode A
 //
 // When the input schema has no RoleShardID column (shardIDIdx == -1 — a
 // degenerate fixture that pre-dates the storage bridge), dedup falls back
-// to the group key alone. This is the safest behaviour: we cannot
+// to the group key alone. This is the safest behavior: we cannot
 // distinguish replicas without a shard id, so we treat every (group_key)
 // pair as the single contribution.
 func (a *BatchAggregation) markDedupSeen(b *vectorized.RecordBatch, rowIdx int, groupKey string) bool {
@@ -142,7 +142,7 @@ func (a *BatchAggregation) combinePartial(b *vectorized.RecordBatch, rowIdx int,
 
 // writeReduce emits the slot's reduced final value to the typed output
 // column. Mirrors aggSlot.write but reads from the Reduce accumulator
-// (whose Val() handles MEAN finalisation by dividing Sum by Count).
+// (whose Val() handles MEAN finalization by dividing Sum by Count).
 func (s *aggSlot) writeReduce(col vectorized.Column) {
 	if s.intReduce != nil {
 		col.(*vectorized.TypedColumn[int64]).Append(s.intReduce.Val())

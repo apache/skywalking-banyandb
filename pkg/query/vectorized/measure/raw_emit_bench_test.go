@@ -30,12 +30,12 @@ import (
 // distributed soak/bench. It simulates a fan-out of N data nodes each
 // running AggModeMap → frame.Encode, the cluster wire (just the byte
 // slice handoff), and the liaison's frame.Decode → AggModeReduce +
-// (shard, group) dedup → serialise to InternalDataPoint.
+// (shard, group) dedup → serialize to InternalDataPoint.
 //
 // Compared against BenchmarkG9f_SingleNodeAggModeAll on the same row
 // set, this measures the *full path overhead* of the throughout-vec
-// distributed loop: per-shard Map fold + columnar serialise + bytes +
-// columnar deserialise + Reduce + final proto materialise. The ratio
+// distributed loop: per-shard Map fold + columnar serialize + bytes +
+// columnar deserialise + Reduce + final proto materialize. The ratio
 // of the two numbers is the load-bearing efficiency claim of G9f.
 //
 // Real-cluster soak (gRPC + retry + network latency) is a follow-up
@@ -73,7 +73,7 @@ func BenchmarkG9f_DistributedFanout(b *testing.B) {
 // BenchmarkG9f_SingleNodeAggModeAll is the AggModeAll oracle: full
 // dataset processed in one BatchAggregation pass with no wire crossing.
 // The number this produces is the lower bound — any distributed path
-// adding wire / serialise / decode steps must stay close to it.
+// adding wire / serialize / decode steps must stay close to it.
 func BenchmarkG9f_SingleNodeAggModeAll(b *testing.B) {
 	rows := generateBenchRows(1000)
 	schema := topologyRawSchema()
@@ -108,7 +108,7 @@ func BenchmarkG9f_SingleNodeAggModeAll(b *testing.B) {
 
 // BenchmarkG9f_DataNodeEmit measures the per-data-node Map + Encode
 // step alone — the upstream cost of the distributed path. Useful when
-// regressions appear in BenchmarkG9f_DistributedFanout to localise
+// regressions appear in BenchmarkG9f_DistributedFanout to localize
 // whether they're on the encode side or the decode/reduce side.
 func BenchmarkG9f_DataNodeEmit(b *testing.B) {
 	rows := generateBenchRows(1000)

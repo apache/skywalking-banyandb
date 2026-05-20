@@ -99,7 +99,7 @@ func (h *hiddenTagsMIterator) Close() error { return h.inner.Close() }
 // EmitFrame implements vmeasure.FrameEmitter. Draining via the wrapper's
 // own Next / Current keeps the hidden-tag strip as the single source of
 // truth — Current already removes the hidden criteria tags from each
-// emitted DataPoint, so the reverse-serialised RecordBatch carries only
+// emitted DataPoint, so the reverse-serialized RecordBatch carries only
 // the projected columns. The columnar wire then matches what a query
 // without hidden criteria tags would have emitted, byte-identical to
 // the row path.
@@ -119,7 +119,7 @@ func (h *hiddenTagsMIterator) EmitFrame(_ context.Context) ([]byte, error) {
 // hiddenFieldsMIterator wraps an MIterator and strips a single hidden field
 // from each Current() result. It is the Phase 4 parallel of hiddenTagsMIterator:
 // when Top.FieldName is not in the user-visible FieldProjection, the analyzer
-// appends it to the nodeTemplate so data nodes materialise it for BatchTop
+// appends it to the nodeTemplate so data nodes materialize it for BatchTop
 // sorting. This wrapper removes it at egress so the wire bytes match a query
 // without the extra field projection — byte-identical to the row path's
 // hidden-projection strip for criteria tags.

@@ -78,4 +78,3 @@ func resolveOrderByTag(measureSchema *databasev1.Measure, indexRules []*database
 	}
 	return resolvedOrderByTag{}, fmt.Errorf("tag %s not found", tagName)
 }
-

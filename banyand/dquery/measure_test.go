@@ -69,8 +69,8 @@ func TestRawWireMode_PlanType_AnalyzeDistributed(t *testing.T) {
 	}
 
 	shapes := []struct {
-		name string
 		req  *measurev1.QueryRequest
+		name string
 	}{
 		{
 			name: "plain non-agg",
@@ -140,8 +140,8 @@ func TestRawWireMode_PlanType_AnalyzeDistributed(t *testing.T) {
 // After Phase 6 the routing in Rev is a single boolean: data.MeasureWireModeRaw().
 func TestRawWireMode_AlwaysUsesVecPlan(t *testing.T) {
 	shapes := []struct {
-		name string
 		req  *measurev1.QueryRequest
+		name string
 	}{
 		{
 			name: "plain non-agg",

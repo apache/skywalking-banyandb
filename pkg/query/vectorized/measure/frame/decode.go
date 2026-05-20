@@ -75,7 +75,7 @@ func Decode(b []byte) (*vectorized.RecordBatch, error) {
 }
 
 // decodeColumn parses one column block (header + body) from b. It returns
-// the column definition, the materialised column with nrows rows already
+// the column definition, the materialized column with nrows rows already
 // appended (validity bits respected), and the number of bytes consumed so
 // the caller can advance its offset.
 func decodeColumn(b []byte, nrows uint64) (vectorized.ColumnDef, vectorized.Column, int, error) {
@@ -149,12 +149,13 @@ func readValidityBitmap(b []byte, nrows uint64) ([]bool, int, error) {
 	return nulls, nbytes, nil
 }
 
-// readColumnData materialises one column of nrows rows from b given the
+// readColumnData materializes one column of nrows rows from b given the
 // validity vector. Fixed-width types read N × 8 bytes regardless of
 // nullness; variable-width types read uvarint(len) + len bytes per row and
 // rely on the validity vector to mark nullness.
+// nolint:gocyclo // switch-dispatch over ColumnType variants is intentionally exhaustive; splitting per-case helpers would obscure the wire-format mapping
 func readColumnData(b []byte, t vectorized.ColumnType, nrows int, nulls []bool) (vectorized.Column, int, error) {
-	switch t {
+	switch t { //nolint:exhaustive // Int64Array/StrArray never appear on the wire; the producer-side encoder rejects them via mapColumnType
 	case vectorized.ColumnTypeInt64:
 		if len(b) < nrows*8 {
 			return nil, 0, fmt.Errorf("%w: int64 column needs %d bytes, have %d", ErrTruncated, nrows*8, len(b))
@@ -287,7 +288,7 @@ func readColumnData(b []byte, t vectorized.ColumnType, nrows int, nulls []bool) 
 // unmapColumnRole is the inverse of mapColumnRole: it translates a
 // wire-stable frameColRole byte back to its pkg/query/vectorized.ColumnRole
 // equivalent. Unknown bytes fail loud — the spec forbids dual-wire so an
-// unrecognised role byte is by definition a botched encoder, not a
+// unrecognized role byte is by definition a botched encoder, not a
 // version-skew negotiation.
 func unmapColumnRole(r frameColRole) (vectorized.ColumnRole, error) {
 	switch r {

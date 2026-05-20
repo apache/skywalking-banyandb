@@ -34,6 +34,8 @@ import (
 	measure "github.com/apache/skywalking-banyandb/pkg/query/vectorized/measure"
 )
 
+const defaultName = "default"
+
 func dispatchCfg(enabled bool) measure.VectorizedConfig {
 	return measure.VectorizedConfig{Enabled: enabled, BatchSize: 1024, QueryMemoryMiB: 16}
 }
@@ -41,7 +43,7 @@ func dispatchCfg(enabled bool) measure.VectorizedConfig {
 func bareReq() *measurev1.QueryRequest {
 	return &measurev1.QueryRequest{
 		Name:            "demo",
-		Groups:          []string{"default"},
+		Groups:          []string{defaultName},
 		TagProjection:   projTagProj(),
 		FieldProjection: &measurev1.QueryRequest_FieldProjection{Names: []string{fieldValue}},
 		TimeRange: &modelv1.TimeRange{
@@ -80,7 +82,7 @@ func dispatchSchemaFixture(t *testing.T) (*databasev1.Measure, logical.Schema, *
 	if schemaErr != nil {
 		t.Fatalf("BuildSchema: %v", schemaErr)
 	}
-	return measureSchema, logicalSchema, &commonv1.Metadata{Name: "demo", Group: "default"}, &fakeEC{}
+	return measureSchema, logicalSchema, &commonv1.Metadata{Name: "demo", Group: defaultName}, &fakeEC{}
 }
 
 // TestDispatch_RawGroupBy_ReachesEcQuery confirms G9b: GroupBy without
@@ -145,7 +147,7 @@ func TestDispatch_GroupByAggUncoveredProjection_ReachesEcQuery(t *testing.T) {
 				// GroupBy references region but TagProjection only carries svc.
 				req.GroupBy = &measurev1.QueryRequest_GroupBy{
 					TagProjection: &modelv1.TagProjection{TagFamilies: []*modelv1.TagProjection_TagFamily{
-						{Name: "default", Tags: []string{"region"}},
+						{Name: defaultName, Tags: []string{"region"}},
 					}},
 					FieldName: fieldValue,
 				}
@@ -204,7 +206,7 @@ func TestDispatch_Top_ReachesEcQuery(t *testing.T) {
 	if schemaErr != nil {
 		t.Fatalf("BuildSchema: %v", schemaErr)
 	}
-	metadata := &commonv1.Metadata{Name: "demo", Group: "default"}
+	metadata := &commonv1.Metadata{Name: "demo", Group: defaultName}
 	ec := &fakeEC{wantResult: nil, wantErr: nil}
 
 	req := bareReq()
@@ -238,7 +240,7 @@ func TestDispatch_OrderBy_ReachesEcQuery(t *testing.T) {
 	if schemaErr != nil {
 		t.Fatalf("BuildSchema: %v", schemaErr)
 	}
-	metadata := &commonv1.Metadata{Name: "demo", Group: "default"}
+	metadata := &commonv1.Metadata{Name: "demo", Group: defaultName}
 	ec := &fakeEC{wantResult: nil, wantErr: nil}
 
 	req := bareReq()
@@ -269,7 +271,7 @@ func TestDispatch_OrderBy_UnknownIndexRule_BubblesUpError(t *testing.T) {
 	if schemaErr != nil {
 		t.Fatalf("BuildSchema: %v", schemaErr)
 	}
-	metadata := &commonv1.Metadata{Name: "demo", Group: "default"}
+	metadata := &commonv1.Metadata{Name: "demo", Group: defaultName}
 	ec := &fakeEC{wantResult: nil, wantErr: nil}
 
 	req := bareReq()
@@ -303,12 +305,12 @@ func TestDispatch_UnknownTagProjection_SurfacesCanonicalError(t *testing.T) {
 	if schemaErr != nil {
 		t.Fatalf("BuildSchema: %v", schemaErr)
 	}
-	metadata := &commonv1.Metadata{Name: "demo", Group: "default"}
+	metadata := &commonv1.Metadata{Name: "demo", Group: defaultName}
 	ec := &fakeEC{wantResult: nil, wantErr: nil}
 
 	req := bareReq()
 	req.TagProjection = &modelv1.TagProjection{TagFamilies: []*modelv1.TagProjection_TagFamily{
-		{Name: "default", Tags: []string{"ghost"}},
+		{Name: defaultName, Tags: []string{"ghost"}},
 	}}
 	_, _, handled, err := Dispatch(context.Background(),
 		req, metadata, measureSchema, logicalSchema, ec, dispatchCfg(true), false, false)
@@ -339,7 +341,7 @@ func TestDispatch_UnknownFieldProjection_SurfacesCanonicalError(t *testing.T) {
 	if schemaErr != nil {
 		t.Fatalf("BuildSchema: %v", schemaErr)
 	}
-	metadata := &commonv1.Metadata{Name: "demo", Group: "default"}
+	metadata := &commonv1.Metadata{Name: "demo", Group: defaultName}
 	ec := &fakeEC{wantResult: nil, wantErr: nil}
 
 	req := bareReq()
@@ -371,12 +373,12 @@ func TestDispatch_TagValidatedBeforeField(t *testing.T) {
 	if schemaErr != nil {
 		t.Fatalf("BuildSchema: %v", schemaErr)
 	}
-	metadata := &commonv1.Metadata{Name: "demo", Group: "default"}
+	metadata := &commonv1.Metadata{Name: "demo", Group: defaultName}
 	ec := &fakeEC{}
 
 	req := bareReq()
 	req.TagProjection = &modelv1.TagProjection{TagFamilies: []*modelv1.TagProjection_TagFamily{
-		{Name: "default", Tags: []string{"ghost"}},
+		{Name: defaultName, Tags: []string{"ghost"}},
 	}}
 	req.FieldProjection = &measurev1.QueryRequest_FieldProjection{Names: []string{"phantom"}}
 	_, _, handled, err := Dispatch(context.Background(),
@@ -403,7 +405,7 @@ func TestDispatch_NoTimeRange_EmptyResultParity(t *testing.T) {
 	if schemaErr != nil {
 		t.Fatalf("BuildSchema: %v", schemaErr)
 	}
-	metadata := &commonv1.Metadata{Name: "demo", Group: "default"}
+	metadata := &commonv1.Metadata{Name: "demo", Group: defaultName}
 	ec := &fakeEC{wantResult: nil, wantErr: nil}
 
 	req := bareReq()
@@ -476,7 +478,7 @@ func TestDispatch_EmptyResult_CanonicalEmptyIterator(t *testing.T) {
 	if schemaErr != nil {
 		t.Fatalf("BuildSchema: %v", schemaErr)
 	}
-	metadata := &commonv1.Metadata{Name: "demo", Group: "default"}
+	metadata := &commonv1.Metadata{Name: "demo", Group: defaultName}
 	ec := &fakeEC{wantResult: nil, wantErr: nil}
 
 	iter, _, handled, err := Dispatch(context.Background(),
@@ -552,7 +554,7 @@ func TestDispatch_GroupByAggCovered_ReachesEcQuery(t *testing.T) {
 	if schemaErr != nil {
 		t.Fatalf("BuildSchema: %v", schemaErr)
 	}
-	metadata := &commonv1.Metadata{Name: "demo", Group: "default"}
+	metadata := &commonv1.Metadata{Name: "demo", Group: defaultName}
 	ec := &fakeEC{wantResult: nil, wantErr: nil}
 
 	req := bareReq()
@@ -587,7 +589,7 @@ func TestDispatch_GroupByAggCovered_ReachesEcQuery(t *testing.T) {
 func TestAugmentRequestWithHiddenTags_AppendsFamiliesAfterVisible(t *testing.T) {
 	req := bareReq() // TagProjection: default=[svc]
 	extras := [][]*logical.Tag{
-		{logical.NewTag("default", "region")},
+		{logical.NewTag(defaultName, "region")},
 		{logical.NewTag("extra", "zone")},
 	}
 	got := augmentRequestWithHiddenTags(req, extras)
@@ -602,10 +604,10 @@ func TestAugmentRequestWithHiddenTags_AppendsFamiliesAfterVisible(t *testing.T) 
 	if len(fams) != 3 {
 		t.Fatalf("want 3 families (1 visible + 2 hidden), got %d: %+v", len(fams), fams)
 	}
-	if fams[0].GetName() != "default" || fams[0].GetTags()[0] != tagSvc {
+	if fams[0].GetName() != defaultName || fams[0].GetTags()[0] != tagSvc {
 		t.Fatalf("visible family must stay first, got %+v", fams[0])
 	}
-	if fams[1].GetName() != "default" || fams[1].GetTags()[0] != "region" {
+	if fams[1].GetName() != defaultName || fams[1].GetTags()[0] != "region" {
 		t.Fatalf("first hidden family wrong, got %+v", fams[1])
 	}
 	if fams[2].GetName() != "extra" || fams[2].GetTags()[0] != "zone" {
@@ -625,7 +627,7 @@ func TestHiddenTagsMIterator_StripsHiddenTagsFromCurrent(t *testing.T) {
 		return []*measurev1.InternalDataPoint{{
 			DataPoint: &measurev1.DataPoint{
 				TagFamilies: []*modelv1.TagFamily{{
-					Name: "default",
+					Name: defaultName,
 					Tags: []*modelv1.Tag{
 						{Key: tagSvc, Value: &modelv1.TagValue{Value: &modelv1.TagValue_Str{Str: &modelv1.Str{Value: "a"}}}},
 						{Key: "region", Value: &modelv1.TagValue{Value: &modelv1.TagValue_Str{Str: &modelv1.Str{Value: "us"}}}},
@@ -684,7 +686,7 @@ func TestDispatch_QueryError_BubblesUp(t *testing.T) {
 	if schemaErr != nil {
 		t.Fatalf("BuildSchema: %v", schemaErr)
 	}
-	metadata := &commonv1.Metadata{Name: "demo", Group: "default"}
+	metadata := &commonv1.Metadata{Name: "demo", Group: defaultName}
 	wantErr := context.DeadlineExceeded
 	ec := &fakeEC{wantErr: wantErr}
 

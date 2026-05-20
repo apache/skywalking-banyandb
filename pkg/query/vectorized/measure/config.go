@@ -32,7 +32,7 @@ type VectorizedConfig struct {
 
 // DefaultBroadcastTimeout is the per-broadcast wait the vec distributed
 // liaison uses when the caller (banyand/dquery) does not override it. The
-// value matches the historical hard-coded constant so behaviour is
+// value matches the historical hard-coded constant so behavior is
 // unchanged when the operator does not set --dst-broadcast-timeout.
 const DefaultBroadcastTimeout = 15 * time.Second
 

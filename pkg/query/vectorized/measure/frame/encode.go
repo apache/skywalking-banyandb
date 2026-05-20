@@ -142,8 +142,9 @@ func appendValidityBitmap(buf []byte, col vectorized.Column, active []int) []byt
 // Variable-width types (string, []byte) write uvarint(len) + len bytes per row;
 // null rows write len=0 + 0 bytes (the validity bitmap disambiguates "null"
 // from "empty string"/"empty bytes").
+// nolint:gocyclo // switch-dispatch over ColumnType variants is intentionally exhaustive; splitting per-case helpers would obscure the wire-format mapping
 func appendColumnData(buf []byte, col vectorized.Column, t vectorized.ColumnType, active []int) ([]byte, error) {
-	switch t {
+	switch t { //nolint:exhaustive // Int64Array/StrArray are handled via passthrough at the dispatcher; this function never receives them
 	case vectorized.ColumnTypeInt64:
 		tc, ok := col.(*vectorized.TypedColumn[int64])
 		if !ok {
@@ -257,7 +258,7 @@ func appendColumnData(buf []byte, col vectorized.Column, t vectorized.ColumnType
 // frameColType. Unsupported types yield ErrUnsupportedColumnType so callers
 // surface the bad input loudly at encode time.
 func mapColumnType(t vectorized.ColumnType) (frameColType, error) {
-	switch t {
+	switch t { //nolint:exhaustive // unsupported types (Int64Array/StrArray) fall through to the ErrUnsupportedColumnType return below
 	case vectorized.ColumnTypeInt64:
 		return frameColInt64, nil
 	case vectorized.ColumnTypeFloat64:

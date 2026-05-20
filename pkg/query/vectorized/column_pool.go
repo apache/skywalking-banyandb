@@ -42,7 +42,7 @@ var (
 // AcquireColumn with a matching ReleaseColumn once they are done with the
 // column.
 //
-// Capacity behaviour: pooled columns retain whichever capacity they had at
+// Capacity behavior: pooled columns retain whichever capacity they had at
 // the last Release. If a pooled column is too small for the new request the
 // backing slice is reallocated; otherwise the existing backing slice is
 // reused. Over time the pool converges to the largest capacity seen.

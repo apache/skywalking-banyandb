@@ -371,23 +371,6 @@ func projectedNames(tp *modelv1.TagProjection) map[string]struct{} {
 	return out
 }
 
-// validateProjectionParity reproduces, byte-for-byte, the projection
-// errors the row path's logical_measure.Analyze raises so dispatch can
-// surface the canonical WantErr=true message directly instead of falling
-// through. It mirrors the row path exactly:
-//
-//   - Tags are validated before fields (measure_analyzer.go:110-119).
-//   - Tag projection is checked only when non-empty; each projected tag
-//     (families in order, tags in order) is looked up schema-wide via the
-//     TagSpec registry — the logical.Schema equivalent of CommonSchema's
-//     TagSpecMap. The first miss returns errors.Wrap(ErrTagNotDefined,
-//     tagName), identical to CommonSchema.ValidateProjectionTags
-//     (schema.go:175): "<tagName>: tag is not defined".
-//   - Field projection is checked only when non-empty; the first name
-//     absent from the Measure schema's fields returns errors.Errorf(
-//     "field %s not found in schema", field), identical to
-//     measure.schema.ValidateProjectionFields (measure/schema.go:77).
-//
 // ValidateMultiGroupProjection is the multi-measure counterpart of the
 // single-group validation Dispatch runs inline. A projected tag/field is
 // accepted if it resolves in ANY group's schema/measure — mirroring the
@@ -433,6 +416,23 @@ func ValidateMultiGroupProjection(req *measurev1.QueryRequest, schemas []logical
 	return nil
 }
 
+// validateProjectionParity reproduces, byte-for-byte, the projection
+// errors the row path's logical_measure.Analyze raises so dispatch can
+// surface the canonical WantErr=true message directly instead of falling
+// through. It mirrors the row path exactly:
+//
+//   - Tags are validated before fields (measure_analyzer.go:110-119).
+//   - Tag projection is checked only when non-empty; each projected tag
+//     (families in order, tags in order) is looked up schema-wide via the
+//     TagSpec registry — the logical.Schema equivalent of CommonSchema's
+//     TagSpecMap. The first miss returns errors.Wrap(ErrTagNotDefined,
+//     tagName), identical to CommonSchema.ValidateProjectionTags
+//     (schema.go:175): "<tagName>: tag is not defined".
+//   - Field projection is checked only when non-empty; the first name
+//     absent from the Measure schema's fields returns errors.Errorf(
+//     "field %s not found in schema", field), identical to
+//     measure.schema.ValidateProjectionFields (measure/schema.go:77).
+//
 // A nil error means every projected name resolves, so dispatch proceeds.
 func validateProjectionParity(req *measurev1.QueryRequest, logicalSchema logical.Schema, m *databasev1.Measure) error {
 	if tp := req.GetTagProjection(); tp != nil {

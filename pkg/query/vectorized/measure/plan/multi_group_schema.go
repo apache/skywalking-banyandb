@@ -173,7 +173,7 @@ func BuildMultiGroupBatchSchema(measureSchemas []*databasev1.Measure, req *measu
 				orderedFields = append(orderedFields, name)
 			} else {
 				// Field not in any group's schema — include as passthrough
-				// (BuildBatchSchema's null-slot behaviour for unknown fields).
+				// (BuildBatchSchema's null-slot behavior for unknown fields).
 				orderedFields = append(orderedFields, name)
 				fieldColType[name] = vectorized.ColumnTypeFieldValue
 			}
@@ -204,7 +204,7 @@ func nativeKeyMulti(family, name string) string { return family + "\x00" + name 
 // for types that have no direct vec mapping (UNSPECIFIED, TIMESTAMP) so the
 // caller can fall back to ColumnTypeTagValue.
 func tagTypeToColumnTypeMG(t databasev1.TagType) (vectorized.ColumnType, error) {
-	switch t {
+	switch t { //nolint:exhaustive // TAG_TYPE_TIMESTAMP and UNSPECIFIED fall through to the error return below
 	case databasev1.TagType_TAG_TYPE_INT:
 		return vectorized.ColumnTypeInt64, nil
 	case databasev1.TagType_TAG_TYPE_STRING:

@@ -52,7 +52,7 @@ type seenSIDKey struct {
 // OrderByFamily / OrderByTagName select the sort column when the request
 // carries an OrderBy.IndexRuleName (Phase 2). Both empty means time-sort:
 // the comparator uses the timestamp column encoded as 8-byte big-endian,
-// matching the Phase 1.5 behaviour byte-for-byte. The merger looks up the
+// matching the Phase 1.5 behavior byte-for-byte. The merger looks up the
 // column index from the merged-batch schema after frames have been decoded,
 // so the spec only carries the names — not a column index.
 //
@@ -61,9 +61,9 @@ type seenSIDKey struct {
 // column without going through TagIndex lookup. The merger prefers the
 // explicit index when >= 0; otherwise it resolves from the names.
 type distributedRowsSpec struct {
+	Tracker        *vectorized.MemoryTracker
 	OrderByFamily  string
 	OrderByTagName string
-	Tracker        *vectorized.MemoryTracker
 	BatchSize      int
 	OrderByColIdx  int
 	Desc           bool
@@ -106,20 +106,20 @@ func (r *distributedRowItem) SortedField() []byte { return r.sortField }
 // sources is built by handing N of these to itersort.NewItemIter. When the
 // merger is configured for OrderBy-by-index-rule, sortKeys caches the
 // per-row encoded sort bytes so the local sort and Next()'s SortedField
-// both reuse the same encoding without re-marshalling per call.
+// both reuse the same encoding without re-marshaling per call.
 type distributedRowSourceIter struct {
-	batch        *vectorized.RecordBatch
-	cur          *distributedRowItem
-	sortKeys     [][]byte
-	indices      []int
-	source       int
-	group        int
-	sidIdx       int
-	tsIdx        int
-	verIdx       int
-	sortColIdx   int
-	pos          int
-	seq          int
+	batch      *vectorized.RecordBatch
+	cur        *distributedRowItem
+	sortKeys   [][]byte
+	indices    []int
+	source     int
+	group      int
+	sidIdx     int
+	tsIdx      int
+	verIdx     int
+	sortColIdx int
+	pos        int
+	seq        int
 }
 
 // newDistributedRowSourceIter constructs the per-source iterator. When
@@ -128,7 +128,13 @@ type distributedRowSourceIter struct {
 // pre-encodes each active row's sort key via encodeSortKey, stable-sorts
 // indices by that encoding (respecting desc), and reuses the cached keys
 // in Next() to avoid re-encoding per heap pop.
-func newDistributedRowSourceIter(batch *vectorized.RecordBatch, schema *vectorized.BatchSchema, source, group int, desc bool, sortColIdx int) (*distributedRowSourceIter, error) {
+func newDistributedRowSourceIter(
+	batch *vectorized.RecordBatch,
+	schema *vectorized.BatchSchema,
+	source, group int,
+	desc bool,
+	sortColIdx int,
+) (*distributedRowSourceIter, error) {
 	tsIdx := schema.TimestampIndex()
 	indices := activeDistributedRows(batch)
 	iter := &distributedRowSourceIter{
@@ -155,7 +161,7 @@ func newDistributedRowSourceIter(batch *vectorized.RecordBatch, schema *vectoriz
 		// heap's lex compare gives the right global order. Data nodes emit
 		// per-shard pre-sorted on this same column, but tests and unusual
 		// scan modes may not respect that, so the defensive O(n log n) sort
-		// keeps the heap invariant intact regardless of producer behaviour.
+		// keeps the heap invariant intact regardless of producer behavior.
 		sort.SliceStable(indices, func(i, j int) bool {
 			cmp := bytes.Compare(sortKeys[indices[i]], sortKeys[indices[j]])
 			if desc {
@@ -280,7 +286,12 @@ func mergeDistributedRows(frames [][]byte, spec distributedRowsSpec) ([]*vectori
 // batches. Extracted so both the single-group path (mergeDistributedRows) and
 // the multi-group path (mergeDistributedRowsMulti) share the same merge loop
 // without duplication.
-func runDistributedRowMerge(iters []itersort.Iterator[*distributedRowItem], schema *vectorized.BatchSchema, spec distributedRowsSpec, batchSize int) ([]*vectorized.RecordBatch, error) {
+func runDistributedRowMerge(
+	iters []itersort.Iterator[*distributedRowItem],
+	schema *vectorized.BatchSchema,
+	spec distributedRowsSpec,
+	batchSize int,
+) ([]*vectorized.RecordBatch, error) {
 	merger := itersort.NewItemIter(iters, spec.Desc)
 	defer func() { _ = merger.Close() }()
 
@@ -334,7 +345,12 @@ type decodedBatchSource struct {
 // heap expects (largest-first for desc, smallest-first for asc). sortColIdx
 // selects the comparator: < 0 means time-sort (Phase 1.5), >= 0 means the
 // OrderBy column at that index in the merged-batch schema (Phase 2).
-func buildDistributedRowSourceIters(sources []decodedBatchSource, schema *vectorized.BatchSchema, desc bool, sortColIdx int) ([]itersort.Iterator[*distributedRowItem], error) {
+func buildDistributedRowSourceIters(
+	sources []decodedBatchSource,
+	schema *vectorized.BatchSchema,
+	desc bool,
+	sortColIdx int,
+) ([]itersort.Iterator[*distributedRowItem], error) {
 	iters := make([]itersort.Iterator[*distributedRowItem], 0, len(sources))
 	for _, src := range sources {
 		iter, buildErr := newDistributedRowSourceIter(src.batch, schema, src.source, src.group, desc, sortColIdx)
@@ -373,17 +389,17 @@ func resolveDistributedSortColumn(schema *vectorized.BatchSchema, spec distribut
 // dedup map, the current in-progress output batch, the cross-window seenSID
 // guard for index-mode queries, and the returned batch list.
 type distributedRowEmitter struct {
-	pool         *vectorized.BatchPool
-	schema       *vectorized.BatchSchema
-	tracker      *vectorized.MemoryTracker
-	seenSID      map[seenSIDKey]struct{}
-	window       map[distributedRowKey]*distributedRowItem
-	current      *vectorized.RecordBatch
-	windowKey    []byte
-	output       []*vectorized.RecordBatch
-	batchSize    int
-	rowWidth     int64
-	indexMode    bool
+	pool      *vectorized.BatchPool
+	schema    *vectorized.BatchSchema
+	tracker   *vectorized.MemoryTracker
+	seenSID   map[seenSIDKey]struct{}
+	window    map[distributedRowKey]*distributedRowItem
+	current   *vectorized.RecordBatch
+	windowKey []byte
+	output    []*vectorized.RecordBatch
+	batchSize int
+	rowWidth  int64
+	indexMode bool
 }
 
 // accept adds an incoming row to the current sort-group dedup map. The window
@@ -404,7 +420,7 @@ func (e *distributedRowEmitter) accept(item *distributedRowItem) {
 //
 // Emit-order note: sortedMIterator.loadOneGroup in the row-path baseline
 // (pkg/query/logical/measure/measure_plan_distributed.go) iterates its
-// uniqueData map in Go map order, which is intentionally randomised by the
+// uniqueData map in Go map order, which is intentionally randomized by the
 // runtime. The vec path here imposes a deterministic (source, seq) order via
 // sort.SliceStable on the window's surviving rows so equal-sort-field output
 // is reproducible across reruns and process restarts. This is strictly
@@ -442,7 +458,7 @@ func (e *distributedRowEmitter) flushWindow() error {
 }
 
 // appendRowToCurrent zero-copies one source row into the active output batch
-// via measure.AppendColumnRange. When the batch fills, it is finalised (which
+// via measure.AppendColumnRange. When the batch fills, it is finalized (which
 // reserves memory tracker bytes, appends to the output, then releases the
 // reservation so the tracker bounds in-transit batches without
 // double-counting once they reach the caller).
