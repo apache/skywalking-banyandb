@@ -18,6 +18,7 @@
 package data
 
 import (
+	"bytes"
 	"testing"
 
 	"google.golang.org/protobuf/proto"
@@ -124,7 +125,7 @@ func TestTopicResponseMap_ProtoCodec_RoundTripsByteIdentical(t *testing.T) {
 			t.Errorf("topic %s: ProtoCodec.Marshal failed: %v", topic, err)
 			continue
 		}
-		if string(gotBytes) != string(wantBytes) {
+		if !bytes.Equal(gotBytes, wantBytes) {
 			t.Errorf("topic %s: marshal mismatch: got %x want %x", topic, gotBytes, wantBytes)
 			continue
 		}
@@ -181,7 +182,7 @@ func TestMeasureQueryResponseCodec_DispatchesOnWireMode(t *testing.T) {
 	if err != nil {
 		t.Fatalf("flag-on Marshal failed: %v", err)
 	}
-	if string(encoded) != string(rawBody) {
+	if !bytes.Equal(encoded, rawBody) {
 		t.Fatalf("flag-on Marshal is not passthrough: got %x want %x", encoded, rawBody)
 	}
 	out, err := codec.Unmarshal(rawBody)
@@ -189,7 +190,7 @@ func TestMeasureQueryResponseCodec_DispatchesOnWireMode(t *testing.T) {
 		t.Fatalf("flag-on Unmarshal of 0x00-leading body failed: %v", err)
 	}
 	outBytes, _ := out.([]byte)
-	if string(outBytes) != string(rawBody) {
+	if !bytes.Equal(outBytes, rawBody) {
 		t.Fatalf("flag-on Unmarshal is not passthrough: got %x want %x", outBytes, rawBody)
 	}
 
