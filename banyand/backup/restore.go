@@ -245,34 +245,20 @@ func restoreByName(fs remote.FS, timeDir, rootPath, catalogName string) error {
 
 func validatedRemoteRelPath(timeDir, catalogName, remoteFile string) (string, error) {
 	remotePath := filepath.ToSlash(remoteFile)
-	if path.IsAbs(remotePath) || hasRemoteVolumeName(remotePath) {
+	if path.IsAbs(remotePath) || banyandbpath.HasVolumeName(remotePath) {
 		return "", fmt.Errorf("remote file %q escapes backup prefix", remoteFile)
 	}
-	prefix := path.Clean(filepath.ToSlash(filepath.Join(timeDir, catalogName)))
+	prefix := path.Clean(path.Join(filepath.ToSlash(timeDir), filepath.ToSlash(catalogName)))
 	cleanRemotePath := path.Clean(remotePath)
-	if hasRemoteVolumeName(cleanRemotePath) || cleanRemotePath == "." || prefix == "." {
+	if banyandbpath.HasVolumeName(cleanRemotePath) || cleanRemotePath == "." || prefix == "." {
 		return "", fmt.Errorf("remote file %q escapes backup prefix", remoteFile)
 	}
-	relPath, err := filepath.Rel(filepath.FromSlash(prefix), filepath.FromSlash(cleanRemotePath))
-	if err != nil {
-		return "", fmt.Errorf("failed to get relative path for %s: %w", remoteFile, err)
-	}
-	relPath = filepath.ToSlash(relPath)
-	if relPath == "." || strings.HasPrefix(relPath, "../") || relPath == ".." || path.IsAbs(relPath) {
+	prefixWithSlash := prefix + "/"
+	if !strings.HasPrefix(cleanRemotePath, prefixWithSlash) {
 		return "", fmt.Errorf("remote file %q escapes backup prefix", remoteFile)
 	}
+	relPath := strings.TrimPrefix(cleanRemotePath, prefixWithSlash)
 	return relPath, nil
-}
-
-func hasRemoteVolumeName(path string) bool {
-	if filepath.VolumeName(filepath.FromSlash(path)) != "" {
-		return true
-	}
-	return len(path) >= 2 && isASCIILetter(path[0]) && path[1] == ':'
-}
-
-func isASCIILetter(c byte) bool {
-	return (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z')
 }
 
 func cleanEmptyDirs(dir, stopDir string) {

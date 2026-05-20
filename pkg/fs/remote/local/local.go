@@ -27,6 +27,7 @@ import (
 	"strings"
 
 	"github.com/apache/skywalking-banyandb/pkg/fs/remote"
+	pathutil "github.com/apache/skywalking-banyandb/pkg/path"
 )
 
 const dirPerm = 0o755
@@ -54,12 +55,15 @@ func NewFS(baseDir string) (remote.FS, error) {
 }
 
 func (l *fs) Upload(_ context.Context, path string, data io.Reader) error {
-	fullPath, err := l.fullPath(path)
+	fullPath, err := l.fullPath(path, false)
 	if err != nil {
 		return err
 	}
 	if mkdirErr := os.MkdirAll(filepath.Dir(fullPath), dirPerm); mkdirErr != nil {
 		return mkdirErr
+	}
+	if err = l.ensureResolvedWithinBase(filepath.Dir(fullPath)); err != nil {
+		return fmt.Errorf("path %q escapes base directory: %w", path, err)
 	}
 
 	file, err := os.Create(fullPath)
@@ -73,7 +77,7 @@ func (l *fs) Upload(_ context.Context, path string, data io.Reader) error {
 }
 
 func (l *fs) Download(_ context.Context, path string) (io.ReadCloser, error) {
-	fullPath, err := l.fullPath(path)
+	fullPath, err := l.fullPath(path, false)
 	if err != nil {
 		return nil, err
 	}
@@ -82,7 +86,7 @@ func (l *fs) Download(_ context.Context, path string) (io.ReadCloser, error) {
 
 func (l *fs) List(_ context.Context, prefix string) ([]string, error) {
 	var files []string
-	fullPath, err := l.fullPath(prefix)
+	fullPath, err := l.fullPath(prefix, true)
 	if err != nil {
 		return nil, err
 	}
@@ -108,7 +112,7 @@ func (l *fs) List(_ context.Context, prefix string) ([]string, error) {
 }
 
 func (l *fs) Delete(_ context.Context, path string) error {
-	fullPath, err := l.fullPath(path)
+	fullPath, err := l.fullPath(path, false)
 	if err != nil {
 		return err
 	}
@@ -119,12 +123,15 @@ func (l *fs) Close() error {
 	return nil
 }
 
-func (l *fs) fullPath(path string) (string, error) {
-	if filepath.IsAbs(path) || hasVolumeName(path) {
+func (l *fs) fullPath(path string, allowRoot bool) (string, error) {
+	if filepath.IsAbs(path) || pathutil.HasVolumeName(path) {
 		return "", fmt.Errorf("path %q escapes base directory", path)
 	}
 	cleanPath := filepath.Clean(path)
-	if hasVolumeName(cleanPath) || cleanPath == ".." || strings.HasPrefix(cleanPath, ".."+string(filepath.Separator)) {
+	if !allowRoot && cleanPath == "." {
+		return "", fmt.Errorf("path %q escapes base directory", path)
+	}
+	if pathutil.HasVolumeName(cleanPath) || cleanPath == ".." || strings.HasPrefix(cleanPath, ".."+string(filepath.Separator)) {
 		return "", fmt.Errorf("path %q escapes base directory", path)
 	}
 	fullPath := filepath.Join(l.baseDir, cleanPath)
@@ -168,15 +175,4 @@ func (l *fs) ensureResolvedWithinBase(path string) error {
 		return fmt.Errorf("resolved path %q is outside base directory %q", realPath, l.baseDir)
 	}
 	return nil
-}
-
-func hasVolumeName(path string) bool {
-	if filepath.VolumeName(path) != "" {
-		return true
-	}
-	return len(path) >= 2 && isASCIILetter(path[0]) && path[1] == ':'
-}
-
-func isASCIILetter(c byte) bool {
-	return (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z')
 }

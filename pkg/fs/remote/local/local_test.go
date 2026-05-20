@@ -87,6 +87,81 @@ func TestFSListMissingPrefixReturnsEmpty(t *testing.T) {
 	}
 }
 
+func TestFSListEmptyPrefixReturnsFiles(t *testing.T) {
+	baseDir := filepath.Join(t.TempDir(), "remote")
+	fs, err := NewFS(baseDir)
+	if err != nil {
+		t.Fatalf("NewFS failed: %v", err)
+	}
+
+	const filePath = "snapshot/data/test.txt"
+	if err = fs.Upload(context.Background(), filePath, strings.NewReader("hello")); err != nil {
+		t.Fatalf("Upload failed: %v", err)
+	}
+
+	files, err := fs.List(context.Background(), "")
+	if err != nil {
+		t.Fatalf("List failed: %v", err)
+	}
+	if len(files) != 1 || files[0] != filePath {
+		t.Fatalf("files = %v, want [%s]", files, filePath)
+	}
+}
+
+func TestFSRejectsRootFileOperationPaths(t *testing.T) {
+	fs, err := NewFS(t.TempDir())
+	if err != nil {
+		t.Fatalf("NewFS failed: %v", err)
+	}
+
+	tests := []struct {
+		run  func(string) error
+		name string
+		path string
+	}{
+		{
+			name: "upload empty",
+			path: "",
+			run: func(path string) error {
+				return fs.Upload(context.Background(), path, strings.NewReader("root"))
+			},
+		},
+		{
+			name: "upload dot",
+			path: ".",
+			run: func(path string) error {
+				return fs.Upload(context.Background(), path, strings.NewReader("root"))
+			},
+		},
+		{
+			name: "download empty",
+			path: "",
+			run: func(path string) error {
+				reader, downloadErr := fs.Download(context.Background(), path)
+				if reader != nil {
+					reader.Close()
+				}
+				return downloadErr
+			},
+		},
+		{
+			name: "delete dot",
+			path: ".",
+			run: func(path string) error {
+				return fs.Delete(context.Background(), path)
+			},
+		},
+	}
+
+	for _, testCase := range tests {
+		t.Run(testCase.name, func(t *testing.T) {
+			if err := testCase.run(testCase.path); err == nil {
+				t.Fatal("expected root file operation path to be rejected")
+			}
+		})
+	}
+}
+
 func TestFSRejectsPathTraversal(t *testing.T) {
 	baseDir := filepath.Join(t.TempDir(), "remote")
 	fs, err := NewFS(baseDir)
