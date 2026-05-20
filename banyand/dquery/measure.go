@@ -111,6 +111,14 @@ func (p *measureQueryProcessor) Rev(ctx context.Context, message bus.Message) (r
 	//     This is the kill-switch / rollback path; latency is higher and multi-group
 	//     native merge is unavailable. Use only during incident response.
 	useVecDistributed := data.MeasureWireModeRaw()
+	// Operator-configured broadcast timeout overrides each plan's historical
+	// 15 s default. Setting it on vecCfg.BroadcastTimeout flows through
+	// vecplan.AnalyzeDistributed into DistributedPlan.broadcastTimeout(); the
+	// row path receives it as an explicit parameter on DistributedAnalyze.
+	// Either way the two plans stay lockstep with the same liaison config.
+	if p.broadcastTimeout > 0 {
+		vecCfg.BroadcastTimeout = p.broadcastTimeout
+	}
 	if useVecDistributed {
 		if len(measureSchemas) == 0 {
 			resp = bus.NewMessage(bus.MessageID(now), common.NewError("vec distributed plan requires at least one measure schema"))
@@ -119,7 +127,7 @@ func (p *measureQueryProcessor) Rev(ctx context.Context, message bus.Message) (r
 		plan, err = vecplan.AnalyzeDistributed(queryCriteria, measureSchemas, measureIndexRules, vecCfg)
 	} else {
 		// nolint:staticcheck // SA1019 - row distributed plan is the flag-off rollback path only.
-		rowPlan, analyzeErr := logical_measure.DistributedAnalyze(queryCriteria, schemas)
+		rowPlan, analyzeErr := logical_measure.DistributedAnalyze(queryCriteria, schemas, p.broadcastTimeout)
 		if analyzeErr != nil {
 			err = analyzeErr
 		} else {

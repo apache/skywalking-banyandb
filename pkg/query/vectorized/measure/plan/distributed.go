@@ -40,7 +40,24 @@ import (
 	vmeasure "github.com/apache/skywalking-banyandb/pkg/query/vectorized/measure"
 )
 
+// distributedQueryTimeout is the historical hard-coded broadcast deadline.
+// Retained as a fallback when DistributedPlan.cfg.BroadcastTimeout is zero
+// so call sites that build a VectorizedConfig by hand (most existing
+// tests) keep their prior behaviour. Production deployments thread the
+// operator's --dst-broadcast-timeout through cfg.BroadcastTimeout.
 const distributedQueryTimeout = 15 * time.Second
+
+// broadcastTimeout returns the effective per-broadcast deadline for this
+// plan: the operator-configured value when non-zero, the historical 15 s
+// constant otherwise. Used at every dctx.Broadcast call site so a single
+// flag flip changes both the row-and-vec-fanout single-broadcast path and
+// the per-group fanout loop used by multi-group requests.
+func (p *DistributedPlan) broadcastTimeout() time.Duration {
+	if p.cfg.BroadcastTimeout > 0 {
+		return p.cfg.BroadcastTimeout
+	}
+	return distributedQueryTimeout
+}
 
 // SupportsDistributedRows reports whether a non-aggregation request can use
 // the native vectorized distributed row merge. Phase 2 lifts the
@@ -394,7 +411,7 @@ func (p *DistributedPlan) Execute(ctx context.Context) (executor.MIterator, erro
 		nodeRequest := proto.Clone(p.nodeTemplate).(*measurev1.QueryRequest)
 		nodeRequest.TimeRange = dctx.TimeRange()
 		internalRequest := &measurev1.InternalQueryRequest{Request: nodeRequest, AggReturnPartial: queryRequest.GetAgg() != nil}
-		ff, broadcastErr := dctx.Broadcast(distributedQueryTimeout, data.TopicInternalMeasureQuery,
+		ff, broadcastErr := dctx.Broadcast(p.broadcastTimeout(), data.TopicInternalMeasureQuery,
 			bus.NewMessageWithNodeSelectors(bus.MessageID(dctx.TimeRange().Begin.Nanos), dctx.NodeSelectors(), dctx.TimeRange(), internalRequest))
 		if broadcastErr != nil {
 			return nil, fmt.Errorf("vec distributed plan: broadcast: %w", broadcastErr)
@@ -430,7 +447,7 @@ func (p *DistributedPlan) Execute(ctx context.Context) (executor.MIterator, erro
 			nodeRequest.FieldProjection = intersectFieldProjection(nodeRequest.GetFieldProjection(), groupSchema)
 		}
 		internalRequest := &measurev1.InternalQueryRequest{Request: nodeRequest, AggReturnPartial: queryRequest.GetAgg() != nil}
-		ff, broadcastErr := dctx.Broadcast(distributedQueryTimeout, data.TopicInternalMeasureQuery,
+		ff, broadcastErr := dctx.Broadcast(p.broadcastTimeout(), data.TopicInternalMeasureQuery,
 			bus.NewMessageWithNodeSelectors(bus.MessageID(dctx.TimeRange().Begin.Nanos), dctx.NodeSelectors(), dctx.TimeRange(), internalRequest))
 		if broadcastErr != nil {
 			perGroupErr = multierr.Append(perGroupErr, fmt.Errorf("vec distributed plan: broadcast group %s: %w", groupName, broadcastErr))

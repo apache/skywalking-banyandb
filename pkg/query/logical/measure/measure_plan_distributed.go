@@ -106,15 +106,17 @@ func (as *pushDownAggSchema) Children() []logical.Schema {
 // vec query is a G8 follow-up; for now the dispatcher continues to use
 // this row-path distributed plan even when vec is enabled on standalone.
 type unresolvedDistributed struct {
-	originalQuery *measurev1.QueryRequest
-	groupByEntity bool
-	pushDownAgg   bool
+	originalQuery    *measurev1.QueryRequest
+	broadcastTimeout time.Duration
+	groupByEntity    bool
+	pushDownAgg      bool
 }
 
-func newUnresolvedDistributed(query *measurev1.QueryRequest, pushDownAgg bool) logical.UnresolvedPlan {
+func newUnresolvedDistributed(query *measurev1.QueryRequest, pushDownAgg bool, broadcastTimeout time.Duration) logical.UnresolvedPlan {
 	return &unresolvedDistributed{
-		originalQuery: query,
-		pushDownAgg:   pushDownAgg,
+		originalQuery:    query,
+		pushDownAgg:      pushDownAgg,
+		broadcastTimeout: broadcastTimeout,
 	}
 }
 
@@ -176,13 +178,14 @@ func (ud *unresolvedDistributed) Analyze(s logical.Schema) (logical.Plan, error)
 			return nil, fmt.Errorf("entity tag %s not found", e)
 		}
 		result := &distributedPlan{
-			queryTemplate:   temp,
-			s:               s,
-			sortByTime:      false,
-			sortTagSpec:     *sortTagSpec,
-			pushDownAgg:     ud.pushDownAgg,
-			groupByTagsRefs: groupByTagsRefs,
-			indexMode:       indexMode,
+			queryTemplate:    temp,
+			s:                s,
+			sortByTime:       false,
+			sortTagSpec:      *sortTagSpec,
+			pushDownAgg:      ud.pushDownAgg,
+			groupByTagsRefs:  groupByTagsRefs,
+			indexMode:        indexMode,
+			broadcastTimeout: ud.broadcastTimeout,
 		}
 		if ud.originalQuery.OrderBy != nil && ud.originalQuery.OrderBy.Sort == modelv1.Sort_SORT_DESC {
 			result.desc = true
@@ -191,22 +194,24 @@ func (ud *unresolvedDistributed) Analyze(s logical.Schema) (logical.Plan, error)
 	}
 	if ud.originalQuery.OrderBy == nil {
 		return &distributedPlan{
-			queryTemplate:   temp,
-			s:               s,
-			sortByTime:      true,
-			pushDownAgg:     ud.pushDownAgg,
-			groupByTagsRefs: groupByTagsRefs,
-			indexMode:       indexMode,
+			queryTemplate:    temp,
+			s:                s,
+			sortByTime:       true,
+			pushDownAgg:      ud.pushDownAgg,
+			groupByTagsRefs:  groupByTagsRefs,
+			indexMode:        indexMode,
+			broadcastTimeout: ud.broadcastTimeout,
 		}, nil
 	}
 	if ud.originalQuery.OrderBy.IndexRuleName == "" {
 		result := &distributedPlan{
-			queryTemplate:   temp,
-			s:               s,
-			sortByTime:      true,
-			pushDownAgg:     ud.pushDownAgg,
-			groupByTagsRefs: groupByTagsRefs,
-			indexMode:       indexMode,
+			queryTemplate:    temp,
+			s:                s,
+			sortByTime:       true,
+			pushDownAgg:      ud.pushDownAgg,
+			groupByTagsRefs:  groupByTagsRefs,
+			indexMode:        indexMode,
+			broadcastTimeout: ud.broadcastTimeout,
 		}
 		if ud.originalQuery.OrderBy.Sort == modelv1.Sort_SORT_DESC {
 			result.desc = true
@@ -225,13 +230,14 @@ func (ud *unresolvedDistributed) Analyze(s logical.Schema) (logical.Plan, error)
 		return nil, fmt.Errorf("tag %s not found", indexRule.Tags[0])
 	}
 	result := &distributedPlan{
-		queryTemplate:   temp,
-		s:               s,
-		sortByTime:      false,
-		sortTagSpec:     *sortTagSpec,
-		pushDownAgg:     ud.pushDownAgg,
-		groupByTagsRefs: groupByTagsRefs,
-		indexMode:       indexMode,
+		queryTemplate:    temp,
+		s:                s,
+		sortByTime:       false,
+		sortTagSpec:      *sortTagSpec,
+		pushDownAgg:      ud.pushDownAgg,
+		groupByTagsRefs:  groupByTagsRefs,
+		indexMode:        indexMode,
+		broadcastTimeout: ud.broadcastTimeout,
 	}
 	if ud.originalQuery.OrderBy.Sort == modelv1.Sort_SORT_DESC {
 		result.desc = true
@@ -244,11 +250,23 @@ type distributedPlan struct {
 	queryTemplate     *measurev1.QueryRequest
 	sortTagSpec       logical.TagSpec
 	groupByTagsRefs   [][]*logical.TagRef
+	broadcastTimeout  time.Duration
 	maxDataPointsSize uint32
 	sortByTime        bool
 	desc              bool
 	pushDownAgg       bool
 	indexMode         bool
+}
+
+// broadcastDeadline returns the effective per-broadcast deadline for this
+// plan: the operator-configured value when non-zero, the historical 15 s
+// constant otherwise. Mirrors the vec plan helper so a single flag flip
+// changes both paths.
+func (t *distributedPlan) broadcastDeadline() time.Duration {
+	if t.broadcastTimeout > 0 {
+		return t.broadcastTimeout
+	}
+	return defaultQueryTimeout
 }
 
 func (t *distributedPlan) Execute(ctx context.Context) (mi executor.MIterator, err error) {
@@ -275,7 +293,7 @@ func (t *distributedPlan) Execute(ctx context.Context) (mi executor.MIterator, e
 		}()
 	}
 	internalRequest := &measurev1.InternalQueryRequest{Request: queryRequest, AggReturnPartial: t.pushDownAgg}
-	ff, broadcastErr := dctx.Broadcast(defaultQueryTimeout, data.TopicInternalMeasureQuery,
+	ff, broadcastErr := dctx.Broadcast(t.broadcastDeadline(), data.TopicInternalMeasureQuery,
 		bus.NewMessageWithNodeSelectors(bus.MessageID(dctx.TimeRange().Begin.Nanos), dctx.NodeSelectors(), dctx.TimeRange(), internalRequest))
 	if broadcastErr != nil {
 		return nil, broadcastErr
@@ -543,7 +561,6 @@ func (s *sortedMIterator) Close() error {
 	}
 	return s.Iterator.Close()
 }
-
 
 const (
 	offset64 = 14695981039346656037
