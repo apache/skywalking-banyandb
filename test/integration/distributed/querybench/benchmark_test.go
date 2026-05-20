@@ -249,7 +249,16 @@ func startBenchCluster(t *testing.T, vectorized bool) (benchCluster, time.Time, 
 	setup.PreloadSchemaViaProperty(config, testmeasure.PreloadSchema)
 	config.AddLoadedKinds(schema.KindMeasure)
 	liaisonAddr, closeLiaison := setup.LiaisonNode(config, flags...)
-	conn, connErr := grpchelper.Conn(liaisonAddr, 10*time.Second, grpc.WithTransportCredentials(insecure.NewCredentials()))
+	// Bump the gRPC client's max receive size so visibility checks at
+	// high cardinality (100K+ rows of proto-encoded DataPoints exceed the
+	// default 4 MiB) don't fail with ResourceExhausted before the timed
+	// phase starts. 512 MiB covers the stress cardinality (2M rows ≈
+	// ~220 MiB of proto-wire response) with margin.
+	conn, connErr := grpchelper.Conn(
+		liaisonAddr, 10*time.Second,
+		grpc.WithTransportCredentials(insecure.NewCredentials()),
+		grpc.WithDefaultCallOptions(grpc.MaxCallRecvMsgSize(512<<20)),
+	)
 	if connErr != nil {
 		closeLiaison()
 		closeDataNode0()

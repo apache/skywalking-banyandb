@@ -34,6 +34,7 @@ BINARY="/tmp/dqb.test"
 
 CARDINALITIES="${DQB_CARDINALITIES:-1024,10000,100000,1000000,2000000}"
 SCENARIOS="${DQB_SCENARIOS:-scan_all,top_with_filter}"
+MODES="${DQB_MODES:-row,vec}"
 
 echo "[orchestrate] report_dir=${REPORT_DIR}"
 echo "[orchestrate] cardinalities=${CARDINALITIES}"
@@ -56,9 +57,10 @@ go test -c -o "${BINARY}" ./test/integration/distributed/querybench
 
 IFS=',' read -ra CARD_ARR <<< "${CARDINALITIES}"
 IFS=',' read -ra SCEN_ARR <<< "${SCENARIOS}"
+IFS=',' read -ra MODE_ARR <<< "${MODES}"
 
 for card in "${CARD_ARR[@]}"; do
-  for mode in row vec; do
+  for mode in "${MODE_ARR[@]}"; do
     for scenario in "${SCEN_ARR[@]}"; do
       echo "[orchestrate] === cardinality=${card} mode=${mode} scenario=${scenario} ==="
       DQB_MODE="${mode}" \
