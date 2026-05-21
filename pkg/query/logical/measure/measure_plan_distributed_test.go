@@ -62,6 +62,99 @@ func makeComparableDP(sid uint64, seconds, nanos int64, version int64, sortField
 	}
 }
 
+func TestSortedMIterator_IndexModeDedup(t *testing.T) {
+	// Cross-node duplicates for an IndexMode measure carry the same Sid but
+	// different per-node "last-write" timestamps. They live in different
+	// sort-field groups when sorted by time, so hashDataPoint (which keys on
+	// Sid+timestamp) cannot collapse them — only Sid-based cross-group dedup
+	// can. See the package-level comment on sortedMIterator.loadDps.
+	testCases := []struct {
+		name      string
+		data      []*comparableDataPoint
+		wantSids  []uint64
+		indexMode bool
+	}{
+		{
+			// Sort-by-time, two nodes return the same Sid at different ts.
+			// IndexMode=true → only first-seen Sid survives.
+			name: "indexMode collapses same Sid across sort-field groups",
+			data: []*comparableDataPoint{
+				makeComparableDP(1, 1, 0, 1, 1),
+				makeComparableDP(1, 2, 0, 1, 2),
+			},
+			indexMode: true,
+			wantSids:  []uint64{1},
+		},
+		{
+			// Same input, IndexMode=false → existing behavior preserved.
+			name: "row-path keeps Sid duplicates with different timestamps",
+			data: []*comparableDataPoint{
+				makeComparableDP(1, 1, 0, 1, 1),
+				makeComparableDP(1, 2, 0, 1, 2),
+			},
+			indexMode: false,
+			wantSids:  []uint64{1, 1},
+		},
+		{
+			// Sort-by-tag (same sort field) — both modes already dedup via
+			// hashDataPoint here. Verify IndexMode does not regress that.
+			name: "indexMode collapses same Sid within one sort-field group",
+			data: []*comparableDataPoint{
+				makeComparableDP(2, 1, 0, 1, 5),
+				makeComparableDP(2, 2, 0, 1, 5),
+			},
+			indexMode: true,
+			wantSids:  []uint64{2},
+		},
+		{
+			// Three Sids interleaved across two sort-field groups.
+			// IndexMode=true keeps one per Sid (first-seen).
+			name: "indexMode preserves distinct Sids across groups",
+			data: []*comparableDataPoint{
+				makeComparableDP(1, 1, 0, 1, 1),
+				makeComparableDP(2, 1, 0, 1, 1),
+				makeComparableDP(1, 2, 0, 1, 2),
+				makeComparableDP(3, 2, 0, 1, 2),
+			},
+			indexMode: true,
+			wantSids:  []uint64{1, 2, 3},
+		},
+		{
+			// Group at sf=2 contains only already-seen Sids — loadDps's outer
+			// loop must advance past the fully-filtered group to reach sf=3
+			// instead of stopping iteration. Without that, `Next` returns
+			// false after the first emission and Sid=2 is lost.
+			name: "indexMode advances past a fully-filtered intermediate group",
+			data: []*comparableDataPoint{
+				makeComparableDP(1, 1, 0, 1, 1),
+				makeComparableDP(1, 2, 0, 1, 2),
+				makeComparableDP(2, 3, 0, 1, 3),
+			},
+			indexMode: true,
+			wantSids:  []uint64{1, 2},
+		},
+	}
+	for _, tc := range testCases {
+		t.Run(tc.name, func(t *testing.T) {
+			iter := &sortedMIterator{
+				Iterator:  &mockIterator{data: tc.data, idx: -1},
+				indexMode: tc.indexMode,
+			}
+			iter.init()
+			gotSids := make([]uint64, 0, len(tc.wantSids))
+			for iter.Next() {
+				gotSids = append(gotSids, iter.Current()[0].GetDataPoint().GetSid())
+			}
+			slices.Sort(gotSids)
+			wantSids := append([]uint64(nil), tc.wantSids...)
+			slices.Sort(wantSids)
+			if diff := cmp.Diff(wantSids, gotSids); diff != "" {
+				t.Errorf("Sids mismatch (-want +got):\n%s", diff)
+			}
+		})
+	}
+}
+
 func TestSortedMIterator(t *testing.T) {
 	testCases := []struct {
 		name string

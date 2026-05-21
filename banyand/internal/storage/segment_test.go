@@ -352,7 +352,7 @@ func TestCloseIdleAndSelectSegments(t *testing.T) {
 	seg2.lastAccessed.Store(time.Now().UnixNano())
 
 	// Close idle segments
-	closedCount := sc.closeIdleSegments(context.Background())
+	closedCount := sc.closeIdleSegments()
 
 	// We should have closed 2 segments (seg1 and seg3)
 	assert.Equal(t, 2, closedCount)
@@ -611,7 +611,7 @@ func TestDeleteExpiredSegmentsWithClosedSegments(t *testing.T) {
 	segments[5].lastAccessed.Store(activeTime) // day6 - not expired
 
 	// Close idle segments
-	closedCount := sc.closeIdleSegments(context.Background())
+	closedCount := sc.closeIdleSegments()
 	assert.Equal(t, 3, closedCount, "Should have closed 3 segments")
 
 	// Verify segments 0, 2, and 4 are closed
