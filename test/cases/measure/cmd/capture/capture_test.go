@@ -113,6 +113,10 @@ func TestCapture(t *testing.T) {
 	entries, readErr := os.ReadDir(inputDirPath)
 	gomega.Expect(readErr).NotTo(gomega.HaveOccurred())
 
+	// Precompute the header bytes once so each fixture write is a single
+	// make+copy, not a per-iteration string→[]byte conversion + append.
+	headerBytes := []byte(casesMeasureData.LicenseHeader)
+
 	capturedCount := 0
 	for _, entry := range entries {
 		if entry.IsDir() {
@@ -185,7 +189,9 @@ func TestCapture(t *testing.T) {
 		}
 
 		wantPath := filepath.Join(wantDirPath, testName+".yaml")
-		wantContent := append([]byte(casesMeasureData.LicenseHeader), respYAML...)
+		wantContent := make([]byte, len(headerBytes)+len(respYAML))
+		copy(wantContent, headerBytes)
+		copy(wantContent[len(headerBytes):], respYAML)
 		if writeErr := os.WriteFile(wantPath, wantContent, 0o600); writeErr != nil {
 			t.Errorf("  [ERROR] %s: write failed: %v", testName, writeErr)
 			continue

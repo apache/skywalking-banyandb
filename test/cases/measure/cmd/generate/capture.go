@@ -76,6 +76,10 @@ func runCapture(outputDir, serverAddr string) {
 	skippedCount := 0
 	errorCount := 0
 
+	// Precompute the header bytes once so each fixture write is a single
+	// make+copy, not a per-iteration string→[]byte conversion + append.
+	headerBytes := []byte(licenseHeader)
+
 	for _, entry := range entries {
 		if entry.IsDir() {
 			continue
@@ -165,7 +169,9 @@ func runCapture(outputDir, serverAddr string) {
 		}
 
 		wantPath := filepath.Join(wantDirPath, testName+".yaml")
-		wantContent := append([]byte(licenseHeader), respYAML...)
+		wantContent := make([]byte, len(headerBytes)+len(respYAML))
+		copy(wantContent, headerBytes)
+		copy(wantContent[len(headerBytes):], respYAML)
 		if writeErr := os.WriteFile(wantPath, wantContent, 0o600); writeErr != nil {
 			fmt.Fprintf(os.Stderr, "  [ERROR] %s: write failed: %v\n", testName, writeErr)
 			errorCount++
