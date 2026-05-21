@@ -164,6 +164,14 @@ func (s *segment[T, O]) TablesWithShardIDs() (tt []T, shardIDs []common.ShardID,
 // guaranteed that the segment is alive (s.index != nil, shards loaded) and
 // will stay alive until the matching DecRef.
 //
+// incRef intentionally does NOT touch lastAccessed: the idle-segment
+// reclaimer (closeIdleSegments) decides eligibility from that field, and
+// the rotation-tick scan iterates every segment via incRef on each tick.
+// Refreshing lastAccessed here would defeat the reclaimer for any segment
+// outside the active write window. Callers that represent a real read or
+// write touch must bump lastAccessed explicitly (see selectSegments and
+// createSegment); housekeeping iterators must not.
+//
 // The CAS loop closes a TOCTOU race that the older "Load + AddInt32"
 // shape suffered from: a goroutine could read refCount=1, race against a
 // concurrent DecRef that drives it to 0 and triggers performCleanup
@@ -179,7 +187,6 @@ func (s *segment[T, O]) TablesWithShardIDs() (tt []T, shardIDs []common.ShardID,
 // DecRef that drives refCount to 0 sees no concurrent +1 sneak in
 // before performCleanup runs.
 func (s *segment[T, O]) incRef(ctx context.Context) error {
-	s.lastAccessed.Store(time.Now().UnixNano())
 	for {
 		current := atomic.LoadInt32(&s.refCount)
 		if current <= 0 {
@@ -426,6 +433,7 @@ func (sc *segmentController[T, O]) selectSegments(timeRange timestamp.TimeRange)
 	defer sc.RUnlock()
 	last := len(sc.lst) - 1
 	ctx := context.WithValue(context.Background(), logger.ContextKey, sc.l)
+	now := time.Now().UnixNano()
 	for i := range sc.lst {
 		s := sc.lst[last-i]
 		if s.GetTimeRange().End.Before(timeRange.Start) {
@@ -435,6 +443,7 @@ func (sc *segmentController[T, O]) selectSegments(timeRange timestamp.TimeRange)
 			if err = s.incRef(ctx); err != nil {
 				return nil, err
 			}
+			s.lastAccessed.Store(now)
 			tt = append(tt, s)
 		}
 	}
@@ -446,7 +455,11 @@ func (sc *segmentController[T, O]) createSegment(ts time.Time) (*segment[T, O], 
 	if err != nil {
 		return nil, err
 	}
-	return s, s.incRef(context.WithValue(context.Background(), logger.ContextKey, sc.l))
+	if err = s.incRef(context.WithValue(context.Background(), logger.ContextKey, sc.l)); err != nil {
+		return nil, err
+	}
+	s.lastAccessed.Store(time.Now().UnixNano())
+	return s, nil
 }
 
 func (sc *segmentController[T, O]) segments(ctx context.Context, reopenClosed bool) (ss []*segment[T, O], err error) {
@@ -469,26 +482,60 @@ func (sc *segmentController[T, O]) segments(ctx context.Context, reopenClosed bo
 	return r, nil
 }
 
-func (sc *segmentController[T, O]) closeIdleSegments(ctx context.Context) int {
+func (sc *segmentController[T, O]) closeIdleSegments() int {
 	maxIdleTime := sc.idleTimeout
 
 	now := time.Now().UnixNano()
 	idleThreshold := now - maxIdleTime.Nanoseconds()
 
-	segs, _ := sc.segments(ctx, false)
-	closedCount := 0
-
-	for _, seg := range segs {
-		lastAccess := seg.lastAccessed.Load()
-		// Only consider segments that have been idle for longer than the threshold
-		// and have active references (are not already closed)
-		if lastAccess < idleThreshold && atomic.LoadInt32(&seg.refCount) > 0 {
-			seg.DecRef()
+	// Take our own snapshot rather than going through segments(false): that
+	// helper's "Load>0 then Add" bump is non-atomic and can resurrect a
+	// segment that DecRef just cleaned up, and its caller has no way to tell
+	// which entries it actually bumped. closeIdleSegments must know, because
+	// it issues an unconditional DecRef per entry to release the bump; if a
+	// concurrent selectSegments reopens an entry we didn't bump, that DecRef
+	// would drop the query's only live ref and trigger performCleanup under
+	// active use. Iterate sc.lst under RLock and CAS-bump each open segment;
+	// closed segments are recorded as "not bumped" and skipped in the loop.
+	sc.RLock()
+	segs := make([]*segment[T, O], 0, len(sc.lst))
+	bumped := make([]bool, 0, len(sc.lst))
+	refAtBump := make([]int32, 0, len(sc.lst))
+	for _, s := range sc.lst {
+		didBump := false
+		var snapRef int32
+		for {
+			current := atomic.LoadInt32(&s.refCount)
+			if current <= 0 {
+				break
+			}
+			if atomic.CompareAndSwapInt32(&s.refCount, current, current+1) {
+				didBump = true
+				snapRef = current
+				break
+			}
 		}
-		seg.DecRef()
-		if atomic.LoadInt32(&seg.refCount) == 0 {
+		segs = append(segs, s)
+		bumped = append(bumped, didBump)
+		refAtBump = append(refAtBump, snapRef)
+	}
+	sc.RUnlock()
+
+	closedCount := 0
+	for i, seg := range segs {
+		if !bumped[i] {
+			continue
+		}
+		// Only close when the snapshot proved refCount==1 (baseline only):
+		// a higher value means other callers hold active references, and
+		// decrementing past our bump would steal one of their refs,
+		// potentially triggering performCleanup under active use on a
+		// subsequent tick.
+		if refAtBump[i] == 1 && seg.lastAccessed.Load() < idleThreshold {
+			seg.DecRef()
 			closedCount++
 		}
+		seg.DecRef()
 	}
 
 	return closedCount

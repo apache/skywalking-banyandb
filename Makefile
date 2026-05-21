@@ -50,6 +50,9 @@ generate: default  ## Generate API codes
 generate-test-cases:  ## Regenerate measure query test cases (input/*.ql, input/*.yaml)
 	go run ./test/cases/measure/cmd/generate generate test/cases/measure/data
 
+capture-test-cases:  ## Capture measure query want fixtures (data/want/*.yaml) by running queries against a standalone server
+	CAPTURE_WANT_FIXTURES=1 go test -count=1 -timeout 5m -run TestCapture ./test/cases/measure/cmd/capture/
+
 build: TARGET=all
 build: default  ## Build all projects
 
@@ -270,7 +273,7 @@ release-push-candidate: ## Push release candidate
 	${PUSH_RELEASE_SCRIPTS}
 	
 .PHONY: all $(PROJECTS) clean build  default nuke
-.PHONY: lint check tidy format pre-push generate-test-cases check-import-boundaries
+.PHONY: lint check tidy format pre-push generate-test-cases capture-test-cases check-import-boundaries
 .PHONY: test test-race test-coverage test-ci test-docker
 .PHONY: license-check license-fix license-dep
 .PHONY: release release-binary release-source release-sign release-assembly
