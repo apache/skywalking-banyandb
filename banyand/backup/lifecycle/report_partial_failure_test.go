@@ -23,6 +23,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
+	"github.com/apache/skywalking-banyandb/api/common"
 	"github.com/apache/skywalking-banyandb/pkg/logger"
 )
 
@@ -202,4 +203,53 @@ func assertResource(t *testing.T, summary map[string]interface{}, catalog, resou
 	assert.Equalf(t, completed, res["completed"], "summary.%s.%s.completed", catalog, resource)
 	assert.Equalf(t, errors, res["errors"], "summary.%s.%s.errors", catalog, resource)
 	assert.InDeltaf(t, rate, res["completion_rate"], 1e-9, "summary.%s.%s.completion_rate", catalog, resource)
+}
+
+// TestCompletionRateNeverExceeds100UnderFanOut replays the original 266 %
+// regression scenario: per-target Mark*Completed is invoked once per
+// (source × target_segment × target_shard) tuple while MarkSource*Completed
+// is invoked once per source. Under Option 3 the per-target Marks must NOT
+// move counters and MarkSource bumps Progress exactly once per source, so
+// completion_rate = Progress / pre-walk-Counts stays in [0, 100] no matter
+// how large the fan-out is. This is the regression test that pins the 266 %
+// bug as fixed.
+func TestCompletionRateNeverExceeds100UnderFanOut(t *testing.T) {
+	p := NewProgress("", logger.GetLogger("test"))
+	p.SetGroupsToProcess([]string{"sw_fanout"})
+
+	// 4 source series files × 2 target segments × 3 target shards = 24
+	// per-target Mark calls. Pre-walk says 4 source items.
+	const sourceCount = 4
+	p.SetStreamSeriesCount("sw_fanout", sourceCount)
+	targetSegs := []string{"tgt-seg-0", "tgt-seg-1"}
+
+	for src := 0; src < sourceCount; src++ {
+		sourceShard := common.ShardID(src)
+		// Fan-out: emit per-target Marks for every (target_segment, target_shard).
+		for _, tgtSeg := range targetSegs {
+			for tgtShard := common.ShardID(0); tgtShard < 3; tgtShard++ {
+				p.MarkStreamSeriesCompleted("sw_fanout", tgtSeg, tgtShard)
+			}
+		}
+		// Per-source: advance Progress exactly once per source file.
+		p.MarkSourceStreamSeriesCompleted("sw_fanout", "src-segment", sourceShard)
+	}
+	p.MarkGroupCompleted("sw_fanout")
+
+	svc := &lifecycleService{l: logger.GetLogger("test")}
+	report := svc.buildMigrationReport(p)
+	summary := report["summary"].(map[string]interface{})
+
+	// Counts comes from pre-walk Set*Count, not from per-target Marks.
+	// Progress is one bump per source MarkSource, not one per fan-out Mark.
+	// rate = 4/4 = 100 % (NOT 24/4 = 600 %).
+	streamMigration := summary["stream_migration"].(map[string]interface{})
+	series := streamMigration["series"].(map[string]interface{})
+	assert.Equal(t, sourceCount, series["total"], "Counts must come from Set*Count, not from per-target Marks")
+	assert.Equal(t, sourceCount, series["completed"], "Progress must be one bump per source, not per fan-out target")
+
+	rate := series["completion_rate"].(float64)
+	assert.GreaterOrEqualf(t, rate, 0.0, "completion_rate must be >= 0, got %v", rate)
+	assert.LessOrEqualf(t, rate, 100.0, "completion_rate must stay <= 100%% under fan-out (266%% regression), got %v", rate)
+	assert.InDelta(t, 100.0, rate, 1e-9)
 }
