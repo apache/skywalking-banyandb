@@ -25,198 +25,168 @@ import (
 	"github.com/apache/skywalking-banyandb/pkg/logger"
 )
 
-// TestMarkCompleted_Idempotent verifies that repeated Mark*Completed calls
-// for the same (group, segment, shard, partID) bump Counts and Progress
-// exactly once across all 7 resource types. This is the invariant that lets
-// resume re-walk already-completed items without inflating the denominator.
-func TestMarkCompleted_Idempotent(t *testing.T) {
+// TestMarkPerTargetDoesNotMoveCounters pins the contract that per-target
+// Mark*Completed / Mark*Error only maintain the per-target dedup / error
+// maps and do NOT advance Counts or Progress. Counts is set by pre-walk
+// (Set*Count) and Progress is advanced exclusively by MarkSource*Completed.
+func TestMarkPerTargetDoesNotMoveCounters(t *testing.T) {
 	p := NewProgress("", logger.GetLogger("test"))
 
-	// Stream parts: 3 calls on the same key, then a 4th on a different partID.
-	p.MarkStreamPartCompleted("g", "seg", 0, 1)
-	p.MarkStreamPartCompleted("g", "seg", 0, 1)
-	p.MarkStreamPartCompleted("g", "seg", 0, 1)
-	assert.Equal(t, 1, p.StreamPartCounts["g"], "duplicate stream part marks must collapse to 1")
-	assert.Equal(t, 1, p.StreamPartProgress["g"])
-	assert.True(t, p.IsStreamPartCompleted("g", "seg", 0, 1))
-	p.MarkStreamPartCompleted("g", "seg", 0, 2)
-	assert.Equal(t, 2, p.StreamPartCounts["g"], "distinct partIDs must each contribute 1")
-	assert.Equal(t, 2, p.StreamPartProgress["g"])
-	assert.True(t, p.IsStreamPartCompleted("g", "seg", 0, 2))
+	// Stream part: per-target mark several times — counters must stay 0.
+	p.MarkStreamPartCompleted("g", "tgt-seg-1", 0, 1)
+	p.MarkStreamPartCompleted("g", "tgt-seg-2", 0, 1)
+	p.MarkStreamPartError("g", "tgt-seg-3", 0, 1, "err")
+	assert.Equal(t, 0, p.StreamPartCounts["g"])
+	assert.Equal(t, 0, p.StreamPartProgress["g"])
 
-	// Stream series.
-	p.MarkStreamSeriesCompleted("g", "seg", 0)
-	p.MarkStreamSeriesCompleted("g", "seg", 0)
-	assert.Equal(t, 1, p.StreamSeriesCounts["g"])
+	// Per-target dedup map populated.
+	assert.True(t, p.IsStreamPartCompleted("g", "tgt-seg-1", 0, 1))
+	assert.True(t, p.IsStreamPartCompleted("g", "tgt-seg-2", 0, 1))
+
+	// Same for series / element_index / measure / trace.
+	p.MarkStreamSeriesCompleted("g", "tgt-seg-1", 0)
+	p.MarkStreamElementIndexCompleted("g", "tgt-seg-1", 0)
+	p.MarkMeasurePartCompleted("g", "tgt-seg-1", 0, 1)
+	p.MarkMeasureSeriesCompleted("g", "tgt-seg-1", 0)
+	p.MarkTraceShardCompleted("g", "tgt-seg-1", 0)
+	p.MarkTraceSeriesCompleted("g", "tgt-seg-1", 0)
+	for _, counter := range []int{
+		p.StreamSeriesCounts["g"], p.StreamSeriesProgress["g"],
+		p.StreamElementIndexCounts["g"], p.StreamElementIndexProgress["g"],
+		p.MeasurePartCounts["g"], p.MeasurePartProgress["g"],
+		p.MeasureSeriesCounts["g"], p.MeasureSeriesProgress["g"],
+		p.TraceShardCounts["g"], p.TraceShardProgress["g"],
+		p.TraceSeriesCounts["g"], p.TraceSeriesProgress["g"],
+	} {
+		assert.Equal(t, 0, counter, "per-target marks must not move counters")
+	}
+}
+
+// TestSetCountIsThePlannedDenominator pins that Set*Count is the only writer
+// of the per-resource Counts denominator (set by pre-walk).
+func TestSetCountIsThePlannedDenominator(t *testing.T) {
+	p := NewProgress("", logger.GetLogger("test"))
+
+	p.SetStreamPartCount("g", 100)
+	p.SetStreamSeriesCount("g", 50)
+	p.SetStreamElementIndexCount("g", 10)
+	p.SetMeasurePartCount("g", 70)
+	p.SetMeasureSeriesCount("g", 35)
+	p.SetTraceShardCount("g", 5)
+	p.SetTraceSeriesCount("g", 8)
+
+	assert.Equal(t, 100, p.StreamPartCounts["g"])
+	assert.Equal(t, 50, p.StreamSeriesCounts["g"])
+	assert.Equal(t, 10, p.StreamElementIndexCounts["g"])
+	assert.Equal(t, 70, p.MeasurePartCounts["g"])
+	assert.Equal(t, 35, p.MeasureSeriesCounts["g"])
+	assert.Equal(t, 5, p.TraceShardCounts["g"])
+	assert.Equal(t, 8, p.TraceSeriesCounts["g"])
+
+	// Set is overwrite semantics — last call wins.
+	p.SetStreamPartCount("g", 200)
+	assert.Equal(t, 200, p.StreamPartCounts["g"])
+}
+
+// TestMarkSourceCompletedIdempotent pins that MarkSource*Completed advances
+// Progress exactly once per unique source key across all 7 resources.
+func TestMarkSourceCompletedIdempotent(t *testing.T) {
+	p := NewProgress("", logger.GetLogger("test"))
+
+	// Stream part: same key 3 times → Progress=1.
+	p.MarkSourceStreamPartCompleted("g", "src-seg", 0, 1)
+	p.MarkSourceStreamPartCompleted("g", "src-seg", 0, 1)
+	p.MarkSourceStreamPartCompleted("g", "src-seg", 0, 1)
+	assert.Equal(t, 1, p.StreamPartProgress["g"])
+	assert.True(t, p.IsSourceStreamPartCompleted("g", "src-seg", 0, 1))
+	// Different partID = different source = +1.
+	p.MarkSourceStreamPartCompleted("g", "src-seg", 0, 2)
+	assert.Equal(t, 2, p.StreamPartProgress["g"])
+
+	// Stream series, element_index, measure, trace: same pattern, +1 once.
+	p.MarkSourceStreamSeriesCompleted("g", "src-seg", 0)
+	p.MarkSourceStreamSeriesCompleted("g", "src-seg", 0)
 	assert.Equal(t, 1, p.StreamSeriesProgress["g"])
-	assert.True(t, p.IsStreamSeriesCompleted("g", "seg", 0))
 
-	// Stream element_index.
-	p.MarkStreamElementIndexCompleted("g", "seg", 0)
-	p.MarkStreamElementIndexCompleted("g", "seg", 0)
-	assert.Equal(t, 1, p.StreamElementIndexCounts["g"])
+	p.MarkSourceStreamElementIndexCompleted("g", "src-seg", 0)
+	p.MarkSourceStreamElementIndexCompleted("g", "src-seg", 0)
 	assert.Equal(t, 1, p.StreamElementIndexProgress["g"])
-	assert.True(t, p.IsStreamElementIndexCompleted("g", "seg", 0))
 
-	// Measure parts.
-	p.MarkMeasurePartCompleted("g", "seg", 0, 1)
-	p.MarkMeasurePartCompleted("g", "seg", 0, 1)
-	assert.Equal(t, 1, p.MeasurePartCounts["g"])
+	p.MarkSourceMeasurePartCompleted("g", "src-seg", 0, 1)
+	p.MarkSourceMeasurePartCompleted("g", "src-seg", 0, 1)
 	assert.Equal(t, 1, p.MeasurePartProgress["g"])
-	assert.True(t, p.IsMeasurePartCompleted("g", "seg", 0, 1))
 
-	// Measure series.
-	p.MarkMeasureSeriesCompleted("g", "seg", 0)
-	p.MarkMeasureSeriesCompleted("g", "seg", 0)
-	assert.Equal(t, 1, p.MeasureSeriesCounts["g"])
+	p.MarkSourceMeasureSeriesCompleted("g", "src-seg", 0)
+	p.MarkSourceMeasureSeriesCompleted("g", "src-seg", 0)
 	assert.Equal(t, 1, p.MeasureSeriesProgress["g"])
-	assert.True(t, p.IsMeasureSeriesCompleted("g", "seg", 0))
 
-	// Trace shard.
-	p.MarkTraceShardCompleted("g", "seg", 0)
-	p.MarkTraceShardCompleted("g", "seg", 0)
-	assert.Equal(t, 1, p.TraceShardCounts["g"])
+	p.MarkSourceTraceShardCompleted("g", "src-seg", 0)
+	p.MarkSourceTraceShardCompleted("g", "src-seg", 0)
 	assert.Equal(t, 1, p.TraceShardProgress["g"])
-	assert.True(t, p.IsTraceShardCompleted("g", "seg", 0))
 
-	// Trace series.
-	p.MarkTraceSeriesCompleted("g", "seg", 0)
-	p.MarkTraceSeriesCompleted("g", "seg", 0)
-	assert.Equal(t, 1, p.TraceSeriesCounts["g"])
+	p.MarkSourceTraceSeriesCompleted("g", "src-seg", 0)
+	p.MarkSourceTraceSeriesCompleted("g", "src-seg", 0)
 	assert.Equal(t, 1, p.TraceSeriesProgress["g"])
-	assert.True(t, p.IsTraceSeriesCompleted("g", "seg", 0))
 }
 
-// TestMarkError_Idempotent verifies that repeated Mark*Error calls for the
-// same key bump Counts exactly once across all 7 error buckets. Counts is
-// bumped (not Progress) so the denominator includes failed attempts and
-// the report can show completion_rate < 100 honestly.
-func TestMarkError_Idempotent(t *testing.T) {
+// TestClearErrors_AllSevenBuckets pins that ClearErrors resets every error
+// map (including trace) and does NOT touch Counts/Progress (which now
+// derive from pre-walk + MarkSource and are immutable to error replay).
+func TestClearErrors_AllSevenBuckets(t *testing.T) {
 	p := NewProgress("", logger.GetLogger("test"))
 
-	p.MarkStreamPartError("g", "seg", 0, 1, "first")
-	p.MarkStreamPartError("g", "seg", 0, 1, "duplicate")
-	assert.Equal(t, 1, p.StreamPartCounts["g"])
-	assert.Equal(t, 0, p.StreamPartProgress["g"], "errors must not bump Progress")
+	// Set planned counts (pre-walk).
+	p.SetStreamPartCount("g", 10)
+	p.SetStreamSeriesCount("g", 10)
+	p.SetStreamElementIndexCount("g", 10)
+	p.SetMeasurePartCount("g", 10)
+	p.SetMeasureSeriesCount("g", 10)
+	p.SetTraceShardCount("g", 10)
+	p.SetTraceSeriesCount("g", 10)
 
-	p.MarkStreamSeriesError("g", "seg", 0, "first")
-	p.MarkStreamSeriesError("g", "seg", 0, "duplicate")
-	assert.Equal(t, 1, p.StreamSeriesCounts["g"])
-	assert.Equal(t, 0, p.StreamSeriesProgress["g"], "errors must not bump Progress")
+	// Drop one error per bucket.
+	p.MarkStreamPartError("g", "s", 0, 1, "x")
+	p.MarkStreamSeriesError("g", "s", 0, "x")
+	p.MarkStreamElementIndexError("g", "s", 0, "x")
+	p.MarkMeasurePartError("g", "s", 0, 1, "x")
+	p.MarkMeasureSeriesError("g", "s", 0, "x")
+	p.MarkTraceShardError("g", "s", 0, "x")
+	p.MarkTraceSeriesError("g", "s", 0, "x")
 
-	p.MarkStreamElementIndexError("g", "seg", 0, "first")
-	p.MarkStreamElementIndexError("g", "seg", 0, "duplicate")
-	assert.Equal(t, 1, p.StreamElementIndexCounts["g"])
-	assert.Equal(t, 0, p.StreamElementIndexProgress["g"], "errors must not bump Progress")
-
-	p.MarkMeasurePartError("g", "seg", 0, 1, "first")
-	p.MarkMeasurePartError("g", "seg", 0, 1, "duplicate")
-	assert.Equal(t, 1, p.MeasurePartCounts["g"])
-	assert.Equal(t, 0, p.MeasurePartProgress["g"], "errors must not bump Progress")
-
-	p.MarkMeasureSeriesError("g", "seg", 0, "first")
-	p.MarkMeasureSeriesError("g", "seg", 0, "duplicate")
-	assert.Equal(t, 1, p.MeasureSeriesCounts["g"])
-	assert.Equal(t, 0, p.MeasureSeriesProgress["g"], "errors must not bump Progress")
-
-	p.MarkTraceShardError("g", "seg", 0, "first")
-	p.MarkTraceShardError("g", "seg", 0, "duplicate")
-	assert.Equal(t, 1, p.TraceShardCounts["g"])
-	assert.Equal(t, 0, p.TraceShardProgress["g"], "errors must not bump Progress")
-
-	p.MarkTraceSeriesError("g", "seg", 0, "first")
-	p.MarkTraceSeriesError("g", "seg", 0, "duplicate")
-	assert.Equal(t, 1, p.TraceSeriesCounts["g"])
-	assert.Equal(t, 0, p.TraceSeriesProgress["g"], "errors must not bump Progress")
-}
-
-// TestClearErrors_AdjustsCountsForRetry pins down the retry invariant:
-// after ClearErrors, the count contribution from cleared errors must be
-// subtracted so a successful retry's Mark*Completed can re-bump Counts
-// without producing a denominator that grows beyond the actual workload.
-// This guards against the >100 % completion rates the original report had.
-// Trace is exercised alongside stream because the original ClearErrors
-// completely missed the trace error maps -- the most regression-prone
-// path post-fix.
-func TestClearErrors_AdjustsCountsForRetry(t *testing.T) {
-	p := NewProgress("", logger.GetLogger("test"))
-
-	// --- Stream part path ---
-	// Cycle 1: one stream part succeeds, one fails. counts=2, progress=1.
-	p.MarkStreamPartCompleted("g", "seg", 0, 1)
-	p.MarkStreamPartError("g", "seg", 0, 2, "transport error")
-	assert.Equal(t, 2, p.StreamPartCounts["g"])
-	assert.Equal(t, 1, p.StreamPartProgress["g"])
-
-	// --- Trace shard path (the regression target ClearErrors must keep correct) ---
-	p.MarkTraceShardCompleted("trg", "tseg", 0)
-	p.MarkTraceShardError("trg", "tseg", 1, "trace transport error")
-	assert.Equal(t, 2, p.TraceShardCounts["trg"])
-	assert.Equal(t, 1, p.TraceShardProgress["trg"])
-
-	// action() calls ClearErrors at the top of each cycle.
 	p.ClearErrors()
 
-	// Stream: cleared error subtracted; success retained.
-	assert.Equal(t, 1, p.StreamPartCounts["g"], "ClearErrors must subtract cleared stream error contribution")
-	assert.Equal(t, 1, p.StreamPartProgress["g"])
 	assert.Empty(t, p.StreamPartErrors["g"])
+	assert.Empty(t, p.StreamSeriesErrors["g"])
+	assert.Empty(t, p.StreamElementIndexErrors["g"])
+	assert.Empty(t, p.MeasurePartErrors["g"])
+	assert.Empty(t, p.MeasureSeriesErrors["g"])
+	assert.Empty(t, p.TraceShardErrors["g"])
+	assert.Empty(t, p.TraceSeriesErrors["g"])
 
-	// Trace: cleared error subtracted; success retained.
-	assert.Equal(t, 1, p.TraceShardCounts["trg"], "ClearErrors must subtract cleared trace error contribution")
-	assert.Equal(t, 1, p.TraceShardProgress["trg"])
-	assert.Empty(t, p.TraceShardErrors["trg"])
-
-	// Cycle 2 retry: the previously-failed items now succeed.
-	p.MarkStreamPartCompleted("g", "seg", 0, 2)
-	assert.Equal(t, 2, p.StreamPartCounts["g"], "after stream retry counts back to 2 (parts 1+2)")
-	assert.Equal(t, 2, p.StreamPartProgress["g"])
-
-	p.MarkTraceShardCompleted("trg", "tseg", 1)
-	assert.Equal(t, 2, p.TraceShardCounts["trg"], "after trace retry counts back to 2 (shards 0+1)")
-	assert.Equal(t, 2, p.TraceShardProgress["trg"])
+	// Counts are pre-walk planned — must survive ClearErrors.
+	for _, c := range []int{
+		p.StreamPartCounts["g"], p.StreamSeriesCounts["g"], p.StreamElementIndexCounts["g"],
+		p.MeasurePartCounts["g"], p.MeasureSeriesCounts["g"],
+		p.TraceShardCounts["g"], p.TraceSeriesCounts["g"],
+	} {
+		assert.Equal(t, 10, c, "Counts must not be touched by ClearErrors")
+	}
 }
 
-// TestClearErrors_HandlesAllSevenBuckets is the contract for the trace
-// error fix: a previous version of ClearErrors only reset 5 stream/measure
-// error maps, leaving TraceShardErrors and TraceSeriesErrors untouched.
-// Stale trace errors then survived across cycles and (because the new
-// Mark*Error semantic bumps Counts) inflated the trace_migration
-// denominator on every retry. This test fails on the pre-fix code.
-func TestClearErrors_HandlesAllSevenBuckets(t *testing.T) {
+// TestPerTargetAndPerSourceAreIndependent pins that per-target dedup and
+// per-source progress are tracked independently: per-target Mark does not
+// move source progress, and MarkSource does not populate the per-target map.
+func TestPerTargetAndPerSourceAreIndependent(t *testing.T) {
 	p := NewProgress("", logger.GetLogger("test"))
 
-	p.MarkStreamPartError("g", "seg", 0, 1, "x")
-	p.MarkStreamSeriesError("g", "seg", 0, "x")
-	p.MarkStreamElementIndexError("g", "seg", 0, "x")
-	p.MarkMeasurePartError("g", "seg", 0, 1, "x")
-	p.MarkMeasureSeriesError("g", "seg", 0, "x")
-	p.MarkTraceShardError("g", "seg", 0, "x")
-	p.MarkTraceSeriesError("g", "seg", 0, "x")
+	p.MarkStreamPartCompleted("g", "tgt-1", 0, 1)
+	assert.True(t, p.IsStreamPartCompleted("g", "tgt-1", 0, 1))
+	assert.False(t, p.IsSourceStreamPartCompleted("g", "src-1", 0, 1))
+	assert.Equal(t, 0, p.StreamPartProgress["g"])
 
-	for _, c := range []int{
-		p.StreamPartCounts["g"], p.StreamSeriesCounts["g"], p.StreamElementIndexCounts["g"],
-		p.MeasurePartCounts["g"], p.MeasureSeriesCounts["g"],
-		p.TraceShardCounts["g"], p.TraceSeriesCounts["g"],
-	} {
-		assert.Equal(t, 1, c, "each error bucket must bump its Counts by 1")
-	}
-
-	p.ClearErrors()
-
-	assert.Empty(t, p.StreamPartErrors["g"], "stream_parts errors must be cleared")
-	assert.Empty(t, p.StreamSeriesErrors["g"], "stream_series errors must be cleared")
-	assert.Empty(t, p.StreamElementIndexErrors["g"], "stream_element_index errors must be cleared")
-	assert.Empty(t, p.MeasurePartErrors["g"], "measure_parts errors must be cleared")
-	assert.Empty(t, p.MeasureSeriesErrors["g"], "measure_series errors must be cleared")
-	assert.Empty(t, p.TraceShardErrors["g"], "trace_parts errors must be cleared")
-	assert.Empty(t, p.TraceSeriesErrors["g"], "trace_series errors must be cleared")
-
-	for _, c := range []int{
-		p.StreamPartCounts["g"], p.StreamSeriesCounts["g"], p.StreamElementIndexCounts["g"],
-		p.MeasurePartCounts["g"], p.MeasureSeriesCounts["g"],
-		p.TraceShardCounts["g"], p.TraceSeriesCounts["g"],
-	} {
-		assert.Equal(t, 0, c, "each Counts must be subtracted back to 0 after ClearErrors")
-	}
+	p.MarkSourceStreamPartCompleted("g", "src-1", 0, 1)
+	assert.True(t, p.IsSourceStreamPartCompleted("g", "src-1", 0, 1))
+	// Per-target map untouched by source mark.
+	assert.False(t, p.IsStreamPartCompleted("g", "src-1", 0, 1))
+	assert.Equal(t, 1, p.StreamPartProgress["g"])
 }

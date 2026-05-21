@@ -210,6 +210,15 @@ func (mv *measureMigrationVisitor) VisitSeries(segmentTR *timestamp.TimeRange, s
 		}
 	}
 
+	// Mark each source series file as fully migrated (idempotent — bumps Progress once per source).
+	for _, segmentFileName := range segmentFiles {
+		fileSegmentIDStr := strings.TrimSuffix(segmentFileName, ".seg")
+		segmentID, parseErr := strconv.ParseUint(fileSegmentIDStr, 16, 64)
+		if parseErr != nil {
+			continue
+		}
+		mv.progress.MarkSourceMeasureSeriesCompleted(mv.group, seriesIndexPath, common.ShardID(segmentID))
+	}
 	return nil
 }
 
@@ -222,6 +231,9 @@ func (mv *measureMigrationVisitor) VisitPart(_ *timestamp.TimeRange, sourceShard
 	partID, err := parsePartIDFromPath(partPath)
 	if err != nil {
 		return fmt.Errorf("failed to parse part ID from path: %w", err)
+	}
+	if mv.progress.IsSourceMeasurePartCompleted(mv.group, partPath, sourceShardID, partID) {
+		return nil
 	}
 
 	// Calculate ALL target segments this part should go to
@@ -288,6 +300,7 @@ func (mv *measureMigrationVisitor) VisitPart(_ *timestamp.TimeRange, sourceShard
 			Msgf("measure part migration completed for target segment %d/%d", i+1, len(targetSegments))
 	}
 
+	mv.progress.MarkSourceMeasurePartCompleted(mv.group, partPath, sourceShardID, partID)
 	return nil
 }
 
@@ -394,4 +407,26 @@ func (mv *measureMigrationVisitor) createStreamingSegmentFromFiles(
 	}
 
 	return segmentData
+}
+
+// SetMeasurePartCount sets the total number of parts for the current measure.
+func (mv *measureMigrationVisitor) SetMeasurePartCount(totalParts int) {
+	if mv.progress != nil {
+		mv.progress.SetMeasurePartCount(mv.group, totalParts)
+		mv.logger.Info().
+			Str("group", mv.group).
+			Int("total_parts", totalParts).
+			Msg("set measure part count for progress tracking")
+	}
+}
+
+// SetMeasureSeriesCount sets the total number of series segments for the current measure.
+func (mv *measureMigrationVisitor) SetMeasureSeriesCount(totalSegments int) {
+	if mv.progress != nil {
+		mv.progress.SetMeasureSeriesCount(mv.group, totalSegments)
+		mv.logger.Info().
+			Str("group", mv.group).
+			Int("total_segments", totalSegments).
+			Msg("set measure series count for progress tracking")
+	}
 }

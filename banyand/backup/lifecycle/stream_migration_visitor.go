@@ -217,6 +217,15 @@ func (mv *streamMigrationVisitor) VisitSeries(segmentTR *timestamp.TimeRange, se
 		}
 	}
 
+	// Mark each source series file as fully migrated (idempotent — bumps Progress once per source).
+	for _, segmentFileName := range segmentFiles {
+		fileSegmentIDStr := strings.TrimSuffix(segmentFileName, ".seg")
+		segmentID, parseErr := strconv.ParseUint(fileSegmentIDStr, 16, 64)
+		if parseErr != nil {
+			continue
+		}
+		mv.progress.MarkSourceStreamSeriesCompleted(mv.group, seriesIndexPath, common.ShardID(segmentID))
+	}
 	return nil
 }
 
@@ -229,6 +238,9 @@ func (mv *streamMigrationVisitor) VisitPart(_ *timestamp.TimeRange, sourceShardI
 	partID, err := parsePartIDFromPath(partPath)
 	if err != nil {
 		return fmt.Errorf("failed to parse part ID from path: %w", err)
+	}
+	if mv.progress.IsSourceStreamPartCompleted(mv.group, partPath, sourceShardID, partID) {
+		return nil
 	}
 
 	// Calculate ALL target segments this part should go to
@@ -295,6 +307,7 @@ func (mv *streamMigrationVisitor) VisitPart(_ *timestamp.TimeRange, sourceShardI
 			Msgf("part migration completed for target segment %d/%d", i+1, len(targetSegments))
 	}
 
+	mv.progress.MarkSourceStreamPartCompleted(mv.group, partPath, sourceShardID, partID)
 	return nil
 }
 
@@ -306,6 +319,9 @@ func (mv *streamMigrationVisitor) VisitElementIndex(segmentTR *timestamp.TimeRan
 			Str("group", mv.group).
 			Uint32("source_shard", uint32(sourceShardID)).
 			Msg("element index segment already completed, skipping")
+		// Per-target write done; ensure source progress is recorded to survive
+		// a crash between MarkStreamElementIndexCompleted and MarkSource (idempotent).
+		mv.progress.MarkSourceStreamElementIndexCompleted(mv.group, indexPath, sourceShardID)
 		return nil
 	}
 
@@ -405,6 +421,7 @@ func (mv *streamMigrationVisitor) VisitElementIndex(segmentTR *timestamp.TimeRan
 
 	// Mark segment as completed
 	mv.progress.MarkStreamElementIndexCompleted(mv.group, segmentIDStr, sourceShardID)
+	mv.progress.MarkSourceStreamElementIndexCompleted(mv.group, indexPath, sourceShardID)
 
 	return nil
 }
@@ -505,6 +522,39 @@ func (mv *streamMigrationVisitor) createStreamingSegmentFromFiles(
 	}
 
 	return segmentData
+}
+
+// SetStreamPartCount sets the total number of parts for the current stream.
+func (mv *streamMigrationVisitor) SetStreamPartCount(totalParts int) {
+	if mv.progress != nil {
+		mv.progress.SetStreamPartCount(mv.group, totalParts)
+		mv.logger.Info().
+			Str("group", mv.group).
+			Int("total_parts", totalParts).
+			Msg("set stream part count for progress tracking")
+	}
+}
+
+// SetStreamSeriesCount sets the total number of series segments for the current stream.
+func (mv *streamMigrationVisitor) SetStreamSeriesCount(totalSegments int) {
+	if mv.progress != nil {
+		mv.progress.SetStreamSeriesCount(mv.group, totalSegments)
+		mv.logger.Info().
+			Str("group", mv.group).
+			Int("total_segments", totalSegments).
+			Msg("set stream series count for progress tracking")
+	}
+}
+
+// SetStreamElementIndexCount sets the total number of element index segment files for the current stream.
+func (mv *streamMigrationVisitor) SetStreamElementIndexCount(totalSegmentFiles int) {
+	if mv.progress != nil {
+		mv.progress.SetStreamElementIndexCount(mv.group, totalSegmentFiles)
+		mv.logger.Info().
+			Str("group", mv.group).
+			Int("total_segment_files", totalSegmentFiles).
+			Msg("set stream element index segment count for progress tracking")
+	}
 }
 
 // calculateTargetShardID maps source shard ID to target shard ID using proportional mapping.

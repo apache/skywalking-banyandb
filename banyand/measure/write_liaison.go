@@ -135,11 +135,20 @@ func (w *writeQueueCallback) Rev(ctx context.Context, message bus.Message) (resp
 				w.l.Warn().Uint32("shardID", uint32(es.shardID)).Msg("no nodes found for shard")
 				continue
 			}
+			routeTs := es.timeRange.End.UnixNano() - 1
+			if es.dataPoints != nil && len(es.dataPoints.timestamps) > 0 {
+				routeTs = es.dataPoints.timestamps[0]
+				for _, t := range es.dataPoints.timestamps[1:] {
+					if t < routeTs {
+						routeTs = t
+					}
+				}
+			}
 			sendDocuments := func(topic bus.Topic, seriesDocData []byte) {
 				// Encode group name, start timestamp from timeRange, and prepend to docData
 				combinedData := make([]byte, 0, len(seriesDocData)+len(g.name)+8)
 				combinedData = encoding.EncodeBytes(combinedData, convert.StringToBytes(g.name))
-				combinedData = encoding.Int64ToBytes(combinedData, es.timeRange.Start.UnixNano())
+				combinedData = encoding.Int64ToBytes(combinedData, routeTs)
 				combinedData = append(combinedData, seriesDocData...)
 
 				// Send to all nodes for this shard

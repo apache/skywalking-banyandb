@@ -218,6 +218,15 @@ func (mv *traceMigrationVisitor) VisitSeries(segmentTR *timestamp.TimeRange, ser
 		}
 	}
 
+	// Mark each source series file as fully migrated (idempotent — bumps Progress once per source).
+	for _, segmentFileName := range segmentFiles {
+		fileSegmentIDStr := strings.TrimSuffix(segmentFileName, ".seg")
+		segmentID, parseErr := strconv.ParseUint(fileSegmentIDStr, 16, 64)
+		if parseErr != nil {
+			continue
+		}
+		mv.progress.MarkSourceTraceSeriesCompleted(mv.group, seriesIndexPath, common.ShardID(segmentID))
+	}
 	return nil
 }
 
@@ -233,6 +242,9 @@ func (mv *traceMigrationVisitor) VisitShard(timestampTR *timestamp.TimeRange, so
 			Str("group", mv.group).
 			Uint32("source_shard", uint32(sourceShardID)).
 			Msg("trace shard already completed for this target segment, skipping")
+		// Per-target write done; ensure source progress is recorded to survive
+		// a crash between MarkTraceShardCompleted and MarkSource (idempotent).
+		mv.progress.MarkSourceTraceShardCompleted(mv.group, segmentIDStr, sourceShardID)
 		return nil
 	}
 	allParts := make([]queue.StreamingPartData, 0)
@@ -277,6 +289,7 @@ func (mv *traceMigrationVisitor) VisitShard(timestampTR *timestamp.TimeRange, so
 
 	// Mark shard as completed for this target segment
 	mv.progress.MarkTraceShardCompleted(mv.group, segmentIDStr, sourceShardID)
+	mv.progress.MarkSourceTraceShardCompleted(mv.group, segmentIDStr, sourceShardID)
 	mv.logger.Info().
 		Str("group", mv.group).
 		Msgf("trace shard migration completed for target segment")
@@ -572,4 +585,26 @@ func (mv *traceMigrationVisitor) createStreamingSegmentFromFiles(
 	}
 
 	return segmentData
+}
+
+// SetTraceShardCount sets the total number of shards for the current trace.
+func (mv *traceMigrationVisitor) SetTraceShardCount(totalShards int) {
+	if mv.progress != nil {
+		mv.progress.SetTraceShardCount(mv.group, totalShards)
+		mv.logger.Info().
+			Str("group", mv.group).
+			Int("total_shards", totalShards).
+			Msg("set trace part count for progress tracking")
+	}
+}
+
+// SetTraceSeriesCount sets the total number of series segments for the current trace.
+func (mv *traceMigrationVisitor) SetTraceSeriesCount(totalSegments int) {
+	if mv.progress != nil {
+		mv.progress.SetTraceSeriesCount(mv.group, totalSegments)
+		mv.logger.Info().
+			Str("group", mv.group).
+			Int("total_segments", totalSegments).
+			Msg("set trace series count for progress tracking")
+	}
 }
