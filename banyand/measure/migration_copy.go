@@ -207,7 +207,7 @@ func MigrationCopy(ctx context.Context, cfg DirectCopyConfig) (DirectCopyResult,
 
 	logStep("loading measure schemas")
 	//nolint:contextcheck // bluge reader.Search inside walkSchemaPropertyShard already uses its own context.
-	schemas, err := loadMeasureSchemasFromSchemaCatalog(cfg.BackupDir, cfg.SchemaPropertyPath, cfg.Groups)
+	schemas, err := loadMeasureSchemasFromSchemaCatalog(cfg.BackupDir, cfg.Date, cfg.SchemaPropertyPath, cfg.Groups)
 	if err != nil {
 		return res, fmt.Errorf("load measure schemas: %w", err)
 	}
@@ -226,7 +226,7 @@ func MigrationCopy(ctx context.Context, cfg DirectCopyConfig) (DirectCopyResult,
 	}
 
 	//nolint:contextcheck // bluge reader.Search inside walkSchemaPropertyShard already uses its own context.
-	resourceOpts, err := loadGroupResourceOptsFromSchema(cfg.BackupDir, cfg.SchemaPropertyPath, cfg.Groups)
+	resourceOpts, err := loadGroupResourceOptsFromSchema(cfg.BackupDir, cfg.Date, cfg.SchemaPropertyPath, cfg.Groups)
 	if err != nil {
 		return res, fmt.Errorf("load group resource opts: %w", err)
 	}

@@ -165,7 +165,7 @@ func TestFetchMeasureSchemasFromSchema_returnsRequestedGroups(t *testing.T) {
 	}
 	synthBackup(t, dir, synthGroupsFromNames(append(groups, "g_d")...), measures)
 
-	byGroup, err := fetchMeasureSchemasFromSchema(dir, "", groups)
+	byGroup, err := fetchMeasureSchemasFromSchema(dir, "", "", groups)
 	if err != nil {
 		t.Fatalf("fetchMeasureSchemasFromSchema: %v", err)
 	}
@@ -194,7 +194,7 @@ func TestFetchMeasureSchemasFromSchema_schemaFieldsArePopulated(t *testing.T) {
 		{group: "g_a", name: "m_a1", modRev: 1},
 	})
 
-	byGroup, err := fetchMeasureSchemasFromSchema(dir, "", []string{"g_a"})
+	byGroup, err := fetchMeasureSchemasFromSchema(dir, "", "", []string{"g_a"})
 	if err != nil {
 		t.Fatalf("fetchMeasureSchemasFromSchema: %v", err)
 	}
@@ -227,7 +227,7 @@ func TestFetchMeasureSchemasFromSchema_unknownGroupReturnsEmpty(t *testing.T) {
 		{group: "g_a", name: "m_a1", modRev: 1},
 	})
 
-	byGroup, err := fetchMeasureSchemasFromSchema(dir, "", []string{"this_group_does_not_exist"})
+	byGroup, err := fetchMeasureSchemasFromSchema(dir, "", "", []string{"this_group_does_not_exist"})
 	if err != nil {
 		t.Fatalf("fetchMeasureSchemasFromSchema: %v", err)
 	}
@@ -237,7 +237,7 @@ func TestFetchMeasureSchemasFromSchema_unknownGroupReturnsEmpty(t *testing.T) {
 }
 
 func TestFetchMeasureSchemasFromSchema_missingBackupDir(t *testing.T) {
-	_, err := fetchMeasureSchemasFromSchema("/no/such/dir/should/exist", "", []string{"g_a"})
+	_, err := fetchMeasureSchemasFromSchema("/no/such/dir/should/exist", "", "", []string{"g_a"})
 	if err == nil {
 		t.Fatal("expected error for nonexistent backup-dir, got nil")
 	}
@@ -258,7 +258,7 @@ func TestFetchMeasureSchemasFromSchema_dedupesStaleRevisions(t *testing.T) {
 		{group: "g_a", name: "m_a1", modRev: 3},
 	})
 
-	byGroup, err := fetchMeasureSchemasFromSchema(dir, "", []string{"g_a"})
+	byGroup, err := fetchMeasureSchemasFromSchema(dir, "", "", []string{"g_a"})
 	if err != nil {
 		t.Fatalf("fetchMeasureSchemasFromSchema: %v", err)
 	}
@@ -291,7 +291,7 @@ func TestLoadGroupResourceOptsFromSchema_returnsRequestedGroups(t *testing.T) {
 		{name: "g_skipped", opts: hourly}, // present in catalog, not requested
 	}, nil)
 
-	got, err := loadGroupResourceOptsFromSchema(dir, "",
+	got, err := loadGroupResourceOptsFromSchema(dir, "", "",
 		[]string{"g_hourly", "g_daily"})
 	if err != nil {
 		t.Fatalf("loadGroupResourceOptsFromSchema: %v", err)

@@ -151,22 +151,13 @@ func CountBlugeDocs(path string) (uint64, error) {
 		return 0, err
 	}
 	defer func() { _ = reader.Close() }()
-	dmi, err := reader.Search(context.Background(),
-		bluge.NewAllMatches(bluge.NewMatchAllQuery()))
-	if err != nil {
-		return 0, err
-	}
-	var count uint64
-	for {
-		next, nextErr := dmi.Next()
-		if nextErr != nil {
-			return count, nextErr
-		}
-		if next == nil {
-			return count, nil
-		}
-		count++
-	}
+	// Reader.Count sums per-segment doc counts in O(numSegments), not
+	// O(numDocs) — important for `verify` because the union sidx is
+	// broadcast into every aligned target seg of a group and we call
+	// CountBlugeDocs once per seg. Iterating dmi.Next() instead would
+	// scale with total docs × broadcast fan-out and dominate verify
+	// runtime on production-sized datasets.
+	return reader.Count()
 }
 
 // EnumerateGroupTarget walks <groupRoot>/seg-* and reports per-segment
@@ -327,7 +318,7 @@ func MigrationVerify(ctx context.Context, cfg DirectCopyConfig, onReport func(En
 		return err
 	}
 	//nolint:contextcheck // bluge reader.Search inside walkSchemaPropertyShard already uses its own context.
-	resourceOpts, err := loadGroupResourceOptsFromSchema(cfg.BackupDir, cfg.SchemaPropertyPath, cfg.Groups)
+	resourceOpts, err := loadGroupResourceOptsFromSchema(cfg.BackupDir, cfg.Date, cfg.SchemaPropertyPath, cfg.Groups)
 	if err != nil {
 		return fmt.Errorf("load group resource opts: %w", err)
 	}

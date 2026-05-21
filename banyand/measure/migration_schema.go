@@ -136,12 +136,13 @@ const (
 // by callers that mount a live cluster's schema-property PVC and want
 // to skip the backup-style `<node>/<date>/` discovery). Otherwise the
 // caller falls back to walking the backup snapshot via
-// findSchemaPropertyRoot.
-func resolveSchemaRoot(backupDir, schemaPropertyPath string) (string, error) {
+// findSchemaPropertyRoot, restricted to date (when non-empty) so the
+// schemas come from the same snapshot as the migrated measure data.
+func resolveSchemaRoot(backupDir, date, schemaPropertyPath string) (string, error) {
 	if schemaPropertyPath != "" {
 		return schemaPropertyPath, nil
 	}
-	return findSchemaPropertyRoot(backupDir)
+	return findSchemaPropertyRoot(backupDir, date)
 }
 
 // loadMeasureSchemasFromSchemaCatalog reads every measure schema under the
@@ -158,8 +159,8 @@ func resolveSchemaRoot(backupDir, schemaPropertyPath string) (string, error) {
 // with the highest mod_revision wins, and the winning entry is dropped
 // entirely if it carries a non-zero _deleted marker (the schema was
 // tombstoned at that revision).
-func loadMeasureSchemasFromSchemaCatalog(backupDir, schemaPropertyPath string, groups []string) (map[string]map[string]*measureSchemaInfo, error) {
-	byGroup, err := fetchMeasureSchemasFromSchema(backupDir, schemaPropertyPath, groups)
+func loadMeasureSchemasFromSchemaCatalog(backupDir, date, schemaPropertyPath string, groups []string) (map[string]map[string]*measureSchemaInfo, error) {
+	byGroup, err := fetchMeasureSchemasFromSchema(backupDir, date, schemaPropertyPath, groups)
 	if err != nil {
 		return nil, err
 	}
@@ -175,7 +176,7 @@ func loadMeasureSchemasFromSchemaCatalog(backupDir, schemaPropertyPath string, g
 	return out, nil
 }
 
-func fetchMeasureSchemasFromSchema(backupDir, schemaPropertyPath string, groups []string) (map[string][]*measureSchemaInfo, error) {
+func fetchMeasureSchemasFromSchema(backupDir, date, schemaPropertyPath string, groups []string) (map[string][]*measureSchemaInfo, error) {
 	if backupDir == "" && schemaPropertyPath == "" {
 		return nil, errors.New("either backup-dir or schema-property-path is required")
 	}
@@ -183,7 +184,7 @@ func fetchMeasureSchemasFromSchema(backupDir, schemaPropertyPath string, groups 
 	for _, g := range groups {
 		wanted[g] = true
 	}
-	schemaRoot, err := resolveSchemaRoot(backupDir, schemaPropertyPath)
+	schemaRoot, err := resolveSchemaRoot(backupDir, date, schemaPropertyPath)
 	if err != nil {
 		return nil, err
 	}
@@ -222,43 +223,63 @@ type schemaCandidate struct {
 	deleted bool
 }
 
-// findSchemaPropertyRoot walks <backup>/<node>/<date>/ and returns the first
-// schema-property/_schema directory it finds. Hot/schema-server pods are the
-// only ones whose backup carries this catalog.
-func findSchemaPropertyRoot(backupDir string) (string, error) {
+// findSchemaPropertyRoot walks <backup>/<node>/<date>/ and returns the
+// first schema-property/_schema directory it finds. Hot/schema-server
+// pods are the only ones whose backup carries this catalog.
+//
+// When date is non-empty, only `<node>/<date>/...` subtrees are
+// considered — this is the typical case where the caller migrates a
+// specific snapshot and must not silently pick up schemas from a
+// different (older/newer) date that happens to live under the same
+// backup root.
+func findSchemaPropertyRoot(backupDir, date string) (string, error) {
 	nodes, err := os.ReadDir(backupDir)
 	if err != nil {
 		return "", fmt.Errorf("read backup dir %q: %w", backupDir, err)
+	}
+	tryDate := func(nodeRoot, d string) (string, bool) {
+		p := filepath.Join(nodeRoot, d, backupsnapshot.SchemaPropertyCatalogName, schema.SchemaGroup)
+		info, statErr := os.Stat(p)
+		return p, statErr == nil && info.IsDir()
 	}
 	for _, node := range nodes {
 		if !node.IsDir() {
 			continue
 		}
 		nodeRoot := filepath.Join(backupDir, node.Name())
-		dates, readErr := os.ReadDir(nodeRoot)
-		if readErr != nil {
-			continue
-		}
-		for _, date := range dates {
-			if !date.IsDir() {
+		candidates := []string{date}
+		if date == "" {
+			dates, readErr := os.ReadDir(nodeRoot)
+			if readErr != nil {
 				continue
 			}
-			cand := filepath.Join(nodeRoot, date.Name(), backupsnapshot.SchemaPropertyCatalogName, schema.SchemaGroup)
-			if info, statErr := os.Stat(cand); statErr == nil && info.IsDir() {
-				return cand, nil
+			candidates = candidates[:0]
+			for _, d := range dates {
+				if d.IsDir() {
+					candidates = append(candidates, d.Name())
+				}
+			}
+		}
+		for _, c := range candidates {
+			if p, ok := tryDate(nodeRoot, c); ok {
+				return p, nil
 			}
 		}
 	}
+	dateClause := ""
+	if date != "" {
+		dateClause = fmt.Sprintf(" for date %q", date)
+	}
 	return "", errors.WithMessagef(errSchemaPropertyMissing,
-		"no %s/%s directory found under %q (only hot/schema-server node backups carry schemas)",
-		backupsnapshot.SchemaPropertyCatalogName, schema.SchemaGroup, backupDir)
+		"no %s/%s directory found under %q%s (only hot/schema-server node backups carry schemas)",
+		backupsnapshot.SchemaPropertyCatalogName, schema.SchemaGroup, backupDir, dateClause)
 }
 
 // loadGroupResourceOptsFromSchema scans the schema-property bluge index
 // for commonv1.Group docs and returns each requested group's
 // ResourceOpts (carrying SegmentInterval + Stages). Missing groups are
 // simply absent from the result map.
-func loadGroupResourceOptsFromSchema(backupDir, schemaPropertyPath string, groups []string) (map[string]*commonv1.ResourceOpts, error) {
+func loadGroupResourceOptsFromSchema(backupDir, date, schemaPropertyPath string, groups []string) (map[string]*commonv1.ResourceOpts, error) {
 	if backupDir == "" && schemaPropertyPath == "" {
 		return nil, errors.New("either backup-dir or schema-property-path is required")
 	}
@@ -266,7 +287,7 @@ func loadGroupResourceOptsFromSchema(backupDir, schemaPropertyPath string, group
 	for _, g := range groups {
 		wanted[g] = true
 	}
-	schemaRoot, err := resolveSchemaRoot(backupDir, schemaPropertyPath)
+	schemaRoot, err := resolveSchemaRoot(backupDir, date, schemaPropertyPath)
 	if err != nil {
 		return nil, err
 	}

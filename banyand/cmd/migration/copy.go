@@ -22,7 +22,6 @@ import (
 	"fmt"
 	"os"
 	"os/signal"
-	"runtime"
 	"runtime/debug"
 	"strconv"
 	"syscall"
@@ -154,17 +153,13 @@ func applyGoMemLimit() {
 	}
 	limit, err := cgroups.MemoryLimit()
 	if err != nil || limit <= 0 {
-		// Fall back to 85% of host total memory. cgroups.MemoryLimit
-		// returns -1 for "max" (unlimited) on a non-containerised host.
-		var ms runtime.MemStats
-		runtime.ReadMemStats(&ms)
-		if ms.Sys == 0 {
-			fmt.Fprintf(os.Stdout, "[migration] GOMEMLIMIT not set (no cgroup limit, runtime.MemStats unavailable)\n")
-			return
-		}
-		// MemStats.Sys reports OS memory reserved for the runtime, not
-		// host RAM. As a heuristic we don't set a limit here.
-		fmt.Fprintf(os.Stdout, "[migration] GOMEMLIMIT not set (cgroup limit unavailable; running on bare host)\n")
+		// No reliable bound: cgroups.MemoryLimit returns -1 for "max"
+		// (unlimited) on a non-containerised host, and Go's std lib has
+		// no portable cheap accessor for host total RAM (runtime.MemStats
+		// reports memory reserved for the runtime itself, not the host).
+		// Leave GOMEMLIMIT unset on this branch and rely on the operator
+		// (or the kernel OOMKiller) to bound the process.
+		fmt.Fprintf(os.Stdout, "[migration] GOMEMLIMIT not set (no cgroup limit; running on bare host)\n")
 		return
 	}
 	memLimit := int64(float64(limit) * 0.85)
