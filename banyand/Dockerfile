@@ -27,6 +27,7 @@ COPY build/bin/linux/${TARGETARCH}/banyand-server-${BINARYTYPE} /banyand
 COPY build/bin/linux/${TARGETARCH}/banyand-backup-${BINARYTYPE} /backup
 COPY build/bin/linux/${TARGETARCH}/banyand-restore-${BINARYTYPE} /restore
 COPY build/bin/linux/${TARGETARCH}/banyand-lifecycle-${BINARYTYPE} /lifecycle
+COPY build/bin/linux/${TARGETARCH}/banyand-migration-${BINARYTYPE} /migration
 COPY --from=certs /etc/ssl/certs /etc/ssl/certs
 
 FROM build-${TARGETOS} AS final
