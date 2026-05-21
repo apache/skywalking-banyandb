@@ -93,7 +93,12 @@ func walkSchemaPropertyShard(shardPath string, visit func(schemaPropDoc) error) 
 		}
 		var prop propertyv1.Property
 		if err := protojson.Unmarshal(sourceBytes, &prop); err != nil {
-			continue
+			// Surface the failure with the shard path + a snippet of the
+			// offending JSON so an operator hitting a corrupt catalog can
+			// see WHERE the parse broke instead of just "missing schema"
+			// later in the run.
+			return fmt.Errorf("unmarshal property doc in %s (%d source bytes): %w",
+				shardPath, len(sourceBytes), err)
 		}
 		var group, srcJSON string
 		for _, t := range prop.GetTags() {

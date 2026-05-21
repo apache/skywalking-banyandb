@@ -78,6 +78,11 @@ type EntryGroupReport struct {
 // sum of partMetadata.TotalCount plus the part count.
 //
 // Errors (instead of t.Fatalf) so this helper is usable from a CLI.
+//
+// fileSystem is passed through to mustOpenFilePart. Directory listing
+// and .snp reads go through the os package directly: fs.FileSystem's
+// ReadDir panics on missing directories, and verify is read-only, so
+// the abstraction is intentionally bypassed for the enumeration path.
 func VerifyShardParts(shardDir string, fileSystem fs.FileSystem) (uint64, int, error) {
 	entries, err := os.ReadDir(shardDir)
 	if err != nil {

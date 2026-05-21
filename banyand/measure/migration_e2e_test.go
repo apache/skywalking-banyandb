@@ -104,6 +104,16 @@ var _ = Describe("MigrationCopy end-to-end (live service)", func() {
 			_, ok := svcs.measure.LoadGroup(group)
 			return ok
 		}).WithTimeout(30 * time.Second).Should(BeTrue())
+		// Group-loaded does NOT imply measure-loaded — the measure
+		// event arrives on a separate schemaRepo channel. Wait for
+		// it explicitly, otherwise the first writes get rejected with
+		// "cannot find measure definition" and the Eventually below
+		// times out waiting for segments to land.
+		Eventually(func() error {
+			_, err := svcs.measure.Measure(&commonv1.Metadata{Name: measureName, Group: group})
+			return err
+		}).WithTimeout(30*time.Second).Should(Succeed(),
+			"source service should resolve the measure before writes are published")
 
 		// Pick two timestamps that land in DIFFERENT DAY×2 buckets:
 		// align "now" down to the current 2-day bucket, then step back 2

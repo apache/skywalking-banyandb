@@ -653,6 +653,12 @@ func sortVersionsAsc(vs []VersionWithPath) {
 // openAllPartsInRoots enumerates every part dir under the given roots,
 // opens each via mustOpenFilePart, and returns the *part slice + a
 // partID → full path map. Caller must closeAllParts when done.
+//
+// fileSystem is passed through to mustOpenFilePart. Directory walking
+// goes through the os package directly: fs.FileSystem's ReadDir panics
+// on missing directories, while this walker must skip roots that don't
+// exist on every PVC (hash-shard sparsity). The abstraction is
+// intentionally bypassed for the enumeration path.
 func openAllPartsInRoots(roots []string, fileSystem fs.FileSystem) ([]*part, map[uint64]string, error) {
 	var parts []*part
 	pathByID := make(map[uint64]string, 64)

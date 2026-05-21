@@ -54,7 +54,7 @@ Release Notes.
   - Fix the `notifiedModRevision` watermark advancement in `SchemaRegistry.processInitialResourceFromProperty`, `handleWatchEvent` (DELETE branch), and `handleDeletion`. Previously `AdvanceNotified` was gated on `cache.Update` / `cache.Delete` returning true, but those methods compare `latestUpdateAt` (property timestamp) while the watermark tracks `modRevision` (etcd revision). When the property timestamp is stale (e.g. a no-op Update that doesn't change the measure spec), the cache rejects the entry and the watermark cannot advance, causing `AwaitRevisionApplied(R)` to block forever even though the event has been fully processed. `AdvanceNotified` now fires unconditionally whenever an event reaches the processing stage, regardless of cache mutation outcome.
   - Fix the `modRevision` contract on no-op Update RPCs (`MeasureRegistryService.Update`, etc.). Previously `updateResource` detected unchanged content via `CheckerMap` and short-circuited without writing to the property store, but the caller had already fabricated `modRevision = time.Now().UnixNano()` and returned it. The returned revision never appeared in the property watch stream, so `AwaitRevisionApplied(R)` would hang. `updateResource` now returns `(int64, error)` — the existing property's `modRevision` for no-op updates, the new revision for real updates — so callers always return a revision the barrier can observe.
   - Add end-to-end observability for liaison internal queue pipelines with per-topic metrics for queue_sub and queue_pub, along with Grafana panels and troubleshooting docs.
-  - Introduce measure migration tool. 
+  - Introduce measure migration tool.
 
 ### Bug Fixes
 

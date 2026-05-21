@@ -117,14 +117,23 @@ type verifyMismatch struct {
 	TgtRows  uint64
 }
 
-// entryNodeName picks the first node from EntryNodes (entries usually
-// reference exactly one node); falls back to the entry stage when the
-// list is empty (e.g. backup-mode plans without explicit nodes).
+// entryNodeName picks the coverage-table row label for an EntryGroupReport.
+// Entries usually carry exactly one node (live mode), in which case the
+// label IS that node. When an entry references multiple nodes
+// (backup-mode plans that fan one target out across several backup-node
+// dirs), the report's SrcRows / TargetSegs are aggregated across all of
+// them — so we join the node names with `,` to make it explicit that the
+// row aggregates more than one node. Falls back to the entry stage when
+// EntryNodes is empty (defensive: validation requires at least one).
 func entryNodeName(r measure.EntryGroupReport) string {
-	if len(r.EntryNodes) > 0 {
+	switch len(r.EntryNodes) {
+	case 0:
+		return r.EntryStage
+	case 1:
 		return r.EntryNodes[0]
+	default:
+		return strings.Join(r.EntryNodes, ",")
 	}
-	return r.EntryStage
 }
 
 func (t *verifyTally) absorb(r measure.EntryGroupReport) {
@@ -212,7 +221,8 @@ func (t *verifyTally) printSummary() {
 		fmt.Println("        deduping (seriesID, timestamp) within each chunk flush — banyandb's")
 		fmt.Println("        merger can leave duplicated boundary rows in source parts, and")
 		fmt.Println("        only the latest version of each (sid, ts) survives in target.")
-		fmt.Println("        Pass --detail to list the exact missing (sid, ts, version) rows.")
+		fmt.Println("        Run `migration analyze --entry-idx <i> --group <g>` for the exact")
+		fmt.Println("        missing (sid, ts, version) rows of any (entry, group) shown above.")
 	}
 }
 
