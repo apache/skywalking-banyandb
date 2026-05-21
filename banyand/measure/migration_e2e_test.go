@@ -224,12 +224,19 @@ var _ = Describe("MigrationCopy end-to-end (live service)", func() {
 			// segmentController guarantees at runtime. Asserting this on
 			// the migrated target catches grid drift the per-seg
 			// EnumerateGroupTarget Aligned bit alone won't flag.
-			Expect(twoDayInterval.Standard(r.StartTime)).To(Equal(r.StartTime),
+			// time.Time comparisons go through BeTemporally rather than
+			// gomega.Equal: Equal uses reflect.DeepEqual which trips on
+			// matching instants that differ only in Location pointer
+			// (time.Local from parseDirectCopySegStart vs time.UTC
+			// from time.Parse), and that mismatch surfaces only on
+			// hosts whose $TZ is UTC at the OS level (CI Linux runners,
+			// not the typical macOS dev box).
+			Expect(twoDayInterval.Standard(r.StartTime)).To(BeTemporally("==", r.StartTime),
 				"seg %s start %s is not aligned to its own DAY×2 standard %s",
 				r.Seg, r.StartTime, twoDayInterval.Standard(r.StartTime))
 			endTime, parseErr := time.Parse(time.RFC3339Nano, meta.EndTime)
 			Expect(parseErr).NotTo(HaveOccurred(), "parse seg %s endTime %q", r.Seg, meta.EndTime)
-			Expect(endTime).To(Equal(twoDayInterval.NextTime(r.StartTime)),
+			Expect(endTime).To(BeTemporally("==", twoDayInterval.NextTime(r.StartTime)),
 				"seg %s [%s, %s) is not exactly one DAY×2 bucket wide (expected end %s)",
 				r.Seg, r.StartTime, endTime, twoDayInterval.NextTime(r.StartTime))
 		}
