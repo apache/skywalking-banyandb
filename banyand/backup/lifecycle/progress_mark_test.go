@@ -98,7 +98,7 @@ func TestMarkSourceCompletedIdempotent(t *testing.T) {
 	p.MarkSourceStreamPartCompleted("g", "src-seg", 0, 1)
 	p.MarkSourceStreamPartCompleted("g", "src-seg", 0, 1)
 	assert.Equal(t, 1, p.StreamPartProgress["g"])
-	assert.True(t, p.IsSourceStreamPartCompleted("g", "src-seg", 0, 1))
+	assert.True(t, p.SourceCompletedStreamParts["g"]["src-seg"][0][1])
 	// Different partID = different source = +1.
 	p.MarkSourceStreamPartCompleted("g", "src-seg", 0, 2)
 	assert.Equal(t, 2, p.StreamPartProgress["g"])
@@ -181,11 +181,11 @@ func TestPerTargetAndPerSourceAreIndependent(t *testing.T) {
 
 	p.MarkStreamPartCompleted("g", "tgt-1", 0, 1)
 	assert.True(t, p.IsStreamPartCompleted("g", "tgt-1", 0, 1))
-	assert.False(t, p.IsSourceStreamPartCompleted("g", "src-1", 0, 1))
+	assert.False(t, p.SourceCompletedStreamParts["g"]["src-1"][0][1])
 	assert.Equal(t, 0, p.StreamPartProgress["g"])
 
 	p.MarkSourceStreamPartCompleted("g", "src-1", 0, 1)
-	assert.True(t, p.IsSourceStreamPartCompleted("g", "src-1", 0, 1))
+	assert.True(t, p.SourceCompletedStreamParts["g"]["src-1"][0][1])
 	// Per-target map untouched by source mark.
 	assert.False(t, p.IsStreamPartCompleted("g", "src-1", 0, 1))
 	assert.Equal(t, 1, p.StreamPartProgress["g"])

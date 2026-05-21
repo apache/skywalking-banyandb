@@ -239,10 +239,6 @@ func (mv *streamMigrationVisitor) VisitPart(_ *timestamp.TimeRange, sourceShardI
 	if err != nil {
 		return fmt.Errorf("failed to parse part ID from path: %w", err)
 	}
-	if mv.progress.IsSourceStreamPartCompleted(mv.group, partPath, sourceShardID, partID) {
-		return nil
-	}
-
 	// Calculate ALL target segments this part should go to
 	targetSegments := calculateTargetSegments(
 		partData.MinTimestamp,

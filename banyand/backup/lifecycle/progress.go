@@ -913,20 +913,6 @@ func (p *Progress) MarkSourceStreamPartCompleted(group string, sourceSegmentID s
 	}
 }
 
-// IsSourceStreamPartCompleted checks if a source stream part already had every target succeed.
-func (p *Progress) IsSourceStreamPartCompleted(group string, sourceSegmentID string, sourceShardID common.ShardID, partID uint64) bool {
-	p.mu.Lock()
-	defer p.mu.Unlock()
-	if segments, ok := p.SourceCompletedStreamParts[group]; ok {
-		if shards, ok := segments[sourceSegmentID]; ok {
-			if parts, ok := shards[sourceShardID]; ok {
-				return parts[partID]
-			}
-		}
-	}
-	return false
-}
-
 // MarkSourceStreamSeriesCompleted records that one source stream series file finished
 // every target write successfully; idempotent.
 func (p *Progress) MarkSourceStreamSeriesCompleted(group string, sourceSegmentID string, sourceShardID common.ShardID) {
@@ -945,18 +931,6 @@ func (p *Progress) MarkSourceStreamSeriesCompleted(group string, sourceSegmentID
 	}
 }
 
-// IsSourceStreamSeriesCompleted checks if a source stream series file already had every target succeed.
-func (p *Progress) IsSourceStreamSeriesCompleted(group string, sourceSegmentID string, sourceShardID common.ShardID) bool {
-	p.mu.Lock()
-	defer p.mu.Unlock()
-	if segments, ok := p.SourceCompletedStreamSeries[group]; ok {
-		if shards, ok := segments[sourceSegmentID]; ok {
-			return shards[sourceShardID]
-		}
-	}
-	return false
-}
-
 // MarkSourceStreamElementIndexCompleted records that one source stream element-index visit finished
 // every target write successfully; idempotent.
 func (p *Progress) MarkSourceStreamElementIndexCompleted(group string, sourceSegmentID string, sourceShardID common.ShardID) {
@@ -973,18 +947,6 @@ func (p *Progress) MarkSourceStreamElementIndexCompleted(group string, sourceSeg
 		p.SourceCompletedStreamElementIndex[group][sourceSegmentID][sourceShardID] = true
 		p.StreamElementIndexProgress[group]++
 	}
-}
-
-// IsSourceStreamElementIndexCompleted checks if a source stream element-index visit already had every target succeed.
-func (p *Progress) IsSourceStreamElementIndexCompleted(group string, sourceSegmentID string, sourceShardID common.ShardID) bool {
-	p.mu.Lock()
-	defer p.mu.Unlock()
-	if segments, ok := p.SourceCompletedStreamElementIndex[group]; ok {
-		if shards, ok := segments[sourceSegmentID]; ok {
-			return shards[sourceShardID]
-		}
-	}
-	return false
 }
 
 // MarkSourceMeasurePartCompleted records that one source measure part finished
@@ -1008,20 +970,6 @@ func (p *Progress) MarkSourceMeasurePartCompleted(group string, sourceSegmentID 
 	}
 }
 
-// IsSourceMeasurePartCompleted checks if a source measure part already had every target succeed.
-func (p *Progress) IsSourceMeasurePartCompleted(group string, sourceSegmentID string, sourceShardID common.ShardID, partID uint64) bool {
-	p.mu.Lock()
-	defer p.mu.Unlock()
-	if segments, ok := p.SourceCompletedMeasureParts[group]; ok {
-		if shards, ok := segments[sourceSegmentID]; ok {
-			if parts, ok := shards[sourceShardID]; ok {
-				return parts[partID]
-			}
-		}
-	}
-	return false
-}
-
 // MarkSourceMeasureSeriesCompleted records that one source measure series file finished
 // every target write successfully; idempotent.
 func (p *Progress) MarkSourceMeasureSeriesCompleted(group string, sourceSegmentID string, sourceShardID common.ShardID) {
@@ -1038,18 +986,6 @@ func (p *Progress) MarkSourceMeasureSeriesCompleted(group string, sourceSegmentI
 		p.SourceCompletedMeasureSeries[group][sourceSegmentID][sourceShardID] = true
 		p.MeasureSeriesProgress[group]++
 	}
-}
-
-// IsSourceMeasureSeriesCompleted checks if a source measure series file already had every target succeed.
-func (p *Progress) IsSourceMeasureSeriesCompleted(group string, sourceSegmentID string, sourceShardID common.ShardID) bool {
-	p.mu.Lock()
-	defer p.mu.Unlock()
-	if segments, ok := p.SourceCompletedMeasureSeries[group]; ok {
-		if shards, ok := segments[sourceSegmentID]; ok {
-			return shards[sourceShardID]
-		}
-	}
-	return false
 }
 
 // MarkSourceTraceShardCompleted records that one source trace shard finished
@@ -1070,18 +1006,6 @@ func (p *Progress) MarkSourceTraceShardCompleted(group string, sourceSegmentID s
 	}
 }
 
-// IsSourceTraceShardCompleted checks if a source trace shard already had every target succeed.
-func (p *Progress) IsSourceTraceShardCompleted(group string, sourceSegmentID string, sourceShardID common.ShardID) bool {
-	p.mu.Lock()
-	defer p.mu.Unlock()
-	if segments, ok := p.SourceCompletedTraceShards[group]; ok {
-		if shards, ok := segments[sourceSegmentID]; ok {
-			return shards[sourceShardID]
-		}
-	}
-	return false
-}
-
 // MarkSourceTraceSeriesCompleted records that one source trace series file finished
 // every target write successfully; idempotent.
 func (p *Progress) MarkSourceTraceSeriesCompleted(group string, sourceSegmentID string, sourceShardID common.ShardID) {
@@ -1098,16 +1022,4 @@ func (p *Progress) MarkSourceTraceSeriesCompleted(group string, sourceSegmentID 
 		p.SourceCompletedTraceSeries[group][sourceSegmentID][sourceShardID] = true
 		p.TraceSeriesProgress[group]++
 	}
-}
-
-// IsSourceTraceSeriesCompleted checks if a source trace series file already had every target succeed.
-func (p *Progress) IsSourceTraceSeriesCompleted(group string, sourceSegmentID string, sourceShardID common.ShardID) bool {
-	p.mu.Lock()
-	defer p.mu.Unlock()
-	if segments, ok := p.SourceCompletedTraceSeries[group]; ok {
-		if shards, ok := segments[sourceSegmentID]; ok {
-			return shards[sourceShardID]
-		}
-	}
-	return false
 }
