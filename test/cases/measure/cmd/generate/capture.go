@@ -165,7 +165,8 @@ func runCapture(outputDir, serverAddr string) {
 		}
 
 		wantPath := filepath.Join(wantDirPath, testName+".yaml")
-		if writeErr := os.WriteFile(wantPath, respYAML, 0o600); writeErr != nil {
+		wantContent := append([]byte(licenseHeader), respYAML...)
+		if writeErr := os.WriteFile(wantPath, wantContent, 0o600); writeErr != nil {
 			fmt.Fprintf(os.Stderr, "  [ERROR] %s: write failed: %v\n", testName, writeErr)
 			errorCount++
 			continue
