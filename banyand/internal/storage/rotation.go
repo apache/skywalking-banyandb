@@ -55,15 +55,24 @@ func (d *database[T, O]) startRotationTask() error {
 		var idleCheckTicker *time.Ticker
 		var idleCheckC <-chan time.Time
 
-		// Only create the ticker if idleTimeout is at least 1 second
+		// Only create the ticker if idleTimeout is at least 1 second.
+		// When disabled, idle segments are never reclaimed and their
+		// bluge writers (analysisWorker pools) accumulate across rotations.
 		if d.segmentController.idleTimeout >= time.Second {
 			idleCheckTicker = time.NewTicker(10 * time.Minute)
 			idleCheckC = idleCheckTicker.C
+			d.logger.Info().
+				Stringer("idle_timeout", d.segmentController.idleTimeout).
+				Msg("idle segment reclaimer enabled")
 			defer func() {
 				if idleCheckTicker != nil {
 					idleCheckTicker.Stop()
 				}
 			}()
+		} else {
+			d.logger.Warn().
+				Stringer("idle_timeout", d.segmentController.idleTimeout).
+				Msg("idle segment reclaimer disabled (idle_timeout < 1s); bluge writers will not be released on segment rotation")
 		}
 
 		for {
