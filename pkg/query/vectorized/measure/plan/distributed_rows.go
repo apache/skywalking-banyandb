@@ -466,8 +466,13 @@ func (e *distributedRowEmitter) appendRowToCurrent(row *distributedRowItem) erro
 	if e.current == nil {
 		e.current = e.pool.Get()
 	}
+	// appendColumnRangeCoerced wraps native source cells into the merged
+	// schema's passthrough column when the row-merge schema union promoted
+	// a tag/field column to TagValue/FieldValue (e.g. mid-flight tag move
+	// across data nodes). When schemas agree it delegates straight to
+	// measure.AppendColumnRange — the homogeneous fast path is unchanged.
 	for colIdx, srcCol := range row.batch.Columns {
-		if err := measure.AppendColumnRange(e.current.Columns[colIdx], srcCol, row.rowIdx, 1); err != nil {
+		if err := appendColumnRangeCoerced(e.current.Columns[colIdx], srcCol, row.rowIdx, 1); err != nil {
 			return fmt.Errorf("merge column %d: %w", colIdx, err)
 		}
 	}
@@ -533,11 +538,19 @@ func estimateRowWidth(schema *vectorized.BatchSchema) int64 {
 
 // decodeDistributedRowSources decodes every non-empty frame body into a
 // decodedBatchSource (group=0 for all frames on the single-group path).
-// Schema parity across sources is asserted — a frame produced under a
-// divergent schema means a producer mis-rollout, not a recoverable data error.
+//
+// Frames may disagree on a tag/field column's encoded Type when a tag move
+// has propagated unevenly across data nodes (one node already encodes
+// "host" as a native string column, another still emits it as a tagvalue
+// passthrough). When that happens the function returns a unioned schema
+// where each divergent column is promoted to the passthrough type
+// (RoleTag → ColumnTypeTagValue, RoleField → ColumnTypeFieldValue) so the
+// per-cell coercion in appendColumnRangeCoerced wraps native cells into
+// the passthrough column at merge-emit time. Divergence on metadata
+// columns (timestamp/version/seriesID/shardID) is a producer bug and
+// surfaces as a loud error.
 func decodeDistributedRowSources(frames [][]byte) ([]decodedBatchSource, *vectorized.BatchSchema, error) {
 	sources := make([]decodedBatchSource, 0, len(frames))
-	var schema *vectorized.BatchSchema
 	for frameIdx, body := range frames {
 		if len(body) == 0 {
 			continue
@@ -549,14 +562,64 @@ func decodeDistributedRowSources(frames [][]byte) ([]decodedBatchSource, *vector
 		if batch == nil || batch.ActiveLen() == 0 {
 			continue
 		}
-		if schema == nil {
-			schema = batch.Schema
-		} else if !distributedRowSchemasEqual(schema, batch.Schema) {
-			return nil, nil, fmt.Errorf("frame %d schema mismatch", frameIdx)
-		}
 		sources = append(sources, decodedBatchSource{batch: batch, source: frameIdx, group: 0})
 	}
-	return sources, schema, nil
+	if len(sources) == 0 {
+		return nil, nil, nil
+	}
+	unioned, unionErr := unionDistributedRowFrameSchemas(sources)
+	if unionErr != nil {
+		return nil, nil, unionErr
+	}
+	return sources, unioned, nil
+}
+
+// unionDistributedRowFrameSchemas reconciles per-frame BatchSchemas. The
+// frames are required to agree on column count, name, family, and role at
+// every index (any drift there is a producer bug — fail loud). When a
+// tag/field column's Type diverges across frames the unioned column is
+// promoted to ColumnTypeTagValue / ColumnTypeFieldValue respectively, so
+// downstream copy via appendColumnRangeCoerced wraps native source cells
+// into the passthrough column. When every frame agrees on every column
+// the input baseline schema is returned unchanged (fast path).
+func unionDistributedRowFrameSchemas(sources []decodedBatchSource) (*vectorized.BatchSchema, error) {
+	baseline := sources[0].batch.Schema
+	diverged := false
+	cols := append([]vectorized.ColumnDef(nil), baseline.Columns...)
+	for idx := 1; idx < len(sources); idx++ {
+		this := sources[idx].batch.Schema
+		if len(this.Columns) != len(baseline.Columns) {
+			return nil, fmt.Errorf("frame %d schema column count %d != baseline %d",
+				sources[idx].source, len(this.Columns), len(baseline.Columns))
+		}
+		for colIdx, baseCol := range cols {
+			thisCol := this.Columns[colIdx]
+			if thisCol.Name != baseCol.Name || thisCol.TagFamily != baseCol.TagFamily || thisCol.Role != baseCol.Role {
+				return nil, fmt.Errorf("frame %d column %d layout mismatch: baseline=%q.%q role=%v vs frame=%q.%q role=%v",
+					sources[idx].source, colIdx,
+					baseCol.TagFamily, baseCol.Name, baseCol.Role,
+					thisCol.TagFamily, thisCol.Name, thisCol.Role)
+			}
+			if thisCol.Type == baseCol.Type {
+				continue
+			}
+			switch baseCol.Role {
+			case vectorized.RoleTag:
+				cols[colIdx].Type = vectorized.ColumnTypeTagValue
+				diverged = true
+			case vectorized.RoleField:
+				cols[colIdx].Type = vectorized.ColumnTypeFieldValue
+				diverged = true
+			default:
+				return nil, fmt.Errorf("frame %d column %d type divergence on non-tag/field role: baseline=%v vs frame=%v (role=%v)",
+					sources[idx].source, colIdx, baseCol.Type, thisCol.Type, baseCol.Role)
+			}
+		}
+	}
+	if !diverged {
+		return baseline, nil
+	}
+	return vectorized.NewBatchSchema(cols), nil
 }
 
 // appendColumnRangeCoerced copies n rows starting at srcPos from src into dst.
@@ -762,22 +825,4 @@ func activeDistributedRows(batch *vectorized.RecordBatch) []int {
 		rows[i] = int(rowIdx)
 	}
 	return rows
-}
-
-// distributedRowSchemasEqual asserts two BatchSchemas describe the same
-// column layout. Used as a defensive cross-source shape check.
-func distributedRowSchemasEqual(a, b *vectorized.BatchSchema) bool {
-	if a == b {
-		return true
-	}
-	if a == nil || b == nil || len(a.Columns) != len(b.Columns) {
-		return false
-	}
-	for i, ac := range a.Columns {
-		bc := b.Columns[i]
-		if ac.Name != bc.Name || ac.TagFamily != bc.TagFamily || ac.Role != bc.Role || ac.Type != bc.Type {
-			return false
-		}
-	}
-	return true
 }
