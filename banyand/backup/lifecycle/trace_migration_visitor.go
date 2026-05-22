@@ -103,9 +103,6 @@ func (mv *traceMigrationVisitor) VisitSeries(segmentTR *timestamp.TimeRange, ser
 		Str("path", seriesIndexPath).
 		Msg("found trace segment files for migration")
 
-	// Set the total number of series segments for progress tracking
-	mv.SetTraceSeriesCount(len(segmentFiles))
-
 	// Calculate ALL target segments this series index should go to
 	targetSegments := calculateTargetSegments(
 		segmentTR.Start.UnixNano(),
@@ -221,18 +218,33 @@ func (mv *traceMigrationVisitor) VisitSeries(segmentTR *timestamp.TimeRange, ser
 		}
 	}
 
+	// Mark each source series file as fully migrated (idempotent — bumps Progress once per source).
+	for _, segmentFileName := range segmentFiles {
+		fileSegmentIDStr := strings.TrimSuffix(segmentFileName, ".seg")
+		segmentID, parseErr := strconv.ParseUint(fileSegmentIDStr, 16, 64)
+		if parseErr != nil {
+			continue
+		}
+		mv.progress.MarkSourceTraceSeriesCompleted(mv.group, seriesIndexPath, common.ShardID(segmentID))
+	}
 	return nil
 }
 
 // VisitShard implements trace.Visitor - core and sidx migration logic.
 func (mv *traceMigrationVisitor) VisitShard(timestampTR *timestamp.TimeRange, sourceShardID common.ShardID, shardPath string) error {
 	segmentIDStr := timestampTR.String()
-	if mv.progress.IsTraceShardCompleted(mv.group, shardPath, sourceShardID) {
+	// Match the key used by Mark below; using shardPath here would always
+	// miss on resume and re-run the migration even though the shard had
+	// completed, wasting bandwidth and writing duplicates to the target.
+	if mv.progress.IsTraceShardCompleted(mv.group, segmentIDStr, sourceShardID) {
 		mv.logger.Debug().
 			Str("shard_path", shardPath).
 			Str("group", mv.group).
 			Uint32("source_shard", uint32(sourceShardID)).
 			Msg("trace shard already completed for this target segment, skipping")
+		// Per-target write done; ensure source progress is recorded to survive
+		// a crash between MarkTraceShardCompleted and MarkSource (idempotent).
+		mv.progress.MarkSourceTraceShardCompleted(mv.group, segmentIDStr, sourceShardID)
 		return nil
 	}
 	allParts := make([]queue.StreamingPartData, 0)
@@ -277,6 +289,7 @@ func (mv *traceMigrationVisitor) VisitShard(timestampTR *timestamp.TimeRange, so
 
 	// Mark shard as completed for this target segment
 	mv.progress.MarkTraceShardCompleted(mv.group, segmentIDStr, sourceShardID)
+	mv.progress.MarkSourceTraceShardCompleted(mv.group, segmentIDStr, sourceShardID)
 	mv.logger.Info().
 		Str("group", mv.group).
 		Msgf("trace shard migration completed for target segment")

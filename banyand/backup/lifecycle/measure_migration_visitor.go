@@ -102,9 +102,6 @@ func (mv *measureMigrationVisitor) VisitSeries(segmentTR *timestamp.TimeRange, s
 		Str("path", seriesIndexPath).
 		Msg("found measure segment files for migration")
 
-	// Set the total number of series segments for progress tracking
-	mv.SetMeasureSeriesCount(len(segmentFiles))
-
 	// Calculate ALL target segments this series index should go to
 	targetSegments := calculateTargetSegments(
 		segmentTR.Start.UnixNano(),
@@ -213,6 +210,15 @@ func (mv *measureMigrationVisitor) VisitSeries(segmentTR *timestamp.TimeRange, s
 		}
 	}
 
+	// Mark each source series file as fully migrated (idempotent — bumps Progress once per source).
+	for _, segmentFileName := range segmentFiles {
+		fileSegmentIDStr := strings.TrimSuffix(segmentFileName, ".seg")
+		segmentID, parseErr := strconv.ParseUint(fileSegmentIDStr, 16, 64)
+		if parseErr != nil {
+			continue
+		}
+		mv.progress.MarkSourceMeasureSeriesCompleted(mv.group, seriesIndexPath, common.ShardID(segmentID))
+	}
 	return nil
 }
 
@@ -226,7 +232,6 @@ func (mv *measureMigrationVisitor) VisitPart(_ *timestamp.TimeRange, sourceShard
 	if err != nil {
 		return fmt.Errorf("failed to parse part ID from path: %w", err)
 	}
-
 	// Calculate ALL target segments this part should go to
 	targetSegments := calculateTargetSegments(
 		partData.MinTimestamp,
@@ -291,6 +296,7 @@ func (mv *measureMigrationVisitor) VisitPart(_ *timestamp.TimeRange, sourceShard
 			Msgf("measure part migration completed for target segment %d/%d", i+1, len(targetSegments))
 	}
 
+	mv.progress.MarkSourceMeasurePartCompleted(mv.group, partPath, sourceShardID, partID)
 	return nil
 }
 

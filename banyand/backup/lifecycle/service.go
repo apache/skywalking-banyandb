@@ -429,6 +429,10 @@ func (l *lifecycleService) action() error {
 	}
 	if streamDir == "" && measureDir == "" && traceDir == "" {
 		l.l.Warn().Msg("no snapshots found, skipping lifecycle migration")
+		// Clear any GroupsToProcess persisted from a prior cycle so the
+		// emitted report honestly reports total_groups=0 for this empty
+		// cycle instead of inheriting a stale denominator.
+		progress.SetGroupsToProcess(nil)
 		l.generateReport(progress)
 		return nil
 	}
@@ -437,6 +441,10 @@ func (l *lifecycleService) action() error {
 		Str("measure_snapshot", measureDir).
 		Str("trace_snapshot", traceDir).
 		Msg("created snapshots")
+	// Record the scheduled group set only after snapshots are confirmed so
+	// the report distinguishes "no work this cycle" (total_groups=0) from a
+	// real cycle that processed N groups (total_groups=N).
+	progress.SetGroupsToProcess(getGroupNames(groups))
 	progress.Save(l.progressFilePath, l.l)
 
 	nodes, err := l.metadata.NodeRegistry().ListNode(ctx, databasev1.Role_ROLE_DATA)
@@ -446,7 +454,6 @@ func (l *lifecycleService) action() error {
 	}
 	labels := common.ParseNodeFlags()
 
-	allGroupsCompleted := true
 	for _, g := range groups {
 		switch g.Catalog {
 		case commonv1.Catalog_CATALOG_STREAM:
@@ -478,13 +485,18 @@ func (l *lifecycleService) action() error {
 
 	// Only remove progress file if ALL groups are fully completed
 	notCompleteGroups := progress.AllGroupsNotFullyCompleted(groups)
-	if allGroupsCompleted && len(notCompleteGroups) == 0 {
+	if len(notCompleteGroups) == 0 {
 		progress.Remove(l.progressFilePath, l.l)
 		l.l.Info().Msg("lifecycle migration completed successfully")
 		l.generateReport(progress)
 		return nil
 	}
+	// Partial-failure path: also emit a report so operators can inspect
+	// errors.* and per-resource completion_rate without parsing raw
+	// progress.json. The report distinguishes itself from a clean cycle
+	// by having errors.* non-empty and completion_rate < 100.
 	l.l.Info().Msg("lifecycle migration partially completed, progress file retained")
+	l.generateReport(progress)
 	return fmt.Errorf("lifecycle migration partially completed, progress file retained; %v groups not fully completed", notCompleteGroups)
 }
 
@@ -531,6 +543,7 @@ func (l *lifecycleService) buildMigrationReport(p *Progress) map[string]interfac
 		"snapshot_info": map[string]interface{}{
 			"stream_dir":  p.SnapshotStreamDir,
 			"measure_dir": p.SnapshotMeasureDir,
+			"trace_dir":   p.SnapshotTraceDir,
 		},
 	}
 
@@ -539,8 +552,20 @@ func (l *lifecycleService) buildMigrationReport(p *Progress) map[string]interfac
 
 // buildSummaryStats creates overall migration statistics.
 func (l *lifecycleService) buildSummaryStats(p *Progress) map[string]interface{} {
-	totalGroups := len(p.CompletedGroups) + len(p.DeletedStreamGroups) + len(p.DeletedMeasureGroups)
-	completedGroups := len(p.CompletedGroups)
+	// total_groups reflects the cycle's scheduled set captured at the top of
+	// action(); completed_groups counts groups that ran the full
+	// processXxxGroup → MarkGroupCompleted path. The intersection guards
+	// against resume from a partial-failure progress.json where
+	// CompletedGroups carries entries from prior cycles that are not in
+	// the current scheduled set, which would otherwise yield
+	// completed_groups > total_groups.
+	totalGroups := len(p.GroupsToProcess)
+	completedGroups := 0
+	for _, name := range p.GroupsToProcess {
+		if p.CompletedGroups[name] {
+			completedGroups++
+		}
+	}
 
 	// Calculate total parts and series across all groups
 	totalStreamParts, completedStreamParts := l.calculateTotalCounts(p.StreamPartCounts, p.StreamPartProgress)
@@ -548,6 +573,8 @@ func (l *lifecycleService) buildSummaryStats(p *Progress) map[string]interface{}
 	totalStreamElementIndex, completedStreamElementIndex := l.calculateTotalCounts(p.StreamElementIndexCounts, p.StreamElementIndexProgress)
 	totalMeasureParts, completedMeasureParts := l.calculateTotalCounts(p.MeasurePartCounts, p.MeasurePartProgress)
 	totalMeasureSeries, completedMeasureSeries := l.calculateTotalCounts(p.MeasureSeriesCounts, p.MeasureSeriesProgress)
+	totalTraceShards, completedTraceShards := l.calculateTotalCounts(p.TraceShardCounts, p.TraceShardProgress)
+	totalTraceSeries, completedTraceSeries := l.calculateTotalCounts(p.TraceSeriesCounts, p.TraceSeriesProgress)
 
 	// Calculate error counts
 	streamPartErrors := l.countErrors(p.StreamPartErrors)
@@ -555,6 +582,8 @@ func (l *lifecycleService) buildSummaryStats(p *Progress) map[string]interface{}
 	streamElementIndexErrors := l.countErrors(p.StreamElementIndexErrors)
 	measurePartErrors := l.countErrors(p.MeasurePartErrors)
 	measureSeriesErrors := l.countErrors(p.MeasureSeriesErrors)
+	traceShardErrors := l.countErrors(p.TraceShardErrors)
+	traceSeriesErrors := l.countErrors(p.TraceSeriesErrors)
 
 	return map[string]interface{}{
 		"migration_status": map[string]interface{}{
@@ -596,20 +625,37 @@ func (l *lifecycleService) buildSummaryStats(p *Progress) map[string]interface{}
 				"completion_rate": l.calculatePercentage(completedMeasureSeries, totalMeasureSeries),
 			},
 		},
+		// Field names parts/series mirror stream_migration / measure_migration.
+		// "parts" is fed by the per-shard TraceShard counters because trace
+		// migration is shard-batched (sidx + core parts streamed together).
+		"trace_migration": map[string]interface{}{
+			"parts": map[string]interface{}{
+				"total":           totalTraceShards,
+				"completed":       completedTraceShards,
+				"errors":          traceShardErrors,
+				"completion_rate": l.calculatePercentage(completedTraceShards, totalTraceShards),
+			},
+			"series": map[string]interface{}{
+				"total":           totalTraceSeries,
+				"completed":       completedTraceSeries,
+				"errors":          traceSeriesErrors,
+				"completion_rate": l.calculatePercentage(completedTraceSeries, totalTraceSeries),
+			},
+		},
 	}
 }
 
 // buildErrorSummary creates detailed error information.
 func (l *lifecycleService) buildErrorSummary(p *Progress) map[string]interface{} {
-	errors := map[string]interface{}{
+	return map[string]interface{}{
 		"stream_parts":         l.buildErrorDetails(p.StreamPartErrors),
 		"stream_series":        l.buildErrorDetails(p.StreamSeriesErrors),
 		"stream_element_index": l.buildErrorDetails(p.StreamElementIndexErrors),
 		"measure_parts":        l.buildErrorDetails(p.MeasurePartErrors),
 		"measure_series":       l.buildErrorDetails(p.MeasureSeriesErrors),
+		"trace_parts":          l.buildErrorDetails(p.TraceShardErrors),
+		"trace_series":         l.buildErrorDetails(p.TraceSeriesErrors),
 	}
-
-	return errors
 }
 
 // Helper functions.
@@ -684,7 +730,14 @@ func (l *lifecycleService) buildErrorDetails(errorMaps interface{}) map[string]i
 				segmentDetails := make(map[string]interface{})
 				for shardID, parts := range shards {
 					if len(parts) > 0 {
-						segmentDetails[fmt.Sprintf("shard_%d", shardID)] = parts
+						// Copy the inner map so the report does not alias
+						// Progress state; aliasing would race with a
+						// concurrent Mark*Error during JSON marshaling.
+						partDetails := make(map[uint64]string, len(parts))
+						for partID, errorMsg := range parts {
+							partDetails[partID] = errorMsg
+						}
+						segmentDetails[fmt.Sprintf("shard_%d", shardID)] = partDetails
 					}
 				}
 				if len(segmentDetails) > 0 {

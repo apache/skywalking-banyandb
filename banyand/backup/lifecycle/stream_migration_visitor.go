@@ -102,9 +102,6 @@ func (mv *streamMigrationVisitor) VisitSeries(segmentTR *timestamp.TimeRange, se
 		Str("path", seriesIndexPath).
 		Msg("found segment files for migration")
 
-	// Set the total number of series segments for progress tracking
-	mv.SetStreamSeriesCount(len(segmentFiles))
-
 	// Calculate ALL target segments this series index should go to
 	targetSegments := calculateTargetSegments(
 		segmentTR.Start.UnixNano(),
@@ -220,6 +217,15 @@ func (mv *streamMigrationVisitor) VisitSeries(segmentTR *timestamp.TimeRange, se
 		}
 	}
 
+	// Mark each source series file as fully migrated (idempotent — bumps Progress once per source).
+	for _, segmentFileName := range segmentFiles {
+		fileSegmentIDStr := strings.TrimSuffix(segmentFileName, ".seg")
+		segmentID, parseErr := strconv.ParseUint(fileSegmentIDStr, 16, 64)
+		if parseErr != nil {
+			continue
+		}
+		mv.progress.MarkSourceStreamSeriesCompleted(mv.group, seriesIndexPath, common.ShardID(segmentID))
+	}
 	return nil
 }
 
@@ -233,7 +239,6 @@ func (mv *streamMigrationVisitor) VisitPart(_ *timestamp.TimeRange, sourceShardI
 	if err != nil {
 		return fmt.Errorf("failed to parse part ID from path: %w", err)
 	}
-
 	// Calculate ALL target segments this part should go to
 	targetSegments := calculateTargetSegments(
 		partData.MinTimestamp,
@@ -298,6 +303,7 @@ func (mv *streamMigrationVisitor) VisitPart(_ *timestamp.TimeRange, sourceShardI
 			Msgf("part migration completed for target segment %d/%d", i+1, len(targetSegments))
 	}
 
+	mv.progress.MarkSourceStreamPartCompleted(mv.group, partPath, sourceShardID, partID)
 	return nil
 }
 
@@ -309,6 +315,9 @@ func (mv *streamMigrationVisitor) VisitElementIndex(segmentTR *timestamp.TimeRan
 			Str("group", mv.group).
 			Uint32("source_shard", uint32(sourceShardID)).
 			Msg("element index segment already completed, skipping")
+		// Per-target write done; ensure source progress is recorded to survive
+		// a crash between MarkStreamElementIndexCompleted and MarkSource (idempotent).
+		mv.progress.MarkSourceStreamElementIndexCompleted(mv.group, indexPath, sourceShardID)
 		return nil
 	}
 
@@ -336,9 +345,6 @@ func (mv *streamMigrationVisitor) VisitElementIndex(segmentTR *timestamp.TimeRan
 			Msg("no .seg files found in element index directory")
 		return nil
 	}
-
-	// Set the total number of element index segment files for progress tracking
-	mv.SetStreamElementIndexCount(len(segmentFiles))
 
 	// Calculate target shard ID (using a simple approach for element index)
 	targetShardID := mv.calculateTargetShardID(uint32(sourceShardID))
@@ -411,6 +417,7 @@ func (mv *streamMigrationVisitor) VisitElementIndex(segmentTR *timestamp.TimeRan
 
 	// Mark segment as completed
 	mv.progress.MarkStreamElementIndexCompleted(mv.group, segmentIDStr, sourceShardID)
+	mv.progress.MarkSourceStreamElementIndexCompleted(mv.group, indexPath, sourceShardID)
 
 	return nil
 }
