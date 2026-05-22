@@ -19,6 +19,7 @@
 package lifecycle_test
 
 import (
+	"encoding/json"
 	"io/fs"
 	"os"
 	"path/filepath"
@@ -64,10 +65,7 @@ var _ = ginkgo.Describe("Lifecycle", func() {
 		gomega.Expect(err).NotTo(gomega.HaveOccurred())
 		verifySourceDirectoriesAfterMigration()
 		verifyDestinationDirectoriesAfterMigration()
-		// Check report directory has files
-		rEntries, err := os.ReadDir(rf)
-		gomega.Expect(err).NotTo(gomega.HaveOccurred(), "Report directory should exist")
-		gomega.Expect(len(rEntries)).To(gomega.BeNumerically(">", 0), "Report directory should contain files")
+		verifyMigrationReport(rf)
 		conn, err := grpchelper.Conn(SharedContext.LiaisonAddr, 10*time.Second,
 			grpc.WithTransportCredentials(insecure.NewCredentials()))
 		defer func() {
@@ -131,10 +129,7 @@ var _ = ginkgo.Describe("Lifecycle", func() {
 		gomega.Expect(err).NotTo(gomega.HaveOccurred())
 		verifySourceDirectoriesAfterMigration()
 		verifyDestinationDirectoriesAfterMigration()
-		// Check report directory has files
-		rEntries, err := os.ReadDir(rf)
-		gomega.Expect(err).NotTo(gomega.HaveOccurred(), "Report directory should exist")
-		gomega.Expect(len(rEntries)).To(gomega.BeNumerically(">", 0), "Report directory should contain files")
+		verifyMigrationReport(rf)
 		conn, err := grpchelper.Conn(SharedContext.LiaisonAddr, 10*time.Second,
 			grpc.WithTransportCredentials(insecure.NewCredentials()))
 		defer func() {
@@ -272,4 +267,134 @@ func verifyLockFileAndSegFolder(entries []fs.DirEntry) (hasLockFile bool, hasSeg
 		}
 	}
 	return hasLockFile, hasSegFolder
+}
+
+// verifyMigrationReport reads every JSON report file generated under rf
+// and asserts the invariants of the comprehensive migration report:
+//
+//   - migration_status.completion_rate is 100 when the cycle had scheduled
+//     groups; the denominator equals the scheduled group set.
+//   - Every per-resource block (parts / series / element_index) reaches
+//     100 % when the catalog had work to do, or 0 % when the cycle had
+//     nothing to migrate (total == 0).
+//   - The trace_migration block is present with parts + series fields
+//     aligned to stream_migration / measure_migration; snapshot_info
+//     includes trace_dir; errors includes trace_parts / trace_series keys.
+//   - All errors.* maps are empty for a clean cycle.
+func verifyMigrationReport(rf string) {
+	rEntries, err := os.ReadDir(rf)
+	gomega.Expect(err).NotTo(gomega.HaveOccurred(), "Report directory should exist")
+	gomega.Expect(rEntries).NotTo(gomega.BeEmpty(), "Report directory should contain files")
+
+	jsonReports := 0
+	for _, entry := range rEntries {
+		if entry.IsDir() || filepath.Ext(entry.Name()) != ".json" {
+			continue
+		}
+		jsonReports++
+		path := filepath.Join(rf, entry.Name())
+		raw, readErr := os.ReadFile(path)
+		gomega.Expect(readErr).NotTo(gomega.HaveOccurred(), "Report file %s should be readable", path)
+
+		var report map[string]interface{}
+		gomega.Expect(json.Unmarshal(raw, &report)).To(gomega.Succeed(), "Report file %s should be valid JSON", path)
+
+		gomega.Expect(report).To(gomega.HaveKey("summary"), "report %s missing summary", path)
+		gomega.Expect(report).To(gomega.HaveKey("errors"), "report %s missing errors", path)
+		gomega.Expect(report).To(gomega.HaveKey("snapshot_info"), "report %s missing snapshot_info", path)
+		gomega.Expect(report["report_version"]).To(gomega.Equal("2.0"), "report %s has unexpected report_version", path)
+
+		// snapshot_info: trace_dir must surface alongside stream/measure.
+		snap, ok := report["snapshot_info"].(map[string]interface{})
+		gomega.Expect(ok).To(gomega.BeTrue(), "snapshot_info must be a map in %s", path)
+		gomega.Expect(snap).To(gomega.HaveKey("trace_dir"), "snapshot_info must include trace_dir in %s", path)
+
+		summary, ok := report["summary"].(map[string]interface{})
+		gomega.Expect(ok).To(gomega.BeTrue(), "summary must be a map in %s", path)
+
+		// migration_status: when total_groups=0 the cycle had no scheduled
+		// work (e.g. snapshots were empty); the rate is 0 by construction.
+		// Otherwise the report reflects a fully completed cycle, so the
+		// rate must be 100.
+		ms, ok := summary["migration_status"].(map[string]interface{})
+		gomega.Expect(ok).To(gomega.BeTrue(), "summary.migration_status must be a map in %s", path)
+		if asInt(ms["total_groups"]) == 0 {
+			gomega.Expect(asFloat(ms["completion_rate"])).To(gomega.BeNumerically("~", 0.0, 1e-9),
+				"migration_status.completion_rate must be 0 when total_groups=0 in %s", path)
+		} else {
+			gomega.Expect(asFloat(ms["completion_rate"])).To(gomega.BeNumerically("~", 100.0, 1e-9),
+				"migration_status.completion_rate should be 100 in %s", path)
+		}
+
+		// Per-resource invariants.
+		verifyAllRatesAt100(summary, "stream_migration", []string{"parts", "series", "element_index"}, path)
+		verifyAllRatesAt100(summary, "measure_migration", []string{"parts", "series"}, path)
+
+		// trace_migration: block must exist with parts + series.
+		verifyAllRatesAt100(summary, "trace_migration", []string{"parts", "series"}, path)
+
+		// errors must include trace_* keys and stay empty.
+		errs, ok := report["errors"].(map[string]interface{})
+		gomega.Expect(ok).To(gomega.BeTrue(), "errors must be a map in %s", path)
+		for _, key := range []string{
+			"stream_parts", "stream_series", "stream_element_index",
+			"measure_parts", "measure_series",
+			"trace_parts", "trace_series",
+		} {
+			v, found := errs[key]
+			gomega.Expect(found).To(gomega.BeTrue(), "errors.%s must be present in %s", key, path)
+			errMap, isMap := v.(map[string]interface{})
+			gomega.Expect(isMap).To(gomega.BeTrue(), "errors.%s must be a map in %s", key, path)
+			gomega.Expect(errMap).To(gomega.BeEmpty(), "errors.%s must be empty for a clean cycle in %s", key, path)
+		}
+	}
+	gomega.Expect(jsonReports).To(gomega.BeNumerically(">", 0), "no JSON report files found under %s", rf)
+}
+
+// verifyAllRatesAt100 enforces the per-resource accounting invariant: when
+// total == 0 the cycle had no work for that resource and the rate stays at
+// 0; otherwise completed must equal total and the rate must be 100.
+func verifyAllRatesAt100(summary map[string]interface{}, catalog string, resources []string, path string) {
+	cat, ok := summary[catalog].(map[string]interface{})
+	gomega.Expect(ok).To(gomega.BeTrue(), "summary.%s must be a map in %s", catalog, path)
+	for _, r := range resources {
+		res, isMap := cat[r].(map[string]interface{})
+		gomega.Expect(isMap).To(gomega.BeTrue(), "summary.%s.%s must be a map in %s", catalog, r, path)
+		gomega.Expect(res).To(gomega.HaveKey("total"), "summary.%s.%s missing total in %s", catalog, r, path)
+		gomega.Expect(res).To(gomega.HaveKey("completed"), "summary.%s.%s missing completed in %s", catalog, r, path)
+		gomega.Expect(res).To(gomega.HaveKey("errors"), "summary.%s.%s missing errors in %s", catalog, r, path)
+		gomega.Expect(res).To(gomega.HaveKey("completion_rate"), "summary.%s.%s missing completion_rate in %s", catalog, r, path)
+
+		total := asInt(res["total"])
+		completed := asInt(res["completed"])
+		errors := asInt(res["errors"])
+		rate := asFloat(res["completion_rate"])
+
+		gomega.Expect(errors).To(gomega.Equal(0), "summary.%s.%s.errors must be 0 in %s", catalog, r, path)
+		if total == 0 {
+			gomega.Expect(rate).To(gomega.BeNumerically("~", 0.0, 1e-9),
+				"summary.%s.%s.completion_rate must be 0 when total=0 in %s", catalog, r, path)
+			continue
+		}
+		gomega.Expect(completed).To(gomega.Equal(total),
+			"summary.%s.%s.completed must equal total in %s", catalog, r, path)
+		gomega.Expect(rate).To(gomega.BeNumerically("~", 100.0, 1e-9),
+			"summary.%s.%s.completion_rate must be 100 in %s", catalog, r, path)
+	}
+}
+
+// asFloat coerces a JSON-decoded numeric value to float64.
+func asFloat(v interface{}) float64 {
+	if f, ok := v.(float64); ok {
+		return f
+	}
+	return 0
+}
+
+// asInt coerces a JSON-decoded numeric value to int.
+func asInt(v interface{}) int {
+	if f, ok := v.(float64); ok {
+		return int(f)
+	}
+	return 0
 }

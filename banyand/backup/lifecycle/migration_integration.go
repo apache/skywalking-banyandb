@@ -18,11 +18,14 @@
 package lifecycle
 
 import (
+	"strings"
+
 	"github.com/apache/skywalking-banyandb/api/common"
 	"github.com/apache/skywalking-banyandb/banyand/internal/storage"
 	"github.com/apache/skywalking-banyandb/banyand/measure"
 	"github.com/apache/skywalking-banyandb/banyand/stream"
 	"github.com/apache/skywalking-banyandb/banyand/trace"
+	"github.com/apache/skywalking-banyandb/pkg/fs"
 	"github.com/apache/skywalking-banyandb/pkg/logger"
 	"github.com/apache/skywalking-banyandb/pkg/timestamp"
 )
@@ -37,13 +40,16 @@ func migrateStreamWithFileBasedAndProgress(tsdbRootPath string, timeRange timest
 	// Get target stage configuration
 	targetStageInterval := getTargetStageInterval(group)
 
-	// Count total parts before starting migration
-	totalParts, segmentSuffixes, err := countStreamParts(tsdbRootPath, timeRange, segmentIntervalRule)
+	// Pre-walk source items so each resource has a fixed planned denominator.
+	counter, segmentSuffixes, err := countStreamParts(tsdbRootPath, timeRange, segmentIntervalRule)
 	if err != nil {
-		logger.Warn().Err(err).Msg("failed to count stream parts, proceeding without part count")
+		logger.Warn().Err(err).Msg("failed to count stream source items, proceeding without planned counts")
 	} else {
-		logger.Info().Int("total_parts", totalParts).Strs("segment_suffixes", segmentSuffixes).
-			Msg("counted stream parts for progres tracking")
+		logger.Info().Int("total_parts", counter.partCount).
+			Int("total_series_files", counter.seriesFileCount).
+			Int("total_element_index_visits", counter.elementIndexCount).
+			Strs("segment_suffixes", segmentSuffixes).
+			Msg("counted stream source items for progress tracking")
 	}
 
 	// Create file-based migration visitor with progress tracking and target stage interval
@@ -53,9 +59,11 @@ func migrateStreamWithFileBasedAndProgress(tsdbRootPath string, timeRange timest
 	)
 	defer visitor.Close()
 
-	// Set the total part count for progress tracking
-	if totalParts > 0 {
-		visitor.SetStreamPartCount(totalParts)
+	// Set the planned source-item counts for progress tracking.
+	if counter != nil {
+		visitor.SetStreamPartCount(counter.partCount)
+		visitor.SetStreamSeriesCount(counter.seriesFileCount)
+		visitor.SetStreamElementIndexCount(counter.elementIndexCount)
 	}
 
 	// Use the existing VisitStreamsInTimeRange function with our file-based visitor
@@ -66,27 +74,36 @@ func migrateStreamWithFileBasedAndProgress(tsdbRootPath string, timeRange timest
 	return segmentSuffixes, nil
 }
 
-// countStreamParts counts the total number of parts in the given time range.
-func countStreamParts(tsdbRootPath string, timeRange timestamp.TimeRange, segmentInterval storage.IntervalRule) (int, []string, error) {
-	// Create a simple visitor to count parts
-	partCounter := &partCountVisitor{}
+// countStreamParts counts the total number of source items in the given time range.
+func countStreamParts(tsdbRootPath string, timeRange timestamp.TimeRange, segmentInterval storage.IntervalRule) (*partCountVisitor, []string, error) {
+	// Create a simple visitor to count source items
+	partCounter := &partCountVisitor{lfs: fs.NewLocalFileSystem()}
 
 	// Use the existing VisitStreamsInTimeRange function to count parts
 	segmentSuffixes, err := stream.VisitStreamsInTimeRange(tsdbRootPath, timeRange, partCounter, segmentInterval)
 	if err != nil {
-		return 0, nil, err
+		return nil, nil, err
 	}
 
-	return partCounter.partCount, segmentSuffixes, nil
+	return partCounter, segmentSuffixes, nil
 }
 
-// partCountVisitor is a simple visitor that counts parts.
+// partCountVisitor is a simple visitor that counts source parts, series files and element-index visits.
 type partCountVisitor struct {
-	partCount int
+	lfs               fs.FileSystem
+	partCount         int
+	seriesFileCount   int
+	elementIndexCount int
 }
 
-// VisitSeries implements stream.Visitor.
-func (pcv *partCountVisitor) VisitSeries(_ *timestamp.TimeRange, _ string, _ []common.ShardID) error {
+// VisitSeries implements stream.Visitor; counts .seg files under the source series index directory.
+func (pcv *partCountVisitor) VisitSeries(_ *timestamp.TimeRange, seriesIndexPath string, _ []common.ShardID) error {
+	entries := pcv.lfs.ReadDir(seriesIndexPath)
+	for _, e := range entries {
+		if !e.IsDir() && strings.HasSuffix(e.Name(), ".seg") {
+			pcv.seriesFileCount++
+		}
+	}
 	return nil
 }
 
@@ -98,6 +115,7 @@ func (pcv *partCountVisitor) VisitPart(_ *timestamp.TimeRange, _ common.ShardID,
 
 // VisitElementIndex implements stream.Visitor.
 func (pcv *partCountVisitor) VisitElementIndex(_ *timestamp.TimeRange, _ common.ShardID, _ string) error {
+	pcv.elementIndexCount++
 	return nil
 }
 
@@ -111,13 +129,15 @@ func migrateMeasureWithFileBasedAndProgress(tsdbRootPath string, timeRange times
 	// Get target stage configuration
 	targetStageInterval := getTargetStageInterval(group)
 
-	// Count total parts before starting migration
-	totalParts, segmentSuffixes, err := countMeasureParts(tsdbRootPath, timeRange, segmentIntervalRule)
+	// Pre-walk source items so each resource has a fixed planned denominator.
+	counter, segmentSuffixes, err := countMeasureParts(tsdbRootPath, timeRange, segmentIntervalRule)
 	if err != nil {
-		logger.Warn().Err(err).Msg("failed to count measure parts, proceeding without part count")
+		logger.Warn().Err(err).Msg("failed to count measure source items, proceeding without planned counts")
 	} else {
-		logger.Info().Int("total_parts", totalParts).Strs("segment_suffixes", segmentSuffixes).
-			Msg("counted measure parts for progress tracking")
+		logger.Info().Int("total_parts", counter.partCount).
+			Int("total_series_files", counter.seriesFileCount).
+			Strs("segment_suffixes", segmentSuffixes).
+			Msg("counted measure source items for progress tracking")
 	}
 
 	// Create file-based migration visitor with progress tracking and target stage interval
@@ -127,9 +147,10 @@ func migrateMeasureWithFileBasedAndProgress(tsdbRootPath string, timeRange times
 	)
 	defer visitor.Close()
 
-	// Set the total part count for progress tracking
-	if totalParts > 0 {
-		visitor.SetMeasurePartCount(totalParts)
+	// Set the planned source-item counts for progress tracking.
+	if counter != nil {
+		visitor.SetMeasurePartCount(counter.partCount)
+		visitor.SetMeasureSeriesCount(counter.seriesFileCount)
 	}
 
 	// Use the existing VisitMeasuresInTimeRange function with our file-based visitor
@@ -140,27 +161,35 @@ func migrateMeasureWithFileBasedAndProgress(tsdbRootPath string, timeRange times
 	return segmentSuffixes, nil
 }
 
-// countMeasureParts counts the total number of parts in the given time range.
-func countMeasureParts(tsdbRootPath string, timeRange timestamp.TimeRange, segmentInterval storage.IntervalRule) (int, []string, error) {
-	// Create a simple visitor to count parts
-	partCounter := &measurePartCountVisitor{}
+// countMeasureParts counts the total number of source items in the given time range.
+func countMeasureParts(tsdbRootPath string, timeRange timestamp.TimeRange, segmentInterval storage.IntervalRule) (*measurePartCountVisitor, []string, error) {
+	// Create a simple visitor to count source items
+	partCounter := &measurePartCountVisitor{lfs: fs.NewLocalFileSystem()}
 
 	// Use the existing VisitMeasuresInTimeRange function to count parts
 	segmentSuffixes, err := measure.VisitMeasuresInTimeRange(tsdbRootPath, timeRange, partCounter, segmentInterval)
 	if err != nil {
-		return 0, nil, err
+		return nil, nil, err
 	}
 
-	return partCounter.partCount, segmentSuffixes, nil
+	return partCounter, segmentSuffixes, nil
 }
 
-// measurePartCountVisitor is a simple visitor that counts measure parts.
+// measurePartCountVisitor is a simple visitor that counts measure source parts and series files.
 type measurePartCountVisitor struct {
-	partCount int
+	lfs             fs.FileSystem
+	partCount       int
+	seriesFileCount int
 }
 
-// VisitSeries implements measure.Visitor.
-func (pcv *measurePartCountVisitor) VisitSeries(_ *timestamp.TimeRange, _ string, _ []common.ShardID) error {
+// VisitSeries implements measure.Visitor; counts .seg files under the source series index directory.
+func (pcv *measurePartCountVisitor) VisitSeries(_ *timestamp.TimeRange, seriesIndexPath string, _ []common.ShardID) error {
+	entries := pcv.lfs.ReadDir(seriesIndexPath)
+	for _, e := range entries {
+		if !e.IsDir() && strings.HasSuffix(e.Name(), ".seg") {
+			pcv.seriesFileCount++
+		}
+	}
 	return nil
 }
 
@@ -180,13 +209,15 @@ func migrateTraceWithFileBasedAndProgress(tsdbRootPath string, timeRange timesta
 	// Get target stage configuration
 	targetStageInterval := getTargetStageInterval(group)
 
-	// Count total shards before starting migration
-	totalShards, segmentSuffixes, err := countTraceShards(tsdbRootPath, timeRange, segmentIntervalRule)
+	// Pre-walk source items so each resource has a fixed planned denominator.
+	counter, segmentSuffixes, err := countTraceShards(tsdbRootPath, timeRange, segmentIntervalRule)
 	if err != nil {
-		logger.Warn().Err(err).Msg("failed to count trace parts, proceeding without part count")
+		logger.Warn().Err(err).Msg("failed to count trace source items, proceeding without planned counts")
 	} else {
-		logger.Info().Int("total_shards", totalShards).Strs("segment_suffixes", segmentSuffixes).
-			Msg("counted trace parts for progress tracking")
+		logger.Info().Int("total_shards", counter.shardCount).
+			Int("total_series_files", counter.seriesFileCount).
+			Strs("segment_suffixes", segmentSuffixes).
+			Msg("counted trace source items for progress tracking")
 	}
 
 	// Create file-based migration visitor with progress tracking and target stage interval
@@ -196,9 +227,10 @@ func migrateTraceWithFileBasedAndProgress(tsdbRootPath string, timeRange timesta
 	)
 	defer visitor.Close()
 
-	// Set the total part count for progress tracking
-	if totalShards > 0 {
-		visitor.SetTraceShardCount(totalShards)
+	// Set the planned source-item counts for progress tracking.
+	if counter != nil {
+		visitor.SetTraceShardCount(counter.shardCount)
+		visitor.SetTraceSeriesCount(counter.seriesFileCount)
 	}
 
 	// Use the existing VisitTracesInTimeRange function with our file-based visitor
@@ -209,27 +241,35 @@ func migrateTraceWithFileBasedAndProgress(tsdbRootPath string, timeRange timesta
 	return segmentSuffixes, nil
 }
 
-// countTraceShards counts the total number of shards in the given time range.
-func countTraceShards(tsdbRootPath string, timeRange timestamp.TimeRange, segmentInterval storage.IntervalRule) (int, []string, error) {
-	// Create a simple visitor to count shards
-	shardCounter := &traceShardsCountVisitor{}
+// countTraceShards counts the total number of source items in the given time range.
+func countTraceShards(tsdbRootPath string, timeRange timestamp.TimeRange, segmentInterval storage.IntervalRule) (*traceShardsCountVisitor, []string, error) {
+	// Create a simple visitor to count source items
+	shardCounter := &traceShardsCountVisitor{lfs: fs.NewLocalFileSystem()}
 
 	// Use the existing VisitTracesInTimeRange function to count parts
 	segmentSuffixes, err := trace.VisitTracesInTimeRange(tsdbRootPath, timeRange, shardCounter, segmentInterval)
 	if err != nil {
-		return 0, nil, err
+		return nil, nil, err
 	}
 
-	return shardCounter.shardCount, segmentSuffixes, nil
+	return shardCounter, segmentSuffixes, nil
 }
 
-// traceShardsCountVisitor is a simple visitor that counts trace shards.
+// traceShardsCountVisitor is a simple visitor that counts trace source shards and series files.
 type traceShardsCountVisitor struct {
-	shardCount int
+	lfs             fs.FileSystem
+	shardCount      int
+	seriesFileCount int
 }
 
-// VisitSeries implements trace.Visitor.
-func (pcv *traceShardsCountVisitor) VisitSeries(_ *timestamp.TimeRange, _ string, _ []common.ShardID) error {
+// VisitSeries implements trace.Visitor; counts .seg files under the source series index directory.
+func (pcv *traceShardsCountVisitor) VisitSeries(_ *timestamp.TimeRange, seriesIndexPath string, _ []common.ShardID) error {
+	entries := pcv.lfs.ReadDir(seriesIndexPath)
+	for _, e := range entries {
+		if !e.IsDir() && strings.HasSuffix(e.Name(), ".seg") {
+			pcv.seriesFileCount++
+		}
+	}
 	return nil
 }
 
