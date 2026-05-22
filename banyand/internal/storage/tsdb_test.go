@@ -606,38 +606,40 @@ func TestCollectWithPartialClosedSegments(t *testing.T) {
 
 	var segments []Segment[*MockTSTable, any]
 
-	// Create segments and keep track of them
+	// Create segments and keep track of them.
+	// openSegment.initialize sets refCount=1, then createSegment.incRef
+	// bumps it to 2. The DecRef below releases the createSegment ref,
+	// leaving refCount=1 (the initialize ref) so the idle reclaimer can
+	// CAS-bump and see refAtBump==1.
 	for _, date := range segmentDates {
 		mc.Set(date)
-		seg, err := tsdb.CreateSegmentIfNotExist(date)
-		require.NoError(t, err)
+		seg, segErr := tsdb.CreateSegmentIfNotExist(date)
+		require.NoError(t, segErr)
 		require.NotNil(t, seg)
 		segments = append(segments, seg)
-		seg.DecRef() // Release reference
+		seg.DecRef() // Release createSegment's ref; refCount 2->1
 	}
 
 	// Set a specific tick time for testing
 	tickTime := int64(123456789)
 	db.latestTickTime.Store(tickTime)
 
-	// Manually close some segments (first and third)
-	segments[0].DecRef() // Close first segment
-	segments[2].DecRef() // Close third segment
-
-	// Manually set the closed segments to have idle time in the past
+	// Mark the first and third segments as idle by backdating their
+	// lastAccessed timestamp. Do NOT DecRef them — they must stay alive
+	// (refCount=1) so closeIdleSegments can CAS-bump (refAtBump==1) and
+	// close them.
 	sc := db.segmentController
 	ss, _ := sc.segments(context.Background(), false)
 	for _, s := range ss {
-		// Find segments we want to mark as idle (first and third)
 		if s.Start.Equal(segmentDates[0]) || s.Start.Equal(segmentDates[2]) {
 			s.lastAccessed.Store(time.Now().Add(-2 * time.Hour).UnixNano())
-			s.DecRef() // Force close
 		}
 		s.DecRef() // Release our reference from segments()
 	}
 
-	// Call closeIdleSegments to ensure our target segments are closed
-	closedCount := sc.closeIdleSegments(context.Background())
+	// closeIdleSegments should close the 2 idle segments (refAtBump==1 and
+	// lastAccessed older than idleThreshold) and leave the other 2 open.
+	closedCount := sc.closeIdleSegments()
 	require.Equal(t, 2, closedCount, "Should have closed 2 segments")
 
 	// Verify segments 0 and 2 are closed, 1 and 3 are open

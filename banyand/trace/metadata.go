@@ -581,7 +581,9 @@ func (s *supplier) OpenDB(groupSchema *commonv1.Group) (resourceSchema.DB, error
 	shardNum := ro.ShardNum
 	ttl := ro.Ttl
 	segInterval := ro.SegmentInterval
-	segmentIdleTimeout := time.Duration(0)
+	// Non-zero default so the idle-segment reclaimer ticker actually starts
+	// (storage/rotation.go gates it on >=1s). Staged Close paths override below.
+	segmentIdleTimeout := time.Hour
 	disableRetention := false
 	disableRotation := false
 	if len(ro.Stages) > 0 && len(s.nodeLabels) > 0 {

@@ -32,3 +32,17 @@ func Get(p string) (string, error) {
 	}
 	return filepath.Abs(p)
 }
+
+// HasVolumeName reports whether p starts with a platform volume name or a
+// Windows drive prefix. The explicit drive-prefix check keeps validation
+// portable on non-Windows platforms.
+func HasVolumeName(p string) bool {
+	if filepath.VolumeName(p) != "" || filepath.VolumeName(filepath.FromSlash(p)) != "" {
+		return true
+	}
+	return len(p) >= 2 && isASCIILetter(p[0]) && p[1] == ':'
+}
+
+func isASCIILetter(c byte) bool {
+	return (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z')
+}

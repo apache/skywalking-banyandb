@@ -1,0 +1,67 @@
+# Licensed to Apache Software Foundation (ASF) under one or more contributor
+# license agreements. See the NOTICE file distributed with
+# this work for additional information regarding copyright
+# ownership. Apache Software Foundation (ASF) licenses this file to you under
+# the Apache License, Version 2.0 (the "License"); you may
+# not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing,
+# software distributed under the License is distributed on an
+# "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
+# KIND, either express or implied.  See the License for the
+# specific language governing permissions and limitations
+# under the License.
+
+# Migration plan run from INSIDE the bydb-migration-runner pod.
+# Each entry rewrites one mounted PVC's measure data in-place into a
+# `data-copy/` sibling on the same volume — after operator verification,
+# the workflow is `rm -rf data && mv data-copy data` per PVC.
+#
+# Source mode: `live` — measure data + schema-property come from the
+# runner pod's PVC mounts. The discriminated `source.live.stages` map
+# names every (node, root) pair available per stage; each entry below
+# selects a subset of those nodes via `nodes` to feed its target.
+
+staging_dir: /work/staging
+
+source:
+  live:
+    schema_property_path: /mnt/hot-0/schema-property/data/_schema
+    stages:
+      hot:
+        - { node: hot-0, root: /mnt/hot-0/measure/data }
+        - { node: hot-1, root: /mnt/hot-1/measure/data }
+      warm:
+        - { node: warn-0, root: /mnt/warn-0/measure/data }
+        - { node: warn-1, root: /mnt/warn-1/measure/data }
+      cold:
+        - { node: cold-0, root: /mnt/cold-0/measure/data }
+
+groups:
+  - sw_metricsMinute
+  - sw_metricsHour
+  - sw_metricsDay
+
+# One entry per data-PVC. The migration writes that node's `data-copy/`
+# sibling using only its own node's source (in-place rewrite), so post-
+# migration the operator can `rm -rf data && mv data-copy data` per PVC
+# independently.
+entries:
+  - stage: hot
+    target: /mnt/hot-0/measure/data-copy
+    nodes: [hot-0]
+  - stage: hot
+    target: /mnt/hot-1/measure/data-copy
+    nodes: [hot-1]
+  - stage: warm
+    target: /mnt/warn-0/measure/data-copy
+    nodes: [warn-0]
+  - stage: warm
+    target: /mnt/warn-1/measure/data-copy
+    nodes: [warn-1]
+  - stage: cold
+    target: /mnt/cold-0/measure/data-copy
+    nodes: [cold-0]
