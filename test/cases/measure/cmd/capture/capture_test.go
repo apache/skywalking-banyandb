@@ -18,9 +18,19 @@
 // Package capture_test runs a standalone server, loads seed data, executes
 // generated queries, and writes responses as want/*.yaml files.
 //
+// The capture loop is gated behind the CAPTURE_WANT_FIXTURES=1 environment
+// variable so a routine `make test` (or any `./...` discovery) cannot
+// silently re-baseline the golden fixtures from whatever branch the
+// developer happens to be on. Without the env var the test calls
+// t.Skip and returns instantly.
+//
 // Usage:
 //
-//	go test -run TestCapture ./test/cases/measure/cmd/capture/ -args [output-dir]
+//	make capture-test-cases
+//
+// or directly:
+//
+//	CAPTURE_WANT_FIXTURES=1 go test -run TestCapture ./test/cases/measure/cmd/capture/ -args [output-dir]
 //
 // output-dir defaults to ../../data (i.e. test/cases/measure/data).
 package capture_test
@@ -49,6 +59,12 @@ import (
 )
 
 func TestCapture(t *testing.T) {
+	if os.Getenv("CAPTURE_WANT_FIXTURES") != "1" {
+		t.Skip("skipped: set CAPTURE_WANT_FIXTURES=1 (or run `make capture-test-cases`) " +
+			"to re-baseline data/want/*.yaml. This test starts a live server and rewrites " +
+			"the golden fixtures with whatever the current build produces, so it must be " +
+			"opt-in and only run against a trusted baseline.")
+	}
 	gomega.RegisterTestingT(t)
 
 	// Initialize logger
@@ -96,6 +112,10 @@ func TestCapture(t *testing.T) {
 	// Discover generated input YAML files
 	entries, readErr := os.ReadDir(inputDirPath)
 	gomega.Expect(readErr).NotTo(gomega.HaveOccurred())
+
+	// Precompute the header bytes once so each fixture write is a single
+	// make+copy, not a per-iteration string→[]byte conversion + append.
+	headerBytes := []byte(casesMeasureData.LicenseHeader)
 
 	capturedCount := 0
 	for _, entry := range entries {
@@ -169,7 +189,10 @@ func TestCapture(t *testing.T) {
 		}
 
 		wantPath := filepath.Join(wantDirPath, testName+".yaml")
-		if writeErr := os.WriteFile(wantPath, respYAML, 0o600); writeErr != nil {
+		wantContent := make([]byte, len(headerBytes)+len(respYAML))
+		copy(wantContent, headerBytes)
+		copy(wantContent[len(headerBytes):], respYAML)
+		if writeErr := os.WriteFile(wantPath, wantContent, 0o600); writeErr != nil {
 			t.Errorf("  [ERROR] %s: write failed: %v", testName, writeErr)
 			continue
 		}
