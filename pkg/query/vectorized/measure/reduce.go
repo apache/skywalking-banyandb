@@ -193,11 +193,21 @@ func bindAggReduceSpecs(schema *vectorized.BatchSchema, aggSpecs []AggReduceSpec
 	out := make([]AggSpec, 0, len(aggSpecs))
 	for _, ars := range aggSpecs {
 		valueIdx := -1
+		fieldValueIdx := -1
 		for i, def := range schema.Columns {
-			if def.Role == vectorized.RoleField && def.Name == ars.OutputName {
+			if def.Role != vectorized.RoleField || def.Name != ars.OutputName {
+				continue
+			}
+			if isAggReduceValueType(def.Type) {
 				valueIdx = i
 				break
 			}
+			if def.Type == vectorized.ColumnTypeFieldValue && fieldValueIdx < 0 {
+				fieldValueIdx = i
+			}
+		}
+		if valueIdx < 0 {
+			valueIdx = fieldValueIdx
 		}
 		if valueIdx < 0 {
 			return nil, fmt.Errorf("agg output column %q not present in partial schema", ars.OutputName)
@@ -209,6 +219,10 @@ func bindAggReduceSpecs(schema *vectorized.BatchSchema, aggSpecs []AggReduceSpec
 		})
 	}
 	return out, nil
+}
+
+func isAggReduceValueType(columnType vectorized.ColumnType) bool {
+	return columnType == vectorized.ColumnTypeInt64 || columnType == vectorized.ColumnTypeFloat64
 }
 
 // schemaCompatible asserts that two BatchSchemas describe the same column

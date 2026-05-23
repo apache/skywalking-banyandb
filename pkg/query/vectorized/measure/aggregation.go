@@ -657,5 +657,8 @@ func findShardIDIndex(schema *vectorized.BatchSchema) int {
 // FIELD_TYPE_FLOAT → float64 → FieldValue_Float; see
 // measure_plan_aggregation.go and pkg/query/aggregation).
 func aggOutputType(in vectorized.ColumnType, _ AggFunc) vectorized.ColumnType {
+	if in == vectorized.ColumnTypeFieldValue {
+		return vectorized.ColumnTypeInt64
+	}
 	return in
 }

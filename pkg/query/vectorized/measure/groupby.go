@@ -251,35 +251,85 @@ func (g *BatchGroupBy) encodeKey(dst []byte, b *vectorized.RecordBatch, rowIdx i
 //   - float64:  8 little-endian bytes of math.Float64bits, with -0.0 → +0.0.
 //   - string:   4-byte little-endian length prefix + raw bytes.
 //   - bytes:    4-byte little-endian length prefix + raw bytes.
+//   - TagValue/FieldValue passthrough: same encoding as the scalar payload type.
 //
 // This helper is shared by BatchGroupBy.encodeKey and BatchAggregation.computeKey
 // so the two operators agree on key equivalence (Copilot G3 review issues 1+2).
 func appendKeyComponent(dst []byte, col vectorized.Column, rowIdx int) []byte {
 	switch c := col.(type) {
 	case *vectorized.TypedColumn[int64]:
-		var b [8]byte
-		binary.LittleEndian.PutUint64(b[:], uint64(c.Data()[rowIdx]))
-		return append(dst, b[:]...)
+		return appendIntKey(dst, c.Data()[rowIdx])
 	case *vectorized.TypedColumn[float64]:
-		v := c.Data()[rowIdx]
-		if v == 0 {
-			v = 0 // canonicalise -0.0 → +0.0 so they hash identically
-		}
-		var b [8]byte
-		binary.LittleEndian.PutUint64(b[:], math.Float64bits(v))
-		return append(dst, b[:]...)
+		return appendFloatKey(dst, c.Data()[rowIdx])
 	case *vectorized.TypedColumn[string]:
-		s := c.Data()[rowIdx]
-		var lb [4]byte
-		binary.LittleEndian.PutUint32(lb[:], uint32(len(s)))
-		dst = append(dst, lb[:]...)
-		return append(dst, s...)
+		return appendStringKey(dst, c.Data()[rowIdx])
 	case *vectorized.TypedColumn[[]byte]:
-		bs := c.Data()[rowIdx]
-		var lb [4]byte
-		binary.LittleEndian.PutUint32(lb[:], uint32(len(bs)))
-		dst = append(dst, lb[:]...)
-		return append(dst, bs...)
+		return appendBytesKey(dst, c.Data()[rowIdx])
+	case *vectorized.TypedColumn[*modelv1.TagValue]:
+		return appendTagValueKey(dst, c.Data()[rowIdx])
+	case *vectorized.TypedColumn[*modelv1.FieldValue]:
+		return appendFieldValueKey(dst, c.Data()[rowIdx])
+	}
+	return dst
+}
+
+func appendIntKey(dst []byte, value int64) []byte {
+	var b [8]byte
+	binary.LittleEndian.PutUint64(b[:], uint64(value))
+	return append(dst, b[:]...)
+}
+
+func appendFloatKey(dst []byte, value float64) []byte {
+	if value == 0 {
+		value = 0 // canonicalise -0.0 → +0.0 so they hash identically
+	}
+	var b [8]byte
+	binary.LittleEndian.PutUint64(b[:], math.Float64bits(value))
+	return append(dst, b[:]...)
+}
+
+func appendStringKey(dst []byte, value string) []byte {
+	var lb [4]byte
+	binary.LittleEndian.PutUint32(lb[:], uint32(len(value)))
+	dst = append(dst, lb[:]...)
+	return append(dst, value...)
+}
+
+func appendBytesKey(dst []byte, value []byte) []byte {
+	var lb [4]byte
+	binary.LittleEndian.PutUint32(lb[:], uint32(len(value)))
+	dst = append(dst, lb[:]...)
+	return append(dst, value...)
+}
+
+func appendTagValueKey(dst []byte, value *modelv1.TagValue) []byte {
+	if value == nil {
+		return dst
+	}
+	switch payload := value.GetValue().(type) {
+	case *modelv1.TagValue_Int:
+		return appendIntKey(dst, payload.Int.GetValue())
+	case *modelv1.TagValue_Str:
+		return appendStringKey(dst, payload.Str.GetValue())
+	case *modelv1.TagValue_BinaryData:
+		return appendBytesKey(dst, payload.BinaryData)
+	}
+	return dst
+}
+
+func appendFieldValueKey(dst []byte, value *modelv1.FieldValue) []byte {
+	if value == nil {
+		return dst
+	}
+	switch payload := value.GetValue().(type) {
+	case *modelv1.FieldValue_Int:
+		return appendIntKey(dst, payload.Int.GetValue())
+	case *modelv1.FieldValue_Float:
+		return appendFloatKey(dst, payload.Float.GetValue())
+	case *modelv1.FieldValue_Str:
+		return appendStringKey(dst, payload.Str.GetValue())
+	case *modelv1.FieldValue_BinaryData:
+		return appendBytesKey(dst, payload.BinaryData)
 	}
 	return dst
 }

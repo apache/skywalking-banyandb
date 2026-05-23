@@ -680,6 +680,124 @@ func TestBatchAggregation_AggModeReduce_CombinesPartialsAcrossShards(t *testing.
 	}
 }
 
+// TestBatchAggregation_AggModeReduce_BindsNumericDuplicateField asserts the
+// liaison reduce binds the numeric partial column when a schema also carries a
+// passthrough field with the same name. Distributed multi-source schemas may
+// carry row-compatible passthrough fields alongside the AggModeMap partial; the
+// reducer must not pick the passthrough column and panic on type assertion.
+func TestBatchAggregation_AggModeReduce_BindsNumericDuplicateField(t *testing.T) {
+	s := vectorized.NewBatchSchema([]vectorized.ColumnDef{
+		{Role: vectorized.RoleShardID, Name: shardIDOutputName, Type: vectorized.ColumnTypeInt64},
+		{Role: vectorized.RoleTag, TagFamily: "f", Name: "g", Type: vectorized.ColumnTypeString},
+		{Role: vectorized.RoleField, Name: "sum_v", Type: vectorized.ColumnTypeFieldValue},
+		{Role: vectorized.RoleField, Name: "sum_v", Type: vectorized.ColumnTypeInt64},
+	})
+	specs, bindErr := bindAggReduceSpecs(s, []AggReduceSpec{{OutputName: "sum_v", Func: AggSum}})
+	if bindErr != nil {
+		t.Fatalf("bindAggReduceSpecs: %v", bindErr)
+	}
+	if got := specs[0].InputCol; got != 3 {
+		t.Fatalf("InputCol = %d, want numeric duplicate column 3", got)
+	}
+	op := NewBatchAggregation(s, []int{1}, specs, AggModeReduce, 8, vectorized.NewMemoryTracker(1<<30), 0)
+	defer op.Close()
+	b := vectorized.NewRecordBatch(s, 2)
+	b.Columns[0].(*vectorized.TypedColumn[int64]).Append(1)
+	b.Columns[1].(*vectorized.TypedColumn[string]).Append("a")
+	b.Columns[2].(*vectorized.TypedColumn[*modelv1.FieldValue]).Append(nil)
+	b.Columns[3].(*vectorized.TypedColumn[int64]).Append(10)
+	b.Columns[0].(*vectorized.TypedColumn[int64]).Append(2)
+	b.Columns[1].(*vectorized.TypedColumn[string]).Append("a")
+	b.Columns[2].(*vectorized.TypedColumn[*modelv1.FieldValue]).Append(nil)
+	b.Columns[3].(*vectorized.TypedColumn[int64]).Append(20)
+	b.Len = 2
+	batches := feedReduce(t, op, b)
+	if len(batches) != 1 || batches[0].Len != 1 {
+		t.Fatalf("expected 1 output batch with 1 row, got %d batches", len(batches))
+	}
+	if got := batches[0].Columns[1].(*vectorized.TypedColumn[int64]).Data()[0]; got != 30 {
+		t.Fatalf("sum_v = %d, want 30", got)
+	}
+}
+
+// TestBatchAggregation_AggModeReduce_BindsFieldValueFallback covers the hidden
+// criteria path where a data-node iterator wrapper serializes partial rows
+// through DataPoint egress, so the wire frame carries FieldValue passthrough
+// columns instead of native numeric partial columns.
+func TestBatchAggregation_AggModeReduce_BindsFieldValueFallback(t *testing.T) {
+	s := vectorized.NewBatchSchema([]vectorized.ColumnDef{
+		{Role: vectorized.RoleShardID, Name: shardIDOutputName, Type: vectorized.ColumnTypeInt64},
+		{Role: vectorized.RoleTag, TagFamily: "f", Name: "g", Type: vectorized.ColumnTypeString},
+		{Role: vectorized.RoleField, Name: "sum_v", Type: vectorized.ColumnTypeFieldValue},
+	})
+	specs, bindErr := bindAggReduceSpecs(s, []AggReduceSpec{{OutputName: "sum_v", Func: AggSum}})
+	if bindErr != nil {
+		t.Fatalf("bindAggReduceSpecs: %v", bindErr)
+	}
+	if got := specs[0].InputCol; got != 2 {
+		t.Fatalf("InputCol = %d, want FieldValue fallback column 2", got)
+	}
+	op := NewBatchAggregation(s, []int{1}, specs, AggModeReduce, 8, vectorized.NewMemoryTracker(1<<30), 0)
+	defer op.Close()
+	b := vectorized.NewRecordBatch(s, 2)
+	b.Columns[0].(*vectorized.TypedColumn[int64]).Append(1)
+	b.Columns[1].(*vectorized.TypedColumn[string]).Append("a")
+	b.Columns[2].(*vectorized.TypedColumn[*modelv1.FieldValue]).Append(&modelv1.FieldValue{Value: &modelv1.FieldValue_Int{Int: &modelv1.Int{Value: 10}}})
+	b.Columns[0].(*vectorized.TypedColumn[int64]).Append(2)
+	b.Columns[1].(*vectorized.TypedColumn[string]).Append("a")
+	b.Columns[2].(*vectorized.TypedColumn[*modelv1.FieldValue]).Append(&modelv1.FieldValue{Value: &modelv1.FieldValue_Int{Int: &modelv1.Int{Value: 20}}})
+	b.Len = 2
+	batches := feedReduce(t, op, b)
+	if len(batches) != 1 || batches[0].Len != 1 {
+		t.Fatalf("expected 1 output batch with 1 row, got %d batches", len(batches))
+	}
+	if got := batches[0].Columns[1].(*vectorized.TypedColumn[int64]).Data()[0]; got != 30 {
+		t.Fatalf("sum_v = %d, want 30", got)
+	}
+}
+
+// TestBatchAggregation_AggModeReduce_TagValueGroupKeyDoesNotCollapse is a
+// focused debug reproducer for distributed hidden-criteria queries: the data
+// node serializes partial aggregate rows through DataPoint egress, so the
+// liaison sees group keys as ColumnTypeTagValue passthrough cells. Distinct
+// TagValue keys must remain distinct during reduce.
+func TestBatchAggregation_AggModeReduce_TagValueGroupKeyDoesNotCollapse(t *testing.T) {
+	s := vectorized.NewBatchSchema([]vectorized.ColumnDef{
+		{Role: vectorized.RoleShardID, Name: shardIDOutputName, Type: vectorized.ColumnTypeInt64},
+		{Role: vectorized.RoleTag, TagFamily: "f", Name: "entity_id", Type: vectorized.ColumnTypeTagValue},
+		{Role: vectorized.RoleField, Name: "sum_v", Type: vectorized.ColumnTypeFieldValue},
+	})
+	specs, bindErr := bindAggReduceSpecs(s, []AggReduceSpec{{OutputName: "sum_v", Func: AggSum}})
+	if bindErr != nil {
+		t.Fatalf("bindAggReduceSpecs: %v", bindErr)
+	}
+	op := NewBatchAggregation(s, []int{1}, specs, AggModeReduce, 8, vectorized.NewMemoryTracker(1<<30), 0)
+	defer op.Close()
+	b := vectorized.NewRecordBatch(s, 2)
+	b.Columns[0].(*vectorized.TypedColumn[int64]).Append(1)
+	b.Columns[1].(*vectorized.TypedColumn[*modelv1.TagValue]).Append(&modelv1.TagValue{Value: &modelv1.TagValue_Str{Str: &modelv1.Str{Value: "e2e-service-consumer"}}})
+	b.Columns[2].(*vectorized.TypedColumn[*modelv1.FieldValue]).Append(&modelv1.FieldValue{Value: &modelv1.FieldValue_Int{Int: &modelv1.Int{Value: 10}}})
+	b.Columns[0].(*vectorized.TypedColumn[int64]).Append(1)
+	b.Columns[1].(*vectorized.TypedColumn[*modelv1.TagValue]).Append(&modelv1.TagValue{Value: &modelv1.TagValue_Str{Str: &modelv1.Str{Value: "e2e-service-provider"}}})
+	b.Columns[2].(*vectorized.TypedColumn[*modelv1.FieldValue]).Append(&modelv1.FieldValue{Value: &modelv1.FieldValue_Int{Int: &modelv1.Int{Value: 20}}})
+	b.Len = 2
+	batches := feedReduce(t, op, b)
+	if len(batches) != 1 || batches[0].Len != 2 {
+		t.Fatalf("expected 1 output batch with 2 rows, got %d batches and %d rows", len(batches), batches[0].Len)
+	}
+	gotKeys := make(map[string]struct{}, batches[0].Len)
+	keyCol := batches[0].Columns[0].(*vectorized.TypedColumn[*modelv1.TagValue])
+	for rowIdx := range batches[0].Len {
+		key := keyCol.Data()[rowIdx].GetStr().GetValue()
+		gotKeys[key] = struct{}{}
+	}
+	for _, wantKey := range []string{"e2e-service-consumer", "e2e-service-provider"} {
+		if _, ok := gotKeys[wantKey]; !ok {
+			t.Fatalf("missing reduced group key %q in %v", wantKey, gotKeys)
+		}
+	}
+}
+
 // TestBatchAggregation_AggModeReduce_DedupsSameShardSameGroup asserts replica
 // duplicates — same shard_id + same group_key — collapse to a single
 // contribution. Two identical (shard=1, g=a, sum_v=10) rows yield sum=10.

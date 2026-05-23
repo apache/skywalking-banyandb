@@ -20,6 +20,7 @@ package measure
 import (
 	"encoding/binary"
 
+	modelv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/model/v1"
 	"github.com/apache/skywalking-banyandb/pkg/query/aggregation"
 	"github.com/apache/skywalking-banyandb/pkg/query/vectorized"
 )
@@ -122,22 +123,66 @@ func (a *BatchAggregation) combinePartial(b *vectorized.RecordBatch, rowIdx int,
 		return
 	}
 	if slot.inputIsFloat {
-		valueCol := col.(*vectorized.TypedColumn[float64])
-		p := aggregation.Partial[float64]{Value: valueCol.Data()[rowIdx]}
+		p := aggregation.Partial[float64]{Value: partialFloatValue(col, rowIdx)}
 		if countIdx >= 0 {
-			countCol := b.Columns[countIdx].(*vectorized.TypedColumn[float64])
-			p.Count = countCol.Data()[rowIdx]
+			p.Count = partialFloatValue(b.Columns[countIdx], rowIdx)
 		}
 		slot.floatReduce.Combine(p)
 		return
 	}
-	valueCol := col.(*vectorized.TypedColumn[int64])
-	p := aggregation.Partial[int64]{Value: valueCol.Data()[rowIdx]}
+	p := aggregation.Partial[int64]{Value: partialIntValue(col, rowIdx)}
 	if countIdx >= 0 {
-		countCol := b.Columns[countIdx].(*vectorized.TypedColumn[int64])
-		p.Count = countCol.Data()[rowIdx]
+		p.Count = partialIntValue(b.Columns[countIdx], rowIdx)
 	}
 	slot.intReduce.Combine(p)
+}
+
+func partialIntValue(col vectorized.Column, rowIdx int) int64 {
+	switch c := col.(type) {
+	case *vectorized.TypedColumn[int64]:
+		return c.Data()[rowIdx]
+	case *vectorized.TypedColumn[float64]:
+		return int64(c.Data()[rowIdx])
+	case *vectorized.TypedColumn[*modelv1.FieldValue]:
+		fv := c.Data()[rowIdx]
+		if fv == nil {
+			return 0
+		}
+		switch value := fv.GetValue().(type) {
+		case *modelv1.FieldValue_Int:
+			return value.Int.GetValue()
+		case *modelv1.FieldValue_Float:
+			return int64(value.Float.GetValue())
+		}
+		return 0
+	default:
+		valueCol := col.(*vectorized.TypedColumn[int64])
+		return valueCol.Data()[rowIdx]
+	}
+}
+
+func partialFloatValue(col vectorized.Column, rowIdx int) float64 {
+	switch c := col.(type) {
+	case *vectorized.TypedColumn[float64]:
+		return c.Data()[rowIdx]
+	case *vectorized.TypedColumn[int64]:
+		return float64(c.Data()[rowIdx])
+	case *vectorized.TypedColumn[*modelv1.FieldValue]:
+		fv := c.Data()[rowIdx]
+		if fv == nil {
+			return 0
+		}
+		switch value := fv.GetValue().(type) {
+		case *modelv1.FieldValue_Float:
+			return value.Float.GetValue()
+		case *modelv1.FieldValue_Int:
+			return float64(value.Int.GetValue())
+		}
+		return 0
+	default:
+		valueCol := col.(*vectorized.TypedColumn[float64])
+		return valueCol.Data()[rowIdx]
+	}
 }
 
 // writeReduce emits the slot's reduced final value to the typed output

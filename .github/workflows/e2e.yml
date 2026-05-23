@@ -48,12 +48,20 @@ jobs:
           tag: ${{ github.sha }}
 
   StoragePlugins:
-    name: ${{ matrix.test.name }}
+    name: ${{ matrix.test.name }}${{ matrix.engine.suffix }}
     runs-on: ${{ matrix.test.runs-on || 'ubuntu-latest' }}
     timeout-minutes: 90
     needs: [DockerImage]
     strategy:
       fail-fast: false
+      # Two-dimensional matrix: (suite × engine). The `engine` axis pivots
+      # every suite into a (row, vec) pair without literal duplication. The
+      # row variant keeps the historical CI label (empty suffix); the vec
+      # variant appends " Vec" so existing dashboards/regex over job names
+      # keep matching.
+      #
+      # BANYANDB_DEPLOYMENT_FILE in the vec engine env is consumed only by
+      # the Rover e2e-banyandb.yaml; setting it on other vec runs is inert.
       matrix:
         test:
           - name: Storage
@@ -64,6 +72,8 @@ jobs:
             config: test/e2e-v2/cases/event/banyandb/e2e.yaml
           - name: Log
             config: test/e2e-v2/cases/log/banyandb/e2e.yaml
+          - name: Zipkin
+            config: test/e2e-v2/cases/zipkin/banyandb/e2e.yaml
           - name: Cluster
             config: test/e2e-v2/cases/cluster/e2e.yaml
           - name: Rover eBPF - Istio mesh, Kind
@@ -75,6 +85,12 @@ jobs:
           # TODO: Enable Lifecycle test when it is ready
           # - name: Lifecycle
           #   config: test/e2e-v2/cases/lifecycle/e2e.yaml
+        engine:
+          - suffix: ""
+          - suffix: " Vec"
+            env: |
+              BANYANDB_MEASURE_VECTORIZED_FLAGS=--measure-vectorized-enabled=true
+              BANYANDB_DEPLOYMENT_FILE=test/e2e-v2/cases/rover/process/istio/banyandb/banyandb-deployment-vec.yaml
     env:
       TAG: ${{ github.sha }}
     steps:
@@ -105,7 +121,9 @@ jobs:
           username: ${{ github.repository_owner }}
           password: ${{ secrets.GITHUB_TOKEN }}
       - name: Set env var
-        run: echo "${{ matrix.test.env }}" >> $GITHUB_ENV
+        run: |
+          echo "${{ matrix.test.env }}" >> $GITHUB_ENV
+          echo "${{ matrix.engine.env }}" >> $GITHUB_ENV
       - name: Generate data for lifecycle
         if: ${{ matrix.test.name == 'Lifecycle' }}
         run: |
