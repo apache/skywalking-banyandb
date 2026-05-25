@@ -69,6 +69,14 @@ type queryService struct {
 	nodeID               string
 	hotStageNodeSelector string
 	slowQuery            time.Duration
+	// broadcastTimeout bounds how long the liaison waits for each measure
+	// query broadcast (per-group fanout under multi-group). Both the row
+	// distributed plan and the vec distributed plan inherit this value;
+	// the default matches their historical hard-coded 15 s. Operators
+	// running large non-paginated scans should raise it to a value that
+	// lets the slow query complete instead of returning DeadlineExceeded
+	// mid-merge.
+	broadcastTimeout time.Duration
 }
 
 // NewService return a new query service.
@@ -110,6 +118,8 @@ func (q *queryService) Name() string {
 func (q *queryService) FlagSet() *run.FlagSet {
 	fs := run.NewFlagSet("distributed-query")
 	fs.DurationVar(&q.slowQuery, "dst-slow-query", 5*time.Second, "distributed slow query threshold, 0 means no slow query log")
+	fs.DurationVar(&q.broadcastTimeout, "dst-broadcast-timeout", 15*time.Second,
+		"per-broadcast wait when fanning a measure query out to data nodes; raise it for clusters that legitimately scan large non-paginated result sets")
 	return fs
 }
 

@@ -21,8 +21,16 @@ import (
 	"context"
 
 	"github.com/apache/skywalking-banyandb/api/common"
+	"github.com/apache/skywalking-banyandb/pkg/pool"
 	"github.com/apache/skywalking-banyandb/pkg/query/vectorized"
 )
+
+// measureBatchPool recycles *MeasureBatch shells together with their
+// parallel metadata slices (Timestamps / Versions / ShardIDs / SeriesIDs).
+// Tag and Field columns come from the per-type column pool exposed by the
+// vectorized package; AcquireMeasureBatch wires them in on Get and Release
+// returns them on Put.
+var measureBatchPool = pool.Register[*MeasureBatch]("vectorized.measure-batch")
 
 // MeasureBatchResult is the columnar counterpart to MeasureQueryResult.
 // Implementations return a *MeasureBatch carrying parallel typed slices
@@ -89,4 +97,79 @@ func (b *MeasureBatch) RowCount() int {
 		return 0
 	}
 	return len(b.Timestamps)
+}
+
+// AcquireMeasureBatch returns a recycled *MeasureBatch wired to schema with
+// Tag / Field column slots pre-acquired from the per-type column pool. The
+// parallel metadata slices are truncated to length 0 and grown to capacity
+// if needed; columns inherit whatever capacity their pooled instance last
+// held (at least capacity). Callers must call Release exactly once when
+// done with the batch.
+func AcquireMeasureBatch(schema *vectorized.BatchSchema, capacity int) *MeasureBatch {
+	b := measureBatchPool.Get()
+	if b == nil {
+		b = &MeasureBatch{}
+	}
+	b.Schema = schema
+	b.Timestamps = b.Timestamps[:0]
+	b.Versions = b.Versions[:0]
+	b.ShardIDs = b.ShardIDs[:0]
+	b.SeriesIDs = b.SeriesIDs[:0]
+	b.SeriesBoundaries = b.SeriesBoundaries[:0]
+	if capacity > 0 {
+		if cap(b.Timestamps) < capacity {
+			b.Timestamps = make([]int64, 0, capacity)
+		}
+		if cap(b.Versions) < capacity {
+			b.Versions = make([]int64, 0, capacity)
+		}
+		if cap(b.ShardIDs) < capacity {
+			b.ShardIDs = make([]common.ShardID, 0, capacity)
+		}
+		if cap(b.SeriesIDs) < capacity {
+			b.SeriesIDs = make([]common.SeriesID, 0, capacity)
+		}
+	}
+	b.Tags = b.Tags[:0]
+	b.Fields = b.Fields[:0]
+	if schema != nil {
+		for _, def := range schema.Columns {
+			switch def.Role {
+			case vectorized.RoleTag:
+				b.Tags = append(b.Tags, vectorized.AcquireColumn(def.Type, capacity))
+			case vectorized.RoleField:
+				b.Fields = append(b.Fields, vectorized.AcquireColumn(def.Type, capacity))
+			case vectorized.RoleTimestamp, vectorized.RoleVersion,
+				vectorized.RoleSeriesID, vectorized.RoleShardID:
+				// Metadata roles use the parallel slices on the batch.
+			}
+		}
+	}
+	return b
+}
+
+// Release returns the batch's Tag / Field columns to the per-type pool and
+// the batch itself to the MeasureBatch pool. Parallel metadata slices keep
+// their backing arrays (truncated to length 0) so the next Acquire can
+// reuse them. Calling Release on a nil receiver is a no-op; calling Release
+// twice on the same batch is a use-after-free and not supported.
+func (b *MeasureBatch) Release() {
+	if b == nil {
+		return
+	}
+	for _, c := range b.Tags {
+		vectorized.ReleaseColumn(c)
+	}
+	for _, c := range b.Fields {
+		vectorized.ReleaseColumn(c)
+	}
+	b.Schema = nil
+	b.Timestamps = b.Timestamps[:0]
+	b.Versions = b.Versions[:0]
+	b.ShardIDs = b.ShardIDs[:0]
+	b.SeriesIDs = b.SeriesIDs[:0]
+	b.Tags = b.Tags[:0]
+	b.Fields = b.Fields[:0]
+	b.SeriesBoundaries = b.SeriesBoundaries[:0]
+	measureBatchPool.Put(b)
 }

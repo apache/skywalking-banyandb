@@ -1058,6 +1058,7 @@ Contains shard information for proper deduplication.
 | ----- | ---- | ----- | ----------- |
 | data_points | [InternalDataPoint](#banyandb-measure-v1-InternalDataPoint) | repeated | data_points with shard information |
 | trace | [banyandb.common.v1.Trace](#banyandb-common-v1-Trace) |  | trace contains the trace information of the query when trace is enabled |
+| raw_frame_body | [bytes](#bytes) |  | raw_frame_body contains the vectorized raw frame body when raw wire mode is enabled |
 
 
 

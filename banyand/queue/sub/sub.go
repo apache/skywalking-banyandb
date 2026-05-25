@@ -203,10 +203,25 @@ func (s *server) Send(stream clusterv1.Service_SendServer) error {
 			s.metrics.totalMsgSent.Inc(1, writeEntity.Topic)
 			continue
 		}
-		var message proto.Message
+		var responseBody []byte
 		switch d := m.Data().(type) {
 		case proto.Message:
-			message = d
+			var marshalErr error
+			responseBody, marshalErr = proto.Marshal(d)
+			if marshalErr != nil {
+				s.reply(stream, writeEntity, marshalErr, "failed to marshal message")
+				continue
+			}
+		case []byte:
+			// Topic-AND-process-wire-mode guard: an opaque []byte response body
+			// is the raw vec columnar frame and is only valid on
+			// TopicInternalMeasureQuery when this process is flag-on. The
+			// default: arm still rejects []byte for every other topic/mode.
+			if *topic != data.TopicInternalMeasureQuery || !data.MeasureWireModeRaw() {
+				s.reply(stream, writeEntity, nil, fmt.Sprintf("invalid response: unexpected raw body on topic %s", *topic))
+				continue
+			}
+			responseBody = d
 		case *common.Error:
 			select {
 			case <-ctx.Done():
@@ -220,14 +235,9 @@ func (s *server) Send(stream clusterv1.Service_SendServer) error {
 			s.reply(stream, writeEntity, nil, fmt.Sprintf("invalid response: %T", d))
 			continue
 		}
-		data, err := proto.Marshal(message)
-		if err != nil {
-			s.reply(stream, writeEntity, err, "failed to marshal message")
-			continue
-		}
 		if err := stream.Send(&clusterv1.SendResponse{
 			MessageId: writeEntity.MessageId,
-			Body:      data,
+			Body:      responseBody,
 		}); err != nil {
 			s.log.Error().Stringer("request", writeEntity).Dur("latency", time.Since(start)).Err(err).Msg("failed to send query response")
 			s.metrics.totalMsgSentErr.Inc(1, writeEntity.Topic)

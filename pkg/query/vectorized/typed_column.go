@@ -117,7 +117,14 @@ func NewFieldValueColumn(capacity int) *TypedColumn[*modelv1.FieldValue] {
 	return &TypedColumn[*modelv1.FieldValue]{typ: ColumnTypeFieldValue, data: make([]*modelv1.FieldValue, 0, capacity)}
 }
 
-// NewColumnForType constructs a Column with the given type and capacity.
+// NewColumnForType constructs a fresh Column of the given type with the
+// requested backing capacity. Callers that want pool recycling should use
+// AcquireColumn / ReleaseColumn directly — those are wired into the
+// MeasureBatch pool's Acquire path. NewColumnForType deliberately stays
+// non-pooled so callers (operator-internal slot buffers, the egress
+// coalesce buffer, etc.) that never Release their columns do not skew the
+// pool refcount used by the test-teardown HaveZeroRef invariant.
+//
 // Panics on unknown type — programmer error, not data error.
 func NewColumnForType(t ColumnType, capacity int) Column {
 	switch t {

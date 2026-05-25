@@ -26,9 +26,11 @@ import (
 )
 
 // Top selects the top-N (or bottom-N when Asc) rows by FieldName. Wraps
-// `measure.BatchTop`, which uses a single global heap — the row path's
-// per-timestamp TopN semantic is not yet reproduced here (BatchTop
-// extension is tracked separately; see G6 plan).
+// `measure.BatchTop`, a single global heap. This matches the row path's
+// req.Top handler (pkg/query/logical/measure.topOp), which also inserts
+// every data point into one TopQueue — req.Top is a whole-result top-N,
+// not the per-timestamp TopNQuery RPC (out of scope, see .omc/g9-plan.md
+// G9a).
 //
 // Schema-preserving.
 type Top struct {

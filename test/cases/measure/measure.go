@@ -97,6 +97,7 @@ var measureEntries = []any{
 	g.Entry("multi groups: new tag and fields", helpers.Args{Input: "multi_group_new_tag_field", Duration: 35 * time.Minute, Offset: -20 * time.Minute}),
 	g.Entry("filter by non-existent tag", helpers.Args{Input: "filter_non_existent_tag", Duration: 25 * time.Minute, Offset: -20 * time.Minute, WantErr: true}),
 	g.Entry("project non-existent tag", helpers.Args{Input: "project_non_existent_tag", Duration: 25 * time.Minute, Offset: -20 * time.Minute, WantErr: true}),
+	g.Entry("project non-existent field", helpers.Args{Input: "project_non_existent_field", Duration: 25 * time.Minute, Offset: -20 * time.Minute, WantErr: true}),
 	g.Entry("write mixed", helpers.Args{Input: "write_mixed", Duration: 15 * time.Minute, Offset: 25 * time.Minute, DisOrder: true}),
 	g.Entry("filter by tag with NE", helpers.Args{Input: "tag_filter_ne", Duration: 25 * time.Minute, Offset: -20 * time.Minute, DisOrder: true}),
 	g.Entry("filter by tag with NOT IN", helpers.Args{Input: "tag_filter_not_in", Duration: 25 * time.Minute, Offset: -20 * time.Minute, DisOrder: true}),
@@ -107,6 +108,7 @@ var measureEntries = []any{
 	g.Entry("index mode filter by NE", helpers.Args{Input: "index_mode_ne", Duration: 25 * time.Minute, Offset: -20 * time.Minute, DisOrder: true}),
 	g.Entry("index mode filter by LE on int", helpers.Args{Input: "index_mode_le", Duration: 25 * time.Minute, Offset: -20 * time.Minute, DisOrder: true}),
 	g.Entry("offset beyond results", helpers.Args{Input: "offset_empty", Duration: 25 * time.Minute, Offset: -20 * time.Minute, WantEmpty: true}),
+	g.Entry("empty result for unmatched filter", helpers.Args{Input: "empty_result", Duration: 25 * time.Minute, Offset: -20 * time.Minute, WantEmpty: true}),
 
 	// Generated test cases (Layer 1: leaf conditions)
 	g.Entry("gen: leaf EQ string", helpers.Args{Input: "gen_leaf_eq_str", Want: "gen_leaf_eq_str", Duration: 25 * time.Minute, Offset: -20 * time.Minute}),

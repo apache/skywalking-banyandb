@@ -27,6 +27,7 @@ import (
 	"golang.org/x/exp/slices"
 
 	"github.com/apache/skywalking-banyandb/api/common"
+	"github.com/apache/skywalking-banyandb/api/data"
 	commonv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/common/v1"
 	databasev1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/database/v1"
 	measurev1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/measure/v1"
@@ -47,6 +48,7 @@ import (
 	logical_stream "github.com/apache/skywalking-banyandb/pkg/query/logical/stream"
 	logical_trace "github.com/apache/skywalking-banyandb/pkg/query/logical/trace"
 	"github.com/apache/skywalking-banyandb/pkg/query/model"
+	"github.com/apache/skywalking-banyandb/pkg/query/tracelabels"
 	vmeasure "github.com/apache/skywalking-banyandb/pkg/query/vectorized/measure"
 	vecplan "github.com/apache/skywalking-banyandb/pkg/query/vectorized/measure/plan"
 )
@@ -123,18 +125,18 @@ func (p *streamQueryProcessor) Rev(ctx context.Context, message bus.Message) (re
 	if queryCriteria.Trace {
 		tracer, ctx = query.NewTracer(ctx, n.Format(time.RFC3339Nano))
 		span, ctx = tracer.StartSpan(ctx, "data-%s", p.queryService.nodeID)
-		span.Tag("plan", plan.String())
+		span.Tag(tracelabels.TagPlan, plan.String())
 		defer func() {
 			data := resp.Data()
 			switch d := data.(type) {
 			case *streamv1.QueryResponse:
-				span.Tag("resp_count", fmt.Sprintf("%d", len(d.Elements)))
+				span.Tag(tracelabels.TagRespCount, fmt.Sprintf("%d", len(d.Elements)))
 				span.Stop()
 				d.Trace = tracer.ToProto()
 			case *common.Error:
 				span.Error(errors.New(d.Error()))
 				span.Stop()
-				resp = bus.NewMessage(bus.MessageID(now), &measurev1.QueryResponse{Trace: tracer.ToProto()})
+				resp = bus.NewMessage(bus.MessageID(now), &streamv1.QueryResponse{Trace: tracer.ToProto()})
 			default:
 				panic("unexpected data type")
 			}
@@ -260,33 +262,115 @@ func executeMeasurePlan(
 }
 
 // tryVecDispatch is the thin adapter from measureExecutionContext into
-// the vec dispatch inputs. Multi-measure queries are not yet wired (G8
-// follow-up), so they fall through to the row path.
+// the vec dispatch inputs. Multi-measure queries (len(ecc) > 1) are
+// handled per-group: each group is dispatched to vec individually and
+// the per-group iterators are merged through the row path's exact
+// cross-group ordering via logical_measure.MergeGroupMIterators (G9f.1,
+// reusing the row sortableDataPoints + sortedMIterator stack so the
+// cross-group order and version dedup are reproduced by construction,
+// not by parallel reimplementation). If any group's executor context is
+// not vec-capable, or any group's dispatch declines to handle the
+// request, the whole multi-measure request falls through to the row
+// path — mixing vec for some groups with row for others would produce a
+// merged result the row path cannot validate.
 //
-// Distributed Map-mode GroupBy+Agg requests (emitPartial=true) also fall
-// through: the vec subsystem only implements AggModeAll (single-node full
-// reduce), so emitting AggModeAll results on each data node and letting
-// the liaison naively merge them would double-count groups. The row path
-// handles the Map/Reduce split via measure_plan_aggregation.go's
-// emitPartial flag.
+// Distributed Map-mode GroupBy+Agg (emitPartial=true) routes to vec via
+// AggModeMap (G9f.2): vecplan.Dispatch receives emitPartial and the
+// BatchAggregation operator emits typed-column partials. As of G9f.4 the
+// data-node side handles distributed Top-over-Agg too — the vec plan emits
+// Scan → GroupByAgg(Map) → Top → Limit per node, BatchTop sorts on the
+// partial value column, and the row-path liaison's distributedPlan dedupes
+// + applies the global Top across the per-node partial top-Ns (mirrors the
+// row path's two-pass distributed Top approach; pushDownAgg is set whenever
+// Agg != nil, see measure_analyzer.go:179, and Top is applied AFTER
+// aggregation at :205-207).
 func tryVecDispatch(
 	ctx context.Context,
 	queryCriteria *measurev1.QueryRequest,
 	mctx *measureExecutionContext,
 	emitPartial bool,
 ) (executor.MIterator, string, bool, error) {
-	if len(mctx.ecc) != 1 {
+	// Empty execution context = no measures to query. Fall through to row
+	// in both flag states — the row path handles the degenerate empty
+	// case identically (returns an empty MIterator). This is NOT a vec
+	// fall-through under flag-on (we never entered vec); it is the
+	// "no work to do" exit.
+	if len(mctx.ecc) == 0 {
 		return nil, "", false, nil
 	}
-	if emitPartial && (queryCriteria.GetGroupBy() != nil || queryCriteria.GetAgg() != nil) {
-		return nil, "", false, nil
+	vecs := make([]vecExecutionContext, len(mctx.ecc))
+	flagOn := false
+	for groupIdx, ec := range mctx.ecc {
+		vec, ok := ec.(vecExecutionContext)
+		if !ok {
+			// A non-vec execution context can legitimately appear only on
+			// the flag-off rollback path (production storage satisfies
+			// vecExecutionContext). If ANY group's executor lacks the
+			// capability and the cluster is flag-on, that is a botched
+			// rollout and must fail loud — no proto/row fall-through.
+			if flagOn {
+				return nil, "", true, fmt.Errorf("vec dispatch: group %d execution context not vec-capable under flag-on (rollout skew?)", groupIdx)
+			}
+			return nil, "", false, nil
+		}
+		vecs[groupIdx] = vec
+		// Detect flag-on as soon as the first vec config is observable.
+		// Per-process flag means every group's config agrees in practice.
+		if groupIdx == 0 && vec.VectorizedConfig().Enabled {
+			flagOn = true
+		}
 	}
-	vec, ok := mctx.ecc[0].(vecExecutionContext)
-	if !ok {
-		return nil, "", false, nil
+	if len(mctx.ecc) == 1 {
+		return vecplan.Dispatch(ctx, queryCriteria, mctx.metadata[0], vecs[0].GetSchema(),
+			mctx.schemas[0], vecs[0], vecs[0].VectorizedConfig(), emitPartial, false)
 	}
-	return vecplan.Dispatch(ctx, queryCriteria, mctx.metadata[0], vec.GetSchema(),
-		mctx.schemas[0], vec, vec.VectorizedConfig())
+	// Multi-measure projection validation: a tag/field is valid if it
+	// resolves in ANY group's schema (mirrors measure_analyzer.Analyze's
+	// mergeSchema(ss) union). Running the per-group validation inside
+	// Dispatch would reject the schema-evolution case where one group
+	// added a tag/field the others lack (multi_group_new_tag_field
+	// integration fixture). We pre-validate here against the union once,
+	// then skip the per-group validation inside Dispatch.
+	measureSchemas := make([]*databasev1.Measure, len(vecs))
+	for i, v := range vecs {
+		measureSchemas[i] = v.GetSchema()
+	}
+	if projErr := vecplan.ValidateMultiGroupProjection(queryCriteria, mctx.schemas, measureSchemas); projErr != nil {
+		return nil, "", true, projErr
+	}
+	iters := make([]executor.MIterator, 0, len(mctx.ecc))
+	planStrs := make([]string, 0, len(mctx.ecc))
+	closeOpened := func() {
+		for _, opened := range iters {
+			_ = opened.Close()
+		}
+	}
+	for groupIdx, vec := range vecs {
+		mit, planStr, handled, dispatchErr := vecplan.Dispatch(ctx, queryCriteria,
+			mctx.metadata[groupIdx], vec.GetSchema(), mctx.schemas[groupIdx], vec, vec.VectorizedConfig(), emitPartial, true)
+		if dispatchErr != nil {
+			closeOpened()
+			// handled=true so the caller surfaces the error rather than
+			// retrying on row (no fall-through under flag-on).
+			return nil, "", true, dispatchErr
+		}
+		if !handled {
+			closeOpened()
+			// Per-group vec config is flag-off (rollback rail). Forward
+			// the rollback decision to the caller so the entire
+			// multi-measure request runs row-side end-to-end.
+			return nil, "", false, nil
+		}
+		iters = append(iters, mit)
+		planStrs = append(planStrs, planStr)
+	}
+	order, orderErr := logical_measure.ResolveCrossGroupMergeOrder(queryCriteria, mctx.schemas)
+	if orderErr != nil {
+		closeOpened()
+		return nil, "", false, orderErr
+	}
+	merged := logical_measure.MergeGroupMIterators(iters, order)
+	return merged, fmt.Sprintf("vec-multi-measure%v", planStrs), true, nil
 }
 
 // collectInternalDataPoints collects InternalDataPoints from the iterator.
@@ -332,31 +416,41 @@ func (p *measureQueryProcessor) executeQuery(ctx context.Context, queryCriteria 
 		e.RawJSON("req", logger.Proto(queryCriteria)).Msg("received a query event")
 	}
 
-	mIterator, planStr, execErr := executeMeasurePlan(ctx, queryCriteria, mctx, false)
-	if execErr != nil {
-		resp = bus.NewMessage(bus.MessageID(now), common.NewError("%v", execErr))
-		return
-	}
-	defer func() {
-		if closeErr := mIterator.Close(); closeErr != nil {
-			mctx.ml.Error().Err(closeErr).Dur("latency", time.Since(n)).RawJSON("req", logger.Proto(queryCriteria)).Msg("fail to close the query plan")
-		}
-	}()
-
 	var tracer *query.Tracer
 	var span *query.Span
 	if queryCriteria.Trace {
 		tracer, ctx = query.NewTracer(ctx, n.Format(time.RFC3339Nano))
 		span, ctx = tracer.StartSpan(ctx, "data-%s", p.queryService.nodeID)
-		span.Tag("plan", planStr)
+	}
+	mIterator, planStr, execErr := executeMeasurePlan(ctx, queryCriteria, mctx, false)
+	if execErr != nil {
+		resp = bus.NewMessage(bus.MessageID(now), common.NewError("%v", execErr))
+		return
+	}
+	iteratorClosed := false
+	closeIterator := func() {
+		if iteratorClosed {
+			return
+		}
+		iteratorClosed = true
+		if closeErr := mIterator.Close(); closeErr != nil {
+			mctx.ml.Error().Err(closeErr).Dur("latency", time.Since(n)).RawJSON("req", logger.Proto(queryCriteria)).Msg("fail to close the query plan")
+		}
+	}
+	defer closeIterator()
+
+	if span != nil {
+		span.Tag(tracelabels.TagPlan, planStr)
 		defer func() {
 			data := resp.Data()
 			switch d := data.(type) {
 			case *measurev1.QueryResponse:
-				span.Tag("resp_count", fmt.Sprintf("%d", len(d.DataPoints)))
-				d.Trace = tracer.ToProto()
+				closeIterator()
+				span.Tag(tracelabels.TagRespCount, fmt.Sprintf("%d", len(d.DataPoints)))
 				span.Stop()
+				d.Trace = tracer.ToProto()
 			case *common.Error:
+				closeIterator()
 				span.Error(errors.New(d.Error()))
 				span.Stop()
 				resp = bus.NewMessage(bus.MessageID(now), &measurev1.QueryResponse{Trace: tracer.ToProto()})
@@ -372,8 +466,8 @@ func (p *measureQueryProcessor) executeQuery(ctx context.Context, queryCriteria 
 		if tracer != nil {
 			iterSpan, _ := tracer.StartSpan(ctx, "iterator")
 			defer func() {
-				iterSpan.Tag("rounds", fmt.Sprintf("%d", r))
-				iterSpan.Tag("size", fmt.Sprintf("%d", len(result)))
+				iterSpan.Tag(tracelabels.TagRounds, fmt.Sprintf("%d", r))
+				iterSpan.Tag(tracelabels.TagSize, fmt.Sprintf("%d", len(result)))
 				iterSpan.Stop()
 			}()
 		}
@@ -436,31 +530,108 @@ func (p *measureInternalQueryProcessor) Rev(ctx context.Context, message bus.Mes
 		e.RawJSON("req", logger.Proto(queryCriteria)).Msg("received an internal query event")
 	}
 
+	var tracer *query.Tracer
+	var span *query.Span
+	if queryCriteria.Trace {
+		tracer, ctx = query.NewTracer(ctx, n.Format(time.RFC3339Nano))
+		span, ctx = tracer.StartSpan(ctx, "data-%s", p.queryService.nodeID)
+	}
 	mIterator, planStr, execErr := executeMeasurePlan(ctx, queryCriteria, mctx, internalRequest.GetAggReturnPartial())
 	if execErr != nil {
 		resp = bus.NewMessage(bus.MessageID(now), common.NewError("%v", execErr))
 		return
 	}
-	defer func() {
+	iteratorClosed := false
+	closeIterator := func() {
+		if iteratorClosed {
+			return
+		}
+		iteratorClosed = true
 		if closeErr := mIterator.Close(); closeErr != nil {
 			mctx.ml.Error().Err(closeErr).Dur("latency", time.Since(n)).RawJSON("req", logger.Proto(queryCriteria)).Msg("fail to close the query plan")
 		}
-	}()
+	}
+	defer closeIterator()
 
-	var tracer *query.Tracer
-	var span *query.Span
-	if queryCriteria.Trace {
-		tracer, ctx = query.NewTracer(ctx, n.Format(time.RFC3339Nano))
-		span, _ = tracer.StartSpan(ctx, "data-%s", p.queryService.nodeID)
-		span.Tag("plan", planStr)
+	// Raw-frame wire-emit path under flag-on. No-fall-through directive:
+	// data.MeasureWireModeRaw() means the cluster wire codec is
+	// RawFrameCodec, so the data-node Rev MUST emit a raw frame body
+	// (or a nil empty body — the codec carve-out). A proto body would
+	// be silently rejected by the liaison's RawFrameCodec.Unmarshal
+	// bad-magic guard.
+	//
+	// Iterators encapsulate their own drain + encode via FrameEmitter:
+	//
+	//   - vectorizedMIterator drains the vec Pipeline directly
+	//     (throughput-optimal: no proto materialization, columnar
+	//     end-to-end).
+	//   - emptyMIterator emits a nil body (codec empty-result carve-out).
+	//   - hiddenTagsMIterator drains via Next/Current (its strip stays
+	//     the source of truth) and reverse-serializes.
+	//   - sortedMIterator drains via Next/Current (its cross-group sort
+	//     + version dedup stay the source of truth) and reverse-
+	//     serializes.
+	//
+	if data.MeasureWireModeRaw() {
+		if span != nil {
+			span.Tag(tracelabels.TagPlan, planStr)
+			span.Tag(tracelabels.TagRespKind, "raw-frame")
+		}
+		emitter, ok := mIterator.(vmeasure.FrameEmitter)
+		if !ok {
+			emitErr := fmt.Errorf("vec wire mode (flag-on) requires FrameEmitter iterator; got %T — this iterator type has no wire-emit implementation", mIterator)
+			if span != nil {
+				closeIterator()
+				span.Error(emitErr)
+				span.Stop()
+				resp = bus.NewMessage(bus.MessageID(now), &measurev1.InternalQueryResponse{Trace: tracer.ToProto()})
+				return
+			}
+			resp = bus.NewMessage(bus.MessageID(now), common.NewError("%v", emitErr))
+			return
+		}
+		rawBody, drainErr := emitter.EmitFrame(ctx)
+		if drainErr != nil {
+			emitErr := fmt.Errorf("vec raw-frame emit: %w", drainErr)
+			if span != nil {
+				closeIterator()
+				span.Error(emitErr)
+				span.Stop()
+				resp = bus.NewMessage(bus.MessageID(now), &measurev1.InternalQueryResponse{Trace: tracer.ToProto()})
+				return
+			}
+			resp = bus.NewMessage(bus.MessageID(now), common.NewError("%v", emitErr))
+			return
+		}
+		if span != nil {
+			closeIterator()
+			span.Tagf(tracelabels.TagBytesOut, "%d", len(rawBody))
+			span.Stop()
+			resp = bus.NewMessage(bus.MessageID(now), &measurev1.InternalQueryResponse{RawFrameBody: rawBody, Trace: tracer.ToProto()})
+		} else {
+			resp = bus.NewMessage(bus.MessageID(now), rawBody)
+		}
+		if p.slowQuery > 0 {
+			latency := time.Since(n)
+			if latency > p.slowQuery {
+				p.log.Warn().Dur("latency", latency).RawJSON("req", logger.Proto(queryCriteria)).Int("resp_bytes", len(rawBody)).Msg("internal measure slow query (raw frame)")
+			}
+		}
+		return
+	}
+
+	if span != nil {
+		span.Tag(tracelabels.TagPlan, planStr)
 		defer func() {
 			respData := resp.Data()
 			switch d := respData.(type) {
 			case *measurev1.InternalQueryResponse:
-				span.Tag("resp_count", fmt.Sprintf("%d", len(d.DataPoints)))
-				d.Trace = tracer.ToProto()
+				closeIterator()
+				span.Tag(tracelabels.TagRespCount, fmt.Sprintf("%d", len(d.DataPoints)))
 				span.Stop()
+				d.Trace = tracer.ToProto()
 			case *common.Error:
+				closeIterator()
 				span.Error(errors.New(d.Error()))
 				span.Stop()
 				resp = bus.NewMessage(bus.MessageID(now), &measurev1.InternalQueryResponse{Trace: tracer.ToProto()})
@@ -594,7 +765,7 @@ func (p *traceQueryProcessor) setupTraceMonitor(ctx context.Context, queryCriter
 
 	tracer, newCtx := query.NewTracer(ctx, startTime.Format(time.RFC3339Nano))
 	span, newCtx := tracer.StartSpan(newCtx, "data-%s", p.queryService.nodeID)
-	span.Tag("plan", plan.String())
+	span.Tag(tracelabels.TagPlan, plan.String())
 
 	return newCtx, &traceMonitor{
 		tracer: tracer,

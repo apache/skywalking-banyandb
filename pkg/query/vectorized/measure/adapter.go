@@ -25,6 +25,31 @@ import (
 	"github.com/apache/skywalking-banyandb/pkg/query/vectorized"
 )
 
+// RawFrameSource is the capability a vec MIterator exposes when the
+// caller wants to short-circuit per-row proto serialization and instead
+// drain the underlying Pipeline into a single columnar raw frame body
+// (G9f.5.b). The data-node processor type-asserts to this interface
+// when data.MeasureWireModeRaw() is true on TopicInternalMeasureQuery,
+// calls DrainPipelineToFrame(ctx, src.Pipeline(), src.Schema()), then
+// Close()s the wrapping iterator to release pooled batches + the
+// pipeline. The row-path iterators do NOT implement this interface, so
+// the type assertion failing is the correct fall-through signal.
+//
+// IMPORTANT: a caller that drains the Pipeline directly MUST NOT also
+// drive Next() on the MIterator afterwards — the pipeline is now empty
+// and the iterator's internal cursor is stale. The data-node processor
+// honors this by branching on RawFrameSource BEFORE the iterator's
+// proto-collection loop.
+type RawFrameSource interface {
+	// Pipeline returns the vec pipeline the iterator wraps. Drain it via
+	// vectorized.Pipeline.Next until nil; the iterator's own Close still
+	// owns the pipeline lifecycle.
+	Pipeline() *vectorized.Pipeline
+	// Schema returns the terminal-operator output schema — the same
+	// schema every emitted batch carries.
+	Schema() *vectorized.BatchSchema
+}
+
 // vectorizedMIterator adapts a vectorized Pipeline to the executor.MIterator
 // interface so the existing gRPC handler can drive it without knowing it
 // is internally columnar.
@@ -36,9 +61,14 @@ import (
 // row at a time, pulling a new batch from the pipeline whenever the
 // previously-serialized batch is exhausted, returning the consumed batch to
 // pool so allocations stay flat.
+//
+// Implements RawFrameSource: the data-node Rev under flag-on bypasses
+// serializeBatchToProto and drains the pipeline directly via
+// DrainPipelineToFrame.
 type vectorizedMIterator struct {
 	ctx       context.Context
 	pipeline  *vectorized.Pipeline
+	schema    *vectorized.BatchSchema
 	pool      *vectorized.BatchPool
 	prevBatch *vectorized.RecordBatch
 	err       error
@@ -47,11 +77,32 @@ type vectorizedMIterator struct {
 	done      bool
 }
 
+// Pipeline implements RawFrameSource: returns the underlying vec pipeline
+// so the caller can drain it directly into a raw frame body. Calling this
+// transfers iteration ownership — the iterator's own Next() must not be
+// called afterwards, only Close().
+func (i *vectorizedMIterator) Pipeline() *vectorized.Pipeline { return i.pipeline }
+
+// EmitFrame implements FrameEmitter: drain the underlying vec pipeline
+// directly via DrainPipelineToFrame. This is the throughput-optimal
+// wire-emit path — no proto materialization, columnar end-to-end. The
+// data-node Rev prefers this over the row-side reverse-serialize that
+// wrapper iterators fall back on.
+func (i *vectorizedMIterator) EmitFrame(ctx context.Context) ([]byte, error) {
+	return DrainPipelineToFrame(ctx, i.pipeline, i.schema)
+}
+
+// Schema implements RawFrameSource: returns the terminal-operator output
+// schema, the same schema every emitted batch carries.
+func (i *vectorizedMIterator) Schema() *vectorized.BatchSchema { return i.schema }
+
 // newVectorizedMIterator constructs an adapter bound to ctx. The pool is the
 // BatchPool that BatchScan draws from; consumed batches are returned there
-// after serialization.
-func newVectorizedMIterator(ctx context.Context, p *vectorized.Pipeline, pool *vectorized.BatchPool) *vectorizedMIterator {
-	return &vectorizedMIterator{ctx: ctx, pipeline: p, pool: pool, pos: -1}
+// after serialization. schema is the terminal-operator output schema
+// (passed through to the RawFrameSource capability so the data-node raw
+// frame emit path knows what shape every emitted batch will carry).
+func newVectorizedMIterator(ctx context.Context, p *vectorized.Pipeline, schema *vectorized.BatchSchema, pool *vectorized.BatchPool) *vectorizedMIterator {
+	return &vectorizedMIterator{ctx: ctx, pipeline: p, schema: schema, pool: pool, pos: -1}
 }
 
 // Next advances by exactly one DataPoint. Whenever the cached serialization

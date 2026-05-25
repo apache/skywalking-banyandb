@@ -58,12 +58,23 @@ const (
 	soakFieldCount  = "count"
 )
 
-// catalogEntry holds the user-visible fields from the JSON catalog.
-// TimeRange is injected at runtime.
+// catalogEntry holds one query template from the JSON catalog. ID is a
+// catalog-unique label used as the baseline key (the proto measure name
+// is the same for every entry, so it cannot key the baseline). Request is
+// a proto-JSON QueryRequest so proto oneofs (Criteria, TagValue) and
+// enums (AggregationFunction, Sort) round-trip correctly — stdlib
+// encoding/json cannot populate proto oneof interface fields. TimeRange
+// and Limit are injected at runtime by buildQueryRequest.
 type catalogEntry struct {
-	FieldProjection *measurev1.QueryRequest_FieldProjection `json:"field_projection,omitempty"`
-	Name            string                                  `json:"name"`
-	Groups          []string                                `json:"groups"`
+	Request *measurev1.QueryRequest
+	ID      string
+}
+
+// rawCatalogEntry is the on-disk shape: an "id" label plus a proto-JSON
+// "request" object decoded separately via protojson.
+type rawCatalogEntry struct {
+	ID      string          `json:"id"`
+	Request json.RawMessage `json:"request"`
 }
 
 // baselineRecord is persisted to disk after record-baseline runs.
@@ -116,15 +127,31 @@ func dialInsecure(addr string) (*grpc.ClientConn, error) {
 	return conn, nil
 }
 
-// loadCatalog reads the JSON catalog file and returns its entries.
+// loadCatalog reads the JSON catalog file and returns its entries. The
+// catalog is a JSON array of {id, request} objects (rawCatalogEntry on
+// disk): stdlib json splits the outer array and pulls out each entry's
+// id plus its raw request bytes; protojson then decodes the request
+// bytes into a *measurev1.QueryRequest so proto oneofs/enums (which
+// stdlib encoding/json cannot round-trip) decode correctly.
 func loadCatalog(path string) ([]catalogEntry, error) {
 	raw, readErr := os.ReadFile(path)
 	if readErr != nil {
 		return nil, fmt.Errorf("read catalog %s: %w", path, readErr)
 	}
-	var entries []catalogEntry
-	if unmarshalErr := json.Unmarshal(raw, &entries); unmarshalErr != nil {
-		return nil, fmt.Errorf("unmarshal catalog: %w", unmarshalErr)
+	var rawEntries []rawCatalogEntry
+	if unmarshalErr := json.Unmarshal(raw, &rawEntries); unmarshalErr != nil {
+		return nil, fmt.Errorf("unmarshal catalog array: %w", unmarshalErr)
+	}
+	entries := make([]catalogEntry, 0, len(rawEntries))
+	for idx, rawEntry := range rawEntries {
+		if rawEntry.ID == "" {
+			return nil, fmt.Errorf("catalog entry %d: missing id", idx)
+		}
+		req := new(measurev1.QueryRequest)
+		if protoErr := protojson.Unmarshal(rawEntry.Request, req); protoErr != nil {
+			return nil, fmt.Errorf("unmarshal catalog entry %q: %w", rawEntry.ID, protoErr)
+		}
+		entries = append(entries, catalogEntry{ID: rawEntry.ID, Request: req})
 	}
 	return entries, nil
 }
@@ -135,17 +162,13 @@ func loadCatalog(path string) ([]catalogEntry, error) {
 func buildQueryRequest(entry catalogEntry, untilMs int64) *measurev1.QueryRequest {
 	untilTime := time.UnixMilli(untilMs)
 	beginTime := untilTime.Add(-1 * time.Hour)
-	req := &measurev1.QueryRequest{
-		Name:   entry.Name,
-		Groups: entry.Groups,
-		TimeRange: &modelv1.TimeRange{
-			Begin: timestamppb.New(beginTime),
-			End:   timestamppb.New(untilTime),
-		},
-		Limit: 100000,
+	req, _ := proto.Clone(entry.Request).(*measurev1.QueryRequest)
+	req.TimeRange = &modelv1.TimeRange{
+		Begin: timestamppb.New(beginTime),
+		End:   timestamppb.New(untilTime),
 	}
-	if entry.FieldProjection != nil {
-		req.FieldProjection = entry.FieldProjection
+	if req.GetLimit() == 0 {
+		req.Limit = 100000
 	}
 	return req
 }
@@ -175,29 +198,30 @@ func newRecordBaselineCmd() *cobra.Command {
 
 			for _, entry := range entries {
 				req := buildQueryRequest(entry, untilMs)
+				queryName := entry.ID
 				ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 				resp, queryErr := client.Query(ctx, req)
 				cancel()
 				if queryErr != nil {
 					failed++
-					fmt.Printf("[record-baseline] %s: SKIP (%v)\n", entry.Name, queryErr)
+					fmt.Printf("[record-baseline] %s: SKIP (%v)\n", queryName, queryErr)
 					continue
 				}
 				rec := baselineRecord{
-					QueryName: entry.Name,
-					Groups:    entry.Groups,
+					QueryName: queryName,
+					Groups:    entry.Request.GetGroups(),
 					UntilMs:   untilMs,
 				}
 				for _, dp := range resp.GetDataPoints() {
 					raw, marshalErr := protojson.Marshal(dp)
 					if marshalErr != nil {
-						return fmt.Errorf("marshal data point for %s: %w", entry.Name, marshalErr)
+						return fmt.Errorf("marshal data point for %s: %w", queryName, marshalErr)
 					}
 					rec.DataPoints = append(rec.DataPoints, json.RawMessage(raw))
 				}
 				records = append(records, rec)
 				succeeded++
-				fmt.Printf("[record-baseline] %s: %d data points\n", entry.Name, len(rec.DataPoints))
+				fmt.Printf("[record-baseline] %s: %d data points\n", queryName, len(rec.DataPoints))
 			}
 			if succeeded == 0 {
 				return fmt.Errorf("record-baseline: all %d catalog queries failed (no usable baseline)", failed)
@@ -269,13 +293,14 @@ func newReplayAndDiffCmd() *cobra.Command {
 			}
 
 			for _, entry := range entries {
-				rec, ok := baselineMap[entry.Name]
+				queryName := entry.ID
+				rec, ok := baselineMap[queryName]
 				if !ok {
 					// Catalog has a query the baseline doesn't (e.g. baseline
 					// skipped it because the measure wasn't installed yet).
 					// Skip the diff for this entry rather than failing the
 					// whole replay.
-					fmt.Printf("[replay-and-diff] %s: SKIP (no baseline)\n", entry.Name)
+					fmt.Printf("[replay-and-diff] %s: SKIP (no baseline)\n", queryName)
 					continue
 				}
 				req := buildQueryRequest(entry, rec.UntilMs)
@@ -287,10 +312,10 @@ func newReplayAndDiffCmd() *cobra.Command {
 					// pass/fail signal still flips, but don't abort early —
 					// we want to attempt every catalog entry.
 					report.Divergences = append(report.Divergences, divergence{
-						QueryName: entry.Name,
+						QueryName: queryName,
 					})
 					report.Pass = false
-					fmt.Printf("[replay-and-diff] %s: FAIL (%v)\n", entry.Name, queryErr)
+					fmt.Printf("[replay-and-diff] %s: FAIL (%v)\n", queryName, queryErr)
 					continue
 				}
 				report.QueriesRun++
@@ -298,7 +323,7 @@ func newReplayAndDiffCmd() *cobra.Command {
 				replayDPs := resp.GetDataPoints()
 				if len(replayDPs) != len(rec.DataPoints) {
 					div := divergence{
-						QueryName:   entry.Name,
+						QueryName:   queryName,
 						BaselineLen: len(rec.DataPoints),
 						ReplayLen:   len(replayDPs),
 					}
@@ -307,12 +332,12 @@ func newReplayAndDiffCmd() *cobra.Command {
 					continue
 				}
 
-				div := divergence{QueryName: entry.Name, BaselineLen: len(rec.DataPoints), ReplayLen: len(replayDPs)}
+				div := divergence{QueryName: queryName, BaselineLen: len(rec.DataPoints), ReplayLen: len(replayDPs)}
 				hasDiff := false
 				for idx, baselineRaw := range rec.DataPoints {
 					baselineDP := new(measurev1.DataPoint)
 					if parseErr := protojson.Unmarshal(baselineRaw, baselineDP); parseErr != nil {
-						return fmt.Errorf("unmarshal baseline dp %d for %s: %w", idx, entry.Name, parseErr)
+						return fmt.Errorf("unmarshal baseline dp %d for %s: %w", idx, queryName, parseErr)
 					}
 					if !proto.Equal(baselineDP, replayDPs[idx]) {
 						hasDiff = true

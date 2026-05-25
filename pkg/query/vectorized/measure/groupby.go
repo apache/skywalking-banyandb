@@ -27,6 +27,8 @@ import (
 	"slices"
 
 	modelv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/model/v1"
+	"github.com/apache/skywalking-banyandb/pkg/query"
+	"github.com/apache/skywalking-banyandb/pkg/query/tracelabels"
 	"github.com/apache/skywalking-banyandb/pkg/query/vectorized"
 )
 
@@ -34,6 +36,13 @@ import (
 // of one or more key columns. Output preserves the input schema; rows are
 // emitted in group-insertion order, with all rows of the first group flushed
 // before the next group begins.
+//
+// When firstOnly is set the operator keeps only the first-seen row of each
+// group and drops subsequent rows. This reproduces the row path's raw
+// GroupBy egress: the row aggregator wraps every group in a single
+// InternalDataPoint slice and banyand/query/processor.go reads only
+// current[0] per Next, so a raw GroupBy surfaces exactly one row (the
+// first-seen) per group in group-insertion order.
 //
 // Memory accounting follows a pessimistic-reserve, refund-unused pattern:
 //
@@ -47,6 +56,7 @@ type BatchGroupBy struct {
 	schema       *vectorized.BatchSchema
 	pool         *vectorized.BatchPool
 	tracker      *vectorized.MemoryTracker
+	span         *query.Span
 	groups       map[uint64][]*groupBucket
 	insertion    []*groupBucket
 	keyIndices   []int
@@ -54,10 +64,13 @@ type BatchGroupBy struct {
 	entrySize    int64
 	rowSize      int64
 	reserved     int64
+	rowsIn       int64
+	rowsOut      int64
 	batchSize    int
 	cursorBucket int
 	cursorRow    int
 	closed       bool
+	firstOnly    bool
 }
 
 type groupBucket struct {
@@ -88,9 +101,33 @@ func NewBatchGroupBy(
 	}
 }
 
+// NewBatchGroupByFirst constructs a BatchGroupBy that emits only the
+// first-seen row of each group (raw GroupBy without aggregation). It
+// matches the row path: groupBy.Execute produces a groupIterator whose
+// Current() returns the whole group, and processor.go keeps only
+// current[0], so each group surfaces a single row in group-insertion
+// order with the input schema unchanged.
+func NewBatchGroupByFirst(
+	schema *vectorized.BatchSchema, keyIndices []int,
+	pool *vectorized.BatchPool, batchSize int,
+	tracker *vectorized.MemoryTracker, entrySize int64,
+) *BatchGroupBy {
+	g := NewBatchGroupBy(schema, keyIndices, pool, batchSize, tracker, entrySize, 0)
+	g.firstOnly = true
+	return g
+}
+
 // Init prepares the group map.
-func (g *BatchGroupBy) Init(_ context.Context) error {
+func (g *BatchGroupBy) Init(ctx context.Context) error {
 	g.groups = make(map[uint64][]*groupBucket)
+	tracer := query.GetTracer(ctx)
+	if tracer != nil {
+		spanName := "groupby"
+		if g.firstOnly {
+			spanName = "groupby-first"
+		}
+		g.span, _ = tracer.StartSpan(ctx, "%s", spanName)
+	}
 	return nil
 }
 
@@ -102,6 +139,9 @@ func (g *BatchGroupBy) OutputSchema() *vectorized.BatchSchema { return g.schema 
 func (g *BatchGroupBy) Consume(_ context.Context, b *vectorized.RecordBatch) error {
 	active := activeIndices(b)
 	n := int64(len(active))
+	if g.span != nil {
+		g.rowsIn += n
+	}
 	estBytes := n*g.entrySize + n*g.rowSize
 	if estBytes > 0 {
 		if reserveErr := g.tracker.Reserve(estBytes); reserveErr != nil {
@@ -120,16 +160,23 @@ func (g *BatchGroupBy) Consume(_ context.Context, b *vectorized.RecordBatch) err
 
 func (g *BatchGroupBy) consumeRows(b *vectorized.RecordBatch, active []uint16) int64 {
 	var newGroups int64
+	var copiedRows int64
 	for _, rowIdx := range active {
 		bucket, isNew := g.findOrCreate(b, int(rowIdx))
 		if isNew {
 			newGroups++
 		}
+		if g.firstOnly && !isNew {
+			// Raw GroupBy keeps only the first-seen row per group;
+			// drop every later row in the same group.
+			continue
+		}
 		for colIdx, srcCol := range b.Columns {
 			copyOneValue(bucket.cols[colIdx], srcCol, int(rowIdx))
 		}
+		copiedRows++
 	}
-	return newGroups*g.entrySize + int64(len(active))*g.rowSize
+	return newGroups*g.entrySize + copiedRows*g.rowSize
 }
 
 // findOrCreate locates the bucket for the row's key, creating it if absent.
@@ -171,6 +218,9 @@ func (g *BatchGroupBy) NextBatch(_ context.Context) (*vectorized.RecordBatch, er
 			}
 			out.Len++
 			g.cursorRow++
+			if g.span != nil {
+				g.rowsOut++
+			}
 		}
 		if g.cursorRow >= bucketLen {
 			g.cursorBucket++
@@ -193,6 +243,16 @@ func (g *BatchGroupBy) Close() error {
 	if g.reserved > 0 {
 		g.tracker.Release(g.reserved)
 		g.reserved = 0
+	}
+	if g.span != nil {
+		g.span.Tagf(tracelabels.TagRowsIn, "%d", g.rowsIn)
+		g.span.Tagf(tracelabels.TagRowsOut, "%d", g.rowsOut)
+		g.span.Tagf(tracelabels.TagGroupsOut, "%d", len(g.insertion))
+		if g.firstOnly {
+			g.span.Tagf(tracelabels.TagDroppedRows, "%d", g.rowsIn-g.rowsOut)
+			g.span.Tag(tracelabels.TagDropReason, "groupby-first")
+		}
+		g.span.Stop()
 	}
 	g.groups = nil
 	g.insertion = nil
@@ -220,35 +280,85 @@ func (g *BatchGroupBy) encodeKey(dst []byte, b *vectorized.RecordBatch, rowIdx i
 //   - float64:  8 little-endian bytes of math.Float64bits, with -0.0 → +0.0.
 //   - string:   4-byte little-endian length prefix + raw bytes.
 //   - bytes:    4-byte little-endian length prefix + raw bytes.
+//   - TagValue/FieldValue passthrough: same encoding as the scalar payload type.
 //
 // This helper is shared by BatchGroupBy.encodeKey and BatchAggregation.computeKey
 // so the two operators agree on key equivalence (Copilot G3 review issues 1+2).
 func appendKeyComponent(dst []byte, col vectorized.Column, rowIdx int) []byte {
 	switch c := col.(type) {
 	case *vectorized.TypedColumn[int64]:
-		var b [8]byte
-		binary.LittleEndian.PutUint64(b[:], uint64(c.Data()[rowIdx]))
-		return append(dst, b[:]...)
+		return appendIntKey(dst, c.Data()[rowIdx])
 	case *vectorized.TypedColumn[float64]:
-		v := c.Data()[rowIdx]
-		if v == 0 {
-			v = 0 // canonicalise -0.0 → +0.0 so they hash identically
-		}
-		var b [8]byte
-		binary.LittleEndian.PutUint64(b[:], math.Float64bits(v))
-		return append(dst, b[:]...)
+		return appendFloatKey(dst, c.Data()[rowIdx])
 	case *vectorized.TypedColumn[string]:
-		s := c.Data()[rowIdx]
-		var lb [4]byte
-		binary.LittleEndian.PutUint32(lb[:], uint32(len(s)))
-		dst = append(dst, lb[:]...)
-		return append(dst, s...)
+		return appendStringKey(dst, c.Data()[rowIdx])
 	case *vectorized.TypedColumn[[]byte]:
-		bs := c.Data()[rowIdx]
-		var lb [4]byte
-		binary.LittleEndian.PutUint32(lb[:], uint32(len(bs)))
-		dst = append(dst, lb[:]...)
-		return append(dst, bs...)
+		return appendBytesKey(dst, c.Data()[rowIdx])
+	case *vectorized.TypedColumn[*modelv1.TagValue]:
+		return appendTagValueKey(dst, c.Data()[rowIdx])
+	case *vectorized.TypedColumn[*modelv1.FieldValue]:
+		return appendFieldValueKey(dst, c.Data()[rowIdx])
+	}
+	return dst
+}
+
+func appendIntKey(dst []byte, value int64) []byte {
+	var b [8]byte
+	binary.LittleEndian.PutUint64(b[:], uint64(value))
+	return append(dst, b[:]...)
+}
+
+func appendFloatKey(dst []byte, value float64) []byte {
+	if value == 0 {
+		value = 0 // canonicalise -0.0 → +0.0 so they hash identically
+	}
+	var b [8]byte
+	binary.LittleEndian.PutUint64(b[:], math.Float64bits(value))
+	return append(dst, b[:]...)
+}
+
+func appendStringKey(dst []byte, value string) []byte {
+	var lb [4]byte
+	binary.LittleEndian.PutUint32(lb[:], uint32(len(value)))
+	dst = append(dst, lb[:]...)
+	return append(dst, value...)
+}
+
+func appendBytesKey(dst []byte, value []byte) []byte {
+	var lb [4]byte
+	binary.LittleEndian.PutUint32(lb[:], uint32(len(value)))
+	dst = append(dst, lb[:]...)
+	return append(dst, value...)
+}
+
+func appendTagValueKey(dst []byte, value *modelv1.TagValue) []byte {
+	if value == nil {
+		return dst
+	}
+	switch payload := value.GetValue().(type) {
+	case *modelv1.TagValue_Int:
+		return appendIntKey(dst, payload.Int.GetValue())
+	case *modelv1.TagValue_Str:
+		return appendStringKey(dst, payload.Str.GetValue())
+	case *modelv1.TagValue_BinaryData:
+		return appendBytesKey(dst, payload.BinaryData)
+	}
+	return dst
+}
+
+func appendFieldValueKey(dst []byte, value *modelv1.FieldValue) []byte {
+	if value == nil {
+		return dst
+	}
+	switch payload := value.GetValue().(type) {
+	case *modelv1.FieldValue_Int:
+		return appendIntKey(dst, payload.Int.GetValue())
+	case *modelv1.FieldValue_Float:
+		return appendFloatKey(dst, payload.Float.GetValue())
+	case *modelv1.FieldValue_Str:
+		return appendStringKey(dst, payload.Str.GetValue())
+	case *modelv1.FieldValue_BinaryData:
+		return appendBytesKey(dst, payload.BinaryData)
 	}
 	return dst
 }

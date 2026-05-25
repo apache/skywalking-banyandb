@@ -42,7 +42,6 @@ import (
 	"github.com/apache/skywalking-banyandb/pkg/bus"
 	"github.com/apache/skywalking-banyandb/pkg/logger"
 	"github.com/apache/skywalking-banyandb/pkg/test/flags"
-	"google.golang.org/protobuf/proto"
 )
 
 type mockService struct {
@@ -55,13 +54,19 @@ func (s *mockService) Send(stream clusterv1.Service_SendServer) (err error) {
 	var batchMod bool
 
 	sendResp := func() {
-		f := data.TopicResponseMap[topic]
+		codec := data.TopicResponseMap[topic]
 		var body []byte
 		var errMarshal error
-		if f == nil {
+		if codec == nil {
 			body = first.Body
 		} else {
-			body, errMarshal = proto.Marshal(f())
+			// Round-trip an empty body through the topic codec to produce the
+			// same byte-identical empty response the pre-G9f.0 mock emitted.
+			empty, errDecode := codec.Unmarshal(nil)
+			if errDecode != nil {
+				panic(errDecode)
+			}
+			body, errMarshal = codec.Marshal(empty)
 			if errMarshal != nil {
 				panic(errMarshal)
 			}
