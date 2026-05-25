@@ -24,7 +24,9 @@ import (
 	"slices"
 
 	modelv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/model/v1"
+	"github.com/apache/skywalking-banyandb/pkg/query"
 	"github.com/apache/skywalking-banyandb/pkg/query/aggregation"
+	"github.com/apache/skywalking-banyandb/pkg/query/tracelabels"
 	"github.com/apache/skywalking-banyandb/pkg/query/vectorized"
 )
 
@@ -121,6 +123,7 @@ type BatchAggregation struct {
 	outputSchema     *vectorized.BatchSchema
 	pool             *vectorized.BatchPool
 	tracker          *vectorized.MemoryTracker
+	span             *query.Span
 	groups           map[string]*aggGroup
 	inputSchema      *vectorized.BatchSchema
 	insertion        []*aggGroup
@@ -134,8 +137,11 @@ type BatchAggregation struct {
 	tagOutOffset     int
 	outputShardIdx   int
 	mode             AggMode
+	aggValuePath     AggValuePath
 	entrySize        int64
 	reserved         int64
+	rowsIn           int64
+	rowsOut          int64
 	batchSize        int
 	cursor           int
 	closed           bool
@@ -215,9 +221,26 @@ func NewBatchAggregation(
 		shardIDIdx:       findShardIDIndex(input),
 		aggInputCountIdx: buildAggInputCountIdx(input, aggs, mode),
 		mode:             mode,
+		aggValuePath:     deriveAggValuePath(input, aggs),
 		batchSize:        batchSize,
 		entrySize:        entrySize,
 	}
+}
+
+// deriveAggValuePath inspects the pre-built AggSpec list to determine which
+// column-type path was used. If any spec's InputCol points to a
+// ColumnTypeFieldValue column the path is AggValuePathFieldValueFallback;
+// otherwise it is AggValuePathTyped. AggValuePathUnresolved is never returned
+// here — callers that build AggSpecs have already verified the columns exist.
+func deriveAggValuePath(input *vectorized.BatchSchema, aggs []AggSpec) AggValuePath {
+	for _, spec := range aggs {
+		if spec.InputCol >= 0 && spec.InputCol < len(input.Columns) {
+			if input.Columns[spec.InputCol].Type == vectorized.ColumnTypeFieldValue {
+				return AggValuePathFieldValueFallback
+			}
+		}
+	}
+	return AggValuePathTyped
 }
 
 // collectTagIndices returns every tag column index in input, in input
@@ -245,10 +268,21 @@ func collectTagIndices(input *vectorized.BatchSchema, keyIndices []int) []int {
 // AggModeReduce, Init also resets the (shard, group_key) replica-dedup map
 // so the operator can be reused across distributed reduce runs without a
 // fresh allocation per call.
-func (a *BatchAggregation) Init(_ context.Context) error {
+func (a *BatchAggregation) Init(ctx context.Context) error {
 	a.groups = make(map[string]*aggGroup)
 	if a.mode == AggModeReduce {
 		a.dedupSeen = make(map[string]struct{})
+	}
+	tracer := query.GetTracer(ctx)
+	if tracer != nil {
+		spanName := "groupby-agg-all"
+		switch a.mode {
+		case AggModeMap:
+			spanName = "groupby-agg-map"
+		case AggModeReduce:
+			spanName = "groupby-agg-reduce"
+		}
+		a.span, _ = tracer.StartSpan(ctx, "%s", spanName)
 	}
 	return nil
 }
@@ -276,6 +310,9 @@ func (a *BatchAggregation) Consume(_ context.Context, b *vectorized.RecordBatch)
 		return ErrAggModeNotImplemented
 	}
 	active := activeIndices(b)
+	if a.span != nil {
+		a.rowsIn += int64(len(active))
+	}
 	for _, rowIdx := range active {
 		key := a.computeKey(b, int(rowIdx))
 		if a.mode == AggModeReduce && a.markDedupSeen(b, int(rowIdx), key) {
@@ -340,6 +377,9 @@ func (a *BatchAggregation) NextBatch(_ context.Context) (*vectorized.RecordBatch
 		a.emitGroupRow(out, group)
 		out.Len++
 		a.cursor++
+		if a.span != nil {
+			a.rowsOut++
+		}
 	}
 	if out.Len == 0 {
 		a.pool.Put(out)
@@ -355,9 +395,28 @@ func (a *BatchAggregation) Close() error {
 		return nil
 	}
 	a.closed = true
+	memoryChargedBytes := a.reserved
 	if a.reserved > 0 {
 		a.tracker.Release(a.reserved)
 		a.reserved = 0
+	}
+	if a.span != nil {
+		mode := "all"
+		switch a.mode {
+		case AggModeMap:
+			mode = "map"
+		case AggModeReduce:
+			mode = "reduce"
+		}
+		a.span.Tag(tracelabels.TagMode, mode)
+		a.span.Tagf(tracelabels.TagRowsIn, "%d", a.rowsIn)
+		a.span.Tagf(tracelabels.TagRowsOut, "%d", a.rowsOut)
+		a.span.Tagf(tracelabels.TagGroupsOut, "%d", len(a.insertion))
+		a.span.Tagf(tracelabels.TagMemoryChargedBytes, "%d", memoryChargedBytes)
+		if a.mode == AggModeMap {
+			a.span.Tag(tracelabels.TagAggValuePath, string(a.aggValuePath))
+		}
+		a.span.Stop()
 	}
 	a.groups = nil
 	a.insertion = nil

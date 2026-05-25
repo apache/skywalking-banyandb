@@ -22,7 +22,9 @@ import (
 	"fmt"
 
 	modelv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/model/v1"
+	"github.com/apache/skywalking-banyandb/pkg/query"
 	"github.com/apache/skywalking-banyandb/pkg/query/model"
+	"github.com/apache/skywalking-banyandb/pkg/query/tracelabels"
 	"github.com/apache/skywalking-banyandb/pkg/query/vectorized"
 )
 
@@ -43,15 +45,18 @@ import (
 // returns an error on TypedColumn[T] mismatches, which surfaces as a
 // pipeline error.
 type BatchSourceFromBatchResult struct {
-	br        model.MeasureBatchResult
-	schema    *vectorized.BatchSchema
-	pool      *vectorized.BatchPool
-	pending   *model.MeasureBatch
-	err       error
-	batchSize int
-	pendPos   int
-	eof       bool
-	closed    bool
+	br         model.MeasureBatchResult
+	schema     *vectorized.BatchSchema
+	pool       *vectorized.BatchPool
+	span       *query.Span
+	pending    *model.MeasureBatch
+	err        error
+	batchSize  int
+	pendPos    int
+	rowsOut    int64
+	batchesOut int64
+	eof        bool
+	closed     bool
 }
 
 // NewBatchSourceFromBatchResult constructs the source. Init is required
@@ -68,7 +73,13 @@ func NewBatchSourceFromBatchResult(br model.MeasureBatchResult, schema *vectoriz
 }
 
 // Init satisfies PullOperator.
-func (s *BatchSourceFromBatchResult) Init(_ context.Context) error { return nil }
+func (s *BatchSourceFromBatchResult) Init(ctx context.Context) error {
+	tracer := query.GetTracer(ctx)
+	if tracer != nil {
+		s.span, _ = tracer.StartSpan(ctx, "scan")
+	}
+	return nil
+}
 
 // OutputSchema returns the schema declared at construction.
 func (s *BatchSourceFromBatchResult) OutputSchema() *vectorized.BatchSchema { return s.schema }
@@ -195,6 +206,14 @@ func (s *BatchSourceFromBatchResult) Close() error {
 		return nil
 	}
 	s.closed = true
+	if s.span != nil {
+		s.span.Tagf(tracelabels.TagRowsOut, "%d", s.rowsOut)
+		s.span.Tagf(tracelabels.TagBatchesOut, "%d", s.batchesOut)
+		if s.schema != nil {
+			s.span.Tagf(tracelabels.TagSchemaCols, "%d", len(s.schema.Columns))
+		}
+		s.span.Stop()
+	}
 	if s.pending != nil {
 		s.pending.Release()
 		s.pending = nil

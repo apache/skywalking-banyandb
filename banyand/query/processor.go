@@ -48,6 +48,7 @@ import (
 	logical_stream "github.com/apache/skywalking-banyandb/pkg/query/logical/stream"
 	logical_trace "github.com/apache/skywalking-banyandb/pkg/query/logical/trace"
 	"github.com/apache/skywalking-banyandb/pkg/query/model"
+	"github.com/apache/skywalking-banyandb/pkg/query/tracelabels"
 	vmeasure "github.com/apache/skywalking-banyandb/pkg/query/vectorized/measure"
 	vecplan "github.com/apache/skywalking-banyandb/pkg/query/vectorized/measure/plan"
 )
@@ -124,18 +125,18 @@ func (p *streamQueryProcessor) Rev(ctx context.Context, message bus.Message) (re
 	if queryCriteria.Trace {
 		tracer, ctx = query.NewTracer(ctx, n.Format(time.RFC3339Nano))
 		span, ctx = tracer.StartSpan(ctx, "data-%s", p.queryService.nodeID)
-		span.Tag("plan", plan.String())
+		span.Tag(tracelabels.TagPlan, plan.String())
 		defer func() {
 			data := resp.Data()
 			switch d := data.(type) {
 			case *streamv1.QueryResponse:
-				span.Tag("resp_count", fmt.Sprintf("%d", len(d.Elements)))
+				span.Tag(tracelabels.TagRespCount, fmt.Sprintf("%d", len(d.Elements)))
 				span.Stop()
 				d.Trace = tracer.ToProto()
 			case *common.Error:
 				span.Error(errors.New(d.Error()))
 				span.Stop()
-				resp = bus.NewMessage(bus.MessageID(now), &measurev1.QueryResponse{Trace: tracer.ToProto()})
+				resp = bus.NewMessage(bus.MessageID(now), &streamv1.QueryResponse{Trace: tracer.ToProto()})
 			default:
 				panic("unexpected data type")
 			}
@@ -415,31 +416,41 @@ func (p *measureQueryProcessor) executeQuery(ctx context.Context, queryCriteria 
 		e.RawJSON("req", logger.Proto(queryCriteria)).Msg("received a query event")
 	}
 
-	mIterator, planStr, execErr := executeMeasurePlan(ctx, queryCriteria, mctx, false)
-	if execErr != nil {
-		resp = bus.NewMessage(bus.MessageID(now), common.NewError("%v", execErr))
-		return
-	}
-	defer func() {
-		if closeErr := mIterator.Close(); closeErr != nil {
-			mctx.ml.Error().Err(closeErr).Dur("latency", time.Since(n)).RawJSON("req", logger.Proto(queryCriteria)).Msg("fail to close the query plan")
-		}
-	}()
-
 	var tracer *query.Tracer
 	var span *query.Span
 	if queryCriteria.Trace {
 		tracer, ctx = query.NewTracer(ctx, n.Format(time.RFC3339Nano))
 		span, ctx = tracer.StartSpan(ctx, "data-%s", p.queryService.nodeID)
-		span.Tag("plan", planStr)
+	}
+	mIterator, planStr, execErr := executeMeasurePlan(ctx, queryCriteria, mctx, false)
+	if execErr != nil {
+		resp = bus.NewMessage(bus.MessageID(now), common.NewError("%v", execErr))
+		return
+	}
+	iteratorClosed := false
+	closeIterator := func() {
+		if iteratorClosed {
+			return
+		}
+		iteratorClosed = true
+		if closeErr := mIterator.Close(); closeErr != nil {
+			mctx.ml.Error().Err(closeErr).Dur("latency", time.Since(n)).RawJSON("req", logger.Proto(queryCriteria)).Msg("fail to close the query plan")
+		}
+	}
+	defer closeIterator()
+
+	if span != nil {
+		span.Tag(tracelabels.TagPlan, planStr)
 		defer func() {
 			data := resp.Data()
 			switch d := data.(type) {
 			case *measurev1.QueryResponse:
-				span.Tag("resp_count", fmt.Sprintf("%d", len(d.DataPoints)))
-				d.Trace = tracer.ToProto()
+				closeIterator()
+				span.Tag(tracelabels.TagRespCount, fmt.Sprintf("%d", len(d.DataPoints)))
 				span.Stop()
+				d.Trace = tracer.ToProto()
 			case *common.Error:
+				closeIterator()
 				span.Error(errors.New(d.Error()))
 				span.Stop()
 				resp = bus.NewMessage(bus.MessageID(now), &measurev1.QueryResponse{Trace: tracer.ToProto()})
@@ -455,8 +466,8 @@ func (p *measureQueryProcessor) executeQuery(ctx context.Context, queryCriteria 
 		if tracer != nil {
 			iterSpan, _ := tracer.StartSpan(ctx, "iterator")
 			defer func() {
-				iterSpan.Tag("rounds", fmt.Sprintf("%d", r))
-				iterSpan.Tag("size", fmt.Sprintf("%d", len(result)))
+				iterSpan.Tag(tracelabels.TagRounds, fmt.Sprintf("%d", r))
+				iterSpan.Tag(tracelabels.TagSize, fmt.Sprintf("%d", len(result)))
 				iterSpan.Stop()
 			}()
 		}
@@ -519,16 +530,28 @@ func (p *measureInternalQueryProcessor) Rev(ctx context.Context, message bus.Mes
 		e.RawJSON("req", logger.Proto(queryCriteria)).Msg("received an internal query event")
 	}
 
+	var tracer *query.Tracer
+	var span *query.Span
+	if queryCriteria.Trace {
+		tracer, ctx = query.NewTracer(ctx, n.Format(time.RFC3339Nano))
+		span, ctx = tracer.StartSpan(ctx, "data-%s", p.queryService.nodeID)
+	}
 	mIterator, planStr, execErr := executeMeasurePlan(ctx, queryCriteria, mctx, internalRequest.GetAggReturnPartial())
 	if execErr != nil {
 		resp = bus.NewMessage(bus.MessageID(now), common.NewError("%v", execErr))
 		return
 	}
-	defer func() {
+	iteratorClosed := false
+	closeIterator := func() {
+		if iteratorClosed {
+			return
+		}
+		iteratorClosed = true
 		if closeErr := mIterator.Close(); closeErr != nil {
 			mctx.ml.Error().Err(closeErr).Dur("latency", time.Since(n)).RawJSON("req", logger.Proto(queryCriteria)).Msg("fail to close the query plan")
 		}
-	}()
+	}
+	defer closeIterator()
 
 	// Raw-frame wire-emit path under flag-on. No-fall-through directive:
 	// data.MeasureWireModeRaw() means the cluster wire codec is
@@ -549,29 +572,45 @@ func (p *measureInternalQueryProcessor) Rev(ctx context.Context, message bus.Mes
 	//     + version dedup stay the source of truth) and reverse-
 	//     serializes.
 	//
-	// queryCriteria.Trace=true still hard-errors: the columnar frame
-	// has no trace-bytes slot, so trace-enabled distributed queries are
-	// unsupported under flag-on (documented in the runbook).
 	if data.MeasureWireModeRaw() {
-		if queryCriteria.Trace {
-			resp = bus.NewMessage(bus.MessageID(now), common.NewError(
-				"vec wire mode (flag-on) does not support trace=true on TopicInternalMeasureQuery; "+
-					"disable --measure-vectorized-enabled or omit trace from the query"))
-			return
+		if span != nil {
+			span.Tag(tracelabels.TagPlan, planStr)
+			span.Tag(tracelabels.TagRespKind, "raw-frame")
 		}
 		emitter, ok := mIterator.(vmeasure.FrameEmitter)
 		if !ok {
-			resp = bus.NewMessage(bus.MessageID(now), common.NewError(
-				"vec wire mode (flag-on) requires FrameEmitter iterator; "+
-					"got %T — this iterator type has no wire-emit implementation", mIterator))
+			emitErr := fmt.Errorf("vec wire mode (flag-on) requires FrameEmitter iterator; got %T — this iterator type has no wire-emit implementation", mIterator)
+			if span != nil {
+				closeIterator()
+				span.Error(emitErr)
+				span.Stop()
+				resp = bus.NewMessage(bus.MessageID(now), &measurev1.InternalQueryResponse{Trace: tracer.ToProto()})
+				return
+			}
+			resp = bus.NewMessage(bus.MessageID(now), common.NewError("%v", emitErr))
 			return
 		}
 		rawBody, drainErr := emitter.EmitFrame(ctx)
 		if drainErr != nil {
-			resp = bus.NewMessage(bus.MessageID(now), common.NewError("vec raw-frame emit: %v", drainErr))
+			emitErr := fmt.Errorf("vec raw-frame emit: %w", drainErr)
+			if span != nil {
+				closeIterator()
+				span.Error(emitErr)
+				span.Stop()
+				resp = bus.NewMessage(bus.MessageID(now), &measurev1.InternalQueryResponse{Trace: tracer.ToProto()})
+				return
+			}
+			resp = bus.NewMessage(bus.MessageID(now), common.NewError("%v", emitErr))
 			return
 		}
-		resp = bus.NewMessage(bus.MessageID(now), rawBody)
+		if span != nil {
+			closeIterator()
+			span.Tagf(tracelabels.TagBytesOut, "%d", len(rawBody))
+			span.Stop()
+			resp = bus.NewMessage(bus.MessageID(now), &measurev1.InternalQueryResponse{RawFrameBody: rawBody, Trace: tracer.ToProto()})
+		} else {
+			resp = bus.NewMessage(bus.MessageID(now), rawBody)
+		}
 		if p.slowQuery > 0 {
 			latency := time.Since(n)
 			if latency > p.slowQuery {
@@ -581,20 +620,18 @@ func (p *measureInternalQueryProcessor) Rev(ctx context.Context, message bus.Mes
 		return
 	}
 
-	var tracer *query.Tracer
-	var span *query.Span
-	if queryCriteria.Trace {
-		tracer, ctx = query.NewTracer(ctx, n.Format(time.RFC3339Nano))
-		span, _ = tracer.StartSpan(ctx, "data-%s", p.queryService.nodeID)
-		span.Tag("plan", planStr)
+	if span != nil {
+		span.Tag(tracelabels.TagPlan, planStr)
 		defer func() {
 			respData := resp.Data()
 			switch d := respData.(type) {
 			case *measurev1.InternalQueryResponse:
-				span.Tag("resp_count", fmt.Sprintf("%d", len(d.DataPoints)))
-				d.Trace = tracer.ToProto()
+				closeIterator()
+				span.Tag(tracelabels.TagRespCount, fmt.Sprintf("%d", len(d.DataPoints)))
 				span.Stop()
+				d.Trace = tracer.ToProto()
 			case *common.Error:
+				closeIterator()
 				span.Error(errors.New(d.Error()))
 				span.Stop()
 				resp = bus.NewMessage(bus.MessageID(now), &measurev1.InternalQueryResponse{Trace: tracer.ToProto()})
@@ -728,7 +765,7 @@ func (p *traceQueryProcessor) setupTraceMonitor(ctx context.Context, queryCriter
 
 	tracer, newCtx := query.NewTracer(ctx, startTime.Format(time.RFC3339Nano))
 	span, newCtx := tracer.StartSpan(newCtx, "data-%s", p.queryService.nodeID)
-	span.Tag("plan", plan.String())
+	span.Tag(tracelabels.TagPlan, plan.String())
 
 	return newCtx, &traceMonitor{
 		tracer: tracer,

@@ -35,6 +35,7 @@ import (
 	"github.com/apache/skywalking-banyandb/pkg/query/executor"
 	"github.com/apache/skywalking-banyandb/pkg/query/logical"
 	logical_measure "github.com/apache/skywalking-banyandb/pkg/query/logical/measure"
+	"github.com/apache/skywalking-banyandb/pkg/query/tracelabels"
 	vmeasure "github.com/apache/skywalking-banyandb/pkg/query/vectorized/measure"
 	vecplan "github.com/apache/skywalking-banyandb/pkg/query/vectorized/measure/plan"
 )
@@ -105,8 +106,8 @@ func (p *measureQueryProcessor) Rev(ctx context.Context, message bus.Message) (r
 	if queryCriteria.Trace {
 		tracer, ctx = query.NewTracer(ctx, n.Format(time.RFC3339Nano))
 		span, ctx = tracer.StartSpan(ctx, "distributed-%s", p.queryService.nodeID)
-		span.Tag("plan", plan.String())
-		span.Tagf("nodeSelectors", "%v", nodeSelectors)
+		span.Tag(tracelabels.TagPlan, plan.String())
+		span.Tagf(tracelabels.TagNodeSelectors, "%v", nodeSelectors)
 		defer func() {
 			data := resp.Data()
 			switch d := data.(type) {
@@ -147,8 +148,8 @@ func (p *measureQueryProcessor) Rev(ctx context.Context, message bus.Message) (r
 		if tracer != nil {
 			iterSpan, _ := tracer.StartSpan(ctx, "iterator")
 			defer func() {
-				iterSpan.Tag("rounds", fmt.Sprintf("%d", r))
-				iterSpan.Tag("size", fmt.Sprintf("%d", len(result)))
+				iterSpan.Tag(tracelabels.TagRounds, fmt.Sprintf("%d", r))
+				iterSpan.Tag(tracelabels.TagSize, fmt.Sprintf("%d", len(result)))
 				iterSpan.Stop()
 			}()
 		}

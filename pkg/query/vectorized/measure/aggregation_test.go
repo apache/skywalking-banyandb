@@ -692,7 +692,7 @@ func TestBatchAggregation_AggModeReduce_BindsNumericDuplicateField(t *testing.T)
 		{Role: vectorized.RoleField, Name: "sum_v", Type: vectorized.ColumnTypeFieldValue},
 		{Role: vectorized.RoleField, Name: "sum_v", Type: vectorized.ColumnTypeInt64},
 	})
-	specs, bindErr := bindAggReduceSpecs(s, []AggReduceSpec{{OutputName: "sum_v", Func: AggSum}})
+	specs, _, bindErr := bindAggReduceSpecs(s, []AggReduceSpec{{OutputName: "sum_v", Func: AggSum}})
 	if bindErr != nil {
 		t.Fatalf("bindAggReduceSpecs: %v", bindErr)
 	}
@@ -730,7 +730,7 @@ func TestBatchAggregation_AggModeReduce_BindsFieldValueFallback(t *testing.T) {
 		{Role: vectorized.RoleTag, TagFamily: "f", Name: "g", Type: vectorized.ColumnTypeString},
 		{Role: vectorized.RoleField, Name: "sum_v", Type: vectorized.ColumnTypeFieldValue},
 	})
-	specs, bindErr := bindAggReduceSpecs(s, []AggReduceSpec{{OutputName: "sum_v", Func: AggSum}})
+	specs, _, bindErr := bindAggReduceSpecs(s, []AggReduceSpec{{OutputName: "sum_v", Func: AggSum}})
 	if bindErr != nil {
 		t.Fatalf("bindAggReduceSpecs: %v", bindErr)
 	}
@@ -767,7 +767,7 @@ func TestBatchAggregation_AggModeReduce_TagValueGroupKeyDoesNotCollapse(t *testi
 		{Role: vectorized.RoleTag, TagFamily: "f", Name: "entity_id", Type: vectorized.ColumnTypeTagValue},
 		{Role: vectorized.RoleField, Name: "sum_v", Type: vectorized.ColumnTypeFieldValue},
 	})
-	specs, bindErr := bindAggReduceSpecs(s, []AggReduceSpec{{OutputName: "sum_v", Func: AggSum}})
+	specs, _, bindErr := bindAggReduceSpecs(s, []AggReduceSpec{{OutputName: "sum_v", Func: AggSum}})
 	if bindErr != nil {
 		t.Fatalf("bindAggReduceSpecs: %v", bindErr)
 	}

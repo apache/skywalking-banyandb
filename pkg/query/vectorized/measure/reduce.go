@@ -73,14 +73,15 @@ type ReduceTopSpec struct {
 // tag rule).
 //
 // Returns the final reduced batches in group-insertion order (paginated
-// by batchSize). Callers walk the batches sequentially; one row per group.
+// by batchSize) and the AggValuePath that describes how the value column
+// was resolved. Callers walk the batches sequentially; one row per group.
 func ReduceRawFrames(
 	frames [][]byte,
 	keyTagNames []string,
 	aggSpecs []AggReduceSpec,
 	batchSize int,
 	tracker *vectorized.MemoryTracker,
-) ([]*vectorized.RecordBatch, error) {
+) ([]*vectorized.RecordBatch, AggValuePath, error) {
 	decoded := make([]*vectorized.RecordBatch, 0, len(frames))
 	for i, body := range frames {
 		if len(body) == 0 {
@@ -88,7 +89,7 @@ func ReduceRawFrames(
 		}
 		b, decodeErr := frame.Decode(body)
 		if decodeErr != nil {
-			return nil, fmt.Errorf("ReduceRawFrames: decode partial %d: %w", i, decodeErr)
+			return nil, AggValuePathUnresolved, fmt.Errorf("ReduceRawFrames: decode partial %d: %w", i, decodeErr)
 		}
 		decoded = append(decoded, b)
 	}
@@ -100,13 +101,16 @@ func ReduceRawFrames(
 // partials. Empty batches (nil or Len==0) are skipped; the first non-empty
 // batch defines the schema and structural compatibility is checked against
 // subsequent ones.
+//
+// Returns the reduced batches and the AggValuePath that describes how the
+// value column was resolved (typed, fieldvalue-fallback, or unresolved).
 func ReducePartialBatches(
 	partials []*vectorized.RecordBatch,
 	keyTagNames []string,
 	aggSpecs []AggReduceSpec,
 	batchSize int,
 	tracker *vectorized.MemoryTracker,
-) ([]*vectorized.RecordBatch, error) {
+) ([]*vectorized.RecordBatch, AggValuePath, error) {
 	var refSchema *vectorized.BatchSchema
 	for _, b := range partials {
 		if b == nil || b.Len == 0 {
@@ -116,47 +120,47 @@ func ReducePartialBatches(
 		break
 	}
 	if refSchema == nil {
-		return nil, nil
+		return nil, AggValuePathTyped, nil
 	}
 	keyIndices, indicesErr := resolveKeyIndices(refSchema, keyTagNames)
 	if indicesErr != nil {
-		return nil, indicesErr
+		return nil, AggValuePathUnresolved, indicesErr
 	}
-	specs, specsErr := bindAggReduceSpecs(refSchema, aggSpecs)
+	specs, path, specsErr := bindAggReduceSpecs(refSchema, aggSpecs)
 	if specsErr != nil {
-		return nil, specsErr
+		return nil, AggValuePathUnresolved, specsErr
 	}
 	op := NewBatchAggregation(refSchema, keyIndices, specs, AggModeReduce, batchSize, tracker, 0)
 	defer op.Close()
 	if initErr := op.Init(context.Background()); initErr != nil {
-		return nil, fmt.Errorf("ReducePartialBatches: init: %w", initErr)
+		return nil, path, fmt.Errorf("ReducePartialBatches: init: %w", initErr)
 	}
 	for i, b := range partials {
 		if b == nil || b.Len == 0 {
 			continue
 		}
 		if compatErr := schemaCompatible(refSchema, b.Schema); compatErr != nil {
-			return nil, fmt.Errorf("ReducePartialBatches: partial %d schema mismatch: %w", i, compatErr)
+			return nil, path, fmt.Errorf("ReducePartialBatches: partial %d schema mismatch: %w", i, compatErr)
 		}
 		if consumeErr := op.Consume(context.Background(), b); consumeErr != nil {
-			return nil, fmt.Errorf("ReducePartialBatches: consume partial %d: %w", i, consumeErr)
+			return nil, path, fmt.Errorf("ReducePartialBatches: consume partial %d: %w", i, consumeErr)
 		}
 	}
 	if finalErr := op.Finalize(context.Background()); finalErr != nil {
-		return nil, fmt.Errorf("ReducePartialBatches: finalize: %w", finalErr)
+		return nil, path, fmt.Errorf("ReducePartialBatches: finalize: %w", finalErr)
 	}
 	var out []*vectorized.RecordBatch
 	for {
 		nb, nextErr := op.NextBatch(context.Background())
 		if nextErr != nil {
-			return nil, fmt.Errorf("ReducePartialBatches: next: %w", nextErr)
+			return nil, path, fmt.Errorf("ReducePartialBatches: next: %w", nextErr)
 		}
 		if nb == nil {
 			break
 		}
 		out = append(out, nb)
 	}
-	return out, nil
+	return out, path, nil
 }
 
 // resolveKeyIndices binds keyTagNames to column indices in the partial
@@ -183,14 +187,38 @@ func resolveKeyIndices(schema *vectorized.BatchSchema, keyTagNames []string) ([]
 	return out, nil
 }
 
+// AggValuePath records which column-type path bindAggReduceSpecs used to
+// resolve the aggregation value column.
+type AggValuePath string
+
+// AggValuePath constants match the trace tag values required by US-VT-1.
+const (
+	// AggValuePathTyped means all agg specs resolved via a native int64 or
+	// float64 column — the normal AggModeMap partial path.
+	AggValuePathTyped AggValuePath = "typed"
+	// AggValuePathFieldValueFallback means at least one agg spec fell back
+	// to a ColumnTypeFieldValue passthrough column because no native typed
+	// column was found — the DataPoint-egress passthrough path.
+	AggValuePathFieldValueFallback AggValuePath = "fieldvalue-fallback"
+	// AggValuePathUnresolved means bindAggReduceSpecs could not find any
+	// matching column for at least one agg spec and returned an error.
+	AggValuePathUnresolved AggValuePath = "unresolved"
+)
+
 // bindAggReduceSpecs maps each requested AggReduceSpec to the partial
 // schema's value column. The value column is identified by its name
 // (AggReduceSpec.OutputName); the count sidecar — if present — is found
 // by buildAggInputCountIdx, so callers only need to supply the value
 // column name. A missing value column is a producer/planner mismatch and
 // is reported loudly.
-func bindAggReduceSpecs(schema *vectorized.BatchSchema, aggSpecs []AggReduceSpec) ([]AggSpec, error) {
+//
+// The returned AggValuePath reflects the resolution path taken:
+//   - AggValuePathTyped if all specs resolved via a native int64/float64 column.
+//   - AggValuePathFieldValueFallback if at least one spec fell back to a FieldValue column.
+//   - AggValuePathUnresolved (alongside a non-nil error) if a column was not found.
+func bindAggReduceSpecs(schema *vectorized.BatchSchema, aggSpecs []AggReduceSpec) ([]AggSpec, AggValuePath, error) {
 	out := make([]AggSpec, 0, len(aggSpecs))
+	usedFieldValueFallback := false
 	for _, ars := range aggSpecs {
 		valueIdx := -1
 		fieldValueIdx := -1
@@ -206,11 +234,12 @@ func bindAggReduceSpecs(schema *vectorized.BatchSchema, aggSpecs []AggReduceSpec
 				fieldValueIdx = i
 			}
 		}
-		if valueIdx < 0 {
+		if valueIdx < 0 && fieldValueIdx >= 0 {
 			valueIdx = fieldValueIdx
+			usedFieldValueFallback = true
 		}
 		if valueIdx < 0 {
-			return nil, fmt.Errorf("agg output column %q not present in partial schema", ars.OutputName)
+			return nil, AggValuePathUnresolved, fmt.Errorf("agg output column %q not present in partial schema", ars.OutputName)
 		}
 		out = append(out, AggSpec{
 			Output:   ars.OutputName,
@@ -218,7 +247,11 @@ func bindAggReduceSpecs(schema *vectorized.BatchSchema, aggSpecs []AggReduceSpec
 			InputCol: valueIdx,
 		})
 	}
-	return out, nil
+	path := AggValuePathTyped
+	if usedFieldValueFallback {
+		path = AggValuePathFieldValueFallback
+	}
+	return out, path, nil
 }
 
 func isAggReduceValueType(columnType vectorized.ColumnType) bool {

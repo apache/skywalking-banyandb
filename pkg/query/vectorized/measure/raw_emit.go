@@ -23,6 +23,8 @@ import (
 
 	measurev1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/measure/v1"
 	modelv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/model/v1"
+	"github.com/apache/skywalking-banyandb/pkg/query"
+	"github.com/apache/skywalking-banyandb/pkg/query/tracelabels"
 	"github.com/apache/skywalking-banyandb/pkg/query/vectorized"
 	"github.com/apache/skywalking-banyandb/pkg/query/vectorized/measure/frame"
 )
@@ -126,7 +128,25 @@ func DrainPipelineToFrame(ctx context.Context, p *vectorized.Pipeline, schema *v
 	if convErr != nil {
 		return nil, fmt.Errorf("DrainPipelineToFrame: %w", convErr)
 	}
-	return frame.Encode(converted)
+	tracer := query.GetTracer(ctx)
+	if tracer == nil {
+		return frame.Encode(converted)
+	}
+	span, _ := tracer.StartSpan(ctx, "frame-encode")
+	encoded, encodeErr := frame.Encode(converted)
+	if encodeErr != nil {
+		span.Error(encodeErr)
+		span.Stop()
+		return nil, encodeErr
+	}
+	span.Tagf(tracelabels.TagRowsOut, "%d", converted.ActiveLen())
+	span.Tagf(tracelabels.TagBatchesOut, "%d", 1)
+	span.Tagf(tracelabels.TagBytesOut, "%d", len(encoded))
+	if converted.Schema != nil {
+		span.Tagf(tracelabels.TagSchemaCols, "%d", len(converted.Schema.Columns))
+	}
+	span.Stop()
+	return encoded, nil
 }
 
 // SerializeDataPointsToFrame is the fallback wire-emit path for iterator
@@ -574,7 +594,7 @@ func ReduceFramesToInternalDataPoints(
 	batchSize int,
 	tracker *vectorized.MemoryTracker,
 ) ([]*measurev1.InternalDataPoint, error) {
-	reduced, reduceErr := ReduceRawFrames(frames, keyTagNames, aggSpecs, batchSize, tracker)
+	reduced, _, reduceErr := ReduceRawFrames(frames, keyTagNames, aggSpecs, batchSize, tracker)
 	if reduceErr != nil {
 		return nil, reduceErr
 	}

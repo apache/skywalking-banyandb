@@ -30,12 +30,15 @@ import (
 
 	"github.com/apache/skywalking-banyandb/api/common"
 	"github.com/apache/skywalking-banyandb/api/data"
+	commonv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/common/v1"
 	databasev1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/database/v1"
 	measurev1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/measure/v1"
 	modelv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/model/v1"
 	"github.com/apache/skywalking-banyandb/pkg/bus"
+	"github.com/apache/skywalking-banyandb/pkg/query"
 	"github.com/apache/skywalking-banyandb/pkg/query/executor"
 	"github.com/apache/skywalking-banyandb/pkg/query/logical"
+	"github.com/apache/skywalking-banyandb/pkg/query/tracelabels"
 	"github.com/apache/skywalking-banyandb/pkg/query/vectorized"
 	vmeasure "github.com/apache/skywalking-banyandb/pkg/query/vectorized/measure"
 )
@@ -57,6 +60,51 @@ func (p *DistributedPlan) broadcastTimeout() time.Duration {
 		return p.cfg.BroadcastTimeout
 	}
 	return distributedQueryTimeout
+}
+
+func startTraceSpan(ctx context.Context, msg string) (*query.Span, context.Context) {
+	tracer := query.GetTracer(ctx)
+	if tracer == nil {
+		return nil, ctx
+	}
+	return tracer.StartSpan(ctx, "%s", msg)
+}
+
+func stopTraceSpan(span *query.Span) {
+	if span != nil {
+		span.Stop()
+	}
+}
+
+func addTraceTag(span *query.Span, key, value string) {
+	if span != nil {
+		span.Tag(key, value)
+	}
+}
+
+func addTraceTagf(span *query.Span, key, format string, args ...any) {
+	if span != nil {
+		span.Tagf(key, format, args...)
+	}
+}
+
+func nodeSelectorCount(nodeSelectors map[string][]string) int {
+	count := 0
+	for _, selectors := range nodeSelectors {
+		count += len(selectors)
+	}
+	return count
+}
+
+
+func batchRows(batches []*vectorized.RecordBatch) int {
+	rows := 0
+	for _, batch := range batches {
+		if batch != nil {
+			rows += batch.ActiveLen()
+		}
+	}
+	return rows
 }
 
 // SupportsDistributedRows reports whether a non-aggregation request can use
@@ -416,13 +464,36 @@ func (p *DistributedPlan) Execute(ctx context.Context) (executor.MIterator, erro
 		// Single-group fast path — unchanged behavior.
 		nodeRequest := proto.Clone(p.nodeTemplate).(*measurev1.QueryRequest)
 		nodeRequest.TimeRange = dctx.TimeRange()
+		spanName := "broadcast-rows"
+		if queryRequest.GetAgg() != nil {
+			spanName = "broadcast-agg"
+		}
+		broadcastSpan, broadcastSpanCtx := startTraceSpan(ctx, spanName)
+		addTraceTagf(broadcastSpan, tracelabels.TagNodeCount, "%d", nodeSelectorCount(dctx.NodeSelectors()))
+		addTraceTagf(broadcastSpan, tracelabels.TagBroadcastTimeoutMS, "%d", p.broadcastTimeout().Milliseconds())
+		addTraceTag(broadcastSpan, tracelabels.TagTimeRange, dctx.TimeRange().String())
 		internalRequest := &measurev1.InternalQueryRequest{Request: nodeRequest, AggReturnPartial: queryRequest.GetAgg() != nil}
 		ff, broadcastErr := dctx.Broadcast(p.broadcastTimeout(), data.TopicInternalMeasureQuery,
 			bus.NewMessageWithNodeSelectors(bus.MessageID(dctx.TimeRange().Begin.Nanos), dctx.NodeSelectors(), dctx.TimeRange(), internalRequest))
 		if broadcastErr != nil {
+			if broadcastSpan != nil {
+				broadcastSpan.Error(fmt.Errorf("vec distributed plan: broadcast: %w", broadcastErr))
+				stopTraceSpan(broadcastSpan)
+			}
 			return nil, fmt.Errorf("vec distributed plan: broadcast: %w", broadcastErr)
 		}
-		frames, responseErr := collectRawFrameResponses(ff)
+		frames, _, nodes, responseErr := collectRawFrameResponsesWithNodes(ff)
+		applyFanoutCap(broadcastSpanCtx, broadcastSpan, nodes)
+		addTraceTagf(broadcastSpan, tracelabels.TagResponseCount, "%d", len(frames))
+		frameBytesTotal := 0
+		for _, frameBody := range frames {
+			frameBytesTotal += len(frameBody)
+		}
+		addTraceTagf(broadcastSpan, tracelabels.TagFrameBytesTotal, "%d", frameBytesTotal)
+		if responseErr != nil && broadcastSpan != nil {
+			broadcastSpan.Error(responseErr)
+		}
+		stopTraceSpan(broadcastSpan)
 		if responseErr != nil {
 			return nil, responseErr
 		}
@@ -452,18 +523,33 @@ func (p *DistributedPlan) Execute(ctx context.Context) (executor.MIterator, erro
 			nodeRequest.TagProjection = intersectTagProjection(nodeRequest.GetTagProjection(), groupSchema)
 			nodeRequest.FieldProjection = intersectFieldProjection(nodeRequest.GetFieldProjection(), groupSchema)
 		}
+		broadcastSpan, broadcastSpanCtx := startTraceSpan(ctx, fmt.Sprintf("broadcast-per-group-%s", groupName))
+		addTraceTag(broadcastSpan, tracelabels.TagGroupName, groupName)
+		addTraceTagf(broadcastSpan, tracelabels.TagNodeCount, "%d", nodeSelectorCount(dctx.NodeSelectors()))
 		internalRequest := &measurev1.InternalQueryRequest{Request: nodeRequest, AggReturnPartial: queryRequest.GetAgg() != nil}
 		ff, broadcastErr := dctx.Broadcast(p.broadcastTimeout(), data.TopicInternalMeasureQuery,
 			bus.NewMessageWithNodeSelectors(bus.MessageID(dctx.TimeRange().Begin.Nanos), dctx.NodeSelectors(), dctx.TimeRange(), internalRequest))
 		if broadcastErr != nil {
-			perGroupErr = multierr.Append(perGroupErr, fmt.Errorf("vec distributed plan: broadcast group %s: %w", groupName, broadcastErr))
+			wrappedErr := fmt.Errorf("vec distributed plan: broadcast group %s: %w", groupName, broadcastErr)
+			if broadcastSpan != nil {
+				broadcastSpan.Error(wrappedErr)
+				stopTraceSpan(broadcastSpan)
+			}
+			perGroupErr = multierr.Append(perGroupErr, wrappedErr)
 			continue
 		}
-		rawFrames, responseErr := collectRawFrameResponses(ff)
+		rawFrames, _, groupNodes, responseErr := collectRawFrameResponsesWithNodes(ff)
+		applyFanoutCap(broadcastSpanCtx, broadcastSpan, groupNodes)
+		addTraceTagf(broadcastSpan, tracelabels.TagResponseCount, "%d", len(rawFrames))
 		if responseErr != nil {
+			if broadcastSpan != nil {
+				broadcastSpan.Error(responseErr)
+				stopTraceSpan(broadcastSpan)
+			}
 			perGroupErr = multierr.Append(perGroupErr, responseErr)
 			continue
 		}
+		stopTraceSpan(broadcastSpan)
 		for _, body := range rawFrames {
 			allGroupFrames = append(allGroupFrames, groupFrame{body: body, group: groupIdx})
 		}
@@ -482,13 +568,21 @@ func (p *DistributedPlan) Execute(ctx context.Context) (executor.MIterator, erro
 	return p.executeAgg(ctx, flatFrames, queryRequest)
 }
 
-func collectRawFrameResponses(ff []bus.Future) ([][]byte, error) {
+func collectRawFrameResponses(ff []bus.Future) ([][]byte, []*commonv1.Trace, error) {
+	frames, traces, _, err := collectRawFrameResponsesWithNodes(ff)
+	return frames, traces, err
+}
+
+func collectRawFrameResponsesWithNodes(ff []bus.Future) ([][]byte, []*commonv1.Trace, []nodeInfo, error) {
 	frames := make([][]byte, 0, len(ff))
+	traces := make([]*commonv1.Trace, 0, len(ff))
+	nodes := make([]nodeInfo, 0, len(ff))
 	var err error
 	for _, future := range ff {
 		message, getErr := future.Get()
 		if getErr != nil {
 			err = multierr.Append(err, getErr)
+			nodes = append(nodes, nodeInfo{hasError: true})
 			continue
 		}
 		switch response := message.Data().(type) {
@@ -498,19 +592,48 @@ func collectRawFrameResponses(ff []bus.Future) ([][]byte, error) {
 			// rawBody, which the bus wire layer surfaces as an
 			// untyped-nil Data interface. Treat as zero rows from this
 			// source — there is no frame to decode.
+			nodes = append(nodes, nodeInfo{rows: 0})
 		case []byte:
 			if len(response) > 0 {
 				frames = append(frames, response)
+				nodes = append(nodes, nodeInfo{bytes: int64(len(response))})
+			} else {
+				nodes = append(nodes, nodeInfo{})
 			}
 		case *common.Error:
 			err = multierr.Append(err, fmt.Errorf("data node error: %s", response.Error()))
+			nodes = append(nodes, nodeInfo{hasError: true})
 		case *measurev1.InternalQueryResponse:
-			err = multierr.Append(err, fmt.Errorf("vec distributed plan: got proto response under raw wire mode"))
+			if len(response.GetDataPoints()) > 0 && len(response.GetRawFrameBody()) == 0 {
+				err = multierr.Append(err, fmt.Errorf("vec distributed plan: got data_points proto response under raw wire mode"))
+				nodes = append(nodes, nodeInfo{hasError: true})
+				continue
+			}
+			frameBody := response.GetRawFrameBody()
+			if len(frameBody) > 0 {
+				frames = append(frames, frameBody)
+			}
+			nodeTrace := response.GetTrace()
+			ni := nodeInfo{
+				trace:     nodeTrace,
+				bytes:     int64(len(frameBody)),
+				latencyNS: extractNodeLatency(nodeTrace),
+				rows:      extractNodeTagInt64(nodeTrace, tracelabels.TagRespCount),
+				hasError:  nodeTrace != nil && nodeTrace.GetError(),
+			}
+			if nodeTrace != nil {
+				traces = append(traces, nodeTrace)
+				if len(frameBody) == 0 && nodeTrace.GetError() {
+					err = multierr.Append(err, fmt.Errorf("data node trace error"))
+				}
+			}
+			nodes = append(nodes, ni)
 		default:
 			err = multierr.Append(err, fmt.Errorf("vec distributed plan: unexpected response %T", response))
+			nodes = append(nodes, nodeInfo{hasError: true})
 		}
 	}
-	return frames, err
+	return frames, traces, nodes, err
 }
 
 func (p *DistributedPlan) executeAgg(ctx context.Context, frames [][]byte, req *measurev1.QueryRequest) (executor.MIterator, error) {
@@ -525,17 +648,44 @@ func (p *DistributedPlan) executeAgg(ctx context.Context, frames [][]byte, req *
 		topSpec = &vmeasure.ReduceTopSpec{FieldName: top.GetFieldName(), N: int(top.GetNumber()), Asc: top.GetFieldValueSort() == modelv1.Sort_SORT_ASC}
 	}
 	tracker := vectorized.NewMemoryTracker(int64(p.cfg.QueryMemoryMiB) * 1024 * 1024)
+	reduceSpan, reduceSpanCtx := startTraceSpan(ctx, "reduce-raw-frames")
+	addTraceTagf(reduceSpan, tracelabels.TagFramesIn, "%d", len(frames))
+	frameDecodeDurations := collectFrameDecodeDurations(frames)
 	// nolint:contextcheck // pure in-memory reducer; no cancelable I/O downstream
-	batches, reduceErr := vmeasure.ReduceRawFrames(frames, keyTagNames, aggSpecs, p.cfg.BatchSize, tracker)
+	batches, aggValuePath, reduceErr := vmeasure.ReduceRawFrames(frames, keyTagNames, aggSpecs, p.cfg.BatchSize, tracker)
 	if reduceErr != nil {
+		if reduceSpan != nil {
+			reduceSpan.Error(reduceErr)
+			addTraceTag(reduceSpan, tracelabels.TagAggValuePath, string(aggValuePath))
+			stopTraceSpan(reduceSpan)
+		}
 		return nil, fmt.Errorf("vec distributed plan: reduce raw frames: %w", reduceErr)
 	}
+	emitDecodeFrameSummarySpan(reduceSpanCtx, frameDecodeDurations)
+	addTraceTagf(reduceSpan, tracelabels.TagRowsOut, "%d", batchRows(batches))
+	addTraceTagf(reduceSpan, tracelabels.TagGroupsOut, "%d", batchRows(batches))
+	addTraceTag(reduceSpan, tracelabels.TagAggValuePath, string(aggValuePath))
+	stopTraceSpan(reduceSpan)
 	if topSpec != nil && topSpec.N > 0 && len(batches) > 0 {
+		topSpan, _ := startTraceSpan(ctx, "apply-top-to-reduce")
+		rowsIn := batchRows(batches)
 		// nolint:contextcheck // pure in-memory top selection; no cancelable I/O downstream
 		topped, topErr := vmeasure.ApplyTopToReduce(batches, *topSpec, p.cfg.BatchSize)
 		if topErr != nil {
+			if topSpan != nil {
+				topSpan.Error(topErr)
+				stopTraceSpan(topSpan)
+			}
 			return nil, fmt.Errorf("vec distributed plan: top reduced frames: %w", topErr)
 		}
+		rowsOut := batchRows(topped)
+		addTraceTagf(topSpan, tracelabels.TagTopN, "%d", topSpec.N)
+		addTraceTagf(topSpan, tracelabels.TagTopAsc, "%t", topSpec.Asc)
+		addTraceTagf(topSpan, tracelabels.TagRowsIn, "%d", rowsIn)
+		addTraceTagf(topSpan, tracelabels.TagRowsOut, "%d", rowsOut)
+		addTraceTagf(topSpan, tracelabels.TagDroppedRows, "%d", rowsIn-rowsOut)
+		addTraceTag(topSpan, tracelabels.TagDropReason, "top")
+		stopTraceSpan(topSpan)
 		batches = topped
 	}
 	return p.iteratorFromBatches(ctx, batches, req)
@@ -554,10 +704,25 @@ func (p *DistributedPlan) executeRows(ctx context.Context, frames [][]byte, req 
 		spec.OrderByFamily = p.orderByTag.family
 		spec.OrderByTagName = p.orderByTag.tag
 	}
+	mergeSpan, mergeSpanCtx := startTraceSpan(ctx, "merge-distributed-rows")
+	addTraceTagf(mergeSpan, tracelabels.TagSourcesIn, "%d", len(frames))
+	rowsFrameDecodeDurations := collectFrameDecodeDurations(frames)
 	batches, mergeErr := mergeDistributedRows(frames, spec)
 	if mergeErr != nil {
+		if mergeSpan != nil {
+			mergeSpan.Error(mergeErr)
+			stopTraceSpan(mergeSpan)
+		}
 		return nil, fmt.Errorf("vec distributed plan: merge rows: %w", mergeErr)
 	}
+	emitDecodeFrameSummarySpan(mergeSpanCtx, rowsFrameDecodeDurations)
+	addTraceTagf(mergeSpan, tracelabels.TagRowsOut, "%d", batchRows(batches))
+	addTraceTagf(mergeSpan, tracelabels.TagOrderByColIdx, "%d", spec.OrderByColIdx)
+	addTraceTag(mergeSpan, tracelabels.TagOrderByFamily, spec.OrderByFamily)
+	addTraceTag(mergeSpan, tracelabels.TagOrderByTag, spec.OrderByTagName)
+	addTraceTagf(mergeSpan, tracelabels.TagDesc, "%t", spec.Desc)
+	addTraceTagf(mergeSpan, tracelabels.TagIndexMode, "%t", spec.IndexMode)
+	stopTraceSpan(mergeSpan)
 	// Phase 5: raw GroupBy liaison pass. Runs after the k-way heap merge so
 	// the stream is already (OrderBy/ts, sid)-sorted, and before BatchTop so
 	// that BatchTop never sees two rows from the same group (which would
@@ -602,10 +767,21 @@ func (p *DistributedPlan) executeRows(ctx context.Context, frames [][]byte, req 
 // the merged BatchSchema by unioning all per-group schemas, then runs the
 // k-way heap merger over all per-group frames decoded into that merged schema.
 func (p *DistributedPlan) executeRowsMultiGroup(ctx context.Context, groupFrames []groupFrame, req *measurev1.QueryRequest) (executor.MIterator, error) {
+	schemaSpan, _ := startTraceSpan(ctx, "build-multi-group-schema")
+	addTraceTagf(schemaSpan, tracelabels.TagGroupsIn, "%d", len(p.measureSchemas))
 	mergedSchema, schemaErr := BuildMultiGroupBatchSchema(p.measureSchemas, req)
 	if schemaErr != nil {
+		if schemaSpan != nil {
+			schemaSpan.Error(schemaErr)
+			stopTraceSpan(schemaSpan)
+		}
 		return nil, fmt.Errorf("vec distributed plan: build multi-group schema: %w", schemaErr)
 	}
+	if mergedSchema != nil {
+		addTraceTagf(schemaSpan, tracelabels.TagSchemaCols, "%d", len(mergedSchema.Columns))
+	}
+	addTraceTagf(schemaSpan, tracelabels.TagSchemaDegraded, "%t", false)
+	stopTraceSpan(schemaSpan)
 	tracker := vectorized.NewMemoryTracker(int64(p.cfg.QueryMemoryMiB) * 1024 * 1024)
 	// IndexMode is true when ALL groups are index-mode. A mixed-mode
 	// configuration is treated as non-index-mode to avoid over-suppressing rows
@@ -628,10 +804,18 @@ func (p *DistributedPlan) executeRowsMultiGroup(ctx context.Context, groupFrames
 		spec.OrderByFamily = p.orderByTag.family
 		spec.OrderByTagName = p.orderByTag.tag
 	}
+	mergeSpan, _ := startTraceSpan(ctx, "merge-distributed-rows-multi")
+	addTraceTagf(mergeSpan, tracelabels.TagSourcesIn, "%d", len(groupFrames))
 	batches, mergeErr := mergeDistributedRowsMulti(groupFrames, mergedSchema, spec)
 	if mergeErr != nil {
+		if mergeSpan != nil {
+			mergeSpan.Error(mergeErr)
+			stopTraceSpan(mergeSpan)
+		}
 		return nil, fmt.Errorf("vec distributed plan: merge multi-group rows: %w", mergeErr)
 	}
+	addTraceTagf(mergeSpan, tracelabels.TagRowsOut, "%d", batchRows(batches))
+	stopTraceSpan(mergeSpan)
 	// Phase 5: raw GroupBy liaison pass. Same ordering as executeRows —
 	// GroupByFirst before BatchTop so each group contributes at most one row
 	// to the global Top ranking.

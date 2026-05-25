@@ -1,5 +1,7 @@
 # Changes by Version
 
+* Add opt-in vectorized measure query tracing over raw-frame distributed queries, including a trace envelope and fixed trace-label vocabulary.
+
 Release Notes.
 
 ## 0.11.0

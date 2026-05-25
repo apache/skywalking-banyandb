@@ -83,7 +83,7 @@ func TestTopologyMatrix(t *testing.T) {
 					name := fmt.Sprintf("S%d_R%d", shards, replicas)
 					t.Run(name, func(t *testing.T) {
 						frames := buildPartialFrames(t, rows, shards, replicas, tc.fn)
-						got, reduceErr := ReduceRawFrames(frames,
+						got, _, reduceErr := ReduceRawFrames(frames,
 							[]string{"g"},
 							[]AggReduceSpec{{OutputName: "out", Func: tc.fn}},
 							1024, vectorized.NewMemoryTracker(1<<30))
@@ -342,7 +342,7 @@ func TestTopologyMatrix_WithTop(t *testing.T) {
 					name := fmt.Sprintf("S%d_R%d", shards, replicas)
 					t.Run(name, func(t *testing.T) {
 						frames := buildPartialFrames(t, rows, shards, replicas, AggSum)
-						reduced, reduceErr := ReduceRawFrames(frames,
+						reduced, _, reduceErr := ReduceRawFrames(frames,
 							[]string{"g"},
 							[]AggReduceSpec{{OutputName: "out", Func: AggSum}},
 							1024, vectorized.NewMemoryTracker(1<<30))

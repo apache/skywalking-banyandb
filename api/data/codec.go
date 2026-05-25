@@ -22,6 +22,8 @@ import (
 	"sync/atomic"
 
 	"google.golang.org/protobuf/proto"
+
+	measurev1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/measure/v1"
 )
 
 // RawFrameMagicLeadingByte is the mandatory first byte of every raw vec
@@ -158,14 +160,24 @@ type measureQueryResponseCodec struct {
 }
 
 func (c *measureQueryResponseCodec) Marshal(v any) ([]byte, error) {
-	if MeasureWireModeRaw() {
-		return c.raw.Marshal(v)
+	if !MeasureWireModeRaw() {
+		return c.proto.Marshal(v)
 	}
-	return c.proto.Marshal(v)
+	switch value := v.(type) {
+	case []byte:
+		return c.raw.Marshal(value)
+	case *measurev1.InternalQueryResponse:
+		return c.proto.Marshal(value)
+	default:
+		return nil, fmt.Errorf("measureQueryResponseCodec: raw wire mode expects []byte or *measurev1.InternalQueryResponse, got %T", v)
+	}
 }
 
 func (c *measureQueryResponseCodec) Unmarshal(body []byte) (any, error) {
-	if MeasureWireModeRaw() {
+	if !MeasureWireModeRaw() {
+		return c.proto.Unmarshal(body)
+	}
+	if len(body) == 0 || body[0] == RawFrameMagicLeadingByte {
 		return c.raw.Unmarshal(body)
 	}
 	return c.proto.Unmarshal(body)

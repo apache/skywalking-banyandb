@@ -22,6 +22,8 @@ import (
 	"context"
 
 	modelv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/model/v1"
+	"github.com/apache/skywalking-banyandb/pkg/query"
+	"github.com/apache/skywalking-banyandb/pkg/query/tracelabels"
 	"github.com/apache/skywalking-banyandb/pkg/query/vectorized"
 )
 
@@ -34,12 +36,14 @@ type BatchTop struct {
 	schema     *vectorized.BatchSchema
 	pool       *vectorized.BatchPool
 	heapState  *topHeap
+	span       *query.Span
 	sorted     []*topRow
 	fieldCol   int
 	n          int
 	batchSize  int
 	inputCount int
 	cursor     int
+	rowsOut    int64
 	asc        bool
 	closed     bool
 }
@@ -131,8 +135,12 @@ func NewBatchTop(schema *vectorized.BatchSchema, fieldCol, n int, asc bool, batc
 }
 
 // Init initializes the heap.
-func (t *BatchTop) Init(_ context.Context) error {
+func (t *BatchTop) Init(ctx context.Context) error {
 	t.heapState = &topHeap{asc: t.asc}
+	tracer := query.GetTracer(ctx)
+	if tracer != nil {
+		t.span, _ = tracer.StartSpan(ctx, "top")
+	}
 	return nil
 }
 
@@ -219,6 +227,9 @@ func (t *BatchTop) NextBatch(_ context.Context) (*vectorized.RecordBatch, error)
 		}
 		out.Len++
 		t.cursor++
+		if t.span != nil {
+			t.rowsOut++
+		}
 	}
 	if out.Len == 0 {
 		t.pool.Put(out)
@@ -234,6 +245,15 @@ func (t *BatchTop) Close() error {
 	}
 	t.closed = true
 	t.heapState = nil
+	if t.span != nil {
+		t.span.Tagf(tracelabels.TagTopN, "%d", t.n)
+		t.span.Tagf(tracelabels.TagTopAsc, "%t", t.asc)
+		t.span.Tagf(tracelabels.TagRowsIn, "%d", t.inputCount)
+		t.span.Tagf(tracelabels.TagRowsOut, "%d", t.rowsOut)
+		t.span.Tagf(tracelabels.TagDroppedRows, "%d", int64(t.inputCount)-t.rowsOut)
+		t.span.Tag(tracelabels.TagDropReason, "top")
+		t.span.Stop()
+	}
 	t.sorted = nil
 	return nil
 }

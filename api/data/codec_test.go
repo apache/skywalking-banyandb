@@ -21,6 +21,7 @@ import (
 	"bytes"
 	"testing"
 
+	commonv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/common/v1"
 	"google.golang.org/protobuf/proto"
 
 	measurev1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/measure/v1"
@@ -194,8 +195,75 @@ func TestMeasureQueryResponseCodec_DispatchesOnWireMode(t *testing.T) {
 		t.Fatalf("flag-on Unmarshal is not passthrough: got %x want %x", outBytes, rawBody)
 	}
 
-	// Flag ON + body with the wrong magic must fail loud.
-	if _, err := codec.Unmarshal([]byte{0x01, 0x02}); err == nil {
-		t.Fatal("flag-on Unmarshal of non-0x00-leading body returned nil error; want fail-loud")
+	// Flag ON + body with the wrong magic now routes to the proto envelope decoder.
+	if _, err := codec.Unmarshal([]byte{0xff, 0x02}); err == nil {
+		t.Fatal("flag-on Unmarshal of invalid proto envelope returned nil error; want fail-loud")
+	}
+}
+
+func TestMeasureQueryResponseCodec_RawModeTraceEnvelopeRoundTrip(t *testing.T) {
+	codec, ok := TopicResponseMap[TopicInternalMeasureQuery]
+	if !ok {
+		t.Fatal("TopicInternalMeasureQuery is not registered in TopicResponseMap")
+	}
+	prev := MeasureWireModeRaw()
+	t.Cleanup(func() { SetMeasureWireModeRaw(prev) })
+	SetMeasureWireModeRaw(true)
+
+	rawBody := []byte{RawFrameMagicLeadingByte, 0x01, 0xAA, 0xBB}
+	envelope := &measurev1.InternalQueryResponse{
+		RawFrameBody: rawBody,
+		Trace:        &commonv1.Trace{TraceId: "trace-1"},
+	}
+	encoded, err := codec.Marshal(envelope)
+	if err != nil {
+		t.Fatalf("raw-mode envelope Marshal failed: %v", err)
+	}
+	if len(encoded) == 0 || encoded[0] == RawFrameMagicLeadingByte {
+		t.Fatalf("raw-mode envelope encoded with raw-frame prefix: %x", encoded)
+	}
+	decoded, err := codec.Unmarshal(encoded)
+	if err != nil {
+		t.Fatalf("raw-mode envelope Unmarshal failed: %v", err)
+	}
+	got, ok := decoded.(*measurev1.InternalQueryResponse)
+	if !ok {
+		t.Fatalf("raw-mode envelope Unmarshal returned %T; want *measurev1.InternalQueryResponse", decoded)
+	}
+	if !bytes.Equal(got.GetRawFrameBody(), rawBody) {
+		t.Fatalf("RawFrameBody mismatch: got %x want %x", got.GetRawFrameBody(), rawBody)
+	}
+	if got.GetTrace().GetTraceId() != "trace-1" {
+		t.Fatalf("TraceId mismatch: got %q", got.GetTrace().GetTraceId())
+	}
+}
+
+func TestMeasureQueryResponseCodec_RawModeTraceEmptyEnvelopeRoundTrip(t *testing.T) {
+	codec, ok := TopicResponseMap[TopicInternalMeasureQuery]
+	if !ok {
+		t.Fatal("TopicInternalMeasureQuery is not registered in TopicResponseMap")
+	}
+	prev := MeasureWireModeRaw()
+	t.Cleanup(func() { SetMeasureWireModeRaw(prev) })
+	SetMeasureWireModeRaw(true)
+
+	envelope := &measurev1.InternalQueryResponse{Trace: &commonv1.Trace{TraceId: "empty"}}
+	encoded, err := codec.Marshal(envelope)
+	if err != nil {
+		t.Fatalf("raw-mode empty envelope Marshal failed: %v", err)
+	}
+	decoded, err := codec.Unmarshal(encoded)
+	if err != nil {
+		t.Fatalf("raw-mode empty envelope Unmarshal failed: %v", err)
+	}
+	got, ok := decoded.(*measurev1.InternalQueryResponse)
+	if !ok {
+		t.Fatalf("raw-mode empty envelope Unmarshal returned %T; want *measurev1.InternalQueryResponse", decoded)
+	}
+	if len(got.GetRawFrameBody()) != 0 {
+		t.Fatalf("RawFrameBody length = %d, want 0", len(got.GetRawFrameBody()))
+	}
+	if got.GetTrace().GetTraceId() != "empty" {
+		t.Fatalf("TraceId mismatch: got %q", got.GetTrace().GetTraceId())
 	}
 }

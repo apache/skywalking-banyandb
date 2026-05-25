@@ -27,6 +27,8 @@ import (
 	"slices"
 
 	modelv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/model/v1"
+	"github.com/apache/skywalking-banyandb/pkg/query"
+	"github.com/apache/skywalking-banyandb/pkg/query/tracelabels"
 	"github.com/apache/skywalking-banyandb/pkg/query/vectorized"
 )
 
@@ -54,6 +56,7 @@ type BatchGroupBy struct {
 	schema       *vectorized.BatchSchema
 	pool         *vectorized.BatchPool
 	tracker      *vectorized.MemoryTracker
+	span         *query.Span
 	groups       map[uint64][]*groupBucket
 	insertion    []*groupBucket
 	keyIndices   []int
@@ -61,6 +64,8 @@ type BatchGroupBy struct {
 	entrySize    int64
 	rowSize      int64
 	reserved     int64
+	rowsIn       int64
+	rowsOut      int64
 	batchSize    int
 	cursorBucket int
 	cursorRow    int
@@ -113,8 +118,16 @@ func NewBatchGroupByFirst(
 }
 
 // Init prepares the group map.
-func (g *BatchGroupBy) Init(_ context.Context) error {
+func (g *BatchGroupBy) Init(ctx context.Context) error {
 	g.groups = make(map[uint64][]*groupBucket)
+	tracer := query.GetTracer(ctx)
+	if tracer != nil {
+		spanName := "groupby"
+		if g.firstOnly {
+			spanName = "groupby-first"
+		}
+		g.span, _ = tracer.StartSpan(ctx, "%s", spanName)
+	}
 	return nil
 }
 
@@ -126,6 +139,9 @@ func (g *BatchGroupBy) OutputSchema() *vectorized.BatchSchema { return g.schema 
 func (g *BatchGroupBy) Consume(_ context.Context, b *vectorized.RecordBatch) error {
 	active := activeIndices(b)
 	n := int64(len(active))
+	if g.span != nil {
+		g.rowsIn += n
+	}
 	estBytes := n*g.entrySize + n*g.rowSize
 	if estBytes > 0 {
 		if reserveErr := g.tracker.Reserve(estBytes); reserveErr != nil {
@@ -202,6 +218,9 @@ func (g *BatchGroupBy) NextBatch(_ context.Context) (*vectorized.RecordBatch, er
 			}
 			out.Len++
 			g.cursorRow++
+			if g.span != nil {
+				g.rowsOut++
+			}
 		}
 		if g.cursorRow >= bucketLen {
 			g.cursorBucket++
@@ -224,6 +243,16 @@ func (g *BatchGroupBy) Close() error {
 	if g.reserved > 0 {
 		g.tracker.Release(g.reserved)
 		g.reserved = 0
+	}
+	if g.span != nil {
+		g.span.Tagf(tracelabels.TagRowsIn, "%d", g.rowsIn)
+		g.span.Tagf(tracelabels.TagRowsOut, "%d", g.rowsOut)
+		g.span.Tagf(tracelabels.TagGroupsOut, "%d", len(g.insertion))
+		if g.firstOnly {
+			g.span.Tagf(tracelabels.TagDroppedRows, "%d", g.rowsIn-g.rowsOut)
+			g.span.Tag(tracelabels.TagDropReason, "groupby-first")
+		}
+		g.span.Stop()
 	}
 	g.groups = nil
 	g.insertion = nil
