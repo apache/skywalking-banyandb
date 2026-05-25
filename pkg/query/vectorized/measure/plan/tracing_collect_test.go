@@ -16,6 +16,7 @@
 package plan
 
 import (
+	"bytes"
 	"errors"
 	"testing"
 
@@ -25,8 +26,8 @@ import (
 )
 
 type rawFrameFuture struct {
-	message bus.Message
 	err     error
+	message bus.Message
 }
 
 func (f rawFrameFuture) Get() (bus.Message, error) {
@@ -49,7 +50,7 @@ func TestCollectRawFrameResponsesTraceEnvelope(t *testing.T) {
 	if collectErr != nil {
 		t.Fatalf("collectRawFrameResponses returned error: %v", collectErr)
 	}
-	if len(frames) != 1 || string(frames[0]) != string(rawBody) {
+	if len(frames) != 1 || !bytes.Equal(frames[0], rawBody) {
 		t.Fatalf("frames = %v, want one raw body %v", frames, rawBody)
 	}
 	if len(traces) != 1 || traces[0].GetTraceId() != "trace-1" {

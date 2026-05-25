@@ -142,7 +142,7 @@ func assertTagInt64Ordered(t *testing.T, span *commonv1.Span, keys ...string) {
 //   - 5 zero-row nodes (nodeIDs 4–8, latency 80 ms each)
 //   - 17 healthy nodes (nodeIDs 9–25, latencies 10–170 ms, 10 ms steps)
 //
-// Expected behaviour:
+// Expected behavior:
 //   - Exactly 19 individual children on the broadcast span + 1 data-summary child.
 //   - The 19 individual slots are filled by: 3 error + 5 zero-row + 11 highest-latency healthy nodes.
 //   - data-summary.aggregated_data_node_spans = 6  (the remaining 6 lower-latency healthy nodes).
@@ -167,7 +167,7 @@ func TestFanoutDataSummary_AtThreshold(t *testing.T) {
 	for idx := range 17 {
 		latencyMS := int64((17 - idx) * 10) // 170, 160, ..., 10
 		rows := int64((17 - idx) * 100)
-		nodes = append(nodes, makeNodeInfo(idx+9, latencyMS*int64(time.Millisecond), rows, int64(rows*8), false))
+		nodes = append(nodes, makeNodeInfo(idx+9, latencyMS*int64(time.Millisecond), rows, rows*8, false))
 	}
 
 	applyFanoutCap(broadcastSpanCtx, broadcastSpan, nodes)
@@ -204,7 +204,7 @@ func TestFanoutDataSummary_AtThreshold(t *testing.T) {
 	assertTagPresent(t, lastChild, tracelabels.TagNodeLatencyNSMin)
 	assertTagPresent(t, lastChild, tracelabels.TagNodeLatencyNSMax)
 
-	// The 6 summarised nodes are all healthy (the 6 lowest-latency healthy ones: 10–60 ms).
+	// The 6 summarized nodes are all healthy (the 6 lowest-latency healthy ones: 10–60 ms).
 	// So nodes_with_errors = 0 and nodes_with_zero_rows = 0 in the summary.
 	assertTagValueEquals(t, lastChild, tracelabels.TagNodesWithErrors, "0")
 	assertTagValueEquals(t, lastChild, tracelabels.TagNodesWithZeroRows, "0")
@@ -289,11 +289,11 @@ func TestDecodeFrameSummary_AtThreshold(t *testing.T) {
 		t.Fatalf("child message = %q, want decode-frame-summary", summarySpan.GetMessage())
 	}
 
-	// frames_total = 100.
+	// Every frame is reflected in frames_total; no individual frame spans
+	// are emitted so frames_emitted_individually is 0 and frames_skipped
+	// equals the total.
 	assertTagValueEquals(t, summarySpan, tracelabels.TagFramesTotal, "100")
-	// frames_emitted_individually = 0 (no individual frame spans).
 	assertTagValueEquals(t, summarySpan, tracelabels.TagFramesEmittedIndividually, "0")
-	// frames_skipped = 100.
 	assertTagValueEquals(t, summarySpan, tracelabels.TagFramesSkipped, "100")
 
 	// All decode NS tags present.

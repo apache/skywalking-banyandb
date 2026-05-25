@@ -96,7 +96,6 @@ func nodeSelectorCount(nodeSelectors map[string][]string) int {
 	return count
 }
 
-
 func batchRows(batches []*vectorized.RecordBatch) int {
 	rows := 0
 	for _, batch := range batches {

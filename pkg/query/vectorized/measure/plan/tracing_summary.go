@@ -82,12 +82,12 @@ func extractNodeTagInt64(trace *commonv1.Trace, key string) int64 {
 // span, so broadcastSpan is the current-span in that context).
 //
 // When len(nodes) ≤ maxIndividualSubTraces every sub-trace is attached
-// individually via AddSubTrace — unchanged behaviour.
+// individually via AddSubTrace — unchanged behavior.
 //
 // When len(nodes) > maxIndividualSubTraces:
 //   - The first 19 individual slots are filled by priority order:
 //     (1) error nodes, (2) zero-row nodes, (3) healthy nodes desc-by-latency.
-//   - The remaining (N−19) nodes are summarised into one "data-summary" child
+//   - The remaining (N−19) nodes are summarized into one "data-summary" child
 //     span emitted via tracer.StartSpan on broadcastSpanCtx so the tracer
 //     wires it as a child of broadcastSpan automatically.
 func applyFanoutCap(broadcastSpanCtx context.Context, broadcastSpan *query.Span, nodes []nodeInfo) {
@@ -122,7 +122,7 @@ func applyFanoutCap(broadcastSpanCtx context.Context, broadcastSpan *query.Span,
 		return healthyNodes[i].latencyNS > healthyNodes[j].latencyNS
 	})
 
-	// Build the prioritised ordering: error → zero-row → healthy(desc latency).
+	// Build the prioritized ordering: error → zero-row → healthy(desc latency).
 	ordered := make([]nodeInfo, 0, len(nodes))
 	ordered = append(ordered, errorNodes...)
 	ordered = append(ordered, zeroRowNodes...)
@@ -135,17 +135,17 @@ func applyFanoutCap(broadcastSpanCtx context.Context, broadcastSpan *query.Span,
 		}
 	}
 
-	// Summarise the remaining nodes.
-	summarised := ordered[maxIndividualSubTraces:]
-	emitDataSummarySpan(broadcastSpanCtx, summarised)
+	// Summarize the remaining nodes.
+	summarized := ordered[maxIndividualSubTraces:]
+	emitDataSummarySpan(broadcastSpanCtx, summarized)
 }
 
 // emitDataSummarySpan opens a "data-summary" child span via tracer.StartSpan on
 // broadcastSpanCtx (where the broadcast span is the current span) so the tracer
 // automatically wires it as a direct child of the broadcast span.
-// It tags the span with aggregate statistics over the summarised node slice.
-func emitDataSummarySpan(broadcastSpanCtx context.Context, summarised []nodeInfo) {
-	if len(summarised) == 0 {
+// It tags the span with aggregate statistics over the summarized node slice.
+func emitDataSummarySpan(broadcastSpanCtx context.Context, summarized []nodeInfo) {
+	if len(summarized) == 0 {
 		return
 	}
 	tracer := query.GetTracer(broadcastSpanCtx)
@@ -155,8 +155,8 @@ func emitDataSummarySpan(broadcastSpanCtx context.Context, summarised []nodeInfo
 
 	var errCount, zeroRowCount int64
 	var totalRows, totalBytes int64
-	latencies := make([]int64, 0, len(summarised))
-	for _, ni := range summarised {
+	latencies := make([]int64, 0, len(summarized))
+	for _, ni := range summarized {
 		if ni.hasError {
 			errCount++
 		}
@@ -171,7 +171,7 @@ func emitDataSummarySpan(broadcastSpanCtx context.Context, summarised []nodeInfo
 	p50, p95, p99, nsMin, nsMax := percentilesInt64(latencies)
 
 	summarySpan, _ := tracer.StartSpan(broadcastSpanCtx, "data-summary")
-	summarySpan.Tagf(tracelabels.TagAggregatedDataNodeSpans, "%d", len(summarised))
+	summarySpan.Tagf(tracelabels.TagAggregatedDataNodeSpans, "%d", len(summarized))
 	summarySpan.Tagf(tracelabels.TagNodesWithErrors, "%d", errCount)
 	summarySpan.Tagf(tracelabels.TagNodesWithZeroRows, "%d", zeroRowCount)
 	summarySpan.Tagf(tracelabels.TagTotalRowsAcrossNodes, "%d", totalRows)
@@ -199,7 +199,7 @@ func emitDataSummarySpan(broadcastSpanCtx context.Context, summarised []nodeInfo
 // spans (e.g. via streamed decode), the two tags should be re-anchored to
 // "individually emitted" vs "summarized only" semantics.
 //
-// When frameCount ≤ maxIndividualSubTraces no span is emitted (no behaviour change).
+// When frameCount ≤ maxIndividualSubTraces no span is emitted (no behavior change).
 func emitDecodeFrameSummarySpan(parentSpanCtx context.Context, frameDecodeDurations []time.Duration) {
 	frameCount := len(frameDecodeDurations)
 	if frameCount <= maxIndividualSubTraces {
@@ -249,14 +249,13 @@ func percentilesInt64(vals []int64) (p50, p95, p99, nsMin, nsMax int64) {
 }
 
 // percentileIdx returns the 0-based index into a sorted slice of length n
-// corresponding to the pth percentile (0–100). Uses nearest-rank rounding:
-// idx = ceil(p/100 * n) − 1, clamped to [0, n−1].
+// corresponding to the pth percentile (0–100). Uses nearest-rank rounding,
+// clamped to [0, n−1].
 func percentileIdx(n, p int) int {
 	if n <= 1 {
 		return 0
 	}
-	idx := (p*n + 99) / 100 // ceil(p/100 * n)
-	idx--                    // convert to 0-based
+	idx := (p*n+99)/100 - 1
 	if idx < 0 {
 		return 0
 	}
@@ -271,7 +270,7 @@ func percentileIdx(n, p int) int {
 // probe decode: the real decode happens inside ReduceRawFrames /
 // mergeDistributedRows; here we only measure the decode cost for tracing
 // purposes and discard the decoded batches immediately.
-// Empty bodies are skipped (consistent with ReduceRawFrames behaviour).
+// Empty bodies are skipped (consistent with ReduceRawFrames behavior).
 func collectFrameDecodeDurations(frames [][]byte) []time.Duration {
 	durations := make([]time.Duration, 0, len(frames))
 	for _, body := range frames {

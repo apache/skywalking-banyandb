@@ -22,6 +22,7 @@
 package plan
 
 import (
+	"bytes"
 	"strings"
 	"testing"
 
@@ -77,7 +78,9 @@ func TestRawFrameTraceRequiresAllNodesUpgraded(t *testing.T) {
 		rawFrameFuture{message: bus.NewMessage(5, common.NewError(preStory2TraceError))},
 	}
 
-	allFutures := append(upgradedFutures, laggardFutures...)
+	allFutures := make([]bus.Future, 0, len(upgradedFutures)+len(laggardFutures))
+	allFutures = append(allFutures, upgradedFutures...)
+	allFutures = append(allFutures, laggardFutures...)
 
 	frames, traces, collectErr := collectRawFrameResponses(allFutures)
 
@@ -88,7 +91,7 @@ func TestRawFrameTraceRequiresAllNodesUpgraded(t *testing.T) {
 		t.Fatalf("frames len = %d, want 3 (one per upgraded node)", len(frames))
 	}
 	for idx, frame := range frames {
-		if string(frame) != string(validRawFrame) {
+		if !bytes.Equal(frame, validRawFrame) {
 			t.Errorf("frames[%d] = %v, want %v", idx, frame, validRawFrame)
 		}
 	}

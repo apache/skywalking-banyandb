@@ -31,8 +31,8 @@ import (
 	"errors"
 	"testing"
 
-	commonv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/common/v1"
 	"github.com/apache/skywalking-banyandb/api/data"
+	commonv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/common/v1"
 	query "github.com/apache/skywalking-banyandb/pkg/query"
 )
 

@@ -35,11 +35,11 @@ import (
 type BatchLimit struct {
 	schema  *vectorized.BatchSchema
 	span    *query.Span
+	rowsIn  int64
+	rowsOut int64
 	offset  uint32
 	limit   uint32
 	seen    uint32
-	rowsIn  int64
-	rowsOut int64
 	closed  bool
 }
 

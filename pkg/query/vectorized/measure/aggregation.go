@@ -126,18 +126,18 @@ type BatchAggregation struct {
 	span             *query.Span
 	groups           map[string]*aggGroup
 	inputSchema      *vectorized.BatchSchema
-	insertion        []*aggGroup
+	aggValuePath     AggValuePath
 	tagIndices       []int
 	aggs             []AggSpec
 	aggOutOffsets    []int
 	aggHasCount      []bool
 	keyIndices       []int
 	aggInputCountIdx []int
-	shardIDIdx       int
-	tagOutOffset     int
+	insertion        []*aggGroup
 	outputShardIdx   int
+	tagOutOffset     int
 	mode             AggMode
-	aggValuePath     AggValuePath
+	shardIDIdx       int
 	entrySize        int64
 	reserved         int64
 	rowsIn           int64
@@ -275,8 +275,10 @@ func (a *BatchAggregation) Init(ctx context.Context) error {
 	}
 	tracer := query.GetTracer(ctx)
 	if tracer != nil {
-		spanName := "groupby-agg-all"
+		var spanName string
 		switch a.mode {
+		case AggModeAll:
+			spanName = "groupby-agg-all"
 		case AggModeMap:
 			spanName = "groupby-agg-map"
 		case AggModeReduce:
@@ -401,8 +403,10 @@ func (a *BatchAggregation) Close() error {
 		a.reserved = 0
 	}
 	if a.span != nil {
-		mode := "all"
+		var mode string
 		switch a.mode {
+		case AggModeAll:
+			mode = "all"
 		case AggModeMap:
 			mode = "map"
 		case AggModeReduce:

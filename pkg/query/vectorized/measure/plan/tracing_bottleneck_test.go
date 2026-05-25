@@ -81,11 +81,15 @@ func findSpanByMessage(root *commonv1.Span, msg string) *commonv1.Span {
 	return nil
 }
 
+// bottleneckMinFactor is the minimum skew factor (target.Duration /
+// next-slowest.Duration) that assertSpanIsBottleneck enforces, per the plan
+// spec.
+const bottleneckMinFactor = 5.0
+
 // assertSpanIsBottleneck asserts that among all spans at the same level as
-// target (i.e. the direct children of parent), target has the maximum Duration.
-// It also asserts that target.Duration is at least minFactor times larger than
-// the second-largest Duration (≥5× per spec).
-func assertSpanIsBottleneck(t *testing.T, parent *commonv1.Span, targetMsg string, minFactor float64) {
+// target (i.e. the direct children of parent), target has the maximum Duration
+// and is at least bottleneckMinFactor× larger than the second-largest peer.
+func assertSpanIsBottleneck(t *testing.T, parent *commonv1.Span, targetMsg string) {
 	t.Helper()
 	peers := parent.GetChildren()
 	if len(peers) == 0 {
@@ -108,7 +112,6 @@ func assertSpanIsBottleneck(t *testing.T, parent *commonv1.Span, targetMsg strin
 		t.Fatalf("span %q duration %d is not the maximum (max=%d) among peers of %q",
 			targetMsg, target.GetDuration(), maxDuration, parent.GetMessage())
 	}
-	// Find second-largest to verify the skew factor.
 	secondMax := int64(0)
 	for _, peer := range peers {
 		if peer.GetMessage() == targetMsg {
@@ -120,9 +123,9 @@ func assertSpanIsBottleneck(t *testing.T, parent *commonv1.Span, targetMsg strin
 	}
 	if secondMax > 0 {
 		factor := float64(target.GetDuration()) / float64(secondMax)
-		if factor < minFactor {
+		if factor < bottleneckMinFactor {
 			t.Fatalf("span %q duration %d is only %.2f× the next-slowest %d (want ≥%.1f×)",
-				targetMsg, target.GetDuration(), factor, secondMax, minFactor)
+				targetMsg, target.GetDuration(), factor, secondMax, bottleneckMinFactor)
 		}
 	}
 }
@@ -161,7 +164,7 @@ func TestTracerBottleneckScan(t *testing.T) {
 	limitSpan := bottleneckSpan("limit", 20_000_000)
 	dataNode := bottleneckSpan("data-node1", 570_000_000, scanSpan, topSpan, limitSpan)
 
-	assertSpanIsBottleneck(t, dataNode, "scan", 5.0)
+	assertSpanIsBottleneck(t, dataNode, "scan")
 }
 
 // TestTracerBottleneckDecode validates that a decode/reduce-raw-frames span
@@ -181,7 +184,7 @@ func TestTracerBottleneckDecode(t *testing.T) {
 	topSpan := bottleneckSpan("apply-top-to-reduce", 40_000_000)
 	root := bottleneckSpan("broadcast-rows", 900_000_000, reduceSpan, mergeSpan, topSpan)
 
-	assertSpanIsBottleneck(t, root, "reduce-raw-frames", 5.0)
+	assertSpanIsBottleneck(t, root, "reduce-raw-frames")
 }
 
 // TestTracerBottleneckReduce validates that a reduce-raw-frames span with many
@@ -201,7 +204,7 @@ func TestTracerBottleneckReduce(t *testing.T) {
 	schemaSpan := bottleneckSpan("build-multi-group-schema", 10_000_000)
 	root := bottleneckSpan("broadcast-agg", 990_000_000, reduceSpan, topSpan, schemaSpan)
 
-	assertSpanIsBottleneck(t, root, "reduce-raw-frames", 5.0)
+	assertSpanIsBottleneck(t, root, "reduce-raw-frames")
 }
 
 // TestTracerBottleneckMerge validates that a merge-distributed-rows span
@@ -222,7 +225,7 @@ func TestTracerBottleneckMerge(t *testing.T) {
 	topSpan := bottleneckSpan("apply-top-to-reduce", 40_000_000)
 	root := bottleneckSpan("broadcast-rows", 800_000_000, mergeSpan, reduceSpan, topSpan)
 
-	assertSpanIsBottleneck(t, root, "merge-distributed-rows", 5.0)
+	assertSpanIsBottleneck(t, root, "merge-distributed-rows")
 }
 
 // TestTracerBottleneckFrameEncode validates that a frame-encode span dominates
@@ -242,7 +245,7 @@ func TestTracerBottleneckFrameEncode(t *testing.T) {
 	topSpan := bottleneckSpan("top", 30_000_000)
 	dataNode := bottleneckSpan("data-node1", 710_000_000, scanSpan, encodeSpan, topSpan)
 
-	assertSpanIsBottleneck(t, dataNode, "frame-encode", 5.0)
+	assertSpanIsBottleneck(t, dataNode, "frame-encode")
 }
 
 // TestTracerBottleneckBroadcastTail validates that in a 5-node fanout where one
@@ -280,7 +283,7 @@ func TestTracerBottleneckBroadcastTail(t *testing.T) {
 	)
 
 	// 1. Slow node has maximum duration among the node children.
-	assertSpanIsBottleneck(t, broadcastSpan, "data-node5", 5.0)
+	assertSpanIsBottleneck(t, broadcastSpan, "data-node5")
 
 	// 2. data-node5.Duration > p50 of the other four nodes.
 	otherDurations := []int64{

@@ -21,9 +21,9 @@ import (
 	"bytes"
 	"testing"
 
-	commonv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/common/v1"
 	"google.golang.org/protobuf/proto"
 
+	commonv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/common/v1"
 	measurev1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/measure/v1"
 )
 
