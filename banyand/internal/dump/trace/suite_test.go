@@ -15,7 +15,7 @@
 // specific language governing permissions and limitations
 // under the License.
 
-package stream
+package trace
 
 import (
 	"context"
@@ -34,13 +34,13 @@ import (
 	commonv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/common/v1"
 	databasev1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/database/v1"
 	modelv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/model/v1"
-	streamv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/stream/v1"
-	"github.com/apache/skywalking-banyandb/banyand/dump"
+	tracev1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/trace/v1"
+	"github.com/apache/skywalking-banyandb/banyand/internal/dump"
 	metadataservice "github.com/apache/skywalking-banyandb/banyand/metadata/service"
 	obsservice "github.com/apache/skywalking-banyandb/banyand/observability/services"
 	"github.com/apache/skywalking-banyandb/banyand/protector"
 	"github.com/apache/skywalking-banyandb/banyand/queue"
-	"github.com/apache/skywalking-banyandb/banyand/stream"
+	"github.com/apache/skywalking-banyandb/banyand/trace"
 	"github.com/apache/skywalking-banyandb/pkg/bus"
 	localfs "github.com/apache/skywalking-banyandb/pkg/fs"
 	"github.com/apache/skywalking-banyandb/pkg/logger"
@@ -48,14 +48,14 @@ import (
 )
 
 const (
-	rtGroup  = "dump_rt_group"
-	rtStream = "dump_rt_stream"
+	rtGroup = "dump_rt_group"
+	rtTrace = "dump_rt_trace"
 )
 
-// TestStreamWriteRoundTrip drives the top-level stream write path (the same
+// TestTraceWriteRoundTrip drives the top-level trace write path (the same
 // writeCallback.Rev reached via the data pipeline), flushes real parts to disk,
 // then reads them back with the dump iterator and verifies every written field.
-func TestStreamWriteRoundTrip(t *testing.T) {
+func TestTraceWriteRoundTrip(t *testing.T) {
 	req := require.New(t)
 	require.NoError(t, logger.Init(logger.Logging{Env: "dev", Level: "warn"}))
 	gomega.RegisterFailHandler(func(message string, _ ...int) { panic(message) })
@@ -65,7 +65,7 @@ func TestStreamWriteRoundTrip(t *testing.T) {
 	req.NoError(err)
 	metricSvc := obsservice.NewMetricService(metaSvc, pipeline, "test", nil)
 	pm := protector.NewMemory(metricSvc)
-	streamSvc, err := stream.NewService(metaSvc, pipeline, metricSvc, pm, nil)
+	traceSvc, err := trace.NewService(metaSvc, pipeline, metricSvc, pm)
 	req.NoError(err)
 
 	metaPath, metaDefer, err := test.NewSpace()
@@ -81,26 +81,29 @@ func TestStreamWriteRoundTrip(t *testing.T) {
 		"--schema-server-root-path=" + metaPath,
 		fmt.Sprintf("--schema-server-grpc-port=%d", ports[0]),
 		"--schema-server-grpc-host=127.0.0.1",
-		"--stream-root-path=" + rootPath,
-		"--stream-flush-timeout=200ms",
+		"--trace-root-path=" + rootPath,
+		"--trace-flush-timeout=200ms",
 	}
-	moduleDefer := test.SetupModules(flags, pipeline, metaSvc, streamSvc)
+	moduleDefer := test.SetupModules(flags, pipeline, metaSvc, traceSvc)
 	defer moduleDefer()
 
-	registerRoundTripStream(t, metaSvc)
+	registerRoundTripTrace(t, metaSvc)
 	require.Eventually(t, func() bool {
-		_, ok := streamSvc.LoadGroup(rtGroup)
+		_, ok := traceSvc.LoadGroup(rtGroup)
 		return ok
-	}, 30*time.Second, 200*time.Millisecond, "stream group not loaded")
+	}, 30*time.Second, 200*time.Millisecond, "trace group not loaded")
 	time.Sleep(time.Second)
 
+	tagNames := []string{"trace_id", "span_id", "timestamp", "service_id", "duration"}
 	const total = 3
 	baseTS := time.Now().Truncate(time.Minute)
 	type want struct {
-		series  string
-		strTag  string
-		intTag  int64
-		tsMilli int64
+		traceID  string
+		spanID   string
+		service  string
+		span     string
+		duration int64
+		tsMilli  int64
 	}
 	wants := map[string]want{}
 
@@ -108,25 +111,30 @@ func TestStreamWriteRoundTrip(t *testing.T) {
 	for i := 0; i < total; i++ {
 		iStr := strconv.Itoa(i)
 		ts := baseTS.Add(time.Duration(i) * time.Minute)
-		w := want{series: "series" + iStr, strTag: "str" + iStr, intTag: int64(10 + i), tsMilli: ts.UnixMilli()}
-		wants[w.strTag] = w
-		writeReq := &streamv1.WriteRequest{
-			Metadata: &commonv1.Metadata{Name: rtStream, Group: rtGroup},
-			Element: &streamv1.ElementValue{
-				Timestamp: timestamppb.New(ts),
-				ElementId: "element" + iStr,
-				TagFamilies: []*modelv1.TagFamilyForWrite{{
-					Tags: []*modelv1.TagValue{
-						{Value: &modelv1.TagValue_Str{Str: &modelv1.Str{Value: w.series}}},
-						{Value: &modelv1.TagValue_Str{Str: &modelv1.Str{Value: w.strTag}}},
-						{Value: &modelv1.TagValue_Int{Int: &modelv1.Int{Value: w.intTag}}},
-					},
-				}},
-			},
+		w := want{
+			traceID:  "trace" + iStr,
+			spanID:   "span" + iStr,
+			service:  "svc" + iStr,
+			duration: int64(100 + i),
+			span:     "span_data_" + iStr,
+			tsMilli:  ts.UnixMilli(),
 		}
-		_, errPub := bp.Publish(context.TODO(), data.TopicStreamWrite, bus.NewMessage(bus.MessageID(i), &streamv1.InternalWriteRequest{
-			EntityValues: []*modelv1.TagValue{{Value: &modelv1.TagValue_Str{Str: &modelv1.Str{Value: w.series}}}},
-			Request:      writeReq,
+		wants[w.spanID] = w
+		tags := []*modelv1.TagValue{
+			{Value: &modelv1.TagValue_Str{Str: &modelv1.Str{Value: w.traceID}}},
+			{Value: &modelv1.TagValue_Str{Str: &modelv1.Str{Value: w.spanID}}},
+			{Value: &modelv1.TagValue_Timestamp{Timestamp: timestamppb.New(ts)}},
+			{Value: &modelv1.TagValue_Str{Str: &modelv1.Str{Value: w.service}}},
+			{Value: &modelv1.TagValue_Int{Int: &modelv1.Int{Value: w.duration}}},
+		}
+		writeReq := &tracev1.WriteRequest{
+			Metadata: &commonv1.Metadata{Name: rtTrace, Group: rtGroup},
+			Tags:     tags,
+			Span:     []byte(w.span),
+			TagSpec:  &tracev1.TagSpec{TagNames: tagNames},
+		}
+		_, errPub := bp.Publish(context.TODO(), data.TopicTraceWrite, bus.NewMessage(bus.MessageID(i), &tracev1.InternalWriteRequest{
+			Request: writeReq,
 		}))
 		req.NoError(errPub)
 	}
@@ -141,7 +149,6 @@ func TestStreamWriteRoundTrip(t *testing.T) {
 	fileSystem := localfs.NewLocalFileSystem()
 	seen := map[string]bool{}
 	seriesIDs := map[uint64]bool{}
-	elementIDs := map[uint64]bool{}
 	for _, partDir := range partDirs {
 		partID, parseErr := strconv.ParseUint(filepath.Base(partDir), 16, 64)
 		req.NoError(parseErr)
@@ -150,35 +157,33 @@ func TestStreamWriteRoundTrip(t *testing.T) {
 		it := p.Iterator()
 		for it.Next() {
 			r := it.Row()
-			strTag := dump.DecodeTagValue(r.TagTypes["default.strTag"], r.Tags["default.strTag"], nil).GetStr().GetValue()
-			w, ok := wants[strTag]
-			require.True(t, ok, "unexpected row strTag=%q sid=%d", strTag, r.SeriesID)
-			require.False(t, seen[w.strTag], "duplicate row for %s", w.strTag)
-			seen[w.strTag] = true
+			w, ok := wants[r.SpanID]
+			require.True(t, ok, "unexpected row spanID=%q", r.SpanID)
+			require.False(t, seen[r.SpanID], "duplicate row for %s", r.SpanID)
+			seen[r.SpanID] = true
 			seriesIDs[uint64(r.SeriesID)] = true
-			elementIDs[r.ElementID] = true
 
-			require.Equal(t, w.intTag, dump.DecodeTagValue(r.TagTypes["default.intTag"], r.Tags["default.intTag"], nil).GetInt().GetValue())
-			require.Equal(t, w.tsMilli, time.Unix(0, r.Timestamp).UnixMilli(), "timestamp round-trip for %s", w.strTag)
-			require.NotZero(t, r.SeriesID, "seriesID derived from entity")
-			require.NotZero(t, r.ElementID, "elementID set")
-			require.NotContains(t, r.Tags, "default.series")
+			require.Equal(t, w.traceID, r.TraceID)
+			require.Equal(t, w.span, string(r.Span))
+			require.Equal(t, w.service, dump.DecodeTagValue(r.TagTypes["service_id"], r.Tags["service_id"], nil).GetStr().GetValue())
+			require.Equal(t, w.duration, dump.DecodeTagValue(r.TagTypes["duration"], r.Tags["duration"], nil).GetInt().GetValue())
+			require.Equal(t, w.tsMilli, time.Unix(0, r.Timestamp).UnixMilli(), "timestamp round-trip for %s", r.SpanID)
+			require.NotZero(t, r.SeriesID, "seriesID derived from tags")
 		}
 		require.NoError(t, it.Err())
 		it.Close()
 		p.Close()
 	}
-	require.Len(t, seen, total, "every written element must be read back exactly once")
-	require.Len(t, seriesIDs, total, "each distinct entity must map to a distinct series")
-	require.Len(t, elementIDs, total, "each element must have a distinct elementID")
+	require.Len(t, seen, total, "every written span must be read back exactly once")
+	require.Len(t, seriesIDs, total, "each span must map to a distinct series")
 }
 
-func registerRoundTripStream(t *testing.T, metaSvc metadataservice.Service) {
+func registerRoundTripTrace(t *testing.T, metaSvc metadataservice.Service) {
 	reg := metaSvc.SchemaRegistry()
 	ctx := context.TODO()
 	_, err := reg.CreateGroup(ctx, &commonv1.Group{
 		Metadata: &commonv1.Metadata{Name: rtGroup},
-		Catalog:  commonv1.Catalog_CATALOG_STREAM,
+		Catalog:  commonv1.Catalog_CATALOG_TRACE,
 		ResourceOpts: &commonv1.ResourceOpts{
 			ShardNum:        1,
 			SegmentInterval: &commonv1.IntervalRule{Unit: commonv1.IntervalRule_UNIT_DAY, Num: 1},
@@ -186,17 +191,18 @@ func registerRoundTripStream(t *testing.T, metaSvc metadataservice.Service) {
 		},
 	})
 	require.NoError(t, err)
-	_, err = reg.CreateStream(ctx, &databasev1.Stream{
-		Metadata: &commonv1.Metadata{Name: rtStream, Group: rtGroup},
-		TagFamilies: []*databasev1.TagFamilySpec{{
-			Name: "default",
-			Tags: []*databasev1.TagSpec{
-				{Name: "series", Type: databasev1.TagType_TAG_TYPE_STRING},
-				{Name: "strTag", Type: databasev1.TagType_TAG_TYPE_STRING},
-				{Name: "intTag", Type: databasev1.TagType_TAG_TYPE_INT},
-			},
-		}},
-		Entity: &databasev1.Entity{TagNames: []string{"series"}},
+	_, err = reg.CreateTrace(ctx, &databasev1.Trace{
+		Metadata: &commonv1.Metadata{Name: rtTrace, Group: rtGroup},
+		Tags: []*databasev1.TraceTagSpec{
+			{Name: "trace_id", Type: databasev1.TagType_TAG_TYPE_STRING},
+			{Name: "span_id", Type: databasev1.TagType_TAG_TYPE_STRING},
+			{Name: "timestamp", Type: databasev1.TagType_TAG_TYPE_TIMESTAMP},
+			{Name: "service_id", Type: databasev1.TagType_TAG_TYPE_STRING},
+			{Name: "duration", Type: databasev1.TagType_TAG_TYPE_INT},
+		},
+		TraceIdTagName:   "trace_id",
+		SpanIdTagName:    "span_id",
+		TimestampTagName: "timestamp",
 	})
 	require.NoError(t, err)
 }

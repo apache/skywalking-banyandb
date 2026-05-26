@@ -23,7 +23,7 @@ import (
 
 	"github.com/stretchr/testify/assert"
 
-	"github.com/apache/skywalking-banyandb/banyand/dump"
+	"github.com/apache/skywalking-banyandb/banyand/internal/dump"
 	"github.com/apache/skywalking-banyandb/pkg/convert"
 	"github.com/apache/skywalking-banyandb/pkg/encoding"
 	pbv1 "github.com/apache/skywalking-banyandb/pkg/pb/v1"

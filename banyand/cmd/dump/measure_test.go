@@ -30,8 +30,8 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
-	"github.com/apache/skywalking-banyandb/banyand/dump"
-	dumpmeasure "github.com/apache/skywalking-banyandb/banyand/dump/measure"
+	"github.com/apache/skywalking-banyandb/banyand/internal/dump"
+	dumpmeasure "github.com/apache/skywalking-banyandb/banyand/internal/dump/measure"
 	"github.com/apache/skywalking-banyandb/banyand/measure"
 	"github.com/apache/skywalking-banyandb/pkg/fs"
 	"github.com/apache/skywalking-banyandb/pkg/test"

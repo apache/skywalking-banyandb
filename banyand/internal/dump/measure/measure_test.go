@@ -28,7 +28,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/apache/skywalking-banyandb/api/common"
-	"github.com/apache/skywalking-banyandb/banyand/dump"
+	"github.com/apache/skywalking-banyandb/banyand/internal/dump"
 	"github.com/apache/skywalking-banyandb/banyand/internal/storage"
 	storagemeasure "github.com/apache/skywalking-banyandb/banyand/measure"
 	"github.com/apache/skywalking-banyandb/pkg/compress/zstd"

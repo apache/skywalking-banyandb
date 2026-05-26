@@ -20,7 +20,7 @@ package trace
 import (
 	"fmt"
 
-	"github.com/apache/skywalking-banyandb/banyand/dump"
+	"github.com/apache/skywalking-banyandb/banyand/internal/dump"
 	"github.com/apache/skywalking-banyandb/pkg/compress/zstd"
 	"github.com/apache/skywalking-banyandb/pkg/convert"
 	"github.com/apache/skywalking-banyandb/pkg/encoding"

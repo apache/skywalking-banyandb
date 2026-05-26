@@ -26,7 +26,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
-	"github.com/apache/skywalking-banyandb/banyand/dump"
+	"github.com/apache/skywalking-banyandb/banyand/internal/dump"
 	storagetrace "github.com/apache/skywalking-banyandb/banyand/trace"
 	"github.com/apache/skywalking-banyandb/pkg/compress/zstd"
 	"github.com/apache/skywalking-banyandb/pkg/convert"

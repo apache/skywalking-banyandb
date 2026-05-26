@@ -30,7 +30,7 @@ import (
 
 	"github.com/apache/skywalking-banyandb/api/common"
 	modelv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/model/v1"
-	"github.com/apache/skywalking-banyandb/banyand/dump"
+	"github.com/apache/skywalking-banyandb/banyand/internal/dump"
 	internalencoding "github.com/apache/skywalking-banyandb/banyand/internal/encoding"
 	"github.com/apache/skywalking-banyandb/pkg/bytes"
 	"github.com/apache/skywalking-banyandb/pkg/compress/zstd"

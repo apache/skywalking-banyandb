@@ -15,12 +15,12 @@
 // specific language governing permissions and limitations
 // under the License.
 
-package stream
+package measure
 
 import (
 	"fmt"
 
-	"github.com/apache/skywalking-banyandb/banyand/dump"
+	"github.com/apache/skywalking-banyandb/banyand/internal/dump"
 	"github.com/apache/skywalking-banyandb/pkg/compress/zstd"
 	"github.com/apache/skywalking-banyandb/pkg/encoding"
 	pbv1 "github.com/apache/skywalking-banyandb/pkg/pb/v1"
@@ -54,12 +54,23 @@ func (p *PartReader) Iterator() *dump.Iterator[Row] {
 
 func (p *PartReader) decodeBlock(decoder *encoding.BytesBlockDecoder, bm *blockMetadata) ([]Row, error) {
 	count := int(bm.count)
-	timestamps, elementIDs, err := readTimestamps(bm.timestamps, count, p.timestamps)
+	timestamps, versions, err := readTimestamps(bm.timestamps, count, p.timestamps)
 	if err != nil {
-		return nil, fmt.Errorf("cannot read timestamps/elementIDs for series %d: %w", bm.seriesID, err)
+		return nil, fmt.Errorf("cannot read timestamps for series %d: %w", bm.seriesID, err)
 	}
 
-	tagsByElement := make(map[string][][]byte)
+	fieldsByDataPoint := make(map[string][][]byte, len(bm.field.columns))
+	fieldTypes := make(map[string]pbv1.ValueType, len(bm.field.columns))
+	for _, colMeta := range bm.field.columns {
+		values, fieldErr := readFieldValues(decoder, colMeta.dataBlock, colMeta.name, count, p.fieldValues, colMeta.valueType)
+		if fieldErr != nil {
+			return nil, fmt.Errorf("cannot read field %s for series %d: %w", colMeta.name, bm.seriesID, fieldErr)
+		}
+		fieldsByDataPoint[colMeta.name] = values
+		fieldTypes[colMeta.name] = colMeta.valueType
+	}
+
+	tagsByDataPoint := make(map[string][][]byte)
 	tagTypes := make(map[string]pbv1.ValueType)
 	for tagFamilyName, tagFamilyBlock := range bm.tagFamilies {
 		metaReader := p.tagFamilyMetadata[tagFamilyName]
@@ -73,18 +84,18 @@ func (p *PartReader) decodeBlock(decoder *encoding.BytesBlockDecoder, bm *blockM
 		if readErr := dump.ReadData(metaReader, int64(tagFamilyBlock.offset), metaData); readErr != nil {
 			return nil, fmt.Errorf("cannot read tag family %s for series %d: %w", tagFamilyName, bm.seriesID, readErr)
 		}
-		tagMetadatas, parseErr := parseTagFamilyMetadata(metaData)
-		if parseErr != nil {
-			return nil, fmt.Errorf("cannot parse tag family %s for series %d: %w", tagFamilyName, bm.seriesID, parseErr)
+		var cfm columnFamilyMetadata
+		if _, unmarshalErr := cfm.unmarshal(metaData); unmarshalErr != nil {
+			return nil, fmt.Errorf("cannot unmarshal tag family %s for series %d: %w", tagFamilyName, bm.seriesID, unmarshalErr)
 		}
-		for _, tagMeta := range tagMetadatas {
-			fullTagName := tagFamilyName + "." + tagMeta.name
-			values, tagErr := readTagValues(decoder, tagMeta.dataBlock, fullTagName, count, valueReader, tagMeta.valueType)
+		for _, colMeta := range cfm.columns {
+			fullTagName := tagFamilyName + "." + colMeta.name
+			values, tagErr := readTagValues(decoder, colMeta.dataBlock, fullTagName, count, valueReader, colMeta.valueType)
 			if tagErr != nil {
 				return nil, fmt.Errorf("cannot read tag %s for series %d: %w", fullTagName, bm.seriesID, tagErr)
 			}
-			tagsByElement[fullTagName] = values
-			tagTypes[fullTagName] = tagMeta.valueType
+			tagsByDataPoint[fullTagName] = values
+			tagTypes[fullTagName] = colMeta.valueType
 		}
 	}
 
@@ -95,21 +106,31 @@ func (p *PartReader) decodeBlock(decoder *encoding.BytesBlockDecoder, bm *blockM
 
 	rows := make([]Row, 0, len(timestamps))
 	for i := range timestamps {
-		tags := make(map[string][]byte, len(tagsByElement))
-		tagTypesForRow := make(map[string]pbv1.ValueType, len(tagsByElement))
-		for tagName, tagValues := range tagsByElement {
+		tags := make(map[string][]byte, len(tagsByDataPoint))
+		tagTypesForRow := make(map[string]pbv1.ValueType, len(tagsByDataPoint))
+		for tagName, tagValues := range tagsByDataPoint {
 			if i < len(tagValues) {
 				tags[tagName] = tagValues[i]
 				tagTypesForRow[tagName] = tagTypes[tagName]
 			}
 		}
+		fields := make(map[string][]byte, len(fieldsByDataPoint))
+		fieldTypesForRow := make(map[string]pbv1.ValueType, len(fieldsByDataPoint))
+		for fieldName, fieldValues := range fieldsByDataPoint {
+			if i < len(fieldValues) {
+				fields[fieldName] = fieldValues[i]
+				fieldTypesForRow[fieldName] = fieldTypes[fieldName]
+			}
+		}
 		rows = append(rows, Row{
 			Timestamp:    timestamps[i],
-			ElementID:    elementIDs[i],
+			Version:      versions[i],
 			SeriesID:     bm.seriesID,
 			EntityValues: entityValues,
 			Tags:         tags,
+			Fields:       fields,
 			TagTypes:     tagTypesForRow,
+			FieldTypes:   fieldTypesForRow,
 		})
 	}
 	return rows, nil

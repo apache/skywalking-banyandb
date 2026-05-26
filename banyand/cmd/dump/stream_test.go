@@ -27,8 +27,8 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
-	"github.com/apache/skywalking-banyandb/banyand/dump"
-	dumpstream "github.com/apache/skywalking-banyandb/banyand/dump/stream"
+	"github.com/apache/skywalking-banyandb/banyand/internal/dump"
+	dumpstream "github.com/apache/skywalking-banyandb/banyand/internal/dump/stream"
 	"github.com/apache/skywalking-banyandb/banyand/stream"
 	"github.com/apache/skywalking-banyandb/pkg/fs"
 	"github.com/apache/skywalking-banyandb/pkg/test"
