@@ -18,7 +18,6 @@
 package trace
 
 import (
-	"fmt"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -27,15 +26,12 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
-	"github.com/apache/skywalking-banyandb/api/common"
 	"github.com/apache/skywalking-banyandb/banyand/dump"
-	"github.com/apache/skywalking-banyandb/banyand/internal/storage"
 	storagetrace "github.com/apache/skywalking-banyandb/banyand/trace"
 	"github.com/apache/skywalking-banyandb/pkg/compress/zstd"
 	"github.com/apache/skywalking-banyandb/pkg/convert"
 	"github.com/apache/skywalking-banyandb/pkg/encoding"
 	"github.com/apache/skywalking-banyandb/pkg/fs"
-	"github.com/apache/skywalking-banyandb/pkg/index"
 	pbv1 "github.com/apache/skywalking-banyandb/pkg/pb/v1"
 	"github.com/apache/skywalking-banyandb/pkg/test"
 )
@@ -128,7 +124,6 @@ func TestTraceIteratorAllRows(t *testing.T) {
 		tsBySpan[r.SpanID] = r.Timestamp
 		require.Len(t, r.Tags, 5, "each span has five tags")
 		assert.NotZero(t, r.SeriesID, "trace seriesID is derived from tags")
-		assert.Nil(t, r.EntityValues, "no smeta.bin -> EntityValues nil")
 
 		// Row.Timestamp is recovered from the ValueType=Timestamp "timestamp" tag.
 		assert.Equal(t, pbv1.ValueTypeTimestamp, r.TagTypes["timestamp"])
@@ -217,83 +212,6 @@ func decodeStrArr(t *testing.T, raw []byte) []string {
 		raw = rest
 	}
 	return out
-}
-
-// TestTraceIteratorNoSeriesMeta verifies EntityValues is nil without smeta.bin.
-func TestTraceIteratorNoSeriesMeta(t *testing.T) {
-	tmpPath, defFn := test.Space(require.New(t))
-	defer defFn()
-
-	fileSystem := fs.NewLocalFileSystem()
-	partPath, _, cleanup := storagetrace.BuildPartForDump(tmpPath, fileSystem, 12345, storagetrace.StandardDumpRows())
-	defer cleanup()
-
-	partID, err := strconv.ParseUint(filepath.Base(partPath), 16, 64)
-	require.NoError(t, err)
-
-	p, err := OpenPart(partID, filepath.Dir(partPath), fileSystem)
-	require.NoError(t, err)
-	defer p.Close()
-	require.Nil(t, p.SeriesMap())
-
-	it := p.Iterator()
-	defer it.Close()
-	for it.Next() {
-		assert.Nil(t, it.Row().EntityValues, "EntityValues should be nil without smeta.bin")
-	}
-	require.NoError(t, it.Err())
-}
-
-// TestTraceSeriesMap verifies smeta.bin is parsed into the part-level series map.
-func TestTraceSeriesMap(t *testing.T) {
-	tmpPath, defFn := test.Space(require.New(t))
-	defer defFn()
-
-	fileSystem := fs.NewLocalFileSystem()
-	partPath, cleanup := createTestTracePartWithSeriesMetadata(tmpPath, fileSystem)
-	defer cleanup()
-
-	partID, err := strconv.ParseUint(filepath.Base(partPath), 16, 64)
-	require.NoError(t, err)
-
-	p, err := OpenPart(partID, filepath.Dir(partPath), fileSystem)
-	require.NoError(t, err)
-	defer p.Close()
-
-	seriesMap := p.SeriesMap()
-	require.NotNil(t, seriesMap, "series map should be parsed from smeta.bin")
-
-	expectedSeriesID1 := common.SeriesID(convert.Hash([]byte("service.name=test-service")))
-	expectedSeriesID2 := common.SeriesID(convert.Hash([]byte("service.name=another-service")))
-
-	require.Contains(t, seriesMap, expectedSeriesID1)
-	require.Contains(t, seriesMap, expectedSeriesID2)
-	assert.Equal(t, "service.name=test-service", string(seriesMap[expectedSeriesID1]))
-	assert.Equal(t, "service.name=another-service", string(seriesMap[expectedSeriesID2]))
-}
-
-func createTestTracePartWithSeriesMetadata(tmpPath string, fileSystem fs.FileSystem) (string, func()) {
-	partPath, _, cleanup := storagetrace.BuildPartForDump(tmpPath, fileSystem, 12345, storagetrace.StandardDumpRows())
-
-	seriesMetadataPath := filepath.Join(partPath, "smeta.bin")
-	docs := index.Documents{
-		{
-			DocID:        1,
-			EntityValues: []byte("service.name=test-service"),
-		},
-		{
-			DocID:        2,
-			EntityValues: []byte("service.name=another-service"),
-		},
-	}
-
-	seriesMetadataBytes, err := docs.Marshal()
-	if err != nil {
-		panic(fmt.Sprintf("failed to marshal series metadata documents: %v", err))
-	}
-	fs.MustFlush(fileSystem, seriesMetadataBytes, seriesMetadataPath, storage.FilePerm)
-
-	return partPath, cleanup
 }
 
 // TestTraceOpenPartCorruptMetadata: corrupt metadata.json -> OpenPart error.

@@ -23,7 +23,6 @@ import (
 	"github.com/apache/skywalking-banyandb/banyand/dump"
 	"github.com/apache/skywalking-banyandb/pkg/compress/zstd"
 	"github.com/apache/skywalking-banyandb/pkg/encoding"
-	"github.com/apache/skywalking-banyandb/pkg/fs"
 	pbv1 "github.com/apache/skywalking-banyandb/pkg/pb/v1"
 )
 
@@ -34,7 +33,9 @@ func (p *PartReader) Iterator() *dump.Iterator[Row] {
 	for i := range p.primaryBlockMetadata {
 		pbm := p.primaryBlockMetadata[i]
 		primaryData := make([]byte, pbm.size)
-		fs.MustReadData(p.primary, int64(pbm.offset), primaryData)
+		if readErr := dump.ReadData(p.primary, int64(pbm.offset), primaryData); readErr != nil {
+			return dump.NewErrIterator[Row](fmt.Errorf("cannot read primary block: %w", readErr))
+		}
 		decompressed, err := zstd.Decompress(nil, primaryData)
 		if err != nil {
 			return dump.NewErrIterator[Row](fmt.Errorf("cannot decompress primary block: %w", err))
@@ -80,7 +81,9 @@ func (p *PartReader) decodeBlock(decoder *encoding.BytesBlockDecoder, bm *blockM
 			continue
 		}
 		metaData := make([]byte, tagFamilyBlock.size)
-		fs.MustReadData(metaReader, int64(tagFamilyBlock.offset), metaData)
+		if readErr := dump.ReadData(metaReader, int64(tagFamilyBlock.offset), metaData); readErr != nil {
+			return nil, fmt.Errorf("cannot read tag family %s for series %d: %w", tagFamilyName, bm.seriesID, readErr)
+		}
 		var cfm columnFamilyMetadata
 		if _, unmarshalErr := cfm.unmarshal(metaData); unmarshalErr != nil {
 			return nil, fmt.Errorf("cannot unmarshal tag family %s for series %d: %w", tagFamilyName, bm.seriesID, unmarshalErr)

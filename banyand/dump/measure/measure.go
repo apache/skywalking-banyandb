@@ -173,7 +173,11 @@ func OpenPart(id uint64, root string, fileSystem fs.FileSystem) (*PartReader, er
 	}
 
 	// Load the optional part-level series metadata (smeta.bin).
-	p.seriesMap = dump.LoadPartSeriesMap(fileSystem, partPath, id)
+	p.seriesMap, err = dump.LoadPartSeriesMap(fileSystem, partPath, id)
+	if err != nil {
+		closePart(&p)
+		return nil, fmt.Errorf("cannot load series metadata: %w", err)
+	}
 
 	// Open tag family files
 	entries := fileSystem.ReadDir(partPath)
@@ -399,7 +403,9 @@ func (cm *columnMetadata) unmarshal(src []byte) ([]byte, error) {
 
 func readTimestamps(tm timestampsMetadata, count int, reader fs.Reader) ([]int64, []int64, error) {
 	data := make([]byte, tm.dataBlock.size)
-	fs.MustReadData(reader, int64(tm.dataBlock.offset), data)
+	if err := dump.ReadData(reader, int64(tm.dataBlock.offset), data); err != nil {
+		return nil, nil, fmt.Errorf("cannot read timestamps: %w", err)
+	}
 
 	if tm.dataBlock.size < tm.versionOffset {
 		return nil, nil, fmt.Errorf("size %d must be greater than versionOffset %d", tm.dataBlock.size, tm.versionOffset)
@@ -435,7 +441,9 @@ func readTagValues(decoder *encoding.BytesBlockDecoder, tagBlock dataBlock, _ st
 	// Read tag values
 	bb := &bytes.Buffer{}
 	bb.Buf = make([]byte, tagBlock.size)
-	fs.MustReadData(valueReader, int64(tagBlock.offset), bb.Buf)
+	if err := dump.ReadData(valueReader, int64(tagBlock.offset), bb.Buf); err != nil {
+		return nil, fmt.Errorf("cannot read tag values: %w", err)
+	}
 
 	// Decode values using the internal encoding package
 	var err error
@@ -454,7 +462,9 @@ func readFieldValues(decoder *encoding.BytesBlockDecoder, fieldBlock dataBlock, 
 	// Read field values
 	bb := &bytes.Buffer{}
 	bb.Buf = make([]byte, fieldBlock.size)
-	fs.MustReadData(valueReader, int64(fieldBlock.offset), bb.Buf)
+	if err := dump.ReadData(valueReader, int64(fieldBlock.offset), bb.Buf); err != nil {
+		return nil, fmt.Errorf("cannot read field values: %w", err)
+	}
 
 	// Decode values based on value type
 	var values [][]byte
@@ -587,15 +597,20 @@ func DiscoverColumns(shardPath string, fileSystem fs.FileSystem) ([]string, []st
 	// Read primary block to discover field names
 	if len(p.primaryBlockMetadata) > 0 {
 		primaryData := make([]byte, p.primaryBlockMetadata[0].size)
-		fs.MustReadData(p.primary, int64(p.primaryBlockMetadata[0].offset), primaryData)
-
+		if readErr := dump.ReadData(p.primary, int64(p.primaryBlockMetadata[0].offset), primaryData); readErr != nil {
+			return nil, nil, fmt.Errorf("cannot read primary block: %w", readErr)
+		}
 		decompressed, err := zstd.Decompress(nil, primaryData)
-		if err == nil {
-			blockMetadatas, err := parseBlockMetadata(decompressed)
-			if err == nil && len(blockMetadatas) > 0 {
-				for _, colMeta := range blockMetadatas[0].field.columns {
-					fieldNames[colMeta.name] = true
-				}
+		if err != nil {
+			return nil, nil, fmt.Errorf("cannot decompress primary block: %w", err)
+		}
+		blockMetadatas, err := parseBlockMetadata(decompressed)
+		if err != nil {
+			return nil, nil, fmt.Errorf("cannot parse block metadata: %w", err)
+		}
+		if len(blockMetadatas) > 0 {
+			for _, colMeta := range blockMetadatas[0].field.columns {
+				fieldNames[colMeta.name] = true
 			}
 		}
 	}

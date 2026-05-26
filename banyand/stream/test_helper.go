@@ -55,7 +55,7 @@ type DumpRow struct {
 // cleanup func. When writeSeriesMeta is true a matching smeta.bin is written for
 // every row that carries an Entity.
 func BuildPartForDump(tmpPath string, fileSystem fs.FileSystem, partID uint64, rows []DumpRow) (string, []DumpRow, func()) {
-	es := &elements{}
+	es := generateElements()
 	for i := range rows {
 		r := &rows[i]
 		if r.Entity != "" {
@@ -74,6 +74,7 @@ func BuildPartForDump(tmpPath string, fileSystem fs.FileSystem, partID uint64, r
 
 	return path, rows, func() {
 		releaseMemPart(mp)
+		releaseElements(es)
 	}
 }
 

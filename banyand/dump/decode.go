@@ -24,6 +24,7 @@ import (
 
 	modelv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/model/v1"
 	"github.com/apache/skywalking-banyandb/pkg/convert"
+	"github.com/apache/skywalking-banyandb/pkg/encoding"
 	pbv1 "github.com/apache/skywalking-banyandb/pkg/pb/v1"
 )
 
@@ -69,12 +70,30 @@ func DecodeTagValue(valueType pbv1.ValueType, value []byte, valueArr [][]byte) *
 			},
 		}
 	case pbv1.ValueTypeStrArr:
-		values := make([]string, 0, len(valueArr))
-		for _, item := range valueArr {
-			values = append(values, string(item))
+		var values []string
+		if valueArr != nil {
+			values = make([]string, 0, len(valueArr))
+			for _, item := range valueArr {
+				values = append(values, string(item))
+			}
+		} else {
+			values = decodePackedStrArray(value)
 		}
 		return &modelv1.TagValue{
 			Value: &modelv1.TagValue_StrArray{StrArray: &modelv1.StrArray{Value: values}},
+		}
+	case pbv1.ValueTypeInt64Arr:
+		var values []int64
+		if valueArr != nil {
+			values = make([]int64, 0, len(valueArr))
+			for _, item := range valueArr {
+				values = append(values, convert.BytesToInt64(item))
+			}
+		} else {
+			values = decodePackedInt64Array(value)
+		}
+		return &modelv1.TagValue{
+			Value: &modelv1.TagValue_IntArray{IntArray: &modelv1.IntArray{Value: values}},
 		}
 	case pbv1.ValueTypeBinaryData:
 		if value == nil {
@@ -97,4 +116,34 @@ func DecodeTagValue(valueType pbv1.ValueType, value []byte, valueArr [][]byte) *
 		}
 		return pbv1.NullTagValue
 	}
+}
+
+// decodePackedStrArray splits a column-stored string array (elements separated by
+// encoding.EntityDelimiter with encoding.Escape escaping) into its elements.
+func decodePackedStrArray(value []byte) []string {
+	if len(value) == 0 {
+		return nil
+	}
+	// UnmarshalVarArray decodes in place; copy first so the caller's value is kept intact.
+	buf := append([]byte(nil), value...)
+	var out []string
+	for idx := 0; idx < len(buf); {
+		end, next, err := encoding.UnmarshalVarArray(buf, idx)
+		if err != nil {
+			break
+		}
+		out = append(out, string(buf[idx:end]))
+		idx = next
+	}
+	return out
+}
+
+// decodePackedInt64Array splits a column-stored int64 array (consecutive 8-byte
+// big-endian int64s) into its elements.
+func decodePackedInt64Array(value []byte) []int64 {
+	out := make([]int64, 0, len(value)/8)
+	for i := 0; i+8 <= len(value); i += 8 {
+		out = append(out, convert.BytesToInt64(value[i:i+8]))
+	}
+	return out
 }

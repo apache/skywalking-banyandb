@@ -53,7 +53,7 @@ type DumpRow struct {
 // BuildPartForDump writes spans into a trace part at root/<partID>, returning the
 // part directory, the rows for verification and a cleanup func.
 func BuildPartForDump(tmpPath string, fileSystem fs.FileSystem, partID uint64, rows []DumpRow) (string, []DumpRow, func()) {
-	ts := &traces{}
+	ts := generateTraces()
 	for i := range rows {
 		r := &rows[i]
 		ts.traceIDs = append(ts.traceIDs, r.TraceID)
@@ -68,7 +68,9 @@ func BuildPartForDump(tmpPath string, fileSystem fs.FileSystem, partID uint64, r
 	path := partPath(tmpPath, partID)
 	mp.mustFlush(fileSystem, path)
 
-	return path, rows, func() {}
+	return path, rows, func() {
+		releaseTraces(ts)
+	}
 }
 
 // StandardDumpRows returns the canonical trace fixture: three spans across two

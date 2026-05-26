@@ -580,10 +580,11 @@ func (r *traceTagRegistry) Children() []logical.Schema {
 	return nil
 }
 
+// traceSeriesText resolves a row's SeriesID to its entity-values text via the
+// segment-level series map. It returns "" when the SeriesID is not present
+// (e.g. the series map is absent, or the row's SeriesID does not match the
+// stored series ID).
 func traceSeriesText(row dumptrace.Row, seriesMap map[common.SeriesID]string) string {
-	if len(row.EntityValues) > 0 {
-		return string(row.EntityValues)
-	}
 	if seriesMap != nil {
 		if text, ok := seriesMap[row.SeriesID]; ok {
 			return text

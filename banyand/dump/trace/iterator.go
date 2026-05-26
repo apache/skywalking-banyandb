@@ -24,7 +24,6 @@ import (
 	"github.com/apache/skywalking-banyandb/pkg/compress/zstd"
 	"github.com/apache/skywalking-banyandb/pkg/convert"
 	"github.com/apache/skywalking-banyandb/pkg/encoding"
-	"github.com/apache/skywalking-banyandb/pkg/fs"
 	pbv1 "github.com/apache/skywalking-banyandb/pkg/pb/v1"
 )
 
@@ -35,7 +34,9 @@ func (p *PartReader) Iterator() *dump.Iterator[Row] {
 	for i := range p.primaryBlockMetadata {
 		pbm := p.primaryBlockMetadata[i]
 		primaryData := make([]byte, pbm.size)
-		fs.MustReadData(p.primary, int64(pbm.offset), primaryData)
+		if readErr := dump.ReadData(p.primary, int64(pbm.offset), primaryData); readErr != nil {
+			return dump.NewErrIterator[Row](fmt.Errorf("cannot read primary block: %w", readErr))
+		}
 		decompressed, err := zstd.Decompress(nil, primaryData)
 		if err != nil {
 			return dump.NewErrIterator[Row](fmt.Errorf("cannot decompress primary block: %w", err))
@@ -86,19 +87,14 @@ func (p *PartReader) decodeBlock(decoder *encoding.BytesBlockDecoder, bm *blockM
 			}
 		}
 		seriesID := calculateSeriesIDFromTags(spanTags)
-		var entityValues []byte
-		if p.seriesMap != nil {
-			entityValues = p.seriesMap[seriesID]
-		}
 		rows = append(rows, Row{
-			TraceID:      bm.traceID,
-			SpanID:       spanIDs[i],
-			Span:         spans[i],
-			Tags:         spanTags,
-			TagTypes:     tagTypesForRow,
-			SeriesID:     seriesID,
-			EntityValues: entityValues,
-			Timestamp:    timestampFromTags(spanTags, tagTypesForRow),
+			TraceID:   bm.traceID,
+			SpanID:    spanIDs[i],
+			Span:      spans[i],
+			Tags:      spanTags,
+			TagTypes:  tagTypesForRow,
+			SeriesID:  seriesID,
+			Timestamp: timestampFromTags(spanTags, tagTypesForRow),
 		})
 	}
 	return rows, nil

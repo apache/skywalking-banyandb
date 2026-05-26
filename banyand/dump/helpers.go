@@ -39,6 +39,20 @@ const (
 	logName     = "dump"
 )
 
+// ReadData reads exactly len(buf) bytes from r at offset. Unlike fs.MustReadData
+// it returns an error on short reads or I/O failures instead of panicking, so
+// callers reading a possibly corrupt part can surface the failure gracefully.
+func ReadData(r fs.Reader, offset int64, buf []byte) error {
+	n, err := r.Read(offset, buf)
+	if err != nil {
+		return fmt.Errorf("cannot read %d bytes at offset %d from %s: %w", len(buf), offset, r.Path(), err)
+	}
+	if n != len(buf) {
+		return fmt.Errorf("short read from %s: got %d bytes, want %d", r.Path(), n, len(buf))
+	}
+	return nil
+}
+
 // DiscoverPartIDs returns the sorted part IDs found directly under shardPath.
 func DiscoverPartIDs(shardPath string) ([]uint64, error) {
 	entries, err := os.ReadDir(shardPath)
@@ -102,27 +116,30 @@ func LoadSegmentSeriesMap(segmentPath string) (map[common.SeriesID]string, error
 }
 
 // LoadPartSeriesMap reads the optional part-level smeta.bin under partPath and
-// returns its SeriesID -> EntityValues map, or nil when smeta.bin is absent or
-// cannot be parsed (the file is optional for backward compatibility).
-func LoadPartSeriesMap(fileSystem fs.FileSystem, partPath string, id uint64) map[common.SeriesID][]byte {
-	sm := pkgdump.TryOpenSeriesMetadata(fileSystem, partPath)
+// returns its SeriesID -> EntityValues map. It returns (nil, nil) when smeta.bin
+// is absent (the file is optional); any open or parse failure is returned so the
+// caller can decide how to report it.
+func LoadPartSeriesMap(fileSystem fs.FileSystem, partPath string, id uint64) (map[common.SeriesID][]byte, error) {
+	sm, err := pkgdump.TryOpenSeriesMetadata(fileSystem, partPath)
+	if err != nil {
+		return nil, err
+	}
 	if sm == nil {
-		return nil
+		return nil, nil
 	}
 	defer fs.MustClose(sm)
 
 	tmp := make(map[uint64]map[common.SeriesID]string)
-	if err := pkgdump.ParseSeriesMetadata(id, sm, tmp); err != nil {
-		logger.GetLogger(logName).Warn().Err(err).Msg("failed to parse series metadata")
-		return nil
+	if parseErr := pkgdump.ParseSeriesMetadata(id, sm, tmp); parseErr != nil {
+		return nil, fmt.Errorf("cannot parse series metadata: %w", parseErr)
 	}
 	m := tmp[id]
 	if m == nil {
-		return nil
+		return nil, nil
 	}
 	seriesMap := make(map[common.SeriesID][]byte, len(m))
 	for sid, ev := range m {
 		seriesMap[sid] = []byte(ev)
 	}
-	return seriesMap
+	return seriesMap, nil
 }

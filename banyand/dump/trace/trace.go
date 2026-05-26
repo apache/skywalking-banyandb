@@ -79,7 +79,6 @@ type PartReader struct {
 	tagMetadata          map[string]fs.Reader
 	tags                 map[string]fs.Reader
 	tagType              map[string]pbv1.ValueType
-	seriesMap            map[common.SeriesID][]byte // part-level smeta.bin, nil if absent
 	path                 string
 	primaryBlockMetadata []primaryBlockMetadata
 	partMetadata         PartMetadata
@@ -88,17 +87,21 @@ type PartReader struct {
 // Row is one decoded span from a trace part. The []byte / map values alias the
 // iterator's block decode buffer and are valid only until the next
 // Iterator.Next()/Close(); copy to retain. Tag keys are full tag names.
-// SeriesID is computed from the tags (calculateSeriesIDFromTags); Timestamp is
-// read from the tag whose type is ValueTypeTimestamp. Trace has no version/fields.
+// Timestamp is read from the tag whose type is ValueTypeTimestamp. Trace has no
+// version/fields.
+//
+// SeriesID is a hash derived from this span's tags (calculateSeriesIDFromTags),
+// not the storage series ID (which the writer computes from subject + entity tag
+// values). It is therefore only stable per tag set and must not be used to look
+// up the on-disk series metadata.
 type Row struct {
-	Tags         map[string][]byte
-	TagTypes     map[string]pbv1.ValueType
-	TraceID      string
-	SpanID       string
-	EntityValues []byte
-	Span         []byte
-	Timestamp    int64
-	SeriesID     common.SeriesID
+	Tags      map[string][]byte
+	TagTypes  map[string]pbv1.ValueType
+	TraceID   string
+	SpanID    string
+	Span      []byte
+	Timestamp int64
+	SeriesID  common.SeriesID
 }
 
 // OpenPart opens the trace part directory root/<id> for read-only access.
@@ -152,9 +155,6 @@ func OpenPart(id uint64, root string, fileSystem fs.FileSystem) (*PartReader, er
 		return nil, fmt.Errorf("cannot open spans.bin: %w", err)
 	}
 
-	// Load the optional part-level series metadata (smeta.bin).
-	p.seriesMap = dump.LoadPartSeriesMap(fileSystem, partPath, id)
-
 	// Open tag files
 	entries := fileSystem.ReadDir(partPath)
 	p.tags = make(map[string]fs.Reader)
@@ -206,10 +206,6 @@ func (p *PartReader) Metadata() PartMetadata { return p.partMetadata }
 
 // PartID returns the part's numeric ID.
 func (p *PartReader) PartID() uint64 { return p.partMetadata.ID }
-
-// SeriesMap returns the part-level SeriesID -> EntityValues map parsed from
-// smeta.bin, or nil if smeta.bin is absent.
-func (p *PartReader) SeriesMap() map[common.SeriesID][]byte { return p.seriesMap }
 
 // Close releases all file handles. Safe to call multiple times.
 func (p *PartReader) Close() error {
@@ -344,7 +340,9 @@ func parseBlockMetadata(src []byte, tagType map[string]pbv1.ValueType) (*blockMe
 
 func readSpans(decoder *encoding.BytesBlockDecoder, sm *dataBlock, count int, reader fs.Reader) ([][]byte, []string, error) {
 	data := make([]byte, sm.size)
-	fs.MustReadData(reader, int64(sm.offset), data)
+	if err := dump.ReadData(reader, int64(sm.offset), data); err != nil {
+		return nil, nil, fmt.Errorf("cannot read spans: %w", err)
+	}
 
 	var spanIDBytes [][]byte
 	var tail []byte
@@ -381,7 +379,9 @@ func readTagValues(decoder *encoding.BytesBlockDecoder, tagBlock *dataBlock, _ s
 ) ([][]byte, error) {
 	// Read tag metadata
 	metaData := make([]byte, tagBlock.size)
-	fs.MustReadData(metaReader, int64(tagBlock.offset), metaData)
+	if err := dump.ReadData(metaReader, int64(tagBlock.offset), metaData); err != nil {
+		return nil, fmt.Errorf("cannot read tag metadata: %w", err)
+	}
 
 	var tm tagMetadata
 	if err := unmarshalTagMetadata(&tm, metaData); err != nil {
@@ -398,7 +398,9 @@ func readTagValues(decoder *encoding.BytesBlockDecoder, tagBlock *dataBlock, _ s
 	// Read tag values
 	bb := &bytes.Buffer{}
 	bb.Buf = make([]byte, tm.size)
-	fs.MustReadData(valueReader, int64(tm.offset), bb.Buf)
+	if err := dump.ReadData(valueReader, int64(tm.offset), bb.Buf); err != nil {
+		return nil, fmt.Errorf("cannot read tag values: %w", err)
+	}
 
 	// Decode values using the internal encoding package
 	var err error

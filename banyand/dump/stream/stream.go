@@ -157,7 +157,11 @@ func OpenPart(id uint64, root string, fileSystem fs.FileSystem) (*PartReader, er
 	}
 
 	// Load the optional part-level series metadata (smeta.bin).
-	p.seriesMap = dump.LoadPartSeriesMap(fileSystem, partPath, id)
+	p.seriesMap, err = dump.LoadPartSeriesMap(fileSystem, partPath, id)
+	if err != nil {
+		closePart(&p)
+		return nil, fmt.Errorf("cannot load series metadata: %w", err)
+	}
 
 	// Open tag family files
 	entries := fileSystem.ReadDir(partPath)
@@ -359,7 +363,9 @@ func (db *dataBlock) unmarshal(src []byte) []byte {
 
 func readTimestamps(tm timestampsMetadata, count int, reader fs.Reader) ([]int64, []uint64, error) {
 	data := make([]byte, tm.dataBlock.size)
-	fs.MustReadData(reader, int64(tm.dataBlock.offset), data)
+	if err := dump.ReadData(reader, int64(tm.dataBlock.offset), data); err != nil {
+		return nil, nil, fmt.Errorf("cannot read timestamps: %w", err)
+	}
 
 	if tm.dataBlock.size < tm.elementIDsOffset {
 		return nil, nil, fmt.Errorf("size %d must be greater than elementIDsOffset %d", tm.dataBlock.size, tm.elementIDsOffset)
@@ -443,7 +449,9 @@ func readTagValues(decoder *encoding.BytesBlockDecoder, tagBlock dataBlock, _ st
 	// Read tag values
 	bb := &bytes.Buffer{}
 	bb.Buf = make([]byte, tagBlock.size)
-	fs.MustReadData(valueReader, int64(tagBlock.offset), bb.Buf)
+	if err := dump.ReadData(valueReader, int64(tagBlock.offset), bb.Buf); err != nil {
+		return nil, fmt.Errorf("cannot read tag values: %w", err)
+	}
 
 	// Decode values using the internal encoding package
 	var err error

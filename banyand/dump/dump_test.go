@@ -25,6 +25,7 @@ import (
 
 	"github.com/apache/skywalking-banyandb/banyand/dump"
 	"github.com/apache/skywalking-banyandb/pkg/convert"
+	"github.com/apache/skywalking-banyandb/pkg/encoding"
 	pbv1 "github.com/apache/skywalking-banyandb/pkg/pb/v1"
 )
 
@@ -40,6 +41,21 @@ func TestDecodeTagValue(t *testing.T) {
 
 	// A nil value and a nil array both decode to the null tag value.
 	assert.Equal(t, pbv1.NullTagValue, dump.DecodeTagValue(pbv1.ValueTypeStr, nil, nil))
+}
+
+// TestDecodeTagValuePackedArrays covers the array branches decoding from the
+// column's packed single value (the form a Row exposes), not a pre-split valueArr.
+func TestDecodeTagValuePackedArrays(t *testing.T) {
+	intPacked := append(convert.Int64ToBytes(25), convert.Int64ToBytes(30)...)
+	intArr := dump.DecodeTagValue(pbv1.ValueTypeInt64Arr, intPacked, nil)
+	assert.Equal(t, []int64{25, 30}, intArr.GetIntArray().GetValue())
+
+	strPacked := encoding.MarshalVarArray(encoding.MarshalVarArray(nil, []byte("value1")), []byte("value2"))
+	want := append([]byte(nil), strPacked...)
+	strArr := dump.DecodeTagValue(pbv1.ValueTypeStrArr, strPacked, nil)
+	assert.Equal(t, []string{"value1", "value2"}, strArr.GetStrArray().GetValue())
+	// Decoding must not mutate the caller's packed source buffer.
+	assert.Equal(t, want, strPacked)
 }
 
 // TestDecodeTagValueBinaryDeepCopy: binary data must be copied so the decoded
