@@ -18,6 +18,7 @@
 package dump
 
 import (
+	"bytes"
 	"context"
 	"path/filepath"
 
@@ -57,18 +58,15 @@ type IndexedTagSpec struct {
 type IndexResolver struct {
 	store     index.SeriesStore
 	cache     *lru.TwoQueueCache
-	seriesMap map[common.SeriesID]string
 	ruleToTag map[uint32]IndexedTagSpec
 }
 
 // NewIndexResolver opens the segment's series index under segmentPath/sidx for
-// read-only lookups. seriesMap maps SeriesID -> EntityValues (as produced by
-// LoadSegmentSeriesMap); it is required because the index document is keyed by
-// EntityValues, not by SeriesID. ruleToTag is optional: when the schema is known
-// it lets DecodeTagValues decode values by tag name, otherwise pass nil and use
-// Resolve. cacheSize bounds the frequency-aware cache; values <= 0 fall back to
+// read-only lookups. ruleToTag is optional: when the schema is known it lets
+// DecodeTagValues decode values by tag name, otherwise pass nil and use Resolve.
+// cacheSize bounds the frequency-aware cache; values <= 0 fall back to
 // DefaultIndexCacheSize. Call Close when done.
-func NewIndexResolver(segmentPath string, seriesMap map[common.SeriesID]string, cacheSize int,
+func NewIndexResolver(segmentPath string, cacheSize int,
 	ruleToTag map[uint32]IndexedTagSpec,
 ) (*IndexResolver, error) {
 	if cacheSize <= 0 {
@@ -88,30 +86,65 @@ func NewIndexResolver(segmentPath string, seriesMap map[common.SeriesID]string, 
 	return &IndexResolver{
 		store:     store,
 		cache:     cache,
-		seriesMap: seriesMap,
 		ruleToTag: ruleToTag,
 	}, nil
 }
 
-// Resolve returns the indexed tag values stored for the given series, keyed by
-// IndexRuleID. Each rule id maps to one or more raw value byte slices (one for a
-// scalar tag, several for an array tag). It returns nil when the series has no
-// EntityValues mapping or no indexed tags. Results are cached per series.
-func (r *IndexResolver) Resolve(seriesID common.SeriesID) (map[uint32][][]byte, error) {
+// Resolve returns the indexed tag values stored for the series identified by
+// seriesID, whose EntityValues the caller already knows (the index document is
+// keyed by EntityValues). Each rule id maps to one or more raw value byte slices
+// (one for a scalar tag, several for an array tag). It returns nil when
+// entityValues is empty or the series has no indexed tags. Results are cached
+// per seriesID, so a series spanning several blocks or parts resolves once.
+func (r *IndexResolver) Resolve(seriesID common.SeriesID, entityValues []byte) (map[uint32][][]byte, error) {
 	if v, ok := r.cache.Get(seriesID); ok {
 		return v.(map[uint32][][]byte), nil
 	}
-	entityValues, ok := r.seriesMap[seriesID]
-	if !ok || entityValues == "" {
+	if len(entityValues) == 0 {
 		r.cache.Add(seriesID, map[uint32][][]byte(nil))
 		return nil, nil
 	}
-	raw, err := r.store.StoredFields(context.Background(), []byte(entityValues))
+	raw, err := r.store.StoredFields(context.Background(), entityValues)
 	if err != nil {
 		return nil, err
 	}
 	result := parseIndexedFields(raw)
 	r.cache.Add(seriesID, result)
+	return result, nil
+}
+
+// PartSeriesMap builds a SeriesID -> EntityValues map scoped to the given set of
+// series by scanning the series index once and keeping only the entries whose
+// SeriesID (Hash of EntityValues) is in seriesIDs. It is the fallback that
+// recovers EntityValues for a part with no part-level series metadata, while
+// keeping peak memory bounded by the part's distinct series count. It stops
+// early once every requested series has been found.
+func (r *IndexResolver) PartSeriesMap(seriesIDs map[common.SeriesID]struct{}) (map[common.SeriesID][]byte, error) {
+	if len(seriesIDs) == 0 {
+		return nil, nil
+	}
+	iter, err := r.store.SeriesIterator(context.Background())
+	if err != nil {
+		return nil, err
+	}
+	result := make(map[common.SeriesID][]byte, len(seriesIDs))
+	for iter.Next() {
+		entityValues := iter.Val().EntityValues
+		if len(entityValues) == 0 {
+			continue
+		}
+		seriesID := common.SeriesID(convert.Hash(entityValues))
+		if _, ok := seriesIDs[seriesID]; !ok {
+			continue
+		}
+		result[seriesID] = bytes.Clone(entityValues)
+		if len(result) == len(seriesIDs) {
+			break
+		}
+	}
+	if closeErr := iter.Close(); closeErr != nil {
+		return nil, closeErr
+	}
 	return result, nil
 }
 

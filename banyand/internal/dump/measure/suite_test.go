@@ -21,6 +21,7 @@ import (
 	"context"
 	"fmt"
 	"io/fs"
+	"os"
 	"path/filepath"
 	"strconv"
 	"testing"
@@ -30,6 +31,7 @@ import (
 	"github.com/stretchr/testify/require"
 	"google.golang.org/protobuf/types/known/timestamppb"
 
+	"github.com/apache/skywalking-banyandb/api/common"
 	"github.com/apache/skywalking-banyandb/api/data"
 	commonv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/common/v1"
 	databasev1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/database/v1"
@@ -44,6 +46,7 @@ import (
 	"github.com/apache/skywalking-banyandb/pkg/bus"
 	"github.com/apache/skywalking-banyandb/pkg/convert"
 	localfs "github.com/apache/skywalking-banyandb/pkg/fs"
+	"github.com/apache/skywalking-banyandb/pkg/index"
 	"github.com/apache/skywalking-banyandb/pkg/logger"
 	pbv1 "github.com/apache/skywalking-banyandb/pkg/pb/v1"
 	"github.com/apache/skywalking-banyandb/pkg/test"
@@ -354,27 +357,35 @@ func TestMeasureIndexedTagResolvedFromIndex(t *testing.T) {
 	stopped = true
 
 	segmentPath := findSidxSegmentPath(t, rootPath)
-	seriesMap, err := dump.LoadSegmentSeriesMap(segmentPath)
-	req.NoError(err)
-	req.NotEmpty(seriesMap, "segment series map must be loaded for the resolver")
 
 	ruleToTag := map[uint32]dump.IndexedTagSpec{
 		strRuleID: {Family: "default", Name: "idxStr", Type: pbv1.ValueTypeStr},
 		intRuleID: {Family: "default", Name: "idxInt", Type: pbv1.ValueTypeInt64},
 		arrRuleID: {Family: "default", Name: "idxArr", Type: pbv1.ValueTypeStrArr},
 	}
-	resolver, err := dump.NewIndexResolver(segmentPath, seriesMap, 0, ruleToTag)
+	// The standalone write path persists no part-level smeta.bin, so the resolver
+	// recovers EntityValues for each part by scanning the series index scoped to
+	// that part (PartSeriesMap) — the per-part bounded fallback, no segment-wide
+	// map.
+	resolver, err := dump.NewIndexResolver(segmentPath, 0, ruleToTag)
 	req.NoError(err)
-	defer resolver.Close()
+	// Closed explicitly before the smeta-path phase reopens the same index
+	// (bluge holds an exclusive lock, so only one store may be open at a time).
 
 	fileSystem := localfs.NewLocalFileSystem()
 	seen := 0
+	entityBySeries := map[common.SeriesID]string{}
+	partSeriesByDir := map[string]map[common.SeriesID][]byte{}
 	for _, partDir := range partDirs {
 		partID, parseErr := strconv.ParseUint(filepath.Base(partDir), 16, 64)
 		req.NoError(parseErr)
 		p, openErr := OpenPart(partID, filepath.Dir(partDir), fileSystem)
 		req.NoError(openErr)
+		// Standalone parts carry no smeta.bin, so the iterator must take the
+		// per-part fallback scan to recover EntityValues.
+		req.Nil(p.SeriesMap(), "standalone part has no smeta.bin")
 		p.SetIndexResolver(resolver)
+		curSeries := map[common.SeriesID][]byte{}
 		it := p.Iterator()
 		for it.Next() {
 			r := it.Row()
@@ -391,6 +402,13 @@ func TestMeasureIndexedTagResolvedFromIndex(t *testing.T) {
 			req.NotContains(r.Tags, "default.idxArr")
 			req.NotContains(r.Tags, "default.series")
 			req.Contains(r.Fields, "intField")
+			// No part-level smeta exists (standalone write path), so EntityValues
+			// here proves the per-part fallback scan recovered it; the entity tag
+			// value is part of the encoded EntityValues.
+			req.NotEmpty(r.EntityValues, "fallback scan must recover EntityValues")
+			req.Contains(string(r.EntityValues), "series"+iStr)
+			entityBySeries[r.SeriesID] = string(r.EntityValues)
+			curSeries[r.SeriesID] = append([]byte(nil), r.EntityValues...)
 			// All three rules' values are recovered, each under its own
 			// IndexRuleID (multiple rules on one row stay separate, not merged).
 			req.Len(r.IndexedTags, 3, "all three index rules resolved")
@@ -414,8 +432,85 @@ func TestMeasureIndexedTagResolvedFromIndex(t *testing.T) {
 		req.NoError(it.Err())
 		it.Close()
 		p.Close()
+		partSeriesByDir[partDir] = curSeries
 	}
 	req.Equal(total, seen, "every data point should be read back")
+	req.Len(entityBySeries, total, "each entity maps to a distinct series")
+
+	// Direct coverage of the bounded per-part scan: it returns EntityValues only
+	// for the requested series, and nothing for unknown series.
+	allIDs := make(map[common.SeriesID]struct{}, len(entityBySeries))
+	for sid := range entityBySeries {
+		allIDs[sid] = struct{}{}
+	}
+	full, err := resolver.PartSeriesMap(allIDs)
+	req.NoError(err)
+	req.Len(full, len(entityBySeries), "scan returns exactly the requested series")
+	for sid, ev := range entityBySeries {
+		req.Equal(ev, string(full[sid]))
+	}
+
+	var oneID common.SeriesID
+	for sid := range allIDs {
+		oneID = sid
+		break
+	}
+	subset, err := resolver.PartSeriesMap(map[common.SeriesID]struct{}{oneID: {}})
+	req.NoError(err)
+	req.Len(subset, 1, "a subset request stays scoped to that subset")
+	req.Equal(entityBySeries[oneID], string(subset[oneID]))
+
+	bogus, err := resolver.PartSeriesMap(map[common.SeriesID]struct{}{common.SeriesID(0xdeadbeef): {}})
+	req.NoError(err)
+	req.Empty(bogus, "an unknown series resolves to nothing")
+
+	// Distributed write-path coverage: a part produced by the data-node path
+	// carries a part-level smeta.bin, so OpenPart loads its series map directly
+	// and the iterator skips the index scan. Simulate that by writing a real
+	// smeta.bin per part, then reopen with a fresh resolver (empty cache) so the
+	// indexed tags are genuinely re-resolved from the smeta-provided EntityValues.
+	req.NoError(resolver.Close())
+	smetaResolver, err := dump.NewIndexResolver(segmentPath, 0, ruleToTag)
+	req.NoError(err)
+	defer smetaResolver.Close()
+	smetaSeen := 0
+	for partDir, series := range partSeriesByDir {
+		partID, parseErr := strconv.ParseUint(filepath.Base(partDir), 16, 64)
+		req.NoError(parseErr)
+		docs := make(index.Documents, 0, len(series))
+		for _, entityValues := range series {
+			docs = append(docs, index.Document{EntityValues: entityValues})
+		}
+		smeta, marshalErr := docs.Marshal()
+		req.NoError(marshalErr)
+		req.NoError(os.WriteFile(filepath.Join(partDir, "smeta.bin"), smeta, 0o600))
+
+		p, openErr := OpenPart(partID, filepath.Dir(partDir), fileSystem)
+		req.NoError(openErr)
+		req.NotNil(p.SeriesMap(), "smeta.bin present -> series map loaded, index scan skipped")
+		p.SetIndexResolver(smetaResolver)
+		it := p.Iterator()
+		for it.Next() {
+			r := it.Row()
+			smetaSeen++
+			req.Equal(series[r.SeriesID], r.EntityValues, "EntityValues sourced from smeta.bin")
+			plain := dump.DecodeTagValue(r.TagTypes["default.strTag"], r.Tags["default.strTag"], nil).GetStr().GetValue()
+			n, atoiErr := strconv.Atoi(plain[len("plain"):])
+			req.NoError(atoiErr)
+			iStr := strconv.Itoa(n)
+			req.Len(r.IndexedTags, 3, "indexed tags still resolve on the smeta fast path")
+			req.Equal("indexed"+iStr, string(r.IndexedTags[strRuleID][0]))
+			req.Equal(convert.Int64ToBytes(int64(70+n)), r.IndexedTags[intRuleID][0])
+			arrVals := r.IndexedTags[arrRuleID]
+			req.Len(arrVals, 2)
+			arrSet := map[string]bool{string(arrVals[0]): true, string(arrVals[1]): true}
+			req.True(arrSet["arr"+iStr+"a"] && arrSet["arr"+iStr+"b"], "both array elements recovered")
+		}
+		req.NoError(it.Err())
+		it.Close()
+		p.Close()
+	}
+	req.Equal(total, smetaSeen, "every data point read back on the smeta path too")
 }
 
 func registerIndexedResolveMeasure(t *testing.T, metaSvc metadataservice.Service) {
