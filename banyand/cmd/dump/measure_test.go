@@ -18,236 +18,231 @@
 package main
 
 import (
-	"fmt"
+	"bytes"
+	"encoding/csv"
+	"io"
+	"os"
 	"path/filepath"
 	"strconv"
+	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
-	"github.com/apache/skywalking-banyandb/api/common"
-	"github.com/apache/skywalking-banyandb/banyand/internal/storage"
+	"github.com/apache/skywalking-banyandb/banyand/internal/dump"
+	dumpmeasure "github.com/apache/skywalking-banyandb/banyand/internal/dump/measure"
 	"github.com/apache/skywalking-banyandb/banyand/measure"
-	"github.com/apache/skywalking-banyandb/pkg/compress/zstd"
-	"github.com/apache/skywalking-banyandb/pkg/convert"
-	"github.com/apache/skywalking-banyandb/pkg/encoding"
 	"github.com/apache/skywalking-banyandb/pkg/fs"
-	"github.com/apache/skywalking-banyandb/pkg/index"
 	"github.com/apache/skywalking-banyandb/pkg/test"
 )
 
-// TestDumpMeasurePartFormat tests that the dump tool can parse the latest measure part format.
-// This test creates a real part using the measure module's flush operation,
-// then verifies the dump tool can correctly parse it.
-func TestDumpMeasurePartFormat(t *testing.T) {
-	tmpPath, defFn := test.Space(require.New(t))
-	defer defFn()
-
-	fileSystem := fs.NewLocalFileSystem()
-
-	// Use measure package to create a real part using actual flush operation
-	partPath, cleanup := measure.CreateTestPartForDump(tmpPath, fileSystem)
-	defer cleanup()
-
-	// Extract part ID from path
-	partName := filepath.Base(partPath)
-	partID, err := strconv.ParseUint(partName, 16, 64)
-	require.NoError(t, err, "part directory should have valid hex name")
-
-	// Parse the part using dump tool functions
-	p, err := openMeasurePart(partID, filepath.Dir(partPath), fileSystem)
-	require.NoError(t, err, "should be able to open part created by measure module")
-	defer closeMeasurePart(p)
-
-	// Verify part metadata
-	assert.Equal(t, partID, p.partMetadata.ID)
-	t.Logf("Part metadata: TotalCount=%d, BlocksCount=%d", p.partMetadata.TotalCount, p.partMetadata.BlocksCount)
-	assert.Greater(t, p.partMetadata.TotalCount, uint64(0), "should have data points")
-	assert.Greater(t, p.partMetadata.BlocksCount, uint64(0), "should have at least 1 block")
-	assert.Greater(t, p.partMetadata.MinTimestamp, int64(0), "should have valid min timestamp")
-	assert.Greater(t, p.partMetadata.MaxTimestamp, int64(0), "should have valid max timestamp")
-	assert.GreaterOrEqual(t, p.partMetadata.MaxTimestamp, p.partMetadata.MinTimestamp)
-
-	// Verify primary block metadata
-	assert.Greater(t, len(p.primaryBlockMetadata), 0, "should have at least 1 primary block")
-	t.Logf("Found %d primary blocks (metadata says BlocksCount=%d)", len(p.primaryBlockMetadata), p.partMetadata.BlocksCount)
-	for i, pbm := range p.primaryBlockMetadata {
-		t.Logf("Block %d: SeriesID=%d, MinTimestamp=%d, MaxTimestamp=%d, Offset=%d, Size=%d", i, pbm.seriesID, pbm.minTimestamp, pbm.maxTimestamp, pbm.offset, pbm.size)
-	}
-
-	// Verify we can decode all blocks
-	decoder := &encoding.BytesBlockDecoder{}
-	totalDataPoints := 0
-
-	for blockIdx, pbm := range p.primaryBlockMetadata {
-		// Read primary data block
-		primaryData := make([]byte, pbm.size)
-		fs.MustReadData(p.primary, int64(pbm.offset), primaryData)
-
-		// Decompress
-		decompressed, err := zstd.Decompress(nil, primaryData)
-		require.NoError(t, err, "should decompress primary data for primary block %d", blockIdx)
-
-		// Parse ALL block metadata entries from this primary block
-		blockMetadatas, err := parseMeasureBlockMetadata(decompressed)
-		require.NoError(t, err, "should parse all block metadata from primary block %d", blockIdx)
-		t.Logf("Primary block %d contains %d measure blocks", blockIdx, len(blockMetadatas))
-
-		// Process each measure block
-		for bmIdx, bm := range blockMetadatas {
-			// Read timestamps and versions
-			timestamps, versions, err := readMeasureTimestamps(bm.timestamps, int(bm.count), p.timestamps)
-			require.NoError(t, err, "should read timestamps/versions for series %d", bm.seriesID)
-			assert.Len(t, timestamps, int(bm.count), "should have correct number of timestamps")
-			assert.Len(t, versions, int(bm.count), "should have correct number of versions")
-
-			totalDataPoints += len(timestamps)
-			t.Logf("  Measure block %d (SeriesID=%d): read %d data points", bmIdx, bm.seriesID, len(timestamps))
-
-			// Verify timestamps are valid
-			for i, ts := range timestamps {
-				assert.Greater(t, ts, int64(0), "timestamp should be positive")
-				assert.GreaterOrEqual(t, ts, p.partMetadata.MinTimestamp, "timestamp should be >= min")
-				assert.LessOrEqual(t, ts, p.partMetadata.MaxTimestamp, "timestamp should be <= max")
-				t.Logf("    Data point %d: Version=%d, Timestamp=%s", i, versions[i], formatTimestamp(ts))
-			}
-
-			// Read field values if available
-			for _, colMeta := range bm.field.columns {
-				fieldValues, err := readMeasureFieldValues(decoder, colMeta.dataBlock, colMeta.name, int(bm.count), p.fieldValues, colMeta.valueType)
-				require.NoError(t, err, "should read field %s for series %d", colMeta.name, bm.seriesID)
-				assert.Len(t, fieldValues, int(bm.count), "field %s should have value for each data point", colMeta.name)
-
-				// Verify specific field values
-				for i, fieldValue := range fieldValues {
-					if fieldValue == nil {
-						continue
-					}
-					t.Logf("    Data point %d field %s: %s", i, colMeta.name, formatTagValueForDisplay(fieldValue, colMeta.valueType))
-				}
-			}
-
-			// Read tag families if available
-			for tagFamilyName, tagFamilyBlock := range bm.tagFamilies {
-				// Read tag family metadata
-				tagFamilyMetadataData := make([]byte, tagFamilyBlock.size)
-				fs.MustReadData(p.tagFamilyMetadata[tagFamilyName], int64(tagFamilyBlock.offset), tagFamilyMetadataData)
-
-				// Parse tag family metadata as columnFamilyMetadata (same format as fields)
-				var cfm measureColumnFamilyMetadata
-				_, err := cfm.unmarshal(tagFamilyMetadataData)
-				require.NoError(t, err, "should parse tag family metadata %s for series %d", tagFamilyName, bm.seriesID)
-
-				// Read each tag (column) in the tag family
-				for _, colMeta := range cfm.columns {
-					fullTagName := tagFamilyName + "." + colMeta.name
-					tagValues, err := readMeasureTagValues(decoder, colMeta.dataBlock, fullTagName, int(bm.count), p.tagFamilies[tagFamilyName], colMeta.valueType)
-					require.NoError(t, err, "should read tag %s for series %d", fullTagName, bm.seriesID)
-					assert.Len(t, tagValues, int(bm.count), "tag %s should have value for each data point", fullTagName)
-
-					// Verify specific tag values
-					for i, tagValue := range tagValues {
-						if tagValue == nil {
-							continue
-						}
-						t.Logf("    Data point %d tag %s: %s", i, fullTagName, formatTagValueForDisplay(tagValue, colMeta.valueType))
-					}
-				}
-			}
-		}
-	}
-
-	// Verify we can read all the data correctly
-	assert.Equal(t, int(p.partMetadata.TotalCount), totalDataPoints, "should have parsed all data points from metadata")
-	t.Logf("Successfully parsed part with %d data points across %d primary blocks (metadata BlocksCount=%d)",
-		totalDataPoints, len(p.primaryBlockMetadata), p.partMetadata.BlocksCount)
-}
-
-// TestDumpMeasurePartWithSeriesMetadata tests that the dump tool can parse smeta file.
-// This test creates a part with series metadata and verifies the dump tool can correctly parse it.
-func TestDumpMeasurePartWithSeriesMetadata(t *testing.T) {
-	tmpPath, defFn := test.Space(require.New(t))
-	defer defFn()
-
-	fileSystem := fs.NewLocalFileSystem()
-
-	// Create a part with series metadata
-	partPath, cleanup := createTestMeasurePartWithSeriesMetadata(tmpPath, fileSystem)
-	defer cleanup()
-
-	// Extract part ID from path
-	partName := filepath.Base(partPath)
-	partID, err := strconv.ParseUint(partName, 16, 64)
-	require.NoError(t, err, "part directory should have valid hex name")
-
-	// Parse the part using dump tool functions
-	p, err := openMeasurePart(partID, filepath.Dir(partPath), fileSystem)
-	require.NoError(t, err, "should be able to open part with series metadata")
-	defer closeMeasurePart(p)
-
-	// Verify series metadata reader is available
-	assert.NotNil(t, p.seriesMetadata, "series metadata reader should be available")
-
-	// Create a dump context to test parsing
-	opts := measureDumpOptions{
-		shardPath:   filepath.Dir(partPath),
-		segmentPath: tmpPath, // Not used for this test
-		verbose:     false,
-		csvOutput:   false,
-	}
-	ctx, err := newMeasureDumpContext(opts)
+// captureMeasureStdout redirects os.Stdout while f runs and returns what was written.
+func captureMeasureStdout(t *testing.T, f func()) string {
+	t.Helper()
+	old := os.Stdout
+	r, w, err := os.Pipe()
 	require.NoError(t, err)
-	if ctx != nil {
-		defer ctx.close()
-	}
-
-	// Test parsing series metadata
-	err = ctx.parseAndDisplaySeriesMetadata(partID, p)
-	require.NoError(t, err, "should be able to parse series metadata")
-
-	// Verify EntityValues are stored in partSeriesMap
-	require.NotNil(t, ctx.partSeriesMap, "partSeriesMap should be initialized")
-	partMap, exists := ctx.partSeriesMap[partID]
-	require.True(t, exists, "partSeriesMap should contain entry for partID")
-	require.NotNil(t, partMap, "partMap should not be nil")
-
-	// Verify EntityValues are correctly stored
-	// Calculate expected SeriesIDs from EntityValues
-	expectedSeriesID1 := common.SeriesID(convert.Hash([]byte("service.name=test-service")))
-	expectedSeriesID2 := common.SeriesID(convert.Hash([]byte("service.name=another-service")))
-
-	assert.Contains(t, partMap, expectedSeriesID1, "partMap should contain first series")
-	assert.Contains(t, partMap, expectedSeriesID2, "partMap should contain second series")
-	assert.Equal(t, "service.name=test-service", partMap[expectedSeriesID1], "EntityValues should match")
-	assert.Equal(t, "service.name=another-service", partMap[expectedSeriesID2], "EntityValues should match")
+	os.Stdout = w
+	done := make(chan string, 1)
+	go func() {
+		var buf bytes.Buffer
+		_, _ = io.Copy(&buf, r)
+		done <- buf.String()
+	}()
+	f()
+	require.NoError(t, w.Close())
+	os.Stdout = old
+	return <-done
 }
 
-// createTestMeasurePartWithSeriesMetadata creates a test measure part with series metadata.
-func createTestMeasurePartWithSeriesMetadata(tmpPath string, fileSystem fs.FileSystem) (string, func()) {
-	// Use measure package to create a part
-	partPath, cleanup := measure.CreateTestPartForDump(tmpPath, fileSystem)
-
-	// Create sample series metadata file
-	seriesMetadataPath := filepath.Join(partPath, "smeta.bin")
-
-	// Create sample documents
-	docs := index.Documents{
-		{
-			DocID:        1,
-			EntityValues: []byte("service.name=test-service"),
-		},
-		{
-			DocID:        2,
-			EntityValues: []byte("service.name=another-service"),
-		},
+// expectedDataPointCount opens the part with the library to learn how many rows
+// the CLI should emit, so the assertions are independent of the fixture details.
+func expectedDataPointCount(t *testing.T, shardPath string, fileSystem fs.FileSystem) int {
+	t.Helper()
+	partIDs, err := dump.DiscoverPartIDs(shardPath)
+	require.NoError(t, err)
+	require.NotEmpty(t, partIDs)
+	total := 0
+	for _, id := range partIDs {
+		reader, openErr := dumpmeasure.OpenPart(id, shardPath, fileSystem)
+		require.NoError(t, openErr)
+		total += int(reader.Metadata().TotalCount)
+		require.NoError(t, reader.Close())
 	}
+	return total
+}
 
-	seriesMetadataBytes, err := docs.Marshal()
-	if err != nil {
-		panic(fmt.Sprintf("failed to marshal series metadata documents: %v", err))
+func newMeasureFixture(t *testing.T) (shardPath, segmentPath string, total int) {
+	tmpPath, defFn := test.Space(require.New(t))
+	t.Cleanup(defFn)
+
+	fileSystem := fs.NewLocalFileSystem()
+	partPath, _, cleanup := measure.BuildPartForDump(tmpPath, fileSystem, 12345, measure.StandardDumpRows())
+	t.Cleanup(cleanup)
+
+	shardPath = filepath.Dir(partPath)
+	segmentPath = tmpPath // no sidx dir; series map load is best-effort
+	total = expectedDataPointCount(t, shardPath, fileSystem)
+	require.Greater(t, total, 0)
+	return shardPath, segmentPath, total
+}
+
+// TestDumpMeasureShardText drives the full CLI text flow and verifies every row
+// is emitted with correctly typed field values (covers the per-field-type fix).
+func TestDumpMeasureShardText(t *testing.T) {
+	shardPath, segmentPath, total := newMeasureFixture(t)
+
+	out := captureMeasureStdout(t, func() {
+		require.NoError(t, dumpMeasureShard(measureDumpOptions{
+			shardPath:   shardPath,
+			segmentPath: segmentPath,
+		}))
+	})
+
+	// Every data point is rendered as a "Row N:" block.
+	for i := 1; i <= total; i++ {
+		assert.Contains(t, out, "Row "+strconv.Itoa(i)+":", "row %d should be printed", i)
 	}
-	fs.MustFlush(fileSystem, seriesMetadataBytes, seriesMetadataPath, storage.FilePerm)
+	assert.Contains(t, out, "Total rows: "+strconv.Itoa(total))
 
-	return partPath, cleanup
+	// Mixed field types must render with their own type: the float64 field
+	// formats as a float, which is only possible when FieldTypes is per-field
+	// (regression guard for the per-field type bugfix).
+	assert.Contains(t, out, "floatField: 3.14")
+	assert.Contains(t, out, "intField: 1000")
+	assert.Contains(t, out, "intField: 2000")
+	// Tag values flow through too.
+	assert.Contains(t, out, "test-value")
+	assert.Contains(t, out, "tag1")
+}
+
+// TestDumpMeasureShardCSV drives the full CLI CSV flow and verifies the header
+// plus one data record per data point.
+func TestDumpMeasureShardCSV(t *testing.T) {
+	shardPath, segmentPath, total := newMeasureFixture(t)
+
+	out := captureMeasureStdout(t, func() {
+		require.NoError(t, dumpMeasureShard(measureDumpOptions{
+			shardPath:   shardPath,
+			segmentPath: segmentPath,
+			csvOutput:   true,
+		}))
+	})
+
+	records, err := csv.NewReader(strings.NewReader(out)).ReadAll()
+	require.NoError(t, err, "CLI must emit valid CSV")
+	require.GreaterOrEqual(t, len(records), 1, "must have a header row")
+
+	header := records[0]
+	assert.Equal(t, []string{"PartID", "Timestamp", "Version", "SeriesID", "Series"}, header[:5],
+		"fixed CSV header prefix must be preserved")
+	// DiscoverColumns scans only the first part's first block (series 1 -> intField).
+	// floatField lives in a later series block, so it is not a CSV column (this
+	// preserves the historical CLI behavior). Text mode still renders it per-row.
+	assert.Contains(t, header, "intField")
+	assert.NotContains(t, header, "floatField")
+
+	assert.Equal(t, total, len(records)-1, "one CSV data record per data point")
+}
+
+// TestDumpMeasureShardProjectionTags verifies --projection-tags restricts the
+// rendered tags to the requested set.
+func TestDumpMeasureShardProjectionTags(t *testing.T) {
+	shardPath, segmentPath, _ := newMeasureFixture(t)
+
+	out := captureMeasureStdout(t, func() {
+		require.NoError(t, dumpMeasureShard(measureDumpOptions{
+			shardPath:      shardPath,
+			segmentPath:    segmentPath,
+			projectionTags: "singleTag.strTag",
+		}))
+	})
+
+	assert.Contains(t, out, "singleTag.strTag")
+	// A tag that exists in the part but is not projected must not appear.
+	assert.NotContains(t, out, "singleTag.strTag1")
+}
+
+// TestDumpMeasureShardNoParts verifies graceful handling of an empty shard dir.
+func TestDumpMeasureShardNoParts(t *testing.T) {
+	tmpPath, defFn := test.Space(require.New(t))
+	defer defFn()
+
+	out := captureMeasureStdout(t, func() {
+		require.NoError(t, dumpMeasureShard(measureDumpOptions{
+			shardPath:   tmpPath,
+			segmentPath: tmpPath,
+		}))
+	})
+	assert.Contains(t, out, "No parts found in shard directory")
+}
+
+// TestDumpMeasureShardSeriesColumn verifies the "Series" column is resolved from
+// part-level smeta.bin end-to-end (entity-aligned part so seriesID == hash(entity)).
+func TestDumpMeasureShardSeriesColumn(t *testing.T) {
+	tmpPath, defFn := test.Space(require.New(t))
+	defer defFn()
+
+	fileSystem := fs.NewLocalFileSystem()
+	entities := []string{"service=a", "service=b", "service=c"}
+	partPath, _, cleanup := measure.BuildEntityPartWithSeriesMeta(tmpPath, fileSystem, 0x3039, entities)
+	defer cleanup()
+	shardPath := filepath.Dir(partPath)
+
+	out := captureMeasureStdout(t, func() {
+		require.NoError(t, dumpMeasureShard(measureDumpOptions{
+			shardPath:   shardPath,
+			segmentPath: tmpPath,
+		}))
+	})
+
+	for _, e := range entities {
+		assert.Contains(t, out, "Series: "+e, "Series column should resolve %q from smeta", e)
+	}
+}
+
+// TestDumpMeasureShardSeriesColumnNoMeta verifies that without smeta.bin (and no
+// sidx segment) the Series line is simply omitted — best-effort, non-fatal.
+func TestDumpMeasureShardSeriesColumnNoMeta(t *testing.T) {
+	tmpPath, defFn := test.Space(require.New(t))
+	defer defFn()
+
+	fileSystem := fs.NewLocalFileSystem()
+	partPath, _, cleanup := measure.BuildPartForDump(tmpPath, fileSystem, 0x3039, measure.EntityDumpRows([]string{"service=a"}))
+	defer cleanup()
+	shardPath := filepath.Dir(partPath)
+
+	out := captureMeasureStdout(t, func() {
+		require.NoError(t, dumpMeasureShard(measureDumpOptions{
+			shardPath:   shardPath,
+			segmentPath: tmpPath,
+		}))
+	})
+	assert.NotContains(t, out, "Series:", "no Series line when neither smeta nor sidx resolves the series")
+}
+
+// TestDumpMeasureShardCriteria verifies --criteria filtering end-to-end: with a
+// single-tag-per-row part, an EQ filter on meta.name keeps only the matching row.
+func TestDumpMeasureShardCriteria(t *testing.T) {
+	tmpPath, defFn := test.Space(require.New(t))
+	defer defFn()
+
+	fileSystem := fs.NewLocalFileSystem()
+	partPath, _, cleanup := measure.BuildEntityPartWithSeriesMeta(tmpPath, fileSystem, 0x3039, []string{"service=a", "service=b", "service=c"})
+	defer cleanup()
+	shardPath := filepath.Dir(partPath)
+
+	criteria := `{"condition":{"name":"meta.name","op":"BINARY_OP_EQ","value":{"str":{"value":"service=a"}}}}`
+	out := captureMeasureStdout(t, func() {
+		require.NoError(t, dumpMeasureShard(measureDumpOptions{
+			shardPath:    shardPath,
+			segmentPath:  tmpPath,
+			criteriaJSON: criteria,
+		}))
+	})
+
+	assert.Contains(t, out, "Total rows: 1", "only the one matching row should pass the filter")
+	assert.Contains(t, out, "service=a")
+	assert.NotContains(t, out, "service=b", "non-matching rows must be filtered out")
 }
