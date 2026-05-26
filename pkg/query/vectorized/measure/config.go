@@ -17,21 +17,36 @@
 
 package measure
 
-import "fmt"
+import (
+	"fmt"
+	"time"
+)
 
 // VectorizedConfig controls the v1 vectorized Measure query path.
 type VectorizedConfig struct {
-	BatchSize      int
-	QueryMemoryMiB int
-	Enabled        bool
+	BroadcastTimeout time.Duration
+	BatchSize        int
+	QueryMemoryMiB   int
+	Enabled          bool
 }
 
+// DefaultBroadcastTimeout is the per-broadcast wait the vec distributed
+// liaison uses when the caller (banyand/dquery) does not override it. The
+// value matches the historical hard-coded constant so behavior is
+// unchanged when the operator does not set --dst-broadcast-timeout.
+const DefaultBroadcastTimeout = 15 * time.Second
+
 // DefaultConfig returns the v1 default — enabled, 1024-row batches, 256 MiB
-// per-query memory budget. To roll back the vec path entirely, pass
-// --measure-vectorized-enabled=false on the standalone or data-node command
-// line and restart.
+// per-query memory budget, 15 s broadcast timeout. To roll back the vec
+// path entirely, pass --measure-vectorized-enabled=false on the standalone
+// or data-node command line and restart.
 func DefaultConfig() VectorizedConfig {
-	return VectorizedConfig{Enabled: true, BatchSize: 1024, QueryMemoryMiB: 256}
+	return VectorizedConfig{
+		Enabled:          true,
+		BatchSize:        1024,
+		QueryMemoryMiB:   256,
+		BroadcastTimeout: DefaultBroadcastTimeout,
+	}
 }
 
 // Validate rejects nonsense configurations.
@@ -41,6 +56,9 @@ func (c VectorizedConfig) Validate() error {
 	}
 	if c.QueryMemoryMiB <= 0 {
 		return fmt.Errorf("vectorized.measure: QueryMemoryMiB must be > 0, got %d", c.QueryMemoryMiB)
+	}
+	if c.BroadcastTimeout < 0 {
+		return fmt.Errorf("vectorized.measure: BroadcastTimeout must be >= 0, got %s", c.BroadcastTimeout)
 	}
 	return nil
 }

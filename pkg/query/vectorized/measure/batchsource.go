@@ -22,7 +22,9 @@ import (
 	"fmt"
 
 	modelv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/model/v1"
+	"github.com/apache/skywalking-banyandb/pkg/query"
 	"github.com/apache/skywalking-banyandb/pkg/query/model"
+	"github.com/apache/skywalking-banyandb/pkg/query/tracelabels"
 	"github.com/apache/skywalking-banyandb/pkg/query/vectorized"
 )
 
@@ -43,15 +45,18 @@ import (
 // returns an error on TypedColumn[T] mismatches, which surfaces as a
 // pipeline error.
 type BatchSourceFromBatchResult struct {
-	br        model.MeasureBatchResult
-	schema    *vectorized.BatchSchema
-	pool      *vectorized.BatchPool
-	pending   *model.MeasureBatch
-	err       error
-	batchSize int
-	pendPos   int
-	eof       bool
-	closed    bool
+	br         model.MeasureBatchResult
+	schema     *vectorized.BatchSchema
+	pool       *vectorized.BatchPool
+	span       *query.Span
+	pending    *model.MeasureBatch
+	err        error
+	batchSize  int
+	pendPos    int
+	rowsOut    int64
+	batchesOut int64
+	eof        bool
+	closed     bool
 }
 
 // NewBatchSourceFromBatchResult constructs the source. Init is required
@@ -68,7 +73,13 @@ func NewBatchSourceFromBatchResult(br model.MeasureBatchResult, schema *vectoriz
 }
 
 // Init satisfies PullOperator.
-func (s *BatchSourceFromBatchResult) Init(_ context.Context) error { return nil }
+func (s *BatchSourceFromBatchResult) Init(ctx context.Context) error {
+	tracer := query.GetTracer(ctx)
+	if tracer != nil {
+		s.span, _ = tracer.StartSpan(ctx, "scan")
+	}
+	return nil
+}
 
 // OutputSchema returns the schema declared at construction.
 func (s *BatchSourceFromBatchResult) OutputSchema() *vectorized.BatchSchema { return s.schema }
@@ -89,6 +100,13 @@ func (s *BatchSourceFromBatchResult) NextBatch(ctx context.Context) (*vectorized
 	out := s.pool.Get()
 	for out.Len < s.batchSize {
 		if s.pending == nil || s.pendPos >= s.pending.RowCount() {
+			// Return the exhausted batch to the per-type column pool
+			// before pulling the next one; otherwise the storage layer's
+			// allocations leak to GC every batch boundary.
+			if s.pending != nil {
+				s.pending.Release()
+				s.pending = nil
+			}
 			mb, pullErr := s.br.PullBatch(ctx)
 			if pullErr != nil {
 				s.err = pullErr
@@ -99,7 +117,7 @@ func (s *BatchSourceFromBatchResult) NextBatch(ctx context.Context) (*vectorized
 				break
 			}
 			if mb.RowCount() == 0 {
-				s.pending = nil
+				mb.Release()
 				s.pendPos = 0
 				continue
 			}
@@ -124,7 +142,7 @@ func (s *BatchSourceFromBatchResult) NextBatch(ctx context.Context) (*vectorized
 
 // copyRowsInto copies n rows starting at srcPos from mb into the
 // RecordBatch out (appending). Metadata roles read mb's parallel slices;
-// tag/field roles delegate to appendColumnRange for each typed column.
+// tag/field roles delegate to AppendColumnRange for each typed column.
 func (s *BatchSourceFromBatchResult) copyRowsInto(out *vectorized.RecordBatch,
 	mb *model.MeasureBatch, srcPos, n int,
 ) error {
@@ -160,7 +178,7 @@ func (s *BatchSourceFromBatchResult) copyRowsInto(out *vectorized.RecordBatch,
 				return fmt.Errorf("BatchSourceFromBatchResult: schema declares %d tag columns but MeasureBatch has %d",
 					tagIdx+1, len(mb.Tags))
 			}
-			if copyErr := appendColumnRange(out.Columns[outColIdx], mb.Tags[tagIdx], srcPos, n); copyErr != nil {
+			if copyErr := AppendColumnRange(out.Columns[outColIdx], mb.Tags[tagIdx], srcPos, n); copyErr != nil {
 				return fmt.Errorf("tag %s.%s: %w", def.TagFamily, def.Name, copyErr)
 			}
 			tagIdx++
@@ -169,7 +187,7 @@ func (s *BatchSourceFromBatchResult) copyRowsInto(out *vectorized.RecordBatch,
 				return fmt.Errorf("BatchSourceFromBatchResult: schema declares %d field columns but MeasureBatch has %d",
 					fieldIdx+1, len(mb.Fields))
 			}
-			if copyErr := appendColumnRange(out.Columns[outColIdx], mb.Fields[fieldIdx], srcPos, n); copyErr != nil {
+			if copyErr := AppendColumnRange(out.Columns[outColIdx], mb.Fields[fieldIdx], srcPos, n); copyErr != nil {
 				return fmt.Errorf("field %s: %w", def.Name, copyErr)
 			}
 			fieldIdx++
@@ -181,12 +199,25 @@ func (s *BatchSourceFromBatchResult) copyRowsInto(out *vectorized.RecordBatch,
 	return nil
 }
 
-// Close releases the underlying MeasureBatchResult exactly once. Idempotent.
+// Close releases any in-flight pending MeasureBatch back to the column pool
+// and then the underlying MeasureBatchResult exactly once. Idempotent.
 func (s *BatchSourceFromBatchResult) Close() error {
 	if s.closed {
 		return nil
 	}
 	s.closed = true
+	if s.span != nil {
+		s.span.Tagf(tracelabels.TagRowsOut, "%d", s.rowsOut)
+		s.span.Tagf(tracelabels.TagBatchesOut, "%d", s.batchesOut)
+		if s.schema != nil {
+			s.span.Tagf(tracelabels.TagSchemaCols, "%d", len(s.schema.Columns))
+		}
+		s.span.Stop()
+	}
+	if s.pending != nil {
+		s.pending.Release()
+		s.pending = nil
+	}
 	if s.br != nil {
 		s.br.Release()
 		s.br = nil
@@ -194,7 +225,7 @@ func (s *BatchSourceFromBatchResult) Close() error {
 	return nil
 }
 
-// appendColumnRange copies n rows starting at srcPos from src into dst
+// AppendColumnRange copies n rows starting at srcPos from src into dst
 // (appending). Both columns must share the same TypedColumn[T] type;
 // returns an error on mismatch. Validity bits are propagated cell-by-cell
 // via dst.MarkNullAt when src.IsNull reports null at the corresponding
@@ -209,13 +240,13 @@ func (s *BatchSourceFromBatchResult) Close() error {
 // sharing the slice reference is safe and avoids a redundant double
 // copy that would regress the egress bench gates by ~3 allocs per
 // slice-typed cell.
-func appendColumnRange(dst, src vectorized.Column, srcPos, n int) error {
+func AppendColumnRange(dst, src vectorized.Column, srcPos, n int) error {
 	startLen := dst.Len()
 	switch d := dst.(type) {
 	case *vectorized.TypedColumn[int64]:
 		sCol, ok := src.(*vectorized.TypedColumn[int64])
 		if !ok {
-			return fmt.Errorf("appendColumnRange: dst int64 vs src %s", src.Type())
+			return fmt.Errorf("AppendColumnRange: dst int64 vs src %s", src.Type())
 		}
 		sData := sCol.Data()
 		for k := range n {
@@ -224,7 +255,7 @@ func appendColumnRange(dst, src vectorized.Column, srcPos, n int) error {
 	case *vectorized.TypedColumn[float64]:
 		sCol, ok := src.(*vectorized.TypedColumn[float64])
 		if !ok {
-			return fmt.Errorf("appendColumnRange: dst float64 vs src %s", src.Type())
+			return fmt.Errorf("AppendColumnRange: dst float64 vs src %s", src.Type())
 		}
 		sData := sCol.Data()
 		for k := range n {
@@ -233,7 +264,7 @@ func appendColumnRange(dst, src vectorized.Column, srcPos, n int) error {
 	case *vectorized.TypedColumn[string]:
 		sCol, ok := src.(*vectorized.TypedColumn[string])
 		if !ok {
-			return fmt.Errorf("appendColumnRange: dst string vs src %s", src.Type())
+			return fmt.Errorf("AppendColumnRange: dst string vs src %s", src.Type())
 		}
 		sData := sCol.Data()
 		for k := range n {
@@ -242,7 +273,7 @@ func appendColumnRange(dst, src vectorized.Column, srcPos, n int) error {
 	case *vectorized.TypedColumn[[]byte]:
 		sCol, ok := src.(*vectorized.TypedColumn[[]byte])
 		if !ok {
-			return fmt.Errorf("appendColumnRange: dst bytes vs src %s", src.Type())
+			return fmt.Errorf("AppendColumnRange: dst bytes vs src %s", src.Type())
 		}
 		sData := sCol.Data()
 		for k := range n {
@@ -251,7 +282,7 @@ func appendColumnRange(dst, src vectorized.Column, srcPos, n int) error {
 	case *vectorized.TypedColumn[[]int64]:
 		sCol, ok := src.(*vectorized.TypedColumn[[]int64])
 		if !ok {
-			return fmt.Errorf("appendColumnRange: dst int64[] vs src %s", src.Type())
+			return fmt.Errorf("AppendColumnRange: dst int64[] vs src %s", src.Type())
 		}
 		sData := sCol.Data()
 		for k := range n {
@@ -260,7 +291,7 @@ func appendColumnRange(dst, src vectorized.Column, srcPos, n int) error {
 	case *vectorized.TypedColumn[[]string]:
 		sCol, ok := src.(*vectorized.TypedColumn[[]string])
 		if !ok {
-			return fmt.Errorf("appendColumnRange: dst string[] vs src %s", src.Type())
+			return fmt.Errorf("AppendColumnRange: dst string[] vs src %s", src.Type())
 		}
 		sData := sCol.Data()
 		for k := range n {
@@ -269,7 +300,7 @@ func appendColumnRange(dst, src vectorized.Column, srcPos, n int) error {
 	case *vectorized.TypedColumn[*modelv1.TagValue]:
 		sCol, ok := src.(*vectorized.TypedColumn[*modelv1.TagValue])
 		if !ok {
-			return fmt.Errorf("appendColumnRange: dst tagvalue vs src %s", src.Type())
+			return fmt.Errorf("AppendColumnRange: dst tagvalue vs src %s", src.Type())
 		}
 		sData := sCol.Data()
 		for k := range n {
@@ -278,14 +309,14 @@ func appendColumnRange(dst, src vectorized.Column, srcPos, n int) error {
 	case *vectorized.TypedColumn[*modelv1.FieldValue]:
 		sCol, ok := src.(*vectorized.TypedColumn[*modelv1.FieldValue])
 		if !ok {
-			return fmt.Errorf("appendColumnRange: dst fieldvalue vs src %s", src.Type())
+			return fmt.Errorf("AppendColumnRange: dst fieldvalue vs src %s", src.Type())
 		}
 		sData := sCol.Data()
 		for k := range n {
 			d.Append(sData[srcPos+k])
 		}
 	default:
-		return fmt.Errorf("appendColumnRange: unsupported dst type %s", dst.Type())
+		return fmt.Errorf("AppendColumnRange: unsupported dst type %s", dst.Type())
 	}
 	for k := range n {
 		if src.IsNull(srcPos + k) {

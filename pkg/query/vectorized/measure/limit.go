@@ -20,6 +20,8 @@ package measure
 import (
 	"context"
 
+	"github.com/apache/skywalking-banyandb/pkg/query"
+	"github.com/apache/skywalking-banyandb/pkg/query/tracelabels"
 	"github.com/apache/skywalking-banyandb/pkg/query/vectorized"
 )
 
@@ -31,10 +33,14 @@ import (
 // returns vectorized.ErrLimitExhausted. The fused stage translates that
 // sentinel into "emit current batch, then EOF on next pull".
 type BatchLimit struct {
-	schema *vectorized.BatchSchema
-	offset uint32
-	limit  uint32
-	seen   uint32
+	schema  *vectorized.BatchSchema
+	span    *query.Span
+	rowsIn  int64
+	rowsOut int64
+	offset  uint32
+	limit   uint32
+	seen    uint32
+	closed  bool
 }
 
 // NewBatchLimit constructs a fusible limit operator.
@@ -43,18 +49,42 @@ func NewBatchLimit(schema *vectorized.BatchSchema, offset, limit uint32) *BatchL
 }
 
 // Init is a no-op. Limit has no per-pipeline setup.
-func (l *BatchLimit) Init(_ context.Context) error { return nil }
+func (l *BatchLimit) Init(ctx context.Context) error {
+	tracer := query.GetTracer(ctx)
+	if tracer != nil {
+		l.span, _ = tracer.StartSpan(ctx, "limit")
+	}
+	return nil
+}
 
 // OutputSchema returns the unchanged input schema.
 func (l *BatchLimit) OutputSchema() *vectorized.BatchSchema { return l.schema }
 
 // Close is idempotent and a no-op.
-func (l *BatchLimit) Close() error { return nil }
+func (l *BatchLimit) Close() error {
+	if l.closed {
+		return nil
+	}
+	l.closed = true
+	if l.span != nil {
+		l.span.Tagf(tracelabels.TagLimitN, "%d", l.limit)
+		l.span.Tagf(tracelabels.TagLimitOffset, "%d", l.offset)
+		l.span.Tagf(tracelabels.TagRowsIn, "%d", l.rowsIn)
+		l.span.Tagf(tracelabels.TagRowsOut, "%d", l.rowsOut)
+		l.span.Tagf(tracelabels.TagDroppedRows, "%d", l.rowsIn-l.rowsOut)
+		l.span.Tag(tracelabels.TagDropReason, "limit")
+		l.span.Stop()
+	}
+	return nil
+}
 
 // Process rewrites b.Selection to keep only rows in [offset, offset+limit) of
 // the cumulative active stream.
 func (l *BatchLimit) Process(_ context.Context, b *vectorized.RecordBatch) error {
 	active := activeIndices(b)
+	if l.span != nil {
+		l.rowsIn += int64(len(active))
+	}
 	out := make([]uint16, 0, len(active))
 	end := l.offset + l.limit
 	for _, idx := range active {
@@ -64,10 +94,16 @@ func (l *BatchLimit) Process(_ context.Context, b *vectorized.RecordBatch) error
 		l.seen++
 		if l.seen >= end {
 			b.Selection = out
+			if l.span != nil {
+				l.rowsOut += int64(len(out))
+			}
 			return vectorized.ErrLimitExhausted
 		}
 	}
 	b.Selection = out
+	if l.span != nil {
+		l.rowsOut += int64(len(out))
+	}
 	return nil
 }
 

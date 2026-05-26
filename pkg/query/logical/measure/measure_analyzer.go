@@ -20,6 +20,7 @@ package measure
 import (
 	"fmt"
 	"math"
+	"time"
 
 	commonv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/common/v1"
 	databasev1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/database/v1"
@@ -166,7 +167,7 @@ func Analyze(criteria *measurev1.QueryRequest, metadata []*commonv1.Metadata, ss
 // Deprecated: Row-based distributed-query analyzer; see Analyze for the
 // replacement plan. The vec measure subsystem (G8) will provide a
 // vec-distributed variant once standalone-vec parity is stable.
-func DistributedAnalyze(criteria *measurev1.QueryRequest, ss []logical.Schema) (logical.Plan, error) {
+func DistributedAnalyze(criteria *measurev1.QueryRequest, ss []logical.Schema, broadcastTimeout time.Duration) (logical.Plan, error) {
 	var groupByTags [][]*logical.Tag
 	if criteria.GetGroupBy() != nil {
 		groupByProjectionTags := criteria.GetGroupBy().GetTagProjection()
@@ -177,7 +178,7 @@ func DistributedAnalyze(criteria *measurev1.QueryRequest, ss []logical.Schema) (
 	}
 
 	pushDownAgg := criteria.GetAgg() != nil
-	plan := newUnresolvedDistributed(criteria, pushDownAgg)
+	plan := newUnresolvedDistributed(criteria, pushDownAgg, broadcastTimeout)
 
 	// parse limit and offset
 	limitParameter := criteria.GetLimit()

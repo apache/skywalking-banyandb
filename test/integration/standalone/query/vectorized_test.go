@@ -25,6 +25,7 @@ import (
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials/insecure"
 
+	"github.com/apache/skywalking-banyandb/api/data"
 	"github.com/apache/skywalking-banyandb/pkg/grpchelper"
 	vecplan "github.com/apache/skywalking-banyandb/pkg/query/vectorized/measure/plan"
 	"github.com/apache/skywalking-banyandb/pkg/test"
@@ -36,21 +37,29 @@ import (
 	casestopn "github.com/apache/skywalking-banyandb/test/cases/topn"
 )
 
-// Vectorized parity gate (G4 §"Integration Test Plan"; updated for G8e).
+// Vec independent verification on a standalone process.
 //
 // Boots a *separate* standalone with --measure-vectorized-enabled=true and
-// replays the same Measure / TopN test entries the row-path integration suite
-// already covers in suite_test.go. Each case asserts the row-path's expected
-// output, so every greenness here is a parity check: vectorized produced the
-// row-path's reference InternalDataPoints. The cluster is fresh and isolated
-// so neither side observes the other's state.
+// replays the same Measure / TopN test entries the row-path integration
+// suite already covers in suite_test.go. Each case asserts the row-path's
+// expected output, so every greenness here is an INDEPENDENT verification
+// that vec produces the same reference InternalDataPoints on its own
+// merits — not a row-vec same-process diff, but vec running against the
+// reference yaml the row path agreed with first. The cluster is fresh
+// and isolated so neither side observes the other's state.
+//
+// This is the standalone twin of test/integration/distributed/query/
+// vectorized_test.go. Together they satisfy the directive that integration
+// standalone and distributed verify row and vec independently.
 //
 // With G8d (top-level vec dispatch) wired, plain measure queries take the
 // new pkg/query/vectorized/measure/plan.Dispatch path instead of the legacy
-// leaf-substitution at localIndexScan.maybeVectorized. GroupBy/Agg/Top and
-// queries with hidden criteria tags continue through the row plan with leaf
-// substitution. The AfterAll assertion below uses vecplan.HandledCount to
-// confirm dispatch actually fires for at least one query — protecting
+// leaf-substitution at localIndexScan.maybeVectorized. Queries with hidden
+// criteria tags (G9d) also route through Dispatch: the hidden tags are
+// projected for storage filtering and stripped at egress so the wire bytes
+// match the row path. GroupBy/Agg/Top continue through the row plan with
+// leaf substitution. The AfterAll assertion below uses vecplan.HandledCount
+// to confirm dispatch actually fires for at least one query — protecting
 // against a silent regression where the eligibility gate excludes
 // everything.
 //
@@ -58,7 +67,7 @@ import (
 // the original cluster. The integration suite remains a release-candidate
 // gate; the unit-level differential tests in pkg/query/vectorized/measure
 // gate every PR.
-var _ = ginkgo.Describe("vectorized parity", ginkgo.Ordered, func() {
+var _ = ginkgo.Describe("vec independent verification (standalone)", ginkgo.Ordered, func() {
 	var (
 		vectorizedConn *grpc.ClientConn
 		stopFn         func()
@@ -71,12 +80,18 @@ var _ = ginkgo.Describe("vectorized parity", ginkgo.Ordered, func() {
 		// next BeforeAll (e.g. the top-level "TopN Tests" / "Scanning
 		// Measures" tables); leaving SharedContext pointing at our
 		// closed-down cluster makes those siblings time out.
-		savedMeasureCtx helpers.SharedContext
-		savedTopNCtx    helpers.SharedContext
+		savedMeasureCtx  helpers.SharedContext
+		savedTopNCtx     helpers.SharedContext
+		savedWireModeRaw bool
 	)
 	ginkgo.BeforeAll(func() {
 		savedMeasureCtx = casesmeasure.SharedContext
 		savedTopNCtx = casestopn.SharedContext
+		// data.MeasureWireModeRaw is a per-process atomic — the vec
+		// cluster's PreRun flips it to true and the original row-baseline
+		// cluster (still alive in the same test binary) would then start
+		// hitting the flag-on raw-frame guard for its own responses.
+		savedWireModeRaw = data.MeasureWireModeRaw()
 		startHandledCount = vecplan.HandledCount()
 		startFellThroughCount = vecplan.FellThroughCount()
 		path, diskCleanupFn, pathErr := test.NewSpace()
@@ -116,6 +131,10 @@ var _ = ginkgo.Describe("vectorized parity", ginkgo.Ordered, func() {
 		// #1 from SynchronizedBeforeSuite is still up at this point).
 		casesmeasure.SharedContext = savedMeasureCtx
 		casestopn.SharedContext = savedTopNCtx
+		// Restore the per-process wire-mode flag BEFORE tearing down so
+		// any later test that targets the row baseline cluster (same
+		// process) sees the original proto codec contract.
+		data.SetMeasureWireModeRaw(savedWireModeRaw)
 		// G8e observability: dispatch MUST fire for at least one of the
 		// replayed cases. If this assertion ever drops to zero, the
 		// vec subsystem is silently 0%-covered — either the dispatch
@@ -123,11 +142,11 @@ var _ = ginkgo.Describe("vectorized parity", ginkgo.Ordered, func() {
 		handledDelta := vecplan.HandledCount() - startHandledCount
 		fellThroughDelta := vecplan.FellThroughCount() - startFellThroughCount
 		ginkgo.GinkgoWriter.Printf(
-			"vec dispatch: handled=%d fell_through=%d (deltas across vectorized-parity table)\n",
+			"vec dispatch (standalone): handled=%d fell_through=%d (deltas across vec-standalone table)\n",
 			handledDelta, fellThroughDelta,
 		)
 		gomega.Expect(handledDelta).To(gomega.BeNumerically(">", int64(0)),
-			"vec dispatch did not fire for any case in the parity table; "+
+			"vec dispatch did not fire for any case in the vec-standalone table; "+
 				"either the eligibility gate is too tight or processor.go's tryVecDispatch regressed")
 		if vectorizedConn != nil {
 			gomega.Expect(vectorizedConn.Close()).To(gomega.Succeed())
@@ -137,6 +156,6 @@ var _ = ginkgo.Describe("vectorized parity", ginkgo.Ordered, func() {
 		}
 	})
 
-	casesmeasure.RegisterTable("Vectorized: scanning measures")
-	casestopn.RegisterTable("Vectorized: TopN")
+	casesmeasure.RegisterTable("Vec (standalone): scanning measures")
+	casestopn.RegisterTable("Vec (standalone): TopN")
 })

@@ -22,7 +22,9 @@ import (
 
 	modelv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/model/v1"
 	pbv1 "github.com/apache/skywalking-banyandb/pkg/pb/v1"
+	"github.com/apache/skywalking-banyandb/pkg/query"
 	"github.com/apache/skywalking-banyandb/pkg/query/model"
+	"github.com/apache/skywalking-banyandb/pkg/query/tracelabels"
 	"github.com/apache/skywalking-banyandb/pkg/query/vectorized"
 )
 
@@ -37,12 +39,15 @@ var (
 // produces RecordBatches. It uses a SeriesCursor to manage cross-series
 // boundaries and bulk-extracts metadata, tags, and fields per series fill.
 type BatchScan struct {
-	qr        model.MeasureQueryResult
-	schema    *vectorized.BatchSchema
-	pool      *vectorized.BatchPool
-	cursor    SeriesCursor
-	batchSize int
-	closed    bool
+	qr         model.MeasureQueryResult
+	schema     *vectorized.BatchSchema
+	pool       *vectorized.BatchPool
+	span       *query.Span
+	cursor     SeriesCursor
+	batchSize  int
+	rowsOut    int64
+	batchesOut int64
+	closed     bool
 }
 
 // NewBatchScan returns a BatchScan; call Init before NextBatch.
@@ -53,8 +58,12 @@ func NewBatchScan(qr model.MeasureQueryResult, schema *vectorized.BatchSchema,
 }
 
 // Init prepares the cursor and pulls the first non-empty MeasureResult.
-func (s *BatchScan) Init(_ context.Context) error {
+func (s *BatchScan) Init(ctx context.Context) error {
 	s.cursor.Init(s.qr)
+	tracer := query.GetTracer(ctx)
+	if tracer != nil {
+		s.span, _ = tracer.StartSpan(ctx, "scan")
+	}
 	return nil
 }
 
@@ -67,6 +76,14 @@ func (s *BatchScan) Close() error {
 		return nil
 	}
 	s.closed = true
+	if s.span != nil {
+		s.span.Tagf(tracelabels.TagRowsOut, "%d", s.rowsOut)
+		s.span.Tagf(tracelabels.TagBatchesOut, "%d", s.batchesOut)
+		if s.schema != nil {
+			s.span.Tagf(tracelabels.TagSchemaCols, "%d", len(s.schema.Columns))
+		}
+		s.span.Stop()
+	}
 	s.cursor.Close()
 	return nil
 }
@@ -106,6 +123,10 @@ func (s *BatchScan) NextBatch(_ context.Context) (*vectorized.RecordBatch, error
 			return nil, cursorErr
 		}
 		return nil, nil
+	}
+	if s.span != nil {
+		s.rowsOut += int64(b.ActiveLen())
+		s.batchesOut++
 	}
 	return b, nil
 }

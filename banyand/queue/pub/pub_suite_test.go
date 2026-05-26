@@ -33,7 +33,6 @@ import (
 	"google.golang.org/grpc/health"
 	"google.golang.org/grpc/health/grpc_health_v1"
 	"google.golang.org/grpc/status"
-	"google.golang.org/protobuf/proto"
 
 	"github.com/apache/skywalking-banyandb/api/data"
 	clusterv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/cluster/v1"
@@ -81,14 +80,21 @@ func (s *mockServer) Send(stream clusterv1.Service_SendServer) (err error) {
 			return
 		}
 
-		f := data.TopicResponseMap[topic]
+		codec := data.TopicResponseMap[topic]
 
 		var body []byte
 		var errMarshal error
-		if f == nil {
+		if codec == nil {
 			body = first.Body
 		} else {
-			body, errMarshal = proto.Marshal(f())
+			// Round-trip an empty body through the topic codec to produce the
+			// same byte-identical empty response the pre-G9f.0 mock emitted
+			// (proto.Marshal of a fresh empty typed message).
+			empty, errDecode := codec.Unmarshal(nil)
+			if errDecode != nil {
+				panic(errDecode)
+			}
+			body, errMarshal = codec.Marshal(empty)
 			if errMarshal != nil {
 				panic(errMarshal)
 			}

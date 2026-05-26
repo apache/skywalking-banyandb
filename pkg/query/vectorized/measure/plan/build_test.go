@@ -56,8 +56,8 @@ func buildScanInput(t *testing.T) (*vectorized.BatchSchema, *vectorized.RecordBa
 		{Role: vectorized.RoleVersion, Type: vectorized.ColumnTypeInt64},
 		{Role: vectorized.RoleSeriesID, Type: vectorized.ColumnTypeInt64},
 		{Role: vectorized.RoleShardID, Type: vectorized.ColumnTypeInt64},
-		{Role: vectorized.RoleTag, TagFamily: "default", Name: "svc", Type: vectorized.ColumnTypeString},
-		{Role: vectorized.RoleField, Name: "value", Type: vectorized.ColumnTypeInt64},
+		{Role: vectorized.RoleTag, TagFamily: "default", Name: tagSvc, Type: vectorized.ColumnTypeString},
+		{Role: vectorized.RoleField, Name: fieldValue, Type: vectorized.ColumnTypeInt64},
 	})
 	b := vectorized.NewRecordBatch(schema, 5)
 	pushRow := func(ts int64, svc string, v int64) {
@@ -135,8 +135,9 @@ func TestScanGroupByAggLimit_Build_AggregatesByKey(t *testing.T) {
 	scan := NewScan(schema, ScanParams{})
 	scan.Source = src
 	gba, err := NewGroupByAgg(scan,
-		&model.MeasureGroupBy{TagFamily: "default", TagNames: []string{"svc"}},
-		&model.MeasureAgg{FieldName: "value", Func: modelv1.AggregationFunction_AGGREGATION_FUNCTION_SUM},
+		&model.MeasureGroupBy{TagFamily: "default", TagNames: []string{tagSvc}},
+		&model.MeasureAgg{FieldName: fieldValue, Func: modelv1.AggregationFunction_AGGREGATION_FUNCTION_SUM},
+		measure.AggModeAll,
 	)
 	if err != nil {
 		t.Fatalf("NewGroupByAgg: %v", err)
@@ -205,8 +206,9 @@ func TestGroupByAgg_Schema_DropsTimestampAddsAggField(t *testing.T) {
 	scan := NewScan(schema, ScanParams{})
 	scan.Source = src
 	gba, err := NewGroupByAgg(scan,
-		&model.MeasureGroupBy{TagFamily: "default", TagNames: []string{"svc"}},
-		&model.MeasureAgg{FieldName: "value", Func: modelv1.AggregationFunction_AGGREGATION_FUNCTION_SUM},
+		&model.MeasureGroupBy{TagFamily: "default", TagNames: []string{tagSvc}},
+		&model.MeasureAgg{FieldName: fieldValue, Func: modelv1.AggregationFunction_AGGREGATION_FUNCTION_SUM},
+		measure.AggModeAll,
 	)
 	if err != nil {
 		t.Fatalf("NewGroupByAgg: %v", err)
@@ -222,10 +224,10 @@ func TestGroupByAgg_Schema_DropsTimestampAddsAggField(t *testing.T) {
 	if len(out.Columns) != 2 {
 		t.Fatalf("want 2 output columns (key + agg result), got %d", len(out.Columns))
 	}
-	if out.Columns[0].Name != "svc" {
+	if out.Columns[0].Name != tagSvc {
 		t.Fatalf("col 0 should be the svc key, got %s", out.Columns[0].Name)
 	}
-	if out.Columns[1].Name != "value" {
+	if out.Columns[1].Name != fieldValue {
 		t.Fatalf("col 1 should be 'value' (row-path parity), got %s", out.Columns[1].Name)
 	}
 }

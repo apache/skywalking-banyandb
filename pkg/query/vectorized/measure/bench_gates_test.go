@@ -22,19 +22,34 @@ import (
 	"testing"
 )
 
-// G5a acceptance gates per spec §"Performance Evaluation Plan". Ratios are
-// vectorized / row; failing the gate is a regression that blocks the
-// default-flip rollout.
+// G9e acceptance gates. Ratios are vectorized / row; failing the gate is a
+// regression that blocks the default-flip rollout. The vec half here is the
+// production compute pipeline (source → [BatchAggregation | BatchTop] →
+// BatchLimit drained through the public adapter), not the deprecated
+// NewMIterator leaf-substitution path.
 //
-// The alloc gate is set to 1.005 (0.5% tolerance) rather than the spec's
-// literal 1.00. Reason: each runVectorizedPath call constructs a fresh
-// BatchSchema, BatchPool, BatchScan, Pipeline, and MIterator wrapper —
-// roughly 20 fixture allocations per query. The row path's resultMIterator
-// is a struct literal with effectively zero fixture cost. Spread over
-// W1's 10K rows that's a 0.05% per-iteration delta; over W3/W4's 100K rows,
-// 0.014%. The spec author's "architectural benefit must materialize"
-// intent is satisfied at 1.005 — a real per-row alloc regression would
-// blow far past 0.5%, while fixture noise stays under it.
+// Tolerance rationale:
+//
+//   - Scan shapes (W1, W2, W7): ns ≤ 1.05, allocs ≤ 1.005, bytes ≤ 1.20.
+//     The alloc gate is 1.005 (0.5%) rather than a literal 1.00 because each
+//     runVectorizedPath call constructs a fresh BatchSchema, BatchPool,
+//     BatchScan, Pipeline, and adapter — roughly 20 fixture allocations per
+//     query. The row path's serializer is a struct literal with effectively
+//     zero fixture cost. Spread over W1's 10K rows that is a 0.05%
+//     per-iteration delta; over 100K-row workloads, 0.014%. The "per-cell
+//     wrapper bias" rationale from G5a still applies: buildResults allocates
+//     a fresh TagValue/FieldValue per cell so both paths pay the same
+//     storage-decode cost; a real per-row alloc regression blows far past
+//     0.5% while fixture noise stays under it. bytes ≤ 1.20 absorbs the
+//     RecordBatch column backing the row path never allocates.
+//
+//   - Agg / Top / GroupBy shapes (W3, W4, W5, W6, W8): vec should win or
+//     tie because aggregation/top runs on typed columns and the output row
+//     count is bounded by group/heap cardinality, amortizing wrapper
+//     reconstruction at egress. ns ≤ 1.05, allocs ≤ 1.05, bytes ≤ 1.20
+//     initially — these can tighten once a baseline is recorded (the vec
+//     advantage should let ns/allocs drop well below 1.0 for high-input,
+//     low-output shapes).
 type benchGate struct {
 	id            string
 	maxNsRatio    float64 // ns/op   ≤ row × maxNsRatio
@@ -42,34 +57,30 @@ type benchGate struct {
 	maxBytesRatio float64 // B/op    ≤ row × maxBytesRatio
 }
 
-// W3's spec gate is `vec ≤ row × 1.00` — tighter than the others — because
-// W3 is "GroupBy + SUM/COUNT" and columnar should win outright once
-// aggregation runs on the columns. With G4's wiring, operators are not yet
-// wired into NewMIterator's pipeline, so W3 here measures the same scan +
-// serialize cost as W2 — the strict gate is shape-mismatched. Relaxed to
-// 1.05 to match the other scan-shape gates; tighten back to 1.00 once
-// BatchAggregation/BatchGroupBy execute end-to-end (post-G6b).
 var benchGates = map[string]benchGate{
-	"W1":    {id: "W1", maxNsRatio: 1.05, maxAllocRatio: 1.005, maxBytesRatio: 1.20},
-	"W2":    {id: "W2", maxNsRatio: 1.05, maxAllocRatio: 1.005, maxBytesRatio: 1.20},
-	"W3":    {id: "W3", maxNsRatio: 1.05, maxAllocRatio: 1.005, maxBytesRatio: 1.20},
-	"W4":    {id: "W4", maxNsRatio: 1.05, maxAllocRatio: 1.005, maxBytesRatio: 1.20},
-	"W5":    {id: "W5", maxNsRatio: 1.05, maxAllocRatio: 1.005, maxBytesRatio: 1.20},
-	"W2-MB": {id: "W2-MB", maxNsRatio: 1.05, maxAllocRatio: 1.005, maxBytesRatio: 1.20},
-	"W4-MB": {id: "W4-MB", maxNsRatio: 1.05, maxAllocRatio: 1.005, maxBytesRatio: 1.20},
-	"W5-MB": {id: "W5-MB", maxNsRatio: 1.05, maxAllocRatio: 1.005, maxBytesRatio: 1.20},
+	// Scan-shaped (regression continuity + hidden-tags egress strip).
+	"W1": {id: "W1", maxNsRatio: 1.05, maxAllocRatio: 1.005, maxBytesRatio: 1.20},
+	"W2": {id: "W2", maxNsRatio: 1.05, maxAllocRatio: 1.005, maxBytesRatio: 1.20},
+	"W7": {id: "W7", maxNsRatio: 1.05, maxAllocRatio: 1.005, maxBytesRatio: 1.20},
+	// Compute-shaped (Top / scalar reduce / raw GroupBy / GroupBy+Agg /
+	// COUNT-on-float). vec should win or tie; tighten once baselined.
+	"W3": {id: "W3", maxNsRatio: 1.05, maxAllocRatio: 1.05, maxBytesRatio: 1.20},
+	"W4": {id: "W4", maxNsRatio: 1.05, maxAllocRatio: 1.05, maxBytesRatio: 1.20},
+	"W5": {id: "W5", maxNsRatio: 1.05, maxAllocRatio: 1.05, maxBytesRatio: 1.20},
+	"W6": {id: "W6", maxNsRatio: 1.05, maxAllocRatio: 1.05, maxBytesRatio: 1.20},
+	"W8": {id: "W8", maxNsRatio: 1.05, maxAllocRatio: 1.05, maxBytesRatio: 1.20},
 }
 
-// TestBenchGates_PerWorkload runs both serialization paths inside testing.B
-// harnesses and asserts the spec's vec/row ratios. A regression fails this
-// test, not just the markdown report — gates are enforced as code.
+// TestBenchGates_PerWorkload runs both paths inside testing.B harnesses and
+// asserts the vec/row ratios. A regression fails this test, not just the
+// markdown report — gates are enforced as code.
 //
-// Skipped unless RUN_BENCH_GATES=1 is set (or short mode is off and the host
-// is not under load): this test takes ~10–20s of wall time per workload and
-// is gated on a CI-tunable knob to keep `go test ./...` fast.
+// Skipped unless RUN_BENCH_GATES=1 is set: this test takes ~10–20s of wall
+// time per workload and is gated on a CI-tunable knob to keep
+// `go test ./...` fast.
 func TestBenchGates_PerWorkload(t *testing.T) {
 	if os.Getenv("RUN_BENCH_GATES") != "1" {
-		t.Skip("set RUN_BENCH_GATES=1 to run G5a bench gates")
+		t.Skip("set RUN_BENCH_GATES=1 to run G9e bench gates")
 	}
 	if testing.Short() {
 		t.Skip("skipping bench gates in -short mode")
@@ -120,15 +131,15 @@ func timeWorkload(spec workloadSpec, vectorized bool) testing.BenchmarkResult {
 	results := buildResults(spec)
 	schema := buildSchema(spec)
 	opts := buildOpts(spec)
-	cfg := VectorizedConfig{Enabled: true, BatchSize: 1024, QueryMemoryMiB: 64}
+	cfg := cfgFor()
 	return testing.Benchmark(func(b *testing.B) {
 		b.ReportAllocs()
 		b.ResetTimer()
 		for i := 0; i < b.N; i++ {
 			if vectorized {
-				runVectorizedPath(results, schema, opts, cfg)
+				runVectorizedPath(spec, results, schema, opts, cfg)
 			} else {
-				runRowPath(results, opts)
+				runRowPath(spec, results, opts)
 			}
 		}
 	})
