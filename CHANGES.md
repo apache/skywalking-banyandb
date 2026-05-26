@@ -101,6 +101,7 @@ Release Notes.
 - Upgrade Go and npm dependencies including etcd to v3.6.10, OpenTelemetry to v1.43.0, AWS SDK, and Google Cloud libraries.
 - Regenerate expired TLS test certificate with 100-year validity.
 - Set Ginkgo `--repeat` to 0 in the flaky-test workflow so the hourly run completes within the 50-minute timeout.
+- Refactor the dump tool into a reusable `banyand/dump` parser library.
 
 ## 0.10.0
 

@@ -18,264 +18,120 @@
 package main
 
 import (
-	"fmt"
+	"encoding/csv"
 	"path/filepath"
 	"strconv"
+	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
-	"github.com/apache/skywalking-banyandb/api/common"
-	"github.com/apache/skywalking-banyandb/banyand/internal/storage"
+	"github.com/apache/skywalking-banyandb/banyand/dump"
+	dumptrace "github.com/apache/skywalking-banyandb/banyand/dump/trace"
 	"github.com/apache/skywalking-banyandb/banyand/trace"
-	"github.com/apache/skywalking-banyandb/pkg/compress/zstd"
-	"github.com/apache/skywalking-banyandb/pkg/convert"
-	"github.com/apache/skywalking-banyandb/pkg/encoding"
 	"github.com/apache/skywalking-banyandb/pkg/fs"
-	"github.com/apache/skywalking-banyandb/pkg/index"
-	pbv1 "github.com/apache/skywalking-banyandb/pkg/pb/v1"
 	"github.com/apache/skywalking-banyandb/pkg/test"
 )
 
-// Test that the dump tool can parse the latest trace part format.
-// This test creates a real part using the trace module's flush operation,
-// then verifies the dump tool can correctly parse it.
-func TestDumpTracePartFormat(t *testing.T) {
+func newTraceFixture(t *testing.T) (shardPath, segmentPath string, total int) {
 	tmpPath, defFn := test.Space(require.New(t))
-	defer defFn()
+	t.Cleanup(defFn)
 
 	fileSystem := fs.NewLocalFileSystem()
+	partPath, _, cleanup := trace.BuildPartForDump(tmpPath, fileSystem, 12345, trace.StandardDumpRows())
+	t.Cleanup(cleanup)
 
-	// Use trace package to create a real part using actual flush operation
-	partPath, cleanup := trace.CreateTestPartForDump(tmpPath, fileSystem)
-	defer cleanup()
+	shardPath = filepath.Dir(partPath)
+	segmentPath = tmpPath
 
-	// Extract part ID from path
-	partName := filepath.Base(partPath)
-	partID, err := strconv.ParseUint(partName, 16, 64)
-	require.NoError(t, err, "part directory should have valid hex name")
-
-	// Parse the part using dump tool functions
-	p, err := openFilePart(partID, filepath.Dir(partPath), fileSystem)
-	require.NoError(t, err, "should be able to open part created by trace module")
-	defer closePart(p)
-
-	// Verify part metadata
-	assert.Equal(t, partID, p.partMetadata.ID)
-	t.Logf("Part metadata: TotalCount=%d, BlocksCount=%d", p.partMetadata.TotalCount, p.partMetadata.BlocksCount)
-	assert.Greater(t, p.partMetadata.TotalCount, uint64(0), "should have spans")
-	assert.Greater(t, p.partMetadata.BlocksCount, uint64(0), "should have at least 1 block")
-	assert.Greater(t, p.partMetadata.MinTimestamp, int64(0), "should have valid min timestamp")
-	assert.Greater(t, p.partMetadata.MaxTimestamp, int64(0), "should have valid max timestamp")
-	assert.GreaterOrEqual(t, p.partMetadata.MaxTimestamp, p.partMetadata.MinTimestamp)
-
-	// Verify tag types exist
-	assert.Contains(t, p.tagType, "service.name")
-	assert.Contains(t, p.tagType, "http.status")
-	assert.Contains(t, p.tagType, "timestamp")
-	assert.Contains(t, p.tagType, "tags")
-	assert.Contains(t, p.tagType, "duration")
-
-	// Verify tag types are correct
-	assert.Equal(t, pbv1.ValueTypeStr, p.tagType["service.name"])
-	assert.Equal(t, pbv1.ValueTypeInt64, p.tagType["http.status"])
-	assert.Equal(t, pbv1.ValueTypeTimestamp, p.tagType["timestamp"])
-	assert.Equal(t, pbv1.ValueTypeStrArr, p.tagType["tags"])
-	assert.Equal(t, pbv1.ValueTypeInt64, p.tagType["duration"])
-
-	// Verify primary block metadata
-	assert.Greater(t, len(p.primaryBlockMetadata), 0, "should have at least 1 primary block")
-	t.Logf("Found %d primary blocks (metadata says BlocksCount=%d)", len(p.primaryBlockMetadata), p.partMetadata.BlocksCount)
-	for i, pbm := range p.primaryBlockMetadata {
-		t.Logf("Block %d: TraceID=%s, Offset=%d, Size=%d", i, pbm.traceID, pbm.offset, pbm.size)
-	}
-
-	// The number of primary blocks might not match BlocksCount due to trace block grouping logic.
-	// But we should be able to read all spans.
-	assert.LessOrEqual(t, uint64(len(p.primaryBlockMetadata)), p.partMetadata.BlocksCount,
-		"primary blocks should not exceed BlocksCount")
-
-	// Verify we can decode all blocks
-	decoder := &encoding.BytesBlockDecoder{}
-	totalSpans := 0
-
-	for blockIdx, pbm := range p.primaryBlockMetadata {
-		// Read primary data block
-		primaryData := make([]byte, pbm.size)
-		fs.MustReadData(p.primary, int64(pbm.offset), primaryData)
-
-		// Decompress
-		decompressed, err := zstd.Decompress(nil, primaryData)
-		require.NoError(t, err, "should decompress primary data for primary block %d", blockIdx)
-
-		// Parse ALL block metadata entries from this primary block
-		blockMetadatas, err := parseAllBlockMetadata(decompressed, p.tagType)
-		require.NoError(t, err, "should parse all block metadata from primary block %d", blockIdx)
-		t.Logf("Primary block %d contains %d trace blocks", blockIdx, len(blockMetadatas))
-
-		// Process each trace block
-		for bmIdx, bm := range blockMetadatas {
-			// Read spans
-			spans, spanIDs, err := readSpans(decoder, bm.spans, int(bm.count), p.spans)
-			require.NoError(t, err, "should read spans for trace %s", bm.traceID)
-			assert.Len(t, spans, int(bm.count), "should have correct number of spans")
-			assert.Len(t, spanIDs, int(bm.count), "should have correct number of spanIDs")
-
-			totalSpans += len(spans)
-			t.Logf("  Trace block %d (TraceID=%s): read %d spans", bmIdx, bm.traceID, len(spans))
-
-			// Read all tags
-			for tagName, tagBlock := range bm.tags {
-				tagValues, err := readTagValues(decoder, tagBlock, tagName, int(bm.count),
-					p.tagMetadata[tagName], p.tags[tagName], p.tagType[tagName])
-				require.NoError(t, err, "should read tag %s for trace %s", tagName, bm.traceID)
-				assert.Len(t, tagValues, int(bm.count), "tag %s should have value for each span", tagName)
-
-				// Verify specific tag values
-				for i, tagValue := range tagValues {
-					if tagValue == nil {
-						continue
-					}
-					switch tagName {
-					case "service.name":
-						assert.NotEmpty(t, string(tagValue), "service.name should not be empty")
-					case "http.status":
-						status := convert.BytesToInt64(tagValue)
-						assert.Contains(t, []int64{200, 404, 500}, status, "http.status should be valid")
-					case "timestamp":
-						ts := convert.BytesToInt64(tagValue)
-						assert.Greater(t, ts, int64(0), "timestamp should be positive")
-						assert.GreaterOrEqual(t, ts, p.partMetadata.MinTimestamp, "timestamp should be >= min")
-						assert.LessOrEqual(t, ts, p.partMetadata.MaxTimestamp, "timestamp should be <= max")
-					case "duration":
-						duration := convert.BytesToInt64(tagValue)
-						assert.Greater(t, duration, int64(0), "duration should be positive")
-					case "tags":
-						// Verify string array can be decoded
-						if len(tagValue) > 0 {
-							values := decodeStringArray(tagValue)
-							if len(values) > 0 {
-								t.Logf("    Span %d tags array: %v", i, values)
-							}
-						}
-					}
-				}
-			}
-		}
-	}
-
-	// Note: One primary block can contain multiple trace blocks (blockMetadata).
-	// The dump tool shows primary blocks, not logical blocks.
-	// BlocksCount = number of unique trace writes (blockMetadata)
-	// len(primaryBlockMetadata) = number of compressed primary blocks
-	// We verify we can read all the data correctly.
-	assert.Equal(t, int(p.partMetadata.TotalCount), totalSpans, "should have parsed all spans from metadata")
-	t.Logf("Successfully parsed part with %d spans across %d primary blocks (metadata BlocksCount=%d)",
-		totalSpans, len(p.primaryBlockMetadata), p.partMetadata.BlocksCount)
-}
-
-func decodeStringArray(data []byte) []string {
-	var values []string
-	remaining := data
-	for len(remaining) > 0 {
-		var decoded []byte
-		var err error
-		decoded, remaining, err = unmarshalVarArray(nil, remaining)
-		if err != nil {
-			break
-		}
-		if len(decoded) > 0 {
-			values = append(values, string(decoded))
-		}
-	}
-	return values
-}
-
-// TestDumpTracePartWithSeriesMetadata tests that the dump tool can parse smeta file.
-// This test creates a part with series metadata and verifies the dump tool can correctly parse it.
-func TestDumpTracePartWithSeriesMetadata(t *testing.T) {
-	tmpPath, defFn := test.Space(require.New(t))
-	defer defFn()
-
-	fileSystem := fs.NewLocalFileSystem()
-
-	// Create a part with series metadata
-	partPath, cleanup := createTestTracePartWithSeriesMetadata(tmpPath, fileSystem)
-	defer cleanup()
-
-	// Extract part ID from path
-	partName := filepath.Base(partPath)
-	partID, err := strconv.ParseUint(partName, 16, 64)
-	require.NoError(t, err, "part directory should have valid hex name")
-
-	// Parse the part using dump tool functions
-	p, err := openFilePart(partID, filepath.Dir(partPath), fileSystem)
-	require.NoError(t, err, "should be able to open part with series metadata")
-	defer closePart(p)
-
-	// Verify series metadata reader is available
-	assert.NotNil(t, p.seriesMetadata, "series metadata reader should be available")
-
-	// Create a dump context to test parsing
-	opts := traceDumpOptions{
-		shardPath:   filepath.Dir(partPath),
-		segmentPath: tmpPath, // Not used for this test
-		verbose:     false,
-		csvOutput:   false,
-	}
-	ctx, err := newTraceDumpContext(opts)
+	partIDs, err := dump.DiscoverPartIDs(shardPath)
 	require.NoError(t, err)
-	if ctx != nil {
-		defer ctx.close()
+	require.NotEmpty(t, partIDs)
+	for _, id := range partIDs {
+		reader, openErr := dumptrace.OpenPart(id, shardPath, fileSystem)
+		require.NoError(t, openErr)
+		total += int(reader.Metadata().TotalCount)
+		require.NoError(t, reader.Close())
 	}
-
-	// Test parsing series metadata
-	err = ctx.parseAndDisplaySeriesMetadata(partID, p)
-	require.NoError(t, err, "should be able to parse series metadata")
-
-	// Verify EntityValues are stored in partSeriesMap
-	require.NotNil(t, ctx.partSeriesMap, "partSeriesMap should be initialized")
-	partMap, exists := ctx.partSeriesMap[partID]
-	require.True(t, exists, "partSeriesMap should contain entry for partID")
-	require.NotNil(t, partMap, "partMap should not be nil")
-
-	// Verify EntityValues are correctly stored
-	// Calculate expected SeriesIDs from EntityValues
-	expectedSeriesID1 := common.SeriesID(convert.Hash([]byte("service.name=test-service")))
-	expectedSeriesID2 := common.SeriesID(convert.Hash([]byte("service.name=another-service")))
-
-	assert.Contains(t, partMap, expectedSeriesID1, "partMap should contain first series")
-	assert.Contains(t, partMap, expectedSeriesID2, "partMap should contain second series")
-	assert.Equal(t, "service.name=test-service", partMap[expectedSeriesID1], "EntityValues should match")
-	assert.Equal(t, "service.name=another-service", partMap[expectedSeriesID2], "EntityValues should match")
+	require.Greater(t, total, 0)
+	return shardPath, segmentPath, total
 }
 
-// createTestTracePartWithSeriesMetadata creates a test trace part with series metadata.
-func createTestTracePartWithSeriesMetadata(tmpPath string, fileSystem fs.FileSystem) (string, func()) {
-	// Use trace package to create a part
-	partPath, cleanup := trace.CreateTestPartForDump(tmpPath, fileSystem)
+// TestDumpTraceShardText drives the full CLI text flow.
+func TestDumpTraceShardText(t *testing.T) {
+	shardPath, segmentPath, total := newTraceFixture(t)
 
-	// Create sample series metadata file
-	seriesMetadataPath := filepath.Join(partPath, "smeta.bin")
+	out := captureMeasureStdout(t, func() {
+		require.NoError(t, dumpTraceShard(traceDumpOptions{
+			shardPath:   shardPath,
+			segmentPath: segmentPath,
+		}))
+	})
 
-	// Create sample documents
-	docs := index.Documents{
-		{
-			DocID:        1,
-			EntityValues: []byte("service.name=test-service"),
-		},
-		{
-			DocID:        2,
-			EntityValues: []byte("service.name=another-service"),
-		},
+	for i := 1; i <= total; i++ {
+		assert.Contains(t, out, "Row "+strconv.Itoa(i)+":", "row %d should be printed", i)
 	}
+	assert.Contains(t, out, "Total rows: "+strconv.Itoa(total))
+	assert.Contains(t, out, "TraceID: test-trace-1")
+	assert.Contains(t, out, "SpanID: span-1")
+	assert.Contains(t, out, "span-data-1-with-content")
+}
 
-	seriesMetadataBytes, err := docs.Marshal()
-	if err != nil {
-		panic(fmt.Sprintf("failed to marshal series metadata documents: %v", err))
-	}
-	fs.MustFlush(fileSystem, seriesMetadataBytes, seriesMetadataPath, storage.FilePerm)
+// TestDumpTraceShardCSV drives the full CLI CSV flow.
+func TestDumpTraceShardCSV(t *testing.T) {
+	shardPath, segmentPath, total := newTraceFixture(t)
 
-	return partPath, cleanup
+	out := captureMeasureStdout(t, func() {
+		require.NoError(t, dumpTraceShard(traceDumpOptions{
+			shardPath:   shardPath,
+			segmentPath: segmentPath,
+			csvOutput:   true,
+		}))
+	})
+
+	records, err := csv.NewReader(strings.NewReader(out)).ReadAll()
+	require.NoError(t, err, "CLI must emit valid CSV")
+	require.GreaterOrEqual(t, len(records), 1)
+	assert.Equal(t, []string{"PartID", "TraceID", "SpanID", "SeriesID", "Series", "SpanDataSize"}, records[0][:6],
+		"fixed CSV header prefix must be preserved")
+	assert.Equal(t, total, len(records)-1, "one CSV data record per span")
+}
+
+// TestDumpTraceShardCriteria verifies --criteria filtering on a single-tag-per-span part.
+func TestDumpTraceShardCriteria(t *testing.T) {
+	tmpPath, defFn := test.Space(require.New(t))
+	defer defFn()
+
+	fileSystem := fs.NewLocalFileSystem()
+	partPath, _, cleanup := trace.BuildPartForDump(tmpPath, fileSystem, 0x3039, trace.EntityDumpRows([]string{"service=a", "service=b", "service=c"}))
+	defer cleanup()
+	shardPath := filepath.Dir(partPath)
+
+	criteria := `{"condition":{"name":"meta.name","op":"BINARY_OP_EQ","value":{"str":{"value":"service=a"}}}}`
+	out := captureMeasureStdout(t, func() {
+		require.NoError(t, dumpTraceShard(traceDumpOptions{
+			shardPath:    shardPath,
+			segmentPath:  tmpPath,
+			criteriaJSON: criteria,
+		}))
+	})
+
+	assert.Contains(t, out, "Total rows: 1", "only the one matching span should pass the filter")
+	assert.Contains(t, out, "service=a")
+	assert.NotContains(t, out, "service=b")
+}
+
+// TestDumpTraceShardNoParts verifies graceful handling of an empty shard dir.
+func TestDumpTraceShardNoParts(t *testing.T) {
+	tmpPath, defFn := test.Space(require.New(t))
+	defer defFn()
+
+	out := captureMeasureStdout(t, func() {
+		require.NoError(t, dumpTraceShard(traceDumpOptions{
+			shardPath:   tmpPath,
+			segmentPath: tmpPath,
+		}))
+	})
+	assert.Contains(t, out, "No parts found in shard directory")
 }
