@@ -104,6 +104,17 @@ func (p *PartReader) decodeBlock(decoder *encoding.BytesBlockDecoder, bm *blockM
 		entityValues = p.seriesMap[bm.seriesID]
 	}
 
+	// Indexed (non-column) tags live only in the series index; resolve them once
+	// per block (one series) and share across the block's rows.
+	var indexedTags map[uint32][][]byte
+	if p.indexResolver != nil {
+		var resolveErr error
+		indexedTags, resolveErr = p.indexResolver.Resolve(bm.seriesID)
+		if resolveErr != nil {
+			return nil, fmt.Errorf("cannot resolve indexed tags for series %d: %w", bm.seriesID, resolveErr)
+		}
+	}
+
 	rows := make([]Row, 0, len(timestamps))
 	for i := range timestamps {
 		tags := make(map[string][]byte, len(tagsByDataPoint))
@@ -131,6 +142,7 @@ func (p *PartReader) decodeBlock(decoder *encoding.BytesBlockDecoder, bm *blockM
 			Fields:       fields,
 			TagTypes:     tagTypesForRow,
 			FieldTypes:   fieldTypesForRow,
+			IndexedTags:  indexedTags,
 		})
 	}
 	return rows, nil

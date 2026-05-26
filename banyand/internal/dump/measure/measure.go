@@ -104,6 +104,7 @@ type PartReader struct {
 	tagFamilyMetadata    map[string]fs.Reader
 	tagFamilies          map[string]fs.Reader
 	seriesMap            map[common.SeriesID][]byte // part-level smeta.bin, nil if absent
+	indexResolver        *dump.IndexResolver        // optional; resolves indexed (non-column) tags
 	path                 string
 	primaryBlockMetadata []primaryBlockMetadata
 	partMetadata         PartMetadata
@@ -117,6 +118,7 @@ type Row struct {
 	Fields       map[string][]byte
 	TagTypes     map[string]pbv1.ValueType
 	FieldTypes   map[string]pbv1.ValueType
+	IndexedTags  map[uint32][][]byte
 	EntityValues []byte
 	Timestamp    int64
 	Version      int64
@@ -239,6 +241,11 @@ func (p *PartReader) PartID() uint64 { return p.partMetadata.ID }
 // SeriesMap returns the part-level SeriesID -> EntityValues map parsed from
 // smeta.bin, or nil if smeta.bin is absent.
 func (p *PartReader) SeriesMap() map[common.SeriesID][]byte { return p.seriesMap }
+
+// SetIndexResolver attaches an index resolver so the iterator fills each Row's
+// IndexedTags with the series' indexed (non-column) tag values. Optional; the
+// resolver is owned by the caller (the PartReader does not close it).
+func (p *PartReader) SetIndexResolver(r *dump.IndexResolver) { p.indexResolver = r }
 
 // Close releases all file handles. Safe to call multiple times.
 func (p *PartReader) Close() error {

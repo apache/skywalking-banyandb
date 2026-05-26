@@ -1007,3 +1007,47 @@ func updateData(tester *require.Assertions, s index.SeriesStore) {
 	tester.NoError(s.UpdateSeriesBatch(b1))
 	tester.NoError(s.UpdateSeriesBatch(b2))
 }
+
+func TestStore_StoredFields(t *testing.T) {
+	tester := require.New(t)
+	path, fn := setUp(tester)
+	s, err := NewStore(StoreOpts{
+		Path:   path,
+		Logger: logger.GetLogger("test"),
+	})
+	tester.NoError(err)
+	defer func() {
+		tester.NoError(s.Close())
+		fn()
+	}()
+	insertData(tester, s)
+	ctx := context.TODO()
+
+	// No projection: every stored field of test2 is returned, internal
+	// bookkeeping fields (_id, _timestamp, ...) excluded.
+	all, err := s.StoredFields(ctx, []byte("test2"))
+	tester.NoError(err)
+	tester.Equal([][]byte{convert.Int64ToBytes(100)}, all[fieldKeyDuration.Marshal()])
+	tester.Equal([][]byte{[]byte("svc2")}, all[fieldKeyServiceName.Marshal()])
+	tester.Equal([][]byte{convert.Int64ToBytes(100)}, all[fieldKeyStartTime.Marshal()])
+	tester.NotContains(all, docIDField)
+	tester.NotContains(all, timestampField)
+
+	// Projection: only the requested field is returned.
+	only, err := s.StoredFields(ctx, []byte("test2"), fieldKeyDuration)
+	tester.NoError(err)
+	tester.Len(only, 1)
+	tester.Equal([][]byte{convert.Int64ToBytes(100)}, only[fieldKeyDuration.Marshal()])
+
+	// A two-field projection returns exactly those two.
+	two, err := s.StoredFields(ctx, []byte("test2"), fieldKeyDuration, fieldKeyServiceName)
+	tester.NoError(err)
+	tester.Len(two, 2)
+	tester.Contains(two, fieldKeyDuration.Marshal())
+	tester.Contains(two, fieldKeyServiceName.Marshal())
+
+	// A missing document yields nil.
+	none, err := s.StoredFields(ctx, []byte("does-not-exist"))
+	tester.NoError(err)
+	tester.Nil(none)
+}

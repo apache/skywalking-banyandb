@@ -137,6 +137,7 @@ type measureDumpContext struct {
 	tagFilter        logical.TagFilter
 	fileSystem       fs.FileSystem
 	seriesMap        map[common.SeriesID]string
+	indexResolver    *dump.IndexResolver
 	writer           *csv.Writer
 	opts             measureDumpOptions
 	partIDs          []uint64
@@ -170,6 +171,16 @@ func newMeasureDumpContext(opts measureDumpOptions) (*measureDumpContext, error)
 		ctx.seriesMap = nil
 	} else {
 		fmt.Fprintf(os.Stderr, "Loaded %d series from segment\n", len(ctx.seriesMap))
+	}
+
+	if ctx.seriesMap != nil {
+		// The offline CLI has no schema, so it resolves indexed tags by
+		// IndexRuleID (ruleToTag is nil).
+		ctx.indexResolver, err = dump.NewIndexResolver(opts.segmentPath, ctx.seriesMap, dump.DefaultIndexCacheSize, nil)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "Warning: Failed to open index resolver (indexed tags unavailable): %v\n", err)
+			ctx.indexResolver = nil
+		}
 	}
 
 	if opts.criteriaJSON != "" {
@@ -237,7 +248,7 @@ func (ctx *measureDumpContext) initOutput() error {
 	}
 
 	ctx.writer = csv.NewWriter(os.Stdout)
-	header := []string{"PartID", "Timestamp", "Version", "SeriesID", "Series"}
+	header := []string{"PartID", "Timestamp", "Version", "SeriesID", "Series", "IndexedTags"}
 	header = append(header, ctx.fieldColumns...)
 	header = append(header, ctx.tagColumns...)
 	if err := ctx.writer.Write(header); err != nil {
@@ -250,6 +261,9 @@ func (ctx *measureDumpContext) close() {
 	if ctx.writer != nil {
 		ctx.writer.Flush()
 	}
+	if ctx.indexResolver != nil {
+		_ = ctx.indexResolver.Close()
+	}
 }
 
 func (ctx *measureDumpContext) processParts() error {
@@ -260,6 +274,9 @@ func (ctx *measureDumpContext) processParts() error {
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "Warning: failed to open part %016x: %v\n", partID, err)
 			continue
+		}
+		if ctx.indexResolver != nil {
+			reader.SetIndexResolver(ctx.indexResolver)
 		}
 
 		partRowCount := 0
@@ -372,6 +389,44 @@ func measureSeriesText(row dumpmeasure.Row, seriesMap map[common.SeriesID]string
 	return ""
 }
 
+func sortedRuleIDs(m map[uint32][][]byte) []uint32 {
+	ids := make([]uint32, 0, len(m))
+	for id := range m {
+		ids = append(ids, id)
+	}
+	sort.Slice(ids, func(i, j int) bool { return ids[i] < ids[j] })
+	return ids
+}
+
+// formatIndexedTagValues renders one IndexRuleID's values (several for an array
+// tag). The index does not store the value type, so values are shown as text
+// when printable and as a byte size otherwise.
+func formatIndexedTagValues(values [][]byte) string {
+	parts := make([]string, 0, len(values))
+	for _, v := range values {
+		if isPrintable(v) {
+			parts = append(parts, string(v))
+		} else {
+			parts = append(parts, fmt.Sprintf("(binary:%d bytes)", len(v)))
+		}
+	}
+	return strings.Join(parts, ",")
+}
+
+// formatIndexedTagsCSV serializes all indexed tags into one CSV cell as
+// "ruleID=v1,v2;ruleID=...", sorted by IndexRuleID.
+func formatIndexedTagsCSV(m map[uint32][][]byte) string {
+	if len(m) == 0 {
+		return ""
+	}
+	ids := sortedRuleIDs(m)
+	parts := make([]string, 0, len(ids))
+	for _, id := range ids {
+		parts = append(parts, fmt.Sprintf("%d=%s", id, formatIndexedTagValues(m[id])))
+	}
+	return strings.Join(parts, ";")
+}
+
 func writeMeasureRowAsText(
 	partID uint64,
 	row dumpmeasure.Row,
@@ -441,6 +496,13 @@ func writeMeasureRowAsText(
 			}
 		}
 	}
+
+	if len(row.IndexedTags) > 0 {
+		fmt.Printf("  IndexedTags (by IndexRuleID):\n")
+		for _, ruleID := range sortedRuleIDs(row.IndexedTags) {
+			fmt.Printf("    %d: %s\n", ruleID, formatIndexedTagValues(row.IndexedTags[ruleID]))
+		}
+	}
 	fmt.Printf("\n")
 }
 
@@ -458,6 +520,7 @@ func writeMeasureRowAsCSV(
 		fmt.Sprintf("%d", row.Version),
 		fmt.Sprintf("%d", row.SeriesID),
 		measureSeriesText(row, seriesMap),
+		formatIndexedTagsCSV(row.IndexedTags),
 	}
 
 	// Add field values
