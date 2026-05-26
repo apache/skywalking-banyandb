@@ -101,7 +101,6 @@ func (r *IndexResolver) Resolve(seriesID common.SeriesID, entityValues []byte) (
 		return v.(map[uint32][][]byte), nil
 	}
 	if len(entityValues) == 0 {
-		r.cache.Add(seriesID, map[uint32][][]byte(nil))
 		return nil, nil
 	}
 	raw, err := r.store.StoredFields(context.Background(), entityValues)
@@ -183,17 +182,20 @@ func (r *IndexResolver) Close() error {
 	return r.store.Close()
 }
 
-// parseIndexedFields keys a document's stored fields by IndexRuleID. StoredFields
-// already excludes the store's internal bookkeeping fields, so every remaining
-// field name is an index-rule field name (FieldKey.Marshal() = the uint32
-// IndexRuleID). A rule id maps to one value for a scalar tag, several for an
-// array tag.
+// parseIndexedFields keys a document's stored fields by IndexRuleID. An
+// index-rule field name is a marshaled uint32 IndexRuleID (exactly 4 bytes);
+// any other-width field is skipped, so a non-rule name (e.g. an index-mode
+// tag name) can neither panic BytesToUint32 nor map to a garbage rule id. A
+// rule id maps to one value for a scalar tag, several for an array tag.
 func parseIndexedFields(raw map[string][][]byte) map[uint32][][]byte {
 	if len(raw) == 0 {
 		return nil
 	}
 	result := make(map[uint32][][]byte, len(raw))
 	for name, values := range raw {
+		if len(name) != 4 {
+			continue
+		}
 		result[convert.BytesToUint32([]byte(name))] = values
 	}
 	return result

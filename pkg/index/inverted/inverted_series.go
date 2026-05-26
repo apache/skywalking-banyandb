@@ -262,14 +262,13 @@ func (s *store) StoredFields(ctx context.Context, docID []byte, projection ...in
 	}
 	fields := make(map[string][][]byte)
 	if visitErr := match.VisitStoredFields(func(field string, value []byte) bool {
+		switch field {
+		case docIDField, seriesIDField, timestampField, versionField:
+			return true // always skip internal bookkeeping fields, even if projected
+		}
 		if want != nil {
 			if _, ok := want[field]; !ok {
 				return true // not in the requested projection
-			}
-		} else {
-			switch field {
-			case docIDField, seriesIDField, timestampField, versionField:
-				return true // skip internal bookkeeping fields
 			}
 		}
 		fields[field] = append(fields[field], bytes.Clone(value))

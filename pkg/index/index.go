@@ -880,10 +880,10 @@ type SeriesStore interface {
 	SeriesIterator(context.Context) (FieldIterator[Series], error)
 	SeriesSort(ctx context.Context, indexQuery Query, orderBy *OrderBy,
 		preLoadSize int, fieldKeys []FieldKey) (iter FieldIterator[*DocumentResult], err error)
-	// StoredFields returns the stored fields (excluding internal bookkeeping
-	// fields) of the document with the given docID, keyed by field name; a field
-	// may map to several values. When projection is non-empty, only the listed
-	// fields are returned. Returns nil when no document matches.
+	// StoredFields returns the document's stored fields keyed by name (a field
+	// may have several values), always excluding internal bookkeeping fields
+	// (_id, _timestamp, ...). A non-empty projection limits the result to the
+	// listed fields. Returns nil when no document matches.
 	StoredFields(ctx context.Context, docID []byte, projection ...FieldKey) (map[string][][]byte, error)
 }
 

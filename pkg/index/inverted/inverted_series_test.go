@@ -1050,4 +1050,26 @@ func TestStore_StoredFields(t *testing.T) {
 	none, err := s.StoredFields(ctx, []byte("does-not-exist"))
 	tester.NoError(err)
 	tester.Nil(none)
+
+	// An array indexed tag stores several values under one field name; they all
+	// come back (the result is [][]byte per field, not a single value).
+	arrKey := index.FieldKey{IndexRuleID: 4099}
+	tester.NoError(s.InsertSeriesBatch(index.Batch{Documents: []index.Document{{
+		EntityValues: []byte("arr1"),
+		Fields: []index.Field{
+			field(arrKey, []byte("a"), true),
+			field(arrKey, []byte("b"), true),
+			field(fieldKeyServiceName, []byte("svcArr"), true),
+		},
+	}}}))
+	arr, err := s.StoredFields(ctx, []byte("arr1"))
+	tester.NoError(err)
+	tester.ElementsMatch([][]byte{[]byte("a"), []byte("b")}, arr[arrKey.Marshal()])
+	tester.Equal([][]byte{[]byte("svcArr")}, arr[fieldKeyServiceName.Marshal()])
+
+	// Internal bookkeeping fields are excluded even when explicitly projected.
+	internalProj, err := s.StoredFields(ctx, []byte("test2"), index.FieldKey{TagName: docIDField}, fieldKeyDuration)
+	tester.NoError(err)
+	tester.NotContains(internalProj, docIDField)
+	tester.Equal([][]byte{convert.Int64ToBytes(100)}, internalProj[fieldKeyDuration.Marshal()])
 }
