@@ -226,6 +226,59 @@ func (s *store) Search(ctx context.Context,
 	return parseResult(dmi, projection, limit)
 }
 
+// StoredFields implements index.SeriesStore.
+func (s *store) StoredFields(ctx context.Context, docID []byte, projection ...index.FieldKey) (map[string][][]byte, error) {
+	reader, err := s.writer.Reader()
+	if err != nil {
+		return nil, err
+	}
+	defer func() {
+		if r := recover(); r != nil {
+			_ = reader.Close()
+			panic(r)
+		}
+		_ = reader.Close()
+	}()
+
+	q := bluge.NewTermQuery(convert.BytesToString(docID))
+	q.SetField(docIDField)
+	dmi, err := reader.Search(ctx, bluge.NewAllMatches(q))
+	if err != nil {
+		return nil, err
+	}
+	match, err := dmi.Next()
+	if err != nil {
+		return nil, err
+	}
+	if match == nil {
+		return nil, nil
+	}
+	var want map[string]struct{}
+	if len(projection) > 0 {
+		want = make(map[string]struct{}, len(projection))
+		for i := range projection {
+			want[projection[i].Marshal()] = struct{}{}
+		}
+	}
+	fields := make(map[string][][]byte)
+	if visitErr := match.VisitStoredFields(func(field string, value []byte) bool {
+		switch field {
+		case docIDField, seriesIDField, timestampField, versionField:
+			return true // always skip internal bookkeeping fields, even if projected
+		}
+		if want != nil {
+			if _, ok := want[field]; !ok {
+				return true // not in the requested projection
+			}
+		}
+		fields[field] = append(fields[field], bytes.Clone(value))
+		return true
+	}); visitErr != nil {
+		return nil, visitErr
+	}
+	return fields, nil
+}
+
 func parseResult(dmi search.DocumentMatchIterator, loadedFields []index.FieldKey, limit int) ([]index.SeriesDocument, error) {
 	result := make([]index.SeriesDocument, 0, 10)
 	next, err := dmi.Next()

@@ -20,6 +20,7 @@ package measure
 import (
 	"fmt"
 
+	"github.com/apache/skywalking-banyandb/api/common"
 	"github.com/apache/skywalking-banyandb/banyand/internal/dump"
 	"github.com/apache/skywalking-banyandb/pkg/compress/zstd"
 	"github.com/apache/skywalking-banyandb/pkg/encoding"
@@ -45,6 +46,21 @@ func (p *PartReader) Iterator() *dump.Iterator[Row] {
 			return dump.NewErrIterator[Row](fmt.Errorf("cannot parse block metadata: %w", err))
 		}
 		blocks = append(blocks, bms...)
+	}
+	// When the part has no part-level series metadata (the standalone write path
+	// writes none), recover EntityValues for just this part's series by scanning
+	// the series index scoped to the part — keeping peak memory bounded by the
+	// part rather than loading a segment-wide map.
+	if p.seriesMap == nil && p.indexResolver != nil {
+		seriesIDs := make(map[common.SeriesID]struct{})
+		for _, bm := range blocks {
+			seriesIDs[bm.seriesID] = struct{}{}
+		}
+		seriesMap, err := p.indexResolver.PartSeriesMap(seriesIDs)
+		if err != nil {
+			return dump.NewErrIterator[Row](fmt.Errorf("cannot build part series map: %w", err))
+		}
+		p.seriesMap = seriesMap
 	}
 	var decoder encoding.BytesBlockDecoder
 	return dump.NewIterator(len(blocks), func(blockIdx int) ([]Row, error) {
@@ -104,6 +120,17 @@ func (p *PartReader) decodeBlock(decoder *encoding.BytesBlockDecoder, bm *blockM
 		entityValues = p.seriesMap[bm.seriesID]
 	}
 
+	// Indexed (non-column) tags live only in the series index; resolve them once
+	// per block (one series) and share across the block's rows.
+	var indexedTags map[uint32][][]byte
+	if p.indexResolver != nil {
+		var resolveErr error
+		indexedTags, resolveErr = p.indexResolver.Resolve(bm.seriesID, entityValues)
+		if resolveErr != nil {
+			return nil, fmt.Errorf("cannot resolve indexed tags for series %d: %w", bm.seriesID, resolveErr)
+		}
+	}
+
 	rows := make([]Row, 0, len(timestamps))
 	for i := range timestamps {
 		tags := make(map[string][]byte, len(tagsByDataPoint))
@@ -131,6 +158,7 @@ func (p *PartReader) decodeBlock(decoder *encoding.BytesBlockDecoder, bm *blockM
 			Fields:       fields,
 			TagTypes:     tagTypesForRow,
 			FieldTypes:   fieldTypesForRow,
+			IndexedTags:  indexedTags,
 		})
 	}
 	return rows, nil

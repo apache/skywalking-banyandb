@@ -57,6 +57,7 @@ Release Notes.
   - Fix the `modRevision` contract on no-op Update RPCs (`MeasureRegistryService.Update`, etc.). Previously `updateResource` detected unchanged content via `CheckerMap` and short-circuited without writing to the property store, but the caller had already fabricated `modRevision = time.Now().UnixNano()` and returned it. The returned revision never appeared in the property watch stream, so `AwaitRevisionApplied(R)` would hang. `updateResource` now returns `(int64, error)` — the existing property's `modRevision` for no-op updates, the new revision for real updates — so callers always return a revision the barrier can observe.
   - Add end-to-end observability for liaison internal queue pipelines with per-topic metrics for queue_sub and queue_pub, along with Grafana panels and troubleshooting docs.
   - Introduce measure migration tool.
+- Support displaying a measure's indexed tags in the dump tool, resolved per part so peak memory is bounded by the part rather than a segment-wide series map.
 
 ### Bug Fixes
 

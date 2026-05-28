@@ -27,7 +27,6 @@ import (
 	"github.com/spf13/cobra"
 	"google.golang.org/protobuf/encoding/protojson"
 
-	"github.com/apache/skywalking-banyandb/api/common"
 	databasev1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/database/v1"
 	modelv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/model/v1"
 	"github.com/apache/skywalking-banyandb/banyand/internal/dump"
@@ -136,7 +135,7 @@ func dumpMeasureShard(opts measureDumpOptions) error {
 type measureDumpContext struct {
 	tagFilter        logical.TagFilter
 	fileSystem       fs.FileSystem
-	seriesMap        map[common.SeriesID]string
+	indexResolver    *dump.IndexResolver
 	writer           *csv.Writer
 	opts             measureDumpOptions
 	partIDs          []uint64
@@ -164,12 +163,13 @@ func newMeasureDumpContext(opts measureDumpOptions) (*measureDumpContext, error)
 	ctx.partIDs = partIDs
 	fmt.Fprintf(os.Stderr, "Found %d parts in shard\n", len(partIDs))
 
-	ctx.seriesMap, err = dump.LoadSegmentSeriesMap(opts.segmentPath)
+	// The offline CLI has no schema, so it resolves indexed tags by IndexRuleID
+	// (ruleToTag is nil). EntityValues come from each part on demand, so no
+	// segment-wide series map is loaded.
+	ctx.indexResolver, err = dump.NewIndexResolver(opts.segmentPath, dump.DefaultIndexCacheSize, nil)
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "Warning: Failed to load series information: %v\n", err)
-		ctx.seriesMap = nil
-	} else {
-		fmt.Fprintf(os.Stderr, "Loaded %d series from segment\n", len(ctx.seriesMap))
+		fmt.Fprintf(os.Stderr, "Warning: Failed to open index resolver (indexed tags unavailable): %v\n", err)
+		ctx.indexResolver = nil
 	}
 
 	if opts.criteriaJSON != "" {
@@ -237,7 +237,7 @@ func (ctx *measureDumpContext) initOutput() error {
 	}
 
 	ctx.writer = csv.NewWriter(os.Stdout)
-	header := []string{"PartID", "Timestamp", "Version", "SeriesID", "Series"}
+	header := []string{"PartID", "Timestamp", "Version", "SeriesID", "Series", "IndexedTags"}
 	header = append(header, ctx.fieldColumns...)
 	header = append(header, ctx.tagColumns...)
 	if err := ctx.writer.Write(header); err != nil {
@@ -250,6 +250,9 @@ func (ctx *measureDumpContext) close() {
 	if ctx.writer != nil {
 		ctx.writer.Flush()
 	}
+	if ctx.indexResolver != nil {
+		_ = ctx.indexResolver.Close()
+	}
 }
 
 func (ctx *measureDumpContext) processParts() error {
@@ -260,6 +263,9 @@ func (ctx *measureDumpContext) processParts() error {
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "Warning: failed to open part %016x: %v\n", partID, err)
 			continue
+		}
+		if ctx.indexResolver != nil {
+			reader.SetIndexResolver(ctx.indexResolver)
 		}
 
 		partRowCount := 0
@@ -317,11 +323,11 @@ func (ctx *measureDumpContext) shouldSkip(tags map[string][]byte) bool {
 
 func (ctx *measureDumpContext) writeRow(partID uint64, row dumpmeasure.Row) error {
 	if ctx.opts.csvOutput {
-		if err := writeMeasureRowAsCSV(ctx.writer, partID, row, ctx.fieldColumns, ctx.tagColumns, ctx.seriesMap); err != nil {
+		if err := writeMeasureRowAsCSV(ctx.writer, partID, row, ctx.fieldColumns, ctx.tagColumns); err != nil {
 			return err
 		}
 	} else {
-		writeMeasureRowAsText(partID, row, ctx.rowNum+1, ctx.projectionTags, ctx.projectionFields, ctx.seriesMap)
+		writeMeasureRowAsText(partID, row, ctx.rowNum+1, ctx.projectionTags, ctx.projectionFields)
 	}
 	ctx.rowNum++
 	return nil
@@ -360,16 +366,46 @@ func parseMeasureProjectionTags(projectionStr string) []string {
 	return result
 }
 
-func measureSeriesText(row dumpmeasure.Row, seriesMap map[common.SeriesID]string) string {
-	if len(row.EntityValues) > 0 {
-		return string(row.EntityValues)
+func measureSeriesText(row dumpmeasure.Row) string {
+	return string(row.EntityValues)
+}
+
+func sortedRuleIDs(m map[uint32][][]byte) []uint32 {
+	ids := make([]uint32, 0, len(m))
+	for id := range m {
+		ids = append(ids, id)
 	}
-	if seriesMap != nil {
-		if text, ok := seriesMap[row.SeriesID]; ok {
-			return text
+	sort.Slice(ids, func(i, j int) bool { return ids[i] < ids[j] })
+	return ids
+}
+
+// formatIndexedTagValues renders one IndexRuleID's values (several for an array
+// tag). The index does not store the value type, so values are shown as text
+// when printable and as a byte size otherwise.
+func formatIndexedTagValues(values [][]byte) string {
+	parts := make([]string, 0, len(values))
+	for _, v := range values {
+		if isPrintable(v) {
+			parts = append(parts, string(v))
+		} else {
+			parts = append(parts, fmt.Sprintf("(binary:%d bytes)", len(v)))
 		}
 	}
-	return ""
+	return strings.Join(parts, ",")
+}
+
+// formatIndexedTagsCSV serializes all indexed tags into one CSV cell as
+// "ruleID=v1,v2;ruleID=...", sorted by IndexRuleID.
+func formatIndexedTagsCSV(m map[uint32][][]byte) string {
+	if len(m) == 0 {
+		return ""
+	}
+	ids := sortedRuleIDs(m)
+	parts := make([]string, 0, len(ids))
+	for _, id := range ids {
+		parts = append(parts, fmt.Sprintf("%d=%s", id, formatIndexedTagValues(m[id])))
+	}
+	return strings.Join(parts, ";")
 }
 
 func writeMeasureRowAsText(
@@ -378,7 +414,6 @@ func writeMeasureRowAsText(
 	rowNum int,
 	projectionTags []string,
 	projectionFields []string,
-	seriesMap map[common.SeriesID]string,
 ) {
 	fmt.Printf("Row %d:\n", rowNum)
 	fmt.Printf("  PartID: %d (0x%016x)\n", partID, partID)
@@ -386,7 +421,7 @@ func writeMeasureRowAsText(
 	fmt.Printf("  Version: %d\n", row.Version)
 	fmt.Printf("  SeriesID: %d\n", row.SeriesID)
 
-	if seriesText := measureSeriesText(row, seriesMap); seriesText != "" {
+	if seriesText := measureSeriesText(row); seriesText != "" {
 		fmt.Printf("  Series: %s\n", seriesText)
 	}
 
@@ -441,6 +476,13 @@ func writeMeasureRowAsText(
 			}
 		}
 	}
+
+	if len(row.IndexedTags) > 0 {
+		fmt.Printf("  IndexedTags (by IndexRuleID):\n")
+		for _, ruleID := range sortedRuleIDs(row.IndexedTags) {
+			fmt.Printf("    %d: %s\n", ruleID, formatIndexedTagValues(row.IndexedTags[ruleID]))
+		}
+	}
 	fmt.Printf("\n")
 }
 
@@ -450,14 +492,14 @@ func writeMeasureRowAsCSV(
 	row dumpmeasure.Row,
 	fieldColumns []string,
 	tagColumns []string,
-	seriesMap map[common.SeriesID]string,
 ) error {
 	csvRow := []string{
 		fmt.Sprintf("%d", partID),
 		formatTimestamp(row.Timestamp),
 		fmt.Sprintf("%d", row.Version),
 		fmt.Sprintf("%d", row.SeriesID),
-		measureSeriesText(row, seriesMap),
+		measureSeriesText(row),
+		formatIndexedTagsCSV(row.IndexedTags),
 	}
 
 	// Add field values
