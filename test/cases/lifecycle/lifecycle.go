@@ -21,7 +21,9 @@ package lifecycle_test
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
+	"io"
 	"io/fs"
 	"os"
 	"path/filepath"
@@ -522,26 +524,20 @@ func runLifecycleMigration(progressFile, reportDir string) {
 	gomega.Expect(lifecycleCmd.Execute()).To(gomega.Succeed())
 }
 
-// drainWriteAcks closes a client-streaming write and fails the spec if any
-// server-side ack reports a non-success status, surfacing per-row rejections
-// that a bare CloseSend would swallow.
+// drainWriteAcks closes a client-streaming write and fails the spec on any
+// non-success ack or non-EOF stream error, surfacing per-row rejections and
+// server-side stream failures that a bare CloseSend would swallow.
 func drainWriteAcks[R interface{ GetStatus() string }](recv func() (R, error), closeSend func() error) {
-	ackErrs := make(chan error, 8)
-	go func() {
-		defer close(ackErrs)
-		for {
-			resp, recvErr := recv()
-			if recvErr != nil {
-				return
-			}
-			if status := resp.GetStatus(); status != "" && status != "STATUS_SUCCEED" {
-				ackErrs <- fmt.Errorf("write rejected: %s", status)
-			}
-		}
-	}()
 	gomega.Expect(closeSend()).To(gomega.Succeed())
-	for ackErr := range ackErrs {
-		gomega.Expect(ackErr).NotTo(gomega.HaveOccurred(), "write ack must succeed")
+	for {
+		resp, recvErr := recv()
+		if errors.Is(recvErr, io.EOF) {
+			return
+		}
+		gomega.Expect(recvErr).NotTo(gomega.HaveOccurred(), "write stream recv must not fail")
+		if status := resp.GetStatus(); status != "" {
+			gomega.Expect(status).To(gomega.Equal("STATUS_SUCCEED"), "write ack must succeed")
+		}
 	}
 }
 

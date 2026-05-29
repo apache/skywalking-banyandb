@@ -25,13 +25,13 @@ import (
 )
 
 // calculateTargetSegments returns every target bucket overlapping the half-open
-// source range [start, end). Every migration caller passes the source segment's
-// own boundaries (segment/shard time range), where end is exclusive, so the
-// strict current.Before(end) guard naturally excludes the empty next bucket
-// when the source ends exactly on a target boundary. Using time.Local keeps the
-// sender's bucket math on the same per-timezone grid as the receiver, which
-// sees ctx.MinTimestamp as time.Local too.
+// source range [start, end); the Before(end) guard drops the empty trailing
+// bucket when the source ends on a boundary. start/end are normalized to
+// time.Local so the bucket math stays on the receiver's grid regardless of the
+// caller's time zone.
 func calculateTargetSegments(start, end time.Time, targetInterval storage.IntervalRule) []time.Time {
+	start = start.In(time.Local)
+	end = end.In(time.Local)
 	var targetSegments []time.Time
 	for current := targetInterval.Standard(start); current.Before(end); current = targetInterval.NextTime(current) {
 		targetSegments = append(targetSegments, current)
