@@ -23,6 +23,7 @@ import (
 	"github.com/apache/skywalking-banyandb/api/common"
 	"github.com/apache/skywalking-banyandb/banyand/internal/storage"
 	"github.com/apache/skywalking-banyandb/banyand/measure"
+	"github.com/apache/skywalking-banyandb/banyand/metadata"
 	"github.com/apache/skywalking-banyandb/banyand/stream"
 	"github.com/apache/skywalking-banyandb/banyand/trace"
 	"github.com/apache/skywalking-banyandb/pkg/fs"
@@ -32,7 +33,7 @@ import (
 
 // migrateStreamWithFileBasedAndProgress performs file-based stream migration with progress tracking.
 func migrateStreamWithFileBasedAndProgress(tsdbRootPath string, timeRange timestamp.TimeRange, group *GroupConfig,
-	logger *logger.Logger, progress *Progress, chunkSize int,
+	logger *logger.Logger, progress *Progress, chunkSize int, md metadata.Repo,
 ) ([]string, error) {
 	// Convert segment Interval to IntervalRule using storage.MustToIntervalRule
 	segmentIntervalRule := storage.MustToIntervalRule(group.SegmentInterval)
@@ -55,7 +56,7 @@ func migrateStreamWithFileBasedAndProgress(tsdbRootPath string, timeRange timest
 	// Create file-based migration visitor with progress tracking and target stage interval
 	visitor := newStreamMigrationVisitor(
 		group.Group, group.TargetShardNum, group.TargetReplicas, group.NodeSelector, group.QueueClient,
-		logger, progress, chunkSize, targetStageInterval,
+		logger, progress, chunkSize, targetStageInterval, md,
 	)
 	defer visitor.Close()
 
@@ -121,7 +122,7 @@ func (pcv *partCountVisitor) VisitElementIndex(_ *timestamp.TimeRange, _ common.
 
 // migrateMeasureWithFileBasedAndProgress performs file-based measure migration with progress tracking.
 func migrateMeasureWithFileBasedAndProgress(tsdbRootPath string, timeRange timestamp.TimeRange, group *GroupConfig,
-	logger *logger.Logger, progress *Progress, chunkSize int,
+	logger *logger.Logger, progress *Progress, chunkSize int, md metadata.Repo,
 ) ([]string, error) {
 	// Convert segment interval to IntervalRule using storage.MustToIntervalRule
 	segmentIntervalRule := storage.MustToIntervalRule(group.SegmentInterval)
@@ -143,7 +144,7 @@ func migrateMeasureWithFileBasedAndProgress(tsdbRootPath string, timeRange times
 	// Create file-based migration visitor with progress tracking and target stage interval
 	visitor := newMeasureMigrationVisitor(
 		group.Group, group.TargetShardNum, group.TargetReplicas, group.NodeSelector, group.QueueClient,
-		logger, progress, chunkSize, targetStageInterval,
+		logger, progress, chunkSize, targetStageInterval, md,
 	)
 	defer visitor.Close()
 
@@ -201,7 +202,7 @@ func (pcv *measurePartCountVisitor) VisitPart(_ *timestamp.TimeRange, _ common.S
 
 // migrateTraceWithFileBasedAndProgress performs file-based trace migration with progress tracking.
 func migrateTraceWithFileBasedAndProgress(tsdbRootPath string, timeRange timestamp.TimeRange, group *GroupConfig,
-	logger *logger.Logger, progress *Progress, chunkSize int,
+	logger *logger.Logger, progress *Progress, chunkSize int, md metadata.Repo,
 ) ([]string, error) {
 	// Convert segment interval to IntervalRule using storage.MustToIntervalRule
 	segmentIntervalRule := storage.MustToIntervalRule(group.SegmentInterval)
@@ -223,7 +224,7 @@ func migrateTraceWithFileBasedAndProgress(tsdbRootPath string, timeRange timesta
 	// Create file-based migration visitor with progress tracking and target stage interval
 	visitor := newTraceMigrationVisitor(
 		group.Group, group.TargetShardNum, group.TargetReplicas, group.NodeSelector, group.QueueClient,
-		logger, progress, chunkSize, targetStageInterval,
+		logger, progress, chunkSize, targetStageInterval, md,
 	)
 	defer visitor.Close()
 

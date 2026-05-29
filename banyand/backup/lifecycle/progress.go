@@ -74,6 +74,25 @@ type Progress struct {
 	SourceCompletedTraceShards        map[string]map[string]map[common.ShardID]bool            `json:"source_completed_trace_shards"`
 	SourceCompletedTraceSeries        map[string]map[string]map[common.ShardID]bool            `json:"source_completed_trace_series"`
 
+	// Sync-mode breakdown per group: how many parts (measure/stream) or shards
+	// (trace) were migrated via chunk-sync vs row-replay, plus the real number
+	// of rows replayed. Accumulated across resume cycles, fed into the report's
+	// summary.<catalog>.sync_breakdown.
+	StreamChunkSyncParts  map[string]uint64 `json:"stream_chunk_sync_parts"`
+	StreamRowReplayParts  map[string]uint64 `json:"stream_row_replay_parts"`
+	StreamRowReplayRows   map[string]uint64 `json:"stream_row_replay_rows"`
+	MeasureChunkSyncParts map[string]uint64 `json:"measure_chunk_sync_parts"`
+	MeasureRowReplayParts map[string]uint64 `json:"measure_row_replay_parts"`
+	MeasureRowReplayRows  map[string]uint64 `json:"measure_row_replay_rows"`
+	TraceChunkSyncShards  map[string]uint64 `json:"trace_chunk_sync_shards"`
+	TraceRowReplayParts   map[string]uint64 `json:"trace_row_replay_parts"`
+	TraceRowReplayRows    map[string]uint64 `json:"trace_row_replay_rows"`
+
+	// Per-node errors reported by row replayers during flush/close, keyed by
+	// group then node id. A group is single-catalog, so group names do not
+	// collide across catalogs.
+	RowReplayNodeErrors map[string]map[string]string `json:"row_replay_node_errors"`
+
 	progressFilePath   string     `json:"-"`
 	SnapshotStreamDir  string     `json:"snapshot_stream_dir"`
 	SnapshotMeasureDir string     `json:"snapshot_measure_dir"`
@@ -148,6 +167,17 @@ func NewProgress(path string, l *logger.Logger) *Progress {
 		SourceCompletedMeasureSeries:      make(map[string]map[string]map[common.ShardID]bool),
 		SourceCompletedTraceShards:        make(map[string]map[string]map[common.ShardID]bool),
 		SourceCompletedTraceSeries:        make(map[string]map[string]map[common.ShardID]bool),
+
+		StreamChunkSyncParts:  make(map[string]uint64),
+		StreamRowReplayParts:  make(map[string]uint64),
+		StreamRowReplayRows:   make(map[string]uint64),
+		MeasureChunkSyncParts: make(map[string]uint64),
+		MeasureRowReplayParts: make(map[string]uint64),
+		MeasureRowReplayRows:  make(map[string]uint64),
+		TraceChunkSyncShards:  make(map[string]uint64),
+		TraceRowReplayParts:   make(map[string]uint64),
+		TraceRowReplayRows:    make(map[string]uint64),
+		RowReplayNodeErrors:   make(map[string]map[string]string),
 
 		progressFilePath: path,
 		logger:           l,
@@ -652,6 +682,132 @@ func (p *Progress) ClearErrors() {
 	p.MeasureSeriesErrors = make(map[string]map[string]map[common.ShardID]string)
 	p.TraceShardErrors = make(map[string]map[string]map[common.ShardID]string)
 	p.TraceSeriesErrors = make(map[string]map[string]map[common.ShardID]string)
+}
+
+// AddMeasureChunkSyncPart records one measure part migrated via chunk-sync.
+func (p *Progress) AddMeasureChunkSyncPart(group string) {
+	defer p.saveProgress()
+	p.mu.Lock()
+	defer p.mu.Unlock()
+
+	if p.MeasureChunkSyncParts == nil {
+		p.MeasureChunkSyncParts = make(map[string]uint64)
+	}
+
+	p.MeasureChunkSyncParts[group]++
+}
+
+// AddMeasureRowReplay records one measure part migrated via row-replay and the
+// number of rows it republished.
+func (p *Progress) AddMeasureRowReplay(group string, rows int) {
+	defer p.saveProgress()
+	p.mu.Lock()
+	defer p.mu.Unlock()
+
+	if p.MeasureRowReplayParts == nil {
+		p.MeasureRowReplayParts = make(map[string]uint64)
+	}
+	if p.MeasureRowReplayRows == nil {
+		p.MeasureRowReplayRows = make(map[string]uint64)
+	}
+
+	p.MeasureRowReplayParts[group]++
+	if rows > 0 {
+		p.MeasureRowReplayRows[group] += uint64(rows)
+	}
+}
+
+// AddStreamChunkSyncPart records one stream part migrated via chunk-sync.
+func (p *Progress) AddStreamChunkSyncPart(group string) {
+	defer p.saveProgress()
+	p.mu.Lock()
+	defer p.mu.Unlock()
+
+	if p.StreamChunkSyncParts == nil {
+		p.StreamChunkSyncParts = make(map[string]uint64)
+	}
+
+	p.StreamChunkSyncParts[group]++
+}
+
+// AddStreamRowReplay records one stream part migrated via row-replay and the
+// number of rows it republished.
+func (p *Progress) AddStreamRowReplay(group string, rows int) {
+	defer p.saveProgress()
+	p.mu.Lock()
+	defer p.mu.Unlock()
+
+	if p.StreamRowReplayParts == nil {
+		p.StreamRowReplayParts = make(map[string]uint64)
+	}
+	if p.StreamRowReplayRows == nil {
+		p.StreamRowReplayRows = make(map[string]uint64)
+	}
+
+	p.StreamRowReplayParts[group]++
+	if rows > 0 {
+		p.StreamRowReplayRows[group] += uint64(rows)
+	}
+}
+
+// AddTraceChunkSyncShard records one trace shard migrated via chunk-sync.
+func (p *Progress) AddTraceChunkSyncShard(group string) {
+	defer p.saveProgress()
+	p.mu.Lock()
+	defer p.mu.Unlock()
+
+	if p.TraceChunkSyncShards == nil {
+		p.TraceChunkSyncShards = make(map[string]uint64)
+	}
+
+	p.TraceChunkSyncShards[group]++
+}
+
+// AddTraceRowReplay records the parts and rows of a trace shard migrated via
+// row-replay (one shard may contain several parts).
+func (p *Progress) AddTraceRowReplay(group string, parts, rows int) {
+	defer p.saveProgress()
+	p.mu.Lock()
+	defer p.mu.Unlock()
+
+	if p.TraceRowReplayParts == nil {
+		p.TraceRowReplayParts = make(map[string]uint64)
+	}
+	if p.TraceRowReplayRows == nil {
+		p.TraceRowReplayRows = make(map[string]uint64)
+	}
+
+	if parts > 0 {
+		p.TraceRowReplayParts[group] += uint64(parts)
+	}
+	if rows > 0 {
+		p.TraceRowReplayRows[group] += uint64(rows)
+	}
+}
+
+// RecordRowReplayNodeErrors persists the per-node errors a row replayer
+// reported while flushing/closing its publisher. Keyed by group then node id.
+func (p *Progress) RecordRowReplayNodeErrors(group string, cee map[string]*common.Error) {
+	if len(cee) == 0 {
+		return
+	}
+	defer p.saveProgress()
+	p.mu.Lock()
+	defer p.mu.Unlock()
+
+	if p.RowReplayNodeErrors == nil {
+		p.RowReplayNodeErrors = make(map[string]map[string]string)
+	}
+	if p.RowReplayNodeErrors[group] == nil {
+		p.RowReplayNodeErrors[group] = make(map[string]string)
+	}
+
+	for nodeID, ce := range cee {
+		if ce == nil {
+			continue
+		}
+		p.RowReplayNodeErrors[group][nodeID] = ce.Error()
+	}
 }
 
 // MarkMeasureSeriesCompleted marks a specific series segment of a measure as completed.

@@ -89,11 +89,25 @@ func TestCalculateTargetSegments(t *testing.T) {
 				time.Date(2024, 1, 1, 18, 0, 0, 0, time.Local), // Hour 18-24
 			},
 		},
+		{
+			// Exclusive-end regression: a source whose end lands exactly on the
+			// next target boundary must map to ONE bucket, not the empty next one.
+			name:      "source end exactly on a 1-day target boundary stays single",
+			partMinTS: time.Date(2026, 5, 18, 0, 0, 0, 0, time.Local).UnixNano(),
+			partMaxTS: time.Date(2026, 5, 19, 0, 0, 0, 0, time.Local).UnixNano(),
+			targetInterval: storage.IntervalRule{
+				Unit: storage.DAY,
+				Num:  1,
+			},
+			expected: []time.Time{
+				time.Date(2026, 5, 18, 0, 0, 0, 0, time.Local),
+			},
+		},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			result := calculateTargetSegments(tt.partMinTS, tt.partMaxTS, tt.targetInterval)
+			result := calculateTargetSegments(time.Unix(0, tt.partMinTS), time.Unix(0, tt.partMaxTS), tt.targetInterval)
 			assert.Equal(t, tt.expected, result)
 		})
 	}

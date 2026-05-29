@@ -170,9 +170,16 @@ func processElements(schemaRepo *schemaRepo, elements *elements, writeEvent *str
 
 	elements.timestamps = append(elements.timestamps, ts)
 	var eID uint64
-	if req.Element.GetElementId() != "" {
+	switch {
+	case writeEvent.RawElementId != 0:
+		// Lifecycle row-replay forwards the original storage-internal eID (already
+		// hashed by the source-side liaison). Use it directly so a logical element
+		// migrated through chunk-sync and row-replay paths keeps a single eID and
+		// the query-layer dedup (seenElementIDs) stays consistent.
+		eID = writeEvent.RawElementId
+	case req.Element.GetElementId() != "":
 		eID = convert.HashStr(metadata.Group + "|" + metadata.Name + "|" + req.Element.GetElementId())
-	} else {
+	default:
 		eID = schemaRepo.idGen.NextID()
 	}
 	elements.elementIDs = append(elements.elementIDs, eID)

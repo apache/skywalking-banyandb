@@ -72,4 +72,10 @@ message InternalWriteRequest {
   uint32 shard_id = 1;
   repeated model.v1.TagValue entity_values = 2;
   WriteRequest request = 3;
+  // raw_element_id carries the original storage-internal eID (an already-hashed uint64)
+  // forwarded by lifecycle row-replay. When non-zero, the receiver uses it directly
+  // and skips the HashStr step on element.element_id, so a logical element migrated
+  // through both chunk-sync and row-replay paths keeps the same target-side eID and
+  // query-layer dedup stays consistent. SDK and topN write paths leave this unset (0).
+  uint64 raw_element_id = 4;
 }

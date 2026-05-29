@@ -93,7 +93,7 @@ func TestBuildMigrationReport_PartialFailure(t *testing.T) {
 	svc := &lifecycleService{l: logger.GetLogger("test")}
 	report := svc.buildMigrationReport(p)
 
-	require.Equal(t, "2.0", report["report_version"])
+	require.Equal(t, "2.1", report["report_version"])
 	summary, ok := report["summary"].(map[string]interface{})
 	require.True(t, ok)
 	errs, ok := report["errors"].(map[string]interface{})
@@ -187,6 +187,64 @@ func TestBuildMigrationReport_EmptyCycleHonestTotalGroups(t *testing.T) {
 	assert.Equal(t, 0, ms["total_groups"])
 	assert.Equal(t, 0, ms["completed_groups"])
 	assert.InDelta(t, 0.0, ms["completion_rate"], 1e-9)
+}
+
+// TestBuildMigrationReport_SyncBreakdown pins the sync_breakdown blocks and the
+// row_replay_node_errors block introduced in report_version 2.1. It seeds both
+// chunk-sync and row-replay activity across measure/stream/trace groups and
+// asserts the per-group and _total accounting plus the per-node replay error.
+func TestBuildMigrationReport_SyncBreakdown(t *testing.T) {
+	p := NewProgress("", logger.GetLogger("test"))
+
+	// measure: 2 chunk-sync parts; 1 row-replay part carrying 5 rows.
+	p.AddMeasureChunkSyncPart("sw_metrics")
+	p.AddMeasureChunkSyncPart("sw_metrics")
+	p.AddMeasureRowReplay("sw_metrics", 5)
+	// stream: 1 chunk-sync part; 2 row-replay parts carrying 3 + 4 rows.
+	p.AddStreamChunkSyncPart("sw_stream")
+	p.AddStreamRowReplay("sw_stream", 3)
+	p.AddStreamRowReplay("sw_stream", 4)
+	// trace: 1 chunk-sync shard; 1 row-replay shard with 2 parts / 6 rows.
+	p.AddTraceChunkSyncShard("sw_trace")
+	p.AddTraceRowReplay("sw_trace", 2, 6)
+	// per-node replay error on the stream group.
+	p.RecordRowReplayNodeErrors("sw_stream", map[string]*common.Error{
+		"data-node-1": common.NewError("flush timeout"),
+	})
+
+	svc := &lifecycleService{l: logger.GetLogger("test")}
+	report := svc.buildMigrationReport(p)
+	summary := report["summary"].(map[string]interface{})
+
+	mb := summary["measure_migration"].(map[string]interface{})["sync_breakdown"].(map[string]interface{})
+	assertBreakdown(t, mb, "sw_metrics", "chunk_sync_parts", 2, 1, 5)
+	assertBreakdown(t, mb, "_total", "chunk_sync_parts", 2, 1, 5)
+
+	sb := summary["stream_migration"].(map[string]interface{})["sync_breakdown"].(map[string]interface{})
+	assertBreakdown(t, sb, "sw_stream", "chunk_sync_parts", 1, 2, 7)
+	assertBreakdown(t, sb, "_total", "chunk_sync_parts", 1, 2, 7)
+
+	tb := summary["trace_migration"].(map[string]interface{})["sync_breakdown"].(map[string]interface{})
+	assertBreakdown(t, tb, "sw_trace", "chunk_sync_shards", 1, 2, 6)
+	assertBreakdown(t, tb, "_total", "chunk_sync_shards", 1, 2, 6)
+
+	errs := report["errors"].(map[string]interface{})
+	nodeErrs, ok := errs["row_replay_node_errors"].(map[string]interface{})
+	require.True(t, ok, "errors.row_replay_node_errors must be a map")
+	groupErrs, ok := nodeErrs["sw_stream"].(map[string]interface{})
+	require.True(t, ok, "row_replay_node_errors must contain sw_stream")
+	assert.Contains(t, groupErrs["data-node-1"], "flush timeout")
+}
+
+// assertBreakdown checks one sync_breakdown entry's chunk count (keyed by
+// chunkKey), row-replay part count and row-replay row count.
+func assertBreakdown(t *testing.T, breakdown map[string]interface{}, key, chunkKey string, chunk, replayParts, replayRows uint64) {
+	t.Helper()
+	entry, ok := breakdown[key].(map[string]interface{})
+	require.Truef(t, ok, "sync_breakdown[%s] must be a map", key)
+	assert.Equalf(t, chunk, entry[chunkKey], "sync_breakdown[%s].%s", key, chunkKey)
+	assert.Equalf(t, replayParts, entry["row_replay_parts"], "sync_breakdown[%s].row_replay_parts", key)
+	assert.Equalf(t, replayRows, entry["row_replay_rows"], "sync_breakdown[%s].row_replay_rows", key)
 }
 
 // assertResource pins down a single resource sub-block under a catalog

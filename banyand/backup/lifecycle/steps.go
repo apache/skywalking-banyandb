@@ -191,10 +191,15 @@ func parseGroup(
 		return nil, fmt.Errorf("failed to initialize node selector for group %s", g.Metadata.Name)
 	}
 	client := pub.NewWithoutMetadata() //nolint:contextcheck // health check goroutine uses context.Background()
-	if g.Catalog == commonv1.Catalog_CATALOG_STREAM {
+	switch g.Catalog {
+	case commonv1.Catalog_CATALOG_STREAM:
 		_ = grpc.NewClusterNodeRegistry(data.TopicStreamWrite, client, nodeSel)
-	} else {
+	case commonv1.Catalog_CATALOG_TRACE:
+		_ = grpc.NewClusterNodeRegistry(data.TopicTraceWrite, client, nodeSel)
+	case commonv1.Catalog_CATALOG_MEASURE:
 		_ = grpc.NewClusterNodeRegistry(data.TopicMeasureWrite, client, nodeSel)
+	default:
+		return nil, fmt.Errorf("unsupported catalog %s for lifecycle migration of group %s", g.Catalog, g.Metadata.Name)
 	}
 
 	var existed bool

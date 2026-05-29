@@ -1,0 +1,24 @@
+{
+    "metadata": {
+        "name": "cross_segment_trace_item",
+        "group": "sw_cross_segment_trace"
+    },
+    "tags": [
+        {
+            "name": "trace_id",
+            "type": "TAG_TYPE_STRING"
+        },
+        {
+            "name": "span_id",
+            "type": "TAG_TYPE_STRING"
+        },
+        {
+            "name": "timestamp",
+            "type": "TAG_TYPE_TIMESTAMP"
+        }
+    ],
+    "trace_id_tag_name": "trace_id",
+    "span_id_tag_name": "span_id",
+    "timestamp_tag_name": "timestamp",
+    "updated_at": "2026-05-27T00:00:00.00Z"
+}

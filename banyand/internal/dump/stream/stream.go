@@ -95,6 +95,7 @@ type PartReader struct {
 	tagFamilies          map[string]fs.Reader
 	tagFamilyFilter      map[string]fs.Reader
 	seriesMap            map[common.SeriesID][]byte // part-level smeta.bin, nil if absent
+	indexResolver        *dump.IndexResolver        // optional segment-level series-index fallback
 	path                 string
 	primaryBlockMetadata []primaryBlockMetadata
 	partMetadata         PartMetadata
@@ -231,6 +232,12 @@ func (p *PartReader) PartID() uint64 { return p.partMetadata.ID }
 // SeriesMap returns the part-level SeriesID -> EntityValues map parsed from
 // smeta.bin, or nil if smeta.bin is absent.
 func (p *PartReader) SeriesMap() map[common.SeriesID][]byte { return p.seriesMap }
+
+// SetIndexResolver attaches a segment-level series-index resolver. When the
+// part has no smeta.bin (the standalone write path skips it), the iterator
+// falls back to IndexResolver.PartSeriesMap to recover EntityValues scoped to
+// just this part's distinct seriesIDs.
+func (p *PartReader) SetIndexResolver(r *dump.IndexResolver) { p.indexResolver = r }
 
 // Close releases all file handles. Safe to call multiple times.
 func (p *PartReader) Close() error {

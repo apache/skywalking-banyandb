@@ -24,17 +24,16 @@ import (
 	"github.com/apache/skywalking-banyandb/pkg/timestamp"
 )
 
-func calculateTargetSegments(partMinTS, partMaxTS int64, targetInterval storage.IntervalRule) []time.Time {
-	// Use time.Local so sender's bucket math stays on the same per-timezone
-	// grid as the receiver, which sees ctx.MinTimestamp as time.Local too.
-	minTime := time.Unix(0, partMinTS)
-	maxTime := time.Unix(0, partMaxTS)
-
+// calculateTargetSegments returns every target bucket overlapping the half-open
+// source range [start, end). Every migration caller passes the source segment's
+// own boundaries (segment/shard time range), where end is exclusive, so the
+// strict current.Before(end) guard naturally excludes the empty next bucket
+// when the source ends exactly on a target boundary. Using time.Local keeps the
+// sender's bucket math on the same per-timezone grid as the receiver, which
+// sees ctx.MinTimestamp as time.Local too.
+func calculateTargetSegments(start, end time.Time, targetInterval storage.IntervalRule) []time.Time {
 	var targetSegments []time.Time
-	// current starts at the bucket containing minTime, so segmentEnd is
-	// always > minTime and the loop guard already excludes anything past
-	// maxTime - every iteration produces a real overlap.
-	for current := targetInterval.Standard(minTime); !current.After(maxTime); current = targetInterval.NextTime(current) {
+	for current := targetInterval.Standard(start); current.Before(end); current = targetInterval.NextTime(current) {
 		targetSegments = append(targetSegments, current)
 	}
 	return targetSegments
