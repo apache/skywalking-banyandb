@@ -70,13 +70,14 @@ type measureRowReplayer struct {
 	logger          *logger.Logger
 	measureSchemas  map[string]*databasev1.Measure
 	schemaCache     map[string]*cachedMeasureSchema
-	irCache         map[string]*dump.IndexResolver
+	irResolver      *dump.IndexResolver
 	mergedRuleToTag map[uint32]dump.IndexedTagSpec
 	counter         *uint64
 	group           string
+	irPath          string
 	batch           []bus.Message
 	schemaCacheMu   sync.Mutex
-	irCacheMu       sync.Mutex
+	irMu            sync.Mutex
 	batchMu         sync.Mutex
 	targetShardNum  uint32
 }
@@ -120,7 +121,6 @@ func newMeasureRowReplayer(
 		logger:          l,
 		measureSchemas:  measureSchemas,
 		schemaCache:     make(map[string]*cachedMeasureSchema),
-		irCache:         make(map[string]*dump.IndexResolver),
 		mergedRuleToTag: deriveMergedRuleToTag(measures, rules, bindings),
 		counter:         counter,
 		batch:           make([]bus.Message, 0, measureReplayBatchSize),
@@ -133,12 +133,13 @@ func (r *measureRowReplayer) Close() (map[string]*common.Error, error) {
 	flushCtx, cancel := context.WithTimeout(context.Background(), measureReplayBatchTimeout)
 	defer cancel()
 	flushErr := r.flushBatch(flushCtx)
-	r.irCacheMu.Lock()
-	for _, ir := range r.irCache {
-		_ = ir.Close()
+	r.irMu.Lock()
+	if r.irResolver != nil {
+		_ = r.irResolver.Close()
+		r.irResolver = nil
+		r.irPath = ""
 	}
-	r.irCache = nil
-	r.irCacheMu.Unlock()
+	r.irMu.Unlock()
 	cee, closeErr := r.publisher.Close()
 	if flushErr != nil {
 		return cee, flushErr
@@ -184,18 +185,29 @@ func (r *measureRowReplayer) loadSchema(measureName string) (*cachedMeasureSchem
 	return c, nil
 }
 
-// loadIndexResolver lazily opens an IndexResolver per source segment.
+// loadIndexResolver lazily opens an IndexResolver for the current source
+// segment. Only one resolver is kept resident: same segmentPath reuses it
+// (so all shards/parts under a segment share the bluge reader and avoid
+// reopening the same exclusive-locked dir), and a different segmentPath closes
+// the prior one before opening a new one. The replayer's Close releases the
+// last resolver.
 func (r *measureRowReplayer) loadIndexResolver(segmentPath string) (*dump.IndexResolver, error) {
-	r.irCacheMu.Lock()
-	defer r.irCacheMu.Unlock()
-	if ir, ok := r.irCache[segmentPath]; ok {
-		return ir, nil
+	r.irMu.Lock()
+	defer r.irMu.Unlock()
+	if r.irResolver != nil && r.irPath == segmentPath {
+		return r.irResolver, nil
+	}
+	if r.irResolver != nil {
+		_ = r.irResolver.Close()
+		r.irResolver = nil
+		r.irPath = ""
 	}
 	ir, err := dump.NewIndexResolver(segmentPath, dump.DefaultIndexCacheSize, r.mergedRuleToTag)
 	if err != nil {
 		return nil, fmt.Errorf("open index resolver for %s: %w", segmentPath, err)
 	}
-	r.irCache[segmentPath] = ir
+	r.irResolver = ir
+	r.irPath = segmentPath
 	return ir, nil
 }
 
