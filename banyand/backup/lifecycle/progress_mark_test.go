@@ -18,10 +18,13 @@
 package lifecycle
 
 import (
+	"path/filepath"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 
+	"github.com/apache/skywalking-banyandb/api/common"
 	"github.com/apache/skywalking-banyandb/pkg/logger"
 )
 
@@ -189,4 +192,78 @@ func TestPerTargetAndPerSourceAreIndependent(t *testing.T) {
 	// Per-target map untouched by source mark.
 	assert.False(t, p.IsStreamPartCompleted("g", "src-1", 0, 1))
 	assert.Equal(t, 1, p.StreamPartProgress["g"])
+}
+
+// TestPartCompletionKeyedBySourceSegment pins that measure/stream part
+// completion dedup is keyed by the SOURCE segment, not the target segment.
+// Part IDs reset per source segment, so when several source segments collapse
+// into one larger target segment (warm interval > hot interval), two source
+// segments can each carry part_id=1 on the same shard. If completion were keyed
+// by the target segment, marking source-A's part done would make source-B's
+// part look done and the visitor (VisitPart) would skip it, dropping source-B's
+// data. Keying by the source segment — what measure/stream VisitPart now pass,
+// matching trace's source-keyed VisitShard — keeps the two parts independent.
+func TestPartCompletionKeyedBySourceSegment(t *testing.T) {
+	p := NewProgress("", logger.GetLogger("test"))
+	const (
+		group   = "g"
+		srcSegA = "[2026-05-19 00:00:00, 2026-05-20 00:00:00)"
+		srcSegB = "[2026-05-20 00:00:00, 2026-05-21 00:00:00)"
+	)
+	var shard common.ShardID // 0 on both source segments
+	const partID uint64 = 1  // resets per source segment, so it collides
+
+	// Source segment A's part 1 migrated into the shared target segment.
+	p.MarkMeasurePartCompleted(group, srcSegA, shard, partID)
+	p.MarkStreamPartCompleted(group, srcSegA, shard, partID)
+
+	// Source segment B's part 1 (same shard + part ID, different source segment)
+	// must NOT be seen as already done — otherwise VisitPart skips it and loses
+	// B's data.
+	assert.False(t, p.IsMeasurePartCompleted(group, srcSegB, shard, partID),
+		"measure: source segment B part must be independent of source segment A")
+	assert.False(t, p.IsStreamPartCompleted(group, srcSegB, shard, partID),
+		"stream: source segment B part must be independent of source segment A")
+
+	// Source segment A stays marked.
+	assert.True(t, p.IsMeasurePartCompleted(group, srcSegA, shard, partID))
+	assert.True(t, p.IsStreamPartCompleted(group, srcSegA, shard, partID))
+}
+
+// TestSyncBreakdownCountersPersistAndAccumulate pins that the chunk-sync /
+// row-replay counters and the per-node replay errors are written to the
+// progress file and reloaded on resume, and that a subsequent Add accumulates
+// onto the reloaded value rather than resetting it.
+func TestSyncBreakdownCountersPersistAndAccumulate(t *testing.T) {
+	pf := filepath.Join(t.TempDir(), "progress.json")
+	l := logger.GetLogger("test")
+
+	p := NewProgress(pf, l)
+	p.AddMeasureChunkSyncPart("g")  // measure: 1 chunk-sync part
+	p.AddMeasureChunkSyncPart("g")  // measure: 2 chunk-sync parts
+	p.AddMeasureRowReplay("g", 5)   // measure: 1 row-replay part, 5 rows
+	p.AddStreamChunkSyncPart("g2")  // stream: 1 chunk-sync part
+	p.AddStreamRowReplay("g2", 3)   // stream: 1 row-replay part, 3 rows
+	p.AddTraceChunkSyncShard("g3")  // trace: 1 chunk-sync shard
+	p.AddTraceRowReplay("g3", 2, 6) // trace: 2 row-replay parts, 6 rows
+	p.RecordRowReplayNodeErrors("g2", map[string]*common.Error{"node-1": common.NewError("boom")})
+
+	// Reload from disk (resume).
+	reloaded := LoadProgress(pf, l)
+	assert.Equal(t, uint64(2), reloaded.MeasureChunkSyncParts["g"])
+	assert.Equal(t, uint64(1), reloaded.MeasureRowReplayParts["g"])
+	assert.Equal(t, uint64(5), reloaded.MeasureRowReplayRows["g"])
+	assert.Equal(t, uint64(1), reloaded.StreamChunkSyncParts["g2"])
+	assert.Equal(t, uint64(1), reloaded.StreamRowReplayParts["g2"])
+	assert.Equal(t, uint64(3), reloaded.StreamRowReplayRows["g2"])
+	assert.Equal(t, uint64(1), reloaded.TraceChunkSyncShards["g3"])
+	assert.Equal(t, uint64(2), reloaded.TraceRowReplayParts["g3"])
+	assert.Equal(t, uint64(6), reloaded.TraceRowReplayRows["g3"])
+	require.Contains(t, reloaded.RowReplayNodeErrors, "g2")
+	assert.Contains(t, reloaded.RowReplayNodeErrors["g2"]["node-1"], "boom")
+
+	// Resume accumulation: a further Add builds on the reloaded value.
+	reloaded.AddMeasureRowReplay("g", 10)
+	assert.Equal(t, uint64(2), reloaded.MeasureRowReplayParts["g"])
+	assert.Equal(t, uint64(15), reloaded.MeasureRowReplayRows["g"])
 }

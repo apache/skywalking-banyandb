@@ -6453,6 +6453,7 @@ WriteResponse is the response contract for write
 | shard_id | [uint32](#uint32) |  |  |
 | entity_values | [banyandb.model.v1.TagValue](#banyandb-model-v1-TagValue) | repeated |  |
 | request | [WriteRequest](#banyandb-stream-v1-WriteRequest) |  |  |
+| raw_element_id | [uint64](#uint64) |  | raw_element_id carries the original storage-internal eID (an already-hashed uint64) forwarded by lifecycle row-replay. When non-zero, the receiver uses it directly and skips the HashStr step on element.element_id, so a logical element migrated through both chunk-sync and row-replay paths keeps the same target-side eID and query-layer dedup stays consistent. SDK and topN write paths leave this unset (0). |
 
 
 

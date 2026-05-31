@@ -1,0 +1,19 @@
+{
+    "metadata": {
+        "name": "sw_cross_segment_trace"
+    },
+    "catalog": "CATALOG_TRACE",
+    "resource_opts": {
+        "shard_num": 1,
+        "replicas": 0,
+        "segment_interval": {
+            "unit": "UNIT_DAY",
+            "num": 2
+        },
+        "ttl": {
+            "unit": "UNIT_DAY",
+            "num": 5
+        }
+    },
+    "updated_at": "2026-05-27T00:00:00.00Z"
+}

@@ -20,6 +20,7 @@ package stream
 import (
 	"fmt"
 
+	"github.com/apache/skywalking-banyandb/api/common"
 	"github.com/apache/skywalking-banyandb/banyand/internal/dump"
 	"github.com/apache/skywalking-banyandb/pkg/compress/zstd"
 	"github.com/apache/skywalking-banyandb/pkg/encoding"
@@ -45,6 +46,20 @@ func (p *PartReader) Iterator() *dump.Iterator[Row] {
 			return dump.NewErrIterator[Row](fmt.Errorf("cannot parse block metadata: %w", err))
 		}
 		blocks = append(blocks, bms...)
+	}
+	// When the part has no part-level series metadata (the standalone write path
+	// writes none), recover EntityValues for just this part's series by scanning
+	// the segment-level series index scoped to the part.
+	if p.seriesMap == nil && p.indexResolver != nil {
+		seriesIDs := make(map[common.SeriesID]struct{})
+		for _, bm := range blocks {
+			seriesIDs[bm.seriesID] = struct{}{}
+		}
+		seriesMap, err := p.indexResolver.PartSeriesMap(seriesIDs)
+		if err != nil {
+			return dump.NewErrIterator[Row](fmt.Errorf("cannot build part series map: %w", err))
+		}
+		p.seriesMap = seriesMap
 	}
 	var decoder encoding.BytesBlockDecoder
 	return dump.NewIterator(len(blocks), func(blockIdx int) ([]Row, error) {
