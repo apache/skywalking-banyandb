@@ -291,16 +291,11 @@ func (tst *tsTable) mustWriteSnapshot(snapshot uint64, partNames []string) {
 }
 
 func (tst *tsTable) readSnapshot(snapshot uint64) ([]uint64, error) {
-	snapshotPath := filepath.Join(tst.root, snapshotName(snapshot))
-	data, err := tst.fileSystem.Read(snapshotPath)
+	partNames, err := storage.ReadSnapshotPartNames(tst.fileSystem, filepath.Join(tst.root, snapshotName(snapshot)))
 	if err != nil {
-		return nil, fmt.Errorf("cannot read %s: %w", snapshotPath, err)
+		return nil, err
 	}
-	var partNames []string
-	if err := json.Unmarshal(data, &partNames); err != nil {
-		return nil, fmt.Errorf("cannot parse %s: %w", snapshotPath, err)
-	}
-	var result []uint64
+	result := make([]uint64, 0, len(partNames))
 	for i := range partNames {
 		e, parseErr := parseEpoch(partNames[i])
 		if parseErr != nil {

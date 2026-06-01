@@ -305,7 +305,7 @@ func (m *measure) QueryWithCache(ctx context.Context, mqo model.MeasureQueryOpti
 		tsdb = db.(storage.TSDB[*tsTable, option])
 	}
 
-	segments, err := tsdb.SelectSegments(*mqo.TimeRange)
+	segments, err := tsdb.SelectSegments(*mqo.TimeRange, true)
 	if err != nil {
 		return nil, err
 	}

@@ -366,7 +366,7 @@ func TestCloseIdleAndSelectSegments(t *testing.T) {
 
 	// Now select segments using the entire time range
 	timeRange := timestamp.NewInclusiveTimeRange(day1, day3.Add(24*time.Hour))
-	selectedSegments, err := sc.selectSegments(timeRange)
+	selectedSegments, err := sc.selectSegments(timeRange, true)
 	require.NoError(t, err)
 
 	// Should have selected all 3 segments
@@ -1151,7 +1151,7 @@ func TestSegment_ConcurrentReopenAndClose_NoPanic(t *testing.T) {
 			}()
 			<-start
 			for c := 0; c < cycles; c++ {
-				segs, selErr := sc.selectSegments(timeRange)
+				segs, selErr := sc.selectSegments(timeRange, true)
 				if selErr != nil {
 					t.Errorf("goroutine-%d cycle %d selectSegments: %v", id, c, selErr)
 					return

@@ -60,7 +60,7 @@ func (s *stream) Query(ctx context.Context, sqo model.StreamQueryOptions) (sqr m
 		return nil, err
 	}
 
-	segments, err := tsdb.SelectSegments(*sqo.TimeRange)
+	segments, err := tsdb.SelectSegments(*sqo.TimeRange, true)
 	if err != nil {
 		return nil, err
 	}

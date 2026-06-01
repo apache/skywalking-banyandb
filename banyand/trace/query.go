@@ -65,7 +65,7 @@ func (t *trace) Query(ctx context.Context, tqo model.TraceQueryOptions) (model.T
 		return nil, err
 	}
 
-	segments, err := tsdb.SelectSegments(*tqo.TimeRange)
+	segments, err := tsdb.SelectSegments(*tqo.TimeRange, true)
 	if err != nil {
 		return nil, err
 	}

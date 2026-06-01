@@ -315,6 +315,132 @@ func (s *segment[T, O]) delete() {
 	s.DecRef()
 }
 
+// Location returns the on-disk directory of the segment.
+func (s *segment[T, O]) Location() string {
+	return s.location
+}
+
+// SeriesIndexStats returns the series index document count and on-disk size.
+// An open segment is reported from its live index; a closed segment is read
+// from disk read-only (via OpenReader + directory walk), so inspecting a cold
+// segment never reopens its writable index.
+func (s *segment[T, O]) SeriesIndexStats() (int64, int64) {
+	s.mu.RLock()
+	if s.index != nil {
+		// Hold the read lock while reading live stats so a concurrent
+		// performCleanup cannot close the index out from under us.
+		defer s.mu.RUnlock()
+		return s.index.Stats()
+	}
+	s.mu.RUnlock()
+	// Closed: release the lock (so a concurrent reopen is not blocked) and read
+	// read-only. Best-effort -- a missing/unflushed/concurrently-removed index
+	// reports 0.
+	indexPath := filepath.Join(s.location, seriesIndexDirName)
+	count, err := inverted.ReadOnlyDocCount(indexPath)
+	if err != nil {
+		s.l.Debug().Err(err).Str("path", indexPath).Msg("closed series index has no readable doc count")
+	}
+	size, _ := calculatePathSize(indexPath)
+	return count, int64(size)
+}
+
+// snapshotInto writes a point-in-time snapshot of this segment under dst.
+//
+// It NEVER reopens a closed segment -- reopening an idle-closed cold segment is
+// the root cause of the nil-index panic and the bluge "exclusive lock" churn.
+// A closed (quiescent) segment is hard-linked directly from its immutable
+// on-disk files; an open segment is snapshotted through its live series index
+// and shard tables while a reference is held to keep it open.
+//
+// Returns whether anything was written (false when the segment is being
+// deleted, so the caller can skip it).
+func (s *segment[T, O]) snapshotInto(dst string) (bool, error) {
+	s.mu.Lock()
+	if atomic.LoadUint32(&s.mustBeDeleted) != 0 {
+		s.mu.Unlock()
+		return false, nil
+	}
+	idx := s.index
+	if idx != nil {
+		// Open: the bump only pins it (never reopens). Release the mutex before
+		// the slow backup so other callers are not blocked.
+		atomic.AddInt32(&s.refCount, 1)
+		s.mu.Unlock()
+		defer s.DecRef()
+		return s.snapshotOpen(dst, idx)
+	}
+	// Closed and quiescent: hold s.mu for the fast hard-link so a concurrent
+	// reopen cannot write into the directory mid-copy.
+	defer s.mu.Unlock()
+	return s.snapshotClosed(dst)
+}
+
+// snapshotClosed hard-links the whole quiescent segment directory into dst.
+// Must be called with s.mu held and s.index == nil.
+func (s *segment[T, O]) snapshotClosed(dst string) (bool, error) {
+	segDir := filepath.Base(s.location)
+	segPath := filepath.Join(dst, segDir)
+	if err := s.lfs.CreateHardLink(s.location, segPath, includeInClosedSnapshot); err != nil {
+		return false, errors.Wrapf(err, "failed to hard-link closed segment %s", segDir)
+	}
+	return true, nil
+}
+
+// includeInClosedSnapshot reports whether a file or directory under a closed
+// segment should be hard-linked into a snapshot. It excludes the transient and
+// non-current artifacts that the open-path snapshot never copies: the bluge
+// lock file, the failed-parts directory, the external-segment temp directory,
+// and partial ".tmp" atomic-write files. Current part directories and their
+// ".snp" manifests are kept.
+func includeInClosedSnapshot(p string) bool {
+	switch base := filepath.Base(p); {
+	case base == inverted.LockFilename, base == FailedPartsDirName, base == inverted.ExternalSegmentTempDirName:
+		return false
+	default:
+		return filepath.Ext(base) != ".tmp"
+	}
+}
+
+// snapshotOpen snapshots an open segment through its live state. idx is the
+// series index captured under s.mu; a reference is held by the caller so the
+// segment (and idx) stays open for the duration.
+func (s *segment[T, O]) snapshotOpen(dst string, idx *seriesIndex) (bool, error) {
+	segDir := filepath.Base(s.location)
+	segPath := filepath.Join(dst, segDir)
+	s.lfs.MkdirIfNotExist(segPath, DirPerm)
+
+	metadataSrc := filepath.Join(s.location, metadataFilename)
+	metadataDest := filepath.Join(segPath, metadataFilename)
+	if err := s.lfs.CreateHardLink(metadataSrc, metadataDest, nil); err != nil {
+		return false, errors.Wrapf(err, "failed to snapshot metadata for segment %s", segDir)
+	}
+
+	indexPath := filepath.Join(segPath, seriesIndexDirName)
+	s.lfs.MkdirIfNotExist(indexPath, DirPerm)
+	if err := idx.store.TakeFileSnapshot(indexPath); err != nil {
+		return false, errors.Wrapf(err, "failed to snapshot index for segment %s", segDir)
+	}
+
+	sLst := s.sLst.Load()
+	if sLst != nil {
+		for _, shard := range *sLst {
+			shardDir := filepath.Base(shard.location)
+			shardPath := filepath.Join(segPath, shardDir)
+			s.lfs.MkdirIfNotExist(shardPath, DirPerm)
+			if _, err := shard.table.TakeFileSnapshot(shardPath); err != nil {
+				if errors.Is(err, ErrNoCurrentSnapshot) {
+					s.l.Debug().Str("shard", shardDir).Str("segment", segDir).
+						Msg("skipping empty shard snapshot")
+					continue
+				}
+				return false, errors.Wrapf(err, "failed to snapshot shard %s in segment %s", shardDir, segDir)
+			}
+		}
+	}
+	return true, nil
+}
+
 func (s *segment[T, O]) CreateTSTableIfNotExist(id common.ShardID) (T, error) {
 	if s, ok := s.getShard(id); ok {
 		return s.table, nil
@@ -428,7 +554,7 @@ func (sc *segmentController[T, O]) updateOptions(resourceOpts *commonv1.Resource
 	sc.opts.ShardNum = resourceOpts.ShardNum
 }
 
-func (sc *segmentController[T, O]) selectSegments(timeRange timestamp.TimeRange) (tt []Segment[T, O], err error) {
+func (sc *segmentController[T, O]) selectSegments(timeRange timestamp.TimeRange, reopenClosed bool) (tt []Segment[T, O], err error) {
 	sc.RLock()
 	defer sc.RUnlock()
 	last := len(sc.lst) - 1
@@ -440,10 +566,24 @@ func (sc *segmentController[T, O]) selectSegments(timeRange timestamp.TimeRange)
 			break
 		}
 		if s.Overlapping(timeRange) {
-			if err = s.incRef(ctx); err != nil {
-				return nil, err
+			if reopenClosed {
+				// Real read: reopen if closed and mark as accessed.
+				if err = s.incRef(ctx); err != nil {
+					return nil, err
+				}
+				s.lastAccessed.Store(now)
+			} else {
+				// Stats peek: pin only if already open, never reopen.
+				for {
+					current := atomic.LoadInt32(&s.refCount)
+					if current <= 0 {
+						break
+					}
+					if atomic.CompareAndSwapInt32(&s.refCount, current, current+1) {
+						break
+					}
+				}
 			}
-			s.lastAccessed.Store(now)
 			tt = append(tt, s)
 		}
 	}
@@ -480,6 +620,18 @@ func (sc *segmentController[T, O]) segments(ctx context.Context, reopenClosed bo
 		r[i] = sc.lst[i]
 	}
 	return r, nil
+}
+
+// copySegments returns a snapshot of the current segment list WITHOUT touching
+// reference counts or reopening anything. Callers (e.g. TakeFileSnapshot) that
+// must not force a reopen decide per-segment, under the segment's own lock,
+// whether it is open or closed.
+func (sc *segmentController[T, O]) copySegments() []*segment[T, O] {
+	sc.RLock()
+	defer sc.RUnlock()
+	r := make([]*segment[T, O], len(sc.lst))
+	copy(r, sc.lst)
+	return r
 }
 
 func (sc *segmentController[T, O]) closeIdleSegments() int {
