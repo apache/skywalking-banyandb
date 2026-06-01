@@ -116,7 +116,7 @@ func (m *measure) Query(ctx context.Context, mqo model.MeasureQueryOptions) (mqr
 		tsdb = db.(storage.TSDB[*tsTable, option])
 	}
 
-	segments, err := tsdb.SelectSegments(*mqo.TimeRange)
+	segments, err := tsdb.SelectSegments(*mqo.TimeRange, true)
 	if err != nil {
 		return nil, err
 	}

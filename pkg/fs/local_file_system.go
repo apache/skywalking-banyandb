@@ -472,6 +472,10 @@ func (fs *localFileSystem) CreateHardLink(srcPath, destPath string, filter func(
 		destFullPath := filepath.Join(destPath, relPath)
 
 		if info.IsDir() {
+			// A filter that rejects a directory skips the whole subtree.
+			if filter != nil && !filter(path) {
+				return filepath.SkipDir
+			}
 			if err := os.MkdirAll(destFullPath, info.Mode()); err != nil {
 				return &FileSystemError{
 					Code:    otherError,
