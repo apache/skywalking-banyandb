@@ -572,9 +572,17 @@ func (sc *segmentController[T, O]) selectSegments(timeRange timestamp.TimeRange,
 					return nil, err
 				}
 				s.lastAccessed.Store(now)
-			} else if atomic.LoadInt32(&s.refCount) > 0 {
+			} else {
 				// Stats peek: pin only if already open, never reopen.
-				atomic.AddInt32(&s.refCount, 1)
+				for {
+					current := atomic.LoadInt32(&s.refCount)
+					if current <= 0 {
+						break
+					}
+					if atomic.CompareAndSwapInt32(&s.refCount, current, current+1) {
+						break
+					}
+				}
 			}
 			tt = append(tt, s)
 		}
