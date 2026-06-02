@@ -94,7 +94,7 @@ func newReclaimTestController(
 // openReclaimTestSegment opens a single day segment and registers it with the
 // controller's segment list, matching the helper inlined in segment_test.go.
 func openReclaimTestSegment(
-	t *testing.T, sc *segmentController[mockTSTable, mockTSTableOpener], ctx context.Context, tempDir string, start time.Time,
+	ctx context.Context, t *testing.T, sc *segmentController[mockTSTable, mockTSTableOpener], tempDir string, start time.Time,
 ) *segment[mockTSTable, mockTSTableOpener] {
 	t.Helper()
 	segmentPath := filepath.Join(tempDir, "segment-"+start.Format(dayFormat))
@@ -131,7 +131,7 @@ func TestCloseIdleSegments_KeepsActivelyHeldReopenedSegment(t *testing.T) {
 	defer cleanup()
 	sc, ctx := newReclaimTestController(t, tempDir, 100*time.Millisecond)
 
-	seg := openReclaimTestSegment(t, sc, ctx, tempDir, reclaimTestDay(t))
+	seg := openReclaimTestSegment(ctx, t, sc, tempDir, reclaimTestDay(t))
 
 	// 1) Drive the segment into the idle-closed state every cold segment lives
 	// in: stale lastAccessed -> reclaimed -> index writer released.
@@ -179,7 +179,7 @@ func TestDelete_KeepsIndexWhileActivelyHeld(t *testing.T) {
 	defer cleanup()
 	sc, ctx := newReclaimTestController(t, tempDir, 100*time.Millisecond)
 
-	seg := openReclaimTestSegment(t, sc, ctx, tempDir, reclaimTestDay(t))
+	seg := openReclaimTestSegment(ctx, t, sc, tempDir, reclaimTestDay(t))
 
 	// Reduce to the cold-segment shape where a reopen yields the lone reference
 	// (refCount==1): idle-close, then reopen as an active holder.
@@ -214,7 +214,7 @@ func TestCloseIdleSegments_ReclaimsTrulyIdleSegment(t *testing.T) {
 	defer cleanup()
 	sc, ctx := newReclaimTestController(t, tempDir, 100*time.Millisecond)
 
-	seg := openReclaimTestSegment(t, sc, ctx, tempDir, reclaimTestDay(t))
+	seg := openReclaimTestSegment(ctx, t, sc, tempDir, reclaimTestDay(t))
 	require.NotNil(t, seg.index)
 
 	// No extra reference is held; only the segment's own open state keeps it
@@ -239,7 +239,7 @@ func TestIncRef_DoesNotRefreshLastAccessed(t *testing.T) {
 	defer cleanup()
 	sc, ctx := newReclaimTestController(t, tempDir, 100*time.Millisecond)
 
-	seg := openReclaimTestSegment(t, sc, ctx, tempDir, reclaimTestDay(t))
+	seg := openReclaimTestSegment(ctx, t, sc, tempDir, reclaimTestDay(t))
 
 	stale := time.Now().Add(-time.Hour).UnixNano()
 	seg.lastAccessed.Store(stale)
@@ -258,7 +258,7 @@ func TestOpenSegment_StartsDormant(t *testing.T) {
 	defer cleanup()
 	sc, ctx := newReclaimTestController(t, tempDir, time.Hour)
 
-	seg := openReclaimTestSegment(t, sc, ctx, tempDir, reclaimTestDay(t))
+	seg := openReclaimTestSegment(ctx, t, sc, tempDir, reclaimTestDay(t))
 	require.NotNil(t, seg.index, "a freshly opened segment is open")
 	require.Equal(t, int32(0), atomic.LoadInt32(&seg.refCount), "a freshly opened segment has no active reference")
 }
@@ -270,7 +270,7 @@ func TestCloseIdleSegments_KeepsFreshDormantSegment(t *testing.T) {
 	defer cleanup()
 	sc, ctx := newReclaimTestController(t, tempDir, time.Hour)
 
-	seg := openReclaimTestSegment(t, sc, ctx, tempDir, reclaimTestDay(t))
+	seg := openReclaimTestSegment(ctx, t, sc, tempDir, reclaimTestDay(t))
 	require.Equal(t, int32(0), atomic.LoadInt32(&seg.refCount))
 
 	require.Equal(t, 0, sc.closeIdleSegments(), "a fresh dormant segment must not be reclaimed")
@@ -284,7 +284,7 @@ func TestDecRef_ToZeroLeavesDormantAndReusable(t *testing.T) {
 	defer cleanup()
 	sc, ctx := newReclaimTestController(t, tempDir, time.Hour)
 
-	seg := openReclaimTestSegment(t, sc, ctx, tempDir, reclaimTestDay(t))
+	seg := openReclaimTestSegment(ctx, t, sc, tempDir, reclaimTestDay(t))
 	require.NoError(t, seg.incRef(ctx))
 	require.Equal(t, int32(1), atomic.LoadInt32(&seg.refCount))
 
@@ -304,7 +304,7 @@ func TestReclaimedSegment_ReopensOnIncRef(t *testing.T) {
 	defer cleanup()
 	sc, ctx := newReclaimTestController(t, tempDir, 100*time.Millisecond)
 
-	seg := openReclaimTestSegment(t, sc, ctx, tempDir, reclaimTestDay(t))
+	seg := openReclaimTestSegment(ctx, t, sc, tempDir, reclaimTestDay(t))
 	seg.lastAccessed.Store(time.Now().Add(-time.Hour).UnixNano())
 	require.Equal(t, 1, sc.closeIdleSegments())
 	require.Nil(t, seg.index)
@@ -322,7 +322,7 @@ func TestDelete_DormantSegmentDeletedImmediately(t *testing.T) {
 	defer cleanup()
 	sc, ctx := newReclaimTestController(t, tempDir, time.Hour)
 
-	seg := openReclaimTestSegment(t, sc, ctx, tempDir, reclaimTestDay(t))
+	seg := openReclaimTestSegment(ctx, t, sc, tempDir, reclaimTestDay(t))
 	require.Equal(t, int32(0), atomic.LoadInt32(&seg.refCount))
 
 	seg.delete()
@@ -337,7 +337,7 @@ func TestDeleteExpiredSegments_DefersWhileHeld(t *testing.T) {
 	defer cleanup()
 	sc, ctx := newReclaimTestController(t, tempDir, time.Hour)
 
-	seg := openReclaimTestSegment(t, sc, ctx, tempDir, reclaimTestDay(t))
+	seg := openReclaimTestSegment(ctx, t, sc, tempDir, reclaimTestDay(t))
 	require.NoError(t, seg.incRef(ctx)) // an in-flight query/snapshot holds it
 
 	require.Equal(t, int64(1), sc.deleteExpiredSegments([]string{seg.suffix}))
@@ -356,7 +356,7 @@ func TestReopenCycles_NoWriterLeak(t *testing.T) {
 	defer cleanup()
 	sc, ctx := newReclaimTestController(t, tempDir, 100*time.Millisecond)
 
-	seg := openReclaimTestSegment(t, sc, ctx, tempDir, reclaimTestDay(t))
+	seg := openReclaimTestSegment(ctx, t, sc, tempDir, reclaimTestDay(t))
 	for i := 0; i < 8; i++ {
 		require.NoError(t, seg.incRef(ctx), "round %d: reopen must succeed (writer lock not leaked)", i)
 		require.NotNil(t, seg.index)
@@ -378,7 +378,7 @@ func TestConcurrent_IncRefVsCloseIdle_NoStolenRefOrPanic(t *testing.T) {
 	// tick, maximizing the race against acquirers.
 	sc, ctx := newReclaimTestController(t, tempDir, time.Nanosecond)
 	defer sc.close()
-	seg := openReclaimTestSegment(t, sc, ctx, tempDir, reclaimTestDay(t))
+	seg := openReclaimTestSegment(ctx, t, sc, tempDir, reclaimTestDay(t))
 
 	// A fixed per-acquirer cycle count (rather than a wall-clock duration) keeps
 	// the race deterministic across machines: every run exercises the same number
@@ -454,7 +454,7 @@ func TestCloseIfIdle_RefusesWhenMustBeDeleted(t *testing.T) {
 	defer cleanup()
 	sc, ctx := newReclaimTestController(t, tempDir, time.Hour)
 
-	seg := openReclaimTestSegment(t, sc, ctx, tempDir, reclaimTestDay(t))
+	seg := openReclaimTestSegment(ctx, t, sc, tempDir, reclaimTestDay(t))
 	atomic.StoreUint32(&seg.mustBeDeleted, 1)
 	seg.lastAccessed.Store(time.Now().Add(-time.Hour).UnixNano()) // also idle
 
@@ -471,7 +471,7 @@ func TestIncRef_AfterDelete_ReturnsErrSegmentClosed(t *testing.T) {
 	defer cleanup()
 	sc, ctx := newReclaimTestController(t, tempDir, time.Hour)
 
-	seg := openReclaimTestSegment(t, sc, ctx, tempDir, reclaimTestDay(t))
+	seg := openReclaimTestSegment(ctx, t, sc, tempDir, reclaimTestDay(t))
 	seg.delete()
 	require.Nil(t, seg.index)
 	require.NoDirExists(t, seg.location)
@@ -489,7 +489,7 @@ func TestDecRef_OnClosedSegment_IsNoOp(t *testing.T) {
 	defer cleanup()
 	sc, ctx := newReclaimTestController(t, tempDir, time.Hour)
 
-	seg := openReclaimTestSegment(t, sc, ctx, tempDir, reclaimTestDay(t))
+	seg := openReclaimTestSegment(ctx, t, sc, tempDir, reclaimTestDay(t))
 	seg.lastAccessed.Store(time.Now().Add(-time.Hour).UnixNano())
 	require.True(t, seg.closeIfIdle(time.Now().UnixNano()))
 	require.Nil(t, seg.index)
@@ -512,11 +512,11 @@ func TestPeekOldestSegmentEndTime_OnlyWhileOpen(t *testing.T) {
 	require.False(t, ok, "no segments -> not reported")
 
 	day1 := reclaimTestDay(t)
-	oldest := openReclaimTestSegment(t, sc, ctx, tempDir, day1)
+	oldest := openReclaimTestSegment(ctx, t, sc, tempDir, day1)
 	_, ok = sc.peekOldestSegmentEndTime()
 	require.False(t, ok, "a single segment is not reported (keep-one rule)")
 
-	openReclaimTestSegment(t, sc, ctx, tempDir, day1.Add(24*time.Hour)) // a newer segment; peek needs len>1
+	openReclaimTestSegment(ctx, t, sc, tempDir, day1.Add(24*time.Hour)) // a newer segment; peek needs len>1
 
 	// Open (dormant) oldest: its end time is reported.
 	end, ok := sc.peekOldestSegmentEndTime()
@@ -599,9 +599,9 @@ func TestControllerClose_ReleasesAllAndDeletesFlagged(t *testing.T) {
 	sc, ctx := newReclaimTestController(t, tempDir, time.Hour)
 
 	day1 := reclaimTestDay(t)
-	dormant := openReclaimTestSegment(t, sc, ctx, tempDir, day1)
-	held := openReclaimTestSegment(t, sc, ctx, tempDir, day1.Add(24*time.Hour))
-	flagged := openReclaimTestSegment(t, sc, ctx, tempDir, day1.Add(48*time.Hour))
+	dormant := openReclaimTestSegment(ctx, t, sc, tempDir, day1)
+	held := openReclaimTestSegment(ctx, t, sc, tempDir, day1.Add(24*time.Hour))
+	flagged := openReclaimTestSegment(ctx, t, sc, tempDir, day1.Add(48*time.Hour))
 
 	require.NoError(t, held.incRef(ctx)) // an active reference survives into shutdown
 	require.Equal(t, int32(1), atomic.LoadInt32(&held.refCount))
@@ -630,8 +630,8 @@ func TestRemoveOldest_DeletesDormantOldestKeepsRest(t *testing.T) {
 	sc, ctx := newReclaimTestController(t, tempDir, time.Hour)
 
 	day1 := reclaimTestDay(t)
-	oldest := openReclaimTestSegment(t, sc, ctx, tempDir, day1)
-	newer := openReclaimTestSegment(t, sc, ctx, tempDir, day1.Add(24*time.Hour))
+	oldest := openReclaimTestSegment(ctx, t, sc, tempDir, day1)
+	newer := openReclaimTestSegment(ctx, t, sc, tempDir, day1.Add(24*time.Hour))
 	oldestLoc := oldest.location
 
 	removed, err := sc.removeOldest()
@@ -650,7 +650,7 @@ func TestRemoveOldest_KeepOneRule(t *testing.T) {
 	defer cleanup()
 	sc, ctx := newReclaimTestController(t, tempDir, time.Hour)
 
-	only := openReclaimTestSegment(t, sc, ctx, tempDir, reclaimTestDay(t))
+	only := openReclaimTestSegment(ctx, t, sc, tempDir, reclaimTestDay(t))
 	removed, err := sc.removeOldest()
 	require.NoError(t, err)
 	require.False(t, removed, "the last remaining segment must never be removed")
@@ -667,8 +667,8 @@ func TestRemoveOldest_DefersWhileOldestHeld(t *testing.T) {
 	sc, ctx := newReclaimTestController(t, tempDir, time.Hour)
 
 	day1 := reclaimTestDay(t)
-	oldest := openReclaimTestSegment(t, sc, ctx, tempDir, day1)
-	openReclaimTestSegment(t, sc, ctx, tempDir, day1.Add(24*time.Hour))
+	oldest := openReclaimTestSegment(ctx, t, sc, tempDir, day1)
+	openReclaimTestSegment(ctx, t, sc, tempDir, day1.Add(24*time.Hour))
 	require.NoError(t, oldest.incRef(ctx)) // an in-flight reader holds the oldest
 	oldestLoc := oldest.location
 
@@ -693,8 +693,8 @@ func TestGetExpiredSegmentsTimeRange(t *testing.T) {
 	sc, ctx := newReclaimTestController(t, tempDir, time.Hour) // opts.TTL = 7 days
 
 	today := reclaimTestDay(t)
-	expired := openReclaimTestSegment(t, sc, ctx, tempDir, today.Add(-10*24*time.Hour))
-	openReclaimTestSegment(t, sc, ctx, tempDir, today) // fresh, not expired
+	expired := openReclaimTestSegment(ctx, t, sc, tempDir, today.Add(-10*24*time.Hour))
+	openReclaimTestSegment(ctx, t, sc, tempDir, today) // fresh, not expired
 
 	tr := sc.getExpiredSegmentsTimeRange()
 	require.Equal(t, expired.Start, tr.Start, "range starts at the expired segment")

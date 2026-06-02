@@ -79,8 +79,7 @@ func TestSyncReceiver_SegmentRefOwnership(t *testing.T) {
 	// stays flat across the sibling sync sessions below.
 	seg, err := db.CreateSegmentIfNotExist(segTime)
 	require.NoError(t, err)
-	seg.DecRef()
-	seg.DecRef() // refCount = 0 (dormant: open, no active reference)
+	seg.DecRef() // the single create reference; refCount = 0 (dormant: open, no active reference)
 	baselineOpens := openShardCount.Load()
 
 	// ---------- Part A: simulate syncChunkCallback.CreatePartHandler (fix) ----------
@@ -231,8 +230,7 @@ func TestSyncChunkCallback_CreatePartHandler_StoresSegment(t *testing.T) {
 	// without reloading shards.
 	warmup, err := db.CreateSegmentIfNotExist(segTime)
 	require.NoError(t, err)
-	warmup.DecRef()
-	warmup.DecRef() // refCount = 0 (dormant: open, no active reference)
+	warmup.DecRef() // the single create reference; refCount = 0 (dormant: open, no active reference)
 	baselineOpens := openShardCount.Load()
 
 	const groupName = "test-group"
@@ -416,8 +414,7 @@ func TestSegmentCreateTS_ConsistencyAcrossPaths(t *testing.T) {
 	historicalStart := ir.Standard(time.Date(2026, 4, 10, 0, 0, 0, 0, time.Local))
 	histSeg, err := db.CreateSegmentIfNotExist(historicalStart)
 	require.NoError(t, err)
-	histSeg.DecRef()
-	histSeg.DecRef()
+	histSeg.DecRef() // the single create reference; refCount = 0 (dormant: open, no active reference)
 
 	rawTS := time.Date(2026, 5, 15, 6, 0, 0, 0, time.Local)
 	wantNewStart := ir.Standard(rawTS)
