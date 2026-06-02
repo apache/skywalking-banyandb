@@ -225,6 +225,21 @@ func TestQueryResult(t *testing.T) {
 	}
 }
 
+func TestOmitIdentityTagProjection(t *testing.T) {
+	projection := &model.TagProjection{
+		Family: "default",
+		Names:  []string{"trace_id", "service_id", "span_id", "duration"},
+	}
+
+	got := omitIdentityTagProjection(projection, "trace_id", "span_id")
+
+	require.Equal(t, &model.TagProjection{
+		Family: "default",
+		Names:  []string{"service_id", "duration"},
+	}, got)
+	require.Equal(t, []string{"trace_id", "service_id", "span_id", "duration"}, projection.Names)
+}
+
 func TestQueryResultMultipleBatches(t *testing.T) {
 	tests := []struct {
 		name         string
