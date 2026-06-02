@@ -384,9 +384,13 @@ var _ = Describe("Metadata", func() {
 					return getFilePartCount(svcs, groupName)
 				}, flags.EventuallyTimeout).Should(BeNumerically(">", filePartCountAfterFirstBatch))
 				partCountBeforeMerge := getTotalPartCount(svcs, groupName)
+				// The background merge of the freshly-flushed parts runs asynchronously and,
+				// on resource-constrained CI runners (notably under -race), can take well
+				// beyond the default Eventually budget. Allow a generous, environment-scaled
+				// timeout so the wait reflects merge latency rather than a fixed ceiling.
 				Eventually(func() int64 {
 					return getTotalPartCount(svcs, groupName)
-				}, flags.EventuallyTimeout).Should(BeNumerically("<", partCountBeforeMerge))
+				}, 3*flags.EventuallyTimeout).Should(BeNumerically("<", partCountBeforeMerge))
 
 				Eventually(func(innerGm Gomega) {
 					spans := querySchemaChangeTraceData(svcs, traceName, groupName,

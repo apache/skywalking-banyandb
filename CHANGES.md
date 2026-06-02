@@ -2,6 +2,12 @@
 
 Release Notes.
 
+## 0.10.3
+
+### Bug Fixes
+
+- Fix trace query identity-tag projection: when `trace_id`/`span_id` are explicitly projected, reconstruct them from span identity at response build time instead of requesting them as stored tags, and preserve tag order with null-filled per-span value alignment in the distributed trace result iterator.
+
 ## 0.10.2
 
 ### Bug Fixes
