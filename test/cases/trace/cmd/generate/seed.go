@@ -194,8 +194,8 @@ func parseRows(paths ...string) ([]SpanRow, error) {
 			return nil, fmt.Errorf("failed to read %s: %w", path, readErr)
 		}
 		var rawRows []struct {
-			Tags []map[string]map[string]any `json:"tags"`
 			Span string                      `json:"span"`
+			Tags []map[string]map[string]any `json:"tags"`
 		}
 		if jsonErr := json.Unmarshal(content, &rawRows); jsonErr != nil {
 			return nil, fmt.Errorf("failed to parse %s: %w", path, jsonErr)

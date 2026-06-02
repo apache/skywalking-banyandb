@@ -48,14 +48,26 @@ func GenerateLayer2() []*TestCase {
 	var cases []*TestCase
 	for _, cfg := range configs {
 		criteria := buildTree(traceDef, cfg.depth, cfg.rootOp, 0)
-		req := &tracev1.QueryRequest{Name: traceDef.Name, Groups: []string{traceDef.Group}, TagProjection: []string{"trace_id", "span_id", "service_id", "duration"}, Criteria: criteria, OrderBy: &modelv1.QueryOrder{IndexRuleName: "timestamp", Sort: modelv1.Sort_SORT_DESC}}
+		req := &tracev1.QueryRequest{
+			Name:          traceDef.Name,
+			Groups:        []string{traceDef.Group},
+			TagProjection: []string{"trace_id", "span_id", "service_id", "duration"},
+			Criteria:      criteria,
+			OrderBy:       &modelv1.QueryOrder{IndexRuleName: "timestamp", Sort: modelv1.Sort_SORT_DESC},
+		}
 		ql, qlErr := RenderQL(req)
 		if qlErr != nil {
 			continue
 		}
+		wantEmpty := (cfg.depth == 3 && cfg.rootOp == modelv1.LogicalExpression_LOGICAL_OP_AND) ||
+			(cfg.depth == 5 && cfg.rootOp == modelv1.LogicalExpression_LOGICAL_OP_OR)
 		cases = append(cases, &TestCase{
-			Name: fmt.Sprintf("gen_tree_depth%d_%s", cfg.depth, cfg.suffix), Trace: traceDef, Request: req, QL: ql,
-			DisOrder: cfg.depth > 1, WantEmpty: (cfg.depth == 3 && cfg.rootOp == modelv1.LogicalExpression_LOGICAL_OP_AND) || (cfg.depth == 5 && cfg.rootOp == modelv1.LogicalExpression_LOGICAL_OP_OR),
+			Name:      fmt.Sprintf("gen_tree_depth%d_%s", cfg.depth, cfg.suffix),
+			Trace:     traceDef,
+			Request:   req,
+			QL:        ql,
+			DisOrder:  cfg.depth > 1,
+			WantEmpty: wantEmpty,
 		})
 	}
 	return cases
