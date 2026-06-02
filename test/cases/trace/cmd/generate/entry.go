@@ -15,6 +15,7 @@
 // specific language governing permissions and limitations
 // under the License.
 
+// Package main generates trace query integration-test cases (input/*.ql and input/*.yml).
 package main
 
 import (
