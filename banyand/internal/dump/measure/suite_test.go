@@ -47,6 +47,7 @@ import (
 	"github.com/apache/skywalking-banyandb/pkg/convert"
 	localfs "github.com/apache/skywalking-banyandb/pkg/fs"
 	"github.com/apache/skywalking-banyandb/pkg/index"
+	"github.com/apache/skywalking-banyandb/pkg/index/inverted"
 	"github.com/apache/skywalking-banyandb/pkg/logger"
 	pbv1 "github.com/apache/skywalking-banyandb/pkg/pb/v1"
 	"github.com/apache/skywalking-banyandb/pkg/test"
@@ -357,6 +358,17 @@ func TestMeasureIndexedTagResolvedFromIndex(t *testing.T) {
 	stopped = true
 
 	segmentPath := findSidxSegmentPath(t, rootPath)
+
+	// The series index persists asynchronously (unsafe batches + persister) and is
+	// flushed on stop; after a hard stop there is a brief window before all series
+	// are readable on disk. The fallback scan below sources EntityValues purely
+	// from this index, so wait until every written series is visible before
+	// asserting, otherwise the scan can race the flush and recover nothing.
+	sidxPath := filepath.Join(segmentPath, "sidx")
+	require.Eventually(t, func() bool {
+		count, _ := inverted.ReadOnlyDocCount(sidxPath)
+		return count >= int64(total)
+	}, 30*time.Second, 100*time.Millisecond, "series index not fully persisted after stop")
 
 	ruleToTag := map[uint32]dump.IndexedTagSpec{
 		strRuleID: {Family: "default", Name: "idxStr", Type: pbv1.ValueTypeStr},
