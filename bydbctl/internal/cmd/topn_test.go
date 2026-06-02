@@ -261,9 +261,12 @@ var _ = Describe("Topn Data Query", func() {
 	var startStr, endStr string
 	var interval time.Duration
 	BeforeEach(func() {
-		var err error
-		now, err = time.ParseInLocation("2006-01-02T15:04:05", "2021-09-01T23:30:00", time.Local)
-		Expect(err).NotTo(HaveOccurred())
+		// Seed an hour in the past: recent enough to stay within the group TTL
+		// (so the retention filter keeps it), but old enough that the TopN
+		// streaming window has already closed and emitted by query time. Seeding
+		// exactly at now leaves the single 1ms-interval bucket's window open (no
+		// later events advance the watermark), so TopN would return nothing.
+		now = timestamp.NowMilli().Add(-time.Hour)
 		startStr = now.Add(-20 * time.Minute).Format(time.RFC3339)
 		interval = 1 * time.Millisecond
 		endStr = now.Add(5 * time.Minute).Format(time.RFC3339)
@@ -280,6 +283,11 @@ var _ = Describe("Topn Data Query", func() {
 		)
 		Expect(err).NotTo(HaveOccurred())
 		cases_measure_data.Write(conn, "service_instance_cpm_minute", "sw_metric", "service_instance_cpm_minute_data.json", now, interval)
+		// Advance the TopN streaming watermark past the recent-past bucket by
+		// writing a current-time datapoint outside the query window, so the
+		// tumbling window closes and TopN emits. Without a later event the single
+		// bucket's window stays open and TopN returns nothing.
+		cases_measure_data.Write(conn, "service_instance_cpm_minute", "sw_metric", "service_instance_cpm_minute_data.json", timestamp.NowMilli(), interval)
 		rootCmd.SetArgs([]string{"measure", "query", "-a", addr, "-f", "-"})
 		issue := func() string {
 			rootCmd.SetIn(strings.NewReader(fmt.Sprintf(`
@@ -339,6 +347,9 @@ fieldValueSort: 1`, startStr, endStr)))
 			resp := new(measurev1.TopNResponse)
 			helpers.UnmarshalYAML([]byte(out), resp)
 			GinkgoWriter.Println(resp)
+			if len(resp.Lists) == 0 {
+				return 0
+			}
 			return len(resp.Lists[0].Items)
 		}, flags.EventuallyTimeout).Should(Equal(3))
 	})
@@ -379,6 +390,9 @@ fieldValueSort: 1`))
 			resp := new(measurev1.TopNResponse)
 			helpers.UnmarshalYAML([]byte(out), resp)
 			GinkgoWriter.Println(resp)
+			if len(resp.Lists) == 0 {
+				return 0
+			}
 			return len(resp.Lists[0].Items)
 		}, flags.EventuallyTimeout).Should(Equal(3))
 	},

@@ -41,6 +41,11 @@ var (
 
 var streamEntries = []any{
 	g.Entry("all elements", helpers.Args{Input: "all", Duration: 1 * time.Hour}),
+	// Window sits ~6 days back, well past the "default" group's 3-day TTL. The
+	// data seeded there (see test/cases/init.go) is in a fully expired segment
+	// and must be dropped by the retention filter, yielding an empty result.
+	// Without the filter the expired elements leak in and this case fails.
+	g.Entry("excludes data expired beyond TTL", helpers.Args{Input: "all", Offset: -156 * time.Hour, Duration: 24 * time.Hour, WantEmpty: true}),
 	g.Entry("projection with http.method", helpers.Args{Input: "all_with_http_method", Duration: 1 * time.Hour}),
 	g.Entry("limit", helpers.Args{Input: "limit", Duration: 1 * time.Hour}),
 	g.Entry("max limit", helpers.Args{Input: "all_max_limit", Want: "all", Duration: 1 * time.Hour}),

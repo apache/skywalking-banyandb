@@ -89,6 +89,13 @@ var measureEntries = []any{
 		helpers.Args{Input: "index_mode_all", Want: "index_mode_all_xl", Duration: 96 * time.Hour, Offset: -72 * time.Hour, DisOrder: true}),
 	g.Entry("all in all segments of index mode",
 		helpers.Args{Input: "index_mode_all", Want: "index_mode_all_segs", Duration: 96 * time.Hour, Offset: -72 * time.Hour, DisOrder: true}),
+	// Window reaches ~11 days back, past the index_mode group's 7-day TTL. The
+	// expired ids 901/902 seeded at now-10d (see test/cases/init.go) sit in a
+	// fully expired segment and must be dropped by the retention filter, leaving
+	// exactly the in-retention rows of index_mode_all_xl. Without the filter the
+	// expired rows leak in and this case fails.
+	g.Entry("index mode excludes data expired beyond TTL",
+		helpers.Args{Input: "index_mode_all", Want: "index_mode_all_xl", Duration: 288 * time.Hour, Offset: -264 * time.Hour, DisOrder: true}),
 	g.Entry("order by desc of index mode", helpers.Args{Input: "index_mode_order_desc", Duration: 25 * time.Minute, Offset: -20 * time.Minute}),
 	g.Entry("range of index mode", helpers.Args{Input: "index_mode_range", Duration: 25 * time.Minute, Offset: -20 * time.Minute, DisOrder: true}),
 	g.Entry("none of index mode", helpers.Args{Input: "index_mode_none", WantEmpty: true, Duration: 25 * time.Minute, Offset: -20 * time.Minute}),

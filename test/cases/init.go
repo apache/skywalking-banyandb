@@ -44,6 +44,11 @@ func Initialize(addr string, now time.Time) {
 	interval := 500 * time.Millisecond
 	// stream
 	casesstreamdata.Write(conn, "sw", now, interval)
+	// Seed stream data in a fully expired segment, well past the "default"
+	// group's 3-day TTL. It must never surface in query results: it backs the
+	// "excludes data expired beyond TTL" case, which fails without the retention
+	// filter that drops fully expired segments.
+	casesstreamdata.WriteToGroup(conn, "sw", "default", "sw", now.AddDate(0, 0, -6), interval)
 	casesstreamdata.Write(conn, "duplicated", now, 0)
 	casesstreamdata.WriteDeduplicationTest(conn, "deduplication_test", now, time.Millisecond)
 	casesstreamdata.WriteToGroup(conn, "sw", "updated", "sw_updated", now.Add(time.Minute), interval)
@@ -83,6 +88,11 @@ func Initialize(addr string, now time.Time) {
 	interval = time.Minute
 	casesmeasuredata.Write(conn, "service_traffic", "index_mode", "service_traffic_data_old.json", now.AddDate(0, 0, -2), interval)
 	casesmeasuredata.Write(conn, "service_traffic", "index_mode", "service_traffic_data.json", now, interval)
+	// Seed data in a fully expired segment, well past the index_mode group's
+	// 7-day TTL (distinct entity ids 901/902). It must never surface in query
+	// results: it backs the "index mode excludes data expired beyond TTL" case,
+	// which fails without the retention filter that drops fully expired segments.
+	casesmeasuredata.Write(conn, "service_traffic", "index_mode", "service_traffic_data_expired.json", now.AddDate(0, 0, -10), interval)
 	casesmeasuredata.Write(conn, "service_traffic", "replicated_group", "service_traffic_data.json", now, interval)
 	casesmeasuredata.Write(conn, "service_instance_traffic", "sw_metric", "service_instance_traffic_data.json", now, interval)
 	casesmeasuredata.Write(conn, "service_cpm_minute", "sw_metric", "service_cpm_minute_data.json", now, interval)
@@ -137,6 +147,11 @@ func Initialize(addr string, now time.Time) {
 	// trace
 	interval = 500 * time.Millisecond
 	casestrace.WriteToGroup(conn, "sw", "test-trace-group", "sw", now, interval)
+	// Seed trace data in a fully expired segment, well past the
+	// "test-trace-group" group's 3-day TTL. It must never surface in query
+	// results: it backs the "excludes data expired beyond TTL" case, which fails
+	// without the retention filter that drops fully expired segments.
+	casestrace.WriteToGroup(conn, "sw", "test-trace-group", "sw", now.AddDate(0, 0, -6), interval)
 	casestrace.WriteToGroup(conn, "zipkin", "zipkinTrace", "zipkin", now, interval)
 	casestrace.WriteToGroup(conn, "sw", "test-trace-updated", "sw_updated", now.Add(time.Minute), interval)
 	time.Sleep(2 * time.Second)
