@@ -17,7 +17,8 @@
 
 package main
 
-// Copied verbatim from test/cases/measure/cmd/generate/pairwise.go — keep in sync; pure combinatorics, no proto types.
+// Adapted from test/cases/measure/cmd/generate/pairwise.go (pure combinatorics, no proto types),
+// with fixes to the constraint-unsatisfiable fallback path; keep the two in sync.
 
 // Pair holds a parameter-value pair for pairwise testing.
 type Pair struct {
@@ -96,7 +97,11 @@ func collectAllPairs(params map[string][]string, constraints []ConstraintFunc) m
 
 func buildVector(params map[string][]string, paramNames []string, coveredPairs map[Pair]bool, constraints []ConstraintFunc) TestVector {
 	tv := make(TestVector)
-	fillVector(tv, params, paramNames, 0, coveredPairs, constraints)
+	if !fillVector(tv, params, paramNames, 0, coveredPairs, constraints) {
+		// No assignment satisfies the constraints; signal an unsatisfiable
+		// vector so PairwiseGenerate stops instead of recording a partial one.
+		return nil
+	}
 	return tv
 }
 
@@ -128,7 +133,7 @@ func fillVector(tv TestVector, params map[string][]string, paramNames []string, 
 			}
 		}
 		if bestVal == "" {
-			tv[pn] = params[pn][0]
+			bestVal = params[pn][0]
 		}
 	}
 	tv[pn] = bestVal

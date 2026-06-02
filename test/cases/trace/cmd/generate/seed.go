@@ -77,9 +77,10 @@ func SeedData() []Trace {
 
 // FindTrace returns a trace schema by name.
 func FindTrace(name string) *Trace {
-	for _, traceDef := range SeedData() {
-		if traceDef.Name == name {
-			return &traceDef
+	traces := SeedData()
+	for idx := range traces {
+		if traces[idx].Name == name {
+			return &traces[idx]
 		}
 	}
 	return nil
