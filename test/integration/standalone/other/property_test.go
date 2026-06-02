@@ -38,6 +38,23 @@ import (
 	"github.com/apache/skywalking-banyandb/pkg/test/setup"
 )
 
+// applyCreatedProperty issues req and retries until Apply succeeds, then asserts
+// the property was newly created with wantTags tags. A just-created group and
+// property reach the liaison's in-memory repositories asynchronously via the
+// schema watch, so the first Apply right after creating them can transiently
+// fail with "failed to get group copies". Eventually rides out that propagation
+// window without masking a persistent failure.
+func applyCreatedProperty(client propertyv1.PropertyServiceClient, req *propertyv1.ApplyRequest, wantTags uint32) {
+	var resp *propertyv1.ApplyResponse
+	gm.EventuallyWithOffset(1, func() error {
+		var err error
+		resp, err = client.Apply(context.Background(), req)
+		return err
+	}, flags.EventuallyTimeout).Should(gm.Succeed())
+	gm.ExpectWithOffset(1, resp.Created).To(gm.BeTrue())
+	gm.ExpectWithOffset(1, resp.TagsNum).To(gm.Equal(wantTags))
+}
+
 var _ = g.Describe("Property application", func() {
 	var deferFn func()
 	var conn *grpc.ClientConn
@@ -89,17 +106,14 @@ var _ = g.Describe("Property application", func() {
 			Name:  "p",
 			Group: "g",
 		}
-		resp, err := client.Apply(context.Background(), &propertyv1.ApplyRequest{Property: &propertyv1.Property{
+		applyCreatedProperty(client, &propertyv1.ApplyRequest{Property: &propertyv1.Property{
 			Metadata: md,
 			Id:       "1",
 			Tags: []*modelv1.Tag{
 				{Key: "t1", Value: &modelv1.TagValue{Value: &modelv1.TagValue_Str{Str: &modelv1.Str{Value: "v1"}}}},
 				{Key: "t2", Value: &modelv1.TagValue{Value: &modelv1.TagValue_Str{Str: &modelv1.Str{Value: "v2"}}}},
 			},
-		}})
-		gm.Expect(err).NotTo(gm.HaveOccurred())
-		gm.Expect(resp.Created).To(gm.BeTrue())
-		gm.Expect(resp.TagsNum).To(gm.Equal(uint32(2)))
+		}}, 2)
 		got, err := client.Query(context.Background(), &propertyv1.QueryRequest{
 			Groups: []string{"g"},
 			Name:   "p",
@@ -112,7 +126,7 @@ var _ = g.Describe("Property application", func() {
 			{Key: "t1", Value: &modelv1.TagValue{Value: &modelv1.TagValue_Str{Str: &modelv1.Str{Value: "v1"}}}},
 			{Key: "t2", Value: &modelv1.TagValue{Value: &modelv1.TagValue_Str{Str: &modelv1.Str{Value: "v2"}}}},
 		}))
-		resp, err = client.Apply(context.Background(), &propertyv1.ApplyRequest{Property: &propertyv1.Property{
+		resp, err := client.Apply(context.Background(), &propertyv1.ApplyRequest{Property: &propertyv1.Property{
 			Metadata: md,
 			Id:       "1",
 			Tags: []*modelv1.Tag{
@@ -140,17 +154,14 @@ var _ = g.Describe("Property application", func() {
 			Name:  "p",
 			Group: "g",
 		}
-		resp, err := client.Apply(context.Background(), &propertyv1.ApplyRequest{Property: &propertyv1.Property{
+		applyCreatedProperty(client, &propertyv1.ApplyRequest{Property: &propertyv1.Property{
 			Metadata: md,
 			Id:       "1",
 			Tags: []*modelv1.Tag{
 				{Key: "t1", Value: &modelv1.TagValue{Value: &modelv1.TagValue_Str{Str: &modelv1.Str{Value: "v1"}}}},
 			},
-		}})
-		gm.Expect(err).NotTo(gm.HaveOccurred())
-		gm.Expect(resp.Created).To(gm.BeTrue())
-		gm.Expect(resp.TagsNum).To(gm.Equal(uint32(1)))
-		resp, err = client.Apply(context.Background(), &propertyv1.ApplyRequest{Property: &propertyv1.Property{
+		}}, 1)
+		resp, err := client.Apply(context.Background(), &propertyv1.ApplyRequest{Property: &propertyv1.Property{
 			Metadata: md,
 			Id:       "1",
 			Tags: []*modelv1.Tag{
@@ -179,18 +190,15 @@ var _ = g.Describe("Property application", func() {
 			Name:  "p",
 			Group: "g",
 		}
-		resp, err := client.Apply(context.Background(), &propertyv1.ApplyRequest{Property: &propertyv1.Property{
+		applyCreatedProperty(client, &propertyv1.ApplyRequest{Property: &propertyv1.Property{
 			Metadata: md,
 			Id:       "1",
 			Tags: []*modelv1.Tag{
 				{Key: "t1", Value: &modelv1.TagValue{Value: &modelv1.TagValue_Str{Str: &modelv1.Str{Value: "v1"}}}},
 				{Key: "t2", Value: &modelv1.TagValue{Value: &modelv1.TagValue_Null{}}},
 			},
-		}})
-		gm.Expect(err).NotTo(gm.HaveOccurred())
-		gm.Expect(resp.Created).To(gm.BeTrue())
-		gm.Expect(resp.TagsNum).To(gm.Equal(uint32(2)))
-		resp, err = client.Apply(context.Background(), &propertyv1.ApplyRequest{Property: &propertyv1.Property{
+		}}, 2)
+		resp, err := client.Apply(context.Background(), &propertyv1.ApplyRequest{Property: &propertyv1.Property{
 			Metadata: md,
 			Id:       "1",
 			Tags: []*modelv1.Tag{
@@ -258,18 +266,15 @@ var _ = g.Describe("Property application", func() {
 			Name:  "p",
 			Group: "g",
 		}
-		resp, err := client.Apply(context.Background(), &propertyv1.ApplyRequest{Property: &propertyv1.Property{
+		applyCreatedProperty(client, &propertyv1.ApplyRequest{Property: &propertyv1.Property{
 			Metadata: md,
 			Id:       "1",
 			Tags: []*modelv1.Tag{
 				{Key: "t1", Value: &modelv1.TagValue{Value: &modelv1.TagValue_Str{Str: &modelv1.Str{Value: "v1"}}}},
 				{Key: "t2", Value: &modelv1.TagValue{Value: &modelv1.TagValue_Str{Str: &modelv1.Str{Value: "v2"}}}},
 			},
-		}})
-		gm.Expect(err).NotTo(gm.HaveOccurred())
-		gm.Expect(resp.Created).To(gm.BeTrue())
-		gm.Expect(resp.TagsNum).To(gm.Equal(uint32(2)))
-		resp, err = client.Apply(context.Background(), &propertyv1.ApplyRequest{Property: &propertyv1.Property{
+		}}, 2)
+		resp, err := client.Apply(context.Background(), &propertyv1.ApplyRequest{Property: &propertyv1.Property{
 			Metadata: &commonv1.Metadata{
 				Name:  "p",
 				Group: "g",
