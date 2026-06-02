@@ -90,7 +90,7 @@ var VerifyFn = func(innerGm gm.Gomega, sharedContext helpers.SharedContext, args
 	if args.WantEmpty {
 		innerGm.Expect(resp.Traces).To(gm.BeEmpty(), func() string {
 			var j []byte
-			j, err = marshalToJSONWithStringBytes(resp)
+			j, err = MarshalToJSONWithStringBytes(resp)
 			if err != nil {
 				return err.Error()
 			}
@@ -160,7 +160,7 @@ var VerifyFn = func(innerGm gm.Gomega, sharedContext helpers.SharedContext, args
 		extra...)).
 		To(gm.BeTrue(), func() string {
 			var j []byte
-			j, err = marshalToJSONWithStringBytes(resp)
+			j, err = MarshalToJSONWithStringBytes(resp)
 			if err != nil {
 				return err.Error()
 			}
@@ -342,6 +342,33 @@ func Write(conn *grpclib.ClientConn, name string, baseTime time.Time, interval t
 	WriteToGroup(conn, name, "test-trace-group", name, baseTime, interval)
 }
 
+// SeedAll writes all trace fixtures used by the integration suite.
+func SeedAll(conn *grpclib.ClientConn, baseTime time.Time, interval time.Duration) {
+	WriteToGroup(conn, "sw", "test-trace-group", "sw", baseTime, interval)
+	WriteToGroup(conn, "zipkin", "zipkinTrace", "zipkin", baseTime, interval)
+	WriteToGroup(conn, "sw", "test-trace-updated", "sw_updated", baseTime.Add(time.Minute), interval)
+	time.Sleep(2 * time.Second)
+	WriteToGroup(conn, "sw", "test-trace-group", "sw_mixed_traces", baseTime.Add(time.Minute), interval)
+	WriteMixed(conn, baseTime.Add(2*time.Minute), interval,
+		WriteSpec{
+			Metadata: &commonv1.Metadata{Name: "sw", Group: "test-trace-spec"},
+			DataFile: "sw_schema_order.json",
+		},
+		WriteSpec{
+			Spec: &tracev1.TagSpec{
+				TagNames: []string{"trace_id", "state", "service_id", "service_instance_id", "endpoint_id", "duration", "span_id", "timestamp"},
+			},
+			DataFile: "sw_spec_order.json",
+		},
+		WriteSpec{
+			Metadata: &commonv1.Metadata{Name: "sw", Group: "test-trace-spec2"},
+			Spec: &tracev1.TagSpec{
+				TagNames: []string{"span_id", "duration", "endpoint_id", "service_instance_id", "service_id", "state", "trace_id", "timestamp"},
+			},
+			DataFile: "sw_spec_order2.json",
+		})
+}
+
 // WriteToGroup writes trace data to a specific group.
 func WriteToGroup(conn *grpclib.ClientConn, name, group, fileName string, baseTime time.Time, interval time.Duration) {
 	metadata := &commonv1.Metadata{
@@ -456,8 +483,8 @@ func unmarshalYAMLWithSpanEncoding(yamlData []byte, response *tracev1.QueryRespo
 	gm.Expect(protojson.Unmarshal(modifiedJSON, response)).To(gm.Succeed())
 }
 
-// marshalToJSONWithStringBytes marshals the QueryResponse to JSON with []byte fields as strings instead of base64.
-func marshalToJSONWithStringBytes(resp *tracev1.QueryResponse) ([]byte, error) {
+// MarshalToJSONWithStringBytes marshals the QueryResponse to JSON with []byte fields as strings instead of base64.
+func MarshalToJSONWithStringBytes(resp *tracev1.QueryResponse) ([]byte, error) {
 	// First marshal to JSON using protojson
 	j, err := protojson.Marshal(resp)
 	if err != nil {

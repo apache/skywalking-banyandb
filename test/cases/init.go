@@ -28,7 +28,6 @@ import (
 	commonv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/common/v1"
 	measurev1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/measure/v1"
 	streamv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/stream/v1"
-	tracev1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/trace/v1"
 	"github.com/apache/skywalking-banyandb/pkg/grpchelper"
 	casesmeasuredata "github.com/apache/skywalking-banyandb/test/cases/measure/data"
 	caseproperty "github.com/apache/skywalking-banyandb/test/cases/property/data"
@@ -135,30 +134,7 @@ func Initialize(addr string, now time.Time) {
 		})
 	time.Sleep(2 * time.Second)
 	// trace
-	interval = 500 * time.Millisecond
-	casestrace.WriteToGroup(conn, "sw", "test-trace-group", "sw", now, interval)
-	casestrace.WriteToGroup(conn, "zipkin", "zipkinTrace", "zipkin", now, interval)
-	casestrace.WriteToGroup(conn, "sw", "test-trace-updated", "sw_updated", now.Add(time.Minute), interval)
-	time.Sleep(2 * time.Second)
-	casestrace.WriteToGroup(conn, "sw", "test-trace-group", "sw_mixed_traces", now.Add(time.Minute), interval)
-	casestrace.WriteMixed(conn, now.Add(2*time.Minute), interval,
-		casestrace.WriteSpec{
-			Metadata: &commonv1.Metadata{Name: "sw", Group: "test-trace-spec"},
-			DataFile: "sw_schema_order.json",
-		},
-		casestrace.WriteSpec{
-			Spec: &tracev1.TagSpec{
-				TagNames: []string{"trace_id", "state", "service_id", "service_instance_id", "endpoint_id", "duration", "span_id", "timestamp"},
-			},
-			DataFile: "sw_spec_order.json",
-		},
-		casestrace.WriteSpec{
-			Metadata: &commonv1.Metadata{Name: "sw", Group: "test-trace-spec2"},
-			Spec: &tracev1.TagSpec{
-				TagNames: []string{"span_id", "duration", "endpoint_id", "service_instance_id", "service_id", "state", "trace_id", "timestamp"},
-			},
-			DataFile: "sw_spec_order2.json",
-		})
+	casestrace.SeedAll(conn, now, 500*time.Millisecond)
 	// property
 	caseproperty.Write(conn, "sw1")
 	caseproperty.Write(conn, "sw2")

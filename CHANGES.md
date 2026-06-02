@@ -2,6 +2,7 @@
 
 * Add opt-in vectorized measure query tracing over raw-frame distributed queries, including a trace envelope and fixed trace-label vocabulary.
 * Fix trace query identity-tag projection: when `trace_id`/`span_id` are explicitly projected, reconstruct them from span identity at response build time instead of requesting them as stored tags, and preserve tag order with null-filled per-span value alignment in the distributed trace result iterator.
+* Add a program-generated trace query integration-test framework under `test/cases/trace/cmd/{generate,capture}`: layered case generation (criteria leaves, AND/OR trees, and feature-pairwise across the traceID-lookup and order-based query modes), env-gated golden capture, and a shared `SeedAll` seeder — mirroring the measure test-case framework.
 
 Release Notes.
 
