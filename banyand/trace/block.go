@@ -457,6 +457,9 @@ func (bc *blockCursor) copyAllTo(r *model.TraceResult) {
 	r.Spans = append(r.Spans, bc.spans...)
 	r.SpanIDs = append(r.SpanIDs, bc.spanIDs...)
 
+	if bc.tagProjection == nil || len(bc.tagProjection.Names) == 0 {
+		return
+	}
 	if len(r.Tags) != len(bc.tagProjection.Names) {
 		r.Tags = make([]model.Tag, len(bc.tagProjection.Names))
 		for i, name := range bc.tagProjection.Names {

@@ -1,6 +1,7 @@
 # Changes by Version
 
 * Add opt-in vectorized measure query tracing over raw-frame distributed queries, including a trace envelope and fixed trace-label vocabulary.
+* Fix trace query identity-tag projection: when `trace_id`/`span_id` are explicitly projected, reconstruct them from span identity at response build time instead of requesting them as stored tags, and preserve tag order with null-filled per-span value alignment in the distributed trace result iterator.
 
 Release Notes.
 
