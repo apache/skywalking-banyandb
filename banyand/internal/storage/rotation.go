@@ -107,7 +107,7 @@ func (d *database[T, O]) startRotationTask() error {
 						}()
 						for i := range ss {
 							if ss[i].End.UnixNano() < ts {
-								ss[i].index.store.Reset()
+								ss[i].resetIndex()
 							}
 						}
 						latest := ss[len(ss)-1]

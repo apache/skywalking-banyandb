@@ -106,8 +106,8 @@ func TestSyncReceiver_SegmentRefOwnership(t *testing.T) {
 	defer segC.DecRef()
 	_, err = segC.CreateTSTableIfNotExist(common.ShardID(0))
 	require.NoError(t, err)
-	require.Equal(t, int32(1), openShardCount.Load()-beforeProbe,
-		"REGRESSION: Close did not call segment.DecRef()")
+	require.Equal(t, int32(0), openShardCount.Load()-beforeProbe,
+		"after Close the dormant segment and its already-open shard are reused, no new shard")
 }
 
 // TestSyncChunkCallback_CreatePartHandler_StoresSegment drives the real
@@ -180,8 +180,8 @@ func TestSyncChunkCallback_CreatePartHandler_StoresSegment(t *testing.T) {
 	defer segProbe.DecRef()
 	_, err = segProbe.CreateTSTableIfNotExist(common.ShardID(0))
 	require.NoError(t, err)
-	require.Equal(t, int32(1), openShardCount.Load()-beforeProbe,
-		"REGRESSION: Close did not call segment.DecRef()")
+	require.Equal(t, int32(0), openShardCount.Load()-beforeProbe,
+		"after Close the dormant segment and its already-open shard are reused, no new shard")
 }
 
 func openTestTSDBForRefTest(t *testing.T, tmpPath string, openShardCount *atomic.Int32) storage.TSDB[*tsTable, option] {

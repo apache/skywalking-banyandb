@@ -140,21 +140,26 @@ func TestSegmentOpenAndReopen(t *testing.T) {
 	require.NoError(t, err)
 	require.NotNil(t, segment)
 
-	// Verify segment is open
-	assert.Greater(t, segment.refCount, int32(0))
+	// A freshly opened segment is dormant: resources open (index!=nil) with no
+	// active reference (refCount==0).
+	assert.NotNil(t, segment.index)
+	assert.Equal(t, int32(0), segment.refCount)
 
-	// Close segment by decrementing reference count
-	initialRefCount := segment.refCount
+	// Acquire an active reference, then release it: DecRef to zero leaves the
+	// segment dormant (open), it does NOT close.
+	require.NoError(t, segment.incRef(ctx))
+	assert.Equal(t, int32(1), segment.refCount)
 	segment.DecRef()
+	assert.Equal(t, int32(0), segment.refCount)
+	assert.NotNil(t, segment.index)
 
-	// Verify segment is closed (refCount reduced)
-	assert.Equal(t, initialRefCount-1, segment.refCount)
-
-	// Reopen segment
-	segment.incRef(ctx)
-
-	// Verify segment is properly reopened
-	assert.Equal(t, initialRefCount, segment.refCount)
+	// Idle-close it (resources released), then incRef reopens it.
+	segment.lastAccessed.Store(time.Now().Add(-time.Hour).UnixNano())
+	require.True(t, segment.closeIfIdle(time.Now().UnixNano()))
+	assert.Nil(t, segment.index)
+	require.NoError(t, segment.incRef(ctx))
+	assert.Equal(t, int32(1), segment.refCount)
+	defer segment.DecRef()
 
 	// Verify we can still access segment data
 	assert.NotNil(t, segment.index)
@@ -234,17 +239,22 @@ func TestSegmentCloseIfIdle(t *testing.T) {
 	segment, err := sc.openSegment(ctx, startTime, endTime, segmentPath, suffix, sc.groupCache)
 	require.NoError(t, err)
 
-	// Force last access time to be in the past
+	// A freshly opened segment is dormant (open, refCount==0).
+	require.NotNil(t, segment.index)
+	require.Equal(t, int32(0), segment.refCount)
+
+	// Force last access time to be in the past so the idle reclaimer closes it.
 	segment.lastAccessed.Store(time.Now().Add(-time.Minute).UnixNano())
 
-	// Close if idle should succeed
-	segment.DecRef()
+	// closeIfIdle releases the dormant, idle segment's resources.
+	require.True(t, segment.closeIfIdle(time.Now().UnixNano()))
 
 	// Verify segment is closed
 	assert.Nil(t, segment.index)
 
 	// Test reopening the segment
-	segment.incRef(ctx)
+	require.NoError(t, segment.incRef(ctx))
+	defer segment.DecRef()
 
 	// Verify segment is properly reopened
 	assert.NotNil(t, segment.index)
@@ -339,10 +349,10 @@ func TestCloseIdleAndSelectSegments(t *testing.T) {
 	// Verify we have three segments
 	require.Len(t, sc.lst, 3)
 
-	// Make sure all segments have reference counts > 0
-	require.Greater(t, seg1.refCount, int32(0))
-	require.Greater(t, seg2.refCount, int32(0))
-	require.Greater(t, seg3.refCount, int32(0))
+	// All segments start dormant: open (index!=nil) with no active reference.
+	require.NotNil(t, seg1.index)
+	require.NotNil(t, seg2.index)
+	require.NotNil(t, seg3.index)
 
 	// Force segments 1 and 3 to be idle (setting last accessed time in the past)
 	seg1.lastAccessed.Store(time.Now().Add(-time.Second).UnixNano())
@@ -590,9 +600,9 @@ func TestDeleteExpiredSegmentsWithClosedSegments(t *testing.T) {
 		segments = append(segments, segment)
 	}
 
-	// Verify all segments are initially open
+	// Verify all segments are initially open (dormant: index!=nil, refCount==0)
 	for i, seg := range segments {
-		assert.Greater(t, seg.refCount, int32(0), "Segment %d should be open", i)
+		assert.NotNil(t, seg.index, "Segment %d should be open", i)
 	}
 
 	// Set the "lastAccessed" time for some segments to make them idle
@@ -614,12 +624,12 @@ func TestDeleteExpiredSegmentsWithClosedSegments(t *testing.T) {
 	closedCount := sc.closeIdleSegments()
 	assert.Equal(t, 3, closedCount, "Should have closed 3 segments")
 
-	// Verify segments 0, 2, and 4 are closed
-	assert.Equal(t, int32(0), segments[0].refCount, "Segment 0 should be closed")
+	// Verify segments 0, 2, and 4 are closed (index released)
+	assert.Nil(t, segments[0].index, "Segment 0 should be closed")
 	assert.NotNil(t, segments[1].index, "Segment 1 should remain open")
-	assert.Equal(t, int32(0), segments[2].refCount, "Segment 2 should be closed")
+	assert.Nil(t, segments[2].index, "Segment 2 should be closed")
 	assert.NotNil(t, segments[3].index, "Segment 3 should remain open")
-	assert.Equal(t, int32(0), segments[4].refCount, "Segment 4 should be closed")
+	assert.Nil(t, segments[4].index, "Segment 4 should be closed")
 	assert.NotNil(t, segments[5].index, "Segment 5 should remain open")
 
 	// Now delete expired segments
@@ -917,10 +927,11 @@ func TestSegment_IndexDB_ReturnsUntypedNilWhenClosed(t *testing.T) {
 		startTime.Format(dayFormat), sc.groupCache)
 	require.NoError(t, err)
 
-	// Idle-close: drop the only reference so performCleanup runs and the
-	// segment ends up in the residual state seen on cold-tier nodes
-	// (refCount=0, s.index=nil, but segment still reachable for reopen).
-	seg.DecRef()
+	// Idle-close: the reclaimer releases the dormant segment's resources so it
+	// ends up in the residual state seen on cold-tier nodes (refCount=0,
+	// s.index=nil, but segment still reachable for reopen).
+	seg.lastAccessed.Store(time.Now().Add(-time.Hour).UnixNano())
+	require.True(t, seg.closeIfIdle(time.Now().UnixNano()))
 	require.Nil(t, seg.index)
 	require.Equal(t, int32(0), atomic.LoadInt32(&seg.refCount))
 
@@ -949,18 +960,17 @@ func TestSegment_IndexDB_ReturnsUntypedNilWhenClosed(t *testing.T) {
 
 // TestSegment_ConcurrentReopen_RefCountConsistent stress-tests the
 // reference-count contract of segment.incRef under concurrent reopen.
-// Before the fix, segment.initialize() returned without AddInt32 when
+// Before the fix, the reopen slow path returned without AddInt32 when
 // another goroutine had already reopened the segment, so the second caller
 // "owned" a reference it had never accounted for. The first DecRef would
-// then trigger performCleanup while another goroutine was still using the
-// segment.
+// then tear the segment down while another goroutine was still using it.
 //
 // After the fix, every concurrent incRef must add exactly one reference
 // regardless of which path it takes.
 //
 // Reliability note: a single 64-goroutine round can occasionally serialize
 // well enough that only the first caller enters the slow path
-// (initialize) and the rest take the fast path (CAS+1). That serialized
+// (acquire) and the rest take the fast path (CAS+1). That serialized
 // shape would also pass on the buggy code. To make the test deterministic
 // across machines, the experiment is repeated for `rounds` cycles, each
 // starting from the residual state. The bug becomes effectively
@@ -1010,8 +1020,9 @@ func TestSegment_ConcurrentReopen_RefCountConsistent(t *testing.T) {
 		startTime.Format(dayFormat), sc.groupCache)
 	require.NoError(t, err)
 
-	// Bring the segment into the cold-tier residual state.
-	seg.DecRef()
+	// Bring the segment into the cold-tier residual (closed) state.
+	seg.lastAccessed.Store(time.Now().Add(-time.Hour).UnixNano())
+	require.True(t, seg.closeIfIdle(time.Now().UnixNano()))
 	require.Nil(t, seg.index)
 	require.Equal(t, int32(0), atomic.LoadInt32(&seg.refCount))
 
@@ -1048,16 +1059,21 @@ func TestSegment_ConcurrentReopen_RefCountConsistent(t *testing.T) {
 			"round %d: every concurrent incRef must add exactly one reference", r)
 		require.NotNil(t, seg.index, "round %d: segment.index must be reopened", r)
 
-		// Drain references; the last DecRef must trigger performCleanup
-		// and bring the segment back to the residual state for the next
-		// round.
+		// Drain references. DecRef to zero leaves the segment dormant (open);
+		// the idle reclaimer then closes it, restoring the residual state for
+		// the next round.
 		for i := 0; i < N; i++ {
 			seg.DecRef()
 		}
 		require.Equal(t, int32(0), atomic.LoadInt32(&seg.refCount),
 			"round %d", r)
+		require.NotNil(t, seg.index,
+			"round %d: draining to zero leaves the segment dormant (open)", r)
+		seg.lastAccessed.Store(time.Now().Add(-time.Hour).UnixNano())
+		require.True(t, seg.closeIfIdle(time.Now().UnixNano()),
+			"round %d: the reclaimer must close the dormant segment", r)
 		require.Nil(t, seg.index,
-			"round %d: segment.index must be cleared by performCleanup", r)
+			"round %d: segment.index must be cleared by the reclaimer", r)
 	}
 }
 
@@ -1065,14 +1081,15 @@ func TestSegment_ConcurrentReopen_RefCountConsistent(t *testing.T) {
 // reopen pattern under heavy concurrency: many goroutines repeatedly call
 // selectSegments, exercise IndexDB().Stats() on each returned segment, and
 // release with DecRef. With idle-closed segments as the starting state,
-// each iteration triggers initialize() to reopen the segment and the final
-// DecRef triggers performCleanup() to close it again, so closes and
-// reopens are interleaved across goroutines.
+// each iteration triggers acquire()/initialize() to reopen the segment;
+// DecRef leaves it dormant (open, refCount==0) rather than closing it, so
+// reopens and dormant releases interleave across goroutines.
 //
 // Verifies (run with -race):
 //   - no goroutine panics (covers both the typed-nil and refcount fixes)
 //   - no data race is detected on the segment lifecycle
-//   - all segments end up cleanly closed (refCount == 0, index == nil)
+//   - no segment leaks an active reference (refCount == 0 at the end)
+//   - every dormant segment is then reclaimable to closed via the idle reclaimer
 func TestSegment_ConcurrentReopenAndClose_NoPanic(t *testing.T) {
 	tempDir, cleanup := setupTestEnvironment(t)
 	defer cleanup()
@@ -1123,8 +1140,9 @@ func TestSegment_ConcurrentReopenAndClose_NoPanic(t *testing.T) {
 		sc.lst = append(sc.lst, seg)
 		sc.sortLst()
 		sc.Unlock()
-		// Drop the open reference so each segment starts in the residual state.
-		seg.DecRef()
+		// Force each segment into the residual (closed) state to start.
+		seg.lastAccessed.Store(time.Now().Add(-time.Hour).UnixNano())
+		require.True(t, seg.closeIfIdle(time.Now().UnixNano()))
 		require.Nil(t, seg.index)
 	}
 
@@ -1174,10 +1192,19 @@ func TestSegment_ConcurrentReopenAndClose_NoPanic(t *testing.T) {
 	sc.RLock()
 	final := append([]*segment[mockTSTable, mockTSTableOpener]{}, sc.lst...)
 	sc.RUnlock()
+	// No goroutine may leak an active reference.
 	for _, s := range final {
 		require.Equal(t, int32(0), atomic.LoadInt32(&s.refCount),
 			"segment %s leaked references", s.suffix)
-		require.Nil(t, s.index, "segment %s should be cleaned up", s.suffix)
+	}
+	// After the churn the segments are dormant (open, refCount==0); the idle
+	// reclaimer must be able to close every one of them cleanly.
+	for _, s := range final {
+		s.lastAccessed.Store(time.Now().Add(-time.Hour).UnixNano())
+	}
+	sc.closeIdleSegments()
+	for _, s := range final {
+		require.Nil(t, s.index, "segment %s should be reclaimable to closed", s.suffix)
 	}
 }
 

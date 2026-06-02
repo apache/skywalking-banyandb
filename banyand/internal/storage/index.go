@@ -37,9 +37,9 @@ import (
 const seriesIndexDirName = "sidx"
 
 func (s *segment[T, O]) IndexDB() IndexDB {
-	// Snapshot s.index into a local: the field can be flipped to nil by
-	// performCleanup at any time, so a second read could see a different
-	// value. Returning the local also avoids boxing a nil *seriesIndex
+	// Snapshot s.index into a local: the field can be flipped to nil by a
+	// concurrent reclaim (closeIfIdle / performDelete) at any time, so a second
+	// read could see a different value. Returning the local also avoids boxing a nil *seriesIndex
 	// into a typed-nil IndexDB interface, which would defeat the
 	// `if indexDB == nil` guard on the caller side.
 	idx := s.index

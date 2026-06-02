@@ -387,21 +387,17 @@ func (d *database[T, O]) collect() {
 		return
 	}
 	d.metrics.lastTickTime.Set(float64(d.latestTickTime.Load()))
-	refCount := int32(0)
-	ss, _ := d.segmentController.segments(context.Background(), false)
-	for _, s := range ss {
-		if atomic.LoadInt32(&s.refCount) <= 0 {
-			continue
+	// Collect metrics for every open segment. Under the dormant-refcount model
+	// an open segment usually has refCount==0, so we cannot rely on a reference
+	// bump to pin it: collectOpenMetrics gathers under the segment's read lock,
+	// which a concurrent reclaim (closeIfIdle takes the write lock) cannot race.
+	openSegments := int32(0)
+	for _, s := range d.segmentController.copySegments() {
+		if s.collectOpenMetrics(d.segmentController.metrics) {
+			openSegments++
 		}
-		tables, _ := s.Tables()
-		for _, t := range tables {
-			t.Collect(d.segmentController.metrics)
-		}
-		s.collectMetrics()
-		s.DecRef()
-		refCount += atomic.LoadInt32(&s.refCount)
 	}
-	d.totalSegRefs.Set(float64(refCount))
+	d.totalSegRefs.Set(float64(openSegments))
 	if d.metrics.schedulerMetrics == nil {
 		return
 	}
