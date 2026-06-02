@@ -886,9 +886,9 @@ func (sc *segmentController[T, O]) remove(deadline time.Time) (hasSegment bool, 
 // retention window. Data points with a timestamp before this deadline are
 // expired by the TTL policy. Retention removes a segment only once its whole
 // time range falls before the deadline (see (*segmentController).remove), so a
-// partially expired segment keeps serving expired data points until its end
-// also passes the deadline; queries must clamp their lower time bound to this
-// value to avoid returning that expired data.
+// fully expired segment can linger on disk until the next retention run.
+// Queries should exclude such fully expired segments to avoid serving TTL-expired
+// data; partially expired segments remain visible until their end passes the deadline.
 func (sc *segmentController[T, O]) getRetentionDeadline() time.Time {
 	return time.Now().Local().Add(-sc.getOptions().TTL.estimatedDuration())
 }
