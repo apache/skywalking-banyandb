@@ -88,6 +88,10 @@ func openSnapshotTSDB(t *testing.T, dir string, ttlDays int) (TSDB[*MockTSTable,
 		TSTableCreator:     MockTSTableCreator,
 		SegmentIdleTimeout: time.Hour,
 	}
+	// Pin the controller's clock to snapshotTestBase so retention's deadline is
+	// computed from the same clock the segments are created against; otherwise the
+	// fixed-2024 segments would look retention-expired against the real wall clock
+	// and SelectSegments would filter them out.
 	mc := timestamp.NewMockClock()
 	mc.Set(snapshotTestBase)
 	ctx := timestamp.SetClock(context.Background(), mc)
@@ -103,7 +107,7 @@ func openSnapshotTestTSDB(t *testing.T, dir string) (TSDB[*MockTSTable, any], *s
 	tsdb, sc := openSnapshotTSDB(t, dir, 3)
 	seg, err := tsdb.CreateSegmentIfNotExist(snapshotTestBase)
 	require.NoError(t, err)
-	seg.DecRef() // leave it at its open baseline
+	seg.DecRef() // release the create ref, leaving it open but dormant (refCount==0)
 	require.Len(t, sc.lst, 1)
 	return tsdb, sc, sc.lst[0]
 }
@@ -195,7 +199,7 @@ func TestSeriesIndexStats_ClosedSegmentIsNotReopened(t *testing.T) {
 	defer func() { require.NoError(t, tsdb.Close()) }()
 
 	// Write a known number of series into the open segment's index, then drive
-	// it idle-closed (performCleanup flushes the index to disk on close).
+	// it idle-closed (closeIfIdle flushes the index to disk on close).
 	const seriesCount = 10
 	require.NoError(t, seg.IndexDB().Insert(buildTestSeriesDocs(t, seriesCount)))
 
@@ -308,7 +312,7 @@ func snapshotDay(i int) time.Time {
 
 // createSegmentWithSeries creates (via the controller) the segment containing
 // ts, inserts n series documents into its series index, and returns the
-// internal segment left at its open baseline (the create reference is released).
+// internal segment left open but dormant (the create reference is released).
 func createSegmentWithSeries(t *testing.T, tsdb TSDB[*MockTSTable, any], ts time.Time, n int) *segment[*MockTSTable, any] {
 	t.Helper()
 	s, err := tsdb.CreateSegmentIfNotExist(ts)
@@ -529,8 +533,9 @@ func idleClose(t *testing.T, sc *segmentController[*MockTSTable, any], seg *segm
 }
 
 // TestSelectSegments_ReopenTrue_ReopensClosedSegment: reopenClosed=true on a
-// CLOSED segment reopens it (incRef -> initialize), restores refCount to 1, and
-// refreshes lastAccessed (a real read keeps the segment hot).
+// CLOSED segment reopens it (incRef -> acquire), takes refCount to 1, and
+// refreshes lastAccessed (a real read keeps the segment hot). DecRef to zero
+// then leaves it dormant (open), not closed.
 func TestSelectSegments_ReopenTrue_ReopensClosedSegment(t *testing.T) {
 	dir := snapshotTestDir(t)
 	tsdb, sc := newEmptySnapshotTSDB(t, dir)
@@ -544,36 +549,38 @@ func TestSelectSegments_ReopenTrue_ReopensClosedSegment(t *testing.T) {
 	require.NoError(t, err)
 	require.Len(t, got, 1)
 	require.NotNil(t, seg.index, "reopenClosed=true must reopen a closed segment")
-	require.Equal(t, int32(1), atomic.LoadInt32(&seg.refCount), "reopen reinitializes refCount to 1")
+	require.Equal(t, int32(1), atomic.LoadInt32(&seg.refCount), "acquire takes refCount to 1")
 	require.Greater(t, seg.lastAccessed.Load(), closedAccessed, "a real read refreshes lastAccessed")
 
 	got[0].DecRef()
-	require.Equal(t, int32(0), atomic.LoadInt32(&seg.refCount), "DecRef returns the reopened segment to closed")
-	require.Nil(t, seg.index)
+	require.Equal(t, int32(0), atomic.LoadInt32(&seg.refCount))
+	require.NotNil(t, seg.index, "DecRef to zero leaves the reopened segment dormant (open), not closed")
 }
 
-// TestSelectSegments_ReopenTrue_OpenSegmentBumpsAndRefreshes: reopenClosed=true
-// on an OPEN segment pins it (+1) and refreshes lastAccessed without re-opening.
-func TestSelectSegments_ReopenTrue_OpenSegmentBumpsAndRefreshes(t *testing.T) {
+// TestSelectSegments_ReopenTrue_DormantSegmentAcquiredAndRefreshed:
+// reopenClosed=true on a DORMANT open segment (refCount==0, index!=nil) acquires
+// it (0->1) and refreshes lastAccessed without re-opening; DecRef returns it to
+// dormant.
+func TestSelectSegments_ReopenTrue_DormantSegmentAcquiredAndRefreshed(t *testing.T) {
 	dir := snapshotTestDir(t)
 	tsdb, sc := newEmptySnapshotTSDB(t, dir)
 	defer func() { require.NoError(t, tsdb.Close()) }()
 
 	seg := createSegmentWithSeries(t, tsdb, snapshotDay(0), 0)
 	require.NotNil(t, seg.index)
-	require.Equal(t, int32(1), atomic.LoadInt32(&seg.refCount), "open baseline refCount is 1")
+	require.Equal(t, int32(0), atomic.LoadInt32(&seg.refCount), "dormant baseline: open, refCount 0")
 	seg.lastAccessed.Store(time.Now().Add(-time.Hour).UnixNano())
 	before := seg.lastAccessed.Load()
 
 	got, err := sc.selectSegments(allTimeRange(), true)
 	require.NoError(t, err)
 	require.Len(t, got, 1)
-	require.NotNil(t, seg.index, "open segment stays open")
-	require.Equal(t, int32(2), atomic.LoadInt32(&seg.refCount), "incRef bumps the open segment")
+	require.NotNil(t, seg.index, "dormant open segment stays open (no reopen needed)")
+	require.Equal(t, int32(1), atomic.LoadInt32(&seg.refCount), "acquire takes the dormant segment 0->1")
 	require.Greater(t, seg.lastAccessed.Load(), before, "a real read refreshes lastAccessed")
 
 	got[0].DecRef()
-	require.Equal(t, int32(1), atomic.LoadInt32(&seg.refCount))
+	require.Equal(t, int32(0), atomic.LoadInt32(&seg.refCount))
 }
 
 // TestSelectSegments_ReopenFalse_ClosedSegmentNotReopened: reopenClosed=false on
@@ -600,28 +607,31 @@ func TestSelectSegments_ReopenFalse_ClosedSegmentNotReopened(t *testing.T) {
 	require.Nil(t, seg.index)
 }
 
-// TestSelectSegments_ReopenFalse_OpenSegmentPinnedNoRefresh: reopenClosed=false
-// on an OPEN segment pins it (+1) but does NOT refresh lastAccessed, so the
-// segment stays eligible for the next idle-close tick.
-func TestSelectSegments_ReopenFalse_OpenSegmentPinnedNoRefresh(t *testing.T) {
+// TestSelectSegments_ReopenFalse_DormantSegmentNotPinned: reopenClosed=false on a
+// DORMANT open segment (refCount==0) returns it WITHOUT pinning. By design the
+// stats path never bumps a refCount==0 segment (that would race the idle
+// reclaimer); stats are best-effort. The segment stays open and its idle timer
+// is not refreshed.
+func TestSelectSegments_ReopenFalse_DormantSegmentNotPinned(t *testing.T) {
 	dir := snapshotTestDir(t)
 	tsdb, sc := newEmptySnapshotTSDB(t, dir)
 	defer func() { require.NoError(t, tsdb.Close()) }()
 
 	seg := createSegmentWithSeries(t, tsdb, snapshotDay(0), 0)
-	require.Equal(t, int32(1), atomic.LoadInt32(&seg.refCount))
+	require.NotNil(t, seg.index)
+	require.Equal(t, int32(0), atomic.LoadInt32(&seg.refCount), "dormant: open, refCount 0")
 	seg.lastAccessed.Store(time.Now().Add(-time.Hour).UnixNano())
 	before := seg.lastAccessed.Load()
 
 	got, err := sc.selectSegments(allTimeRange(), false)
 	require.NoError(t, err)
 	require.Len(t, got, 1)
-	require.NotNil(t, seg.index, "open segment stays open")
-	require.Equal(t, int32(2), atomic.LoadInt32(&seg.refCount), "open segment is pinned (+1)")
+	require.NotNil(t, seg.index, "dormant open segment stays open")
+	require.Equal(t, int32(0), atomic.LoadInt32(&seg.refCount), "a dormant segment is not pinned by the stats path")
 	require.Equal(t, before, seg.lastAccessed.Load(), "a stats peek must not refresh lastAccessed")
 
-	got[0].DecRef()
-	require.Equal(t, int32(1), atomic.LoadInt32(&seg.refCount))
+	got[0].DecRef() // no-op
+	require.Equal(t, int32(0), atomic.LoadInt32(&seg.refCount))
 }
 
 // TestSelectSegments_ReopenFalse_InUseSegmentPinned: reopenClosed=false on a
@@ -633,17 +643,17 @@ func TestSelectSegments_ReopenFalse_InUseSegmentPinned(t *testing.T) {
 	defer func() { require.NoError(t, tsdb.Close()) }()
 
 	seg := createSegmentWithSeries(t, tsdb, snapshotDay(0), 0)
-	require.NoError(t, seg.incRef(context.Background())) // a concurrent reader holds a ref
-	require.Equal(t, int32(2), atomic.LoadInt32(&seg.refCount), "in-use: baseline + one active reader")
+	require.NoError(t, seg.incRef(context.Background())) // an active reader holds a ref
+	require.Equal(t, int32(1), atomic.LoadInt32(&seg.refCount), "one active reader")
 
 	got, err := sc.selectSegments(allTimeRange(), false)
 	require.NoError(t, err)
 	require.Len(t, got, 1)
-	require.Equal(t, int32(3), atomic.LoadInt32(&seg.refCount), "in-use open segment is pinned (+1)")
+	require.Equal(t, int32(2), atomic.LoadInt32(&seg.refCount), "an in-use (refCount>0) segment is pinned (+1)")
 
 	got[0].DecRef() // release the selectSegments pin
-	seg.DecRef()    // release the simulated active reader
-	require.Equal(t, int32(1), atomic.LoadInt32(&seg.refCount), "back to open baseline")
+	seg.DecRef()    // release the active reader
+	require.Equal(t, int32(0), atomic.LoadInt32(&seg.refCount), "back to dormant")
 }
 
 // TestSelectSegments_TimeRangeFilters: only segments overlapping the requested
@@ -698,4 +708,57 @@ func TestSelectSegments_PublicWrapper(t *testing.T) {
 	got, err = tsdb.SelectSegments(allTimeRange(), true)
 	require.NoError(t, err)
 	require.Nil(t, got, "a closed database returns no segments")
+}
+
+// TestSelectSegments_FiltersRetentionExpiredSegment verifies that
+// SelectSegments(_, true) excludes a segment whose whole time range has passed
+// the retention deadline, and that the deadline tracks the controller's
+// injectable clock: advancing the mock clock past the TTL expires the segment
+// even though it is still on disk (retention removes it only on its next run).
+func TestSelectSegments_FiltersRetentionExpiredSegment(t *testing.T) {
+	dir := snapshotTestDir(t)
+	tsdb, sc := openSnapshotTSDB(t, dir, 3) // TTL = 3 days
+	defer func() { require.NoError(t, tsdb.Close()) }()
+
+	seg := createSegmentWithSeries(t, tsdb, snapshotTestBase, 0)
+	require.NotNil(t, seg.index)
+
+	// Clock at snapshotTestBase: the segment is within the TTL and is returned.
+	got, err := tsdb.SelectSegments(allTimeRange(), true)
+	require.NoError(t, err)
+	require.Len(t, got, 1, "a segment within the TTL is returned")
+	for _, g := range got {
+		g.DecRef()
+	}
+
+	// Advance the controller clock past the TTL so the segment's whole range is
+	// behind the retention deadline; SelectSegments must now filter it out.
+	sc.clock.(timestamp.MockClock).Add(10 * 24 * time.Hour)
+	got, err = tsdb.SelectSegments(allTimeRange(), true)
+	require.NoError(t, err)
+	require.Empty(t, got, "a fully retention-expired segment is excluded from query results")
+	require.Equal(t, int32(0), atomic.LoadInt32(&seg.refCount), "the filtered segment leaks no reference")
+}
+
+// TestGetExpiredSegmentsTimeRange_TracksInjectableClock verifies that the
+// expired-segment time range is computed against the controller's injectable
+// clock: a segment within the TTL reports nothing, and advancing the mock clock
+// past the TTL makes it expired. (Guards against reverting to wall-clock
+// time.Now(), which would mis-expire mock-clock-dated segments.)
+func TestGetExpiredSegmentsTimeRange_TracksInjectableClock(t *testing.T) {
+	dir := snapshotTestDir(t)
+	tsdb, sc := openSnapshotTSDB(t, dir, 3) // TTL = 3 days
+	defer func() { require.NoError(t, tsdb.Close()) }()
+
+	seg := createSegmentWithSeries(t, tsdb, snapshotTestBase, 0)
+
+	// Clock at snapshotTestBase: the segment is within the TTL, nothing expired.
+	tr := sc.getExpiredSegmentsTimeRange()
+	require.True(t, tr.Start.IsZero(), "no segment is expired while the clock is within the TTL")
+
+	// Advance the clock past the TTL: the segment is now expired and reported.
+	sc.clock.(timestamp.MockClock).Add(10 * 24 * time.Hour)
+	tr = sc.getExpiredSegmentsTimeRange()
+	require.Equal(t, seg.Start, tr.Start, "the expired range starts at the now-expired segment")
+	require.Equal(t, seg.End, tr.End, "the expired range ends at the now-expired segment")
 }

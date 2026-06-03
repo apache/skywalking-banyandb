@@ -74,12 +74,12 @@ func TestSyncReceiver_SegmentRefOwnership(t *testing.T) {
 
 	segTime := time.Date(2026, 4, 17, 0, 0, 0, 0, time.UTC)
 
-	// Drive the segment into the cold-0 "idle-closed" state: segment object
-	// still exists in sc.lst but refCount=0 and shards have been released.
+	// Drop the segment to refCount 0. Under the dormant-refcount model it stays
+	// open (loaded), so re-acquiring it does NOT reload shards: the open count
+	// stays flat across the sibling sync sessions below.
 	seg, err := db.CreateSegmentIfNotExist(segTime)
 	require.NoError(t, err)
-	seg.DecRef() // normal caller release    -> refCount = 1
-	seg.DecRef() // simulate idle close      -> refCount = 0
+	seg.DecRef() // the single create reference; refCount = 0 (dormant: open, no active reference)
 	baselineOpens := openShardCount.Load()
 
 	// ---------- Part A: simulate syncChunkCallback.CreatePartHandler (fix) ----------
@@ -104,8 +104,8 @@ func TestSyncReceiver_SegmentRefOwnership(t *testing.T) {
 
 	opensAfterA := openShardCount.Load()
 	require.Equal(t, int32(1), opensAfterA-baselineOpens,
-		"Part A's CreateSegmentIfNotExist should re-initialize exactly once "+
-			"(segment was idle-closed, so refCount=0 -> initialize branch)")
+		"Part A creates shard 0 for the first time (the dormant segment is reused "+
+			"without a reload, but its shard table is opened on demand)")
 
 	// ---------- Part B: another sync session starts while A is still in flight ----------
 	// With the fix, segA keeps refCount>=1, so Part B's CreateSegmentIfNotExist
@@ -146,11 +146,9 @@ func TestSyncReceiver_SegmentRefOwnership(t *testing.T) {
 	require.Nil(t, partCtxB.segment,
 		"REGRESSION: Close must clear syncPartContext.segment (`s.segment = nil`)")
 
-	// ---------- Verify Close actually DecRef'd (not just cleared the field) ----------
-	// After both Closes, refCount should be 0. The next CreateSegmentIfNotExist
-	// must therefore re-initialize and invoke TSTableCreator. If Close forgot
-	// to call s.segment.DecRef(), refCount would still be >=1 and this
-	// assertion would fail.
+	// ---------- After Close, the dormant segment is reused without reload ----------
+	// Both Closes drop refCount back to 0; the segment stays open (dormant), so
+	// the next CreateSegmentIfNotExist re-acquires it without reloading shards.
 	segC, err := db.CreateSegmentIfNotExist(segTime)
 	require.NoError(t, err)
 	defer segC.DecRef()
@@ -158,10 +156,8 @@ func TestSyncReceiver_SegmentRefOwnership(t *testing.T) {
 	require.NoError(t, err)
 
 	opensAfterC := openShardCount.Load()
-	require.Equal(t, int32(1), opensAfterC-opensAfterB,
-		"REGRESSION: after closing both partCtx, the next CreateSegmentIfNotExist did "+
-			"not re-initialize. This means Close did not call segment.DecRef(). "+
-			"Check `s.segment.DecRef()` is still in syncPartContext.Close.")
+	require.Equal(t, int32(0), opensAfterC-opensAfterB,
+		"the dormant segment is reused without reload after Close")
 }
 
 func openTestTSDBForRefTest(t *testing.T, tmpPath string, openShardCount *atomic.Int32) storage.TSDB[*tsTable, option] {
@@ -229,13 +225,12 @@ func TestSyncChunkCallback_CreatePartHandler_StoresSegment(t *testing.T) {
 
 	segTime := time.Date(2026, 4, 17, 0, 0, 0, 0, time.Local)
 
-	// Drive the segment into the idle-closed state (refCount=0) so that the
-	// probe at the end of this test reliably exercises the `initialize`
-	// branch of incRef if and only if Close actually DecRef'd.
+	// Drop the segment to refCount 0. Under the dormant-refcount model it stays
+	// open (loaded), so subsequent CreateSegmentIfNotExist calls re-acquire it
+	// without reloading shards.
 	warmup, err := db.CreateSegmentIfNotExist(segTime)
 	require.NoError(t, err)
-	warmup.DecRef()
-	warmup.DecRef() // refCount -> 0
+	warmup.DecRef() // the single create reference; refCount = 0 (dormant: open, no active reference)
 	baselineOpens := openShardCount.Load()
 
 	const groupName = "test-group"
@@ -265,11 +260,11 @@ func TestSyncChunkCallback_CreatePartHandler_StoresSegment(t *testing.T) {
 			"partCtx struct literal and that `defer segment.DecRef()` has not been "+
 			"re-introduced at the top of CreatePartHandler.")
 
-	// At this point CreatePartHandler has driven refCount 0 -> 1 via initialize
-	// (loadShards ran -> TSTableCreator was called once).
+	// CreatePartHandler acquired the dormant segment (refCount 0 -> 1) and
+	// opened shard 0 on demand for the first time.
 	afterCreate := openShardCount.Load()
 	require.Equal(t, int32(1), afterCreate-baselineOpens,
-		"CreatePartHandler should have re-initialized the idle-closed segment once")
+		"CreatePartHandler opens shard 0 for the first time on the dormant segment")
 
 	// CRITICAL mid-stream probe (between CreatePartHandler and Close).
 	// Under the fix, partCtx holds segment.refCount >= 1, so a concurrent
@@ -307,10 +302,8 @@ func TestSyncChunkCallback_CreatePartHandler_StoresSegment(t *testing.T) {
 	_, err = segProbe.CreateTSTableIfNotExist(common.ShardID(0))
 	require.NoError(t, err)
 
-	require.Equal(t, int32(1), openShardCount.Load()-beforeProbe,
-		"REGRESSION: after partCtx.Close, the next CreateSegmentIfNotExist did not "+
-			"re-initialize. This means Close did not call s.segment.DecRef(). "+
-			"Check that the Close method still contains `s.segment.DecRef()`.")
+	require.Equal(t, int32(0), openShardCount.Load()-beforeProbe,
+		"after Close the dormant segment is reused without reload")
 }
 
 // newTestSchemaRepo builds a minimal *schemaRepo whose loadTSDB returns the
@@ -421,8 +414,7 @@ func TestSegmentCreateTS_ConsistencyAcrossPaths(t *testing.T) {
 	historicalStart := ir.Standard(time.Date(2026, 4, 10, 0, 0, 0, 0, time.Local))
 	histSeg, err := db.CreateSegmentIfNotExist(historicalStart)
 	require.NoError(t, err)
-	histSeg.DecRef()
-	histSeg.DecRef()
+	histSeg.DecRef() // the single create reference; refCount = 0 (dormant: open, no active reference)
 
 	rawTS := time.Date(2026, 5, 15, 6, 0, 0, 0, time.Local)
 	wantNewStart := ir.Standard(rawTS)

@@ -58,6 +58,7 @@ Release Notes.
 - Support displaying a measure's indexed tags in the dump tool, resolved per part so peak memory is bounded by the part rather than a segment-wide series map.
 - Snapshot/backup and data inspection no longer reopen idle-closed segments, avoiding cold-segment nil-index panics and index lock-file churn.
 - Add opt-in vectorized measure query tracing over raw-frame distributed queries, including a trace envelope and fixed trace-label vocabulary.
+- Enhance segment lifecycle: `refCount` now counts only active users, decoupled from "open" (`index != nil`), adding a "dormant" state (open, `refCount == 0`). A `DecRef` to zero no longer closes a segment; idle reclaim and retention delete act only at `refCount == 0`, so an in-flight snapshot/inspect is no longer torn down mid-operation (fixing the cold-node nil-index panic and bluge lock churn) while idle segments still release their bluge writers.
 
 ### Bug Fixes
 

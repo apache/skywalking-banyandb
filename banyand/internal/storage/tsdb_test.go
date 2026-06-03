@@ -707,11 +707,11 @@ func TestCollectWithPartialClosedSegments(t *testing.T) {
 	ss, _ = sc.segments(context.Background(), false)
 	for _, s := range ss {
 		if s.Start.Equal(segmentDates[0]) || s.Start.Equal(segmentDates[2]) {
-			require.Equal(t, int32(0), s.refCount, "Segment should be closed")
+			require.Nil(t, s.index, "Segment should be closed")
 		} else {
-			require.Greater(t, s.refCount, int32(0), "Segment should be open")
+			require.NotNil(t, s.index, "Segment should be open")
 		}
-		s.DecRef() // Release reference
+		s.DecRef() // no-op for dormant/closed segments
 	}
 
 	// Call the collect method with mixed open/closed segments

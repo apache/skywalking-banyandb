@@ -113,6 +113,11 @@ func (sc *segmentController[T, O]) openSegment(ctx context.Context, startTime, e
 	}
 	s.l = logger.Fetch(ctx, s.String())
 	s.lastAccessed.Store(time.Now().UnixNano())
+	// New segments start dormant: resources open (index!=nil) but refCount==0,
+	// so an idle, unused segment is reclaimable without any caller releasing a
+	// baseline reference.
+	s.mu.Lock()
+	defer s.mu.Unlock()
 	return s, s.initialize(ctx)
 }
 
@@ -159,61 +164,44 @@ func (s *segment[T, O]) TablesWithShardIDs() (tt []T, shardIDs []common.ShardID,
 	return tt, shardIDs, cc
 }
 
-// incRef acquires one reference on the segment, opening it via initialize
-// if it is currently closed (refCount<=0). On return, the caller is
-// guaranteed that the segment is alive (s.index != nil, shards loaded) and
-// will stay alive until the matching DecRef.
+// incRef acquires one active reference on the segment, opening its resources
+// (series index + shards) via acquire if it is currently closed. On return the
+// segment is guaranteed alive (s.index != nil) until the matching DecRef.
 //
-// incRef intentionally does NOT touch lastAccessed: the idle-segment
-// reclaimer (closeIdleSegments) decides eligibility from that field, and
-// the rotation-tick scan iterates every segment via incRef on each tick.
-// Refreshing lastAccessed here would defeat the reclaimer for any segment
-// outside the active write window. Callers that represent a real read or
-// write touch must bump lastAccessed explicitly (see selectSegments and
+// refCount counts only active users and is orthogonal to whether the segment is
+// open (index != nil): a segment with refCount==0 but index!=nil is "dormant"
+// -- open and reusable, yet eligible for the idle reclaimer. incRef therefore
+// does NOT touch lastAccessed: the reclaimer (closeIdleSegments) decides
+// eligibility from that field and the rotation-tick scan iterates every segment
+// via incRef on each tick, so refreshing it here would defeat the reclaimer.
+// Real read/write touches bump lastAccessed explicitly (see selectSegments and
 // createSegment); housekeeping iterators must not.
 //
-// The CAS loop closes a TOCTOU race that the older "Load + AddInt32"
-// shape suffered from: a goroutine could read refCount=1, race against a
-// concurrent DecRef that drives it to 0 and triggers performCleanup
-// (which sets s.index=nil and tears down shards), and then AddInt32 it
-// back to 1. The caller would walk away with refCount=1 -- formally a
-// valid reference -- but pointing at an already-cleaned-up segment, so
-// every subsequent IndexDB() / Tables() call would observe zero state.
-//
-// The CAS variant retries whenever a concurrent DecRef beats us to the
-// counter: if CAS fails, we re-Load and either succeed at the new value
-// or fall through to initialize() to reopen the segment under s.mu.
-// Symmetric to the CAS loop in DecRef, which guarantees the dual: a
-// DecRef that drives refCount to 0 sees no concurrent +1 sneak in
-// before performCleanup runs.
+// The fast path CAS-bumps only while refCount>0, so it can never resurrect a
+// segment the idle reclaimer is closing (closeIfIdle / performDelete act only
+// at refCount==0 under s.mu). When refCount<=0 it falls to the s.mu slow path
+// (acquire), which serializes the reopen and the 0->1 transition against them.
 func (s *segment[T, O]) incRef(ctx context.Context) error {
 	for {
 		current := atomic.LoadInt32(&s.refCount)
 		if current <= 0 {
-			// Either the segment was never opened or DecRef just drove
-			// refCount to 0; reopen under the mutex.
-			return s.initialize(ctx)
+			// Dormant (index!=nil) or closed (index==nil); reopen/acquire under
+			// the mutex.
+			return s.acquire(ctx)
 		}
-		// CAS so a concurrent DecRef cannot flip refCount to 0 and run
-		// performCleanup between our Load and our increment. On failure
-		// we re-Load and re-evaluate the branch.
+		// CAS bumps only while refCount>0, so it can never resurrect a segment
+		// the idle reclaimer is closing (closeIfIdle acts only at refCount==0).
 		if atomic.CompareAndSwapInt32(&s.refCount, current, current+1) {
 			return nil
 		}
 	}
 }
 
+// initialize opens the segment's series index and shards if not already
+// open, leaving the segment dormant (index!=nil) WITHOUT changing refCount.
+// Must be called with s.mu held.
 func (s *segment[T, O]) initialize(ctx context.Context) error {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-
-	if atomic.LoadInt32(&s.refCount) > 0 {
-		// Another goroutine reopened the segment while we waited for the
-		// mutex. Add the +1 our caller (incRef) skipped before entering
-		// the slow path; otherwise concurrent reopens would share one
-		// refCount and the first DecRef would cleanup while we are still
-		// using it.
-		atomic.AddInt32(&s.refCount, 1)
+	if s.index != nil {
 		return nil
 	}
 
@@ -234,85 +222,145 @@ func (s *segment[T, O]) initialize(ctx context.Context) error {
 		s.index = nil
 		return errors.Wrap(errOpenDatabase, errors.WithMessage(err, "load shards failed").Error())
 	}
-	atomic.StoreInt32(&s.refCount, 1)
 
 	s.l.Info().Stringer("seg", s).Msg("segment initialized")
 	return nil
 }
 
-func (s *segment[T, O]) collectMetrics() {
+// acquire is the slow path of incRef: under s.mu it opens the segment's
+// resources via initialize if closed, then adds the caller's reference (0->1).
+// Holding s.mu serializes the reopen and the 0->1 transition against
+// closeIfIdle / performDelete, which act only at refCount==0 under the same lock.
+func (s *segment[T, O]) acquire(ctx context.Context) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if atomic.LoadInt32(&s.refCount) > 0 {
+		// Another goroutine acquired the segment while we waited for the mutex.
+		atomic.AddInt32(&s.refCount, 1)
+		return nil
+	}
+	if atomic.LoadUint32(&s.mustBeDeleted) != 0 {
+		// Flagged for deletion with no active reference: performDelete has run
+		// (or is about to, blocked on s.mu) and the directory may already be
+		// gone. Refuse to reopen so we never open resources on a removed dir.
+		// A still-referenced (refCount>0) flagged segment is handled by the
+		// fast-bump above, since its directory stays until the last DecRef.
+		return ErrSegmentClosed
+	}
+	if err := s.initialize(ctx); err != nil {
+		return err
+	}
+	atomic.StoreInt32(&s.refCount, 1)
+	return nil
+}
+
+// resetIndex resets the series-index cache if the segment is open, holding
+// s.mu.RLock so the index pointer read is synchronized against a concurrent
+// close (which clears it under the write lock).
+func (s *segment[T, O]) resetIndex() {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	if s.index != nil {
+		s.index.store.Reset()
+	}
+}
+
+// collectOpenMetrics gathers the segment's shard-table and series-index metrics
+// if it is open, holding s.mu.RLock so a concurrent reclaim (which takes the
+// write lock) cannot tear the resources down mid-collection. Returns whether
+// the segment was open.
+func (s *segment[T, O]) collectOpenMetrics(shardMetrics Metrics) bool {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 	if s.index == nil {
-		return
+		return false
 	}
-	s.index.store.CollectMetrics(s.index.p.SegLabelValues()...)
-}
-
-func (s *segment[T, O]) DecRef() {
-	shouldCleanup := false
-
-	if atomic.LoadInt32(&s.refCount) <= 0 && atomic.LoadUint32(&s.mustBeDeleted) != 0 {
-		shouldCleanup = true
-	} else {
-		for {
-			current := atomic.LoadInt32(&s.refCount)
-			if current <= 0 {
-				return
-			}
-
-			if atomic.CompareAndSwapInt32(&s.refCount, current, current-1) {
-				shouldCleanup = current == 1
-				break
-			}
+	if sLst := s.sLst.Load(); sLst != nil {
+		for _, sh := range *sLst {
+			sh.table.Collect(shardMetrics)
 		}
 	}
-
-	if !shouldCleanup {
-		return
-	}
-
-	s.performCleanup()
+	s.index.store.CollectMetrics(s.index.p.SegLabelValues()...)
+	return true
 }
 
-func (s *segment[T, O]) performCleanup() {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-
-	if atomic.LoadInt32(&s.refCount) > 0 && atomic.LoadUint32(&s.mustBeDeleted) == 0 {
-		return
+// DecRef releases one active reference. Reaching refCount==0 does NOT close the
+// segment -- it becomes dormant (open, reclaimable by the idle reclaimer). The
+// sole exception: a segment flagged for deletion (mustBeDeleted) while held runs
+// its deferred delete on the last DecRef.
+func (s *segment[T, O]) DecRef() {
+	for {
+		current := atomic.LoadInt32(&s.refCount)
+		if current <= 0 {
+			// Already dormant; nothing to release. Deletion of a dormant
+			// segment is driven by delete()/performDelete, not here.
+			return
+		}
+		if atomic.CompareAndSwapInt32(&s.refCount, current, current-1) {
+			if current == 1 && atomic.LoadUint32(&s.mustBeDeleted) != 0 {
+				s.performDelete()
+			}
+			return
+		}
 	}
+}
 
-	deletePath := ""
-	if atomic.LoadUint32(&s.mustBeDeleted) != 0 {
-		deletePath = s.location
-	}
-
+// closeResourcesLocked closes the segment's series index and shards but keeps
+// its on-disk directory, leaving it closed (index==nil) and reopenable. Must be
+// called with s.mu held. Idempotent.
+func (s *segment[T, O]) closeResourcesLocked() {
 	if s.index != nil {
 		if err := s.index.Close(); err != nil {
 			s.l.Panic().Err(err).Msg("failed to close the series index")
 		}
 		s.index = nil
 	}
-
-	sLst := s.sLst.Load()
-	if sLst != nil {
+	if sLst := s.sLst.Load(); sLst != nil {
 		for _, shard := range *sLst {
 			shard.close()
 		}
-		if deletePath == "" {
-			s.sLst.Store(&[]*shard[T]{})
-		}
-	}
-
-	if deletePath != "" {
-		s.lfs.MustRMAll(deletePath)
+		s.sLst.Store(&[]*shard[T]{})
 	}
 }
 
+// closeIfIdle releases a dormant segment's resources (index writer + shards) if
+// it is open, unreferenced, not flagged for deletion, and idle past the
+// threshold. The directory is kept so the segment reopens on next access.
+// Returns whether it closed the segment.
+func (s *segment[T, O]) closeIfIdle(idleThreshold int64) bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.index == nil || atomic.LoadInt32(&s.refCount) != 0 ||
+		atomic.LoadUint32(&s.mustBeDeleted) != 0 || s.lastAccessed.Load() >= idleThreshold {
+		return false
+	}
+	s.closeResourcesLocked()
+	return true
+}
+
+// performDelete closes the segment's resources and removes its directory. It
+// runs once the last active reference is dropped, or immediately from delete()
+// when the segment is already dormant. Idempotent. Must NOT be called with s.mu
+// held.
+func (s *segment[T, O]) performDelete() {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if atomic.LoadInt32(&s.refCount) > 0 {
+		// A reference was acquired before we ran; the next DecRef to zero
+		// retries the delete.
+		return
+	}
+	s.closeResourcesLocked()
+	s.lfs.MustRMAll(s.location)
+}
+
+// delete flags the segment for deletion. If it is dormant (no active reference)
+// the delete happens now; otherwise it is deferred to the last DecRef.
 func (s *segment[T, O]) delete() {
 	atomic.StoreUint32(&s.mustBeDeleted, 1)
-	s.DecRef()
+	if atomic.LoadInt32(&s.refCount) == 0 {
+		s.performDelete()
+	}
 }
 
 // Location returns the on-disk directory of the segment.
@@ -327,8 +375,8 @@ func (s *segment[T, O]) Location() string {
 func (s *segment[T, O]) SeriesIndexStats() (int64, int64) {
 	s.mu.RLock()
 	if s.index != nil {
-		// Hold the read lock while reading live stats so a concurrent
-		// performCleanup cannot close the index out from under us.
+		// Hold the read lock while reading live stats so a concurrent reclaim
+		// (closeIfIdle / performDelete) cannot close the index out from under us.
 		defer s.mu.RUnlock()
 		return s.index.Stats()
 	}
@@ -613,8 +661,17 @@ func (sc *segmentController[T, O]) segments(ctx context.Context, reopenClosed bo
 				return nil, err
 			}
 		} else {
-			if atomic.LoadInt32(&sc.lst[i].refCount) > 0 {
-				atomic.AddInt32(&sc.lst[i].refCount, 1)
+			// Pin only if already open (CAS while refCount>0); a dormant/closed
+			// segment is returned unbumped so the idle reclaimer is never raced
+			// into resurrecting it, and the caller's DecRef on it is a no-op.
+			for {
+				current := atomic.LoadInt32(&sc.lst[i].refCount)
+				if current <= 0 {
+					break
+				}
+				if atomic.CompareAndSwapInt32(&sc.lst[i].refCount, current, current+1) {
+					break
+				}
 			}
 		}
 		r[i] = sc.lst[i]
@@ -634,62 +691,24 @@ func (sc *segmentController[T, O]) copySegments() []*segment[T, O] {
 	return r
 }
 
+// closeIdleSegments releases the resources of every dormant, idle segment
+// (index!=nil, refCount==0, not flagged for deletion, lastAccessed past the
+// idle threshold), keeping their directories so they reopen on next access.
+// Each segment is decided under its own s.mu, where the refCount==0 check is
+// stable against concurrent acquire (which takes the same lock to go 0->1).
 func (sc *segmentController[T, O]) closeIdleSegments() int {
-	maxIdleTime := sc.idleTimeout
-
-	now := time.Now().UnixNano()
-	idleThreshold := now - maxIdleTime.Nanoseconds()
-
-	// Take our own snapshot rather than going through segments(false): that
-	// helper's "Load>0 then Add" bump is non-atomic and can resurrect a
-	// segment that DecRef just cleaned up, and its caller has no way to tell
-	// which entries it actually bumped. closeIdleSegments must know, because
-	// it issues an unconditional DecRef per entry to release the bump; if a
-	// concurrent selectSegments reopens an entry we didn't bump, that DecRef
-	// would drop the query's only live ref and trigger performCleanup under
-	// active use. Iterate sc.lst under RLock and CAS-bump each open segment;
-	// closed segments are recorded as "not bumped" and skipped in the loop.
+	idleThreshold := time.Now().UnixNano() - sc.idleTimeout.Nanoseconds()
 	sc.RLock()
-	segs := make([]*segment[T, O], 0, len(sc.lst))
-	bumped := make([]bool, 0, len(sc.lst))
-	refAtBump := make([]int32, 0, len(sc.lst))
-	for _, s := range sc.lst {
-		didBump := false
-		var snapRef int32
-		for {
-			current := atomic.LoadInt32(&s.refCount)
-			if current <= 0 {
-				break
-			}
-			if atomic.CompareAndSwapInt32(&s.refCount, current, current+1) {
-				didBump = true
-				snapRef = current
-				break
-			}
-		}
-		segs = append(segs, s)
-		bumped = append(bumped, didBump)
-		refAtBump = append(refAtBump, snapRef)
-	}
+	segs := make([]*segment[T, O], len(sc.lst))
+	copy(segs, sc.lst)
 	sc.RUnlock()
 
 	closedCount := 0
-	for i, seg := range segs {
-		if !bumped[i] {
-			continue
-		}
-		// Only close when the snapshot proved refCount==1 (baseline only):
-		// a higher value means other callers hold active references, and
-		// decrementing past our bump would steal one of their refs,
-		// potentially triggering performCleanup under active use on a
-		// subsequent tick.
-		if refAtBump[i] == 1 && seg.lastAccessed.Load() < idleThreshold {
-			seg.DecRef()
+	for _, s := range segs {
+		if s.closeIfIdle(idleThreshold) {
 			closedCount++
 		}
-		seg.DecRef()
 	}
-
 	return closedCount
 }
 
@@ -890,11 +909,11 @@ func (sc *segmentController[T, O]) remove(deadline time.Time) (hasSegment bool, 
 // Queries should exclude such fully expired segments to avoid serving TTL-expired
 // data; partially expired segments remain visible until their end passes the deadline.
 func (sc *segmentController[T, O]) getRetentionDeadline() time.Time {
-	return time.Now().Local().Add(-sc.getOptions().TTL.estimatedDuration())
+	return sc.clock.Now().Local().Add(-sc.getOptions().TTL.estimatedDuration())
 }
 
 func (sc *segmentController[T, O]) getExpiredSegmentsTimeRange() *timestamp.TimeRange {
-	deadline := time.Now().Local().Add(-sc.opts.TTL.estimatedDuration())
+	deadline := sc.clock.Now().Local().Add(-sc.opts.TTL.estimatedDuration())
 	timeRange := &timestamp.TimeRange{
 		IncludeStart: true,
 		IncludeEnd:   false,
@@ -913,7 +932,7 @@ func (sc *segmentController[T, O]) getExpiredSegmentsTimeRange() *timestamp.Time
 }
 
 func (sc *segmentController[T, O]) deleteExpiredSegments(segmentSuffixes []string) int64 {
-	deadline := time.Now().Local().Add(-sc.opts.TTL.estimatedDuration())
+	deadline := sc.clock.Now().Local().Add(-sc.opts.TTL.estimatedDuration())
 	var count int64
 	ss, _ := sc.segments(context.Background(), false)
 	sc.l.Info().Str("segment_suffixes", fmt.Sprintf("%s", segmentSuffixes)).
@@ -958,7 +977,7 @@ func (sc *segmentController[T, O]) removeSeg(segID segmentID) {
 }
 
 // peekOldestSegmentEndTime returns the end time of the oldest segment.
-// It returns the zero time and false if no segments exist or all segments have refCount <= 0.
+// It returns the zero time and false if no segments exist or the oldest segment is closed.
 func (sc *segmentController[T, O]) peekOldestSegmentEndTime() (time.Time, bool) {
 	sc.RLock()
 	defer sc.RUnlock()
@@ -971,8 +990,10 @@ func (sc *segmentController[T, O]) peekOldestSegmentEndTime() (time.Time, bool) 
 	// so the first one is the oldest
 	oldest := sc.lst[0]
 
-	// Only return segments that are still active (have references > 0)
-	if atomic.LoadInt32(&oldest.refCount) > 0 {
+	oldest.mu.RLock()
+	open := oldest.index != nil
+	oldest.mu.RUnlock()
+	if open {
 		return oldest.End, true
 	}
 
@@ -1004,10 +1025,16 @@ func (sc *segmentController[T, O]) removeOldest() (bool, error) {
 func (sc *segmentController[T, O]) close() {
 	sc.Lock()
 	defer sc.Unlock()
+	// Full shutdown: release every segment's resources regardless of refCount
+	// (DecRef no longer closes on reaching zero). A segment flagged for deletion
+	// also has its directory removed; the rest keep their data on disk.
 	for _, s := range sc.lst {
-		for atomic.LoadInt32(&s.refCount) > 0 {
-			s.DecRef()
+		s.mu.Lock()
+		s.closeResourcesLocked()
+		if atomic.LoadUint32(&s.mustBeDeleted) != 0 {
+			s.lfs.MustRMAll(s.location)
 		}
+		s.mu.Unlock()
 	}
 	sc.lst = sc.lst[:0]
 	if sc.metrics != nil {

@@ -59,8 +59,7 @@ func TestSyncReceiver_SegmentRefOwnership(t *testing.T) {
 
 	seg, err := db.CreateSegmentIfNotExist(segTime)
 	require.NoError(t, err)
-	seg.DecRef()
-	seg.DecRef() // refCount -> 0 (idle-closed)
+	seg.DecRef() // the single create reference; refCount = 0 (dormant: open, no active reference)
 	baselineOpens := openShardCount.Load()
 
 	segA, err := db.CreateSegmentIfNotExist(segTime)
@@ -106,8 +105,8 @@ func TestSyncReceiver_SegmentRefOwnership(t *testing.T) {
 	defer segC.DecRef()
 	_, err = segC.CreateTSTableIfNotExist(common.ShardID(0))
 	require.NoError(t, err)
-	require.Equal(t, int32(1), openShardCount.Load()-beforeProbe,
-		"REGRESSION: Close did not call segment.DecRef()")
+	require.Equal(t, int32(0), openShardCount.Load()-beforeProbe,
+		"after Close the dormant segment and its already-open shard are reused, no new shard")
 }
 
 // TestSyncChunkCallback_CreatePartHandler_StoresSegment drives the real
@@ -129,8 +128,7 @@ func TestSyncChunkCallback_CreatePartHandler_StoresSegment(t *testing.T) {
 
 	warmup, err := db.CreateSegmentIfNotExist(segTime)
 	require.NoError(t, err)
-	warmup.DecRef()
-	warmup.DecRef()
+	warmup.DecRef() // the single create reference; refCount = 0 (dormant: open, no active reference)
 	baselineOpens := openShardCount.Load()
 
 	const groupName = "test-group"
@@ -179,8 +177,8 @@ func TestSyncChunkCallback_CreatePartHandler_StoresSegment(t *testing.T) {
 	defer segProbe.DecRef()
 	_, err = segProbe.CreateTSTableIfNotExist(common.ShardID(0))
 	require.NoError(t, err)
-	require.Equal(t, int32(1), openShardCount.Load()-beforeProbe,
-		"REGRESSION: Close did not call segment.DecRef()")
+	require.Equal(t, int32(0), openShardCount.Load()-beforeProbe,
+		"after Close the dormant segment and its already-open shard are reused, no new shard")
 }
 
 func openTestTSDBForRefTest(t *testing.T, tmpPath string, openShardCount *atomic.Int32) storage.TSDB[*tsTable, option] {
@@ -340,8 +338,7 @@ func TestSegmentCreateTS_ConsistencyAcrossPaths(t *testing.T) {
 	historicalStart := ir.Standard(historicalRaw)
 	histSeg, err := db.CreateSegmentIfNotExist(historicalStart)
 	require.NoError(t, err)
-	histSeg.DecRef()
-	histSeg.DecRef() // refCount->0, idle-closed
+	histSeg.DecRef() // the single create reference; refCount = 0 (dormant: open, no active reference)
 
 	// New raw datapoint with an off-grid (06:00 inside a 5-day bucket) ts.
 	// liaison-side sidx pre-standardizes it; data-node-side part chunk-sync
