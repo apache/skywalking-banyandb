@@ -28,6 +28,7 @@ import (
 
 	"github.com/apache/skywalking-banyandb/fodc/agent/internal/metrics"
 	"github.com/apache/skywalking-banyandb/pkg/logger"
+	"github.com/apache/skywalking-banyandb/pkg/panicdiag"
 )
 
 // MetricsRecorder is an interface for recording metrics.
@@ -126,32 +127,69 @@ func (w *Watchdog) Serve() <-chan struct{} {
 	go func() {
 		defer w.wg.Done()
 		defer close(stopCh)
+		panicdiag.WithRecovery(w.ctx, panicdiag.RecoveryOptions{
+			Component:   "fodc-watchdog",
+			Logger:      w.log,
+			StateDumper: watchdogStateDumper{watchdog: w},
+			ProcessMetadata: map[string]string{
+				"pod_name":  w.podName,
+				"node_role": w.nodeRole,
+			},
+		}, nil, func(ctx *context.Context) {
+			// baseCtx is the pre-loop context, reused as the starting point for
+			// each poll so breadcrumbs reflect only the current iteration.
+			baseCtx := *ctx
 
-		ticker := time.NewTicker(w.interval)
-		defer ticker.Stop()
+			ticker := time.NewTicker(w.interval)
+			defer ticker.Stop()
 
-		w.log.Info().Msg("Starting watchdog polling loop")
-		if pollErr := w.pollAndForward(); pollErr != nil {
-			w.log.Warn().Err(pollErr).Msg("Initial metrics poll failed")
-		} else {
-			w.log.Info().Msg("Initial metrics poll succeeded")
-		}
-
-		for {
-			select {
-			case <-w.ctx.Done():
-				w.log.Info().Msg("Watchdog stopping")
-				return
-			case <-ticker.C:
-				w.log.Info().Msg("Starting metrics poll")
-				if pollErr := w.pollAndForward(); pollErr != nil {
+			runPoll := func() {
+				enrichedCtx, pollErr := w.pollAndForward(baseCtx)
+				*ctx = enrichedCtx
+				if pollErr != nil {
 					w.log.Warn().Err(pollErr).Msg("Metrics poll failed")
 				}
 			}
-		}
+
+			w.log.Info().Msg("Starting watchdog polling loop")
+			runPoll()
+
+			for {
+				select {
+				case <-w.ctx.Done():
+					w.log.Info().Msg("Watchdog stopping")
+					return
+				case <-ticker.C:
+					w.log.Info().Msg("Starting metrics poll")
+					runPoll()
+				}
+			}
+		})
 	}()
 
 	return stopCh
+}
+
+type watchdogStateDumper struct {
+	watchdog *Watchdog
+}
+
+func (w watchdogStateDumper) DumpState(_ context.Context) (any, error) {
+	if w.watchdog == nil {
+		return nil, fmt.Errorf("watchdog is nil")
+	}
+	w.watchdog.mu.RLock()
+	defer w.watchdog.mu.RUnlock()
+
+	return map[string]any{
+		"podName":        w.watchdog.podName,
+		"nodeRole":       w.watchdog.nodeRole,
+		"urls":           append([]string(nil), w.watchdog.urls...),
+		"containerNames": append([]string(nil), w.watchdog.containerNames...),
+		"interval":       w.watchdog.interval.String(),
+		"retryBackoff":   w.watchdog.retryBackoff.String(),
+		"isRunning":      w.watchdog.isRunning,
+	}, nil
 }
 
 // GracefulStop gracefully stops the watchdog polling loop.
@@ -181,23 +219,35 @@ func (w *Watchdog) GracefulStop() {
 }
 
 // pollAndForward polls metrics and forwards them to the recorder.
-func (w *Watchdog) pollAndForward() error {
-	rawMetrics, pollErr := w.pollMetrics(w.ctx)
+// It returns the enriched context so the caller can update the recovery-visible
+// ctx pointer, making breadcrumbs visible if a panic occurs.
+func (w *Watchdog) pollAndForward(ctx context.Context) (context.Context, error) {
+	ctx = panicdiag.WithBreadcrumb(ctx, "poll watchdog metrics", "fodc-watchdog", map[string]string{
+		"endpoint_count": fmt.Sprintf("%d", len(w.urls)),
+	})
+
+	rawMetrics, pollErr := w.pollMetrics(ctx)
 	if pollErr != nil {
-		return fmt.Errorf("failed to poll metrics: %w", pollErr)
+		return ctx, fmt.Errorf("failed to poll metrics: %w", pollErr)
 	}
+	ctx = panicdiag.WithBreadcrumb(ctx, "parsed watchdog metrics", "fodc-watchdog", map[string]string{
+		"metric_count": fmt.Sprintf("%d", len(rawMetrics)),
+	})
 
 	if w.recorder == nil {
 		w.log.Error().Int("count", len(rawMetrics)).Msg("No recorder configured, skipping metrics forwarding")
-		return nil
+		return ctx, nil
 	}
 
 	if updateErr := w.recorder.Update(rawMetrics); updateErr != nil {
-		return fmt.Errorf("failed to forward metrics to recorder: %w", updateErr)
+		return ctx, fmt.Errorf("failed to forward metrics to recorder: %w", updateErr)
 	}
+	ctx = panicdiag.WithBreadcrumb(ctx, "forwarded watchdog metrics", "fodc-watchdog", map[string]string{
+		"metric_count": fmt.Sprintf("%d", len(rawMetrics)),
+	})
 
 	w.log.Info().Int("count", len(rawMetrics)).Msg("Successfully polled and forwarded metrics")
-	return nil
+	return ctx, nil
 }
 
 // pollMetrics fetches raw metrics text from all endpoints and parses them.

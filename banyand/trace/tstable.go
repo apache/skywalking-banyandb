@@ -18,6 +18,7 @@
 package trace
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -127,9 +128,22 @@ func (tst *tsTable) startLoop(cur uint64) {
 	mergeCh := make(chan *mergerIntroduction)
 	introducerWatcher := make(watcher.Channel, 1)
 	flusherWatcher := make(watcher.Channel, 1)
-	go tst.introducerLoop(flushCh, mergeCh, introducerWatcher, cur+1)
-	go tst.flusherLoop(flushCh, mergeCh, introducerWatcher, flusherWatcher, cur)
-	go tst.mergeLoop(mergeCh, flusherWatcher)
+	// Each loop already calls tst.loopCloser.Done via defer, so a panic
+	// captured by run.Go still decrements the closer; lifecycle ordering
+	// for tsTable shutdown is preserved. The loop methods predate this
+	// migration and use tst.loopCloser for cancellation rather than a
+	// context, so contextcheck propagation from the recovery ctx is
+	// suppressed at each call site.
+	ctx := context.Background()
+	run.Go(ctx, "trace.tstable.introducer", tst.l, func(_ context.Context) {
+		tst.introducerLoop(flushCh, mergeCh, introducerWatcher, cur+1) //nolint:contextcheck
+	})
+	run.Go(ctx, "trace.tstable.flusher", tst.l, func(_ context.Context) {
+		tst.flusherLoop(flushCh, mergeCh, introducerWatcher, flusherWatcher, cur) //nolint:contextcheck
+	})
+	run.Go(ctx, "trace.tstable.merger", tst.l, func(_ context.Context) {
+		tst.mergeLoop(mergeCh, flusherWatcher) //nolint:contextcheck
+	})
 }
 
 func (tst *tsTable) startLoopWithConditionalMerge(cur uint64) {
@@ -140,9 +154,18 @@ func (tst *tsTable) startLoopWithConditionalMerge(cur uint64) {
 	mergeCh := make(chan *mergerIntroduction)
 	introducerWatcher := make(watcher.Channel, 1)
 	flusherWatcher := make(watcher.Channel, 1)
-	go tst.introducerLoopWithSync(flushCh, mergeCh, syncCh, introducerWatcher, cur+1)
-	go tst.flusherLoop(flushCh, mergeCh, introducerWatcher, flusherWatcher, cur)
-	go tst.syncLoop(syncCh, flusherWatcher)
+	// See startLoop for the rationale on routing through run.Go and the
+	// contextcheck suppression.
+	ctx := context.Background()
+	run.Go(ctx, "trace.tstable.introducer-sync", tst.l, func(_ context.Context) {
+		tst.introducerLoopWithSync(flushCh, mergeCh, syncCh, introducerWatcher, cur+1) //nolint:contextcheck
+	})
+	run.Go(ctx, "trace.tstable.flusher", tst.l, func(_ context.Context) {
+		tst.flusherLoop(flushCh, mergeCh, introducerWatcher, flusherWatcher, cur) //nolint:contextcheck
+	})
+	run.Go(ctx, "trace.tstable.syncer", tst.l, func(_ context.Context) {
+		tst.syncLoop(syncCh, flusherWatcher) //nolint:contextcheck
+	})
 }
 
 func parseEpoch(epochStr string) (uint64, error) {
@@ -168,16 +191,11 @@ func (tst *tsTable) mustWriteSnapshot(snapshot uint64, partNames []string) {
 }
 
 func (tst *tsTable) readSnapshot(snapshot uint64) ([]uint64, error) {
-	snapshotPath := filepath.Join(tst.root, snapshotName(snapshot))
-	data, err := tst.fileSystem.Read(snapshotPath)
+	partNames, err := storage.ReadSnapshotPartNames(tst.fileSystem, filepath.Join(tst.root, snapshotName(snapshot)))
 	if err != nil {
-		return nil, fmt.Errorf("cannot read %s: %w", snapshotPath, err)
+		return nil, err
 	}
-	var partNames []string
-	if err := json.Unmarshal(data, &partNames); err != nil {
-		return nil, fmt.Errorf("cannot parse %s: %w", snapshotPath, err)
-	}
-	var result []uint64
+	result := make([]uint64, 0, len(partNames))
 	for i := range partNames {
 		e, parseErr := parseEpoch(partNames[i])
 		if parseErr != nil {

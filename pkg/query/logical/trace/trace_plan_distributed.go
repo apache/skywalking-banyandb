@@ -33,6 +33,7 @@ import (
 	"github.com/apache/skywalking-banyandb/pkg/iter"
 	"github.com/apache/skywalking-banyandb/pkg/iter/sort"
 	"github.com/apache/skywalking-banyandb/pkg/logger"
+	pbv1 "github.com/apache/skywalking-banyandb/pkg/pb/v1"
 	"github.com/apache/skywalking-banyandb/pkg/query"
 	"github.com/apache/skywalking-banyandb/pkg/query/executor"
 	"github.com/apache/skywalking-banyandb/pkg/query/logical"
@@ -377,21 +378,37 @@ func (t *distributedTraceResultIterator) Next() (model.TraceResult, bool) {
 		SpanIDs: make([]string, 0, len(trace.Spans)),
 		Tags:    make([]model.Tag, 0, len(trace.Spans)),
 	}
-	tagMap := make(map[string][]*modelv1.TagValue)
+	tagValuesByName := make(map[string][]*modelv1.TagValue)
+	var tagOrder []string
 
-	for _, span := range trace.Spans {
+	for spanIdx, span := range trace.Spans {
 		// Add span data
 		result.Spans = append(result.Spans, span.Span)
 		// Extract tags from this span and aggregate by name
+		spanTags := make(map[string]*modelv1.TagValue, len(span.Tags))
 		for _, tag := range span.Tags {
-			tagMap[tag.Key] = append(tagMap[tag.Key], tag.Value)
+			if _, exists := tagValuesByName[tag.Key]; !exists {
+				tagOrder = append(tagOrder, tag.Key)
+				tagValuesByName[tag.Key] = make([]*modelv1.TagValue, spanIdx)
+				for fillIdx := range tagValuesByName[tag.Key] {
+					tagValuesByName[tag.Key][fillIdx] = pbv1.NullTagValue
+				}
+			}
+			spanTags[tag.Key] = tag.Value
+		}
+		for _, tagName := range tagOrder {
+			tagValue, exists := spanTags[tagName]
+			if !exists {
+				tagValue = pbv1.NullTagValue
+			}
+			tagValuesByName[tagName] = append(tagValuesByName[tagName], tagValue)
 		}
 		result.SpanIDs = append(result.SpanIDs, span.SpanId)
 	}
-	for tagName, values := range tagMap {
+	for _, tagName := range tagOrder {
 		result.Tags = append(result.Tags, model.Tag{
 			Name:   tagName,
-			Values: values,
+			Values: tagValuesByName[tagName],
 		})
 	}
 	return result, true

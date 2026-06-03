@@ -95,39 +95,20 @@ func (ds *discoveryService) navigateByLocator(metadata *commonv1.Metadata, tagFa
 		return nil, common.ShardID(0), errors.Wrapf(errNotExist, "finding the shard num by: %v", metadata)
 	}
 	id := getID(metadata)
-	var entityValues pbv1.EntityValues
-	var shardID common.ShardID
-	var err error
+	var entityRouter, shardingKeyRouter partition.Router
 	if specEntityLocator != nil {
-		entityValues, shardID, err = specEntityLocator.Locate(metadata.Name, tagFamilies, shardNum)
-		if err != nil {
-			return nil, common.ShardID(0), err
-		}
+		entityRouter = specEntityLocator
+	} else if cached, ok := ds.entityRepo.getLocator(id); ok {
+		entityRouter = cached
 	} else {
-		entityLocator, existed := ds.entityRepo.getLocator(id)
-		if !existed {
-			return nil, common.ShardID(0), errors.Wrapf(errNotExist, "finding the entity locator by: %v", metadata)
-		}
-		entityValues, shardID, err = entityLocator.Locate(metadata.Name, tagFamilies, shardNum)
-		if err != nil {
-			return nil, common.ShardID(0), err
-		}
+		return nil, common.ShardID(0), errors.Wrapf(errNotExist, "finding the entity locator by: %v", metadata)
 	}
 	if specShardingKeyLocator != nil {
-		_, shardID, err = specShardingKeyLocator.Locate(metadata.Name, tagFamilies, shardNum)
-		if err != nil {
-			return nil, common.ShardID(0), err
-		}
-	} else {
-		shardingKeyLocator, existed := ds.shardingKeyRepo.getLocator(id)
-		if existed {
-			_, shardID, err = shardingKeyLocator.Locate(metadata.Name, tagFamilies, shardNum)
-			if err != nil {
-				return nil, common.ShardID(0), err
-			}
-		}
+		shardingKeyRouter = specShardingKeyLocator
+	} else if sk, ok := ds.shardingKeyRepo.getLocator(id); ok {
+		shardingKeyRouter = sk
 	}
-	return entityValues, shardID, nil
+	return partition.ApplyLocators(metadata.Name, tagFamilies, entityRouter, shardingKeyRouter, shardNum)
 }
 
 type identity struct {

@@ -23,6 +23,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"path"
 	"path/filepath"
 	"strings"
 
@@ -193,13 +194,12 @@ func restoreByName(fs remote.FS, timeDir, rootPath, catalogName string) error {
 	logger.Infof("Restoring %s to %s from %s, remote total %d files", catalogName, localDir, remotePrefix, len(remoteFiles))
 
 	remoteRelSet := make(map[string]bool)
-	var relPath string
 	for _, remoteFile := range remoteFiles {
-		relPath, err = filepath.Rel(timeDir, remoteFile)
-		if err != nil {
-			return fmt.Errorf("failed to get relative path for %s: %w", remoteFile, err)
+		relPath, relPathErr := validatedRemoteRelPath(timeDir, catalogName, remoteFile)
+		if relPathErr != nil {
+			return relPathErr
 		}
-		remoteRelSet[filepath.ToSlash(relPath)] = true
+		remoteRelSet[path.Join(catalogName, relPath)] = true
 	}
 
 	localFiles, err := getAllFiles(localDir)
@@ -208,7 +208,7 @@ func restoreByName(fs remote.FS, timeDir, rootPath, catalogName string) error {
 	}
 
 	for _, localRelPath := range localFiles {
-		localRelPathWithCatalog := filepath.Join(catalogName, localRelPath)
+		localRelPathWithCatalog := path.Join(catalogName, filepath.ToSlash(localRelPath))
 		if !remoteRelSet[localRelPathWithCatalog] {
 			localPath := filepath.Join(localDir, localRelPath)
 			logger.Infof("found local file: %s not exist in the remote storage, so delete it", localRelPathWithCatalog)
@@ -220,11 +220,10 @@ func restoreByName(fs remote.FS, timeDir, rootPath, catalogName string) error {
 	}
 
 	for _, remoteFile := range remoteFiles {
-		relPath, err := filepath.Rel(filepath.Join(timeDir, catalogName), remoteFile)
+		relPath, err := validatedRemoteRelPath(timeDir, catalogName, remoteFile)
 		if err != nil {
-			return fmt.Errorf("failed to get relative path for %s: %w", remoteFile, err)
+			return err
 		}
-		relPath = filepath.ToSlash(relPath)
 		localPath := filepath.Join(rootPath, catalogName, storage.DataDir, relPath)
 
 		if !contains(localFiles, relPath) {
@@ -242,6 +241,24 @@ func restoreByName(fs remote.FS, timeDir, rootPath, catalogName string) error {
 	}
 
 	return nil
+}
+
+func validatedRemoteRelPath(timeDir, catalogName, remoteFile string) (string, error) {
+	remotePath := filepath.ToSlash(remoteFile)
+	if path.IsAbs(remotePath) || banyandbpath.HasVolumeName(remotePath) {
+		return "", fmt.Errorf("remote file %q escapes backup prefix", remoteFile)
+	}
+	prefix := path.Clean(path.Join(filepath.ToSlash(timeDir), filepath.ToSlash(catalogName)))
+	cleanRemotePath := path.Clean(remotePath)
+	if banyandbpath.HasVolumeName(cleanRemotePath) || cleanRemotePath == "." || prefix == "." {
+		return "", fmt.Errorf("remote file %q escapes backup prefix", remoteFile)
+	}
+	prefixWithSlash := prefix + "/"
+	if !strings.HasPrefix(cleanRemotePath, prefixWithSlash) {
+		return "", fmt.Errorf("remote file %q escapes backup prefix", remoteFile)
+	}
+	relPath := strings.TrimPrefix(cleanRemotePath, prefixWithSlash)
+	return relPath, nil
 }
 
 func cleanEmptyDirs(dir, stopDir string) {

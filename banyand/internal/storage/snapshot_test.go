@@ -220,3 +220,33 @@ func TestDeleteStaleSnapshotsWithMinAge(t *testing.T) {
 		})
 	}
 }
+
+func TestReadSnapshotPartNames(t *testing.T) {
+	fileSystem := fs.NewLocalFileSystem()
+	tmpPath, deferFn := test.Space(require.New(t))
+	defer deferFn()
+
+	t.Run("valid manifest returns the part names verbatim", func(t *testing.T) {
+		manifest := filepath.Join(tmpPath, "valid.snp")
+		_, writeErr := fileSystem.Write([]byte(`["0000000000000001","00000000000000ff"]`), manifest, FilePerm)
+		require.NoError(t, writeErr)
+		names, err := ReadSnapshotPartNames(fileSystem, manifest)
+		require.NoError(t, err)
+		require.Equal(t, []string{"0000000000000001", "00000000000000ff"}, names)
+	})
+
+	t.Run("missing file is a read error", func(t *testing.T) {
+		_, err := ReadSnapshotPartNames(fileSystem, filepath.Join(tmpPath, "absent.snp"))
+		require.Error(t, err)
+		require.Contains(t, err.Error(), "cannot read")
+	})
+
+	t.Run("invalid JSON is a parse error", func(t *testing.T) {
+		manifest := filepath.Join(tmpPath, "invalid.snp")
+		_, writeErr := fileSystem.Write([]byte("{not-an-array}"), manifest, FilePerm)
+		require.NoError(t, writeErr)
+		_, err := ReadSnapshotPartNames(fileSystem, manifest)
+		require.Error(t, err)
+		require.Contains(t, err.Error(), "cannot parse")
+	})
+}

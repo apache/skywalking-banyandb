@@ -5,12 +5,14 @@ Release Notes.
 ## 0.11.0
 
 ### Features
-- Add validation to ensure Measure's ShardingKey contains all Entity tags to guarantee entity locality. 
+- Vectorized measure query path is now enabled by default. The columnar pipeline replaces per-row protobuf serialization in `NewMIterator`, cutting allocations and ns/op for scan-heavy measure queries; gRPC wire format (`*measurev1.InternalDataPoint`) is byte-identical. Single-node coverage is complete: scan, GroupBy+Agg via `BatchAggregation`, scalar reduce (`Agg` without `GroupBy`), raw `GroupBy` (without `Agg`), implicit projection coverage for GroupBy/Agg fields, `TopN`/`BottomN`, `order_by` (via `logical.ParseOrderBy`, mirroring the row path's `PushDownOrder` rule), queries with hidden criteria tags, and boundary-error parity (nil time range, unknown projection, empty result) all resolve through the vec dispatch with row-path-equivalent semantics (SUM/COUNT/MIN/MAX/MEAN type semantics, first-seen carry-forward of non-key projected tags, canonical validation errors). Validated by a 6h production soak (byte-identical parity, zero divergences) and the per-workload bench gates. Distributed Map-mode partial aggregation (multi-node GroupBy+Agg / TopN), multi-measure (multi-group) requests, and non-vectorized backends continue to flow through the row path pending the distributed vectorized query work. Rollback: pass `--measure-vectorized-enabled=false` on the standalone or data-node command line and restart; the row path resumes immediately.
+- Add validation to ensure Measure's ShardingKey contains all Entity tags to guarantee entity locality.
 - Organize access logs under a dedicated "accesslog" subdirectory to improve log organization and separation from other application data.
 - Collect BanyanDB data on e2e test failure for CI debugging.
 - Add log query e2e test.
 - Sync lifecycle e2e test from SkyWalking stages test.
 - Add `noDuplicates` verification to all e2e expected files to detect duplicate data in query results.
+- Add a program-generated trace query integration-test framework under `test/cases/trace/cmd/{generate,capture}`: layered case generation (criteria leaves, AND/OR trees, and feature-pairwise across the traceID-lookup and order-based query modes), env-gated golden capture, and a shared `SeedAll` seeder — mirroring the measure test-case framework.
 - Add periodic health check for property schema connection.
 - Persist segment end time in per-segment metadata so boundaries don't shift across restarts or config changes.
 - Introduce fair fast/slow lane scheduling for trace part merges to prevent short merges from being blocked by long-running merges; expose queue wait time as `total_merge_queue_latency`.
@@ -19,6 +21,7 @@ Release Notes.
   - The `--namespace` CLI flag has been removed (it previously configured the etcd key prefix).
   - The `--node-discovery-mode` flag no longer accepts `etcd` (supported values: `none`, `dns`, `file`). 
   - The `--schema-registry-mode` flag only accepts `property`.
+- implement panic diagnostics and FODC crash reporting pipeline.
 - Schema consistency (Phase 1): introduce client-observable revision and propagation primitives. All gates are opt-in and zero-valued requests preserve prior behavior.
   - Add `mod_revision` to Group / IndexRule / IndexRuleBinding / TopNAggregation Create and Update responses.
   - Add `delete_time` to all `*ServiceDeleteResponse` messages so clients can observe tombstones.
@@ -52,6 +55,11 @@ Release Notes.
   - Fix the `notifiedModRevision` watermark advancement in `SchemaRegistry.processInitialResourceFromProperty`, `handleWatchEvent` (DELETE branch), and `handleDeletion`. Previously `AdvanceNotified` was gated on `cache.Update` / `cache.Delete` returning true, but those methods compare `latestUpdateAt` (property timestamp) while the watermark tracks `modRevision` (etcd revision). When the property timestamp is stale (e.g. a no-op Update that doesn't change the measure spec), the cache rejects the entry and the watermark cannot advance, causing `AwaitRevisionApplied(R)` to block forever even though the event has been fully processed. `AdvanceNotified` now fires unconditionally whenever an event reaches the processing stage, regardless of cache mutation outcome.
   - Fix the `modRevision` contract on no-op Update RPCs (`MeasureRegistryService.Update`, etc.). Previously `updateResource` detected unchanged content via `CheckerMap` and short-circuited without writing to the property store, but the caller had already fabricated `modRevision = time.Now().UnixNano()` and returned it. The returned revision never appeared in the property watch stream, so `AwaitRevisionApplied(R)` would hang. `updateResource` now returns `(int64, error)` — the existing property's `modRevision` for no-op updates, the new revision for real updates — so callers always return a revision the barrier can observe.
   - Add end-to-end observability for liaison internal queue pipelines with per-topic metrics for queue_sub and queue_pub, along with Grafana panels and troubleshooting docs.
+  - Introduce measure migration tool.
+- Support displaying a measure's indexed tags in the dump tool, resolved per part so peak memory is bounded by the part rather than a segment-wide series map.
+- Snapshot/backup and data inspection no longer reopen idle-closed segments, avoiding cold-segment nil-index panics and index lock-file churn.
+- Add opt-in vectorized measure query tracing over raw-frame distributed queries, including a trace envelope and fixed trace-label vocabulary.
+- Enhance segment lifecycle: `refCount` now counts only active users, decoupled from "open" (`index != nil`), adding a "dormant" state (open, `refCount == 0`). A `DecRef` to zero no longer closes a segment; idle reclaim and retention delete act only at `refCount == 0`, so an in-flight snapshot/inspect is no longer torn down mid-operation (fixing the cold-node nil-index panic and bluge lock churn) while idle segments still release their bluge writers.
 
 ### Bug Fixes
 
@@ -90,12 +98,18 @@ Release Notes.
 - Fix `CollectDataInfo` and `CollectLiaisonInfo` not handling `CATALOG_PROPERTY` groups.
 - Fix lifecycle migration where the receiving node could create segments shorter than the configured `SegmentInterval`.
 - Fail fast on incompatible storage version at boot. Previously the server would start in a degraded `SERVING` state with affected groups un-loaded because the property schema-registry retry loop swallowed the version-incompatibility panic. Compatible versions are listed in `banyand/internal/storage/versions.yml`.
+- Release bluge index writers on segment rotation so `analysisWorker` pools sized from `GOMAXPROCS` don't accumulate across rotations. Two layered defects kept the existing idle-segment reclaim path from running: `segmentIdleTimeout` defaulted to `0` (which disabled the 10-minute reclaim ticker), and `incRef` refreshed `lastAccessed` on every rotation tick so `closeIdleSegments` never observed an idle segment. Defaults to `time.Hour`, moves the `lastAccessed` bump to real read/write call sites, and rewrites `closeIdleSegments` to take its own CAS-bumped snapshot so a concurrent reopen cannot have its only ref dropped under the reclaimer (apache/skywalking#13874).
+- Fix incorrect counts and missing trace fields in the lifecycle migration report.
+- Fix lifecycle migration placing data in the wrong target segment when the source segment interval is not a multiple of the target stage's interval, by row-level replaying parts that straddle a target-segment boundary instead of chunk-copying them into a single segment.
+- Fix trace query identity-tag projection: when `trace_id`/`span_id` are explicitly projected, reconstruct them from span identity at response build time instead of requesting them as stored tags, and preserve tag order with null-filled per-span value alignment in the distributed trace result iterator.
+- Fix measure, stream, and trace queries returning data from segments already expired by the TTL. Retention removes a segment only on its next scheduled run, so a fully expired segment can linger on disk and keep serving TTL-expired data; queries now skip segments whose whole time range is past the retention deadline, matching retention's own removal condition.
 
 ### Chores
 
 - Upgrade Go and npm dependencies including etcd to v3.6.10, OpenTelemetry to v1.43.0, AWS SDK, and Google Cloud libraries.
 - Regenerate expired TLS test certificate with 100-year validity.
 - Set Ginkgo `--repeat` to 0 in the flaky-test workflow so the hourly run completes within the 50-minute timeout.
+- Refactor the dump tool into a reusable `banyand/dump` parser library.
 
 ## 0.10.0
 

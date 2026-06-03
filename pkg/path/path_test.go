@@ -81,3 +81,39 @@ func TestGet(t *testing.T) {
 		})
 	}
 }
+
+func TestHasVolumeName(t *testing.T) {
+	tests := []struct {
+		name string
+		path string
+		want bool
+	}{
+		{
+			name: "relative path",
+			path: "snapshot/data/file.txt",
+		},
+		{
+			name: "windows drive relative",
+			path: `C:snapshot\data.txt`,
+			want: true,
+		},
+		{
+			name: "windows drive absolute slash",
+			path: "C:/snapshot/data.txt",
+			want: true,
+		},
+		{
+			name: "windows drive absolute backslash",
+			path: `C:\snapshot\data.txt`,
+			want: true,
+		},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			if got := HasVolumeName(test.path); got != test.want {
+				t.Fatalf("HasVolumeName(%q) = %t, want %t", test.path, got, test.want)
+			}
+		})
+	}
+}

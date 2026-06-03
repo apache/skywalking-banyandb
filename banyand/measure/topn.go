@@ -50,6 +50,7 @@ import (
 	pbv1 "github.com/apache/skywalking-banyandb/pkg/pb/v1"
 	"github.com/apache/skywalking-banyandb/pkg/pool"
 	"github.com/apache/skywalking-banyandb/pkg/query/logical"
+	"github.com/apache/skywalking-banyandb/pkg/run"
 	"github.com/apache/skywalking-banyandb/pkg/timestamp"
 )
 
@@ -69,6 +70,7 @@ var (
 )
 
 func (sr *schemaRepo) inFlow(
+	ctx context.Context,
 	stm *databasev1.Measure,
 	seriesID uint64,
 	shardID uint32,
@@ -77,7 +79,7 @@ func (sr *schemaRepo) inFlow(
 	spec *measurev1.DataPointSpec,
 ) {
 	if p, _ := sr.topNProcessorMap.Load(getKey(stm.GetMetadata())); p != nil {
-		p.(*topNProcessorManager).onMeasureWrite(seriesID, shardID, &measurev1.InternalWriteRequest{
+		p.(*topNProcessorManager).onMeasureWrite(ctx, seriesID, shardID, &measurev1.InternalWriteRequest{
 			Request: &measurev1.WriteRequest{
 				Metadata:      stm.GetMetadata(),
 				DataPoint:     dp,
@@ -89,7 +91,7 @@ func (sr *schemaRepo) inFlow(
 	}
 }
 
-func (sr *schemaRepo) getSteamingManager(source *commonv1.Metadata, pipeline queue.Client) (manager *topNProcessorManager) {
+func (sr *schemaRepo) getSteamingManager(ctx context.Context, source *commonv1.Metadata, pipeline queue.Client) (manager *topNProcessorManager) {
 	key := getKey(source)
 	// avoid creating a new manager if the repo is closing or the source group is closing
 	if sr.ctx.Err() != nil || sr.isGroupClosing(source.GetGroup()) {
@@ -108,12 +110,14 @@ func (sr *schemaRepo) getSteamingManager(source *commonv1.Metadata, pipeline que
 
 	if v, ok := sr.topNProcessorMap.Load(key); ok {
 		pre := v.(*topNProcessorManager)
-		pre.init(sourceMeasure.GetSchema())
+		pre.init(ctx, sourceMeasure.GetSchema())
 		var modRevision int64
 		pre.RLock()
 		modRevision = pre.m.GetMetadata().GetModRevision()
 		pre.RUnlock()
 		if modRevision < sourceMeasure.schema.GetMetadata().GetModRevision() {
+			// nolint:contextcheck // Close spawns cleanup goroutines that must
+			// outlive the caller's ctx (which may already be canceled).
 			defer pre.Close()
 			manager = &topNProcessorManager{
 				l:        sr.l,
@@ -132,7 +136,7 @@ func (sr *schemaRepo) getSteamingManager(source *commonv1.Metadata, pipeline que
 			nodeID:   sr.nodeID,
 		}
 	}
-	manager.init(sourceMeasure.GetSchema())
+	manager.init(ctx, sourceMeasure.GetSchema())
 	sr.topNProcessorMap.Store(key, manager)
 	return manager
 }
@@ -359,7 +363,9 @@ func (t *topNStreamingProcessor[K]) In() chan<- flow.StreamRecord {
 
 func (t *topNStreamingProcessor[K]) Setup(ctx context.Context) error {
 	t.Add(1)
-	go t.run(ctx)
+	run.Go(ctx, "measure.topn.processor-run", t.l, func(ctx context.Context) {
+		t.run(ctx)
+	})
 	return nil
 }
 
@@ -526,7 +532,7 @@ func (t *topNStreamingProcessor[K]) downSampleTimeBucket(eventTimeMillis int64) 
 	return time.UnixMilli(eventTimeMillis - eventTimeMillis%t.interval.Milliseconds())
 }
 
-func (t *topNStreamingProcessor[K]) start() *topNStreamingProcessor[K] {
+func (t *topNStreamingProcessor[K]) start(ctx context.Context) *topNStreamingProcessor[K] {
 	flushInterval := t.interval
 	if flushInterval > maxFlushInterval {
 		flushInterval = maxFlushInterval
@@ -546,7 +552,9 @@ func (t *topNStreamingProcessor[K]) start() *topNStreamingProcessor[K] {
 			return record.Data().(flow.Data)[1].(string)
 		}),
 	).To(t).Open()
-	go t.handleError()
+	run.Go(ctx, "measure.topn.error-handler", t.l, func(_ context.Context) {
+		t.handleError()
+	})
 	return t
 }
 
@@ -578,7 +586,7 @@ type topNProcessorManager struct {
 	closed bool
 }
 
-func (manager *topNProcessorManager) init(m *databasev1.Measure) {
+func (manager *topNProcessorManager) init(ctx context.Context, m *databasev1.Measure) {
 	manager.Lock()
 	defer manager.Unlock()
 	if manager.closed {
@@ -589,7 +597,7 @@ func (manager *topNProcessorManager) init(m *databasev1.Measure) {
 	}
 	manager.m = m
 	for i := range manager.registeredTasks {
-		if err := manager.start(manager.registeredTasks[i]); err != nil {
+		if err := manager.start(ctx, manager.registeredTasks[i]); err != nil {
 			manager.l.Err(err).Msg("fail to start processor")
 		}
 	}
@@ -605,9 +613,10 @@ func (manager *topNProcessorManager) Close() error {
 	// Close all processors in parallel to avoid serial 5-second-per-flow timeouts.
 	errCh := make(chan error, len(manager.processorList))
 	for _, processor := range manager.processorList {
-		go func(p topNProcessor) {
+		p := processor
+		run.Go(context.Background(), "measure.topn.processor-close", manager.l, func(_ context.Context) {
 			errCh <- p.Close()
-		}(processor)
+		})
 	}
 	var err error
 	for range manager.processorList {
@@ -619,8 +628,14 @@ func (manager *topNProcessorManager) Close() error {
 	return err
 }
 
-func (manager *topNProcessorManager) onMeasureWrite(seriesID uint64, shardID uint32, request *measurev1.InternalWriteRequest, measure *databasev1.Measure) {
-	go func() {
+func (manager *topNProcessorManager) onMeasureWrite(
+	ctx context.Context,
+	seriesID uint64,
+	shardID uint32,
+	request *measurev1.InternalWriteRequest,
+	measure *databasev1.Measure,
+) {
+	run.Go(ctx, "topn-write", manager.l, func(_ context.Context) {
 		manager.RLock()
 		defer manager.RUnlock()
 		if manager.closed {
@@ -628,7 +643,7 @@ func (manager *topNProcessorManager) onMeasureWrite(seriesID uint64, shardID uin
 		}
 		if manager.m == nil {
 			manager.RUnlock()
-			manager.init(measure)
+			manager.init(ctx, measure)
 			manager.RLock()
 		}
 		dp := request.GetRequest().GetDataPoint()
@@ -644,10 +659,10 @@ func (manager *topNProcessorManager) onMeasureWrite(seriesID uint64, shardID uin
 			)
 			processor.Src() <- flow.NewStreamRecordWithTimestampPb(dpWithEntity, dp.GetTimestamp())
 		}
-	}()
+	})
 }
 
-func (manager *topNProcessorManager) register(topNSchema *databasev1.TopNAggregation) {
+func (manager *topNProcessorManager) register(ctx context.Context, topNSchema *databasev1.TopNAggregation) {
 	manager.Lock()
 	defer manager.Unlock()
 	if manager.closed {
@@ -660,7 +675,7 @@ func (manager *topNProcessorManager) register(topNSchema *databasev1.TopNAggrega
 			if manager.registeredTasks[i].GetMetadata().GetModRevision() < topNSchema.GetMetadata().GetModRevision() {
 				prev := manager.registeredTasks[i]
 				prevProcessors := manager.removeProcessors(prev)
-				if err := manager.start(topNSchema); err != nil {
+				if err := manager.start(ctx, topNSchema); err != nil {
 					manager.l.Err(err).Msg("fail to start the new processor")
 					return
 				}
@@ -677,12 +692,12 @@ func (manager *topNProcessorManager) register(topNSchema *databasev1.TopNAggrega
 		return
 	}
 	manager.registeredTasks = append(manager.registeredTasks, topNSchema)
-	if err := manager.start(topNSchema); err != nil {
+	if err := manager.start(ctx, topNSchema); err != nil {
 		manager.l.Err(err).Msg("fail to start processor")
 	}
 }
 
-func (manager *topNProcessorManager) start(topNSchema *databasev1.TopNAggregation) error {
+func (manager *topNProcessorManager) start(ctx context.Context, topNSchema *databasev1.TopNAggregation) error {
 	if manager.m == nil {
 		return nil
 	}
@@ -719,11 +734,11 @@ func (manager *topNProcessorManager) start(topNSchema *databasev1.TopNAggregatio
 		if fieldType == databasev1.FieldType_FIELD_TYPE_FLOAT {
 			processorList[i] = newTopNStreamingProcessor[float64](
 				manager.m, manager.l, interval, topNSchema, sortDirection, srcCh, streamingFlow, manager.pipeline, manager.nodeID,
-			).start()
+			).start(ctx)
 		} else {
 			processorList[i] = newTopNStreamingProcessor[int64](
 				manager.m, manager.l, interval, topNSchema, sortDirection, srcCh, streamingFlow, manager.pipeline, manager.nodeID,
-			).start()
+			).start(ctx)
 		}
 	}
 	manager.processorList = append(manager.processorList, processorList...)

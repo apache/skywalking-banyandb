@@ -19,7 +19,7 @@ services:
       file: ../../script/docker-compose/base-compose.yml
       service: data
     hostname: data-hot1
-    command: data --node-discovery-mode=file --node-discovery-file-path=/etc/banyandb/nodes.yaml --node-labels type=hot
+    command: data --node-discovery-mode=file --node-discovery-file-path=/etc/banyandb/nodes.yaml --node-labels type=hot ${BANYANDB_MEASURE_VECTORIZED_FLAGS:---measure-vectorized-enabled=false}
     volumes:
       - ./data-generator/tmp/metadata:/tmp/measure/data/sw_metadata
       - ./nodes.yaml:/etc/banyandb/nodes.yaml
@@ -31,7 +31,7 @@ services:
       file: ../../script/docker-compose/base-compose.yml
       service: data
     hostname: data-warm1
-    command: data --node-discovery-mode=file --node-discovery-file-path=/etc/banyandb/nodes.yaml --node-labels type=warm
+    command: data --node-discovery-mode=file --node-discovery-file-path=/etc/banyandb/nodes.yaml --node-labels type=warm ${BANYANDB_MEASURE_VECTORIZED_FLAGS:---measure-vectorized-enabled=false}
     volumes:
       - ./nodes.yaml:/etc/banyandb/nodes.yaml
     networks:
@@ -42,7 +42,7 @@ services:
       file: ../../script/docker-compose/base-compose.yml
       service: data
     hostname: data-cold1
-    command: data --node-discovery-mode=file --node-discovery-file-path=/etc/banyandb/nodes.yaml --node-labels type=cold
+    command: data --node-discovery-mode=file --node-discovery-file-path=/etc/banyandb/nodes.yaml --node-labels type=cold ${BANYANDB_MEASURE_VECTORIZED_FLAGS:---measure-vectorized-enabled=false}
     volumes:
       - ./data-generator/tmp/measure:/tmp/measure
       - ./data-generator/tmp/stream:/tmp/stream
@@ -56,7 +56,7 @@ services:
     extends:
       file: ../../script/docker-compose/base-compose.yml
       service: liaison
-    command: liaison --node-discovery-mode=file --node-discovery-file-path=/etc/banyandb/nodes.yaml --data-node-selector type=hot
+    command: liaison --node-discovery-mode=file --node-discovery-file-path=/etc/banyandb/nodes.yaml --data-node-selector type=hot ${BANYANDB_MEASURE_VECTORIZED_FLAGS:---measure-vectorized-enabled=false}
     volumes:
       - ./nodes.yaml:/etc/banyandb/nodes.yaml
     networks:

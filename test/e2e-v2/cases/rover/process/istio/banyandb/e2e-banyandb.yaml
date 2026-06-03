@@ -48,7 +48,7 @@ setup:
     - name: Load BanyanDB image into kind
       command: kind load docker-image apache/skywalking-banyandb:${TAG}-testing --name kind
     - name: Deploy BanyanDB
-      command: envsubst < test/e2e-v2/cases/rover/process/istio/banyandb/banyandb-deployment.yaml | kubectl apply -f -
+      command: envsubst < ${BANYANDB_DEPLOYMENT_FILE:-test/e2e-v2/cases/rover/process/istio/banyandb/banyandb-deployment.yaml} | kubectl apply -f -
     - name: Wait for BanyanDB
       command: kubectl rollout status deployment/banyandb -n istio-system --timeout=120s
     - name: Install SkyWalking

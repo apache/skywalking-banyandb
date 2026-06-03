@@ -123,6 +123,10 @@ func (a *reduceAccumulator[N]) Reset() {
 	a.reduceFunc.Reset()
 }
 
+// Deprecated: row-path measure plan; see .omc/g8-plan.md. The vec
+// subsystem performs aggregation in storage via
+// pkg/query/vectorized/measure.BatchAggregation, planned by
+// pkg/query/vectorized/measure/plan.GroupByAgg.
 type unresolvedAggregation struct {
 	unresolvedInput  logical.UnresolvedPlan
 	aggregationField *logical.Field

@@ -224,10 +224,10 @@ func (l *lifecycleService) GracefulStop() {
 	// Stop gRPC server
 	if l.grpcServer != nil {
 		stopped := make(chan struct{})
-		go func() {
+		run.Go(context.Background(), "backup.lifecycle.graceful-stop", l.l, func(_ context.Context) {
 			l.grpcServer.GracefulStop()
 			close(stopped)
-		}()
+		})
 
 		t := time.NewTimer(10 * time.Second)
 		select {
@@ -258,7 +258,7 @@ func (l *lifecycleService) Serve() run.StopNotify {
 	if l.schedule == "" {
 		defer close(done)
 		l.l.Info().Msg("starting lifecycle migration without schedule")
-		if err := l.action(); err != nil {
+		if err := l.action(context.Background()); err != nil {
 			logger.Panicf("failed to run lifecycle migration: %v", err)
 		}
 		return done
@@ -267,9 +267,9 @@ func (l *lifecycleService) Serve() run.StopNotify {
 	clockInstance := clock.New()
 	l.sch = timestamp.NewScheduler(l.l, clockInstance)
 	var executionCount int
-	err := l.sch.Register("lifecycle", cron.Descriptor, l.schedule, func(triggerTime time.Time, _ *logger.Logger) bool {
+	err := l.sch.Register(context.Background(), "lifecycle", cron.Descriptor, l.schedule, func(ctx context.Context, triggerTime time.Time, _ *logger.Logger) bool {
 		l.l.Info().Msgf("lifecycle migration triggered at %s", triggerTime)
-		if err := l.action(); err != nil {
+		if err := l.action(ctx); err != nil {
 			l.l.Error().Err(err).Msg("failed to run lifecycle migration action")
 		}
 		executionCount++
@@ -287,7 +287,7 @@ func (l *lifecycleService) Serve() run.StopNotify {
 	}
 
 	// Wait for either migration completion or server stop
-	go func() {
+	run.Go(context.Background(), "backup.lifecycle.stop-watcher", l.l, func(_ context.Context) {
 		select {
 		case <-done:
 			// Migration completed
@@ -295,7 +295,7 @@ func (l *lifecycleService) Serve() run.StopNotify {
 			// Server stopped
 			close(done)
 		}
-	}()
+	})
 
 	return done
 }
@@ -304,7 +304,7 @@ func (l *lifecycleService) startServers() {
 	// Setup gRPC server
 	var opts []grpclib.ServerOption
 	if l.lifecycleTLS && l.tlsReloader != nil {
-		if startErr := l.tlsReloader.Start(); startErr != nil {
+		if startErr := l.tlsReloader.Start(context.Background()); startErr != nil {
 			l.l.Error().Err(startErr).Msg("Failed to start TLS reloader")
 			close(l.stopCh)
 			return
@@ -366,7 +366,7 @@ func (l *lifecycleService) startServers() {
 	wg.Add(2)
 
 	// gRPC server goroutine
-	go func() {
+	run.Go(context.Background(), "backup.lifecycle.grpc-server", l.l, func(_ context.Context) {
 		defer wg.Done()
 		lis, listenErr := net.Listen("tcp", l.lifecycleGRPCAddr)
 		if listenErr != nil {
@@ -377,10 +377,10 @@ func (l *lifecycleService) startServers() {
 		if serveErr := l.grpcServer.Serve(lis); serveErr != nil {
 			l.l.Error().Err(serveErr).Msg("gRPC server error")
 		}
-	}()
+	})
 
 	// HTTP server goroutine
-	go func() {
+	run.Go(context.Background(), "backup.lifecycle.http-server", l.l, func(_ context.Context) {
 		defer wg.Done()
 		l.l.Info().Str("addr", l.lifecycleHTTPAddr).Msg("Lifecycle HTTP server listening")
 		var serveErr error
@@ -393,17 +393,16 @@ func (l *lifecycleService) startServers() {
 		if serveErr != nil && serveErr != http.ErrServerClosed {
 			l.l.Error().Err(serveErr).Msg("HTTP server error")
 		}
-	}()
+	})
 
 	// Wait for both servers to stop
-	go func() {
+	run.Go(context.Background(), "backup.lifecycle.shutdown-watcher", l.l, func(_ context.Context) {
 		wg.Wait()
 		close(l.stopCh)
-	}()
+	})
 }
 
-func (l *lifecycleService) action() error {
-	ctx := context.Background()
+func (l *lifecycleService) action(ctx context.Context) error {
 	progress := LoadProgress(l.progressFilePath, l.l)
 	progress.ClearErrors()
 
@@ -422,13 +421,17 @@ func (l *lifecycleService) action() error {
 	}
 
 	// Pass progress to getSnapshots
-	streamDir, measureDir, traceDir, err := l.getSnapshots(groups, progress)
+	streamDir, measureDir, traceDir, err := l.getSnapshots(ctx, groups, progress)
 	if err != nil {
 		l.l.Error().Err(err).Msg("failed to get snapshots")
 		return err
 	}
 	if streamDir == "" && measureDir == "" && traceDir == "" {
 		l.l.Warn().Msg("no snapshots found, skipping lifecycle migration")
+		// Clear any GroupsToProcess persisted from a prior cycle so the
+		// emitted report honestly reports total_groups=0 for this empty
+		// cycle instead of inheriting a stale denominator.
+		progress.SetGroupsToProcess(nil)
 		l.generateReport(progress)
 		return nil
 	}
@@ -437,6 +440,10 @@ func (l *lifecycleService) action() error {
 		Str("measure_snapshot", measureDir).
 		Str("trace_snapshot", traceDir).
 		Msg("created snapshots")
+	// Record the scheduled group set only after snapshots are confirmed so
+	// the report distinguishes "no work this cycle" (total_groups=0) from a
+	// real cycle that processed N groups (total_groups=N).
+	progress.SetGroupsToProcess(getGroupNames(groups))
 	progress.Save(l.progressFilePath, l.l)
 
 	nodes, err := l.metadata.NodeRegistry().ListNode(ctx, databasev1.Role_ROLE_DATA)
@@ -446,7 +453,6 @@ func (l *lifecycleService) action() error {
 	}
 	labels := common.ParseNodeFlags()
 
-	allGroupsCompleted := true
 	for _, g := range groups {
 		switch g.Catalog {
 		case commonv1.Catalog_CATALOG_STREAM:
@@ -478,13 +484,18 @@ func (l *lifecycleService) action() error {
 
 	// Only remove progress file if ALL groups are fully completed
 	notCompleteGroups := progress.AllGroupsNotFullyCompleted(groups)
-	if allGroupsCompleted && len(notCompleteGroups) == 0 {
+	if len(notCompleteGroups) == 0 {
 		progress.Remove(l.progressFilePath, l.l)
 		l.l.Info().Msg("lifecycle migration completed successfully")
 		l.generateReport(progress)
 		return nil
 	}
+	// Partial-failure path: also emit a report so operators can inspect
+	// errors.* and per-resource completion_rate without parsing raw
+	// progress.json. The report distinguishes itself from a clean cycle
+	// by having errors.* non-empty and completion_rate < 100.
 	l.l.Info().Msg("lifecycle migration partially completed, progress file retained")
+	l.generateReport(progress)
 	return fmt.Errorf("lifecycle migration partially completed, progress file retained; %v groups not fully completed", notCompleteGroups)
 }
 
@@ -525,12 +536,13 @@ func (l *lifecycleService) buildMigrationReport(p *Progress) map[string]interfac
 	now := time.Now()
 	report := map[string]interface{}{
 		"generated_at":   now,
-		"report_version": "2.0",
+		"report_version": "2.1",
 		"summary":        l.buildSummaryStats(p),
 		"errors":         l.buildErrorSummary(p),
 		"snapshot_info": map[string]interface{}{
 			"stream_dir":  p.SnapshotStreamDir,
 			"measure_dir": p.SnapshotMeasureDir,
+			"trace_dir":   p.SnapshotTraceDir,
 		},
 	}
 
@@ -539,8 +551,20 @@ func (l *lifecycleService) buildMigrationReport(p *Progress) map[string]interfac
 
 // buildSummaryStats creates overall migration statistics.
 func (l *lifecycleService) buildSummaryStats(p *Progress) map[string]interface{} {
-	totalGroups := len(p.CompletedGroups) + len(p.DeletedStreamGroups) + len(p.DeletedMeasureGroups)
-	completedGroups := len(p.CompletedGroups)
+	// total_groups reflects the cycle's scheduled set captured at the top of
+	// action(); completed_groups counts groups that ran the full
+	// processXxxGroup → MarkGroupCompleted path. The intersection guards
+	// against resume from a partial-failure progress.json where
+	// CompletedGroups carries entries from prior cycles that are not in
+	// the current scheduled set, which would otherwise yield
+	// completed_groups > total_groups.
+	totalGroups := len(p.GroupsToProcess)
+	completedGroups := 0
+	for _, name := range p.GroupsToProcess {
+		if p.CompletedGroups[name] {
+			completedGroups++
+		}
+	}
 
 	// Calculate total parts and series across all groups
 	totalStreamParts, completedStreamParts := l.calculateTotalCounts(p.StreamPartCounts, p.StreamPartProgress)
@@ -548,6 +572,8 @@ func (l *lifecycleService) buildSummaryStats(p *Progress) map[string]interface{}
 	totalStreamElementIndex, completedStreamElementIndex := l.calculateTotalCounts(p.StreamElementIndexCounts, p.StreamElementIndexProgress)
 	totalMeasureParts, completedMeasureParts := l.calculateTotalCounts(p.MeasurePartCounts, p.MeasurePartProgress)
 	totalMeasureSeries, completedMeasureSeries := l.calculateTotalCounts(p.MeasureSeriesCounts, p.MeasureSeriesProgress)
+	totalTraceShards, completedTraceShards := l.calculateTotalCounts(p.TraceShardCounts, p.TraceShardProgress)
+	totalTraceSeries, completedTraceSeries := l.calculateTotalCounts(p.TraceSeriesCounts, p.TraceSeriesProgress)
 
 	// Calculate error counts
 	streamPartErrors := l.countErrors(p.StreamPartErrors)
@@ -555,6 +581,8 @@ func (l *lifecycleService) buildSummaryStats(p *Progress) map[string]interface{}
 	streamElementIndexErrors := l.countErrors(p.StreamElementIndexErrors)
 	measurePartErrors := l.countErrors(p.MeasurePartErrors)
 	measureSeriesErrors := l.countErrors(p.MeasureSeriesErrors)
+	traceShardErrors := l.countErrors(p.TraceShardErrors)
+	traceSeriesErrors := l.countErrors(p.TraceSeriesErrors)
 
 	return map[string]interface{}{
 		"migration_status": map[string]interface{}{
@@ -581,6 +609,7 @@ func (l *lifecycleService) buildSummaryStats(p *Progress) map[string]interface{}
 				"errors":          streamElementIndexErrors,
 				"completion_rate": l.calculatePercentage(completedStreamElementIndex, totalStreamElementIndex),
 			},
+			"sync_breakdown": l.buildSyncBreakdown(p.StreamChunkSyncParts, p.StreamRowReplayParts, p.StreamRowReplayRows, "chunk_sync_parts"),
 		},
 		"measure_migration": map[string]interface{}{
 			"parts": map[string]interface{}{
@@ -595,21 +624,93 @@ func (l *lifecycleService) buildSummaryStats(p *Progress) map[string]interface{}
 				"errors":          measureSeriesErrors,
 				"completion_rate": l.calculatePercentage(completedMeasureSeries, totalMeasureSeries),
 			},
+			"sync_breakdown": l.buildSyncBreakdown(p.MeasureChunkSyncParts, p.MeasureRowReplayParts, p.MeasureRowReplayRows, "chunk_sync_parts"),
+		},
+		// Field names parts/series mirror stream_migration / measure_migration.
+		// "parts" is fed by the per-shard TraceShard counters because trace
+		// migration is shard-batched (sidx + core parts streamed together).
+		"trace_migration": map[string]interface{}{
+			"parts": map[string]interface{}{
+				"total":           totalTraceShards,
+				"completed":       completedTraceShards,
+				"errors":          traceShardErrors,
+				"completion_rate": l.calculatePercentage(completedTraceShards, totalTraceShards),
+			},
+			"series": map[string]interface{}{
+				"total":           totalTraceSeries,
+				"completed":       completedTraceSeries,
+				"errors":          traceSeriesErrors,
+				"completion_rate": l.calculatePercentage(completedTraceSeries, totalTraceSeries),
+			},
+			// Trace chunk-sync is shard-batched, so the breakdown reports
+			// chunk_sync_shards (not parts) alongside the row-replay part/row counts.
+			"sync_breakdown": l.buildSyncBreakdown(p.TraceChunkSyncShards, p.TraceRowReplayParts, p.TraceRowReplayRows, "chunk_sync_shards"),
 		},
 	}
 }
 
+// buildSyncBreakdown reports, per group, how many parts/shards were migrated via
+// chunk-sync vs row-replay and how many rows the row-replay path republished.
+// The chunkKey is "chunk_sync_parts" for measure/stream and "chunk_sync_shards"
+// for trace. A "_total" entry aggregates across groups.
+func (l *lifecycleService) buildSyncBreakdown(chunk, replayParts, replayRows map[string]uint64, chunkKey string) map[string]interface{} {
+	groups := make(map[string]struct{})
+	for g := range chunk {
+		groups[g] = struct{}{}
+	}
+	for g := range replayParts {
+		groups[g] = struct{}{}
+	}
+	for g := range replayRows {
+		groups[g] = struct{}{}
+	}
+	out := make(map[string]interface{}, len(groups)+1)
+	var totalChunk, totalReplayParts, totalReplayRows uint64
+	for g := range groups {
+		c, rp, rr := chunk[g], replayParts[g], replayRows[g]
+		out[g] = map[string]interface{}{
+			chunkKey:           c,
+			"row_replay_parts": rp,
+			"row_replay_rows":  rr,
+		}
+		totalChunk += c
+		totalReplayParts += rp
+		totalReplayRows += rr
+	}
+	out["_total"] = map[string]interface{}{
+		chunkKey:           totalChunk,
+		"row_replay_parts": totalReplayParts,
+		"row_replay_rows":  totalReplayRows,
+	}
+	return out
+}
+
 // buildErrorSummary creates detailed error information.
 func (l *lifecycleService) buildErrorSummary(p *Progress) map[string]interface{} {
-	errors := map[string]interface{}{
-		"stream_parts":         l.buildErrorDetails(p.StreamPartErrors),
-		"stream_series":        l.buildErrorDetails(p.StreamSeriesErrors),
-		"stream_element_index": l.buildErrorDetails(p.StreamElementIndexErrors),
-		"measure_parts":        l.buildErrorDetails(p.MeasurePartErrors),
-		"measure_series":       l.buildErrorDetails(p.MeasureSeriesErrors),
+	return map[string]interface{}{
+		"stream_parts":           l.buildErrorDetails(p.StreamPartErrors),
+		"stream_series":          l.buildErrorDetails(p.StreamSeriesErrors),
+		"stream_element_index":   l.buildErrorDetails(p.StreamElementIndexErrors),
+		"measure_parts":          l.buildErrorDetails(p.MeasurePartErrors),
+		"measure_series":         l.buildErrorDetails(p.MeasureSeriesErrors),
+		"trace_parts":            l.buildErrorDetails(p.TraceShardErrors),
+		"trace_series":           l.buildErrorDetails(p.TraceSeriesErrors),
+		"row_replay_node_errors": l.buildNodeErrorDetails(p.RowReplayNodeErrors),
 	}
+}
 
-	return errors
+// buildNodeErrorDetails copies the group→node→message error map for the report,
+// returning an empty map (never nil) so the JSON shape is stable.
+func (l *lifecycleService) buildNodeErrorDetails(nodeErrors map[string]map[string]string) map[string]interface{} {
+	result := make(map[string]interface{}, len(nodeErrors))
+	for group, nodes := range nodeErrors {
+		groupErrors := make(map[string]interface{}, len(nodes))
+		for nodeID, msg := range nodes {
+			groupErrors[nodeID] = msg
+		}
+		result[group] = groupErrors
+	}
+	return result
 }
 
 // Helper functions.
@@ -684,7 +785,14 @@ func (l *lifecycleService) buildErrorDetails(errorMaps interface{}) map[string]i
 				segmentDetails := make(map[string]interface{})
 				for shardID, parts := range shards {
 					if len(parts) > 0 {
-						segmentDetails[fmt.Sprintf("shard_%d", shardID)] = parts
+						// Copy the inner map so the report does not alias
+						// Progress state; aliasing would race with a
+						// concurrent Mark*Error during JSON marshaling.
+						partDetails := make(map[uint64]string, len(parts))
+						for partID, errorMsg := range parts {
+							partDetails[partID] = errorMsg
+						}
+						segmentDetails[fmt.Sprintf("shard_%d", shardID)] = partDetails
 					}
 				}
 				if len(segmentDetails) > 0 {
@@ -853,7 +961,8 @@ func (l *lifecycleService) processStreamGroupFileBased(_ context.Context, g *Gro
 	}
 
 	// Use the file-based migration with existing visitor pattern
-	segmentSuffixes, err := migrateStreamWithFileBasedAndProgress(rootDir, *tr, g, l.l, progress, int(l.chunkSize))
+	//nolint:contextcheck // migration drives its own context lifecycle for batch publish.
+	segmentSuffixes, err := migrateStreamWithFileBasedAndProgress(rootDir, *tr, g, l.l, progress, int(l.chunkSize), l.metadata)
 	if err != nil {
 		return nil, fmt.Errorf("file-based stream migration failed: %w", err)
 	}
@@ -976,7 +1085,8 @@ func (l *lifecycleService) processMeasureGroupFileBased(_ context.Context, g *Gr
 	}
 
 	// Use the file-based migration with existing visitor pattern
-	segmentSuffixes, err := migrateMeasureWithFileBasedAndProgress(rootDir, *tr, g, l.l, progress, int(l.chunkSize))
+	//nolint:contextcheck // migration drives its own context lifecycle for batch publish.
+	segmentSuffixes, err := migrateMeasureWithFileBasedAndProgress(rootDir, *tr, g, l.l, progress, int(l.chunkSize), l.metadata)
 	if err != nil {
 		return nil, fmt.Errorf("file-based measure migration failed: %w", err)
 	}
@@ -1081,7 +1191,8 @@ func (l *lifecycleService) processTraceGroupFileBased(_ context.Context, g *Grou
 	}
 
 	// Use the file-based migration with existing visitor pattern
-	segmentSuffixes, err := migrateTraceWithFileBasedAndProgress(rootDir, *tr, g, l.l, progress, int(l.chunkSize))
+	//nolint:contextcheck // migration drives its own context lifecycle for batch publish.
+	segmentSuffixes, err := migrateTraceWithFileBasedAndProgress(rootDir, *tr, g, l.l, progress, int(l.chunkSize), l.metadata)
 	if err != nil {
 		return nil, fmt.Errorf("file-based trace migration failed: %w", err)
 	}

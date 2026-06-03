@@ -18,6 +18,7 @@
 package lifecycle
 
 import (
+	"context"
 	"fmt"
 	"os"
 
@@ -38,7 +39,7 @@ import (
 	"github.com/apache/skywalking-banyandb/pkg/node"
 )
 
-func (l *lifecycleService) getSnapshots(groups []*commonv1.Group, p *Progress) (streamDir string, measureDir string, traceDir string, err error) {
+func (l *lifecycleService) getSnapshots(ctx context.Context, groups []*commonv1.Group, p *Progress) (streamDir string, measureDir string, traceDir string, err error) {
 	// If we already have snapshot dirs in Progress, reuse them
 	if p.SnapshotStreamDir != "" || p.SnapshotMeasureDir != "" || p.SnapshotTraceDir != "" {
 		return p.SnapshotStreamDir, p.SnapshotMeasureDir, p.SnapshotTraceDir, nil
@@ -51,7 +52,7 @@ func (l *lifecycleService) getSnapshots(groups []*commonv1.Group, p *Progress) (
 			Catalog: group.Catalog,
 		})
 	}
-	snn, err := snapshot.Get(l.gRPCAddr, l.enableTLS, l.insecure, l.cert, snapshotGroups...)
+	snn, err := snapshot.Get(ctx, l.gRPCAddr, l.enableTLS, l.insecure, l.cert, snapshotGroups...)
 	if err != nil {
 		return "", "", "", err
 	}
@@ -190,10 +191,15 @@ func parseGroup(
 		return nil, fmt.Errorf("failed to initialize node selector for group %s", g.Metadata.Name)
 	}
 	client := pub.NewWithoutMetadata() //nolint:contextcheck // health check goroutine uses context.Background()
-	if g.Catalog == commonv1.Catalog_CATALOG_STREAM {
+	switch g.Catalog {
+	case commonv1.Catalog_CATALOG_STREAM:
 		_ = grpc.NewClusterNodeRegistry(data.TopicStreamWrite, client, nodeSel)
-	} else {
+	case commonv1.Catalog_CATALOG_TRACE:
+		_ = grpc.NewClusterNodeRegistry(data.TopicTraceWrite, client, nodeSel)
+	case commonv1.Catalog_CATALOG_MEASURE:
 		_ = grpc.NewClusterNodeRegistry(data.TopicMeasureWrite, client, nodeSel)
+	default:
+		return nil, fmt.Errorf("unsupported catalog %s for lifecycle migration of group %s", g.Catalog, g.Metadata.Name)
 	}
 
 	var existed bool

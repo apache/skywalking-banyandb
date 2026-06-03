@@ -22,6 +22,7 @@ import (
 	"fmt"
 	"io"
 	"strings"
+	"time"
 
 	"github.com/pkg/errors"
 	grpclib "google.golang.org/grpc"
@@ -36,10 +37,50 @@ import (
 var (
 	gossipMerkleTreeReadPageSize int64 = 10
 	gossipShardQueryDatabaseSize       = 100
+
+	// repairPerPropertyCtxBudget bounds every ctx-aware call inside one
+	// gossip-triggered per-property repair: shard.repair -> s.search,
+	// shard.repair -> buildDeleteFromTimeDocuments -> s.search, and any
+	// nested ctx-aware lookup. updateDocuments takes no ctx and is not
+	// bounded.
+	repairPerPropertyCtxBudget = 10 * time.Second
 )
 
 type repairGossipBase struct {
 	scheduler *repairScheduler
+}
+
+// executeRepairWithBudget runs syncShard.repair under repairPerPropertyCtxBudget;
+// shared by client and server paths. repairSuccessLatency samples every err == nil
+// (incl. no-op). totalRepairPerPropertyTimeout fires only when DeadlineExceeded
+// came from the child budget (parent ctx still active).
+func (b *repairGossipBase) executeRepairWithBudget(
+	ctx context.Context,
+	syncShard *shard,
+	id []byte,
+	property *propertyv1.Property,
+	deleteTime int64,
+	group string,
+) (bool, *queryProperty, error) {
+	repairCtx, repairCancel := context.WithTimeout(ctx, repairPerPropertyCtxBudget)
+	repairStart := time.Now()
+	updated, newer, err := syncShard.repair(repairCtx, id, property, deleteTime)
+	repairCancel()
+	shardLabel := fmt.Sprintf("%d", syncShard.id)
+	if err == nil {
+		b.scheduler.metrics.repairSuccessLatency.Observe(time.Since(repairStart).Seconds(), group, shardLabel)
+	}
+	// Only count per-property timeout when the child budget fired while the
+	// parent ctx was still active. If the parent was already done, the
+	// DeadlineExceeded came from outside this helper and would be a misleading
+	// signal for "single property too slow".
+	if err != nil && errors.Is(err, context.DeadlineExceeded) && ctx.Err() == nil {
+		b.scheduler.metrics.totalRepairPerPropertyTimeout.Inc(1, group, shardLabel)
+		b.scheduler.l.Warn().Str("group", group).Uint32("shardID", uint32(syncShard.id)).
+			Str("propertyID", string(id)).Dur("budget", repairPerPropertyCtxBudget).
+			Msg("per-property repair hit timeout — skipping single property")
+	}
+	return updated, newer, err
 }
 
 func (b *repairGossipBase) getTreeReader(ctx context.Context, group string, shardID uint32) (repairTreeReader, bool, error) {
@@ -265,6 +306,8 @@ func (r *repairGossipClient) Rev(ctx context.Context, tracer gossip.Trace, nextN
 	leafReader := newRepairBufferLeafReader(reader)
 	var currentComparingClientNode *repairTreeNode
 	var notProcessingClientNode *repairTreeNode
+	processed := 0
+	loopStart := time.Now()
 	for {
 		recvResp, err := stream.Recv()
 		if err != nil {
@@ -299,6 +342,13 @@ func (r *repairGossipClient) Rev(ctx context.Context, tracer gossip.Trace, nextN
 			}
 			differSpan.End()
 		case *propertyv1.RepairResponse_PropertySync:
+			processed++
+			if processed%100 == 0 {
+				r.scheduler.l.Info().Int("processed", processed).
+					Dur("elapsed", time.Since(loopStart)).
+					Str("group", request.Group).Uint32("shardID", request.ShardId).
+					Msg("repair progress")
+			}
 			r.scheduler.l.Debug().Msgf("received repair response from server")
 			// step 3: keep receiving messages from the server
 			// if the server still sending different nodes, we should keep reading them
@@ -307,13 +357,15 @@ func (r *repairGossipClient) Rev(ctx context.Context, tracer gossip.Trace, nextN
 			syncSpan := tracer.CreateSpan(startSyncSpan, "repair property")
 			syncSpan.Tag(gossip.TraceTagOperateType, gossip.TraceTagOperateRepairProperty)
 			syncSpan.Tag(gossip.TraceTagPropertyID, string(sync.Property.Id))
-			updated, newer, err := syncShard.repair(ctx, sync.Property.Id, sync.Property.Property, sync.Property.DeleteTime)
+			updated, newer, err := r.executeRepairWithBudget(ctx, syncShard, sync.Property.Id, sync.Property.Property, sync.Property.DeleteTime, request.Group)
 			syncSpan.Tag("updated", fmt.Sprintf("%t", updated))
 			syncSpan.Tag("has_newer", fmt.Sprintf("%t", newer != nil))
 			if err != nil {
 				syncSpan.Error(err.Error())
 				r.scheduler.l.Warn().Err(err).Msgf("failed to repair property %s", sync.Property.Id)
 				r.scheduler.metrics.totalRepairFailedCount.Inc(1, request.Group, fmt.Sprintf("%d", request.ShardId))
+				syncSpan.End()
+				continue
 			}
 			if updated {
 				r.scheduler.l.Debug().Msgf("successfully repaired property %s on client side", sync.Property.Id)
@@ -350,8 +402,8 @@ func (r *repairGossipClient) Rev(ctx context.Context, tracer gossip.Trace, nextN
 					syncSpan.Error(err.Error())
 					r.scheduler.l.Warn().Err(err).Msgf("failed to send newer property sync response to server, entity: %s", newer.id)
 				}
-				syncSpan.End()
 			}
+			syncSpan.End()
 		default:
 			r.scheduler.l.Warn().Msgf("unexpected response type: %T, expected DifferTreeSummary or PropertySync", resp)
 		}
@@ -741,7 +793,7 @@ func (r *repairGossipServer) processPropertySync(
 	s grpclib.BidiStreamingServer[propertyv1.RepairRequest, propertyv1.RepairResponse],
 	group string,
 ) bool {
-	updated, newer, err := syncShard.repair(ctx, sync.Id, sync.Property, sync.DeleteTime)
+	updated, newer, err := r.executeRepairWithBudget(ctx, syncShard, sync.Id, sync.Property, sync.DeleteTime, group)
 	if err != nil {
 		r.scheduler.l.Warn().Err(err).Msgf("failed to repair property %s from server side", sync.Id)
 		r.scheduler.metrics.totalRepairFailedCount.Inc(1, group, fmt.Sprintf("%d", syncShard.id))

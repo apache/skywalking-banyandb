@@ -34,6 +34,7 @@ import (
 
 	fodcv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/fodc/v1"
 	"github.com/apache/skywalking-banyandb/fodc/proxy/internal/cluster"
+	"github.com/apache/skywalking-banyandb/fodc/proxy/internal/diagnostics"
 	"github.com/apache/skywalking-banyandb/fodc/proxy/internal/lifecycle"
 	"github.com/apache/skywalking-banyandb/fodc/proxy/internal/metrics"
 	"github.com/apache/skywalking-banyandb/fodc/proxy/internal/registry"
@@ -42,12 +43,13 @@ import (
 
 // agentConnection represents a connection to an agent.
 type agentConnection struct {
-	metricsStream      fodcv1.FODCService_StreamMetricsServer
-	clusterStateStream fodcv1.FODCService_StreamClusterTopologyServer
-	lifecycleStream    fodcv1.FODCService_StreamLifecycleServer
-	lastActivity       time.Time
-	agentID            string
-	mu                 sync.RWMutex
+	metricsStream          fodcv1.FODCService_StreamMetricsServer
+	clusterStateStream     fodcv1.FODCService_StreamClusterTopologyServer
+	lifecycleStream        fodcv1.FODCService_StreamLifecycleServer
+	crashDiagnosticsStream fodcv1.FODCService_StreamCrashDiagnosticsServer
+	lastActivity           time.Time
+	agentID                string
+	mu                     sync.RWMutex
 }
 
 // updateActivity updates the last activity time.
@@ -144,17 +146,48 @@ func (ac *agentConnection) sendLifecycleDataRequest() error {
 	return nil
 }
 
+// setCrashDiagnosticsStream sets the crash diagnostics stream.
+func (ac *agentConnection) setCrashDiagnosticsStream(stream fodcv1.FODCService_StreamCrashDiagnosticsServer) {
+	ac.mu.Lock()
+	defer ac.mu.Unlock()
+	ac.crashDiagnosticsStream = stream
+}
+
+// hasCrashDiagnosticsStream reports whether the crash diagnostics stream is established.
+func (ac *agentConnection) hasCrashDiagnosticsStream() bool {
+	ac.mu.RLock()
+	defer ac.mu.RUnlock()
+	return ac.crashDiagnosticsStream != nil
+}
+
+// sendDiagnosticsRequest sends a crash diagnostics request to the agent.
+func (ac *agentConnection) sendDiagnosticsRequest() error {
+	ac.mu.RLock()
+	defer ac.mu.RUnlock()
+	if ac.crashDiagnosticsStream == nil {
+		return fmt.Errorf("crash diagnostics stream not established for agent ID: %s", ac.agentID)
+	}
+	resp := &fodcv1.StreamCrashDiagnosticsResponse{
+		RequestDiagnostics: true,
+	}
+	if sendErr := ac.crashDiagnosticsStream.Send(resp); sendErr != nil {
+		return fmt.Errorf("failed to send crash diagnostics request: %w", sendErr)
+	}
+	return nil
+}
+
 // FODCService implements the FODC gRPC service.
 type FODCService struct {
 	fodcv1.UnimplementedFODCServiceServer
-	registry            *registry.AgentRegistry
-	metricsAggregator   *metrics.Aggregator
-	clusterStateManager *cluster.Manager
-	lifecycleManager    *lifecycle.Manager
-	logger              *logger.Logger
-	connections         map[string]*agentConnection
-	connectionsMu       sync.RWMutex
-	heartbeatInterval   time.Duration
+	registry                   *registry.AgentRegistry
+	metricsAggregator          *metrics.Aggregator
+	clusterStateManager        *cluster.Manager
+	lifecycleManager           *lifecycle.Manager
+	crashDiagnosticsAggregator *diagnostics.Aggregator
+	logger                     *logger.Logger
+	connections                map[string]*agentConnection
+	connectionsMu              sync.RWMutex
+	heartbeatInterval          time.Duration
 }
 
 // NewFODCService creates a new FODCService instance.
@@ -163,17 +196,19 @@ func NewFODCService(
 	metricsAggregator *metrics.Aggregator,
 	clusterStateManager *cluster.Manager,
 	lifecycleManager *lifecycle.Manager,
+	crashDiagnosticsAggregator *diagnostics.Aggregator,
 	logger *logger.Logger,
 	heartbeatInterval time.Duration,
 ) *FODCService {
 	return &FODCService{
-		registry:            registry,
-		metricsAggregator:   metricsAggregator,
-		clusterStateManager: clusterStateManager,
-		lifecycleManager:    lifecycleManager,
-		logger:              logger,
-		connections:         make(map[string]*agentConnection),
-		heartbeatInterval:   heartbeatInterval,
+		registry:                   registry,
+		metricsAggregator:          metricsAggregator,
+		clusterStateManager:        clusterStateManager,
+		lifecycleManager:           lifecycleManager,
+		crashDiagnosticsAggregator: crashDiagnosticsAggregator,
+		logger:                     logger,
+		connections:                make(map[string]*agentConnection),
+		heartbeatInterval:          heartbeatInterval,
 	}
 }
 
@@ -605,4 +640,95 @@ func (s *FODCService) RequestLifecycleData(agentID string) error {
 		return fmt.Errorf("agent connection not found for agent ID: %s", agentID)
 	}
 	return agentConn.sendLifecycleDataRequest()
+}
+
+// HasCrashDiagnosticsStream reports whether the given agent has a crash diagnostics stream.
+func (s *FODCService) HasCrashDiagnosticsStream(agentID string) bool {
+	s.connectionsMu.RLock()
+	defer s.connectionsMu.RUnlock()
+	conn, exists := s.connections[agentID]
+	if !exists || conn == nil {
+		return false
+	}
+	return conn.hasCrashDiagnosticsStream()
+}
+
+// StreamCrashDiagnostics handles bi-directional crash diagnostics streaming.
+func (s *FODCService) StreamCrashDiagnostics(stream fodcv1.FODCService_StreamCrashDiagnosticsServer) error {
+	ctx := stream.Context()
+	agentID := s.getAgentIDFromContext(ctx)
+	if agentID == "" {
+		agentID = s.getAgentIDFromPeer(ctx)
+		if agentID != "" {
+			s.logger.Warn().
+				Str("agent_id", agentID).
+				Msg("Agent ID not found in metadata, using peer address fallback (this may be unreliable)")
+		}
+	}
+	if agentID == "" {
+		s.logger.Error().Msg("Agent ID not found in context metadata or peer address for crash diagnostics stream")
+		return status.Errorf(codes.Unauthenticated, "agent ID not found in context or peer address")
+	}
+
+	s.connectionsMu.Lock()
+	existingConn, exists := s.connections[agentID]
+	if exists {
+		existingConn.setCrashDiagnosticsStream(stream)
+		existingConn.updateActivity()
+	} else {
+		agentConn := &agentConnection{
+			agentID:                agentID,
+			crashDiagnosticsStream: stream,
+			lastActivity:           time.Now(),
+		}
+		s.connections[agentID] = agentConn
+	}
+	s.connectionsMu.Unlock()
+
+	for {
+		req, recvErr := stream.Recv()
+		if errors.Is(recvErr, io.EOF) {
+			s.logger.Debug().Str("agent_id", agentID).Msg("Crash diagnostics stream closed by agent")
+			return nil
+		}
+		if recvErr != nil {
+			if errors.Is(recvErr, context.Canceled) || errors.Is(recvErr, context.DeadlineExceeded) {
+				s.logger.Debug().Err(recvErr).Str("agent_id", agentID).Msg("Crash diagnostics stream closed")
+			} else if st, ok := status.FromError(recvErr); ok {
+				code := st.Code()
+				if code == codes.Canceled || code == codes.DeadlineExceeded {
+					s.logger.Debug().Err(recvErr).Str("agent_id", agentID).Msg("Crash diagnostics stream closed")
+				} else {
+					s.logger.Error().Err(recvErr).Str("agent_id", agentID).Msg("Error receiving crash diagnostics")
+				}
+			} else {
+				s.logger.Error().Err(recvErr).Str("agent_id", agentID).Msg("Error receiving crash diagnostics")
+			}
+			return recvErr
+		}
+
+		if s.crashDiagnosticsAggregator != nil {
+			agentInfo, getErr := s.registry.GetAgentByID(agentID)
+			if getErr != nil {
+				s.logger.Error().Err(getErr).Str("agent_id", agentID).Msg("Failed to get agent info for crash record")
+				continue
+			}
+			s.crashDiagnosticsAggregator.ProcessCrashFromAgent(agentID, agentInfo, req)
+			s.logger.Debug().
+				Str("agent_id", agentID).
+				Str("artifact_dir", req.ArtifactDir).
+				Msg("Received crash diagnostic record from agent")
+		}
+	}
+}
+
+// RequestDiagnostics requests crash diagnostics from an agent via the crash diagnostics stream.
+func (s *FODCService) RequestDiagnostics(agentID string) error {
+	s.connectionsMu.RLock()
+	agentConn, exists := s.connections[agentID]
+	s.connectionsMu.RUnlock()
+	if !exists {
+		return fmt.Errorf("agent connection not found for agent ID: %s", agentID)
+	}
+	return agentConn.sendDiagnosticsRequest()
 }

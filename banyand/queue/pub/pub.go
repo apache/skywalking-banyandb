@@ -197,7 +197,7 @@ func (p *pub) GracefulStop() {
 func (p *pub) Serve() run.StopNotify {
 	// Start CA certificate reloader if enabled
 	if p.caCertReloader != nil {
-		if err := p.caCertReloader.Start(); err != nil {
+		if err := p.caCertReloader.Start(context.Background()); err != nil {
 			p.log.Error().Err(err).Msg("Failed to start CA certificate reloader")
 			stopCh := p.closer.CloseNotify()
 			return stopCh
@@ -208,7 +208,7 @@ func (p *pub) Serve() run.StopNotify {
 		certUpdateCh := p.caCertReloader.GetUpdateChannel()
 		stopCh := p.closer.CloseNotify()
 		if p.closer.AddRunning() {
-			go func() {
+			run.Go(context.Background(), "pub-cert-watcher", p.log, func(_ context.Context) {
 				defer p.closer.Done()
 				for {
 					select {
@@ -219,7 +219,7 @@ func (p *pub) Serve() run.StopNotify {
 						return
 					}
 				}
-			}()
+			})
 		}
 		return stopCh
 	}
@@ -294,10 +294,10 @@ func (p *pub) Broadcast(timeout time.Duration, topic bus.Topic, messages bus.Mes
 			errs = multierr.Append(errs, pkgerrors.Wrapf(f.e, "failed to publish message to %s", f.n))
 			if grpchelper.IsFailoverError(f.e) {
 				if p.closer.AddRunning() {
-					go func() {
+					run.Go(context.Background(), "pub-failover", p.log, func(ctx context.Context) {
 						defer p.closer.Done()
-						p.failover(f.n, common.NewErrorWithStatus(modelv1.Status_STATUS_INTERNAL_ERROR, f.e.Error()), topic)
-					}()
+						p.failover(ctx, f.n, common.NewErrorWithStatus(modelv1.Status_STATUS_INTERNAL_ERROR, f.e.Error()), topic)
+					})
 				}
 			}
 			continue
@@ -519,11 +519,10 @@ func (l *future) Get() (bus.Message, error) {
 	if resp.Body == nil {
 		return bus.NewMessageWithNode(bus.MessageID(resp.MessageId), n, nil), nil
 	}
-	if messageSupplier, ok := data.TopicResponseMap[t]; ok {
-		m := messageSupplier()
-		err = proto.Unmarshal(resp.Body, m)
-		if err != nil {
-			return bus.Message{}, err
+	if codec, ok := data.TopicResponseMap[t]; ok {
+		m, decodeErr := codec.Unmarshal(resp.Body)
+		if decodeErr != nil {
+			return bus.Message{}, decodeErr
 		}
 		return bus.NewMessageWithNode(
 			bus.MessageID(resp.MessageId),

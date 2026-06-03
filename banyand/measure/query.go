@@ -36,9 +36,12 @@ import (
 	"github.com/apache/skywalking-banyandb/pkg/index"
 	"github.com/apache/skywalking-banyandb/pkg/index/posting/roaring"
 	"github.com/apache/skywalking-banyandb/pkg/logger"
+	"github.com/apache/skywalking-banyandb/pkg/panicdiag"
 	pbv1 "github.com/apache/skywalking-banyandb/pkg/pb/v1"
 	"github.com/apache/skywalking-banyandb/pkg/pool"
 	"github.com/apache/skywalking-banyandb/pkg/query/model"
+	"github.com/apache/skywalking-banyandb/pkg/query/vectorized"
+	vmeasure "github.com/apache/skywalking-banyandb/pkg/query/vectorized/measure"
 	resourceSchema "github.com/apache/skywalking-banyandb/pkg/schema"
 	"github.com/apache/skywalking-banyandb/pkg/timestamp"
 )
@@ -71,6 +74,7 @@ var _ Measure = (*measure)(nil)
 type queryOptions struct {
 	schemaTagTypes map[string]pbv1.ValueType
 	model.MeasureQueryOptions
+	vectorized   vmeasure.VectorizedConfig
 	minTimestamp int64
 	maxTimestamp int64
 }
@@ -83,6 +87,10 @@ type topNQueryOptions struct {
 
 func (m *measure) Query(ctx context.Context, mqo model.MeasureQueryOptions) (mqr model.MeasureQueryResult, err error) {
 	startTime := time.Now()
+	ctx = panicdiag.WithBreadcrumb(ctx, "start measure query", "measure", map[string]string{
+		"group":   m.group,
+		"measure": mqo.Name,
+	})
 	defer func() {
 		if m.queryMetrics != nil {
 			m.queryMetrics.queryLatency.Observe(time.Since(startTime).Seconds())
@@ -108,13 +116,17 @@ func (m *measure) Query(ctx context.Context, mqo model.MeasureQueryOptions) (mqr
 		tsdb = db.(storage.TSDB[*tsTable, option])
 	}
 
-	segments, err := tsdb.SelectSegments(*mqo.TimeRange)
+	segments, err := tsdb.SelectSegments(*mqo.TimeRange, true)
 	if err != nil {
 		return nil, err
 	}
 	if len(segments) < 1 {
 		return nilResult, nil
 	}
+	ctx = panicdiag.WithBreadcrumb(ctx, "selected measure segments", "measure", map[string]string{
+		"group":    m.group,
+		"segments": fmt.Sprintf("%d", len(segments)),
+	})
 	segmentsNeedRelease := true
 	defer func() {
 		if !segmentsNeedRelease {
@@ -127,6 +139,10 @@ func (m *measure) Query(ctx context.Context, mqo model.MeasureQueryOptions) (mqr
 
 	if m.schema.IndexMode {
 		segmentsNeedRelease = false
+		ctx = panicdiag.WithBreadcrumb(ctx, "build indexed measure query result", "measure", map[string]string{
+			"group":   m.group,
+			"measure": mqo.Name,
+		})
 		return m.buildIndexQueryResult(ctx, mqo, segments)
 	}
 
@@ -149,6 +165,10 @@ func (m *measure) Query(ctx context.Context, mqo model.MeasureQueryOptions) (mqr
 	if len(sids) < 1 {
 		return nilResult, nil
 	}
+	ctx = panicdiag.WithBreadcrumb(ctx, "resolved measure series", "measure", map[string]string{
+		"group":  m.group,
+		"series": fmt.Sprintf("%d", len(sids)),
+	})
 	result := queryResult{
 		ctx:              ctx,
 		qm:               m.queryMetrics,
@@ -184,6 +204,7 @@ func (m *measure) Query(ctx context.Context, mqo model.MeasureQueryOptions) (mqr
 		schemaTagTypes:      schemaTagTypes,
 		minTimestamp:        mqo.TimeRange.Start.UnixNano(),
 		maxTimestamp:        mqo.TimeRange.End.UnixNano(),
+		vectorized:          m.vectorized,
 	}
 	var n int
 	for i := range tables {
@@ -204,6 +225,10 @@ func (m *measure) Query(ctx context.Context, mqo model.MeasureQueryOptions) (mqr
 		result.snapshots = append(result.snapshots, s)
 	}
 
+	ctx = panicdiag.WithBreadcrumb(ctx, "search measure blocks", "measure", map[string]string{
+		"group": m.group,
+		"parts": fmt.Sprintf("%d", len(parts)),
+	})
 	if err = m.searchBlocks(ctx, &result, sids, parts, qo); err != nil {
 		return nil, err
 	}
@@ -214,6 +239,29 @@ func (m *measure) Query(ctx context.Context, mqo model.MeasureQueryOptions) (mqr
 	if m.queryMetrics != nil {
 		m.queryMetrics.resultPoints.Observe(float64(len(result.data)))
 	}
+
+	// Build the columnar BatchSchema once for PullBatch consumers (G5b).
+	// IMPORTANT: use result.tagProjection (the *original* projection
+	// captured before the entity/index tag strip) rather than mqo —
+	// mqo.TagProjection was rewritten to newTagProjection above and no
+	// longer carries entity-tag slots that the row path's copyAllTo
+	// fills via storedIndexValue. The batch path's column layout must
+	// match the vec adapter's expectation, which is the original
+	// projection. Falls back to nil on schema-build failure; PullBatch
+	// checks for nil and returns a clean error rather than degrading
+	// the row-path Pull().
+	// Thread GroupBy + Agg through so BuildBatchSchema emits native
+	// column types for the agg-relevant columns. Plain queries get
+	// passthrough; GroupBy+Agg queries get native int64/float64/string
+	// columns the BatchAggregation operator reads directly (computeKey +
+	// fold). Storage decoders (banyand/measure/batch_decode.go) handle
+	// both column shapes.
+	result.batchSchema, _ = vmeasure.BuildBatchSchema(m.schema, model.MeasureQueryOptions{
+		TagProjection:   result.tagProjection,
+		FieldProjection: mqo.FieldProjection,
+		GroupBy:         mqo.GroupBy,
+		Agg:             mqo.Agg,
+	})
 
 	return &result, nil
 }
@@ -534,6 +582,11 @@ func (m *measure) buildIndexQueryResult(ctx context.Context, mqo model.MeasureQu
 		r.segResults.sortDesc = true
 	}
 
+	// G5b — build the columnar BatchSchema once for PullBatch consumers.
+	// Errors here are non-fatal for the row-path Pull(); PullBatch will
+	// return a clean error if batchSchema is nil at call time.
+	r.batchSchema, _ = vmeasure.BuildBatchSchema(m.schema, mqo)
+
 	heap.Init(&r.segResults)
 	return r, nil
 }
@@ -742,6 +795,7 @@ type queryResult struct {
 	topNQueryOptions *topNQueryOptions
 	sidToIndex       map[common.SeriesID]int
 	storedIndexValue map[common.SeriesID]map[string]*modelv1.TagValue
+	batchSchema      *vectorized.BatchSchema
 	tagProjection    []model.TagProjection
 	data             []*blockCursor
 	snapshots        []*snapshot
@@ -766,25 +820,33 @@ func (qr *queryResult) Pull() *model.MeasureResult {
 		}
 
 		cursorChan := make(chan int, len(qr.data))
+		measureBlockLogger := logger.GetLogger("measure-query-block-loader")
 		for i := 0; i < len(qr.data); i++ {
-			go func(i int) {
+			idx := i
+			go func() {
+				defer func() {
+					if r := recover(); r != nil {
+						measureBlockLogger.Error().Interface("panic", r).Msg("panic in parallel block loader")
+						cursorChan <- idx
+					}
+				}()
 				select {
 				case <-qr.ctx.Done():
-					cursorChan <- i
+					cursorChan <- idx
 					return
 				default:
 				}
 				tmpBlock := generateBlock()
 				defer releaseBlock(tmpBlock)
-				if !qr.data[i].loadData(tmpBlock) {
-					cursorChan <- i
+				if !qr.data[idx].loadData(tmpBlock) {
+					cursorChan <- idx
 					return
 				}
 				if qr.orderByTimestampDesc() {
-					qr.data[i].idx = len(qr.data[i].timestamps) - 1
+					qr.data[idx].idx = len(qr.data[idx].timestamps) - 1
 				}
 				cursorChan <- -1
-			}(i)
+			}()
 		}
 
 		blankCursorList := []int{}
@@ -963,8 +1025,9 @@ func (qr *queryResult) merge(storedIndexValue map[common.SeriesID]map[string]*mo
 }
 
 type indexSortResult struct {
-	tfl        []tagFamilyLocation
-	segResults segResultHeap
+	batchSchema *vectorized.BatchSchema
+	tfl         []tagFamilyLocation
+	segResults  segResultHeap
 }
 
 // Pull implements model.MeasureQueryResult.

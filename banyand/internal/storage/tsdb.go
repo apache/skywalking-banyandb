@@ -274,11 +274,33 @@ func (d *database[T, O]) CreateSegmentIfNotExist(ts time.Time) (Segment[T, O], e
 	return d.segmentController.createSegment(ts)
 }
 
-func (d *database[T, O]) SelectSegments(timeRange timestamp.TimeRange) ([]Segment[T, O], error) {
+func (d *database[T, O]) SelectSegments(timeRange timestamp.TimeRange, reopenClosed bool) ([]Segment[T, O], error) {
 	if d.closed.Load() {
 		return nil, nil
 	}
-	return d.segmentController.selectSegments(timeRange)
+	segments, err := d.segmentController.selectSegments(timeRange, reopenClosed)
+	if err != nil || !reopenClosed || d.disableRetention {
+		return segments, err
+	}
+	// Exclude segments whose whole time range has already passed the retention
+	// deadline. Retention removes such a segment only on its next cron run (see
+	// (*segmentController).remove), so between runs a fully expired segment is
+	// still on disk and would otherwise serve TTL-expired data to queries. Data
+	// in partially expired segments that retention still keeps stays visible.
+	deadline := d.segmentController.getRetentionDeadline()
+	kept := segments[:0]
+	for _, s := range segments {
+		if s.GetTimeRange().Before(deadline) {
+			s.DecRef()
+			continue
+		}
+		kept = append(kept, s)
+	}
+	return kept, nil
+}
+
+func (d *database[T, O]) SegmentInterval() IntervalRule {
+	return d.segmentController.getSegmentInterval()
 }
 
 func (d *database[T, O]) UpdateOptions(resourceOpts *commonv1.ResourceOpts) {
@@ -288,21 +310,22 @@ func (d *database[T, O]) UpdateOptions(resourceOpts *commonv1.ResourceOpts) {
 	d.segmentController.updateOptions(resourceOpts)
 }
 
+// TakeFileSnapshot writes a point-in-time snapshot of every segment under dst.
+// success is true only when at least one segment actually wrote content; it is
+// false (with a nil error) when there are no segments, or when every segment is
+// concurrently being deleted and thus skipped.
 func (d *database[T, O]) TakeFileSnapshot(dst string) (success bool, err error) {
 	if d.closed.Load() {
 		return false, errors.New("database is closed")
 	}
 
-	segments, segErr := d.segmentController.segments(true)
-	if segErr != nil {
-		return false, errors.Wrap(segErr, "failed to get segments")
-	}
-	defer func() {
-		for _, seg := range segments {
-			seg.DecRef()
-		}
-	}()
-
+	// The snapshot must NOT reopen a closed segment: reopening an idle-closed
+	// cold segment is the source of the nil-index panic and the bluge
+	// "exclusive lock" churn. Take the current segment objects WITHOUT forcing
+	// a reopen. A closed (quiescent) segment is hard-linked directly from its
+	// immutable on-disk files; an open segment is snapshotted through its live
+	// series index and shard tables.
+	segments := d.segmentController.copySegments()
 	if len(segments) == 0 {
 		return false, nil
 	}
@@ -316,42 +339,14 @@ func (d *database[T, O]) TakeFileSnapshot(dst string) (success bool, err error) 
 	log.Info().Int("segment_count", len(segments)).Str("db_location", d.location).
 		Msgf("taking file snapshot for %s", dst)
 	for _, seg := range segments {
-		segDir := filepath.Base(seg.location)
-		segPath := filepath.Join(dst, segDir)
-		d.lfs.MkdirIfNotExist(segPath, DirPerm)
-
-		metadataSrc := filepath.Join(seg.location, metadataFilename)
-		metadataDest := filepath.Join(segPath, metadataFilename)
-		if linkErr := d.lfs.CreateHardLink(metadataSrc, metadataDest, nil); linkErr != nil {
-			return false, errors.Wrapf(linkErr, "failed to snapshot metadata for segment %s", segDir)
+		wrote, segErr := seg.snapshotInto(dst)
+		if segErr != nil {
+			return false, segErr
 		}
-
-		indexPath := filepath.Join(segPath, seriesIndexDirName)
-		d.lfs.MkdirIfNotExist(indexPath, DirPerm)
-		if indexErr := seg.index.store.TakeFileSnapshot(indexPath); indexErr != nil {
-			return false, errors.Wrapf(indexErr, "failed to snapshot index for segment %s", segDir)
-		}
-
-		sLst := seg.sLst.Load()
-		if sLst == nil {
-			continue
-		}
-		for _, shard := range *sLst {
-			shardDir := filepath.Base(shard.location)
-			shardPath := filepath.Join(segPath, shardDir)
-			d.lfs.MkdirIfNotExist(shardPath, DirPerm)
-			if _, shardErr := shard.table.TakeFileSnapshot(shardPath); shardErr != nil {
-				if errors.Is(shardErr, ErrNoCurrentSnapshot) {
-					log.Debug().Str("shard", shardDir).Str("segment", segDir).
-						Msg("skipping empty shard snapshot")
-					continue
-				}
-				return false, errors.Wrapf(shardErr, "failed to snapshot shard %s in segment %s", shardDir, segDir)
-			}
-		}
+		success = success || wrote
 	}
 
-	return true, nil
+	return success, nil
 }
 
 func (d *database[T, O]) GetExpiredSegmentsTimeRange() *timestamp.TimeRange {
@@ -410,21 +405,17 @@ func (d *database[T, O]) collect() {
 		return
 	}
 	d.metrics.lastTickTime.Set(float64(d.latestTickTime.Load()))
-	refCount := int32(0)
-	ss, _ := d.segmentController.segments(false)
-	for _, s := range ss {
-		if atomic.LoadInt32(&s.refCount) <= 0 {
-			continue
+	// Collect metrics for every open segment. Under the dormant-refcount model
+	// an open segment usually has refCount==0, so we cannot rely on a reference
+	// bump to pin it: collectOpenMetrics gathers under the segment's read lock,
+	// which a concurrent reclaim (closeIfIdle takes the write lock) cannot race.
+	openSegments := int32(0)
+	for _, s := range d.segmentController.copySegments() {
+		if s.collectOpenMetrics(d.segmentController.metrics) {
+			openSegments++
 		}
-		tables, _ := s.Tables()
-		for _, t := range tables {
-			t.Collect(d.segmentController.metrics)
-		}
-		s.collectMetrics()
-		s.DecRef()
-		refCount += atomic.LoadInt32(&s.refCount)
 	}
-	d.totalSegRefs.Set(float64(refCount))
+	d.totalSegRefs.Set(float64(openSegments))
 	if d.metrics.schedulerMetrics == nil {
 		return
 	}

@@ -430,6 +430,7 @@ func (w *writeCallback) Rev(_ context.Context, message bus.Message) (resp bus.Me
 			var sidxMemPartMap map[string]*sidx.MemPart
 			for sidxName, sidxReqs := range es.sidxReqsMap {
 				if len(sidxReqs) > 0 {
+					//nolint:contextcheck // local SIDX cache/init path eventually hits ref-count cleanup without meaningful context use
 					sidxInstance, err := es.tsTable.getOrCreateSidx(sidxName)
 					if err != nil {
 						w.l.Error().Err(err).Str("sidx", sidxName).Msg("cannot get or create sidx instance")

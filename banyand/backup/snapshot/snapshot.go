@@ -55,9 +55,8 @@ func Conn[T any](gRPCAddr string, enableTLS, insecure bool, cert string, delFn f
 }
 
 // Get retrieves the snapshots from the gRPC server.
-func Get(gRPCAddr string, enableTLS, insecure bool, cert string, groups ...*databasev1.SnapshotRequest_Group) ([]*databasev1.Snapshot, error) {
+func Get(ctx context.Context, gRPCAddr string, enableTLS, insecure bool, cert string, groups ...*databasev1.SnapshotRequest_Group) ([]*databasev1.Snapshot, error) {
 	return Conn(gRPCAddr, enableTLS, insecure, cert, func(conn *grpc.ClientConn) ([]*databasev1.Snapshot, error) {
-		ctx := context.Background()
 		client := databasev1.NewSnapshotServiceClient(conn)
 		snapshotResp, err := client.Snapshot(ctx, &databasev1.SnapshotRequest{Groups: groups})
 		if err != nil {

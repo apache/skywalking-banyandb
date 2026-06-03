@@ -59,6 +59,7 @@ import (
 	"github.com/apache/skywalking-banyandb/pkg/bydbql"
 	fslib "github.com/apache/skywalking-banyandb/pkg/fs"
 	"github.com/apache/skywalking-banyandb/pkg/logger"
+	"github.com/apache/skywalking-banyandb/pkg/panicdiag"
 	"github.com/apache/skywalking-banyandb/pkg/partition"
 	banyandbpath "github.com/apache/skywalking-banyandb/pkg/path"
 	"github.com/apache/skywalking-banyandb/pkg/run"
@@ -480,7 +481,7 @@ func (s *server) Validate() error {
 func (s *server) Serve() run.StopNotify {
 	var opts []grpclib.ServerOption
 	if s.tls {
-		if err := s.tlsReloader.Start(); err != nil {
+		if err := s.tlsReloader.Start(context.Background()); err != nil {
 			s.log.Error().Err(err).Msg("Failed to start TLSReloader for gRPC")
 			close(s.stopCh)
 			return s.stopCh
@@ -498,19 +499,26 @@ func (s *server) Serve() run.StopNotify {
 		}
 		s.log.Info().Str("authConfigFile", s.authConfigFile).Msg("Starting auth config file monitoring")
 	}
-	grpcPanicRecoveryHandler := func(p any) (err error) {
-		s.log.Error().Interface("panic", p).Str("stack", string(debug.Stack())).Msg("recovered from panic")
+	grpcPanicRecoveryHandler := func(ctx context.Context, p any) (err error) {
+		breadcrumbs := panicdiag.BreadcrumbsFromContext(ctx)
+		stages := make([]string, len(breadcrumbs))
+		for idx, bc := range breadcrumbs {
+			stages[idx] = bc.Stage
+		}
+		s.log.Error().Interface("panic", p).Str("stack", string(debug.Stack())).Strs("breadcrumbs", stages).Msg("recovered from panic")
 		s.metrics.totalPanic.Inc(1)
 		return status.Errorf(codes.Internal, "%s", p)
 	}
 
 	streamChain := []grpclib.StreamServerInterceptor{
+		panicdiag.BreadcrumbStreamInterceptor(),
 		grpc_validator.StreamServerInterceptor(),
-		recovery.StreamServerInterceptor(recovery.WithRecoveryHandler(grpcPanicRecoveryHandler)),
+		recovery.StreamServerInterceptor(recovery.WithRecoveryHandlerContext(grpcPanicRecoveryHandler)),
 	}
 	unaryChain := []grpclib.UnaryServerInterceptor{
+		panicdiag.BreadcrumbUnaryInterceptor(),
 		grpc_validator.UnaryServerInterceptor(),
-		recovery.UnaryServerInterceptor(recovery.WithRecoveryHandler(grpcPanicRecoveryHandler)),
+		recovery.UnaryServerInterceptor(recovery.WithRecoveryHandlerContext(grpcPanicRecoveryHandler)),
 	}
 	if s.authConfigFile != "" {
 		streamChain = append(streamChain, authStreamInterceptor(s.authReloader))

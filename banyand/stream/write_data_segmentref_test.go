@@ -59,8 +59,7 @@ func TestSyncReceiver_SegmentRefOwnership(t *testing.T) {
 
 	seg, err := db.CreateSegmentIfNotExist(segTime)
 	require.NoError(t, err)
-	seg.DecRef()
-	seg.DecRef() // refCount -> 0 (idle-closed)
+	seg.DecRef() // the single create reference; refCount = 0 (dormant: open, no active reference)
 	baselineOpens := openShardCount.Load()
 
 	segA, err := db.CreateSegmentIfNotExist(segTime)
@@ -106,14 +105,20 @@ func TestSyncReceiver_SegmentRefOwnership(t *testing.T) {
 	defer segC.DecRef()
 	_, err = segC.CreateTSTableIfNotExist(common.ShardID(0))
 	require.NoError(t, err)
-	require.Equal(t, int32(1), openShardCount.Load()-beforeProbe,
-		"REGRESSION: Close did not call segment.DecRef()")
+	require.Equal(t, int32(0), openShardCount.Load()-beforeProbe,
+		"after Close the dormant segment and its already-open shard are reused, no new shard")
 }
 
 // TestSyncChunkCallback_CreatePartHandler_StoresSegment drives the real
 // syncCallback.CreatePartHandler through a minimal schemaRepo shim and
 // asserts that segment ownership transfers to partCtx and that Close
 // actually DecRefs. See trace package for rationale.
+// In each StoresSegment test, segTime must use time.Local because the
+// callback path runs time.Unix(0,ns) -> Standard -> CreateSegmentIfNotExist
+// in Local tz. If the warmup segment were created in UTC, the two calls
+// could represent the same instant but format to different segment-suffix
+// strings, causing a directory-name mismatch instead of reusing the same
+// segment.
 func TestSyncChunkCallback_CreatePartHandler_StoresSegment(t *testing.T) {
 	tmpPath, cleanup := test.Space(require.New(t))
 	defer cleanup()
@@ -122,12 +127,11 @@ func TestSyncChunkCallback_CreatePartHandler_StoresSegment(t *testing.T) {
 	db := openTestTSDBForRefTest(t, tmpPath, &openShardCount)
 	defer db.Close()
 
-	segTime := time.Date(2026, 4, 17, 0, 0, 0, 0, time.UTC)
+	segTime := time.Date(2026, 4, 17, 0, 0, 0, 0, time.Local)
 
 	warmup, err := db.CreateSegmentIfNotExist(segTime)
 	require.NoError(t, err)
-	warmup.DecRef()
-	warmup.DecRef()
+	warmup.DecRef() // the single create reference; refCount = 0 (dormant: open, no active reference)
 	baselineOpens := openShardCount.Load()
 
 	const groupName = "test-group"
@@ -174,8 +178,8 @@ func TestSyncChunkCallback_CreatePartHandler_StoresSegment(t *testing.T) {
 	defer segProbe.DecRef()
 	_, err = segProbe.CreateTSTableIfNotExist(common.ShardID(0))
 	require.NoError(t, err)
-	require.Equal(t, int32(1), openShardCount.Load()-beforeProbe,
-		"REGRESSION: Close did not call segment.DecRef()")
+	require.Equal(t, int32(0), openShardCount.Load()-beforeProbe,
+		"after Close the dormant segment and its already-open shard are reused, no new shard")
 }
 
 func openTestTSDBForRefTest(t *testing.T, tmpPath string, openShardCount *atomic.Int32) storage.TSDB[*tsTable, option] {
@@ -246,3 +250,130 @@ type fakeGroup struct {
 
 func (f *fakeGroup) GetSchema() *commonv1.Group { return nil }
 func (f *fakeGroup) SupplyTSDB() io.Closer      { return f.tsdb }
+
+// TestSyncChunkCallback_CreatePartHandler_AlignsOffGridMinTimestamp covers
+// the regression where the stream part chunk-sync receiver passed the raw
+// MinTimestamp straight into CreateSegmentIfNotExist. See the analogous
+// measure test for full rationale.
+func TestSyncChunkCallback_CreatePartHandler_AlignsOffGridMinTimestamp(t *testing.T) {
+	t.Run("DAY(1)", func(t *testing.T) {
+		runStreamOffGridCase(t, storage.IntervalRule{Unit: storage.DAY, Num: 1})
+	})
+	t.Run("DAY(5)", func(t *testing.T) {
+		runStreamOffGridCase(t, storage.IntervalRule{Unit: storage.DAY, Num: 5})
+	})
+}
+
+func runStreamOffGridCase(t *testing.T, ir storage.IntervalRule) {
+	t.Helper()
+	tmpPath, cleanup := test.Space(require.New(t))
+	defer cleanup()
+
+	const groupName = "off-grid-stream"
+	db := openTestTSDBWithInterval(t, tmpPath, groupName, ir)
+	defer db.Close()
+
+	rawTS := time.Date(2026, 5, 15, 6, 0, 0, 0, time.Local)
+	wantStart := ir.Standard(rawTS)
+
+	callback := &syncCallback{
+		l:          logger.GetLogger("test-offgrid-stream"),
+		schemaRepo: newTestSchemaRepo(db, groupName),
+	}
+	handler, err := callback.CreatePartHandler(&queue.ChunkedSyncPartContext{
+		ID:           1,
+		Group:        groupName,
+		ShardID:      0,
+		MinTimestamp: rawTS.UnixNano(),
+		MaxTimestamp: rawTS.UnixNano(),
+	})
+	require.NoError(t, err)
+	defer func() { _ = handler.(*syncPartContext).Close() }()
+	gotStart := handler.(*syncPartContext).segment.GetTimeRange().Start
+	require.True(t, gotStart.Equal(wantStart),
+		"REGRESSION: raw MinTimestamp=%s landed in segment start=%s; expected aligned %s (ir=%+v)",
+		rawTS, gotStart, wantStart, ir)
+	require.False(t, rawTS.Equal(wantStart),
+		"test setup degenerate: rawTS already aligned")
+}
+
+// TestSegmentCreateTS_ConsistencyAcrossPaths is the stream variant of the
+// Path-A vs Path-B convergence demo. A pre-existing aligned historical
+// segment must NOT be touched; both new writes must land in the same
+// new bucket.
+func TestSegmentCreateTS_ConsistencyAcrossPaths(t *testing.T) {
+	tmpPath, cleanup := test.Space(require.New(t))
+	defer cleanup()
+
+	const groupName = "consistency-stream"
+	ir := storage.IntervalRule{Unit: storage.DAY, Num: 5}
+	db := openTestTSDBWithInterval(t, tmpPath, groupName, ir)
+	defer db.Close()
+
+	historicalStart := ir.Standard(time.Date(2026, 4, 10, 0, 0, 0, 0, time.Local))
+	histSeg, err := db.CreateSegmentIfNotExist(historicalStart)
+	require.NoError(t, err)
+	histSeg.DecRef() // the single create reference; refCount = 0 (dormant: open, no active reference)
+
+	rawTS := time.Date(2026, 5, 15, 6, 0, 0, 0, time.Local)
+	wantNewStart := ir.Standard(rawTS)
+	require.False(t, wantNewStart.Equal(historicalStart))
+	require.False(t, wantNewStart.Equal(rawTS))
+
+	repo := newTestSchemaRepo(db, groupName)
+
+	chunkCallback := &syncCallback{l: logger.GetLogger("test-stream-pathA"), schemaRepo: repo}
+	handlerA, err := chunkCallback.CreatePartHandler(&queue.ChunkedSyncPartContext{
+		ID:           1,
+		Group:        groupName,
+		ShardID:      0,
+		MinTimestamp: rawTS.UnixNano(),
+		MaxTimestamp: rawTS.UnixNano(),
+	})
+	require.NoError(t, err)
+	defer func() { _ = handlerA.(*syncPartContext).Close() }()
+	gotStartA := handlerA.(*syncPartContext).segment.GetTimeRange().Start
+
+	seriesCallback := &syncSeriesCallback{l: logger.GetLogger("test-stream-pathB"), schemaRepo: repo}
+	handlerB, err := seriesCallback.CreatePartHandler(&queue.ChunkedSyncPartContext{
+		ID:           2,
+		Group:        groupName,
+		ShardID:      0,
+		MinTimestamp: wantNewStart.UnixNano(),
+		MaxTimestamp: wantNewStart.UnixNano(),
+	})
+	require.NoError(t, err)
+	defer func() { _ = handlerB.(*syncSeriesContext).Close() }()
+	gotStartB := handlerB.(*syncSeriesContext).segment.GetTimeRange().Start
+
+	require.True(t, gotStartA.Equal(gotStartB),
+		"REGRESSION: stream Path A (raw %s -> %s) and Path B (aligned %s -> %s) diverged",
+		rawTS, gotStartA, wantNewStart, gotStartB)
+	require.True(t, gotStartA.Equal(wantNewStart),
+		"path A start %s != expected aligned %s", gotStartA, wantNewStart)
+	require.False(t, gotStartA.Equal(historicalStart),
+		"new write must NOT land in historical segment %s", historicalStart)
+}
+
+func openTestTSDBWithInterval(t *testing.T, tmpPath, groupName string, ir storage.IntervalRule) storage.TSDB[*tsTable, option] {
+	t.Helper()
+	opts := storage.TSDBOpts[*tsTable, option]{
+		ShardNum:        1,
+		Location:        filepath.Join(tmpPath, "tab"),
+		TSTableCreator:  newTSTable,
+		SegmentInterval: ir,
+		TTL:             storage.IntervalRule{Unit: ir.Unit, Num: 60},
+		Option:          option{protector: protector.Nop{}, mergePolicy: newDefaultMergePolicyForTesting()},
+	}
+	require.NoError(t, os.MkdirAll(opts.Location, storage.DirPerm))
+	ctx := common.SetPosition(
+		context.WithValue(context.Background(), logger.ContextKey, logger.GetLogger("test-offgrid-stream")),
+		func(p common.Position) common.Position {
+			p.Database = "test-offgrid-stream"
+			return p
+		},
+	)
+	db, err := storage.OpenTSDB[*tsTable, option](ctx, opts, nil, groupName)
+	require.NoError(t, err)
+	return db
+}

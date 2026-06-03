@@ -48,6 +48,7 @@ import (
 	"github.com/apache/skywalking-banyandb/banyand/property/gossip"
 	"github.com/apache/skywalking-banyandb/pkg/fs"
 	"github.com/apache/skywalking-banyandb/pkg/logger"
+	"github.com/apache/skywalking-banyandb/pkg/panicdiag"
 	banyandbpath "github.com/apache/skywalking-banyandb/pkg/path"
 	"github.com/apache/skywalking-banyandb/pkg/run"
 	pkgtls "github.com/apache/skywalking-banyandb/pkg/tls"
@@ -192,7 +193,7 @@ func (s *server) Validate() error {
 	return nil
 }
 
-func (s *server) PreRun(_ context.Context) error {
+func (s *server) PreRun(ctx context.Context) error {
 	s.l = logger.GetLogger("schema-server")
 	var err error
 	if s.root, err = banyandbpath.Get(s.root); err != nil {
@@ -276,7 +277,7 @@ func (s *server) PreRun(_ context.Context) error {
 	var opts []grpclib.ServerOption
 	if s.tls {
 		if s.tlsReloader != nil {
-			if startErr := s.tlsReloader.Start(); startErr != nil {
+			if startErr := s.tlsReloader.Start(ctx); startErr != nil {
 				return errors.Wrap(startErr, "failed to start TLS reloader for schema server")
 			}
 			s.l.Info().Str("certFile", s.certFile).Str("keyFile", s.keyFile).
@@ -292,16 +293,23 @@ func (s *server) PreRun(_ context.Context) error {
 			opts = []grpclib.ServerOption{grpclib.Creds(creds)}
 		}
 	}
-	grpcPanicRecoveryHandler := func(p any) (err error) {
-		s.l.Error().Interface("panic", p).Str("stack", string(debug.Stack())).Msg("recovered from panic")
+	grpcPanicRecoveryHandler := func(ctx context.Context, p any) (err error) {
+		breadcrumbs := panicdiag.BreadcrumbsFromContext(ctx)
+		stages := make([]string, len(breadcrumbs))
+		for idx, bc := range breadcrumbs {
+			stages[idx] = bc.Stage
+		}
+		s.l.Error().Interface("panic", p).Str("stack", string(debug.Stack())).Strs("breadcrumbs", stages).Msg("recovered from panic")
 		return status.Errorf(codes.Internal, "%s", p)
 	}
 	streamChain := []grpclib.StreamServerInterceptor{
-		recovery.StreamServerInterceptor(recovery.WithRecoveryHandler(grpcPanicRecoveryHandler)),
+		panicdiag.BreadcrumbStreamInterceptor(),
+		recovery.StreamServerInterceptor(recovery.WithRecoveryHandlerContext(grpcPanicRecoveryHandler)),
 	}
 	unaryChain := []grpclib.UnaryServerInterceptor{
+		panicdiag.BreadcrumbUnaryInterceptor(),
 		grpc_validator.UnaryServerInterceptor(),
-		recovery.UnaryServerInterceptor(recovery.WithRecoveryHandler(grpcPanicRecoveryHandler)),
+		recovery.UnaryServerInterceptor(recovery.WithRecoveryHandlerContext(grpcPanicRecoveryHandler)),
 	}
 	opts = append(opts, grpclib.MaxRecvMsgSize(int(s.maxRecvMsgSize)),
 		grpclib.ChainUnaryInterceptor(unaryChain...),

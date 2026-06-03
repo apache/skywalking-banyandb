@@ -25,6 +25,7 @@ import (
 	"google.golang.org/protobuf/types/known/timestamppb"
 
 	commonv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/common/v1"
+	"github.com/apache/skywalking-banyandb/pkg/query/tracelabels"
 )
 
 const (
@@ -142,7 +143,7 @@ func (s *Span) addChild(child *commonv1.Span) {
 		if !s.data.Error {
 			s.data.Error = true
 			s.data.Tags = append(s.data.Tags, &commonv1.Tag{
-				Key:   "error_msg",
+				Key:   tracelabels.TagErrorMsg,
 				Value: "sub span error",
 			})
 			s.tracer.mu.Lock()
@@ -174,7 +175,7 @@ func (s *Span) AddSubTrace(trace *commonv1.Trace) {
 	if hasError && !s.data.Error {
 		s.data.Error = true
 		s.data.Tags = append(s.data.Tags, &commonv1.Tag{
-			Key:   "error_msg",
+			Key:   tracelabels.TagErrorMsg,
 			Value: "sub span error",
 		})
 		s.tracer.mu.Lock()
@@ -215,7 +216,7 @@ func (s *Span) Error(err error) *Span {
 	s.data.Error = true
 	// Inline Tag() to avoid recursive lock
 	s.data.Tags = append(s.data.Tags, &commonv1.Tag{
-		Key:   "error_msg",
+		Key:   tracelabels.TagErrorMsg,
 		Value: err.Error(),
 	})
 	s.tracer.mu.Lock()
@@ -232,12 +233,12 @@ func (s *Span) recordIgnoredChildren() {
 	}
 	// Check for existing "ignored_child_spans" tag to avoid duplicates
 	for _, tag := range s.data.Tags {
-		if tag.Key == "ignored_child_spans" {
+		if tag.Key == tracelabels.TagIgnoredChildSpans {
 			return
 		}
 	}
 	s.data.Tags = append(s.data.Tags, &commonv1.Tag{
-		Key:   "ignored_child_spans",
+		Key:   tracelabels.TagIgnoredChildSpans,
 		Value: fmt.Sprintf("%d", s.ignoredChildren),
 	})
 }

@@ -123,7 +123,7 @@ func TestOpenTSDB(t *testing.T) {
 		defer seg.DecRef()
 
 		db := tsdb.(*database[*MockTSTable, any])
-		ss, _ := db.segmentController.segments(false)
+		ss, _ := db.segmentController.segments(context.Background(), false)
 		require.Equal(t, len(ss), 1)
 		tsdb.Close()
 	})
@@ -158,7 +158,7 @@ func TestOpenTSDB(t *testing.T) {
 		seg.DecRef()
 
 		db := tsdb.(*database[*MockTSTable, any])
-		segs, _ := db.segmentController.segments(false)
+		segs, _ := db.segmentController.segments(context.Background(), false)
 		require.Equal(t, len(segs), 1)
 		for i := range segs {
 			segs[i].DecRef()
@@ -171,7 +171,7 @@ func TestOpenTSDB(t *testing.T) {
 		require.NotNil(t, tsdb)
 
 		db = tsdb.(*database[*MockTSTable, any])
-		segs, _ = db.segmentController.segments(false)
+		segs, _ = db.segmentController.segments(context.Background(), false)
 		require.Equal(t, len(segs), 1)
 		for i := range segs {
 			segs[i].DecRef()
@@ -221,6 +221,67 @@ func TestOpenTSDB(t *testing.T) {
 		})
 
 		tsdb.Close()
+	})
+}
+
+func TestSelectSegmentsRetention(t *testing.T) {
+	logger.Init(logger.Logging{
+		Env:   "dev",
+		Level: flags.LogLevel,
+	})
+
+	realNow := time.Now()
+	// A wide query window spanning both the expired and the fresh segment.
+	wide := timestamp.NewInclusiveTimeRange(realNow.Add(-10*24*time.Hour), realNow.Add(24*time.Hour))
+	// TTL is 3 days, so a segment whose end is older than this is fully expired.
+	deadline := realNow.Add(-3 * 24 * time.Hour)
+
+	newDB := func(t *testing.T, disableRetention bool) TSDB[*MockTSTable, any] {
+		dir, defFn := test.Space(require.New(t))
+		t.Cleanup(defFn)
+		opts := TSDBOpts[*MockTSTable, any]{
+			Location:         dir,
+			SegmentInterval:  IntervalRule{Unit: DAY, Num: 1},
+			TTL:              IntervalRule{Unit: DAY, Num: 3},
+			ShardNum:         1,
+			TSTableCreator:   MockTSTableCreator,
+			DisableRetention: disableRetention,
+		}
+		tsdb, err := OpenTSDB(context.Background(), opts, NewServiceCache(), group)
+		require.NoError(t, err)
+		t.Cleanup(func() { _ = tsdb.Close() })
+		// One fully expired segment (end well past the deadline) and one fresh.
+		for _, ts := range []time.Time{realNow.Add(-6 * 24 * time.Hour), realNow} {
+			seg, segErr := tsdb.CreateSegmentIfNotExist(ts)
+			require.NoError(t, segErr)
+			seg.DecRef()
+		}
+		return tsdb
+	}
+
+	t.Run("query path excludes fully expired segments", func(t *testing.T) {
+		tsdb := newDB(t, false)
+		segs, err := tsdb.SelectSegments(wide, true)
+		require.NoError(t, err)
+		defer func() {
+			for _, s := range segs {
+				s.DecRef()
+			}
+		}()
+		require.Len(t, segs, 1)
+		require.False(t, segs[0].GetTimeRange().Before(deadline), "the kept segment must not be fully expired")
+	})
+
+	t.Run("retention disabled keeps all segments", func(t *testing.T) {
+		tsdb := newDB(t, true)
+		segs, err := tsdb.SelectSegments(wide, true)
+		require.NoError(t, err)
+		defer func() {
+			for _, s := range segs {
+				s.DecRef()
+			}
+		}()
+		require.Len(t, segs, 2)
 	})
 }
 
@@ -454,7 +515,7 @@ func TestHalfBornSegmentCleanupOnOpen(t *testing.T) {
 	require.NoDirExists(t, halfBornDir, "half-born segment should be removed on open")
 
 	db := tsdb2.(*database[*MockTSTable, any])
-	segs, _ := db.segmentController.segments(false)
+	segs, _ := db.segmentController.segments(context.Background(), false)
 	require.Equal(t, 1, len(segs), "only the valid segment should remain after cleanup")
 	for i := range segs {
 		segs[i].DecRef()
@@ -606,49 +667,51 @@ func TestCollectWithPartialClosedSegments(t *testing.T) {
 
 	var segments []Segment[*MockTSTable, any]
 
-	// Create segments and keep track of them
+	// Create segments and keep track of them.
+	// openSegment.initialize sets refCount=1, then createSegment.incRef
+	// bumps it to 2. The DecRef below releases the createSegment ref,
+	// leaving refCount=1 (the initialize ref) so the idle reclaimer can
+	// CAS-bump and see refAtBump==1.
 	for _, date := range segmentDates {
 		mc.Set(date)
-		seg, err := tsdb.CreateSegmentIfNotExist(date)
-		require.NoError(t, err)
+		seg, segErr := tsdb.CreateSegmentIfNotExist(date)
+		require.NoError(t, segErr)
 		require.NotNil(t, seg)
 		segments = append(segments, seg)
-		seg.DecRef() // Release reference
+		seg.DecRef() // Release createSegment's ref; refCount 2->1
 	}
 
 	// Set a specific tick time for testing
 	tickTime := int64(123456789)
 	db.latestTickTime.Store(tickTime)
 
-	// Manually close some segments (first and third)
-	segments[0].DecRef() // Close first segment
-	segments[2].DecRef() // Close third segment
-
-	// Manually set the closed segments to have idle time in the past
+	// Mark the first and third segments as idle by backdating their
+	// lastAccessed timestamp. Do NOT DecRef them — they must stay alive
+	// (refCount=1) so closeIdleSegments can CAS-bump (refAtBump==1) and
+	// close them.
 	sc := db.segmentController
-	ss, _ := sc.segments(false)
+	ss, _ := sc.segments(context.Background(), false)
 	for _, s := range ss {
-		// Find segments we want to mark as idle (first and third)
 		if s.Start.Equal(segmentDates[0]) || s.Start.Equal(segmentDates[2]) {
 			s.lastAccessed.Store(time.Now().Add(-2 * time.Hour).UnixNano())
-			s.DecRef() // Force close
 		}
 		s.DecRef() // Release our reference from segments()
 	}
 
-	// Call closeIdleSegments to ensure our target segments are closed
+	// closeIdleSegments should close the 2 idle segments (refAtBump==1 and
+	// lastAccessed older than idleThreshold) and leave the other 2 open.
 	closedCount := sc.closeIdleSegments()
 	require.Equal(t, 2, closedCount, "Should have closed 2 segments")
 
 	// Verify segments 0 and 2 are closed, 1 and 3 are open
-	ss, _ = sc.segments(false)
+	ss, _ = sc.segments(context.Background(), false)
 	for _, s := range ss {
 		if s.Start.Equal(segmentDates[0]) || s.Start.Equal(segmentDates[2]) {
-			require.Equal(t, int32(0), s.refCount, "Segment should be closed")
+			require.Nil(t, s.index, "Segment should be closed")
 		} else {
-			require.Greater(t, s.refCount, int32(0), "Segment should be open")
+			require.NotNil(t, s.index, "Segment should be open")
 		}
-		s.DecRef() // Release reference
+		s.DecRef() // no-op for dormant/closed segments
 	}
 
 	// Call the collect method with mixed open/closed segments

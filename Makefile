@@ -50,6 +50,15 @@ generate: default  ## Generate API codes
 generate-test-cases:  ## Regenerate measure query test cases (input/*.ql, input/*.yaml)
 	go run ./test/cases/measure/cmd/generate generate test/cases/measure/data
 
+capture-test-cases:  ## Capture measure query want fixtures (data/want/*.yaml) by running queries against a standalone server
+	CAPTURE_WANT_FIXTURES=1 go test -count=1 -timeout 5m -run TestCapture ./test/cases/measure/cmd/capture/
+
+generate-trace-test-cases:  ## Regenerate trace query test cases (input/*.ql, input/*.yml)
+	go run ./test/cases/trace/cmd/generate generate test/cases/trace/data
+
+capture-trace-test-cases:  ## Capture trace query want fixtures (data/want/*.yml) against a standalone server
+	CAPTURE_TRACE_WANT_FIXTURES=1 go test -count=1 -timeout 5m -run TestCaptureTrace ./test/cases/trace/cmd/capture/
+
 build: TARGET=all
 build: default  ## Build all projects
 
@@ -107,6 +116,22 @@ lint: TARGET=lint
 lint: PROJECTS:=api $(PROJECTS) pkg scripts/ci/check test
 lint: check-import-boundaries
 lint: default ## Run the linters on all projects
+
+# lint-rawgo enforces the project's "no raw goroutines" rule. New `go`
+# statements in code outside the recovery wrappers must either go
+# through run.Go / run.GoOrDie / run.GoWithSignal or carry an explicit
+# `//panicdiag:allow-rawgo <reason>` directive. Pre-existing sites are
+# tracked in pkg/panicdiag/lintrawgo/baseline.txt; that list only ever
+# shrinks. Runs once at the module root rather than per-subproject.
+.PHONY: lint-rawgo
+lint-rawgo: ## Enforce panic-recovery wrappers for goroutine launches
+	go run ./scripts/lint/rawgo \
+	  -baseline=pkg/panicdiag/lintrawgo/baseline.txt ./...
+
+.PHONY: update-rawgo-baseline
+update-rawgo-baseline: ## Regenerate the raw-go baseline from the current tree
+	go run ./scripts/lint/rawgo-baseline \
+	  -baseline=pkg/panicdiag/lintrawgo/baseline.txt ./...
 
 # check-import-boundaries enforces the layering invariants documented in
 # pkg/initerror/initerror.go: the leaf permanent-error contract must not gain
@@ -254,7 +279,7 @@ release-push-candidate: ## Push release candidate
 	${PUSH_RELEASE_SCRIPTS}
 	
 .PHONY: all $(PROJECTS) clean build  default nuke
-.PHONY: lint check tidy format pre-push generate-test-cases check-import-boundaries
+.PHONY: lint check tidy format pre-push generate-test-cases capture-test-cases generate-trace-test-cases capture-trace-test-cases check-import-boundaries
 .PHONY: test test-race test-coverage test-ci test-docker
 .PHONY: license-check license-fix license-dep
 .PHONY: release release-binary release-source release-sign release-assembly

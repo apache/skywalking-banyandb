@@ -197,6 +197,7 @@ func (s *standalone) FlagSet() *run.FlagSet {
 	flagS.VarP(&s.cc.MaxCacheSize, "service-cache-max-size", "", "maximum service cache size (e.g., 100M)")
 	flagS.DurationVar(&s.cc.CleanupInterval, "service-cache-cleanup-interval", 30*time.Second, "service cache cleanup interval")
 	flagS.DurationVar(&s.cc.IdleTimeout, "service-cache-idle-timeout", 2*time.Minute, "service cache entry idle timeout")
+	bindVectorizedFlags(flagS, &s.option.vectorized)
 	return flagS
 }
 
@@ -245,6 +246,21 @@ func (s *standalone) Role() databasev1.Role {
 func (s *standalone) PreRun(ctx context.Context) error {
 	s.l = logger.GetLogger(s.Name())
 	s.l.Info().Msg("memory protector is initialized in PreRun")
+	// Publish the per-process wire mode for TopicInternalMeasureQuery so the
+	// queue's per-topic ResponseCodec dispatcher selects RawFrameCodec when
+	// this process is flag-on (vec raw columnar frame body) and ProtoCodec
+	// when flag-off — topic-AND-process-wire-mode selection, G9f spec G9f.0.
+	// Flags have been parsed by the time PreRun fires.
+	data.SetMeasureWireModeRaw(s.option.vectorized.Enabled)
+	// Loud announcement so operators see the cluster wire mode at boot.
+	// G9f is a hard cutover — a botched partial rollout (some nodes
+	// flag-on, some flag-off) is the load-bearing failure mode the runbook
+	// covers. Surfacing the mode at startup makes the rollout state
+	// auditable from logs (G9f spec Principle 3 — fail loud).
+	s.l.Info().
+		Bool("measure_vectorized_enabled", s.option.vectorized.Enabled).
+		Bool("measure_wire_mode_raw", data.MeasureWireModeRaw()).
+		Msg("G9f wire mode published for TopicInternalMeasureQuery")
 	s.lfs = fs.NewLocalFileSystemWithLoggerAndLimit(s.l, s.pm.GetLimit())
 	var err error
 	if s.root, err = banyandbpath.Get(s.root); err != nil {
@@ -272,7 +288,7 @@ func (s *standalone) PreRun(ctx context.Context) error {
 	if s.cc.MaxCacheSize == 0 {
 		s.c = storage.NewBypassCache()
 	} else {
-		s.c = storage.NewServiceCacheWithConfig(s.cc)
+		s.c = storage.NewServiceCacheWithConfig(ctx, s.cc)
 	}
 	node := val.(common.Node)
 	s.schemaRepo = newSchemaRepo(s.dataPath, s, node.Labels, node.NodeID)

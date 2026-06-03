@@ -32,6 +32,7 @@ import (
 	"github.com/apache/skywalking-banyandb/pkg/logger"
 	"github.com/apache/skywalking-banyandb/pkg/meter"
 	"github.com/apache/skywalking-banyandb/pkg/partition"
+	vmeasure "github.com/apache/skywalking-banyandb/pkg/query/vectorized/measure"
 	"github.com/apache/skywalking-banyandb/pkg/run"
 	"github.com/apache/skywalking-banyandb/pkg/timestamp"
 )
@@ -56,6 +57,7 @@ type option struct {
 	flushTimeout                 time.Duration
 	syncInterval                 time.Duration
 	failedPartsMaxTotalSizeBytes uint64
+	vectorized                   vmeasure.VectorizedConfig
 }
 
 type indexSchema struct {
@@ -87,6 +89,7 @@ type measure struct {
 	name         string
 	group        string
 	interval     time.Duration
+	vectorized   vmeasure.VectorizedConfig
 }
 
 func (m *measure) GetSchema() *databasev1.Measure {
@@ -146,6 +149,7 @@ func newQueryMetrics(factory observability.Factory) *queryMetrics {
 
 func openMeasure(spec measureSpec,
 	l *logger.Logger, c storage.Cache, pm protector.Memory, schemaRepo *schemaRepo, qm *queryMetrics,
+	vectorized vmeasure.VectorizedConfig,
 ) (*measure, error) {
 	m := &measure{
 		schema:       spec.schema,
@@ -154,9 +158,29 @@ func openMeasure(spec measureSpec,
 		pm:           pm,
 		schemaRepo:   schemaRepo,
 		queryMetrics: qm,
+		vectorized:   vectorized,
 	}
 	if err := m.parseSpec(); err != nil {
 		return nil, err
 	}
 	return m, nil
+}
+
+// VectorizedConfig returns the per-Measure vectorized query configuration. It
+// is consumed by the logical query layer to decide whether to wrap the row
+// MeasureQueryResult in a vectorized iterator.
+func (m *measure) VectorizedConfig() vmeasure.VectorizedConfig {
+	return m.vectorized
+}
+
+// bindVectorizedFlags wires VectorizedConfig fields to a run.FlagSet. The
+// defaults match vmeasure.DefaultConfig.
+func bindVectorizedFlags(flagS *run.FlagSet, cfg *vmeasure.VectorizedConfig) {
+	defaults := vmeasure.DefaultConfig()
+	flagS.BoolVar(&cfg.Enabled, "measure-vectorized-enabled", defaults.Enabled,
+		"enable the vectorized measure query path")
+	flagS.IntVar(&cfg.BatchSize, "measure-vectorized-batch-size", defaults.BatchSize,
+		"row count per vectorized batch")
+	flagS.IntVar(&cfg.QueryMemoryMiB, "measure-vectorized-query-memory-mib", defaults.QueryMemoryMiB,
+		"per-query memory budget for the vectorized path, in MiB")
 }

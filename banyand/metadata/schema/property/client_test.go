@@ -508,6 +508,40 @@ func TestMeasureCRUD(t *testing.T) {
 	require.Error(t, getErr)
 }
 
+// TestListMeasureReturnsAllBeyondDefaultLimit guards the lifecycle row-replay
+// path, which calls ListMeasure to snapshot every measure in a group and then
+// resolves each replayed row's schema from that snapshot. A group with more
+// than ten measures must not be silently truncated: the schema query is issued
+// with limit=0, which the inverted store treats as "no cap", so all measures
+// must come back. Picking a count well above ten makes a regression to any
+// page-size default fail loudly.
+func TestListMeasureReturnsAllBeyondDefaultLimit(t *testing.T) {
+	addr := startTestSchemaServer(t)
+	reg := newTestRegistry(t, addr)
+	ctx := context.Background()
+	createTestGroup(t, reg)
+
+	const total = 25
+	wantNames := make(map[string]struct{}, total)
+	for i := 0; i < total; i++ {
+		m := testMeasure("test-group")
+		m.Metadata.Name = fmt.Sprintf("measure-%02d", i)
+		_, createErr := reg.CreateMeasure(ctx, m)
+		require.NoError(t, createErr, "create measure %s", m.Metadata.Name)
+		wantNames[m.Metadata.Name] = struct{}{}
+	}
+
+	measures, listErr := reg.ListMeasure(ctx, schema.ListOpt{Group: "test-group"})
+	require.NoError(t, listErr)
+	assert.Len(t, measures, total, "ListMeasure must return all %d measures without limit truncation", total)
+
+	gotNames := make(map[string]struct{}, len(measures))
+	for _, m := range measures {
+		gotNames[m.GetMetadata().GetName()] = struct{}{}
+	}
+	assert.Equal(t, wantNames, gotNames, "ListMeasure must return exactly the created measures")
+}
+
 func TestTraceCRUD(t *testing.T) {
 	addr := startTestSchemaServer(t)
 	reg := newTestRegistry(t, addr)

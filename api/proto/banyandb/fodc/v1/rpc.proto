@@ -39,6 +39,10 @@ service FODCService {
 
   // Bi-directional stream for lifecycle data
   rpc StreamLifecycle(stream StreamLifecycleRequest) returns (stream StreamLifecycleResponse);
+
+  // Bi-directional stream for crash diagnostics
+  // Agent sends StreamCrashDiagnosticsRequest (panic collections), Proxy sends StreamCrashDiagnosticsResponse (requests)
+  rpc StreamCrashDiagnostics(stream StreamCrashDiagnosticsRequest) returns (stream StreamCrashDiagnosticsResponse);
 }
 
 message RegisterAgentRequest {
@@ -130,6 +134,36 @@ message GroupLifecycleInfo {
 message LifecycleReport {
   string filename = 1;
   string report_json = 2;
+}
+
+message CrashBreadcrumb {
+  google.protobuf.Timestamp time = 1;
+  string stage = 2;
+  string component = 3;
+  map<string, string> fields = 4;
+}
+
+message CrashPanicRecord {
+  google.protobuf.Timestamp occurred_at = 1;
+  string component = 2;
+  string panic_value = 3;
+  bool recovered = 4;
+  string goroutine_stack = 5;
+  repeated CrashBreadcrumb breadcrumbs = 6;
+  map<string, string> process_metadata = 7;
+}
+
+message StreamCrashDiagnosticsRequest {
+  google.protobuf.Timestamp fetched_at = 1;
+  string source_endpoint = 2;
+  string artifact_dir = 3;
+  CrashPanicRecord panic_record = 4;
+  repeated string files = 5;
+}
+
+message StreamCrashDiagnosticsResponse {
+  // Request crash diagnostics from agent
+  bool request_diagnostics = 1;
 }
 
 // GroupLifecycleService provides group lifecycle information from liaison nodes.

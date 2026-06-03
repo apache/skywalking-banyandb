@@ -38,6 +38,7 @@ import (
 	"github.com/apache/skywalking-banyandb/pkg/bus"
 	"github.com/apache/skywalking-banyandb/pkg/convert"
 	"github.com/apache/skywalking-banyandb/pkg/logger"
+	"github.com/apache/skywalking-banyandb/pkg/partition"
 	"github.com/apache/skywalking-banyandb/pkg/query"
 	"github.com/apache/skywalking-banyandb/pkg/timestamp"
 )
@@ -216,8 +217,7 @@ func (s *traceService) navigate(metadata *commonv1.Metadata,
 }
 
 func (s *traceService) shardID(traceID string, shardCount uint32) common.ShardID {
-	hash := convert.Hash([]byte(traceID))
-	return common.ShardID(hash % uint64(shardCount))
+	return partition.TraceShardID(traceID, shardCount)
 }
 
 func (s *traceService) extractTraceID(tags []*modelv1.TagValue, traceIDIndex int) (string, error) {

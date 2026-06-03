@@ -18,6 +18,7 @@
 package tls
 
 import (
+	"context"
 	"crypto/tls"
 	"crypto/x509"
 	"os"
@@ -53,7 +54,7 @@ func TestReloaderBasic(t *testing.T) {
 		require.NotNil(t, reloader)
 
 		// Start the reloader
-		require.NoError(t, reloader.Start())
+		require.NoError(t, reloader.Start(context.Background()))
 		defer reloader.Stop()
 	})
 
@@ -107,7 +108,7 @@ func TestReloaderCertificateRotation(t *testing.T) {
 		defer reloader.Stop()
 
 		// Start reloader
-		err = reloader.Start()
+		err = reloader.Start(context.Background())
 		require.NoError(t, err)
 
 		// Wait for initial certificate to be loaded
@@ -159,7 +160,7 @@ func TestReloaderCertificateRotation(t *testing.T) {
 		defer reloader.Stop()
 
 		// Start reloader
-		err = reloader.Start()
+		err = reloader.Start(context.Background())
 		require.NoError(t, err)
 
 		// Wait for initial certificate to be loaded
@@ -216,7 +217,7 @@ func TestReloaderCertificateRotation(t *testing.T) {
 		defer reloader.Stop()
 
 		// Start reloader
-		err = reloader.Start()
+		err = reloader.Start(context.Background())
 		require.NoError(t, err)
 
 		// Wait for initial certificate to be loaded
@@ -264,7 +265,7 @@ func TestReloaderInvalidCertificate(t *testing.T) {
 	log := logger.GetLogger("tls-test")
 	reloader, err := NewReloader(certFile, keyFile, log)
 	require.NoError(t, err)
-	require.NoError(t, reloader.Start())
+	require.NoError(t, reloader.Start(context.Background()))
 	defer reloader.Stop()
 
 	// Wait for initial certificate to be loaded
@@ -363,7 +364,7 @@ func TestClientCertReloader(t *testing.T) {
 		require.NotNil(t, reloader)
 
 		// Start the reloader
-		require.NoError(t, reloader.Start())
+		require.NoError(t, reloader.Start(context.Background()))
 		defer reloader.Stop()
 
 		// Test GetClientTLSConfig
@@ -378,7 +379,7 @@ func TestClientCertReloader(t *testing.T) {
 	t.Run("certificate updates", func(t *testing.T) {
 		reloader, err := NewClientCertReloader(certFile, log)
 		require.NoError(t, err)
-		require.NoError(t, reloader.Start())
+		require.NoError(t, reloader.Start(context.Background()))
 		defer reloader.Stop()
 
 		// Get update channel
@@ -437,7 +438,7 @@ func TestClientCertReloader(t *testing.T) {
 	t.Run("remove and recreate certificate", func(t *testing.T) {
 		reloader, err := NewClientCertReloader(certFile, log)
 		require.NoError(t, err)
-		require.NoError(t, reloader.Start())
+		require.NoError(t, reloader.Start(context.Background()))
 		defer reloader.Stop()
 
 		// Get initial client config

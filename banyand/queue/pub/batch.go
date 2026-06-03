@@ -33,6 +33,7 @@ import (
 	"github.com/apache/skywalking-banyandb/pkg/bus"
 	"github.com/apache/skywalking-banyandb/pkg/grpchelper"
 	"github.com/apache/skywalking-banyandb/pkg/logger"
+	"github.com/apache/skywalking-banyandb/pkg/run"
 )
 
 const (
@@ -156,7 +157,7 @@ func (bp *batchPublisher) Publish(ctx context.Context, topic bus.Topic, messages
 				err = multierr.Append(err, fmt.Errorf("failed to get client for node %s", node))
 				return true
 			}
-			succeed, ce := bp.pub.checkWritable(node, topic)
+			succeed, ce := bp.pub.checkWritable(ctx, node, topic)
 			if succeed {
 				return false
 			}
@@ -192,7 +193,12 @@ func (bp *batchPublisher) Publish(ctx context.Context, topic bus.Topic, messages
 		bp.f.events = append(bp.f.events, make(chan batchEvent))
 		_ = sendData()
 		nodeName := node
-		go bp.listenBatchResponse(ctx, stream, deferFn, bp.f.events[len(bp.f.events)-1], nodeName, topicStr)
+		recvStream := stream
+		recvDeferFn := deferFn
+		recvBC := bp.f.events[len(bp.f.events)-1]
+		run.Go(ctx, "batch-stream-recv", bp.pub.log, func(runCtx context.Context) {
+			bp.listenBatchResponse(runCtx, recvStream, recvDeferFn, recvBC, nodeName, topicStr)
+		})
 	}
 	return nil, err
 }
@@ -259,18 +265,18 @@ func (bp *batchPublisher) Close() (cee map[string]*common.Error, err error) {
 		return nil, err
 	}
 	if bp.pub.closer.AddRunning() {
-		go func() {
+		run.Go(context.Background(), "batch-failover", bp.pub.log, func(ctx context.Context) {
 			defer bp.pub.closer.Done()
 			for n, e := range batchEvents {
 				// Record circuit breaker failure before failover
 				bp.pub.connMgr.RecordFailure(n, e.e)
 				if bp.topic == nil {
-					bp.pub.failover(n, e.e, data.TopicCommon)
+					bp.pub.failover(ctx, n, e.e, data.TopicCommon)
 					continue
 				}
-				bp.pub.failover(n, e.e, *bp.topic)
+				bp.pub.failover(ctx, n, e.e, *bp.topic)
 			}
-		}()
+		})
 	}
 	cee = make(map[string]*common.Error, len(batchEvents))
 	for n, be := range batchEvents {

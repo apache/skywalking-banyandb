@@ -55,6 +55,7 @@ import (
 	"github.com/apache/skywalking-banyandb/pkg/healthcheck"
 	"github.com/apache/skywalking-banyandb/pkg/logger"
 	"github.com/apache/skywalking-banyandb/pkg/meter"
+	"github.com/apache/skywalking-banyandb/pkg/panicdiag"
 	banyandbpath "github.com/apache/skywalking-banyandb/pkg/path"
 	"github.com/apache/skywalking-banyandb/pkg/run"
 	pkgtls "github.com/apache/skywalking-banyandb/pkg/tls"
@@ -241,7 +242,7 @@ func (s *server) Serve() run.StopNotify {
 	if s.tls {
 		// Start TLS reloader if enabled
 		if s.tlsReloader != nil {
-			if err := s.tlsReloader.Start(); err != nil {
+			if err := s.tlsReloader.Start(context.Background()); err != nil {
 				s.log.Error().Err(err).Msg("Failed to start TLS reloader for queue server")
 				stopCh := make(chan struct{})
 				close(stopCh)
@@ -263,18 +264,24 @@ func (s *server) Serve() run.StopNotify {
 			opts = []grpclib.ServerOption{grpclib.Creds(creds)}
 		}
 	}
-	grpcPanicRecoveryHandler := func(p any) (err error) {
-		s.log.Error().Interface("panic", p).Str("stack", string(debug.Stack())).Msg("recovered from panic")
-
+	grpcPanicRecoveryHandler := func(ctx context.Context, p any) (err error) {
+		breadcrumbs := panicdiag.BreadcrumbsFromContext(ctx)
+		stages := make([]string, len(breadcrumbs))
+		for idx, bc := range breadcrumbs {
+			stages[idx] = bc.Stage
+		}
+		s.log.Error().Interface("panic", p).Str("stack", string(debug.Stack())).Strs("breadcrumbs", stages).Msg("recovered from panic")
 		return status.Errorf(codes.Internal, "%s", p)
 	}
 
 	streamChain := []grpclib.StreamServerInterceptor{
-		recovery.StreamServerInterceptor(recovery.WithRecoveryHandler(grpcPanicRecoveryHandler)),
+		panicdiag.BreadcrumbStreamInterceptor(),
+		recovery.StreamServerInterceptor(recovery.WithRecoveryHandlerContext(grpcPanicRecoveryHandler)),
 	}
 	unaryChain := []grpclib.UnaryServerInterceptor{
+		panicdiag.BreadcrumbUnaryInterceptor(),
 		grpc_validator.UnaryServerInterceptor(),
-		recovery.UnaryServerInterceptor(recovery.WithRecoveryHandler(grpcPanicRecoveryHandler)),
+		recovery.UnaryServerInterceptor(recovery.WithRecoveryHandlerContext(grpcPanicRecoveryHandler)),
 	}
 
 	opts = append(opts, grpclib.MaxRecvMsgSize(int(s.maxRecvMsgSize)),
@@ -347,7 +354,7 @@ func (s *server) Serve() run.StopNotify {
 	}
 	var wg sync.WaitGroup
 	wg.Add(2)
-	go func() {
+	run.Go(context.Background(), "queue.sub.grpc-server", s.log, func(_ context.Context) {
 		lis, err := net.Listen("tcp", s.addr)
 		if err != nil {
 			s.log.Error().Err(err).Msg("Failed to listen")
@@ -360,20 +367,20 @@ func (s *server) Serve() run.StopNotify {
 			s.log.Error().Err(err).Msg("server is interrupted")
 		}
 		wg.Done()
-	}()
-	go func() {
+	})
+	run.Go(context.Background(), "queue.sub.healthz-http", s.log, func(_ context.Context) {
 		s.log.Info().Str("listenAddr", s.httpAddr).Msg("Start healthz http server")
 		err := s.httpSrv.ListenAndServe()
 		if err != http.ErrServerClosed {
 			s.log.Error().Err(err)
 		}
 		wg.Done()
-	}()
-	go func() {
+	})
+	run.Go(context.Background(), "queue.sub.shutdown-watcher", s.log, func(_ context.Context) {
 		wg.Wait()
 		s.log.Info().Msg("All servers are stopped")
 		close(stopCh)
-	}()
+	})
 	return stopCh
 }
 
@@ -390,10 +397,10 @@ func (s *server) GracefulStop() {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 	_ = s.httpSrv.Shutdown(ctx)
-	go func() {
+	run.Go(context.Background(), "queue.sub.graceful-stop", s.log, func(_ context.Context) {
 		s.ser.GracefulStop()
 		close(stopped)
-	}()
+	})
 
 	t := time.NewTimer(10 * time.Second)
 	select {

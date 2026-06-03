@@ -1,0 +1,80 @@
+# Licensed to Apache Software Foundation (ASF) under one or more contributor
+# license agreements. See the NOTICE file distributed with
+# this work for additional information regarding copyright
+# ownership. Apache Software Foundation (ASF) licenses this file to you under
+# the Apache License, Version 2.0 (the "License"); you may
+# not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing,
+# software distributed under the License is distributed on an
+# "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
+# KIND, either express or implied.  See the License for the
+# specific language governing permissions and limitations
+# under the License.
+
+# Sample runner pod for in-place live migration. Adapt every name / PVC /
+# mount path to your real cluster topology before applying.
+#
+# This pod is meant to be launched while the BanyanDB data StatefulSets
+# are scaled to 0 so the RWO measure PVCs are free to be re-mounted here.
+# It mounts every data PVC the migration needs to read from OR write to,
+# plus a small emptyDir at /work for the plan file and per-group union
+# sidx staging.
+#
+# Key fields the operator typically tweaks:
+#   - image                       use the same banyandb image your cluster runs;
+#                                 it already ships the `banyand-migration`
+#                                 binary at /banyand-migration.
+#   - resources.limits.memory     migration sets GOMEMLIMIT to 85% of this.
+#   - volumeMounts / volumes      one (mountPath, PVC) pair per node × catalog
+#                                 the plan references. Mount measure PVCs at
+#                                 /mnt/<node>/measure and hot schema-property
+#                                 PVCs at /mnt/<node>/schema-property.
+apiVersion: v1
+kind: Pod
+metadata:
+  name: bydb-migration-runner
+  labels:
+    app.kubernetes.io/component: bydb-migration-runner
+spec:
+  restartPolicy: Never
+  containers:
+    - name: runner
+      image: apache/skywalking-banyandb:latest
+      command: ["sleep", "infinity"]
+      resources:
+        requests:
+          cpu: "2"
+          memory: "8Gi"
+        limits:
+          cpu: "4"
+          memory: "20Gi"
+      volumeMounts:
+        - { name: work,                  mountPath: /work }
+        # Measure + schema-property PVCs from each node the plan references.
+        # `subPath` is only needed when the live pod uses a sub-key per
+        # catalog (typical for the hot tier in the official helm chart).
+        - { name: hot-0-measure,         mountPath: /mnt/hot-0/measure,         subPath: measure         }
+        - { name: hot-0-schema-property, mountPath: /mnt/hot-0/schema-property, subPath: schema-property }
+        - { name: hot-1-measure,         mountPath: /mnt/hot-1/measure,         subPath: measure         }
+        - { name: hot-1-schema-property, mountPath: /mnt/hot-1/schema-property, subPath: schema-property }
+        # Consolidated (single-catalog-per-PVC) warm + cold tiers — no subPath.
+        - { name: warn-0,                mountPath: /mnt/warn-0 }
+        - { name: warn-1,                mountPath: /mnt/warn-1 }
+        - { name: cold-0,                mountPath: /mnt/cold-0 }
+  volumes:
+    # Scratch space: plan file + per-group union sidx staging.
+    - name: work
+      emptyDir:
+        sizeLimit: 4Gi
+    # Replace each claimName below with the PVC name your cluster uses.
+    - { name: hot-0-measure,         persistentVolumeClaim: { claimName: hot-measure-data-demo-banyandb-data-hot-0         } }
+    - { name: hot-0-schema-property, persistentVolumeClaim: { claimName: hot-schema-property-data-demo-banyandb-data-hot-0 } }
+    - { name: hot-1-measure,         persistentVolumeClaim: { claimName: hot-measure-data-demo-banyandb-data-hot-1         } }
+    - { name: hot-1-schema-property, persistentVolumeClaim: { claimName: hot-schema-property-data-demo-banyandb-data-hot-1 } }
+    - { name: warn-0,                persistentVolumeClaim: { claimName: warm-data-demo-banyandb-data-warm-0               } }
+    - { name: warn-1,                persistentVolumeClaim: { claimName: warm-data-demo-banyandb-data-warm-1               } }
+    - { name: cold-0,                persistentVolumeClaim: { claimName: cold-data-demo-banyandb-data-cold-0                } }

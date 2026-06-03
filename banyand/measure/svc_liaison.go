@@ -115,6 +115,7 @@ func (s *liaison) FlagSet() *run.FlagSet {
 		"percentage of BanyanDB's allowed disk usage allocated to failed parts storage. "+
 			"Calculated as: totalDisk * measure-max-disk-usage-percent * failed-parts-max-size-percent / 10000. "+
 			"Set to 0 to disable copying failed parts. Valid range: 0-100")
+	bindVectorizedFlags(flagS, &s.option.vectorized)
 	return flagS
 }
 
@@ -145,6 +146,19 @@ func (s *liaison) Role() databasev1.Role {
 func (s *liaison) PreRun(ctx context.Context) error {
 	s.l = logger.GetLogger(s.Name())
 	s.l.Info().Msg("memory protector is initialized in PreRun")
+	// Publish the per-process wire mode for TopicInternalMeasureQuery.
+	// On the liaison this controls the DECODE side: an incoming response
+	// body on TopicInternalMeasureQuery is parsed as raw frame bytes
+	// under flag-on (G9f.5.c's distributedPlan recognizes the []byte
+	// shape and runs ReduceFramesToInternalDataPoints /
+	// DecodeFramesToInternalDataPoints) or proto under flag-off. The
+	// per-process modes MUST match across the cluster — the runbook
+	// covers detection + recovery for a partial-rollout skew.
+	data.SetMeasureWireModeRaw(s.option.vectorized.Enabled)
+	s.l.Info().
+		Bool("measure_vectorized_enabled", s.option.vectorized.Enabled).
+		Bool("measure_wire_mode_raw", data.MeasureWireModeRaw()).
+		Msg("G9f wire mode published for TopicInternalMeasureQuery (liaison)")
 	s.lfs = fs.NewLocalFileSystemWithLoggerAndLimit(s.l, s.pm.GetLimit())
 	var err error
 	if s.root, err = banyandbpath.Get(s.root); err != nil {

@@ -37,6 +37,7 @@ import (
 	"github.com/apache/skywalking-banyandb/pkg/meter"
 	"github.com/apache/skywalking-banyandb/pkg/meter/native"
 	"github.com/apache/skywalking-banyandb/pkg/meter/prom"
+	"github.com/apache/skywalking-banyandb/pkg/panicdiag"
 	"github.com/apache/skywalking-banyandb/pkg/run"
 	"github.com/apache/skywalking-banyandb/pkg/timestamp"
 )
@@ -90,10 +91,12 @@ type metricService struct {
 	schedulerMetrics    *SchedulerMetrics
 	listenAddr          string
 	nodeType            string
+	panicArtifactDir    string
 	modes               []string
 	npf                 nativeProviderFactory
 	metricsInterval     time.Duration
 	nativeFlushInterval time.Duration
+	panicMaxArtifacts   int
 	mutex               sync.Mutex
 }
 
@@ -103,6 +106,10 @@ func (p *metricService) FlagSet() *run.FlagSet {
 	flagSet.StringSliceVar(&p.modes, "observability-modes", []string{"prometheus"}, "modes for observability")
 	flagSet.DurationVar(&p.metricsInterval, "observability-metrics-interval", 15*time.Second, "interval for metrics collection")
 	flagSet.DurationVar(&p.nativeFlushInterval, "observability-native-flush-interval", 5*time.Second, "interval for native metrics flush")
+	flagSet.StringVar(&p.panicArtifactDir, "panic-artifact-dir", "",
+		"directory where banyand writes recovered panic artifacts; leave empty to disable")
+	flagSet.IntVar(&p.panicMaxArtifacts, "panic-max-artifacts", 0,
+		"maximum number of panic artifact directories to retain; 0 disables pruning")
 	return flagSet
 }
 
@@ -154,6 +161,27 @@ func (p *metricService) PreRun(ctx context.Context) error {
 			nodeInfo: nodeInfo,
 		}
 	}
+	var promProvider meter.Provider
+	if containsMode(p.modes, flagPromethusMode) {
+		promProvider = prom.NewProvider(observability.RootScope, p.promReg)
+	}
+	var nativeProvider meter.Provider
+	if containsMode(p.modes, flagNativeMode) {
+		nativeProvider = native.NewProvider(observability.RootScope, p.metadata, p.npf.nodeInfo)
+		p.npf.mu.Lock()
+		p.npf.providers = append(p.npf.providers, nativeProvider)
+		p.npf.mu.Unlock()
+	}
+	// Register the process-wide panic counter so that all goroutines using
+	// panicdiag.WithRecovery (including run.Group services and run.Go) increment
+	// banyandb_panic_total{component="..."} without needing per-call wiring.
+	panicdiag.SetDefaultPanicCounter(NewFactory(promProvider, nativeProvider, p.nCollection).NewCounter("panic_total", "component"))
+	if p.panicArtifactDir != "" {
+		panicdiag.SetDefaultArtifactRoot(p.panicArtifactDir)
+	}
+	if p.panicMaxArtifacts > 0 {
+		panicdiag.SetDefaultMaxArtifacts(p.panicMaxArtifacts)
+	}
 	return nil
 }
 
@@ -165,22 +193,22 @@ func (p *metricService) Serve() run.StopNotify {
 	p.mutex.Lock()
 	defer p.mutex.Unlock()
 	p.initMetrics()
+	startupCtx, cancelStartup := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancelStartup()
 	if containsMode(p.modes, flagNativeMode) {
 		p.npf.setServeStarted()
-		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
-		p.npf.initAllSchemas(ctx)
-		cancel()
+		p.npf.initAllSchemas(startupCtx)
 	}
 	// First collection on startup so metrics arrive sooner.
 	MetricsCollector.collect()
 	if containsMode(p.modes, flagNativeMode) {
-		p.nCollection.FlushMetrics()
+		p.nCollection.FlushMetrics(startupCtx)
 	}
 	clock, _ := timestamp.GetClock(context.TODO())
 	p.scheduler = timestamp.NewScheduler(p.l, clock)
 	p.schedulerMetrics = NewSchedulerMetrics(p.With(obScope))
 	metricsCollectorExpr := fmt.Sprintf("@every %s", p.metricsInterval)
-	err := p.scheduler.Register("metrics-collector", cron.Descriptor, metricsCollectorExpr, func(_ time.Time, _ *logger.Logger) bool {
+	err := p.scheduler.Register(startupCtx, "metrics-collector", cron.Descriptor, metricsCollectorExpr, func(_ context.Context, _ time.Time, _ *logger.Logger) bool {
 		MetricsCollector.collect()
 		metrics := p.scheduler.Metrics()
 		for job, m := range metrics {
@@ -193,13 +221,14 @@ func (p *metricService) Serve() run.StopNotify {
 	}
 	metricsMux := http.NewServeMux()
 	metricsMux.HandleFunc("/_route", p.routeTableHandler)
+	metricsMux.HandleFunc("/debug/panic", p.handleDebugPanic)
 	if containsMode(p.modes, flagPromethusMode) {
 		registerMetricsEndpoint(p.promReg, metricsMux)
 	}
 	if containsMode(p.modes, flagNativeMode) {
 		nativeFlushExpr := fmt.Sprintf("@every %s", p.nativeFlushInterval)
-		err = p.scheduler.Register("native-metric-collection", cron.Descriptor, nativeFlushExpr, func(_ time.Time, _ *logger.Logger) bool {
-			p.nCollection.FlushMetrics()
+		err = p.scheduler.Register(startupCtx, "native-metric-collection", cron.Descriptor, nativeFlushExpr, func(ctx context.Context, _ time.Time, _ *logger.Logger) bool {
+			p.nCollection.FlushMetrics(ctx)
 			return true
 		})
 		if err != nil {
@@ -280,6 +309,47 @@ func (sm *SchedulerMetrics) Collect(job string, m *timestamp.SchedulerMetrics) {
 	sm.totalTasksFinished.Set(float64(m.TotalTasksFinished.Load()), job)
 	sm.totalTasksPanic.Set(float64(m.TotalTasksPanic.Load()), job)
 	sm.totalTaskLatency.Set(float64(m.TotalTaskLatencyInNanoseconds.Load())/float64(time.Second), job)
+}
+
+func (p *metricService) handleDebugPanic(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	component := r.URL.Query().Get("component")
+	if component == "" {
+		component = "debug-panic"
+	}
+	dumper := panicdiag.StateDumperFunc(func(_ context.Context) (any, error) {
+		return map[string]any{
+			"listenAddr":  p.listenAddr,
+			"nodeType":    p.nodeType,
+			"modes":       p.modes,
+			"component":   component,
+			"artifactDir": p.panicArtifactDir,
+		}, nil
+	})
+	panicCtx := panicdiag.WithMutableBreadcrumbs(r.Context())
+	panicdiag.GoWithRecovery(panicCtx, panicdiag.RecoveryOptions{
+		Component:   component,
+		Logger:      p.l,
+		StateDumper: dumper,
+		ProcessMetadata: map[string]string{
+			"listenAddr":  p.listenAddr,
+			"nodeType":    p.nodeType,
+			"component":   component,
+			"artifactDir": p.panicArtifactDir,
+		},
+	}, nil, func(ctx *context.Context) {
+		panicdiag.WithBreadcrumb(*ctx, "received debug panic request", component, map[string]string{
+			"method": r.Method,
+			"path":   r.URL.Path,
+		})
+		panicdiag.WithBreadcrumb(*ctx, "trigger debug panic", component, nil)
+		panic("diagnostic test panic triggered via /debug/panic")
+	})
+	w.WriteHeader(http.StatusAccepted)
+	_, _ = w.Write([]byte("panic triggered; check --panic-artifact-dir for artifacts\n"))
 }
 
 func (p *metricService) With(scope meter.Scope) observability.Factory {

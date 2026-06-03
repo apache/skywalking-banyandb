@@ -22,7 +22,6 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"os"
 	"path/filepath"
 
 	"github.com/apache/skywalking-banyandb/api/common"
@@ -32,21 +31,20 @@ import (
 )
 
 // TryOpenSeriesMetadata attempts to open the series metadata file (smeta.bin) in the given part path.
-// It returns the reader if successful, or nil if the file doesn't exist or on error.
-// Only file not found errors are silently ignored; other errors are reported as warnings.
-func TryOpenSeriesMetadata(fileSystem fs.FileSystem, partPath string) fs.Reader {
+// The file is optional: a "not found" error yields (nil, nil) so callers can proceed without it.
+// Any other open failure is returned so the caller can decide how to report it.
+func TryOpenSeriesMetadata(fileSystem fs.FileSystem, partPath string) (fs.Reader, error) {
 	seriesMetadataPath := filepath.Join(partPath, "smeta.bin")
 	reader, err := fileSystem.OpenFile(seriesMetadataPath)
 	if err != nil {
 		// Only ignore file not found errors; other errors should be reported
 		var fsErr *fs.FileSystemError
-		if !errors.As(err, &fsErr) || fsErr.Code != fs.IsNotExistError {
-			fmt.Fprintf(os.Stderr, "Warning: Failed to open series metadata file %s: %v\n", seriesMetadataPath, err)
+		if errors.As(err, &fsErr) && fsErr.Code == fs.IsNotExistError {
+			return nil, nil
 		}
-		// File doesn't exist, it's okay - just continue without it
-		return nil
+		return nil, fmt.Errorf("cannot open series metadata file %s: %w", seriesMetadataPath, err)
 	}
-	return reader
+	return reader, nil
 }
 
 // ParseSeriesMetadata parses series metadata from the given reader and stores EntityValues in partSeriesMap.

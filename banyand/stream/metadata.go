@@ -296,7 +296,7 @@ func (sr *schemaRepo) CollectDataInfo(ctx context.Context, group string) (*datab
 	segments, segmentsErr := tsdb.SelectSegments(timestamp.TimeRange{
 		Start: time.Unix(0, 0),
 		End:   time.Unix(0, timestamp.MaxNanoTime),
-	})
+	}, false)
 	if segmentsErr != nil {
 		return nil, segmentsErr
 	}
@@ -306,10 +306,22 @@ func (sr *schemaRepo) CollectDataInfo(ctx context.Context, group string) (*datab
 		timeRange := segment.GetTimeRange()
 		tables, _ := segment.Tables()
 		var shardInfoList []*databasev1.ShardInfo
-		for shardIdx, table := range tables {
-			shardInfo := sr.collectShardInfo(table, uint32(shardIdx))
-			shardInfoList = append(shardInfoList, shardInfo)
-			totalDataSize += shardInfo.DataSizeBytes
+		if len(tables) > 0 {
+			for shardIdx, table := range tables {
+				shardInfo := sr.collectShardInfo(table, uint32(shardIdx))
+				shardInfoList = append(shardInfoList, shardInfo)
+				totalDataSize += shardInfo.DataSizeBytes
+			}
+		} else {
+			// No live shard tables (a closed segment, or a brand-new open one
+			// with no data yet): read shard part stats from disk without
+			// reopening. The per-shard InvertedIndexInfo is reported empty here:
+			// reading it would reopen the shard's bluge index (the exclusive-lock
+			// churn this change exists to avoid), so it is populated only for
+			// open segments.
+			closedShards, closedSize := storage.CollectClosedShardInfo(segment.Location())
+			shardInfoList = closedShards
+			totalDataSize += closedSize
 		}
 		seriesIndexInfo := sr.collectSeriesIndexInfo(segment)
 		totalDataSize += seriesIndexInfo.DataSizeBytes
@@ -332,14 +344,10 @@ func (sr *schemaRepo) CollectDataInfo(ctx context.Context, group string) (*datab
 }
 
 func (sr *schemaRepo) collectSeriesIndexInfo(segment storage.Segment[*tsTable, option]) *databasev1.SeriesIndexInfo {
-	indexDB := segment.IndexDB()
-	if indexDB == nil {
-		return &databasev1.SeriesIndexInfo{
-			DataCount:     0,
-			DataSizeBytes: 0,
-		}
-	}
-	dataCount, dataSizeBytes := indexDB.Stats()
+	// SeriesIndexStats reads from the live index when the segment is open and
+	// from disk (read-only) when it is closed, so inspecting a cold segment
+	// never reopens its writable index.
+	dataCount, dataSizeBytes := segment.SeriesIndexStats()
 	return &databasev1.SeriesIndexInfo{
 		DataCount:     dataCount,
 		DataSizeBytes: dataSizeBytes,
@@ -438,7 +446,7 @@ func (sr *schemaRepo) collectPendingWriteInfo(groupName string) (int64, error) {
 	segments, segmentsErr := tsdb.SelectSegments(timestamp.TimeRange{
 		Start: time.Unix(0, 0),
 		End:   time.Unix(0, timestamp.MaxNanoTime),
-	})
+	}, false)
 	if segmentsErr != nil {
 		return 0, fmt.Errorf("failed to select segments: %w", segmentsErr)
 	}
@@ -559,7 +567,9 @@ func (s *supplier) OpenDB(groupSchema *commonv1.Group) (resourceSchema.DB, error
 	shardNum := ro.ShardNum
 	ttl := ro.Ttl
 	segInterval := ro.SegmentInterval
-	segmentIdleTimeout := time.Duration(0)
+	// Non-zero default so the idle-segment reclaimer ticker actually starts
+	// (storage/rotation.go gates it on >=1s). Staged Close paths override below.
+	segmentIdleTimeout := time.Hour
 	disableRetention := false
 	disableRotation := false
 	if len(ro.Stages) > 0 && len(s.nodeLabels) > 0 {

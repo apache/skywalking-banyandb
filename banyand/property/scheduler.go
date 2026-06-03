@@ -44,8 +44,8 @@ func newRepairScheduler(ctx context.Context, l *logger.Logger, cronExp string, m
 		gossipMessenger: messenger,
 		scheduler:       timestamp.NewScheduler(l, timestamp.NewClock()),
 	}
-	err := r.scheduler.Register("trigger", cron.Minute|cron.Hour|cron.Dom|cron.Month|cron.Dow|cron.Descriptor,
-		cronExp, func(time.Time, *logger.Logger) bool {
+	err := r.scheduler.Register(ctx, "trigger", cron.Minute|cron.Hour|cron.Dom|cron.Month|cron.Dow|cron.Descriptor,
+		cronExp, func(context.Context, time.Time, *logger.Logger) bool {
 			l.Debug().Msgf("starting background repair gossip")
 			group, shardNum, nodes, gossipErr := r.doRepairGossip(ctx)
 			if gossipErr != nil {

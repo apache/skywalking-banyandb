@@ -1,0 +1,333 @@
+// Licensed to Apache Software Foundation (ASF) under one or more contributor
+// license agreements. See the NOTICE file distributed with
+// this work for additional information regarding copyright
+// ownership. Apache Software Foundation (ASF) licenses this file to you under
+// the Apache License, Version 2.0 (the "License"); you may
+// not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing,
+// software distributed under the License is distributed on an
+// "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
+// KIND, either express or implied.  See the License for the
+// specific language governing permissions and limitations
+// under the License.
+
+package measure
+
+import (
+	"container/heap"
+	"context"
+
+	modelv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/model/v1"
+	"github.com/apache/skywalking-banyandb/pkg/query"
+	"github.com/apache/skywalking-banyandb/pkg/query/tracelabels"
+	"github.com/apache/skywalking-banyandb/pkg/query/vectorized"
+)
+
+// BatchTop is a BreakerOperator that retains the top-N rows by a designated
+// field column. asc=true keeps the lowest N; asc=false keeps the highest N.
+//
+// Tie-break is stable on insertion order — earlier rows win. Nulls in the key
+// column are treated as the lowest value (kept first in asc, evicted first in desc).
+type BatchTop struct {
+	schema     *vectorized.BatchSchema
+	pool       *vectorized.BatchPool
+	heapState  *topHeap
+	span       *query.Span
+	sorted     []*topRow
+	fieldCol   int
+	n          int
+	batchSize  int
+	inputCount int
+	cursor     int
+	rowsOut    int64
+	asc        bool
+	closed     bool
+}
+
+// topRow materializes one input row plus its sort key for heap comparisons.
+type topRow struct {
+	cols     []vectorized.Column // schema-shaped, exactly 1 row each
+	floatVal float64
+	intVal   int64
+	seq      int
+	isNull   bool
+	isFloat  bool
+}
+
+type topHeap struct {
+	rows []*topRow
+	asc  bool
+}
+
+func (h *topHeap) Len() int { return len(h.rows) }
+
+func (h *topHeap) Less(i, j int) bool {
+	c := cmpTopVal(h.rows[i], h.rows[j])
+	if c != 0 {
+		// asc → max-heap (largest at root, evict on overflow);
+		// desc → min-heap (smallest at root).
+		if h.asc {
+			return c > 0
+		}
+		return c < 0
+	}
+	// Tie: prefer the later (larger seq) row at root so it gets evicted /
+	// popped first. After Finalize reverses the pop order, ties surface in
+	// insertion order — earlier-row-wins.
+	return h.rows[i].seq > h.rows[j].seq
+}
+
+func (h *topHeap) Swap(i, j int) { h.rows[i], h.rows[j] = h.rows[j], h.rows[i] }
+
+func (h *topHeap) Push(x any) { h.rows = append(h.rows, x.(*topRow)) }
+
+func (h *topHeap) Pop() any {
+	n := len(h.rows)
+	x := h.rows[n-1]
+	h.rows = h.rows[:n-1]
+	return x
+}
+
+// cmpTopVal returns -1 / 0 / +1 for a < b / == / >. Nulls sort lowest.
+func cmpTopVal(a, b *topRow) int {
+	if a.isNull && b.isNull {
+		return 0
+	}
+	if a.isNull {
+		return -1
+	}
+	if b.isNull {
+		return 1
+	}
+	if a.isFloat {
+		switch {
+		case a.floatVal < b.floatVal:
+			return -1
+		case a.floatVal > b.floatVal:
+			return 1
+		}
+		return 0
+	}
+	switch {
+	case a.intVal < b.intVal:
+		return -1
+	case a.intVal > b.intVal:
+		return 1
+	}
+	return 0
+}
+
+// NewBatchTop constructs a BatchTop. fieldCol is the index of the int64 or
+// float64 column to sort by; n is the bound; asc selects ascending or descending order.
+func NewBatchTop(schema *vectorized.BatchSchema, fieldCol, n int, asc bool, batchSize int) *BatchTop {
+	return &BatchTop{
+		schema:    schema,
+		pool:      vectorized.NewBatchPool(schema, batchSize),
+		fieldCol:  fieldCol,
+		n:         n,
+		batchSize: batchSize,
+		asc:       asc,
+	}
+}
+
+// Init initializes the heap.
+func (t *BatchTop) Init(ctx context.Context) error {
+	t.heapState = &topHeap{asc: t.asc}
+	tracer := query.GetTracer(ctx)
+	if tracer != nil {
+		t.span, _ = tracer.StartSpan(ctx, "top")
+	}
+	return nil
+}
+
+// OutputSchema returns the unchanged input schema.
+func (t *BatchTop) OutputSchema() *vectorized.BatchSchema { return t.schema }
+
+// Consume considers each active row for inclusion in the top-N heap.
+//
+// n <= 0 is a no-op (matches the row-path's top-N convention) — without this
+// guard the bounded-heap logic would dereference an empty heap on the first row.
+func (t *BatchTop) Consume(_ context.Context, b *vectorized.RecordBatch) error {
+	if t.n <= 0 {
+		return nil
+	}
+	active := activeIndices(b)
+	for _, rowIdx := range active {
+		ri := int(rowIdx)
+		seq := t.inputCount
+		t.inputCount++
+		// Heap not yet full: the row is retained, so pay the full
+		// per-column deep copy now (the batch is recycled after Consume
+		// returns, so a retained row cannot defer its copy).
+		if t.heapState.Len() < t.n {
+			row := &topRow{seq: seq}
+			t.extractKey(b, ri, row)
+			row.cols = t.materializeCols(b, ri)
+			heap.Push(t.heapState, row)
+			continue
+		}
+		// Heap full: extract only the cheap sort key and compare against
+		// the root. The expensive per-column materialize is deferred
+		// until the row actually displaces the root — for high-input /
+		// low-N top-N the vast majority of rows lose here and never pay
+		// the copy. cmpTopVal/shouldReplace read only the key fields.
+		cand := topRow{seq: seq}
+		t.extractKey(b, ri, &cand)
+		root := t.heapState.rows[0]
+		if t.shouldReplace(&cand, root) {
+			cand.cols = t.materializeCols(b, ri)
+			t.heapState.rows[0] = &cand
+			heap.Fix(t.heapState, 0)
+		}
+	}
+	return nil
+}
+
+// shouldReplace returns true iff candidate is strictly better than root for
+// the configured order. Strict comparison is what gives us stable tie-break:
+// equal values do not replace.
+func (t *BatchTop) shouldReplace(candidate, root *topRow) bool {
+	c := cmpTopVal(candidate, root)
+	if t.asc {
+		return c < 0
+	}
+	return c > 0
+}
+
+// Finalize drains the heap into a sorted slice in user-facing order.
+func (t *BatchTop) Finalize(_ context.Context) error {
+	out := make([]*topRow, 0, t.heapState.Len())
+	for t.heapState.Len() > 0 {
+		out = append(out, heap.Pop(t.heapState).(*topRow))
+	}
+	// Pop order is reverse of desired: max-heap pops largest first (asc wants
+	// smallest first); min-heap pops smallest first (desc wants largest first).
+	for i, j := 0, len(out)-1; i < j; i, j = i+1, j-1 {
+		out[i], out[j] = out[j], out[i]
+	}
+	t.sorted = out
+	t.heapState = &topHeap{asc: t.asc} // free heap backing slice
+	return nil
+}
+
+// NextBatch emits the sorted rows in batches of batchSize.
+func (t *BatchTop) NextBatch(_ context.Context) (*vectorized.RecordBatch, error) {
+	if t.cursor >= len(t.sorted) {
+		return nil, nil
+	}
+	out := t.pool.Get()
+	for out.Len < t.batchSize && t.cursor < len(t.sorted) {
+		row := t.sorted[t.cursor]
+		for colIdx := range out.Columns {
+			copyOneValue(out.Columns[colIdx], row.cols[colIdx], 0)
+		}
+		out.Len++
+		t.cursor++
+		if t.span != nil {
+			t.rowsOut++
+		}
+	}
+	if out.Len == 0 {
+		t.pool.Put(out)
+		return nil, nil
+	}
+	return out, nil
+}
+
+// Close releases the heap and sorted buffer. Idempotent.
+func (t *BatchTop) Close() error {
+	if t.closed {
+		return nil
+	}
+	t.closed = true
+	t.heapState = nil
+	if t.span != nil {
+		t.span.Tagf(tracelabels.TagTopN, "%d", t.n)
+		t.span.Tagf(tracelabels.TagTopAsc, "%t", t.asc)
+		t.span.Tagf(tracelabels.TagRowsIn, "%d", t.inputCount)
+		t.span.Tagf(tracelabels.TagRowsOut, "%d", t.rowsOut)
+		t.span.Tagf(tracelabels.TagDroppedRows, "%d", int64(t.inputCount)-t.rowsOut)
+		t.span.Tag(tracelabels.TagDropReason, "top")
+		t.span.Stop()
+	}
+	t.sorted = nil
+	return nil
+}
+
+// extractKey reads only the sort key for row rowIdx from the configured
+// field column into row — no per-column deep copy. This is the cheap
+// half of the old materialize: it runs for every input row, while the
+// expensive materializeCols runs only for rows admitted to the heap.
+//
+// The key column may be a native typed column (ColumnTypeInt64 /
+// ColumnTypeFloat64 — promoted when an Agg reduces over the field) or a
+// passthrough *modelv1.FieldValue column (ColumnTypeFieldValue — the
+// non-Agg Scan→Top→Limit path, where BuildBatchSchema leaves projected
+// fields as passthrough). Both are handled so the float/int decision is
+// per-column-shape, matching the row path's schema-field-type dispatch
+// (pkg/query/logical/measure.topOp.Execute).
+func (t *BatchTop) extractKey(b *vectorized.RecordBatch, rowIdx int, row *topRow) {
+	keyCol := b.Columns[t.fieldCol]
+	switch c := keyCol.(type) {
+	case *vectorized.TypedColumn[float64]:
+		row.isFloat = true
+		if c.IsNull(rowIdx) {
+			row.isNull = true
+			return
+		}
+		row.floatVal = c.Data()[rowIdx]
+	case *vectorized.TypedColumn[int64]:
+		if c.IsNull(rowIdx) {
+			row.isNull = true
+			return
+		}
+		row.intVal = c.Data()[rowIdx]
+	case *vectorized.TypedColumn[*modelv1.FieldValue]:
+		// Passthrough FieldValue columns can carry a nil pointer at a row
+		// without the validity bitmap being set (a non-Agg Scan→Top→Limit
+		// upstream may forward the source row's nil *modelv1.FieldValue
+		// directly). Treat both shapes as null/lowest before touching
+		// fv to keep the float64/int64 cases' "IsNull-first" discipline.
+		if c.IsNull(rowIdx) {
+			row.isNull = true
+			return
+		}
+		fv := c.Data()[rowIdx]
+		if fv == nil {
+			row.isNull = true
+			return
+		}
+		switch v := fv.GetValue().(type) {
+		case *modelv1.FieldValue_Float:
+			row.isFloat = true
+			row.floatVal = v.Float.GetValue()
+		case *modelv1.FieldValue_Int:
+			row.intVal = v.Int.GetValue()
+		default:
+			// Null / unset / non-numeric field value: treat as lowest,
+			// matching the native-column null handling and the row path.
+			row.isNull = true
+		}
+	default:
+		// Unexpected key column shape (string / bytes / arrays): no
+		// numeric sort key. Treat as lowest so the query still completes
+		// rather than panicking.
+		row.isNull = true
+	}
+}
+
+// materializeCols deep-copies row rowIdx of b into schema-shaped 1-row
+// columns. Only called for rows admitted to the bounded heap (heap not
+// full, or the row displaces the root) — rejected rows never pay this.
+func (t *BatchTop) materializeCols(b *vectorized.RecordBatch, rowIdx int) []vectorized.Column {
+	cols := make([]vectorized.Column, len(t.schema.Columns))
+	for i, def := range t.schema.Columns {
+		cols[i] = vectorized.NewColumnForType(def.Type, 1)
+		copyOneValue(cols[i], b.Columns[i], rowIdx)
+	}
+	return cols
+}

@@ -1,0 +1,27 @@
+{
+  "metadata": {
+    "name": "cross_segment_log",
+    "group": "sw_cross_segment_stream"
+  },
+  "tag_families": [
+    {
+      "name": "searchable",
+      "tags": [
+        {
+          "name": "business_id",
+          "type": "TAG_TYPE_STRING"
+        },
+        {
+          "name": "entity_id",
+          "type": "TAG_TYPE_STRING"
+        }
+      ]
+    }
+  ],
+  "entity": {
+    "tag_names": [
+      "entity_id"
+    ]
+  },
+  "updated_at": "2026-05-27T00:00:00.00Z"
+}
