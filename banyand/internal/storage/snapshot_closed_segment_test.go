@@ -88,6 +88,10 @@ func openSnapshotTSDB(t *testing.T, dir string, ttlDays int) (TSDB[*MockTSTable,
 		TSTableCreator:     MockTSTableCreator,
 		SegmentIdleTimeout: time.Hour,
 	}
+	// Pin the controller's clock to snapshotTestBase so retention's deadline is
+	// computed from the same clock the segments are created against; otherwise the
+	// fixed-2024 segments would look retention-expired against the real wall clock
+	// and SelectSegments would filter them out.
 	mc := timestamp.NewMockClock()
 	mc.Set(snapshotTestBase)
 	ctx := timestamp.SetClock(context.Background(), mc)
@@ -704,4 +708,57 @@ func TestSelectSegments_PublicWrapper(t *testing.T) {
 	got, err = tsdb.SelectSegments(allTimeRange(), true)
 	require.NoError(t, err)
 	require.Nil(t, got, "a closed database returns no segments")
+}
+
+// TestSelectSegments_FiltersRetentionExpiredSegment verifies that
+// SelectSegments(_, true) excludes a segment whose whole time range has passed
+// the retention deadline, and that the deadline tracks the controller's
+// injectable clock: advancing the mock clock past the TTL expires the segment
+// even though it is still on disk (retention removes it only on its next run).
+func TestSelectSegments_FiltersRetentionExpiredSegment(t *testing.T) {
+	dir := snapshotTestDir(t)
+	tsdb, sc := openSnapshotTSDB(t, dir, 3) // TTL = 3 days
+	defer func() { require.NoError(t, tsdb.Close()) }()
+
+	seg := createSegmentWithSeries(t, tsdb, snapshotTestBase, 0)
+	require.NotNil(t, seg.index)
+
+	// Clock at snapshotTestBase: the segment is within the TTL and is returned.
+	got, err := tsdb.SelectSegments(allTimeRange(), true)
+	require.NoError(t, err)
+	require.Len(t, got, 1, "a segment within the TTL is returned")
+	for _, g := range got {
+		g.DecRef()
+	}
+
+	// Advance the controller clock past the TTL so the segment's whole range is
+	// behind the retention deadline; SelectSegments must now filter it out.
+	sc.clock.(timestamp.MockClock).Add(10 * 24 * time.Hour)
+	got, err = tsdb.SelectSegments(allTimeRange(), true)
+	require.NoError(t, err)
+	require.Empty(t, got, "a fully retention-expired segment is excluded from query results")
+	require.Equal(t, int32(0), atomic.LoadInt32(&seg.refCount), "the filtered segment leaks no reference")
+}
+
+// TestGetExpiredSegmentsTimeRange_TracksInjectableClock verifies that the
+// expired-segment time range is computed against the controller's injectable
+// clock: a segment within the TTL reports nothing, and advancing the mock clock
+// past the TTL makes it expired. (Guards against reverting to wall-clock
+// time.Now(), which would mis-expire mock-clock-dated segments.)
+func TestGetExpiredSegmentsTimeRange_TracksInjectableClock(t *testing.T) {
+	dir := snapshotTestDir(t)
+	tsdb, sc := openSnapshotTSDB(t, dir, 3) // TTL = 3 days
+	defer func() { require.NoError(t, tsdb.Close()) }()
+
+	seg := createSegmentWithSeries(t, tsdb, snapshotTestBase, 0)
+
+	// Clock at snapshotTestBase: the segment is within the TTL, nothing expired.
+	tr := sc.getExpiredSegmentsTimeRange()
+	require.True(t, tr.Start.IsZero(), "no segment is expired while the clock is within the TTL")
+
+	// Advance the clock past the TTL: the segment is now expired and reported.
+	sc.clock.(timestamp.MockClock).Add(10 * 24 * time.Hour)
+	tr = sc.getExpiredSegmentsTimeRange()
+	require.Equal(t, seg.Start, tr.Start, "the expired range starts at the now-expired segment")
+	require.Equal(t, seg.End, tr.End, "the expired range ends at the now-expired segment")
 }
