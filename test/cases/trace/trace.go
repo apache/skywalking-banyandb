@@ -39,6 +39,11 @@ var (
 
 var traceEntries = []any{
 	g.Entry("query by trace id", helpers.Args{Input: "eq_trace_id", Duration: 1 * time.Hour}),
+	// Window sits ~6 days back, well past the "test-trace-group" group's 3-day
+	// TTL. The data seeded there (see test/cases/init.go) is in a fully expired
+	// segment and must be dropped by the retention filter, yielding an empty
+	// result. Without the filter the expired traces leak in and this case fails.
+	g.Entry("excludes data expired beyond TTL", helpers.Args{Input: "all", Offset: -156 * time.Hour, Duration: 24 * time.Hour, WantEmpty: true}),
 	g.Entry("query by trace ids", helpers.Args{Input: "in_trace_ids", Duration: 1 * time.Hour}),
 	g.Entry("query by empty span ids", helpers.Args{Input: "in_empty_span_ids", Duration: 1 * time.Hour, WantEmpty: true}),
 	g.Entry("order by timestamp", helpers.Args{Input: "order_timestamp_desc", Duration: 1 * time.Hour}),

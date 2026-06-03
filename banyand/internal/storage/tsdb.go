@@ -278,7 +278,25 @@ func (d *database[T, O]) SelectSegments(timeRange timestamp.TimeRange, reopenClo
 	if d.closed.Load() {
 		return nil, nil
 	}
-	return d.segmentController.selectSegments(timeRange, reopenClosed)
+	segments, err := d.segmentController.selectSegments(timeRange, reopenClosed)
+	if err != nil || !reopenClosed || d.disableRetention {
+		return segments, err
+	}
+	// Exclude segments whose whole time range has already passed the retention
+	// deadline. Retention removes such a segment only on its next cron run (see
+	// (*segmentController).remove), so between runs a fully expired segment is
+	// still on disk and would otherwise serve TTL-expired data to queries. Data
+	// in partially expired segments that retention still keeps stays visible.
+	deadline := d.segmentController.getRetentionDeadline()
+	kept := segments[:0]
+	for _, s := range segments {
+		if s.GetTimeRange().Before(deadline) {
+			s.DecRef()
+			continue
+		}
+		kept = append(kept, s)
+	}
+	return kept, nil
 }
 
 func (d *database[T, O]) SegmentInterval() IntervalRule {

@@ -345,6 +345,11 @@ func Write(conn *grpclib.ClientConn, name string, baseTime time.Time, interval t
 // SeedAll writes all trace fixtures used by the integration suite.
 func SeedAll(conn *grpclib.ClientConn, baseTime time.Time, interval time.Duration) {
 	WriteToGroup(conn, "sw", "test-trace-group", "sw", baseTime, interval)
+	// Seed trace data in a fully expired segment, well past the
+	// "test-trace-group" group's 3-day TTL. It must never surface in query
+	// results: it backs the "excludes data expired beyond TTL" case, which fails
+	// without the retention filter that drops fully expired segments.
+	WriteToGroup(conn, "sw", "test-trace-group", "sw", baseTime.AddDate(0, 0, -6), interval)
 	WriteToGroup(conn, "zipkin", "zipkinTrace", "zipkin", baseTime, interval)
 	WriteToGroup(conn, "sw", "test-trace-updated", "sw_updated", baseTime.Add(time.Minute), interval)
 	time.Sleep(2 * time.Second)

@@ -224,6 +224,67 @@ func TestOpenTSDB(t *testing.T) {
 	})
 }
 
+func TestSelectSegmentsRetention(t *testing.T) {
+	logger.Init(logger.Logging{
+		Env:   "dev",
+		Level: flags.LogLevel,
+	})
+
+	realNow := time.Now()
+	// A wide query window spanning both the expired and the fresh segment.
+	wide := timestamp.NewInclusiveTimeRange(realNow.Add(-10*24*time.Hour), realNow.Add(24*time.Hour))
+	// TTL is 3 days, so a segment whose end is older than this is fully expired.
+	deadline := realNow.Add(-3 * 24 * time.Hour)
+
+	newDB := func(t *testing.T, disableRetention bool) TSDB[*MockTSTable, any] {
+		dir, defFn := test.Space(require.New(t))
+		t.Cleanup(defFn)
+		opts := TSDBOpts[*MockTSTable, any]{
+			Location:         dir,
+			SegmentInterval:  IntervalRule{Unit: DAY, Num: 1},
+			TTL:              IntervalRule{Unit: DAY, Num: 3},
+			ShardNum:         1,
+			TSTableCreator:   MockTSTableCreator,
+			DisableRetention: disableRetention,
+		}
+		tsdb, err := OpenTSDB(context.Background(), opts, NewServiceCache(), group)
+		require.NoError(t, err)
+		t.Cleanup(func() { _ = tsdb.Close() })
+		// One fully expired segment (end well past the deadline) and one fresh.
+		for _, ts := range []time.Time{realNow.Add(-6 * 24 * time.Hour), realNow} {
+			seg, segErr := tsdb.CreateSegmentIfNotExist(ts)
+			require.NoError(t, segErr)
+			seg.DecRef()
+		}
+		return tsdb
+	}
+
+	t.Run("query path excludes fully expired segments", func(t *testing.T) {
+		tsdb := newDB(t, false)
+		segs, err := tsdb.SelectSegments(wide, true)
+		require.NoError(t, err)
+		defer func() {
+			for _, s := range segs {
+				s.DecRef()
+			}
+		}()
+		require.Len(t, segs, 1)
+		require.False(t, segs[0].GetTimeRange().Before(deadline), "the kept segment must not be fully expired")
+	})
+
+	t.Run("retention disabled keeps all segments", func(t *testing.T) {
+		tsdb := newDB(t, true)
+		segs, err := tsdb.SelectSegments(wide, true)
+		require.NoError(t, err)
+		defer func() {
+			for _, s := range segs {
+				s.DecRef()
+			}
+		}()
+		require.Len(t, segs, 2)
+	})
+}
+
 func TestTakeFileSnapshot(t *testing.T) {
 	logger.Init(logger.Logging{
 		Env:   "dev",
