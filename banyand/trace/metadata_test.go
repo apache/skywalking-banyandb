@@ -384,13 +384,15 @@ var _ = Describe("Metadata", func() {
 					return getFilePartCount(svcs, groupName)
 				}, flags.EventuallyTimeout).Should(BeNumerically(">", filePartCountAfterFirstBatch))
 				partCountBeforeMerge := getTotalPartCount(svcs, groupName)
-				// The background merge of the freshly-flushed parts runs asynchronously and,
-				// on resource-constrained CI runners (notably under -race), can take well
-				// beyond the default Eventually budget. Allow a generous, environment-scaled
-				// timeout so the wait reflects merge latency rather than a fixed ceiling.
+				// The background merge runs asynchronously; under the full parallel -race
+				// suite on CI its goroutine competes for CPU and snapshot locks with every
+				// other test. Poll on a relaxed interval (rather than Gomega's ~10ms
+				// default) so this wait does not starve the merge it is waiting for, with a
+				// generous, environment-scaled budget for merge latency. The post-merge
+				// part count is stable (no further writes), so slow polling never misses it.
 				Eventually(func() int64 {
 					return getTotalPartCount(svcs, groupName)
-				}, 3*flags.EventuallyTimeout).Should(BeNumerically("<", partCountBeforeMerge))
+				}, 3*flags.EventuallyTimeout, 500*time.Millisecond).Should(BeNumerically("<", partCountBeforeMerge))
 
 				Eventually(func(innerGm Gomega) {
 					spans := querySchemaChangeTraceData(svcs, traceName, groupName,

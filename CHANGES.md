@@ -12,6 +12,7 @@ Release Notes.
 - Add log query e2e test.
 - Sync lifecycle e2e test from SkyWalking stages test.
 - Add `noDuplicates` verification to all e2e expected files to detect duplicate data in query results.
+- Add a program-generated trace query integration-test framework under `test/cases/trace/cmd/{generate,capture}`: layered case generation (criteria leaves, AND/OR trees, and feature-pairwise across the traceID-lookup and order-based query modes), env-gated golden capture, and a shared `SeedAll` seeder — mirroring the measure test-case framework.
 - Add periodic health check for property schema connection.
 - Persist segment end time in per-segment metadata so boundaries don't shift across restarts or config changes.
 - Introduce fair fast/slow lane scheduling for trace part merges to prevent short merges from being blocked by long-running merges; expose queue wait time as `total_merge_queue_latency`.

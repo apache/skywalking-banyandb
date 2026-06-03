@@ -53,6 +53,12 @@ generate-test-cases:  ## Regenerate measure query test cases (input/*.ql, input/
 capture-test-cases:  ## Capture measure query want fixtures (data/want/*.yaml) by running queries against a standalone server
 	CAPTURE_WANT_FIXTURES=1 go test -count=1 -timeout 5m -run TestCapture ./test/cases/measure/cmd/capture/
 
+generate-trace-test-cases:  ## Regenerate trace query test cases (input/*.ql, input/*.yml)
+	go run ./test/cases/trace/cmd/generate generate test/cases/trace/data
+
+capture-trace-test-cases:  ## Capture trace query want fixtures (data/want/*.yml) against a standalone server
+	CAPTURE_TRACE_WANT_FIXTURES=1 go test -count=1 -timeout 5m -run TestCaptureTrace ./test/cases/trace/cmd/capture/
+
 build: TARGET=all
 build: default  ## Build all projects
 
@@ -273,7 +279,7 @@ release-push-candidate: ## Push release candidate
 	${PUSH_RELEASE_SCRIPTS}
 	
 .PHONY: all $(PROJECTS) clean build  default nuke
-.PHONY: lint check tidy format pre-push generate-test-cases capture-test-cases check-import-boundaries
+.PHONY: lint check tidy format pre-push generate-test-cases capture-test-cases generate-trace-test-cases capture-trace-test-cases check-import-boundaries
 .PHONY: test test-race test-coverage test-ci test-docker
 .PHONY: license-check license-fix license-dep
 .PHONY: release release-binary release-source release-sign release-assembly
