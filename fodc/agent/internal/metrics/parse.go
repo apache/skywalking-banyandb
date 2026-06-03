@@ -24,6 +24,10 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+
+	dto "github.com/prometheus/client_model/go"
+	"github.com/prometheus/common/expfmt"
+	"github.com/prometheus/common/model"
 )
 
 // Label represents a metric label as a key-value pair.
@@ -36,6 +40,7 @@ type Label struct {
 type RawMetric struct {
 	Name   string
 	Desc   string
+	Type   string // lowercase prometheus type: "counter","gauge","histogram","summary","untyped",""
 	Labels []Label
 	Value  float64
 }
@@ -76,8 +81,59 @@ var (
 	labelRegex      = regexp.MustCompile(`(\w+)="([^"]+)"`)
 )
 
+// metricTypeToString converts a dto.MetricType to its lowercase Prometheus text representation.
+func metricTypeToString(mt dto.MetricType) string {
+	switch mt {
+	case dto.MetricType_COUNTER:
+		return "counter"
+	case dto.MetricType_GAUGE:
+		return "gauge"
+	case dto.MetricType_SUMMARY:
+		return "summary"
+	case dto.MetricType_HISTOGRAM:
+		return "histogram"
+	case dto.MetricType_UNTYPED:
+		return "untyped"
+	default:
+		return ""
+	}
+}
+
+// ResolveMetricType resolves the metric type for a given series name using the typeMap.
+// For histogram/summary component series (ending in _bucket/_sum/_count), the base family
+// name is used to look up the type. Returns "" if unknown.
+func ResolveMetricType(typeMap map[string]string, name string) string {
+	if t, ok := typeMap[name]; ok {
+		return t
+	}
+	// Trim histogram/summary suffixes to find the base family name.
+	for _, suffix := range []string{"_bucket", "_sum", "_count"} {
+		if strings.HasSuffix(name, suffix) {
+			base := strings.TrimSuffix(name, suffix)
+			if base != "" {
+				if t, ok := typeMap[base]; ok {
+					return t
+				}
+			}
+			break
+		}
+	}
+	return ""
+}
+
 // ParseWithAgentLabels parses Prometheus text format metrics and returns structured RawMetric objects.
 func ParseWithAgentLabels(text string, nodeRole, podName, containerName string) ([]RawMetric, error) {
+	// Build authoritative type map using expfmt.
+	// TextToMetricFamilies may return a non-nil error AND a non-empty families map
+	// simultaneously (e.g. for "unexpected end of input stream" on trailing newline).
+	// We always use whatever families were successfully parsed, ignoring parse errors.
+	typeMap := make(map[string]string)
+	parser := expfmt.NewTextParser(model.LegacyValidation)
+	families, _ := parser.TextToMetricFamilies(strings.NewReader(text))
+	for familyName, mf := range families {
+		typeMap[familyName] = metricTypeToString(mf.GetType())
+	}
+
 	lines := strings.Split(text, "\n")
 	var metrics []RawMetric
 	helpMap := make(map[string]string)
@@ -145,6 +201,7 @@ func ParseWithAgentLabels(text string, nodeRole, podName, containerName string) 
 			Labels: labels,
 			Value:  value,
 			Desc:   desc,
+			Type:   ResolveMetricType(typeMap, metricName),
 		})
 	}
 
