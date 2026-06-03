@@ -1,8 +1,5 @@
 # Changes by Version
 
-* Add opt-in vectorized measure query tracing over raw-frame distributed queries, including a trace envelope and fixed trace-label vocabulary.
-* Fix trace query identity-tag projection: when `trace_id`/`span_id` are explicitly projected, reconstruct them from span identity at response build time instead of requesting them as stored tags, and preserve tag order with null-filled per-span value alignment in the distributed trace result iterator.
-
 Release Notes.
 
 ## 0.11.0
@@ -60,6 +57,7 @@ Release Notes.
   - Introduce measure migration tool.
 - Support displaying a measure's indexed tags in the dump tool, resolved per part so peak memory is bounded by the part rather than a segment-wide series map.
 - Snapshot/backup and data inspection no longer reopen idle-closed segments, avoiding cold-segment nil-index panics and index lock-file churn.
+- Add opt-in vectorized measure query tracing over raw-frame distributed queries, including a trace envelope and fixed trace-label vocabulary.
 - Enhance segment lifecycle: `refCount` now counts only active users, decoupled from "open" (`index != nil`), adding a "dormant" state (open, `refCount == 0`). A `DecRef` to zero no longer closes a segment; idle reclaim and retention delete act only at `refCount == 0`, so an in-flight snapshot/inspect is no longer torn down mid-operation (fixing the cold-node nil-index panic and bluge lock churn) while idle segments still release their bluge writers.
 
 ### Bug Fixes
@@ -102,6 +100,8 @@ Release Notes.
 - Release bluge index writers on segment rotation so `analysisWorker` pools sized from `GOMAXPROCS` don't accumulate across rotations. Two layered defects kept the existing idle-segment reclaim path from running: `segmentIdleTimeout` defaulted to `0` (which disabled the 10-minute reclaim ticker), and `incRef` refreshed `lastAccessed` on every rotation tick so `closeIdleSegments` never observed an idle segment. Defaults to `time.Hour`, moves the `lastAccessed` bump to real read/write call sites, and rewrites `closeIdleSegments` to take its own CAS-bumped snapshot so a concurrent reopen cannot have its only ref dropped under the reclaimer (apache/skywalking#13874).
 - Fix incorrect counts and missing trace fields in the lifecycle migration report.
 - Fix lifecycle migration placing data in the wrong target segment when the source segment interval is not a multiple of the target stage's interval, by row-level replaying parts that straddle a target-segment boundary instead of chunk-copying them into a single segment.
+- Fix trace query identity-tag projection: when `trace_id`/`span_id` are explicitly projected, reconstruct them from span identity at response build time instead of requesting them as stored tags, and preserve tag order with null-filled per-span value alignment in the distributed trace result iterator.
+- Fix measure, stream, and trace queries returning data from segments already expired by the TTL. Retention removes a segment only on its next scheduled run, so a fully expired segment can linger on disk and keep serving TTL-expired data; queries now skip segments whose whole time range is past the retention deadline, matching retention's own removal condition.
 
 ### Chores
 
