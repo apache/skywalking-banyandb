@@ -21,7 +21,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"sync"
+	"runtime/debug"
 	"sync/atomic"
 	"time"
 
@@ -139,9 +139,9 @@ func (p *confirmPipeline) drain() error {
 // write overlaps with building and sending the next. It owns the whole publisher
 // lifecycle (open, rotate, close) so the per-data-type replayers only build
 // messages and enqueue them. batchSize and timeout are supplied by each data
-// type. A sender is driven by a single goroutine; only the buffer is
-// mutex-guarded, while each background confirmation touches just its own
-// captured publisher and channel.
+// type. A sender is driven by a single goroutine (the part's replay loop): only
+// it touches the buffer, and each background confirmation touches just its own
+// captured publisher and channel, so no buffer locking is needed.
 type batchSender struct {
 	client    queue.Client
 	publisher queue.BatchPublisher
@@ -150,14 +150,11 @@ type batchSender struct {
 	topic     bus.Topic
 	timeout   time.Duration
 	batchSize int
-	mu        sync.Mutex
 }
 
 // newBatchSender builds a sender for one data type. batchSize and timeout are
 // per-type knobs each replayer (measure/stream/trace) supplies from its own
-// constants; they coincide at 2000/30s today, which is why unparam is silenced.
-//
-//nolint:unparam
+// constants, reserved for per-type tuning; they coincide at 2000/30s today.
 func newBatchSender(client queue.Client, topic bus.Topic, batchSize int, timeout time.Duration) *batchSender {
 	return &batchSender{
 		client:    client,
@@ -174,11 +171,8 @@ func newBatchSender(client queue.Client, topic bus.Topic, batchSize int, timeout
 // confirms it. The returned error is non-nil only when the in-flight bound
 // forced it to wait on (and surface) an earlier batch's failure.
 func (s *batchSender) enqueue(ctx context.Context, msg bus.Message) error {
-	s.mu.Lock()
 	s.batch = append(s.batch, msg)
-	full := len(s.batch) >= s.batchSize
-	s.mu.Unlock()
-	if full {
+	if len(s.batch) >= s.batchSize {
 		return s.flush(ctx)
 	}
 	return nil
@@ -207,7 +201,7 @@ func (s *batchSender) flush(ctx context.Context) error {
 		var out error
 		defer func() {
 			if rec := recover(); rec != nil {
-				out = fmt.Errorf("row-replay batch confirm panicked: %v", rec)
+				out = fmt.Errorf("row-replay batch confirm panicked: %v\n%s", rec, debug.Stack())
 			}
 			ch <- out
 		}()
@@ -215,6 +209,8 @@ func (s *batchSender) flush(ctx context.Context) error {
 		err := pubErr
 		if err == nil {
 			err = closeErr
+		} else {
+			cee = nil // publish failed — receiver saw nothing, so per-node cee is noise
 		}
 		out = newNodeReplayError(cee, err)
 	}()
@@ -338,10 +334,8 @@ func (s *batchSender) close() (map[string]*common.Error, error) {
 	return cee, closeErr
 }
 
-// take atomically swaps out the buffered batch, returning nil when empty.
+// take swaps out the buffered batch, returning nil when empty.
 func (s *batchSender) take() []bus.Message {
-	s.mu.Lock()
-	defer s.mu.Unlock()
 	if len(s.batch) == 0 {
 		return nil
 	}

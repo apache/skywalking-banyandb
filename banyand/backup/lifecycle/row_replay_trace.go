@@ -112,7 +112,9 @@ func (r *traceRowReplayer) replayPart(ctx context.Context, partPath string) (int
 
 	it := reader.Iterator()
 	defer it.Close()
-	return r.sender.replay(ctx, r.logger, r.group, partPath, r.counter, it,
+	// Prefix the part label with the trace name so the shared driver's timing and
+	// abort logs keep the trace identity the old per-type logs carried.
+	return r.sender.replay(ctx, r.logger, r.group, r.traceName+"/"+partPath, r.counter, it,
 		func() error { return r.publishRow(ctx, it.Row()) })
 }
 
