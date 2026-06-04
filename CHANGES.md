@@ -103,6 +103,7 @@ Release Notes.
 - Fix lifecycle migration placing data in the wrong target segment when the source segment interval is not a multiple of the target stage's interval, by row-level replaying parts that straddle a target-segment boundary instead of chunk-copying them into a single segment.
 - Fix trace query identity-tag projection: when `trace_id`/`span_id` are explicitly projected, reconstruct them from span identity at response build time instead of requesting them as stored tags, and preserve tag order with null-filled per-span value alignment in the distributed trace result iterator.
 - Fix measure, stream, and trace queries returning data from segments already expired by the TTL. Retention removes a segment only on its next scheduled run, so a fully expired segment can linger on disk and keep serving TTL-expired data; queries now skip segments whose whole time range is past the retention deadline, matching retention's own removal condition.
+- Trace storage metrics now expose the `storage` sub-scope, matching the `stream_storage_*` naming. The `StorageMetricsFactory` for trace switched from the root `trace` scope to `trace.storage`, so per-segment inverted-index metrics (`inverted_index_total_updates`, `inverted_index_total_doc_count`, `inverted_index_total_term_searchers_started`) are now emitted as `banyandb_trace_storage_*` instead of `banyandb_trace_*`, aligning the dashboard query names. Other trace metrics (`trace_tst_*`, `trace_scheduler_*`) are unchanged.
 
 ### Chores
 

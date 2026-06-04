@@ -26,8 +26,9 @@ import (
 )
 
 var (
-	streamScope = observability.RootScope.SubScope("trace")
-	tbScope     = streamScope.SubScope("tst")
+	streamScope  = observability.RootScope.SubScope("trace")
+	tbScope      = streamScope.SubScope("tst")
+	storageScope = streamScope.SubScope("storage")
 )
 
 type metrics struct {
