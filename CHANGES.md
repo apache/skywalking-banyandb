@@ -103,6 +103,7 @@ Release Notes.
 - Fix lifecycle migration placing data in the wrong target segment when the source segment interval is not a multiple of the target stage's interval, by row-level replaying parts that straddle a target-segment boundary instead of chunk-copying them into a single segment.
 - Fix trace query identity-tag projection: when `trace_id`/`span_id` are explicitly projected, reconstruct them from span identity at response build time instead of requesting them as stored tags, and preserve tag order with null-filled per-span value alignment in the distributed trace result iterator.
 - Fix measure, stream, and trace queries returning data from segments already expired by the TTL. Retention removes a segment only on its next scheduled run, so a fully expired segment can linger on disk and keep serving TTL-expired data; queries now skip segments whose whole time range is past the retention deadline, matching retention's own removal condition.
+- Fix flaky measure snapshot tests that gated on the part directory appearing in `tab/` as the flush-completion signal. That directory is created by the first line of `memPart.mustFlush`, before the mem→file introduction reaches the in-memory snapshot and before the `.snp` manifest is persisted, so under `-race`/CI load `TakeFileSnapshot` could observe only mem parts and `Close` could drop the in-flight flush; gate on the persisted `.snp` manifest instead.
 
 ### Chores
 
