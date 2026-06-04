@@ -67,6 +67,7 @@ func UpdateTimestampRingBuffer(trb *TimestampRingBuffer, v int64) {
 type Datasource struct {
 	metrics      map[string]*MetricRingBuffer // Map from metric name+labels to RingBuffer storing metric values
 	descriptions map[string]string            // Map from metric name to HELP content descriptions
+	types        map[string]string            // Map from metric name to Prometheus type string
 	timestamps   *TimestampRingBuffer         // RingBuffer storing timestamps for each polling cycle
 	mu           sync.RWMutex
 	CapacitySize int64 // Memory limit in bytes
@@ -78,6 +79,7 @@ func NewDatasource() *Datasource {
 		metrics:      make(map[string]*MetricRingBuffer),
 		timestamps:   NewTimestampRingBuffer(),
 		descriptions: make(map[string]string),
+		types:        make(map[string]string),
 		CapacitySize: 0,
 	}
 }
@@ -102,6 +104,9 @@ func (ds *Datasource) Update(m *metrics.RawMetric) error {
 	}
 	if m.Desc != "" {
 		ds.descriptions[m.Name] = m.Desc
+	}
+	if m.Type != "" {
+		ds.types[m.Name] = m.Type
 	}
 	UpdateMetricRingBuffer(ds.metrics[metricKey], m.Value)
 
@@ -139,6 +144,9 @@ func (ds *Datasource) UpdateBatch(rawMetrics []metrics.RawMetric, timestamp int6
 		}
 		if m.Desc != "" {
 			ds.descriptions[m.Name] = m.Desc
+		}
+		if m.Type != "" {
+			ds.types[m.Name] = m.Type
 		}
 		buffer := ds.metrics[metricKey]
 		UpdateMetricRingBuffer(buffer, m.Value)
@@ -255,6 +263,18 @@ func (ds *Datasource) GetDescriptions() map[string]string {
 
 	result := make(map[string]string)
 	for k, v := range ds.descriptions {
+		result[k] = v
+	}
+	return result
+}
+
+// GetTypes returns a copy of the types map.
+func (ds *Datasource) GetTypes() map[string]string {
+	ds.mu.RLock()
+	defer ds.mu.RUnlock()
+
+	result := make(map[string]string)
+	for k, v := range ds.types {
 		result[k] = v
 	}
 	return result

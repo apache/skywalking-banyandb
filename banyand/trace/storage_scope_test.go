@@ -40,7 +40,7 @@ func TestStorageScopeNamespace(t *testing.T) {
 		scope meter.Scope
 		want  string
 	}{
-		{"streamScope", streamScope, "banyandb_trace"},
+		{"traceScope", traceScope, "banyandb_trace"},
 		{"tbScope", tbScope, "banyandb_trace_tst"},
 		{"storageScope", storageScope, "banyandb_trace_storage"},
 	}
