@@ -324,6 +324,8 @@
     - [StreamMetricsResponse](#banyandb-fodc-v1-StreamMetricsResponse)
     - [Topology](#banyandb-fodc-v1-Topology)
   
+    - [MetricType](#banyandb-fodc-v1-MetricType)
+  
     - [FODCService](#banyandb-fodc-v1-FODCService)
     - [GroupLifecycleService](#banyandb-fodc-v1-GroupLifecycleService)
   
@@ -4850,6 +4852,7 @@ Phase represents the current phase of the deletion task.
 | value | [double](#double) |  |  |
 | description | [string](#string) |  |  |
 | timestamp | [google.protobuf.Timestamp](#google-protobuf-Timestamp) |  |  |
+| type | [MetricType](#banyandb-fodc-v1-MetricType) |  |  |
 
 
 
@@ -5035,6 +5038,22 @@ Phase represents the current phase of the deletion task.
 
 
  
+
+
+<a name="banyandb-fodc-v1-MetricType"></a>
+
+### MetricType
+MetricType represents the Prometheus metric type.
+
+| Name | Number | Description |
+| ---- | ------ | ----------- |
+| METRIC_TYPE_UNSPECIFIED | 0 |  |
+| METRIC_TYPE_GAUGE | 1 |  |
+| METRIC_TYPE_COUNTER | 2 |  |
+| METRIC_TYPE_HISTOGRAM | 3 |  |
+| METRIC_TYPE_SUMMARY | 4 |  |
+| METRIC_TYPE_UNTYPED | 5 |  |
+
 
  
 

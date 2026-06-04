@@ -1328,11 +1328,12 @@ func TestProxyClient_sendLatestMetrics_WithUnfinalizedValue(t *testing.T) {
 
 	allMetrics := ds.GetMetrics()
 	descriptions := ds.GetDescriptions()
+	types := ds.GetTypes()
 
 	ctx := context.Background()
 	mockStream := newMockStreamMetricsClient(ctx)
 
-	err := pc.sendLatestMetrics(mockStream, allMetrics, descriptions)
+	err := pc.sendLatestMetrics(mockStream, allMetrics, descriptions, types)
 
 	require.NoError(t, err)
 	mockStream.mu.Lock()
@@ -1371,6 +1372,7 @@ func TestProxyClient_sendFilteredMetrics_TimeWindow(t *testing.T) {
 	timestamps := ds.GetTimestamps()
 	timestampValues := timestamps.GetAllValues()
 	descriptions := ds.GetDescriptions()
+	types := ds.GetTypes()
 
 	startTime := now.Add(-90 * time.Minute)
 	endTime := now.Add(-30 * time.Minute)
@@ -1382,7 +1384,7 @@ func TestProxyClient_sendFilteredMetrics_TimeWindow(t *testing.T) {
 	ctx := context.Background()
 	mockStream := newMockStreamMetricsClient(ctx)
 
-	err := pc.sendFilteredMetrics(mockStream, allMetrics, timestampValues, descriptions, filter)
+	err := pc.sendFilteredMetrics(mockStream, allMetrics, timestampValues, descriptions, types, filter)
 
 	require.NoError(t, err)
 	mockStream.mu.Lock()
@@ -1414,6 +1416,7 @@ func TestProxyClient_sendFilteredMetrics_NoMatchingTimeWindow(t *testing.T) {
 	timestamps := ds.GetTimestamps()
 	timestampValues := timestamps.GetAllValues()
 	descriptions := ds.GetDescriptions()
+	types := ds.GetTypes()
 
 	// Filter for future time window (no matches)
 	startTime := now.Add(1 * time.Hour)
@@ -1426,7 +1429,7 @@ func TestProxyClient_sendFilteredMetrics_NoMatchingTimeWindow(t *testing.T) {
 	ctx := context.Background()
 	mockStream := newMockStreamMetricsClient(ctx)
 
-	err := pc.sendFilteredMetrics(mockStream, allMetrics, timestampValues, descriptions, filter)
+	err := pc.sendFilteredMetrics(mockStream, allMetrics, timestampValues, descriptions, types, filter)
 
 	require.NoError(t, err)
 	mockStream.mu.Lock()

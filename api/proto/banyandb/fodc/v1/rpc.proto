@@ -60,12 +60,23 @@ message StreamMetricsRequest {
   google.protobuf.Timestamp timestamp = 2;
 }
 
+// MetricType represents the Prometheus metric type.
+enum MetricType {
+  METRIC_TYPE_UNSPECIFIED = 0;
+  METRIC_TYPE_GAUGE = 1;
+  METRIC_TYPE_COUNTER = 2;
+  METRIC_TYPE_HISTOGRAM = 3;
+  METRIC_TYPE_SUMMARY = 4;
+  METRIC_TYPE_UNTYPED = 5;
+}
+
 message Metric {
   string name = 1;
   map<string, string> labels = 2;
   double value = 3;
   string description = 4;
   google.protobuf.Timestamp timestamp = 5;
+  MetricType type = 6;
 }
 
 message StreamMetricsResponse {
