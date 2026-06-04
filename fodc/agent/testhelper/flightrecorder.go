@@ -43,6 +43,7 @@ func NewFlightRecorder(capacitySize int64) *flightrecorder.FlightRecorder {
 type RawMetric struct {
 	Desc   string
 	Name   string
+	Type   string
 	Labels []Label
 	Value  float64
 }
@@ -74,6 +75,7 @@ func UpdateMetrics(fr interface{}, rawMetrics []RawMetric) error {
 			Name:   rawMetrics[idx].Name,
 			Value:  rawMetrics[idx].Value,
 			Desc:   rawMetrics[idx].Desc,
+			Type:   rawMetrics[idx].Type,
 			Labels: internalLabels,
 		}
 	}

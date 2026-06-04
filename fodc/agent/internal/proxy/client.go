@@ -712,6 +712,7 @@ func (c *Client) RetrieveAndSendMetrics(_ context.Context, filter *MetricsReques
 	allMetrics := ds.GetMetrics()
 	timestamps := ds.GetTimestamps()
 	descriptions := ds.GetDescriptions()
+	types := ds.GetTypes()
 
 	if filter != nil && (filter.StartTime != nil || filter.EndTime != nil) {
 		if timestamps == nil {
@@ -756,7 +757,7 @@ func (c *Client) RetrieveAndSendMetrics(_ context.Context, filter *MetricsReques
 			c.streamsMu.Unlock()
 			return fmt.Errorf("metrics stream changed during send")
 		}
-		sendErr := c.sendFilteredMetrics(metricsStream, allMetrics, timestampValues, descriptions, filter)
+		sendErr := c.sendFilteredMetrics(metricsStream, allMetrics, timestampValues, descriptions, types, filter)
 		c.streamsMu.Unlock()
 		return sendErr
 	}
@@ -766,9 +767,27 @@ func (c *Client) RetrieveAndSendMetrics(_ context.Context, filter *MetricsReques
 		c.streamsMu.Unlock()
 		return fmt.Errorf("metrics stream changed during send")
 	}
-	sendErr := c.sendLatestMetrics(metricsStream, allMetrics, descriptions)
+	sendErr := c.sendLatestMetrics(metricsStream, allMetrics, descriptions, types)
 	c.streamsMu.Unlock()
 	return sendErr
+}
+
+// toProtoMetricType converts a lowercase prometheus type string to the proto enum.
+func toProtoMetricType(t string) fodcv1.MetricType {
+	switch t {
+	case "counter":
+		return fodcv1.MetricType_METRIC_TYPE_COUNTER
+	case "gauge":
+		return fodcv1.MetricType_METRIC_TYPE_GAUGE
+	case "histogram":
+		return fodcv1.MetricType_METRIC_TYPE_HISTOGRAM
+	case "summary":
+		return fodcv1.MetricType_METRIC_TYPE_SUMMARY
+	case "untyped":
+		return fodcv1.MetricType_METRIC_TYPE_UNTYPED
+	default:
+		return fodcv1.MetricType_METRIC_TYPE_UNSPECIFIED
+	}
 }
 
 // sendLatestMetrics sends the latest metrics (most recent values).
@@ -776,6 +795,7 @@ func (c *Client) sendLatestMetrics(
 	stream fodcv1.FODCService_StreamMetricsClient,
 	allMetrics map[string]*flightrecorder.MetricRingBuffer,
 	descriptions map[string]string,
+	types map[string]string,
 ) error {
 	protoMetrics := make([]*fodcv1.Metric, 0)
 
@@ -803,6 +823,7 @@ func (c *Client) sendLatestMetrics(
 			Labels:      labelsMap,
 			Value:       metricValue,
 			Description: descriptions[parsedKey.Name],
+			Type:        toProtoMetricType(metrics.ResolveMetricType(types, parsedKey.Name)),
 		}
 
 		protoMetrics = append(protoMetrics, protoMetric)
@@ -826,6 +847,7 @@ func (c *Client) sendFilteredMetrics(
 	allMetrics map[string]*flightrecorder.MetricRingBuffer,
 	timestampValues []int64,
 	descriptions map[string]string,
+	types map[string]string,
 	filter *MetricsRequestFilter,
 ) error {
 	protoMetrics := make([]*fodcv1.Metric, 0)
@@ -871,6 +893,7 @@ func (c *Client) sendFilteredMetrics(
 				Value:       metricValues[idx],
 				Description: description,
 				Timestamp:   timestamppb.New(timestamp),
+				Type:        toProtoMetricType(metrics.ResolveMetricType(types, parsedKey.Name)),
 			}
 
 			protoMetrics = append(protoMetrics, protoMetric)
