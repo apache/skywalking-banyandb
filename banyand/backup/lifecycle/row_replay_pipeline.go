@@ -187,8 +187,9 @@ func (s *batchSender) enqueue(ctx context.Context, msg bus.Message) error {
 // flush sends the buffered batch on the current publisher, rotates in a fresh
 // publisher for the next batch, and confirms the sent batch (closing its stream
 // to collect the per-node delivery result) in the background. The returned error
-// is non-nil only when the in-flight bound made it wait on (and surface) an
-// earlier batch's result. It is a no-op when the buffer is empty.
+// aborts the part promptly: it is this batch's synchronous send error, or — when
+// the in-flight bound made it wait — an earlier batch's surfaced result (which
+// takes priority, preserving send order). It is a no-op when the buffer is empty.
 func (s *batchSender) flush(ctx context.Context) error {
 	pending := s.take()
 	if len(pending) == 0 {
@@ -217,7 +218,15 @@ func (s *batchSender) flush(ctx context.Context) error {
 		}
 		out = newNodeReplayError(cee, err)
 	}()
-	return s.pipeline.add(ch)
+	// Abort promptly: an earlier in-flight batch's failure (via the bound) wins,
+	// otherwise this batch's own synchronous send error.
+	if awaited := s.pipeline.add(ch); awaited != nil {
+		return awaited
+	}
+	if pubErr != nil {
+		return newNodeReplayError(nil, pubErr)
+	}
+	return nil
 }
 
 // drain waits for every in-flight batch confirmation and returns the first

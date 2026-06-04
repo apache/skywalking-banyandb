@@ -973,11 +973,12 @@ func findRoundtripPartDirs(root string) []string {
 // countingBatchPublisher is a queue.BatchPublisher fake that records how many
 // times it was published to and closed, and how many messages each Publish
 // carried. Close runs in the replayer's background confirmation goroutines, so
-// the counters are atomic. closeCee injects a per-node delivery failure, and
-// panicOnClose makes Close panic to exercise the confirm goroutine's
-// panic-safety.
+// the counters are atomic. closeCee injects a per-node delivery failure,
+// publishErr injects a synchronous send failure, and panicOnClose makes Close
+// panic to exercise the confirm goroutine's panic-safety.
 type countingBatchPublisher struct {
 	closeCee      map[string]*common.Error
+	publishErr    error
 	panicOnClose  bool
 	publishCount  atomic.Int32
 	publishedRows atomic.Int32
@@ -987,7 +988,7 @@ type countingBatchPublisher struct {
 func (f *countingBatchPublisher) Publish(_ context.Context, _ bus.Topic, messages ...bus.Message) (bus.Future, error) {
 	f.publishCount.Add(1)
 	f.publishedRows.Add(int32(len(messages)))
-	return nil, nil
+	return nil, f.publishErr
 }
 
 func (f *countingBatchPublisher) Close() (map[string]*common.Error, error) {
@@ -1491,4 +1492,27 @@ func TestBatchSender_CloseSurfacesDrainedFailure(t *testing.T) {
 	cee, err := s.close()                  // close() must drain it and surface the node error
 	require.NoError(t, err, "a node-only failure carries no global error")
 	require.Contains(t, cee, "node-9", "close must return the drained batch's per-node errors")
+}
+
+// TestReplay_SurfacesSynchronousPublishErrorPromptly pins that a synchronous
+// Publish failure aborts the part on the flush that triggered it — not deferred
+// until the in-flight bound or the final drain. With the failing publisher
+// carrying the first batch, replay must stop right after that batch instead of
+// scanning ~depth more batches: the old code returned the error only via the
+// bound, so it would have consumed ~3 batches before aborting.
+func TestReplay_SurfacesSynchronousPublishErrorPromptly(t *testing.T) {
+	pub := &countingBatchPublisher{publishErr: fmt.Errorf("stream send broke")}
+	s, _ := senderReturning(t, pub) // the first batch's Publish fails synchronously
+	var counter uint64
+	rows, err := s.replay(context.TODO(), logger.GetLogger("test-replayer"), "g", "p", &counter,
+		&fakeCursor{n: 3 * measureReplayBatchSize}, cleanEmit(s))
+	require.ErrorContains(t, err, "stream send broke", "a synchronous Publish error must abort the part")
+	require.Zero(t, counter, "a failed part must not be counted")
+	// Row 2000's emit triggers the failing flush and returns its error, so the loop
+	// breaks before counting it: exactly one batch worth minus the failing row, far
+	// short of the 3 batches the deferred (bound-only) behavior would have scanned.
+	require.Equal(t, measureReplayBatchSize-1, rows, "replay must abort on the failing flush, not keep scanning")
+	require.Nil(t, s.take(), "the residual must be discarded")
+	_, cerr := s.close()
+	require.NoError(t, cerr)
 }
