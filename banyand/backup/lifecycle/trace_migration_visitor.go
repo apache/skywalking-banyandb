@@ -385,32 +385,20 @@ func (mv *traceMigrationVisitor) visitShardRowReplay(ctx context.Context, source
 			continue
 		}
 		partPath := filepath.Join(shardPath, name)
-		rowCount, replayErr := replayer.replayPart(ctx, partPath)
-		if replayErr != nil {
-			mv.progress.MarkTraceShardError(mv.group, segmentIDStr, sourceShardID, replayErr.Error())
-			return fmt.Errorf("row-replay trace part %s: %w", partPath, replayErr)
+		// replayPart sends and confirms the part's rows through the bounded pipeline,
+		// draining all in-flight confirmations before returning. A non-nil error
+		// marks the whole shard errored so resume re-replays it, never skipping a
+		// shard whose rows were not durably delivered.
+		rowCount, partErr := replayer.replayPart(ctx, partPath)
+		if partErr != nil {
+			recordReplayNodeErrors(mv.progress, mv.group, partErr)
+			mv.progress.MarkTraceShardError(mv.group, segmentIDStr, sourceShardID, partErr.Error())
+			return fmt.Errorf("row-replay trace part %s: %w", partPath, partErr)
 		}
 		totalRows += rowCount
 		partsReplayed++
 	}
 
-	// Confirm this shard's rows reached every node before marking it completed.
-	// replayPart only enqueues; the batch publisher is client-streaming so
-	// per-node errors surface only when its stream closes, so flushAndConfirm
-	// closes the publisher to collect that result (then opens a fresh one for the
-	// next shard). Marking before this confirmation could report success for rows
-	// a flush failure never delivered, and the resume guard would then skip the
-	// whole shard, losing data.
-	cee, flushErr := replayer.flushAndConfirm(ctx)
-	if flushErr != nil || len(cee) > 0 {
-		mv.progress.RecordRowReplayNodeErrors(mv.group, cee)
-		confirmErr := flushErr
-		if confirmErr == nil {
-			confirmErr = fmt.Errorf("%d node error(s)", len(cee))
-		}
-		mv.progress.MarkTraceShardError(mv.group, segmentIDStr, sourceShardID, confirmErr.Error())
-		return fmt.Errorf("confirm row-replay trace shard %s: %w", shardPath, confirmErr)
-	}
 	mv.progress.MarkTraceShardCompleted(mv.group, segmentIDStr, sourceShardID)
 	mv.progress.MarkSourceTraceShardCompleted(mv.group, segmentIDStr, sourceShardID)
 	mv.progress.AddTraceRowReplay(mv.group, partsReplayed, totalRows)

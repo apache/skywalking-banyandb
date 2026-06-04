@@ -382,29 +382,17 @@ func (mv *streamMigrationVisitor) visitPartRowReplay(ctx context.Context, segmen
 		Int("target_segments_count", len(targetSegments)).
 		Str("group", mv.group).
 		Msg("stream part spans multiple target segments; switching to row-replay")
+	// replayPart sends and confirms the part's rows through the bounded pipeline,
+	// draining all in-flight confirmations before returning. A non-nil error means
+	// some rows were not durably delivered; marking the part errored (rather than
+	// completed) ensures the resume guard re-replays the whole part.
 	rowCount, err := replayer.replayPart(ctx, partPath)
 	if err != nil {
 		// Row-replay is all-or-nothing per part; mark the source part errored so
 		// resume retries the whole part (same source key the guard checks above).
+		recordReplayNodeErrors(mv.progress, mv.group, err)
 		mv.progress.MarkStreamPartError(mv.group, sourceSegmentIDStr, sourceShardID, partID, err.Error())
 		return fmt.Errorf("row-replay stream part %s: %w", partPath, err)
-	}
-	// Confirm this part's rows reached every node before marking it completed.
-	// replayPart only enqueues; the batch publisher is client-streaming so
-	// per-node errors surface only when its stream closes, so flushAndConfirm
-	// closes the publisher to collect that result (then opens a fresh one for the
-	// next part). Marking before this confirmation could report success for rows
-	// a flush failure never delivered, and the resume guard would then skip the
-	// part, losing data.
-	cee, flushErr := replayer.flushAndConfirm(ctx)
-	if flushErr != nil || len(cee) > 0 {
-		mv.progress.RecordRowReplayNodeErrors(mv.group, cee)
-		confirmErr := flushErr
-		if confirmErr == nil {
-			confirmErr = fmt.Errorf("%d node error(s)", len(cee))
-		}
-		mv.progress.MarkStreamPartError(mv.group, sourceSegmentIDStr, sourceShardID, partID, confirmErr.Error())
-		return fmt.Errorf("confirm row-replay stream part %s: %w", partPath, confirmErr)
 	}
 	mv.progress.MarkStreamPartCompleted(mv.group, sourceSegmentIDStr, sourceShardID, partID)
 	mv.progress.MarkSourceStreamPartCompleted(mv.group, partPath, sourceShardID, partID)

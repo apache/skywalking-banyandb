@@ -24,7 +24,6 @@ import (
 	"path/filepath"
 	"strconv"
 	"sync"
-	"sync/atomic"
 	"time"
 
 	"google.golang.org/protobuf/types/known/timestamppb"
@@ -59,8 +58,7 @@ type cachedStreamSchema struct {
 // streamRowReplayer replays a group's stream parts row-by-row.
 type streamRowReplayer struct {
 	selector       node.Selector
-	client         queue.Client
-	publisher      queue.BatchPublisher
+	sender         *batchSender
 	metadata       metadata.Repo
 	fs             fs.FileSystem
 	logger         *logger.Logger
@@ -69,10 +67,8 @@ type streamRowReplayer struct {
 	counter        *uint64
 	group          string
 	irPath         string
-	batch          []bus.Message
 	schemaCacheMu  sync.Mutex
 	irMu           sync.Mutex
-	batchMu        sync.Mutex
 	targetShardNum uint32
 }
 
@@ -86,23 +82,19 @@ func newStreamRowReplayer(
 		group:          group,
 		targetShardNum: targetShardNum,
 		selector:       selector,
-		client:         client,
-		publisher:      client.NewBatchPublisher(streamReplayBatchTimeout),
+		sender:         newBatchSender(client, data.TopicStreamWrite, streamReplayBatchSize, streamReplayBatchTimeout),
 		metadata:       md,
 		fs:             fileSystem,
 		logger:         l,
 		schemaCache:    make(map[string]*cachedStreamSchema),
 		counter:        counter,
-		batch:          make([]bus.Message, 0, streamReplayBatchSize),
 	}
 }
 
-// Close flushes pending messages, closes the publisher and releases cached
-// IndexResolver handles.
+// Close drains any outstanding batch confirmations, closes the publisher and
+// releases cached IndexResolver handles.
 func (r *streamRowReplayer) Close() (map[string]*common.Error, error) {
-	flushCtx, cancel := context.WithTimeout(context.Background(), streamReplayBatchTimeout)
-	defer cancel()
-	flushErr := r.flushBatch(flushCtx)
+	cee, closeErr := r.sender.close()
 	r.irMu.Lock()
 	if r.irResolver != nil {
 		_ = r.irResolver.Close()
@@ -110,25 +102,6 @@ func (r *streamRowReplayer) Close() (map[string]*common.Error, error) {
 		r.irPath = ""
 	}
 	r.irMu.Unlock()
-	cee, closeErr := r.publisher.Close()
-	if flushErr != nil {
-		return cee, flushErr
-	}
-	return cee, closeErr
-}
-
-// flushAndConfirm flushes the buffered batch, closes the publisher to obtain the
-// per-node delivery result for everything sent since the last call, then opens a
-// fresh publisher for subsequent parts. The batch publisher is client-streaming,
-// so per-node errors are only observable once its stream closes; this lets a
-// row-replayed part be confirmed durable before it is marked completed.
-func (r *streamRowReplayer) flushAndConfirm(ctx context.Context) (map[string]*common.Error, error) {
-	flushErr := r.flushBatch(ctx)
-	cee, closeErr := r.publisher.Close()
-	r.publisher = r.client.NewBatchPublisher(streamReplayBatchTimeout)
-	if flushErr != nil {
-		return cee, flushErr
-	}
 	return cee, closeErr
 }
 
@@ -198,38 +171,8 @@ func (r *streamRowReplayer) replayPart(ctx context.Context, partPath string) (in
 
 	it := reader.Iterator()
 	defer it.Close()
-
-	rowCount := 0
-	for it.Next() {
-		row := it.Row()
-		if rowErr := r.publishRow(ctx, row); rowErr != nil {
-			pos := it.Position()
-			r.logger.Warn().Err(rowErr).
-				Str("group", r.group).
-				Str("part", partPath).
-				Int("block_idx", pos.BlockIdx).
-				Int("row_idx", pos.RowIdx).
-				Int("rows_published", rowCount).
-				Msg("stream row-replay aborted mid-part on publish error; will retry on resume")
-			return rowCount, rowErr
-		}
-		rowCount++
-	}
-	if iterErr := it.Err(); iterErr != nil {
-		pos := it.Position()
-		r.logger.Warn().Err(iterErr).
-			Str("group", r.group).
-			Str("part", partPath).
-			Int("block_idx", pos.BlockIdx).
-			Int("row_idx", pos.RowIdx).
-			Int("rows_published", rowCount).
-			Msg("stream row-replay aborted mid-part; will retry on resume")
-		return rowCount, iterErr
-	}
-	if r.counter != nil {
-		atomic.AddUint64(r.counter, 1)
-	}
-	return rowCount, nil
+	return r.sender.replay(ctx, r.logger, r.group, partPath, r.counter, it,
+		func() error { return r.publishRow(ctx, it.Row()) })
 }
 
 // buildWriteRequest reconstructs the WriteRequest + InternalWriteRequest pair
@@ -277,30 +220,5 @@ func (r *streamRowReplayer) publishRow(ctx context.Context, row dumpstream.Row) 
 		return fmt.Errorf("pick target node for %s: %w", wr.Metadata.Name, err)
 	}
 	msg := bus.NewBatchMessageWithNode(bus.MessageID(time.Now().UnixNano()), nodeID, iwr)
-	return r.enqueue(ctx, msg)
-}
-
-// enqueue appends a message to the batch and flushes when full.
-func (r *streamRowReplayer) enqueue(ctx context.Context, msg bus.Message) error {
-	r.batchMu.Lock()
-	r.batch = append(r.batch, msg)
-	shouldFlush := len(r.batch) >= streamReplayBatchSize
-	r.batchMu.Unlock()
-	if shouldFlush {
-		return r.flushBatch(ctx)
-	}
-	return nil
-}
-
-func (r *streamRowReplayer) flushBatch(ctx context.Context) error {
-	r.batchMu.Lock()
-	if len(r.batch) == 0 {
-		r.batchMu.Unlock()
-		return nil
-	}
-	pending := r.batch
-	r.batch = make([]bus.Message, 0, streamReplayBatchSize)
-	r.batchMu.Unlock()
-	_, err := r.publisher.Publish(ctx, data.TopicStreamWrite, pending...)
-	return err
+	return r.sender.enqueue(ctx, msg)
 }
