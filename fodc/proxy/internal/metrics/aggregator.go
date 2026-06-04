@@ -44,6 +44,7 @@ type AggregatedMetric struct {
 	Name        string
 	AgentID     string
 	Description string
+	Type        string // lowercase prometheus type: "counter","gauge","histogram","summary","untyped",""
 	Value       float64
 }
 
@@ -88,6 +89,25 @@ func (ma *Aggregator) SetGRPCService(grpcService RequestSender) {
 	ma.grpcService = grpcService
 }
 
+// protoMetricTypeToString converts a proto MetricType enum to its lowercase string representation.
+// UNSPECIFIED maps to "" (unknown, causes proxy to fall back to suffix heuristic).
+func protoMetricTypeToString(mt fodcv1.MetricType) string {
+	switch mt {
+	case fodcv1.MetricType_METRIC_TYPE_COUNTER:
+		return "counter"
+	case fodcv1.MetricType_METRIC_TYPE_GAUGE:
+		return "gauge"
+	case fodcv1.MetricType_METRIC_TYPE_HISTOGRAM:
+		return "histogram"
+	case fodcv1.MetricType_METRIC_TYPE_SUMMARY:
+		return "summary"
+	case fodcv1.MetricType_METRIC_TYPE_UNTYPED:
+		return "untyped"
+	default:
+		return ""
+	}
+}
+
 // ProcessMetricsFromAgent processes metrics received from an agent.
 func (ma *Aggregator) ProcessMetricsFromAgent(ctx context.Context, agentID string, agentInfo *registry.AgentInfo, req *fodcv1.StreamMetricsRequest) error {
 	aggregatedMetrics := make([]*AggregatedMetric, 0, len(req.Metrics))
@@ -119,6 +139,7 @@ func (ma *Aggregator) ProcessMetricsFromAgent(ctx context.Context, agentID strin
 			Timestamp:   timestamp,
 			AgentID:     agentID,
 			Description: metric.Description,
+			Type:        protoMetricTypeToString(metric.Type),
 		}
 
 		aggregatedMetrics = append(aggregatedMetrics, aggregatedMetric)
