@@ -6,112 +6,185 @@ In TSDB, the data in a group is partitioned based on the time range of the data.
 
 More than the time series data model, TSDB also provides a schema-less and non-time-series data type, `Property`. The `Property` data type is used to store the document which contains several tags. The `Property` data is an independent group that contains only `shard`s, without `segment_interval`, `ttl`, or other time-series-related features.
 
-![tsdb](https://skywalking.apache.org/doc-graph/banyandb/v0.8.0/tsdb-v1.2.0.png)
+> This page describes the TSDB engine concepts. For the on-disk file format of every resource organized **from the API perspective** (including `Property`, measure index-mode, the shared encoding primitives, and the distributed sync wire format), see [Storage & File Format](storage-and-format.md).
+
+The on-disk hierarchy is `group → segment → shard → part`:
+
+```mermaid
+flowchart TD
+    G["group/"] --> SEG["seg-&lt;date&gt;/ (time segment)"]
+    SEG --> SI["sidx/ — series index (Bluge)"]
+    SEG --> SH["shard-&lt;N&gt;/"]
+    SH --> P["&lt;016x&gt;/ — part (immutable)"]
+    SH --> SNP["&lt;016x&gt;.snp — snapshot manifest"]
+    P --> COL["columnar files (meta.bin, primary.bin, …)"]
+```
+
+For `Property`, there is no time segment: a group contains shards directly, each shard being a single inverted index (see [Storage & File Format](storage-and-format.md#6-property)).
 
 ## Segment
 
-In each segment, the data is spread into shards based on `entity`. The series index is stored in the segment, which is used to locate the data in the shard.
+In each segment, the data is spread into shards based on `entity`. The series index (the per-segment `sidx/` directory, a Bluge inverted index) is stored in the segment and is used to locate the data in the shard.
 
-![segment](https://skywalking.apache.org/doc-graph/banyandb/v0.7.0/segment.png)
+A segment directory is named `seg-<suffix>`, where the suffix is the segment-start time formatted as `YYYYMMDDHH` (hour granularity) or `YYYYMMDD` (day granularity), selected by the group's `segment_interval` unit.
+
+```mermaid
+flowchart TD
+    SEG["seg-20240901/"] --> SI["sidx/ — series index"]
+    SEG --> S0["shard-0/"]
+    SEG --> S1["shard-1/"]
+    SEG --> SN["shard-n/"]
+```
 
 ## Shard
 
 Each shard is assigned to a specific set of storage nodes, and those nodes store and process the data within that shard. This allows BanyanDB to scale horizontally by adding more storage nodes to the cluster as needed.
 
-In `Stream`, `Measure` or `Trace`, Each shard is composed of multiple [parts](#Part). Whenever SkyWalking sends a batch of data, BanyanDB writes this batch of data into a new part. For data of the `Stream` type, the inverted indexes generated based on the indexing rules are also stored in the segment. For data of the `Trace` type, BanyanDB maintains a tree index for `TREE` type index rules. The tree index stores data with user-controlled int64 ordering keys, enabling efficient sorted result retrieval.
+In `Stream`, `Measure` or `Trace`, each shard is composed of multiple [parts](#Part). Whenever SkyWalking sends a batch of data, BanyanDB writes this batch of data into a new part.
 
-Since BanyanDB adopts a snapshot approach for data read and write operations, the segment also needs to maintain additional snapshot information to record the validity of the parts. The shard contains `xxxxxxx.snp` to record the validity of parts. In the chart, `0000000000000001` is removed from the snapshot file, which means the part is invalid. It will be cleaned up in the next flush or merge operation.
+- For data of the `Stream` type, an element-level inverted index built from `TYPE_INVERTED` index rules is stored in the shard's `idx/` directory.
+- For data of the `Trace` type, BanyanDB maintains an ordered secondary index (`sidx`) for `TREE` type index rules under the shard's `sidx/` directory. The secondary index stores data with user-controlled int64 ordering keys, enabling efficient sorted result retrieval. (Note: this shard-level `sidx/` is distinct from the segment-level `sidx/` series index above — same name, different depth and purpose.)
 
-![shard](https://skywalking.apache.org/doc-graph/banyandb/v0.7.0/shard.png)
+Since BanyanDB adopts a snapshot approach for data read and write operations, the shard maintains snapshot information to record the validity of the parts. The shard contains `<016x>.snp` (JSON array of live part directory names) to record which parts are valid. In the chart, `000…001` is absent from the snapshot file, which means the part is invalid; it will be cleaned up in the next flush or merge operation.
 
-In `Property`, the shard is implemented by the [inverted index](#Inverted-Index). Users could filter data by the tag.
+```mermaid
+flowchart TD
+    SH["shard-0/"] --> P1["000…001/ (part — dropped)"]:::dead
+    SH --> P2["000…002/ (part)"]
+    SH --> PN["000…0cdfe/ (part)"]
+    SH --> SNP["000…0cdfe.snp (lists 002 … 0cdfe)"]
+    SH --> IDX["idx/ — stream element index (stream only)"]
+    classDef dead fill:#fdd,stroke:#900,stroke-dasharray:4
+```
+
+In `Property`, the shard is implemented directly by an [inverted index](#Inverted-Index). Users can filter data by tag.
 
 ## Inverted Index
 
-The inverted index is used to locate the data in the shard. For `measure`, it is a mapping from the term to the series id. For `stream`, it is a mapping from the term to the timestamp.
+The inverted index locates data within a segment/shard. It is used in several places:
+
+- the per-segment **series index** (`seg-…/sidx/`) — for `Measure`, `Stream`, and `Trace`, it maps entity/tag terms to the **series id**;
+- the per-shard **element index** (`Stream`'s `idx/`) — it maps indexed-tag terms to **element ids** (with a parallel timestamp posting list);
+- the **index-mode `Measure`** store and the entire **`Property`** store (see [Storage & File Format](storage-and-format.md)).
+
+The inverted index uses the Bluge/ICE segment format. It stores a `snapshot` file `<012x>.snp` to record the validity of segments; a segment id absent from the snapshot is invalid and will be cleaned up at the next flush or merge.
+
+A segment file `<012x>.seg` contains the inverted index data, with these logical parts:
+
+- **Tags**: the mapping from a tag name to its dictionary location.
+- **Dictionary**: an FST (Finite State Transducer) dictionary mapping a tag value to its posting list.
+- **Posting List**: the mapping from a tag value to the series id / element id (and, when stored, a location for the stored value). Posting lists are roaring bitmaps.
+- **Stored Value**: optionally stored field values. (For `Property`, individual tags are *not* stored here — only the whole-document `_source` JSON is stored; tags are indexed-only.)
+
+```mermaid
+flowchart LR
+    Q["query Tag1 = Value1"] --> TAGS["Tags (name → dict location)"]
+    TAGS --> DICT["Dictionary (FST: value → postings)"]
+    DICT --> POST["Posting List (roaring bitmap of doc ids)"]
+    POST --> STORE["Stored Value (optional)"]
+    SEG[".seg segments + .snp snapshot"]
+```
 
 ## Tree Index
 
-The tree index is a high-performance indexing system used by `Trace` for `TREE` type index rules. The tree index stores data with user-controlled int64 ordering keys, enabling efficient sorted result retrieval.
+The "tree index" (proto enum `TYPE_TREE`) is the high-performance ordered index used by `Trace`. It is implemented by the **sidx** (secondary index) store, not a literal tree structure; it stores records ordered by a user-controlled int64 key, enabling efficient sorted retrieval.
 
-Each `TREE` type index rule bound to a trace creates a separate tree index instance identified by the index rule name. During writes, the database engine extracts the int64 value from the indexed tag and stores it as the ordering key along with the trace data. During queries, the tree index supports streaming result retrieval sorted by the ordering key, cross-shard ordered merging, and key range filtering.
+Each `TREE` index rule bound to a trace creates a separate sidx instance, identified by the index rule name, under `shard-<N>/sidx/<ruleName>/`. During writes, the engine extracts the int64 value from the indexed tag (e.g. `duration`, start time) and stores it as the ordering key alongside the trace id. During queries, sidx supports streaming retrieval sorted by the key, cross-shard ordered merging, and key-range filtering.
 
-The tree index follows the same part-based storage model as the main data store, with memory parts flushed to disk parts and periodic merge operations to maintain performance.
-
-For `property`, all the content of a property is stored as a `_source` field in the inverted index. `group`, `name`, `id` and `tags` are only indexed in the inverted index.
-
-The inverted index stores `snapshot` file `xxxxxxx.snp` to record the validity of segments. In the chart, `0000000000000001.seg` is removed from the snapshot file, which means the segment is invalid. It will be cleaned up in the next flush or merge operation.
-
-The segment file `xxxxxxxx.seg` contains the inverted index data. It includes four parts:
-
-- **Tags**: The mapping from the tag name to the dictionary location.
-- **Dictionary**: It's a FST(Finite State Transducer) dictionary to map tag value to the posting list.
-- **Posting List**: The mapping from the tag value to the series id or timestamp. It also contains a location info to the stored tag value.
-- **Stored Tag Value**: The stored tag value.
-
-![inverted-index](https://skywalking.apache.org/doc-graph/banyandb/v0.7.0/inverted-index.png)
-
-If you want to search `Tag1=Value1`, the index will first search the `Tags` part to find the dictionary location of `Tag1`. Then, it will search the `Dictionary` part to find the posting list location of `Value1`. Finally, it will search the `Posting List` part to find the series id or timestamp. If you want to fetch the tag value, it will search the `Stored Tag Value` part to find the tag value.
+sidx follows the same part-based storage model as the main data store (memory parts flushed to disk parts, with periodic merges). Its on-disk files (`keys.bin`, `data.bin`, per-tag `.td`/`.tm`/`.tf`, etc.) are detailed in [Storage & File Format](storage-and-format.md#53-sidx--the-ordered-secondary-index).
 
 ## Part
 
-Within a part, data is split into multiple files in a columnar manner. The timestamps are stored in the `timestamps.bin` file, tags are organized in persistent tag families as various files with the `.tf` suffix, and fields are stored separately in the `fields.bin` file.
+Within a part, data is split into multiple files in a **columnar** manner. The exact set of files depends on the engine:
 
-In addition, each part maintains several metadata files. Among them, `metadata.json` is the metadata file for the part, storing descriptive information, such as start and end times, part size, etc.
+- **Measure**: timestamps (with versions) in `timestamps.bin`; field-value columns in `fv.bin`; tags grouped into tag families, with values in `<tagFamily>.tf` and the column directory in `<tagFamily>.tfm`.
+- **Stream**: same as Measure but with **no `fv.bin`** (streams have no fields); `timestamps.bin` holds timestamps **+ element ids**; each tag family adds a `<tagFamily>.tff` filter file (bloom filters for `SKIPPING`-indexed tags).
+- **Trace**: a different layout — opaque span payloads in `spans.bin`, **no `timestamps.bin`** (timestamps live in `metadata.json`), flat per-tag files `<tag>.t` / `<tag>.tm` (not tag families), plus `tag.type` and a part-level `traceID.filter` bloom. See [Storage & File Format](storage-and-format.md#5-trace).
 
-The `meta.bin` is a skipping index file that serves as the entry file for the entire part, helping to index the `primary.bin` file.
+Each part also maintains metadata files:
 
-The `primary.bin` file contains the index of each [block](#Block). Through it, the actual data files or the tagFamily metadata files ending with `.tfm` can be indexed, which in turn helps to locate the data in blocks.
+- `metadata.json` — descriptive information for the part (compressed/uncompressed sizes, total count, block count, min/max timestamp). The part id is the directory name, not stored inside the JSON.
+- `meta.bin` — a skipping index file that is the entry point for the part; it indexes the `primary.bin` file. It is a zstd-compressed stream of fixed-size `primaryBlockMetadata` records.
+- `primary.bin` — the index of each [block](#Block). Through it, the data files (and the tag-family metadata files ending with `.tfm`) are located. It is a sequence of independently zstd-compressed "primary blocks".
+- `smeta.bin` (optional) — compact series metadata (e.g. SeriesID → EntityValues), used for sync/recovery and offline inspection tools. It may be absent on older parts.
 
-The optional `smeta.bin` file persists compact series metadata (e.g., SeriesID to EntityValues mappings). It is primarily designed for operational debugging and offline inspection tools.
+The diagrams below show the Measure and Stream part fan-out (`meta.bin → primary.bin → data columns`):
 
-Notably, for data of the `Stream` type, since there are no field columns, the `fields.bin` file does not exist, while the rest of the structure is entirely consistent with the `Measure` type.
+```mermaid
+flowchart LR
+    subgraph Measure part
+    MM["meta.bin"] --> MP["primary.bin"]
+    MP --> MT["timestamps.bin (ts + version)"]
+    MP --> MF["fv.bin (field columns)"]
+    MP --> MTFM["&lt;family&gt;.tfm"]
+    MTFM --> MTF["&lt;family&gt;.tf"]
+    MJ["metadata.json"]
+    MS["smeta.bin (optional)"]
+    end
+```
 
-![measure-part](https://skywalking.apache.org/doc-graph/banyandb/v0.10.0/measure-part.png)
-![stream-part](https://skywalking.apache.org/doc-graph/banyandb/v0.10.0/stream-part.png)
+```mermaid
+flowchart LR
+    subgraph Stream part
+    SM["meta.bin"] --> SP["primary.bin"]
+    SP --> ST["timestamps.bin (ts + elementID)"]
+    SP --> STFM["&lt;family&gt;.tfm"]
+    STFM --> STF["&lt;family&gt;.tf"]
+    STFM --> STFF["&lt;family&gt;.tff (tag filters)"]
+    SJ["metadata.json"]
+    SS["smeta.bin (optional)"]
+    end
+```
 
 ## Block
 
-Each block holds data with the same series ID.
-The max size of the measure block is controlled by data volume and the number of rows. Meanwhile, the max size of the stream block is controlled by data volume.
-The diagram below shows the detailed fields within each block. The block is the minimal unit of TSDB, which contains several rows of data. Due to the column-based design, each block is spread over several files.
+Each block holds data with the same series ID (for `Trace`, the grouping key is the **trace id** instead). A block is the minimal unit of TSDB and contains several rows of data; because of the column-based design, a single block is spread across several files. Blocks are globally ordered by `(seriesID, minTimestamp)`.
 
-In measure's timestamp file, there are version fields to record the version of the data. The version field is used to deduplicate. It determine the latest data when the data's timestamp are identical. Only the latest data will be returned to the user.
+Block size is bounded by configurable caps (enforced by splitting): for Measure, by both data volume (2 MiB uncompressed) and row count (8192 rows); for Stream, by data volume only; for Trace, by opaque span volume (2 MiB). Separate 8 MiB caps on per-block value/metadata regions are hard invariants (enforced by panic). See [Storage & File Format](storage-and-format.md#33-mode-a--normal-columnar-index_mode--false) for the full table.
 
-![measure-block](https://skywalking.apache.org/doc-graph/banyandb/v0.10.0/measure-block.png)
+In Measure's `timestamps.bin`, a `version` is stored next to each timestamp. The version deduplicates rows that share an identical timestamp — only the latest (highest-version) row is returned to the user.
 
-Unlike the measure, there are element ids in the stream's timestamp file. The element id is used to identify the data of the same series. The data with the same timestamp but different element id will both be stored in the TSDB. This introduces a series of new files, named `*.tff`, which contain tag filter information for each tag. As of 0.10.0, dictionary-encoded tags no longer use Bloom filters, replacing them with a more efficient dictionary-based filter. Additionally, min/max fields are added to the `*.tfm` file to further aid in skipping blocks.
+The two-level index and per-block record layout:
 
-![stream-block](https://skywalking.apache.org/doc-graph/banyandb/v0.9.0/stream-block.png)
+| `meta.bin` record (`primaryBlockMetadata`, 40 bytes, zstd stream) | bytes |
+| --- | --- |
+| seriesID | 8 (big-endian) |
+| minTimestamp / maxTimestamp | 8 + 8 |
+| offset / size (into `primary.bin`) | 8 + 8 |
+
+A `primary.bin` "primary block" (zstd-compressed, ~128 KiB uncompressed) is a run of `blockMetadata` records, each carrying the seriesID, row count, the timestamps location, and per-column / per-tag-family `(offset, size)` pointers into `timestamps.bin`, `fv.bin`, and the `.tfm`/`.tf` files.
+
+```mermaid
+flowchart LR
+    META["meta.bin: [seriesID,minTs,maxTs,offset,size] …"] --> PB["primary.bin: zstd primary block"]
+    PB --> BM["blockMetadata: seriesID, count, tsMeta, fieldMeta, tag (offset,size) …"]
+    BM --> DATA["timestamps.bin / fv.bin / &lt;family&gt;.tf"]
+```
+
+Unlike Measure, Stream's `timestamps.bin` stores **element ids** (not versions); rows with the same timestamp but different element id are both stored (no dedup). Stream's `.tfm` records additionally carry per-tag `min`/`max` (for Int64 tags) and a pointer to the `.tff` filter block; as of 0.10.0, dictionary-encoded tags use the dictionary itself as an exact filter rather than a bloom filter.
 
 ## Write Path
 
-The write path of TSDB begins when time-series data is ingested into the system. TSDB will consult the schema repository to check if the group exists, and if it does, then it will hash the SeriesID to determine which shard it belongs to.
+The write path of TSDB begins when time-series data is ingested into the system. TSDB consults the schema repository to check that the group exists, then hashes the SeriesID (or the configured sharding key) to determine which shard the data belongs to.
 
-Each shard in TSDB is responsible for storing a subset of the time-series data. The shard also holds an in-memory index allowing fast lookups of time-series data.
+Each shard is responsible for storing a subset of the data and holds an in-memory index for fast lookups.
 
-When a shard receives a write request, the data is written to the buffer as a memory part. Meanwhile, the series index and inverted index will also be updated. The worker in the background periodically flushes data, writing the memory part to the disk. After the flush operation is completed, it triggers a merge operation to combine the parts and remove invalid data.
+When a shard receives a write request, the data is written to a buffer as a memory part; the series index (and, for indexed tags, the inverted index) is updated as well. A background worker periodically flushes the memory part to disk. After a flush completes, it triggers a merge operation to combine parts and remove invalid data.
 
-Whenever a new memory part is generated, or when a flush or merge operation is triggered, they initiate an update of the snapshot and delete outdated snapshots. The parts in a persistent snapshot could be accessible to the reader.
+Whenever a new memory part is generated, or a flush or merge completes, the snapshot is updated and outdated snapshots are deleted. Only the parts referenced by a persistent snapshot are visible to readers.
 
 ## Read Path
 
-The read path in TSDB retrieves time-series data from disk or memory, and returns it to the query engine. The read path comprises several components: the buffer and parts. The following is a high-level overview of how these components work together to retrieve time-series data in TSDB.
+The read path retrieves data from disk or memory and returns it to the query engine, working across the buffer (memory parts) and on-disk parts.
 
-The first step in the read path is to perform an index lookup to determine which parts contain the desired time range. The index contains metadata about each data part, including its start and end time.
+The first step is an index lookup to determine which parts cover the requested time range; each part's `metadata.json` records its start and end time. The buffer (memory parts) is checked first; if the data is not present there, the read path proceeds to the on-disk parts. Because of the columnar layout, satisfying a query may require reading several data files per part.
 
 ### Snapshot Coordination
 
-BanyanDB uses a shared snapshot coordination mechanism to ensure atomic snapshot transitions across the trace and sidx (skipping index) engines. When a snapshot transition occurs, both engines coordinate to produce a consistent view of the data. This prevents situations where the trace engine and the sidx engine have different views of the same data.
-
-This coordination is automatic and requires no operator configuration.
+BanyanDB uses a shared snapshot coordination mechanism to ensure atomic snapshot transitions across the trace engine and the sidx (secondary index) engine. When a snapshot transition occurs, both engines coordinate to produce a consistent view of the data, preventing situations where the trace engine and the sidx engine have different views of the same data. This coordination is automatic and requires no operator configuration.
 
 ### Series Metadata Persistence
 
 In cluster mode, liaison nodes persist series metadata to disk. This improves recovery after restarts by allowing the liaison to rebuild its series mapping without waiting for data from other nodes. The persisted metadata includes the mapping between series IDs and entity values.
 
 The dump tool can analyze series metadata files (`smeta.bin`) stored in each part directory for debugging purposes. See [Disk Management](../operation/disk-management.md#dump-tool-series-metadata) for details.
-
-If the requested data is present in the buffer (i.e., it has been recently written but not yet persisted to disk), the buffer is checked to see if the data can be returned directly from memory. The read path determines which memory part(s) contain the requested time range. If the data is not present in the buffer, the read path proceeds to the next step.
-
-The next step in the read path is to look up the appropriate parts on disk. Files are the on-disk representation of blocks and are organized by shard and time range. The read path determines which parts contain the requested time range and reads the appropriate blocks from the disk. Due to the column-based storage design, it may be necessary to read multiple data files.

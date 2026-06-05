@@ -183,6 +183,8 @@ catalog:
             path: "/operation/benchmark/benchmark-hybrid"
   - name: "File Format"
     catalog:
+      - name: "Storage & File Format (by API resource)"
+        path: "/concept/storage-and-format"
       - name: "v1.3.0"
         path: "/concept/tsdb"
   - name: "Concepts"

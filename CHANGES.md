@@ -56,6 +56,10 @@ Release Notes.
 - Fix lifecycle migration panic when a stream shard's snapshot has no element index (`idx/`) directory.
 - Avoid FODC lifecycle inspection failing on busy data nodes by raising the per-broadcast `CollectDataInfo` / `CollectLiaisonInfo` deadline from 5s to 30s and parallelizing per-group inspection in the cluster-internal `InspectAll`.
 
+### Document
+
+- Add a code-accurate, API-first "Storage & File Format" doc and correct stale storage/format descriptions: fix the on-disk hierarchy to `group → segment → shard → part` (in `tsdb.md`, `data-model.md`, `clustering.md`, `disk-management.md`, including the `dump` CLI path examples), correct the measure field-values file name (`fv.bin`, not `fields.bin`), clarify that the `GORILLA`/`ZSTD` enums are schema hints (the engine uses delta/dictionary + size-thresholded zstd), document the measure `index_mode` two-engine split and the trace span-store/sidx layout, and fix the property repair Merkle-tree SHA/snapshot-state descriptions. Replace the file-structure diagrams with inline mermaid.
+
 ### Chores
 
 - Upgrade Go and npm dependencies including etcd to v3.6.10, OpenTelemetry to v1.43.0, AWS SDK, and Google Cloud libraries.

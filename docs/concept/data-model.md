@@ -12,7 +12,16 @@ You can also find [examples](../interacting/bydbctl/schema) of how to interact w
 
 The hierarchy that data is organized into **streams**, **measures**, **traces** and **properties** in groups.
 
-![Structure of BanyanDB](https://skywalking.apache.org/doc-graph/banyandb/v0.2.0/structure.png)
+```mermaid
+flowchart LR
+    G["Group"] --> P["Property (schema-less)"]
+    G --> S["Stream"]
+    G --> M["Measure"]
+    G --> T["Trace"]
+    M --> TN["TopNAggregation"]
+```
+
+A group's `catalog` fixes which one kind of resource it holds (`MEASURE`, `STREAM`, `TRACE`, or `PROPERTY`). For how each resource is physically stored on disk, see [Storage & File Format](storage-and-format.md).
 
 ### Groups
 
@@ -114,17 +123,18 @@ functions to them.
 - **DATA_BINARY** : Raw binary
 - **FLOAT** : 64 bits double-precision floating-point number
 
-`Measure` supports the following encoding methods:
+`Measure` declares the following encoding/compression options on each field:
 
-- **GORILLA** : GORILLA encoding is lossless. It is more suitable for a numerical sequence with similar values and is not recommended for sequence data with large fluctuations.
+- **GORILLA** (`encoding_method`) : a lossless encoding hint for numerical sequences with similar values.
+- **ZSTD** (`compression_method`) : Zstandard, a real-time compression algorithm with high compression ratios.
 
-`Measure` supports the types of the following fields:
+> **How values are actually encoded on disk.** These two enums are schema-level *hints*; the columnar storage engine selects the concrete encoding from the value type and data shape, not from the enum. Numeric (`INT`/`FLOAT`) field columns are delta / delta-of-delta / const encoded with zigzag-varint (floats are first converted to a decimal-int mantissa + exponent); non-numeric columns use dictionary or plain encoding. ZSTD is applied generically by a size threshold (whole index blocks and byte payloads ≥ 128 bytes), not per field. See [Storage & File Format](storage-and-format.md#7-encoding--compression-primitives-shared) for the exact scheme.
 
-- **ZSTD** : Zstandard is a real-time compression algorithm, that provides high compression ratios. It offers a very wide range of compression/speed trade-offs, while being backed by a very fast decoder. For BanyanDB focus on speed.
-
-Another option named `interval` plays a critical role in encoding. It indicates the time range between two adjacent data points in a time series and implies that all data points belonging to the same time series are distributed based on a fixed interval. A better practice for the naming measure is to append the interval literal to the tail, for example, `service_cpm_minute`. It's a parameter of `GORILLA` encoding method.
+Another option named `interval` indicates the time range between two adjacent data points in a time series and implies that all data points belonging to the same time series are distributed based on a fixed interval. A better practice for naming a measure is to append the interval literal to the tail, for example, `service_cpm_minute`.
 
 `index_mode` is a flag to enable the series index as the storage engine. All the tags will be stored in the inverted index and no field is allowed in the measure. This mode is suitable for the non-time series data model but needs TTL to be set. In this mode, the tags defined in the `entity` is the unique key of the data point. `timestamp` and `version` are the common tags in the inverted index.
+
+> **Same API, two storage engines.** `index_mode` is the single switch that swaps the entire storage engine behind the *same* `Measure` schema and the *same* `Write`/`Query` RPCs. With `index_mode: false`, values are stored as columnar parts (the TSDB engine); with `index_mode: true`, no columnar part is written at all — the whole data point is stored as a document in the inverted index. The flag is effectively immutable once data exists (flipping it would orphan previously-written data). See [Storage & File Format → Measure](storage-and-format.md#3-measure) for the two on-disk layouts.
 
 There is an example of a measure with the index mode enabled:
 
@@ -184,7 +194,7 @@ Tags in `group_by_tag_names` are used as dimensions. These tags can be searched 
 
 ### Streams
 
-`Stream` shares many details with `Measure` except for abandoning `field`. Stream focuses on high throughput data collection, for example, logging. The database engine also supports compressing stream entries based on `entity`, but no encoding process is involved.
+`Stream` shares many details with `Measure` except for abandoning `field`. Stream focuses on high throughput data collection, for example, logging. Like Measure, the engine encodes and compresses a stream's tag columns (delta/dictionary encoding plus zstd for large byte payloads); what Stream lacks is *fields* (and therefore Measure's field-level encoding), not encoding altogether. See [Storage & File Format → Stream](storage-and-format.md#4-stream).
 
 [Stream Registration Operations](../api-reference.md#streamregistryservice)
 
@@ -245,7 +255,7 @@ Each span also carries a raw `span` field (binary), which stores the original sp
 
 ### Properties
 
-A `Property` is a schema-less (or schema-free) document, stored using a distributed inverted index for efficient tag-based queries. Unlike Measures, Streams and Traces, Properties support a more flexible key structure: `group`/`name`/`id`.
+A `Property` is a mutable document keyed by `group`/`name`/`id`, stored using a distributed inverted index for efficient tag-based queries. A tag-type contract is registered once via the Property registry, but values are flexible. Unlike Measures, Streams and Traces, a Property is **not** a time series: it has no timestamp/segment dimension and `segment_interval`/`ttl` do not apply; updates overwrite by `ModRevision` (last-writer-wins) and deletes are soft (tombstoned, reclaimed lazily at merge). See [Storage & File Format → Property](storage-and-format.md#6-property).
 
 We should create a group before creating a property.
 
