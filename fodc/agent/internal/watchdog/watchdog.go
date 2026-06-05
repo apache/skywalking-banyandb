@@ -26,6 +26,7 @@ import (
 	"sync"
 	"time"
 
+	databasev1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/database/v1"
 	"github.com/apache/skywalking-banyandb/fodc/agent/internal/metrics"
 	"github.com/apache/skywalking-banyandb/pkg/logger"
 	"github.com/apache/skywalking-banyandb/pkg/panicdiag"
@@ -42,7 +43,15 @@ const (
 	maxRetries     = 3
 	initialBackoff = 100 * time.Millisecond
 	maxBackoff     = 5 * time.Second
+	// nodeResolveGracePeriod bounds how long the watchdog defers recording while the local
+	// node's role is still unresolved. Deferring avoids emitting metrics stamped with an
+	// unresolved identity that later turns into duplicate (ghost) series once the role
+	// resolves; after the grace period a never-resolving node still has its metrics collected.
+	nodeResolveGracePeriod = 5 * time.Minute
 )
+
+// roleUnspecified is the string form of an unresolved node role.
+var roleUnspecified = databasev1.Role_name[int32(databasev1.Role_ROLE_UNSPECIFIED)]
 
 // Watchdog periodically polls metrics from BanyanDB and forwards them to Flight Recorder.
 type Watchdog struct {
@@ -60,9 +69,11 @@ type Watchdog struct {
 
 	interval     time.Duration
 	retryBackoff time.Duration
+	startTime    time.Time
 	mu           sync.RWMutex
 	wg           sync.WaitGroup
 	isRunning    bool
+	everResolved bool
 }
 
 // NewWatchdogWithConfig creates a new Watchdog instance with specified configuration.
@@ -75,6 +86,7 @@ func NewWatchdogWithConfig(recorder MetricsRecorder, urls []string, interval tim
 		ctx:            ctx,
 		cancel:         cancel,
 		retryBackoff:   initialBackoff,
+		startTime:      time.Now(),
 		nodeRole:       nodeRole,
 		podName:        podName,
 		containerNames: containerNames,
@@ -100,6 +112,30 @@ func (w *Watchdog) resolveNodeInfo() (role string, labels map[string]string) {
 		return fn()
 	}
 	return w.nodeRole, nil
+}
+
+// nodeReadyToRecord reports whether the watchdog should record metrics this cycle. While a live
+// node-info provider is configured but the node role has not resolved yet, recording is deferred
+// (up to nodeResolveGracePeriod) so the flight recorder never buffers metrics under an unresolved
+// identity — those would otherwise linger as duplicate (ghost) series once the role resolves and
+// the identity labels change. Once resolved, the gate opens permanently; if the role never
+// resolves, the grace period ensures the node's metrics are still recorded.
+func (w *Watchdog) nodeReadyToRecord() bool {
+	w.mu.RLock()
+	fn := w.nodeInfo
+	ever := w.everResolved
+	start := w.startTime
+	w.mu.RUnlock()
+	if fn == nil || ever {
+		return true
+	}
+	if role, _ := fn(); role != "" && role != roleUnspecified {
+		w.mu.Lock()
+		w.everResolved = true
+		w.mu.Unlock()
+		return true
+	}
+	return time.Since(start) >= nodeResolveGracePeriod
 }
 
 // Name returns the name of the watchdog service.
@@ -244,6 +280,10 @@ func (w *Watchdog) GracefulStop() {
 // It returns the enriched context so the caller can update the recovery-visible
 // ctx pointer, making breadcrumbs visible if a panic occurs.
 func (w *Watchdog) pollAndForward(ctx context.Context) (context.Context, error) {
+	if !w.nodeReadyToRecord() {
+		w.log.Debug().Msg("Deferring metrics recording until the node role resolves (avoids duplicate series)")
+		return ctx, nil
+	}
 	ctx = panicdiag.WithBreadcrumb(ctx, "poll watchdog metrics", "fodc-watchdog", map[string]string{
 		"endpoint_count": fmt.Sprintf("%d", len(w.urls)),
 	})
