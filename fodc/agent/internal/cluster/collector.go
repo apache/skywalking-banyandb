@@ -536,10 +536,14 @@ func NodeRoleFromNode(node *databasev1.Node) string {
 }
 
 // GenerateClusterStateAddrs generates cluster state gRPC addresses from the given ports.
+// The local node is addressed via the IPv4 loopback (127.0.0.1) rather than "localhost":
+// "localhost" can resolve to the IPv6 loopback (::1), and gRPC's dial then fails with
+// "cannot assign requested address" in pods without an IPv6 loopback, leaving the node's
+// role/labels unresolved.
 func GenerateClusterStateAddrs(ports []string) []string {
 	addrs := make([]string, 0, len(ports))
 	for _, port := range ports {
-		addrs = append(addrs, fmt.Sprintf("localhost:%s", port))
+		addrs = append(addrs, fmt.Sprintf("127.0.0.1:%s", port))
 	}
 	return addrs
 }

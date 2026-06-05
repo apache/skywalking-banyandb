@@ -439,7 +439,10 @@ func startProxyClient(ctx context.Context, log *logger.Logger, fr *flightrecorde
 	}
 	var lifecycleCollector *lifecycle.Collector
 	if lifecyclePort > 0 {
-		grpcAddr := fmt.Sprintf("localhost:%d", lifecyclePort)
+		// Use the IPv4 loopback rather than "localhost" so the dial never resolves to the
+		// IPv6 loopback (::1), which fails with "cannot assign requested address" in pods
+		// without an IPv6 loopback.
+		grpcAddr := fmt.Sprintf("127.0.0.1:%d", lifecyclePort)
 		lifecycleCollector = lifecycle.NewCollector(log, grpcAddr, lifecycleReportDir, lifecycleCacheTTL)
 		log.Info().Str("grpc_addr", grpcAddr).Msg("Lifecycle collector initialized")
 	}
