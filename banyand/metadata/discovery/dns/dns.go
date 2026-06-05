@@ -279,7 +279,7 @@ func (s *Service) Start(ctx context.Context) error {
 		startedReloaders := make([]*pkgtls.Reloader, 0, len(s.pathToReloader))
 
 		for certPath, reloader := range s.pathToReloader {
-			if startErr := reloader.Start(); startErr != nil {
+			if startErr := reloader.Start(ctx); startErr != nil {
 				// stop any already-started reloaders
 				for _, r := range startedReloaders {
 					r.Stop()

@@ -24,7 +24,9 @@ import (
 	"time"
 
 	"github.com/apache/skywalking-banyandb/api/common"
+	"github.com/apache/skywalking-banyandb/api/data"
 	commonv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/common/v1"
+	databasev1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/database/v1"
 	measurev1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/measure/v1"
 	"github.com/apache/skywalking-banyandb/banyand/measure"
 	"github.com/apache/skywalking-banyandb/pkg/bus"
@@ -33,6 +35,9 @@ import (
 	"github.com/apache/skywalking-banyandb/pkg/query/executor"
 	"github.com/apache/skywalking-banyandb/pkg/query/logical"
 	logical_measure "github.com/apache/skywalking-banyandb/pkg/query/logical/measure"
+	"github.com/apache/skywalking-banyandb/pkg/query/tracelabels"
+	vmeasure "github.com/apache/skywalking-banyandb/pkg/query/vectorized/measure"
+	vecplan "github.com/apache/skywalking-banyandb/pkg/query/vectorized/measure/plan"
 )
 
 type measureQueryProcessor struct {
@@ -40,6 +45,15 @@ type measureQueryProcessor struct {
 	broadcaster    bus.Broadcaster
 	*queryService
 	*bus.UnImplementedHealthyListener
+}
+
+type measureVectorizedExecutionContext interface {
+	VectorizedConfig() vmeasure.VectorizedConfig
+}
+
+type measureDistributedExecutable interface {
+	executor.MeasureExecutable
+	fmt.Stringer
 }
 
 func (p *measureQueryProcessor) Rev(ctx context.Context, message bus.Message) (resp bus.Message) {
@@ -55,26 +69,20 @@ func (p *measureQueryProcessor) Rev(ctx context.Context, message bus.Message) (r
 		e.RawJSON("req", logger.Proto(queryCriteria)).Msg("received a query event")
 	}
 
-	var schemas []logical.Schema
-	for _, g := range queryCriteria.Groups {
-		meta := &commonv1.Metadata{
-			Name:  queryCriteria.Name,
-			Group: g,
-		}
-		ec, err := p.measureService.Measure(meta)
-		if err != nil {
-			resp = bus.NewMessage(bus.MessageID(now), common.NewError("fail to get execution context for measure %s: %v", meta.GetName(), err))
-			return
-		}
-		s, err := logical_measure.BuildSchema(ec.GetSchema(), ec.GetIndexRules())
-		if err != nil {
-			resp = bus.NewMessage(bus.MessageID(now), common.NewError("fail to build schema for measure %s: %v", meta.GetName(), err))
-			return
-		}
-		schemas = append(schemas, s)
+	schemas, measureSchemas, measureIndexRules, vecCfg, loadErr := p.loadMeasureSchemas(queryCriteria)
+	if loadErr != nil {
+		resp = bus.NewMessage(bus.MessageID(now), common.NewError("%s", loadErr.Error()))
+		return
 	}
-
-	plan, err := logical_measure.DistributedAnalyze(queryCriteria, schemas)
+	// Operator-configured broadcast timeout overrides each plan's historical
+	// 15 s default. Setting it on vecCfg.BroadcastTimeout flows through
+	// vecplan.AnalyzeDistributed into DistributedPlan.broadcastTimeout(); the
+	// row path receives it as an explicit parameter on DistributedAnalyze.
+	// Either way the two plans stay lockstep with the same liaison config.
+	if p.broadcastTimeout > 0 {
+		vecCfg.BroadcastTimeout = p.broadcastTimeout
+	}
+	plan, err := p.analyzeDistributedPlan(queryCriteria, schemas, measureSchemas, measureIndexRules, vecCfg)
 	if err != nil {
 		resp = bus.NewMessage(bus.MessageID(now), common.NewError("fail to analyze the query request for measure %s: %v", queryCriteria.Name, err))
 		return
@@ -83,21 +91,10 @@ func (p *measureQueryProcessor) Rev(ctx context.Context, message bus.Message) (r
 	if e := ml.Debug(); e.Enabled() {
 		e.Str("plan", plan.String()).Msg("query plan")
 	}
-	nodeSelectors := make(map[string][]string)
-	for _, g := range queryCriteria.Groups {
-		if gs, ok := p.measureService.LoadGroup(g); ok {
-			if ns, exist := p.parseNodeSelector(queryCriteria.Stages, gs.GetSchema().ResourceOpts); exist {
-				nodeSelectors[g] = ns
-			} else if len(gs.GetSchema().ResourceOpts.Stages) > 0 {
-				ml.Error().Strs("req_stages", queryCriteria.Stages).Strs("default_stages", gs.GetSchema().GetResourceOpts().GetDefaultStages()).Msg("no stage found")
-				resp = bus.NewMessage(bus.MessageID(now), common.NewError("no stage found in request or default stages in resource opts"))
-				return
-			}
-		} else {
-			ml.Error().RawJSON("req", logger.Proto(queryCriteria)).Msg("group not found")
-			resp = bus.NewMessage(bus.MessageID(now), common.NewError("group %s not found", g))
-			return
-		}
+	nodeSelectors, selErr := p.buildNodeSelectors(queryCriteria, ml)
+	if selErr != nil {
+		resp = bus.NewMessage(bus.MessageID(now), common.NewError("%s", selErr.Error()))
+		return
 	}
 	if len(queryCriteria.Stages) > 0 && len(nodeSelectors) == 0 {
 		ml.Error().RawJSON("req", logger.Proto(queryCriteria)).Msg("no stage found")
@@ -109,8 +106,8 @@ func (p *measureQueryProcessor) Rev(ctx context.Context, message bus.Message) (r
 	if queryCriteria.Trace {
 		tracer, ctx = query.NewTracer(ctx, n.Format(time.RFC3339Nano))
 		span, ctx = tracer.StartSpan(ctx, "distributed-%s", p.queryService.nodeID)
-		span.Tag("plan", plan.String())
-		span.Tagf("nodeSelectors", "%v", nodeSelectors)
+		span.Tag(tracelabels.TagPlan, plan.String())
+		span.Tagf(tracelabels.TagNodeSelectors, "%v", nodeSelectors)
 		defer func() {
 			data := resp.Data()
 			switch d := data.(type) {
@@ -151,8 +148,8 @@ func (p *measureQueryProcessor) Rev(ctx context.Context, message bus.Message) (r
 		if tracer != nil {
 			iterSpan, _ := tracer.StartSpan(ctx, "iterator")
 			defer func() {
-				iterSpan.Tag("rounds", fmt.Sprintf("%d", r))
-				iterSpan.Tag("size", fmt.Sprintf("%d", len(result)))
+				iterSpan.Tag(tracelabels.TagRounds, fmt.Sprintf("%d", r))
+				iterSpan.Tag(tracelabels.TagSize, fmt.Sprintf("%d", len(result)))
 				iterSpan.Stop()
 			}()
 		}
@@ -176,4 +173,85 @@ func (p *measureQueryProcessor) Rev(ctx context.Context, message bus.Message) (r
 		}
 	}
 	return
+}
+
+func (p *measureQueryProcessor) loadMeasureSchemas(queryCriteria *measurev1.QueryRequest) (
+	[]logical.Schema, []*databasev1.Measure, [][]*databasev1.IndexRule, vmeasure.VectorizedConfig, error,
+) {
+	var schemas []logical.Schema
+	var measureSchemas []*databasev1.Measure
+	var measureIndexRules [][]*databasev1.IndexRule
+	var vecCfg vmeasure.VectorizedConfig
+	for groupIdx, g := range queryCriteria.Groups {
+		meta := &commonv1.Metadata{Name: queryCriteria.Name, Group: g}
+		ec, measureErr := p.measureService.Measure(meta)
+		if measureErr != nil {
+			return nil, nil, nil, vecCfg, fmt.Errorf("fail to get execution context for measure %s: %w", meta.GetName(), measureErr)
+		}
+		// nolint:staticcheck // SA1019 - row schema is still used for the flag-off rollback path.
+		s, schemaErr := logical_measure.BuildSchema(ec.GetSchema(), ec.GetIndexRules())
+		if schemaErr != nil {
+			return nil, nil, nil, vecCfg, fmt.Errorf("fail to build schema for measure %s: %w", meta.GetName(), schemaErr)
+		}
+		schemas = append(schemas, s)
+		measureSchemas = append(measureSchemas, ec.GetSchema())
+		measureIndexRules = append(measureIndexRules, ec.GetIndexRules())
+		if vecEC, ok := ec.(measureVectorizedExecutionContext); ok {
+			if groupIdx == 0 {
+				vecCfg = vecEC.VectorizedConfig()
+			}
+		} else if data.MeasureWireModeRaw() {
+			return nil, nil, nil, vecCfg, fmt.Errorf("measure %s is not vectorized-capable under raw wire mode", meta.GetName())
+		}
+	}
+	return schemas, measureSchemas, measureIndexRules, vecCfg, nil
+}
+
+// analyzeDistributedPlan picks the vec plan when raw wire mode is on, otherwise
+// falls back to the row distributed plan (kill-switch / rollback rail).
+// See docs/operation/troubleshooting/measure-vec-flag-off-rollback.md.
+func (p *measureQueryProcessor) analyzeDistributedPlan(
+	queryCriteria *measurev1.QueryRequest,
+	schemas []logical.Schema,
+	measureSchemas []*databasev1.Measure,
+	measureIndexRules [][]*databasev1.IndexRule,
+	vecCfg vmeasure.VectorizedConfig,
+) (measureDistributedExecutable, error) {
+	if data.MeasureWireModeRaw() {
+		if len(measureSchemas) == 0 {
+			return nil, fmt.Errorf("vec distributed plan requires at least one measure schema")
+		}
+		return vecplan.AnalyzeDistributed(queryCriteria, measureSchemas, measureIndexRules, vecCfg)
+	}
+	// nolint:staticcheck // SA1019 - row distributed plan is the flag-off rollback path only.
+	rowPlan, analyzeErr := logical_measure.DistributedAnalyze(queryCriteria, schemas, p.broadcastTimeout)
+	if analyzeErr != nil {
+		return nil, analyzeErr
+	}
+	plan, ok := rowPlan.(measureDistributedExecutable)
+	if !ok {
+		return nil, fmt.Errorf("distributed measure plan %T is not executable", rowPlan)
+	}
+	return plan, nil
+}
+
+func (p *measureQueryProcessor) buildNodeSelectors(queryCriteria *measurev1.QueryRequest, ml *logger.Logger) (map[string][]string, error) {
+	nodeSelectors := make(map[string][]string)
+	for _, g := range queryCriteria.Groups {
+		gs, ok := p.measureService.LoadGroup(g)
+		if !ok {
+			ml.Error().RawJSON("req", logger.Proto(queryCriteria)).Msg("group not found")
+			return nil, fmt.Errorf("group %s not found", g)
+		}
+		ns, exist := p.parseNodeSelector(queryCriteria.Stages, gs.GetSchema().ResourceOpts)
+		if exist {
+			nodeSelectors[g] = ns
+			continue
+		}
+		if len(gs.GetSchema().ResourceOpts.Stages) > 0 {
+			ml.Error().Strs("req_stages", queryCriteria.Stages).Strs("default_stages", gs.GetSchema().GetResourceOpts().GetDefaultStages()).Msg("no stage found")
+			return nil, fmt.Errorf("no stage found in request or default stages in resource opts")
+		}
+	}
+	return nodeSelectors, nil
 }

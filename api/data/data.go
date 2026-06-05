@@ -171,63 +171,73 @@ var (
 		},
 	}
 
-	// TopicResponseMap is the map of topic name to response message.
+	// TopicResponseMap is the map of topic name to per-topic response codec.
+	// Every proto-bodied topic is wrapped in a behavior-preserving ProtoCodec
+	// (byte-identical to the pre-G9f.0 proto.Marshal/proto.Unmarshal path).
+	// TopicInternalMeasureQuery uses a wire-mode-dispatching codec: flag-on
+	// processes encode/decode the raw vec columnar frame via RawFrameCodec,
+	// flag-off processes keep the proto body via ProtoCodec (one static
+	// supplier serves both modes on the same topic — topic-AND-process-wire-
+	// mode selection, G9f spec G9f.0).
 	// nolint: exhaustruct
-	TopicResponseMap = map[bus.Topic]func() proto.Message{
-		TopicStreamQuery: func() proto.Message {
+	TopicResponseMap = map[bus.Topic]ResponseCodec{
+		TopicStreamQuery: NewProtoCodec(func() proto.Message {
 			return &streamv1.QueryResponse{}
-		},
-		TopicMeasureQuery: func() proto.Message {
+		}),
+		TopicMeasureQuery: NewProtoCodec(func() proto.Message {
 			return &measurev1.QueryResponse{}
+		}),
+		TopicInternalMeasureQuery: &measureQueryResponseCodec{
+			proto: NewProtoCodec(func() proto.Message {
+				return &measurev1.InternalQueryResponse{}
+			}),
+			raw: NewRawFrameCodec(),
 		},
-		TopicInternalMeasureQuery: func() proto.Message {
-			return &measurev1.InternalQueryResponse{}
-		},
-		TopicTopNQuery: func() proto.Message {
+		TopicTopNQuery: NewProtoCodec(func() proto.Message {
 			return &measurev1.TopNResponse{}
-		},
-		TopicPropertyQuery: func() proto.Message {
+		}),
+		TopicPropertyQuery: NewProtoCodec(func() proto.Message {
 			return &propertyv1.InternalQueryResponse{}
-		},
-		TopicPropertyDelete: func() proto.Message {
+		}),
+		TopicPropertyDelete: NewProtoCodec(func() proto.Message {
 			return &propertyv1.DeleteResponse{}
-		},
-		TopicPropertyUpdate: func() proto.Message {
+		}),
+		TopicPropertyUpdate: NewProtoCodec(func() proto.Message {
 			return &propertyv1.ApplyResponse{}
-		},
-		TopicPropertyRepair: func() proto.Message {
+		}),
+		TopicPropertyRepair: NewProtoCodec(func() proto.Message {
 			return &propertyv1.InternalRepairResponse{}
-		},
-		TopicTraceQuery: func() proto.Message {
+		}),
+		TopicTraceQuery: NewProtoCodec(func() proto.Message {
 			return &tracev1.InternalQueryResponse{}
-		},
-		TopicMeasureCollectDataInfo: func() proto.Message {
+		}),
+		TopicMeasureCollectDataInfo: NewProtoCodec(func() proto.Message {
 			return &databasev1.DataInfo{}
-		},
-		TopicStreamCollectDataInfo: func() proto.Message {
+		}),
+		TopicStreamCollectDataInfo: NewProtoCodec(func() proto.Message {
 			return &databasev1.DataInfo{}
-		},
-		TopicTraceCollectDataInfo: func() proto.Message {
+		}),
+		TopicTraceCollectDataInfo: NewProtoCodec(func() proto.Message {
 			return &databasev1.DataInfo{}
-		},
-		TopicMeasureCollectLiaisonInfo: func() proto.Message {
+		}),
+		TopicMeasureCollectLiaisonInfo: NewProtoCodec(func() proto.Message {
 			return &databasev1.LiaisonInfo{}
-		},
-		TopicStreamCollectLiaisonInfo: func() proto.Message {
+		}),
+		TopicStreamCollectLiaisonInfo: NewProtoCodec(func() proto.Message {
 			return &databasev1.LiaisonInfo{}
-		},
-		TopicTraceCollectLiaisonInfo: func() proto.Message {
+		}),
+		TopicTraceCollectLiaisonInfo: NewProtoCodec(func() proto.Message {
 			return &databasev1.LiaisonInfo{}
-		},
-		TopicMeasureDropGroup: func() proto.Message {
+		}),
+		TopicMeasureDropGroup: NewProtoCodec(func() proto.Message {
 			return &databasev1.GroupRegistryServiceDeleteRequest{}
-		},
-		TopicStreamDropGroup: func() proto.Message {
+		}),
+		TopicStreamDropGroup: NewProtoCodec(func() proto.Message {
 			return &databasev1.GroupRegistryServiceDeleteRequest{}
-		},
-		TopicTraceDropGroup: func() proto.Message {
+		}),
+		TopicTraceDropGroup: NewProtoCodec(func() proto.Message {
 			return &databasev1.GroupRegistryServiceDeleteRequest{}
-		},
+		}),
 	}
 
 	// TopicCommon is the common topic for data transmission.

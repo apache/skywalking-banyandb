@@ -24,6 +24,8 @@ import (
 
 	"github.com/pkg/errors"
 	"sigs.k8s.io/yaml"
+
+	"github.com/apache/skywalking-banyandb/pkg/initerror"
 )
 
 const (
@@ -32,6 +34,25 @@ const (
 	compatibleVersionsKey      = "versions"
 	compatibleVersionsFilename = "versions.yml"
 )
+
+// SegmentMetadataFilename is the filename used for the per-segment
+// metadata document. Exported so out-of-package tooling (e.g. the
+// migration copy CLI) writes the file to the exact location runtime
+// readers expect.
+const SegmentMetadataFilename = metadataFilename
+
+// CurrentSegmentVersion is the version string a freshly-written segment
+// must carry. Exported for the same reason as SegmentMetadataFilename.
+const CurrentSegmentVersion = currentVersion
+
+// SegmentMetadata is the on-disk shape of <segment>/metadata. Kept in
+// sync with the (unexported) segmentMeta runtime reads. Exported so
+// out-of-package writers can produce identical bytes via the same JSON
+// tags (lowercase `version` / `endTime,omitempty`).
+type SegmentMetadata struct {
+	Version string `json:"version"`
+	EndTime string `json:"endTime,omitempty"`
+}
 
 var errVersionIncompatible = errors.New("version not compatible")
 
@@ -46,7 +67,8 @@ func checkVersion(version string) error {
 			return nil
 		}
 	}
-	return errors.WithMessagef(errVersionIncompatible, "incompatible version %s, supported versions: %s", version, strings.Join(compatibleVersions, ", "))
+	return initerror.AsPermanent(errors.WithMessagef(errVersionIncompatible,
+		"incompatible version %s, supported versions: %s", version, strings.Join(compatibleVersions, ", ")))
 }
 
 type segmentMeta struct {

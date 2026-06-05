@@ -1,0 +1,99 @@
+[
+  {
+    "id": "scan_projection",
+    "request": {
+      "name": "soak_metric",
+      "groups": ["soak"],
+      "fieldProjection": { "names": ["value", "count"] }
+    }
+  },
+  {
+    "id": "topn_value",
+    "request": {
+      "name": "soak_metric",
+      "groups": ["soak"],
+      "fieldProjection": { "names": ["value"] },
+      "top": { "number": 10, "fieldName": "value", "fieldValueSort": "SORT_DESC" }
+    }
+  },
+  {
+    "id": "scalar_reduce_sum_value",
+    "request": {
+      "name": "soak_metric",
+      "groups": ["soak"],
+      "fieldProjection": { "names": ["value"] },
+      "agg": { "function": "AGGREGATION_FUNCTION_SUM", "fieldName": "value" }
+    }
+  },
+  {
+    "id": "raw_groupby_service",
+    "request": {
+      "name": "soak_metric",
+      "groups": ["soak"],
+      "tagProjection": {
+        "tagFamilies": [{ "name": "default", "tags": ["service"] }]
+      },
+      "fieldProjection": { "names": ["value"] },
+      "groupBy": {
+        "tagProjection": {
+          "tagFamilies": [{ "name": "default", "tags": ["service"] }]
+        },
+        "fieldName": "value"
+      }
+    }
+  },
+  {
+    "id": "groupby_service_sum_value",
+    "request": {
+      "name": "soak_metric",
+      "groups": ["soak"],
+      "tagProjection": {
+        "tagFamilies": [{ "name": "default", "tags": ["service"] }]
+      },
+      "fieldProjection": { "names": ["value"] },
+      "groupBy": {
+        "tagProjection": {
+          "tagFamilies": [{ "name": "default", "tags": ["service"] }]
+        },
+        "fieldName": "value"
+      },
+      "agg": { "function": "AGGREGATION_FUNCTION_SUM", "fieldName": "value" }
+    }
+  },
+  {
+    "id": "hidden_criteria_instance",
+    "request": {
+      "name": "soak_metric",
+      "groups": ["soak"],
+      "tagProjection": {
+        "tagFamilies": [{ "name": "default", "tags": ["service"] }]
+      },
+      "fieldProjection": { "names": ["value"] },
+      "criteria": {
+        "condition": {
+          "name": "instance_id",
+          "op": "BINARY_OP_EQ",
+          "value": { "int": { "value": "3" } }
+        }
+      }
+    }
+  },
+  {
+    "id": "order_by_time_desc",
+    "request": {
+      "name": "soak_metric",
+      "groups": ["soak"],
+      "fieldProjection": { "names": ["value", "count"] },
+      "orderBy": { "sort": "SORT_DESC" }
+    }
+  },
+  {
+    "id": "count_value",
+    "request": {
+      "name": "soak_metric",
+      "groups": ["soak"],
+      "fieldProjection": { "names": ["value"] },
+      "agg": { "function": "AGGREGATION_FUNCTION_COUNT", "fieldName": "value" }
+    }
+  }
+]

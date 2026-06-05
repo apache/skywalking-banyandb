@@ -111,7 +111,13 @@ type IndexDB interface {
 type TSDB[T TSTable, O any] interface {
 	io.Closer
 	CreateSegmentIfNotExist(ts time.Time) (Segment[T, O], error)
-	SelectSegments(timeRange timestamp.TimeRange) ([]Segment[T, O], error)
+	// SelectSegments returns the segments overlapping timeRange. reopenClosed=true
+	// (query) reopens closed segments and marks them accessed; false (read-only
+	// stats) returns them without reopening or refreshing their idle timer. The
+	// caller must DecRef every returned segment (a no-op for a closed one).
+	SelectSegments(timeRange timestamp.TimeRange, reopenClosed bool) ([]Segment[T, O], error)
+	// SegmentInterval returns the current segment interval rule.
+	SegmentInterval() IntervalRule
 	Tick(ts int64)
 	UpdateOptions(opts *commonv1.ResourceOpts)
 	TakeFileSnapshot(dst string) (bool, error)
@@ -136,6 +142,12 @@ type Segment[T TSTable, O any] interface {
 	TablesWithShardIDs() ([]T, []common.ShardID, []Cache)
 	Lookup(ctx context.Context, series []*pbv1.Series) (pbv1.SeriesList, error)
 	IndexDB() IndexDB
+	// Location returns the on-disk directory of the segment.
+	Location() string
+	// SeriesIndexStats returns the series index document count and on-disk size.
+	// It works without reopening a closed segment: an open segment is reported
+	// from its live index, a closed one is read from disk read-only.
+	SeriesIndexStats() (dataCount int64, dataSizeBytes int64)
 }
 
 // TSTable is time series table.
@@ -200,6 +212,45 @@ func (ir IntervalRule) NextTime(current time.Time) time.Time {
 		return current.AddDate(0, 0, ir.Num)
 	}
 	panic("invalid interval unit")
+}
+
+// Standard aligns t down to the nearest Num*Unit boundary on a grid anchored
+// at 1970-01-01 in t.Location(). Boundaries always fall on local-day midnight
+// (DAY) or local-hour boundaries (HOUR), so the result format/parses cleanly
+// in t.Location() and Num=1 reduces to IntervalUnit.Standard's local alignment.
+// The grid is per-timezone, so two nodes in different geographic timezones may
+// produce different bucket starts for the same instant.
+func (ir IntervalRule) Standard(t time.Time) time.Time {
+	if ir.Num <= 0 {
+		logger.Panicf("interval rule Num must be positive: %+v", ir)
+	}
+	if ir.Num == 1 {
+		return ir.Unit.Standard(t)
+	}
+	epochLocal := time.Date(1970, 1, 1, 0, 0, 0, 0, t.Location())
+	switch ir.Unit {
+	case DAY:
+		todayMidnight := time.Date(t.Year(), t.Month(), t.Day(), 0, 0, 0, 0, t.Location())
+		// +12 absorbs DST-affected days that are 23 or 25 absolute hours;
+		// floorDiv handles pre-epoch (negative) inputs correctly.
+		days := floorDiv(int64(todayMidnight.Sub(epochLocal).Hours()+12), 24)
+		bucketIdx := floorDiv(days, int64(ir.Num))
+		return time.Date(1970, 1, 1+int(bucketIdx)*ir.Num, 0, 0, 0, 0, t.Location())
+	case HOUR:
+		todayHour := time.Date(t.Year(), t.Month(), t.Day(), t.Hour(), 0, 0, 0, t.Location())
+		hours := floorDiv(int64(todayHour.Sub(epochLocal)), int64(time.Hour))
+		bucketIdx := floorDiv(hours, int64(ir.Num))
+		return time.Date(1970, 1, 1, int(bucketIdx)*ir.Num, 0, 0, 0, t.Location())
+	}
+	panic("invalid interval unit")
+}
+
+func floorDiv(a, b int64) int64 {
+	q := a / b
+	if a%b != 0 && (a < 0) != (b < 0) {
+		q--
+	}
+	return q
 }
 
 func (ir IntervalRule) estimatedDuration() time.Duration {

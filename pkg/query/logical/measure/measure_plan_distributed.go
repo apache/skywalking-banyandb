@@ -102,20 +102,26 @@ func (as *pushDownAggSchema) Children() []logical.Schema {
 	return as.originalSchema.Children()
 }
 
+// Deprecated: row-path measure plan; see .omc/g8-plan.md. Distributed
+// vec query is a G8 follow-up; for now the dispatcher continues to use
+// this row-path distributed plan even when vec is enabled on standalone.
 type unresolvedDistributed struct {
-	originalQuery *measurev1.QueryRequest
-	groupByEntity bool
-	pushDownAgg   bool
+	originalQuery    *measurev1.QueryRequest
+	broadcastTimeout time.Duration
+	groupByEntity    bool
+	pushDownAgg      bool
 }
 
-func newUnresolvedDistributed(query *measurev1.QueryRequest, pushDownAgg bool) logical.UnresolvedPlan {
+func newUnresolvedDistributed(query *measurev1.QueryRequest, pushDownAgg bool, broadcastTimeout time.Duration) logical.UnresolvedPlan {
 	return &unresolvedDistributed{
-		originalQuery: query,
-		pushDownAgg:   pushDownAgg,
+		originalQuery:    query,
+		pushDownAgg:      pushDownAgg,
+		broadcastTimeout: broadcastTimeout,
 	}
 }
 
 func (ud *unresolvedDistributed) Analyze(s logical.Schema) (logical.Plan, error) {
+	indexMode := s.(*schema).measure.IndexMode
 	projectionTags := logical.ToTags(ud.originalQuery.GetTagProjection())
 	if len(projectionTags) > 0 {
 		var err error
@@ -172,12 +178,14 @@ func (ud *unresolvedDistributed) Analyze(s logical.Schema) (logical.Plan, error)
 			return nil, fmt.Errorf("entity tag %s not found", e)
 		}
 		result := &distributedPlan{
-			queryTemplate:   temp,
-			s:               s,
-			sortByTime:      false,
-			sortTagSpec:     *sortTagSpec,
-			pushDownAgg:     ud.pushDownAgg,
-			groupByTagsRefs: groupByTagsRefs,
+			queryTemplate:    temp,
+			s:                s,
+			sortByTime:       false,
+			sortTagSpec:      *sortTagSpec,
+			pushDownAgg:      ud.pushDownAgg,
+			groupByTagsRefs:  groupByTagsRefs,
+			indexMode:        indexMode,
+			broadcastTimeout: ud.broadcastTimeout,
 		}
 		if ud.originalQuery.OrderBy != nil && ud.originalQuery.OrderBy.Sort == modelv1.Sort_SORT_DESC {
 			result.desc = true
@@ -186,20 +194,24 @@ func (ud *unresolvedDistributed) Analyze(s logical.Schema) (logical.Plan, error)
 	}
 	if ud.originalQuery.OrderBy == nil {
 		return &distributedPlan{
-			queryTemplate:   temp,
-			s:               s,
-			sortByTime:      true,
-			pushDownAgg:     ud.pushDownAgg,
-			groupByTagsRefs: groupByTagsRefs,
+			queryTemplate:    temp,
+			s:                s,
+			sortByTime:       true,
+			pushDownAgg:      ud.pushDownAgg,
+			groupByTagsRefs:  groupByTagsRefs,
+			indexMode:        indexMode,
+			broadcastTimeout: ud.broadcastTimeout,
 		}, nil
 	}
 	if ud.originalQuery.OrderBy.IndexRuleName == "" {
 		result := &distributedPlan{
-			queryTemplate:   temp,
-			s:               s,
-			sortByTime:      true,
-			pushDownAgg:     ud.pushDownAgg,
-			groupByTagsRefs: groupByTagsRefs,
+			queryTemplate:    temp,
+			s:                s,
+			sortByTime:       true,
+			pushDownAgg:      ud.pushDownAgg,
+			groupByTagsRefs:  groupByTagsRefs,
+			indexMode:        indexMode,
+			broadcastTimeout: ud.broadcastTimeout,
 		}
 		if ud.originalQuery.OrderBy.Sort == modelv1.Sort_SORT_DESC {
 			result.desc = true
@@ -218,12 +230,14 @@ func (ud *unresolvedDistributed) Analyze(s logical.Schema) (logical.Plan, error)
 		return nil, fmt.Errorf("tag %s not found", indexRule.Tags[0])
 	}
 	result := &distributedPlan{
-		queryTemplate:   temp,
-		s:               s,
-		sortByTime:      false,
-		sortTagSpec:     *sortTagSpec,
-		pushDownAgg:     ud.pushDownAgg,
-		groupByTagsRefs: groupByTagsRefs,
+		queryTemplate:    temp,
+		s:                s,
+		sortByTime:       false,
+		sortTagSpec:      *sortTagSpec,
+		pushDownAgg:      ud.pushDownAgg,
+		groupByTagsRefs:  groupByTagsRefs,
+		indexMode:        indexMode,
+		broadcastTimeout: ud.broadcastTimeout,
 	}
 	if ud.originalQuery.OrderBy.Sort == modelv1.Sort_SORT_DESC {
 		result.desc = true
@@ -236,10 +250,23 @@ type distributedPlan struct {
 	queryTemplate     *measurev1.QueryRequest
 	sortTagSpec       logical.TagSpec
 	groupByTagsRefs   [][]*logical.TagRef
+	broadcastTimeout  time.Duration
 	maxDataPointsSize uint32
 	sortByTime        bool
 	desc              bool
 	pushDownAgg       bool
+	indexMode         bool
+}
+
+// broadcastDeadline returns the effective per-broadcast deadline for this
+// plan: the operator-configured value when non-zero, the historical 15 s
+// constant otherwise. Mirrors the vec plan helper so a single flag flip
+// changes both paths.
+func (t *distributedPlan) broadcastDeadline() time.Duration {
+	if t.broadcastTimeout > 0 {
+		return t.broadcastTimeout
+	}
+	return defaultQueryTimeout
 }
 
 func (t *distributedPlan) Execute(ctx context.Context) (mi executor.MIterator, err error) {
@@ -266,7 +293,7 @@ func (t *distributedPlan) Execute(ctx context.Context) (mi executor.MIterator, e
 		}()
 	}
 	internalRequest := &measurev1.InternalQueryRequest{Request: queryRequest, AggReturnPartial: t.pushDownAgg}
-	ff, broadcastErr := dctx.Broadcast(defaultQueryTimeout, data.TopicInternalMeasureQuery,
+	ff, broadcastErr := dctx.Broadcast(t.broadcastDeadline(), data.TopicInternalMeasureQuery,
 		bus.NewMessageWithNodeSelectors(bus.MessageID(dctx.TimeRange().Begin.Nanos), dctx.NodeSelectors(), dctx.TimeRange(), internalRequest))
 	if broadcastErr != nil {
 		return nil, broadcastErr
@@ -311,7 +338,8 @@ func (t *distributedPlan) Execute(ctx context.Context) (mi executor.MIterator, e
 		return &pushedDownAggregatedIterator{dataPoints: deduplicatedDps}, err
 	}
 	smi := &sortedMIterator{
-		Iterator: sort.NewItemIter(see, t.desc),
+		Iterator:  sort.NewItemIter(see, t.desc),
+		indexMode: t.indexMode,
 	}
 	smi.init()
 	return smi, err
@@ -421,9 +449,11 @@ type sortedMIterator struct {
 	data        *list.List
 	uniqueData  map[uint64]*measurev1.InternalDataPoint
 	cur         *measurev1.InternalDataPoint
+	seenSids    map[uint64]struct{}
 	initialized bool
 	exhausted   bool
 	closed      bool
+	indexMode   bool
 }
 
 func (s *sortedMIterator) init() {
@@ -437,6 +467,9 @@ func (s *sortedMIterator) init() {
 	}
 	s.data = list.New()
 	s.uniqueData = make(map[uint64]*measurev1.InternalDataPoint)
+	if s.indexMode {
+		s.seenSids = make(map[uint64]struct{})
+	}
 	s.loadDps()
 }
 
@@ -456,10 +489,23 @@ func (s *sortedMIterator) Next() bool {
 	return true
 }
 
+// loadDps consumes sort-field-equal groups from the underlying iterator and
+// pushes their deduplicated rows into s.data. When indexMode is true, rows
+// whose Sid was already emitted in a prior group are skipped — without this,
+// cross-node duplicates that carry different per-node "last-write" timestamps
+// would slip past hashDataPoint (which keys on Sid+timestamp) because they
+// land in different sort-field groups. When every row in a group is filtered,
+// the loop advances to the next group so callers see continued iteration.
 func (s *sortedMIterator) loadDps() {
-	if s.exhausted {
-		return
+	for !s.exhausted {
+		s.loadOneGroup()
+		if s.data.Len() > 0 {
+			return
+		}
 	}
+}
+
+func (s *sortedMIterator) loadOneGroup() {
 	for k := range s.uniqueData {
 		delete(s.uniqueData, k)
 	}
@@ -485,6 +531,13 @@ func (s *sortedMIterator) loadDps() {
 		}
 	}
 	for _, v := range s.uniqueData {
+		if s.indexMode {
+			sid := v.GetDataPoint().GetSid()
+			if _, dup := s.seenSids[sid]; dup {
+				continue
+			}
+			s.seenSids[sid] = struct{}{}
+		}
 		s.data.PushBack(v)
 	}
 }
@@ -501,6 +554,7 @@ func (s *sortedMIterator) Close() error {
 	s.exhausted = true
 	s.data = nil
 	s.uniqueData = nil
+	s.seenSids = nil
 	s.cur = nil
 	if s.Iterator == nil {
 		return nil

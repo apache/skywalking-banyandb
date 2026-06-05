@@ -1,0 +1,32 @@
+{
+  "metadata": {
+    "name": "cross_segment_metric",
+    "group": "sw_cross_segment"
+  },
+  "tag_families": [
+    {
+      "name": "default",
+      "tags": [
+        {
+          "name": "entity_id",
+          "type": "TAG_TYPE_STRING"
+        }
+      ]
+    }
+  ],
+  "fields": [
+    {
+      "name": "value",
+      "field_type": "FIELD_TYPE_INT",
+      "encoding_method": "ENCODING_METHOD_GORILLA",
+      "compression_method": "COMPRESSION_METHOD_ZSTD"
+    }
+  ],
+  "entity": {
+    "tag_names": [
+      "entity_id"
+    ]
+  },
+  "interval": "1m",
+  "updated_at": "2026-05-27T00:00:00.00Z"
+}

@@ -18,6 +18,7 @@
 package storage
 
 import (
+	"encoding/json"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -27,6 +28,21 @@ import (
 	"github.com/apache/skywalking-banyandb/pkg/fs"
 	"github.com/apache/skywalking-banyandb/pkg/logger"
 )
+
+// ReadSnapshotPartNames reads the part directory names recorded in a ".snp"
+// snapshot manifest (a JSON string array) at path. It is the single reader for
+// the part-list manifest written by every data type (stream/measure/trace).
+func ReadSnapshotPartNames(fileSystem fs.FileSystem, path string) ([]string, error) {
+	data, err := fileSystem.Read(path)
+	if err != nil {
+		return nil, fmt.Errorf("cannot read %s: %w", path, err)
+	}
+	var partNames []string
+	if unmarshalErr := json.Unmarshal(data, &partNames); unmarshalErr != nil {
+		return nil, fmt.Errorf("cannot parse %s: %w", path, unmarshalErr)
+	}
+	return partNames, nil
+}
 
 // SnapshotTimeFormat is the timestamp snapshot directory prefix.
 const SnapshotTimeFormat = "20060102150405"

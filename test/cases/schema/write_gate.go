@@ -260,7 +260,7 @@ func sendMeasureWriteAtTime(
 	return firstStatus, nil
 }
 
-// Schema write gate smoke tests — §4.4.1 / §4.4.2 / §4.4.3.
+// Schema write gate smoke tests —  /  /
 // Each spec exercises a distinct branch of the three-way ModRevision split.
 var _ = g.Describe("Schema write gate", func() {
 	var (
@@ -273,9 +273,9 @@ var _ = g.Describe("Schema write gate", func() {
 		clients = NewClients(SharedContext.Connection)
 	})
 
-	// §4.4.1: a write carrying a client ModRevision below the cached schema revision
+	// a write carrying a client ModRevision below the cached schema revision
 	// is rejected immediately with STATUS_EXPIRED_SCHEMA.
-	g.It("rejects write with stale ModRevision (§4.4.1)", func() {
+	g.It("rejects write with stale ModRevision", func() {
 		groupName := fmt.Sprintf("wg-stale-%d", time.Now().UnixNano())
 		streamName := "wg_stream"
 
@@ -321,9 +321,9 @@ var _ = g.Describe("Schema write gate", func() {
 		_, _ = clients.GroupClient.Delete(ctx, &databasev1.GroupRegistryServiceDeleteRequest{Group: groupName})
 	})
 
-	// §4.4.2: a write carrying a client ModRevision ahead of the cache is held until the
+	// a write carrying a client ModRevision ahead of the cache is held until the
 	// configured wait duration and then returned with STATUS_SCHEMA_NOT_APPLIED.
-	g.It("returns STATUS_SCHEMA_NOT_APPLIED for ahead ModRevision that never applies (§4.4.2)", func() {
+	g.It("returns STATUS_SCHEMA_NOT_APPLIED for ahead ModRevision that never applies", func() {
 		groupName := fmt.Sprintf("wg-ahead-%d", time.Now().UnixNano())
 		streamName := "wg_stream"
 
@@ -353,8 +353,8 @@ var _ = g.Describe("Schema write gate", func() {
 		_, _ = clients.GroupClient.Delete(ctx, &databasev1.GroupRegistryServiceDeleteRequest{Group: groupName})
 	})
 
-	// §4.4.3: a write with ModRevision == 0 skips the revision gate entirely and is accepted.
-	g.It("skips the revision check and succeeds when ModRevision is zero (§4.4.3)", func() {
+	// a write with ModRevision == 0 skips the revision gate entirely and is accepted.
+	g.It("skips the revision check and succeeds when ModRevision is zero", func() {
 		groupName := fmt.Sprintf("wg-zero-%d", time.Now().UnixNano())
 		streamName := "wg_stream"
 

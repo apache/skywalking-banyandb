@@ -32,11 +32,13 @@ import (
 	commonv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/common/v1"
 	modelv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/model/v1"
 	tracev1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/trace/v1"
+	"github.com/apache/skywalking-banyandb/banyand/metadata/schema"
 	"github.com/apache/skywalking-banyandb/banyand/queue"
 	"github.com/apache/skywalking-banyandb/pkg/accesslog"
 	"github.com/apache/skywalking-banyandb/pkg/bus"
 	"github.com/apache/skywalking-banyandb/pkg/convert"
 	"github.com/apache/skywalking-banyandb/pkg/logger"
+	"github.com/apache/skywalking-banyandb/pkg/partition"
 	"github.com/apache/skywalking-banyandb/pkg/query"
 	"github.com/apache/skywalking-banyandb/pkg/timestamp"
 )
@@ -145,22 +147,30 @@ func (s *traceService) validateWriteRequest(writeEntity *tracev1.WriteRequest,
 	}
 
 	if metadata.ModRevision > 0 {
+		// See banyand/liaison/grpc/measure.go for the rationale: the gate
+		// reads through the per-node NodeRepoRegistry so its verdict tracks
+		// the same cache the AwaitXXX barrier and the data-node executor
+		// consult; the entityRepo trace's ModRevision serves as the legacy
+		// fallback when the metadata service is not a metadata.Service.
+		reg := schemaRevisionRegistry(s.metadataRepo)
 		clientRev := metadata.ModRevision
-		cacheRev := traceEntity.GetMetadata().GetModRevision()
+		cacheRev := resolveSchemaRevision(reg, schema.KindTrace, metadata.GetGroup(), metadata.GetName(), traceEntity.GetMetadata().GetModRevision())
 		if clientRev < cacheRev {
 			s.l.Error().Stringer("written", writeEntity).Msg("the trace schema is expired")
+			s.metrics.emitStatusExpired(rpcLabelTraceWrite, metadata.GetGroup())
 			s.sendReply(metadata, modelv1.Status_STATUS_EXPIRED_SCHEMA, writeEntity.GetVersion(), stream)
 			return modelv1.Status_STATUS_EXPIRED_SCHEMA
 		}
 		if clientRev > cacheRev {
 			reached := awaitRevisionReached(func() int64 {
-				e, ok := s.entityRepo.getTrace(id)
-				if !ok {
-					return 0
+				fallback := int64(0)
+				if e, ok := s.entityRepo.getTrace(id); ok {
+					fallback = e.GetMetadata().GetModRevision()
 				}
-				return e.GetMetadata().GetModRevision()
+				return resolveSchemaRevision(reg, schema.KindTrace, metadata.GetGroup(), metadata.GetName(), fallback)
 			}, clientRev, s.maxWaitDuration)
 			if !reached {
+				s.metrics.emitStatusNotAppliedTimeout(rpcLabelTraceWrite, metadata.GetGroup())
 				s.sendReply(metadata, modelv1.Status_STATUS_SCHEMA_NOT_APPLIED, writeEntity.GetVersion(), stream)
 				return modelv1.Status_STATUS_SCHEMA_NOT_APPLIED
 			}
@@ -207,8 +217,7 @@ func (s *traceService) navigate(metadata *commonv1.Metadata,
 }
 
 func (s *traceService) shardID(traceID string, shardCount uint32) common.ShardID {
-	hash := convert.Hash([]byte(traceID))
-	return common.ShardID(hash % uint64(shardCount))
+	return partition.TraceShardID(traceID, shardCount)
 }
 
 func (s *traceService) extractTraceID(tags []*modelv1.TagValue, traceIDIndex int) (string, error) {
@@ -521,11 +530,13 @@ func (s *traceService) Query(ctx context.Context, req *tracev1.QueryRequest) (re
 			}
 		}()
 	}
+	traceReg := schemaRevisionRegistry(s.metadataRepo)
 	gatedStatuses, shortCircuit := checkQueryGate(req.Groups, req.Name, req.GroupModRevisions,
 		func(name, group string) (int64, bool) {
 			loc, ok := s.entityRepo.getLocator(identity{name: name, group: group})
-			return loc.ModRevision, ok
+			return resolveQueryGateRevision(traceReg, schema.KindTrace, group, name, loc.ModRevision, ok)
 		}, s.maxWaitDuration)
+	recordQueryGateStatuses(s.metrics, rpcLabelTraceQuery, gatedStatuses)
 	if shortCircuit {
 		return &tracev1.QueryResponse{GroupStatuses: gatedStatuses}, nil
 	}

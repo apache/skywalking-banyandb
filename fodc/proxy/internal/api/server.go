@@ -28,22 +28,36 @@ import (
 	"strings"
 	"time"
 
+	"google.golang.org/protobuf/encoding/protojson"
+
+	fodcv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/fodc/v1"
 	"github.com/apache/skywalking-banyandb/fodc/proxy/internal/cluster"
+	"github.com/apache/skywalking-banyandb/fodc/proxy/internal/diagnostics"
 	"github.com/apache/skywalking-banyandb/fodc/proxy/internal/lifecycle"
 	"github.com/apache/skywalking-banyandb/fodc/proxy/internal/metrics"
 	"github.com/apache/skywalking-banyandb/fodc/proxy/internal/registry"
 	"github.com/apache/skywalking-banyandb/pkg/logger"
 )
 
+// lifecycleGroupMarshaler emits zero-value protobuf fields (replicas=0, close=false, empty
+// stages, etc.) as explicit JSON keys instead of dropping them. The default encoding/json +
+// protoc-gen-go combination would silence those fields via `omitempty`, leaving downstream
+// consumers (SRE agent) unable to tell "field absent" from "value is zero".
+var lifecycleGroupMarshaler = protojson.MarshalOptions{
+	UseProtoNames:   true,
+	EmitUnpopulated: true,
+}
+
 // Server exposes REST and Prometheus-style endpoints for external consumption.
 type Server struct {
-	metricsAggregator     *metrics.Aggregator
-	clusterStateCollector *cluster.Manager
-	lifecycleManager      *lifecycle.Manager
-	registry              *registry.AgentRegistry
-	server                *http.Server
-	logger                *logger.Logger
-	startTime             time.Time
+	metricsAggregator          *metrics.Aggregator
+	clusterStateCollector      *cluster.Manager
+	lifecycleManager           *lifecycle.Manager
+	crashDiagnosticsAggregator *diagnostics.Aggregator
+	registry                   *registry.AgentRegistry
+	server                     *http.Server
+	logger                     *logger.Logger
+	startTime                  time.Time
 }
 
 // NewServer creates a new Server instance.
@@ -52,15 +66,17 @@ func NewServer(
 	clusterStateCollector *cluster.Manager,
 	lifecycleManager *lifecycle.Manager,
 	registry *registry.AgentRegistry,
+	crashDiagnosticsAggregator *diagnostics.Aggregator,
 	logger *logger.Logger,
 ) *Server {
 	return &Server{
-		metricsAggregator:     metricsAggregator,
-		clusterStateCollector: clusterStateCollector,
-		lifecycleManager:      lifecycleManager,
-		registry:              registry,
-		logger:                logger,
-		startTime:             time.Now(),
+		metricsAggregator:          metricsAggregator,
+		clusterStateCollector:      clusterStateCollector,
+		lifecycleManager:           lifecycleManager,
+		crashDiagnosticsAggregator: crashDiagnosticsAggregator,
+		registry:                   registry,
+		logger:                     logger,
+		startTime:                  time.Now(),
 	}
 }
 
@@ -73,6 +89,7 @@ func (s *Server) Start(listenAddr string, readTimeout, writeTimeout time.Duratio
 	mux.HandleFunc("/health", s.handleHealth)
 	mux.HandleFunc("/cluster/topology", s.handleClusterTopology)
 	mux.HandleFunc("/cluster/lifecycle", s.handleClusterLifecycle)
+	mux.HandleFunc("/diagnostics", s.handleDiagnostics)
 
 	s.server = &http.Server{
 		Addr:         listenAddr,
@@ -253,82 +270,137 @@ func (s *Server) handleHealth(w http.ResponseWriter, r *http.Request) {
 }
 
 // formatPrometheusText formats aggregated metrics as Prometheus text format.
+//
+// Metrics with a known Type (non-empty) are emitted using the real type. Metrics with
+// Type=="" (pre-upgrade agents) fall back to the legacy suffix-heuristic path so behavior
+// is unchanged for those metrics.
 func (s *Server) formatPrometheusText(aggregatedMetrics []*metrics.AggregatedMetric) string {
 	if len(aggregatedMetrics) == 0 {
 		return ""
 	}
 
-	metricMap := make(map[string]*metricGroup)
-	histogramBases := make(map[string]bool)
-
-	for _, metric := range aggregatedMetrics {
-		key := metric.Name
-		group, exists := metricMap[key]
-		if !exists {
-			group = &metricGroup{
-				name:        metric.Name,
-				description: metric.Description,
-				metrics:     make([]*metrics.AggregatedMetric, 0),
-			}
-			metricMap[key] = group
-		}
-		group.metrics = append(group.metrics, metric)
-
-		if strings.HasSuffix(metric.Name, "_bucket") ||
-			strings.HasSuffix(metric.Name, "_sum") ||
-			strings.HasSuffix(metric.Name, "_count") {
-			baseName := getHistogramBaseName(metric.Name)
-			if baseName != "" {
-				histogramBases[baseName] = true
-			}
-		}
-	}
-
-	histogramMetrics := make(map[string][]*metrics.AggregatedMetric)
-	regularMetrics := make(map[string]*metricGroup)
-
-	for name, group := range metricMap {
-		baseName := getHistogramBaseName(name)
-		if baseName != "" && histogramBases[baseName] {
-			histogramMetrics[baseName] = append(histogramMetrics[baseName], group.metrics...)
+	// Partition into typed (type known from agent) and untyped (legacy/unknown).
+	var typed []*metrics.AggregatedMetric
+	var untyped []*metrics.AggregatedMetric
+	for _, m := range aggregatedMetrics {
+		if m.Type != "" {
+			typed = append(typed, m)
 		} else {
-			regularMetrics[name] = group
+			untyped = append(untyped, m)
 		}
 	}
 
 	var builder strings.Builder
+	remainingUntyped := writeTypedFamilies(&builder, typed, untyped)
+	writeUntypedFamilies(&builder, remainingUntyped)
+	return builder.String()
+}
+
+// writeTypedFamilies groups typed metrics by family base and emits one "# TYPE" line per
+// family using the real type. The family base for histogram/summary component series
+// (_bucket/_sum/_count) is the name with the suffix stripped; bare summary quantile series
+// and all counter/gauge/untyped series use the name as-is. Untyped metrics whose base
+// collides with a typed family are absorbed under the authoritative typed line — this
+// prevents a mixed-version rollout from emitting two conflicting "# TYPE" lines for one
+// name. The untyped metrics with no typed-family collision are returned for the legacy path.
+func writeTypedFamilies(builder *strings.Builder, typed, untyped []*metrics.AggregatedMetric) []*metrics.AggregatedMetric {
+	typedFamilyOrder := make([]string, 0)
+	typedFamilies := make(map[string]*metricGroup) // base → group
+	for _, m := range typed {
+		base := typedFamilyBase(m.Name, m.Type)
+		grp, exists := typedFamilies[base]
+		if !exists {
+			grp = &metricGroup{
+				name:        base,
+				description: m.Description,
+				metricType:  m.Type,
+				metrics:     make([]*metrics.AggregatedMetric, 0),
+			}
+			typedFamilies[base] = grp
+			typedFamilyOrder = append(typedFamilyOrder, base)
+		}
+		grp.metrics = append(grp.metrics, m)
+	}
+
+	remainingUntyped := make([]*metrics.AggregatedMetric, 0, len(untyped))
+	for _, m := range untyped {
+		grp := matchTypedFamily(typedFamilies, m.Name)
+		if grp == nil {
+			remainingUntyped = append(remainingUntyped, m)
+			continue
+		}
+		if grp.description == "" && m.Description != "" {
+			grp.description = m.Description
+		}
+		grp.metrics = append(grp.metrics, m)
+	}
+
+	sort.Strings(typedFamilyOrder)
+	for _, base := range typedFamilyOrder {
+		grp := typedFamilies[base]
+		if grp.description != "" {
+			builder.WriteString(fmt.Sprintf("# HELP %s %s\n", base, grp.description))
+		}
+		builder.WriteString(fmt.Sprintf("# TYPE %s %s\n", base, grp.metricType))
+		for _, m := range grp.metrics {
+			builder.WriteString(formatMetricLine(m))
+		}
+	}
+	return remainingUntyped
+}
+
+// writeUntypedFamilies emits metrics with no known type using the legacy suffix heuristic:
+// a base name with a _bucket/_sum/_count sibling is treated as a histogram, everything else
+// as a gauge. This preserves pre-typed behavior for pre-upgrade agents.
+func writeUntypedFamilies(builder *strings.Builder, untyped []*metrics.AggregatedMetric) {
+	if len(untyped) == 0 {
+		return
+	}
+	metricMap := make(map[string]*metricGroup)
+	histogramBases := make(map[string]bool)
+	for _, m := range untyped {
+		grp, exists := metricMap[m.Name]
+		if !exists {
+			grp = &metricGroup{
+				name:        m.Name,
+				description: m.Description,
+				metrics:     make([]*metrics.AggregatedMetric, 0),
+			}
+			metricMap[m.Name] = grp
+		}
+		grp.metrics = append(grp.metrics, m)
+		if baseName := getHistogramBaseName(m.Name); baseName != "" {
+			histogramBases[baseName] = true
+		}
+	}
+
+	histogramMetricsMap := make(map[string][]*metrics.AggregatedMetric)
+	regularMetrics := make(map[string]*metricGroup)
+	for name, grp := range metricMap {
+		baseName := getHistogramBaseName(name)
+		if baseName != "" && histogramBases[baseName] {
+			histogramMetricsMap[baseName] = append(histogramMetricsMap[baseName], grp.metrics...)
+		} else {
+			regularMetrics[name] = grp
+		}
+	}
 
 	histogramNames := make([]string, 0, len(histogramBases))
 	for baseName := range histogramBases {
 		histogramNames = append(histogramNames, baseName)
 	}
 	sort.Strings(histogramNames)
-
 	for _, baseName := range histogramNames {
-		allMetrics := histogramMetrics[baseName]
-		if len(allMetrics) == 0 {
+		allM := histogramMetricsMap[baseName]
+		if len(allM) == 0 {
 			continue
 		}
-
-		description := allMetrics[0].Description
-		if description != "" {
+		if description := allM[0].Description; description != "" {
 			builder.WriteString(fmt.Sprintf("# HELP %s %s\n", baseName, description))
 		}
 		builder.WriteString(fmt.Sprintf("# TYPE %s histogram\n", baseName))
-
-		for _, metric := range allMetrics {
-			labelParts := make([]string, 0, len(metric.Labels))
-			for key, value := range metric.Labels {
-				labelParts = append(labelParts, fmt.Sprintf(`%s="%s"`, key, value))
-			}
-			sort.Strings(labelParts)
-
-			labelStr := ""
-			if len(labelParts) > 0 {
-				labelStr = "{" + strings.Join(labelParts, ",") + "}"
-			}
-
-			builder.WriteString(fmt.Sprintf("%s%s %s\n", metric.Name, labelStr, formatFloat(metric.Value)))
+		for _, m := range allM {
+			builder.WriteString(formatMetricLine(m))
 		}
 	}
 
@@ -337,31 +409,76 @@ func (s *Server) formatPrometheusText(aggregatedMetrics []*metrics.AggregatedMet
 		regularNames = append(regularNames, name)
 	}
 	sort.Strings(regularNames)
-
 	for _, name := range regularNames {
-		group := regularMetrics[name]
-		if group.description != "" {
-			builder.WriteString(fmt.Sprintf("# HELP %s %s\n", group.name, group.description))
+		grp := regularMetrics[name]
+		if grp.description != "" {
+			builder.WriteString(fmt.Sprintf("# HELP %s %s\n", grp.name, grp.description))
 		}
-		builder.WriteString(fmt.Sprintf("# TYPE %s gauge\n", group.name))
-
-		for _, metric := range group.metrics {
-			labelParts := make([]string, 0, len(metric.Labels))
-			for key, value := range metric.Labels {
-				labelParts = append(labelParts, fmt.Sprintf(`%s="%s"`, key, value))
-			}
-			sort.Strings(labelParts)
-
-			labelStr := ""
-			if len(labelParts) > 0 {
-				labelStr = "{" + strings.Join(labelParts, ",") + "}"
-			}
-
-			builder.WriteString(fmt.Sprintf("%s%s %s\n", group.name, labelStr, formatFloat(metric.Value)))
+		builder.WriteString(fmt.Sprintf("# TYPE %s gauge\n", grp.name))
+		for _, m := range grp.metrics {
+			builder.WriteString(formatMetricLine(m))
 		}
 	}
+}
 
-	return builder.String()
+// matchTypedFamily returns the typed family an untyped series belongs to, or nil if none.
+// It checks the exact name first (counter/gauge/untyped series and bare summary quantile
+// series), then the histogram/summary component base after trimming a trailing
+// _bucket/_sum/_count suffix. Used to fold pre-upgrade (untyped) samples into the
+// authoritative typed family so the proxy never emits two TYPE lines for one name.
+func matchTypedFamily(typedFamilies map[string]*metricGroup, name string) *metricGroup {
+	if grp, ok := typedFamilies[name]; ok {
+		return grp
+	}
+	for _, suffix := range []string{"_bucket", "_sum", "_count"} {
+		if strings.HasSuffix(name, suffix) {
+			base := strings.TrimSuffix(name, suffix)
+			if base != "" {
+				if grp, ok := typedFamilies[base]; ok {
+					return grp
+				}
+			}
+			break
+		}
+	}
+	return nil
+}
+
+// typedFamilyBase returns the Prometheus family base name for a typed series.
+// For histogram/summary component series the trailing _bucket/_sum/_count is stripped.
+// For all other types (counter, gauge, untyped) the name is used as-is.
+func typedFamilyBase(name, metricType string) string {
+	switch metricType {
+	case "histogram", "summary":
+		for _, suffix := range []string{"_bucket", "_sum", "_count"} {
+			if strings.HasSuffix(name, suffix) {
+				base := strings.TrimSuffix(name, suffix)
+				if base != "" {
+					return base
+				}
+			}
+		}
+	}
+	return name
+}
+
+// labelValueEscaper escapes the three characters that are special inside a Prometheus
+// text-exposition label value: backslash, double-quote, and line feed. The replacements are
+// applied in a single left-to-right pass, so an escaped backslash is not re-escaped.
+var labelValueEscaper = strings.NewReplacer(`\`, `\\`, `"`, `\"`, "\n", `\n`)
+
+// formatMetricLine renders a single metric sample as a Prometheus text line.
+func formatMetricLine(m *metrics.AggregatedMetric) string {
+	labelParts := make([]string, 0, len(m.Labels))
+	for k, v := range m.Labels {
+		labelParts = append(labelParts, fmt.Sprintf(`%s="%s"`, k, labelValueEscaper.Replace(v)))
+	}
+	sort.Strings(labelParts)
+	labelStr := ""
+	if len(labelParts) > 0 {
+		labelStr = "{" + strings.Join(labelParts, ",") + "}"
+	}
+	return fmt.Sprintf("%s%s %s\n", m.Name, labelStr, formatFloat(m.Value))
 }
 
 // formatMetricsWindowJSON formats aggregated metrics as JSON for metrics-windows endpoint.
@@ -463,6 +580,7 @@ func getHistogramBaseName(metricName string) string {
 type metricGroup struct {
 	name        string
 	description string
+	metricType  string
 	metrics     []*metrics.AggregatedMetric
 }
 
@@ -476,6 +594,15 @@ type timeSeriesMetric struct {
 }
 
 // handleClusterLifecycle handles GET /cluster/lifecycle endpoint.
+//
+// The handler adds an "error" field to the response body whenever the proxy could not
+// gather any lifecycle data — that is, when no agent was registered (Total == 0), no
+// registered agent supported the lifecycle stream (Requested == 0), or none of the
+// requested agents responded within the collection window (Responded == 0). The error
+// message describes which of these three sub-cases occurred so callers can distinguish an
+// infrastructure-layer outage (e.g. proxy pod restart with every agent failing to
+// reconnect) from a cluster that genuinely has no groups. The HTTP status stays 200 in
+// every case; the distinguishing signal is in the body, not in the status code.
 func (s *Server) handleClusterLifecycle(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
 		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
@@ -485,12 +612,106 @@ func (s *Server) handleClusterLifecycle(w http.ResponseWriter, r *http.Request) 
 		http.Error(w, "Lifecycle manager not available", http.StatusServiceUnavailable)
 		return
 	}
-	lifecycleData := s.lifecycleManager.CollectLifecycle(r.Context())
+	lifecycleData, agentSummary := s.lifecycleManager.CollectLifecycle(r.Context())
+
+	groupsJSON, err := marshalLifecycleGroups(lifecycleData.Groups)
+	if err != nil {
+		s.logger.Error().Err(err).Msg("Failed to marshal lifecycle groups")
+		http.Error(w, "Failed to serialize lifecycle groups", http.StatusInternalServerError)
+		return
+	}
+
+	statusesJSON, err := marshalLifecycleStatuses(lifecycleData.LifecycleStatuses)
+	if err != nil {
+		s.logger.Error().Err(err).Msg("Failed to marshal lifecycle statuses")
+		http.Error(w, "Failed to serialize lifecycle statuses", http.StatusInternalServerError)
+		return
+	}
+
+	body := map[string]interface{}{
+		"groups":             groupsJSON,
+		"lifecycle_statuses": statusesJSON,
+		"agent_summary":      agentSummary,
+	}
+	switch {
+	case agentSummary.Total == 0:
+		body["error"] = "FODC unavailable: no agents registered"
+	case agentSummary.Requested == 0:
+		body["error"] = fmt.Sprintf("FODC unavailable: 0/%d registered agents support the lifecycle stream",
+			agentSummary.Total)
+	case agentSummary.Responded == 0:
+		body["error"] = fmt.Sprintf("FODC unavailable: 0/%d requested agents responded",
+			agentSummary.Requested)
+	}
+
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusOK)
-	if encodeErr := json.NewEncoder(w).Encode(lifecycleData); encodeErr != nil {
+	if encodeErr := json.NewEncoder(w).Encode(body); encodeErr != nil {
 		s.logger.Error().Err(encodeErr).Msg("Failed to encode lifecycle response")
 	}
+}
+
+// handleDiagnostics handles GET /diagnostics endpoint.
+func (s *Server) handleDiagnostics(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	if s.crashDiagnosticsAggregator == nil {
+		http.Error(w, "Diagnostics aggregator not available", http.StatusServiceUnavailable)
+		return
+	}
+	filter := &diagnostics.Filter{
+		Role:    r.URL.Query().Get("role"),
+		PodName: r.URL.Query().Get("pod_name"),
+	}
+	records, collectErr := s.crashDiagnosticsAggregator.CollectDiagnostics(r.Context(), filter)
+	if collectErr != nil {
+		s.logger.Error().Err(collectErr).Msg("Failed to collect diagnostics")
+		http.Error(w, "Failed to collect diagnostics", http.StatusInternalServerError)
+		return
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusOK)
+	if encodeErr := json.NewEncoder(w).Encode(records); encodeErr != nil {
+		s.logger.Error().Err(encodeErr).Msg("Failed to encode diagnostics response")
+	}
+}
+
+func marshalLifecycleGroups(groups []*fodcv1.GroupLifecycleInfo) ([]json.RawMessage, error) {
+	out := make([]json.RawMessage, 0, len(groups))
+	for _, g := range groups {
+		raw, err := lifecycleGroupMarshaler.Marshal(g)
+		if err != nil {
+			return nil, fmt.Errorf("marshal group %q: %w", g.GetName(), err)
+		}
+		out = append(out, raw)
+	}
+	return out, nil
+}
+
+// lifecycleStatusJSON mirrors lifecycle.PodLifecycleStatus but holds each report as a
+// pre-marshaled protojson blob so the LifecycleReport's protobuf zero-value fields are
+// emitted consistently with the groups payload.
+type lifecycleStatusJSON struct {
+	PodName string            `json:"pod_name"`
+	Reports []json.RawMessage `json:"reports"`
+}
+
+func marshalLifecycleStatuses(statuses []*lifecycle.PodLifecycleStatus) ([]lifecycleStatusJSON, error) {
+	out := make([]lifecycleStatusJSON, 0, len(statuses))
+	for _, s := range statuses {
+		reports := make([]json.RawMessage, 0, len(s.Reports))
+		for _, r := range s.Reports {
+			raw, err := lifecycleGroupMarshaler.Marshal(r)
+			if err != nil {
+				return nil, fmt.Errorf("marshal report %q: %w", r.GetFilename(), err)
+			}
+			reports = append(reports, raw)
+		}
+		out = append(out, lifecycleStatusJSON{PodName: s.PodName, Reports: reports})
+	}
+	return out, nil
 }
 
 // handleClusterTopology handles GET /cluster/topology endpoint.

@@ -1,0 +1,16 @@
+{
+    "metadata": {
+        "name": "cross-segment-trace-index-rule-binding",
+        "group": "sw_cross_segment_trace"
+    },
+    "rules": [
+        "cross_segment_timestamp"
+    ],
+    "subject": {
+        "catalog": "CATALOG_TRACE",
+        "name": "cross_segment_trace_item"
+    },
+    "begin_at": "2021-04-15T01:30:15.01Z",
+    "expire_at": "2121-04-15T01:30:15.01Z",
+    "updated_at": "2026-05-27T00:00:00.00Z"
+}

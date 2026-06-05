@@ -85,23 +85,13 @@ func TestQueryResult_QuotaExceeded(t *testing.T) {
 				tst.mustAddElements(es)
 				time.Sleep(100 * time.Millisecond)
 			}
-			// wait until the introducer is done
+			// wait until every introduced mem part has been flushed to disk;
+			// inspecting only snapshot.creator races with concurrent introductions
+			// (a flush of part N can land while part N+1 is still a mem part).
 			if len(tt.esList) > 0 {
-				for {
-					snp := tst.currentSnapshot()
-					if snp == nil {
-						time.Sleep(100 * time.Millisecond)
-						continue
-					}
-					if snp.creator == snapshotCreatorMemPart {
-						snp.decRef()
-						time.Sleep(100 * time.Millisecond)
-						continue
-					}
-					snp.decRef()
-					tst.Close()
-					break
-				}
+				require.Eventually(t, allPartsFlushed(tst), 30*time.Second, 100*time.Millisecond,
+					"mem parts not flushed to disk in time")
+				tst.Close()
 			}
 
 			// reopen the table

@@ -64,11 +64,50 @@ type Progress struct {
 	TraceSeriesErrors    map[string]map[string]map[common.ShardID]string `json:"trace_series_errors"`
 	TraceSeriesCounts    map[string]int                                  `json:"trace_series_counts"`
 	TraceSeriesProgress  map[string]int                                  `json:"trace_series_progress"`
-	progressFilePath     string                                          `json:"-"`
-	SnapshotStreamDir    string                                          `json:"snapshot_stream_dir"`
-	SnapshotMeasureDir   string                                          `json:"snapshot_measure_dir"`
-	SnapshotTraceDir     string                                          `json:"snapshot_trace_dir"`
-	mu                   sync.Mutex                                      `json:"-"`
+
+	// Per-source completion tracking (advances *Progress idempotently once per source item).
+	SourceCompletedStreamParts        map[string]map[string]map[common.ShardID]map[uint64]bool `json:"source_completed_stream_parts"`
+	SourceCompletedStreamSeries       map[string]map[string]map[common.ShardID]bool            `json:"source_completed_stream_series"`
+	SourceCompletedStreamElementIndex map[string]map[string]map[common.ShardID]bool            `json:"source_completed_stream_element_index"`
+	SourceCompletedMeasureParts       map[string]map[string]map[common.ShardID]map[uint64]bool `json:"source_completed_measure_parts"`
+	SourceCompletedMeasureSeries      map[string]map[string]map[common.ShardID]bool            `json:"source_completed_measure_series"`
+	SourceCompletedTraceShards        map[string]map[string]map[common.ShardID]bool            `json:"source_completed_trace_shards"`
+	SourceCompletedTraceSeries        map[string]map[string]map[common.ShardID]bool            `json:"source_completed_trace_series"`
+
+	// Sync-mode breakdown per group: how many parts (measure/stream) or shards
+	// (trace) were migrated via chunk-sync vs row-replay, plus the real number
+	// of rows replayed. Accumulated across resume cycles, fed into the report's
+	// summary.<catalog>.sync_breakdown.
+	StreamChunkSyncParts  map[string]uint64 `json:"stream_chunk_sync_parts"`
+	StreamRowReplayParts  map[string]uint64 `json:"stream_row_replay_parts"`
+	StreamRowReplayRows   map[string]uint64 `json:"stream_row_replay_rows"`
+	MeasureChunkSyncParts map[string]uint64 `json:"measure_chunk_sync_parts"`
+	MeasureRowReplayParts map[string]uint64 `json:"measure_row_replay_parts"`
+	MeasureRowReplayRows  map[string]uint64 `json:"measure_row_replay_rows"`
+	TraceChunkSyncShards  map[string]uint64 `json:"trace_chunk_sync_shards"`
+	TraceRowReplayParts   map[string]uint64 `json:"trace_row_replay_parts"`
+	TraceRowReplayRows    map[string]uint64 `json:"trace_row_replay_rows"`
+
+	// Per-node errors reported by row replayers during flush/close, keyed by
+	// group then node id. A group is single-catalog, so group names do not
+	// collide across catalogs.
+	RowReplayNodeErrors map[string]map[string]string `json:"row_replay_node_errors"`
+
+	progressFilePath   string     `json:"-"`
+	SnapshotStreamDir  string     `json:"snapshot_stream_dir"`
+	SnapshotMeasureDir string     `json:"snapshot_measure_dir"`
+	SnapshotTraceDir   string     `json:"snapshot_trace_dir"`
+	GroupsToProcess    []string   `json:"groups_to_process"`
+	mu                 sync.Mutex `json:"-"`
+}
+
+// SetGroupsToProcess records the set of groups picked up by this migration cycle.
+// Used as the denominator for migration_status.completion_rate so the report
+// reflects "completed / scheduled" rather than overlapping per-catalog buckets.
+func (p *Progress) SetGroupsToProcess(groups []string) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	p.GroupsToProcess = append(p.GroupsToProcess[:0], groups...)
 }
 
 // AllGroupsNotFullyCompleted find is there have any group not fully completed.
@@ -120,8 +159,28 @@ func NewProgress(path string, l *logger.Logger) *Progress {
 		TraceSeriesErrors:           make(map[string]map[string]map[common.ShardID]string),
 		TraceSeriesCounts:           make(map[string]int),
 		TraceSeriesProgress:         make(map[string]int),
-		progressFilePath:            path,
-		logger:                      l,
+
+		SourceCompletedStreamParts:        make(map[string]map[string]map[common.ShardID]map[uint64]bool),
+		SourceCompletedStreamSeries:       make(map[string]map[string]map[common.ShardID]bool),
+		SourceCompletedStreamElementIndex: make(map[string]map[string]map[common.ShardID]bool),
+		SourceCompletedMeasureParts:       make(map[string]map[string]map[common.ShardID]map[uint64]bool),
+		SourceCompletedMeasureSeries:      make(map[string]map[string]map[common.ShardID]bool),
+		SourceCompletedTraceShards:        make(map[string]map[string]map[common.ShardID]bool),
+		SourceCompletedTraceSeries:        make(map[string]map[string]map[common.ShardID]bool),
+
+		StreamChunkSyncParts:  make(map[string]uint64),
+		StreamRowReplayParts:  make(map[string]uint64),
+		StreamRowReplayRows:   make(map[string]uint64),
+		MeasureChunkSyncParts: make(map[string]uint64),
+		MeasureRowReplayParts: make(map[string]uint64),
+		MeasureRowReplayRows:  make(map[string]uint64),
+		TraceChunkSyncShards:  make(map[string]uint64),
+		TraceRowReplayParts:   make(map[string]uint64),
+		TraceRowReplayRows:    make(map[string]uint64),
+		RowReplayNodeErrors:   make(map[string]map[string]string),
+
+		progressFilePath: path,
+		logger:           l,
 	}
 }
 
@@ -266,9 +325,6 @@ func (p *Progress) MarkStreamPartCompleted(group string, segmentID string, shard
 
 	// Mark part as completed
 	p.CompletedStreamParts[group][segmentID][shardID][partID] = true
-
-	// Update progress count
-	p.StreamPartProgress[group]++
 }
 
 // IsStreamPartCompleted checks if a specific part of a stream has been completed.
@@ -354,9 +410,6 @@ func (p *Progress) MarkStreamSeriesCompleted(group string, segmentID string, sha
 
 	// Mark series segment as completed
 	p.CompletedStreamSeries[group][segmentID][shardID] = true
-
-	// Update progress count
-	p.StreamSeriesProgress[group]++
 }
 
 // IsStreamSeriesCompleted checks if a specific series segment of a stream has been completed.
@@ -466,9 +519,6 @@ func (p *Progress) MarkStreamElementIndexCompleted(group string, segmentID strin
 
 	// Mark shard as completed
 	p.CompletedStreamElementIndex[group][segmentID][shardID] = true
-
-	// Update progress count
-	p.StreamElementIndexProgress[group]++
 }
 
 // IsStreamElementIndexCompleted checks if a specific element index file of a stream has been completed.
@@ -552,9 +602,6 @@ func (p *Progress) MarkMeasurePartCompleted(group string, segmentID string, shar
 
 	// Mark part as completed
 	p.CompletedMeasureParts[group][segmentID][shardID][partID] = true
-
-	// Update progress count
-	p.MeasurePartProgress[group]++
 }
 
 // IsMeasurePartCompleted checks if a specific part of a measure has been completed.
@@ -633,6 +680,134 @@ func (p *Progress) ClearErrors() {
 	p.StreamElementIndexErrors = make(map[string]map[string]map[common.ShardID]string)
 	p.MeasurePartErrors = make(map[string]map[string]map[common.ShardID]map[uint64]string)
 	p.MeasureSeriesErrors = make(map[string]map[string]map[common.ShardID]string)
+	p.TraceShardErrors = make(map[string]map[string]map[common.ShardID]string)
+	p.TraceSeriesErrors = make(map[string]map[string]map[common.ShardID]string)
+}
+
+// AddMeasureChunkSyncPart records one measure part migrated via chunk-sync.
+func (p *Progress) AddMeasureChunkSyncPart(group string) {
+	defer p.saveProgress()
+	p.mu.Lock()
+	defer p.mu.Unlock()
+
+	if p.MeasureChunkSyncParts == nil {
+		p.MeasureChunkSyncParts = make(map[string]uint64)
+	}
+
+	p.MeasureChunkSyncParts[group]++
+}
+
+// AddMeasureRowReplay records one measure part migrated via row-replay and the
+// number of rows it republished.
+func (p *Progress) AddMeasureRowReplay(group string, rows int) {
+	defer p.saveProgress()
+	p.mu.Lock()
+	defer p.mu.Unlock()
+
+	if p.MeasureRowReplayParts == nil {
+		p.MeasureRowReplayParts = make(map[string]uint64)
+	}
+	if p.MeasureRowReplayRows == nil {
+		p.MeasureRowReplayRows = make(map[string]uint64)
+	}
+
+	p.MeasureRowReplayParts[group]++
+	if rows > 0 {
+		p.MeasureRowReplayRows[group] += uint64(rows)
+	}
+}
+
+// AddStreamChunkSyncPart records one stream part migrated via chunk-sync.
+func (p *Progress) AddStreamChunkSyncPart(group string) {
+	defer p.saveProgress()
+	p.mu.Lock()
+	defer p.mu.Unlock()
+
+	if p.StreamChunkSyncParts == nil {
+		p.StreamChunkSyncParts = make(map[string]uint64)
+	}
+
+	p.StreamChunkSyncParts[group]++
+}
+
+// AddStreamRowReplay records one stream part migrated via row-replay and the
+// number of rows it republished.
+func (p *Progress) AddStreamRowReplay(group string, rows int) {
+	defer p.saveProgress()
+	p.mu.Lock()
+	defer p.mu.Unlock()
+
+	if p.StreamRowReplayParts == nil {
+		p.StreamRowReplayParts = make(map[string]uint64)
+	}
+	if p.StreamRowReplayRows == nil {
+		p.StreamRowReplayRows = make(map[string]uint64)
+	}
+
+	p.StreamRowReplayParts[group]++
+	if rows > 0 {
+		p.StreamRowReplayRows[group] += uint64(rows)
+	}
+}
+
+// AddTraceChunkSyncShard records one trace shard migrated via chunk-sync.
+func (p *Progress) AddTraceChunkSyncShard(group string) {
+	defer p.saveProgress()
+	p.mu.Lock()
+	defer p.mu.Unlock()
+
+	if p.TraceChunkSyncShards == nil {
+		p.TraceChunkSyncShards = make(map[string]uint64)
+	}
+
+	p.TraceChunkSyncShards[group]++
+}
+
+// AddTraceRowReplay records the parts and rows of a trace shard migrated via
+// row-replay (one shard may contain several parts).
+func (p *Progress) AddTraceRowReplay(group string, parts, rows int) {
+	defer p.saveProgress()
+	p.mu.Lock()
+	defer p.mu.Unlock()
+
+	if p.TraceRowReplayParts == nil {
+		p.TraceRowReplayParts = make(map[string]uint64)
+	}
+	if p.TraceRowReplayRows == nil {
+		p.TraceRowReplayRows = make(map[string]uint64)
+	}
+
+	if parts > 0 {
+		p.TraceRowReplayParts[group] += uint64(parts)
+	}
+	if rows > 0 {
+		p.TraceRowReplayRows[group] += uint64(rows)
+	}
+}
+
+// RecordRowReplayNodeErrors persists the per-node errors a row replayer
+// reported while flushing/closing its publisher. Keyed by group then node id.
+func (p *Progress) RecordRowReplayNodeErrors(group string, cee map[string]*common.Error) {
+	if len(cee) == 0 {
+		return
+	}
+	defer p.saveProgress()
+	p.mu.Lock()
+	defer p.mu.Unlock()
+
+	if p.RowReplayNodeErrors == nil {
+		p.RowReplayNodeErrors = make(map[string]map[string]string)
+	}
+	if p.RowReplayNodeErrors[group] == nil {
+		p.RowReplayNodeErrors[group] = make(map[string]string)
+	}
+
+	for nodeID, ce := range cee {
+		if ce == nil {
+			continue
+		}
+		p.RowReplayNodeErrors[group][nodeID] = ce.Error()
+	}
 }
 
 // MarkMeasureSeriesCompleted marks a specific series segment of a measure as completed.
@@ -651,9 +826,6 @@ func (p *Progress) MarkMeasureSeriesCompleted(group string, segmentID string, sh
 
 	// Mark series segment as completed
 	p.CompletedMeasureSeries[group][segmentID][shardID] = true
-
-	// Update progress count
-	p.MeasureSeriesProgress[group]++
 }
 
 // IsMeasureSeriesCompleted checks if a specific series segment of a measure has been completed.
@@ -746,9 +918,6 @@ func (p *Progress) MarkTraceShardCompleted(group string, segmentID string, shard
 		p.CompletedTraceShards[group][segmentID] = make(map[common.ShardID]bool)
 	}
 	p.CompletedTraceShards[group][segmentID][shardID] = true
-
-	// Increment progress
-	p.TraceShardProgress[group]++
 }
 
 // IsTraceShardCompleted checks if a specific part of a trace has been completed.
@@ -820,9 +989,6 @@ func (p *Progress) MarkTraceSeriesCompleted(group string, segmentID string, shar
 		p.CompletedTraceSeries[group][segmentID] = make(map[common.ShardID]bool)
 	}
 	p.CompletedTraceSeries[group][segmentID][shardID] = true
-
-	// Increment progress
-	p.TraceSeriesProgress[group]++
 }
 
 // IsTraceSeriesCompleted checks if a specific series segment of a trace has been completed.
@@ -880,4 +1046,136 @@ func (p *Progress) GetTraceSeriesProgress(group string) int {
 		return progress
 	}
 	return 0
+}
+
+// MarkSourceStreamPartCompleted records that one source stream part finished
+// every target write successfully; idempotent (++Progress on first call only).
+func (p *Progress) MarkSourceStreamPartCompleted(group string, sourceSegmentID string, sourceShardID common.ShardID, partID uint64) {
+	defer p.saveProgress()
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	if p.SourceCompletedStreamParts[group] == nil {
+		p.SourceCompletedStreamParts[group] = make(map[string]map[common.ShardID]map[uint64]bool)
+	}
+	if p.SourceCompletedStreamParts[group][sourceSegmentID] == nil {
+		p.SourceCompletedStreamParts[group][sourceSegmentID] = make(map[common.ShardID]map[uint64]bool)
+	}
+	if p.SourceCompletedStreamParts[group][sourceSegmentID][sourceShardID] == nil {
+		p.SourceCompletedStreamParts[group][sourceSegmentID][sourceShardID] = make(map[uint64]bool)
+	}
+	if !p.SourceCompletedStreamParts[group][sourceSegmentID][sourceShardID][partID] {
+		p.SourceCompletedStreamParts[group][sourceSegmentID][sourceShardID][partID] = true
+		p.StreamPartProgress[group]++
+	}
+}
+
+// MarkSourceStreamSeriesCompleted records that one source stream series file finished
+// every target write successfully; idempotent.
+func (p *Progress) MarkSourceStreamSeriesCompleted(group string, sourceSegmentID string, sourceShardID common.ShardID) {
+	defer p.saveProgress()
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	if p.SourceCompletedStreamSeries[group] == nil {
+		p.SourceCompletedStreamSeries[group] = make(map[string]map[common.ShardID]bool)
+	}
+	if p.SourceCompletedStreamSeries[group][sourceSegmentID] == nil {
+		p.SourceCompletedStreamSeries[group][sourceSegmentID] = make(map[common.ShardID]bool)
+	}
+	if !p.SourceCompletedStreamSeries[group][sourceSegmentID][sourceShardID] {
+		p.SourceCompletedStreamSeries[group][sourceSegmentID][sourceShardID] = true
+		p.StreamSeriesProgress[group]++
+	}
+}
+
+// MarkSourceStreamElementIndexCompleted records that one source stream element-index visit finished
+// every target write successfully; idempotent.
+func (p *Progress) MarkSourceStreamElementIndexCompleted(group string, sourceSegmentID string, sourceShardID common.ShardID) {
+	defer p.saveProgress()
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	if p.SourceCompletedStreamElementIndex[group] == nil {
+		p.SourceCompletedStreamElementIndex[group] = make(map[string]map[common.ShardID]bool)
+	}
+	if p.SourceCompletedStreamElementIndex[group][sourceSegmentID] == nil {
+		p.SourceCompletedStreamElementIndex[group][sourceSegmentID] = make(map[common.ShardID]bool)
+	}
+	if !p.SourceCompletedStreamElementIndex[group][sourceSegmentID][sourceShardID] {
+		p.SourceCompletedStreamElementIndex[group][sourceSegmentID][sourceShardID] = true
+		p.StreamElementIndexProgress[group]++
+	}
+}
+
+// MarkSourceMeasurePartCompleted records that one source measure part finished
+// every target write successfully; idempotent.
+func (p *Progress) MarkSourceMeasurePartCompleted(group string, sourceSegmentID string, sourceShardID common.ShardID, partID uint64) {
+	defer p.saveProgress()
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	if p.SourceCompletedMeasureParts[group] == nil {
+		p.SourceCompletedMeasureParts[group] = make(map[string]map[common.ShardID]map[uint64]bool)
+	}
+	if p.SourceCompletedMeasureParts[group][sourceSegmentID] == nil {
+		p.SourceCompletedMeasureParts[group][sourceSegmentID] = make(map[common.ShardID]map[uint64]bool)
+	}
+	if p.SourceCompletedMeasureParts[group][sourceSegmentID][sourceShardID] == nil {
+		p.SourceCompletedMeasureParts[group][sourceSegmentID][sourceShardID] = make(map[uint64]bool)
+	}
+	if !p.SourceCompletedMeasureParts[group][sourceSegmentID][sourceShardID][partID] {
+		p.SourceCompletedMeasureParts[group][sourceSegmentID][sourceShardID][partID] = true
+		p.MeasurePartProgress[group]++
+	}
+}
+
+// MarkSourceMeasureSeriesCompleted records that one source measure series file finished
+// every target write successfully; idempotent.
+func (p *Progress) MarkSourceMeasureSeriesCompleted(group string, sourceSegmentID string, sourceShardID common.ShardID) {
+	defer p.saveProgress()
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	if p.SourceCompletedMeasureSeries[group] == nil {
+		p.SourceCompletedMeasureSeries[group] = make(map[string]map[common.ShardID]bool)
+	}
+	if p.SourceCompletedMeasureSeries[group][sourceSegmentID] == nil {
+		p.SourceCompletedMeasureSeries[group][sourceSegmentID] = make(map[common.ShardID]bool)
+	}
+	if !p.SourceCompletedMeasureSeries[group][sourceSegmentID][sourceShardID] {
+		p.SourceCompletedMeasureSeries[group][sourceSegmentID][sourceShardID] = true
+		p.MeasureSeriesProgress[group]++
+	}
+}
+
+// MarkSourceTraceShardCompleted records that one source trace shard finished
+// every target write successfully; idempotent.
+func (p *Progress) MarkSourceTraceShardCompleted(group string, sourceSegmentID string, sourceShardID common.ShardID) {
+	defer p.saveProgress()
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	if p.SourceCompletedTraceShards[group] == nil {
+		p.SourceCompletedTraceShards[group] = make(map[string]map[common.ShardID]bool)
+	}
+	if p.SourceCompletedTraceShards[group][sourceSegmentID] == nil {
+		p.SourceCompletedTraceShards[group][sourceSegmentID] = make(map[common.ShardID]bool)
+	}
+	if !p.SourceCompletedTraceShards[group][sourceSegmentID][sourceShardID] {
+		p.SourceCompletedTraceShards[group][sourceSegmentID][sourceShardID] = true
+		p.TraceShardProgress[group]++
+	}
+}
+
+// MarkSourceTraceSeriesCompleted records that one source trace series file finished
+// every target write successfully; idempotent.
+func (p *Progress) MarkSourceTraceSeriesCompleted(group string, sourceSegmentID string, sourceShardID common.ShardID) {
+	defer p.saveProgress()
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	if p.SourceCompletedTraceSeries[group] == nil {
+		p.SourceCompletedTraceSeries[group] = make(map[string]map[common.ShardID]bool)
+	}
+	if p.SourceCompletedTraceSeries[group][sourceSegmentID] == nil {
+		p.SourceCompletedTraceSeries[group][sourceSegmentID] = make(map[common.ShardID]bool)
+	}
+	if !p.SourceCompletedTraceSeries[group][sourceSegmentID][sourceShardID] {
+		p.SourceCompletedTraceSeries[group][sourceSegmentID][sourceShardID] = true
+		p.TraceSeriesProgress[group]++
+	}
 }

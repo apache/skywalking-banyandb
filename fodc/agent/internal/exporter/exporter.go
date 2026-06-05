@@ -87,6 +87,21 @@ func (dc *DatasourceCollector) Describe(ch chan<- *prometheus.Desc) {
 	}
 }
 
+// chooseValueType maps a lowercase prometheus type string to a prometheus.ValueType
+// suitable for NewConstMetric. Histogram and summary cannot be represented as scalar
+// const metrics, so they degrade to UntypedValue.
+func chooseValueType(t string) prometheus.ValueType {
+	switch t {
+	case "counter":
+		return prometheus.CounterValue
+	case "histogram", "summary", "untyped":
+		return prometheus.UntypedValue
+	default:
+		// gauge or "" (unknown) → gauge
+		return prometheus.GaugeValue
+	}
+}
+
 // Collect implements prometheus.Collector interface.
 // It collects metrics from all Datasources and sends them to the channel.
 func (dc *DatasourceCollector) Collect(ch chan<- prometheus.Metric) {
@@ -94,6 +109,7 @@ func (dc *DatasourceCollector) Collect(ch chan<- prometheus.Metric) {
 	for _, ds := range datasources {
 		metricsMap := ds.GetMetrics()
 		descriptions := ds.GetDescriptions()
+		types := ds.GetTypes()
 		timestamps := ds.GetTimestamps()
 
 		for metricKeyStr, metricBuffer := range metricsMap {
@@ -128,9 +144,10 @@ func (dc *DatasourceCollector) Collect(ch chan<- prometheus.Metric) {
 				labelValues[idx] = labelValueMap[labelName]
 			}
 
+			metricType := metrics.ResolveMetricType(types, parsedKey.name)
 			metric, createErr := prometheus.NewConstMetric(
 				desc,
-				prometheus.GaugeValue,
+				chooseValueType(metricType),
 				currentValue,
 				labelValues...,
 			)

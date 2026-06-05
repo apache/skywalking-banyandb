@@ -84,6 +84,8 @@ message InternalQueryResponse {
   repeated InternalDataPoint data_points = 1;
   // trace contains the trace information of the query when trace is enabled
   common.v1.Trace trace = 2;
+  // raw_frame_body contains the vectorized raw frame body when raw wire mode is enabled
+  bytes raw_frame_body = 3;
 }
 
 // QueryRequest is the request contract for query.

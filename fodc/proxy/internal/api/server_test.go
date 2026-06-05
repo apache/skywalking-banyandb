@@ -89,7 +89,7 @@ func newTestServer(t *testing.T) (*Server, *registry.AgentRegistry, *mockCluster
 	mockRequester := &mockClusterDataRequester{}
 	clusterMgr := cluster.NewManager(testRegistry, mockRequester, testLogger)
 	mockRequester.clusterMgr = clusterMgr
-	server := NewServer(aggregator, clusterMgr, nil, testRegistry, testLogger)
+	server := NewServer(aggregator, clusterMgr, nil, testRegistry, nil, testLogger)
 	return server, testRegistry, mockRequester
 }
 
@@ -102,6 +102,11 @@ func newTestServerOnly(t *testing.T) *Server {
 }
 
 func createTestMetric(name string, value float64, labels map[string]string, timestamp time.Time) *metrics.AggregatedMetric {
+	return createTestMetricWithType(name, value, labels, timestamp, "")
+}
+
+// createTestMetricWithType creates a test metric with an explicit Prometheus type.
+func createTestMetricWithType(name string, value float64, labels map[string]string, timestamp time.Time, metricType string) *metrics.AggregatedMetric {
 	if labels == nil {
 		labels = make(map[string]string)
 	}
@@ -112,6 +117,7 @@ func createTestMetric(name string, value float64, labels map[string]string, time
 		Timestamp:   timestamp,
 		AgentID:     "test-agent-1",
 		Description: "Test metric description",
+		Type:        metricType,
 	}
 }
 
@@ -165,7 +171,7 @@ func TestHandleClusterTopology_NoClusterStateCollector(t *testing.T) {
 	testRegistry := registry.NewAgentRegistry(testLogger, 5*time.Second, 10*time.Second, 100)
 	mockSender := &mockRequestSender{}
 	aggregator := metrics.NewAggregator(testRegistry, mockSender, testLogger)
-	server := NewServer(aggregator, nil, nil, testRegistry, testLogger)
+	server := NewServer(aggregator, nil, nil, testRegistry, nil, testLogger)
 	req := httptest.NewRequest(http.MethodGet, "/cluster/topology", nil)
 	resp := httptest.NewRecorder()
 	server.handleClusterTopology(resp, req)
@@ -180,7 +186,7 @@ func TestHandleClusterTopology_RequestClusterDataError(t *testing.T) {
 	aggregator := metrics.NewAggregator(testRegistry, mockSender, testLogger)
 	mockRequester := &mockClusterDataRequester{requestErr: assert.AnError}
 	clusterMgr := cluster.NewManager(testRegistry, mockRequester, testLogger)
-	server := NewServer(aggregator, clusterMgr, nil, testRegistry, testLogger)
+	server := NewServer(aggregator, clusterMgr, nil, testRegistry, nil, testLogger)
 	ctx := context.Background()
 	identity := registry.AgentIdentity{
 		PodName:        "test-pod",
@@ -202,7 +208,7 @@ func TestNewServer(t *testing.T) {
 	mockSender := &mockRequestSender{}
 	aggregator := metrics.NewAggregator(testRegistry, mockSender, testLogger)
 
-	server := NewServer(aggregator, nil, nil, testRegistry, testLogger)
+	server := NewServer(aggregator, nil, nil, testRegistry, nil, testLogger)
 
 	assert.NotNil(t, server)
 	assert.Equal(t, aggregator, server.metricsAggregator)
@@ -747,7 +753,7 @@ func TestHandleClusterLifecycle_Success(t *testing.T) {
 	}
 	mockLifecycleRequester.podByAgent[agentID] = "test-pod-1"
 
-	server := NewServer(aggregator, nil, lifecycleMgr, testRegistry, testLogger)
+	server := NewServer(aggregator, nil, lifecycleMgr, testRegistry, nil, testLogger)
 
 	req := httptest.NewRequest(http.MethodGet, "/cluster/lifecycle", nil)
 	resp := httptest.NewRecorder()
@@ -773,11 +779,417 @@ func TestHandleClusterLifecycle_NoLifecycleManager(t *testing.T) {
 	testRegistry := registry.NewAgentRegistry(testLogger, 5*time.Second, 10*time.Second, 100)
 	mockSender := &mockRequestSender{}
 	aggregator := metrics.NewAggregator(testRegistry, mockSender, testLogger)
-	server := NewServer(aggregator, nil, nil, testRegistry, testLogger)
+	server := NewServer(aggregator, nil, nil, testRegistry, nil, testLogger)
 
 	req := httptest.NewRequest(http.MethodGet, "/cluster/lifecycle", nil)
 	resp := httptest.NewRecorder()
 	server.handleClusterLifecycle(resp, req)
 
 	assert.Equal(t, http.StatusServiceUnavailable, resp.Code)
+}
+
+// TestHandleClusterLifecycle_NoAgents_FlagsErrorInBody reproduces the bug where the proxy
+// silently returns 200 + an empty payload when no agents are registered. This makes the
+// caller (e.g. the SRE inspection agent) unable to distinguish two semantically very
+// different states:
+//   - the BanyanDB cluster genuinely has no groups (a real cluster-side problem); or
+//   - the FODC proxy lost all of its agents (an infrastructure-layer outage caused by a
+//     proxy pod restart, every agent stuck on reconnect, etc.).
+//
+// In production the second case is what triggered the lifecycle critical alert, but the
+// HTTP layer presented it identically to the first.
+//
+// Pre-fix behavior: handleClusterLifecycle writes 200 with body
+// `{"groups":[],"lifecycle_statuses":[]}` and no way to tell the two cases apart.
+// Post-fix behavior: HTTP status is still 200, but the body now carries an "error" field
+// when agent_summary reports total=0 or responded=0, plus the agent_summary itself.
+func TestHandleClusterLifecycle_NoAgents_FlagsErrorInBody(t *testing.T) {
+	initTestLogger(t)
+	testLogger := logger.GetLogger("test", "api")
+	testRegistry := registry.NewAgentRegistry(testLogger, 5*time.Second, 10*time.Second, 100)
+	defer testRegistry.Stop()
+	mockSender := &mockRequestSender{}
+	aggregator := metrics.NewAggregator(testRegistry, mockSender, testLogger)
+
+	mockLifecycleRequester := &mockLifecycleDataRequester{
+		dataByAgent: make(map[string]*fodcv1.LifecycleData),
+		podByAgent:  make(map[string]string),
+	}
+	lifecycleMgr := lifecycle.NewManager(testRegistry, mockLifecycleRequester, testLogger)
+	mockLifecycleRequester.lifecycleMgr = lifecycleMgr
+
+	server := NewServer(aggregator, nil, lifecycleMgr, testRegistry, nil, testLogger)
+
+	req := httptest.NewRequest(http.MethodGet, "/cluster/lifecycle", nil)
+	resp := httptest.NewRecorder()
+	server.handleClusterLifecycle(resp, req)
+
+	assert.Equal(t, http.StatusOK, resp.Code, "status code stays 200 even when zero agents are registered")
+
+	var body map[string]interface{}
+	require.NoError(t, json.NewDecoder(resp.Body).Decode(&body))
+
+	errMsg, hasError := body["error"]
+	assert.Truef(t, hasError, "body must include an error field when zero agents are registered, got: %v", body)
+	assert.Containsf(t, errMsg, "FODC unavailable",
+		"error field should describe the infrastructure-layer failure, got: %v", errMsg)
+
+	summary, hasSummary := body["agent_summary"].(map[string]interface{})
+	require.Truef(t, hasSummary, "body must include agent_summary, got: %v", body)
+	assert.EqualValues(t, 0, summary["total"], "agent_summary.total should be 0 when no agents are registered")
+	assert.EqualValues(t, 0, summary["responded"], "agent_summary.responded should be 0 when no agents are registered")
+}
+
+// runLifecycleHandlerWithGroup wires up a lifecycle manager backed by a single agent that
+// reports the supplied group, invokes the HTTP handler, and returns the parsed response
+// body so callers can inspect raw JSON keys.
+func runLifecycleHandlerWithGroup(t *testing.T, group *fodcv1.GroupLifecycleInfo) map[string]interface{} {
+	t.Helper()
+	initTestLogger(t)
+	testLogger := logger.GetLogger("test", "api")
+	testRegistry := registry.NewAgentRegistry(testLogger, 5*time.Second, 10*time.Second, 100)
+	t.Cleanup(testRegistry.Stop)
+	mockSender := &mockRequestSender{}
+	aggregator := metrics.NewAggregator(testRegistry, mockSender, testLogger)
+
+	mockLifecycleRequester := &mockLifecycleDataRequester{
+		dataByAgent: make(map[string]*fodcv1.LifecycleData),
+		podByAgent:  make(map[string]string),
+	}
+	lifecycleMgr := lifecycle.NewManager(testRegistry, mockLifecycleRequester, testLogger)
+	mockLifecycleRequester.lifecycleMgr = lifecycleMgr
+
+	identity := registry.AgentIdentity{
+		PodName:        "test-pod-1",
+		Role:           "datanode",
+		ContainerNames: []string{"banyandb"},
+	}
+	agentID, registerErr := testRegistry.RegisterAgent(context.Background(), identity)
+	require.NoError(t, registerErr)
+
+	mockLifecycleRequester.dataByAgent[agentID] = &fodcv1.LifecycleData{
+		Groups: []*fodcv1.GroupLifecycleInfo{group},
+	}
+	mockLifecycleRequester.podByAgent[agentID] = "test-pod-1"
+
+	server := NewServer(aggregator, nil, lifecycleMgr, testRegistry, nil, testLogger)
+	req := httptest.NewRequest(http.MethodGet, "/cluster/lifecycle", nil)
+	resp := httptest.NewRecorder()
+	server.handleClusterLifecycle(resp, req)
+	require.Equal(t, http.StatusOK, resp.Code)
+
+	var body map[string]interface{}
+	require.NoError(t, json.NewDecoder(resp.Body).Decode(&body))
+	return body
+}
+
+// firstGroup pulls the first group from the decoded response body and asserts the basic shape.
+func firstGroup(t *testing.T, body map[string]interface{}) map[string]interface{} {
+	t.Helper()
+	groups, ok := body["groups"].([]interface{})
+	require.True(t, ok, "response body must contain a groups array")
+	require.NotEmpty(t, groups, "groups array must not be empty")
+	g, ok := groups[0].(map[string]interface{})
+	require.True(t, ok, "first group must decode to an object")
+	return g
+}
+
+func TestHandleClusterLifecycle_UsesSnakeCase(t *testing.T) {
+	group := &fodcv1.GroupLifecycleInfo{
+		Name: "g1",
+		ResourceOpts: &commonv1.ResourceOpts{
+			ShardNum: 4,
+		},
+	}
+	body := runLifecycleHandlerWithGroup(t, group)
+	g := firstGroup(t, body)
+
+	resourceOpts, ok := g["resource_opts"].(map[string]interface{})
+	require.True(t, ok, "field name must be snake_case 'resource_opts', not 'resourceOpts'")
+	assert.Equal(t, float64(4), resourceOpts["shard_num"], "field name must be snake_case 'shard_num'")
+	_, hasCamel := g["resourceOpts"]
+	assert.False(t, hasCamel, "camelCase key must not be emitted")
+}
+
+func TestHandleClusterLifecycle_EmitsZeroValueFields(t *testing.T) {
+	group := &fodcv1.GroupLifecycleInfo{
+		Name: "g1",
+		ResourceOpts: &commonv1.ResourceOpts{
+			ShardNum: 4,
+			Replicas: 0, // zero value must still appear in JSON output
+			Stages: []*commonv1.LifecycleStage{
+				{
+					Name:     "warm",
+					ShardNum: 2,
+					Close:    false, // zero value must still appear
+					Replicas: 0,     // zero value must still appear
+				},
+			},
+		},
+	}
+	body := runLifecycleHandlerWithGroup(t, group)
+	g := firstGroup(t, body)
+
+	resourceOpts := g["resource_opts"].(map[string]interface{})
+	_, hasReplicas := resourceOpts["replicas"]
+	assert.True(t, hasReplicas, "zero-value replicas at ResourceOpts level must be emitted, not omitted")
+	assert.Equal(t, float64(0), resourceOpts["replicas"])
+
+	stages, ok := resourceOpts["stages"].([]interface{})
+	require.True(t, ok)
+	require.Len(t, stages, 1)
+	stage := stages[0].(map[string]interface{})
+
+	_, hasClose := stage["close"]
+	assert.True(t, hasClose, "zero-value close=false in LifecycleStage must be emitted")
+	assert.Equal(t, false, stage["close"])
+
+	_, hasStageReplicas := stage["replicas"]
+	assert.True(t, hasStageReplicas, "zero-value replicas in LifecycleStage must be emitted")
+	assert.Equal(t, float64(0), stage["replicas"])
+}
+
+func TestHandleClusterLifecycle_NilResourceOptsIsNull(t *testing.T) {
+	group := &fodcv1.GroupLifecycleInfo{
+		Name: "g1",
+		// ResourceOpts intentionally nil
+	}
+	body := runLifecycleHandlerWithGroup(t, group)
+	g := firstGroup(t, body)
+
+	require.Contains(t, g, "resource_opts", "EmitUnpopulated must surface the absent message as a key")
+	assert.Nil(t, g["resource_opts"], "nil protobuf message marshals to JSON null under EmitUnpopulated")
+}
+
+func TestHandleClusterLifecycle_DataInfoEmitted(t *testing.T) {
+	group := &fodcv1.GroupLifecycleInfo{
+		Name: "g1",
+		DataInfo: []*databasev1.DataInfo{
+			{DataSizeBytes: 1024},
+		},
+	}
+	body := runLifecycleHandlerWithGroup(t, group)
+	g := firstGroup(t, body)
+
+	dataInfo, ok := g["data_info"].([]interface{})
+	require.True(t, ok, "data_info must be encoded as snake_case array")
+	require.Len(t, dataInfo, 1)
+}
+
+// TestFormatPrometheusText_CounterType verifies that a metric with type=counter emits
+// "# TYPE foo_total counter" and is NOT mistaken for a histogram (invariant 2).
+func TestFormatPrometheusText_CounterType(t *testing.T) {
+	server := newTestServerOnly(t)
+	now := time.Now()
+	metricsList := []*metrics.AggregatedMetric{
+		createTestMetricWithType("http_requests_total", 42, map[string]string{"method": "GET"}, now, "counter"),
+	}
+
+	result := server.formatPrometheusText(metricsList)
+
+	assert.Contains(t, result, "# TYPE http_requests_total counter")
+	assert.Contains(t, result, "http_requests_total{")
+	assert.NotContains(t, result, "# TYPE http_requests_total gauge")
+	assert.NotContains(t, result, "# TYPE http_requests_total histogram")
+}
+
+// TestFormatPrometheusText_CounterWithCountSuffix verifies that a counter named foo_count
+// (not a histogram component) keeps type=counter and is NOT folded into histogram base "foo"
+// (invariant 3 — the key fix for the mislabeled-histogram defect).
+func TestFormatPrometheusText_CounterWithCountSuffix(t *testing.T) {
+	server := newTestServerOnly(t)
+	now := time.Now()
+	metricsList := []*metrics.AggregatedMetric{
+		createTestMetricWithType("banyandb_grpc_request_count", 100, map[string]string{"pod_name": "p1"}, now, "counter"),
+	}
+
+	result := server.formatPrometheusText(metricsList)
+
+	assert.Contains(t, result, "# TYPE banyandb_grpc_request_count counter")
+	// Must NOT be folded into a histogram base called "banyandb_grpc_request"
+	assert.NotContains(t, result, "# TYPE banyandb_grpc_request histogram")
+	assert.Contains(t, result, "banyandb_grpc_request_count{")
+}
+
+// TestFormatPrometheusText_HistogramTyped verifies that histogram component series with
+// type=histogram share exactly one "# TYPE foo histogram" line (invariant 4).
+func TestFormatPrometheusText_HistogramTyped(t *testing.T) {
+	server := newTestServerOnly(t)
+	now := time.Now()
+	labels := map[string]string{"pod_name": "p1"}
+	metricsList := []*metrics.AggregatedMetric{
+		createTestMetricWithType("request_latency_bucket", 10, labels, now, "histogram"),
+		createTestMetricWithType("request_latency_sum", 1.5, labels, now, "histogram"),
+		createTestMetricWithType("request_latency_count", 10, labels, now, "histogram"),
+	}
+
+	result := server.formatPrometheusText(metricsList)
+
+	// Exactly one TYPE line for the base name.
+	assert.Equal(t, 1, strings.Count(result, "# TYPE request_latency histogram"),
+		"must emit exactly one TYPE histogram line")
+	assert.Contains(t, result, "request_latency_bucket{")
+	assert.Contains(t, result, "request_latency_sum{")
+	assert.Contains(t, result, "request_latency_count{")
+	// Component names must not get their own TYPE lines.
+	assert.NotContains(t, result, "# TYPE request_latency_bucket")
+	assert.NotContains(t, result, "# TYPE request_latency_sum")
+	assert.NotContains(t, result, "# TYPE request_latency_count")
+}
+
+// TestFormatPrometheusText_SummaryTyped verifies that summary families emit exactly one
+// "# TYPE foo summary" line and all series (quantile, _sum, _count) fall under it (invariant 5).
+func TestFormatPrometheusText_SummaryTyped(t *testing.T) {
+	server := newTestServerOnly(t)
+	now := time.Now()
+	labelsQ := map[string]string{"quantile": "0.5"}
+	labelsBase := map[string]string{}
+	metricsList := []*metrics.AggregatedMetric{
+		createTestMetricWithType("go_gc_duration_seconds", 0.0001, labelsQ, now, "summary"),
+		createTestMetricWithType("go_gc_duration_seconds_sum", 0.5, labelsBase, now, "summary"),
+		createTestMetricWithType("go_gc_duration_seconds_count", 42, labelsBase, now, "summary"),
+	}
+
+	result := server.formatPrometheusText(metricsList)
+
+	// Exactly one TYPE line for the base name.
+	assert.Equal(t, 1, strings.Count(result, "# TYPE go_gc_duration_seconds summary"),
+		"must emit exactly one TYPE summary line")
+	assert.Contains(t, result, "go_gc_duration_seconds{")
+	assert.Contains(t, result, "go_gc_duration_seconds_sum")
+	assert.Contains(t, result, "go_gc_duration_seconds_count")
+	// Must NOT emit a separate gauge TYPE line for the bare name.
+	assert.NotContains(t, result, "# TYPE go_gc_duration_seconds gauge")
+}
+
+// TestFormatPrometheusText_MixedVersionDedup verifies that when the same metric family
+// arrives both typed (upgraded agent) and untyped (pre-upgrade agent) in one scrape, the
+// proxy emits exactly ONE "# TYPE" line — the typed one — and folds the untyped samples
+// under it, rather than emitting a conflicting second TYPE line that Prometheus rejects.
+func TestFormatPrometheusText_MixedVersionDedup(t *testing.T) {
+	server := newTestServerOnly(t)
+	now := time.Now()
+	metricsList := []*metrics.AggregatedMetric{
+		createTestMetricWithType("process_cpu_seconds_total", 5, map[string]string{"pod_name": "new"}, now, "counter"),
+		createTestMetricWithType("process_cpu_seconds_total", 3, map[string]string{"pod_name": "old"}, now, ""),
+	}
+
+	result := server.formatPrometheusText(metricsList)
+
+	assert.Equal(t, 1, strings.Count(result, "# TYPE process_cpu_seconds_total"),
+		"must emit exactly one TYPE line for the family")
+	assert.Contains(t, result, "# TYPE process_cpu_seconds_total counter")
+	assert.NotContains(t, result, "# TYPE process_cpu_seconds_total gauge")
+	// Both the upgraded and pre-upgrade samples must still be present.
+	assert.Contains(t, result, `pod_name="new"`)
+	assert.Contains(t, result, `pod_name="old"`)
+}
+
+// TestFormatPrometheusText_MixedVersionHistogramDedup verifies the same dedup for histogram
+// component series: untyped _bucket/_sum/_count samples from a pre-upgrade agent fold under
+// the typed histogram family rather than spawning a second (conflicting) TYPE line.
+func TestFormatPrometheusText_MixedVersionHistogramDedup(t *testing.T) {
+	server := newTestServerOnly(t)
+	now := time.Now()
+	newPod := map[string]string{"le": "0.1", "pod_name": "new"}
+	oldPod := map[string]string{"le": "0.1", "pod_name": "old"}
+	metricsList := []*metrics.AggregatedMetric{
+		createTestMetricWithType("req_latency_bucket", 10, newPod, now, "histogram"),
+		createTestMetricWithType("req_latency_sum", 1.0, map[string]string{"pod_name": "new"}, now, "histogram"),
+		createTestMetricWithType("req_latency_count", 10, map[string]string{"pod_name": "new"}, now, "histogram"),
+		createTestMetricWithType("req_latency_bucket", 8, oldPod, now, ""),
+		createTestMetricWithType("req_latency_sum", 0.8, map[string]string{"pod_name": "old"}, now, ""),
+		createTestMetricWithType("req_latency_count", 8, map[string]string{"pod_name": "old"}, now, ""),
+	}
+
+	result := server.formatPrometheusText(metricsList)
+
+	assert.Equal(t, 1, strings.Count(result, "# TYPE req_latency histogram"),
+		"must emit exactly one histogram TYPE line for the family")
+	// No component or gauge TYPE lines leaked from the legacy path.
+	assert.NotContains(t, result, "# TYPE req_latency_bucket")
+	assert.NotContains(t, result, "# TYPE req_latency_sum")
+	assert.NotContains(t, result, "# TYPE req_latency_count")
+	assert.NotContains(t, result, "# TYPE req_latency gauge")
+	// Pre-upgrade samples still present.
+	assert.Contains(t, result, `pod_name="old"`)
+}
+
+// TestFormatPrometheusText_EscapesLabelValues verifies that label values containing the
+// Prometheus-special characters (backslash, double-quote, line feed) are escaped, so a value
+// with special characters cannot produce malformed exposition output that breaks the scrape.
+func TestFormatPrometheusText_EscapesLabelValues(t *testing.T) {
+	server := newTestServerOnly(t)
+	now := time.Now()
+	metricsList := []*metrics.AggregatedMetric{
+		createTestMetricWithType("http_requests_total", 1, map[string]string{
+			"path": `a"b\c` + "\n" + "d",
+		}, now, "counter"),
+	}
+
+	result := server.formatPrometheusText(metricsList)
+
+	assert.Contains(t, result, `path="a\"b\\c\nd"`)
+	// The raw, unescaped sequence must not leak into the output.
+	assert.NotContains(t, result, `path="a"b\c`)
+}
+
+func TestHandleClusterLifecycle_StatusReportsUseProtoJSON(t *testing.T) {
+	initTestLogger(t)
+	testLogger := logger.GetLogger("test", "api")
+	testRegistry := registry.NewAgentRegistry(testLogger, 5*time.Second, 10*time.Second, 100)
+	t.Cleanup(testRegistry.Stop)
+	mockSender := &mockRequestSender{}
+	aggregator := metrics.NewAggregator(testRegistry, mockSender, testLogger)
+
+	mockLifecycleRequester := &mockLifecycleDataRequester{
+		dataByAgent: make(map[string]*fodcv1.LifecycleData),
+		podByAgent:  make(map[string]string),
+	}
+	lifecycleMgr := lifecycle.NewManager(testRegistry, mockLifecycleRequester, testLogger)
+	mockLifecycleRequester.lifecycleMgr = lifecycleMgr
+
+	identity := registry.AgentIdentity{
+		PodName:        "test-pod-1",
+		Role:           "datanode",
+		ContainerNames: []string{"banyandb"},
+	}
+	agentID, registerErr := testRegistry.RegisterAgent(context.Background(), identity)
+	require.NoError(t, registerErr)
+
+	mockLifecycleRequester.dataByAgent[agentID] = &fodcv1.LifecycleData{
+		Reports: []*fodcv1.LifecycleReport{
+			{Filename: "2026-04-29.json", ReportJson: `{"status":"ok"}`},
+			{Filename: "2026-04-28.json", ReportJson: ""}, // empty value must still be emitted
+		},
+	}
+	mockLifecycleRequester.podByAgent[agentID] = "test-pod-1"
+
+	server := NewServer(aggregator, nil, lifecycleMgr, testRegistry, nil, testLogger)
+	req := httptest.NewRequest(http.MethodGet, "/cluster/lifecycle", nil)
+	resp := httptest.NewRecorder()
+	server.handleClusterLifecycle(resp, req)
+	require.Equal(t, http.StatusOK, resp.Code)
+
+	var body map[string]interface{}
+	require.NoError(t, json.NewDecoder(resp.Body).Decode(&body))
+
+	statuses, ok := body["lifecycle_statuses"].([]interface{})
+	require.True(t, ok)
+	require.Len(t, statuses, 1)
+	status := statuses[0].(map[string]interface{})
+	assert.Equal(t, "test-pod-1", status["pod_name"])
+
+	reports, ok := status["reports"].([]interface{})
+	require.True(t, ok)
+	require.Len(t, reports, 2)
+
+	first := reports[0].(map[string]interface{})
+	assert.Equal(t, "2026-04-29.json", first["filename"])
+	assert.Equal(t, `{"status":"ok"}`, first["report_json"], "field must be snake_case 'report_json'")
+
+	second := reports[1].(map[string]interface{})
+	_, hasReportJSON := second["report_json"]
+	assert.True(t, hasReportJSON, "empty report_json must still be emitted under EmitUnpopulated")
+	assert.Equal(t, "", second["report_json"])
 }

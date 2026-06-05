@@ -18,6 +18,7 @@
 package cmd_test
 
 import (
+	"bytes"
 	"fmt"
 	"strings"
 	"time"
@@ -25,7 +26,6 @@ import (
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 	"github.com/spf13/cobra"
-	"github.com/zenizh/go-capturer"
 	grpclib "google.golang.org/grpc"
 	"google.golang.org/grpc/credentials/insecure"
 
@@ -63,12 +63,15 @@ resource_opts:
   ttl:
     unit: UNIT_DAY
     num: 7`))
-			return capturer.CaptureStdout(func() {
-				err := rootCmd.Execute()
-				if err != nil {
-					GinkgoWriter.Printf("execution fails:%v", err)
-				}
-			})
+			var buf bytes.Buffer
+			rootCmd.SetOut(&buf)
+			rootCmd.SetErr(&buf)
+
+			err := rootCmd.Execute()
+			if err != nil {
+				GinkgoWriter.Printf("execution fails:%v", err)
+			}
+			return buf.String()
 		}
 		Eventually(createGroup, flags.EventuallyTimeout).Should(ContainSubstring("group group1 is created"))
 		rootCmd.SetArgs([]string{"measure", "create", "-a", addr, "-f", "-"})
@@ -84,22 +87,28 @@ tag_families:
         type: TAG_TYPE_STRING
 entity:
   tagNames: ["id"]`))
-			return capturer.CaptureStdout(func() {
-				err := rootCmd.Execute()
-				if err != nil {
-					GinkgoWriter.Printf("execution fails:%v", err)
-				}
-			})
+			var buf bytes.Buffer
+			rootCmd.SetOut(&buf)
+			rootCmd.SetErr(&buf)
+
+			err := rootCmd.Execute()
+			if err != nil {
+				GinkgoWriter.Printf("execution fails:%v", err)
+			}
+			return buf.String()
 		}
 		Eventually(createMeasure, flags.EventuallyTimeout).Should(ContainSubstring("measure group1.name1 is created"))
 	})
 
 	It("get measure schema", func() {
 		rootCmd.SetArgs([]string{"measure", "get", "-g", "group1", "-n", "name1"})
-		out := capturer.CaptureStdout(func() {
-			err := rootCmd.Execute()
-			Expect(err).NotTo(HaveOccurred())
-		})
+		var buf bytes.Buffer
+		rootCmd.SetOut(&buf)
+		rootCmd.SetErr(&buf)
+
+		err := rootCmd.Execute()
+		Expect(err).NotTo(HaveOccurred())
+		out := buf.String()
 		resp := new(databasev1.MeasureRegistryServiceGetResponse)
 		helpers.UnmarshalYAML([]byte(out), resp)
 		Expect(resp.Measure.Metadata.Group).To(Equal("group1"))
@@ -121,16 +130,22 @@ tag_families:
         type: TAG_TYPE_STRING
 entity:
   tagNames: ["id"]`))
-		out := capturer.CaptureStdout(func() {
-			err := rootCmd.Execute()
-			Expect(err).NotTo(HaveOccurred())
-		})
+		var buf bytes.Buffer
+		rootCmd.SetOut(&buf)
+		rootCmd.SetErr(&buf)
+
+		err := rootCmd.Execute()
+		Expect(err).NotTo(HaveOccurred())
+		out := buf.String()
 		Expect(out).To(ContainSubstring("measure group1.name1 is updated"))
 		rootCmd.SetArgs([]string{"measure", "get", "-g", "group1", "-n", "name1"})
-		out = capturer.CaptureStdout(func() {
-			err := rootCmd.Execute()
-			Expect(err).NotTo(HaveOccurred())
-		})
+		buf.Reset()
+		rootCmd.SetOut(&buf)
+		rootCmd.SetErr(&buf)
+
+		err = rootCmd.Execute()
+		Expect(err).NotTo(HaveOccurred())
+		out = buf.String()
 		resp := new(databasev1.MeasureRegistryServiceGetResponse)
 		helpers.UnmarshalYAML([]byte(out), resp)
 		Expect(resp.Measure.Metadata.Group).To(Equal("group1"))
@@ -141,14 +156,17 @@ entity:
 	It("delete measure schema", func() {
 		// delete
 		rootCmd.SetArgs([]string{"measure", "delete", "-g", "group1", "-n", "name1"})
-		out := capturer.CaptureStdout(func() {
-			err := rootCmd.Execute()
-			Expect(err).NotTo(HaveOccurred())
-		})
+		var buf bytes.Buffer
+		rootCmd.SetOut(&buf)
+		rootCmd.SetErr(&buf)
+
+		err := rootCmd.Execute()
+		Expect(err).NotTo(HaveOccurred())
+		out := buf.String()
 		Expect(out).To(ContainSubstring("measure group1.name1 is deleted"))
 		// get again
 		rootCmd.SetArgs([]string{"measure", "get", "-g", "group1", "-n", "name1"})
-		err := rootCmd.Execute()
+		err = rootCmd.Execute()
 		Expect(err).To(MatchError("rpc error: code = NotFound desc = banyandb: resource not found"))
 	})
 
@@ -166,17 +184,23 @@ tag_families:
         type: TAG_TYPE_STRING
 entity:
   tagNames: ["tag1"]`))
-		out := capturer.CaptureStdout(func() {
-			err := rootCmd.Execute()
-			Expect(err).NotTo(HaveOccurred())
-		})
+		var buf bytes.Buffer
+		rootCmd.SetOut(&buf)
+		rootCmd.SetErr(&buf)
+
+		err := rootCmd.Execute()
+		Expect(err).NotTo(HaveOccurred())
+		out := buf.String()
 		Expect(out).To(ContainSubstring("measure group1.name2 is created"))
 		// list
 		rootCmd.SetArgs([]string{"measure", "list", "-g", "group1"})
-		out = capturer.CaptureStdout(func() {
-			err := rootCmd.Execute()
-			Expect(err).NotTo(HaveOccurred())
-		})
+		buf.Reset()
+		rootCmd.SetOut(&buf)
+		rootCmd.SetErr(&buf)
+
+		err = rootCmd.Execute()
+		Expect(err).NotTo(HaveOccurred())
+		out = buf.String()
 		resp := new(databasev1.MeasureRegistryServiceListResponse)
 		helpers.UnmarshalYAML([]byte(out), resp)
 		// There is a _topn_result measure created by default
@@ -196,9 +220,10 @@ var _ = Describe("Measure Data Query", func() {
 	var startStr, endStr string
 	var interval time.Duration
 	BeforeEach(func() {
-		var err error
-		now, err = time.ParseInLocation("2006-01-02T15:04:05", "2021-09-01T23:30:00", time.Local)
-		Expect(err).NotTo(HaveOccurred())
+		// Seed at a recent time so the data stays within the group TTL; data
+		// older than the retention deadline is now filtered out at query time
+		// even when freshly written.
+		now = timestamp.NowMilli()
 		startStr = now.Add(-20 * time.Minute).Format(time.RFC3339)
 		interval = 1 * time.Millisecond
 		endStr = now.Add(5 * time.Minute).Format(time.RFC3339)
@@ -228,10 +253,13 @@ tagProjection:
     - name: default
       tags:
         - id`, startStr, endStr)))
-			return capturer.CaptureStdout(func() {
-				err := rootCmd.Execute()
-				Expect(err).NotTo(HaveOccurred())
-			})
+			var buf bytes.Buffer
+			rootCmd.SetOut(&buf)
+			rootCmd.SetErr(&buf)
+
+			err := rootCmd.Execute()
+			Expect(err).NotTo(HaveOccurred())
+			return buf.String()
 		}
 		Eventually(issue, flags.EventuallyTimeout).ShouldNot(ContainSubstring("code:"))
 		Eventually(func() int {
@@ -266,10 +294,13 @@ tagProjection:
    - name: default
      tags:
        - id`))
-			return capturer.CaptureStdout(func() {
-				err := rootCmd.Execute()
-				Expect(err).NotTo(HaveOccurred())
-			})
+			var buf bytes.Buffer
+			rootCmd.SetOut(&buf)
+			rootCmd.SetErr(&buf)
+
+			err := rootCmd.Execute()
+			Expect(err).NotTo(HaveOccurred())
+			return buf.String()
 		}
 		Eventually(issue, flags.EventuallyTimeout).ShouldNot(ContainSubstring("code:"))
 		Eventually(func() int {

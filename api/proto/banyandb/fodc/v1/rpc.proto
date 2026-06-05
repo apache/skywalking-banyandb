@@ -39,6 +39,10 @@ service FODCService {
 
   // Bi-directional stream for lifecycle data
   rpc StreamLifecycle(stream StreamLifecycleRequest) returns (stream StreamLifecycleResponse);
+
+  // Bi-directional stream for crash diagnostics
+  // Agent sends StreamCrashDiagnosticsRequest (panic collections), Proxy sends StreamCrashDiagnosticsResponse (requests)
+  rpc StreamCrashDiagnostics(stream StreamCrashDiagnosticsRequest) returns (stream StreamCrashDiagnosticsResponse);
 }
 
 message RegisterAgentRequest {
@@ -60,12 +64,23 @@ message StreamMetricsRequest {
   google.protobuf.Timestamp timestamp = 2;
 }
 
+// MetricType represents the Prometheus metric type.
+enum MetricType {
+  METRIC_TYPE_UNSPECIFIED = 0;
+  METRIC_TYPE_GAUGE = 1;
+  METRIC_TYPE_COUNTER = 2;
+  METRIC_TYPE_HISTOGRAM = 3;
+  METRIC_TYPE_SUMMARY = 4;
+  METRIC_TYPE_UNTYPED = 5;
+}
+
 message Metric {
   string name = 1;
   map<string, string> labels = 2;
   double value = 3;
   string description = 4;
   google.protobuf.Timestamp timestamp = 5;
+  MetricType type = 6;
 }
 
 message StreamMetricsResponse {
@@ -114,11 +129,52 @@ message GroupLifecycleInfo {
   string catalog = 2;
   banyandb.common.v1.ResourceOpts resource_opts = 3;
   repeated banyandb.database.v1.DataInfo data_info = 4;
+  // errors lists every failure observed while collecting data_info for this
+  // group: top-level CollectDataInfo failures (GetGroup, missing collector,
+  // dial failure -- prefixed "top-level: ") and per-node broadcast failures
+  // (prefixed "future error: ", "node error: ", "broadcast failed: ").
+  // Combined with len(data_info), consumers can tell the following four
+  // states apart:
+  //   - data_info empty && errors empty       -> no nodes reported (group inactive)
+  //   - data_info empty && errors non-empty   -> total failure
+  //   - data_info non-empty && errors empty   -> full success
+  //   - data_info non-empty && errors non-empty -> partial failure
+  repeated string errors = 5;
 }
 
 message LifecycleReport {
   string filename = 1;
   string report_json = 2;
+}
+
+message CrashBreadcrumb {
+  google.protobuf.Timestamp time = 1;
+  string stage = 2;
+  string component = 3;
+  map<string, string> fields = 4;
+}
+
+message CrashPanicRecord {
+  google.protobuf.Timestamp occurred_at = 1;
+  string component = 2;
+  string panic_value = 3;
+  bool recovered = 4;
+  string goroutine_stack = 5;
+  repeated CrashBreadcrumb breadcrumbs = 6;
+  map<string, string> process_metadata = 7;
+}
+
+message StreamCrashDiagnosticsRequest {
+  google.protobuf.Timestamp fetched_at = 1;
+  string source_endpoint = 2;
+  string artifact_dir = 3;
+  CrashPanicRecord panic_record = 4;
+  repeated string files = 5;
+}
+
+message StreamCrashDiagnosticsResponse {
+  // Request crash diagnostics from agent
+  bool request_diagnostics = 1;
 }
 
 // GroupLifecycleService provides group lifecycle information from liaison nodes.

@@ -29,6 +29,10 @@ import (
 // errFieldNotDefined indicated the field is not defined in the measure schema.
 var errFieldNotDefined = errors.New("field is not defined")
 
+// Deprecated: row-path measure plan; see .omc/g8-plan.md. The vec
+// subsystem consumes *databasev1.Measure directly via
+// measure.BuildBatchSchema and produces a *vectorized.BatchSchema with
+// no intermediate logical.Schema indirection.
 type schema struct {
 	measure  *databasev1.Measure
 	fieldMap map[string]*logical.FieldSpec
@@ -136,6 +140,7 @@ func mergeSchema(schemas []logical.Schema) (logical.Schema, error) {
 
 	var commonSchemas []*logical.CommonSchema
 	var tagFamilies []*databasev1.TagFamilySpec
+	var canonicalMeasure *databasev1.Measure
 	fieldMap := make(map[string]*logical.FieldSpec)
 
 	for _, sm := range schemas {
@@ -148,6 +153,10 @@ func mergeSchema(schemas []logical.Schema) (logical.Schema, error) {
 		}
 
 		tagFamilies = logical.MergeTagFamilySpecs(tagFamilies, mSchema.measure.GetTagFamilies())
+
+		if canonicalMeasure == nil {
+			canonicalMeasure = mSchema.measure
+		}
 
 		commonSchemas = append(commonSchemas, mSchema.common)
 
@@ -180,6 +189,7 @@ func mergeSchema(schemas []logical.Schema) (logical.Schema, error) {
 	}
 
 	ret := &schema{
+		measure:  canonicalMeasure,
 		common:   mergedCommon,
 		children: schemas,
 		fieldMap: fieldMap,

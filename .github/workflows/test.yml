@@ -72,7 +72,7 @@ jobs:
       - name: Test integration and banyand
         env:
           LOAD_TEST_MINUTES: ${{ inputs.load-test-minutes }}
-        run: TEST_CI_OPTS="--cover --covermode atomic --coverprofile=coverage.out ${{ inputs.options }}" make test-ci PKG=${{ inputs.pkg }}
+        run: TEST_CI_OPTS="--cover --covermode atomic --coverprofile=coverage.out ${{ inputs.options }}" make test-ci "PKG=${{ inputs.pkg }}"
       - if: ${{ failure() }}
         run: |
           ls /tmp

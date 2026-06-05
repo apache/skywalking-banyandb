@@ -1,0 +1,78 @@
+[
+  {
+    "tag_families": [
+      {
+        "tags": [
+          {
+            "str": {
+              "value": "901"
+            }
+          },
+          {
+            "str": {
+              "value": "service_901_expired"
+            }
+          },
+          {
+            "str": {
+              "value": "service_name_901_expired"
+            }
+          },
+          {
+            "str": {
+              "value": "service_short_name_901_expired"
+            }
+          },
+          {
+            "str": {
+              "value": "group_expired"
+            }
+          },
+          {
+            "int": {
+              "value": 9
+            }
+          }
+        ]
+      }
+    ]
+  },
+  {
+    "tag_families": [
+      {
+        "tags": [
+          {
+            "str": {
+              "value": "902"
+            }
+          },
+          {
+            "str": {
+              "value": "service_902_expired"
+            }
+          },
+          {
+            "str": {
+              "value": "service_name_902_expired"
+            }
+          },
+          {
+            "str": {
+              "value": "service_short_name_902_expired"
+            }
+          },
+          {
+            "str": {
+              "value": "group_expired"
+            }
+          },
+          {
+            "int": {
+              "value": 9
+            }
+          }
+        ]
+      }
+    ]
+  }
+]

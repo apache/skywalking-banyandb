@@ -29,6 +29,7 @@ import (
 	modelv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/model/v1"
 	"github.com/apache/skywalking-banyandb/pkg/cgroups"
 	"github.com/apache/skywalking-banyandb/pkg/query"
+	"github.com/apache/skywalking-banyandb/pkg/run"
 )
 
 // StreamingQuery implements the streaming query API defined on SIDX.
@@ -36,20 +37,20 @@ func (s *sidx) StreamingQuery(ctx context.Context, req QueryRequest) (<-chan *Qu
 	resultsCh := make(chan *QueryResponse)
 	errCh := make(chan error, 1)
 
-	go func() {
+	run.Go(ctx, "sidx-streaming-query", s.l, func(_ context.Context) {
 		defer close(resultsCh)
 		defer close(errCh)
 
-		if err := req.Validate(); err != nil {
-			errCh <- err
+		if validateErr := req.Validate(); validateErr != nil {
+			errCh <- validateErr
 			return
 		}
 
-		if err := s.runStreamingQuery(ctx, req, resultsCh); err != nil {
+		if queryErr := s.runStreamingQuery(ctx, req, resultsCh); queryErr != nil {
 			// Propagate fatal errors to the caller.
-			errCh <- err
+			errCh <- queryErr
 		}
-	}()
+	})
 
 	return resultsCh, errCh
 }
@@ -91,7 +92,7 @@ func (s *sidx) runStreamingQuery(ctx context.Context, req QueryRequest, resultsC
 		}
 		return nil
 	}
-	defer snap.decRef()
+	defer snap.decRef() //nolint:contextcheck // reference counting cleanup does not require context
 
 	resources, ok := s.prepareStreamingResources(ctx, req, snap, span)
 	if !ok {
@@ -218,10 +219,10 @@ func (s *sidx) prepareStreamingResources(
 	}
 
 	blockCh := make(chan *blockScanResultBatch)
-	go func() {
+	run.Go(ctx, "sidx-block-scanner", s.l, func(_ context.Context) {
+		defer close(blockCh)
 		bs.scan(ctx, blockCh)
-		close(blockCh)
-	}()
+	})
 
 	blockHeap := generateBlockCursorHeap(asc)
 
@@ -388,7 +389,7 @@ func (s *sidx) buildCursorsForBatch(
 	workerWg.Add(workerCount)
 
 	for i := 0; i < workerCount; i++ {
-		go func() {
+		run.Go(ctx, "sidx-block-worker", s.l, func(_ context.Context) {
 			defer workerWg.Done()
 
 			tmpBlock := generateBlock()
@@ -424,7 +425,7 @@ func (s *sidx) buildCursorsForBatch(
 					}
 				}
 			}
-		}()
+		})
 	}
 
 	for i := range batch.bss {

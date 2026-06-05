@@ -18,6 +18,7 @@
 package timestamp
 
 import (
+	"context"
 	"runtime/debug"
 	"sync"
 	"sync/atomic"
@@ -39,9 +40,10 @@ var (
 	ErrTaskDuplicated = errors.New("the task is duplicated")
 )
 
-// SchedulerAction is an executable when a trigger is fired
-// now is the trigger time, logger has a context indicating the task's identity.
-type SchedulerAction func(now time.Time, logger *logger.Logger) bool
+// SchedulerAction is an executable when a trigger is fired.
+// ctx is canceled when the scheduler is closed, now is the trigger time,
+// and logger carries the task's identity.
+type SchedulerAction func(ctx context.Context, now time.Time, logger *logger.Logger) bool
 
 // Scheduler maintains a registry of tasks and their duty cycle.
 // It also provides a Trigger method to fire a task that is scheduled by a MockClock.
@@ -70,7 +72,7 @@ func NewScheduler(parent *logger.Logger, clock Clock) *Scheduler {
 
 // Register adds the given task's SchedulerAction to the Scheduler,
 // and associate the given schedule expression.
-func (s *Scheduler) Register(name string, options cron.ParseOption, expr string, action SchedulerAction) error {
+func (s *Scheduler) Register(ctx context.Context, name string, options cron.ParseOption, expr string, action SchedulerAction) error {
 	s.Lock()
 	defer s.Unlock()
 	if s.closed {
@@ -92,15 +94,15 @@ func (s *Scheduler) Register(name string, options cron.ParseOption, expr string,
 	} else {
 		clock = s.clock
 	}
-	t := newTask(s.l.Named(name), name, clock, schedule, action)
+	t := newTask(ctx, s.l.Named(name), name, clock, schedule, action)
 	s.tasks[name] = t
-	go func() {
+	run.Go(ctx, "scheduler-task-"+name, s.l, func(_ context.Context) {
 		t.run()
 		t.close()
 		s.Lock()
 		defer s.Unlock()
 		delete(s.tasks, name)
-	}()
+	})
 	return nil
 }
 
@@ -150,11 +152,15 @@ func (s *Scheduler) Closed() bool {
 // Close the Scheduler and shut down all registered tasks.
 func (s *Scheduler) Close() {
 	s.Lock()
-	defer s.Unlock()
 	s.closed = true
+	tasks := make([]*task, 0, len(s.tasks))
 	for k, t := range s.tasks {
-		t.close()
+		tasks = append(tasks, t)
 		delete(s.tasks, k)
+	}
+	s.Unlock()
+	for _, t := range tasks {
+		t.close()
 	}
 }
 
@@ -170,24 +176,36 @@ func (s *Scheduler) Metrics() map[string]*SchedulerMetrics {
 }
 
 type task struct {
-	clock    Clock
-	schedule cron.Schedule
-	closer   *run.Closer
-	l        *logger.Logger
-	action   SchedulerAction
-	metrics  *SchedulerMetrics
-	name     string
+	// taskCtx is a child of the caller-supplied parent context, derived
+	// via context.WithCancel. SchedulerAction's contract is that its ctx
+	// is canceled when the scheduler is closed; cancelTaskCtx() is what
+	// fulfills that promise (task.close calls it before CloseThenWait).
+	// Cancellation of the parent context still propagates through this
+	// child, so both shutdown paths (caller cancel and Scheduler.Close)
+	// reach long-running actions.
+	taskCtx       context.Context
+	cancelTaskCtx context.CancelFunc
+	clock         Clock
+	schedule      cron.Schedule
+	closer        *run.Closer
+	l             *logger.Logger
+	action        SchedulerAction
+	metrics       *SchedulerMetrics
+	name          string
 }
 
-func newTask(l *logger.Logger, name string, clock clock.Clock, schedule cron.Schedule, action SchedulerAction) *task {
+func newTask(parentCtx context.Context, l *logger.Logger, name string, clock clock.Clock, schedule cron.Schedule, action SchedulerAction) *task {
+	taskCtx, cancel := context.WithCancel(parentCtx)
 	return &task{
-		l:        l,
-		name:     name,
-		clock:    clock,
-		schedule: schedule,
-		action:   action,
-		closer:   run.NewCloser(0),
-		metrics:  &SchedulerMetrics{},
+		taskCtx:       taskCtx,
+		cancelTaskCtx: cancel,
+		l:             l,
+		name:          name,
+		clock:         clock,
+		schedule:      schedule,
+		action:        action,
+		closer:        run.NewCloser(0),
+		metrics:       &SchedulerMetrics{},
 	}
 }
 
@@ -218,22 +236,32 @@ func (t *task) run() {
 				defer func() {
 					t.metrics.TotalTasksFinished.Add(1)
 					t.metrics.TotalTaskLatencyInNanoseconds.Add(time.Since(start).Nanoseconds())
+					// Defense-in-depth: action panics are caught and counted
+					// via the signalCh path below. This recover only fires if
+					// the select code itself panics.
 					if r := recover(); r != nil {
 						t.l.Error().Str("name", t.name).Interface("panic", r).Str("stack", string(debug.Stack())).Msg("panic")
 						ret = true
 						t.metrics.TotalTasksPanic.Add(1)
 					}
 				}()
-				resultCh := make(chan bool, 1)
 				timeoutCh := t.clock.Timer(5 * time.Minute).C
 
-				go func() {
-					resultCh <- t.action(now, t.l)
-				}()
+				signalCh := run.GoWithSignal(t.taskCtx, "scheduler-action-"+t.name, t.l,
+					func(ctx context.Context) bool {
+						return t.action(ctx, now, t.l)
+					})
 
 				select {
-				case result := <-resultCh:
-					return result
+				case r := <-signalCh:
+					// panicdiag has already logged the panic and persisted
+					// the artifact; here we surface the failure to the
+					// scheduler instead of stalling on timeoutCh for 5min.
+					if r.Outcome != nil && r.Outcome.Panicked {
+						t.metrics.TotalTasksPanic.Add(1)
+						return true
+					}
+					return r.Value
 				case <-timeoutCh:
 					t.l.Error().Str("name", t.name).Msg("action timed out")
 					t.metrics.TotalTasksTimeout.Add(1)
@@ -252,6 +280,12 @@ func (t *task) run() {
 }
 
 func (t *task) close() {
+	// Cancel before CloseThenWait so any in-flight SchedulerAction
+	// observing ctx.Done() can unblock and return, which lets the
+	// run() loop's signalCh fire instead of stalling on the 5-minute
+	// timeoutCh. Without this, Scheduler.Close() could pin tasks for
+	// up to 5 minutes even when actions are well-behaved on ctx.
+	t.cancelTaskCtx()
 	t.closer.CloseThenWait()
 }
 

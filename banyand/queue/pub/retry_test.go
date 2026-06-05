@@ -109,7 +109,7 @@ func TestRetrySendSuccess(t *testing.T) {
 	bp := &batchPublisher{}
 	req := &clusterv1.SendRequest{}
 
-	err := bp.retrySend(ctx, mockStream, req, "test-node")
+	err := bp.retrySend(ctx, mockStream, req, "test-node", "test-topic")
 
 	assert.NoError(t, err, "successful send should not return error")
 }
@@ -131,7 +131,7 @@ func TestRetrySendTransientErrorWithRecovery(t *testing.T) {
 	bp := &batchPublisher{}
 	req := &clusterv1.SendRequest{}
 
-	err := bp.retrySend(ctx, mockStream, req, "test-node")
+	err := bp.retrySend(ctx, mockStream, req, "test-node", "test-topic")
 
 	assert.NoError(t, err, "should succeed after retry")
 }
@@ -149,7 +149,7 @@ func TestRetrySendNonTransientError(t *testing.T) {
 	bp := &batchPublisher{}
 	req := &clusterv1.SendRequest{}
 
-	err := bp.retrySend(ctx, mockStream, req, "test-node")
+	err := bp.retrySend(ctx, mockStream, req, "test-node", "test-topic")
 
 	assert.Error(t, err, "non-transient error should be returned immediately")
 	assert.Equal(t, nonTransientErr, err, "should return the original error")
@@ -168,7 +168,7 @@ func TestRetrySendExhaustedRetries(t *testing.T) {
 	bp := &batchPublisher{}
 	req := &clusterv1.SendRequest{}
 
-	err := bp.retrySend(ctx, mockStream, req, "test-node")
+	err := bp.retrySend(ctx, mockStream, req, "test-node", "test-topic")
 
 	assert.Error(t, err, "should return error after exhausting retries")
 	assert.Contains(t, err.Error(), "retry exhausted", "error should indicate retry exhaustion")
@@ -190,7 +190,7 @@ func TestRetrySendContextCancellation(t *testing.T) {
 	bp := &batchPublisher{}
 	req := &clusterv1.SendRequest{}
 
-	err := bp.retrySend(ctx, mockStream, req, "test-node")
+	err := bp.retrySend(ctx, mockStream, req, "test-node", "test-topic")
 
 	assert.Error(t, err, "should return error when context is canceled")
 	assert.Equal(t, context.Canceled, err, "should return context cancellation error")
@@ -208,7 +208,7 @@ func TestRetrySendStreamContextDone(t *testing.T) {
 	bp := &batchPublisher{}
 	req := &clusterv1.SendRequest{}
 
-	err := bp.retrySend(ctx, mockStream, req, "test-node")
+	err := bp.retrySend(ctx, mockStream, req, "test-node", "test-topic")
 
 	assert.Error(t, err, "should return error when stream context is done")
 	assert.Equal(t, context.Canceled, err, "should return stream context cancellation error")
@@ -228,7 +228,7 @@ func TestRetrySendPerAttemptTimeout(t *testing.T) {
 	req := &clusterv1.SendRequest{}
 
 	start := time.Now()
-	_ = bp.retrySend(ctx, mockStream, req, "test-node")
+	_ = bp.retrySend(ctx, mockStream, req, "test-node", "test-topic")
 	duration := time.Since(start)
 
 	// Should timeout quickly due to per-attempt timeout, not wait for the full operation
@@ -259,7 +259,7 @@ func TestRetrySendBackoffTiming(t *testing.T) {
 	req := &clusterv1.SendRequest{}
 
 	start := time.Now()
-	err := bp.retrySend(ctx, mockStream, req, "test-node")
+	err := bp.retrySend(ctx, mockStream, req, "test-node", "test-topic")
 	duration := time.Since(start)
 
 	assert.NoError(t, err, "should eventually succeed")
@@ -302,7 +302,7 @@ func TestRetrySendConcurrency(t *testing.T) {
 			bp := &batchPublisher{}
 			req := &clusterv1.SendRequest{}
 
-			err := bp.retrySend(ctx, mockStream, req, fmt.Sprintf("test-node-%d", id))
+			err := bp.retrySend(ctx, mockStream, req, fmt.Sprintf("test-node-%d", id), "test-topic")
 			errors <- err
 		}(i)
 	}

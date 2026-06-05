@@ -59,8 +59,7 @@ func TestSyncReceiver_SegmentRefOwnership(t *testing.T) {
 
 	seg, err := db.CreateSegmentIfNotExist(segTime)
 	require.NoError(t, err)
-	seg.DecRef()
-	seg.DecRef() // refCount -> 0 (idle-closed)
+	seg.DecRef() // the single create reference; refCount = 0 (dormant: open, no active reference)
 	baselineOpens := openShardCount.Load()
 
 	segA, err := db.CreateSegmentIfNotExist(segTime)
@@ -106,8 +105,8 @@ func TestSyncReceiver_SegmentRefOwnership(t *testing.T) {
 	defer segC.DecRef()
 	_, err = segC.CreateTSTableIfNotExist(common.ShardID(0))
 	require.NoError(t, err)
-	require.Equal(t, int32(1), openShardCount.Load()-beforeProbe,
-		"REGRESSION: Close did not call segment.DecRef()")
+	require.Equal(t, int32(0), openShardCount.Load()-beforeProbe,
+		"after Close the dormant segment and its already-open shard are reused, no new shard")
 }
 
 // TestSyncChunkCallback_CreatePartHandler_StoresSegment drives the real
@@ -122,12 +121,14 @@ func TestSyncChunkCallback_CreatePartHandler_StoresSegment(t *testing.T) {
 	db := openTestTSDBForRefTest(t, tmpPath, &openShardCount)
 	defer db.Close()
 
-	segTime := time.Date(2026, 4, 17, 0, 0, 0, 0, time.UTC)
+	// CreatePartHandler reinterprets ctx.MinTimestamp via time.Unix in Local
+	// tz before alignment; keep the warmup segment on the same tz so both
+	// resolve to the same segment instant.
+	segTime := time.Date(2026, 4, 17, 0, 0, 0, 0, time.Local)
 
 	warmup, err := db.CreateSegmentIfNotExist(segTime)
 	require.NoError(t, err)
-	warmup.DecRef()
-	warmup.DecRef()
+	warmup.DecRef() // the single create reference; refCount = 0 (dormant: open, no active reference)
 	baselineOpens := openShardCount.Load()
 
 	const groupName = "test-group"
@@ -176,8 +177,8 @@ func TestSyncChunkCallback_CreatePartHandler_StoresSegment(t *testing.T) {
 	defer segProbe.DecRef()
 	_, err = segProbe.CreateTSTableIfNotExist(common.ShardID(0))
 	require.NoError(t, err)
-	require.Equal(t, int32(1), openShardCount.Load()-beforeProbe,
-		"REGRESSION: Close did not call segment.DecRef()")
+	require.Equal(t, int32(0), openShardCount.Load()-beforeProbe,
+		"after Close the dormant segment and its already-open shard are reused, no new shard")
 }
 
 func openTestTSDBForRefTest(t *testing.T, tmpPath string, openShardCount *atomic.Int32) storage.TSDB[*tsTable, option] {
@@ -248,3 +249,165 @@ type fakeGroup struct {
 
 func (f *fakeGroup) GetSchema() *commonv1.Group { return nil }
 func (f *fakeGroup) SupplyTSDB() io.Closer      { return f.tsdb }
+
+// TestSyncChunkCallback_CreatePartHandler_AlignsOffGridMinTimestamp covers the
+// regression where the part chunk-sync receiver passed the raw MinTimestamp
+// straight into CreateSegmentIfNotExist. Real data points carry a timestamp
+// anywhere inside a segment window, while the matching sidx Insert/Update
+// arrives from liaison with a grid-aligned start. Without alignment here,
+// part and sidx end up in different segments. The fix is to feed every
+// raw MinTimestamp through TSDB.SegmentInterval().Standard before creating
+// the segment so both paths converge on the same aligned start.
+func TestSyncChunkCallback_CreatePartHandler_AlignsOffGridMinTimestamp(t *testing.T) {
+	t.Run("DAY(1)", func(t *testing.T) {
+		runOffGridCase(t, storage.IntervalRule{Unit: storage.DAY, Num: 1})
+	})
+	t.Run("DAY(5)", func(t *testing.T) {
+		runOffGridCase(t, storage.IntervalRule{Unit: storage.DAY, Num: 5})
+	})
+}
+
+func runOffGridCase(t *testing.T, ir storage.IntervalRule) {
+	t.Helper()
+	tmpPath, cleanup := test.Space(require.New(t))
+	defer cleanup()
+
+	const groupName = "off-grid-group"
+	db := openTestTSDBWithInterval(t, tmpPath, groupName, ir)
+	defer db.Close()
+
+	// Pick a raw timestamp deliberately off-grid: an arbitrary 06:00 in local
+	// time inside the current grid bucket. Without the alignment fix the
+	// receiver would build a segment whose Start equals this raw ts (modulo
+	// rotation to a 0-second wall instant), which never matches the Standard
+	// grid that liaison-side sidx uses.
+	rawTS := time.Date(2026, 5, 15, 6, 0, 0, 0, time.Local)
+	wantStart := ir.Standard(rawTS)
+
+	callback := &syncCallback{
+		l:          logger.GetLogger("test-offgrid"),
+		schemaRepo: newTestSchemaRepo(db, groupName),
+	}
+	ctx := &queue.ChunkedSyncPartContext{
+		ID:           1,
+		Group:        groupName,
+		ShardID:      0,
+		MinTimestamp: rawTS.UnixNano(),
+		MaxTimestamp: rawTS.UnixNano(),
+	}
+	handler, err := callback.CreatePartHandler(ctx)
+	require.NoError(t, err)
+	defer func() { _ = handler.(*syncPartContext).Close() }()
+	partCtx := handler.(*syncPartContext)
+	require.NotNil(t, partCtx.segment)
+
+	gotStart := partCtx.segment.GetTimeRange().Start
+	require.True(t, gotStart.Equal(wantStart),
+		"REGRESSION: raw MinTimestamp=%s landed in segment start=%s; expected aligned start=%s (ir=%+v)",
+		rawTS, gotStart, wantStart, ir)
+	// Sanity: assert the raw ts itself would NOT have produced this start —
+	// otherwise the test passes vacuously when raw happens to land on grid.
+	require.False(t, rawTS.Equal(wantStart),
+		"test setup is degenerate: rawTS already aligned, cannot detect missing Standard call")
+}
+
+// TestSegmentCreateTS_ConsistencyAcrossPaths verifies that both the part
+// chunk-sync receiver (Path A, raw ts straight from a part's MinTimestamp)
+// and the sidx series-sync receiver (Path B, ts pre-standardized at the
+// liaison) converge on the SAME segment Start. A pre-existing aligned
+// segment in an older grid bucket simulates historical data on disk — it
+// must NOT be touched, and the two paths' new writes must land in the
+// same new bucket as each other.
+//
+// This is the regression demo for the PR #1120 fault where Path A used
+// raw ts while Path B (sidx via liaison) used Standard ts, so the same
+// real datapoint produced part data in one segment and sidx data in
+// another.
+func TestSegmentCreateTS_ConsistencyAcrossPaths(t *testing.T) {
+	tmpPath, cleanup := test.Space(require.New(t))
+	defer cleanup()
+
+	const groupName = "consistency-group"
+	ir := storage.IntervalRule{Unit: storage.DAY, Num: 5}
+	db := openTestTSDBWithInterval(t, tmpPath, groupName, ir)
+	defer db.Close()
+
+	// Historical segment: pre-create an aligned segment in a much older grid
+	// bucket so the test cluster looks like it has prior data on disk.
+	historicalRaw := time.Date(2026, 4, 10, 0, 0, 0, 0, time.Local)
+	historicalStart := ir.Standard(historicalRaw)
+	histSeg, err := db.CreateSegmentIfNotExist(historicalStart)
+	require.NoError(t, err)
+	histSeg.DecRef() // the single create reference; refCount = 0 (dormant: open, no active reference)
+
+	// New raw datapoint with an off-grid (06:00 inside a 5-day bucket) ts.
+	// liaison-side sidx pre-standardizes it; data-node-side part chunk-sync
+	// also runs it through Standard now.
+	rawTS := time.Date(2026, 5, 15, 6, 0, 0, 0, time.Local)
+	wantNewStart := ir.Standard(rawTS)
+	require.False(t, wantNewStart.Equal(historicalStart),
+		"test setup degenerate: new bucket coincides with historical bucket")
+	require.False(t, wantNewStart.Equal(rawTS),
+		"test setup degenerate: rawTS already on grid, cannot detect Standard")
+
+	repo := newTestSchemaRepo(db, groupName)
+
+	// Path A: part chunk-sync receiver gets the raw MinTimestamp from the
+	// transferred part's metadata. Aligned internally by the fix.
+	chunkCallback := &syncCallback{l: logger.GetLogger("test-pathA"), schemaRepo: repo}
+	handlerA, err := chunkCallback.CreatePartHandler(&queue.ChunkedSyncPartContext{
+		ID:           1,
+		Group:        groupName,
+		ShardID:      0,
+		MinTimestamp: rawTS.UnixNano(),
+		MaxTimestamp: rawTS.UnixNano(),
+	})
+	require.NoError(t, err)
+	defer func() { _ = handlerA.(*syncPartContext).Close() }()
+	gotStartA := handlerA.(*syncPartContext).segment.GetTimeRange().Start
+
+	// Path B: sidx series-sync receiver gets a MinTimestamp the liaison has
+	// already aligned via Standard. The handler uses it as-is.
+	seriesCallback := &syncSeriesCallback{l: logger.GetLogger("test-pathB"), schemaRepo: repo}
+	handlerB, err := seriesCallback.CreatePartHandler(&queue.ChunkedSyncPartContext{
+		ID:           2,
+		Group:        groupName,
+		ShardID:      0,
+		MinTimestamp: wantNewStart.UnixNano(),
+		MaxTimestamp: wantNewStart.UnixNano(),
+	})
+	require.NoError(t, err)
+	defer func() { _ = handlerB.(*syncSeriesContext).Close() }()
+	gotStartB := handlerB.(*syncSeriesContext).segment.GetTimeRange().Start
+
+	require.True(t, gotStartA.Equal(gotStartB),
+		"REGRESSION: Path A (raw ts %s -> segment %s) and Path B (aligned ts %s -> segment %s) diverged",
+		rawTS, gotStartA, wantNewStart, gotStartB)
+	require.True(t, gotStartA.Equal(wantNewStart),
+		"path A segment start %s != expected aligned %s", gotStartA, wantNewStart)
+	require.False(t, gotStartA.Equal(historicalStart),
+		"new write must NOT land in historical segment %s", historicalStart)
+}
+
+func openTestTSDBWithInterval(t *testing.T, tmpPath, groupName string, ir storage.IntervalRule) storage.TSDB[*tsTable, option] {
+	t.Helper()
+	opts := storage.TSDBOpts[*tsTable, option]{
+		ShardNum:        1,
+		Location:        filepath.Join(tmpPath, "tab"),
+		TSTableCreator:  newTSTable,
+		SegmentInterval: ir,
+		TTL:             storage.IntervalRule{Unit: ir.Unit, Num: 60},
+		Option:          option{protector: protector.Nop{}, mergePolicy: newDefaultMergePolicyForTesting()},
+	}
+	require.NoError(t, os.MkdirAll(opts.Location, storage.DirPerm))
+	ctx := common.SetPosition(
+		context.WithValue(context.Background(), logger.ContextKey, logger.GetLogger("test-offgrid")),
+		func(p common.Position) common.Position {
+			p.Database = "test-offgrid"
+			return p
+		},
+	)
+	db, err := storage.OpenTSDB[*tsTable, option](ctx, opts, nil, groupName)
+	require.NoError(t, err)
+	return db
+}

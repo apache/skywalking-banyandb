@@ -74,21 +74,21 @@ MIT licenses
     @parcel/watcher-linux-x64-musl 2.5.6 MIT
     @popperjs/core 2.11.8 MIT
     @tanstack/match-sorter-utils 8.19.4 MIT
-    @tanstack/query-core 5.97.0 MIT
-    @tanstack/vue-query 5.97.0 MIT
+    @tanstack/query-core 5.100.6 MIT
+    @tanstack/vue-query 5.100.6 MIT
     @types/lodash 4.17.24 MIT
     @types/lodash-es 4.17.12 MIT
     @types/web-bluetooth 0.0.20 MIT
-    @vue/compiler-core 3.5.32 MIT
-    @vue/compiler-dom 3.5.32 MIT
-    @vue/compiler-sfc 3.5.32 MIT
-    @vue/compiler-ssr 3.5.32 MIT
+    @vue/compiler-core 3.5.33 MIT
+    @vue/compiler-dom 3.5.33 MIT
+    @vue/compiler-sfc 3.5.33 MIT
+    @vue/compiler-ssr 3.5.33 MIT
     @vue/devtools-api 6.6.4 MIT
-    @vue/reactivity 3.5.32 MIT
-    @vue/runtime-core 3.5.32 MIT
-    @vue/runtime-dom 3.5.32 MIT
-    @vue/server-renderer 3.5.32 MIT
-    @vue/shared 3.5.32 MIT
+    @vue/reactivity 3.5.33 MIT
+    @vue/runtime-core 3.5.33 MIT
+    @vue/runtime-dom 3.5.33 MIT
+    @vue/server-renderer 3.5.33 MIT
+    @vue/shared 3.5.33 MIT
     @vueuse/core 12.0.0 MIT
     @vueuse/metadata 12.0.0 MIT
     @vueuse/shared 12.0.0 MIT
@@ -98,7 +98,7 @@ MIT licenses
     core-util-is 1.0.3 MIT
     csstype 3.2.3 MIT
     dayjs 1.11.20 MIT
-    element-plus 2.13.6 MIT
+    element-plus 2.13.7 MIT
     estree-walker 2.0.2 MIT
     immediate 3.0.6 MIT
     immutable 5.1.5 MIT
@@ -106,7 +106,7 @@ MIT licenses
     is-glob 4.0.3 MIT
     isarray 1.0.0 MIT
     js-yaml 4.1.1 MIT
-    jsonfile 6.2.0 MIT
+    jsonfile 6.2.1 MIT
     lie 3.3.0 MIT
     lodash 4.18.1 MIT
     lodash-es 4.18.1 MIT
@@ -118,7 +118,7 @@ MIT licenses
     node-addon-api 7.1.1 MIT
     picomatch 4.0.4 MIT
     pinia 2.3.1 MIT
-    postcss 8.5.9 MIT
+    postcss 8.5.12 MIT
     process-nextick-args 2.0.1 MIT
     readable-stream 2.3.8 MIT
     readdirp 4.1.2 MIT
@@ -129,8 +129,8 @@ MIT licenses
     string_decoder 1.1.1 MIT
     universalify 2.0.1 MIT
     util-deprecate 1.0.2 MIT
-    vue 3.5.32 MIT
-    vue-component-type-helpers 3.2.6 MIT
+    vue 3.5.33 MIT
+    vue-component-type-helpers 3.2.7 MIT
     vue-demi 0.14.10 MIT
     vue-router 4.6.4 MIT
 

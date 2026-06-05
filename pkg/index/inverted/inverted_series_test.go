@@ -1007,3 +1007,69 @@ func updateData(tester *require.Assertions, s index.SeriesStore) {
 	tester.NoError(s.UpdateSeriesBatch(b1))
 	tester.NoError(s.UpdateSeriesBatch(b2))
 }
+
+func TestStore_StoredFields(t *testing.T) {
+	tester := require.New(t)
+	path, fn := setUp(tester)
+	s, err := NewStore(StoreOpts{
+		Path:   path,
+		Logger: logger.GetLogger("test"),
+	})
+	tester.NoError(err)
+	defer func() {
+		tester.NoError(s.Close())
+		fn()
+	}()
+	insertData(tester, s)
+	ctx := context.TODO()
+
+	// No projection: every stored field of test2 is returned, internal
+	// bookkeeping fields (_id, _timestamp, ...) excluded.
+	all, err := s.StoredFields(ctx, []byte("test2"))
+	tester.NoError(err)
+	tester.Equal([][]byte{convert.Int64ToBytes(100)}, all[fieldKeyDuration.Marshal()])
+	tester.Equal([][]byte{[]byte("svc2")}, all[fieldKeyServiceName.Marshal()])
+	tester.Equal([][]byte{convert.Int64ToBytes(100)}, all[fieldKeyStartTime.Marshal()])
+	tester.NotContains(all, docIDField)
+	tester.NotContains(all, timestampField)
+
+	// Projection: only the requested field is returned.
+	only, err := s.StoredFields(ctx, []byte("test2"), fieldKeyDuration)
+	tester.NoError(err)
+	tester.Len(only, 1)
+	tester.Equal([][]byte{convert.Int64ToBytes(100)}, only[fieldKeyDuration.Marshal()])
+
+	// A two-field projection returns exactly those two.
+	two, err := s.StoredFields(ctx, []byte("test2"), fieldKeyDuration, fieldKeyServiceName)
+	tester.NoError(err)
+	tester.Len(two, 2)
+	tester.Contains(two, fieldKeyDuration.Marshal())
+	tester.Contains(two, fieldKeyServiceName.Marshal())
+
+	// A missing document yields nil.
+	none, err := s.StoredFields(ctx, []byte("does-not-exist"))
+	tester.NoError(err)
+	tester.Nil(none)
+
+	// An array indexed tag stores several values under one field name; they all
+	// come back (the result is [][]byte per field, not a single value).
+	arrKey := index.FieldKey{IndexRuleID: 4099}
+	tester.NoError(s.InsertSeriesBatch(index.Batch{Documents: []index.Document{{
+		EntityValues: []byte("arr1"),
+		Fields: []index.Field{
+			field(arrKey, []byte("a"), true),
+			field(arrKey, []byte("b"), true),
+			field(fieldKeyServiceName, []byte("svcArr"), true),
+		},
+	}}}))
+	arr, err := s.StoredFields(ctx, []byte("arr1"))
+	tester.NoError(err)
+	tester.ElementsMatch([][]byte{[]byte("a"), []byte("b")}, arr[arrKey.Marshal()])
+	tester.Equal([][]byte{[]byte("svcArr")}, arr[fieldKeyServiceName.Marshal()])
+
+	// Internal bookkeeping fields are excluded even when explicitly projected.
+	internalProj, err := s.StoredFields(ctx, []byte("test2"), index.FieldKey{TagName: docIDField}, fieldKeyDuration)
+	tester.NoError(err)
+	tester.NotContains(internalProj, docIDField)
+	tester.Equal([][]byte{convert.Int64ToBytes(100)}, internalProj[fieldKeyDuration.Marshal()])
+}

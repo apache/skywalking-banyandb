@@ -54,6 +54,11 @@ const (
 	// ExternalSegmentTempDirName is the name of the directory used for temporary external segments.
 	ExternalSegmentTempDirName = "external-segment-temp"
 
+	// LockFilename is the bluge exclusive-lock file kept in every index
+	// directory while a writer is open (github.com/SkyAPM/bluge directory_fs).
+	// It must never be copied into a snapshot.
+	LockFilename = "bluge.pid"
+
 	docIDField     = "_id"
 	seriesIDField  = "_series_id"
 	timestampField = "_timestamp"
@@ -290,6 +295,27 @@ func (s *store) Close() error {
 
 func (s *store) Reset() {
 	s.writer.ResetCache()
+}
+
+// ReadOnlyDocCount opens the index directory at path read-only and returns the
+// number of indexed documents. Unlike NewStore it never acquires the exclusive
+// directory lock, so it can inspect a closed (or even concurrently open)
+// segment index without reopening its writable index. A missing or unflushed
+// index (no usable snapshot) returns a count of 0 together with the open error,
+// which callers may treat as an empty index.
+func ReadOnlyDocCount(path string) (int64, error) {
+	reader, err := bluge.OpenReader(bluge.DefaultConfig(path))
+	if err != nil {
+		return 0, err
+	}
+	defer func() {
+		_ = reader.Close()
+	}()
+	count, err := reader.Count()
+	if err != nil {
+		return 0, err
+	}
+	return int64(count), nil
 }
 
 func (s *store) Iterator(ctx context.Context, fieldKey index.FieldKey, termRange index.RangeOpts, order modelv1.Sort,

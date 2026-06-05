@@ -366,13 +366,33 @@ var _ = Describe("Metadata", func() {
 				env := setupSchemaChangeTrace(svcs, traceName, groupName, traceSetupOptions{withExtraTag: true})
 				writeSchemaChangeTraceData(svcs, traceName, groupName, now.Add(-2*time.Hour), 5,
 					writeTraceDataOptions{extraTag: extraTagInt})
+				// Wait for the first batch to flush to disk before writing the second batch.
+				// This ensures each shard has at least one file part from the first batch,
+				// so the second batch creates additional parts that can be merged.
+				Eventually(func() int64 {
+					return getFilePartCount(svcs, groupName)
+				}, flags.EventuallyTimeout).Should(BeNumerically(">=", 1))
+				filePartCountAfterFirstBatch := getFilePartCount(svcs, groupName)
 				changeTraceExtraTagType(svcs, traceName, groupName)
 				writeSchemaChangeTraceData(svcs, traceName, groupName, now.Add(-1*time.Hour), 3,
 					writeTraceDataOptions{extraTag: extraTagString, traceIDPrefix: "trace_new_"})
+				// Wait for the second batch to flush to disk, creating additional
+				// file parts that the merge loop can pick up. Without this gate the
+				// merge Eventually below also has to absorb flush latency, which can
+				// exceed 30 s on resource-constrained CI runners with -race.
+				Eventually(func() int64 {
+					return getFilePartCount(svcs, groupName)
+				}, flags.EventuallyTimeout).Should(BeNumerically(">", filePartCountAfterFirstBatch))
 				partCountBeforeMerge := getTotalPartCount(svcs, groupName)
+				// The background merge runs asynchronously; under the full parallel -race
+				// suite on CI its goroutine competes for CPU and snapshot locks with every
+				// other test. Poll on a relaxed interval (rather than Gomega's ~10ms
+				// default) so this wait does not starve the merge it is waiting for, with a
+				// generous, environment-scaled budget for merge latency. The post-merge
+				// part count is stable (no further writes), so slow polling never misses it.
 				Eventually(func() int64 {
 					return getTotalPartCount(svcs, groupName)
-				}, flags.EventuallyTimeout).Should(BeNumerically("<", partCountBeforeMerge))
+				}, 3*flags.EventuallyTimeout, 500*time.Millisecond).Should(BeNumerically("<", partCountBeforeMerge))
 
 				Eventually(func(innerGm Gomega) {
 					spans := querySchemaChangeTraceData(svcs, traceName, groupName,
@@ -747,6 +767,20 @@ func getTotalPartCount(svcs *services, group string) int64 {
 	for _, seg := range dataInfo.SegmentInfo {
 		for _, shard := range seg.ShardInfo {
 			total += shard.PartCount
+		}
+	}
+	return total
+}
+
+func getFilePartCount(svcs *services, group string) int64 {
+	dataInfo, err := svcs.trace.CollectDataInfo(context.TODO(), group)
+	if err != nil || dataInfo == nil {
+		return 0
+	}
+	var total int64
+	for _, seg := range dataInfo.SegmentInfo {
+		for _, shard := range seg.ShardInfo {
+			total += shard.FilePartCount
 		}
 	}
 	return total

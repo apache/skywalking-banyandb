@@ -130,5 +130,38 @@
       ]
     },
     "updated_at": "2021-04-15T01:30:15.01Z"
+  },
+  {
+    "metadata": {
+      "name": "sw_cross_segment_stream"
+    },
+    "catalog": "CATALOG_STREAM",
+    "resource_opts": {
+      "shard_num": 1,
+      "segment_interval": {
+        "unit": "UNIT_DAY",
+        "num": 2
+      },
+      "ttl": {
+        "unit": "UNIT_DAY",
+        "num": 5
+      },
+      "stages": [
+        {
+          "name": "warm",
+          "shard_num": 1,
+          "segment_interval": {
+            "unit": "UNIT_DAY",
+            "num": 3
+          },
+          "ttl": {
+            "unit": "UNIT_DAY",
+            "num": 10
+          },
+          "node_selector": "type=warm"
+        }
+      ]
+    },
+    "updated_at": "2026-05-27T00:00:00.00Z"
   }
 ]

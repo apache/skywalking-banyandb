@@ -20,6 +20,7 @@ package tls
 
 import (
 	"bytes"
+	"context"
 	"crypto/sha256"
 	"crypto/tls"
 	"crypto/x509"
@@ -31,6 +32,7 @@ import (
 	"github.com/pkg/errors"
 
 	"github.com/apache/skywalking-banyandb/pkg/logger"
+	"github.com/apache/skywalking-banyandb/pkg/run"
 )
 
 // Reloader manages dynamic reloading of TLS certificates and keys for servers.
@@ -135,7 +137,7 @@ func NewClientCertReloader(certFile string, log *logger.Logger) (*Reloader, erro
 }
 
 // Start begins monitoring the TLS certificate and key files for changes.
-func (r *Reloader) Start() error {
+func (r *Reloader) Start(ctx context.Context) error {
 	r.log.Info().Str("certFile", r.certFile).Str("keyFile", r.keyFile).Msg("Starting TLS file monitoring")
 
 	err := r.watcher.Add(r.certFile)
@@ -151,7 +153,9 @@ func (r *Reloader) Start() error {
 		}
 	}
 
-	go r.watchFiles()
+	run.Go(ctx, "tls.reloader.watcher", r.log, func(_ context.Context) {
+		r.watchFiles()
+	})
 
 	return nil
 }

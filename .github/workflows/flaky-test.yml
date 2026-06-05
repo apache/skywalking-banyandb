@@ -32,5 +32,9 @@ jobs:
     uses: ./.github/workflows/test.yml
     with:
       test-name: Flaky Tests
-      options:  --vv --repeat 3 --label-filter '(integration&&!slow)||banyand'
+      options:  --vv --repeat 0 --label-filter '(integration&&!slow)||banyand'
+      # Exclude ./test/load/... — those packages are gated behind build tags
+      # (e.g. //go:build loadtest) and trip Ginkgo's compile step on ./... .
+      # Run them via their own make targets (e.g. make load-test-barrier).
+      pkg: ./api/... ./banyand/... ./bydbctl/... ./fodc/... ./mcp/... ./pkg/... ./scripts/... ./test/cases/... ./test/integration/... ./test/property_repair/...
       timeout-minutes: 50

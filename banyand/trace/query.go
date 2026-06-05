@@ -65,7 +65,7 @@ func (t *trace) Query(ctx context.Context, tqo model.TraceQueryOptions) (model.T
 		return nil, err
 	}
 
-	segments, err := tsdb.SelectSegments(*tqo.TimeRange)
+	segments, err := tsdb.SelectSegments(*tqo.TimeRange, true)
 	if err != nil {
 		return nil, err
 	}
@@ -82,10 +82,13 @@ func (t *trace) Query(ctx context.Context, tqo model.TraceQueryOptions) (model.T
 		}
 	}()
 
+	storageTagProjection := omitIdentityTagProjection(tqo.TagProjection, t.schema.GetTraceIdTagName(), t.schema.GetSpanIdTagName())
+	storageTQO := tqo
+	storageTQO.TagProjection = storageTagProjection
 	result := queryResult{
 		ctx:           ctx,
 		segments:      segments,
-		tagProjection: tqo.TagProjection,
+		tagProjection: storageTagProjection,
 	}
 	segmentsNeedRelease = false
 	defer func() {
@@ -105,7 +108,7 @@ func (t *trace) Query(ctx context.Context, tqo model.TraceQueryOptions) (model.T
 	}
 
 	qo := queryOptions{
-		TraceQueryOptions: tqo,
+		TraceQueryOptions: storageTQO,
 		traceIDs:          tqo.TraceIDs,
 		schemaTagTypes:    schemaTagTypes,
 	}
@@ -116,7 +119,7 @@ func (t *trace) Query(ctx context.Context, tqo model.TraceQueryOptions) (model.T
 
 	tables := collectTables(segments)
 
-	sidxInstances, sidxQueryRequest, useSIDXStreaming := t.prepareSIDXStreaming(tqo, qo, tables)
+	sidxInstances, sidxQueryRequest, useSIDXStreaming := t.prepareSIDXStreaming(storageTQO, qo, tables)
 	if len(qo.traceIDs) == 0 && !useSIDXStreaming {
 		result.Release()
 		return nilResult, nil
@@ -147,6 +150,23 @@ func (t *trace) Query(ctx context.Context, tqo model.TraceQueryOptions) (model.T
 
 	traceQueryResultTracker.Acquire(&result)
 	return &result, nil
+}
+
+func omitIdentityTagProjection(projection *model.TagProjection, traceIDTagName, spanIDTagName string) *model.TagProjection {
+	if projection == nil {
+		return nil
+	}
+	filtered := &model.TagProjection{
+		Family: projection.Family,
+		Names:  make([]string, 0, len(projection.Names)),
+	}
+	for _, name := range projection.Names {
+		if name == traceIDTagName || name == spanIDTagName {
+			continue
+		}
+		filtered.Names = append(filtered.Names, name)
+	}
+	return filtered
 }
 
 func validateTraceQueryOptions(tqo model.TraceQueryOptions) error {
@@ -434,8 +454,16 @@ func (qr *queryResult) loadTraceCursors(cursors []*blockCursor) ([]*blockCursor,
 	}
 
 	cursorChan := make(chan int, len(cursors))
+	traceBlockLogger := logger.GetLogger("trace-query-block-loader")
 	for i := range cursors {
-		go func(idx int) {
+		idx := i
+		go func() {
+			defer func() {
+				if r := recover(); r != nil {
+					traceBlockLogger.Error().Interface("panic", r).Msg("panic in parallel block loader")
+					cursorChan <- idx
+				}
+			}()
 			select {
 			case <-qr.ctx.Done():
 				cursorChan <- idx
@@ -449,7 +477,7 @@ func (qr *queryResult) loadTraceCursors(cursors []*blockCursor) ([]*blockCursor,
 				return
 			}
 			cursorChan <- -1
-		}(i)
+		}()
 	}
 
 	var blankCursorIdx []int

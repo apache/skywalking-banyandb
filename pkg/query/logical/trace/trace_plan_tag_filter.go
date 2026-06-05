@@ -117,8 +117,8 @@ func (uis *unresolvedTraceTagFilter) Analyze(s logical.Schema) (logical.Plan, er
 		conditionSchema = s.ProjTags(conditionTagRefs...)
 	}
 
-	// Deduplicate tag names
-	ctx.projectionTags.Names = deduplicateStrings(ctx.projectionTags.Names)
+	// Deduplicate tag names and leave identity tags to response construction.
+	ctx.projectionTags.Names = omitIdentityProjectionTagNames(deduplicateStrings(ctx.projectionTags.Names), uis.traceIDTagName, uis.spanIDTagName)
 
 	// Create tag references if we have any projection tags
 	if len(ctx.projectionTags.Names) > 0 {
@@ -208,6 +208,17 @@ func deduplicateStrings(strings []string) []string {
 			seen[str] = true
 			result = append(result, str)
 		}
+	}
+	return result
+}
+
+func omitIdentityProjectionTagNames(tagNames []string, traceIDTagName, spanIDTagName string) []string {
+	result := make([]string, 0, len(tagNames))
+	for _, tagName := range tagNames {
+		if tagName == traceIDTagName || tagName == spanIDTagName {
+			continue
+		}
+		result = append(result, tagName)
 	}
 	return result
 }

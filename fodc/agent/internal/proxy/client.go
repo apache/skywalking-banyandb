@@ -35,10 +35,13 @@ import (
 	databasev1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/database/v1"
 	fodcv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/fodc/v1"
 	"github.com/apache/skywalking-banyandb/fodc/agent/internal/cluster"
+	"github.com/apache/skywalking-banyandb/fodc/agent/internal/crashcollector"
 	"github.com/apache/skywalking-banyandb/fodc/agent/internal/flightrecorder"
 	"github.com/apache/skywalking-banyandb/fodc/agent/internal/lifecycle"
 	"github.com/apache/skywalking-banyandb/fodc/agent/internal/metrics"
 	"github.com/apache/skywalking-banyandb/pkg/logger"
+	"github.com/apache/skywalking-banyandb/pkg/panicdiag"
+	"github.com/apache/skywalking-banyandb/pkg/run"
 )
 
 // MetricsRequestFilter defines filters for metrics requests.
@@ -55,6 +58,7 @@ type Client struct {
 	connManager        *connManager
 	clusterCollector   *cluster.Collector
 	lifecycleCollector *lifecycle.Collector
+	collectionLister   crashcollector.CollectionLister
 	stopCh             chan struct{}
 	reconnectCh        chan struct{}
 	labels             map[string]string
@@ -62,6 +66,7 @@ type Client struct {
 	registrationStream fodcv1.FODCService_RegisterAgentClient
 	clusterStateStream fodcv1.FODCService_StreamClusterTopologyClient
 	lifecycleStream    fodcv1.FODCService_StreamLifecycleClient
+	crashStream        fodcv1.FODCService_StreamCrashDiagnosticsClient
 	client             fodcv1.FODCServiceClient
 
 	proxyAddr      string
@@ -89,6 +94,7 @@ func NewClient(
 	flightRecorder *flightrecorder.FlightRecorder,
 	clusterCollector *cluster.Collector,
 	lifecycleCollector *lifecycle.Collector,
+	collectionLister crashcollector.CollectionLister,
 	logger *logger.Logger,
 ) *Client {
 	connMgr := newConnManager(proxyAddr, reconnectInterval, logger)
@@ -104,6 +110,7 @@ func NewClient(
 		flightRecorder:     flightRecorder,
 		clusterCollector:   clusterCollector,
 		lifecycleCollector: lifecycleCollector,
+		collectionLister:   collectionLister,
 		logger:             logger,
 		stopCh:             make(chan struct{}),
 		reconnectCh:        make(chan struct{}, 1),
@@ -130,7 +137,9 @@ func (c *Client) Connect(ctx context.Context) error {
 	c.streamsMu.Unlock()
 
 	if wasDisconnected {
-		c.heartbeatWg.Wait()
+		if !waitWaitGroupWithTimeout(&c.heartbeatWg, heartbeatWaitTimeout) {
+			c.logger.Warn().Msg("Heartbeat goroutine did not exit in time during Connect, proceeding anyway")
+		}
 	}
 
 	c.streamsMu.Lock()
@@ -200,7 +209,9 @@ func (c *Client) StartRegistrationStream(ctx context.Context) error {
 
 	c.startHeartbeat(ctx)
 
-	go c.handleRegistrationStream(ctx, stream)
+	run.Go(ctx, "fodc.agent.proxy.registration-stream", c.logger, func(ctx context.Context) {
+		c.handleRegistrationStream(ctx, stream)
+	})
 
 	return nil
 }
@@ -232,7 +243,9 @@ func (c *Client) StartMetricsStream(ctx context.Context) error {
 	c.metricsStream = stream
 	c.streamsMu.Unlock()
 
-	go c.handleMetricsStream(ctx, stream)
+	run.Go(ctx, "fodc.agent.proxy.metrics-stream", c.logger, func(ctx context.Context) {
+		c.handleMetricsStream(ctx, stream)
+	})
 
 	c.logger.Info().
 		Str("agent_id", agentID).
@@ -268,7 +281,9 @@ func (c *Client) StartClusterStateStream(ctx context.Context) error {
 	c.clusterStateStream = stream
 	c.streamsMu.Unlock()
 
-	go c.handleClusterStateStream(ctx, stream)
+	run.Go(ctx, "fodc.agent.proxy.cluster-state-stream", c.logger, func(ctx context.Context) {
+		c.handleClusterStateStream(ctx, stream)
+	})
 
 	c.logger.Info().
 		Str("agent_id", agentID).
@@ -351,7 +366,9 @@ func (c *Client) StartLifecycleStream(ctx context.Context) error {
 	c.lifecycleStream = stream
 	c.streamsMu.Unlock()
 
-	go c.handleLifecycleStream(ctx, stream)
+	run.Go(ctx, "fodc.agent.proxy.lifecycle-stream", c.logger, func(ctx context.Context) {
+		c.handleLifecycleStream(ctx, stream)
+	})
 
 	c.logger.Info().
 		Str("agent_id", agentID).
@@ -403,6 +420,177 @@ func (c *Client) sendLifecycleData(ctx context.Context) error {
 	return nil
 }
 
+// StartCrashStream establishes bi-directional crash diagnostics stream with Proxy.
+func (c *Client) StartCrashStream(ctx context.Context) error {
+	c.streamsMu.Lock()
+	if c.client == nil {
+		c.streamsMu.Unlock()
+		return fmt.Errorf("client not connected, call Connect() first")
+	}
+	client := c.client
+	agentID := c.agentID
+	c.streamsMu.Unlock()
+
+	if agentID == "" {
+		return fmt.Errorf("agent ID not available, register agent first")
+	}
+
+	md := metadata.New(map[string]string{"agent_id": agentID})
+	ctxWithMetadata := metadata.NewOutgoingContext(ctx, md)
+
+	stream, streamErr := client.StreamCrashDiagnostics(ctxWithMetadata)
+	if streamErr != nil {
+		return fmt.Errorf("failed to create crash diagnostics stream: %w", streamErr)
+	}
+
+	c.streamsMu.Lock()
+	c.crashStream = stream
+	c.streamsMu.Unlock()
+
+	run.Go(ctx, "fodc.agent.proxy.crash-stream", c.logger, func(ctx context.Context) {
+		c.handleCrashStream(ctx, stream)
+	})
+
+	c.logger.Info().
+		Str("agent_id", agentID).
+		Msg("Crash diagnostics stream established with Proxy")
+
+	return nil
+}
+
+// sendCrashCollections sends all current crash collections to Proxy.
+func (c *Client) sendCrashCollections() error {
+	c.streamsMu.RLock()
+	if c.disconnected || c.crashStream == nil {
+		c.streamsMu.RUnlock()
+		return fmt.Errorf("crash diagnostics stream not established")
+	}
+	crashStream := c.crashStream
+	lister := c.collectionLister
+	c.streamsMu.RUnlock()
+
+	if lister == nil {
+		c.logger.Warn().Msg("Crash collection lister is nil, skipping send")
+		return nil
+	}
+
+	records := lister.ListCollections()
+	if len(records) == 0 {
+		c.logger.Debug().Msg("No crash collections available to send")
+		return nil
+	}
+
+	for _, record := range records {
+		req := &fodcv1.StreamCrashDiagnosticsRequest{
+			FetchedAt:      timestamppb.New(record.FetchedAt),
+			SourceEndpoint: record.SourceEndpoint,
+			ArtifactDir:    record.Collection.ArtifactDir,
+			Files:          record.Collection.Files,
+		}
+		if record.Collection.Record != nil {
+			req.PanicRecord = &fodcv1.CrashPanicRecord{
+				OccurredAt:      timestamppb.New(record.Collection.Record.OccurredAt),
+				Component:       record.Collection.Record.Component,
+				PanicValue:      record.Collection.Record.PanicValue,
+				Recovered:       record.Collection.Record.Recovered,
+				GoroutineStack:  record.Collection.Record.GoroutineStack,
+				Breadcrumbs:     buildCrashBreadcrumbs(record.Collection.Record.Breadcrumbs),
+				ProcessMetadata: cloneStringMap(record.Collection.Record.ProcessMetadata),
+			}
+		}
+		c.streamsMu.Lock()
+		if c.crashStream != crashStream {
+			c.streamsMu.Unlock()
+			return fmt.Errorf("crash diagnostics stream changed during send")
+		}
+		sendErr := crashStream.Send(req)
+		c.streamsMu.Unlock()
+		if sendErr != nil {
+			return fmt.Errorf("failed to send crash collection: %w", sendErr)
+		}
+	}
+
+	c.logger.Info().
+		Int("records_count", len(records)).
+		Msg("Successfully sent crash collections to proxy")
+	return nil
+}
+
+func buildCrashBreadcrumbs(breadcrumbs []panicdiag.Breadcrumb) []*fodcv1.CrashBreadcrumb {
+	if len(breadcrumbs) == 0 {
+		return nil
+	}
+	result := make([]*fodcv1.CrashBreadcrumb, 0, len(breadcrumbs))
+	for _, breadcrumb := range breadcrumbs {
+		result = append(result, &fodcv1.CrashBreadcrumb{
+			Time:      timestamppb.New(breadcrumb.Time),
+			Stage:     breadcrumb.Stage,
+			Component: breadcrumb.Component,
+			Fields:    cloneBreadcrumbFields(breadcrumb.Fields),
+		})
+	}
+	return result
+}
+
+func cloneBreadcrumbFields(fields map[string]string) map[string]string {
+	return cloneStringMap(fields)
+}
+
+func cloneStringMap(src map[string]string) map[string]string {
+	if len(src) == 0 {
+		return nil
+	}
+	cloned := make(map[string]string, len(src))
+	for key, value := range src {
+		cloned[key] = value
+	}
+	return cloned
+}
+
+// handleCrashStream handles the crash diagnostics stream.
+func (c *Client) handleCrashStream(ctx context.Context, stream fodcv1.FODCService_StreamCrashDiagnosticsClient) {
+	c.streamsMu.RLock()
+	stopCh := c.stopCh
+	c.streamsMu.RUnlock()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-stopCh:
+			return
+		default:
+		}
+		resp, recvErr := stream.Recv()
+		if errors.Is(recvErr, io.EOF) {
+			c.logger.Warn().Msg("Crash diagnostics stream closed by Proxy, reconnecting...")
+			run.Go(ctx, "fodc.agent.proxy.reconnect", c.logger, func(ctx context.Context) {
+				c.reconnect(ctx)
+			})
+			return
+		}
+		if recvErr != nil {
+			c.streamsMu.RLock()
+			disconnected := c.disconnected
+			c.streamsMu.RUnlock()
+			if disconnected {
+				c.logger.Debug().Err(recvErr).Msg("Crash diagnostics stream closed")
+				return
+			}
+			c.logger.Error().Err(recvErr).Msg("Error receiving from crash diagnostics stream, reconnecting...")
+			run.Go(ctx, "fodc.agent.proxy.reconnect", c.logger, func(ctx context.Context) {
+				c.reconnect(ctx)
+			})
+			return
+		}
+		if resp != nil && resp.RequestDiagnostics {
+			c.logger.Debug().Msg("Received crash diagnostics request from proxy")
+			if sendErr := c.sendCrashCollections(); sendErr != nil {
+				c.logger.Error().Err(sendErr).Msg("Failed to send crash collections to proxy")
+			}
+		}
+	}
+}
+
 // handleLifecycleStream handles the lifecycle stream.
 func (c *Client) handleLifecycleStream(ctx context.Context, stream fodcv1.FODCService_StreamLifecycleClient) {
 	c.streamsMu.RLock()
@@ -419,7 +607,9 @@ func (c *Client) handleLifecycleStream(ctx context.Context, stream fodcv1.FODCSe
 		resp, recvErr := stream.Recv()
 		if errors.Is(recvErr, io.EOF) {
 			c.logger.Warn().Msg("Lifecycle stream closed by Proxy, reconnecting...")
-			go c.reconnect(ctx)
+			run.Go(ctx, "fodc.agent.proxy.reconnect", c.logger, func(ctx context.Context) {
+				c.reconnect(ctx)
+			})
 			return
 		}
 		if recvErr != nil {
@@ -431,7 +621,9 @@ func (c *Client) handleLifecycleStream(ctx context.Context, stream fodcv1.FODCSe
 				return
 			}
 			c.logger.Error().Err(recvErr).Msg("Error receiving from lifecycle stream, reconnecting...")
-			go c.reconnect(ctx)
+			run.Go(ctx, "fodc.agent.proxy.reconnect", c.logger, func(ctx context.Context) {
+				c.reconnect(ctx)
+			})
 			return
 		}
 		if resp != nil && resp.RequestLifecycle {
@@ -459,7 +651,9 @@ func (c *Client) handleClusterStateStream(ctx context.Context, stream fodcv1.FOD
 		resp, recvErr := stream.Recv()
 		if errors.Is(recvErr, io.EOF) {
 			c.logger.Warn().Msg("Cluster state stream closed by Proxy, reconnecting...")
-			go c.reconnect(ctx)
+			run.Go(ctx, "fodc.agent.proxy.reconnect", c.logger, func(ctx context.Context) {
+				c.reconnect(ctx)
+			})
 			return
 		}
 		if recvErr != nil {
@@ -471,7 +665,9 @@ func (c *Client) handleClusterStateStream(ctx context.Context, stream fodcv1.FOD
 				return
 			}
 			c.logger.Error().Err(recvErr).Msg("Error receiving from cluster state stream, reconnecting...")
-			go c.reconnect(ctx)
+			run.Go(ctx, "fodc.agent.proxy.reconnect", c.logger, func(ctx context.Context) {
+				c.reconnect(ctx)
+			})
 			return
 		}
 		if resp != nil && resp.RequestTopology {
@@ -516,6 +712,7 @@ func (c *Client) RetrieveAndSendMetrics(_ context.Context, filter *MetricsReques
 	allMetrics := ds.GetMetrics()
 	timestamps := ds.GetTimestamps()
 	descriptions := ds.GetDescriptions()
+	types := ds.GetTypes()
 
 	if filter != nil && (filter.StartTime != nil || filter.EndTime != nil) {
 		if timestamps == nil {
@@ -560,7 +757,7 @@ func (c *Client) RetrieveAndSendMetrics(_ context.Context, filter *MetricsReques
 			c.streamsMu.Unlock()
 			return fmt.Errorf("metrics stream changed during send")
 		}
-		sendErr := c.sendFilteredMetrics(metricsStream, allMetrics, timestampValues, descriptions, filter)
+		sendErr := c.sendFilteredMetrics(metricsStream, allMetrics, timestampValues, descriptions, types, filter)
 		c.streamsMu.Unlock()
 		return sendErr
 	}
@@ -570,9 +767,27 @@ func (c *Client) RetrieveAndSendMetrics(_ context.Context, filter *MetricsReques
 		c.streamsMu.Unlock()
 		return fmt.Errorf("metrics stream changed during send")
 	}
-	sendErr := c.sendLatestMetrics(metricsStream, allMetrics, descriptions)
+	sendErr := c.sendLatestMetrics(metricsStream, allMetrics, descriptions, types)
 	c.streamsMu.Unlock()
 	return sendErr
+}
+
+// toProtoMetricType converts a lowercase prometheus type string to the proto enum.
+func toProtoMetricType(t string) fodcv1.MetricType {
+	switch t {
+	case "counter":
+		return fodcv1.MetricType_METRIC_TYPE_COUNTER
+	case "gauge":
+		return fodcv1.MetricType_METRIC_TYPE_GAUGE
+	case "histogram":
+		return fodcv1.MetricType_METRIC_TYPE_HISTOGRAM
+	case "summary":
+		return fodcv1.MetricType_METRIC_TYPE_SUMMARY
+	case "untyped":
+		return fodcv1.MetricType_METRIC_TYPE_UNTYPED
+	default:
+		return fodcv1.MetricType_METRIC_TYPE_UNSPECIFIED
+	}
 }
 
 // sendLatestMetrics sends the latest metrics (most recent values).
@@ -580,6 +795,7 @@ func (c *Client) sendLatestMetrics(
 	stream fodcv1.FODCService_StreamMetricsClient,
 	allMetrics map[string]*flightrecorder.MetricRingBuffer,
 	descriptions map[string]string,
+	types map[string]string,
 ) error {
 	protoMetrics := make([]*fodcv1.Metric, 0)
 
@@ -607,6 +823,7 @@ func (c *Client) sendLatestMetrics(
 			Labels:      labelsMap,
 			Value:       metricValue,
 			Description: descriptions[parsedKey.Name],
+			Type:        toProtoMetricType(metrics.ResolveMetricType(types, parsedKey.Name)),
 		}
 
 		protoMetrics = append(protoMetrics, protoMetric)
@@ -630,6 +847,7 @@ func (c *Client) sendFilteredMetrics(
 	allMetrics map[string]*flightrecorder.MetricRingBuffer,
 	timestampValues []int64,
 	descriptions map[string]string,
+	types map[string]string,
 	filter *MetricsRequestFilter,
 ) error {
 	protoMetrics := make([]*fodcv1.Metric, 0)
@@ -675,6 +893,7 @@ func (c *Client) sendFilteredMetrics(
 				Value:       metricValues[idx],
 				Description: description,
 				Timestamp:   timestamppb.New(timestamp),
+				Type:        toProtoMetricType(metrics.ResolveMetricType(types, parsedKey.Name)),
 			}
 
 			protoMetrics = append(protoMetrics, protoMetric)
@@ -693,8 +912,11 @@ func (c *Client) sendFilteredMetrics(
 	return nil
 }
 
-// SendHeartbeat sends heartbeat to Proxy.
-func (c *Client) SendHeartbeat(_ context.Context) error {
+// SendHeartbeat sends heartbeat to Proxy. The provided context bounds the wait so that a
+// stream whose Send is wedged (for example, after the proxy entered graceful_stop and the
+// underlying TCP write queue is no longer being drained) cannot pin the heartbeat goroutine
+// indefinitely.
+func (c *Client) SendHeartbeat(ctx context.Context) error {
 	c.streamsMu.RLock()
 	if c.disconnected || c.registrationStream == nil {
 		c.streamsMu.RUnlock()
@@ -710,7 +932,25 @@ func (c *Client) SendHeartbeat(_ context.Context) error {
 		ContainerNames: c.containerNames,
 	}
 
-	if sendErr := registrationStream.Send(req); sendErr != nil {
+	// gRPC client-stream Send does not accept a context, so wrap it in a goroutine and
+	// race the result against ctx.Done(). When ctx fires first the in-flight Send is
+	// orphaned. The leak is bounded: every reconnect/cleanupStreams/Disconnect path
+	// closes the registration stream after waiting on heartbeatWg with bounded timeout,
+	// which forces Send to return so the orphan goroutine can write to the (buffered)
+	// channel and exit. Without an upstream tear-down the orphan would persist, so the
+	// reliability of the heartbeatWaitTimeout-bounded cleanup paths is load-bearing here.
+	sendErrCh := make(chan error, 1)
+	run.Go(ctx, "fodc.agent.proxy.heartbeat-send", c.logger, func(_ context.Context) {
+		sendErrCh <- registrationStream.Send(req)
+	})
+
+	var sendErr error
+	select {
+	case sendErr = <-sendErrCh:
+	case <-ctx.Done():
+		return fmt.Errorf("heartbeat send aborted: %w", ctx.Err())
+	}
+	if sendErr != nil {
 		// Check if error is due to stream being closed/disconnected
 		if errors.Is(sendErr, io.EOF) || errors.Is(sendErr, context.Canceled) {
 			return fmt.Errorf("registration stream closed")
@@ -738,15 +978,11 @@ func (c *Client) cleanupStreams() {
 	c.stopCh = make(chan struct{})
 	c.streamsMu.Unlock()
 
-	if oldStopCh != nil {
-		select {
-		case <-oldStopCh:
-		default:
-			close(oldStopCh)
-		}
-	}
+	safeClose(oldStopCh)
 
-	c.heartbeatWg.Wait()
+	if !waitWaitGroupWithTimeout(&c.heartbeatWg, heartbeatWaitTimeout) {
+		c.logger.Warn().Msg("Heartbeat goroutine did not exit in time during cleanupStreams, proceeding anyway")
+	}
 
 	c.streamsMu.Lock()
 	if c.registrationStream != nil {
@@ -775,6 +1011,13 @@ func (c *Client) cleanupStreams() {
 			c.logger.Warn().Err(closeErr).Msg("Error closing lifecycle stream")
 		}
 		c.lifecycleStream = nil
+	}
+
+	if c.crashStream != nil {
+		if closeErr := c.crashStream.CloseSend(); closeErr != nil {
+			c.logger.Warn().Err(closeErr).Msg("Error closing crash diagnostics stream")
+		}
+		c.crashStream = nil
 	}
 	c.client = nil
 	c.streamsMu.Unlock()
@@ -798,8 +1041,11 @@ func (c *Client) Disconnect() error {
 
 	c.streamsMu.Unlock()
 
-	// Wait for heartbeat goroutine to exit before closing streams
-	c.heartbeatWg.Wait()
+	// Wait for heartbeat goroutine to exit before closing streams. Bounded so a wedged
+	// in-flight Send cannot keep Disconnect from progressing.
+	if !waitWaitGroupWithTimeout(&c.heartbeatWg, heartbeatWaitTimeout) {
+		c.logger.Warn().Msg("Heartbeat goroutine did not exit in time during Disconnect, proceeding anyway")
+	}
 
 	c.streamsMu.Lock()
 	if c.registrationStream != nil {
@@ -828,6 +1074,13 @@ func (c *Client) Disconnect() error {
 			c.logger.Warn().Err(closeErr).Msg("Error closing lifecycle stream")
 		}
 		c.lifecycleStream = nil
+	}
+
+	if c.crashStream != nil {
+		if closeErr := c.crashStream.CloseSend(); closeErr != nil {
+			c.logger.Warn().Err(closeErr).Msg("Error closing crash diagnostics stream")
+		}
+		c.crashStream = nil
 	}
 	c.streamsMu.Unlock()
 
@@ -895,6 +1148,15 @@ func (c *Client) Start(ctx context.Context) error {
 			}
 		}
 
+		if c.collectionLister != nil {
+			if crashErr := c.StartCrashStream(ctx); crashErr != nil {
+				c.logger.Error().Err(crashErr).Msg("Failed to start crash diagnostics stream, reconnecting...")
+				c.cleanupStreams()
+				time.Sleep(c.reconnectInterval)
+				continue
+			}
+		}
+
 		c.logger.Info().Msg("Proxy client started successfully")
 		return nil
 	}
@@ -918,7 +1180,9 @@ func (c *Client) handleRegistrationStream(ctx context.Context, stream fodcv1.FOD
 		_, recvErr := stream.Recv()
 		if errors.Is(recvErr, io.EOF) {
 			c.logger.Warn().Msg("Registration stream closed by Proxy, reconnecting...")
-			go c.reconnect(ctx)
+			run.Go(ctx, "fodc.agent.proxy.reconnect", c.logger, func(ctx context.Context) {
+				c.reconnect(ctx)
+			})
 			return
 		}
 		if recvErr != nil {
@@ -930,7 +1194,9 @@ func (c *Client) handleRegistrationStream(ctx context.Context, stream fodcv1.FOD
 				return
 			}
 			c.logger.Error().Err(recvErr).Msg("Error receiving from registration stream, reconnecting...")
-			go c.reconnect(ctx)
+			run.Go(ctx, "fodc.agent.proxy.reconnect", c.logger, func(ctx context.Context) {
+				c.reconnect(ctx)
+			})
 			return
 		}
 	}
@@ -954,7 +1220,9 @@ func (c *Client) handleMetricsStream(ctx context.Context, stream fodcv1.FODCServ
 		resp, recvErr := stream.Recv()
 		if errors.Is(recvErr, io.EOF) {
 			c.logger.Warn().Msg("Metrics stream closed by Proxy, reconnecting...")
-			go c.reconnect(ctx)
+			run.Go(ctx, "fodc.agent.proxy.reconnect", c.logger, func(ctx context.Context) {
+				c.reconnect(ctx)
+			})
 			return
 		}
 		if recvErr != nil {
@@ -966,7 +1234,9 @@ func (c *Client) handleMetricsStream(ctx context.Context, stream fodcv1.FODCServ
 				return
 			}
 			c.logger.Error().Err(recvErr).Msg("Error receiving from metrics stream, reconnecting...")
-			go c.reconnect(ctx)
+			run.Go(ctx, "fodc.agent.proxy.reconnect", c.logger, func(ctx context.Context) {
+				c.reconnect(ctx)
+			})
 			return
 		}
 
@@ -1017,15 +1287,22 @@ func (c *Client) reconnect(ctx context.Context) {
 		c.heartbeatTicker = nil
 	}
 
+	// Swap the stop channel under the lock so subsequent callers see the new one, then
+	// release the lock and close the old channel from outside the critical section.
+	// This is what allows the heartbeat goroutine to exit via <-stopCh BEFORE we wait on
+	// heartbeatWg; closing stopCh AFTER the wait (the previous behavior) deadlocks any
+	// heartbeat goroutine that is parked on the select.
+	oldStopCh := c.stopCh
+	c.stopCh = make(chan struct{})
 	c.streamsMu.Unlock()
 
-	c.heartbeatWg.Wait()
-	c.streamsMu.Lock()
+	safeClose(oldStopCh)
 
-	if !c.disconnected {
-		close(c.stopCh)
+	if !waitWaitGroupWithTimeout(&c.heartbeatWg, heartbeatWaitTimeout) {
+		c.logger.Warn().Msg("Heartbeat goroutine did not exit in time during reconnect, proceeding anyway")
 	}
-	c.stopCh = make(chan struct{})
+
+	c.streamsMu.Lock()
 	if c.registrationStream != nil {
 		_ = c.registrationStream.CloseSend()
 		c.registrationStream = nil
@@ -1041,6 +1318,10 @@ func (c *Client) reconnect(ctx context.Context) {
 	if c.lifecycleStream != nil {
 		_ = c.lifecycleStream.CloseSend()
 		c.lifecycleStream = nil
+	}
+	if c.crashStream != nil {
+		_ = c.crashStream.CloseSend()
+		c.crashStream = nil
 	}
 	c.streamsMu.Unlock()
 
@@ -1089,6 +1370,13 @@ func (c *Client) reconnect(ctx context.Context) {
 		}
 	}
 
+	if c.collectionLister != nil {
+		if crashErr := c.StartCrashStream(ctx); crashErr != nil {
+			c.logger.Error().Err(crashErr).Msg("Failed to restart crash diagnostics stream")
+			return
+		}
+	}
+
 	c.logger.Info().Msg("Successfully reconnected to Proxy")
 }
 
@@ -1105,7 +1393,10 @@ func (c *Client) startHeartbeat(ctx context.Context) {
 	c.heartbeatWg.Add(1)
 	c.streamsMu.Unlock()
 
-	go func() {
+	panicdiag.GoWithRecovery(ctx, panicdiag.RecoveryOptions{
+		Component: "fodc-agent-heartbeat",
+		Logger:    c.logger,
+	}, nil, func(_ *context.Context) {
 		defer c.heartbeatWg.Done()
 		for {
 			select {
@@ -1119,7 +1410,7 @@ func (c *Client) startHeartbeat(ctx context.Context) {
 				}
 			}
 		}
-	}()
+	})
 }
 
 // parseMetricKey parses a metric key string into a MetricKey struct.

@@ -42,13 +42,17 @@ import (
 	"github.com/apache/skywalking-banyandb/banyand/internal/storage"
 	"github.com/apache/skywalking-banyandb/banyand/metadata"
 	"github.com/apache/skywalking-banyandb/banyand/metadata/schema"
+	"github.com/apache/skywalking-banyandb/banyand/observability"
 	"github.com/apache/skywalking-banyandb/banyand/queue"
 	"github.com/apache/skywalking-banyandb/pkg/bus"
 	"github.com/apache/skywalking-banyandb/pkg/grpchelper"
 	"github.com/apache/skywalking-banyandb/pkg/logger"
+	"github.com/apache/skywalking-banyandb/pkg/meter"
 	"github.com/apache/skywalking-banyandb/pkg/run"
 	pkgtls "github.com/apache/skywalking-banyandb/pkg/tls"
 )
+
+var queuePubScope = observability.RootScope.SubScope("queue_pub")
 
 // ChunkedSyncClientConfig configures chunked sync client behavior.
 type ChunkedSyncClientConfig struct {
@@ -71,6 +75,7 @@ type pub struct {
 	metadata        metadata.Repo
 	handlers        map[bus.Topic]schema.EventHandler
 	log             *logger.Logger
+	metrics         *pubMetrics
 	connMgr         *grpchelper.ConnManager[*client]
 	closer          *run.Closer
 	writableProbe   map[string]map[string]struct{}
@@ -81,6 +86,34 @@ type pub struct {
 	allowedRoles    []databasev1.Role
 	writableProbeMu sync.Mutex
 	tlsEnabled      bool
+}
+
+type pubMetrics struct {
+	sendSuccessTotal    meter.Counter
+	sendErrTotal        meter.Counter
+	sendBytesTotal      meter.Counter
+	sendDurationSeconds meter.Histogram
+
+	sendRetryAttempts  meter.Counter
+	sendRetryExhausted meter.Counter
+	sendBackoffSeconds meter.Counter
+	inflightStreams    meter.Gauge
+	inflightRequests   meter.Gauge
+}
+
+func newPubMetrics(factory observability.Factory) *pubMetrics {
+	return &pubMetrics{
+		sendSuccessTotal:    factory.NewCounter("send_success_total", "topic", "node"),
+		sendErrTotal:        factory.NewCounter("send_err_total", "topic", "node", "reason"),
+		sendBytesTotal:      factory.NewCounter("send_bytes_total", "topic", "node"),
+		sendDurationSeconds: factory.NewHistogram("send_duration_seconds", meter.DefBuckets, "topic", "node", "result"),
+
+		sendRetryAttempts:  factory.NewCounter("send_retry_attempts_total", "topic", "node"),
+		sendRetryExhausted: factory.NewCounter("send_retry_exhausted_total", "topic", "node"),
+		sendBackoffSeconds: factory.NewCounter("send_backoff_seconds_total", "topic", "node"),
+		inflightStreams:    factory.NewGauge("inflight_streams", "node"),
+		inflightRequests:   factory.NewGauge("inflight_requests", "topic", "node"),
+	}
 }
 
 // AddressOf implements grpchelper.ConnectionHandler.
@@ -164,7 +197,7 @@ func (p *pub) GracefulStop() {
 func (p *pub) Serve() run.StopNotify {
 	// Start CA certificate reloader if enabled
 	if p.caCertReloader != nil {
-		if err := p.caCertReloader.Start(); err != nil {
+		if err := p.caCertReloader.Start(context.Background()); err != nil {
 			p.log.Error().Err(err).Msg("Failed to start CA certificate reloader")
 			stopCh := p.closer.CloseNotify()
 			return stopCh
@@ -175,7 +208,7 @@ func (p *pub) Serve() run.StopNotify {
 		certUpdateCh := p.caCertReloader.GetUpdateChannel()
 		stopCh := p.closer.CloseNotify()
 		if p.closer.AddRunning() {
-			go func() {
+			run.Go(context.Background(), "pub-cert-watcher", p.log, func(_ context.Context) {
 				defer p.closer.Done()
 				for {
 					select {
@@ -186,7 +219,7 @@ func (p *pub) Serve() run.StopNotify {
 						return
 					}
 				}
-			}()
+			})
 		}
 		return stopCh
 	}
@@ -261,10 +294,10 @@ func (p *pub) Broadcast(timeout time.Duration, topic bus.Topic, messages bus.Mes
 			errs = multierr.Append(errs, pkgerrors.Wrapf(f.e, "failed to publish message to %s", f.n))
 			if grpchelper.IsFailoverError(f.e) {
 				if p.closer.AddRunning() {
-					go func() {
+					run.Go(context.Background(), "pub-failover", p.log, func(ctx context.Context) {
 						defer p.closer.Done()
-						p.failover(f.n, common.NewErrorWithStatus(modelv1.Status_STATUS_INTERNAL_ERROR, f.e.Error()), topic)
-					}()
+						p.failover(ctx, f.n, common.NewErrorWithStatus(modelv1.Status_STATUS_INTERNAL_ERROR, f.e.Error()), topic)
+					})
 				}
 			}
 			continue
@@ -387,6 +420,18 @@ func (p *pub) PreRun(context.Context) error {
 
 	p.log = logger.GetLogger("server-queue-pub-" + p.prefix)
 
+	if p.metrics == nil && p.metadata != nil {
+		if svc, ok := p.metadata.(metadata.Service); ok {
+			if omr := svc.MetricsRegistry(); omr != nil {
+				p.metrics = newPubMetrics(omr.With(queuePubScope))
+			} else {
+				p.log.Warn().Msg("queue_pub metrics disabled: MetricsRegistry returned nil")
+			}
+		} else {
+			p.log.Warn().Msg("queue_pub metrics disabled: metadata does not implement metadata.Service")
+		}
+	}
+
 	// Initialize connection manager with the pub as the handler
 	p.connMgr = grpchelper.NewConnManager(grpchelper.ConnManagerConfig[*client]{ //nolint:contextcheck // health check runs in background goroutine
 		Handler:        p,
@@ -474,11 +519,10 @@ func (l *future) Get() (bus.Message, error) {
 	if resp.Body == nil {
 		return bus.NewMessageWithNode(bus.MessageID(resp.MessageId), n, nil), nil
 	}
-	if messageSupplier, ok := data.TopicResponseMap[t]; ok {
-		m := messageSupplier()
-		err = proto.Unmarshal(resp.Body, m)
-		if err != nil {
-			return bus.Message{}, err
+	if codec, ok := data.TopicResponseMap[t]; ok {
+		m, decodeErr := codec.Unmarshal(resp.Body)
+		if decodeErr != nil {
+			return bus.Message{}, decodeErr
 		}
 		return bus.NewMessageWithNode(
 			bus.MessageID(resp.MessageId),
@@ -563,4 +607,18 @@ func (p *pub) NewChunkedSyncClientWithConfig(node string, config *ChunkedSyncCli
 // HealthyNodes returns a list of node names that are currently healthy and connected.
 func (p *pub) HealthyNodes() []string {
 	return p.connMgr.ActiveNames()
+}
+
+// NewNodeSchemaStatusClient borrows the underlying *grpc.ClientConn from the
+// connection pool and wraps it as a clusterv1.NodeSchemaStatusServiceClient
+// so the cluster-barrier fan-out (Step 2.2) can probe peer caches without
+// opening parallel connections. The returned client shares the conn's HTTP/2
+// streams with normal queue traffic; per-RPC contexts carry their own
+// deadlines.
+func (p *pub) NewNodeSchemaStatusClient(node string) (clusterv1.NodeSchemaStatusServiceClient, error) {
+	c, ok := p.connMgr.GetClient(node)
+	if !ok {
+		return nil, fmt.Errorf("no active client for node %s", node)
+	}
+	return clusterv1.NewNodeSchemaStatusServiceClient(c.conn), nil
 }

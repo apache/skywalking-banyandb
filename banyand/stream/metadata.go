@@ -41,8 +41,14 @@ import (
 	"github.com/apache/skywalking-banyandb/pkg/logger"
 	"github.com/apache/skywalking-banyandb/pkg/meter"
 	resourceSchema "github.com/apache/skywalking-banyandb/pkg/schema"
+	"github.com/apache/skywalking-banyandb/pkg/schema/registry"
 	"github.com/apache/skywalking-banyandb/pkg/timestamp"
 )
+
+// streamRegistryKinds is the kind set the stream schemaRepo registers with
+// the per-node NodeRepoRegistry; mirrors the stream variant in
+// banyand/measure/metadata.go.
+const streamRegistryKinds = schema.KindGroup | schema.KindStream | schema.KindIndexRule | schema.KindIndexRuleBinding
 
 var metadataScope = streamScope.SubScope("metadata")
 
@@ -77,6 +83,7 @@ func newSchemaRepo(path string, svc *standalone, nodeLabels map[string]string, n
 		),
 	}
 	sr.start()
+	sr.registerWithNodeRepo()
 	return sr
 }
 
@@ -96,6 +103,7 @@ func newLiaisonSchemaRepo(path string, svc *liaison, streamDataNodeRegistry grpc
 		),
 	}
 	sr.start()
+	sr.registerWithNodeRepo()
 	return sr
 }
 
@@ -104,6 +112,18 @@ func (sr *schemaRepo) start() {
 	sr.metadata.
 		RegisterHandler("stream", schema.KindGroup|schema.KindStream|schema.KindIndexRuleBinding|schema.KindIndexRule,
 			sr)
+}
+
+// registerWithNodeRepo joins this schemaRepo to the per-node aggregator so the
+// cluster barrier and NodeSchemaStatusService route Group/Stream/IndexRule/
+// IndexRuleBinding lookups through the same cache the executor consults via
+// LoadGroup / LoadResource.
+func (sr *schemaRepo) registerWithNodeRepo() {
+	metaSvc, ok := sr.metadata.(metadata.Service)
+	if !ok {
+		return
+	}
+	registry.MaybeRegister(metaSvc.NodeRepoRegistry(), streamRegistryKinds, sr.Repository)
 }
 
 func (sr *schemaRepo) Stream(metadata *commonv1.Metadata) (Stream, error) {
@@ -276,7 +296,7 @@ func (sr *schemaRepo) CollectDataInfo(ctx context.Context, group string) (*datab
 	segments, segmentsErr := tsdb.SelectSegments(timestamp.TimeRange{
 		Start: time.Unix(0, 0),
 		End:   time.Unix(0, timestamp.MaxNanoTime),
-	})
+	}, false)
 	if segmentsErr != nil {
 		return nil, segmentsErr
 	}
@@ -286,10 +306,22 @@ func (sr *schemaRepo) CollectDataInfo(ctx context.Context, group string) (*datab
 		timeRange := segment.GetTimeRange()
 		tables, _ := segment.Tables()
 		var shardInfoList []*databasev1.ShardInfo
-		for shardIdx, table := range tables {
-			shardInfo := sr.collectShardInfo(table, uint32(shardIdx))
-			shardInfoList = append(shardInfoList, shardInfo)
-			totalDataSize += shardInfo.DataSizeBytes
+		if len(tables) > 0 {
+			for shardIdx, table := range tables {
+				shardInfo := sr.collectShardInfo(table, uint32(shardIdx))
+				shardInfoList = append(shardInfoList, shardInfo)
+				totalDataSize += shardInfo.DataSizeBytes
+			}
+		} else {
+			// No live shard tables (a closed segment, or a brand-new open one
+			// with no data yet): read shard part stats from disk without
+			// reopening. The per-shard InvertedIndexInfo is reported empty here:
+			// reading it would reopen the shard's bluge index (the exclusive-lock
+			// churn this change exists to avoid), so it is populated only for
+			// open segments.
+			closedShards, closedSize := storage.CollectClosedShardInfo(segment.Location())
+			shardInfoList = closedShards
+			totalDataSize += closedSize
 		}
 		seriesIndexInfo := sr.collectSeriesIndexInfo(segment)
 		totalDataSize += seriesIndexInfo.DataSizeBytes
@@ -312,14 +344,10 @@ func (sr *schemaRepo) CollectDataInfo(ctx context.Context, group string) (*datab
 }
 
 func (sr *schemaRepo) collectSeriesIndexInfo(segment storage.Segment[*tsTable, option]) *databasev1.SeriesIndexInfo {
-	indexDB := segment.IndexDB()
-	if indexDB == nil {
-		return &databasev1.SeriesIndexInfo{
-			DataCount:     0,
-			DataSizeBytes: 0,
-		}
-	}
-	dataCount, dataSizeBytes := indexDB.Stats()
+	// SeriesIndexStats reads from the live index when the segment is open and
+	// from disk (read-only) when it is closed, so inspecting a cold segment
+	// never reopens its writable index.
+	dataCount, dataSizeBytes := segment.SeriesIndexStats()
 	return &databasev1.SeriesIndexInfo{
 		DataCount:     dataCount,
 		DataSizeBytes: dataSizeBytes,
@@ -346,13 +374,14 @@ func (sr *schemaRepo) collectShardInfo(table any, shardID uint32) *databasev1.Sh
 		}
 	}
 	defer snapshot.decRef()
-	var totalCount, compressedSize, uncompressedSize, partCount uint64
+	var totalCount, compressedSize, uncompressedSize, partCount, filePartCount uint64
 	for _, pw := range snapshot.parts {
 		if pw.p != nil {
 			totalCount += pw.p.partMetadata.TotalCount
 			compressedSize += pw.p.partMetadata.CompressedSizeBytes
 			uncompressedSize += pw.p.partMetadata.UncompressedSizeBytes
 			partCount++
+			filePartCount++
 		} else if pw.mp != nil {
 			totalCount += pw.mp.partMetadata.TotalCount
 			compressedSize += pw.mp.partMetadata.CompressedSizeBytes
@@ -368,6 +397,7 @@ func (sr *schemaRepo) collectShardInfo(table any, shardID uint32) *databasev1.Sh
 		PartCount:         int64(partCount),
 		InvertedIndexInfo: invertedIndexInfo,
 		SidxInfo:          &databasev1.SIDXInfo{},
+		FilePartCount:     int64(filePartCount),
 	}
 }
 
@@ -416,7 +446,7 @@ func (sr *schemaRepo) collectPendingWriteInfo(groupName string) (int64, error) {
 	segments, segmentsErr := tsdb.SelectSegments(timestamp.TimeRange{
 		Start: time.Unix(0, 0),
 		End:   time.Unix(0, timestamp.MaxNanoTime),
-	})
+	}, false)
 	if segmentsErr != nil {
 		return 0, fmt.Errorf("failed to select segments: %w", segmentsErr)
 	}
@@ -537,7 +567,9 @@ func (s *supplier) OpenDB(groupSchema *commonv1.Group) (resourceSchema.DB, error
 	shardNum := ro.ShardNum
 	ttl := ro.Ttl
 	segInterval := ro.SegmentInterval
-	segmentIdleTimeout := time.Duration(0)
+	// Non-zero default so the idle-segment reclaimer ticker actually starts
+	// (storage/rotation.go gates it on >=1s). Staged Close paths override below.
+	segmentIdleTimeout := time.Hour
 	disableRetention := false
 	disableRotation := false
 	if len(ro.Stages) > 0 && len(s.nodeLabels) > 0 {

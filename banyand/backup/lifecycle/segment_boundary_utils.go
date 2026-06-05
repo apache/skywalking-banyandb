@@ -24,35 +24,18 @@ import (
 	"github.com/apache/skywalking-banyandb/pkg/timestamp"
 )
 
-func calculateTargetSegments(partMinTS, partMaxTS int64, targetInterval storage.IntervalRule) []time.Time {
-	minTime := time.Unix(0, partMinTS).UTC()
-	maxTime := time.Unix(0, partMaxTS).UTC()
-
+// calculateTargetSegments returns every target bucket overlapping the half-open
+// source range [start, end); the Before(end) guard drops the empty trailing
+// bucket when the source ends on a boundary. start/end are normalized to
+// time.Local so the bucket math stays on the receiver's grid regardless of the
+// caller's time zone.
+func calculateTargetSegments(start, end time.Time, targetInterval storage.IntervalRule) []time.Time {
+	start = start.In(time.Local)
+	end = end.In(time.Local)
 	var targetSegments []time.Time
-
-	var segmentStart time.Time
-	switch targetInterval.Unit {
-	case storage.DAY:
-		daysSinceEpoch := minTime.Sub(time.Date(1970, 1, 1, 0, 0, 0, 0, time.UTC)).Hours() / 24
-		segmentIndex := int(daysSinceEpoch) / targetInterval.Num
-		segmentStart = time.Date(1970, 1, 1+segmentIndex*targetInterval.Num, 0, 0, 0, 0, time.UTC)
-	case storage.HOUR:
-		hoursSinceEpoch := minTime.Sub(time.Date(1970, 1, 1, 0, 0, 0, 0, time.UTC)).Hours()
-		segmentIndex := int(hoursSinceEpoch) / targetInterval.Num
-		segmentStart = time.Date(1970, 1, 1, segmentIndex*targetInterval.Num, 0, 0, 0, time.UTC)
-	default:
-		segmentStart = targetInterval.Unit.Standard(minTime)
+	for current := targetInterval.Standard(start); current.Before(end); current = targetInterval.NextTime(current) {
+		targetSegments = append(targetSegments, current)
 	}
-
-	current := segmentStart
-	for !current.After(maxTime) {
-		segmentEnd := targetInterval.NextTime(current)
-		if !(segmentEnd.Before(minTime) || current.After(maxTime)) {
-			targetSegments = append(targetSegments, current)
-		}
-		current = segmentEnd
-	}
-
 	return targetSegments
 }
 
@@ -61,12 +44,11 @@ func getSegmentTimeRange(segmentStart time.Time, interval storage.IntervalRule) 
 	return timestamp.NewSectionTimeRange(segmentStart, segmentEnd)
 }
 
+// getTargetStageInterval returns the segment interval of the migration target
+// (the next stage relative to the current node), as populated by parseGroup.
 func getTargetStageInterval(group *GroupConfig) storage.IntervalRule {
-	if group.ResourceOpts != nil && len(group.ResourceOpts.Stages) > 0 {
-		stage := group.ResourceOpts.Stages[0]
-		if stage.SegmentInterval != nil {
-			return storage.MustToIntervalRule(stage.SegmentInterval)
-		}
+	if group.TargetSegmentInterval != nil {
+		return storage.MustToIntervalRule(group.TargetSegmentInterval)
 	}
 
 	if group.ResourceOpts != nil && group.ResourceOpts.SegmentInterval != nil {

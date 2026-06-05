@@ -44,6 +44,7 @@ func TestPrometheusFormatConversion(t *testing.T) {
 			Value:  100.0,
 			Labels: []metrics.Label{{Name: "method", Value: "GET"}, {Name: "status", Value: "200"}},
 			Desc:   "Total number of HTTP requests",
+			Type:   "counter",
 		},
 		{
 			Name:   "cpu_usage",
@@ -126,7 +127,7 @@ func TestPrometheusFormatConversion(t *testing.T) {
 
 		// Check TYPE lines
 		if strings.HasPrefix(line, "# TYPE") {
-			if strings.Contains(line, "http_requests_total") && strings.Contains(line, "gauge") {
+			if strings.Contains(line, "http_requests_total") && strings.Contains(line, "counter") {
 				hasTypeHTTPRequests = true
 			}
 			if strings.Contains(line, "cpu_usage") && strings.Contains(line, "gauge") {
