@@ -230,7 +230,7 @@ func (c *Collector) WaitForNodeFetched(ctx context.Context) error {
 
 func (c *Collector) collectLoop(ctx context.Context) {
 	defer c.closer.Done()
-	c.pollCurrentNodeWithRetry(ctx)
+	c.pollCurrentNode(ctx)
 	close(c.nodeFetchedCh)
 	ticker := time.NewTicker(c.interval)
 	defer ticker.Stop()
@@ -265,32 +265,33 @@ func (c *Collector) updateCurrentNodes(nodes map[string]*databasev1.Node) {
 	c.log.Info().Int("nodes_count", len(nodes)).Msg("Updated current nodes from all endpoints")
 }
 
-// pollCurrentNodeWithRetry repeatedly polls the current node until node info with a
-// resolved (non-unspecified) role is obtained, or the resolve budget elapses. The
-// sibling lifecycle/banyandb gRPC server may not be listening when the agent first
-// starts; the original single-shot poll left node_role permanently ROLE_UNSPECIFIED
-// whenever that brief startup race was lost.
-func (c *Collector) pollCurrentNodeWithRetry(ctx context.Context) {
-	deadline := time.Now().Add(c.resolveBudget)
+// ResolveNodeRole polls the current node until a resolved (non-unspecified) role is
+// obtained or resolveBudget elapses, then returns the role string and labels. All
+// per-attempt fetches share a budget-scoped context, so the total runtime is bounded by
+// resolveBudget regardless of the per-attempt gRPC timeouts and backoffs. This guards the
+// startup race where the sibling lifecycle/banyandb gRPC server is not yet listening when
+// the agent first polls, which previously left node_role permanently ROLE_UNSPECIFIED.
+// It does not touch nodeFetchedCh, so the collector's readiness signal stays prompt.
+func (c *Collector) ResolveNodeRole(ctx context.Context) (nodeRole string, nodeLabels map[string]string) {
+	budgetCtx, cancel := context.WithTimeout(ctx, c.resolveBudget)
+	defer cancel()
 	backoff := initialBackoff
-	for {
-		c.pollCurrentNode(ctx)
-		if c.hasResolvedRole() {
-			return
-		}
-		if ctx.Err() != nil || !time.Now().Before(deadline) {
-			c.log.Warn().Msg("Node role unresolved after resolve budget; proceeding with current node info")
-			return
+	for !c.hasResolvedRole() {
+		c.pollCurrentNode(budgetCtx)
+		if c.hasResolvedRole() || budgetCtx.Err() != nil || c.closer.Closed() {
+			break
 		}
 		select {
-		case <-ctx.Done():
-			return
+		case <-budgetCtx.Done():
 		case <-c.closer.CloseNotify():
-			return
 		case <-time.After(backoff):
+		}
+		if budgetCtx.Err() != nil || c.closer.Closed() {
+			break
 		}
 		backoff = min(backoff*2, maxBackoff)
 	}
+	return c.GetNodeInfo()
 }
 
 // hasResolvedRole reports whether any current node has a known (non-unspecified) role.

@@ -784,7 +784,7 @@ func (f *fakeNodeQueryClient) GetCurrentNode(_ context.Context, _ *databasev1.Ge
 	return &databasev1.GetCurrentNodeResponse{Node: f.node}, nil
 }
 
-func TestCollector_PollCurrentNodeWithRetry_ResolvesAfterTransientFailure(t *testing.T) {
+func TestCollector_ResolveNodeRole_ResolvesAfterTransientFailure(t *testing.T) {
 	log := initTestLogger(t)
 	c := NewCollector(log, []string{"test"}, time.Second, "test-pod")
 	c.resolveBudget = 5 * time.Second
@@ -796,24 +796,24 @@ func TestCollector_PollCurrentNodeWithRetry_ResolvesAfterTransientFailure(t *tes
 	// failing the first 3 GetCurrentNode calls forces a second outer poll iteration.
 	fake := &fakeNodeQueryClient{node: node, failCount: maxRetries}
 	c.clients = []*endpointClient{{nodeQueryClient: fake, addr: "test"}}
-	c.pollCurrentNodeWithRetry(context.Background())
-	role, _ := c.GetNodeInfo()
+	role, _ := c.ResolveNodeRole(context.Background())
 	assert.Equal(t, databasev1.Role_name[int32(databasev1.Role_ROLE_DATA)], role)
 	assert.Greater(t, fake.calls, maxRetries)
 }
 
-func TestCollector_PollCurrentNodeWithRetry_GivesUpAfterBudget(t *testing.T) {
+func TestCollector_ResolveNodeRole_GivesUpWithinBudget(t *testing.T) {
 	log := initTestLogger(t)
 	c := NewCollector(log, []string{"test"}, time.Second, "test-pod")
-	c.resolveBudget = 200 * time.Millisecond
+	c.resolveBudget = 500 * time.Millisecond
 	fake := &fakeNodeQueryClient{failCount: 1 << 30} // always fails
 	c.clients = []*endpointClient{{nodeQueryClient: fake, addr: "test"}}
 	start := time.Now()
-	c.pollCurrentNodeWithRetry(context.Background())
+	role, _ := c.ResolveNodeRole(context.Background())
 	elapsed := time.Since(start)
-	role, _ := c.GetNodeInfo()
 	assert.Equal(t, databasev1.Role_name[int32(databasev1.Role_ROLE_UNSPECIFIED)], role)
-	assert.Less(t, elapsed, 10*time.Second) // returns promptly, does not hang
+	// Total runtime must stay bounded by the budget (plus slack for one in-flight gRPC
+	// attempt), proving the budget-scoped context actually caps the retry loop.
+	assert.Less(t, elapsed, c.resolveBudget+2*time.Second)
 }
 
 func TestProcessClusterStates_ComplexTopology(t *testing.T) {
