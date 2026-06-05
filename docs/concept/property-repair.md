@@ -20,10 +20,10 @@ In the context of property data, each shard within a group builds its own Merkle
 The tree consists of the following three types of nodes:
 1. **Leaf Node**: Store the summary information of each Property data:
    1. **Entity**: The identifier of the Property data, composed of `group_name` + `property_name` + `id`.
-   2. **SHA Value**: The SHA512 hash value of the Property source data(`sha512(source_json_bytes+property_is_deleted)`), used for fast equality comparison to check the consistency of the same entity data
+   2. **SHA Value**: The SHA512 hash value of the Property source data(`sha512(source_json_bytes + delete_time)`, where `delete_time` is the int64 nanosecond delete timestamp, or `0` when the property is not deleted), used for fast equality comparison to check the consistency of the same entity data. Encoding the actual delete time (rather than a boolean flag) means two records deleted at different times produce different SHAs.
 2. **Slot Node**: Each tree contains a fixed number(such as `32`) of slot nodes. When the Property data is added into the tree, it is placed in a slot node based on its hash value of Entity(`hash(entity) % slot_count`). 
-   The slot node contains the SHA value of the Property data and the number of Property data in that slot.
-3. **Root Node**: The root node of the Merkle Tree, which contains the SHA value of the entire tree and the number of slot nodes.
+   The slot node's SHA is computed over the (hex-encoded) SHA values of its leaf nodes, and it records the number of Property data in that slot.
+3. **Root Node**: The root node of the Merkle Tree, whose SHA is computed over the (hex-encoded) SHA values of all slot nodes; it also records the number of slot nodes.
 
 Therefore, the Merkle Tree has above three structure levels:
 * The top level is a single root node.
@@ -37,11 +37,20 @@ There are two types of triggers for Merkle Tree construction:
 2. **On Update**: When an update in the shard is detected, the system schedules a delayed build after a short wait period (default 10 minutes).
 
 The construction process follows these steps:
-1. **Check for Updates**: The system compares the snapshot ID(`XXXXX.snp`) of the previously built tree with the current snapshot ID of the shard. 
+1. **Check for Updates**: The system compares the snapshot ID recorded from the previous build (persisted in `state.json` as `last_snp_id`) with the shard's current latest snapshot ID (the newest `.snp` file in the shard's Bluge index directory).
    If they differ, it indicates that data has changed, and the process continues. If they match, the tree construction is skipped.
 2. **Snapshot the Shard**: A snapshot of the shard data is taken to avoid blocking ongoing business operations during data traversal.
 3. **Build the Tree**: Using the streaming method, the system scans all data in the snapshot and builds a Merkle Tree for each group individually.
-4. **Save the Snapshot ID**: The snapshot ID used in this build is saved, so it can be used for efficient change detection during the next scheduled run.
+4. **Save the Snapshot ID**: The snapshot ID used in this build is saved (to `state.json`), so it can be used for efficient change detection during the next scheduled run.
+
+### On-disk State
+
+Repair state is persisted under a dedicated repair base directory (separate from the Bluge data files), laid out per group/shard:
+
+- `state.json` — `{last_sync_time, last_snp_id}`, the change-detection marker described above.
+- `state-tree.data` — the persisted Merkle Tree (a custom self-describing format: a section of leaf nodes, then slot nodes, then the root node, followed by a trailing footer with section offsets).
+- `state-append-<slot>.tmp` — transient per-slot spill files used while composing the tree; concatenated into `state-tree.data` and then removed.
+- `scheduled.json` — a marker recording that a build-tree run has occurred (used to disambiguate gossip emptiness).
 
 ## Gossip Protocol
 

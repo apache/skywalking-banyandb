@@ -108,6 +108,10 @@ Release Notes.
 - Fix FODC proxy corrupting Prometheus metric types. The agent dropped the `# TYPE` line while parsing banyandb `/metrics`, the `StreamMetrics` proto carried no type field, and the proxy guessed the type from a name-suffix heuristic — downgrading counters to gauge, mislabeling `_count`-suffixed counters as histograms, and splitting summaries into two conflicting `# TYPE` lines. Capture the type with the Prometheus `expfmt` parser, store it in the flight recorder, thread it through a new `Metric.type` enum over gRPC, and emit the real type from the proxy; pre-upgrade (untyped) samples fold into the matching typed family so a mixed-version rollout never emits two conflicting `# TYPE` lines for one metric.
 - Fix FODC agent labeling metrics with `node_role="ROLE_UNSPECIFIED"`. The agent resolved the node role exactly once at startup via a single `GetCurrentNode` poll whose endpoint retries spanned only ~1s; when the sibling lifecycle/banyandb gRPC server was not yet listening (`connect: cannot assign requested address`) the role fell back to `ROLE_UNSPECIFIED` permanently, so most nodes never reported their real `ROLE_DATA`/`ROLE_LIAISON`. Retry the initial node-role resolution with exponential backoff until a non-unspecified role is obtained or a 25s budget elapses.
 
+### Document
+
+- Add a code-accurate, API-first "Storage & File Format" doc and correct stale storage/format descriptions: fix the on-disk hierarchy to `group → segment → shard → part` (in `tsdb.md`, `data-model.md`, `clustering.md`, `disk-management.md`, including the `dump` CLI path examples), correct the measure field-values file name (`fv.bin`, not `fields.bin`), clarify that the `GORILLA`/`ZSTD` enums are schema hints (the engine uses delta/dictionary + size-thresholded zstd), document the measure `index_mode` two-engine split and the trace span-store/sidx layout, and fix the property repair Merkle-tree SHA/snapshot-state descriptions. Replace the file-structure diagrams with inline mermaid.
+
 ### Chores
 
 - Upgrade Go and npm dependencies including etcd to v3.6.10, OpenTelemetry to v1.43.0, AWS SDK, and Google Cloud libraries.

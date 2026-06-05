@@ -49,13 +49,13 @@ Liaison servers use the disk usage flags to manage their write queue and prevent
 #### Inspecting the Liaison write queue on disk
 
 Liaison nodes persist the write queue to disk, so pending data survives restarts and can be inspected during incident response.
-The on-disk layout under each `*-data-path` mirrors the TSDB structure (group → shard → segment → part). See [TSDB](../concept/tsdb.md) for the segment and shard concepts.
+The on-disk layout under each `*-data-path` mirrors the TSDB structure (group → segment → shard → part). See [TSDB](../concept/tsdb.md) for the segment and shard concepts.
 
 **Where series metadata is stored (`smeta.bin`)**
 
 Starting from 0.10, each persisted part for **measure**, **stream**, and **trace** may include an optional `smeta.bin` file in the part directory:
 
-- **Location**: `.../<group>/shard-<id>/<segment>/.../<partID-hex>/smeta.bin`
+- **Location**: `.../<group>/<segment>/shard-<id>/<partID-hex>/smeta.bin`
 - **Purpose**: `smeta.bin` stores a compact mapping from `SeriesID` to the series `EntityValues` that appear in that part. This makes it possible to identify which series a queued (or malformed) part belongs to even when segment-level indexes are missing or hard to use during debugging.
 - **Backward compatibility**: older parts may not contain `smeta.bin`, and tools should handle its absence gracefully.
 
@@ -67,9 +67,9 @@ Examples:
 
 ```sh
 # If you have the dump binary in PATH.
-dump measure --shard-path <measure-data-path>/<group>/shard-0 --segment-path <measure-data-path>/<group>/shard-0/<segment>
-dump stream  --shard-path <stream-data-path>/<group>/shard-0  --segment-path <stream-data-path>/<group>/shard-0/<segment>
-dump trace   --shard-path <trace-data-path>/<group>/shard-0   --segment-path <trace-data-path>/<group>/shard-0/<segment>
+dump measure --shard-path <measure-data-path>/<group>/<segment>/shard-0 --segment-path <measure-data-path>/<group>/<segment>
+dump stream  --shard-path <stream-data-path>/<group>/<segment>/shard-0  --segment-path <stream-data-path>/<group>/<segment>
+dump trace   --shard-path <trace-data-path>/<group>/<segment>/shard-0   --segment-path <trace-data-path>/<group>/<segment>
 
 # Or run it from source.
 go run ./banyand/cmd/dump measure --shard-path <...> --segment-path <...>

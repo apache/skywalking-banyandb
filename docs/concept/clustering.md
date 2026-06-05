@@ -63,7 +63,7 @@ Liaison Nodes use this metadata to dynamically determine shard-to-node assignmen
 
 ### 3.2 Data Nodes
 
-Data Nodes store all raw time series data, metadata, and indexed data. On disk, the data is organized by `<group>/shard-<shard_id>/<segment_id>/`. The segment is designed to support retention policy.
+Data Nodes store all raw time series data, metadata, and indexed data. For time-series resources (`Measure`, `Stream`, `Trace`), the data is organized on disk by `<group>/<segment>/shard-<shard_id>/<part>/`, where the segment is a time bucket that supports the retention policy. `Property` data has no time segment — it is organized by `<group>/shard-<shard_id>/` directly. See [Storage & File Format](storage-and-format.md) for details.
 
 ### 3.3 Liaison Nodes
 
