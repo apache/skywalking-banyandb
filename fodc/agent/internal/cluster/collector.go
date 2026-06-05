@@ -240,6 +240,11 @@ func (c *Collector) collectLoop(ctx context.Context) {
 		case <-c.closer.CloseNotify():
 			return
 		case <-ticker.C:
+			// Re-poll the current node every tick, not just at startup: a node may not have
+			// assumed its role (or populated its labels) when the agent first polls, and
+			// without a refresh GetNodeInfo would stay ROLE_UNSPECIFIED with no labels for
+			// the life of the process, leaving node_role/node_type unresolved on slow nodes.
+			c.pollCurrentNode(ctx)
 			c.collectClusterState(ctx)
 		}
 	}
