@@ -44,7 +44,7 @@ const (
 	defaultHeartbeatTimeout  = 30 * time.Second
 	defaultCleanupTimeout    = 5 * time.Minute
 	defaultMaxAgents         = 1000
-	defaultGRPCMaxMsgSize    = 4194304 // 4MB
+	defaultGRPCMaxMsgSize    = 32 << 20 // 32MB; a single data node's metrics push can exceed the gRPC 4MB default.
 	defaultHTTPReadTimeout   = 10 * time.Second
 	defaultHTTPWriteTimeout  = 10 * time.Second
 	defaultHeartbeatInterval = 10 * time.Second

@@ -34,6 +34,10 @@ import (
 const (
 	connManagerMaxRetryInterval = 60 * time.Second
 	connManagerMaxRetries       = 3
+	// maxProxyCallMsgSize bounds gRPC messages exchanged with the proxy. A data node's metrics
+	// push can exceed the gRPC 4MB default and otherwise gets rejected with ResourceExhausted,
+	// causing an endless reconnect storm. Keep in sync with the proxy's --grpc-max-msg-size.
+	maxProxyCallMsgSize = 32 << 20 // 32MB
 )
 
 // connEventType represents the type of connection event.
@@ -248,7 +252,13 @@ func (cm *connManager) doConnect(ctx context.Context) connResult {
 		default:
 		}
 
-		conn, dialErr := grpc.NewClient(cm.proxyAddr, grpc.WithTransportCredentials(insecure.NewCredentials()))
+		conn, dialErr := grpc.NewClient(cm.proxyAddr,
+			grpc.WithTransportCredentials(insecure.NewCredentials()),
+			grpc.WithDefaultCallOptions(
+				grpc.MaxCallRecvMsgSize(maxProxyCallMsgSize),
+				grpc.MaxCallSendMsgSize(maxProxyCallMsgSize),
+			),
+		)
 		if dialErr == nil {
 			cm.logger.Info().Str("proxy_addr", cm.proxyAddr).Int("attempt", attempt).Msg("Connected to FODC Proxy")
 			return connResult{conn: conn}
