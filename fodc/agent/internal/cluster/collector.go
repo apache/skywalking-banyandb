@@ -39,6 +39,10 @@ const (
 	initialBackoff       = 100 * time.Millisecond
 	maxBackoff           = 5 * time.Second
 	nodeInfoFetchTimeout = 30 * time.Second
+	// nodeRoleResolveBudget bounds how long the initial node-role resolution retries.
+	// Keep it below nodeInfoFetchTimeout so the poll finishes before StartCollector's
+	// WaitForNodeFetched deadline.
+	nodeRoleResolveBudget = 25 * time.Second
 )
 
 // TopologyMap represents processed cluster data for a single endpoint.
@@ -66,6 +70,7 @@ type Collector struct {
 	podName         string
 	addrs           []string
 	interval        time.Duration
+	resolveBudget   time.Duration
 	mu              sync.RWMutex
 }
 
@@ -76,6 +81,7 @@ func NewCollector(log *logger.Logger, addrs []string, interval time.Duration, po
 		addrs:           addrs,
 		interval:        interval,
 		podName:         podName,
+		resolveBudget:   nodeRoleResolveBudget,
 		closer:          run.NewCloser(0),
 		nodeFetchedCh:   make(chan struct{}),
 		clients:         make([]*endpointClient, 0, len(addrs)),
@@ -224,7 +230,7 @@ func (c *Collector) WaitForNodeFetched(ctx context.Context) error {
 
 func (c *Collector) collectLoop(ctx context.Context) {
 	defer c.closer.Done()
-	c.pollCurrentNode(ctx)
+	c.pollCurrentNodeWithRetry(ctx)
 	close(c.nodeFetchedCh)
 	ticker := time.NewTicker(c.interval)
 	defer ticker.Stop()
@@ -257,6 +263,47 @@ func (c *Collector) updateCurrentNodes(nodes map[string]*databasev1.Node) {
 	c.currentNodes = nodes
 	c.mu.Unlock()
 	c.log.Info().Int("nodes_count", len(nodes)).Msg("Updated current nodes from all endpoints")
+}
+
+// pollCurrentNodeWithRetry repeatedly polls the current node until node info with a
+// resolved (non-unspecified) role is obtained, or the resolve budget elapses. The
+// sibling lifecycle/banyandb gRPC server may not be listening when the agent first
+// starts; the original single-shot poll left node_role permanently ROLE_UNSPECIFIED
+// whenever that brief startup race was lost.
+func (c *Collector) pollCurrentNodeWithRetry(ctx context.Context) {
+	deadline := time.Now().Add(c.resolveBudget)
+	backoff := initialBackoff
+	for {
+		c.pollCurrentNode(ctx)
+		if c.hasResolvedRole() {
+			return
+		}
+		if ctx.Err() != nil || !time.Now().Before(deadline) {
+			c.log.Warn().Msg("Node role unresolved after resolve budget; proceeding with current node info")
+			return
+		}
+		select {
+		case <-ctx.Done():
+			return
+		case <-c.closer.CloseNotify():
+			return
+		case <-time.After(backoff):
+		}
+		backoff = min(backoff*2, maxBackoff)
+	}
+}
+
+// hasResolvedRole reports whether any current node has a known (non-unspecified) role.
+func (c *Collector) hasResolvedRole() bool {
+	c.mu.RLock()
+	defer c.mu.RUnlock()
+	unspecified := databasev1.Role_name[int32(databasev1.Role_ROLE_UNSPECIFIED)]
+	for _, node := range c.currentNodes {
+		if node != nil && NodeRoleFromNode(node) != unspecified {
+			return true
+		}
+	}
+	return false
 }
 
 func (c *Collector) updateClusterStates(states map[string]*databasev1.GetClusterStateResponse) {
