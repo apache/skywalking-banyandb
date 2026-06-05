@@ -63,8 +63,10 @@ type Watchdog struct {
 
 	nodeRole       string
 	podName        string
+	resolvedRole   string
 	urls           []string
 	containerNames []string
+	resolvedLabels map[string]string
 	nodeInfo       func() (role string, labels map[string]string)
 
 	interval     time.Duration
@@ -73,7 +75,6 @@ type Watchdog struct {
 	mu           sync.RWMutex
 	wg           sync.WaitGroup
 	isRunning    bool
-	everResolved bool
 }
 
 // NewWatchdogWithConfig creates a new Watchdog instance with specified configuration.
@@ -102,16 +103,31 @@ func (w *Watchdog) SetNodeInfoProvider(fn func() (role string, labels map[string
 	w.mu.Unlock()
 }
 
-// resolveNodeInfo returns the current node role and labels, preferring the live provider when
-// set and otherwise falling back to the static role captured at construction.
+// resolveNodeInfo returns the current node role and labels from the live provider, falling back
+// to the static role captured at construction when no provider is set. The first resolved
+// identity is cached and "sticks": if the provider later regresses to an unresolved role
+// (ROLE_UNSPECIFIED), the cached resolved identity is returned instead. Without this, a regression
+// would cause the flight recorder to buffer a duplicate (ghost) series under the unresolved
+// identity, which is never evicted.
 func (w *Watchdog) resolveNodeInfo() (role string, labels map[string]string) {
 	w.mu.RLock()
 	fn := w.nodeInfo
+	cachedRole, cachedLabels := w.resolvedRole, w.resolvedLabels
 	w.mu.RUnlock()
-	if fn != nil {
-		return fn()
+	if fn == nil {
+		return w.nodeRole, nil
 	}
-	return w.nodeRole, nil
+	role, labels = fn()
+	if role != "" && role != roleUnspecified {
+		w.mu.Lock()
+		w.resolvedRole, w.resolvedLabels = role, labels
+		w.mu.Unlock()
+		return role, labels
+	}
+	if cachedRole != "" {
+		return cachedRole, cachedLabels
+	}
+	return role, labels
 }
 
 // nodeReadyToRecord reports whether the watchdog should record metrics this cycle. While a live
@@ -123,16 +139,14 @@ func (w *Watchdog) resolveNodeInfo() (role string, labels map[string]string) {
 func (w *Watchdog) nodeReadyToRecord() bool {
 	w.mu.RLock()
 	fn := w.nodeInfo
-	ever := w.everResolved
 	start := w.startTime
 	w.mu.RUnlock()
-	if fn == nil || ever {
+	if fn == nil {
 		return true
 	}
-	if role, _ := fn(); role != "" && role != roleUnspecified {
-		w.mu.Lock()
-		w.everResolved = true
-		w.mu.Unlock()
+	// resolveNodeInfo caches and sticks to the first resolved identity, so once the role has
+	// resolved this stays true even if the live provider briefly regresses to unspecified.
+	if role, _ := w.resolveNodeInfo(); role != "" && role != roleUnspecified {
 		return true
 	}
 	return time.Since(start) >= nodeResolveGracePeriod

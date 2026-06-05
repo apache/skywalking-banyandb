@@ -858,3 +858,25 @@ func TestNodeReadyToRecord(t *testing.T) {
 	stuck.startTime = time.Now().Add(-2 * nodeResolveGracePeriod)
 	assert.True(t, stuck.nodeReadyToRecord(), "should record after the grace period even if unresolved")
 }
+
+func TestResolveNodeInfoSticky(t *testing.T) {
+	regress := false
+	wd := NewWatchdogWithConfig(nil, nil, time.Second, "", "p", []string{"data"})
+	wd.SetNodeInfoProvider(func() (string, map[string]string) {
+		if regress {
+			return roleUnspecified, nil
+		}
+		return "ROLE_DATA", map[string]string{"type": "warm"}
+	})
+
+	role, labels := wd.resolveNodeInfo()
+	assert.Equal(t, "ROLE_DATA", role)
+	assert.Equal(t, "warm", labels["type"])
+
+	// Once resolved, a regression to an unresolved role must not be returned, otherwise the
+	// flight recorder buffers a duplicate ghost series under the unresolved identity.
+	regress = true
+	role, labels = wd.resolveNodeInfo()
+	assert.Equal(t, "ROLE_DATA", role, "must stick to the resolved role")
+	assert.Equal(t, "warm", labels["type"], "must stick to the resolved labels")
+}
