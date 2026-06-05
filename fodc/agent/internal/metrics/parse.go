@@ -123,6 +123,15 @@ func ResolveMetricType(typeMap map[string]string, name string) string {
 
 // ParseWithAgentLabels parses Prometheus text format metrics and returns structured RawMetric objects.
 func ParseWithAgentLabels(text string, nodeRole, podName, containerName string) ([]RawMetric, error) {
+	return ParseWithNodeLabels(text, nodeRole, podName, containerName, nil)
+}
+
+// ParseWithNodeLabels is ParseWithAgentLabels plus the node's own labels (e.g. the data-node
+// tier "type"). Each node label is stamped under a "node_" prefix (so "type" becomes
+// "node_type"), which keeps it from ever colliding with a metric-intrinsic label of the same
+// name (e.g. the merge "type"). pod_name and container_name are skipped because they are
+// already stamped as first-class labels.
+func ParseWithNodeLabels(text string, nodeRole, podName, containerName string, nodeLabels map[string]string) ([]RawMetric, error) {
 	// Build authoritative type map using expfmt.
 	// TextToMetricFamilies may return a non-nil error AND a non-empty families map
 	// simultaneously (e.g. for "unexpected end of input stream" on trailing newline).
@@ -186,6 +195,15 @@ func ParseWithAgentLabels(text string, nodeRole, podName, containerName string) 
 			labels = append(labels, Label{
 				Name:  "container_name",
 				Value: containerName,
+			})
+		}
+		for nodeLabelKey, nodeLabelValue := range nodeLabels {
+			if nodeLabelValue == "" || nodeLabelKey == "pod_name" || nodeLabelKey == "container_name" {
+				continue
+			}
+			labels = append(labels, Label{
+				Name:  "node_" + nodeLabelKey,
+				Value: nodeLabelValue,
 			})
 		}
 

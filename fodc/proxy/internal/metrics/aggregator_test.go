@@ -251,8 +251,11 @@ func TestProcessMetricsFromAgent_WithAgentLabels(t *testing.T) {
 	case metrics := <-collectCh:
 		require.Equal(t, 1, len(metrics))
 		metric := metrics[0]
-		assert.Equal(t, "prod", metric.Labels["env"])
-		assert.Equal(t, "us-east", metric.Labels["zone"])
+		// Custom node labels are exposed under the node_ prefix.
+		assert.Equal(t, "prod", metric.Labels["node_env"])
+		assert.Equal(t, "us-east", metric.Labels["node_zone"])
+		// The metric's own intrinsic labels and first-class identity labels are untouched.
+		assert.Equal(t, "heap", metric.Labels["type"])
 		assert.Equal(t, "test", metric.Labels["pod_name"])
 		assert.Equal(t, "master", metric.Labels["container_name"])
 	case <-time.After(1 * time.Second):
@@ -817,4 +820,66 @@ func TestMatchesAddress_PortMismatch(t *testing.T) {
 	result := strings.EqualFold(agentInfo.AgentIdentity.PodName, "192.168.1.1:8081")
 
 	assert.False(t, result)
+}
+
+func collectOneMetric(t *testing.T, aggregator *Aggregator, agentID string, agentInfo *registry.AgentInfo,
+	req *fodcv1.StreamMetricsRequest,
+) *AggregatedMetric {
+	t.Helper()
+	aggregator.collectingMu.Lock()
+	collectCh := make(chan []*AggregatedMetric, 1)
+	aggregator.collecting[agentID] = collectCh
+	aggregator.collectingMu.Unlock()
+
+	require.NoError(t, aggregator.ProcessMetricsFromAgent(context.Background(), agentID, agentInfo, req))
+
+	select {
+	case got := <-collectCh:
+		require.Len(t, got, 1)
+		return got[0]
+	case <-time.After(time.Second):
+		t.Fatal("timeout waiting for metrics")
+		return nil
+	}
+}
+
+func TestProcessMetricsFromAgent_NamespacesNodeLabels(t *testing.T) {
+	aggregator, testRegistry, _ := newTestAggregator(t)
+	// The agent reports node labels: the tier ("type") plus pod_name (which is already a
+	// first-class label and must not be re-applied as node_pod_name).
+	agentID := createTestAgent(t, testRegistry, "demo-banyandb-data-warm-1", "datanode-warm",
+		map[string]string{"type": "warm", "pod_name": "demo-banyandb-data-warm-1"})
+	agentInfo, getErr := testRegistry.GetAgentByID(agentID)
+	require.NoError(t, getErr)
+
+	req := createTestStreamMetricsRequest("banyandb_queue_sub_total_msg_received", 5, map[string]string{
+		"pod_name": "demo-banyandb-data-warm-1",
+		"topic":    "v1:stream-query",
+	}, nil)
+
+	metric := collectOneMetric(t, aggregator, agentID, agentInfo, req)
+	assert.Equal(t, "warm", metric.Labels["node_type"], "tier exposed as node_type")
+	_, hasRawType := metric.Labels["type"]
+	assert.False(t, hasRawType, "node label must not appear under the raw key")
+	_, hasNodePodName := metric.Labels["node_pod_name"]
+	assert.False(t, hasNodePodName, "pod_name must not be namespaced")
+}
+
+func TestProcessMetricsFromAgent_NodeLabelDoesNotClobberMetricLabel(t *testing.T) {
+	aggregator, testRegistry, _ := newTestAggregator(t)
+	// The agent reports a node "type" label (the data-node storage tier).
+	agentID := createTestAgent(t, testRegistry, "demo-banyandb-data-hot-0", "datanode-hot", map[string]string{"type": "hot"})
+	agentInfo, getErr := testRegistry.GetAgentByID(agentID)
+	require.NoError(t, getErr)
+
+	// The metric carries its own intrinsic "type" label (e.g. a merge part type).
+	req := createTestStreamMetricsRequest("banyandb_measure_total_merged_parts", 3, map[string]string{
+		"pod_name": "demo-banyandb-data-hot-0",
+		"type":     "file",
+	}, nil)
+
+	metric := collectOneMetric(t, aggregator, agentID, agentInfo, req)
+	// The metric's intrinsic type is preserved; the node tier lands on node_type, no collision.
+	assert.Equal(t, "file", metric.Labels["type"])
+	assert.Equal(t, "hot", metric.Labels["node_type"])
 }

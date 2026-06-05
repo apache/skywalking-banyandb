@@ -56,6 +56,7 @@ type Watchdog struct {
 	podName        string
 	urls           []string
 	containerNames []string
+	nodeInfo       func() (role string, labels map[string]string)
 
 	interval     time.Duration
 	retryBackoff time.Duration
@@ -78,6 +79,27 @@ func NewWatchdogWithConfig(recorder MetricsRecorder, urls []string, interval tim
 		podName:        podName,
 		containerNames: containerNames,
 	}
+}
+
+// SetNodeInfoProvider supplies a live source of the node's role and labels, used to stamp
+// metrics at scrape time. This avoids freezing the role/labels at a startup snapshot, which
+// is unreliable when the local node has not yet resolved its role when the agent starts.
+func (w *Watchdog) SetNodeInfoProvider(fn func() (role string, labels map[string]string)) {
+	w.mu.Lock()
+	w.nodeInfo = fn
+	w.mu.Unlock()
+}
+
+// resolveNodeInfo returns the current node role and labels, preferring the live provider when
+// set and otherwise falling back to the static role captured at construction.
+func (w *Watchdog) resolveNodeInfo() (role string, labels map[string]string) {
+	w.mu.RLock()
+	fn := w.nodeInfo
+	w.mu.RUnlock()
+	if fn != nil {
+		return fn()
+	}
+	return w.nodeRole, nil
 }
 
 // Name returns the name of the watchdog service.
@@ -328,7 +350,8 @@ func (w *Watchdog) pollMetricsFromEndpoint(ctx context.Context, url string, cont
 			currentBackoff = w.exponentialBackoff(currentBackoff)
 			continue
 		}
-		parsedMetrics, parseErr := metrics.ParseWithAgentLabels(string(body), w.nodeRole, w.podName, containerName)
+		nodeRole, nodeLabels := w.resolveNodeInfo()
+		parsedMetrics, parseErr := metrics.ParseWithNodeLabels(string(body), nodeRole, w.podName, containerName, nodeLabels)
 		if parseErr != nil {
 			lastErr = fmt.Errorf("failed to parse metrics: %w", parseErr)
 			currentBackoff = w.exponentialBackoff(currentBackoff)

@@ -278,6 +278,11 @@ func runFODC(_ *cobra.Command, _ []string) error {
 	}
 
 	wd := watchdog.NewWatchdogWithConfig(fr, metricsEndpoints, metricsPollInterval, nodeRole, podName, containerNames)
+	if clusterCollector != nil {
+		// Stamp the node role and labels live from the collector, which keeps resolving after
+		// startup, instead of the one-shot snapshot captured above.
+		wd.SetNodeInfoProvider(clusterCollector.GetNodeInfo)
+	}
 
 	stopKTM := initializeKTM(ctx, log, fr)
 

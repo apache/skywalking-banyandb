@@ -1253,3 +1253,30 @@ func TestParse_WithoutAgentIdentityLabels(t *testing.T) {
 	assert.Equal(t, "instance", metrics[0].Labels[0].Name)
 	assert.Equal(t, "localhost", metrics[0].Labels[0].Value)
 }
+
+func TestParseWithNodeLabels_NamespacesAndSkips(t *testing.T) {
+	// A merge metric with an intrinsic "type" label, scraped from a hot data node.
+	text := `banyandb_measure_total_merged_parts{type="file"} 3`
+
+	metrics, err := ParseWithNodeLabels(text, "ROLE_DATA", "demo-banyandb-data-hot-0", "data",
+		map[string]string{"type": "hot", "pod_name": "demo-banyandb-data-hot-0", "container_name": "data", "empty": ""})
+
+	require.NoError(t, err)
+	require.Len(t, metrics, 1)
+
+	got := make(map[string]string)
+	for _, l := range metrics[0].Labels {
+		got[l.Name] = l.Value
+	}
+	// Intrinsic type is preserved; the node tier is namespaced to node_type (no collision).
+	assert.Equal(t, "file", got["type"])
+	assert.Equal(t, "hot", got["node_type"])
+	// First-class identity labels are not re-applied under the node_ prefix, and empty values are skipped.
+	assert.Equal(t, "demo-banyandb-data-hot-0", got["pod_name"])
+	_, hasNodePodName := got["node_pod_name"]
+	assert.False(t, hasNodePodName)
+	_, hasNodeContainer := got["node_container_name"]
+	assert.False(t, hasNodeContainer)
+	_, hasNodeEmpty := got["node_empty"]
+	assert.False(t, hasNodeEmpty)
+}
