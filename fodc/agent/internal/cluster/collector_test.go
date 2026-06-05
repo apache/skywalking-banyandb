@@ -19,11 +19,13 @@ package cluster
 
 import (
 	"context"
+	"fmt"
 	"testing"
 	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"google.golang.org/grpc"
 
 	commonv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/common/v1"
 	databasev1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/database/v1"
@@ -764,6 +766,54 @@ func TestProcessClusterStates_EmptyPodName(t *testing.T) {
 		_, hasPodName := node.Labels["pod_name"]
 		assert.False(t, hasPodName, "pod_name should not be added when podName is empty")
 	}
+}
+
+type fakeNodeQueryClient struct {
+	node      *databasev1.Node
+	failCount int
+	calls     int
+}
+
+func (f *fakeNodeQueryClient) GetCurrentNode(_ context.Context, _ *databasev1.GetCurrentNodeRequest,
+	_ ...grpc.CallOption,
+) (*databasev1.GetCurrentNodeResponse, error) {
+	f.calls++
+	if f.calls <= f.failCount {
+		return nil, fmt.Errorf("simulated unavailable on call %d", f.calls)
+	}
+	return &databasev1.GetCurrentNodeResponse{Node: f.node}, nil
+}
+
+func TestCollector_ResolveNodeRole_ResolvesAfterTransientFailure(t *testing.T) {
+	log := initTestLogger(t)
+	c := NewCollector(log, []string{"test"}, time.Second, "test-pod")
+	c.resolveBudget = 5 * time.Second
+	node := &databasev1.Node{
+		Metadata: &commonv1.Metadata{Name: "data-0"},
+		Roles:    []databasev1.Role{databasev1.Role_ROLE_DATA},
+	}
+	// fetchCurrentNodeFromEndpoint itself retries maxRetries(=3) times per poll, so
+	// failing the first 3 GetCurrentNode calls forces a second outer poll iteration.
+	fake := &fakeNodeQueryClient{node: node, failCount: maxRetries}
+	c.clients = []*endpointClient{{nodeQueryClient: fake, addr: "test"}}
+	role, _ := c.ResolveNodeRole(context.Background())
+	assert.Equal(t, databasev1.Role_name[int32(databasev1.Role_ROLE_DATA)], role)
+	assert.Greater(t, fake.calls, maxRetries)
+}
+
+func TestCollector_ResolveNodeRole_GivesUpWithinBudget(t *testing.T) {
+	log := initTestLogger(t)
+	c := NewCollector(log, []string{"test"}, time.Second, "test-pod")
+	c.resolveBudget = 500 * time.Millisecond
+	fake := &fakeNodeQueryClient{failCount: 1 << 30} // always fails
+	c.clients = []*endpointClient{{nodeQueryClient: fake, addr: "test"}}
+	start := time.Now()
+	role, _ := c.ResolveNodeRole(context.Background())
+	elapsed := time.Since(start)
+	assert.Equal(t, databasev1.Role_name[int32(databasev1.Role_ROLE_UNSPECIFIED)], role)
+	// Total runtime must stay bounded by the budget (plus slack for one in-flight gRPC
+	// attempt), proving the budget-scoped context actually caps the retry loop.
+	assert.Less(t, elapsed, c.resolveBudget+2*time.Second)
 }
 
 func TestProcessClusterStates_ComplexTopology(t *testing.T) {
