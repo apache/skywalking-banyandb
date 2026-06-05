@@ -273,7 +273,7 @@ func runFODC(_ *cobra.Command, _ []string) error {
 	var nodeRole string
 	var nodeLabels map[string]string
 	if clusterCollector != nil {
-		nodeRole, nodeLabels = clusterCollector.GetNodeInfo()
+		nodeRole, nodeLabels = clusterCollector.ResolveNodeRole(ctx)
 		log.Info().Str("node_role", nodeRole).Int("labels_count", len(nodeLabels)).Msg("Node info fetched")
 	}
 
