@@ -74,6 +74,12 @@ func (mk MetricKey) String() string {
 	return fmt.Sprintf("%s{%s}", mk.Name, strings.Join(labelParts, ","))
 }
 
+const (
+	labelNodeRole      = "node_role"
+	labelPodName       = "pod_name"
+	labelContainerName = "container_name"
+)
+
 var (
 	helpLineRegex = regexp.MustCompile(`^#\s+HELP\s+(\S+)\s+(.+)$`)
 	// metricLineRegex matches metric lines: metric_name{label1="value1",label2="value2"} value.
@@ -181,24 +187,24 @@ func ParseWithNodeLabels(text string, nodeRole, podName, containerName string, n
 		// Add agent identity labels if provided
 		if nodeRole != "" {
 			labels = append(labels, Label{
-				Name:  "node_role",
+				Name:  labelNodeRole,
 				Value: nodeRole,
 			})
 		}
 		if podName != "" {
 			labels = append(labels, Label{
-				Name:  "pod_name",
+				Name:  labelPodName,
 				Value: podName,
 			})
 		}
 		if containerName != "" {
 			labels = append(labels, Label{
-				Name:  "container_name",
+				Name:  labelContainerName,
 				Value: containerName,
 			})
 		}
 		for nodeLabelKey, nodeLabelValue := range nodeLabels {
-			if nodeLabelValue == "" || nodeLabelKey == "pod_name" || nodeLabelKey == "container_name" {
+			if nodeLabelValue == "" || nodeLabelKey == labelPodName || nodeLabelKey == labelContainerName {
 				continue
 			}
 			labels = append(labels, Label{

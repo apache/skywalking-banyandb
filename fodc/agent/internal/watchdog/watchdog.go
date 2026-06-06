@@ -55,26 +55,24 @@ var roleUnspecified = databasev1.Role_name[int32(databasev1.Role_ROLE_UNSPECIFIE
 
 // Watchdog periodically polls metrics from BanyanDB and forwards them to Flight Recorder.
 type Watchdog struct {
-	recorder MetricsRecorder
-	log      *logger.Logger
-	ctx      context.Context
-	cancel   context.CancelFunc
-	client   *http.Client
-
+	startTime      time.Time
+	ctx            context.Context
+	recorder       MetricsRecorder
+	nodeInfo       func() (role string, labels map[string]string)
+	log            *logger.Logger
+	cancel         context.CancelFunc
+	client         *http.Client
+	resolvedLabels map[string]string
 	nodeRole       string
 	podName        string
 	resolvedRole   string
 	urls           []string
 	containerNames []string
-	resolvedLabels map[string]string
-	nodeInfo       func() (role string, labels map[string]string)
-
-	interval     time.Duration
-	retryBackoff time.Duration
-	startTime    time.Time
-	mu           sync.RWMutex
-	wg           sync.WaitGroup
-	isRunning    bool
+	wg             sync.WaitGroup
+	interval       time.Duration
+	retryBackoff   time.Duration
+	mu             sync.RWMutex
+	isRunning      bool
 }
 
 // NewWatchdogWithConfig creates a new Watchdog instance with specified configuration.
