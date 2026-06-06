@@ -20,6 +20,7 @@ package metrics
 
 import (
 	"context"
+	"maps"
 	"strings"
 	"sync"
 	"time"
@@ -35,6 +36,13 @@ const (
 	// maxCollectionTimeout is the maximum timeout allowed for collecting metrics,
 	// preventing excessively long waits for wide time windows.
 	maxCollectionTimeout = 5 * time.Minute
+	// podNameLabelName and containerNameLabelName are first-class node identity labels that are
+	// already stamped per metric, so they are not re-applied as namespaced node labels.
+	podNameLabelName       = "pod_name"
+	containerNameLabelName = "container_name"
+	// nodeLabelPrefix namespaces a node's own labels (e.g. the data-node tier "type" becomes
+	// "node_type") so they can never collide with a metric-intrinsic label of the same name.
+	nodeLabelPrefix = "node_"
 )
 
 // AggregatedMetric represents an aggregated metric with node metadata.
@@ -113,13 +121,21 @@ func (ma *Aggregator) ProcessMetricsFromAgent(ctx context.Context, agentID strin
 	aggregatedMetrics := make([]*AggregatedMetric, 0, len(req.Metrics))
 
 	for _, metric := range req.Metrics {
-		labels := make(map[string]string)
-		for key, value := range metric.Labels {
-			labels[key] = value
-		}
+		labels := make(map[string]string, len(metric.Labels))
+		maps.Copy(labels, metric.Labels)
 
+		// Overlay the agent's node labels under a "node_" prefix so they can never collide
+		// with a metric-intrinsic label of the same name (e.g. the merge "type"). pod_name and
+		// container_name are already first-class labels and are skipped. A namespaced label
+		// already present (stamped per metric by the agent) is left untouched.
 		for key, value := range agentInfo.Labels {
-			labels[key] = value
+			if value == "" || key == podNameLabelName || key == containerNameLabelName {
+				continue
+			}
+			prefixed := nodeLabelPrefix + key
+			if _, exists := labels[prefixed]; !exists {
+				labels[prefixed] = value
+			}
 		}
 
 		var timestamp time.Time
