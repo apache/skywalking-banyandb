@@ -47,21 +47,15 @@ func (s *server) handleEOF(stream clusterv1.Service_SendServer, topic *bus.Topic
 		return
 	}
 	message := listener.Rev(stream.Context(), bus.NewMessage(bus.MessageID(0), dataCollection))
-	var resp *clusterv1.SendResponse
-	msgData := message.Data()
-	if msgData != nil {
-		switch d := msgData.(type) {
-		case *common.Error:
-			resp = &clusterv1.SendResponse{
-				MessageId: writeEntity.MessageId,
-				Error:     d.Error(),
-				Status:    d.Status(),
-			}
-		default:
-			resp = &clusterv1.SendResponse{
-				MessageId: writeEntity.MessageId,
-			}
-		}
+	// writeEntity is nil when the stream closed (Recv returned io.EOF), so guard the ID access.
+	var msgID uint64
+	if writeEntity != nil {
+		msgID = writeEntity.MessageId
+	}
+	resp := &clusterv1.SendResponse{MessageId: msgID}
+	if ce, ok := message.Data().(*common.Error); ok {
+		resp.Error = ce.Error()
+		resp.Status = ce.Status()
 	}
 	if errSend := stream.Send(resp); errSend != nil {
 		s.log.Error().Stringer("written", writeEntity).Err(errSend).Msg("failed to send write response")

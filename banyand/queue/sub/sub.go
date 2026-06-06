@@ -111,7 +111,7 @@ func (s *server) Send(stream clusterv1.Service_SendServer) error {
 	identity := &streamIdentity{}
 
 	defer func() {
-		if topic == nil || !identity.pinned {
+		if topic == nil || !identity.pinned || s.metrics == nil {
 			return
 		}
 		s.metrics.totalFinished.Inc(1, identity.operation, identity.group, identity.senderNode, identity.senderRole, identity.senderTier)
@@ -354,8 +354,12 @@ func (s *server) replyWithErrType(
 	if s.metrics != nil {
 		s.metrics.totalErr.Inc(1, identity.operation, identity.group, identity.senderNode, identity.senderRole, identity.senderTier, errType)
 	}
+	var msgID uint64
+	if writeEntity != nil {
+		msgID = writeEntity.MessageId
+	}
 	if errResp := stream.Send(&clusterv1.SendResponse{
-		MessageId: writeEntity.MessageId,
+		MessageId: msgID,
 		Error:     message,
 	}); errResp != nil {
 		s.log.Error().Err(errResp).AnErr("original", err).Stringer("request", writeEntity).Msg("failed to send error response")

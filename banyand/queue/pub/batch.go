@@ -53,9 +53,9 @@ const (
 )
 
 type writeStream struct {
-	client      clusterv1.Service_SendClient
-	ctxDoneCh   <-chan struct{}
-	isFirstSent bool // true until the first successful send on this stream
+	client         clusterv1.Service_SendClient
+	ctxDoneCh      <-chan struct{}
+	firstFrameSent bool // false until the first frame is sent; the first frame carries the sender_* identity labels
 }
 
 type batchPublisher struct {
@@ -111,7 +111,7 @@ func (bp *batchPublisher) Publish(ctx context.Context, topic bus.Topic, messages
 				default:
 				}
 				// Stamp sender identity on the first frame of each stream.
-				if !stream.isFirstSent {
+				if !stream.firstFrameSent {
 					r.SenderNode = bp.pub.selfNode
 					r.SenderRole = bp.pub.selfRole
 					r.SenderTier = bp.pub.selfTier
@@ -127,9 +127,9 @@ func (bp *batchPublisher) Publish(ctx context.Context, topic bus.Topic, messages
 					bp.pub.connMgr.RecordFailure(node, errSend)
 					return false
 				}
-				if !stream.isFirstSent {
+				if !stream.firstFrameSent {
 					ws := bp.streams[node]
-					ws.isFirstSent = true
+					ws.firstFrameSent = true
 					bp.streams[node] = ws
 				}
 				// Record success for circuit breaker
