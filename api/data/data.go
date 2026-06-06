@@ -243,3 +243,117 @@ var (
 	// TopicCommon is the common topic for data transmission.
 	TopicCommon = bus.Topic{}
 )
+
+const (
+	// OperationFileSyncValue is the operation label for file-sync (chunked sync) operations.
+	OperationFileSyncValue = "file-sync"
+	// OperationBatchWriteValue is the operation label for batch-write operations.
+	OperationBatchWriteValue = "batch-write"
+	// OperationQueryValue is the operation label for query operations.
+	OperationQueryValue = "query"
+	// OperationControlValue is the operation label for control operations.
+	OperationControlValue = "control"
+)
+
+var operationMap = map[bus.Topic]string{
+	TopicStreamPartSync:            OperationFileSyncValue,
+	TopicMeasurePartSync:           OperationFileSyncValue,
+	TopicTracePartSync:             OperationFileSyncValue,
+	TopicStreamSeriesSync:          OperationFileSyncValue,
+	TopicMeasureSeriesSync:         OperationFileSyncValue,
+	TopicTraceSeriesSync:           OperationFileSyncValue,
+	TopicStreamElementIndexSync:    OperationFileSyncValue,
+	TopicStreamWrite:               OperationBatchWriteValue,
+	TopicMeasureWrite:              OperationBatchWriteValue,
+	TopicTraceWrite:                OperationBatchWriteValue,
+	TopicMeasureSeriesIndexInsert:  OperationBatchWriteValue,
+	TopicMeasureSeriesIndexUpdate:  OperationBatchWriteValue,
+	TopicStreamSeriesIndexWrite:    OperationBatchWriteValue,
+	TopicStreamLocalIndexWrite:     OperationBatchWriteValue,
+	TopicTraceSidxSeriesWrite:      OperationBatchWriteValue,
+	TopicStreamQuery:               OperationQueryValue,
+	TopicMeasureQuery:              OperationQueryValue,
+	TopicInternalMeasureQuery:      OperationQueryValue,
+	TopicTopNQuery:                 OperationQueryValue,
+	TopicTraceQuery:                OperationQueryValue,
+	TopicPropertyUpdate:            OperationControlValue,
+	TopicPropertyDelete:            OperationControlValue,
+	TopicPropertyQuery:             OperationControlValue,
+	TopicPropertyRepair:            OperationControlValue,
+	TopicMeasureCollectDataInfo:    OperationControlValue,
+	TopicMeasureCollectLiaisonInfo: OperationControlValue,
+	TopicStreamCollectDataInfo:     OperationControlValue,
+	TopicStreamCollectLiaisonInfo:  OperationControlValue,
+	TopicTraceCollectDataInfo:      OperationControlValue,
+	TopicTraceCollectLiaisonInfo:   OperationControlValue,
+	TopicMeasureDropGroup:          OperationControlValue,
+	TopicStreamDropGroup:           OperationControlValue,
+	TopicTraceDropGroup:            OperationControlValue,
+}
+
+// OperationOf returns the operation label string for the given bus topic.
+func OperationOf(topic bus.Topic) string {
+	if op, ok := operationMap[topic]; ok {
+		return op
+	}
+	return OperationControlValue
+}
+
+// GroupFromMessageData extracts the business group string from the pre-marshal request proto (pub side).
+func GroupFromMessageData(_ bus.Topic, payload any) string {
+	switch v := payload.(type) {
+	case *measurev1.InternalWriteRequest:
+		return groupFromWriteMetadata(v.GetRequest().GetMetadata())
+	case *streamv1.InternalWriteRequest:
+		return groupFromWriteMetadata(v.GetRequest().GetMetadata())
+	case *tracev1.InternalWriteRequest:
+		return groupFromWriteMetadata(v.GetRequest().GetMetadata())
+	case *measurev1.QueryRequest:
+		return firstGroup(v.GetGroups())
+	case *measurev1.InternalQueryRequest:
+		return firstGroup(v.GetRequest().GetGroups())
+	case *measurev1.TopNRequest:
+		return firstGroup(v.GetGroups())
+	case *streamv1.QueryRequest:
+		return firstGroup(v.GetGroups())
+	case *tracev1.QueryRequest:
+		return firstGroup(v.GetGroups())
+	case *propertyv1.InternalUpdateRequest:
+		return groupFromProperty(v.GetProperty())
+	case *propertyv1.InternalRepairRequest:
+		return groupFromProperty(v.GetProperty())
+	case *propertyv1.QueryRequest:
+		return firstGroup(v.GetGroups())
+	case *databasev1.GroupRegistryServiceDeleteRequest:
+		return v.GetGroup()
+	}
+	return ""
+}
+
+type groupGetter interface {
+	GetGroup() string
+}
+
+func groupFromWriteMetadata(md groupGetter) string {
+	if md == nil {
+		return ""
+	}
+	return md.GetGroup()
+}
+
+func groupFromProperty(p *propertyv1.Property) string {
+	if p == nil {
+		return ""
+	}
+	if md := p.GetMetadata(); md != nil {
+		return md.GetGroup()
+	}
+	return ""
+}
+
+func firstGroup(groups []string) string {
+	if len(groups) > 0 {
+		return groups[0]
+	}
+	return ""
+}

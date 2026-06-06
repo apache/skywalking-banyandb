@@ -52,15 +52,10 @@ func checkVersionCompatibility(versionInfo *clusterv1.VersionInfo) (*clusterv1.V
 	serverFileFormatVersion := storage.GetCurrentVersion()
 	compatibleFileFormatVersions := storage.GetCompatibleVersions()
 
-	// Check API version compatibility
 	apiCompatible := versionInfo.ApiVersion == serverAPIVersion
 
-	// Check file format version compatibility
-	fileFormatCompatible := false
-	if versionInfo.FileFormatVersion == serverFileFormatVersion {
-		fileFormatCompatible = true
-	} else {
-		// Check if client's file format version is in our compatible list
+	fileFormatCompatible := versionInfo.FileFormatVersion == serverFileFormatVersion
+	if !fileFormatCompatible {
 		for _, compatVer := range compatibleFileFormatVersions {
 			if compatVer == versionInfo.FileFormatVersion {
 				fileFormatCompatible = true
@@ -69,7 +64,7 @@ func checkVersionCompatibility(versionInfo *clusterv1.VersionInfo) (*clusterv1.V
 		}
 	}
 
-	versionCompatibility := &clusterv1.VersionCompatibility{
+	vc := &clusterv1.VersionCompatibility{
 		ServerApiVersion:            serverAPIVersion,
 		SupportedApiVersions:        []string{serverAPIVersion},
 		ServerFileFormatVersion:     serverFileFormatVersion,
@@ -78,37 +73,49 @@ func checkVersionCompatibility(versionInfo *clusterv1.VersionInfo) (*clusterv1.V
 
 	switch {
 	case !apiCompatible && !fileFormatCompatible:
-		versionCompatibility.Supported = false
-		versionCompatibility.Reason = fmt.Sprintf("API version %s not supported (server: %s) and file format version %s not compatible (server: %s, supported: %v)",
+		vc.Supported = false
+		vc.Reason = fmt.Sprintf("API version %s not supported (server: %s) and file format version %s not compatible (server: %s, supported: %v)",
 			versionInfo.ApiVersion, serverAPIVersion, versionInfo.FileFormatVersion, serverFileFormatVersion, compatibleFileFormatVersions)
-		return versionCompatibility, modelv1.Status_STATUS_VERSION_UNSUPPORTED
+		return vc, modelv1.Status_STATUS_VERSION_UNSUPPORTED
 	case !apiCompatible:
-		versionCompatibility.Supported = false
-		versionCompatibility.Reason = fmt.Sprintf("API version %s not supported (server: %s)", versionInfo.ApiVersion, serverAPIVersion)
-		return versionCompatibility, modelv1.Status_STATUS_VERSION_UNSUPPORTED
+		vc.Supported = false
+		vc.Reason = fmt.Sprintf("API version %s not supported (server: %s)", versionInfo.ApiVersion, serverAPIVersion)
+		return vc, modelv1.Status_STATUS_VERSION_UNSUPPORTED
 	case !fileFormatCompatible:
-		versionCompatibility.Supported = false
-		versionCompatibility.Reason = fmt.Sprintf("File format version %s not compatible (server: %s, supported: %v)",
+		vc.Supported = false
+		vc.Reason = fmt.Sprintf("File format version %s not compatible (server: %s, supported: %v)",
 			versionInfo.FileFormatVersion, serverFileFormatVersion, compatibleFileFormatVersions)
-		return versionCompatibility, modelv1.Status_STATUS_VERSION_UNSUPPORTED
+		return vc, modelv1.Status_STATUS_VERSION_UNSUPPORTED
 	}
 
-	versionCompatibility.Supported = true
-	versionCompatibility.Reason = "Client version compatible with server"
-	return versionCompatibility, modelv1.Status_STATUS_SUCCEED
+	vc.Supported = true
+	vc.Reason = "Client version compatible with server"
+	return vc, modelv1.Status_STATUS_SUCCEED
+}
+
+// streamIdentity captures the per-stream remote sender identity, pinned on the first message.
+type streamIdentity struct {
+	senderNode string
+	senderRole string
+	senderTier string
+	group      string
+	operation  string
+	pinned     bool
 }
 
 func (s *server) Send(stream clusterv1.Service_SendServer) error {
 	ctx := stream.Context()
 	var topic *bus.Topic
-	var m bus.Message
 	var dataCollection []any
 	start := time.Now()
+	identity := &streamIdentity{}
+
 	defer func() {
-		if topic != nil {
-			s.metrics.totalFinished.Inc(1, topic.String())
-			s.metrics.totalLatency.Inc(time.Since(start).Seconds(), topic.String())
+		if topic == nil || !identity.pinned || s.metrics == nil {
+			return
 		}
+		s.metrics.totalFinished.Inc(1, identity.operation, identity.group, identity.senderNode, identity.senderRole, identity.senderTier)
+		s.metrics.totalLatency.Observe(time.Since(start).Seconds(), identity.operation, identity.group, identity.senderNode, identity.senderRole, identity.senderTier)
 	}()
 	for {
 		select {
@@ -118,132 +125,198 @@ func (s *server) Send(stream clusterv1.Service_SendServer) error {
 		}
 		writeEntity, err := stream.Recv()
 		if errors.Is(err, io.EOF) {
-			s.handleEOF(stream, topic, dataCollection, writeEntity)
+			s.handleEOF(stream, topic, dataCollection, writeEntity, identity)
 			return nil
 		}
 		if err != nil {
 			return s.handleRecvError(err)
 		}
 
-		// Check version compatibility on first message received
-		if writeEntity.VersionInfo != nil {
-			versionCompatibility, status := checkVersionCompatibility(writeEntity.VersionInfo)
-			if status != modelv1.Status_STATUS_SUCCEED {
-				s.log.Warn().
-					Str("client_api_version", writeEntity.VersionInfo.ApiVersion).
-					Str("client_file_format_version", writeEntity.VersionInfo.FileFormatVersion).
-					Str("reason", versionCompatibility.Reason).
-					Msg("version compatibility check failed")
-
-				if errSend := stream.Send(&clusterv1.SendResponse{
-					MessageId:            writeEntity.MessageId,
-					Status:               status,
-					Error:                versionCompatibility.Reason,
-					VersionCompatibility: versionCompatibility,
-				}); errSend != nil {
-					s.log.Error().Err(errSend).Msg("failed to send version incompatibility response")
-				}
-				return fmt.Errorf("version incompatibility: %s", versionCompatibility.Reason)
-			}
+		if versionErr := s.checkVersionAndReply(stream, writeEntity); versionErr != nil {
+			return versionErr
 		}
 
-		s.metrics.totalMsgReceived.Inc(1, writeEntity.Topic)
-		if writeEntity.Topic != "" && topic == nil {
-			t, ok := data.TopicMap[writeEntity.Topic]
-			if !ok {
-				s.reply(stream, writeEntity, err, "invalid topic")
-				continue
-			}
-			topic = &t
+		topic, err = s.resolveTopic(stream, writeEntity, topic, identity)
+		if err != nil {
+			continue
 		}
 		if topic == nil {
-			s.reply(stream, writeEntity, err, "topic is empty")
 			continue
 		}
 
-		if reqSupplier, ok := data.TopicRequestMap[*topic]; ok {
-			req := reqSupplier()
-			if req == nil {
-				m = bus.NewMessage(bus.MessageID(writeEntity.MessageId), writeEntity.Body)
-			} else {
-				if errUnmarshal := proto.Unmarshal(writeEntity.Body, req); errUnmarshal != nil {
-					s.reply(stream, writeEntity, errUnmarshal, "failed to unmarshal message")
-					continue
-				}
-				m = bus.NewMessage(bus.MessageID(writeEntity.MessageId), req)
-			}
-		} else {
-			s.reply(stream, writeEntity, err, "unknown topic")
+		s.pinIdentity(identity, writeEntity, *topic)
+
+		m, parseErr := s.parseMessage(stream, writeEntity, *topic, identity)
+		if parseErr != nil {
 			continue
 		}
+
 		if writeEntity.BatchMod {
-			s.handleBatch(&dataCollection, writeEntity, &start)
+			s.handleBatch(&dataCollection, writeEntity, &start, identity)
 			continue
 		}
-		s.metrics.totalStarted.Inc(1, writeEntity.Topic)
-		listeners := s.getListeners(*topic)
-		if len(listeners) == 0 {
-			s.reply(stream, writeEntity, err, "no listener found")
-			continue
-		}
-		if len(listeners) > 1 {
-			logger.Panicf("multiple listeners found for topic %s", *topic)
-		}
-		listener := listeners[0]
 
-		m = listener.Rev(ctx, m)
-		if m.Data() == nil {
-			if errSend := stream.Send(&clusterv1.SendResponse{
-				MessageId: writeEntity.MessageId,
-			}); errSend != nil {
-				s.log.Error().Stringer("request", writeEntity).Err(errSend).Msg("failed to send empty response")
-				s.metrics.totalMsgSentErr.Inc(1, writeEntity.Topic)
-				continue
-			}
-			s.metrics.totalMsgSent.Inc(1, writeEntity.Topic)
-			continue
+		s.dispatchMessage(stream, writeEntity, *topic, m, identity, &start)
+	}
+}
+
+// checkVersionAndReply returns an error if the version is incompatible and sends the rejection response.
+func (s *server) checkVersionAndReply(stream clusterv1.Service_SendServer, writeEntity *clusterv1.SendRequest) error {
+	if writeEntity.VersionInfo == nil {
+		return nil
+	}
+	vc, versionStatus := checkVersionCompatibility(writeEntity.VersionInfo)
+	if versionStatus == modelv1.Status_STATUS_SUCCEED {
+		return nil
+	}
+	s.log.Warn().
+		Str("client_api_version", writeEntity.VersionInfo.ApiVersion).
+		Str("client_file_format_version", writeEntity.VersionInfo.FileFormatVersion).
+		Str("reason", vc.Reason).
+		Msg("version compatibility check failed")
+	if errSend := stream.Send(&clusterv1.SendResponse{
+		MessageId:            writeEntity.MessageId,
+		Status:               versionStatus,
+		Error:                vc.Reason,
+		VersionCompatibility: vc,
+	}); errSend != nil {
+		s.log.Error().Err(errSend).Msg("failed to send version incompatibility response")
+	}
+	return fmt.Errorf("version incompatibility: %s", vc.Reason)
+}
+
+// resolveTopic parses and validates the topic from the write entity.
+// Returns a non-nil error (sentinel) to signal the caller to `continue`.
+func (s *server) resolveTopic(
+	stream clusterv1.Service_SendServer,
+	writeEntity *clusterv1.SendRequest,
+	current *bus.Topic,
+	identity *streamIdentity,
+) (*bus.Topic, error) {
+	if writeEntity.Topic == "" || current != nil {
+		if current == nil {
+			s.replyWithErrType(stream, writeEntity, nil, "topic is empty", identity, "empty_topic")
+			return nil, fmt.Errorf("empty")
 		}
-		var responseBody []byte
-		switch d := m.Data().(type) {
-		case proto.Message:
-			var marshalErr error
-			responseBody, marshalErr = proto.Marshal(d)
-			if marshalErr != nil {
-				s.reply(stream, writeEntity, marshalErr, "failed to marshal message")
-				continue
+		return current, nil
+	}
+	t, ok := data.TopicMap[writeEntity.Topic]
+	if !ok {
+		s.replyWithErrType(stream, writeEntity, nil, "invalid topic", identity, "invalid_topic")
+		return nil, fmt.Errorf("invalid")
+	}
+	return &t, nil
+}
+
+// pinIdentity pins the sender identity on the first message.
+func (s *server) pinIdentity(identity *streamIdentity, writeEntity *clusterv1.SendRequest, topic bus.Topic) {
+	if !identity.pinned {
+		identity.senderNode = writeEntity.GetSenderNode()
+		identity.senderRole = writeEntity.GetSenderRole()
+		identity.senderTier = writeEntity.GetSenderTier()
+		identity.operation = data.OperationOf(topic)
+		identity.group = writeEntity.GetGroup()
+		identity.pinned = true
+		return
+	}
+	if g := writeEntity.GetGroup(); g != "" {
+		identity.group = g
+	}
+}
+
+// parseMessage deserializes the wire body into a bus.Message. Returns a sentinel error to `continue` on failure.
+func (s *server) parseMessage(
+	stream clusterv1.Service_SendServer,
+	writeEntity *clusterv1.SendRequest,
+	topic bus.Topic,
+	identity *streamIdentity,
+) (bus.Message, error) {
+	reqSupplier, ok := data.TopicRequestMap[topic]
+	if !ok {
+		s.replyWithErrType(stream, writeEntity, nil, "unknown topic", identity, "unknown_topic")
+		return bus.Message{}, fmt.Errorf("unknown")
+	}
+	req := reqSupplier()
+	if req == nil {
+		return bus.NewMessage(bus.MessageID(writeEntity.MessageId), writeEntity.Body), nil
+	}
+	if errUnmarshal := proto.Unmarshal(writeEntity.Body, req); errUnmarshal != nil {
+		s.replyWithErrType(stream, writeEntity, errUnmarshal, "failed to unmarshal message", identity, "unmarshal_error")
+		return bus.Message{}, errUnmarshal
+	}
+	return bus.NewMessage(bus.MessageID(writeEntity.MessageId), req), nil
+}
+
+// dispatchMessage invokes the listener and sends back the response.
+func (s *server) dispatchMessage(
+	stream clusterv1.Service_SendServer,
+	writeEntity *clusterv1.SendRequest,
+	topic bus.Topic,
+	m bus.Message,
+	identity *streamIdentity,
+	start *time.Time,
+) {
+	if s.metrics != nil {
+		s.metrics.totalStarted.Inc(1, identity.operation, identity.group, identity.senderNode, identity.senderRole, identity.senderTier)
+	}
+	listeners := s.getListeners(topic)
+	if len(listeners) == 0 {
+		s.replyWithErrType(stream, writeEntity, nil, "no listener found", identity, "no_listener")
+		return
+	}
+	if len(listeners) > 1 {
+		logger.Panicf("multiple listeners found for topic %s", topic)
+	}
+	m = listeners[0].Rev(stream.Context(), m)
+	if m.Data() == nil {
+		if errSend := stream.Send(&clusterv1.SendResponse{MessageId: writeEntity.MessageId}); errSend != nil {
+			s.log.Error().Stringer("request", writeEntity).Err(errSend).Msg("failed to send empty response")
+			if s.metrics != nil {
+				s.metrics.totalErr.Inc(1, identity.operation, identity.group, identity.senderNode, identity.senderRole, identity.senderTier, "send_error")
 			}
-		case []byte:
-			// Topic-AND-process-wire-mode guard: an opaque []byte response body
-			// is the raw vec columnar frame and is only valid on
-			// TopicInternalMeasureQuery when this process is flag-on. The
-			// default: arm still rejects []byte for every other topic/mode.
-			if *topic != data.TopicInternalMeasureQuery || !data.MeasureWireModeRaw() {
-				s.reply(stream, writeEntity, nil, fmt.Sprintf("invalid response: unexpected raw body on topic %s", *topic))
-				continue
-			}
-			responseBody = d
-		case *common.Error:
-			select {
-			case <-ctx.Done():
-				s.metrics.totalMsgReceivedErr.Inc(1, writeEntity.Topic)
-				return ctx.Err()
-			default:
-			}
-			s.reply(stream, writeEntity, nil, d.Error())
-			continue
-		default:
-			s.reply(stream, writeEntity, nil, fmt.Sprintf("invalid response: %T", d))
-			continue
 		}
-		if err := stream.Send(&clusterv1.SendResponse{
-			MessageId: writeEntity.MessageId,
-			Body:      responseBody,
-		}); err != nil {
-			s.log.Error().Stringer("request", writeEntity).Dur("latency", time.Since(start)).Err(err).Msg("failed to send query response")
-			s.metrics.totalMsgSentErr.Inc(1, writeEntity.Topic)
-			continue
+		return
+	}
+	responseBody, marshalErr := s.marshalResponse(stream, writeEntity, topic, m, identity)
+	if marshalErr != nil {
+		return
+	}
+	if sendErr := stream.Send(&clusterv1.SendResponse{MessageId: writeEntity.MessageId, Body: responseBody}); sendErr != nil {
+		s.log.Error().Stringer("request", writeEntity).Dur("latency", time.Since(*start)).Err(sendErr).Msg("failed to send query response")
+		if s.metrics != nil {
+			s.metrics.totalErr.Inc(1, identity.operation, identity.group, identity.senderNode, identity.senderRole, identity.senderTier, "send_error")
 		}
-		s.metrics.totalMsgSent.Inc(1, writeEntity.Topic)
+	}
+}
+
+// marshalResponse converts a bus.Message data to a wire body. Returns sentinel error to stop dispatch on failure.
+func (s *server) marshalResponse(
+	stream clusterv1.Service_SendServer,
+	writeEntity *clusterv1.SendRequest,
+	topic bus.Topic,
+	m bus.Message,
+	identity *streamIdentity,
+) ([]byte, error) {
+	switch d := m.Data().(type) {
+	case proto.Message:
+		body, marshalErr := proto.Marshal(d)
+		if marshalErr != nil {
+			s.replyWithErrType(stream, writeEntity, marshalErr, "failed to marshal message", identity, "marshal_error")
+			return nil, marshalErr
+		}
+		return body, nil
+	case []byte:
+		if topic != data.TopicInternalMeasureQuery || !data.MeasureWireModeRaw() {
+			s.replyWithErrType(stream, writeEntity, nil, fmt.Sprintf("invalid response: unexpected raw body on topic %s", topic), identity, "marshal_error")
+			return nil, fmt.Errorf("invalid raw body")
+		}
+		return d, nil
+	case *common.Error:
+		s.replyWithErrType(stream, writeEntity, nil, d.Error(), identity, "handler_error")
+		return nil, fmt.Errorf("handler error")
+	default:
+		s.replyWithErrType(stream, writeEntity, nil, fmt.Sprintf("invalid response: %T", d), identity, "handler_error")
+		return nil, fmt.Errorf("invalid response type")
 	}
 }
 
@@ -269,25 +342,26 @@ func (s *server) getListeners(topic bus.Topic) []bus.MessageListener {
 	return s.listeners[topic]
 }
 
-func (s *server) reply(stream clusterv1.Service_SendServer, writeEntity *clusterv1.SendRequest, err error, message string) {
+func (s *server) replyWithErrType(
+	stream clusterv1.Service_SendServer,
+	writeEntity *clusterv1.SendRequest,
+	err error,
+	message string,
+	identity *streamIdentity,
+	errType string,
+) {
 	s.log.Error().Stringer("request", writeEntity).Err(err).Msg(message)
-	s.metrics.totalMsgReceivedErr.Inc(1, writeEntity.Topic)
-	resp := &clusterv1.SendResponse{
-		MessageId: writeEntity.MessageId,
+	if s.metrics != nil {
+		s.metrics.totalErr.Inc(1, identity.operation, identity.group, identity.senderNode, identity.senderRole, identity.senderTier, errType)
 	}
-
-	var ce *common.Error
-	if errors.As(err, &ce) {
-		resp.Error = ce.Error()
-		resp.Status = ce.Status()
-	} else {
-		resp.Error = message
+	var msgID uint64
+	if writeEntity != nil {
+		msgID = writeEntity.MessageId
 	}
 	if errResp := stream.Send(&clusterv1.SendResponse{
-		MessageId: writeEntity.MessageId,
+		MessageId: msgID,
 		Error:     message,
 	}); errResp != nil {
 		s.log.Error().Err(errResp).AnErr("original", err).Stringer("request", writeEntity).Msg("failed to send error response")
-		s.metrics.totalMsgSentErr.Inc(1, writeEntity.Topic)
 	}
 }

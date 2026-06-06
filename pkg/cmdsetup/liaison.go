@@ -162,6 +162,15 @@ func newLiaisonCmd(runners ...run.Unit) *cobra.Command {
 			if err != nil {
 				return err
 			}
+			// Stamp the liaison's own identity onto the cluster publishers so the
+			// receiving data nodes can label queue metrics by sender (remote_node/
+			// role/tier), enabling the liaison<->data topology to be drawn.
+			liaisonTier := node.Labels["type"]
+			for _, c := range []queue.Client{tire1Client, tire2Client} {
+				if setter, ok := c.(interface{ SetSelfNode(string, string, string) }); ok {
+					setter.SetSelfNode(node.NodeID, "liaison", liaisonTier)
+				}
+			}
 			logger.GetLogger().Info().Msg("starting as a liaison server")
 			runCtx = context.WithValue(runCtx, common.ContextNodeKey, node)
 			// Spawn our go routines and wait for shutdown.

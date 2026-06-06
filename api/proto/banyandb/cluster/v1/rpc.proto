@@ -54,6 +54,14 @@ message SendRequest {
   bool batch_mod = 4;
   // version_info contains version information
   VersionInfo version_info = 5;
+  // group is the business group associated with this message.
+  string group = 6;
+  // sender_node is the BanyanDB node name of the sender; set only on the first message of a stream.
+  string sender_node = 7;
+  // sender_role is the role of the sender node; set only on the first message of a stream.
+  string sender_role = 8;
+  // sender_tier is the storage tier label of the sender node; set only on the first message of a stream.
+  string sender_tier = 9;
 }
 
 message SendResponse {
@@ -121,6 +129,12 @@ message SyncMetadata {
   string topic = 4; // Sync topic (stream-part-sync or measure-part-sync).
   int64 timestamp = 6; // Timestamp when sync started.
   uint32 total_parts = 7; // Total number of parts being synced.
+  // sender_node is the BanyanDB node name of the sender.
+  string sender_node = 8;
+  // sender_role is the role of the sender node.
+  string sender_role = 9;
+  // sender_tier is the storage tier label of the sender node.
+  string sender_tier = 10;
 }
 
 // SyncCompletion contains completion information for the sync operation.

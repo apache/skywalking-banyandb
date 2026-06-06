@@ -19,8 +19,6 @@ package pub
 
 import (
 	"context"
-	"strings"
-	"sync"
 	"testing"
 	"time"
 
@@ -71,101 +69,30 @@ func (*countingCounter) Delete(_ ...string) bool {
 	return true
 }
 
-// errReasonCapturer records send_err_total increments keyed by the `reason` label (third label).
-type errReasonCapturer struct {
+// Label order: operation, group, remote_node, remote_role, remote_tier, error_type.
+type errReasonCapturerImpl struct {
 	byReason map[string]float64
-	mu       sync.Mutex
 }
 
-func newErrReasonCapturer() *errReasonCapturer {
-	return &errReasonCapturer{byReason: make(map[string]float64)}
+func newErrReasonCapturer() *errReasonCapturerImpl {
+	return &errReasonCapturerImpl{byReason: make(map[string]float64)}
 }
 
-func (c *errReasonCapturer) Inc(delta float64, labels ...string) {
-	c.mu.Lock()
-	defer c.mu.Unlock()
-	if len(labels) < 3 {
+func (c *errReasonCapturerImpl) Inc(delta float64, labels ...string) {
+	// error_type is the last label (index 5 for totalErr)
+	if len(labels) < 1 {
 		return
 	}
-	reason := labels[2]
-	c.byReason[reason] += delta
+	errorType := labels[len(labels)-1]
+	c.byReason[errorType] += delta
 }
 
-func (c *errReasonCapturer) Delete(_ ...string) bool {
+func (c *errReasonCapturerImpl) Delete(_ ...string) bool {
 	return true
 }
 
-func (c *errReasonCapturer) sum(reason string) float64 {
-	c.mu.Lock()
-	defer c.mu.Unlock()
+func (c *errReasonCapturerImpl) sum(reason string) float64 {
 	return c.byReason[reason]
-}
-
-type noopGauge struct{}
-
-func (*noopGauge) Set(_ float64, _ ...string) {}
-func (*noopGauge) Add(_ float64, _ ...string) {}
-func (*noopGauge) Delete(_ ...string) bool    { return true }
-
-type valGauge struct {
-	mu  sync.Mutex
-	val float64
-}
-
-func (g *valGauge) Add(delta float64, _ ...string) {
-	g.mu.Lock()
-	g.val += delta
-	g.mu.Unlock()
-}
-
-func (g *valGauge) Set(v float64, _ ...string) {
-	g.mu.Lock()
-	g.val = v
-	g.mu.Unlock()
-}
-
-func (*valGauge) Delete(_ ...string) bool { return true }
-
-func (g *valGauge) value() float64 {
-	g.mu.Lock()
-	defer g.mu.Unlock()
-	return g.val
-}
-
-// inflightKeyedGauge tracks inflight_requests Add deltas per (topic, node) label pair.
-type inflightKeyedGauge struct {
-	vals map[string]float64
-	mu   sync.Mutex
-}
-
-func newInflightKeyedGauge() *inflightKeyedGauge {
-	return &inflightKeyedGauge{vals: make(map[string]float64)}
-}
-
-func inflightReqKey(topic, node string) string {
-	return strings.Join([]string{topic, node}, "|")
-}
-
-func (g *inflightKeyedGauge) Add(delta float64, labels ...string) {
-	if len(labels) < 2 {
-		return
-	}
-	k := inflightReqKey(labels[0], labels[1])
-	g.mu.Lock()
-	g.vals[k] += delta
-	g.mu.Unlock()
-}
-
-func (*inflightKeyedGauge) Set(_ float64, _ ...string) {}
-
-func (*inflightKeyedGauge) Delete(_ ...string) bool {
-	return true
-}
-
-func (g *inflightKeyedGauge) net(topic, node string) float64 {
-	g.mu.Lock()
-	defer g.mu.Unlock()
-	return g.vals[inflightReqKey(topic, node)]
 }
 
 type noopHistogram struct{}
@@ -173,27 +100,24 @@ type noopHistogram struct{}
 func (*noopHistogram) Observe(_ float64, _ ...string) {}
 func (*noopHistogram) Delete(_ ...string) bool        { return true }
 
-func newPubMetricsWithErrCapture(sendErr *errReasonCapturer) *pubMetrics {
+func newPubMetricsWithErrCapture(totalErr *errReasonCapturerImpl) *pubMetrics { //nolint:exhaustruct
 	return &pubMetrics{
-		sendSuccessTotal:    &countingCounter{},
-		sendErrTotal:        sendErr,
-		sendBytesTotal:      &countingCounter{},
-		sendDurationSeconds: &noopHistogram{},
-		sendRetryAttempts:   &countingCounter{},
-		sendRetryExhausted:  &countingCounter{},
-		sendBackoffSeconds:  &countingCounter{},
-		inflightStreams:     &noopGauge{},
-		inflightRequests:    &noopGauge{},
+		totalStarted:  &countingCounter{},
+		totalFinished: &countingCounter{},
+		totalLatency:  &noopHistogram{},
+		totalErr:      totalErr,
+		sentBytes:     &countingCounter{},
 	}
 }
 
 func newPubWithConnMgrForMetrics(t *testing.T, pm *pubMetrics) *pub {
 	t.Helper()
-	p := &pub{
-		handlers: make(map[bus.Topic]schema.EventHandler),
-		log:      logger.GetLogger("queue-pub-metrics-test"),
-		metrics:  pm,
-		closer:   run.NewCloser(1),
+	p := &pub{ //nolint:exhaustruct
+		handlers:  make(map[bus.Topic]schema.EventHandler),
+		log:       logger.GetLogger("queue-pub-metrics-test"),
+		metrics:   pm,
+		closer:    run.NewCloser(1),
+		nodeCache: make(map[string]nodeInfo),
 	}
 	p.connMgr = grpchelper.NewConnManager(grpchelper.ConnManagerConfig[*client]{
 		Handler:        p,
@@ -204,26 +128,24 @@ func newPubWithConnMgrForMetrics(t *testing.T, pm *pubMetrics) *pub {
 	return p
 }
 
-// TestRetryMetrics ensures that retry-related metrics are updated when retrySend
-// observes retryable errors and eventually exhausts retries.
+// TestRetryMetrics verifies that retry-exhausted and error-type metrics are updated when
+// retrySend observes retryable errors and eventually exhausts retries.
 func TestRetryMetrics(t *testing.T) {
 	sendErrCap := newErrReasonCapturer()
-	p := &pub{
+	p := &pub{ //nolint:exhaustruct
 		metrics: &pubMetrics{
-			sendRetryAttempts:   &countingCounter{},
-			sendRetryExhausted:  &countingCounter{},
-			sendErrTotal:        sendErrCap,
-			sendBackoffSeconds:  &countingCounter{},
-			sendSuccessTotal:    &countingCounter{},
-			sendBytesTotal:      &countingCounter{},
-			sendDurationSeconds: &noopHistogram{},
-			inflightStreams:     &noopGauge{},
-			inflightRequests:    &noopGauge{},
+			totalStarted:  &countingCounter{},
+			totalFinished: &countingCounter{},
+			totalLatency:  &noopHistogram{},
+			totalErr:      sendErrCap,
+			sentBytes:     &countingCounter{},
 		},
+		nodeCache: make(map[string]nodeInfo),
 	}
 
 	bp := &batchPublisher{
-		pub: p,
+		pub:   p,
+		topic: topicPtr(data.TopicMeasureWrite),
 	}
 
 	ctx := context.Background()
@@ -243,28 +165,28 @@ func TestRetryMetrics(t *testing.T) {
 	}
 
 	const nodeName = "test-node"
-	const topicStr = "test-topic"
 
-	retryErr := bp.retrySend(ctx, client, req, nodeName, topicStr)
+	retryErr := bp.retrySend(ctx, client, req, nodeName)
 	require.Error(t, retryErr)
-
-	retries := p.metrics.sendRetryAttempts.(*countingCounter).count
-	require.Equal(t, float64(4), retries, "one retry counter per transient failure before exhaustion")
-
-	exhausted := p.metrics.sendRetryExhausted.(*countingCounter).count
-	require.Equal(t, float64(1), exhausted)
 
 	require.Equal(t, float64(1), sendErrCap.sum(sendErrReasonRetryExhausted))
 	require.Equal(t, float64(0), sendErrCap.sum(sendErrReasonNonTransient))
+}
 
-	backoff := p.metrics.sendBackoffSeconds.(*countingCounter).count
-	require.Greater(t, backoff, float64(0), "backoff should be recorded between retry attempts")
+func topicPtr(t bus.Topic) *bus.Topic {
+	return &t
 }
 
 func TestRetrySendNonTransientRecordsReason(t *testing.T) {
 	sendErrCap := newErrReasonCapturer()
-	p := &pub{metrics: newPubMetricsWithErrCapture(sendErrCap)}
-	bp := &batchPublisher{pub: p}
+	p := &pub{ //nolint:exhaustruct
+		metrics:   newPubMetricsWithErrCapture(sendErrCap),
+		nodeCache: make(map[string]nodeInfo),
+	}
+	bp := &batchPublisher{
+		pub:   p,
+		topic: topicPtr(data.TopicMeasureWrite),
+	}
 
 	ctx := context.Background()
 	mockStream := NewMockSendClient(ctx)
@@ -272,18 +194,23 @@ func TestRetrySendNonTransientRecordsReason(t *testing.T) {
 		return status.Error(codes.InvalidArgument, "non-transient")
 	})
 
-	err := bp.retrySend(ctx, mockStream, &clusterv1.SendRequest{}, "n1", "t1")
+	err := bp.retrySend(ctx, mockStream, &clusterv1.SendRequest{}, "n1")
 	require.Error(t, err)
 
 	require.Equal(t, float64(1), sendErrCap.sum(sendErrReasonNonTransient))
 	require.Equal(t, float64(0), sendErrCap.sum(sendErrReasonRetryExhausted))
-	require.Equal(t, float64(0), p.metrics.sendRetryAttempts.(*countingCounter).count)
 }
 
 func TestRetrySendCanceledRecordsReason(t *testing.T) {
 	sendErrCap := newErrReasonCapturer()
-	p := &pub{metrics: newPubMetricsWithErrCapture(sendErrCap)}
-	bp := &batchPublisher{pub: p}
+	p := &pub{ //nolint:exhaustruct
+		metrics:   newPubMetricsWithErrCapture(sendErrCap),
+		nodeCache: make(map[string]nodeInfo),
+	}
+	bp := &batchPublisher{
+		pub:   p,
+		topic: topicPtr(data.TopicMeasureWrite),
+	}
 
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
@@ -293,7 +220,7 @@ func TestRetrySendCanceledRecordsReason(t *testing.T) {
 		return status.Error(codes.Unavailable, "unavailable")
 	})
 
-	err := bp.retrySend(ctx, mockStream, &clusterv1.SendRequest{}, "n1", "t1")
+	err := bp.retrySend(ctx, mockStream, &clusterv1.SendRequest{}, "n1")
 	require.ErrorIs(t, err, context.Canceled)
 
 	require.Equal(t, float64(1), sendErrCap.sum(sendErrReasonCanceled))
@@ -301,15 +228,21 @@ func TestRetrySendCanceledRecordsReason(t *testing.T) {
 
 func TestRetrySendStreamCanceledRecordsReason(t *testing.T) {
 	sendErrCap := newErrReasonCapturer()
-	p := &pub{metrics: newPubMetricsWithErrCapture(sendErrCap)}
-	bp := &batchPublisher{pub: p}
+	p := &pub{ //nolint:exhaustruct
+		metrics:   newPubMetricsWithErrCapture(sendErrCap),
+		nodeCache: make(map[string]nodeInfo),
+	}
+	bp := &batchPublisher{
+		pub:   p,
+		topic: topicPtr(data.TopicMeasureWrite),
+	}
 
 	streamCtx, cancel := context.WithCancel(context.Background())
 	cancel()
 
 	mockStream := NewMockSendClient(streamCtx)
 
-	err := bp.retrySend(context.Background(), mockStream, &clusterv1.SendRequest{}, "n1", "t1")
+	err := bp.retrySend(context.Background(), mockStream, &clusterv1.SendRequest{}, "n1")
 	require.ErrorIs(t, err, context.Canceled)
 
 	require.Equal(t, float64(1), sendErrCap.sum(sendErrReasonStreamCanceled))
@@ -319,7 +252,10 @@ func TestListenBatchResponseRecordsRecvError(t *testing.T) {
 	sendErrCap := newErrReasonCapturer()
 	pm := newPubMetricsWithErrCapture(sendErrCap)
 	p := newPubWithConnMgrForMetrics(t, pm)
-	bp := &batchPublisher{pub: p}
+	bp := &batchPublisher{
+		pub:   p,
+		topic: topicPtr(data.TopicMeasureWrite),
+	}
 
 	ctx := context.Background()
 	mockStream := NewMockSendClient(ctx)
@@ -328,7 +264,7 @@ func TestListenBatchResponseRecordsRecvError(t *testing.T) {
 	})
 
 	bc := make(chan batchEvent, 1)
-	bp.listenBatchResponse(ctx, mockStream, func() {}, bc, "node-a", "topic-a")
+	bp.listenBatchResponse(ctx, mockStream, func() {}, bc, "node-a")
 
 	require.Equal(t, float64(1), sendErrCap.sum(sendErrReasonRecvError))
 }
@@ -337,7 +273,10 @@ func TestListenBatchResponseRecvNonFailoverStillRecordsRecvError(t *testing.T) {
 	sendErrCap := newErrReasonCapturer()
 	pm := newPubMetricsWithErrCapture(sendErrCap)
 	p := newPubWithConnMgrForMetrics(t, pm)
-	bp := &batchPublisher{pub: p}
+	bp := &batchPublisher{
+		pub:   p,
+		topic: topicPtr(data.TopicMeasureWrite),
+	}
 
 	ctx := context.Background()
 	mockStream := NewMockSendClient(ctx)
@@ -346,7 +285,7 @@ func TestListenBatchResponseRecvNonFailoverStillRecordsRecvError(t *testing.T) {
 	})
 
 	bc := make(chan batchEvent, 1)
-	bp.listenBatchResponse(ctx, mockStream, func() {}, bc, "node-a", "topic-a")
+	bp.listenBatchResponse(ctx, mockStream, func() {}, bc, "node-a")
 
 	require.Equal(t, float64(1), sendErrCap.sum(sendErrReasonRecvError))
 }
@@ -355,7 +294,10 @@ func TestListenBatchResponseServerRejectedWithoutFailover(t *testing.T) {
 	sendErrCap := newErrReasonCapturer()
 	pm := newPubMetricsWithErrCapture(sendErrCap)
 	p := newPubWithConnMgrForMetrics(t, pm)
-	bp := &batchPublisher{pub: p}
+	bp := &batchPublisher{
+		pub:   p,
+		topic: topicPtr(data.TopicMeasureWrite),
+	}
 
 	ctx := context.Background()
 	mockStream := NewMockSendClient(ctx)
@@ -367,14 +309,12 @@ func TestListenBatchResponseServerRejectedWithoutFailover(t *testing.T) {
 	})
 
 	bc := make(chan batchEvent, 1)
-	bp.listenBatchResponse(ctx, mockStream, func() {}, bc, "node-a", "topic-a")
+	bp.listenBatchResponse(ctx, mockStream, func() {}, bc, "node-a")
 
 	require.Equal(t, float64(1), sendErrCap.sum(sendErrReasonServerRejected))
 	require.Equal(t, float64(0), sendErrCap.sum(sendErrReasonRecvError))
 
-	// Non-failover server rejections are now surfaced to the caller via batchEvent
-	// so that send_err_total{reason="server_rejected"} stays consistent with visible errors.
-	// The event must carry the rejection but must NOT trigger a circuit-breaker failover.
+	// Non-failover server rejections are now surfaced to the caller via batchEvent.
 	select {
 	case evt, ok := <-bc:
 		require.True(t, ok, "expected a batchEvent for non-failover server rejection")
@@ -390,7 +330,10 @@ func TestListenBatchResponseDiskFullSendsFailoverEvent(t *testing.T) {
 	sendErrCap := newErrReasonCapturer()
 	pm := newPubMetricsWithErrCapture(sendErrCap)
 	p := newPubWithConnMgrForMetrics(t, pm)
-	bp := &batchPublisher{pub: p}
+	bp := &batchPublisher{
+		pub:   p,
+		topic: topicPtr(data.TopicMeasureWrite),
+	}
 
 	ctx := context.Background()
 	mockStream := NewMockSendClient(ctx)
@@ -402,7 +345,7 @@ func TestListenBatchResponseDiskFullSendsFailoverEvent(t *testing.T) {
 	})
 
 	bc := make(chan batchEvent, 1)
-	bp.listenBatchResponse(ctx, mockStream, func() {}, bc, "node-a", "topic-a")
+	bp.listenBatchResponse(ctx, mockStream, func() {}, bc, "node-a")
 
 	require.Equal(t, float64(1), sendErrCap.sum(sendErrReasonServerRejected))
 
@@ -416,55 +359,17 @@ func TestListenBatchResponseDiskFullSendsFailoverEvent(t *testing.T) {
 	}
 }
 
-func TestCloseDecrementsInflightStreams(t *testing.T) {
-	streamGauge := &valGauge{}
-	pm := &pubMetrics{
-		sendSuccessTotal:    &countingCounter{},
-		sendErrTotal:        newErrReasonCapturer(),
-		sendBytesTotal:      &countingCounter{},
-		sendDurationSeconds: &noopHistogram{},
-		sendRetryAttempts:   &countingCounter{},
-		sendRetryExhausted:  &countingCounter{},
-		sendBackoffSeconds:  &countingCounter{},
-		inflightStreams:     streamGauge,
-		inflightRequests:    &noopGauge{},
-	}
-	p := newPubWithConnMgrForMetrics(t, pm)
-
-	ctx := context.Background()
-	mockStream := NewMockSendClient(ctx)
-	doneCh := make(chan struct{})
-	close(doneCh)
-
-	bp := p.NewBatchPublisher(time.Second).(*batchPublisher)
-	bp.streams["node-x"] = writeStream{
-		client:    mockStream,
-		ctxDoneCh: doneCh,
-	}
-
-	streamGauge.Add(1, "node-x")
-
-	_, closeErr := bp.Close()
-	require.NoError(t, closeErr)
-	require.Equal(t, float64(0), streamGauge.value(), "Close should decrement inflight_streams once per open stream")
-}
-
-// TestPublishInflightRequestsBalancedWhenStreamPreexists checks that Publish increments then decrements
-// inflight_requests (via defer) when reusing an existing stream, without requiring GetClient / new stream setup.
-func TestPublishInflightRequestsBalancedWhenStreamPreexists(t *testing.T) {
-	inflightReq := newInflightKeyedGauge()
-	sendErrCap := newErrReasonCapturer()
-	attempts := &countingCounter{}
-	pm := &pubMetrics{
-		sendSuccessTotal:    attempts,
-		sendErrTotal:        sendErrCap,
-		sendBytesTotal:      &countingCounter{},
-		sendDurationSeconds: &noopHistogram{},
-		sendRetryAttempts:   &countingCounter{},
-		sendRetryExhausted:  &countingCounter{},
-		sendBackoffSeconds:  &countingCounter{},
-		inflightStreams:     &noopGauge{},
-		inflightRequests:    inflightReq,
+// TestPublishRecordsStartedAndFinished verifies that a successful retrySend increments
+// totalStarted and totalFinished with matching label counts.
+func TestPublishRecordsStartedAndFinished(t *testing.T) {
+	started := &countingCounter{}
+	finished := &countingCounter{}
+	pm := &pubMetrics{ //nolint:exhaustruct
+		totalStarted:  started,
+		totalFinished: finished,
+		totalLatency:  &noopHistogram{},
+		totalErr:      newErrReasonCapturer(),
+		sentBytes:     &countingCounter{},
 	}
 	p := newPubWithConnMgrForMetrics(t, pm)
 
@@ -479,7 +384,6 @@ func TestPublishInflightRequestsBalancedWhenStreamPreexists(t *testing.T) {
 
 	const nodeName = "node-a"
 	topic := data.TopicMeasureWrite
-	topicStr := topic.String()
 
 	bp := p.NewBatchPublisher(10 * time.Second).(*batchPublisher)
 	bp.streams[nodeName] = writeStream{
@@ -492,8 +396,6 @@ func TestPublishInflightRequestsBalancedWhenStreamPreexists(t *testing.T) {
 	_, publishErr := bp.Publish(ctx, topic, msg)
 	require.NoError(t, publishErr)
 
-	require.Equal(t, float64(1), attempts.count, "successful retrySend should record send_success_total")
-	require.Equal(t, float64(0), inflightReq.net(topicStr, nodeName),
-		"inflight_requests defer must balance +1/-1 for topic/node")
-	require.Equal(t, float64(0), sendErrCap.sum(sendErrReasonRetryExhausted))
+	require.Equal(t, float64(1), started.count, "totalStarted must be 1 on success")
+	require.Equal(t, float64(1), finished.count, "totalFinished must be 1 on success")
 }
