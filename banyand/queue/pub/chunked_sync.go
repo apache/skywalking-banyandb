@@ -28,6 +28,7 @@ import (
 
 	"google.golang.org/grpc"
 
+	apidata "github.com/apache/skywalking-banyandb/api/data"
 	apiversion "github.com/apache/skywalking-banyandb/api/proto/banyandb"
 	clusterv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/cluster/v1"
 	"github.com/apache/skywalking-banyandb/banyand/internal/storage"
@@ -43,12 +44,18 @@ const (
 )
 
 type chunkedSyncClient struct {
-	client    clusterv1.ServiceClient
-	conn      *grpc.ClientConn
-	log       *logger.Logger
-	config    *ChunkedSyncClientConfig
-	node      string
-	chunkSize uint32
+	client     clusterv1.ServiceClient
+	conn       *grpc.ClientConn
+	log        *logger.Logger
+	metrics    *pubMetrics
+	config     *ChunkedSyncClientConfig
+	selfNode   string
+	selfRole   string
+	selfTier   string
+	node       string
+	remoteRole string
+	remoteTier string
+	chunkSize  uint32
 }
 
 // SyncStreamingParts implements queue.ChunkedSyncClient with streaming support.
@@ -99,22 +106,43 @@ func (c *chunkedSyncClient) SyncStreamingParts(ctx context.Context, parts []queu
 	}()
 
 	startTime := time.Now()
+	group := parts[0].Group
+
+	topicStr := parts[0].Topic
+	operation := apidata.OperationFileSyncValue
+
+	if c.metrics != nil {
+		c.metrics.totalStarted.Inc(1, operation, group, c.node, c.remoteRole, c.remoteTier)
+	}
 
 	metadata := &clusterv1.SyncMetadata{
-		Group:      parts[0].Group,
+		Group:      group,
 		ShardId:    parts[0].ShardID,
-		Topic:      parts[0].Topic,
+		Topic:      topicStr,
 		Timestamp:  startTime.UnixMilli(),
 		TotalParts: uint32(len(parts)),
+		SenderNode: c.selfNode,
+		SenderRole: c.selfRole,
+		SenderTier: c.selfTier,
 	}
 
 	var totalBytesSent uint64
 
-	totalChunks, failedParts, err := c.streamPartsAsChunks(stream, sessionID, metadata, parts, &totalBytesSent)
-	if err != nil {
-		return nil, fmt.Errorf("failed to stream parts: %w", err)
+	totalChunks, failedParts, streamErr := c.streamPartsAsChunks(stream, sessionID, metadata, parts, &totalBytesSent)
+	if streamErr != nil {
+		errType := classifyChunkedSyncPubErr(streamErr)
+		if c.metrics != nil {
+			c.metrics.totalErr.Inc(1, operation, group, c.node, c.remoteRole, c.remoteTier, errType)
+		}
+		return nil, fmt.Errorf("failed to stream parts: %w", streamErr)
 	}
 	if totalChunks == 0 && len(failedParts) == 0 {
+		duration := time.Since(startTime)
+		if c.metrics != nil {
+			c.metrics.totalFinished.Inc(1, operation, group, c.node, c.remoteRole, c.remoteTier)
+			c.metrics.totalLatency.Observe(duration.Seconds(), operation, group, c.node, c.remoteRole, c.remoteTier)
+			c.metrics.sentBytes.Inc(float64(totalBytesSent), operation, group, c.node, c.remoteRole, c.remoteTier)
+		}
 		return &queue.SyncResult{
 			Success:    true,
 			SessionID:  sessionID,
@@ -124,12 +152,15 @@ func (c *chunkedSyncClient) SyncStreamingParts(ctx context.Context, parts []queu
 
 	var finalResp *clusterv1.SyncPartResponse
 	for {
-		resp, err := stream.Recv()
-		if errors.Is(err, io.EOF) {
+		resp, recvErr := stream.Recv()
+		if errors.Is(recvErr, io.EOF) {
 			break
 		}
-		if err != nil {
-			return nil, fmt.Errorf("failed to receive final response: %w", err)
+		if recvErr != nil {
+			if c.metrics != nil {
+				c.metrics.totalErr.Inc(1, operation, group, c.node, c.remoteRole, c.remoteTier, "recv_error")
+			}
+			return nil, fmt.Errorf("failed to receive final response: %w", recvErr)
 		}
 		finalResp = resp
 		if resp.GetSyncResult() != nil {
@@ -146,6 +177,18 @@ func (c *chunkedSyncClient) SyncStreamingParts(ctx context.Context, parts []queu
 	}
 	if !success && len(failedParts) < len(parts) {
 		success = true
+	}
+
+	if success {
+		if c.metrics != nil {
+			c.metrics.totalFinished.Inc(1, operation, group, c.node, c.remoteRole, c.remoteTier)
+			c.metrics.totalLatency.Observe(duration.Seconds(), operation, group, c.node, c.remoteRole, c.remoteTier)
+			c.metrics.sentBytes.Inc(float64(totalBytesSent), operation, group, c.node, c.remoteRole, c.remoteTier)
+		}
+	} else {
+		if c.metrics != nil {
+			c.metrics.totalErr.Inc(1, operation, group, c.node, c.remoteRole, c.remoteTier, "completion_error")
+		}
 	}
 
 	return &queue.SyncResult{
@@ -491,4 +534,24 @@ func (c *chunkedSyncClient) handleOutOfOrderResponse(resp *clusterv1.SyncPartRes
 
 func generateSessionID() string {
 	return fmt.Sprintf("sync-%d", time.Now().UnixNano())
+}
+
+// classifyChunkedSyncPubErr maps a chunked-sync send error to an error_type label value.
+func classifyChunkedSyncPubErr(err error) string {
+	if err == nil {
+		return ""
+	}
+	msg := err.Error()
+	switch {
+	case strings.Contains(msg, "checksum mismatch"):
+		return "checksum_mismatch"
+	case strings.Contains(msg, "out of order"):
+		return "out_of_order"
+	case strings.Contains(msg, "session") && strings.Contains(msg, "not found"):
+		return "session_not_found"
+	case strings.Contains(msg, "receive") || strings.Contains(msg, "recv"):
+		return "recv_error"
+	default:
+		return "stream_error"
+	}
 }

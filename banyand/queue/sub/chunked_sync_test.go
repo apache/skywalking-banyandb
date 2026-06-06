@@ -211,102 +211,75 @@ func (c *capturingCounter) Delete(_ ...string) bool {
 	return true
 }
 
-func (c *capturingCounter) uniqueFirstLabelValues() map[string]struct{} {
-	c.mu.Lock()
-	defer c.mu.Unlock()
-
-	m := make(map[string]struct{})
-	for _, lv := range c.labelValues {
-		if len(lv) > 0 {
-			m[lv[0]] = struct{}{}
-		}
-	}
-	return m
-}
-
-func TestChunkOrderingMetricsAreLabeledByTopic_NotSessionID(t *testing.T) {
-	// enable reordering, otherwise the chunk-ordering metrics will not be triggered.
-	s := &server{
-		log:                   logger.GetLogger("test-server-metrics-label"),
+// TestChunkOrderingBufferFull verifies that buffer_full error_type is emitted when the
+// chunk buffer is full. The new metrics use (operation,group,remote_node,remote_role,remote_tier,error_type).
+func TestChunkOrderingBufferFull(t *testing.T) {
+	errCap := &capturingCounter{}
+	s := &server{ //nolint:exhaustruct
+		log:                   logger.GetLogger("test-server-buffer-full"),
 		chunkedSyncHandlers:   make(map[bus.Topic]queue.ChunkedSyncHandler),
 		enableChunkReordering: true,
-		maxChunkBufferSize:    10,
-		maxChunkGapSize:       5,
+		maxChunkBufferSize:    1,
+		maxChunkGapSize:       10,
+		chunkBufferTimeout:    time.Hour,
+		metrics:               newTestMetrics(),
 	}
+	s.metrics.totalErr = errCap
 
-	// handler: avoid "no handler registered" in processExpectedChunk.
 	mockHandler := &MockChunkedSyncHandler{}
 	s.chunkedSyncHandlers[data.TopicStreamPartSync] = mockHandler
 
-	outOfOrder := &capturingCounter{}
-	buffered := &capturingCounter{}
-	testMetrics := newTestMetrics()
-	testMetrics.outOfOrderChunksReceived = outOfOrder
-	testMetrics.chunksBuffered = buffered
-	s.metrics = testMetrics
-
-	topic := data.TopicStreamPartSync.String()
-
-	drive := func(sessionID string) {
-		mockStream := &MockSyncPartStream{}
-		session := &syncSession{
-			sessionID:      sessionID,
-			startTime:      time.Now(),
-			chunksReceived: 0,
-			partsProgress:  make(map[int]*partProgress),
-			metadata: &clusterv1.SyncMetadata{
-				Group: "test-group",
-				Topic: topic,
-			},
-		}
-
-		// send chunk 0 (establish buffer.expectedIndex=1)
-		req0 := &clusterv1.SyncPartRequest{
-			SessionId:     sessionID,
-			ChunkIndex:    0,
-			ChunkData:     []byte("chunk-0"),
-			ChunkChecksum: fmt.Sprintf("%x", crc32.ChecksumIEEE([]byte("chunk-0"))),
-			PartsInfo: []*clusterv1.PartInfo{
-				{Id: 1, Files: []*clusterv1.FileInfo{{Name: "f", Offset: 0, Size: 7}}},
-			},
-		}
-		require.NoError(t, s.processChunk(mockStream, session, req0))
-
-		// send chunk 2 (out-of-order: expected 1 got 2),
-		// will trigger out_of_order_received + chunk_buffered.
-		req2 := &clusterv1.SyncPartRequest{
-			SessionId:     sessionID,
-			ChunkIndex:    2,
-			ChunkData:     []byte("chunk-2"),
-			ChunkChecksum: fmt.Sprintf("%x", crc32.ChecksumIEEE([]byte("chunk-2"))),
-			PartsInfo: []*clusterv1.PartInfo{
-				{Id: 2, Files: []*clusterv1.FileInfo{{Name: "f", Offset: 0, Size: 7}}},
-			},
-		}
-		require.NoError(t, s.processChunk(mockStream, session, req2))
+	mockStream := &MockSyncPartStream{}
+	session := &syncSession{ //nolint:exhaustruct
+		sessionID:      "buf-full-sess",
+		startTime:      time.Now(),
+		chunksReceived: 0,
+		partsProgress:  make(map[int]*partProgress),
+		metadata: &clusterv1.SyncMetadata{
+			Group: "test-group",
+			Topic: data.TopicStreamPartSync.String(),
+		},
 	}
 
-	drive("test-session-A")
-	drive("test-session-B")
+	// chunk 0 — processed normally, buffer.expectedIndex becomes 1
+	req0 := &clusterv1.SyncPartRequest{
+		SessionId:     "buf-full-sess",
+		ChunkIndex:    0,
+		ChunkData:     []byte("chunk-0"),
+		ChunkChecksum: fmt.Sprintf("%x", crc32.ChecksumIEEE([]byte("chunk-0"))),
+		PartsInfo:     []*clusterv1.PartInfo{{Id: 1, Files: []*clusterv1.FileInfo{{Name: "f", Offset: 0, Size: 7}}}},
+	}
+	require.NoError(t, s.processChunk(mockStream, session, req0))
 
-	// assert: labelValues[0] must be topic; and unique label must be only one (topic)
-	uniqOut := outOfOrder.uniqueFirstLabelValues()
-	uniqBuf := buffered.uniqueFirstLabelValues()
+	// chunk 2 — out-of-order, fills the buffer (maxBufferSize=1)
+	req2 := &clusterv1.SyncPartRequest{
+		SessionId:     "buf-full-sess",
+		ChunkIndex:    2,
+		ChunkData:     []byte("chunk-2"),
+		ChunkChecksum: fmt.Sprintf("%x", crc32.ChecksumIEEE([]byte("chunk-2"))),
+		PartsInfo:     []*clusterv1.PartInfo{{Id: 2, Files: []*clusterv1.FileInfo{{Name: "f", Offset: 0, Size: 7}}}},
+	}
+	require.NoError(t, s.processChunk(mockStream, session, req2))
 
-	assert.Equal(t, 1, len(uniqOut))
-	assert.Equal(t, 1, len(uniqBuf))
+	// chunk 3 — buffer is full, should trigger buffer_full error_type
+	req3 := &clusterv1.SyncPartRequest{
+		SessionId:     "buf-full-sess",
+		ChunkIndex:    3,
+		ChunkData:     []byte("chunk-3"),
+		ChunkChecksum: fmt.Sprintf("%x", crc32.ChecksumIEEE([]byte("chunk-3"))),
+		PartsInfo:     []*clusterv1.PartInfo{{Id: 3, Files: []*clusterv1.FileInfo{{Name: "f", Offset: 0, Size: 7}}}},
+	}
+	require.NoError(t, s.processChunk(mockStream, session, req3))
 
-	_, okOut := uniqOut[topic]
-	_, okBuf := uniqBuf[topic]
-	assert.True(t, okOut, "out_of_order_received label must be topic")
-	assert.True(t, okBuf, "chunk_buffered label must be topic")
-
-	// assert: never should have session_id as label
-	_, bad1 := uniqOut["test-session-A"]
-	_, bad2 := uniqOut["test-session-B"]
-	_, bad3 := uniqBuf["test-session-A"]
-	_, bad4 := uniqBuf["test-session-B"]
-	assert.False(t, bad1 || bad2 || bad3 || bad4, "metrics must not be labeled by session_id")
+	// error_type label is the last (index 5): operation,group,remote_node,remote_role,remote_tier,error_type
+	found := false
+	for _, labels := range errCap.labelValues {
+		if len(labels) > 0 && labels[len(labels)-1] == "buffer_full" {
+			found = true
+			break
+		}
+	}
+	assert.True(t, found, "expected error_type=buffer_full to be recorded")
 }
 
 // MockChunkedSyncHandler implements queue.ChunkedSyncHandler for testing.

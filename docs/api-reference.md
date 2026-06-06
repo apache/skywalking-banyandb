@@ -2487,6 +2487,10 @@ PartResult contains the result for individual parts.
 | body | [bytes](#bytes) |  |  |
 | batch_mod | [bool](#bool) |  |  |
 | version_info | [VersionInfo](#banyandb-cluster-v1-VersionInfo) |  | version_info contains version information |
+| group | [string](#string) |  | group is the business group associated with this message. |
+| sender_node | [string](#string) |  | sender_node is the BanyanDB node name of the sender; set only on the first message of a stream. |
+| sender_role | [string](#string) |  | sender_role is the role of the sender node; set only on the first message of a stream. |
+| sender_tier | [string](#string) |  | sender_tier is the storage tier label of the sender node; set only on the first message of a stream. |
 
 
 
@@ -2542,6 +2546,9 @@ SyncMetadata contains metadata for the sync operation.
 | topic | [string](#string) |  | Sync topic (stream-part-sync or measure-part-sync). |
 | timestamp | [int64](#int64) |  | Timestamp when sync started. |
 | total_parts | [uint32](#uint32) |  | Total number of parts being synced. |
+| sender_node | [string](#string) |  | sender_node is the BanyanDB node name of the sender. |
+| sender_role | [string](#string) |  | sender_role is the role of the sender node. |
+| sender_tier | [string](#string) |  | sender_tier is the storage tier label of the sender node. |
 
 
 

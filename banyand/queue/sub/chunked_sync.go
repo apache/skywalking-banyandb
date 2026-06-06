@@ -103,17 +103,16 @@ type chunkBuffer struct {
 }
 
 type syncSession struct {
-	startTime       time.Time
-	metadata        *clusterv1.SyncMetadata
-	partsProgress   map[int]*partProgress
-	partCtx         *queue.ChunkedSyncPartContext
-	chunkBuffer     *chunkBuffer
-	sessionID       string
-	errorMsg        string
-	totalReceived   uint64
-	chunksReceived  uint32
-	abortedRecorded bool
-	completed       bool
+	startTime      time.Time
+	metadata       *clusterv1.SyncMetadata
+	partsProgress  map[int]*partProgress
+	partCtx        *queue.ChunkedSyncPartContext
+	chunkBuffer    *chunkBuffer
+	sessionID      string
+	errorMsg       string
+	totalReceived  uint64
+	chunksReceived uint32
+	completed      bool
 }
 
 type partProgress struct {
@@ -122,54 +121,15 @@ type partProgress struct {
 	completed     bool
 }
 
-const (
-	abortedReasonSwitch      = "switch"
-	abortedReasonStreamError = "stream_error"
-	abortedReasonCtxDone     = "ctx_done"
-	abortedReasonEOF         = "eof"
-)
-
-// releaseMetrics releases the gauges held by this session.
-// Idempotent: safe to call from both handleCompletion and the SyncPart defer.
-func (s *syncSession) releaseMetrics(m *metrics) {
-	if m == nil || s.completed {
-		return
-	}
-	m.activeSyncSessions.Add(-1, s.metadata.Topic)
-	if s.chunkBuffer != nil {
-		if n := len(s.chunkBuffer.chunks); n > 0 {
-			m.reorderBuffered.Add(-float64(n), s.metadata.Topic)
-		}
-	}
-	s.completed = true
-}
-
-func (s *syncSession) recordAborted(m *metrics, reason string) {
-	if m == nil || s.abortedRecorded || s.completed {
-		return
-	}
-	if reason == "" {
-		return
-	}
-	// chunkedSyncAbortedTotal is always initialized in production; tests that wire partial metrics must set it if they trigger abort paths.
-	m.chunkedSyncAbortedTotal.Inc(1, s.metadata.Topic, reason)
-	s.abortedRecorded = true
-}
-
 // SyncPart implements clusterv1.ChunkedSyncServiceServer.
 func (s *server) SyncPart(stream clusterv1.ChunkedSyncService_SyncPartServer) error {
 	ctx := stream.Context()
 	var currentSession *syncSession
 	var sessionID string
-	var abortReason string
 	defer func() {
 		if currentSession == nil {
 			return
 		}
-		if !currentSession.completed {
-			currentSession.recordAborted(s.metrics, abortReason)
-		}
-		currentSession.releaseMetrics(s.metrics)
 		if currentSession.partCtx != nil {
 			if closeErr := currentSession.partCtx.Close(); closeErr != nil {
 				s.log.Error().Err(closeErr).Str("session_id", currentSession.sessionID).Msg("failed to close session partCtx")
@@ -180,20 +140,29 @@ func (s *server) SyncPart(stream clusterv1.ChunkedSyncService_SyncPartServer) er
 	for {
 		select {
 		case <-ctx.Done():
-			abortReason = abortedReasonCtxDone
+			if s.metrics != nil && currentSession != nil && !currentSession.completed {
+				op, grp, sn, sr, st := s.resolveSessionLabels(currentSession)
+				s.metrics.totalErr.Inc(1, op, grp, sn, sr, st, "ctx_done")
+			}
 			return ctx.Err()
 		default:
 		}
 
-		req, err := stream.Recv()
-		if errors.Is(err, io.EOF) {
-			abortReason = abortedReasonEOF
+		req, recvErr := stream.Recv()
+		if errors.Is(recvErr, io.EOF) {
+			if s.metrics != nil && currentSession != nil && !currentSession.completed {
+				op, grp, sn, sr, st := s.resolveSessionLabels(currentSession)
+				s.metrics.totalErr.Inc(1, op, grp, sn, sr, st, "eof")
+			}
 			break
 		}
-		if err != nil {
-			abortReason = abortedReasonStreamError
-			s.log.Error().Err(err).Msg("failed to receive chunk")
-			return err
+		if recvErr != nil {
+			if s.metrics != nil && currentSession != nil && !currentSession.completed {
+				op, grp, sn, sr, st := s.resolveSessionLabels(currentSession)
+				s.metrics.totalErr.Inc(1, op, grp, sn, sr, st, "stream_error")
+			}
+			s.log.Error().Err(recvErr).Msg("failed to receive chunk")
+			return recvErr
 		}
 
 		sessionID = req.SessionId
@@ -212,13 +181,25 @@ func (s *server) SyncPart(stream clusterv1.ChunkedSyncService_SyncPartServer) er
 			return s.handleCompletion(stream, currentSession, req)
 		}
 
-		if err := s.processChunk(stream, currentSession, req); err != nil {
-			s.log.Error().Err(err).Str("session_id", sessionID).Msg("failed to process chunk")
-			return err
+		if processErr := s.processChunk(stream, currentSession, req); processErr != nil {
+			s.log.Error().Err(processErr).Str("session_id", sessionID).Msg("failed to process chunk")
+			return processErr
 		}
 	}
 
 	return nil
+}
+
+// resolveSessionLabels returns the label tuple for the current session.
+func (s *server) resolveSessionLabels(session *syncSession) (operation, group, senderNode, senderRole, senderTier string) {
+	operation = data.OperationFileSyncValue
+	if session.metadata != nil {
+		group = session.metadata.GetGroup()
+		senderNode = session.metadata.GetSenderNode()
+		senderRole = session.metadata.GetSenderRole()
+		senderTier = session.metadata.GetSenderTier()
+	}
+	return
 }
 
 func (s *server) startOrSwitchSession(sessionID string, req *clusterv1.SyncPartRequest, previousSession *syncSession) *syncSession {
@@ -234,7 +215,8 @@ func (s *server) startOrSwitchSession(sessionID string, req *clusterv1.SyncPartR
 		partsProgress:  make(map[int]*partProgress),
 	}
 	if s.metrics != nil {
-		s.metrics.activeSyncSessions.Add(1, newSession.metadata.Topic)
+		op, grp, sn, sr, st := s.resolveSessionLabels(newSession)
+		s.metrics.totalStarted.Inc(1, op, grp, sn, sr, st)
 	}
 	if dl := s.log.Debug(); dl.Enabled() {
 		dl.Str("session_id", sessionID).
@@ -247,16 +229,22 @@ func (s *server) startOrSwitchSession(sessionID string, req *clusterv1.SyncPartR
 
 func (s *server) cleanupPreviousSession(previousSession *syncSession) {
 	if !previousSession.completed {
-		previousSession.recordAborted(s.metrics, abortedReasonSwitch)
+		if s.metrics != nil {
+			op, grp, sn, sr, st := s.resolveSessionLabels(previousSession)
+			s.metrics.totalErr.Inc(1, op, grp, sn, sr, st, "switch")
+		}
+		previousSession.completed = true
 	}
-	previousSession.releaseMetrics(s.metrics)
 
 	if previousSession.partCtx == nil {
 		return
 	}
 	if previousSession.partCtx.Handler != nil {
 		if finishErr := previousSession.partCtx.Handler.FinishSync(); finishErr != nil {
-			s.updateChunkOrderMetrics("finish_sync_err", previousSession.metadata.Topic)
+			if s.metrics != nil {
+				op, grp, sn, sr, st := s.resolveSessionLabels(previousSession)
+				s.metrics.totalErr.Inc(1, op, grp, sn, sr, st, "finish_sync_err")
+			}
 			s.log.Error().Err(finishErr).Str("session_id", previousSession.sessionID).Msg("failed to finish sync for previous session")
 		}
 	}
@@ -268,8 +256,8 @@ func (s *server) cleanupPreviousSession(previousSession *syncSession) {
 func (s *server) processChunk(stream clusterv1.ChunkedSyncService_SyncPartServer, session *syncSession, req *clusterv1.SyncPartRequest) error {
 	// Check version compatibility on every chunk
 	if req.VersionInfo != nil {
-		versionCompatibility, status := checkSyncVersionCompatibility(req.VersionInfo)
-		if status != clusterv1.SyncStatus_SYNC_STATUS_CHUNK_RECEIVED {
+		versionCompatibility, syncStatus := checkSyncVersionCompatibility(req.VersionInfo)
+		if syncStatus != clusterv1.SyncStatus_SYNC_STATUS_CHUNK_RECEIVED {
 			s.log.Warn().
 				Str("session_id", req.SessionId).
 				Str("client_api_version", req.VersionInfo.ApiVersion).
@@ -277,7 +265,7 @@ func (s *server) processChunk(stream clusterv1.ChunkedSyncService_SyncPartServer
 				Str("reason", versionCompatibility.Reason).
 				Msg("sync version compatibility check failed")
 
-			return s.sendResponse(stream, req, status, versionCompatibility.Reason, versionCompatibility)
+			return s.sendResponse(stream, req, syncStatus, versionCompatibility.Reason, versionCompatibility)
 		}
 	}
 
@@ -315,14 +303,14 @@ func (s *server) processChunkSequential(stream clusterv1.ChunkedSyncService_Sync
 func (s *server) processChunkWithReordering(stream clusterv1.ChunkedSyncService_SyncPartServer, session *syncSession, req *clusterv1.SyncPartRequest) error {
 	buffer := session.chunkBuffer
 	// must check buffer timeout before refreshing lastActivity, otherwise it will never timeout.
-	if err := s.checkBufferTimeout(session); err != nil {
-		return err
+	if checkErr := s.checkBufferTimeout(session); checkErr != nil {
+		return checkErr
 	}
 	buffer.lastActivity = time.Now()
 
 	if req.ChunkIndex == buffer.expectedIndex {
-		if err := s.processExpectedChunk(stream, session, req); err != nil {
-			return err
+		if processErr := s.processExpectedChunk(stream, session, req); processErr != nil {
+			return processErr
 		}
 		buffer.expectedIndex++
 
@@ -331,7 +319,6 @@ func (s *server) processChunkWithReordering(stream clusterv1.ChunkedSyncService_
 
 	if req.ChunkIndex > buffer.expectedIndex {
 		gap := req.ChunkIndex - buffer.expectedIndex
-		s.updateChunkOrderMetrics("out_of_order_received", session.metadata.Topic)
 
 		if gap > s.maxChunkGapSize {
 			errMsg := fmt.Sprintf("chunk gap too large: expected %d, got %d (gap: %d > max: %d)",
@@ -342,7 +329,10 @@ func (s *server) processChunkWithReordering(stream clusterv1.ChunkedSyncService_
 				Uint32("gap", gap).
 				Uint32("max_gap", s.maxChunkGapSize).
 				Msg("chunk gap too large, rejecting")
-			s.updateChunkOrderMetrics("gap_too_large", session.metadata.Topic)
+			if s.metrics != nil {
+				op, grp, sn, sr, st := s.resolveSessionLabels(session)
+				s.metrics.totalErr.Inc(1, op, grp, sn, sr, st, "gap_too_large")
+			}
 			return s.sendResponse(stream, req, clusterv1.SyncStatus_SYNC_STATUS_CHUNK_OUT_OF_ORDER, errMsg, nil)
 		}
 
@@ -353,7 +343,10 @@ func (s *server) processChunkWithReordering(stream clusterv1.ChunkedSyncService_
 				Uint32("buffer_size", uint32(len(buffer.chunks))).
 				Uint32("max_buffer_size", buffer.maxBufferSize).
 				Msg("chunk buffer full, rejecting chunk")
-			s.updateChunkOrderMetrics("buffer_full", session.metadata.Topic)
+			if s.metrics != nil {
+				op, grp, sn, sr, st := s.resolveSessionLabels(session)
+				s.metrics.totalErr.Inc(1, op, grp, sn, sr, st, "buffer_full")
+			}
 			return s.sendResponse(stream, req, clusterv1.SyncStatus_SYNC_STATUS_CHUNK_OUT_OF_ORDER, errMsg, nil)
 		}
 
@@ -365,10 +358,6 @@ func (s *server) processChunkWithReordering(stream clusterv1.ChunkedSyncService_
 				Uint32("expected_index", buffer.expectedIndex).
 				Uint32("buffered_chunks", uint32(len(buffer.chunks))).
 				Msg("buffered out-of-order chunk")
-		}
-		s.updateChunkOrderMetrics("chunk_buffered", session.metadata.Topic)
-		if s.metrics != nil {
-			s.metrics.reorderBuffered.Add(1, session.metadata.Topic)
 		}
 		return s.sendResponse(stream, req, clusterv1.SyncStatus_SYNC_STATUS_CHUNK_RECEIVED,
 			fmt.Sprintf("chunk %d buffered (waiting for %d)", req.ChunkIndex, buffer.expectedIndex), nil)
@@ -395,6 +384,10 @@ func (s *server) processExpectedChunk(stream clusterv1.ChunkedSyncService_SyncPa
 		errMsg := fmt.Sprintf("chunk %d checksum mismatch: expected %s, got %s",
 			req.ChunkIndex, req.ChunkChecksum, calculatedChecksum)
 		s.log.Warn().Str("session_id", req.SessionId).Msg(errMsg)
+		if s.metrics != nil {
+			op, grp, sn, sr, st := s.resolveSessionLabels(session)
+			s.metrics.totalErr.Inc(1, op, grp, sn, sr, st, "checksum_mismatch")
+		}
 		return s.sendResponse(stream, req, clusterv1.SyncStatus_SYNC_STATUS_CHUNK_CHECKSUM_MISMATCH, errMsg, nil)
 	}
 
@@ -418,8 +411,8 @@ func (s *server) processExpectedChunk(stream clusterv1.ChunkedSyncService_SyncPa
 			session.partCtx.ID != partInfo.Id
 
 		if createNewContext && session.partCtx != nil && session.partCtx.Handler != nil {
-			if err := session.partCtx.Handler.FinishSync(); err != nil {
-				return fmt.Errorf("failed to complete part %d: %w", session.partCtx.ID, err)
+			if finishErr := session.partCtx.Handler.FinishSync(); finishErr != nil {
+				return fmt.Errorf("failed to complete part %d: %w", session.partCtx.ID, finishErr)
 			}
 		}
 
@@ -438,9 +431,9 @@ func (s *server) processExpectedChunk(stream clusterv1.ChunkedSyncService_SyncPa
 				MaxKey:                partInfo.MaxKey,
 				PartType:              partInfo.PartType,
 			}
-			partHandler, err := handler.CreatePartHandler(session.partCtx)
-			if err != nil {
-				return fmt.Errorf("failed to create part handler: %w", err)
+			partHandler, createErr := handler.CreatePartHandler(session.partCtx)
+			if createErr != nil {
+				return fmt.Errorf("failed to create part handler: %w", createErr)
 			}
 			session.partCtx.Handler = partHandler
 		} else if session.partCtx.PartType != partInfo.PartType {
@@ -453,18 +446,22 @@ func (s *server) processExpectedChunk(stream clusterv1.ChunkedSyncService_SyncPa
 			session.partCtx.MinKey = partInfo.MinKey
 			session.partCtx.MaxKey = partInfo.MaxKey
 			session.partCtx.PartType = partInfo.PartType
-			if err := session.partCtx.Handler.NewPartType(session.partCtx); err != nil {
-				return fmt.Errorf("failed to new part type: %w", err)
+			if newPartErr := session.partCtx.Handler.NewPartType(session.partCtx); newPartErr != nil {
+				return fmt.Errorf("failed to new part type: %w", newPartErr)
 			}
 		}
 
-		if err := s.processPart(session, req, partInfo, partIndex, handler); err != nil {
-			s.log.Error().Err(err).
+		if processErr := s.processPart(session, req, partInfo, partIndex, handler); processErr != nil {
+			s.log.Error().Err(processErr).
 				Str("session_id", req.SessionId).
 				Str("topic", session.metadata.Topic).
 				Int("part_index", partIndex).
 				Msg("failed to process part")
-			return err
+			if s.metrics != nil {
+				op, grp, sn, sr, st := s.resolveSessionLabels(session)
+				s.metrics.totalErr.Inc(1, op, grp, sn, sr, st, "part_failed")
+			}
+			return processErr
 		}
 	}
 
@@ -477,9 +474,6 @@ func (s *server) processBufferedChunks(stream clusterv1.ChunkedSyncService_SyncP
 	for {
 		if chunk, exists := buffer.chunks[buffer.expectedIndex]; exists {
 			delete(buffer.chunks, buffer.expectedIndex)
-			if s.metrics != nil {
-				s.metrics.reorderBuffered.Add(-1, session.metadata.Topic)
-			}
 
 			if dl := s.log.Debug(); dl.Enabled() {
 				dl.Str("session_id", session.sessionID).
@@ -489,8 +483,8 @@ func (s *server) processBufferedChunks(stream clusterv1.ChunkedSyncService_SyncP
 					Msg("processing buffered chunk")
 			}
 
-			if err := s.processExpectedChunk(stream, session, chunk); err != nil {
-				return err
+			if processErr := s.processExpectedChunk(stream, session, chunk); processErr != nil {
+				return processErr
 			}
 			buffer.expectedIndex++
 		} else {
@@ -514,7 +508,10 @@ func (s *server) checkBufferTimeout(session *syncSession) error {
 					missing = append(missing, i)
 				}
 			}
-			s.updateChunkOrderMetrics("buffer_timeout", session.metadata.Topic)
+			if s.metrics != nil {
+				op, grp, sn, sr, st := s.resolveSessionLabels(session)
+				s.metrics.totalErr.Inc(1, op, grp, sn, sr, st, "buffer_timeout")
+			}
 			return fmt.Errorf("buffer timeout: missing chunks %v after %v",
 				missing, session.chunkBuffer.bufferTimeout)
 		}
@@ -565,8 +562,8 @@ func (s *server) processPart(session *syncSession, req *clusterv1.SyncPartReques
 		session.partCtx.FileName = fileInfo.Name
 		session.partCtx.PartType = partInfo.PartType
 
-		if err := handler.HandleFileChunk(session.partCtx, fileChunk); err != nil {
-			return fmt.Errorf("failed to stream file chunk for %s: %w", fileInfo.Name, err)
+		if handleErr := handler.HandleFileChunk(session.partCtx, fileChunk); handleErr != nil {
+			return fmt.Errorf("failed to stream file chunk for %s: %w", fileInfo.Name, handleErr)
 		}
 	}
 
@@ -581,9 +578,13 @@ func (s *server) processPart(session *syncSession, req *clusterv1.SyncPartReques
 }
 
 func (s *server) handleCompletion(stream clusterv1.ChunkedSyncService_SyncPartServer, session *syncSession, req *clusterv1.SyncPartRequest) error {
-	if session.partCtx.Handler != nil {
-		if err := session.partCtx.Handler.FinishSync(); err != nil {
-			return fmt.Errorf("failed to complete part %d: %w", session.partCtx.ID, err)
+	if session.partCtx != nil && session.partCtx.Handler != nil {
+		if finishErr := session.partCtx.Handler.FinishSync(); finishErr != nil {
+			if s.metrics != nil {
+				op, grp, sn, sr, st := s.resolveSessionLabels(session)
+				s.metrics.totalErr.Inc(1, op, grp, sn, sr, st, "finish_sync_err")
+			}
+			return fmt.Errorf("failed to complete part %d: %w", session.partCtx.ID, finishErr)
 		}
 		session.partCtx.Handler = nil
 	}
@@ -613,15 +614,15 @@ func (s *server) handleCompletion(stream clusterv1.ChunkedSyncService_SyncPartSe
 		PartsResults:       partsResults,
 	}
 
-	session.releaseMetrics(s.metrics)
+	session.completed = true
 	if s.metrics != nil {
-		topic := session.metadata.Topic
-		s.metrics.chunkedSyncTotalBytes.Inc(float64(syncResult.TotalBytesReceived), topic)
-		s.metrics.chunkedSyncDurationSecs.Observe(float64(syncResult.DurationMs)/1000.0, topic)
-
+		op, grp, sn, sr, st := s.resolveSessionLabels(session)
+		s.metrics.totalFinished.Inc(1, op, grp, sn, sr, st)
+		s.metrics.totalLatency.Observe(float64(syncResult.DurationMs)/1000.0, op, grp, sn, sr, st)
+		s.metrics.receivedBytes.Inc(float64(syncResult.TotalBytesReceived), op, grp, sn, sr, st)
 		for _, pr := range partsResults {
 			if !pr.Success {
-				s.metrics.chunkedSyncFailedParts.Inc(1, topic)
+				s.metrics.totalErr.Inc(1, op, grp, sn, sr, st, "part_failed")
 			}
 		}
 	}
@@ -641,14 +642,14 @@ func (s *server) handleCompletion(stream clusterv1.ChunkedSyncService_SyncPartSe
 func (s *server) sendResponse(
 	stream clusterv1.ChunkedSyncService_SyncPartServer,
 	req *clusterv1.SyncPartRequest,
-	status clusterv1.SyncStatus,
+	syncStatus clusterv1.SyncStatus,
 	errorMsg string,
 	result interface{},
 ) error {
 	resp := &clusterv1.SyncPartResponse{
 		SessionId:  req.SessionId,
 		ChunkIndex: req.ChunkIndex,
-		Status:     status,
+		Status:     syncStatus,
 		Error:      errorMsg,
 	}
 

@@ -34,7 +34,7 @@ import (
 	"google.golang.org/protobuf/proto"
 
 	"github.com/apache/skywalking-banyandb/api/common"
-	"github.com/apache/skywalking-banyandb/api/data"
+	apidata "github.com/apache/skywalking-banyandb/api/data"
 	apiversion "github.com/apache/skywalking-banyandb/api/proto/banyandb"
 	clusterv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/cluster/v1"
 	databasev1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/database/v1"
@@ -79,40 +79,42 @@ type pub struct {
 	connMgr         *grpchelper.ConnManager[*client]
 	closer          *run.Closer
 	writableProbe   map[string]map[string]struct{}
+	nodeCache       map[string]nodeInfo
 	caCertPath      string
 	caCertReloader  *pkgtls.Reloader
 	prefix          string
 	retryPolicy     string
+	selfNode        string
+	selfRole        string
+	selfTier        string
 	allowedRoles    []databasev1.Role
 	writableProbeMu sync.Mutex
+	nodeCacheMu     sync.RWMutex
 	tlsEnabled      bool
 }
 
-type pubMetrics struct {
-	sendSuccessTotal    meter.Counter
-	sendErrTotal        meter.Counter
-	sendBytesTotal      meter.Counter
-	sendDurationSeconds meter.Histogram
+// nodeInfo caches the resolved role and tier for a remote node.
+type nodeInfo struct {
+	role string
+	tier string
+}
 
-	sendRetryAttempts  meter.Counter
-	sendRetryExhausted meter.Counter
-	sendBackoffSeconds meter.Counter
-	inflightStreams    meter.Gauge
-	inflightRequests   meter.Gauge
+type pubMetrics struct {
+	totalStarted  meter.Counter
+	totalFinished meter.Counter
+	totalLatency  meter.Histogram
+	totalErr      meter.Counter
+	sentBytes     meter.Counter
 }
 
 func newPubMetrics(factory observability.Factory) *pubMetrics {
+	labels := []string{"operation", "group", "remote_node", "remote_role", "remote_tier"}
 	return &pubMetrics{
-		sendSuccessTotal:    factory.NewCounter("send_success_total", "topic", "node"),
-		sendErrTotal:        factory.NewCounter("send_err_total", "topic", "node", "reason"),
-		sendBytesTotal:      factory.NewCounter("send_bytes_total", "topic", "node"),
-		sendDurationSeconds: factory.NewHistogram("send_duration_seconds", meter.DefBuckets, "topic", "node", "result"),
-
-		sendRetryAttempts:  factory.NewCounter("send_retry_attempts_total", "topic", "node"),
-		sendRetryExhausted: factory.NewCounter("send_retry_exhausted_total", "topic", "node"),
-		sendBackoffSeconds: factory.NewCounter("send_backoff_seconds_total", "topic", "node"),
-		inflightStreams:    factory.NewGauge("inflight_streams", "node"),
-		inflightRequests:   factory.NewGauge("inflight_requests", "topic", "node"),
+		totalStarted:  factory.NewCounter("total_started", labels...),
+		totalFinished: factory.NewCounter("total_finished", labels...),
+		totalLatency:  factory.NewHistogram("total_latency", meter.DefBuckets, labels...),
+		totalErr:      factory.NewCounter("total_err", append(labels, "error_type")...),
+		sentBytes:     factory.NewCounter("sent_bytes", labels...),
 	}
 }
 
@@ -143,9 +145,15 @@ func (p *pub) NewClient(conn *grpc.ClientConn, node *databasev1.Node) (*client, 
 }
 
 // OnActive implements grpchelper.ConnectionHandler.
-func (p *pub) OnActive(_ string, c *client) {
+func (p *pub) OnActive(name string, c *client) {
 	for _, h := range p.handlers {
 		h.OnAddOrUpdate(c.md)
+	}
+	if node, ok := c.md.Spec.(*databasev1.Node); ok {
+		info := resolveNodeInfo(node)
+		p.nodeCacheMu.Lock()
+		p.nodeCache[name] = info
+		p.nodeCacheMu.Unlock()
 	}
 }
 
@@ -157,6 +165,49 @@ func (p *pub) OnInactive(name string, c *client) {
 	p.writableProbeMu.Lock()
 	delete(p.writableProbe, name)
 	p.writableProbeMu.Unlock()
+	p.nodeCacheMu.Lock()
+	delete(p.nodeCache, name)
+	p.nodeCacheMu.Unlock()
+}
+
+// resolveNodeInfo extracts role and tier from a Node spec.
+func resolveNodeInfo(node *databasev1.Node) nodeInfo {
+	info := nodeInfo{}
+	for _, r := range node.GetRoles() {
+		switch r {
+		case databasev1.Role_ROLE_DATA:
+			info.role = "data"
+		case databasev1.Role_ROLE_LIAISON:
+			info.role = "liaison"
+		default:
+			// ROLE_UNSPECIFIED, ROLE_META and any future roles are not queue peers.
+		}
+		if info.role != "" {
+			break
+		}
+	}
+	if node.GetLabels() != nil {
+		info.tier = node.GetLabels()["type"]
+	}
+	return info
+}
+
+// getNodeInfo returns the cached nodeInfo for the named node.
+func (p *pub) getNodeInfo(name string) nodeInfo {
+	if p == nil {
+		return nodeInfo{}
+	}
+	p.nodeCacheMu.RLock()
+	info := p.nodeCache[name]
+	p.nodeCacheMu.RUnlock()
+	return info
+}
+
+// SetSelfNode sets the publisher's own node identity for sender stamping.
+func (p *pub) SetSelfNode(name, role, tier string) {
+	p.selfNode = name
+	p.selfRole = role
+	p.selfTier = tier
 }
 
 func (p *pub) FlagSet() *run.FlagSet {
@@ -327,6 +378,12 @@ func (p *pub) publish(timeout time.Duration, topic bus.Topic, messages ...bus.Me
 		if errSend != nil {
 			return multierr.Append(err, fmt.Errorf("failed to marshal message[%d]: %w", m.ID(), errSend))
 		}
+		// Stamp sender identity so the receiver can label query/control queue
+		// metrics by sender (topology). publish opens one stream per message, so
+		// every request is the first frame of its stream — the sub captures it there.
+		r.SenderNode = p.selfNode
+		r.SenderRole = p.selfRole
+		r.SenderTier = p.selfTier
 		node := m.Node()
 		execErr := p.connMgr.Execute(node, func(c *client) error {
 			ctx, cancel := context.WithTimeout(context.Background(), timeout)
@@ -390,12 +447,14 @@ func New(metadata metadata.Repo, roles ...databasev1.Role) queue.Client {
 		allowedRoles:  roles,
 		prefix:        strBuilder.String(),
 		writableProbe: make(map[string]map[string]struct{}),
+		nodeCache:     make(map[string]nodeInfo),
 		retryPolicy:   retryPolicy,
 	}
 	return p
 }
 
 // NewWithoutMetadata returns a new queue client without metadata, defaulting to data nodes.
+// sender_* fields are left empty for this lifecycle-tool publisher.
 func NewWithoutMetadata() queue.Client {
 	p := New(nil, databasev1.Role_ROLE_DATA)
 	pp := p.(*pub)
@@ -465,15 +524,16 @@ func messageToRequest(topic bus.Topic, m bus.Message) (*clusterv1.SendRequest, e
 		},
 	}
 
-	switch data := m.Data().(type) {
+	switch msgData := m.Data().(type) {
 	case proto.Message:
-		messageData, err := proto.Marshal(data)
+		messageData, err := proto.Marshal(msgData)
 		if err != nil {
 			return nil, fmt.Errorf("failed to marshal message %T: %w", m, err)
 		}
 		r.Body = messageData
+		r.Group = apidata.GroupFromMessageData(topic, msgData)
 	case []byte:
-		r.Body = data
+		r.Body = msgData
 	default:
 		return nil, fmt.Errorf("invalid message type %T", m.Data())
 	}
@@ -519,7 +579,7 @@ func (l *future) Get() (bus.Message, error) {
 	if resp.Body == nil {
 		return bus.NewMessageWithNode(bus.MessageID(resp.MessageId), n, nil), nil
 	}
-	if codec, ok := data.TopicResponseMap[t]; ok {
+	if codec, ok := apidata.TopicResponseMap[t]; ok {
 		m, decodeErr := codec.Unmarshal(resp.Body)
 		if decodeErr != nil {
 			return bus.Message{}, decodeErr
@@ -594,13 +654,25 @@ func (p *pub) NewChunkedSyncClientWithConfig(node string, config *ChunkedSyncCli
 	if config.ChunkSize == 0 {
 		config.ChunkSize = defaultChunkSize
 	}
+	// Resolve the target node's role/tier so file-sync metrics carry the remote
+	// service-level topology labels (the connMgr client already holds the Node).
+	var info nodeInfo
+	if n, ok := c.md.Spec.(*databasev1.Node); ok {
+		info = resolveNodeInfo(n)
+	}
 	return &chunkedSyncClient{
-		client:    c.client,
-		conn:      c.conn,
-		node:      node,
-		log:       p.log,
-		chunkSize: config.ChunkSize,
-		config:    config,
+		client:     c.client,
+		conn:       c.conn,
+		node:       node,
+		log:        p.log,
+		metrics:    p.metrics,
+		selfNode:   p.selfNode,
+		selfRole:   p.selfRole,
+		selfTier:   p.selfTier,
+		remoteRole: info.role,
+		remoteTier: info.tier,
+		chunkSize:  config.ChunkSize,
+		config:     config,
 	}, nil
 }
 
