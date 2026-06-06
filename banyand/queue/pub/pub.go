@@ -330,7 +330,7 @@ func (p *pub) Broadcast(timeout time.Duration, topic bus.Topic, messages bus.Mes
 		wg.Add(1)
 		go func(n string) {
 			defer wg.Done()
-			f, err := p.publish(timeout, topic, bus.NewMessageWithNode(messages.ID(), n, messages.Data()))
+			f, err := p.publish(timeout, topic, bus.NewMessageWithNodeAndGroup(messages.ID(), n, messages.Group(), messages.Data()))
 			futureCh <- publishResult{n: n, f: f, e: err}
 		}(n)
 	}
@@ -534,6 +534,7 @@ func messageToRequest(topic bus.Topic, m bus.Message) (*clusterv1.SendRequest, e
 		r.Group = apidata.GroupFromMessageData(topic, msgData)
 	case []byte:
 		r.Body = msgData
+		r.Group = m.Group()
 	default:
 		return nil, fmt.Errorf("invalid message type %T", m.Data())
 	}
