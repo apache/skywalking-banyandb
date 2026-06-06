@@ -540,7 +540,7 @@
             "uid": "${DS_PROMETHEUS}"
           },
           "editorMode": "code",
-          "expr": "(sum(rate(banyandb_liaison_grpc_total_err{job=~\"$job\", container_name=~\"$role\", pod_name=~\"$pod\"}[$__rate_interval])*60) or vector(0)) + (sum(rate(banyandb_liaison_grpc_total_registry_err{job=~\"$job\", container_name=~\"$role\", pod_name=~\"$pod\"}[$__rate_interval])*60) or vector(0)) + (sum(rate(banyandb_liaison_grpc_total_stream_msg_received_err{job=~\"$job\", container_name=~\"$role\", pod_name=~\"$pod\"}[$__rate_interval])*60) or vector(0)) + (sum(rate(banyandb_queue_pub_send_duration_seconds_count{job=~\"$job\", container_name=~\"$role\", pod_name=~\"$pod\",result!=\"success\"}[$__rate_interval])*60) or vector(0)) + (sum(rate(banyandb_measure_total_sync_loop_err{job=~\"$job\", container_name=\"liaison\", pod_name=~\"$pod\"}[$__rate_interval])*60) or vector(0)) + (sum(rate(banyandb_stream_tst_total_sync_loop_err{job=~\"$job\", container_name=\"liaison\", pod_name=~\"$pod\"}[$__rate_interval])*60) or vector(0)) + (sum(rate(banyandb_trace_tst_total_sync_loop_err{job=~\"$job\", container_name=\"liaison\", pod_name=~\"$pod\"}[$__rate_interval])*60) or vector(0))",
+          "expr": "(sum(rate(banyandb_liaison_grpc_total_err{job=~\"$job\", container_name=~\"$role\", pod_name=~\"$pod\"}[$__rate_interval])*60) or vector(0)) + (sum(rate(banyandb_liaison_grpc_total_registry_err{job=~\"$job\", container_name=~\"$role\", pod_name=~\"$pod\"}[$__rate_interval])*60) or vector(0)) + (sum(rate(banyandb_liaison_grpc_total_stream_msg_received_err{job=~\"$job\", container_name=~\"$role\", pod_name=~\"$pod\"}[$__rate_interval])*60) or vector(0)) + (sum(rate(banyandb_queue_pub_total_err{job=~\"$job\", container_name=~\"$role\", pod_name=~\"$pod\"}[$__rate_interval])*60) or vector(0)) + (sum(rate(banyandb_measure_total_sync_loop_err{job=~\"$job\", container_name=\"liaison\", pod_name=~\"$pod\"}[$__rate_interval])*60) or vector(0)) + (sum(rate(banyandb_stream_tst_total_sync_loop_err{job=~\"$job\", container_name=\"liaison\", pod_name=~\"$pod\"}[$__rate_interval])*60) or vector(0)) + (sum(rate(banyandb_trace_tst_total_sync_loop_err{job=~\"$job\", container_name=\"liaison\", pod_name=~\"$pod\"}[$__rate_interval])*60) or vector(0))",
           "instant": false,
           "legendFormat": "__auto",
           "range": true,
@@ -2453,7 +2453,7 @@
         "type": "prometheus",
         "uid": "${DS_PROMETHEUS}"
       },
-      "description": "Liaison publish success rate and byte throughput by topic.",
+      "description": "Liaison publish success rate by operation and file-sync byte throughput by group.",
       "fieldConfig": {
         "defaults": {
           "color": {
@@ -2552,9 +2552,9 @@
             "uid": "${DS_PROMETHEUS}"
           },
           "editorMode": "code",
-          "expr": "sum(rate(banyandb_queue_pub_send_success_total{job=~\"$job\", container_name=~\"$role\", pod_name=~\"$pod\"}[$__rate_interval])) by (topic)",
+          "expr": "sum(rate(banyandb_queue_pub_total_finished{job=~\"$job\", container_name=~\"$role\", pod_name=~\"$pod\"}[$__rate_interval])) by (operation)",
           "instant": false,
-          "legendFormat": "success {{topic}}",
+          "legendFormat": "success {{operation}}",
           "range": true,
           "refId": "A"
         },
@@ -2564,9 +2564,9 @@
             "uid": "${DS_PROMETHEUS}"
           },
           "editorMode": "code",
-          "expr": "sum(rate(banyandb_queue_pub_send_bytes_total{job=~\"$job\", container_name=~\"$role\", pod_name=~\"$pod\"}[$__rate_interval])) by (topic)",
+          "expr": "sum(rate(banyandb_queue_pub_sent_bytes{job=~\"$job\", container_name=~\"$role\", pod_name=~\"$pod\"}[$__rate_interval])) by (group)",
           "instant": false,
-          "legendFormat": "bytes {{topic}}",
+          "legendFormat": "bytes {{group}}",
           "range": true,
           "refId": "B"
         }
@@ -2776,7 +2776,7 @@
         "type": "prometheus",
         "uid": "${DS_PROMETHEUS}"
       },
-      "description": "p99 latency of publish sends from liaison to data nodes, by topic.",
+      "description": "p99 latency of publish sends from liaison to data nodes, by operation.",
       "fieldConfig": {
         "defaults": {
           "color": {
@@ -2862,9 +2862,9 @@
             "uid": "${DS_PROMETHEUS}"
           },
           "editorMode": "code",
-          "expr": "histogram_quantile(0.99, sum(rate(banyandb_queue_pub_send_duration_seconds_bucket{job=~\"$job\", container_name=~\"$role\", pod_name=~\"$pod\"}[$__rate_interval])) by (le, topic))",
+          "expr": "histogram_quantile(0.99, sum(rate(banyandb_queue_pub_total_latency_bucket{job=~\"$job\", container_name=~\"$role\", pod_name=~\"$pod\"}[$__rate_interval])) by (le, operation))",
           "instant": false,
-          "legendFormat": "p99 {{topic}}",
+          "legendFormat": "p99 {{operation}}",
           "range": true,
           "refId": "A"
         }
@@ -4058,7 +4058,7 @@
         "type": "prometheus",
         "uid": "${DS_PROMETHEUS}"
       },
-      "description": "Chunked part-sync active sessions and p99 duration on data nodes (receiving wqueue parts).",
+      "description": "File-sync (part-sync) start rate and p99 duration on data nodes, by group (receiving wqueue parts).",
       "fieldConfig": {
         "defaults": {
           "color": {
@@ -4157,9 +4157,9 @@
             "uid": "${DS_PROMETHEUS}"
           },
           "editorMode": "code",
-          "expr": "sum(banyandb_queue_sub_chunked_sync_active_sessions{job=~\"$job\", container_name=~\"$role\", pod_name=~\"$pod\"}) by (topic)",
+          "expr": "sum(rate(banyandb_queue_sub_total_started{job=~\"$job\", container_name=~\"$role\", pod_name=~\"$pod\", operation=\"file-sync\"}[$__rate_interval])) by (group)",
           "instant": false,
-          "legendFormat": "sessions {{topic}}",
+          "legendFormat": "started {{group}}",
           "range": true,
           "refId": "A"
         },
@@ -4169,14 +4169,14 @@
             "uid": "${DS_PROMETHEUS}"
           },
           "editorMode": "code",
-          "expr": "histogram_quantile(0.99, sum(rate(banyandb_queue_sub_chunked_sync_duration_seconds_bucket{job=~\"$job\", container_name=~\"$role\", pod_name=~\"$pod\"}[$__rate_interval])) by (le, topic))",
+          "expr": "histogram_quantile(0.99, sum(rate(banyandb_queue_sub_total_latency_bucket{job=~\"$job\", container_name=~\"$role\", pod_name=~\"$pod\", operation=\"file-sync\"}[$__rate_interval])) by (le, group))",
           "instant": false,
-          "legendFormat": "p99 {{topic}}",
+          "legendFormat": "p99 {{group}}",
           "range": true,
           "refId": "B"
         }
       ],
-      "title": "Part-Sync Active Sessions & p99",
+      "title": "Part-Sync Throughput & p99",
       "type": "timeseries"
     },
     {
@@ -4184,7 +4184,7 @@
         "type": "prometheus",
         "uid": "${DS_PROMETHEUS}"
       },
-      "description": "Byte rate received via chunked part-sync on data nodes.",
+      "description": "Byte rate received via file-sync (part-sync) on data nodes, by group.",
       "fieldConfig": {
         "defaults": {
           "color": {
@@ -4270,9 +4270,9 @@
             "uid": "${DS_PROMETHEUS}"
           },
           "editorMode": "code",
-          "expr": "sum(rate(banyandb_queue_sub_chunked_sync_total_bytes_received{job=~\"$job\", container_name=~\"$role\", pod_name=~\"$pod\"}[$__rate_interval])) by (topic)",
+          "expr": "sum(rate(banyandb_queue_sub_received_bytes{job=~\"$job\", container_name=~\"$role\", pod_name=~\"$pod\"}[$__rate_interval])) by (group)",
           "instant": false,
-          "legendFormat": "{{topic}}",
+          "legendFormat": "{{group}}",
           "range": true,
           "refId": "A"
         }
@@ -4285,7 +4285,7 @@
         "type": "prometheus",
         "uid": "${DS_PROMETHEUS}"
       },
-      "description": "Inbound/outbound internal message-bus messages handled by topic (distributed queries, index writes, sync). Was 'Subscribe Throughput'.",
+      "description": "Subscribe-side queue errors by operation/error_type and by group (empty when the cluster is healthy).",
       "fieldConfig": {
         "defaults": {
           "color": {
@@ -4371,9 +4371,9 @@
             "uid": "${DS_PROMETHEUS}"
           },
           "editorMode": "code",
-          "expr": "sum(rate(banyandb_queue_sub_total_msg_received{job=~\"$job\", container_name=~\"$role\", pod_name=~\"$pod\"}[$__rate_interval])) by (topic)",
+          "expr": "sum(rate(banyandb_queue_sub_total_err{job=~\"$job\", container_name=~\"$role\", pod_name=~\"$pod\"}[$__rate_interval])) by (operation, error_type)",
           "instant": false,
-          "legendFormat": "in {{topic}}",
+          "legendFormat": "{{operation}} / {{error_type}}",
           "range": true,
           "refId": "A"
         },
@@ -4383,14 +4383,14 @@
             "uid": "${DS_PROMETHEUS}"
           },
           "editorMode": "code",
-          "expr": "sum(rate(banyandb_queue_sub_total_msg_sent{job=~\"$job\", container_name=~\"$role\", pod_name=~\"$pod\"}[$__rate_interval])) by (topic)",
+          "expr": "sum(rate(banyandb_queue_sub_total_err{job=~\"$job\", container_name=~\"$role\", pod_name=~\"$pod\"}[$__rate_interval])) by (group)",
           "instant": false,
-          "legendFormat": "out {{topic}}",
+          "legendFormat": "group {{group}}",
           "range": true,
           "refId": "B"
         }
       ],
-      "title": "Message Rate (in / out)",
+      "title": "Subscribe Errors by Type",
       "type": "timeseries"
     },
     {
@@ -4398,7 +4398,7 @@
         "type": "prometheus",
         "uid": "${DS_PROMETHEUS}"
       },
-      "description": "Internal message handlers started vs finished by topic (a persistent gap indicates backlog/stuck handlers).",
+      "description": "Subscribe RPCs started vs finished by operation (a persistent gap indicates backlog/stuck handlers).",
       "fieldConfig": {
         "defaults": {
           "color": {
@@ -4484,9 +4484,9 @@
             "uid": "${DS_PROMETHEUS}"
           },
           "editorMode": "code",
-          "expr": "sum(rate(banyandb_queue_sub_total_started{job=~\"$job\", container_name=~\"$role\", pod_name=~\"$pod\"}[$__rate_interval])) by (topic)",
+          "expr": "sum(rate(banyandb_queue_sub_total_started{job=~\"$job\", container_name=~\"$role\", pod_name=~\"$pod\"}[$__rate_interval])) by (operation)",
           "instant": false,
-          "legendFormat": "started {{topic}}",
+          "legendFormat": "started {{operation}}",
           "range": true,
           "refId": "A"
         },
@@ -4496,9 +4496,9 @@
             "uid": "${DS_PROMETHEUS}"
           },
           "editorMode": "code",
-          "expr": "sum(rate(banyandb_queue_sub_total_finished{job=~\"$job\", container_name=~\"$role\", pod_name=~\"$pod\"}[$__rate_interval])) by (topic)",
+          "expr": "sum(rate(banyandb_queue_sub_total_finished{job=~\"$job\", container_name=~\"$role\", pod_name=~\"$pod\"}[$__rate_interval])) by (operation)",
           "instant": false,
-          "legendFormat": "finished {{topic}}",
+          "legendFormat": "finished {{operation}}",
           "range": true,
           "refId": "B"
         }
@@ -4511,7 +4511,7 @@
         "type": "prometheus",
         "uid": "${DS_PROMETHEUS}"
       },
-      "description": "Average internal message handling time by topic.",
+      "description": "p99 subscribe handling latency by operation.",
       "fieldConfig": {
         "defaults": {
           "color": {
@@ -4597,14 +4597,14 @@
             "uid": "${DS_PROMETHEUS}"
           },
           "editorMode": "code",
-          "expr": "sum(rate(banyandb_queue_sub_total_latency{job=~\"$job\", container_name=~\"$role\", pod_name=~\"$pod\"}[$__rate_interval])) by (topic) / sum(rate(banyandb_queue_sub_total_finished{job=~\"$job\", container_name=~\"$role\", pod_name=~\"$pod\"}[$__rate_interval])) by (topic)",
+          "expr": "histogram_quantile(0.99, sum(rate(banyandb_queue_sub_total_latency_bucket{job=~\"$job\", container_name=~\"$role\", pod_name=~\"$pod\"}[$__rate_interval])) by (le, operation))",
           "instant": false,
-          "legendFormat": "{{topic}}",
+          "legendFormat": "p99 {{operation}}",
           "range": true,
           "refId": "A"
         }
       ],
-      "title": "Handler Latency",
+      "title": "Subscribe Latency p99",
       "type": "timeseries"
     },
     {
