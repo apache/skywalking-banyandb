@@ -239,7 +239,10 @@ func (bp *batchPublisher) listenBatchResponse(ctx context.Context, s clusterv1.S
 		if grpchelper.IsFailoverError(errRecv) {
 			// Record circuit breaker failure before creating failover event
 			bp.pub.connMgr.RecordFailure(curNode, errRecv)
-			bc <- batchEvent{n: curNode, e: common.NewErrorWithStatus(modelv1.Status_STATUS_INTERNAL_ERROR, errRecv.Error())}
+			select {
+			case bc <- batchEvent{n: curNode, e: common.NewErrorWithStatus(modelv1.Status_STATUS_INTERNAL_ERROR, errRecv.Error())}:
+			case <-ctx.Done():
+			}
 		}
 		return
 	}
@@ -258,7 +261,10 @@ func (bp *batchPublisher) listenBatchResponse(ctx context.Context, s clusterv1.S
 	}
 	// Always surface a batchEvent for any non-empty resp.Error so that Close() exposes
 	// the rejection to the caller.
-	bc <- batchEvent{n: curNode, e: ce}
+	select {
+	case bc <- batchEvent{n: curNode, e: ce}:
+	case <-ctx.Done():
+	}
 }
 
 func (bp *batchPublisher) Close() (cee map[string]*common.Error, err error) {
