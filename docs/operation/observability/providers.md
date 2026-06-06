@@ -33,7 +33,10 @@ The proxy adds the `pod_name` and `container_name` labels used throughout this d
 
 ### Grafana Dashboard
 
-Check out the [BanyanDB Cluster (FODC Proxy) Dashboard](../grafana-cluster-fodc.json) for monitoring BanyanDB metrics. It is built for the deployment where Prometheus scrapes the [FODC proxy](../fodc/overview.md) `/metrics` endpoint — the single scrape target — rather than each BanyanDB pod: per-node identity is carried in the `pod_name` and `container_name` labels (so `job`/`pod`/`up` no longer distinguish nodes). The dashboard is organized by role (liaison / data) with fleet overview, a per-node health table, resources, disk-by-path, liaison ingestion/query/publish plus write-queue (wqueue) backlog, data storage/inverted-index/internal-queue, and Go runtime sections.
+Two complementary dashboards monitor BanyanDB metrics, both built for the deployment where Prometheus scrapes the [FODC proxy](../fodc/overview.md) `/metrics` endpoint — the single scrape target — rather than each BanyanDB pod (per-node identity is carried in the `pod_name` and `container_name` labels, so `job`/`pod`/`up` no longer distinguish nodes). They are split by aggregation dimension:
+
+- [BanyanDB Cluster — Nodes (FODC Proxy)](../grafana-fodc-nodes.json) — node/pod-level health and resources, aggregated by `pod_name`: fleet overview (node counts, CPU/memory/disk capacity, uptime), a per-node health table, resources (CPU, RSS, system memory %, disk %, network), disk-by-path, and Go runtime.
+- [BanyanDB Cluster — Workload (FODC Proxy)](../grafana-fodc-workload.json) — business/data-level throughput and latency, aggregated by `group`: cluster workload summary (write/query/error rate), liaison ingestion/query/publish plus write-queue (wqueue) backlog, data storage, inverted-index, and the internal queue (per-operation throughput & p99 by group).
 
 ## Native
 
