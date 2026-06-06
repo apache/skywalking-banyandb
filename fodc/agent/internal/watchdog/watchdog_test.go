@@ -828,3 +828,55 @@ func TestWatchdog_PollMetrics_NoEndpoints(t *testing.T) {
 	assert.Nil(t, rawMetrics)
 	assert.Contains(t, err.Error(), "no metrics endpoints configured")
 }
+
+func TestNodeReadyToRecord(t *testing.T) {
+	// No live provider configured: always ready (preserves behavior without a collector).
+	noProvider := NewWatchdogWithConfig(nil, nil, time.Second, "ROLE_DATA", "p", []string{"data"})
+	assert.True(t, noProvider.nodeReadyToRecord())
+
+	// Provider reports an unresolved role within the grace period: defer recording.
+	unresolved := NewWatchdogWithConfig(nil, nil, time.Second, "", "p", []string{"data"})
+	unresolved.SetNodeInfoProvider(func() (string, map[string]string) { return roleUnspecified, nil })
+	assert.False(t, unresolved.nodeReadyToRecord())
+
+	// Once a resolved role is seen the gate opens and stays open even if it regresses.
+	regress := false
+	flips := NewWatchdogWithConfig(nil, nil, time.Second, "", "p", []string{"data"})
+	flips.SetNodeInfoProvider(func() (string, map[string]string) {
+		if regress {
+			return roleUnspecified, nil
+		}
+		return "ROLE_DATA", map[string]string{"type": "cold"}
+	})
+	assert.True(t, flips.nodeReadyToRecord())
+	regress = true
+	assert.True(t, flips.nodeReadyToRecord(), "should stay ready once resolved")
+
+	// Unresolved but past the grace period: record anyway so metrics are never permanently dropped.
+	stuck := NewWatchdogWithConfig(nil, nil, time.Second, "", "p", []string{"data"})
+	stuck.SetNodeInfoProvider(func() (string, map[string]string) { return roleUnspecified, nil })
+	stuck.startTime = time.Now().Add(-2 * nodeResolveGracePeriod)
+	assert.True(t, stuck.nodeReadyToRecord(), "should record after the grace period even if unresolved")
+}
+
+func TestResolveNodeInfoSticky(t *testing.T) {
+	regress := false
+	wd := NewWatchdogWithConfig(nil, nil, time.Second, "", "p", []string{"data"})
+	wd.SetNodeInfoProvider(func() (string, map[string]string) {
+		if regress {
+			return roleUnspecified, nil
+		}
+		return "ROLE_DATA", map[string]string{"type": "warm"}
+	})
+
+	role, labels := wd.resolveNodeInfo()
+	assert.Equal(t, "ROLE_DATA", role)
+	assert.Equal(t, "warm", labels["type"])
+
+	// Once resolved, a regression to an unresolved role must not be returned, otherwise the
+	// flight recorder buffers a duplicate ghost series under the unresolved identity.
+	regress = true
+	role, labels = wd.resolveNodeInfo()
+	assert.Equal(t, "ROLE_DATA", role, "must stick to the resolved role")
+	assert.Equal(t, "warm", labels["type"], "must stick to the resolved labels")
+}
