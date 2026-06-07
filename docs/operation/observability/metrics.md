@@ -5,251 +5,342 @@ BanyanDB exposes metrics for monitoring and analysis.
 > **Scrape source — the FODC proxy.** In a cluster deployment, metrics are collected by scraping the **FODC proxy** `/metrics` endpoint (see [FODC overview](../fodc/overview.md)), which is the **single Prometheus scrape target**. The proxy aggregates every BanyanDB node's metrics and adds per-node identity labels, so all the PromQL below is written for that scheme:
 >
 > - `$job` — the Prometheus scrape job for the FODC proxy.
-> - `$pod` — a BanyanDB node, matched via the **`pod_name`** label (the full node identity, e.g. `banyandb-data-hot-0`).
 > - `$role` — the node role, matched via the **`container_name`** label (`liaison` or `data`).
+> - `$pod` — a BanyanDB node, matched via the **`pod_name`** label (the full node identity, e.g. `banyandb-data-hot-0`).
 >
-> Because the proxy is the only target, the Prometheus-synthesized `instance`, `job`, and `up` labels describe the **proxy**, not individual BanyanDB nodes — use `$pod` / `$role` to scope a query to a node. Original BanyanDB labels (`group`, `kind`, `method`, `service`, `topic`, `node`, …) are preserved on every sample. `$__rate_interval` is the Grafana rate-interval variable.
+> Because the proxy is the only target, the Prometheus-synthesized `instance`, `job`, and `up` labels describe the **proxy**, not individual BanyanDB nodes — use `$role` / `$pod` to scope a query to a node. Original BanyanDB labels (`group`, `kind`, `method`, `service`, `path`, `operation`, `remote_node`, …) are preserved on every sample. `$__rate_interval` is the Grafana rate-interval variable. Every expression below carries the `{job=~"$job", container_name=~"$role", pod_name=~"$pod"}` selector; a few liaison-only metrics (the write queue and its sync loop) are pinned with the literal `container_name="liaison"` instead.
 >
 > (If you are *not* running the FODC proxy, BanyanDB also exposes its own metrics on port `2121`; scrape each pod directly and substitute the Kubernetes `pod`/`instance` target labels for `$pod` below.)
 
-## Stats
+## Dashboards
 
-`Stats` metrics are used to monitor the overall status of BanyanDB. The following metrics are available:
+The metrics are presented through **two complementary Grafana dashboards**, split by aggregation dimension (see [Metrics Providers](providers.md)):
 
-### Write Rate
+- **[BanyanDB Cluster — Nodes](../grafana-fodc-nodes.json)** — node/pod-level health and resources, aggregated by **`pod_name`**: *Fleet Overview*, *Per-node Health*, *Resources*, *Disk by Path*, and *Go Runtime*.
+- **[BanyanDB Cluster — Workload](../grafana-fodc-workload.json)** — business/data-level throughput and latency, aggregated by **`group`**: *Cluster Workload Summary*, *Liaison: Ingestion, Query & Publish*, *Data: Storage*, *Data: Inverted Index*, and *Data: Internal Queue*.
 
-The write rate is the number of write operations per second. It is calculated by summing the total number of written operations for measures, streams and traces.
+The sections below mirror the two dashboards row-for-row; each metric entry corresponds to one panel and uses that panel's expression. A standalone [Internal queue metrics reference](#internal-queue-metrics-reference-queue_sub--queue_pub) at the end documents the `queue_sub` / `queue_pub` model in depth.
 
-**Expression**: `sum(rate(banyandb_measure_total_written{job=~"$job", pod_name=~"$pod"}[$__rate_interval])) + sum(rate(banyandb_stream_tst_total_written{job=~"$job", pod_name=~"$pod"}[$__rate_interval])) + sum(rate(banyandb_trace_tst_total_written{job=~"$job", pod_name=~"$pod"}[$__rate_interval]))`
+---
 
-### Total Memory
+# Nodes dashboard
 
-The total memory is the total physical memory available on the system, which means total amount of RAM on the system.
+Node and process health, aggregated per `pod_name`. Use this dashboard to find an overloaded, low-on-disk, or restarting node.
 
-**Expression**: `sum(banyandb_system_memory_state{job=~"$job", pod_name=~"$pod", kind="total"})`
+## Fleet Overview
 
-### Disk Usage
-
-The total disk space used across the selected nodes, in bytes (summed over all storage paths). See **Resource Usage → Disk Usage** below for the used/total percentage.
-
-**Expression**: `sum(banyandb_system_disk{job=~"$job", pod_name=~"$pod", kind="used"})`
-
-### Query Rate
-
-The query rate is the number of query operations per second. It is the query rate on the liaison server.
-
-**Expression**: `sum(rate(banyandb_liaison_grpc_total_started{job=~"$job", pod_name=~"$pod", method="query"}[$__rate_interval]))`
-
-### Total CPU
-
-The total CPU is the total number of CPUs available on the system.
-
-**Expression**: `sum(banyandb_system_cpu_num{job=~"$job", pod_name=~"$pod"})`
-
-### Write and Query Errors Rate
-
-The write and query errors rate is the number of write and query errors per minute. It is calculated by summing the total number of write and query errors from liaison and data servers.
-
-Each term is wrapped in `or vector(0)` so the panel reports `0` rather than "No Data" when an error counter has not been registered yet (several error counters are lazily registered on first occurrence).
-
-**Expression**: `(sum(rate(banyandb_liaison_grpc_total_err{job=~"$job", pod_name=~"$pod", method="query"}[$__rate_interval])*60) or vector(0)) + (sum(rate(banyandb_liaison_grpc_total_stream_msg_sent_err{job=~"$job", pod_name=~"$pod"}[$__rate_interval])*60) or vector(0)) + (sum(rate(banyandb_liaison_grpc_total_stream_msg_received_err{job=~"$job", pod_name=~"$pod"}[$__rate_interval])*60) or vector(0)) + (sum(rate(banyandb_queue_sub_total_err{job=~"$job", pod_name=~"$pod"}[$__rate_interval])*60) or vector(0))`
-
-### Registry Operation Rate
-
-The registry operation rate is the number of registry operations per second. It is calculated by summing the total number of registry operations.
-
-**Expression**: `(sum(rate(banyandb_liaison_grpc_total_registry_started{job=~"$job", pod_name=~"$pod"}[$__rate_interval])) or vector(0)) + (sum(rate(banyandb_liaison_grpc_total_started{job=~"$job", pod_name=~"$pod", method!="query"}[$__rate_interval])) or vector(0))`
-
-### Active Instances
+### Reporting Nodes
 
 The number of BanyanDB nodes currently reporting through the FODC proxy. (The Prometheus `up` metric reflects the proxy target, not individual nodes, so node liveness is derived from the per-node `banyandb_system_up_time` gauge instead.)
 
-**Expression**: `count(banyandb_system_up_time{job=~"$job", pod_name=~"$pod"})`
+**Expression**: `count(banyandb_system_up_time{job=~"$job", container_name=~"$role", pod_name=~"$pod"})`
 
-## Resource Usage
+### Nodes by Role
 
-`Resource Usage` metrics are used to monitor the resource usage of BanyanDB on the node. The following metrics are available:
+The reporting-node count broken down by role (`liaison` / `data`), via the `container_name` label.
+
+**Expression**: `count(banyandb_system_up_time{job=~"$job", container_name=~"$role", pod_name=~"$pod"}) by (container_name)`
+
+### Total CPU Cores
+
+The total number of CPU cores across the selected nodes.
+
+**Expression**: `sum(banyandb_system_cpu_num{job=~"$job", container_name=~"$role", pod_name=~"$pod"})`
+
+### Total Memory Used
+
+The total resident memory used across the selected nodes, in bytes.
+
+**Expression**: `sum(banyandb_system_memory_state{job=~"$job", container_name=~"$role", pod_name=~"$pod", kind="used"})`
+
+### Total Disk Used
+
+The total disk space used across the selected nodes, in bytes (summed over all storage paths). See **Resources → Disk Usage %** for the used/total percentage and **Disk by Path** for the per-path breakdown.
+
+**Expression**: `sum(banyandb_system_disk{job=~"$job", container_name=~"$role", pod_name=~"$pod", kind="used"})`
+
+### Node Uptime
+
+The per-node uptime gauge. A value dropping to ~0 indicates a restart; a series disappearing indicates a node that stopped reporting.
+
+**Expression**: `banyandb_system_up_time{job=~"$job", container_name=~"$role", pod_name=~"$pod"}` (one series per `pod_name`)
+
+## Per-node Health
+
+A single table joining the key per-node signals so an unhealthy node stands out at a glance. The columns are the metrics documented in **Resources** below, each reduced `by (pod_name)`:
+
+- Uptime — `banyandb_system_up_time{…}`
+- CPU (cores) — `sum(rate(process_cpu_seconds_total{…}[$__rate_interval])) by (pod_name)`
+- RSS — `sum(process_resident_memory_bytes{…}) by (pod_name)`
+- Memory % — `max(banyandb_system_memory_state{…, kind="used_percent"}) by (pod_name)`
+- Disk % — `sum(banyandb_system_disk{…, kind="used"}) by (pod_name) / sum(banyandb_system_disk{…, kind="total"}) by (pod_name)`
+
+## Resources
+
+`Resources` metrics monitor per-node resource usage.
 
 ### CPU Usage
 
-The CPU usage is the fraction of CPU used per node. If it is over 80%, it may indicate that the CPU is overloaded.
+CPU cores consumed per node. Sustained high utilization correlates with rising query/merge latency.
 
-**Expression**: `max(rate(process_cpu_seconds_total{job=~"$job", pod_name=~"$pod"}[$__rate_interval]) / banyandb_system_cpu_num{job=~"$job", pod_name=~"$pod"}) by (pod_name)`
+**Expression**: `sum(rate(process_cpu_seconds_total{job=~"$job", container_name=~"$role", pod_name=~"$pod"}[$__rate_interval])) by (pod_name)`
 
-### RSS memory usage
+### RSS Memory
 
-The RSS memory usage is the fraction of system memory held as resident memory per node. If it is over 80%, it may indicate that the memory is almost full.
+Resident set size per node, in bytes. The peak over the rate interval is used so transient spikes are not hidden.
 
-**Expression**: `max_over_time(process_resident_memory_bytes{job=~"$job", pod_name=~"$pod"}[$__rate_interval]) / on(pod_name) group_left() sum(banyandb_system_memory_state{job=~"$job", pod_name=~"$pod", kind="total"}) by (pod_name)`
+**Expression**: `max by (pod_name) (max_over_time(process_resident_memory_bytes{job=~"$job", container_name=~"$role", pod_name=~"$pod"}[$__rate_interval]))`
 
-### Disk Usage
+### System Memory %
 
-The disk usage is the percentage of disk space used per node. If the disk usage is over 80%, it may indicate that the disk is almost full.
+The percentage of system memory used per node. As it approaches the memory protector limit (`--allowed-percent`, default 75), query execution is throttled, so high memory surfaces as query slowdown first.
 
-**Expression**: `sum(banyandb_system_disk{job=~"$job", pod_name=~"$pod", kind="used"}) by (pod_name) / sum(banyandb_system_disk{job=~"$job", pod_name=~"$pod", kind="total"}) by (pod_name)`
+**Expression**: `max(banyandb_system_memory_state{job=~"$job", container_name=~"$role", pod_name=~"$pod", kind="used_percent"}) by (pod_name)`
+
+### Disk Usage %
+
+The fraction of disk used per node (summed over all storage paths). BanyanDB rejects writes with `STATUS_DISK_FULL` once usage crosses the disk-full threshold (default 95%), so alert well before that — commonly at ~80–85%.
+
+**Expression**: `sum(banyandb_system_disk{job=~"$job", container_name=~"$role", pod_name=~"$pod", kind="used"}) by (pod_name) / sum(banyandb_system_disk{job=~"$job", container_name=~"$role", pod_name=~"$pod", kind="total"}) by (pod_name)`
 
 ### Network Usage
 
-The network usage is the number of bytes sent and received per second.
+Bytes received and sent per second, per node and interface (`name`).
 
-**Expression1**: `sum(rate(banyandb_system_net_state{job=~"$job", pod_name=~"$pod", kind="bytes_recv"}[$__rate_interval])) by (pod_name, name)`
+**Expression1 (recv)**: `sum(rate(banyandb_system_net_state{job=~"$job", container_name=~"$role", pod_name=~"$pod", kind="bytes_recv"}[$__rate_interval])) by (pod_name, name)`
+**Expression2 (sent)**: `sum(rate(banyandb_system_net_state{job=~"$job", container_name=~"$role", pod_name=~"$pod", kind="bytes_sent"}[$__rate_interval])) by (pod_name, name)`
 
-**Expression2**: `sum(rate(banyandb_system_net_state{job=~"$job", pod_name=~"$pod", kind="bytes_sent"}[$__rate_interval])) by (pod_name, name)`
+## Disk by Path
 
-## Storage
+BanyanDB can place data on multiple storage paths; these panels break `banyandb_system_disk` down by the `path` label so a single full volume is visible even when the node total looks healthy.
 
-`Storage` metrics are used to monitor the storage status of BanyanDB. The following metrics are available:
+### Disk Used by Path
 
-### Write Rate
+**Expression**: `sum(banyandb_system_disk{job=~"$job", container_name=~"$role", pod_name=~"$pod", kind="used"}) by (pod_name, path)`
 
-The write rate is the number of write operations per second for measures, streams and traces, grouped by the `group` tag. The three data types use different `group` values, so they are charted as separate series rather than added together.
+### Disk Total by Path
 
-You can view the write rate of different nodes (`pod_name`) to find out the hot node.
+**Expression**: `sum(banyandb_system_disk{job=~"$job", container_name=~"$role", pod_name=~"$pod", kind="total"}) by (pod_name, path)`
 
-**Expression1**: `sum(rate(banyandb_measure_total_written{job=~"$job", pod_name=~"$pod"}[$__rate_interval])) by (group)`
-**Expression2**: `sum(rate(banyandb_stream_tst_total_written{job=~"$job", pod_name=~"$pod"}[$__rate_interval])) by (group)`
-**Expression3**: `sum(rate(banyandb_trace_tst_total_written{job=~"$job", pod_name=~"$pod"}[$__rate_interval])) by (group)`
+### Disk Used % by Path
 
-### Query Latency
+**Expression**: `sum(banyandb_system_disk{job=~"$job", container_name=~"$role", pod_name=~"$pod", kind="used"}) by (pod_name, path) / sum(banyandb_system_disk{job=~"$job", container_name=~"$role", pod_name=~"$pod", kind="total"}) by (pod_name, path)`
 
-The query latency is the average query latency in seconds. It is calculated by summing the total query latency and dividing by the total number of queries.
+## Go Runtime
 
-You can view the query latency of different nodes to find out the node with high query latency. Because BanyanDB will fetch all nodes to query, the node with high query latency will affect the overall query latency.
+Standard Go process metrics, per node. Rising goroutine counts, GC pause, or allocation rate are early indicators of memory pressure or a leak.
 
-**Expression**: `sum(rate(banyandb_liaison_grpc_total_latency{job=~"$job", pod_name=~"$pod", method="query"}[$__rate_interval])) by (group) / sum(rate(banyandb_liaison_grpc_total_started{job=~"$job", pod_name=~"$pod", method="query"}[$__rate_interval])) by (group)`
+### Goroutines
+
+**Expression**: `sum(go_goroutines{job=~"$job", container_name=~"$role", pod_name=~"$pod"}) by (pod_name)`
+
+### GC Pause (avg)
+
+Average garbage-collection pause, derived from the GC duration summary.
+
+**Expression**: `sum(rate(go_gc_duration_seconds_sum{job=~"$job", container_name=~"$role", pod_name=~"$pod"}[$__rate_interval])) by (pod_name) / sum(rate(go_gc_duration_seconds_count{job=~"$job", container_name=~"$role", pod_name=~"$pod"}[$__rate_interval])) by (pod_name)`
+
+### Heap In-Use
+
+Heap memory currently in use, per node.
+
+**Expression**: `sum(go_memstats_heap_inuse_bytes{job=~"$job", container_name=~"$role", pod_name=~"$pod"}) by (pod_name)`
+
+### Heap Next-GC / Alloc Rate
+
+The heap size that will trigger the next GC, alongside the allocation rate.
+
+**Expression1 (next_gc)**: `sum(go_memstats_next_gc_bytes{job=~"$job", container_name=~"$role", pod_name=~"$pod"}) by (pod_name)`
+**Expression2 (alloc_rate)**: `sum(rate(go_memstats_alloc_bytes_total{job=~"$job", container_name=~"$role", pod_name=~"$pod"}[$__rate_interval])) by (pod_name)`
+
+---
+
+# Workload dashboard
+
+Business- and data-level throughput and latency, aggregated per `group`. Use this dashboard to see which business group / operation is slow, erroring, or backlogged.
+
+## Cluster Workload Summary
+
+Cluster-wide RED stats. Each summand is wrapped in `or vector(0)` so a not-yet-registered counter reports `0` rather than "No Data".
+
+### Cluster Write Rate
+
+Total write operations per second across measures, streams and traces.
+
+**Expression**: `(sum(rate(banyandb_measure_total_written{job=~"$job", container_name=~"$role", pod_name=~"$pod"}[$__rate_interval])) or vector(0)) + (sum(rate(banyandb_stream_tst_total_written{job=~"$job", container_name=~"$role", pod_name=~"$pod"}[$__rate_interval])) or vector(0)) + (sum(rate(banyandb_trace_tst_total_written{job=~"$job", container_name=~"$role", pod_name=~"$pod"}[$__rate_interval])) or vector(0))`
+
+### Cluster Query Rate
+
+Query operations per second on the liaison servers.
+
+**Expression**: `sum(rate(banyandb_liaison_grpc_total_started{job=~"$job", container_name=~"$role", pod_name=~"$pod", method="query"}[$__rate_interval]))`
+
+### Error Rate
+
+Cluster error rate per minute, combining liaison gRPC, registry, stream-receive, queue-publisher, and liaison write-queue sync-loop errors. Several of these counters are lazily registered (absent until the first error), hence the `or vector(0)` guards.
+
+**Expression**: `(sum(rate(banyandb_liaison_grpc_total_err{job=~"$job", container_name=~"$role", pod_name=~"$pod"}[$__rate_interval])*60) or vector(0)) + (sum(rate(banyandb_liaison_grpc_total_registry_err{job=~"$job", container_name=~"$role", pod_name=~"$pod"}[$__rate_interval])*60) or vector(0)) + (sum(rate(banyandb_liaison_grpc_total_stream_msg_received_err{job=~"$job", container_name=~"$role", pod_name=~"$pod"}[$__rate_interval])*60) or vector(0)) + (sum(rate(banyandb_queue_pub_total_err{job=~"$job", container_name=~"$role", pod_name=~"$pod"}[$__rate_interval])*60) or vector(0)) + (sum(rate(banyandb_measure_total_sync_loop_err{job=~"$job", container_name="liaison", pod_name=~"$pod"}[$__rate_interval])*60) or vector(0)) + (sum(rate(banyandb_stream_tst_total_sync_loop_err{job=~"$job", container_name="liaison", pod_name=~"$pod"}[$__rate_interval])*60) or vector(0)) + (sum(rate(banyandb_trace_tst_total_sync_loop_err{job=~"$job", container_name="liaison", pod_name=~"$pod"}[$__rate_interval])*60) or vector(0))`
+
+## Liaison: Ingestion, Query & Publish
+
+The liaison node's front door — gRPC ingestion/query, the schema registry, the on-disk write queue (wqueue), and the tier-2 publish pipeline to data nodes.
+
+### Query Rate by Service
+
+Query rate split by the `service` label (measure / stream / trace / property / topn).
+
+**Expression**: `sum(rate(banyandb_liaison_grpc_total_started{job=~"$job", container_name=~"$role", pod_name=~"$pod", method="query"}[$__rate_interval])) by (service)`
+
+### Query Latency by Group
+
+Average query latency in seconds, per `group` — total latency divided by total started. Because a distributed query fans out to all nodes, the slowest group dominates the overall query latency.
+
+**Expression**: `sum(rate(banyandb_liaison_grpc_total_latency{job=~"$job", container_name=~"$role", pod_name=~"$pod", method="query"}[$__rate_interval])) by (group) / sum(rate(banyandb_liaison_grpc_total_started{job=~"$job", container_name=~"$role", pod_name=~"$pod", method="query"}[$__rate_interval])) by (group)`
+
+### gRPC Error Rate
+
+Liaison error rate, broken down by `service`/`method`, plus registry and stream-receive errors. All terms are lazily registered, so they are simply absent on a healthy cluster.
+
+**Expression1 (grpc, by service/method)**: `sum(rate(banyandb_liaison_grpc_total_err{job=~"$job", container_name=~"$role", pod_name=~"$pod"}[$__rate_interval])) by (service, method)`
+**Expression2 (registry)**: `sum(rate(banyandb_liaison_grpc_total_registry_err{job=~"$job", container_name=~"$role", pod_name=~"$pod"}[$__rate_interval]))`
+**Expression3 (stream recv)**: `sum(rate(banyandb_liaison_grpc_total_stream_msg_received_err{job=~"$job", container_name=~"$role", pod_name=~"$pod"}[$__rate_interval]))`
+
+### Registry Operation Rate
+
+The rate of schema-registry operations and non-query gRPC calls.
+
+**Expression1 (registry)**: `sum(rate(banyandb_liaison_grpc_total_registry_started{job=~"$job", container_name=~"$role", pod_name=~"$pod"}[$__rate_interval]))`
+**Expression2 (non-query)**: `sum(rate(banyandb_liaison_grpc_total_started{job=~"$job", container_name=~"$role", pod_name=~"$pod", method!="query"}[$__rate_interval]))`
+
+### Write Rate by Group
+
+Write operations per second on the liaison, per `group`, for measures, streams and traces (charted as separate series rather than added, since each data type uses different `group` values).
+
+**Expression1**: `sum(rate(banyandb_measure_total_written{job=~"$job", container_name=~"$role", pod_name=~"$pod"}[$__rate_interval])) by (group)`
+**Expression2**: `sum(rate(banyandb_stream_tst_total_written{job=~"$job", container_name=~"$role", pod_name=~"$pod"}[$__rate_interval])) by (group)`
+**Expression3**: `sum(rate(banyandb_trace_tst_total_written{job=~"$job", container_name=~"$role", pod_name=~"$pod"}[$__rate_interval])) by (group)`
+
+### Publish Throughput & Success
+
+The tier-2 publisher's success throughput by `operation`, alongside file-sync bytes sent by `group`. See the [queue reference](#internal-queue-metrics-reference-queue_sub--queue_pub) for the full model.
+
+**Expression1 (success)**: `sum(rate(banyandb_queue_pub_total_finished{job=~"$job", container_name=~"$role", pod_name=~"$pod"}[$__rate_interval])) by (operation)`
+**Expression2 (bytes)**: `sum(rate(banyandb_queue_pub_sent_bytes{job=~"$job", container_name=~"$role", pod_name=~"$pod"}[$__rate_interval])) by (group)`
+
+### Write Queue Length (wqueue)
+
+The liaison buffers writes in an **on-disk write queue (wqueue)** before syncing each part to the data nodes. These gauges (scoped with the literal `container_name="liaison"`) expose the queue depth per `pod_name`/`group`. The wqueue accumulates on disk — it does not drop data after a fixed window — so a sustained rise in any of these, especially `pending`, signals a slow or unavailable downstream data node and can eventually fill the liaison disk (`STATUS_DISK_FULL`). The matching `*_total_sync_loop_*` counters (`started`/`finished`/`latency`/`bytes`, and the lazily-registered `*_total_sync_loop_err`) describe the loop that drains it.
+
+**Expression1 (file parts)**: `sum(banyandb_{measure,stream_tst,trace_tst}_total_file_parts{job=~"$job", container_name="liaison", pod_name=~"$pod"}) by (pod_name, group)`
+**Expression2 (mem parts)**: `sum(banyandb_{measure,stream_tst,trace_tst}_total_mem_part{job=~"$job", container_name="liaison", pod_name=~"$pod"}) by (pod_name, group)`
+**Expression3 (pending)**: `sum(banyandb_{measure,stream_tst,trace_tst}_pending_data_count{job=~"$job", container_name="liaison", pod_name=~"$pod"}) by (pod_name, group)`
+
+> The panel charts all three families for `measure`, `stream_tst` and `trace_tst` as separate series (nine queries); the `{measure,stream_tst,trace_tst}` brace above is shorthand for the three concrete metric names.
+
+### Publish Send Latency p99
+
+The 99th-percentile tier-2 send latency, per `operation`, from the publisher latency histogram.
+
+**Expression**: `histogram_quantile(0.99, sum(rate(banyandb_queue_pub_total_latency_bucket{job=~"$job", container_name=~"$role", pod_name=~"$pod"}[$__rate_interval])) by (le, operation))`
+
+## Data: Storage
+
+`Storage` metrics monitor the data nodes' on-disk state, grouped by the `group` tag. View different `pod_name`s to find a hot node or uneven data distribution.
 
 ### Total Data
 
-The total data is the total number of data points stored in BanyanDB. It's grouped by the `group` tag.
+The total number of data elements (points/rows) stored, per `group`, for measures, streams and traces.
 
-You can view the total data of different nodes to find out the node with high data points. If the difference between the total data of different nodes is too large, it may indicate that the data is not evenly distributed.
-
-**Expression1**: `sum(banyandb_measure_total_file_elements{job=~"$job", pod_name=~"$pod"}) by (group)`
-**Expression2**: `sum(banyandb_stream_tst_total_file_elements{job=~"$job", pod_name=~"$pod"}) by (group)`
-**Expression3**: `sum(banyandb_trace_tst_total_file_elements{job=~"$job", pod_name=~"$pod"}) by (group)`
+**Expression1**: `sum(banyandb_measure_total_file_elements{job=~"$job", container_name=~"$role", pod_name=~"$pod"}) by (group)`
+**Expression2**: `sum(banyandb_stream_tst_total_file_elements{job=~"$job", container_name=~"$role", pod_name=~"$pod"}) by (group)`
+**Expression3**: `sum(banyandb_trace_tst_total_file_elements{job=~"$job", container_name=~"$role", pod_name=~"$pod"}) by (group)`
 
 ### Merge File Rate
 
-The merge file rate is the number of merge file operations per minute. It is calculated by summing the total number of merge file operations. It's grouped by the `group` tag.
+Merge-file operations per minute, per `group`. A surge means many small files are being merged, which raises disk I/O and CPU and can slow queries.
 
-If the value surges, it may indicate that too many small files are being merged. It may bring following problems:
-
-- Increase the disk I/O
-- Slow down the query performance
-- Increase the CPU usage
-
-**Expression1**: `sum(rate(banyandb_measure_total_merge_loop_started{job=~"$job", pod_name=~"$pod"}[$__rate_interval])) by (group) * 60`
-**Expression2**: `sum(rate(banyandb_stream_tst_total_merge_loop_started{job=~"$job", pod_name=~"$pod"}[$__rate_interval])) by (group) * 60`
-**Expression3**: `sum(rate(banyandb_trace_tst_total_merge_loop_started{job=~"$job", pod_name=~"$pod"}[$__rate_interval])) by (group) * 60`
+**Expression1**: `sum(rate(banyandb_measure_total_merge_loop_started{job=~"$job", container_name=~"$role", pod_name=~"$pod"}[$__rate_interval])) by (group) * 60`
+**Expression2**: `sum(rate(banyandb_stream_tst_total_merge_loop_started{job=~"$job", container_name=~"$role", pod_name=~"$pod"}[$__rate_interval])) by (group) * 60`
+**Expression3**: `sum(rate(banyandb_trace_tst_total_merge_loop_started{job=~"$job", container_name=~"$role", pod_name=~"$pod"}[$__rate_interval])) by (group) * 60`
 
 ### Merge File Latency
 
-The merge file latency is the average merge file latency in seconds. It is calculated by summing the total merge file latency and dividing by the total number of merge file operations. It's grouped by the `group` tag.
+Average merge-file latency in seconds, per `group` (total merge latency ÷ merge operations). A surge indicates slow merges, often from high disk I/O.
 
-If the value surges, it may indicate that the merge file operation is slow. It may be caused by the high disk I/O and other resource usage. It may bring following problems:
-
-- Slow down the query performance
-- Increase the CPU usage
-- Increase the memory usage
-
-**Expression1**: `sum(rate(banyandb_measure_total_merge_latency{job=~"$job", pod_name=~"$pod", type="file"}[$__rate_interval])) by (group) / sum(rate(banyandb_measure_total_merge_loop_started{job=~"$job", pod_name=~"$pod"}[$__rate_interval])) by (group)`
-**Expression2**: `sum(rate(banyandb_stream_tst_total_merge_latency{job=~"$job", pod_name=~"$pod", type="file"}[$__rate_interval])) by (group) / sum(rate(banyandb_stream_tst_total_merge_loop_started{job=~"$job", pod_name=~"$pod"}[$__rate_interval])) by (group)`
-**Expression3**: `sum(rate(banyandb_trace_tst_total_merge_latency{job=~"$job", pod_name=~"$pod", type="file"}[$__rate_interval])) by (group) / sum(rate(banyandb_trace_tst_total_merge_loop_started{job=~"$job", pod_name=~"$pod"}[$__rate_interval])) by (group)`
+**Expression1**: `sum(rate(banyandb_measure_total_merge_latency{job=~"$job", container_name=~"$role", pod_name=~"$pod", type="file"}[$__rate_interval])) by (group) / sum(rate(banyandb_measure_total_merge_loop_started{job=~"$job", container_name=~"$role", pod_name=~"$pod"}[$__rate_interval])) by (group)`
+**Expression2**: `sum(rate(banyandb_stream_tst_total_merge_latency{job=~"$job", container_name=~"$role", pod_name=~"$pod", type="file"}[$__rate_interval])) by (group) / sum(rate(banyandb_stream_tst_total_merge_loop_started{job=~"$job", container_name=~"$role", pod_name=~"$pod"}[$__rate_interval])) by (group)`
+**Expression3**: `sum(rate(banyandb_trace_tst_total_merge_latency{job=~"$job", container_name=~"$role", pod_name=~"$pod", type="file"}[$__rate_interval])) by (group) / sum(rate(banyandb_trace_tst_total_merge_loop_started{job=~"$job", container_name=~"$role", pod_name=~"$pod"}[$__rate_interval])) by (group)`
 
 ### Merge File Partitions
 
-The merge file partitions is the average number of partitions merged per merge file operation. It is calculated by summing the total number of partitions merged and dividing by the total number of merge file operations. It's grouped by the `group` tag.
+Average number of partitions merged per merge-file operation, per `group` (merged parts ÷ merge operations). A surge suggests the server is under heavy write load.
 
-If the value surges, it may indicate that too many partitions are being merged. It may because the partition number is too large that indicates the server is under a high write load.
+**Expression1**: `sum(rate(banyandb_measure_total_merged_parts{job=~"$job", container_name=~"$role", pod_name=~"$pod", type="file"}[$__rate_interval])) by (group) / sum(rate(banyandb_measure_total_merge_loop_started{job=~"$job", container_name=~"$role", pod_name=~"$pod"}[$__rate_interval])) by (group)`
+**Expression2**: `sum(rate(banyandb_stream_tst_total_merged_parts{job=~"$job", container_name=~"$role", pod_name=~"$pod", type="file"}[$__rate_interval])) by (group) / sum(rate(banyandb_stream_tst_total_merge_loop_started{job=~"$job", container_name=~"$role", pod_name=~"$pod"}[$__rate_interval])) by (group)`
+**Expression3**: `sum(rate(banyandb_trace_tst_total_merged_parts{job=~"$job", container_name=~"$role", pod_name=~"$pod", type="file"}[$__rate_interval])) by (group) / sum(rate(banyandb_trace_tst_total_merge_loop_started{job=~"$job", container_name=~"$role", pod_name=~"$pod"}[$__rate_interval])) by (group)`
 
-**Expression1**: `sum(rate(banyandb_measure_total_merged_parts{job=~"$job", pod_name=~"$pod", type="file"}[$__rate_interval])) by (group) / sum(rate(banyandb_measure_total_merge_loop_started{job=~"$job", pod_name=~"$pod"}[$__rate_interval])) by (group)`
-**Expression2**: `sum(rate(banyandb_stream_tst_total_merged_parts{job=~"$job", pod_name=~"$pod", type="file"}[$__rate_interval])) by (group) / sum(rate(banyandb_stream_tst_total_merge_loop_started{job=~"$job", pod_name=~"$pod"}[$__rate_interval])) by (group)`
-**Expression3**: `sum(rate(banyandb_trace_tst_total_merged_parts{job=~"$job", pod_name=~"$pod", type="file"}[$__rate_interval])) by (group) / sum(rate(banyandb_trace_tst_total_merge_loop_started{job=~"$job", pod_name=~"$pod"}[$__rate_interval])) by (group)`
+## Data: Inverted Index
+
+`Inverted Index` metrics monitor the series index of measures and streams, grouped by the `group` tag. Rapid growth or churn signals a cardinality problem that bloats the index and slows queries.
 
 ### Series Write Rate
 
-The series write rate is the number of series write operations per second. It is calculated by summing the total number of series write operations for measures and streams. It's grouped by the `group` tag.
+Series index update operations per second, per `group`, for measures and streams.
 
-If the value surges, it may indicate that the old series are being updated frequently by the new series. It may be caused by the high cardinality of the series and bring following problems:
+**Expression1 (measure)**: `sum(rate(banyandb_measure_inverted_index_total_updates{job=~"$job", container_name=~"$role", pod_name=~"$pod"}[$__rate_interval])) by (group)`
+**Expression2 (stream)**: `sum(rate(banyandb_stream_storage_inverted_index_total_updates{job=~"$job", container_name=~"$role", pod_name=~"$pod"}[$__rate_interval])) by (group)`
 
-- Increase the series inverted index size
-- Slow down the query performance
+### Series Term Search Rate
 
-**Expression1**: `sum(rate(banyandb_measure_inverted_index_total_updates{job=~"$job", pod_name=~"$pod"}[$__rate_interval])) by (group)`
-**Expression2**: `sum(rate(banyandb_stream_storage_inverted_index_total_updates{job=~"$job", pod_name=~"$pod"}[$__rate_interval])) by (group)`
+Series term-search operations per second, per `group`. A high value means reads are fetching many series — often a high-cardinality symptom.
 
-#### Series Term Search Rate
-
-The series term search rate is the number of series term search operations per second. It is calculated by summing the total number of series term search operations for measures and streams. It's grouped by the `group` tag.
-
-If the value is too large, it may indicate that reading operation fetch too many series. It may be caused by the high cardinality of the series and bring following problems:
-
-- Slow down the query performance
-- Increase the CPU usage
-- Increase the memory usage
-
-**Expression1**: `sum(rate(banyandb_stream_storage_inverted_index_total_term_searchers_started{job=~"$job", pod_name=~"$pod"}[$__rate_interval])) by (group)`
-**Expression2**: `sum(rate(banyandb_measure_inverted_index_total_term_searchers_started{job=~"$job", pod_name=~"$pod"}[$__rate_interval])) by (group)`
+**Expression1 (measure)**: `sum(rate(banyandb_measure_inverted_index_total_term_searchers_started{job=~"$job", container_name=~"$role", pod_name=~"$pod"}[$__rate_interval])) by (group)`
+**Expression2 (stream)**: `sum(rate(banyandb_stream_storage_inverted_index_total_term_searchers_started{job=~"$job", container_name=~"$role", pod_name=~"$pod"}[$__rate_interval])) by (group)`
 
 ### Total Series
 
-The total series is the total number of series stored in BanyanDB. It's grouped by the `group` tag.
+The total number of series (index documents) stored, per `group`, for measures and streams.
 
-If the value is too large, it may indicate that the high cardinality of the series. It may bring following problems:
+**Expression1 (measure)**: `sum(banyandb_measure_inverted_index_total_doc_count{job=~"$job", container_name=~"$role", pod_name=~"$pod"}) by (group)`
+**Expression2 (stream)**: `sum(banyandb_stream_storage_inverted_index_total_doc_count{job=~"$job", container_name=~"$role", pod_name=~"$pod"}) by (group)`
 
-- Increase the series inverted index size
-- Slow down the query performance
+### Stream tst: Write Rate
 
-**Expression1**: `sum(banyandb_measure_inverted_index_total_doc_count{job=~"$job", pod_name=~"$pod"}) by (group)`
-**Expression2**: `sum(banyandb_stream_storage_inverted_index_total_doc_count{job=~"$job", pod_name=~"$pod"}) by (group)`
+Write rate into the stream **time-series-table (tst) inverted index** (the per-element index, distinct from the series index above), per `group`.
 
-## Stream Inverted Index
+**Expression**: `sum(rate(banyandb_stream_tst_inverted_index_total_updates{job=~"$job", container_name=~"$role", pod_name=~"$pod"}[$__rate_interval])) by (group)`
 
-`Stream Inverted Index` metrics are used to monitor the stream inverted index status of BanyanDB. The following metrics are available:
+### Stream tst: Term Search Rate
 
-### Stream Inverted Index Write Rate
+Term-search rate on the stream tst inverted index, per `group`.
 
-The write rate is the number of write operations per second. It is calculated by summing the total number of written operations for streams. It's grouped by the `group` tag.
+**Expression**: `sum(rate(banyandb_stream_tst_inverted_index_total_term_searchers_started{job=~"$job", container_name=~"$role", pod_name=~"$pod"}[$__rate_interval])) by (group)`
 
-If the value is too large, it may indicate that too many data points are being indexed and bring following problems:
+### Stream tst: Total Documents
 
-- Increase the inverted index size
-- Slow down the query performance
-- Increase the CPU usage
-- Increase the memory usage
+Total documents in the stream tst inverted index, per `group`.
 
-**Expression**: `sum(rate(banyandb_stream_tst_inverted_index_total_updates{job=~"$job", pod_name=~"$pod"}[$__rate_interval])) by (group)`
+**Expression**: `sum(banyandb_stream_tst_inverted_index_total_doc_count{job=~"$job", container_name=~"$role", pod_name=~"$pod"}) by (group)`
 
-### Term Search Rate
+## Data: Internal Queue
 
-The term search rate is the number of term search operations per second. It is calculated by summing the total number of term search operations for streams. It's grouped by the `group` tag.
+One panel per queue **operation**, each showing subscribe throughput (`started`/`finished`) and p99 latency, broken down by `group`. These are the data-node (subscribe) view of the internal queue; the full model is in the [queue reference](#internal-queue-metrics-reference-queue_sub--queue_pub). The four operations are `query`, `file-sync`, `batch-write` and `control`.
 
-If the value is too large, it may indicate that reading operation fetch too many data points. It may bring following problems:
+Each panel uses the same three expressions, with `operation` pinned to the panel's value (`<op>` ∈ `query` | `file-sync` | `batch-write` | `control`):
 
-- Slow down the query performance
-- Increase the CPU usage
-- Increase the memory usage
+**Started**: `sum(rate(banyandb_queue_sub_total_started{job=~"$job", container_name=~"$role", pod_name=~"$pod", operation="<op>"}[$__rate_interval])) by (group)`
+**Finished**: `sum(rate(banyandb_queue_sub_total_finished{job=~"$job", container_name=~"$role", pod_name=~"$pod", operation="<op>"}[$__rate_interval])) by (group)`
+**p99 latency**: `histogram_quantile(0.99, sum(rate(banyandb_queue_sub_total_latency_bucket{job=~"$job", container_name=~"$role", pod_name=~"$pod", operation="<op>"}[$__rate_interval])) by (le, group))`
 
-**Expression**: `sum(rate(banyandb_stream_tst_inverted_index_total_term_searchers_started{job=~"$job", pod_name=~"$pod"}[$__rate_interval])) by (group)`
+> `batch-write` covers both plain writes and the secondary-index sync (measure/stream series-index, stream local-index, trace sidx-series). All of these carry their business `group`, so the per-group breakdown is complete for every operation.
 
-### Total Documents
+---
 
-The total documents is the total number of documents stored in the stream inverted index. It's grouped by the `group` tag.
+# Internal queue metrics reference (`queue_sub` / `queue_pub`)
 
-If the value is too large, it may indicate that too many data points are being indexed and bring following problems:
+Liaison nodes run an internal gRPC **queue server** (`server-queue-sub`, wired via `sub.NewServerWithPorts` in `pkg/cmdsetup/liaison.go`) and **queue clients** (`server-queue-pub`) for the tier-1/tier-2 pipelines. Prometheus metrics use the namespaces `banyandb_queue_sub_*` and `banyandb_queue_pub_*` (built from `observability.RootScope` + `queue_sub` / `queue_pub` sub-scopes). Data nodes expose the same families where the corresponding services run.
 
-- Increase the inverted index size
-- Slow down the query performance
-- Increase the CPU usage
-- Increase the memory usage
-
-**Expression**: `sum(banyandb_stream_tst_inverted_index_total_doc_count{job=~"$job", pod_name=~"$pod"}) by (group)`
-
-## Liaison internal queue (`queue_sub` / `queue_pub`)
-
-Liaison nodes run an internal gRPC **queue server** (`server-queue-sub`, wired via `sub.NewServerWithPorts` in `pkg/cmdsetup/liaison.go`) and **queue clients** (`server-queue-pub`) for tier-1/tier-2 pipelines. Prometheus metrics use the namespaces `banyandb_queue_sub_*` and `banyandb_queue_pub_*` (built from `observability.RootScope` + `queue_sub` / `queue_pub` sub-scopes). Data nodes may expose the same metric families where the corresponding services run.
-
-Both namespaces share one model: the base metrics `total_started`, `total_finished`, `total_latency` (histogram), and `total_err`, labeled by `operation` (`batch-write` / `file-sync` / `query` / `control`) and `group`, plus the **remote endpoint** of the flow — `remote_node` (the peer's BanyanDB node name, equal to its `/cluster/topology` `metadata.name`), `remote_role` (`liaison` / `data`), and `remote_tier` (`hot` / `warm` / `cold`, data only). `total_err` adds an `error_type` label. File-sync additionally exposes byte counters: `sent_bytes` (pub) and `received_bytes` (sub). The **local** end of each flow is the scrape target itself (`pod_name` / `node_role` / `node_type` from the FODC proxy), so joining the scrape labels with the `remote_*` labels reconstructs the liaison↔data(hot/warm/cold) call graph.
+Both namespaces share one model: the base metrics `total_started`, `total_finished`, `total_latency` (a histogram), and `total_err`, labeled by `operation` (`batch-write` / `file-sync` / `query` / `control`) and `group`, plus the **remote endpoint** of the flow — `remote_node` (the peer's BanyanDB node name, equal to its `/cluster/topology` `metadata.name`), `remote_role` (`liaison` / `data`), and `remote_tier` (`hot` / `warm` / `cold`, data only). `total_err` adds an `error_type` label. File-sync additionally exposes byte counters: `sent_bytes` (pub) and `received_bytes` (sub). The **local** end of each flow is the scrape target itself (`pod_name` / `node_role` / `node_type` from the FODC proxy), so joining the scrape labels with the `remote_*` labels reconstructs the liaison↔data(hot/warm/cold) call graph.
 
 ### `queue_sub` — inbound server
 
@@ -279,12 +370,12 @@ Metrics are only registered when `metadata` implements `metadata.Service` and `M
 
 Saturation (scope by node with the proxy labels):
 
-- **Subscribe throughput:** `sum(rate(banyandb_queue_sub_total_started{job=~"$job", pod_name=~"$pod"}[$__rate_interval])) by (operation)` (and the matching `banyandb_queue_sub_total_finished`)
-- **Subscribe p99 latency:** `histogram_quantile(0.99, sum(rate(banyandb_queue_sub_total_latency_bucket{job=~"$job", pod_name=~"$pod"}[$__rate_interval])) by (le, operation))`
-- **Part-sync bytes received:** `sum(rate(banyandb_queue_sub_received_bytes{job=~"$job", pod_name=~"$pod"}[$__rate_interval])) by (group)`
-- **Publisher success rate:** `sum(rate(banyandb_queue_pub_total_finished{job=~"$job", pod_name=~"$pod"}[$__rate_interval])) by (operation)`
-- **Publisher errors by type:** `sum(rate(banyandb_queue_pub_total_err{job=~"$job", pod_name=~"$pod"}[$__rate_interval])) by (operation, error_type)`
-- **Publisher file-sync bytes sent (by tier):** `sum(rate(banyandb_queue_pub_sent_bytes{job=~"$job", pod_name=~"$pod"}[$__rate_interval])) by (remote_tier)`
+- **Subscribe throughput:** `sum(rate(banyandb_queue_sub_total_started{job=~"$job", container_name=~"$role", pod_name=~"$pod"}[$__rate_interval])) by (operation)` (and the matching `banyandb_queue_sub_total_finished`)
+- **Subscribe p99 latency:** `histogram_quantile(0.99, sum(rate(banyandb_queue_sub_total_latency_bucket{job=~"$job", container_name=~"$role", pod_name=~"$pod"}[$__rate_interval])) by (le, operation))`
+- **File-sync bytes received:** `sum(rate(banyandb_queue_sub_received_bytes{job=~"$job", container_name=~"$role", pod_name=~"$pod"}[$__rate_interval])) by (group)`
+- **Publisher success rate:** `sum(rate(banyandb_queue_pub_total_finished{job=~"$job", container_name=~"$role", pod_name=~"$pod"}[$__rate_interval])) by (operation)`
+- **Publisher errors by type:** `sum(rate(banyandb_queue_pub_total_err{job=~"$job", container_name=~"$role", pod_name=~"$pod"}[$__rate_interval])) by (operation, error_type)`
+- **Publisher file-sync bytes sent (by tier):** `sum(rate(banyandb_queue_pub_sent_bytes{job=~"$job", container_name=~"$role", pod_name=~"$pod"}[$__rate_interval])) by (remote_tier)`
 
 **Suggested alerts (tune thresholds per cluster):**
 
@@ -293,6 +384,6 @@ Saturation (scope by node with the proxy labels):
 
 ### Aggregate pipeline error rate (optional)
 
-To combine subscribe-side and publisher-side queue failures (per minute scaling as elsewhere in this doc; each term wrapped in `or vector(0)` so a missing counter doesn't blank the result):
+To combine subscribe-side and publisher-side queue failures (per-minute scaling as elsewhere in this doc; each term wrapped in `or vector(0)` so a missing counter doesn't blank the result):
 
-**Expression**: `(sum(rate(banyandb_queue_sub_total_err{job=~"$job", pod_name=~"$pod"}[$__rate_interval])*60) or vector(0)) + (sum(rate(banyandb_queue_pub_total_err{job=~"$job", pod_name=~"$pod"}[$__rate_interval])*60) or vector(0))`
+**Expression**: `(sum(rate(banyandb_queue_sub_total_err{job=~"$job", container_name=~"$role", pod_name=~"$pod"}[$__rate_interval])*60) or vector(0)) + (sum(rate(banyandb_queue_pub_total_err{job=~"$job", container_name=~"$role", pod_name=~"$pod"}[$__rate_interval])*60) or vector(0))`
