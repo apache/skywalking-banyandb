@@ -24,9 +24,14 @@ import (
 
 	"github.com/spf13/cobra"
 
+	"github.com/apache/skywalking-banyandb/api/data"
+	"github.com/apache/skywalking-banyandb/banyand/liaison/grpc"
 	"github.com/apache/skywalking-banyandb/banyand/metadata"
+	"github.com/apache/skywalking-banyandb/banyand/observability/services"
+	"github.com/apache/skywalking-banyandb/banyand/queue/pub"
 	"github.com/apache/skywalking-banyandb/pkg/config"
 	"github.com/apache/skywalking-banyandb/pkg/logger"
+	"github.com/apache/skywalking-banyandb/pkg/node"
 	"github.com/apache/skywalking-banyandb/pkg/panicdiag"
 	"github.com/apache/skywalking-banyandb/pkg/run"
 	"github.com/apache/skywalking-banyandb/pkg/signal"
@@ -41,9 +46,22 @@ func NewCommand() *cobra.Command {
 	if err != nil {
 		logger.GetLogger().Err(err).Msg("failed to initiate metadata service")
 	}
-	svc := NewService(metaSvc)
+	// Native metrics pipeline: a queue client that publishes _monitoring measure
+	// writes to the co-located data node over gRPC. It is created idle here (no
+	// dial until a node is registered); the lifecycle service registers the local
+	// data node — with its --grpc-addr, known only after flag parsing — during its
+	// Serve phase when native mode is enabled.
+	metricsClient := pub.NewWithoutMetadata()
+	nodeSelector, _ := node.NewPickFirstSelector()
+	nodeRegistry := grpc.NewClusterNodeRegistry(data.TopicMeasureWrite, metricsClient, nodeSelector)
+	// Listener-suppressed: the lifecycle reuses its own HTTP port for /metrics
+	// instead of opening the observability :2121 listener.
+	metricSvc := services.NewMetricServiceWithoutListener(metaSvc, metricsClient, "lifecycle", nodeRegistry)
+	svc := NewService(metaSvc, metricSvc, metricsClient, nodeRegistry)
 	group := run.NewGroup("lifecycle")
-	group.Register(new(signal.Handler), metaSvc, svc)
+	// metricSvc is registered before svc so its PreRun (building the providers)
+	// runs first; svc.PreRun then safely derives its proof counter from it.
+	group.Register(new(signal.Handler), metaSvc, metricSvc, svc)
 	cmd := &cobra.Command{
 		Short:             "Run lifecycle migration",
 		DisableAutoGenTag: true,
@@ -64,7 +82,13 @@ func NewCommand() *cobra.Command {
 					os.Exit(-1)
 				}
 			}()
-			if err := group.Run(context.Background()); err != nil {
+			runCtx := context.Background()
+			if metricSvc.NativeEnabled() {
+				// Native mode stamps the lifecycle node identity onto every
+				// _monitoring series; the metric service reads it from the context.
+				runCtx = nativeNodeContext(runCtx)
+			}
+			if err := group.Run(runCtx); err != nil {
 				logger.GetLogger().Error().Err(err).Stack().Str("name", group.Name()).Msg("Exit")
 				os.Exit(-1)
 			}
