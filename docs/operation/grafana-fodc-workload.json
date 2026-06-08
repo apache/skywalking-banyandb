@@ -386,14 +386,14 @@
             "uid": "${DS_PROMETHEUS}"
           },
           "editorMode": "code",
-          "expr": "sum(rate(banyandb_liaison_grpc_total_started{job=~\"$job\", container_name=~\"$role\", pod_name=~\"$pod\", method=\"query\", group=~\"$group\"}[$__rate_interval])) by (service, group)",
+          "expr": "sum(rate(banyandb_liaison_grpc_total_started{job=~\"$job\", container_name=~\"$role\", pod_name=~\"$pod\", method=\"query\", group=~\"$group\"}[$__rate_interval])) by (group)",
           "instant": false,
-          "legendFormat": "{{service}} {{group}}",
+          "legendFormat": "{{group}}",
           "range": true,
           "refId": "A"
         }
       ],
-      "title": "Query Rate by Service",
+      "title": "Query Rate by Group",
       "type": "timeseries"
     },
     {
