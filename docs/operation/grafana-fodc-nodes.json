@@ -591,7 +591,7 @@
             "uid": "${DS_PROMETHEUS}"
           },
           "editorMode": "code",
-          "expr": "sum(banyandb_system_disk{job=~\"$job\", container_name=~\"$role\", pod_name=~\"$pod\",kind=\"used\"}) by (pod_name) / sum(banyandb_system_disk{job=~\"$job\", container_name=~\"$role\", pod_name=~\"$pod\",kind=\"total\"}) by (pod_name)",
+          "expr": "max by (pod_name) (  banyandb_system_disk{job=~\"$job\", container_name=~\"$role\", pod_name=~\"$pod\",kind=\"used\"}  / on (pod_name, path)   banyandb_system_disk{job=~\"$job\", container_name=~\"$role\", pod_name=~\"$pod\",kind=\"total\"})",
           "instant": true,
           "legendFormat": "",
           "range": false,
