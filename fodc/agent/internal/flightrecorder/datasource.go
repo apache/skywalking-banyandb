@@ -256,6 +256,27 @@ func (ds *Datasource) GetTimestamps() *TimestampRingBuffer {
 	return ds.timestamps
 }
 
+// GetCurrentSnapshot returns the latest value of every metric together with the
+// latest timestamp, all captured under a single lock. UpdateBatch mutates under
+// the same lock, so the returned values and timestamp always belong to the same
+// batch: callers never observe a mix of an old metric value and a new timestamp
+// (or vice versa) while an UpdateBatch is in flight. The map is keyed by the same
+// metric key as GetMetrics.
+func (ds *Datasource) GetCurrentSnapshot() (map[string]float64, int64) {
+	ds.mu.RLock()
+	defer ds.mu.RUnlock()
+
+	values := make(map[string]float64, len(ds.metrics))
+	for k, buffer := range ds.metrics {
+		values[k] = buffer.GetCurrentValue()
+	}
+	var timestamp int64
+	if ds.timestamps != nil {
+		timestamp = ds.timestamps.GetCurrentValue()
+	}
+	return values, timestamp
+}
+
 // GetDescriptions returns a copy of the descriptions map.
 func (ds *Datasource) GetDescriptions() map[string]string {
 	ds.mu.RLock()

@@ -514,9 +514,10 @@ func TestDatasource_UpdateBatch_ConcurrentReadsDuringUpdate(t *testing.T) {
 			// Wait for batch update to start
 			<-batchStart
 
-			// Try to read during batch update
-			metricsMap := ds.GetMetrics()
-			timestamps := ds.GetTimestamps()
+			// Try to read during batch update. GetCurrentSnapshot reads every
+			// value plus the timestamp under a single lock, so it always returns a
+			// coherent view of one batch even while UpdateBatch is in flight.
+			values, ts := ds.GetCurrentSnapshot()
 
 			readResults[idx] = struct {
 				metric1Value float64
@@ -524,10 +525,10 @@ func TestDatasource_UpdateBatch_ConcurrentReadsDuringUpdate(t *testing.T) {
 				metric3Value float64
 				timestamp    int64
 			}{
-				metric1Value: metricsMap["metric1"].GetCurrentValue(),
-				metric2Value: metricsMap["metric2"].GetCurrentValue(),
-				metric3Value: metricsMap["metric3"].GetCurrentValue(),
-				timestamp:    timestamps.GetCurrentValue(),
+				metric1Value: values["metric1"],
+				metric2Value: values["metric2"],
+				metric3Value: values["metric3"],
+				timestamp:    ts,
 			}
 
 			readComplete <- struct{}{}
