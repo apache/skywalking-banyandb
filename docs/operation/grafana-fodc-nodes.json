@@ -591,7 +591,7 @@
             "uid": "${DS_PROMETHEUS}"
           },
           "editorMode": "code",
-          "expr": "max by (pod_name) (  banyandb_system_disk{job=~\"$job\", container_name=~\"$role\", pod_name=~\"$pod\",kind=\"used\"}  / on (pod_name, path)   banyandb_system_disk{job=~\"$job\", container_name=~\"$role\", pod_name=~\"$pod\",kind=\"total\"})",
+          "expr": "sum(banyandb_system_disk{job=~\"$job\", container_name=~\"$role\", pod_name=~\"$pod\",kind=\"used\"}) by (pod_name) / sum(banyandb_system_disk{job=~\"$job\", container_name=~\"$role\", pod_name=~\"$pod\",kind=\"total\"}) by (pod_name)",
           "instant": true,
           "legendFormat": "",
           "range": false,
@@ -648,409 +648,6 @@
         "w": 24,
         "x": 0,
         "y": 16
-      },
-      "id": 60,
-      "panels": [],
-      "title": "Topology: Pod-to-Pod Flows",
-      "type": "row"
-    },
-    {
-      "datasource": {
-        "type": "prometheus",
-        "uid": "${DS_PROMETHEUS}"
-      },
-      "description": "Each row is one directed flow source→target (bare pod names) per operation, with the PUBLISHER's view and the SUBSCRIBER's view of the SAME traffic side by side — never sum the two. Request edges pair banyandb_queue_pub_* (sender) with banyandb_queue_sub_* (receiver); tier-migration edges pair banyandb_lifecycle_migration_* (lifecycle sidecar, sharing its data pod's pod_name) with the receiver's queue_sub remote_role=\"lifecycle\" series. The two sides are joined on (source, target, operation): the full-DNS remote_node is shortened to its first label to match the bare pod_name. Granularity: Pub msg/s counts published messages (parts for file-sync); Sub msg/s (queue_sub_total_message_finished) counts the same per-message unit on the receiver — per message for ordinary traffic, per part for file-sync, and per message even for batch-mode streams (the liaison→liaison tier-1 write routing, where each write OAP sends to its connected liaison is re-published round-robin to the owner liaison, including itself, one wire stream per OAP write stream, gathered by the receiver and dispatched at stream EOF). So both msg/s columns compare ≈1:1 on every edge. One caveat remains: Sub p99 (from queue_sub_total_latency, recorded per stream) still times the whole batch for that batch-mode traffic, not one message; for a per-message subscribe view use the queue_sub_total_batch_latency / message catalogs directly. A populated Pub cell with an empty Sub cell (or vice versa) is signal — an uninstrumented side (older servers record query/control only on the receiver) or a one-sided byte counter (sent_bytes is pub+migration, received_bytes is sub, both file-sync only). Empty err cells mean no errors (lazily registered). $pod/$role select flows INVOLVING a matching node on either end: every query unions a scrape-target-side selector (pod_name/container_name) with a remote-side one (remote_node prefix / remote_role), so both views of a surviving edge stay in the row instead of splitting. No group filter: query/control and the tier-1 write routing carry group=\"\", which an all-value \".+\" silently drops.",
-      "fieldConfig": {
-        "defaults": {
-          "color": {
-            "mode": "thresholds"
-          },
-          "custom": {
-            "align": "auto",
-            "cellOptions": {
-              "type": "auto"
-            },
-            "filterable": false,
-            "inspect": false
-          },
-          "decimals": 2,
-          "mappings": [
-            {
-              "type": "special",
-              "options": {
-                "match": "nan",
-                "result": {
-                  "text": "-",
-                  "index": 0
-                }
-              }
-            }
-          ],
-          "noValue": "-",
-          "thresholds": {
-            "mode": "absolute",
-            "steps": [
-              {
-                "color": "text",
-                "value": null
-              }
-            ]
-          },
-          "unit": "ops"
-        },
-        "overrides": [
-          {
-            "matcher": {
-              "id": "byName",
-              "options": "Pub p99"
-            },
-            "properties": [
-              {
-                "id": "unit",
-                "value": "s"
-              },
-              {
-                "id": "decimals",
-                "value": 3
-              }
-            ]
-          },
-          {
-            "matcher": {
-              "id": "byName",
-              "options": "Sub p99"
-            },
-            "properties": [
-              {
-                "id": "unit",
-                "value": "s"
-              },
-              {
-                "id": "decimals",
-                "value": 3
-              }
-            ]
-          },
-          {
-            "matcher": {
-              "id": "byName",
-              "options": "Pub B/s"
-            },
-            "properties": [
-              {
-                "id": "unit",
-                "value": "Bps"
-              }
-            ]
-          },
-          {
-            "matcher": {
-              "id": "byName",
-              "options": "Sub B/s"
-            },
-            "properties": [
-              {
-                "id": "unit",
-                "value": "Bps"
-              }
-            ]
-          },
-          {
-            "matcher": {
-              "id": "byName",
-              "options": "Pub err/s"
-            },
-            "properties": [
-              {
-                "id": "unit",
-                "value": "ops"
-              },
-              {
-                "id": "custom.cellOptions",
-                "value": {
-                  "type": "color-text"
-                }
-              },
-              {
-                "id": "thresholds",
-                "value": {
-                  "mode": "absolute",
-                  "steps": [
-                    {
-                      "color": "text",
-                      "value": null
-                    },
-                    {
-                      "color": "red",
-                      "value": 1e-06
-                    }
-                  ]
-                }
-              }
-            ]
-          },
-          {
-            "matcher": {
-              "id": "byName",
-              "options": "Sub err/s"
-            },
-            "properties": [
-              {
-                "id": "unit",
-                "value": "ops"
-              },
-              {
-                "id": "custom.cellOptions",
-                "value": {
-                  "type": "color-text"
-                }
-              },
-              {
-                "id": "thresholds",
-                "value": {
-                  "mode": "absolute",
-                  "steps": [
-                    {
-                      "color": "text",
-                      "value": null
-                    },
-                    {
-                      "color": "red",
-                      "value": 1e-06
-                    }
-                  ]
-                }
-              }
-            ]
-          },
-          {
-            "matcher": {
-              "id": "byName",
-              "options": "Source"
-            },
-            "properties": [
-              {
-                "id": "custom.filterable",
-                "value": true
-              }
-            ]
-          },
-          {
-            "matcher": {
-              "id": "byName",
-              "options": "Target"
-            },
-            "properties": [
-              {
-                "id": "custom.filterable",
-                "value": true
-              }
-            ]
-          },
-          {
-            "matcher": {
-              "id": "byName",
-              "options": "Operation"
-            },
-            "properties": [
-              {
-                "id": "custom.filterable",
-                "value": true
-              }
-            ]
-          }
-        ]
-      },
-      "gridPos": {
-        "h": 13,
-        "w": 24,
-        "x": 0,
-        "y": 17
-      },
-      "id": 61,
-      "options": {
-        "cellHeight": "sm",
-        "footer": {
-          "countRows": false,
-          "fields": "",
-          "reducer": [
-            "sum"
-          ],
-          "show": false
-        },
-        "showHeader": true,
-        "sortBy": [
-          {
-            "desc": true,
-            "displayName": "Pub msg/s"
-          }
-        ]
-      },
-      "pluginVersion": "11.2.0",
-      "targets": [
-        {
-          "datasource": {
-            "type": "prometheus",
-            "uid": "${DS_PROMETHEUS}"
-          },
-          "editorMode": "code",
-          "exemplar": false,
-          "expr": "sum by (source, target, operation) (label_replace(label_replace(rate(banyandb_queue_pub_total_finished{job=~\"$job\", container_name=~\"$role\", pod_name=~\"$pod\"}[$__rate_interval]) or rate(banyandb_queue_pub_total_finished{job=~\"$job\", remote_role=~\"$role\", remote_node=~\"($pod)\\\\..*\"}[$__rate_interval]) or rate(banyandb_lifecycle_migration_total_finished{job=~\"$job\", container_name=~\"$role\", pod_name=~\"$pod\"}[$__rate_interval]) or rate(banyandb_lifecycle_migration_total_finished{job=~\"$job\", remote_role=~\"$role\", remote_node=~\"($pod)\\\\..*\"}[$__rate_interval]), \"source\", \"$1\", \"pod_name\", \"(.*)\"), \"target\", \"$1\", \"remote_node\", \"([^.:]+).*\"))",
-          "format": "table",
-          "instant": true,
-          "legendFormat": "__auto",
-          "range": false,
-          "refId": "A"
-        },
-        {
-          "datasource": {
-            "type": "prometheus",
-            "uid": "${DS_PROMETHEUS}"
-          },
-          "editorMode": "code",
-          "exemplar": false,
-          "expr": "sum by (source, target, operation) (label_replace(label_replace(rate(banyandb_queue_sub_total_message_finished{job=~\"$job\", container_name=~\"$role\", pod_name=~\"$pod\"}[$__rate_interval]) or rate(banyandb_queue_sub_total_message_finished{job=~\"$job\", remote_role=~\"$role\", remote_node=~\"($pod)\\\\..*\"}[$__rate_interval]), \"source\", \"$1\", \"remote_node\", \"([^.:]+).*\"), \"target\", \"$1\", \"pod_name\", \"(.*)\"))",
-          "format": "table",
-          "instant": true,
-          "legendFormat": "__auto",
-          "range": false,
-          "refId": "B"
-        },
-        {
-          "datasource": {
-            "type": "prometheus",
-            "uid": "${DS_PROMETHEUS}"
-          },
-          "editorMode": "code",
-          "exemplar": false,
-          "expr": "histogram_quantile(0.99, sum by (le, source, target, operation) (label_replace(label_replace(rate(banyandb_queue_pub_total_latency_bucket{job=~\"$job\", container_name=~\"$role\", pod_name=~\"$pod\"}[$__rate_interval]) or rate(banyandb_queue_pub_total_latency_bucket{job=~\"$job\", remote_role=~\"$role\", remote_node=~\"($pod)\\\\..*\"}[$__rate_interval]) or rate(banyandb_lifecycle_migration_total_latency_bucket{job=~\"$job\", container_name=~\"$role\", pod_name=~\"$pod\"}[$__rate_interval]) or rate(banyandb_lifecycle_migration_total_latency_bucket{job=~\"$job\", remote_role=~\"$role\", remote_node=~\"($pod)\\\\..*\"}[$__rate_interval]), \"source\", \"$1\", \"pod_name\", \"(.*)\"), \"target\", \"$1\", \"remote_node\", \"([^.:]+).*\")))",
-          "format": "table",
-          "instant": true,
-          "legendFormat": "__auto",
-          "range": false,
-          "refId": "C"
-        },
-        {
-          "datasource": {
-            "type": "prometheus",
-            "uid": "${DS_PROMETHEUS}"
-          },
-          "editorMode": "code",
-          "exemplar": false,
-          "expr": "histogram_quantile(0.99, sum by (le, source, target, operation) (label_replace(label_replace(rate(banyandb_queue_sub_total_latency_bucket{job=~\"$job\", container_name=~\"$role\", pod_name=~\"$pod\"}[$__rate_interval]) or rate(banyandb_queue_sub_total_latency_bucket{job=~\"$job\", remote_role=~\"$role\", remote_node=~\"($pod)\\\\..*\"}[$__rate_interval]), \"source\", \"$1\", \"remote_node\", \"([^.:]+).*\"), \"target\", \"$1\", \"pod_name\", \"(.*)\")))",
-          "format": "table",
-          "instant": true,
-          "legendFormat": "__auto",
-          "range": false,
-          "refId": "D"
-        },
-        {
-          "datasource": {
-            "type": "prometheus",
-            "uid": "${DS_PROMETHEUS}"
-          },
-          "editorMode": "code",
-          "exemplar": false,
-          "expr": "sum by (source, target, operation) (label_replace(label_replace(rate(banyandb_queue_pub_total_err{job=~\"$job\", container_name=~\"$role\", pod_name=~\"$pod\"}[$__rate_interval]) or rate(banyandb_queue_pub_total_err{job=~\"$job\", remote_role=~\"$role\", remote_node=~\"($pod)\\\\..*\"}[$__rate_interval]) or rate(banyandb_lifecycle_migration_total_err{job=~\"$job\", container_name=~\"$role\", pod_name=~\"$pod\"}[$__rate_interval]) or rate(banyandb_lifecycle_migration_total_err{job=~\"$job\", remote_role=~\"$role\", remote_node=~\"($pod)\\\\..*\"}[$__rate_interval]), \"source\", \"$1\", \"pod_name\", \"(.*)\"), \"target\", \"$1\", \"remote_node\", \"([^.:]+).*\"))",
-          "format": "table",
-          "instant": true,
-          "legendFormat": "__auto",
-          "range": false,
-          "refId": "E"
-        },
-        {
-          "datasource": {
-            "type": "prometheus",
-            "uid": "${DS_PROMETHEUS}"
-          },
-          "editorMode": "code",
-          "exemplar": false,
-          "expr": "sum by (source, target, operation) (label_replace(label_replace(rate(banyandb_queue_sub_total_err{job=~\"$job\", container_name=~\"$role\", pod_name=~\"$pod\"}[$__rate_interval]) or rate(banyandb_queue_sub_total_err{job=~\"$job\", remote_role=~\"$role\", remote_node=~\"($pod)\\\\..*\"}[$__rate_interval]), \"source\", \"$1\", \"remote_node\", \"([^.:]+).*\"), \"target\", \"$1\", \"pod_name\", \"(.*)\"))",
-          "format": "table",
-          "instant": true,
-          "legendFormat": "__auto",
-          "range": false,
-          "refId": "F"
-        },
-        {
-          "datasource": {
-            "type": "prometheus",
-            "uid": "${DS_PROMETHEUS}"
-          },
-          "editorMode": "code",
-          "exemplar": false,
-          "expr": "sum by (source, target, operation) (label_replace(label_replace(rate(banyandb_queue_pub_sent_bytes{job=~\"$job\", container_name=~\"$role\", pod_name=~\"$pod\"}[$__rate_interval]) or rate(banyandb_queue_pub_sent_bytes{job=~\"$job\", remote_role=~\"$role\", remote_node=~\"($pod)\\\\..*\"}[$__rate_interval]) or rate(banyandb_lifecycle_migration_sent_bytes{job=~\"$job\", container_name=~\"$role\", pod_name=~\"$pod\"}[$__rate_interval]) or rate(banyandb_lifecycle_migration_sent_bytes{job=~\"$job\", remote_role=~\"$role\", remote_node=~\"($pod)\\\\..*\"}[$__rate_interval]), \"source\", \"$1\", \"pod_name\", \"(.*)\"), \"target\", \"$1\", \"remote_node\", \"([^.:]+).*\"))",
-          "format": "table",
-          "instant": true,
-          "legendFormat": "__auto",
-          "range": false,
-          "refId": "G"
-        },
-        {
-          "datasource": {
-            "type": "prometheus",
-            "uid": "${DS_PROMETHEUS}"
-          },
-          "editorMode": "code",
-          "exemplar": false,
-          "expr": "sum by (source, target, operation) (label_replace(label_replace(rate(banyandb_queue_sub_received_bytes{job=~\"$job\", container_name=~\"$role\", pod_name=~\"$pod\"}[$__rate_interval]) or rate(banyandb_queue_sub_received_bytes{job=~\"$job\", remote_role=~\"$role\", remote_node=~\"($pod)\\\\..*\"}[$__rate_interval]), \"source\", \"$1\", \"remote_node\", \"([^.:]+).*\"), \"target\", \"$1\", \"pod_name\", \"(.*)\"))",
-          "format": "table",
-          "instant": true,
-          "legendFormat": "__auto",
-          "range": false,
-          "refId": "H"
-        }
-      ],
-      "title": "Flows — Publisher vs Subscriber View",
-      "transformations": [
-        {
-          "id": "merge",
-          "options": {}
-        },
-        {
-          "id": "organize",
-          "options": {
-            "excludeByName": {
-              "Time": true
-            },
-            "indexByName": {
-              "source": 0,
-              "target": 1,
-              "operation": 2,
-              "Value #A": 3,
-              "Value #B": 4,
-              "Value #C": 5,
-              "Value #D": 6,
-              "Value #E": 7,
-              "Value #F": 8,
-              "Value #G": 9,
-              "Value #H": 10
-            },
-            "renameByName": {
-              "source": "Source",
-              "target": "Target",
-              "operation": "Operation",
-              "Value #A": "Pub msg/s",
-              "Value #B": "Sub msg/s",
-              "Value #C": "Pub p99",
-              "Value #D": "Sub p99",
-              "Value #E": "Pub err/s",
-              "Value #F": "Sub err/s",
-              "Value #G": "Pub B/s",
-              "Value #H": "Sub B/s"
-            }
-          }
-        }
-      ],
-      "type": "table"
-    },
-    {
-      "collapsed": false,
-      "gridPos": {
-        "h": 1,
-        "w": 24,
-        "x": 0,
-        "y": 30
       },
       "id": 13,
       "panels": [],
@@ -1119,7 +716,7 @@
         "h": 8,
         "w": 12,
         "x": 0,
-        "y": 31
+        "y": 17
       },
       "id": 14,
       "options": {
@@ -1220,7 +817,7 @@
         "h": 8,
         "w": 12,
         "x": 12,
-        "y": 31
+        "y": 17
       },
       "id": 15,
       "options": {
@@ -1325,7 +922,7 @@
         "h": 8,
         "w": 12,
         "x": 0,
-        "y": 39
+        "y": 25
       },
       "id": 16,
       "options": {
@@ -1430,7 +1027,7 @@
         "h": 8,
         "w": 12,
         "x": 12,
-        "y": 39
+        "y": 25
       },
       "id": 17,
       "options": {
@@ -1531,7 +1128,7 @@
         "h": 8,
         "w": 24,
         "x": 0,
-        "y": 47
+        "y": 33
       },
       "id": 18,
       "options": {
@@ -1588,7 +1185,7 @@
         "h": 1,
         "w": 24,
         "x": 0,
-        "y": 55
+        "y": 41
       },
       "id": 19,
       "panels": [],
@@ -1657,7 +1254,7 @@
         "h": 8,
         "w": 12,
         "x": 0,
-        "y": 56
+        "y": 42
       },
       "id": 20,
       "options": {
@@ -1758,7 +1355,7 @@
         "h": 8,
         "w": 12,
         "x": 12,
-        "y": 56
+        "y": 42
       },
       "id": 21,
       "options": {
@@ -1863,7 +1460,7 @@
         "h": 8,
         "w": 24,
         "x": 0,
-        "y": 64
+        "y": 50
       },
       "id": 22,
       "options": {
@@ -1908,7 +1505,7 @@
         "h": 1,
         "w": 24,
         "x": 0,
-        "y": 72
+        "y": 58
       },
       "id": 50,
       "panels": [],
@@ -1977,7 +1574,7 @@
         "h": 8,
         "w": 12,
         "x": 0,
-        "y": 73
+        "y": 59
       },
       "id": 51,
       "options": {
@@ -2078,7 +1675,7 @@
         "h": 8,
         "w": 12,
         "x": 12,
-        "y": 73
+        "y": 59
       },
       "id": 52,
       "options": {
@@ -2179,7 +1776,7 @@
         "h": 8,
         "w": 12,
         "x": 0,
-        "y": 81
+        "y": 67
       },
       "id": 53,
       "options": {
@@ -2293,7 +1890,7 @@
         "h": 8,
         "w": 12,
         "x": 12,
-        "y": 81
+        "y": 67
       },
       "id": 54,
       "options": {
