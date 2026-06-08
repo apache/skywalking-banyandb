@@ -44,6 +44,11 @@ import (
 	"github.com/apache/skywalking-banyandb/pkg/run"
 )
 
+// defaultReconnectRetryInterval is the fallback delay scheduleReconnect uses when the client was
+// created without a positive reconnect interval. In practice c.reconnectInterval is always set from
+// the --reconnect-interval flag; this only guards a zero value.
+const defaultReconnectRetryInterval = 10 * time.Second
+
 // MetricsRequestFilter defines filters for metrics requests.
 type MetricsRequestFilter struct {
 	StartTime *time.Time
@@ -68,6 +73,7 @@ type Client struct {
 	lifecycleStream    fodcv1.FODCService_StreamLifecycleClient
 	crashStream        fodcv1.FODCService_StreamCrashDiagnosticsClient
 	client             fodcv1.FODCServiceClient
+	reconnectFn        func(context.Context) // overridable in tests; nil means use reconnect
 
 	proxyAddr      string
 	nodeRole       string
@@ -1335,10 +1341,11 @@ func (c *Client) reconnect(ctx context.Context) {
 	}
 
 	if connResult.err != nil {
-		c.logger.Error().Err(connResult.err).Msg("Failed to reconnect to Proxy")
-		if disconnectErr := c.Disconnect(); disconnectErr != nil {
-			c.logger.Warn().Err(disconnectErr).Msg("Failed to disconnect")
-		}
+		// Transient failure (e.g. the proxy pod is mid-rollout). Do NOT call Disconnect here: that
+		// latches c.disconnected and the guard at the top of reconnect would suppress every future
+		// attempt. Schedule another try so the agent recovers once the proxy is ready again.
+		c.logger.Error().Err(connResult.err).Msg("Failed to reconnect to Proxy; will retry")
+		c.scheduleReconnect(ctx)
 		return
 	}
 
@@ -1348,36 +1355,81 @@ func (c *Client) reconnect(ctx context.Context) {
 		c.streamsMu.Unlock()
 	}
 
+	// Each stream (re)start below can fail transiently when the new proxy pod is not yet accepting
+	// RPCs. reconnect() has already torn down the heartbeat ticker and all stream receive-loops -
+	// the only mechanisms that would otherwise re-trigger a reconnect - so returning here without
+	// rescheduling leaves the agent permanently disconnected (agents_online drops to 0 until a
+	// manual pod restart). Always schedule another attempt on failure.
 	if regErr := c.StartRegistrationStream(ctx); regErr != nil {
-		c.logger.Error().Err(regErr).Msg("Failed to restart registration stream")
+		c.logger.Error().Err(regErr).Msg("Failed to restart registration stream; will retry")
+		c.scheduleReconnect(ctx)
 		return
 	}
 
 	if metricsErr := c.StartMetricsStream(ctx); metricsErr != nil {
-		c.logger.Error().Err(metricsErr).Msg("Failed to restart metrics stream")
+		c.logger.Error().Err(metricsErr).Msg("Failed to restart metrics stream; will retry")
+		c.scheduleReconnect(ctx)
 		return
 	}
 
 	if clusterStateErr := c.StartClusterStateStream(ctx); clusterStateErr != nil {
-		c.logger.Error().Err(clusterStateErr).Msg("Failed to restart cluster state stream")
+		c.logger.Error().Err(clusterStateErr).Msg("Failed to restart cluster state stream; will retry")
+		c.scheduleReconnect(ctx)
 		return
 	}
 
 	if c.lifecycleCollector != nil {
 		if lifecycleErr := c.StartLifecycleStream(ctx); lifecycleErr != nil {
-			c.logger.Error().Err(lifecycleErr).Msg("Failed to restart lifecycle stream")
+			c.logger.Error().Err(lifecycleErr).Msg("Failed to restart lifecycle stream; will retry")
+			c.scheduleReconnect(ctx)
 			return
 		}
 	}
 
 	if c.collectionLister != nil {
 		if crashErr := c.StartCrashStream(ctx); crashErr != nil {
-			c.logger.Error().Err(crashErr).Msg("Failed to restart crash diagnostics stream")
+			c.logger.Error().Err(crashErr).Msg("Failed to restart crash diagnostics stream; will retry")
+			c.scheduleReconnect(ctx)
 			return
 		}
 	}
 
 	c.logger.Info().Msg("Successfully reconnected to Proxy")
+}
+
+// scheduleReconnect arms a delayed reconnect attempt after a transient failure during reconnect
+// (e.g. the proxy pod not yet ready), so the agent keeps retrying instead of stalling forever.
+// reconnect() is single-flight and re-checks ctx and c.disconnected, so a timer that fires after
+// shutdown is a harmless no-op. Each failed reconnect arms exactly one timer, so retries proceed at
+// roughly one per interval rather than in a tight loop.
+func (c *Client) scheduleReconnect(ctx context.Context) {
+	c.streamsMu.Lock()
+	disconnected := c.disconnected
+	interval := c.reconnectInterval
+	c.streamsMu.Unlock()
+
+	if disconnected {
+		return
+	}
+	if interval <= 0 {
+		interval = defaultReconnectRetryInterval
+	}
+
+	select {
+	case <-ctx.Done():
+		return
+	default:
+	}
+
+	reconnectFn := c.reconnect
+	if c.reconnectFn != nil {
+		reconnectFn = c.reconnectFn
+	}
+
+	c.logger.Info().Dur("retry_in", interval).Msg("Scheduling proxy reconnect retry")
+	time.AfterFunc(interval, func() {
+		reconnectFn(ctx)
+	})
 }
 
 // startHeartbeat starts the heartbeat ticker.
