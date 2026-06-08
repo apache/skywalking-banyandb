@@ -108,7 +108,7 @@ func setupChunkedSyncTestWithChunkSize(t *testing.T, testName string, chunkSize 
 		return errInternal == nil
 	}, flags.EventuallyTimeout, 100*time.Millisecond)
 
-	client := pub.NewWithoutMetadata()
+	client := pub.NewWithoutMetadata(nil)
 
 	nodeAddr := fmt.Sprintf("localhost:%d", grpcPort)
 	nodeName := testName + "-node"

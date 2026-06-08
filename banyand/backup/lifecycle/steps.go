@@ -32,6 +32,7 @@ import (
 	"github.com/apache/skywalking-banyandb/banyand/liaison/grpc"
 	"github.com/apache/skywalking-banyandb/banyand/metadata"
 	"github.com/apache/skywalking-banyandb/banyand/metadata/schema"
+	"github.com/apache/skywalking-banyandb/banyand/observability"
 	"github.com/apache/skywalking-banyandb/banyand/queue"
 	"github.com/apache/skywalking-banyandb/banyand/queue/pub"
 	"github.com/apache/skywalking-banyandb/pkg/fs"
@@ -123,6 +124,7 @@ func cloneIntervalRule(ir *commonv1.IntervalRule) *commonv1.IntervalRule {
 func parseGroup(
 	g *commonv1.Group, nodeLabels map[string]string, nodes []*databasev1.Node,
 	l *logger.Logger, metadata metadata.Repo, clusterStateMgr *clusterStateManager,
+	omr observability.MetricsRegistry,
 ) (*GroupConfig, error) {
 	ro := g.ResourceOpts
 	if ro == nil {
@@ -190,7 +192,7 @@ func parseGroup(
 	if ok, _ := nodeSel.OnInit([]schema.Kind{schema.KindGroup}); !ok {
 		return nil, fmt.Errorf("failed to initialize node selector for group %s", g.Metadata.Name)
 	}
-	client := pub.NewWithoutMetadata() //nolint:contextcheck // health check goroutine uses context.Background()
+	client := pub.NewWithoutMetadata(omr) //nolint:contextcheck // health check goroutine uses context.Background()
 	switch g.Catalog {
 	case commonv1.Catalog_CATALOG_STREAM:
 		_ = grpc.NewClusterNodeRegistry(data.TopicStreamWrite, client, nodeSel)

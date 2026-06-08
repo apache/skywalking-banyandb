@@ -51,7 +51,9 @@ func NewCommand() *cobra.Command {
 	// dial until a node is registered); the lifecycle service registers the local
 	// data node — with its --grpc-addr, known only after flag parsing — during its
 	// Serve phase when native mode is enabled.
-	metricsClient := pub.NewWithoutMetadata()
+	// nil migration registry: this client carries native _monitoring writes, not
+	// tier-migration traffic, so it must not emit the banyandb_lifecycle_migration_* family.
+	metricsClient := pub.NewWithoutMetadata(nil)
 	nodeSelector, _ := node.NewPickFirstSelector()
 	nodeRegistry := grpc.NewClusterNodeRegistry(data.TopicMeasureWrite, metricsClient, nodeSelector)
 	// Listener-suppressed: the lifecycle reuses its own HTTP port for /metrics

@@ -44,18 +44,43 @@ const (
 )
 
 type chunkedSyncClient struct {
-	client     clusterv1.ServiceClient
-	conn       *grpc.ClientConn
-	log        *logger.Logger
-	metrics    *pubMetrics
-	config     *ChunkedSyncClientConfig
-	selfNode   string
-	selfRole   string
-	selfTier   string
-	node       string
-	remoteRole string
-	remoteTier string
-	chunkSize  uint32
+	client           clusterv1.ServiceClient
+	conn             *grpc.ClientConn
+	log              *logger.Logger
+	metrics          *pubMetrics
+	migrationMetrics *pubMigrationMetrics
+	config           *ChunkedSyncClientConfig
+	selfNode         string
+	selfRole         string
+	selfTier         string
+	node             string
+	remoteRole       string
+	remoteTier       string
+	chunkSize        uint32
+}
+
+// migStarted, migErr and migFinished emit the banyandb_lifecycle_migration_*
+// mirror of the file-sync metrics. They are extracted from SyncStreamingParts so
+// the parallel guards do not push that function over the gocyclo budget; the
+// banyandb_queue_pub_* emissions stay inline and untouched.
+func (c *chunkedSyncClient) migStarted(operation, group string) {
+	if c.migrationMetrics != nil {
+		c.migrationMetrics.totalStarted.Inc(1, operation, group, c.node, c.remoteRole, c.remoteTier)
+	}
+}
+
+func (c *chunkedSyncClient) migErr(operation, group, errType string) {
+	if c.migrationMetrics != nil {
+		c.migrationMetrics.totalErr.Inc(1, operation, group, c.node, c.remoteRole, c.remoteTier, errType)
+	}
+}
+
+func (c *chunkedSyncClient) migFinished(operation, group string, duration time.Duration, bytesSent uint64) {
+	if c.migrationMetrics != nil {
+		c.migrationMetrics.totalFinished.Inc(1, operation, group, c.node, c.remoteRole, c.remoteTier)
+		c.migrationMetrics.totalLatency.Observe(duration.Seconds(), operation, group, c.node, c.remoteRole, c.remoteTier)
+		c.migrationMetrics.sentBytes.Inc(float64(bytesSent), operation, group, c.node, c.remoteRole, c.remoteTier)
+	}
 }
 
 // SyncStreamingParts implements queue.ChunkedSyncClient with streaming support.
@@ -114,6 +139,7 @@ func (c *chunkedSyncClient) SyncStreamingParts(ctx context.Context, parts []queu
 	if c.metrics != nil {
 		c.metrics.totalStarted.Inc(1, operation, group, c.node, c.remoteRole, c.remoteTier)
 	}
+	c.migStarted(operation, group)
 
 	metadata := &clusterv1.SyncMetadata{
 		Group:      group,
@@ -134,6 +160,7 @@ func (c *chunkedSyncClient) SyncStreamingParts(ctx context.Context, parts []queu
 		if c.metrics != nil {
 			c.metrics.totalErr.Inc(1, operation, group, c.node, c.remoteRole, c.remoteTier, errType)
 		}
+		c.migErr(operation, group, errType)
 		return nil, fmt.Errorf("failed to stream parts: %w", streamErr)
 	}
 	if totalChunks == 0 && len(failedParts) == 0 {
@@ -143,6 +170,7 @@ func (c *chunkedSyncClient) SyncStreamingParts(ctx context.Context, parts []queu
 			c.metrics.totalLatency.Observe(duration.Seconds(), operation, group, c.node, c.remoteRole, c.remoteTier)
 			c.metrics.sentBytes.Inc(float64(totalBytesSent), operation, group, c.node, c.remoteRole, c.remoteTier)
 		}
+		c.migFinished(operation, group, duration, totalBytesSent)
 		return &queue.SyncResult{
 			Success:    true,
 			SessionID:  sessionID,
@@ -160,6 +188,7 @@ func (c *chunkedSyncClient) SyncStreamingParts(ctx context.Context, parts []queu
 			if c.metrics != nil {
 				c.metrics.totalErr.Inc(1, operation, group, c.node, c.remoteRole, c.remoteTier, "recv_error")
 			}
+			c.migErr(operation, group, "recv_error")
 			return nil, fmt.Errorf("failed to receive final response: %w", recvErr)
 		}
 		finalResp = resp
@@ -185,10 +214,12 @@ func (c *chunkedSyncClient) SyncStreamingParts(ctx context.Context, parts []queu
 			c.metrics.totalLatency.Observe(duration.Seconds(), operation, group, c.node, c.remoteRole, c.remoteTier)
 			c.metrics.sentBytes.Inc(float64(totalBytesSent), operation, group, c.node, c.remoteRole, c.remoteTier)
 		}
+		c.migFinished(operation, group, duration, totalBytesSent)
 	} else {
 		if c.metrics != nil {
 			c.metrics.totalErr.Inc(1, operation, group, c.node, c.remoteRole, c.remoteTier, "completion_error")
 		}
+		c.migErr(operation, group, "completion_error")
 	}
 
 	return &queue.SyncResult{
