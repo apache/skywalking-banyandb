@@ -393,7 +393,7 @@
           "refId": "A"
         }
       ],
-      "title": "Query Rate by Group",
+      "title": "Query Rate",
       "type": "timeseries"
     },
     {
@@ -494,7 +494,7 @@
           "refId": "A"
         }
       ],
-      "title": "Query Latency by Group",
+      "title": "Query Latency",
       "type": "timeseries"
     },
     {
@@ -857,7 +857,7 @@
           "refId": "C"
         }
       ],
-      "title": "Write Rate by Group",
+      "title": "Write Rate",
       "type": "timeseries"
     },
     {
