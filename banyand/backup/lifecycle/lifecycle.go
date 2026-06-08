@@ -27,6 +27,7 @@ import (
 	"github.com/apache/skywalking-banyandb/api/data"
 	"github.com/apache/skywalking-banyandb/banyand/liaison/grpc"
 	"github.com/apache/skywalking-banyandb/banyand/metadata"
+	"github.com/apache/skywalking-banyandb/banyand/observability"
 	"github.com/apache/skywalking-banyandb/banyand/observability/services"
 	"github.com/apache/skywalking-banyandb/banyand/queue/pub"
 	"github.com/apache/skywalking-banyandb/pkg/config"
@@ -40,6 +41,15 @@ import (
 
 // NewCommand creates a new lifecycle command.
 func NewCommand() *cobra.Command {
+	cmd, _ := NewCommandWithRegistry()
+	return cmd
+}
+
+// NewCommandWithRegistry creates a new lifecycle command and also returns the
+// metrics registry it wires. Tests and embedders use the registry to inspect the
+// lifecycle and banyandb_lifecycle_migration_* metric families (e.g. via its
+// observability.PrometheusHandlerProvider) without scraping a live HTTP port.
+func NewCommandWithRegistry() (*cobra.Command, observability.MetricsRegistry) {
 	logging := logger.Logging{}
 	crashOutputCfg := panicdiag.NewCrashOutputConfig()
 	metaSvc, err := metadata.NewClient()
@@ -101,5 +111,5 @@ func NewCommand() *cobra.Command {
 	cmd.Flags().StringVar(&logging.Env, "logging-env", "prod", "the logging")
 	cmd.Flags().StringVar(&logging.Level, "logging-level", "info", "the root level of logging")
 	crashOutputCfg.RegisterFlags(cmd.Flags())
-	return cmd
+	return cmd, metricSvc
 }
