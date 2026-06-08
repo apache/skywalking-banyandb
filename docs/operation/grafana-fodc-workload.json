@@ -487,7 +487,7 @@
             "uid": "${DS_PROMETHEUS}"
           },
           "editorMode": "code",
-          "expr": "sum(rate(banyandb_liaison_grpc_total_latency{job=~\"$job\", container_name=~\"$role\", pod_name=~\"$pod\",method=\"query\"}[$__rate_interval])) by (group) / sum(rate(banyandb_liaison_grpc_total_started{job=~\"$job\", container_name=~\"$role\", pod_name=~\"$pod\",method=\"query\"}[$__rate_interval])) by (group)",
+          "expr": "sum(rate(banyandb_liaison_grpc_total_latency{job=~\"$job\", container_name=~\"$role\", pod_name=~\"$pod\", method=\"query\", group=~\"$group\"}[$__rate_interval])) by (group) / sum(rate(banyandb_liaison_grpc_total_started{job=~\"$job\", container_name=~\"$role\", pod_name=~\"$pod\",method=\"query\"}[$__rate_interval])) by (group)",
           "instant": false,
           "legendFormat": "{{group}}",
           "range": true,
@@ -826,7 +826,7 @@
             "uid": "${DS_PROMETHEUS}"
           },
           "editorMode": "code",
-          "expr": "sum(rate(banyandb_measure_total_written{job=~\"$job\", container_name=~\"$role\", pod_name=~\"$pod\"}[$__rate_interval])) by (group)",
+          "expr": "sum(rate(banyandb_measure_total_written{job=~\"$job\", container_name=~\"$role\", pod_name=~\"$pod\", group=~\"$group\"}[$__rate_interval])) by (group)",
           "instant": false,
           "legendFormat": "{{group}}",
           "range": true,
@@ -838,7 +838,7 @@
             "uid": "${DS_PROMETHEUS}"
           },
           "editorMode": "code",
-          "expr": "sum(rate(banyandb_stream_tst_total_written{job=~\"$job\", container_name=~\"$role\", pod_name=~\"$pod\"}[$__rate_interval])) by (group)",
+          "expr": "sum(rate(banyandb_stream_tst_total_written{job=~\"$job\", container_name=~\"$role\", pod_name=~\"$pod\", group=~\"$group\"}[$__rate_interval])) by (group)",
           "instant": false,
           "legendFormat": "{{group}}",
           "range": true,
@@ -850,7 +850,7 @@
             "uid": "${DS_PROMETHEUS}"
           },
           "editorMode": "code",
-          "expr": "sum(rate(banyandb_trace_tst_total_written{job=~\"$job\", container_name=~\"$role\", pod_name=~\"$pod\"}[$__rate_interval])) by (group)",
+          "expr": "sum(rate(banyandb_trace_tst_total_written{job=~\"$job\", container_name=~\"$role\", pod_name=~\"$pod\", group=~\"$group\"}[$__rate_interval])) by (group)",
           "instant": false,
           "legendFormat": "{{group}}",
           "range": true,
@@ -976,7 +976,7 @@
             "uid": "${DS_PROMETHEUS}"
           },
           "editorMode": "code",
-          "expr": "sum(rate(banyandb_queue_pub_sent_bytes{job=~\"$job\", container_name=~\"$role\", pod_name=~\"$pod\"}[$__rate_interval])) by (group)",
+          "expr": "sum(rate(banyandb_queue_pub_sent_bytes{job=~\"$job\", container_name=~\"$role\", pod_name=~\"$pod\", group=~\"$group\"}[$__rate_interval])) by (group)",
           "instant": false,
           "legendFormat": "bytes {{group}}",
           "range": true,
@@ -1077,7 +1077,7 @@
             "uid": "${DS_PROMETHEUS}"
           },
           "editorMode": "code",
-          "expr": "sum(banyandb_measure_total_file_parts{job=~\"$job\", container_name=\"liaison\", pod_name=~\"$pod\"}) by (pod_name, group)",
+          "expr": "sum(banyandb_measure_total_file_parts{job=~\"$job\", container_name=\"liaison\", pod_name=~\"$pod\", group=~\"$group\"}) by (pod_name, group)",
           "instant": false,
           "legendFormat": "file_parts {{pod_name}} {{group}}",
           "range": true,
@@ -1089,7 +1089,7 @@
             "uid": "${DS_PROMETHEUS}"
           },
           "editorMode": "code",
-          "expr": "sum(banyandb_stream_tst_total_file_parts{job=~\"$job\", container_name=\"liaison\", pod_name=~\"$pod\"}) by (pod_name, group)",
+          "expr": "sum(banyandb_stream_tst_total_file_parts{job=~\"$job\", container_name=\"liaison\", pod_name=~\"$pod\", group=~\"$group\"}) by (pod_name, group)",
           "instant": false,
           "legendFormat": "file_parts {{pod_name}} {{group}}",
           "range": true,
@@ -1101,7 +1101,7 @@
             "uid": "${DS_PROMETHEUS}"
           },
           "editorMode": "code",
-          "expr": "sum(banyandb_trace_tst_total_file_parts{job=~\"$job\", container_name=\"liaison\", pod_name=~\"$pod\"}) by (pod_name, group)",
+          "expr": "sum(banyandb_trace_tst_total_file_parts{job=~\"$job\", container_name=\"liaison\", pod_name=~\"$pod\", group=~\"$group\"}) by (pod_name, group)",
           "instant": false,
           "legendFormat": "file_parts {{pod_name}} {{group}}",
           "range": true,
@@ -1113,7 +1113,7 @@
             "uid": "${DS_PROMETHEUS}"
           },
           "editorMode": "code",
-          "expr": "sum(banyandb_measure_total_mem_part{job=~\"$job\", container_name=\"liaison\", pod_name=~\"$pod\"}) by (pod_name, group)",
+          "expr": "sum(banyandb_measure_total_mem_part{job=~\"$job\", container_name=\"liaison\", pod_name=~\"$pod\", group=~\"$group\"}) by (pod_name, group)",
           "instant": false,
           "legendFormat": "mem_part {{pod_name}} {{group}}",
           "range": true,
@@ -1125,7 +1125,7 @@
             "uid": "${DS_PROMETHEUS}"
           },
           "editorMode": "code",
-          "expr": "sum(banyandb_stream_tst_total_mem_part{job=~\"$job\", container_name=\"liaison\", pod_name=~\"$pod\"}) by (pod_name, group)",
+          "expr": "sum(banyandb_stream_tst_total_mem_part{job=~\"$job\", container_name=\"liaison\", pod_name=~\"$pod\", group=~\"$group\"}) by (pod_name, group)",
           "instant": false,
           "legendFormat": "mem_part {{pod_name}} {{group}}",
           "range": true,
@@ -1137,7 +1137,7 @@
             "uid": "${DS_PROMETHEUS}"
           },
           "editorMode": "code",
-          "expr": "sum(banyandb_trace_tst_total_mem_part{job=~\"$job\", container_name=\"liaison\", pod_name=~\"$pod\"}) by (pod_name, group)",
+          "expr": "sum(banyandb_trace_tst_total_mem_part{job=~\"$job\", container_name=\"liaison\", pod_name=~\"$pod\", group=~\"$group\"}) by (pod_name, group)",
           "instant": false,
           "legendFormat": "mem_part {{pod_name}} {{group}}",
           "range": true,
@@ -1149,7 +1149,7 @@
             "uid": "${DS_PROMETHEUS}"
           },
           "editorMode": "code",
-          "expr": "sum(banyandb_measure_pending_data_count{job=~\"$job\", container_name=\"liaison\", pod_name=~\"$pod\"}) by (pod_name, group)",
+          "expr": "sum(banyandb_measure_pending_data_count{job=~\"$job\", container_name=\"liaison\", pod_name=~\"$pod\", group=~\"$group\"}) by (pod_name, group)",
           "instant": false,
           "legendFormat": "pending {{pod_name}} {{group}}",
           "range": true,
@@ -1161,7 +1161,7 @@
             "uid": "${DS_PROMETHEUS}"
           },
           "editorMode": "code",
-          "expr": "sum(banyandb_stream_tst_pending_data_count{job=~\"$job\", container_name=\"liaison\", pod_name=~\"$pod\"}) by (pod_name, group)",
+          "expr": "sum(banyandb_stream_tst_pending_data_count{job=~\"$job\", container_name=\"liaison\", pod_name=~\"$pod\", group=~\"$group\"}) by (pod_name, group)",
           "instant": false,
           "legendFormat": "pending {{pod_name}} {{group}}",
           "range": true,
@@ -1173,7 +1173,7 @@
             "uid": "${DS_PROMETHEUS}"
           },
           "editorMode": "code",
-          "expr": "sum(banyandb_trace_tst_pending_data_count{job=~\"$job\", container_name=\"liaison\", pod_name=~\"$pod\"}) by (pod_name, group)",
+          "expr": "sum(banyandb_trace_tst_pending_data_count{job=~\"$job\", container_name=\"liaison\", pod_name=~\"$pod\", group=~\"$group\"}) by (pod_name, group)",
           "instant": false,
           "legendFormat": "pending {{pod_name}} {{group}}",
           "range": true,
@@ -1388,7 +1388,7 @@
             "uid": "${DS_PROMETHEUS}"
           },
           "editorMode": "code",
-          "expr": "sum(banyandb_measure_total_file_elements{job=~\"$job\", container_name=~\"$role\", pod_name=~\"$pod\"}) by (group)",
+          "expr": "sum(banyandb_measure_total_file_elements{job=~\"$job\", container_name=~\"$role\", pod_name=~\"$pod\", group=~\"$group\"}) by (group)",
           "instant": false,
           "legendFormat": "{{group}}",
           "range": true,
@@ -1400,7 +1400,7 @@
             "uid": "${DS_PROMETHEUS}"
           },
           "editorMode": "code",
-          "expr": "sum(banyandb_stream_tst_total_file_elements{job=~\"$job\", container_name=~\"$role\", pod_name=~\"$pod\"}) by (group)",
+          "expr": "sum(banyandb_stream_tst_total_file_elements{job=~\"$job\", container_name=~\"$role\", pod_name=~\"$pod\", group=~\"$group\"}) by (group)",
           "instant": false,
           "legendFormat": "{{group}}",
           "range": true,
@@ -1412,7 +1412,7 @@
             "uid": "${DS_PROMETHEUS}"
           },
           "editorMode": "code",
-          "expr": "sum(banyandb_trace_tst_total_file_elements{job=~\"$job\", container_name=~\"$role\", pod_name=~\"$pod\"}) by (group)",
+          "expr": "sum(banyandb_trace_tst_total_file_elements{job=~\"$job\", container_name=~\"$role\", pod_name=~\"$pod\", group=~\"$group\"}) by (group)",
           "instant": false,
           "legendFormat": "{{group}}",
           "range": true,
@@ -1513,7 +1513,7 @@
             "uid": "${DS_PROMETHEUS}"
           },
           "editorMode": "code",
-          "expr": "sum(rate(banyandb_measure_total_merge_loop_started{job=~\"$job\", container_name=~\"$role\", pod_name=~\"$pod\"}[$__rate_interval])) by (group) * 60",
+          "expr": "sum(rate(banyandb_measure_total_merge_loop_started{job=~\"$job\", container_name=~\"$role\", pod_name=~\"$pod\", group=~\"$group\"}[$__rate_interval])) by (group) * 60",
           "instant": false,
           "legendFormat": "{{group}}",
           "range": true,
@@ -1525,7 +1525,7 @@
             "uid": "${DS_PROMETHEUS}"
           },
           "editorMode": "code",
-          "expr": "sum(rate(banyandb_stream_tst_total_merge_loop_started{job=~\"$job\", container_name=~\"$role\", pod_name=~\"$pod\"}[$__rate_interval])) by (group) * 60",
+          "expr": "sum(rate(banyandb_stream_tst_total_merge_loop_started{job=~\"$job\", container_name=~\"$role\", pod_name=~\"$pod\", group=~\"$group\"}[$__rate_interval])) by (group) * 60",
           "instant": false,
           "legendFormat": "{{group}}",
           "range": true,
@@ -1537,7 +1537,7 @@
             "uid": "${DS_PROMETHEUS}"
           },
           "editorMode": "code",
-          "expr": "sum(rate(banyandb_trace_tst_total_merge_loop_started{job=~\"$job\", container_name=~\"$role\", pod_name=~\"$pod\"}[$__rate_interval])) by (group) * 60",
+          "expr": "sum(rate(banyandb_trace_tst_total_merge_loop_started{job=~\"$job\", container_name=~\"$role\", pod_name=~\"$pod\", group=~\"$group\"}[$__rate_interval])) by (group) * 60",
           "instant": false,
           "legendFormat": "{{group}}",
           "range": true,
@@ -1638,7 +1638,7 @@
             "uid": "${DS_PROMETHEUS}"
           },
           "editorMode": "code",
-          "expr": "sum(rate(banyandb_measure_total_merge_latency{job=~\"$job\", container_name=~\"$role\", pod_name=~\"$pod\",type=\"file\"}[$__rate_interval])) by (group) / sum(rate(banyandb_measure_total_merge_loop_started{job=~\"$job\", container_name=~\"$role\", pod_name=~\"$pod\"}[$__rate_interval])) by (group)",
+          "expr": "sum(rate(banyandb_measure_total_merge_latency{job=~\"$job\", container_name=~\"$role\", pod_name=~\"$pod\", type=\"file\", group=~\"$group\"}[$__rate_interval])) by (group) / sum(rate(banyandb_measure_total_merge_loop_started{job=~\"$job\", container_name=~\"$role\", pod_name=~\"$pod\"}[$__rate_interval])) by (group)",
           "instant": false,
           "legendFormat": "{{group}}",
           "range": true,
@@ -1650,7 +1650,7 @@
             "uid": "${DS_PROMETHEUS}"
           },
           "editorMode": "code",
-          "expr": "sum(rate(banyandb_stream_tst_total_merge_latency{job=~\"$job\", container_name=~\"$role\", pod_name=~\"$pod\",type=\"file\"}[$__rate_interval])) by (group) / sum(rate(banyandb_stream_tst_total_merge_loop_started{job=~\"$job\", container_name=~\"$role\", pod_name=~\"$pod\"}[$__rate_interval])) by (group)",
+          "expr": "sum(rate(banyandb_stream_tst_total_merge_latency{job=~\"$job\", container_name=~\"$role\", pod_name=~\"$pod\", type=\"file\", group=~\"$group\"}[$__rate_interval])) by (group) / sum(rate(banyandb_stream_tst_total_merge_loop_started{job=~\"$job\", container_name=~\"$role\", pod_name=~\"$pod\"}[$__rate_interval])) by (group)",
           "instant": false,
           "legendFormat": "{{group}}",
           "range": true,
@@ -1662,7 +1662,7 @@
             "uid": "${DS_PROMETHEUS}"
           },
           "editorMode": "code",
-          "expr": "sum(rate(banyandb_trace_tst_total_merge_latency{job=~\"$job\", container_name=~\"$role\", pod_name=~\"$pod\",type=\"file\"}[$__rate_interval])) by (group) / sum(rate(banyandb_trace_tst_total_merge_loop_started{job=~\"$job\", container_name=~\"$role\", pod_name=~\"$pod\"}[$__rate_interval])) by (group)",
+          "expr": "sum(rate(banyandb_trace_tst_total_merge_latency{job=~\"$job\", container_name=~\"$role\", pod_name=~\"$pod\", type=\"file\", group=~\"$group\"}[$__rate_interval])) by (group) / sum(rate(banyandb_trace_tst_total_merge_loop_started{job=~\"$job\", container_name=~\"$role\", pod_name=~\"$pod\"}[$__rate_interval])) by (group)",
           "instant": false,
           "legendFormat": "{{group}}",
           "range": true,
@@ -1763,7 +1763,7 @@
             "uid": "${DS_PROMETHEUS}"
           },
           "editorMode": "code",
-          "expr": "sum(rate(banyandb_measure_total_merged_parts{job=~\"$job\", container_name=~\"$role\", pod_name=~\"$pod\",type=\"file\"}[$__rate_interval])) by (group) / sum(rate(banyandb_measure_total_merge_loop_started{job=~\"$job\", container_name=~\"$role\", pod_name=~\"$pod\"}[$__rate_interval])) by (group)",
+          "expr": "sum(rate(banyandb_measure_total_merged_parts{job=~\"$job\", container_name=~\"$role\", pod_name=~\"$pod\", type=\"file\", group=~\"$group\"}[$__rate_interval])) by (group) / sum(rate(banyandb_measure_total_merge_loop_started{job=~\"$job\", container_name=~\"$role\", pod_name=~\"$pod\"}[$__rate_interval])) by (group)",
           "instant": false,
           "legendFormat": "{{group}}",
           "range": true,
@@ -1775,7 +1775,7 @@
             "uid": "${DS_PROMETHEUS}"
           },
           "editorMode": "code",
-          "expr": "sum(rate(banyandb_stream_tst_total_merged_parts{job=~\"$job\", container_name=~\"$role\", pod_name=~\"$pod\",type=\"file\"}[$__rate_interval])) by (group) / sum(rate(banyandb_stream_tst_total_merge_loop_started{job=~\"$job\", container_name=~\"$role\", pod_name=~\"$pod\"}[$__rate_interval])) by (group)",
+          "expr": "sum(rate(banyandb_stream_tst_total_merged_parts{job=~\"$job\", container_name=~\"$role\", pod_name=~\"$pod\", type=\"file\", group=~\"$group\"}[$__rate_interval])) by (group) / sum(rate(banyandb_stream_tst_total_merge_loop_started{job=~\"$job\", container_name=~\"$role\", pod_name=~\"$pod\"}[$__rate_interval])) by (group)",
           "instant": false,
           "legendFormat": "{{group}}",
           "range": true,
@@ -1787,7 +1787,7 @@
             "uid": "${DS_PROMETHEUS}"
           },
           "editorMode": "code",
-          "expr": "sum(rate(banyandb_trace_tst_total_merged_parts{job=~\"$job\", container_name=~\"$role\", pod_name=~\"$pod\",type=\"file\"}[$__rate_interval])) by (group) / sum(rate(banyandb_trace_tst_total_merge_loop_started{job=~\"$job\", container_name=~\"$role\", pod_name=~\"$pod\"}[$__rate_interval])) by (group)",
+          "expr": "sum(rate(banyandb_trace_tst_total_merged_parts{job=~\"$job\", container_name=~\"$role\", pod_name=~\"$pod\", type=\"file\", group=~\"$group\"}[$__rate_interval])) by (group) / sum(rate(banyandb_trace_tst_total_merge_loop_started{job=~\"$job\", container_name=~\"$role\", pod_name=~\"$pod\"}[$__rate_interval])) by (group)",
           "instant": false,
           "legendFormat": "{{group}}",
           "range": true,
@@ -1901,7 +1901,7 @@
             "uid": "${DS_PROMETHEUS}"
           },
           "editorMode": "code",
-          "expr": "sum(rate(banyandb_measure_inverted_index_total_updates{job=~\"$job\", container_name=~\"$role\", pod_name=~\"$pod\"}[$__rate_interval])) by (group)",
+          "expr": "sum(rate(banyandb_measure_inverted_index_total_updates{job=~\"$job\", container_name=~\"$role\", pod_name=~\"$pod\", group=~\"$group\"}[$__rate_interval])) by (group)",
           "instant": false,
           "legendFormat": "measure {{group}}",
           "range": true,
@@ -1913,7 +1913,7 @@
             "uid": "${DS_PROMETHEUS}"
           },
           "editorMode": "code",
-          "expr": "sum(rate(banyandb_stream_storage_inverted_index_total_updates{job=~\"$job\", container_name=~\"$role\", pod_name=~\"$pod\"}[$__rate_interval])) by (group)",
+          "expr": "sum(rate(banyandb_stream_storage_inverted_index_total_updates{job=~\"$job\", container_name=~\"$role\", pod_name=~\"$pod\", group=~\"$group\"}[$__rate_interval])) by (group)",
           "instant": false,
           "legendFormat": "stream {{group}}",
           "range": true,
@@ -2014,7 +2014,7 @@
             "uid": "${DS_PROMETHEUS}"
           },
           "editorMode": "code",
-          "expr": "sum(rate(banyandb_measure_inverted_index_total_term_searchers_started{job=~\"$job\", container_name=~\"$role\", pod_name=~\"$pod\"}[$__rate_interval])) by (group)",
+          "expr": "sum(rate(banyandb_measure_inverted_index_total_term_searchers_started{job=~\"$job\", container_name=~\"$role\", pod_name=~\"$pod\", group=~\"$group\"}[$__rate_interval])) by (group)",
           "instant": false,
           "legendFormat": "measure {{group}}",
           "range": true,
@@ -2026,7 +2026,7 @@
             "uid": "${DS_PROMETHEUS}"
           },
           "editorMode": "code",
-          "expr": "sum(rate(banyandb_stream_storage_inverted_index_total_term_searchers_started{job=~\"$job\", container_name=~\"$role\", pod_name=~\"$pod\"}[$__rate_interval])) by (group)",
+          "expr": "sum(rate(banyandb_stream_storage_inverted_index_total_term_searchers_started{job=~\"$job\", container_name=~\"$role\", pod_name=~\"$pod\", group=~\"$group\"}[$__rate_interval])) by (group)",
           "instant": false,
           "legendFormat": "stream {{group}}",
           "range": true,
@@ -2127,7 +2127,7 @@
             "uid": "${DS_PROMETHEUS}"
           },
           "editorMode": "code",
-          "expr": "sum(banyandb_measure_inverted_index_total_doc_count{job=~\"$job\", container_name=~\"$role\", pod_name=~\"$pod\"}) by (group)",
+          "expr": "sum(banyandb_measure_inverted_index_total_doc_count{job=~\"$job\", container_name=~\"$role\", pod_name=~\"$pod\", group=~\"$group\"}) by (group)",
           "instant": false,
           "legendFormat": "measure {{group}}",
           "range": true,
@@ -2139,7 +2139,7 @@
             "uid": "${DS_PROMETHEUS}"
           },
           "editorMode": "code",
-          "expr": "sum(banyandb_stream_storage_inverted_index_total_doc_count{job=~\"$job\", container_name=~\"$role\", pod_name=~\"$pod\"}) by (group)",
+          "expr": "sum(banyandb_stream_storage_inverted_index_total_doc_count{job=~\"$job\", container_name=~\"$role\", pod_name=~\"$pod\", group=~\"$group\"}) by (group)",
           "instant": false,
           "legendFormat": "stream {{group}}",
           "range": true,
@@ -2240,7 +2240,7 @@
             "uid": "${DS_PROMETHEUS}"
           },
           "editorMode": "code",
-          "expr": "sum(rate(banyandb_stream_tst_inverted_index_total_updates{job=~\"$job\", container_name=~\"$role\", pod_name=~\"$pod\"}[$__rate_interval])) by (group)",
+          "expr": "sum(rate(banyandb_stream_tst_inverted_index_total_updates{job=~\"$job\", container_name=~\"$role\", pod_name=~\"$pod\", group=~\"$group\"}[$__rate_interval])) by (group)",
           "instant": false,
           "legendFormat": "{{group}}",
           "range": true,
@@ -2341,7 +2341,7 @@
             "uid": "${DS_PROMETHEUS}"
           },
           "editorMode": "code",
-          "expr": "sum(rate(banyandb_stream_tst_inverted_index_total_term_searchers_started{job=~\"$job\", container_name=~\"$role\", pod_name=~\"$pod\"}[$__rate_interval])) by (group)",
+          "expr": "sum(rate(banyandb_stream_tst_inverted_index_total_term_searchers_started{job=~\"$job\", container_name=~\"$role\", pod_name=~\"$pod\", group=~\"$group\"}[$__rate_interval])) by (group)",
           "instant": false,
           "legendFormat": "{{group}}",
           "range": true,
@@ -2442,7 +2442,7 @@
             "uid": "${DS_PROMETHEUS}"
           },
           "editorMode": "code",
-          "expr": "sum(banyandb_stream_tst_inverted_index_total_doc_count{job=~\"$job\", container_name=~\"$role\", pod_name=~\"$pod\"}) by (group)",
+          "expr": "sum(banyandb_stream_tst_inverted_index_total_doc_count{job=~\"$job\", container_name=~\"$role\", pod_name=~\"$pod\", group=~\"$group\"}) by (group)",
           "instant": false,
           "legendFormat": "{{group}}",
           "range": true,
@@ -2569,7 +2569,7 @@
             "uid": "${DS_PROMETHEUS}"
           },
           "editorMode": "code",
-          "expr": "sum(rate(banyandb_queue_sub_total_started{job=~\"$job\", container_name=~\"$role\", pod_name=~\"$pod\", operation=\"query\"}[$__rate_interval])) by (group)",
+          "expr": "sum(rate(banyandb_queue_sub_total_started{job=~\"$job\", container_name=~\"$role\", pod_name=~\"$pod\", operation=\"query\", group=~\"$group\"}[$__rate_interval])) by (group)",
           "instant": false,
           "legendFormat": "started {{group}}",
           "range": true,
@@ -2581,7 +2581,7 @@
             "uid": "${DS_PROMETHEUS}"
           },
           "editorMode": "code",
-          "expr": "sum(rate(banyandb_queue_sub_total_finished{job=~\"$job\", container_name=~\"$role\", pod_name=~\"$pod\", operation=\"query\"}[$__rate_interval])) by (group)",
+          "expr": "sum(rate(banyandb_queue_sub_total_finished{job=~\"$job\", container_name=~\"$role\", pod_name=~\"$pod\", operation=\"query\", group=~\"$group\"}[$__rate_interval])) by (group)",
           "instant": false,
           "legendFormat": "finished {{group}}",
           "range": true,
@@ -2593,7 +2593,7 @@
             "uid": "${DS_PROMETHEUS}"
           },
           "editorMode": "code",
-          "expr": "histogram_quantile(0.99, sum(rate(banyandb_queue_sub_total_latency_bucket{job=~\"$job\", container_name=~\"$role\", pod_name=~\"$pod\", operation=\"query\"}[$__rate_interval])) by (le, group))",
+          "expr": "histogram_quantile(0.99, sum(rate(banyandb_queue_sub_total_latency_bucket{job=~\"$job\", container_name=~\"$role\", pod_name=~\"$pod\", operation=\"query\", group=~\"$group\"}[$__rate_interval])) by (le, group))",
           "instant": false,
           "legendFormat": "p99 {{group}}",
           "range": true,
@@ -2707,7 +2707,7 @@
             "uid": "${DS_PROMETHEUS}"
           },
           "editorMode": "code",
-          "expr": "sum(rate(banyandb_queue_sub_total_started{job=~\"$job\", container_name=~\"$role\", pod_name=~\"$pod\", operation=\"file-sync\"}[$__rate_interval])) by (group)",
+          "expr": "sum(rate(banyandb_queue_sub_total_started{job=~\"$job\", container_name=~\"$role\", pod_name=~\"$pod\", operation=\"file-sync\", group=~\"$group\"}[$__rate_interval])) by (group)",
           "instant": false,
           "legendFormat": "started {{group}}",
           "range": true,
@@ -2719,7 +2719,7 @@
             "uid": "${DS_PROMETHEUS}"
           },
           "editorMode": "code",
-          "expr": "sum(rate(banyandb_queue_sub_total_finished{job=~\"$job\", container_name=~\"$role\", pod_name=~\"$pod\", operation=\"file-sync\"}[$__rate_interval])) by (group)",
+          "expr": "sum(rate(banyandb_queue_sub_total_finished{job=~\"$job\", container_name=~\"$role\", pod_name=~\"$pod\", operation=\"file-sync\", group=~\"$group\"}[$__rate_interval])) by (group)",
           "instant": false,
           "legendFormat": "finished {{group}}",
           "range": true,
@@ -2731,7 +2731,7 @@
             "uid": "${DS_PROMETHEUS}"
           },
           "editorMode": "code",
-          "expr": "histogram_quantile(0.99, sum(rate(banyandb_queue_sub_total_latency_bucket{job=~\"$job\", container_name=~\"$role\", pod_name=~\"$pod\", operation=\"file-sync\"}[$__rate_interval])) by (le, group))",
+          "expr": "histogram_quantile(0.99, sum(rate(banyandb_queue_sub_total_latency_bucket{job=~\"$job\", container_name=~\"$role\", pod_name=~\"$pod\", operation=\"file-sync\", group=~\"$group\"}[$__rate_interval])) by (le, group))",
           "instant": false,
           "legendFormat": "p99 {{group}}",
           "range": true,
@@ -2845,7 +2845,7 @@
             "uid": "${DS_PROMETHEUS}"
           },
           "editorMode": "code",
-          "expr": "sum(rate(banyandb_queue_sub_total_started{job=~\"$job\", container_name=~\"$role\", pod_name=~\"$pod\", operation=\"batch-write\"}[$__rate_interval])) by (group)",
+          "expr": "sum(rate(banyandb_queue_sub_total_started{job=~\"$job\", container_name=~\"$role\", pod_name=~\"$pod\", operation=\"batch-write\", group=~\"$group\"}[$__rate_interval])) by (group)",
           "instant": false,
           "legendFormat": "started {{group}}",
           "range": true,
@@ -2857,7 +2857,7 @@
             "uid": "${DS_PROMETHEUS}"
           },
           "editorMode": "code",
-          "expr": "sum(rate(banyandb_queue_sub_total_finished{job=~\"$job\", container_name=~\"$role\", pod_name=~\"$pod\", operation=\"batch-write\"}[$__rate_interval])) by (group)",
+          "expr": "sum(rate(banyandb_queue_sub_total_finished{job=~\"$job\", container_name=~\"$role\", pod_name=~\"$pod\", operation=\"batch-write\", group=~\"$group\"}[$__rate_interval])) by (group)",
           "instant": false,
           "legendFormat": "finished {{group}}",
           "range": true,
@@ -2869,7 +2869,7 @@
             "uid": "${DS_PROMETHEUS}"
           },
           "editorMode": "code",
-          "expr": "histogram_quantile(0.99, sum(rate(banyandb_queue_sub_total_latency_bucket{job=~\"$job\", container_name=~\"$role\", pod_name=~\"$pod\", operation=\"batch-write\"}[$__rate_interval])) by (le, group))",
+          "expr": "histogram_quantile(0.99, sum(rate(banyandb_queue_sub_total_latency_bucket{job=~\"$job\", container_name=~\"$role\", pod_name=~\"$pod\", operation=\"batch-write\", group=~\"$group\"}[$__rate_interval])) by (le, group))",
           "instant": false,
           "legendFormat": "p99 {{group}}",
           "range": true,
@@ -2983,7 +2983,7 @@
             "uid": "${DS_PROMETHEUS}"
           },
           "editorMode": "code",
-          "expr": "sum(rate(banyandb_queue_sub_total_started{job=~\"$job\", container_name=~\"$role\", pod_name=~\"$pod\", operation=\"control\"}[$__rate_interval])) by (group)",
+          "expr": "sum(rate(banyandb_queue_sub_total_started{job=~\"$job\", container_name=~\"$role\", pod_name=~\"$pod\", operation=\"control\", group=~\"$group\"}[$__rate_interval])) by (group)",
           "instant": false,
           "legendFormat": "started {{group}}",
           "range": true,
@@ -2995,7 +2995,7 @@
             "uid": "${DS_PROMETHEUS}"
           },
           "editorMode": "code",
-          "expr": "sum(rate(banyandb_queue_sub_total_finished{job=~\"$job\", container_name=~\"$role\", pod_name=~\"$pod\", operation=\"control\"}[$__rate_interval])) by (group)",
+          "expr": "sum(rate(banyandb_queue_sub_total_finished{job=~\"$job\", container_name=~\"$role\", pod_name=~\"$pod\", operation=\"control\", group=~\"$group\"}[$__rate_interval])) by (group)",
           "instant": false,
           "legendFormat": "finished {{group}}",
           "range": true,
@@ -3007,7 +3007,7 @@
             "uid": "${DS_PROMETHEUS}"
           },
           "editorMode": "code",
-          "expr": "histogram_quantile(0.99, sum(rate(banyandb_queue_sub_total_latency_bucket{job=~\"$job\", container_name=~\"$role\", pod_name=~\"$pod\", operation=\"control\"}[$__rate_interval])) by (le, group))",
+          "expr": "histogram_quantile(0.99, sum(rate(banyandb_queue_sub_total_latency_bucket{job=~\"$job\", container_name=~\"$role\", pod_name=~\"$pod\", operation=\"control\", group=~\"$group\"}[$__rate_interval])) by (le, group))",
           "instant": false,
           "legendFormat": "p99 {{group}}",
           "range": true,
@@ -3116,23 +3116,19 @@
           "type": "prometheus",
           "uid": "${DS_PROMETHEUS}"
         },
-        "definition": "label_values(banyandb_measure_total_written{job=~\"$job\"},group)",
+        "definition": "label_values(banyandb_liaison_grpc_total_started{job=~\"$job\",container_name=~\"$role\",pod_name=~\"$pod\"},group)",
         "hide": 0,
         "includeAll": true,
         "multi": true,
         "name": "group",
         "options": [],
-        "query": {
-          "qryType": 1,
-          "query": "label_values(banyandb_measure_total_written{job=~\"$job\"},group)",
-          "refId": "PrometheusVariableQueryEditor-VariableQuery"
-        },
+        "query": "label_values(banyandb_liaison_grpc_total_started{job=~\"$job\",container_name=~\"$role\",pod_name=~\"$pod\"},group)",
         "refresh": 1,
         "regex": "",
         "skipUrlSync": false,
         "sort": 1,
         "type": "query",
-        "allValue": ".*"
+        "allValue": ".+"
       }
     ]
   },
