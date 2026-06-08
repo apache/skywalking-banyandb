@@ -27,6 +27,7 @@ import (
 
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/prometheus/client_golang/prometheus/collectors"
+	"github.com/prometheus/client_golang/prometheus/promhttp"
 	"github.com/robfig/cron/v3"
 
 	"github.com/apache/skywalking-banyandb/api/common"
@@ -55,8 +56,9 @@ var (
 )
 
 var (
-	_ run.Service = (*metricService)(nil)
-	_ run.Config  = (*metricService)(nil)
+	_ run.Service                             = (*metricService)(nil)
+	_ run.Config                              = (*metricService)(nil)
+	_ observability.PrometheusHandlerProvider = (*metricService)(nil)
 
 	obScope = observability.RootScope.SubScope("observability")
 )
@@ -78,6 +80,17 @@ func NewMetricService(metadata metadata.Repo, pipeline queue.Client, nodeType st
 	}
 }
 
+// NewMetricServiceWithoutListener returns a metric service that does not start
+// its own HTTP listener. The embedding service is responsible for serving the
+// metrics, e.g. by mounting PrometheusHandler on its own router. This lets the
+// lifecycle command expose /metrics on its existing HTTP port instead of opening
+// a separate observability listener.
+func NewMetricServiceWithoutListener(metadata metadata.Repo, pipeline queue.Client, nodeType string, nodeSelector native.NodeSelector) observability.MetricsRegistry {
+	svc, _ := NewMetricService(metadata, pipeline, nodeType, nodeSelector).(*metricService)
+	svc.listenerDisabled = true
+	return svc
+}
+
 type metricService struct {
 	metadata            metadata.Repo
 	nodeSelector        native.NodeSelector
@@ -97,6 +110,7 @@ type metricService struct {
 	metricsInterval     time.Duration
 	nativeFlushInterval time.Duration
 	panicMaxArtifacts   int
+	listenerDisabled    bool
 	mutex               sync.Mutex
 }
 
@@ -114,7 +128,7 @@ func (p *metricService) FlagSet() *run.FlagSet {
 }
 
 func (p *metricService) Validate() error {
-	if p.listenAddr == "" {
+	if !p.listenerDisabled && p.listenAddr == "" {
 		return errNoAddr
 	}
 	if len(p.modes) == 0 {
@@ -235,6 +249,14 @@ func (p *metricService) Serve() run.StopNotify {
 			p.l.Fatal().Err(err).Msg("Failed to register native metric collection")
 		}
 	}
+	if p.listenerDisabled {
+		// No own HTTP listener: the embedding service (e.g. the lifecycle
+		// command) mounts PrometheusHandler on its existing router. Release the
+		// closer slot so GracefulStop's CloseThenWait does not block.
+		p.l.Info().Msg("metric server listener disabled; metrics served by the embedding service")
+		p.closer.Done()
+		return p.closer.CloseNotify()
+	}
 	p.svr = &http.Server{
 		Addr:              p.listenAddr,
 		ReadHeaderTimeout: 3 * time.Second,
@@ -266,8 +288,24 @@ func (p *metricService) NativeEnabled() bool {
 
 func (p *metricService) routeTableHandler(w http.ResponseWriter, _ *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
+	if p.nodeSelector == nil {
+		w.WriteHeader(http.StatusNotFound)
+		return
+	}
 	w.WriteHeader(http.StatusOK)
 	_, _ = w.Write([]byte(p.nodeSelector.String()))
+}
+
+// PrometheusHandler returns an http.Handler exposing this service's Prometheus
+// registry, for mounting on an external router (see PrometheusHandlerProvider).
+// It returns a 404 handler when prometheus mode is not enabled.
+func (p *metricService) PrometheusHandler() http.Handler {
+	if p.promReg == nil {
+		return http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+			http.Error(w, "prometheus mode not enabled", http.StatusNotFound)
+		})
+	}
+	return promhttp.HandlerFor(p.promReg, promhttp.HandlerOpts{})
 }
 
 func containsMode(modes []string, mode string) bool {
