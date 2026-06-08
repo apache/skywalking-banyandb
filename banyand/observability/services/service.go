@@ -208,6 +208,14 @@ func (p *metricService) Name() string {
 func (p *metricService) Serve() run.StopNotify {
 	p.mutex.Lock()
 	defer p.mutex.Unlock()
+	if p.listenerDisabled {
+		// A listener-suppressed service shares its process with a node's metric
+		// service (e.g. the lifecycle sidecar alongside a data node). The host
+		// gauges and the MetricsCollector singleton are process-global, so it must
+		// not (re)initialize or drive them — that races the node's running
+		// collector. It only flushes its own lifecycle/migration families.
+		return p.serveWithoutListener()
+	}
 	p.initMetrics()
 	startupCtx, cancelStartup := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancelStartup()
@@ -251,14 +259,6 @@ func (p *metricService) Serve() run.StopNotify {
 			p.l.Fatal().Err(err).Msg("Failed to register native metric collection")
 		}
 	}
-	if p.listenerDisabled {
-		// No own HTTP listener: the embedding service (e.g. the lifecycle
-		// command) mounts PrometheusHandler on its existing router. Release the
-		// closer slot so GracefulStop's CloseThenWait does not block.
-		p.l.Info().Msg("metric server listener disabled; metrics served by the embedding service")
-		p.closer.Done()
-		return p.closer.CloseNotify()
-	}
 	p.svr = &http.Server{
 		Addr:              p.listenAddr,
 		ReadHeaderTimeout: 3 * time.Second,
@@ -269,6 +269,37 @@ func (p *metricService) Serve() run.StopNotify {
 		p.l.Info().Str("listenAddr", p.listenAddr).Msg("Start metric server")
 		_ = p.svr.ListenAndServe()
 	}()
+	return p.closer.CloseNotify()
+}
+
+// serveWithoutListener brings up the metric service without its own HTTP listener
+// and without touching the process-global host gauges (cpu/mem/net/disk) or the
+// shared MetricsCollector singleton. The embedding service (e.g. the lifecycle
+// command) serves /metrics via PrometheusHandler; this path only drives
+// native-mode flushing of the lifecycle and migration metric families. Skipping
+// the global host collectors avoids racing a co-located node's metric service in
+// single-process deployments.
+func (p *metricService) serveWithoutListener() run.StopNotify {
+	startupCtx, cancelStartup := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancelStartup()
+	if containsMode(p.modes, flagNativeMode) {
+		p.npf.setServeStarted()
+		p.npf.initAllSchemas(startupCtx)
+		p.nCollection.FlushMetrics(startupCtx)
+		clock, _ := timestamp.GetClock(context.TODO())
+		p.scheduler = timestamp.NewScheduler(p.l, clock)
+		nativeFlushExpr := fmt.Sprintf("@every %s", p.nativeFlushInterval)
+		if err := p.scheduler.Register(startupCtx, "native-metric-collection", cron.Descriptor, nativeFlushExpr,
+			func(ctx context.Context, _ time.Time, _ *logger.Logger) bool {
+				p.nCollection.FlushMetrics(ctx)
+				return true
+			}); err != nil {
+			p.l.Fatal().Err(err).Msg("Failed to register native metric collection")
+		}
+	}
+	// Release the closer slot so GracefulStop's CloseThenWait does not block.
+	p.l.Info().Msg("metric server listener disabled; metrics served by the embedding service")
+	p.closer.Done()
 	return p.closer.CloseNotify()
 }
 
