@@ -456,6 +456,7 @@ func setDecodedTagBytesAt(col vectorized.Column, valueType pbv1.ValueType, raw [
 		col.(*vectorized.TypedColumn[[]int64]).SetAt(destRow, values)
 	case pbv1.ValueTypeStrArr:
 		bb := bigValuePool.Generate()
+		defer bigValuePool.Release(bb)
 		var values []string
 		buf := raw
 		var unmarshalErr error
