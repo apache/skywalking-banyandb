@@ -964,9 +964,9 @@
             "uid": "${DS_PROMETHEUS}"
           },
           "editorMode": "code",
-          "expr": "sum(rate(banyandb_queue_pub_total_finished{job=~\"$job\", container_name=~\"$role\", pod_name=~\"$pod\"}[$__rate_interval])) by (operation)",
+          "expr": "sum(rate(banyandb_queue_pub_total_finished{job=~\"$job\", container_name=~\"$role\", pod_name=~\"$pod\", group=~\"$group\"}[$__rate_interval])) by (operation, group)",
           "instant": false,
-          "legendFormat": "success {{operation}}",
+          "legendFormat": "success {{operation}} {{group}}",
           "range": true,
           "refId": "A"
         },
