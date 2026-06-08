@@ -658,6 +658,7 @@ func mustDecodeTagValue(valueType pbv1.ValueType, value []byte) *modelv1.TagValu
 	case pbv1.ValueTypeStrArr:
 		var values []string
 		bb := bigValuePool.Generate()
+		defer bigValuePool.Release(bb)
 		var err error
 		for len(value) > 0 {
 			bb.Buf, value, err = unmarshalVarArray(bb.Buf[:0], value)
