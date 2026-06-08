@@ -59,7 +59,6 @@ import (
 	"github.com/apache/skywalking-banyandb/pkg/healthcheck"
 	"github.com/apache/skywalking-banyandb/pkg/logger"
 	"github.com/apache/skywalking-banyandb/pkg/meter"
-	"github.com/apache/skywalking-banyandb/pkg/meter/native"
 	"github.com/apache/skywalking-banyandb/pkg/run"
 	"github.com/apache/skywalking-banyandb/pkg/timestamp"
 	pkgtls "github.com/apache/skywalking-banyandb/pkg/tls"
@@ -85,62 +84,58 @@ const (
 type lifecycleService struct {
 	databasev1.UnimplementedClusterStateServiceServer
 	databasev1.UnimplementedNodeQueryServiceServer
-	metadata            metadata.Repo
-	omr                 observability.MetricsRegistry
-	pm                  protector.Memory
-	cyclesTotal         meter.Counter
-	metricsNodeRegistry native.NodeSelector
-	metricsClient       queue.Client
-	grpcServer          *grpclib.Server
-	httpSrv             *http.Server
-	tlsReloader         *pkgtls.Reloader
-	currentNode         *databasev1.Node
-	clientCloser        context.CancelFunc
-	stopCh              chan struct{}
-	sch                 *timestamp.Scheduler
-	l                   *logger.Logger
-	clusterStateMgr     *clusterStateManager
-	metricsKeeperStop   chan struct{}
-	lifecycleHost       string
-	lifecycleHTTPAddr   string
-	streamRoot          string
-	traceRoot           string
-	progressFilePath    string
-	reportDir           string
-	schedule            string
-	cert                string
-	gRPCAddr            string
-	lifecycleKeyFile    string
-	lifecycleGRPCAddr   string
-	measureRoot         string
-	lifecycleCertFile   string
-	localNodeMD         schema.Metadata
-	maxExecutionTimes   int
-	chunkSize           run.Bytes
-	lifecycleGRPCPort   uint32
-	lifecycleHTTPPort   uint32
-	enableTLS           bool
-	insecure            bool
-	lifecycleTLS        bool
+	metadata          metadata.Repo
+	omr               observability.MetricsRegistry
+	pm                protector.Memory
+	cyclesTotal       meter.Counter
+	metricsClient     queue.Client
+	grpcServer        *grpclib.Server
+	httpSrv           *http.Server
+	tlsReloader       *pkgtls.Reloader
+	currentNode       *databasev1.Node
+	clientCloser      context.CancelFunc
+	stopCh            chan struct{}
+	sch               *timestamp.Scheduler
+	l                 *logger.Logger
+	clusterStateMgr   *clusterStateManager
+	metricsKeeperStop chan struct{}
+	lifecycleHost     string
+	lifecycleHTTPAddr string
+	streamRoot        string
+	traceRoot         string
+	progressFilePath  string
+	reportDir         string
+	schedule          string
+	cert              string
+	gRPCAddr          string
+	lifecycleKeyFile  string
+	lifecycleGRPCAddr string
+	measureRoot       string
+	lifecycleCertFile string
+	localNodeMD       schema.Metadata
+	maxExecutionTimes int
+	chunkSize         run.Bytes
+	lifecycleGRPCPort uint32
+	lifecycleHTTPPort uint32
+	enableTLS         bool
+	insecure          bool
+	lifecycleTLS      bool
 }
 
 // NewService creates a new lifecycle service. metricsRegistry replaces the
 // previous BypassRegistry, so the protector memory metrics and the lifecycle
-// proof counter emit real series. metricsClient and metricsNodeRegistry form the
-// native-metrics pipeline to the co-located data node; they are only exercised
-// when native observability mode is enabled.
+// proof counter emit real series. metricsClient is the native-metrics pipeline to
+// the co-located data node; it is only exercised when native mode is enabled.
 func NewService(
 	meta metadata.Repo,
 	metricsRegistry observability.MetricsRegistry,
 	metricsClient queue.Client,
-	metricsNodeRegistry native.NodeSelector,
 ) run.Unit {
 	ls := &lifecycleService{
-		metadata:            meta,
-		omr:                 metricsRegistry,
-		metricsClient:       metricsClient,
-		metricsNodeRegistry: metricsNodeRegistry,
-		clusterStateMgr:     &clusterStateManager{},
+		metadata:        meta,
+		omr:             metricsRegistry,
+		metricsClient:   metricsClient,
+		clusterStateMgr: &clusterStateManager{},
 	}
 	ls.pm = protector.NewMemory(ls.omr)
 	return ls
@@ -359,7 +354,11 @@ func (l *lifecycleService) startMetricsNodeKeeper() {
 			case <-l.metricsKeeperStop:
 				return
 			case <-ticker.C:
-				if _, locateErr := l.metricsNodeRegistry.Locate(native.ObservabilityGroupName, "", 0, 0); locateErr != nil {
+				// HealthyNodes reflects the pub's active-connection state directly.
+				// connMgr.OnAddOrUpdate fans out OnActive synchronously (which seeds
+				// the native selector), so an empty set means the local data node is
+				// not connected and native flushes would drop; force a fresh dial.
+				if len(l.metricsClient.HealthyNodes()) == 0 {
 					// connMgr.OnAddOrUpdate short-circuits an evictable node, so drop
 					// it first to force a fresh dial. queue.Client does not expose
 					// OnDelete, hence the type assertion.

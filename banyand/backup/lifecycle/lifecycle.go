@@ -69,7 +69,7 @@ func NewCommandWithRegistry() (*cobra.Command, observability.MetricsRegistry) {
 	// Listener-suppressed: the lifecycle reuses its own HTTP port for /metrics
 	// instead of opening the observability :2121 listener.
 	metricSvc := services.NewMetricServiceWithoutListener(metaSvc, metricsClient, "lifecycle", nodeRegistry)
-	svc := NewService(metaSvc, metricSvc, metricsClient, nodeRegistry)
+	svc := NewService(metaSvc, metricSvc, metricsClient)
 	group := run.NewGroup("lifecycle")
 	// metricSvc is registered before svc so its PreRun (building the providers)
 	// runs first; svc.PreRun then safely derives its proof counter from it.

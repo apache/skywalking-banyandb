@@ -86,7 +86,9 @@ func NewMetricService(metadata metadata.Repo, pipeline queue.Client, nodeType st
 // lifecycle command expose /metrics on its existing HTTP port instead of opening
 // a separate observability listener.
 func NewMetricServiceWithoutListener(metadata metadata.Repo, pipeline queue.Client, nodeType string, nodeSelector native.NodeSelector) observability.MetricsRegistry {
-	svc, _ := NewMetricService(metadata, pipeline, nodeType, nodeSelector).(*metricService)
+	// Direct assertion: NewMetricService always returns *metricService, so a
+	// mismatch should fail loudly here rather than nil-deref on the next line.
+	svc := NewMetricService(metadata, pipeline, nodeType, nodeSelector).(*metricService)
 	svc.listenerDisabled = true
 	return svc
 }
