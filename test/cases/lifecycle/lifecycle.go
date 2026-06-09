@@ -250,6 +250,18 @@ func verifyMigrationMetrics(reg observability.MetricsRegistry) {
 	provider.PrometheusHandler().ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/metrics", nil))
 	gomega.Expect(rec.Code).To(gomega.Equal(http.StatusOK))
 	body := rec.Body.String()
+	// Last-run metrics (banyandb_lifecycle_last_run_timestamp_seconds +
+	// banyandb_lifecycle_last_run_success) are stamped by the deferred
+	// recordLastRun() at the end of action(). A successful cycle must set
+	// success=1 with a non-zero epoch; an empty value would mean the
+	// gauges were never registered (PreRun not run) or the action never
+	// reached the defer. Prometheus emits floats in scientific notation
+	// for large values like epoch seconds (e.g. 1.781007822e+09), so the
+	// assertion accepts either fixed or scientific form.
+	gomega.Expect(body).To(gomega.MatchRegexp(`(?m)^banyandb_lifecycle_last_run_timestamp_seconds (?:[1-9]\d{9}|[1-9]\.\d+e\+0?[89])`),
+		"banyandb_lifecycle_last_run_timestamp_seconds must be set to a non-zero epoch, got:\n"+body)
+	gomega.Expect(body).To(gomega.MatchRegexp(`(?m)^banyandb_lifecycle_last_run_success 1$`),
+		"banyandb_lifecycle_last_run_success must be 1 after a successful cycle, got:\n"+body)
 	// A successful migration send increments total_finished; the measure/stream/trace
 	// part files are sent via the file-sync operation, so that label must be present.
 	gomega.Expect(body).To(gomega.MatchRegexp(`banyandb_lifecycle_migration_total_finished\{[^}]*\} [1-9]`),
