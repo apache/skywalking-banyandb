@@ -54,7 +54,7 @@ var _ = ginkgo.SynchronizedBeforeSuite(func() []byte {
 	dfWriter := setup.NewDiscoveryFileWriter(tmpDir)
 	config := setup.PropertyClusterConfig(dfWriter)
 	ginkgo.By("Starting data node")
-	dataAddr, _, closeDataNode0 := setup.DataNodeWithAddrAndDir(config)
+	dataAddr, _, _, closeDataNode0 := setup.DataNodeWithAddrAndDir(config)
 	ginkgo.By("Starting liaison node")
 	liaisonAddr, closerLiaisonNode := setup.LiaisonNode(config)
 	stopFunc = func() {

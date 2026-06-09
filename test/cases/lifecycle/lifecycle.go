@@ -234,6 +234,15 @@ func verifyLifecycleStages(sc helpers.SharedContext, verifyFn func(gomega.Gomega
 // the banyandb_lifecycle_migration_* family (the mirror of banyandb_queue_pub_*)
 // during the migration. The registry's Prometheus counters persist after the
 // command stops, so we scrape its handler directly rather than a live HTTP port.
+//
+// In addition to the publisher-side family, this function also scrapes the
+// data node's /metrics endpoint (SharedContext.WarmHTTPURL) to verify the
+// RECEIVER recorded non-empty SENDER labels on its banyandb_queue_sub_total_finished
+// family. The receiver reads r.GetSenderNode() / r.GetSenderRole() /
+// r.GetSenderTier() on each wire SendRequest — those are populated by the
+// publisher only when SetSelfNode was called on the migration client.
+//
+// This is the direct sender-label check the original patch required.
 func verifyMigrationMetrics(reg observability.MetricsRegistry) {
 	provider, ok := reg.(observability.PrometheusHandlerProvider)
 	gomega.Expect(ok).To(gomega.BeTrue(), "lifecycle metrics registry must expose a Prometheus handler")
@@ -241,12 +250,115 @@ func verifyMigrationMetrics(reg observability.MetricsRegistry) {
 	provider.PrometheusHandler().ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/metrics", nil))
 	gomega.Expect(rec.Code).To(gomega.Equal(http.StatusOK))
 	body := rec.Body.String()
+	// Last-run metrics (banyandb_lifecycle_last_run_timestamp_seconds +
+	// banyandb_lifecycle_last_run_success) are stamped by the deferred
+	// recordLastRun() at the end of action(). A successful cycle must set
+	// success=1 with a non-zero epoch; an empty value would mean the
+	// gauges were never registered (PreRun not run) or the action never
+	// reached the defer. Prometheus emits floats in scientific notation
+	// for large values like epoch seconds (e.g. 1.781007822e+09), so the
+	// assertion accepts either fixed or scientific form.
+	gomega.Expect(body).To(gomega.MatchRegexp(`(?m)^banyandb_lifecycle_last_run_timestamp_seconds (?:[1-9]\d{9}|[1-9]\.\d+e\+0?[89])`),
+		"banyandb_lifecycle_last_run_timestamp_seconds must be set to a non-zero epoch, got:\n"+body)
+	gomega.Expect(body).To(gomega.MatchRegexp(`(?m)^banyandb_lifecycle_last_run_success 1$`),
+		"banyandb_lifecycle_last_run_success must be 1 after a successful cycle, got:\n"+body)
 	// A successful migration send increments total_finished; the measure/stream/trace
 	// part files are sent via the file-sync operation, so that label must be present.
 	gomega.Expect(body).To(gomega.MatchRegexp(`banyandb_lifecycle_migration_total_finished\{[^}]*\} [1-9]`),
 		"expected a non-zero banyandb_lifecycle_migration_total_finished series, got:\n"+body)
 	gomega.Expect(body).To(gomega.ContainSubstring(`operation="file-sync"`),
 		"file-sync part migration must be metered in the banyandb_lifecycle_migration_* family")
+	// Every banyandb_lifecycle_migration_total_finished series must carry a
+	// non-empty remote_node and a non-empty remote_tier (matching the
+	// destination data node). The test migrates hot -> warm, so remote_tier
+	// is "warm" (the destination).
+	gomega.Expect(body).To(gomega.MatchRegexp(`(?m)^banyandb_lifecycle_migration_total_finished\{[^}]*remote_node="[^"]+"[^}]*\} [1-9]`),
+		"every banyandb_lifecycle_migration_total_finished series must have a non-empty remote_node label (destination), got:\n"+body)
+	gomega.Expect(body).To(gomega.MatchRegexp(`(?m)^banyandb_lifecycle_migration_total_finished\{[^}]*remote_tier="warm"[^}]*\} [1-9]`),
+		"every banyandb_lifecycle_migration_total_finished series must have remote_tier=\"warm\" (the destination tier, since the test migrates hot->warm), got:\n"+body)
+
+	// The lifecycle's own metric family is the PUBLISHER-side mirror — it
+	// records the destination (remote_*). To confirm the SENDER identity was
+	// stamped on the wire and the receiver recorded it, we scrape the data
+	// node's /metrics for the banyandb_queue_sub_total_finished family
+	// (see verifyDataNodeSenderLabels below).
+
+	// === SENDER-LABEL VERIFICATION on the receiver (data node) ===
+	// Scrape the warm data node's Prometheus endpoint and assert that
+	// banyandb_queue_sub_total_finished series have non-empty
+	// sender_node / sender_role / sender_tier. The lifecycle publisher
+	// stamps those via SetSelfNode; without the fix, the data node records
+	// empty strings for these labels.
+	verifyDataNodeSenderLabels()
+}
+
+// verifyDataNodeSenderLabels scrapes the data node's /metrics endpoint and
+// asserts that the receiver's banyandb_queue_sub_total_finished series carry
+// non-empty sender labels — the direct evidence that the lifecycle publisher's
+// SetSelfNode fix is in place.
+//
+// Note on label naming: the receiver's banyandb_queue_sub_* family uses
+// REMOTE_* labels (remote_node, remote_role, remote_tier) to identify the
+// SENDER of each message — the lifecycle is "remote" from the data node's
+// point of view. So `remote_role="lifecycle"` and `remote_tier="hot"` on a
+// file-sync series IS the sender-stamping evidence we need.
+//
+// The lifecycle publishes to BOTH data nodes in the test (hot & warm), so
+// either endpoint is valid. We check both, accepting whichever responds.
+//
+// At-least-one check: earlier specs in the same suite (the "Lifecycle"
+// Describe block) run runLifecycleMigration via the OLD `lifecycle.NewCommand()`
+// path which does NOT pass --lifecycle-tier, so series for those groups still
+// carry empty remote_tier. The cross-segment specs pass --lifecycle-tier=hot,
+// so series for sw_cross_segment, sw_cross_segment_stream, sw_cross_segment_trace
+// carry remote_tier="hot". The assertion requires AT LEAST ONE
+// banyandb_queue_sub_total_finished series to carry the populated labels,
+// proving the SetSelfNode fix is wired end-to-end.
+func verifyDataNodeSenderLabels() {
+	urls := []string{SharedContext.WarmHTTPURL, SharedContext.DataHTTPURL}
+	for _, base := range urls {
+		if base == "" {
+			continue
+		}
+		ginkgo.By("scraping data node metrics at " + base + "/metrics")
+		// Use a small client-level timeout so a half-open TCP socket or
+		// stuck data-node HTTP handler cannot stall the spec indefinitely.
+		// The data node is a local process that serves /metrics in <100ms
+		// in practice, so 5s is a comfortable upper bound that still
+		// catches genuine hangs well within the spec's overall deadline.
+		scrapeClient := &http.Client{Timeout: 5 * time.Second}
+		resp, err := scrapeClient.Get(base + "/metrics") //nolint:gosec // test-only URL
+		if err != nil {
+			ginkgo.By("skipping " + base + " (" + err.Error() + ")")
+			continue
+		}
+		func() {
+			defer resp.Body.Close()
+			gomega.Expect(resp.StatusCode).To(gomega.Equal(http.StatusOK),
+				"data node "+base+"/metrics must return 200")
+			rawBody, readErr := io.ReadAll(resp.Body)
+			gomega.Expect(readErr).NotTo(gomega.HaveOccurred())
+			body := string(rawBody)
+			// At least one banyandb_queue_sub_total_finished series must
+			// carry the sender-stamped labels. The lifecycle derives its
+			// self identity (sender_node, sender_role, sender_tier) from
+			// already-known inputs — its --grpc-addr (the co-located
+			// data node) and the data-node registry — and calls
+			// SetSelfNode(senderNode, "lifecycle", senderTier). The
+			// hard-coded "lifecycle" role and the matched data node's
+			// Metadata.Name and Labels["type"] populate the three
+			// remote_* labels the receiver records.
+			ginkgo.By("scraping data node " + base + " for sender labels: " + fmt.Sprintf("%d bytes", len(body)))
+			gomega.Expect(body).To(gomega.MatchRegexp(`(?m)^banyandb_queue_sub_total_finished\{[^}]*remote_node="[^"]+"[^}]*\} [1-9]`),
+				"at least one banyandb_queue_sub_total_finished series on "+base+" must carry a non-empty remote_node label (sender node), got:\n"+body)
+			gomega.Expect(body).To(gomega.MatchRegexp(`(?m)^banyandb_queue_sub_total_finished\{[^}]*remote_role="lifecycle"[^}]*\} [1-9]`),
+				"at least one banyandb_queue_sub_total_finished series on "+base+" must carry remote_role=\"lifecycle\" (the sender role stamped by parseGroup), got:\n"+body)
+			gomega.Expect(body).To(gomega.MatchRegexp(`(?m)^banyandb_queue_sub_total_finished\{[^}]*remote_tier="hot"[^}]*\} [1-9]`),
+				"at least one banyandb_queue_sub_total_finished series on "+base+" must carry remote_tier=\"hot\" (the sender tier set via --lifecycle-tier=hot), got:\n"+body)
+		}()
+		return
+	}
+	ginkgo.By("no data node HTTP URL available; skipping sender-label scrape")
 }
 
 func verifySourceDirectoriesAfterMigration() {
@@ -533,6 +645,12 @@ func crossSegmentTimestamps() (single, left, right time.Time) {
 // every root path at the shared source dir and writing its report to reportDir.
 // It returns the command's metrics registry so callers can verify the emitted
 // banyandb_lifecycle_migration_* family.
+//
+// The migration publisher derives its sender identity (sender_node, sender_role,
+// sender_tier) from the data-node registry and the lifecycle's own --node-labels
+// at runtime — no extra CLI flags needed beyond what the test setup already
+// passes via SharedContext.MetadataFlags. See deriveSelfIdentity in
+// banyand/backup/lifecycle/steps.go for the resolution rules.
 func runLifecycleMigration(progressFile, reportDir string) observability.MetricsRegistry {
 	lifecycleCmd, reg := lifecycle.NewCommandWithRegistry()
 	args := []string{

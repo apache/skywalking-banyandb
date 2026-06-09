@@ -84,10 +84,18 @@ const (
 type lifecycleService struct {
 	databasev1.UnimplementedClusterStateServiceServer
 	databasev1.UnimplementedNodeQueryServiceServer
-	metadata          metadata.Repo
-	omr               observability.MetricsRegistry
-	pm                protector.Memory
-	cyclesTotal       meter.Counter
+	metadata    metadata.Repo
+	omr         observability.MetricsRegistry
+	pm          protector.Memory
+	cyclesTotal meter.Counter
+	// lastRunTimestamp records the wall-clock epoch (in seconds) of the
+	// most recent attempt to run a migration cycle, regardless of outcome.
+	// Updated at the end of action() in both the success and error paths.
+	lastRunTimestamp meter.Gauge
+	// lastRunSuccess records the outcome of the most recent migration
+	// cycle: 1 on success, 0 on error. Combined with lastRunTimestamp it
+	// gives dashboards an at-a-glance "is the lifecycle healthy" signal.
+	lastRunSuccess    meter.Gauge
 	metricsClient     queue.Client
 	grpcServer        *grpclib.Server
 	httpSrv           *http.Server
@@ -235,7 +243,10 @@ func (l *lifecycleService) PreRun(_ context.Context) error {
 
 	// Safe to call With() here: the metrics registry is registered earlier in the
 	// group, so its PreRun (which builds the provider) has already run.
-	l.cyclesTotal = l.omr.With(observability.RootScope.SubScope("lifecycle")).NewCounter("cycles_total")
+	lifecycleScope := l.omr.With(observability.RootScope.SubScope("lifecycle"))
+	l.cyclesTotal = lifecycleScope.NewCounter("cycles_total")
+	l.lastRunTimestamp = lifecycleScope.NewGauge("last_run_timestamp_seconds")
+	l.lastRunSuccess = lifecycleScope.NewGauge("last_run_success")
 
 	if l.schedule != "" && l.lifecycleTLS {
 		var err error
@@ -538,10 +549,20 @@ func (l *lifecycleService) startServers() {
 	})
 }
 
-func (l *lifecycleService) action(ctx context.Context) error {
+func (l *lifecycleService) action(ctx context.Context) (err error) {
 	if l.cyclesTotal != nil {
 		l.cyclesTotal.Inc(1)
 	}
+	// Stamp last-run metrics at the end of this cycle regardless of outcome.
+	// Using defer keeps the success/error bookkeeping in one place even as
+	// the body grows new early returns; the metrics gauge Set()s observe
+	// the same time.Now() and the success flag, so dashboards see consistent
+	// (timestamp, success) pairs. The named return value lets the defer
+	// observe whether the body succeeded.
+	runStart := time.Now()
+	defer func() {
+		l.recordLastRun(runStart, err)
+	}()
 	progress := LoadProgress(l.progressFilePath, l.l)
 	progress.ClearErrors()
 
@@ -636,6 +657,25 @@ func (l *lifecycleService) action(ctx context.Context) error {
 	l.l.Info().Msg("lifecycle migration partially completed, progress file retained")
 	l.generateReport(progress)
 	return fmt.Errorf("lifecycle migration partially completed, progress file retained; %v groups not fully completed", notCompleteGroups)
+}
+
+// recordLastRun stamps the banyandb_lifecycle_last_run_* gauges with the
+// start time (epoch seconds) and a 0/1 success flag. Called from the
+// deferred end-of-action block so every code path (success, error,
+// panic-recovered) updates both gauges. nil gauges are skipped so a
+// lifecycle run with a nil observability.MetricsRegistry (BypassRegistry)
+// doesn't crash.
+func (l *lifecycleService) recordLastRun(start time.Time, err error) {
+	if l.lastRunTimestamp != nil {
+		l.lastRunTimestamp.Set(float64(start.Unix()), nil...)
+	}
+	if l.lastRunSuccess != nil {
+		success := 0.0
+		if err == nil {
+			success = 1.0
+		}
+		l.lastRunSuccess.Set(success, nil...)
+	}
 }
 
 // generateReport gathers detailed counts & errors from Progress, writes comprehensive JSON file per run, and keeps only 5 latest.
@@ -1056,7 +1096,7 @@ func (l *lifecycleService) getGroupsToProcess(ctx context.Context, progress *Pro
 func (l *lifecycleService) processStreamGroup(ctx context.Context, g *commonv1.Group,
 	streamDir string, nodes []*databasev1.Node, labels map[string]string, progress *Progress,
 ) {
-	group, err := parseGroup(g, labels, nodes, l.l, l.metadata, l.clusterStateMgr, l.omr)
+	group, err := parseGroup(g, labels, nodes, l.l, l.metadata, l.clusterStateMgr, l.omr, l.gRPCAddr)
 	if err != nil {
 		l.l.Error().Err(err).Msgf("failed to parse group %s", g.Metadata.Name)
 		return
@@ -1176,7 +1216,7 @@ func (l *lifecycleService) deleteExpiredStreamSegments(ctx context.Context, g *c
 func (l *lifecycleService) processMeasureGroup(ctx context.Context, g *commonv1.Group, measureDir string,
 	nodes []*databasev1.Node, labels map[string]string, progress *Progress,
 ) {
-	group, err := parseGroup(g, labels, nodes, l.l, l.metadata, l.clusterStateMgr, l.omr)
+	group, err := parseGroup(g, labels, nodes, l.l, l.metadata, l.clusterStateMgr, l.omr, l.gRPCAddr)
 	if err != nil {
 		l.l.Error().Err(err).Msgf("failed to parse group %s", g.Metadata.Name)
 		return
@@ -1283,7 +1323,7 @@ func (l *lifecycleService) deleteExpiredTraceSegments(ctx context.Context, g *co
 func (l *lifecycleService) processTraceGroup(ctx context.Context, g *commonv1.Group, traceDir string,
 	nodes []*databasev1.Node, labels map[string]string, progress *Progress,
 ) {
-	group, err := parseGroup(g, labels, nodes, l.l, l.metadata, l.clusterStateMgr, l.omr)
+	group, err := parseGroup(g, labels, nodes, l.l, l.metadata, l.clusterStateMgr, l.omr, l.gRPCAddr)
 	if err != nil {
 		l.l.Error().Err(err).Msgf("failed to parse group %s", g.Metadata.Name)
 		return

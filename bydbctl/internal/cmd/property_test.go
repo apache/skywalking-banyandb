@@ -492,9 +492,9 @@ var _ = Describe("Property Cluster Operation", func() {
 		dfWriter := setup.NewDiscoveryFileWriter(dir)
 		config := setup.PropertyClusterConfig(dfWriter)
 		By("Starting data node 0")
-		_, _, closeNode1 = setup.DataNodeFromDataDir(config, node1Dir)
+		_, _, _, closeNode1 = setup.DataNodeFromDataDir(config, node1Dir)
 		By("Starting data node 1")
-		_, _, closeNode2 = setup.DataNodeFromDataDir(config, node2Dir)
+		_, _, _, closeNode2 = setup.DataNodeFromDataDir(config, node2Dir)
 		By("Starting liaison node")
 		_, liaisonHTTPAddr, closerLiaisonNode := setup.LiaisonNodeWithHTTP(config)
 		By("Initializing test cases")
@@ -653,9 +653,9 @@ var _ = Describe("Property Cluster background Repair Operation", func() {
 		config := setup.PropertyClusterConfig(dfWriter)
 		By("Starting data node 0")
 		var node1Repair, node2Repair string
-		node1ID, node1Repair, closeNode1 = setup.DataNodeFromDataDir(config, node1Dir, "--property-repair-enabled=true")
+		node1ID, node1Repair, _, closeNode1 = setup.DataNodeFromDataDir(config, node1Dir, "--property-repair-enabled=true")
 		By("Starting data node 1")
-		node2ID, node2Repair, closeNode2 = setup.DataNodeFromDataDir(config, node2Dir, "--property-repair-enabled=true")
+		node2ID, node2Repair, _, closeNode2 = setup.DataNodeFromDataDir(config, node2Dir, "--property-repair-enabled=true")
 		By("Initializing test cases")
 		_, liaisonHTTPAddr, closerLiaisonNode := setup.LiaisonNodeWithHTTP(config)
 		addr = httpSchema + liaisonHTTPAddr
@@ -771,7 +771,7 @@ var _ = Describe("Property Cluster Resilience with 5 Data Nodes", func() {
 		// Start 5 data nodes with short file discovery interval for faster failure detection
 		for i := 0; i < nodeCount; i++ {
 			By(fmt.Sprintf("Starting data node %d", i))
-			nodeIDs[i], nodeRepairAddrs[i], closeNodes[i] = setup.DataNodeFromDataDir(clusterConfig, nodeDirs[i],
+			nodeIDs[i], nodeRepairAddrs[i], _, closeNodes[i] = setup.DataNodeFromDataDir(clusterConfig, nodeDirs[i],
 				"--logging-level=debug",
 				"--property-repair-enabled=true", "--property-repair-quick-build-tree-time=1s",
 				"--property-repair-build-tree-cron=@every 2s",
@@ -868,7 +868,7 @@ var _ = Describe("Property Cluster Resilience with 5 Data Nodes", func() {
 		By(fmt.Sprintf("Restarting the %d closed nodes with existing data directories", closedNodeCount))
 		for i := 0; i < closedNodeCount; i++ {
 			GinkgoWriter.Printf("Restarting node %d\n", i)
-			nodeIDs[i], nodeRepairAddrs[i], closeNodes[i] = setup.DataNodeFromDataDir(clusterConfig, nodeDirs[i],
+			nodeIDs[i], nodeRepairAddrs[i], _, closeNodes[i] = setup.DataNodeFromDataDir(clusterConfig, nodeDirs[i],
 				"--logging-level=debug",
 				"--property-repair-enabled=true", "--property-repair-quick-build-tree-time=1s",
 				"--property-repair-build-tree-cron=@every 2s",

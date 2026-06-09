@@ -68,7 +68,7 @@ var _ = SynchronizedBeforeSuite(func() []byte {
 
 	// Start data node
 	var dataNodeCloseFn func()
-	dataNodeGRPCAddr, _, dataNodeCloseFn = setup.DataNodeWithAddrAndDir(config,
+	dataNodeGRPCAddr, _, _, dataNodeCloseFn = setup.DataNodeWithAddrAndDir(config,
 		"--observability-modes=prometheus",
 		"--observability-listener-addr=:2121",
 	)

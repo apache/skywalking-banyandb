@@ -87,7 +87,7 @@ var _ = SynchronizedBeforeSuite(func() []byte {
 	for i := 0; i < 3; i++ {
 		nodeDir, nodeDirCleanup, dirErr := test.NewSpace()
 		Expect(dirErr).NotTo(HaveOccurred())
-		_, _, closeDataNode := setup.DataNodeFromDataDir(clusterConfig, nodeDir, "--node-labels", "role=data")
+		_, _, _, closeDataNode := setup.DataNodeFromDataDir(clusterConfig, nodeDir, "--node-labels", "role=data")
 		dataNodeDirs = append(dataNodeDirs, nodeDir)
 		dataNodeDirCleanups = append(dataNodeDirCleanups, nodeDirCleanup)
 		dataNodeClosers = append(dataNodeClosers, closeDataNode)
@@ -192,7 +192,7 @@ var _ = AfterEach(func() {
 		return
 	}
 	// Node 0 may have been stopped by a spec — restart it from its data directory.
-	_, _, closeDataNode := setup.DataNodeFromDataDir(clusterConfig, dataNodeDirs[0], "--node-labels", "role=data")
+	_, _, _, closeDataNode := setup.DataNodeFromDataDir(clusterConfig, dataNodeDirs[0], "--node-labels", "role=data")
 	dataNodeClosers[0] = closeDataNode
 	Eventually(func() bool {
 		return isClusterStable(connection)

@@ -84,6 +84,79 @@ func (l *lifecycleService) getSnapshots(ctx context.Context, groups []*commonv1.
 	return streamDir, measureDir, traceDir, nil
 }
 
+// deriveSelfIdentity returns the SenderNode and SenderTier the lifecycle
+// publisher should stamp on its wire SendRequest so the data-node receiver
+// can label its banyandb_queue_sub_* family accordingly.
+//
+// Inputs (no new CLI flags needed):
+//
+//   - coLocatedDataNodeAddr: the lifecycle's --grpc-addr, which is the
+//     gRPC address of the data node the lifecycle is co-located with
+//     (sidecar topology). It is the authoritative match key.
+//   - nodeLabels: the lifecycle's own --node-labels, used as a fallback
+//     when the co-located data node hasn't synced to the metadata
+//     registry yet (cold start of a freshly created lifecycle).
+//   - nodes: the cluster's data-node registry (ROLE_DATA), which carries
+//     both Metadata.Name (the BanyanDB NodeID) and Labels (e.g. type=hot).
+//
+// Resolution order:
+//
+//  1. Match by GrpcAddress. In the standard sidecar layout the lifecycle's
+//     --grpc-addr equals the co-located data node's GrpcAddress, and
+//     that data node's Metadata.Name is the BanyanDB NodeID the
+//     receiver records as remote_node. This is the production path
+//     (the live cluster's lifecycle container has no --node-labels).
+//  2. Fall back to label matching. If a data node's Labels are a
+//     superset of nodeLabels (every key in nodeLabels matches), use
+//     that node's Metadata.Name and Labels["type"].
+//  3. Fall back to type-only match on nodeLabels["type"].
+//  4. If nothing matches, return empty strings — preserves the
+//     pre-fix behavior so existing test setups that don't populate
+//     these fields keep working.
+func deriveSelfIdentity(coLocatedDataNodeAddr string, nodeLabels map[string]string, nodes []*databasev1.Node) (senderNode, senderTier string) {
+	// Pass 1: GrpcAddress match (the production sidecar path).
+	if coLocatedDataNodeAddr != "" {
+		for _, n := range nodes {
+			if n.GrpcAddress == coLocatedDataNodeAddr {
+				return n.Metadata.Name, n.Labels["type"]
+			}
+		}
+	}
+	// Pass 2: every-key label match.
+	for _, n := range nodes {
+		if n.Labels == nil {
+			continue
+		}
+		if !labelsContain(n.Labels, nodeLabels) {
+			continue
+		}
+		return n.Metadata.Name, n.Labels["type"]
+	}
+	// Pass 3: type-only label match.
+	if wantType := nodeLabels["type"]; wantType != "" {
+		for _, n := range nodes {
+			if n.Labels == nil {
+				continue
+			}
+			if n.Labels["type"] == wantType {
+				return n.Metadata.Name, n.Labels["type"]
+			}
+		}
+	}
+	return "", ""
+}
+
+// labelsContain reports whether superset has every (k, v) pair in subset.
+// An empty subset matches anything.
+func labelsContain(superset, subset map[string]string) bool {
+	for k, v := range subset {
+		if superset[k] != v {
+			return false
+		}
+	}
+	return true
+}
+
 // GroupConfig encapsulates the parsed lifecycle configuration for a Group.
 // It contains all necessary information for migration and deletion operations.
 type GroupConfig struct {
@@ -125,6 +198,7 @@ func parseGroup(
 	g *commonv1.Group, nodeLabels map[string]string, nodes []*databasev1.Node,
 	l *logger.Logger, metadata metadata.Repo, clusterStateMgr *clusterStateManager,
 	omr observability.MetricsRegistry,
+	coLocatedDataNodeAddr string,
 ) (*GroupConfig, error) {
 	ro := g.ResourceOpts
 	if ro == nil {
@@ -193,6 +267,27 @@ func parseGroup(
 		return nil, fmt.Errorf("failed to initialize node selector for group %s", g.Metadata.Name)
 	}
 	client := pub.NewWithoutMetadata(omr) //nolint:contextcheck // health check goroutine uses context.Background()
+	// Stamp the lifecycle's self identity onto the publisher so the wire
+	// SenderNode / SenderRole / SenderTier fields and the parallel
+	// banyandb_lifecycle_migration_* labels are populated. The three
+	// values are derived from already-known inputs (the co-located data
+	// node's gRPC address and the cluster's data-node registry) so the
+	// fix needs no new CLI flags:
+	//   - SenderNode  = the data node whose GrpcAddress matches the
+	//     lifecycle's --grpc-addr (i.e. the co-located data node). Its
+	//     Metadata.Name is the BanyanDB NodeID the receiver records as
+	//     remote_node.
+	//   - SenderRole  = "lifecycle" (no Role enum entry; matches the
+	//     liaison's hard-coded "liaison" pattern in pkg/cmdsetup/liaison.go).
+	//   - SenderTier  = the matched data node's `type` label
+	//     (hot/warm/cold), which becomes the receiver's remote_tier.
+	// Falls back to the lifecycle's own --node-labels when the co-located
+	// data node isn't in the registry yet (cold start), and to empty
+	// when neither is available — preserving the pre-fix behavior.
+	senderNode, senderTier := deriveSelfIdentity(coLocatedDataNodeAddr, nodeLabels, nodes)
+	if senderNode != "" || senderTier != "" {
+		client.SetSelfNode(senderNode, "lifecycle", senderTier)
+	}
 	switch g.Catalog {
 	case commonv1.Catalog_CATALOG_STREAM:
 		_ = grpc.NewClusterNodeRegistry(data.TopicStreamWrite, client, nodeSel)

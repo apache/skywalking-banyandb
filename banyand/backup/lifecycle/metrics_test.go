@@ -19,9 +19,11 @@ package lifecycle
 
 import (
 	"context"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/require"
 
@@ -104,4 +106,71 @@ func TestBuildHTTPRouterWithoutPromHandler(t *testing.T) {
 	rec := httptest.NewRecorder()
 	router.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/metrics", nil))
 	require.Equal(t, http.StatusNotFound, rec.Code)
+}
+
+// recordingGauge captures the last Set() call so a unit test can assert
+// the value the lifecycle would have emitted. The lifecycle uses the
+// real prometheus-backed Gauge in production; this stub keeps the test
+// hermetic.
+type recordingGauge struct {
+	lastValue float64
+	called    int
+}
+
+func (g *recordingGauge) Set(v float64, _ ...string) {
+	g.lastValue = v
+	g.called++
+}
+
+func (g *recordingGauge) Add(_ float64, _ ...string) {}
+
+func (g *recordingGauge) Delete(_ ...string) bool { return true }
+
+// TestRecordLastRunSuccess stamps the gauges with the start time (epoch
+// seconds) and success=1 when the action returned nil. Asserts both the
+// integer epoch shape and the 0/1 success signal so dashboards can
+// distinguish a healthy last run from a failed one.
+func TestRecordLastRunSuccess(t *testing.T) {
+	tsGauge, okGauge := &recordingGauge{}, &recordingGauge{}
+	l := &lifecycleService{
+		lastRunTimestamp: tsGauge,
+		lastRunSuccess:   okGauge,
+	}
+	start := time.Unix(1717929600, 0) // 2024-06-09T00:00:00Z, deterministic
+	l.recordLastRun(start, nil)
+
+	require.Equal(t, 1, tsGauge.called)
+	require.Equal(t, 1717929600.0, tsGauge.lastValue,
+		"lastRunTimestamp must record the start time as epoch seconds")
+	require.Equal(t, 1, okGauge.called)
+	require.Equal(t, 1.0, okGauge.lastValue,
+		"lastRunSuccess must be 1 on a nil error")
+}
+
+// TestRecordLastRunFailure stamps the gauges with success=0 when the action
+// returned an error. The timestamp is still set — operators want to know
+// "when did the last attempt happen, and did it succeed?".
+func TestRecordLastRunFailure(t *testing.T) {
+	tsGauge, okGauge := &recordingGauge{}, &recordingGauge{}
+	l := &lifecycleService{
+		lastRunTimestamp: tsGauge,
+		lastRunSuccess:   okGauge,
+	}
+	start := time.Unix(1717929700, 0)
+	l.recordLastRun(start, errors.New("snapshot dir unavailable"))
+
+	require.Equal(t, 1717929700.0, tsGauge.lastValue)
+	require.Equal(t, 0.0, okGauge.lastValue,
+		"lastRunSuccess must be 0 on a non-nil error")
+}
+
+// TestRecordLastRunNilGaugesSafe ensures nil observability gauges (e.g. when
+// the metrics registry is BypassRegistry and never wired) don't crash
+// the deferred bookkeeping. This is the path the no-op PreRun takes.
+func TestRecordLastRunNilGaugesSafe(t *testing.T) {
+	l := &lifecycleService{}
+	require.NotPanics(t, func() {
+		l.recordLastRun(time.Now(), nil)
+		l.recordLastRun(time.Now(), errors.New("boom"))
+	})
 }
