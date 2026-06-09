@@ -138,7 +138,7 @@ var _ = g.Describe("Measure Normal Mode Replication", func() {
 		})
 
 		g.By("Restarting the data node")
-		_, _, closeDataNode := setup.DataNodeFromDataDir(clusterConfig, dataNodeDirs[0], "--node-labels", "role=data")
+		_, _, _, closeDataNode := setup.DataNodeFromDataDir(clusterConfig, dataNodeDirs[0], "--node-labels", "role=data")
 		dataNodeClosers[0] = closeDataNode
 
 		g.By("Waiting for cluster to stabilize and handoff queue to drain")

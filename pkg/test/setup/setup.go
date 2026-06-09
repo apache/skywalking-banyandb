@@ -547,14 +547,17 @@ func hasFlagValue(flags []string, key, value string) bool {
 	return false
 }
 
-func startDataNode(config *ClusterConfig, dataDir string, flags ...string) (string, string, func()) {
+func startDataNode(config *ClusterConfig, dataDir string, flags ...string) (grpcAddr, propertyRepairAddr, httpURL string, closeFn func()) {
 	if config == nil {
 		config = newDefaultClusterConfig()
 	}
 	runSchemaServer := !hasFlagValue(flags, "--has-meta-role", "false")
-	portCount := 2
+	// Allocate 4 ports: grpc, property-repair-gossip, http (Prometheus), and
+	// (optionally) schema server. The HTTP port is the data node's Prometheus
+	// /metrics endpoint, so tests can scrape banyandb_queue_sub_* directly.
+	portCount := 3
 	if runSchemaServer {
-		portCount = 3
+		portCount = 4
 	}
 	ports, err := test.AllocateFreePorts(portCount)
 	gomega.Expect(err).NotTo(gomega.HaveOccurred())
@@ -567,6 +570,7 @@ func startDataNode(config *ClusterConfig, dataDir string, flags ...string) (stri
 		"--grpc-host="+host,
 		fmt.Sprintf("--grpc-port=%d", ports[0]),
 		fmt.Sprintf("--property-repair-gossip-grpc-port=%d", ports[1]),
+		fmt.Sprintf("--http-port=%d", ports[2]),
 		"--stream-root-path="+dataDir,
 		"--measure-root-path="+dataDir,
 		"--property-root-path="+dataDir,
@@ -586,7 +590,7 @@ func startDataNode(config *ClusterConfig, dataDir string, flags ...string) (stri
 	}
 
 	if runSchemaServer {
-		schemaPort := ports[2]
+		schemaPort := ports[3]
 		schemaAddr := fmt.Sprintf("%s:%d", nodeHost, schemaPort)
 		flags = append(flags,
 			"--schema-server-grpc-host="+nodeHost,
@@ -624,7 +628,7 @@ func startDataNode(config *ClusterConfig, dataDir string, flags ...string) (stri
 		}
 	}
 
-	closeFn := func() {
+	closeFn = func() {
 		if config.NodeDiscovery.FileWriter != nil {
 			config.NodeDiscovery.FileWriter.RemoveNode(nodeAddr)
 		}
@@ -635,14 +639,14 @@ func startDataNode(config *ClusterConfig, dataDir string, flags ...string) (stri
 		rawCloseFn()
 	}
 
-	return addr, fmt.Sprintf("%s:%d", host, ports[1]), closeFn
+	return addr, fmt.Sprintf("%s:%d", host, ports[1]), fmt.Sprintf("http://%s:%d", host, ports[2]), closeFn
 }
 
 // DataNode runs a data node.
 func DataNode(config *ClusterConfig, flags ...string) func() {
 	path, deferFn, err := test.NewSpace()
 	gomega.Expect(err).NotTo(gomega.HaveOccurred())
-	_, _, closeFn := DataNodeFromDataDir(config, path, flags...)
+	_, _, _, closeFn := DataNodeFromDataDir(config, path, flags...)
 	return func() {
 		fmt.Printf("Data tsdb path: %s\n", path)
 		_ = filepath.Walk(path, func(path string, _ os.FileInfo, err error) error {
@@ -658,18 +662,21 @@ func DataNode(config *ClusterConfig, flags ...string) func() {
 	}
 }
 
-// DataNodeFromDataDir runs a data node with a specific data directory.
-func DataNodeFromDataDir(config *ClusterConfig, dataDir string, flags ...string) (string, string, func()) {
-	grpcAddr, propertyRepairAddr, closeFn := startDataNode(config, dataDir, flags...)
-	return grpcAddr, propertyRepairAddr, closeFn
+// DataNodeFromDataDir runs a data node with a specific data directory and
+// returns the gRPC address, the property-repair-gossip gRPC address, the
+// HTTP URL (Prometheus /metrics), and a close function.
+func DataNodeFromDataDir(config *ClusterConfig, dataDir string, flags ...string) (string, string, string, func()) {
+	grpcAddr, propertyRepairAddr, httpURL, closeFn := startDataNode(config, dataDir, flags...)
+	return grpcAddr, propertyRepairAddr, httpURL, closeFn
 }
 
-// DataNodeWithAddrAndDir runs a data node and returns the address and root path.
-func DataNodeWithAddrAndDir(config *ClusterConfig, flags ...string) (string, string, func()) {
+// DataNodeWithAddrAndDir runs a data node and returns the gRPC address, the
+// data directory path, the HTTP URL (Prometheus /metrics), and a close fn.
+func DataNodeWithAddrAndDir(config *ClusterConfig, flags ...string) (string, string, string, func()) {
 	path, deferFn, err := test.NewSpace()
 	gomega.Expect(err).NotTo(gomega.HaveOccurred())
-	addr, _, closeFn := startDataNode(config, path, flags...)
-	return addr, path, func() {
+	addr, _, httpURL, closeFn := startDataNode(config, path, flags...)
+	return addr, path, httpURL, func() {
 		closeFn()
 		deferFn()
 	}

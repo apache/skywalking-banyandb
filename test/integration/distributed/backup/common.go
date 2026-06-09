@@ -81,7 +81,7 @@ func InitializeTestSuite() (*CommonTestVars, error) {
 	clusterConfig := setup.PropertyClusterConfig(dfWriter)
 	ginkgo.By("Starting data node 0")
 	var closeDataNode0 func()
-	vars.DataAddr, vars.Dir, closeDataNode0 = setup.DataNodeWithAddrAndDir(clusterConfig)
+	vars.DataAddr, vars.Dir, _, closeDataNode0 = setup.DataNodeWithAddrAndDir(clusterConfig)
 	ginkgo.By("Starting liaison node")
 	liaisonAddr, closerLiaisonNode := setup.LiaisonNode(clusterConfig)
 	ginkgo.By("Loading schema")

@@ -347,6 +347,14 @@ func (s *server) Serve() run.StopNotify {
 	}
 	mux := chi.NewRouter()
 	mux.Mount("/api", http.StripPrefix("/api", gwMux))
+	// Mount /metrics when the metrics registry exposes a Prometheus handler.
+	// The data node's HTTP server doubles as a Prometheus scrape target, so
+	// monitoring tooling (and integration tests) can read banyandb_queue_sub_*
+	// directly. The handler is only registered when omr is wired to a real
+	// registry; BypassRegistry / nil registries leave /metrics absent (404).
+	if reg, ok := s.omr.(observability.PrometheusHandlerProvider); ok {
+		mux.Handle("/metrics", reg.PrometheusHandler())
+	}
 	s.httpSrv = &http.Server{
 		Addr:              s.httpAddr,
 		Handler:           mux,

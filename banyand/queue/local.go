@@ -59,6 +59,11 @@ func (l *local) GracefulStop() {
 	}
 }
 
+// SetSelfNode implements Queue. The local pipeline is in-process and has no
+// wire / sender stamping, so this is a no-op kept only to satisfy the Client
+// interface.
+func (l *local) SetSelfNode(_, _, _ string) {}
+
 // Serve implements Queue.
 func (l *local) Serve() run.StopNotify {
 	return l.stopCh

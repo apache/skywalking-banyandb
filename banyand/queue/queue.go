@@ -59,6 +59,13 @@ type Client interface {
 	route.TableProvider
 	NewBatchPublisher(timeout time.Duration) BatchPublisher
 	NewChunkedSyncClient(node string, chunkSize uint32) (ChunkedSyncClient, error)
+	// SetSelfNode stamps the publisher's own node identity onto the wire
+	// (SenderNode / SenderRole / SenderTier on every SendRequest) and onto
+	// the banyandb_lifecycle_migration_* metric labels. Pass "" for any
+	// dimension the caller doesn't know (e.g. the lifecycle has no Role
+	// enum entry; the tier is untracked when the co-located data node's
+	// tier isn't known at boot time).
+	SetSelfNode(name, role, tier string)
 	// NewNodeSchemaStatusClient returns a client for the cluster.v1
 	// NodeSchemaStatusService against the named node, sharing the underlying
 	// *grpc.ClientConn from this queue client's existing connection pool.

@@ -66,7 +66,7 @@ var _ = g.SynchronizedBeforeSuite(func() []byte {
 
 	// Start two data nodes to ensure replication targets exist
 	startDataNode := func() (string, string) {
-		addr, path, closeFn := setup.DataNodeWithAddrAndDir(clusterConfig)
+		addr, path, _, closeFn := setup.DataNodeWithAddrAndDir(clusterConfig)
 		cleanupFuncs = append(cleanupFuncs, closeFn)
 		return addr, path
 	}

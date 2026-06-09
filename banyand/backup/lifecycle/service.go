@@ -1056,7 +1056,7 @@ func (l *lifecycleService) getGroupsToProcess(ctx context.Context, progress *Pro
 func (l *lifecycleService) processStreamGroup(ctx context.Context, g *commonv1.Group,
 	streamDir string, nodes []*databasev1.Node, labels map[string]string, progress *Progress,
 ) {
-	group, err := parseGroup(g, labels, nodes, l.l, l.metadata, l.clusterStateMgr, l.omr)
+	group, err := parseGroup(g, labels, nodes, l.l, l.metadata, l.clusterStateMgr, l.omr, l.gRPCAddr)
 	if err != nil {
 		l.l.Error().Err(err).Msgf("failed to parse group %s", g.Metadata.Name)
 		return
@@ -1176,7 +1176,7 @@ func (l *lifecycleService) deleteExpiredStreamSegments(ctx context.Context, g *c
 func (l *lifecycleService) processMeasureGroup(ctx context.Context, g *commonv1.Group, measureDir string,
 	nodes []*databasev1.Node, labels map[string]string, progress *Progress,
 ) {
-	group, err := parseGroup(g, labels, nodes, l.l, l.metadata, l.clusterStateMgr, l.omr)
+	group, err := parseGroup(g, labels, nodes, l.l, l.metadata, l.clusterStateMgr, l.omr, l.gRPCAddr)
 	if err != nil {
 		l.l.Error().Err(err).Msgf("failed to parse group %s", g.Metadata.Name)
 		return
@@ -1283,7 +1283,7 @@ func (l *lifecycleService) deleteExpiredTraceSegments(ctx context.Context, g *co
 func (l *lifecycleService) processTraceGroup(ctx context.Context, g *commonv1.Group, traceDir string,
 	nodes []*databasev1.Node, labels map[string]string, progress *Progress,
 ) {
-	group, err := parseGroup(g, labels, nodes, l.l, l.metadata, l.clusterStateMgr, l.omr)
+	group, err := parseGroup(g, labels, nodes, l.l, l.metadata, l.clusterStateMgr, l.omr, l.gRPCAddr)
 	if err != nil {
 		l.l.Error().Err(err).Msgf("failed to parse group %s", g.Metadata.Name)
 		return
