@@ -50,6 +50,10 @@ const (
 	// Remote-side failures (observed after the frame was written to the stream).
 	sendErrReasonRecvError      = "recv_error"      // s.Recv returned an error (connection/protocol layer).
 	sendErrReasonServerRejected = "server_rejected" // Server responded with a non-empty Error (includes failover statuses).
+	// Failures specific to the non-batched publish path (query/control operations).
+	sendErrReasonSendError    = "send_error"    // Opening the stream or writing the first frame failed.
+	sendErrReasonDecodeError  = "decode_error"  // The response body could not be decoded.
+	sendErrReasonInvalidTopic = "invalid_topic" // No response codec is registered for the topic.
 )
 
 type writeStream struct {
