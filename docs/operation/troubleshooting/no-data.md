@@ -2,10 +2,12 @@
 
 If you encounter issues with missing data in BanyanDB, follow these troubleshooting steps to identify and resolve the problem.
 
+> Most "no data" problems surface first in the write-path **Key Signals** — write rate, write errors, and node liveness. Start at [Observability › Key Signals to Watch](../observability/overview.md#key-signals-to-watch); in a cluster these metrics are scraped from the [FODC proxy](../fodc/overview.md), with per-node identity in the `pod_name` / `container_name` labels.
+
 ## Check Data Ingestion
 
-1. **Monitor Write Rate**: Use the BanyanDB metrics [write rate](../observability.md#write-rate)to monitor the write rate and ensure that data is being ingested into the database.
-2. **Monitor Write Errors**: Monitor the [write errors](../observability.md#write-and-query-errors-rate) metric to identify any issues with data ingestion. High write errors can indicate problems with data ingestion.
+1. **Monitor Write Rate**: Use the BanyanDB metrics [write rate](../observability/metrics.md#write-rate)to monitor the write rate and ensure that data is being ingested into the database.
+2. **Monitor Write Errors**: Monitor the [write errors](../observability/metrics.md#write-and-query-errors-rate) metric to identify any issues with data ingestion. High write errors can indicate problems with data ingestion.
 3. **Review Ingestion Logs**: Check the BanyanDB logs for any errors or warnings related to data ingestion. Look for messages indicating failed writes or data loss.
 
 ## Verify the Query Time Range
