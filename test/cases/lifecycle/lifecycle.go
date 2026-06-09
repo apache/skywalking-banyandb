@@ -25,6 +25,8 @@ import (
 	"fmt"
 	"io"
 	"io/fs"
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"sort"
@@ -43,6 +45,7 @@ import (
 	streamv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/stream/v1"
 	tracev1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/trace/v1"
 	"github.com/apache/skywalking-banyandb/banyand/backup/lifecycle"
+	"github.com/apache/skywalking-banyandb/banyand/observability"
 	"github.com/apache/skywalking-banyandb/pkg/grpchelper"
 	"github.com/apache/skywalking-banyandb/pkg/test/flags"
 	"github.com/apache/skywalking-banyandb/pkg/test/helpers"
@@ -225,6 +228,25 @@ func verifyLifecycleStages(sc helpers.SharedContext, verifyFn func(gomega.Gomega
 		Stages:          []string{"hot"},
 		IgnoreElementID: args.IgnoreElementID,
 	})
+}
+
+// verifyMigrationMetrics asserts the lifecycle tier-migration publisher emitted
+// the banyandb_lifecycle_migration_* family (the mirror of banyandb_queue_pub_*)
+// during the migration. The registry's Prometheus counters persist after the
+// command stops, so we scrape its handler directly rather than a live HTTP port.
+func verifyMigrationMetrics(reg observability.MetricsRegistry) {
+	provider, ok := reg.(observability.PrometheusHandlerProvider)
+	gomega.Expect(ok).To(gomega.BeTrue(), "lifecycle metrics registry must expose a Prometheus handler")
+	rec := httptest.NewRecorder()
+	provider.PrometheusHandler().ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/metrics", nil))
+	gomega.Expect(rec.Code).To(gomega.Equal(http.StatusOK))
+	body := rec.Body.String()
+	// A successful migration send increments total_finished; the measure/stream/trace
+	// part files are sent via the file-sync operation, so that label must be present.
+	gomega.Expect(body).To(gomega.MatchRegexp(`banyandb_lifecycle_migration_total_finished\{[^}]*\} [1-9]`),
+		"expected a non-zero banyandb_lifecycle_migration_total_finished series, got:\n"+body)
+	gomega.Expect(body).To(gomega.ContainSubstring(`operation="file-sync"`),
+		"file-sync part migration must be metered in the banyandb_lifecycle_migration_* family")
 }
 
 func verifySourceDirectoriesAfterMigration() {
@@ -509,8 +531,10 @@ func crossSegmentTimestamps() (single, left, right time.Time) {
 
 // runLifecycleMigration runs a single hot->warm lifecycle migration, pointing
 // every root path at the shared source dir and writing its report to reportDir.
-func runLifecycleMigration(progressFile, reportDir string) {
-	lifecycleCmd := lifecycle.NewCommand()
+// It returns the command's metrics registry so callers can verify the emitted
+// banyandb_lifecycle_migration_* family.
+func runLifecycleMigration(progressFile, reportDir string) observability.MetricsRegistry {
+	lifecycleCmd, reg := lifecycle.NewCommandWithRegistry()
 	args := []string{
 		"--grpc-addr", SharedContext.DataAddr,
 		"--stream-root-path", SharedContext.SrcDir,
@@ -522,6 +546,7 @@ func runLifecycleMigration(progressFile, reportDir string) {
 	args = append(args, SharedContext.MetadataFlags...)
 	lifecycleCmd.SetArgs(args)
 	gomega.Expect(lifecycleCmd.Execute()).To(gomega.Succeed())
+	return reg
 }
 
 // drainWriteAcks closes a client-streaming write and fails the spec on any
@@ -737,7 +762,11 @@ var _ = ginkgo.Describe("Measure cross-segment migration", ginkgo.Ordered, func(
 		gomega.Expect(err).NotTo(gomega.HaveOccurred())
 		defer os.RemoveAll(dir)
 		rf := filepath.Join(dir, "report")
-		runLifecycleMigration(filepath.Join(dir, "progress.json"), rf)
+		migrationMetrics := runLifecycleMigration(filepath.Join(dir, "progress.json"), rf)
+		// This Describe seeds sw_cross_segment immediately above and migrates it
+		// here, so the tier-migration publisher always emits the
+		// banyandb_lifecycle_migration_* family regardless of spec ordering.
+		verifyMigrationMetrics(migrationMetrics)
 
 		// === 4. Verify the destination directory contains multiple seg-* folders for
 		//        sw_cross_segment. Pre-fix, the cross-segment part would copy entirely

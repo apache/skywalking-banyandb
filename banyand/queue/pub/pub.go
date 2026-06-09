@@ -72,25 +72,26 @@ var (
 
 type pub struct {
 	schema.UnimplementedOnInitHandler
-	metadata        metadata.Repo
-	handlers        map[bus.Topic]schema.EventHandler
-	log             *logger.Logger
-	metrics         *pubMetrics
-	connMgr         *grpchelper.ConnManager[*client]
-	closer          *run.Closer
-	writableProbe   map[string]map[string]struct{}
-	nodeCache       map[string]nodeInfo
-	caCertPath      string
-	caCertReloader  *pkgtls.Reloader
-	prefix          string
-	retryPolicy     string
-	selfNode        string
-	selfRole        string
-	selfTier        string
-	allowedRoles    []databasev1.Role
-	writableProbeMu sync.Mutex
-	nodeCacheMu     sync.RWMutex
-	tlsEnabled      bool
+	metadata         metadata.Repo
+	handlers         map[bus.Topic]schema.EventHandler
+	log              *logger.Logger
+	metrics          *pubMetrics
+	migrationMetrics *pubMigrationMetrics
+	connMgr          *grpchelper.ConnManager[*client]
+	closer           *run.Closer
+	writableProbe    map[string]map[string]struct{}
+	nodeCache        map[string]nodeInfo
+	caCertPath       string
+	caCertReloader   *pkgtls.Reloader
+	prefix           string
+	retryPolicy      string
+	selfNode         string
+	selfRole         string
+	selfTier         string
+	allowedRoles     []databasev1.Role
+	writableProbeMu  sync.Mutex
+	nodeCacheMu      sync.RWMutex
+	tlsEnabled       bool
 }
 
 // nodeInfo caches the resolved role and tier for a remote node.
@@ -473,7 +474,12 @@ func New(metadata metadata.Repo, roles ...databasev1.Role) queue.Client {
 
 // NewWithoutMetadata returns a new queue client without metadata, defaulting to data nodes.
 // sender_* fields are left empty for this lifecycle-tool publisher.
-func NewWithoutMetadata() queue.Client {
+//
+// If omr is non-nil, a parallel banyandb_lifecycle_migration_* metric family is
+// registered on it. The regular banyandb_queue_pub_* family stays disabled because
+// metadata is nil (PreRun gates it on metadata != nil). Pass nil to leave the
+// migration metrics disabled (e.g. tests, or non-migration clients).
+func NewWithoutMetadata(omr observability.MetricsRegistry) queue.Client {
 	p := New(nil, databasev1.Role_ROLE_DATA)
 	pp := p.(*pub)
 	pp.log = logger.GetLogger("queue-client")
@@ -483,6 +489,9 @@ func NewWithoutMetadata() queue.Client {
 		RetryPolicy:    pp.retryPolicy,
 		MaxRecvMsgSize: maxReceiveMessageSize,
 	})
+	if omr != nil {
+		pp.migrationMetrics = newPubMigrationMetrics(omr.With(lifecycleMigrationScope))
+	}
 	return p
 }
 
@@ -709,18 +718,19 @@ func (p *pub) NewChunkedSyncClientWithConfig(node string, config *ChunkedSyncCli
 		info = resolveNodeInfo(n)
 	}
 	return &chunkedSyncClient{
-		client:     c.client,
-		conn:       c.conn,
-		node:       node,
-		log:        p.log,
-		metrics:    p.metrics,
-		selfNode:   p.selfNode,
-		selfRole:   p.selfRole,
-		selfTier:   p.selfTier,
-		remoteRole: info.role,
-		remoteTier: info.tier,
-		chunkSize:  config.ChunkSize,
-		config:     config,
+		client:           c.client,
+		conn:             c.conn,
+		node:             node,
+		log:              p.log,
+		metrics:          p.metrics,
+		migrationMetrics: p.migrationMetrics,
+		selfNode:         p.selfNode,
+		selfRole:         p.selfRole,
+		selfTier:         p.selfTier,
+		remoteRole:       info.role,
+		remoteTier:       info.tier,
+		chunkSize:        config.ChunkSize,
+		config:           config,
 	}, nil
 }
 

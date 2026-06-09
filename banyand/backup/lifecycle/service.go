@@ -52,10 +52,13 @@ import (
 	"github.com/apache/skywalking-banyandb/banyand/backup/snapshot"
 	"github.com/apache/skywalking-banyandb/banyand/internal/storage"
 	"github.com/apache/skywalking-banyandb/banyand/metadata"
+	"github.com/apache/skywalking-banyandb/banyand/metadata/schema"
 	"github.com/apache/skywalking-banyandb/banyand/observability"
 	"github.com/apache/skywalking-banyandb/banyand/protector"
+	"github.com/apache/skywalking-banyandb/banyand/queue"
 	"github.com/apache/skywalking-banyandb/pkg/healthcheck"
 	"github.com/apache/skywalking-banyandb/pkg/logger"
+	"github.com/apache/skywalking-banyandb/pkg/meter"
 	"github.com/apache/skywalking-banyandb/pkg/run"
 	"github.com/apache/skywalking-banyandb/pkg/timestamp"
 	pkgtls "github.com/apache/skywalking-banyandb/pkg/tls"
@@ -69,22 +72,35 @@ type service interface {
 
 var _ service = (*lifecycleService)(nil)
 
+const (
+	// metricsLocalNodeName is the connMgr key for the co-located data node that
+	// receives the lifecycle's native _monitoring measure writes.
+	metricsLocalNodeName = "lifecycle-local"
+	// metricsNodeKeeperInterval is how often the keeper re-checks that the local
+	// data node connection is active and re-registers it if not.
+	metricsNodeKeeperInterval = 10 * time.Second
+)
+
 type lifecycleService struct {
 	databasev1.UnimplementedClusterStateServiceServer
 	databasev1.UnimplementedNodeQueryServiceServer
 	metadata          metadata.Repo
 	omr               observability.MetricsRegistry
 	pm                protector.Memory
-	clusterStateMgr   *clusterStateManager
-	l                 *logger.Logger
-	sch               *timestamp.Scheduler
+	cyclesTotal       meter.Counter
+	metricsClient     queue.Client
 	grpcServer        *grpclib.Server
 	httpSrv           *http.Server
 	tlsReloader       *pkgtls.Reloader
 	currentNode       *databasev1.Node
 	clientCloser      context.CancelFunc
 	stopCh            chan struct{}
-	measureRoot       string
+	sch               *timestamp.Scheduler
+	l                 *logger.Logger
+	clusterStateMgr   *clusterStateManager
+	metricsKeeperStop chan struct{}
+	lifecycleHost     string
+	lifecycleHTTPAddr string
 	streamRoot        string
 	traceRoot         string
 	progressFilePath  string
@@ -92,29 +108,60 @@ type lifecycleService struct {
 	schedule          string
 	cert              string
 	gRPCAddr          string
-	lifecycleHost     string
-	lifecycleGRPCAddr string
-	lifecycleHTTPAddr string
-	lifecycleCertFile string
 	lifecycleKeyFile  string
+	lifecycleGRPCAddr string
+	measureRoot       string
+	lifecycleCertFile string
+	localNodeMD       schema.Metadata
+	maxExecutionTimes int
+	chunkSize         run.Bytes
 	lifecycleGRPCPort uint32
 	lifecycleHTTPPort uint32
-	maxExecutionTimes int
 	enableTLS         bool
 	insecure          bool
 	lifecycleTLS      bool
-	chunkSize         run.Bytes
 }
 
-// NewService creates a new lifecycle service.
-func NewService(meta metadata.Repo) run.Unit {
+// NewService creates a new lifecycle service. metricsRegistry replaces the
+// previous BypassRegistry, so the protector memory metrics and the lifecycle
+// proof counter emit real series. metricsClient is the native-metrics pipeline to
+// the co-located data node; it is only exercised when native mode is enabled.
+func NewService(
+	meta metadata.Repo,
+	metricsRegistry observability.MetricsRegistry,
+	metricsClient queue.Client,
+) run.Unit {
 	ls := &lifecycleService{
 		metadata:        meta,
-		omr:             observability.BypassRegistry,
+		omr:             metricsRegistry,
+		metricsClient:   metricsClient,
 		clusterStateMgr: &clusterStateManager{},
 	}
 	ls.pm = protector.NewMemory(ls.omr)
 	return ls
+}
+
+// nativeNodeContext augments ctx with the lifecycle node identity that the metric
+// service's native mode stamps onto every _monitoring series. The identity is the
+// lifecycle's own (Type="lifecycle", set via the metric service nodeType); NodeID
+// prefers POD_NAME (downward API) and falls back to the hostname (the pod name in
+// k8s) so series from different pods stay distinct. The lifecycle's own gRPC/HTTP
+// addresses are not computed until Validate (later, and only when scheduled), so
+// the address tags are left empty.
+func nativeNodeContext(ctx context.Context) context.Context {
+	nodeID := os.Getenv("POD_NAME")
+	if nodeID == "" {
+		if hostname, hostErr := os.Hostname(); hostErr == nil {
+			nodeID = hostname
+		}
+	}
+	if nodeID == "" {
+		nodeID = "lifecycle"
+	}
+	return context.WithValue(ctx, common.ContextNodeKey, common.Node{
+		NodeID: nodeID,
+		Labels: common.ParseNodeFlags(),
+	})
 }
 
 func (l *lifecycleService) FlagSet() *run.FlagSet {
@@ -186,6 +233,10 @@ func (l *lifecycleService) Validate() error {
 func (l *lifecycleService) PreRun(_ context.Context) error {
 	l.l = logger.GetLogger("lifecycle")
 
+	// Safe to call With() here: the metrics registry is registered earlier in the
+	// group, so its PreRun (which builds the provider) has already run.
+	l.cyclesTotal = l.omr.With(observability.RootScope.SubScope("lifecycle")).NewCounter("cycles_total")
+
 	if l.schedule != "" && l.lifecycleTLS {
 		var err error
 		l.tlsReloader, err = pkgtls.NewReloader(l.lifecycleCertFile, l.lifecycleKeyFile, l.l)
@@ -200,6 +251,18 @@ func (l *lifecycleService) PreRun(_ context.Context) error {
 func (l *lifecycleService) GracefulStop() {
 	if l.sch != nil {
 		l.sch.Close()
+	}
+
+	// Stop the native metrics node keeper, then close the local metrics pub
+	// client. The metric service may still attempt a final flush concurrently
+	// during shutdown; native metrics are best-effort, so a flush that loses the
+	// race to the closing client simply logs and is dropped.
+	if l.metricsKeeperStop != nil {
+		close(l.metricsKeeperStop)
+		l.metricsKeeperStop = nil
+	}
+	if l.metricsClient != nil {
+		l.metricsClient.GracefulStop()
 	}
 
 	l.l.Info().Msg("Stopping lifecycle server")
@@ -245,9 +308,80 @@ func (l *lifecycleService) Name() string {
 	return "lifecycle"
 }
 
+// buildLocalNodeMD builds the schema metadata registered on the native metrics
+// pub client for the co-located data node. The ROLE_DATA role is REQUIRED: the
+// pub client's role gate (allowedRoles=[ROLE_DATA]) silently drops a node whose
+// roles do not intersect, which would make native metrics a silent no-op.
+func buildLocalNodeMD(grpcAddr string) schema.Metadata {
+	return schema.Metadata{
+		TypeMeta: schema.TypeMeta{Kind: schema.KindNode},
+		Spec: &databasev1.Node{
+			Metadata:    &commonv1.Metadata{Name: metricsLocalNodeName},
+			GrpcAddress: grpcAddr,
+			Roles:       []databasev1.Role{databasev1.Role_ROLE_DATA},
+		},
+	}
+}
+
+// buildHTTPRouter assembles the lifecycle's HTTP routes: the gRPC-gateway API
+// under /api and, when the metrics registry exposes a Prometheus handler, the
+// /metrics endpoint on the same (existing) HTTP server.
+func (l *lifecycleService) buildHTTPRouter(apiHandler http.Handler) *chi.Mux {
+	mux := chi.NewRouter()
+	mux.Mount("/api", http.StripPrefix("/api", apiHandler))
+	if reg, ok := l.omr.(observability.PrometheusHandlerProvider); ok {
+		mux.Handle("/metrics", reg.PrometheusHandler())
+	}
+	return mux
+}
+
+// startMetricsNodeKeeper registers the co-located data node on the native
+// metrics pub client and keeps the connection active. The pub connManager runs a
+// synchronous health check at registration and does NOT auto-retry an evicted
+// node (NewWithoutMetadata leaves healthCheckInterval==0), so the keeper
+// re-registers whenever the node is not locatable — covering both an initial
+// dial that failed (data node not ready yet) and a later failover eviction.
+func (l *lifecycleService) startMetricsNodeKeeper() {
+	l.localNodeMD = buildLocalNodeMD(l.gRPCAddr)
+	l.metricsKeeperStop = make(chan struct{})
+	// Initial registration dials the local data node so native flushes route there.
+	l.metricsClient.OnAddOrUpdate(l.localNodeMD)
+	run.Go(context.Background(), "backup.lifecycle.metrics-node-keeper", l.l, func(_ context.Context) {
+		ticker := time.NewTicker(metricsNodeKeeperInterval)
+		defer ticker.Stop()
+		for {
+			select {
+			case <-l.metricsKeeperStop:
+				return
+			case <-ticker.C:
+				// HealthyNodes reflects the pub's active-connection state directly.
+				// connMgr.OnAddOrUpdate fans out OnActive synchronously (which seeds
+				// the native selector), so an empty set means the local data node is
+				// not connected and native flushes would drop; force a fresh dial.
+				if len(l.metricsClient.HealthyNodes()) == 0 {
+					// connMgr.OnAddOrUpdate short-circuits an evictable node, so drop
+					// it first to force a fresh dial. queue.Client does not expose
+					// OnDelete, hence the type assertion.
+					if deleter, ok := l.metricsClient.(interface{ OnDelete(schema.Metadata) }); ok {
+						deleter.OnDelete(l.localNodeMD)
+					}
+					l.metricsClient.OnAddOrUpdate(l.localNodeMD)
+				}
+			}
+		}
+	})
+}
+
 func (l *lifecycleService) Serve() run.StopNotify {
 	l.l = logger.GetLogger("lifecycle")
 	l.stopCh = make(chan struct{})
+
+	// Register the co-located data node for native metrics and keep it active.
+	// Native works in both scheduled and one-shot modes (it is a gRPC write that
+	// does not depend on the lifecycle's own HTTP server).
+	if l.omr.NativeEnabled() {
+		l.startMetricsNodeKeeper()
+	}
 
 	// Start gRPC/HTTP servers when schedule is set
 	if l.schedule != "" {
@@ -352,8 +486,10 @@ func (l *lifecycleService) startServers() {
 		return
 	}
 
-	mux := chi.NewRouter()
-	mux.Mount("/api", http.StripPrefix("/api", gwMux))
+	// Reuse this existing HTTP server for the Prometheus endpoint instead of
+	// opening a separate observability listener. The fodc-agent already scrapes
+	// this port, so the lifecycle metrics appear with zero deployment change.
+	mux := l.buildHTTPRouter(gwMux)
 
 	l.httpSrv = &http.Server{
 		Addr:              l.lifecycleHTTPAddr,
@@ -403,6 +539,9 @@ func (l *lifecycleService) startServers() {
 }
 
 func (l *lifecycleService) action(ctx context.Context) error {
+	if l.cyclesTotal != nil {
+		l.cyclesTotal.Inc(1)
+	}
 	progress := LoadProgress(l.progressFilePath, l.l)
 	progress.ClearErrors()
 
@@ -917,7 +1056,7 @@ func (l *lifecycleService) getGroupsToProcess(ctx context.Context, progress *Pro
 func (l *lifecycleService) processStreamGroup(ctx context.Context, g *commonv1.Group,
 	streamDir string, nodes []*databasev1.Node, labels map[string]string, progress *Progress,
 ) {
-	group, err := parseGroup(g, labels, nodes, l.l, l.metadata, l.clusterStateMgr)
+	group, err := parseGroup(g, labels, nodes, l.l, l.metadata, l.clusterStateMgr, l.omr)
 	if err != nil {
 		l.l.Error().Err(err).Msgf("failed to parse group %s", g.Metadata.Name)
 		return
@@ -1037,7 +1176,7 @@ func (l *lifecycleService) deleteExpiredStreamSegments(ctx context.Context, g *c
 func (l *lifecycleService) processMeasureGroup(ctx context.Context, g *commonv1.Group, measureDir string,
 	nodes []*databasev1.Node, labels map[string]string, progress *Progress,
 ) {
-	group, err := parseGroup(g, labels, nodes, l.l, l.metadata, l.clusterStateMgr)
+	group, err := parseGroup(g, labels, nodes, l.l, l.metadata, l.clusterStateMgr, l.omr)
 	if err != nil {
 		l.l.Error().Err(err).Msgf("failed to parse group %s", g.Metadata.Name)
 		return
@@ -1144,7 +1283,7 @@ func (l *lifecycleService) deleteExpiredTraceSegments(ctx context.Context, g *co
 func (l *lifecycleService) processTraceGroup(ctx context.Context, g *commonv1.Group, traceDir string,
 	nodes []*databasev1.Node, labels map[string]string, progress *Progress,
 ) {
-	group, err := parseGroup(g, labels, nodes, l.l, l.metadata, l.clusterStateMgr)
+	group, err := parseGroup(g, labels, nodes, l.l, l.metadata, l.clusterStateMgr, l.omr)
 	if err != nil {
 		l.l.Error().Err(err).Msgf("failed to parse group %s", g.Metadata.Name)
 		return

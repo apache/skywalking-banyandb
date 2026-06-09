@@ -213,6 +213,10 @@ func (bp *batchPublisher) hasMetrics() bool {
 	return bp.pub != nil && bp.pub.metrics != nil
 }
 
+func (bp *batchPublisher) hasMigrationMetrics() bool {
+	return bp.pub != nil && bp.pub.migrationMetrics != nil
+}
+
 // listenBatchResponse receives the server response and records failover events and end-to-end failure metrics.
 func (bp *batchPublisher) listenBatchResponse(ctx context.Context, s clusterv1.Service_SendClient, deferFn func(), bc chan batchEvent, curNode string) {
 	defer func() {
@@ -240,6 +244,9 @@ func (bp *batchPublisher) listenBatchResponse(ctx context.Context, s clusterv1.S
 		if bp.hasMetrics() {
 			bp.pub.metrics.totalErr.Inc(1, operation, "", curNode, info.role, info.tier, sendErrReasonRecvError)
 		}
+		if bp.hasMigrationMetrics() {
+			bp.pub.migrationMetrics.totalErr.Inc(1, operation, "", curNode, info.role, info.tier, sendErrReasonRecvError)
+		}
 		if grpchelper.IsFailoverError(errRecv) {
 			// Record circuit breaker failure before creating failover event
 			bp.pub.connMgr.RecordFailure(curNode, errRecv)
@@ -255,6 +262,9 @@ func (bp *batchPublisher) listenBatchResponse(ctx context.Context, s clusterv1.S
 	}
 	if bp.hasMetrics() {
 		bp.pub.metrics.totalErr.Inc(1, operation, "", curNode, info.role, info.tier, sendErrReasonServerRejected)
+	}
+	if bp.hasMigrationMetrics() {
+		bp.pub.migrationMetrics.totalErr.Inc(1, operation, "", curNode, info.role, info.tier, sendErrReasonServerRejected)
 	}
 	ce := common.NewErrorWithStatus(resp.Status, resp.Error)
 	// Only failover statuses trigger circuit-breaker accounting; other server-side
@@ -370,6 +380,9 @@ func (bp *batchPublisher) retrySend(ctx context.Context, stream clusterv1.Servic
 		if bp.hasMetrics() {
 			bp.pub.metrics.totalLatency.Observe(time.Since(start).Seconds(), operation, group, node, info.role, info.tier)
 		}
+		if bp.hasMigrationMetrics() {
+			bp.pub.migrationMetrics.totalLatency.Observe(time.Since(start).Seconds(), operation, group, node, info.role, info.tier)
+		}
 	}
 
 	for attempt := 0; attempt <= defaultMaxRetries; attempt++ {
@@ -383,12 +396,18 @@ func (bp *batchPublisher) retrySend(ctx context.Context, stream clusterv1.Servic
 			if bp.hasMetrics() {
 				bp.pub.metrics.totalErr.Inc(1, operation, group, node, info.role, info.tier, sendErrReasonCanceled)
 			}
+			if bp.hasMigrationMetrics() {
+				bp.pub.migrationMetrics.totalErr.Inc(1, operation, group, node, info.role, info.tier, sendErrReasonCanceled)
+			}
 			observeLatency()
 			return ctx.Err()
 		case <-stream.Context().Done():
 			cancel()
 			if bp.hasMetrics() {
 				bp.pub.metrics.totalErr.Inc(1, operation, group, node, info.role, info.tier, sendErrReasonStreamCanceled)
+			}
+			if bp.hasMigrationMetrics() {
+				bp.pub.migrationMetrics.totalErr.Inc(1, operation, group, node, info.role, info.tier, sendErrReasonStreamCanceled)
 			}
 			observeLatency()
 			return stream.Context().Err()
@@ -411,6 +430,10 @@ func (bp *batchPublisher) retrySend(ctx context.Context, stream clusterv1.Servic
 				bp.pub.metrics.totalStarted.Inc(1, operation, group, node, info.role, info.tier)
 				bp.pub.metrics.totalFinished.Inc(1, operation, group, node, info.role, info.tier)
 			}
+			if bp.hasMigrationMetrics() {
+				bp.pub.migrationMetrics.totalStarted.Inc(1, operation, group, node, info.role, info.tier)
+				bp.pub.migrationMetrics.totalFinished.Inc(1, operation, group, node, info.role, info.tier)
+			}
 			// Success writing to the local stream; end-to-end ack is observed in listenBatchResponse.
 			observeLatency()
 			return nil
@@ -423,6 +446,9 @@ func (bp *batchPublisher) retrySend(ctx context.Context, stream clusterv1.Servic
 			// Non-transient error, don't retry
 			if bp.hasMetrics() {
 				bp.pub.metrics.totalErr.Inc(1, operation, group, node, info.role, info.tier, sendErrReasonNonTransient)
+			}
+			if bp.hasMigrationMetrics() {
+				bp.pub.migrationMetrics.totalErr.Inc(1, operation, group, node, info.role, info.tier, sendErrReasonNonTransient)
 			}
 			observeLatency()
 			return sendErr
@@ -444,11 +470,17 @@ func (bp *batchPublisher) retrySend(ctx context.Context, stream clusterv1.Servic
 			if bp.hasMetrics() {
 				bp.pub.metrics.totalErr.Inc(1, operation, group, node, info.role, info.tier, sendErrReasonCanceled)
 			}
+			if bp.hasMigrationMetrics() {
+				bp.pub.migrationMetrics.totalErr.Inc(1, operation, group, node, info.role, info.tier, sendErrReasonCanceled)
+			}
 			observeLatency()
 			return ctx.Err()
 		case <-stream.Context().Done():
 			if bp.hasMetrics() {
 				bp.pub.metrics.totalErr.Inc(1, operation, group, node, info.role, info.tier, sendErrReasonStreamCanceled)
+			}
+			if bp.hasMigrationMetrics() {
+				bp.pub.migrationMetrics.totalErr.Inc(1, operation, group, node, info.role, info.tier, sendErrReasonStreamCanceled)
 			}
 			observeLatency()
 			return stream.Context().Err()
@@ -458,6 +490,9 @@ func (bp *batchPublisher) retrySend(ctx context.Context, stream clusterv1.Servic
 	// All retries exhausted
 	if bp.hasMetrics() {
 		bp.pub.metrics.totalErr.Inc(1, operation, group, node, info.role, info.tier, sendErrReasonRetryExhausted)
+	}
+	if bp.hasMigrationMetrics() {
+		bp.pub.migrationMetrics.totalErr.Inc(1, operation, group, node, info.role, info.tier, sendErrReasonRetryExhausted)
 	}
 	observeLatency()
 	return fmt.Errorf("retry exhausted for node %s after %d attempts, last error: %w", node, defaultMaxRetries+1, lastErr)
