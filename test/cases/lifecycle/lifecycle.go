@@ -321,7 +321,13 @@ func verifyDataNodeSenderLabels() {
 			continue
 		}
 		ginkgo.By("scraping data node metrics at " + base + "/metrics")
-		resp, err := http.Get(base + "/metrics") //nolint:gosec // test-only URL
+		// Use a small client-level timeout so a half-open TCP socket or
+		// stuck data-node HTTP handler cannot stall the spec indefinitely.
+		// The data node is a local process that serves /metrics in <100ms
+		// in practice, so 5s is a comfortable upper bound that still
+		// catches genuine hangs well within the spec's overall deadline.
+		scrapeClient := &http.Client{Timeout: 5 * time.Second}
+		resp, err := scrapeClient.Get(base + "/metrics") //nolint:gosec // test-only URL
 		if err != nil {
 			ginkgo.By("skipping " + base + " (" + err.Error() + ")")
 			continue
@@ -334,10 +340,14 @@ func verifyDataNodeSenderLabels() {
 			gomega.Expect(readErr).NotTo(gomega.HaveOccurred())
 			body := string(rawBody)
 			// At least one banyandb_queue_sub_total_finished series must
-			// carry the sender-stamped labels set by --lifecycle-node-id,
-			// --lifecycle-tier=hot, and the hard-coded "lifecycle" role in
-			// parseGroup. This is the direct receiver-side evidence that
-			// SetSelfNode was called on the migration publisher.
+			// carry the sender-stamped labels. The lifecycle derives its
+			// self identity (sender_node, sender_role, sender_tier) from
+			// already-known inputs — its --grpc-addr (the co-located
+			// data node) and the data-node registry — and calls
+			// SetSelfNode(senderNode, "lifecycle", senderTier). The
+			// hard-coded "lifecycle" role and the matched data node's
+			// Metadata.Name and Labels["type"] populate the three
+			// remote_* labels the receiver records.
 			ginkgo.By("scraping data node " + base + " for sender labels: " + fmt.Sprintf("%d bytes", len(body)))
 			gomega.Expect(body).To(gomega.MatchRegexp(`(?m)^banyandb_queue_sub_total_finished\{[^}]*remote_node="[^"]+"[^}]*\} [1-9]`),
 				"at least one banyandb_queue_sub_total_finished series on "+base+" must carry a non-empty remote_node label (sender node), got:\n"+body)
