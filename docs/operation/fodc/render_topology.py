@@ -18,13 +18,10 @@
 
 """Render a BanyanDB cluster topology by joining the FODC proxy's
 /cluster/topology (node inventory) with queue Prometheus metrics (live edges).
-Request edges come from the publisher metrics (queue_pub) by default; for
-edges the publisher does not record -- chiefly liaison->warm/cold query
-fan-out on older servers -- the subscriber metrics (queue_sub) fill in, read
-from the receiver's side and flipped back to the true sender->receiver
-direction. Lifecycle tier-migration edges take their path from the topology
-`calls` and their weight from the banyandb_lifecycle_migration_* family (the
-tier-migration mirror of queue_pub) whenever a migration has run.
+Edges come from the publisher metrics (queue_pub) by default; for edges the
+publisher does not record -- chiefly liaison->warm/cold query fan-out -- the
+subscriber metrics (queue_sub) fill in, read from the receiver's side and
+flipped back to the true sender->receiver direction.
 Output is Graphviz DOT and/or Mermaid. Stdlib only.
 If Prometheus is behind Grafana's datasource proxy with basic auth,
 set PROM_USER / PROM_PASS in the environment."""
@@ -75,15 +72,14 @@ def main():
 
     # 1) Node inventory from /cluster/topology.
     topo = http_get_json(args.proxy.rstrip("/") + "/cluster/topology")
-    nodes, podname2name, podname2lifecycle = {}, {}, {}
+    nodes, podname2name = {}, {}
     for n in topo.get("nodes", []):
         name = (n.get("metadata") or {}).get("name", "")
         if not name:
             continue
         labels = n.get("labels") or {}
         nodes[name] = {"role": primary_role(n.get("roles")), "tier": labels.get("type", ""),
-                       "pod": labels.get("pod_name", ""), "container": labels.get("container_name", ""),
-                       "status": n.get("status") or ""}
+                       "pod": labels.get("pod_name", ""), "status": n.get("status") or ""}
         # Lifecycle sidecars share their pod (and pod_name) with the co-located
         # data node but never originate queue metrics, so they must not shadow
         # the data node in the pod_name -> node map -- otherwise sub-side edges
@@ -98,21 +94,13 @@ def main():
         host = name.split(".")[0].split(":")[0]
         if host and not is_lifecycle and host not in podname2name:
             podname2name[host] = name
-        # The banyandb_lifecycle_migration_* series are scraped from the lifecycle
-        # sidecar (container_name="lifecycle") but share the data pod's pod_name,
-        # so they resolve through a separate map to the pod's :17914 identity.
-        if is_lifecycle:
-            if labels.get("pod_name"):
-                podname2lifecycle.setdefault(labels["pod_name"], name)
-            if host:
-                podname2lifecycle.setdefault(host, name)
 
     def local_name(pod):
         return podname2name.get(pod, pod)
 
     def ensure_node(name, role="", tier=""):
         if name and name not in nodes:
-            nodes[name] = {"role": role or "node", "tier": tier, "pod": "", "container": "", "status": ""}
+            nodes[name] = {"role": role or "node", "tier": tier, "pod": "", "status": ""}
 
     j, w = '{job=~"%s"}' % args.job, args.window
     edge_by = "pod_name, node_role, node_type, remote_node, remote_role, remote_tier, operation"
@@ -129,20 +117,14 @@ def main():
     #    flow is pod_name -> remote_node. The subscriber (queue_sub) scrape
     #    target is the receiver and remote_node is the sender, so its flow is
     #    remote_node -> pod_name -- the edge is flipped. The sub view is what
-    #    surfaces liaison->warm/cold query fan-out on older servers whose
-    #    publish path predates the query/control instrumentation. Sub series
-    #    with remote_role="lifecycle" are inbound tier-migration traffic, not
-    #    request pipeline, and are skipped (the migration layer is weighted
-    #    from the publisher-side banyandb_lifecycle_migration_* family).
-    def build_edges(thr, p99, err, byt, invert, resolve_local=None, skip_remote_role=None):
-        resolve = resolve_local or local_name
+    #    surfaces liaison->warm/cold query fan-out, which the publisher side
+    #    does not record on servers whose publish path is not yet instrumented.
+    def build_edges(thr, p99, err, byt, invert):
         es = {}
         for s in thr:
             m = s["metric"]
-            pod_node, peer = resolve(m.get("pod_name", "")), m.get("remote_node", "")
+            pod_node, peer = local_name(m.get("pod_name", "")), m.get("remote_node", "")
             if not pod_node or not peer:
-                continue
-            if skip_remote_role and m.get("remote_role", "") == skip_remote_role:
                 continue
             pod_role, pod_tier = primary_role([m.get("node_role", "")]), m.get("node_type", "")
             peer_role, peer_tier = m.get("remote_role", ""), m.get("remote_tier", "")
@@ -160,7 +142,7 @@ def main():
 
         def add_scalar(rows, field):
             for s in rows:
-                pod_node = resolve(s["metric"].get("pod_name", ""))
+                pod_node = local_name(s["metric"].get("pod_name", ""))
                 peer = s["metric"].get("remote_node", "")
                 key = (peer, pod_node) if invert else (pod_node, peer)
                 if key in es:
@@ -187,37 +169,23 @@ def main():
         p99_by("banyandb_queue_sub_total_latency_bucket"),
         rate_by("banyandb_queue_sub_total_err", "pod_name, remote_node"),
         None,  # sub records received_bytes, not sent_bytes; query/control carry no bytes
-        invert=True, skip_remote_role="lifecycle")
+        invert=True)
     edges = dict(pub_edges)
     for key, sub_edge in sub_edges.items():
         edges.setdefault(key, sub_edge)  # default pub; fall back to sub for edges pub lacks
 
-    # 3) Lifecycle migration edges. The PATH comes from /cluster/topology `calls`
-    #    (structural; present even between scheduled runs): keep only edges whose
-    #    source is a lifecycle node (name ends with the lifecycle port), drop the
-    #    liaison route-table copies and the data<->data property-gossip mesh. The
-    #    WEIGHT comes from the banyandb_lifecycle_migration_* family -- the
-    #    tier-migration mirror of queue_pub, scraped from the lifecycle sidecar
-    #    (container_name="lifecycle"), whose pod_name resolves to the pod's
-    #    :17914 lifecycle identity rather than its data node.
+    # 3) Lifecycle migration edges from /cluster/topology `calls`: keep only edges
+    #    whose source is a lifecycle node (name ends with the lifecycle port) and
+    #    drop the data<->data property-gossip mesh. These are structural (the
+    #    lifecycle publisher is metadata-less, so it emits no queue metrics).
     lc_suffix = ":" + str(args.lifecycle_port)
-    migrations = {}
+    migrations = []
     for c in topo.get("calls", []):
         src, dst = c.get("source", ""), c.get("target", "")
         if src.endswith(lc_suffix) and dst:
             ensure_node(src, role="lifecycle")
             ensure_node(dst)
-            migrations.setdefault((src, dst), None)
-    mig_weights = build_edges(
-        rate_by("banyandb_lifecycle_migration_total_finished", edge_by),
-        p99_by("banyandb_lifecycle_migration_total_latency_bucket"),
-        rate_by("banyandb_lifecycle_migration_total_err", "pod_name, remote_node"),
-        rate_by("banyandb_lifecycle_migration_sent_bytes", "pod_name, remote_node"),
-        invert=False, resolve_local=lambda pod: podname2lifecycle.get(pod, pod))
-    for key, e in mig_weights.items():
-        ensure_node(key[0], role="lifecycle")
-        ensure_node(key[1])
-        migrations[key] = e  # weighted when a migration has run; else structural
+            migrations.append((src, dst))
 
     if args.format in ("dot", "both"):
         print(render_dot(nodes, edges, migrations, args.p99_warn))
@@ -235,53 +203,21 @@ def edge_label(e):
     return "\\n".join(parts)
 
 
-def pod_groups(nodes):
-    """Pods hosting more than one node (a data node plus its lifecycle
-    sidecar) -- rendered as one enclosing boundary per pod."""
-    by_pod = {}
-    for name, a in nodes.items():
-        if a.get("pod"):
-            by_pod.setdefault(a["pod"], []).append(name)
-    return {pod: sorted(names) for pod, names in by_pod.items() if len(names) > 1}
-
-
-def node_label(name, a, in_pod):
-    """Bare nodes show the node name; nodes inside a pod boundary show their
-    container name (data / lifecycle) -- the boundary already carries the pod
-    name. The tier line stays on both."""
-    base = (a.get("container") or short(name)) if in_pod else short(name)
-    return base, a["tier"]
-
-
 def render_dot(nodes, edges, migrations, p99_warn):
-    def node_line(name, a, indent="  ", in_pod=False):
+    out = ["digraph banyandb_topology {", "  rankdir=LR;", '  node [style=filled, fontname="sans"];']
+    for name, a in sorted(nodes.items()):
         shape = "box" if a["role"] == "liaison" else "cylinder" if a["role"] == "data" else "ellipse"
         pen = ', color="#c62828", penwidth=2, style="filled,dashed"' if a["status"] and a["status"] != "online" else ""
-        base, tier = node_label(name, a, in_pod)
-        label = base + (("\\n" + tier) if tier else "")
-        return '%s"%s" [label="%s", shape=%s, fillcolor="%s"%s];' \
-            % (indent, name, label, shape, TIER_COLOR.get(a["tier"], "#cfd8dc"), pen)
-
-    out = ["digraph banyandb_topology {", "  rankdir=LR;", '  node [style=filled, fontname="sans"];']
-    groups = pod_groups(nodes)
-    grouped = {n for names in groups.values() for n in names}
-    for pod, names in sorted(groups.items()):  # data + lifecycle sharing a pod
-        out.append('  subgraph "cluster_%s" {' % pod)
-        out.append('    label="pod %s"; style=rounded; color="#9e9e9e"; fontsize=10;' % pod)
-        for name in names:
-            out.append(node_line(name, nodes[name], "    ", in_pod=True))
-        out.append("  }")
-    for name, a in sorted(nodes.items()):
-        if name not in grouped:
-            out.append(node_line(name, a))
+        label = short(name) + (("\\n" + a["tier"]) if a["tier"] else "")
+        out.append('  "%s" [label="%s", shape=%s, fillcolor="%s"%s];'
+                   % (name, label, shape, TIER_COLOR.get(a["tier"], "#cfd8dc"), pen))
     for (local, remote), e in sorted(edges.items()):  # write pipeline (weighted)
         red = e["err"] > 0 or e["p99"] > p99_warn
         pw = 1.0 + min(4.0, sum(e["ops"].values()) ** 0.25)
         out.append('  "%s" -> "%s" [label="%s", color="%s", penwidth=%.1f, fontsize=10];'
                    % (local, remote, edge_label(e), "#c62828" if red else "#607d8b", pw))
-    for (src, dst), e in sorted(migrations.items()):  # lifecycle migration (dashed)
-        label = "migrate" if e is None else "migrate\\n" + edge_label(e)
-        out.append('  "%s" -> "%s" [label="%s", style=dashed, color="#8e24aa", fontsize=9];' % (src, dst, label))
+    for src, dst in sorted(migrations):  # lifecycle migration (structural)
+        out.append('  "%s" -> "%s" [label="migrate", style=dashed, color="#8e24aa", fontsize=9];' % (src, dst))
     out.append("}")
     return "\n".join(out)
 
@@ -289,32 +225,18 @@ def render_dot(nodes, edges, migrations, p99_warn):
 def render_mermaid(nodes, edges, migrations, p99_warn):
     def nid(name):
         return "n_" + "".join(c if c.isalnum() else "_" for c in name)
-
-    def node_def(name, a, in_pod=False):
-        base, tier = node_label(name, a, in_pod)
-        label = base + (("<br/>" + tier) if tier else "")
-        return '%s[("%s")]' % (nid(name), label) if a["role"] == "data" else '%s["%s"]' % (nid(name), label)
-
     out = ["```mermaid", "graph LR"]
-    groups = pod_groups(nodes)
-    grouped = {n for names in groups.values() for n in names}
-    for pod, names in sorted(groups.items()):  # data + lifecycle sharing a pod
-        out.append('  subgraph %s["pod %s"]' % ("pod_" + "".join(c if c.isalnum() else "_" for c in pod), pod))
-        for name in names:
-            out.append("    " + node_def(name, nodes[name], in_pod=True))
-        out.append("  end")
     for name, a in sorted(nodes.items()):
-        if name not in grouped:
-            out.append("  " + node_def(name, a))
+        label = short(name) + (("<br/>" + a["tier"]) if a["tier"] else "")
+        out.append('  %s[("%s")]' % (nid(name), label) if a["role"] == "data" else '  %s["%s"]' % (nid(name), label))
     red_idx, i = [], 0
     for (local, remote), e in sorted(edges.items()):  # write pipeline (weighted)
         out.append('  %s -- "%s" --> %s' % (nid(local), edge_label(e).replace("\\n", " · "), nid(remote)))
         if e["err"] > 0 or e["p99"] > p99_warn:
             red_idx.append(i)
         i += 1
-    for (src, dst), e in sorted(migrations.items()):  # lifecycle migration (dashed)
-        label = "migrate" if e is None else "migrate · " + edge_label(e).replace("\\n", " · ")
-        out.append('  %s -. "%s" .-> %s' % (nid(src), label, nid(dst)))
+    for src, dst in sorted(migrations):  # lifecycle migration (structural, dashed)
+        out.append('  %s -. "migrate" .-> %s' % (nid(src), nid(dst)))
     for name, a in sorted(nodes.items()):
         out.append("  style %s fill:%s" % (nid(name), TIER_COLOR.get(a["tier"], "#cfd8dc")))
     for idx in red_idx:
