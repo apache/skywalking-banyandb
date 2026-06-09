@@ -1,0 +1,33 @@
+# Licensed to the Apache Software Foundation (ASF) under one or more
+# contributor license agreements.  See the NOTICE file distributed with
+# this work for additional information regarding copyright ownership.
+# The ASF licenses this file to You under the Apache License, Version 2.0
+# (the "License"); you may not use this file except in compliance with
+# the License.  You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+#
+# NON_EMPTY: dashboard metrics asserted to exist AND carry a positive value
+# under realistic OAP-driven write+query traffic on a 1:1 liaison/data cluster.
+# For histogram families (names ending in _bucket) check-metrics.sh asserts the
+# companion _count/_sum > 0 (the bare _bucket carries no scalar value).
+# This set is intentionally the always-on core; every other reachable metric is
+# presence-checked in presence.txt. Disjoint from presence.txt and documented_gap.txt.
+banyandb_system_cpu_num
+banyandb_system_up_time
+go_goroutines
+go_memstats_heap_inuse_bytes
+process_cpu_seconds_total
+process_resident_memory_bytes
+banyandb_measure_total_written
+banyandb_liaison_grpc_total_started
+banyandb_queue_pub_total_finished
+banyandb_queue_sub_total_finished
+banyandb_queue_pub_total_latency_bucket
+banyandb_queue_sub_total_latency_bucket
