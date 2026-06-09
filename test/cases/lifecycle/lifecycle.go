@@ -328,7 +328,7 @@ func verifyDataNodeSenderLabels() {
 			// SetSelfNode was called on the migration publisher.
 			ginkgo.By("scraping data node " + base + " for sender labels: " + fmt.Sprintf("%d bytes", len(body)))
 			gomega.Expect(body).To(gomega.MatchRegexp(`(?m)^banyandb_queue_sub_total_finished\{[^}]*remote_node="[^"]+"[^}]*\} [1-9]`),
-				"at least one banyandb_queue_sub_total_finished series on "+base+" must carry a non-empty remote_node label (the sender node set via --lifecycle-node-id), got:\n"+body)
+				"at least one banyandb_queue_sub_total_finished series on "+base+" must carry a non-empty remote_node label (sender node), got:\n"+body)
 			gomega.Expect(body).To(gomega.MatchRegexp(`(?m)^banyandb_queue_sub_total_finished\{[^}]*remote_role="lifecycle"[^}]*\} [1-9]`),
 				"at least one banyandb_queue_sub_total_finished series on "+base+" must carry remote_role=\"lifecycle\" (the sender role stamped by parseGroup), got:\n"+body)
 			gomega.Expect(body).To(gomega.MatchRegexp(`(?m)^banyandb_queue_sub_total_finished\{[^}]*remote_tier="hot"[^}]*\} [1-9]`),

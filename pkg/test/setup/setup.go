@@ -646,7 +646,7 @@ func startDataNode(config *ClusterConfig, dataDir string, flags ...string) (grpc
 func DataNode(config *ClusterConfig, flags ...string) func() {
 	path, deferFn, err := test.NewSpace()
 	gomega.Expect(err).NotTo(gomega.HaveOccurred())
-	_, _, _, closeFn := DataNodeFromDataDir(config, path, flags...)
+	_, _, _, closeFn := DataNodeFromDataDir(config, path, flags...) //nolint:dogsled // only the close func is needed
 	return func() {
 		fmt.Printf("Data tsdb path: %s\n", path)
 		_ = filepath.Walk(path, func(path string, _ os.FileInfo, err error) error {

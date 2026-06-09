@@ -83,6 +83,7 @@ func (l *lifecycleService) getSnapshots(ctx context.Context, groups []*commonv1.
 	p.SnapshotTraceDir = traceDir
 	return streamDir, measureDir, traceDir, nil
 }
+
 // deriveSelfIdentity returns the SenderNode and SenderTier the lifecycle
 // publisher should stamp on its wire SendRequest so the data-node receiver
 // can label its banyandb_queue_sub_* family accordingly.
