@@ -489,9 +489,9 @@ func verifyMigrationReport(rf string) {
 		} {
 			v, found := errs[key]
 			gomega.Expect(found).To(gomega.BeTrue(), "errors.%s must be present in %s", key, path)
-			errMap, isMap := v.(map[string]interface{})
-			gomega.Expect(isMap).To(gomega.BeTrue(), "errors.%s must be a map in %s", key, path)
-			gomega.Expect(errMap).To(gomega.BeEmpty(), "errors.%s must be empty for a clean cycle in %s", key, path)
+			errList, isList := v.([]interface{})
+			gomega.Expect(isList).To(gomega.BeTrue(), "errors.%s must be an array in %s", key, path)
+			gomega.Expect(errList).To(gomega.BeEmpty(), "errors.%s must be empty for a clean cycle in %s", key, path)
 		}
 
 		// report_version 2.1: every catalog carries a sync_breakdown block, and
@@ -506,9 +506,9 @@ func verifyMigrationReport(rf string) {
 		// row_replay_node_errors must surface and stay empty for a clean cycle.
 		nodeErrs, found := errs["row_replay_node_errors"]
 		gomega.Expect(found).To(gomega.BeTrue(), "errors.row_replay_node_errors must be present in %s", path)
-		nodeErrMap, isMap := nodeErrs.(map[string]interface{})
-		gomega.Expect(isMap).To(gomega.BeTrue(), "errors.row_replay_node_errors must be a map in %s", path)
-		gomega.Expect(nodeErrMap).To(gomega.BeEmpty(), "errors.row_replay_node_errors must be empty for a clean cycle in %s", path)
+		nodeErrList, isList := nodeErrs.([]interface{})
+		gomega.Expect(isList).To(gomega.BeTrue(), "errors.row_replay_node_errors must be an array in %s", path)
+		gomega.Expect(nodeErrList).To(gomega.BeEmpty(), "errors.row_replay_node_errors must be empty for a clean cycle in %s", path)
 	}
 	gomega.Expect(jsonReports).To(gomega.BeNumerically(">", 0), "no JSON report files found under %s", rf)
 }
