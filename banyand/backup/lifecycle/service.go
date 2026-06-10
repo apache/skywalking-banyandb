@@ -611,6 +611,13 @@ func (l *lifecycleService) action(ctx context.Context) (err error) {
 		l.l.Error().Err(err).Msg("failed to list data nodes")
 		return err
 	}
+	// The lifecycle usually starts together with its co-located data node and
+	// the property-based registry syncs asynchronously, so the node behind
+	// --grpc-addr may not be visible in the first listing. deriveSelfIdentity
+	// needs it for deterministic sender attribution (its address match is
+	// pass 1), so wait briefly for it instead of mis-deriving the identity
+	// from a label fallback.
+	nodes = l.waitForCoLocatedNode(ctx, nodes)
 	labels := common.ParseNodeFlags()
 
 	for _, g := range groups {
@@ -676,6 +683,52 @@ func (l *lifecycleService) recordLastRun(start time.Time, err error) {
 		}
 		l.lastRunSuccess.Set(success, nil...)
 	}
+}
+
+// waitForCoLocatedNode waits briefly for the data node behind --grpc-addr to
+// appear in the registry listing so deriveSelfIdentity can resolve the sender
+// identity through its deterministic address match (pass 1). The lifecycle
+// typically starts alongside its co-located data node, whose registration
+// propagates through the property-based registry asynchronously, so the first
+// listing may not include it yet. Returns the freshest listing either way; on
+// timeout the label fallbacks (or the empty identity) apply as before.
+func (l *lifecycleService) waitForCoLocatedNode(ctx context.Context, nodes []*databasev1.Node) []*databasev1.Node {
+	const (
+		attempts = 20
+		interval = 500 * time.Millisecond
+	)
+	if l.gRPCAddr == "" || hasGrpcAddress(nodes, l.gRPCAddr) {
+		return nodes
+	}
+	for i := 0; i < attempts; i++ {
+		select {
+		case <-ctx.Done():
+			return nodes
+		case <-time.After(interval):
+		}
+		refreshed, listErr := l.metadata.NodeRegistry().ListNode(ctx, databasev1.Role_ROLE_DATA)
+		if listErr != nil {
+			l.l.Warn().Err(listErr).Msg("failed to re-list data nodes while waiting for the co-located node")
+			continue
+		}
+		nodes = refreshed
+		if hasGrpcAddress(nodes, l.gRPCAddr) {
+			return nodes
+		}
+	}
+	l.l.Warn().Str("grpc_addr", l.gRPCAddr).Msg("co-located data node not visible in the registry; sender identity falls back to node labels")
+	return nodes
+}
+
+// hasGrpcAddress reports whether any node advertises the given gRPC address
+// (loopback host aliases are treated as equivalent, see grpcAddrEqual).
+func hasGrpcAddress(nodes []*databasev1.Node, addr string) bool {
+	for _, n := range nodes {
+		if grpcAddrEqual(n.GrpcAddress, addr) {
+			return true
+		}
+	}
+	return false
 }
 
 // generateReport gathers detailed counts & errors from Progress, writes comprehensive JSON file per run, and keeps only 5 latest.

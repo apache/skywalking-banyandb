@@ -2,12 +2,14 @@
 
 When facing issues with BanyanDB, follow this checklist to effectively troubleshoot and resolve errors.
 
+> Before deep-diving, glance at the [Key Signals to Watch](../observability/overview.md#key-signals-to-watch) — query p99 latency, error rate, disk %, memory vs. `--allowed-percent`, and queue backlog — to localize whether the problem is load, resources, or a specific node.
+
 ## 1. Collect Information
 
 Gather detailed information about the error to assist in diagnosing the issue:
 
-- **Logs**: Collect relevant log files from the BanyanDB system. See the [Logging](../observability.md#logging) section for more information.
-- **Query Tracing**: If the error is related to a query, enable query tracing to capture detailed information about the query execution. See the [Query Tracing](../observability.md#query-tracing) section for more information.
+- **Logs**: Collect relevant log files from the BanyanDB system. See the [Logging](../observability/logging.md) section for more information.
+- **Query Tracing**: If the error is related to a query, enable query tracing to capture detailed information about the query execution. See the [Query Tracing](../observability/tracing.md) section for more information.
 - **Environment**: Document the environment details, including OS, BanyanDB version, and hardware specifications.
 - **Database Schema**: Provide the schema details related to the error. See the [Schema Management](../../interacting/bydbctl/schema/) section for more information.
 - **Data Sample**: If applicable, include a sample of the data causing the error.
@@ -35,11 +37,13 @@ Follow this procedure to address the identified error type:
 - You can also raise a bug report in the [SkyWalking Issue Tracker](https://github.com/apache/skywalking/issues) if the issue is not resolved.
 - Finally, As a OpenSource project, you could try to fix the issue by yourself and submit a pull request.
 
-Here's an expanded section on common issues for your BanyanDB troubleshooting document:
+## 4. Related Guides
 
+- [Observability › Key Signals to Watch](../observability/overview.md#key-signals-to-watch) — the RED/USE signals to check first
 - [Troubleshooting Crash Issues](./crash.md)
 - [Troubleshooting Overhead Issues](./overhead.md)
 - [Troubleshooting No Data Issues](./no-data.md)
 - [Troubleshooting Query Issues](./query.md)
 - [Troubleshooting Installation Issues](./install.md)
 - [Common Issues](./common-issues.md)
+- [Measure Vec Flag-Off Rollback](./measure-vec-flag-off-rollback.md)

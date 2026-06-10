@@ -48,7 +48,7 @@ This retention period can be configured via the `--property-repair-history-days`
 ## Metrics
 
 All metrics are reported through the internal self-observation system and can be queried using standard tools as described in 
-the [Observability documentation](./observability.md).
+the [Observability documentation](./observability/overview.md).
 
 In the context of Property background repair, the following key metrics are exposed:
 

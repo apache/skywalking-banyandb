@@ -31,6 +31,12 @@
     },
     {
       "type": "panel",
+      "id": "table",
+      "name": "Table",
+      "version": ""
+    },
+    {
+      "type": "panel",
       "id": "timeseries",
       "name": "Time series",
       "version": ""
@@ -59,6 +65,9 @@
   "links": [],
   "panels": [
     {
+      "id": 100,
+      "type": "row",
+      "title": "Cluster Workload Summary",
       "collapsed": false,
       "gridPos": {
         "h": 1,
@@ -66,17 +75,14 @@
         "x": 0,
         "y": 0
       },
-      "id": 6,
-      "panels": [],
-      "title": "Stats ($pod)",
-      "type": "row"
+      "panels": []
     },
     {
       "datasource": {
         "type": "prometheus",
         "uid": "${DS_PROMETHEUS}"
       },
-      "description": "The write rate is the number of write operations per second. It is calculated by summing the total number of written operations for measures and streams.",
+      "description": "Total write rate (measure + stream + trace).",
       "fieldConfig": {
         "defaults": {
           "color": {
@@ -102,10 +108,10 @@
         "x": 0,
         "y": 1
       },
-      "id": 8,
+      "id": 6,
       "options": {
         "colorMode": "value",
-        "graphMode": "none",
+        "graphMode": "area",
         "justifyMode": "auto",
         "orientation": "auto",
         "percentChangeColorMode": "standard",
@@ -128,14 +134,14 @@
             "uid": "${DS_PROMETHEUS}"
           },
           "editorMode": "code",
-          "expr": "sum(rate(banyandb_measure_total_written{job=~\"$job\", pod=~\"$pod\"}[$__rate_interval])) + sum(rate(banyandb_stream_tst_total_written{job=~\"$job\", pod=~\"$pod\"}[$__rate_interval]))",
+          "expr": "(sum(rate(banyandb_measure_total_written{job=~\"$job\", container_name=~\"$role\", pod_name=~\"$pod\"}[$__rate_interval])) or vector(0)) + (sum(rate(banyandb_stream_tst_total_written{job=~\"$job\", container_name=~\"$role\", pod_name=~\"$pod\"}[$__rate_interval])) or vector(0)) + (sum(rate(banyandb_trace_tst_total_written{job=~\"$job\", container_name=~\"$role\", pod_name=~\"$pod\"}[$__rate_interval])) or vector(0))",
           "instant": false,
           "legendFormat": "__auto",
           "range": true,
           "refId": "A"
         }
       ],
-      "title": "Write Rate",
+      "title": "Cluster Write Rate",
       "type": "stat"
     },
     {
@@ -143,7 +149,7 @@
         "type": "prometheus",
         "uid": "${DS_PROMETHEUS}"
       },
-      "description": "The total memory is the total physical memory available on the system, which means total amount of RAM on the system.",
+      "description": "gRPC query request rate.",
       "fieldConfig": {
         "defaults": {
           "color": {
@@ -159,7 +165,7 @@
               }
             ]
           },
-          "unit": "bytes"
+          "unit": "reqps"
         },
         "overrides": []
       },
@@ -167,79 +173,12 @@
         "h": 5,
         "w": 8,
         "x": 8,
-        "y": 1
-      },
-      "id": 5,
-      "options": {
-        "colorMode": "value",
-        "graphMode": "none",
-        "justifyMode": "auto",
-        "orientation": "auto",
-        "percentChangeColorMode": "standard",
-        "reduceOptions": {
-          "calcs": [
-            "lastNotNull"
-          ],
-          "fields": "",
-          "values": false
-        },
-        "showPercentChange": false,
-        "textMode": "auto",
-        "wideLayout": true
-      },
-      "pluginVersion": "11.2.0",
-      "targets": [
-        {
-          "datasource": {
-            "type": "prometheus",
-            "uid": "${DS_PROMETHEUS}"
-          },
-          "editorMode": "code",
-          "expr": "sum(banyandb_system_memory_state{job=~\"$job\", pod=~\"$pod\",kind=\"total\"})",
-          "instant": false,
-          "legendFormat": "__auto",
-          "range": true,
-          "refId": "A"
-        }
-      ],
-      "title": "Total Memory",
-      "type": "stat"
-    },
-    {
-      "datasource": {
-        "type": "prometheus",
-        "uid": "${DS_PROMETHEUS}"
-      },
-      "description": "The disk usage is the percentage of disk space used. If the disk usage is over 80%, it may indicate that the disk is almost full.",
-      "fieldConfig": {
-        "defaults": {
-          "color": {
-            "mode": "thresholds"
-          },
-          "mappings": [],
-          "thresholds": {
-            "mode": "absolute",
-            "steps": [
-              {
-                "color": "green",
-                "value": null
-              }
-            ]
-          },
-          "unit": "bytes"
-        },
-        "overrides": []
-      },
-      "gridPos": {
-        "h": 5,
-        "w": 8,
-        "x": 16,
         "y": 1
       },
       "id": 7,
       "options": {
         "colorMode": "value",
-        "graphMode": "none",
+        "graphMode": "area",
         "justifyMode": "auto",
         "orientation": "auto",
         "percentChangeColorMode": "standard",
@@ -262,14 +201,14 @@
             "uid": "${DS_PROMETHEUS}"
           },
           "editorMode": "code",
-          "expr": "sum(banyandb_system_disk{job=~\"$job\", pod=~\"$pod\",kind=\"used\"})",
+          "expr": "sum(rate(banyandb_liaison_grpc_total_started{job=~\"$job\", container_name=~\"$role\", pod_name=~\"$pod\",method=\"query\"}[$__rate_interval]))",
           "instant": false,
           "legendFormat": "__auto",
           "range": true,
           "refId": "A"
         }
       ],
-      "title": "Disk Usage ",
+      "title": "Cluster Query Rate",
       "type": "stat"
     },
     {
@@ -277,141 +216,7 @@
         "type": "prometheus",
         "uid": "${DS_PROMETHEUS}"
       },
-      "description": "The query rate is the number of query operations per second. It is the query rate on the liaison server.",
-      "fieldConfig": {
-        "defaults": {
-          "color": {
-            "mode": "thresholds"
-          },
-          "mappings": [],
-          "thresholds": {
-            "mode": "absolute",
-            "steps": [
-              {
-                "color": "green",
-                "value": null
-              }
-            ]
-          },
-          "unit": "rps"
-        },
-        "overrides": []
-      },
-      "gridPos": {
-        "h": 5,
-        "w": 8,
-        "x": 0,
-        "y": 6
-      },
-      "id": 9,
-      "options": {
-        "colorMode": "value",
-        "graphMode": "none",
-        "justifyMode": "auto",
-        "orientation": "auto",
-        "percentChangeColorMode": "standard",
-        "reduceOptions": {
-          "calcs": [
-            "lastNotNull"
-          ],
-          "fields": "",
-          "values": false
-        },
-        "showPercentChange": false,
-        "textMode": "auto",
-        "wideLayout": true
-      },
-      "pluginVersion": "11.2.0",
-      "targets": [
-        {
-          "datasource": {
-            "type": "prometheus",
-            "uid": "${DS_PROMETHEUS}"
-          },
-          "editorMode": "code",
-          "expr": "sum(rate(banyandb_liaison_grpc_total_started{job=~\"$job\", pod=~\"$pod\", method=\"query\"}[$__rate_interval]))",
-          "instant": false,
-          "legendFormat": "__auto",
-          "range": true,
-          "refId": "A"
-        }
-      ],
-      "title": "Query Rate",
-      "type": "stat"
-    },
-    {
-      "datasource": {
-        "type": "prometheus",
-        "uid": "${DS_PROMETHEUS}"
-      },
-      "description": "The total CPU is the total number of CPUs available on the system.",
-      "fieldConfig": {
-        "defaults": {
-          "color": {
-            "mode": "thresholds"
-          },
-          "mappings": [],
-          "thresholds": {
-            "mode": "absolute",
-            "steps": [
-              {
-                "color": "green",
-                "value": null
-              }
-            ]
-          },
-          "unit": "short"
-        },
-        "overrides": []
-      },
-      "gridPos": {
-        "h": 5,
-        "w": 8,
-        "x": 8,
-        "y": 6
-      },
-      "id": 2,
-      "options": {
-        "colorMode": "value",
-        "graphMode": "none",
-        "justifyMode": "auto",
-        "orientation": "auto",
-        "percentChangeColorMode": "standard",
-        "reduceOptions": {
-          "calcs": [
-            "lastNotNull"
-          ],
-          "fields": "",
-          "values": false
-        },
-        "showPercentChange": false,
-        "textMode": "auto",
-        "wideLayout": true
-      },
-      "pluginVersion": "11.2.0",
-      "targets": [
-        {
-          "datasource": {
-            "type": "prometheus",
-            "uid": "${DS_PROMETHEUS}"
-          },
-          "editorMode": "code",
-          "expr": "sum(banyandb_system_cpu_num{job=~\"$job\", pod=~\"$pod\"})",
-          "instant": false,
-          "legendFormat": "__auto",
-          "range": true,
-          "refId": "A"
-        }
-      ],
-      "title": "Total CPU",
-      "type": "stat"
-    },
-    {
-      "datasource": {
-        "type": "prometheus",
-        "uid": "${DS_PROMETHEUS}"
-      },
-      "description": "The write and query errors rate is the number of write and query errors per minute. It is calculated by summing the total number of write and query errors from liaison and data servers.",
+      "description": "gRPC + queue publish + write-queue sync errors per minute. Stays 0 (not No-Data) while healthy.",
       "fieldConfig": {
         "defaults": {
           "color": {
@@ -439,226 +244,55 @@
         "h": 5,
         "w": 8,
         "x": 16,
+        "y": 1
+      },
+      "id": 8,
+      "options": {
+        "colorMode": "value",
+        "graphMode": "area",
+        "justifyMode": "auto",
+        "orientation": "auto",
+        "percentChangeColorMode": "standard",
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        },
+        "showPercentChange": false,
+        "textMode": "auto",
+        "wideLayout": true
+      },
+      "pluginVersion": "11.2.0",
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${DS_PROMETHEUS}"
+          },
+          "editorMode": "code",
+          "expr": "(sum(rate(banyandb_liaison_grpc_total_err{job=~\"$job\", container_name=~\"$role\", pod_name=~\"$pod\"}[$__rate_interval])*60) or vector(0)) + (sum(rate(banyandb_liaison_grpc_total_registry_err{job=~\"$job\", container_name=~\"$role\", pod_name=~\"$pod\"}[$__rate_interval])*60) or vector(0)) + (sum(rate(banyandb_liaison_grpc_total_stream_msg_received_err{job=~\"$job\", container_name=~\"$role\", pod_name=~\"$pod\"}[$__rate_interval])*60) or vector(0)) + (sum(rate(banyandb_queue_pub_total_err{job=~\"$job\", container_name=~\"$role\", pod_name=~\"$pod\"}[$__rate_interval])*60) or vector(0)) + (sum(rate(banyandb_measure_total_sync_loop_err{job=~\"$job\", container_name=\"liaison\", pod_name=~\"$pod\"}[$__rate_interval])*60) or vector(0)) + (sum(rate(banyandb_stream_tst_total_sync_loop_err{job=~\"$job\", container_name=\"liaison\", pod_name=~\"$pod\"}[$__rate_interval])*60) or vector(0)) + (sum(rate(banyandb_trace_tst_total_sync_loop_err{job=~\"$job\", container_name=\"liaison\", pod_name=~\"$pod\"}[$__rate_interval])*60) or vector(0))",
+          "instant": false,
+          "legendFormat": "__auto",
+          "range": true,
+          "refId": "A"
+        }
+      ],
+      "title": "Error Rate",
+      "type": "stat"
+    },
+    {
+      "collapsed": false,
+      "gridPos": {
+        "h": 1,
+        "w": 24,
+        "x": 0,
         "y": 6
       },
-      "id": 27,
-      "options": {
-        "colorMode": "value",
-        "graphMode": "area",
-        "justifyMode": "auto",
-        "orientation": "auto",
-        "percentChangeColorMode": "standard",
-        "reduceOptions": {
-          "calcs": [
-            "lastNotNull"
-          ],
-          "fields": "",
-          "values": false
-        },
-        "showPercentChange": false,
-        "textMode": "auto",
-        "wideLayout": true
-      },
-      "pluginVersion": "11.2.0",
-      "targets": [
-        {
-          "datasource": {
-            "type": "prometheus",
-            "uid": "${DS_PROMETHEUS}"
-          },
-          "editorMode": "code",
-          "expr": "sum(rate(banyandb_liaison_grpc_total_err{job=~\"$job\",pod=~\"$pod\",method=\"query\"}[$__rate_interval])*60) + sum(rate(banyandb_liaison_grpc_total_stream_msg_sent_err{job=~\"$job\",pod=~\"$pod\"}[$__rate_interval])*60) + sum(rate(banyandb_liaison_grpc_total_stream_msg_received_err{job=~\"$job\",pod=~\"$pod\"}[$__rate_interval])*60)  + sum(rate(banyandb_queue_sub_total_msg_sent_err{job=~\"$job\",pod=~\"$pod\"}[$__rate_interval])*60)",
-          "instant": false,
-          "legendFormat": "__auto",
-          "range": true,
-          "refId": "A"
-        }
-      ],
-      "title": "Write and Query Errors Rate",
-      "type": "stat"
-    },
-    {
-      "datasource": {
-        "type": "prometheus",
-        "uid": "${DS_PROMETHEUS}"
-      },
-      "description": "The registry operation rate is the number of registry operations per second. It is calculated by summing the total number of registry operations.",
-      "fieldConfig": {
-        "defaults": {
-          "color": {
-            "mode": "thresholds"
-          },
-          "mappings": [],
-          "thresholds": {
-            "mode": "absolute",
-            "steps": [
-              {
-                "color": "green",
-                "value": null
-              },
-              {
-                "color": "red",
-                "value": 80
-              }
-            ]
-          },
-          "unit": "cps"
-        },
-        "overrides": []
-      },
-      "gridPos": {
-        "h": 5,
-        "w": 8,
-        "x": 0,
-        "y": 11
-      },
-      "id": 28,
-      "options": {
-        "colorMode": "value",
-        "graphMode": "area",
-        "justifyMode": "auto",
-        "orientation": "auto",
-        "percentChangeColorMode": "standard",
-        "reduceOptions": {
-          "calcs": [
-            "lastNotNull"
-          ],
-          "fields": "",
-          "values": false
-        },
-        "showPercentChange": false,
-        "textMode": "auto",
-        "wideLayout": true
-      },
-      "pluginVersion": "11.2.0",
-      "targets": [
-        {
-          "datasource": {
-            "type": "prometheus",
-            "uid": "${DS_PROMETHEUS}"
-          },
-          "editorMode": "code",
-          "expr": "sum(rate(banyandb_liaison_grpc_total_registry_started{job=~\"$job\",pod=~\"$pod\"}[$__rate_interval])) + sum(rate(banyandb_liaison_grpc_total_started{job=~\"$job\",pod=~\"$pod\",method!=\"query\"}[$__rate_interval]))",
-          "instant": false,
-          "legendFormat": "__auto",
-          "range": true,
-          "refId": "A"
-        }
-      ],
-      "title": "Registry Operation Rate",
-      "type": "stat"
-    },
-    {
-      "datasource": {
-        "type": "prometheus",
-        "uid": "${DS_PROMETHEUS}"
-      },
-      "description": "The active instances is the number of active instances in the BanyanDB cluster.",
-      "fieldConfig": {
-        "defaults": {
-          "color": {
-            "mode": "palette-classic"
-          },
-          "custom": {
-            "axisBorderShow": false,
-            "axisCenteredZero": false,
-            "axisColorMode": "text",
-            "axisLabel": "",
-            "axisPlacement": "auto",
-            "barAlignment": 0,
-            "barWidthFactor": 0.6,
-            "drawStyle": "line",
-            "fillOpacity": 0,
-            "gradientMode": "none",
-            "hideFrom": {
-              "legend": false,
-              "tooltip": false,
-              "viz": false
-            },
-            "insertNulls": false,
-            "lineInterpolation": "linear",
-            "lineWidth": 1,
-            "pointSize": 5,
-            "scaleDistribution": {
-              "type": "linear"
-            },
-            "showPoints": "auto",
-            "spanNulls": false,
-            "stacking": {
-              "group": "A",
-              "mode": "none"
-            },
-            "thresholdsStyle": {
-              "mode": "off"
-            }
-          },
-          "mappings": [],
-          "thresholds": {
-            "mode": "absolute",
-            "steps": [
-              {
-                "color": "green",
-                "value": null
-              },
-              {
-                "color": "red",
-                "value": 80
-              }
-            ]
-          }
-        },
-        "overrides": []
-      },
-      "gridPos": {
-        "h": 5,
-        "w": 16,
-        "x": 8,
-        "y": 11
-      },
-      "id": 10,
-      "options": {
-        "legend": {
-          "calcs": [
-            "lastNotNull"
-          ],
-          "displayMode": "table",
-          "placement": "bottom",
-          "showLegend": true
-        },
-        "tooltip": {
-          "mode": "single",
-          "sort": "none"
-        }
-      },
-      "pluginVersion": "11.2.0",
-      "targets": [
-        {
-          "datasource": {
-            "type": "prometheus",
-            "uid": "${DS_PROMETHEUS}"
-          },
-          "editorMode": "code",
-          "expr": "sum(min_over_time(up{job=~\"$job\", pod=~\"$pod\"}[$__rate_interval])) by (job)",
-          "instant": false,
-          "legendFormat": "__auto",
-          "range": true,
-          "refId": "A"
-        }
-      ],
-      "title": "Active Instances",
-      "type": "timeseries"
-    },
-    {
-      "collapsed": false,
-      "gridPos": {
-        "h": 1,
-        "w": 24,
-        "x": 0,
-        "y": 16
-      },
-      "id": 4,
+      "id": 23,
       "panels": [],
-      "title": "Resource Usage ($pod)",
+      "title": "Liaison: Ingestion, Query & Publish",
       "type": "row"
     },
     {
@@ -666,7 +300,7 @@
         "type": "prometheus",
         "uid": "${DS_PROMETHEUS}"
       },
-      "description": "The CPU usage is the percentage of CPU used. If the CPU usage is over 80%, it may indicate that the CPU is overloaded.",
+      "description": "gRPC query rate by service (measure / stream / property).",
       "fieldConfig": {
         "defaults": {
           "color": {
@@ -681,7 +315,7 @@
             "barAlignment": 0,
             "barWidthFactor": 0.6,
             "drawStyle": "line",
-            "fillOpacity": 0,
+            "fillOpacity": 10,
             "gradientMode": "none",
             "hideFrom": {
               "legend": false,
@@ -690,9 +324,6 @@
             },
             "insertNulls": false,
             "lineInterpolation": "linear",
-            "lineStyle": {
-              "fill": "solid"
-            },
             "lineWidth": 1,
             "pointSize": 5,
             "scaleDistribution": {
@@ -715,30 +346,26 @@
               {
                 "color": "green",
                 "value": null
-              },
-              {
-                "color": "red",
-                "value": 80
               }
             ]
           },
-          "unit": "percentunit"
+          "unit": "reqps"
         },
         "overrides": []
       },
       "gridPos": {
-        "h": 8,
-        "w": 11,
+        "h": 7,
+        "w": 8,
         "x": 0,
-        "y": 17
+        "y": 7
       },
-      "id": 1,
+      "id": 24,
       "options": {
         "legend": {
           "calcs": [
             "lastNotNull",
-            "mean",
-            "max"
+            "max",
+            "mean"
           ],
           "displayMode": "table",
           "placement": "bottom",
@@ -747,8 +374,8 @@
           "sortDesc": true
         },
         "tooltip": {
-          "mode": "single",
-          "sort": "none"
+          "mode": "multi",
+          "sort": "desc"
         }
       },
       "pluginVersion": "11.2.0",
@@ -759,16 +386,14 @@
             "uid": "${DS_PROMETHEUS}"
           },
           "editorMode": "code",
-          "exemplar": false,
-          "expr": "avg(rate(process_cpu_seconds_total{job=~\"$job\", pod=~\"$pod\"}[1m])) by (pod)",
+          "expr": "sum(rate(banyandb_liaison_grpc_total_started{job=~\"$job\", container_name=~\"$role\", pod_name=~\"$pod\", method=\"query\", group=~\"$group\"}[$__rate_interval])) by (group)",
           "instant": false,
-          "interval": "",
-          "legendFormat": "__auto",
+          "legendFormat": "{{group}}",
           "range": true,
           "refId": "A"
         }
       ],
-      "title": "CPU Usage",
+      "title": "Query Rate",
       "type": "timeseries"
     },
     {
@@ -776,7 +401,7 @@
         "type": "prometheus",
         "uid": "${DS_PROMETHEUS}"
       },
-      "description": "The RSS memory usage is the size of resident memory used. ",
+      "description": "Average query latency per group.",
       "fieldConfig": {
         "defaults": {
           "color": {
@@ -791,112 +416,7 @@
             "barAlignment": 0,
             "barWidthFactor": 0.6,
             "drawStyle": "line",
-            "fillOpacity": 0,
-            "gradientMode": "none",
-            "hideFrom": {
-              "legend": false,
-              "tooltip": false,
-              "viz": false
-            },
-            "insertNulls": false,
-            "lineInterpolation": "linear",
-            "lineWidth": 1,
-            "pointSize": 5,
-            "scaleDistribution": {
-              "type": "linear"
-            },
-            "showPoints": "auto",
-            "showValues": false,
-            "spanNulls": false,
-            "stacking": {
-              "group": "A",
-              "mode": "none"
-            },
-            "thresholdsStyle": {
-              "mode": "off"
-            }
-          },
-          "mappings": [],
-          "thresholds": {
-            "mode": "absolute",
-            "steps": [
-              {
-                "color": "green",
-                "value": null
-              },
-              {
-                "color": "red",
-                "value": 80
-              }
-            ]
-          },
-          "unit": "bits"
-        },
-        "overrides": []
-      },
-      "gridPos": {
-        "h": 8,
-        "w": 13,
-        "x": 11,
-        "y": 17
-      },
-      "id": 3,
-      "options": {
-        "legend": {
-          "calcs": [
-            "lastNotNull",
-            "mean",
-            "max"
-          ],
-          "displayMode": "table",
-          "placement": "bottom",
-          "showLegend": true,
-          "sortBy": "Last *",
-          "sortDesc": true
-        },
-        "tooltip": {
-          "mode": "single",
-          "sort": "none"
-        }
-      },
-      "targets": [
-        {
-          "datasource": {
-            "type": "prometheus",
-            "uid": "${DS_PROMETHEUS}"
-          },
-          "editorMode": "code",
-          "expr": "max by (pod) (max_over_time(process_resident_memory_bytes{job=~\"$job\", pod=~\"$pod\"}[$__rate_interval]))",
-          "instant": false,
-          "legendFormat": "__auto",
-          "range": true,
-          "refId": "A"
-        }
-      ],
-      "title": "RSS memory usage $pod",
-      "type": "timeseries"
-    },
-    {
-      "datasource": {
-        "type": "prometheus",
-        "uid": "${DS_PROMETHEUS}"
-      },
-      "description": "The disk usage is the percentage of disk space used. If the disk usage is over 80%, it may indicate that the disk is almost full.",
-      "fieldConfig": {
-        "defaults": {
-          "color": {
-            "mode": "palette-classic"
-          },
-          "custom": {
-            "axisBorderShow": false,
-            "axisCenteredZero": false,
-            "axisColorMode": "text",
-            "axisLabel": "",
-            "axisPlacement": "auto",
-            "barAlignment": 0,
-            "barWidthFactor": 0.6,
-            "drawStyle": "line",
-            "fillOpacity": 0,
+            "fillOpacity": 10,
             "gradientMode": "none",
             "hideFrom": {
               "legend": false,
@@ -927,371 +447,6 @@
               {
                 "color": "green",
                 "value": null
-              },
-              {
-                "color": "red",
-                "value": 80
-              }
-            ]
-          },
-          "unit": "percentunit"
-        },
-        "overrides": []
-      },
-      "gridPos": {
-        "h": 8,
-        "w": 11,
-        "x": 0,
-        "y": 25
-      },
-      "id": 11,
-      "options": {
-        "legend": {
-          "calcs": [
-            "lastNotNull",
-            "mean",
-            "max"
-          ],
-          "displayMode": "table",
-          "placement": "bottom",
-          "showLegend": true,
-          "sortBy": "Last *",
-          "sortDesc": true
-        },
-        "tooltip": {
-          "mode": "single",
-          "sort": "none"
-        }
-      },
-      "targets": [
-        {
-          "datasource": {
-            "type": "prometheus",
-            "uid": "${DS_PROMETHEUS}"
-          },
-          "editorMode": "code",
-          "expr": "max(sum(banyandb_system_disk{job=~\"$job\", pod=~\"$pod\", kind=\"used\"}) / sum(banyandb_system_disk{job=~\"$job\", pod=~\"$pod\", kind=\"total\"})) by (job)",
-          "instant": false,
-          "interval": "",
-          "legendFormat": "__auto",
-          "range": true,
-          "refId": "A"
-        }
-      ],
-      "title": "Disk Usage ($pod)",
-      "type": "timeseries"
-    },
-    {
-      "datasource": {
-        "type": "prometheus",
-        "uid": "${DS_PROMETHEUS}"
-      },
-      "description": "The network usage is the number of bytes sent and received per second.",
-      "fieldConfig": {
-        "defaults": {
-          "color": {
-            "mode": "palette-classic"
-          },
-          "custom": {
-            "axisBorderShow": false,
-            "axisCenteredZero": false,
-            "axisColorMode": "text",
-            "axisLabel": "",
-            "axisPlacement": "auto",
-            "barAlignment": 0,
-            "barWidthFactor": 0.6,
-            "drawStyle": "line",
-            "fillOpacity": 0,
-            "gradientMode": "none",
-            "hideFrom": {
-              "legend": false,
-              "tooltip": false,
-              "viz": false
-            },
-            "insertNulls": false,
-            "lineInterpolation": "linear",
-            "lineWidth": 1,
-            "pointSize": 5,
-            "scaleDistribution": {
-              "type": "linear"
-            },
-            "showPoints": "auto",
-            "spanNulls": false,
-            "stacking": {
-              "group": "A",
-              "mode": "none"
-            },
-            "thresholdsStyle": {
-              "mode": "off"
-            }
-          },
-          "mappings": [],
-          "thresholds": {
-            "mode": "absolute",
-            "steps": [
-              {
-                "color": "green",
-                "value": null
-              },
-              {
-                "color": "red",
-                "value": 80
-              }
-            ]
-          },
-          "unit": "binBps"
-        },
-        "overrides": []
-      },
-      "gridPos": {
-        "h": 8,
-        "w": 13,
-        "x": 11,
-        "y": 25
-      },
-      "id": 12,
-      "options": {
-        "legend": {
-          "calcs": [
-            "lastNotNull",
-            "mean",
-            "max"
-          ],
-          "displayMode": "table",
-          "placement": "bottom",
-          "showLegend": true,
-          "sortBy": "Last *",
-          "sortDesc": true
-        },
-        "tooltip": {
-          "mode": "single",
-          "sort": "none"
-        }
-      },
-      "targets": [
-        {
-          "datasource": {
-            "type": "prometheus",
-            "uid": "${DS_PROMETHEUS}"
-          },
-          "editorMode": "code",
-          "expr": "sum(rate(banyandb_system_net_state{job=~\"$job\",instanct=~\"$pod\",kind=\"bytes_recv\"}[$__rate_interval])) by (name)",
-          "instant": false,
-          "legendFormat": "{{name}}-recv",
-          "range": true,
-          "refId": "A"
-        },
-        {
-          "datasource": {
-            "type": "prometheus",
-            "uid": "${DS_PROMETHEUS}"
-          },
-          "editorMode": "code",
-          "expr": "sum(rate(banyandb_system_net_state{job=~\"$job\",instanct=~\"$pod\",kind=\"bytes_sent\"}[$__rate_interval])) by (name)",
-          "hide": false,
-          "instant": false,
-          "legendFormat": "{{name}}-sent",
-          "range": true,
-          "refId": "B"
-        }
-      ],
-      "title": "Network usage ($pod)",
-      "type": "timeseries"
-    },
-    {
-      "collapsed": false,
-      "gridPos": {
-        "h": 1,
-        "w": 24,
-        "x": 0,
-        "y": 33
-      },
-      "id": 13,
-      "panels": [],
-      "title": "Storage ($pod)",
-      "type": "row"
-    },
-    {
-      "datasource": {
-        "type": "prometheus",
-        "uid": "${DS_PROMETHEUS}"
-      },
-      "description": "The write rate is the number of write operations per second. It is calculated by summing the total number of written operations for measures and streams. It's grouped by the `group` tag.\n\nYou can view the write rate of different instance to find out the hot instance.",
-      "fieldConfig": {
-        "defaults": {
-          "color": {
-            "mode": "palette-classic"
-          },
-          "custom": {
-            "axisBorderShow": false,
-            "axisCenteredZero": false,
-            "axisColorMode": "text",
-            "axisLabel": "",
-            "axisPlacement": "auto",
-            "barAlignment": 0,
-            "barWidthFactor": 0.6,
-            "drawStyle": "line",
-            "fillOpacity": 0,
-            "gradientMode": "none",
-            "hideFrom": {
-              "legend": false,
-              "tooltip": false,
-              "viz": false
-            },
-            "insertNulls": false,
-            "lineInterpolation": "linear",
-            "lineWidth": 1,
-            "pointSize": 5,
-            "scaleDistribution": {
-              "type": "linear"
-            },
-            "showPoints": "auto",
-            "spanNulls": false,
-            "stacking": {
-              "group": "A",
-              "mode": "none"
-            },
-            "thresholdsStyle": {
-              "mode": "off"
-            }
-          },
-          "mappings": [],
-          "thresholds": {
-            "mode": "absolute",
-            "steps": [
-              {
-                "color": "green",
-                "value": null
-              }
-            ]
-          },
-          "unit": "short"
-        },
-        "overrides": []
-      },
-      "gridPos": {
-        "h": 6,
-        "w": 8,
-        "x": 0,
-        "y": 34
-      },
-      "id": 14,
-      "options": {
-        "legend": {
-          "calcs": [
-            "lastNotNull",
-            "mean",
-            "max"
-          ],
-          "displayMode": "table",
-          "placement": "bottom",
-          "showLegend": true,
-          "sortBy": "Last *",
-          "sortDesc": true
-        },
-        "tooltip": {
-          "mode": "single",
-          "sort": "none"
-        }
-      },
-      "targets": [
-        {
-          "datasource": {
-            "type": "prometheus",
-            "uid": "${DS_PROMETHEUS}"
-          },
-          "editorMode": "code",
-          "expr": "sum(rate(banyandb_measure_total_written{job=~\"$job\", pod=~\"$pod\"}[$__rate_interval])) by (group)",
-          "instant": false,
-          "legendFormat": "__auto",
-          "range": true,
-          "refId": "A"
-        },
-        {
-          "datasource": {
-            "type": "prometheus",
-            "uid": "${DS_PROMETHEUS}"
-          },
-          "editorMode": "code",
-          "expr": " + sum(rate(banyandb_stream_tst_total_written{job=~\"$job\", pod=~\"$pod\"}[$__rate_interval])) by (group)",
-          "hide": false,
-          "instant": false,
-          "legendFormat": "__auto",
-          "range": true,
-          "refId": "B"
-        },
-        {
-          "datasource": {
-            "type": "prometheus",
-            "uid": "${DS_PROMETHEUS}"
-          },
-          "editorMode": "code",
-          "expr": " + sum(rate(banyandb_trace_tst_total_written{job=~\"$job\", pod=~\"$pod\"}[$__rate_interval])) by (group)",
-          "hide": false,
-          "instant": false,
-          "legendFormat": "__auto",
-          "range": true,
-          "refId": "C"
-        }
-      ],
-      "title": "Write Rate",
-      "type": "timeseries"
-    },
-    {
-      "datasource": {
-        "type": "prometheus",
-        "uid": "${DS_PROMETHEUS}"
-      },
-      "description": "The query latency is the average query latency in seconds. It is calculated by summing the total query latency and dividing by the total number of queries.\n\nYou can view the query latency of different instance to find out the instance with high query latency. Because BanyanDB will fetch all instances to query, the query latency of the instance with high query latency will affect the overall query latency.",
-      "fieldConfig": {
-        "defaults": {
-          "color": {
-            "mode": "palette-classic"
-          },
-          "custom": {
-            "axisBorderShow": false,
-            "axisCenteredZero": false,
-            "axisColorMode": "text",
-            "axisLabel": "",
-            "axisPlacement": "auto",
-            "barAlignment": 0,
-            "barWidthFactor": 0.6,
-            "drawStyle": "line",
-            "fillOpacity": 0,
-            "gradientMode": "none",
-            "hideFrom": {
-              "legend": false,
-              "tooltip": false,
-              "viz": false
-            },
-            "insertNulls": false,
-            "lineInterpolation": "linear",
-            "lineWidth": 1,
-            "pointSize": 5,
-            "scaleDistribution": {
-              "type": "linear"
-            },
-            "showPoints": "auto",
-            "spanNulls": false,
-            "stacking": {
-              "group": "A",
-              "mode": "none"
-            },
-            "thresholdsStyle": {
-              "mode": "off"
-            }
-          },
-          "mappings": [],
-          "thresholds": {
-            "mode": "absolute",
-            "steps": [
-              {
-                "color": "green",
-                "value": null
-              },
-              {
-                "color": "red",
-                "value": 5
               }
             ]
           },
@@ -1300,18 +455,18 @@
         "overrides": []
       },
       "gridPos": {
-        "h": 6,
+        "h": 7,
         "w": 8,
         "x": 8,
-        "y": 34
+        "y": 7
       },
-      "id": 15,
+      "id": 25,
       "options": {
         "legend": {
           "calcs": [
             "lastNotNull",
-            "mean",
-            "max"
+            "max",
+            "mean"
           ],
           "displayMode": "table",
           "placement": "bottom",
@@ -1320,10 +475,11 @@
           "sortDesc": true
         },
         "tooltip": {
-          "mode": "single",
-          "sort": "none"
+          "mode": "multi",
+          "sort": "desc"
         }
       },
+      "pluginVersion": "11.2.0",
       "targets": [
         {
           "datasource": {
@@ -1331,9 +487,9 @@
             "uid": "${DS_PROMETHEUS}"
           },
           "editorMode": "code",
-          "expr": "sum(rate(banyandb_liaison_grpc_total_latency{job=~\"$job\", pod=~\"$pod\",method=\"query\"}[$__rate_interval])) by( group) / sum(rate(banyandb_liaison_grpc_total_started{job=~\"$job\", pod=~\"$pod\",method=\"query\"}[$__rate_interval])) by (group)",
+          "expr": "sum(rate(banyandb_liaison_grpc_total_latency{job=~\"$job\", container_name=~\"$role\", pod_name=~\"$pod\", method=\"query\", group=~\"$group\"}[$__rate_interval])) by (group) / sum(rate(banyandb_liaison_grpc_total_started{job=~\"$job\", container_name=~\"$role\", pod_name=~\"$pod\",method=\"query\"}[$__rate_interval])) by (group)",
           "instant": false,
-          "legendFormat": "__auto",
+          "legendFormat": "{{group}}",
           "range": true,
           "refId": "A"
         }
@@ -1346,7 +502,7 @@
         "type": "prometheus",
         "uid": "${DS_PROMETHEUS}"
       },
-      "description": "The total data is the total number of data points stored in BanyanDB. It's grouped by the `group` tag.\n\nYou can view the total data of different instance to find out the instance with high data points. If the difference between the total data of different instances is too large, it may indicate that the data is not evenly distributed.",
+      "description": "gRPC error rates (request errors, registry errors, stream receive errors).",
       "fieldConfig": {
         "defaults": {
           "color": {
@@ -1361,7 +517,7 @@
             "barAlignment": 0,
             "barWidthFactor": 0.6,
             "drawStyle": "line",
-            "fillOpacity": 0,
+            "fillOpacity": 10,
             "gradientMode": "none",
             "hideFrom": {
               "legend": false,
@@ -1392,30 +548,26 @@
               {
                 "color": "green",
                 "value": null
-              },
-              {
-                "color": "red",
-                "value": 80
               }
             ]
           },
-          "unit": "short"
+          "unit": "ops"
         },
         "overrides": []
       },
       "gridPos": {
-        "h": 6,
+        "h": 7,
         "w": 8,
         "x": 16,
-        "y": 34
+        "y": 7
       },
-      "id": 16,
+      "id": 26,
       "options": {
         "legend": {
           "calcs": [
             "lastNotNull",
-            "mean",
-            "max"
+            "max",
+            "mean"
           ],
           "displayMode": "table",
           "placement": "bottom",
@@ -1424,10 +576,11 @@
           "sortDesc": true
         },
         "tooltip": {
-          "mode": "single",
-          "sort": "none"
+          "mode": "multi",
+          "sort": "desc"
         }
       },
+      "pluginVersion": "11.2.0",
       "targets": [
         {
           "datasource": {
@@ -1435,9 +588,9 @@
             "uid": "${DS_PROMETHEUS}"
           },
           "editorMode": "code",
-          "expr": "sum(banyandb_measure_total_file_elements{job=~\"$job\",pod=~\"$pod\"})by(group)",
+          "expr": "sum(rate(banyandb_liaison_grpc_total_err{job=~\"$job\", container_name=~\"$role\", pod_name=~\"$pod\", group=~\"$group\"}[$__rate_interval])) by (group)",
           "instant": false,
-          "legendFormat": "__auto",
+          "legendFormat": "err {{group}}",
           "range": true,
           "refId": "A"
         },
@@ -1447,10 +600,9 @@
             "uid": "${DS_PROMETHEUS}"
           },
           "editorMode": "code",
-          "expr": "sum(banyandb_stream_tst_total_file_elements{job=~\"$job\",pod=~\"$pod\"})by(group)",
-          "hide": false,
+          "expr": "sum(rate(banyandb_liaison_grpc_total_registry_err{job=~\"$job\", container_name=~\"$role\", pod_name=~\"$pod\", group=~\"$group\"}[$__rate_interval])) by (group)",
           "instant": false,
-          "legendFormat": "__auto",
+          "legendFormat": "registry_err {{group}}",
           "range": true,
           "refId": "B"
         },
@@ -1460,10 +612,809 @@
             "uid": "${DS_PROMETHEUS}"
           },
           "editorMode": "code",
-          "expr": "sum(banyandb_trace_tst_total_file_elements{job=~\"$job\",pod=~\"$pod\"})by(group)",
-          "hide": false,
+          "expr": "sum(rate(banyandb_liaison_grpc_total_stream_msg_received_err{job=~\"$job\", container_name=~\"$role\", pod_name=~\"$pod\", group=~\"$group\"}[$__rate_interval])) by (group)",
           "instant": false,
-          "legendFormat": "__auto",
+          "legendFormat": "stream_recv_err {{group}}",
+          "range": true,
+          "refId": "C"
+        }
+      ],
+      "title": "gRPC Error Rate",
+      "type": "timeseries"
+    },
+    {
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${DS_PROMETHEUS}"
+      },
+      "description": "Registry and non-query gRPC operation rate.",
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "palette-classic"
+          },
+          "custom": {
+            "axisBorderShow": false,
+            "axisCenteredZero": false,
+            "axisColorMode": "text",
+            "axisLabel": "",
+            "axisPlacement": "auto",
+            "barAlignment": 0,
+            "barWidthFactor": 0.6,
+            "drawStyle": "line",
+            "fillOpacity": 10,
+            "gradientMode": "none",
+            "hideFrom": {
+              "legend": false,
+              "tooltip": false,
+              "viz": false
+            },
+            "insertNulls": false,
+            "lineInterpolation": "linear",
+            "lineWidth": 1,
+            "pointSize": 5,
+            "scaleDistribution": {
+              "type": "linear"
+            },
+            "showPoints": "auto",
+            "spanNulls": false,
+            "stacking": {
+              "group": "A",
+              "mode": "none"
+            },
+            "thresholdsStyle": {
+              "mode": "off"
+            }
+          },
+          "mappings": [],
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              }
+            ]
+          },
+          "unit": "ops"
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 7,
+        "w": 8,
+        "x": 0,
+        "y": 14
+      },
+      "id": 27,
+      "options": {
+        "legend": {
+          "calcs": [
+            "lastNotNull",
+            "max",
+            "mean"
+          ],
+          "displayMode": "table",
+          "placement": "bottom",
+          "showLegend": true,
+          "sortBy": "Last *",
+          "sortDesc": true
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      },
+      "pluginVersion": "11.2.0",
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${DS_PROMETHEUS}"
+          },
+          "editorMode": "code",
+          "expr": "sum(rate(banyandb_liaison_grpc_total_registry_started{job=~\"$job\", container_name=~\"$role\", pod_name=~\"$pod\"}[$__rate_interval]))",
+          "instant": false,
+          "legendFormat": "registry",
+          "range": true,
+          "refId": "A"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${DS_PROMETHEUS}"
+          },
+          "editorMode": "code",
+          "expr": "sum(rate(banyandb_liaison_grpc_total_started{job=~\"$job\", container_name=~\"$role\", pod_name=~\"$pod\",method!=\"query\"}[$__rate_interval]))",
+          "instant": false,
+          "legendFormat": "non-query",
+          "range": true,
+          "refId": "B"
+        }
+      ],
+      "title": "Registry Operation Rate",
+      "type": "timeseries"
+    },
+    {
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${DS_PROMETHEUS}"
+      },
+      "description": "Write rate by group (measure / stream / trace).",
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "palette-classic"
+          },
+          "custom": {
+            "axisBorderShow": false,
+            "axisCenteredZero": false,
+            "axisColorMode": "text",
+            "axisLabel": "",
+            "axisPlacement": "auto",
+            "barAlignment": 0,
+            "barWidthFactor": 0.6,
+            "drawStyle": "line",
+            "fillOpacity": 10,
+            "gradientMode": "none",
+            "hideFrom": {
+              "legend": false,
+              "tooltip": false,
+              "viz": false
+            },
+            "insertNulls": false,
+            "lineInterpolation": "linear",
+            "lineWidth": 1,
+            "pointSize": 5,
+            "scaleDistribution": {
+              "type": "linear"
+            },
+            "showPoints": "auto",
+            "spanNulls": false,
+            "stacking": {
+              "group": "A",
+              "mode": "none"
+            },
+            "thresholdsStyle": {
+              "mode": "off"
+            }
+          },
+          "mappings": [],
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              }
+            ]
+          },
+          "unit": "wps"
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 7,
+        "w": 8,
+        "x": 8,
+        "y": 14
+      },
+      "id": 28,
+      "options": {
+        "legend": {
+          "calcs": [
+            "lastNotNull",
+            "max",
+            "mean"
+          ],
+          "displayMode": "table",
+          "placement": "bottom",
+          "showLegend": true,
+          "sortBy": "Last *",
+          "sortDesc": true
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      },
+      "pluginVersion": "11.2.0",
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${DS_PROMETHEUS}"
+          },
+          "editorMode": "code",
+          "expr": "sum(rate(banyandb_measure_total_written{job=~\"$job\", container_name=~\"$role\", pod_name=~\"$pod\", group=~\"$group\"}[$__rate_interval])) by (group)",
+          "instant": false,
+          "legendFormat": "{{group}}",
+          "range": true,
+          "refId": "A"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${DS_PROMETHEUS}"
+          },
+          "editorMode": "code",
+          "expr": "sum(rate(banyandb_stream_tst_total_written{job=~\"$job\", container_name=~\"$role\", pod_name=~\"$pod\", group=~\"$group\"}[$__rate_interval])) by (group)",
+          "instant": false,
+          "legendFormat": "{{group}}",
+          "range": true,
+          "refId": "B"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${DS_PROMETHEUS}"
+          },
+          "editorMode": "code",
+          "expr": "sum(rate(banyandb_trace_tst_total_written{job=~\"$job\", container_name=~\"$role\", pod_name=~\"$pod\", group=~\"$group\"}[$__rate_interval])) by (group)",
+          "instant": false,
+          "legendFormat": "{{group}}",
+          "range": true,
+          "refId": "C"
+        }
+      ],
+      "title": "Write Rate",
+      "type": "timeseries"
+    },
+    {
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${DS_PROMETHEUS}"
+      },
+      "description": "Liaison publish success rate by operation and file-sync byte throughput by group.",
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "palette-classic"
+          },
+          "custom": {
+            "axisBorderShow": false,
+            "axisCenteredZero": false,
+            "axisColorMode": "text",
+            "axisLabel": "",
+            "axisPlacement": "auto",
+            "barAlignment": 0,
+            "barWidthFactor": 0.6,
+            "drawStyle": "line",
+            "fillOpacity": 10,
+            "gradientMode": "none",
+            "hideFrom": {
+              "legend": false,
+              "tooltip": false,
+              "viz": false
+            },
+            "insertNulls": false,
+            "lineInterpolation": "linear",
+            "lineWidth": 1,
+            "pointSize": 5,
+            "scaleDistribution": {
+              "type": "linear"
+            },
+            "showPoints": "auto",
+            "spanNulls": false,
+            "stacking": {
+              "group": "A",
+              "mode": "none"
+            },
+            "thresholdsStyle": {
+              "mode": "off"
+            }
+          },
+          "mappings": [],
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              }
+            ]
+          },
+          "unit": "ops"
+        },
+        "overrides": [
+          {
+            "matcher": {
+              "id": "byFrameRefID",
+              "options": "B"
+            },
+            "properties": [
+              {
+                "id": "unit",
+                "value": "Bps"
+              }
+            ]
+          }
+        ]
+      },
+      "gridPos": {
+        "h": 7,
+        "w": 8,
+        "x": 16,
+        "y": 14
+      },
+      "id": 29,
+      "options": {
+        "legend": {
+          "calcs": [
+            "lastNotNull",
+            "max",
+            "mean"
+          ],
+          "displayMode": "table",
+          "placement": "bottom",
+          "showLegend": true,
+          "sortBy": "Last *",
+          "sortDesc": true
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      },
+      "pluginVersion": "11.2.0",
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${DS_PROMETHEUS}"
+          },
+          "editorMode": "code",
+          "expr": "sum(rate(banyandb_queue_pub_total_finished{job=~\"$job\", container_name=~\"$role\", pod_name=~\"$pod\", group=~\"$group\"}[$__rate_interval])) by (operation, group)",
+          "instant": false,
+          "legendFormat": "success {{operation}} {{group}}",
+          "range": true,
+          "refId": "A"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${DS_PROMETHEUS}"
+          },
+          "editorMode": "code",
+          "expr": "sum(rate(banyandb_queue_pub_sent_bytes{job=~\"$job\", container_name=~\"$role\", pod_name=~\"$pod\", group=~\"$group\"}[$__rate_interval])) by (group)",
+          "instant": false,
+          "legendFormat": "bytes {{group}}",
+          "range": true,
+          "refId": "B"
+        }
+      ],
+      "title": "Publish Throughput & Success",
+      "type": "timeseries"
+    },
+    {
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${DS_PROMETHEUS}"
+      },
+      "description": "Liaison write-ahead queue backlog: on-disk part folders + in-memory parts + pending items. >0 = data nodes slow/unreachable. (file_parts/mem_part appear only when the queue is non-empty; pending_data_count is the always-present anchor.)",
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "palette-classic"
+          },
+          "custom": {
+            "axisBorderShow": false,
+            "axisCenteredZero": false,
+            "axisColorMode": "text",
+            "axisLabel": "",
+            "axisPlacement": "auto",
+            "barAlignment": 0,
+            "barWidthFactor": 0.6,
+            "drawStyle": "line",
+            "fillOpacity": 10,
+            "gradientMode": "none",
+            "hideFrom": {
+              "legend": false,
+              "tooltip": false,
+              "viz": false
+            },
+            "insertNulls": false,
+            "lineInterpolation": "linear",
+            "lineWidth": 1,
+            "pointSize": 5,
+            "scaleDistribution": {
+              "type": "linear"
+            },
+            "showPoints": "auto",
+            "spanNulls": false,
+            "stacking": {
+              "group": "A",
+              "mode": "none"
+            },
+            "thresholdsStyle": {
+              "mode": "off"
+            }
+          },
+          "mappings": [],
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              }
+            ]
+          },
+          "unit": "short"
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 7,
+        "w": 12,
+        "x": 0,
+        "y": 21
+      },
+      "id": 30,
+      "options": {
+        "legend": {
+          "calcs": [
+            "lastNotNull",
+            "max",
+            "mean"
+          ],
+          "displayMode": "table",
+          "placement": "bottom",
+          "showLegend": true,
+          "sortBy": "Last *",
+          "sortDesc": true
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      },
+      "pluginVersion": "11.2.0",
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${DS_PROMETHEUS}"
+          },
+          "editorMode": "code",
+          "expr": "sum(banyandb_measure_total_file_parts{job=~\"$job\", container_name=\"liaison\", pod_name=~\"$pod\", group=~\"$group\"}) by (pod_name, group)",
+          "instant": false,
+          "legendFormat": "file_parts {{pod_name}} {{group}}",
+          "range": true,
+          "refId": "A"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${DS_PROMETHEUS}"
+          },
+          "editorMode": "code",
+          "expr": "sum(banyandb_stream_tst_total_file_parts{job=~\"$job\", container_name=\"liaison\", pod_name=~\"$pod\", group=~\"$group\"}) by (pod_name, group)",
+          "instant": false,
+          "legendFormat": "file_parts {{pod_name}} {{group}}",
+          "range": true,
+          "refId": "B"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${DS_PROMETHEUS}"
+          },
+          "editorMode": "code",
+          "expr": "sum(banyandb_trace_tst_total_file_parts{job=~\"$job\", container_name=\"liaison\", pod_name=~\"$pod\", group=~\"$group\"}) by (pod_name, group)",
+          "instant": false,
+          "legendFormat": "file_parts {{pod_name}} {{group}}",
+          "range": true,
+          "refId": "C"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${DS_PROMETHEUS}"
+          },
+          "editorMode": "code",
+          "expr": "sum(banyandb_measure_total_mem_part{job=~\"$job\", container_name=\"liaison\", pod_name=~\"$pod\", group=~\"$group\"}) by (pod_name, group)",
+          "instant": false,
+          "legendFormat": "mem_part {{pod_name}} {{group}}",
+          "range": true,
+          "refId": "D"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${DS_PROMETHEUS}"
+          },
+          "editorMode": "code",
+          "expr": "sum(banyandb_stream_tst_total_mem_part{job=~\"$job\", container_name=\"liaison\", pod_name=~\"$pod\", group=~\"$group\"}) by (pod_name, group)",
+          "instant": false,
+          "legendFormat": "mem_part {{pod_name}} {{group}}",
+          "range": true,
+          "refId": "E"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${DS_PROMETHEUS}"
+          },
+          "editorMode": "code",
+          "expr": "sum(banyandb_trace_tst_total_mem_part{job=~\"$job\", container_name=\"liaison\", pod_name=~\"$pod\", group=~\"$group\"}) by (pod_name, group)",
+          "instant": false,
+          "legendFormat": "mem_part {{pod_name}} {{group}}",
+          "range": true,
+          "refId": "F"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${DS_PROMETHEUS}"
+          },
+          "editorMode": "code",
+          "expr": "sum(banyandb_measure_pending_data_count{job=~\"$job\", container_name=\"liaison\", pod_name=~\"$pod\", group=~\"$group\"}) by (pod_name, group)",
+          "instant": false,
+          "legendFormat": "pending {{pod_name}} {{group}}",
+          "range": true,
+          "refId": "G"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${DS_PROMETHEUS}"
+          },
+          "editorMode": "code",
+          "expr": "sum(banyandb_stream_tst_pending_data_count{job=~\"$job\", container_name=\"liaison\", pod_name=~\"$pod\", group=~\"$group\"}) by (pod_name, group)",
+          "instant": false,
+          "legendFormat": "pending {{pod_name}} {{group}}",
+          "range": true,
+          "refId": "H"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${DS_PROMETHEUS}"
+          },
+          "editorMode": "code",
+          "expr": "sum(banyandb_trace_tst_pending_data_count{job=~\"$job\", container_name=\"liaison\", pod_name=~\"$pod\", group=~\"$group\"}) by (pod_name, group)",
+          "instant": false,
+          "legendFormat": "pending {{pod_name}} {{group}}",
+          "range": true,
+          "refId": "I"
+        }
+      ],
+      "title": "Write Queue Length (wqueue)",
+      "type": "timeseries"
+    },
+    {
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${DS_PROMETHEUS}"
+      },
+      "description": "p99 latency of publish sends from liaison to data nodes, by operation.",
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "palette-classic"
+          },
+          "custom": {
+            "axisBorderShow": false,
+            "axisCenteredZero": false,
+            "axisColorMode": "text",
+            "axisLabel": "",
+            "axisPlacement": "auto",
+            "barAlignment": 0,
+            "barWidthFactor": 0.6,
+            "drawStyle": "line",
+            "fillOpacity": 10,
+            "gradientMode": "none",
+            "hideFrom": {
+              "legend": false,
+              "tooltip": false,
+              "viz": false
+            },
+            "insertNulls": false,
+            "lineInterpolation": "linear",
+            "lineWidth": 1,
+            "pointSize": 5,
+            "scaleDistribution": {
+              "type": "linear"
+            },
+            "showPoints": "auto",
+            "spanNulls": false,
+            "stacking": {
+              "group": "A",
+              "mode": "none"
+            },
+            "thresholdsStyle": {
+              "mode": "off"
+            }
+          },
+          "mappings": [],
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              }
+            ]
+          },
+          "unit": "s"
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 7,
+        "w": 12,
+        "x": 12,
+        "y": 21
+      },
+      "id": 31,
+      "options": {
+        "legend": {
+          "calcs": [
+            "lastNotNull",
+            "max",
+            "mean"
+          ],
+          "displayMode": "table",
+          "placement": "bottom",
+          "showLegend": true,
+          "sortBy": "Last *",
+          "sortDesc": true
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      },
+      "pluginVersion": "11.2.0",
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${DS_PROMETHEUS}"
+          },
+          "editorMode": "code",
+          "expr": "histogram_quantile(0.99, sum(rate(banyandb_queue_pub_total_latency_bucket{job=~\"$job\", container_name=~\"$role\", pod_name=~\"$pod\", group=~\"$group\"}[$__rate_interval])) by (le, operation, group))",
+          "instant": false,
+          "legendFormat": "p99 {{operation}} {{group}}",
+          "range": true,
+          "refId": "A"
+        }
+      ],
+      "title": "Publish Send Latency p99",
+      "type": "timeseries"
+    },
+    {
+      "collapsed": false,
+      "gridPos": {
+        "h": 1,
+        "w": 24,
+        "x": 0,
+        "y": 28
+      },
+      "id": 32,
+      "panels": [],
+      "title": "Data: Storage",
+      "type": "row"
+    },
+    {
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${DS_PROMETHEUS}"
+      },
+      "description": "Total file elements by group (measure / stream / trace).",
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "palette-classic"
+          },
+          "custom": {
+            "axisBorderShow": false,
+            "axisCenteredZero": false,
+            "axisColorMode": "text",
+            "axisLabel": "",
+            "axisPlacement": "auto",
+            "barAlignment": 0,
+            "barWidthFactor": 0.6,
+            "drawStyle": "line",
+            "fillOpacity": 10,
+            "gradientMode": "none",
+            "hideFrom": {
+              "legend": false,
+              "tooltip": false,
+              "viz": false
+            },
+            "insertNulls": false,
+            "lineInterpolation": "linear",
+            "lineWidth": 1,
+            "pointSize": 5,
+            "scaleDistribution": {
+              "type": "linear"
+            },
+            "showPoints": "auto",
+            "spanNulls": false,
+            "stacking": {
+              "group": "A",
+              "mode": "none"
+            },
+            "thresholdsStyle": {
+              "mode": "off"
+            }
+          },
+          "mappings": [],
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              }
+            ]
+          },
+          "unit": "short"
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 7,
+        "w": 12,
+        "x": 0,
+        "y": 29
+      },
+      "id": 33,
+      "options": {
+        "legend": {
+          "calcs": [
+            "lastNotNull",
+            "max",
+            "mean"
+          ],
+          "displayMode": "table",
+          "placement": "bottom",
+          "showLegend": true,
+          "sortBy": "Last *",
+          "sortDesc": true
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      },
+      "pluginVersion": "11.2.0",
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${DS_PROMETHEUS}"
+          },
+          "editorMode": "code",
+          "expr": "sum(banyandb_measure_total_file_elements{job=~\"$job\", container_name=~\"$role\", pod_name=~\"$pod\", group=~\"$group\"}) by (group)",
+          "instant": false,
+          "legendFormat": "{{group}}",
+          "range": true,
+          "refId": "A"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${DS_PROMETHEUS}"
+          },
+          "editorMode": "code",
+          "expr": "sum(banyandb_stream_tst_total_file_elements{job=~\"$job\", container_name=~\"$role\", pod_name=~\"$pod\", group=~\"$group\"}) by (group)",
+          "instant": false,
+          "legendFormat": "{{group}}",
+          "range": true,
+          "refId": "B"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${DS_PROMETHEUS}"
+          },
+          "editorMode": "code",
+          "expr": "sum(banyandb_trace_tst_total_file_elements{job=~\"$job\", container_name=~\"$role\", pod_name=~\"$pod\", group=~\"$group\"}) by (group)",
+          "instant": false,
+          "legendFormat": "{{group}}",
           "range": true,
           "refId": "C"
         }
@@ -1476,7 +1427,7 @@
         "type": "prometheus",
         "uid": "${DS_PROMETHEUS}"
       },
-      "description": "The merge file rate is the number of merge file operations per minute. It is calculated by summing the total number of merge file operations. It's grouped by the `group` tag.\n\nIf the value surges, it may indicate that too many small files are being merged. It may bring following problems:\n\n- Increase the disk I/O\n- Slow down the query performance\n- Increase the CPU usage",
+      "description": "File merge loop rate (per minute) by group.",
       "fieldConfig": {
         "defaults": {
           "color": {
@@ -1491,7 +1442,7 @@
             "barAlignment": 0,
             "barWidthFactor": 0.6,
             "drawStyle": "line",
-            "fillOpacity": 0,
+            "fillOpacity": 10,
             "gradientMode": "none",
             "hideFrom": {
               "legend": false,
@@ -1522,10 +1473,6 @@
               {
                 "color": "green",
                 "value": null
-              },
-              {
-                "color": "red",
-                "value": 80
               }
             ]
           },
@@ -1534,18 +1481,18 @@
         "overrides": []
       },
       "gridPos": {
-        "h": 8,
-        "w": 8,
-        "x": 0,
-        "y": 40
+        "h": 7,
+        "w": 12,
+        "x": 12,
+        "y": 29
       },
-      "id": 17,
+      "id": 34,
       "options": {
         "legend": {
           "calcs": [
             "lastNotNull",
-            "mean",
-            "max"
+            "max",
+            "mean"
           ],
           "displayMode": "table",
           "placement": "bottom",
@@ -1554,10 +1501,11 @@
           "sortDesc": true
         },
         "tooltip": {
-          "mode": "single",
-          "sort": "none"
+          "mode": "multi",
+          "sort": "desc"
         }
       },
+      "pluginVersion": "11.2.0",
       "targets": [
         {
           "datasource": {
@@ -1565,9 +1513,9 @@
             "uid": "${DS_PROMETHEUS}"
           },
           "editorMode": "code",
-          "expr": "sum(rate(banyandb_measure_total_merge_loop_started{job=~\"$job\",pod=~\"$pod\"}[$__rate_interval]))by(group) * 60",
+          "expr": "sum(rate(banyandb_measure_total_merge_loop_started{job=~\"$job\", container_name=~\"$role\", pod_name=~\"$pod\", group=~\"$group\"}[$__rate_interval])) by (group) * 60",
           "instant": false,
-          "legendFormat": "__auto",
+          "legendFormat": "{{group}}",
           "range": true,
           "refId": "A"
         },
@@ -1577,10 +1525,9 @@
             "uid": "${DS_PROMETHEUS}"
           },
           "editorMode": "code",
-          "expr": "sum(rate(banyandb_stream_tst_total_merge_loop_started{job=~\"$job\",pod=~\"$pod\"}[$__rate_interval]))by(group) * 60",
-          "hide": false,
+          "expr": "sum(rate(banyandb_stream_tst_total_merge_loop_started{job=~\"$job\", container_name=~\"$role\", pod_name=~\"$pod\", group=~\"$group\"}[$__rate_interval])) by (group) * 60",
           "instant": false,
-          "legendFormat": "__auto",
+          "legendFormat": "{{group}}",
           "range": true,
           "refId": "B"
         },
@@ -1590,10 +1537,9 @@
             "uid": "${DS_PROMETHEUS}"
           },
           "editorMode": "code",
-          "expr": "sum(rate(banyandb_trace_tst_total_merge_loop_started{job=~\"$job\",pod=~\"$pod\"}[$__rate_interval]))by(group) * 60",
-          "hide": false,
+          "expr": "sum(rate(banyandb_trace_tst_total_merge_loop_started{job=~\"$job\", container_name=~\"$role\", pod_name=~\"$pod\", group=~\"$group\"}[$__rate_interval])) by (group) * 60",
           "instant": false,
-          "legendFormat": "__auto",
+          "legendFormat": "{{group}}",
           "range": true,
           "refId": "C"
         }
@@ -1606,7 +1552,7 @@
         "type": "prometheus",
         "uid": "${DS_PROMETHEUS}"
       },
-      "description": "The merge file latency is the average merge file latency in seconds. It is calculated by summing the total merge file latency and dividing by the total number of merge file operations. It's grouped by the `group` tag.\n\nIf the value surges, it may indicate that the merge file operation is slow. It may be caused by the high disk I/O and other resource usage. It may bring following problems:\n\n- Slow down the query performance\n- Increase the CPU usage\n- Increase the memory usage",
+      "description": "Average file merge latency by group.",
       "fieldConfig": {
         "defaults": {
           "color": {
@@ -1621,7 +1567,7 @@
             "barAlignment": 0,
             "barWidthFactor": 0.6,
             "drawStyle": "line",
-            "fillOpacity": 0,
+            "fillOpacity": 10,
             "gradientMode": "none",
             "hideFrom": {
               "legend": false,
@@ -1652,10 +1598,6 @@
               {
                 "color": "green",
                 "value": null
-              },
-              {
-                "color": "red",
-                "value": 80
               }
             ]
           },
@@ -1664,18 +1606,18 @@
         "overrides": []
       },
       "gridPos": {
-        "h": 8,
-        "w": 8,
-        "x": 8,
-        "y": 40
+        "h": 7,
+        "w": 12,
+        "x": 0,
+        "y": 36
       },
-      "id": 18,
+      "id": 35,
       "options": {
         "legend": {
           "calcs": [
             "lastNotNull",
-            "mean",
-            "max"
+            "max",
+            "mean"
           ],
           "displayMode": "table",
           "placement": "bottom",
@@ -1684,10 +1626,11 @@
           "sortDesc": true
         },
         "tooltip": {
-          "mode": "single",
-          "sort": "none"
+          "mode": "multi",
+          "sort": "desc"
         }
       },
+      "pluginVersion": "11.2.0",
       "targets": [
         {
           "datasource": {
@@ -1695,9 +1638,9 @@
             "uid": "${DS_PROMETHEUS}"
           },
           "editorMode": "code",
-          "expr": "sum(rate(banyandb_measure_total_merge_latency{job=~\"$job\", pod=~\"$pod\",type=\"file\"}[$__rate_interval]))by(group) / sum(rate(banyandb_measure_total_merge_loop_started{job=~\"$job\",pod=~\"$pod\"}[$__rate_interval]))by(group)",
+          "expr": "sum(rate(banyandb_measure_total_merge_latency{job=~\"$job\", container_name=~\"$role\", pod_name=~\"$pod\", type=\"file\", group=~\"$group\"}[$__rate_interval])) by (group) / sum(rate(banyandb_measure_total_merge_loop_started{job=~\"$job\", container_name=~\"$role\", pod_name=~\"$pod\"}[$__rate_interval])) by (group)",
           "instant": false,
-          "legendFormat": "__auto",
+          "legendFormat": "{{group}}",
           "range": true,
           "refId": "A"
         },
@@ -1707,10 +1650,9 @@
             "uid": "${DS_PROMETHEUS}"
           },
           "editorMode": "code",
-          "expr": "sum(rate(banyandb_stream_tst_total_merge_latency{job=~\"$job\", pod=~\"$pod\",type=\"file\"}[$__rate_interval]))by(group) / sum(rate(banyandb_stream_tst_total_merge_loop_started{job=~\"$job\",pod=~\"$pod\"}[$__rate_interval]))by(group)",
-          "hide": false,
+          "expr": "sum(rate(banyandb_stream_tst_total_merge_latency{job=~\"$job\", container_name=~\"$role\", pod_name=~\"$pod\", type=\"file\", group=~\"$group\"}[$__rate_interval])) by (group) / sum(rate(banyandb_stream_tst_total_merge_loop_started{job=~\"$job\", container_name=~\"$role\", pod_name=~\"$pod\"}[$__rate_interval])) by (group)",
           "instant": false,
-          "legendFormat": "__auto",
+          "legendFormat": "{{group}}",
           "range": true,
           "refId": "B"
         },
@@ -1720,10 +1662,9 @@
             "uid": "${DS_PROMETHEUS}"
           },
           "editorMode": "code",
-          "expr": "sum(rate(banyandb_trace_tst_total_merge_latency{job=~\"$job\", pod=~\"$pod\",type=\"file\"}[$__rate_interval]))by(group) / sum(rate(banyandb_trace_tst_total_merge_loop_started{job=~\"$job\",pod=~\"$pod\"}[$__rate_interval]))by(group)",
-          "hide": false,
+          "expr": "sum(rate(banyandb_trace_tst_total_merge_latency{job=~\"$job\", container_name=~\"$role\", pod_name=~\"$pod\", type=\"file\", group=~\"$group\"}[$__rate_interval])) by (group) / sum(rate(banyandb_trace_tst_total_merge_loop_started{job=~\"$job\", container_name=~\"$role\", pod_name=~\"$pod\"}[$__rate_interval])) by (group)",
           "instant": false,
-          "legendFormat": "__auto",
+          "legendFormat": "{{group}}",
           "range": true,
           "refId": "C"
         }
@@ -1736,7 +1677,7 @@
         "type": "prometheus",
         "uid": "${DS_PROMETHEUS}"
       },
-      "description": "The merge file partitions is the average number of partitions merged per merge file operation. It is calculated by summing the total number of partitions merged and dividing by the total number of merge file operations. It's grouped by the `group` tag.\n\nIf the value surges, it may indicate that too many partitions are being merged. It may because the partition number is too large that indicates the server is under a high write load.",
+      "description": "Average partitions merged per file merge, by group.",
       "fieldConfig": {
         "defaults": {
           "color": {
@@ -1751,7 +1692,7 @@
             "barAlignment": 0,
             "barWidthFactor": 0.6,
             "drawStyle": "line",
-            "fillOpacity": 0,
+            "fillOpacity": 10,
             "gradientMode": "none",
             "hideFrom": {
               "legend": false,
@@ -1784,23 +1725,24 @@
                 "value": null
               }
             ]
-          }
+          },
+          "unit": "short"
         },
         "overrides": []
       },
       "gridPos": {
-        "h": 8,
-        "w": 8,
-        "x": 16,
-        "y": 40
+        "h": 7,
+        "w": 12,
+        "x": 12,
+        "y": 36
       },
-      "id": 20,
+      "id": 36,
       "options": {
         "legend": {
           "calcs": [
             "lastNotNull",
-            "mean",
-            "max"
+            "max",
+            "mean"
           ],
           "displayMode": "table",
           "placement": "bottom",
@@ -1809,10 +1751,11 @@
           "sortDesc": true
         },
         "tooltip": {
-          "mode": "single",
-          "sort": "none"
+          "mode": "multi",
+          "sort": "desc"
         }
       },
+      "pluginVersion": "11.2.0",
       "targets": [
         {
           "datasource": {
@@ -1820,9 +1763,9 @@
             "uid": "${DS_PROMETHEUS}"
           },
           "editorMode": "code",
-          "expr": "sum(rate(banyandb_measure_total_merged_parts{job=~\"$job\", pod=~\"$pod\",type=\"file\"}[$__rate_interval]))by(group) / sum(rate(banyandb_measure_total_merge_loop_started{job=~\"$job\",pod=~\"$pod\"}[$__rate_interval]))by(group)",
+          "expr": "sum(rate(banyandb_measure_total_merged_parts{job=~\"$job\", container_name=~\"$role\", pod_name=~\"$pod\", type=\"file\", group=~\"$group\"}[$__rate_interval])) by (group) / sum(rate(banyandb_measure_total_merge_loop_started{job=~\"$job\", container_name=~\"$role\", pod_name=~\"$pod\"}[$__rate_interval])) by (group)",
           "instant": false,
-          "legendFormat": "__auto",
+          "legendFormat": "{{group}}",
           "range": true,
           "refId": "A"
         },
@@ -1832,10 +1775,9 @@
             "uid": "${DS_PROMETHEUS}"
           },
           "editorMode": "code",
-          "expr": "sum(rate(banyandb_stream_tst_total_merged_parts{job=~\"$job\", pod=~\"$pod\",type=\"file\"}[$__rate_interval]))by(group) / sum(rate(banyandb_stream_tst_total_merge_loop_started{job=~\"$job\",pod=~\"$pod\"}[$__rate_interval]))by(group)",
-          "hide": false,
+          "expr": "sum(rate(banyandb_stream_tst_total_merged_parts{job=~\"$job\", container_name=~\"$role\", pod_name=~\"$pod\", type=\"file\", group=~\"$group\"}[$__rate_interval])) by (group) / sum(rate(banyandb_stream_tst_total_merge_loop_started{job=~\"$job\", container_name=~\"$role\", pod_name=~\"$pod\"}[$__rate_interval])) by (group)",
           "instant": false,
-          "legendFormat": "__auto",
+          "legendFormat": "{{group}}",
           "range": true,
           "refId": "B"
         },
@@ -1845,10 +1787,9 @@
             "uid": "${DS_PROMETHEUS}"
           },
           "editorMode": "code",
-          "expr": "sum(rate(banyandb_trace_tst_total_merged_parts{job=~\"$job\", pod=~\"$pod\",type=\"file\"}[$__rate_interval]))by(group) / sum(rate(banyandb_trace_tst_total_merge_loop_started{job=~\"$job\",pod=~\"$pod\"}[$__rate_interval]))by(group)",
-          "hide": false,
+          "expr": "sum(rate(banyandb_trace_tst_total_merged_parts{job=~\"$job\", container_name=~\"$role\", pod_name=~\"$pod\", type=\"file\", group=~\"$group\"}[$__rate_interval])) by (group) / sum(rate(banyandb_trace_tst_total_merge_loop_started{job=~\"$job\", container_name=~\"$role\", pod_name=~\"$pod\"}[$__rate_interval])) by (group)",
           "instant": false,
-          "legendFormat": "__auto",
+          "legendFormat": "{{group}}",
           "range": true,
           "refId": "C"
         }
@@ -1857,11 +1798,24 @@
       "type": "timeseries"
     },
     {
+      "collapsed": false,
+      "gridPos": {
+        "h": 1,
+        "w": 24,
+        "x": 0,
+        "y": 43
+      },
+      "id": 37,
+      "panels": [],
+      "title": "Data: Inverted Index",
+      "type": "row"
+    },
+    {
       "datasource": {
         "type": "prometheus",
         "uid": "${DS_PROMETHEUS}"
       },
-      "description": "The series write rate is the number of series write operations per second. It is calculated by summing the total number of series write operations for measures and streams. It's grouped by the `group` tag.\n\nIf the value surges, it may indicate that the old series are being updated frequently by the new series. It may be caused by the high cardinality of the series and bring following problems:\n\n- Increase the series inverted index size\n- Slow down the query performance",
+      "description": "Inverted index update rate (measure + stream storage). Trace has no storage inverted index.",
       "fieldConfig": {
         "defaults": {
           "color": {
@@ -1876,7 +1830,7 @@
             "barAlignment": 0,
             "barWidthFactor": 0.6,
             "drawStyle": "line",
-            "fillOpacity": 0,
+            "fillOpacity": 10,
             "gradientMode": "none",
             "hideFrom": {
               "legend": false,
@@ -1918,15 +1872,15 @@
         "h": 7,
         "w": 8,
         "x": 0,
-        "y": 48
+        "y": 44
       },
-      "id": 21,
+      "id": 38,
       "options": {
         "legend": {
           "calcs": [
             "lastNotNull",
-            "mean",
-            "max"
+            "max",
+            "mean"
           ],
           "displayMode": "table",
           "placement": "bottom",
@@ -1935,10 +1889,11 @@
           "sortDesc": true
         },
         "tooltip": {
-          "mode": "single",
-          "sort": "none"
+          "mode": "multi",
+          "sort": "desc"
         }
       },
+      "pluginVersion": "11.2.0",
       "targets": [
         {
           "datasource": {
@@ -1946,9 +1901,9 @@
             "uid": "${DS_PROMETHEUS}"
           },
           "editorMode": "code",
-          "expr": "sum(rate(banyandb_measure_inverted_index_total_updates{job=~\"$job\",pod=~\"$pod\"}[$__rate_interval])) by (group)",
+          "expr": "sum(rate(banyandb_measure_inverted_index_total_updates{job=~\"$job\", container_name=~\"$role\", pod_name=~\"$pod\", group=~\"$group\"}[$__rate_interval])) by (group)",
           "instant": false,
-          "legendFormat": "__auto",
+          "legendFormat": "measure {{group}}",
           "range": true,
           "refId": "A"
         },
@@ -1958,25 +1913,11 @@
             "uid": "${DS_PROMETHEUS}"
           },
           "editorMode": "code",
-          "expr": "sum(rate(banyandb_stream_storage_inverted_index_total_updates{job=~\"$job\",pod=~\"$pod\"}[$__rate_interval])) by (group)",
-          "hide": false,
+          "expr": "sum(rate(banyandb_stream_storage_inverted_index_total_updates{job=~\"$job\", container_name=~\"$role\", pod_name=~\"$pod\", group=~\"$group\"}[$__rate_interval])) by (group)",
           "instant": false,
-          "legendFormat": "__auto",
+          "legendFormat": "stream {{group}}",
           "range": true,
           "refId": "B"
-        },
-        {
-          "datasource": {
-            "type": "prometheus",
-            "uid": "${DS_PROMETHEUS}"
-          },
-          "editorMode": "code",
-          "expr": "sum(rate(banyandb_trace_storage_inverted_index_total_updates{job=~\"$job\",pod=~\"$pod\"}[$__rate_interval])) by (group)",
-          "hide": false,
-          "instant": false,
-          "legendFormat": "__auto",
-          "range": true,
-          "refId": "C"
         }
       ],
       "title": "Series Write Rate",
@@ -1987,7 +1928,7 @@
         "type": "prometheus",
         "uid": "${DS_PROMETHEUS}"
       },
-      "description": "The series term search rate is the number of series term search operations per second. It is calculated by summing the total number of series term search operations for measures and streams. It's grouped by the `group` tag.\n\nIf the value is too large, it may indicate that reading operation fetch too many series. It may be caused by the high cardinality of the series and bring following problems:\n\n- Slow down the query performance\n- Increase the CPU usage\n- Increase the memory usage",
+      "description": "Inverted index term searcher start rate.",
       "fieldConfig": {
         "defaults": {
           "color": {
@@ -2002,7 +1943,7 @@
             "barAlignment": 0,
             "barWidthFactor": 0.6,
             "drawStyle": "line",
-            "fillOpacity": 0,
+            "fillOpacity": 10,
             "gradientMode": "none",
             "hideFrom": {
               "legend": false,
@@ -2036,7 +1977,7 @@
               }
             ]
           },
-          "unit": "rps"
+          "unit": "reqps"
         },
         "overrides": []
       },
@@ -2044,15 +1985,15 @@
         "h": 7,
         "w": 8,
         "x": 8,
-        "y": 48
+        "y": 44
       },
-      "id": 25,
+      "id": 39,
       "options": {
         "legend": {
           "calcs": [
             "lastNotNull",
-            "mean",
-            "max"
+            "max",
+            "mean"
           ],
           "displayMode": "table",
           "placement": "bottom",
@@ -2061,10 +2002,11 @@
           "sortDesc": true
         },
         "tooltip": {
-          "mode": "single",
-          "sort": "none"
+          "mode": "multi",
+          "sort": "desc"
         }
       },
+      "pluginVersion": "11.2.0",
       "targets": [
         {
           "datasource": {
@@ -2072,12 +2014,11 @@
             "uid": "${DS_PROMETHEUS}"
           },
           "editorMode": "code",
-          "expr": "sum(rate(banyandb_stream_storage_inverted_index_total_term_searchers_started{job=~\"$job\",pod=~\"$pod\"}[$__rate_interval])) by (group)",
-          "hide": false,
+          "expr": "sum(rate(banyandb_measure_inverted_index_total_term_searchers_started{job=~\"$job\", container_name=~\"$role\", pod_name=~\"$pod\", group=~\"$group\"}[$__rate_interval])) by (group)",
           "instant": false,
-          "legendFormat": "__auto",
+          "legendFormat": "measure {{group}}",
           "range": true,
-          "refId": "B"
+          "refId": "A"
         },
         {
           "datasource": {
@@ -2085,12 +2026,11 @@
             "uid": "${DS_PROMETHEUS}"
           },
           "editorMode": "code",
-          "expr": "sum(rate(banyandb_measure_inverted_index_total_term_searchers_started{job=~\"$job\",pod=~\"$pod\"}[$__rate_interval])) by (group)",
-          "hide": false,
+          "expr": "sum(rate(banyandb_stream_storage_inverted_index_total_term_searchers_started{job=~\"$job\", container_name=~\"$role\", pod_name=~\"$pod\", group=~\"$group\"}[$__rate_interval])) by (group)",
           "instant": false,
-          "legendFormat": "__auto",
+          "legendFormat": "stream {{group}}",
           "range": true,
-          "refId": "A"
+          "refId": "B"
         }
       ],
       "title": "Series Term Search Rate",
@@ -2101,7 +2041,7 @@
         "type": "prometheus",
         "uid": "${DS_PROMETHEUS}"
       },
-      "description": "The total series is the total number of series stored in BanyanDB. It's grouped by the `group` tag.\n\nIf the value is too large, it may indicate that the high cardinality of the series. It may bring following problems:\n\n- Increase the series inverted index size\n- Slow down the query performance",
+      "description": "Inverted index document (series) count.",
       "fieldConfig": {
         "defaults": {
           "color": {
@@ -2116,7 +2056,7 @@
             "barAlignment": 0,
             "barWidthFactor": 0.6,
             "drawStyle": "line",
-            "fillOpacity": 0,
+            "fillOpacity": 10,
             "gradientMode": "none",
             "hideFrom": {
               "legend": false,
@@ -2158,15 +2098,15 @@
         "h": 7,
         "w": 8,
         "x": 16,
-        "y": 48
+        "y": 44
       },
-      "id": 22,
+      "id": 40,
       "options": {
         "legend": {
           "calcs": [
             "lastNotNull",
-            "mean",
-            "max"
+            "max",
+            "mean"
           ],
           "displayMode": "table",
           "placement": "bottom",
@@ -2175,10 +2115,11 @@
           "sortDesc": true
         },
         "tooltip": {
-          "mode": "single",
-          "sort": "none"
+          "mode": "multi",
+          "sort": "desc"
         }
       },
+      "pluginVersion": "11.2.0",
       "targets": [
         {
           "datasource": {
@@ -2186,9 +2127,9 @@
             "uid": "${DS_PROMETHEUS}"
           },
           "editorMode": "code",
-          "expr": "sum(banyandb_measure_inverted_index_total_doc_count{job=~\"$job\",pod=~\"$pod\"}) by (group)",
+          "expr": "sum(banyandb_measure_inverted_index_total_doc_count{job=~\"$job\", container_name=~\"$role\", pod_name=~\"$pod\", group=~\"$group\"}) by (group)",
           "instant": false,
-          "legendFormat": "__auto",
+          "legendFormat": "measure {{group}}",
           "range": true,
           "refId": "A"
         },
@@ -2198,10 +2139,9 @@
             "uid": "${DS_PROMETHEUS}"
           },
           "editorMode": "code",
-          "expr": "sum(banyandb_stream_storage_inverted_index_total_doc_count{job=~\"$job\",pod=~\"$pod\"}) by (group)",
-          "hide": false,
+          "expr": "sum(banyandb_stream_storage_inverted_index_total_doc_count{job=~\"$job\", container_name=~\"$role\", pod_name=~\"$pod\", group=~\"$group\"}) by (group)",
           "instant": false,
-          "legendFormat": "__auto",
+          "legendFormat": "stream {{group}}",
           "range": true,
           "refId": "B"
         }
@@ -2210,24 +2150,11 @@
       "type": "timeseries"
     },
     {
-      "collapsed": false,
-      "gridPos": {
-        "h": 1,
-        "w": 24,
-        "x": 0,
-        "y": 55
-      },
-      "id": 23,
-      "panels": [],
-      "title": "Stream Inverted Index ($pod)",
-      "type": "row"
-    },
-    {
       "datasource": {
         "type": "prometheus",
         "uid": "${DS_PROMETHEUS}"
       },
-      "description": "The write rate is the number of write operations per second. It is calculated by summing the total number of written operations for streams. It's grouped by the `group` tag.\n\nIf the value is too large, it may indicate that too many data points are being indexed and bring following problems:\n\n- Increase the inverted index size\n- Slow down the query performance\n- Increase the CPU usage\n- Increase the memory usage",
+      "description": "Stream time-series-table inverted index update rate.",
       "fieldConfig": {
         "defaults": {
           "color": {
@@ -2242,7 +2169,7 @@
             "barAlignment": 0,
             "barWidthFactor": 0.6,
             "drawStyle": "line",
-            "fillOpacity": 0,
+            "fillOpacity": 10,
             "gradientMode": "none",
             "hideFrom": {
               "legend": false,
@@ -2284,15 +2211,15 @@
         "h": 7,
         "w": 8,
         "x": 0,
-        "y": 56
+        "y": 51
       },
-      "id": 24,
+      "id": 41,
       "options": {
         "legend": {
           "calcs": [
             "lastNotNull",
-            "mean",
-            "max"
+            "max",
+            "mean"
           ],
           "displayMode": "table",
           "placement": "bottom",
@@ -2301,10 +2228,11 @@
           "sortDesc": true
         },
         "tooltip": {
-          "mode": "single",
-          "sort": "none"
+          "mode": "multi",
+          "sort": "desc"
         }
       },
+      "pluginVersion": "11.2.0",
       "targets": [
         {
           "datasource": {
@@ -2312,15 +2240,14 @@
             "uid": "${DS_PROMETHEUS}"
           },
           "editorMode": "code",
-          "expr": "sum(rate(banyandb_stream_tst_inverted_index_total_updates{job=~\"$job\",pod=~\"$pod\"}[$__rate_interval])) by (group)",
-          "hide": false,
+          "expr": "sum(rate(banyandb_stream_tst_inverted_index_total_updates{job=~\"$job\", container_name=~\"$role\", pod_name=~\"$pod\", group=~\"$group\"}[$__rate_interval])) by (group)",
           "instant": false,
-          "legendFormat": "__auto",
+          "legendFormat": "{{group}}",
           "range": true,
-          "refId": "B"
+          "refId": "A"
         }
       ],
-      "title": "Write Rate",
+      "title": "Stream tst: Write Rate",
       "type": "timeseries"
     },
     {
@@ -2328,7 +2255,7 @@
         "type": "prometheus",
         "uid": "${DS_PROMETHEUS}"
       },
-      "description": "The term search rate is the number of term search operations per second. It is calculated by summing the total number of term search operations for streams. It's grouped by the `group` tag.\n\nIf the value is too large, it may indicate that reading operation fetch too many data points. It may bring following problems:\n\n- Slow down the query performance\n- Increase the CPU usage\n- Increase the memory usage",
+      "description": "Stream tst inverted index term searcher start rate.",
       "fieldConfig": {
         "defaults": {
           "color": {
@@ -2343,7 +2270,7 @@
             "barAlignment": 0,
             "barWidthFactor": 0.6,
             "drawStyle": "line",
-            "fillOpacity": 0,
+            "fillOpacity": 10,
             "gradientMode": "none",
             "hideFrom": {
               "legend": false,
@@ -2377,7 +2304,7 @@
               }
             ]
           },
-          "unit": "rps"
+          "unit": "reqps"
         },
         "overrides": []
       },
@@ -2385,15 +2312,15 @@
         "h": 7,
         "w": 8,
         "x": 8,
-        "y": 56
+        "y": 51
       },
-      "id": 19,
+      "id": 42,
       "options": {
         "legend": {
           "calcs": [
             "lastNotNull",
-            "mean",
-            "max"
+            "max",
+            "mean"
           ],
           "displayMode": "table",
           "placement": "bottom",
@@ -2402,10 +2329,11 @@
           "sortDesc": true
         },
         "tooltip": {
-          "mode": "single",
-          "sort": "none"
+          "mode": "multi",
+          "sort": "desc"
         }
       },
+      "pluginVersion": "11.2.0",
       "targets": [
         {
           "datasource": {
@@ -2413,15 +2341,14 @@
             "uid": "${DS_PROMETHEUS}"
           },
           "editorMode": "code",
-          "expr": "sum(rate(banyandb_stream_tst_inverted_index_total_term_searchers_started{job=~\"$job\",pod=~\"$pod\"}[$__rate_interval])) by (group)",
-          "hide": false,
+          "expr": "sum(rate(banyandb_stream_tst_inverted_index_total_term_searchers_started{job=~\"$job\", container_name=~\"$role\", pod_name=~\"$pod\", group=~\"$group\"}[$__rate_interval])) by (group)",
           "instant": false,
-          "legendFormat": "__auto",
+          "legendFormat": "{{group}}",
           "range": true,
-          "refId": "B"
+          "refId": "A"
         }
       ],
-      "title": "Term Search Rate",
+      "title": "Stream tst: Term Search Rate",
       "type": "timeseries"
     },
     {
@@ -2429,7 +2356,7 @@
         "type": "prometheus",
         "uid": "${DS_PROMETHEUS}"
       },
-      "description": "The total documents is the total number of documents stored in the stream inverted index. It's grouped by the `group` tag.\n\nIf the value is too large, it may indicate that too many data points are being indexed and bring following problems:\n\n- Increase the inverted index size\n- Slow down the query performance\n- Increase the CPU usage\n- Increase the memory usage",
+      "description": "Stream tst inverted index document count.",
       "fieldConfig": {
         "defaults": {
           "color": {
@@ -2444,7 +2371,7 @@
             "barAlignment": 0,
             "barWidthFactor": 0.6,
             "drawStyle": "line",
-            "fillOpacity": 0,
+            "fillOpacity": 10,
             "gradientMode": "none",
             "hideFrom": {
               "legend": false,
@@ -2486,15 +2413,15 @@
         "h": 7,
         "w": 8,
         "x": 16,
-        "y": 56
+        "y": 51
       },
-      "id": 26,
+      "id": 43,
       "options": {
         "legend": {
           "calcs": [
             "lastNotNull",
-            "mean",
-            "max"
+            "max",
+            "mean"
           ],
           "displayMode": "table",
           "placement": "bottom",
@@ -2503,10 +2430,11 @@
           "sortDesc": true
         },
         "tooltip": {
-          "mode": "single",
-          "sort": "none"
+          "mode": "multi",
+          "sort": "desc"
         }
       },
+      "pluginVersion": "11.2.0",
       "targets": [
         {
           "datasource": {
@@ -2514,15 +2442,14 @@
             "uid": "${DS_PROMETHEUS}"
           },
           "editorMode": "code",
-          "expr": "sum(banyandb_stream_tst_inverted_index_total_doc_count{job=~\"$job\",pod=~\"$pod\"}) by (group)",
-          "hide": false,
+          "expr": "sum(banyandb_stream_tst_inverted_index_total_doc_count{job=~\"$job\", container_name=~\"$role\", pod_name=~\"$pod\", group=~\"$group\"}) by (group)",
           "instant": false,
-          "legendFormat": "__auto",
+          "legendFormat": "{{group}}",
           "range": true,
-          "refId": "B"
+          "refId": "A"
         }
       ],
-      "title": "Total Documents",
+      "title": "Stream tst: Total Documents",
       "type": "timeseries"
     },
     {
@@ -2531,11 +2458,11 @@
         "h": 1,
         "w": 24,
         "x": 0,
-        "y": 64
+        "y": 58
       },
-      "id": 30,
+      "id": 44,
       "panels": [],
-      "title": "Liaison internal queue ($pod)",
+      "title": "Data: Internal Queue",
       "type": "row"
     },
     {
@@ -2543,7 +2470,7 @@
         "type": "prometheus",
         "uid": "${DS_PROMETHEUS}"
       },
-      "description": "Internal queue_sub chunked sync pressure: active sessions and reorder-buffer depth (labels use topic, not session).",
+      "description": "Subscribe `query` RPCs per group: started / finished rate (left axis) and p99 handling latency (right axis).",
       "fieldConfig": {
         "defaults": {
           "color": {
@@ -2558,7 +2485,7 @@
             "barAlignment": 0,
             "barWidthFactor": 0.6,
             "drawStyle": "line",
-            "fillOpacity": 0,
+            "fillOpacity": 10,
             "gradientMode": "none",
             "hideFrom": {
               "legend": false,
@@ -2592,23 +2519,36 @@
               }
             ]
           },
-          "unit": "short"
+          "unit": "ops"
         },
-        "overrides": []
+        "overrides": [
+          {
+            "matcher": {
+              "id": "byFrameRefID",
+              "options": "C"
+            },
+            "properties": [
+              {
+                "id": "unit",
+                "value": "s"
+              }
+            ]
+          }
+        ]
       },
       "gridPos": {
         "h": 8,
         "w": 12,
         "x": 0,
-        "y": 65
+        "y": 59
       },
-      "id": 31,
+      "id": 45,
       "options": {
         "legend": {
           "calcs": [
             "lastNotNull",
-            "mean",
-            "max"
+            "max",
+            "mean"
           ],
           "displayMode": "table",
           "placement": "bottom",
@@ -2617,10 +2557,11 @@
           "sortDesc": true
         },
         "tooltip": {
-          "mode": "single",
-          "sort": "none"
+          "mode": "multi",
+          "sort": "desc"
         }
       },
+      "pluginVersion": "11.2.0",
       "targets": [
         {
           "datasource": {
@@ -2628,10 +2569,9 @@
             "uid": "${DS_PROMETHEUS}"
           },
           "editorMode": "code",
-          "expr": "sum(banyandb_queue_sub_chunked_sync_active_sessions{job=~\"$job\",pod=~\"$pod\"}) by (topic)",
-          "hide": false,
+          "expr": "sum(rate(banyandb_queue_sub_total_started{job=~\"$job\", container_name=~\"$role\", pod_name=~\"$pod\", operation=\"query\", group=~\"$group\"}[$__rate_interval])) by (group)",
           "instant": false,
-          "legendFormat": "active_sessions {{topic}}",
+          "legendFormat": "started {{group}}",
           "range": true,
           "refId": "A"
         },
@@ -2641,15 +2581,26 @@
             "uid": "${DS_PROMETHEUS}"
           },
           "editorMode": "code",
-          "expr": "sum(banyandb_queue_sub_chunk_reorder_buffered_chunks{job=~\"$job\",pod=~\"$pod\"}) by (topic)",
-          "hide": false,
+          "expr": "sum(rate(banyandb_queue_sub_total_finished{job=~\"$job\", container_name=~\"$role\", pod_name=~\"$pod\", operation=\"query\", group=~\"$group\"}[$__rate_interval])) by (group)",
           "instant": false,
-          "legendFormat": "reorder_buffered {{topic}}",
+          "legendFormat": "finished {{group}}",
           "range": true,
           "refId": "B"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${DS_PROMETHEUS}"
+          },
+          "editorMode": "code",
+          "expr": "histogram_quantile(0.99, sum(rate(banyandb_queue_sub_total_latency_bucket{job=~\"$job\", container_name=~\"$role\", pod_name=~\"$pod\", operation=\"query\", group=~\"$group\"}[$__rate_interval])) by (le, group))",
+          "instant": false,
+          "legendFormat": "p99 {{group}}",
+          "range": true,
+          "refId": "C"
         }
       ],
-      "title": "queue_sub: sync sessions & reorder buffer",
+      "title": "Query — Throughput & p99",
       "type": "timeseries"
     },
     {
@@ -2657,7 +2608,7 @@
         "type": "prometheus",
         "uid": "${DS_PROMETHEUS}"
       },
-      "description": "Chunked sync abort rate by topic and reason (switch, stream_error, ctx_done, eof).",
+      "description": "Subscribe `file-sync` RPCs per group: started / finished rate (left axis) and p99 handling latency (right axis).",
       "fieldConfig": {
         "defaults": {
           "color": {
@@ -2672,7 +2623,7 @@
             "barAlignment": 0,
             "barWidthFactor": 0.6,
             "drawStyle": "line",
-            "fillOpacity": 0,
+            "fillOpacity": 10,
             "gradientMode": "none",
             "hideFrom": {
               "legend": false,
@@ -2708,21 +2659,34 @@
           },
           "unit": "ops"
         },
-        "overrides": []
+        "overrides": [
+          {
+            "matcher": {
+              "id": "byFrameRefID",
+              "options": "C"
+            },
+            "properties": [
+              {
+                "id": "unit",
+                "value": "s"
+              }
+            ]
+          }
+        ]
       },
       "gridPos": {
         "h": 8,
         "w": 12,
         "x": 12,
-        "y": 65
+        "y": 59
       },
-      "id": 32,
+      "id": 46,
       "options": {
         "legend": {
           "calcs": [
             "lastNotNull",
-            "mean",
-            "max"
+            "max",
+            "mean"
           ],
           "displayMode": "table",
           "placement": "bottom",
@@ -2731,10 +2695,11 @@
           "sortDesc": true
         },
         "tooltip": {
-          "mode": "single",
-          "sort": "none"
+          "mode": "multi",
+          "sort": "desc"
         }
       },
+      "pluginVersion": "11.2.0",
       "targets": [
         {
           "datasource": {
@@ -2742,15 +2707,38 @@
             "uid": "${DS_PROMETHEUS}"
           },
           "editorMode": "code",
-          "expr": "sum(rate(banyandb_queue_sub_chunked_sync_aborted_total{job=~\"$job\",pod=~\"$pod\"}[$__rate_interval])) by (topic,reason)",
-          "hide": false,
+          "expr": "sum(rate(banyandb_queue_sub_total_started{job=~\"$job\", container_name=~\"$role\", pod_name=~\"$pod\", operation=\"file-sync\", group=~\"$group\"}[$__rate_interval])) by (group)",
           "instant": false,
-          "legendFormat": "{{topic}} {{reason}}",
+          "legendFormat": "started {{group}}",
           "range": true,
           "refId": "A"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${DS_PROMETHEUS}"
+          },
+          "editorMode": "code",
+          "expr": "sum(rate(banyandb_queue_sub_total_finished{job=~\"$job\", container_name=~\"$role\", pod_name=~\"$pod\", operation=\"file-sync\", group=~\"$group\"}[$__rate_interval])) by (group)",
+          "instant": false,
+          "legendFormat": "finished {{group}}",
+          "range": true,
+          "refId": "B"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${DS_PROMETHEUS}"
+          },
+          "editorMode": "code",
+          "expr": "histogram_quantile(0.99, sum(rate(banyandb_queue_sub_total_latency_bucket{job=~\"$job\", container_name=~\"$role\", pod_name=~\"$pod\", operation=\"file-sync\", group=~\"$group\"}[$__rate_interval])) by (le, group))",
+          "instant": false,
+          "legendFormat": "p99 {{group}}",
+          "range": true,
+          "refId": "C"
         }
       ],
-      "title": "queue_sub: chunked sync abort rate",
+      "title": "File-sync — Throughput & p99",
       "type": "timeseries"
     },
     {
@@ -2758,7 +2746,7 @@
         "type": "prometheus",
         "uid": "${DS_PROMETHEUS}"
       },
-      "description": "queue_pub successful stream sends per second (tier-1/tier-2 batch client).",
+      "description": "Subscribe `batch-write` RPCs per group: started / finished rate (left axis) and p99 handling latency (right axis).",
       "fieldConfig": {
         "defaults": {
           "color": {
@@ -2773,7 +2761,7 @@
             "barAlignment": 0,
             "barWidthFactor": 0.6,
             "drawStyle": "line",
-            "fillOpacity": 0,
+            "fillOpacity": 10,
             "gradientMode": "none",
             "hideFrom": {
               "legend": false,
@@ -2809,21 +2797,34 @@
           },
           "unit": "ops"
         },
-        "overrides": []
+        "overrides": [
+          {
+            "matcher": {
+              "id": "byFrameRefID",
+              "options": "C"
+            },
+            "properties": [
+              {
+                "id": "unit",
+                "value": "s"
+              }
+            ]
+          }
+        ]
       },
       "gridPos": {
-        "h": 8,
+        "h": 7,
         "w": 12,
         "x": 0,
-        "y": 73
+        "y": 67
       },
-      "id": 33,
+      "id": 47,
       "options": {
         "legend": {
           "calcs": [
             "lastNotNull",
-            "mean",
-            "max"
+            "max",
+            "mean"
           ],
           "displayMode": "table",
           "placement": "bottom",
@@ -2832,10 +2833,11 @@
           "sortDesc": true
         },
         "tooltip": {
-          "mode": "single",
-          "sort": "none"
+          "mode": "multi",
+          "sort": "desc"
         }
       },
+      "pluginVersion": "11.2.0",
       "targets": [
         {
           "datasource": {
@@ -2843,15 +2845,38 @@
             "uid": "${DS_PROMETHEUS}"
           },
           "editorMode": "code",
-          "expr": "sum(rate(banyandb_queue_pub_send_success_total{job=~\"$job\",pod=~\"$pod\"}[$__rate_interval])) by (topic)",
-          "hide": false,
+          "expr": "sum(rate(banyandb_queue_sub_total_started{job=~\"$job\", container_name=~\"$role\", pod_name=~\"$pod\", operation=\"batch-write\", group=~\"$group\"}[$__rate_interval])) by (group)",
           "instant": false,
-          "legendFormat": "{{topic}}",
+          "legendFormat": "started {{group}}",
           "range": true,
           "refId": "A"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${DS_PROMETHEUS}"
+          },
+          "editorMode": "code",
+          "expr": "sum(rate(banyandb_queue_sub_total_finished{job=~\"$job\", container_name=~\"$role\", pod_name=~\"$pod\", operation=\"batch-write\", group=~\"$group\"}[$__rate_interval])) by (group)",
+          "instant": false,
+          "legendFormat": "finished {{group}}",
+          "range": true,
+          "refId": "B"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${DS_PROMETHEUS}"
+          },
+          "editorMode": "code",
+          "expr": "histogram_quantile(0.99, sum(rate(banyandb_queue_sub_total_latency_bucket{job=~\"$job\", container_name=~\"$role\", pod_name=~\"$pod\", operation=\"batch-write\", group=~\"$group\"}[$__rate_interval])) by (le, group))",
+          "instant": false,
+          "legendFormat": "p99 {{group}}",
+          "range": true,
+          "refId": "C"
         }
       ],
-      "title": "queue_pub: send success rate",
+      "title": "Batch-write — Throughput & p99",
       "type": "timeseries"
     },
     {
@@ -2859,7 +2884,7 @@
         "type": "prometheus",
         "uid": "${DS_PROMETHEUS}"
       },
-      "description": "queue_pub errors and exhausted retries (see docs/operation/observability.md for reason values).",
+      "description": "Subscribe `control` RPCs per group: started / finished rate (left axis) and p99 handling latency (right axis).",
       "fieldConfig": {
         "defaults": {
           "color": {
@@ -2874,7 +2899,7 @@
             "barAlignment": 0,
             "barWidthFactor": 0.6,
             "drawStyle": "line",
-            "fillOpacity": 0,
+            "fillOpacity": 10,
             "gradientMode": "none",
             "hideFrom": {
               "legend": false,
@@ -2910,21 +2935,34 @@
           },
           "unit": "ops"
         },
-        "overrides": []
+        "overrides": [
+          {
+            "matcher": {
+              "id": "byFrameRefID",
+              "options": "C"
+            },
+            "properties": [
+              {
+                "id": "unit",
+                "value": "s"
+              }
+            ]
+          }
+        ]
       },
       "gridPos": {
-        "h": 8,
+        "h": 7,
         "w": 12,
         "x": 12,
-        "y": 73
+        "y": 67
       },
-      "id": 34,
+      "id": 48,
       "options": {
         "legend": {
           "calcs": [
             "lastNotNull",
-            "mean",
-            "max"
+            "max",
+            "mean"
           ],
           "displayMode": "table",
           "placement": "bottom",
@@ -2933,10 +2971,11 @@
           "sortDesc": true
         },
         "tooltip": {
-          "mode": "single",
-          "sort": "none"
+          "mode": "multi",
+          "sort": "desc"
         }
       },
+      "pluginVersion": "11.2.0",
       "targets": [
         {
           "datasource": {
@@ -2944,10 +2983,9 @@
             "uid": "${DS_PROMETHEUS}"
           },
           "editorMode": "code",
-          "expr": "sum(rate(banyandb_queue_pub_send_err_total{job=~\"$job\",pod=~\"$pod\"}[$__rate_interval])) by (reason)",
-          "hide": false,
+          "expr": "sum(rate(banyandb_queue_sub_total_started{job=~\"$job\", container_name=~\"$role\", pod_name=~\"$pod\", operation=\"control\", group=~\"$group\"}[$__rate_interval])) by (group)",
           "instant": false,
-          "legendFormat": "err {{reason}}",
+          "legendFormat": "started {{group}}",
           "range": true,
           "refId": "A"
         },
@@ -2957,22 +2995,50 @@
             "uid": "${DS_PROMETHEUS}"
           },
           "editorMode": "code",
-          "expr": "sum(rate(banyandb_queue_pub_send_retry_exhausted_total{job=~\"$job\",pod=~\"$pod\"}[$__rate_interval])) by (topic,node)",
-          "hide": false,
+          "expr": "sum(rate(banyandb_queue_sub_total_finished{job=~\"$job\", container_name=~\"$role\", pod_name=~\"$pod\", operation=\"control\", group=~\"$group\"}[$__rate_interval])) by (group)",
           "instant": false,
-          "legendFormat": "retry_exhausted {{topic}} {{node}}",
+          "legendFormat": "finished {{group}}",
           "range": true,
           "refId": "B"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${DS_PROMETHEUS}"
+          },
+          "editorMode": "code",
+          "expr": "histogram_quantile(0.99, sum(rate(banyandb_queue_sub_total_latency_bucket{job=~\"$job\", container_name=~\"$role\", pod_name=~\"$pod\", operation=\"control\", group=~\"$group\"}[$__rate_interval])) by (le, group))",
+          "instant": false,
+          "legendFormat": "p99 {{group}}",
+          "range": true,
+          "refId": "C"
         }
       ],
-      "title": "queue_pub: errors & retry exhausted",
+      "title": "Control — Throughput & p99",
       "type": "timeseries"
     }
   ],
   "schemaVersion": 39,
-  "tags": [],
+  "tags": [
+    "banyandb",
+    "fodc"
+  ],
   "templating": {
     "list": [
+      {
+        "current": {},
+        "hide": 0,
+        "includeAll": false,
+        "label": "Prometheus",
+        "multi": false,
+        "name": "DS_PROMETHEUS",
+        "options": [],
+        "query": "prometheus",
+        "refresh": 1,
+        "regex": "",
+        "skipUrlSync": false,
+        "type": "datasource"
+      },
       {
         "current": {},
         "datasource": {
@@ -2997,28 +3063,72 @@
         "type": "query"
       },
       {
-        "allValue": ".*",
         "current": {},
         "datasource": {
           "type": "prometheus",
           "uid": "${DS_PROMETHEUS}"
         },
-        "definition": "label_values(banyandb_system_up_time{job=\"$job\"},pod)",
-        "hide": 1,
+        "definition": "label_values(banyandb_system_up_time{job=~\"$job\"},container_name)",
+        "hide": 0,
+        "includeAll": true,
+        "multi": true,
+        "name": "role",
+        "options": [],
+        "query": {
+          "qryType": 1,
+          "query": "label_values(banyandb_system_up_time{job=~\"$job\"},container_name)",
+          "refId": "PrometheusVariableQueryEditor-VariableQuery"
+        },
+        "refresh": 1,
+        "regex": "",
+        "skipUrlSync": false,
+        "sort": 1,
+        "type": "query",
+        "allValue": ".+"
+      },
+      {
+        "current": {},
+        "datasource": {
+          "type": "prometheus",
+          "uid": "${DS_PROMETHEUS}"
+        },
+        "definition": "label_values(banyandb_system_up_time{job=~\"$job\",container_name=~\"$role\"},pod_name)",
+        "hide": 0,
         "includeAll": true,
         "multi": true,
         "name": "pod",
         "options": [],
         "query": {
           "qryType": 1,
-          "query": "label_values(banyandb_system_up_time{job=\"$job\"},pod)",
+          "query": "label_values(banyandb_system_up_time{job=~\"$job\",container_name=~\"$role\"},pod_name)",
           "refId": "PrometheusVariableQueryEditor-VariableQuery"
         },
         "refresh": 1,
         "regex": "",
         "skipUrlSync": false,
-        "sort": 0,
-        "type": "query"
+        "sort": 1,
+        "type": "query",
+        "allValue": ".+"
+      },
+      {
+        "current": {},
+        "datasource": {
+          "type": "prometheus",
+          "uid": "${DS_PROMETHEUS}"
+        },
+        "definition": "label_values(banyandb_liaison_grpc_total_started{job=~\"$job\",container_name=~\"$role\",pod_name=~\"$pod\"},group)",
+        "hide": 0,
+        "includeAll": true,
+        "multi": true,
+        "name": "group",
+        "options": [],
+        "query": "label_values(banyandb_liaison_grpc_total_started{job=~\"$job\",container_name=~\"$role\",pod_name=~\"$pod\"},group)",
+        "refresh": 1,
+        "regex": "",
+        "skipUrlSync": false,
+        "sort": 1,
+        "type": "query",
+        "allValue": ".+"
       }
     ]
   },
@@ -3028,8 +3138,8 @@
   },
   "timepicker": {},
   "timezone": "browser",
-  "title": "BanyanDB Cluster",
-  "uid": "ddy81kbj931mof",
-  "version": 20,
+  "title": "BanyanDB Cluster — Workload (FODC Proxy)",
+  "uid": "banyandb-fodc-workload",
+  "version": 1,
   "weekStart": ""
 }

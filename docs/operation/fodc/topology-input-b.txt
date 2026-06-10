@@ -1,0 +1,162 @@
+# Licensed to Apache Software Foundation (ASF) under one or more contributor
+# license agreements. See the NOTICE file distributed with
+# this work for additional information regarding copyright
+# ownership. Apache Software Foundation (ASF) licenses this file to you under
+# the Apache License, Version 2.0 (the "License"); you may
+# not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing,
+# software distributed under the License is distributed on an
+# "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
+# KIND, either express or implied.  See the License for the
+# specific language governing permissions and limitations
+# under the License.
+
+# batch-write (no group) — liaison-1 → liaison-0/liaison-1 (tier-1 write routing: each
+# write OAP sends to liaison-1 is re-published round-robin to its owner liaison, incl. itself)
+{pod_name="demo-banyandb-liaison-1", container_name="liaison", node_role="ROLE_LIAISON", node_type="",
+ operation="batch-write", group="",
+ remote_node="demo-banyandb-liaison-0.demo-banyandb-liaison-headless.skywalking-showcase:18912", remote_role="liaison", remote_tier=""}  238.996
+{pod_name="demo-banyandb-liaison-1", container_name="liaison", node_role="ROLE_LIAISON", node_type="",
+ operation="batch-write", group="",
+ remote_node="demo-banyandb-liaison-1.demo-banyandb-liaison-headless.skywalking-showcase:18912", remote_role="liaison", remote_tier=""}  249.107
+# batch-write sw_metricsMinute — liaison-1 → liaison-0/liaison-1
+{pod_name="demo-banyandb-liaison-1", container_name="liaison", node_role="ROLE_LIAISON", node_type="",
+ operation="batch-write", group="sw_metricsMinute",
+ remote_node="demo-banyandb-liaison-0.demo-banyandb-liaison-headless.skywalking-showcase:18912", remote_role="liaison", remote_tier=""}   38.207
+{pod_name="demo-banyandb-liaison-1", container_name="liaison", node_role="ROLE_LIAISON", node_type="",
+ operation="batch-write", group="sw_metricsMinute",
+ remote_node="demo-banyandb-liaison-1.demo-banyandb-liaison-headless.skywalking-showcase:18912", remote_role="liaison", remote_tier=""}   38.774
+# batch-write sw_metricsHour — liaison-1 → liaison-1
+{pod_name="demo-banyandb-liaison-1", container_name="liaison", node_role="ROLE_LIAISON", node_type="",
+ operation="batch-write", group="sw_metricsHour",
+ remote_node="demo-banyandb-liaison-1.demo-banyandb-liaison-headless.skywalking-showcase:18912", remote_role="liaison", remote_tier=""}   12.793
+# batch-write sw_metricsDay — liaison-1 → liaison-0
+{pod_name="demo-banyandb-liaison-1", container_name="liaison", node_role="ROLE_LIAISON", node_type="",
+ operation="batch-write", group="sw_metricsDay",
+ remote_node="demo-banyandb-liaison-0.demo-banyandb-liaison-headless.skywalking-showcase:18912", remote_role="liaison", remote_tier=""}   12.848
+# batch-write sw_metadata — liaison-1 → liaison-0/liaison-1
+{pod_name="demo-banyandb-liaison-1", container_name="liaison", node_role="ROLE_LIAISON", node_type="",
+ operation="batch-write", group="sw_metadata",
+ remote_node="demo-banyandb-liaison-0.demo-banyandb-liaison-headless.skywalking-showcase:18912", remote_role="liaison", remote_tier=""}    0.285
+{pod_name="demo-banyandb-liaison-1", container_name="liaison", node_role="ROLE_LIAISON", node_type="",
+ operation="batch-write", group="sw_metadata",
+ remote_node="demo-banyandb-liaison-1.demo-banyandb-liaison-headless.skywalking-showcase:18912", remote_role="liaison", remote_tier=""}    0.285
+# batch-write sw_zipkinTrace — liaison-1 → liaison-0/liaison-1
+{pod_name="demo-banyandb-liaison-1", container_name="liaison", node_role="ROLE_LIAISON", node_type="",
+ operation="batch-write", group="sw_zipkinTrace",
+ remote_node="demo-banyandb-liaison-0.demo-banyandb-liaison-headless.skywalking-showcase:18912", remote_role="liaison", remote_tier=""}    0.619
+{pod_name="demo-banyandb-liaison-1", container_name="liaison", node_role="ROLE_LIAISON", node_type="",
+ operation="batch-write", group="sw_zipkinTrace",
+ remote_node="demo-banyandb-liaison-1.demo-banyandb-liaison-headless.skywalking-showcase:18912", remote_role="liaison", remote_tier=""}    0.607
+# batch-write sw_trace — liaison-1 → liaison-0/liaison-1
+{pod_name="demo-banyandb-liaison-1", container_name="liaison", node_role="ROLE_LIAISON", node_type="",
+ operation="batch-write", group="sw_trace",
+ remote_node="demo-banyandb-liaison-0.demo-banyandb-liaison-headless.skywalking-showcase:18912", remote_role="liaison", remote_tier=""}    0.352
+{pod_name="demo-banyandb-liaison-1", container_name="liaison", node_role="ROLE_LIAISON", node_type="",
+ operation="batch-write", group="sw_trace",
+ remote_node="demo-banyandb-liaison-1.demo-banyandb-liaison-headless.skywalking-showcase:18912", remote_role="liaison", remote_tier=""}    0.385
+# batch-write sw_records — liaison-1 → liaison-1
+{pod_name="demo-banyandb-liaison-1", container_name="liaison", node_role="ROLE_LIAISON", node_type="",
+ operation="batch-write", group="sw_records",
+ remote_node="demo-banyandb-liaison-1.demo-banyandb-liaison-headless.skywalking-showcase:18912", remote_role="liaison", remote_tier=""}    0.026
+# batch-write sw_recordsLog — liaison-1 → liaison-0/liaison-1
+{pod_name="demo-banyandb-liaison-1", container_name="liaison", node_role="ROLE_LIAISON", node_type="",
+ operation="batch-write", group="sw_recordsLog",
+ remote_node="demo-banyandb-liaison-0.demo-banyandb-liaison-headless.skywalking-showcase:18912", remote_role="liaison", remote_tier=""}    0.156
+{pod_name="demo-banyandb-liaison-1", container_name="liaison", node_role="ROLE_LIAISON", node_type="",
+ operation="batch-write", group="sw_recordsLog",
+ remote_node="demo-banyandb-liaison-1.demo-banyandb-liaison-headless.skywalking-showcase:18912", remote_role="liaison", remote_tier=""}    0.189
+# batch-write sw_recordsBrowserErrorLog — liaison-1 → liaison-0
+{pod_name="demo-banyandb-liaison-1", container_name="liaison", node_role="ROLE_LIAISON", node_type="",
+ operation="batch-write", group="sw_recordsBrowserErrorLog",
+ remote_node="demo-banyandb-liaison-0.demo-banyandb-liaison-headless.skywalking-showcase:18912", remote_role="liaison", remote_tier=""}    0.193
+# file-sync sw_zipkinTrace — liaison-0/liaison-1 → data-hot-0/data-hot-1
+{pod_name="demo-banyandb-liaison-0", container_name="liaison", node_role="ROLE_LIAISON", node_type="",
+ operation="file-sync", group="sw_zipkinTrace",
+ remote_node="demo-banyandb-data-hot-0.demo-banyandb-data-hot-headless.skywalking-showcase:17912", remote_role="data", remote_tier="hot"}    0.067
+{pod_name="demo-banyandb-liaison-1", container_name="liaison", node_role="ROLE_LIAISON", node_type="",
+ operation="file-sync", group="sw_zipkinTrace",
+ remote_node="demo-banyandb-data-hot-1.demo-banyandb-data-hot-headless.skywalking-showcase:17912", remote_role="data", remote_tier="hot"}    0.067
+# file-sync sw_metricsMinute — liaison-0/liaison-1 → data-hot-0/data-hot-1
+{pod_name="demo-banyandb-liaison-0", container_name="liaison", node_role="ROLE_LIAISON", node_type="",
+ operation="file-sync", group="sw_metricsMinute",
+ remote_node="demo-banyandb-data-hot-0.demo-banyandb-data-hot-headless.skywalking-showcase:17912", remote_role="data", remote_tier="hot"}    0.070
+{pod_name="demo-banyandb-liaison-1", container_name="liaison", node_role="ROLE_LIAISON", node_type="",
+ operation="file-sync", group="sw_metricsMinute",
+ remote_node="demo-banyandb-data-hot-1.demo-banyandb-data-hot-headless.skywalking-showcase:17912", remote_role="data", remote_tier="hot"}    0.067
+# file-sync sw_metricsDay — liaison-0 → data-hot-0
+{pod_name="demo-banyandb-liaison-0", container_name="liaison", node_role="ROLE_LIAISON", node_type="",
+ operation="file-sync", group="sw_metricsDay",
+ remote_node="demo-banyandb-data-hot-0.demo-banyandb-data-hot-headless.skywalking-showcase:17912", remote_role="data", remote_tier="hot"}    0.059
+# file-sync sw_metricsHour — liaison-1 → data-hot-1
+{pod_name="demo-banyandb-liaison-1", container_name="liaison", node_role="ROLE_LIAISON", node_type="",
+ operation="file-sync", group="sw_metricsHour",
+ remote_node="demo-banyandb-data-hot-1.demo-banyandb-data-hot-headless.skywalking-showcase:17912", remote_role="data", remote_tier="hot"}    0.056
+# file-sync sw_trace — liaison-0/liaison-1 → data-hot-0/data-hot-1
+{pod_name="demo-banyandb-liaison-0", container_name="liaison", node_role="ROLE_LIAISON", node_type="",
+ operation="file-sync", group="sw_trace",
+ remote_node="demo-banyandb-data-hot-0.demo-banyandb-data-hot-headless.skywalking-showcase:17912", remote_role="data", remote_tier="hot"}    0.067
+{pod_name="demo-banyandb-liaison-1", container_name="liaison", node_role="ROLE_LIAISON", node_type="",
+ operation="file-sync", group="sw_trace",
+ remote_node="demo-banyandb-data-hot-1.demo-banyandb-data-hot-headless.skywalking-showcase:17912", remote_role="data", remote_tier="hot"}    0.067
+# file-sync sw_records — liaison-1 → data-hot-1
+{pod_name="demo-banyandb-liaison-1", container_name="liaison", node_role="ROLE_LIAISON", node_type="",
+ operation="file-sync", group="sw_records",
+ remote_node="demo-banyandb-data-hot-1.demo-banyandb-data-hot-headless.skywalking-showcase:17912", remote_role="data", remote_tier="hot"}    0.011
+# file-sync sw_recordsLog — liaison-0/liaison-1 → data-hot-0/data-hot-1
+{pod_name="demo-banyandb-liaison-0", container_name="liaison", node_role="ROLE_LIAISON", node_type="",
+ operation="file-sync", group="sw_recordsLog",
+ remote_node="demo-banyandb-data-hot-0.demo-banyandb-data-hot-headless.skywalking-showcase:17912", remote_role="data", remote_tier="hot"}    0.067
+{pod_name="demo-banyandb-liaison-1", container_name="liaison", node_role="ROLE_LIAISON", node_type="",
+ operation="file-sync", group="sw_recordsLog",
+ remote_node="demo-banyandb-data-hot-1.demo-banyandb-data-hot-headless.skywalking-showcase:17912", remote_role="data", remote_tier="hot"}    0.067
+# file-sync sw_recordsBrowserErrorLog — liaison-0 → data-hot-0
+{pod_name="demo-banyandb-liaison-0", container_name="liaison", node_role="ROLE_LIAISON", node_type="",
+ operation="file-sync", group="sw_recordsBrowserErrorLog",
+ remote_node="demo-banyandb-data-hot-0.demo-banyandb-data-hot-headless.skywalking-showcase:17912", remote_role="data", remote_tier="hot"}    0.067
+# p99 latency (s) and sent_bytes (B/s) per (pod_name, remote_node) — from banyandb_queue_pub_total_latency_bucket / _sent_bytes
+{pod_name="demo-banyandb-liaison-0", remote_node="demo-banyandb-data-hot-0.demo-banyandb-data-hot-headless.skywalking-showcase:17912"}     p99=0.2457  bytes/s=28088
+{pod_name="demo-banyandb-liaison-1", remote_node="demo-banyandb-data-hot-1.demo-banyandb-data-hot-headless.skywalking-showcase:17912"}     p99=0.2457  bytes/s=30753
+{pod_name="demo-banyandb-liaison-1", remote_node="demo-banyandb-liaison-0.demo-banyandb-liaison-headless.skywalking-showcase:18912"}      p99=0.0050  bytes/s=—
+{pod_name="demo-banyandb-liaison-1", remote_node="demo-banyandb-liaison-1.demo-banyandb-liaison-headless.skywalking-showcase:18912"}      p99=0.0050  bytes/s=—
+
+# ============================================================================
+# query / control — banyandb_queue_pub_total_finished, operation="query"/"control"
+# Recorded on the PUBLISHER (liaison) once its publish path is instrumented for
+# query/control. Same mapping as the write edges above — pod_name is the sender,
+# remote_node the receiver, so the edge is pod_name -> remote_node directly, and
+# remote_tier carries the destination tier (hot/warm/cold). No sub fallback needed.
+# query — liaison-1 → data-hot-0/1 and data-warm-0/1 (recorded on the PUBLISHER now;
+# the liaison's publish path is instrumented for query/control). group="" because the
+# business group travels in the request body, not the bus message, for query fan-out.
+{pod_name="demo-banyandb-liaison-1", container_name="liaison", node_role="ROLE_LIAISON", node_type="",
+ operation="query", group="",
+ remote_node="demo-banyandb-data-hot-0.demo-banyandb-data-hot-headless.skywalking-showcase:17912", remote_role="data", remote_tier="hot"}   27.04
+{pod_name="demo-banyandb-liaison-1", container_name="liaison", node_role="ROLE_LIAISON", node_type="",
+ operation="query", group="",
+ remote_node="demo-banyandb-data-hot-1.demo-banyandb-data-hot-headless.skywalking-showcase:17912", remote_role="data", remote_tier="hot"}   27.04
+{pod_name="demo-banyandb-liaison-1", container_name="liaison", node_role="ROLE_LIAISON", node_type="",
+ operation="query", group="",
+ remote_node="demo-banyandb-data-warm-0.demo-banyandb-data-warm-headless.skywalking-showcase:17912", remote_role="data", remote_tier="warm"}   26.37
+{pod_name="demo-banyandb-liaison-1", container_name="liaison", node_role="ROLE_LIAISON", node_type="",
+ operation="query", group="",
+ remote_node="demo-banyandb-data-warm-1.demo-banyandb-data-warm-headless.skywalking-showcase:17912", remote_role="data", remote_tier="warm"}   26.37
+# control — liaison-1 → every data node (hot/warm/cold), also on the PUBLISHER
+{pod_name="demo-banyandb-liaison-1", container_name="liaison", node_role="ROLE_LIAISON", node_type="",
+ operation="control", group="",
+ remote_node="demo-banyandb-data-hot-0.demo-banyandb-data-hot-headless.skywalking-showcase:17912", remote_role="data", remote_tier="hot"}    1.21
+{pod_name="demo-banyandb-liaison-1", container_name="liaison", node_role="ROLE_LIAISON", node_type="",
+ operation="control", group="",
+ remote_node="demo-banyandb-data-warm-0.demo-banyandb-data-warm-headless.skywalking-showcase:17912", remote_role="data", remote_tier="warm"}    1.21
+{pod_name="demo-banyandb-liaison-1", container_name="liaison", node_role="ROLE_LIAISON", node_type="",
+ operation="control", group="",
+ remote_node="demo-banyandb-data-cold-0.demo-banyandb-data-cold-headless.skywalking-showcase:17912", remote_role="data", remote_tier="cold"}    1.21
+# p99 latency (s) per (pod_name, remote_node) for the query/control edges above
+{pod_name="demo-banyandb-liaison-1", remote_node="demo-banyandb-data-hot-0.demo-banyandb-data-hot-headless.skywalking-showcase:17912"}     p99=0.009  bytes/s=—
+{pod_name="demo-banyandb-liaison-1", remote_node="demo-banyandb-data-warm-0.demo-banyandb-data-warm-headless.skywalking-showcase:17912"}    p99=0.009  bytes/s=—
+{pod_name="demo-banyandb-liaison-1", remote_node="demo-banyandb-data-warm-1.demo-banyandb-data-warm-headless.skywalking-showcase:17912"}    p99=0.025  bytes/s=—
+{pod_name="demo-banyandb-liaison-1", remote_node="demo-banyandb-data-cold-0.demo-banyandb-data-cold-headless.skywalking-showcase:17912"}    p99=0.028  bytes/s=—

@@ -24,6 +24,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	commonv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/common/v1"
+	databasev1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/database/v1"
 )
 
 // TestParseGroup_RejectsMissingIntervals verifies that parseGroup fails fast
@@ -90,4 +91,32 @@ func TestParseGroup_RejectsMissingIntervals(t *testing.T) {
 			assert.Contains(t, err.Error(), c.errFrag)
 		})
 	}
+}
+
+// TestDeriveSelfIdentity verifies the sender-identity resolution order: the
+// co-located data node's address match (including loopback host aliases, since
+// test clusters dial localhost:PORT while nodes register 127.0.0.1:PORT), the
+// label fallbacks, and the guard that keeps an empty label set from
+// wildcard-matching an arbitrary registry node.
+func TestDeriveSelfIdentity(t *testing.T) {
+	nodes := []*databasev1.Node{
+		{Metadata: &commonv1.Metadata{Name: "warm-node"}, GrpcAddress: "127.0.0.1:2", Labels: map[string]string{"type": "warm"}},
+		{Metadata: &commonv1.Metadata{Name: "hot-node"}, GrpcAddress: "127.0.0.1:1", Labels: map[string]string{"type": "hot"}},
+	}
+
+	node, tier := deriveSelfIdentity("127.0.0.1:1", nil, nodes)
+	assert.Equal(t, "hot-node", node, "exact address match")
+	assert.Equal(t, "hot", tier)
+
+	node, tier = deriveSelfIdentity("localhost:1", nil, nodes)
+	assert.Equal(t, "hot-node", node, "loopback alias must match the registered 127.0.0.1 form")
+	assert.Equal(t, "hot", tier)
+
+	node, tier = deriveSelfIdentity("localhost:9", nil, nodes)
+	assert.Empty(t, node, "unmatched address with no labels must not wildcard-match an arbitrary node")
+	assert.Empty(t, tier)
+
+	node, tier = deriveSelfIdentity("", map[string]string{"type": "hot"}, nodes)
+	assert.Equal(t, "hot-node", node, "label fallback")
+	assert.Equal(t, "hot", tier)
 }
