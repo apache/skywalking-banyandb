@@ -1,0 +1,138 @@
+# Licensed to Apache Software Foundation (ASF) under one or more contributor
+# license agreements. See the NOTICE file distributed with
+# this work for additional information regarding copyright
+# ownership. Apache Software Foundation (ASF) licenses this file to you under
+# the Apache License, Version 2.0 (the "License"); you may
+# not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing,
+# software distributed under the License is distributed on an
+# "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
+# KIND, either express or implied.  See the License for the
+# specific language governing permissions and limitations
+# under the License.
+
+# ============================================================================
+# Input C — lifecycle tier-migration metrics (banyandb_lifecycle_migration_*),
+# the PUBLISHER-side mirror of banyandb_queue_pub_* emitted by each lifecycle
+# sidecar. Captured over a 5m rate window WHILE THE DAILY MIGRATION RUN WAS IN
+# FLIGHT: the lifecycle runs on a schedule (typically @daily), so outside that
+# window every rate below is 0 and the migration edges render structural-only
+# (the total_* counters persist, but rate() over a quiet window is zero).
+#
+# Label model (identical to queue_pub, see Input B):
+#   - pod_name / container_name are stamped by the FODC agent. The sidecar
+#     SHARES its pod with the co-located data node, so pod_name is the data
+#     pod's name and container_name="lifecycle" is what distinguishes the
+#     series; the join resolves pod_name to the pod's :17914 lifecycle
+#     identity, not its :17912 data node. node_role is empty (the sidecar is
+#     role-less); node_type is the SOURCE tier.
+#   - remote_node / remote_role / remote_tier name the DESTINATION data node,
+#     so a series is the directed migration edge pod_name -> remote_node.
+#   - operation="file-sync" is whole-part shipping; operation="batch-write"
+#     is row replay (rows whose segments straddle the destination's segment
+#     boundaries are re-written row-by-row in batches).
+#
+# This round: both hot-tier instances migrated parts and replayed rows to the
+# two warm nodes, and warm-0's instance shipped one group's parts to cold-0.
+# warm-1's instance also ran but found nothing due for migration, so it emits
+# NO series in this window — its hot->cold path stays a structural `calls`
+# edge, which is exactly how the renderer degrades.
+# ============================================================================
+
+# banyandb_lifecycle_migration_total_finished — rate over the 5m run window
+# --- data-hot-0's lifecycle → data-warm-0 ---
+{pod_name="demo-banyandb-data-hot-0", container_name="lifecycle", node_role="", node_type="hot",
+ operation="file-sync", group="sw_metricsMinute",
+ remote_node="demo-banyandb-data-warm-0.demo-banyandb-data-warm-headless.skywalking-showcase:17912", remote_role="data", remote_tier="warm"}    0.25
+{pod_name="demo-banyandb-data-hot-0", container_name="lifecycle", node_role="", node_type="hot",
+ operation="file-sync", group="sw_recordsLog",
+ remote_node="demo-banyandb-data-warm-0.demo-banyandb-data-warm-headless.skywalking-showcase:17912", remote_role="data", remote_tier="warm"}    0.15
+{pod_name="demo-banyandb-data-hot-0", container_name="lifecycle", node_role="", node_type="hot",
+ operation="batch-write", group="sw_metricsMinute",
+ remote_node="demo-banyandb-data-warm-0.demo-banyandb-data-warm-headless.skywalking-showcase:17912", remote_role="data", remote_tier="warm"}    3.80
+{pod_name="demo-banyandb-data-hot-0", container_name="lifecycle", node_role="", node_type="hot",
+ operation="batch-write", group="sw_metricsHour",
+ remote_node="demo-banyandb-data-warm-0.demo-banyandb-data-warm-headless.skywalking-showcase:17912", remote_role="data", remote_tier="warm"}    2.40
+# --- data-hot-0's lifecycle → data-warm-1 ---
+{pod_name="demo-banyandb-data-hot-0", container_name="lifecycle", node_role="", node_type="hot",
+ operation="file-sync", group="sw_metricsMinute",
+ remote_node="demo-banyandb-data-warm-1.demo-banyandb-data-warm-headless.skywalking-showcase:17912", remote_role="data", remote_tier="warm"}    0.18
+{pod_name="demo-banyandb-data-hot-0", container_name="lifecycle", node_role="", node_type="hot",
+ operation="file-sync", group="sw_recordsLog",
+ remote_node="demo-banyandb-data-warm-1.demo-banyandb-data-warm-headless.skywalking-showcase:17912", remote_role="data", remote_tier="warm"}    0.12
+{pod_name="demo-banyandb-data-hot-0", container_name="lifecycle", node_role="", node_type="hot",
+ operation="batch-write", group="sw_metricsMinute",
+ remote_node="demo-banyandb-data-warm-1.demo-banyandb-data-warm-headless.skywalking-showcase:17912", remote_role="data", remote_tier="warm"}    3.50
+{pod_name="demo-banyandb-data-hot-0", container_name="lifecycle", node_role="", node_type="hot",
+ operation="batch-write", group="sw_metricsHour",
+ remote_node="demo-banyandb-data-warm-1.demo-banyandb-data-warm-headless.skywalking-showcase:17912", remote_role="data", remote_tier="warm"}    2.30
+# --- data-hot-1's lifecycle → data-warm-0 ---
+{pod_name="demo-banyandb-data-hot-1", container_name="lifecycle", node_role="", node_type="hot",
+ operation="file-sync", group="sw_trace",
+ remote_node="demo-banyandb-data-warm-0.demo-banyandb-data-warm-headless.skywalking-showcase:17912", remote_role="data", remote_tier="warm"}    0.20
+{pod_name="demo-banyandb-data-hot-1", container_name="lifecycle", node_role="", node_type="hot",
+ operation="file-sync", group="sw_records",
+ remote_node="demo-banyandb-data-warm-0.demo-banyandb-data-warm-headless.skywalking-showcase:17912", remote_role="data", remote_tier="warm"}    0.10
+{pod_name="demo-banyandb-data-hot-1", container_name="lifecycle", node_role="", node_type="hot",
+ operation="batch-write", group="sw_metricsMinute",
+ remote_node="demo-banyandb-data-warm-0.demo-banyandb-data-warm-headless.skywalking-showcase:17912", remote_role="data", remote_tier="warm"}    2.90
+{pod_name="demo-banyandb-data-hot-1", container_name="lifecycle", node_role="", node_type="hot",
+ operation="batch-write", group="sw_metricsDay",
+ remote_node="demo-banyandb-data-warm-0.demo-banyandb-data-warm-headless.skywalking-showcase:17912", remote_role="data", remote_tier="warm"}    2.00
+# --- data-hot-1's lifecycle → data-warm-1 ---
+{pod_name="demo-banyandb-data-hot-1", container_name="lifecycle", node_role="", node_type="hot",
+ operation="file-sync", group="sw_trace",
+ remote_node="demo-banyandb-data-warm-1.demo-banyandb-data-warm-headless.skywalking-showcase:17912", remote_role="data", remote_tier="warm"}    0.22
+{pod_name="demo-banyandb-data-hot-1", container_name="lifecycle", node_role="", node_type="hot",
+ operation="file-sync", group="sw_records",
+ remote_node="demo-banyandb-data-warm-1.demo-banyandb-data-warm-headless.skywalking-showcase:17912", remote_role="data", remote_tier="warm"}    0.18
+{pod_name="demo-banyandb-data-hot-1", container_name="lifecycle", node_role="", node_type="hot",
+ operation="batch-write", group="sw_metricsMinute",
+ remote_node="demo-banyandb-data-warm-1.demo-banyandb-data-warm-headless.skywalking-showcase:17912", remote_role="data", remote_tier="warm"}    3.20
+{pod_name="demo-banyandb-data-hot-1", container_name="lifecycle", node_role="", node_type="hot",
+ operation="batch-write", group="sw_metricsDay",
+ remote_node="demo-banyandb-data-warm-1.demo-banyandb-data-warm-headless.skywalking-showcase:17912", remote_role="data", remote_tier="warm"}    2.20
+# --- data-warm-0's lifecycle → data-cold-0 (parts only, no row replay) ---
+{pod_name="demo-banyandb-data-warm-0", container_name="lifecycle", node_role="", node_type="warm",
+ operation="file-sync", group="sw_recordsLog",
+ remote_node="demo-banyandb-data-cold-0.demo-banyandb-data-cold-headless.skywalking-showcase:17912", remote_role="data", remote_tier="cold"}    0.20
+# --- data-warm-1's lifecycle: ran, nothing due — no series this window ---
+
+# p99 latency (s) and sent_bytes (B/s) per (pod_name, remote_node) — from
+# banyandb_lifecycle_migration_total_latency_bucket / _sent_bytes
+{pod_name="demo-banyandb-data-hot-0", remote_node="demo-banyandb-data-warm-0.demo-banyandb-data-warm-headless.skywalking-showcase:17912"}    p99=0.310  bytes/s=1638400
+{pod_name="demo-banyandb-data-hot-0", remote_node="demo-banyandb-data-warm-1.demo-banyandb-data-warm-headless.skywalking-showcase:17912"}    p99=0.280  bytes/s=1228800
+{pod_name="demo-banyandb-data-hot-1", remote_node="demo-banyandb-data-warm-0.demo-banyandb-data-warm-headless.skywalking-showcase:17912"}    p99=0.295  bytes/s=1126400
+{pod_name="demo-banyandb-data-hot-1", remote_node="demo-banyandb-data-warm-1.demo-banyandb-data-warm-headless.skywalking-showcase:17912"}    p99=0.320  bytes/s=1433600
+{pod_name="demo-banyandb-data-warm-0", remote_node="demo-banyandb-data-cold-0.demo-banyandb-data-cold-headless.skywalking-showcase:17912"}   p99=0.410  bytes/s=921600
+
+# ============================================================================
+# Run health — banyandb_lifecycle_* gauges/counters on the same scrape (raw
+# values, not rates). One set per lifecycle sidecar; the other three pods
+# carry the same shape. last_run_timestamp_seconds is the run's START epoch
+# (Prometheus renders large floats in scientific notation); last_run_success
+# is 1/0 for the most recent cycle; cycles_total counts scheduler cycles.
+# ============================================================================
+banyandb_lifecycle_last_run_timestamp_seconds{pod_name="demo-banyandb-data-hot-0", container_name="lifecycle"} 1.7810496e+09
+banyandb_lifecycle_last_run_success{pod_name="demo-banyandb-data-hot-0", container_name="lifecycle"} 1
+banyandb_lifecycle_cycles_total{pod_name="demo-banyandb-data-hot-0", container_name="lifecycle"} 152
+
+# ============================================================================
+# Receiver-side cross-check — banyandb_queue_sub_total_finished on the
+# DESTINATION data node, rate over the same window. The migration publisher
+# stamps its identity on the wire as its CO-LOCATED DATA NODE's name + tier
+# with role "lifecycle", so the receiver's series name a :17912 data node as
+# remote_node. The renderer EXCLUDES remote_role="lifecycle" series from the
+# request-pipeline fallback (they are this migration traffic, not requests);
+# they exist purely as a receiver-side cross-check of the publisher family.
+# ============================================================================
+{pod_name="demo-banyandb-data-warm-0", container_name="data", node_role="ROLE_DATA", node_type="warm",
+ operation="file-sync", group="sw_metricsMinute",
+ remote_node="demo-banyandb-data-hot-0.demo-banyandb-data-hot-headless.skywalking-showcase:17912", remote_role="lifecycle", remote_tier="hot"}    0.25
+{pod_name="demo-banyandb-data-warm-0", container_name="data", node_role="ROLE_DATA", node_type="warm",
+ operation="batch-write", group="sw_metricsMinute",
+ remote_node="demo-banyandb-data-hot-0.demo-banyandb-data-hot-headless.skywalking-showcase:17912", remote_role="lifecycle", remote_tier="hot"}    3.80

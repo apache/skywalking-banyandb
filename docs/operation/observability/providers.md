@@ -6,7 +6,7 @@ BanyanDB has built-in support for metrics collection. Currently, there are two s
 
 Prometheus is auto enabled at run time, if no flag is passed or if `prometheus` is set in `observability-modes` flag.
 
-When the Prometheus metrics provider is enabled, each BanyanDB process exposes its own metrics on port `2121`.
+When the Prometheus metrics provider is enabled, each BanyanDB process exposes its own metrics on port `2121`. (The lifecycle sidecar is the exception: it reuses its HTTP API port — `--lifecycle-http-port`, default `17915` — and serves the same Prometheus payload at `/metrics` there instead of opening `2121`.)
 
 In a cluster, the recommended setup is to let the **FODC proxy** aggregate every node's metrics and scrape the proxy as the single target. Configure the following Prometheus job (replace `BANYANDB_NAMESPACE` with the namespace where BanyanDB is deployed, and adjust the keep-regex to match your FODC proxy pod label):
 
@@ -35,7 +35,7 @@ The proxy adds the `pod_name` and `container_name` labels used throughout this d
 
 Two complementary dashboards monitor BanyanDB metrics, both built for the deployment where Prometheus scrapes the [FODC proxy](../fodc/overview.md) `/metrics` endpoint — the single scrape target — rather than each BanyanDB pod (per-node identity is carried in the `pod_name` and `container_name` labels, so `job`/`pod`/`up` no longer distinguish nodes). They are split by aggregation dimension:
 
-- [BanyanDB Cluster — Nodes (FODC Proxy)](../grafana-fodc-nodes.json) — node/pod-level health and resources, aggregated by `pod_name`: fleet overview (node counts, CPU/memory/disk capacity, uptime), a per-node health table, resources (CPU, RSS, system memory %, disk %, network), disk-by-path, and Go runtime.
+- [BanyanDB Cluster — Nodes (FODC Proxy)](../grafana-fodc-nodes.json) — node/pod-level health and resources, aggregated by `pod_name`: fleet overview (node counts, CPU/memory/disk capacity, uptime), a per-node health table, a pod-to-pod flows table that joins the publisher's and subscriber's views of each directed flow into one row, resources (CPU, RSS, system memory %, disk %, network), disk-by-path, and Go runtime.
 - [BanyanDB Cluster — Workload (FODC Proxy)](../grafana-fodc-workload.json) — business/data-level throughput and latency, aggregated by `group`: cluster workload summary (write/query/error rate), liaison ingestion/query/publish plus write-queue (wqueue) backlog, data storage, inverted-index, and the internal queue (per-operation throughput & p99 by group).
 
 ## Native
