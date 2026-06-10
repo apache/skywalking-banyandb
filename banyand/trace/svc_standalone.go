@@ -97,6 +97,7 @@ func (s *standalone) FlagSet() *run.FlagSet {
 	s.option.mergePolicy = newDefaultMergePolicy()
 	fs.IntVar(&s.option.mergePolicy.maxParts, "trace-max-merge-parts", s.option.mergePolicy.maxParts, "the maximum number of parts to merge at once")
 	fs.VarP(&s.option.mergePolicy.maxFanOutSize, "trace-max-fan-out-size", "", "the upper bound of a single file size after merge of trace")
+	bindVectorizedFlags(fs, &s.option.vectorized)
 	// Additional flags can be added here
 	return fs
 }
@@ -122,8 +123,7 @@ func (s *standalone) Validate() error {
 	if s.retentionConfig.Cooldown <= 0 {
 		return errors.New("trace-retention-cooldown must be greater than 0")
 	}
-
-	return nil
+	return s.option.vectorized.Validate()
 }
 
 func (s *standalone) Name() string {

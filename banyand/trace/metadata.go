@@ -567,7 +567,7 @@ func newSupplier(path string, svc *standalone, nodeLabels map[string]string) *su
 
 func (s *supplier) OpenResource(spec resourceSchema.Resource) (resourceSchema.IndexListener, error) {
 	traceSchema := spec.Schema().(*databasev1.Trace)
-	return openTrace(traceSchema, s.l, s.pm, s.schemaRepo), nil
+	return openTrace(traceSchema, s.l, s.pm, s.schemaRepo, s.option.vectorized), nil
 }
 
 func (s *supplier) ResourceSchema(md *commonv1.Metadata) (resourceSchema.ResourceSchema, error) {
@@ -688,7 +688,7 @@ func newQueueSupplier(path string, svc *liaison, traceDataNodeRegistry grpc.Node
 
 func (qs *queueSupplier) OpenResource(spec resourceSchema.Resource) (resourceSchema.IndexListener, error) {
 	traceSchema := spec.Schema().(*databasev1.Trace)
-	return openTrace(traceSchema, qs.l, qs.pm, qs.schemaRepo), nil
+	return openTrace(traceSchema, qs.l, qs.pm, qs.schemaRepo, qs.option.vectorized), nil
 }
 
 func (qs *queueSupplier) ResourceSchema(md *commonv1.Metadata) (resourceSchema.ResourceSchema, error) {

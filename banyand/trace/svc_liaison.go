@@ -141,6 +141,7 @@ func (l *liaison) FlagSet() *run.FlagSet {
 		"percentage of BanyanDB's allowed disk usage allocated to failed parts storage. "+
 			"Calculated as: totalDisk * trace-max-disk-usage-percent * failed-parts-max-size-percent / 10000. "+
 			"Set to 0 to disable copying failed parts. Valid range: 0-100")
+	bindVectorizedFlags(fs, &l.option.vectorized)
 	return fs
 }
 
@@ -162,8 +163,7 @@ func (l *liaison) Validate() error {
 	if l.failedPartsMaxSizePercent < 0 || l.failedPartsMaxSizePercent > 100 {
 		return fmt.Errorf("invalid failed-parts-max-size-percent: %d%%. Must be between 0 and 100", l.failedPartsMaxSizePercent)
 	}
-
-	return nil
+	return l.option.vectorized.Validate()
 }
 
 func (l *liaison) Name() string {

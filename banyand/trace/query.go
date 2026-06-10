@@ -134,19 +134,38 @@ func (t *trace) Query(ctx context.Context, tqo model.TraceQueryOptions) (model.T
 		result.keys = make(map[string]int64)
 	}
 
-	var traceBatchCh <-chan traceBatch
 	switch {
+	case t.vectorized.Enabled:
+		// Assign errors to err so the deferred result.Release() fires on failure,
+		// releasing segments, the timeout context, and the tracing span.
+		var vectorizedBatch traceBatch
+		if vectorizedBatch, err = t.buildVectorizedPhase1TraceBatch(pipelineCtx, qo, sidxInstances, sidxQueryRequest, useSIDXStreaming, tqo.MaxTraceSize); err != nil {
+			return nil, err
+		}
+		var vectorizedScanBatch *scanBatch
+		if vectorizedScanBatch, err = t.buildVectorizedScanBatch(pipelineCtx, tables, qo, vectorizedBatch); err != nil {
+			return nil, err
+		}
+		var vectorizedResult *vectorizedTraceQueryResult
+		vectorizedResult, err = newVectorizedTraceQueryResult(
+			pipelineCtx, vectorizedScanBatch, qo, segments, cancel, result.finishResultSpan, result.recordResult)
+		if err != nil {
+			return nil, err
+		}
+		traceQueryResultTracker.Acquire(vectorizedResult)
+		return vectorizedResult, nil
 	case len(qo.traceIDs) > 0:
-		traceBatchCh = staticTraceBatchSource(pipelineCtx, qo.traceIDs, tqo.MaxTraceSize, result.keys)
+		traceBatchCh := staticTraceBatchSource(pipelineCtx, qo.traceIDs, tqo.MaxTraceSize, result.keys)
+		result.cursorBatchCh = t.startBlockScanStage(pipelineCtx, tables, qo, traceBatchCh)
 	case useSIDXStreaming:
 		var streamDone <-chan struct{}
-		traceBatchCh, streamDone = t.streamSIDXTraceBatches(pipelineCtx, sidxInstances, sidxQueryRequest, tqo.MaxTraceSize)
+		traceBatchCh, streamDone := t.streamSIDXTraceBatches(pipelineCtx, sidxInstances, sidxQueryRequest, tqo.MaxTraceSize)
 		result.streamDone = streamDone
+		result.cursorBatchCh = t.startBlockScanStage(pipelineCtx, tables, qo, traceBatchCh)
 	default:
-		return nilResult, errors.New("invalid query options: either traceIDs or order must be specified")
+		err = errors.New("invalid query options: either traceIDs or order must be specified")
+		return nilResult, err
 	}
-
-	result.cursorBatchCh = t.startBlockScanStage(pipelineCtx, tables, qo, traceBatchCh)
 
 	traceQueryResultTracker.Acquire(&result)
 	return &result, nil
@@ -379,6 +398,9 @@ func (qr *queryResult) ensureCurrentBatch() bool {
 	qr.releaseCurrentBatch()
 
 	for {
+		if qr.cursorBatchCh == nil {
+			return false
+		}
 		select {
 		case batch, ok := <-qr.cursorBatchCh:
 			if !ok {
@@ -387,65 +409,71 @@ func (qr *queryResult) ensureCurrentBatch() bool {
 			if batch == nil {
 				continue
 			}
-
-			if batch.err != nil {
-				qr.err = batch.err
-				return true
-			}
-
-			qr.currentBatch = batch
-			qr.currentIndex = 0
-
-			// Use the ordered list of trace IDs to maintain the sorted order from SIDX stream
-			qr.currentTraceIDs = batch.traceIDsOrder
-
-			qr.currentCursorGroups = make(map[string][]*blockCursor, len(qr.currentTraceIDs))
-
-			// Stream cursors from channel and group by traceID
-			if batch.cursorCh != nil {
-				for result := range batch.cursorCh {
-					if result.err != nil {
-						qr.err = result.err
-						// Release any cursors we've already collected
-						for _, cursors := range qr.currentCursorGroups {
-							for _, bc := range cursors {
-								releaseBlockCursor(bc)
-							}
-						}
-						qr.currentCursorGroups = nil
-						// Release snapshots from this batch on error
-						for _, s := range batch.snapshots {
-							s.decRef()
-						}
-						qr.currentBatch = nil
-						return true
-					}
-					if result.cursor != nil {
-						if qr.recordCursor != nil {
-							qr.recordCursor(result.cursor)
-						}
-						traceID := result.cursor.bm.traceID
-						qr.currentCursorGroups[traceID] = append(qr.currentCursorGroups[traceID], result.cursor)
-					}
-				}
-			}
-
-			if len(batch.keys) > 0 {
-				if qr.keys == nil {
-					qr.keys = make(map[string]int64, len(batch.keys))
-				}
-				for k, v := range batch.keys {
-					qr.keys[k] = v
-				}
-			}
-
-			return true
+			return qr.acceptScanBatch(batch)
 
 		case <-qr.ctx.Done():
 			qr.err = errors.WithMessagef(qr.ctx.Err(), "interrupt: hit %d", qr.hit)
 			return true
 		}
 	}
+}
+
+func (qr *queryResult) acceptScanBatch(batch *scanBatch) bool {
+	if batch.err != nil {
+		qr.err = batch.err
+		return true
+	}
+
+	qr.currentBatch = batch
+	qr.currentIndex = 0
+	qr.currentTraceIDs = batch.traceIDsOrder
+	qr.currentCursorGroups = make(map[string][]*blockCursor, len(qr.currentTraceIDs))
+
+	for _, cursor := range batch.cursors {
+		if qr.recordCursor != nil {
+			qr.recordCursor(cursor)
+		}
+		traceID := cursor.bm.traceID
+		qr.currentCursorGroups[traceID] = append(qr.currentCursorGroups[traceID], cursor)
+	}
+	batch.cursors = nil
+
+	if batch.cursorCh != nil {
+		for result := range batch.cursorCh {
+			if result.err != nil {
+				qr.err = result.err
+				for _, cursors := range qr.currentCursorGroups {
+					for _, bc := range cursors {
+						releaseBlockCursor(bc)
+					}
+				}
+				qr.currentCursorGroups = nil
+				for _, s := range batch.snapshots {
+					s.decRef()
+				}
+				qr.currentBatch = nil
+				return true
+			}
+			if result.cursor != nil {
+				if qr.recordCursor != nil {
+					qr.recordCursor(result.cursor)
+				}
+				traceID := result.cursor.bm.traceID
+				qr.currentCursorGroups[traceID] = append(qr.currentCursorGroups[traceID], result.cursor)
+			}
+		}
+	}
+
+	if len(batch.keys) > 0 {
+		if qr.keys == nil {
+			qr.keys = make(map[string]int64, len(batch.keys))
+		}
+		for k, v := range batch.keys {
+			qr.keys[k] = v
+		}
+	}
+
+	return true
 }
 
 func (qr *queryResult) loadTraceCursors(cursors []*blockCursor) ([]*blockCursor, error) {
@@ -541,20 +569,7 @@ func (qr *queryResult) Release() {
 	// Drain all batches and their cursor channels to ensure scanTraceIDsInline completes
 	if qr.cursorBatchCh != nil {
 		for batch := range qr.cursorBatchCh {
-			if batch != nil {
-				if batch.cursorCh != nil {
-					// Drain the cursor channel to ensure scanTraceIDsInline goroutine finishes
-					for result := range batch.cursorCh {
-						if result.cursor != nil {
-							releaseBlockCursor(result.cursor)
-						}
-					}
-				}
-				// Release snapshots from drained batches
-				for _, s := range batch.snapshots {
-					s.decRef()
-				}
-			}
+			qr.releaseScanBatch(batch)
 		}
 		qr.cursorBatchCh = nil
 	}
@@ -568,6 +583,29 @@ func (qr *queryResult) Release() {
 	qr.segments = qr.segments[:0]
 
 	qr.finishTracing(qr.err)
+}
+
+func (qr *queryResult) releaseScanBatch(batch *scanBatch) {
+	if batch == nil {
+		return
+	}
+	for _, cursor := range batch.cursors {
+		if cursor != nil {
+			releaseBlockCursor(cursor)
+		}
+	}
+	batch.cursors = nil
+	if batch.cursorCh != nil {
+		for result := range batch.cursorCh {
+			if result.cursor != nil {
+				releaseBlockCursor(result.cursor)
+			}
+		}
+	}
+	for _, s := range batch.snapshots {
+		s.decRef()
+	}
+	batch.snapshots = nil
 }
 
 func (qr *queryResult) finishTracing(err error) {
