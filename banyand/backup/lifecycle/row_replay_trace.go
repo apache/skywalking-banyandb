@@ -20,8 +20,6 @@ package lifecycle
 import (
 	"context"
 	"fmt"
-	"path/filepath"
-	"strconv"
 	"time"
 
 	"github.com/apache/skywalking-banyandb/api/common"
@@ -33,7 +31,6 @@ import (
 	"github.com/apache/skywalking-banyandb/banyand/metadata"
 	"github.com/apache/skywalking-banyandb/banyand/metadata/schema"
 	"github.com/apache/skywalking-banyandb/banyand/queue"
-	"github.com/apache/skywalking-banyandb/pkg/bus"
 	"github.com/apache/skywalking-banyandb/pkg/fs"
 	"github.com/apache/skywalking-banyandb/pkg/logger"
 	"github.com/apache/skywalking-banyandb/pkg/node"
@@ -41,7 +38,6 @@ import (
 )
 
 const (
-	traceReplayBatchSize    = 2000
 	traceReplayBatchTimeout = 30 * time.Second
 	traceReplayVersion      = 1 // trace Row has no version; receiver requires version > 0.
 )
@@ -83,7 +79,7 @@ func newTraceRowReplayer(
 		group:          group,
 		targetShardNum: targetShardNum,
 		selector:       selector,
-		sender:         newBatchSender(client, data.TopicTraceWrite, traceReplayBatchSize, traceReplayBatchTimeout),
+		sender:         newBatchSender(client, data.TopicTraceWrite, rowReplayMaxBatchRows, int(rowReplayMaxBatchBytes), traceReplayBatchTimeout),
 		fs:             fileSystem,
 		logger:         l,
 		schema:         t,
@@ -98,11 +94,10 @@ func (r *traceRowReplayer) Close() (map[string]*common.Error, error) {
 }
 
 func (r *traceRowReplayer) replayPart(ctx context.Context, partPath string) (int, error) {
-	partID, parseErr := strconv.ParseUint(filepath.Base(partPath), 16, 64)
+	partID, shardPath, _, parseErr := parseReplayPartPath(partPath)
 	if parseErr != nil {
-		return 0, fmt.Errorf("invalid part path %s: %w", partPath, parseErr)
+		return 0, parseErr
 	}
-	shardPath := filepath.Dir(partPath)
 
 	reader, err := dumptrace.OpenPart(partID, shardPath, r.fs)
 	if err != nil {
@@ -140,10 +135,5 @@ func (r *traceRowReplayer) buildWriteRequest(row dumptrace.Row) (*tracev1.WriteR
 
 func (r *traceRowReplayer) publishRow(ctx context.Context, row dumptrace.Row) error {
 	_, iwr := r.buildWriteRequest(row)
-	nodeID, err := r.selector.Pick(r.group, r.traceName, iwr.ShardId, 0)
-	if err != nil {
-		return fmt.Errorf("pick target node for trace %s: %w", r.traceName, err)
-	}
-	msg := bus.NewBatchMessageWithNode(bus.MessageID(time.Now().UnixNano()), nodeID, iwr)
-	return r.sender.enqueue(ctx, msg)
+	return r.sender.routeAndEnqueue(ctx, r.selector, r.group, r.traceName, iwr.ShardId, iwr)
 }

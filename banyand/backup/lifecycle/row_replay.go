@@ -22,7 +22,11 @@
 package lifecycle
 
 import (
+	"errors"
 	"fmt"
+	"path/filepath"
+	"strconv"
+	"sync"
 
 	commonv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/common/v1"
 	databasev1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/database/v1"
@@ -34,21 +38,83 @@ import (
 	pbv1 "github.com/apache/skywalking-banyandb/pkg/pb/v1"
 )
 
+// errSkipSeries marks a series whose entity cannot be resolved during replay —
+// e.g. empty EntityValues recovered from a series-index (sidx) gap, where a part
+// block references a seriesID the segment's sidx does not carry. Rather than
+// aborting the whole part (and the migration), the replay loop skips every row
+// of such a series, tallies them, and continues, so a localized source-data gap
+// does not block migrating the rest. The skipped count surfaces how much was
+// dropped.
+var errSkipSeries = errors.New("skip series: unresolvable entity")
+
 // decodeSeriesEntityValues recovers (subject, entityTagValues) from the raw
 // EntityValues byte sequence stored in part-level smeta.bin or recovered via
-// PartSeriesMap.
+// PartSeriesMap. A resolution failure is wrapped in errSkipSeries so callers can
+// choose to skip the series instead of aborting.
 func decodeSeriesEntityValues(rawBytes []byte) (string, pbv1.EntityValues, error) {
 	if len(rawBytes) == 0 {
-		return "", nil, fmt.Errorf("empty entity values bytes")
+		return "", nil, fmt.Errorf("%w: empty entity values bytes", errSkipSeries)
 	}
 	var s pbv1.Series
 	if err := s.Unmarshal(rawBytes); err != nil {
-		return "", nil, fmt.Errorf("unmarshal series: %w", err)
+		return "", nil, fmt.Errorf("%w: unmarshal series: %w", errSkipSeries, err)
 	}
 	if s.Subject == "" {
-		return "", nil, fmt.Errorf("decoded subject is empty")
+		return "", nil, fmt.Errorf("%w: decoded subject is empty", errSkipSeries)
 	}
 	return s.Subject, s.EntityValues, nil
+}
+
+// parseReplayPartPath splits a source part directory (.../seg-.../shard-.../<hexID>)
+// into its hex part id and the shard and segment directories above it. Callers
+// that do not need the segment (trace) discard it.
+func parseReplayPartPath(partPath string) (partID uint64, shardPath, segmentPath string, err error) {
+	partID, err = strconv.ParseUint(filepath.Base(partPath), 16, 64)
+	if err != nil {
+		return 0, "", "", fmt.Errorf("invalid part path %s: %w", partPath, err)
+	}
+	shardPath = filepath.Dir(partPath)
+	segmentPath = filepath.Dir(shardPath)
+	return partID, shardPath, segmentPath, nil
+}
+
+// reloadIndexResolver returns the single resident IndexResolver for segmentPath,
+// reusing *cur when it already points at that segment, otherwise closing the prior
+// one and opening a fresh resolver (ruleToTag drives value decoding; nil for
+// stream). Keeping one resolver per segment lets all its shards/parts share one
+// bluge reader instead of reopening the same exclusive-locked dir. mu guards the
+// resident *cur/*curPath pair for the call.
+func reloadIndexResolver(mu *sync.Mutex, cur **dump.IndexResolver, curPath *string,
+	segmentPath string, ruleToTag map[uint32]dump.IndexedTagSpec,
+) (*dump.IndexResolver, error) {
+	mu.Lock()
+	defer mu.Unlock()
+	if *cur != nil && *curPath == segmentPath {
+		return *cur, nil
+	}
+	closeIndexResolverLocked(cur, curPath)
+	ir, err := dump.NewIndexResolver(segmentPath, dump.DefaultIndexCacheSize, ruleToTag)
+	if err != nil {
+		return nil, fmt.Errorf("open index resolver for %s: %w", segmentPath, err)
+	}
+	*cur = ir
+	*curPath = segmentPath
+	return ir, nil
+}
+
+// closeIndexResolver closes and clears the resident resolver under mu.
+func closeIndexResolver(mu *sync.Mutex, cur **dump.IndexResolver, curPath *string) {
+	mu.Lock()
+	defer mu.Unlock()
+	closeIndexResolverLocked(cur, curPath)
+}
+
+func closeIndexResolverLocked(cur **dump.IndexResolver, curPath *string) {
+	if *cur != nil {
+		_ = (*cur).Close()
+		*cur = nil
+		*curPath = ""
+	}
 }
 
 // deriveMergedRuleToTag builds an IndexRuleID -> IndexedTagSpec map covering the
@@ -117,32 +183,11 @@ func deriveMergedRuleToTag(measures []*databasev1.Measure, rules []*databasev1.I
 			out[rule.GetMetadata().GetId()] = dump.IndexedTagSpec{
 				Family: info.family,
 				Name:   ruleTags[0],
-				Type:   tagTypeToValueType(info.spec.Type),
+				Type:   pbv1.TagValueSpecToValueType(info.spec.Type),
 			}
 		}
 	}
 	return out
-}
-
-// tagTypeToValueType maps the schema TagType enum to the storage ValueType
-// used by dump.DecodeTagValue. It mirrors the production write path's mapping.
-func tagTypeToValueType(t databasev1.TagType) pbv1.ValueType {
-	switch t {
-	case databasev1.TagType_TAG_TYPE_STRING:
-		return pbv1.ValueTypeStr
-	case databasev1.TagType_TAG_TYPE_INT:
-		return pbv1.ValueTypeInt64
-	case databasev1.TagType_TAG_TYPE_DATA_BINARY:
-		return pbv1.ValueTypeBinaryData
-	case databasev1.TagType_TAG_TYPE_STRING_ARRAY:
-		return pbv1.ValueTypeStrArr
-	case databasev1.TagType_TAG_TYPE_INT_ARRAY:
-		return pbv1.ValueTypeInt64Arr
-	case databasev1.TagType_TAG_TYPE_TIMESTAMP:
-		return pbv1.ValueTypeTimestamp
-	default:
-		return pbv1.ValueTypeUnknown
-	}
 }
 
 // fieldTypeToValueType maps the schema FieldType enum to the storage ValueType
@@ -211,7 +256,7 @@ func resolveMeasureTagValue(
 	if raw, ok := row.Tags[fullName]; ok {
 		vt, hasType := row.TagTypes[fullName]
 		if !hasType {
-			vt = tagTypeToValueType(t.Type)
+			vt = pbv1.TagValueSpecToValueType(t.Type)
 		}
 		return dump.DecodeTagValue(vt, raw, nil)
 	}
@@ -264,7 +309,7 @@ func buildStreamTagFamilies(
 			if raw, ok := row.Tags[fullName]; ok {
 				vt, hasType := row.TagTypes[fullName]
 				if !hasType {
-					vt = tagTypeToValueType(t.Type)
+					vt = pbv1.TagValueSpecToValueType(t.Type)
 				}
 				tf.Tags = append(tf.Tags, dump.DecodeTagValue(vt, raw, nil))
 				continue
@@ -304,7 +349,7 @@ func buildTraceTags(specs []*databasev1.TraceTagSpec, row dumptrace.Row, traceID
 		}
 		vt, hasType := row.TagTypes[t.Name]
 		if !hasType {
-			vt = tagTypeToValueType(t.Type)
+			vt = pbv1.TagValueSpecToValueType(t.Type)
 		}
 		out = append(out, dump.DecodeTagValue(vt, raw, nil))
 	}

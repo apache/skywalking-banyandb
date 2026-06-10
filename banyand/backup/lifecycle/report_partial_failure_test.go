@@ -61,8 +61,13 @@ func TestBuildMigrationReport_PartialFailure(t *testing.T) {
 	p.MarkSourceStreamPartCompleted("sw_b", "20260512", 0, 1)
 	p.MarkSourceStreamPartCompleted("sw_b", "20260512", 0, 2)
 	p.MarkSourceStreamPartCompleted("sw_b", "20260512", 1, 1)
-	// partID 7 fails on shard 1 — record the per-target error, source not advanced.
-	p.MarkStreamPartError("sw_b", "20260512", 1, 7, "failed to stream part to target node-cold-0: connection refused")
+	// partID 7 fails on shard 1 — record the error, source not advanced.
+	swBShard, swBPart := uint32(1), uint64(7)
+	p.AddMigrationError(MigrationError{
+		SourceStage: "hot", TargetStage: "warm", Group: "sw_b",
+		Catalog: catalogStream, Scope: scopePart, Segment: "seg-20260512", Interval: "1d",
+		Shard: &swBShard, Part: &swBPart, Error: "failed to stream part to target node-cold-0: connection refused",
+	})
 	p.SetStreamSeriesCount("sw_b", 2)
 	p.MarkSourceStreamSeriesCompleted("sw_b", "20260512", 0)
 	p.MarkSourceStreamSeriesCompleted("sw_b", "20260512", 1)
@@ -119,28 +124,31 @@ func TestBuildMigrationReport_PartialFailure(t *testing.T) {
 	assertResource(t, summary, "trace_migration", "parts", 1, 1, 100.0, 0)
 	assertResource(t, summary, "trace_migration", "series", 1, 1, 100.0, 0)
 
-	// errors: stream_parts has one entry for sw_b; everything else empty.
+	// errors: each bucket is now an array; stream_parts holds the one sw_b entry,
+	// every other bucket is an empty array.
 	for _, key := range []string{
 		"stream_parts", "stream_series", "stream_element_index",
 		"measure_parts", "measure_series",
-		"trace_parts", "trace_series",
+		"trace_parts", "trace_series", "row_replay_node_errors",
 	} {
 		v, found := errs[key]
 		require.Truef(t, found, "errors.%s must be present", key)
-		_, isMap := v.(map[string]interface{})
-		require.Truef(t, isMap, "errors.%s must be map[string]interface{}", key)
+		_, isArr := v.([]MigrationError)
+		require.Truef(t, isArr, "errors.%s must be []MigrationError, got %T", key, v)
 	}
-	streamPartErrs := errs["stream_parts"].(map[string]interface{})
-	require.Lenf(t, streamPartErrs, 1, "errors.stream_parts must hold one group entry, got %v", streamPartErrs)
-	require.Contains(t, streamPartErrs, "sw_b")
+	streamPartErrs := errs["stream_parts"].([]MigrationError)
+	require.Lenf(t, streamPartErrs, 1, "errors.stream_parts must hold one entry, got %v", streamPartErrs)
+	assert.Equal(t, "sw_b", streamPartErrs[0].Group)
+	assert.Equal(t, catalogStream, streamPartErrs[0].Catalog)
+	assert.Equal(t, scopePart, streamPartErrs[0].Scope)
+	assert.Equal(t, "seg-20260512", streamPartErrs[0].Segment)
 
 	for _, key := range []string{
 		"stream_series", "stream_element_index",
 		"measure_parts", "measure_series",
-		"trace_parts", "trace_series",
+		"trace_parts", "trace_series", "row_replay_node_errors",
 	} {
-		v := errs[key].(map[string]interface{})
-		assert.Emptyf(t, v, "errors.%s must be empty for this scenario", key)
+		assert.Emptyf(t, errs[key].([]MigrationError), "errors.%s must be empty for this scenario", key)
 	}
 }
 
@@ -208,8 +216,9 @@ func TestBuildMigrationReport_SyncBreakdown(t *testing.T) {
 	p.AddTraceChunkSyncShard("sw_trace")
 	p.AddTraceRowReplay("sw_trace", 2, 6)
 	// per-node replay error on the stream group.
-	p.RecordRowReplayNodeErrors("sw_stream", map[string]*common.Error{
-		"data-node-1": common.NewError("flush timeout"),
+	p.AddMigrationError(MigrationError{
+		SourceStage: "warm", TargetStage: "cold", Group: "sw_stream",
+		Catalog: catalogStream, Scope: scopeNode, Node: "data-node-1", Error: "flush timeout",
 	})
 
 	svc := &lifecycleService{l: logger.GetLogger("test")}
@@ -229,11 +238,13 @@ func TestBuildMigrationReport_SyncBreakdown(t *testing.T) {
 	assertBreakdown(t, tb, "_total", "chunk_sync_shards", 1, 2, 6)
 
 	errs := report["errors"].(map[string]interface{})
-	nodeErrs, ok := errs["row_replay_node_errors"].(map[string]interface{})
-	require.True(t, ok, "errors.row_replay_node_errors must be a map")
-	groupErrs, ok := nodeErrs["sw_stream"].(map[string]interface{})
-	require.True(t, ok, "row_replay_node_errors must contain sw_stream")
-	assert.Contains(t, groupErrs["data-node-1"], "flush timeout")
+	nodeErrs, ok := errs["row_replay_node_errors"].([]MigrationError)
+	require.True(t, ok, "errors.row_replay_node_errors must be []MigrationError")
+	require.Len(t, nodeErrs, 1)
+	assert.Equal(t, "sw_stream", nodeErrs[0].Group)
+	assert.Equal(t, scopeNode, nodeErrs[0].Scope)
+	assert.Equal(t, "data-node-1", nodeErrs[0].Node)
+	assert.Contains(t, nodeErrs[0].Error, "flush timeout")
 }
 
 // assertBreakdown checks one sync_breakdown entry's chunk count (keyed by

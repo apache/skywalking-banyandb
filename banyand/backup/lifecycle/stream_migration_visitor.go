@@ -50,7 +50,10 @@ type streamMigrationVisitor struct {
 	progress                *Progress
 	replayer                *streamRowReplayer
 	group                   string
+	sourceStage             string
+	targetStage             string
 	targetStageInterval     storage.IntervalRule
+	sourceSegmentInterval   storage.IntervalRule
 	chunkSize               int
 	partsCopiedSingleTarget uint64
 	partsReplayedRowLevel   uint64
@@ -61,21 +64,39 @@ type streamMigrationVisitor struct {
 // newStreamMigrationVisitor creates a new file-based migration visitor.
 func newStreamMigrationVisitor(group *commonv1.Group, shardNum, replicas uint32, selector node.Selector, client queue.Client,
 	l *logger.Logger, progress *Progress, chunkSize int, targetStageInterval storage.IntervalRule, md metadata.Repo,
+	sourceStage, targetStage string, sourceSegmentInterval storage.IntervalRule,
 ) *streamMigrationVisitor {
 	return &streamMigrationVisitor{
-		group:               group.Metadata.Name,
-		targetShardNum:      shardNum,
-		replicas:            replicas,
-		selector:            selector,
-		client:              client,
-		chunkedClients:      make(map[string]queue.ChunkedSyncClient),
-		logger:              l,
-		progress:            progress,
-		chunkSize:           chunkSize,
-		targetStageInterval: targetStageInterval,
-		metadata:            md,
-		lfs:                 fs.NewLocalFileSystem(),
+		group:                 group.Metadata.Name,
+		sourceStage:           sourceStage,
+		targetStage:           targetStage,
+		sourceSegmentInterval: sourceSegmentInterval,
+		targetShardNum:        shardNum,
+		replicas:              replicas,
+		selector:              selector,
+		client:                client,
+		chunkedClients:        make(map[string]queue.ChunkedSyncClient),
+		logger:                l,
+		progress:              progress,
+		chunkSize:             chunkSize,
+		targetStageInterval:   targetStageInterval,
+		metadata:              md,
+		lfs:                   fs.NewLocalFileSystem(),
 	}
+}
+
+// recordError appends a structured stream migration error to the report, keyed
+// by the SOURCE segment. partID is nil for series- and element-index-scoped errors.
+func (mv *streamMigrationVisitor) recordError(scope string, segmentTR *timestamp.TimeRange,
+	shardID common.ShardID, partID *uint64, msg string,
+) {
+	seg, interval := segmentErrorLocation(segmentTR, mv.sourceSegmentInterval)
+	s := uint32(shardID)
+	mv.progress.AddMigrationError(MigrationError{
+		SourceStage: mv.sourceStage, TargetStage: mv.targetStage, Group: mv.group,
+		Catalog: catalogStream, Scope: scope, Segment: seg, Interval: interval,
+		Shard: &s, Part: partID, Error: msg,
+	})
 }
 
 // CounterSnapshot returns the current (chunk-sync, row-replay) part counts.
@@ -207,7 +228,7 @@ func (mv *streamMigrationVisitor) VisitSeries(segmentTR *timestamp.TimeRange, se
 			segmentFile, err := mv.lfs.OpenFile(segmentFilePath)
 			if err != nil {
 				errorMsg := fmt.Sprintf("failed to open segment file %s: %v", segmentFilePath, err)
-				mv.progress.MarkStreamSeriesError(mv.group, segmentIDStr, shardID, errorMsg)
+				mv.recordError(scopeSeries, segmentTR, shardID, nil, errorMsg)
 				mv.logger.Error().
 					Str("path", segmentFilePath).
 					Err(err).
@@ -247,7 +268,7 @@ func (mv *streamMigrationVisitor) VisitSeries(segmentTR *timestamp.TimeRange, se
 			// Stream segment to target shard replicas
 			if err := mv.streamPartToTargetShard(partData); err != nil {
 				errorMsg := fmt.Sprintf("failed to stream segment to target shard %d: %v", targetShardID, err)
-				mv.progress.MarkStreamSeriesError(mv.group, segmentIDStr, shardID, errorMsg)
+				mv.recordError(scopeSeries, segmentTR, shardID, nil, errorMsg)
 				return fmt.Errorf("failed to stream segment to target shard %d: %w", targetShardID, err)
 			}
 			// Mark segment as completed for this specific target segment
@@ -336,7 +357,7 @@ func (mv *streamMigrationVisitor) VisitPart(segmentTR *timestamp.TimeRange, sour
 		// Stream part to target segment
 		if err := mv.streamPartToTargetShard(targetPartData); err != nil {
 			errorMsg := fmt.Sprintf("failed to stream part to target segment %s: %v", targetSegmentTime.Format(time.RFC3339), err)
-			mv.progress.MarkStreamPartError(mv.group, sourceSegmentIDStr, sourceShardID, partID, errorMsg)
+			mv.recordError(scopePart, segmentTR, sourceShardID, &partID, errorMsg)
 			return fmt.Errorf("failed to stream part to target segment: %w", err)
 		}
 
@@ -390,8 +411,8 @@ func (mv *streamMigrationVisitor) visitPartRowReplay(ctx context.Context, segmen
 	if err != nil {
 		// Row-replay is all-or-nothing per part; mark the source part errored so
 		// resume retries the whole part (same source key the guard checks above).
-		recordReplayNodeErrors(mv.progress, mv.group, err)
-		mv.progress.MarkStreamPartError(mv.group, sourceSegmentIDStr, sourceShardID, partID, err.Error())
+		recordReplayNodeErrors(mv.progress, mv.group, mv.sourceStage, mv.targetStage, catalogStream, err)
+		mv.recordError(scopePart, segmentTR, sourceShardID, &partID, err.Error())
 		return fmt.Errorf("row-replay stream part %s: %w", partPath, err)
 	}
 	mv.progress.MarkStreamPartCompleted(mv.group, sourceSegmentIDStr, sourceShardID, partID)
@@ -523,7 +544,7 @@ func (mv *streamMigrationVisitor) VisitElementIndex(segmentTR *timestamp.TimeRan
 	// Stream segment file to target shard replicas
 	if err := mv.streamPartToTargetShard(partData); err != nil {
 		errorMsg := fmt.Sprintf("failed to stream element index to target shard: %v", err)
-		mv.progress.MarkStreamElementIndexError(mv.group, segmentIDStr, sourceShardID, errorMsg)
+		mv.recordError(scopeElementIndex, segmentTR, sourceShardID, nil, errorMsg)
 		return fmt.Errorf("failed to stream element index to target shard: %w", err)
 	}
 
@@ -606,7 +627,7 @@ func (mv *streamMigrationVisitor) streamPartToNode(nodeID string, targetShardID 
 func (mv *streamMigrationVisitor) Close() error {
 	if mv.replayer != nil {
 		cee, replayCloseErr := mv.replayer.Close()
-		mv.progress.RecordRowReplayNodeErrors(mv.group, cee)
+		recordNodeErrors(mv.progress, mv.group, mv.sourceStage, mv.targetStage, catalogStream, cee)
 		if replayCloseErr != nil {
 			mv.logger.Warn().Err(replayCloseErr).Interface("node_errors", cee).Msg("failed to close stream row replayer")
 		} else if len(cee) > 0 {

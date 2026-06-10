@@ -18,15 +18,37 @@
 package dump
 
 import (
+	"fmt"
 	"time"
 
 	"google.golang.org/protobuf/types/known/timestamppb"
 
 	modelv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/model/v1"
+	internalencoding "github.com/apache/skywalking-banyandb/banyand/internal/encoding"
+	"github.com/apache/skywalking-banyandb/pkg/bytes"
 	"github.com/apache/skywalking-banyandb/pkg/convert"
 	"github.com/apache/skywalking-banyandb/pkg/encoding"
+	"github.com/apache/skywalking-banyandb/pkg/fs"
 	pbv1 "github.com/apache/skywalking-banyandb/pkg/pb/v1"
 )
+
+// ReadTagValues reads size bytes at offset from valueReader (into the scratch
+// value buffer when scratch is non-nil) and decodes them into count raw tag
+// values of valueType. Shared by the measure and stream part iterators.
+func ReadTagValues(decoder *encoding.BytesBlockDecoder, offset, size uint64, count int,
+	valueReader fs.Reader, valueType pbv1.ValueType, scratch *ReadScratch,
+) ([][]byte, error) {
+	bb := &bytes.Buffer{}
+	bb.Buf = ReadBuf(scratch, (*ReadScratch).ValueBuf, int(size))
+	if err := ReadData(valueReader, int64(offset), bb.Buf); err != nil {
+		return nil, fmt.Errorf("cannot read tag values: %w", err)
+	}
+	values, err := internalencoding.DecodeTagValues(nil, decoder, bb, valueType, count)
+	if err != nil {
+		return nil, fmt.Errorf("cannot decode tag values: %w", err)
+	}
+	return values, nil
+}
 
 // DecodeTagValue converts a byte-encoded tag value back to a typed
 // modelv1.TagValue. valueType selects the decoding; the returned value is

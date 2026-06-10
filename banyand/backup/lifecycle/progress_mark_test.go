@@ -29,16 +29,15 @@ import (
 )
 
 // TestMarkPerTargetDoesNotMoveCounters pins the contract that per-target
-// Mark*Completed / Mark*Error only maintain the per-target dedup / error
-// maps and do NOT advance Counts or Progress. Counts is set by pre-walk
-// (Set*Count) and Progress is advanced exclusively by MarkSource*Completed.
+// Mark*Completed only maintains the per-target dedup map and does NOT advance
+// Counts or Progress. Counts is set by pre-walk (Set*Count) and Progress is
+// advanced exclusively by MarkSource*Completed.
 func TestMarkPerTargetDoesNotMoveCounters(t *testing.T) {
 	p := NewProgress("", logger.GetLogger("test"))
 
 	// Stream part: per-target mark several times — counters must stay 0.
 	p.MarkStreamPartCompleted("g", "tgt-seg-1", 0, 1)
 	p.MarkStreamPartCompleted("g", "tgt-seg-2", 0, 1)
-	p.MarkStreamPartError("g", "tgt-seg-3", 0, 1, "err")
 	assert.Equal(t, 0, p.StreamPartCounts["g"])
 	assert.Equal(t, 0, p.StreamPartProgress["g"])
 
@@ -132,45 +131,34 @@ func TestMarkSourceCompletedIdempotent(t *testing.T) {
 	assert.Equal(t, 1, p.TraceSeriesProgress["g"])
 }
 
-// TestClearErrors_AllSevenBuckets pins that ClearErrors resets every error
-// map (including trace) and does NOT touch Counts/Progress (which now
-// derive from pre-walk + MarkSource and are immutable to error replay).
-func TestClearErrors_AllSevenBuckets(t *testing.T) {
+// TestClearErrors_ResetsMigrationErrors pins that ClearErrors empties the
+// structured MigrationErrors (the single error source) at run start and does
+// NOT touch the pre-walk Counts.
+func TestClearErrors_ResetsMigrationErrors(t *testing.T) {
 	p := NewProgress("", logger.GetLogger("test"))
 
 	// Set planned counts (pre-walk).
 	p.SetStreamPartCount("g", 10)
-	p.SetStreamSeriesCount("g", 10)
-	p.SetStreamElementIndexCount("g", 10)
 	p.SetMeasurePartCount("g", 10)
-	p.SetMeasureSeriesCount("g", 10)
 	p.SetTraceShardCount("g", 10)
-	p.SetTraceSeriesCount("g", 10)
 
-	// Drop one error per bucket.
-	p.MarkStreamPartError("g", "s", 0, 1, "x")
-	p.MarkStreamSeriesError("g", "s", 0, "x")
-	p.MarkStreamElementIndexError("g", "s", 0, "x")
-	p.MarkMeasurePartError("g", "s", 0, 1, "x")
-	p.MarkMeasureSeriesError("g", "s", 0, "x")
-	p.MarkTraceShardError("g", "s", 0, "x")
-	p.MarkTraceSeriesError("g", "s", 0, "x")
+	shard0, part1 := uint32(0), uint64(1)
+	p.AddMigrationError(MigrationError{
+		Group: "g", Catalog: catalogStream, Scope: scopePart,
+		Segment: "seg-1", Shard: &shard0, Part: &part1, Error: "x",
+	})
+	p.AddMigrationError(MigrationError{
+		Group: "g", Catalog: catalogTrace, Scope: scopeShard,
+		Segment: "seg-1", Shard: &shard0, Error: "y",
+	})
+	assert.NotEmpty(t, p.MigrationErrors)
 
 	p.ClearErrors()
-
-	assert.Empty(t, p.StreamPartErrors["g"])
-	assert.Empty(t, p.StreamSeriesErrors["g"])
-	assert.Empty(t, p.StreamElementIndexErrors["g"])
-	assert.Empty(t, p.MeasurePartErrors["g"])
-	assert.Empty(t, p.MeasureSeriesErrors["g"])
-	assert.Empty(t, p.TraceShardErrors["g"])
-	assert.Empty(t, p.TraceSeriesErrors["g"])
+	assert.Empty(t, p.MigrationErrors, "ClearErrors must reset MigrationErrors")
 
 	// Counts are pre-walk planned — must survive ClearErrors.
 	for _, c := range []int{
-		p.StreamPartCounts["g"], p.StreamSeriesCounts["g"], p.StreamElementIndexCounts["g"],
-		p.MeasurePartCounts["g"], p.MeasureSeriesCounts["g"],
-		p.TraceShardCounts["g"], p.TraceSeriesCounts["g"],
+		p.StreamPartCounts["g"], p.MeasurePartCounts["g"], p.TraceShardCounts["g"],
 	} {
 		assert.Equal(t, 10, c, "Counts must not be touched by ClearErrors")
 	}
@@ -246,7 +234,7 @@ func TestSyncBreakdownCountersPersistAndAccumulate(t *testing.T) {
 	p.AddStreamRowReplay("g2", 3)   // stream: 1 row-replay part, 3 rows
 	p.AddTraceChunkSyncShard("g3")  // trace: 1 chunk-sync shard
 	p.AddTraceRowReplay("g3", 2, 6) // trace: 2 row-replay parts, 6 rows
-	p.RecordRowReplayNodeErrors("g2", map[string]*common.Error{"node-1": common.NewError("boom")})
+	p.AddMigrationError(MigrationError{Group: "g2", Catalog: catalogStream, Scope: scopeNode, Node: "node-1", Error: "boom"})
 
 	// Reload from disk (resume).
 	reloaded := LoadProgress(pf, l)
@@ -259,8 +247,10 @@ func TestSyncBreakdownCountersPersistAndAccumulate(t *testing.T) {
 	assert.Equal(t, uint64(1), reloaded.TraceChunkSyncShards["g3"])
 	assert.Equal(t, uint64(2), reloaded.TraceRowReplayParts["g3"])
 	assert.Equal(t, uint64(6), reloaded.TraceRowReplayRows["g3"])
-	require.Contains(t, reloaded.RowReplayNodeErrors, "g2")
-	assert.Contains(t, reloaded.RowReplayNodeErrors["g2"]["node-1"], "boom")
+	require.Len(t, reloaded.MigrationErrors, 1)
+	assert.Equal(t, "g2", reloaded.MigrationErrors[0].Group)
+	assert.Equal(t, "node-1", reloaded.MigrationErrors[0].Node)
+	assert.Contains(t, reloaded.MigrationErrors[0].Error, "boom")
 
 	// Resume accumulation: a further Add builds on the reloaded value.
 	reloaded.AddMeasureRowReplay("g", 10)

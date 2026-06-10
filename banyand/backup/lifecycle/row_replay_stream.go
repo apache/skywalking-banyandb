@@ -21,8 +21,6 @@ import (
 	"context"
 	"encoding/base64"
 	"fmt"
-	"path/filepath"
-	"strconv"
 	"sync"
 	"time"
 
@@ -37,7 +35,6 @@ import (
 	dumpstream "github.com/apache/skywalking-banyandb/banyand/internal/dump/stream"
 	"github.com/apache/skywalking-banyandb/banyand/metadata"
 	"github.com/apache/skywalking-banyandb/banyand/queue"
-	"github.com/apache/skywalking-banyandb/pkg/bus"
 	"github.com/apache/skywalking-banyandb/pkg/convert"
 	"github.com/apache/skywalking-banyandb/pkg/fs"
 	"github.com/apache/skywalking-banyandb/pkg/logger"
@@ -46,7 +43,6 @@ import (
 )
 
 const (
-	streamReplayBatchSize    = 2000
 	streamReplayBatchTimeout = 30 * time.Second
 )
 
@@ -82,7 +78,7 @@ func newStreamRowReplayer(
 		group:          group,
 		targetShardNum: targetShardNum,
 		selector:       selector,
-		sender:         newBatchSender(client, data.TopicStreamWrite, streamReplayBatchSize, streamReplayBatchTimeout),
+		sender:         newBatchSender(client, data.TopicStreamWrite, rowReplayMaxBatchRows, int(rowReplayMaxBatchBytes), streamReplayBatchTimeout),
 		metadata:       md,
 		fs:             fileSystem,
 		logger:         l,
@@ -95,40 +91,15 @@ func newStreamRowReplayer(
 // releases cached IndexResolver handles.
 func (r *streamRowReplayer) Close() (map[string]*common.Error, error) {
 	cee, closeErr := r.sender.close()
-	r.irMu.Lock()
-	if r.irResolver != nil {
-		_ = r.irResolver.Close()
-		r.irResolver = nil
-		r.irPath = ""
-	}
-	r.irMu.Unlock()
+	closeIndexResolver(&r.irMu, &r.irResolver, &r.irPath)
 	return cee, closeErr
 }
 
-// loadIndexResolver lazily opens an IndexResolver for the current source
-// segment. Only one resolver is kept resident: same segmentPath reuses it
-// (so all shards/parts under a segment share the bluge reader and avoid
-// reopening the same exclusive-locked dir), and a different segmentPath closes
-// the prior one before opening a new one. The replayer's Close releases the
-// last resolver.
+// loadIndexResolver lazily opens (and keeps resident) the IndexResolver for the
+// current source segment via the shared helper. Stream rows carry no indexed
+// values to decode, so the rule-to-tag map is nil.
 func (r *streamRowReplayer) loadIndexResolver(segmentPath string) (*dump.IndexResolver, error) {
-	r.irMu.Lock()
-	defer r.irMu.Unlock()
-	if r.irResolver != nil && r.irPath == segmentPath {
-		return r.irResolver, nil
-	}
-	if r.irResolver != nil {
-		_ = r.irResolver.Close()
-		r.irResolver = nil
-		r.irPath = ""
-	}
-	ir, err := dump.NewIndexResolver(segmentPath, dump.DefaultIndexCacheSize, nil)
-	if err != nil {
-		return nil, fmt.Errorf("open stream index resolver for %s: %w", segmentPath, err)
-	}
-	r.irResolver = ir
-	r.irPath = segmentPath
-	return ir, nil
+	return reloadIndexResolver(&r.irMu, &r.irResolver, &r.irPath, segmentPath, nil)
 }
 
 func (r *streamRowReplayer) loadSchema(ctx context.Context, streamName string) (*cachedStreamSchema, error) {
@@ -150,12 +121,10 @@ func (r *streamRowReplayer) loadSchema(ctx context.Context, streamName string) (
 }
 
 func (r *streamRowReplayer) replayPart(ctx context.Context, partPath string) (int, error) {
-	partID, parseErr := strconv.ParseUint(filepath.Base(partPath), 16, 64)
+	partID, shardPath, segmentPath, parseErr := parseReplayPartPath(partPath)
 	if parseErr != nil {
-		return 0, fmt.Errorf("invalid part path %s: %w", partPath, parseErr)
+		return 0, parseErr
 	}
-	shardPath := filepath.Dir(partPath)
-	segmentPath := filepath.Dir(shardPath)
 
 	reader, err := dumpstream.OpenPart(partID, shardPath, r.fs)
 	if err != nil {
@@ -215,10 +184,5 @@ func (r *streamRowReplayer) publishRow(ctx context.Context, row dumpstream.Row) 
 	if err != nil {
 		return err
 	}
-	nodeID, err := r.selector.Pick(r.group, wr.Metadata.Name, iwr.ShardId, 0)
-	if err != nil {
-		return fmt.Errorf("pick target node for %s: %w", wr.Metadata.Name, err)
-	}
-	msg := bus.NewBatchMessageWithNode(bus.MessageID(time.Now().UnixNano()), nodeID, iwr)
-	return r.sender.enqueue(ctx, msg)
+	return r.sender.routeAndEnqueue(ctx, r.selector, r.group, wr.Metadata.Name, iwr.ShardId, iwr)
 }

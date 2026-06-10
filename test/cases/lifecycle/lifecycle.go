@@ -490,9 +490,9 @@ func verifyMigrationReport(rf string) {
 		} {
 			v, found := errs[key]
 			gomega.Expect(found).To(gomega.BeTrue(), "errors.%s must be present in %s", key, path)
-			errMap, isMap := v.(map[string]interface{})
-			gomega.Expect(isMap).To(gomega.BeTrue(), "errors.%s must be a map in %s", key, path)
-			gomega.Expect(errMap).To(gomega.BeEmpty(), "errors.%s must be empty for a clean cycle in %s", key, path)
+			errList, isList := v.([]interface{})
+			gomega.Expect(isList).To(gomega.BeTrue(), "errors.%s must be an array in %s", key, path)
+			gomega.Expect(errList).To(gomega.BeEmpty(), "errors.%s must be empty for a clean cycle in %s", key, path)
 		}
 
 		// report_version 2.1: every catalog carries a sync_breakdown block, and
@@ -507,9 +507,9 @@ func verifyMigrationReport(rf string) {
 		// row_replay_node_errors must surface and stay empty for a clean cycle.
 		nodeErrs, found := errs["row_replay_node_errors"]
 		gomega.Expect(found).To(gomega.BeTrue(), "errors.row_replay_node_errors must be present in %s", path)
-		nodeErrMap, isMap := nodeErrs.(map[string]interface{})
-		gomega.Expect(isMap).To(gomega.BeTrue(), "errors.row_replay_node_errors must be a map in %s", path)
-		gomega.Expect(nodeErrMap).To(gomega.BeEmpty(), "errors.row_replay_node_errors must be empty for a clean cycle in %s", path)
+		nodeErrList, isList := nodeErrs.([]interface{})
+		gomega.Expect(isList).To(gomega.BeTrue(), "errors.row_replay_node_errors must be an array in %s", path)
+		gomega.Expect(nodeErrList).To(gomega.BeEmpty(), "errors.row_replay_node_errors must be empty for a clean cycle in %s", path)
 	}
 	gomega.Expect(jsonReports).To(gomega.BeNumerically(">", 0), "no JSON report files found under %s", rf)
 }
@@ -982,6 +982,143 @@ var _ = ginkgo.Describe("Measure cross-segment migration", ginkgo.Ordered, func(
 		expectValues(runQuery(singleTargetTS, crossRightTS.Add(time.Millisecond), 3),
 			map[int64]int64{msVal(singleTargetTS): 100, msVal(crossLeftTS): 200, msVal(crossRightTS): 300},
 			"Q4 cross-segment aggregate")
+	})
+
+	// sidx-completeness regression: every DISTINCT series written must remain
+	// resolvable on the warm stage after migration. A measure query resolves each
+	// series via the segment series-index (sidx); if migration drops a series from
+	// the target sidx, that series' rows become invisible to queries. The single
+	// pre-existing entity-a case above cannot catch a many-series sidx gap, so this
+	// writes a large distinct-series set through BOTH the chunk-sync (T0 -> seg-A ->
+	// target α) and row-replay (T1/T2 -> straddling seg-B -> α/β) paths and asserts
+	// the warm stage returns every one of them.
+	ginkgo.It("every distinct series survives cross-segment migration (sidx completeness)", func() {
+		const numSeries = 64
+		entityID := func(i int) string { return fmt.Sprintf("xseg-%04d", i) }
+		singleTargetTS, crossLeftTS, crossRightTS := crossSegmentTimestamps()
+
+		ctx, cancel := context.WithTimeout(context.Background(), 120*time.Second)
+		defer cancel()
+		liaisonConn, dialErr := grpchelper.Conn(SharedContext.LiaisonAddr, 10*time.Second,
+			grpc.WithTransportCredentials(insecure.NewCredentials()))
+		gomega.Expect(dialErr).NotTo(gomega.HaveOccurred(), "dial liaison")
+		defer func() { _ = liaisonConn.Close() }()
+		measureClient := measurev1.NewMeasureServiceClient(liaisonConn)
+		writeStream, writeErr := measureClient.Write(ctx)
+		gomega.Expect(writeErr).NotTo(gomega.HaveOccurred(), "open Write stream")
+
+		md := &commonv1.Metadata{Group: crossGroup, Name: crossMeasure}
+		first := true
+		sendRow := func(ts time.Time, eID string, value int64) {
+			req := &measurev1.WriteRequest{
+				DataPoint: &measurev1.DataPointValue{
+					Timestamp: timestamppb.New(ts),
+					Version:   ts.UnixNano(),
+					TagFamilies: []*modelv1.TagFamilyForWrite{
+						{Tags: []*modelv1.TagValue{
+							{Value: &modelv1.TagValue_Str{Str: &modelv1.Str{Value: eID}}},
+						}},
+					},
+					Fields: []*modelv1.FieldValue{
+						{Value: &modelv1.FieldValue_Int{Int: &modelv1.Int{Value: value}}},
+					},
+				},
+				MessageId: uint64(time.Now().UnixNano()),
+			}
+			if first {
+				req.Metadata = md
+				first = false
+			}
+			gomega.Expect(writeStream.Send(req)).To(gomega.Succeed())
+		}
+		ginkgo.By(fmt.Sprintf("seeding %d distinct series across chunk-sync (T0) and row-replay (T1,T2) paths", numSeries))
+		for i := 0; i < numSeries; i++ {
+			e := entityID(i)
+			sendRow(singleTargetTS, e, int64(i)+1) // source seg-A (chunk-sync)  -> target α
+			sendRow(crossLeftTS, e, int64(i)+1)    // straddling seg-B (row-replay) -> target α
+			sendRow(crossRightTS, e, int64(i)+1)   // straddling seg-B (row-replay) -> target β
+		}
+		drainWriteAcks(writeStream.Recv, writeStream.CloseSend)
+		time.Sleep(flags.ConsistentlyTimeout)
+
+		ginkgo.By("running lifecycle migration")
+		dir, err := os.MkdirTemp("", "lifecycle-sidx-completeness")
+		gomega.Expect(err).NotTo(gomega.HaveOccurred())
+		defer os.RemoveAll(dir)
+		runLifecycleMigration(filepath.Join(dir, "progress.json"), filepath.Join(dir, "report"))
+
+		ginkgo.By("warm stage must return every distinct series across the full cross-segment range")
+		queryClient := measurev1.NewMeasureServiceClient(liaisonConn)
+		dpEntityID := func(dp *measurev1.DataPoint) string {
+			for _, tf := range dp.GetTagFamilies() {
+				for _, tag := range tf.GetTags() {
+					if tag.GetKey() == "entity_id" {
+						return tag.GetValue().GetStr().GetValue()
+					}
+				}
+			}
+			return ""
+		}
+		// Limit MUST exceed the total written rows: a measure query defaults to
+		// Limit=100, which would silently truncate the 3*numSeries rows and look
+		// like data loss (it is not).
+		gomega.Eventually(func() error {
+			resp, qErr := queryClient.Query(ctx, &measurev1.QueryRequest{
+				Groups: []string{crossGroup},
+				Name:   crossMeasure,
+				TimeRange: &modelv1.TimeRange{
+					Begin: timestamppb.New(singleTargetTS),
+					End:   timestamppb.New(crossRightTS.Add(time.Millisecond)),
+				},
+				TagProjection: &modelv1.TagProjection{
+					TagFamilies: []*modelv1.TagProjection_TagFamily{
+						{Name: "default", Tags: []string{"entity_id"}},
+					},
+				},
+				FieldProjection: &measurev1.QueryRequest_FieldProjection{Names: []string{"value"}},
+				Stages:          []string{"warm"},
+				Limit:           uint32(numSeries * 10),
+			})
+			if qErr != nil {
+				return qErr
+			}
+			t0ms, t1ms, t2ms := singleTargetTS.UnixMilli(), crossLeftTS.UnixMilli(), crossRightTS.UnixMilli()
+			perSeries := make(map[string]map[int64]bool, numSeries)
+			for _, dp := range resp.GetDataPoints() {
+				eid := dpEntityID(dp)
+				if !strings.HasPrefix(eid, "xseg-") {
+					continue
+				}
+				m := perSeries[eid]
+				if m == nil {
+					m = make(map[int64]bool, 3)
+					perSeries[eid] = m
+				}
+				m[dp.GetTimestamp().AsTime().UnixMilli()] = true
+			}
+			var full, missT0, missT1, missT2 int
+			for i := 0; i < numSeries; i++ {
+				m := perSeries[entityID(i)]
+				if len(m) == 3 {
+					full++
+				}
+				if !m[t0ms] {
+					missT0++
+				}
+				if !m[t1ms] {
+					missT1++
+				}
+				if !m[t2ms] {
+					missT2++
+				}
+			}
+			if full != numSeries {
+				return fmt.Errorf("of %d series, full(3 rows)=%d; missing-by-ts: T0(chunk-sync→α)=%d "+
+					"T1(row-replay→α)=%d T2(row-replay→β)=%d", numSeries, full, missT0, missT1, missT2)
+			}
+			return nil
+		}, flags.EventuallyTimeout).Should(gomega.Succeed(),
+			"every distinct series (chunk-sync T0 + row-replay T1/T2) must be queryable on the warm stage after migration")
 	})
 })
 
