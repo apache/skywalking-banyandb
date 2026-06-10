@@ -206,12 +206,20 @@ type batchSender struct {
 // for the report; the full count still accrues in skippedRows.
 const maxSkipDetail = 200
 
-// recordSkip tallies one skipped series and, up to the cap, retains its location.
+// recordSkip tallies one skipped row and, up to the cap, retains its series'
+// location. Rows for a series are emitted contiguously, so de-duplicating against
+// the last retained entry keeps the bounded sample effectively per-series instead
+// of letting one high-row-count series fill it with duplicates.
 func (s *batchSender) recordSkip(err error) {
 	s.skippedRows++
-	if c := asSkipError(err); c != nil && len(s.skippedDetail) < maxSkipDetail {
-		s.skippedDetail = append(s.skippedDetail, *c)
+	c := asSkipError(err)
+	if c == nil || len(s.skippedDetail) >= maxSkipDetail {
+		return
 	}
+	if n := len(s.skippedDetail); n > 0 && s.skippedDetail[n-1] == *c {
+		return
+	}
+	s.skippedDetail = append(s.skippedDetail, *c)
 }
 
 // newBatchSender builds a sender for one data type. maxRows and maxBytes bound a

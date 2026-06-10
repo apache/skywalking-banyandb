@@ -65,6 +65,39 @@ func TestRecordSkip_CountsAllButBoundsDetail(t *testing.T) {
 	assert.Len(t, s.skippedDetail, before, "a location-less skip adds no detail")
 }
 
+// TestRecordSkip_DeduplicatesContiguousSeries proves the bounded detail sample is
+// effectively per-series: a high-row-count series contributes one entry instead of
+// flooding the sample, while distinct (part, series, reason) locations each add one.
+func TestRecordSkip_DeduplicatesContiguousSeries(t *testing.T) {
+	s := &batchSender{}
+
+	// 1000 skipped rows of the same series collapse to a single detail entry.
+	for i := 0; i < 1000; i++ {
+		s.recordSkip(&skipError{partPath: "p", seriesID: 7, reason: skipReasonRebuildFailed})
+	}
+	assert.Equal(t, 1000, s.skippedRows, "every skipped row must be counted")
+	require.Len(t, s.skippedDetail, 1, "one series must contribute a single detail entry")
+
+	// A different series (emitted contiguously after the first) adds one entry.
+	s.recordSkip(&skipError{partPath: "p", seriesID: 8, reason: skipReasonRebuildFailed})
+	require.Len(t, s.skippedDetail, 2)
+
+	// Same series but a different reason is a distinct location and adds one entry.
+	s.recordSkip(&skipError{partPath: "p", seriesID: 8, reason: skipReasonIncompletePart})
+	require.Len(t, s.skippedDetail, 3)
+
+	// Same series in a different part is a distinct location and adds one entry.
+	s.recordSkip(&skipError{partPath: "q", seriesID: 8, reason: skipReasonIncompletePart})
+	require.Len(t, s.skippedDetail, 4)
+
+	assert.Equal(t, []skipError{
+		{partPath: "p", seriesID: 7, reason: skipReasonRebuildFailed},
+		{partPath: "p", seriesID: 8, reason: skipReasonRebuildFailed},
+		{partPath: "p", seriesID: 8, reason: skipReasonIncompletePart},
+		{partPath: "q", seriesID: 8, reason: skipReasonIncompletePart},
+	}, s.skippedDetail)
+}
+
 // TestExcludeRetainedSuffixes proves the deletion-gating filter: a source segment
 // whose start instant is retained (because row-replay skipped unresolved rows in
 // it) is removed from the delete-after-migration suffix set, while the others pass
