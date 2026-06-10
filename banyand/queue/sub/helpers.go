@@ -29,7 +29,9 @@ import (
 	"github.com/apache/skywalking-banyandb/pkg/logger"
 )
 
-func (s *server) handleEOF(stream clusterv1.Service_SendServer, topic *bus.Topic, dataCollection []any, writeEntity *clusterv1.SendRequest, identity *streamIdentity) {
+func (s *server) handleEOF(stream clusterv1.Service_SendServer, topic *bus.Topic, dataCollection []any,
+	writeEntity *clusterv1.SendRequest, identity *streamIdentity, start time.Time,
+) {
 	if len(dataCollection) < 1 {
 		return
 	}
@@ -47,6 +49,13 @@ func (s *server) handleEOF(stream clusterv1.Service_SendServer, topic *bus.Topic
 		return
 	}
 	message := listener.Rev(stream.Context(), bus.NewMessage(bus.MessageID(0), dataCollection))
+	// Tick batch + message finished immediately after Rev returns, independent of the response Send outcome.
+	// Pre-Rev early returns (len<1, no-listener, CheckHealth fail) are excluded — they return before this point.
+	if s.metrics != nil {
+		s.metrics.totalMessageFinished.Inc(float64(len(dataCollection)), identity.operation, identity.group, identity.senderNode, identity.senderRole, identity.senderTier)
+		s.metrics.totalBatchFinished.Inc(1, identity.operation, identity.group, identity.senderNode, identity.senderRole, identity.senderTier)
+		s.metrics.totalBatchLatency.Observe(time.Since(start).Seconds(), identity.operation, identity.group, identity.senderNode, identity.senderRole, identity.senderTier)
+	}
 	// writeEntity is nil when the stream closed (Recv returned io.EOF), so guard the ID access.
 	var msgID uint64
 	if writeEntity != nil {
@@ -77,8 +86,12 @@ func (s *server) handleBatch(dataCollection *[]any, writeEntity *clusterv1.SendR
 	if len(*dataCollection) == 0 {
 		if s.metrics != nil {
 			s.metrics.totalStarted.Inc(1, identity.operation, identity.group, identity.senderNode, identity.senderRole, identity.senderTier)
+			s.metrics.totalBatchStarted.Inc(1, identity.operation, identity.group, identity.senderNode, identity.senderRole, identity.senderTier)
 		}
 		*start = time.Now()
+	}
+	if s.metrics != nil {
+		s.metrics.totalMessageStarted.Inc(1, identity.operation, identity.group, identity.senderNode, identity.senderRole, identity.senderTier)
 	}
 	*dataCollection = append(*dataCollection, writeEntity.Body)
 }

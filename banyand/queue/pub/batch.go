@@ -59,6 +59,7 @@ const (
 type writeStream struct {
 	client         clusterv1.Service_SendClient
 	ctxDoneCh      <-chan struct{}
+	batchStart     time.Time
 	firstFrameSent bool // false until the first frame is sent; the first frame carries the sender_* identity labels
 }
 
@@ -192,9 +193,25 @@ func (bp *batchPublisher) Publish(ctx context.Context, topic bus.Topic, messages
 			err = multierr.Append(err, fmt.Errorf("failed to get stream for node %s: %w", node, errCreateStream))
 			continue
 		}
+		streamBatchStart := time.Now()
 		bp.streams[node] = writeStream{
-			client:    stream,
-			ctxDoneCh: streamCtx.Done(),
+			client:     stream,
+			ctxDoneCh:  streamCtx.Done(),
+			batchStart: streamBatchStart,
+		}
+		var batchOp string
+		var batchInfo nodeInfo
+		if bp.topic != nil {
+			batchOp = apidata.OperationOf(*bp.topic)
+		}
+		if bp.pub != nil {
+			batchInfo = bp.pub.getNodeInfo(node)
+		}
+		if bp.hasMetrics() {
+			bp.pub.metrics.totalBatchStarted.Inc(1, batchOp, "", node, batchInfo.role, batchInfo.tier)
+		}
+		if bp.hasMigrationMetrics() {
+			bp.pub.migrationMetrics.totalBatchStarted.Inc(1, batchOp, "", node, batchInfo.role, batchInfo.tier)
 		}
 		bp.f.events = append(bp.f.events, make(chan batchEvent))
 		_ = sendData()
@@ -202,8 +219,9 @@ func (bp *batchPublisher) Publish(ctx context.Context, topic bus.Topic, messages
 		recvStream := stream
 		recvDeferFn := deferFn
 		recvBC := bp.f.events[len(bp.f.events)-1]
+		recvBatchStart := streamBatchStart
 		run.Go(ctx, "batch-stream-recv", bp.pub.log, func(runCtx context.Context) {
-			bp.listenBatchResponse(runCtx, recvStream, recvDeferFn, recvBC, nodeName)
+			bp.listenBatchResponse(runCtx, recvStream, recvDeferFn, recvBC, nodeName, recvBatchStart)
 		})
 	}
 	return nil, err
@@ -218,11 +236,14 @@ func (bp *batchPublisher) hasMigrationMetrics() bool {
 }
 
 // listenBatchResponse receives the server response and records failover events and end-to-end failure metrics.
-func (bp *batchPublisher) listenBatchResponse(ctx context.Context, s clusterv1.Service_SendClient, deferFn func(), bc chan batchEvent, curNode string) {
+func (bp *batchPublisher) listenBatchResponse(ctx context.Context, s clusterv1.Service_SendClient, deferFn func(),
+	bc chan batchEvent, curNode string, batchStart time.Time,
+) {
 	defer func() {
 		close(bc)
 		deferFn()
 	}()
+	// ctx.Done() fires before any Recv; do NOT tick batch finished/latency here.
 	select {
 	case <-ctx.Done():
 		return
@@ -243,9 +264,13 @@ func (bp *batchPublisher) listenBatchResponse(ctx context.Context, s clusterv1.S
 	if errRecv != nil {
 		if bp.hasMetrics() {
 			bp.pub.metrics.totalErr.Inc(1, operation, "", curNode, info.role, info.tier, sendErrReasonRecvError)
+			bp.pub.metrics.totalBatchFinished.Inc(1, operation, "", curNode, info.role, info.tier)
+			bp.pub.metrics.totalBatchLatency.Observe(time.Since(batchStart).Seconds(), operation, "", curNode, info.role, info.tier)
 		}
 		if bp.hasMigrationMetrics() {
 			bp.pub.migrationMetrics.totalErr.Inc(1, operation, "", curNode, info.role, info.tier, sendErrReasonRecvError)
+			bp.pub.migrationMetrics.totalBatchFinished.Inc(1, operation, "", curNode, info.role, info.tier)
+			bp.pub.migrationMetrics.totalBatchLatency.Observe(time.Since(batchStart).Seconds(), operation, "", curNode, info.role, info.tier)
 		}
 		if grpchelper.IsFailoverError(errRecv) {
 			// Record circuit breaker failure before creating failover event
@@ -258,13 +283,25 @@ func (bp *batchPublisher) listenBatchResponse(ctx context.Context, s clusterv1.S
 		return
 	}
 	if resp == nil || resp.Error == "" || resp.Status == modelv1.Status_STATUS_SUCCEED {
+		if bp.hasMetrics() {
+			bp.pub.metrics.totalBatchFinished.Inc(1, operation, "", curNode, info.role, info.tier)
+			bp.pub.metrics.totalBatchLatency.Observe(time.Since(batchStart).Seconds(), operation, "", curNode, info.role, info.tier)
+		}
+		if bp.hasMigrationMetrics() {
+			bp.pub.migrationMetrics.totalBatchFinished.Inc(1, operation, "", curNode, info.role, info.tier)
+			bp.pub.migrationMetrics.totalBatchLatency.Observe(time.Since(batchStart).Seconds(), operation, "", curNode, info.role, info.tier)
+		}
 		return
 	}
 	if bp.hasMetrics() {
 		bp.pub.metrics.totalErr.Inc(1, operation, "", curNode, info.role, info.tier, sendErrReasonServerRejected)
+		bp.pub.metrics.totalBatchFinished.Inc(1, operation, "", curNode, info.role, info.tier)
+		bp.pub.metrics.totalBatchLatency.Observe(time.Since(batchStart).Seconds(), operation, "", curNode, info.role, info.tier)
 	}
 	if bp.hasMigrationMetrics() {
 		bp.pub.migrationMetrics.totalErr.Inc(1, operation, "", curNode, info.role, info.tier, sendErrReasonServerRejected)
+		bp.pub.migrationMetrics.totalBatchFinished.Inc(1, operation, "", curNode, info.role, info.tier)
+		bp.pub.migrationMetrics.totalBatchLatency.Observe(time.Since(batchStart).Seconds(), operation, "", curNode, info.role, info.tier)
 	}
 	ce := common.NewErrorWithStatus(resp.Status, resp.Error)
 	// Only failover statuses trigger circuit-breaker accounting; other server-side
