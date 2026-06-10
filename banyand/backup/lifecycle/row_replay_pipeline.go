@@ -25,11 +25,15 @@ import (
 	"sync/atomic"
 	"time"
 
+	"google.golang.org/protobuf/proto"
+
 	"github.com/apache/skywalking-banyandb/api/common"
 	"github.com/apache/skywalking-banyandb/banyand/internal/dump"
 	"github.com/apache/skywalking-banyandb/banyand/queue"
 	"github.com/apache/skywalking-banyandb/pkg/bus"
 	"github.com/apache/skywalking-banyandb/pkg/logger"
+	"github.com/apache/skywalking-banyandb/pkg/node"
+	"github.com/apache/skywalking-banyandb/pkg/run"
 )
 
 // rowReplayMaxInflight bounds how many row-replay batches may be sent but not
@@ -37,6 +41,18 @@ import (
 // overlap with the building and sending of the next batch (double buffering)
 // while capping the extra sender/receiver memory and write contention.
 const rowReplayMaxInflight = 2
+
+// rowReplayMaxBatchRows and rowReplayMaxBatchBytes bound a row-replay batch by
+// row count and by total in-flight marshaled bytes. A batch flushes when either
+// cap is reached, so the normal stream of small rows is cut by the row count
+// (unchanged throughput) while a run of unusually large rows is cut by the byte
+// budget — pinning peak marshal memory regardless of body-size distribution and
+// preventing a cluster of large bodies from ballooning one batch. Both are
+// overridable via lifecycle flags; the defaults need no configuration.
+var (
+	rowReplayMaxBatchRows  = 2000
+	rowReplayMaxBatchBytes = run.Bytes(32 << 20)
+)
 
 // nodeReplayError reports a failed row-replay batch. It distinguishes a global
 // send/confirm failure (err: the whole publish/close failed, or a row could not
@@ -69,13 +85,26 @@ func newNodeReplayError(cee map[string]*common.Error, err error) error {
 	return &nodeReplayError{cee: cee, err: err}
 }
 
-// recordReplayNodeErrors records any per-node delivery errors carried by err
-// into progress so they surface in the migration report. It is a no-op for a
-// global-only error.
-func recordReplayNodeErrors(progress *Progress, group string, err error) {
+// recordNodeErrors appends one node-scoped MigrationError per failing node so
+// per-node delivery/close errors surface in the migration report.
+func recordNodeErrors(progress *Progress, group, sourceStage, targetStage, catalog string, cee map[string]*common.Error) {
+	for nodeID, ce := range cee {
+		if ce == nil {
+			continue
+		}
+		progress.AddMigrationError(MigrationError{
+			SourceStage: sourceStage, TargetStage: targetStage, Group: group,
+			Catalog: catalog, Scope: scopeNode, Node: nodeID, Error: ce.Error(),
+		})
+	}
+}
+
+// recordReplayNodeErrors records any per-node delivery errors carried by err. It
+// is a no-op for a global-only error.
+func recordReplayNodeErrors(progress *Progress, group, sourceStage, targetStage, catalog string, err error) {
 	var nre *nodeReplayError
 	if errors.As(err, &nre) && len(nre.cee) > 0 {
-		progress.RecordRowReplayNodeErrors(group, nre.cee)
+		recordNodeErrors(progress, group, sourceStage, targetStage, catalog, nre.cee)
 	}
 }
 
@@ -146,33 +175,116 @@ type batchSender struct {
 	client    queue.Client
 	publisher queue.BatchPublisher
 	pipeline  *confirmPipeline
+	pool      *marshalBufferPool
 	batch     []bus.Message
-	topic     bus.Topic
-	timeout   time.Duration
-	batchSize int
+	lent      [][]byte
+	// skippedDetail locates a bounded sample of skipped series (part, seriesID,
+	// reason) so the migration report can point an operator at the source data,
+	// not just a count. Capped at maxSkipDetail to bound memory.
+	skippedDetail []skipError
+	topic         bus.Topic
+	timeout       time.Duration
+	maxRows       int
+	maxBytes      int
+	inflightBytes int
+	// Flush-reason tallies: which cap forced each batch out. A flush triggered by
+	// both caps at once is attributed to bytes (the memory-protecting cap that
+	// fires early in the big-body cluster). tailFlushes counts the trailing
+	// end-of-part flush that neither cap triggered.
+	rowLimitFlushes  int
+	byteLimitFlushes int
+	tailFlushes      int
+	// skippedRows counts rows dropped because their series could not be resolved
+	// (errSkipSeries: a part block referencing a series absent from the segment's
+	// sidx that could not be rebuilt from the part's columns). The part still
+	// completes; this surfaces how much a source-data gap dropped instead of
+	// aborting the whole migration.
+	skippedRows int
 }
 
-// newBatchSender builds a sender for one data type. batchSize and timeout are
-// per-type knobs each replayer (measure/stream/trace) supplies from its own
-// constants, reserved for per-type tuning; they coincide at 2000/30s today.
-func newBatchSender(client queue.Client, topic bus.Topic, batchSize int, timeout time.Duration) *batchSender {
+// maxSkipDetail bounds how many distinct skipped-series locations are retained
+// for the report; the full count still accrues in skippedRows.
+const maxSkipDetail = 200
+
+// recordSkip tallies one skipped series and, up to the cap, retains its location.
+func (s *batchSender) recordSkip(err error) {
+	s.skippedRows++
+	if c := asSkipError(err); c != nil && len(s.skippedDetail) < maxSkipDetail {
+		s.skippedDetail = append(s.skippedDetail, *c)
+	}
+}
+
+// newBatchSender builds a sender for one data type. maxRows and maxBytes bound a
+// batch by row count and total in-flight marshaled bytes; timeout is the
+// publisher's per-batch deadline. Each replayer (measure/stream/trace) supplies
+// these from the shared row-replay knobs.
+func newBatchSender(client queue.Client, topic bus.Topic, maxRows, maxBytes int, timeout time.Duration) *batchSender {
 	return &batchSender{
 		client:    client,
 		publisher: client.NewBatchPublisher(timeout),
 		pipeline:  newConfirmPipeline(),
+		pool:      newMarshalBufferPool(maxBytes),
 		topic:     topic,
-		batch:     make([]bus.Message, 0, batchSize),
+		batch:     make([]bus.Message, 0, maxRows),
 		timeout:   timeout,
-		batchSize: batchSize,
+		maxRows:   maxRows,
+		maxBytes:  maxBytes,
 	}
 }
 
-// enqueue buffers msg and, when the batch is full, sends and asynchronously
-// confirms it. The returned error is non-nil only when the in-flight bound
-// forced it to wait on (and surface) an earlier batch's failure.
-func (s *batchSender) enqueue(ctx context.Context, msg bus.Message) error {
+// enqueueMarshaled marshals m into a size-class-pooled buffer and enqueues it as
+// a []byte message, so the body is serialized once here instead of allocating a
+// fresh []byte in the shared publish path. The borrowed buffer is tracked in lent
+// and returned to the pool by flush once Publish has put every body on the wire
+// (gRPC SendMsg is synchronous), keeping reuse safe. The buffer's capacity feeds
+// the byte budget. sizeHint sizes the borrow: the caller passes a per-block size
+// (one proto.Size per series instead of per row, since rows of a block share a
+// schema), and MarshalAppend grows the buffer on the rare cross-class row, so the
+// hint only affects reuse efficiency, never correctness.
+func (s *batchSender) enqueueMarshaled(ctx context.Context, nodeID, group string, m proto.Message, sizeHint int) error {
+	buf, err := proto.MarshalOptions{}.MarshalAppend(s.pool.borrow(sizeHint), m)
+	if err != nil {
+		s.pool.put(buf)
+		return fmt.Errorf("marshal row-replay message: %w", err)
+	}
+	s.lent = append(s.lent, buf)
+	// Carry the group explicitly: the body is opaque marshaled bytes, so the
+	// publisher metrics path cannot recover the group from it (unlike the
+	// proto-message path), and the queue metrics would otherwise lose the label.
+	msg := bus.NewBatchMessageWithNodeAndGroup(bus.MessageID(time.Now().UnixNano()), nodeID, group, buf)
+	return s.enqueue(ctx, cap(buf), msg)
+}
+
+// routeAndEnqueue picks the target node for iwr and enqueues it. The
+// proto-message replayers (stream/trace) share this Pick+build+enqueue tail; the
+// measure columnar path routes inline via routeColumnar + enqueueMarshaled.
+func (s *batchSender) routeAndEnqueue(ctx context.Context, selector node.Selector,
+	group, name string, shardID uint32, iwr proto.Message,
+) error {
+	nodeID, err := selector.Pick(group, name, shardID, 0)
+	if err != nil {
+		return fmt.Errorf("pick target node for %s: %w", name, err)
+	}
+	msg := bus.NewBatchMessageWithNode(bus.MessageID(time.Now().UnixNano()), nodeID, iwr)
+	return s.enqueue(ctx, proto.Size(iwr), msg)
+}
+
+// enqueue buffers msg and, once the batch fills by row count or in-flight byte
+// budget, sends and asynchronously confirms it. size is the message's marshaled
+// size (cap of the pooled buffer for enqueueMarshaled, proto.Size for the
+// proto-message path) and feeds the byte budget. The returned error is non-nil
+// only when a flush's in-flight bound surfaced an earlier batch's failure.
+func (s *batchSender) enqueue(ctx context.Context, size int, msg bus.Message) error {
 	s.batch = append(s.batch, msg)
-	if len(s.batch) >= s.batchSize {
+	s.inflightBytes += size
+	byteCap := s.inflightBytes >= s.maxBytes
+	rowCap := len(s.batch) >= s.maxRows
+	if rowCap || byteCap {
+		if byteCap {
+			s.byteLimitFlushes++
+		} else {
+			s.rowLimitFlushes++
+		}
 		return s.flush(ctx)
 	}
 	return nil
@@ -190,6 +302,12 @@ func (s *batchSender) flush(ctx context.Context) error {
 		return nil
 	}
 	_, pubErr := s.publisher.Publish(ctx, s.topic, pending...)
+	// Publish is synchronous: every body is serialized onto the wire before it
+	// returns, so the marshaled buffers are no longer referenced by the transport
+	// and can be returned to the pool for the next batch to reuse.
+	s.pool.returnAll(s.lent)
+	s.lent = s.lent[:0]
+	s.inflightBytes = 0
 	pub := s.publisher
 	s.publisher = s.client.NewBatchPublisher(s.timeout)
 	ch := make(chan error, 1)
@@ -263,6 +381,13 @@ func (s *batchSender) replay(ctx context.Context, l *logger.Logger, group, part 
 	var failure error
 	for cur.Next() {
 		if err := emit(); err != nil {
+			// A series whose entity cannot be resolved (sidx gap) is skipped, not
+			// fatal: drop its rows, tally them, and keep migrating the rest so one
+			// localized source-data gap does not block the whole part/migration.
+			if errors.Is(err, errSkipSeries) {
+				s.recordSkip(err)
+				continue
+			}
 			warnAbort(rowCount, err)
 			failure = err
 			break
@@ -274,6 +399,9 @@ func (s *batchSender) replay(ctx context.Context, l *logger.Logger, group, part 
 			warnAbort(rowCount, iterErr)
 			failure = iterErr
 		} else {
+			if len(s.batch) > 0 {
+				s.tailFlushes++
+			}
 			failure = s.flush(ctx)
 		}
 	}
@@ -340,12 +468,15 @@ func (s *batchSender) take() []bus.Message {
 		return nil
 	}
 	pending := s.batch
-	s.batch = make([]bus.Message, 0, s.batchSize)
+	s.batch = make([]bus.Message, 0, s.maxRows)
 	return pending
 }
 
 // discard drops any buffered rows not yet flushed, abandoning the residual of a
-// failed part so it is never sent. It is take() with the rows thrown away.
+// failed part so it is never sent. The abandoned marshal buffers are dropped (not
+// returned to the pool) and the byte counter is reset, since no Publish ran.
 func (s *batchSender) discard() {
 	s.take()
+	s.lent = s.lent[:0]
+	s.inflightBytes = 0
 }

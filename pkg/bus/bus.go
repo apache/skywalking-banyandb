@@ -103,6 +103,13 @@ func NewBatchMessageWithNode(id MessageID, node string, data interface{}) Messag
 	return Message{id: id, node: node, payload: data, batchMode: true}
 }
 
+// NewBatchMessageWithNodeAndGroup returns a new batch Message carrying an explicit business group.
+// Use it for pre-marshaled ([]byte) payloads whose group is embedded in the opaque body and
+// therefore not recoverable by the publisher metrics path.
+func NewBatchMessageWithNodeAndGroup(id MessageID, node, group string, data interface{}) Message {
+	return Message{id: id, node: node, group: group, payload: data, batchMode: true}
+}
+
 // NewMessageWithNode returns a new Message with a MessageID and NodeID and embed data.
 func NewMessageWithNode(id MessageID, node string, data interface{}) Message {
 	return Message{id: id, node: node, payload: data}

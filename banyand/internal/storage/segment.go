@@ -713,13 +713,7 @@ func (sc *segmentController[T, O]) closeIdleSegments() int {
 }
 
 func (sc *segmentController[T, O]) format(tm time.Time) string {
-	switch sc.getOptions().SegmentInterval.Unit {
-	case HOUR:
-		return tm.Format(hourFormat)
-	case DAY:
-		return tm.Format(dayFormat)
-	}
-	panic("invalid interval unit")
+	return FormatSegmentTime(tm, sc.getOptions().SegmentInterval)
 }
 
 // parseSegmentTime parses a segment suffix into a time based on the interval unit.
@@ -729,6 +723,28 @@ func parseSegmentTime(value string, unit IntervalUnit) (time.Time, error) {
 		return time.ParseInLocation(hourFormat, value, time.Local)
 	case DAY:
 		return time.ParseInLocation(dayFormat, value, time.Local)
+	}
+	panic("invalid interval unit")
+}
+
+// ParseSegmentTime parses a segment-directory suffix back into its start time
+// for the given interval unit, the inverse of the suffix formatting used when a
+// segment directory is named. Callers outside this package use it to map the
+// suffixes returned by VisitSegmentsInTimeRange to the segment instants a
+// visitor observed.
+func ParseSegmentTime(suffix string, rule IntervalRule) (time.Time, error) {
+	return parseSegmentTime(suffix, rule.Unit)
+}
+
+// FormatSegmentTime formats a segment start time into its directory suffix for
+// the given interval rule, the inverse of ParseSegmentTime. The returned suffix
+// excludes the "seg-" directory prefix.
+func FormatSegmentTime(t time.Time, rule IntervalRule) string {
+	switch rule.Unit {
+	case HOUR:
+		return t.Format(hourFormat)
+	case DAY:
+		return t.Format(dayFormat)
 	}
 	panic("invalid interval unit")
 }

@@ -193,6 +193,10 @@ func (l *lifecycleService) FlagSet() *run.FlagSet {
 	flagS.IntVar(&l.maxExecutionTimes, "max-execution-times", 0, "Maximum number of times to execute the lifecycle migration. 0 means no limit.")
 	l.chunkSize = run.Bytes(1024 * 1024)
 	flagS.VarP(&l.chunkSize, "chunk-size", "", "Chunk size in bytes for streaming data during migration (default: 1MB)")
+	flagS.IntVar(&rowReplayMaxBatchRows, "row-replay-max-batch-rows", rowReplayMaxBatchRows,
+		"Maximum rows per row-replay batch (row-replay is the fallback for parts spanning multiple target segments)")
+	flagS.VarP(&rowReplayMaxBatchBytes, "row-replay-max-batch-bytes", "",
+		"Maximum in-flight marshaled bytes per row-replay batch; caps peak marshal memory for large bodies (default: 32MB)")
 
 	// Lifecycle server flags
 	flagS.BoolVar(&l.lifecycleTLS, "lifecycle-tls", false, "connection uses TLS if true, else plain TCP")
@@ -754,14 +758,14 @@ func (l *lifecycleService) buildSummaryStats(p *Progress) map[string]interface{}
 	totalTraceShards, completedTraceShards := l.calculateTotalCounts(p.TraceShardCounts, p.TraceShardProgress)
 	totalTraceSeries, completedTraceSeries := l.calculateTotalCounts(p.TraceSeriesCounts, p.TraceSeriesProgress)
 
-	// Calculate error counts
-	streamPartErrors := l.countErrors(p.StreamPartErrors)
-	streamSeriesErrors := l.countErrors(p.StreamSeriesErrors)
-	streamElementIndexErrors := l.countErrors(p.StreamElementIndexErrors)
-	measurePartErrors := l.countErrors(p.MeasurePartErrors)
-	measureSeriesErrors := l.countErrors(p.MeasureSeriesErrors)
-	traceShardErrors := l.countErrors(p.TraceShardErrors)
-	traceSeriesErrors := l.countErrors(p.TraceSeriesErrors)
+	// Calculate error counts from the structured MigrationErrors (single source).
+	streamPartErrors := countMigrationErrors(p, catalogStream, scopePart)
+	streamSeriesErrors := countMigrationErrors(p, catalogStream, scopeSeries)
+	streamElementIndexErrors := countMigrationErrors(p, catalogStream, scopeElementIndex)
+	measurePartErrors := countMigrationErrors(p, catalogMeasure, scopePart)
+	measureSeriesErrors := countMigrationErrors(p, catalogMeasure, scopeSeries)
+	traceShardErrors := countMigrationErrors(p, catalogTrace, scopeShard)
+	traceSeriesErrors := countMigrationErrors(p, catalogTrace, scopeSeries)
 
 	return map[string]interface{}{
 		"migration_status": map[string]interface{}{
@@ -866,30 +870,55 @@ func (l *lifecycleService) buildSyncBreakdown(chunk, replayParts, replayRows map
 
 // buildErrorSummary creates detailed error information.
 func (l *lifecycleService) buildErrorSummary(p *Progress) map[string]interface{} {
-	return map[string]interface{}{
-		"stream_parts":           l.buildErrorDetails(p.StreamPartErrors),
-		"stream_series":          l.buildErrorDetails(p.StreamSeriesErrors),
-		"stream_element_index":   l.buildErrorDetails(p.StreamElementIndexErrors),
-		"measure_parts":          l.buildErrorDetails(p.MeasurePartErrors),
-		"measure_series":         l.buildErrorDetails(p.MeasureSeriesErrors),
-		"trace_parts":            l.buildErrorDetails(p.TraceShardErrors),
-		"trace_series":           l.buildErrorDetails(p.TraceSeriesErrors),
-		"row_replay_node_errors": l.buildNodeErrorDetails(p.RowReplayNodeErrors),
+	// Project the flattened MigrationErrors into the 8 report buckets by their
+	// (catalog, scope), each an array (empty when none) so the JSON shape is
+	// stable.
+	buckets := make(map[string][]MigrationError, len(errorBuckets)+1)
+	for i := range errorBuckets {
+		buckets[errorBuckets[i].name] = []MigrationError{}
 	}
+	buckets[nodeErrorBucket] = []MigrationError{}
+	for i := range p.MigrationErrors {
+		if key := errorBucketKey(p.MigrationErrors[i].Catalog, p.MigrationErrors[i].Scope); key != "" {
+			buckets[key] = append(buckets[key], p.MigrationErrors[i])
+		}
+	}
+	out := make(map[string]interface{}, len(buckets))
+	for k := range buckets {
+		out[k] = buckets[k]
+	}
+	return out
 }
 
-// buildNodeErrorDetails copies the group→node→message error map for the report,
-// returning an empty map (never nil) so the JSON shape is stable.
-func (l *lifecycleService) buildNodeErrorDetails(nodeErrors map[string]map[string]string) map[string]interface{} {
-	result := make(map[string]interface{}, len(nodeErrors))
-	for group, nodes := range nodeErrors {
-		groupErrors := make(map[string]interface{}, len(nodes))
-		for nodeID, msg := range nodes {
-			groupErrors[nodeID] = msg
-		}
-		result[group] = groupErrors
+// errorBuckets is the single source of truth for the report's error buckets:
+// each entry names a bucket and the (catalog, scope) it holds. Node-scoped
+// errors share nodeErrorBucket across catalogs and are handled separately.
+var errorBuckets = []struct {
+	name, catalog, scope string
+}{
+	{"stream_parts", catalogStream, scopePart},
+	{"stream_series", catalogStream, scopeSeries},
+	{"stream_element_index", catalogStream, scopeElementIndex},
+	{"measure_parts", catalogMeasure, scopePart},
+	{"measure_series", catalogMeasure, scopeSeries},
+	{"trace_parts", catalogTrace, scopeShard},
+	{"trace_series", catalogTrace, scopeSeries},
+}
+
+const nodeErrorBucket = "row_replay_node_errors"
+
+// errorBucketKey maps a migration error's catalog+scope to its report bucket
+// name, or "" if it has none. Node-scoped errors share one bucket across catalogs.
+func errorBucketKey(catalog, scope string) string {
+	if scope == scopeNode {
+		return nodeErrorBucket
 	}
-	return result
+	for i := range errorBuckets {
+		if errorBuckets[i].catalog == catalog && errorBuckets[i].scope == scope {
+			return errorBuckets[i].name
+		}
+	}
+	return ""
 }
 
 // Helper functions.
@@ -904,45 +933,16 @@ func (l *lifecycleService) calculateTotalCounts(counts, progress map[string]int)
 	return totalCount, totalProgress
 }
 
-func (l *lifecycleService) countErrors(errorMaps interface{}) int {
-	switch v := errorMaps.(type) {
-	// New four-level structure: map[group]map[segmentID]map[shardID]map[partID]error
-	case map[string]map[string]map[common.ShardID]map[uint64]string:
-		total := 0
-		for _, segments := range v {
-			for _, shards := range segments {
-				for _, parts := range shards {
-					total += len(parts)
-				}
-			}
+// countMigrationErrors counts the structured migration errors matching the given
+// catalog and scope, the single source for the report's per-resource error tally.
+func countMigrationErrors(p *Progress, catalog, scope string) int {
+	n := 0
+	for i := range p.MigrationErrors {
+		if p.MigrationErrors[i].Catalog == catalog && p.MigrationErrors[i].Scope == scope {
+			n++
 		}
-		return total
-	// New three-level structure: map[group]map[segmentID]map[shardID]error
-	case map[string]map[string]map[common.ShardID]string:
-		total := 0
-		for _, segments := range v {
-			for _, shards := range segments {
-				total += len(shards)
-			}
-		}
-		return total
-	// Legacy two-level structure: map[group]map[partID]error
-	case map[string]map[uint64]string:
-		total := 0
-		for _, groupErrors := range v {
-			total += len(groupErrors)
-		}
-		return total
-	// Legacy two-level structure: map[group]map[shardID]error
-	case map[string]map[string]string:
-		total := 0
-		for _, groupErrors := range v {
-			total += len(groupErrors)
-		}
-		return total
-	default:
-		return 0
 	}
+	return n
 }
 
 func (l *lifecycleService) calculatePercentage(completed, total int) float64 {
@@ -950,73 +950,6 @@ func (l *lifecycleService) calculatePercentage(completed, total int) float64 {
 		return 0.0
 	}
 	return float64(completed) / float64(total) * 100.0
-}
-
-func (l *lifecycleService) buildErrorDetails(errorMaps interface{}) map[string]interface{} {
-	result := make(map[string]interface{})
-
-	switch v := errorMaps.(type) {
-	// New four-level structure: map[group]map[segmentID]map[shardID]map[partID]error
-	case map[string]map[string]map[common.ShardID]map[uint64]string:
-		for group, segments := range v {
-			groupDetails := make(map[string]interface{})
-			for segmentID, shards := range segments {
-				segmentDetails := make(map[string]interface{})
-				for shardID, parts := range shards {
-					if len(parts) > 0 {
-						// Copy the inner map so the report does not alias
-						// Progress state; aliasing would race with a
-						// concurrent Mark*Error during JSON marshaling.
-						partDetails := make(map[uint64]string, len(parts))
-						for partID, errorMsg := range parts {
-							partDetails[partID] = errorMsg
-						}
-						segmentDetails[fmt.Sprintf("shard_%d", shardID)] = partDetails
-					}
-				}
-				if len(segmentDetails) > 0 {
-					groupDetails[segmentID] = segmentDetails
-				}
-			}
-			if len(groupDetails) > 0 {
-				result[group] = groupDetails
-			}
-		}
-	// New three-level structure: map[group]map[segmentID]map[shardID]error
-	case map[string]map[string]map[common.ShardID]string:
-		for group, segments := range v {
-			groupDetails := make(map[string]interface{})
-			for segmentID, shards := range segments {
-				if len(shards) > 0 {
-					// Convert ShardID keys to strings for JSON serialization
-					shardDetails := make(map[string]string)
-					for shardID, errorMsg := range shards {
-						shardDetails[fmt.Sprintf("shard_%d", shardID)] = errorMsg
-					}
-					groupDetails[segmentID] = shardDetails
-				}
-			}
-			if len(groupDetails) > 0 {
-				result[group] = groupDetails
-			}
-		}
-	// Legacy two-level structure: map[group]map[partID]error
-	case map[string]map[uint64]string:
-		for group, groupErrors := range v {
-			if len(groupErrors) > 0 {
-				result[group] = groupErrors
-			}
-		}
-	// Legacy two-level structure: map[group]map[shardID]error
-	case map[string]map[string]string:
-		for group, groupErrors := range v {
-			if len(groupErrors) > 0 {
-				result[group] = groupErrors
-			}
-		}
-	}
-
-	return result
 }
 
 // rotateReportFiles keeps only the 5 most recent report files.

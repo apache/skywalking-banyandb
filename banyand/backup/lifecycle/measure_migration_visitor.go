@@ -49,8 +49,12 @@ type measureMigrationVisitor struct {
 	logger                  *logger.Logger
 	progress                *Progress
 	replayer                *measureRowReplayer
+	skippedSourceStarts     map[int64]struct{}
 	group                   string
+	sourceStage             string
+	targetStage             string
 	targetStageInterval     storage.IntervalRule
+	sourceSegmentInterval   storage.IntervalRule
 	chunkSize               int
 	partsCopiedSingleTarget uint64
 	partsReplayedRowLevel   uint64
@@ -61,21 +65,79 @@ type measureMigrationVisitor struct {
 // newMeasureMigrationVisitor creates a new file-based migration visitor.
 func newMeasureMigrationVisitor(group *commonv1.Group, shardNum, replicas uint32, selector node.Selector, client queue.Client,
 	l *logger.Logger, progress *Progress, chunkSize int, targetStageInterval storage.IntervalRule, md metadata.Repo,
+	sourceStage, targetStage string, sourceSegmentInterval storage.IntervalRule,
 ) *measureMigrationVisitor {
 	return &measureMigrationVisitor{
-		group:               group.Metadata.Name,
-		targetShardNum:      shardNum,
-		replicas:            replicas,
-		selector:            selector,
-		client:              client,
-		chunkedClients:      make(map[string]queue.ChunkedSyncClient),
-		logger:              l,
-		progress:            progress,
-		chunkSize:           chunkSize,
-		targetStageInterval: targetStageInterval,
-		metadata:            md,
-		lfs:                 fs.NewLocalFileSystem(),
+		group:                 group.Metadata.Name,
+		sourceStage:           sourceStage,
+		targetStage:           targetStage,
+		sourceSegmentInterval: sourceSegmentInterval,
+		targetShardNum:        shardNum,
+		replicas:              replicas,
+		selector:              selector,
+		client:                client,
+		chunkedClients:        make(map[string]queue.ChunkedSyncClient),
+		logger:                l,
+		progress:              progress,
+		chunkSize:             chunkSize,
+		targetStageInterval:   targetStageInterval,
+		metadata:              md,
+		lfs:                   fs.NewLocalFileSystem(),
+		skippedSourceStarts:   make(map[int64]struct{}),
 	}
+}
+
+// recordSkippedSource marks a source segment (by its start instant) as holding
+// rows the row-replay could not republish, so it must be retained rather than
+// deleted. Keyed by start nanos, the same value the segment suffix decodes to.
+func (mv *measureMigrationVisitor) recordSkippedSource(segmentTR *timestamp.TimeRange) {
+	mv.skippedSourceStarts[segmentTR.Start.UnixNano()] = struct{}{}
+}
+
+// recordError appends a structured measure migration error to the report,
+// keyed by the SOURCE segment (segmentTR) so segment/interval describe the data
+// being migrated. partID is nil for series-scoped errors.
+func (mv *measureMigrationVisitor) recordError(scope string, segmentTR *timestamp.TimeRange,
+	shardID common.ShardID, partID *uint64, msg string,
+) {
+	seg, interval := segmentErrorLocation(segmentTR, mv.sourceSegmentInterval)
+	s := uint32(shardID)
+	mv.progress.AddMigrationError(MigrationError{
+		SourceStage: mv.sourceStage, TargetStage: mv.targetStage, Group: mv.group,
+		Catalog: catalogMeasure, Scope: scope, Segment: seg, Interval: interval,
+		Shard: &s, Part: partID, Error: msg,
+	})
+}
+
+// SkippedSourceSegmentStarts returns the start instants (UnixNano) of source
+// segments that must be retained because row-replay skipped unresolved rows in
+// them. The migration excludes these from the delete-after-migration suffix set.
+func (mv *measureMigrationVisitor) SkippedSourceSegmentStarts() []int64 {
+	if len(mv.skippedSourceStarts) == 0 {
+		return nil
+	}
+	out := make([]int64, 0, len(mv.skippedSourceStarts))
+	for start := range mv.skippedSourceStarts {
+		out = append(out, start)
+	}
+	return out
+}
+
+// formatSkipExamples renders a bounded sample of skip locations for a report
+// message.
+func formatSkipExamples(detail []skipError) string {
+	const maxExamples = 5
+	if len(detail) == 0 {
+		return "[]"
+	}
+	parts := make([]string, 0, maxExamples)
+	for i := range detail {
+		if i >= maxExamples {
+			break
+		}
+		parts = append(parts, fmt.Sprintf("{seriesID=%d reason=%s}", detail[i].seriesID, detail[i].reason))
+	}
+	return "[" + strings.Join(parts, " ") + "]"
 }
 
 // CounterSnapshot returns the current (chunk-sync, row-replay) part counts.
@@ -212,7 +274,7 @@ func (mv *measureMigrationVisitor) VisitSeries(segmentTR *timestamp.TimeRange, s
 			segmentFile, err := mv.lfs.OpenFile(segmentFilePath)
 			if err != nil {
 				errorMsg := fmt.Sprintf("failed to open measure segment file %s: %v", segmentFilePath, err)
-				mv.progress.MarkMeasureSeriesError(mv.group, segmentIDStr, shardID, errorMsg)
+				mv.recordError(scopeSeries, segmentTR, shardID, nil, errorMsg)
 				mv.logger.Error().
 					Str("path", segmentFilePath).
 					Err(err).
@@ -246,7 +308,7 @@ func (mv *measureMigrationVisitor) VisitSeries(segmentTR *timestamp.TimeRange, s
 			// Stream segment to target shard replicas
 			if err := mv.streamPartToTargetShard(partData); err != nil {
 				errorMsg := fmt.Sprintf("failed to stream measure segment to target shard %d: %v", targetShardID, err)
-				mv.progress.MarkMeasureSeriesError(mv.group, segmentIDStr, shardID, errorMsg)
+				mv.recordError(scopeSeries, segmentTR, shardID, nil, errorMsg)
 				return fmt.Errorf("failed to stream measure segment to target shard %d: %w", targetShardID, err)
 			}
 			// Mark segment as completed for this specific target segment
@@ -341,7 +403,7 @@ func (mv *measureMigrationVisitor) VisitPart(segmentTR *timestamp.TimeRange, sou
 		// Stream part to target segment
 		if err := mv.streamPartToTargetShard(targetPartData); err != nil {
 			errorMsg := fmt.Sprintf("failed to stream measure part to target segment %s: %v", targetSegmentTime.Format(time.RFC3339), err)
-			mv.progress.MarkMeasurePartError(mv.group, sourceSegmentIDStr, sourceShardID, partID, errorMsg)
+			mv.recordError(scopePart, segmentTR, sourceShardID, &partID, errorMsg)
 			return fmt.Errorf("failed to stream measure part to target segment: %w", err)
 		}
 
@@ -396,20 +458,36 @@ func (mv *measureMigrationVisitor) visitPartRowReplay(ctx context.Context, segme
 	// draining all in-flight confirmations before returning. A non-nil error means
 	// some rows were not durably delivered; marking the part errored (rather than
 	// completed) ensures the resume guard re-replays the whole part.
-	rowCount, err := replayer.replayPart(ctx, partPath)
+	res, err := replayer.replayPart(ctx, partPath)
 	if err != nil {
 		// Row-replay is all-or-nothing per part; mark the source part errored so
 		// resume retries the whole part (same source key the guard checks above).
-		recordReplayNodeErrors(mv.progress, mv.group, err)
-		mv.progress.MarkMeasurePartError(mv.group, sourceSegmentIDStr, sourceShardID, partID, err.Error())
+		recordReplayNodeErrors(mv.progress, mv.group, mv.sourceStage, mv.targetStage, catalogMeasure, err)
+		mv.recordError(scopePart, segmentTR, sourceShardID, &partID, err.Error())
 		return fmt.Errorf("row-replay measure part %s: %w", partPath, err)
+	}
+	if res.skipped > 0 {
+		// Some series could not be resolved from sidx nor rebuilt from the part's
+		// columns: their rows remain only in the source part. Record a locatable
+		// error and retain the source segment (excluded from the post-migration
+		// delete set) so the data is not silently and permanently lost (S1).
+		mv.recordSkippedSource(segmentTR)
+		skipMsg := fmt.Sprintf("row-replay skipped %d unresolved rows (series-index gap, not rebuildable from columns); examples=%s",
+			res.skipped, formatSkipExamples(res.detail))
+		mv.recordError(scopePart, segmentTR, sourceShardID, &partID, skipMsg)
+		mv.logger.Warn().
+			Uint64("part_id", partID).
+			Int("skipped_rows", res.skipped).
+			Int("published_rows", res.rows).
+			Str("group", mv.group).
+			Msg("row-replay skipped unresolved series; retaining source segment to avoid data loss")
 	}
 	mv.progress.MarkMeasurePartCompleted(mv.group, sourceSegmentIDStr, sourceShardID, partID)
 	mv.progress.MarkSourceMeasurePartCompleted(mv.group, partPath, sourceShardID, partID)
-	mv.progress.AddMeasureRowReplay(mv.group, rowCount)
+	mv.progress.AddMeasureRowReplay(mv.group, res.rows)
 	mv.logger.Info().
 		Uint64("part_id", partID).
-		Int("rows_published", rowCount).
+		Int("rows_published", res.rows).
 		Str("group", mv.group).
 		Msg("measure row-replay completed")
 	return nil
@@ -487,7 +565,7 @@ func (mv *measureMigrationVisitor) streamPartToNode(nodeID string, targetShardID
 func (mv *measureMigrationVisitor) Close() error {
 	if mv.replayer != nil {
 		cee, replayCloseErr := mv.replayer.Close()
-		mv.progress.RecordRowReplayNodeErrors(mv.group, cee)
+		recordNodeErrors(mv.progress, mv.group, mv.sourceStage, mv.targetStage, catalogMeasure, cee)
 		if replayCloseErr != nil {
 			mv.logger.Warn().Err(replayCloseErr).Interface("node_errors", cee).Msg("failed to close measure row replayer")
 		} else if len(cee) > 0 {

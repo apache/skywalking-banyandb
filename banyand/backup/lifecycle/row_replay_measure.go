@@ -20,11 +20,10 @@ package lifecycle
 import (
 	"context"
 	"fmt"
-	"path/filepath"
-	"strconv"
 	"sync"
 	"time"
 
+	"google.golang.org/protobuf/proto"
 	"google.golang.org/protobuf/types/known/timestamppb"
 
 	"github.com/apache/skywalking-banyandb/api/common"
@@ -32,16 +31,17 @@ import (
 	commonv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/common/v1"
 	databasev1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/database/v1"
 	measurev1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/measure/v1"
+	modelv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/model/v1"
 	"github.com/apache/skywalking-banyandb/banyand/internal/dump"
 	dumpmeasure "github.com/apache/skywalking-banyandb/banyand/internal/dump/measure"
 	"github.com/apache/skywalking-banyandb/banyand/metadata"
 	"github.com/apache/skywalking-banyandb/banyand/metadata/schema"
 	"github.com/apache/skywalking-banyandb/banyand/queue"
-	"github.com/apache/skywalking-banyandb/pkg/bus"
 	"github.com/apache/skywalking-banyandb/pkg/fs"
 	"github.com/apache/skywalking-banyandb/pkg/logger"
 	"github.com/apache/skywalking-banyandb/pkg/node"
 	"github.com/apache/skywalking-banyandb/pkg/partition"
+	pbv1 "github.com/apache/skywalking-banyandb/pkg/pb/v1"
 )
 
 const (
@@ -70,9 +70,12 @@ type measureRowReplayer struct {
 	schemaCache     map[string]*cachedMeasureSchema
 	irResolver      *dump.IndexResolver
 	mergedRuleToTag map[uint32]dump.IndexedTagSpec
+	rebuildIdx      *entityRebuildIndex
 	counter         *uint64
 	group           string
 	irPath          string
+	rebuildEV       []*modelv1.TagValue
+	rebuildSeries   pbv1.Series
 	schemaCacheMu   sync.Mutex
 	irMu            sync.Mutex
 	targetShardNum  uint32
@@ -111,12 +114,13 @@ func newMeasureRowReplayer(
 		group:           group,
 		targetShardNum:  targetShardNum,
 		selector:        selector,
-		sender:          newBatchSender(client, data.TopicMeasureWrite, measureReplayBatchSize, measureReplayBatchTimeout),
+		sender:          newBatchSender(client, data.TopicMeasureWrite, rowReplayMaxBatchRows, int(rowReplayMaxBatchBytes), measureReplayBatchTimeout),
 		fs:              fileSystem,
 		logger:          l,
 		measureSchemas:  measureSchemas,
 		schemaCache:     make(map[string]*cachedMeasureSchema),
 		mergedRuleToTag: deriveMergedRuleToTag(measures, rules, bindings),
+		rebuildIdx:      buildEntityRebuildIndex(measureSchemas),
 		counter:         counter,
 	}, nil
 }
@@ -124,14 +128,18 @@ func newMeasureRowReplayer(
 // Close drains any outstanding batch confirmations, closes the publisher and
 // releases cached IndexResolver handles.
 func (r *measureRowReplayer) Close() (map[string]*common.Error, error) {
-	cee, closeErr := r.sender.close()
-	r.irMu.Lock()
-	if r.irResolver != nil {
-		_ = r.irResolver.Close()
-		r.irResolver = nil
-		r.irPath = ""
+	tally := r.logger.Info().
+		Str("group", r.group).
+		Int("byte_limit_flushes", r.sender.byteLimitFlushes).
+		Int("row_limit_flushes", r.sender.rowLimitFlushes).
+		Int("tail_flushes", r.sender.tailFlushes).
+		Int("skipped_rows", r.sender.skippedRows)
+	if r.sender.skippedRows > 0 {
+		tally = tally.Bool("incomplete_due_to_sidx_gap", true)
 	}
-	r.irMu.Unlock()
+	tally.Msg("row-replay flush-reason tally (byte_limit=hit maxBytes; row_limit=hit maxRows; tail=end-of-part; skipped_rows=unresolvable series dropped)")
+	cee, closeErr := r.sender.close()
+	closeIndexResolver(&r.irMu, &r.irResolver, &r.irPath)
 	return cee, closeErr
 }
 
@@ -158,59 +166,184 @@ func (r *measureRowReplayer) loadSchema(measureName string) (*cachedMeasureSchem
 	return c, nil
 }
 
-// loadIndexResolver lazily opens an IndexResolver for the current source
-// segment. Only one resolver is kept resident: same segmentPath reuses it
-// (so all shards/parts under a segment share the bluge reader and avoid
-// reopening the same exclusive-locked dir), and a different segmentPath closes
-// the prior one before opening a new one. The replayer's Close releases the
-// last resolver.
+// loadIndexResolver lazily opens (and keeps resident) the IndexResolver for the
+// current source segment via the shared helper, decoding indexed values with the
+// group's merged rule-to-tag map.
 func (r *measureRowReplayer) loadIndexResolver(segmentPath string) (*dump.IndexResolver, error) {
-	r.irMu.Lock()
-	defer r.irMu.Unlock()
-	if r.irResolver != nil && r.irPath == segmentPath {
-		return r.irResolver, nil
-	}
-	if r.irResolver != nil {
-		_ = r.irResolver.Close()
-		r.irResolver = nil
-		r.irPath = ""
-	}
-	ir, err := dump.NewIndexResolver(segmentPath, dump.DefaultIndexCacheSize, r.mergedRuleToTag)
-	if err != nil {
-		return nil, fmt.Errorf("open index resolver for %s: %w", segmentPath, err)
-	}
-	r.irResolver = ir
-	r.irPath = segmentPath
-	return ir, nil
+	return reloadIndexResolver(&r.irMu, &r.irResolver, &r.irPath, segmentPath, r.mergedRuleToTag)
+}
+
+// partReplayResult reports what one part's replay delivered: the rows published,
+// the rows skipped because their series could not be resolved or rebuilt
+// (errSkipSeries), and a bounded sample of those skips' locations for the report.
+// A skipped > 0 result means the source part still holds data the migration could
+// not republish, so its source segment must be retained rather than deleted.
+type partReplayResult struct {
+	detail  []skipError
+	rows    int
+	skipped int
 }
 
 // replayPart opens a source part and replays its rows through the sender, which
 // sends and confirms batches through the bounded pipeline. The returned error is
-// non-nil when any row build/route, iteration, or batch confirmation failed.
-func (r *measureRowReplayer) replayPart(ctx context.Context, partPath string) (int, error) {
-	partID, parseErr := strconv.ParseUint(filepath.Base(partPath), 16, 64)
+// non-nil when any row build/route, iteration, or batch confirmation failed. The
+// result's skipped count and detail are this part's delta from the (replayer-wide)
+// sender tallies.
+func (r *measureRowReplayer) replayPart(ctx context.Context, partPath string) (partReplayResult, error) {
+	partID, shardPath, segmentPath, parseErr := parseReplayPartPath(partPath)
 	if parseErr != nil {
-		return 0, fmt.Errorf("invalid part path %s: %w", partPath, parseErr)
+		return partReplayResult{}, parseErr
 	}
-	shardPath := filepath.Dir(partPath)
-	segmentPath := filepath.Dir(shardPath)
 
 	reader, err := dumpmeasure.OpenPart(partID, shardPath, r.fs)
 	if err != nil {
-		return 0, fmt.Errorf("open part %s: %w", partPath, err)
+		return partReplayResult{}, fmt.Errorf("open part %s: %w", partPath, err)
 	}
 	defer reader.Close()
 
 	ir, err := r.loadIndexResolver(segmentPath)
 	if err != nil {
-		return 0, fmt.Errorf("load index resolver for segment %s: %w", segmentPath, err)
+		return partReplayResult{}, fmt.Errorf("load index resolver for segment %s: %w", segmentPath, err)
 	}
 	reader.SetIndexResolver(ir)
 
-	it := reader.Iterator()
-	defer it.Close()
-	return r.sender.replay(ctx, r.logger, r.group, partPath, r.counter, it,
-		func() error { return r.publishRow(ctx, ir, it.Row()) })
+	// Reuse the dump iterator's file-read/decompress scratch across blocks
+	// (transient buffers, decoder owns the decompressed output) to cut churn.
+	reader.SetReuseBuffers(true)
+	// A3 columnar replay: pull one row at a time but build each proto straight
+	// from the shared column view, with per-block constants (entity decode,
+	// indexed tags, route) resolved once per block (A2) instead of per row.
+	cur := reader.ColumnarIterator()
+	defer cur.Close()
+	// bc caches per-block constants (A2); pb is a single reusable proto tree the
+	// sender marshals to bytes immediately, so one tree serves every row instead
+	// of allocating a fresh graph. Both are part-local: parts replay sequentially.
+	var bc measureBlockCtx
+	bc.partPath = partPath
+	var pb measureProtoBuilder
+	// The sender's skip tallies are replayer-wide (one sender serves every part),
+	// so snapshot them around this part to recover its own skipped delta.
+	beforeRows := r.sender.skippedRows
+	beforeDetail := len(r.sender.skippedDetail)
+	rowCount, replayErr := r.sender.replay(ctx, r.logger, r.group, partPath, r.counter, cur,
+		func() error { return r.publishRowColumnar(ctx, &bc, &pb, cur.Block(), cur.Index()) })
+	res := partReplayResult{rows: rowCount, skipped: r.sender.skippedRows - beforeRows}
+	if d := r.sender.skippedDetail[beforeDetail:]; len(d) > 0 {
+		res.detail = append([]skipError(nil), d...)
+	}
+	return res, replayErr
+}
+
+// measureBlockCtx caches the constants that are identical for every row of one
+// block (one series): the decoded subject/entity, the schema, the indexed-tag
+// and entity TagValue maps, and — when routing does not depend on per-row tags
+// (no sharding key) — the resolved shardID, encoded entity values and node.
+type measureBlockCtx struct {
+	cached       *cachedMeasureSchema
+	entityIdx    map[string]*modelv1.TagValue
+	indexedTyped map[string]*modelv1.TagValue
+	subject      string
+	nodeID       string
+	partPath     string
+	entityEnc    []*modelv1.TagValue
+	seriesID     uint64
+	sizeHint     int
+	shardID      uint32
+	valid        bool
+	routeValid   bool
+}
+
+// ensureBlock recomputes the block-constant context when the series changes.
+func (r *measureRowReplayer) ensureBlock(ir *dump.IndexResolver, bc *measureBlockCtx, cb *dumpmeasure.ColumnarBlock) error {
+	if bc.valid && bc.seriesID == uint64(cb.SeriesID) {
+		return nil
+	}
+	// Resolve the entity from sidx, falling back to a column rebuild on a sidx gap
+	// so row-replay no longer depends on sidx completeness (S4 root fix).
+	subject, evList, reason, ok := r.decodeOrRebuildEntity(cb.SeriesID, cb.EntityValues, columnarBlockLookup(cb))
+	if !ok {
+		return &skipError{partPath: bc.partPath, seriesID: uint64(cb.SeriesID), reason: reason}
+	}
+	cached, err := r.loadSchema(subject)
+	if err != nil {
+		return err
+	}
+	bc.valid = true
+	bc.seriesID = uint64(cb.SeriesID)
+	bc.subject = subject
+	bc.cached = cached
+	bc.indexedTyped = ir.DecodeTagValues(cb.IndexedTags)
+	bc.entityIdx = buildEntityTagIndex(cached.schema.Entity, evList)
+	bc.routeValid = false
+	bc.sizeHint = 0
+	return nil
+}
+
+// publishRowColumnar fills the reusable proto tree for row i of cb and enqueues
+// it, reusing the block-constant context. Output is byte-identical to publishRow.
+func (r *measureRowReplayer) publishRowColumnar(ctx context.Context, bc *measureBlockCtx, pb *measureProtoBuilder, cb *dumpmeasure.ColumnarBlock, i int) error {
+	ir, err := r.currentIndexResolver()
+	if err != nil {
+		return err
+	}
+	iwr, nodeID, err := r.fillWriteRequestColumnar(ir, bc, pb, cb, i)
+	if err != nil {
+		return err
+	}
+	// Rows of a block share one series/schema, so their marshaled size lands in
+	// the same size class. Size the first row once and reuse it as the borrow
+	// hint for the rest, replacing a per-row proto.Size walk (~10% of replay CPU).
+	if bc.sizeHint == 0 {
+		bc.sizeHint = proto.Size(iwr)
+	}
+	return r.sender.enqueueMarshaled(ctx, nodeID, r.group, iwr, bc.sizeHint)
+}
+
+// routeColumnar resolves the shardID, encoded entity values and target node for
+// the current block. When the measure has no sharding key the entity fully
+// determines routing, so it is resolved once per block (cached on bc) and reused
+// for every row; otherwise it is recomputed per row from tagFamilies.
+func (r *measureRowReplayer) routeColumnar(
+	bc *measureBlockCtx, tagFamilies []*modelv1.TagFamilyForWrite,
+) (uint32, []*modelv1.TagValue, string, error) {
+	if bc.cached.shardingKey == nil {
+		if !bc.routeValid {
+			tagValues, sid, rErr := partition.ApplyLocators(bc.subject, tagFamilies,
+				bc.cached.entityLocator, nil, r.targetShardNum)
+			if rErr != nil {
+				return 0, nil, "", fmt.Errorf("route %s: %w", bc.subject, rErr)
+			}
+			pickedNode, pErr := r.selector.Pick(r.group, bc.subject, uint32(sid), 0)
+			if pErr != nil {
+				return 0, nil, "", fmt.Errorf("pick target node for %s: %w", bc.subject, pErr)
+			}
+			bc.shardID = uint32(sid)
+			bc.entityEnc = tagValues[1:].Encode()
+			bc.nodeID = pickedNode
+			bc.routeValid = true
+		}
+		return bc.shardID, bc.entityEnc, bc.nodeID, nil
+	}
+	tagValues, sid, rErr := partition.ApplyLocators(bc.subject, tagFamilies,
+		bc.cached.entityLocator, bc.cached.shardingKey, r.targetShardNum)
+	if rErr != nil {
+		return 0, nil, "", fmt.Errorf("route %s: %w", bc.subject, rErr)
+	}
+	nodeID, pErr := r.selector.Pick(r.group, bc.subject, uint32(sid), 0)
+	if pErr != nil {
+		return 0, nil, "", fmt.Errorf("pick target node for %s: %w", bc.subject, pErr)
+	}
+	return uint32(sid), tagValues[1:].Encode(), nodeID, nil
+}
+
+// currentIndexResolver returns the resolver opened for the part being replayed.
+func (r *measureRowReplayer) currentIndexResolver() (*dump.IndexResolver, error) {
+	r.irMu.Lock()
+	defer r.irMu.Unlock()
+	if r.irResolver == nil {
+		return nil, fmt.Errorf("index resolver not initialized")
+	}
+	return r.irResolver, nil
 }
 
 // buildWriteRequest reconstructs the WriteRequest + InternalWriteRequest pair
@@ -218,9 +351,9 @@ func (r *measureRowReplayer) replayPart(ctx context.Context, partPath string) (i
 func (r *measureRowReplayer) buildWriteRequest(
 	ir *dump.IndexResolver, row dumpmeasure.Row,
 ) (*measurev1.WriteRequest, *measurev1.InternalWriteRequest, error) {
-	subject, evList, err := decodeSeriesEntityValues(row.EntityValues)
-	if err != nil {
-		return nil, nil, fmt.Errorf("decode entity values (seriesID=%d): %w", row.SeriesID, err)
+	subject, evList, reason, ok := r.decodeOrRebuildEntity(row.SeriesID, row.EntityValues, rowLookup(row))
+	if !ok {
+		return nil, nil, &skipError{seriesID: uint64(row.SeriesID), reason: reason}
 	}
 	cached, err := r.loadSchema(subject)
 	if err != nil {
@@ -251,20 +384,4 @@ func (r *measureRowReplayer) buildWriteRequest(
 		Request:      wr,
 	}
 	return wr, iwr, nil
-}
-
-// publishRow rebuilds a WriteRequest from a measure Row and hands it to the
-// sender. The returned error is non-nil only on a build/route error or when a
-// full batch's asynchronous confirmation surfaced an earlier per-node failure.
-func (r *measureRowReplayer) publishRow(ctx context.Context, ir *dump.IndexResolver, row dumpmeasure.Row) error {
-	wr, iwr, err := r.buildWriteRequest(ir, row)
-	if err != nil {
-		return err
-	}
-	nodeID, err := r.selector.Pick(r.group, wr.Metadata.Name, iwr.ShardId, 0)
-	if err != nil {
-		return fmt.Errorf("pick target node for %s: %w", wr.Metadata.Name, err)
-	}
-	msg := bus.NewBatchMessageWithNode(bus.MessageID(time.Now().UnixNano()), nodeID, iwr)
-	return r.sender.enqueue(ctx, msg)
 }

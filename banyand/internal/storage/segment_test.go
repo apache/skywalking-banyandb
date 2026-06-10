@@ -1658,3 +1658,21 @@ func TestCreateSegment_PersistedMetadataReflectsAlignedRange(t *testing.T) {
 	assert.Equal(t, expectedEnd.Format(time.RFC3339Nano), meta.EndTime,
 		"persisted endTime must reflect the epoch-aligned bucket end, not start+15d from the probe day")
 }
+
+// TestFormatSegmentTime_RoundTrip pins that FormatSegmentTime is the inverse of
+// ParseSegmentTime for both day and hour granularities.
+func TestFormatSegmentTime_RoundTrip(t *testing.T) {
+	day := IntervalRule{Unit: DAY, Num: 1}
+	dayT := time.Date(2026, 6, 1, 0, 0, 0, 0, time.Local)
+	require.Equal(t, "20260601", FormatSegmentTime(dayT, day))
+	gotDay, err := ParseSegmentTime(FormatSegmentTime(dayT, day), day)
+	require.NoError(t, err)
+	require.True(t, gotDay.Equal(dayT), "day round-trip: got %s want %s", gotDay, dayT)
+
+	hour := IntervalRule{Unit: HOUR, Num: 1}
+	hourT := time.Date(2026, 6, 1, 13, 0, 0, 0, time.Local)
+	require.Equal(t, "2026060113", FormatSegmentTime(hourT, hour))
+	gotHour, err := ParseSegmentTime(FormatSegmentTime(hourT, hour), hour)
+	require.NoError(t, err)
+	require.True(t, gotHour.Equal(hourT), "hour round-trip: got %s want %s", gotHour, hourT)
+}

@@ -171,8 +171,12 @@ type GroupConfig struct {
 	// from SegmentInterval on 3-stage deployments (e.g. warm->cold), so any
 	// computation against the target tier's segment grid must use this field.
 	TargetSegmentInterval *commonv1.IntervalRule
-	TargetShardNum        uint32
-	TargetReplicas        uint32
+	// SourceStage and TargetStage are the migration's source and target stage
+	// names (e.g. "hot" -> "warm"), surfaced in the migration report's errors.
+	SourceStage    string
+	TargetStage    string
+	TargetShardNum uint32
+	TargetReplicas uint32
 }
 
 // Close releases resources held by the GroupConfig.
@@ -226,6 +230,7 @@ func parseGroup(
 	segmentInterval := cloneIntervalRule(ro.SegmentInterval)
 	var nst *commonv1.LifecycleStage
 	var targetSegmentInterval *commonv1.IntervalRule
+	var sourceStage string
 	for i, st := range ro.Stages {
 		selector, err := pub.ParseLabelSelector(st.NodeSelector)
 		if err != nil {
@@ -240,6 +245,7 @@ func parseGroup(
 			return nil, nil
 		}
 		nst = ro.Stages[i+1]
+		sourceStage = st.Name
 		// Clone before exposing through GroupConfig so callers cannot mutate
 		// the shared proto Stages[*] sub-objects.
 		segmentInterval = cloneIntervalRule(st.SegmentInterval)
@@ -253,6 +259,9 @@ func parseGroup(
 	}
 	if nst == nil {
 		nst = ro.Stages[0]
+		// No stage matched this node (e.g. the initial hot tier is not listed in
+		// Stages): the source stage is the running node's own tier label.
+		sourceStage = nodeLabels["type"]
 		ttlTime = proto.Clone(ro.Ttl).(*commonv1.IntervalRule)
 		targetSegmentInterval = cloneIntervalRule(nst.SegmentInterval)
 		l.Info().Msgf("no matching stage for group %s, defaulting to first stage %s segment interval: %d(%s), total ttl needs: %d(%s)",
@@ -328,6 +337,8 @@ func parseGroup(
 		AccumulatedTTL:        ttlTime,
 		SegmentInterval:       segmentInterval,
 		TargetSegmentInterval: targetSegmentInterval,
+		SourceStage:           sourceStage,
+		TargetStage:           nst.Name,
 		NodeSelector:          nodeSel,
 		QueueClient:           client,
 	}, nil

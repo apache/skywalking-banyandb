@@ -57,6 +57,7 @@ func migrateStreamWithFileBasedAndProgress(tsdbRootPath string, timeRange timest
 	visitor := newStreamMigrationVisitor(
 		group.Group, group.TargetShardNum, group.TargetReplicas, group.NodeSelector, group.QueueClient,
 		logger, progress, chunkSize, targetStageInterval, md,
+		group.SourceStage, group.TargetStage, segmentIntervalRule,
 	)
 	defer visitor.Close()
 
@@ -145,6 +146,7 @@ func migrateMeasureWithFileBasedAndProgress(tsdbRootPath string, timeRange times
 	visitor := newMeasureMigrationVisitor(
 		group.Group, group.TargetShardNum, group.TargetReplicas, group.NodeSelector, group.QueueClient,
 		logger, progress, chunkSize, targetStageInterval, md,
+		group.SourceStage, group.TargetStage, segmentIntervalRule,
 	)
 	defer visitor.Close()
 
@@ -159,7 +161,44 @@ func migrateMeasureWithFileBasedAndProgress(tsdbRootPath string, timeRange times
 	if err != nil {
 		return nil, err
 	}
+	// Retain (do not delete) source segments where row-replay skipped unresolved
+	// rows: deleting them would silently and permanently drop that data (S1).
+	segmentSuffixes = excludeRetainedSuffixes(segmentSuffixes, visitor.SkippedSourceSegmentStarts(), segmentIntervalRule, logger)
 	return segmentSuffixes, nil
+}
+
+// excludeRetainedSuffixes removes from suffixes any segment whose start instant
+// is in retainedStarts, so the post-migration delete pass leaves those source
+// segments in place. A suffix that fails to parse is kept in the delete set (the
+// prior behavior), but logged.
+func excludeRetainedSuffixes(suffixes []string, retainedStarts []int64, rule storage.IntervalRule, logger *logger.Logger) []string {
+	if len(retainedStarts) == 0 || len(suffixes) == 0 {
+		return suffixes
+	}
+	retained := make(map[int64]struct{}, len(retainedStarts))
+	for _, start := range retainedStarts {
+		retained[start] = struct{}{}
+	}
+	kept := make([]string, 0, len(suffixes))
+	var skipped []string
+	for _, suffix := range suffixes {
+		start, parseErr := storage.ParseSegmentTime(suffix, rule)
+		if parseErr != nil {
+			logger.Warn().Err(parseErr).Str("suffix", suffix).Msg("cannot parse segment suffix for retention check; keeping in delete set")
+			kept = append(kept, suffix)
+			continue
+		}
+		if _, ok := retained[start.UnixNano()]; ok {
+			skipped = append(skipped, suffix)
+			continue
+		}
+		kept = append(kept, suffix)
+	}
+	if len(skipped) > 0 {
+		logger.Warn().Strs("retained_suffixes", skipped).
+			Msg("retaining source segments with unresolved row-replay skips; excluded from expired-segment deletion")
+	}
+	return kept
 }
 
 // countMeasureParts counts the total number of source items in the given time range.
@@ -225,6 +264,7 @@ func migrateTraceWithFileBasedAndProgress(tsdbRootPath string, timeRange timesta
 	visitor := newTraceMigrationVisitor(
 		group.Group, group.TargetShardNum, group.TargetReplicas, group.NodeSelector, group.QueueClient,
 		logger, progress, chunkSize, targetStageInterval, md,
+		group.SourceStage, group.TargetStage, segmentIntervalRule,
 	)
 	defer visitor.Close()
 
