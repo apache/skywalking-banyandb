@@ -2,6 +2,10 @@
 
 If BanyanDB processes crash or encounter file corruption, follow these steps to diagnose and recover from the issue.
 
+## Collect Crash Diagnostics (FODC)
+
+If the cluster runs the [FODC agent + proxy](../fodc/overview.md), panics and crash artifacts are captured automatically. Query the proxy's `GET /diagnostics` endpoint to retrieve aggregated crash records — the structured `panic.json` (component, panic value, goroutine stack) plus any deep-dump artifacts — across all nodes, optionally filtered by `role` or `pod_name`. See [Proxy APIs and CLI Flags](../fodc/apis.md) for the request/response schema. This is usually the fastest way to recover a panic's goroutine stack and identify the component that failed before digging into individual node logs.
+
 ## Remove Corrupted Standalone Metadata
 
 If the BanyanDB standalone process crashes due to corrupted metadata. You should remove the corrupted metadata:

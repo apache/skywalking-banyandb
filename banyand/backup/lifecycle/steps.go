@@ -20,6 +20,7 @@ package lifecycle
 import (
 	"context"
 	"fmt"
+	"net"
 	"os"
 
 	"github.com/pkg/errors"
@@ -117,20 +118,26 @@ func deriveSelfIdentity(coLocatedDataNodeAddr string, nodeLabels map[string]stri
 	// Pass 1: GrpcAddress match (the production sidecar path).
 	if coLocatedDataNodeAddr != "" {
 		for _, n := range nodes {
-			if n.GrpcAddress == coLocatedDataNodeAddr {
+			if grpcAddrEqual(n.GrpcAddress, coLocatedDataNodeAddr) {
 				return n.Metadata.Name, n.Labels["type"]
 			}
 		}
 	}
-	// Pass 2: every-key label match.
-	for _, n := range nodes {
-		if n.Labels == nil {
-			continue
+	// Pass 2: every-key label match. Guarded against an empty label set:
+	// labelsContain treats an empty subset as matching anything, which would
+	// attribute the identity to an arbitrary registry node (whichever happens
+	// to be listed first — e.g. a migration target instead of the co-located
+	// data node).
+	if len(nodeLabels) > 0 {
+		for _, n := range nodes {
+			if n.Labels == nil {
+				continue
+			}
+			if !labelsContain(n.Labels, nodeLabels) {
+				continue
+			}
+			return n.Metadata.Name, n.Labels["type"]
 		}
-		if !labelsContain(n.Labels, nodeLabels) {
-			continue
-		}
-		return n.Metadata.Name, n.Labels["type"]
 	}
 	// Pass 3: type-only label match.
 	if wantType := nodeLabels["type"]; wantType != "" {
@@ -144,6 +151,32 @@ func deriveSelfIdentity(coLocatedDataNodeAddr string, nodeLabels map[string]stri
 		}
 	}
 	return "", ""
+}
+
+// grpcAddrEqual reports whether two advertised gRPC addresses identify the
+// same endpoint. Besides the exact match, loopback host aliases (localhost,
+// 127.0.0.1, ::1) with the same port are treated as equivalent, so a
+// --grpc-addr given as localhost:PORT still matches a data node registered
+// as 127.0.0.1:PORT.
+func grpcAddrEqual(a, b string) bool {
+	if a == b {
+		return true
+	}
+	hostA, portA, errA := net.SplitHostPort(a)
+	hostB, portB, errB := net.SplitHostPort(b)
+	if errA != nil || errB != nil || portA != portB {
+		return false
+	}
+	return isLoopbackHost(hostA) && isLoopbackHost(hostB)
+}
+
+// isLoopbackHost reports whether the host is a loopback alias.
+func isLoopbackHost(host string) bool {
+	if host == "localhost" {
+		return true
+	}
+	ip := net.ParseIP(host)
+	return ip != nil && ip.IsLoopback()
 }
 
 // labelsContain reports whether superset has every (k, v) pair in subset.

@@ -1,8 +1,30 @@
-# Vectorized Measure Query Tracing
+# Query Tracing
+
+BanyanDB supports query tracing, which allows you to trace the execution of a query. The tracing data includes the query plan, execution time, and other useful information. You can enable query tracing by setting the `QueryRequest.trace` field to `true` when sending a query request.
+
+The below command could query data in the last 30 minutes with `trace` enabled:
+
+```shell
+bydbctl measure query --start -30m -f - <<EOF
+name: "service_cpm_minute"
+groups: ["measure-minute"]
+tagProjection:
+  tagFamilies:
+    - name: "storage-only"
+      tags: ["entity_id"]
+fieldProjection:
+  names: ["total", "value"]
+trace: true
+EOF
+```
+
+The result will include the tracing data in the response. The duration time unit is in nano seconds.
+
+## Vectorized Measure Query Tracing
 
 Vectorized distributed measure queries use the existing `pkg/query.Tracer` and `common.v1.Trace` tree. Tracing is opt-in through `QueryRequest.trace`; trace-off raw wire responses remain raw frame bytes.
 
-## Span shape
+### Span shape
 
 Aggregation path:
 
@@ -45,7 +67,7 @@ distributed-{nodeID}
 └── build-iterator
 ```
 
-## Vocabulary
+### Vocabulary
 
 Trace tag keys are exported from `pkg/query/tracelabels` and should be used instead of string literals.
 
@@ -128,7 +150,7 @@ Trace tag keys are exported from `pkg/query/tracelabels` and should be used inst
 | `TagErrorMsg` | `error_msg` |
 | `TagIgnoredChildSpans` | `ignored_child_spans` |
 
-## Empty-result diagnosis runbook
+### Empty-result diagnosis runbook
 
 1. Check `response_data_point_count` on the user-visible response trace/root context.
 2. Walk from `broadcast-*` into data-node children and find the first span whose `rows_out` is unexpectedly low.
@@ -136,11 +158,11 @@ Trace tag keys are exported from `pkg/query/tracelabels` and should be used inst
 4. For aggregation value issues, inspect `agg_value_path` on `groupby-agg-map` or `reduce-raw-frames`.
 5. For fanout issues, compare `node_count`, `response_count`, `node_errors`, and summary latency tags.
 
-## Examples
+### Examples
 
 Each example below shows the trace tree returned in `QueryResponse.trace` for a representative query. `(123ms)` is the span `Duration` (rounded). Tag values follow `key=value`. Only the tags relevant to the walk are shown — the actual response contains the full vocabulary.
 
-### Enabling trace
+#### Enabling trace
 
 Set `trace=true` on the request:
 
@@ -172,7 +194,7 @@ EOF
 
 The response carries `trace: { spans: [ ... ] }` alongside `dataPoints`.
 
-### Example 1 — Healthy aggregation across 3 data nodes
+#### Example 1 — Healthy aggregation across 3 data nodes
 
 Query: `SUM(value) GROUP BY entity_id` over 5 minutes, 3 data nodes.
 
@@ -192,7 +214,7 @@ distributed-liaison-0 (47ms)  plan="… AggSum on value" node_selectors="{sw_met
 
 **Reading it:** the bottom-up `rows_in/rows_out` chain shows where rows were consumed and where groups were folded; `agg_value_path=typed` on both the data-node `groupby-agg-map` and liaison `reduce-raw-frames` confirms the native numeric value column was used (no FieldValue fallback).
 
-### Example 2 — Empty result via Top.N truncation (Q1 case 2)
+#### Example 2 — Empty result via Top.N truncation (Q1 case 2)
 
 Same query plus `top { number: 1 }` and a tight time range that produced very few rows.
 
@@ -212,7 +234,7 @@ distributed-liaison-0 (12ms)  response_data_point_count=0   ← unexpected
 
 **Diagnosis:** `response_data_point_count=0` would be the user-visible surprise, but in this example the liaison merge returned 1 row. The empty case is when `top_n` plus filtering combine to drop everything — look for any `drop_reason=top` or `drop_reason=limit` where `dropped_rows` is large.
 
-### Example 3 — Aggregation passthrough fallback (Q1 case 4)
+#### Example 3 — Aggregation passthrough fallback (Q1 case 4)
 
 Same `SUM` query, but one data node's measure schema still emits the field as a `*modelv1.FieldValue` passthrough wrapper (mid-rollout).
 
@@ -230,7 +252,7 @@ distributed-liaison-0
 
 **Action:** `agg_value_path=fieldvalue-fallback` means the operator resolved the agg value via the FieldValue passthrough column instead of a native numeric column. This is correct but slower; it usually points to a tag-type migration in flight on node `n1`. If the result also looks numerically off, query the suspect node directly via `bydbctl measure query --node n1 ...` to confirm.
 
-### Example 4 — Schema divergence in multi-group (Q1 case 5)
+#### Example 4 — Schema divergence in multi-group (Q1 case 5)
 
 Query joins two groups whose `service_name` tag has different types across nodes mid-migration.
 
@@ -246,7 +268,7 @@ distributed-liaison-0  response_data_point_count=0
 
 **Action:** `schema_degraded=true` on `build-multi-group-schema` is the early-warning. `type_divergences` lists the exact (column → type@group) tuples. The merge then sees rows it can't unify and produces 0. Resolution: complete the tag-type migration so both groups carry the same type for `service_name`.
 
-### Example 5 — Fanout asymmetry with > 20 data nodes (Q1 case 7)
+#### Example 5 — Fanout asymmetry with > 20 data nodes (Q1 case 7)
 
 Same query over a 25-node fanout. 3 nodes returned errors; 5 returned zero rows.
 
@@ -269,7 +291,7 @@ distributed-liaison-0
 
 **Reading it:** `node_count - response_count = 3` indicates three nodes never responded (the three with `error_msg`). The fanout summary span captures the lower-latency 6 healthy nodes that didn't get individual slots — their aggregate is in `total_rows_across_nodes` and the percentiles. If `nodes_with_zero_rows` on `data-summary` is non-zero, a healthy-looking node was actually empty — a likely indicator of stage / segment misrouting.
 
-### Example 6 — Performance bottleneck identification (Q2)
+#### Example 6 — Performance bottleneck identification (Q2)
 
 Same query, all nodes healthy, but the user reports slow query.
 
@@ -287,7 +309,7 @@ distributed-liaison-0 (812ms)   ← total
 
 **Diagnosis:** the bottleneck is the span with the largest `Duration` — here `reduce-raw-frames` at 740ms. Tags reveal high `groups_out=87432` and `memory_charged_bytes=210MB`, pointing at a high-cardinality `GROUP BY`. Fix by tightening the time range, adding a more selective filter, or capping with `Top.N`.
 
-### Example 7 — Decode-frame summary at high frame count
+#### Example 7 — Decode-frame summary at high frame count
 
 When the liaison processes > 19 frames (e.g. a wide fanout returning many partials), per-frame decode spans are summarized:
 
@@ -300,6 +322,6 @@ reduce-raw-frames (95ms)  frames_in=100
 
 The summary fully represents every frame's decode duration. `decode_ns_p99 ≫ p50` would point at a single slow decode worth investigating; here the distribution is tight, so decode is not the bottleneck.
 
-## Wire contract
+### Wire contract
 
 Under raw wire mode, trace-off responses are still opaque raw frame bytes beginning with `RawFrameMagicLeadingByte`. Trace-on responses use the existing `measure.v1.InternalQueryResponse` envelope with `raw_frame_body` and `trace` populated. Proto `data_points` responses under raw mode are rejected loudly by the vectorized collector.

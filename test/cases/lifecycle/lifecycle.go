@@ -306,12 +306,12 @@ func verifyMigrationMetrics(reg observability.MetricsRegistry) {
 // The lifecycle publishes to BOTH data nodes in the test (hot & warm), so
 // either endpoint is valid. We check both, accepting whichever responds.
 //
-// At-least-one check: earlier specs in the same suite (the "Lifecycle"
-// Describe block) run runLifecycleMigration via the OLD `lifecycle.NewCommand()`
-// path which does NOT pass --lifecycle-tier, so series for those groups still
-// carry empty remote_tier. The cross-segment specs pass --lifecycle-tier=hot,
-// so series for sw_cross_segment, sw_cross_segment_stream, sw_cross_segment_trace
-// carry remote_tier="hot". The assertion requires AT LEAST ONE
+// At-least-one check: every runLifecycleMigration invocation passes
+// --grpc-addr=SharedContext.DataAddr (the hot data node), so deriveSelfIdentity
+// resolves the sender through the registry's GrpcAddress match and the stamped
+// tier is the hot node's `type` label. The lifecycle service waits for the
+// co-located node to become visible in the registry before deriving, so the
+// match is deterministic. The assertion requires AT LEAST ONE
 // banyandb_queue_sub_total_finished series to carry the populated labels,
 // proving the SetSelfNode fix is wired end-to-end.
 func verifyDataNodeSenderLabels() {
@@ -354,7 +354,8 @@ func verifyDataNodeSenderLabels() {
 			gomega.Expect(body).To(gomega.MatchRegexp(`(?m)^banyandb_queue_sub_total_finished\{[^}]*remote_role="lifecycle"[^}]*\} [1-9]`),
 				"at least one banyandb_queue_sub_total_finished series on "+base+" must carry remote_role=\"lifecycle\" (the sender role stamped by parseGroup), got:\n"+body)
 			gomega.Expect(body).To(gomega.MatchRegexp(`(?m)^banyandb_queue_sub_total_finished\{[^}]*remote_tier="hot"[^}]*\} [1-9]`),
-				"at least one banyandb_queue_sub_total_finished series on "+base+" must carry remote_tier=\"hot\" (the sender tier set via --lifecycle-tier=hot), got:\n"+body)
+				"at least one banyandb_queue_sub_total_finished series on "+base+" must carry remote_tier=\"hot\" "+
+					"(the co-located hot data node's type label, resolved via the lifecycle's --grpc-addr registry match), got:\n"+body)
 		}()
 		return
 	}
