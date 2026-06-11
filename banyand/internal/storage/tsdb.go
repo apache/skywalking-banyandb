@@ -279,7 +279,7 @@ func (d *database[T, O]) SelectSegments(timeRange timestamp.TimeRange, reopenClo
 		return nil, nil
 	}
 	segments, err := d.segmentController.selectSegments(timeRange, reopenClosed)
-	if err != nil || !reopenClosed || d.disableRetention {
+	if err != nil || d.disableRetention {
 		return segments, err
 	}
 	// Exclude segments whose whole time range has already passed the retention
