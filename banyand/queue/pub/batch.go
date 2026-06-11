@@ -264,13 +264,9 @@ func (bp *batchPublisher) listenBatchResponse(ctx context.Context, s clusterv1.S
 	if errRecv != nil {
 		if bp.hasMetrics() {
 			bp.pub.metrics.totalErr.Inc(1, operation, "", curNode, info.role, info.tier, sendErrReasonRecvError)
-			bp.pub.metrics.totalBatchFinished.Inc(1, operation, "", curNode, info.role, info.tier)
-			bp.pub.metrics.totalBatchLatency.Observe(time.Since(batchStart).Seconds(), operation, "", curNode, info.role, info.tier)
 		}
 		if bp.hasMigrationMetrics() {
 			bp.pub.migrationMetrics.totalErr.Inc(1, operation, "", curNode, info.role, info.tier, sendErrReasonRecvError)
-			bp.pub.migrationMetrics.totalBatchFinished.Inc(1, operation, "", curNode, info.role, info.tier)
-			bp.pub.migrationMetrics.totalBatchLatency.Observe(time.Since(batchStart).Seconds(), operation, "", curNode, info.role, info.tier)
 		}
 		if grpchelper.IsFailoverError(errRecv) {
 			// Record circuit breaker failure before creating failover event

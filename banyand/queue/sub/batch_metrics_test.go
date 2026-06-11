@@ -137,13 +137,13 @@ func TestBatchModNMessageMetrics(t *testing.T) {
 	var dataCollection []any
 	start := time.Now()
 
+	// Mirror the production Send path: pin identity before the first handleBatch call.
+	s.pinIdentity(identity, req, topic)
+
 	// Simulate N batch messages (handleBatch called N times with the same identity).
 	for range N {
 		s.handleBatch(&dataCollection, req, &start, identity)
 	}
-
-	// Pin identity as the real Send path does before handleBatch is called.
-	s.pinIdentity(identity, req, topic)
 
 	// Simulate EOF: handleEOF dispatches the collected batch.
 	s.handleEOF(stream, &topic, dataCollection, req, identity, start)
@@ -177,10 +177,12 @@ func TestBatchModSendFailureMetrics(t *testing.T) {
 	var dataCollection []any
 	start := time.Now()
 
+	// Mirror the production Send path: pin identity before the first handleBatch call.
+	s.pinIdentity(identity, req, topic)
+
 	for range N {
 		s.handleBatch(&dataCollection, req, &start, identity)
 	}
-	s.pinIdentity(identity, req, topic)
 	s.handleEOF(stream, &topic, dataCollection, req, identity, start)
 
 	require.Equal(t, float64(N), msgStarted.total, "total_message_started must equal N even when Send fails")
