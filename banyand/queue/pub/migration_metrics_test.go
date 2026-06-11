@@ -169,7 +169,7 @@ func TestMigrationMirrorBatchFinishedAndLatency(t *testing.T) {
 	})
 
 	bc := make(chan batchEvent, 1)
-	bp.listenBatchResponse(ctx, mockStream, func() {}, bc, "node-a", time.Now())
+	bp.listenBatchResponse(ctx, mockStream, func() {}, bc, "node-a", time.Now(), "test-group")
 
 	require.Equal(t, float64(1), pubBatchFinished.count, "pub total_batch_finished must be 1 on success")
 	require.Equal(t, float64(1), migBatchFinished.count, "migration total_batch_finished must mirror pub on success")

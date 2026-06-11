@@ -211,7 +211,7 @@ func (s *streamService) publishMessages(
 		nodeSpecSent[nodeID] = true
 	}
 
-	message := bus.NewBatchMessageWithNode(bus.MessageID(time.Now().UnixNano()), nodeID, iwr)
+	message := bus.NewBatchMessageWithNodeAndGroup(bus.MessageID(time.Now().UnixNano()), nodeID, metadata.GetGroup(), iwr)
 	if _, err := publisher.Publish(ctx, data.TopicStreamWrite, message); err != nil {
 		return nil, err
 	}

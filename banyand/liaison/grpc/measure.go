@@ -322,7 +322,7 @@ func (ms *measureService) publishToNodes(ctx context.Context, writeRequest *meas
 		nodeSpecSent[nodeID] = true
 	}
 
-	message := bus.NewBatchMessageWithNode(bus.MessageID(time.Now().UnixNano()), nodeID, iwr)
+	message := bus.NewBatchMessageWithNodeAndGroup(bus.MessageID(time.Now().UnixNano()), nodeID, metadata.GetGroup(), iwr)
 	_, errWritePub := publisher.Publish(ctx, data.TopicMeasureWrite, message)
 	if errWritePub != nil {
 		ms.l.Error().Err(errWritePub).RawJSON("written", logger.Proto(writeRequest)).Str("nodeID", nodeID).Msg("failed to send a message")

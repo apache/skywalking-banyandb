@@ -295,7 +295,7 @@ func (s *traceService) publishMessages(
 		Request: requestToSend,
 	}
 
-	message := bus.NewBatchMessageWithNode(bus.MessageID(time.Now().UnixNano()), nodeID, iwr)
+	message := bus.NewBatchMessageWithNodeAndGroup(bus.MessageID(time.Now().UnixNano()), nodeID, metadata.GetGroup(), iwr)
 	if _, err := publisher.Publish(ctx, data.TopicTraceWrite, message); err != nil {
 		return nil, err
 	}
