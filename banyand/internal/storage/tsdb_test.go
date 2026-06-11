@@ -283,6 +283,19 @@ func TestSelectSegmentsRetention(t *testing.T) {
 		}()
 		require.Len(t, segs, 2)
 	})
+
+	t.Run("metadata path excludes fully expired segments", func(t *testing.T) {
+		tsdb := newDB(t, false)
+		segs, err := tsdb.SelectSegments(wide, false)
+		require.NoError(t, err)
+		defer func() {
+			for _, s := range segs {
+				s.DecRef()
+			}
+		}()
+		require.Len(t, segs, 1, "fully expired segment must be filtered out for reopenClosed=false too")
+		require.False(t, segs[0].GetTimeRange().Before(deadline), "the kept segment must not be fully expired")
+	})
 }
 
 func TestTakeFileSnapshot(t *testing.T) {
