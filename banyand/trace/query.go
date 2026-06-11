@@ -20,6 +20,7 @@ package trace
 import (
 	"context"
 	"fmt"
+	"maps"
 	"sort"
 	"time"
 
@@ -36,6 +37,7 @@ import (
 	pbv1 "github.com/apache/skywalking-banyandb/pkg/pb/v1"
 	"github.com/apache/skywalking-banyandb/pkg/pool"
 	"github.com/apache/skywalking-banyandb/pkg/query/model"
+	vtrace "github.com/apache/skywalking-banyandb/pkg/query/vectorized/trace"
 )
 
 var traceQueryResultTracker = pool.RegisterTracker("trace.queryResult")
@@ -152,6 +154,7 @@ func (t *trace) Query(ctx context.Context, tqo model.TraceQueryOptions) (model.T
 		if err != nil {
 			return nil, err
 		}
+		vtrace.IncrQueryCount()
 		traceQueryResultTracker.Acquire(vectorizedResult)
 		return vectorizedResult, nil
 	case len(qo.traceIDs) > 0:
@@ -468,9 +471,7 @@ func (qr *queryResult) acceptScanBatch(batch *scanBatch) bool {
 		if qr.keys == nil {
 			qr.keys = make(map[string]int64, len(batch.keys))
 		}
-		for k, v := range batch.keys {
-			qr.keys[k] = v
-		}
+		maps.Copy(qr.keys, batch.keys)
 	}
 
 	return true

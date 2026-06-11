@@ -25,7 +25,10 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/apache/skywalking-banyandb/api/common"
+	modelv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/model/v1"
 	"github.com/apache/skywalking-banyandb/banyand/internal/sidx"
+	"github.com/apache/skywalking-banyandb/pkg/index"
+	"github.com/apache/skywalking-banyandb/pkg/query/model"
 	vtrace "github.com/apache/skywalking-banyandb/pkg/query/vectorized/trace"
 )
 
@@ -187,4 +190,80 @@ func TestLoadedCursorSource(t *testing.T) {
 	require.Nil(t, done)
 
 	require.NoError(t, source.Close())
+}
+
+// fakeSIDXWithSync wraps fakeSIDX (satisfies sidx.SIDX) and adds QuerySync so that
+// sidxInstancesToVectorizedIterators can cast it to syncSIDXQuerier.
+type fakeSIDXWithSync struct {
+	*fakeSIDX
+	syncResponses []*sidx.QueryResponse
+	syncErr       error
+}
+
+func (f *fakeSIDXWithSync) QuerySync(_ context.Context, _ sidx.QueryRequest) ([]*sidx.QueryResponse, error) {
+	return f.syncResponses, f.syncErr
+}
+
+// TestVectorizedOrderModeSmokeTest exercises the full order-mode vectorized path end-to-end:
+// fake sidx → Phase-1 merge batch → Phase-2 scan → Pull results.
+func TestVectorizedOrderModeSmokeTest(t *testing.T) {
+	tst, cleanup := newParityTSTable(t, tsTS1)
+	defer cleanup()
+
+	tr := newParityTrace()
+
+	ctx := context.Background()
+	req := sidx.QueryRequest{
+		Order: &index.OrderBy{Sort: modelv1.Sort_SORT_ASC},
+	}
+
+	// fakeSIDXInst returns trace1 < trace2 < trace3 in ASC key order.
+	// PartIDs=0 won't match any real part; the bloom filter fallback picks them up.
+	fakeSIDXInst := &fakeSIDXWithSync{
+		fakeSIDX: &fakeSIDX{},
+		syncResponses: []*sidx.QueryResponse{
+			{
+				Keys:    []int64{1, 2, 3},
+				Data:    [][]byte{encodeTraceIDForTest("trace1"), encodeTraceIDForTest("trace2"), encodeTraceIDForTest("trace3")},
+				SIDs:    []common.SeriesID{0, 0, 0},
+				PartIDs: []uint64{0, 0, 0},
+			},
+		},
+	}
+
+	qo := queryOptions{
+		TraceQueryOptions: model.TraceQueryOptions{
+			TagProjection: allTagProjections,
+			Order:         req.Order,
+		},
+		schemaTagTypes: testSchemaTagTypes,
+	}
+
+	// Phase 1: build ordered traceBatch from the fake sidx.
+	batch, phase1Err := tr.buildVectorizedPhase1TraceBatch(ctx, qo, []sidx.SIDX{fakeSIDXInst}, req, true, 0)
+	require.NoError(t, phase1Err)
+	require.ElementsMatch(t, []string{"trace1", "trace2", "trace3"}, batch.traceIDsOrder)
+	require.Equal(t, map[string]int64{"trace1": 1, "trace2": 2, "trace3": 3}, batch.keys)
+
+	// Phase 2: scan parts → load span data.
+	sb, phase2Err := tr.buildVectorizedScanBatch(ctx, []*tsTable{tst}, qo, batch)
+	require.NoError(t, phase2Err)
+	require.NotNil(t, sb)
+
+	result, matErr := newVectorizedTraceQueryResult(ctx, sb, qo, nil, nil, nil, nil)
+	require.NoError(t, matErr)
+	require.NotNil(t, result)
+	defer result.Release()
+
+	got := collectResults(t, result)
+	require.Len(t, got, 3, "order-mode vectorized query must return one result per trace")
+	require.Equal(t, "trace1", got[0].TID)
+	require.Equal(t, [][]byte{[]byte("span1")}, got[0].Spans)
+	require.Equal(t, []string{"span1"}, got[0].SpanIDs)
+	require.Equal(t, "trace2", got[1].TID)
+	require.Equal(t, [][]byte{[]byte("span2")}, got[1].Spans)
+	require.Equal(t, []string{"span2"}, got[1].SpanIDs)
+	require.Equal(t, "trace3", got[2].TID)
+	require.Equal(t, [][]byte{[]byte("span3")}, got[2].Spans)
+	require.Equal(t, []string{"span3"}, got[2].SpanIDs)
 }

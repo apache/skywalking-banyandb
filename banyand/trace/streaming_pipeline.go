@@ -307,7 +307,6 @@ type sidxStreamRunner struct {
 	req            sidx.QueryRequest
 	batch          traceBatch
 	errWg          sync.WaitGroup
-	maxTraceSize   int
 	nextSeq        int
 	total          atomic.Int64
 	batchesEmitted atomic.Int64
@@ -365,8 +364,7 @@ func newSIDXStreamRunner(
 		streamCtx:    streamCtx,
 		cancelFunc:   cancel,
 		req:          req,
-		maxTraceSize: maxTraceSize,
-		batchSize:    batchSize,
+		batchSize: batchSize,
 		heap:         &sidxStreamHeap{asc: asc},
 		seenTraceIDs: make(map[string]struct{}),
 		batch:        newTraceBatch(0, batchSize),
