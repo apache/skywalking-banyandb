@@ -71,7 +71,7 @@ jobs:
       - name: Setup build environment
         uses: ./.github/actions/setup-build-env
         with:
-          download-artifacts: 'true'
+          download-artifacts: 'false'
           setup-docker: 'true'
 
       - name: Build BanyanDB image
