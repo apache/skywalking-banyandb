@@ -46,7 +46,7 @@ var (
 
 // gaugesMu protects the process-global gauge vars below. Multiple metricService
 // instances can exist in the same process (e.g. distributed integration tests),
-// so initMetrics() (writer) and collect*() (readers) must be synchronised.
+// so initMetrics() (writer) and collect*() (readers) must be synchronized.
 var gaugesMu sync.RWMutex
 
 var (
@@ -213,8 +213,8 @@ func collectUpTime() {
 func collectDisk() {
 	paths := getPath()
 	type usageStat struct {
-		path  string
 		usage *disk.UsageStat
+		path  string
 	}
 	var stats []usageStat
 	for _, path := range paths {
