@@ -74,6 +74,21 @@ jobs:
           download-artifacts: 'false'
           setup-docker: 'true'
 
+      - name: Cache generate tools
+        uses: actions/cache@v4
+        with:
+          path: bin
+          key: ${{ runner.os }}-generate-tool-${{ hashFiles('**/version.mk') }}
+
+      - name: Generate code
+        run: make generate
+
+      - name: Build UI
+        run: |
+          cd ui
+          npm ci
+          npm run build
+
       - name: Build BanyanDB image
         run: |
           make -C banyand release
