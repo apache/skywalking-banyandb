@@ -23,8 +23,9 @@
 # these never appear.
 banyandb_liaison_grpc_total_err
 banyandb_liaison_grpc_total_stream_msg_received_err
-banyandb_measure_total_sync_loop_err
 banyandb_queue_pub_total_err
+banyandb_queue_sub_total_err
+banyandb_measure_total_sync_loop_err
 banyandb_stream_tst_total_sync_loop_err
 banyandb_trace_tst_total_sync_loop_err
 #
@@ -39,3 +40,12 @@ banyandb_stream_tst_total_merge_latency
 banyandb_stream_tst_total_merged_parts
 banyandb_trace_tst_total_merge_latency
 banyandb_trace_tst_total_merged_parts
+#
+# Group 3 -- lifecycle metrics. The lifecycle service is not deployed in the
+# e2e test cluster, so these metrics are never exported within the verify window.
+banyandb_lifecycle_last_run_timestamp_seconds
+banyandb_lifecycle_last_run_success
+banyandb_lifecycle_migration_sent_bytes
+banyandb_lifecycle_migration_total_err
+banyandb_lifecycle_migration_total_finished
+banyandb_lifecycle_migration_total_latency_bucket

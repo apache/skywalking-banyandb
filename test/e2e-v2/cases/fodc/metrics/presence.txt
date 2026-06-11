@@ -19,7 +19,7 @@
 # always-positive core lives in non_empty.txt; metrics that need a specific
 # event to materialise (error counters, completed part-merges) live in
 # documented_gap.txt. The three lists are disjoint and their union is exactly
-# the 62 distinct names referenced by the FODC Grafana dashboards.
+# the 77 distinct names referenced by the FODC Grafana dashboards.
 #
 # Calibrated against a live run: OAP writes the BanyanDB trace model, so the
 # banyandb_trace_tst_* family is present; stream_storage_* and stream_tst_* are
@@ -28,7 +28,6 @@
 banyandb_system_disk
 banyandb_system_memory_state
 banyandb_system_net_state
-go_gc_duration_seconds_count
 go_gc_duration_seconds_sum
 go_memstats_alloc_bytes_total
 go_memstats_next_gc_bytes
@@ -44,6 +43,7 @@ banyandb_measure_total_file_parts
 banyandb_measure_total_mem_part
 banyandb_measure_total_merge_loop_started
 banyandb_queue_pub_sent_bytes
+banyandb_queue_sub_received_bytes
 banyandb_queue_sub_total_started
 banyandb_stream_storage_inverted_index_total_doc_count
 banyandb_stream_storage_inverted_index_total_term_searchers_started
@@ -63,3 +63,9 @@ banyandb_trace_tst_total_file_parts
 banyandb_trace_tst_total_mem_part
 banyandb_trace_tst_total_merge_loop_started
 banyandb_trace_tst_total_written
+banyandb_queue_pub_total_batch_started
+banyandb_queue_pub_total_batch_finished
+banyandb_queue_sub_total_batch_started
+banyandb_queue_sub_total_batch_finished
+banyandb_queue_sub_total_message_started
+banyandb_queue_sub_total_message_finished

@@ -45,7 +45,17 @@ jobs:
       - name: Skip FODC Dashboard E2E
         run: echo "Skipping FODC Dashboard E2E because this change does not affect FODC-related paths."
 
+  fodc-dashboard-sync-check:
+    if: ${{ github.event_name != 'workflow_call' || inputs.should_run }}
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+      - name: Verify dashboard metrics match test lists
+        run: bash test/e2e-v2/cases/fodc/check-dashboard-sync.sh
+
   fodc-dashboard-kind:
+    needs: fodc-dashboard-sync-check
     if: ${{ github.event_name != 'workflow_call' || inputs.should_run }}
     runs-on: ubuntu-24.04
     timeout-minutes: 60

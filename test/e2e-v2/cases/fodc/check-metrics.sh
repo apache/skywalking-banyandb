@@ -20,10 +20,21 @@
 #   * PRESENCE      (metrics/presence.txt)      -> at least one exported series
 #   * NON_EMPTY     (metrics/non_empty.txt)     -> a sample value > 0 (histogram
 #                                                  families verified via _count)
+#   * LABEL DIMS    (hardcoded)                 -> metric-level labels used as
+#                                                  dimensional filters in dashboard
+#                                                  "expr" fields are present on the
+#                                                  exported series
+#   * LABEL VALUES  (hardcoded)                 -> specific label values required
+#                                                  by non-trivial dashboard panels
+#                                                  are present (e.g. kind="used")
 #   * DOCUMENTED_GAP(metrics/documented_gap.txt)-> reported only, never asserted
 # It also asserts the two agents (liaison + data) registered with DISTINCT
 # node_role labels and that operation="query" series appear on two different
 # nodes (publisher = liaison, subscriber = data).
+#
+# Infrastructure labels (job, container_name, pod_name) are added by the
+# Prometheus scrape config and are NOT checked here -- they are absent from
+# the raw /metrics endpoint output.
 #
 # The skywalking-infra-e2e verify retry loop drives the waiting: this script
 # does ONE scrape and exits. The single status line on STDOUT is matched against
@@ -72,6 +83,28 @@ metric_positive() {
     index($0, m) == 1 {
       c = substr($0, length(m) + 1, 1)
       if (c == "{" || c == " ") { v = $NF + 0; if (v > 0) { found = 1 } }
+    }
+    END { exit found ? 0 : 1 }' "${SCRAPE_FILE}"
+}
+
+# label_exists METRIC LABEL -> 0 if any exported series for METRIC has LABEL=<anything>.
+label_exists() {
+  grep -qE "^$1\{[^}]*\b$2=" "${SCRAPE_FILE}"
+}
+
+# label_value METRIC LABEL VALUE -> 0 if any exported series has LABEL="VALUE".
+label_value() {
+  grep -qE "^$1\{[^}]*\b$2=\"$3\"" "${SCRAPE_FILE}"
+}
+
+# group_positive METRIC GROUP -> 0 if any series of METRIC with group="GROUP" has a value > 0.
+group_positive() {
+  awk -v m="$1" -v g="$2" '
+    index($0, m) == 1 {
+      c = substr($0, length(m) + 1, 1)
+      if ((c == "{" || c == " ") && index($0, "group=\"" g "\"") > 0) {
+        v = $NF + 0; if (v > 0) { found = 1 }
+      }
     }
     END { exit found ? 0 : 1 }' "${SCRAPE_FILE}"
 }
@@ -128,6 +161,85 @@ for m in "${NON_EMPTY[@]}"; do
 done
 [ -z "${MISSING_POSITIVE}" ] || fail "non_empty metrics not > 0:${MISSING_POSITIVE}"
 
+# ---- label dimension checks ---------------------------------------------
+# Verify that metric-level labels used as dimensional filters in dashboard
+# "expr" fields are actually present on the exported series.
+#
+# Queue pub/sub: both pub (pub.go) and sub (server.go) register labels
+#   ["operation", "group", "remote_node", "remote_role", "remote_tier"].
+# The workload dashboard filters/groups by {operation=..., group=...} on all
+# queue pub/sub panels.
+QUEUE_LABEL_METRICS=(
+  banyandb_queue_pub_sent_bytes
+  banyandb_queue_pub_total_finished
+  banyandb_queue_pub_total_latency_bucket
+  banyandb_queue_pub_total_batch_started
+  banyandb_queue_pub_total_batch_finished
+  banyandb_queue_pub_total_batch_latency_bucket
+  banyandb_queue_sub_total_started
+  banyandb_queue_sub_total_finished
+  banyandb_queue_sub_total_latency_bucket
+  banyandb_queue_sub_total_batch_started
+  banyandb_queue_sub_total_batch_finished
+  banyandb_queue_sub_total_batch_latency_bucket
+  banyandb_queue_sub_total_message_started
+  banyandb_queue_sub_total_message_finished
+)
+MISSING_LABELS=""
+for m in "${QUEUE_LABEL_METRICS[@]}"; do
+  series_present "${m}" || continue
+  for lbl in operation group; do
+    label_exists "${m}" "${lbl}" || MISSING_LABELS="${MISSING_LABELS} ${m}(${lbl})"
+  done
+done
+
+# System metrics: nodes dashboard filters banyandb_system_{memory_state,disk,net_state}
+# by {kind=...}. The kind dimension is metric-level, not an infra label.
+for m in banyandb_system_memory_state banyandb_system_disk banyandb_system_net_state; do
+  series_present "${m}" || continue
+  label_exists "${m}" "kind" || MISSING_LABELS="${MISSING_LABELS} ${m}(kind)"
+done
+
+[ -z "${MISSING_LABELS}" ] || fail "metrics missing required dashboard label dimensions:${MISSING_LABELS}"
+
+# ---- specific label-value checks ----------------------------------------
+# Assert that label values required by specific dashboard panels are present.
+# Nodes dashboard panels require these kind= values on system metrics.
+MISSING_VALUES=""
+for kv in \
+    "banyandb_system_memory_state:kind:used" \
+    "banyandb_system_memory_state:kind:used_percent" \
+    "banyandb_system_disk:kind:used" \
+    "banyandb_system_disk:kind:total" \
+    "banyandb_system_net_state:kind:bytes_recv" \
+    "banyandb_system_net_state:kind:bytes_sent"; do
+  IFS=: read -r lv_m lv_lbl lv_val <<< "${kv}"
+  series_present "${lv_m}" && \
+    { label_value "${lv_m}" "${lv_lbl}" "${lv_val}" || \
+      MISSING_VALUES="${MISSING_VALUES} ${lv_m}{${lv_lbl}=\"${lv_val}\"}"; }
+done
+[ -z "${MISSING_VALUES}" ] || fail "metrics missing required label values for dashboard panels:${MISSING_VALUES}"
+
+# ---- canonical group checks -------------------------------------------------
+# Assert the three core OAP groups each produced positive write traffic.
+# banyandb_queue_pub_total_batch_started fires at stream-open (the earliest
+# possible signal — before any message is sent), so it is positive as soon as
+# OAP initiates a single batch for the group, regardless of whether the batch
+# has completed within the verify window.
+#   sw_metadata  -> measure writes (index_mode)
+#   sw_record    -> trace writes
+#   sw_minute    -> downsampled measure writes
+MISSING_GROUPS=""
+for grp_spec in \
+    "sw_metadata:measure/index_mode" \
+    "sw_records:trace" \
+    "sw_metricsMinute:measure"; do
+  IFS=: read -r grp _desc <<< "${grp_spec}"
+  group_positive "banyandb_queue_pub_total_batch_started" "${grp}" || \
+    MISSING_GROUPS="${MISSING_GROUPS} ${grp}(${_desc})"
+done
+[ -z "${MISSING_GROUPS}" ] || fail "canonical groups missing positive pub batch-started metrics:${MISSING_GROUPS}"
+
 # The dashboard query-throughput panels read banyandb_queue_sub_*{operation="query"}
 # (the subscriber/data side -- the data node subscribes to the query topic the
 # liaison publishes). Assert that exists, proving the OAP->liaison->data query
@@ -141,6 +253,8 @@ log "All dashboard metrics verified."
 log "  distinct node_role values : ${ROLES}"
 log "  presence metrics found    : ${#PRESENCE[@]}/${#PRESENCE[@]}"
 log "  non_empty metrics  > 0    : ${#NON_EMPTY[@]}/${#NON_EMPTY[@]}"
+log "  label dim checks          : ${#QUEUE_LABEL_METRICS[@]} queue + 3 system metrics"
+log "  canonical groups positive : sw_metadata(measure/index_mode) sw_records(trace) sw_metricsMinute(measure)"
 log "  operation=query           : pub@${PUB_ROLE}  sub@${SUB_ROLE}"
 log "Documented gaps (reported, not asserted):"
 for m in "${GAP[@]}"; do
