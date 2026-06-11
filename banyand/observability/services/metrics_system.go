@@ -225,7 +225,7 @@ func collectDisk() {
 					log.Error().Err(statErr).Msgf("failed to get stat for path: %s", path)
 				}
 			}
-			return
+			continue
 		}
 		diskMap.Store(path, int(usage.UsedPercent))
 		stats = append(stats, usageStat{path: path, usage: usage})

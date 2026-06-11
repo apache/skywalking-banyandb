@@ -142,7 +142,7 @@ func TestBatchModNMessageMetrics(t *testing.T) {
 
 	// Simulate N batch messages (handleBatch called N times with the same identity).
 	for range N {
-		s.handleBatch(&dataCollection, req, &start, identity)
+		s.handleBatch(&dataCollection, req, &start)
 	}
 
 	// Simulate EOF: handleEOF dispatches the collected batch.
@@ -181,7 +181,7 @@ func TestBatchModSendFailureMetrics(t *testing.T) {
 	s.pinIdentity(identity, req, topic)
 
 	for range N {
-		s.handleBatch(&dataCollection, req, &start, identity)
+		s.handleBatch(&dataCollection, req, &start)
 	}
 	s.handleEOF(stream, &topic, dataCollection, req, identity, start)
 
