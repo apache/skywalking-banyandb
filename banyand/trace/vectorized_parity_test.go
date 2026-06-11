@@ -172,10 +172,10 @@ func TestVectorizedParityLookup(t *testing.T) {
 	tables := []*tsTable{tst}
 
 	tests := []struct {
+		tagProjection *model.TagProjection
 		name          string
 		traceIDs      []string
 		maxTraceSize  int
-		tagProjection *model.TagProjection
 		wantCount     int
 		wantNilTags   bool
 	}{
@@ -240,10 +240,10 @@ func TestVectorizedParityOrderMode(t *testing.T) {
 
 	tests := []struct {
 		name      string
-		sortDir   modelv1.Sort
 		keys      []int64
 		traceIDs  []string
 		wantCount int
+		sortDir   modelv1.Sort
 	}{
 		{
 			name:      "ASC order all traces",

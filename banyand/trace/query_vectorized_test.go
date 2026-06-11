@@ -195,9 +195,9 @@ func TestLoadedCursorSource(t *testing.T) {
 // fakeSIDXWithSync wraps fakeSIDX (satisfies sidx.SIDX) and adds QuerySync so that
 // sidxInstancesToVectorizedIterators can cast it to syncSIDXQuerier.
 type fakeSIDXWithSync struct {
+	syncErr error
 	*fakeSIDX
 	syncResponses []*sidx.QueryResponse
-	syncErr       error
 }
 
 func (f *fakeSIDXWithSync) QuerySync(_ context.Context, _ sidx.QueryRequest) ([]*sidx.QueryResponse, error) {

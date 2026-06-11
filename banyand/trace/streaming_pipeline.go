@@ -364,7 +364,7 @@ func newSIDXStreamRunner(
 		streamCtx:    streamCtx,
 		cancelFunc:   cancel,
 		req:          req,
-		batchSize: batchSize,
+		batchSize:    batchSize,
 		heap:         &sidxStreamHeap{asc: asc},
 		seenTraceIDs: make(map[string]struct{}),
 		batch:        newTraceBatch(0, batchSize),

@@ -29,7 +29,7 @@ import (
 // BenchmarkRowBasedVsVectorized_Lookup compares the original row-based goroutine path
 // (startBlockScanStage → queryResult) against the new vectorized pull path
 // (buildVectorizedScanBatch → vectorizedTraceQueryResult) for traceID lookup queries.
-// Run with: go test -bench=BenchmarkRowBasedVsVectorized_Lookup -benchmem ./banyand/trace/
+// Run with: go test -bench=BenchmarkRowBasedVsVectorized_Lookup -benchmem ./banyand/trace/.
 func BenchmarkRowBasedVsVectorized_Lookup(b *testing.B) {
 	tst, cleanup := newParityTSTable(b, tsTS1, tsTS2)
 	defer cleanup()
