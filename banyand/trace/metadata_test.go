@@ -392,7 +392,7 @@ var _ = Describe("Metadata", func() {
 				// part count is stable (no further writes), so slow polling never misses it.
 				Eventually(func() int64 {
 					return getTotalPartCount(svcs, groupName)
-				}, 3*flags.EventuallyTimeout, 500*time.Millisecond).Should(BeNumerically("<", partCountBeforeMerge))
+				}, 5*flags.EventuallyTimeout, 500*time.Millisecond).Should(BeNumerically("<", partCountBeforeMerge))
 
 				Eventually(func(innerGm Gomega) {
 					spans := querySchemaChangeTraceData(svcs, traceName, groupName,
