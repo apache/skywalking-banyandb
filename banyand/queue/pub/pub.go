@@ -101,21 +101,27 @@ type nodeInfo struct {
 }
 
 type pubMetrics struct {
-	totalStarted  meter.Counter
-	totalFinished meter.Counter
-	totalLatency  meter.Histogram
-	totalErr      meter.Counter
-	sentBytes     meter.Counter
+	totalStarted       meter.Counter
+	totalFinished      meter.Counter
+	totalLatency       meter.Histogram
+	totalErr           meter.Counter
+	sentBytes          meter.Counter
+	totalBatchStarted  meter.Counter
+	totalBatchFinished meter.Counter
+	totalBatchLatency  meter.Histogram
 }
 
 func newPubMetrics(factory observability.Factory) *pubMetrics {
 	labels := []string{"operation", "group", "remote_node", "remote_role", "remote_tier"}
 	return &pubMetrics{
-		totalStarted:  factory.NewCounter("total_started", labels...),
-		totalFinished: factory.NewCounter("total_finished", labels...),
-		totalLatency:  factory.NewHistogram("total_latency", meter.DefBuckets, labels...),
-		totalErr:      factory.NewCounter("total_err", append(labels, "error_type")...),
-		sentBytes:     factory.NewCounter("sent_bytes", labels...),
+		totalStarted:       factory.NewCounter("total_started", labels...),
+		totalFinished:      factory.NewCounter("total_finished", labels...),
+		totalLatency:       factory.NewHistogram("total_latency", meter.DefBuckets, labels...),
+		totalErr:           factory.NewCounter("total_err", append(labels, "error_type")...),
+		sentBytes:          factory.NewCounter("sent_bytes", labels...),
+		totalBatchStarted:  factory.NewCounter("total_batch_started", labels...),
+		totalBatchFinished: factory.NewCounter("total_batch_finished", labels...),
+		totalBatchLatency:  factory.NewHistogram("total_batch_latency", meter.BatchBuckets, labels...),
 	}
 }
 

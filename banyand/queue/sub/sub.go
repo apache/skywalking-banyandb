@@ -125,7 +125,7 @@ func (s *server) Send(stream clusterv1.Service_SendServer) error {
 		}
 		writeEntity, err := stream.Recv()
 		if errors.Is(err, io.EOF) {
-			s.handleEOF(stream, topic, dataCollection, writeEntity, identity)
+			s.handleEOF(stream, topic, dataCollection, writeEntity, identity, start)
 			return nil
 		}
 		if err != nil {
@@ -258,6 +258,7 @@ func (s *server) dispatchMessage(
 ) {
 	if s.metrics != nil {
 		s.metrics.totalStarted.Inc(1, identity.operation, identity.group, identity.senderNode, identity.senderRole, identity.senderTier)
+		s.metrics.totalMessageStarted.Inc(1, identity.operation, identity.group, identity.senderNode, identity.senderRole, identity.senderTier)
 	}
 	listeners := s.getListeners(topic)
 	if len(listeners) == 0 {
@@ -268,6 +269,11 @@ func (s *server) dispatchMessage(
 		logger.Panicf("multiple listeners found for topic %s", topic)
 	}
 	m = listeners[0].Rev(stream.Context(), m)
+	// The BatchMod fork in Send routes each SendRequest to exactly one of
+	// handleBatch→handleEOF (batch) or dispatchMessage (non-batch), so no message is double-counted.
+	if s.metrics != nil {
+		s.metrics.totalMessageFinished.Inc(1, identity.operation, identity.group, identity.senderNode, identity.senderRole, identity.senderTier)
+	}
 	if m.Data() == nil {
 		if errSend := stream.Send(&clusterv1.SendResponse{MessageId: writeEntity.MessageId}); errSend != nil {
 			s.log.Error().Stringer("request", writeEntity).Err(errSend).Msg("failed to send empty response")
