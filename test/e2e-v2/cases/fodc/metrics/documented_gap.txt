@@ -25,9 +25,6 @@ banyandb_liaison_grpc_total_err
 banyandb_liaison_grpc_total_stream_msg_received_err
 banyandb_queue_pub_total_err
 banyandb_queue_sub_total_err
-banyandb_measure_total_sync_loop_err
-banyandb_stream_tst_total_sync_loop_err
-banyandb_trace_tst_total_sync_loop_err
 #
 # Group 2 -- part-merge completion metrics. These increment only when a
 # background part merge actually completes, which requires enough accumulated
@@ -45,7 +42,3 @@ banyandb_trace_tst_total_merged_parts
 # e2e test cluster, so these metrics are never exported within the verify window.
 banyandb_lifecycle_last_run_timestamp_seconds
 banyandb_lifecycle_last_run_success
-banyandb_lifecycle_migration_sent_bytes
-banyandb_lifecycle_migration_total_err
-banyandb_lifecycle_migration_total_finished
-banyandb_lifecycle_migration_total_latency_bucket
