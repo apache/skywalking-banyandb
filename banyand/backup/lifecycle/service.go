@@ -88,6 +88,13 @@ type lifecycleService struct {
 	omr         observability.MetricsRegistry
 	pm          protector.Memory
 	cyclesTotal meter.Counter
+	// selfIdentityResolution is incremented by every parseGroup call
+	// after resolveSelfIdentity runs, with result="ok" on a non-empty
+	// match and result="empty" on a no-match. The companion
+	// banyandb_lifecycle_self_identity_resolution_total counter is
+	// the regression detector for the per-pod asymmetry that
+	// deriveSelfIdentity's address-based Pass 1 had.
+	selfIdentityResolution meter.Counter
 	// lastRunTimestamp records the wall-clock epoch (in seconds) of the
 	// most recent attempt to run a migration cycle, regardless of outcome.
 	// Updated at the end of action() in both the success and error paths.
@@ -251,6 +258,16 @@ func (l *lifecycleService) PreRun(_ context.Context) error {
 	l.cyclesTotal = lifecycleScope.NewCounter("cycles_total")
 	l.lastRunTimestamp = lifecycleScope.NewGauge("last_run_timestamp_seconds")
 	l.lastRunSuccess = lifecycleScope.NewGauge("last_run_success")
+	// selfIdentityResolution tracks the result of every resolveSelfIdentity
+	// call inside parseGroup. result="ok" means the lifecycle stamped a
+	// non-empty SenderNode on the wire; result="empty" means the registry
+	// did not contain a matching entry (e.g. cold start) and the
+	// publisher's SenderNode stayed empty. The on-wire empty case
+	// produces empty remote_node labels on the receiver's
+	// banyandb_queue_sub_* family; a sustained non-zero result="empty"
+	// rate is the canary for a registration / identity-resolution
+	// regression.
+	l.selfIdentityResolution = lifecycleScope.NewCounter("self_identity_resolution_total", "result")
 
 	if l.schedule != "" && l.lifecycleTLS {
 		var err error
@@ -1082,7 +1099,7 @@ func (l *lifecycleService) getGroupsToProcess(ctx context.Context, progress *Pro
 func (l *lifecycleService) processStreamGroup(ctx context.Context, g *commonv1.Group,
 	streamDir string, nodes []*databasev1.Node, labels map[string]string, progress *Progress,
 ) {
-	group, err := parseGroup(g, labels, nodes, l.l, l.metadata, l.clusterStateMgr, l.omr, l.gRPCAddr)
+	group, err := parseGroup(g, labels, nodes, l.l, l.metadata, l.clusterStateMgr, l.omr, l.selfIdentityResolution)
 	if err != nil {
 		l.l.Error().Err(err).Msgf("failed to parse group %s", g.Metadata.Name)
 		return
@@ -1202,7 +1219,7 @@ func (l *lifecycleService) deleteExpiredStreamSegments(ctx context.Context, g *c
 func (l *lifecycleService) processMeasureGroup(ctx context.Context, g *commonv1.Group, measureDir string,
 	nodes []*databasev1.Node, labels map[string]string, progress *Progress,
 ) {
-	group, err := parseGroup(g, labels, nodes, l.l, l.metadata, l.clusterStateMgr, l.omr, l.gRPCAddr)
+	group, err := parseGroup(g, labels, nodes, l.l, l.metadata, l.clusterStateMgr, l.omr, l.selfIdentityResolution)
 	if err != nil {
 		l.l.Error().Err(err).Msgf("failed to parse group %s", g.Metadata.Name)
 		return
@@ -1309,7 +1326,7 @@ func (l *lifecycleService) deleteExpiredTraceSegments(ctx context.Context, g *co
 func (l *lifecycleService) processTraceGroup(ctx context.Context, g *commonv1.Group, traceDir string,
 	nodes []*databasev1.Node, labels map[string]string, progress *Progress,
 ) {
-	group, err := parseGroup(g, labels, nodes, l.l, l.metadata, l.clusterStateMgr, l.omr, l.gRPCAddr)
+	group, err := parseGroup(g, labels, nodes, l.l, l.metadata, l.clusterStateMgr, l.omr, l.selfIdentityResolution)
 	if err != nil {
 		l.l.Error().Err(err).Msgf("failed to parse group %s", g.Metadata.Name)
 		return

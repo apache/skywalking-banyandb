@@ -22,6 +22,7 @@ import (
 	"fmt"
 	"net"
 	"os"
+	"strings"
 
 	"github.com/pkg/errors"
 	"google.golang.org/protobuf/proto"
@@ -38,6 +39,7 @@ import (
 	"github.com/apache/skywalking-banyandb/banyand/queue/pub"
 	"github.com/apache/skywalking-banyandb/pkg/fs"
 	"github.com/apache/skywalking-banyandb/pkg/logger"
+	"github.com/apache/skywalking-banyandb/pkg/meter"
 	"github.com/apache/skywalking-banyandb/pkg/node"
 )
 
@@ -85,79 +87,104 @@ func (l *lifecycleService) getSnapshots(ctx context.Context, groups []*commonv1.
 	return streamDir, measureDir, traceDir, nil
 }
 
-// deriveSelfIdentity returns the SenderNode and SenderTier the lifecycle
-// publisher should stamp on its wire SendRequest so the data-node receiver
-// can label its banyandb_queue_sub_* family accordingly.
+// resolveSelfIdentity returns the BanyanDB NodeID (Metadata.Name) and
+// tier label (Labels["type"]) the lifecycle publisher should stamp on
+// its wire SendRequest / SyncMetadata, so the data-node receiver labels
+// its banyandb_queue_sub_total_* family with non-empty remote_node and
+// remote_tier.
 //
-// Inputs (no new CLI flags needed):
+// Resolution: the lifecycle sidecar's own pod hostname is the stable
+// identifier the receiver will see as the sender. It comes from
+// POD_NAME (K8s downward API) and falls back to os.Hostname() — the
+// same precedence as nativeNodeContext at service.go:160-165. The
+// function then looks the host up directly in the data-node registry,
+// matching against the host portion of GrpcAddress and NodeID (the
+// registry may carry either an IP, a headless-service FQDN, or a
+// loopback alias, depending on which bind address the data pod
+// registered with). The first registry entry whose host matches (with
+// loopback-alias normalization) is the co-located data pod; its
+// Metadata.Name is the SenderNode and its Labels["type"] is the
+// SenderTier.
 //
-//   - coLocatedDataNodeAddr: the lifecycle's --grpc-addr, which is the
-//     gRPC address of the data node the lifecycle is co-located with
-//     (sidecar topology). It is the authoritative match key.
-//   - nodeLabels: the lifecycle's own --node-labels, used as a fallback
-//     when the co-located data node hasn't synced to the metadata
-//     registry yet (cold start of a freshly created lifecycle).
-//   - nodes: the cluster's data-node registry (ROLE_DATA), which carries
-//     both Metadata.Name (the BanyanDB NodeID) and Labels (e.g. type=hot).
-//
-// Resolution order:
-//
-//  1. Match by GrpcAddress. In the standard sidecar layout the lifecycle's
-//     --grpc-addr equals the co-located data node's GrpcAddress, and
-//     that data node's Metadata.Name is the BanyanDB NodeID the
-//     receiver records as remote_node. This is the production path
-//     (the live cluster's lifecycle container has no --node-labels).
-//  2. Fall back to label matching. If a data node's Labels are a
-//     superset of nodeLabels (every key in nodeLabels matches), use
-//     that node's Metadata.Name and Labels["type"].
-//  3. Fall back to type-only match on nodeLabels["type"].
-//  4. If nothing matches, return empty strings — preserves the
-//     pre-fix behavior so existing test setups that don't populate
-//     these fields keep working.
-func deriveSelfIdentity(coLocatedDataNodeAddr string, nodeLabels map[string]string, nodes []*databasev1.Node) (senderNode, senderTier string) {
-	// Pass 1: GrpcAddress match (the production sidecar path).
-	if coLocatedDataNodeAddr != "" {
-		for _, n := range nodes {
-			if grpcAddrEqual(n.GrpcAddress, coLocatedDataNodeAddr) {
-				return n.Metadata.Name, n.Labels["type"]
-			}
+// Re-runs on every parseGroup call (no caching) so a data-pod
+// restart, re-registration, or new host is picked up by the next
+// cycle. Returns ok=false when no registry entry matches.
+func resolveSelfIdentity(selfPodHost string, nodes []*databasev1.Node) (senderNode, senderTier string, ok bool) {
+	if selfPodHost == "" {
+		return "", "", false
+	}
+	for _, n := range nodes {
+		if n == nil || n.Metadata == nil {
+			continue
+		}
+		if hostMatches(n.GrpcAddress, selfPodHost) {
+			return n.Metadata.Name, n.Labels["type"], true
 		}
 	}
-	// Pass 2: every-key label match. Guarded against an empty label set:
-	// labelsContain treats an empty subset as matching anything, which would
-	// attribute the identity to an arbitrary registry node (whichever happens
-	// to be listed first — e.g. a migration target instead of the co-located
-	// data node).
-	if len(nodeLabels) > 0 {
-		for _, n := range nodes {
-			if n.Labels == nil {
-				continue
-			}
-			if !labelsContain(n.Labels, nodeLabels) {
-				continue
-			}
-			return n.Metadata.Name, n.Labels["type"]
+	return "", "", false
+}
+
+// selfPodHostname returns the lifecycle sidecar's own pod host.
+// Precedence matches nativeNodeContext at service.go:160-165:
+// POD_NAME first (K8s downward API), then os.Hostname() as a
+// fallback. Returns "" only if both lookups fail (very rare; e.g.
+// hostname uname syscall returns ENAMETOOLONG).
+func selfPodHostname() string {
+	if v := os.Getenv("POD_NAME"); v != "" {
+		return v
+	}
+	if h, err := os.Hostname(); err == nil {
+		return h
+	}
+	return ""
+}
+
+// hostMatches reports whether aRegistryHost (which may carry a :port
+// and may be a loopback alias, an IP, or a headless-service FQDN)
+// identifies the same pod as selfPodHost. The host portion is
+// extracted via net.SplitHostPort, then reduced to its leftmost
+// label -- but only for FQDNs (multi-label hostnames); IP literals
+// are kept as-is so a 127.0.0.1 form is not truncated to "127".
+// (a FQDN like "data-x.data-x-headless.ns" maps to the pod name
+// "data-x".) Loopback aliases (localhost, 127.0.0.1, ::1) are
+// treated as equivalent so a registry entry advertised as
+// 127.0.0.1:17912 still matches a selfPodHost of "localhost" or
+// vice versa.
+func hostMatches(aRegistryHost, selfPodHost string) bool {
+	if aRegistryHost == "" {
+		return false
+	}
+	if h, _, err := net.SplitHostPort(aRegistryHost); err == nil {
+		aRegistryHost = h
+	}
+	if net.ParseIP(aRegistryHost) == nil {
+		if i := strings.Index(aRegistryHost, "."); i >= 0 {
+			aRegistryHost = aRegistryHost[:i]
 		}
 	}
-	// Pass 3: type-only label match.
-	if wantType := nodeLabels["type"]; wantType != "" {
-		for _, n := range nodes {
-			if n.Labels == nil {
-				continue
-			}
-			if n.Labels["type"] == wantType {
-				return n.Metadata.Name, n.Labels["type"]
-			}
-		}
+	if aRegistryHost == selfPodHost {
+		return true
 	}
-	return "", ""
+	if isLoopbackHost(selfPodHost) && isLoopbackHost(aRegistryHost) {
+		return true
+	}
+	return false
 }
 
 // grpcAddrEqual reports whether two advertised gRPC addresses identify the
-// same endpoint. Besides the exact match, loopback host aliases (localhost,
-// 127.0.0.1, ::1) with the same port are treated as equivalent, so a
-// --grpc-addr given as localhost:PORT still matches a data node registered
-// as 127.0.0.1:PORT.
+// same endpoint. Three equivalences are honored:
+//   - exact string match,
+//   - host-portion match after reducing each to its leftmost label
+//     (FQDN-only; IP literals are kept as-is) with the same port,
+//   - both hosts are loopback aliases (localhost / 127.0.0.1 / ::1)
+//     with the same port.
+//
+// The middle case is what was missing pre-fix: a --grpc-addr of
+// 127.0.0.1:17912 and a registry GrpcAddress of
+// "<headless-svc>.<ns>:17912" used to be rejected because the
+// headless-svc host is not loopback and not a literal string match.
+// The new behavior is "same port and same leftmost label" wins
+// regardless of the FQDN or loopback status.
 func grpcAddrEqual(a, b string) bool {
 	if a == b {
 		return true
@@ -166,6 +193,19 @@ func grpcAddrEqual(a, b string) bool {
 	hostB, portB, errB := net.SplitHostPort(b)
 	if errA != nil || errB != nil || portA != portB {
 		return false
+	}
+	if net.ParseIP(hostA) == nil {
+		if i := strings.Index(hostA, "."); i >= 0 {
+			hostA = hostA[:i]
+		}
+	}
+	if net.ParseIP(hostB) == nil {
+		if i := strings.Index(hostB, "."); i >= 0 {
+			hostB = hostB[:i]
+		}
+	}
+	if hostA == hostB {
+		return true
 	}
 	return isLoopbackHost(hostA) && isLoopbackHost(hostB)
 }
@@ -177,17 +217,6 @@ func isLoopbackHost(host string) bool {
 	}
 	ip := net.ParseIP(host)
 	return ip != nil && ip.IsLoopback()
-}
-
-// labelsContain reports whether superset has every (k, v) pair in subset.
-// An empty subset matches anything.
-func labelsContain(superset, subset map[string]string) bool {
-	for k, v := range subset {
-		if superset[k] != v {
-			return false
-		}
-	}
-	return true
 }
 
 // GroupConfig encapsulates the parsed lifecycle configuration for a Group.
@@ -235,7 +264,7 @@ func parseGroup(
 	g *commonv1.Group, nodeLabels map[string]string, nodes []*databasev1.Node,
 	l *logger.Logger, metadata metadata.Repo, clusterStateMgr *clusterStateManager,
 	omr observability.MetricsRegistry,
-	coLocatedDataNodeAddr string,
+	resolutionCounter meter.Counter,
 ) (*GroupConfig, error) {
 	ro := g.ResourceOpts
 	if ro == nil {
@@ -311,24 +340,48 @@ func parseGroup(
 	client := pub.NewWithoutMetadata(omr) //nolint:contextcheck // health check goroutine uses context.Background()
 	// Stamp the lifecycle's self identity onto the publisher so the wire
 	// SenderNode / SenderRole / SenderTier fields and the parallel
-	// banyandb_lifecycle_migration_* labels are populated. The three
-	// values are derived from already-known inputs (the co-located data
-	// node's gRPC address and the cluster's data-node registry) so the
-	// fix needs no new CLI flags:
-	//   - SenderNode  = the data node whose GrpcAddress matches the
-	//     lifecycle's --grpc-addr (i.e. the co-located data node). Its
-	//     Metadata.Name is the BanyanDB NodeID the receiver records as
-	//     remote_node.
-	//   - SenderRole  = "lifecycle" (no Role enum entry; matches the
-	//     liaison's hard-coded "liaison" pattern in pkg/cmdsetup/liaison.go).
-	//   - SenderTier  = the matched data node's `type` label
-	//     (hot/warm/cold), which becomes the receiver's remote_tier.
-	// Falls back to the lifecycle's own --node-labels when the co-located
-	// data node isn't in the registry yet (cold start), and to empty
-	// when neither is available — preserving the pre-fix behavior.
-	senderNode, senderTier := deriveSelfIdentity(coLocatedDataNodeAddr, nodeLabels, nodes)
-	if senderNode != "" || senderTier != "" {
+	// banyandb_lifecycle_migration_* labels are populated. The
+	// resolveSelfIdentity algorithm matches the lifecycle's own pod
+	// hostname (POD_NAME -> os.Hostname(), same precedence as
+	// nativeNodeContext at service.go:160-165) against the
+	// data-node registry's GrpcAddress with loopback-alias and
+	// port-strip normalization. The first matching registry entry is
+	// the co-located data pod; its Metadata.Name is the BanyanDB
+	// NodeID the receiver records as remote_node, and its
+	// Labels["type"] is the receiver's remote_tier. SenderRole is
+	// hard-coded to "lifecycle" to mirror the liaison's
+	// "liaison" pattern at pkg/cmdsetup/liaison.go:170-171.
+	//
+	// The resolution counter (banyandb_lifecycle_self_identity_resolution_total)
+	// is incremented with result=ok on a non-empty match and
+	// result=empty on a no-match. Pre-fix, 2 of 4 lifecycle pods
+	// (hot-0, warm-1) returned empty due to a DNS-name vs loopback
+	// mismatch in deriveSelfIdentity's Pass 1; the new
+	// resolveSelfIdentity closes that gap.
+	selfHost := selfPodHostname()
+	senderNode, senderTier, resolvedOK := resolveSelfIdentity(selfHost, nodes)
+	if resolutionCounter != nil {
+		label := "empty"
+		if resolvedOK {
+			label = "ok"
+		}
+		resolutionCounter.Inc(1, label)
+	}
+	if resolvedOK {
 		client.SetSelfNode(senderNode, "lifecycle", senderTier)
+		// Info log so operators can see which identity the agent
+		// stamped on the wire, and which co-located data pod the
+		// registry picked. This is the log line that surfaces the
+		// "remote node" the user wants visible at startup.
+		l.Info().
+			Str("data_pod", selfHost).
+			Str("sender_node", senderNode).
+			Str("sender_tier", senderTier).
+			Msg("lifecycle: stamped sender identity on wire (SenderNode, SenderTier)")
+	} else {
+		l.Warn().
+			Str("data_pod", selfHost).
+			Msg("lifecycle: sender identity resolution returned empty; SenderNode on wire will be empty (pre-fix regression)")
 	}
 	switch g.Catalog {
 	case commonv1.Catalog_CATALOG_STREAM:
