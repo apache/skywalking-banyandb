@@ -730,14 +730,35 @@ func (l *lifecycleService) recordCycleGroup(group, senderNode, senderRole, sende
 // (group, remote_node, remote_role, remote_tier) tuple from the cycle's
 // last processed group. Called from the deferred end-of-action block so
 // every code path (success, error, panic-recovered) updates both
-// gauges atomically. On the empty-cycle path (no group was processed)
-// the labels are empty strings so dashboards still see a single series
-// with group="". nil gauges are skipped so a lifecycle run with a nil
-// observability.MetricsRegistry (BypassRegistry) doesn't crash.
+// gauges atomically.
+//
+// Prometheus' labeled gauges don't garbage-collect the previous tuple
+// when Set is called with new labels — the old series lingers as
+// "stale" until a scrape expires it. To prevent dashboards from
+// reading a previous cycle's (group, remote_*) tuple as current,
+// recordLastRun first Deletes the previous-tuple series (if any
+// existed) before stamping the new one. The empty-cycle path (no
+// group was processed) calls Delete on the previous tuple and then
+// stamps a single series with all-empty labels, so dashboards always
+// see exactly one current series. nil gauges are skipped so a lifecycle
+// run with a nil observability.MetricsRegistry (BypassRegistry)
+// doesn't crash.
 func (l *lifecycleService) recordLastRun(start time.Time, err error) {
 	success := 0.0
 	if err == nil {
 		success = 1.0
+	}
+	prevLabels := []string{l.lastRunNode, l.lastRunRole, l.lastRunTier, l.lastRunGroup}
+	// If a previous tuple was set (and the cycle is not the empty one,
+	// where the tuple was reset to empty strings at action start),
+	// delete it first so the new stamp replaces rather than shadows.
+	if l.lastRunGroup != "" || l.lastRunNode != "" || l.lastRunRole != "" || l.lastRunTier != "" {
+		if l.lastRunTimestamp != nil {
+			l.lastRunTimestamp.Delete(prevLabels...)
+		}
+		if l.lastRunSuccess != nil {
+			l.lastRunSuccess.Delete(prevLabels...)
+		}
 	}
 	if l.lastRunTimestamp != nil {
 		l.lastRunTimestamp.Set(float64(start.Unix()), l.lastRunNode, l.lastRunRole, l.lastRunTier, l.lastRunGroup)

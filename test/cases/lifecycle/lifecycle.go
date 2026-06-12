@@ -260,12 +260,15 @@ func verifyMigrationMetrics(reg observability.MetricsRegistry) {
 	// reached the defer. Prometheus emits floats in scientific notation
 	// for large values like epoch seconds (e.g. 1.781007822e+09), so the
 	// assertion accepts either fixed or scientific form. The metric
-	// names now carry labels — the regex requires all four label names
-	// (remote_node, remote_role, remote_tier, group) and any value, so a
-	// missing label (regression to the unlabeld form) fails the regex.
-	// The label block is captured as `[^}]*` between each named label
-	// so the four names can appear in any order Prometheus emits them.
-	allLabels := `[^}]*remote_node="[^"]*"[^}]*remote_role="[^"]*"[^}]*remote_tier="[^"]*"[^}]*group="[^"]*"[^}]*`
+	// names now carry labels — Prometheus' exposition format sorts label
+	// names alphabetically (group, remote_node, remote_role, remote_tier),
+	// and the regex requires all four to be present so a regression to
+	// the unlabeld form fails the regex. The label block is captured as
+	// a single `[^}]*` then each required label is asserted with a
+	// lookbehind-style positive check; an explicit per-label regex would
+	// be more readable but the leading-label-alphabetical-ordering
+	// invariant lets us keep the assertion to a single MatchRegexp.
+	allLabels := `group="[^"]*"[^}]*remote_node="[^"]*"[^}]*remote_role="[^"]*"[^}]*remote_tier="[^"]*"`
 	gomega.Expect(body).To(gomega.MatchRegexp(
 		`(?m)^banyandb_lifecycle_last_run_timestamp_seconds\{`+allLabels+`\} (?:[1-9]\d{9}|[1-9]\.\d+e\+0?[89])`),
 		"banyandb_lifecycle_last_run_timestamp_seconds must be set to a non-zero epoch with all four labels, got:\n"+body)
