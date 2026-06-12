@@ -1,0 +1,239 @@
+# Licensed to the Apache Software Foundation (ASF) under one or more
+# contributor license agreements.  See the NOTICE file distributed with
+# this work for additional information regarding copyright ownership.
+# The ASF licenses this file to You under the Apache License, Version 2.0
+# (the "License"); you may not use this file except in compliance with
+# the License.  You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
+# BanyanDB 1:1 cluster (file discovery, no etcd). Each node pod runs the banyand
+# process plus a co-located fodc-agent sidecar that scrapes the local
+# observability endpoint (127.0.0.1:2121), resolves its node role from the local
+# cluster-state gRPC (127.0.0.1:17912), and pushes metrics to the fodc-proxy.
+#
+# CRITICAL: the agent MUST be given --cluster-state-ports; without it the
+# cluster collector is not started, the node role never resolves, and the proxy
+# client stays disabled (no metrics ever reach the proxy).
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: data
+  labels:
+    app: banyandb-data
+spec:
+  selector:
+    app: banyandb-data
+  ports:
+    - name: grpc
+      port: 17912
+      targetPort: 17912
+    - name: http
+      port: 17913
+      targetPort: 17913
+    - name: metrics
+      port: 2121
+      targetPort: 2121
+    - name: prop-schema
+      port: 17916
+      targetPort: 17916
+    - name: prop-gossip
+      port: 17932
+      targetPort: 17932
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: liaison
+  labels:
+    app: banyandb-liaison
+spec:
+  selector:
+    app: banyandb-liaison
+  ports:
+    - name: grpc
+      port: 17912
+      targetPort: 17912
+    - name: http
+      port: 17913
+      targetPort: 17913
+    - name: metrics
+      port: 2121
+      targetPort: 2121
+    - name: prop-schema
+      port: 17916
+      targetPort: 17916
+    - name: prop-gossip
+      port: 17932
+      targetPort: 17932
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: banyandb-data
+  labels:
+    app: banyandb-data
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: banyandb-data
+  template:
+    metadata:
+      labels:
+        app: banyandb-data
+    spec:
+      hostname: data
+      shareProcessNamespace: true
+      containers:
+        - name: banyand
+          image: apache/skywalking-banyandb:latest
+          imagePullPolicy: IfNotPresent
+          args:
+            - data
+            - --node-discovery-mode=file
+            - --node-discovery-file-path=/etc/banyandb/nodes.yaml
+          ports:
+            - { name: grpc, containerPort: 17912 }
+            - { name: http, containerPort: 17913 }
+            - { name: metrics, containerPort: 2121 }
+          readinessProbe:
+            # /api/healthz reports SERVING only after pre-run completes and the
+            # node serves gRPC on 17912, so OAP (deployed after) never starts
+            # against a not-yet-listening BanyanDB and crashloops.
+            httpGet:
+              path: /api/healthz
+              port: 17913
+            initialDelaySeconds: 5
+            periodSeconds: 5
+            failureThreshold: 60
+          volumeMounts:
+            - name: nodes
+              mountPath: /etc/banyandb
+              readOnly: true
+          resources:
+            limits:
+              memory: 1536Mi
+              cpu: "2"
+            requests:
+              memory: 512Mi
+              cpu: "500m"
+        - name: fodc-agent
+          image: apache/skywalking-banyandb-fodc-agent:latest
+          imagePullPolicy: IfNotPresent
+          args:
+            - --poll-metrics-ports=2121
+            - --poll-metrics-interval=2s
+            - --cluster-state-ports=17912
+            - --cluster-state-poll-interval=10s
+            - --proxy-addr=fodc-proxy:17912
+            - --prometheus-listen-addr=:9090
+            - --heartbeat-interval=5s
+            - --pod-name=$(POD_NAME)
+          env:
+            - name: POD_NAME
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.name
+          ports:
+            - { name: fodc-metrics, containerPort: 9090 }
+          resources:
+            limits:
+              memory: 256Mi
+              cpu: "500m"
+            requests:
+              memory: 64Mi
+              cpu: "100m"
+      volumes:
+        - name: nodes
+          configMap:
+            name: banyandb-nodes
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: banyandb-liaison
+  labels:
+    app: banyandb-liaison
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: banyandb-liaison
+  template:
+    metadata:
+      labels:
+        app: banyandb-liaison
+    spec:
+      hostname: liaison
+      shareProcessNamespace: true
+      containers:
+        - name: banyand
+          image: apache/skywalking-banyandb:latest
+          imagePullPolicy: IfNotPresent
+          args:
+            - liaison
+            - --node-discovery-mode=file
+            - --node-discovery-file-path=/etc/banyandb/nodes.yaml
+          ports:
+            - { name: grpc, containerPort: 17912 }
+            - { name: http, containerPort: 17913 }
+            - { name: metrics, containerPort: 2121 }
+          readinessProbe:
+            # /api/healthz reports SERVING only after pre-run completes and the
+            # node serves gRPC on 17912, so OAP (deployed after) never starts
+            # against a not-yet-listening BanyanDB and crashloops.
+            httpGet:
+              path: /api/healthz
+              port: 17913
+            initialDelaySeconds: 5
+            periodSeconds: 5
+            failureThreshold: 60
+          volumeMounts:
+            - name: nodes
+              mountPath: /etc/banyandb
+              readOnly: true
+          resources:
+            limits:
+              memory: 1Gi
+              cpu: "2"
+            requests:
+              memory: 512Mi
+              cpu: "500m"
+        - name: fodc-agent
+          image: apache/skywalking-banyandb-fodc-agent:latest
+          imagePullPolicy: IfNotPresent
+          args:
+            - --poll-metrics-ports=2121
+            - --poll-metrics-interval=2s
+            - --cluster-state-ports=17912
+            - --cluster-state-poll-interval=10s
+            - --proxy-addr=fodc-proxy:17912
+            - --prometheus-listen-addr=:9090
+            - --heartbeat-interval=5s
+            - --pod-name=$(POD_NAME)
+          env:
+            - name: POD_NAME
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.name
+          ports:
+            - { name: fodc-metrics, containerPort: 9090 }
+          resources:
+            limits:
+              memory: 256Mi
+              cpu: "500m"
+            requests:
+              memory: 64Mi
+              cpu: "100m"
+      volumes:
+        - name: nodes
+          configMap:
+            name: banyandb-nodes

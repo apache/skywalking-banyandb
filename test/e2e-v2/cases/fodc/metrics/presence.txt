@@ -1,0 +1,71 @@
+# Licensed to the Apache Software Foundation (ASF) under one or more
+# contributor license agreements.  See the NOTICE file distributed with
+# this work for additional information regarding copyright ownership.
+# The ASF licenses this file to You under the Apache License, Version 2.0
+# (the "License"); you may not use this file except in compliance with
+# the License.  You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+#
+# PRESENCE: dashboard metrics asserted to have >=1 exported series (the value
+# may legitimately be zero, e.g. *_pending_data_count). These are reliably
+# exported by a 1:1 OAP-driven cluster within the verify window. The
+# always-positive core lives in non_empty.txt; metrics that need a specific
+# event to materialise (error counters, completed part-merges) live in
+# documented_gap.txt. The three lists are disjoint and their union is exactly
+# the 77 distinct names referenced by the FODC Grafana dashboards.
+#
+# Calibrated against a live run: OAP writes the BanyanDB trace model, so the
+# banyandb_trace_tst_* family is present; stream_storage_* and stream_tst_* are
+# both produced. *_total_merge_loop_started is present (the merge loop starts at
+# boot); the merge *completion* metrics are documented_gap (see that file).
+banyandb_system_disk
+banyandb_system_memory_state
+banyandb_system_net_state
+go_gc_duration_seconds_sum
+go_memstats_alloc_bytes_total
+go_memstats_next_gc_bytes
+banyandb_liaison_grpc_total_latency
+banyandb_liaison_grpc_total_registry_err
+banyandb_liaison_grpc_total_registry_started
+banyandb_measure_inverted_index_total_doc_count
+banyandb_measure_inverted_index_total_term_searchers_started
+banyandb_measure_inverted_index_total_updates
+banyandb_measure_pending_data_count
+banyandb_measure_total_file_elements
+banyandb_measure_total_file_parts
+banyandb_measure_total_mem_part
+banyandb_measure_total_merge_loop_started
+banyandb_queue_pub_sent_bytes
+banyandb_queue_sub_received_bytes
+banyandb_queue_sub_total_started
+banyandb_stream_storage_inverted_index_total_doc_count
+banyandb_stream_storage_inverted_index_total_term_searchers_started
+banyandb_stream_storage_inverted_index_total_updates
+banyandb_stream_tst_inverted_index_total_doc_count
+banyandb_stream_tst_inverted_index_total_term_searchers_started
+banyandb_stream_tst_inverted_index_total_updates
+banyandb_stream_tst_pending_data_count
+banyandb_stream_tst_total_file_elements
+banyandb_stream_tst_total_file_parts
+banyandb_stream_tst_total_mem_part
+banyandb_stream_tst_total_merge_loop_started
+banyandb_stream_tst_total_written
+banyandb_trace_tst_pending_data_count
+banyandb_trace_tst_total_file_elements
+banyandb_trace_tst_total_file_parts
+banyandb_trace_tst_total_mem_part
+banyandb_trace_tst_total_merge_loop_started
+banyandb_trace_tst_total_written
+banyandb_queue_pub_total_batch_started
+banyandb_queue_pub_total_batch_finished
+banyandb_queue_sub_total_batch_started
+banyandb_queue_sub_total_batch_finished
+banyandb_queue_sub_total_message_started
+banyandb_queue_sub_total_message_finished

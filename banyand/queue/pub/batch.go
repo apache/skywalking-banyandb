@@ -207,11 +207,12 @@ func (bp *batchPublisher) Publish(ctx context.Context, topic bus.Topic, messages
 		if bp.pub != nil {
 			batchInfo = bp.pub.getNodeInfo(node)
 		}
+		batchGroup := m.Group()
 		if bp.hasMetrics() {
-			bp.pub.metrics.totalBatchStarted.Inc(1, batchOp, "", node, batchInfo.role, batchInfo.tier)
+			bp.pub.metrics.totalBatchStarted.Inc(1, batchOp, batchGroup, node, batchInfo.role, batchInfo.tier)
 		}
 		if bp.hasMigrationMetrics() {
-			bp.pub.migrationMetrics.totalBatchStarted.Inc(1, batchOp, "", node, batchInfo.role, batchInfo.tier)
+			bp.pub.migrationMetrics.totalBatchStarted.Inc(1, batchOp, batchGroup, node, batchInfo.role, batchInfo.tier)
 		}
 		bp.f.events = append(bp.f.events, make(chan batchEvent))
 		_ = sendData()
@@ -220,8 +221,9 @@ func (bp *batchPublisher) Publish(ctx context.Context, topic bus.Topic, messages
 		recvDeferFn := deferFn
 		recvBC := bp.f.events[len(bp.f.events)-1]
 		recvBatchStart := streamBatchStart
+		recvGroup := batchGroup
 		run.Go(ctx, "batch-stream-recv", bp.pub.log, func(runCtx context.Context) {
-			bp.listenBatchResponse(runCtx, recvStream, recvDeferFn, recvBC, nodeName, recvBatchStart)
+			bp.listenBatchResponse(runCtx, recvStream, recvDeferFn, recvBC, nodeName, recvBatchStart, recvGroup)
 		})
 	}
 	return nil, err
@@ -237,7 +239,7 @@ func (bp *batchPublisher) hasMigrationMetrics() bool {
 
 // listenBatchResponse receives the server response and records failover events and end-to-end failure metrics.
 func (bp *batchPublisher) listenBatchResponse(ctx context.Context, s clusterv1.Service_SendClient, deferFn func(),
-	bc chan batchEvent, curNode string, batchStart time.Time,
+	bc chan batchEvent, curNode string, batchStart time.Time, group string,
 ) {
 	defer func() {
 		close(bc)
@@ -263,14 +265,16 @@ func (bp *batchPublisher) listenBatchResponse(ctx context.Context, s clusterv1.S
 	resp, errRecv := s.Recv()
 	if errRecv != nil {
 		if bp.hasMetrics() {
-			bp.pub.metrics.totalErr.Inc(1, operation, "", curNode, info.role, info.tier, sendErrReasonRecvError)
+			bp.pub.metrics.totalErr.Inc(1, operation, group, curNode, info.role, info.tier, sendErrReasonRecvError)
 		}
 		if bp.hasMigrationMetrics() {
-			bp.pub.migrationMetrics.totalErr.Inc(1, operation, "", curNode, info.role, info.tier, sendErrReasonRecvError)
+			bp.pub.migrationMetrics.totalErr.Inc(1, operation, group, curNode, info.role, info.tier, sendErrReasonRecvError)
 		}
 		if grpchelper.IsFailoverError(errRecv) {
 			// Record circuit breaker failure before creating failover event
-			bp.pub.connMgr.RecordFailure(curNode, errRecv)
+			if bp.pub != nil {
+				bp.pub.connMgr.RecordFailure(curNode, errRecv)
+			}
 			select {
 			case bc <- batchEvent{n: curNode, e: common.NewErrorWithStatus(modelv1.Status_STATUS_INTERNAL_ERROR, errRecv.Error())}:
 			case <-ctx.Done():
@@ -280,30 +284,30 @@ func (bp *batchPublisher) listenBatchResponse(ctx context.Context, s clusterv1.S
 	}
 	if resp == nil || resp.Error == "" || resp.Status == modelv1.Status_STATUS_SUCCEED {
 		if bp.hasMetrics() {
-			bp.pub.metrics.totalBatchFinished.Inc(1, operation, "", curNode, info.role, info.tier)
-			bp.pub.metrics.totalBatchLatency.Observe(time.Since(batchStart).Seconds(), operation, "", curNode, info.role, info.tier)
+			bp.pub.metrics.totalBatchFinished.Inc(1, operation, group, curNode, info.role, info.tier)
+			bp.pub.metrics.totalBatchLatency.Observe(time.Since(batchStart).Seconds(), operation, group, curNode, info.role, info.tier)
 		}
 		if bp.hasMigrationMetrics() {
-			bp.pub.migrationMetrics.totalBatchFinished.Inc(1, operation, "", curNode, info.role, info.tier)
-			bp.pub.migrationMetrics.totalBatchLatency.Observe(time.Since(batchStart).Seconds(), operation, "", curNode, info.role, info.tier)
+			bp.pub.migrationMetrics.totalBatchFinished.Inc(1, operation, group, curNode, info.role, info.tier)
+			bp.pub.migrationMetrics.totalBatchLatency.Observe(time.Since(batchStart).Seconds(), operation, group, curNode, info.role, info.tier)
 		}
 		return
 	}
 	if bp.hasMetrics() {
-		bp.pub.metrics.totalErr.Inc(1, operation, "", curNode, info.role, info.tier, sendErrReasonServerRejected)
-		bp.pub.metrics.totalBatchFinished.Inc(1, operation, "", curNode, info.role, info.tier)
-		bp.pub.metrics.totalBatchLatency.Observe(time.Since(batchStart).Seconds(), operation, "", curNode, info.role, info.tier)
+		bp.pub.metrics.totalErr.Inc(1, operation, group, curNode, info.role, info.tier, sendErrReasonServerRejected)
+		bp.pub.metrics.totalBatchFinished.Inc(1, operation, group, curNode, info.role, info.tier)
+		bp.pub.metrics.totalBatchLatency.Observe(time.Since(batchStart).Seconds(), operation, group, curNode, info.role, info.tier)
 	}
 	if bp.hasMigrationMetrics() {
-		bp.pub.migrationMetrics.totalErr.Inc(1, operation, "", curNode, info.role, info.tier, sendErrReasonServerRejected)
-		bp.pub.migrationMetrics.totalBatchFinished.Inc(1, operation, "", curNode, info.role, info.tier)
-		bp.pub.migrationMetrics.totalBatchLatency.Observe(time.Since(batchStart).Seconds(), operation, "", curNode, info.role, info.tier)
+		bp.pub.migrationMetrics.totalErr.Inc(1, operation, group, curNode, info.role, info.tier, sendErrReasonServerRejected)
+		bp.pub.migrationMetrics.totalBatchFinished.Inc(1, operation, group, curNode, info.role, info.tier)
+		bp.pub.migrationMetrics.totalBatchLatency.Observe(time.Since(batchStart).Seconds(), operation, group, curNode, info.role, info.tier)
 	}
 	ce := common.NewErrorWithStatus(resp.Status, resp.Error)
 	// Only failover statuses trigger circuit-breaker accounting; other server-side
 	// rejections (e.g. invalid argument) are surfaced to the caller but do not count
 	// toward node health.
-	if isFailoverStatus(resp.Status) {
+	if isFailoverStatus(resp.Status) && bp.pub != nil {
 		bp.pub.connMgr.RecordFailure(curNode, ce)
 	}
 	// Always surface a batchEvent for any non-empty resp.Error so that Close() exposes

@@ -267,7 +267,7 @@ func TestListenBatchResponseRecordsRecvError(t *testing.T) {
 	})
 
 	bc := make(chan batchEvent, 1)
-	bp.listenBatchResponse(ctx, mockStream, func() {}, bc, "node-a", time.Now())
+	bp.listenBatchResponse(ctx, mockStream, func() {}, bc, "node-a", time.Now(), "test-group")
 
 	require.Equal(t, float64(1), sendErrCap.sum(sendErrReasonRecvError))
 }
@@ -288,7 +288,7 @@ func TestListenBatchResponseRecvNonFailoverStillRecordsRecvError(t *testing.T) {
 	})
 
 	bc := make(chan batchEvent, 1)
-	bp.listenBatchResponse(ctx, mockStream, func() {}, bc, "node-a", time.Now())
+	bp.listenBatchResponse(ctx, mockStream, func() {}, bc, "node-a", time.Now(), "test-group")
 
 	require.Equal(t, float64(1), sendErrCap.sum(sendErrReasonRecvError))
 }
@@ -312,7 +312,7 @@ func TestListenBatchResponseServerRejectedWithoutFailover(t *testing.T) {
 	})
 
 	bc := make(chan batchEvent, 1)
-	bp.listenBatchResponse(ctx, mockStream, func() {}, bc, "node-a", time.Now())
+	bp.listenBatchResponse(ctx, mockStream, func() {}, bc, "node-a", time.Now(), "test-group")
 
 	require.Equal(t, float64(1), sendErrCap.sum(sendErrReasonServerRejected))
 	require.Equal(t, float64(0), sendErrCap.sum(sendErrReasonRecvError))
@@ -348,7 +348,7 @@ func TestListenBatchResponseDiskFullSendsFailoverEvent(t *testing.T) {
 	})
 
 	bc := make(chan batchEvent, 1)
-	bp.listenBatchResponse(ctx, mockStream, func() {}, bc, "node-a", time.Now())
+	bp.listenBatchResponse(ctx, mockStream, func() {}, bc, "node-a", time.Now(), "test-group")
 
 	require.Equal(t, float64(1), sendErrCap.sum(sendErrReasonServerRejected))
 
@@ -437,7 +437,7 @@ func TestListenBatchResponseCtxDoneTicksNoBatchFinished(t *testing.T) {
 
 	mockStream := NewMockSendClient(context.Background())
 	bc := make(chan batchEvent, 1)
-	bp.listenBatchResponse(ctx, mockStream, func() {}, bc, "node-a", time.Now())
+	bp.listenBatchResponse(ctx, mockStream, func() {}, bc, "node-a", time.Now(), "test-group")
 
 	require.Equal(t, float64(0), batchFinished.count, "total_batch_finished must NOT be ticked on ctx.Done() early-return")
 	require.Equal(t, 0, batchLatency.count, "total_batch_latency must NOT be observed on ctx.Done() early-return")
@@ -472,7 +472,7 @@ func TestListenBatchResponseSuccessTicksBatchFinished(t *testing.T) {
 	})
 
 	bc := make(chan batchEvent, 1)
-	bp.listenBatchResponse(ctx, mockStream, func() {}, bc, "node-a", time.Now())
+	bp.listenBatchResponse(ctx, mockStream, func() {}, bc, "node-a", time.Now(), "test-group")
 
 	require.Equal(t, float64(1), batchFinished.count, "total_batch_finished must be 1 on success")
 	require.Equal(t, 1, batchLatency.count, "total_batch_latency must be observed once on success")
