@@ -352,22 +352,18 @@ func parseGroup(
 	//
 	// The (senderNode, "lifecycle", senderTier) tuple returned here is
 	// consumed by three downstream emissions, all sharing the same
-	// label set: (a) the wire SenderNode/Role/Tier fields on every
-	// SendRequest (banyand/queue/queue.go:62-68), (b) the per-message
+	// (remote_node, remote_role, remote_tier) label form: (a) the wire
+	// SenderNode/Role/Tier fields on every SendRequest
+	// (banyand/queue/queue.go:62-68), (b) the per-message
 	// banyandb_lifecycle_migration_* family emitted by the
-	// lifecycle-tier pub, which has two parallel paths
-	// (file-sync: banyand/queue/pub/chunked_sync.go:67-82 and
+	// lifecycle-tier pub (file-sync: banyand/queue/pub/chunked_sync.go:67-82;
 	// batch-write: banyand/queue/pub/batch.go:215, 271, 291-292, 421,
 	// 471-472, 488, 511, 520, 532), and (c) the cycle-level
-	// banyandb_lifecycle_cycles_total + last_run_* metrics stamped
-	// by the caller (process*Group). Pre-fix, the empty
-	// selfIdentityResolution result propagated to empty SenderNode on
-	// the wire, which the receiver recorded as empty remote_node on
-	// its banyandb_queue_sub_total_finished series; the regression
-	// detector for that is now the new labeled cycle-level
-	// banyandb_lifecycle_cycles_total{remote_node!=""} and the
-	// existing receiver-side count of empty remote_node on lifecycle
-	// Sub series.
+	// banyandb_lifecycle_cycles_total + last_run_* metrics stamped by
+	// the caller (process*Group). The two families describe different
+	// sides (sender vs destination) and are not cross-joinable — see
+	// the struct comment in service.go and CHANGES.md for the
+	// asymmetry.
 	selfHost := selfPodHostname()
 	senderNode, senderTier, resolvedOK := resolveSelfIdentity(selfHost, nodes)
 	if resolvedOK {
