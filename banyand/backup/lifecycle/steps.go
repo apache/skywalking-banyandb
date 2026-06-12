@@ -39,6 +39,7 @@ import (
 	"github.com/apache/skywalking-banyandb/banyand/queue/pub"
 	"github.com/apache/skywalking-banyandb/pkg/fs"
 	"github.com/apache/skywalking-banyandb/pkg/logger"
+	"github.com/apache/skywalking-banyandb/pkg/meter"
 	"github.com/apache/skywalking-banyandb/pkg/node"
 )
 
@@ -97,13 +98,13 @@ func (l *lifecycleService) getSnapshots(ctx context.Context, groups []*commonv1.
 // POD_NAME (K8s downward API) and falls back to os.Hostname() — the
 // same precedence as nativeNodeContext at service.go:160-165. The
 // function then looks the host up directly in the data-node registry,
-// matching against the host portion of GrpcAddress (the registry may
-// carry an IP, a headless-service FQDN, or a loopback alias, depending
-// on which bind address the data pod registered with). The first
-// registry entry whose host matches (with loopback-alias and
-// IP-literal normalization via hostMatches) is the co-located data
-// pod; its Metadata.Name is the SenderNode and its Labels["type"] is
-// the SenderTier.
+// matching against the host portion of GrpcAddress and NodeID (the
+// registry may carry either an IP, a headless-service FQDN, or a
+// loopback alias, depending on which bind address the data pod
+// registered with). The first registry entry whose host matches (with
+// loopback-alias normalization) is the co-located data pod; its
+// Metadata.Name is the SenderNode and its Labels["type"] is the
+// SenderTier.
 //
 // Re-runs on every parseGroup call (no caching) so a data-pod
 // restart, re-registration, or new host is picked up by the next
@@ -263,6 +264,7 @@ func parseGroup(
 	g *commonv1.Group, nodeLabels map[string]string, nodes []*databasev1.Node,
 	l *logger.Logger, metadata metadata.Repo, clusterStateMgr *clusterStateManager,
 	omr observability.MetricsRegistry,
+	resolutionCounter meter.Counter,
 ) (group *GroupConfig, senderNode, senderRole, senderTier string, err error) {
 	ro := g.ResourceOpts
 	if ro == nil {
@@ -364,8 +366,22 @@ func parseGroup(
 	// sides (sender vs destination) and are not cross-joinable — see
 	// the struct comment in service.go and CHANGES.md for the
 	// asymmetry.
+	//
+	// The resolution counter (banyandb_lifecycle_self_identity_resolution_total)
+	// is incremented with result=ok on a non-empty match and
+	// result=empty on a no-match. Pre-fix, 2 of 4 lifecycle pods
+	// (hot-0, warm-1) returned empty due to a DNS-name vs loopback
+	// mismatch in deriveSelfIdentity's Pass 1; the new
+	// resolveSelfIdentity closes that gap.
 	selfHost := selfPodHostname()
 	senderNode, senderTier, resolvedOK := resolveSelfIdentity(selfHost, nodes)
+	if resolutionCounter != nil {
+		label := "empty"
+		if resolvedOK {
+			label = "ok"
+		}
+		resolutionCounter.Inc(1, label)
+	}
 	if resolvedOK {
 		senderRole = "lifecycle"
 		client.SetSelfNode(senderNode, senderRole, senderTier)

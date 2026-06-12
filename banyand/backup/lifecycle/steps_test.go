@@ -86,7 +86,7 @@ func TestParseGroup_RejectsMissingIntervals(t *testing.T) {
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
 			g := makeGroup(c.mutate)
-			_, _, _, _, err := parseGroup(g, map[string]string{"type": "warm"}, nil, nil, nil, nil, nil)
+			_, _, _, _, err := parseGroup(g, map[string]string{"type": "warm"}, nil, nil, nil, nil, nil, nil)
 			require.Error(t, err)
 			assert.Contains(t, err.Error(), c.errFrag)
 		})
@@ -100,6 +100,7 @@ func TestParseGroup_RejectsMissingIntervals(t *testing.T) {
 // clusterStateMgr for the route table, so calling parseGroup from a
 // unit test requires an integration harness — that coverage lives in
 // test/cases/lifecycle/lifecycle.go.
+
 
 // TestResolveSelfIdentity exercises the post-fix pod-name primary lookup
 // against representative registry shapes. The first three cases prove
