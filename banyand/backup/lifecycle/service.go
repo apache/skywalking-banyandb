@@ -115,42 +115,55 @@ type lifecycleService struct {
 	// the cycle ends. Reset to empty strings at the start of each
 	// action() so an empty cycle (no parseGroup succeeded) doesn't
 	// inherit the previous cycle's labels.
-	lastRunGroup      string
-	lastRunNode       string
-	lastRunRole       string
-	lastRunTier       string
-	metricsClient     queue.Client
-	grpcServer        *grpclib.Server
-	httpSrv           *http.Server
-	tlsReloader       *pkgtls.Reloader
-	currentNode       *databasev1.Node
-	clientCloser      context.CancelFunc
-	stopCh            chan struct{}
-	sch               *timestamp.Scheduler
-	l                 *logger.Logger
-	clusterStateMgr   *clusterStateManager
-	metricsKeeperStop chan struct{}
-	lifecycleHost     string
-	lifecycleHTTPAddr string
-	streamRoot        string
-	traceRoot         string
-	progressFilePath  string
-	reportDir         string
-	schedule          string
-	cert              string
-	gRPCAddr          string
-	lifecycleKeyFile  string
-	lifecycleGRPCAddr string
-	measureRoot       string
-	lifecycleCertFile string
-	localNodeMD       schema.Metadata
-	maxExecutionTimes int
-	chunkSize         run.Bytes
-	lifecycleGRPCPort uint32
-	lifecycleHTTPPort uint32
-	enableTLS         bool
-	insecure          bool
-	lifecycleTLS      bool
+	lastRunGroup string
+	lastRunNode  string
+	lastRunRole  string
+	lastRunTier  string
+	// emittedLastRunGroup/Node/Role/Tier is the (group, remote_*)
+	// tuple of the last_run_* series that was last Set on
+	// Prometheus. recordLastRun uses this to Delete the previous
+	// series before stamping the new one, so each cycle's tuple
+	// fully replaces the previous cycle's tuple instead of
+	// accumulating as a stale series. Reset only when the previous
+	// Set succeeded; the empty-cycle path (no recordCycleGroup ran)
+	// leaves this set to whatever the previous cycle emitted, so
+	// the next non-empty cycle's Delete still fires correctly.
+	emittedLastRunGroup string
+	emittedLastRunNode  string
+	emittedLastRunRole  string
+	emittedLastRunTier  string
+	metricsClient       queue.Client
+	grpcServer          *grpclib.Server
+	httpSrv             *http.Server
+	tlsReloader         *pkgtls.Reloader
+	currentNode         *databasev1.Node
+	clientCloser        context.CancelFunc
+	stopCh              chan struct{}
+	sch                 *timestamp.Scheduler
+	l                   *logger.Logger
+	clusterStateMgr     *clusterStateManager
+	metricsKeeperStop   chan struct{}
+	lifecycleHost       string
+	lifecycleHTTPAddr   string
+	streamRoot          string
+	traceRoot           string
+	progressFilePath    string
+	reportDir           string
+	schedule            string
+	cert                string
+	gRPCAddr            string
+	lifecycleKeyFile    string
+	lifecycleGRPCAddr   string
+	measureRoot         string
+	lifecycleCertFile   string
+	localNodeMD         schema.Metadata
+	maxExecutionTimes   int
+	chunkSize           run.Bytes
+	lifecycleGRPCPort   uint32
+	lifecycleHTTPPort   uint32
+	enableTLS           bool
+	insecure            bool
+	lifecycleTLS        bool
 }
 
 // NewService creates a new lifecycle service. metricsRegistry replaces the
@@ -587,6 +600,13 @@ func (l *lifecycleService) action(ctx context.Context) (err error) {
 	l.lastRunNode = ""
 	l.lastRunRole = ""
 	l.lastRunTier = ""
+	// Do NOT reset the emittedLastRun* fields here — they carry the
+	// (group, remote_*) tuple of the last series actually Set on
+	// Prometheus, which recordLastRun needs to Delete in the next
+	// cycle so the previous cycle's series doesn't accumulate as a
+	// stale labeled gauge. An empty cycle still has a previous emitted
+	// tuple to clean up; the new cycle's Set will then re-stamp with
+	// the current (possibly empty) labels.
 	// Stamp last-run metrics at the end of this cycle regardless of outcome.
 	// Using defer keeps the success/error bookkeeping in one place even as
 	// the body grows new early returns; the metrics gauge Set()s observe
@@ -736,11 +756,13 @@ func (l *lifecycleService) recordCycleGroup(group, senderNode, senderRole, sende
 // when Set is called with new labels — the old series lingers as
 // "stale" until a scrape expires it. To prevent dashboards from
 // reading a previous cycle's (group, remote_*) tuple as current,
-// recordLastRun first Deletes the previous-tuple series (if any
-// existed) before stamping the new one. The empty-cycle path (no
-// group was processed) calls Delete on the previous tuple and then
-// stamps a single series with all-empty labels, so dashboards always
-// see exactly one current series. nil gauges are skipped so a lifecycle
+// recordLastRun Deletes the previously-emitted tuple (tracked in
+// emittedLastRun{Group,Node,Role,Tier}) before stamping the new
+// (current) tuple, and then updates the emitted-tuple fields to
+// reflect the new stamp. The empty-cycle path (no group was processed
+// in the current cycle) still calls Delete on the previous tuple and
+// then Set the all-empty-labels tuple, so the dashboard always sees
+// exactly one current series. nil gauges are skipped so a lifecycle
 // run with a nil observability.MetricsRegistry (BypassRegistry)
 // doesn't crash.
 func (l *lifecycleService) recordLastRun(start time.Time, err error) {
@@ -748,11 +770,12 @@ func (l *lifecycleService) recordLastRun(start time.Time, err error) {
 	if err == nil {
 		success = 1.0
 	}
-	prevLabels := []string{l.lastRunNode, l.lastRunRole, l.lastRunTier, l.lastRunGroup}
-	// If a previous tuple was set (and the cycle is not the empty one,
-	// where the tuple was reset to empty strings at action start),
-	// delete it first so the new stamp replaces rather than shadows.
-	if l.lastRunGroup != "" || l.lastRunNode != "" || l.lastRunRole != "" || l.lastRunTier != "" {
+	prevLabels := []string{
+		l.emittedLastRunNode, l.emittedLastRunRole, l.emittedLastRunTier, l.emittedLastRunGroup,
+	}
+	hasPrev := l.emittedLastRunGroup != "" || l.emittedLastRunNode != "" ||
+		l.emittedLastRunRole != "" || l.emittedLastRunTier != ""
+	if hasPrev {
 		if l.lastRunTimestamp != nil {
 			l.lastRunTimestamp.Delete(prevLabels...)
 		}
@@ -766,6 +789,13 @@ func (l *lifecycleService) recordLastRun(start time.Time, err error) {
 	if l.lastRunSuccess != nil {
 		l.lastRunSuccess.Set(success, l.lastRunNode, l.lastRunRole, l.lastRunTier, l.lastRunGroup)
 	}
+	// Update the emitted-tuple tracking so the next cycle's recordLastRun
+	// deletes THIS cycle's tuple. This runs after the Set so a panic in
+	// Set doesn't leave the tracking inconsistent with Prometheus.
+	l.emittedLastRunGroup = l.lastRunGroup
+	l.emittedLastRunNode = l.lastRunNode
+	l.emittedLastRunRole = l.lastRunRole
+	l.emittedLastRunTier = l.lastRunTier
 }
 
 // waitForCoLocatedNode waits briefly for the data node behind --grpc-addr to

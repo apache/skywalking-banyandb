@@ -108,16 +108,20 @@ func TestBuildHTTPRouterWithoutPromHandler(t *testing.T) {
 	require.Equal(t, http.StatusNotFound, rec.Code)
 }
 
-// recordingGauge captures the last Set() call so a unit test can assert
-// the value the lifecycle would have emitted. The lifecycle uses the
-// real prometheus-backed Gauge in production; this stub keeps the test
-// hermetic. It also records the labels argument so tests can assert the
-// (remote_node, remote_role, remote_tier, group) tuple stamped by the
-// per-group recordCycleGroup and the cycle-end recordLastRun paths.
+// recordingGauge captures the Set() and Delete() calls so a unit test
+// can assert the value the lifecycle would have emitted AND the
+// staleness-prevention Delete that recordLastRun issues before each
+// Set. The lifecycle uses the real prometheus-backed Gauge in
+// production; this stub keeps the test hermetic. It also records the
+// labels argument so tests can assert the (remote_node, remote_role,
+// remote_tier, group) tuple stamped by the per-group recordCycleGroup
+// and the cycle-end recordLastRun paths.
 type recordingGauge struct {
-	lastLabels []string
-	lastValue  float64
-	called     int
+	lastLabels   []string
+	deletedLabel [][]string
+	lastValue    float64
+	called       int
+	deleted      int
 }
 
 func (g *recordingGauge) Set(v float64, labels ...string) {
@@ -128,7 +132,11 @@ func (g *recordingGauge) Set(v float64, labels ...string) {
 
 func (g *recordingGauge) Add(_ float64, _ ...string) {}
 
-func (g *recordingGauge) Delete(_ ...string) bool { return true }
+func (g *recordingGauge) Delete(labels ...string) bool {
+	g.deleted++
+	g.deletedLabel = append(g.deletedLabel, append([]string{}, labels...))
+	return true
+}
 
 // recordingCounter captures the last Inc() call's label set.
 type recordingCounter struct {
@@ -235,6 +243,8 @@ func TestRecordLastRunSuccess(t *testing.T) {
 		[]string{"data-hot-0:17912", "lifecycle", "hot", "metrics-day"},
 		tsGauge.lastLabels,
 		"lastRunTimestamp must be Set with the cycle's (remote_node, remote_role, remote_tier, group) tuple")
+	require.Equal(t, 0, tsGauge.deleted,
+		"first-ever recordLastRun must NOT issue a Delete (no previous tuple to clean up)")
 	require.Equal(t, 1, okGauge.called)
 	require.Equal(t, 1.0, okGauge.lastValue,
 		"lastRunSuccess must be 1 on a nil error")
@@ -242,6 +252,67 @@ func TestRecordLastRunSuccess(t *testing.T) {
 		[]string{"data-hot-0:17912", "lifecycle", "hot", "metrics-day"},
 		okGauge.lastLabels,
 		"lastRunSuccess must be Set with the cycle's (remote_node, remote_role, remote_tier, group) tuple")
+	require.Equal(t, 0, okGauge.deleted)
+}
+
+// TestRecordLastRunTwoCycleReplaceStaleSeries is the regression test
+// for the staleness issue: two consecutive recordLastRun calls with
+// DIFFERENT (group, remote_*) tuples. The first call stamps
+// ("metrics-day", "data-hot-0", "lifecycle", "hot") and updates
+// emittedLastRun*. The second call must Delete that tuple before
+// stamping the new ("metrics-hour", "data-warm-0", "lifecycle",
+// "warm") tuple, so Prometheus doesn't accumulate a stale series
+// shadowing the new one. Without the emittedLastRun* tracking and
+// the Delete-before-Set, cycle B's series would coexist with cycle
+// A's and dashboards could read either as "current".
+func TestRecordLastRunTwoCycleReplaceStaleSeries(t *testing.T) {
+	tsGauge, okGauge := &recordingGauge{}, &recordingGauge{}
+	l := &lifecycleService{
+		lastRunTimestamp: tsGauge,
+		lastRunSuccess:   okGauge,
+		lastRunGroup:     "metrics-day",
+		lastRunNode:      "data-hot-0:17912",
+		lastRunRole:      "lifecycle",
+		lastRunTier:      "hot",
+	}
+
+	// Cycle A: stamp the hot path.
+	l.recordLastRun(time.Unix(1717929600, 0), nil)
+	require.Equal(t, 1, tsGauge.called)
+	require.Equal(t, 1, okGauge.called)
+	require.Equal(t, 0, tsGauge.deleted)
+	require.Equal(t, 0, okGauge.deleted)
+	require.Equal(t,
+		[]string{"data-hot-0:17912", "lifecycle", "hot", "metrics-day"},
+		tsGauge.lastLabels,
+		"cycle A must stamp the hot-path tuple")
+
+	// Cycle B: action() resets lastRun* and the new cycle's
+	// recordCycleGroup overwrites them with the warm-path tuple.
+	l.lastRunGroup = ""
+	l.lastRunNode = ""
+	l.lastRunRole = ""
+	l.lastRunTier = ""
+	l.lastRunGroup = "metrics-hour"
+	l.lastRunNode = "data-warm-0:17912"
+	l.lastRunRole = "lifecycle"
+	l.lastRunTier = "warm"
+	l.recordLastRun(time.Unix(1717929700, 0), nil)
+
+	// Cycle B must Delete cycle A's tuple before stamping the new one.
+	require.Equal(t, 1, tsGauge.deleted,
+		"second recordLastRun must Delete the previous tuple to prevent stale-series shadowing")
+	require.Equal(t,
+		[]string{"data-hot-0:17912", "lifecycle", "hot", "metrics-day"},
+		tsGauge.deletedLabel[0],
+		"Delete must target the cycle A tuple (the previously-emitted one)")
+	require.Equal(t, 2, tsGauge.called)
+	require.Equal(t, 1717929700.0, tsGauge.lastValue)
+	require.Equal(t,
+		[]string{"data-warm-0:17912", "lifecycle", "warm", "metrics-hour"},
+		tsGauge.lastLabels,
+		"cycle B must stamp the warm-path tuple after deleting the hot-path one")
+	require.Equal(t, 1, okGauge.deleted)
 }
 
 // TestRecordLastRunFailure stamps the gauges with success=0 when the action
