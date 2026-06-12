@@ -39,7 +39,6 @@ import (
 	"github.com/apache/skywalking-banyandb/banyand/queue/pub"
 	"github.com/apache/skywalking-banyandb/pkg/fs"
 	"github.com/apache/skywalking-banyandb/pkg/logger"
-	"github.com/apache/skywalking-banyandb/pkg/meter"
 	"github.com/apache/skywalking-banyandb/pkg/node"
 )
 
@@ -264,7 +263,6 @@ func parseGroup(
 	g *commonv1.Group, nodeLabels map[string]string, nodes []*databasev1.Node,
 	l *logger.Logger, metadata metadata.Repo, clusterStateMgr *clusterStateManager,
 	omr observability.MetricsRegistry,
-	resolutionCounter meter.Counter,
 ) (group *GroupConfig, senderNode, senderRole, senderTier string, err error) {
 	ro := g.ResourceOpts
 	if ro == nil {
@@ -366,22 +364,8 @@ func parseGroup(
 	// sides (sender vs destination) and are not cross-joinable — see
 	// the struct comment in service.go and CHANGES.md for the
 	// asymmetry.
-	//
-	// The resolution counter (banyandb_lifecycle_self_identity_resolution_total)
-	// is incremented with result=ok on a non-empty match and
-	// result=empty on a no-match. Pre-fix, 2 of 4 lifecycle pods
-	// (hot-0, warm-1) returned empty due to a DNS-name vs loopback
-	// mismatch in deriveSelfIdentity's Pass 1; the new
-	// resolveSelfIdentity closes that gap.
 	selfHost := selfPodHostname()
 	senderNode, senderTier, resolvedOK := resolveSelfIdentity(selfHost, nodes)
-	if resolutionCounter != nil {
-		label := "empty"
-		if resolvedOK {
-			label = "ok"
-		}
-		resolutionCounter.Inc(1, label)
-	}
 	if resolvedOK {
 		senderRole = "lifecycle"
 		client.SetSelfNode(senderNode, senderRole, senderTier)
