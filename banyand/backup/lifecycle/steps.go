@@ -97,13 +97,13 @@ func (l *lifecycleService) getSnapshots(ctx context.Context, groups []*commonv1.
 // POD_NAME (K8s downward API) and falls back to os.Hostname() — the
 // same precedence as nativeNodeContext at service.go:160-165. The
 // function then looks the host up directly in the data-node registry,
-// matching against the host portion of GrpcAddress and NodeID (the
-// registry may carry either an IP, a headless-service FQDN, or a
-// loopback alias, depending on which bind address the data pod
-// registered with). The first registry entry whose host matches (with
-// loopback-alias normalization) is the co-located data pod; its
-// Metadata.Name is the SenderNode and its Labels["type"] is the
-// SenderTier.
+// matching against the host portion of GrpcAddress (the registry may
+// carry an IP, a headless-service FQDN, or a loopback alias, depending
+// on which bind address the data pod registered with). The first
+// registry entry whose host matches (with loopback-alias and
+// IP-literal normalization via hostMatches) is the co-located data
+// pod; its Metadata.Name is the SenderNode and its Labels["type"] is
+// the SenderTier.
 //
 // Re-runs on every parseGroup call (no caching) so a data-pod
 // restart, re-registration, or new host is picked up by the next

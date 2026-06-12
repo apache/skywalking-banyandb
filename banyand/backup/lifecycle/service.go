@@ -89,78 +89,50 @@ const (
 type lifecycleService struct {
 	databasev1.UnimplementedClusterStateServiceServer
 	databasev1.UnimplementedNodeQueryServiceServer
-	metadata metadata.Repo
-	omr      observability.MetricsRegistry
-	pm       protector.Memory
-	// cycleLabels is the label set shared by the three cycle-level
-	// metrics (cyclesTotal, lastRunTimestamp, lastRunSuccess): the
-	// SENDER identity of the lifecycle pod (remote_node = the
-	// co-located data pod's BanyanDB NodeID, remote_role = "lifecycle",
-	// remote_tier = the data pod's tier label) plus the GROUP being
-	// processed. The label form mirrors the parallel
-	// banyandb_lifecycle_migration_* family emitted by the queue/pub
-	// lifecycle publisher, but the cycle-level series describe the
-	// SENDER side (one tuple per cycle, the cycle's last-seen group)
-	// while the per-message pub series describe the DESTINATION side
-	// (one tuple per chunk, the destination's NodeID/role/tier resolved
-	// from getNodeInfo). The two families are independently useful
-	// (cycle health vs. per-message traffic) and share the same label
-	// form so dashboard matchers and regexes apply to both.
-	cyclesTotal      meter.Counter
-	lastRunTimestamp meter.Gauge
-	lastRunSuccess   meter.Gauge
-	// Last-seen (group, remote_node, remote_role, remote_tier) tuple
-	// from the most recent parseGroup call. Used by the deferred
-	// recordLastRun to stamp the cycle-level last_run_* gauges when
-	// the cycle ends. Reset to empty strings at the start of each
-	// action() so an empty cycle (no parseGroup succeeded) doesn't
-	// inherit the previous cycle's labels.
-	lastRunGroup string
-	lastRunNode  string
-	lastRunRole  string
-	lastRunTier  string
-	// emittedLastRunGroup/Node/Role/Tier is the (group, remote_*)
-	// tuple of the last_run_* series that was last Set on
-	// Prometheus. recordLastRun uses this to Delete the previous
-	// series before stamping the new one, so each cycle's tuple
-	// fully replaces the previous cycle's tuple instead of
-	// accumulating as a stale series. Reset only when the previous
-	// Set succeeded; the empty-cycle path (no recordCycleGroup ran)
-	// leaves this set to whatever the previous cycle emitted, so
-	// the next non-empty cycle's Delete still fires correctly.
-	emittedLastRunGroup string
-	emittedLastRunNode  string
-	emittedLastRunRole  string
-	emittedLastRunTier  string
+	pm                  protector.Memory
+	omr                 observability.MetricsRegistry
 	metricsClient       queue.Client
-	grpcServer          *grpclib.Server
-	httpSrv             *http.Server
-	tlsReloader         *pkgtls.Reloader
-	currentNode         *databasev1.Node
-	clientCloser        context.CancelFunc
-	stopCh              chan struct{}
-	sch                 *timestamp.Scheduler
+	cyclesTotal         meter.Counter
+	lastRunTimestamp    meter.Gauge
+	lastRunSuccess      meter.Gauge
+	metadata            metadata.Repo
 	l                   *logger.Logger
 	clusterStateMgr     *clusterStateManager
 	metricsKeeperStop   chan struct{}
+	sch                 *timestamp.Scheduler
+	stopCh              chan struct{}
+	clientCloser        context.CancelFunc
+	currentNode         *databasev1.Node
+	tlsReloader         *pkgtls.Reloader
+	httpSrv             *http.Server
+	grpcServer          *grpclib.Server
+	gRPCAddr            string
+	schedule            string
+	emittedLastRunRole  string
+	emittedLastRunNode  string
+	emittedLastRunGroup string
+	lifecycleCertFile   string
+	lastRunTier         string
+	lastRunRole         string
+	lastRunNode         string
 	lifecycleHost       string
 	lifecycleHTTPAddr   string
 	streamRoot          string
 	traceRoot           string
 	progressFilePath    string
 	reportDir           string
-	schedule            string
+	emittedLastRunTier  string
 	cert                string
-	gRPCAddr            string
+	lastRunGroup        string
 	lifecycleKeyFile    string
 	lifecycleGRPCAddr   string
 	measureRoot         string
-	lifecycleCertFile   string
 	localNodeMD         schema.Metadata
 	maxExecutionTimes   int
 	chunkSize           run.Bytes
 	lifecycleGRPCPort   uint32
 	lifecycleHTTPPort   uint32
+	emittedLastRunSet   bool
 	enableTLS           bool
 	insecure            bool
 	lifecycleTLS        bool
@@ -765,9 +737,7 @@ func (l *lifecycleService) recordLastRun(start time.Time, err error) {
 	prevLabels := []string{
 		l.emittedLastRunNode, l.emittedLastRunRole, l.emittedLastRunTier, l.emittedLastRunGroup,
 	}
-	hasPrev := l.emittedLastRunGroup != "" || l.emittedLastRunNode != "" ||
-		l.emittedLastRunRole != "" || l.emittedLastRunTier != ""
-	if hasPrev {
+	if l.emittedLastRunSet {
 		if l.lastRunTimestamp != nil {
 			l.lastRunTimestamp.Delete(prevLabels...)
 		}
@@ -782,8 +752,12 @@ func (l *lifecycleService) recordLastRun(start time.Time, err error) {
 		l.lastRunSuccess.Set(success, l.lastRunNode, l.lastRunRole, l.lastRunTier, l.lastRunGroup)
 	}
 	// Update the emitted-tuple tracking so the next cycle's recordLastRun
-	// deletes THIS cycle's tuple. This runs after the Set so a panic in
-	// Set doesn't leave the tracking inconsistent with Prometheus.
+	// deletes THIS cycle's tuple. emittedLastRunSet is unconditionally
+	// true after a successful Set, even for the all-empty-labels case
+	// (so the next non-empty cycle knows to Delete the all-empty
+	// series). This runs after the Set so a panic in Set doesn't
+	// leave the tracking inconsistent with Prometheus.
+	l.emittedLastRunSet = true
 	l.emittedLastRunGroup = l.lastRunGroup
 	l.emittedLastRunNode = l.lastRunNode
 	l.emittedLastRunRole = l.lastRunRole
