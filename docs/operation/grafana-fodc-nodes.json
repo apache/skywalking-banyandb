@@ -659,7 +659,7 @@
         "type": "prometheus",
         "uid": "${DS_PROMETHEUS}"
       },
-      "description": "Each row is one directed flow source→target (bare pod names) per operation, with the PUBLISHER’s view and the SUBSCRIBER’s view of the SAME traffic side by side — never sum the two. Request edges pair banyandb_queue_pub_* (sender) with banyandb_queue_sub_* (receiver); tier-migration edges pair banyandb_lifecycle_migration_* (lifecycle sidecar, sharing its data pod’s pod_name) with the receiver’s queue_sub remote_role=\"lifecycle\" series. The two sides are joined on (source, target, operation): the full-DNS remote_node is shortened to its first label to match the bare pod_name. Granularity: Pub msg/s counts published messages (parts for file-sync); Sub msg/s (queue_sub_total_started) counts dispatch units on the receiver — per message for ordinary traffic and per part for file-sync, but once per collected batch for batch-mode streams — the liaison→liaison tier-1 write routing, where each write OAP sends to its connected liaison is re-published round-robin to the owner liaison (including itself), one wire stream per OAP write stream, gathered by the receiver and dispatched at stream EOF. So liaison→data rows match side-to-side, while liaison→liaison batch-write shows Pub msg/s ≈ the OAP write rate, a steady Pub:Sub ratio ≈ messages per OAP stream session, and a Sub p99 that times the whole batch, not one message. A populated Pub cell with an empty Sub cell (or vice versa) is signal — an uninstrumented side (older servers record query/control only on the receiver) or a one-sided byte counter (sent_bytes is pub+migration, received_bytes is sub, both file-sync only). Empty err cells mean no errors (lazily registered). $pod/$role select flows INVOLVING a matching node on either end: every query unions a scrape-target-side selector (pod_name/container_name) with a remote-side one (remote_node prefix / remote_role), so both views of a surviving edge stay in the row instead of splitting. No group filter: query/control and the tier-1 write routing carry group=\"\", which an all-value \".+\" silently drops.",
+      "description": "Streaming pod-to-pod flows (excludes tier-migration edges; see the Migration Flows panel below for those). Each row is one directed source→target per (group, operation). Pub side is the publisher container; Sub side is the receiver. Units are per-second (rate over $__range). Pub msg/s and Sub msg/s should match side-to-side; a populated Pub cell with an empty Sub cell is signal — an uninstrumented side or missing scrape target. p99 latencies are histogram-quantile over the visible window. Errors and bytes are also per-second.",
       "fieldConfig": {
         "defaults": {
           "color": {
@@ -895,7 +895,7 @@
           },
           "editorMode": "code",
           "exemplar": false,
-          "expr": "sum by (source, target, operation) (label_replace(label_replace(rate(banyandb_queue_pub_total_finished{job=~\"$job\", container_name=~\"$role\", pod_name=~\"$pod\"}[$__rate_interval]) or rate(banyandb_queue_pub_total_finished{job=~\"$job\", remote_role=~\"$role\", remote_node=~\"($pod)\\\\..*\"}[$__rate_interval]) or rate(banyandb_lifecycle_migration_total_finished{job=~\"$job\", container_name=~\"$role\", pod_name=~\"$pod\"}[$__rate_interval]) or rate(banyandb_lifecycle_migration_total_finished{job=~\"$job\", remote_role=~\"$role\", remote_node=~\"($pod)\\\\..*\"}[$__rate_interval]), \"source\", \"$1\", \"pod_name\", \"(.*)\"), \"target\", \"$1\", \"remote_node\", \"([^.:]+).*\"))",
+          "expr": "sum by (source, target, operation) (label_replace(label_replace(rate(banyandb_queue_pub_total_finished{job=~\"$job\", container_name=~\"$role\", pod_name=~\"$pod\"}[$__range]) or rate(banyandb_queue_pub_total_finished{job=~\"$job\", remote_role=~\"$role\", remote_node=~\"($pod)\\\\..*\"}[$__range]), \"source\", \"$1\", \"pod_name\", \"(.*)\"), \"target\", \"$1\", \"remote_node\", \"([^.:]+).*\"))",
           "format": "table",
           "instant": true,
           "legendFormat": "__auto",
@@ -909,7 +909,7 @@
           },
           "editorMode": "code",
           "exemplar": false,
-          "expr": "sum by (source, target, operation) (label_replace(label_replace(rate(banyandb_queue_sub_total_started{job=~\"$job\", container_name=~\"$role\", pod_name=~\"$pod\"}[$__rate_interval]) or rate(banyandb_queue_sub_total_started{job=~\"$job\", remote_role=~\"$role\", remote_node=~\"($pod)\\\\..*\"}[$__rate_interval]), \"source\", \"$1\", \"remote_node\", \"([^.:]+).*\"), \"target\", \"$1\", \"pod_name\", \"(.*)\"))",
+          "expr": "sum by (source, target, operation) (label_replace(label_replace(rate(banyandb_queue_sub_total_started{job=~\"$job\", container_name=~\"$role\", pod_name=~\"$pod\", remote_role!~\"lifecycle\"}[$__range]) or rate(banyandb_queue_sub_total_started{job=~\"$job\", remote_role=~\"$role\", remote_node=~\"($pod)\\\\..*\", remote_role!~\"lifecycle\"}[$__range]), \"source\", \"$1\", \"remote_node\", \"([^.:]+).*\"), \"target\", \"$1\", \"pod_name\", \"(.*)\"))",
           "format": "table",
           "instant": true,
           "legendFormat": "__auto",
@@ -923,7 +923,7 @@
           },
           "editorMode": "code",
           "exemplar": false,
-          "expr": "histogram_quantile(0.99, sum by (le, source, target, operation) (label_replace(label_replace(rate(banyandb_queue_pub_total_latency_bucket{job=~\"$job\", container_name=~\"$role\", pod_name=~\"$pod\"}[$__rate_interval]) or rate(banyandb_queue_pub_total_latency_bucket{job=~\"$job\", remote_role=~\"$role\", remote_node=~\"($pod)\\\\..*\"}[$__rate_interval]) or rate(banyandb_lifecycle_migration_total_latency_bucket{job=~\"$job\", container_name=~\"$role\", pod_name=~\"$pod\"}[$__rate_interval]) or rate(banyandb_lifecycle_migration_total_latency_bucket{job=~\"$job\", remote_role=~\"$role\", remote_node=~\"($pod)\\\\..*\"}[$__rate_interval]), \"source\", \"$1\", \"pod_name\", \"(.*)\"), \"target\", \"$1\", \"remote_node\", \"([^.:]+).*\")))",
+          "expr": "histogram_quantile(0.99, sum by (le, source, target, operation) (label_replace(label_replace(rate(banyandb_queue_pub_total_latency_bucket{job=~\"$job\", container_name=~\"$role\", pod_name=~\"$pod\"}[$__range]) or rate(banyandb_queue_pub_total_latency_bucket{job=~\"$job\", remote_role=~\"$role\", remote_node=~\"($pod)\\\\..*\"}[$__range]), \"source\", \"$1\", \"pod_name\", \"(.*)\"), \"target\", \"$1\", \"remote_node\", \"([^.:]+).*\")))",
           "format": "table",
           "instant": true,
           "legendFormat": "__auto",
@@ -937,7 +937,7 @@
           },
           "editorMode": "code",
           "exemplar": false,
-          "expr": "histogram_quantile(0.99, sum by (le, source, target, operation) (label_replace(label_replace(rate(banyandb_queue_sub_total_latency_bucket{job=~\"$job\", container_name=~\"$role\", pod_name=~\"$pod\"}[$__rate_interval]) or rate(banyandb_queue_sub_total_latency_bucket{job=~\"$job\", remote_role=~\"$role\", remote_node=~\"($pod)\\\\..*\"}[$__rate_interval]), \"source\", \"$1\", \"remote_node\", \"([^.:]+).*\"), \"target\", \"$1\", \"pod_name\", \"(.*)\")))",
+          "expr": "histogram_quantile(0.99, sum by (le, source, target, operation) (label_replace(label_replace(rate(banyandb_queue_sub_total_latency_bucket{job=~\"$job\", container_name=~\"$role\", pod_name=~\"$pod\", remote_role!~\"lifecycle\"}[$__range]) or rate(banyandb_queue_sub_total_latency_bucket{job=~\"$job\", remote_role=~\"$role\", remote_node=~\"($pod)\\\\..*\", remote_role!~\"lifecycle\"}[$__range]), \"source\", \"$1\", \"remote_node\", \"([^.:]+).*\"), \"target\", \"$1\", \"pod_name\", \"(.*)\")))",
           "format": "table",
           "instant": true,
           "legendFormat": "__auto",
@@ -951,7 +951,7 @@
           },
           "editorMode": "code",
           "exemplar": false,
-          "expr": "sum by (source, target, operation) (label_replace(label_replace(rate(banyandb_queue_pub_total_err{job=~\"$job\", container_name=~\"$role\", pod_name=~\"$pod\"}[$__rate_interval]) or rate(banyandb_queue_pub_total_err{job=~\"$job\", remote_role=~\"$role\", remote_node=~\"($pod)\\\\..*\"}[$__rate_interval]) or rate(banyandb_lifecycle_migration_total_err{job=~\"$job\", container_name=~\"$role\", pod_name=~\"$pod\"}[$__rate_interval]) or rate(banyandb_lifecycle_migration_total_err{job=~\"$job\", remote_role=~\"$role\", remote_node=~\"($pod)\\\\..*\"}[$__rate_interval]), \"source\", \"$1\", \"pod_name\", \"(.*)\"), \"target\", \"$1\", \"remote_node\", \"([^.:]+).*\"))",
+          "expr": "sum by (source, target, operation) (label_replace(label_replace(rate(banyandb_queue_pub_total_err{job=~\"$job\", container_name=~\"$role\", pod_name=~\"$pod\"}[$__range]) or rate(banyandb_queue_pub_total_err{job=~\"$job\", remote_role=~\"$role\", remote_node=~\"($pod)\\\\..*\"}[$__range]), \"source\", \"$1\", \"pod_name\", \"(.*)\"), \"target\", \"$1\", \"remote_node\", \"([^.:]+).*\"))",
           "format": "table",
           "instant": true,
           "legendFormat": "__auto",
@@ -965,7 +965,7 @@
           },
           "editorMode": "code",
           "exemplar": false,
-          "expr": "sum by (source, target, operation) (label_replace(label_replace(rate(banyandb_queue_sub_total_err{job=~\"$job\", container_name=~\"$role\", pod_name=~\"$pod\"}[$__rate_interval]) or rate(banyandb_queue_sub_total_err{job=~\"$job\", remote_role=~\"$role\", remote_node=~\"($pod)\\\\..*\"}[$__rate_interval]), \"source\", \"$1\", \"remote_node\", \"([^.:]+).*\"), \"target\", \"$1\", \"pod_name\", \"(.*)\"))",
+          "expr": "sum by (source, target, operation) (label_replace(label_replace(rate(banyandb_queue_sub_total_err{job=~\"$job\", container_name=~\"$role\", pod_name=~\"$pod\", remote_role!~\"lifecycle\"}[$__range]) or rate(banyandb_queue_sub_total_err{job=~\"$job\", remote_role=~\"$role\", remote_node=~\"($pod)\\\\..*\", remote_role!~\"lifecycle\"}[$__range]), \"source\", \"$1\", \"remote_node\", \"([^.:]+).*\"), \"target\", \"$1\", \"pod_name\", \"(.*)\"))",
           "format": "table",
           "instant": true,
           "legendFormat": "__auto",
@@ -979,7 +979,7 @@
           },
           "editorMode": "code",
           "exemplar": false,
-          "expr": "sum by (source, target, operation) (label_replace(label_replace(rate(banyandb_queue_pub_sent_bytes{job=~\"$job\", container_name=~\"$role\", pod_name=~\"$pod\"}[$__rate_interval]) or rate(banyandb_queue_pub_sent_bytes{job=~\"$job\", remote_role=~\"$role\", remote_node=~\"($pod)\\\\..*\"}[$__rate_interval]) or rate(banyandb_lifecycle_migration_sent_bytes{job=~\"$job\", container_name=~\"$role\", pod_name=~\"$pod\"}[$__rate_interval]) or rate(banyandb_lifecycle_migration_sent_bytes{job=~\"$job\", remote_role=~\"$role\", remote_node=~\"($pod)\\\\..*\"}[$__rate_interval]), \"source\", \"$1\", \"pod_name\", \"(.*)\"), \"target\", \"$1\", \"remote_node\", \"([^.:]+).*\"))",
+          "expr": "sum by (source, target, operation) (label_replace(label_replace(rate(banyandb_queue_pub_sent_bytes{job=~\"$job\", container_name=~\"$role\", pod_name=~\"$pod\"}[$__range]) or rate(banyandb_queue_pub_sent_bytes{job=~\"$job\", remote_role=~\"$role\", remote_node=~\"($pod)\\\\..*\"}[$__range]), \"source\", \"$1\", \"pod_name\", \"(.*)\"), \"target\", \"$1\", \"remote_node\", \"([^.:]+).*\"))",
           "format": "table",
           "instant": true,
           "legendFormat": "__auto",
@@ -993,7 +993,7 @@
           },
           "editorMode": "code",
           "exemplar": false,
-          "expr": "sum by (source, target, operation) (label_replace(label_replace(rate(banyandb_queue_sub_received_bytes{job=~\"$job\", container_name=~\"$role\", pod_name=~\"$pod\"}[$__rate_interval]) or rate(banyandb_queue_sub_received_bytes{job=~\"$job\", remote_role=~\"$role\", remote_node=~\"($pod)\\\\..*\"}[$__rate_interval]), \"source\", \"$1\", \"remote_node\", \"([^.:]+).*\"), \"target\", \"$1\", \"pod_name\", \"(.*)\"))",
+          "expr": "sum by (source, target, operation) (label_replace(label_replace(rate(banyandb_queue_sub_received_bytes{job=~\"$job\", container_name=~\"$role\", pod_name=~\"$pod\", remote_role!~\"lifecycle\"}[$__range]) or rate(banyandb_queue_sub_received_bytes{job=~\"$job\", remote_role=~\"$role\", remote_node=~\"($pod)\\\\..*\", remote_role!~\"lifecycle\"}[$__range]), \"source\", \"$1\", \"remote_node\", \"([^.:]+).*\"), \"target\", \"$1\", \"pod_name\", \"(.*)\"))",
           "format": "table",
           "instant": true,
           "legendFormat": "__auto",
@@ -1045,12 +1045,536 @@
       "type": "table"
     },
     {
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${DS_PROMETHEUS}"
+      },
+      "description": "Cross-tier lifecycle migration flows (hot→warm, warm→cold). Each row is one directed source→target per (group, operation). Pub side is the lifecycle sidecar inside the SOURCE data pod (publishes via banyandb_lifecycle_migration_*); Sub side is the data pod RECEIVING (records via banyandb_queue_sub_total_started{remote_role=\"lifecycle\"}). Counts/bytes/errors are per-day (rate × 86400) because tier migration is a daily-batch workload and an instant per-second rate is structurally zero 99% of the time. Pub msg/day and Sub msg/day should match side-to-side. Latencies are p99 over the visible time range, NOT per-day — they are time-domain quantiles, not rates.",
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "thresholds"
+          },
+          "custom": {
+            "align": "auto",
+            "cellOptions": {
+              "type": "auto"
+            },
+            "filterable": false,
+            "inspect": false
+          },
+          "decimals": 2,
+          "mappings": [
+            {
+              "type": "special",
+              "options": {
+                "match": "nan",
+                "result": {
+                  "text": "-",
+                  "index": 0
+                }
+              }
+            }
+          ],
+          "noValue": "-",
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "text",
+                "value": null
+              }
+            ]
+          },
+          "unit": "short",
+          "overrides": [
+            {
+              "matcher": {
+                "id": "byName",
+                "options": "Pub msg/day"
+              },
+              "properties": [
+                {
+                  "id": "unit",
+                  "value": "short"
+                },
+                {
+                  "id": "decimals",
+                  "value": 2
+                }
+              ]
+            },
+            {
+              "matcher": {
+                "id": "byName",
+                "options": "Sub msg/day"
+              },
+              "properties": [
+                {
+                  "id": "unit",
+                  "value": "short"
+                },
+                {
+                  "id": "decimals",
+                  "value": 2
+                }
+              ]
+            },
+            {
+              "matcher": {
+                "id": "byName",
+                "options": "Pub err/day"
+              },
+              "properties": [
+                {
+                  "id": "unit",
+                  "value": "short"
+                },
+                {
+                  "id": "decimals",
+                  "value": 2
+                },
+                {
+                  "id": "thresholds",
+                  "value": {
+                    "mode": "absolute",
+                    "steps": [
+                      {
+                        "color": "text",
+                        "value": null
+                      },
+                      {
+                        "color": "red",
+                        "value": 1e-06
+                      }
+                    ]
+                  }
+                },
+                {
+                  "id": "custom.cellOptions",
+                  "value": {
+                    "type": "color-text"
+                  }
+                }
+              ]
+            },
+            {
+              "matcher": {
+                "id": "byName",
+                "options": "Sub err/day"
+              },
+              "properties": [
+                {
+                  "id": "unit",
+                  "value": "short"
+                },
+                {
+                  "id": "decimals",
+                  "value": 2
+                },
+                {
+                  "id": "thresholds",
+                  "value": {
+                    "mode": "absolute",
+                    "steps": [
+                      {
+                        "color": "text",
+                        "value": null
+                      },
+                      {
+                        "color": "red",
+                        "value": 1e-06
+                      }
+                    ]
+                  }
+                },
+                {
+                  "id": "custom.cellOptions",
+                  "value": {
+                    "type": "color-text"
+                  }
+                }
+              ]
+            },
+            {
+              "matcher": {
+                "id": "byName",
+                "options": "Pub B/day"
+              },
+              "properties": [
+                {
+                  "id": "unit",
+                  "value": "bytes"
+                }
+              ]
+            },
+            {
+              "matcher": {
+                "id": "byName",
+                "options": "Sub B/day"
+              },
+              "properties": [
+                {
+                  "id": "unit",
+                  "value": "bytes"
+                }
+              ]
+            }
+          ]
+        },
+        "overrides": [
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "Pub p99"
+            },
+            "properties": [
+              {
+                "id": "unit",
+                "value": "s"
+              },
+              {
+                "id": "decimals",
+                "value": 3
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "Sub p99"
+            },
+            "properties": [
+              {
+                "id": "unit",
+                "value": "s"
+              },
+              {
+                "id": "decimals",
+                "value": 3
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "Pub B/s"
+            },
+            "properties": [
+              {
+                "id": "unit",
+                "value": "Bps"
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "Sub B/s"
+            },
+            "properties": [
+              {
+                "id": "unit",
+                "value": "Bps"
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "Pub err/s"
+            },
+            "properties": [
+              {
+                "id": "unit",
+                "value": "ops"
+              },
+              {
+                "id": "custom.cellOptions",
+                "value": {
+                  "type": "color-text"
+                }
+              },
+              {
+                "id": "thresholds",
+                "value": {
+                  "mode": "absolute",
+                  "steps": [
+                    {
+                      "color": "text",
+                      "value": null
+                    },
+                    {
+                      "color": "red",
+                      "value": 1e-06
+                    }
+                  ]
+                }
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "Sub err/s"
+            },
+            "properties": [
+              {
+                "id": "unit",
+                "value": "ops"
+              },
+              {
+                "id": "custom.cellOptions",
+                "value": {
+                  "type": "color-text"
+                }
+              },
+              {
+                "id": "thresholds",
+                "value": {
+                  "mode": "absolute",
+                  "steps": [
+                    {
+                      "color": "text",
+                      "value": null
+                    },
+                    {
+                      "color": "red",
+                      "value": 1e-06
+                    }
+                  ]
+                }
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "Source"
+            },
+            "properties": [
+              {
+                "id": "custom.filterable",
+                "value": true
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "Target"
+            },
+            "properties": [
+              {
+                "id": "custom.filterable",
+                "value": true
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "Operation"
+            },
+            "properties": [
+              {
+                "id": "custom.filterable",
+                "value": true
+              }
+            ]
+          }
+        ]
+      },
+      "gridPos": {
+        "h": 13,
+        "w": 24,
+        "x": 0,
+        "y": 30
+      },
+      "id": 62,
+      "options": {
+        "cellHeight": "sm",
+        "footer": {
+          "countRows": false,
+          "fields": "",
+          "reducer": [
+            "sum"
+          ],
+          "show": false
+        },
+        "showHeader": true,
+        "sortBy": [
+          {
+            "desc": true,
+            "displayName": "Pub msg/s"
+          }
+        ]
+      },
+      "pluginVersion": "11.2.0",
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${DS_PROMETHEUS}"
+          },
+          "editorMode": "code",
+          "exemplar": false,
+          "format": "table",
+          "instant": true,
+          "legendFormat": "__auto",
+          "range": false,
+          "refId": "A",
+          "expr": "sum by (source, target, operation) (label_replace(label_replace(rate(banyandb_lifecycle_migration_total_finished{job=~\"$job\", container_name=~\"$role\", pod_name=~\"$pod\"}[$__range]) * 86400 or rate(banyandb_lifecycle_migration_total_finished{job=~\"$job\", remote_role=~\"$role\", remote_node=~\"($pod)\\\\..*\"}[$__range]) * 86400, \"source\", \"$1\", \"pod_name\", \"(.*)\"), \"target\", \"$1\", \"remote_node\", \"([^.:]+).*\"))"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${DS_PROMETHEUS}"
+          },
+          "editorMode": "code",
+          "exemplar": false,
+          "format": "table",
+          "instant": true,
+          "legendFormat": "__auto",
+          "range": false,
+          "refId": "B",
+          "expr": "sum by (source, target, operation) (label_replace(label_replace(rate(banyandb_queue_sub_total_started{job=~\"$job\", container_name=~\"$role\", pod_name=~\"$pod\", remote_role=\"lifecycle\"}[$__range]) * 86400 or rate(banyandb_queue_sub_total_started{job=~\"$job\", remote_role=\"lifecycle\", remote_node=~\"($pod)\\\\..*\"}[$__range]) * 86400, \"source\", \"$1\", \"remote_node\", \"([^.:]+).*\"), \"target\", \"$1\", \"pod_name\", \"(.*)\"))"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${DS_PROMETHEUS}"
+          },
+          "editorMode": "code",
+          "exemplar": false,
+          "format": "table",
+          "instant": true,
+          "legendFormat": "__auto",
+          "range": false,
+          "refId": "C",
+          "expr": "histogram_quantile(0.99, sum by (le, source, target, operation) (label_replace(label_replace(rate(banyandb_lifecycle_migration_total_latency_bucket{job=~\"$job\", container_name=~\"$role\", pod_name=~\"$pod\"}[$__range]) or rate(banyandb_lifecycle_migration_total_latency_bucket{job=~\"$job\", remote_role=~\"$role\", remote_node=~\"($pod)\\\\..*\"}[$__range]), \"source\", \"$1\", \"pod_name\", \"(.*)\"), \"target\", \"$1\", \"remote_node\", \"([^.:]+).*\")))"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${DS_PROMETHEUS}"
+          },
+          "editorMode": "code",
+          "exemplar": false,
+          "format": "table",
+          "instant": true,
+          "legendFormat": "__auto",
+          "range": false,
+          "refId": "D",
+          "expr": "histogram_quantile(0.99, sum by (le, source, target, operation) (label_replace(label_replace(rate(banyandb_queue_sub_total_latency_bucket{job=~\"$job\", container_name=~\"$role\", pod_name=~\"$pod\", remote_role=\"lifecycle\"}[$__range]) or rate(banyandb_queue_sub_total_latency_bucket{job=~\"$job\", remote_role=\"lifecycle\", remote_node=~\"($pod)\\\\..*\"}[$__range]), \"source\", \"$1\", \"remote_node\", \"([^.:]+).*\"), \"target\", \"$1\", \"pod_name\", \"(.*)\")))"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${DS_PROMETHEUS}"
+          },
+          "editorMode": "code",
+          "exemplar": false,
+          "format": "table",
+          "instant": true,
+          "legendFormat": "__auto",
+          "range": false,
+          "refId": "E",
+          "expr": "sum by (source, target, operation) (label_replace(label_replace(rate(banyandb_lifecycle_migration_total_err{job=~\"$job\", container_name=~\"$role\", pod_name=~\"$pod\"}[$__range]) * 86400 or rate(banyandb_lifecycle_migration_total_err{job=~\"$job\", remote_role=~\"$role\", remote_node=~\"($pod)\\\\..*\"}[$__range]) * 86400, \"source\", \"$1\", \"pod_name\", \"(.*)\"), \"target\", \"$1\", \"remote_node\", \"([^.:]+).*\"))"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${DS_PROMETHEUS}"
+          },
+          "editorMode": "code",
+          "exemplar": false,
+          "format": "table",
+          "instant": true,
+          "legendFormat": "__auto",
+          "range": false,
+          "refId": "F",
+          "expr": "sum by (source, target, operation) (label_replace(label_replace(rate(banyandb_queue_sub_total_err{job=~\"$job\", container_name=~\"$role\", pod_name=~\"$pod\", remote_role=\"lifecycle\"}[$__range]) * 86400 or rate(banyandb_queue_sub_total_err{job=~\"$job\", remote_role=\"lifecycle\", remote_node=~\"($pod)\\\\..*\"}[$__range]) * 86400, \"source\", \"$1\", \"remote_node\", \"([^.:]+).*\"), \"target\", \"$1\", \"pod_name\", \"(.*)\"))"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${DS_PROMETHEUS}"
+          },
+          "editorMode": "code",
+          "exemplar": false,
+          "format": "table",
+          "instant": true,
+          "legendFormat": "__auto",
+          "range": false,
+          "refId": "G",
+          "expr": "sum by (source, target, operation) (label_replace(label_replace(rate(banyandb_lifecycle_migration_sent_bytes{job=~\"$job\", container_name=~\"$role\", pod_name=~\"$pod\"}[$__range]) * 86400 or rate(banyandb_lifecycle_migration_sent_bytes{job=~\"$job\", remote_role=~\"$role\", remote_node=~\"($pod)\\\\..*\"}[$__range]) * 86400, \"source\", \"$1\", \"pod_name\", \"(.*)\"), \"target\", \"$1\", \"remote_node\", \"([^.:]+).*\"))"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${DS_PROMETHEUS}"
+          },
+          "editorMode": "code",
+          "exemplar": false,
+          "format": "table",
+          "instant": true,
+          "legendFormat": "__auto",
+          "range": false,
+          "refId": "H",
+          "expr": "sum by (source, target, operation) (label_replace(label_replace(rate(banyandb_queue_sub_received_bytes{job=~\"$job\", container_name=~\"$role\", pod_name=~\"$pod\", remote_role=\"lifecycle\"}[$__range]) * 86400 or rate(banyandb_queue_sub_received_bytes{job=~\"$job\", remote_role=\"lifecycle\", remote_node=~\"($pod)\\\\..*\"}[$__range]) * 86400, \"source\", \"$1\", \"remote_node\", \"([^.:]+).*\"), \"target\", \"$1\", \"pod_name\", \"(.*)\"))"
+        }
+      ],
+      "title": "Migration Flows — Tier Migrations (lifecycle)",
+      "transformations": [
+        {
+          "id": "merge",
+          "options": {}
+        },
+        {
+          "id": "organize",
+          "options": {
+            "excludeByName": {
+              "Time": true
+            },
+            "indexByName": {
+              "source": 0,
+              "target": 1,
+              "operation": 2,
+              "Value #A": 3,
+              "Value #B": 4,
+              "Value #C": 5,
+              "Value #D": 6,
+              "Value #E": 7,
+              "Value #F": 8,
+              "Value #G": 9,
+              "Value #H": 10
+            },
+            "renameByName": {
+              "source": "Source",
+              "target": "Target",
+              "operation": "Operation",
+              "Value #A": "Pub msg/day",
+              "Value #B": "Sub msg/day",
+              "Value #C": "Pub p99",
+              "Value #D": "Sub p99",
+              "Value #E": "Pub err/day",
+              "Value #F": "Sub err/day",
+              "Value #G": "Pub B/day",
+              "Value #H": "Sub B/day"
+            }
+          }
+        }
+      ],
+      "type": "table"
+    },
+    {
       "collapsed": false,
       "gridPos": {
         "h": 1,
         "w": 24,
         "x": 0,
-        "y": 16
+        "y": 43
       },
       "id": 13,
       "panels": [],
@@ -1119,7 +1643,7 @@
         "h": 8,
         "w": 12,
         "x": 0,
-        "y": 17
+        "y": 44
       },
       "id": 14,
       "options": {
@@ -1220,7 +1744,7 @@
         "h": 8,
         "w": 12,
         "x": 12,
-        "y": 17
+        "y": 44
       },
       "id": 15,
       "options": {
@@ -1325,7 +1849,7 @@
         "h": 8,
         "w": 12,
         "x": 0,
-        "y": 25
+        "y": 52
       },
       "id": 16,
       "options": {
@@ -1430,7 +1954,7 @@
         "h": 8,
         "w": 12,
         "x": 12,
-        "y": 25
+        "y": 52
       },
       "id": 17,
       "options": {
@@ -1531,7 +2055,7 @@
         "h": 8,
         "w": 24,
         "x": 0,
-        "y": 33
+        "y": 60
       },
       "id": 18,
       "options": {
@@ -1588,7 +2112,7 @@
         "h": 1,
         "w": 24,
         "x": 0,
-        "y": 41
+        "y": 68
       },
       "id": 19,
       "panels": [],
@@ -1657,7 +2181,7 @@
         "h": 8,
         "w": 12,
         "x": 0,
-        "y": 42
+        "y": 69
       },
       "id": 20,
       "options": {
@@ -1758,7 +2282,7 @@
         "h": 8,
         "w": 12,
         "x": 12,
-        "y": 42
+        "y": 69
       },
       "id": 21,
       "options": {
@@ -1863,7 +2387,7 @@
         "h": 8,
         "w": 24,
         "x": 0,
-        "y": 50
+        "y": 77
       },
       "id": 22,
       "options": {
@@ -1908,7 +2432,7 @@
         "h": 1,
         "w": 24,
         "x": 0,
-        "y": 58
+        "y": 85
       },
       "id": 50,
       "panels": [],
@@ -1977,7 +2501,7 @@
         "h": 8,
         "w": 12,
         "x": 0,
-        "y": 59
+        "y": 86
       },
       "id": 51,
       "options": {
@@ -2078,7 +2602,7 @@
         "h": 8,
         "w": 12,
         "x": 12,
-        "y": 59
+        "y": 86
       },
       "id": 52,
       "options": {
@@ -2179,7 +2703,7 @@
         "h": 8,
         "w": 12,
         "x": 0,
-        "y": 67
+        "y": 94
       },
       "id": 53,
       "options": {
@@ -2293,7 +2817,7 @@
         "h": 8,
         "w": 12,
         "x": 12,
-        "y": 67
+        "y": 94
       },
       "id": 54,
       "options": {
@@ -2440,7 +2964,7 @@
     ]
   },
   "time": {
-    "from": "now-1h",
+    "from": "now-24h",
     "to": "now"
   },
   "timepicker": {},
