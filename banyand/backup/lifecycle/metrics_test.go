@@ -315,6 +315,54 @@ func TestRecordLastRunTwoCycleReplaceStaleSeries(t *testing.T) {
 	require.Equal(t, 1, okGauge.deleted)
 }
 
+// TestRecordLastRunEmptyThenNonEmptyCycle is the regression test for
+// the empty-tuple state collision: an empty cycle (no recordCycleGroup
+// ran; the action-start reset left lastRun* all empty) stamps the
+// gauges with all-empty labels, and a subsequent non-empty cycle must
+// still Delete the all-empty-labels series before stamping its own
+// tuple. Without the emittedLastRunSet bool flag, the hasPrev check
+// "any emittedLastRun* field is non-empty" would return false for an
+// all-empty predecessor and skip the Delete, leaving the empty series
+// to shadow the new stamp.
+func TestRecordLastRunEmptyThenNonEmptyCycle(t *testing.T) {
+	tsGauge, okGauge := &recordingGauge{}, &recordingGauge{}
+	l := &lifecycleService{
+		lastRunTimestamp: tsGauge,
+		lastRunSuccess:   okGauge,
+	}
+
+	// Cycle A: empty cycle (no recordCycleGroup; all lastRun* are
+	// empty strings from action()'s prelude reset). recordLastRun
+	// stamps the all-empty tuple and sets emittedLastRunSet = true.
+	l.recordLastRun(time.Unix(1717929600, 0), nil)
+	require.Equal(t, 1, tsGauge.called)
+	require.Equal(t, 0, tsGauge.deleted,
+		"first-ever recordLastRun must NOT Delete (no previous tuple)")
+	require.Equal(t, []string{"", "", "", ""}, tsGauge.lastLabels,
+		"empty cycle must stamp all-empty labels")
+	require.True(t, l.emittedLastRunSet,
+		"emittedLastRunSet must be true after a successful Set, even with all-empty labels")
+	require.Equal(t, "", l.emittedLastRunGroup)
+
+	// Cycle B: non-empty cycle. recordLastRun must Delete the
+	// all-empty tuple from cycle A before stamping the new tuple.
+	l.lastRunGroup = "metrics-day"
+	l.lastRunNode = "data-hot-0:17912"
+	l.lastRunRole = "lifecycle"
+	l.lastRunTier = "hot"
+	l.recordLastRun(time.Unix(1717929700, 0), nil)
+
+	require.Equal(t, 1, tsGauge.deleted,
+		"second recordLastRun must Delete the previous all-empty tuple (the empty-cycle predecessor)")
+	require.Equal(t, []string{"", "", "", ""}, tsGauge.deletedLabel[0],
+		"Delete must target the all-empty tuple from cycle A")
+	require.Equal(t, 2, tsGauge.called)
+	require.Equal(t,
+		[]string{"data-hot-0:17912", "lifecycle", "hot", "metrics-day"},
+		tsGauge.lastLabels,
+		"cycle B must stamp the new tuple after deleting the empty one")
+}
+
 // TestRecordLastRunFailure stamps the gauges with success=0 when the action
 // returned an error. The timestamp is still set — operators want to know
 // "when did the last attempt happen, and did it succeed?".
