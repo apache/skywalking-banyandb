@@ -34,7 +34,7 @@
     "jsonfile": "^6.2.1",
     "prettier": "^3.8.3",
     "semver": "^7.8.0",
-    "tsx": "^4.21.0",
+    "tsx": "^4.22.4",
     "typescript": "^5.9.3",
     "typescript-eslint": "^8.59.2"
   },
