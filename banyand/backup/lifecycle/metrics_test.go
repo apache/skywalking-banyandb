@@ -111,14 +111,18 @@ func TestBuildHTTPRouterWithoutPromHandler(t *testing.T) {
 // recordingGauge captures the last Set() call so a unit test can assert
 // the value the lifecycle would have emitted. The lifecycle uses the
 // real prometheus-backed Gauge in production; this stub keeps the test
-// hermetic.
+// hermetic. It also records the labels argument so tests can assert the
+// (remote_node, remote_role, remote_tier, group) tuple stamped by the
+// per-group recordCycleGroup and the cycle-end recordLastRun paths.
 type recordingGauge struct {
-	lastValue float64
-	called    int
+	lastLabels []string
+	lastValue  float64
+	called     int
 }
 
-func (g *recordingGauge) Set(v float64, _ ...string) {
+func (g *recordingGauge) Set(v float64, labels ...string) {
 	g.lastValue = v
+	g.lastLabels = labels
 	g.called++
 }
 
@@ -126,15 +130,100 @@ func (g *recordingGauge) Add(_ float64, _ ...string) {}
 
 func (g *recordingGauge) Delete(_ ...string) bool { return true }
 
+// recordingCounter captures the last Inc() call's label set.
+type recordingCounter struct {
+	lastLabels []string
+	called     int
+}
+
+func (c *recordingCounter) Inc(_ float64, labels ...string) {
+	c.lastLabels = labels
+	c.called++
+}
+
+func (c *recordingCounter) Add(_ float64, _ ...string) {}
+
+func (c *recordingCounter) Delete(_ ...string) bool { return true }
+
+// TestRecordCycleGroupStampsLabeledMetrics asserts the per-group helper
+// issues an Inc on cyclesTotal with the
+// (remote_node, remote_role, remote_tier, group) tuple and captures
+// the cycle's last-seen (group, remote_*) tuple on the service for
+// the deferred recordLastRun. lastRunTimestamp and lastRunSuccess are
+// intentionally NOT touched by recordCycleGroup — they are stamped
+// atomically at cycle end so dashboards see consistent (timestamp,
+// success) pairs for the same tuple and the success flag reflects the
+// whole-cycle outcome.
+func TestRecordCycleGroupStampsLabeledMetrics(t *testing.T) {
+	cyc, ts, ok := &recordingCounter{}, &recordingGauge{}, &recordingGauge{}
+	l := &lifecycleService{
+		cyclesTotal:      cyc,
+		lastRunTimestamp: ts,
+		lastRunSuccess:   ok,
+	}
+	l.recordCycleGroup("metrics-day", "data-hot-0:17912", "lifecycle", "hot")
+
+	require.Equal(t, 1, cyc.called)
+	require.Equal(t,
+		[]string{"data-hot-0:17912", "lifecycle", "hot", "metrics-day"},
+		cyc.lastLabels,
+		"cyclesTotal must be Inc'd with (remote_node, remote_role, remote_tier, group)")
+	require.Equal(t, 0, ts.called,
+		"lastRunTimestamp must NOT be Set by recordCycleGroup (deferred recordLastRun's job)")
+	require.Equal(t, 0, ok.called,
+		"lastRunSuccess must NOT be Set by recordCycleGroup (deferred recordLastRun's job)")
+	require.Equal(t, "data-hot-0:17912", l.lastRunNode)
+	require.Equal(t, "lifecycle", l.lastRunRole)
+	require.Equal(t, "hot", l.lastRunTier)
+	require.Equal(t, "metrics-day", l.lastRunGroup,
+		"lastRunGroup/Node/Role/Tier are the inputs to the deferred recordLastRun")
+}
+
+// TestRecordLastRunResetsTupleAtActionStart asserts action() resets the
+// cycle's last-seen (group, remote_*) tuple to empty strings so an
+// empty cycle (no parseGroup succeeded) doesn't inherit the previous
+// cycle's labels. Scheduler-driven consecutive cycles would otherwise
+// see a stale group label on last_run_*.
+func TestRecordLastRunResetsTupleAtActionStart(t *testing.T) {
+	ts, ok := &recordingGauge{}, &recordingGauge{}
+	l := &lifecycleService{
+		lastRunTimestamp: ts,
+		lastRunSuccess:   ok,
+		// Stale labels from a previous cycle; action() must clear them.
+		lastRunGroup: "stale-group",
+		lastRunNode:  "stale-node:17912",
+		lastRunRole:  "lifecycle",
+		lastRunTier:  "stale",
+	}
+	// Simulate the action() prelude: reset, then call recordLastRun
+	// without any recordCycleGroup in between (empty cycle).
+	l.lastRunGroup = ""
+	l.lastRunNode = ""
+	l.lastRunRole = ""
+	l.lastRunTier = ""
+	l.recordLastRun(time.Unix(1717929900, 0), nil)
+
+	require.Equal(t, 1, ts.called)
+	require.Equal(t, []string{"", "", "", ""}, ts.lastLabels,
+		"empty-cycle path must stamp gauges with empty (group, remote_*) labels")
+	require.Equal(t, []string{"", "", "", ""}, ok.lastLabels)
+}
+
 // TestRecordLastRunSuccess stamps the gauges with the start time (epoch
 // seconds) and success=1 when the action returned nil. Asserts both the
 // integer epoch shape and the 0/1 success signal so dashboards can
-// distinguish a healthy last run from a failed one.
+// distinguish a healthy last run from a failed one. The label set is
+// sourced from the cycle's last-seen tuple (set by recordCycleGroup),
+// so we wire one in before the call.
 func TestRecordLastRunSuccess(t *testing.T) {
 	tsGauge, okGauge := &recordingGauge{}, &recordingGauge{}
 	l := &lifecycleService{
 		lastRunTimestamp: tsGauge,
 		lastRunSuccess:   okGauge,
+		lastRunGroup:     "metrics-day",
+		lastRunNode:      "data-hot-0:17912",
+		lastRunRole:      "lifecycle",
+		lastRunTier:      "hot",
 	}
 	start := time.Unix(1717929600, 0) // 2024-06-09T00:00:00Z, deterministic
 	l.recordLastRun(start, nil)
@@ -142,9 +231,17 @@ func TestRecordLastRunSuccess(t *testing.T) {
 	require.Equal(t, 1, tsGauge.called)
 	require.Equal(t, 1717929600.0, tsGauge.lastValue,
 		"lastRunTimestamp must record the start time as epoch seconds")
+	require.Equal(t,
+		[]string{"data-hot-0:17912", "lifecycle", "hot", "metrics-day"},
+		tsGauge.lastLabels,
+		"lastRunTimestamp must be Set with the cycle's (remote_node, remote_role, remote_tier, group) tuple")
 	require.Equal(t, 1, okGauge.called)
 	require.Equal(t, 1.0, okGauge.lastValue,
 		"lastRunSuccess must be 1 on a nil error")
+	require.Equal(t,
+		[]string{"data-hot-0:17912", "lifecycle", "hot", "metrics-day"},
+		okGauge.lastLabels,
+		"lastRunSuccess must be Set with the cycle's (remote_node, remote_role, remote_tier, group) tuple")
 }
 
 // TestRecordLastRunFailure stamps the gauges with success=0 when the action
@@ -155,6 +252,10 @@ func TestRecordLastRunFailure(t *testing.T) {
 	l := &lifecycleService{
 		lastRunTimestamp: tsGauge,
 		lastRunSuccess:   okGauge,
+		lastRunGroup:     "metrics-day",
+		lastRunNode:      "data-warm-1:17912",
+		lastRunRole:      "lifecycle",
+		lastRunTier:      "warm",
 	}
 	start := time.Unix(1717929700, 0)
 	l.recordLastRun(start, errors.New("snapshot dir unavailable"))

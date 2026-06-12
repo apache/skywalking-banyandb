@@ -79,30 +79,46 @@ const (
 	// metricsNodeKeeperInterval is how often the keeper re-checks that the local
 	// data node connection is active and re-registers it if not.
 	metricsNodeKeeperInterval = 10 * time.Second
+	// lifecycleRoleName is the hard-coded role label the lifecycle stamps
+	// on its own _monitoring series and on the wire-level SenderRole
+	// for tier-migration traffic. Mirrors the liaison's "liaison"
+	// pattern at pkg/cmdsetup/liaison.go:170-171.
+	lifecycleRoleName = "lifecycle"
 )
 
 type lifecycleService struct {
 	databasev1.UnimplementedClusterStateServiceServer
 	databasev1.UnimplementedNodeQueryServiceServer
-	metadata    metadata.Repo
-	omr         observability.MetricsRegistry
-	pm          protector.Memory
-	cyclesTotal meter.Counter
-	// selfIdentityResolution is incremented by every parseGroup call
-	// after resolveSelfIdentity runs, with result="ok" on a non-empty
-	// match and result="empty" on a no-match. The companion
-	// banyandb_lifecycle_self_identity_resolution_total counter is
-	// the regression detector for the per-pod asymmetry that
-	// deriveSelfIdentity's address-based Pass 1 had.
-	selfIdentityResolution meter.Counter
-	// lastRunTimestamp records the wall-clock epoch (in seconds) of the
-	// most recent attempt to run a migration cycle, regardless of outcome.
-	// Updated at the end of action() in both the success and error paths.
+	metadata metadata.Repo
+	omr      observability.MetricsRegistry
+	pm       protector.Memory
+	// cycleLabels is the label set shared by the three cycle-level
+	// metrics (cyclesTotal, lastRunTimestamp, lastRunSuccess): the
+	// SENDER identity of the lifecycle pod (remote_node = the
+	// co-located data pod's BanyanDB NodeID, remote_role = "lifecycle",
+	// remote_tier = the data pod's tier label) plus the GROUP being
+	// processed. The label form mirrors the parallel
+	// banyandb_lifecycle_migration_* family emitted by the queue/pub
+	// lifecycle publisher, but the cycle-level series describe the
+	// SENDER side (one tuple per cycle, the cycle's last-seen group)
+	// while the per-message pub series describe the DESTINATION side
+	// (one tuple per chunk, the destination's NodeID/role/tier resolved
+	// from getNodeInfo). The two families are independently useful
+	// (cycle health vs. per-message traffic) and share the same label
+	// form so dashboard matchers and regexes apply to both.
+	cyclesTotal      meter.Counter
 	lastRunTimestamp meter.Gauge
-	// lastRunSuccess records the outcome of the most recent migration
-	// cycle: 1 on success, 0 on error. Combined with lastRunTimestamp it
-	// gives dashboards an at-a-glance "is the lifecycle healthy" signal.
-	lastRunSuccess    meter.Gauge
+	lastRunSuccess   meter.Gauge
+	// Last-seen (group, remote_node, remote_role, remote_tier) tuple
+	// from the most recent parseGroup call. Used by the deferred
+	// recordLastRun to stamp the cycle-level last_run_* gauges when
+	// the cycle ends. Reset to empty strings at the start of each
+	// action() so an empty cycle (no parseGroup succeeded) doesn't
+	// inherit the previous cycle's labels.
+	lastRunGroup      string
+	lastRunNode       string
+	lastRunRole       string
+	lastRunTier       string
 	metricsClient     queue.Client
 	grpcServer        *grpclib.Server
 	httpSrv           *http.Server
@@ -171,7 +187,7 @@ func nativeNodeContext(ctx context.Context) context.Context {
 		}
 	}
 	if nodeID == "" {
-		nodeID = "lifecycle"
+		nodeID = lifecycleRoleName
 	}
 	return context.WithValue(ctx, common.ContextNodeKey, common.Node{
 		NodeID: nodeID,
@@ -255,19 +271,10 @@ func (l *lifecycleService) PreRun(_ context.Context) error {
 	// Safe to call With() here: the metrics registry is registered earlier in the
 	// group, so its PreRun (which builds the provider) has already run.
 	lifecycleScope := l.omr.With(observability.RootScope.SubScope("lifecycle"))
-	l.cyclesTotal = lifecycleScope.NewCounter("cycles_total")
-	l.lastRunTimestamp = lifecycleScope.NewGauge("last_run_timestamp_seconds")
-	l.lastRunSuccess = lifecycleScope.NewGauge("last_run_success")
-	// selfIdentityResolution tracks the result of every resolveSelfIdentity
-	// call inside parseGroup. result="ok" means the lifecycle stamped a
-	// non-empty SenderNode on the wire; result="empty" means the registry
-	// did not contain a matching entry (e.g. cold start) and the
-	// publisher's SenderNode stayed empty. The on-wire empty case
-	// produces empty remote_node labels on the receiver's
-	// banyandb_queue_sub_* family; a sustained non-zero result="empty"
-	// rate is the canary for a registration / identity-resolution
-	// regression.
-	l.selfIdentityResolution = lifecycleScope.NewCounter("self_identity_resolution_total", "result")
+	cycleLabels := []string{"remote_node", "remote_role", "remote_tier", "group"}
+	l.cyclesTotal = lifecycleScope.NewCounter("cycles_total", cycleLabels...)
+	l.lastRunTimestamp = lifecycleScope.NewGauge("last_run_timestamp_seconds", cycleLabels...)
+	l.lastRunSuccess = lifecycleScope.NewGauge("last_run_success", cycleLabels...)
 
 	if l.schedule != "" && l.lifecycleTLS {
 		var err error
@@ -571,13 +578,19 @@ func (l *lifecycleService) startServers() {
 }
 
 func (l *lifecycleService) action(ctx context.Context) (err error) {
-	if l.cyclesTotal != nil {
-		l.cyclesTotal.Inc(1)
-	}
+	// Reset the cycle's last-seen (group, remote_*) tuple so an empty
+	// cycle (no parseGroup succeeded) doesn't inherit the previous
+	// cycle's labels. recordLastRun reads these at the end of the
+	// cycle; without the reset, scheduler-driven consecutive cycles
+	// could see a stale group label.
+	l.lastRunGroup = ""
+	l.lastRunNode = ""
+	l.lastRunRole = ""
+	l.lastRunTier = ""
 	// Stamp last-run metrics at the end of this cycle regardless of outcome.
 	// Using defer keeps the success/error bookkeeping in one place even as
 	// the body grows new early returns; the metrics gauge Set()s observe
-	// the same time.Now() and the success flag, so dashboards see consistent
+	// the same runStart and the success flag, so dashboards see consistent
 	// (timestamp, success) pairs. The named return value lets the defer
 	// observe whether the body succeeded.
 	runStart := time.Now()
@@ -687,22 +700,50 @@ func (l *lifecycleService) action(ctx context.Context) (err error) {
 	return fmt.Errorf("lifecycle migration partially completed, progress file retained; %v groups not fully completed", notCompleteGroups)
 }
 
-// recordLastRun stamps the banyandb_lifecycle_last_run_* gauges with the
-// start time (epoch seconds) and a 0/1 success flag. Called from the
-// deferred end-of-action block so every code path (success, error,
-// panic-recovered) updates both gauges. nil gauges are skipped so a
-// lifecycle run with a nil observability.MetricsRegistry (BypassRegistry)
-// doesn't crash.
+// recordCycleGroup stamps the per-group banyandb_lifecycle_cycles_total
+// Inc with the (group, remote_node, remote_role, remote_tier) tuple
+// returned by parseGroup. It also captures the (group, remote_*) tuple
+// as the cycle's last-seen identity, which the deferred recordLastRun
+// reads at the end of the cycle to stamp the cycle-level last_run_*
+// gauges. lastRunTimestamp and lastRunSuccess are intentionally NOT
+// touched here — they are stamped atomically at cycle end in
+// recordLastRun so dashboards see consistent (timestamp, success) pairs
+// for the same (group, remote_*) tuple, and so the success flag
+// reflects the whole-cycle outcome (not the last group's parseGroup
+// result).
+//
+// nil counters are skipped so a lifecycle run with a nil
+// observability.MetricsRegistry (BypassRegistry) doesn't crash.
+func (l *lifecycleService) recordCycleGroup(group, senderNode, senderRole, senderTier string) {
+	if l.cyclesTotal != nil {
+		l.cyclesTotal.Inc(1, senderNode, senderRole, senderTier, group)
+	}
+	l.lastRunGroup = group
+	l.lastRunNode = senderNode
+	l.lastRunRole = senderRole
+	l.lastRunTier = senderTier
+}
+
+// recordLastRun stamps the banyandb_lifecycle_last_run_timestamp_seconds
+// and banyandb_lifecycle_last_run_success gauges with the start time
+// (epoch seconds) and a 0/1 success flag, both using the
+// (group, remote_node, remote_role, remote_tier) tuple from the cycle's
+// last processed group. Called from the deferred end-of-action block so
+// every code path (success, error, panic-recovered) updates both
+// gauges atomically. On the empty-cycle path (no group was processed)
+// the labels are empty strings so dashboards still see a single series
+// with group="". nil gauges are skipped so a lifecycle run with a nil
+// observability.MetricsRegistry (BypassRegistry) doesn't crash.
 func (l *lifecycleService) recordLastRun(start time.Time, err error) {
+	success := 0.0
+	if err == nil {
+		success = 1.0
+	}
 	if l.lastRunTimestamp != nil {
-		l.lastRunTimestamp.Set(float64(start.Unix()), nil...)
+		l.lastRunTimestamp.Set(float64(start.Unix()), l.lastRunNode, l.lastRunRole, l.lastRunTier, l.lastRunGroup)
 	}
 	if l.lastRunSuccess != nil {
-		success := 0.0
-		if err == nil {
-			success = 1.0
-		}
-		l.lastRunSuccess.Set(success, nil...)
+		l.lastRunSuccess.Set(success, l.lastRunNode, l.lastRunRole, l.lastRunTier, l.lastRunGroup)
 	}
 }
 
@@ -1099,11 +1140,12 @@ func (l *lifecycleService) getGroupsToProcess(ctx context.Context, progress *Pro
 func (l *lifecycleService) processStreamGroup(ctx context.Context, g *commonv1.Group,
 	streamDir string, nodes []*databasev1.Node, labels map[string]string, progress *Progress,
 ) {
-	group, err := parseGroup(g, labels, nodes, l.l, l.metadata, l.clusterStateMgr, l.omr, l.selfIdentityResolution)
+	group, senderNode, senderRole, senderTier, err := parseGroup(g, labels, nodes, l.l, l.metadata, l.clusterStateMgr, l.omr)
 	if err != nil {
 		l.l.Error().Err(err).Msgf("failed to parse group %s", g.Metadata.Name)
 		return
 	}
+	l.recordCycleGroup(g.Metadata.Name, senderNode, senderRole, senderTier)
 	defer group.Close()
 	tr := l.getRemovalSegmentsTimeRange(group)
 	if tr.Start.IsZero() && tr.End.IsZero() {
@@ -1219,11 +1261,12 @@ func (l *lifecycleService) deleteExpiredStreamSegments(ctx context.Context, g *c
 func (l *lifecycleService) processMeasureGroup(ctx context.Context, g *commonv1.Group, measureDir string,
 	nodes []*databasev1.Node, labels map[string]string, progress *Progress,
 ) {
-	group, err := parseGroup(g, labels, nodes, l.l, l.metadata, l.clusterStateMgr, l.omr, l.selfIdentityResolution)
+	group, senderNode, senderRole, senderTier, err := parseGroup(g, labels, nodes, l.l, l.metadata, l.clusterStateMgr, l.omr)
 	if err != nil {
 		l.l.Error().Err(err).Msgf("failed to parse group %s", g.Metadata.Name)
 		return
 	}
+	l.recordCycleGroup(g.Metadata.Name, senderNode, senderRole, senderTier)
 	defer group.Close()
 
 	tr := l.getRemovalSegmentsTimeRange(group)
@@ -1326,11 +1369,12 @@ func (l *lifecycleService) deleteExpiredTraceSegments(ctx context.Context, g *co
 func (l *lifecycleService) processTraceGroup(ctx context.Context, g *commonv1.Group, traceDir string,
 	nodes []*databasev1.Node, labels map[string]string, progress *Progress,
 ) {
-	group, err := parseGroup(g, labels, nodes, l.l, l.metadata, l.clusterStateMgr, l.omr, l.selfIdentityResolution)
+	group, senderNode, senderRole, senderTier, err := parseGroup(g, labels, nodes, l.l, l.metadata, l.clusterStateMgr, l.omr)
 	if err != nil {
 		l.l.Error().Err(err).Msgf("failed to parse group %s", g.Metadata.Name)
 		return
 	}
+	l.recordCycleGroup(g.Metadata.Name, senderNode, senderRole, senderTier)
 	defer group.Close()
 
 	tr := l.getRemovalSegmentsTimeRange(group)

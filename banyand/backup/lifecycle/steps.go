@@ -39,7 +39,6 @@ import (
 	"github.com/apache/skywalking-banyandb/banyand/queue/pub"
 	"github.com/apache/skywalking-banyandb/pkg/fs"
 	"github.com/apache/skywalking-banyandb/pkg/logger"
-	"github.com/apache/skywalking-banyandb/pkg/meter"
 	"github.com/apache/skywalking-banyandb/pkg/node"
 )
 
@@ -264,28 +263,27 @@ func parseGroup(
 	g *commonv1.Group, nodeLabels map[string]string, nodes []*databasev1.Node,
 	l *logger.Logger, metadata metadata.Repo, clusterStateMgr *clusterStateManager,
 	omr observability.MetricsRegistry,
-	resolutionCounter meter.Counter,
-) (*GroupConfig, error) {
+) (group *GroupConfig, senderNode, senderRole, senderTier string, err error) {
 	ro := g.ResourceOpts
 	if ro == nil {
-		return nil, fmt.Errorf("no resource opts in group %s", g.Metadata.Name)
+		return nil, "", "", "", fmt.Errorf("no resource opts in group %s", g.Metadata.Name)
 	}
 	if len(ro.Stages) == 0 {
-		return nil, fmt.Errorf("no stages in group %s", g.Metadata.Name)
+		return nil, "", "", "", fmt.Errorf("no stages in group %s", g.Metadata.Name)
 	}
 	// Validate IntervalRules up-front so later derefs (incl. Stages[i+1]) are safe.
 	if ro.Ttl == nil {
-		return nil, fmt.Errorf("group %s: missing ttl", g.Metadata.Name)
+		return nil, "", "", "", fmt.Errorf("group %s: missing ttl", g.Metadata.Name)
 	}
 	if ro.SegmentInterval == nil {
-		return nil, fmt.Errorf("group %s: missing segment_interval", g.Metadata.Name)
+		return nil, "", "", "", fmt.Errorf("group %s: missing segment_interval", g.Metadata.Name)
 	}
 	for _, st := range ro.Stages {
 		if st.SegmentInterval == nil {
-			return nil, fmt.Errorf("group %s stage %s: missing segment_interval", g.Metadata.Name, st.Name)
+			return nil, "", "", "", fmt.Errorf("group %s stage %s: missing segment_interval", g.Metadata.Name, st.Name)
 		}
 		if st.Ttl == nil {
-			return nil, fmt.Errorf("group %s stage %s: missing ttl", g.Metadata.Name, st.Name)
+			return nil, "", "", "", fmt.Errorf("group %s stage %s: missing ttl", g.Metadata.Name, st.Name)
 		}
 	}
 	ttlTime := proto.Clone(ro.Ttl).(*commonv1.IntervalRule)
@@ -294,9 +292,9 @@ func parseGroup(
 	var targetSegmentInterval *commonv1.IntervalRule
 	var sourceStage string
 	for i, st := range ro.Stages {
-		selector, err := pub.ParseLabelSelector(st.NodeSelector)
-		if err != nil {
-			return nil, errors.WithMessagef(err, "failed to parse node selector %s", st.NodeSelector)
+		selector, parseErr := pub.ParseLabelSelector(st.NodeSelector)
+		if parseErr != nil {
+			return nil, "", "", "", errors.WithMessagef(parseErr, "failed to parse node selector %s", st.NodeSelector)
 		}
 		ttlTime.Num += st.Ttl.Num
 		if !selector.Matches(nodeLabels) {
@@ -304,7 +302,7 @@ func parseGroup(
 		}
 		if i+1 >= len(ro.Stages) {
 			l.Info().Msgf("no next stage for group %s at stage %s", g.Metadata.Name, st.Name)
-			return nil, nil
+			return nil, "", "", "", nil
 		}
 		nst = ro.Stages[i+1]
 		sourceStage = st.Name
@@ -331,11 +329,11 @@ func parseGroup(
 	}
 	nsl, err := pub.ParseLabelSelector(nst.NodeSelector)
 	if err != nil {
-		return nil, errors.WithMessagef(err, "failed to parse node selector %s", nst.NodeSelector)
+		return nil, "", "", "", errors.WithMessagef(err, "failed to parse node selector %s", nst.NodeSelector)
 	}
 	nodeSel := node.NewRoundRobinSelector("", metadata)
 	if ok, _ := nodeSel.OnInit([]schema.Kind{schema.KindGroup}); !ok {
-		return nil, fmt.Errorf("failed to initialize node selector for group %s", g.Metadata.Name)
+		return nil, "", "", "", fmt.Errorf("failed to initialize node selector for group %s", g.Metadata.Name)
 	}
 	client := pub.NewWithoutMetadata(omr) //nolint:contextcheck // health check goroutine uses context.Background()
 	// Stamp the lifecycle's self identity onto the publisher so the wire
@@ -352,23 +350,29 @@ func parseGroup(
 	// hard-coded to "lifecycle" to mirror the liaison's
 	// "liaison" pattern at pkg/cmdsetup/liaison.go:170-171.
 	//
-	// The resolution counter (banyandb_lifecycle_self_identity_resolution_total)
-	// is incremented with result=ok on a non-empty match and
-	// result=empty on a no-match. Pre-fix, 2 of 4 lifecycle pods
-	// (hot-0, warm-1) returned empty due to a DNS-name vs loopback
-	// mismatch in deriveSelfIdentity's Pass 1; the new
-	// resolveSelfIdentity closes that gap.
+	// The (senderNode, "lifecycle", senderTier) tuple returned here is
+	// consumed by three downstream emissions, all sharing the same
+	// label set: (a) the wire SenderNode/Role/Tier fields on every
+	// SendRequest (banyand/queue/queue.go:62-68), (b) the per-message
+	// banyandb_lifecycle_migration_* family emitted by the
+	// lifecycle-tier pub, which has two parallel paths
+	// (file-sync: banyand/queue/pub/chunked_sync.go:67-82 and
+	// batch-write: banyand/queue/pub/batch.go:215, 271, 291-292, 421,
+	// 471-472, 488, 511, 520, 532), and (c) the cycle-level
+	// banyandb_lifecycle_cycles_total + last_run_* metrics stamped
+	// by the caller (process*Group). Pre-fix, the empty
+	// selfIdentityResolution result propagated to empty SenderNode on
+	// the wire, which the receiver recorded as empty remote_node on
+	// its banyandb_queue_sub_total_finished series; the regression
+	// detector for that is now the new labeled cycle-level
+	// banyandb_lifecycle_cycles_total{remote_node!=""} and the
+	// existing receiver-side count of empty remote_node on lifecycle
+	// Sub series.
 	selfHost := selfPodHostname()
 	senderNode, senderTier, resolvedOK := resolveSelfIdentity(selfHost, nodes)
-	if resolutionCounter != nil {
-		label := "empty"
-		if resolvedOK {
-			label = "ok"
-		}
-		resolutionCounter.Inc(1, label)
-	}
 	if resolvedOK {
-		client.SetSelfNode(senderNode, "lifecycle", senderTier)
+		senderRole = "lifecycle"
+		client.SetSelfNode(senderNode, senderRole, senderTier)
 		// Info log so operators can see which identity the agent
 		// stamped on the wire, and which co-located data pod the
 		// registry picked. This is the log line that surfaces the
@@ -391,7 +395,7 @@ func parseGroup(
 	case commonv1.Catalog_CATALOG_MEASURE:
 		_ = grpc.NewClusterNodeRegistry(data.TopicMeasureWrite, client, nodeSel)
 	default:
-		return nil, fmt.Errorf("unsupported catalog %s for lifecycle migration of group %s", g.Catalog, g.Metadata.Name)
+		return nil, "", "", "", fmt.Errorf("unsupported catalog %s for lifecycle migration of group %s", g.Catalog, g.Metadata.Name)
 	}
 
 	var existed bool
@@ -410,7 +414,7 @@ func parseGroup(
 		}
 	}
 	if !existed {
-		return nil, errors.New("no nodes matched")
+		return nil, "", "", "", errors.New("no nodes matched")
 	}
 
 	if t := client.GetRouteTable(); t != nil {
@@ -427,7 +431,7 @@ func parseGroup(
 		TargetStage:           nst.Name,
 		NodeSelector:          nodeSel,
 		QueueClient:           client,
-	}, nil
+	}, senderNode, senderRole, senderTier, nil
 }
 
 type fileInfo struct {

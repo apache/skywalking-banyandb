@@ -3491,7 +3491,7 @@
             "uid": "${DS_PROMETHEUS}"
           },
           "editorMode": "code",
-          "expr": "banyandb_lifecycle_last_run_success{job=~\"$job\", container_name=~\"$role\", pod_name=~\"$pod\"}",
+          "expr": "banyandb_lifecycle_last_run_success{job=~\"$job\", container_name=~\"$role\", pod_name=~\"$pod\", group=~\"$group\"}",
           "instant": false,
           "legendFormat": "{{pod_name}}",
           "range": true,
@@ -3555,7 +3555,7 @@
             "uid": "${DS_PROMETHEUS}"
           },
           "editorMode": "code",
-          "expr": "banyandb_lifecycle_last_run_timestamp_seconds{job=~\"$job\", container_name=~\"$role\", pod_name=~\"$pod\"}",
+          "expr": "banyandb_lifecycle_last_run_timestamp_seconds{job=~\"$job\", container_name=~\"$role\", pod_name=~\"$pod\", group=~\"$group\"}",
           "instant": false,
           "legendFormat": "{{pod_name}}",
           "range": true,
