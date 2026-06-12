@@ -665,8 +665,33 @@ func crossSegmentTimestamps() (single, left, right time.Time) {
 // at runtime — no extra CLI flags needed beyond what the test setup already
 // passes via SharedContext.MetadataFlags. See deriveSelfIdentity in
 // banyand/backup/lifecycle/steps.go for the resolution rules.
+// runLifecycleMigration runs a single hot->warm lifecycle migration, pointing
+// the lifecycle service at the co-located data node. Returns the MetricsRegistry
+// the lifecycle service registered its metrics with so the test can scrape them.
+//
+// The integration test cluster has the data node bound to "localhost"
+// (pkg/test/setup/setup.go:host = "localhost") and its GrpcAddress
+// registered as `localhost:<port>`. The lifecycle CLI's resolveSelfIdentity
+// matches selfPodHost against the host portion of the registered
+// GrpcAddress, so we set POD_NAME=localhost for the duration of the
+// call (and restore the prior value on exit) so selfPodHostname()
+// returns "localhost" and matches the data node. In production this
+// is set by the K8s downward API to the lifecycle pod's actual pod
+// name (e.g. demo-banyandb-data-hot-0); the integration test uses
+// "localhost" because the data node's bind address is the loopback.
 func runLifecycleMigration(progressFile, reportDir string) observability.MetricsRegistry {
 	lifecycleCmd, reg := lifecycle.NewCommandWithRegistry()
+	priorPodName, priorHad := os.LookupEnv("POD_NAME")
+	if err := os.Setenv("POD_NAME", "localhost"); err != nil {
+		gomega.Expect(err).NotTo(gomega.HaveOccurred())
+	}
+	defer func() {
+		if priorHad {
+			_ = os.Setenv("POD_NAME", priorPodName)
+		} else {
+			_ = os.Unsetenv("POD_NAME")
+		}
+	}()
 	args := []string{
 		"--grpc-addr", SharedContext.DataAddr,
 		"--stream-root-path", SharedContext.SrcDir,
