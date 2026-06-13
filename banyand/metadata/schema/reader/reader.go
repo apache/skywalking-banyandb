@@ -99,8 +99,12 @@ func WalkShard(shardPath string, visit func(Doc) error, kinds ...schema.Kind) er
 	if err != nil {
 		return err
 	}
+	// Request one more than the limit so an exact-fit shard (matched ==
+	// schemaSearchSize) is not mistaken for truncation; TopN returns at most
+	// the requested count, so seeing more than schemaSearchSize means the
+	// shard genuinely overflowed.
 	dmi, err := blugeReader.Search(context.Background(),
-		bluge.NewTopNSearch(schemaSearchSize, query))
+		bluge.NewTopNSearch(schemaSearchSize+1, query))
 	if err != nil {
 		return fmt.Errorf("search schema docs: %w", err)
 	}
@@ -111,7 +115,7 @@ func WalkShard(shardPath string, visit func(Doc) error, kinds ...schema.Kind) er
 			return fmt.Errorf("iterate schema docs: %w", nextErr)
 		}
 		if next == nil {
-			if matched >= schemaSearchSize {
+			if matched > schemaSearchSize {
 				return fmt.Errorf("shard %s: schema docs hit the search limit %d; results may be truncated", shardPath, schemaSearchSize)
 			}
 			return nil

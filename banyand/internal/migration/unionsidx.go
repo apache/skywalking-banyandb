@@ -314,10 +314,17 @@ func buildDocFromMatchLocked(
 		case sidxVersionField:
 			doc.AddField(bluge.NewStoredOnlyField(f.name, f.value))
 		default:
-			// Stream series docs carry only entity values, so this branch is
-			// unreachable today. Bluge stored fields do not retain index /
-			// sortable / analyzer properties; a future caller unioning docs
-			// with secondary fields would lose those properties here.
+			// Remaining stored fields are the series' entity-tag fields
+			// (e.g. "service"), written by the production series index as
+			// keyword fields (pkg/index/inverted/inverted_series.go toDoc).
+			// VisitStoredFields only returns the stored name+value, not the
+			// original Index/NoSort/Analyzer flags, so they are re-emitted as
+			// keyword+stored. This preserves exact-match (keyword) series
+			// lookups — the only way the union sidx is queried for the
+			// supported catalogs (entity tags are keyword, not analyzed) — but
+			// would NOT preserve a non-keyword analyzer or doc-values sorting.
+			// Such fields don't occur in the current series index; supporting
+			// them would require threading the schema's field metadata in.
 			doc.AddField(bluge.NewKeywordFieldBytes(f.name, f.value).StoreValue())
 		}
 	}
