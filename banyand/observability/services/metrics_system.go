@@ -44,6 +44,11 @@ var (
 	startTime     = time.Now()
 )
 
+// gaugesMu protects the process-global gauge vars below. Multiple metricService
+// instances can exist in the same process (e.g. distributed integration tests),
+// so initMetrics() (writer) and collect*() (readers) must be synchronized.
+var gaugesMu sync.RWMutex
+
 var (
 	cpuStateGauge    meter.Gauge
 	cpuNumGauge      meter.Gauge
@@ -85,6 +90,8 @@ func init() {
 
 func (p *metricService) initMetrics() {
 	factory := p.With(observability.SystemScope)
+	gaugesMu.Lock()
+	defer gaugesMu.Unlock()
 	cpuStateGauge = factory.NewGauge("cpu_state", "kind")
 	cpuNumGauge = factory.NewGauge("cpu_num")
 	memoryStateGauge = factory.NewGauge("memory_state", "kind")
@@ -101,7 +108,6 @@ func collectCPU() {
 			cpuCount = c
 		}
 	})
-	cpuNumGauge.Set(float64(cpuCount))
 	s, err := cpuTimesFunc(false)
 	if err != nil {
 		log.Error().Err(err).Msg("cannot get cpu stat")
@@ -114,6 +120,12 @@ func collectCPU() {
 	allStat := s[0]
 	total := allStat.User + allStat.System + allStat.Idle + allStat.Nice + allStat.Iowait + allStat.Irq +
 		allStat.Softirq + allStat.Steal + allStat.Guest + allStat.GuestNice
+	gaugesMu.RLock()
+	defer gaugesMu.RUnlock()
+	if cpuNumGauge == nil || cpuStateGauge == nil {
+		return
+	}
+	cpuNumGauge.Set(float64(cpuCount))
 	cpuStateGauge.Set(allStat.User/total, "user")
 	cpuStateGauge.Set(allStat.System/total, "system")
 	cpuStateGauge.Set(allStat.Idle/total, "idle")
@@ -125,13 +137,14 @@ func collectCPU() {
 }
 
 func collectMemory() {
-	if memoryStateGauge == nil {
-		log.Error().Msg("memoryStateGauge is not registered")
-		return
-	}
 	m, err := mem.VirtualMemory()
 	if err != nil {
 		log.Error().Err(err).Msg("cannot get memory stat")
+		return
+	}
+	gaugesMu.RLock()
+	defer gaugesMu.RUnlock()
+	if memoryStateGauge == nil {
 		return
 	}
 	memoryStateGauge.Set(m.UsedPercent/100, "used_percent")
@@ -140,13 +153,14 @@ func collectMemory() {
 }
 
 func collectNet() {
-	if netStateGauge == nil {
-		log.Error().Msg("netStateGauge is not registered")
-		return
-	}
 	stats, err := getNetStat(context.Background())
 	if err != nil {
 		log.Error().Err(err).Msg("cannot get net stat")
+		return
+	}
+	gaugesMu.RLock()
+	defer gaugesMu.RUnlock()
+	if netStateGauge == nil {
 		return
 	}
 	for _, stat := range stats {
@@ -188,23 +202,42 @@ func getNetStat(ctx context.Context) ([]net.IOCountersStat, error) {
 }
 
 func collectUpTime() {
+	gaugesMu.RLock()
+	defer gaugesMu.RUnlock()
+	if upTimeGauge == nil {
+		return
+	}
 	upTimeGauge.Set(time.Since(startTime).Seconds())
 }
 
 func collectDisk() {
-	for _, path := range getPath() {
+	paths := getPath()
+	type usageStat struct {
+		usage *disk.UsageStat
+		path  string
+	}
+	var stats []usageStat
+	for _, path := range paths {
 		usage, err := disk.Usage(path)
 		if err != nil {
-			if _, err = os.Stat(path); err != nil {
-				if !os.IsNotExist(err) {
-					log.Error().Err(err).Msgf("failed to get stat for path: %s", path)
+			if _, statErr := os.Stat(path); statErr != nil {
+				if !os.IsNotExist(statErr) {
+					log.Error().Err(statErr).Msgf("failed to get stat for path: %s", path)
 				}
 			}
-			return
+			continue
 		}
 		diskMap.Store(path, int(usage.UsedPercent))
-		diskStateGauge.Set(usage.UsedPercent/100, path, "used_percent")
-		diskStateGauge.Set(float64(usage.Used), path, "used")
-		diskStateGauge.Set(float64(usage.Total), path, "total")
+		stats = append(stats, usageStat{path: path, usage: usage})
+	}
+	gaugesMu.RLock()
+	defer gaugesMu.RUnlock()
+	if diskStateGauge == nil {
+		return
+	}
+	for _, s := range stats {
+		diskStateGauge.Set(s.usage.UsedPercent/100, s.path, "used_percent")
+		diskStateGauge.Set(float64(s.usage.Used), s.path, "used")
+		diskStateGauge.Set(float64(s.usage.Total), s.path, "total")
 	}
 }

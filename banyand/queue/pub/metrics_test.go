@@ -102,11 +102,14 @@ func (*noopHistogram) Delete(_ ...string) bool        { return true }
 
 func newPubMetricsWithErrCapture(totalErr *errReasonCapturerImpl) *pubMetrics { //nolint:exhaustruct
 	return &pubMetrics{
-		totalStarted:  &countingCounter{},
-		totalFinished: &countingCounter{},
-		totalLatency:  &noopHistogram{},
-		totalErr:      totalErr,
-		sentBytes:     &countingCounter{},
+		totalStarted:       &countingCounter{},
+		totalFinished:      &countingCounter{},
+		totalLatency:       &noopHistogram{},
+		totalErr:           totalErr,
+		sentBytes:          &countingCounter{},
+		totalBatchStarted:  &countingCounter{},
+		totalBatchFinished: &countingCounter{},
+		totalBatchLatency:  &noopHistogram{},
 	}
 }
 
@@ -264,7 +267,7 @@ func TestListenBatchResponseRecordsRecvError(t *testing.T) {
 	})
 
 	bc := make(chan batchEvent, 1)
-	bp.listenBatchResponse(ctx, mockStream, func() {}, bc, "node-a")
+	bp.listenBatchResponse(ctx, mockStream, func() {}, bc, "node-a", time.Now(), "test-group")
 
 	require.Equal(t, float64(1), sendErrCap.sum(sendErrReasonRecvError))
 }
@@ -285,7 +288,7 @@ func TestListenBatchResponseRecvNonFailoverStillRecordsRecvError(t *testing.T) {
 	})
 
 	bc := make(chan batchEvent, 1)
-	bp.listenBatchResponse(ctx, mockStream, func() {}, bc, "node-a")
+	bp.listenBatchResponse(ctx, mockStream, func() {}, bc, "node-a", time.Now(), "test-group")
 
 	require.Equal(t, float64(1), sendErrCap.sum(sendErrReasonRecvError))
 }
@@ -309,7 +312,7 @@ func TestListenBatchResponseServerRejectedWithoutFailover(t *testing.T) {
 	})
 
 	bc := make(chan batchEvent, 1)
-	bp.listenBatchResponse(ctx, mockStream, func() {}, bc, "node-a")
+	bp.listenBatchResponse(ctx, mockStream, func() {}, bc, "node-a", time.Now(), "test-group")
 
 	require.Equal(t, float64(1), sendErrCap.sum(sendErrReasonServerRejected))
 	require.Equal(t, float64(0), sendErrCap.sum(sendErrReasonRecvError))
@@ -345,7 +348,7 @@ func TestListenBatchResponseDiskFullSendsFailoverEvent(t *testing.T) {
 	})
 
 	bc := make(chan batchEvent, 1)
-	bp.listenBatchResponse(ctx, mockStream, func() {}, bc, "node-a")
+	bp.listenBatchResponse(ctx, mockStream, func() {}, bc, "node-a", time.Now(), "test-group")
 
 	require.Equal(t, float64(1), sendErrCap.sum(sendErrReasonServerRejected))
 
@@ -398,4 +401,79 @@ func TestPublishRecordsStartedAndFinished(t *testing.T) {
 
 	require.Equal(t, float64(1), started.count, "totalStarted must be 1 on success")
 	require.Equal(t, float64(1), finished.count, "totalFinished must be 1 on success")
+}
+
+type countingHistogram struct {
+	count int
+}
+
+func (h *countingHistogram) Observe(_ float64, _ ...string) { h.count++ }
+func (*countingHistogram) Delete(_ ...string) bool          { return true }
+
+// TestListenBatchResponseCtxDoneTicksNoBatchFinished verifies that the ctx.Done() early-return
+// path in listenBatchResponse does NOT increment total_batch_finished or total_batch_latency.
+func TestListenBatchResponseCtxDoneTicksNoBatchFinished(t *testing.T) {
+	batchFinished := &countingCounter{}
+	batchLatency := &countingHistogram{}
+	pm := &pubMetrics{ //nolint:exhaustruct
+		totalStarted:       &countingCounter{},
+		totalFinished:      &countingCounter{},
+		totalLatency:       &noopHistogram{},
+		totalErr:           newErrReasonCapturer(),
+		sentBytes:          &countingCounter{},
+		totalBatchStarted:  &countingCounter{},
+		totalBatchFinished: batchFinished,
+		totalBatchLatency:  batchLatency,
+	}
+	p := newPubWithConnMgrForMetrics(t, pm)
+	bp := &batchPublisher{
+		pub:   p,
+		topic: topicPtr(data.TopicMeasureWrite),
+	}
+
+	// Cancel the context before calling listenBatchResponse — the ctx.Done() select fires immediately.
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+
+	mockStream := NewMockSendClient(context.Background())
+	bc := make(chan batchEvent, 1)
+	bp.listenBatchResponse(ctx, mockStream, func() {}, bc, "node-a", time.Now(), "test-group")
+
+	require.Equal(t, float64(0), batchFinished.count, "total_batch_finished must NOT be ticked on ctx.Done() early-return")
+	require.Equal(t, 0, batchLatency.count, "total_batch_latency must NOT be observed on ctx.Done() early-return")
+}
+
+// TestListenBatchResponseSuccessTicksBatchFinished verifies that a successful single-response path
+// increments total_batch_finished exactly once and observes total_batch_latency exactly once with group="".
+func TestListenBatchResponseSuccessTicksBatchFinished(t *testing.T) {
+	batchFinished := &countingCounter{}
+	batchLatency := &countingHistogram{}
+	pm := &pubMetrics{ //nolint:exhaustruct
+		totalStarted:       &countingCounter{},
+		totalFinished:      &countingCounter{},
+		totalLatency:       &noopHistogram{},
+		totalErr:           newErrReasonCapturer(),
+		sentBytes:          &countingCounter{},
+		totalBatchStarted:  &countingCounter{},
+		totalBatchFinished: batchFinished,
+		totalBatchLatency:  batchLatency,
+	}
+	p := newPubWithConnMgrForMetrics(t, pm)
+	bp := &batchPublisher{
+		pub:   p,
+		topic: topicPtr(data.TopicMeasureWrite),
+	}
+
+	ctx := context.Background()
+	mockStream := NewMockSendClient(ctx)
+	// Return a successful response (nil error, empty Error field → success path).
+	mockStream.SetRecvFunc(func() (*clusterv1.SendResponse, error) {
+		return &clusterv1.SendResponse{}, nil
+	})
+
+	bc := make(chan batchEvent, 1)
+	bp.listenBatchResponse(ctx, mockStream, func() {}, bc, "node-a", time.Now(), "test-group")
+
+	require.Equal(t, float64(1), batchFinished.count, "total_batch_finished must be 1 on success")
+	require.Equal(t, 1, batchLatency.count, "total_batch_latency must be observed once on success")
 }

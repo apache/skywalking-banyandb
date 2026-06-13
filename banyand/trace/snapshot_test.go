@@ -528,6 +528,24 @@ func TestSnapshotRemove(t *testing.T) {
 	}
 }
 
+// waitForPersistedSnapshot blocks until a flush has been introduced and its
+// ".snp" manifest persisted. Waiting for the part directory alone is racy: the
+// directory is created by the first line of memPart.mustFlush, before the
+// mem->file introduction reaches the in-memory snapshot and before the manifest
+// is written, so the directory can exist while the snapshot still holds only
+// mem parts and no ".snp" has been persisted.
+func waitForPersistedSnapshot(t *testing.T, fileSystem fs.FileSystem, tabDir string) {
+	t.Helper()
+	require.Eventually(t, func() bool {
+		for _, e := range fileSystem.ReadDir(tabDir) {
+			if !e.IsDir() && filepath.Ext(e.Name()) == snapshotSuffix {
+				return true
+			}
+		}
+		return false
+	}, flags.EventuallyTimeout, time.Millisecond, "wait for snapshot manifest to be persisted")
+}
+
 func TestSnapshotFunctionality(t *testing.T) {
 	fileSystem := fs.NewLocalFileSystem()
 
@@ -557,18 +575,10 @@ func TestSnapshotFunctionality(t *testing.T) {
 
 	tst.mustAddTraces(tsTS1, nil)
 	tst.mustAddTraces(tsTS2, nil)
-	time.Sleep(100 * time.Millisecond) // allow time for flushing
-
-	require.Eventually(t, func() bool {
-		dd := fileSystem.ReadDir(tabDir)
-		partNum := 0
-		for _, d := range dd {
-			if d.IsDir() {
-				partNum++
-			}
-		}
-		return partNum >= 1
-	}, flags.EventuallyTimeout, time.Millisecond, "wait for file parts to be created")
+	// Wait until the flush has been introduced and its ".snp" manifest persisted,
+	// not merely until a part directory appears (which happens at the start of
+	// mustFlush, before the mem->file introduction reaches the snapshot).
+	waitForPersistedSnapshot(t, fileSystem, tabDir)
 
 	snapshotPath := filepath.Join(tmpPath, "snapshot")
 	fileSystem.MkdirIfNotExist(snapshotPath, 0o755)

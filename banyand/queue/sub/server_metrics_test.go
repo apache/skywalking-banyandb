@@ -43,11 +43,16 @@ func newTestMetrics() *metrics { //nolint:exhaustruct
 	c := &noopCounter{}
 	h := &noopHistogram{}
 	return &metrics{
-		totalStarted:  c,
-		totalFinished: c,
-		totalLatency:  h,
-		totalErr:      c,
-		receivedBytes: c,
+		totalStarted:         c,
+		totalFinished:        c,
+		totalLatency:         h,
+		totalErr:             c,
+		receivedBytes:        c,
+		totalMessageStarted:  c,
+		totalMessageFinished: c,
+		totalBatchStarted:    c,
+		totalBatchFinished:   c,
+		totalBatchLatency:    h,
 	}
 }
 

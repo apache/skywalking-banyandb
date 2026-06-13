@@ -34,11 +34,14 @@ import (
 
 func newPubMigrationMetricsWithErrCapture(totalErr *errReasonCapturerImpl) *pubMigrationMetrics { //nolint:exhaustruct
 	return &pubMigrationMetrics{
-		totalStarted:  &countingCounter{},
-		totalFinished: &countingCounter{},
-		totalLatency:  &noopHistogram{},
-		totalErr:      totalErr,
-		sentBytes:     &countingCounter{},
+		totalStarted:       &countingCounter{},
+		totalFinished:      &countingCounter{},
+		totalLatency:       &noopHistogram{},
+		totalErr:           totalErr,
+		sentBytes:          &countingCounter{},
+		totalBatchStarted:  &countingCounter{},
+		totalBatchFinished: &countingCounter{},
+		totalBatchLatency:  &noopHistogram{},
 	}
 }
 
@@ -121,4 +124,55 @@ func TestPublishMirrorsStartedFinishedToMigrationMetrics(t *testing.T) {
 	require.Equal(t, float64(1), migStarted.count, "migration started must mirror pub started")
 	require.Equal(t, float64(1), pubFinished.count)
 	require.Equal(t, float64(1), migFinished.count, "migration finished must mirror pub finished")
+}
+
+// TestMigrationMirrorBatchFinishedAndLatency verifies that the migration mirror's
+// totalBatchFinished and totalBatchLatency are ticked from listenBatchResponse on a
+// terminal (success) response path — the first latency observation in that function for the mirror.
+func TestMigrationMirrorBatchFinishedAndLatency(t *testing.T) {
+	pubBatchFinished := &countingCounter{}
+	migBatchFinished := &countingCounter{}
+	pubBatchLatency := &countingHistogram{}
+	migBatchLatency := &countingHistogram{}
+
+	pm := &pubMetrics{ //nolint:exhaustruct
+		totalStarted:       &countingCounter{},
+		totalFinished:      &countingCounter{},
+		totalLatency:       &noopHistogram{},
+		totalErr:           newErrReasonCapturer(),
+		sentBytes:          &countingCounter{},
+		totalBatchStarted:  &countingCounter{},
+		totalBatchFinished: pubBatchFinished,
+		totalBatchLatency:  pubBatchLatency,
+	}
+	p := newPubWithConnMgrForMetrics(t, pm)
+	p.migrationMetrics = &pubMigrationMetrics{ //nolint:exhaustruct
+		totalStarted:       &countingCounter{},
+		totalFinished:      &countingCounter{},
+		totalLatency:       &noopHistogram{},
+		totalErr:           newErrReasonCapturer(),
+		sentBytes:          &countingCounter{},
+		totalBatchStarted:  &countingCounter{},
+		totalBatchFinished: migBatchFinished,
+		totalBatchLatency:  migBatchLatency,
+	}
+
+	bp := &batchPublisher{
+		pub:   p,
+		topic: topicPtr(data.TopicMeasureWrite),
+	}
+
+	ctx := context.Background()
+	mockStream := NewMockSendClient(ctx)
+	mockStream.SetRecvFunc(func() (*clusterv1.SendResponse, error) {
+		return &clusterv1.SendResponse{}, nil
+	})
+
+	bc := make(chan batchEvent, 1)
+	bp.listenBatchResponse(ctx, mockStream, func() {}, bc, "node-a", time.Now(), "test-group")
+
+	require.Equal(t, float64(1), pubBatchFinished.count, "pub total_batch_finished must be 1 on success")
+	require.Equal(t, float64(1), migBatchFinished.count, "migration total_batch_finished must mirror pub on success")
+	require.Equal(t, 1, pubBatchLatency.count, "pub total_batch_latency must be observed once on success")
+	require.Equal(t, 1, migBatchLatency.count, "migration total_batch_latency must mirror pub on success")
 }

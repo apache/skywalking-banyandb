@@ -1,0 +1,48 @@
+# Licensed to the Apache Software Foundation (ASF) under one or more
+# contributor license agreements.  See the NOTICE file distributed with
+# this work for additional information regarding copyright ownership.
+# The ASF licenses this file to You under the Apache License, Version 2.0
+# (the "License"); you may not use this file except in compliance with
+# the License.  You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+#
+# DOCUMENTED_GAP: dashboard metrics that need a specific runtime event to be
+# exported, so they are NOT asserted within a bounded run. check-metrics.sh
+# reports their presence/absence for visibility but neither requires nor forbids
+# them -- nothing is silently dropped. Calibrated against live runs.
+#
+# Group 1 -- error counters. A labelled Prometheus counter is not exported until
+# first incremented, so on a healthy run (no gRPC errors, no failed sync loops)
+# these never appear.
+banyandb_liaison_grpc_total_err
+banyandb_liaison_grpc_total_stream_msg_received_err
+banyandb_queue_pub_total_err
+banyandb_queue_sub_total_err
+#
+# Group 2 -- part-merge completion metrics. These increment only when a
+# background part merge actually completes, which requires enough accumulated
+# parts and is not guaranteed within the verify window for every data type (the
+# *_total_merge_loop_started counter, which fires when the merge loop starts, is
+# asserted in presence.txt instead).
+banyandb_measure_total_merge_latency
+banyandb_measure_total_merged_parts
+banyandb_stream_tst_total_merge_latency
+banyandb_stream_tst_total_merged_parts
+banyandb_trace_tst_total_merge_latency
+banyandb_trace_tst_total_merged_parts
+#
+# Group 3 -- lifecycle metrics. The lifecycle service is not deployed in the
+# e2e test cluster, so these metrics are never exported within the verify window.
+banyandb_lifecycle_last_run_timestamp_seconds
+banyandb_lifecycle_last_run_success
+banyandb_lifecycle_migration_sent_bytes
+banyandb_lifecycle_migration_total_err
+banyandb_lifecycle_migration_total_finished
+banyandb_lifecycle_migration_total_latency_bucket

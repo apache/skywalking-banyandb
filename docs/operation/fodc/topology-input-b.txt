@@ -15,8 +15,7 @@
 # specific language governing permissions and limitations
 # under the License.
 
-# batch-write (no group) — liaison-1 → liaison-0/liaison-1 (tier-1 write routing: each
-# write OAP sends to liaison-1 is re-published round-robin to its owner liaison, incl. itself)
+# batch-write (no group) — liaison-1 → liaison-0/liaison-1 (round-robin replica writes)
 {pod_name="demo-banyandb-liaison-1", container_name="liaison", node_role="ROLE_LIAISON", node_type="",
  operation="batch-write", group="",
  remote_node="demo-banyandb-liaison-0.demo-banyandb-liaison-headless.skywalking-showcase:18912", remote_role="liaison", remote_tier=""}  238.996

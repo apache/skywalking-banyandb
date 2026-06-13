@@ -30,6 +30,7 @@ import (
 	databasev1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/database/v1"
 	modelv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/model/v1"
 	streamv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/stream/v1"
+	"github.com/apache/skywalking-banyandb/pkg/test/flags"
 	"github.com/apache/skywalking-banyandb/pkg/timestamp"
 )
 
@@ -186,8 +187,19 @@ var _ = g.Describe("Schema query gate", func() {
 		gm.Expect(awaitErr).ShouldNot(gm.HaveOccurred())
 
 		g.By("Sending a query with the current ModRevision R1 (matching cache)")
-		st, queryErr := sendStreamQuery(ctx, clients.StreamWriteClient, groupName, streamName, r1)
-		gm.Expect(queryErr).ShouldNot(gm.HaveOccurred())
+		// AwaitApplied confirms the stream resource key is present in every data
+		// node's schema cache, but not that the group's TSDB shard has finished
+		// opening: a data node can apply the stream resource event before its
+		// group event, and until the shard is open it fails the query plan with
+		// "group not found" (surfaced as a gRPC error). The gate verdict itself is
+		// deterministic once the cache matches R1, so poll past this orthogonal
+		// storage-init race, then assert the per-group status.
+		var st modelv1.Status
+		gm.Eventually(func() error {
+			var queryErr error
+			st, queryErr = sendStreamQuery(ctx, clients.StreamWriteClient, groupName, streamName, r1)
+			return queryErr
+		}, flags.EventuallyTimeout, 500*time.Millisecond).ShouldNot(gm.HaveOccurred())
 		gm.Expect(st).Should(gm.Equal(modelv1.Status_STATUS_SUCCEED),
 			"query with group ModRevision equal to cache must pass the gate with STATUS_SUCCEED")
 
@@ -330,7 +342,7 @@ var _ = g.Describe("Schema query gate", func() {
 
 		g.By("Querying with group1 gated (current rev) and group2 NOT in GroupModRevisions")
 		now := timestamp.NowMilli()
-		resp, queryErr := clients.StreamWriteClient.Query(ctx, &streamv1.QueryRequest{
+		queryReq := &streamv1.QueryRequest{
 			Groups: []string{group1, group2},
 			Name:   streamName,
 			TimeRange: &modelv1.TimeRange{
@@ -347,8 +359,19 @@ var _ = g.Describe("Schema query gate", func() {
 					{Name: "default", Tags: []string{"svc"}},
 				},
 			},
-		})
-		gm.Expect(queryErr).ShouldNot(gm.HaveOccurred())
+		}
+		// No group is stale here, so the query does not short-circuit and is
+		// broadcast to the data nodes. AwaitApplied only confirms the two stream
+		// resource keys are cached, not that both group TSDB shards are open, so
+		// the data node can transiently fail the plan with "group not found"
+		// (surfaced as a gRPC error). Poll until both shards are open — same
+		// storage-init race as the match spec above.
+		var resp *streamv1.QueryResponse
+		gm.Eventually(func() error {
+			var queryErr error
+			resp, queryErr = clients.StreamWriteClient.Query(ctx, queryReq)
+			return queryErr
+		}, flags.EventuallyTimeout, 500*time.Millisecond).ShouldNot(gm.HaveOccurred())
 
 		g.By("Asserting group1 status is SUCCEED and group2 is absent or SUCCEED (ungated)")
 		statuses := resp.GetGroupStatuses()

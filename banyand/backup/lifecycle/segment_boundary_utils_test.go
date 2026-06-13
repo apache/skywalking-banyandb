@@ -181,8 +181,8 @@ func stage(name, selector string, segNum, ttlNum uint32) *commonv1.LifecycleStag
 func TestGetTargetStageInterval(t *testing.T) {
 	//nolint:govet // fieldalignment: test struct optimization not critical
 	type tc struct {
-		name     string
 		group    *GroupConfig
+		name     string
 		expected storage.IntervalRule
 	}
 

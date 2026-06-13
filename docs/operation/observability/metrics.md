@@ -16,7 +16,7 @@ BanyanDB exposes metrics for monitoring and analysis.
 
 The metrics are presented through **two complementary Grafana dashboards**, split by aggregation dimension (see [Metrics Providers](providers.md)):
 
-- **[BanyanDB Cluster — Nodes](../grafana-fodc-nodes.json)** — node/pod-level health and resources, aggregated by **`pod_name`**: *Fleet Overview*, *Per-node Health*, *Topology: Pod-to-Pod Flows*, *Resources*, *Disk by Path*, and *Go Runtime*.
+- **[BanyanDB Cluster — Nodes](../grafana-fodc-nodes.json)** — node/pod-level health and resources, aggregated by **`pod_name`**: *Fleet Overview*, *Per-node Health*, *Resources*, *Disk by Path*, and *Go Runtime*.
 - **[BanyanDB Cluster — Workload](../grafana-fodc-workload.json)** — business/data-level throughput and latency, aggregated by **`group`**: *Cluster Workload Summary*, *Liaison: Ingestion, Query & Publish*, *Data: Storage*, *Data: Inverted Index*, and *Data: Internal Queue*.
 
 The sections below mirror the two dashboards row-for-row; each metric entry corresponds to one panel and uses that panel's expression. A standalone [Internal queue metrics reference](#internal-queue-metrics-reference-queue_sub--queue_pub) at the end documents the `queue_sub` / `queue_pub` model in depth.
@@ -74,42 +74,6 @@ A single table joining the key per-node signals so an unhealthy node stands out 
 - RSS — `sum(process_resident_memory_bytes{…}) by (pod_name)`
 - Memory % — `max(banyandb_system_memory_state{…, kind="used_percent"}) by (pod_name)`
 - Disk % — `sum(banyandb_system_disk{…, kind="used"}) by (pod_name) / sum(banyandb_system_disk{…, kind="total"}) by (pod_name)`
-
-## Topology: Pod-to-Pod Flows
-
-A single **table** in which each row is one directed flow **`source` → `target`** (bare pod names) per `operation`, showing the **publisher's view and the subscriber's view of the same traffic side by side**: `Pub msg/s` / `Sub msg/s`, `Pub p99` / `Sub p99`, `Pub err/s` / `Sub err/s`, and `Pub B/s` / `Sub B/s`.
-
-The two sides record the same edge with mirrored labels — on a `queue_pub` series the scrape target (`pod_name`) is the sender and `remote_node` (a full DNS node name) the receiver; on a `queue_sub` series it is the inverse. Each query therefore canonicalizes the edge key with `label_replace`: the full DNS `remote_node` is shortened to its first label (which equals the peer's `pod_name`), and source/target are swapped on the sub side. All eight queries then emit the same `(source, target, operation)` key, and Grafana's **merge** transformation folds them into one row per edge:
-
-**Pub side (sender view; the `or` of each metric over two selectors implements the `$pod`/`$role` *edge-involvement* filter — see below — and the tier-migration mirror is unioned in the same way so lifecycle edges get a pub column too):**
-
-```promql
-sum by (source, target, operation) (label_replace(label_replace(
-  rate(banyandb_queue_pub_total_finished{job=~"$job", container_name=~"$role", pod_name=~"$pod"}[$__rate_interval])
-    or rate(banyandb_queue_pub_total_finished{job=~"$job", remote_role=~"$role", remote_node=~"($pod)\\..*"}[$__rate_interval])
-    or rate(banyandb_lifecycle_migration_total_finished{job=~"$job", container_name=~"$role", pod_name=~"$pod"}[$__rate_interval])
-    or rate(banyandb_lifecycle_migration_total_finished{job=~"$job", remote_role=~"$role", remote_node=~"($pod)\\..*"}[$__rate_interval]),
-  "source", "$1", "pod_name", "(.*)"), "target", "$1", "remote_node", "([^.:]+).*"))
-```
-
-**Sub side (receiver view; inverted mapping — `total_started` is the receiver's per-dispatch counter, the closest match to the publisher's per-message count):**
-
-```promql
-sum by (source, target, operation) (label_replace(label_replace(
-  rate(banyandb_queue_sub_total_started{job=~"$job", container_name=~"$role", pod_name=~"$pod"}[$__rate_interval])
-    or rate(banyandb_queue_sub_total_started{job=~"$job", remote_role=~"$role", remote_node=~"($pod)\\..*"}[$__rate_interval]),
-  "source", "$1", "remote_node", "([^.:]+).*"), "target", "$1", "pod_name", "(.*)"))
-```
-
-The p99 columns apply the same relabeling inside `histogram_quantile(0.99, sum by (le, source, target, operation) (…))`; the error and byte columns swap in `_total_err` and `sent_bytes` / `received_bytes`. **Tier-migration edges pair up naturally**: the pub view is `banyandb_lifecycle_migration_*` (whose `pod_name` is the data pod the sidecar shares) and the sub view is the receiver's `queue_sub` series with `remote_role="lifecycle"` (whose sender shortens to the same data pod) — the keys align, so a migration row also carries both sides.
-
-Reading the table:
-
-- The two sides describe the **same traffic — never add them**. A healthy steady-state edge shows roughly equal `Pub msg/s` and `Sub msg/s` — except for **batch-mode** streams: the liaison→liaison **tier-1 write routing**, where each write the SkyWalking OAP sends to its connected liaison is re-published **round-robin to the owner liaison** (including itself, over real gRPC), one wire stream per OAP write stream, and the receiver collects the whole stream and dispatches it **once at stream EOF**. There, `Pub msg/s` ≈ the OAP write rate split across the liaisons, a steady `Pub:Sub` ratio ≈ messages per OAP stream session is the healthy signature, and the Sub p99 times the whole batch rather than one message. An *unsteady* or growing gap is backlog or loss in flight.
-- A populated Pub cell with an **empty Sub cell** (or vice versa) is also signal: an uninstrumented side (older servers record `query`/`control` only on the receiver) or a one-sided counter (`sent_bytes` exists only on pub/migration, `received_bytes` only on sub; both are file-sync-only).
-- Empty `err` cells mean **no errors** (the counters are lazily registered).
-- `$pod` / `$role` select flows **involving** a matching node on **either end**. A naive `pod_name=~"$pod"` filter would hit the two sides asymmetrically (pub rows are scraped from the sender, sub rows from the receiver) and split the merged rows; instead every query unions two selectors — one matching the scrape-target side (`pod_name` / `container_name`) and one matching the remote side (`remote_node=~"($pod)\\..*"`, a prefix match on the full DNS node name, and `remote_role=~"$role"`, which shares the `liaison`/`data`/`lifecycle` vocabulary with `container_name`) — so both views of a surviving edge stay in the row. There is deliberately **no `$group` filter**: `query`/`control` and the tier-1 write routing carry `group=""`, which an all-value `.+` silently drops — validated against the live cluster, where a group filter hid all publisher-side query/control rows.
-- For the full directed-graph rendering of the same data (with node health and the structural `calls` layer), see [Cluster Topology Rendering](../fodc/topology.md).
 
 ## Resources
 
@@ -376,18 +340,18 @@ Each panel uses the same three expressions, with `operation` pinned to the panel
 
 Liaison nodes run an internal gRPC **queue server** (`server-queue-sub`, wired via `sub.NewServerWithPorts` in `pkg/cmdsetup/liaison.go`) and **queue clients** (`server-queue-pub`) for the tier-1/tier-2 pipelines. Prometheus metrics use the namespaces `banyandb_queue_sub_*` and `banyandb_queue_pub_*` (built from `observability.RootScope` + `queue_sub` / `queue_pub` sub-scopes). Data nodes expose the same families where the corresponding services run.
 
-Both namespaces share one model: the base metrics `total_started`, `total_finished`, `total_latency` (a histogram), and `total_err`, labeled by `operation` (`batch-write` / `file-sync` / `query` / `control`) and `group`, plus the **remote endpoint** of the flow — `remote_node` (the peer's BanyanDB node name, equal to its `/cluster/topology` `metadata.name`), `remote_role` (`liaison` / `data`, plus `lifecycle` on `queue_sub` for inbound tier-migration traffic — see the [lifecycle migration family](#lifecycle_migration--the-tier-migration-mirror-of-queue_pub)), and `remote_tier` (`hot` / `warm` / `cold`, data only). `total_err` adds an `error_type` label. File-sync additionally exposes byte counters: `sent_bytes` (pub) and `received_bytes` (sub). The **local** end of each flow is the scrape target itself (`pod_name` / `node_role` / `node_type` from the FODC proxy), so joining the scrape labels with the `remote_*` labels reconstructs the liaison↔data(hot/warm/cold) call graph. For a worked recipe that fuses these metrics with the FODC `/cluster/topology` node inventory to render the topology, see [Cluster Topology Rendering](../fodc/topology.md).
+Both namespaces share one model: the base metrics `total_started`, `total_finished`, `total_latency` (a histogram), and `total_err`, labeled by `operation` (`batch-write` / `file-sync` / `query` / `control`) and `group`, plus the **remote endpoint** of the flow — `remote_node` (the peer's BanyanDB node name, equal to its `/cluster/topology` `metadata.name`), `remote_role` (`liaison` / `data`), and `remote_tier` (`hot` / `warm` / `cold`, data only). `total_err` adds an `error_type` label. File-sync additionally exposes byte counters: `sent_bytes` (pub) and `received_bytes` (sub). The **local** end of each flow is the scrape target itself (`pod_name` / `node_role` / `node_type` from the FODC proxy), so joining the scrape labels with the `remote_*` labels reconstructs the liaison↔data(hot/warm/cold) call graph. For a worked recipe that fuses these metrics with the FODC `/cluster/topology` node inventory to render the topology, see [Cluster Topology Rendering](../fodc/topology.md).
 
 ### `queue_sub` — inbound server
 
 | Metric (suffix after `banyandb_queue_sub_`) | Type | Labels | Meaning |
 | --- | --- | --- | --- |
-| `total_started`, `total_finished` | Counter | `operation`, `group`, `remote_node`, `remote_role`, `remote_tier` | Dispatch units started / finished: per message for ordinary traffic, per part for file-sync; **batch-mode** streams (the liaison tier-1 write routing) count once per collected batch, dispatched at stream EOF, with `total_finished` stamped when the stream ends. A persistent `started − finished` gap indicates backlog or stuck handlers. |
+| `total_started`, `total_finished` | Counter | `operation`, `group`, `remote_node`, `remote_role`, `remote_tier` | Subscribe RPCs started / finished, per operation and group. A persistent `started − finished` gap indicates backlog or stuck handlers. |
 | `total_latency` | Histogram | `operation`, `group`, `remote_node`, `remote_role`, `remote_tier` | Handling latency (`_bucket` / `_sum` / `_count`); use `histogram_quantile` for p50/p99. |
 | `total_err` | Counter | …, `error_type` | Errors by type. Lazily registered, so absent (not zero) on a healthy cluster. |
 | `received_bytes` | Counter | `operation`, `group`, `remote_node`, `remote_role`, `remote_tier` | Bytes received, **file-sync only** (`operation="file-sync"`). |
 
-**Troubleshooting:** a growing `total_started − total_finished` gap (or rising `total_latency` p99) for a `group`/`operation` points at slow or stuck consumers. `total_err` broken down by `error_type` distinguishes transport issues (`stream_error`, `recv_error`, `checksum_mismatch`, `out_of_order`) from completion issues (`finish_sync_err`, `part_failed`). For file-sync, `received_bytes` together with `total_latency` separates partial completion from healthy throughput. On data nodes, series with `remote_role="lifecycle"` are inbound **tier-migration** traffic from the lifecycle service (which stamps its identity — its co-located data node's name and tier — on the wire), distinct from the liaison request pipeline.
+**Troubleshooting:** a growing `total_started − total_finished` gap (or rising `total_latency` p99) for a `group`/`operation` points at slow or stuck consumers. `total_err` broken down by `error_type` distinguishes transport issues (`stream_error`, `recv_error`, `checksum_mismatch`, `out_of_order`) from completion issues (`finish_sync_err`, `part_failed`). For file-sync, `received_bytes` together with `total_latency` separates partial completion from healthy throughput.
 
 ### `queue_pub` — outbound batch client
 
@@ -395,34 +359,12 @@ Both namespaces share one model: the base metrics `total_started`, `total_finish
 | --- | --- | --- | --- |
 | `total_started`, `total_finished` | Counter | `operation`, `group`, `remote_node`, `remote_role`, `remote_tier` | Sends started / finished per operation and target node; `total_finished` is the success rate. |
 | `total_latency` | Histogram | `operation`, `group`, `remote_node`, `remote_role`, `remote_tier` | Send latency (`_bucket` / `_sum` / `_count`); use `histogram_quantile` for p99. |
-| `total_err` | Counter | …, `error_type` | Send errors by type. `error_type` is one of `non_transient`, `canceled`, `stream_canceled`, `retry_exhausted`, `recv_error`, `server_rejected`, `send_error`, `decode_error`, `invalid_topic` (Send/publish path) or `stream_error`, `recv_error`, `checksum_mismatch`, `out_of_order`, `session_not_found`, `completion_error` (file-sync). Lazily registered. |
+| `total_err` | Counter | …, `error_type` | Send errors by type. `error_type` is one of `non_transient`, `canceled`, `stream_canceled`, `retry_exhausted`, `recv_error`, `server_rejected` (Send path) or `stream_error`, `recv_error`, `checksum_mismatch`, `out_of_order`, `session_not_found`, `completion_error` (file-sync). Lazily registered. |
 | `sent_bytes` | Counter | `operation`, `group`, `remote_node`, `remote_role`, `remote_tier` | Bytes sent, **file-sync only**. |
 
 **Troubleshooting:** `total_err` by `error_type` separates transport failures (`recv_error`) from application-level `SendResponse` errors (`server_rejected`) and exhausted retries (`retry_exhausted`). A persistent `total_started − total_finished` gap, or rising `total_latency` p99 for a given `remote_node` / `remote_tier`, indicates slow or unavailable data nodes.
 
-Metrics are only registered when `metadata` implements `metadata.Service` and `MetricsRegistry()` is non-nil (e.g. after `SetMetricsRegistry` in bootstrap). `NewWithoutMetadata(omr)` — used by the lifecycle service's tier-migration publisher — leaves the regular `queue_pub` family disabled and registers the same instrument set under `banyandb_lifecycle_migration_*` instead (see [below](#lifecycle_migration--the-tier-migration-mirror-of-queue_pub)). The `total_err` counters above are registered lazily on first occurrence, so they are simply absent (not zero) on a healthy cluster.
-
-### `lifecycle_migration` — the tier-migration mirror of `queue_pub`
-
-The **lifecycle** service migrates data hot→warm→cold through a queue client built without a metadata service (`pub.NewWithoutMetadata`), so its traffic does **not** appear under `banyandb_queue_pub_*`. Instead the same five instruments — `total_started`, `total_finished`, `total_latency`, `total_err`, `sent_bytes` — are registered under **`banyandb_lifecycle_migration_*`**, with the same labels (`operation`, `group`, `remote_node`, `remote_role`, `remote_tier`, plus `error_type` on `total_err`), so the migration layer can be queried independently of the write pipeline. `operation` follows the underlying traffic: `file-sync` for migrated part shipping and `batch-write` for row replay.
-
-The lifecycle sidecar serves these series (plus the run-health gauges below) at `/metrics` on its own HTTP port (`--lifecycle-http-port`, default `17915`) instead of the `2121` observability listener; the co-located FODC agent polls that port, so the series arrive through the proxy scrape with `container_name="lifecycle"` and the `pod_name` shared with the co-located data node. On the **receiving** data node the same flows are mirrored as `banyandb_queue_sub_*` series with `remote_role="lifecycle"` — the migration publisher stamps its identity (its co-located data node's name and tier) onto the wire.
-
-**Example:** migration throughput per target node — `sum(rate(banyandb_lifecycle_migration_total_finished{job=~"$job"}[$__rate_interval])) by (operation, remote_node)`; errors — `sum(rate(banyandb_lifecycle_migration_total_err{job=~"$job"}[$__rate_interval])) by (error_type)`.
-
-For the worked recipe that turns this family into weighted hot→warm→cold edges in a topology graph, see [Cluster Topology Rendering](../fodc/topology.md#lifecycle-migration-layer).
-
-### Lifecycle run health (`banyandb_lifecycle_*`)
-
-The lifecycle scheduler also exposes three service-level series:
-
-| Metric | Type | Meaning |
-| --- | --- | --- |
-| `banyandb_lifecycle_cycles_total` | Counter | Migration cycles executed by the scheduler. |
-| `banyandb_lifecycle_last_run_timestamp_seconds` | Gauge | Unix time at which the most recent migration run **started**; stamped on every return path (success, error, recovered panic). |
-| `banyandb_lifecycle_last_run_success` | Gauge | Outcome of the most recent run: `1` success, `0` failure. |
-
-**Suggested alerts:** `banyandb_lifecycle_last_run_success == 0`, and `time() - banyandb_lifecycle_last_run_timestamp_seconds` exceeding the migration schedule interval (a missed run).
+Metrics are only registered when `metadata` implements `metadata.Service` and `MetricsRegistry()` is non-nil (e.g. after `SetMetricsRegistry` in bootstrap). `NewWithoutMetadata()` leaves `queue_pub` metrics disabled and logs a warning (`queue_pub metrics disabled: ...`). The `total_err` counters above are registered lazily on first occurrence, so they are simply absent (not zero) on a healthy cluster.
 
 ### Example PromQL snippets
 

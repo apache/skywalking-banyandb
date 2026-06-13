@@ -444,20 +444,30 @@ func (s *server) SetNodeSchemaStatusRepo(svc metadata.Service) {
 }
 
 type metrics struct {
-	totalStarted  meter.Counter
-	totalFinished meter.Counter
-	totalLatency  meter.Histogram
-	totalErr      meter.Counter
-	receivedBytes meter.Counter
+	totalStarted         meter.Counter
+	totalFinished        meter.Counter
+	totalLatency         meter.Histogram
+	totalErr             meter.Counter
+	receivedBytes        meter.Counter
+	totalBatchStarted    meter.Counter
+	totalBatchFinished   meter.Counter
+	totalBatchLatency    meter.Histogram
+	totalMessageStarted  meter.Counter
+	totalMessageFinished meter.Counter
 }
 
 func newMetrics(factory observability.Factory) *metrics {
 	labels := []string{"operation", "group", "remote_node", "remote_role", "remote_tier"}
 	return &metrics{
-		totalStarted:  factory.NewCounter("total_started", labels...),
-		totalFinished: factory.NewCounter("total_finished", labels...),
-		totalLatency:  factory.NewHistogram("total_latency", meter.DefBuckets, labels...),
-		totalErr:      factory.NewCounter("total_err", append(labels, "error_type")...),
-		receivedBytes: factory.NewCounter("received_bytes", labels...),
+		totalStarted:         factory.NewCounter("total_started", labels...),
+		totalFinished:        factory.NewCounter("total_finished", labels...),
+		totalLatency:         factory.NewHistogram("total_latency", meter.DefBuckets, labels...),
+		totalErr:             factory.NewCounter("total_err", append(labels, "error_type")...),
+		receivedBytes:        factory.NewCounter("received_bytes", labels...),
+		totalBatchStarted:    factory.NewCounter("total_batch_started", labels...),
+		totalBatchFinished:   factory.NewCounter("total_batch_finished", labels...),
+		totalBatchLatency:    factory.NewHistogram("total_batch_latency", meter.BatchBuckets, labels...),
+		totalMessageStarted:  factory.NewCounter("total_message_started", labels...),
+		totalMessageFinished: factory.NewCounter("total_message_finished", labels...),
 	}
 }

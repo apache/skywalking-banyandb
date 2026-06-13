@@ -62,7 +62,7 @@ func (t *topNHandler) Rev(ctx context.Context, message bus.Message) (resp bus.Me
 			continue
 		}
 
-		msg := bus.NewBatchMessageWithNode(bus.MessageID(time.Now().UnixNano()), nodeID, iwr)
+		msg := bus.NewBatchMessageWithNodeAndGroup(bus.MessageID(time.Now().UnixNano()), nodeID, group, iwr)
 		_, err = publisher.Publish(ctx, data.TopicMeasureWrite, msg)
 		if err != nil {
 			t.l.Error().Err(err).Str("node", nodeID).Msg("failed to publish message")

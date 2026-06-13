@@ -252,16 +252,29 @@ func verifyMigrationMetrics(reg observability.MetricsRegistry) {
 	body := rec.Body.String()
 	// Last-run metrics (banyandb_lifecycle_last_run_timestamp_seconds +
 	// banyandb_lifecycle_last_run_success) are stamped by the deferred
-	// recordLastRun() at the end of action(). A successful cycle must set
+	// recordLastRun() at the end of action() with the (remote_node,
+	// remote_role, remote_tier, group) label set, sourced from the
+	// cycle's last processed group. A successful cycle must set
 	// success=1 with a non-zero epoch; an empty value would mean the
 	// gauges were never registered (PreRun not run) or the action never
 	// reached the defer. Prometheus emits floats in scientific notation
 	// for large values like epoch seconds (e.g. 1.781007822e+09), so the
-	// assertion accepts either fixed or scientific form.
-	gomega.Expect(body).To(gomega.MatchRegexp(`(?m)^banyandb_lifecycle_last_run_timestamp_seconds (?:[1-9]\d{9}|[1-9]\.\d+e\+0?[89])`),
-		"banyandb_lifecycle_last_run_timestamp_seconds must be set to a non-zero epoch, got:\n"+body)
-	gomega.Expect(body).To(gomega.MatchRegexp(`(?m)^banyandb_lifecycle_last_run_success 1$`),
-		"banyandb_lifecycle_last_run_success must be 1 after a successful cycle, got:\n"+body)
+	// assertion accepts either fixed or scientific form. The metric
+	// names now carry labels — Prometheus' exposition format sorts label
+	// names alphabetically (group, remote_node, remote_role, remote_tier),
+	// and the regex requires all four to be present so a regression to
+	// the unlabeld form fails the regex. The label block is captured as
+	// a single `[^}]*` then each required label is asserted with a
+	// lookbehind-style positive check; an explicit per-label regex would
+	// be more readable but the leading-label-alphabetical-ordering
+	// invariant lets us keep the assertion to a single MatchRegexp.
+	allLabels := `group="[^"]*"[^}]*remote_node="[^"]*"[^}]*remote_role="[^"]*"[^}]*remote_tier="[^"]*"`
+	gomega.Expect(body).To(gomega.MatchRegexp(
+		`(?m)^banyandb_lifecycle_last_run_timestamp_seconds\{`+allLabels+`\} (?:[1-9]\d{9}|[1-9]\.\d+e\+0?[89])`),
+		"banyandb_lifecycle_last_run_timestamp_seconds must be set to a non-zero epoch with all four labels, got:\n"+body)
+	gomega.Expect(body).To(gomega.MatchRegexp(
+		`(?m)^banyandb_lifecycle_last_run_success\{`+allLabels+`\} 1$`),
+		"banyandb_lifecycle_last_run_success must be 1 after a successful cycle, with all four labels, got:\n"+body)
 	// A successful migration send increments total_finished; the measure/stream/trace
 	// part files are sent via the file-sync operation, so that label must be present.
 	gomega.Expect(body).To(gomega.MatchRegexp(`banyandb_lifecycle_migration_total_finished\{[^}]*\} [1-9]`),
@@ -652,8 +665,33 @@ func crossSegmentTimestamps() (single, left, right time.Time) {
 // at runtime — no extra CLI flags needed beyond what the test setup already
 // passes via SharedContext.MetadataFlags. See deriveSelfIdentity in
 // banyand/backup/lifecycle/steps.go for the resolution rules.
+// runLifecycleMigration runs a single hot->warm lifecycle migration, pointing
+// the lifecycle service at the co-located data node. Returns the MetricsRegistry
+// the lifecycle service registered its metrics with so the test can scrape them.
+//
+// The integration test cluster has the data node bound to "localhost"
+// (pkg/test/setup/setup.go:host = "localhost") and its GrpcAddress
+// registered as `localhost:<port>`. The lifecycle CLI's resolveSelfIdentity
+// matches selfPodHost against the host portion of the registered
+// GrpcAddress, so we set POD_NAME=localhost for the duration of the
+// call (and restore the prior value on exit) so selfPodHostname()
+// returns "localhost" and matches the data node. In production this
+// is set by the K8s downward API to the lifecycle pod's actual pod
+// name (e.g. demo-banyandb-data-hot-0); the integration test uses
+// "localhost" because the data node's bind address is the loopback.
 func runLifecycleMigration(progressFile, reportDir string) observability.MetricsRegistry {
 	lifecycleCmd, reg := lifecycle.NewCommandWithRegistry()
+	priorPodName, priorHad := os.LookupEnv("POD_NAME")
+	if err := os.Setenv("POD_NAME", "localhost"); err != nil {
+		gomega.Expect(err).NotTo(gomega.HaveOccurred())
+	}
+	defer func() {
+		if priorHad {
+			_ = os.Setenv("POD_NAME", priorPodName)
+		} else {
+			_ = os.Unsetenv("POD_NAME")
+		}
+	}()
 	args := []string{
 		"--grpc-addr", SharedContext.DataAddr,
 		"--stream-root-path", SharedContext.SrcDir,
