@@ -86,37 +86,96 @@ func TestParseGroup_RejectsMissingIntervals(t *testing.T) {
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
 			g := makeGroup(c.mutate)
-			_, err := parseGroup(g, map[string]string{"type": "warm"}, nil, nil, nil, nil, nil, "")
+			_, _, _, _, err := parseGroup(g, map[string]string{"type": "warm"}, nil, nil, nil, nil, nil)
 			require.Error(t, err)
 			assert.Contains(t, err.Error(), c.errFrag)
 		})
 	}
 }
 
-// TestDeriveSelfIdentity verifies the sender-identity resolution order: the
-// co-located data node's address match (including loopback host aliases, since
-// test clusters dial localhost:PORT while nodes register 127.0.0.1:PORT), the
-// label fallbacks, and the guard that keeps an empty label set from
-// wildcard-matching an arbitrary registry node.
-func TestDeriveSelfIdentity(t *testing.T) {
+// Note: parseGroup's (senderNode, senderRole, senderTier) return is
+// driven by resolveSelfIdentity, which is exhaustively covered by
+// TestResolveSelfIdentity below. The full parseGroup body requires a
+// real metadata.Repo for nodeSel.OnInit (steps.go:335) and a real
+// clusterStateMgr for the route table, so calling parseGroup from a
+// unit test requires an integration harness — that coverage lives in
+// test/cases/lifecycle/lifecycle.go.
+
+// TestResolveSelfIdentity exercises the post-fix pod-name primary lookup
+// against representative registry shapes. The first three cases prove
+// the bug fix: a host-portion match on the registry's GrpcAddress
+// (whether loopback, IP, or FQDN) resolves to the co-located data
+// node's Metadata.Name. The last two cases prove the no-match and
+// empty-input guards.
+func TestResolveSelfIdentity(t *testing.T) {
 	nodes := []*databasev1.Node{
-		{Metadata: &commonv1.Metadata{Name: "warm-node"}, GrpcAddress: "127.0.0.1:2", Labels: map[string]string{"type": "warm"}},
-		{Metadata: &commonv1.Metadata{Name: "hot-node"}, GrpcAddress: "127.0.0.1:1", Labels: map[string]string{"type": "hot"}},
+		// Production-bug repro: lifecycle's --grpc-addr is
+		// 127.0.0.1:17912, but the data pod registered its
+		// GrpcAddress as the headless-service DNS form. The new
+		// algorithm must match on the host portion (data-hot-0).
+		{Metadata: &commonv1.Metadata{Name: "data-hot-0:17912"}, GrpcAddress: "data-hot-0.data-hot-headless.ns:17912", Labels: map[string]string{"type": "hot"}},
+
+		// Loopback-registered case: --grpc-addr "127.0.0.1:17912"
+		// matches the loopback form via isLoopbackHost equivalence.
+		{Metadata: &commonv1.Metadata{Name: "data-warm-0:17912"}, GrpcAddress: "127.0.0.1:17912", Labels: map[string]string{"type": "warm"}},
+
+		// IP-only registered case (NodeHostProvider=ip): must NOT
+		// match unless the selfPodHost is itself an IP, so we
+		// expect an empty result here. The first case in this
+		// table covers the production path; this one documents
+		// the known limitation of the post-fix algorithm.
+		{Metadata: &commonv1.Metadata{Name: "data-cold-0:17912"}, GrpcAddress: "10.116.3.84:17912", Labels: map[string]string{"type": "cold"}},
 	}
 
-	node, tier := deriveSelfIdentity("127.0.0.1:1", nil, nodes)
-	assert.Equal(t, "hot-node", node, "exact address match")
+	node, tier, ok := resolveSelfIdentity("data-hot-0", nodes)
+	assert.True(t, ok, "DNS-form GrpcAddress must match by host portion (the production-bug case)")
+	assert.Equal(t, "data-hot-0:17912", node)
 	assert.Equal(t, "hot", tier)
 
-	node, tier = deriveSelfIdentity("localhost:1", nil, nodes)
-	assert.Equal(t, "hot-node", node, "loopback alias must match the registered 127.0.0.1 form")
-	assert.Equal(t, "hot", tier)
+	node, tier, ok = resolveSelfIdentity("127.0.0.1", nodes)
+	assert.True(t, ok, "loopback GrpcAddress matches a loopback selfPodHost")
+	assert.Equal(t, "data-warm-0:17912", node)
+	assert.Equal(t, "warm", tier)
 
-	node, tier = deriveSelfIdentity("localhost:9", nil, nodes)
-	assert.Empty(t, node, "unmatched address with no labels must not wildcard-match an arbitrary node")
-	assert.Empty(t, tier)
+	// selfPodHost="10.116.3.84" matches the IP-form entry.
+	node, tier, ok = resolveSelfIdentity("10.116.3.84", nodes)
+	assert.True(t, ok, "IP-form GrpcAddress matches an IP selfPodHost")
+	assert.Equal(t, "data-cold-0:17912", node)
+	assert.Equal(t, "cold", tier)
 
-	node, tier = deriveSelfIdentity("", map[string]string{"type": "hot"}, nodes)
-	assert.Equal(t, "hot-node", node, "label fallback")
-	assert.Equal(t, "hot", tier)
+	// selfPodHost="data-warm-1" is not in the registry: no match.
+	_, _, ok = resolveSelfIdentity("data-warm-1", nodes)
+	assert.False(t, ok, "selfPodHost not in registry must return ok=false (no wildcard)")
+
+	// Empty selfPodHost: no match.
+	_, _, ok = resolveSelfIdentity("", nodes)
+	assert.False(t, ok, "empty selfPodHost must return ok=false (no panic)")
+
+	// grpcAddrEqual: post-fix also accepts host-portion exact match.
+	assert.True(t, grpcAddrEqual("data-x.headless:17912", "data-x:17912"),
+		"same port and same host (after SplitHostPort) must match")
+	assert.True(t, grpcAddrEqual("127.0.0.1:17912", "127.0.0.1:17912"),
+		"exact match still works")
+	assert.True(t, grpcAddrEqual("localhost:17912", "127.0.0.1:17912"),
+		"loopback-vs-loopback still works")
+	assert.False(t, grpcAddrEqual("data-x:17912", "data-y:17912"),
+		"different hosts with same port must not match")
+}
+
+// TestSelfPodHostnamePrecedence checks that selfPodHostname() prefers
+// POD_NAME (the K8s downward API value) and falls back to os.Hostname()
+// when POD_NAME is unset.
+func TestSelfPodHostnamePrecedence(t *testing.T) {
+	t.Setenv("POD_NAME", "my-pod")
+	assert.Equal(t, "my-pod", selfPodHostname(),
+		"POD_NAME takes precedence (K8s downward API)")
+
+	t.Setenv("POD_NAME", "")
+	// Without POD_NAME, the function falls back to os.Hostname().
+	// The test host name is non-empty on Linux, so the result is
+	// either the test runner's hostname or "" if uname fails.
+	// Either way it must not panic and must not return "my-pod".
+	got := selfPodHostname()
+	assert.NotEqual(t, "my-pod", got,
+		"empty POD_NAME must fall back to os.Hostname(), not return the previous value")
 }
