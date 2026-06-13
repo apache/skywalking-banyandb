@@ -15,7 +15,7 @@
 // specific language governing permissions and limitations
 // under the License.
 
-package measure
+package stream
 
 import (
 	"encoding/json"
@@ -34,32 +34,39 @@ import (
 	"github.com/apache/skywalking-banyandb/pkg/fs"
 )
 
-// SegmentReport summarizes one `seg-*` directory under a measure
-// group root. Populated by EnumerateGroupTarget for the migration
-// verify CLI.
+// SegmentReport summarizes one seg-* directory under a stream group
+// root. Populated by EnumerateGroupTarget for the migration verify CLI.
 //
-// Aligned is true only when ALL of these hold:
+// Aligned is true only when ALL of the following hold:
 //   - the dir name parses cleanly into a start time;
 //   - start = IntervalRule.Standard(start) (start is on the grid);
 //   - <seg>/metadata exists, is well-formed JSON, and carries a non-empty endTime;
-//   - end = IntervalRule.NextTime(start) (the segment spans exactly one bucket);
-//   - the inclusive last instant (end - 1ns) standardizes back to start (start
-//     and end fall in the same IntervalRule bucket).
+//   - end = IntervalRule.NextTime(start) (segment spans exactly one bucket);
+//   - the inclusive last instant (end - 1ns) standardizes back to start.
 type SegmentReport struct {
 	StartTime    time.Time
 	EndTime      time.Time
 	Seg          string
+	Shards       []ShardReport
 	Rows         uint64
 	SidxDocCount uint64
-	Shards       int
 	Parts        int
 	Aligned      bool
 	SidxOpened   bool
 }
 
+// ShardReport summarizes one shard-N directory inside a segment,
+// including the element index (idx/) bluge doc count (stream-only).
+type ShardReport struct {
+	Shard       string
+	IdxDocCount uint64
+	Rows        uint64
+	Parts       int
+	IdxOpened   bool
+}
+
 // EntryGroupReport aggregates source row count + target per-seg report
-// for one (entry, group) pair. Both source and target are read-only;
-// the verify command never mutates the dataset.
+// for one (entry, group) pair. Both source and target are read-only.
 type EntryGroupReport struct {
 	Group       string
 	EntryStage  string
@@ -72,16 +79,9 @@ type EntryGroupReport struct {
 	SrcParts    int
 }
 
-// VerifyShardParts reads <shardDir>'s newest `.snp`, confirms every
-// listed partID has an on-disk dir, opens each part, and returns the
+// VerifyShardParts reads the newest .snp under shardDir, confirms every
+// listed partID has an on-disk directory, opens each part, and returns the
 // sum of partMetadata.TotalCount plus the part count.
-//
-// Errors (instead of t.Fatalf) so this helper is usable from a CLI.
-//
-// fileSystem is passed through to mustOpenFilePart. Directory listing
-// and .snp reads go through the os package directly: fs.FileSystem's
-// ReadDir panics on missing directories, and verify is read-only, so
-// the abstraction is intentionally bypassed for the enumeration path.
 func VerifyShardParts(shardDir string, fileSystem fs.FileSystem) (uint64, int, error) {
 	entries, err := os.ReadDir(shardDir)
 	if err != nil {
@@ -89,7 +89,7 @@ func VerifyShardParts(shardDir string, fileSystem fs.FileSystem) (uint64, int, e
 	}
 	var snpPath string
 	for _, e := range entries {
-		if !e.IsDir() && strings.HasSuffix(e.Name(), directCopySnpSuffix) {
+		if !e.IsDir() && strings.HasSuffix(e.Name(), directStreamCopySnpSuffix) {
 			candidate := filepath.Join(shardDir, e.Name())
 			if snpPath == "" || candidate > snpPath {
 				snpPath = candidate
@@ -110,7 +110,7 @@ func VerifyShardParts(shardDir string, fileSystem fs.FileSystem) (uint64, int, e
 
 	onDiskPartIDs := map[string]bool{}
 	for _, e := range entries {
-		if e.IsDir() && directCopyPartDirPattern.MatchString(e.Name()) {
+		if e.IsDir() && directStreamCopyPartDirPattern.MatchString(e.Name()) {
 			onDiskPartIDs[e.Name()] = true
 		}
 	}
@@ -147,30 +147,21 @@ func partRowCount(partID uint64, name, shardDir string, fileSystem fs.FileSystem
 	return p.partMetadata.TotalCount, nil
 }
 
-// CountBlugeDocs opens the bluge index at path read-only and returns the
-// total document count. Used to spot-check the broadcast union sidx
-// that `migration copy` writes into every aligned target segment.
+// CountBlugeDocs opens the bluge index at path read-only and returns
+// the total document count. Used by verify to spot-check idx/ and sidx/.
 func CountBlugeDocs(path string) (uint64, error) {
 	reader, err := bluge.OpenReader(bluge.DefaultConfig(path))
 	if err != nil {
 		return 0, err
 	}
 	defer func() { _ = reader.Close() }()
-	// Reader.Count sums per-segment doc counts in O(numSegments), not
-	// O(numDocs) — important for `verify` because the union sidx is
-	// broadcast into every aligned target seg of a group and we call
-	// CountBlugeDocs once per seg. Iterating dmi.Next() instead would
-	// scale with total docs × broadcast fan-out and dominate verify
-	// runtime on production-sized datasets.
 	return reader.Count()
 }
 
 // EnumerateGroupTarget walks <groupRoot>/seg-* and reports per-segment
-// row total + sidx doc count + whether the segment's start time aligns
-// to the supplied IntervalRule's standard grid. A missing groupRoot
-// returns (nil, nil) — the caller decides whether that is a no-op or
-// an error (e.g. when the PVC didn't own the group, "no segs" is
-// expected, not a fault).
+// row total + sidx doc count + per-shard idx doc count + whether the segment's
+// start time aligns to the supplied IntervalRule's standard grid.
+// A missing groupRoot returns (nil, nil).
 func EnumerateGroupTarget(groupRoot string, intervalRule storage.IntervalRule, fileSystem fs.FileSystem) ([]SegmentReport, error) {
 	entries, err := os.ReadDir(groupRoot)
 	if err != nil {
@@ -181,7 +172,7 @@ func EnumerateGroupTarget(groupRoot string, intervalRule storage.IntervalRule, f
 	}
 	var reports []SegmentReport
 	for _, e := range entries {
-		if !e.IsDir() || !strings.HasPrefix(e.Name(), directCopySegPrefix) {
+		if !e.IsDir() || !strings.HasPrefix(e.Name(), directStreamCopySegPrefix) {
 			continue
 		}
 		segDir := filepath.Join(groupRoot, e.Name())
@@ -193,18 +184,12 @@ func EnumerateGroupTarget(groupRoot string, intervalRule storage.IntervalRule, f
 			haveStart bool
 			haveEnd   bool
 		)
-		if start, parseErr := parseDirectCopySegStart(e.Name(), intervalRule.Unit); parseErr == nil {
+		if start, parseErr := parseStreamDirectCopySegStart(e.Name(), intervalRule.Unit); parseErr == nil {
 			startTime = start
 			haveStart = true
 			report.StartTime = start
 		}
 
-		// Read <seg>/metadata: the migrated tree's runtime contract is that
-		// every segment carries a JSON-encoded SegmentMetadata with a
-		// non-empty endTime (RFC3339Nano) — both writer paths
-		// (writeDirectCopySegmentMetadata and the live segmentController)
-		// emit it. A missing / unparseable file or a missing endTime keeps
-		// Aligned false so the verify CLI surfaces it loudly.
 		metaPath := filepath.Join(segDir, storage.SegmentMetadataFilename)
 		if raw, readErr := os.ReadFile(metaPath); readErr == nil {
 			var meta storage.SegmentMetadata
@@ -229,20 +214,36 @@ func EnumerateGroupTarget(groupRoot string, intervalRule storage.IntervalRule, f
 			return nil, fmt.Errorf("read seg %s: %w", segDir, readErr)
 		}
 		for _, sh := range shardEntries {
-			if !sh.IsDir() || !strings.HasPrefix(sh.Name(), directCopyShardPrefix) {
+			if !sh.IsDir() || !strings.HasPrefix(sh.Name(), directStreamCopyShardPrefix) {
 				continue
 			}
-			report.Shards++
 			shardDir := filepath.Join(segDir, sh.Name())
+			shardReport := ShardReport{Shard: sh.Name()}
+
 			rows, parts, partsErr := VerifyShardParts(shardDir, fileSystem)
 			if partsErr != nil {
 				return nil, fmt.Errorf("shard %s: %w", shardDir, partsErr)
 			}
+			shardReport.Rows = rows
+			shardReport.Parts = parts
+
+			// Stream-only: count element index docs in idx/.
+			idxDir := filepath.Join(shardDir, elementIndexFilename)
+			if info, statErr := os.Stat(idxDir); statErr == nil && info.IsDir() {
+				count, idxErr := CountBlugeDocs(idxDir)
+				if idxErr != nil {
+					return nil, fmt.Errorf("shard %s idx open: %w", shardDir, idxErr)
+				}
+				shardReport.IdxOpened = true
+				shardReport.IdxDocCount = count
+			}
+
+			report.Shards = append(report.Shards, shardReport)
 			report.Rows += rows
 			report.Parts += parts
 		}
 
-		sidxDir := filepath.Join(segDir, directCopySidxDirName)
+		sidxDir := filepath.Join(segDir, directStreamCopySidxDirName)
 		if info, statErr := os.Stat(sidxDir); statErr == nil && info.IsDir() {
 			count, sidxErr := CountBlugeDocs(sidxDir)
 			if sidxErr != nil {
@@ -258,10 +259,8 @@ func EnumerateGroupTarget(groupRoot string, intervalRule storage.IntervalRule, f
 }
 
 // SumGroupSourceRows walks every <root>/seg-*/shard-*/<partID>/ across
-// the given source roots, opens each part read-only, and returns the
-// total row count plus the part count. Missing roots are silently
-// skipped — the caller has already filtered them via
-// resolveEntrySrcRoots and only existing dirs end up here in practice.
+// the given source roots, opens each part read-only, and returns the total
+// row count plus the part count.
 func SumGroupSourceRows(srcRoots []string, fileSystem fs.FileSystem) (uint64, int, error) {
 	var totalRows uint64
 	var totalParts int
@@ -274,7 +273,7 @@ func SumGroupSourceRows(srcRoots []string, fileSystem fs.FileSystem) (uint64, in
 			return 0, 0, fmt.Errorf("read src root %s: %w", root, err)
 		}
 		for _, se := range segEntries {
-			if !se.IsDir() || !strings.HasPrefix(se.Name(), directCopySegPrefix) {
+			if !se.IsDir() || !strings.HasPrefix(se.Name(), directStreamCopySegPrefix) {
 				continue
 			}
 			segDir := filepath.Join(root, se.Name())
@@ -283,11 +282,11 @@ func SumGroupSourceRows(srcRoots []string, fileSystem fs.FileSystem) (uint64, in
 				return 0, 0, fmt.Errorf("read src seg %s: %w", segDir, readErr)
 			}
 			for _, sh := range shardEntries {
-				if !sh.IsDir() || !strings.HasPrefix(sh.Name(), directCopyShardPrefix) {
+				if !sh.IsDir() || !strings.HasPrefix(sh.Name(), directStreamCopyShardPrefix) {
 					continue
 				}
 				shardDir := filepath.Join(segDir, sh.Name())
-				rows, parts, partsErr := sumShardPartsOnDisk(shardDir, fileSystem)
+				rows, parts, partsErr := sumStreamShardPartsOnDisk(shardDir, fileSystem)
 				if partsErr != nil {
 					return 0, 0, fmt.Errorf("src shard %s: %w", shardDir, partsErr)
 				}
@@ -299,10 +298,10 @@ func SumGroupSourceRows(srcRoots []string, fileSystem fs.FileSystem) (uint64, in
 	return totalRows, totalParts, nil
 }
 
-// sumShardPartsOnDisk pattern-scans <shardDir>/<partID> dirs — the same
+// sumStreamShardPartsOnDisk pattern-scans <shardDir>/<partID> dirs — the same
 // discovery the copy path uses; source shards may lack a migration-written
 // .snp — and sums their TotalCount.
-func sumShardPartsOnDisk(shardDir string, fileSystem fs.FileSystem) (uint64, int, error) {
+func sumStreamShardPartsOnDisk(shardDir string, fileSystem fs.FileSystem) (uint64, int, error) {
 	entries, err := os.ReadDir(shardDir)
 	if err != nil {
 		return 0, 0, fmt.Errorf("read shard: %w", err)
@@ -310,7 +309,7 @@ func sumShardPartsOnDisk(shardDir string, fileSystem fs.FileSystem) (uint64, int
 	var rowsTotal uint64
 	parts := 0
 	for _, e := range entries {
-		if !e.IsDir() || !directCopyPartDirPattern.MatchString(e.Name()) {
+		if !e.IsDir() || !directStreamCopyPartDirPattern.MatchString(e.Name()) {
 			continue
 		}
 		partID, parseErr := strconv.ParseUint(e.Name(), 16, 64)

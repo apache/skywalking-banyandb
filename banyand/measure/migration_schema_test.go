@@ -31,8 +31,10 @@ import (
 	modelv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/model/v1"
 	propertyv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/property/v1"
 	backupsnapshot "github.com/apache/skywalking-banyandb/banyand/backup/snapshot"
+	"github.com/apache/skywalking-banyandb/banyand/internal/migration"
 	"github.com/apache/skywalking-banyandb/banyand/internal/storage"
 	"github.com/apache/skywalking-banyandb/banyand/metadata/schema"
+	"github.com/apache/skywalking-banyandb/pkg/index"
 )
 
 // synthMeasure describes one measure to seed into the synthetic
@@ -140,7 +142,22 @@ func synthSchemaDocWithPropID(docID, propID, kind, group string, modRev int64, s
 	if err != nil {
 		panic(fmt.Sprintf("marshal property %q: %v", propID, err))
 	}
-	return bluge.NewDocument(docID).AddField(bluge.NewStoredOnlyField("_source", propJSON))
+	return bluge.NewDocument(docID).
+		AddField(bluge.NewStoredOnlyField("_source", propJSON)).
+		AddField(bluge.NewKeywordFieldBytes(index.IndexModeName, []byte(kind))).
+		AddField(bluge.NewKeywordFieldBytes("_group", []byte(schema.SchemaGroup)))
+}
+
+// synthSchemaRoot resolves the `_schema` root of the synthetic backup the
+// same way the orchestrator does in production.
+func synthSchemaRoot(t *testing.T, backupDir string) string {
+	t.Helper()
+	plan := &migration.CopyPlan{Source: migration.CopySource{Backup: &migration.BackupSource{Root: backupDir}}}
+	root, err := plan.SchemaRoot()
+	if err != nil {
+		t.Fatalf("SchemaRoot: %v", err)
+	}
+	return root
 }
 
 // synthGroupsFromNames is a shorthand for callers that don't care
@@ -153,7 +170,7 @@ func synthGroupsFromNames(names ...string) []synthGroup {
 	return out
 }
 
-func TestFetchMeasureSchemasFromSchema_returnsRequestedGroups(t *testing.T) {
+func TestLoadMeasureSchemas_returnsRequestedGroups(t *testing.T) {
 	dir := t.TempDir()
 	groups := []string{"g_a", "g_b", "g_c"}
 	measures := []synthMeasure{
@@ -165,9 +182,9 @@ func TestFetchMeasureSchemasFromSchema_returnsRequestedGroups(t *testing.T) {
 	}
 	synthBackup(t, dir, synthGroupsFromNames(append(groups, "g_d")...), measures)
 
-	byGroup, err := fetchMeasureSchemasFromSchema(dir, "", "", groups)
+	byGroup, err := loadMeasureSchemas(synthSchemaRoot(t, dir), groups)
 	if err != nil {
-		t.Fatalf("fetchMeasureSchemasFromSchema: %v", err)
+		t.Fatalf("loadMeasureSchemas: %v", err)
 	}
 	for _, g := range groups {
 		if len(byGroup[g]) == 0 {
@@ -188,15 +205,15 @@ func TestFetchMeasureSchemasFromSchema_returnsRequestedGroups(t *testing.T) {
 	}
 }
 
-func TestFetchMeasureSchemasFromSchema_schemaFieldsArePopulated(t *testing.T) {
+func TestLoadMeasureSchemas_schemaFieldsArePopulated(t *testing.T) {
 	dir := t.TempDir()
 	synthBackup(t, dir, synthGroupsFromNames("g_a"), []synthMeasure{
 		{group: "g_a", name: "m_a1", modRev: 1},
 	})
 
-	byGroup, err := fetchMeasureSchemasFromSchema(dir, "", "", []string{"g_a"})
+	byGroup, err := loadMeasureSchemas(synthSchemaRoot(t, dir), []string{"g_a"})
 	if err != nil {
-		t.Fatalf("fetchMeasureSchemasFromSchema: %v", err)
+		t.Fatalf("loadMeasureSchemas: %v", err)
 	}
 	list := byGroup["g_a"]
 	if len(list) == 0 {
@@ -209,46 +226,40 @@ func TestFetchMeasureSchemasFromSchema_schemaFieldsArePopulated(t *testing.T) {
 		if s.Group != "g_a" {
 			t.Fatalf("measure %q: wrong group %q", s.Name, s.Group)
 		}
-		if len(s.EntityTagNames) == 0 {
-			t.Fatalf("measure %q: empty entity tag names", s.Name)
-		}
 		if len(s.TagFamilies) == 0 {
 			t.Fatalf("measure %q: no tag families", s.Name)
-		}
-		if s.EntityFamily == "" {
-			t.Fatalf("measure %q: missing entity family", s.Name)
 		}
 	}
 }
 
-func TestFetchMeasureSchemasFromSchema_unknownGroupReturnsEmpty(t *testing.T) {
+func TestLoadMeasureSchemas_unknownGroupReturnsEmpty(t *testing.T) {
 	dir := t.TempDir()
 	synthBackup(t, dir, synthGroupsFromNames("g_a"), []synthMeasure{
 		{group: "g_a", name: "m_a1", modRev: 1},
 	})
 
-	byGroup, err := fetchMeasureSchemasFromSchema(dir, "", "", []string{"this_group_does_not_exist"})
+	byGroup, err := loadMeasureSchemas(synthSchemaRoot(t, dir), []string{"this_group_does_not_exist"})
 	if err != nil {
-		t.Fatalf("fetchMeasureSchemasFromSchema: %v", err)
+		t.Fatalf("loadMeasureSchemas: %v", err)
 	}
 	if got := len(byGroup["this_group_does_not_exist"]); got != 0 {
 		t.Fatalf("expected 0 schemas for unknown group, got %d", got)
 	}
 }
 
-func TestFetchMeasureSchemasFromSchema_missingBackupDir(t *testing.T) {
-	_, err := fetchMeasureSchemasFromSchema("/no/such/dir/should/exist", "", "", []string{"g_a"})
+func TestLoadMeasureSchemas_missingSchemaRoot(t *testing.T) {
+	_, err := loadMeasureSchemas("/no/such/dir/should/exist", []string{"g_a"})
 	if err == nil {
-		t.Fatal("expected error for nonexistent backup-dir, got nil")
+		t.Fatal("expected error for nonexistent schema root, got nil")
 	}
 }
 
-// TestFetchMeasureSchemasFromSchema_dedupesStaleRevisions asserts that the
+// TestLoadMeasureSchemas_dedupesStaleRevisions asserts that the
 // loader collapses historical revisions of the same schema (different
 // mod_revisions on the same propID, retained across bluge segments) into a
 // single entry. The live cluster's SchemaRegistry already dedupes by
 // propID, and the backup loader must match that contract.
-func TestFetchMeasureSchemasFromSchema_dedupesStaleRevisions(t *testing.T) {
+func TestLoadMeasureSchemas_dedupesStaleRevisions(t *testing.T) {
 	dir := t.TempDir()
 	// Same (group, name) appears at three different mod_revisions; the
 	// loader must keep only the highest one.
@@ -258,9 +269,9 @@ func TestFetchMeasureSchemasFromSchema_dedupesStaleRevisions(t *testing.T) {
 		{group: "g_a", name: "m_a1", modRev: 3},
 	})
 
-	byGroup, err := fetchMeasureSchemasFromSchema(dir, "", "", []string{"g_a"})
+	byGroup, err := loadMeasureSchemas(synthSchemaRoot(t, dir), []string{"g_a"})
 	if err != nil {
-		t.Fatalf("fetchMeasureSchemasFromSchema: %v", err)
+		t.Fatalf("loadMeasureSchemas: %v", err)
 	}
 	seen := map[string]int{}
 	for _, s := range byGroup["g_a"] {
@@ -270,39 +281,5 @@ func TestFetchMeasureSchemasFromSchema_dedupesStaleRevisions(t *testing.T) {
 		if count > 1 {
 			t.Fatalf("group g_a: measure %q appears %d times (expected 1)", name, count)
 		}
-	}
-}
-
-// TestLoadGroupResourceOptsFromSchema_returnsRequestedGroups asserts the
-// group ResourceOpts loader resolves a backup catalog through the same
-// resolveSchemaRoot path as the measure loader and carries SegmentInterval
-// from the seeded Group proto into the returned map.
-func TestLoadGroupResourceOptsFromSchema_returnsRequestedGroups(t *testing.T) {
-	dir := t.TempDir()
-	hourly := &commonv1.ResourceOpts{
-		SegmentInterval: &commonv1.IntervalRule{Unit: commonv1.IntervalRule_UNIT_HOUR, Num: 4},
-	}
-	daily := &commonv1.ResourceOpts{
-		SegmentInterval: &commonv1.IntervalRule{Unit: commonv1.IntervalRule_UNIT_DAY, Num: 1},
-	}
-	synthBackup(t, dir, []synthGroup{
-		{name: "g_hourly", opts: hourly},
-		{name: "g_daily", opts: daily},
-		{name: "g_skipped", opts: hourly}, // present in catalog, not requested
-	}, nil)
-
-	got, err := loadGroupResourceOptsFromSchema(dir, "", "",
-		[]string{"g_hourly", "g_daily"})
-	if err != nil {
-		t.Fatalf("loadGroupResourceOptsFromSchema: %v", err)
-	}
-	if _, ok := got["g_skipped"]; ok {
-		t.Fatalf("non-requested group g_skipped leaked into result")
-	}
-	if si := got["g_hourly"].GetSegmentInterval(); si.GetUnit() != commonv1.IntervalRule_UNIT_HOUR || si.GetNum() != 4 {
-		t.Fatalf("g_hourly: want HOUR×4, got %v×%d", si.GetUnit(), si.GetNum())
-	}
-	if si := got["g_daily"].GetSegmentInterval(); si.GetUnit() != commonv1.IntervalRule_UNIT_DAY || si.GetNum() != 1 {
-		t.Fatalf("g_daily: want DAY×1, got %v×%d", si.GetUnit(), si.GetNum())
 	}
 }

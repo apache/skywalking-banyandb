@@ -15,7 +15,7 @@
 // specific language governing permissions and limitations
 // under the License.
 
-package main
+package migration
 
 import (
 	"os"
@@ -206,6 +206,14 @@ func TestValidate_liveEntryNodeNotDefined(t *testing.T) {
 	}
 }
 
+func TestValidate_liveEntryStageNotDefined(t *testing.T) {
+	p := validLivePlan()
+	p.Entries[0].Stage = "nonexistent"
+	if err := p.Validate(); err == nil || !strings.Contains(err.Error(), "not defined in source.live.stages") {
+		t.Fatalf("expected undefined-stage error, got %v", err)
+	}
+}
+
 func TestLoadCopyPlan_roundtripLive(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "plan.yaml")
@@ -243,7 +251,7 @@ entries:
 }
 
 func TestPrepareStagingDir_emptyConfiguredUsesTmpDir(t *testing.T) {
-	dir, err := PrepareStagingDir("")
+	dir, err := (&CopyPlan{}).PrepareStagingDir()
 	if err != nil {
 		t.Fatalf("prepare: %v", err)
 	}
@@ -255,7 +263,7 @@ func TestPrepareStagingDir_emptyConfiguredUsesTmpDir(t *testing.T) {
 
 func TestPrepareStagingDir_emptyExistingDirIsReused(t *testing.T) {
 	base := t.TempDir()
-	got, err := PrepareStagingDir(base)
+	got, err := (&CopyPlan{StagingDir: base}).PrepareStagingDir()
 	if err != nil {
 		t.Fatalf("prepare: %v", err)
 	}
@@ -269,14 +277,14 @@ func TestPrepareStagingDir_existingNonEmptyRejected(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(base, "marker"), nil, 0o600); err != nil {
 		t.Fatalf("seed: %v", err)
 	}
-	if _, err := PrepareStagingDir(base); err == nil || !strings.Contains(err.Error(), "not empty") {
+	if _, err := (&CopyPlan{StagingDir: base}).PrepareStagingDir(); err == nil || !strings.Contains(err.Error(), "not empty") {
 		t.Fatalf("expected non-empty rejection, got %v", err)
 	}
 }
 
 func TestPrepareStagingDir_createsNonExistingDir(t *testing.T) {
 	base := filepath.Join(t.TempDir(), "subdir-that-does-not-exist")
-	got, err := PrepareStagingDir(base)
+	got, err := (&CopyPlan{StagingDir: base}).PrepareStagingDir()
 	if err != nil {
 		t.Fatalf("prepare: %v", err)
 	}

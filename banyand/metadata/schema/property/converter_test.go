@@ -345,7 +345,7 @@ func TestKindFromString_Unknown(t *testing.T) {
 }
 
 func TestBuildSchemaQuery(t *testing.T) {
-	query := buildSchemaQuery(schema.KindStream, "", "", 0)
+	query := BuildSchemaQuery(schema.KindStream, "", "", 0)
 	assert.Equal(t, "stream", query.GetName())
 	assert.Nil(t, query.GetCriteria())
 	assert.Empty(t, query.GetIds())
@@ -353,7 +353,7 @@ func TestBuildSchemaQuery(t *testing.T) {
 }
 
 func TestBuildSchemaQuery_WithGroup(t *testing.T) {
-	query := buildSchemaQuery(schema.KindStream, "g1", "", 0)
+	query := BuildSchemaQuery(schema.KindStream, "g1", "", 0)
 	assert.Equal(t, "stream", query.GetName())
 	assert.Equal(t, []string{schema.SchemaGroup}, query.GetGroups())
 	assert.Empty(t, query.GetIds())
@@ -365,7 +365,7 @@ func TestBuildSchemaQuery_WithGroup(t *testing.T) {
 }
 
 func TestBuildSchemaQuery_WithGroupAndName(t *testing.T) {
-	query := buildSchemaQuery(schema.KindStream, "g1", "s1", 0)
+	query := BuildSchemaQuery(schema.KindStream, "g1", "s1", 0)
 	assert.Equal(t, "stream", query.GetName())
 	assert.Equal(t, []string{"stream_g1/s1"}, query.GetIds())
 	assert.Equal(t, []string{schema.SchemaGroup}, query.GetGroups())
@@ -373,14 +373,14 @@ func TestBuildSchemaQuery_WithGroupAndName(t *testing.T) {
 }
 
 func TestBuildSchemaQuery_KindGroup(t *testing.T) {
-	query := buildSchemaQuery(schema.KindGroup, "", "mygroup", 0)
+	query := BuildSchemaQuery(schema.KindGroup, "", "mygroup", 0)
 	assert.Equal(t, "group", query.GetName())
 	assert.Equal(t, []string{"group_mygroup"}, query.GetIds())
 	assert.Equal(t, []string{schema.SchemaGroup}, query.GetGroups())
 }
 
 func TestBuildSchemaQuery_WithSinceRevision(t *testing.T) {
-	query := buildSchemaQuery(schema.KindMeasure, "", "", 100)
+	query := BuildSchemaQuery(schema.KindMeasure, "", "", 100)
 	assert.Equal(t, "measure", query.GetName())
 	assert.Empty(t, query.GetIds())
 	require.NotNil(t, query.GetCriteria())
@@ -392,7 +392,7 @@ func TestBuildSchemaQuery_WithSinceRevision(t *testing.T) {
 }
 
 func TestBuildSchemaQuery_WithGroupAndSinceRevision(t *testing.T) {
-	query := buildSchemaQuery(schema.KindStream, "g1", "", 200)
+	query := BuildSchemaQuery(schema.KindStream, "g1", "", 200)
 	assert.Equal(t, "stream", query.GetName())
 	assert.Empty(t, query.GetIds())
 	require.NotNil(t, query.GetCriteria())
@@ -411,7 +411,7 @@ func TestBuildSchemaQuery_WithGroupAndSinceRevision(t *testing.T) {
 }
 
 func TestBuildSchemaQuery_WithNameIgnoresSinceRevision(t *testing.T) {
-	query := buildSchemaQuery(schema.KindStream, "g1", "s1", 500)
+	query := BuildSchemaQuery(schema.KindStream, "g1", "s1", 500)
 	assert.Equal(t, "stream", query.GetName())
 	assert.Equal(t, []string{"stream_g1/s1"}, query.GetIds())
 	assert.Nil(t, query.GetCriteria(), "name-based lookup should not have criteria even with sinceRevision")

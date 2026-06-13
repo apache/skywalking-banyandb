@@ -40,6 +40,7 @@ import (
 	measurev1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/measure/v1"
 	modelv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/model/v1"
 	propertyv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/property/v1"
+	"github.com/apache/skywalking-banyandb/banyand/internal/migration"
 	"github.com/apache/skywalking-banyandb/banyand/internal/storage"
 	"github.com/apache/skywalking-banyandb/banyand/measure"
 	"github.com/apache/skywalking-banyandb/banyand/metadata/schema"
@@ -50,12 +51,13 @@ import (
 	"github.com/apache/skywalking-banyandb/banyand/queue"
 	"github.com/apache/skywalking-banyandb/pkg/bus"
 	"github.com/apache/skywalking-banyandb/pkg/fs"
+	"github.com/apache/skywalking-banyandb/pkg/index"
 	"github.com/apache/skywalking-banyandb/pkg/test"
 )
 
-// MigrationCopy end-to-end: write through the live measure service (so the
+// migration.RunCopy end-to-end: write through the live measure service (so the
 // schema goes through the metadata registry and parts land on disk via the
-// normal write → flush path), then run MigrationCopy on the live dataPath,
+// normal write → flush path), then run migration.RunCopy on the live dataPath,
 // inspect the migrated target tree at both the **file level**
 // (EnumerateGroupTarget) AND at the **service level** by re-opening the
 // target tree from a second live measure service and calling
@@ -65,7 +67,7 @@ import (
 
 const defaultTagFamily = "default"
 
-var _ = Describe("MigrationCopy end-to-end (live service)", func() {
+var _ = Describe("migration.RunCopy end-to-end (live service)", func() {
 	const (
 		group       = "e2e_two_day_migration"
 		measureName = "e2e_two_day_metric"
@@ -77,7 +79,7 @@ var _ = Describe("MigrationCopy end-to-end (live service)", func() {
 
 		// Use ginkgo-owned temp dirs for source + target rootPaths so the
 		// source data survives the deliberate mid-test source-service
-		// shutdown (which must happen before MigrationCopy runs so every
+		// shutdown (which must happen before the copy runs so every
 		// per-seg seriesIndex commits its bluge writer to disk).
 		workspace := GinkgoT().TempDir()
 		sourceRoot := filepath.Join(workspace, "source")
@@ -169,22 +171,24 @@ var _ = Describe("MigrationCopy end-to-end (live service)", func() {
 		// and the runtime can't resolve series IDs at query time.
 		sourceDown()
 
-		cfg := measure.DirectCopyConfig{
-			SchemaPropertyPath: schemaPropertyRoot,
-			SidxStagingDir:     staging,
-			Groups:             []string{group},
-			Entries: []measure.DirectCopyEntry{
-				{
-					Stage:  measure.StageHot,
-					Target: targetDataPath,
-					Nodes:  []string{"node-0"},
-					Source: []string{sourceDataPath},
+		plan := &migration.CopyPlan{
+			Source: migration.CopySource{Live: &migration.LiveSource{
+				SchemaPropertyPath: schemaPropertyRoot,
+				Stages: map[string][]migration.LiveStageNode{
+					"hot": {{Node: "node-0", Root: sourceDataPath}},
 				},
+			}},
+			Groups: []string{group},
+			Entries: []migration.CopyEntry{
+				{Stage: "hot", Target: targetDataPath, Nodes: []string{"node-0"}},
 			},
 		}
-		res, err := measure.MigrationCopy(ctx, cfg)
+		executors := []migration.CatalogExecutor{measure.NewMigrationExecutor()}
+		cls, err := plan.ClassifyGroups(executors)
 		Expect(err).NotTo(HaveOccurred())
-		Expect(res.Segments).To(Equal(len(sourceInfo.SegmentInfo)),
+		res, err := plan.RunCopy(ctx, staging, cls, executors)
+		Expect(err).NotTo(HaveOccurred())
+		Expect(res.Totals.Segments).To(Equal(len(sourceInfo.SegmentInfo)),
 			"copy res should land the same number of segments as the source")
 
 		// File-level inspect: enumerate every target seg and cross-check
@@ -363,7 +367,7 @@ func queryMigrationE2E(svcs *services, group, measureName string, begin, end tim
 // allSidxDirsHaveSnapshot returns true when every `<groupRoot>/seg-*/sidx`
 // directory carries at least one `.snp` file (bluge's snapshot marker).
 // Used to wait deterministically for the per-seg seriesIndex persister to
-// fire before MigrationCopy scans the source — see the call site for
+// fire before the copy scans the source — see the call site for
 // rationale.
 func allSidxDirsHaveSnapshot(groupRoot string) bool {
 	segs, err := os.ReadDir(groupRoot)
@@ -556,7 +560,10 @@ func migrationE2EBlugeDoc(id, kind, group, sourceJSON string) *bluge.Document {
 	}
 	propJSON, err := protojson.Marshal(prop)
 	Expect(err).NotTo(HaveOccurred())
-	return bluge.NewDocument(id).AddField(bluge.NewStoredOnlyField("_source", propJSON))
+	return bluge.NewDocument(id).
+		AddField(bluge.NewStoredOnlyField("_source", propJSON)).
+		AddField(bluge.NewKeywordFieldBytes(index.IndexModeName, []byte(kind))).
+		AddField(bluge.NewKeywordFieldBytes("_group", []byte(schema.SchemaGroup)))
 }
 
 // setUpMigrationTarget mirrors setUp() from measure_suite_test.go but pins

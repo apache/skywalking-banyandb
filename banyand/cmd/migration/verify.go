@@ -22,13 +22,16 @@ import (
 	"fmt"
 	"os"
 	"os/signal"
+	"slices"
 	"strings"
 	"syscall"
 	"text/tabwriter"
 
 	"github.com/spf13/cobra"
 
+	"github.com/apache/skywalking-banyandb/banyand/internal/migration"
 	"github.com/apache/skywalking-banyandb/banyand/measure"
+	"github.com/apache/skywalking-banyandb/banyand/stream"
 )
 
 func newVerifyCmd() *cobra.Command {
@@ -52,21 +55,31 @@ verify never fails on mismatch — it just reports. Use it after a copy
 run, optionally after the data-copy ↔ data swap, to confirm the
 migration result.`,
 		RunE: func(_ *cobra.Command, _ []string) error {
-			plan, err := LoadCopyPlan(configPath)
+			plan, err := migration.LoadCopyPlan(configPath)
 			if err != nil {
 				return err
 			}
-			// staging dir is unused by verify (read-only), pass "".
-			cfg := plan.ToDirectCopyConfig("")
+
+			executors := catalogExecutors()
+			cls, clsErr := plan.ClassifyGroups(executors)
+			if clsErr != nil {
+				return clsErr
+			}
 
 			ctx, stop := signal.NotifyContext(context.Background(),
 				os.Interrupt, syscall.SIGTERM)
 			defer stop()
 
 			tally := &verifyTally{}
-			runErr := measure.MigrationVerify(ctx, cfg, func(r measure.EntryGroupReport) {
-				printOneReport(r)
-				tally.absorb(r)
+			runErr := plan.RunVerify(ctx, cls, executors, func(report any) {
+				switch r := report.(type) {
+				case measure.EntryGroupReport:
+					printOneReport(r)
+					tally.absorb(r)
+				case stream.EntryGroupReport:
+					printOneStreamReport(r)
+					tally.absorbStream(r)
+				}
 			})
 			tally.printSummary()
 			return runErr
@@ -82,6 +95,8 @@ migration result.`,
 // verifyTally accumulates the per-(node, group) findings the callback
 // stream emits so we can print a single roll-up SUMMARY block at the
 // end of the run — the per-report stream prints itself.
+// hasStream / hasMeasure track which catalogs reported, so printSummary
+// can pick the right per-catalog messaging (a mixed plan prints both).
 type verifyTally struct {
 	mismatches     []verifyMismatch
 	coverage       map[string]map[string]coverageState // node → group → (src/tgt presence)
@@ -91,6 +106,8 @@ type verifyTally struct {
 	tgtRowsTotal   uint64
 	segsTotal      int
 	segsMisaligned int
+	hasStream      bool
+	hasMeasure     bool
 }
 
 // coverageState records whether SOURCE and TARGET independently hold
@@ -117,27 +134,36 @@ type verifyMismatch struct {
 	TgtRows  uint64
 }
 
-// entryNodeName picks the coverage-table row label for an EntryGroupReport.
-// Entries usually carry exactly one node (live mode), in which case the
-// label IS that node. When an entry references multiple nodes
-// (backup-mode plans that fan one target out across several backup-node
-// dirs), the report's SrcRows / TargetSegs are aggregated across all of
-// them — so we join the node names with `,` to make it explicit that the
-// row aggregates more than one node. Falls back to the entry stage when
-// EntryNodes is empty (defensive: validation requires at least one).
-func entryNodeName(r measure.EntryGroupReport) string {
-	switch len(r.EntryNodes) {
+// nodeLabel picks the coverage-table row label for one report. Entries
+// usually carry exactly one node (live mode), in which case the label IS
+// that node. When an entry references multiple nodes (backup-mode plans
+// that fan one target out across several backup-node dirs), the report's
+// SrcRows / TargetSegs are aggregated across all of them — so we join the
+// node names with `,` to make it explicit that the row aggregates more
+// than one node. Falls back to the entry stage when nodes is empty
+// (defensive: validation requires at least one).
+func nodeLabel(nodes []string, stage string) string {
+	switch len(nodes) {
 	case 0:
-		return r.EntryStage
+		return stage
 	case 1:
-		return r.EntryNodes[0]
+		return nodes[0]
 	default:
-		return strings.Join(r.EntryNodes, ",")
+		return strings.Join(nodes, ",")
 	}
 }
 
-func (t *verifyTally) absorb(r measure.EntryGroupReport) {
-	node := entryNodeName(r)
+// tallySeg is the catalog-neutral slice of one target-segment report the
+// tally needs; the absorb adapters project both catalogs' reports onto it.
+type tallySeg struct {
+	rows    uint64
+	aligned bool
+}
+
+// absorbCommon folds one (entry, group) report — already projected to the
+// catalog-neutral shape — into the coverage / mismatch / alignment tallies.
+func (t *verifyTally) absorbCommon(stage string, nodes []string, group string, srcRows uint64, segs []tallySeg) {
+	node := nodeLabel(nodes, stage)
 	if t.coverage == nil {
 		t.coverage = make(map[string]map[string]coverageState)
 	}
@@ -145,48 +171,52 @@ func (t *verifyTally) absorb(r measure.EntryGroupReport) {
 		t.coverage[node] = make(map[string]coverageState)
 		t.nodeOrder = append(t.nodeOrder, node)
 	}
-	if _, ok := indexOf(t.groupOrder, r.Group); !ok {
-		t.groupOrder = append(t.groupOrder, r.Group)
+	if !slices.Contains(t.groupOrder, group) {
+		t.groupOrder = append(t.groupOrder, group)
 	}
 
-	t.srcRowsTotal += r.SrcRows
+	t.srcRowsTotal += srcRows
 	var tgtRows uint64
-	for _, s := range r.TargetSegs {
-		tgtRows += s.Rows
-		if !s.Aligned {
+	for _, s := range segs {
+		tgtRows += s.rows
+		if !s.aligned {
 			t.segsMisaligned++
 		}
 	}
 	t.tgtRowsTotal += tgtRows
-	t.segsTotal += len(r.TargetSegs)
+	t.segsTotal += len(segs)
 
-	t.coverage[node][r.Group] = coverageState{
-		src: r.SrcRows > 0,
+	t.coverage[node][group] = coverageState{
+		src: srcRows > 0,
 		tgt: tgtRows > 0,
 	}
 
-	if tgtRows != r.SrcRows {
+	if tgtRows != srcRows {
 		t.mismatches = append(t.mismatches, verifyMismatch{
-			Stage:    r.EntryStage,
+			Stage:    stage,
 			NodeName: node,
-			Group:    r.Group,
-			SrcRows:  r.SrcRows,
+			Group:    group,
+			SrcRows:  srcRows,
 			TgtRows:  tgtRows,
 		})
 	}
 }
 
-func indexOf(xs []string, v string) (int, bool) {
-	for i, x := range xs {
-		if x == v {
-			return i, true
-		}
+func (t *verifyTally) absorb(r measure.EntryGroupReport) {
+	t.hasMeasure = true
+	segs := make([]tallySeg, len(r.TargetSegs))
+	for i, s := range r.TargetSegs {
+		segs[i] = tallySeg{rows: s.Rows, aligned: s.Aligned}
 	}
-	return 0, false
+	t.absorbCommon(r.EntryStage, r.EntryNodes, r.Group, r.SrcRows, segs)
 }
 
 func (t *verifyTally) printSummary() {
-	fmt.Println("== SUMMARY ==")
+	if t.hasStream && !t.hasMeasure {
+		fmt.Println("== SUMMARY (stream) ==")
+	} else {
+		fmt.Println("== SUMMARY ==")
+	}
 	t.printCoverageTable()
 	fmt.Println()
 	fmt.Printf("  target segments                : %d\n", t.segsTotal)
@@ -198,12 +228,20 @@ func (t *verifyTally) printSummary() {
 			fmt.Printf("  diff (tgt - src)               : %+d (UNEXPECTED — target has MORE rows than source)\n",
 				int64(t.tgtRowsTotal)-int64(t.srcRowsTotal))
 		} else {
-			fmt.Println("  src == tgt")
+			if t.hasStream && !t.hasMeasure {
+				fmt.Println("  src == tgt  (stream invariant: no rows dropped)")
+			} else {
+				fmt.Println("  src == tgt")
+			}
 		}
 		return
 	}
 	fmt.Println()
-	fmt.Println("  row-count mismatches (tgt - src, negative = rows dropped by copy):")
+	if t.hasStream && !t.hasMeasure {
+		fmt.Println("  row-count mismatches (stream must have 0 diff — any non-zero is a BUG):")
+	} else {
+		fmt.Println("  row-count mismatches (tgt - src, negative = rows dropped by copy):")
+	}
 	tw := tabwriter.NewWriter(os.Stdout, 0, 0, 2, ' ', 0)
 	fmt.Fprintln(tw, "    stage\tnode\tgroup\tsrc\ttgt\tdiff")
 	var total int64
@@ -215,7 +253,12 @@ func (t *verifyTally) printSummary() {
 	}
 	fmt.Fprintf(tw, "    %s\t\t\t\t\t%+d\n", "TOTAL", total)
 	_ = tw.Flush()
-	if total < 0 {
+	if t.hasStream {
+		fmt.Println()
+		fmt.Println("  note: stream never deduplicates — any stream row-count diff indicates a")
+		fmt.Println("        real migration bug. Run `migration analyze` for the exact missing rows.")
+	}
+	if t.hasMeasure && total < 0 {
 		fmt.Println()
 		fmt.Println("  note: rows dropped are caused by slow-path mustInitFromDataPoints")
 		fmt.Println("        deduping (seriesID, timestamp) within each chunk flush — banyandb's")
@@ -335,5 +378,60 @@ func printOneReport(r measure.EntryGroupReport) {
 		}
 		fmt.Printf("    %-22s %s shards=%d parts=%d rows=%d %s\n",
 			s.Seg, alignTag, s.Shards, s.Parts, s.Rows, sidxTag)
+	}
+}
+
+// absorbStream records one stream (entry, group) report into the tally.
+func (t *verifyTally) absorbStream(r stream.EntryGroupReport) {
+	t.hasStream = true
+	segs := make([]tallySeg, len(r.TargetSegs))
+	for i, s := range r.TargetSegs {
+		segs[i] = tallySeg{rows: s.Rows, aligned: s.Aligned}
+	}
+	t.absorbCommon(r.EntryStage, r.EntryNodes, r.Group, r.SrcRows, segs)
+}
+
+// printOneStreamReport renders a single (entry, group) stream report.
+func printOneStreamReport(r stream.EntryGroupReport) {
+	fmt.Printf("== entry stage=%s target=%s group=%s (stream) ==\n",
+		r.EntryStage, r.EntryTarget, r.Group)
+	if len(r.SrcRoots) == 0 {
+		fmt.Printf("  src  : (no source dirs resolved for this entry/group)\n")
+	} else {
+		fmt.Printf("  src  : %d row(s) across %d part(s) in %d dir(s)\n",
+			r.SrcRows, r.SrcParts, len(r.SrcRoots))
+		for _, p := range r.SrcRoots {
+			fmt.Printf("           %s\n", p)
+		}
+	}
+	if len(r.TargetSegs) == 0 {
+		fmt.Printf("  tgt  : (no segments under %s)\n", r.TargetGroup)
+		return
+	}
+	var tgtRows uint64
+	for _, s := range r.TargetSegs {
+		tgtRows += s.Rows
+	}
+	fmt.Printf("  tgt  : %d row(s) across %d seg(s) under %s\n",
+		tgtRows, len(r.TargetSegs), r.TargetGroup)
+	for _, s := range r.TargetSegs {
+		alignTag := "aligned"
+		if !s.Aligned {
+			alignTag = "MISALIGNED"
+		}
+		sidxTag := "no-sidx"
+		if s.SidxOpened {
+			sidxTag = fmt.Sprintf("sidxDocs=%d", s.SidxDocCount)
+		}
+		fmt.Printf("    %-22s %s shards=%d parts=%d rows=%d %s\n",
+			s.Seg, alignTag, len(s.Shards), s.Parts, s.Rows, sidxTag)
+		for _, sh := range s.Shards {
+			idxTag := "no-idx"
+			if sh.IdxOpened {
+				idxTag = fmt.Sprintf("idxDocs=%d", sh.IdxDocCount)
+			}
+			fmt.Printf("      %-20s rows=%d parts=%d %s\n",
+				sh.Shard, sh.Rows, sh.Parts, idxTag)
+		}
 	}
 }

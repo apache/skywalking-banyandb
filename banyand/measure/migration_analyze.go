@@ -144,13 +144,6 @@ type analyzeRowSrc struct {
 	pathIdx uint32
 }
 
-// ResolveEntrySrcRoots is the exported wrapper around resolveEntrySrcRoots
-// so cmd/migration can reach the same plan→roots logic the copy + verify
-// pipelines use internally.
-func ResolveEntrySrcRoots(cfg DirectCopyConfig, entry DirectCopyEntry, group string) []string {
-	return resolveEntrySrcRoots(cfg, entry, group)
-}
-
 // AnalyzeMissingRow names one row that exists in src but not in tgt
 // after a migration copy: (sid, ts) appears more times physically in
 // source than in target, and MissingVersions lists the version values

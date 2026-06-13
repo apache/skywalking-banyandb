@@ -16,14 +16,18 @@
 # under the License.
 
 # Migration plan run from INSIDE the bydb-migration-runner pod.
-# Each entry rewrites one mounted PVC's measure data in-place into a
+# Each entry rewrites one mounted PVC's data in-place into a
 # `data-copy/` sibling on the same volume — after operator verification,
 # the workflow is `rm -rf data && mv data-copy data` per PVC.
 #
-# Source mode: `live` — measure data + schema-property come from the
-# runner pod's PVC mounts. The discriminated `source.live.stages` map
-# names every (node, root) pair available per stage; each entry below
-# selects a subset of those nodes via `nodes` to feed its target.
+# Source mode: `live` — measure + stream data and schema-property come
+# from the runner pod's PVC mounts. ONE plan covers BOTH catalogs: in the
+# in-place flow measure and stream live on different PVC roots, so each
+# (node, catalog) root gets its own `stages` name (hot-0-measure,
+# hot-0-stream, …) and its own entry. A group that doesn't exist under an
+# entry's roots is skipped for that entry, so measure groups flow only
+# through the measure roots and stream groups only through the stream
+# roots.
 
 staging_dir: /work/staging
 
@@ -32,36 +36,61 @@ source:
     schema_property_path: /mnt/hot-0/schema-property/data/_schema
     stages:
       hot:
-        - { node: hot-0, root: /mnt/hot-0/measure/data }
-        - { node: hot-1, root: /mnt/hot-1/measure/data }
+        - { node: hot-0-measure, root: /mnt/hot-0/measure/data }
+        - { node: hot-0-stream,  root: /mnt/hot-0/stream/data }
+        - { node: hot-1-measure, root: /mnt/hot-1/measure/data }
+        - { node: hot-1-stream,  root: /mnt/hot-1/stream/data }
       warm:
-        - { node: warn-0, root: /mnt/warn-0/measure/data }
-        - { node: warn-1, root: /mnt/warn-1/measure/data }
+        - { node: warn-0-measure, root: /mnt/warn-0/measure/data }
+        - { node: warn-0-stream,  root: /mnt/warn-0/stream/data }
+        - { node: warn-1-measure, root: /mnt/warn-1/measure/data }
+        - { node: warn-1-stream,  root: /mnt/warn-1/stream/data }
       cold:
-        - { node: cold-0, root: /mnt/cold-0/measure/data }
+        - { node: cold-0-measure, root: /mnt/cold-0/measure/data }
+        - { node: cold-0-stream,  root: /mnt/cold-0/stream/data }
 
 groups:
+  # measure groups
   - sw_metricsMinute
   - sw_metricsHour
   - sw_metricsDay
+  # stream groups
+  - sw_records
+  - sw_recordsLog
+  - sw_recordsBrowserErrorLog
 
-# One entry per data-PVC. The migration writes that node's `data-copy/`
-# sibling using only its own node's source (in-place rewrite), so post-
-# migration the operator can `rm -rf data && mv data-copy data` per PVC
-# independently.
+# One entry per data-PVC × catalog. The migration writes that PVC's
+# `data-copy/` sibling using only its own node's source (in-place
+# rewrite), so post-migration the operator can `rm -rf data &&
+# mv data-copy data` per PVC independently.
 entries:
   - stage: hot
     target: /mnt/hot-0/measure/data-copy
-    nodes: [hot-0]
+    nodes: [hot-0-measure]
+  - stage: hot
+    target: /mnt/hot-0/stream/data-copy
+    nodes: [hot-0-stream]
   - stage: hot
     target: /mnt/hot-1/measure/data-copy
-    nodes: [hot-1]
+    nodes: [hot-1-measure]
+  - stage: hot
+    target: /mnt/hot-1/stream/data-copy
+    nodes: [hot-1-stream]
   - stage: warm
     target: /mnt/warn-0/measure/data-copy
-    nodes: [warn-0]
+    nodes: [warn-0-measure]
+  - stage: warm
+    target: /mnt/warn-0/stream/data-copy
+    nodes: [warn-0-stream]
   - stage: warm
     target: /mnt/warn-1/measure/data-copy
-    nodes: [warn-1]
+    nodes: [warn-1-measure]
+  - stage: warm
+    target: /mnt/warn-1/stream/data-copy
+    nodes: [warn-1-stream]
   - stage: cold
     target: /mnt/cold-0/measure/data-copy
-    nodes: [cold-0]
+    nodes: [cold-0-measure]
+  - stage: cold
+    target: /mnt/cold-0/stream/data-copy
+    nodes: [cold-0-stream]

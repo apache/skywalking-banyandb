@@ -70,6 +70,17 @@ func (q *queryNode) String() string {
 	return q.node.String()
 }
 
+// BlugeQuery extracts the underlying bluge query from a Query built by this
+// package, so callers reading a bluge index directly (without a Store) can
+// reuse the same query construction.
+func BlugeQuery(q index.Query) (bluge.Query, bool) {
+	qn, ok := q.(*queryNode)
+	if !ok {
+		return nil, false
+	}
+	return qn.query, true
+}
+
 // BuildQuery returns blugeQuery for local indices.
 func BuildQuery(criteria *modelv1.Criteria, schema logical.Schema, entityDict map[string]int,
 	entity []*modelv1.TagValue,

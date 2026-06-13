@@ -29,7 +29,10 @@ import (
 
 	"github.com/spf13/cobra"
 
+	commonv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/common/v1"
+	"github.com/apache/skywalking-banyandb/banyand/internal/migration"
 	"github.com/apache/skywalking-banyandb/banyand/measure"
+	"github.com/apache/skywalking-banyandb/banyand/stream"
 	"github.com/apache/skywalking-banyandb/pkg/cgroups"
 )
 
@@ -38,7 +41,7 @@ func newCopyCmd() *cobra.Command {
 
 	cmd := &cobra.Command{
 		Use:   "copy",
-		Short: "Direct-file copy of measure parts into local measure root with row-level grid alignment",
+		Short: "Direct-file copy of measure / stream parts into a local data root with row-level grid alignment",
 		Long: `copy walks every source part, reads each row's actual timestamp, and routes
 the row to the grid-aligned target segment via SegmentInterval.Standard.
 A single source part can fan out to multiple target segments (one new
@@ -55,12 +58,16 @@ is then broadcast (byte-copied) into every aligned target segment that
 received any rows. A fresh .snp is written per (target segment, shard)
 so tsTable.loadSnapshot picks up the new parts on next startup.
 
-Schemas (measure tag families + IndexMode bit) and group resource
-opts (SegmentInterval per LifecycleStage) are read directly from the
-source's schema-property bluge catalog — no liaison access is needed.
+Schemas (measure tag families + IndexMode bit; stream tag families +
+index-rule bindings) and group resource opts (SegmentInterval per
+LifecycleStage) are read directly from the source's schema-property
+bluge catalog — no liaison access is needed. Each group routes to its
+catalog's executor, so one plan may mix measure and stream groups.
 Groups containing any IndexMode measure are rejected up front, since
 their fields live inside sidx and the broadcast strategy would corrupt
-cross-node deduplication at the liaison.
+cross-node deduplication at the liaison. Stream groups additionally
+finalize the per-shard element index (idx/) — byte-copied on the fast
+path, rebuilt from rows + index rules when a source segment splits.
 
 The staging directory is removed in full when the run finishes
 (success or failure). Run inside a data pod whose BanyanDB process is
@@ -69,11 +76,11 @@ topology must match.`,
 		RunE: func(_ *cobra.Command, _ []string) error {
 			applyGoMemLimit()
 
-			plan, err := LoadCopyPlan(configPath)
+			plan, err := migration.LoadCopyPlan(configPath)
 			if err != nil {
 				return err
 			}
-			stagingDir, err := PrepareStagingDir(plan.StagingDir)
+			stagingDir, err := plan.PrepareStagingDir()
 			if err != nil {
 				return err
 			}
@@ -85,14 +92,21 @@ topology must match.`,
 				}
 			}()
 
-			cfg := plan.ToDirectCopyConfig(stagingDir)
+			executors := catalogExecutors()
+			cls, clsErr := plan.ClassifyGroups(executors)
+			if clsErr != nil {
+				return clsErr
+			}
 
 			ctx, stop := signal.NotifyContext(context.Background(),
 				os.Interrupt, syscall.SIGTERM)
 			defer stop()
 
-			res, runErr := measure.MigrationCopy(ctx, cfg)
-			printCopyResult(res)
+			res, runErr := plan.RunCopy(ctx, stagingDir, cls, executors)
+			if runErr != nil {
+				fmt.Printf("PARTIAL RUN — copy aborted on first error; the totals below cover only the work finished before: %v\n", runErr)
+			}
+			printCopyResult(res, cls, runErr == nil)
 			return runErr
 		},
 	}
@@ -103,16 +117,27 @@ topology must match.`,
 	return cmd
 }
 
-func printCopyResult(res measure.DirectCopyResult) {
-	fmt.Println("DONE in", res.Duration)
-	fmt.Printf("   target segments   : %d\n", res.Segments)
-	fmt.Printf("   source parts      : %d\n", res.SourceParts)
-	fmt.Printf("   target mem-parts  : %d (pre-merge; banyandb's merge loop will compact)\n", res.TargetParts)
-	fmt.Printf("   rows copied       : %d\n", res.Rows)
-	fmt.Printf("   bytes written     : %d\n", res.Bytes)
-	fmt.Printf("   fast-path parts   : %d\n", measure.FastPathHits())
-	fmt.Printf("   slow-path parts   : %d\n", measure.SlowPathHits())
-	fmt.Printf("   slow-path rows    : %d\n", measure.SlowPathRows())
+func printCopyResult(res migration.Result, cls *migration.Classified, ok bool) {
+	if ok {
+		fmt.Println("DONE in", res.Duration)
+	} else {
+		fmt.Println("ABORTED after", res.Duration, "(partial — see PARTIAL RUN error above)")
+	}
+	fmt.Printf("   target segments   : %d\n", res.Totals.Segments)
+	fmt.Printf("   source parts      : %d\n", res.Totals.SourceParts)
+	fmt.Printf("   target mem-parts  : %d (pre-merge; banyandb's merge loop will compact)\n", res.Totals.TargetParts)
+	fmt.Printf("   rows copied       : %d\n", res.Totals.Rows)
+	fmt.Printf("   bytes written     : %d\n", res.Totals.Bytes)
+	if len(cls.Buckets[commonv1.Catalog_CATALOG_MEASURE]) > 0 {
+		fmt.Printf("   measure fast-path parts : %d\n", measure.FastPathHits())
+		fmt.Printf("   measure slow-path parts : %d\n", measure.SlowPathHits())
+		fmt.Printf("   measure slow-path rows  : %d\n", measure.SlowPathRows())
+	}
+	if len(cls.Buckets[commonv1.Catalog_CATALOG_STREAM]) > 0 {
+		fmt.Printf("   stream fast-path parts  : %d\n", stream.FastPathHits())
+		fmt.Printf("   stream slow-path parts  : %d\n", stream.SlowPathHits())
+		fmt.Printf("   stream slow-path rows   : %d\n", stream.SlowPathRows())
+	}
 }
 
 // applyGoMemLimit auto-sets the Go runtime's heap soft-cap (GOMEMLIMIT)
