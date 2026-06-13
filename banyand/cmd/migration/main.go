@@ -15,12 +15,13 @@
 // specific language governing permissions and limitations
 // under the License.
 
-// Package main is the CLI entry point of the BanyanDB measure-migration
-// tool. The root command exposes three subcommands:
+// Package main is the CLI entry point of the BanyanDB data-migration
+// tool for the measure and stream catalogs. The root command exposes
+// three subcommands:
 //
-//	copy    - file-level direct copy of measure parts into a data pod's
-//	          measure root, with row-level grid alignment against each
-//	          target stage's SegmentInterval.
+//	copy    - file-level direct copy of measure / stream parts into a
+//	          data pod's data root, with row-level grid alignment against
+//	          each target stage's SegmentInterval.
 //	verify  - read-only inspection of a previous copy run: source vs
 //	          target row counts, target segment grid alignment, sidx
 //	          doc counts. Takes the same --copy-config plan as `copy`.
@@ -46,14 +47,18 @@ func main() {
 	var pprofAddr string
 	root := &cobra.Command{
 		Use:   "migration",
-		Short: "BanyanDB measure data migration tool",
-		Long: `migration moves measure data from a backup snapshot, or from a live
-data PVC mount, into a target measure-data root.
+		Short: "BanyanDB measure / stream data migration tool",
+		Long: `migration moves measure or stream data from a backup snapshot, or from
+a live data PVC mount, into a target data root. The catalog of each
+group is auto-detected from the schema-property catalog (with a backup
+directory-layout fallback for detection only); a single plan may mix
+measure and stream groups.
 
-  copy    - copy backup/live measure part files directly into the target,
-            aligning rows to each entry stage's SegmentInterval. Fast,
-            preserves all tag content, requires running inside the target
-            pod (or on a host that owns the target directory exclusively).
+  copy    - copy backup/live measure or stream part files directly into
+            the target, aligning rows to each entry stage's
+            SegmentInterval. Fast, preserves all tag content, requires
+            running inside the target pod (or on a host that owns the
+            target directory exclusively).
   verify  - re-read the same plan and report per-(entry, group) source
             vs target row counts, target segment grid alignment, and
             sidx doc counts. Read-only; no exit code on mismatch.

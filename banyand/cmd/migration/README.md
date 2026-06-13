@@ -1,6 +1,8 @@
-# BanyanDB measure migration
+# BanyanDB data migration (measure & stream)
 
-A one-shot CLI that rewrites **measure** data — from either a local backup snapshot or a set of live PVC mount paths — into one or more target measure-data roots, with rows re-bucketed onto each target stage's `SegmentInterval` grid. Stream / trace / property catalogs and `sw_metadata` are **out of scope**: the tool only touches measure data.
+A one-shot CLI that rewrites **measure** or **stream** data — from either a local backup snapshot or a set of live PVC mount paths — into one or more target data roots, with rows re-bucketed onto each target stage's `SegmentInterval` grid. The catalog of each group is auto-detected (authoritatively from the source's schema-property catalog via `banyand/metadata/schema/reader`; when a backup snapshot carries no catalog, the backup directory layout — `<node>/<date>/{measure,stream}/<group>/` — classifies the group instead) and each group is routed to its catalog's executor. One plan may mix measure and stream groups freely. Trace / property catalogs and `sw_metadata` are **out of scope**.
+
+Stream specifics: stream has no field columns, no version, and the tool never de-duplicates rows, so source and target row counts are expected to match **exactly**. Each stream segment carries two index layers — the segment-level series index (`sidx/`, union-built and broadcast like measure) and the per-shard element index (`idx/`). On the fast path (a source segment maps to a single target segment) both are byte-copied; on the slow path (a source segment splits across target segments) the element index is rebuilt from rows + index rules. The slow path supports multi-stream groups (e.g. SkyWalking's `sw_records`, 21 streams): because a shard's element index mixes docs from every stream of the group, each row's owning stream is resolved per-row from its `seriesID` via the source segment's series index (`seriesID -> sidx EntityValues -> pbv1.Series.Subject`), and that stream's index locator is used to build the row's doc. The fast path has no such cost (it byte-copies).
 
 For end-to-end operator runbooks (workstation flow + in-cluster live flow), see [`MIGRATION.md`](MIGRATION.md).
 
@@ -8,7 +10,7 @@ The CLI exposes three subcommands; all share a single required flag `--copy-conf
 
 | Subcommand | Purpose |
 |---|---|
-| `copy`    | Rewrite measure data from the plan's source into each entry's target. Side-effecting. |
+| `copy`    | Rewrite measure or stream data from the plan's source into each entry's target. Side-effecting. |
 | `verify`  | Re-read the same plan and report per-(entry, group) source-vs-target row counts, segment grid alignment, and union-sidx doc counts. Read-only inspector. |
 | `analyze` | For one (entry, group), walk every source part and dump within-part duplicate rows, per-part block boundaries, and an exact src↔tgt multiset diff. Diagnostic. |
 
@@ -18,16 +20,17 @@ Each source row is routed to a grid-aligned target segment using the `SegmentInt
 
 ## What it does
 
-1. Loads measure schemas (tag families + `IndexMode` bit) and group `ResourceOpts` from the source's schema-property bluge catalog.
-2. Rejects any requested group that contains an `IndexMode` measure (their field data lives inside sidx and broadcasting the union would corrupt cross-node dedup at query time).
-3. For each group, walks every source segment under `<source>/<node>/.../measure/<group>/` and:
+1. Loads the schemas of the plan's catalog from the source's schema-property bluge catalog — measure schemas (tag families + `IndexMode` bit) or stream schemas (tag families + index-rule bindings + entity layout) — plus each group's `ResourceOpts`.
+2. Measure plans only: rejects any requested group that contains an `IndexMode` measure (their field data lives inside sidx and broadcasting the union would corrupt cross-node dedup at query time). Stream has no `IndexMode`.
+3. For each group, walks every source segment under `<source>/<node>/.../measure/<group>/` (or `.../stream/<group>/`) and:
    - Builds one **union sidx** at `<staging_dir>/<group>/sidx/` by deduplicating every source sidx doc by SeriesID.
    - Discovers every `seg-*/shard-*/<partID>/` directory and records a `partTask` list.
 4. For each `(entry, group)` pair:
    - Resolves the SegmentInterval for `entry.stage`.
-   - For each source part: if all rows fall in one aligned target segment, takes the **fast path** (whole-part byte copy under a fresh target partID); otherwise the **slow path** row-level rewrite into per-target-segment buckets.
+   - For each source part: if all rows fall in one aligned target segment, takes the **fast path** (whole-part byte copy under a fresh target partID); otherwise the **slow path** row-level rewrite into per-target-segment buckets. Measure's slow path de-duplicates `(seriesID, timestamp)` within a chunk; stream's slow path never de-duplicates.
    - Writes `metadata` (segment version + endTime) and a `.snp` snapshot file per `(target segment, shard)`.
    - Broadcasts the group's union sidx into every aligned target segment that received any rows.
+   - Stream only: finalizes the per-shard element index (`idx/`) — byte-copied when a source `(segment, shard)` fed exactly one fresh target segment, otherwise rebuilt row-by-row from the copied parts + the group's index rules (entity-tag values are resolved through the source segment's sidx).
 
 Entries run sequentially. The first error aborts the run. The whole `staging_dir` is removed at the end (success or failure).
 
@@ -35,8 +38,8 @@ Entries run sequentially. The first error aborts the run. The whole `staging_dir
 
 ## Limitations
 
-- The source **must** include a `schema-property` catalog under at least one node (typically a hot / schema-server node). Sources lacking the catalog are rejected.
-- All groups containing any `IndexMode` measure are refused up front.
+- Every command **requires** a `schema-property` catalog under at least one source node (typically a hot / schema-server node): group catalogs, segment alignment and stream index rebuilds all resolve from it. A source without the catalog fails fast.
+- All groups containing any `IndexMode` measure are refused up front (measure groups only — stream has no `IndexMode`).
 - Source and target shard topology must match (no reshard semantics).
 - The tool assumes nothing else is writing to the target paths.
 
@@ -44,7 +47,7 @@ Entries run sequentially. The first error aborts the run. The whole `staging_dir
 
 ## Configuration
 
-A `CopyPlan` selects ONE source mode (`backup` or `live`) and a list of `entries` that fan-out the same source data into multiple target directories. Two ready-to-edit samples ship under [`example/`](example/): [`plan-backup.yaml`](example/plan-backup.yaml) (workstation, reads a downloaded snapshot) and [`plan-live.yaml`](example/plan-live.yaml) (in-cluster, reads live PVC mounts).
+A `CopyPlan` selects ONE source mode (`backup` or `live`) and a list of `entries` that fan-out the same source data into multiple target directories. Two ready-to-edit samples ship under [`example/`](example/), both covering measure + stream groups in one plan: [`plan-backup.yaml`](example/plan-backup.yaml) (workstation, reads a downloaded snapshot) and [`plan-live.yaml`](example/plan-live.yaml) (in-cluster, reads live PVC mounts; each (node, catalog) PVC root gets its own stages name and entry).
 
 ```yaml
 # Optional. When unset, a fresh os.MkdirTemp("banyandb-migration-staging-*")
@@ -59,6 +62,7 @@ source:
   backup:
     # Local path holding the backup snapshot, laid out as
     #   <root>/<node>/<date>/measure/<group>/seg-*/shard-*/<partID>/
+    #   <root>/<node>/<date>/stream/<group>/seg-*/shard-*/<partID>/
     #   <root>/<node>/<date>/schema-property/_schema/shard-*/
     root: /tmp/banyandb-backup
     # Pins the snapshot date inside <root>. Format YYYY-MM-DD.
@@ -82,8 +86,9 @@ groups:
 #  - stage:  one of the LifecycleStages configured on every group's
 #            ResourceOpts (e.g. hot / warm / cold) — its SegmentInterval
 #            determines the target grid for this entry.
-#  - target: the measure-data root for this entry. Must not pre-exist
-#            (or be empty) for any group dir written under it.
+#  - target: the data root (measure-data or stream-data) for this entry.
+#            Must not pre-exist (or be empty) for any group dir written
+#            under it.
 #  - nodes:  the subset of source node identifiers (backup directory
 #            names, or live `stages[stage][].node` keys) feeding this
 #            entry's target.
@@ -94,20 +99,34 @@ entries:
   - { stage: cold, target: /tmp/banyandb-copy/cold/measure-data, nodes: [cold-0]         }
 ```
 
-Validation errors are surfaced at startup, before any byte is written. The common ones: missing `source` (or setting both modes), missing/duplicate `groups`, missing/duplicate `entries[*].target`, bad `date` format, pre-existing non-empty `staging_dir`, or an `entries[*].nodes` entry that does not match any node declared under `source.live.stages[stage]`.
+For a **stream** plan the shape is identical — list stream groups (e.g. `sw_records`, `sw_recordsLog`, `sw_recordsBrowserErrorLog`) and point each entry's `target` at a stream-data root (e.g. `/tmp/banyandb-copy/hot/stream-data`). Measure and stream groups may also share one plan: each group is routed by its auto-detected catalog, and the catalogs run one after the other within a single invocation. Note a mixed plan writes both catalogs' group trees under the same `entries[*].target` — when serving that root, point `--measure-data-path` and `--stream-data-path` at it (each service only loads its own catalog's groups), or keep per-catalog plans with distinct targets. See [`MIGRATION.md`](MIGRATION.md) §3 for a full stream plan demo.
+
+Validation errors are surfaced at startup, before any byte is written. The common ones: missing `source` (or setting both modes), missing/duplicate `groups`, missing/duplicate `entries[*].target`, bad `date` format, pre-existing non-empty `staging_dir`, an `entries[*].stage` that is not defined as a key in `source.live.stages`, or an `entries[*].nodes` entry that does not match any node declared under `source.live.stages[stage]`.
 
 ---
 
 ## Output layout
 
-Each target directory is byte-compatible with what a BanyanDB data pod expects at `--measure-root`. The on-disk shape under one entry's target is:
+Each target directory is byte-compatible with what a BanyanDB data pod expects at `--measure-root-path` / `--stream-root-path`. The on-disk shape under one entry's target is:
 
 ```
 <entry.target>/<group>/seg-YYYYMMDD[HH]/
                        ├── metadata                     # storage.SegmentMetadata: segment version + endTime
                        ├── shard-N/
                        │   ├── <16-hex-partID>/         # measure part files (one dir per copied part)
-                       │   └── <16-hex-partID>.snp      # part index snapshot
+                       │   └── <16-hex-epoch>.snp       # part index snapshot
+                       └── sidx/                        # broadcast union sidx (bluge index)
+```
+
+A stream target carries one extra layer — the per-shard element index:
+
+```
+<entry.target>/<group>/seg-YYYYMMDD[HH]/
+                       ├── metadata
+                       ├── shard-N/
+                       │   ├── <16-hex-partID>/         # stream part files
+                       │   ├── <16-hex-epoch>.snp       # part index snapshot
+                       │   └── idx/                     # element index (bluge); byte-copied or rebuilt, see above
                        └── sidx/                        # broadcast union sidx (bluge index)
 ```
 

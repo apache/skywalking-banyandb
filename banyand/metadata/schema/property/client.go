@@ -486,7 +486,7 @@ func (r *SchemaRegistry) repairInconsistentNodes(ctx context.Context,
 func (r *SchemaRegistry) getSchema(ctx context.Context, kind schema.Kind,
 	group, name string,
 ) (*propertyv1.Property, error) {
-	query := buildSchemaQuery(kind, group, name, 0)
+	query := BuildSchemaQuery(kind, group, name, 0)
 	propMap, queryErr := r.queryAndRepairSchemas(ctx, query)
 	if queryErr != nil {
 		return nil, queryErr
@@ -502,7 +502,7 @@ func (r *SchemaRegistry) getSchema(ctx context.Context, kind schema.Kind,
 func (r *SchemaRegistry) listSchemas(ctx context.Context, kind schema.Kind,
 	group string,
 ) ([]*propertyv1.Property, error) {
-	query := buildSchemaQuery(kind, group, "", 0)
+	query := BuildSchemaQuery(kind, group, "", 0)
 	propMap, queryErr := r.queryAndRepairSchemas(ctx, query)
 	if queryErr != nil {
 		return nil, queryErr
@@ -608,7 +608,7 @@ func (r *SchemaRegistry) validateGroup(ctx context.Context, kind schema.Kind, gr
 // its delete time in unix nanoseconds (non-zero when the entry is a tombstone).
 // It does NOT trigger repairs so it is safe to call inside createResource before broadcastInsert.
 func (r *SchemaRegistry) getSchemaWithDeleteTime(ctx context.Context, kind schema.Kind, group, name string) (*propertyv1.Property, int64, error) {
-	query := buildSchemaQuery(kind, group, name, 0)
+	query := BuildSchemaQuery(kind, group, name, 0)
 	propMap, _, collectErr := r.collectSchemas(ctx, query)
 	if collectErr != nil {
 		return nil, 0, collectErr
