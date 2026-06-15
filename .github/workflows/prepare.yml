@@ -34,7 +34,7 @@ jobs:
         with:
           path: bin
           key: ${{ runner.os }}-generate-tool-${{ hashFiles('**/version.mk') }}
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v6
         with:
           node-version: 24.6.0
           cache: 'npm'
@@ -42,7 +42,7 @@ jobs:
             ui/package-lock.json
             mcp/package-lock.json
       - name: Install Go
-        uses: actions/setup-go@v5
+        uses: actions/setup-go@v6
         with:
           go-version-file: 'go.mod'
           cache: true
