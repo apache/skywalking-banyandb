@@ -77,14 +77,15 @@ func (l *LimitedDistinctTraceID) Process(_ context.Context, batch *vectorized.Re
 	traceIDs := phase1TraceIDs(batch).Data()
 	out := make([]uint16, 0, batch.ActiveLen())
 	for _, rowIdx := range activeIndices(batch) {
-		if l.seen < l.max {
-			traceID := traceIDs[rowIdx]
-			partID := partIDs[rowIdx]
-			l.carry.traceIDsByPart[partID] = append(l.carry.traceIDsByPart[partID], traceID)
-			l.carry.keys[traceID] = keys[rowIdx]
-			l.carry.order = append(l.carry.order, traceID)
-			out = append(out, rowIdx)
+		traceID := traceIDs[rowIdx]
+		if _, alreadySeen := l.carry.keys[traceID]; alreadySeen {
+			continue
 		}
+		partID := partIDs[rowIdx]
+		l.carry.traceIDsByPart[partID] = append(l.carry.traceIDsByPart[partID], traceID)
+		l.carry.keys[traceID] = keys[rowIdx]
+		l.carry.order = append(l.carry.order, traceID)
+		out = append(out, rowIdx)
 		l.seen++
 		if l.seen >= l.max {
 			batch.Selection = out

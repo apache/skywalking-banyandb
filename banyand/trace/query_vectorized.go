@@ -295,7 +295,7 @@ func findCursorTag(bc *blockCursor, tagName string, schemaTagTypes map[string]pb
 // loadTraceCursorsSync loads span data for each cursor from disk.
 // budgetBytes is a soft span-loading threshold: it caps the cumulative uncompressed
 // span bytes loaded across cursors. SIDX responses, tags, record-batch overhead, and
-// other per-query allocations are not counted. Pass 0 to disable the cap.
+// other per-query allocations are not counted. Pass 0 (or any non-positive value) to disable the cap.
 // Two complementary gates enforce the threshold:
 //  1. Hard stop: once usedBytes >= budgetBytes, remaining cursors are released
 //     without calling loadData.
@@ -495,13 +495,15 @@ func selectVectorizedTraceParts(batch traceBatch, snapshots []*snapshot) ([]*par
 			p := pw.p
 			partID := p.partMetadata.ID
 
-			var idsFromSIDX []string
+			sidxSet := make(map[string]struct{})
 			if traceIDsFromSIDX, exists := batch.traceIDs[partID]; exists {
-				idsFromSIDX = append([]string(nil), traceIDsFromSIDX...)
+				for _, id := range traceIDsFromSIDX {
+					sidxSet[id] = struct{}{}
+				}
 			}
 			var idsForPart []string
 			for _, traceID := range allTraceIDs {
-				if slices.Contains(idsFromSIDX, traceID) || p.traceIDFilter.filter.MightContain(convert.StringToBytes(traceID)) {
+				if _, inSIDX := sidxSet[traceID]; inSIDX || p.traceIDFilter.filter.MightContain(convert.StringToBytes(traceID)) {
 					idsForPart = append(idsForPart, traceID)
 				}
 			}
