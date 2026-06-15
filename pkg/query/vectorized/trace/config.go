@@ -25,7 +25,12 @@ import (
 
 // VectorizedConfig controls the v1 vectorized Trace query path.
 type VectorizedConfig struct {
-	BatchSize      int
+	BatchSize int
+	// QueryMemoryMiB is a soft span-loading threshold: it caps the cumulative
+	// uncompressed span bytes fetched from disk per query. SIDX responses, tags,
+	// record-batch overhead, and other per-query allocations are not counted.
+	// The first block always loads regardless of the budget (first-block exception),
+	// so a single oversized block may exceed this value.
 	QueryMemoryMiB int
 	Enabled        bool
 }

@@ -75,7 +75,10 @@ func (g *GroupByTraceID) OutputSchema() *vectorized.BatchSchema {
 
 // Consume accumulates each active row into the bucket for its traceID.
 // Rows with traceIDs not in traceIDsOrder are silently dropped.
-func (g *GroupByTraceID) Consume(_ context.Context, batch *vectorized.RecordBatch) error {
+func (g *GroupByTraceID) Consume(ctx context.Context, batch *vectorized.RecordBatch) error {
+	if ctxErr := ctx.Err(); ctxErr != nil {
+		return ctxErr
+	}
 	tidCol := Phase2TraceIDs(batch)
 	keyCol := Phase2Keys(batch)
 	spanCol := Phase2Spans(batch)
@@ -129,14 +132,22 @@ func (g *GroupByTraceID) Finalize(context.Context) error {
 // NextBatch emits one RecordBatch per traceID in traceIDsOrder.
 // TraceIDs with no accumulated rows are skipped.
 // Returns (nil, nil) when all traceIDs have been emitted.
-func (g *GroupByTraceID) NextBatch(_ context.Context) (*vectorized.RecordBatch, error) {
+func (g *GroupByTraceID) NextBatch(ctx context.Context) (*vectorized.RecordBatch, error) {
 	for g.emitIdx < len(g.traceIDsOrder) {
+		if ctxErr := ctx.Err(); ctxErr != nil {
+			return nil, ctxErr
+		}
 		traceID := g.traceIDsOrder[g.emitIdx]
 		g.emitIdx++
 		bucket, ok := g.buckets[traceID]
 		if !ok || len(bucket.spans) == 0 {
 			continue
 		}
+		// Delete the bucket before emitting so that a duplicate entry in
+		// traceIDsOrder (e.g. from a caller-supplied duplicate lookup list) is
+		// skipped on the second encounter, matching the push-path's behavior of
+		// deleting the cursor group after first emission.
+		delete(g.buckets, traceID)
 		batch := vectorized.NewRecordBatch(g.schema, len(bucket.spans))
 		tidOut := Phase2TraceIDs(batch)
 		keyOut := Phase2Keys(batch)

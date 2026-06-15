@@ -62,6 +62,9 @@ func (l *LimitedDistinctTraceID) Process(_ context.Context, batch *vectorized.Re
 		traceIDs := phase1TraceIDs(batch).Data()
 		for _, rowIdx := range out {
 			traceID := traceIDs[rowIdx]
+			if _, seen := l.carry.keys[traceID]; seen {
+				continue
+			}
 			partID := partIDs[rowIdx]
 			l.carry.traceIDsByPart[partID] = append(l.carry.traceIDsByPart[partID], traceID)
 			l.carry.keys[traceID] = keys[rowIdx]

@@ -119,7 +119,11 @@ func materializeVectorizedTraceResults(ctx context.Context, batch *scanBatch, qo
 		return nil, batch.err
 	}
 
-	loaded, loadErr := loadTraceCursorsSync(ctx, batch.cursors)
+	var budgetBytes int64
+	if qo.QueryMemoryMiB > 0 {
+		budgetBytes = int64(qo.QueryMemoryMiB) * 1024 * 1024
+	}
+	loaded, loadErr := loadTraceCursorsSync(ctx, batch.cursors, budgetBytes)
 	batch.cursors = nil
 	if loadErr != nil {
 		return nil, loadErr
@@ -199,10 +203,8 @@ func (s *loadedCursorSource) closeAll() {
 	s.idx = len(s.cursors)
 }
 
-// Init is a no-op.
 func (s *loadedCursorSource) Init(context.Context) error { return nil }
 
-// OutputSchema returns the Phase-2 schema.
 func (s *loadedCursorSource) OutputSchema() *vectorized.BatchSchema { return s.schema }
 
 // Close releases all remaining unread cursors. Idempotent.
@@ -217,8 +219,12 @@ func (s *loadedCursorSource) Close() error {
 
 // NextBatch emits one Phase-2 RecordBatch per loaded blockCursor.
 // Each span in the cursor becomes one row in the batch.
-func (s *loadedCursorSource) NextBatch(_ context.Context) (*vectorized.RecordBatch, error) {
+func (s *loadedCursorSource) NextBatch(ctx context.Context) (*vectorized.RecordBatch, error) {
 	for s.idx < len(s.cursors) {
+		if ctxErr := ctx.Err(); ctxErr != nil {
+			s.closeAll()
+			return nil, ctxErr
+		}
 		bc := s.cursors[s.idx]
 		s.idx++
 		if len(bc.spans) == 0 {
@@ -286,10 +292,26 @@ func findCursorTag(bc *blockCursor, tagName string, schemaTagTypes map[string]pb
 	return nil
 }
 
-func loadTraceCursorsSync(ctx context.Context, cursors []*blockCursor) ([]*blockCursor, error) {
+// loadTraceCursorsSync loads span data for each cursor from disk.
+// budgetBytes is a soft span-loading threshold: it caps the cumulative uncompressed
+// span bytes loaded across cursors. SIDX responses, tags, record-batch overhead, and
+// other per-query allocations are not counted. Pass 0 to disable the cap.
+// Two complementary gates enforce the threshold:
+//  1. Hard stop: once usedBytes >= budgetBytes, remaining cursors are released
+//     without calling loadData.
+//  2. Metadata preflight: cursor.bm.uncompressedSpanSizeBytes (written at flush,
+//     available without loading) is used to predict whether a cursor would push
+//     usedBytes over budgetBytes. If so the cursor is skipped before loadData.
+//
+// First-block exception: the first cursor always loads regardless of the budget
+// so that a query never returns zero results due to a too-small budget. This means
+// a single oversized block can exceed budgetBytes; the threshold is best-effort,
+// not a hard memory cap.
+func loadTraceCursorsSync(ctx context.Context, cursors []*blockCursor, budgetBytes int64) ([]*blockCursor, error) {
 	if len(cursors) == 0 {
 		return nil, nil
 	}
+	var usedBytes int64
 	filtered := cursors[:0]
 	for curIdx, cursor := range cursors {
 		select {
@@ -305,14 +327,39 @@ func loadTraceCursorsSync(ctx context.Context, cursors []*blockCursor) ([]*block
 			return nil, fmt.Errorf("interrupt while loading trace data: %w", ctx.Err())
 		default:
 		}
+		if budgetBytes > 0 {
+			// Hard stop: prior cursors already filled the budget.
+			if usedBytes >= budgetBytes {
+				releaseBlockCursor(cursor)
+				for _, pendingCursor := range cursors[curIdx+1:] {
+					releaseBlockCursor(pendingCursor)
+				}
+				return filtered, nil
+			}
+			// Metadata preflight: skip this cursor without calling loadData when its
+			// uncompressed-size estimate would push usedBytes over the budget.
+			// The guard usedBytes > 0 ensures the first cursor always loads.
+			if usedBytes > 0 && usedBytes+int64(cursor.bm.uncompressedSpanSizeBytes) > budgetBytes {
+				releaseBlockCursor(cursor)
+				for _, pendingCursor := range cursors[curIdx+1:] {
+					releaseBlockCursor(pendingCursor)
+				}
+				return filtered, nil
+			}
+		}
 		tmpBlock := generateBlock()
 		loaded := cursor.loadData(tmpBlock)
 		releaseBlock(tmpBlock)
-		if loaded {
-			filtered = append(filtered, cursor)
+		if !loaded {
+			releaseBlockCursor(cursor)
 			continue
 		}
-		releaseBlockCursor(cursor)
+		if budgetBytes > 0 {
+			for _, span := range cursor.spans {
+				usedBytes += int64(len(span))
+			}
+		}
+		filtered = append(filtered, cursor)
 	}
 	return filtered, nil
 }
@@ -333,29 +380,9 @@ func releaseVectorizedScanBatch(batch *scanBatch) {
 	batch.snapshots = nil
 }
 
-type syncSIDXQuerier interface {
-	QuerySync(context.Context, sidx.QueryRequest) ([]*sidx.QueryResponse, error)
-}
-
 func sidxInstancesToVectorizedIterators(
 	ctx context.Context,
 	instances []sidx.SIDX,
-	req sidx.QueryRequest,
-) ([]itersort.Iterator[*vtrace.MergeItem], error) {
-	syncInstances := make([]syncSIDXQuerier, 0, len(instances))
-	for instanceIdx, instance := range instances {
-		syncInstance, ok := instance.(syncSIDXQuerier)
-		if !ok {
-			return nil, fmt.Errorf("sidx instance %d does not support synchronous query", instanceIdx)
-		}
-		syncInstances = append(syncInstances, syncInstance)
-	}
-	return syncSIDXQuerierToVectorizedIterators(ctx, syncInstances, req)
-}
-
-func syncSIDXQuerierToVectorizedIterators(
-	ctx context.Context,
-	instances []syncSIDXQuerier,
 	req sidx.QueryRequest,
 ) ([]itersort.Iterator[*vtrace.MergeItem], error) {
 	iters := make([]itersort.Iterator[*vtrace.MergeItem], 0, len(instances))
@@ -388,7 +415,13 @@ func (t *trace) buildVectorizedPhase1TraceBatch(
 	}
 	switch {
 	case len(qo.traceIDs) > 0:
-		plan, buildErr := vtrace.BuildStaticPhase1(qo.traceIDs, nil, maxRows, batchSize)
+		// Mirror the push path: truncate the raw list to maxTraceSize first (preserving
+		// duplicates), then let Phase-1's DistinctTraceID deduplicate within that window.
+		ids := qo.traceIDs
+		if maxRows > 0 && int(maxRows) < len(ids) {
+			ids = ids[:maxRows]
+		}
+		plan, buildErr := vtrace.BuildStaticPhase1(ids, nil, 0, batchSize)
 		if buildErr != nil {
 			return traceBatch{}, fmt.Errorf("build static vectorized trace phase1: %w", buildErr)
 		}
@@ -398,7 +431,10 @@ func (t *trace) buildVectorizedPhase1TraceBatch(
 		if iterErr != nil {
 			return traceBatch{}, iterErr
 		}
-		plan, buildErr := vtrace.BuildMergePhase1(iters, sidxRequestDesc(req), maxRows, batchSize)
+		// Ordered SIDX path: MaxTraceSize controls SIDX batch size (MaxBatchSize in the
+		// request), not the total result cap. The push path emits all matching traces in
+		// batches; vectorized must do the same. Pass 0 to disable the Phase-1 trace cap.
+		plan, buildErr := vtrace.BuildMergePhase1(iters, sidxRequestDesc(req), 0, batchSize)
 		if buildErr != nil {
 			return traceBatch{}, fmt.Errorf("build ordered vectorized trace phase1: %w", buildErr)
 		}

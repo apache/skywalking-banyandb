@@ -239,11 +239,12 @@ func TestVectorizedParityOrderMode(t *testing.T) {
 	}
 
 	tests := []struct {
-		name      string
-		keys      []int64
-		traceIDs  []string
-		wantCount int
-		sortDir   modelv1.Sort
+		name         string
+		keys         []int64
+		traceIDs     []string
+		maxTraceSize int
+		wantCount    int
+		sortDir      modelv1.Sort
 	}{
 		{
 			name:      "ASC order all traces",
@@ -258,6 +259,24 @@ func TestVectorizedParityOrderMode(t *testing.T) {
 			keys:      []int64{3, 2, 1},
 			traceIDs:  []string{"trace3", "trace2", "trace1"},
 			wantCount: 3,
+		},
+		{
+			// MaxTraceSize is a batch-size hint for ordered SIDX queries, not a total cap.
+			// The push path emits all 3 traces in batches of 2; vectorized must match.
+			name:         "ASC order MaxTraceSize=2 with 3 traces returns all 3",
+			sortDir:      modelv1.Sort_SORT_ASC,
+			keys:         []int64{1, 2, 3},
+			traceIDs:     []string{"trace1", "trace2", "trace3"},
+			maxTraceSize: 2,
+			wantCount:    3,
+		},
+		{
+			name:         "DESC order MaxTraceSize=2 with 3 traces returns all 3",
+			sortDir:      modelv1.Sort_SORT_DESC,
+			keys:         []int64{3, 2, 1},
+			traceIDs:     []string{"trace3", "trace2", "trace1"},
+			maxTraceSize: 2,
+			wantCount:    3,
 		},
 	}
 
@@ -287,11 +306,11 @@ func TestVectorizedParityOrderMode(t *testing.T) {
 				syncResponses: sharedResp,
 			}
 
-			pushRes := pushOrderResult(ctx, tr, tables, qo, fakeSIDXInst, req, 0)
+			pushRes := pushOrderResult(ctx, tr, tables, qo, fakeSIDXInst, req, tt.maxTraceSize)
 			defer pushRes.Release()
 			pushGot := collectResults(t, pushRes)
 
-			pullRes, pullErr := pullOrderResult(ctx, tr, tables, qo, fakeSIDXInst, req, 0)
+			pullRes, pullErr := pullOrderResult(ctx, tr, tables, qo, fakeSIDXInst, req, tt.maxTraceSize)
 			require.NoError(t, pullErr)
 			defer pullRes.Release()
 			pullGot := collectResults(t, pullRes)

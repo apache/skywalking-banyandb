@@ -54,6 +54,7 @@ type queryOptions struct {
 	schemaTagTypes map[string]pbv1.ValueType
 	traceIDs       []string
 	model.TraceQueryOptions
+	QueryMemoryMiB int
 }
 
 func (t *trace) Query(ctx context.Context, tqo model.TraceQueryOptions) (model.TraceQueryResult, error) {
@@ -113,6 +114,7 @@ func (t *trace) Query(ctx context.Context, tqo model.TraceQueryOptions) (model.T
 		TraceQueryOptions: storageTQO,
 		traceIDs:          tqo.TraceIDs,
 		schemaTagTypes:    schemaTagTypes,
+		QueryMemoryMiB:    t.vectorized.QueryMemoryMiB,
 	}
 
 	if err = t.resolveSeriesEntities(ctx, segments, &qo, tqo.Name, tqo.Entities); err != nil {

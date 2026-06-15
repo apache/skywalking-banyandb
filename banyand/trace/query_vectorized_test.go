@@ -80,6 +80,144 @@ func TestBuildVectorizedPhase1TraceBatchStatic(t *testing.T) {
 	require.Equal(t, map[string]int64{"trace-a": 0}, batch.keys)
 }
 
+// TestBuildVectorizedPhase1TraceBatchStaticDedupLimitParity guards against the
+// regression where deduplication happened BEFORE limit truncation, causing
+// vectorized to return different results than the push path for duplicate IDs.
+// Push path: traceIDs[:limit] → emit first occurrence only.
+// Vectorized (fixed): same — truncate first, then dedup within the window.
+func TestBuildVectorizedPhase1TraceBatchStaticDedupLimitParity(t *testing.T) {
+	tr := &trace{vectorized: vtrace.VectorizedConfig{Enabled: true, BatchSize: 10, QueryMemoryMiB: 1}}
+	// [a, a, b] limit 2: push takes first 2 raw = [a, a], emits a once.
+	// Vectorized must do the same: truncate to [a, a], dedup → [a].
+	batch, err := tr.buildVectorizedPhase1TraceBatch(context.Background(), queryOptions{
+		traceIDs: []string{"a", "a", "b"},
+	}, nil, sidx.QueryRequest{}, false, 2)
+	require.NoError(t, err)
+	require.Equal(t, []string{"a"}, batch.traceIDsOrder,
+		"[a,a,b] limit 2 must yield [a], not [a,b] or [a,a]")
+}
+
+// TestLoadTraceCursorsSyncBudgetPreCheck verifies that the hard-stop and metadata
+// preflight gates in loadTraceCursorsSync prevent over-loading when a budget is set.
+// The test uses budget=1 byte so that after cursor[0] loads any real span data,
+// usedBytes >= 1 and every subsequent cursor is stopped by the hard-stop gate.
+// Loaded cursors are verified to have non-empty spans, confirming loadData ran for
+// them. Cursors absent from the result were released without loading — proven by the
+// fact that filtered count is strictly less than the total.
+func TestLoadTraceCursorsSyncBudgetPreCheck(t *testing.T) {
+	tst, cleanup := newParityTSTable(t, tsTS1)
+	defer cleanup()
+
+	tr := newParityTrace()
+	ctx := context.Background()
+	qo := queryOptions{
+		TraceQueryOptions: model.TraceQueryOptions{TagProjection: allTagProjections},
+		schemaTagTypes:    testSchemaTagTypes,
+		traceIDs:          []string{"trace1", "trace2", "trace3"},
+	}
+
+	phase1Batch, phase1Err := tr.buildVectorizedPhase1TraceBatch(ctx, qo, nil, sidx.QueryRequest{}, false, 0)
+	require.NoError(t, phase1Err)
+
+	sb, sbErr := tr.buildVectorizedScanBatch(ctx, []*tsTable{tst}, qo, phase1Batch)
+	require.NoError(t, sbErr)
+	require.NotNil(t, sb)
+
+	totalCursors := len(sb.cursors)
+	cursors := sb.cursors
+	sb.cursors = nil
+	releaseVectorizedScanBatch(sb)
+
+	require.GreaterOrEqual(t, totalCursors, 2,
+		"fixture must produce ≥2 cursors to exercise the budget gates; check newParityTSTable data")
+
+	// Budget = 1 byte: cursor[0] always loads (usedBytes starts at 0, hard-stop fires only
+	// when usedBytes >= 1). After cursor[0] loads any real span bytes, usedBytes >= 1 and
+	// every subsequent cursor is stopped by the hard-stop gate before loadData is called.
+	loaded, loadErr := loadTraceCursorsSync(ctx, cursors, 1)
+	require.NoError(t, loadErr)
+	require.Less(t, len(loaded), totalCursors,
+		"hard-stop gate must prevent loading cursors once prior spans fill the 1-byte budget")
+	for _, c := range loaded {
+		require.NotEmpty(t, c.spans, "a cursor in the loaded set must have span data (loadData ran)")
+		releaseBlockCursor(c)
+	}
+}
+
+// TestLoadTraceCursorsSyncMetadataPreflight verifies that the metadata preflight
+// gate (not the hard-stop gate) skips a cursor when its bm.uncompressedSpanSizeBytes
+// estimate would push usedBytes over the budget.
+// The test uses budget = firstSize + 1, so after cursor[0] loads (usedBytes = firstSize)
+// the hard-stop condition (usedBytes >= budget) is FALSE, but the preflight condition
+// (usedBytes + cursor[1].estimate > budget) is TRUE — proving the preflight gate fires.
+func TestLoadTraceCursorsSyncMetadataPreflight(t *testing.T) {
+	tst, cleanup := newParityTSTable(t, tsTS1)
+	defer cleanup()
+
+	tr := newParityTrace()
+	ctx := context.Background()
+	qo := queryOptions{
+		TraceQueryOptions: model.TraceQueryOptions{TagProjection: allTagProjections},
+		schemaTagTypes:    testSchemaTagTypes,
+		traceIDs:          []string{"trace1", "trace2", "trace3"},
+	}
+
+	phase1Batch, phase1Err := tr.buildVectorizedPhase1TraceBatch(ctx, qo, nil, sidx.QueryRequest{}, false, 0)
+	require.NoError(t, phase1Err)
+
+	// First pass: measure cursor[0]'s actual span size with an unlimited budget.
+	sb, sbErr := tr.buildVectorizedScanBatch(ctx, []*tsTable{tst}, qo, phase1Batch)
+	require.NoError(t, sbErr)
+	require.NotNil(t, sb)
+	require.GreaterOrEqual(t, len(sb.cursors), 2,
+		"fixture must produce ≥2 cursors; check newParityTSTable data")
+
+	for _, c := range sb.cursors[1:] {
+		releaseBlockCursor(c)
+	}
+	c0Only := sb.cursors[:1]
+	sb.cursors = nil
+	releaseVectorizedScanBatch(sb)
+
+	loaded0, loadErr0 := loadTraceCursorsSync(ctx, c0Only, 0)
+	require.NoError(t, loadErr0)
+	require.Len(t, loaded0, 1, "cursor[0] must load from the test fixture")
+	var firstSize int64
+	for _, span := range loaded0[0].spans {
+		firstSize += int64(len(span))
+	}
+	releaseBlockCursor(loaded0[0])
+	require.Greater(t, firstSize, int64(0), "cursor[0] must have non-empty span data")
+
+	// Second pass: fresh cursors for the actual preflight test.
+	sb2, sbErr2 := tr.buildVectorizedScanBatch(ctx, []*tsTable{tst}, qo, phase1Batch)
+	require.NoError(t, sbErr2)
+	require.NotNil(t, sb2)
+	require.GreaterOrEqual(t, len(sb2.cursors), 2)
+	cursors2 := sb2.cursors
+	sb2.cursors = nil
+	releaseVectorizedScanBatch(sb2)
+	for _, c := range cursors2[2:] {
+		releaseBlockCursor(c)
+	}
+
+	// Set cursor[1]'s metadata estimate so the preflight fires:
+	//   usedBytes (= firstSize) + estimate (= firstSize+1) > budget (= firstSize+1)
+	// The hard-stop condition usedBytes >= budget is FALSE (firstSize < firstSize+1),
+	// so only the preflight branch is responsible for skipping cursor[1].
+	cursors2[1].bm.uncompressedSpanSizeBytes = uint64(firstSize) + 1
+	budget := firstSize + 1
+
+	loaded, loadErr := loadTraceCursorsSync(ctx, cursors2[:2], budget)
+	require.NoError(t, loadErr)
+	require.Len(t, loaded, 1,
+		"metadata preflight must skip cursor[1]: usedBytes+estimate > budget while usedBytes < budget")
+	require.NotEmpty(t, loaded[0].spans, "loaded cursor must have span data (loadData ran)")
+	for _, c := range loaded {
+		releaseBlockCursor(c)
+	}
+}
+
 func TestNewVectorizedTraceQueryResultEmptyBatch(t *testing.T) {
 	finished := false
 	result, err := newVectorizedTraceQueryResult(context.Background(), &scanBatch{}, queryOptions{}, nil, nil, func(hit int, resultErr error) {
@@ -107,14 +245,14 @@ func TestQueryResultSyncCursorLoaderHonorsContextCancel(t *testing.T) {
 	// loadTraceCursorsSync owns the cursors: on cancellation it releases
 	// every loaded and pending cursor itself, so no defer-release here.
 	cursor := generateBlockCursor()
-	filtered, err := loadTraceCursorsSync(ctx, []*blockCursor{cursor})
+	filtered, err := loadTraceCursorsSync(ctx, []*blockCursor{cursor}, 0)
 	require.Nil(t, filtered)
 	require.Error(t, err)
 }
 
 func TestSyncSIDXQuerierToVectorizedIterators(t *testing.T) {
-	iters, err := syncSIDXQuerierToVectorizedIterators(context.Background(), []syncSIDXQuerier{
-		&fakeSyncSIDX{responses: []*sidx.QueryResponse{
+	iters, err := sidxInstancesToVectorizedIterators(context.Background(), []sidx.SIDX{
+		&fakeSyncSIDX{fakeSIDX: &fakeSIDX{}, responses: []*sidx.QueryResponse{
 			{
 				Keys:    []int64{1},
 				Data:    [][]byte{{0x01, 'a'}},
@@ -135,18 +273,19 @@ func TestSyncSIDXQuerierToVectorizedIterators(t *testing.T) {
 }
 
 func TestSyncSIDXQuerierToVectorizedIteratorsReturnsQueryError(t *testing.T) {
-	_, err := syncSIDXQuerierToVectorizedIterators(context.Background(), []syncSIDXQuerier{
-		&fakeSyncSIDX{err: fmt.Errorf("boom")},
+	_, err := sidxInstancesToVectorizedIterators(context.Background(), []sidx.SIDX{
+		&fakeSyncSIDX{fakeSIDX: &fakeSIDX{}, err: fmt.Errorf("boom")},
 	}, sidx.QueryRequest{})
 	require.Error(t, err)
 }
 
 type fakeSyncSIDX struct {
-	err       error
+	err error
+	*fakeSIDX
 	responses []*sidx.QueryResponse
 }
 
-func (f *fakeSyncSIDX) QuerySync(context.Context, sidx.QueryRequest) ([]*sidx.QueryResponse, error) {
+func (f *fakeSyncSIDX) QuerySync(_ context.Context, _ sidx.QueryRequest) ([]*sidx.QueryResponse, error) {
 	return f.responses, f.err
 }
 

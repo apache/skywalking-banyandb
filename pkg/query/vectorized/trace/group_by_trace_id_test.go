@@ -127,6 +127,35 @@ func TestGroupByTraceID_SkipsUnknownTraceIDs(t *testing.T) {
 	require.NoError(t, op.Close())
 }
 
+// TestGroupByTraceID_DuplicateOrderEmitsOnce guards against the regression where
+// a duplicate entry in traceIDsOrder caused GroupByTraceID to emit the same
+// trace bucket twice (the fix is delete(g.buckets, traceID) after emission).
+func TestGroupByTraceID_DuplicateOrderEmitsOnce(t *testing.T) {
+	schema := NewPhase2Schema(nil)
+	op := NewGroupByTraceID(schema, []string{"trace-a", "trace-a"})
+	ctx := context.Background()
+
+	require.NoError(t, op.Init(ctx))
+
+	batch := makePhase2Batch(schema, []phase2Row{
+		{traceID: "trace-a", key: 1, span: []byte("s1"), spanID: "id1"},
+	})
+	require.NoError(t, op.Consume(ctx, batch))
+	require.NoError(t, op.Finalize(ctx))
+
+	out, err := op.NextBatch(ctx)
+	require.NoError(t, err)
+	require.NotNil(t, out)
+	require.Equal(t, 1, out.Len)
+	require.Equal(t, []string{"trace-a"}, Phase2TraceIDs(out).Data())
+
+	done, err := op.NextBatch(ctx)
+	require.NoError(t, err)
+	require.Nil(t, done, "duplicate traceID in traceIDsOrder must not emit the bucket twice")
+
+	require.NoError(t, op.Close())
+}
+
 func TestGroupByTraceID_SkipsEmptyGroups(t *testing.T) {
 	schema := NewPhase2Schema(nil)
 	// trace-b is in order but no rows will be sent for it

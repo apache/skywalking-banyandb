@@ -66,6 +66,10 @@ func (f *fakeSIDX) ConvertToMemPart([]sidx.WriteRequest, int64, *int64, *int64) 
 func (f *fakeSIDX) Query(context.Context, sidx.QueryRequest) (*sidx.QueryResponse, error) {
 	panic("not implemented")
 }
+
+func (f *fakeSIDX) QuerySync(_ context.Context, _ sidx.QueryRequest) ([]*sidx.QueryResponse, error) {
+	return f.responses, nil
+}
 func (f *fakeSIDX) Stats(context.Context) (*sidx.Stats, error) { return &sidx.Stats{}, nil }
 func (f *fakeSIDX) Close() error                               { return nil }
 func (f *fakeSIDX) Flush(map[uint64]struct{}) (*sidx.FlusherIntroduction, error) {
@@ -192,7 +196,6 @@ func TestStreamSIDXTraceBatches_ProducesOrderedBatches(t *testing.T) {
 		t.Fatalf("expected 2 batches, got %d", len(batches))
 	}
 
-	// First batch should have trace IDs grouped by partID
 	wantBatch0 := map[uint64][]string{
 		100: {"a"},
 		101: {"b"},
@@ -201,7 +204,6 @@ func TestStreamSIDXTraceBatches_ProducesOrderedBatches(t *testing.T) {
 		t.Fatalf("first batch mismatch (-want +got):\n%s", diff)
 	}
 
-	// Second batch should have trace ID in partID 102
 	wantBatch1 := map[uint64][]string{
 		102: {"c"},
 	}
@@ -264,7 +266,6 @@ func TestStreamSIDXTraceBatches_OrdersDescending(t *testing.T) {
 		t.Fatalf("expected 2 batches, got %d", len(batches))
 	}
 
-	// First batch should have trace IDs grouped by partID
 	wantBatch0 := map[uint64][]string{
 		200: {"e"},
 		201: {"d"},
@@ -273,7 +274,6 @@ func TestStreamSIDXTraceBatches_OrdersDescending(t *testing.T) {
 		t.Fatalf("first batch mismatch (-want +got):\n%s", diff)
 	}
 
-	// Second batch should have trace ID in partID 202
 	wantBatch1 := map[uint64][]string{
 		202: {"c"},
 	}
@@ -334,7 +334,6 @@ func TestStreamSIDXTraceBatches_PropagatesErrorAfterCancellation(t *testing.T) {
 			errSeen = true
 			continue
 		}
-		// Check if batch has any trace IDs in the map
 		for _, ids := range batch.traceIDs {
 			if len(ids) > 0 {
 				dataSeen = true
@@ -595,6 +594,10 @@ func (f *fakeSIDXInfinite) ScanQuery(context.Context, sidx.ScanQueryRequest) ([]
 	return nil, nil
 }
 
+func (f *fakeSIDXInfinite) QuerySync(_ context.Context, _ sidx.QueryRequest) ([]*sidx.QueryResponse, error) {
+	return nil, nil
+}
+
 func (f *fakeSIDXInfinite) StreamingQuery(ctx context.Context, _ sidx.QueryRequest) (<-chan *sidx.QueryResponse, <-chan error) {
 	results := make(chan *sidx.QueryResponse)
 	errCh := make(chan error, 1)
@@ -612,7 +615,6 @@ func (f *fakeSIDXInfinite) StreamingQuery(ctx context.Context, _ sidx.QueryReque
 				errCh <- ctx.Err()
 				return
 			default:
-				// Generate a batch of responses
 				batchSize := f.batchSize
 				if batchSize <= 0 {
 					batchSize = 10
@@ -630,7 +632,7 @@ func (f *fakeSIDXInfinite) StreamingQuery(ctx context.Context, _ sidx.QueryReque
 					}
 					traceID := prefix + "-" + strconv.Itoa(counter)
 					data[i] = encodeTraceIDForTest(traceID)
-					partIDs[i] = uint64(1000 + counter) // Generate unique partIDs
+					partIDs[i] = uint64(1000 + counter)
 					key++
 					counter++
 				}
@@ -646,7 +648,6 @@ func (f *fakeSIDXInfinite) StreamingQuery(ctx context.Context, _ sidx.QueryReque
 					errCh <- ctx.Err()
 					return
 				case results <- resp:
-					// Continue to next iteration
 				}
 			}
 		}
