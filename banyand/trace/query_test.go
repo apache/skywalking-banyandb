@@ -238,6 +238,14 @@ func TestOmitIdentityTagProjection(t *testing.T) {
 		Names:  []string{"service_id", "duration"},
 	}, got)
 	require.Equal(t, []string{"trace_id", "service_id", "span_id", "duration"}, projection.Names)
+
+	// Identity-only projection: all names stripped → empty Names slice (r.Tags == nil).
+	identityOnly := &model.TagProjection{Family: "default", Names: []string{"trace_id", "span_id"}}
+	stripped := omitIdentityTagProjection(identityOnly, "trace_id", "span_id")
+	require.Empty(t, stripped.Names)
+
+	// Nil projection passthrough.
+	require.Nil(t, omitIdentityTagProjection(nil, "trace_id", "span_id"))
 }
 
 func TestQueryResultMultipleBatches(t *testing.T) {

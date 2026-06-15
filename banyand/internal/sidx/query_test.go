@@ -76,6 +76,33 @@ func TestSIDX_Query_BasicQuery(t *testing.T) {
 	}
 }
 
+func TestSIDX_QuerySyncMatchesStreamingQuery(t *testing.T) {
+	sidx := createTestSIDX(t)
+	defer func() {
+		assert.NoError(t, sidx.Close())
+	}()
+
+	ctx := context.Background()
+	reqs := []WriteRequest{
+		createTestWriteRequest(1, 100, "data100"),
+		createTestWriteRequest(1, 200, "data200"),
+		createTestWriteRequest(1, 150, "data150"),
+	}
+	writeTestData(t, sidx, reqs, 44, 44)
+	waitForIntroducerLoop()
+
+	queryReq := createTestQueryRequest(1)
+	queryReq.MaxBatchSize = 2
+	streamingRows := collectStreamingRows(ctx, t, sidx, queryReq)
+	syncQuerier, ok := sidx.(interface {
+		QuerySync(context.Context, QueryRequest) ([]*QueryResponse, error)
+	})
+	require.True(t, ok)
+	syncRows, err := syncQuerier.QuerySync(ctx, queryReq)
+	require.NoError(t, err)
+	require.Equal(t, flattenQueryRows(streamingRows), flattenQueryRows(syncRows))
+}
+
 func TestSIDX_Query_EmptyResult(t *testing.T) {
 	sidx := createTestSIDX(t)
 	defer func() {
@@ -97,6 +124,42 @@ func TestSIDX_Query_EmptyResult(t *testing.T) {
 	}
 
 	assert.Equal(t, 0, resultCount)
+}
+
+type queryRow struct {
+	data   string
+	key    int64
+	series common.SeriesID
+	partID uint64
+}
+
+func collectStreamingRows(ctx context.Context, t *testing.T, sidx SIDX, req QueryRequest) []*QueryResponse {
+	t.Helper()
+	resultsCh, errCh := sidx.StreamingQuery(ctx, req)
+	var results []*QueryResponse
+	for res := range resultsCh {
+		require.NoError(t, res.Error)
+		results = append(results, res)
+	}
+	if err, ok := <-errCh; ok {
+		require.NoError(t, err)
+	}
+	return results
+}
+
+func flattenQueryRows(results []*QueryResponse) []queryRow {
+	var rows []queryRow
+	for _, result := range results {
+		for rowIdx := range result.Keys {
+			rows = append(rows, queryRow{
+				key:    result.Keys[rowIdx],
+				data:   string(result.Data[rowIdx]),
+				series: result.SIDs[rowIdx],
+				partID: result.PartIDs[rowIdx],
+			})
+		}
+	}
+	return rows
 }
 
 func TestSIDX_Query_KeyRangeFilter(t *testing.T) {

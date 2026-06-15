@@ -33,6 +33,7 @@ import (
 	"github.com/apache/skywalking-banyandb/banyand/queue"
 	"github.com/apache/skywalking-banyandb/pkg/logger"
 	"github.com/apache/skywalking-banyandb/pkg/query/model"
+	vtrace "github.com/apache/skywalking-banyandb/pkg/query/vectorized/trace"
 	"github.com/apache/skywalking-banyandb/pkg/run"
 	"github.com/apache/skywalking-banyandb/pkg/schema"
 	"github.com/apache/skywalking-banyandb/pkg/timestamp"
@@ -58,6 +59,7 @@ type option struct {
 	flushTimeout                 time.Duration
 	syncInterval                 time.Duration
 	failedPartsMaxTotalSizeBytes uint64
+	vectorized                   vtrace.VectorizedConfig
 }
 
 // Service allows inspecting the trace data.
@@ -108,6 +110,7 @@ type trace struct {
 	schemaRepo  *schemaRepo
 	name        string
 	group       string
+	vectorized  vtrace.VectorizedConfig
 }
 
 func (t *trace) GetSchema() *databasev1.Trace {
@@ -138,13 +141,30 @@ func (t *trace) parseSpec() {
 	t.indexSchema.Store(is)
 }
 
-func openTrace(schema *databasev1.Trace, l *logger.Logger, pm protector.Memory, schemaRepo *schemaRepo) *trace {
+func openTrace(schema *databasev1.Trace, l *logger.Logger, pm protector.Memory, schemaRepo *schemaRepo, vectorized vtrace.VectorizedConfig) *trace {
 	t := &trace{
 		schema:     schema,
 		l:          l,
 		pm:         pm,
 		schemaRepo: schemaRepo,
+		vectorized: vectorized,
 	}
 	t.parseSpec()
 	return t
+}
+
+// VectorizedConfig returns the per-Trace vectorized query configuration.
+func (t *trace) VectorizedConfig() vtrace.VectorizedConfig {
+	return t.vectorized
+}
+
+// bindVectorizedFlags wires VectorizedConfig fields to a run.FlagSet.
+func bindVectorizedFlags(flagS *run.FlagSet, cfg *vtrace.VectorizedConfig) {
+	defaults := vtrace.DefaultConfig()
+	flagS.BoolVar(&cfg.Enabled, "trace-vectorized-enabled", defaults.Enabled,
+		"enable the vectorized trace query path")
+	flagS.IntVar(&cfg.BatchSize, "trace-vectorized-batch-size", defaults.BatchSize,
+		"row count per vectorized trace batch")
+	flagS.IntVar(&cfg.QueryMemoryMiB, "trace-vectorized-query-memory-mib", defaults.QueryMemoryMiB,
+		"per-query memory budget for the vectorized trace path, in MiB")
 }
