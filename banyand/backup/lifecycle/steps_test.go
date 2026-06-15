@@ -101,7 +101,6 @@ func TestParseGroup_RejectsMissingIntervals(t *testing.T) {
 // unit test requires an integration harness — that coverage lives in
 // test/cases/lifecycle/lifecycle.go.
 
-
 // TestResolveSelfIdentity exercises the post-fix pod-name primary lookup
 // against representative registry shapes. The first three cases prove
 // the bug fix: a host-portion match on the registry's GrpcAddress
