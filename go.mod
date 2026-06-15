@@ -1,6 +1,6 @@
 module github.com/apache/skywalking-banyandb
 
-go 1.25.0
+go 1.25.3
 
 require (
 	cloud.google.com/go/storage v1.62.0
