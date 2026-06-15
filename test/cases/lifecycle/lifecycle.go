@@ -263,7 +263,7 @@ func verifyMigrationMetrics(reg observability.MetricsRegistry) {
 	// names now carry labels — Prometheus' exposition format sorts label
 	// names alphabetically (group, remote_node, remote_role, remote_tier),
 	// and the regex requires all four to be present so a regression to
-	// the unlabeld form fails the regex. The label block is captured as
+	// the unlabeled form fails the regex. The label block is captured as
 	// a single `[^}]*` then each required label is asserted with a
 	// lookbehind-style positive check; an explicit per-label regex would
 	// be more readable but the leading-label-alphabetical-ordering
@@ -320,10 +320,10 @@ func verifyMigrationMetrics(reg observability.MetricsRegistry) {
 // either endpoint is valid. We check both, accepting whichever responds.
 //
 // At-least-one check: every runLifecycleMigration invocation passes
-// --grpc-addr=SharedContext.DataAddr (the hot data node), so deriveSelfIdentity
+// --grpc-addr=SharedContext.DataAddr (the hot data node), so resolveSelfIdentity
 // resolves the sender through the registry's GrpcAddress match and the stamped
 // tier is the hot node's `type` label. The lifecycle service waits for the
-// co-located node to become visible in the registry before deriving, so the
+// co-located node to become visible in the registry before resolving, so the
 // match is deterministic. The assertion requires AT LEAST ONE
 // banyandb_queue_sub_total_finished series to carry the populated labels,
 // proving the SetSelfNode fix is wired end-to-end.
@@ -655,16 +655,6 @@ func crossSegmentTimestamps() (single, left, right time.Time) {
 	return crossSrcStart.Add(-12 * time.Hour), crossSrcStart.Add(12 * time.Hour), crossSrcStart.Add(36 * time.Hour)
 }
 
-// runLifecycleMigration runs a single hot->warm lifecycle migration, pointing
-// every root path at the shared source dir and writing its report to reportDir.
-// It returns the command's metrics registry so callers can verify the emitted
-// banyandb_lifecycle_migration_* family.
-//
-// The migration publisher derives its sender identity (sender_node, sender_role,
-// sender_tier) from the data-node registry and the lifecycle's own --node-labels
-// at runtime — no extra CLI flags needed beyond what the test setup already
-// passes via SharedContext.MetadataFlags. See deriveSelfIdentity in
-// banyand/backup/lifecycle/steps.go for the resolution rules.
 // runLifecycleMigration runs a single hot->warm lifecycle migration, pointing
 // the lifecycle service at the co-located data node. Returns the MetricsRegistry
 // the lifecycle service registered its metrics with so the test can scrape them.
