@@ -51,6 +51,14 @@ runs:
         go-version-file: 'go.mod'
         cache: true
 
+    # setup-go@v6 exports GOTOOLCHAIN=local to the job env, which prevents
+    # later steps (e.g. the skywalking-infra-e2e action building itself from
+    # source with a higher go.mod requirement) from fetching the toolchain
+    # they need. Reset to Go's default so those builds can self-provision.
+    - name: Reset GOTOOLCHAIN to auto
+      shell: bash
+      run: echo "GOTOOLCHAIN=auto" >> "$GITHUB_ENV"
+
     - name: Set up QEMU
       if: inputs.setup-docker == 'true'
       uses: docker/setup-qemu-action@06116385d9baf250c9f4dcb4858b16962ea869c3
