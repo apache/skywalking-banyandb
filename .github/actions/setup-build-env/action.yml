@@ -51,6 +51,10 @@ runs:
         go-version-file: 'go.mod'
         cache: true
 
+    - name: Set up QEMU
+      if: inputs.setup-docker == 'true'
+      uses: docker/setup-qemu-action@29109295f81e9208d7d86ff1c6c12d2833863392
+
     - name: Set up Docker Buildx
       if: inputs.setup-docker == 'true'
       uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f
