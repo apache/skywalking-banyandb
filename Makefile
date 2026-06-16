@@ -266,7 +266,6 @@ release-source: ## Package source archive
 release-sign: ## Sign artifacts
 	${RELEASE_SCRIPTS} -k banyand
 	${RELEASE_SCRIPTS} -k bydbctl
-	${RELEASE_SCRIPTS} -k mcp
 	${RELEASE_SCRIPTS} -k fodc-agent
 	${RELEASE_SCRIPTS} -k fodc-proxy
 	${RELEASE_SCRIPTS} -k src
