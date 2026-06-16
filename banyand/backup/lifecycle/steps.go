@@ -367,7 +367,7 @@ func parseGroup(
 	selfHost := selfPodHostname()
 	senderNode, senderTier, resolvedOK := resolveSelfIdentity(selfHost, nodes)
 	if resolvedOK {
-		senderRole = "lifecycle"
+		senderRole = lifecycleRoleName
 		client.SetSelfNode(senderNode, senderRole, senderTier)
 		// Info log so operators can see which identity the agent
 		// stamped on the wire, and which co-located data pod the
