@@ -284,7 +284,8 @@ func TestBatchSender_ErrSkipSeriesSkip(t *testing.T) {
 	}
 
 	l := logger.GetLogger("sender-skip-test")
-	rowCount, err := sender.replay(context.Background(), l, senderTestGroup, "part-0", nil, cur, emit)
+	res, err := sender.replay(context.Background(), l, senderTestGroup, "part-0", nil, cur, emit)
+	rowCount := res.rows
 	require.NoError(t, err, "errSkipSeries must not abort the part")
 	require.Equal(t, totalRows-len(skip), rowCount, "replay counts only non-skipped rows")
 	require.Equal(t, len(skip), sender.skippedRows, "each unresolvable series increments skippedRows")
@@ -562,7 +563,8 @@ func TestReplay_RowCountBoundaries(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			s, vended := senderReturning(t)
 			var counter uint64
-			rows, err := s.replay(context.TODO(), logger.GetLogger("test-replayer"), "g", "p", &counter, &fakeCursor{n: tc.rows}, cleanEmit(s))
+			res, err := s.replay(context.TODO(), logger.GetLogger("test-replayer"), "g", "p", &counter, &fakeCursor{n: tc.rows}, cleanEmit(s))
+			rows := res.rows
 			require.NoError(t, err)
 			require.Equal(t, tc.rows, rows, "rowCount must equal the source row count")
 			require.Equal(t, uint64(1), counter, "every successful part counts once, even when empty")
@@ -591,7 +593,8 @@ func TestReplay_BatchPlusTailSendsEveryRow(t *testing.T) {
 	const rows = 2*measureReplayBatchSize + tail
 	s, vended := senderReturning(t)
 	var counter uint64
-	got, err := s.replay(context.TODO(), logger.GetLogger("test-replayer"), "g", "p", &counter, &fakeCursor{n: rows}, cleanEmit(s))
+	gotRes, err := s.replay(context.TODO(), logger.GetLogger("test-replayer"), "g", "p", &counter, &fakeCursor{n: rows}, cleanEmit(s))
+	got := gotRes.rows
 	require.NoError(t, err)
 	require.Equal(t, rows, got, "rowCount must equal the source row count")
 
@@ -628,7 +631,8 @@ func TestReplay_AbortDrainsInflightAndDiscards(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			s, vended := senderReturning(t)
 			var counter uint64
-			rows, err := s.replay(context.TODO(), logger.GetLogger("test-replayer"), "g", "p", &counter, &fakeCursor{n: tc.failAt}, failingEmit(s, tc.failAt))
+			res, err := s.replay(context.TODO(), logger.GetLogger("test-replayer"), "g", "p", &counter, &fakeCursor{n: tc.failAt}, failingEmit(s, tc.failAt))
+			rows := res.rows
 			require.Error(t, err, "the part must report failure")
 			require.Equal(t, tc.wantRows, rows, "rowCount counts the rows enqueued before the failure")
 			require.Zero(t, counter, "a failed part must not be counted")
@@ -653,8 +657,9 @@ func TestReplay_IteratorErrorDrainsAndDiscards(t *testing.T) {
 	s, vended := senderReturning(t)
 	const n = 2*measureReplayBatchSize + 300 // two full batches sent, 300 buffered, then the iterator errors
 	var counter uint64
-	rows, err := s.replay(context.TODO(), logger.GetLogger("test-replayer"), "g", "p", &counter,
+	res, err := s.replay(context.TODO(), logger.GetLogger("test-replayer"), "g", "p", &counter,
 		&fakeCursor{n: n, err: fmt.Errorf("iterator boom")}, cleanEmit(s))
+	rows := res.rows
 	require.ErrorContains(t, err, "iterator boom", "an iterator error must fail the part")
 	require.Equal(t, n, rows, "all rows read before the iterator error are counted")
 	require.Zero(t, counter, "a failed part must not be counted")
@@ -674,8 +679,9 @@ func TestReplay_NodeErrorViaInflightBoundDrivesAbort(t *testing.T) {
 	failing := &countingBatchPublisher{closeCee: map[string]*common.Error{"node-1": common.NewError("boom")}}
 	s, _ := senderReturning(t, failing) // batch 1's confirm fails
 	var counter uint64
-	rows, err := s.replay(context.TODO(), logger.GetLogger("test-replayer"), "g", "p", &counter,
+	res, err := s.replay(context.TODO(), logger.GetLogger("test-replayer"), "g", "p", &counter,
 		&fakeCursor{n: 3 * measureReplayBatchSize}, cleanEmit(s))
+	rows := res.rows
 	require.Contains(t, nodeErrCee(t, err), "node-1", "the node error must abort the part")
 	require.Zero(t, counter, "a failed part must not be counted")
 	// Batch 1's failure surfaces only once a later batch's flush awaits it at the
@@ -828,6 +834,41 @@ func TestBatchSender_CloseSurfacesDrainedFailure(t *testing.T) {
 	require.Contains(t, cee, "node-9", "close must return the drained batch's per-node errors")
 }
 
+// TestReplayCountsOrphanSkipSeparately drives replay with an emit closure that
+// returns newOrphanSkip for one row and enqueues real messages for the rest.
+// The part must not abort, orphanRows must tally the orphan, and skippedRows
+// must stay zero (sidx-gap and orphan-schema are distinct counters).
+func TestReplayCountsOrphanSkipSeparately(t *testing.T) {
+	require.NoError(t, logger.Init(logger.Logging{Env: "dev", Level: "warn"}))
+	pub := &capturingBatchPublisher{}
+	client := senderMockClient(t, pub)
+	sender := newBatchSender(client, bus.Topic{}, 10, 1<<30, time.Second)
+
+	const totalRows = 3
+	cur := &senderCursor{total: totalRows}
+	emitted := 0
+	base := time.Now().UTC().Truncate(time.Millisecond)
+	emit := func() error {
+		idx := emitted
+		emitted++
+		if idx == 1 {
+			return newOrphanSkip("part", 7, "deleted_measure")
+		}
+		iwr := senderNewIWR(base.Add(time.Duration(idx)*time.Second), 16, int64(idx))
+		return sender.enqueueMarshaled(context.Background(), senderTestNode, senderTestGroup, iwr, proto.Size(iwr))
+	}
+
+	l := logger.GetLogger("orphan-skip-test")
+	res, err := sender.replay(context.Background(), l, senderTestGroup, "part-0", nil, cur, emit)
+	rowCount := res.rows
+	require.NoError(t, err, "orphan skip must not abort the part")
+	require.Equal(t, totalRows-1, rowCount, "orphan row is not counted as a published row")
+	require.Equal(t, 1, sender.orphanRows, "one orphan-schema row must be tallied in orphanRows")
+	require.Equal(t, 0, sender.skippedRows, "orphan skip must not increment skippedRows")
+	require.Equal(t, map[string]uint64{"deleted_measure": 1}, sender.orphanCounts,
+		"orphan row must be tallied per deleted subject for the report's orphan_handling")
+}
+
 // TestReplay_SurfacesSynchronousPublishErrorPromptly pins that a synchronous
 // Publish failure aborts the part on the flush that triggered it — not deferred
 // until the in-flight bound or the final drain. With the failing publisher
@@ -838,8 +879,9 @@ func TestReplay_SurfacesSynchronousPublishErrorPromptly(t *testing.T) {
 	pub := &countingBatchPublisher{publishErr: fmt.Errorf("stream send broke")}
 	s, _ := senderReturning(t, pub) // the first batch's Publish fails synchronously
 	var counter uint64
-	rows, err := s.replay(context.TODO(), logger.GetLogger("test-replayer"), "g", "p", &counter,
+	res, err := s.replay(context.TODO(), logger.GetLogger("test-replayer"), "g", "p", &counter,
 		&fakeCursor{n: 3 * measureReplayBatchSize}, cleanEmit(s))
+	rows := res.rows
 	require.ErrorContains(t, err, "stream send broke", "a synchronous Publish error must abort the part")
 	require.Zero(t, counter, "a failed part must not be counted")
 	// Row 2000's emit triggers the failing flush and returns its error, so the loop

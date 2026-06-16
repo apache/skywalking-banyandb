@@ -109,8 +109,9 @@ func (r *traceRowReplayer) replayPart(ctx context.Context, partPath string) (int
 	defer it.Close()
 	// Prefix the part label with the trace name so the shared driver's timing and
 	// abort logs keep the trace identity the old per-type logs carried.
-	return r.sender.replay(ctx, r.logger, r.group, r.traceName+"/"+partPath, r.counter, it,
+	res, err := r.sender.replay(ctx, r.logger, r.group, r.traceName+"/"+partPath, r.counter, it,
 		func() error { return r.publishRow(ctx, it.Row()) })
+	return res.rows, err
 }
 
 // buildWriteRequest reconstructs the WriteRequest + InternalWriteRequest pair

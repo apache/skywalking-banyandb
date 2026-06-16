@@ -41,17 +41,19 @@ import (
 
 // streamMigrationVisitor implements the stream.Visitor interface for file-based migration.
 type streamMigrationVisitor struct {
-	client                  queue.Client
-	lfs                     fs.FileSystem
-	metadata                metadata.Repo
-	selector                node.Selector
-	chunkedClients          map[string]queue.ChunkedSyncClient
-	logger                  *logger.Logger
-	progress                *Progress
-	replayer                *streamRowReplayer
+	client         queue.Client
+	lfs            fs.FileSystem
+	metadata       metadata.Repo
+	selector       node.Selector
+	chunkedClients map[string]queue.ChunkedSyncClient
+	logger         *logger.Logger
+	progress       *Progress
+	replayer       *streamRowReplayer
+	skippedSourceTracker
 	group                   string
 	sourceStage             string
 	targetStage             string
+	orphanCfg               orphanConfig
 	targetStageInterval     storage.IntervalRule
 	sourceSegmentInterval   storage.IntervalRule
 	chunkSize               int
@@ -64,7 +66,7 @@ type streamMigrationVisitor struct {
 // newStreamMigrationVisitor creates a new file-based migration visitor.
 func newStreamMigrationVisitor(group *commonv1.Group, shardNum, replicas uint32, selector node.Selector, client queue.Client,
 	l *logger.Logger, progress *Progress, chunkSize int, targetStageInterval storage.IntervalRule, md metadata.Repo,
-	sourceStage, targetStage string, sourceSegmentInterval storage.IntervalRule,
+	sourceStage, targetStage string, sourceSegmentInterval storage.IntervalRule, orphanCfg orphanConfig,
 ) *streamMigrationVisitor {
 	return &streamMigrationVisitor{
 		group:                 group.Metadata.Name,
@@ -82,6 +84,8 @@ func newStreamMigrationVisitor(group *commonv1.Group, shardNum, replicas uint32,
 		targetStageInterval:   targetStageInterval,
 		metadata:              md,
 		lfs:                   fs.NewLocalFileSystem(),
+		skippedSourceTracker:  newSkippedSourceTracker(),
+		orphanCfg:             orphanCfg,
 	}
 }
 
@@ -110,7 +114,7 @@ func (mv *streamMigrationVisitor) CounterSnapshot() (chunkSync, rowReplay uint64
 func (mv *streamMigrationVisitor) ensureReplayer() *streamRowReplayer {
 	if mv.replayer == nil {
 		mv.replayer = newStreamRowReplayer(mv.group, mv.targetShardNum, mv.selector, mv.client, mv.metadata,
-			mv.lfs, mv.logger, &mv.partsReplayedRowLevel)
+			mv.lfs, mv.logger, &mv.partsReplayedRowLevel, mv.orphanCfg, mv.sourceStage)
 	}
 	return mv.replayer
 }
@@ -407,7 +411,7 @@ func (mv *streamMigrationVisitor) visitPartRowReplay(ctx context.Context, segmen
 	// draining all in-flight confirmations before returning. A non-nil error means
 	// some rows were not durably delivered; marking the part errored (rather than
 	// completed) ensures the resume guard re-replays the whole part.
-	rowCount, err := replayer.replayPart(ctx, partPath)
+	res, err := replayer.replayPart(ctx, partPath)
 	if err != nil {
 		// Row-replay is all-or-nothing per part; mark the source part errored so
 		// resume retries the whole part (same source key the guard checks above).
@@ -415,12 +419,40 @@ func (mv *streamMigrationVisitor) visitPartRowReplay(ctx context.Context, segmen
 		mv.recordError(scopePart, segmentTR, sourceShardID, &partID, err.Error())
 		return fmt.Errorf("row-replay stream part %s: %w", partPath, err)
 	}
+	if res.skipped > 0 {
+		// Some series could not be resolved from the series index: their rows remain
+		// only in the source part. Record a locatable error and retain the source
+		// segment (excluded from the post-migration delete set) so the data is not
+		// silently and permanently lost, mirroring measure.
+		mv.recordSkippedSource(segmentTR)
+		mv.recordError(scopePart, segmentTR, sourceShardID, &partID,
+			fmt.Sprintf("row-replay skipped %d unresolved rows (series-index gap); examples=%s",
+				res.skipped, formatSkipExamples(filterSkipExamplesByKind(res.detail, skipKindSidxGap))))
+		mv.logger.Warn().
+			Uint64("part_id", partID).
+			Int("skipped_rows", res.skipped).
+			Int("published_rows", res.rows).
+			Str("group", mv.group).
+			Msg("stream row-replay skipped unresolved series; retaining source segment to avoid data loss")
+	}
+	if res.orphanSkipped > 0 {
+		// Orphan (deleted schema): archived or discarded; the source segment is NOT
+		// retained — it is deleted normally. This is expected handling, not a
+		// migration error: the per-subject counts are reported via orphan_handling
+		// (pushed at Close), not recorded in the errors buckets.
+		mv.logger.Warn().
+			Uint64("part_id", partID).
+			Int("orphan_rows", res.orphanSkipped).
+			Str("policy", orphanVerb(mv.orphanCfg.policy)).
+			Str("group", mv.group).
+			Msg("stream row-replay handled orphan-schema series; source segment will be deleted")
+	}
 	mv.progress.MarkStreamPartCompleted(mv.group, sourceSegmentIDStr, sourceShardID, partID)
 	mv.progress.MarkSourceStreamPartCompleted(mv.group, partPath, sourceShardID, partID)
-	mv.progress.AddStreamRowReplay(mv.group, rowCount)
+	mv.progress.AddStreamRowReplay(mv.group, res.rows)
 	mv.logger.Info().
 		Uint64("part_id", partID).
-		Int("rows_published", rowCount).
+		Int("rows_published", res.rows).
 		Str("group", mv.group).
 		Msg("stream row-replay completed")
 	return nil
@@ -626,6 +658,7 @@ func (mv *streamMigrationVisitor) streamPartToNode(nodeID string, targetShardID 
 // Close cleans up all chunked sync clients and the row-replayer.
 func (mv *streamMigrationVisitor) Close() error {
 	if mv.replayer != nil {
+		mv.progress.AddOrphanRows(mv.group, catalogStream, mv.replayer.sender.orphanCounts)
 		cee, replayCloseErr := mv.replayer.Close()
 		recordNodeErrors(mv.progress, mv.group, mv.sourceStage, mv.targetStage, catalogStream, cee)
 		if replayCloseErr != nil {

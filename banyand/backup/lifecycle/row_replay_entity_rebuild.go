@@ -42,22 +42,44 @@ const (
 	skipReasonIncompletePart skipReason = "incomplete-part"
 )
 
+type skipKind uint8
+
+const (
+	skipKindSidxGap skipKind = iota
+	skipKindOrphan
+)
+
 // skipError locates a skipped series so the migration report can point an
-// operator at the exact source part rather than only a count. It wraps
-// errSkipSeries so callers keep using errors.Is(err, errSkipSeries) to detect a
-// skip, while errors.As recovers the location for the report.
+// operator at the exact source part rather than only a count. It wraps either
+// errSkipSeries (sidx-gap) or errOrphanSchema (deleted schema) so callers can
+// distinguish the two via errors.Is, while errors.As recovers the location for
+// the report.
 type skipError struct {
 	partPath string
 	reason   skipReason
 	seriesID uint64
+	kind     skipKind
 }
 
 func (c *skipError) Error() string {
-	return fmt.Sprintf("%s: part=%s seriesID=%d reason=%s", errSkipSeries.Error(), c.partPath, c.seriesID, c.reason)
+	return fmt.Sprintf("%s: part=%s seriesID=%d reason=%s", c.sentinel().Error(), c.partPath, c.seriesID, c.reason)
 }
 
-// Unwrap lets errors.Is(err, errSkipSeries) match a skipError.
-func (c *skipError) Unwrap() error { return errSkipSeries }
+func (c *skipError) sentinel() error {
+	if c.kind == skipKindOrphan {
+		return errOrphanSchema
+	}
+	return errSkipSeries
+}
+
+// Unwrap routes errors.Is to the matching sentinel so sidx-gap and orphan skips
+// stay distinguishable.
+func (c *skipError) Unwrap() error { return c.sentinel() }
+
+// newOrphanSkip builds a skip error for an orphan-schema series (deleted measure/stream).
+func newOrphanSkip(partPath string, seriesID uint64, measure string) *skipError {
+	return &skipError{partPath: partPath, seriesID: seriesID, reason: skipReason(measure), kind: skipKindOrphan}
+}
 
 // asSkipError extracts the locating skipError from a skip error, or nil when
 // the error carries no location (a bare errSkipSeries).
@@ -67,6 +89,19 @@ func asSkipError(err error) *skipError {
 		return c
 	}
 	return nil
+}
+
+// filterSkipExamplesByKind returns only the skip details whose kind matches, so a
+// per-part report message can show only the sidx-gap (or only the orphan) examples
+// from a detail slice that may mix both kinds.
+func filterSkipExamplesByKind(detail []skipError, kind skipKind) []skipError {
+	out := make([]skipError, 0, len(detail))
+	for i := range detail {
+		if detail[i].kind == kind {
+			out = append(out, detail[i])
+		}
+	}
+	return out
 }
 
 // rebuildCandidate describes one measure whose entity can be rebuilt from part

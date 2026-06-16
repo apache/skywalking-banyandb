@@ -257,3 +257,30 @@ func TestSyncBreakdownCountersPersistAndAccumulate(t *testing.T) {
 	assert.Equal(t, uint64(2), reloaded.MeasureRowReplayParts["g"])
 	assert.Equal(t, uint64(15), reloaded.MeasureRowReplayRows["g"])
 }
+
+// TestAddOrphanRows pins the per-subject orphan accounting that feeds the report's
+// orphans section: an empty map is a no-op, counts nest by catalog->group->subject,
+// repeated adds for the same subject accumulate (resume cycles sum), and distinct
+// catalogs/groups stay independent.
+func TestAddOrphanRows(t *testing.T) {
+	p := NewProgress("", logger.GetLogger("test"))
+
+	// Empty bySubject is a no-op (no nested maps created).
+	p.AddOrphanRows("g1", catalogMeasure, nil)
+	p.AddOrphanRows("g1", catalogMeasure, map[string]uint64{})
+	assert.Empty(t, p.OrphanRows)
+
+	// Fresh add nests by catalog -> group -> subject.
+	p.AddOrphanRows("g1", catalogMeasure, map[string]uint64{"m1": 2, "m2": 1})
+	assert.Equal(t, uint64(2), p.OrphanRows[catalogMeasure]["g1"]["m1"])
+	assert.Equal(t, uint64(1), p.OrphanRows[catalogMeasure]["g1"]["m2"])
+
+	// Additive accumulation: a later cycle's counts for the same subject sum.
+	p.AddOrphanRows("g1", catalogMeasure, map[string]uint64{"m1": 3})
+	assert.Equal(t, uint64(5), p.OrphanRows[catalogMeasure]["g1"]["m1"])
+
+	// Distinct catalog/group stay independent.
+	p.AddOrphanRows("g2", catalogStream, map[string]uint64{"s1": 7})
+	assert.Equal(t, uint64(7), p.OrphanRows[catalogStream]["g2"]["s1"])
+	assert.Equal(t, uint64(5), p.OrphanRows[catalogMeasure]["g1"]["m1"], "other catalog must be unaffected")
+}
