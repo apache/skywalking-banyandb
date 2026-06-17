@@ -182,6 +182,10 @@ type batchSender struct {
 	// reason) so the migration report can point an operator at the source data,
 	// not just a count. Capped at maxSkipDetail to bound memory.
 	skippedDetail []skipError
+	// orphanCounts breaks orphanRows down per measure/stream subject name. The
+	// visitor pushes it into the report's orphans section at Close, so the
+	// report shows which deleted schema lost how many rows (archived or discarded).
+	orphanCounts  map[string]uint64
 	topic         bus.Topic
 	timeout       time.Duration
 	maxRows       int
@@ -200,6 +204,11 @@ type batchSender struct {
 	// completes; this surfaces how much a source-data gap dropped instead of
 	// aborting the whole migration.
 	skippedRows int
+	// orphanRows counts rows dropped because their schema was deleted from the
+	// registry (errOrphanSchema). Tracked apart from skippedRows so the visitor
+	// can delete the source segment for orphan-only drops while still retaining it
+	// for sidx-gap drops.
+	orphanRows int
 }
 
 // maxSkipDetail bounds how many distinct skipped-series locations are retained
@@ -220,6 +229,33 @@ func (s *batchSender) recordSkip(err error) {
 		return
 	}
 	s.skippedDetail = append(s.skippedDetail, *c)
+}
+
+// recordOrphanSkip tallies one row dropped for a deleted schema, accumulating a
+// per-subject count for the report's orphans section. Unlike recordSkip
+// it keeps no located sample: orphans are reported as per-subject counts, leaving
+// the bounded skippedDetail sample entirely for sidx-gap skips.
+func (s *batchSender) recordOrphanSkip(err error) {
+	s.orphanRows++
+	if c := asSkipError(err); c != nil {
+		if s.orphanCounts == nil {
+			s.orphanCounts = make(map[string]uint64)
+		}
+		s.orphanCounts[string(c.reason)]++
+	}
+}
+
+// partReplayResult reports what one part's replay delivered: the rows published,
+// the rows skipped because their series could not be resolved or rebuilt
+// (errSkipSeries), the rows whose schema was deleted (orphanSkipped), and a
+// bounded sample of those skips' locations for the report. A skipped > 0 result
+// means the source part still holds data the migration could not republish, so
+// its source segment must be retained rather than deleted.
+type partReplayResult struct {
+	detail        []skipError
+	rows          int
+	skipped       int
+	orphanSkipped int
 }
 
 // newBatchSender builds a sender for one data type. maxRows and maxBytes bound a
@@ -374,9 +410,14 @@ type rowCursor interface {
 // confirmation failed; the caller maps that to its progress bookkeeping.
 func (s *batchSender) replay(ctx context.Context, l *logger.Logger, group, part string, counter *uint64,
 	cur rowCursor, emit func() error,
-) (int, error) {
+) (partReplayResult, error) {
 	start := time.Now()
 	waited0 := s.pipeline.waited
+	// The sender's skip tallies are replayer-wide (one sender serves every part),
+	// so snapshot them to recover this part's own deltas for the returned result.
+	beforeRows := s.skippedRows
+	beforeOrphan := s.orphanRows
+	beforeDetail := len(s.skippedDetail)
 	warnAbort := func(rows int, err error) {
 		pos := cur.Position()
 		l.Warn().Err(err).
@@ -389,6 +430,14 @@ func (s *batchSender) replay(ctx context.Context, l *logger.Logger, group, part 
 	var failure error
 	for cur.Next() {
 		if err := emit(); err != nil {
+			// An orphan-schema series (its measure/stream was deleted from the
+			// registry) is skipped, not fatal: archive or discard its rows, tally
+			// them separately from sidx-gap skips, and keep migrating the rest.
+			// Unlike errSkipSeries, the source segment is still deleted after migration.
+			if errors.Is(err, errOrphanSchema) {
+				s.recordOrphanSkip(err)
+				continue
+			}
 			// A series whose entity cannot be resolved (sidx gap) is skipped, not
 			// fatal: drop its rows, tally them, and keep migrating the rest so one
 			// localized source-data gap does not block the whole part/migration.
@@ -418,18 +467,27 @@ func (s *batchSender) replay(ctx context.Context, l *logger.Logger, group, part 
 	if drained := s.drain(); failure == nil {
 		failure = drained
 	}
+	// This part's own counts, recovered as deltas from the replayer-wide tallies.
+	res := partReplayResult{
+		rows:          rowCount,
+		skipped:       s.skippedRows - beforeRows,
+		orphanSkipped: s.orphanRows - beforeOrphan,
+	}
+	if d := s.skippedDetail[beforeDetail:]; len(d) > 0 {
+		res.detail = append([]skipError(nil), d...)
+	}
 	if failure != nil {
 		// Drop the failed part's un-flushed residual rows (an abort skips the
 		// trailing flush) so a later close() cannot resurrect rows the caller was
 		// told were not delivered; the whole part is re-replayed on resume.
 		s.discard()
-		return rowCount, failure
+		return res, failure
 	}
 	if counter != nil {
 		atomic.AddUint64(counter, 1)
 	}
 	logRowReplayTiming(l, group, part, rowCount, time.Since(start), s.pipeline.waited-waited0)
-	return rowCount, nil
+	return res, nil
 }
 
 // logRowReplayTiming emits one info line per replayed part splitting its wall

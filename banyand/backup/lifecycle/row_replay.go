@@ -47,6 +47,13 @@ import (
 // dropped.
 var errSkipSeries = errors.New("skip series: unresolvable entity")
 
+// errOrphanSchema marks a series whose subject decoded fine but whose schema is
+// no longer in the registry (the measure/stream was deleted). Unlike a sidx gap,
+// the data is unmigratable and known-droppable: the replay loop skips it, the
+// archiver optionally preserves it, and — distinct from errSkipSeries — the
+// source segment is still deleted.
+var errOrphanSchema = errors.New("orphan schema: subject not in registry")
+
 // decodeSeriesEntityValues recovers (subject, entityTagValues) from the raw
 // EntityValues byte sequence stored in part-level smeta.bin or recovered via
 // PartSeriesMap. A resolution failure is wrapped in errSkipSeries so callers can
