@@ -15,21 +15,39 @@
 // specific language governing permissions and limitations
 // under the License.
 
-// Package checksum provides functions for computing checksums algorithms and verifying.
 package checksum
 
-import "io"
+import (
+	"io"
+	"strings"
+	"testing"
+)
 
-// Verifier defines the interface for computing and verifying checksums.
-type Verifier interface {
-	// Wrap returns an io.ReadCloser that transparently verifies the checksum
-	// when the returned reader is closed. This enables streaming verification
-	// without buffering the entire content in memory.
-	Wrap(io.ReadCloser, string) io.ReadCloser
+func TestSum(t *testing.T) {
+	v, err := DefaultSHA256Verifier()
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Well-known SHA-256 of "hello".
+	const want = "2cf24dba5fb0a30e26e83b2ac5b9e29e1b161e5c1fa7425e73043362938b9824"
+	got, err := v.Sum(strings.NewReader("hello"))
+	if err != nil {
+		t.Fatalf("Sum: %v", err)
+	}
+	if got != want {
+		t.Errorf("Sum = %s, want %s", got, want)
+	}
 
-	// ComputeAndWrap returns a reader that computes the checksum while reading.
-	ComputeAndWrap(r io.Reader) (wrappedReader io.Reader, getHash func() (string, error))
-
-	// Sum reads r to completion and returns the hex-encoded checksum of its contents.
-	Sum(r io.Reader) (string, error)
+	// Sum must agree with the streaming ComputeAndWrap path on the same input.
+	wrapped, getHash := v.ComputeAndWrap(strings.NewReader("hello"))
+	if _, err = io.Copy(io.Discard, wrapped); err != nil {
+		t.Fatal(err)
+	}
+	streamed, err := getHash()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if streamed != got {
+		t.Errorf("Sum (%s) disagrees with ComputeAndWrap (%s)", got, streamed)
+	}
 }
