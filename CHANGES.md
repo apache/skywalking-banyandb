@@ -67,6 +67,7 @@ Release Notes.
 - Add opt-in vectorized measure query tracing over raw-frame distributed queries, including a trace envelope and fixed trace-label vocabulary.
 - Enhance segment lifecycle: `refCount` now counts only active users, decoupled from "open" (`index != nil`), adding a "dormant" state (open, `refCount == 0`). A `DecRef` to zero no longer closes a segment; idle reclaim and retention delete act only at `refCount == 0`, so an in-flight snapshot/inspect is no longer torn down mid-operation (fixing the cold-node nil-index panic and bluge lock churn) while idle segments still release their bluge writers.
 - Speed up GCS backup uploads: write each object and its checksum metadata in one request, dropping the per-object `Update` round-trip.
+- Lifecycle migration now archives rows whose measure/stream schema was deleted from the registry, instead of aborting the group.
 
 ### Bug Fixes
 

@@ -18,9 +18,12 @@
 package lifecycle
 
 import (
+	"compress/gzip"
 	"context"
 	"encoding/base64"
+	"encoding/json"
 	"fmt"
+	"io"
 	gofs "io/fs"
 	"os"
 	"path/filepath"
@@ -30,6 +33,7 @@ import (
 	"time"
 
 	"github.com/onsi/gomega"
+	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"go.uber.org/mock/gomock"
 	"google.golang.org/protobuf/proto"
@@ -162,7 +166,7 @@ func TestRoundtrip_Measure(t *testing.T) {
 	// exclusive access to the bluge index dir, so the service must be stopped
 	// before any reader opens the segment.
 	replayer, err := newMeasureRowReplayer(context.TODO(), roundtripMeasureGroup, 2, nil, pipeline,
-		metaSvc, localfs.NewLocalFileSystem(), logger.GetLogger("test-replayer"), nil)
+		metaSvc, localfs.NewLocalFileSystem(), logger.GetLogger("test-replayer"), nil, orphanConfig{}, "")
 	req.NoError(err)
 	defer replayer.Close()
 	// Warm the schema cache so buildWriteRequest does not need the metadata
@@ -291,7 +295,7 @@ func TestRoundtrip_Stream(t *testing.T) {
 	}, 30*time.Second, 200*time.Millisecond, "stream parts for both shards not flushed")
 
 	replayer := newStreamRowReplayer(roundtripStreamGroup, 2, nil, pipeline,
-		metaSvc, localfs.NewLocalFileSystem(), logger.GetLogger("test-replayer"), nil)
+		metaSvc, localfs.NewLocalFileSystem(), logger.GetLogger("test-replayer"), nil, orphanConfig{}, "")
 	defer replayer.Close()
 	// Warm the schema cache so buildWriteRequest does not need the metadata
 	// service after we stop it below.
@@ -316,7 +320,11 @@ func TestRoundtrip_Stream(t *testing.T) {
 		it := reader.Iterator()
 		for it.Next() {
 			row := it.Row()
-			wr, iwr, buildErr := replayer.buildWriteRequest(context.TODO(), row)
+			subject, evList, decodeErr := decodeSeriesEntityValues(row.EntityValues)
+			req.NoError(decodeErr)
+			cached, schemaErr := replayer.loadSchema(context.TODO(), subject)
+			req.NoError(schemaErr)
+			wr, iwr, buildErr := replayer.buildWriteRequest(cached, subject, evList, row)
 			req.NoError(buildErr)
 			series := wr.GetElement().GetTagFamilies()[0].GetTags()[0].GetStr().GetValue()
 			e, ok := expect[series]
@@ -757,7 +765,7 @@ func TestRoundtrip_MeasureIndexed(t *testing.T) {
 	mockClient.EXPECT().NewBatchPublisher(gomock.Any()).
 		DoAndReturn(func(time.Duration) queue.BatchPublisher { return &marshalingBatchPublisher{} }).AnyTimes()
 	r, err := newMeasureRowReplayer(ctx, roundtripE2EGroup, 1, selector, mockClient,
-		metadataService, localfs.NewLocalFileSystem(), logger.GetLogger("roundtrip-e2e"), nil)
+		metadataService, localfs.NewLocalFileSystem(), logger.GetLogger("roundtrip-e2e"), nil, orphanConfig{}, "")
 	req.NoError(err)
 	defer r.Close()
 
@@ -1127,7 +1135,7 @@ func TestRoundtrip_StreamIndexed(t *testing.T) {
 	}, 30*time.Second, 200*time.Millisecond, "indexed stream part not flushed")
 
 	replayer := newStreamRowReplayer(streamIdxGroup, 1, nil, pipeline,
-		metaSvc, localfs.NewLocalFileSystem(), logger.GetLogger("test-replayer-idx"), nil)
+		metaSvc, localfs.NewLocalFileSystem(), logger.GetLogger("test-replayer-idx"), nil, orphanConfig{}, "")
 	defer replayer.Close()
 	// Warm the schema cache so buildWriteRequest does not need metadata after stop.
 	_, err = replayer.loadSchema(context.TODO(), streamIdxName)
@@ -1155,7 +1163,11 @@ func TestRoundtrip_StreamIndexed(t *testing.T) {
 			// move it to sidx, and the replayer rebuilds tags only from columns.
 			require.Contains(t, row.Tags, "default.endpoint",
 				"indexed endpoint tag must stay in the replayable part column")
-			wrGot, _, buildErr := replayer.buildWriteRequest(context.TODO(), row)
+			subject, evList, decodeErr := decodeSeriesEntityValues(row.EntityValues)
+			req.NoError(decodeErr)
+			cached, schemaErr := replayer.loadSchema(context.TODO(), subject)
+			req.NoError(schemaErr)
+			wrGot, _, buildErr := replayer.buildWriteRequest(cached, subject, evList, row)
 			req.NoError(buildErr)
 			tags := wrGot.GetElement().GetTagFamilies()[0].GetTags()
 			require.Len(t, tags, 3, "reconstructed element must carry all three tags")
@@ -1214,4 +1226,313 @@ func registerStreamIndexedSchema(t *testing.T, metaSvc metadataservice.Service) 
 		ExpireAt: timestamppb.New(time.Now().Add(365 * 24 * time.Hour)),
 	})
 	require.NoError(t, err)
+}
+
+const (
+	orphanRTGroup        = "lc_rt_orphan_group"
+	orphanRTNormalName   = "lc_rt_orphan_normal"
+	orphanRTDeletedName  = "lc_rt_orphan_deleted"
+	orphanRTSrcStage     = "hot"
+	orphanRTSeriesPerMsr = 4
+)
+
+// TestMeasureOrphanArchived proves the measure row-replay archives (not aborts)
+// a series whose schema was deleted from the registry: the orphan rows land in a
+// JSONL archive and a per-segment manifest, while the still-registered measure
+// replays normally and the orphan is not counted as a sidx-gap skip.
+func TestMeasureOrphanArchived(t *testing.T) {
+	archiveRoot, partDirs, r, stop := setupMeasureOrphanScenario(t, orphanConfig{policy: orphanArchive, rootDir: filepath.Join(t.TempDir(), "orphan-archive")})
+	defer stop()
+	defer r.Close()
+
+	res := replayAllParts(t, r, partDirs)
+
+	assert.Greater(t, res.orphanSkipped, 0, "deleted-schema series must be tallied as orphan skips")
+	assert.Equal(t, 0, res.skipped, "orphan is not a sidx-gap skip")
+	assert.Equal(t, orphanRTSeriesPerMsr, res.rows, "the still-registered measure's rows must replay")
+
+	// The archive .jsonl file(s) must exist and carry the orphan rows. The
+	// per-segment manifest.json must list the deleted measure.
+	jsonlPaths := findFilesWithSuffix(t, archiveRoot, ".jsonl.gz")
+	require.NotEmpty(t, jsonlPaths, "expected at least one orphan archive .jsonl.gz under %s", archiveRoot)
+	archivedRows := 0
+	for _, p := range jsonlPaths {
+		require.True(t, strings.HasPrefix(p, filepath.Join(archiveRoot, orphanRTGroup)),
+			"archive path %s must live under <root>/<group>", p)
+		for _, rec := range readArchiveRecords(t, p) {
+			require.Equal(t, orphanRTDeletedName, rec.Measure, "only the deleted measure must be archived")
+			require.Equal(t, catalogMeasure, rec.Catalog)
+			require.Equal(t, orphanRTGroup, rec.Group)
+			require.Equal(t, orphanRTSrcStage, rec.Source.Stage, "source stage must be threaded into the record")
+			archivedRows++
+		}
+	}
+	assert.Equal(t, res.orphanSkipped, archivedRows, "every orphan-skipped row must be archived")
+
+	manifestPaths := findFilesWithSuffix(t, archiveRoot, "manifest.json")
+	require.NotEmpty(t, manifestPaths, "expected at least one manifest.json")
+	manifestListsOrphan := false
+	manifestRows := 0
+	for _, p := range manifestPaths {
+		var m manifestFile
+		mb, readErr := os.ReadFile(p)
+		require.NoError(t, readErr)
+		require.NoError(t, json.Unmarshal(mb, &m))
+		for _, mm := range m.Measures {
+			if mm.Measure == orphanRTDeletedName {
+				manifestListsOrphan = true
+			}
+			require.NotEqual(t, orphanRTNormalName, mm.Measure, "the registered measure must never be archived")
+		}
+		manifestRows += m.TotalRows
+	}
+	assert.True(t, manifestListsOrphan, "manifest must list the deleted (orphan) measure")
+	assert.Equal(t, res.orphanSkipped, manifestRows, "manifest total_rows must equal archived orphan rows")
+}
+
+// TestMeasureOrphanDiscarded proves the discard policy drops deleted-schema rows
+// without aborting the part and without writing any files.
+func TestMeasureOrphanDiscarded(t *testing.T) {
+	archiveRoot, partDirs, r, stop := setupMeasureOrphanScenario(t, orphanConfig{policy: orphanDiscard, rootDir: filepath.Join(t.TempDir(), "orphan-archive")})
+	defer stop()
+	defer r.Close()
+
+	res := replayAllParts(t, r, partDirs)
+
+	assert.Greater(t, res.orphanSkipped, 0, "deleted-schema series must be tallied as orphan skips")
+	assert.Equal(t, 0, res.skipped, "orphan is not a sidx-gap skip")
+	assert.Equal(t, orphanRTSeriesPerMsr, res.rows, "the still-registered measure's rows must replay")
+
+	entries, readErr := os.ReadDir(archiveRoot)
+	if readErr == nil {
+		assert.Empty(t, entries, "discard policy must not write any files under the archive root")
+	} else {
+		assert.True(t, os.IsNotExist(readErr), "discard policy must leave the archive root untouched")
+	}
+}
+
+// setupMeasureOrphanScenario registers a measure group with two measures, writes
+// rows for both through the real write path, flushes them to on-disk parts, then
+// deletes one measure from the registry so it becomes an orphan. The replayer is
+// constructed while metadata is still live (it snapshots ListMeasure, now missing
+// the deleted measure) and the modules are stopped before returning so the bluge
+// sidx dir is unlocked for the read-only IndexResolver during replay. It returns
+// the archive root, the flushed part dirs, the ready replayer, and a stop func.
+func setupMeasureOrphanScenario(t *testing.T, cfg orphanConfig) (string, []string, *measureRowReplayer, func()) {
+	t.Helper()
+	req := require.New(t)
+	require.NoError(t, logger.Init(logger.Logging{Env: "dev", Level: "warn"}))
+	gomega.RegisterFailHandler(func(message string, _ ...int) { panic(message) })
+
+	pipeline := queue.Local()
+	metaSvc, err := metadataservice.NewService()
+	req.NoError(err)
+	metricSvc := obsservice.NewMetricService(metaSvc, pipeline, "test", nil)
+	pm := protector.NewMemory(metricSvc)
+	measureSvc, err := measure.NewStandalone(metaSvc, pipeline, nil, metricSvc, pm)
+	req.NoError(err)
+
+	metaPath, metaDefer, err := test.NewSpace()
+	req.NoError(err)
+	ports, err := test.AllocateFreePorts(1)
+	req.NoError(err)
+	rootPath, rootDefer, err := test.NewSpace()
+	req.NoError(err)
+
+	flags := []string{
+		"--schema-server-root-path=" + metaPath,
+		fmt.Sprintf("--schema-server-grpc-port=%d", ports[0]),
+		"--schema-server-grpc-host=127.0.0.1",
+		"--measure-root-path=" + rootPath,
+		"--measure-flush-timeout=200ms",
+	}
+	moduleDefer := test.SetupModules(flags, pipeline, metaSvc, measureSvc)
+	moduleStopped := false
+	stopModules := func() {
+		if !moduleStopped {
+			moduleDefer()
+			moduleStopped = true
+		}
+	}
+	stop := func() {
+		stopModules()
+		rootDefer()
+		metaDefer()
+	}
+
+	registerOrphanMeasure(t, metaSvc, orphanRTNormalName)
+	registerOrphanMeasure(t, metaSvc, orphanRTDeletedName)
+	require.Eventually(t, func() bool {
+		_, ok := measureSvc.LoadGroup(orphanRTGroup)
+		return ok
+	}, 30*time.Second, 200*time.Millisecond, "orphan measure group not loaded")
+	time.Sleep(time.Second)
+
+	base := time.Now().Truncate(time.Millisecond)
+	bp := pipeline.NewBatchPublisher(5 * time.Second)
+	msgID := 0
+	writeSeries := func(measureName string) {
+		for i := 0; i < orphanRTSeriesPerMsr; i++ {
+			msgID++
+			series := fmt.Sprintf("%s-ent-%d", measureName, i)
+			wr := &measurev1.WriteRequest{
+				Metadata: &commonv1.Metadata{Group: orphanRTGroup, Name: measureName},
+				DataPoint: &measurev1.DataPointValue{
+					Timestamp:   timestamppb.New(base.Add(time.Duration(msgID) * time.Second)),
+					Version:     int64(msgID),
+					TagFamilies: []*modelv1.TagFamilyForWrite{{Tags: []*modelv1.TagValue{stringTagValue(series), stringTagValue("s"), intTagValue(int64(i))}}},
+					Fields:      []*modelv1.FieldValue{intFieldValue(int64(i)), floatFieldValue(float64(i))},
+				},
+			}
+			_, errPub := bp.Publish(context.TODO(), data.TopicMeasureWrite, bus.NewMessage(bus.MessageID(msgID), &measurev1.InternalWriteRequest{
+				EntityValues: []*modelv1.TagValue{stringTagValue(series)},
+				Request:      wr,
+			}))
+			req.NoError(errPub)
+		}
+	}
+	writeSeries(orphanRTNormalName)
+	writeSeries(orphanRTDeletedName)
+	closeNodeErrs, closeErr := bp.Close()
+	req.NoError(closeErr)
+	req.Empty(closeNodeErrs)
+
+	var partDirs []string
+	require.Eventually(t, func() bool {
+		partDirs = findRoundtripPartDirs(rootPath)
+		return len(partDirs) >= 1
+	}, 30*time.Second, 200*time.Millisecond, "orphan measure parts not flushed")
+
+	// Delete one measure from the registry so the replayer's construction-time
+	// ListMeasure snapshot omits it; its already-flushed series become orphans.
+	_, _, err = metaSvc.SchemaRegistry().DeleteMeasure(context.TODO(), &commonv1.Metadata{Group: orphanRTGroup, Name: orphanRTDeletedName})
+	req.NoError(err)
+
+	// Build the replayer while metadata is still live: newMeasureRowReplayer
+	// snapshots ListMeasure at construction, so the deleted measure is now absent
+	// and its series resolve to errOrphanSchema during replay.
+	selector, err := node.NewPickFirstSelector()
+	req.NoError(err)
+	selector.AddNode(&databasev1.Node{Metadata: &commonv1.Metadata{Name: "n1"}})
+	ctrl := gomock.NewController(t)
+	t.Cleanup(ctrl.Finish)
+	mockClient := queue.NewMockClient(ctrl)
+	mockClient.EXPECT().NewBatchPublisher(gomock.Any()).
+		DoAndReturn(func(time.Duration) queue.BatchPublisher { return &marshalingBatchPublisher{} }).AnyTimes()
+	r, err := newMeasureRowReplayer(context.TODO(), orphanRTGroup, 2, selector, mockClient,
+		metaSvc, localfs.NewLocalFileSystem(), logger.GetLogger("orphan-replayer"), nil, cfg, orphanRTSrcStage)
+	req.NoError(err)
+
+	// Stop the modules so the bluge sidx writer commits and releases its exclusive
+	// lock before the read-only IndexResolver opens the segment during replay.
+	stopModules()
+
+	return cfg.rootDir, partDirs, r, stop
+}
+
+// replayAllParts replays every flushed part and sums the per-part results so the
+// assertions are independent of how series routed across shards/parts.
+func replayAllParts(t *testing.T, r *measureRowReplayer, partDirs []string) partReplayResult {
+	t.Helper()
+	var total partReplayResult
+	for _, partDir := range partDirs {
+		res, err := r.replayPart(context.TODO(), partDir)
+		require.NoError(t, err, "orphan must not abort the part replay for %s", partDir)
+		total.rows += res.rows
+		total.skipped += res.skipped
+		total.orphanSkipped += res.orphanSkipped
+	}
+	return total
+}
+
+func registerOrphanMeasure(t *testing.T, metaSvc metadataservice.Service, name string) {
+	t.Helper()
+	reg := metaSvc.SchemaRegistry()
+	ctx := context.TODO()
+	if name == orphanRTNormalName {
+		_, err := reg.CreateGroup(ctx, &commonv1.Group{
+			Metadata: &commonv1.Metadata{Name: orphanRTGroup},
+			Catalog:  commonv1.Catalog_CATALOG_MEASURE,
+			ResourceOpts: &commonv1.ResourceOpts{
+				ShardNum:        2,
+				SegmentInterval: &commonv1.IntervalRule{Unit: commonv1.IntervalRule_UNIT_DAY, Num: 1},
+				Ttl:             &commonv1.IntervalRule{Unit: commonv1.IntervalRule_UNIT_DAY, Num: 7},
+			},
+		})
+		require.NoError(t, err)
+	}
+	_, err := reg.CreateMeasure(ctx, orphanMeasureSchema(name))
+	require.NoError(t, err)
+}
+
+// orphanMeasureSchema returns the measure schema the orphan scenario registers,
+// shared so a test can rebuild a deleted measure's schema (absent from the
+// replayer's snapshot) for entity-column reconstruction.
+func orphanMeasureSchema(name string) *databasev1.Measure {
+	return &databasev1.Measure{
+		Metadata: &commonv1.Metadata{Name: name, Group: orphanRTGroup},
+		TagFamilies: []*databasev1.TagFamilySpec{{
+			Name: "default",
+			Tags: []*databasev1.TagSpec{
+				{Name: "series", Type: databasev1.TagType_TAG_TYPE_STRING},
+				{Name: "strTag", Type: databasev1.TagType_TAG_TYPE_STRING},
+				{Name: "intTag", Type: databasev1.TagType_TAG_TYPE_INT},
+			},
+		}},
+		Fields: []*databasev1.FieldSpec{
+			{
+				Name:              "intField",
+				FieldType:         databasev1.FieldType_FIELD_TYPE_INT,
+				EncodingMethod:    databasev1.EncodingMethod_ENCODING_METHOD_GORILLA,
+				CompressionMethod: databasev1.CompressionMethod_COMPRESSION_METHOD_ZSTD,
+			},
+			{
+				Name:              "floatField",
+				FieldType:         databasev1.FieldType_FIELD_TYPE_FLOAT,
+				EncodingMethod:    databasev1.EncodingMethod_ENCODING_METHOD_GORILLA,
+				CompressionMethod: databasev1.CompressionMethod_COMPRESSION_METHOD_ZSTD,
+			},
+		},
+		Entity: &databasev1.Entity{TagNames: []string{"series"}},
+	}
+}
+
+// findFilesWithSuffix walks root and returns every regular file whose name ends
+// with suffix.
+func findFilesWithSuffix(t *testing.T, root, suffix string) []string {
+	t.Helper()
+	var out []string
+	_ = filepath.WalkDir(root, func(path string, d gofs.DirEntry, err error) error {
+		if err != nil || d.IsDir() {
+			return nil
+		}
+		if strings.HasSuffix(d.Name(), suffix) {
+			out = append(out, path)
+		}
+		return nil
+	})
+	return out
+}
+
+// readArchiveRecords decodes a JSONL archive file into its records.
+func readArchiveRecords(t *testing.T, path string) []archiveRecord {
+	t.Helper()
+	f, err := os.Open(path)
+	require.NoError(t, err)
+	defer f.Close()
+	gr, err := gzip.NewReader(f)
+	require.NoError(t, err, "archive file must be a valid gzip stream: %s", path)
+	defer gr.Close()
+	data, err := io.ReadAll(gr)
+	require.NoError(t, err)
+	var recs []archiveRecord
+	for _, line := range strings.Split(strings.TrimSpace(string(data)), "\n") {
+		if line == "" {
+			continue
+		}
+		var rec archiveRecord
+		require.NoError(t, json.Unmarshal([]byte(line), &rec), "archive line must be valid JSON: %s", line)
+		recs = append(recs, rec)
+	}
+	return recs
 }

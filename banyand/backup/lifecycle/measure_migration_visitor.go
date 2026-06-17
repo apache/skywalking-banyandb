@@ -41,18 +41,19 @@ import (
 
 // measureMigrationVisitor implements the measure.Visitor interface for file-based migration.
 type measureMigrationVisitor struct {
-	client                  queue.Client
-	lfs                     fs.FileSystem
-	metadata                metadata.Repo
-	selector                node.Selector
-	chunkedClients          map[string]queue.ChunkedSyncClient
-	logger                  *logger.Logger
-	progress                *Progress
-	replayer                *measureRowReplayer
-	skippedSourceStarts     map[int64]struct{}
+	client         queue.Client
+	lfs            fs.FileSystem
+	metadata       metadata.Repo
+	selector       node.Selector
+	chunkedClients map[string]queue.ChunkedSyncClient
+	logger         *logger.Logger
+	progress       *Progress
+	replayer       *measureRowReplayer
+	skippedSourceTracker
 	group                   string
 	sourceStage             string
 	targetStage             string
+	orphanCfg               orphanConfig
 	targetStageInterval     storage.IntervalRule
 	sourceSegmentInterval   storage.IntervalRule
 	chunkSize               int
@@ -65,7 +66,7 @@ type measureMigrationVisitor struct {
 // newMeasureMigrationVisitor creates a new file-based migration visitor.
 func newMeasureMigrationVisitor(group *commonv1.Group, shardNum, replicas uint32, selector node.Selector, client queue.Client,
 	l *logger.Logger, progress *Progress, chunkSize int, targetStageInterval storage.IntervalRule, md metadata.Repo,
-	sourceStage, targetStage string, sourceSegmentInterval storage.IntervalRule,
+	sourceStage, targetStage string, sourceSegmentInterval storage.IntervalRule, orphanCfg orphanConfig,
 ) *measureMigrationVisitor {
 	return &measureMigrationVisitor{
 		group:                 group.Metadata.Name,
@@ -83,15 +84,9 @@ func newMeasureMigrationVisitor(group *commonv1.Group, shardNum, replicas uint32
 		targetStageInterval:   targetStageInterval,
 		metadata:              md,
 		lfs:                   fs.NewLocalFileSystem(),
-		skippedSourceStarts:   make(map[int64]struct{}),
+		skippedSourceTracker:  newSkippedSourceTracker(),
+		orphanCfg:             orphanCfg,
 	}
-}
-
-// recordSkippedSource marks a source segment (by its start instant) as holding
-// rows the row-replay could not republish, so it must be retained rather than
-// deleted. Keyed by start nanos, the same value the segment suffix decodes to.
-func (mv *measureMigrationVisitor) recordSkippedSource(segmentTR *timestamp.TimeRange) {
-	mv.skippedSourceStarts[segmentTR.Start.UnixNano()] = struct{}{}
 }
 
 // recordError appends a structured measure migration error to the report,
@@ -107,20 +102,6 @@ func (mv *measureMigrationVisitor) recordError(scope string, segmentTR *timestam
 		Catalog: catalogMeasure, Scope: scope, Segment: seg, Interval: interval,
 		Shard: &s, Part: partID, Error: msg,
 	})
-}
-
-// SkippedSourceSegmentStarts returns the start instants (UnixNano) of source
-// segments that must be retained because row-replay skipped unresolved rows in
-// them. The migration excludes these from the delete-after-migration suffix set.
-func (mv *measureMigrationVisitor) SkippedSourceSegmentStarts() []int64 {
-	if len(mv.skippedSourceStarts) == 0 {
-		return nil
-	}
-	out := make([]int64, 0, len(mv.skippedSourceStarts))
-	for start := range mv.skippedSourceStarts {
-		out = append(out, start)
-	}
-	return out
 }
 
 // formatSkipExamples renders a bounded sample of skip locations for a report
@@ -151,7 +132,7 @@ func (mv *measureMigrationVisitor) ensureReplayer(ctx context.Context) (*measure
 		return mv.replayer, nil
 	}
 	r, err := newMeasureRowReplayer(ctx, mv.group, mv.targetShardNum, mv.selector, mv.client, mv.metadata,
-		mv.lfs, mv.logger, &mv.partsReplayedRowLevel)
+		mv.lfs, mv.logger, &mv.partsReplayedRowLevel, mv.orphanCfg, mv.sourceStage)
 	if err != nil {
 		return nil, fmt.Errorf("create measure row replayer: %w", err)
 	}
@@ -473,7 +454,7 @@ func (mv *measureMigrationVisitor) visitPartRowReplay(ctx context.Context, segme
 		// delete set) so the data is not silently and permanently lost (S1).
 		mv.recordSkippedSource(segmentTR)
 		skipMsg := fmt.Sprintf("row-replay skipped %d unresolved rows (series-index gap, not rebuildable from columns); examples=%s",
-			res.skipped, formatSkipExamples(res.detail))
+			res.skipped, formatSkipExamples(filterSkipExamplesByKind(res.detail, skipKindSidxGap)))
 		mv.recordError(scopePart, segmentTR, sourceShardID, &partID, skipMsg)
 		mv.logger.Warn().
 			Uint64("part_id", partID).
@@ -481,6 +462,18 @@ func (mv *measureMigrationVisitor) visitPartRowReplay(ctx context.Context, segme
 			Int("published_rows", res.rows).
 			Str("group", mv.group).
 			Msg("row-replay skipped unresolved series; retaining source segment to avoid data loss")
+	}
+	if res.orphanSkipped > 0 {
+		// Orphan (deleted schema): archived or discarded; the source segment is NOT
+		// retained — it is deleted normally. This is expected handling, not a
+		// migration error: the per-subject counts are reported via orphans
+		// (pushed at Close), not recorded in the errors buckets.
+		mv.logger.Warn().
+			Uint64("part_id", partID).
+			Int("orphan_rows", res.orphanSkipped).
+			Str("policy", orphanVerb(mv.orphanCfg.policy)).
+			Str("group", mv.group).
+			Msg("row-replay handled orphan-schema series; source segment will be deleted")
 	}
 	mv.progress.MarkMeasurePartCompleted(mv.group, sourceSegmentIDStr, sourceShardID, partID)
 	mv.progress.MarkSourceMeasurePartCompleted(mv.group, partPath, sourceShardID, partID)
@@ -564,6 +557,7 @@ func (mv *measureMigrationVisitor) streamPartToNode(nodeID string, targetShardID
 // Close cleans up all chunked sync clients and the row-replayer.
 func (mv *measureMigrationVisitor) Close() error {
 	if mv.replayer != nil {
+		mv.progress.AddOrphanRows(mv.group, catalogMeasure, mv.replayer.sender.orphanCounts)
 		cee, replayCloseErr := mv.replayer.Close()
 		recordNodeErrors(mv.progress, mv.group, mv.sourceStage, mv.targetStage, catalogMeasure, cee)
 		if replayCloseErr != nil {

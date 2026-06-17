@@ -19,7 +19,12 @@ package lifecycle
 
 import (
 	"context"
+	"encoding/base64"
+	"errors"
 	"fmt"
+	"path/filepath"
+	"strconv"
+	"strings"
 	"sync"
 	"time"
 
@@ -63,6 +68,7 @@ type cachedMeasureSchema struct {
 // real Write API, resolving each row's schema on demand via EntityValues.
 type measureRowReplayer struct {
 	selector        node.Selector
+	archiver        *orphanArchiver
 	sender          *batchSender
 	fs              fs.FileSystem
 	logger          *logger.Logger
@@ -74,6 +80,7 @@ type measureRowReplayer struct {
 	counter         *uint64
 	group           string
 	irPath          string
+	srcStage        string
 	rebuildEV       []*modelv1.TagValue
 	rebuildSeries   pbv1.Series
 	schemaCacheMu   sync.Mutex
@@ -88,7 +95,7 @@ func newMeasureRowReplayer(
 	group string, targetShardNum uint32,
 	selector node.Selector, client queue.Client,
 	md metadata.Repo, fileSystem fs.FileSystem,
-	l *logger.Logger, counter *uint64,
+	l *logger.Logger, counter *uint64, orphanCfg orphanConfig, srcStage string,
 ) (*measureRowReplayer, error) {
 	measures, err := md.MeasureRegistry().ListMeasure(ctx, schema.ListOpt{Group: group})
 	if err != nil {
@@ -115,6 +122,7 @@ func newMeasureRowReplayer(
 		targetShardNum:  targetShardNum,
 		selector:        selector,
 		sender:          newBatchSender(client, data.TopicMeasureWrite, rowReplayMaxBatchRows, int(rowReplayMaxBatchBytes), measureReplayBatchTimeout),
+		archiver:        newOrphanArchiver(orphanCfg, group, catalogMeasure, l),
 		fs:              fileSystem,
 		logger:          l,
 		measureSchemas:  measureSchemas,
@@ -122,6 +130,7 @@ func newMeasureRowReplayer(
 		mergedRuleToTag: deriveMergedRuleToTag(measures, rules, bindings),
 		rebuildIdx:      buildEntityRebuildIndex(measureSchemas),
 		counter:         counter,
+		srcStage:        srcStage,
 	}, nil
 }
 
@@ -153,7 +162,7 @@ func (r *measureRowReplayer) loadSchema(measureName string) (*cachedMeasureSchem
 	}
 	m, ok := r.measureSchemas[measureName]
 	if !ok {
-		return nil, fmt.Errorf("measure schema %s/%s not found in group snapshot", r.group, measureName)
+		return nil, fmt.Errorf("%w: measure %s/%s", errOrphanSchema, r.group, measureName)
 	}
 	c := &cachedMeasureSchema{
 		schema:        m,
@@ -171,17 +180,6 @@ func (r *measureRowReplayer) loadSchema(measureName string) (*cachedMeasureSchem
 // group's merged rule-to-tag map.
 func (r *measureRowReplayer) loadIndexResolver(segmentPath string) (*dump.IndexResolver, error) {
 	return reloadIndexResolver(&r.irMu, &r.irResolver, &r.irPath, segmentPath, r.mergedRuleToTag)
-}
-
-// partReplayResult reports what one part's replay delivered: the rows published,
-// the rows skipped because their series could not be resolved or rebuilt
-// (errSkipSeries), and a bounded sample of those skips' locations for the report.
-// A skipped > 0 result means the source part still holds data the migration could
-// not republish, so its source segment must be retained rather than deleted.
-type partReplayResult struct {
-	detail  []skipError
-	rows    int
-	skipped int
 }
 
 // replayPart opens a source part and replays its rows through the sender, which
@@ -207,6 +205,11 @@ func (r *measureRowReplayer) replayPart(ctx context.Context, partPath string) (p
 	}
 	reader.SetIndexResolver(ir)
 
+	loc, err := newSourceLoc(r.srcStage, segmentPath, shardPath, partID)
+	if err != nil {
+		return partReplayResult{}, fmt.Errorf("derive source location for part %s: %w", partPath, err)
+	}
+
 	// Reuse the dump iterator's file-read/decompress scratch across blocks
 	// (transient buffers, decoder owns the decompressed output) to cut churn.
 	reader.SetReuseBuffers(true)
@@ -221,17 +224,17 @@ func (r *measureRowReplayer) replayPart(ctx context.Context, partPath string) (p
 	var bc measureBlockCtx
 	bc.partPath = partPath
 	var pb measureProtoBuilder
-	// The sender's skip tallies are replayer-wide (one sender serves every part),
-	// so snapshot them around this part to recover its own skipped delta.
-	beforeRows := r.sender.skippedRows
-	beforeDetail := len(r.sender.skippedDetail)
-	rowCount, replayErr := r.sender.replay(ctx, r.logger, r.group, partPath, r.counter, cur,
-		func() error { return r.publishRowColumnar(ctx, &bc, &pb, cur.Block(), cur.Index()) })
-	res := partReplayResult{rows: rowCount, skipped: r.sender.skippedRows - beforeRows}
-	if d := r.sender.skippedDetail[beforeDetail:]; len(d) > 0 {
-		res.detail = append([]skipError(nil), d...)
-	}
-	return res, replayErr
+	// runPart opens the part's archive writer and commits/aborts its manifest; the
+	// orphan rows are appended to that writer (reached via bc.pw) inside replay.
+	var res partReplayResult
+	runErr := r.archiver.runPart(loc, func(pw *orphanPartWriter) error {
+		bc.pw = pw
+		var replayErr error
+		res, replayErr = r.sender.replay(ctx, r.logger, r.group, partPath, r.counter, cur,
+			func() error { return r.publishRowColumnar(ctx, &bc, &pb, cur.Block(), cur.Index()) })
+		return replayErr
+	})
+	return res, runErr
 }
 
 // measureBlockCtx caches the constants that are identical for every row of one
@@ -239,22 +242,37 @@ func (r *measureRowReplayer) replayPart(ctx context.Context, partPath string) (p
 // and entity TagValue maps, and — when routing does not depend on per-row tags
 // (no sharding key) — the resolved shardID, encoded entity values and node.
 type measureBlockCtx struct {
-	cached       *cachedMeasureSchema
-	entityIdx    map[string]*modelv1.TagValue
-	indexedTyped map[string]*modelv1.TagValue
-	subject      string
-	nodeID       string
-	partPath     string
-	entityEnc    []*modelv1.TagValue
-	seriesID     uint64
-	sizeHint     int
-	shardID      uint32
-	valid        bool
-	routeValid   bool
+	cached         *cachedMeasureSchema
+	pw             *orphanPartWriter
+	entityIdx      map[string]*modelv1.TagValue
+	indexedTyped   map[string]*modelv1.TagValue
+	subject        string
+	nodeID         string
+	partPath       string
+	entityEnc      []*modelv1.TagValue
+	seriesID       uint64
+	orphanSeriesID uint64
+	sizeHint       int
+	shardID        uint32
+	valid          bool
+	routeValid     bool
+	orphan         bool
 }
 
 // ensureBlock recomputes the block-constant context when the series changes.
 func (r *measureRowReplayer) ensureBlock(ir *dump.IndexResolver, bc *measureBlockCtx, cb *dumpmeasure.ColumnarBlock) error {
+	// Same orphan series as the previous row: the block was already archived once;
+	// keep skipping its rows without re-archiving. This consecutive-row guard is
+	// sufficient (no cross-block dedup set is needed) because a measure part emits
+	// exactly one contiguous block per series, in ascending seriesID order — see
+	// banyand/internal/dump/measure/iterator.go, whose blocks are per-series and
+	// series-sorted. A given series therefore never reappears in a later block of
+	// the same part, so it can never be archived twice. A per-series dedup set would
+	// be not only unnecessary but unsafe: a series legitimately never spans two
+	// blocks, so any such set could only ever wrongly drop rows.
+	if bc.orphan && bc.orphanSeriesID == uint64(cb.SeriesID) {
+		return newOrphanSkip(bc.partPath, uint64(cb.SeriesID), bc.subject)
+	}
 	if bc.valid && bc.seriesID == uint64(cb.SeriesID) {
 		return nil
 	}
@@ -266,8 +284,24 @@ func (r *measureRowReplayer) ensureBlock(ir *dump.IndexResolver, bc *measureBloc
 	}
 	cached, err := r.loadSchema(subject)
 	if err != nil {
+		if errors.Is(err, errOrphanSchema) {
+			// Deleted schema: archive this block's rows once, then skip every row of
+			// the series (the source segment is still deleted by the visitor). A
+			// failed archive write under the archive policy is FATAL — returning it
+			// as-is aborts the part so the source is retained and resume retries,
+			// never silently dropping orphan rows.
+			if archiveErr := r.archiveOrphanBlock(bc.pw, cb, subject, evList); archiveErr != nil {
+				return archiveErr
+			}
+			bc.valid = false
+			bc.orphan = true
+			bc.orphanSeriesID = uint64(cb.SeriesID)
+			bc.subject = subject
+			return newOrphanSkip(bc.partPath, uint64(cb.SeriesID), subject)
+		}
 		return err
 	}
+	bc.orphan = false
 	bc.valid = true
 	bc.seriesID = uint64(cb.SeriesID)
 	bc.subject = subject
@@ -384,4 +418,144 @@ func (r *measureRowReplayer) buildWriteRequest(
 		Request:      wr,
 	}
 	return wr, iwr, nil
+}
+
+// segmentSuffixFromPath extracts "20260601" from ".../seg-20260601".
+func segmentSuffixFromPath(segmentPath string) (string, error) {
+	base := filepath.Base(segmentPath)
+	suffix, ok := strings.CutPrefix(base, "seg-")
+	if !ok {
+		return "", fmt.Errorf("unexpected segment dir %q: missing %q prefix", base, "seg-")
+	}
+	return suffix, nil
+}
+
+// shardFromPath extracts the shard id from ".../shard-0".
+func shardFromPath(shardPath string) (uint32, error) {
+	base := filepath.Base(shardPath)
+	raw, ok := strings.CutPrefix(base, "shard-")
+	if !ok {
+		return 0, fmt.Errorf("unexpected shard dir %q: missing %q prefix", base, "shard-")
+	}
+	id, err := strconv.ParseUint(raw, 10, 32)
+	if err != nil {
+		return 0, fmt.Errorf("parse shard id from %q: %w", base, err)
+	}
+	return uint32(id), nil
+}
+
+// newSourceLoc builds the archive sourceLoc from a part's parsed path components,
+// validating the seg-/shard- directory prefixes so a malformed path fails the part
+// instead of silently misattributing orphan rows to shard 0 (and colliding archives).
+func newSourceLoc(stage, segmentPath, shardPath string, partID uint64) (sourceLoc, error) {
+	segment, err := segmentSuffixFromPath(segmentPath)
+	if err != nil {
+		return sourceLoc{}, err
+	}
+	shard, err := shardFromPath(shardPath)
+	if err != nil {
+		return sourceLoc{}, err
+	}
+	return sourceLoc{
+		Stage:   stage,
+		Segment: segment,
+		Shard:   shard,
+		Part:    fmt.Sprintf("%016x", partID),
+	}, nil
+}
+
+// archiveOrphanBlock writes all rows of an orphan series to the part archive
+// (a no-op write when policy is discard, which still tallies via the writer).
+// It returns a non-nil error when an archive write fails so the caller can treat
+// it as fatal (under the archive policy) and retain the source segment.
+func (r *measureRowReplayer) archiveOrphanBlock(pw *orphanPartWriter, cb *dumpmeasure.ColumnarBlock, subject string, evList pbv1.EntityValues) error {
+	entity := orphanEntityStrings(evList, cb.EntityValues)
+	// Indexed tags are block-constant (one series per block), so render them once
+	// here instead of per row inside the loop.
+	indexedTags := renderIndexedTags(cb.IndexedTags)
+	for i := 0; i < cb.Count; i++ {
+		rec := &archiveRecord{
+			Group: r.group, Catalog: catalogMeasure, Measure: subject,
+			Source:    pw.loc,
+			SeriesID:  uint64(cb.SeriesID),
+			Entity:    entity,
+			Timestamp: time.Unix(0, cb.Timestamp(i)).UTC().Format(time.RFC3339Nano),
+			TimeNanos: cb.Timestamp(i),
+			Version:   cb.Version(i),
+		}
+		rec.Tags = columnsToTyped(cb.TagCols, cb.TagTypes, i)
+		rec.Fields = columnsToTyped(cb.FieldCols, cb.FieldTypes, i)
+		rec.IndexedTags = indexedTags
+		if err := pw.appendRow(rec); err != nil {
+			return fmt.Errorf("archive orphan measure %s row: %w", subject, err)
+		}
+	}
+	return nil
+}
+
+// orphanEntityStrings renders an orphan series' entity faithfully from the
+// decoded entity values; when evList is nil (decode path produced nothing) it
+// falls back to unmarshaling the raw EntityValues bytes.
+func orphanEntityStrings(evList pbv1.EntityValues, raw []byte) []string {
+	entity := make([]string, 0)
+	if evList != nil {
+		for _, ev := range evList {
+			entity = append(entity, entityValueString(ev))
+		}
+		return entity
+	}
+	var s pbv1.Series
+	if s.Unmarshal(raw) == nil {
+		for _, ev := range s.EntityValues {
+			entity = append(entity, entityValueString(ev))
+		}
+	}
+	return entity
+}
+
+// columnsToTyped renders row i of named columns to schema-free typed values.
+func columnsToTyped(cols map[string][][]byte, types map[string]pbv1.ValueType, i int) map[string]typedValue {
+	if len(cols) == 0 {
+		return nil
+	}
+	out := make(map[string]typedValue, len(cols))
+	for name, vals := range cols {
+		if i < len(vals) {
+			out[name] = valueWithType(dump.DecodeTagValue(types[name], vals[i], nil))
+		}
+	}
+	return out
+}
+
+// renderIndexedTags renders the block's indexed tags. Indexed-tag raw bytes carry
+// no stored value type, so a printable value is emitted as text and a
+// non-printable one as "base64:"+encoding to avoid corrupting binary content.
+func renderIndexedTags(m map[uint32][][]byte) map[string][]string {
+	if len(m) == 0 {
+		return nil
+	}
+	out := make(map[string][]string, len(m))
+	for ruleID, vals := range m {
+		ss := make([]string, 0, len(vals))
+		for _, v := range vals {
+			if isPrintableBytes(v) {
+				ss = append(ss, string(v))
+			} else {
+				ss = append(ss, "base64:"+base64.StdEncoding.EncodeToString(v))
+			}
+		}
+		out[strconv.FormatUint(uint64(ruleID), 10)] = ss
+	}
+	return out
+}
+
+// isPrintableBytes reports whether b contains only printable ASCII (plus common
+// whitespace), mirroring banyand/cmd/dump's isPrintable.
+func isPrintableBytes(b []byte) bool {
+	for _, c := range b {
+		if c < 32 && c != '\n' && c != '\r' && c != '\t' || c > 126 {
+			return false
+		}
+	}
+	return true
 }

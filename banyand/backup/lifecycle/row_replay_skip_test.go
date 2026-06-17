@@ -21,12 +21,14 @@ import (
 	"errors"
 	"fmt"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
 	"github.com/apache/skywalking-banyandb/banyand/internal/storage"
 	"github.com/apache/skywalking-banyandb/pkg/logger"
+	"github.com/apache/skywalking-banyandb/pkg/timestamp"
 )
 
 // TestSkipContext_WrapsErrSkipSeries proves a located skip still satisfies the
@@ -123,4 +125,31 @@ func TestExcludeRetainedSuffixes_NoneRetained(t *testing.T) {
 
 	got := excludeRetainedSuffixes(suffixes, nil, rule, l)
 	assert.Equal(t, suffixes, got)
+}
+
+// TestStreamMigrationVisitor_SidxGapRetention proves the stream visitor now has
+// the same sidx-gap source retention as measure: a recorded skipped source
+// segment surfaces from SkippedSourceSegmentStarts and is excluded from the
+// delete-after-migration suffix set.
+func TestStreamMigrationVisitor_SidxGapRetention(t *testing.T) {
+	mv := &streamMigrationVisitor{skippedSourceTracker: newSkippedSourceTracker()}
+	require.Empty(t, mv.SkippedSourceSegmentStarts(), "no skips recorded yet")
+
+	rule := storage.IntervalRule{Unit: storage.DAY, Num: 1}
+	retainStart, err := storage.ParseSegmentTime("20260608", rule)
+	require.NoError(t, err)
+	segmentTR := &timestamp.TimeRange{Start: retainStart, End: retainStart.Add(24 * time.Hour)}
+
+	mv.recordSkippedSource(segmentTR)
+	// Idempotent: recording the same source twice keeps a single entry.
+	mv.recordSkippedSource(segmentTR)
+	starts := mv.SkippedSourceSegmentStarts()
+	require.Len(t, starts, 1)
+	assert.Equal(t, retainStart.UnixNano(), starts[0])
+
+	l := logger.GetLogger("stream-retention-test")
+	suffixes := []string{"20260607", "20260608", "20260609"}
+	got := excludeRetainedSuffixes(suffixes, mv.SkippedSourceSegmentStarts(), rule, l)
+	assert.Equal(t, []string{"20260607", "20260609"}, got,
+		"a stream source segment with a sidx-gap skip must be retained (excluded from deletion)")
 }
