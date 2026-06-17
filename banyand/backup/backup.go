@@ -275,7 +275,11 @@ func backupSnapshot(ctx context.Context, fs remote.FS, snapshotDir, catalog, tim
 	if concurrency < 1 {
 		concurrency = 1
 	}
-	g, gctx := errgroup.WithContext(ctx)
+	// A dedicated cancellable context lets us stop in-flight uploads as soon as the
+	// walk fails, instead of letting them run to completion for a doomed backup.
+	uploadCtx, cancelUploads := context.WithCancel(ctx)
+	defer cancelUploads()
+	g, gctx := errgroup.WithContext(uploadCtx)
 	g.SetLimit(concurrency)
 
 	walkErr := filepath.Walk(snapshotDir, func(filePath string, info os.FileInfo, iterErr error) error {
@@ -314,12 +318,22 @@ func backupSnapshot(ctx context.Context, fs remote.FS, snapshotDir, catalog, tim
 		// is held at a time, keeping peak memory bounded.
 		return uploadFile(gctx, fs, snapshotDir, relPath, remotePath)
 	})
-	// Always wait for in-flight uploads before returning, even on a walk error.
-	if waitErr := g.Wait(); waitErr != nil {
+	if walkErr != nil {
+		// The backup is already failing, so stop in-flight uploads rather than
+		// letting them run to completion.
+		cancelUploads()
+	}
+	waitErr := g.Wait()
+	// A real upload failure takes priority; a context.Canceled that we induced via
+	// cancelUploads above is not itself a reportable error.
+	if waitErr != nil && !errors.Is(waitErr, context.Canceled) {
 		return waitErr
 	}
 	if walkErr != nil {
 		return walkErr
+	}
+	if waitErr != nil {
+		return waitErr
 	}
 
 	// Remaining entries exist remotely but no longer locally: delete them.
