@@ -28,6 +28,7 @@ import (
 	"path"
 	"path/filepath"
 	"strings"
+	"sync/atomic"
 	"syscall"
 	"time"
 
@@ -35,6 +36,7 @@ import (
 	"github.com/robfig/cron/v3"
 	"github.com/spf13/cobra"
 	"go.uber.org/multierr"
+	"golang.org/x/sync/errgroup"
 
 	"github.com/apache/skywalking-banyandb/banyand/backup/snapshot"
 	cfg "github.com/apache/skywalking-banyandb/pkg/config"
@@ -50,20 +52,28 @@ import (
 	"github.com/apache/skywalking-banyandb/pkg/version"
 )
 
+// smallFileThreshold is the size below which files are uploaded concurrently.
+// Backup snapshots are dominated by tiny index files whose upload cost is bound
+// by per-request latency rather than bandwidth, so parallelizing them shortens
+// the overall backup well within the schedule interval. Larger files are uploaded
+// sequentially to keep the concurrent write-buffer memory bounded.
+const smallFileThreshold = 5 << 20 // 5 MiB
+
 type backupOptions struct {
-	fsConfig     remoteconfig.FsConfig
-	gRPCAddr     string
-	cert         string
-	timeStyle    string
-	schedule     string
-	streamRoot   string
-	measureRoot  string
-	propertyRoot string
-	traceRoot    string
-	schemaRoot   string
-	dest         string
-	enableTLS    bool
-	insecure     bool
+	fsConfig          remoteconfig.FsConfig
+	gRPCAddr          string
+	cert              string
+	timeStyle         string
+	schedule          string
+	streamRoot        string
+	measureRoot       string
+	propertyRoot      string
+	traceRoot         string
+	schemaRoot        string
+	dest              string
+	uploadConcurrency int
+	enableTLS         bool
+	insecure          bool
 }
 
 // NewBackupCommand creates a new backup command.
@@ -94,7 +104,19 @@ func NewBackupCommand() *cobra.Command {
 			schedLogger.Info().Msgf("backup to %s will run with schedule: %s", backupOpts.dest, backupOpts.schedule)
 			clockInstance := clock.New()
 			sch := timestamp.NewScheduler(schedLogger, clockInstance)
+			// A full backup may legitimately run longer than the schedule interval.
+			// The scheduler abandons (but does not cancel) an action that exceeds its
+			// internal timeout, so without this guard a slow run would overlap with the
+			// next scheduled run, stacking concurrent uploads until the process is
+			// OOM-killed. backupInFlight ensures only one backup runs at a time: a tick
+			// that fires while the previous run is still in progress is skipped.
+			var backupInFlight atomic.Bool
 			err := sch.Register(cmd.Context(), "backup", cron.Descriptor, backupOpts.schedule, func(ctx context.Context, _ time.Time, l *logger.Logger) bool {
+				if !backupInFlight.CompareAndSwap(false, true) {
+					l.Warn().Msg("previous backup is still running; skipping this scheduled run")
+					return true
+				}
+				defer backupInFlight.Store(false)
 				err := backupAction(ctx, backupOpts)
 				if err != nil {
 					l.Error().Err(err).Msg("backup failed")
@@ -130,6 +152,7 @@ func NewBackupCommand() *cobra.Command {
 	cmd.Flags().StringVar(&backupOpts.schemaRoot, "schema-root-path", "/tmp", "Root directory for schema property catalog")
 	cmd.Flags().StringVar(&backupOpts.dest, "dest", "", "Destination URL (e.g., file:///backups)")
 	cmd.Flags().StringVar(&backupOpts.timeStyle, "time-style", "daily", "Time directory style (daily|hourly)")
+	cmd.Flags().IntVar(&backupOpts.uploadConcurrency, "upload-concurrency", 8, "Number of concurrent uploads for small files (<5MiB)")
 	cmd.Flags().StringVar(
 		&backupOpts.schedule,
 		"schedule",
@@ -198,7 +221,7 @@ func backupAction(ctx context.Context, options backupOptions) error {
 		if strings.HasPrefix(snp.Name, snapshot.SchemaPropertyCatalogName+"/") {
 			catalogName = snapshot.SchemaPropertyCatalogName
 		}
-		multierr.AppendInto(&err, backupSnapshot(ctx, fs, snapshotDir, catalogName, timeDir))
+		multierr.AppendInto(&err, backupSnapshot(ctx, fs, snapshotDir, catalogName, timeDir, options.uploadConcurrency))
 	}
 	return err
 }
@@ -233,28 +256,78 @@ func getTimeDir(style string) string {
 	}
 }
 
-func backupSnapshot(ctx context.Context, fs remote.FS, snapshotDir, catalog, timeDir string) error {
-	localFiles, err := getAllFiles(snapshotDir)
+func backupSnapshot(ctx context.Context, fs remote.FS, snapshotDir, catalog, timeDir string, concurrency int) error {
+	prefix := path.Join(timeDir, catalog)
+
+	remoteFiles, err := fs.List(ctx, prefix+"/")
 	if err != nil {
 		return err
 	}
-
-	remotePrefix := path.Join(timeDir, catalog) + "/"
-
-	remoteFiles, err := fs.List(ctx, remotePrefix)
-	if err != nil {
-		return err
+	// Build a set of existing remote files for O(1) lookups. The local file list
+	// is never materialized; instead the snapshot is walked file by file so memory
+	// stays bounded by the remote file count rather than the (much larger) local
+	// file count.
+	remoteSet := make(map[string]struct{}, len(remoteFiles))
+	for _, remoteFile := range remoteFiles {
+		remoteSet[remoteFile] = struct{}{}
 	}
-	for _, relPath := range localFiles {
-		remotePath := path.Join(timeDir, catalog, relPath)
-		if !contains(remoteFiles, remotePath) {
-			if err := uploadFile(ctx, fs, snapshotDir, relPath, remotePath); err != nil {
-				return err
-			}
+
+	if concurrency < 1 {
+		concurrency = 1
+	}
+	g, gctx := errgroup.WithContext(ctx)
+	g.SetLimit(concurrency)
+
+	walkErr := filepath.Walk(snapshotDir, func(filePath string, info os.FileInfo, iterErr error) error {
+		if iterErr != nil {
+			return iterErr
+		}
+		if info.IsDir() {
+			return nil
+		}
+		// Stop walking promptly if a concurrent upload has already failed.
+		if gctx.Err() != nil {
+			return gctx.Err()
+		}
+		relPath, relErr := filepath.Rel(snapshotDir, filePath)
+		if relErr != nil {
+			return relErr
+		}
+		relPath = filepath.ToSlash(relPath)
+		remotePath := path.Join(prefix, relPath)
+		if _, ok := remoteSet[remotePath]; ok {
+			// Present both locally and remotely: keep it and drop it from the
+			// set so that whatever remains is exactly the orphaned remote files.
+			delete(remoteSet, remotePath)
+			return nil
+		}
+		if info.Size() < smallFileThreshold {
+			// Small files dominate and are latency-bound: upload them concurrently.
+			// relPath/remotePath are per-callback locals, so capturing them is safe.
+			// g.Go blocks once the limit is reached, providing natural backpressure.
+			g.Go(func() error {
+				return uploadFile(gctx, fs, snapshotDir, relPath, remotePath)
+			})
+			return nil
+		}
+		// Large files are uploaded sequentially so at most one large write buffer
+		// is held at a time, keeping peak memory bounded.
+		return uploadFile(gctx, fs, snapshotDir, relPath, remotePath)
+	})
+	// Always wait for in-flight uploads before returning, even on a walk error.
+	if waitErr := g.Wait(); waitErr != nil {
+		return waitErr
+	}
+	if walkErr != nil {
+		return walkErr
+	}
+
+	// Remaining entries exist remotely but no longer locally: delete them.
+	for orphan := range remoteSet {
+		if delErr := fs.Delete(ctx, orphan); delErr != nil {
+			logger.Warningf("Warning: failed to delete orphaned file %s: %v\n", orphan, delErr)
 		}
 	}
-
-	deleteOrphanedFiles(ctx, fs, localFiles, remoteFiles, timeDir, catalog)
 	return nil
 }
 
@@ -285,21 +358,6 @@ func uploadFile(ctx context.Context, fs remote.FS, snapshotDir, relPath, remoteP
 	defer file.Close()
 
 	return fs.Upload(ctx, remotePath, file)
-}
-
-func deleteOrphanedFiles(ctx context.Context, fs remote.FS, localFiles, remoteFiles []string, timeDir, snapshotName string) {
-	expected := make(map[string]struct{})
-	for _, f := range localFiles {
-		expected[path.Join(timeDir, snapshotName, f)] = struct{}{}
-	}
-
-	for _, remoteFile := range remoteFiles {
-		if _, exists := expected[remoteFile]; !exists {
-			if err := fs.Delete(ctx, remoteFile); err != nil {
-				logger.Warningf("Warning: failed to delete orphaned file %s: %v\n", remoteFile, err)
-			}
-		}
-	}
 }
 
 func contains(slice []string, s string) bool {

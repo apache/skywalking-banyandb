@@ -19,10 +19,13 @@ package backup
 
 import (
 	"context"
+	"fmt"
 	"io"
 	"os"
 	"path"
 	"path/filepath"
+	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -158,8 +161,10 @@ func TestGetAllFiles(t *testing.T) {
 }
 
 type mockFS struct {
-	uploaded []string
-	deleted  []string
+	uploadErrOn string
+	uploaded    []string
+	deleted     []string
+	mu          sync.Mutex
 }
 
 func (m *mockFS) List(_ context.Context, prefix string) ([]string, error) {
@@ -167,11 +172,18 @@ func (m *mockFS) List(_ context.Context, prefix string) ([]string, error) {
 }
 
 func (m *mockFS) Upload(_ context.Context, p string, _ io.Reader) error {
+	if m.uploadErrOn != "" && strings.Contains(p, m.uploadErrOn) {
+		return fmt.Errorf("mock upload failure for %s", p)
+	}
+	m.mu.Lock()
+	defer m.mu.Unlock()
 	m.uploaded = append(m.uploaded, p)
 	return nil
 }
 
 func (m *mockFS) Delete(_ context.Context, p string) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
 	m.deleted = append(m.deleted, p)
 	return nil
 }
@@ -185,7 +197,7 @@ func TestBackupSnapshot(t *testing.T) {
 	os.WriteFile(filepath.Join(tmpDir, "newfile.txt"), nil, 0o600)
 
 	m := &mockFS{}
-	err := backupSnapshot(context.Background(), m, tmpDir, "test-snapshot", "daily")
+	err := backupSnapshot(context.Background(), m, tmpDir, "test-snapshot", "daily", 4)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -198,6 +210,69 @@ func TestBackupSnapshot(t *testing.T) {
 	wantDelete := "daily/test-snapshot/existing.txt"
 	if len(m.deleted) != 1 || m.deleted[0] != wantDelete {
 		t.Errorf("deleted = %v, want %v", m.deleted, wantDelete)
+	}
+}
+
+// TestBackupSnapshotConcurrent exercises the concurrent small-file path, the
+// sequential large-file path (>= smallFileThreshold), and orphan deletion all
+// at once. Run with -race to catch data races in the upload fan-out.
+func TestBackupSnapshotConcurrent(t *testing.T) {
+	tmpDir := t.TempDir()
+	const numSmall = 50
+	for i := 0; i < numSmall; i++ {
+		sub := filepath.Join(tmpDir, fmt.Sprintf("seg-%d", i%5))
+		if err := os.MkdirAll(sub, 0o750); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(filepath.Join(sub, fmt.Sprintf("f-%d.tm", i)), []byte("x"), 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	// A file at exactly smallFileThreshold takes the sequential branch (size is
+	// not strictly less than the threshold).
+	if err := os.WriteFile(filepath.Join(tmpDir, "big.bin"), make([]byte, smallFileThreshold), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	m := &mockFS{}
+	if err := backupSnapshot(context.Background(), m, tmpDir, "test-snapshot", "daily", 8); err != nil {
+		t.Fatal(err)
+	}
+
+	if len(m.uploaded) != numSmall+1 {
+		t.Fatalf("uploaded %d files, want %d", len(m.uploaded), numSmall+1)
+	}
+	uploaded := make(map[string]struct{}, len(m.uploaded))
+	for _, p := range m.uploaded {
+		uploaded[p] = struct{}{}
+	}
+	if _, ok := uploaded["daily/test-snapshot/big.bin"]; !ok {
+		t.Errorf("large file not uploaded; uploaded=%v", m.uploaded)
+	}
+	wantDelete := "daily/test-snapshot/existing.txt"
+	if len(m.deleted) != 1 || m.deleted[0] != wantDelete {
+		t.Errorf("deleted = %v, want [%s]", m.deleted, wantDelete)
+	}
+}
+
+// TestBackupSnapshotUploadError verifies that a failed upload surfaces an error
+// and that orphaned remote files are NOT deleted when the backup did not fully
+// succeed.
+func TestBackupSnapshotUploadError(t *testing.T) {
+	tmpDir := t.TempDir()
+	for _, name := range []string{"a.tm", "b.tm", "boom.tm"} {
+		if err := os.WriteFile(filepath.Join(tmpDir, name), []byte("x"), 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	m := &mockFS{uploadErrOn: "boom.tm"}
+	err := backupSnapshot(context.Background(), m, tmpDir, "test-snapshot", "daily", 4)
+	if err == nil {
+		t.Fatal("expected an error when an upload fails, got nil")
+	}
+	if len(m.deleted) != 0 {
+		t.Errorf("orphans must not be deleted on a failed backup, deleted = %v", m.deleted)
 	}
 }
 

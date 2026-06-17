@@ -66,6 +66,7 @@ Release Notes.
 - Snapshot/backup and data inspection no longer reopen idle-closed segments, avoiding cold-segment nil-index panics and index lock-file churn.
 - Add opt-in vectorized measure query tracing over raw-frame distributed queries, including a trace envelope and fixed trace-label vocabulary.
 - Enhance segment lifecycle: `refCount` now counts only active users, decoupled from "open" (`index != nil`), adding a "dormant" state (open, `refCount == 0`). A `DecRef` to zero no longer closes a segment; idle reclaim and retention delete act only at `refCount == 0`, so an in-flight snapshot/inspect is no longer torn down mid-operation (fixing the cold-node nil-index panic and bluge lock churn) while idle segments still release their bluge writers.
+- Speed up GCS backup uploads: write each object and its checksum metadata in one request, dropping the per-object `Update` round-trip.
 
 ### Bug Fixes
 
@@ -116,6 +117,7 @@ Release Notes.
 - Fix FODC agent labeling metrics with `node_role="ROLE_UNSPECIFIED"`. The agent resolved the node role exactly once at startup via a single `GetCurrentNode` poll whose endpoint retries spanned only ~1s; when the sibling lifecycle/banyandb gRPC server was not yet listening (`connect: cannot assign requested address`) the role fell back to `ROLE_UNSPECIFIED` permanently, so most nodes never reported their real `ROLE_DATA`/`ROLE_LIAISON`. Retry the initial node-role resolution with exponential backoff until a non-unspecified role is obtained or a 25s budget elapses.
 - Fix lifecycle row-replay OOM on large measure parts by streaming the dump reader, pooling size-classed marshal buffers, and bounding in-flight batch bytes (default 32 MiB); peak heap drops ~1.5 GB→~296 MB.
 - Consolidate lifecycle migration report errors into a single flat list of structured, stage-aware entries.
+- Fix backup container OOM from overlapping scheduled runs; serialize runs and upload small snapshot files concurrently.
 
 ### Document
 
