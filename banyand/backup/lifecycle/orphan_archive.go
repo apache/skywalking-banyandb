@@ -371,14 +371,16 @@ func (a *orphanArchiver) loadManifestParts(segment string) map[string]map[string
 	if err != nil {
 		// First run for this segment has no manifest yet; any other read error means
 		// prior tallies are about to be lost on the next write, so make it visible.
-		if !os.IsNotExist(err) {
+		if !os.IsNotExist(err) && a.l != nil {
 			a.l.Warn().Err(err).Str("segment", segment).Msg("cannot read existing orphan manifest; prior tallies will be overwritten")
 		}
 		return nil
 	}
 	var m manifestFile
 	if err := json.Unmarshal(b, &m); err != nil {
-		a.l.Warn().Err(err).Str("segment", segment).Msg("corrupt orphan manifest; prior tallies will be overwritten")
+		if a.l != nil {
+			a.l.Warn().Err(err).Str("segment", segment).Msg("corrupt orphan manifest; prior tallies will be overwritten")
+		}
 		return nil
 	}
 	return m.Parts

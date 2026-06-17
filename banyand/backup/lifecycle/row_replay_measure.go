@@ -205,11 +205,9 @@ func (r *measureRowReplayer) replayPart(ctx context.Context, partPath string) (p
 	}
 	reader.SetIndexResolver(ir)
 
-	loc := sourceLoc{
-		Stage:   r.srcStage,
-		Segment: segmentSuffixFromPath(segmentPath),
-		Shard:   shardFromPath(shardPath),
-		Part:    fmt.Sprintf("%016x", partID),
+	loc, err := newSourceLoc(r.srcStage, segmentPath, shardPath, partID)
+	if err != nil {
+		return partReplayResult{}, fmt.Errorf("derive source location for part %s: %w", partPath, err)
 	}
 
 	// Reuse the dump iterator's file-read/decompress scratch across blocks
@@ -423,14 +421,47 @@ func (r *measureRowReplayer) buildWriteRequest(
 }
 
 // segmentSuffixFromPath extracts "20260601" from ".../seg-20260601".
-func segmentSuffixFromPath(segmentPath string) string {
-	return strings.TrimPrefix(filepath.Base(segmentPath), "seg-")
+func segmentSuffixFromPath(segmentPath string) (string, error) {
+	base := filepath.Base(segmentPath)
+	suffix, ok := strings.CutPrefix(base, "seg-")
+	if !ok {
+		return "", fmt.Errorf("unexpected segment dir %q: missing %q prefix", base, "seg-")
+	}
+	return suffix, nil
 }
 
 // shardFromPath extracts the shard id from ".../shard-0".
-func shardFromPath(shardPath string) uint32 {
-	id, _ := strconv.ParseUint(strings.TrimPrefix(filepath.Base(shardPath), "shard-"), 10, 32)
-	return uint32(id)
+func shardFromPath(shardPath string) (uint32, error) {
+	base := filepath.Base(shardPath)
+	raw, ok := strings.CutPrefix(base, "shard-")
+	if !ok {
+		return 0, fmt.Errorf("unexpected shard dir %q: missing %q prefix", base, "shard-")
+	}
+	id, err := strconv.ParseUint(raw, 10, 32)
+	if err != nil {
+		return 0, fmt.Errorf("parse shard id from %q: %w", base, err)
+	}
+	return uint32(id), nil
+}
+
+// newSourceLoc builds the archive sourceLoc from a part's parsed path components,
+// validating the seg-/shard- directory prefixes so a malformed path fails the part
+// instead of silently misattributing orphan rows to shard 0 (and colliding archives).
+func newSourceLoc(stage, segmentPath, shardPath string, partID uint64) (sourceLoc, error) {
+	segment, err := segmentSuffixFromPath(segmentPath)
+	if err != nil {
+		return sourceLoc{}, err
+	}
+	shard, err := shardFromPath(shardPath)
+	if err != nil {
+		return sourceLoc{}, err
+	}
+	return sourceLoc{
+		Stage:   stage,
+		Segment: segment,
+		Shard:   shard,
+		Part:    fmt.Sprintf("%016x", partID),
+	}, nil
 }
 
 // archiveOrphanBlock writes all rows of an orphan series to the part archive

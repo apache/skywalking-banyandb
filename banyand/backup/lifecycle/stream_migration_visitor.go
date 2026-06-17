@@ -438,7 +438,7 @@ func (mv *streamMigrationVisitor) visitPartRowReplay(ctx context.Context, segmen
 	if res.orphanSkipped > 0 {
 		// Orphan (deleted schema): archived or discarded; the source segment is NOT
 		// retained — it is deleted normally. This is expected handling, not a
-		// migration error: the per-subject counts are reported via orphan_handling
+		// migration error: the per-subject counts are reported via orphans
 		// (pushed at Close), not recorded in the errors buckets.
 		mv.logger.Warn().
 			Uint64("part_id", partID).

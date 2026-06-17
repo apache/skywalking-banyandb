@@ -183,7 +183,7 @@ type batchSender struct {
 	// not just a count. Capped at maxSkipDetail to bound memory.
 	skippedDetail []skipError
 	// orphanCounts breaks orphanRows down per measure/stream subject name. The
-	// visitor pushes it into the report's orphan_handling section at Close, so the
+	// visitor pushes it into the report's orphans section at Close, so the
 	// report shows which deleted schema lost how many rows (archived or discarded).
 	orphanCounts  map[string]uint64
 	topic         bus.Topic
@@ -232,7 +232,7 @@ func (s *batchSender) recordSkip(err error) {
 }
 
 // recordOrphanSkip tallies one row dropped for a deleted schema, accumulating a
-// per-subject count for the report's orphan_handling section. Unlike recordSkip
+// per-subject count for the report's orphans section. Unlike recordSkip
 // it keeps no located sample: orphans are reported as per-subject counts, leaving
 // the bounded skippedDetail sample entirely for sidx-gap skips.
 func (s *batchSender) recordOrphanSkip(err error) {

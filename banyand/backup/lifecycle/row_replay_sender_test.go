@@ -866,7 +866,7 @@ func TestReplayCountsOrphanSkipSeparately(t *testing.T) {
 	require.Equal(t, 1, sender.orphanRows, "one orphan-schema row must be tallied in orphanRows")
 	require.Equal(t, 0, sender.skippedRows, "orphan skip must not increment skippedRows")
 	require.Equal(t, map[string]uint64{"deleted_measure": 1}, sender.orphanCounts,
-		"orphan row must be tallied per deleted subject for the report's orphan_handling")
+		"orphan row must be tallied per deleted subject for the report's orphans")
 }
 
 // TestReplay_SurfacesSynchronousPublishErrorPromptly pins that a synchronous

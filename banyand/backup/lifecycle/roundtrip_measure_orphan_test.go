@@ -20,7 +20,6 @@ package lifecycle
 import (
 	"context"
 	"encoding/json"
-	"fmt"
 	"os"
 	"path/filepath"
 	"testing"
@@ -160,12 +159,9 @@ func locFromPartDir(t *testing.T, partDir string) sourceLoc {
 	partID, _, segmentPath, err := parseReplayPartPath(partDir)
 	require.NoError(t, err)
 	shardPath := filepath.Dir(partDir)
-	return sourceLoc{
-		Stage:   orphanRTSrcStage,
-		Segment: segmentSuffixFromPath(segmentPath),
-		Shard:   shardFromPath(shardPath),
-		Part:    fmt.Sprintf("%016x", partID),
-	}
+	loc, err := newSourceLoc(orphanRTSrcStage, segmentPath, shardPath, partID)
+	require.NoError(t, err)
+	return loc
 }
 
 // countArchiveRows sums the JSONL rows across every archive file under root.

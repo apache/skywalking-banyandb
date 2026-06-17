@@ -158,11 +158,9 @@ func (r *streamRowReplayer) replayPart(ctx context.Context, partPath string) (pa
 	}
 	reader.SetIndexResolver(ir)
 
-	loc := sourceLoc{
-		Stage:   r.srcStage,
-		Segment: segmentSuffixFromPath(segmentPath),
-		Shard:   shardFromPath(shardPath),
-		Part:    fmt.Sprintf("%016x", partID),
+	loc, locErr := newSourceLoc(r.srcStage, segmentPath, shardPath, partID)
+	if locErr != nil {
+		return partReplayResult{}, fmt.Errorf("derive source location for part %s: %w", partPath, locErr)
 	}
 
 	it := reader.Iterator()

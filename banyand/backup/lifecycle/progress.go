@@ -84,7 +84,7 @@ type Progress struct {
 	// OrphanRows reports, per catalog -> group -> deleted measure/stream subject,
 	// how many rows were archived or discarded because the schema was deleted from
 	// the registry. Accumulated across resume cycles (orphan parts are marked
-	// completed, so each row is counted once), fed into the report's orphan_handling.
+	// completed, so each row is counted once), fed into the report's orphans.
 	OrphanRows map[string]map[string]map[string]uint64 `json:"orphan_rows"`
 
 	// MigrationErrors is the single source of structured migration errors for both
@@ -180,7 +180,7 @@ func NewProgress(path string, l *logger.Logger) *Progress {
 }
 
 // AddOrphanRows accumulates per-subject orphan row counts for one (catalog,
-// group) into the report's orphan_handling section. Additive so resume cycles —
+// group) into the report's orphans section. Additive so resume cycles —
 // each replaying a different subset of parts — sum to the true total.
 func (p *Progress) AddOrphanRows(group, catalog string, bySubject map[string]uint64) {
 	if len(bySubject) == 0 {
