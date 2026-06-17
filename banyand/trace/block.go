@@ -487,29 +487,31 @@ func (bc *blockCursor) copyAllTo(r *model.TraceResult) {
 
 func (bc *blockCursor) loadData(tmpBlock *block) bool {
 	tmpBlock.reset()
-	bc.bm.tagProjection = bc.tagProjection
 	var t map[string]*dataBlock
-	projectionNames := make([]string, len(bc.tagProjection.Names))
-	copy(projectionNames, bc.tagProjection.Names)
-	for i, name := range bc.tagProjection.Names {
-		for typedTag, block := range bc.bm.tags {
-			if decodeTypedTag(typedTag) != name {
-				continue
-			}
-			if hasTypeSuffix(typedTag) {
-				schemaType, ok := bc.schemaTagTypes[name]
-				if !ok {
+	var projectionNames []string
+	if bc.tagProjection != nil && len(bc.tagProjection.Names) > 0 {
+		projectionNames = make([]string, len(bc.tagProjection.Names))
+		copy(projectionNames, bc.tagProjection.Names)
+		for i, name := range bc.tagProjection.Names {
+			for typedTag, block := range bc.bm.tags {
+				if decodeTypedTag(typedTag) != name {
 					continue
 				}
-				if bmType, ok := bc.bm.tagType[typedTag]; !ok || bmType != schemaType {
-					continue
+				if hasTypeSuffix(typedTag) {
+					schemaType, ok := bc.schemaTagTypes[name]
+					if !ok {
+						continue
+					}
+					if bmType, ok := bc.bm.tagType[typedTag]; !ok || bmType != schemaType {
+						continue
+					}
+					projectionNames[i] = typedTag
 				}
-				projectionNames[i] = typedTag
+				if t == nil {
+					t = make(map[string]*dataBlock, len(bc.tagProjection.Names))
+				}
+				t[typedTag] = block
 			}
-			if t == nil {
-				t = make(map[string]*dataBlock, len(bc.tagProjection.Names))
-			}
-			t[typedTag] = block
 		}
 	}
 

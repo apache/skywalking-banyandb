@@ -48,6 +48,7 @@ type traceBatch struct {
 type scanBatch struct {
 	err       error
 	cursorCh  <-chan scanCursorResult
+	cursors   []*blockCursor
 	snapshots []*snapshot
 	traceBatch
 }
@@ -306,7 +307,6 @@ type sidxStreamRunner struct {
 	req            sidx.QueryRequest
 	batch          traceBatch
 	errWg          sync.WaitGroup
-	maxTraceSize   int
 	nextSeq        int
 	total          atomic.Int64
 	batchesEmitted atomic.Int64
@@ -364,7 +364,6 @@ func newSIDXStreamRunner(
 		streamCtx:    streamCtx,
 		cancelFunc:   cancel,
 		req:          req,
-		maxTraceSize: maxTraceSize,
 		batchSize:    batchSize,
 		heap:         &sidxStreamHeap{asc: asc},
 		seenTraceIDs: make(map[string]struct{}),
@@ -809,8 +808,27 @@ type scanCursorResult struct {
 }
 
 func (t *trace) scanPartsInline(ctx context.Context, parts []*part, groupedIDs [][]string, qo queryOptions, out chan<- scanCursorResult) {
-	if len(parts) == 0 {
+	cursors, scanErr := t.scanPartsInlineSync(ctx, parts, groupedIDs, qo)
+	if scanErr != nil {
+		select {
+		case out <- scanCursorResult{err: scanErr}:
+		case <-ctx.Done():
+		}
 		return
+	}
+	for _, cursor := range cursors {
+		select {
+		case out <- scanCursorResult{cursor: cursor}:
+		case <-ctx.Done():
+			releaseBlockCursor(cursor)
+			return
+		}
+	}
+}
+
+func (t *trace) scanPartsInlineSync(ctx context.Context, parts []*part, groupedIDs [][]string, qo queryOptions) ([]*blockCursor, error) {
+	if len(parts) == 0 {
+		return nil, nil
 	}
 
 	recordBlock, finishSpan := startAggregatedBlockScanSpan(ctx, groupedIDs, parts)
@@ -836,15 +854,12 @@ func (t *trace) scanPartsInline(ctx context.Context, parts []*part, groupedIDs [
 	tstIter.init(bma, parts, groupedIDs)
 	if initErr := tstIter.Error(); initErr != nil {
 		spanErr = fmt.Errorf("cannot init tstIter: %w", initErr)
-		select {
-		case out <- scanCursorResult{err: spanErr}:
-		case <-ctx.Done():
-		}
-		return
+		return nil, spanErr
 	}
 
 	quota := t.pm.AvailableBytes()
 	hit := 0
+	cursors := make([]*blockCursor, 0)
 
 	for tstIter.nextBlock() {
 		if hit%checkDoneEvery == 0 {
@@ -852,7 +867,10 @@ func (t *trace) scanPartsInline(ctx context.Context, parts []*part, groupedIDs [
 			case <-ctx.Done():
 				spanErr = pkgerrors.WithMessagef(ctx.Err(), "interrupt: scanned %d blocks, remained %d/%d parts to scan",
 					cursorCount, len(tstIter.piPool)-tstIter.idx, len(tstIter.piPool))
-				return
+				for _, cursor := range cursors {
+					releaseBlockCursor(cursor)
+				}
+				return nil, spanErr
 			default:
 			}
 		}
@@ -869,15 +887,11 @@ func (t *trace) scanPartsInline(ctx context.Context, parts []*part, groupedIDs [
 			releaseBlockCursor(bc)
 			if cursorCount > 0 {
 				// Have results, return them successfully by just closing channel
-				return
+				return cursors, nil
 			}
 			// No results, send error
 			spanErr = fmt.Errorf("block scan quota exceeded: block size %d bytes, quota is %d bytes", blockSize, quota)
-			select {
-			case out <- scanCursorResult{err: spanErr}:
-			case <-ctx.Done():
-			}
-			return
+			return nil, spanErr
 		}
 
 		// Quota OK, send cursor
@@ -886,22 +900,15 @@ func (t *trace) scanPartsInline(ctx context.Context, parts []*part, groupedIDs [
 		}
 		spanBlockBytes += blockSize
 		cursorCount++
-
-		select {
-		case out <- scanCursorResult{cursor: bc}:
-		case <-ctx.Done():
-			releaseBlockCursor(bc)
-			spanErr = pkgerrors.WithMessagef(ctx.Err(), "interrupt: scanned %d blocks", cursorCount)
-			return
-		}
+		cursors = append(cursors, bc)
 	}
 
 	if iterErr := tstIter.Error(); iterErr != nil {
 		spanErr = fmt.Errorf("cannot iterate tstIter: %w", iterErr)
-		select {
-		case out <- scanCursorResult{err: spanErr}:
-		case <-ctx.Done():
+		for _, cursor := range cursors {
+			releaseBlockCursor(cursor)
 		}
-		return
+		return nil, spanErr
 	}
+	return cursors, nil
 }

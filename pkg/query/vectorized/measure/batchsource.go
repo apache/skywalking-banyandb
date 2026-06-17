@@ -21,7 +21,6 @@ import (
 	"context"
 	"fmt"
 
-	modelv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/model/v1"
 	"github.com/apache/skywalking-banyandb/pkg/query"
 	"github.com/apache/skywalking-banyandb/pkg/query/model"
 	"github.com/apache/skywalking-banyandb/pkg/query/tracelabels"
@@ -225,103 +224,7 @@ func (s *BatchSourceFromBatchResult) Close() error {
 	return nil
 }
 
-// AppendColumnRange copies n rows starting at srcPos from src into dst
-// (appending). Both columns must share the same TypedColumn[T] type;
-// returns an error on mismatch. Validity bits are propagated cell-by-cell
-// via dst.MarkNullAt when src.IsNull reports null at the corresponding
-// row.
-//
-// Slice-typed cell values ([]byte / []int64 / []string) are *not*
-// deep-copied here. The upstream storage decode (in
-// banyand/measure/batch_decode.go::appendDecodedTagBytesAsTyped et al.
-// or the row-shape converter via slices.Clone) already produced a fresh
-// owned slice, and each MeasureBatch column uses its own data backing —
-// no pooling between MeasureBatch and the consumer's RecordBatch — so
-// sharing the slice reference is safe and avoids a redundant double
-// copy that would regress the egress bench gates by ~3 allocs per
-// slice-typed cell.
+// AppendColumnRange delegates to the shared vectorized helper.
 func AppendColumnRange(dst, src vectorized.Column, srcPos, n int) error {
-	startLen := dst.Len()
-	switch d := dst.(type) {
-	case *vectorized.TypedColumn[int64]:
-		sCol, ok := src.(*vectorized.TypedColumn[int64])
-		if !ok {
-			return fmt.Errorf("AppendColumnRange: dst int64 vs src %s", src.Type())
-		}
-		sData := sCol.Data()
-		for k := range n {
-			d.Append(sData[srcPos+k])
-		}
-	case *vectorized.TypedColumn[float64]:
-		sCol, ok := src.(*vectorized.TypedColumn[float64])
-		if !ok {
-			return fmt.Errorf("AppendColumnRange: dst float64 vs src %s", src.Type())
-		}
-		sData := sCol.Data()
-		for k := range n {
-			d.Append(sData[srcPos+k])
-		}
-	case *vectorized.TypedColumn[string]:
-		sCol, ok := src.(*vectorized.TypedColumn[string])
-		if !ok {
-			return fmt.Errorf("AppendColumnRange: dst string vs src %s", src.Type())
-		}
-		sData := sCol.Data()
-		for k := range n {
-			d.Append(sData[srcPos+k])
-		}
-	case *vectorized.TypedColumn[[]byte]:
-		sCol, ok := src.(*vectorized.TypedColumn[[]byte])
-		if !ok {
-			return fmt.Errorf("AppendColumnRange: dst bytes vs src %s", src.Type())
-		}
-		sData := sCol.Data()
-		for k := range n {
-			d.Append(sData[srcPos+k])
-		}
-	case *vectorized.TypedColumn[[]int64]:
-		sCol, ok := src.(*vectorized.TypedColumn[[]int64])
-		if !ok {
-			return fmt.Errorf("AppendColumnRange: dst int64[] vs src %s", src.Type())
-		}
-		sData := sCol.Data()
-		for k := range n {
-			d.Append(sData[srcPos+k])
-		}
-	case *vectorized.TypedColumn[[]string]:
-		sCol, ok := src.(*vectorized.TypedColumn[[]string])
-		if !ok {
-			return fmt.Errorf("AppendColumnRange: dst string[] vs src %s", src.Type())
-		}
-		sData := sCol.Data()
-		for k := range n {
-			d.Append(sData[srcPos+k])
-		}
-	case *vectorized.TypedColumn[*modelv1.TagValue]:
-		sCol, ok := src.(*vectorized.TypedColumn[*modelv1.TagValue])
-		if !ok {
-			return fmt.Errorf("AppendColumnRange: dst tagvalue vs src %s", src.Type())
-		}
-		sData := sCol.Data()
-		for k := range n {
-			d.Append(sData[srcPos+k])
-		}
-	case *vectorized.TypedColumn[*modelv1.FieldValue]:
-		sCol, ok := src.(*vectorized.TypedColumn[*modelv1.FieldValue])
-		if !ok {
-			return fmt.Errorf("AppendColumnRange: dst fieldvalue vs src %s", src.Type())
-		}
-		sData := sCol.Data()
-		for k := range n {
-			d.Append(sData[srcPos+k])
-		}
-	default:
-		return fmt.Errorf("AppendColumnRange: unsupported dst type %s", dst.Type())
-	}
-	for k := range n {
-		if src.IsNull(srcPos + k) {
-			dst.MarkNullAt(startLen + k)
-		}
-	}
-	return nil
+	return vectorized.AppendColumnRange(dst, src, srcPos, n)
 }

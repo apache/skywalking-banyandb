@@ -37,6 +37,7 @@ spec:
           args:
             - standalone
             - --measure-vectorized-enabled=false
+            - --trace-vectorized-enabled=false
           ports:
             - name: grpc
               containerPort: 17912

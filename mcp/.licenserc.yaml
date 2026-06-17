@@ -70,6 +70,7 @@ header: # `header` section is configurations for source codes license header.
     - '.dockerignore'
     - 'banyandb-data'
     - '.vscode'
+    - 'mcp-licenses'
 
   comment: on-failure # on what condition license-eye will comment on the pull request, `on-failure`, `always`, `never`.
 

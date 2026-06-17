@@ -260,7 +260,6 @@ func (l *lifecycleService) PreRun(_ context.Context) error {
 	l.cyclesTotal = lifecycleScope.NewCounter("cycles_total", cycleLabels...)
 	l.lastRunTimestamp = lifecycleScope.NewGauge("last_run_timestamp_seconds", cycleLabels...)
 	l.lastRunSuccess = lifecycleScope.NewGauge("last_run_success", cycleLabels...)
-
 	if l.schedule != "" && l.lifecycleTLS {
 		var err error
 		l.tlsReloader, err = pkgtls.NewReloader(l.lifecycleCertFile, l.lifecycleKeyFile, l.l)
@@ -572,13 +571,6 @@ func (l *lifecycleService) action(ctx context.Context) (err error) {
 	l.lastRunNode = ""
 	l.lastRunRole = ""
 	l.lastRunTier = ""
-	// Do NOT reset the emittedLastRun* fields here — they carry the
-	// (group, remote_*) tuple of the last series actually Set on
-	// Prometheus, which recordLastRun needs to Delete in the next
-	// cycle so the previous cycle's series doesn't accumulate as a
-	// stale labeled gauge. An empty cycle still has a previous emitted
-	// tuple to clean up; the new cycle's Set will then re-stamp with
-	// the current (possibly empty) labels.
 	// Stamp last-run metrics at the end of this cycle regardless of outcome.
 	// Using defer keeps the success/error bookkeeping in one place even as
 	// the body grows new early returns; the metrics gauge Set()s observe
