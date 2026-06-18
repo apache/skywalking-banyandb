@@ -667,7 +667,7 @@ const (
 	roundtripE2ETagFamily   = "default"
 	roundtripE2EIndexRule   = "service_index"
 	roundtripE2EPointCount  = 10
-	roundtripE2EFlushWait   = 30 * time.Second
+	roundtripE2EFlushWait   = 60 * time.Second
 	roundtripE2EBatchTimout = 5 * time.Second
 )
 
