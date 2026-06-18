@@ -46,37 +46,3 @@ func NewPhase1Schema() *vectorized.BatchSchema {
 		{Name: Phase1ColumnNameTraceID, Role: vectorized.RoleTag, Type: vectorized.ColumnTypeString},
 	})
 }
-
-// Phase-2 column indices.
-const (
-	phase2ColumnTraceID = iota
-	phase2ColumnKey
-	phase2ColumnSpan
-	phase2ColumnSpanID
-	// phase2FixedColumnCount is the number of fixed (non-tag) Phase-2 columns;
-	// dynamic tag columns start at this index.
-	phase2FixedColumnCount
-)
-
-// Phase-2 column names.
-const (
-	Phase2ColumnNameTraceID = "traceID"
-	Phase2ColumnNameKey     = "key"
-	Phase2ColumnNameSpan    = "span"
-	Phase2ColumnNameSpanID  = "spanID"
-)
-
-// NewPhase2Schema returns the span-materialization batch schema.
-// tagCols are the identity-omitted projected tag names.
-func NewPhase2Schema(tagCols []string) *vectorized.BatchSchema {
-	cols := []vectorized.ColumnDef{
-		{Name: Phase2ColumnNameTraceID, Role: vectorized.RoleTag, Type: vectorized.ColumnTypeString},
-		{Name: Phase2ColumnNameKey, Role: vectorized.RoleTimestamp, Type: vectorized.ColumnTypeInt64},
-		{Name: Phase2ColumnNameSpan, Role: vectorized.RoleTag, Type: vectorized.ColumnTypeBytes},
-		{Name: Phase2ColumnNameSpanID, Role: vectorized.RoleTag, Type: vectorized.ColumnTypeString},
-	}
-	for _, name := range tagCols {
-		cols = append(cols, vectorized.ColumnDef{Name: name, Role: vectorized.RoleTag, Type: vectorized.ColumnTypeTagValue})
-	}
-	return vectorized.NewBatchSchema(cols)
-}

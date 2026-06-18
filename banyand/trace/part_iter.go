@@ -214,7 +214,7 @@ func (pi *partIter) readPrimaryBlock(bms []blockMetadata, mr *primaryBlockMetada
 	if err != nil {
 		return nil, fmt.Errorf("cannot decompress index block: %w", err)
 	}
-	bms, err = unmarshalBlockMetadata(bms, pi.primaryBuf, pi.p.tagType)
+	bms, err = unmarshalBlockMetadataFiltered(bms, pi.primaryBuf, pi.p.tagType, pi.tids)
 	if err != nil {
 		return nil, fmt.Errorf("cannot unmarshal index block: %w", err)
 	}

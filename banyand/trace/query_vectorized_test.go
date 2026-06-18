@@ -97,14 +97,20 @@ func TestBuildVectorizedPhase1TraceBatchStaticDedupLimitParity(t *testing.T) {
 		"[a,a,b] limit 2 must yield [a], not [a,b] or [a,a]")
 }
 
-// TestLoadTraceCursorsSyncBudgetPreCheck verifies that the hard-stop and metadata
-// preflight gates in loadTraceCursorsSync prevent over-loading when a budget is set.
-// The test uses budget=1 byte so that after cursor[0] loads any real span data,
-// usedBytes >= 1 and every subsequent cursor is stopped by the hard-stop gate.
-// Loaded cursors are verified to have non-empty spans, confirming loadData ran for
-// them. Cursors absent from the result were released without loading — proven by the
-// fact that filtered count is strictly less than the total.
-func TestLoadTraceCursorsSyncBudgetPreCheck(t *testing.T) {
+// newScanBatchFromCursors wraps already-scanned cursors in a *scanBatch so the
+// budget tests can hand them straight to assembleVectorizedTraceResults, which
+// owns and releases the cursors.
+func newScanBatchFromCursors(phase1Batch traceBatch, cursors []*blockCursor) *scanBatch {
+	return &scanBatch{traceBatch: phase1Batch, cursors: cursors}
+}
+
+// TestMaterializeBudgetHardStop verifies that the hard-stop gate in
+// assembleVectorizedTraceResults prevents over-loading when a tiny budget is set.
+// The test uses budget=1 byte so that after the first cursor decodes any real span
+// data, usedBytes >= 1 and every subsequent cursor is stopped by the hard-stop gate
+// (decoding ends early). Fewer than all traces are returned, proving later cursors
+// were released without decoding.
+func TestMaterializeBudgetHardStop(t *testing.T) {
 	tst, cleanup := newParityTSTable(t, tsTS1)
 	defer cleanup()
 
@@ -131,26 +137,30 @@ func TestLoadTraceCursorsSyncBudgetPreCheck(t *testing.T) {
 	require.GreaterOrEqual(t, totalCursors, 2,
 		"fixture must produce ≥2 cursors to exercise the budget gates; check newParityTSTable data")
 
-	// Budget = 1 byte: cursor[0] always loads (usedBytes starts at 0, hard-stop fires only
-	// when usedBytes >= 1). After cursor[0] loads any real span bytes, usedBytes >= 1 and
-	// every subsequent cursor is stopped by the hard-stop gate before loadData is called.
-	loaded, loadErr := loadTraceCursorsSync(ctx, cursors, 1)
-	require.NoError(t, loadErr)
-	require.Less(t, len(loaded), totalCursors,
-		"hard-stop gate must prevent loading cursors once prior spans fill the 1-byte budget")
-	for _, c := range loaded {
-		require.NotEmpty(t, c.spans, "a cursor in the loaded set must have span data (loadData ran)")
-		releaseBlockCursor(c)
+	// Budget = 1 byte: the first cursor always decodes (usedBytes starts at 0, hard-stop fires
+	// only when usedBytes >= 1). After it decodes any real span bytes, usedBytes >= 1 and every
+	// subsequent cursor is stopped by the hard-stop gate before decode.
+	batchForAssembly := newScanBatchFromCursors(phase1Batch, cursors)
+	results, err := assembleVectorizedTraceResults(ctx, batchForAssembly, allTagProjections.Names, qo.schemaTagTypes, 1)
+	require.NoError(t, err)
+
+	require.GreaterOrEqual(t, len(results), 1, "the first block must have been decoded into at least one result")
+	require.Less(t, len(results), totalCursors,
+		"hard-stop gate must stop decoding cursors once prior spans fill the 1-byte budget")
+	for _, result := range results {
+		require.NotEmpty(t, result.Spans, "an emitted result must carry decoded spans")
 	}
 }
 
-// TestLoadTraceCursorsSyncMetadataPreflight verifies that the metadata preflight
-// gate (not the hard-stop gate) skips a cursor when its bm.uncompressedSpanSizeBytes
-// estimate would push usedBytes over the budget.
-// The test uses budget = firstSize + 1, so after cursor[0] loads (usedBytes = firstSize)
-// the hard-stop condition (usedBytes >= budget) is FALSE, but the preflight condition
-// (usedBytes + cursor[1].estimate > budget) is TRUE — proving the preflight gate fires.
-func TestLoadTraceCursorsSyncMetadataPreflight(t *testing.T) {
+// TestMaterializeMetadataPreflight verifies that the metadata preflight gate (not
+// the hard-stop gate) skips a cursor when its bm.uncompressedSpanSizeBytes estimate
+// would push usedBytes over the budget.
+// The test uses budget = firstSize + 1, so after the first cursor decodes
+// (usedBytes = firstSize) the hard-stop condition (usedBytes >= budget) is FALSE,
+// but the preflight condition (usedBytes + cursor[1].estimate > budget) is TRUE —
+// proving the preflight gate fires and exactly one trace is materialized
+// (first-block exception holds).
+func TestMaterializeMetadataPreflight(t *testing.T) {
 	tst, cleanup := newParityTSTable(t, tsTS1)
 	defer cleanup()
 
@@ -179,14 +189,14 @@ func TestLoadTraceCursorsSyncMetadataPreflight(t *testing.T) {
 	sb.cursors = nil
 	releaseVectorizedScanBatch(sb)
 
-	loaded0, loadErr0 := loadTraceCursorsSync(ctx, c0Only, 0)
-	require.NoError(t, loadErr0)
-	require.Len(t, loaded0, 1, "cursor[0] must load from the test fixture")
+	batch0 := newScanBatchFromCursors(phase1Batch, c0Only)
+	results0, err0 := assembleVectorizedTraceResults(ctx, batch0, allTagProjections.Names, qo.schemaTagTypes, 0)
+	require.NoError(t, err0)
+	require.Len(t, results0, 1, "cursor[0] must decode into exactly one trace from the test fixture")
 	var firstSize int64
-	for _, span := range loaded0[0].spans {
+	for _, span := range results0[0].Spans {
 		firstSize += int64(len(span))
 	}
-	releaseBlockCursor(loaded0[0])
 	require.Greater(t, firstSize, int64(0), "cursor[0] must have non-empty span data")
 
 	// Second pass: fresh cursors for the actual preflight test.
@@ -208,14 +218,12 @@ func TestLoadTraceCursorsSyncMetadataPreflight(t *testing.T) {
 	cursors2[1].bm.uncompressedSpanSizeBytes = uint64(firstSize) + 1
 	budget := firstSize + 1
 
-	loaded, loadErr := loadTraceCursorsSync(ctx, cursors2[:2], budget)
-	require.NoError(t, loadErr)
-	require.Len(t, loaded, 1,
+	batch2 := newScanBatchFromCursors(phase1Batch, cursors2[:2])
+	results, err := assembleVectorizedTraceResults(ctx, batch2, allTagProjections.Names, qo.schemaTagTypes, budget)
+	require.NoError(t, err)
+	require.Len(t, results, 1,
 		"metadata preflight must skip cursor[1]: usedBytes+estimate > budget while usedBytes < budget")
-	require.NotEmpty(t, loaded[0].spans, "loaded cursor must have span data (loadData ran)")
-	for _, c := range loaded {
-		releaseBlockCursor(c)
-	}
+	require.NotEmpty(t, results[0].Spans, "the decoded cursor must have span data")
 }
 
 func TestNewVectorizedTraceQueryResultEmptyBatch(t *testing.T) {
@@ -239,15 +247,18 @@ func TestNewVectorizedTraceQueryResultReturnsBatchError(t *testing.T) {
 	require.Error(t, err)
 }
 
-func TestQueryResultSyncCursorLoaderHonorsContextCancel(t *testing.T) {
+func TestMaterializeHonorsContextCancel(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
-	// loadTraceCursorsSync owns the cursors: on cancellation it releases
-	// every loaded and pending cursor itself, so no defer-release here.
+	// assembleVectorizedTraceResults owns the cursors: on cancellation it releases
+	// every remaining cursor (and the reusable tmpBlock) itself, so no manual
+	// release here.
 	cursor := generateBlockCursor()
-	filtered, err := loadTraceCursorsSync(ctx, []*blockCursor{cursor}, 0)
-	require.Nil(t, filtered)
+	batch := newScanBatchFromCursors(traceBatch{}, []*blockCursor{cursor})
+	results, err := assembleVectorizedTraceResults(ctx, batch, nil, nil, 0)
+	require.Nil(t, results)
 	require.Error(t, err)
+	require.Nil(t, batch.cursors, "cancellation must clear batch.cursors after releasing them")
 }
 
 func TestSyncSIDXQuerierToVectorizedIterators(t *testing.T) {
@@ -289,46 +300,59 @@ func (f *fakeSyncSIDX) QuerySync(_ context.Context, _ sidx.QueryRequest) ([]*sid
 	return f.responses, f.err
 }
 
-func TestLoadedCursorSource(t *testing.T) {
-	// Build two fake blockCursors with 2 spans each.
-	cursorA := generateBlockCursor()
-	cursorA.bm.traceID = "trace-a"
-	cursorA.spans = [][]byte{[]byte("spanA1"), []byte("spanA2")}
-	cursorA.spanIDs = []string{"sA1", "sA2"}
+// TestMaterialize exercises the budget-unbounded direct-assembly path end-to-end:
+// scanned cursors are decoded straight into []*model.TraceResult carrying the
+// on-disk span/spanID/traceID/key data, emitted in phase-1 arrival order. With the
+// tsTS1 fixture each trace has one span.
+func TestMaterialize(t *testing.T) {
+	tst, cleanup := newParityTSTable(t, tsTS1)
+	defer cleanup()
 
-	cursorB := generateBlockCursor()
-	cursorB.bm.traceID = "trace-b"
-	cursorB.spans = [][]byte{[]byte("spanB1"), []byte("spanB2")}
-	cursorB.spanIDs = []string{"sB1", "sB2"}
-
-	keys := map[string]int64{"trace-a": 10, "trace-b": 20}
-	schema := vtrace.NewPhase2Schema(nil)
-	source := newLoadedCursorSource([]*blockCursor{cursorA, cursorB}, schema, keys, nil, nil)
-
+	tr := newParityTrace()
 	ctx := context.Background()
-	require.NoError(t, source.Init(ctx))
+	qo := queryOptions{
+		TraceQueryOptions: model.TraceQueryOptions{TagProjection: allTagProjections},
+		schemaTagTypes:    testSchemaTagTypes,
+		traceIDs:          []string{"trace1", "trace2", "trace3"},
+	}
 
-	batchA, err := source.NextBatch(ctx)
-	require.NoError(t, err)
-	require.NotNil(t, batchA)
-	require.Equal(t, 2, batchA.Len)
-	require.Equal(t, []string{"trace-a", "trace-a"}, vtrace.Phase2TraceIDs(batchA).Data())
-	require.Equal(t, []int64{10, 10}, vtrace.Phase2Keys(batchA).Data())
-	require.Equal(t, [][]byte{[]byte("spanA1"), []byte("spanA2")}, vtrace.Phase2Spans(batchA).Data())
-	require.Equal(t, []string{"sA1", "sA2"}, vtrace.Phase2SpanIDs(batchA).Data())
+	phase1Batch, phase1Err := tr.buildVectorizedPhase1TraceBatch(ctx, qo, nil, sidx.QueryRequest{}, false, 0)
+	require.NoError(t, phase1Err)
 
-	batchB, err := source.NextBatch(ctx)
-	require.NoError(t, err)
-	require.NotNil(t, batchB)
-	require.Equal(t, 2, batchB.Len)
-	require.Equal(t, []string{"trace-b", "trace-b"}, vtrace.Phase2TraceIDs(batchB).Data())
-	require.Equal(t, []int64{20, 20}, vtrace.Phase2Keys(batchB).Data())
+	sb, sbErr := tr.buildVectorizedScanBatch(ctx, []*tsTable{tst}, qo, phase1Batch)
+	require.NoError(t, sbErr)
+	require.NotNil(t, sb)
 
-	done, err := source.NextBatch(ctx)
-	require.NoError(t, err)
-	require.Nil(t, done)
+	results, matErr := materializeVectorizedTraceResults(ctx, sb, qo)
+	require.NoError(t, matErr)
+	require.Nil(t, sb.cursors, "materialize must clear batch.cursors after consuming them")
 
-	require.NoError(t, source.Close())
+	require.GreaterOrEqual(t, len(results), 3, "tsTS1 contributes three traces, each with a span")
+
+	gotTraceIDs := make(map[string]struct{})
+	for _, result := range results {
+		gotTraceIDs[result.TID] = struct{}{}
+		require.Equal(t, phase1Batch.keys[result.TID], result.Key, "result key must match the phase-1 key for the traceID")
+		require.Len(t, result.Spans, len(result.SpanIDs), "spans and spanIDs must be aligned")
+		require.NotEmpty(t, result.Spans, "decoded span bytes must be non-empty")
+		for _, span := range result.Spans {
+			require.NotEmpty(t, span, "decoded span bytes must be non-empty")
+		}
+		require.Len(t, result.Tags, len(allTagProjections.Names), "each projected tag must produce a tag column")
+		for tagIdx, tag := range result.Tags {
+			require.Equal(t, allTagProjections.Names[tagIdx], tag.Name)
+			require.Len(t, tag.Values, len(result.Spans), "tag values must be aligned with spans")
+		}
+	}
+	require.Subset(t, []string{"trace1", "trace2", "trace3"}, mapsKeysForTest(gotTraceIDs))
+}
+
+func mapsKeysForTest(m map[string]struct{}) []string {
+	out := make([]string, 0, len(m))
+	for k := range m {
+		out = append(out, k)
+	}
+	return out
 }
 
 // fakeSIDXWithSync wraps fakeSIDX (satisfies sidx.SIDX) and adds QuerySync so that
