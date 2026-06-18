@@ -694,7 +694,7 @@ func hashTraceResponse(resp *tracev1.QueryResponse, preserveTraceOrder bool) uin
 			if leftErr != nil || rightErr != nil {
 				return left < right
 			}
-			return string(leftBytes) < string(rightBytes)
+			return bytes.Compare(leftBytes, rightBytes) < 0
 		})
 		body, marshalErr := proto.MarshalOptions{Deterministic: true}.Marshal(clone)
 		if marshalErr != nil {
