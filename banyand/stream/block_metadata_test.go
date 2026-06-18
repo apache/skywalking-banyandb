@@ -18,6 +18,7 @@
 package stream
 
 import (
+	"fmt"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -315,4 +316,75 @@ func Test_unmarshalBlockMetadata(t *testing.T) {
 		_, err := unmarshalBlockMetadata(nil, marshaled)
 		require.Error(t, err)
 	})
+}
+
+func Test_unmarshalBlockMetadataFiltered(t *testing.T) {
+	mkTS := func(off, sz uint64, minTS, maxTS int64) timestampsMetadata {
+		return timestampsMetadata{
+			dataBlock:        dataBlock{offset: off, size: sz},
+			min:              minTS,
+			max:              maxTS,
+			encodeType:       encoding.EncodeTypeConst,
+			elementIDsOffset: off,
+		}
+	}
+	mkEID := func(off, sz uint64) elementIDsMetadata {
+		return elementIDsMetadata{dataBlock: dataBlock{offset: off, size: sz}, encodeType: encoding.EncodeTypeConst}
+	}
+	entries := []blockMetadata{
+		{
+			seriesID: 1, uncompressedSizeBytes: 10, count: 1, timestamps: mkTS(1, 2, 1, 5), elementIDs: mkEID(1, 1),
+			tagFamilies: map[string]*dataBlock{"sf": {offset: 0, size: 5}},
+		},
+		{
+			seriesID: 2, uncompressedSizeBytes: 20, count: 2, timestamps: mkTS(3, 4, 6, 10), elementIDs: mkEID(2, 2),
+			tagFamilies: map[string]*dataBlock{"sf": {offset: 5, size: 6}, "bf": {offset: 11, size: 7}},
+		},
+		{
+			seriesID: 2, uncompressedSizeBytes: 30, count: 3, timestamps: mkTS(7, 8, 11, 15), elementIDs: mkEID(3, 3),
+			tagFamilies: map[string]*dataBlock{"sf": {offset: 18, size: 6}, "bf": {offset: 24, size: 7}},
+		},
+		{
+			seriesID: 5, uncompressedSizeBytes: 40, count: 4, timestamps: mkTS(9, 10, 16, 20), elementIDs: mkEID(4, 4),
+			tagFamilies: map[string]*dataBlock{"sf": {offset: 31, size: 5}},
+		},
+	}
+	var marshaled []byte
+	for i := range entries {
+		marshaled = entries[i].marshal(marshaled)
+	}
+
+	full, err := unmarshalBlockMetadata(nil, marshaled)
+	require.NoError(t, err)
+
+	// Filtering by wanted must be equivalent to filtering the full decode's output.
+	cases := [][]common.SeriesID{
+		{},
+		{1},
+		{5},
+		{2}, // multi-block seriesID -> both seriesID=2 entries
+		{0}, // smaller than all -> none
+		{3}, // gap, absent -> none
+		{9}, // larger than all -> none
+		{1, 5},
+		{1, 2, 5},
+		{0, 2, 9},
+	}
+	for _, wanted := range cases {
+		t.Run(fmt.Sprintf("%v", wanted), func(t *testing.T) {
+			wantSet := make(map[common.SeriesID]struct{}, len(wanted))
+			for _, w := range wanted {
+				wantSet[w] = struct{}{}
+			}
+			var want []blockMetadata
+			for i := range full {
+				if _, ok := wantSet[full[i].seriesID]; ok {
+					want = append(want, full[i])
+				}
+			}
+			got, filterErr := unmarshalBlockMetadataFiltered(nil, marshaled, wanted)
+			require.NoError(t, filterErr)
+			require.Equal(t, want, got)
+		})
+	}
 }
