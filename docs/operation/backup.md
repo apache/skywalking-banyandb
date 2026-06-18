@@ -110,6 +110,7 @@ When a schedule is provided, the tool:
 | `--trace-root-path`               | Root directory for the trace catalog snapshots.                                                                              | `/tmp`            |
 | `--time-style`                    | Directory naming style based on time (`daily` or `hourly`)                                                                   | `daily`           |
 | `--schedule`                      | Schedule expression for periodic backup. Options: `@yearly`, `@monthly`, `@weekly`, `@daily`, `@hourly`, `@every <duration>` | _empty_           |
+| `--upload-concurrency`            | Number of concurrent uploads for small snapshot files (<5MiB).                                                               | `8`               |
 | `--logging-level`                 | Root logging level (`debug`, `info`, `warn`, `error`)                                                                        | `info`            |
 | `--logging-env`                   | Logging environment (`dev` or `prod`)                                                                                        | `prod`            |
 | **AWS S3 specific**               |                                                                                                                              |                   |

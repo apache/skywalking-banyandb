@@ -81,6 +81,12 @@ type Progress struct {
 	TraceRowReplayParts   map[string]uint64 `json:"trace_row_replay_parts"`
 	TraceRowReplayRows    map[string]uint64 `json:"trace_row_replay_rows"`
 
+	// OrphanRows reports, per catalog -> group -> deleted measure/stream subject,
+	// how many rows were archived or discarded because the schema was deleted from
+	// the registry. Accumulated across resume cycles (orphan parts are marked
+	// completed, so each row is counted once), fed into the report's orphans.
+	OrphanRows map[string]map[string]map[string]uint64 `json:"orphan_rows"`
+
 	// MigrationErrors is the single source of structured migration errors for both
 	// the report (stage/group/catalog/scope/segment/interval/location/message) and
 	// the per-resource error counts. Reset by ClearErrors at the start of each run
@@ -165,10 +171,39 @@ func NewProgress(path string, l *logger.Logger) *Progress {
 		TraceChunkSyncShards:  make(map[string]uint64),
 		TraceRowReplayParts:   make(map[string]uint64),
 		TraceRowReplayRows:    make(map[string]uint64),
+		OrphanRows:            make(map[string]map[string]map[string]uint64),
 		MigrationErrors:       make([]MigrationError, 0),
 
 		progressFilePath: path,
 		logger:           l,
+	}
+}
+
+// AddOrphanRows accumulates per-subject orphan row counts for one (catalog,
+// group) into the report's orphans section. Additive so resume cycles —
+// each replaying a different subset of parts — sum to the true total.
+func (p *Progress) AddOrphanRows(group, catalog string, bySubject map[string]uint64) {
+	if len(bySubject) == 0 {
+		return
+	}
+	defer p.saveProgress()
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	if p.OrphanRows == nil {
+		p.OrphanRows = make(map[string]map[string]map[string]uint64)
+	}
+	byGroup := p.OrphanRows[catalog]
+	if byGroup == nil {
+		byGroup = make(map[string]map[string]uint64)
+		p.OrphanRows[catalog] = byGroup
+	}
+	bySub := byGroup[group]
+	if bySub == nil {
+		bySub = make(map[string]uint64)
+		byGroup[group] = bySub
+	}
+	for sub, n := range bySubject {
+		bySub[sub] += n
 	}
 }
 

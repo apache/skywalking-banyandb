@@ -121,18 +121,74 @@ lifecycle \
 
 ### Command-Line Parameters
 
-| Parameter             | Description                                                                   | Default Value                  |
-| --------------------- | ----------------------------------------------------------------------------- | ------------------------------ |
-| `--node-labels`       | Labels of the current node (e.g., `type=hot,region=us-west`)                  | `nil`                          |
-| `--grpc-addr`         | gRPC address of the source data node to snapshot and read from                | `127.0.0.1:17912`              |
-| `--enable-tls`        | Enable TLS for gRPC connection                                                | `false`                        |
-| `--insecure`          | Skip server certificate verification                                          | `false`                        |
-| `--cert`              | Path to the gRPC server certificate                                           | `""`                           |
-| `--stream-root-path`  | Root directory for stream catalog snapshots                                   | `/tmp`                         |
-| `--measure-root-path` | Root directory for measure catalog snapshots                                  | `/tmp`                         |
-| `--trace-root-path`   | Root directory for trace catalog snapshots                                    | `/tmp`                         |
-| `--progress-file`     | File path used for progress tracking and crash recovery                       | `/tmp/lifecycle-progress.json` |
-| `--schedule`          | Schedule for periodic backup (e.g., @yearly, @monthly, @weekly, @daily, etc.) | `""`                           |
+| Parameter                           | Description                                                                                              | Default Value                  |
+|-------------------------------------|----------------------------------------------------------------------------------------------------------| ------------------------------ |
+| `--node-labels`                     | Labels of the current node (e.g., `type=hot,region=us-west`)                                             | `nil`                          |
+| `--grpc-addr`                       | gRPC address of the source data node to snapshot and read from                                           | `127.0.0.1:17912`              |
+| `--enable-tls`                      | Enable TLS for gRPC connection                                                                           | `false`                        |
+| `--insecure`                        | Skip server certificate verification                                                                     | `false`                        |
+| `--cert`                            | Path to the gRPC server certificate                                                                      | `""`                           |
+| `--stream-root-path`                | Root directory for stream catalog snapshots                                                              | `/tmp`                         |
+| `--measure-root-path`               | Root directory for measure catalog snapshots                                                             | `/tmp`                         |
+| `--trace-root-path`                 | Root directory for trace catalog snapshots                                                               | `/tmp`                         |
+| `--progress-file`                   | File path used for progress tracking and crash recovery                                                  | `/tmp/lifecycle-progress.json` |
+| `--schedule`                        | Schedule for periodic backup (e.g., @yearly, @monthly, @weekly, @daily, etc.)                            | `""`                           |
+| `--migration-orphan-policy`         | What to do with rows whose measure/stream schema was deleted from the registry: `archive` or `discard`   | `archive`                      |
+| `--migration-orphan-archive-subdir` | Relative subdirectory, under each catalog's root path, for archived orphan rows when policy is `archive` | `archive`                      |
+
+## Handling Orphan (Deleted-Schema) Data
+
+A source segment can hold data for a measure or stream whose schema was later deleted from the registry (for example, when the upstream metric definition is renamed or removed). Such rows can no longer be written to a target — their schema no longer exists — so the migration treats them as **orphan** rows.
+
+Orphan handling applies to the **measure** and **stream** catalogs only. Trace migration is not wired for per-series orphan handling: a trace group has a single schema, so a deleted trace schema is a whole-group concern rather than a per-series orphan within a surviving group.
+
+On the row-replay path (used when a source segment spans multiple target segments), the migration detects orphan rows, skips them so the rest of the group still migrates, and then — unlike rows skipped because of a series-index gap — lets the source segment be deleted normally. What happens to the orphan rows themselves is controlled by `--migration-orphan-policy`:
+
+- `archive` (default): each orphan row is written as one JSON line so an operator can recover it. The archive lives in the `--migration-orphan-archive-subdir` subdirectory **under each catalog's own root path** (so measure orphans land under `<measure-root-path>/<subdir>/…` and stream orphans under `<stream-root-path>/<subdir>/…`); the catalog is therefore not a path level (it is recorded inside every record and manifest instead). The per-part JSONL is **gzip-compressed** on disk (the rows are highly repetitive, so this is ~37× smaller — e.g. 269 MB of raw JSONL becomes ~7 MB). Files are laid out as:
+
+  ```
+  <catalog-root-path>/<subdir>/<group>/seg-<segment-suffix>/shard-<id>/part-<part-id>.jsonl.gz
+  <catalog-root-path>/<subdir>/<group>/seg-<segment-suffix>/manifest.json
+  ```
+
+  Each line is self-describing (decoded from the part's own column types, with no registry schema needed): it carries the group, catalog, the measure/stream name (always under the JSON key `measure`, regardless of catalog — the `catalog` field disambiguates), source location, series id, entity, timestamp (both RFC3339 `timestamp` and epoch-nanos `timestamp_unix_nano`), tags, and — for measures — `version`, `indexed_tags`, and `fields`; streams carry `element_id` instead of those three and omit `version` entirely (rather than emitting a misleading zero). The per-segment `manifest.json` (plain JSON) indexes which deleted measures/streams were archived and their row counts. A part with no orphan rows writes no file; re-running a part rewrites its file idempotently.
+- `discard`: orphan rows are dropped; nothing is written to disk.
+
+Orphan handling is **not** a migration error — the source segment is migrated and deleted normally. Instead of appearing in the report's `errors` buckets, it is summarized under an `orphans` section that records, per catalog → group → deleted measure/stream, how many rows were archived or discarded:
+
+```json
+"orphans": {
+  "policy": "archive",
+  "measure": { "sw_metricsHour": { "meter_..._hour": 1234 } },
+  "stream":  { "<group>": { "<stream>": 56 } }
+}
+```
+
+(The counts accumulate across resume cycles. If the process is hard-killed mid-group before the group finishes, that run's not-yet-flushed counts are lost from the report — the archive files and their `manifest.json` are unaffected.)
+
+### Reading the archive
+
+The `manifest.json` files are plain text — read them directly. The per-part data is gzip-compressed JSON Lines:
+
+```bash
+# inspect one part's rows (Linux: zcat; macOS: gzcat)
+gunzip -c <measure-root-path>/<subdir>/<group>/seg-20260601/shard-0/part-000000000000003b.jsonl.gz | jq .
+
+# project a few fields
+gunzip -c part-*.jsonl.gz | jq -c '{measure, ts:.timestamp, v:.fields.value.value}'
+
+# search without fully decompressing (Linux)
+zgrep "meter_banyandb_instance_disk_usage" part-*.jsonl.gz
+
+# what was archived for a segment (counts per deleted measure)
+jq '{total_rows, total_series, measures:[.measures[]|{measure,rows}]}' .../seg-20260601/manifest.json
+```
+
+**Limitations and operations notes:**
+
+- The archive lives under each catalog's own root path (`--measure-root-path` / `--stream-root-path`), so it shares the durability of the volume that already holds the catalog data — no separate path to provision. `--migration-orphan-archive-subdir` only changes the subdirectory name within that root.
+- Detection only happens on the row-replay path. On the chunk-sync path (a source segment that maps to a single target segment), whole part files are copied without per-row decoding, so orphan rows pass through to the target. They then occupy target-stage disk until that stage's TTL expires (e.g. up to the warm-stage TTL), and whether the copy succeeds depends on the receiver's part-acceptance behavior for a now-unregistered schema.
+- The archive directory is **not** cleaned up automatically. Prune it periodically once the data is no longer needed.
 
 ## Automatic Behavior on Warm and Cold Nodes
 

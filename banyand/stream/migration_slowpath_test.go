@@ -40,6 +40,52 @@ import (
 	"github.com/apache/skywalking-banyandb/pkg/query/model"
 )
 
+// matchInvertedTerm opens a fresh store at idxPath and returns the element IDs the
+// (ruleID, seriesID, value) term matches, then closes it. A freshly written index
+// can read empty until its snapshot is flushed and visible (see ReadOnlyDocCount),
+// and only a fresh open re-reads the on-disk snapshot — so callers poll this rather
+// than holding a single reader that is stuck at its open-time view.
+func matchInvertedTerm(idxPath string, ruleID uint32, seriesID common.SeriesID, value string) (map[uint64]struct{}, error) {
+	store, openErr := inverted.NewStore(inverted.StoreOpts{Path: idxPath, BatchWaitSec: 0})
+	if openErr != nil {
+		return nil, openErr
+	}
+	defer func() { _ = store.Close() }()
+	list, _, matchErr := store.MatchTerms(index.NewStringField(index.FieldKey{
+		IndexRuleID: ruleID,
+		SeriesID:    seriesID,
+	}, value))
+	if matchErr != nil {
+		return nil, matchErr
+	}
+	got := map[uint64]struct{}{}
+	iter := list.Iterator()
+	for iter.Next() {
+		got[iter.Current()] = struct{}{}
+	}
+	return got, iter.Close()
+}
+
+// eventuallyIdxTerm polls matchInvertedTerm until the term matches exactly want,
+// tolerating the reader-visibility lag of a freshly written index under load.
+func eventuallyIdxTerm(t *testing.T, idxPath string, ruleID uint32, seriesID common.SeriesID, value string, want []uint64) {
+	t.Helper()
+	require.Eventuallyf(t, func() bool {
+		got, err := matchInvertedTerm(idxPath, ruleID, seriesID, value)
+		if err != nil || len(got) != len(want) {
+			return false
+		}
+		for _, id := range want {
+			if _, ok := got[id]; !ok {
+				return false
+			}
+		}
+		return true
+	}, 10*time.Second, 100*time.Millisecond,
+		"idx %s rule %d series %v value=%s: expected elementIDs %v not visible in time",
+		idxPath, ruleID, seriesID, value, want)
+}
+
 // TestMigrationSlowPath_NumGt1_ReBucketing proves that the slow path correctly
 // re-buckets source rows when the target SegmentInterval has Num > 1 (specifically
 // Num=2 days), which is the production scenario for warm/cold tiers. A single source
@@ -300,25 +346,7 @@ func TestMigrationSlowPathElementIndexRebuild(t *testing.T) {
 		info, statErr := os.Stat(idxPath)
 		require.NoError(t, statErr, "target seg %s must have an idx/", seg)
 		require.True(t, info.IsDir())
-		store, openErr := inverted.NewStore(inverted.StoreOpts{Path: idxPath, BatchWaitSec: 0})
-		require.NoError(t, openErr)
-		defer func() { require.NoError(t, store.Close()) }()
-		list, _, matchErr := store.MatchTerms(index.NewStringField(index.FieldKey{
-			IndexRuleID: statusRID,
-			SeriesID:    seriesID,
-		}, value))
-		require.NoError(t, matchErr)
-		got := map[uint64]struct{}{}
-		iter := list.Iterator()
-		for iter.Next() {
-			got[iter.Current()] = struct{}{}
-		}
-		require.NoError(t, iter.Close())
-		require.Len(t, got, len(want), "seg %s status=%s wrong doc count", seg, value)
-		for _, id := range want {
-			_, ok := got[id]
-			require.Truef(t, ok, "seg %s status=%s missing elementID %d", seg, value, id)
-		}
+		eventuallyIdxTerm(t, idxPath, statusRID, seriesID, value, want)
 	}
 
 	// day1: only eD1ok for "ok", only eD1err for "err"; no day2 contamination.
@@ -520,25 +548,7 @@ func TestMigrationSlowPathMultiStreamElementIndexRebuild(t *testing.T) {
 		info, statErr := os.Stat(idxPath)
 		require.NoError(t, statErr, "target seg %s must have an idx/", seg)
 		require.True(t, info.IsDir())
-		store, openErr := inverted.NewStore(inverted.StoreOpts{Path: idxPath, BatchWaitSec: 0})
-		require.NoError(t, openErr)
-		defer func() { require.NoError(t, store.Close()) }()
-		list, _, matchErr := store.MatchTerms(index.NewStringField(index.FieldKey{
-			IndexRuleID: ruleID,
-			SeriesID:    seriesID,
-		}, value))
-		require.NoError(t, matchErr)
-		got := map[uint64]struct{}{}
-		iter := list.Iterator()
-		for iter.Next() {
-			got[iter.Current()] = struct{}{}
-		}
-		require.NoError(t, iter.Close())
-		require.Lenf(t, got, len(want), "seg %s rule %d value=%s wrong doc count", seg, ruleID, value)
-		for _, id := range want {
-			_, ok := got[id]
-			require.Truef(t, ok, "seg %s rule %d value=%s missing elementID %d", seg, ruleID, value, id)
-		}
+		eventuallyIdxTerm(t, idxPath, ruleID, seriesID, value, want)
 	}
 
 	// streamA "status": each seg holds only its own elements, no cross contamination.
@@ -738,26 +748,7 @@ func TestMigrationElementIndexByteCopyCollisionFallsBackToRebuild(t *testing.T) 
 		info, statErr := os.Stat(idxPath)
 		require.NoError(t, statErr, "target idx dir must exist")
 		require.True(t, info.IsDir())
-		store, openErr := inverted.NewStore(inverted.StoreOpts{Path: idxPath, BatchWaitSec: 0})
-		require.NoError(t, openErr)
-		defer func() { require.NoError(t, store.Close()) }()
-		list, _, matchErr := store.MatchTerms(index.NewStringField(index.FieldKey{
-			IndexRuleID: statusRID,
-			SeriesID:    seriesID,
-		}, value))
-		require.NoError(t, matchErr)
-		got := map[uint64]struct{}{}
-		iter := list.Iterator()
-		for iter.Next() {
-			got[iter.Current()] = struct{}{}
-		}
-		require.NoError(t, iter.Close())
-		require.Lenf(t, got, len(wantIDs),
-			"series %d value=%s: wrong doc count (got %v, want %v)", seriesID, value, got, wantIDs)
-		for _, id := range wantIDs {
-			_, present := got[id]
-			require.Truef(t, present, "series %d value=%s: missing elementID %d", seriesID, value, id)
-		}
+		eventuallyIdxTerm(t, idxPath, statusRID, seriesID, value, wantIDs)
 	}
 
 	// sourceA docs (written by byte-copy): aOk → status=ok, aErr → status=err.
