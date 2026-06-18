@@ -40,6 +40,7 @@ type Report struct {
 // ConfigView is a JSON-friendly copy of Config.
 type ConfigView struct {
 	ReportDir        string     `json:"report_dir"`
+	Engine           string     `json:"engine"`
 	Cardinalities    []int      `json:"cardinalities"`
 	Scenarios        []Scenario `json:"scenarios"`
 	QueryWorkers     int        `json:"query_workers"`
@@ -68,7 +69,10 @@ type Result struct {
 	Profiles            map[string]string `json:"profiles,omitempty"`
 	Scenario            Scenario          `json:"scenario"`
 	SampleDataPointText string            `json:"sample_data_point_text,omitempty"`
+	SampleTraceText     string            `json:"sample_trace_text,omitempty"`
 	Error               string            `json:"error,omitempty"`
+	Engine              string            `json:"engine"`
+	SpanDist            string            `json:"span_dist,omitempty"`
 	Mode                string            `json:"mode"`
 	Correctness         string            `json:"correctness"`
 	Allocations         AllocationStats   `json:"allocations"`
@@ -76,10 +80,25 @@ type Result struct {
 	Latency             LatencyStats      `json:"latency"`
 	PointsEach          int               `json:"points_each"`
 	QPS                 float64           `json:"qps"`
+	FilterSelectivity   float64           `json:"filter_selectivity,omitempty"`
+	MeanSpansPerTrace   float64           `json:"mean_spans_per_trace,omitempty"`
 	QueryWorkers        int               `json:"query_workers"`
 	QueryIterations     int               `json:"query_iterations"`
 	ResponseRows        int               `json:"response_rows"`
+	ResponseTraces      int               `json:"response_traces,omitempty"`
+	ResponseSpans       int               `json:"response_spans,omitempty"`
 	Entities            int               `json:"entities"`
+	TracesTotal         int               `json:"traces_total,omitempty"`
+	SpansPerTrace       int               `json:"spans_per_trace,omitempty"`
+	ServiceCardinality  int               `json:"service_cardinality,omitempty"`
+	EndpointCardinality int               `json:"endpoint_cardinality,omitempty"`
+	TraceIDBatch        int               `json:"trace_id_batch,omitempty"`
+	ShardNum            int               `json:"shard_num,omitempty"`
+	DataNodes           int               `json:"data_nodes,omitempty"`
+	SpanBytes           int               `json:"span_bytes,omitempty"`
+	QueryMemoryMiB      int               `json:"query_memory_mib,omitempty"`
+	SegmentCount        int               `json:"segment_count,omitempty"`
+	VecQueryCountDelta  int64             `json:"vec_query_count_delta,omitempty"`
 	ApproxResultHash    uint64            `json:"approx_result_hash,omitempty"`
 	Cardinality         int               `json:"cardinality"`
 }
@@ -119,12 +138,16 @@ type AllocationStats struct {
 func newReportFromShards(cfg Config, results []Result) Report {
 	cardSet := make(map[int]struct{})
 	scenSet := make(map[Scenario]struct{})
+	engineSet := make(map[string]struct{})
 	queryWorkers := cfg.QueryWorkers
 	queryIters := cfg.QueryIterations
 	profile := false
 	for _, r := range results {
 		cardSet[r.Cardinality] = struct{}{}
 		scenSet[r.Scenario] = struct{}{}
+		if r.Engine != "" {
+			engineSet[r.Engine] = struct{}{}
+		}
 		if len(r.Profiles) > 0 {
 			profile = true
 		}
@@ -145,6 +168,12 @@ func newReportFromShards(cfg Config, results []Result) Report {
 		scens = append(scens, s)
 	}
 	sort.Slice(scens, func(i, j int) bool { return scens[i] < scens[j] })
+	engine := cfg.Engine
+	if len(engineSet) == 1 {
+		for resultEngine := range engineSet {
+			engine = resultEngine
+		}
+	}
 	return Report{
 		GeneratedAt: time.Now().UTC(),
 		Environment: Environment{
@@ -161,6 +190,7 @@ func newReportFromShards(cfg Config, results []Result) Report {
 		},
 		Config: ConfigView{
 			ReportDir:        cfg.ReportDir,
+			Engine:           engine,
 			Cardinalities:    cards,
 			Scenarios:        scens,
 			QueryWorkers:     queryWorkers,
@@ -181,7 +211,7 @@ func writeShard(result Result, reportDir string) (string, error) {
 	if mkErr := os.MkdirAll(shardDir, 0o755); mkErr != nil {
 		return "", fmt.Errorf("create shard directory: %w", mkErr)
 	}
-	name := fmt.Sprintf("%s_%s_%d.json", result.Mode, result.Scenario, result.Cardinality)
+	name := result.shardFileName()
 	shardPath := filepath.Join(shardDir, name)
 	body, marshalErr := json.MarshalIndent(result, "", "  ")
 	if marshalErr != nil {
@@ -191,6 +221,19 @@ func writeShard(result Result, reportDir string) (string, error) {
 		return "", fmt.Errorf("write shard: %w", writeErr)
 	}
 	return shardPath, nil
+}
+
+func (r Result) shardFileName() string {
+	if r.Engine != engineTrace {
+		return fmt.Sprintf("%s_%s_%d.json", r.Mode, r.Scenario, r.Cardinality)
+	}
+	return fmt.Sprintf("%s_%s_%s_%d_s%d_%s_sel%s_k%d_sh%d_dn%d_b%d.json",
+		r.Engine, r.Mode, r.Scenario, r.Cardinality, r.SpansPerTrace, r.SpanDist,
+		sanitizeFloat(r.FilterSelectivity), r.TraceIDBatch, r.ShardNum, r.DataNodes, r.SpanBytes)
+}
+
+func sanitizeFloat(value float64) string {
+	return strings.ReplaceAll(fmt.Sprintf("%.6g", value), ".", "p")
 }
 
 // readShards loads every *.json shard under ReportDir/shards/. The order of
@@ -282,13 +325,7 @@ func renderMarkdown(report Report) string {
 	b.WriteString("# Distributed Query Benchmark\n\n")
 	b.WriteString(fmt.Sprintf("Generated: %s\n\n", report.GeneratedAt.Format(time.RFC3339)))
 	b.WriteString("## Per-mode results\n\n")
-	b.WriteString("| Scenario | Cardinality | Mode | p50 ms | p95 ms | p99 ms | QPS | Rows | Mallocs/query | Bytes/query |\n")
-	b.WriteString("| --- | ---: | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: |\n")
-	for _, result := range report.Results {
-		b.WriteString(fmt.Sprintf("| %s | %d | %s | %.2f | %.2f | %.2f | %.2f | %d | %.2f | %.2f |\n",
-			result.Scenario, result.Cardinality, result.Mode, result.Latency.P50Ms, result.Latency.P95Ms,
-			result.Latency.P99Ms, result.QPS, result.ResponseRows, result.Allocations.MallocsPerQuery, result.Allocations.AllocBytesPerQuery))
-	}
+	renderPerModeTable(&b, report)
 	renderRatioTable(&b, report)
 	b.WriteString("\n## Profile artifacts\n\n")
 	for _, result := range report.Results {
@@ -308,14 +345,36 @@ func renderMarkdown(report Report) string {
 	return b.String()
 }
 
+func renderPerModeTable(b *strings.Builder, report Report) {
+	if report.Config.Engine == engineTrace {
+		b.WriteString("| Scenario | Cardinality | Mode | p50 ms | p95 ms | p99 ms | QPS | Response traces | Response spans | Mallocs/query | Bytes/query |\n")
+		b.WriteString("| --- | ---: | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |\n")
+		for _, result := range report.Results {
+			b.WriteString(fmt.Sprintf("| %s | %d | %s | %.2f | %.2f | %.2f | %.2f | %d | %d | %.2f | %.2f |\n",
+				result.Scenario, result.Cardinality, result.Mode, result.Latency.P50Ms, result.Latency.P95Ms,
+				result.Latency.P99Ms, result.QPS, result.ResponseTraces, result.ResponseSpans,
+				result.Allocations.MallocsPerQuery, result.Allocations.AllocBytesPerQuery))
+		}
+		return
+	}
+	b.WriteString("| Scenario | Cardinality | Mode | p50 ms | p95 ms | p99 ms | QPS | Rows | Mallocs/query | Bytes/query |\n")
+	b.WriteString("| --- | ---: | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: |\n")
+	for _, result := range report.Results {
+		b.WriteString(fmt.Sprintf("| %s | %d | %s | %.2f | %.2f | %.2f | %.2f | %d | %.2f | %.2f |\n",
+			result.Scenario, result.Cardinality, result.Mode, result.Latency.P50Ms, result.Latency.P95Ms,
+			result.Latency.P99Ms, result.QPS, result.ResponseRows, result.Allocations.MallocsPerQuery, result.Allocations.AllocBytesPerQuery))
+	}
+}
+
 func renderRatioTable(b *strings.Builder, report Report) {
 	type modeKey struct {
 		scenario    Scenario
+		variant     string
 		cardinality int
 	}
 	byMode := make(map[modeKey]map[string]Result)
 	for _, result := range report.Results {
-		key := modeKey{result.Scenario, result.Cardinality}
+		key := modeKey{scenario: result.Scenario, cardinality: result.Cardinality, variant: result.variantKey()}
 		if byMode[key] == nil {
 			byMode[key] = make(map[string]Result)
 		}
@@ -329,7 +388,10 @@ func renderRatioTable(b *strings.Builder, report Report) {
 		if keys[left].scenario != keys[right].scenario {
 			return keys[left].scenario < keys[right].scenario
 		}
-		return keys[left].cardinality < keys[right].cardinality
+		if keys[left].cardinality != keys[right].cardinality {
+			return keys[left].cardinality < keys[right].cardinality
+		}
+		return keys[left].variant < keys[right].variant
 	})
 	b.WriteString("\n## Vec/Row Ratios\n\n")
 	b.WriteString("Vec divided by row; < 1.00x means vec is faster or lighter.\n\n")
@@ -354,6 +416,14 @@ func renderRatioTable(b *strings.Builder, report Report) {
 			ratioString(vecResult.Allocations.AllocBytesPerQuery, rowResult.Allocations.AllocBytesPerQuery),
 		))
 	}
+}
+
+func (r Result) variantKey() string {
+	if r.Engine != engineTrace {
+		return ""
+	}
+	return fmt.Sprintf("s=%d,dist=%s,sel=%s,k=%d,shard=%d,nodes=%d,bytes=%d",
+		r.SpansPerTrace, r.SpanDist, sanitizeFloat(r.FilterSelectivity), r.TraceIDBatch, r.ShardNum, r.DataNodes, r.SpanBytes)
 }
 
 func ratioString(numerator, denominator float64) string {

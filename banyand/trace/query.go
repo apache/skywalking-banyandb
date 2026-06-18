@@ -117,8 +117,13 @@ func (t *trace) Query(ctx context.Context, tqo model.TraceQueryOptions) (model.T
 		QueryMemoryMiB:    t.vectorized.QueryMemoryMiB,
 	}
 
-	if err = t.resolveSeriesEntities(ctx, segments, &qo, tqo.Name, tqo.Entities); err != nil {
-		return nil, err
+	// resolveSeriesEntities runs an O(series-cardinality) wildcard series-index lookup
+	// whose only consumer is prepareSIDXStreaming, which early-returns for trace-id
+	// queries. Skip the lookup when TraceIDs are set: qo.seriesToEntity is unused there.
+	if len(tqo.TraceIDs) == 0 {
+		if err = t.resolveSeriesEntities(ctx, segments, &qo, tqo.Name, tqo.Entities); err != nil {
+			return nil, err
+		}
 	}
 
 	tables := collectTables(segments)

@@ -90,3 +90,7 @@ dist/bench/
 # G5d soak harness runtime artifacts
 dist/soak/
 test/soak/data/
+
+# Local runtime crash dumps and investigation notes
+crash/
+progress.txt

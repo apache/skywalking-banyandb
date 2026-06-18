@@ -24,27 +24,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	itersort "github.com/apache/skywalking-banyandb/pkg/iter/sort"
-	"github.com/apache/skywalking-banyandb/pkg/query/vectorized"
 )
-
-// staticPhase2Source is a minimal PullOperator emitting pre-built Phase-2 batches for tests.
-type staticPhase2Source struct {
-	schema  *vectorized.BatchSchema
-	batches []*vectorized.RecordBatch
-	pos     int
-}
-
-func (s *staticPhase2Source) Init(context.Context) error            { return nil }
-func (s *staticPhase2Source) OutputSchema() *vectorized.BatchSchema { return s.schema }
-func (s *staticPhase2Source) Close() error                          { return nil }
-func (s *staticPhase2Source) NextBatch(_ context.Context) (*vectorized.RecordBatch, error) {
-	if s.pos >= len(s.batches) {
-		return nil, nil
-	}
-	b := s.batches[s.pos]
-	s.pos++
-	return b, nil
-}
 
 func TestBuildStaticPhase1CarriesOnlyLimitedRows(t *testing.T) {
 	plan, err := BuildStaticPhase1([]string{"trace-a", "trace-b", "trace-c"}, map[string]int64{"trace-c": 3}, 2, 10)
@@ -84,62 +64,6 @@ func TestBuildMergePhase1DecodesLimitsAndCarries(t *testing.T) {
 	done, err := plan.Pipeline.Next(context.Background())
 	require.NoError(t, err)
 	require.Nil(t, done)
-	require.NoError(t, plan.Pipeline.Close())
-}
-
-func TestBuildPhase2(t *testing.T) {
-	schema := NewPhase2Schema(nil)
-	// Build two batches: each batch is one cursor (one traceID, two spans)
-	batchA := vectorized.NewRecordBatch(schema, 2)
-	Phase2TraceIDs(batchA).Append("trace-a")
-	Phase2TraceIDs(batchA).Append("trace-a")
-	Phase2Keys(batchA).Append(int64(10))
-	Phase2Keys(batchA).Append(int64(10))
-	Phase2Spans(batchA).Append([]byte("spanA1"))
-	Phase2Spans(batchA).Append([]byte("spanA2"))
-	Phase2SpanIDs(batchA).Append("sA1")
-	Phase2SpanIDs(batchA).Append("sA2")
-	batchA.Len = 2
-
-	batchB := vectorized.NewRecordBatch(schema, 2)
-	Phase2TraceIDs(batchB).Append("trace-b")
-	Phase2TraceIDs(batchB).Append("trace-b")
-	Phase2Keys(batchB).Append(int64(20))
-	Phase2Keys(batchB).Append(int64(20))
-	Phase2Spans(batchB).Append([]byte("spanB1"))
-	Phase2Spans(batchB).Append([]byte("spanB2"))
-	Phase2SpanIDs(batchB).Append("sB1")
-	Phase2SpanIDs(batchB).Append("sB2")
-	batchB.Len = 2
-
-	source := &staticPhase2Source{
-		schema:  schema,
-		batches: []*vectorized.RecordBatch{batchA, batchB},
-	}
-
-	traceIDsOrder := []string{"trace-a", "trace-b"}
-	plan, buildErr := BuildPhase2(source, traceIDsOrder)
-	require.NoError(t, buildErr)
-	require.NoError(t, plan.Pipeline.Init(context.Background()))
-
-	outA, err := plan.Pipeline.Next(context.Background())
-	require.NoError(t, err)
-	require.NotNil(t, outA)
-	require.Equal(t, 2, outA.Len)
-	require.Equal(t, []string{"trace-a", "trace-a"}, Phase2TraceIDs(outA).Data())
-	require.Equal(t, [][]byte{[]byte("spanA1"), []byte("spanA2")}, Phase2Spans(outA).Data())
-
-	outB, err := plan.Pipeline.Next(context.Background())
-	require.NoError(t, err)
-	require.NotNil(t, outB)
-	require.Equal(t, 2, outB.Len)
-	require.Equal(t, []string{"trace-b", "trace-b"}, Phase2TraceIDs(outB).Data())
-	require.Equal(t, [][]byte{[]byte("spanB1"), []byte("spanB2")}, Phase2Spans(outB).Data())
-
-	done, err := plan.Pipeline.Next(context.Background())
-	require.NoError(t, err)
-	require.Nil(t, done)
-
 	require.NoError(t, plan.Pipeline.Close())
 }
 

@@ -65,6 +65,13 @@ type queryRunSummary struct {
 }
 
 func writeBenchmarkData(ctx context.Context, conn *grpc.ClientConn, cfg Config, cardinality int, base time.Time) (writeSummary, error) {
+	if cfg.Engine == engineTrace {
+		return writeTraceData(ctx, conn, cfg, cardinality, base)
+	}
+	return writeMeasureData(ctx, conn, cfg, cardinality, base)
+}
+
+func writeMeasureData(ctx context.Context, conn *grpc.ClientConn, cfg Config, cardinality int, base time.Time) (writeSummary, error) {
 	client := measurev1.NewMeasureServiceClient(conn)
 	entities, pointsEach := splitCardinality(cardinality)
 	writers := cfg.Writers

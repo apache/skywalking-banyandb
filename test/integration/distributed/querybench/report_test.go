@@ -79,6 +79,31 @@ func TestWriteReportFromShards(t *testing.T) {
 	}
 }
 
+func TestWriteTraceReportUsesTraceLabels(t *testing.T) {
+	dir := t.TempDir()
+	cfg := Config{Engine: engineTrace, ReportDir: dir, QueryWorkers: 1, QueryIterations: 5, WarmupIterations: 0, Writers: 1}
+	results := []Result{
+		{
+			Engine: engineTrace, Mode: modeRow, Scenario: ScenarioTraceByID, Cardinality: 1000, ResponseTraces: 1, ResponseSpans: 20,
+			Latency: LatencyStats{P50Ms: 1}, Allocations: AllocationStats{MallocsPerQuery: 2},
+			QueryIterations: 5, QueryWorkers: 1,
+		},
+	}
+	report := newReportFromShards(cfg, results)
+	_, mdPath, writeErr := writeReport(report, dir)
+	if writeErr != nil {
+		t.Fatalf("writeReport() failed: %v", writeErr)
+	}
+	body, readErr := os.ReadFile(filepath.Clean(mdPath))
+	if readErr != nil {
+		t.Fatalf("read markdown report: %v", readErr)
+	}
+	contents := string(body)
+	if !strings.Contains(contents, "Response traces") || !strings.Contains(contents, "Response spans") {
+		t.Fatalf("trace markdown report missing trace labels: %s", contents)
+	}
+}
+
 func TestShardRoundTrip(t *testing.T) {
 	dir := t.TempDir()
 	original := Result{
@@ -116,5 +141,30 @@ func TestShardRoundTrip(t *testing.T) {
 		r.ResponseRows != original.ResponseRows || r.ApproxResultHash != original.ApproxResultHash ||
 		r.Latency.P50Ms != original.Latency.P50Ms || r.QPS != original.QPS {
 		t.Fatalf("round-trip mismatch: got %+v want %+v", r, original)
+	}
+}
+
+func TestTraceShardFilenameIncludesVariantKey(t *testing.T) {
+	dir := t.TempDir()
+	original := Result{
+		Engine:            engineTrace,
+		Mode:              modeVec,
+		Scenario:          ScenarioTraceTagFilter,
+		Cardinality:       1000000,
+		SpansPerTrace:     20,
+		SpanDist:          spanDistHeavytail,
+		FilterSelectivity: 0.01,
+		TraceIDBatch:      10,
+		ShardNum:          6,
+		DataNodes:         4,
+		SpanBytes:         2048,
+	}
+	shardPath, writeErr := writeShard(original, dir)
+	if writeErr != nil {
+		t.Fatalf("writeShard() failed: %v", writeErr)
+	}
+	expectedName := "trace_vec_trace_tag_filter_1000000_s20_heavytail_sel0p01_k10_sh6_dn4_b2048.json"
+	if filepath.Base(shardPath) != expectedName {
+		t.Fatalf("unexpected trace shard filename: got %s, want %s", filepath.Base(shardPath), expectedName)
 	}
 }
