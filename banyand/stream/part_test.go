@@ -114,6 +114,12 @@ func TestMustInitFromElements(t *testing.T) {
 					_, ok = p.tagFamilyMetadata[k]
 					require.True(t, ok, "p.tagFamilyMetadata %s not found", k)
 				}
+				tagTypeData, readErr := fileSystem.Read(filepath.Join(path, tagTypeFilename))
+				require.NoError(t, readErr)
+				gotTagType := make(tagType)
+				require.NoError(t, gotTagType.unmarshal(tagTypeData))
+				require.Equal(t, pbv1.ValueTypeStrArr, gotTagType["arrTag"]["strArrTag"])
+				require.Equal(t, pbv1.ValueTypeInt64Arr, gotTagType["arrTag"]["intArrTag"])
 			}
 		})
 	}

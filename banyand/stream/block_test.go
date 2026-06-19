@@ -22,6 +22,7 @@ import (
 	"testing"
 
 	"github.com/google/go-cmp/cmp"
+	"github.com/stretchr/testify/require"
 
 	"github.com/apache/skywalking-banyandb/api/common"
 	"github.com/apache/skywalking-banyandb/pkg/bytes"
@@ -340,6 +341,20 @@ func Test_marshalAndUnmarshalBlock(t *testing.T) {
 	bm := blockMetadata{}
 
 	b.mustWriteTo(sid, &bm, ww)
+	require.Equal(t, tagType{
+		"arrTag": {
+			"strArrTag": pbv1.ValueTypeStrArr,
+			"intArrTag": pbv1.ValueTypeInt64Arr,
+		},
+		"binaryTag": {
+			"binaryTag": pbv1.ValueTypeBinaryData,
+		},
+		"singleTag": {
+			"strTag":   pbv1.ValueTypeStr,
+			"intTag":   pbv1.ValueTypeInt64,
+			"floatTag": pbv1.ValueTypeFloat64,
+		},
+	}, bm.tagType)
 
 	tagFamilyMetadataReaders := make(map[string]fs.Reader)
 	tagFamilyReaders := make(map[string]fs.Reader)

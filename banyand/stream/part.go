@@ -45,6 +45,7 @@ const (
 	streamSeriesMetadataName = "smeta"
 
 	metadataFilename               = "metadata.json"
+	tagTypeFilename                = "tag.type"
 	primaryFilename                = streamPrimaryName + ".bin"
 	metaFilename                   = streamMetaName + ".bin"
 	timestampsFilename             = streamTimestampsName + ".bin"
@@ -118,6 +119,7 @@ type memPart struct {
 	tagFamilyMetadata map[string]*bytes.Buffer
 	tagFamilies       map[string]*bytes.Buffer
 	tagFamilyFilter   map[string]*bytes.Buffer
+	tagType           tagType
 	meta              bytes.Buffer
 	primary           bytes.Buffer
 	timestamps        bytes.Buffer
@@ -149,6 +151,11 @@ func (mp *memPart) mustCreateMemTagFamilyWriters(name string) (fs.Writer, fs.Wri
 
 func (mp *memPart) reset() {
 	mp.partMetadata.reset()
+	if mp.tagType == nil {
+		mp.tagType = make(tagType)
+	} else {
+		mp.tagType.reset()
+	}
 	mp.meta.Reset()
 	mp.primary.Reset()
 	mp.timestamps.Reset()
@@ -203,7 +210,7 @@ func (mp *memPart) mustInitFromElements(es *elements) {
 		uncompressedBlockSizeBytes += uncompressedElementSizeBytes(i, es)
 	}
 	bsw.MustWriteElements(sidPrev, es.timestamps[indexPrev:], es.elementIDs[indexPrev:], es.tagFamilies[indexPrev:])
-	bsw.Flush(&mp.partMetadata)
+	bsw.Flush(&mp.partMetadata, &mp.tagType)
 	releaseBlockWriter(bsw)
 }
 
@@ -232,6 +239,7 @@ func (mp *memPart) mustFlush(fileSystem fs.FileSystem, path string) {
 	}
 
 	mp.partMetadata.mustWriteMetadata(fileSystem, path)
+	mp.tagType.mustWriteTagType(fileSystem, path)
 	// No SyncPath: mustWriteMetadata goes through WriteAtomic which already
 	// fsyncs the parent directory after rename, covering the dirent changes
 	// for all data files written above.
@@ -421,6 +429,18 @@ func CreatePartFileReaderFromPath(partPath string, lfs fs.FileSystem) ([]queue.F
 	for _, e := range ee {
 		if e.IsDir() {
 			continue
+		}
+		if e.Name() == tagTypeFilename {
+			tagTypePath := path.Join(partPath, e.Name())
+			tagTypeReader, openErr := lfs.OpenFile(tagTypePath)
+			if openErr != nil {
+				logger.Panicf("cannot open tag type file %q: %s", tagTypePath, openErr)
+			}
+			readers = append(readers, tagTypeReader)
+			files = append(files, queue.FileInfo{
+				Name:   tagTypeFilename,
+				Reader: tagTypeReader.SequentialRead(),
+			})
 		}
 		if filepath.Ext(e.Name()) == tagFamiliesMetadataFilenameExt {
 			tfmPath := path.Join(partPath, e.Name())
