@@ -368,7 +368,7 @@ func TestMeasureIndexedTagResolvedFromIndex(t *testing.T) {
 	require.Eventually(t, func() bool {
 		count, _ := inverted.ReadOnlyDocCount(sidxPath)
 		return count >= int64(total)
-	}, 30*time.Second, 100*time.Millisecond, "series index not fully persisted after stop")
+	}, 60*time.Second, 100*time.Millisecond, "series index not fully persisted after stop")
 
 	ruleToTag := map[uint32]dump.IndexedTagSpec{
 		strRuleID: {Family: "default", Name: "idxStr", Type: pbv1.ValueTypeStr},

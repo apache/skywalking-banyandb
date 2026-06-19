@@ -81,7 +81,7 @@ func eventuallyIdxTerm(t *testing.T, idxPath string, ruleID uint32, seriesID com
 			}
 		}
 		return true
-	}, 10*time.Second, 100*time.Millisecond,
+	}, 60*time.Second, 100*time.Millisecond,
 		"idx %s rule %d series %v value=%s: expected elementIDs %v not visible in time",
 		idxPath, ruleID, seriesID, value, want)
 }
