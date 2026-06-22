@@ -351,12 +351,6 @@ func TestMeasureIndexedTagResolvedFromIndex(t *testing.T) {
 	}
 	strRuleID, intRuleID, arrRuleID := ruleID("idxr_str_rule"), ruleID("idxr_int_rule"), ruleID("idxr_arr_rule")
 
-	// Stop the live service so it releases bluge's exclusive lock on the series
-	// index; the dump (like the offline CLI) reads the index from a quiesced
-	// database. Deferred cleanup is suppressed via the stopped flag.
-	moduleDefer()
-	stopped = true
-
 	segmentPath := findSidxSegmentPath(t, rootPath)
 
 	// The series index persists asynchronously (unsafe batches + persister) and is
@@ -369,6 +363,12 @@ func TestMeasureIndexedTagResolvedFromIndex(t *testing.T) {
 		count, _ := inverted.ReadOnlyDocCount(sidxPath)
 		return count >= int64(total)
 	}, 60*time.Second, 100*time.Millisecond, "series index not fully persisted after stop")
+
+	// Stop the live service so it releases bluge's exclusive lock on the series
+	// index; the dump (like the offline CLI) reads the index from a quiesced
+	// database. Deferred cleanup is suppressed via the stopped flag.
+	moduleDefer()
+	stopped = true
 
 	ruleToTag := map[uint32]dump.IndexedTagSpec{
 		strRuleID: {Family: "default", Name: "idxStr", Type: pbv1.ValueTypeStr},
