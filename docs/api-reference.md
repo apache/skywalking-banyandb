@@ -378,6 +378,27 @@
   
     - [MeasureService](#banyandb-measure-v1-MeasureService)
   
+- [banyandb/pipeline/v1/trace_pipeline.proto](#banyandb_pipeline_v1_trace_pipeline-proto)
+    - [SamplerPlugin](#banyandb-pipeline-v1-SamplerPlugin)
+    - [StageRule](#banyandb-pipeline-v1-StageRule)
+    - [TracePipelineConfig](#banyandb-pipeline-v1-TracePipelineConfig)
+    - [TracePipelineRegistryServiceCreateRequest](#banyandb-pipeline-v1-TracePipelineRegistryServiceCreateRequest)
+    - [TracePipelineRegistryServiceCreateResponse](#banyandb-pipeline-v1-TracePipelineRegistryServiceCreateResponse)
+    - [TracePipelineRegistryServiceDeleteRequest](#banyandb-pipeline-v1-TracePipelineRegistryServiceDeleteRequest)
+    - [TracePipelineRegistryServiceDeleteResponse](#banyandb-pipeline-v1-TracePipelineRegistryServiceDeleteResponse)
+    - [TracePipelineRegistryServiceExistRequest](#banyandb-pipeline-v1-TracePipelineRegistryServiceExistRequest)
+    - [TracePipelineRegistryServiceExistResponse](#banyandb-pipeline-v1-TracePipelineRegistryServiceExistResponse)
+    - [TracePipelineRegistryServiceGetRequest](#banyandb-pipeline-v1-TracePipelineRegistryServiceGetRequest)
+    - [TracePipelineRegistryServiceGetResponse](#banyandb-pipeline-v1-TracePipelineRegistryServiceGetResponse)
+    - [TracePipelineRegistryServiceListRequest](#banyandb-pipeline-v1-TracePipelineRegistryServiceListRequest)
+    - [TracePipelineRegistryServiceListResponse](#banyandb-pipeline-v1-TracePipelineRegistryServiceListResponse)
+    - [TracePipelineRegistryServiceUpdateRequest](#banyandb-pipeline-v1-TracePipelineRegistryServiceUpdateRequest)
+    - [TracePipelineRegistryServiceUpdateResponse](#banyandb-pipeline-v1-TracePipelineRegistryServiceUpdateResponse)
+  
+    - [PipelineEvent](#banyandb-pipeline-v1-PipelineEvent)
+  
+    - [TracePipelineRegistryService](#banyandb-pipeline-v1-TracePipelineRegistryService)
+  
 - [banyandb/property/v1/gossip.proto](#banyandb_property_v1_gossip-proto)
     - [PropagationContext](#banyandb-property-v1-PropagationContext)
     - [PropagationRequest](#banyandb-property-v1-PropagationRequest)
@@ -5894,6 +5915,344 @@ WriteResponse is the response contract for write
 | Write | [WriteRequest](#banyandb-measure-v1-WriteRequest) stream | [WriteResponse](#banyandb-measure-v1-WriteResponse) stream |  |
 | TopN | [TopNRequest](#banyandb-measure-v1-TopNRequest) | [TopNResponse](#banyandb-measure-v1-TopNResponse) |  |
 | DeleteExpiredSegments | [DeleteExpiredSegmentsRequest](#banyandb-measure-v1-DeleteExpiredSegmentsRequest) | [DeleteExpiredSegmentsResponse](#banyandb-measure-v1-DeleteExpiredSegmentsResponse) |  |
+
+ 
+
+
+
+<a name="banyandb_pipeline_v1_trace_pipeline-proto"></a>
+<p align="right"><a href="#top">Top</a></p>
+
+## banyandb/pipeline/v1/trace_pipeline.proto
+
+
+
+<a name="banyandb-pipeline-v1-SamplerPlugin"></a>
+
+### SamplerPlugin
+SamplerPlugin configures a user-supplied native Go plugin (a .so loaded
+in-process via the Go `plugin` package) that owns a keep/drop verdict over a
+vectorized batch of traces. It is the single sampler mechanism at every
+filter point: as TracePipelineConfig.sampler_plugin it is the gating verdict
+at the enabled PipelineEvent(s) (merge / finalization); as
+StageRule.sampler_plugin it is the per-stage retention verdict at a stage&#39;s
+migration-out boundary.
+
+The full plugin↔engine contract (the vectorized batch type, the projection
+handshake, and the verdict shape) lives in the pinned Go SDK module
+`pkg/pipeline/sdk`, not in this proto; this message only locates and admits
+the plugin. Three properties of that contract:
+  - Strong compatibility: the boundary exchanges only stdlib/primitive types
+    defined in the pinned SDK, so no third-party struct version is pinned
+    across the .so boundary. The plugin must be built with the SAME Go
+    toolchain, build tags, and flags (-trimpath, CGO) and the SAME pinned SDK
+    as the running data node; `abi_version` is checked at load.
+  - Vectorized input: the plugin&#39;s Decide is called once per columnar batch of
+    traces, not once per trace.
+  - Projection: the plugin declares the columns it needs (SDK Project →
+    Projection{Tags, SpanIDs, Spans}); the engine materializes only those tag
+    columns and, only when requested, the spans stream — like a query
+    projection.
+
+Operational constraints (Go `plugin`): Linux/macOS only; plugins cannot be
+unloaded, so changing one requires a node restart (no hot-reload); a plugin
+panic is contained with recover() and fails open (the whole batch is
+retained). Loading arbitrary code is operator-only and gated behind a server
+flag plus a trusted plugin directory.
+
+
+| Field | Type | Label | Description |
+| ----- | ---- | ----- | ----------- |
+| path | [string](#string) |  | Plugin .so filename, resolved within the data node&#39;s trusted plugin directory. The engine rejects any path that escapes that directory. |
+| symbol | [string](#string) |  | Constructor symbol the engine looks up; defaults to &#34;NewSampler&#34; if empty. |
+| abi_version | [uint32](#uint32) |  | ABI version the plugin was built against. The engine refuses to load the plugin unless this equals its own compiled sdk.ABIVersion. |
+| config | [google.protobuf.Struct](#google-protobuf-Struct) |  | Plugin-defined configuration, set directly in the pipeline config as a structured object. The engine does not interpret its keys: it serializes the Struct to canonical JSON and hands the bytes to the plugin&#39;s constructor (SDK NewSampler([]byte)), which unmarshals them into the plugin&#39;s own typed config and validates them — a malformed config fails the load. Optional: a plugin that needs no configuration leaves it unset. |
+
+
+
+
+
+
+<a name="banyandb-pipeline-v1-StageRule"></a>
+
+### StageRule
+StageRule binds the pipeline to one lifecycle stage of the targeted Group
+and declares that stage&#39;s retention sampler. The rule fires at the stage&#39;s
+migration-out boundary (i.e. when a segment migrates from this stage to the
+next stage); routine compaction is governed by PIPELINE_EVENT_MERGE on
+TracePipelineConfig, not by StageRule.
+
+Per-stage retention uses the SAME native-plugin mechanism as gating: each
+stage&#39;s `sampler_plugin` owns the keep/drop verdict for traces leaving that
+stage. A StageRule with no `sampler_plugin` set has no filtering effect —
+every trace at this stage migrates unchanged. The &#34;rising bar&#34; across stages
+(Hot keeps more, Cold keeps less) is expressed by each stage plugin&#39;s config
+(see §4.2 of the design doc), not by a fixed predicate vocabulary.
+
+
+| Field | Type | Label | Description |
+| ----- | ---- | ----- | ----------- |
+| stage | [string](#string) |  | Stage name from the Group&#39;s ResourceOpts.stages (e.g. &#34;hot&#34;, &#34;warm&#34;, &#34;cold&#34;). Must be non-empty; an empty stage name cannot match any lifecycle stage. |
+| sampler_plugin | [SamplerPlugin](#banyandb-pipeline-v1-SamplerPlugin) |  | Per-stage retention sampler: the native Go plugin that decides keep/drop for traces leaving this stage at its migration-out boundary. Unset means no per-stage drop (every trace migrates). Same contract as the gating plugin (see SamplerPlugin). |
+
+
+
+
+
+
+<a name="banyandb-pipeline-v1-TracePipelineConfig"></a>
+
+### TracePipelineConfig
+TracePipelineConfig is the root configuration for a storage-node trace pipeline.
+It reuses existing catalog identifiers (group via metadata, stage names, schema
+names) for targeting instead of declaring a parallel metadata model.
+
+The pipeline has up to three filter points:
+  1. PIPELINE_EVENT_MERGE — in-merge filter during Hot-phase LSM compaction (default).
+  2. PIPELINE_EVENT_FINALIZE — tail-sampling gate at Hot-phase finalization.
+  3. Per-stage retention via StageRule.sampler_plugin, applied at the
+     stage&#39;s migration-out boundary (when the segment migrates to the next
+     stage). Always implicit when any StageRule carries a sampler_plugin.
+Events 1 and 2 are toggleable via `enabled_events`. The gating policy those
+events evaluate is a native Go plugin (`sampler_plugin`).
+
+
+| Field | Type | Label | Description |
+| ----- | ---- | ----- | ----------- |
+| metadata | [banyandb.common.v1.Metadata](#banyandb-common-v1-Metadata) |  | Identity and revision tracking; metadata.group is the Group this pipeline lives in and applies to, consistent with every other schema resource. Required: every config needs a name/group for registry handling. |
+| enabled | [bool](#bool) |  | Active status of the pipeline. |
+| stages | [StageRule](#banyandb-pipeline-v1-StageRule) | repeated | Per-stage retention rules: which lifecycle stages this pipeline acts on, with the retention sampler_plugin for each. Each rule fires at its stage&#39;s migration-out boundary regardless of `enabled_events`. Empty means the only filters are the `enabled_events` events (no per-stage drop). |
+| schema_names | [string](#string) | repeated | Explicit schema names to target within the Group (exact match on Metadata.name). Each entry must be non-empty; cross-element uniqueness is enforced server-side. |
+| schema_name_regex | [string](#string) |  | RE2 regular expression matched against schema names. A schema is targeted if it is listed in schema_names OR matches this pattern. When both are empty, every schema in the Group is targeted. |
+| sampler_plugin | [SamplerPlugin](#banyandb-pipeline-v1-SamplerPlugin) |  | Gating policy: a user-supplied native Go plugin (.so) loaded in-process that owns the entire keep/drop verdict, evaluated by any enabled event (PIPELINE_EVENT_MERGE and/or PIPELINE_EVENT_FINALIZE). Unset means the only retention is the per-stage StageRule sampler_plugin(s) at migration-out. |
+| enabled_events | [PipelineEvent](#banyandb-pipeline-v1-PipelineEvent) | repeated | Pipeline-wide events to run. Empty defaults to [PIPELINE_EVENT_MERGE] — the in-merge filter is on, the finalization gate is off. To enable the finalization gate, include PIPELINE_EVENT_FINALIZE; to disable the merge filter, list only [PIPELINE_EVENT_FINALIZE]; the explicit empty default value is also acceptable to mean &#34;merge only&#34;. Each element must be a defined, non-UNSPECIFIED value; duplicates are normalized to a set server-side. |
+| merge_grace | [google.protobuf.Duration](#google-protobuf-Duration) |  | Per-trace maturity window for the in-merge filter (§7.1). A trace is eligible for dropping during an LSM compaction merge only once its latest span timestamp is older than `now - merge_grace`; younger traces pass through the merge unchanged. Bounds the expected intra-trace span arrival spread (typically seconds). Used iff `enabled_events` contains PIPELINE_EVENT_MERGE. Strictly positive if set; engine default 30s if unset. |
+| finalize_grace | [google.protobuf.Duration](#google-protobuf-Duration) |  | Per-segment settling window for the scheduled finalization pass (§7.3). A segment is treated as settled, and the authoritative final filter runs, once the event-time watermark exceeds `segment.End &#43; finalize_grace`. Bounds segment-wide late arrival (typically minutes). Used iff `enabled_events` contains PIPELINE_EVENT_FINALIZE. Strictly positive if set; engine default 5m if unset. |
+
+
+
+
+
+
+<a name="banyandb-pipeline-v1-TracePipelineRegistryServiceCreateRequest"></a>
+
+### TracePipelineRegistryServiceCreateRequest
+
+
+
+| Field | Type | Label | Description |
+| ----- | ---- | ----- | ----------- |
+| trace_pipeline_config | [TracePipelineConfig](#banyandb-pipeline-v1-TracePipelineConfig) |  |  |
+
+
+
+
+
+
+<a name="banyandb-pipeline-v1-TracePipelineRegistryServiceCreateResponse"></a>
+
+### TracePipelineRegistryServiceCreateResponse
+
+
+
+| Field | Type | Label | Description |
+| ----- | ---- | ----- | ----------- |
+| mod_revision | [int64](#int64) |  |  |
+
+
+
+
+
+
+<a name="banyandb-pipeline-v1-TracePipelineRegistryServiceDeleteRequest"></a>
+
+### TracePipelineRegistryServiceDeleteRequest
+
+
+
+| Field | Type | Label | Description |
+| ----- | ---- | ----- | ----------- |
+| metadata | [banyandb.common.v1.Metadata](#banyandb-common-v1-Metadata) |  |  |
+
+
+
+
+
+
+<a name="banyandb-pipeline-v1-TracePipelineRegistryServiceDeleteResponse"></a>
+
+### TracePipelineRegistryServiceDeleteResponse
+
+
+
+| Field | Type | Label | Description |
+| ----- | ---- | ----- | ----------- |
+| deleted | [bool](#bool) |  |  |
+| delete_time | [int64](#int64) |  | delete_time is the server-assigned tombstone timestamp in unix nanos. |
+| mod_revision | [int64](#int64) |  | mod_revision is the etcd revision of the tombstone; zero if the server did not record one. |
+
+
+
+
+
+
+<a name="banyandb-pipeline-v1-TracePipelineRegistryServiceExistRequest"></a>
+
+### TracePipelineRegistryServiceExistRequest
+
+
+
+| Field | Type | Label | Description |
+| ----- | ---- | ----- | ----------- |
+| metadata | [banyandb.common.v1.Metadata](#banyandb-common-v1-Metadata) |  |  |
+
+
+
+
+
+
+<a name="banyandb-pipeline-v1-TracePipelineRegistryServiceExistResponse"></a>
+
+### TracePipelineRegistryServiceExistResponse
+
+
+
+| Field | Type | Label | Description |
+| ----- | ---- | ----- | ----------- |
+| has_group | [bool](#bool) |  |  |
+| has_trace_pipeline_config | [bool](#bool) |  |  |
+
+
+
+
+
+
+<a name="banyandb-pipeline-v1-TracePipelineRegistryServiceGetRequest"></a>
+
+### TracePipelineRegistryServiceGetRequest
+
+
+
+| Field | Type | Label | Description |
+| ----- | ---- | ----- | ----------- |
+| metadata | [banyandb.common.v1.Metadata](#banyandb-common-v1-Metadata) |  |  |
+
+
+
+
+
+
+<a name="banyandb-pipeline-v1-TracePipelineRegistryServiceGetResponse"></a>
+
+### TracePipelineRegistryServiceGetResponse
+
+
+
+| Field | Type | Label | Description |
+| ----- | ---- | ----- | ----------- |
+| trace_pipeline_config | [TracePipelineConfig](#banyandb-pipeline-v1-TracePipelineConfig) |  |  |
+
+
+
+
+
+
+<a name="banyandb-pipeline-v1-TracePipelineRegistryServiceListRequest"></a>
+
+### TracePipelineRegistryServiceListRequest
+
+
+
+| Field | Type | Label | Description |
+| ----- | ---- | ----- | ----------- |
+| group | [string](#string) |  |  |
+
+
+
+
+
+
+<a name="banyandb-pipeline-v1-TracePipelineRegistryServiceListResponse"></a>
+
+### TracePipelineRegistryServiceListResponse
+
+
+
+| Field | Type | Label | Description |
+| ----- | ---- | ----- | ----------- |
+| trace_pipeline_config | [TracePipelineConfig](#banyandb-pipeline-v1-TracePipelineConfig) | repeated |  |
+
+
+
+
+
+
+<a name="banyandb-pipeline-v1-TracePipelineRegistryServiceUpdateRequest"></a>
+
+### TracePipelineRegistryServiceUpdateRequest
+
+
+
+| Field | Type | Label | Description |
+| ----- | ---- | ----- | ----------- |
+| trace_pipeline_config | [TracePipelineConfig](#banyandb-pipeline-v1-TracePipelineConfig) |  |  |
+
+
+
+
+
+
+<a name="banyandb-pipeline-v1-TracePipelineRegistryServiceUpdateResponse"></a>
+
+### TracePipelineRegistryServiceUpdateResponse
+
+
+
+| Field | Type | Label | Description |
+| ----- | ---- | ----- | ----------- |
+| mod_revision | [int64](#int64) |  |  |
+
+
+
+
+
+ 
+
+
+<a name="banyandb-pipeline-v1-PipelineEvent"></a>
+
+### PipelineEvent
+PipelineEvent identifies a pipeline-wide event that can be independently
+enabled. Per-stage retention (StageRule.sampler_plugin) fires implicitly at
+the stage&#39;s migration-out boundary and is not toggleable via this enum.
+
+| Name | Number | Description |
+| ---- | ------ | ----------- |
+| PIPELINE_EVENT_UNSPECIFIED | 0 |  |
+| PIPELINE_EVENT_MERGE | 1 | In-merge filter during Hot-phase LSM compaction merges (Warm/Cold compactions stay lossless). Per-trace drops are gated by `merge_grace` so partial traces are not destroyed prematurely. Cheap, runs often; verdicts wait for trace maturity (see §7.1). |
+| PIPELINE_EVENT_FINALIZE | 2 | Tail-sampling gate at Hot-phase segment finalization, after the segment has settled (event-time watermark past `segment.End &#43; finalize_grace`). Heavy but authoritative; sees the complete trace (see §7.3). |
+
+
+ 
+
+ 
+
+
+<a name="banyandb-pipeline-v1-TracePipelineRegistryService"></a>
+
+### TracePipelineRegistryService
+TracePipelineRegistryService manages TracePipelineConfig resources, mirroring
+the registry services of every other schema resource. Create/Update run the
+admission and conflict checks of §2.3/§2.4 of the design.
+
+| Method Name | Request Type | Response Type | Description |
+| ----------- | ------------ | ------------- | ------------|
+| Create | [TracePipelineRegistryServiceCreateRequest](#banyandb-pipeline-v1-TracePipelineRegistryServiceCreateRequest) | [TracePipelineRegistryServiceCreateResponse](#banyandb-pipeline-v1-TracePipelineRegistryServiceCreateResponse) |  |
+| Update | [TracePipelineRegistryServiceUpdateRequest](#banyandb-pipeline-v1-TracePipelineRegistryServiceUpdateRequest) | [TracePipelineRegistryServiceUpdateResponse](#banyandb-pipeline-v1-TracePipelineRegistryServiceUpdateResponse) |  |
+| Delete | [TracePipelineRegistryServiceDeleteRequest](#banyandb-pipeline-v1-TracePipelineRegistryServiceDeleteRequest) | [TracePipelineRegistryServiceDeleteResponse](#banyandb-pipeline-v1-TracePipelineRegistryServiceDeleteResponse) |  |
+| Get | [TracePipelineRegistryServiceGetRequest](#banyandb-pipeline-v1-TracePipelineRegistryServiceGetRequest) | [TracePipelineRegistryServiceGetResponse](#banyandb-pipeline-v1-TracePipelineRegistryServiceGetResponse) |  |
+| List | [TracePipelineRegistryServiceListRequest](#banyandb-pipeline-v1-TracePipelineRegistryServiceListRequest) | [TracePipelineRegistryServiceListResponse](#banyandb-pipeline-v1-TracePipelineRegistryServiceListResponse) |  |
+| Exist | [TracePipelineRegistryServiceExistRequest](#banyandb-pipeline-v1-TracePipelineRegistryServiceExistRequest) | [TracePipelineRegistryServiceExistResponse](#banyandb-pipeline-v1-TracePipelineRegistryServiceExistResponse) | Exist doesn&#39;t expose an HTTP endpoint. Please use HEAD method to touch Get instead. |
 
  
 
