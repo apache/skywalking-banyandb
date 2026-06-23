@@ -1,0 +1,300 @@
+// Licensed to Apache Software Foundation (ASF) under one or more contributor
+// license agreements. See the NOTICE file distributed with
+// this work for additional information regarding copyright
+// ownership. Apache Software Foundation (ASF) licenses this file to you under
+// the Apache License, Version 2.0 (the "License"); you may
+// not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing,
+// software distributed under the License is distributed on an
+// "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
+// KIND, either express or implied.  See the License for the
+// specific language governing permissions and limitations
+// under the License.
+
+syntax = "proto3";
+
+package banyandb.pipeline.v1;
+
+import "banyandb/common/v1/common.proto";
+import "google/api/annotations.proto";
+import "google/protobuf/duration.proto";
+import "google/protobuf/struct.proto";
+import "protoc-gen-openapiv2/options/annotations.proto";
+import "validate/validate.proto";
+
+option go_package = "github.com/apache/skywalking-banyandb/api/proto/banyandb/pipeline/v1";
+option java_package = "org.apache.skywalking.banyandb.pipeline.v1";
+option (grpc.gateway.protoc_gen_openapiv2.options.openapiv2_swagger) = {base_path: "/api"};
+
+// PipelineEvent identifies a pipeline-wide event that can be independently
+// enabled. Per-stage retention (StageRule.plugins) fires implicitly at the
+// stage's migration-out boundary and is not toggleable via this enum.
+enum PipelineEvent {
+  PIPELINE_EVENT_UNSPECIFIED = 0;
+  // In-merge filter during Hot-phase LSM compaction merges (Warm/Cold
+  // compactions stay lossless). Per-trace drops are gated by `merge_grace` so
+  // partial traces are not destroyed prematurely. Cheap, runs often; verdicts
+  // wait for trace maturity (see §7.1).
+  PIPELINE_EVENT_MERGE = 1;
+  // Tail-sampling gate at Hot-phase segment finalization, after the segment
+  // has settled (event-time watermark past `segment.End + finalize_grace`).
+  // Heavy but authoritative; sees the complete trace (see §7.3).
+  PIPELINE_EVENT_FINALIZE = 2;
+}
+
+// TracePipelineConfig is the root configuration for a storage-node trace pipeline.
+// It reuses existing catalog identifiers (group via metadata, stage names, schema
+// names) for targeting instead of declaring a parallel metadata model.
+//
+// The pipeline has up to three filter points:
+//   1. PIPELINE_EVENT_MERGE — in-merge filter during Hot-phase LSM compaction (default).
+//   2. PIPELINE_EVENT_FINALIZE — tail-sampling gate at Hot-phase finalization.
+//   3. Per-stage retention via StageRule.plugins, applied at the stage's
+//      migration-out boundary (when the segment migrates to the next stage).
+//      Always implicit when any StageRule carries a plugin chain.
+// Events 1 and 2 are toggleable via `enabled_events`. The gating policy those
+// events evaluate is the `plugins` chain (a sequential pipe of native Go
+// plugins; today each link is a sampler).
+message TracePipelineConfig {
+  // Identity and revision tracking; metadata.group is the Group this pipeline
+  // lives in and applies to, consistent with every other schema resource.
+  // Required: every config needs a name/group for registry handling.
+  common.v1.Metadata metadata = 1 [(validate.rules).message = {required: true}];
+  // Active status of the pipeline.
+  bool enabled = 2;
+  // Per-stage retention rules: which lifecycle stages this pipeline acts on,
+  // with the retention plugin chain for each. Each rule fires at its stage's
+  // migration-out boundary regardless of `enabled_events`. Empty means the
+  // only filters are the `enabled_events` events (no per-stage drop).
+  repeated StageRule stages = 3;
+  // Explicit schema names to target within the Group (exact match on Metadata.name).
+  // Each entry must be non-empty; cross-element uniqueness is enforced server-side.
+  repeated string schema_names = 4 [(validate.rules).repeated.items.string.min_len = 1];
+  // RE2 regular expression matched against schema names. A schema is targeted if it
+  // is listed in schema_names OR matches this pattern. When both are empty, every
+  // schema in the Group is targeted.
+  string schema_name_regex = 5;
+  // Gating policy: an ordered chain of plugins (a sequential pipe) evaluated by
+  // any enabled event (PIPELINE_EVENT_MERGE and/or PIPELINE_EVENT_FINALIZE).
+  // Links run in declared order, each processing the traces the previous link
+  // kept; a link that fails is bypassed (fail-open). Today every link is a
+  // sampler, so the chain is the conjunction of the links' keep/drop verdicts.
+  // Empty means the only retention is the per-stage StageRule plugin chain(s)
+  // at migration-out.
+  repeated Plugin plugins = 6;
+  // Pipeline-wide events to run. Empty defaults to [PIPELINE_EVENT_MERGE] —
+  // the in-merge filter is on, the finalization gate is off. To enable the
+  // finalization gate, include PIPELINE_EVENT_FINALIZE; to disable the merge
+  // filter, list only [PIPELINE_EVENT_FINALIZE]; the explicit empty default
+  // value is also acceptable to mean "merge only". Each element must be a
+  // defined, non-UNSPECIFIED value; duplicates are normalized to a set
+  // server-side.
+  repeated PipelineEvent enabled_events = 7 [(validate.rules).repeated.items.enum = {
+    defined_only: true
+    not_in: [0]
+  }];
+  // Per-trace maturity window for the in-merge filter (§7.1). A trace is
+  // eligible for dropping during an LSM compaction merge only once its latest
+  // span timestamp is older than `now - merge_grace`; younger traces pass
+  // through the merge unchanged. Bounds the expected intra-trace span arrival
+  // spread (typically seconds). Used iff `enabled_events` contains
+  // PIPELINE_EVENT_MERGE. Strictly positive if set; engine default 30s if unset.
+  google.protobuf.Duration merge_grace = 8 [(validate.rules).duration = {
+    gt: {seconds: 0}
+  }];
+  // Per-segment settling window for the scheduled finalization pass (§7.3). A
+  // segment is treated as settled, and the authoritative final filter runs,
+  // once the event-time watermark exceeds `segment.End + finalize_grace`.
+  // Bounds segment-wide late arrival (typically minutes). Used iff
+  // `enabled_events` contains PIPELINE_EVENT_FINALIZE. Strictly positive if
+  // set; engine default 5m if unset.
+  google.protobuf.Duration finalize_grace = 9 [(validate.rules).duration = {
+    gt: {seconds: 0}
+  }];
+}
+
+// StageRule binds the pipeline to one lifecycle stage of the targeted Group
+// and declares that stage's retention plugin chain. The rule fires at the
+// stage's migration-out boundary (i.e. when a segment migrates from this stage
+// to the next stage); routine compaction is governed by PIPELINE_EVENT_MERGE on
+// TracePipelineConfig, not by StageRule.
+//
+// Per-stage retention uses the SAME chain mechanism as gating: each stage's
+// `plugins` chain owns the keep/drop verdict for traces leaving that stage. A
+// StageRule with an empty `plugins` chain has no filtering effect — every trace
+// at this stage migrates unchanged. The "rising bar" across stages (Hot keeps
+// more, Cold keeps less) is expressed by each stage's plugin config (see §4.2
+// of the design doc), not by a fixed predicate vocabulary.
+message StageRule {
+  // Stage name from the Group's ResourceOpts.stages (e.g. "hot", "warm", "cold").
+  // Must be non-empty; an empty stage name cannot match any lifecycle stage.
+  string stage = 1 [(validate.rules).string.min_len = 1];
+  // Per-stage retention chain: the ordered plugins (a sequential pipe) that
+  // decide keep/drop for traces leaving this stage at its migration-out
+  // boundary. Empty means no per-stage drop (every trace migrates). Same
+  // contract and composition as the gating chain (see Plugin).
+  repeated Plugin plugins = 2;
+}
+
+// Plugin is one link in a pipeline's processing chain — a generic, kind-tagged
+// envelope around a user-supplied native Go plugin. The set oneof arm selects
+// the kind; today the only kind is a sampler (SamplerPlugin). Adding a new kind
+// is purely additive: define its payload message and add a new arm to `kind`,
+// leaving existing arms and field numbers untouched.
+//
+// A chain of Plugin (TracePipelineConfig.plugins, StageRule.plugins) is a
+// sequential pipe: links run in declared order, each link processes the traces
+// the previous link kept, and a link that fails is bypassed (its input passes
+// through unchanged). The plugin↔engine contract for each kind (the vectorized
+// batch, the projection handshake, the verdict) lives in the pinned Go SDK
+// module `pkg/pipeline/sdk`, not in this proto.
+message Plugin {
+  // Operator-facing identity for this link, used in diagnostics and admission
+  // errors. Must be non-empty; cross-element uniqueness within a chain is
+  // enforced server-side.
+  string name = 1 [(validate.rules).string.min_len = 1];
+  // Plugin kind. Exactly one arm must be set; the set arm is the kind
+  // discriminator. An unset kind is rejected at admission (protoc-gen-validate
+  // cannot mark a oneof required).
+  oneof kind {
+    // Sampler kind: owns a keep/drop verdict over a vectorized batch of traces.
+    SamplerPlugin sampler = 2;
+  }
+}
+
+// SamplerPlugin configures a user-supplied native Go plugin (a .so loaded
+// in-process via the Go `plugin` package) that owns a keep/drop verdict over a
+// vectorized batch of traces. It is the sampler kind of Plugin (Plugin.sampler)
+// and is the keep/drop link wherever a chain runs: in a TracePipelineConfig
+// chain it gates at the enabled PipelineEvent(s) (merge / finalization); in a
+// StageRule chain it is per-stage retention at a stage's migration-out boundary.
+//
+// The full plugin↔engine contract (the vectorized batch type, the projection
+// handshake, and the verdict shape) lives in the pinned Go SDK module
+// `pkg/pipeline/sdk`, not in this proto; this message only locates and admits
+// the plugin. Three properties of that contract:
+//   - Strong compatibility: the boundary exchanges only stdlib/primitive types
+//     defined in the pinned SDK, so no third-party struct version is pinned
+//     across the .so boundary. The plugin must be built with the SAME Go
+//     toolchain, build tags, and flags (-trimpath, CGO) and the SAME pinned SDK
+//     as the running data node; `abi_version` is checked at load.
+//   - Vectorized input: the plugin's Decide is called once per columnar batch of
+//     traces, not once per trace.
+//   - Projection: the plugin declares the columns it needs (SDK Project →
+//     Projection{Tags, SpanIDs, Spans}); the engine materializes only those tag
+//     columns and, only when requested, the spans stream — like a query
+//     projection.
+//
+// Operational constraints (Go `plugin`): Linux/macOS only; plugins cannot be
+// unloaded, so changing one requires a node restart (no hot-reload); a plugin
+// panic is contained with recover() and fails open (the whole batch is
+// retained). Loading arbitrary code is operator-only and gated behind a server
+// flag plus a trusted plugin directory.
+message SamplerPlugin {
+  // Plugin .so filename, resolved within the data node's trusted plugin
+  // directory. The engine rejects any path that escapes that directory.
+  string path = 1 [(validate.rules).string.min_len = 1];
+  // Constructor symbol the engine looks up; defaults to "NewSampler" if empty.
+  string symbol = 2;
+  // ABI version the plugin was built against. The engine refuses to load the
+  // plugin unless this equals its own compiled sdk.ABIVersion.
+  uint32 abi_version = 3 [(validate.rules).uint32 = {gte: 1}];
+  // Plugin-defined configuration, set directly in the pipeline config as a
+  // structured object. The engine does not interpret its keys: it serializes
+  // the Struct to canonical JSON and hands the bytes to the plugin's
+  // constructor (SDK NewSampler([]byte)), which unmarshals them into the
+  // plugin's own typed config and validates them — a malformed config fails
+  // the load. Optional: a plugin that needs no configuration leaves it unset.
+  google.protobuf.Struct config = 4;
+}
+
+message TracePipelineRegistryServiceCreateRequest {
+  TracePipelineConfig trace_pipeline_config = 1 [(validate.rules).message = {required: true}];
+}
+
+message TracePipelineRegistryServiceCreateResponse {
+  int64 mod_revision = 1;
+}
+
+message TracePipelineRegistryServiceUpdateRequest {
+  TracePipelineConfig trace_pipeline_config = 1 [(validate.rules).message = {required: true}];
+}
+
+message TracePipelineRegistryServiceUpdateResponse {
+  int64 mod_revision = 1;
+}
+
+message TracePipelineRegistryServiceDeleteRequest {
+  common.v1.Metadata metadata = 1 [(validate.rules).message = {required: true}];
+}
+
+message TracePipelineRegistryServiceDeleteResponse {
+  bool deleted = 1;
+  // delete_time is the server-assigned tombstone timestamp in unix nanos.
+  int64 delete_time = 2;
+  // mod_revision is the etcd revision of the tombstone; zero if the server did not record one.
+  int64 mod_revision = 3;
+}
+
+message TracePipelineRegistryServiceGetRequest {
+  common.v1.Metadata metadata = 1 [(validate.rules).message = {required: true}];
+}
+
+message TracePipelineRegistryServiceGetResponse {
+  TracePipelineConfig trace_pipeline_config = 1;
+}
+
+message TracePipelineRegistryServiceExistRequest {
+  common.v1.Metadata metadata = 1 [(validate.rules).message = {required: true}];
+}
+
+message TracePipelineRegistryServiceExistResponse {
+  bool has_group = 1;
+  bool has_trace_pipeline_config = 2;
+}
+
+message TracePipelineRegistryServiceListRequest {
+  string group = 1 [(validate.rules).string.min_len = 1];
+}
+
+message TracePipelineRegistryServiceListResponse {
+  repeated TracePipelineConfig trace_pipeline_config = 1;
+}
+
+// TracePipelineRegistryService manages TracePipelineConfig resources, mirroring
+// the registry services of every other schema resource. Create/Update run the
+// admission and conflict checks of §2.3/§2.4 of the design.
+service TracePipelineRegistryService {
+  rpc Create(TracePipelineRegistryServiceCreateRequest) returns (TracePipelineRegistryServiceCreateResponse) {
+    option (google.api.http) = {
+      post: "/v1/trace-pipeline/schema"
+      body: "*"
+    };
+  }
+
+  rpc Update(TracePipelineRegistryServiceUpdateRequest) returns (TracePipelineRegistryServiceUpdateResponse) {
+    option (google.api.http) = {
+      put: "/v1/trace-pipeline/schema/{trace_pipeline_config.metadata.group}/{trace_pipeline_config.metadata.name}"
+      body: "*"
+    };
+  }
+
+  rpc Delete(TracePipelineRegistryServiceDeleteRequest) returns (TracePipelineRegistryServiceDeleteResponse) {
+    option (google.api.http) = {delete: "/v1/trace-pipeline/schema/{metadata.group}/{metadata.name}"};
+  }
+
+  rpc Get(TracePipelineRegistryServiceGetRequest) returns (TracePipelineRegistryServiceGetResponse) {
+    option (google.api.http) = {get: "/v1/trace-pipeline/schema/{metadata.group}/{metadata.name}"};
+  }
+
+  rpc List(TracePipelineRegistryServiceListRequest) returns (TracePipelineRegistryServiceListResponse) {
+    option (google.api.http) = {get: "/v1/trace-pipeline/schema/lists/{group}"};
+  }
+
+  // Exist doesn't expose an HTTP endpoint. Please use HEAD method to touch Get instead.
+  rpc Exist(TracePipelineRegistryServiceExistRequest) returns (TracePipelineRegistryServiceExistResponse);
+}
