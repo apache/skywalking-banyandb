@@ -1,6 +1,8 @@
 # BanyanDB data migration (measure & stream)
 
-A one-shot CLI that rewrites **measure** or **stream** data — from either a local backup snapshot or a set of live PVC mount paths — into one or more target data roots, with rows re-bucketed onto each target stage's `SegmentInterval` grid. The catalog of each group is auto-detected (authoritatively from the source's schema-property catalog via `banyand/metadata/schema/reader`; when a backup snapshot carries no catalog, the backup directory layout — `<node>/<date>/{measure,stream}/<group>/` — classifies the group instead) and each group is routed to its catalog's executor. One plan may mix measure and stream groups freely. Trace / property catalogs and `sw_metadata` are **out of scope**.
+A one-shot CLI that rewrites **measure** or **stream** data — from either a local backup snapshot or a set of live PVC mount paths — into one or more target data roots, with rows re-bucketed onto each target stage's `SegmentInterval` grid. The catalog of each group is auto-detected (authoritatively from the source's schema-property catalog via `banyand/metadata/schema/reader`; when a backup snapshot carries no catalog, the backup directory layout — `<node>/<date>/{measure,stream}/<group>/` — classifies the group instead) and each group is routed to its catalog's executor. One plan may mix normal measure, **index-mode measure** (e.g. `sw_metadata`), and stream groups freely. Trace / property catalogs are **out of scope**.
+
+Index-mode specifics: an index-mode measure (`IndexMode: true`, e.g. SkyWalking's `sw_metadata` group) stores no columnar parts — every data point is one inverted document under the segment-level `seg/sidx/`, upserted by series per segment (one max-version doc per `(series, segment)`). The tool detects these groups from the catalog and routes them through a dedicated path: each source sidx is either **byte-copied** whole (when all its docs align to one not-yet-written target segment) or **rebuilt** doc-by-doc — stored tag fields are carried over verbatim and the index-only entity fields (`_im_name` / `_im_entity_tag_*`, never stored) are regenerated from each doc's `_id`, with `Analyzer`/`NoSort` restored from the catalog's index rules so the migrated sidx stays searchable. Re-gridding onto a coarser/realigned target collapses redundant same-series docs (max version wins), so the target doc count is `≤` source — every distinct series is preserved, never lost. The per-group internal `_top_n_result` measure (auto-created, normally empty) is ignored; an index-mode group that also holds a non-`_top_n_result` normal measure with actual shard parts is refused. A doc read back with `_timestamp == 0` (which never occurs for valid data, since the write path always stamps a checked non-zero timestamp) is treated as corrupt and aborts the copy with the offending sidx + sample series IDs rather than being routed to a guessed segment.
 
 Stream specifics: stream has no field columns, no version, and the tool never de-duplicates rows, so source and target row counts are expected to match **exactly**. Each stream segment carries two index layers — the segment-level series index (`sidx/`, union-built and broadcast like measure) and the per-shard element index (`idx/`). On the fast path (a source segment maps to a single target segment) both are byte-copied; on the slow path (a source segment splits across target segments) the element index is rebuilt from rows + index rules. The slow path supports multi-stream groups (e.g. SkyWalking's `sw_records`, 21 streams): because a shard's element index mixes docs from every stream of the group, each row's owning stream is resolved per-row from its `seriesID` via the source segment's series index (`seriesID -> sidx EntityValues -> pbv1.Series.Subject`), and that stream's index locator is used to build the row's doc. The fast path has no such cost (it byte-copies).
 
@@ -11,8 +13,8 @@ The CLI exposes three subcommands; all share a single required flag `--copy-conf
 | Subcommand | Purpose |
 |---|---|
 | `copy`    | Rewrite measure or stream data from the plan's source into each entry's target. Side-effecting. |
-| `verify`  | Re-read the same plan and report per-(entry, group) source-vs-target row counts, segment grid alignment, and union-sidx doc counts. Read-only inspector. |
-| `analyze` | For one (entry, group), walk every source part and dump within-part duplicate rows, per-part block boundaries, and an exact src↔tgt multiset diff. Diagnostic. |
+| `verify`  | Re-read the same plan and report per-(entry, group) source-vs-target row counts, segment grid alignment, and union-sidx doc counts. For index-mode groups it instead reconciles sidx doc counts, distinct doc-id (series) counts, per-`(segment, series)` full-field value digests, and per-segment 1:1 alignment. Read-only inspector. |
+| `analyze` | For one (entry, group), walk every source part and dump within-part duplicate rows, per-part block boundaries, and an exact src↔tgt multiset diff. For index-mode groups it reports `(series, timestamp)` version-duplicate and value-conflict keys (explains why target doc count `≤` source). Diagnostic. |
 
 Each source row is routed to a grid-aligned target segment using the `SegmentInterval` defined by the entry's `stage`. A per-group **union sidx** is built once from every source segment and broadcast (byte-copied) into every aligned target segment. The tool reads schemas and group `ResourceOpts` directly from the source's `schema-property` bluge catalog — no liaison or network access is required at run time.
 
@@ -20,9 +22,9 @@ Each source row is routed to a grid-aligned target segment using the `SegmentInt
 
 ## What it does
 
-1. Loads the schemas of the plan's catalog from the source's schema-property bluge catalog — measure schemas (tag families + `IndexMode` bit) or stream schemas (tag families + index-rule bindings + entity layout) — plus each group's `ResourceOpts`.
-2. Measure plans only: rejects any requested group that contains an `IndexMode` measure (their field data lives inside sidx and broadcasting the union would corrupt cross-node dedup at query time). Stream has no `IndexMode`.
-3. For each group, walks every source segment under `<source>/<node>/.../measure/<group>/` (or `.../stream/<group>/`) and:
+1. Loads the schemas of the plan's catalog from the source's schema-property bluge catalog — measure schemas (tag families + `IndexMode` bit + index rules) or stream schemas (tag families + index-rule bindings + entity layout) — plus each group's `ResourceOpts`.
+2. Classifies each measure group as **normal** or **index-mode** (a group is index-mode when its only non-`_top_n_result` measures all carry `IndexMode: true`). Normal groups take the union-sidx path below; index-mode groups take the sidx rebuild/byte-copy path (see "Index-mode specifics" above) and are **excluded** from union-sidx broadcast. Stream has no `IndexMode`.
+3. For each **normal** measure / stream group, walks every source segment under `<source>/<node>/.../measure/<group>/` (or `.../stream/<group>/`) and:
    - Builds one **union sidx** at `<staging_dir>/<group>/sidx/` by deduplicating every source sidx doc by SeriesID.
    - Discovers every `seg-*/shard-*/<partID>/` directory and records a `partTask` list.
 4. For each `(entry, group)` pair:
@@ -39,7 +41,7 @@ Entries run sequentially. The first error aborts the run. The whole `staging_dir
 ## Limitations
 
 - Every command **requires** a `schema-property` catalog under at least one source node (typically a hot / schema-server node): group catalogs, segment alignment and stream index rebuilds all resolve from it. A source without the catalog fails fast.
-- All groups containing any `IndexMode` measure are refused up front (measure groups only — stream has no `IndexMode`).
+- Index-mode measure groups are supported (sidx rebuild / byte-copy path). A group that mixes an index-mode measure with a non-`_top_n_result` normal measure that has actual shard parts is refused — split such a group before migrating.
 - Source and target shard topology must match (no reshard semantics).
 - The tool assumes nothing else is writing to the target paths.
 
@@ -128,6 +130,14 @@ A stream target carries one extra layer — the per-shard element index:
                        │   ├── <16-hex-epoch>.snp       # part index snapshot
                        │   └── idx/                     # element index (bluge); byte-copied or rebuilt, see above
                        └── sidx/                        # broadcast union sidx (bluge index)
+```
+
+An **index-mode** measure target carries no `shard-N/` parts at all — every segment holds only the rebuilt/byte-copied series index:
+
+```
+<entry.target>/<group>/seg-YYYYMMDD[HH]/
+                       ├── metadata                     # storage.SegmentMetadata: segment version + endTime
+                       └── sidx/                        # index-mode docs (bluge); byte-copied or rebuilt per segment
 ```
 
 Segment names use `seg-YYYYMMDD` for `DAY` units and `seg-YYYYMMDDHH` for `HOUR` units, matching `banyand/internal/storage.segmentController`. PartIDs are emitted as zero-padded 16-character lowercase hex, starting at `0000000000000001` and incrementing as `copy` writes parts — banyandb's runtime picks up the highest existing partID on startup so live writes resume at `max(N)+1`.

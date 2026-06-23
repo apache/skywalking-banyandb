@@ -63,11 +63,18 @@ index-rule bindings) and group resource opts (SegmentInterval per
 LifecycleStage) are read directly from the source's schema-property
 bluge catalog — no liaison access is needed. Each group routes to its
 catalog's executor, so one plan may mix measure and stream groups.
-Groups containing any IndexMode measure are rejected up front, since
-their fields live inside sidx and the broadcast strategy would corrupt
-cross-node deduplication at the liaison. Stream groups additionally
-finalize the per-shard element index (idx/) — byte-copied on the fast
-path, rebuilt from rows + index rules when a source segment splits.
+IndexMode measure groups take a dedicated path: their data points live
+as documents in the segment-level sidx (no shard parts), so each doc is
+routed by its own timestamp to the grid-aligned target segment's sidx —
+byte-copied when a source segment maps to a single target, rebuilt
+otherwise (regenerating the index-only _im_name / _im_entity_tag_*
+fields from the doc id so entity-tag search survives), keeping the
+highest version per series on merge. The union-sidx broadcast is skipped
+for such groups. The internal _top_n_result measure is ignored; a group
+mixing IndexMode with any other normal measure is rejected. Stream
+groups additionally finalize the per-shard element index (idx/) —
+byte-copied on the fast path, rebuilt from rows + index rules when a
+source segment splits.
 
 The staging directory is removed in full when the run finishes
 (success or failure). Run inside a data pod whose BanyanDB process is

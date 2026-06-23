@@ -76,24 +76,6 @@ func logStep(format string, args ...any) {
 	fmt.Fprintf(os.Stdout, time.Now().Format("2006/01/02 15:04:05")+" "+measureMigrationLogPrefix+" "+format+"\n", args...)
 }
 
-func rejectIndexModeGroups(groups []string, schemas map[string]map[string]*measureSchemaInfo) error {
-	var offenders []string
-	for _, g := range groups {
-		for _, m := range schemas[g] {
-			if m.IndexMode {
-				offenders = append(offenders, fmt.Sprintf("%s/%s", g, m.Name))
-			}
-		}
-	}
-	if len(offenders) == 0 {
-		return nil
-	}
-	sort.Strings(offenders)
-	return fmt.Errorf("refusing to copy IndexMode measures (their data lives inside sidx; "+
-		"the union-sidx broadcast strategy would break query correctness): %s",
-		strings.Join(offenders, ", "))
-}
-
 var (
 	fastPathHits atomic.Int64
 	slowPathHits atomic.Int64
