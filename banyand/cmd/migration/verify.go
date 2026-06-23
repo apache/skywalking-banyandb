@@ -98,16 +98,22 @@ migration result.`,
 // hasStream / hasMeasure track which catalogs reported, so printSummary
 // can pick the right per-catalog messaging (a mixed plan prints both).
 type verifyTally struct {
-	mismatches     []verifyMismatch
-	coverage       map[string]map[string]coverageState // node → group → (src/tgt presence)
-	nodeOrder      []string                            // first-seen ordering
-	groupOrder     []string                            // first-seen ordering
-	srcRowsTotal   uint64
-	tgtRowsTotal   uint64
-	segsTotal      int
-	segsMisaligned int
-	hasStream      bool
-	hasMeasure     bool
+	mismatches        []verifyMismatch
+	coverage          map[string]map[string]coverageState // node → group → (src/tgt presence)
+	nodeOrder         []string                            // first-seen ordering
+	groupOrder        []string                            // first-seen ordering
+	srcRowsTotal      uint64
+	tgtRowsTotal      uint64
+	imSrcDocs         uint64 // index-mode source sidx docs
+	imTgtDocs         uint64 // index-mode target sidx docs
+	imValueMismatches int    // index-mode (segment, series) value-digest mismatches
+	imDocIDIssues     int    // index-mode (entry, group) failing doc-id reconcile
+	segsTotal         int
+	segsMisaligned    int
+	hasStream         bool
+	hasMeasure        bool
+	hasNormalMeasure  bool // a non-index-mode measure report was absorbed (part-row data)
+	hasIndexMode      bool
 }
 
 // coverageState records whether SOURCE and TARGET independently hold
@@ -204,11 +210,45 @@ func (t *verifyTally) absorbCommon(stage string, nodes []string, group string, s
 
 func (t *verifyTally) absorb(r measure.EntryGroupReport) {
 	t.hasMeasure = true
+	if r.IndexMode {
+		t.absorbIndexMode(r)
+		return
+	}
+	t.hasNormalMeasure = true
 	segs := make([]tallySeg, len(r.TargetSegs))
 	for i, s := range r.TargetSegs {
 		segs[i] = tallySeg{rows: s.Rows, aligned: s.Aligned}
 	}
 	t.absorbCommon(r.EntryStage, r.EntryNodes, r.Group, r.SrcRows, segs)
+}
+
+// absorbIndexMode folds an index-mode (entry, group) report into the tally.
+// Index-mode data lives in sidx documents, not part rows, and a coarser target
+// grid legitimately merges several source docs of one series into one — so the
+// doc COUNT differing src↔tgt is normal and must NOT be reported as a row-count
+// mismatch. The real signals are the per-(segment, series) value-digest
+// mismatches and the doc-id reconcile, tracked separately and folded into the
+// final verdict.
+func (t *verifyTally) absorbIndexMode(r measure.EntryGroupReport) {
+	t.hasIndexMode = true
+	node := nodeLabel(r.EntryNodes, r.EntryStage)
+	if t.coverage == nil {
+		t.coverage = make(map[string]map[string]coverageState)
+	}
+	if _, ok := t.coverage[node]; !ok {
+		t.coverage[node] = make(map[string]coverageState)
+		t.nodeOrder = append(t.nodeOrder, node)
+	}
+	if !slices.Contains(t.groupOrder, r.Group) {
+		t.groupOrder = append(t.groupOrder, r.Group)
+	}
+	t.coverage[node][r.Group] = coverageState{src: r.SrcDocs > 0, tgt: r.TgtDocs > 0}
+	t.imSrcDocs += r.SrcDocs
+	t.imTgtDocs += r.TgtDocs
+	t.imValueMismatches += len(r.ValueMismatches)
+	if r.TgtDistinctIDs != r.ExpectDistinctIDs {
+		t.imDocIDIssues++
+	}
 }
 
 func (t *verifyTally) printSummary() {
@@ -219,21 +259,52 @@ func (t *verifyTally) printSummary() {
 	}
 	t.printCoverageTable()
 	fmt.Println()
-	fmt.Printf("  target segments                : %d\n", t.segsTotal)
-	fmt.Printf("  target segments misaligned     : %d\n", t.segsMisaligned)
-	fmt.Printf("  source rows total              : %d\n", t.srcRowsTotal)
-	fmt.Printf("  target rows total              : %d\n", t.tgtRowsTotal)
-	if len(t.mismatches) == 0 {
-		if t.tgtRowsTotal > t.srcRowsTotal {
+	// Part-row counters only mean something for stream / normal-measure data; a
+	// pure index-mode run has none, so printing "0" there reads as "nothing was
+	// copied". Suppress them unless such data was actually reported.
+	hasRowData := t.hasStream || t.hasNormalMeasure
+	if hasRowData {
+		fmt.Printf("  target segments                : %d\n", t.segsTotal)
+		fmt.Printf("  target segments misaligned     : %d\n", t.segsMisaligned)
+		fmt.Printf("  source rows total              : %d\n", t.srcRowsTotal)
+		fmt.Printf("  target rows total              : %d\n", t.tgtRowsTotal)
+	}
+	imClean := t.imValueMismatches == 0 && t.imDocIDIssues == 0
+	if t.hasIndexMode {
+		imTag := "OK"
+		if !imClean {
+			imTag = "MISMATCH"
+		}
+		fmt.Printf("  index-mode src docs            : %d\n", t.imSrcDocs)
+		fmt.Printf("  index-mode tgt docs            : %d (tgt<src is normal: a coarser grid merges same-series docs)\n", t.imTgtDocs)
+		fmt.Printf("  index-mode reconcile           : %d value mismatch(es), %d doc-id issue(s)  [%s]\n",
+			t.imValueMismatches, t.imDocIDIssues, imTag)
+	}
+	if len(t.mismatches) == 0 && imClean {
+		if hasRowData && t.tgtRowsTotal > t.srcRowsTotal {
 			fmt.Printf("  diff (tgt - src)               : %+d (UNEXPECTED — target has MORE rows than source)\n",
 				int64(t.tgtRowsTotal)-int64(t.srcRowsTotal))
 		} else {
-			if t.hasStream && !t.hasMeasure {
+			switch {
+			case t.hasStream && !t.hasMeasure:
 				fmt.Println("  src == tgt  (stream invariant: no rows dropped)")
-			} else {
+			case t.hasIndexMode && !t.hasNormalMeasure:
+				fmt.Println("  src == tgt  (index-mode: every series preserved, max version per segment)")
+			default:
 				fmt.Println("  src == tgt")
 			}
 		}
+		return
+	}
+	if !imClean {
+		// Surface the index-mode failure regardless of whether a row-count
+		// mismatch table also follows, so a mixed run never hides it.
+		fmt.Println()
+		fmt.Printf("  index-mode verify FAILED: %d value mismatch(es), %d doc-id issue(s) — "+
+			"see the per-(entry, group) reports above for the offending (segment, series).\n",
+			t.imValueMismatches, t.imDocIDIssues)
+	}
+	if len(t.mismatches) == 0 {
 		return
 	}
 	fmt.Println()
@@ -346,6 +417,10 @@ func padString(s string, w int) string {
 // Both source paths (one per node) and the target group path are
 // printed so the operator can match the row counts to a specific PVC.
 func printOneReport(r measure.EntryGroupReport) {
+	if r.IndexMode {
+		printOneIndexModeReport(r)
+		return
+	}
 	fmt.Printf("== entry stage=%s target=%s group=%s ==\n",
 		r.EntryStage, r.EntryTarget, r.Group)
 	if len(r.SrcRoots) == 0 {
@@ -378,6 +453,67 @@ func printOneReport(r measure.EntryGroupReport) {
 		}
 		fmt.Printf("    %-22s %s shards=%d parts=%d rows=%d %s\n",
 			s.Seg, alignTag, s.Shards, s.Parts, s.Rows, sidxTag)
+	}
+}
+
+// printOneIndexModeReport renders a single index-mode (entry, group) report:
+// document counts, distinct doc-id reconciliation and per-(segment, series)
+// value-digest mismatches. Index-mode groups carry data in the segment sidx, so
+// they are reconciled at the document level rather than by part rows.
+func printOneIndexModeReport(r measure.EntryGroupReport) {
+	fmt.Printf("== entry stage=%s target=%s group=%s (index-mode) ==\n",
+		r.EntryStage, r.EntryTarget, r.Group)
+	if len(r.SrcRoots) == 0 {
+		fmt.Printf("  src  : (no source dirs resolved for this entry/group)\n")
+	} else {
+		fmt.Printf("  src  : %d doc(s), %d distinct doc-id across %d dir(s)\n",
+			r.SrcDocs, r.SrcDistinctIDs, len(r.SrcRoots))
+		for _, p := range r.SrcRoots {
+			fmt.Printf("           %s\n", p)
+		}
+	}
+	fmt.Printf("  tgt  : %d doc(s), %d distinct doc-id under %s\n",
+		r.TgtDocs, r.TgtDistinctIDs, r.TargetGroup)
+	idTag := "OK"
+	if r.TgtDistinctIDs != r.ExpectDistinctIDs {
+		idTag = "MISMATCH"
+	}
+	fmt.Printf("  doc-id reconcile : expected(union of src)=%d tgt=%d  [%s]\n",
+		r.ExpectDistinctIDs, r.TgtDistinctIDs, idTag)
+	printIndexModeSegAligns(r.SegAligns)
+	if len(r.ValueMismatches) == 0 {
+		fmt.Printf("  value reconcile  : all (segment, series) digests match  [OK]\n")
+		return
+	}
+	fmt.Printf("  value reconcile  : %d (segment, series) key(s) MISMATCH:\n", len(r.ValueMismatches))
+	for _, m := range r.ValueMismatches {
+		fmt.Printf("    %-9s seg=%s sid=%d\n", m.Kind, m.Segment, m.SeriesID)
+	}
+}
+
+// printIndexModeSegAligns renders the per-target-segment alignment breakdown: for
+// each segment whether it was a clean 1:1 byte-copy candidate (one source segment,
+// no collapse) or merged/split, plus the source-doc -> target-doc collapse. This
+// shows the operator why a segment did or did not take the byte-copy fast path.
+func printIndexModeSegAligns(segs []measure.IndexModeSegAlign) {
+	if len(segs) == 0 {
+		return
+	}
+	aligned := 0
+	for _, s := range segs {
+		if s.Aligned {
+			aligned++
+		}
+	}
+	fmt.Printf("  segment alignment: %d/%d target seg(s) are 1:1 aligned (byte-copy candidates); the rest were merged/split:\n",
+		aligned, len(segs))
+	for _, s := range segs {
+		tag := "merged/split"
+		if s.Aligned {
+			tag = "aligned 1:1"
+		}
+		fmt.Printf("    %-16s %-13s src-segs=%d src-docs=%d -> tgt-docs=%d (collapsed %d)\n",
+			s.Segment, tag, s.SrcSegs, s.SrcDocs, s.TgtDocs, s.SrcDocs-s.TgtDocs)
 	}
 }
 
