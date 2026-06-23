@@ -277,7 +277,7 @@ func runIndexModeAnalyze(schemaRoot string, entries []migration.ResolvedEntry, e
 	}
 	fmt.Println()
 	fmt.Println("Interpretation:")
-	fmt.Println("  - index-mode data lives in the segment sidx, one upserted doc per (series, timestamp).")
+	fmt.Println("  - index-mode data lives in the segment sidx, one upserted doc per (series, segment); the (sid, ts) keys below are the analyze granularity.")
 	fmt.Println("  - version-duplicate docs are normal across source segments (target keeps max version).")
 	fmt.Println("  - VALUE-CONFLICT keys are (sid, ts) whose data values differ between docs. For metadata")
 	fmt.Println("    measures this is common and expected: a series is re-upserted over time and its tag")

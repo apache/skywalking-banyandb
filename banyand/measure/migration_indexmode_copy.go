@@ -441,8 +441,7 @@ func sortedSegList(segs map[string]struct{}) string {
 // gets its <segDir>/metadata so the runtime loads it instead of pruning it.
 func copyIndexModeGroup(ctx context.Context, in migration.EntryGroupInput,
 	ruleByID map[uint32]indexRuleInfo, schemasBySubject map[string]*measureSchemaInfo,
-) (migration.EntryGroupResult, error) {
-	var res migration.EntryGroupResult
+) (res migration.EntryGroupResult, err error) {
 	hasPart, err := hasShardPart(ctx, in.SrcRoots)
 	if err != nil {
 		return res, fmt.Errorf("scan for shard parts: %w", err)
@@ -1011,11 +1010,11 @@ func IsIndexModeGroup(schemaRoot, group string) (bool, error) {
 // source sidx dir under srcRoots, and runs the sidx-document analysis.
 func AnalyzeIndexModeGroup(ctx context.Context, schemaRoot, group string, srcRoots []string, sampleCap int) (AnalyzeGroupResult, error) {
 	var res AnalyzeGroupResult
-	schemas, err := loadMeasureSchemas(schemaRoot, []string{group})
+	schemas, err := loadMeasureSchemas(schemaRoot, []string{group}) //nolint:contextcheck // offline bluge schema read, no cancellation
 	if err != nil {
 		return res, fmt.Errorf("load measure schemas: %w", err)
 	}
-	ruleByID, err := loadIndexRuleInfoByID(schemaRoot, []string{group})
+	ruleByID, err := loadIndexRuleInfoByID(schemaRoot, []string{group}) //nolint:contextcheck // offline bluge schema read, no cancellation
 	if err != nil {
 		return res, fmt.Errorf("load index rules: %w", err)
 	}

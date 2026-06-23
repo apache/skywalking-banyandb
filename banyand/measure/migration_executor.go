@@ -54,7 +54,7 @@ func (e *MigrationExecutor) LogPrefix() string { return measureMigrationLogPrefi
 func (e *MigrationExecutor) Prepare(_ context.Context, schemaRoot string, groups []string) error {
 	logStep("loading measure schemas")
 	//nolint:contextcheck // bluge reader.Search inside reader.WalkShard already uses its own context.
-	schemas, err := loadMeasureSchemas(schemaRoot, groups)
+	schemas, err := loadMeasureSchemas(schemaRoot, groups) //nolint:contextcheck // offline bluge schema read, no cancellation
 	if err != nil {
 		return fmt.Errorf("load measure schemas: %w", err)
 	}
@@ -76,7 +76,7 @@ func (e *MigrationExecutor) Prepare(_ context.Context, schemaRoot string, groups
 		}
 		indexModeGroups[g] = isIndexMode
 	}
-	ruleByID, err := loadIndexRuleInfoByID(schemaRoot, groups)
+	ruleByID, err := loadIndexRuleInfoByID(schemaRoot, groups) //nolint:contextcheck // offline bluge schema read, no cancellation
 	if err != nil {
 		return fmt.Errorf("load index rules: %w", err)
 	}
