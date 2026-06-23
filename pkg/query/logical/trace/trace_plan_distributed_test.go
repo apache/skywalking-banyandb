@@ -27,39 +27,32 @@ import (
 	pbv1 "github.com/apache/skywalking-banyandb/pkg/pb/v1"
 )
 
-func TestDistributedTraceResultIteratorPreservesTagOrderAndSpanAlignment(t *testing.T) {
-	iterator := &distributedTraceResultIterator{
-		traces: []*tracev1.InternalTrace{
+func TestInternalTraceToResultPreservesTagOrderAndSpanAlignment(t *testing.T) {
+	got := internalTraceToResult(&tracev1.InternalTrace{
+		TraceId: "trace-1",
+		Spans: []*tracev1.Span{
 			{
-				TraceId: "trace-1",
-				Spans: []*tracev1.Span{
-					{
-						Span:   []byte("span-1"),
-						SpanId: "span-1",
-						Tags: []*modelv1.Tag{
-							{Key: "service_id", Value: strTagValueForDistributedTest("svc")},
-							{Key: "trace_id", Value: pbv1.NullTagValue},
-							{Key: "trace_id", Value: strTagValueForDistributedTest("trace-1")},
-							{Key: "span_id", Value: strTagValueForDistributedTest("span-1")},
-						},
-					},
-					{
-						Span:   []byte("span-2"),
-						SpanId: "span-2",
-						Tags: []*modelv1.Tag{
-							{Key: "service_id", Value: strTagValueForDistributedTest("svc")},
-							{Key: "trace_id", Value: strTagValueForDistributedTest("trace-1")},
-							{Key: "span_id", Value: strTagValueForDistributedTest("span-2")},
-						},
-					},
+				Span:   []byte("span-1"),
+				SpanId: "span-1",
+				Tags: []*modelv1.Tag{
+					{Key: "service_id", Value: strTagValueForDistributedTest("svc")},
+					{Key: "trace_id", Value: pbv1.NullTagValue},
+					{Key: "trace_id", Value: strTagValueForDistributedTest("trace-1")},
+					{Key: "span_id", Value: strTagValueForDistributedTest("span-1")},
+				},
+			},
+			{
+				Span:   []byte("span-2"),
+				SpanId: "span-2",
+				Tags: []*modelv1.Tag{
+					{Key: "service_id", Value: strTagValueForDistributedTest("svc")},
+					{Key: "trace_id", Value: strTagValueForDistributedTest("trace-1")},
+					{Key: "span_id", Value: strTagValueForDistributedTest("span-2")},
 				},
 			},
 		},
-	}
+	})
 
-	got, ok := iterator.Next()
-
-	require.True(t, ok)
 	require.Len(t, got.Tags, 3)
 	require.Equal(t, "service_id", got.Tags[0].Name)
 	require.Equal(t, "trace_id", got.Tags[1].Name)
@@ -70,36 +63,29 @@ func TestDistributedTraceResultIteratorPreservesTagOrderAndSpanAlignment(t *test
 	require.Equal(t, "span-2", got.Tags[2].Values[1].GetStr().GetValue())
 }
 
-func TestDistributedTraceResultIteratorNullFillsMissingSpanTags(t *testing.T) {
-	iterator := &distributedTraceResultIterator{
-		traces: []*tracev1.InternalTrace{
+func TestInternalTraceToResultNullFillsMissingSpanTags(t *testing.T) {
+	got := internalTraceToResult(&tracev1.InternalTrace{
+		TraceId: "trace-1",
+		Spans: []*tracev1.Span{
 			{
-				TraceId: "trace-1",
-				Spans: []*tracev1.Span{
-					{
-						Span:   []byte("span-1"),
-						SpanId: "span-1",
-						Tags: []*modelv1.Tag{
-							{Key: "service_id", Value: strTagValueForDistributedTest("svc")},
-							{Key: "only_on_first", Value: strTagValueForDistributedTest("first")},
-						},
-					},
-					{
-						Span:   []byte("span-2"),
-						SpanId: "span-2",
-						Tags: []*modelv1.Tag{
-							{Key: "service_id", Value: strTagValueForDistributedTest("svc")},
-							{Key: "only_on_second", Value: strTagValueForDistributedTest("second")},
-						},
-					},
+				Span:   []byte("span-1"),
+				SpanId: "span-1",
+				Tags: []*modelv1.Tag{
+					{Key: "service_id", Value: strTagValueForDistributedTest("svc")},
+					{Key: "only_on_first", Value: strTagValueForDistributedTest("first")},
+				},
+			},
+			{
+				Span:   []byte("span-2"),
+				SpanId: "span-2",
+				Tags: []*modelv1.Tag{
+					{Key: "service_id", Value: strTagValueForDistributedTest("svc")},
+					{Key: "only_on_second", Value: strTagValueForDistributedTest("second")},
 				},
 			},
 		},
-	}
+	})
 
-	got, ok := iterator.Next()
-
-	require.True(t, ok)
 	spanCount := len(got.Spans)
 	require.Equal(t, 2, spanCount)
 

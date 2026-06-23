@@ -149,6 +149,23 @@ func MeasureWireModeRaw() bool {
 	return measureWireModeRaw.Load()
 }
 
+// traceWireModeRaw is the per-process wire mode for TopicTraceQuery. Set once at
+// trace-service startup; raw==true selects the native columnar trace frame body,
+// raw==false keeps the proto body. Default false so any process that never sets
+// it keeps the pre-existing proto behavior.
+var traceWireModeRaw atomic.Bool
+
+// SetTraceWireModeRaw publishes the per-process wire mode for TopicTraceQuery.
+func SetTraceWireModeRaw(raw bool) {
+	traceWireModeRaw.Store(raw)
+}
+
+// TraceWireModeRaw reports whether this process emits/decodes native trace frame
+// bodies for TopicTraceQuery.
+func TraceWireModeRaw() bool {
+	return traceWireModeRaw.Load()
+}
+
 // measureQueryResponseCodec dispatches TopicInternalMeasureQuery encode/decode
 // by the per-process wire mode: flag-on → RawFrameCodec, flag-off → ProtoCodec.
 // One static supplier serves both flag-on raw bodies and flag-off proto bodies
