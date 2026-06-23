@@ -28,6 +28,7 @@ import (
 	"time"
 
 	"github.com/onsi/gomega"
+	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"google.golang.org/protobuf/types/known/timestamppb"
 
@@ -362,10 +363,16 @@ func TestMeasureIndexedTagResolvedFromIndex(t *testing.T) {
 	// persister goroutine it is waiting on, which can starve the persister under
 	// the loaded -race CI run.
 	sidxPath := filepath.Join(segmentPath, "sidx")
-	require.Eventually(t, func() bool {
-		count, _ := inverted.ReadOnlyDocCount(sidxPath)
-		return count >= int64(total)
-	}, 90*time.Second, time.Second, "series index not fully persisted before stop")
+	var lastCount int64
+	var lastErr error
+	// A not-yet-flushed index returns (0, err); that is expected while polling, so
+	// treat it as "not ready". Capture the last observed values so a timeout
+	// reports whether the count was stuck or the reader kept erroring.
+	ok := assert.Eventually(t, func() bool {
+		lastCount, lastErr = inverted.ReadOnlyDocCount(sidxPath)
+		return lastCount >= int64(total)
+	}, 90*time.Second, time.Second)
+	require.Truef(t, ok, "series index not fully persisted before stop (last count=%d, err=%v)", lastCount, lastErr)
 
 	// Stop the live service so it releases bluge's exclusive lock on the series
 	// index; the dump (like the offline CLI) reads the index from a quiesced
