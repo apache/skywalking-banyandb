@@ -69,6 +69,12 @@ func LoadMeasures(schemaRoot string, groups []string) (map[string][]*databasev1.
 	return loadGroupScoped(schemaRoot, schema.KindMeasure, groups, func() *databasev1.Measure { return &databasev1.Measure{} })
 }
 
+// LoadIndexRules returns the latest non-deleted index rules of the requested
+// groups, keyed by group name.
+func LoadIndexRules(schemaRoot string, groups []string) (map[string][]*databasev1.IndexRule, error) {
+	return loadGroupScoped(schemaRoot, schema.KindIndexRule, groups, func() *databasev1.IndexRule { return &databasev1.IndexRule{} })
+}
+
 // loadGroupScoped loads one group-scoped Kind (stream / measure) into
 // (group -> latest non-deleted protos). A doc missing its source tag is an
 // error: unlike Group docs these are the payload the migration depends on.

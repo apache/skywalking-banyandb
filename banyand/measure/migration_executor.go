@@ -30,7 +30,9 @@ import (
 // migration.CatalogExecutor: it copies / verifies measure groups one
 // (entry, group) at a time under the shared orchestrator.
 type MigrationExecutor struct {
-	schemas map[string]map[string]*measureSchemaInfo
+	schemas         map[string]map[string]*measureSchemaInfo
+	indexModeGroups map[string]bool
+	ruleByID        map[uint32]indexRuleInfo
 }
 
 // NewMigrationExecutor returns the measure catalog executor.
@@ -45,8 +47,10 @@ func (e *MigrationExecutor) Catalog() commonv1.Catalog { return commonv1.Catalog
 func (e *MigrationExecutor) LogPrefix() string { return measureMigrationLogPrefix }
 
 // Prepare loads the measure schemas of the given groups from the
-// schema-property catalog and rejects IndexMode groups up front
-// (broadcasting a union sidx would corrupt cross-node dedup at query time).
+// schema-property catalog and classifies each group: an index-mode group
+// (its data lives in the segment sidx, routed per timestamp) opts out of the
+// union-sidx broadcast, while a group mixing index-mode measures with real
+// normal measures is unsupported and rejected up front.
 func (e *MigrationExecutor) Prepare(_ context.Context, schemaRoot string, groups []string) error {
 	logStep("loading measure schemas")
 	//nolint:contextcheck // bluge reader.Search inside reader.WalkShard already uses its own context.
@@ -64,10 +68,21 @@ func (e *MigrationExecutor) Prepare(_ context.Context, schemaRoot string, groups
 			return fmt.Errorf("group %q has no measures in backup schema-property catalog — typo in groups or empty group?", g)
 		}
 	}
-	if rejectErr := rejectIndexModeGroups(groups, schemas); rejectErr != nil {
-		return rejectErr
+	indexModeGroups := make(map[string]bool, len(groups))
+	for _, g := range groups {
+		isIndexMode, classifyErr := classifyGroup(g, schemas[g])
+		if classifyErr != nil {
+			return classifyErr
+		}
+		indexModeGroups[g] = isIndexMode
+	}
+	ruleByID, err := loadIndexRuleInfoByID(schemaRoot, groups)
+	if err != nil {
+		return fmt.Errorf("load index rules: %w", err)
 	}
 	e.schemas = schemas
+	e.indexModeGroups = indexModeGroups
+	e.ruleByID = ruleByID
 	// Reset path-hit counters so a previous in-process run's totals don't
 	// bleed into this one.
 	fastPathHits.Store(0)
@@ -76,9 +91,18 @@ func (e *MigrationExecutor) Prepare(_ context.Context, schemaRoot string, groups
 	return nil
 }
 
+// SkipUnionSidx reports whether the orchestrator should skip the Phase A
+// union-sidx build + broadcast for the given group. Index-mode measure groups
+// opt out: their sidx docs are data points routed per timestamp, not
+// series-index metadata to broadcast.
+func (e *MigrationExecutor) SkipUnionSidx(group string) bool { return e.indexModeGroups[group] }
+
 // CopyEntryGroup migrates one (entry, group): discovers source parts and
 // rewrites them onto the target grid.
 func (e *MigrationExecutor) CopyEntryGroup(ctx context.Context, in migration.EntryGroupInput) (migration.EntryGroupResult, error) {
+	if e.indexModeGroups[in.Group] {
+		return copyIndexModeGroup(ctx, in, e.ruleByID, e.schemas[in.Group])
+	}
 	var zero migration.EntryGroupResult
 	tasks, err := discoverPartTasks(ctx, in.SrcRoots)
 	if err != nil {
@@ -102,7 +126,15 @@ func (e *MigrationExecutor) CopyEntryGroup(ctx context.Context, in migration.Ent
 
 // VerifyEntryGroup re-reads one (entry, group) read-only: it sums source
 // rows, enumerates target segments and emits an EntryGroupReport.
-func (e *MigrationExecutor) VerifyEntryGroup(_ context.Context, in migration.EntryGroupInput, onReport func(report any)) error {
+func (e *MigrationExecutor) VerifyEntryGroup(ctx context.Context, in migration.EntryGroupInput, onReport func(report any)) error {
+	if e.indexModeGroups[in.Group] {
+		report, err := verifyIndexModeGroup(ctx, in, e.ruleByID, e.schemas[in.Group])
+		if err != nil {
+			return fmt.Errorf("index-mode verify: %w", err)
+		}
+		onReport(report)
+		return nil
+	}
 	fileSystem := fs.NewLocalFileSystem()
 	ir := in.Interval
 	targetGroup := in.TargetGroupRoot

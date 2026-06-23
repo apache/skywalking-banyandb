@@ -170,6 +170,99 @@ func synthGroupsFromNames(names ...string) []synthGroup {
 	return out
 }
 
+func TestMeasureSchemaInfo_IndexModeFields(t *testing.T) {
+	m := &databasev1.Measure{
+		Metadata:  &commonv1.Metadata{Name: "svc", Group: "g"},
+		IndexMode: true,
+		Entity:    &databasev1.Entity{TagNames: []string{"id"}},
+		TagFamilies: []*databasev1.TagFamilySpec{
+			{Name: "searchable", Tags: []*databasev1.TagSpec{
+				{Name: "id", Type: databasev1.TagType_TAG_TYPE_STRING},
+				{Name: "weight", Type: databasev1.TagType_TAG_TYPE_INT},
+			}},
+		},
+	}
+	info := measureSchemaInfoFromProto("g", m)
+	if !info.IndexMode {
+		t.Fatal("expected IndexMode true")
+	}
+	if len(info.EntityTagNames) != 1 || info.EntityTagNames[0] != "id" {
+		t.Fatalf("EntityTagNames = %v, want [id]", info.EntityTagNames)
+	}
+	if info.TagType["id"] != databasev1.TagType_TAG_TYPE_STRING {
+		t.Fatalf("TagType[id] = %v, want STRING", info.TagType["id"])
+	}
+	if info.TagType["weight"] != databasev1.TagType_TAG_TYPE_INT {
+		t.Fatalf("TagType[weight] = %v, want INT", info.TagType["weight"])
+	}
+}
+
+// synthIndexRule describes one index rule to seed into the synthetic catalog.
+type synthIndexRule struct {
+	group    string
+	name     string
+	analyzer string
+	id       uint32
+	noSort   bool
+}
+
+// synthIndexRules appends index-rule docs to an existing synthetic backup tree
+// built by synthBackup, reusing the same schema-property shard layout.
+func synthIndexRules(t *testing.T, root string, rules []synthIndexRule) {
+	t.Helper()
+	shardPath := filepath.Join(root, "node-0", "2026-05-21",
+		backupsnapshot.SchemaPropertyCatalogName, schema.SchemaGroup, "shard-0")
+	w, err := bluge.OpenWriter(bluge.DefaultConfig(shardPath))
+	if err != nil {
+		t.Fatalf("open bluge writer: %v", err)
+	}
+	defer func() {
+		if cErr := w.Close(); cErr != nil {
+			t.Fatalf("close bluge writer: %v", cErr)
+		}
+	}()
+	batch := bluge.NewBatch()
+	for _, r := range rules {
+		rule := &databasev1.IndexRule{
+			Metadata: &commonv1.Metadata{Name: r.name, Group: r.group, Id: r.id, ModRevision: 1},
+			Analyzer: r.analyzer,
+			NoSort:   r.noSort,
+		}
+		rJSON, mErr := protojson.Marshal(rule)
+		if mErr != nil {
+			t.Fatalf("marshal index rule %q: %v", r.name, mErr)
+		}
+		propID := fmt.Sprintf("index-rule/%s/%s", r.group, r.name)
+		batch.Insert(synthSchemaDocWithPropID(propID, propID,
+			schema.KindIndexRule.String(), r.group, 1, string(rJSON)))
+	}
+	if bErr := w.Batch(batch); bErr != nil {
+		t.Fatalf("write index rule batch: %v", bErr)
+	}
+}
+
+func TestLoadIndexRuleInfoByID(t *testing.T) {
+	dir := t.TempDir()
+	synthBackup(t, dir, synthGroupsFromNames("g_a"), []synthMeasure{
+		{group: "g_a", name: "m_a1", modRev: 1},
+	})
+	synthIndexRules(t, dir, []synthIndexRule{
+		{group: "g_a", name: "r_default", id: 100, analyzer: "", noSort: true},
+		{group: "g_a", name: "r_url", id: 201559343, analyzer: index.AnalyzerURL, noSort: false},
+	})
+
+	byID, err := loadIndexRuleInfoByID(synthSchemaRoot(t, dir), []string{"g_a"})
+	if err != nil {
+		t.Fatalf("loadIndexRuleInfoByID: %v", err)
+	}
+	if got := byID[100]; got.Analyzer != "" || !got.NoSort {
+		t.Fatalf("rule 100 = %+v, want {Analyzer:\"\", NoSort:true}", got)
+	}
+	if got := byID[201559343]; got.Analyzer != index.AnalyzerURL || got.NoSort {
+		t.Fatalf("rule 201559343 = %+v, want {Analyzer:url, NoSort:false}", got)
+	}
+}
+
 func TestLoadMeasureSchemas_returnsRequestedGroups(t *testing.T) {
 	dir := t.TempDir()
 	groups := []string{"g_a", "g_b", "g_c"}
