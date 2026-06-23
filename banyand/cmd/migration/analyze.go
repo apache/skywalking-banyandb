@@ -18,6 +18,7 @@
 package main
 
 import (
+	"context"
 	"fmt"
 	"path/filepath"
 	"time"
@@ -86,6 +87,13 @@ target part).`,
 
 			if catalog == commonv1.Catalog_CATALOG_STREAM {
 				return runStreamAnalyze(entries, entry, entryIdx, srcRoots, groupName, sampleCap)
+			}
+			isIndexMode, imErr := measure.IsIndexModeGroup(cls.SchemaRoot, groupName)
+			if imErr != nil {
+				return imErr
+			}
+			if isIndexMode {
+				return runIndexModeAnalyze(cls.SchemaRoot, entries, entry, entryIdx, srcRoots, groupName, sampleCap)
 			}
 			return runMeasureAnalyze(entries, entry, entryIdx, srcRoots, groupName, sampleCap)
 		},
@@ -209,6 +217,73 @@ func runMeasureAnalyze(entries []migration.ResolvedEntry, entry migration.Resolv
 	fmt.Println("  - WITHIN-part dup rows = the count slow-path drops at flush time. If this")
 	fmt.Println("    matches `verify`'s src-tgt diff (for the same entry/group), the loss is")
 	fmt.Println("    proven to be banyandb's normal in-part (seriesID, ts) collapse.")
+	return nil
+}
+
+// runIndexModeAnalyze runs the index-mode-flavored analyze logic: it reads the
+// group's sidx documents (not part block metadata) and reports total docs,
+// distinct (series, timestamp) keys, version duplicates and value conflicts —
+// a (series, timestamp) appearing in >1 doc with differing value digests.
+func runIndexModeAnalyze(schemaRoot string, entries []migration.ResolvedEntry, entry migration.ResolvedEntry,
+	entryIdx int, srcRoots []string, groupName string, sampleCap int,
+) error {
+	fmt.Printf("== analyze entry [%d/%d] stage=%s nodes=%v group=%s (index-mode) ==\n",
+		entryIdx+1, len(entries), entry.Stage, entry.Nodes, groupName)
+	for _, r := range srcRoots {
+		fmt.Printf("  src: %s\n", r)
+	}
+	start := time.Now()
+	res, err := measure.AnalyzeIndexModeGroup(context.Background(), schemaRoot, groupName, srcRoots, sampleCap)
+	if err != nil {
+		return err
+	}
+	elapsed := time.Since(start)
+
+	fmt.Printf("  sidx dirs scanned            : %d\n", res.PartsScanned)
+	fmt.Printf("  total docs on disk           : %d\n", res.TotalRows)
+	fmt.Printf("  distinct (sid, ts)           : %d\n", res.UniqueKeys)
+	fmt.Printf("  version-duplicate docs       : %d  (same (sid, ts) seen in >1 doc)\n", res.DuplicateRows)
+	fmt.Printf("  (sid, ts) keys with >1 doc   : %d\n", res.KeysWithDuplicates)
+	fmt.Printf("  VALUE-CONFLICT keys          : %d  (same (sid, ts), differing value digest)\n", res.ValueConflictKeys)
+	fmt.Printf("  elapsed                      : %v\n", elapsed)
+	if res.KeysWithDuplicates > 0 {
+		shown := len(res.SamplesByVersion)
+		fmt.Printf("  sample (sid, ts) with >1 doc (showing %d / %d keys):\n", shown, res.KeysWithDuplicates)
+		for _, s := range res.SamplesByVersion {
+			ts := time.Unix(0, s.Timestamp).UTC().Format(time.RFC3339)
+			fmt.Printf("    sid=%d ts=%s\n", s.SeriesID, ts)
+			for _, v := range s.Versions {
+				fmt.Printf("      version=%d\n", v.Version)
+			}
+		}
+		if uint64(shown) < res.KeysWithDuplicates {
+			fmt.Printf("    ... %d more (raise --sample to see them)\n", res.KeysWithDuplicates-uint64(shown))
+		}
+	}
+	if res.ValueConflictKeys > 0 {
+		shown := len(res.ValueConflicts)
+		fmt.Printf("  VALUE CONFLICTS (showing %d / %d keys; same (sid, ts) but differing data values):\n",
+			shown, res.ValueConflictKeys)
+		for _, c := range res.ValueConflicts {
+			ts := time.Unix(0, c.Timestamp).UTC().Format(time.RFC3339)
+			fmt.Printf("    sid=%d ts=%s\n", c.SeriesID, ts)
+			for i := range c.Versions {
+				fmt.Printf("      version=%d digest=%016x\n", c.Versions[i], c.Digests[i])
+			}
+		}
+		if uint64(shown) < res.ValueConflictKeys {
+			fmt.Printf("    ... %d more (raise --sample to see them)\n", res.ValueConflictKeys-uint64(shown))
+		}
+	}
+	fmt.Println()
+	fmt.Println("Interpretation:")
+	fmt.Println("  - index-mode data lives in the segment sidx, one upserted doc per (series, segment); the (sid, ts) keys below are the analyze granularity.")
+	fmt.Println("  - version-duplicate docs are normal across source segments (target keeps max version).")
+	fmt.Println("  - VALUE-CONFLICT keys are (sid, ts) whose data values differ between docs. For metadata")
+	fmt.Println("    measures this is common and expected: a series is re-upserted over time and its tag")
+	fmt.Println("    values evolve with each version, so the same (sid, ts) carries different values across")
+	fmt.Println("    segments — the migration keeps the max-version one. Only investigate if you expected")
+	fmt.Println("    these values to be immutable (then a conflict would indicate a real inconsistency).")
 	return nil
 }
 

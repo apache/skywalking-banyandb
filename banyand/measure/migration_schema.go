@@ -45,18 +45,38 @@ func loadMeasureSchemas(schemaRoot string, groups []string) (map[string]map[stri
 // schema directly from its proto definition.
 func measureSchemaInfoFromProto(group string, m *databasev1.Measure) *measureSchemaInfo {
 	si := &measureSchemaInfo{
-		Group:     group,
-		Name:      m.GetMetadata().GetName(),
-		IndexMode: m.GetIndexMode(),
+		Group:          group,
+		Name:           m.GetMetadata().GetName(),
+		IndexMode:      m.GetIndexMode(),
+		EntityTagNames: m.GetEntity().GetTagNames(),
+		TagType:        make(map[string]databasev1.TagType),
 	}
 	for _, tf := range m.GetTagFamilies() {
 		tags := make([]string, 0, len(tf.GetTags()))
 		for _, t := range tf.GetTags() {
 			tags = append(tags, t.GetName())
+			si.TagType[t.GetName()] = t.GetType()
 		}
 		si.TagFamilies = append(si.TagFamilies, tagFamilyInfo{Name: tf.GetName(), Tags: tags})
 	}
 	return si
+}
+
+// loadIndexRuleInfoByID returns IndexRuleID -> {Analyzer, NoSort} across the
+// given groups. The slow-path rebuild needs it because FieldKey.Marshal only
+// encodes TagName or IndexRuleID and drops Analyzer/NoSort.
+func loadIndexRuleInfoByID(schemaRoot string, groups []string) (map[uint32]indexRuleInfo, error) {
+	rules, err := reader.LoadIndexRules(schemaRoot, groups)
+	if err != nil {
+		return nil, err
+	}
+	out := make(map[uint32]indexRuleInfo)
+	for _, byGroup := range rules {
+		for _, r := range byGroup {
+			out[r.GetMetadata().GetId()] = indexRuleInfo{Analyzer: r.GetAnalyzer(), NoSort: r.GetNoSort()}
+		}
+	}
+	return out, nil
 }
 
 // measureSchemaInfo is the subset of a measure's schema the migration copy
@@ -64,13 +84,23 @@ func measureSchemaInfoFromProto(group string, m *databasev1.Measure) *measureSch
 // groups (their field values live inside sidx, not in part data, and
 // broadcasting a union sidx would break query correctness).
 type measureSchemaInfo struct {
-	Group       string
-	Name        string
-	TagFamilies []tagFamilyInfo
-	IndexMode   bool
+	TagType           map[string]databasev1.TagType
+	IndexedEntityTags map[string]struct{}
+	Group             string
+	Name              string
+	TagFamilies       []tagFamilyInfo
+	EntityTagNames    []string
+	IndexMode         bool
 }
 
 type tagFamilyInfo struct {
 	Name string
 	Tags []string
+}
+
+// indexRuleInfo is the minimal index-rule view the slow-path rebuild needs: it
+// restores the Analyzer and NoSort flags that FieldKey.Marshal does not encode.
+type indexRuleInfo struct {
+	Analyzer string
+	NoSort   bool
 }

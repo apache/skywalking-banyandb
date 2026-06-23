@@ -31,6 +31,21 @@ import (
 	"github.com/apache/skywalking-banyandb/banyand/internal/storage"
 )
 
+// unionSidxSkipper is an optional executor capability: groups it reports true
+// for skip the Phase A union-sidx build + broadcast (index-mode measure groups,
+// whose data docs must NOT be broadcast).
+type unionSidxSkipper interface {
+	SkipUnionSidx(group string) bool
+}
+
+// skipUnionSidx reports whether exec wants the given group's union-sidx build
+// and broadcast skipped. Executors that do not implement unionSidxSkipper
+// always participate in the union-sidx path (the historical behavior).
+func skipUnionSidx(exec CatalogExecutor, group string) bool {
+	s, ok := exec.(unionSidxSkipper)
+	return ok && s.SkipUnionSidx(group)
+}
+
 // Result aggregates a whole run across every catalog the plan touched.
 type Result struct {
 	PerCatalog map[commonv1.Catalog]EntryGroupResult
@@ -186,6 +201,14 @@ func (p *CopyPlan) RunCopy(ctx context.Context, stagingDir string, cls *Classifi
 		for _, group := range groups {
 			if ctx.Err() != nil {
 				return res, ctx.Err()
+			}
+			// Index-mode measure groups opt out of the union-sidx build +
+			// broadcast: their sidx docs are data points routed per timestamp,
+			// not series-index metadata to broadcast. Leaving groupUnionSidx[group]
+			// empty makes Phase B pass UnionSidxPath=="" through to the executor.
+			if skipUnionSidx(exec, group) {
+				logStep(prefix, "group %s: index-mode — skipping union sidx build + broadcast", group)
+				continue
 			}
 			srcRoots := p.CollectAllSrcGroupRoots(exec.Catalog(), group)
 			if len(srcRoots) == 0 {
