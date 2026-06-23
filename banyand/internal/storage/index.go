@@ -425,6 +425,17 @@ func (s *seriesIndex) SearchWithoutSeries(ctx context.Context, opts IndexSearchO
 	return sd, sortedValues, err
 }
 
+// Flush persists pending in-memory documents to disk and blocks until done, so a
+// subsequently-opened offline reader (dump/migration) sees a complete index. The
+// bluge writer's Close does not persist them, so the shutdown path must Flush
+// before Close.
+func (s *seriesIndex) Flush() error {
+	if s == nil {
+		return nil
+	}
+	return s.store.Flush()
+}
+
 func (s *seriesIndex) Close() error {
 	if s == nil {
 		return nil

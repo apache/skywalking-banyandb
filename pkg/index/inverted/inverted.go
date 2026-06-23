@@ -297,6 +297,27 @@ func (s *store) Reset() {
 	s.writer.ResetCache()
 }
 
+// Flush forces every document currently held in memory to be persisted to disk
+// and blocks until that persistence completes. The bluge writer's Close does not
+// persist pending in-memory segments, so callers needing a durable on-disk index
+// after a graceful stop -- e.g. an offline reader such as the dump/migration
+// tools -- must Flush first. It submits an empty batch carrying a persisted
+// callback; because the persister always advances the epoch, the callback fires
+// once the root snapshot (covering all earlier in-memory segments) is on disk.
+func (s *store) Flush() error {
+	if !s.closer.AddRunning() {
+		return nil
+	}
+	defer s.closer.Done()
+	b := bluge.NewBatch()
+	ch := make(chan error, 1)
+	b.SetPersistedCallback(func(err error) { ch <- err })
+	if err := s.writer.Batch(b); err != nil {
+		return err
+	}
+	return <-ch
+}
+
 // ReadOnlyDocCount opens the index directory at path read-only and returns the
 // number of indexed documents. Unlike NewStore it never acquires the exclusive
 // directory lock, so it can inspect a closed (or even concurrently open)

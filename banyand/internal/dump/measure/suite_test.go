@@ -353,16 +353,19 @@ func TestMeasureIndexedTagResolvedFromIndex(t *testing.T) {
 
 	segmentPath := findSidxSegmentPath(t, rootPath)
 
-	// The series index persists asynchronously (unsafe batches + persister) and is
-	// flushed on stop; after a hard stop there is a brief window before all series
-	// are readable on disk. The fallback scan below sources EntityValues purely
-	// from this index, so wait until every written series is visible before
-	// asserting, otherwise the scan can race the flush and recover nothing.
+	// Wait until every written series has been ingested into the segment's series
+	// index before stopping the service. The fallback scan below sources
+	// EntityValues purely from this index, so the writes must have landed first;
+	// stopping the service then flushes the index durably to disk (the shutdown
+	// path in segmentController.close). Poll at a coarse interval: opening a fresh
+	// read-only reader is not free and hammering it competes for CPU/IO with the
+	// persister goroutine it is waiting on, which can starve the persister under
+	// the loaded -race CI run.
 	sidxPath := filepath.Join(segmentPath, "sidx")
 	require.Eventually(t, func() bool {
 		count, _ := inverted.ReadOnlyDocCount(sidxPath)
 		return count >= int64(total)
-	}, 60*time.Second, 100*time.Millisecond, "series index not fully persisted after stop")
+	}, 90*time.Second, time.Second, "series index not fully persisted before stop")
 
 	// Stop the live service so it releases bluge's exclusive lock on the series
 	// index; the dump (like the offline CLI) reads the index from a quiesced

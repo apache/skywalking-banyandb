@@ -1046,6 +1046,15 @@ func (sc *segmentController[T, O]) close() {
 	// also has its directory removed; the rest keep their data on disk.
 	for _, s := range sc.lst {
 		s.mu.Lock()
+		// Persist pending in-memory series documents before closing so an offline
+		// reader (dump/migration) sees a complete index; skip segments flagged for
+		// deletion since their directory is about to be removed. This runs only on
+		// shutdown, not on the idle-reclaim/delete paths.
+		if s.index != nil && atomic.LoadUint32(&s.mustBeDeleted) == 0 {
+			if err := s.index.Flush(); err != nil {
+				s.l.Warn().Err(err).Msg("failed to flush the series index on shutdown")
+			}
+		}
 		s.closeResourcesLocked()
 		if atomic.LoadUint32(&s.mustBeDeleted) != 0 {
 			s.lfs.MustRMAll(s.location)
