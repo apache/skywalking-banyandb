@@ -55,9 +55,27 @@ func (f NoFsyncFS) Write(buffer []byte, name string, permission fs.Mode) (int, e
 	return n, err
 }
 
-// WriteAtomic degrades to a plain (non-atomic, non-synced) write.
+// WriteAtomic writes buffer to name atomically — to a temp sibling, then
+// rename — while skipping the fsync/dir-sync that the durable path performs.
+// NoFsyncFS trades crash durability for throughput, but atomic VISIBILITY must
+// be preserved: callers such as the snapshot-manifest write
+// (tsTable.mustWriteSnapshot) rely on WriteAtomic never exposing a partially
+// written final file to a concurrent reader. A plain O_TRUNC write to the final
+// path opened a window where a concurrent snapshot read saw a truncated file,
+// surfacing as a "<epoch>.snp: unexpected end of JSON" parse panic in
+// mustReadSnapshot under -race.
 func (f NoFsyncFS) WriteAtomic(buffer []byte, name string, permission fs.Mode) (int, error) {
-	return f.Write(buffer, name, permission)
+	tmpName := name + ".tmp"
+	n, err := f.Write(buffer, tmpName, permission)
+	if err != nil {
+		_ = os.Remove(tmpName)
+		return n, err
+	}
+	if renameErr := os.Rename(tmpName, name); renameErr != nil {
+		_ = os.Remove(tmpName)
+		return n, fmt.Errorf("rename %s -> %s: %w", tmpName, name, renameErr)
+	}
+	return n, nil
 }
 
 // SyncPath is a no-op.
