@@ -827,10 +827,6 @@ type Store interface {
 	Searcher
 	CollectMetrics(...string)
 	Reset()
-	// Flush persists all in-memory documents to disk and blocks until the
-	// persistence completes, so that a subsequently-opened offline reader sees a
-	// durable, complete index.
-	Flush() error
 	TakeFileSnapshot(dst string) error
 	Stats() (dataCount int64, dataSizeBytes int64)
 }

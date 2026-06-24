@@ -354,25 +354,34 @@ func TestMeasureIndexedTagResolvedFromIndex(t *testing.T) {
 
 	segmentPath := findSidxSegmentPath(t, rootPath)
 
-	// Wait until every written series has been ingested into the segment's series
-	// index before stopping the service. The fallback scan below sources
-	// EntityValues purely from this index, so the writes must have landed first;
-	// stopping the service then flushes the index durably to disk (the shutdown
-	// path in segmentController.close). Poll at a coarse interval: opening a fresh
-	// read-only reader is not free and hammering it competes for CPU/IO with the
-	// persister goroutine it is waiting on, which can starve the persister under
-	// the loaded -race CI run.
 	sidxPath := filepath.Join(segmentPath, "sidx")
+	diagLog := logger.GetLogger("DUMP-MEASURE-DIAG")
+	dumpSidx := func() string {
+		out := ""
+		_ = filepath.WalkDir(rootPath, func(p string, d fs.DirEntry, walkErr error) error {
+			if walkErr == nil && d.IsDir() && d.Name() == "sidx" {
+				c, e := inverted.ReadOnlyDocCount(p)
+				out += fmt.Sprintf("{path=%s count=%d err=%v chosen=%v} ", p, c, e, p == sidxPath)
+			}
+			return nil
+		})
+		return out
+	}
+	diagLog.Warn().Str("segmentPath", segmentPath).Str("sidxPath", sidxPath).
+		Int("total", total).Msgf("DIAG pre-poll on-disk state: %s", dumpSidx())
+
 	var lastCount int64
 	var lastErr error
-	// A not-yet-flushed index returns (0, err); that is expected while polling, so
-	// treat it as "not ready". Capture the last observed values so a timeout
-	// reports whether the count was stuck or the reader kept erroring.
 	ok := assert.Eventually(t, func() bool {
 		lastCount, lastErr = inverted.ReadOnlyDocCount(sidxPath)
 		return lastCount >= int64(total)
-	}, 90*time.Second, time.Second)
-	require.Truef(t, ok, "series index not fully persisted before stop (last count=%d, err=%v)", lastCount, lastErr)
+	}, 60*time.Second, time.Second)
+	if !ok {
+		diagLog.Warn().Int64("lastCount", lastCount).AnErr("lastErr", lastErr).
+			Str("sidxPath", sidxPath).Msgf("DIAG poll FAILED, final on-disk state: %s", dumpSidx())
+	}
+	require.Truef(t, ok, "series index not fully persisted before stop: lastCount=%d lastErr=%v sidxPath=%s dirs=%s",
+		lastCount, lastErr, sidxPath, dumpSidx())
 
 	// Stop the live service so it releases bluge's exclusive lock on the series
 	// index; the dump (like the offline CLI) reads the index from a quiesced
@@ -608,12 +617,22 @@ func strArrTagValue(vals ...string) *modelv1.TagValue {
 	return &modelv1.TagValue{Value: &modelv1.TagValue_StrArray{StrArray: &modelv1.StrArray{Value: vals}}}
 }
 
+// findSidxSegmentPath returns the segment directory whose series index (sidx)
+// actually holds the written series. When the data lands near a segment-interval
+// boundary an empty adjacent (e.g. next-day) segment dir can also exist, so
+// picking the lexically-last sidx is wrong -- it can select the empty segment and
+// make later reads see zero docs. Choose the sidx with the most documents.
 func findSidxSegmentPath(t *testing.T, root string) string {
 	t.Helper()
 	var seg string
-	_ = filepath.WalkDir(root, func(path string, d fs.DirEntry, err error) error {
+	best := int64(-1)
+	_ = filepath.WalkDir(root, func(p string, d fs.DirEntry, err error) error {
 		if err == nil && d.IsDir() && d.Name() == "sidx" {
-			seg = filepath.Dir(path)
+			c, _ := inverted.ReadOnlyDocCount(p)
+			if c > best {
+				best = c
+				seg = filepath.Dir(p)
+			}
 		}
 		return nil
 	})
