@@ -299,7 +299,7 @@ func runTraceScenarioBenchmark(ctx context.Context, conn *grpc.ClientConn, cfg C
 		SpanBytes:           cfg.SpanBytes,
 		QueryMemoryMiB:      cfg.QueryMemoryMiB,
 		SegmentCount:        traceSegmentCount,
-		QueryIterations:     cfg.QueryIterations,
+		QueryIterations:     cfg.effectiveQueryIterations(scenario),
 		QueryWorkers:        cfg.QueryWorkers,
 		Correctness:         "baseline",
 	}
@@ -317,7 +317,7 @@ func runTraceScenarioBenchmark(ctx context.Context, conn *grpc.ClientConn, cfg C
 	}
 	queryCountBefore := vtrace.QueryCount()
 	before := captureProcessSnapshot()
-	querySummary, queryErr := runTraceScenarioQueries(ctx, conn, req, cfg, cardinality)
+	querySummary, queryErr := runTraceScenarioQueries(ctx, conn, req, cfg, scenario, cardinality)
 	after := captureProcessSnapshot()
 	queryCountAfter := vtrace.QueryCount()
 	profiles, stopProfileErr := profiler.stop()
@@ -439,7 +439,17 @@ func waitForTraceVisibility(ctx context.Context, conn *grpc.ClientConn, req *tra
 	return fmt.Errorf("timeout waiting for %s trace visibility: expected_traces=%d last_traces=%d", scenario, expectedTraces, lastTraceCount)
 }
 
-func runTraceScenarioQueries(ctx context.Context, conn *grpc.ClientConn, req *tracev1.QueryRequest, cfg Config, cardinality int) (traceQueryRunSummary, error) {
+// effectiveQueryIterations returns the timed-loop iteration count for a
+// scenario. trace_by_id is a sub-10ms point lookup whose tail latency is
+// unstable at the global default, so it uses its own (higher) count.
+func (c Config) effectiveQueryIterations(scenario Scenario) int {
+	if scenario == ScenarioTraceByID {
+		return c.ByIDIterations
+	}
+	return c.QueryIterations
+}
+
+func runTraceScenarioQueries(ctx context.Context, conn *grpc.ClientConn, req *tracev1.QueryRequest, cfg Config, scenario Scenario, cardinality int) (traceQueryRunSummary, error) {
 	client := tracev1.NewTraceServiceClient(conn)
 	for warmupIdx := 0; warmupIdx < cfg.WarmupIterations; warmupIdx++ {
 		warmupCtx, cancel := context.WithTimeout(ctx, queryTimeout(cardinality))
@@ -463,7 +473,7 @@ func runTraceScenarioQueries(ctx context.Context, conn *grpc.ClientConn, req *tr
 		}
 		sampleTraceText = b.String()
 	}
-	iterations := cfg.QueryIterations
+	iterations := cfg.effectiveQueryIterations(scenario)
 	jobs := make(chan int, iterations)
 	for iteration := 0; iteration < iterations; iteration++ {
 		jobs <- iteration

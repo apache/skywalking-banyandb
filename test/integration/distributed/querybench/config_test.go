@@ -45,6 +45,7 @@ func TestLoadConfigSingleShotFromEnv(t *testing.T) {
 	t.Setenv(envCardinality, "1024")
 	t.Setenv(envQueryWorkers, "2")
 	t.Setenv(envQueryIters, "7")
+	t.Setenv(envByIDIters, "2500")
 	t.Setenv(envWriters, "3")
 	t.Setenv(envWarmupIters, "1")
 	cfg := LoadConfig()
@@ -59,6 +60,15 @@ func TestLoadConfigSingleShotFromEnv(t *testing.T) {
 	}
 	if cfg.QueryWorkers != 2 || cfg.QueryIterations != 7 || cfg.Writers != 3 || cfg.WarmupIterations != 1 {
 		t.Fatalf("unexpected worker/iteration settings: %+v", cfg)
+	}
+	if cfg.ByIDIterations != 2500 {
+		t.Fatalf("expected ByIDIterations=2500, got %d", cfg.ByIDIterations)
+	}
+	if got := cfg.effectiveQueryIterations(ScenarioTraceByID); got != 2500 {
+		t.Fatalf("expected trace_by_id to use ByIDIterations=2500, got %d", got)
+	}
+	if got := cfg.effectiveQueryIterations(ScenarioTraceTagFilter); got != 7 {
+		t.Fatalf("expected trace_tag_filter to use QueryIterations=7, got %d", got)
 	}
 	if cfg.Engine != engineMeasure {
 		t.Fatalf("expected default engine=%s, got %s", engineMeasure, cfg.Engine)

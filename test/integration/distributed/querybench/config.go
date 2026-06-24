@@ -33,6 +33,7 @@ const (
 	envInContainer    = "DQB_IN_CONTAINER"
 	envQueryWorkers   = "DQB_QUERY_WORKERS"
 	envQueryIters     = "DQB_QUERY_ITERATIONS"
+	envByIDIters      = "DQB_TRACE_BY_ID_ITERATIONS"
 	envWriters        = "DQB_WRITERS"
 	envReportDir      = "DQB_REPORT_DIR"
 	envProfile        = "DQB_PROFILE"
@@ -56,9 +57,14 @@ const (
 	envSpanBytes      = "DQB_SPAN_BYTES"
 	envQueryMemoryMiB = "DQB_QUERY_MEMORY_MIB"
 
-	defaultReportDir      = ".omx/bench-reports/distributed-query"
-	defaultQueryWorkers   = 4
-	defaultQueryIters     = 50
+	defaultReportDir    = ".omx/bench-reports/distributed-query"
+	defaultQueryWorkers = 4
+	defaultQueryIters   = 50
+	// defaultByIDIters is the iteration count for the trace_by_id scenario. A
+	// trace-id point lookup is sub-10ms, so the 50-iteration default yields
+	// noisy p95/p99 tails (a few GC pauses dominate); it needs a far larger
+	// sample to report a stable tail.
+	defaultByIDIters      = 1000
 	defaultWarmupIters    = 3
 	defaultWriters        = 4
 	defaultSmallExactRows = 10000
@@ -129,6 +135,7 @@ type Config struct {
 	QueryMemoryMiB    int
 	QueryWorkers      int
 	QueryIterations   int
+	ByIDIterations    int
 	WarmupIterations  int
 	Writers           int
 	SmallExactRows    int
@@ -165,6 +172,7 @@ func LoadConfig() Config {
 		QueryMemoryMiB:    getInt(envQueryMemoryMiB, defaultQueryMemoryMiB),
 		QueryWorkers:      getInt(envQueryWorkers, defaultQueryWorkers),
 		QueryIterations:   getInt(envQueryIters, defaultQueryIters),
+		ByIDIterations:    getInt(envByIDIters, defaultByIDIters),
 		WarmupIterations:  getInt(envWarmupIters, defaultWarmupIters),
 		Writers:           getInt(envWriters, defaultWriters),
 		SmallExactRows:    getInt(envSmallExactRows, defaultSmallExactRows),
@@ -241,6 +249,9 @@ func (c Config) Validate() error {
 	}
 	if c.QueryIterations <= 0 {
 		return fmt.Errorf("%s must be > 0", envQueryIters)
+	}
+	if c.ByIDIterations <= 0 {
+		return fmt.Errorf("%s must be > 0", envByIDIters)
 	}
 	if c.WarmupIterations < 0 {
 		return fmt.Errorf("%s must be >= 0", envWarmupIters)
