@@ -289,11 +289,23 @@ func internalTraceToResult(trace *tracev1.InternalTrace) model.TraceResult {
 // mergeTraceResultSpans merges spans from src into dst (same TID): a span is
 // appended only when its SpanID is not already present in dst, and the matching
 // per-tag value column is extended in lockstep. This mirrors the legacy
-// InternalTrace span-dedup but on the columnar model.TraceResult.
+// InternalTrace span-dedup but on the columnar model.TraceResult. Tag columns
+// present only in src are first unioned into dst (NullTagValue-backfilled for the
+// spans dst already holds) so no src-only tag column is dropped during the merge.
 func mergeTraceResultSpans(dst, src *model.TraceResult) {
 	existing := make(map[string]struct{}, len(dst.SpanIDs))
 	for _, spanID := range dst.SpanIDs {
 		existing[spanID] = struct{}{}
+	}
+	for _, srcTag := range src.Tags {
+		if _, ok := findTag(dst.Tags, srcTag.Name); ok {
+			continue
+		}
+		backfill := make([]*modelv1.TagValue, len(dst.SpanIDs))
+		for fillIdx := range backfill {
+			backfill[fillIdx] = pbv1.NullTagValue
+		}
+		dst.Tags = append(dst.Tags, model.Tag{Name: srcTag.Name, Values: backfill})
 	}
 	for srcIdx, srcSpanID := range src.SpanIDs {
 		if _, ok := existing[srcSpanID]; ok {
