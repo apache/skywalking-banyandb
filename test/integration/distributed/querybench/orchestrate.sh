@@ -32,11 +32,20 @@ SHARD_DIR="${REPORT_DIR}/shards"
 PROFILE_DIR="${REPORT_DIR}/profiles"
 BINARY="/tmp/dqb.test"
 
+ENGINE="${DQB_ENGINE:-measure}"
+MATRIX="${DQB_MATRIX:-A}"
 CARDINALITIES="${DQB_CARDINALITIES:-1024,10000,100000,1000000,2000000}"
-SCENARIOS="${DQB_SCENARIOS:-scan_all,top_with_filter}"
+if [[ "${ENGINE}" == "trace" ]]; then
+  CARDINALITIES="${DQB_CARDINALITIES:-1000,10000,100000,1000000,2000000}"
+  SCENARIOS="${DQB_SCENARIOS:-trace_by_id,trace_tag_filter}"
+else
+  SCENARIOS="${DQB_SCENARIOS:-scan_all,top_with_filter}"
+fi
 MODES="${DQB_MODES:-row,vec}"
 
 echo "[orchestrate] report_dir=${REPORT_DIR}"
+echo "[orchestrate] engine=${ENGINE}"
+echo "[orchestrate] matrix=${MATRIX}"
 echo "[orchestrate] cardinalities=${CARDINALITIES}"
 echo "[orchestrate] scenarios=${SCENARIOS}"
 
@@ -59,19 +68,82 @@ IFS=',' read -ra CARD_ARR <<< "${CARDINALITIES}"
 IFS=',' read -ra SCEN_ARR <<< "${SCENARIOS}"
 IFS=',' read -ra MODE_ARR <<< "${MODES}"
 
-for card in "${CARD_ARR[@]}"; do
+run_variant() {
+  local card=$1
+  local spans_per_trace=$2
+  local span_dist=$3
+  local selectivity=$4
+  local trace_id_batch=$5
+  local shard_num=$6
+  local data_nodes=$7
+  local span_bytes=$8
   for mode in "${MODE_ARR[@]}"; do
     for scenario in "${SCEN_ARR[@]}"; do
-      echo "[orchestrate] === cardinality=${card} mode=${mode} scenario=${scenario} ==="
-      DQB_MODE="${mode}" \
+      echo "[orchestrate] === engine=${ENGINE} cardinality=${card} mode=${mode} scenario=${scenario} s=${spans_per_trace} dist=${span_dist} sel=${selectivity} k=${trace_id_batch} shard=${shard_num} nodes=${data_nodes} bytes=${span_bytes} ==="
+      DQB_ENGINE="${ENGINE}" \
+        DQB_MATRIX="${MATRIX}" \
+        DQB_MODE="${mode}" \
         DQB_SCENARIO="${scenario}" \
         DQB_CARDINALITY="${card}" \
+        DQB_SPANS_PER_TRACE="${spans_per_trace}" \
+        DQB_SPAN_DIST="${span_dist}" \
+        DQB_FILTER_SELECTIVITY="${selectivity}" \
+        DQB_TRACE_ID_BATCH="${trace_id_batch}" \
+        DQB_SHARD_NUM="${shard_num}" \
+        DQB_DATA_NODES="${data_nodes}" \
+        DQB_SPAN_BYTES="${span_bytes}" \
+        DQB_QUERY_MEMORY_MIB="${DQB_QUERY_MEMORY_MIB:-256}" \
         "${BINARY}" -test.run TestDistributedQueryBench -test.v
     done
   done
-done
+}
+
+run_matrix_a() {
+  for card in "${CARD_ARR[@]}"; do
+    run_variant "${card}" "${DQB_SPANS_PER_TRACE:-20}" "${DQB_SPAN_DIST:-uniform}" "${DQB_FILTER_SELECTIVITY:-0.01}" "${DQB_TRACE_ID_BATCH:-1}" "${DQB_SHARD_NUM:-2}" "${DQB_DATA_NODES:-2}" "${DQB_SPAN_BYTES:-1024}"
+  done
+}
+
+run_matrix_b() {
+  local card="${DQB_MATRIX_B_CARDINALITY:-1000000}"
+  run_variant "${card}" "5" "uniform" "0.01" "1" "2" "2" "${DQB_SPAN_BYTES:-1024}"
+  run_variant "${card}" "20" "uniform" "0.01" "1" "2" "2" "${DQB_SPAN_BYTES:-1024}"
+  run_variant "${card}" "100" "uniform" "0.01" "1" "2" "2" "${DQB_SPAN_BYTES:-1024}"
+  run_variant "${card}" "20" "heavytail" "0.01" "1" "2" "2" "${DQB_SPAN_BYTES:-1024}"
+  for selectivity in 0.001 0.01 0.1; do
+    run_variant "${card}" "20" "uniform" "${selectivity}" "1" "2" "2" "${DQB_SPAN_BYTES:-1024}"
+  done
+  for trace_id_batch in 1 10 100; do
+    run_variant "${card}" "20" "uniform" "0.01" "${trace_id_batch}" "2" "2" "${DQB_SPAN_BYTES:-1024}"
+  done
+  run_variant "${card}" "20" "uniform" "0.01" "1" "6" "2" "${DQB_SPAN_BYTES:-1024}"
+  run_variant "${card}" "20" "uniform" "0.01" "1" "2" "4" "${DQB_SPAN_BYTES:-1024}"
+}
+
+if [[ "${ENGINE}" == "trace" ]]; then
+  case "${MATRIX}" in
+    A)
+      run_matrix_a
+      ;;
+    B)
+      run_matrix_b
+      ;;
+    both)
+      run_matrix_a
+      run_matrix_b
+      ;;
+    *)
+      echo "unknown DQB_MATRIX=${MATRIX}" >&2
+      exit 2
+      ;;
+  esac
+else
+  for card in "${CARD_ARR[@]}"; do
+    run_variant "${card}" "${DQB_SPANS_PER_TRACE:-20}" "${DQB_SPAN_DIST:-uniform}" "${DQB_FILTER_SELECTIVITY:-0.01}" "${DQB_TRACE_ID_BATCH:-1}" "${DQB_SHARD_NUM:-2}" "${DQB_DATA_NODES:-2}" "${DQB_SPAN_BYTES:-1024}"
+  done
+fi
 
 echo "[orchestrate] === merging shards ==="
-DQB_MERGE=1 "${BINARY}" -test.run TestDistributedQueryBench -test.v
+DQB_ENGINE="${ENGINE}" DQB_MERGE=1 "${BINARY}" -test.run TestDistributedQueryBench -test.v
 
 echo "[orchestrate] done"

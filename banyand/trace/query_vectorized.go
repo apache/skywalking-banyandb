@@ -18,6 +18,7 @@
 package trace
 
 import (
+	"bytes"
 	"context"
 	"fmt"
 	"maps"
@@ -31,7 +32,6 @@ import (
 	itersort "github.com/apache/skywalking-banyandb/pkg/iter/sort"
 	pbv1 "github.com/apache/skywalking-banyandb/pkg/pb/v1"
 	"github.com/apache/skywalking-banyandb/pkg/query/model"
-	"github.com/apache/skywalking-banyandb/pkg/query/vectorized"
 	vtrace "github.com/apache/skywalking-banyandb/pkg/query/vectorized/trace"
 )
 
@@ -111,6 +111,32 @@ func (r *vectorizedTraceQueryResult) Release() {
 	}
 }
 
+// traceResultBucket accumulates the decoded spans, span IDs, and per-projected-tag
+// values for a single traceID across all of its blocks. tid and key are constant
+// across every span in the bucket. tagVals holds one slice per projected tag
+// column (aligned with the tagCols order).
+type traceResultBucket struct {
+	tid     string
+	spans   [][]byte
+	spanIDs []string
+	tagVals [][]*modelv1.TagValue
+	key     int64
+}
+
+// materializeVectorizedTraceResults assembles []*model.TraceResult directly from
+// the scanned (but not data-loaded) on-disk blocks, reproducing the exact
+// semantics the former Phase-2 operator pipeline had (decode → group-by-traceID →
+// per-trace emission) without any RecordBatch or operator overhead.
+//
+// budgetBytes is a soft span-loading threshold capping the cumulative uncompressed
+// span bytes decoded across cursors. Pass QueryMemoryMiB<=0 (budgetBytes 0) to
+// disable the cap. Two gates enforce it, matching the former blockBatchSource:
+//  1. Hard stop: once usedBytes >= budgetBytes, remaining cursors are released
+//     without decoding.
+//  2. Metadata preflight: cursor.bm.uncompressedSpanSizeBytes predicts whether a
+//     cursor would push usedBytes over budgetBytes; if so it is skipped before
+//     decode. The usedBytes>0 guard makes the first cursor always decode so a
+//     too-small budget never returns zero results.
 func materializeVectorizedTraceResults(ctx context.Context, batch *scanBatch, qo queryOptions) ([]*model.TraceResult, error) {
 	if batch == nil {
 		return nil, nil
@@ -123,12 +149,7 @@ func materializeVectorizedTraceResults(ctx context.Context, batch *scanBatch, qo
 	if qo.QueryMemoryMiB > 0 {
 		budgetBytes = int64(qo.QueryMemoryMiB) * 1024 * 1024
 	}
-	loaded, loadErr := loadTraceCursorsSync(ctx, batch.cursors, budgetBytes)
-	batch.cursors = nil
-	if loadErr != nil {
-		return nil, loadErr
-	}
-	if len(loaded) == 0 {
+	if len(batch.cursors) == 0 {
 		return nil, nil
 	}
 
@@ -136,232 +157,160 @@ func materializeVectorizedTraceResults(ctx context.Context, batch *scanBatch, qo
 	if qo.TagProjection != nil && len(qo.TagProjection.Names) > 0 {
 		tagCols = append([]string(nil), qo.TagProjection.Names...)
 	}
-	schema := vtrace.NewPhase2Schema(tagCols)
-	source := newLoadedCursorSource(loaded, schema, batch.keys, tagCols, qo.schemaTagTypes)
-
-	phase2Plan, buildErr := vtrace.BuildPhase2(source, batch.traceIDsOrder)
-	if buildErr != nil {
-		source.closeAll()
-		return nil, fmt.Errorf("build vectorized trace phase2: %w", buildErr)
-	}
-	if initErr := phase2Plan.Pipeline.Init(ctx); initErr != nil {
-		phase2Plan.Pipeline.Close() //nolint:errcheck
-		return nil, fmt.Errorf("init vectorized trace phase2: %w", initErr)
-	}
-	defer phase2Plan.Pipeline.Close() //nolint:errcheck
-
-	results := make([]*model.TraceResult, 0, len(batch.traceIDsOrder))
-	for {
-		outBatch, nextErr := phase2Plan.Pipeline.Next(ctx)
-		if nextErr != nil {
-			return nil, fmt.Errorf("pull vectorized trace phase2: %w", nextErr)
-		}
-		if outBatch == nil {
-			break
-		}
-		result := vtrace.BatchToTraceResult(outBatch, schema)
-		if result != nil {
-			results = append(results, result)
-		}
-	}
-	return results, nil
+	return assembleVectorizedTraceResults(ctx, batch, tagCols, qo.schemaTagTypes, budgetBytes)
 }
 
-// loadedCursorSource is a PullOperator that wraps already-loaded []*blockCursor
-// and emits one Phase-2 RecordBatch per cursor.
-type loadedCursorSource struct {
-	schema         *vectorized.BatchSchema
-	keys           map[string]int64
-	schemaTagTypes map[string]pbv1.ValueType
-	cursors        []*blockCursor
-	tagCols        []string
-	idx            int
-	closed         bool
-}
-
-func newLoadedCursorSource(
-	cursors []*blockCursor,
-	schema *vectorized.BatchSchema,
-	keys map[string]int64,
+// assembleVectorizedTraceResults performs the direct block-to-TraceResult
+// assembly with an explicit byte budget. It owns batch.cursors and releases each
+// after use. Callers must have validated that batch has at least one cursor.
+func assembleVectorizedTraceResults(
+	ctx context.Context,
+	batch *scanBatch,
 	tagCols []string,
 	schemaTagTypes map[string]pbv1.ValueType,
-) *loadedCursorSource {
-	return &loadedCursorSource{
-		cursors:        cursors,
-		schema:         schema,
-		keys:           keys,
-		tagCols:        tagCols,
-		schemaTagTypes: schemaTagTypes,
+	budgetBytes int64,
+) ([]*model.TraceResult, error) {
+	known := make(map[string]struct{}, len(batch.traceIDsOrder))
+	for _, tid := range batch.traceIDsOrder {
+		known[tid] = struct{}{}
 	}
-}
+	buckets := make(map[string]*traceResultBucket)
 
-// closeAll releases any remaining cursors without marking the source closed.
-func (s *loadedCursorSource) closeAll() {
-	for remainIdx := s.idx; remainIdx < len(s.cursors); remainIdx++ {
-		releaseBlockCursor(s.cursors[remainIdx])
-	}
-	s.idx = len(s.cursors)
-}
+	tmpBlock := generateBlock()
+	defer releaseBlock(tmpBlock)
 
-func (s *loadedCursorSource) Init(context.Context) error { return nil }
-
-func (s *loadedCursorSource) OutputSchema() *vectorized.BatchSchema { return s.schema }
-
-// Close releases all remaining unread cursors. Idempotent.
-func (s *loadedCursorSource) Close() error {
-	if s.closed {
-		return nil
-	}
-	s.closed = true
-	s.closeAll()
-	return nil
-}
-
-// NextBatch emits one Phase-2 RecordBatch per loaded blockCursor.
-// Each span in the cursor becomes one row in the batch.
-func (s *loadedCursorSource) NextBatch(ctx context.Context) (*vectorized.RecordBatch, error) {
-	for s.idx < len(s.cursors) {
-		if ctxErr := ctx.Err(); ctxErr != nil {
-			s.closeAll()
-			return nil, ctxErr
-		}
-		bc := s.cursors[s.idx]
-		s.idx++
-		if len(bc.spans) == 0 {
-			releaseBlockCursor(bc)
-			continue
-		}
-
-		batch := vectorized.NewRecordBatch(s.schema, len(bc.spans))
-		tid := bc.bm.traceID
-		key := s.keys[tid]
-
-		tidCol := vtrace.Phase2TraceIDs(batch)
-		keyCol := vtrace.Phase2Keys(batch)
-		spanCol := vtrace.Phase2Spans(batch)
-		spanIDCol := vtrace.Phase2SpanIDs(batch)
-		// Tag-column handles and the cursor's matching tag are loop-invariant
-		// across spans; resolve them once per cursor.
-		tagCols := make([]*vectorized.TypedColumn[*modelv1.TagValue], len(s.tagCols))
-		cursorTags := make([]*tag, len(s.tagCols))
-		for tagIdx, tagName := range s.tagCols {
-			tagCols[tagIdx] = vtrace.Phase2TagCol(batch, tagIdx)
-			cursorTags[tagIdx] = findCursorTag(bc, tagName, s.schemaTagTypes)
-		}
-
-		for spanIdx, span := range bc.spans {
-			tidCol.Append(tid)
-			keyCol.Append(key)
-			spanCol.Append(span)
-			spanID := ""
-			if spanIdx < len(bc.spanIDs) {
-				spanID = bc.spanIDs[spanIdx]
-			}
-			spanIDCol.Append(spanID)
-
-			for tagIdx := range s.tagCols {
-				tv := pbv1.NullTagValue
-				if cursorTag := cursorTags[tagIdx]; cursorTag != nil && spanIdx < len(cursorTag.values) {
-					tv = mustDecodeTagValue(cursorTag.valueType, cursorTag.values[spanIdx])
-				}
-				tagCols[tagIdx].Append(tv)
-			}
-		}
-		batch.Len = len(bc.spans)
-		releaseBlockCursor(bc)
-		return batch, nil
-	}
-	return nil, nil
-}
-
-// findCursorTag returns the cursor's tag whose decoded name and value type match
-// the schema expectation, or nil when the cursor has no such tag. A name match
-// with a mismatched type keeps scanning so a correctly-typed variant still wins.
-func findCursorTag(bc *blockCursor, tagName string, schemaTagTypes map[string]pbv1.ValueType) *tag {
-	schemaType, hasSchemaType := schemaTagTypes[tagName]
-	if !hasSchemaType {
-		return nil
-	}
-	for tagIdx := range bc.tags {
-		cursorTag := &bc.tags[tagIdx]
-		if decodeTypedTag(cursorTag.name) != tagName || cursorTag.valueType != schemaType {
-			continue
-		}
-		return cursorTag
-	}
-	return nil
-}
-
-// loadTraceCursorsSync loads span data for each cursor from disk.
-// budgetBytes is a soft span-loading threshold: it caps the cumulative uncompressed
-// span bytes loaded across cursors. SIDX responses, tags, record-batch overhead, and
-// other per-query allocations are not counted. Pass 0 (or any non-positive value) to disable the cap.
-// Two complementary gates enforce the threshold:
-//  1. Hard stop: once usedBytes >= budgetBytes, remaining cursors are released
-//     without calling loadData.
-//  2. Metadata preflight: cursor.bm.uncompressedSpanSizeBytes (written at flush,
-//     available without loading) is used to predict whether a cursor would push
-//     usedBytes over budgetBytes. If so the cursor is skipped before loadData.
-//
-// First-block exception: the first cursor always loads regardless of the budget
-// so that a query never returns zero results due to a too-small budget. This means
-// a single oversized block can exceed budgetBytes; the threshold is best-effort,
-// not a hard memory cap.
-func loadTraceCursorsSync(ctx context.Context, cursors []*blockCursor, budgetBytes int64) ([]*blockCursor, error) {
-	if len(cursors) == 0 {
-		return nil, nil
-	}
 	var usedBytes int64
-	filtered := cursors[:0]
-	for curIdx, cursor := range cursors {
-		select {
-		case <-ctx.Done():
-			// filtered aliases cursors[:0]: its entries are the loaded cursors,
-			// cursors[curIdx:] are untouched; everything in between was already released.
-			for _, loadedCursor := range filtered {
-				releaseBlockCursor(loadedCursor)
+	for i := 0; i < len(batch.cursors); i++ {
+		cursor := batch.cursors[i]
+		if ctxErr := ctx.Err(); ctxErr != nil {
+			for releaseIdx := i; releaseIdx < len(batch.cursors); releaseIdx++ {
+				releaseBlockCursor(batch.cursors[releaseIdx])
 			}
-			for _, pendingCursor := range cursors[curIdx:] {
-				releaseBlockCursor(pendingCursor)
-			}
-			return nil, fmt.Errorf("interrupt while loading trace data: %w", ctx.Err())
-		default:
+			batch.cursors = nil
+			return nil, fmt.Errorf("interrupt while loading trace data: %w", ctxErr)
 		}
 		if budgetBytes > 0 {
 			// Hard stop: prior cursors already filled the budget.
 			if usedBytes >= budgetBytes {
-				releaseBlockCursor(cursor)
-				for _, pendingCursor := range cursors[curIdx+1:] {
-					releaseBlockCursor(pendingCursor)
+				for releaseIdx := i; releaseIdx < len(batch.cursors); releaseIdx++ {
+					releaseBlockCursor(batch.cursors[releaseIdx])
 				}
-				return filtered, nil
+				break
 			}
-			// Metadata preflight: skip this cursor without calling loadData when its
-			// uncompressed-size estimate would push usedBytes over the budget.
-			// The guard usedBytes > 0 ensures the first cursor always loads.
+			// Metadata preflight: skip the remaining cursors without decoding when
+			// this cursor's uncompressed-size estimate would push usedBytes over
+			// the budget. The usedBytes>0 guard ensures the first cursor decodes.
 			if usedBytes > 0 && usedBytes+int64(cursor.bm.uncompressedSpanSizeBytes) > budgetBytes {
-				releaseBlockCursor(cursor)
-				for _, pendingCursor := range cursors[curIdx+1:] {
-					releaseBlockCursor(pendingCursor)
+				for releaseIdx := i; releaseIdx < len(batch.cursors); releaseIdx++ {
+					releaseBlockCursor(batch.cursors[releaseIdx])
 				}
-				return filtered, nil
+				break
 			}
 		}
-		tmpBlock := generateBlock()
-		loaded := cursor.loadData(tmpBlock)
-		releaseBlock(tmpBlock)
-		if !loaded {
+
+		cursor.resolveTagProjection()
+		tmpBlock.reset()
+		tmpBlock.mustReadFrom(&cursor.tagValuesDecoder, cursor.p, cursor.bm)
+		if len(tmpBlock.spans) == 0 {
 			releaseBlockCursor(cursor)
 			continue
 		}
-		if budgetBytes > 0 {
-			for _, span := range cursor.spans {
-				usedBytes += int64(len(span))
+
+		// Account for the decoded span bytes before applying the known-trace drop
+		// so the budget progression matches the former blockBatchSource, which
+		// counted bytes for every non-empty decoded block (GroupByTraceID dropped
+		// unknown rows afterward without affecting usedBytes).
+		var spanBytes int64
+		for spanIdx := range tmpBlock.spans {
+			spanBytes += int64(len(tmpBlock.spans[spanIdx]))
+		}
+		usedBytes += spanBytes
+
+		tid := cursor.bm.traceID
+		if _, ok := known[tid]; !ok {
+			releaseBlockCursor(cursor)
+			continue
+		}
+
+		bucket, exists := buckets[tid]
+		if !exists {
+			bucket = &traceResultBucket{
+				tid:     tid,
+				key:     batch.keys[tid],
+				tagVals: make([][]*modelv1.TagValue, len(tagCols)),
+			}
+			buckets[tid] = bucket
+		}
+
+		// Tag-column block matches are loop-invariant across spans; resolve once.
+		blockTags := make([]*tag, len(tagCols))
+		for tagIdx, tagName := range tagCols {
+			blockTags[tagIdx] = findBlockTag(tmpBlock.tags, tagName, schemaTagTypes)
+		}
+
+		for spanIdx := range tmpBlock.spans {
+			// tmpBlock is reused across blocks; the span bytes must be cloned.
+			bucket.spans = append(bucket.spans, bytes.Clone(tmpBlock.spans[spanIdx]))
+			spanID := ""
+			if spanIdx < len(tmpBlock.spanIDs) {
+				spanID = tmpBlock.spanIDs[spanIdx]
+			}
+			bucket.spanIDs = append(bucket.spanIDs, spanID)
+			for tagIdx := range tagCols {
+				tv := pbv1.NullTagValue
+				if blockTag := blockTags[tagIdx]; blockTag != nil && spanIdx < len(blockTag.values) {
+					tv = mustDecodeTagValue(blockTag.valueType, blockTag.values[spanIdx])
+				}
+				bucket.tagVals[tagIdx] = append(bucket.tagVals[tagIdx], tv)
 			}
 		}
-		filtered = append(filtered, cursor)
+		releaseBlockCursor(cursor)
 	}
-	return filtered, nil
+	batch.cursors = nil
+
+	results := make([]*model.TraceResult, 0, len(batch.traceIDsOrder))
+	for _, tid := range batch.traceIDsOrder {
+		bucket, ok := buckets[tid]
+		if !ok || len(bucket.spans) == 0 {
+			continue
+		}
+		// Delete the bucket before emitting so a duplicate entry in traceIDsOrder
+		// is skipped on the second encounter, matching GroupByTraceID.
+		delete(buckets, tid)
+		result := &model.TraceResult{
+			TID:     tid,
+			Key:     bucket.key,
+			Spans:   bucket.spans,
+			SpanIDs: bucket.spanIDs,
+		}
+		if len(tagCols) > 0 {
+			result.Tags = make([]model.Tag, len(tagCols))
+			for tagIdx := range tagCols {
+				result.Tags[tagIdx] = model.Tag{Name: tagCols[tagIdx], Values: bucket.tagVals[tagIdx]}
+			}
+		}
+		results = append(results, result)
+	}
+	return results, nil
+}
+
+// findBlockTag returns the tag whose decoded name and value type match the schema
+// expectation, or nil when no such tag exists. A name match with a mismatched type
+// keeps scanning so a correctly-typed variant still wins. It matches a projected
+// tag name+type against a decoded block's []tag (here tmpBlock.tags).
+func findBlockTag(tags []tag, tagName string, schemaTagTypes map[string]pbv1.ValueType) *tag {
+	schemaType, hasSchemaType := schemaTagTypes[tagName]
+	if !hasSchemaType {
+		return nil
+	}
+	for tagIdx := range tags {
+		blockTag := &tags[tagIdx]
+		if decodeTypedTag(blockTag.name) != tagName || blockTag.valueType != schemaType {
+			continue
+		}
+		return blockTag
+	}
+	return nil
 }
 
 func releaseVectorizedScanBatch(batch *scanBatch) {
@@ -431,10 +380,12 @@ func (t *trace) buildVectorizedPhase1TraceBatch(
 		if iterErr != nil {
 			return traceBatch{}, iterErr
 		}
-		// Ordered SIDX path: MaxTraceSize controls SIDX batch size (MaxBatchSize in the
-		// request), not the total result cap. The push path emits all matching traces in
-		// batches; vectorized must do the same. Pass 0 to disable the Phase-1 trace cap.
-		plan, buildErr := vtrace.BuildMergePhase1(iters, sidxRequestDesc(req), 0, batchSize)
+		// Ordered SIDX path: cap Phase-1 at maxRows (= offset+limit) so only the top-N
+		// distinct trace IDs in sorted-merge order are carried forward and materialized.
+		// The merge is globally sorted, so the first maxRows traces are exactly the window
+		// the outer traceLimit keeps; carrying the full match set (maxRows=0) wastes span
+		// decode on traces the limit discards. maxRows=0 (no limit set) stays uncapped.
+		plan, buildErr := vtrace.BuildMergePhase1(iters, sidxRequestDesc(req), maxRows, batchSize)
 		if buildErr != nil {
 			return traceBatch{}, fmt.Errorf("build ordered vectorized trace phase1: %w", buildErr)
 		}

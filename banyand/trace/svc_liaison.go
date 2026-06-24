@@ -176,6 +176,8 @@ func (l *liaison) Role() databasev1.Role {
 
 func (l *liaison) PreRun(ctx context.Context) error {
 	l.l = logger.GetLogger(l.Name())
+	data.SetTraceWireModeRaw(l.option.vectorized.Enabled)
+	l.l.Info().Bool("trace_wire_mode_raw", l.option.vectorized.Enabled).Msg("trace wire mode published (liaison)")
 	l.l.Info().Msg("memory protector is initialized in PreRun")
 	l.lfs = fs.NewLocalFileSystemWithLoggerAndLimit(l.l, l.pm.GetLimit())
 	var err error

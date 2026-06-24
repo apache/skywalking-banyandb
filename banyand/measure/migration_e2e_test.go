@@ -580,7 +580,7 @@ func setUpMigrationTarget(measureRootPath string) (*services, func()) {
 	measureService, err := measure.NewStandalone(metadataService, pipeline, nil, metricSvc, pm)
 	Expect(err).NotTo(HaveOccurred())
 	preloadSvc := &preloadMeasureService{metaSvc: metadataService}
-	querySvc, err := query.NewService(context.TODO(), nil, measureService, nil, metadataService, pipeline, metricSvc)
+	querySvc, err := query.NewService(context.TODO(), nil, measureService, nil, metadataService, pipeline, metricSvc, false)
 	Expect(err).NotTo(HaveOccurred())
 
 	metaPath, metaDeferFunc, err := test.NewSpace()

@@ -21,6 +21,7 @@ package querybench
 
 import (
 	"fmt"
+	"math"
 	"os"
 	"strconv"
 	"strings"
@@ -40,10 +41,20 @@ const (
 	envDockerImage    = "DQB_DOCKER_IMAGE"
 	envCPULimit       = "DQB_CPU_LIMIT"
 	envMemoryLimit    = "DQB_MEMORY_LIMIT"
+	envEngine         = "DQB_ENGINE"
+	envMatrix         = "DQB_MATRIX"
 	envMode           = "DQB_MODE"
 	envScenario       = "DQB_SCENARIO"
 	envCardinality    = "DQB_CARDINALITY"
 	envMerge          = "DQB_MERGE"
+	envSpansPerTrace  = "DQB_SPANS_PER_TRACE"
+	envSpanDist       = "DQB_SPAN_DIST"
+	envSelectivity    = "DQB_FILTER_SELECTIVITY"
+	envTraceIDBatch   = "DQB_TRACE_ID_BATCH"
+	envShardNum       = "DQB_SHARD_NUM"
+	envDataNodes      = "DQB_DATA_NODES"
+	envSpanBytes      = "DQB_SPAN_BYTES"
+	envQueryMemoryMiB = "DQB_QUERY_MEMORY_MIB"
 
 	defaultReportDir      = ".omx/bench-reports/distributed-query"
 	defaultQueryWorkers   = 4
@@ -51,9 +62,27 @@ const (
 	defaultWarmupIters    = 3
 	defaultWriters        = 4
 	defaultSmallExactRows = 10000
+	defaultSpansPerTrace  = 20
+	defaultSpanDist       = spanDistUniform
+	defaultSelectivity    = 0.01
+	defaultTraceIDBatch   = 1
+	defaultShardNum       = 2
+	defaultDataNodes      = 2
+	defaultSpanBytes      = 1024
+	defaultQueryMemoryMiB = 256
+
+	engineMeasure = "measure"
+	engineTrace   = "trace"
+
+	matrixA    = "A"
+	matrixB    = "B"
+	matrixBoth = "both"
 
 	modeRow = "row"
 	modeVec = "vec"
+
+	spanDistUniform   = "uniform"
+	spanDistHeavytail = "heavytail"
 )
 
 // Scenario identifies a distributed query benchmark shape.
@@ -64,6 +93,10 @@ const (
 	ScenarioScanAll Scenario = "scan_all"
 	// ScenarioTopWithFilter benchmarks the measure Top-N-with-filter fixture.
 	ScenarioTopWithFilter Scenario = "top_with_filter"
+	// ScenarioTraceByID benchmarks distributed trace-id lookup.
+	ScenarioTraceByID Scenario = "trace_by_id"
+	// ScenarioTraceTagFilter benchmarks distributed ordered trace tag filters.
+	ScenarioTraceTagFilter Scenario = "trace_tag_filter"
 )
 
 // Config drives a single test-binary invocation. The shell orchestrator
@@ -78,43 +111,63 @@ const (
 // Direct go test invocations without the right env vars surface a hard
 // configuration error.
 type Config struct {
-	ReportDir        string
-	DockerImage      string
-	CPULimit         string
-	MemoryLimit      string
-	Mode             string
-	Scenario         Scenario
-	Cardinality      int
-	QueryWorkers     int
-	QueryIterations  int
-	WarmupIterations int
-	Writers          int
-	SmallExactRows   int
-	RunBench         bool
-	InContainer      bool
-	Profile          bool
-	Merge            bool
+	ReportDir         string
+	DockerImage       string
+	CPULimit          string
+	MemoryLimit       string
+	Engine            string
+	Matrix            string
+	Mode              string
+	Scenario          Scenario
+	SpanDist          string
+	Cardinality       int
+	SpansPerTrace     int
+	TraceIDBatch      int
+	ShardNum          int
+	DataNodes         int
+	SpanBytes         int
+	QueryMemoryMiB    int
+	QueryWorkers      int
+	QueryIterations   int
+	WarmupIterations  int
+	Writers           int
+	SmallExactRows    int
+	FilterSelectivity float64
+	RunBench          bool
+	InContainer       bool
+	Profile           bool
+	Merge             bool
 }
 
 // LoadConfig reads benchmark settings from environment variables.
 func LoadConfig() Config {
 	return Config{
-		RunBench:         getBool(envRunBench),
-		InContainer:      getBool(envInContainer),
-		Profile:          getBool(envProfile),
-		Merge:            getBool(envMerge),
-		ReportDir:        getString(envReportDir, defaultReportDir),
-		DockerImage:      getString(envDockerImage, ""),
-		CPULimit:         getString(envCPULimit, ""),
-		MemoryLimit:      getString(envMemoryLimit, ""),
-		Mode:             getString(envMode, ""),
-		Scenario:         Scenario(getString(envScenario, "")),
-		Cardinality:      getInt(envCardinality, 0),
-		QueryWorkers:     getInt(envQueryWorkers, defaultQueryWorkers),
-		QueryIterations:  getInt(envQueryIters, defaultQueryIters),
-		WarmupIterations: getInt(envWarmupIters, defaultWarmupIters),
-		Writers:          getInt(envWriters, defaultWriters),
-		SmallExactRows:   getInt(envSmallExactRows, defaultSmallExactRows),
+		RunBench:          getBool(envRunBench),
+		InContainer:       getBool(envInContainer),
+		Profile:           getBool(envProfile),
+		Merge:             getBool(envMerge),
+		ReportDir:         getString(envReportDir, defaultReportDir),
+		DockerImage:       getString(envDockerImage, ""),
+		CPULimit:          getString(envCPULimit, ""),
+		MemoryLimit:       getString(envMemoryLimit, ""),
+		Engine:            getString(envEngine, engineMeasure),
+		Matrix:            getString(envMatrix, matrixA),
+		Mode:              getString(envMode, ""),
+		Scenario:          Scenario(getString(envScenario, "")),
+		Cardinality:       getInt(envCardinality, 0),
+		SpansPerTrace:     getInt(envSpansPerTrace, defaultSpansPerTrace),
+		SpanDist:          getString(envSpanDist, defaultSpanDist),
+		FilterSelectivity: getFloat(envSelectivity, defaultSelectivity),
+		TraceIDBatch:      getInt(envTraceIDBatch, defaultTraceIDBatch),
+		ShardNum:          getInt(envShardNum, defaultShardNum),
+		DataNodes:         getInt(envDataNodes, defaultDataNodes),
+		SpanBytes:         getInt(envSpanBytes, defaultSpanBytes),
+		QueryMemoryMiB:    getInt(envQueryMemoryMiB, defaultQueryMemoryMiB),
+		QueryWorkers:      getInt(envQueryWorkers, defaultQueryWorkers),
+		QueryIterations:   getInt(envQueryIters, defaultQueryIters),
+		WarmupIterations:  getInt(envWarmupIters, defaultWarmupIters),
+		Writers:           getInt(envWriters, defaultWriters),
+		SmallExactRows:    getInt(envSmallExactRows, defaultSmallExactRows),
 	}
 }
 
@@ -129,6 +182,14 @@ func (c Config) IsSingleShot() bool {
 func (c Config) Validate() error {
 	if !c.RunBench {
 		return nil
+	}
+	if c.Engine == "" {
+		return fmt.Errorf("%s must be set", envEngine)
+	}
+	switch c.Engine {
+	case engineMeasure, engineTrace:
+	default:
+		return fmt.Errorf("%s must be %q or %q, got %q", envEngine, engineMeasure, engineTrace, c.Engine)
 	}
 	if !c.InContainer {
 		return fmt.Errorf("%s=1 requires %s=1; invoke via test/integration/distributed/querybench/run-docker.sh", envRunBench, envInContainer)
@@ -153,13 +214,27 @@ func (c Config) Validate() error {
 	default:
 		return fmt.Errorf("%s must be %q or %q, got %q", envMode, modeRow, modeVec, c.Mode)
 	}
-	switch c.Scenario {
-	case ScenarioScanAll, ScenarioTopWithFilter:
-	default:
-		return fmt.Errorf("%s unsupported: %q", envScenario, c.Scenario)
+	switch c.Engine {
+	case engineMeasure:
+		switch c.Scenario {
+		case ScenarioScanAll, ScenarioTopWithFilter:
+		default:
+			return fmt.Errorf("%s unsupported for %s=%s: %q", envScenario, envEngine, c.Engine, c.Scenario)
+		}
+	case engineTrace:
+		switch c.Scenario {
+		case ScenarioTraceByID, ScenarioTraceTagFilter:
+		default:
+			return fmt.Errorf("%s unsupported for %s=%s: %q", envScenario, envEngine, c.Engine, c.Scenario)
+		}
 	}
 	if c.Cardinality <= 0 {
 		return fmt.Errorf("%s must be > 0", envCardinality)
+	}
+	if c.Engine == engineTrace {
+		if validateErr := c.validateTrace(); validateErr != nil {
+			return validateErr
+		}
 	}
 	if c.QueryWorkers <= 0 {
 		return fmt.Errorf("%s must be > 0", envQueryWorkers)
@@ -175,6 +250,41 @@ func (c Config) Validate() error {
 	}
 	if c.SmallExactRows <= 0 {
 		return fmt.Errorf("%s must be > 0", envSmallExactRows)
+	}
+	return nil
+}
+
+func (c Config) validateTrace() error {
+	switch c.Matrix {
+	case matrixA, matrixB, matrixBoth:
+	default:
+		return fmt.Errorf("%s must be %q, %q, or %q, got %q", envMatrix, matrixA, matrixB, matrixBoth, c.Matrix)
+	}
+	switch c.SpanDist {
+	case spanDistUniform, spanDistHeavytail:
+	default:
+		return fmt.Errorf("%s must be %q or %q, got %q", envSpanDist, spanDistUniform, spanDistHeavytail, c.SpanDist)
+	}
+	if c.SpansPerTrace <= 0 {
+		return fmt.Errorf("%s must be > 0", envSpansPerTrace)
+	}
+	if c.FilterSelectivity <= 0 || c.FilterSelectivity > 1 {
+		return fmt.Errorf("%s must be > 0 and <= 1", envSelectivity)
+	}
+	if c.TraceIDBatch <= 0 {
+		return fmt.Errorf("%s must be > 0", envTraceIDBatch)
+	}
+	if c.ShardNum <= 0 {
+		return fmt.Errorf("%s must be > 0", envShardNum)
+	}
+	if c.DataNodes <= 0 {
+		return fmt.Errorf("%s must be > 0", envDataNodes)
+	}
+	if c.SpanBytes <= 0 {
+		return fmt.Errorf("%s must be > 0", envSpanBytes)
+	}
+	if c.QueryMemoryMiB <= 0 {
+		return fmt.Errorf("%s must be > 0", envQueryMemoryMiB)
 	}
 	return nil
 }
@@ -206,6 +316,64 @@ func getInt(key string, def int) int {
 		}
 	}
 	return def
+}
+
+func getFloat(key string, def float64) float64 {
+	if value := os.Getenv(key); value != "" {
+		parsed, parseErr := strconv.ParseFloat(strings.TrimSpace(value), 64)
+		if parseErr == nil {
+			return parsed
+		}
+	}
+	return def
+}
+
+type traceShape struct {
+	SpansByTrace []int
+	Offsets      []int
+	TraceCount   int
+	TotalSpans   int
+	MeanSpans    float64
+}
+
+func deriveTraceShape(totalSpans, spansPerTrace int, spanDist string) traceShape {
+	if totalSpans <= 0 {
+		totalSpans = 1
+	}
+	if spansPerTrace <= 0 {
+		spansPerTrace = defaultSpansPerTrace
+	}
+	meanSpans := float64(spansPerTrace)
+	if spanDist == spanDistHeavytail {
+		meanSpans = 0.95*10 + 0.05*500
+	}
+	traceCount := int(math.Round(float64(totalSpans) / meanSpans))
+	if traceCount < 1 {
+		traceCount = 1
+	}
+	spansByTrace := make([]int, traceCount)
+	offsets := make([]int, traceCount+1)
+	actualSpans := 0
+	for traceIdx := 0; traceIdx < traceCount; traceIdx++ {
+		spans := spansPerTrace
+		if spanDist == spanDistHeavytail {
+			spans = 10
+			if traceIdx%20 == 0 {
+				spans = 500
+			}
+		}
+		spansByTrace[traceIdx] = spans
+		offsets[traceIdx] = actualSpans
+		actualSpans += spans
+	}
+	offsets[traceCount] = actualSpans
+	return traceShape{
+		SpansByTrace: spansByTrace,
+		Offsets:      offsets,
+		TraceCount:   traceCount,
+		TotalSpans:   actualSpans,
+		MeanSpans:    float64(actualSpans) / float64(traceCount),
+	}
 }
 
 func splitCardinality(totalRows int) (entities, pointsEach int) {

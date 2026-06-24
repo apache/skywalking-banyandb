@@ -136,6 +136,10 @@ func (s *standalone) Role() databasev1.Role {
 
 func (s *standalone) PreRun(ctx context.Context) error {
 	s.l = logger.GetLogger(s.Name())
+	// Native columnar wire frame for the data↔liaison query hop follows the
+	// vectorized flag (mirrors measure's wire-mode wiring).
+	data.SetTraceWireModeRaw(s.option.vectorized.Enabled)
+	s.l.Info().Bool("trace_wire_mode_raw", s.option.vectorized.Enabled).Msg("trace wire mode published (standalone)")
 	s.l.Info().Msg("memory protector is initialized in PreRun")
 	s.lfs = fs.NewLocalFileSystemWithLoggerAndLimit(s.l, s.pm.GetLimit())
 	var err error

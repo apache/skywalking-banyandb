@@ -74,5 +74,24 @@
       }
     },
     "updated_at": "2021-04-15T01:30:15.01Z"
+  },
+  {
+    "metadata": {
+      "name": "sw_cross_segment_stream"
+    },
+    "catalog": "CATALOG_STREAM",
+    "resource_opts": {
+      "shard_num": 2,
+      "replicas": 2,
+      "segment_interval": {
+        "unit": "UNIT_DAY",
+        "num": 2
+      },
+      "ttl": {
+        "unit": "UNIT_DAY",
+        "num": 5
+      }
+    },
+    "updated_at": "2021-04-15T01:30:15.01Z"
   }
 ]

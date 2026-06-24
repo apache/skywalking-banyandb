@@ -60,16 +60,54 @@ type SegmentReport struct {
 // EntryGroupReport aggregates source row count + target per-seg report
 // for one (entry, group) pair. Both source and target are read-only;
 // the verify command never mutates the dataset.
+//
+// IndexMode-prefixed fields are populated only when the (entry, group) is an
+// index-mode measure group: those groups carry their data in the segment sidx
+// (one doc per series), so they are reconciled at the document level (doc count,
+// distinct doc-id, per-(series,timestamp) value digest) instead of part rows.
 type EntryGroupReport struct {
-	Group       string
-	EntryStage  string
-	EntryTarget string
-	TargetGroup string
-	EntryNodes  []string
-	SrcRoots    []string
-	TargetSegs  []SegmentReport
-	SrcRows     uint64
-	SrcParts    int
+	Group             string
+	EntryStage        string
+	EntryTarget       string
+	TargetGroup       string
+	EntryNodes        []string
+	SrcRoots          []string
+	TargetSegs        []SegmentReport
+	ValueMismatches   []IndexModeValueMismatch
+	SegAligns         []IndexModeSegAlign
+	SrcRows           uint64
+	SrcDocs           uint64
+	TgtDocs           uint64
+	SrcDistinctIDs    uint64
+	TgtDistinctIDs    uint64
+	ExpectDistinctIDs uint64
+	SrcParts          int
+	IndexMode         bool
+}
+
+// IndexModeValueMismatch is one (seriesID, timestamp) key whose value digest did
+// not reconcile between source and target during an index-mode verify. The
+// reconciliation unit is (Segment, SeriesID) — the unit the runtime upserts
+// index-mode data on. Kind is one of "missing" (in source, absent in target),
+// "extra" (in target, absent in source) or "tampered" (present on both sides but
+// the digests differ — a changed value or a dropped index-only field).
+type IndexModeValueMismatch struct {
+	Kind     string
+	Segment  string
+	SeriesID uint64
+}
+
+// IndexModeSegAlign reports one target segment's alignment during an index-mode
+// verify: how many source segments fed it (SrcSegs), how many source docs routed
+// in (SrcDocs) and how many target docs survived (TgtDocs). Aligned is true only
+// when exactly one source segment fed the target and no docs collapsed (a 1:1
+// byte-copy candidate); otherwise the segment was merged or split-into.
+type IndexModeSegAlign struct {
+	Segment string
+	SrcSegs int
+	SrcDocs uint64
+	TgtDocs uint64
+	Aligned bool
 }
 
 // VerifyShardParts reads <shardDir>'s newest `.snp`, confirms every
