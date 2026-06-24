@@ -410,8 +410,7 @@ describe('Upstream auth: attach-if-configured (MF2)', () => {
   it('without credential configured: no Authorization header causes no crash', async () => {
     const pool = mockAgent.get('http://upstream-a.test:17913');
     pool.intercept({ path: /.*/, method: 'GET' })
-      .reply(200, '{}', { headers: { 'content-type': 'application/json' } })
-      .times(2); // loginAs triggers fetchBanyanVersion (consumes 1); actual test request consumes 2nd
+      .reply(200, '{}', { headers: { 'content-type': 'application/json' } });
 
     app = await buildTestApp({ upstreamUsername: undefined, upstreamPassword: undefined });
     const cookie = await loginAs(app, 'admin', 'adminpass');
@@ -441,8 +440,7 @@ describe('Upstream error envelopes', () => {
 
   it('upstream 401 → distinct upstream_auth_error envelope (not a Canopy login 401)', async () => {
     const pool = mockAgent.get('http://upstream-a.test:17913');
-    pool.intercept({ path: /.*/, method: 'GET' }).reply(401, 'Unauthorized', { headers: { 'content-type': 'text/plain' } })
-      .times(2); // loginAs triggers fetchBanyanVersion (consumes 1); actual test request consumes 2nd
+    pool.intercept({ path: /.*/, method: 'GET' }).reply(401, 'Unauthorized', { headers: { 'content-type': 'text/plain' } });
 
     const cookie = await loginAs(app, 'admin', 'adminpass');
     const res = await app.inject({
@@ -457,8 +455,7 @@ describe('Upstream error envelopes', () => {
 
   it('upstream 5xx → 502 upstream_error envelope', async () => {
     const pool = mockAgent.get('http://upstream-a.test:17913');
-    pool.intercept({ path: /.*/, method: 'GET' }).reply(500, 'Internal Error')
-      .times(2); // loginAs triggers fetchBanyanVersion (consumes 1); actual test request consumes 2nd
+    pool.intercept({ path: /.*/, method: 'GET' }).reply(500, 'Internal Error');
 
     const cookie = await loginAs(app, 'admin', 'adminpass');
     const res = await app.inject({
