@@ -930,6 +930,43 @@ func (bch *blockCursorHeap) mergeSync(ctx context.Context, batchSize int, metric
 	return results, nil
 }
 
+// distinctDataCounter accumulates distinct data values (= trace IDs) across sidx
+// merge chunks using hash buckets with collision checks. mergeSync dedups data
+// only within a single batch, so the sync query loop uses this to count distinct
+// results across batches and bound scanning the same way the streaming consumer
+// terminates on distinct-trace count.
+type distinctDataCounter struct {
+	seen  map[uint64][][]byte
+	count int
+}
+
+func newDistinctDataCounter() *distinctDataCounter {
+	return &distinctDataCounter{seen: make(map[uint64][][]byte)}
+}
+
+// add records every data value in chunk and returns the running distinct count.
+func (d *distinctDataCounter) add(chunk *QueryResponse) int {
+	if chunk == nil {
+		return d.count
+	}
+	for _, data := range chunk.Data {
+		h := convert.Hash(data)
+		bucket := d.seen[h]
+		duplicate := false
+		for _, existing := range bucket {
+			if bytes.Equal(existing, data) {
+				duplicate = true
+				break
+			}
+		}
+		if !duplicate {
+			d.seen[h] = append(bucket, data)
+			d.count++
+		}
+	}
+	return d.count
+}
+
 var blockCursorHeapPool = pool.Register[*blockCursorHeap]("sidx-blockCursorHeap")
 
 func generateBlockCursorHeap(asc bool) *blockCursorHeap {
