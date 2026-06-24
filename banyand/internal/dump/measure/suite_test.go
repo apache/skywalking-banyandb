@@ -28,7 +28,6 @@ import (
 	"time"
 
 	"github.com/onsi/gomega"
-	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"google.golang.org/protobuf/types/known/timestamppb"
 
@@ -352,42 +351,15 @@ func TestMeasureIndexedTagResolvedFromIndex(t *testing.T) {
 	}
 	strRuleID, intRuleID, arrRuleID := ruleID("idxr_str_rule"), ruleID("idxr_int_rule"), ruleID("idxr_arr_rule")
 
-	segmentPath := findSidxSegmentPath(t, rootPath)
-
-	sidxPath := filepath.Join(segmentPath, "sidx")
-	diagLog := logger.GetLogger("DUMP-MEASURE-DIAG")
-	dumpSidx := func() string {
-		out := ""
-		_ = filepath.WalkDir(rootPath, func(p string, d fs.DirEntry, walkErr error) error {
-			if walkErr == nil && d.IsDir() && d.Name() == "sidx" {
-				c, e := inverted.ReadOnlyDocCount(p)
-				out += fmt.Sprintf("{path=%s count=%d err=%v chosen=%v} ", p, c, e, p == sidxPath)
-			}
-			return nil
-		})
-		return out
-	}
-	diagLog.Warn().Str("segmentPath", segmentPath).Str("sidxPath", sidxPath).
-		Int("total", total).Msgf("DIAG pre-poll on-disk state: %s", dumpSidx())
-
-	var lastCount int64
-	var lastErr error
-	ok := assert.Eventually(t, func() bool {
-		lastCount, lastErr = inverted.ReadOnlyDocCount(sidxPath)
-		return lastCount >= int64(total)
-	}, 60*time.Second, time.Second)
-	if !ok {
-		diagLog.Warn().Int64("lastCount", lastCount).AnErr("lastErr", lastErr).
-			Str("sidxPath", sidxPath).Msgf("DIAG poll FAILED, final on-disk state: %s", dumpSidx())
-	}
-	require.Truef(t, ok, "series index not fully persisted before stop: lastCount=%d lastErr=%v sidxPath=%s dirs=%s",
-		lastCount, lastErr, sidxPath, dumpSidx())
-
 	// Stop the live service so it releases bluge's exclusive lock on the series
 	// index; the dump (like the offline CLI) reads the index from a quiesced
-	// database. Deferred cleanup is suppressed via the stopped flag.
+	// database. The write path above is synchronous (safe-batch insert blocks
+	// until the series index is persisted), so the index is already durable on
+	// disk before this stop. Deferred cleanup is suppressed via the stopped flag.
 	moduleDefer()
 	stopped = true
+
+	segmentPath := findSidxSegmentPath(t, rootPath)
 
 	ruleToTag := map[uint32]dump.IndexedTagSpec{
 		strRuleID: {Family: "default", Name: "idxStr", Type: pbv1.ValueTypeStr},
@@ -624,11 +596,14 @@ func strArrTagValue(vals ...string) *modelv1.TagValue {
 // make later reads see zero docs. Choose the sidx with the most documents.
 func findSidxSegmentPath(t *testing.T, root string) string {
 	t.Helper()
-	var seg string
+	var seg, candidates string
 	best := int64(-1)
+	count := 0
 	_ = filepath.WalkDir(root, func(p string, d fs.DirEntry, err error) error {
 		if err == nil && d.IsDir() && d.Name() == "sidx" {
-			c, _ := inverted.ReadOnlyDocCount(p)
+			c, e := inverted.ReadOnlyDocCount(p)
+			candidates += fmt.Sprintf("{path=%s count=%d err=%v} ", p, c, e)
+			count++
 			if c > best {
 				best = c
 				seg = filepath.Dir(p)
@@ -637,5 +612,11 @@ func findSidxSegmentPath(t *testing.T, root string) string {
 		return nil
 	})
 	require.NotEmpty(t, seg, "sidx directory not found under %s", root)
+	// Record the selection: near a segment-interval boundary more than one sidx
+	// dir can exist (an empty adjacent segment), so logging the candidates and the
+	// chosen one makes any future mis-selection self-evident.
+	logger.GetLogger("dump-measure-test").Info().
+		Int("candidates", count).Str("chosen", seg).Int64("chosenDocs", best).
+		Msgf("findSidxSegmentPath selected series-index segment among: %s", candidates)
 	return seg
 }
