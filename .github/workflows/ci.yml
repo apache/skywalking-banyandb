@@ -20,9 +20,6 @@ on:
   pull_request:
     paths-ignore:
       - 'canopy/**'
-      - 'ui/**'
-      - 'docs/**'
-      - '**.md'
       - '.github/workflows/canopy.yml'
   push:
     branches:
