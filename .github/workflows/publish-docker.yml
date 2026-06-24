@@ -18,6 +18,9 @@ name: publish-docker
 
 on:
   pull_request:
+    paths-ignore:
+      - 'canopy/**'
+      - '.github/workflows/canopy.yml'
   push:
     branches:
       - main
