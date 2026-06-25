@@ -174,7 +174,11 @@ type blockWriter struct {
 
 func (bw *blockWriter) reset() {
 	bw.writers.reset()
-	bw.tagType.reset()
+	if bw.tagType == nil {
+		bw.tagType = make(tagType)
+	} else {
+		bw.tagType.reset()
+	}
 	bw.sidLast = 0
 	bw.sidFirst = 0
 	bw.minTimestampLast = 0
