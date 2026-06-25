@@ -58,6 +58,26 @@ const (
 	soakFieldCount  = "count"
 )
 
+// Engine selects which catalog/fixture the soak-driver targets. The MEASURE
+// path is the default and is unchanged; TRACE dispatches to the trace.go
+// implementation.
+const (
+	engineMeasure = "measure"
+	engineTrace   = "trace"
+
+	// parityWindow is the lookback applied to time-bounded trace queries; the
+	// fixture spans one second per version, so a wide window covers them all.
+	parityWindow = 7 * 24 * time.Hour
+)
+
+// validateEngine returns an error for an unknown --engine value.
+func validateEngine(engine string) error {
+	if engine != engineMeasure && engine != engineTrace {
+		return fmt.Errorf("unknown engine %q: want %q or %q", engine, engineMeasure, engineTrace)
+	}
+	return nil
+}
+
 // catalogEntry holds one query template from the JSON catalog. ID is a
 // catalog-unique label used as the baseline key (the proto measure name
 // is the same for every entry, so it cannot key the baseline). Request is
@@ -111,7 +131,7 @@ func main() {
 		Use:   "soak-driver",
 		Short: "G5d soak harness driver — baseline, diff, and pprof capture",
 	}
-	root.AddCommand(newSeedFixtureCmd(), newRecordBaselineCmd(), newReplayAndDiffCmd(), newPprofGrabCmd())
+	root.AddCommand(newSeedFixtureCmd(), newRecordBaselineCmd(), newReplayAndDiffCmd(), newPprofGrabCmd(), newWriteLoadCmd())
 	if execErr := root.Execute(); execErr != nil {
 		_, _ = fmt.Fprintln(os.Stderr, execErr)
 		os.Exit(1)
@@ -175,13 +195,25 @@ func buildQueryRequest(entry catalogEntry, untilMs int64) *measurev1.QueryReques
 
 // newRecordBaselineCmd returns the record-baseline subcommand.
 func newRecordBaselineCmd() *cobra.Command {
-	var addr, catalogPath, outPath string
+	var addr, catalogPath, outPath, engine string
 	var untilMs int64
 
 	cmd := &cobra.Command{
 		Use:   "record-baseline",
-		Short: "Query measures up to --until and write a deterministic baseline JSON",
+		Short: "Query measures (or traces) up to --until and write a deterministic baseline JSON",
 		RunE: func(_ *cobra.Command, _ []string) error {
+			if engineErr := validateEngine(engine); engineErr != nil {
+				return engineErr
+			}
+			if engine == engineTrace {
+				conn, dialErr := dialInsecure(addr)
+				if dialErr != nil {
+					return dialErr
+				}
+				defer conn.Close()
+				return traceRecordBaseline(context.Background(), conn, catalogPath, outPath, untilMs, parityWindow)
+			}
+
 			entries, loadErr := loadCatalog(catalogPath)
 			if loadErr != nil {
 				return loadErr
@@ -244,6 +276,7 @@ func newRecordBaselineCmd() *cobra.Command {
 		},
 	}
 	cmd.Flags().StringVar(&addr, "addr", "localhost:17912", "BanyanDB gRPC address")
+	cmd.Flags().StringVar(&engine, "engine", engineMeasure, "engine to query: measure|trace")
 	cmd.Flags().StringVar(&catalogPath, "catalog", "", "Path to query catalog JSON")
 	cmd.Flags().Int64Var(&untilMs, "until", 0, "Upper bound for time range (unix milliseconds)")
 	cmd.Flags().StringVar(&outPath, "out", "baseline.json", "Output path for baseline JSON")
@@ -254,12 +287,24 @@ func newRecordBaselineCmd() *cobra.Command {
 
 // newReplayAndDiffCmd returns the replay-and-diff subcommand.
 func newReplayAndDiffCmd() *cobra.Command {
-	var addr, catalogPath, baselinePath, reportPath string
+	var addr, catalogPath, baselinePath, reportPath, engine string
 
 	cmd := &cobra.Command{
 		Use:   "replay-and-diff",
 		Short: "Re-run catalog queries and compare against baseline; exit non-zero on divergence",
 		RunE: func(_ *cobra.Command, _ []string) error {
+			if engineErr := validateEngine(engine); engineErr != nil {
+				return engineErr
+			}
+			if engine == engineTrace {
+				conn, dialErr := dialInsecure(addr)
+				if dialErr != nil {
+					return dialErr
+				}
+				defer conn.Close()
+				return traceReplayAndDiff(context.Background(), conn, catalogPath, baselinePath, reportPath, parityWindow)
+			}
+
 			raw, readErr := os.ReadFile(baselinePath)
 			if readErr != nil {
 				return fmt.Errorf("read baseline %s: %w", baselinePath, readErr)
@@ -377,6 +422,7 @@ func newReplayAndDiffCmd() *cobra.Command {
 		},
 	}
 	cmd.Flags().StringVar(&addr, "addr", "localhost:17912", "BanyanDB gRPC address")
+	cmd.Flags().StringVar(&engine, "engine", engineMeasure, "engine to query: measure|trace")
 	cmd.Flags().StringVar(&catalogPath, "catalog", "", "Path to query catalog JSON")
 	cmd.Flags().StringVar(&baselinePath, "baseline", "baseline.json", "Path to baseline JSON produced by record-baseline")
 	cmd.Flags().StringVar(&reportPath, "report", "diff.json", "Output path for diff report JSON")
@@ -441,13 +487,27 @@ func newPprofGrabCmd() *cobra.Command {
 // --until to record-baseline so the time-bounded queries hit only this
 // fixture.
 func newSeedFixtureCmd() *cobra.Command {
-	var addr string
-	var rows int
+	var addr, engine string
+	var rows, traces, spans int
 
 	cmd := &cobra.Command{
 		Use:   "seed-fixture",
-		Short: "Create a deterministic group/measure and write N rows",
+		Short: "Create a deterministic group/measure (or trace) and write fixture data",
 		RunE: func(_ *cobra.Command, _ []string) error {
+			if engineErr := validateEngine(engine); engineErr != nil {
+				return engineErr
+			}
+			if engine == engineTrace {
+				conn, dialErr := dialInsecure(addr)
+				if dialErr != nil {
+					return dialErr
+				}
+				defer conn.Close()
+				ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
+				defer cancel()
+				return traceSeedFixture(ctx, conn, traces, spans)
+			}
+
 			conn, dialErr := dialInsecure(addr)
 			if dialErr != nil {
 				return dialErr
@@ -616,7 +676,53 @@ func newSeedFixtureCmd() *cobra.Command {
 		},
 	}
 	cmd.Flags().StringVar(&addr, "addr", "localhost:17912", "BanyanDB gRPC address")
-	cmd.Flags().IntVar(&rows, "rows", 1000, "number of data points to write")
+	cmd.Flags().StringVar(&engine, "engine", engineMeasure, "engine to seed: measure|trace")
+	cmd.Flags().IntVar(&rows, "rows", 1000, "number of measure data points to write")
+	cmd.Flags().IntVar(&traces, "traces", traceFixtureTraces, "number of traces to write (trace engine)")
+	cmd.Flags().IntVar(&spans, "spans", traceFixtureSpans, "number of spans per trace (trace engine)")
+	return cmd
+}
+
+// newWriteLoadCmd returns the write-load subcommand. It is trace-only:
+// continuous deterministic writes into the rolling load group, outside the
+// parity window, rate-capped at --rps for --duration.
+func newWriteLoadCmd() *cobra.Command {
+	var addr, engine string
+	var traces, spans, rps int
+	var duration time.Duration
+
+	cmd := &cobra.Command{
+		Use:   "write-load",
+		Short: "Continuously write deterministic trace load outside the parity window (trace only)",
+		RunE: func(_ *cobra.Command, _ []string) error {
+			if engineErr := validateEngine(engine); engineErr != nil {
+				return engineErr
+			}
+			if engine != engineTrace {
+				return fmt.Errorf("write-load is only supported for engine %q", engineTrace)
+			}
+			conn, dialErr := dialInsecure(addr)
+			if dialErr != nil {
+				return dialErr
+			}
+			defer conn.Close()
+
+			ctx, cancel := context.WithTimeout(context.Background(), duration+time.Minute)
+			defer cancel()
+			rowsWritten, loadErr := traceWriteLoad(ctx, conn, traces, spans, rps, duration)
+			fmt.Printf("[write-load] wrote %d spans over %s\n", rowsWritten, duration)
+			if loadErr != nil {
+				return loadErr
+			}
+			return nil
+		},
+	}
+	cmd.Flags().StringVar(&addr, "addr", "localhost:17912", "BanyanDB gRPC address")
+	cmd.Flags().StringVar(&engine, "engine", engineTrace, "engine to write load for: trace")
+	cmd.Flags().IntVar(&traces, "traces", traceFixtureTraces, "number of traces per sweep")
+	cmd.Flags().IntVar(&spans, "spans", traceFixtureSpans, "number of spans per trace")
+	cmd.Flags().IntVar(&rps, "rps", 1000, "rate cap in spans per second")
+	cmd.Flags().DurationVar(&duration, "duration", 30*time.Second, "how long to write load")
 	return cmd
 }
 

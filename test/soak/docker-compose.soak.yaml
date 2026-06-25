@@ -229,6 +229,26 @@ services:
           memory: 64M
           cpus: "0.5"
 
+  soak-driver:
+    build:
+      context: ../..
+      dockerfile: test/soak/Dockerfile.soak-driver
+    # No default command: every invocation uses `docker compose run --rm
+    # soak-driver <subcommand> ...` so the entrypoint receives the subcommand
+    # as argv. Defining the service here lets compose assign it to the demo
+    # network and gives it the correct resource limits.
+    networks:
+      - demo
+    volumes:
+      - type: bind
+        source: ${SOAK_DIST_DIR:-/tmp/soak-dist}
+        target: /artifacts
+    deploy:
+      resources:
+        limits:
+          memory: 512M
+          cpus: "1"
+
 networks:
   demo:
 

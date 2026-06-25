@@ -29,33 +29,35 @@ import (
 )
 
 const (
-	envRunBench       = "RUN_DISTRIBUTED_QUERY_BENCH"
-	envInContainer    = "DQB_IN_CONTAINER"
-	envQueryWorkers   = "DQB_QUERY_WORKERS"
-	envQueryIters     = "DQB_QUERY_ITERATIONS"
-	envByIDIters      = "DQB_TRACE_BY_ID_ITERATIONS"
-	envWriters        = "DQB_WRITERS"
-	envReportDir      = "DQB_REPORT_DIR"
-	envProfile        = "DQB_PROFILE"
-	envWarmupIters    = "DQB_WARMUP_ITERATIONS"
-	envSmallExactRows = "DQB_SMALL_EXACT_ROWS"
-	envDockerImage    = "DQB_DOCKER_IMAGE"
-	envCPULimit       = "DQB_CPU_LIMIT"
-	envMemoryLimit    = "DQB_MEMORY_LIMIT"
-	envEngine         = "DQB_ENGINE"
-	envMatrix         = "DQB_MATRIX"
-	envMode           = "DQB_MODE"
-	envScenario       = "DQB_SCENARIO"
-	envCardinality    = "DQB_CARDINALITY"
-	envMerge          = "DQB_MERGE"
-	envSpansPerTrace  = "DQB_SPANS_PER_TRACE"
-	envSpanDist       = "DQB_SPAN_DIST"
-	envSelectivity    = "DQB_FILTER_SELECTIVITY"
-	envTraceIDBatch   = "DQB_TRACE_ID_BATCH"
-	envShardNum       = "DQB_SHARD_NUM"
-	envDataNodes      = "DQB_DATA_NODES"
-	envSpanBytes      = "DQB_SPAN_BYTES"
-	envQueryMemoryMiB = "DQB_QUERY_MEMORY_MIB"
+	envRunBench          = "RUN_DISTRIBUTED_QUERY_BENCH"
+	envInContainer       = "DQB_IN_CONTAINER"
+	envQueryWorkers      = "DQB_QUERY_WORKERS"
+	envQueryIters        = "DQB_QUERY_ITERATIONS"
+	envByIDIters         = "DQB_TRACE_BY_ID_ITERATIONS"
+	envWriters           = "DQB_WRITERS"
+	envReportDir         = "DQB_REPORT_DIR"
+	envProfile           = "DQB_PROFILE"
+	envWarmupIters       = "DQB_WARMUP_ITERATIONS"
+	envSmallExactRows    = "DQB_SMALL_EXACT_ROWS"
+	envDockerImage       = "DQB_DOCKER_IMAGE"
+	envCPULimit          = "DQB_CPU_LIMIT"
+	envMemoryLimit       = "DQB_MEMORY_LIMIT"
+	envEngine            = "DQB_ENGINE"
+	envMatrix            = "DQB_MATRIX"
+	envMode              = "DQB_MODE"
+	envScenario          = "DQB_SCENARIO"
+	envCardinality       = "DQB_CARDINALITY"
+	envMerge             = "DQB_MERGE"
+	envSpansPerTrace     = "DQB_SPANS_PER_TRACE"
+	envSpanDist          = "DQB_SPAN_DIST"
+	envSelectivity       = "DQB_FILTER_SELECTIVITY"
+	envTraceIDBatch      = "DQB_TRACE_ID_BATCH"
+	envShardNum          = "DQB_SHARD_NUM"
+	envDataNodes         = "DQB_DATA_NODES"
+	envSpanBytes         = "DQB_SPAN_BYTES"
+	envQueryMemoryMiB    = "DQB_QUERY_MEMORY_MIB"
+	envSoak              = "DQB_SOAK"
+	envSoakHeapGrowthPct = "SOAK_HEAP_GROWTH_MAX_PCT"
 
 	defaultReportDir    = ".omx/bench-reports/distributed-query"
 	defaultQueryWorkers = 4
@@ -64,18 +66,19 @@ const (
 	// trace-id point lookup is sub-10ms, so the 50-iteration default yields
 	// noisy p95/p99 tails (a few GC pauses dominate); it needs a far larger
 	// sample to report a stable tail.
-	defaultByIDIters      = 1000
-	defaultWarmupIters    = 3
-	defaultWriters        = 4
-	defaultSmallExactRows = 10000
-	defaultSpansPerTrace  = 20
-	defaultSpanDist       = spanDistUniform
-	defaultSelectivity    = 0.01
-	defaultTraceIDBatch   = 1
-	defaultShardNum       = 2
-	defaultDataNodes      = 2
-	defaultSpanBytes      = 1024
-	defaultQueryMemoryMiB = 256
+	defaultByIDIters         = 1000
+	defaultWarmupIters       = 3
+	defaultWriters           = 4
+	defaultSmallExactRows    = 10000
+	defaultSpansPerTrace     = 20
+	defaultSpanDist          = spanDistUniform
+	defaultSelectivity       = 0.01
+	defaultTraceIDBatch      = 1
+	defaultShardNum          = 2
+	defaultDataNodes         = 2
+	defaultSpanBytes         = 1024
+	defaultQueryMemoryMiB    = 256
+	defaultSoakHeapGrowthPct = 10
 
 	engineMeasure = "measure"
 	engineTrace   = "trace"
@@ -117,65 +120,69 @@ const (
 // Direct go test invocations without the right env vars surface a hard
 // configuration error.
 type Config struct {
-	ReportDir         string
-	DockerImage       string
-	CPULimit          string
-	MemoryLimit       string
-	Engine            string
-	Matrix            string
-	Mode              string
-	Scenario          Scenario
-	SpanDist          string
-	Cardinality       int
-	SpansPerTrace     int
-	TraceIDBatch      int
-	ShardNum          int
-	DataNodes         int
-	SpanBytes         int
-	QueryMemoryMiB    int
-	QueryWorkers      int
-	QueryIterations   int
-	ByIDIterations    int
-	WarmupIterations  int
-	Writers           int
-	SmallExactRows    int
-	FilterSelectivity float64
-	RunBench          bool
-	InContainer       bool
-	Profile           bool
-	Merge             bool
+	ReportDir            string
+	DockerImage          string
+	CPULimit             string
+	MemoryLimit          string
+	Engine               string
+	Matrix               string
+	Mode                 string
+	Scenario             Scenario
+	SpanDist             string
+	Cardinality          int
+	SpansPerTrace        int
+	TraceIDBatch         int
+	ShardNum             int
+	DataNodes            int
+	SpanBytes            int
+	QueryMemoryMiB       int
+	QueryWorkers         int
+	QueryIterations      int
+	ByIDIterations       int
+	WarmupIterations     int
+	Writers              int
+	SmallExactRows       int
+	FilterSelectivity    float64
+	RunBench             bool
+	InContainer          bool
+	Profile              bool
+	Merge                bool
+	Soak                 bool
+	SoakHeapGrowthMaxPct int
 }
 
 // LoadConfig reads benchmark settings from environment variables.
 func LoadConfig() Config {
 	return Config{
-		RunBench:          getBool(envRunBench),
-		InContainer:       getBool(envInContainer),
-		Profile:           getBool(envProfile),
-		Merge:             getBool(envMerge),
-		ReportDir:         getString(envReportDir, defaultReportDir),
-		DockerImage:       getString(envDockerImage, ""),
-		CPULimit:          getString(envCPULimit, ""),
-		MemoryLimit:       getString(envMemoryLimit, ""),
-		Engine:            getString(envEngine, engineMeasure),
-		Matrix:            getString(envMatrix, matrixA),
-		Mode:              getString(envMode, ""),
-		Scenario:          Scenario(getString(envScenario, "")),
-		Cardinality:       getInt(envCardinality, 0),
-		SpansPerTrace:     getInt(envSpansPerTrace, defaultSpansPerTrace),
-		SpanDist:          getString(envSpanDist, defaultSpanDist),
-		FilterSelectivity: getFloat(envSelectivity, defaultSelectivity),
-		TraceIDBatch:      getInt(envTraceIDBatch, defaultTraceIDBatch),
-		ShardNum:          getInt(envShardNum, defaultShardNum),
-		DataNodes:         getInt(envDataNodes, defaultDataNodes),
-		SpanBytes:         getInt(envSpanBytes, defaultSpanBytes),
-		QueryMemoryMiB:    getInt(envQueryMemoryMiB, defaultQueryMemoryMiB),
-		QueryWorkers:      getInt(envQueryWorkers, defaultQueryWorkers),
-		QueryIterations:   getInt(envQueryIters, defaultQueryIters),
-		ByIDIterations:    getInt(envByIDIters, defaultByIDIters),
-		WarmupIterations:  getInt(envWarmupIters, defaultWarmupIters),
-		Writers:           getInt(envWriters, defaultWriters),
-		SmallExactRows:    getInt(envSmallExactRows, defaultSmallExactRows),
+		RunBench:             getBool(envRunBench),
+		InContainer:          getBool(envInContainer),
+		Profile:              getBool(envProfile),
+		Merge:                getBool(envMerge),
+		Soak:                 getBool(envSoak),
+		SoakHeapGrowthMaxPct: getInt(envSoakHeapGrowthPct, defaultSoakHeapGrowthPct),
+		ReportDir:            getString(envReportDir, defaultReportDir),
+		DockerImage:          getString(envDockerImage, ""),
+		CPULimit:             getString(envCPULimit, ""),
+		MemoryLimit:          getString(envMemoryLimit, ""),
+		Engine:               getString(envEngine, engineMeasure),
+		Matrix:               getString(envMatrix, matrixA),
+		Mode:                 getString(envMode, ""),
+		Scenario:             Scenario(getString(envScenario, "")),
+		Cardinality:          getInt(envCardinality, 0),
+		SpansPerTrace:        getInt(envSpansPerTrace, defaultSpansPerTrace),
+		SpanDist:             getString(envSpanDist, defaultSpanDist),
+		FilterSelectivity:    getFloat(envSelectivity, defaultSelectivity),
+		TraceIDBatch:         getInt(envTraceIDBatch, defaultTraceIDBatch),
+		ShardNum:             getInt(envShardNum, defaultShardNum),
+		DataNodes:            getInt(envDataNodes, defaultDataNodes),
+		SpanBytes:            getInt(envSpanBytes, defaultSpanBytes),
+		QueryMemoryMiB:       getInt(envQueryMemoryMiB, defaultQueryMemoryMiB),
+		QueryWorkers:         getInt(envQueryWorkers, defaultQueryWorkers),
+		QueryIterations:      getInt(envQueryIters, defaultQueryIters),
+		ByIDIterations:       getInt(envByIDIters, defaultByIDIters),
+		WarmupIterations:     getInt(envWarmupIters, defaultWarmupIters),
+		Writers:              getInt(envWriters, defaultWriters),
+		SmallExactRows:       getInt(envSmallExactRows, defaultSmallExactRows),
 	}
 }
 
@@ -261,6 +268,24 @@ func (c Config) Validate() error {
 	}
 	if c.SmallExactRows <= 0 {
 		return fmt.Errorf("%s must be > 0", envSmallExactRows)
+	}
+	return nil
+}
+
+// ValidateSoak enforces the DQB_SOAK contract: must run inside the container
+// (DQB_IN_CONTAINER=1) and must target the trace engine.
+func (c Config) ValidateSoak() error {
+	if !c.Soak {
+		return nil
+	}
+	if !c.InContainer {
+		return fmt.Errorf("%s=1 requires %s=1; invoke via test/integration/distributed/querybench/run-docker.sh", envSoak, envInContainer)
+	}
+	if c.SoakHeapGrowthMaxPct <= 0 {
+		return fmt.Errorf("%s must be > 0, got %d", envSoakHeapGrowthPct, c.SoakHeapGrowthMaxPct)
+	}
+	if c.SoakHeapGrowthMaxPct > 100 {
+		return fmt.Errorf("%s must be <= 100, got %d", envSoakHeapGrowthPct, c.SoakHeapGrowthMaxPct)
 	}
 	return nil
 }

@@ -19,19 +19,35 @@
 # G5d soak harness orchestrator.
 #
 # Configuration (set as env vars before running):
+#   SOAK_ENGINE         – engine to test: measure|trace (default measure)
 #   WARMUP_MIN          – minutes OAP has to write data before baseline snapshot (default 60)
 #   SOAK_HOURS          – duration of the vec-on Phase 1 run in hours (default 48)
 #   PPROF_INTERVAL_MIN  – minutes between each pprof capture (default 30)
 #   PARITY_INTERVAL_MIN – minutes between each replay-and-diff run (default 5)
 #   SMOKE               – set to 1 for a quick ~30-min smoke run (overrides durations)
 #
+# Trace-engine additional env (SOAK_ENGINE=trace):
+#   SOAK_TRACE_SPANS_PER_TRACE – spans per trace in the fixture (default: driver default)
+#   SOAK_TRACE_SERVICES        – number of services in the fixture (unused by driver directly;
+#                                kept for documentation / future --services flag)
+#   SOAK_WRITE_RPS             – max spans/s for background write-load (default 500)
+#   SOAK_HEAP_GROWTH_MAX_PCT   – advisory heap-growth threshold pct recorded in summary (default 10)
+#
 # Artefacts are written under dist/soak/<timestamp>/ relative to the repo root.
 #
 # Usage:
 #   ./scripts/soak-vectorized.sh
 #   SMOKE=1 ./scripts/soak-vectorized.sh
+#   SOAK_ENGINE=trace SMOKE=1 ./scripts/soak-vectorized.sh
 
 set -euo pipefail
+
+# ── engine selection ──────────────────────────────────────────────────────────
+SOAK_ENGINE="${SOAK_ENGINE:-measure}"
+if [[ "${SOAK_ENGINE}" != "measure" && "${SOAK_ENGINE}" != "trace" ]]; then
+  echo "ERROR: SOAK_ENGINE must be 'measure' or 'trace' (got '${SOAK_ENGINE}')"
+  exit 1
+fi
 
 # ── configuration ────────────────────────────────────────────────────────────
 WARMUP_MIN="${WARMUP_MIN:-60}"
@@ -51,6 +67,12 @@ fi
 
 SEED_ROWS="${SEED_ROWS:-1000}"
 
+# Trace-engine supplementary knobs (only active when SOAK_ENGINE=trace).
+SOAK_TRACE_SPANS_PER_TRACE="${SOAK_TRACE_SPANS_PER_TRACE:-}"
+SOAK_TRACE_SERVICES="${SOAK_TRACE_SERVICES:-}"
+SOAK_WRITE_RPS="${SOAK_WRITE_RPS:-500}"
+SOAK_HEAP_GROWTH_MAX_PCT="${SOAK_HEAP_GROWTH_MAX_PCT:-10}"
+
 SOAK_HOURS_SEC=$(awk "BEGIN{printf \"%d\", ${SOAK_HOURS}*3600}")
 WARMUP_SEC=$(( WARMUP_MIN * 60 ))
 PPROF_INTERVAL_SEC=$(( PPROF_INTERVAL_MIN * 60 ))
@@ -58,9 +80,14 @@ PARITY_INTERVAL_SEC=$(( PARITY_INTERVAL_MIN * 60 ))
 
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 COMPOSE_FILE="${REPO_ROOT}/test/soak/docker-compose.soak.yaml"
-CATALOG="${REPO_ROOT}/cmd/soak-driver/catalog/default.json"
+# MEASURE path uses the default catalog; TRACE path uses its own catalog.
+CATALOG_MEASURE="${REPO_ROOT}/cmd/soak-driver/catalog/default.json"
+CATALOG_TRACE="${REPO_ROOT}/cmd/soak-driver/catalog/trace.json"
 BANYANDB_GRPC="localhost:17912"
 BANYANDB_PPROF="localhost:6060"
+# Inside the compose network the DB service is reachable by service name.
+BANYANDB_GRPC_CONTAINER="banyandb:17912"
+BANYANDB_PPROF_CONTAINER="banyandb:6060"
 
 # Pass host UID/GID to compose so the BanyanDB container writes the
 # bind-mounted /data dir as the host user (otherwise root-owned files
@@ -94,6 +121,20 @@ wait_banyandb_healthy() {
   log "BanyanDB is healthy."
 }
 
+# soak_driver_container runs the soak-driver inside the compose network via
+# `docker compose run --rm`. The DIST directory is bind-mounted as /artifacts
+# so the driver can read/write baseline.json, diff-*.json, pprof dirs, etc.
+# The driver reaches BanyanDB by service name over the compose network.
+#
+# Usage: soak_driver_container <subcommand> [args...]
+soak_driver_container() {
+  SOAK_DIST_DIR="${DIST}" compose_cmd run --rm \
+    -v "${DIST}:/artifacts" \
+    soak-driver "$@"
+}
+
+# soak_driver is kept for the MEASURE path (host binary) — unchanged from the
+# original harness. The TRACE path uses soak_driver_container instead.
 soak_driver() {
   "${REPO_ROOT}/bin/soak-driver" "$@"
 }
@@ -106,12 +147,6 @@ cleanup() {
 }
 trap cleanup INT TERM EXIT
 
-# ── build soak-driver ────────────────────────────────────────────────────────
-log "Building soak-driver..."
-mkdir -p "${REPO_ROOT}/bin"
-(cd "${REPO_ROOT}" && go build -o bin/soak-driver ./cmd/soak-driver)
-log "soak-driver built at bin/soak-driver"
-
 # ── prepare output dirs ───────────────────────────────────────────────────────
 mkdir -p "${DIST}" "${SNAPSHOT_DIR}" "${DATA_DIR}"
 
@@ -120,6 +155,327 @@ mkdir -p "${DIST}" "${SNAPSHOT_DIR}" "${DATA_DIR}"
 exec > >(tee -a "${DIST}/run.log") 2>&1
 
 log "Run artefacts will be written to: ${DIST}"
+log "Config: ENGINE=${SOAK_ENGINE} WARMUP_MIN=${WARMUP_MIN} SOAK_HOURS=${SOAK_HOURS} PPROF_INTERVAL_MIN=${PPROF_INTERVAL_MIN} PARITY_INTERVAL_MIN=${PARITY_INTERVAL_MIN}"
+
+# ── engine dispatch ───────────────────────────────────────────────────────────
+# The MEASURE path is the original harness, preserved byte-for-byte in
+# behavior.  The TRACE path is gated entirely in the `if` branch below;
+# nothing in the measure path is touched.
+
+if [[ "${SOAK_ENGINE}" == "trace" ]]; then
+# ╔══════════════════════════════════════════════════════════════════════════╗
+# ║  TRACE ENGINE — Instrument 1 (containerized correctness + survival soak)║
+# ╚══════════════════════════════════════════════════════════════════════════╝
+
+# Build (or refresh) the soak-driver image so it embeds this branch's binary.
+log "Building soak-driver container image..."
+SOAK_DIST_DIR="${DIST}" compose_cmd build soak-driver
+log "soak-driver image built."
+
+# Record image digest for reproducibility.
+DRIVER_IMAGE_DIGEST=$(docker inspect \
+  "$(SOAK_DIST_DIR="${DIST}" compose_cmd images -q soak-driver 2>/dev/null | head -1)" \
+  --format '{{.Id}}' 2>/dev/null || echo "unknown")
+log "soak-driver image digest: ${DRIVER_IMAGE_DIGEST}"
+
+# ── TRACE PHASE 0 — Baseline (vec-off) ───────────────────────────────────────
+log "=== TRACE PHASE 0: Baseline (BANYANDB_VEC_ENABLED=false) ==="
+
+SOAK_DATA_DIR="${DATA_DIR}" BANYANDB_VEC_ENABLED=false compose_cmd up -d banyandb
+wait_banyandb_healthy
+
+# Record BanyanDB container image digest.
+BANYANDB_IMAGE_DIGEST=$(docker inspect banyandb --format '{{.Image}}' 2>/dev/null || echo "unknown")
+log "BanyanDB image digest: ${BANYANDB_IMAGE_DIGEST}"
+
+# Record effective resource limits from running container.
+BANYANDB_CPU_LIMIT=$(docker inspect banyandb \
+  --format '{{.HostConfig.NanoCpus}}' 2>/dev/null || echo "unknown")
+BANYANDB_MEM_LIMIT=$(docker inspect banyandb \
+  --format '{{.HostConfig.Memory}}' 2>/dev/null || echo "unknown")
+log "BanyanDB limits: cpus_nanocpu=${BANYANDB_CPU_LIMIT} memory_bytes=${BANYANDB_MEM_LIMIT}"
+
+log "Seeding deterministic trace fixture..."
+# seed-fixture prints T1_MS as the last line of stdout; the driver also
+# prints a T1_MS=<value> diagnostic line — grab the bare integer final line.
+SEED_OUT=$(soak_driver_container seed-fixture \
+  --engine trace \
+  --addr "${BANYANDB_GRPC_CONTAINER}" \
+  ${SOAK_TRACE_SPANS_PER_TRACE:+--spans "${SOAK_TRACE_SPANS_PER_TRACE}"})
+log "seed-fixture output: ${SEED_OUT}"
+T1_MS=$(echo "${SEED_OUT}" | grep -E '^[0-9]+$' | tail -1)
+if [[ -z "${T1_MS}" ]] || ! [[ "${T1_MS}" =~ ^[0-9]+$ ]]; then
+  log "ERROR: seed-fixture did not return a valid T1 timestamp"
+  exit 1
+fi
+log "T1 snapshot timestamp: ${T1_MS} ms"
+
+# Trace flush is async (~5 s); seed-fixture polls until queryable, but also
+# wait for schema-server flush to persist so the snapshot captures schema segs.
+log "Waiting 8s for schema-server flush to persist..."
+sleep 8
+
+log "Recording trace baseline..."
+soak_driver_container record-baseline \
+  --engine trace \
+  --addr "${BANYANDB_GRPC_CONTAINER}" \
+  --catalog /catalog/trace.json \
+  --until "${T1_MS}" \
+  --out /artifacts/baseline.json
+
+# Verify baseline is non-empty. The trace driver exits non-zero if any catalog
+# query returns empty traces, so reaching here means the baseline is usable;
+# this count is purely diagnostic.
+baseline_trace_count=$(python3 -c \
+  "import json; d=json.load(open('${DIST}/baseline.json')); print(sum(len(r.get('traces') or []) for r in d))" \
+  2>/dev/null || echo 0)
+log "Baseline traces captured: ${baseline_trace_count}"
+if [[ "${baseline_trace_count}" == "0" ]]; then
+  log "ERROR: baseline contains zero traces despite seeding — abort"
+  exit 1
+fi
+
+log "Stopping BanyanDB to snapshot data..."
+compose_cmd stop banyandb
+
+log "Copying data to ${SNAPSHOT_DIR}..."
+cp -a "${DATA_DIR}/." "${SNAPSHOT_DIR}/"
+
+snap_size=$(du -sb "${SNAPSHOT_DIR}" 2>/dev/null | awk '{print $1}')
+log "Snapshot size: ${snap_size:-0} bytes"
+
+log "Tearing down Phase 0 stack..."
+trap - EXIT
+compose_cmd down -v --remove-orphans
+trap cleanup INT TERM EXIT
+
+# ── TRACE PHASE 1 — Soak (vec-on) ────────────────────────────────────────────
+log "=== TRACE PHASE 1: Soak (BANYANDB_VEC_ENABLED=true, duration=${SOAK_HOURS}h) ==="
+
+log "Restoring data snapshot..."
+rm -rf "${DATA_DIR:?}"/*
+cp -a "${SNAPSHOT_DIR}/." "${DATA_DIR}/"
+
+SOAK_DATA_DIR="${DATA_DIR}" BANYANDB_VEC_ENABLED=true compose_cmd up -d banyandb
+wait_banyandb_healthy
+
+# Gate: verify the container actually honored --trace-vectorized-enabled=true.
+# The parity-clean S=20 fixture yields identical vec-on/vec-off output by
+# design, so this startup-log grep is load-bearing.
+log "Checking vec-flag-honored via startup log..."
+VEC_FLAG_HONORED=false
+if docker logs banyandb 2>&1 | grep -qiE "trace-vectorized-enabled=true|trace_vectorized_enabled.*true|vectorized.*trace.*enabled|enabled.*vectorized.*trace"; then
+  VEC_FLAG_HONORED=true
+fi
+log "Vec flag honored: ${VEC_FLAG_HONORED}"
+
+# Initial pprof grab via the driver container (reaches banyandb:6060 over the
+# compose network).
+mkdir -p "${DIST}/pprof-start"
+soak_driver_container pprof-grab \
+  --addr "${BANYANDB_PPROF_CONTAINER}" \
+  --out-dir /artifacts/pprof-start
+log "Initial pprof captured."
+
+# Record driver container resource limits (inspect just after first run so the
+# container has been created by compose).
+DRIVER_CPU_LIMIT=$(docker inspect \
+  "$(SOAK_DIST_DIR="${DIST}" compose_cmd ps -q soak-driver 2>/dev/null | head -1)" \
+  --format '{{.HostConfig.NanoCpus}}' 2>/dev/null || echo "unknown")
+DRIVER_MEM_LIMIT=$(docker inspect \
+  "$(SOAK_DIST_DIR="${DIST}" compose_cmd ps -q soak-driver 2>/dev/null | head -1)" \
+  --format '{{.HostConfig.Memory}}' 2>/dev/null || echo "unknown")
+log "soak-driver limits (from last run): cpus_nanocpu=${DRIVER_CPU_LIMIT} memory_bytes=${DRIVER_MEM_LIMIT}"
+
+# Tail BanyanDB logs into persistent log files in the background.
+# Use --since snapshots instead of unbounded -f >> to keep the log bounded.
+(
+  while true; do
+    docker logs --since 60s banyandb 2>&1 >> "${DIST}/banyand.log" || true
+    sleep 60
+  done
+) &
+LOGS_PID=$!
+
+# Grep for memory-alert keywords in the background.
+(
+  tail -f "${DIST}/banyand.log" 2>/dev/null | \
+    grep --line-buffered -iE "budget|MemoryTracker|panic|vectorized" \
+    >> "${DIST}/memory-alerts.log" || true
+) &
+GREP_PID=$!
+
+# RSS + disk advisory sampler — writes to rss-trend.csv (not a gate).
+RSS_CSV="${DIST}/rss-trend.csv"
+echo "ts_utc,rss_bytes,disk_bytes" > "${RSS_CSV}"
+(
+  while true; do
+    TS_NOW="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+    RSS=$(docker stats banyandb --no-stream --format '{{.MemUsage}}' 2>/dev/null \
+      | awk -F'/' '{print $1}' | tr -d ' MiGBkb' || echo 0)
+    DISK=$(du -sb "${DATA_DIR}" 2>/dev/null | awk '{print $1}' || echo 0)
+    echo "${TS_NOW},${RSS},${DISK}" >> "${RSS_CSV}" || true
+    sleep 60
+  done
+) &
+RSS_PID=$!
+
+SOAK_END=$(( $(date +%s) + SOAK_HOURS_SEC ))
+
+# Background pprof loop — driver container grabs heap+goroutine every interval.
+(
+  while (( $(date +%s) < SOAK_END )); do
+    sleep "${PPROF_INTERVAL_SEC}"
+    (( $(date +%s) >= SOAK_END )) && break
+    INTERVAL_TS="$(date +%Y%m%dT%H%M%S)"
+    mkdir -p "${DIST}/pprof-${INTERVAL_TS}"
+    soak_driver_container pprof-grab \
+      --addr "${BANYANDB_PPROF_CONTAINER}" \
+      --out-dir "/artifacts/pprof-${INTERVAL_TS}" || \
+      log "WARN: pprof-grab failed at ${INTERVAL_TS}"
+    log "pprof captured: pprof-${INTERVAL_TS}"
+  done
+) &
+PPROF_LOOP_PID=$!
+
+# Background parity loop — driver container replays trace catalog every interval.
+(
+  while (( $(date +%s) < SOAK_END )); do
+    sleep "${PARITY_INTERVAL_SEC}"
+    (( $(date +%s) >= SOAK_END )) && break
+    DIFF_TS="$(date +%Y%m%dT%H%M%S)"
+    DIFF_REPORT="/artifacts/diff-${DIFF_TS}.json"
+    soak_driver_container replay-and-diff \
+      --engine trace \
+      --addr "${BANYANDB_GRPC_CONTAINER}" \
+      --catalog /catalog/trace.json \
+      --baseline /artifacts/baseline.json \
+      --report "${DIFF_REPORT}" || \
+      log "WARN: parity divergence detected — see ${DIST}/diff-${DIFF_TS}.json"
+    log "parity check done: diff-${DIFF_TS}.json"
+  done
+) &
+PARITY_LOOP_PID=$!
+
+# Background write-load loop — continuous deterministic trace writes into the
+# rolling load group, rate-capped at SOAK_WRITE_RPS. Fail-tolerant: a bad
+# sweep logs WARN and continues.
+WRITE_LOAD_ROWS=0
+WRITE_LOAD_LAST_OK="never"
+(
+  WRITE_DURATION_SEC=$(( PARITY_INTERVAL_SEC > 30 ? PARITY_INTERVAL_SEC : 30 ))
+  while (( $(date +%s) < SOAK_END )); do
+    SWEEP_ROWS=$(soak_driver_container write-load \
+      --engine trace \
+      --addr "${BANYANDB_GRPC_CONTAINER}" \
+      --rps "${SOAK_WRITE_RPS}" \
+      --duration "${WRITE_DURATION_SEC}s" 2>&1 | \
+      grep -oE '[0-9]+ spans' | awk '{print $1}' | tail -1 || echo 0)
+    WRITE_LOAD_ROWS=$(( WRITE_LOAD_ROWS + ${SWEEP_ROWS:-0} ))
+    WRITE_LOAD_LAST_OK="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+    log "write-load sweep: +${SWEEP_ROWS:-0} spans, total=${WRITE_LOAD_ROWS}"
+    # Brief pause to avoid tight loop if the soak window just ended.
+    sleep 5 || true
+  done
+) &
+WRITE_LOAD_PID=$!
+
+log "Trace soak running for ${SOAK_HOURS} hours. Loops started (pids: pprof=${PPROF_LOOP_PID} parity=${PARITY_LOOP_PID} write-load=${WRITE_LOAD_PID})."
+
+# Wait for soak duration.
+REMAINING=$(( SOAK_END - $(date +%s) ))
+if (( REMAINING > 0 )); then
+  sleep "${REMAINING}"
+fi
+
+log "Soak window complete. Collecting final artefacts..."
+
+# Stop background loops gracefully.
+kill "${PPROF_LOOP_PID}" "${PARITY_LOOP_PID}" "${WRITE_LOAD_PID}" 2>/dev/null || true
+wait "${PPROF_LOOP_PID}" "${PARITY_LOOP_PID}" "${WRITE_LOAD_PID}" 2>/dev/null || true
+kill "${LOGS_PID}" "${GREP_PID}" "${RSS_PID}" 2>/dev/null || true
+
+# Final pprof.
+mkdir -p "${DIST}/pprof-end"
+soak_driver_container pprof-grab \
+  --addr "${BANYANDB_PPROF_CONTAINER}" \
+  --out-dir /artifacts/pprof-end
+log "Final pprof captured."
+
+# Final parity check (sets FINAL_PASS).
+FINAL_DIFF="/artifacts/diff-final.json"
+soak_driver_container replay-and-diff \
+  --engine trace \
+  --addr "${BANYANDB_GRPC_CONTAINER}" \
+  --catalog /catalog/trace.json \
+  --baseline /artifacts/baseline.json \
+  --report "${FINAL_DIFF}" && FINAL_PASS=true || FINAL_PASS=false
+log "Final parity check: pass=${FINAL_PASS}"
+
+# Goroutine counts from first and final pprof captures.
+extract_goroutine_total() {
+  local dir="$1"
+  local f
+  f=$(ls "${dir}"/goroutine-*.txt 2>/dev/null | head -1)
+  if [[ -z "${f}" ]]; then
+    echo 0
+    return
+  fi
+  awk '/^goroutine profile: total/ {print $4; exit}' "${f}" 2>/dev/null || echo 0
+}
+GOROUTINE_START=$(extract_goroutine_total "${DIST}/pprof-start")
+GOROUTINE_END=$(extract_goroutine_total "${DIST}/pprof-end")
+MEMORY_ALERTS=$(wc -l < "${DIST}/memory-alerts.log" 2>/dev/null || echo 0)
+
+# Advisory: write-load liveness (rows advancing).
+WRITE_LOAD_ALIVE=false
+if (( WRITE_LOAD_ROWS > 0 )); then
+  WRITE_LOAD_ALIVE=true
+fi
+
+cat > "${DIST}/summary.json" <<EOF
+{
+  "run_ts": "${RUN_TS}",
+  "engine": "trace",
+  "smoke": "${SMOKE:-false}",
+  "warmup_min": ${WARMUP_MIN},
+  "soak_hours": ${SOAK_HOURS},
+  "t1_ms": ${T1_MS},
+  "final_parity_pass": ${FINAL_PASS},
+  "vec_flag_honored": ${VEC_FLAG_HONORED},
+  "goroutine_count_start": ${GOROUTINE_START},
+  "goroutine_count_end": ${GOROUTINE_END},
+  "memory_alert_lines": ${MEMORY_ALERTS},
+  "write_load_spans": ${WRITE_LOAD_ROWS},
+  "write_load_alive": ${WRITE_LOAD_ALIVE},
+  "write_load_last_ok": "${WRITE_LOAD_LAST_OK}",
+  "heap_growth_max_pct_threshold": ${SOAK_HEAP_GROWTH_MAX_PCT},
+  "banyandb_image_digest": "${BANYANDB_IMAGE_DIGEST}",
+  "banyandb_cpu_nanocpu_limit": "${BANYANDB_CPU_LIMIT}",
+  "banyandb_memory_bytes_limit": "${BANYANDB_MEM_LIMIT}",
+  "soak_driver_image_digest": "${DRIVER_IMAGE_DIGEST}",
+  "artefacts_dir": "${DIST}"
+}
+EOF
+
+log "Summary written to ${DIST}/summary.json"
+log "=== Trace soak complete. Artefacts: ${DIST} ==="
+
+trap - EXIT INT TERM
+compose_cmd down -v --remove-orphans
+exit 0
+fi
+
+# ╔══════════════════════════════════════════════════════════════════════════╗
+# ║  MEASURE ENGINE (default) — original harness, behavior unchanged        ║
+# ╚══════════════════════════════════════════════════════════════════════════╝
+
+# ── build soak-driver ────────────────────────────────────────────────────────
+log "Building soak-driver..."
+mkdir -p "${REPO_ROOT}/bin"
+(cd "${REPO_ROOT}" && go build -o bin/soak-driver ./cmd/soak-driver)
+log "soak-driver built at bin/soak-driver"
+
 log "Config: WARMUP_MIN=${WARMUP_MIN} SOAK_HOURS=${SOAK_HOURS} PPROF_INTERVAL_MIN=${PPROF_INTERVAL_MIN} PARITY_INTERVAL_MIN=${PARITY_INTERVAL_MIN}"
 
 # ╔══════════════════════════════════════════════════════════════════════════╗
@@ -165,7 +521,7 @@ sleep 8
 log "Recording baseline..."
 soak_driver record-baseline \
   --addr "${BANYANDB_GRPC}" \
-  --catalog "${CATALOG}" \
+  --catalog "${CATALOG_MEASURE}" \
   --until "${T1_MS}" \
   --out "${DIST}/baseline.json"
 
@@ -248,7 +604,7 @@ PPROF_LOOP_PID=$!
     DIFF_REPORT="${DIST}/diff-${DIFF_TS}.json"
     soak_driver replay-and-diff \
       --addr "${BANYANDB_GRPC}" \
-      --catalog "${CATALOG}" \
+      --catalog "${CATALOG_MEASURE}" \
       --baseline "${DIST}/baseline.json" \
       --report "${DIFF_REPORT}" || \
       log "WARN: parity divergence detected — see ${DIFF_REPORT}"
@@ -280,7 +636,7 @@ log "Final pprof captured."
 FINAL_DIFF="${DIST}/diff-final.json"
 soak_driver replay-and-diff \
   --addr "${BANYANDB_GRPC}" \
-  --catalog "${CATALOG}" \
+  --catalog "${CATALOG_MEASURE}" \
   --baseline "${DIST}/baseline.json" \
   --report "${FINAL_DIFF}" && FINAL_PASS=true || FINAL_PASS=false
 log "Final parity check: pass=${FINAL_PASS}"

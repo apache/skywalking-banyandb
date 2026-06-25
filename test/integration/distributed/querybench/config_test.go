@@ -286,6 +286,101 @@ func TestSplitCardinality(t *testing.T) {
 	}
 }
 
+func TestSoakConfigDefaults(t *testing.T) {
+	// Without any soak env vars, Soak=false and SoakHeapGrowthMaxPct=10 (default).
+	cfg := LoadConfig()
+	if cfg.Soak {
+		t.Fatalf("expected Soak=false by default, got true")
+	}
+	if cfg.SoakHeapGrowthMaxPct != defaultSoakHeapGrowthPct {
+		t.Fatalf("expected SoakHeapGrowthMaxPct=%d by default, got %d", defaultSoakHeapGrowthPct, cfg.SoakHeapGrowthMaxPct)
+	}
+}
+
+func TestSoakConfigParsing(t *testing.T) {
+	t.Setenv(envSoak, "1")
+	t.Setenv(envSoakHeapGrowthPct, "25")
+	t.Setenv(envInContainer, "1")
+	cfg := LoadConfig()
+	if !cfg.Soak {
+		t.Fatalf("expected Soak=true, got false")
+	}
+	if cfg.SoakHeapGrowthMaxPct != 25 {
+		t.Fatalf("expected SoakHeapGrowthMaxPct=25, got %d", cfg.SoakHeapGrowthMaxPct)
+	}
+	if validateErr := cfg.ValidateSoak(); validateErr != nil {
+		t.Fatalf("ValidateSoak() failed: %v", validateErr)
+	}
+}
+
+func TestSoakValidateRejectsHostRun(t *testing.T) {
+	// DQB_SOAK=1 without DQB_IN_CONTAINER=1 must be rejected.
+	cfg := Config{
+		Soak:                 true,
+		InContainer:          false,
+		SoakHeapGrowthMaxPct: defaultSoakHeapGrowthPct,
+	}
+	if validateErr := cfg.ValidateSoak(); validateErr == nil {
+		t.Fatalf("ValidateSoak() succeeded without DQB_IN_CONTAINER=1")
+	}
+}
+
+func TestSoakValidateRejectsZeroGrowthPct(t *testing.T) {
+	cfg := Config{
+		Soak:                 true,
+		InContainer:          true,
+		SoakHeapGrowthMaxPct: 0,
+	}
+	if validateErr := cfg.ValidateSoak(); validateErr == nil {
+		t.Fatalf("ValidateSoak() succeeded with SoakHeapGrowthMaxPct=0")
+	}
+}
+
+func TestSoakValidateRejectsNegativeGrowthPct(t *testing.T) {
+	cfg := Config{
+		Soak:                 true,
+		InContainer:          true,
+		SoakHeapGrowthMaxPct: -5,
+	}
+	if validateErr := cfg.ValidateSoak(); validateErr == nil {
+		t.Fatalf("ValidateSoak() succeeded with SoakHeapGrowthMaxPct=-5")
+	}
+}
+
+func TestSoakValidateRejectsGrowthPctAbove100(t *testing.T) {
+	cfg := Config{
+		Soak:                 true,
+		InContainer:          true,
+		SoakHeapGrowthMaxPct: 101,
+	}
+	if validateErr := cfg.ValidateSoak(); validateErr == nil {
+		t.Fatalf("ValidateSoak() succeeded with SoakHeapGrowthMaxPct=101")
+	}
+}
+
+func TestSoakValidatePassesWhenSoakFalse(t *testing.T) {
+	// ValidateSoak is a no-op when Soak=false.
+	cfg := Config{
+		Soak:                 false,
+		InContainer:          false,
+		SoakHeapGrowthMaxPct: 0,
+	}
+	if validateErr := cfg.ValidateSoak(); validateErr != nil {
+		t.Fatalf("ValidateSoak() failed when Soak=false: %v", validateErr)
+	}
+}
+
+func TestSoakValidateAcceptsMaxGrowthPct100(t *testing.T) {
+	cfg := Config{
+		Soak:                 true,
+		InContainer:          true,
+		SoakHeapGrowthMaxPct: 100,
+	}
+	if validateErr := cfg.ValidateSoak(); validateErr != nil {
+		t.Fatalf("ValidateSoak() rejected SoakHeapGrowthMaxPct=100: %v", validateErr)
+	}
+}
+
 func TestDeriveTraceShape(t *testing.T) {
 	t.Run("uniform", func(t *testing.T) {
 		shape := deriveTraceShape(1000, 20, spanDistUniform)

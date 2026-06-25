@@ -1,0 +1,158 @@
+[
+  {
+    "id": "by_id_single",
+    "request": {
+      "name": "sw",
+      "groups": ["bench-trace-fixture"],
+      "tagProjection": [
+        "trace_id", "state", "service_id", "service_instance_id",
+        "endpoint_id", "duration", "span_id", "timestamp"
+      ],
+      "criteria": {
+        "condition": {
+          "name": "trace_id",
+          "op": "BINARY_OP_EQ",
+          "value": { "str": { "value": "trace-0000000100" } }
+        }
+      },
+      "limit": 1
+    }
+  },
+  {
+    "id": "by_id_batch",
+    "request": {
+      "name": "sw",
+      "groups": ["bench-trace-fixture"],
+      "tagProjection": [
+        "trace_id", "state", "service_id", "service_instance_id",
+        "endpoint_id", "duration", "span_id", "timestamp"
+      ],
+      "criteria": {
+        "condition": {
+          "name": "trace_id",
+          "op": "BINARY_OP_IN",
+          "value": {
+            "strArray": {
+              "value": [
+                "trace-0000000098",
+                "trace-0000000099",
+                "trace-0000000100",
+                "trace-0000000101",
+                "trace-0000000102"
+              ]
+            }
+          }
+        }
+      },
+      "limit": 5
+    }
+  },
+  {
+    "id": "tag_newest",
+    "request": {
+      "name": "sw",
+      "groups": ["bench-trace-fixture"],
+      "tagProjection": [
+        "trace_id", "state", "service_id", "service_instance_id",
+        "endpoint_id", "duration", "span_id", "timestamp"
+      ],
+      "criteria": {
+        "condition": {
+          "name": "service_id",
+          "op": "BINARY_OP_EQ",
+          "value": { "str": { "value": "svc-0" } }
+        }
+      },
+      "orderBy": { "indexRuleName": "timestamp", "sort": "SORT_DESC" },
+      "limit": 50
+    }
+  },
+  {
+    "id": "tag_slowest",
+    "request": {
+      "name": "sw",
+      "groups": ["bench-trace-fixture"],
+      "tagProjection": [
+        "trace_id", "state", "service_id", "service_instance_id",
+        "endpoint_id", "duration", "span_id", "timestamp"
+      ],
+      "criteria": {
+        "le": {
+          "op": "LOGICAL_OP_AND",
+          "left": {
+            "condition": {
+              "name": "service_id",
+              "op": "BINARY_OP_EQ",
+              "value": { "str": { "value": "svc-0" } }
+            }
+          },
+          "right": {
+            "condition": {
+              "name": "state",
+              "op": "BINARY_OP_EQ",
+              "value": { "int": { "value": "0" } }
+            }
+          }
+        }
+      },
+      "orderBy": { "indexRuleName": "duration", "sort": "SORT_DESC" },
+      "limit": 50
+    }
+  },
+  {
+    "id": "tag_complex",
+    "request": {
+      "name": "sw",
+      "groups": ["bench-trace-fixture"],
+      "tagProjection": [
+        "trace_id", "state", "service_id", "service_instance_id",
+        "endpoint_id", "duration", "span_id", "timestamp"
+      ],
+      "criteria": {
+        "le": {
+          "op": "LOGICAL_OP_AND",
+          "left": {
+            "condition": {
+              "name": "state",
+              "op": "BINARY_OP_EQ",
+              "value": { "int": { "value": "0" } }
+            }
+          },
+          "right": {
+            "le": {
+              "op": "LOGICAL_OP_AND",
+              "left": {
+                "condition": {
+                  "name": "service_id",
+                  "op": "BINARY_OP_EQ",
+                  "value": { "str": { "value": "svc-0" } }
+                }
+              },
+              "right": {
+                "le": {
+                  "op": "LOGICAL_OP_AND",
+                  "left": {
+                    "condition": {
+                      "name": "duration",
+                      "op": "BINARY_OP_GE",
+                      "value": { "int": { "value": "1000" } }
+                    }
+                  },
+                  "right": {
+                    "condition": {
+                      "name": "duration",
+                      "op": "BINARY_OP_LE",
+                      "value": { "int": { "value": "2000" } }
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      },
+      "orderBy": { "indexRuleName": "timestamp", "sort": "SORT_DESC" },
+      "limit": 20
+    }
+  }
+]
