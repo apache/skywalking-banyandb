@@ -314,7 +314,9 @@ func (s *server) marshalResponse(
 		}
 		return body, nil
 	case []byte:
-		if topic != data.TopicInternalMeasureQuery || !data.MeasureWireModeRaw() {
+		rawAllowed := (topic == data.TopicInternalMeasureQuery && data.MeasureWireModeRaw()) ||
+			(topic == data.TopicTraceQuery && data.TraceWireModeRaw())
+		if !rawAllowed {
 			s.replyWithErrType(stream, writeEntity, nil, fmt.Sprintf("invalid response: unexpected raw body on topic %s", topic), identity, "marshal_error")
 			return nil, fmt.Errorf("invalid raw body")
 		}

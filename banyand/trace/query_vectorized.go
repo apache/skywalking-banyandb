@@ -380,10 +380,12 @@ func (t *trace) buildVectorizedPhase1TraceBatch(
 		if iterErr != nil {
 			return traceBatch{}, iterErr
 		}
-		// Ordered SIDX path: MaxTraceSize controls SIDX batch size (MaxBatchSize in the
-		// request), not the total result cap. The push path emits all matching traces in
-		// batches; vectorized must do the same. Pass 0 to disable the Phase-1 trace cap.
-		plan, buildErr := vtrace.BuildMergePhase1(iters, sidxRequestDesc(req), 0, batchSize)
+		// Ordered SIDX path: cap Phase-1 at maxRows (= offset+limit) so only the top-N
+		// distinct trace IDs in sorted-merge order are carried forward and materialized.
+		// The merge is globally sorted, so the first maxRows traces are exactly the window
+		// the outer traceLimit keeps; carrying the full match set (maxRows=0) wastes span
+		// decode on traces the limit discards. maxRows=0 (no limit set) stays uncapped.
+		plan, buildErr := vtrace.BuildMergePhase1(iters, sidxRequestDesc(req), maxRows, batchSize)
 		if buildErr != nil {
 			return traceBatch{}, fmt.Errorf("build ordered vectorized trace phase1: %w", buildErr)
 		}

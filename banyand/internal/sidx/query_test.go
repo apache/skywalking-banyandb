@@ -19,6 +19,7 @@ package sidx
 
 import (
 	"context"
+	"fmt"
 	"sort"
 	"strings"
 	"testing"
@@ -101,6 +102,60 @@ func TestSIDX_QuerySyncMatchesStreamingQuery(t *testing.T) {
 	syncRows, err := syncQuerier.QuerySync(ctx, queryReq)
 	require.NoError(t, err)
 	require.Equal(t, flattenQueryRows(streamingRows), flattenQueryRows(syncRows))
+}
+
+// TestSIDX_QuerySync_EarlyStopAtMaxBatchSize verifies the sync query path stops
+// scanning once MaxBatchSize distinct results are collected, while still returning
+// the correct ordered top-N. Blocks are per series, so writing many single-element
+// series forces the scan across multiple batches (blockScannerBatchSize); the block
+// iterator yields them in ascending key order, so the bounded result's prefix must
+// equal the uncapped, fully-ordered scan's prefix.
+func TestSIDX_QuerySync_EarlyStopAtMaxBatchSize(t *testing.T) {
+	s := createTestSIDX(t)
+	defer func() {
+		assert.NoError(t, s.Close())
+	}()
+	ctx := context.Background()
+
+	const seriesCount = 80
+	seriesIDs := make([]common.SeriesID, 0, seriesCount)
+	for i := range seriesCount {
+		key := int64(i + 1)
+		series := common.SeriesID(i + 1)
+		seriesIDs = append(seriesIDs, series)
+		writeTestData(t, s, []WriteRequest{
+			createTestWriteRequest(series, key, fmt.Sprintf("data%03d", key)),
+		}, 44, uint64(i+1))
+	}
+	waitForIntroducerLoop()
+
+	syncQuerier, ok := s.(interface {
+		QuerySync(context.Context, QueryRequest) ([]*QueryResponse, error)
+	})
+	require.True(t, ok)
+
+	baseReq := createTestQueryRequest(seriesIDs...)
+
+	// Uncapped scan reads every block and returns all elements in key order.
+	uncapped, err := syncQuerier.QuerySync(ctx, baseReq)
+	require.NoError(t, err)
+	uncappedRows := flattenQueryRows(uncapped)
+	require.Len(t, uncappedRows, seriesCount)
+
+	const maxBatch = 10
+	cappedReq := baseReq
+	cappedReq.MaxBatchSize = maxBatch
+	capped, err := syncQuerier.QuerySync(ctx, cappedReq)
+	require.NoError(t, err)
+	cappedRows := flattenQueryRows(capped)
+
+	// Bounded query collected at least MaxBatchSize and stopped before reading every block.
+	require.GreaterOrEqual(t, len(cappedRows), maxBatch, "must collect at least MaxBatchSize results")
+	require.Less(t, len(cappedRows), seriesCount, "must stop scanning before reading every block")
+
+	// The bounded result is the correct ordered top-N: its first MaxBatchSize rows
+	// equal the first MaxBatchSize rows of the uncapped, fully-ordered scan.
+	require.Equal(t, uncappedRows[:maxBatch], cappedRows[:maxBatch])
 }
 
 func TestSIDX_Query_EmptyResult(t *testing.T) {

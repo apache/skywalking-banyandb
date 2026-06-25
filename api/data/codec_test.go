@@ -105,8 +105,9 @@ func TestRawFrameCodec_WrongMagic_FailsLoud(t *testing.T) {
 func TestTopicResponseMap_ProtoCodec_RoundTripsByteIdentical(t *testing.T) {
 	var protoTopics int
 	for topic, codec := range TopicResponseMap {
-		if topic == TopicInternalMeasureQuery {
-			// Wire-mode-dispatching codec; covered separately below.
+		if topic == TopicInternalMeasureQuery || topic == TopicTraceQuery {
+			// Wire-mode-dispatching codecs; covered separately (measure below,
+			// trace in trace_frame_test.go including flag-off byte-identity).
 			continue
 		}
 		pc, ok := codec.(*ProtoCodec)

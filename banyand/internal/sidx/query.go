@@ -347,12 +347,27 @@ func (s *sidx) prepareSyncResources(
 	}, true
 }
 
+// errSyncBudgetReached signals that the sync query loop has collected MaxBatchSize
+// distinct results and the block scan can stop early. It is not a failure.
+var errSyncBudgetReached = errors.New("sidx: sync query result budget reached")
+
 func (s *sidx) processSyncLoop(ctx context.Context, req QueryRequest, resources *syncQueryResources) ([]*QueryResponse, error) {
 	var results []*QueryResponse
 	var metrics *batchMetrics
 	if query.GetTracer(ctx) != nil {
 		metrics = &batchMetrics{}
 	}
+	// When MaxBatchSize bounds the result, stop scanning once that many distinct
+	// elements (= trace IDs; mergeSync dedups by data) have been collected. The block
+	// iterator yields blocks in key order, so the first MaxBatchSize distinct elements
+	// are the ordered top-N. This mirrors the streaming path, which stops via consumer
+	// backpressure; the sync path has none, so without this it decodes every matching
+	// block. MaxBatchSize<=0 keeps the full scan.
+	var budgetCounter *distinctDataCounter
+	if req.MaxBatchSize > 0 {
+		budgetCounter = newDistinctDataCounter()
+	}
+	budgetReached := false
 	consume := func(batch *blockScanResultBatch) error {
 		defer releaseBlockScanResultBatch(batch)
 		if batch.err != nil {
@@ -374,16 +389,29 @@ func (s *sidx) processSyncLoop(ctx context.Context, req QueryRequest, resources 
 			return mergeErr
 		}
 		results = append(results, chunks...)
+		if budgetCounter != nil {
+			for _, chunk := range chunks {
+				budgetCounter.add(chunk)
+			}
+			if budgetCounter.count >= req.MaxBatchSize {
+				budgetReached = true
+				return errSyncBudgetReached
+			}
+		}
 		return nil
 	}
-	if scanErr := resources.scanner.scanSync(ctx, consume); scanErr != nil {
+	if scanErr := resources.scanner.scanSync(ctx, consume); scanErr != nil && !errors.Is(scanErr, errSyncBudgetReached) {
 		return nil, scanErr
 	}
-	chunks, mergeErr := resources.heap.mergeSync(ctx, req.MaxBatchSize, metrics)
-	if mergeErr != nil {
-		return nil, mergeErr
+	// When the budget was reached the last consume already drained the heap; only the
+	// completed-scan path needs a final flush of any cursors left in the heap.
+	if !budgetReached {
+		chunks, mergeErr := resources.heap.mergeSync(ctx, req.MaxBatchSize, metrics)
+		if mergeErr != nil {
+			return nil, mergeErr
+		}
+		results = append(results, chunks...)
 	}
-	results = append(results, chunks...)
 	return results, nil
 }
 
