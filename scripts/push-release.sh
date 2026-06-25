@@ -47,6 +47,11 @@ cp ${PRODUCT_NAME}-*.tgz.sha512 skywalking/banyandb/"$VERSION"
 cd skywalking/banyandb && svn add "$VERSION" && svn commit -m "Draft Apache SkyWalking BanyanDB release $VERSION"
 cd "$VERSION"
 
+CHECKSUMS=$(for CHECKSUM_FILE in "${PRODUCT_NAME}"-*.tgz.sha512; do
+  printf '   - '
+  cat "${CHECKSUM_FILE}"
+done)
+
 cat << EOF
 =========================================================================
 Subject: [VOTE] Release Apache SkyWalking BanyanDB version $VERSION
@@ -64,9 +69,7 @@ Release Candidate:
 
  * https://dist.apache.org/repos/dist/dev/skywalking/banyandb/$VERSION
  * sha512 checksums
-   - $(cat ${PRODUCT_NAME}-src.tgz.sha512)
-   - $(cat ${PRODUCT_NAME}-banyand.tgz.sha512)
-   - $(cat ${PRODUCT_NAME}-bydbctl.tgz.sha512)
+$CHECKSUMS
 
 Release Tag :
 
