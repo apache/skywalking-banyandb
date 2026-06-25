@@ -21,8 +21,35 @@
 // The ONLY production data source is ApiDataSource (api.ts).
 // NO MockDataSource exists — live-first by design.
 
+import type {
+  GroupListResponse, CreateGroupRequest, UpdateGroupRequest,
+  CreateStreamRequest, UpdateStreamRequest,
+  CreateMeasureRequest, UpdateMeasureRequest,
+  QueryRequest, QueryResponse,
+  StreamSchema, MeasureSchema, TraceSchema, PropertySchema, Group,
+} from 'canopy-shared';
+
 export interface DataSource {
-  listGroups(): Promise<import('canopy-shared').GroupListResponse>;
-  getResource(catalog: string, group: string, name: string): Promise<unknown>;
-  runQuery(request: import('canopy-shared').QueryRequest): Promise<import('canopy-shared').QueryResponse>;
+  // Groups
+  listGroups(): Promise<GroupListResponse>;
+  createGroup(req: CreateGroupRequest): Promise<Group>;
+  updateGroup(name: string, req: UpdateGroupRequest): Promise<Group>;
+  deleteGroup(name: string): Promise<void>;
+
+  // Resources (read)
+  listResourcesInGroup(type: string, group: string): Promise<(StreamSchema | MeasureSchema | TraceSchema | PropertySchema)[]>;
+  getResource(type: string, group: string, name: string): Promise<StreamSchema | MeasureSchema | TraceSchema | PropertySchema>;
+
+  // Stream CRUD
+  createStream(req: CreateStreamRequest): Promise<StreamSchema>;
+  updateStream(group: string, name: string, req: UpdateStreamRequest): Promise<StreamSchema>;
+
+  // Measure CRUD
+  createMeasure(req: CreateMeasureRequest): Promise<MeasureSchema>;
+  updateMeasure(group: string, name: string, req: UpdateMeasureRequest): Promise<MeasureSchema>;
+
+  // Generic delete
+  deleteResource(type: string, group: string, name: string): Promise<void>;
+
+  runQuery(request: QueryRequest): Promise<QueryResponse>;
 }

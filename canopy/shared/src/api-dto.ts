@@ -17,8 +17,10 @@
  * under the License.
  */
 
-// DTOs will be derived from live BanyanDB responses in M2.
-// Placeholders here to satisfy TypeScript imports.
+import type {
+  Group, StreamSchema, MeasureSchema, TraceSchema, PropertySchema,
+  TagFamilySpec, FieldSpec, TagType, FieldType, CompressMethod, EncodingMethod,
+} from './schema.js';
 
 export interface ApiResponse<T> {
   readonly data?: T;
@@ -26,8 +28,63 @@ export interface ApiResponse<T> {
 }
 
 export interface GroupListResponse {
-  readonly groups: import('./schema').Group[];
+  readonly groups: Group[];
 }
+
+export interface ResourceListResponse<T> {
+  readonly items: T[];
+}
+
+// Group CRUD
+
+export interface CreateGroupRequest {
+  readonly group: {
+    readonly metadata: { readonly name: string };
+    readonly catalog: Group['catalog'];
+    readonly resourceOpts: {
+      readonly shardNum: number;
+      readonly segmentInterval: string;
+      readonly ttl: string;
+    };
+  };
+}
+
+export interface UpdateGroupRequest {
+  readonly group: {
+    readonly metadata: { readonly name: string };
+    readonly resourceOpts: {
+      readonly shardNum: number;
+      readonly segmentInterval: string;
+      readonly ttl: string;
+    };
+  };
+}
+
+// Stream CRUD
+
+export interface CreateStreamRequest {
+  readonly stream: Omit<StreamSchema, 'metadata'> & {
+    readonly metadata: { readonly name: string; readonly group: string };
+  };
+}
+
+export interface UpdateStreamRequest {
+  readonly stream: StreamSchema;
+}
+
+// Measure CRUD
+
+export interface CreateMeasureRequest {
+  readonly measure: Omit<MeasureSchema, 'metadata'> & {
+    readonly metadata: { readonly name: string; readonly group: string };
+  };
+}
+
+export interface UpdateMeasureRequest {
+  readonly measure: MeasureSchema;
+}
+
+// Query
 
 export interface QueryRequest {
   readonly groups: string[];
@@ -42,3 +99,9 @@ export interface QueryRequest {
 export interface QueryResponse {
   readonly elements?: unknown[];
 }
+
+// Re-export schema types for convenience
+export type {
+  Group, StreamSchema, MeasureSchema, TraceSchema, PropertySchema,
+  TagFamilySpec, FieldSpec, TagType, FieldType, CompressMethod, EncodingMethod,
+};
