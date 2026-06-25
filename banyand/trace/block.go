@@ -458,6 +458,11 @@ func (bc *blockCursor) reset() {
 		bc.tags[i].reset()
 	}
 	bc.tags = bc.tags[:0]
+	// Nil the decoder's backing array rather than zero-slicing it so that
+	// the decompressed span bytes (held by decompressBlock inside the decoder)
+	// become unreachable and can be reclaimed by GC when the cursor is pooled.
+	// Reset() only does data=data[:0] which keeps the backing array alive.
+	bc.tagValuesDecoder = encoding.BytesBlockDecoder{}
 }
 
 func (bc *blockCursor) init(p *part, bm *blockMetadata, opts queryOptions) {
