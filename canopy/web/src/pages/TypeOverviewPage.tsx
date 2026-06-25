@@ -24,7 +24,7 @@ import { useQuery } from '@tanstack/react-query';
 import { apiDataSource } from '../data/api.js';
 import { useAuth } from '../auth/AuthContext.js';
 import { IconGroup, IconPlus, IconArrowRight } from '../components/icons.js';
-import { CATALOG_MAP } from './meta-utils.js';
+import { CATALOG_MAP, formatInterval } from './meta-utils.js';
 
 export function TypeOverviewPage({ type, onNewGroup }: { type: string; onNewGroup?: () => void }) {
   const navigate = useNavigate();
@@ -95,13 +95,13 @@ export function TypeOverviewPage({ type, onNewGroup }: { type: string; onNewGrou
                   {g.resourceOpts.segmentInterval && (
                     <span className="meta-chip">
                       <span className="meta-k">interval</span>
-                      <span className="meta-v">{g.resourceOpts.segmentInterval}</span>
+                      <span className="meta-v">{formatInterval(g.resourceOpts.segmentInterval)}</span>
                     </span>
                   )}
                   {g.resourceOpts.ttl && (
                     <span className="meta-chip">
                       <span className="meta-k">ttl</span>
-                      <span className="meta-v">{g.resourceOpts.ttl}</span>
+                      <span className="meta-v">{formatInterval(g.resourceOpts.ttl)}</span>
                     </span>
                   )}
                 </div>

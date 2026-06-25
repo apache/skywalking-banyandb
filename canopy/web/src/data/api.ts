@@ -22,7 +22,8 @@ import type {
   CreateGroupRequest, UpdateGroupRequest,
   CreateStreamRequest, UpdateStreamRequest, StreamSchema,
   CreateMeasureRequest, UpdateMeasureRequest, MeasureSchema,
-  TraceSchema, PropertySchema,
+  CreateTraceRequest, UpdateTraceRequest, TraceSchema,
+  PropertySchema,
   QueryRequest, QueryResponse,
 } from 'canopy-shared';
 
@@ -44,12 +45,21 @@ async function apiFetch<T>(url: string, init?: RequestInit): Promise<T> {
 
 const JSON_HEADERS = { 'content-type': 'application/json' };
 
+// BanyanDB REST API uses singular resource type names in paths; the app routes use plural.
+const TYPE_SINGULAR: Record<string, string> = {
+  measures: 'measure',
+  streams: 'stream',
+  traces: 'trace',
+  properties: 'property',
+};
+
 export class ApiDataSource implements DataSource {
   // ── Groups ──────────────────────────────────────────────────────────────
 
   async listGroups(): Promise<GroupListResponse> {
-    const data = await apiFetch<{ groups?: Group[] }>('/api/v1/group/schema/lists');
-    return { groups: data.groups ?? [] };
+    type RawGroup = Omit<Group, 'name'> & { metadata: { name: string } };
+    const data = await apiFetch<{ group?: RawGroup[] }>('/api/v1/group/schema/lists');
+    return { groups: (data.group ?? []).map(g => ({ ...g, name: g.metadata.name })) };
   }
 
   async createGroup(req: CreateGroupRequest): Promise<Group> {
@@ -73,14 +83,17 @@ export class ApiDataSource implements DataSource {
   // ── Resources (read) ────────────────────────────────────────────────────
 
   async listResourcesInGroup(type: string, group: string): Promise<(StreamSchema | MeasureSchema | TraceSchema | PropertySchema)[]> {
-    type ListResp = { stream?: StreamSchema[]; measure?: MeasureSchema[]; trace?: TraceSchema[]; property?: PropertySchema[] };
-    const data = await apiFetch<ListResp>(`/api/v1/${type}/schema/lists/${group}`);
-    return (data.stream ?? data.measure ?? data.trace ?? data.property ?? []) as (StreamSchema | MeasureSchema | TraceSchema | PropertySchema)[];
+    const singularType = TYPE_SINGULAR[type] ?? type;
+    // BanyanDB uses singular key for stream/measure/trace but plural "properties" for property list responses.
+    type ListResp = { stream?: StreamSchema[]; measure?: MeasureSchema[]; trace?: TraceSchema[]; property?: PropertySchema[]; properties?: PropertySchema[] };
+    const data = await apiFetch<ListResp>(`/api/v1/${singularType}/schema/lists/${group}`);
+    return (data.stream ?? data.measure ?? data.trace ?? data.properties ?? data.property ?? []) as (StreamSchema | MeasureSchema | TraceSchema | PropertySchema)[];
   }
 
   async getResource(type: string, group: string, name: string): Promise<StreamSchema | MeasureSchema | TraceSchema | PropertySchema> {
+    const singularType = TYPE_SINGULAR[type] ?? type;
     type GetResp = { stream?: StreamSchema; measure?: MeasureSchema; trace?: TraceSchema; property?: PropertySchema };
-    const data = await apiFetch<GetResp>(`/api/v1/${type}/schema/${group}/${name}`);
+    const data = await apiFetch<GetResp>(`/api/v1/${singularType}/schema/${group}/${name}`);
     const resource = data.stream ?? data.measure ?? data.trace ?? data.property;
     if (!resource) throw new Error(`Resource not found: ${type}/${group}/${name}`);
     return resource;
@@ -118,10 +131,27 @@ export class ApiDataSource implements DataSource {
     return data.measure;
   }
 
+  // ── Trace CRUD ──────────────────────────────────────────────────────────────
+
+  async createTrace(req: CreateTraceRequest): Promise<TraceSchema> {
+    const data = await apiFetch<{ trace: TraceSchema }>('/api/v1/trace/schema', {
+      method: 'POST', headers: JSON_HEADERS, body: JSON.stringify(req),
+    });
+    return data.trace;
+  }
+
+  async updateTrace(group: string, name: string, req: UpdateTraceRequest): Promise<TraceSchema> {
+    const data = await apiFetch<{ trace: TraceSchema }>(`/api/v1/trace/schema/${group}/${name}`, {
+      method: 'PUT', headers: JSON_HEADERS, body: JSON.stringify(req),
+    });
+    return data.trace;
+  }
+
   // ── Generic delete ────────────────────────────────────────────────────────
 
   async deleteResource(type: string, group: string, name: string): Promise<void> {
-    await apiFetch<void>(`/api/v1/${type}/schema/${group}/${name}`, { method: 'DELETE' });
+    const singularType = TYPE_SINGULAR[type] ?? type;
+    await apiFetch<void>(`/api/v1/${singularType}/schema/${group}/${name}`, { method: 'DELETE' });
   }
 
   // ── Query ─────────────────────────────────────────────────────────────────

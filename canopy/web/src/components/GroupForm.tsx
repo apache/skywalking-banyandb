@@ -17,24 +17,26 @@
  * under the License.
  */
 
-import React, { useState } from 'react';
-import { useMutation, useQueryClient } from '@tanstack/react-query';
+import React, { useState, useEffect } from 'react';
+import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 
-import type { Group, CreateGroupRequest } from 'canopy-shared';
+import type { Group, CreateGroupRequest, UpdateGroupRequest } from 'canopy-shared';
 import { apiDataSource } from '../data/api.js';
+import { parseInterval, formatInterval } from '../pages/meta-utils.js';
 
-const CATALOGS = ['CATALOG_MEASURE', 'CATALOG_STREAM', 'CATALOG_PROPERTY'] as const;
+const CATALOGS = ['CATALOG_MEASURE', 'CATALOG_STREAM', 'CATALOG_PROPERTY', 'CATALOG_TRACE'] as const;
 type Catalog = typeof CATALOGS[number];
 
 const CATALOG_LABELS: Record<string, string> = {
   CATALOG_MEASURE: 'Measure',
   CATALOG_STREAM: 'Stream',
   CATALOG_PROPERTY: 'Property',
+  CATALOG_TRACE: 'Trace',
 };
 
-/** GroupForm renders either a create-group modal or a delete-group confirmation dialog. */
+/** GroupForm renders a create-group modal, an edit-group modal, or a delete-group confirmation dialog. */
 export function GroupForm({ mode, initialName, onClose }: {
-  mode: 'create' | 'delete';
+  mode: 'create' | 'edit' | 'delete';
   initialName?: string;
   onClose: (created?: Group) => void;
 }) {
@@ -46,12 +48,38 @@ export function GroupForm({ mode, initialName, onClose }: {
   const [segmentInterval, setSegmentInterval] = useState('1d');
   const [ttl, setTtl] = useState('7d');
   const [error, setError] = useState('');
+  const [initialized, setInitialized] = useState(false);
+
+  const { data: groupsData } = useQuery({
+    queryKey: ['groups'],
+    queryFn: () => apiDataSource.listGroups(),
+    enabled: mode === 'edit',
+  });
+  const editGroup = groupsData?.groups.find((g) => g.name === initialName);
+
+  useEffect(() => {
+    if (mode === 'edit' && editGroup && !initialized) {
+      setShardNum(editGroup.resourceOpts.shardNum);
+      setSegmentInterval(formatInterval(editGroup.resourceOpts.segmentInterval));
+      setTtl(formatInterval(editGroup.resourceOpts.ttl));
+      setInitialized(true);
+    }
+  }, [mode, editGroup, initialized]);
 
   const createMut = useMutation({
     mutationFn: (req: CreateGroupRequest) => apiDataSource.createGroup(req),
     onSuccess: (group) => {
       qc.invalidateQueries({ queryKey: ['groups'] });
       onClose(group);
+    },
+    onError: (e: Error) => setError(e.message),
+  });
+
+  const updateMut = useMutation({
+    mutationFn: (req: UpdateGroupRequest) => apiDataSource.updateGroup(initialName!, req),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['groups'] });
+      onClose();
     },
     onError: (e: Error) => setError(e.message),
   });
@@ -65,23 +93,58 @@ export function GroupForm({ mode, initialName, onClose }: {
     onError: (e: Error) => setError(e.message),
   });
 
+  const isPropertyCatalog = mode === 'create' ? catalog === 'CATALOG_PROPERTY' : editGroup?.catalog === 'CATALOG_PROPERTY';
+
   function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
+    setError('');
+
+    if (isPropertyCatalog) {
+      if (mode === 'edit') {
+        updateMut.mutate({ group: { metadata: { name: initialName! }, catalog: editGroup?.catalog, resourceOpts: { shardNum } } });
+        return;
+      }
+      if (!name.trim()) { setError('Name is required.'); return; }
+      createMut.mutate({ group: { metadata: { name: name.trim() }, catalog, resourceOpts: { shardNum } } });
+      return;
+    }
+
+    const parsedSegment = parseInterval(segmentInterval);
+    const parsedTtl = parseInterval(ttl);
+    if (!parsedSegment) {
+      setError('Segment interval must be a number followed by h or d (e.g. 1d, 24h).');
+      return;
+    }
+    if (!parsedTtl) {
+      setError('TTL must be a number followed by h or d (e.g. 7d, 168h).');
+      return;
+    }
+
+    if (mode === 'edit') {
+      updateMut.mutate({
+        group: {
+          metadata: { name: initialName! },
+          catalog: editGroup?.catalog,
+          resourceOpts: { shardNum, segmentInterval: parsedSegment, ttl: parsedTtl },
+        },
+      });
+      return;
+    }
+
     if (!name.trim()) {
       setError('Name is required.');
       return;
     }
-    setError('');
     createMut.mutate({
       group: {
         metadata: { name: name.trim() },
         catalog,
-        resourceOpts: { shardNum, segmentInterval, ttl },
+        resourceOpts: { shardNum, segmentInterval: parsedSegment, ttl: parsedTtl },
       },
     });
   }
 
-  const isPending = createMut.isPending || deleteMut.isPending;
+  const isPending = createMut.isPending || updateMut.isPending || deleteMut.isPending;
 
   if (mode === 'delete') {
     return (
@@ -115,11 +178,13 @@ export function GroupForm({ mode, initialName, onClose }: {
     );
   }
 
+  const isEdit = mode === 'edit';
+
   return (
     <div className="modal-overlay" onClick={() => onClose()}>
-      <form className="modal is-wide" onSubmit={handleSubmit} onClick={(e) => e.stopPropagation()}>
+      <form className="modal is-wide" onSubmit={handleSubmit} onClick={(e) => e.stopPropagation()} data-initialized={String(initialized)}>
         <div className="modal-head">
-          <span className="modal-title">New group</span>
+          <span className="modal-title">{isEdit ? 'Edit group' : 'New group'}</span>
           <button type="button" className="modal-x" onClick={() => onClose()} />
         </div>
 
@@ -127,33 +192,45 @@ export function GroupForm({ mode, initialName, onClose }: {
           <div className="f-section">
             <label className="f-field">
               <span className="f-label">
-                Name <span className="f-req">*</span>
+                Name {!isEdit && <span className="f-req">*</span>}
               </span>
               <input
                 className="f-input"
                 type="text"
-                value={name}
-                onChange={(e) => setName(e.target.value)}
-                autoFocus
+                value={isEdit ? (initialName ?? '') : name}
+                onChange={(e) => { if (!isEdit) setName(e.target.value); }}
+                readOnly={isEdit}
+                autoFocus={!isEdit}
               />
             </label>
           </div>
 
-          <div className="f-section">
-            <span className="f-label">Catalog</span>
-            <div className="f-seg">
-              {CATALOGS.map((c) => (
-                <button
-                  key={c}
-                  type="button"
-                  className={`btn${catalog === c ? ' is-on' : ''}`}
-                  onClick={() => setCatalog(c)}
-                >
-                  {CATALOG_LABELS[c]}
-                </button>
-              ))}
+          {!isEdit && (
+            <div className="f-section">
+              <span className="f-label">Catalog</span>
+              <div className="f-seg">
+                {CATALOGS.map((c) => (
+                  <button
+                    key={c}
+                    type="button"
+                    className={`btn${catalog === c ? ' is-on' : ''}`}
+                    onClick={() => setCatalog(c)}
+                  >
+                    {CATALOG_LABELS[c]}
+                  </button>
+                ))}
+              </div>
             </div>
-          </div>
+          )}
+
+          {isEdit && editGroup && (
+            <div className="f-section">
+              <label className="f-field">
+                <span className="f-label">Catalog</span>
+                <input className="f-input" type="text" value={editGroup.catalog} readOnly />
+              </label>
+            </div>
+          )}
 
           <div className="f-section">
             <div className="f-grid">
@@ -168,26 +245,30 @@ export function GroupForm({ mode, initialName, onClose }: {
                   onChange={(e) => setShardNum(Number(e.target.value))}
                 />
               </label>
-              <label className="f-field">
-                <span className="f-label">Segment interval</span>
-                <input
-                  className="f-input"
-                  type="text"
-                  placeholder="1d"
-                  value={segmentInterval}
-                  onChange={(e) => setSegmentInterval(e.target.value)}
-                />
-              </label>
-              <label className="f-field">
-                <span className="f-label">TTL</span>
-                <input
-                  className="f-input"
-                  type="text"
-                  placeholder="7d"
-                  value={ttl}
-                  onChange={(e) => setTtl(e.target.value)}
-                />
-              </label>
+              {!isPropertyCatalog && (
+                <label className="f-field">
+                  <span className="f-label">Segment interval</span>
+                  <input
+                    className="f-input"
+                    type="text"
+                    placeholder="1d"
+                    value={segmentInterval}
+                    onChange={(e) => setSegmentInterval(e.target.value)}
+                  />
+                </label>
+              )}
+              {!isPropertyCatalog && (
+                <label className="f-field">
+                  <span className="f-label">TTL</span>
+                  <input
+                    className="f-input"
+                    type="text"
+                    placeholder="7d"
+                    value={ttl}
+                    onChange={(e) => setTtl(e.target.value)}
+                  />
+                </label>
+              )}
             </div>
           </div>
 
@@ -199,7 +280,7 @@ export function GroupForm({ mode, initialName, onClose }: {
             Cancel
           </button>
           <button type="submit" className="btn btn-primary" disabled={isPending}>
-            {isPending ? 'Creating…' : 'Create'}
+            {isPending ? (isEdit ? 'Saving…' : 'Creating…') : (isEdit ? 'Save' : 'Create')}
           </button>
         </div>
       </form>

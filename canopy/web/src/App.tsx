@@ -30,7 +30,8 @@ import { ResourceDetailPage } from './pages/ResourceDetailPage.js';
 import { GroupForm } from './components/GroupForm.js';
 import { MeasureForm } from './components/MeasureForm.js';
 import { StreamForm } from './components/StreamForm.js';
-import type { Group, MeasureSchema, StreamSchema } from 'canopy-shared';
+import { TraceForm } from './components/TraceForm.js';
+import type { Group, MeasureSchema, StreamSchema, TraceSchema } from 'canopy-shared';
 
 const queryClient = new QueryClient({
   defaultOptions: { queries: { staleTime: 30_000, retry: 1 } },
@@ -38,11 +39,16 @@ const queryClient = new QueryClient({
 
 type ModalState =
   | { kind: 'group-create' }
+  | { kind: 'group-edit'; groupName: string }
   | { kind: 'group-delete'; groupName: string }
   | { kind: 'measure-create'; groupName: string }
+  | { kind: 'measure-edit'; groupName: string; resourceName: string }
   | { kind: 'measure-delete'; groupName: string; resourceName: string }
   | { kind: 'stream-create'; groupName: string }
+  | { kind: 'stream-edit'; groupName: string; resourceName: string }
   | { kind: 'stream-delete'; groupName: string; resourceName: string }
+  | { kind: 'trace-create'; groupName: string }
+  | { kind: 'trace-delete'; groupName: string; resourceName: string }
   | null;
 
 function MetadataTypeRoute() {
@@ -69,29 +75,6 @@ function MetadataTypeRoute() {
   );
 }
 
-function PropertiesRoute() {
-  const navigate = useNavigate();
-  const [modal, setModal] = useState<ModalState>(null);
-
-  return (
-    <>
-      <TypeOverviewPage
-        type="properties"
-        onNewGroup={() => setModal({ kind: 'group-create' })}
-      />
-      {modal?.kind === 'group-create' && (
-        <GroupForm
-          mode="create"
-          onClose={(created?: Group) => {
-            setModal(null);
-            if (created) navigate(`/properties/${created.name}`);
-          }}
-        />
-      )}
-    </>
-  );
-}
-
 function MetadataGroupRoute() {
   const { type = 'measures', group = '' } = useParams<{ type: string; group: string }>();
   const navigate = useNavigate();
@@ -105,10 +88,18 @@ function MetadataGroupRoute() {
         onNewResource={() => {
           if (type === 'measures') setModal({ kind: 'measure-create', groupName: group });
           else if (type === 'streams') setModal({ kind: 'stream-create', groupName: group });
+          else if (type === 'traces') setModal({ kind: 'trace-create', groupName: group });
         }}
-        onEditGroup={() => { /* edit in a future iteration */ }}
+        onEditGroup={() => setModal({ kind: 'group-edit', groupName: group })}
         onDeleteGroup={() => setModal({ kind: 'group-delete', groupName: group })}
       />
+      {modal?.kind === 'group-edit' && (
+        <GroupForm
+          mode="edit"
+          initialName={modal.groupName}
+          onClose={() => setModal(null)}
+        />
+      )}
       {modal?.kind === 'group-delete' && (
         <GroupForm
           mode="delete"
@@ -139,30 +130,13 @@ function MetadataGroupRoute() {
           }}
         />
       )}
-    </>
-  );
-}
-
-function PropertiesGroupRoute() {
-  const { group = '' } = useParams<{ group: string }>();
-  const navigate = useNavigate();
-  const [modal, setModal] = useState<ModalState>(null);
-
-  return (
-    <>
-      <GroupPage
-        type="properties"
-        groupName={group}
-        onEditGroup={() => { /* future */ }}
-        onDeleteGroup={() => setModal({ kind: 'group-delete', groupName: group })}
-      />
-      {modal?.kind === 'group-delete' && (
-        <GroupForm
-          mode="delete"
-          initialName={modal.groupName}
-          onClose={() => {
+      {modal?.kind === 'trace-create' && (
+        <TraceForm
+          mode="create"
+          groupName={modal.groupName}
+          onClose={(created?: TraceSchema) => {
             setModal(null);
-            navigate('/properties');
+            if (created) navigate(`/metadata/${type}/${group}/${created.metadata.name}`);
           }}
         />
       )}
@@ -181,12 +155,24 @@ function MetadataResourceRoute() {
         type={type}
         groupName={group}
         resourceName={name}
-        onEdit={() => { /* future */ }}
+        onEdit={() => {
+          if (type === 'measures') setModal({ kind: 'measure-edit', groupName: group, resourceName: name });
+          else if (type === 'streams') setModal({ kind: 'stream-edit', groupName: group, resourceName: name });
+        }}
         onDelete={() => {
           if (type === 'measures') setModal({ kind: 'measure-delete', groupName: group, resourceName: name });
           else if (type === 'streams') setModal({ kind: 'stream-delete', groupName: group, resourceName: name });
+          else if (type === 'traces') setModal({ kind: 'trace-delete', groupName: group, resourceName: name });
         }}
       />
+      {modal?.kind === 'measure-edit' && (
+        <MeasureForm
+          mode="edit"
+          groupName={modal.groupName}
+          initialName={modal.resourceName}
+          onClose={() => setModal(null)}
+        />
+      )}
       {modal?.kind === 'measure-delete' && (
         <MeasureForm
           mode="delete"
@@ -196,6 +182,14 @@ function MetadataResourceRoute() {
             setModal(null);
             navigate(`/metadata/${type}/${group}`);
           }}
+        />
+      )}
+      {modal?.kind === 'stream-edit' && (
+        <StreamForm
+          mode="edit"
+          groupName={modal.groupName}
+          initialName={modal.resourceName}
+          onClose={() => setModal(null)}
         />
       )}
       {modal?.kind === 'stream-delete' && (
@@ -209,18 +203,18 @@ function MetadataResourceRoute() {
           }}
         />
       )}
+      {modal?.kind === 'trace-delete' && (
+        <TraceForm
+          mode="delete"
+          groupName={modal.groupName}
+          initialName={modal.resourceName}
+          onClose={() => {
+            setModal(null);
+            navigate(`/metadata/${type}/${group}`);
+          }}
+        />
+      )}
     </>
-  );
-}
-
-function PropertiesResourceRoute() {
-  const { group = '', name = '' } = useParams<{ group: string; name: string }>();
-  return (
-    <ResourceDetailPage
-      type="properties"
-      groupName={group}
-      resourceName={name}
-    />
   );
 }
 
@@ -243,15 +237,9 @@ function AppContent() {
     <Shell>
       <Routes>
         <Route path="/" element={<HomePage />} />
-        <Route path="/metadata/measures" element={<MetadataTypeRoute />} />
-        <Route path="/metadata/streams" element={<MetadataTypeRoute />} />
-        <Route path="/metadata/traces" element={<MetadataTypeRoute />} />
         <Route path="/metadata/:type/:group/:name" element={<MetadataResourceRoute />} />
         <Route path="/metadata/:type/:group" element={<MetadataGroupRoute />} />
         <Route path="/metadata/:type" element={<MetadataTypeRoute />} />
-        <Route path="/properties" element={<PropertiesRoute />} />
-        <Route path="/properties/:group/:name" element={<PropertiesResourceRoute />} />
-        <Route path="/properties/:group" element={<PropertiesGroupRoute />} />
         <Route path="/pipelines/*" element={<div className="page-body"><h1 className="page-title">Pipelines</h1><p className="page-meta">Coming soon.</p></div>} />
         <Route path="/query" element={<div className="page-body"><h1 className="page-title">Query</h1><p className="page-meta">Coming in M4.</p></div>} />
         <Route path="*" element={<div className="page-body"><h1 className="page-title">Not found</h1></div>} />

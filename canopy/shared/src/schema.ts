@@ -50,13 +50,18 @@ export enum IndexType {
   INVERTED = 'INDEX_TYPE_INVERTED',
 }
 
+export interface IntervalRule {
+  readonly unit: 'UNIT_HOUR' | 'UNIT_DAY';
+  readonly num: number;
+}
+
 export interface Group {
   readonly name: string;
-  readonly catalog: 'CATALOG_STREAM' | 'CATALOG_MEASURE' | 'CATALOG_PROPERTY' | 'CATALOG_UNSPECIFIED';
+  readonly catalog: 'CATALOG_STREAM' | 'CATALOG_MEASURE' | 'CATALOG_PROPERTY' | 'CATALOG_TRACE' | 'CATALOG_UNSPECIFIED';
   readonly resourceOpts: {
     readonly shardNum: number;
-    readonly segmentInterval: string;
-    readonly ttl: string;
+    readonly segmentInterval?: IntervalRule;
+    readonly ttl?: IntervalRule;
   };
   readonly updatedAt?: string;
 }
@@ -109,10 +114,7 @@ export interface TraceSchema {
     readonly name: string;
     readonly group: string;
   };
-  readonly tagFamilies: TagFamilySpec[];
-  readonly entity: {
-    readonly tagNames: string[];
-  };
+  readonly tags: TagSpec[];
   readonly traceIdTagName: string;
   readonly spanIdTagName: string;
   readonly timestampTagName: string;

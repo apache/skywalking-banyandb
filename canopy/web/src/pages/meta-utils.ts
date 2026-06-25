@@ -18,6 +18,7 @@
  */
 
 import type React from 'react';
+import type { IntervalRule } from 'canopy-shared';
 
 import { IconMeasures, IconStreams, IconTraces, IconProperties } from '../components/icons.js';
 
@@ -48,3 +49,20 @@ export const TYPE_ICONS: Record<string, React.ComponentType<{ size?: number }>> 
   traces:     IconTraces,
   properties: IconProperties,
 };
+
+/** Converts an IntervalRule to a human-readable string e.g. "1d", "24h". */
+export function formatInterval(r: IntervalRule | undefined | null): string {
+  if (!r) return '';
+  const suffix = r.unit === 'UNIT_HOUR' ? 'h' : 'd';
+  return `${r.num}${suffix}`;
+}
+
+/** Parses a user-typed interval string like "1d" or "24h" into an IntervalRule. */
+export function parseInterval(s: string): IntervalRule | null {
+  const m = /^(\d+)\s*([dDhH]?)$/.exec(s.trim());
+  if (!m || !m[1]) return null;
+  const num = parseInt(m[1], 10);
+  if (num <= 0) return null;
+  const unit = (m[2] ?? 'd').toLowerCase() === 'h' ? 'UNIT_HOUR' : 'UNIT_DAY';
+  return { unit, num };
+}

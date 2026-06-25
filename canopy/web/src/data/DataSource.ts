@@ -25,6 +25,7 @@ import type {
   GroupListResponse, CreateGroupRequest, UpdateGroupRequest,
   CreateStreamRequest, UpdateStreamRequest,
   CreateMeasureRequest, UpdateMeasureRequest,
+  CreateTraceRequest, UpdateTraceRequest,
   QueryRequest, QueryResponse,
   StreamSchema, MeasureSchema, TraceSchema, PropertySchema, Group,
 } from 'canopy-shared';
@@ -47,6 +48,10 @@ export interface DataSource {
   // Measure CRUD
   createMeasure(req: CreateMeasureRequest): Promise<MeasureSchema>;
   updateMeasure(group: string, name: string, req: UpdateMeasureRequest): Promise<MeasureSchema>;
+
+  // Trace CRUD
+  createTrace(req: CreateTraceRequest): Promise<TraceSchema>;
+  updateTrace(group: string, name: string, req: UpdateTraceRequest): Promise<TraceSchema>;
 
   // Generic delete
   deleteResource(type: string, group: string, name: string): Promise<void>;

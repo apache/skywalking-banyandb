@@ -18,7 +18,7 @@
  */
 
 import type {
-  Group, StreamSchema, MeasureSchema, TraceSchema, PropertySchema,
+  Group, IntervalRule, StreamSchema, MeasureSchema, TraceSchema, PropertySchema,
   TagFamilySpec, FieldSpec, TagType, FieldType, CompressMethod, EncodingMethod,
 } from './schema.js';
 
@@ -43,8 +43,8 @@ export interface CreateGroupRequest {
     readonly catalog: Group['catalog'];
     readonly resourceOpts: {
       readonly shardNum: number;
-      readonly segmentInterval: string;
-      readonly ttl: string;
+      readonly segmentInterval?: IntervalRule;
+      readonly ttl?: IntervalRule;
     };
   };
 }
@@ -52,10 +52,11 @@ export interface CreateGroupRequest {
 export interface UpdateGroupRequest {
   readonly group: {
     readonly metadata: { readonly name: string };
+    readonly catalog?: Group['catalog'];
     readonly resourceOpts: {
       readonly shardNum: number;
-      readonly segmentInterval: string;
-      readonly ttl: string;
+      readonly segmentInterval?: IntervalRule;
+      readonly ttl?: IntervalRule;
     };
   };
 }
@@ -82,6 +83,18 @@ export interface CreateMeasureRequest {
 
 export interface UpdateMeasureRequest {
   readonly measure: MeasureSchema;
+}
+
+// Trace CRUD
+
+export interface CreateTraceRequest {
+  readonly trace: Omit<TraceSchema, 'metadata'> & {
+    readonly metadata: { readonly name: string; readonly group: string };
+  };
+}
+
+export interface UpdateTraceRequest {
+  readonly trace: TraceSchema;
 }
 
 // Query

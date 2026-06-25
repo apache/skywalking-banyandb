@@ -28,7 +28,7 @@ import {
   IconMeasures,
   IconPlus, IconEdit, IconTrash, IconSearch, IconPlay, IconArrowRight,
 } from '../components/icons.js';
-import { CATALOG_MAP, TYPE_TITLES, TYPE_ICONS } from './meta-utils.js';
+import { CATALOG_MAP, TYPE_TITLES, TYPE_ICONS, formatInterval } from './meta-utils.js';
 
 function tagCount(r: StreamSchema | MeasureSchema | TraceSchema | PropertySchema): number {
   if ('tagFamilies' in r && r.tagFamilies) return r.tagFamilies.reduce((n, f) => n + (f.tags?.length ?? 0), 0);
@@ -128,11 +128,11 @@ export function GroupPage({ type, groupName, onNewResource, onEditResource, onDe
           </div>
           <div className="meta-chip">
             <span className="meta-k">segment</span>
-            <span className="meta-v">{group.resourceOpts.segmentInterval}</span>
+            <span className="meta-v">{formatInterval(group.resourceOpts.segmentInterval)}</span>
           </div>
           <div className="meta-chip">
             <span className="meta-k">ttl</span>
-            <span className="meta-v">{group.resourceOpts.ttl}</span>
+            <span className="meta-v">{formatInterval(group.resourceOpts.ttl)}</span>
           </div>
         </div>
       )}

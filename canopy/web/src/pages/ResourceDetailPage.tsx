@@ -178,7 +178,7 @@ export function ResourceDetailPage({
   const badgeText = indexMode ? 'INDEX MODE' : catalogLabel;
 
   let tagFamilyCount = 0;
-  if (isStream(resource) || isMeasure(resource) || isTrace(resource)) {
+  if (isStream(resource) || isMeasure(resource)) {
     tagFamilyCount = (resource as StreamSchema).tagFamilies?.length ?? 0;
   }
 
@@ -255,6 +255,12 @@ export function ResourceDetailPage({
             <span className="meta-v">{tagFamilyCount}</span>
           </span>
         )}
+        {isTrace(resource) && (
+          <span className="meta-chip">
+            <span className="meta-k">tags</span>
+            <span className="meta-v">{(resource as TraceSchema).tags?.length ?? 0}</span>
+          </span>
+        )}
         {isMeasure(resource) && (
           <span className="meta-chip">
             <span className="meta-k">fields</span>
@@ -275,33 +281,17 @@ export function ResourceDetailPage({
         )}
       </div>
 
-      {/* Tag families (stream / measure / trace) */}
-      {(isStream(resource) || isMeasure(resource) || isTrace(resource)) &&
+      {/* Tag families (stream / measure) */}
+      {(isStream(resource) || isMeasure(resource)) &&
         (resource as StreamSchema).tagFamilies?.map((family) => {
           const entityTagNames = (resource as StreamSchema).entity?.tagNames ?? [];
-          const traceResource = isTrace(resource) ? (resource as TraceSchema) : null;
-
           const rows: React.ReactNode[][] = family.tags.map((tag) => {
             const typeLabel = TAG_TYPE_LABEL[tag.type] ?? tag.type;
-            let roleCell: React.ReactNode = <span className="dim">—</span>;
-
-            if (traceResource) {
-              if (tag.name === traceResource.traceIdTagName) {
-                roleCell = <span className="role-tag is-reserved">trace-id</span>;
-              } else if (tag.name === traceResource.spanIdTagName) {
-                roleCell = <span className="role-tag is-reserved">span-id</span>;
-              } else if (tag.name === traceResource.timestampTagName) {
-                roleCell = <span className="role-tag is-reserved">timestamp</span>;
-              } else if (entityTagNames.includes(tag.name)) {
-                roleCell = <span className="role-tag is-entity">entity</span>;
-              }
-            } else if (entityTagNames.includes(tag.name)) {
-              roleCell = <span className="role-tag is-entity">entity</span>;
-            }
-
+            const roleCell: React.ReactNode = entityTagNames.includes(tag.name)
+              ? <span className="role-tag is-entity">entity</span>
+              : <span className="dim">—</span>;
             return [<span className="mono">{tag.name}</span>, typeLabel, <span className="role-cell">{roleCell}</span>];
           });
-
           return (
             <div key={family.name} className="detail-block">
               <div className="detail-h">
@@ -313,6 +303,31 @@ export function ResourceDetailPage({
           );
         })
       }
+
+      {/* Flat tags (trace) */}
+      {isTrace(resource) && (
+        <div className="detail-block">
+          <div className="detail-h">
+            <IconProperties size={15} />
+            {' '}Tags
+          </div>
+          <SpecTable
+            head={['Tag', 'Type', 'Role']}
+            rows={(resource as TraceSchema).tags?.map((tag) => {
+              const typeLabel = TAG_TYPE_LABEL[tag.type] ?? tag.type;
+              let roleCell: React.ReactNode = <span className="dim">—</span>;
+              if (tag.name === (resource as TraceSchema).traceIdTagName) {
+                roleCell = <span className="role-tag is-reserved">trace-id</span>;
+              } else if (tag.name === (resource as TraceSchema).spanIdTagName) {
+                roleCell = <span className="role-tag is-reserved">span-id</span>;
+              } else if (tag.name === (resource as TraceSchema).timestampTagName) {
+                roleCell = <span className="role-tag is-reserved">timestamp</span>;
+              }
+              return [<span className="mono">{tag.name}</span>, typeLabel, <span className="role-cell">{roleCell}</span>];
+            }) ?? []}
+          />
+        </div>
+      )}
 
       {/* Fields (measure only, when not indexMode) */}
       {isMeasure(resource) && !indexMode && (

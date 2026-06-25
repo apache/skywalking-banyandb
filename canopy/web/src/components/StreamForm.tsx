@@ -17,10 +17,10 @@
  * under the License.
  */
 
-import React, { useState } from 'react';
-import { useMutation, useQueryClient } from '@tanstack/react-query';
+import React, { useState, useEffect } from 'react';
+import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 
-import type { StreamSchema, CreateStreamRequest } from 'canopy-shared';
+import type { StreamSchema, CreateStreamRequest, UpdateStreamRequest } from 'canopy-shared';
 import { TagType } from 'canopy-shared';
 import { apiDataSource } from '../data/api.js';
 import { IconChevron } from './icons.js';
@@ -34,19 +34,12 @@ const TAG_TYPES = [
   'TAG_TYPE_DATA_BINARY',
 ] as const;
 
-interface TagRow {
-  name: string;
-  type: string;
-}
+interface TagRow { name: string; type: string; }
+interface FamilyRow { name: string; tags: TagRow[]; }
 
-interface FamilyRow {
-  name: string;
-  tags: TagRow[];
-}
-
-/** StreamForm renders either a create-stream modal or a delete-stream confirmation dialog. */
+/** StreamForm renders either a create/edit-stream modal or a delete-stream confirmation dialog. */
 export function StreamForm({ mode, groupName, initialName, onClose }: {
-  mode: 'create' | 'delete';
+  mode: 'create' | 'edit' | 'delete';
   groupName: string;
   initialName?: string;
   onClose: (created?: StreamSchema) => void;
@@ -59,12 +52,42 @@ export function StreamForm({ mode, groupName, initialName, onClose }: {
   ]);
   const [entityTags, setEntityTags] = useState<string[]>([]);
   const [error, setError] = useState('');
+  const [initialized, setInitialized] = useState(false);
+
+  const { data: editResource } = useQuery({
+    queryKey: ['resource', 'streams', groupName, initialName ?? ''],
+    queryFn: () => apiDataSource.getResource('streams', groupName, initialName!),
+    enabled: mode === 'edit' && !!initialName,
+  });
+  const editSchema = editResource as StreamSchema | undefined;
+
+  useEffect(() => {
+    if (mode === 'edit' && editSchema && !initialized) {
+      setName(editSchema.metadata.name);
+      setFamilies((editSchema.tagFamilies ?? []).map((f) => ({
+        name: f.name,
+        tags: (f.tags ?? []).map((t) => ({ name: t.name, type: t.type as string })),
+      })));
+      setEntityTags(editSchema.entity?.tagNames ?? []);
+      setInitialized(true);
+    }
+  }, [mode, editSchema, initialized]);
 
   const createMut = useMutation({
     mutationFn: (req: CreateStreamRequest) => apiDataSource.createStream(req),
     onSuccess: (stream) => {
       qc.invalidateQueries({ queryKey: ['resources', 'streams', groupName] });
       onClose(stream);
+    },
+    onError: (e: Error) => setError(e.message),
+  });
+
+  const updateMut = useMutation({
+    mutationFn: (req: UpdateStreamRequest) => apiDataSource.updateStream(groupName, initialName!, req),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['resources', 'streams', groupName] });
+      qc.invalidateQueries({ queryKey: ['resource', 'streams', groupName, initialName] });
+      onClose();
     },
     onError: (e: Error) => setError(e.message),
   });
@@ -78,92 +101,77 @@ export function StreamForm({ mode, groupName, initialName, onClose }: {
     onError: (e: Error) => setError(e.message),
   });
 
-  const allTagNames = families.flatMap(f => f.tags.map(t => t.name)).filter(Boolean);
-  const availTags = allTagNames.filter(n => !entityTags.includes(n));
+  const allTagNames = families.flatMap((f) => f.tags.map((t) => t.name)).filter(Boolean);
+  const availTags = allTagNames.filter((n) => !entityTags.includes(n));
 
   function addFamily() {
-    setFamilies(prev => [...prev, { name: '', tags: [{ name: '', type: 'TAG_TYPE_STRING' }] }]);
+    setFamilies((prev) => [...prev, { name: '', tags: [{ name: '', type: 'TAG_TYPE_STRING' }] }]);
   }
 
   function removeFamily(famIdx: number) {
-    setFamilies(prev => prev.filter((_, i) => i !== famIdx));
+    setFamilies((prev) => prev.filter((_, i) => i !== famIdx));
   }
 
   function updateFamilyName(famIdx: number, value: string) {
-    setFamilies(prev => prev.map((fam, i) => i === famIdx ? { ...fam, name: value } : fam));
+    setFamilies((prev) => prev.map((fam, i) => i === famIdx ? { ...fam, name: value } : fam));
   }
 
   function addTag(famIdx: number) {
-    setFamilies(prev => prev.map((fam, i) =>
+    setFamilies((prev) => prev.map((fam, i) =>
       i === famIdx ? { ...fam, tags: [...fam.tags, { name: '', type: 'TAG_TYPE_STRING' }] } : fam,
     ));
   }
 
   function removeTag(famIdx: number, tagIdx: number) {
-    setFamilies(prev => prev.map((fam, i) =>
+    setFamilies((prev) => prev.map((fam, i) =>
       i === famIdx ? { ...fam, tags: fam.tags.filter((_, j) => j !== tagIdx) } : fam,
     ));
   }
 
   function updateTagName(famIdx: number, tagIdx: number, value: string) {
-    setFamilies(prev => prev.map((fam, i) =>
-      i === famIdx
-        ? { ...fam, tags: fam.tags.map((tag, j) => j === tagIdx ? { ...tag, name: value } : tag) }
-        : fam,
+    setFamilies((prev) => prev.map((fam, i) =>
+      i === famIdx ? { ...fam, tags: fam.tags.map((tag, j) => j === tagIdx ? { ...tag, name: value } : tag) } : fam,
     ));
   }
 
   function updateTagType(famIdx: number, tagIdx: number, value: string) {
-    setFamilies(prev => prev.map((fam, i) =>
-      i === famIdx
-        ? { ...fam, tags: fam.tags.map((tag, j) => j === tagIdx ? { ...tag, type: value } : tag) }
-        : fam,
+    setFamilies((prev) => prev.map((fam, i) =>
+      i === famIdx ? { ...fam, tags: fam.tags.map((tag, j) => j === tagIdx ? { ...tag, type: value } : tag) } : fam,
     ));
   }
 
   function toggleEntityTag(tagName: string) {
-    setEntityTags(prev =>
-      prev.includes(tagName) ? prev.filter(t => t !== tagName) : [...prev, tagName],
-    );
+    setEntityTags((prev) => prev.includes(tagName) ? prev.filter((t) => t !== tagName) : [...prev, tagName]);
   }
 
   function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
-    if (!name.trim()) {
-      setError('Name is required.');
-      return;
-    }
-    const validFamilies = families.filter(f => f.name.trim() && f.tags.some(t => t.name.trim()));
-    if (validFamilies.length === 0) {
-      setError('At least one tag family with a name and one tag is required.');
-      return;
-    }
+    const submittedName = mode === 'edit' ? initialName! : name.trim();
+    if (!submittedName) { setError('Name is required.'); return; }
+    const validFamilies = families.filter((f) => f.name.trim() && f.tags.some((t) => t.name.trim()));
+    if (validFamilies.length === 0) { setError('At least one tag family with a name and one tag is required.'); return; }
     for (const fam of families) {
       for (const tag of fam.tags) {
-        if (!tag.name.trim()) {
-          setError('All tags must have a name.');
-          return;
-        }
+        if (!tag.name.trim()) { setError('All tags must have a name.'); return; }
       }
     }
-    if (entityTags.length === 0) {
-      setError('At least one entity tag is required.');
-      return;
-    }
+    if (entityTags.length === 0) { setError('At least one entity tag is required.'); return; }
     setError('');
-    createMut.mutate({
-      stream: {
-        metadata: { name: name.trim(), group: groupName },
-        tagFamilies: families.map(f => ({
-          name: f.name,
-          tags: f.tags.map(t => ({ name: t.name, type: t.type as TagType })),
-        })),
-        entity: { tagNames: entityTags },
-      },
-    });
+
+    const streamPayload = {
+      metadata: { name: submittedName, group: groupName },
+      tagFamilies: families.map((f) => ({
+        name: f.name,
+        tags: f.tags.map((t) => ({ name: t.name, type: t.type as TagType })),
+      })),
+      entity: { tagNames: entityTags },
+    };
+
+    if (mode === 'edit') { updateMut.mutate({ stream: streamPayload }); }
+    else { createMut.mutate({ stream: streamPayload }); }
   }
 
-  const isPending = createMut.isPending || deleteMut.isPending;
+  const isPending = createMut.isPending || updateMut.isPending || deleteMut.isPending;
 
   if (mode === 'delete') {
     return (
@@ -174,21 +182,12 @@ export function StreamForm({ mode, groupName, initialName, onClose }: {
             <button className="modal-x" onClick={() => onClose()} />
           </div>
           <div className="modal-body">
-            <p>
-              This will permanently delete stream{' '}
-              <span className="mono">{initialName}</span>.
-            </p>
+            <p>This will permanently delete stream <span className="mono">{initialName}</span>.</p>
             {error && <div className="f-error">{error}</div>}
           </div>
           <div className="modal-foot">
-            <button className="btn btn-ghost" onClick={() => onClose()} disabled={isPending}>
-              Cancel
-            </button>
-            <button
-              className="btn btn-danger"
-              onClick={() => deleteMut.mutate()}
-              disabled={isPending}
-            >
+            <button className="btn btn-ghost" onClick={() => onClose()} disabled={isPending}>Cancel</button>
+            <button className="btn btn-danger" onClick={() => deleteMut.mutate()} disabled={isPending}>
               {isPending ? 'Deleting…' : 'Delete'}
             </button>
           </div>
@@ -197,105 +196,63 @@ export function StreamForm({ mode, groupName, initialName, onClose }: {
     );
   }
 
+  const isEdit = mode === 'edit';
+
   return (
     <div className="modal-overlay" onClick={() => onClose()}>
       <form className="modal is-wide" onSubmit={handleSubmit} onClick={(e) => e.stopPropagation()}>
         <div className="modal-head">
-          <span className="modal-title">New stream</span>
+          <span className="modal-title">{isEdit ? 'Edit stream' : 'New stream'}</span>
           <button type="button" className="modal-x" onClick={() => onClose()} />
         </div>
 
         <div className="modal-body">
-          {/* Basic info */}
           <div className="f-section">
             <label className="f-field">
-              <span className="f-label">
-                Name <span className="f-req">*</span>
-              </span>
-              <input
-                className="f-input mono"
-                type="text"
-                value={name}
-                onChange={(e) => setName(e.target.value)}
-                autoFocus
-              />
+              <span className="f-label">Name {!isEdit && <span className="f-req">*</span>}</span>
+              <input className="f-input mono" type="text"
+                value={isEdit ? (initialName ?? '') : name}
+                onChange={(e) => { if (!isEdit) setName(e.target.value); }}
+                readOnly={isEdit} autoFocus={!isEdit} />
             </label>
           </div>
 
-          {/* Tag families */}
           <div className="f-section">
-            <span className="f-section-title">
-              Tag families <span className="f-req">*</span>
-            </span>
+            <span className="f-section-title">Tag families <span className="f-req">*</span></span>
             <div className="fam-list">
               {families.map((fam, famIdx) => (
                 <div className="fam-card" key={famIdx}>
                   <div className="fam-head">
-                    <input
-                      className="f-input fam-name"
-                      type="text"
-                      placeholder="Family name"
-                      value={fam.name}
-                      onChange={(e) => updateFamilyName(famIdx, e.target.value)}
-                    />
+                    <input className="f-input fam-name" type="text" placeholder="Family name"
+                      value={fam.name} onChange={(e) => updateFamilyName(famIdx, e.target.value)} />
                     {families.length > 1 && (
-                      <button
-                        type="button"
-                        className="btn fam-del"
-                        onClick={() => removeFamily(famIdx)}
-                      >
-                        Remove
-                      </button>
+                      <button type="button" className="btn fam-del" onClick={() => removeFamily(famIdx)}>Remove</button>
                     )}
                   </div>
                   {fam.tags.map((tag, tagIdx) => (
                     <div className="spec-row" key={tagIdx}>
                       <div className="spec-cell">
-                        <input
-                          className="f-input"
-                          type="text"
-                          placeholder="Tag name"
-                          value={tag.name}
-                          onChange={(e) => updateTagName(famIdx, tagIdx, e.target.value)}
-                        />
+                        <input className="f-input" type="text" placeholder="Tag name"
+                          value={tag.name} onChange={(e) => updateTagName(famIdx, tagIdx, e.target.value)} />
                       </div>
                       <div className="spec-cell">
                         <div className="f-select-wrap">
-                          <select
-                            className="f-select"
-                            value={tag.type}
-                            onChange={(e) => updateTagType(famIdx, tagIdx, e.target.value)}
-                          >
-                            {TAG_TYPES.map(tt => (
-                              <option key={tt} value={tt}>{tt}</option>
-                            ))}
+                          <select className="f-select" value={tag.type} onChange={(e) => updateTagType(famIdx, tagIdx, e.target.value)}>
+                            {TAG_TYPES.map((tt) => <option key={tt} value={tt}>{tt}</option>)}
                           </select>
-                          <span className="f-select-chev">
-                            <IconChevron />
-                          </span>
+                          <span className="f-select-chev"><IconChevron /></span>
                         </div>
                       </div>
-                      <button
-                        type="button"
-                        className="btn"
-                        onClick={() => removeTag(famIdx, tagIdx)}
-                      >
-                        ×
-                      </button>
+                      <button type="button" className="btn" onClick={() => removeTag(famIdx, tagIdx)}>×</button>
                     </div>
                   ))}
-                  <button type="button" className="btn btn-ghost" onClick={() => addTag(famIdx)}>
-                    Add tag
-                  </button>
+                  <button type="button" className="btn btn-ghost" onClick={() => addTag(famIdx)}>Add tag</button>
                 </div>
               ))}
             </div>
-            <button type="button" className="btn btn-ghost" onClick={addFamily}>
-              Add family
-            </button>
+            <button type="button" className="btn btn-ghost" onClick={addFamily}>Add family</button>
           </div>
 
-          {/* Entity */}
           <div className="f-section">
             <span className="f-section-title">Entity</span>
             <span className="f-section-desc">Select tag names as entity identifiers</span>
@@ -306,25 +263,14 @@ export function StreamForm({ mode, groupName, initialName, onClose }: {
                 <>
                   <div className="picker-selected">
                     {entityTags.map((tagName, ord) => (
-                      <button
-                        key={tagName}
-                        type="button"
-                        className="picker-chip is-on"
-                        onClick={() => toggleEntityTag(tagName)}
-                      >
-                        <span className="picker-ord">{ord + 1}</span>
-                        {tagName}
+                      <button key={tagName} type="button" className="picker-chip is-on" onClick={() => toggleEntityTag(tagName)}>
+                        <span className="picker-ord">{ord + 1}</span>{tagName}
                       </button>
                     ))}
                   </div>
                   <div className="picker-avail">
-                    {availTags.map(tagName => (
-                      <button
-                        key={tagName}
-                        type="button"
-                        className="picker-chip"
-                        onClick={() => toggleEntityTag(tagName)}
-                      >
+                    {availTags.map((tagName) => (
+                      <button key={tagName} type="button" className="picker-chip" onClick={() => toggleEntityTag(tagName)}>
                         {tagName}
                       </button>
                     ))}
@@ -338,11 +284,9 @@ export function StreamForm({ mode, groupName, initialName, onClose }: {
         </div>
 
         <div className="modal-foot">
-          <button type="button" className="btn btn-ghost" onClick={() => onClose()} disabled={isPending}>
-            Cancel
-          </button>
+          <button type="button" className="btn btn-ghost" onClick={() => onClose()} disabled={isPending}>Cancel</button>
           <button type="submit" className="btn btn-primary" disabled={isPending}>
-            {isPending ? 'Creating…' : 'Create'}
+            {isPending ? (isEdit ? 'Saving…' : 'Creating…') : (isEdit ? 'Save' : 'Create')}
           </button>
         </div>
       </form>
