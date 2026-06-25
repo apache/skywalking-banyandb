@@ -60,6 +60,7 @@ import (
 	"github.com/apache/skywalking-banyandb/pkg/bus"
 	"github.com/apache/skywalking-banyandb/pkg/convert"
 	localfs "github.com/apache/skywalking-banyandb/pkg/fs"
+	"github.com/apache/skywalking-banyandb/pkg/index/inverted"
 	"github.com/apache/skywalking-banyandb/pkg/logger"
 	"github.com/apache/skywalking-banyandb/pkg/node"
 	pbv1 "github.com/apache/skywalking-banyandb/pkg/pb/v1"
@@ -996,8 +997,9 @@ func roundtripTagValue(iwr *measurev1.InternalWriteRequest, tagName string) stri
 	return ""
 }
 
-// roundtripAllSidxDirsHaveSnapshot returns true when every <groupRoot>/seg-*/sidx
-// dir carries at least one .snp file (bluge's snapshot marker).
+// roundtripAllSidxDirsHaveSnapshot returns true when every non-empty
+// <groupRoot>/seg-*/sidx dir carries at least one .snp file (bluge's snapshot
+// marker), and at least one such segment exists.
 func roundtripAllSidxDirsHaveSnapshot(groupRoot string) bool {
 	segs, err := os.ReadDir(groupRoot)
 	if err != nil {
@@ -1009,6 +1011,13 @@ func roundtripAllSidxDirsHaveSnapshot(groupRoot string) bool {
 			continue
 		}
 		sidxDir := filepath.Join(groupRoot, seg.Name(), "sidx")
+		// Skip empty segments. Near a day boundary an empty adjacent segment can
+		// exist (e.g. the live current-day segment while the data lands in the
+		// previous day around midnight); its series index holds no documents and
+		// therefore never gets a committed .snp, so requiring one would hang.
+		if docs, _ := inverted.ReadOnlyDocCount(sidxDir); docs == 0 {
+			continue
+		}
 		entries, readErr := os.ReadDir(sidxDir)
 		if readErr != nil {
 			return false

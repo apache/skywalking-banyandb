@@ -304,6 +304,14 @@ func TestMeasureIndexedTagResolvedFromIndex(t *testing.T) {
 
 	const total = 2
 	baseTS := time.Now().Truncate(time.Minute)
+	// Keep all `total` points (one minute apart) inside a single daily segment.
+	// Near local midnight the default span would cross the day boundary and split
+	// the series across two segments, which breaks the single-segment resolver
+	// below; pull the window back so it ends before midnight.
+	midnight := time.Date(baseTS.Year(), baseTS.Month(), baseTS.Day(), 0, 0, 0, 0, baseTS.Location()).Add(24 * time.Hour)
+	if span := time.Duration(total) * time.Minute; baseTS.Add(span).After(midnight) {
+		baseTS = midnight.Add(-span - time.Minute)
+	}
 	bp := pipeline.NewBatchPublisher(5 * time.Second)
 	for i := 0; i < total; i++ {
 		iStr := strconv.Itoa(i)
