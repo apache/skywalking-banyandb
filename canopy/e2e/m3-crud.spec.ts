@@ -696,6 +696,34 @@ test.describe.serial('M3 CRUD — Trace', () => {
     await page.screenshot({ path: join(screenshotsDir, 'm3-crud-trace-detail.png'), fullPage: true });
   });
 
+  test('edit trace via UI — opens pre-filled modal, adds a tag, verifies in detail page', async ({ page }) => {
+    await loginAsAdmin(page);
+    await page.goto(`/metadata/traces/${traceGroupName}/${traceName}`);
+    await expect(page.locator('.page-body')).toBeVisible({ timeout: 10_000 });
+
+    await page.locator('.page-actions .btn-ghost', { hasText: /\bEdit\b/i }).click();
+    await expect(page.locator('.modal-title')).toContainText('Edit trace');
+
+    // Name is pre-filled and read-only
+    await expect(page.locator('.modal .f-input.mono')).toHaveValue(traceName);
+
+    // Wait for useEffect pre-fill: first tag input shows 'tid'
+    await expect(
+      page.locator('.fam-card .spec-row .spec-cell input[type="text"]').first(),
+    ).toHaveValue('tid', { timeout: 5_000 });
+
+    // Add a new tag
+    await page.locator('.fam-card .btn-ghost', { hasText: /Add tag/i }).click();
+    await page.locator('.fam-card .spec-row .spec-cell input[type="text"]').last().fill('extra');
+
+    await page.locator('.modal-foot .btn-primary').click();
+    await expect(page.locator('.modal-title')).toHaveCount(0, { timeout: 10_000 });
+
+    // Verify 'extra' appears in the detail page tag spec table after save
+    await expect(page.locator('.detail-block').first()).toContainText('extra', { timeout: 10_000 });
+    await page.screenshot({ path: join(screenshotsDir, 'm3-crud-trace-edited.png'), fullPage: true });
+  });
+
   test('delete trace resource via UI and verify redirect to group page', async ({ page }) => {
     await loginAsAdmin(page);
     await page.goto(`/metadata/traces/${traceGroupName}/${traceName}`);

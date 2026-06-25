@@ -48,6 +48,7 @@ type ModalState =
   | { kind: 'stream-edit'; groupName: string; resourceName: string }
   | { kind: 'stream-delete'; groupName: string; resourceName: string }
   | { kind: 'trace-create'; groupName: string }
+  | { kind: 'trace-edit'; groupName: string; resourceName: string }
   | { kind: 'trace-delete'; groupName: string; resourceName: string }
   | null;
 
@@ -158,6 +159,7 @@ function MetadataResourceRoute() {
         onEdit={() => {
           if (type === 'measures') setModal({ kind: 'measure-edit', groupName: group, resourceName: name });
           else if (type === 'streams') setModal({ kind: 'stream-edit', groupName: group, resourceName: name });
+          else if (type === 'traces') setModal({ kind: 'trace-edit', groupName: group, resourceName: name });
         }}
         onDelete={() => {
           if (type === 'measures') setModal({ kind: 'measure-delete', groupName: group, resourceName: name });
@@ -201,6 +203,14 @@ function MetadataResourceRoute() {
             setModal(null);
             navigate(`/metadata/${type}/${group}`);
           }}
+        />
+      )}
+      {modal?.kind === 'trace-edit' && (
+        <TraceForm
+          mode="edit"
+          groupName={modal.groupName}
+          initialName={modal.resourceName}
+          onClose={() => setModal(null)}
         />
       )}
       {modal?.kind === 'trace-delete' && (

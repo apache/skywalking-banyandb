@@ -1,0 +1,87 @@
+/*
+ * Licensed to Apache Software Foundation (ASF) under one or more contributor
+ * license agreements. See the NOTICE file distributed with
+ * this work for additional information regarding copyright
+ * ownership. Apache Software Foundation (ASF) licenses this file to you under
+ * the Apache License, Version 2.0 (the "License"); you may
+ * not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing,
+ * software distributed under the License is distributed on an
+ * "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
+ * KIND, either express or implied.  See the License for the
+ * specific language governing permissions and limitations
+ * under the License.
+ */
+
+import React from 'react';
+import { render, screen } from '@testing-library/react';
+import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
+
+import { apiDataSource } from '../data/api.js';
+import { GroupForm } from './GroupForm.js';
+
+vi.mock('../data/api.js', () => ({
+  apiDataSource: {
+    listGroups: vi.fn(),
+    createGroup: vi.fn(),
+    updateGroup: vi.fn(),
+    deleteGroup: vi.fn(),
+  },
+}));
+
+function makeWrapper() {
+  const qc = new QueryClient({ defaultOptions: { queries: { retry: false }, mutations: { retry: false } } });
+  return ({ children }: { children: React.ReactNode }) => (
+    <QueryClientProvider client={qc}>{children}</QueryClientProvider>
+  );
+}
+
+const MOCK_GROUP = {
+  name: 'mygroup',
+  catalog: 'CATALOG_MEASURE',
+  resourceOpts: {
+    shardNum: 2,
+    segmentInterval: { num: 1, unit: 'UNIT_DAY' },
+    ttl: { num: 7, unit: 'UNIT_DAY' },
+  },
+};
+
+describe('GroupForm — edit mode immutable fields', () => {
+  beforeEach(() => {
+    vi.mocked(apiDataSource.listGroups).mockResolvedValue({ groups: [MOCK_GROUP] } as never);
+  });
+
+  it('name is read-only', () => {
+    render(
+      <GroupForm mode="edit" initialName="mygroup" onClose={vi.fn()} />,
+      { wrapper: makeWrapper() },
+    );
+    const nameInput = screen.getByDisplayValue('mygroup');
+    expect(nameInput).toHaveAttribute('readonly');
+  });
+
+  it('catalog is shown as a read-only text input after group loads', async () => {
+    render(
+      <GroupForm mode="edit" initialName="mygroup" onClose={vi.fn()} />,
+      { wrapper: makeWrapper() },
+    );
+    // findBy* waits for the listGroups query to resolve and editGroup to be set
+    const catalogInput = await screen.findByDisplayValue('CATALOG_MEASURE');
+    expect(catalogInput).toHaveAttribute('readonly');
+  });
+
+  it('catalog selector buttons are not rendered in edit mode', () => {
+    render(
+      <GroupForm mode="edit" initialName="mygroup" onClose={vi.fn()} />,
+      { wrapper: makeWrapper() },
+    );
+    // In create mode these buttons exist; in edit mode the {!isEdit && ...} guard hides them
+    expect(screen.queryByRole('button', { name: 'Measure' })).toBeNull();
+    expect(screen.queryByRole('button', { name: 'Stream' })).toBeNull();
+    expect(screen.queryByRole('button', { name: 'Trace' })).toBeNull();
+  });
+});

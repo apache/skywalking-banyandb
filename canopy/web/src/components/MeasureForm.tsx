@@ -46,8 +46,7 @@ const ENCODING_OPTIONS = [
 ];
 
 const COMPRESSION_OPTIONS = [
-  { value: 'COMPRESSION_METHOD_UNSPECIFIED', label: 'Unspecified' },
-  { value: 'COMPRESSION_METHOD_ZSTD',        label: 'Zstd' },
+  { value: 'COMPRESSION_METHOD_ZSTD', label: 'Zstd' },
 ];
 
 interface TagRow { name: string; type: string; }
@@ -195,7 +194,7 @@ export function MeasureForm({ mode, groupName, initialName, onClose }: {
   function addField() {
     setFields((prev) => [...prev, {
       name: '', fieldType: 'FIELD_TYPE_INT64',
-      encodingMethod: 'ENCODING_METHOD_UNSPECIFIED', compressionMethod: 'COMPRESSION_METHOD_UNSPECIFIED',
+      encodingMethod: 'ENCODING_METHOD_UNSPECIFIED', compressionMethod: 'COMPRESSION_METHOD_ZSTD',
     }]);
   }
 
@@ -218,7 +217,11 @@ export function MeasureForm({ mode, groupName, initialName, onClose }: {
       if (!fam.name.trim()) { setError('Each tag family must have a name.'); return; }
       for (const tag of fam.tags) {
         if (!tag.name.trim()) { setError(`All tags in family "${fam.name}" must have names.`); return; }
+        if (tag.name.includes('#')) { setError(`Tag name "${tag.name}" must not contain "#".`); return; }
       }
+    }
+    for (const field of fields) {
+      if (!field.name.trim()) { setError('All fields must have a name.'); return; }
     }
     if (entityTags.length === 0) { setError('Select at least one entity tag.'); return; }
 

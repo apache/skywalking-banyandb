@@ -17,10 +17,10 @@
  * under the License.
  */
 
-import React, { useState } from 'react';
-import { useMutation, useQueryClient } from '@tanstack/react-query';
+import React, { useState, useEffect } from 'react';
+import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 
-import type { TraceSchema, CreateTraceRequest, TagType } from 'canopy-shared';
+import type { TraceSchema, CreateTraceRequest, UpdateTraceRequest, TagType } from 'canopy-shared';
 import { apiDataSource } from '../data/api.js';
 import { IconChevron } from './icons.js';
 
@@ -52,9 +52,9 @@ const TAG_TYPES = [
 
 interface TagRow { name: string; type: string; }
 
-/** TraceForm renders a create-trace modal or a delete-trace confirmation dialog. */
+/** TraceForm renders a create/edit-trace modal or a delete-trace confirmation dialog. */
 export function TraceForm({ mode, groupName, initialName, onClose }: {
-  mode: 'create' | 'delete';
+  mode: 'create' | 'edit' | 'delete';
   groupName: string;
   initialName?: string;
   onClose: (created?: TraceSchema) => void;
@@ -67,12 +67,40 @@ export function TraceForm({ mode, groupName, initialName, onClose }: {
   const [spanIdTagName, setSpanIdTagName] = useState('');
   const [timestampTagName, setTimestampTagName] = useState('');
   const [error, setError] = useState('');
+  const [initialized, setInitialized] = useState(false);
+
+  const { data: editResource } = useQuery({
+    queryKey: ['resource', 'traces', groupName, initialName ?? ''],
+    queryFn: () => apiDataSource.getResource('traces', groupName, initialName!),
+    enabled: mode === 'edit' && !!initialName,
+  });
+  const editSchema = editResource as TraceSchema | undefined;
+
+  useEffect(() => {
+    if (mode === 'edit' && editSchema && !initialized) {
+      setTags((editSchema.tags ?? []).map((t) => ({ name: t.name, type: t.type as string })));
+      setTraceIdTagName(editSchema.traceIdTagName ?? '');
+      setSpanIdTagName(editSchema.spanIdTagName ?? '');
+      setTimestampTagName(editSchema.timestampTagName ?? '');
+      setInitialized(true);
+    }
+  }, [mode, editSchema, initialized]);
 
   const createMut = useMutation({
     mutationFn: (req: CreateTraceRequest) => apiDataSource.createTrace(req),
     onSuccess: (trace) => {
       qc.invalidateQueries({ queryKey: ['resources', 'traces', groupName] });
       onClose(trace);
+    },
+    onError: (e: Error) => setError(e.message),
+  });
+
+  const updateMut = useMutation({
+    mutationFn: (req: UpdateTraceRequest) => apiDataSource.updateTrace(groupName, initialName!, req),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['resources', 'traces', groupName] });
+      qc.invalidateQueries({ queryKey: ['resource', 'traces', groupName, initialName] });
+      onClose();
     },
     onError: (e: Error) => setError(e.message),
   });
@@ -106,28 +134,32 @@ export function TraceForm({ mode, groupName, initialName, onClose }: {
 
   function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
-    if (!name.trim()) { setError('Name is required.'); return; }
+    const submittedName = mode === 'edit' ? initialName! : name.trim();
+    if (!submittedName) { setError('Name is required.'); return; }
     if (tags.length === 0) { setError('At least one tag is required.'); return; }
     for (const tag of tags) {
       if (!tag.name.trim()) { setError('All tags must have a name.'); return; }
+      if (tag.name.includes('#')) { setError(`Tag name "${tag.name}" must not contain "#".`); return; }
     }
     if (!traceIdTagName) { setError('Trace ID tag name is required.'); return; }
     if (!spanIdTagName) { setError('Span ID tag name is required.'); return; }
     if (!timestampTagName) { setError('Timestamp tag name is required.'); return; }
     setError('');
 
-    createMut.mutate({
-      trace: {
-        metadata: { name: name.trim(), group: groupName },
-        tags: tags.map((t) => ({ name: t.name, type: t.type as TagType })),
-        traceIdTagName,
-        spanIdTagName,
-        timestampTagName,
-      },
-    });
+    const tracePayload = {
+      metadata: { name: submittedName, group: groupName },
+      tags: tags.map((t) => ({ name: t.name, type: t.type as TagType })),
+      traceIdTagName,
+      spanIdTagName,
+      timestampTagName,
+    };
+
+    if (mode === 'edit') { updateMut.mutate({ trace: tracePayload }); }
+    else { createMut.mutate({ trace: tracePayload }); }
   }
 
-  const isPending = createMut.isPending || deleteMut.isPending;
+  const isPending = createMut.isPending || updateMut.isPending || deleteMut.isPending;
+  const isEdit = mode === 'edit';
 
   if (mode === 'delete') {
     return (
@@ -156,16 +188,18 @@ export function TraceForm({ mode, groupName, initialName, onClose }: {
     <div className="modal-overlay" onClick={() => onClose()}>
       <form className="modal is-wide" onSubmit={handleSubmit} onClick={(e) => e.stopPropagation()}>
         <div className="modal-head">
-          <span className="modal-title">New trace</span>
+          <span className="modal-title">{isEdit ? 'Edit trace' : 'New trace'}</span>
           <button type="button" className="modal-x" onClick={() => onClose()} />
         </div>
 
         <div className="modal-body">
           <div className="f-section">
             <label className="f-field">
-              <span className="f-label">Name <span className="f-req">*</span></span>
-              <input className="f-input mono" type="text" value={name}
-                onChange={(e) => setName(e.target.value)} autoFocus />
+              <span className="f-label">Name {!isEdit && <span className="f-req">*</span>}</span>
+              <input className="f-input mono" type="text"
+                value={isEdit ? (initialName ?? '') : name}
+                onChange={(e) => { if (!isEdit) setName(e.target.value); }}
+                readOnly={isEdit} autoFocus={!isEdit} />
             </label>
           </div>
 
@@ -210,7 +244,7 @@ export function TraceForm({ mode, groupName, initialName, onClose }: {
         <div className="modal-foot">
           <button type="button" className="btn btn-ghost" onClick={() => onClose()} disabled={isPending}>Cancel</button>
           <button type="submit" className="btn btn-primary" disabled={isPending}>
-            {isPending ? 'Creating…' : 'Create'}
+            {isPending ? (isEdit ? 'Saving…' : 'Creating…') : (isEdit ? 'Save' : 'Create')}
           </button>
         </div>
       </form>

@@ -148,11 +148,12 @@ export function StreamForm({ mode, groupName, initialName, onClose }: {
     e.preventDefault();
     const submittedName = mode === 'edit' ? initialName! : name.trim();
     if (!submittedName) { setError('Name is required.'); return; }
-    const validFamilies = families.filter((f) => f.name.trim() && f.tags.some((t) => t.name.trim()));
-    if (validFamilies.length === 0) { setError('At least one tag family with a name and one tag is required.'); return; }
+    if (families.length === 0) { setError('At least one tag family is required.'); return; }
     for (const fam of families) {
+      if (!fam.name.trim()) { setError('Each tag family must have a name.'); return; }
       for (const tag of fam.tags) {
-        if (!tag.name.trim()) { setError('All tags must have a name.'); return; }
+        if (!tag.name.trim()) { setError(`All tags in family "${fam.name}" must have names.`); return; }
+        if (tag.name.includes('#')) { setError(`Tag name "${tag.name}" must not contain "#".`); return; }
       }
     }
     if (entityTags.length === 0) { setError('At least one entity tag is required.'); return; }
