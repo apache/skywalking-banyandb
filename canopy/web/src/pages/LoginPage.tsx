@@ -81,7 +81,7 @@ function Field({ label, required, value, onChange, type = 'text', placeholder, m
           onKeyDown={(e) => { if (e.key === 'Enter' && onSubmit) onSubmit(); }}
         />
         {eye && (
-          <button type="button" className="f-eye" tabIndex={-1} onClick={onEye} aria-label="Toggle visibility">
+          <button type="button" className="f-eye" onClick={onEye} aria-label="Toggle visibility">
             <EyeIcon off={!eyeOn} />
           </button>
         )}

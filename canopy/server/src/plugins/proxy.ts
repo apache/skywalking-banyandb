@@ -150,6 +150,7 @@ export async function registerProxy(app: FastifyInstance, config: Config): Promi
   async function requireAuth(request: FastifyRequest, reply: FastifyReply) {
     if (!request.session?.user) {
       await reply.status(401).send({ error: 'unauthenticated', message: 'Login required' });
+      return reply;
     }
   }
 

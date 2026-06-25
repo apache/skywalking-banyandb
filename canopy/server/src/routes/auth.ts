@@ -22,6 +22,7 @@ import type { FastifyInstance, FastifyRequest, FastifyReply } from 'fastify';
 import { request as undiciRequest } from 'undici';
 
 import type { Config } from '../config.js';
+import { checkEndpointSafe, SsrfError } from '../lib/ssrf.js';
 
 interface LoginBody {
   username: string;
@@ -30,17 +31,26 @@ interface LoginBody {
 }
 
 function normalizeEndpoint(raw: string): string {
-  // Accept bare host:port and normalize to http://
-  // Leave any other scheme (ftp://, etc.) unchanged so isValidHttpUrl rejects it.
-  if (/^https?:\/\//i.test(raw)) return raw;
-  if (/^[a-z][a-z0-9+\-.]*:\/\//i.test(raw)) return raw;
-  return `http://${raw}`;
+  // Accept bare host:port — normalize to http:// first so URL can parse it.
+  // Leave any other scheme unchanged so isValidHttpUrl rejects it.
+  const withScheme = /^https?:\/\//i.test(raw) ? raw
+    : /^[a-z][a-z0-9+\-.]*:\/\//i.test(raw) ? raw
+    : `http://${raw}`;
+  try {
+    // Canonicalize to origin — strips path, query, fragment, and userinfo.
+    return new URL(withScheme).origin;
+  } catch {
+    return withScheme;
+  }
 }
 
 function isValidHttpUrl(s: string): boolean {
   try {
     const u = new URL(s);
-    return u.protocol === 'http:' || u.protocol === 'https:';
+    if (u.protocol !== 'http:' && u.protocol !== 'https:') return false;
+    // Reject embedded credentials (e.g. http://user:pass@host)
+    if (u.username !== '' || u.password !== '') return false;
+    return true;
   } catch {
     return false;
   }
@@ -98,6 +108,16 @@ export async function registerAuth(app: FastifyInstance, config: Config): Promis
 
     if (!user || !passwordOk) {
       return reply.status(401).send({ error: 'invalid_credentials', message: 'Invalid username or password' });
+    }
+
+    // SSRF check before contacting the user-supplied endpoint
+    try {
+      await checkEndpointSafe(normalizedEndpoint, false);
+    } catch (err) {
+      if (err instanceof SsrfError) {
+        return reply.status(400).send({ error: 'bad_endpoint', message: err.message });
+      }
+      throw err;
     }
 
     const banyanVersion = await fetchBanyanVersion(normalizedEndpoint);

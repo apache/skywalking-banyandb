@@ -20,7 +20,6 @@
     "@fastify/cookie": "^11.0.2",
     "undici": "^7.10.0",
     "bcryptjs": "^3.0.2",
-    "argon2": "^0.43.0",
     "js-yaml": "^4.1.0",
     "canopy-shared": "*"
   },
