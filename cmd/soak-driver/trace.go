@@ -271,7 +271,7 @@ func traceSeedFixture(ctx context.Context, conn *grpc.ClientConn, traces, spans 
 		}
 	}
 
-	base := traceFixtureBaseTime()
+	base := traceFixtureBaseTime(traces * spans)
 	highestMs, writeErr := traceWriteFixture(ctx, conn, traceFixtureGroup, traces, spans, base, 0)
 	if writeErr != nil {
 		return writeErr
@@ -342,10 +342,17 @@ func traceCreateSchema(
 	return nil
 }
 
-// traceFixtureBaseTime returns the locked base time anchoring the deterministic
-// span timestamps. Pinned to a fixed instant so regeneration is reproducible.
-func traceFixtureBaseTime() time.Time {
-	return time.Date(2024, 1, 1, 0, 0, 0, 0, time.UTC)
+// traceFixtureBaseTime anchors the deterministic span timestamps to recent
+// wall-clock time. Span timestamps are base + version*second for version up to
+// totalSpans, so the newest lands ~1 minute in the past and the oldest ~totalSpans
+// seconds before that. They must fall inside the group's TTL retention window
+// (which is relative to now) or BanyanDB silently drops them and queries return
+// empty — a fixed calendar base lands outside retention once wall-clock moves on.
+// Within-run determinism does not depend on the calendar instant: Phase 0 seeds +
+// snapshots and Phase 1 restores that snapshot, so both phases see identical data.
+func traceFixtureBaseTime(totalSpans int) time.Time {
+	const marginSec = 60
+	return time.Now().UTC().Truncate(time.Second).Add(-time.Duration(totalSpans+marginSec) * time.Second)
 }
 
 // traceWriteFixture writes traces*spans deterministic spans into group via the
@@ -637,9 +644,11 @@ func traceWriteLoad(ctx context.Context, conn *grpc.ClientConn, traces, spans, r
 		rps = 1000
 	}
 	spansPerSweep := traces * spans
-	// Load traffic is offset far past the fixture span timestamps so it never
-	// overlaps the parity window even if it shared the group.
-	base := traceFixtureBaseTime().Add(365 * 24 * time.Hour)
+	// Load traffic goes to a SEPARATE group (traceLoadGroup) that the parity
+	// catalog never queries, so group isolation — not timestamp offsetting —
+	// keeps it from polluting parity. Anchor it to recent time so it lands
+	// inside the load group's (short) TTL retention window.
+	base := traceFixtureBaseTime(spansPerSweep)
 	deadline := time.Now().Add(duration)
 	totalSpans := 0
 	var versionBase uint64

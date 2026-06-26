@@ -121,6 +121,25 @@ wait_banyandb_healthy() {
   log "BanyanDB is healthy."
 }
 
+# wait_banyandb_container_healthy waits on the container's own compose
+# healthcheck via `docker inspect`, so it needs no host-published port. The TRACE
+# path uses this (its driver reaches BanyanDB over the compose network), letting
+# the soak run even when the host's standard banyand ports are already taken by
+# another instance — the trace banyandb publishes only random host ports.
+wait_banyandb_container_healthy() {
+  log "Waiting for BanyanDB container to become healthy..."
+  local attempts=0
+  until [[ "$(docker inspect -f '{{.State.Health.Status}}' banyandb 2>/dev/null)" == "healthy" ]]; do
+    attempts=$(( attempts + 1 ))
+    if (( attempts > 120 )); then
+      log "ERROR: BanyanDB container did not become healthy after 120 attempts"
+      return 1
+    fi
+    sleep 5
+  done
+  log "BanyanDB container is healthy."
+}
+
 # soak_driver_container runs the soak-driver inside the compose network via
 # `docker compose run --rm`. The DIST directory is bind-mounted as /artifacts
 # so the driver can read/write baseline.json, diff-*.json, pprof dirs, etc.
@@ -167,10 +186,24 @@ if [[ "${SOAK_ENGINE}" == "trace" ]]; then
 # ║  TRACE ENGINE — Instrument 1 (containerized correctness + survival soak)║
 # ╚══════════════════════════════════════════════════════════════════════════╝
 
+# Bind banyandb's host ports to random free ports (host port 0). The trace
+# driver is containerized and reaches banyandb over the compose network, and
+# readiness is checked via the container healthcheck — so no fixed host port is
+# needed, and the soak coexists with another banyand already on the standard ports.
+export SOAK_HOST_GRPC=0 SOAK_HOST_HTTP=0 SOAK_HOST_PPROF=0 SOAK_HOST_METRICS=0
+
 # Build (or refresh) the soak-driver image so it embeds this branch's binary.
 log "Building soak-driver container image..."
 SOAK_DIST_DIR="${DIST}" compose_cmd build soak-driver
 log "soak-driver image built."
+
+# Build banyand from the current source tree too. `compose up` reuses any
+# cached image and will NOT rebuild on source changes, so without an explicit
+# build Phase 0 can boot a stale binary that lacks new flags and dies with
+# "unknown flag: --trace-vectorized-enabled". Build once; both phases reuse it.
+log "Building banyand container image (current source)..."
+compose_cmd build banyandb
+log "banyand image built."
 
 # Record image digest for reproducibility.
 DRIVER_IMAGE_DIGEST=$(docker inspect \
@@ -182,7 +215,7 @@ log "soak-driver image digest: ${DRIVER_IMAGE_DIGEST}"
 log "=== TRACE PHASE 0: Baseline (BANYANDB_VEC_ENABLED=false) ==="
 
 SOAK_DATA_DIR="${DATA_DIR}" BANYANDB_VEC_ENABLED=false compose_cmd up -d banyandb
-wait_banyandb_healthy
+wait_banyandb_container_healthy
 
 # Record BanyanDB container image digest.
 BANYANDB_IMAGE_DIGEST=$(docker inspect banyandb --format '{{.Image}}' 2>/dev/null || echo "unknown")
@@ -257,14 +290,16 @@ rm -rf "${DATA_DIR:?}"/*
 cp -a "${SNAPSHOT_DIR}/." "${DATA_DIR}/"
 
 SOAK_DATA_DIR="${DATA_DIR}" BANYANDB_VEC_ENABLED=true compose_cmd up -d banyandb
-wait_banyandb_healthy
+wait_banyandb_container_healthy
 
 # Gate: verify the container actually honored --trace-vectorized-enabled=true.
 # The parity-clean S=20 fixture yields identical vec-on/vec-off output by
-# design, so this startup-log grep is load-bearing.
-log "Checking vec-flag-honored via startup log..."
+# design, so this check is load-bearing. banyand does not echo its flags to the
+# log, so inspect the running container's actual command args instead of grepping
+# the log (the log grep is a guaranteed false negative).
+log "Checking vec-flag-honored via container args..."
 VEC_FLAG_HONORED=false
-if docker logs banyandb 2>&1 | grep -qiE "trace-vectorized-enabled=true|trace_vectorized_enabled.*true|vectorized.*trace.*enabled|enabled.*vectorized.*trace"; then
+if docker inspect banyandb --format '{{json .Args}}' 2>/dev/null | grep -q -- '--trace-vectorized-enabled=true'; then
   VEC_FLAG_HONORED=true
 fi
 log "Vec flag honored: ${VEC_FLAG_HONORED}"
@@ -360,10 +395,15 @@ PARITY_LOOP_PID=$!
 # Background write-load loop — continuous deterministic trace writes into the
 # rolling load group, rate-capped at SOAK_WRITE_RPS. Fail-tolerant: a bad
 # sweep logs WARN and continues.
-WRITE_LOAD_ROWS=0
-WRITE_LOAD_LAST_OK="never"
+# The loop runs in a backgrounded subshell, so its variables cannot reach the
+# parent that writes summary.json. Persist progress to files the parent reads.
+WRITE_LOAD_ROWS_FILE="${DIST}/write-load-rows"
+WRITE_LOAD_LAST_OK_FILE="${DIST}/write-load-last-ok"
+echo 0 > "${WRITE_LOAD_ROWS_FILE}"
+echo "never" > "${WRITE_LOAD_LAST_OK_FILE}"
 (
   WRITE_DURATION_SEC=$(( PARITY_INTERVAL_SEC > 30 ? PARITY_INTERVAL_SEC : 30 ))
+  sweep_total=0
   while (( $(date +%s) < SOAK_END )); do
     SWEEP_ROWS=$(soak_driver_container write-load \
       --engine trace \
@@ -371,9 +411,10 @@ WRITE_LOAD_LAST_OK="never"
       --rps "${SOAK_WRITE_RPS}" \
       --duration "${WRITE_DURATION_SEC}s" 2>&1 | \
       grep -oE '[0-9]+ spans' | awk '{print $1}' | tail -1 || echo 0)
-    WRITE_LOAD_ROWS=$(( WRITE_LOAD_ROWS + ${SWEEP_ROWS:-0} ))
-    WRITE_LOAD_LAST_OK="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
-    log "write-load sweep: +${SWEEP_ROWS:-0} spans, total=${WRITE_LOAD_ROWS}"
+    sweep_total=$(( sweep_total + ${SWEEP_ROWS:-0} ))
+    echo "${sweep_total}" > "${WRITE_LOAD_ROWS_FILE}"
+    date -u +%Y-%m-%dT%H:%M:%SZ > "${WRITE_LOAD_LAST_OK_FILE}"
+    log "write-load sweep: +${SWEEP_ROWS:-0} spans, total=${sweep_total}"
     # Brief pause to avoid tight loop if the soak window just ended.
     sleep 5 || true
   done
@@ -427,7 +468,10 @@ GOROUTINE_START=$(extract_goroutine_total "${DIST}/pprof-start")
 GOROUTINE_END=$(extract_goroutine_total "${DIST}/pprof-end")
 MEMORY_ALERTS=$(wc -l < "${DIST}/memory-alerts.log" 2>/dev/null || echo 0)
 
-# Advisory: write-load liveness (rows advancing).
+# Advisory: write-load liveness (rows advancing). Read the totals the background
+# subshell persisted to disk — its variables never reach this parent shell.
+WRITE_LOAD_ROWS=$(cat "${WRITE_LOAD_ROWS_FILE}" 2>/dev/null || echo 0)
+WRITE_LOAD_LAST_OK=$(cat "${WRITE_LOAD_LAST_OK_FILE}" 2>/dev/null || echo never)
 WRITE_LOAD_ALIVE=false
 if (( WRITE_LOAD_ROWS > 0 )); then
   WRITE_LOAD_ALIVE=true

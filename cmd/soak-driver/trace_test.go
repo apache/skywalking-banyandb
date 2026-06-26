@@ -149,7 +149,7 @@ func TestTraceCatalogTagComplexShape(t *testing.T) {
 	assert.Less(t, lo, hi, "duration range must be non-empty")
 	order := entry.Request.GetOrderBy()
 	require.NotNil(t, order)
-	assert.Equal(t, traceIndexTimestamp, order.GetIndexRuleName())
+	assert.Equal(t, traceIndexDuration, order.GetIndexRuleName())
 	assert.Equal(t, modelv1.Sort_SORT_DESC, order.GetSort())
 	assert.Equal(t, uint32(20), entry.Request.GetLimit())
 }
@@ -186,7 +186,10 @@ func TestBuildTraceQueryRequestInjectsTimeRangeKeepsLimit(t *testing.T) {
 }
 
 func TestTraceFixtureGenerationIsReproducible(t *testing.T) {
-	base := traceFixtureBaseTime()
+	// A fixed base keeps this in-memory reproducibility check deterministic;
+	// the production base (traceFixtureBaseTime) is now wall-clock-anchored,
+	// which is irrelevant here since no live cluster / TTL is involved.
+	base := time.Date(2024, 1, 1, 0, 0, 0, 0, time.UTC)
 	first := generateFixtureTraces(t, 20, 5, base)
 	second := generateFixtureTraces(t, 20, 5, base)
 	require.Len(t, first, len(second))

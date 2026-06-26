@@ -151,7 +151,7 @@
           }
         }
       },
-      "orderBy": { "indexRuleName": "timestamp", "sort": "SORT_DESC" },
+      "orderBy": { "indexRuleName": "duration", "sort": "SORT_DESC" },
       "limit": 20
     }
   }

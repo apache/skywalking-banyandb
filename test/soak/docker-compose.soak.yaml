@@ -46,11 +46,15 @@ services:
       - --property-root-path=/data
       - --trace-root-path=/data
       - --schema-server-root-path=/data
+    # Host ports are parameterized so the TRACE soak can bind random free host
+    # ports (SOAK_HOST_*=0) and coexist with another banyand instance already on
+    # the standard ports; its containerized driver uses the compose network, not
+    # these. The MEASURE path keeps the fixed defaults (its host driver needs them).
     ports:
-      - "17912:17912"   # gRPC — soak-driver record-baseline / replay-and-diff
-      - "17913:17913"   # HTTP/healthz
-      - "6060:6060"     # pprof
-      - "2121:2121"     # observability/metrics
+      - "${SOAK_HOST_GRPC:-17912}:17912"     # gRPC — measure host driver
+      - "${SOAK_HOST_HTTP:-17913}:17913"     # HTTP/healthz
+      - "${SOAK_HOST_PPROF:-6060}:6060"      # pprof
+      - "${SOAK_HOST_METRICS:-2121}:2121"    # observability/metrics
     volumes:
       - type: bind
         source: ${SOAK_DATA_DIR:-./data}
@@ -237,6 +241,10 @@ services:
     # soak-driver <subcommand> ...` so the entrypoint receives the subcommand
     # as argv. Defining the service here lets compose assign it to the demo
     # network and gives it the correct resource limits.
+    # Run as the host UID/GID so artifacts it writes to /artifacts (pprof,
+    # baseline, diffs) stay readable by the host orchestrator — otherwise the
+    # goroutine-count parse and other host-side reads hit root-owned 0600 files.
+    user: "${SOAK_UID:-1000}:${SOAK_GID:-1000}"
     networks:
       - demo
     volumes:
