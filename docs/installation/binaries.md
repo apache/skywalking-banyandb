@@ -109,6 +109,33 @@ The build system provides a series of binary options as well.
 
 > The build script now checks if the binary file exists before rebuilding. If you want to rebuild, please remove the binary file manually by running `make clean-build`.
 
+### Reproduce the Official Release Artifacts
+
+The commands above (`make generate && make build`) produce **development** binaries under `build/bin/dev/` (debug symbols included, larger on disk, version string reports `<ver>-release`). They are useful for local hacking but **do not match the binaries shipped in the release tarballs**.
+
+To reproduce the exact `banyand`, `bydbctl`, `fodc-agent` and `fodc-proxy` artifacts published on the Apache mirror, run the per-component `release` targets — the same sequence `scripts/release.sh` uses to package the official tarballs:
+
+```shell
+# Prerequisite: code generation must run first.
+make generate
+make -C ui build
+
+# Linux AMD64 + ARM64 — produces the official banyand, fodc-agent, fodc-proxy packages.
+TARGET_OS=linux PLATFORMS=linux/amd64,linux/arm64 make -C banyand     release
+TARGET_OS=linux PLATFORMS=linux/amd64,linux/arm64 make -C fodc/agent release
+TARGET_OS=linux PLATFORMS=linux/amd64,linux/arm64 make -C fodc/proxy release
+
+# bydbctl is cross-compiled to more targets because it is a single static binary.
+TARGET_OS=linux   PLATFORMS=linux/amd64,linux/arm64,linux/386   make -C bydbctl release
+TARGET_OS=windows PLATFORMS=windows/amd64,windows/386          make -C bydbctl release
+TARGET_OS=darwin  PLATFORMS=darwin/amd64,darwin/arm64          make -C bydbctl release
+
+# MCP server (no platform matrix — pure Node bundle).
+make -C mcp release
+```
+
+Each `release` target produces both `*-static-*` and `*-slim-*` variants where applicable. The `static` builds are stripped (`-s -w`) and statically linked; the `slim` builds additionally omit the embedded UI bundle. The resulting binaries land under `<component>/build/bin/<os>/<arch>/`, e.g. `banyand/build/bin/linux/amd64/banyand-server-static`. The version string in these binaries is set by `git describe` and looks like `v0.10.3-0-g<short-sha>-v0.10.x` rather than the `0.10.3-release` string that `make build` embeds.
+
 ### Cross-compile Binaries
 
 The build system supports cross-compiling binaries for different platforms. For example, to build a Windows binary on a Linux machine, you can issue the following command:

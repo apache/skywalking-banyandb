@@ -1,0 +1,14 @@
+{
+  "extends": "../tsconfig.base.json",
+  "compilerOptions": {
+    "module": "NodeNext",
+    "moduleResolution": "NodeNext",
+    "outDir": "./dist",
+    "rootDir": ".",
+    "paths": {
+      "canopy-shared": ["../shared/src/index.ts"],
+      "canopy-shared/*": ["../shared/src/*"]
+    }
+  },
+  "include": ["src/**/*", "test/**/*"]
+}
