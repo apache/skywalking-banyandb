@@ -21,7 +21,7 @@ import React, { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useQuery } from '@tanstack/react-query';
 
-import type { StreamSchema, MeasureSchema, TraceSchema, PropertySchema } from 'canopy-shared';
+import type { StreamSchema, MeasureSchema, TraceSchema, PropertySchema, IndexRuleSchema, IndexRuleBindingSchema } from 'canopy-shared';
 import { apiDataSource } from '../data/api.js';
 import { useAuth } from '../auth/AuthContext.js';
 import {
@@ -40,7 +40,13 @@ function fieldCount(r: StreamSchema | MeasureSchema | TraceSchema | PropertySche
   return 'fields' in r && r.fields ? r.fields.length : 0;
 }
 
-export function GroupPage({ type, groupName, onNewResource, onEditResource, onDeleteResource, onEditGroup, onDeleteGroup }: {
+export function GroupPage({
+  type, groupName,
+  onNewResource, onEditResource, onDeleteResource,
+  onEditGroup, onDeleteGroup,
+  onNewIndexRule, onEditIndexRule, onDeleteIndexRule,
+  onNewIndexRuleBinding, onEditIndexRuleBinding, onDeleteIndexRuleBinding,
+}: {
   type: string;
   groupName: string;
   onNewResource?: () => void;
@@ -48,12 +54,20 @@ export function GroupPage({ type, groupName, onNewResource, onEditResource, onDe
   onDeleteResource?: (resource: StreamSchema | MeasureSchema | TraceSchema | PropertySchema) => void;
   onEditGroup?: () => void;
   onDeleteGroup?: () => void;
+  onNewIndexRule?: () => void;
+  onEditIndexRule?: (ruleName: string) => void;
+  onDeleteIndexRule?: (ruleName: string) => void;
+  onNewIndexRuleBinding?: () => void;
+  onEditIndexRuleBinding?: (bindingName: string) => void;
+  onDeleteIndexRuleBinding?: (bindingName: string) => void;
 }) {
   const navigate = useNavigate();
   const { session } = useAuth();
   const isAdmin = session?.role === 'admin';
   const [search, setSearch] = useState('');
+  const [page, setPage] = useState(1);
 
+  const PAGE_SIZE = 50;
   const catalogEntry = CATALOG_MAP[type] ?? CATALOG_MAP['measures'];
   const TypeIcon = TYPE_ICONS[type] ?? IconMeasures;
   const isProperties = type === 'properties';
@@ -73,6 +87,8 @@ export function GroupPage({ type, groupName, onNewResource, onEditResource, onDe
   const filteredResources = search.trim()
     ? allResources.filter((r) => r.metadata.name.toLowerCase().includes(search.trim().toLowerCase()))
     : allResources;
+  const totalPages = Math.max(1, Math.ceil(filteredResources.length / PAGE_SIZE));
+  const pagedResources = filteredResources.slice((page - 1) * PAGE_SIZE, page * PAGE_SIZE);
 
   const rowPath = (name: string) =>
     isProperties ? `/properties/${groupName}/${name}` : `/metadata/${type}/${groupName}/${name}`;
@@ -144,7 +160,7 @@ export function GroupPage({ type, groupName, onNewResource, onEditResource, onDe
             type="search"
             placeholder={`Search ${catalogEntry.plural}…`}
             value={search}
-            onChange={(e) => setSearch(e.target.value)}
+            onChange={(e) => { setSearch(e.target.value); setPage(1); }}
           />
         </label>
         <div className="res-toolbar-right">
@@ -184,7 +200,7 @@ export function GroupPage({ type, groupName, onNewResource, onEditResource, onDe
             </tr>
           </thead>
           <tbody>
-            {filteredResources.map((r) => {
+            {pagedResources.map((r) => {
               const tags = tagCount(r);
               const fields = fieldCount(r);
               const isMeasure = type === 'measures';
@@ -245,6 +261,183 @@ export function GroupPage({ type, groupName, onNewResource, onEditResource, onDe
           </tbody>
         </table>
       )}
+      {totalPages > 1 && (
+        <div className="doc-pager">
+          <span>{filteredResources.length} {filteredResources.length === 1 ? catalogEntry.singular : catalogEntry.plural}</span>
+          <div className="doc-pager-btns">
+            <button className="pg-btn" disabled={page === 1} onClick={() => setPage((p) => p - 1)}>← Prev</button>
+            <span className="doc-pager-page mono">{page} / {totalPages}</span>
+            <button className="pg-btn" disabled={page === totalPages} onClick={() => setPage((p) => p + 1)}>Next →</button>
+          </div>
+        </div>
+      )}
+
+      <IndexRuleSection
+        groupName={groupName}
+        isAdmin={isAdmin}
+        onNew={onNewIndexRule}
+        onEdit={onEditIndexRule}
+        onDelete={onDeleteIndexRule}
+      />
+      <IndexRuleBindingSection
+        groupName={groupName}
+        isAdmin={isAdmin}
+        onNew={onNewIndexRuleBinding}
+        onEdit={onEditIndexRuleBinding}
+        onDelete={onDeleteIndexRuleBinding}
+      />
     </div>
+  );
+}
+
+function IndexRuleSection({ groupName, isAdmin, onNew, onEdit, onDelete }: {
+  groupName: string;
+  isAdmin: boolean;
+  onNew?: () => void;
+  onEdit?: (ruleName: string) => void;
+  onDelete?: (ruleName: string) => void;
+}) {
+  const { data: rules = [], isLoading } = useQuery<IndexRuleSchema[]>({
+    queryKey: ['indexRules', groupName],
+    queryFn: () => apiDataSource.listIndexRules(groupName),
+  });
+  return (
+    <section className="detail-block">
+      <div className="detail-h">
+        Index rules <span className="meta-v mono">· {rules.length}</span>
+      </div>
+      {isAdmin && onNew && (
+        <div style={{ marginBottom: 10 }}>
+          <button className="btn btn-ghost" onClick={onNew}>
+            <IconPlus size={14} /> New index rule
+          </button>
+        </div>
+      )}
+      {isLoading ? (
+        <p className="page-meta">Loading…</p>
+      ) : rules.length === 0 ? (
+        <p className="page-meta">No index rules in this group.</p>
+      ) : (
+        <div className="idx-table">
+          <div className="idx-rule-head">
+            <span>Name</span>
+            <span>Tags</span>
+            <span>Type</span>
+            <span>Analyzer</span>
+            <span className="idx-actions-h">Actions</span>
+          </div>
+          {rules.map((r) => (
+            <div className="idx-rule-row" key={r.metadata.name}>
+              <span className="idx-name-cell">
+                <span className="idx-name mono">{r.metadata.name}</span>
+              </span>
+              <span>
+                <span className="idx-chiprow">
+                  {r.tags.map((t) => <span key={t} className="idx-tag">{t}</span>)}
+                </span>
+              </span>
+              <span>
+                <span className={`idx-type-badge ${r.type === 'INDEX_TYPE_TREE' ? 'is-tree' : 'is-inv'}`}>
+                  {r.type === 'INDEX_TYPE_TREE' ? 'tree' : 'inv'}
+                </span>
+              </span>
+              <span className="idx-dim">{r.analyzer || '—'}</span>
+              <span className="idx-actions" onClick={(e) => e.stopPropagation()}>
+                {isAdmin && (
+                  <>
+                    <button className="idx-act" title="Edit" onClick={() => onEdit?.(r.metadata.name)}>
+                      <IconEdit size={14} />
+                    </button>
+                    <button className="idx-act is-danger" title="Delete" onClick={() => onDelete?.(r.metadata.name)}>
+                      <IconTrash size={14} />
+                    </button>
+                  </>
+                )}
+              </span>
+            </div>
+          ))}
+        </div>
+      )}
+    </section>
+  );
+}
+
+function IndexRuleBindingSection({ groupName, isAdmin, onNew, onEdit, onDelete }: {
+  groupName: string;
+  isAdmin: boolean;
+  onNew?: () => void;
+  onEdit?: (bindingName: string) => void;
+  onDelete?: (bindingName: string) => void;
+}) {
+  const { data: bindings = [], isLoading } = useQuery<IndexRuleBindingSchema[]>({
+    queryKey: ['indexRuleBindings', groupName],
+    queryFn: () => apiDataSource.listIndexRuleBindings(groupName),
+  });
+  return (
+    <section className="detail-block">
+      <div className="detail-h">
+        Index rule bindings <span className="meta-v mono">· {bindings.length}</span>
+      </div>
+      {isAdmin && onNew && (
+        <div style={{ marginBottom: 10 }}>
+          <button className="btn btn-ghost" onClick={onNew}>
+            <IconPlus size={14} /> New binding
+          </button>
+        </div>
+      )}
+      {isLoading ? (
+        <p className="page-meta">Loading…</p>
+      ) : bindings.length === 0 ? (
+        <p className="page-meta">No index rule bindings in this group.</p>
+      ) : (
+        <div className="idx-table">
+          <div className="idx-bind-head">
+            <span>Name</span>
+            <span>Subject</span>
+            <span>Rules</span>
+            <span>Window</span>
+            <span className="idx-actions-h">Actions</span>
+          </div>
+          {bindings.map((b) => (
+            <div className="idx-bind-row" key={b.metadata.name}>
+              <span className="idx-name-cell">
+                <span className="idx-name mono">{b.metadata.name}</span>
+              </span>
+              <span className="idx-subj-cell">
+                <span className="idx-subj-cat">{b.subject.catalog.replace('CATALOG_', '')}</span>
+                <span className="mono">{b.subject.name}</span>
+              </span>
+              <span>
+                <span className="idx-chiprow">
+                  {b.rules.map((r) => <span key={r} className="idx-tag">{r}</span>)}
+                </span>
+              </span>
+              <span className="idx-window">
+                <span className="idx-win-row">
+                  <span className="idx-win-k">B</span>
+                  <span className="mono">{b.beginAt}</span>
+                </span>
+                <span className="idx-win-row">
+                  <span className="idx-win-k">E</span>
+                  <span className="mono">{b.expireAt}</span>
+                </span>
+              </span>
+              <span className="idx-actions" onClick={(e) => e.stopPropagation()}>
+                {isAdmin && (
+                  <>
+                    <button className="idx-act" title="Edit" onClick={() => onEdit?.(b.metadata.name)}>
+                      <IconEdit size={14} />
+                    </button>
+                    <button className="idx-act is-danger" title="Delete" onClick={() => onDelete?.(b.metadata.name)}>
+                      <IconTrash size={14} />
+                    </button>
+                  </>
+                )}
+              </span>
+            </div>
+          ))}
+        </div>
+      )}
+    </section>
   );
 }

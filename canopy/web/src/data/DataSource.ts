@@ -26,8 +26,11 @@ import type {
   CreateStreamRequest, UpdateStreamRequest,
   CreateMeasureRequest, UpdateMeasureRequest,
   CreateTraceRequest, UpdateTraceRequest,
+  CreateIndexRuleRequest, UpdateIndexRuleRequest,
+  CreateIndexRuleBindingRequest, UpdateIndexRuleBindingRequest,
   QueryRequest, QueryResponse,
   StreamSchema, MeasureSchema, TraceSchema, PropertySchema, Group,
+  IndexRuleSchema, IndexRuleBindingSchema,
 } from 'canopy-shared';
 
 export interface DataSource {
@@ -52,6 +55,20 @@ export interface DataSource {
   // Trace CRUD
   createTrace(req: CreateTraceRequest): Promise<TraceSchema>;
   updateTrace(group: string, name: string, req: UpdateTraceRequest): Promise<TraceSchema>;
+
+  // IndexRule CRUD
+  listIndexRules(group: string): Promise<IndexRuleSchema[]>;
+  getIndexRule(group: string, name: string): Promise<IndexRuleSchema>;
+  createIndexRule(req: CreateIndexRuleRequest): Promise<IndexRuleSchema>;
+  updateIndexRule(group: string, name: string, req: UpdateIndexRuleRequest): Promise<IndexRuleSchema>;
+  deleteIndexRule(group: string, name: string): Promise<void>;
+
+  // IndexRuleBinding CRUD
+  listIndexRuleBindings(group: string): Promise<IndexRuleBindingSchema[]>;
+  getIndexRuleBinding(group: string, name: string): Promise<IndexRuleBindingSchema>;
+  createIndexRuleBinding(req: CreateIndexRuleBindingRequest): Promise<IndexRuleBindingSchema>;
+  updateIndexRuleBinding(group: string, name: string, req: UpdateIndexRuleBindingRequest): Promise<IndexRuleBindingSchema>;
+  deleteIndexRuleBinding(group: string, name: string): Promise<void>;
 
   // Generic delete
   deleteResource(type: string, group: string, name: string): Promise<void>;

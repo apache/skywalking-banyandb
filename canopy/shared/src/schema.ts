@@ -55,6 +55,16 @@ export interface IntervalRule {
   readonly num: number;
 }
 
+export interface LifecycleStage {
+  readonly name: string;
+  readonly shardNum: number;
+  readonly segmentInterval: IntervalRule;
+  readonly ttl: IntervalRule;
+  readonly nodeSelector?: string;
+  readonly close?: boolean;
+  readonly replicas?: number;
+}
+
 export interface Group {
   readonly name: string;
   readonly catalog: 'CATALOG_STREAM' | 'CATALOG_MEASURE' | 'CATALOG_PROPERTY' | 'CATALOG_TRACE' | 'CATALOG_UNSPECIFIED';
@@ -62,6 +72,7 @@ export interface Group {
     readonly shardNum: number;
     readonly segmentInterval?: IntervalRule;
     readonly ttl?: IntervalRule;
+    readonly stages?: LifecycleStage[];
   };
   readonly updatedAt?: string;
 }

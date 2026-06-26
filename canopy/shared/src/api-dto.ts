@@ -18,8 +18,10 @@
  */
 
 import type {
-  Group, IntervalRule, StreamSchema, MeasureSchema, TraceSchema, PropertySchema,
-  TagFamilySpec, FieldSpec, TagType, FieldType, CompressMethod, EncodingMethod,
+  Group, IntervalRule, LifecycleStage,
+  StreamSchema, MeasureSchema, TraceSchema, PropertySchema,
+  IndexRuleSchema, IndexRuleBindingSchema,
+  TagFamilySpec, FieldSpec, TagType, FieldType, CompressMethod, EncodingMethod, IndexType,
 } from './schema.js';
 
 export interface ApiResponse<T> {
@@ -45,6 +47,7 @@ export interface CreateGroupRequest {
       readonly shardNum: number;
       readonly segmentInterval?: IntervalRule;
       readonly ttl?: IntervalRule;
+      readonly stages?: readonly LifecycleStage[];
     };
   };
 }
@@ -57,6 +60,7 @@ export interface UpdateGroupRequest {
       readonly shardNum: number;
       readonly segmentInterval?: IntervalRule;
       readonly ttl?: IntervalRule;
+      readonly stages?: readonly LifecycleStage[];
     };
   };
 }
@@ -97,6 +101,30 @@ export interface UpdateTraceRequest {
   readonly trace: TraceSchema;
 }
 
+// IndexRule CRUD
+
+export interface CreateIndexRuleRequest {
+  readonly indexRule: Omit<IndexRuleSchema, 'metadata'> & {
+    readonly metadata: { readonly name: string; readonly group: string };
+  };
+}
+
+export interface UpdateIndexRuleRequest {
+  readonly indexRule: IndexRuleSchema;
+}
+
+// IndexRuleBinding CRUD
+
+export interface CreateIndexRuleBindingRequest {
+  readonly indexRuleBinding: Omit<IndexRuleBindingSchema, 'metadata'> & {
+    readonly metadata: { readonly name: string; readonly group: string };
+  };
+}
+
+export interface UpdateIndexRuleBindingRequest {
+  readonly indexRuleBinding: IndexRuleBindingSchema;
+}
+
 // Query
 
 export interface QueryRequest {
@@ -115,6 +143,7 @@ export interface QueryResponse {
 
 // Re-export schema types for convenience
 export type {
-  Group, StreamSchema, MeasureSchema, TraceSchema, PropertySchema,
-  TagFamilySpec, FieldSpec, TagType, FieldType, CompressMethod, EncodingMethod,
+  Group, LifecycleStage, StreamSchema, MeasureSchema, TraceSchema, PropertySchema,
+  IndexRuleSchema, IndexRuleBindingSchema,
+  TagFamilySpec, FieldSpec, TagType, FieldType, CompressMethod, EncodingMethod, IndexType,
 };

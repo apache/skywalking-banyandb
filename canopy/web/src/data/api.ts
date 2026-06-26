@@ -23,6 +23,8 @@ import type {
   CreateStreamRequest, UpdateStreamRequest, StreamSchema,
   CreateMeasureRequest, UpdateMeasureRequest, MeasureSchema,
   CreateTraceRequest, UpdateTraceRequest, TraceSchema,
+  CreateIndexRuleRequest, UpdateIndexRuleRequest, IndexRuleSchema,
+  CreateIndexRuleBindingRequest, UpdateIndexRuleBindingRequest, IndexRuleBindingSchema,
   PropertySchema,
   QueryRequest, QueryResponse,
 } from 'canopy-shared';
@@ -145,6 +147,66 @@ export class ApiDataSource implements DataSource {
       method: 'PUT', headers: JSON_HEADERS, body: JSON.stringify(req),
     });
     return data.trace;
+  }
+
+  // ── IndexRule CRUD ───────────────────────────────────────────────────────
+
+  async listIndexRules(group: string): Promise<IndexRuleSchema[]> {
+    const data = await apiFetch<{ indexRule?: IndexRuleSchema[] }>(`/api/v1/index-rule/schema/lists/${group}`);
+    return data.indexRule ?? [];
+  }
+
+  async getIndexRule(group: string, name: string): Promise<IndexRuleSchema> {
+    const data = await apiFetch<{ indexRule: IndexRuleSchema }>(`/api/v1/index-rule/schema/${group}/${name}`);
+    return data.indexRule;
+  }
+
+  async createIndexRule(req: CreateIndexRuleRequest): Promise<IndexRuleSchema> {
+    const data = await apiFetch<{ indexRule: IndexRuleSchema }>('/api/v1/index-rule/schema', {
+      method: 'POST', headers: JSON_HEADERS, body: JSON.stringify(req),
+    });
+    return data.indexRule;
+  }
+
+  async updateIndexRule(group: string, name: string, req: UpdateIndexRuleRequest): Promise<IndexRuleSchema> {
+    const data = await apiFetch<{ indexRule: IndexRuleSchema }>(`/api/v1/index-rule/schema/${group}/${name}`, {
+      method: 'PUT', headers: JSON_HEADERS, body: JSON.stringify(req),
+    });
+    return data.indexRule;
+  }
+
+  async deleteIndexRule(group: string, name: string): Promise<void> {
+    await apiFetch<void>(`/api/v1/index-rule/schema/${group}/${name}`, { method: 'DELETE' });
+  }
+
+  // ── IndexRuleBinding CRUD ────────────────────────────────────────────────
+
+  async listIndexRuleBindings(group: string): Promise<IndexRuleBindingSchema[]> {
+    const data = await apiFetch<{ indexRuleBinding?: IndexRuleBindingSchema[] }>(`/api/v1/index-rule-binding/schema/lists/${group}`);
+    return data.indexRuleBinding ?? [];
+  }
+
+  async getIndexRuleBinding(group: string, name: string): Promise<IndexRuleBindingSchema> {
+    const data = await apiFetch<{ indexRuleBinding: IndexRuleBindingSchema }>(`/api/v1/index-rule-binding/schema/${group}/${name}`);
+    return data.indexRuleBinding;
+  }
+
+  async createIndexRuleBinding(req: CreateIndexRuleBindingRequest): Promise<IndexRuleBindingSchema> {
+    const data = await apiFetch<{ indexRuleBinding: IndexRuleBindingSchema }>('/api/v1/index-rule-binding/schema', {
+      method: 'POST', headers: JSON_HEADERS, body: JSON.stringify(req),
+    });
+    return data.indexRuleBinding;
+  }
+
+  async updateIndexRuleBinding(group: string, name: string, req: UpdateIndexRuleBindingRequest): Promise<IndexRuleBindingSchema> {
+    const data = await apiFetch<{ indexRuleBinding: IndexRuleBindingSchema }>(`/api/v1/index-rule-binding/schema/${group}/${name}`, {
+      method: 'PUT', headers: JSON_HEADERS, body: JSON.stringify(req),
+    });
+    return data.indexRuleBinding;
+  }
+
+  async deleteIndexRuleBinding(group: string, name: string): Promise<void> {
+    await apiFetch<void>(`/api/v1/index-rule-binding/schema/${group}/${name}`, { method: 'DELETE' });
   }
 
   // ── Generic delete ────────────────────────────────────────────────────────

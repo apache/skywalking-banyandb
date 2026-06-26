@@ -44,7 +44,11 @@ async function waitForReady(url: string, maxAttempts = 60): Promise<void> {
   for (let i = 0; i < maxAttempts; i++) {
     try {
       const res = await fetch(`${url}/api/healthz`);
-      if (res.ok) return;
+      if (res.ok) {
+        // Extra wait for internal services (property node registry) to register after healthz.
+        await sleep(3000);
+        return;
+      }
     } catch {
       // not ready yet
     }
@@ -71,6 +75,8 @@ export default async function globalSetup() {
     'standalone',
     `--stream-root-path=${dataDir}`,
     `--measure-root-path=${dataDir}`,
+    `--property-root-path=${dataDir}`,
+    `--trace-root-path=${dataDir}`,
     `--http-port=${HTTP_PORT}`,
     `--grpc-port=${GRPC_PORT}`,
   ], { stdio: 'pipe' });

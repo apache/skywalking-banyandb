@@ -31,7 +31,12 @@ import { GroupForm } from './components/GroupForm.js';
 import { MeasureForm } from './components/MeasureForm.js';
 import { StreamForm } from './components/StreamForm.js';
 import { TraceForm } from './components/TraceForm.js';
-import type { Group, MeasureSchema, StreamSchema, TraceSchema } from 'canopy-shared';
+import { IndexRuleForm } from './components/IndexRuleForm.js';
+import { IndexRuleBindingForm } from './components/IndexRuleBindingForm.js';
+import type {
+  Group, MeasureSchema, StreamSchema, TraceSchema,
+  IndexRuleSchema, IndexRuleBindingSchema,
+} from 'canopy-shared';
 
 const queryClient = new QueryClient({
   defaultOptions: { queries: { staleTime: 30_000, retry: 1 } },
@@ -50,7 +55,20 @@ type ModalState =
   | { kind: 'trace-create'; groupName: string }
   | { kind: 'trace-edit'; groupName: string; resourceName: string }
   | { kind: 'trace-delete'; groupName: string; resourceName: string }
+  | { kind: 'indexrule-create'; groupName: string }
+  | { kind: 'indexrule-edit'; groupName: string; ruleName: string }
+  | { kind: 'indexrule-delete'; groupName: string; ruleName: string }
+  | { kind: 'indexrulebinding-create'; groupName: string }
+  | { kind: 'indexrulebinding-edit'; groupName: string; bindingName: string }
+  | { kind: 'indexrulebinding-delete'; groupName: string; bindingName: string }
   | null;
+
+const TYPE_CATALOG: Record<string, 'CATALOG_MEASURE' | 'CATALOG_STREAM' | 'CATALOG_TRACE' | 'CATALOG_PROPERTY'> = {
+  measures: 'CATALOG_MEASURE',
+  streams: 'CATALOG_STREAM',
+  traces: 'CATALOG_TRACE',
+  properties: 'CATALOG_PROPERTY',
+};
 
 function MetadataTypeRoute() {
   const { type = 'measures' } = useParams<{ type: string }>();
@@ -66,6 +84,7 @@ function MetadataTypeRoute() {
       {modal?.kind === 'group-create' && (
         <GroupForm
           mode="create"
+          initialCatalog={TYPE_CATALOG[type]}
           onClose={(created?: Group) => {
             setModal(null);
             if (created) navigate(`/metadata/${type}/${created.name}`);
@@ -93,6 +112,12 @@ function MetadataGroupRoute() {
         }}
         onEditGroup={() => setModal({ kind: 'group-edit', groupName: group })}
         onDeleteGroup={() => setModal({ kind: 'group-delete', groupName: group })}
+        onNewIndexRule={() => setModal({ kind: 'indexrule-create', groupName: group })}
+        onEditIndexRule={(ruleName) => setModal({ kind: 'indexrule-edit', groupName: group, ruleName })}
+        onDeleteIndexRule={(ruleName) => setModal({ kind: 'indexrule-delete', groupName: group, ruleName })}
+        onNewIndexRuleBinding={() => setModal({ kind: 'indexrulebinding-create', groupName: group })}
+        onEditIndexRuleBinding={(bindingName) => setModal({ kind: 'indexrulebinding-edit', groupName: group, bindingName })}
+        onDeleteIndexRuleBinding={(bindingName) => setModal({ kind: 'indexrulebinding-delete', groupName: group, bindingName })}
       />
       {modal?.kind === 'group-edit' && (
         <GroupForm
@@ -139,6 +164,52 @@ function MetadataGroupRoute() {
             setModal(null);
             if (created) navigate(`/metadata/${type}/${group}/${created.metadata.name}`);
           }}
+        />
+      )}
+      {modal?.kind === 'indexrule-create' && (
+        <IndexRuleForm
+          mode="create"
+          groupName={modal.groupName}
+          onClose={(created?: IndexRuleSchema) => setModal(null)}
+        />
+      )}
+      {modal?.kind === 'indexrule-edit' && (
+        <IndexRuleForm
+          mode="edit"
+          groupName={modal.groupName}
+          initialName={modal.ruleName}
+          onClose={() => setModal(null)}
+        />
+      )}
+      {modal?.kind === 'indexrule-delete' && (
+        <IndexRuleForm
+          mode="delete"
+          groupName={modal.groupName}
+          initialName={modal.ruleName}
+          onClose={() => setModal(null)}
+        />
+      )}
+      {modal?.kind === 'indexrulebinding-create' && (
+        <IndexRuleBindingForm
+          mode="create"
+          groupName={modal.groupName}
+          onClose={(created?: IndexRuleBindingSchema) => setModal(null)}
+        />
+      )}
+      {modal?.kind === 'indexrulebinding-edit' && (
+        <IndexRuleBindingForm
+          mode="edit"
+          groupName={modal.groupName}
+          initialName={modal.bindingName}
+          onClose={() => setModal(null)}
+        />
+      )}
+      {modal?.kind === 'indexrulebinding-delete' && (
+        <IndexRuleBindingForm
+          mode="delete"
+          groupName={modal.groupName}
+          initialName={modal.bindingName}
+          onClose={() => setModal(null)}
         />
       )}
     </>

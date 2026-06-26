@@ -64,24 +64,23 @@ describe('GroupForm — edit mode immutable fields', () => {
     expect(nameInput).toHaveAttribute('readonly');
   });
 
-  it('catalog is shown as a read-only text input after group loads', async () => {
+  it('catalog seg-btn buttons are disabled in edit mode', () => {
     render(
       <GroupForm mode="edit" initialName="mygroup" onClose={vi.fn()} />,
       { wrapper: makeWrapper() },
     );
-    // findBy* waits for the listGroups query to resolve and editGroup to be set
-    const catalogInput = await screen.findByDisplayValue('CATALOG_MEASURE');
-    expect(catalogInput).toHaveAttribute('readonly');
+    // In edit mode the catalog seg-btns are rendered but disabled (not hidden)
+    expect(screen.getByRole('button', { name: 'MEASURE' })).toBeDisabled();
+    expect(screen.getByRole('button', { name: 'STREAM' })).toBeDisabled();
+    expect(screen.getByRole('button', { name: 'TRACE' })).toBeDisabled();
+    expect(screen.getByRole('button', { name: 'PROPERTY' })).toBeDisabled();
   });
 
-  it('catalog selector buttons are not rendered in edit mode', () => {
+  it('MEASURE button is active (is-on) in edit mode for a measure group', () => {
     render(
       <GroupForm mode="edit" initialName="mygroup" onClose={vi.fn()} />,
       { wrapper: makeWrapper() },
     );
-    // In create mode these buttons exist; in edit mode the {!isEdit && ...} guard hides them
-    expect(screen.queryByRole('button', { name: 'Measure' })).toBeNull();
-    expect(screen.queryByRole('button', { name: 'Stream' })).toBeNull();
-    expect(screen.queryByRole('button', { name: 'Trace' })).toBeNull();
+    expect(screen.getByRole('button', { name: 'MEASURE' })).toHaveClass('is-on');
   });
 });
