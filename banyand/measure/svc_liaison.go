@@ -23,6 +23,7 @@ import (
 	"path"
 	"path/filepath"
 	"strings"
+	"time"
 
 	"github.com/pkg/errors"
 
@@ -109,6 +110,8 @@ func (s *liaison) FlagSet() *run.FlagSet {
 	flagS.StringVar(&s.root, "measure-root-path", "/tmp", "the root path of measure")
 	flagS.StringVar(&s.dataPath, "measure-data-path", "", "the data directory path of measure. If not set, <measure-root-path>/measure/data will be used")
 	flagS.DurationVar(&s.option.flushTimeout, "measure-flush-timeout", defaultFlushTimeout, "the memory data timeout of measure")
+	flagS.DurationVar(&s.option.memWaitTimeout, "measure-lifecycle-receive-mem-wait-timeout", 5*time.Minute,
+		"max time the migration receiver waits for memory to recover before introducing an external segment")
 	flagS.DurationVar(&s.option.syncInterval, "measure-sync-interval", defaultSyncInterval, "the periodic sync interval for measure data")
 	flagS.IntVar(&s.maxDiskUsagePercent, "measure-max-disk-usage-percent", 95, "the maximum disk usage percentage allowed")
 	flagS.IntVar(&s.failedPartsMaxSizePercent, "failed-parts-max-size-percent", 10,

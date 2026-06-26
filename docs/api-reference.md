@@ -2693,6 +2693,7 @@ SyncStatus represents the status of a sync operation.
 | SYNC_STATUS_SYNC_COMPLETE | 5 | Entire sync operation completed successfully. |
 | SYNC_STATUS_VERSION_UNSUPPORTED | 6 | Version not supported for sync operations. |
 | SYNC_STATUS_FORMAT_VERSION_MISMATCH | 7 | File format version incompatible. |
+| SYNC_STATUS_SERVER_BUSY | 8 | Receiver under memory pressure; sender should back off and retry the whole part. |
 
 
  

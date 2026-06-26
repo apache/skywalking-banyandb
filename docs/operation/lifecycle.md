@@ -135,6 +135,7 @@ lifecycle \
 | `--schedule`                        | Schedule for periodic backup (e.g., @yearly, @monthly, @weekly, @daily, etc.)                            | `""`                           |
 | `--migration-orphan-policy`         | What to do with rows whose measure/stream schema was deleted from the registry: `archive` or `discard`   | `archive`                      |
 | `--migration-orphan-archive-subdir` | Relative subdirectory, under each catalog's root path, for archived orphan rows when policy is `archive` | `archive`                      |
+| `--lifecycle-send-retry-timeout`    | Maximum total time to retry streaming a migration part to a target node on transient failures (target node restarting, disconnect, receiver busy) | `15m`                          |
 
 ## Handling Orphan (Deleted-Schema) Data
 

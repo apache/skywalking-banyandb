@@ -418,6 +418,7 @@ func (s *server) processExpectedChunk(stream clusterv1.ChunkedSyncService_SyncPa
 
 		if createNewContext {
 			session.partCtx = &queue.ChunkedSyncPartContext{
+				Context:               stream.Context(),
 				ID:                    partInfo.Id,
 				Group:                 session.metadata.Group,
 				ShardID:               session.metadata.ShardId,
@@ -452,6 +453,10 @@ func (s *server) processExpectedChunk(stream clusterv1.ChunkedSyncService_SyncPa
 		}
 
 		if processErr := s.processPart(session, req, partInfo, partIndex, handler); processErr != nil {
+			if errors.Is(processErr, queue.ErrServerBusy) {
+				return s.sendResponse(stream, req, clusterv1.SyncStatus_SYNC_STATUS_SERVER_BUSY,
+					"receiver under memory pressure, retry later", nil)
+			}
 			s.log.Error().Err(processErr).
 				Str("session_id", req.SessionId).
 				Str("topic", session.metadata.Topic).

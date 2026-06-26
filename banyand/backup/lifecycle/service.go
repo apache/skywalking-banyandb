@@ -212,6 +212,8 @@ func (l *lifecycleService) FlagSet() *run.FlagSet {
 		"Maximum rows per row-replay batch (row-replay is the fallback for parts spanning multiple target segments)")
 	flagS.VarP(&rowReplayMaxBatchBytes, "row-replay-max-batch-bytes", "",
 		"Maximum in-flight marshaled bytes per row-replay batch; caps peak marshal memory for large bodies (default: 32MB)")
+	flagS.DurationVar(&lifecycleSendRetryTimeout, "lifecycle-send-retry-timeout", defaultLifecycleSendRetryTimeout,
+		"Max total time to retry streaming a migration part to a target node on transient failures (target restarting, disconnect, receiver busy)")
 
 	// Lifecycle server flags
 	flagS.BoolVar(&l.lifecycleTLS, "lifecycle-tls", false, "connection uses TLS if true, else plain TCP")

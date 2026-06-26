@@ -284,10 +284,12 @@ func (mv *measureMigrationVisitor) VisitSeries(segmentTR *timestamp.TimeRange, s
 		segmentIDStr := getSegmentTimeRange(targetSegmentTime, mv.targetStageInterval).String()
 		for _, shardID := range shardIDs {
 			targetShardID := mv.calculateTargetShardID(uint32(shardID))
-			partData := mv.createStreamingSegmentFromFiles(targetShardID, files, segmentTR, data.TopicMeasureSeriesSync.String())
 
-			// Stream segment to target shard replicas
-			if err := mv.streamPartToTargetShard(partData); err != nil {
+			// Stream segment to target shard replicas. The factory rebuilds the
+			// part on every retry so each attempt gets fresh offset-0 readers.
+			if err := mv.streamPartToTargetShard(targetShardID, func() queue.StreamingPartData {
+				return mv.createStreamingSegmentFromFiles(targetShardID, files, segmentTR, data.TopicMeasureSeriesSync.String())
+			}); err != nil {
 				errorMsg := fmt.Sprintf("failed to stream measure segment to target shard %d: %v", targetShardID, err)
 				mv.recordError(scopeSeries, segmentTR, shardID, nil, errorMsg)
 				return fmt.Errorf("failed to stream measure segment to target shard %d: %w", targetShardID, err)
@@ -370,19 +372,31 @@ func (mv *measureMigrationVisitor) VisitPart(segmentTR *timestamp.TimeRange, sou
 			continue
 		}
 
-		// Create file readers for this part
-		files, release := measure.CreatePartFileReaderFromPath(partPath, mv.lfs)
-		defer release()
-
-		// Clone part data for this target segment
-		targetPartData := partData
-		targetPartData.Group = mv.group
-		targetPartData.ShardID = targetShardID
-		targetPartData.Topic = data.TopicMeasurePartSync.String()
-		targetPartData.Files = files
+		// Reopen the part each attempt for fresh offset-0 readers, releasing the
+		// prior attempt's handles first; the deferred call frees the last set.
+		var prevRelease func()
+		defer func() {
+			if prevRelease != nil {
+				prevRelease()
+			}
+		}()
+		mk := func() queue.StreamingPartData {
+			if prevRelease != nil {
+				prevRelease()
+				prevRelease = nil
+			}
+			files, release := measure.CreatePartFileReaderFromPath(partPath, mv.lfs)
+			prevRelease = release
+			targetPartData := partData
+			targetPartData.Group = mv.group
+			targetPartData.ShardID = targetShardID
+			targetPartData.Topic = data.TopicMeasurePartSync.String()
+			targetPartData.Files = files
+			return targetPartData
+		}
 
 		// Stream part to target segment
-		if err := mv.streamPartToTargetShard(targetPartData); err != nil {
+		if err := mv.streamPartToTargetShard(targetShardID, mk); err != nil {
 			errorMsg := fmt.Sprintf("failed to stream measure part to target segment %s: %v", targetSegmentTime.Format(time.RFC3339), err)
 			mv.recordError(scopePart, segmentTR, sourceShardID, &partID, errorMsg)
 			return fmt.Errorf("failed to stream measure part to target segment: %w", err)
@@ -491,22 +505,21 @@ func (mv *measureMigrationVisitor) calculateTargetShardID(sourceShardID uint32) 
 	return calculateTargetShardID(sourceShardID, mv.targetShardNum)
 }
 
-// streamPartToTargetShard sends part data to all replicas of the target shard.
-func (mv *measureMigrationVisitor) streamPartToTargetShard(partData queue.StreamingPartData) error {
-	targetShardID := partData.ShardID
+// streamPartToTargetShard sends the part to every replica with bounded
+// exponential-backoff retry (transient: target restarting, disconnect,
+// receiver SERVER_BUSY). streamPartToNode closes the part's readers after each
+// send, so mk() is called per attempt to rebuild fresh offset-0 readers.
+func (mv *measureMigrationVisitor) streamPartToTargetShard(targetShardID uint32, mk func() queue.StreamingPartData) error {
 	copies := mv.replicas + 1
 
 	// Send to all replicas using the exact pattern from steps.go:219-236
 	for replicaID := uint32(0); replicaID < copies; replicaID++ {
-		// Use selector.Pick exactly like steps.go:220
-		nodeID, err := mv.selector.Pick(mv.group, "", targetShardID, replicaID)
+		err := pickAndRun(mv.logger, mv.selector, mv.group, "", targetShardID, replicaID, func(nodeID string) error {
+			partData := mk()
+			return mv.streamPartToNode(nodeID, partData.ShardID, partData)
+		})
 		if err != nil {
-			return fmt.Errorf("failed to pick node for shard %d replica %d: %w", targetShardID, replicaID, err)
-		}
-
-		// Stream part data to target node using chunked sync
-		if err := mv.streamPartToNode(nodeID, targetShardID, partData); err != nil {
-			return fmt.Errorf("failed to stream measure part to node %s: %w", nodeID, err)
+			return fmt.Errorf("failed to stream measure part to replica %d: %w", replicaID, err)
 		}
 	}
 

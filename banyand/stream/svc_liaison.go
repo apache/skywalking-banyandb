@@ -23,6 +23,7 @@ import (
 	"path"
 	"path/filepath"
 	"strings"
+	"time"
 
 	"github.com/pkg/errors"
 
@@ -116,6 +117,8 @@ func (s *liaison) FlagSet() *run.FlagSet {
 	flagS.StringVar(&s.root, "stream-root-path", "/tmp", "the root path of stream")
 	flagS.StringVar(&s.dataPath, "stream-data-path", "", "the data directory path of stream. If not set, <stream-root-path>/stream/data will be used")
 	flagS.DurationVar(&s.option.flushTimeout, "stream-flush-timeout", defaultFlushTimeout, "the memory data timeout of stream")
+	flagS.DurationVar(&s.option.memWaitTimeout, "stream-lifecycle-receive-mem-wait-timeout", 5*time.Minute,
+		"max time the migration receiver waits for memory to recover before introducing an external segment")
 	flagS.IntVar(&s.maxDiskUsagePercent, "stream-max-disk-usage-percent", 95, "the maximum disk usage percentage allowed")
 	flagS.DurationVar(&s.option.syncInterval, "stream-sync-interval", defaultSyncInterval, "the periodic sync interval for stream data")
 	flagS.IntVar(&s.failedPartsMaxSizePercent, "failed-parts-max-size-percent", 10,

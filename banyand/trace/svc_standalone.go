@@ -83,6 +83,8 @@ func (s *standalone) FlagSet() *run.FlagSet {
 	fs.StringVar(&s.root, "trace-root-path", "/tmp", "the root path for trace data")
 	fs.StringVar(&s.dataPath, "trace-data-path", "", "the path for trace data (optional)")
 	fs.DurationVar(&s.option.flushTimeout, "trace-flush-timeout", defaultFlushTimeout, "the timeout for trace data flush")
+	fs.DurationVar(&s.option.memWaitTimeout, "trace-lifecycle-receive-mem-wait-timeout", 5*time.Minute,
+		"max time the migration receiver waits for memory to recover before introducing an external segment")
 
 	// Retention configuration flags
 	fs.Float64Var(&s.retentionConfig.HighWatermark, "trace-retention-high-watermark", 95.0, "disk usage high watermark percentage that triggers forced retention cleanup")
@@ -200,7 +202,7 @@ func (s *standalone) PreRun(ctx context.Context) error {
 		return err
 	}
 	s.pipeline.RegisterChunkedSyncHandler(data.TopicTracePartSync, setUpChunkedSyncCallback(s.l, &s.schemaRepo))
-	s.pipeline.RegisterChunkedSyncHandler(data.TopicTraceSeriesSync, setUpSeriesSyncCallback(s.l, &s.schemaRepo))
+	s.pipeline.RegisterChunkedSyncHandler(data.TopicTraceSeriesSync, setUpSeriesSyncCallback(s.l, &s.schemaRepo, s.pm, s.option.memWaitTimeout))
 	err = s.pipeline.Subscribe(data.TopicTraceSidxSeriesWrite, setUpSidxSeriesIndexCallback(s.l, &s.schemaRepo))
 	if err != nil {
 		return err

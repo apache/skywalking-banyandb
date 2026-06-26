@@ -347,7 +347,7 @@ func (r *measureRowReplayer) routeColumnar(
 			if rErr != nil {
 				return 0, nil, "", fmt.Errorf("route %s: %w", bc.subject, rErr)
 			}
-			pickedNode, pErr := r.selector.Pick(r.group, bc.subject, uint32(sid), 0)
+			pickedNode, pErr := pickWithRetry(r.logger, r.selector, r.group, bc.subject, uint32(sid))
 			if pErr != nil {
 				return 0, nil, "", fmt.Errorf("pick target node for %s: %w", bc.subject, pErr)
 			}
@@ -363,7 +363,7 @@ func (r *measureRowReplayer) routeColumnar(
 	if rErr != nil {
 		return 0, nil, "", fmt.Errorf("route %s: %w", bc.subject, rErr)
 	}
-	nodeID, pErr := r.selector.Pick(r.group, bc.subject, uint32(sid), 0)
+	nodeID, pErr := pickWithRetry(r.logger, r.selector, r.group, bc.subject, uint32(sid))
 	if pErr != nil {
 		return 0, nil, "", fmt.Errorf("pick target node for %s: %w", bc.subject, pErr)
 	}

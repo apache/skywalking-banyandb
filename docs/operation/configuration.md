@@ -121,6 +121,7 @@ The following flags are used to configure the measure storage engine:
 - `--measure-root-path string`: The root path of the measure database (default: "/tmp").
 - `--measure-data-path string`: The data directory path of measure. If not set, `<measure-root-path>/measure/data` is used.
 - `--measure-max-fan-out-size bytes`: the upper bound of a single file size after merge of measure (default 8.00EiB)
+- `--measure-lifecycle-receive-mem-wait-timeout duration`: Max time a lifecycle-migration receiver waits for memory to recover before introducing an external segment (default: 5m).
 
 The following flags are used to configure the stream storage engine:
 
@@ -129,12 +130,14 @@ The following flags are used to configure the stream storage engine:
 - `--stream-data-path string`: The data directory path of stream. If not set, `<stream-root-path>/stream/data` is used.
 - `--stream-max-fan-out-size bytes`: the upper bound of a single file size after merge of stream (default 8.00EiB)
 - `--element-index-flush-timeout duration`: The element index timeout of stream (default: 1s).
+- `--stream-lifecycle-receive-mem-wait-timeout duration`: Max time a lifecycle-migration receiver waits for memory to recover before introducing an external segment (default: 5m).
 
 The following flags are used to configure the trace storage engine:
 
 - `--trace-flush-timeout duration`: The memory data timeout of trace (default: 1s).
 - `--trace-root-path string`: The root path of the database (default: "/tmp").
 - `--trace-max-fan-out-size bytes`: the upper bound of a single file size after merge of trace (default 8.00EiB)
+- `--trace-lifecycle-receive-mem-wait-timeout duration`: Max time a lifecycle-migration receiver waits for memory to recover before introducing an external segment (default: 5m).
 
 The following flags configure the remaining per-catalog storage roots:
 
