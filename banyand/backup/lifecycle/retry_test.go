@@ -18,6 +18,7 @@
 package lifecycle
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"testing"
@@ -93,7 +94,7 @@ func TestPickWithRetry(t *testing.T) {
 
 	t.Run("success first try", func(t *testing.T) {
 		p := &fakePicker{node: "n1"}
-		got, err := pickWithRetry(l, p, "g", "n", 0)
+		got, err := pickWithRetry(context.Background(), l, p, "g", "n", 0)
 		assert.NoError(t, err)
 		assert.Equal(t, "n1", got)
 		assert.Equal(t, 1, p.calls)
@@ -102,7 +103,7 @@ func TestPickWithRetry(t *testing.T) {
 	t.Run("permanent error fails fast without retry", func(t *testing.T) {
 		boom := errors.New("unknown shard")
 		p := &fakePicker{failErr: boom}
-		got, err := pickWithRetry(l, p, "g", "n", 0)
+		got, err := pickWithRetry(context.Background(), l, p, "g", "n", 0)
 		assert.ErrorIs(t, err, boom)
 		assert.Empty(t, got)
 		assert.Equal(t, 1, p.calls)
@@ -110,9 +111,22 @@ func TestPickWithRetry(t *testing.T) {
 
 	t.Run("no nodes then recover retries", func(t *testing.T) {
 		p := &fakePicker{node: "n2", noNodes: 1}
-		got, err := pickWithRetry(l, p, "g", "n", 0)
+		got, err := pickWithRetry(context.Background(), l, p, "g", "n", 0)
 		assert.NoError(t, err)
 		assert.Equal(t, "n2", got)
 		assert.Equal(t, 2, p.calls)
+	})
+
+	t.Run("canceled context aborts retry promptly", func(t *testing.T) {
+		ctx, cancel := context.WithCancel(context.Background())
+		cancel()
+		// noNodes is far higher than any attempt count: without honoring ctx the
+		// call would keep retrying until lifecycleSendRetryTimeout. With ctx
+		// canceled it must return context.Canceled after a single attempt.
+		p := &fakePicker{node: "n3", noNodes: 1000}
+		got, err := pickWithRetry(ctx, l, p, "g", "n", 0)
+		assert.ErrorIs(t, err, context.Canceled)
+		assert.Empty(t, got)
+		assert.Equal(t, 1, p.calls)
 	})
 }

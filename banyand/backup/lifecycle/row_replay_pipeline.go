@@ -305,7 +305,7 @@ func (s *batchSender) enqueueMarshaled(ctx context.Context, nodeID, group string
 func (s *batchSender) routeAndEnqueue(ctx context.Context, l *logger.Logger, selector node.Selector,
 	group, name string, shardID uint32, iwr proto.Message,
 ) error {
-	nodeID, err := pickWithRetry(l, selector, group, name, shardID)
+	nodeID, err := pickWithRetry(ctx, l, selector, group, name, shardID)
 	if err != nil {
 		return fmt.Errorf("pick target node for %s: %w", name, err)
 	}

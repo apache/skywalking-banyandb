@@ -41,6 +41,7 @@ import (
 
 // measureMigrationVisitor implements the measure.Visitor interface for file-based migration.
 type measureMigrationVisitor struct {
+	ctx            context.Context
 	client         queue.Client
 	lfs            fs.FileSystem
 	metadata       metadata.Repo
@@ -64,11 +65,12 @@ type measureMigrationVisitor struct {
 }
 
 // newMeasureMigrationVisitor creates a new file-based migration visitor.
-func newMeasureMigrationVisitor(group *commonv1.Group, shardNum, replicas uint32, selector node.Selector, client queue.Client,
+func newMeasureMigrationVisitor(ctx context.Context, group *commonv1.Group, shardNum, replicas uint32, selector node.Selector, client queue.Client,
 	l *logger.Logger, progress *Progress, chunkSize int, targetStageInterval storage.IntervalRule, md metadata.Repo,
 	sourceStage, targetStage string, sourceSegmentInterval storage.IntervalRule, orphanCfg orphanConfig,
 ) *measureMigrationVisitor {
 	return &measureMigrationVisitor{
+		ctx:                   ctx,
 		group:                 group.Metadata.Name,
 		sourceStage:           sourceStage,
 		targetStage:           targetStage,
@@ -337,7 +339,7 @@ func (mv *measureMigrationVisitor) VisitPart(segmentTR *timestamp.TimeRange, sou
 	// segment. Row-replay sidesteps this by publishing rows through the
 	// real write API, letting the receiver pick the target segment per row.
 	if len(targetSegments) > 1 {
-		return mv.visitPartRowReplay(context.Background(), segmentTR, sourceShardID, partID, partPath, targetSegments)
+		return mv.visitPartRowReplay(mv.ctx, segmentTR, sourceShardID, partID, partPath, targetSegments)
 	}
 	atomic.AddUint64(&mv.partsCopiedSingleTarget, 1)
 	mv.progress.AddMeasureChunkSyncPart(mv.group)
@@ -514,7 +516,7 @@ func (mv *measureMigrationVisitor) streamPartToTargetShard(targetShardID uint32,
 
 	// Send to all replicas using the exact pattern from steps.go:219-236
 	for replicaID := uint32(0); replicaID < copies; replicaID++ {
-		err := pickAndRun(mv.logger, mv.selector, mv.group, "", targetShardID, replicaID, func(nodeID string) error {
+		err := pickAndRun(mv.ctx, mv.logger, mv.selector, mv.group, "", targetShardID, replicaID, func(nodeID string) error {
 			partData := mk()
 			return mv.streamPartToNode(nodeID, partData.ShardID, partData)
 		})
@@ -541,8 +543,7 @@ func (mv *measureMigrationVisitor) streamPartToNode(nodeID string, targetShardID
 	}
 
 	// Stream using chunked transfer (same as syncer.go:202)
-	ctx := context.Background()
-	result, err := chunkedClient.SyncStreamingParts(ctx, []queue.StreamingPartData{partData})
+	result, err := chunkedClient.SyncStreamingParts(mv.ctx, []queue.StreamingPartData{partData})
 	if err != nil {
 		return fmt.Errorf("failed to sync streaming parts to node %s: %w", nodeID, err)
 	}

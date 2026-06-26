@@ -102,6 +102,7 @@ type lifecycleService struct {
 	sch                 *timestamp.Scheduler
 	stopCh              chan struct{}
 	clientCloser        context.CancelFunc
+	runCancel           context.CancelFunc
 	currentNode         *databasev1.Node
 	tlsReloader         *pkgtls.Reloader
 	httpSrv             *http.Server
@@ -319,6 +320,10 @@ func (l *lifecycleService) GracefulStop() {
 		l.tlsReloader.Stop()
 	}
 
+	if l.runCancel != nil {
+		l.runCancel()
+	}
+
 	if l.clientCloser != nil {
 		l.clientCloser()
 	}
@@ -440,7 +445,12 @@ func (l *lifecycleService) Serve() run.StopNotify {
 	if l.schedule == "" {
 		defer close(done)
 		l.l.Info().Msg("starting lifecycle migration without schedule")
-		if err := l.action(context.Background()); err != nil {
+		// One-shot mode has no scheduler, so derive a cancellable context here
+		// that GracefulStop can cancel to abort an in-flight migration promptly.
+		ctx, cancel := context.WithCancel(context.Background())
+		l.runCancel = cancel
+		defer cancel()
+		if err := l.action(ctx); err != nil {
 			logger.Panicf("failed to run lifecycle migration: %v", err)
 		}
 		return done
@@ -451,6 +461,8 @@ func (l *lifecycleService) Serve() run.StopNotify {
 	var executionCount int
 	err := l.sch.Register(context.Background(), "lifecycle", cron.Descriptor, l.schedule, func(ctx context.Context, triggerTime time.Time, _ *logger.Logger) bool {
 		l.l.Info().Msgf("lifecycle migration triggered at %s", triggerTime)
+		// The scheduler cancels this context on Close (GracefulStop), which lets
+		// the send path abort promptly; its 5-minute wait does not cancel it.
 		if err := l.action(ctx); err != nil {
 			l.l.Error().Err(err).Msg("failed to run lifecycle migration action")
 		}
@@ -1217,7 +1229,7 @@ func (l *lifecycleService) processStreamGroup(ctx context.Context, g *commonv1.G
 }
 
 // processStreamGroupFileBased uses file-based migration instead of element-based queries.
-func (l *lifecycleService) processStreamGroupFileBased(_ context.Context, g *GroupConfig, streamDir string,
+func (l *lifecycleService) processStreamGroupFileBased(ctx context.Context, g *GroupConfig, streamDir string,
 	tr *timestamp.TimeRange, progress *Progress,
 ) ([]string, error) {
 	if progress.IsStreamGroupDeleted(g.Metadata.Name) {
@@ -1236,8 +1248,7 @@ func (l *lifecycleService) processStreamGroupFileBased(_ context.Context, g *Gro
 	}
 
 	// Use the file-based migration with existing visitor pattern
-	//nolint:contextcheck // migration drives its own context lifecycle for batch publish.
-	segmentSuffixes, err := migrateStreamWithFileBasedAndProgress(rootDir, *tr, g, l.l, progress, int(l.chunkSize), l.metadata, l.orphanConfigFor(l.streamRoot))
+	segmentSuffixes, err := migrateStreamWithFileBasedAndProgress(ctx, rootDir, *tr, g, l.l, progress, int(l.chunkSize), l.metadata, l.orphanConfigFor(l.streamRoot))
 	if err != nil {
 		return nil, fmt.Errorf("file-based stream migration failed: %w", err)
 	}
@@ -1342,7 +1353,7 @@ func (l *lifecycleService) processMeasureGroup(ctx context.Context, g *commonv1.
 }
 
 // processMeasureGroupFileBased uses file-based migration instead of query-based migration.
-func (l *lifecycleService) processMeasureGroupFileBased(_ context.Context, g *GroupConfig, measureDir string,
+func (l *lifecycleService) processMeasureGroupFileBased(ctx context.Context, g *GroupConfig, measureDir string,
 	tr *timestamp.TimeRange, progress *Progress,
 ) ([]string, error) {
 	if progress.IsMeasureGroupDeleted(g.Metadata.Name) {
@@ -1361,8 +1372,7 @@ func (l *lifecycleService) processMeasureGroupFileBased(_ context.Context, g *Gr
 	}
 
 	// Use the file-based migration with existing visitor pattern
-	//nolint:contextcheck // migration drives its own context lifecycle for batch publish.
-	segmentSuffixes, err := migrateMeasureWithFileBasedAndProgress(rootDir, *tr, g, l.l, progress, int(l.chunkSize), l.metadata, l.orphanConfigFor(l.measureRoot))
+	segmentSuffixes, err := migrateMeasureWithFileBasedAndProgress(ctx, rootDir, *tr, g, l.l, progress, int(l.chunkSize), l.metadata, l.orphanConfigFor(l.measureRoot))
 	if err != nil {
 		return nil, fmt.Errorf("file-based measure migration failed: %w", err)
 	}
@@ -1449,7 +1459,7 @@ func (l *lifecycleService) processTraceGroup(ctx context.Context, g *commonv1.Gr
 	progress.Save(l.progressFilePath, l.l)
 }
 
-func (l *lifecycleService) processTraceGroupFileBased(_ context.Context, g *GroupConfig, traceDir string,
+func (l *lifecycleService) processTraceGroupFileBased(ctx context.Context, g *GroupConfig, traceDir string,
 	tr *timestamp.TimeRange, progress *Progress,
 ) ([]string, error) {
 	if progress.IsTraceGroupDeleted(g.Metadata.Name) {
@@ -1468,8 +1478,7 @@ func (l *lifecycleService) processTraceGroupFileBased(_ context.Context, g *Grou
 	}
 
 	// Use the file-based migration with existing visitor pattern
-	//nolint:contextcheck // migration drives its own context lifecycle for batch publish.
-	segmentSuffixes, err := migrateTraceWithFileBasedAndProgress(rootDir, *tr, g, l.l, progress, int(l.chunkSize), l.metadata)
+	segmentSuffixes, err := migrateTraceWithFileBasedAndProgress(ctx, rootDir, *tr, g, l.l, progress, int(l.chunkSize), l.metadata)
 	if err != nil {
 		return nil, fmt.Errorf("file-based trace migration failed: %w", err)
 	}

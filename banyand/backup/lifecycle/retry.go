@@ -18,6 +18,7 @@
 package lifecycle
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"strings"
@@ -71,13 +72,14 @@ type nodePicker interface {
 // lifecycleSendRetryTimeout. op returns a transient error to retry or
 // backoff.Permanent(err) to stop immediately. While retrying it logs a
 // heartbeat at most once per minute so a long wait for a restarting node is not
-// mistaken for a hang.
-func runWithRetry(l *logger.Logger, stage string, op func() error) error {
+// mistaken for a hang. ctx cancellation aborts the retry promptly (returning
+// ctx.Err()) instead of waiting out the timeout.
+func runWithRetry(ctx context.Context, l *logger.Logger, stage string, op func() error) error {
 	bo := backoff.NewExponentialBackOff()
 	bo.MaxElapsedTime = lifecycleSendRetryTimeout
 	start := time.Now()
 	var lastLog time.Time
-	return backoff.RetryNotify(op, bo, func(err error, _ time.Duration) {
+	return backoff.RetryNotify(op, backoff.WithContext(bo, ctx), func(err error, _ time.Duration) {
 		now := time.Now()
 		if !lastLog.IsZero() && now.Sub(lastLog) < retryLogInterval {
 			return
@@ -90,9 +92,9 @@ func runWithRetry(l *logger.Logger, stage string, op func() error) error {
 
 // pickWithRetry picks a target node, retrying on "no nodes available" (target
 // restarting) under runWithRetry's bounded backoff and heartbeat logging.
-func pickWithRetry(l *logger.Logger, p nodePicker, group, name string, shardID uint32) (string, error) {
+func pickWithRetry(ctx context.Context, l *logger.Logger, p nodePicker, group, name string, shardID uint32) (string, error) {
 	var nodeID string
-	err := runWithRetry(l, fmt.Sprintf("pick group=%s name=%s shard=%d", group, name, shardID), func() error {
+	err := runWithRetry(ctx, l, fmt.Sprintf("pick group=%s name=%s shard=%d", group, name, shardID), func() error {
 		var pErr error
 		nodeID, pErr = p.Pick(group, name, shardID, 0)
 		switch {
@@ -111,10 +113,10 @@ func pickWithRetry(l *logger.Logger, p nodePicker, group, name string, shardID u
 // backoff loop: a "no nodes" pick error or a transient run error retries the
 // whole pick+run (so a failed send re-picks, possibly a healthier node); any
 // other error stops immediately. Heartbeat-logged like runWithRetry.
-func pickAndRun(l *logger.Logger, p nodePicker, group, name string, shardID, replicaID uint32,
+func pickAndRun(ctx context.Context, l *logger.Logger, p nodePicker, group, name string, shardID, replicaID uint32,
 	run func(nodeID string) error,
 ) error {
-	return runWithRetry(l, fmt.Sprintf("send group=%s name=%s shard=%d replica=%d", group, name, shardID, replicaID), func() error {
+	return runWithRetry(ctx, l, fmt.Sprintf("send group=%s name=%s shard=%d replica=%d", group, name, shardID, replicaID), func() error {
 		nodeID, pickErr := p.Pick(group, name, shardID, replicaID)
 		if pickErr != nil {
 			if isNoNodes(pickErr) {
