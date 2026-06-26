@@ -208,13 +208,13 @@ include scripts/build/license.mk
 
 license-check: $(LICENSE_EYE)
 license-check: TARGET=license-check
-license-check: PROJECTS:=ui mcp
+license-check: PROJECTS:=ui mcp canopy
 license-check: default ## Check license header
 	$(LICENSE_EYE) header check
- 
+
 license-fix: $(LICENSE_EYE)
 license-fix: TARGET=license-fix
-license-fix: PROJECTS:=ui mcp
+license-fix: PROJECTS:=ui mcp canopy
 license-fix: default ## Fix license header issues
 	$(LICENSE_EYE) header fix
 
