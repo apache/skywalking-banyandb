@@ -61,6 +61,7 @@ func (d *dataBlock) unmarshal(src []byte) []byte {
 
 type blockMetadata struct {
 	tagFamilies           map[string]*dataBlock
+	tagType               tagType
 	tagProjection         []model.TagProjection
 	timestamps            timestampsMetadata
 	elementIDs            elementIDsMetadata
@@ -75,6 +76,16 @@ func (bm *blockMetadata) copyFrom(src *blockMetadata) {
 	bm.count = src.count
 	bm.timestamps.copyFrom(&src.timestamps)
 	bm.elementIDs.copyFrom(&src.elementIDs)
+	if src.tagType == nil {
+		bm.tagType = nil
+	} else {
+		if bm.tagType == nil {
+			bm.tagType = make(tagType, len(src.tagType))
+		} else {
+			bm.tagType.reset()
+		}
+		bm.tagType.copyFrom(src.tagType)
+	}
 	for k, db := range src.tagFamilies {
 		if bm.tagFamilies == nil {
 			bm.tagFamilies = make(map[string]*dataBlock)
@@ -102,6 +113,11 @@ func (bm *blockMetadata) reset() {
 	bm.count = 0
 	bm.timestamps.reset()
 	bm.elementIDs.reset()
+	if bm.tagType == nil {
+		bm.tagType = make(tagType)
+	} else {
+		bm.tagType.reset()
+	}
 	for k := range bm.tagFamilies {
 		bm.tagFamilies[k].reset()
 		delete(bm.tagFamilies, k)

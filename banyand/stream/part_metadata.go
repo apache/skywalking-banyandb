@@ -19,14 +19,19 @@ package stream
 
 import (
 	"encoding/json"
+	"fmt"
 	"path/filepath"
+	"sort"
 
 	"github.com/pkg/errors"
 
 	"github.com/apache/skywalking-banyandb/banyand/internal/storage"
 	"github.com/apache/skywalking-banyandb/banyand/queue"
+	"github.com/apache/skywalking-banyandb/pkg/convert"
+	"github.com/apache/skywalking-banyandb/pkg/encoding"
 	"github.com/apache/skywalking-banyandb/pkg/fs"
 	"github.com/apache/skywalking-banyandb/pkg/logger"
+	pbv1 "github.com/apache/skywalking-banyandb/pkg/pb/v1"
 )
 
 type partMetadata struct {
@@ -104,6 +109,96 @@ func (pm *partMetadata) mustWriteMetadata(fileSystem fs.FileSystem, partPath str
 	}
 	if n != len(metadata) {
 		logger.Panicf("unexpected number of bytes written to %s; got %d; want %d", metadataPath, n, len(metadata))
+	}
+}
+
+type tagType map[string]map[string]pbv1.ValueType
+
+func (tt tagType) reset() {
+	clear(tt)
+}
+
+func (tt tagType) copyFrom(source tagType) {
+	for familyName, sourceTags := range source {
+		tags := tt[familyName]
+		if tags == nil {
+			tags = make(map[string]pbv1.ValueType, len(sourceTags))
+			tt[familyName] = tags
+		}
+		for tagName, valueType := range sourceTags {
+			tags[tagName] = valueType
+		}
+	}
+}
+
+func (tt tagType) marshal() []byte {
+	var dst []byte
+	dst = encoding.VarUint64ToBytes(dst, uint64(len(tt)))
+	familyNames := make([]string, 0, len(tt))
+	for familyName := range tt {
+		familyNames = append(familyNames, familyName)
+	}
+	sort.Strings(familyNames)
+	for _, familyName := range familyNames {
+		dst = encoding.EncodeBytes(dst, convert.StringToBytes(familyName))
+		tags := tt[familyName]
+		dst = encoding.VarUint64ToBytes(dst, uint64(len(tags)))
+		tagNames := make([]string, 0, len(tags))
+		for tagName := range tags {
+			tagNames = append(tagNames, tagName)
+		}
+		sort.Strings(tagNames)
+		for _, tagName := range tagNames {
+			dst = encoding.EncodeBytes(dst, convert.StringToBytes(tagName))
+			dst = append(dst, byte(tags[tagName]))
+		}
+	}
+	return dst
+}
+
+func (tt tagType) unmarshal(src []byte) error {
+	tt.reset()
+	remaining, familyCount := encoding.BytesToVarUint64(src)
+	for i := uint64(0); i < familyCount; i++ {
+		var familyNameBytes []byte
+		var decodeErr error
+		remaining, familyNameBytes, decodeErr = encoding.DecodeBytes(remaining)
+		if decodeErr != nil {
+			return fmt.Errorf("cannot decode tag family name: %w", decodeErr)
+		}
+		var tagCount uint64
+		remaining, tagCount = encoding.BytesToVarUint64(remaining)
+		tags := make(map[string]pbv1.ValueType, tagCount)
+		for j := uint64(0); j < tagCount; j++ {
+			var tagNameBytes []byte
+			remaining, tagNameBytes, decodeErr = encoding.DecodeBytes(remaining)
+			if decodeErr != nil {
+				return fmt.Errorf("cannot decode tag name: %w", decodeErr)
+			}
+			if len(remaining) < 1 {
+				return errors.New("insufficient data for tag value type")
+			}
+			tags[string(tagNameBytes)] = pbv1.ValueType(remaining[0])
+			remaining = remaining[1:]
+		}
+		tt[string(familyNameBytes)] = tags
+	}
+	return nil
+}
+
+func (tt tagType) mustWriteTagType(fileSystem fs.FileSystem, partPath string) {
+	if len(tt) == 0 {
+		return
+	}
+	data := tt.marshal()
+	tagTypePath := filepath.Join(partPath, tagTypeFilename)
+	written, writeErr := fileSystem.WriteAtomic(data, tagTypePath, storage.FilePerm)
+	if writeErr != nil {
+		logger.Panicf("cannot write tag type: %s", writeErr)
+		return
+	}
+	if written != len(data) {
+		logger.Panicf("unexpected number of bytes written to %s; got %d; want %d", tagTypePath, written, len(data))
 	}
 }
 
