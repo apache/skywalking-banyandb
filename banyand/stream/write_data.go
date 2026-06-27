@@ -18,6 +18,7 @@
 package stream
 
 import (
+	"context"
 	"fmt"
 	"strings"
 	"sync/atomic"
@@ -26,6 +27,7 @@ import (
 	"github.com/apache/skywalking-banyandb/api/common"
 	commonv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/common/v1"
 	"github.com/apache/skywalking-banyandb/banyand/internal/storage"
+	"github.com/apache/skywalking-banyandb/banyand/protector"
 	"github.com/apache/skywalking-banyandb/banyand/queue"
 	"github.com/apache/skywalking-banyandb/pkg/fs"
 	"github.com/apache/skywalking-banyandb/pkg/index"
@@ -157,6 +159,9 @@ func (s *syncCallback) HandleFileChunk(ctx *queue.ChunkedSyncPartContext, chunk 
 		return fmt.Errorf("part handler is nil")
 	}
 	partCtx := ctx.Handler.(*syncPartContext)
+	if partCtx.tsTable.pm.State() == protector.StateHigh {
+		return queue.ErrServerBusy
+	}
 
 	// Select the appropriate writer based on the filename and write the chunk.
 	fileName := ctx.FileName
@@ -188,10 +193,13 @@ func (s *syncCallback) HandleFileChunk(ctx *queue.ChunkedSyncPartContext, chunk 
 }
 
 type syncSeriesContext struct {
-	streamer index.ExternalSegmentStreamer
-	segment  storage.Segment[*tsTable, *commonv1.ResourceOpts]
-	l        *logger.Logger
-	fileName string
+	streamer       index.ExternalSegmentStreamer
+	segment        storage.Segment[*tsTable, *commonv1.ResourceOpts]
+	l              *logger.Logger
+	pm             protector.Memory
+	introduceCtx   context.Context
+	fileName       string
+	memWaitTimeout time.Duration
 }
 
 func (s *syncSeriesContext) NewPartType(_ *queue.ChunkedSyncPartContext) error {
@@ -201,6 +209,9 @@ func (s *syncSeriesContext) NewPartType(_ *queue.ChunkedSyncPartContext) error {
 
 func (s *syncSeriesContext) FinishSync() error {
 	if s.streamer != nil {
+		if err := protector.WaitWhileHigh(s.introduceCtx, s.pm, s.memWaitTimeout, s.l, "stream-series-introduce"); err != nil {
+			return err
+		}
 		if err := s.streamer.CompleteSegment(); err != nil {
 			s.l.Error().Err(err).Msg("failed to complete external segment")
 			return err
@@ -220,14 +231,18 @@ func (s *syncSeriesContext) Close() error {
 }
 
 type syncSeriesCallback struct {
-	l          *logger.Logger
-	schemaRepo *schemaRepo
+	l              *logger.Logger
+	schemaRepo     *schemaRepo
+	pm             protector.Memory
+	memWaitTimeout time.Duration
 }
 
-func setUpSyncSeriesCallback(l *logger.Logger, schemaRepo *schemaRepo) queue.ChunkedSyncHandler {
+func setUpSyncSeriesCallback(l *logger.Logger, schemaRepo *schemaRepo, pm protector.Memory, memWaitTimeout time.Duration) queue.ChunkedSyncHandler {
 	return &syncSeriesCallback{
-		l:          l,
-		schemaRepo: schemaRepo,
+		l:              l,
+		schemaRepo:     schemaRepo,
+		pm:             pm,
+		memWaitTimeout: memWaitTimeout,
 	}
 }
 
@@ -252,8 +267,11 @@ func (s *syncSeriesCallback) CreatePartHandler(ctx *queue.ChunkedSyncPartContext
 		return nil, err
 	}
 	return &syncSeriesContext{
-		l:       s.l,
-		segment: segment,
+		l:              s.l,
+		segment:        segment,
+		pm:             s.pm,
+		memWaitTimeout: s.memWaitTimeout,
+		introduceCtx:   ctx.RetrieveContext(),
 	}, nil
 }
 
@@ -263,12 +281,18 @@ func (s *syncSeriesCallback) HandleFileChunk(ctx *queue.ChunkedSyncPartContext, 
 		return fmt.Errorf("part handler is nil")
 	}
 	seriesCtx := ctx.Handler.(*syncSeriesContext)
+	if seriesCtx.pm.State() == protector.StateHigh {
+		return queue.ErrServerBusy
+	}
 
 	if seriesCtx.segment == nil {
 		return fmt.Errorf("segment is nil")
 	}
 	if seriesCtx.fileName != ctx.FileName {
 		if seriesCtx.streamer != nil {
+			if err := protector.WaitWhileHigh(ctx.RetrieveContext(), seriesCtx.pm, seriesCtx.memWaitTimeout, s.l, "stream-series-introduce"); err != nil {
+				return err
+			}
 			if err := seriesCtx.streamer.CompleteSegment(); err != nil {
 				s.l.Error().Err(err).Str("group", ctx.Group).Msg("failed to complete external segment")
 				return err
@@ -294,11 +318,14 @@ func (s *syncSeriesCallback) HandleFileChunk(ctx *queue.ChunkedSyncPartContext, 
 }
 
 type syncElementIndexContext struct {
-	streamer index.ExternalSegmentStreamer
-	segment  storage.Segment[*tsTable, *commonv1.ResourceOpts]
-	tsTable  *tsTable
-	l        *logger.Logger
-	fileName string
+	streamer       index.ExternalSegmentStreamer
+	segment        storage.Segment[*tsTable, *commonv1.ResourceOpts]
+	tsTable        *tsTable
+	l              *logger.Logger
+	pm             protector.Memory
+	introduceCtx   context.Context
+	fileName       string
+	memWaitTimeout time.Duration
 }
 
 func (s *syncElementIndexContext) NewPartType(_ *queue.ChunkedSyncPartContext) error {
@@ -308,6 +335,9 @@ func (s *syncElementIndexContext) NewPartType(_ *queue.ChunkedSyncPartContext) e
 
 func (s *syncElementIndexContext) FinishSync() error {
 	if s.streamer != nil {
+		if err := protector.WaitWhileHigh(s.introduceCtx, s.pm, s.memWaitTimeout, s.l, "stream-element-index-introduce"); err != nil {
+			return err
+		}
 		if err := s.streamer.CompleteSegment(); err != nil {
 			s.l.Error().Err(err).Msg("failed to complete external segment for element index")
 			return err
@@ -328,14 +358,18 @@ func (s *syncElementIndexContext) Close() error {
 }
 
 type syncElementIndexCallback struct {
-	l          *logger.Logger
-	schemaRepo *schemaRepo
+	l              *logger.Logger
+	schemaRepo     *schemaRepo
+	pm             protector.Memory
+	memWaitTimeout time.Duration
 }
 
-func setUpSyncElementIndexCallback(l *logger.Logger, schemaRepo *schemaRepo) queue.ChunkedSyncHandler {
+func setUpSyncElementIndexCallback(l *logger.Logger, schemaRepo *schemaRepo, pm protector.Memory, memWaitTimeout time.Duration) queue.ChunkedSyncHandler {
 	return &syncElementIndexCallback{
-		l:          l,
-		schemaRepo: schemaRepo,
+		l:              l,
+		schemaRepo:     schemaRepo,
+		pm:             pm,
+		memWaitTimeout: memWaitTimeout,
 	}
 }
 
@@ -366,9 +400,12 @@ func (s *syncElementIndexCallback) CreatePartHandler(ctx *queue.ChunkedSyncPartC
 	}
 
 	return &syncElementIndexContext{
-		l:       s.l,
-		tsTable: tsTable,
-		segment: segment,
+		l:              s.l,
+		tsTable:        tsTable,
+		segment:        segment,
+		pm:             s.pm,
+		memWaitTimeout: s.memWaitTimeout,
+		introduceCtx:   ctx.RetrieveContext(),
 	}, nil
 }
 
@@ -378,12 +415,18 @@ func (s *syncElementIndexCallback) HandleFileChunk(ctx *queue.ChunkedSyncPartCon
 		return fmt.Errorf("part handler is nil")
 	}
 	elementCtx := ctx.Handler.(*syncElementIndexContext)
+	if elementCtx.pm.State() == protector.StateHigh {
+		return queue.ErrServerBusy
+	}
 
 	if elementCtx.tsTable == nil {
 		return fmt.Errorf("ts table is nil")
 	}
 	if elementCtx.fileName != ctx.FileName {
 		if elementCtx.streamer != nil {
+			if err := protector.WaitWhileHigh(ctx.RetrieveContext(), elementCtx.pm, elementCtx.memWaitTimeout, s.l, "stream-element-index-introduce"); err != nil {
+				return err
+			}
 			if err := elementCtx.streamer.CompleteSegment(); err != nil {
 				s.l.Error().Err(err).Str("group", ctx.Group).Msg("failed to complete external segment for element index")
 				return err

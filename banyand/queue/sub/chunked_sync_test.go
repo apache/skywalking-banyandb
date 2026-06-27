@@ -282,6 +282,68 @@ func TestChunkOrderingBufferFull(t *testing.T) {
 	assert.True(t, found, "expected error_type=buffer_full to be recorded")
 }
 
+// TestChunkedSyncServerBusy verifies that when the handler's HandleFileChunk reports
+// memory pressure via queue.ErrServerBusy, the server replies with SYNC_STATUS_SERVER_BUSY
+// instead of a generic stream error or a CHUNK_RECEIVED success.
+func TestChunkedSyncServerBusy(t *testing.T) {
+	err := logger.Init(logger.Logging{Env: "dev", Level: "info"})
+	require.NoError(t, err)
+
+	s := &server{ //nolint:exhaustruct
+		log:                 logger.GetLogger("test-server-busy"),
+		chunkedSyncHandlers: make(map[bus.Topic]queue.ChunkedSyncHandler),
+	}
+	s.chunkedSyncHandlers[data.TopicStreamPartSync] = &busyChunkedSyncHandler{}
+
+	mockStream := &MockSyncPartStream{}
+	session := &syncSession{ //nolint:exhaustruct
+		sessionID:     "busy-session",
+		startTime:     time.Now(),
+		partsProgress: make(map[int]*partProgress),
+		metadata: &clusterv1.SyncMetadata{
+			Group:   "test-group",
+			ShardId: 1,
+			Topic:   data.TopicStreamPartSync.String(),
+		},
+	}
+
+	chunkData := []byte("busy-chunk-data")
+	req := &clusterv1.SyncPartRequest{
+		SessionId:     "busy-session",
+		ChunkIndex:    0,
+		ChunkData:     chunkData,
+		ChunkChecksum: fmt.Sprintf("%x", crc32.ChecksumIEEE(chunkData)),
+		PartsInfo: []*clusterv1.PartInfo{
+			{
+				Id: 1,
+				Files: []*clusterv1.FileInfo{
+					{Name: "test-file.dat", Offset: 0, Size: uint32(len(chunkData))},
+				},
+			},
+		},
+	}
+
+	require.NoError(t, s.processChunk(mockStream, session, req))
+
+	require.Len(t, mockStream.sentResponses, 1)
+	resp := mockStream.sentResponses[0]
+	assert.Equal(t, clusterv1.SyncStatus_SYNC_STATUS_SERVER_BUSY, resp.Status)
+	assert.NotEmpty(t, resp.Error)
+	assert.Equal(t, "busy-session", resp.SessionId)
+	assert.Equal(t, uint32(0), resp.ChunkIndex)
+}
+
+// busyChunkedSyncHandler is a handler whose HandleFileChunk always reports memory pressure.
+type busyChunkedSyncHandler struct{}
+
+func (m *busyChunkedSyncHandler) CreatePartHandler(_ *queue.ChunkedSyncPartContext) (queue.PartHandler, error) {
+	return &MockChunkedSyncPartHandler{}, nil
+}
+
+func (m *busyChunkedSyncHandler) HandleFileChunk(_ *queue.ChunkedSyncPartContext, _ []byte) error {
+	return queue.ErrServerBusy
+}
+
 // MockChunkedSyncHandler implements queue.ChunkedSyncHandler for testing.
 type MockChunkedSyncHandler struct{}
 

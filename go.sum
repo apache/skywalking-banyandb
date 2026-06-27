@@ -55,8 +55,8 @@ github.com/Nvveen/Gotty v0.0.0-20120604004816-cd527374f1e5/go.mod h1:lmUJ/7eu/Q8
 github.com/RoaringBitmap/roaring v0.9.4/go.mod h1:icnadbWcNyfEHlYdr+tDlOTih1Bf/h+rzPpv4sbomAA=
 github.com/RoaringBitmap/roaring v1.9.4 h1:yhEIoH4YezLYT04s1nHehNO64EKFTop/wBhxv2QzDdQ=
 github.com/RoaringBitmap/roaring v1.9.4/go.mod h1:6AXUsoIEzDTFFQCe1RbGA6uFONMhvejWj5rqITANK90=
-github.com/SkyAPM/bluge v0.0.0-20250804100126-cccf29a55f01 h1:f56Ybipl9Yh9wFCZc3EoB5OmbW2UJfIpe6e/gsE/DuA=
-github.com/SkyAPM/bluge v0.0.0-20250804100126-cccf29a55f01/go.mod h1:VfQRtJQEwpooobYuSBadb8QYjTUICH+CX42IJYrfSiM=
+github.com/SkyAPM/bluge v0.0.0-20260625022800-42385daf66b8 h1:kNqj2T61hvMFOblOmkADOf4UWpJPh55jQ4WX2U31zaw=
+github.com/SkyAPM/bluge v0.0.0-20260625022800-42385daf66b8/go.mod h1:VfQRtJQEwpooobYuSBadb8QYjTUICH+CX42IJYrfSiM=
 github.com/SkyAPM/ice v0.0.0-20250619023539-b5173603b0b3 h1:bZvLPihpC1q1AJkmR6ere/aJOr3ev+JCytvjKuL+gE8=
 github.com/SkyAPM/ice v0.0.0-20250619023539-b5173603b0b3/go.mod h1:DoQeb0Ee86LyruZSL77Ddscfk/THJ38x453CRCnGEPI=
 github.com/SkyAPM/ktm-ebpf v0.0.0-20260228024820-81a19d950bff h1:pjcdkEAe+NL2bA0J/mu/Vs+eG+w+KN/BX9yGkOC1f60=

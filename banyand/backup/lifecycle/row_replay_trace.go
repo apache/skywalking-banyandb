@@ -136,5 +136,5 @@ func (r *traceRowReplayer) buildWriteRequest(row dumptrace.Row) (*tracev1.WriteR
 
 func (r *traceRowReplayer) publishRow(ctx context.Context, row dumptrace.Row) error {
 	_, iwr := r.buildWriteRequest(row)
-	return r.sender.routeAndEnqueue(ctx, r.selector, r.group, r.traceName, iwr.ShardId, iwr)
+	return r.sender.routeAndEnqueue(ctx, r.logger, r.selector, r.group, r.traceName, iwr.ShardId, iwr)
 }

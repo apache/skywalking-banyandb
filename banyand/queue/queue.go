@@ -40,6 +40,10 @@ import (
 // self-probing without a special-cased branch in the caller.
 var ErrNotImplemented = errors.New("not implemented")
 
+// ErrServerBusy signals the receiver is under memory pressure and the sender
+// should back off and retry the whole part.
+var ErrServerBusy = errors.New("receiver under memory pressure")
+
 // Queue builds a data transmission tunnel between subscribers and publishers.
 //
 //go:generate mockgen -destination=./queue_mock.go -package=queue github.com/apache/skywalking-banyandb/pkg/bus MessageListener
@@ -136,7 +140,10 @@ type ChunkedSyncClient interface {
 
 // ChunkedSyncPartContext represents the context for a chunked sync operation.
 type ChunkedSyncPartContext struct {
-	Handler               PartHandler
+	Handler PartHandler
+	// Context carries the gRPC stream context for receive-side cancellation
+	// (memory wait upper bound / disconnect).
+	Context               context.Context
 	Group                 string
 	FileName              string
 	PartType              string
@@ -150,6 +157,15 @@ type ChunkedSyncPartContext struct {
 	MinKey                int64
 	MaxKey                int64
 	ShardID               uint32
+}
+
+// RetrieveContext returns the part's stream context, or context.Background()
+// if none was set. Used by receive handlers to bound memory-pressure waits.
+func (c *ChunkedSyncPartContext) RetrieveContext() context.Context {
+	if c.Context == nil {
+		return context.Background()
+	}
+	return c.Context
 }
 
 // Close releases resources associated with the context.

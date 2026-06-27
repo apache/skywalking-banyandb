@@ -177,6 +177,8 @@ func (s *standalone) FlagSet() *run.FlagSet {
 	flagS.StringVar(&s.dataPath, "stream-data-path", "", "the data directory path of stream. If not set, <stream-root-path>/stream/data will be used")
 	flagS.DurationVar(&s.option.flushTimeout, "stream-flush-timeout", defaultFlushTimeout, "the memory data timeout of stream")
 	flagS.DurationVar(&s.option.elementIndexFlushTimeout, "element-index-flush-timeout", defaultFlushTimeout, "the elementIndex timeout of stream")
+	flagS.DurationVar(&s.option.memWaitTimeout, "stream-lifecycle-receive-mem-wait-timeout", 5*time.Minute,
+		"max time the migration receiver waits for memory to recover before introducing an external segment")
 	s.option.mergePolicy = newDefaultMergePolicy()
 	flagS.VarP(&s.option.mergePolicy.maxFanOutSize, "stream-max-fan-out-size", "", "the upper bound of a single file size after merge of stream")
 	s.option.seriesCacheMaxSize = run.Bytes(32 << 20)
@@ -293,9 +295,9 @@ func (s *standalone) PreRun(ctx context.Context) error {
 	}
 	s.pipeline.RegisterChunkedSyncHandler(data.TopicStreamPartSync, setUpChunkedSyncCallback(s.l, &s.schemaRepo))
 	// Register chunked sync handler for stream series index
-	s.pipeline.RegisterChunkedSyncHandler(data.TopicStreamSeriesSync, setUpSyncSeriesCallback(s.l, &s.schemaRepo))
+	s.pipeline.RegisterChunkedSyncHandler(data.TopicStreamSeriesSync, setUpSyncSeriesCallback(s.l, &s.schemaRepo, s.pm, s.option.memWaitTimeout))
 	// Register chunked sync handler for stream element index
-	s.pipeline.RegisterChunkedSyncHandler(data.TopicStreamElementIndexSync, setUpSyncElementIndexCallback(s.l, &s.schemaRepo))
+	s.pipeline.RegisterChunkedSyncHandler(data.TopicStreamElementIndexSync, setUpSyncElementIndexCallback(s.l, &s.schemaRepo, s.pm, s.option.memWaitTimeout))
 
 	err = s.pipeline.Subscribe(data.TopicStreamSeriesIndexWrite, setUpSeriesIndexCallback(s.l, &s.schemaRepo))
 	if err != nil {

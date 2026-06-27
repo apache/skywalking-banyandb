@@ -18,6 +18,7 @@
 package lifecycle
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"sync"
@@ -98,7 +99,7 @@ func TestVisitorRecordError(t *testing.T) {
 
 	t.Run("measure_part_with_shard_zero", func(t *testing.T) {
 		p := NewProgress("", logger.GetLogger("test"))
-		mv := newMeasureMigrationVisitor(grp, 1, 0, nil, nil, logger.GetLogger("test"), p, 0, dayInterval, nil,
+		mv := newMeasureMigrationVisitor(context.Background(), grp, 1, 0, nil, nil, logger.GetLogger("test"), p, 0, dayInterval, nil,
 			"hot", "warm", dayInterval, orphanConfig{})
 		part := uint64(1)
 		mv.recordError(scopePart, segTR, 0, &part, "boom")
@@ -120,7 +121,7 @@ func TestVisitorRecordError(t *testing.T) {
 
 	t.Run("measure_series_has_no_part", func(t *testing.T) {
 		p := NewProgress("", logger.GetLogger("test"))
-		mv := newMeasureMigrationVisitor(grp, 1, 0, nil, nil, logger.GetLogger("test"), p, 0, dayInterval, nil,
+		mv := newMeasureMigrationVisitor(context.Background(), grp, 1, 0, nil, nil, logger.GetLogger("test"), p, 0, dayInterval, nil,
 			"hot", "warm", dayInterval, orphanConfig{})
 		mv.recordError(scopeSeries, segTR, 3, nil, "series boom")
 		require.Len(t, p.MigrationErrors, 1)
@@ -133,7 +134,7 @@ func TestVisitorRecordError(t *testing.T) {
 
 	t.Run("trace_shard_catalog", func(t *testing.T) {
 		p := NewProgress("", logger.GetLogger("test"))
-		tv := newTraceMigrationVisitor(grp, 1, 0, nil, nil, logger.GetLogger("test"), p, 0, dayInterval, nil,
+		tv := newTraceMigrationVisitor(context.Background(), grp, 1, 0, nil, nil, logger.GetLogger("test"), p, 0, dayInterval, nil,
 			"warm", "cold", dayInterval)
 		tv.recordError(scopeShard, segTR, 2, "trace boom")
 		require.Len(t, p.MigrationErrors, 1)
