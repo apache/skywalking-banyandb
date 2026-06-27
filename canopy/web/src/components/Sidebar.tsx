@@ -17,7 +17,7 @@
  * under the License.
  */
 
-import React, { useState } from 'react';
+import React, { useEffect, useMemo, useState } from 'react';
 import { useNavigate, useLocation } from 'react-router-dom';
 import { useQuery } from '@tanstack/react-query';
 
@@ -27,7 +27,7 @@ import { apiDataSource } from '../data/api.js';
 import {
   IconHome, IconMetadata, IconMeasures, IconStreams, IconTraces,
   IconProperties, IconPipelines, IconQuery, IconChevron, IconCollapse, IconSignOut,
-  IconShield, IconViewer,
+  IconShield, IconViewer, IconIndex, IconGroup,
 } from './icons.js';
 
 interface SidebarProps {
@@ -35,23 +35,203 @@ interface SidebarProps {
   onToggleCollapse: () => void;
 }
 
+/** A catalog row (Measures/Streams/Traces) with its groups expanded underneath. */
+function CatalogNav({
+  basePath, label, Icon, groups, open, onToggle, active, navigate, collapsed,
+  isIndexOpen, onToggleIndex, onActivateGroupIndex,
+}: {
+  basePath: string;
+  label: string;
+  Icon: React.ComponentType<{ size?: number }>;
+  groups: Array<{ name: string }>;
+  open: boolean;
+  onToggle: () => void;
+  active: string;
+  navigate: (path: string) => void;
+  collapsed: boolean;
+  /** Returns true if the given group's "Index" sub-row is unfolded. */
+  isIndexOpen: (catalog: string, groupName: string) => boolean;
+  /** Toggle the per-group Index sub-row. */
+  onToggleIndex: (catalog: string, groupName: string) => void;
+  /** Select this group as the "currently expanded" Index in its catalog
+   *  (folds every other group in the same catalog). */
+  onActivateGroupIndex: (catalog: string, groupName: string) => void;
+}) {
+  // basePath is e.g. "/metadata/measures" — the segment after "/metadata/"
+  // is the catalog key we use to scope the open-set so a measure and a
+  // stream that share a name don't collide.
+  const catalog = basePath.replace(/^\/metadata\//, '');
+  const onPath = active === basePath || active.startsWith(basePath + '/');
+  return (
+    <div className="nav-node">
+      <div className="nav-rowline">
+        <button
+          className={'nav-row lvl-1' + (onPath ? ' has-active' : '')}
+          style={{ paddingLeft: 28, paddingRight: collapsed ? 12 : 32 }}
+          onClick={() => { if (!collapsed) { onToggle(); navigate(basePath); } else { navigate(basePath); } }}
+          aria-expanded={open}
+          title={label}
+        >
+          <span className="nav-ico"><Icon size={16} /></span>
+          <span className="nav-label">{label}</span>
+          <span className="nav-count">{groups.length}</span>
+        </button>
+        {!collapsed && groups.length > 0 && (
+          <button
+            type="button"
+            className="nav-chev-btn"
+            aria-label={(open ? 'Collapse' : 'Expand') + ' ' + label}
+            aria-expanded={open}
+            onClick={onToggle}
+          >
+            <span className={'nav-chev' + (open ? ' is-open' : '')}><IconChevron /></span>
+          </button>
+        )}
+      </div>
+      {open && groups.length > 0 && (
+        <div className="nav-sub is-open">
+          <div className="nav-sub-inner">
+            <span className="nav-guide" style={{ left: 37 }} />
+            {groups.map((g) => {
+              const path = `${basePath}/${g.name}`;
+              const indexPath = `${path}/Index`;
+              const isActive = active === path;
+              const isIndexActive = active === indexPath;
+              // Per-group "Index" sub-row: hidden by default; the active group
+              // gets auto-opened by a useEffect in the parent, and the user
+              // can click the chevron on this row to fold/unfold manually.
+              const indexOpen = isIndexOpen(catalog, g.name);
+              return (
+                <div key={g.name} className="nav-node">
+                  <div className="nav-rowline">
+                    <button
+                      className={'nav-row lvl-2 is-leaf' + (isActive ? ' is-active' : '')}
+                      style={{ paddingLeft: 44, paddingRight: collapsed ? 12 : 32 }}
+                      onClick={() => { onActivateGroupIndex(catalog, g.name); navigate(path); }}
+                      title={g.name}
+                    >
+                      <span className="nav-ico grp"><IconGroup size={14} /></span>
+                      <span className="nav-label">{g.name}</span>
+                    </button>
+                    {!collapsed && (
+                      <button
+                        type="button"
+                        className="nav-chev-btn"
+                        aria-label={(indexOpen ? 'Collapse' : 'Expand') + ' Index for ' + g.name}
+                        aria-expanded={indexOpen}
+                        onClick={() => onToggleIndex(catalog, g.name)}
+                      >
+                        <span className={'nav-chev' + (indexOpen ? ' is-open' : '')}><IconChevron /></span>
+                      </button>
+                    )}
+                  </div>
+                  {indexOpen && (
+                    <div className="nav-sub is-open">
+                      <div className="nav-sub-inner">
+                        <span className="nav-guide" style={{ left: 53 }} />
+                        <button
+                          className={'nav-row lvl-3' + (isIndexActive ? ' is-active' : '')}
+                          style={{ paddingLeft: 60 }}
+                          onClick={() => navigate(indexPath)}
+                          title="Index rules and bindings"
+                        >
+                          <span className="nav-ico"><IconIndex size={18} /></span>
+                          <span className="nav-label">Index</span>
+                        </button>
+                      </div>
+                    </div>
+                  )}
+                </div>
+              );
+            })}
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
 export function Sidebar({ collapsed, onToggleCollapse }: SidebarProps) {
   const { session, setSession } = useAuth();
   const navigate = useNavigate();
   const location = useLocation();
   const [metaOpen, setMetaOpen] = useState(true);
+  const [measuresOpen, setMeasuresOpen] = useState(false);
+  const [streamsOpen, setStreamsOpen] = useState(false);
+  const [tracesOpen, setTracesOpen] = useState(false);
+  // Per-group "Index" sub-row expansion. Empty by default — every Index is
+  // folded so the sidebar doesn't grow noisy when there are many groups. The
+  // active group's Index is auto-added below; users can fold/unfold manually
+  // via the per-group chevron.
+  // Per-group "Index" sub-row expansion, keyed by `${catalog}|${group}` so a
+  // measure and a stream that happen to share a name are tracked separately.
+  // Empty by default — every Index is folded so the sidebar doesn't grow
+  // noisy. Clicking a group row activates its Index and folds every other
+  // group in the same catalog. The chevron toggles just this group without
+  // touching the others. The active group's Index is auto-activated in a
+  // useEffect below.
+  const [indexOpenGroups, setIndexOpenGroups] = useState<Set<string>>(new Set());
+  const indexKey = (catalog: string, group: string) => catalog + '|' + group;
+  // Per-catalog state, queried by the CatalogNav for a known catalog.
+  const isIndexOpen = (catalog: string, group: string) => indexOpenGroups.has(indexKey(catalog, group));
+  // Chevron click: toggle just this group's Index. Multiple groups can be
+  // open simultaneously via the chevron — clicking the chevron never closes
+  // another group.
+  const onToggleIndex = (catalog: string, group: string) => setIndexOpenGroups((prev) => {
+    const k = indexKey(catalog, group);
+    const next = new Set(prev);
+    if (next.has(k)) next.delete(k); else next.add(k);
+    return next;
+  });
+  // Group-row click: select this group as the "currently expanded" Index for
+  // its catalog. Every other group in the same catalog gets folded, but
+  // groups in OTHER catalogs are left alone (e.g. a Measures group can
+  // share a name with a Streams group, and we don't want clicking one to
+  // collapse the other).
+  const onActivateGroupIndex = (catalog: string, group: string) => setIndexOpenGroups((prev) => {
+    const prefix = catalog + '|';
+    const next = new Set<string>();
+    for (const k of prev) if (!k.startsWith(prefix)) next.add(k);
+    next.add(indexKey(catalog, group));
+    return next;
+  });
 
   const { data: groupsData } = useQuery({
     queryKey: ['groups'],
     queryFn: () => apiDataSource.listGroups(),
   });
-  const groups = groupsData?.groups ?? [];
-  const navCounts = {
-    measures: groups.filter(g => g.catalog === 'CATALOG_MEASURE').length,
-    streams: groups.filter(g => g.catalog === 'CATALOG_STREAM').length,
-  };
+  const groups = useMemo(() => groupsData?.groups ?? [], [groupsData]);
+  const measureGroups = useMemo(() => groups.filter((g) => g.catalog === 'CATALOG_MEASURE'), [groups]);
+  const streamGroups  = useMemo(() => groups.filter((g) => g.catalog === 'CATALOG_STREAM'),  [groups]);
+  const traceGroups   = useMemo(() => groups.filter((g) => g.catalog === 'CATALOG_TRACE'),   [groups]);
 
   const active = location.pathname;
+
+  // Auto-open the catalog that owns the active path so the user sees
+  // context. The handoff calls this "re-clicking the page you're already on
+  // toggles its branch open/closed" — clicking the row already navigates.
+  useEffect(() => {
+    if (active.startsWith('/metadata/measures')) setMeasuresOpen(true);
+    if (active.startsWith('/metadata/streams'))  setStreamsOpen(true);
+    if (active.startsWith('/metadata/traces'))   setTracesOpen(true);
+  }, [active]);
+
+  // When the URL lands on a group's Index page, unfold that group's Index
+  // sub-row so the user can see it. We only add — the user keeps manual
+  // control to fold via the per-group chevron.
+  useEffect(() => {
+    const m = active.match(/^\/metadata\/(measures|streams|traces)\/([^/]+)\/Index$/);
+    if (!m) return;
+    const [, catalog, group] = m;
+    const k = catalog + '|' + group;
+    setIndexOpenGroups((prev) => {
+      if (prev.has(k)) return prev;
+      const next = new Set(prev);
+      next.add(k);
+      return next;
+    });
+  }, [active]);
+
   const isAdmin = session?.role === 'admin';
   const endpoint = session?.endpoint ?? '';
   const displayHost = endpoint.replace(/^https?:\/\//, '');
@@ -120,26 +300,48 @@ export function Sidebar({ collapsed, onToggleCollapse }: SidebarProps) {
           <div className={'nav-sub' + (metaOpen ? ' is-open' : '')}>
             <div className="nav-sub-inner">
               <span className="nav-guide" style={{ left: 21 }} />
-              {[
-                { path: '/metadata/measures', label: 'Measures', Icon: IconMeasures, count: navCounts.measures },
-                { path: '/metadata/streams', label: 'Streams', Icon: IconStreams, count: navCounts.streams },
-                { path: '/metadata/traces', label: 'Traces', Icon: IconTraces, count: null },
-              ].map(({ path, label, Icon, count }) => (
-                <div key={path} className="nav-node">
-                  <div className="nav-rowline">
-                    <button
-                      className={'nav-row lvl-1' + (active.startsWith(path) ? ' is-active' : '')}
-                      style={{ paddingLeft: 28 }}
-                      onClick={() => navigate(path)}
-                      title={label}
-                    >
-                      <span className="nav-ico"><Icon size={16} /></span>
-                      <span className="nav-label">{label}</span>
-                      {count != null && <span className="nav-count">{count}</span>}
-                    </button>
-                  </div>
-                </div>
-              ))}
+              <CatalogNav
+                basePath="/metadata/measures"
+                label="Measures"
+                Icon={IconMeasures}
+                groups={measureGroups}
+                open={measuresOpen}
+                onToggle={() => setMeasuresOpen((o) => !o)}
+                active={active}
+                navigate={navigate}
+                collapsed={collapsed}
+                isIndexOpen={isIndexOpen}
+                onToggleIndex={onToggleIndex}
+                onActivateGroupIndex={onActivateGroupIndex}
+              />
+              <CatalogNav
+                basePath="/metadata/streams"
+                label="Streams"
+                Icon={IconStreams}
+                groups={streamGroups}
+                open={streamsOpen}
+                onToggle={() => setStreamsOpen((o) => !o)}
+                active={active}
+                navigate={navigate}
+                collapsed={collapsed}
+                isIndexOpen={isIndexOpen}
+                onToggleIndex={onToggleIndex}
+                onActivateGroupIndex={onActivateGroupIndex}
+              />
+              <CatalogNav
+                basePath="/metadata/traces"
+                label="Traces"
+                Icon={IconTraces}
+                groups={traceGroups}
+                open={tracesOpen}
+                onToggle={() => setTracesOpen((o) => !o)}
+                active={active}
+                navigate={navigate}
+                collapsed={collapsed}
+                isIndexOpen={isIndexOpen}
+                onToggleIndex={onToggleIndex}
+                onActivateGroupIndex={onActivateGroupIndex}
+              />
             </div>
           </div>
         </div>
