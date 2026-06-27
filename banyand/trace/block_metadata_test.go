@@ -219,6 +219,7 @@ func Test_unmarshalBlockMetadata(t *testing.T) {
 		wanted := []blockMetadata{
 			{
 				traceID: "trace1",
+				tags:    make(map[string]*dataBlock),
 				tagType: make(map[string]pbv1.ValueType),
 				spans: &dataBlock{
 					offset: 10,
@@ -230,6 +231,7 @@ func Test_unmarshalBlockMetadata(t *testing.T) {
 			},
 			{
 				traceID: "trace2",
+				tags:    make(map[string]*dataBlock),
 				tagType: make(map[string]pbv1.ValueType),
 				spans: &dataBlock{
 					offset: 30,

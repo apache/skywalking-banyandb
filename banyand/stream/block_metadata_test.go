@@ -246,6 +246,7 @@ func Test_unmarshalBlockMetadata(t *testing.T) {
 		original := []blockMetadata{
 			{
 				seriesID: common.SeriesID(1),
+				tagType:  make(tagType),
 				timestamps: timestampsMetadata{
 					dataBlock: dataBlock{
 						offset: 1,
@@ -258,6 +259,7 @@ func Test_unmarshalBlockMetadata(t *testing.T) {
 			},
 			{
 				seriesID: common.SeriesID(2),
+				tagType:  make(tagType),
 				timestamps: timestampsMetadata{
 					dataBlock: dataBlock{
 						offset: 2,
