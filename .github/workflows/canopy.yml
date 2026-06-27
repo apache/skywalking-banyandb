@@ -1,0 +1,89 @@
+# Licensed to Apache Software Foundation (ASF) under one or more contributor
+# license agreements. See the NOTICE file distributed with
+# this work for additional information regarding copyright
+# ownership. Apache Software Foundation (ASF) licenses this file to you under
+# the Apache License, Version 2.0 (the "License"); you may
+# not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing,
+# software distributed under the License is distributed on an
+# "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
+# KIND, either express or implied.  See the License for the
+# specific language governing permissions and limitations
+# under the License.
+
+name: Canopy
+
+on:
+  push:
+    paths:
+      - 'canopy/**'
+      - '.github/workflows/canopy.yml'
+  pull_request:
+    paths:
+      - 'canopy/**'
+      - '.github/workflows/canopy.yml'
+
+jobs:
+  build-test:
+    name: Build & Test
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: canopy
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '24.6.0'
+          cache: 'npm'
+          cache-dependency-path: canopy/package-lock.json
+
+      - name: Install dependencies
+        run: npm install
+
+      - name: Typecheck (shared)
+        run: npm run -w shared typecheck
+
+      - name: Typecheck (web)
+        run: npm run -w web typecheck
+
+      - name: Typecheck (server)
+        run: npm run -w server typecheck
+
+      - name: Lint (web)
+        run: npm run -w web lint
+
+      - name: Lint (server)
+        run: npm run -w server lint
+
+      - name: Test (server — unit + contract)
+        run: npm run -w server test
+
+      - name: Build (web)
+        run: npm run -w web build
+
+      - name: Build (server)
+        run: npm run -w server build
+
+      - name: Verify CSS preserves :has() and color-mix()
+        run: |
+          grep -r "has(" web/dist/assets/*.css && echo "✓ :has() preserved in built CSS"
+          grep -r "color-mix(" web/dist/assets/*.css && echo "✓ color-mix() preserved in built CSS"
+
+      - name: Check ui/ guardrail (must be empty)
+        working-directory: ${{ github.workspace }}
+        run: |
+          CHANGES=$(git status --short -- ui/ ui/embed.go)
+          if [ -n "$CHANGES" ]; then
+            echo "ERROR: ui/ was modified — this is forbidden"
+            echo "$CHANGES"
+            exit 1
+          fi
+          echo "✓ ui/ untouched"

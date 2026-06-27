@@ -58,6 +58,7 @@ type option struct {
 	seriesCacheMaxSize           run.Bytes
 	flushTimeout                 time.Duration
 	syncInterval                 time.Duration
+	memWaitTimeout               time.Duration
 	failedPartsMaxTotalSizeBytes uint64
 	vectorized                   vtrace.VectorizedConfig
 }

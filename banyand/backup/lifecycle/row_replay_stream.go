@@ -234,7 +234,7 @@ func (r *streamRowReplayer) publishRow(ctx context.Context, pw *orphanPartWriter
 	if err != nil {
 		return err
 	}
-	return r.sender.routeAndEnqueue(ctx, r.selector, r.group, wr.Metadata.Name, iwr.ShardId, iwr)
+	return r.sender.routeAndEnqueue(ctx, r.logger, r.selector, r.group, wr.Metadata.Name, iwr.ShardId, iwr)
 }
 
 // archiveOrphanRow writes one orphan stream row to the part archive (a no-op

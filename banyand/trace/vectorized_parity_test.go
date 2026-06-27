@@ -239,12 +239,13 @@ func TestVectorizedParityOrderMode(t *testing.T) {
 	}
 
 	tests := []struct {
-		name         string
-		keys         []int64
-		traceIDs     []string
-		maxTraceSize int
-		wantCount    int
-		sortDir      modelv1.Sort
+		name          string
+		keys          []int64
+		traceIDs      []string
+		maxTraceSize  int
+		wantCount     int
+		wantPullCount int
+		sortDir       modelv1.Sort
 	}{
 		{
 			name:      "ASC order all traces",
@@ -261,22 +262,25 @@ func TestVectorizedParityOrderMode(t *testing.T) {
 			wantCount: 3,
 		},
 		{
-			// MaxTraceSize is a batch-size hint for ordered SIDX queries, not a total cap.
-			// The push path emits all 3 traces in batches of 2; vectorized must match.
-			name:         "ASC order MaxTraceSize=2 with 3 traces returns all 3",
-			sortDir:      modelv1.Sort_SORT_ASC,
-			keys:         []int64{1, 2, 3},
-			traceIDs:     []string{"trace1", "trace2", "trace3"},
-			maxTraceSize: 2,
-			wantCount:    3,
+			// MaxTraceSize (= offset+limit) caps the pull path's materialized trace set to
+			// the sorted top-N. The push path streams lazily and emits all matches, relying
+			// on the outer traceLimit to cap; so pull is the MaxTraceSize-prefix of push.
+			name:          "ASC order MaxTraceSize=2 caps pull to top 2 (push streams all 3)",
+			sortDir:       modelv1.Sort_SORT_ASC,
+			keys:          []int64{1, 2, 3},
+			traceIDs:      []string{"trace1", "trace2", "trace3"},
+			maxTraceSize:  2,
+			wantCount:     3,
+			wantPullCount: 2,
 		},
 		{
-			name:         "DESC order MaxTraceSize=2 with 3 traces returns all 3",
-			sortDir:      modelv1.Sort_SORT_DESC,
-			keys:         []int64{3, 2, 1},
-			traceIDs:     []string{"trace3", "trace2", "trace1"},
-			maxTraceSize: 2,
-			wantCount:    3,
+			name:          "DESC order MaxTraceSize=2 caps pull to top 2 (push streams all 3)",
+			sortDir:       modelv1.Sort_SORT_DESC,
+			keys:          []int64{3, 2, 1},
+			traceIDs:      []string{"trace3", "trace2", "trace1"},
+			maxTraceSize:  2,
+			wantCount:     3,
+			wantPullCount: 2,
 		},
 	}
 
@@ -315,11 +319,18 @@ func TestVectorizedParityOrderMode(t *testing.T) {
 			defer pullRes.Release()
 			pullGot := collectResults(t, pullRes)
 
+			// The pull path caps the materialized set at MaxTraceSize; the push path streams
+			// all matches (the outer traceLimit caps it in production). With no cap the two
+			// are identical; with a cap the pull result is the sorted MaxTraceSize-prefix.
+			wantPull := tt.wantCount
+			if tt.wantPullCount > 0 {
+				wantPull = tt.wantPullCount
+			}
 			require.Len(t, pushGot, tt.wantCount, "push path result count")
-			require.Len(t, pullGot, tt.wantCount, "pull path result count")
+			require.Len(t, pullGot, wantPull, "pull path result count")
 
-			if diff := cmp.Diff(pushGot, pullGot, protocmp.Transform()); diff != "" {
-				t.Errorf("push vs pull order mismatch (-push +pull):\n%s", diff)
+			if diff := cmp.Diff(pushGot[:wantPull], pullGot, protocmp.Transform()); diff != "" {
+				t.Errorf("pull path must equal the sorted MaxTraceSize-prefix of push (-push +pull):\n%s", diff)
 			}
 		})
 	}

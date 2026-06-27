@@ -52,7 +52,7 @@ type queryService struct {
 
 // NewService return a new query service.
 func NewService(_ context.Context, streamService stream.Service, measureService measure.Service, traceService trace.Service,
-	metaService metadata.Repo, pipeline queue.Server, metricSvc observability.MetricsRegistry,
+	metaService metadata.Repo, pipeline queue.Server, metricSvc observability.MetricsRegistry, distributed bool,
 ) (run.Unit, error) {
 	svc := &queryService{
 		metaService: metaService,
@@ -83,6 +83,7 @@ func NewService(_ context.Context, streamService stream.Service, measureService 
 	svc.tqp = &traceQueryProcessor{
 		traceService: traceService,
 		queryService: svc,
+		distributed:  distributed,
 	}
 	return svc, nil
 }

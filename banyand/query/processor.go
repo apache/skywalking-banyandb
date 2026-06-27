@@ -41,6 +41,7 @@ import (
 	"github.com/apache/skywalking-banyandb/pkg/bus"
 	"github.com/apache/skywalking-banyandb/pkg/iter"
 	"github.com/apache/skywalking-banyandb/pkg/logger"
+	pbv1 "github.com/apache/skywalking-banyandb/pkg/pb/v1"
 	"github.com/apache/skywalking-banyandb/pkg/query"
 	"github.com/apache/skywalking-banyandb/pkg/query/executor"
 	"github.com/apache/skywalking-banyandb/pkg/query/logical"
@@ -661,6 +662,12 @@ type traceQueryProcessor struct {
 	traceService trace.Service
 	*queryService
 	*bus.UnImplementedHealthyListener
+	// distributed is true on a distributed data node, whose query response is
+	// sent over the wire to a remote liaison that decodes the native columnar
+	// frame. It is false in standalone, where the local grpc service consumes the
+	// response directly and expects the proto body — so the frame must not be
+	// emitted there.
+	distributed bool
 }
 
 func (p *traceQueryProcessor) Rev(ctx context.Context, message bus.Message) (resp bus.Message) {
@@ -900,19 +907,103 @@ func (p *traceQueryProcessor) buildTraceTags(result *model.TraceResult, queryCri
 	return traceTags
 }
 
+// buildFrameTraceResults mirrors processTraceResults+buildTraceTags but outputs
+// columnar []model.TraceResult (TID/Key/Spans/SpanIDs plus one TagValue column
+// per span) for the native columnar wire frame. It replicates the projected-tag
+// filter and the traceID/spanID tag augmentation so the liaison reconstructs the
+// same spans the proto path would have produced.
+func (p *traceQueryProcessor) buildFrameTraceResults(resultIterator iter.Iterator[model.TraceResult],
+	queryCriteria *tracev1.QueryRequest, execPlan *traceExecutionPlan,
+) ([]model.TraceResult, error) {
+	traceIDInclusionMap := make(map[int]bool)
+	spanIDInclusionMap := make(map[int]bool)
+	for i, tagName := range execPlan.traceIDTagNames {
+		if slices.Contains(queryCriteria.TagProjection, tagName) {
+			traceIDInclusionMap[i] = true
+		}
+	}
+	for i, tagName := range execPlan.spanIDTagNames {
+		if slices.Contains(queryCriteria.TagProjection, tagName) {
+			spanIDInclusionMap[i] = true
+		}
+	}
+
+	var results []model.TraceResult
+	for {
+		result, hasNext := resultIterator.Next()
+		if !hasNext {
+			break
+		}
+		if result.Error != nil {
+			return nil, result.Error
+		}
+		if result.TID == "" {
+			continue
+		}
+
+		spanCount := len(result.Spans)
+		frameResult := model.TraceResult{
+			TID:     result.TID,
+			Key:     result.Key,
+			Spans:   result.Spans,
+			SpanIDs: result.SpanIDs,
+		}
+		if result.Tags != nil && len(queryCriteria.TagProjection) > 0 {
+			for _, tag := range result.Tags {
+				if !slices.Contains(queryCriteria.TagProjection, tag.Name) {
+					continue
+				}
+				frameResult.Tags = append(frameResult.Tags, tag)
+			}
+		}
+		if traceIDInclusionMap[result.GroupIndex] {
+			values := make([]*modelv1.TagValue, spanCount)
+			tidValue := &modelv1.TagValue{Value: &modelv1.TagValue_Str{Str: &modelv1.Str{Value: result.TID}}}
+			for spanIdx := range values {
+				values[spanIdx] = tidValue
+			}
+			frameResult.Tags = append(frameResult.Tags, model.Tag{Name: execPlan.traceIDTagNames[result.GroupIndex], Values: values})
+		}
+		if spanIDInclusionMap[result.GroupIndex] {
+			values := make([]*modelv1.TagValue, spanCount)
+			for spanIdx := 0; spanIdx < spanCount; spanIdx++ {
+				if spanIdx < len(result.SpanIDs) {
+					values[spanIdx] = &modelv1.TagValue{Value: &modelv1.TagValue_Str{Str: &modelv1.Str{Value: result.SpanIDs[spanIdx]}}}
+				} else {
+					values[spanIdx] = pbv1.NullTagValue
+				}
+			}
+			frameResult.Tags = append(frameResult.Tags, model.Tag{Name: execPlan.spanIDTagNames[result.GroupIndex], Values: values})
+		}
+		results = append(results, frameResult)
+	}
+
+	return results, nil
+}
+
 func (p *traceQueryProcessor) logSlowQuery(queryCriteria *tracev1.QueryRequest, traces []*tracev1.InternalTrace, startTime time.Time) {
-	if queryCriteria.Trace || p.slowQuery <= 0 {
-		return
-	}
-
-	latency := time.Since(startTime)
-	if latency <= p.slowQuery {
-		return
-	}
-
 	spanCount := 0
 	for _, trace := range traces {
 		spanCount += len(trace.Spans)
+	}
+	p.logSlowTraceQuery(queryCriteria, spanCount, startTime)
+}
+
+func (p *traceQueryProcessor) logSlowFrameQuery(queryCriteria *tracev1.QueryRequest, results []model.TraceResult, startTime time.Time) {
+	spanCount := 0
+	for resultIdx := range results {
+		spanCount += len(results[resultIdx].Spans)
+	}
+	p.logSlowTraceQuery(queryCriteria, spanCount, startTime)
+}
+
+func (p *traceQueryProcessor) logSlowTraceQuery(queryCriteria *tracev1.QueryRequest, spanCount int, startTime time.Time) {
+	if queryCriteria.Trace || p.slowQuery <= 0 {
+		return
+	}
+	latency := time.Since(startTime)
+	if latency <= p.slowQuery {
+		return
 	}
 	p.log.Warn().Dur("latency", latency).RawJSON("req", logger.Proto(queryCriteria)).Int("resp_count", spanCount).Msg("trace slow query")
 }
@@ -958,6 +1049,22 @@ func (p *traceQueryProcessor) executeQuery(ctx context.Context, queryCriteria *t
 	if err != nil {
 		p.log.Error().Err(err).RawJSON("req", logger.Proto(queryCriteria)).Msg("fail to execute the trace query plan")
 		resp = bus.NewMessage(bus.MessageID(now), common.NewError("execute the query plan for trace %s: %v", queryCriteria.GetName(), err))
+		return
+	}
+
+	// Native wire mode (flag-on, no tracing): emit a columnar frame body so the
+	// send path passes it through as opaque bytes and the liaison decodes it
+	// without the protobuf message-slice/oneof machinery. The tracing path keeps
+	// the proto body (the traceMonitor defer needs *InternalQueryResponse).
+	if p.distributed && data.TraceWireModeRaw() && traceMonitor == nil {
+		results, buildErr := p.buildFrameTraceResults(resultIterator, queryCriteria, execPlan)
+		if buildErr != nil {
+			p.log.Error().Err(buildErr).RawJSON("req", logger.Proto(queryCriteria)).Msg("fail to process trace results")
+			resp = bus.NewMessage(bus.MessageID(now), common.NewError("process trace results for trace %s: %v", queryCriteria.GetName(), buildErr))
+			return
+		}
+		resp = bus.NewMessage(bus.MessageID(now), logical_trace.EncodeTraceResultFrame(results))
+		p.logSlowFrameQuery(queryCriteria, results, n)
 		return
 	}
 

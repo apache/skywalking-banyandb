@@ -110,6 +110,29 @@ EOF
     printf '%s' "$resp" | { grep -o '"elementId"' || true; } | wc -l | tr -d ' '
 }
 
+# Probe an index-mode measure. Index-mode measures store every data point as a
+# bluge document in the segment-level sidx and carry NO fields, so the query
+# omits fieldProjection and projects the entity tag (storage-only/id) that every
+# metadata measure has. Any non-zero data-point count means "present".
+probe_measure_indexmode() {
+    local group="$1" measure="$2" begin="$3" end="$4"
+    local body resp
+    body=$(cat <<EOF
+{
+  "groups": ["$group"],
+  "name": "$measure",
+  "stages": ["hot"],
+  "timeRange": {"begin": "$begin", "end": "$end"},
+  "tagProjection": {"tagFamilies":[{"name":"storage-only","tags":["id"]}]},
+  "limit": 100000
+}
+EOF
+)
+    resp=$(curl -s -XPOST "$LIAISON_HTTP/api/v1/measure/data" \
+        -H 'Content-Type: application/json' -d "$body" || true)
+    printf '%s' "$resp" | { grep -o '"timestamp"' || true; } | wc -l | tr -d ' '
+}
+
 echo "data presence check across most recent $DAYS day(s)"
 echo "  liaison : $LIAISON_HTTP"
 echo "  catalogs: $CATALOGS"
@@ -138,6 +161,7 @@ case " $CATALOGS " in *" measure "*)
     scan probe_measure "Day tier"    sw_metricsDay    service_apdex_day    T00:00:00Z T23:59:59Z "full day"
     scan probe_measure "Hour tier"   sw_metricsHour   service_apdex_hour   T08:00:00Z T08:59:59Z "08:00..09:00"
     scan probe_measure "Minute tier" sw_metricsMinute service_apdex_minute T08:08:00Z T08:08:59Z "08:08..08:09"
+    scan probe_measure_indexmode "Index-mode metadata" sw_metadata instance_traffic_minute T00:00:00Z T23:59:59Z "full day"
 ;; esac
 
 case " $CATALOGS " in *" stream "*)

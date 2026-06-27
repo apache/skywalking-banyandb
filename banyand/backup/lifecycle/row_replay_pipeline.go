@@ -302,10 +302,10 @@ func (s *batchSender) enqueueMarshaled(ctx context.Context, nodeID, group string
 // routeAndEnqueue picks the target node for iwr and enqueues it. The
 // proto-message replayers (stream/trace) share this Pick+build+enqueue tail; the
 // measure columnar path routes inline via routeColumnar + enqueueMarshaled.
-func (s *batchSender) routeAndEnqueue(ctx context.Context, selector node.Selector,
+func (s *batchSender) routeAndEnqueue(ctx context.Context, l *logger.Logger, selector node.Selector,
 	group, name string, shardID uint32, iwr proto.Message,
 ) error {
-	nodeID, err := selector.Pick(group, name, shardID, 0)
+	nodeID, err := pickWithRetry(ctx, l, selector, group, name, shardID)
 	if err != nil {
 		return fmt.Errorf("pick target node for %s: %w", name, err)
 	}

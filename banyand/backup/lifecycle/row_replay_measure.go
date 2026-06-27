@@ -67,6 +67,7 @@ type cachedMeasureSchema struct {
 // measureRowReplayer replays a group's measure parts row-by-row through the
 // real Write API, resolving each row's schema on demand via EntityValues.
 type measureRowReplayer struct {
+	ctx             context.Context
 	selector        node.Selector
 	archiver        *orphanArchiver
 	sender          *batchSender
@@ -118,6 +119,7 @@ func newMeasureRowReplayer(
 		measureSchemas[m.GetMetadata().GetName()] = m
 	}
 	return &measureRowReplayer{
+		ctx:             ctx,
 		group:           group,
 		targetShardNum:  targetShardNum,
 		selector:        selector,
@@ -347,7 +349,7 @@ func (r *measureRowReplayer) routeColumnar(
 			if rErr != nil {
 				return 0, nil, "", fmt.Errorf("route %s: %w", bc.subject, rErr)
 			}
-			pickedNode, pErr := r.selector.Pick(r.group, bc.subject, uint32(sid), 0)
+			pickedNode, pErr := pickWithRetry(r.ctx, r.logger, r.selector, r.group, bc.subject, uint32(sid))
 			if pErr != nil {
 				return 0, nil, "", fmt.Errorf("pick target node for %s: %w", bc.subject, pErr)
 			}
@@ -363,7 +365,7 @@ func (r *measureRowReplayer) routeColumnar(
 	if rErr != nil {
 		return 0, nil, "", fmt.Errorf("route %s: %w", bc.subject, rErr)
 	}
-	nodeID, pErr := r.selector.Pick(r.group, bc.subject, uint32(sid), 0)
+	nodeID, pErr := pickWithRetry(r.ctx, r.logger, r.selector, r.group, bc.subject, uint32(sid))
 	if pErr != nil {
 		return 0, nil, "", fmt.Errorf("pick target node for %s: %w", bc.subject, pErr)
 	}

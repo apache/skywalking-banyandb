@@ -18,12 +18,17 @@
 package migration
 
 import (
+	"encoding/json"
+	"fmt"
 	"os"
 	"path/filepath"
+	"sync"
 	"testing"
 
 	"github.com/stretchr/testify/require"
 
+	"github.com/apache/skywalking-banyandb/banyand/internal/storage"
+	"github.com/apache/skywalking-banyandb/pkg/fs"
 	"github.com/apache/skywalking-banyandb/pkg/index/inverted"
 )
 
@@ -71,4 +76,99 @@ func TestCopyDir_MissingSource(t *testing.T) {
 
 	_, err := CopyDir(filepath.Join(t.TempDir(), "does-not-exist"), dst)
 	require.Error(t, err)
+}
+
+// TestNoFsyncFS_WriteAtomic_NoTmpLeftover asserts WriteAtomic produces the exact
+// content and leaves no ".tmp" sibling behind on success.
+func TestNoFsyncFS_WriteAtomic_NoTmpLeftover(t *testing.T) {
+	dir := t.TempDir()
+	nofs := NoFsyncFS{FileSystem: fs.NewLocalFileSystem()}
+	name := filepath.Join(dir, "manifest.json")
+
+	payload := []byte(`["0000000000000001","0000000000000002"]`)
+	n, err := nofs.WriteAtomic(payload, name, storage.FilePerm)
+	require.NoError(t, err)
+	require.Equal(t, len(payload), n)
+
+	got, err := os.ReadFile(name)
+	require.NoError(t, err)
+	require.Equal(t, payload, got)
+	require.NoFileExists(t, name+".tmp", "WriteAtomic must not leave a .tmp sibling on success")
+}
+
+// TestNoFsyncFS_WriteAtomic_ConcurrentReadsNeverSeePartial locks the atomicity
+// of NoFsyncFS.WriteAtomic: a reader parsing the manifest concurrently with
+// repeated rewrites must never observe a truncated file. Before the fix,
+// WriteAtomic did a plain O_TRUNC write to the final path, so a concurrent
+// ReadSnapshotPartNames caught the truncation window and failed with
+// "unexpected end of JSON" — the root cause of the flaky migration snapshot
+// tests. Run with -race for maximum sensitivity.
+func TestNoFsyncFS_WriteAtomic_ConcurrentReadsNeverSeePartial(t *testing.T) {
+	dir := t.TempDir()
+	lfs := fs.NewLocalFileSystem()
+	nofs := NoFsyncFS{FileSystem: lfs}
+	snpPath := filepath.Join(dir, "0000000000000001.snp")
+
+	// Seed so the manifest always exists before readers start; rename then keeps
+	// it continuously present, so a reader never sees ENOENT, only (with the bug)
+	// a partial file.
+	seed, err := json.Marshal([]string{"0000000000000001"})
+	require.NoError(t, err)
+	_, err = nofs.WriteAtomic(seed, snpPath, storage.FilePerm)
+	require.NoError(t, err)
+
+	const writes = 3000
+	var wg sync.WaitGroup
+	stop := make(chan struct{})
+	errCh := make(chan error, 8)
+
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		defer close(stop)
+		for i := 0; i < writes; i++ {
+			// Vary the payload length so the truncation window a non-atomic write
+			// would expose differs each iteration.
+			names := make([]string, 1+i%17)
+			for j := range names {
+				names[j] = fmt.Sprintf("%016x", i*100+j)
+			}
+			data, mErr := json.Marshal(names)
+			if mErr != nil {
+				errCh <- mErr
+				return
+			}
+			if _, wErr := nofs.WriteAtomic(data, snpPath, storage.FilePerm); wErr != nil {
+				errCh <- wErr
+				return
+			}
+		}
+	}()
+
+	for r := 0; r < 4; r++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			for {
+				select {
+				case <-stop:
+					return
+				default:
+				}
+				if _, rErr := storage.ReadSnapshotPartNames(lfs, snpPath); rErr != nil {
+					select {
+					case errCh <- rErr:
+					default:
+					}
+					return
+				}
+			}
+		}()
+	}
+
+	wg.Wait()
+	close(errCh)
+	for e := range errCh {
+		t.Fatalf("WriteAtomic exposed a partial snapshot to a concurrent reader: %v", e)
+	}
 }

@@ -18,10 +18,12 @@
 package migration
 
 import (
+	"context"
 	"os"
 	"path/filepath"
 	"testing"
 
+	"github.com/blugelabs/bluge"
 	"github.com/stretchr/testify/require"
 
 	commonv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/common/v1"
@@ -76,4 +78,102 @@ func TestDirtyTargets_AllListedUpFront(t *testing.T) {
 	require.NoError(t, err)
 	require.ElementsMatch(t, []string{dirtyA, dirtyWarmA}, dirty)
 	require.NotContains(t, dirty, skipped)
+}
+
+// skipUnionSidxExecutor is a fake CatalogExecutor that also implements the
+// optional unionSidxSkipper capability: it reports skip for the groups in
+// skipGroups and records the UnionSidxPath each CopyEntryGroup received.
+type skipUnionSidxExecutor struct {
+	gotUnionSidxPath map[string]string
+	skipGroups       map[string]bool
+}
+
+func (e *skipUnionSidxExecutor) Catalog() commonv1.Catalog { return commonv1.Catalog_CATALOG_MEASURE }
+
+func (e *skipUnionSidxExecutor) LogPrefix() string { return "[migration/measure-test]" }
+
+func (e *skipUnionSidxExecutor) Prepare(_ context.Context, _ string, _ []string) error { return nil }
+
+func (e *skipUnionSidxExecutor) CopyEntryGroup(_ context.Context, in EntryGroupInput) (EntryGroupResult, error) {
+	if e.gotUnionSidxPath == nil {
+		e.gotUnionSidxPath = map[string]string{}
+	}
+	e.gotUnionSidxPath[in.Group] = in.UnionSidxPath
+	return EntryGroupResult{}, nil
+}
+
+func (e *skipUnionSidxExecutor) VerifyEntryGroup(_ context.Context, _ EntryGroupInput, _ func(report any)) error {
+	return nil
+}
+
+func (e *skipUnionSidxExecutor) SkipUnionSidx(group string) bool { return e.skipGroups[group] }
+
+// TestRunCopy_SkipsUnionSidxForIndexModeGroup verifies that a group an executor
+// reports via SkipUnionSidx never goes through the Phase A union-sidx build and
+// receives UnionSidxPath=="" in CopyEntryGroup, while a non-skipped group with
+// real source sidx docs gets a non-empty UnionSidxPath broadcast.
+func TestRunCopy_SkipsUnionSidxForIndexModeGroup(t *testing.T) {
+	root := t.TempDir()
+	stagingDir := t.TempDir()
+
+	// Live-mode source so ResolvedEntries populates entry.Source; the per-group
+	// source dirs are <root>/<group>. Seed both groups so neither is skipped for
+	// "no source dirs". The index-mode group is left without any sidx so even if
+	// a union build were (wrongly) attempted it would produce nothing.
+	skipGroup := "sw_metadata"
+	normalGroup := "sw_metrics"
+	require.NoError(t, os.MkdirAll(filepath.Join(root, skipGroup), 0o755))
+	// Seed a real source sidx under the normal group so Phase A's union build
+	// yields a non-empty path it can broadcast.
+	doc, _ := makeSidxSourceDoc(t, "alpha", "svc-a")
+	writeSidxAt(t, filepath.Join(root, normalGroup, segPrefix+"20260101"), []*bluge.Document{doc})
+
+	dayInterval := &commonv1.IntervalRule{
+		Unit: commonv1.IntervalRule_UNIT_DAY,
+		Num:  1,
+	}
+	groupProto := func(name string) *commonv1.Group {
+		return &commonv1.Group{
+			Metadata: &commonv1.Metadata{Name: name},
+			Catalog:  commonv1.Catalog_CATALOG_MEASURE,
+			ResourceOpts: &commonv1.ResourceOpts{
+				SegmentInterval: dayInterval,
+			},
+		}
+	}
+	buckets := map[commonv1.Catalog][]string{}
+	buckets[commonv1.Catalog_CATALOG_MEASURE] = []string{skipGroup, normalGroup}
+	cls := &Classified{
+		Buckets: buckets,
+		Groups: map[string]*commonv1.Group{
+			skipGroup:   groupProto(skipGroup),
+			normalGroup: groupProto(normalGroup),
+		},
+		SchemaRoot: filepath.Join(root, "_schema"),
+	}
+
+	plan := &CopyPlan{
+		Source: CopySource{Live: &LiveSource{
+			SchemaPropertyPath: filepath.Join(root, "_schema"),
+			Stages: map[string][]LiveStageNode{
+				"hot": {{Node: "hot-0", Root: root}},
+			},
+		}},
+		Groups: []string{skipGroup, normalGroup},
+		Entries: []CopyEntry{
+			{Stage: "hot", Target: filepath.Join(t.TempDir(), "out"), Nodes: []string{"hot-0"}},
+		},
+	}
+
+	exec := &skipUnionSidxExecutor{skipGroups: map[string]bool{skipGroup: true}}
+	_, err := plan.RunCopy(context.Background(), stagingDir, cls, []CatalogExecutor{exec})
+	require.NoError(t, err)
+
+	gotSkip, ok := exec.gotUnionSidxPath[skipGroup]
+	require.True(t, ok, "index-mode group must still be copied")
+	require.Empty(t, gotSkip, "index-mode group must receive empty UnionSidxPath")
+
+	gotNormal, ok := exec.gotUnionSidxPath[normalGroup]
+	require.True(t, ok, "normal group must be copied")
+	require.NotEmpty(t, gotNormal, "normal group must receive a broadcast union sidx path")
 }

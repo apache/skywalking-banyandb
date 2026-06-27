@@ -208,9 +208,12 @@ var (
 		TopicPropertyRepair: NewProtoCodec(func() proto.Message {
 			return &propertyv1.InternalRepairResponse{}
 		}),
-		TopicTraceQuery: NewProtoCodec(func() proto.Message {
-			return &tracev1.InternalQueryResponse{}
-		}),
+		TopicTraceQuery: &traceQueryResponseCodec{
+			proto: NewProtoCodec(func() proto.Message {
+				return &tracev1.InternalQueryResponse{}
+			}),
+			raw: NewRawFrameCodec(),
+		},
 		TopicMeasureCollectDataInfo: NewProtoCodec(func() proto.Message {
 			return &databasev1.DataInfo{}
 		}),

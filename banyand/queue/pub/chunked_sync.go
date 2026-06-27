@@ -512,6 +512,9 @@ func (c *chunkedSyncClient) sendChunk(
 		case clusterv1.SyncStatus_SYNC_STATUS_SESSION_NOT_FOUND:
 			return fmt.Errorf("session %s not found on server for chunk %d: %s", sessionID, *chunkIndex, resp.Error)
 
+		case clusterv1.SyncStatus_SYNC_STATUS_SERVER_BUSY:
+			return fmt.Errorf("receiver busy for chunk %d: %w", *chunkIndex, queue.ErrServerBusy)
+
 		default:
 			if resp.Error != "" {
 				return fmt.Errorf("chunk %d sync failed: %s", *chunkIndex, resp.Error)
@@ -571,6 +574,9 @@ func generateSessionID() string {
 func classifyChunkedSyncPubErr(err error) string {
 	if err == nil {
 		return ""
+	}
+	if errors.Is(err, queue.ErrServerBusy) {
+		return "server_busy"
 	}
 	msg := err.Error()
 	switch {

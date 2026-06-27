@@ -129,6 +129,8 @@ func (l *liaison) FlagSet() *run.FlagSet {
 	fs.StringVar(&l.root, "trace-root-path", "/tmp", "the root path for trace data")
 	fs.StringVar(&l.dataPath, "trace-data-path", "", "the path for trace data (optional)")
 	fs.DurationVar(&l.option.flushTimeout, "trace-flush-timeout", 3*time.Second, "the timeout for trace data flush")
+	fs.DurationVar(&l.option.memWaitTimeout, "trace-lifecycle-receive-mem-wait-timeout", 5*time.Minute,
+		"max time the migration receiver waits for memory to recover before introducing an external segment")
 	fs.IntVar(&l.maxDiskUsagePercent, "trace-max-disk-usage-percent", 95, "the maximum disk usage percentage")
 	fs.DurationVar(&l.option.syncInterval, "trace-sync-interval", defaultSyncInterval, "the periodic sync interval for trace data")
 	fs.StringSliceVar(&l.dataNodeList, "data-node-list", nil, "comma-separated list of data node names to monitor for handoff")
@@ -176,6 +178,8 @@ func (l *liaison) Role() databasev1.Role {
 
 func (l *liaison) PreRun(ctx context.Context) error {
 	l.l = logger.GetLogger(l.Name())
+	data.SetTraceWireModeRaw(l.option.vectorized.Enabled)
+	l.l.Info().Bool("trace_wire_mode_raw", l.option.vectorized.Enabled).Msg("trace wire mode published (liaison)")
 	l.l.Info().Msg("memory protector is initialized in PreRun")
 	l.lfs = fs.NewLocalFileSystemWithLoggerAndLimit(l.l, l.pm.GetLimit())
 	var err error
