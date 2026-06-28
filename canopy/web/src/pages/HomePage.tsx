@@ -48,6 +48,7 @@ export function HomePage() {
     { k: 'groups', v: groups.length },
     { k: 'measures', v: groups.filter((g) => g.catalog === 'CATALOG_MEASURE').length },
     { k: 'streams', v: groups.filter((g) => g.catalog === 'CATALOG_STREAM').length },
+    { k: 'traces', v: groups.filter((g) => g.catalog === 'CATALOG_TRACE').length },
     { k: 'properties', v: groups.filter((g) => g.catalog === 'CATALOG_PROPERTY').length },
   ];
 
