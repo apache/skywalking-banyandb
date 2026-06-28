@@ -117,11 +117,14 @@ export function LoginPage() {
     fetch('/api/meta')
       .then(r => r.ok ? r.json() as Promise<{ banyanVersion: string | null; reachable?: boolean }> : null)
       .then(d => {
-        if (!d) { setBanyanReachable(false); return; }
+        if (!d) { setBanyanReachable(false); setBanyanVersion(null); return; }
         if (typeof d.reachable === 'boolean') setBanyanReachable(d.reachable);
-        if (d.banyanVersion) setBanyanVersion(d.banyanVersion);
+        // Only show a version for the endpoint we just probed. A failed probe
+        // clears the version so the badge never shows a misleading
+        // "BanyanDB · v0.10" while reachable=false.
+        setBanyanVersion(d.reachable ? (d.banyanVersion ?? null) : null);
       })
-      .catch(() => setBanyanReachable(false));
+      .catch(() => { setBanyanReachable(false); setBanyanVersion(null); });
   }, []);
 
   // Re-probe whenever the user types an endpoint in the form so the badge
@@ -138,11 +141,11 @@ export function LoginPage() {
         .then(d => {
           // Drop stale responses.
           if (seq !== endpointProbeSeq + 1) return;
-          if (!d) { setBanyanReachable(false); return; }
+          if (!d) { setBanyanReachable(false); setBanyanVersion(null); return; }
           setBanyanReachable(d.reachable);
-          if (d.banyanVersion) setBanyanVersion(d.banyanVersion);
+          setBanyanVersion(d.reachable ? (d.banyanVersion ?? null) : null);
         })
-        .catch(() => { if (seq === endpointProbeSeq + 1) setBanyanReachable(false); });
+        .catch(() => { if (seq === endpointProbeSeq + 1) { setBanyanReachable(false); setBanyanVersion(null); } });
     }, 400);
     return () => clearTimeout(handle);
     // eslint-disable-next-line react-hooks/exhaustive-deps
