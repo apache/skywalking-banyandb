@@ -88,6 +88,33 @@ export async function registerAuth(app: FastifyInstance, config: Config): Promis
     return reply.send({ banyanVersion, reachable });
   });
 
+  // Per-endpoint probe — the login page calls this with whatever the user
+  // typed in the endpoint field so the reachability badge reflects the
+  // target they're about to log in against, not the BFF's default.
+  // Unauthenticated by design; the probe only reads the public version
+  // endpoint and doesn't return sensitive info.
+  app.get<{ Querystring: { endpoint?: string } }>('/api/probe', async (request: FastifyRequest, reply: FastifyReply) => {
+    const raw = (request.query as { endpoint?: string })?.endpoint ?? '';
+    const normalizedEndpoint = normalizeEndpoint(raw);
+    if (!isValidHttpUrl(normalizedEndpoint)) {
+      return reply.status(400).send({ error: 'bad_endpoint', message: 'Endpoint must be a valid http(s) URL or host:port' });
+    }
+    let reachable = false;
+    try {
+      const res = await undiciRequest(`${normalizedEndpoint}/api/v1/common/api/version`, {
+        method: 'GET',
+        headersTimeout: 3000,
+        bodyTimeout: 3000,
+      });
+      reachable = res.statusCode > 0 && res.statusCode < 500;
+      await res.body.dump();
+    } catch {
+      reachable = false;
+    }
+    const banyanVersion = reachable ? await fetchBanyanVersion(normalizedEndpoint) : null;
+    return reply.send({ banyanVersion, reachable });
+  });
+
   app.post<{ Body: LoginBody }>('/auth/login', async (request: FastifyRequest, reply: FastifyReply) => {
     const { username, password, endpoint } = request.body as LoginBody;
 

@@ -109,11 +109,11 @@ export function LoginPage() {
   const [errorMsg, setErrorMsg] = useState('');
   const [banyanVersion, setBanyanVersion] = useState<string | null>(null);
   const [banyanReachable, setBanyanReachable] = useState<boolean | null>(null);
+  const [endpointProbeSeq, setEndpointProbeSeq] = useState(0);
 
+  // Probe the BFF's default BanyanDB target on mount so the page can show
+  // an initial reachability indicator before the user has typed anything.
   useEffect(() => {
-    // /api/meta returns the BFF's default BanyanDB target's reachability +
-    // version. It does NOT depend on the endpoint the user is about to
-    // type — that's still validated at login time.
     fetch('/api/meta')
       .then(r => r.ok ? r.json() as Promise<{ banyanVersion: string | null; reachable?: boolean }> : null)
       .then(d => {
@@ -123,6 +123,30 @@ export function LoginPage() {
       })
       .catch(() => setBanyanReachable(false));
   }, []);
+
+  // Re-probe whenever the user types an endpoint in the form so the badge
+  // reflects the target they're actually about to log in against. Debounced
+  // via a token so out-of-order responses can't overwrite a newer result.
+  useEffect(() => {
+    const trimmed = endpoint.trim();
+    if (!trimmed) return;
+    const seq = endpointProbeSeq + 1;
+    setEndpointProbeSeq(seq);
+    const handle = setTimeout(() => {
+      fetch(`/api/probe?endpoint=${encodeURIComponent(trimmed)}`)
+        .then(r => r.ok ? r.json() as Promise<{ banyanVersion: string | null; reachable: boolean }> : null)
+        .then(d => {
+          // Drop stale responses.
+          if (seq !== endpointProbeSeq + 1) return;
+          if (!d) { setBanyanReachable(false); return; }
+          setBanyanReachable(d.reachable);
+          if (d.banyanVersion) setBanyanVersion(d.banyanVersion);
+        })
+        .catch(() => { if (seq === endpointProbeSeq + 1) setBanyanReachable(false); });
+    }, 400);
+    return () => clearTimeout(handle);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [endpoint]);
 
   const clearFieldError = (key: string) => {
     if (errors[key]) setErrors((prev) => { const next = { ...prev }; delete next[key]; return next; });
