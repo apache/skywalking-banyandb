@@ -342,6 +342,9 @@ func mustReadSpansFrom(decoder *encoding.BytesBlockDecoder, spans [][]byte, span
 }
 
 func mustSeqReadSpansFrom(decoder *encoding.BytesBlockDecoder, spans [][]byte, spanIDs []string, sm *dataBlock, count int, reader *seqReader) ([][]byte, []string) {
+	if sm == nil || sm.size == 0 {
+		return spans[:0], spanIDs[:0]
+	}
 	if sm.offset != reader.bytesRead {
 		logger.Panicf("offset %d must be equal to bytesRead %d", sm.offset, reader.bytesRead)
 	}

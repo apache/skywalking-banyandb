@@ -234,9 +234,12 @@ func (br *blockReader) peek() *blockPointer {
 	if nextBM, ok := br.pih[0].peekBlockMetadata(); ok {
 		// If the next block in the same part has the same traceID, we can't use fast path
 		if nextBM.traceID == currentTraceID {
-			// Reuse peekBlock to avoid allocation
+			// Reuse peekBlock to avoid allocation. Deep-copy via copyFrom so the
+			// spans/tags *dataBlock pointers are owned by peekBlock; a shallow
+			// struct copy would alias nextBM's pooled dataBlock, which the
+			// following release zeroes (use-after-pool-release).
 			br.peekBlock.reset()
-			br.peekBlock.bm = *nextBM
+			br.peekBlock.bm.copyFrom(nextBM)
 			releaseBlockMetadata(nextBM)
 			return &br.peekBlock
 		}

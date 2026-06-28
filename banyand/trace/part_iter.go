@@ -336,7 +336,21 @@ func (pmi *partMergeIter) loadBlockMetadata() error {
 
 func (pmi *partMergeIter) peekBlockMetadata() (*blockMetadata, bool) {
 	if len(pmi.primaryBuf) == 0 {
-		return nil, false
+		// At a primary-block (granule) boundary the current primaryBuf is
+		// exhausted, but more blocks may exist in the next granule. Look ahead
+		// using the granule index, whose traceID is the first traceID of that
+		// granule. Returning false here would let the fast path treat the
+		// current block as the unique tail of its traceID even when the same
+		// traceID continues in the next granule, producing split blocks and,
+		// after a re-merge, the "offset must equal bytesRead" panic. Only the
+		// traceID is needed by the caller to decide fast vs slow path.
+		if pmi.primaryMetadataIdx >= len(pmi.primaryBlockMetadata) {
+			return nil, false
+		}
+		bm := generateBlockMetadata()
+		bm.reset()
+		bm.traceID = pmi.primaryBlockMetadata[pmi.primaryMetadataIdx].traceID
+		return bm, true
 	}
 	bm := generateBlockMetadata()
 	_, err := bm.unmarshal(pmi.primaryBuf, pmi.tagType)
