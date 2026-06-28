@@ -108,12 +108,20 @@ export function LoginPage() {
   const [status, setStatus] = useState<Status>('idle');
   const [errorMsg, setErrorMsg] = useState('');
   const [banyanVersion, setBanyanVersion] = useState<string | null>(null);
+  const [banyanReachable, setBanyanReachable] = useState<boolean | null>(null);
 
   useEffect(() => {
+    // /api/meta returns the BFF's default BanyanDB target's reachability +
+    // version. It does NOT depend on the endpoint the user is about to
+    // type — that's still validated at login time.
     fetch('/api/meta')
-      .then(r => r.ok ? r.json() as Promise<{ banyanVersion: string | null }> : Promise.resolve({ banyanVersion: null }))
-      .then(d => { if (d.banyanVersion) setBanyanVersion(d.banyanVersion); })
-      .catch(() => { /* best-effort */ });
+      .then(r => r.ok ? r.json() as Promise<{ banyanVersion: string | null; reachable?: boolean }> : null)
+      .then(d => {
+        if (!d) { setBanyanReachable(false); return; }
+        if (typeof d.reachable === 'boolean') setBanyanReachable(d.reachable);
+        if (d.banyanVersion) setBanyanVersion(d.banyanVersion);
+      })
+      .catch(() => setBanyanReachable(false));
   }, []);
 
   const clearFieldError = (key: string) => {
@@ -177,7 +185,11 @@ export function LoginPage() {
           <div className="lf-meta">
             <span>{banyanVersion ? `BanyanDB · v${banyanVersion}` : 'BanyanDB'}</span>
             <span className="lf-sep" />
-            <span className="lf-live">HTTP ready</span>
+            {banyanReachable === false ? (
+              <span className="lf-warn" title="The default BanyanDB target is unreachable. Sign in with a working endpoint to override it.">Server unreachable</span>
+            ) : (
+              <span className="lf-live">HTTP ready</span>
+            )}
           </div>
         </div>
         <div className="lf-formwrap">

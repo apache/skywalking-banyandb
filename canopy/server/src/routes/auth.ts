@@ -65,11 +65,27 @@ async function fetchBanyanVersion(target: string): Promise<string | null> {
 }
 
 export async function registerAuth(app: FastifyInstance, config: Config): Promise<void> {
-  // Unauthenticated — exposes BanyanDB version for the login page before credentials are known.
-  // Registered before the authenticated /api/* proxy so Fastify matches this route first.
+  // Unauthenticated — exposes BanyanDB version + reachability for the login page
+  // before credentials are known. Registered before the authenticated /api/*
+  // proxy so Fastify matches this route first.
   app.get('/api/meta', async (_request: FastifyRequest, reply: FastifyReply) => {
-    const banyanVersion = await fetchBanyanVersion(config.banyandbTarget);
-    return reply.send({ banyanVersion });
+    // fetchBanyanVersion returns null on any failure (timeout, non-200, bad
+    // body). Distinguish "we got an answer, the version was empty" from "we
+    // couldn't reach the server" by probing a lightweight endpoint.
+    let reachable = false;
+    try {
+      const res = await undiciRequest(`${config.banyandbTarget}/api/v1/common/api/version`, {
+        method: 'GET',
+        headersTimeout: 3000,
+        bodyTimeout: 3000,
+      });
+      reachable = res.statusCode > 0 && res.statusCode < 500;
+      await res.body.dump();
+    } catch {
+      reachable = false;
+    }
+    const banyanVersion = reachable ? await fetchBanyanVersion(config.banyandbTarget) : null;
+    return reply.send({ banyanVersion, reachable });
   });
 
   app.post<{ Body: LoginBody }>('/auth/login', async (request: FastifyRequest, reply: FastifyReply) => {
