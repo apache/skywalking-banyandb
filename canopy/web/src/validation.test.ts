@@ -278,14 +278,14 @@ describe('7. validateIndexRule', () => {
     isEdit: false,
     name: 'by_host',
     tags: ['host'],
-    type: 'INDEX_TYPE_TREE' as const,
+    type: 'TYPE_TREE' as const,
   };
 
   it('accepts a valid TREE rule', () => {
     expect(validateIndexRule(good)).toBeUndefined();
   });
   it('accepts a valid INVERTED rule', () => {
-    expect(validateIndexRule({ ...good, type: 'INDEX_TYPE_INVERTED' })).toBeUndefined();
+    expect(validateIndexRule({ ...good, type: 'TYPE_INVERTED' })).toBeUndefined();
   });
   it('rejects empty name', () => {
     expect(validateIndexRule({ ...good, name: '' })).toMatch(/Name is required/);
@@ -294,10 +294,22 @@ describe('7. validateIndexRule', () => {
     expect(validateIndexRule({ ...good, tags: [] })).toMatch(/At least one tag is required/);
   });
   it('rejects unknown index type', () => {
-    expect(validateIndexRule({ ...good, type: 'INDEX_TYPE_BLOOM' })).toMatch(/must be TREE or INVERTED/);
+    expect(validateIndexRule({ ...good, type: 'TYPE_BLOOM' })).toMatch(/Index type must be/);
   });
   it('rejects duplicate tags', () => {
     expect(validateIndexRule({ ...good, tags: ['a', 'a'] })).toMatch(/Duplicate tag/);
+  });
+  it('rejects names longer than 255 chars', () => {
+    expect(validateIndexRule({ ...good, name: 'a'.repeat(256) })).toMatch(/255 characters or fewer/);
+  });
+  it('rejects duplicate names against existingNames (case-insensitive)', () => {
+    const existingNames = new Set(['by_host']);
+    expect(validateIndexRule({ ...good, existingNames })).toMatch(/already exists/);
+    expect(validateIndexRule({ ...good, name: 'BY_HOST', existingNames })).toMatch(/already exists/);
+  });
+  it('accepts the same name in edit mode even when it is in existingNames', () => {
+    const existingNames = new Set(['by_host']);
+    expect(validateIndexRule({ ...good, isEdit: true, existingNames })).toBeUndefined();
   });
 });
 
@@ -307,8 +319,8 @@ describe('8. validateIndexRuleBinding', () => {
     name: 'binding-1',
     rules: ['by_host'],
     subject: { name: 'sw_metric', catalog: 'CATALOG_MEASURE' },
-    beginAt: '2026-01-01T00:00:00Z',
-    expireAt: '2026-02-01T00:00:00Z',
+    beginAt: Date.parse('2026-01-01T00:00:00Z'),
+    expireAt: Date.parse('2026-02-01T00:00:00Z'),
   };
 
   it('accepts a valid binding', () => {
@@ -321,12 +333,23 @@ describe('8. validateIndexRuleBinding', () => {
     expect(validateIndexRuleBinding({ ...good, subject: { name: '', catalog: '' } })).toMatch(/Subject resource is required/);
   });
   it('rejects expireAt ≤ beginAt', () => {
-    expect(validateIndexRuleBinding({ ...good, expireAt: '2026-01-01T00:00:00Z' })).toMatch(/Expire time must be after/);
+    expect(validateIndexRuleBinding({ ...good, expireAt: good.beginAt })).toMatch(/Expire time must be after/);
   });
-  it('rejects unparseable beginAt', () => {
-    expect(validateIndexRuleBinding({ ...good, beginAt: 'not-a-date' })).toMatch(/not a valid timestamp/);
+  it('rejects null beginAt', () => {
+    expect(validateIndexRuleBinding({ ...good, beginAt: null })).toMatch(/Begin time is required/);
   });
-  it('rejects unparseable expireAt', () => {
-    expect(validateIndexRuleBinding({ ...good, expireAt: 'not-a-date' })).toMatch(/not a valid timestamp/);
+  it('rejects null expireAt', () => {
+    expect(validateIndexRuleBinding({ ...good, expireAt: null })).toMatch(/Expire time is required/);
+  });
+  it('rejects names longer than 255 chars', () => {
+    expect(validateIndexRuleBinding({ ...good, name: 'a'.repeat(256) })).toMatch(/255 characters or fewer/);
+  });
+  it('rejects duplicate names against existingNames', () => {
+    const existingNames = new Set(['binding-1']);
+    expect(validateIndexRuleBinding({ ...good, existingNames })).toMatch(/already exists/);
+  });
+  it('accepts the same name in edit mode even when it is in existingNames', () => {
+    const existingNames = new Set(['binding-1']);
+    expect(validateIndexRuleBinding({ ...good, isEdit: true, existingNames })).toBeUndefined();
   });
 });

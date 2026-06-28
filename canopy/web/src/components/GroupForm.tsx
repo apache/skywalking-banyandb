@@ -42,6 +42,9 @@ interface Stage {
   nodeSelector: string;
   close: boolean;
   replicas: number | '';
+  /** True if this stage's name should appear in ResourceOpts.defaultStages.
+   * Marks the stage as the active/default lifecycle tier. */
+  isDefault: boolean;
 }
 interface StageErrors {
   name?: string;
@@ -127,6 +130,7 @@ const DEFAULT_STAGE: Stage = {
   segmentInterval: { num: 1, unit: 'UNIT_DAY' },
   ttl: { num: 7, unit: 'UNIT_DAY' },
   nodeSelector: '', close: true, replicas: 0,
+  isDefault: false,
 };
 
 function StagesEditor({ stages, errors, onChange }: {
@@ -175,6 +179,12 @@ function StagesEditor({ stages, errors, onChange }: {
                 onChange={(e) => upd(i, { close: e.target.checked })} />
               Close non-live segments in this stage
             </label>
+            <label className="f-check">
+              <input type="checkbox" checked={s.isDefault}
+                onChange={(e) => upd(i, { isDefault: e.target.checked })} />
+              Mark as default stage
+              <span className="f-hint-inline"> — adds "{s.name || 'stage-name'}" to ResourceOpts.defaultStages</span>
+            </label>
           </div>
         );
       })}
@@ -187,17 +197,22 @@ function StagesEditor({ stages, errors, onChange }: {
 }
 
 /** GroupForm renders a create-group modal, an edit-group modal, or a delete-group confirmation dialog. */
-export function GroupForm({ mode, initialName, initialCatalog, onClose }: {
+export function GroupForm({ mode, initialName, initialCatalog, onClose, onDeleted }: {
   mode: 'create' | 'edit' | 'delete';
   initialName?: string;
   initialCatalog?: Catalog;
   onClose: (created?: Group) => void;
+  /** Fired after a confirmed delete — distinct from `onClose` so callers can
+   * navigate away only when the group was actually deleted, not when the user
+   * cancelled via the X button or backdrop. */
+  onDeleted?: () => void;
 }) {
   const qc = useQueryClient();
 
   const [name, setName] = useState('');
   const [catalog, setCatalog] = useState<Catalog>(initialCatalog ?? 'CATALOG_MEASURE');
   const [shardNum, setShardNum] = useState<number | ''>(2);
+  const [replicas, setReplicas] = useState<number | ''>(0);
   const [segmentInterval, setSegmentInterval] = useState<Interval>({ num: 1, unit: 'UNIT_DAY' });
   const [ttl, setTtl] = useState<Interval>({ num: 7, unit: 'UNIT_DAY' });
   const [stages, setStages] = useState<Stage[]>([]);
@@ -215,10 +230,13 @@ export function GroupForm({ mode, initialName, initialCatalog, onClose }: {
   useEffect(() => {
     if (mode === 'edit' && editGroup && !initialized) {
       setShardNum(editGroup.resourceOpts.shardNum);
+      setReplicas(editGroup.resourceOpts.replicas ?? 0);
       const seg = editGroup.resourceOpts.segmentInterval;
       if (seg) setSegmentInterval({ num: seg.num, unit: seg.unit as IntervalUnit });
       const t = editGroup.resourceOpts.ttl;
       if (t) setTtl({ num: t.num, unit: t.unit as IntervalUnit });
+      // defaultStages is a list of stage names — convert to per-stage flag for the UI.
+      const defaultStageNames = new Set(editGroup.resourceOpts.defaultStages ?? []);
       const loadedStages = (editGroup.resourceOpts.stages ?? []).map((s: LifecycleStage): Stage => ({
         name: s.name,
         shardNum: s.shardNum,
@@ -227,6 +245,7 @@ export function GroupForm({ mode, initialName, initialCatalog, onClose }: {
         nodeSelector: s.nodeSelector ?? '',
         close: s.close ?? false,
         replicas: s.replicas ?? 0,
+        isDefault: defaultStageNames.has(s.name),
       }));
       setStages(loadedStages);
       setInitialized(true);
@@ -256,6 +275,7 @@ export function GroupForm({ mode, initialName, initialCatalog, onClose }: {
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ['groups'] });
       onClose();
+      onDeleted?.();
     },
     onError: (e: Error) => setErrors({ _: e.message }),
   });
@@ -305,6 +325,16 @@ export function GroupForm({ mode, initialName, initialCatalog, onClose }: {
       close: s.close,
       replicas: Number(s.replicas) || 0,
     }));
+    // Collect names of stages flagged as default → ResourceOpts.defaultStages.
+    // Deduplicate and drop blanks so we never send empty strings upstream.
+    const defaultStageNames = Array.from(
+      new Set(
+        stages
+          .filter((s) => s.isDefault && s.name.trim())
+          .map((s) => s.name.trim()),
+      ),
+    );
+    const replicasNum = Number(replicas) || 0;
 
     if (isEdit) {
       updateMut.mutate({
@@ -312,8 +342,15 @@ export function GroupForm({ mode, initialName, initialCatalog, onClose }: {
           metadata: { name: initialName! },
           catalog: editGroup?.catalog,
           resourceOpts: isPropertyCatalog
-            ? { shardNum: Number(shardNum) }
-            : { shardNum: Number(shardNum), segmentInterval: seg, ttl: t, stages: mappedStages },
+            ? { shardNum: Number(shardNum), replicas: replicasNum }
+            : {
+                shardNum: Number(shardNum),
+                replicas: replicasNum,
+                segmentInterval: seg,
+                ttl: t,
+                stages: mappedStages,
+                defaultStages: defaultStageNames,
+              },
         },
       });
     } else {
@@ -322,8 +359,15 @@ export function GroupForm({ mode, initialName, initialCatalog, onClose }: {
           metadata: { name: name.trim() },
           catalog,
           resourceOpts: isPropertyCatalog
-            ? { shardNum: Number(shardNum) }
-            : { shardNum: Number(shardNum), segmentInterval: seg, ttl: t, stages: mappedStages },
+            ? { shardNum: Number(shardNum), replicas: replicasNum }
+            : {
+                shardNum: Number(shardNum),
+                replicas: replicasNum,
+                segmentInterval: seg,
+                ttl: t,
+                stages: mappedStages,
+                defaultStages: defaultStageNames,
+              },
         },
       });
     }
@@ -454,6 +498,18 @@ export function GroupForm({ mode, initialName, initialCatalog, onClose }: {
                   min={1}
                   value={shardNum}
                   onChange={(e) => setShardNum(e.target.value === '' ? '' : Number(e.target.value))}
+                />
+              </Field>
+              <Field
+                label="Replicas"
+                hint="0 means no redundancy · 1 means one primary + one replica"
+              >
+                <input
+                  className="f-input mono"
+                  type="number"
+                  min={0}
+                  value={replicas}
+                  onChange={(e) => setReplicas(e.target.value === '' ? '' : Number(e.target.value))}
                 />
               </Field>
               {!isPropertyCatalog && (

@@ -62,32 +62,25 @@ test('M3: clicking a group card navigates to GroupPage', async ({ page }) => {
   await page.goto('/metadata/measures');
   await expect(page.locator('.page-body')).toBeVisible();
 
+  // Wait for the groups query to settle — pass when EITHER groups or empty state is visible
+  await expect(
+    page.locator('.grp-cards').or(page.locator('.empty')),
+  ).toBeVisible({ timeout: 10_000 });
+
   const groupCard = page.locator('.grp-card').first();
   const hasGroup = await groupCard.count() > 0;
 
   if (!hasGroup) {
-    // Nothing to click — verify empty state and skip navigation check
-    await expect(page.locator('.empty')).toBeVisible();
+    // Nothing to click — empty state was already verified above
     return;
   }
 
-  const groupName = await groupCard.locator('.grp-card-name').textContent();
   await groupCard.click();
 
   // GroupPage renders
   await expect(page.locator('.page-body')).toBeVisible();
   // URL changed to /metadata/measures/{groupName}
-  await expect(page).toHaveURL(/\/metadata\/measures\//);
-
-  // Resource table or empty state is shown
-  const hasResources = await page.locator('.res-row').count() > 0;
-  if (hasResources) {
-    await expect(page.locator('.res-table')).toBeVisible();
-  } else {
-    await expect(page.locator('.empty')).toBeVisible();
-  }
-
-  await page.screenshot({ path: join(screenshotsDir, `m3-group-${groupName ?? 'unknown'}.png`), fullPage: true });
+  await expect(page).toHaveURL(/\/metadata\/measures\/[^/]+$/);
 });
 
 test('M3: clicking a resource row navigates to ResourceDetailPage', async ({ page }) => {

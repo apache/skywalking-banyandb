@@ -23,6 +23,7 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import type { MeasureSchema, CreateMeasureRequest, UpdateMeasureRequest } from 'canopy-shared';
 import { apiDataSource } from '../data/api.js';
 import { IconChevron, IconPlus, IconTrash } from './icons.js';
+import { useFocusTrap } from './modal-utils.js';
 
 const TAG_TYPE_OPTIONS = [
   { value: 'TAG_TYPE_STRING',       label: 'String' },
@@ -49,6 +50,30 @@ const COMPRESSION_OPTIONS = [
   { value: 'COMPRESSION_METHOD_ZSTD', label: 'Zstd' },
 ];
 
+// Mirrors the handoff Field wrapper: label + required indicator + hint/error.
+function Field({
+  label, hint, error, required, locked, children,
+}: {
+  label: React.ReactNode;
+  hint?: string;
+  error?: string;
+  required?: boolean;
+  locked?: boolean;
+  children: React.ReactNode;
+}) {
+  return (
+    <div className={`f-field${error ? ' has-error' : ''}`}>
+      <label className="f-label">
+        {label}
+        {required && <span className="f-req">*</span>}
+        {locked && <span className="f-lock">read-only</span>}
+      </label>
+      {children}
+      {error ? <div className="f-error">{error}</div> : hint ? <div className="f-hint">{hint}</div> : null}
+    </div>
+  );
+}
+
 interface TagRow { name: string; type: string; }
 interface FamilyRow { name: string; tags: TagRow[]; }
 interface FieldRow { name: string; fieldType: string; encodingMethod: string; compressionMethod: string; }
@@ -70,11 +95,15 @@ function SelectField({ value, onChange, options, id }: {
 }
 
 /** MeasureForm renders a create/edit-measure modal or a delete-confirmation dialog. */
-export function MeasureForm({ mode, groupName, initialName, onClose }: {
+export function MeasureForm({ mode, groupName, initialName, onClose, onDeleted }: {
   mode: 'create' | 'edit' | 'delete';
   groupName: string;
   initialName?: string;
   onClose: (created?: MeasureSchema) => void;
+  /** Fired after a confirmed delete — distinct from `onClose` so callers can
+   * navigate away only when the resource was actually deleted, not when the
+   * user cancelled via the X button or backdrop. */
+  onDeleted?: () => void;
 }) {
   const qc = useQueryClient();
 
@@ -140,6 +169,7 @@ export function MeasureForm({ mode, groupName, initialName, onClose }: {
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ['resources', 'measures', groupName] });
       onClose();
+      onDeleted?.();
     },
     onError: (e: Error) => setError(e.message),
   });
@@ -241,22 +271,28 @@ export function MeasureForm({ mode, groupName, initialName, onClose }: {
     else { createMut.mutate({ measure: measurePayload }); }
   }
 
+  const trapRef = useFocusTrap(true, () => onClose());
+
   if (mode === 'delete') {
     return (
       <div className="modal-overlay" onClick={() => onClose()}>
         <div className="modal is-danger" onClick={(e) => e.stopPropagation()}>
           <div className="modal-head">
             <span className="modal-title">Delete measure</span>
-            <button className="modal-x btn btn-ghost" onClick={() => onClose()}>✕</button>
+            <button className="modal-x" onClick={() => onClose()} aria-label="Close" />
           </div>
           <div className="modal-body">
-            <p>This will permanently delete measure <span className="mono">{initialName}</span>.</p>
-            {error && <p className="f-error">{error}</p>}
+            <p className="del-warn">
+              You are about to permanently delete the measure{' '}
+              <b className="mono">{initialName}</b> from group{' '}
+              <b className="mono">{groupName}</b>. All stored data for this measure will be removed.
+            </p>
+            {error && <div className="f-error">{error}</div>}
           </div>
           <div className="modal-foot">
             <button className="btn btn-ghost" onClick={() => onClose()} disabled={deleteMut.isPending}>Cancel</button>
             <button className="btn btn-danger" onClick={() => deleteMut.mutate()} disabled={deleteMut.isPending}>
-              {deleteMut.isPending ? 'Deleting…' : 'Delete'}
+              {deleteMut.isPending ? 'Deleting…' : 'Delete measure'}
             </button>
           </div>
         </div>
@@ -269,139 +305,179 @@ export function MeasureForm({ mode, groupName, initialName, onClose }: {
 
   return (
     <div className="modal-overlay" onClick={() => onClose()}>
-      <div className="modal is-wide" onClick={(e) => e.stopPropagation()}>
+      <div className="modal is-wide" ref={trapRef} onClick={(e) => e.stopPropagation()}>
         <div className="modal-head">
-          <span className="modal-title">{isEdit ? 'Edit measure' : 'New measure'}</span>
-          <button className="modal-x btn btn-ghost" onClick={() => onClose()}>✕</button>
+          <div>
+            <span className="modal-title">{isEdit ? 'Edit measure' : 'Create measure'}</span>
+            <p className="modal-sub">
+              {isEdit
+                ? 'Name is immutable. Update the schema below — it is revalidated on save.'
+                : `Define a measure in group “${groupName}”.`}
+            </p>
+          </div>
+          <button type="button" className="modal-x" onClick={() => onClose()} aria-label="Close" />
         </div>
 
         <form id="measure-form" className="modal-body" onSubmit={handleSubmit} noValidate>
-          <div className="f-section">
-            <div className="f-grid" style={{ gridTemplateColumns: '1fr 1fr' }}>
-              <div className="f-field">
-                <label className="f-label" htmlFor="m-name">Name {!isEdit && <span className="f-req">*</span>}</label>
-                <input id="m-name" className="f-input" type="text" placeholder="my-measure"
+          {/* Identity */}
+          <section className="f-section">
+            <div className="f-section-title">Identity</div>
+            <div className="f-grid">
+              <Field
+                label="Name"
+                required={!isEdit}
+                locked={isEdit}
+                hint={isEdit ? undefined : "Unique within the group · letters, digits, '_' and '-'"}
+              >
+                <input id="m-name" className="f-input mono" type="text" placeholder="service_cpm_minute"
                   value={isEdit ? (initialName ?? '') : name}
                   onChange={(e) => { if (!isEdit) setName(e.target.value); }}
                   readOnly={isEdit} autoFocus={!isEdit} />
-              </div>
-              <div className="f-field">
-                <label className="f-label" htmlFor="m-interval">Interval</label>
-                <input id="m-interval" className="f-input" type="text" placeholder="1m"
-                  value={interval} onChange={(e) => setInterval(e.target.value)} disabled={indexMode} />
-                {indexMode && <span className="f-hint dim">Disabled in index mode</span>}
-              </div>
+              </Field>
+              <Field label="Group" locked hint="Resources are scoped to their group">
+                <input className="f-input mono" type="text" value={groupName} disabled />
+              </Field>
             </div>
-            <label className="f-check">
-              <input type="checkbox" checked={indexMode} onChange={(e) => setIndexMode(e.target.checked)} />
-              Index mode
-            </label>
-          </div>
+          </section>
 
-          <div className="f-section">
+          {/* Measure options */}
+          <section className="f-section">
+            <div className="f-section-title">Measure options</div>
+            <div className="f-grid">
+              <Field
+                label="Interval"
+                hint="Sampling rate, e.g. 1m, 1h, 1d · units ns, us, ms, s, m, h, d"
+              >
+                <input id="m-interval" className="f-input mono" type="text" placeholder="1m"
+                  value={interval} onChange={(e) => setInterval(e.target.value)} disabled={indexMode} />
+              </Field>
+              <Field
+                label="Index mode"
+                hint="Store only in the index — no field values allowed"
+              >
+                <label className="f-check" style={{ marginTop: 6 }}>
+                  <input type="checkbox" checked={indexMode}
+                    onChange={(e) => {
+                      const on = e.target.checked;
+                      setIndexMode(on);
+                      if (on) setFields([]);
+                    }} />
+                  Enable index mode
+                </label>
+              </Field>
+            </div>
+          </section>
+
+          {/* Tag families */}
+          <section className="f-section">
             <div className="f-section-title">Tag families <span className="f-req">*</span></div>
             <div className="fam-list">
               {families.map((fam, fi) => (
                 <div className="fam-card" key={fi}>
                   <div className="fam-head">
-                    <input className="f-input fam-name" type="text" placeholder="Family name"
-                      value={fam.name} onChange={(e) => setFamilyName(fi, e.target.value)} />
-                    <button type="button" className="btn btn-ghost fam-del" title="Remove family"
-                      onClick={() => removeFamily(fi)} disabled={families.length === 1}>
-                      <IconTrash size={14} />
-                    </button>
+                    <div className="fam-name">
+                      <input className="f-input mono" type="text" placeholder="Family name"
+                        value={fam.name} onChange={(e) => setFamilyName(fi, e.target.value)} />
+                    </div>
+                    {families.length > 1 && (
+                      <button type="button" className="fam-del" title="Remove family"
+                        onClick={() => removeFamily(fi)}>
+                        Remove family
+                      </button>
+                    )}
                   </div>
                   {fam.tags.map((tag, ti) => (
                     <div className="spec-row" key={ti}>
-                      <div className="spec-cell">
-                        <input className="f-input" type="text" placeholder="Tag name"
+                      <div className="spec-cell grow">
+                        <input className="f-input mono" type="text" placeholder="tag_name"
                           value={tag.name} onChange={(e) => setTagName(fi, ti, e.target.value)} />
                       </div>
-                      <div className="spec-cell">
+                      <div className="spec-cell type">
                         <SelectField value={tag.type} onChange={(v) => setTagType(fi, ti, v)} options={TAG_TYPE_OPTIONS} />
                       </div>
-                      <div className="spec-cell">
-                        <button type="button" className="btn btn-ghost" title="Remove tag"
-                          onClick={() => removeTag(fi, ti)} disabled={fam.tags.length === 1}>
-                          <IconTrash size={14} />
-                        </button>
-                      </div>
+                      <button type="button" className="spec-del" title="Remove tag"
+                        onClick={() => removeTag(fi, ti)} disabled={fam.tags.length === 1}
+                        aria-label="Remove tag">
+                        <IconTrash size={14} />
+                      </button>
                     </div>
                   ))}
-                  <button type="button" className="btn btn-ghost" onClick={() => addTag(fi)}>
-                    <IconPlus size={13} /> Add tag
+                  <button type="button" className="spec-add" onClick={() => addTag(fi)}>
+                    <IconPlus size={14} /> Add tag
                   </button>
                 </div>
               ))}
             </div>
-            <button type="button" className="btn btn-ghost" onClick={addFamily}>
-              <IconPlus size={14} /> Add family
+            <button type="button" className="btn btn-ghost stage-add" onClick={addFamily}>
+              <IconPlus size={14} /> Add tag family
             </button>
-          </div>
+          </section>
 
+          {/* Fields */}
           {!indexMode && (
-            <div className="f-section">
-              <div className="f-section-title">Fields <span className="f-optional dim">(optional)</span></div>
+            <section className="f-section">
+              <div className="f-section-title">Fields <span className="f-optional">optional</span></div>
+              <p className="f-section-desc">Numeric values stored per data point.</p>
               {fields.map((field, fi) => (
                 <div className="field-row" key={fi}>
-                  <div className="spec-cell">
-                    <input className="f-input" type="text" placeholder="Field name"
+                  <div className="spec-cell grow">
+                    <input className="f-input mono" type="text" placeholder="field_name"
                       value={field.name} onChange={(e) => setFieldProp(fi, 'name', e.target.value)} />
                   </div>
-                  <div className="spec-cell">
+                  <div className="spec-cell type">
                     <SelectField value={field.fieldType} onChange={(v) => setFieldProp(fi, 'fieldType', v)} options={FIELD_TYPE_OPTIONS} />
                   </div>
-                  <div className="spec-cell">
+                  <div className="spec-cell type">
                     <SelectField value={field.encodingMethod} onChange={(v) => setFieldProp(fi, 'encodingMethod', v)} options={ENCODING_OPTIONS} />
                   </div>
-                  <div className="spec-cell">
+                  <div className="spec-cell type">
                     <SelectField value={field.compressionMethod} onChange={(v) => setFieldProp(fi, 'compressionMethod', v)} options={COMPRESSION_OPTIONS} />
                   </div>
-                  <div className="spec-cell">
-                    <button type="button" className="btn btn-ghost" title="Remove field" onClick={() => removeField(fi)}>
-                      <IconTrash size={14} />
-                    </button>
-                  </div>
+                  <button type="button" className="spec-del" title="Remove field" onClick={() => removeField(fi)}
+                    aria-label="Remove field">
+                    <IconTrash size={14} />
+                  </button>
                 </div>
               ))}
-              <button type="button" className="btn btn-ghost" onClick={addField}>
+              <button type="button" className="spec-add" onClick={addField}>
                 <IconPlus size={14} /> Add field
               </button>
-            </div>
+            </section>
           )}
 
-          <div className="f-section">
-            <div className="f-section-title">Entity</div>
-            <div className="f-section-desc">Select tag names as entity identifiers</div>
+          {/* Entity */}
+          <section className="f-section">
+            <div className="f-section-title">Entity <span className="f-req">*</span></div>
+            <p className="f-section-desc">Tags whose values form the series key and determine sharding. Order matters.</p>
             <div className="picker">
               <div className="picker-selected">
                 {entityTags.length === 0 ? (
-                  <span className="picker-empty dim">No entity tags selected</span>
+                  <span className="picker-empty">Add tags above, then choose the entity tags.</span>
                 ) : (
                   entityTags.map((tag, idx) => (
                     <button key={tag} type="button" className="picker-chip is-on" title="Remove"
                       onClick={() => setEntityTags((prev) => prev.filter((t) => t !== tag))}>
-                      <span className="picker-ord">{idx + 1}</span>{tag}
+                      <span className="picker-ord">{idx + 1}</span>
+                      <span>{tag}</span>
                     </button>
                   ))
                 )}
               </div>
               <div className="picker-avail">
                 {availableTagNames.length === 0 ? (
-                  <span className="picker-empty dim">No available tags</span>
+                  <span className="picker-all">All tags selected</span>
                 ) : (
-                  <div className="picker-all">
-                    {availableTagNames.map((tag) => (
-                      <button key={tag} type="button" className="picker-chip"
-                        onClick={() => setEntityTags((prev) => [...prev, tag])}>
-                        {tag}
-                      </button>
-                    ))}
-                  </div>
+                  availableTagNames.map((tag) => (
+                    <button key={tag} type="button" className="picker-chip"
+                      onClick={() => setEntityTags((prev) => [...prev, tag])}>
+                      <IconPlus size={11} />
+                      <span>{tag}</span>
+                    </button>
+                  ))
                 )}
               </div>
             </div>
-          </div>
+          </section>
 
           {error && <p className="f-error">{error}</p>}
         </form>
@@ -409,7 +485,7 @@ export function MeasureForm({ mode, groupName, initialName, onClose }: {
         <div className="modal-foot">
           <button className="btn btn-ghost" type="button" onClick={() => onClose()} disabled={isBusy}>Cancel</button>
           <button className="btn btn-primary" type="submit" form="measure-form" disabled={isBusy}>
-            {isBusy ? (isEdit ? 'Saving…' : 'Creating…') : (isEdit ? 'Save measure' : 'Create measure')}
+            {isBusy ? (isEdit ? 'Saving…' : 'Creating…') : (isEdit ? 'Save changes' : 'Create measure')}
           </button>
         </div>
       </div>

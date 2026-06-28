@@ -115,6 +115,11 @@ export interface IndexRuleInput {
   tags: readonly string[];
   type: IndexType | string;
   analyzer?: string;
+  /**
+   * Lower-case set of existing rule/binding names. When provided, create-mode
+   * validation rejects a name that is already taken in the group.
+   */
+  existingNames?: ReadonlySet<string>;
 }
 
 export interface IndexRuleBindingInput {
@@ -122,8 +127,11 @@ export interface IndexRuleBindingInput {
   name: string;
   rules: readonly string[];
   subject: { name: string; catalog: string };
-  beginAt: string;
-  expireAt: string;
+  /** Validity window start, expressed as epoch milliseconds. */
+  beginAt: number | null;
+  /** Validity window end, expressed as epoch milliseconds. */
+  expireAt: number | null;
+  existingNames?: ReadonlySet<string>;
 }
 
 // ── shared helpers ──────────────────────────────────────────────────────────
@@ -301,11 +309,15 @@ export function validateTrace(input: TraceInput): string | undefined {
 
 // ── 7. validateIndexRule ────────────────────────────────────────────────────
 
-/** validateIndexRule: name regex, ≥1 tag, type ∈ {TREE, INVERTED}. */
+/** validateIndexRule: name regex, length cap, ≥1 tag, type ∈ {TREE, INVERTED}. */
 export function validateIndexRule(input: IndexRuleInput): string | undefined {
   const submitted = (input.name ?? '').trim();
   if (!submitted) return 'Name is required.';
+  if (submitted.length > 255) return 'Must be 255 characters or fewer.';
   if (!NAME_RE.test(submitted)) return 'Name may contain only letters, digits, "_" and "-".';
+  if (!input.isEdit && input.existingNames?.has(submitted.toLowerCase())) {
+    return `An index rule named "${submitted}" already exists.`;
+  }
   if (input.tags.length === 0) return 'At least one tag is required.';
   const seen = new Set<string>();
   for (const t of input.tags) {
@@ -313,8 +325,9 @@ export function validateIndexRule(input: IndexRuleInput): string | undefined {
     if (seen.has(t)) return `Duplicate tag "${t}".`;
     seen.add(t);
   }
-  if (input.type !== 'INDEX_TYPE_TREE' && input.type !== 'INDEX_TYPE_INVERTED') {
-    return 'Index type must be TREE or INVERTED.';
+  if (input.type !== 'TYPE_TREE' && input.type !== 'TYPE_INVERTED'
+      && input.type !== 'TYPE_SKIPPING') {
+    return 'Index type must be TREE, INVERTED, or SKIPPING.';
   }
   return undefined;
 }
@@ -325,18 +338,18 @@ export function validateIndexRule(input: IndexRuleInput): string | undefined {
 export function validateIndexRuleBinding(input: IndexRuleBindingInput): string | undefined {
   const submitted = (input.name ?? '').trim();
   if (!submitted) return 'Name is required.';
+  if (submitted.length > 255) return 'Must be 255 characters or fewer.';
   if (!NAME_RE.test(submitted)) return 'Name may contain only letters, digits, "_" and "-".';
+  if (!input.isEdit && input.existingNames?.has(submitted.toLowerCase())) {
+    return `A binding named "${submitted}" already exists.`;
+  }
   if (input.rules.length === 0) return 'At least one rule is required.';
   if (!input.subject || !input.subject.name || !input.subject.name.trim()) {
     return 'Subject resource is required.';
   }
   if (!input.subject.catalog) return 'Subject catalog is required.';
-  if (!input.beginAt || !input.beginAt.trim()) return 'Begin time is required (RFC3339).';
-  if (!input.expireAt || !input.expireAt.trim()) return 'Expire time is required (RFC3339).';
-  const begin = Date.parse(input.beginAt);
-  const expire = Date.parse(input.expireAt);
-  if (Number.isNaN(begin)) return 'Begin time is not a valid timestamp.';
-  if (Number.isNaN(expire)) return 'Expire time is not a valid timestamp.';
-  if (expire <= begin) return 'Expire time must be after begin time.';
+  if (input.beginAt == null) return 'Begin time is required.';
+  if (input.expireAt == null) return 'Expire time is required.';
+  if (input.expireAt <= input.beginAt) return 'Expire time must be after begin time.';
   return undefined;
 }

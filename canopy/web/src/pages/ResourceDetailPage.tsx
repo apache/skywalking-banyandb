@@ -17,19 +17,23 @@
  * under the License.
  */
 
-import React from 'react';
+import React, { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useQuery } from '@tanstack/react-query';
 
-import type { StreamSchema, MeasureSchema, TraceSchema, PropertySchema } from 'canopy-shared';
+import type {
+  StreamSchema, MeasureSchema, TraceSchema, PropertySchema,
+  IndexRuleSchema, IndexRuleBindingSchema, IndexType,
+} from 'canopy-shared';
 import { apiDataSource } from '../data/api.js';
 import { useAuth } from '../auth/AuthContext.js';
 import {
   IconMeasures, IconStreams, IconTraces, IconProperties,
   IconEdit, IconTrash, IconPlay, IconArrowLeft, IconKey, IconAlert, IconEmpty,
+  IconIndex,
 } from '../components/icons.js';
 
-import { CATALOG_MAP } from './meta-utils.js';
+import { CATALOG_MAP, TYPE_TITLES } from './meta-utils.js';
 
 const KIND_LABEL: Record<string, string> = {
   stream: 'Stream', streams: 'Stream',
@@ -42,6 +46,7 @@ const TAG_TYPE_LABEL: Record<string, string> = {
   TAG_TYPE_STRING: 'string',
   TAG_TYPE_INT: 'int',
   TAG_TYPE_INT64: 'int64',
+  TAG_TYPE_FLOAT: 'float',
   TAG_TYPE_FLOAT64: 'float64',
   TAG_TYPE_STRING_ARRAY: 'string[]',
   TAG_TYPE_INT64_ARRAY: 'int64[]',
@@ -53,8 +58,26 @@ const FIELD_TYPE_LABEL: Record<string, string> = {
   FIELD_TYPE_STRING: 'string',
   FIELD_TYPE_INT: 'int',
   FIELD_TYPE_INT64: 'int64',
+  FIELD_TYPE_FLOAT: 'float',
   FIELD_TYPE_FLOAT64: 'float64',
   FIELD_TYPE_DATA_BINARY: 'binary',
+};
+
+// IndexRule.Type from BanyanDB is `TYPE_TREE` / `TYPE_INVERTED` / `TYPE_SKIPPING`
+// on the wire (we map to these display labels).
+const INDEX_TYPE_LABEL: Record<string, string> = {
+  TYPE_TREE: 'tree',
+  TYPE_INVERTED: 'inverted',
+  TYPE_SKIPPING: 'skipping',
+  INDEX_TYPE_TREE: 'tree',
+  INDEX_TYPE_INVERTED: 'inverted',
+};
+const INDEX_TYPE_TONE: Record<string, string> = {
+  TYPE_TREE: 'is-tree',
+  TYPE_INVERTED: 'is-inv',
+  TYPE_SKIPPING: 'is-skip',
+  INDEX_TYPE_TREE: 'is-tree',
+  INDEX_TYPE_INVERTED: 'is-inv',
 };
 
 function typeIcon(type: string, size: number) {
@@ -84,8 +107,6 @@ function isProperty(r: unknown): r is PropertySchema {
 function stripPrefix(value: string | undefined): string {
   if (!value) return '';
   const parts = value.split('_');
-  // Drop leading enum prefix segments (all-caps) and reconstruct lowercase
-  // e.g. ENCODING_METHOD_GORILLA → gorilla, COMPRESSION_METHOD_ZSTD → zstd
   return parts[parts.length - 1].toLowerCase();
 }
 
@@ -103,6 +124,52 @@ function SpecTable({ head, rows }: { head: string[]; rows: React.ReactNode[][] }
         </div>
       ))}
     </div>
+  );
+}
+
+// ── TagIndexRules ─────────────────────────────────────────────────────────────
+// Per-tag chips linking to the IndexRules that index this tag. Hover state is
+// shared so the same rule highlights across all rows, making it clear which
+// tags share an index rule.
+
+function TagIndexRules({
+  rules, tagName, onOpen, hoveredRule, onHoverRule,
+}: {
+  rules: IndexRuleSchema[];
+  tagName: string;
+  onOpen: (ruleName: string) => void;
+  hoveredRule: string | null;
+  onHoverRule: (name: string | null) => void;
+}) {
+  if (!rules.length) {
+    return <span className="tag-noidx">not indexed</span>;
+  }
+  return (
+    <span className="tag-idx-row">
+      {rules.map((ir) => {
+        const hot = hoveredRule === ir.metadata.name;
+        const irTags = ir.tags ?? [];
+        const title =
+          `Index rule “${ir.metadata.name}” · ${INDEX_TYPE_LABEL[ir.type] ?? stripPrefix(ir.type)}` +
+          (ir.analyzer ? ` · ${ir.analyzer}` : '') +
+          `\nIndexes tag${irTags.length !== 1 ? 's' : ''}: ${irTags.join(', ')}`;
+        return (
+          <span className={'tag-idx-pair' + (hot ? ' is-hot' : '')} key={ir.metadata.name}>
+            <button
+              className={'tag-idx-chip ' + (INDEX_TYPE_TONE[ir.type] ?? '') + (hot ? ' is-highlight' : '')}
+              title={title}
+              onClick={() => onOpen(ir.metadata.name)}
+              onMouseEnter={() => onHoverRule(ir.metadata.name)}
+              onMouseLeave={() => onHoverRule(null)}
+            >
+              <IconIndex size={11} />
+              <span className="tag-idx-name mono">{ir.metadata.name}</span>
+            </button>
+            <span className="tag-idx-tagchip mono" title={'Indexed tag: ' + tagName}>{tagName}</span>
+          </span>
+        );
+      })}
+    </span>
   );
 }
 
@@ -124,15 +191,49 @@ export function ResourceDetailPage({
   const navigate = useNavigate();
   const { session } = useAuth();
   const isAdmin = session?.role === 'admin';
+  const [hoveredRule, setHoveredRule] = useState<string | null>(null);
 
   const { data: resource, isLoading, error } = useQuery({
     queryKey: ['resource', type, groupName, resourceName],
     queryFn: () => apiDataSource.getResource(type, groupName, resourceName),
   });
 
-  const typeTitle = CATALOG_MAP[type]?.label ?? type.toUpperCase();
+  // IndexRules scoped to this group — used for the per-tag "Index rules" column.
+  const { data: indexRules = [] } = useQuery<IndexRuleSchema[]>({
+    queryKey: ['indexRules', groupName],
+    queryFn: () => apiDataSource.listIndexRules(groupName),
+  });
+  // IndexRuleBindings scoped to this group. A tag on THIS resource is
+  // "indexed" by a rule only when a binding explicitly ties that rule to
+  // THIS resource (matching subject.name) and is currently active. Without
+  // this filter, every resource with the tag would falsely claim the rule
+  // is indexing it.
+  const { data: indexBindings = [] } = useQuery<IndexRuleBindingSchema[]>({
+    queryKey: ['indexRuleBindings', groupName],
+    queryFn: () => apiDataSource.listIndexRuleBindings(groupName),
+  });
+  const rulesForTag = (n: string) => {
+    // Rule names that have at least one binding targeting THIS resource.
+    const boundRuleNames = new Set(
+      indexBindings
+        .filter((b) => b.subject.name === resourceName)
+        .flatMap((b) => b.rules),
+    );
+    return indexRules.filter(
+      (ir) => boundRuleNames.has(ir.metadata.name) && (ir.tags ?? []).includes(n),
+    );
+  };
+
+  const typeTitle = TYPE_TITLES[type] ?? type;
   const kindLabel = KIND_LABEL[type] ?? type;
-  const typeBase = type.replace(/s$/, ''); // streams→stream, measures→measure, etc.
+  const typeBase = type.replace(/s$/, '');
+  const indexPath = `/metadata/${typeBase}s/${groupName}/Index`;
+  const openIndexRule = (ruleName: string) => {
+    // Stash the rule name so the Index page can highlight the matching row
+    // on arrival, then navigate. The Index page reads-and-clears this slot.
+    (window as unknown as { __idxFocus?: { rule?: string } }).__idxFocus = { rule: ruleName };
+    navigate(indexPath);
+  };
 
   // ── Loading ──────────────────────────────────────────────────────────────
   if (isLoading) {
@@ -173,9 +274,14 @@ export function ResourceDetailPage({
   }
 
   // ── Derived data ─────────────────────────────────────────────────────────
-  const catalogLabel = isTrace(resource) ? 'TRACE' : isMeasure(resource) ? 'MEASURE' : isStream(resource) ? 'STREAM' : 'PROPERTY';
   const indexMode = isMeasure(resource) ? !!(resource as MeasureSchema).indexMode : false;
-  const badgeText = indexMode ? 'INDEX MODE' : catalogLabel;
+  // Detail-page badge uses Title Case singular ("Measure") so it sits naturally
+  // next to the lowercase resource name (e.g. `cpu_usage [Measure]`).
+  const kindSingular = isTrace(resource) ? 'Trace'
+    : isMeasure(resource) ? 'Measure'
+    : isStream(resource) ? 'Stream'
+    : 'Property';
+  const badgeText = indexMode ? 'INDEX MODE' : kindSingular;
 
   let tagFamilyCount = 0;
   if (isStream(resource) || isMeasure(resource)) {
@@ -190,40 +296,42 @@ export function ResourceDetailPage({
       <header className="page-head">
         <div className="crumbs">
           <span className="crumb">Metadata</span>
-          <span className="crumb-sep" />
+          <span className="crumb-sep">/</span>
           <button
             className="crumb crumb-link"
             onClick={() => navigate(`/metadata/${typeBase}s`)}
           >
             {typeTitle}
           </button>
-          <span className="crumb-sep" />
+          <span className="crumb-sep">/</span>
           <button
             className="crumb crumb-link"
             onClick={() => navigate(`/metadata/${typeBase}s/${groupName}`)}
           >
             {groupName}
           </button>
-          <span className="crumb-sep" />
+          <span className="crumb-sep">/</span>
           <span className="crumb is-last">{resourceName}</span>
         </div>
 
         <div className="page-title-row">
           <div className="page-title-wrap">
-            <h1 className="page-title">{resourceName}</h1>
-            <span className="title-badge">{badgeText}</span>
+            <h1 className="page-title">
+              {resourceName}
+              <span className="title-badge">{badgeText}</span>
+            </h1>
           </div>
           <div className="page-actions">
             <button
-              className="btn btn-ghost"
+              className="btn btn-primary"
               onClick={() => navigate(`/query?type=${typeBase}&group=${groupName}&name=${resourceName}`)}
             >
-              <IconPlay size={14} />
+              <IconPlay size={15} />
               Query
             </button>
-            <button className="btn btn-ghost" onClick={() => navigate(-1)}>
+            <button className="btn btn-ghost" onClick={() => navigate(indexPath)}>
               <IconArrowLeft size={14} />
-              Back
+              Back to group
             </button>
             {isAdmin && (
               <>
@@ -273,15 +381,15 @@ export function ResourceDetailPage({
             <span className="meta-v">{(resource as MeasureSchema).interval}</span>
           </span>
         )}
-        {isMeasure(resource) && indexMode && (
+        {isMeasure(resource) && (
           <span className="meta-chip">
             <span className="meta-k">index mode</span>
-            <span className="meta-v">on</span>
+            <span className="meta-v">{indexMode ? 'on' : 'off'}</span>
           </span>
         )}
       </div>
 
-      {/* Tag families (stream / measure) */}
+      {/* Tag families (stream / measure) — with Index rules column */}
       {(isStream(resource) || isMeasure(resource)) &&
         (resource as StreamSchema).tagFamilies?.map((family) => {
           const entityTagNames = (resource as StreamSchema).entity?.tagNames ?? [];
@@ -290,7 +398,13 @@ export function ResourceDetailPage({
             const roleCell: React.ReactNode = entityTagNames.includes(tag.name)
               ? <span className="role-tag is-entity">entity</span>
               : <span className="dim">—</span>;
-            return [<span className="mono">{tag.name}</span>, typeLabel, <span className="role-cell">{roleCell}</span>];
+            return [
+              <span className="mono">{tag.name}</span>,
+              <span className="type-pill">{typeLabel}</span>,
+              <span className="role-cell">{roleCell}</span>,
+              <TagIndexRules rules={rulesForTag(tag.name)} tagName={tag.name} onOpen={openIndexRule}
+                hoveredRule={hoveredRule} onHoverRule={setHoveredRule} />,
+            ];
           });
           return (
             <div key={family.name} className="detail-block">
@@ -298,38 +412,13 @@ export function ResourceDetailPage({
                 <IconProperties size={15} />
                 {' '}Tag family · <span className="mono">{family.name}</span>
               </div>
-              <SpecTable head={['Tag', 'Type', 'Role']} rows={rows} />
+              <SpecTable head={['Tag', 'Type', 'Role', 'Index rules']} rows={rows} />
             </div>
           );
         })
       }
 
-      {/* Flat tags (trace) */}
-      {isTrace(resource) && (
-        <div className="detail-block">
-          <div className="detail-h">
-            <IconProperties size={15} />
-            {' '}Tags
-          </div>
-          <SpecTable
-            head={['Tag', 'Type', 'Role']}
-            rows={(resource as TraceSchema).tags?.map((tag) => {
-              const typeLabel = TAG_TYPE_LABEL[tag.type] ?? tag.type;
-              let roleCell: React.ReactNode = <span className="dim">—</span>;
-              if (tag.name === (resource as TraceSchema).traceIdTagName) {
-                roleCell = <span className="role-tag is-reserved">trace-id</span>;
-              } else if (tag.name === (resource as TraceSchema).spanIdTagName) {
-                roleCell = <span className="role-tag is-reserved">span-id</span>;
-              } else if (tag.name === (resource as TraceSchema).timestampTagName) {
-                roleCell = <span className="role-tag is-reserved">timestamp</span>;
-              }
-              return [<span className="mono">{tag.name}</span>, typeLabel, <span className="role-cell">{roleCell}</span>];
-            }) ?? []}
-          />
-        </div>
-      )}
-
-      {/* Fields (measure only, when not indexMode) */}
+      {/* Fields (measure only, when not indexMode) — use type-pill */}
       {isMeasure(resource) && !indexMode && (
         <div className="detail-block">
           <div className="detail-h">
@@ -343,13 +432,48 @@ export function ResourceDetailPage({
               const enc = stripPrefix(field.encodingMethod);
               const comp = stripPrefix(field.compressionMethod);
               const encComp = [enc, comp].filter(Boolean).join(' · ') || <span className="dim">—</span>;
-              return [<span className="mono">{field.name}</span>, typeLabel, encComp];
+              return [
+                <span className="mono">{field.name}</span>,
+                <span className="type-pill">{typeLabel}</span>,
+                <span className="mono dim">{encComp}</span>,
+              ];
             }) ?? []}
           />
         </div>
       )}
 
-      {/* Tags (property only) */}
+      {/* Trace tags — Index rules column too */}
+      {isTrace(resource) && (
+        <div className="detail-block">
+          <div className="detail-h">
+            <IconProperties size={15} />
+            {' '}Tags
+          </div>
+          <SpecTable
+            head={['Tag', 'Type', 'Role', 'Index rules']}
+            rows={(resource as TraceSchema).tags?.map((tag) => {
+              const typeLabel = TAG_TYPE_LABEL[tag.type] ?? tag.type;
+              let roleCell: React.ReactNode = <span className="dim">—</span>;
+              if (tag.name === (resource as TraceSchema).traceIdTagName) {
+                roleCell = <span className="role-tag is-reserved">trace id</span>;
+              } else if (tag.name === (resource as TraceSchema).spanIdTagName) {
+                roleCell = <span className="role-tag is-reserved">span id</span>;
+              } else if (tag.name === (resource as TraceSchema).timestampTagName) {
+                roleCell = <span className="role-tag is-reserved">timestamp</span>;
+              }
+              return [
+                <span className="mono">{tag.name}</span>,
+                <span className="type-pill">{typeLabel}</span>,
+                <span className="role-cell">{roleCell}</span>,
+                <TagIndexRules rules={rulesForTag(tag.name)} tagName={tag.name} onOpen={openIndexRule}
+                  hoveredRule={hoveredRule} onHoverRule={setHoveredRule} />,
+              ];
+            }) ?? []}
+          />
+        </div>
+      )}
+
+      {/* Property tags — no Index rules column (per handoff) */}
       {isProperty(resource) && (
         <div className="detail-block">
           <div className="detail-h">
@@ -360,7 +484,10 @@ export function ResourceDetailPage({
             head={['Tag', 'Type']}
             rows={(resource as PropertySchema).tags?.map((tag) => {
               const typeLabel = TAG_TYPE_LABEL[tag.type] ?? tag.type;
-              return [<span className="mono">{tag.name}</span>, typeLabel];
+              return [
+                <span className="mono">{tag.name}</span>,
+                <span className="type-pill">{typeLabel}</span>,
+              ];
             }) ?? []}
           />
         </div>
@@ -387,3 +514,6 @@ export function ResourceDetailPage({
     </div>
   );
 }
+
+// Suppress unused-import warning for IndexType (kept for type completeness).
+export type { IndexType };

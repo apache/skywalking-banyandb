@@ -45,9 +45,11 @@ export interface CreateGroupRequest {
     readonly catalog: Group['catalog'];
     readonly resourceOpts: {
       readonly shardNum: number;
+      readonly replicas?: number;
       readonly segmentInterval?: IntervalRule;
       readonly ttl?: IntervalRule;
       readonly stages?: readonly LifecycleStage[];
+      readonly defaultStages?: readonly string[];
     };
   };
 }
@@ -58,9 +60,11 @@ export interface UpdateGroupRequest {
     readonly catalog?: Group['catalog'];
     readonly resourceOpts: {
       readonly shardNum: number;
+      readonly replicas?: number;
       readonly segmentInterval?: IntervalRule;
       readonly ttl?: IntervalRule;
       readonly stages?: readonly LifecycleStage[];
+      readonly defaultStages?: readonly string[];
     };
   };
 }

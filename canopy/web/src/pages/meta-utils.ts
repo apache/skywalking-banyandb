@@ -66,3 +66,51 @@ export function parseInterval(s: string): IntervalRule | null {
   const unit = (m[2] ?? 'd').toLowerCase() === 'h' ? 'UNIT_HOUR' : 'UNIT_DAY';
   return { unit, num };
 }
+
+// ── Binding validity window helpers ─────────────────────────────────────────
+
+/**
+ * Sentinel for "never expires" — BanyanDB liaison accepts timestamps up to
+ * 9999-12-31, so 2099 is a comfortable horizon without overflowing 32-bit
+ * signed integers anywhere downstream.
+ */
+export const FAR_FUTURE: number = Date.parse('2099-12-31T00:00:00Z');
+
+/** Format epoch ms as "YYYY-MM-DDTHH:MM" for `<input type="datetime-local">`. */
+export function msToLocalInput(ms: number | null | undefined): string {
+  if (ms == null || !Number.isFinite(ms)) return '';
+  const d = new Date(ms);
+  // toISOString gives UTC; slice off the seconds and Z to fit the datetime-local shape.
+  return d.toISOString().slice(0, 16);
+}
+
+/** Parse a "YYYY-MM-DDTHH:MM" string back to epoch ms; returns null when empty/invalid. */
+export function localInputToMs(s: string): number | null {
+  if (!s) return null;
+  const t = new Date(s).getTime();
+  return Number.isNaN(t) ? null : t;
+}
+
+/** Round a number down to the start of the current minute. */
+export function floorToMinute(ms: number): number {
+  return Math.floor(ms / 60_000) * 60_000;
+}
+
+/**
+ * Compute the lifecycle status of an IndexRuleBinding. The binding is "orphan"
+ * when its subject no longer exists in the group; otherwise we compare the
+ * (numeric-ms) validity window against the current wall-clock time.
+ */
+export type BindingStatus = 'active' | 'expired' | 'orphan' | 'pending';
+
+export function bindingStatus(
+  beginAt: number,
+  expireAt: number,
+  subjectExists: boolean,
+  nowMs: number,
+): BindingStatus {
+  if (!subjectExists) return 'orphan';
+  if (typeof beginAt === 'number' && beginAt > nowMs) return 'pending';
+  if (typeof expireAt === 'number' && expireAt < nowMs) return 'expired';
+  return 'active';
+}

@@ -21,13 +21,14 @@ import React, { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useQuery } from '@tanstack/react-query';
 
-import type { StreamSchema, MeasureSchema, TraceSchema, PropertySchema, IndexRuleSchema, IndexRuleBindingSchema } from 'canopy-shared';
+import type { StreamSchema, MeasureSchema, TraceSchema, PropertySchema } from 'canopy-shared';
 import { apiDataSource } from '../data/api.js';
 import { useAuth } from '../auth/AuthContext.js';
 import {
   IconMeasures,
-  IconPlus, IconEdit, IconTrash, IconSearch, IconPlay, IconArrowRight,
+  IconPlus, IconEdit, IconTrash, IconSearch, IconPlay,
 } from '../components/icons.js';
+import { DEFAULT_PAGE_SIZE, Pager, usePagedList, useResetPage } from '../components/Pager.js';
 import { CATALOG_MAP, TYPE_TITLES, TYPE_ICONS, formatInterval } from './meta-utils.js';
 
 function tagCount(r: StreamSchema | MeasureSchema | TraceSchema | PropertySchema): number {
@@ -40,12 +41,40 @@ function fieldCount(r: StreamSchema | MeasureSchema | TraceSchema | PropertySche
   return 'fields' in r && r.fields ? r.fields.length : 0;
 }
 
+// One-line "detail" cell per row, matching the handoff:
+//   measure: "interval 1m" / "index mode" / "data point"
+//   stream:  "1 tag family" / "2 tag families"
+//   trace:   "id: trace_id"
+//   property:"N entries" / "1 entry"
+function detailFor(kind: string, r: StreamSchema | MeasureSchema | TraceSchema | PropertySchema): string {
+  if (kind === 'measure') {
+    const m = r as MeasureSchema;
+    if (m.indexMode) return 'index mode';
+    return m.interval ? `interval ${m.interval}` : 'data point';
+  }
+  if (kind === 'stream') {
+    const s = r as StreamSchema;
+    const fams = s.tagFamilies?.length ?? 0;
+    return `${fams} tag ${fams === 1 ? 'family' : 'families'}`;
+  }
+  if (kind === 'trace') {
+    const t = r as TraceSchema;
+    return `id: ${t.traceIdTagName || '—'}`;
+  }
+  // property — count entries when present, otherwise 0
+  const p = r as PropertySchema & { entries?: unknown[] };
+  const n = (p.entries ?? []).length;
+  return `${n} ${n === 1 ? 'entry' : 'entries'}`;
+}
+
+function pluralize(catalogEntry: { singular: string; plural: string }, n: number): string {
+  return n === 1 ? catalogEntry.singular : catalogEntry.plural;
+}
+
 export function GroupPage({
   type, groupName,
   onNewResource, onEditResource, onDeleteResource,
   onEditGroup, onDeleteGroup,
-  onNewIndexRule, onEditIndexRule, onDeleteIndexRule,
-  onNewIndexRuleBinding, onEditIndexRuleBinding, onDeleteIndexRuleBinding,
 }: {
   type: string;
   groupName: string;
@@ -54,20 +83,12 @@ export function GroupPage({
   onDeleteResource?: (resource: StreamSchema | MeasureSchema | TraceSchema | PropertySchema) => void;
   onEditGroup?: () => void;
   onDeleteGroup?: () => void;
-  onNewIndexRule?: () => void;
-  onEditIndexRule?: (ruleName: string) => void;
-  onDeleteIndexRule?: (ruleName: string) => void;
-  onNewIndexRuleBinding?: () => void;
-  onEditIndexRuleBinding?: (bindingName: string) => void;
-  onDeleteIndexRuleBinding?: (bindingName: string) => void;
 }) {
   const navigate = useNavigate();
   const { session } = useAuth();
   const isAdmin = session?.role === 'admin';
   const [search, setSearch] = useState('');
-  const [page, setPage] = useState(1);
 
-  const PAGE_SIZE = 50;
   const catalogEntry = CATALOG_MAP[type] ?? CATALOG_MAP['measures'];
   const TypeIcon = TYPE_ICONS[type] ?? IconMeasures;
   const isProperties = type === 'properties';
@@ -84,14 +105,67 @@ export function GroupPage({
     queryFn: () => apiDataSource.listResourcesInGroup(type, groupName),
   });
   const allResources = resourcesData ?? [];
-  const filteredResources = search.trim()
-    ? allResources.filter((r) => r.metadata.name.toLowerCase().includes(search.trim().toLowerCase()))
+  const q = search.trim().toLowerCase();
+  const filteredResources = q
+    ? allResources.filter((r) => r.metadata.name.toLowerCase().includes(q))
     : allResources;
-  const totalPages = Math.max(1, Math.ceil(filteredResources.length / PAGE_SIZE));
-  const pagedResources = filteredResources.slice((page - 1) * PAGE_SIZE, page * PAGE_SIZE);
+  const { page, setPage, pageItems } = usePagedList(filteredResources, DEFAULT_PAGE_SIZE);
+  // Reset to page 1 whenever the search filter changes so the user isn't
+  // stranded on an out-of-range page after narrowing results.
+  useResetPage(setPage, q);
+
+  // Surface a "not found" empty state when the group doesn't exist (typo'd URL).
+  if (!group && !groupsData) {
+    return (
+      <div className="page-body">
+        <div className="empty">
+          <span className="empty-ico spin"><TypeIcon size={32} /></span>
+          <div className="empty-title">Loading…</div>
+        </div>
+      </div>
+    );
+  }
+  if (!group) {
+    return (
+      <div className="page-body">
+        <div className="page-head">
+          <div className="crumbs">
+            {isProperties ? (
+              <>
+                <button className="crumb crumb-link" onClick={() => navigate('/properties')}>Properties</button>
+                <span className="crumb-sep">/</span>
+                <span className="crumb is-last">{groupName}</span>
+              </>
+            ) : (
+              <>
+                <span className="crumb">Metadata</span>
+                <span className="crumb-sep">/</span>
+                <button className="crumb crumb-link" onClick={() => navigate('/metadata/' + type)}>{TYPE_TITLES[type]}</button>
+                <span className="crumb-sep">/</span>
+                <span className="crumb is-last">{groupName}</span>
+              </>
+            )}
+          </div>
+          <h1 className="page-title">{groupName}</h1>
+        </div>
+        <div className="empty">
+          <span className="empty-ico"><TypeIcon size={36} /></span>
+          <div className="empty-title">Group not found</div>
+          <p className="empty-text">No group named {groupName} exists in this catalog.</p>
+        </div>
+      </div>
+    );
+  }
 
   const rowPath = (name: string) =>
     isProperties ? `/properties/${groupName}/${name}` : `/metadata/${type}/${groupName}/${name}`;
+
+  const stages = group.resourceOpts.stages ?? [];
+  // Group-level replicas lives on ResourceOpts (proto field 6), not on each
+  // LifecycleStage — BanyanDB's wire response puts it next to shard_num, ttl,
+  // and the stages list.
+  const replicas = group.resourceOpts.replicas;
+  const replicasWarn = typeof replicas === 'number' && replicas === 0;
 
   return (
     <div className="page-body">
@@ -100,28 +174,30 @@ export function GroupPage({
           {isProperties ? (
             <>
               <button className="crumb crumb-link" onClick={() => navigate('/properties')}>Properties</button>
-              <span className="crumb-sep"><IconArrowRight size={12} /></span>
+              <span className="crumb-sep">/</span>
               <span className="crumb is-last">{groupName}</span>
             </>
           ) : (
             <>
               <span className="crumb">Metadata</span>
-              <span className="crumb-sep"><IconArrowRight size={12} /></span>
+              <span className="crumb-sep">/</span>
               <button className="crumb crumb-link" onClick={() => navigate('/metadata/' + type)}>{TYPE_TITLES[type]}</button>
-              <span className="crumb-sep"><IconArrowRight size={12} /></span>
+              <span className="crumb-sep">/</span>
               <span className="crumb is-last">{groupName}</span>
             </>
           )}
         </div>
         <div className="page-title-row">
           <div className="page-title-wrap">
-            <h1 className="page-title">{groupName}</h1>
-            <span className="title-badge">{catalogEntry.label}</span>
+            <h1 className="page-title">
+              {groupName}
+              <span className="title-badge">{catalogEntry.label}</span>
+            </h1>
           </div>
           {isAdmin && (
             <div className="page-actions">
               <button className="btn btn-ghost" onClick={() => onEditGroup?.()}>
-                <IconEdit size={15} /> Edit group
+                <IconEdit size={15} /> Edit
               </button>
               <button className="btn btn-danger-ghost" onClick={() => onDeleteGroup?.()}>
                 <IconTrash size={15} /> Delete
@@ -129,45 +205,68 @@ export function GroupPage({
             </div>
           )}
         </div>
-        <p className="page-meta">Group — the minimal physical unit managing shards, segments and retention</p>
+        <p className="page-meta">
+          Group — the minimal physical unit managing shards, segments and retention
+        </p>
       </header>
 
-      {group && (
-        <div className="grp-meta">
+      <div className="grp-meta">
+        <div className="meta-chip">
+          <span className="meta-k">catalog</span>
+          <span className="meta-v">{catalogEntry.label}</span>
+        </div>
+        <div className="meta-chip">
+          <span className="meta-k">shards</span>
+          <span className="meta-v">{group.resourceOpts.shardNum}</span>
+        </div>
+        {typeof replicas === 'number' && (
           <div className="meta-chip">
-            <span className="meta-k">catalog</span>
-            <span className="meta-v">{group.catalog}</span>
+            <span className="meta-k">replicas</span>
+            <span
+              className={'meta-v' + (replicasWarn ? ' is-warn' : '')}
+              title={replicasWarn ? 'Replicas 0 — data in this group has no redundancy' : undefined}
+            >
+              {replicasWarn ? '0 — no redundancy' : replicas}
+            </span>
           </div>
-          <div className="meta-chip">
-            <span className="meta-k">shards</span>
-            <span className="meta-v">{group.resourceOpts.shardNum}</span>
-          </div>
+        )}
+        {group.resourceOpts.segmentInterval && (
           <div className="meta-chip">
             <span className="meta-k">segment</span>
             <span className="meta-v">{formatInterval(group.resourceOpts.segmentInterval)}</span>
           </div>
-          <div className="meta-chip">
-            <span className="meta-k">ttl</span>
-            <span className="meta-v">{formatInterval(group.resourceOpts.ttl)}</span>
-          </div>
+        )}
+        <div className="meta-chip">
+          <span className="meta-k">ttl</span>
+          <span className="meta-v">{formatInterval(group.resourceOpts.ttl)}</span>
         </div>
-      )}
+        {stages.length > 0 && (
+          <div className="meta-chip">
+            <span className="meta-k">stages</span>
+            <span className="meta-v">{stages.map((s) => s.name).join(' → ')}</span>
+          </div>
+        )}
+      </div>
 
       <div className="res-toolbar">
-        <label className="search-box">
+        <div className="search-box">
           <IconSearch size={15} />
           <input
             type="search"
-            placeholder={`Search ${catalogEntry.plural}…`}
+            placeholder={`Filter ${catalogEntry.plural}…`}
             value={search}
-            onChange={(e) => { setSearch(e.target.value); setPage(1); }}
+            onChange={(e) => setSearch(e.target.value)}
           />
-        </label>
+        </div>
         <div className="res-toolbar-right">
-          <span className="res-count">{filteredResources.length} {filteredResources.length === 1 ? catalogEntry.singular : catalogEntry.plural}</span>
+          <span className="res-count">
+            {q
+              ? `${filteredResources.length} of ${allResources.length} ${pluralize(catalogEntry, allResources.length)}`
+              : `${allResources.length} ${pluralize(catalogEntry, allResources.length)}`}
+          </span>
           {isAdmin && (
             <button className="btn btn-primary" onClick={() => onNewResource?.()}>
-              <IconPlus size={15} /> New {catalogEntry.singular}
+              <IconPlus size={16} /> New {catalogEntry.singular}
             </button>
           )}
         </div>
@@ -177,6 +276,7 @@ export function GroupPage({
         <div className="empty">
           <span className="empty-ico"><TypeIcon size={36} /></span>
           <p className="empty-title">No {catalogEntry.plural} in this group</p>
+          <p className="empty-text">Define a {catalogEntry.singular} in {groupName} to begin ingesting data.</p>
           {isAdmin && (
             <button className="btn btn-primary" onClick={() => onNewResource?.()}>
               <IconPlus size={15} /> Create {catalogEntry.singular}
@@ -187,257 +287,105 @@ export function GroupPage({
         <div className="empty">
           <span className="empty-ico"><IconSearch size={36} /></span>
           <p className="empty-title">No matches</p>
-          <p className="empty-text">Try a different search term</p>
+          <p className="empty-text">No {catalogEntry.singular} in {groupName} matches "{search}".</p>
         </div>
       ) : (
-        <table className="res-table">
-          <thead className="res-head">
-            <tr>
-              <th className="rc-name">Name</th>
-              <th className="rc-kind">Type</th>
-              <th className="rc-schema">Schema</th>
-              <th className="rc-actions rc-actions-h"></th>
-            </tr>
-          </thead>
-          <tbody>
-            {pagedResources.map((r) => {
-              const tags = tagCount(r);
-              const fields = fieldCount(r);
-              const isMeasure = type === 'measures';
-              const isMeasureResource = 'fields' in r;
-              const isIndexMode = isMeasureResource && (r as MeasureSchema).indexMode;
-              return (
-                <tr
-                  key={r.metadata.name}
-                  className="res-row"
-                  onClick={() => navigate(rowPath(r.metadata.name))}
-                  style={{ cursor: 'pointer' }}
-                >
-                  <td className="rc-name">
-                    <span className="rc-ico"><TypeIcon size={15} /></span>
-                    <span className="mono">{r.metadata.name}</span>
-                  </td>
-                  <td className="rc-kind">
-                    <span className="kind-badge">{isIndexMode ? 'Index' : catalogEntry.label}</span>
-                  </td>
-                  <td className="rc-detail rc-schema">
-                    {tags > 0 && (
-                      <span className="schema-chip">{tags} tag{tags !== 1 ? 's' : ''}</span>
-                    )}
-                    {isMeasure && fields > 0 && (
-                      <span className="schema-chip">{fields} field{fields !== 1 ? 's' : ''}</span>
-                    )}
-                  </td>
-                  <td className="rc-actions" onClick={(e) => e.stopPropagation()}>
+        <>
+        <div className="res-table">
+          <div className="res-head">
+            <span className="rc-name">Name</span>
+            <span className="rc-kind">Type</span>
+            <span className="rc-detail">Detail</span>
+            <span className="rc-schema">Schema</span>
+            <span className="rc-actions rc-actions-h" />
+          </div>
+          {pageItems.map((r) => {
+            const tags = tagCount(r);
+            const fields = fieldCount(r);
+            const isMeasure = type === 'measures';
+            const isMeasureResource = 'fields' in r;
+            const isIndexMode = isMeasureResource && (r as MeasureSchema).indexMode;
+            const kind = catalogEntry.singular;
+            return (
+              <div
+                key={r.metadata.name}
+                className="res-row"
+                role="button"
+                tabIndex={0}
+                onClick={() => navigate(rowPath(r.metadata.name))}
+                onKeyDown={(e) => {
+                  if (e.key === 'Enter' || e.key === ' ') {
+                    e.preventDefault();
+                    navigate(rowPath(r.metadata.name));
+                  }
+                }}
+              >
+                <span className="rc-name">
+                  <span className="rc-ico"><TypeIcon size={15} /></span>
+                  <span title={r.metadata.name}>{r.metadata.name}</span>
+                </span>
+                <span className="rc-kind">
+                  <span className={'kind-badge' + (isIndexMode ? ' is-idx' : '')}>
+                    {isIndexMode ? 'Index' : (kind.charAt(0).toUpperCase() + kind.slice(1))}
+                  </span>
+                </span>
+                <span className="rc-detail" title={detailFor(kind, r)}>{detailFor(kind, r)}</span>
+                <span className="rc-schema">
+                  {isProperties ? (
+                    <span className="schema-chip">{detailFor(kind, r)}</span>
+                  ) : (
+                    <>
+                      {tags > 0 && (
+                        <span className="schema-chip">{tags} tag{tags !== 1 ? 's' : ''}</span>
+                      )}
+                      {isMeasure && fields > 0 && (
+                        <span className="schema-chip">{fields} field{fields !== 1 ? 's' : ''}</span>
+                      )}
+                    </>
+                  )}
+                </span>
+                <span className="rc-actions" onClick={(e) => e.stopPropagation()}>
+                  {!isProperties && (
                     <button
                       className="rc-act"
-                      title="Query"
+                      title={`Query this ${catalogEntry.singular}`}
                       onClick={() => navigate('/query')}
                     >
-                      <IconPlay size={15} />
+                      <IconPlay size={14} />
                     </button>
-                    {isAdmin && (
-                      <>
-                        <button
-                          className="rc-act"
-                          title="Edit"
-                          onClick={() => onEditResource?.(r)}
-                        >
-                          <IconEdit size={15} />
-                        </button>
-                        <button
-                          className="rc-act is-danger"
-                          title="Delete"
-                          onClick={() => onDeleteResource?.(r)}
-                        >
-                          <IconTrash size={15} />
-                        </button>
-                      </>
-                    )}
-                  </td>
-                </tr>
-              );
-            })}
-          </tbody>
-        </table>
-      )}
-      {totalPages > 1 && (
-        <div className="doc-pager">
-          <span>{filteredResources.length} {filteredResources.length === 1 ? catalogEntry.singular : catalogEntry.plural}</span>
-          <div className="doc-pager-btns">
-            <button className="pg-btn" disabled={page === 1} onClick={() => setPage((p) => p - 1)}>← Prev</button>
-            <span className="doc-pager-page mono">{page} / {totalPages}</span>
-            <button className="pg-btn" disabled={page === totalPages} onClick={() => setPage((p) => p + 1)}>Next →</button>
-          </div>
+                  )}
+                  {isAdmin && (
+                    <>
+                      <button
+                        className="rc-act"
+                        title="Edit"
+                        onClick={() => onEditResource?.(r)}
+                      >
+                        <IconEdit size={15} />
+                      </button>
+                      <button
+                        className="rc-act is-danger"
+                        title="Delete"
+                        onClick={() => onDeleteResource?.(r)}
+                      >
+                        <IconTrash size={15} />
+                      </button>
+                    </>
+                  )}
+                </span>
+              </div>
+            );
+          })}
         </div>
+        <Pager
+          total={filteredResources.length}
+          pageSize={DEFAULT_PAGE_SIZE}
+          page={page}
+          onPageChange={setPage}
+          label={pluralize(catalogEntry, filteredResources.length)}
+        />
+        </>
       )}
-
-      <IndexRuleSection
-        groupName={groupName}
-        isAdmin={isAdmin}
-        onNew={onNewIndexRule}
-        onEdit={onEditIndexRule}
-        onDelete={onDeleteIndexRule}
-      />
-      <IndexRuleBindingSection
-        groupName={groupName}
-        isAdmin={isAdmin}
-        onNew={onNewIndexRuleBinding}
-        onEdit={onEditIndexRuleBinding}
-        onDelete={onDeleteIndexRuleBinding}
-      />
     </div>
-  );
-}
-
-function IndexRuleSection({ groupName, isAdmin, onNew, onEdit, onDelete }: {
-  groupName: string;
-  isAdmin: boolean;
-  onNew?: () => void;
-  onEdit?: (ruleName: string) => void;
-  onDelete?: (ruleName: string) => void;
-}) {
-  const { data: rules = [], isLoading } = useQuery<IndexRuleSchema[]>({
-    queryKey: ['indexRules', groupName],
-    queryFn: () => apiDataSource.listIndexRules(groupName),
-  });
-  return (
-    <section className="detail-block">
-      <div className="detail-h">
-        Index rules <span className="meta-v mono">· {rules.length}</span>
-      </div>
-      {isAdmin && onNew && (
-        <div style={{ marginBottom: 10 }}>
-          <button className="btn btn-ghost" onClick={onNew}>
-            <IconPlus size={14} /> New index rule
-          </button>
-        </div>
-      )}
-      {isLoading ? (
-        <p className="page-meta">Loading…</p>
-      ) : rules.length === 0 ? (
-        <p className="page-meta">No index rules in this group.</p>
-      ) : (
-        <div className="idx-table">
-          <div className="idx-rule-head">
-            <span>Name</span>
-            <span>Tags</span>
-            <span>Type</span>
-            <span>Analyzer</span>
-            <span className="idx-actions-h">Actions</span>
-          </div>
-          {rules.map((r) => (
-            <div className="idx-rule-row" key={r.metadata.name}>
-              <span className="idx-name-cell">
-                <span className="idx-name mono">{r.metadata.name}</span>
-              </span>
-              <span>
-                <span className="idx-chiprow">
-                  {r.tags.map((t) => <span key={t} className="idx-tag">{t}</span>)}
-                </span>
-              </span>
-              <span>
-                <span className={`idx-type-badge ${r.type === 'INDEX_TYPE_TREE' ? 'is-tree' : 'is-inv'}`}>
-                  {r.type === 'INDEX_TYPE_TREE' ? 'tree' : 'inv'}
-                </span>
-              </span>
-              <span className="idx-dim">{r.analyzer || '—'}</span>
-              <span className="idx-actions" onClick={(e) => e.stopPropagation()}>
-                {isAdmin && (
-                  <>
-                    <button className="idx-act" title="Edit" onClick={() => onEdit?.(r.metadata.name)}>
-                      <IconEdit size={14} />
-                    </button>
-                    <button className="idx-act is-danger" title="Delete" onClick={() => onDelete?.(r.metadata.name)}>
-                      <IconTrash size={14} />
-                    </button>
-                  </>
-                )}
-              </span>
-            </div>
-          ))}
-        </div>
-      )}
-    </section>
-  );
-}
-
-function IndexRuleBindingSection({ groupName, isAdmin, onNew, onEdit, onDelete }: {
-  groupName: string;
-  isAdmin: boolean;
-  onNew?: () => void;
-  onEdit?: (bindingName: string) => void;
-  onDelete?: (bindingName: string) => void;
-}) {
-  const { data: bindings = [], isLoading } = useQuery<IndexRuleBindingSchema[]>({
-    queryKey: ['indexRuleBindings', groupName],
-    queryFn: () => apiDataSource.listIndexRuleBindings(groupName),
-  });
-  return (
-    <section className="detail-block">
-      <div className="detail-h">
-        Index rule bindings <span className="meta-v mono">· {bindings.length}</span>
-      </div>
-      {isAdmin && onNew && (
-        <div style={{ marginBottom: 10 }}>
-          <button className="btn btn-ghost" onClick={onNew}>
-            <IconPlus size={14} /> New binding
-          </button>
-        </div>
-      )}
-      {isLoading ? (
-        <p className="page-meta">Loading…</p>
-      ) : bindings.length === 0 ? (
-        <p className="page-meta">No index rule bindings in this group.</p>
-      ) : (
-        <div className="idx-table">
-          <div className="idx-bind-head">
-            <span>Name</span>
-            <span>Subject</span>
-            <span>Rules</span>
-            <span>Window</span>
-            <span className="idx-actions-h">Actions</span>
-          </div>
-          {bindings.map((b) => (
-            <div className="idx-bind-row" key={b.metadata.name}>
-              <span className="idx-name-cell">
-                <span className="idx-name mono">{b.metadata.name}</span>
-              </span>
-              <span className="idx-subj-cell">
-                <span className="idx-subj-cat">{b.subject.catalog.replace('CATALOG_', '')}</span>
-                <span className="mono">{b.subject.name}</span>
-              </span>
-              <span>
-                <span className="idx-chiprow">
-                  {b.rules.map((r) => <span key={r} className="idx-tag">{r}</span>)}
-                </span>
-              </span>
-              <span className="idx-window">
-                <span className="idx-win-row">
-                  <span className="idx-win-k">B</span>
-                  <span className="mono">{b.beginAt}</span>
-                </span>
-                <span className="idx-win-row">
-                  <span className="idx-win-k">E</span>
-                  <span className="mono">{b.expireAt}</span>
-                </span>
-              </span>
-              <span className="idx-actions" onClick={(e) => e.stopPropagation()}>
-                {isAdmin && (
-                  <>
-                    <button className="idx-act" title="Edit" onClick={() => onEdit?.(b.metadata.name)}>
-                      <IconEdit size={14} />
-                    </button>
-                    <button className="idx-act is-danger" title="Delete" onClick={() => onDelete?.(b.metadata.name)}>
-                      <IconTrash size={14} />
-                    </button>
-                  </>
-                )}
-              </span>
-            </div>
-          ))}
-        </div>
-      )}
-    </section>
   );
 }

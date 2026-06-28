@@ -24,7 +24,7 @@ import { useQuery } from '@tanstack/react-query';
 import { apiDataSource } from '../data/api.js';
 import { useAuth } from '../auth/AuthContext.js';
 import { IconGroup, IconPlus, IconArrowRight } from '../components/icons.js';
-import { CATALOG_MAP, formatInterval } from './meta-utils.js';
+import { CATALOG_MAP, TYPE_TITLES, formatInterval } from './meta-utils.js';
 
 export function TypeOverviewPage({ type, onNewGroup }: { type: string; onNewGroup?: () => void }) {
   const navigate = useNavigate();
@@ -48,13 +48,15 @@ export function TypeOverviewPage({ type, onNewGroup }: { type: string; onNewGrou
       <header className="page-head">
         <div className="crumbs">
           <span className="crumb">Metadata</span>
-          <span className="crumb-sep" />
-          <span className="crumb is-last">{cat.label}</span>
+          <span className="crumb-sep">/</span>
+          <span className="crumb is-last">{TYPE_TITLES[type]}</span>
         </div>
         <div className="page-title-row">
           <div className="page-title-wrap">
-            <h1 className="page-title">{cat.label}</h1>
-            <span className="title-badge">{groups.length}</span>
+            <h1 className="page-title">
+              {TYPE_TITLES[type]}
+              <span className="title-badge">{groups.length}</span>
+            </h1>
           </div>
           {isAdmin && (
             <div className="page-actions">

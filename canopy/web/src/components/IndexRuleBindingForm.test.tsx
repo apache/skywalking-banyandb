@@ -20,6 +20,7 @@
 import React from 'react';
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { render, screen, fireEvent, waitFor } from '@testing-library/react';
+import userEvent from '@testing-library/user-event';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 
 import { apiDataSource } from '../data/api.js';
@@ -29,6 +30,7 @@ vi.mock('../data/api.js', () => ({
   apiDataSource: {
     getIndexRuleBinding: vi.fn(),
     listIndexRules: vi.fn(),
+    listResourcesInGroup: vi.fn(),
     createIndexRuleBinding: vi.fn(),
     updateIndexRuleBinding: vi.fn(),
     deleteIndexRuleBinding: vi.fn(),
@@ -42,20 +44,53 @@ function makeWrapper() {
   );
 }
 
+const BEGIN_MS = Date.parse('2026-01-01T00:00:00Z');
+const EXPIRE_MS = Date.parse('2026-02-01T00:00:00Z');
+const FAR_FUTURE_MS = Date.parse('2099-12-31T00:00:00Z');
+
+// What datetime-local will display for the above, in UTC (jsdom default TZ).
+const BEGIN_LOCAL = '2026-01-01T00:00';
+const EXPIRE_LOCAL = '2026-02-01T00:00';
+
 const MOCK_BINDING = {
   metadata: { name: 'binding-1', group: 'sw_metric' },
   rules: ['by_host'],
   subject: { name: 'sw_metric_data', catalog: 'CATALOG_MEASURE' },
-  beginAt: '2026-01-01T00:00:00Z',
-  expireAt: '2026-02-01T00:00:00Z',
+  beginAt: BEGIN_MS,
+  expireAt: EXPIRE_MS,
 };
+
+const MOCK_RULE = {
+  metadata: { name: 'by_host', group: 'sw_metric' },
+  tags: ['host'],
+  type: 'TYPE_TREE',
+} as never;
+
+const MOCK_RESOURCE = {
+  metadata: { name: 'sw_metric_data', group: 'sw_metric', catalog: 'CATALOG_MEASURE' },
+};
+
+// Open the subject dropdown and wait for its option to appear.
+async function pickSubject(name: string) {
+  const inputs = screen.getAllByRole('combobox');
+  fireEvent.focus(inputs[0]);
+  const option = await screen.findByRole('option', { name });
+  fireEvent.click(option);
+}
+
+// Open the rules dropdown and click an option.
+async function pickRule(name: string) {
+  const inputs = screen.getAllByRole('combobox');
+  fireEvent.focus(inputs[1]);
+  const option = await screen.findByRole('option', { name });
+  fireEvent.click(option);
+}
 
 describe('IndexRuleBindingForm — edit mode', () => {
   beforeEach(() => {
     vi.mocked(apiDataSource.getIndexRuleBinding).mockResolvedValue(MOCK_BINDING);
-    vi.mocked(apiDataSource.listIndexRules).mockResolvedValue([
-      { metadata: { name: 'by_host', group: 'sw_metric' }, tags: ['host'], type: 'INDEX_TYPE_TREE' },
-    ] as never);
+    vi.mocked(apiDataSource.listIndexRules).mockResolvedValue([MOCK_RULE]);
+    vi.mocked(apiDataSource.listResourcesInGroup).mockResolvedValue([MOCK_RESOURCE] as never);
   });
 
   it('name input is read-only in edit mode', async () => {
@@ -72,42 +107,51 @@ describe('IndexRuleBindingForm — edit mode', () => {
       <IndexRuleBindingForm mode="edit" groupName="sw_metric" initialName="binding-1" onClose={vi.fn()} />,
       { wrapper: makeWrapper() },
     );
-    expect(await screen.findByDisplayValue('sw_metric_data')).toBeInTheDocument();
-    expect(screen.getByDisplayValue('2026-01-01T00:00:00Z')).toBeInTheDocument();
-    expect(screen.getByDisplayValue('2026-02-01T00:00:00Z')).toBeInTheDocument();
+    // Subject input (first combobox) shows the loaded subject name.
+    const subjectInput = await waitFor(() => {
+      const inputs = screen.getAllByRole('combobox') as HTMLInputElement[];
+      if (inputs[0].value !== 'sw_metric_data') throw new Error('subject not yet loaded');
+      return inputs[0];
+    });
+    expect(subjectInput).toHaveValue('sw_metric_data');
+    // Rule chip appears for the loaded rule.
+    expect(screen.getByRole('button', { name: /by_host/ })).toBeInTheDocument();
+    // Datetime-local inputs render the formatted timestamp.
+    expect(screen.getByDisplayValue(BEGIN_LOCAL)).toBeInTheDocument();
+    expect(screen.getByDisplayValue(EXPIRE_LOCAL)).toBeInTheDocument();
   });
 });
 
 describe('IndexRuleBindingForm — create mode validation', () => {
   beforeEach(() => {
-    vi.mocked(apiDataSource.listIndexRules).mockResolvedValue([
-      { metadata: { name: 'by_host', group: 'g' }, tags: ['host'], type: 'INDEX_TYPE_TREE' },
-    ] as never);
+    vi.mocked(apiDataSource.listIndexRules).mockResolvedValue([MOCK_RULE]);
+    vi.mocked(apiDataSource.listResourcesInGroup).mockResolvedValue([MOCK_RESOURCE] as never);
   });
 
   it('rejects expireAt <= beginAt', async () => {
-    render(<IndexRuleBindingForm mode="create" groupName="g" onClose={vi.fn()} />, { wrapper: makeWrapper() });
-    const textboxes = screen.getAllByRole('textbox');
-    fireEvent.change(textboxes[0], { target: { value: 'binding-1' } });
-    // subject name
-    fireEvent.change(textboxes[1], { target: { value: 'sw_data' } });
-    // begin
-    fireEvent.change(textboxes[2], { target: { value: '2026-02-01T00:00:00Z' } });
-    // expire (before begin)
-    fireEvent.change(textboxes[3], { target: { value: '2026-01-01T00:00:00Z' } });
-    // pick a rule
-    fireEvent.click(await screen.findByRole('button', { name: 'by_host' }));
+    render(<IndexRuleBindingForm mode="create" groupName="g" type="measures" onClose={vi.fn()} />, { wrapper: makeWrapper() });
+    fireEvent.change(screen.getByPlaceholderText('binding_name'), { target: { value: 'binding-1' } });
+    await pickSubject('sw_metric_data');
+    // Uncheck "Never expires" so the expire input becomes editable.
+    fireEvent.click(screen.getByRole('checkbox'));
+    // Set begin to a LATER date than expire.
+    const dateInputs = document.querySelectorAll<HTMLInputElement>('input[type="datetime-local"]');
+    fireEvent.change(dateInputs[0], { target: { value: EXPIRE_LOCAL } });
+    fireEvent.change(dateInputs[1], { target: { value: BEGIN_LOCAL } });
+    await pickRule('by_host');
     fireEvent.click(screen.getByRole('button', { name: /create/i }));
     expect(await screen.findByText(/Expire time must be after/)).toBeInTheDocument();
   });
 
   it('rejects when no rule is selected', async () => {
-    render(<IndexRuleBindingForm mode="create" groupName="g" onClose={vi.fn()} />, { wrapper: makeWrapper() });
-    const textboxes = screen.getAllByRole('textbox');
-    fireEvent.change(textboxes[0], { target: { value: 'binding-1' } });
-    fireEvent.change(textboxes[1], { target: { value: 'sw_data' } });
-    fireEvent.change(textboxes[2], { target: { value: '2026-01-01T00:00:00Z' } });
-    fireEvent.change(textboxes[3], { target: { value: '2026-02-01T00:00:00Z' } });
+    render(<IndexRuleBindingForm mode="create" groupName="g" type="measures" onClose={vi.fn()} />, { wrapper: makeWrapper() });
+    fireEvent.change(screen.getByPlaceholderText('binding_name'), { target: { value: 'binding-1' } });
+    await pickSubject('sw_metric_data');
+    // Uncheck "Never expires" so the expire input becomes editable.
+    fireEvent.click(screen.getByRole('checkbox'));
+    const dateInputs = document.querySelectorAll<HTMLInputElement>('input[type="datetime-local"]');
+    fireEvent.change(dateInputs[0], { target: { value: BEGIN_LOCAL } });
+    fireEvent.change(dateInputs[1], { target: { value: EXPIRE_LOCAL } });
     fireEvent.click(screen.getByRole('button', { name: /create/i }));
     expect(await screen.findByText(/At least one rule is required/)).toBeInTheDocument();
   });
@@ -115,27 +159,28 @@ describe('IndexRuleBindingForm — create mode validation', () => {
 
 describe('IndexRuleBindingForm — happy path', () => {
   it('submits a valid create', async () => {
-    vi.mocked(apiDataSource.listIndexRules).mockResolvedValue([
-      { metadata: { name: 'by_host', group: 'g' }, tags: ['host'], type: 'INDEX_TYPE_TREE' },
-    ] as never);
+    vi.mocked(apiDataSource.listIndexRules).mockResolvedValue([MOCK_RULE]);
+    vi.mocked(apiDataSource.listResourcesInGroup).mockResolvedValue([MOCK_RESOURCE] as never);
     vi.mocked(apiDataSource.createIndexRuleBinding).mockResolvedValue(MOCK_BINDING);
     const onClose = vi.fn();
-    render(<IndexRuleBindingForm mode="create" groupName="g" onClose={onClose} />, { wrapper: makeWrapper() });
-    const textboxes = screen.getAllByRole('textbox');
-    fireEvent.change(textboxes[0], { target: { value: 'binding-1' } });
-    fireEvent.change(textboxes[1], { target: { value: 'sw_data' } });
-    fireEvent.change(textboxes[2], { target: { value: '2026-01-01T00:00:00Z' } });
-    fireEvent.change(textboxes[3], { target: { value: '2026-02-01T00:00:00Z' } });
-    fireEvent.click(await screen.findByRole('button', { name: 'by_host' }));
+    render(<IndexRuleBindingForm mode="create" groupName="g" type="measures" onClose={onClose} />, { wrapper: makeWrapper() });
+    fireEvent.change(screen.getByPlaceholderText('binding_name'), { target: { value: 'binding-1' } });
+    await pickSubject('sw_metric_data');
+    // Uncheck "Never expires" so the expire input is editable.
+    fireEvent.click(screen.getByRole('checkbox'));
+    const dateInputs = document.querySelectorAll<HTMLInputElement>('input[type="datetime-local"]');
+    fireEvent.change(dateInputs[0], { target: { value: BEGIN_LOCAL } });
+    fireEvent.change(dateInputs[1], { target: { value: EXPIRE_LOCAL } });
+    await pickRule('by_host');
     fireEvent.click(screen.getByRole('button', { name: /create/i }));
     await waitFor(() => {
       expect(apiDataSource.createIndexRuleBinding).toHaveBeenCalledWith({
         indexRuleBinding: {
           metadata: { name: 'binding-1', group: 'g' },
           rules: ['by_host'],
-          subject: { name: 'sw_data', catalog: 'CATALOG_MEASURE' },
-          beginAt: '2026-01-01T00:00:00Z',
-          expireAt: '2026-02-01T00:00:00Z',
+          subject: { name: 'sw_metric_data', catalog: 'CATALOG_MEASURE' },
+          beginAt: BEGIN_MS,
+          expireAt: EXPIRE_MS,
         },
       });
     });
@@ -145,7 +190,85 @@ describe('IndexRuleBindingForm — happy path', () => {
 describe('IndexRuleBindingForm — delete mode', () => {
   it('renders the danger modal with the binding name', () => {
     render(<IndexRuleBindingForm mode="delete" groupName="g" initialName="binding-1" onClose={vi.fn()} />, { wrapper: makeWrapper() });
-    expect(screen.getByText('Delete index rule binding')).toBeInTheDocument();
+    // Title and danger button both say "Delete binding" — assert at least one match.
+    expect(screen.getAllByText('Delete binding').length).toBeGreaterThan(0);
     expect(screen.getByText('binding-1')).toBeInTheDocument();
+  });
+});
+
+describe('IndexRuleBindingForm — never-expires toggle', () => {
+  it('shows the never-expires indicator instead of an input when checked, and uses FAR_FUTURE on submit', async () => {
+    vi.mocked(apiDataSource.listIndexRules).mockResolvedValue([MOCK_RULE]);
+    vi.mocked(apiDataSource.listResourcesInGroup).mockResolvedValue([MOCK_RESOURCE] as never);
+    vi.mocked(apiDataSource.createIndexRuleBinding).mockResolvedValue(MOCK_BINDING);
+    render(<IndexRuleBindingForm mode="create" groupName="g" type="measures" onClose={vi.fn()} />, { wrapper: makeWrapper() });
+    // When never-expires is checked there is only one datetime-local input
+    // (begin-at); the expire-at is rendered as the .f-never-expires indicator.
+    const dateInputs = document.querySelectorAll<HTMLInputElement>('input[type="datetime-local"]');
+    expect(dateInputs).toHaveLength(1);
+    expect(document.querySelector('.f-never-expires')).toBeInTheDocument();
+    // Fill the rest and submit; expireAt should be FAR_FUTURE.
+    fireEvent.change(screen.getByPlaceholderText('binding_name'), { target: { value: 'binding-1' } });
+    await pickSubject('sw_metric_data');
+    fireEvent.change(dateInputs[0], { target: { value: BEGIN_LOCAL } });
+    await pickRule('by_host');
+    fireEvent.click(screen.getByRole('button', { name: /create/i }));
+    await waitFor(() => {
+      expect(apiDataSource.createIndexRuleBinding).toHaveBeenCalledWith(
+        expect.objectContaining({
+          indexRuleBinding: expect.objectContaining({ expireAt: FAR_FUTURE_MS }),
+        }),
+      );
+    });
+  });
+
+  it('replaces the sentinel with a 30-day default when user unchecks never-expires', async () => {
+    vi.mocked(apiDataSource.listIndexRules).mockResolvedValue([MOCK_RULE]);
+    vi.mocked(apiDataSource.listResourcesInGroup).mockResolvedValue([MOCK_RESOURCE] as never);
+    render(<IndexRuleBindingForm mode="create" groupName="g" type="measures" onClose={vi.fn()} />, { wrapper: makeWrapper() });
+    // Default state: never-expires checked, expireAt hidden behind indicator.
+    expect(document.querySelector('.f-never-expires')).toBeInTheDocument();
+    // Uncheck — the indicator should disappear and the date input appear.
+    fireEvent.click(screen.getByRole('checkbox'));
+    expect(document.querySelector('.f-never-expires')).toBeNull();
+    const dateInputs = document.querySelectorAll<HTMLInputElement>('input[type="datetime-local"]');
+    expect(dateInputs).toHaveLength(2);
+    // The expire-at input should default to roughly begin + 30 days, NOT the
+    // 2099-12-31 FAR_FUTURE sentinel.
+    const expireValue = dateInputs[1].value;
+    expect(expireValue).not.toMatch(/^2099-12-31/);
+    expect(expireValue.length).toBeGreaterThan(0);
+  });
+});
+
+describe('IndexRuleBindingForm — combobox fuzzy filter', () => {
+  beforeEach(() => {
+    vi.mocked(apiDataSource.listIndexRules).mockResolvedValue([
+      { metadata: { name: 'by_host', group: 'g' } },
+      { metadata: { name: 'by_service_id', group: 'g' } },
+      { metadata: { name: 'by_path', group: 'g' } },
+    ] as never);
+    vi.mocked(apiDataSource.listResourcesInGroup).mockResolvedValue([
+      { metadata: { name: 'sw_metric_data', group: 'g', catalog: 'CATALOG_MEASURE' } },
+      { metadata: { name: 'sw_service_data', group: 'g', catalog: 'CATALOG_MEASURE' } },
+      { metadata: { name: 'sw_path_data', group: 'g', catalog: 'CATALOG_MEASURE' } },
+    ] as never);
+  });
+
+  it('filters the rules dropdown by fuzzy query', async () => {
+    const user = userEvent.setup();
+    render(<IndexRuleBindingForm mode="create" groupName="g" type="measures" onClose={vi.fn()} />, { wrapper: makeWrapper() });
+    await waitFor(() => {
+      expect(screen.getAllByRole('combobox')).toHaveLength(2);
+    });
+    const rulesInput = screen.getAllByRole('combobox')[1];
+    // Real user interaction: click to focus, type each character.
+    await user.click(rulesInput);
+    await user.type(rulesInput, 'bsi');
+    // Subsequence query 'b','s','i' matches "by_service_id" only.
+    const opt = await screen.findByRole('option', { name: /by_service_id/ });
+    expect(opt).toBeInTheDocument();
+    expect(screen.queryByRole('option', { name: /by_host/ })).toBeNull();
+    expect(screen.queryByRole('option', { name: /by_path/ })).toBeNull();
   });
 });

@@ -23,7 +23,8 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import type { StreamSchema, CreateStreamRequest, UpdateStreamRequest } from 'canopy-shared';
 import { TagType } from 'canopy-shared';
 import { apiDataSource } from '../data/api.js';
-import { IconChevron } from './icons.js';
+import { IconChevron, IconPlus, IconTrash } from './icons.js';
+import { useFocusTrap } from './modal-utils.js';
 
 const TAG_TYPES = [
   'TAG_TYPE_STRING',
@@ -37,12 +38,40 @@ const TAG_TYPES = [
 interface TagRow { name: string; type: string; }
 interface FamilyRow { name: string; tags: TagRow[]; }
 
+// Mirrors the handoff Field wrapper: label + required indicator + hint/error.
+function Field({
+  label, hint, error, required, locked, children,
+}: {
+  label: React.ReactNode;
+  hint?: string;
+  error?: string;
+  required?: boolean;
+  locked?: boolean;
+  children: React.ReactNode;
+}) {
+  return (
+    <div className={`f-field${error ? ' has-error' : ''}`}>
+      <label className="f-label">
+        {label}
+        {required && <span className="f-req">*</span>}
+        {locked && <span className="f-lock">read-only</span>}
+      </label>
+      {children}
+      {error ? <div className="f-error">{error}</div> : hint ? <div className="f-hint">{hint}</div> : null}
+    </div>
+  );
+}
+
 /** StreamForm renders either a create/edit-stream modal or a delete-stream confirmation dialog. */
-export function StreamForm({ mode, groupName, initialName, onClose }: {
+export function StreamForm({ mode, groupName, initialName, onClose, onDeleted }: {
   mode: 'create' | 'edit' | 'delete';
   groupName: string;
   initialName?: string;
   onClose: (created?: StreamSchema) => void;
+  /** Fired after a confirmed delete — distinct from `onClose` so callers can
+   * navigate away only when the resource was actually deleted, not when the
+   * user cancelled via the X button or backdrop. */
+  onDeleted?: () => void;
 }) {
   const qc = useQueryClient();
 
@@ -97,6 +126,7 @@ export function StreamForm({ mode, groupName, initialName, onClose }: {
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ['resources', 'streams', groupName] });
       onClose();
+      onDeleted?.();
     },
     onError: (e: Error) => setError(e.message),
   });
@@ -173,6 +203,7 @@ export function StreamForm({ mode, groupName, initialName, onClose }: {
   }
 
   const isPending = createMut.isPending || updateMut.isPending || deleteMut.isPending;
+  const trapRef = useFocusTrap(true, () => onClose());
 
   if (mode === 'delete') {
     return (
@@ -180,16 +211,20 @@ export function StreamForm({ mode, groupName, initialName, onClose }: {
         <div className="modal is-danger" onClick={(e) => e.stopPropagation()}>
           <div className="modal-head">
             <span className="modal-title">Delete stream</span>
-            <button className="modal-x" onClick={() => onClose()} />
+            <button className="modal-x" onClick={() => onClose()} aria-label="Close" />
           </div>
           <div className="modal-body">
-            <p>This will permanently delete stream <span className="mono">{initialName}</span>.</p>
+            <p className="del-warn">
+              You are about to permanently delete the stream{' '}
+              <b className="mono">{initialName}</b> from group{' '}
+              <b className="mono">{groupName}</b>. All stored data for this stream will be removed.
+            </p>
             {error && <div className="f-error">{error}</div>}
           </div>
           <div className="modal-foot">
             <button className="btn btn-ghost" onClick={() => onClose()} disabled={isPending}>Cancel</button>
             <button className="btn btn-danger" onClick={() => deleteMut.mutate()} disabled={isPending}>
-              {isPending ? 'Deleting…' : 'Delete'}
+              {isPending ? 'Deleting…' : 'Delete stream'}
             </button>
           </div>
         </div>
@@ -201,85 +236,127 @@ export function StreamForm({ mode, groupName, initialName, onClose }: {
 
   return (
     <div className="modal-overlay" onClick={() => onClose()}>
-      <form className="modal is-wide" onSubmit={handleSubmit} onClick={(e) => e.stopPropagation()}>
+      <form className="modal is-wide" ref={trapRef} onSubmit={handleSubmit} onClick={(e) => e.stopPropagation()}>
         <div className="modal-head">
-          <span className="modal-title">{isEdit ? 'Edit stream' : 'New stream'}</span>
-          <button type="button" className="modal-x" onClick={() => onClose()} />
+          <div>
+            <span className="modal-title">{isEdit ? 'Edit stream' : 'Create stream'}</span>
+            <p className="modal-sub">
+              {isEdit
+                ? 'Name is immutable. Update the schema below — it is revalidated on save.'
+                : `Define a stream in group “${groupName}”.`}
+            </p>
+          </div>
+          <button type="button" className="modal-x" onClick={() => onClose()} aria-label="Close" />
         </div>
 
         <div className="modal-body">
-          <div className="f-section">
-            <label className="f-field">
-              <span className="f-label">Name {!isEdit && <span className="f-req">*</span>}</span>
-              <input className="f-input mono" type="text"
-                value={isEdit ? (initialName ?? '') : name}
-                onChange={(e) => { if (!isEdit) setName(e.target.value); }}
-                readOnly={isEdit} autoFocus={!isEdit} />
-            </label>
-          </div>
+          {/* Identity */}
+          <section className="f-section">
+            <div className="f-section-title">Identity</div>
+            <div className="f-grid">
+              <Field
+                label="Name"
+                required={!isEdit}
+                locked={isEdit}
+                hint={isEdit ? undefined : "Unique within the group · letters, digits, '_' and '-'"}
+              >
+                <input className="f-input mono" type="text" placeholder="access_log"
+                  value={isEdit ? (initialName ?? '') : name}
+                  onChange={(e) => { if (!isEdit) setName(e.target.value); }}
+                  readOnly={isEdit} autoFocus={!isEdit} />
+              </Field>
+              <Field label="Group" locked hint="Resources are scoped to their group">
+                <input className="f-input mono" type="text" value={groupName} disabled />
+              </Field>
+            </div>
+          </section>
 
-          <div className="f-section">
-            <span className="f-section-title">Tag families <span className="f-req">*</span></span>
+          {/* Tag families */}
+          <section className="f-section">
+            <div className="f-section-title">Tag families <span className="f-req">*</span></div>
             <div className="fam-list">
               {families.map((fam, famIdx) => (
                 <div className="fam-card" key={famIdx}>
                   <div className="fam-head">
-                    <input className="f-input fam-name" type="text" placeholder="Family name"
-                      value={fam.name} onChange={(e) => updateFamilyName(famIdx, e.target.value)} />
+                    <div className="fam-name">
+                      <input className="f-input mono" type="text" placeholder="Family name"
+                        value={fam.name} onChange={(e) => updateFamilyName(famIdx, e.target.value)} />
+                    </div>
                     {families.length > 1 && (
-                      <button type="button" className="btn fam-del" onClick={() => removeFamily(famIdx)}>Remove</button>
+                      <button type="button" className="fam-del" title="Remove family"
+                        onClick={() => removeFamily(famIdx)}>
+                        Remove family
+                      </button>
                     )}
                   </div>
                   {fam.tags.map((tag, tagIdx) => (
                     <div className="spec-row" key={tagIdx}>
-                      <div className="spec-cell">
-                        <input className="f-input" type="text" placeholder="Tag name"
+                      <div className="spec-cell grow">
+                        <input className="f-input mono" type="text" placeholder="tag_name"
                           value={tag.name} onChange={(e) => updateTagName(famIdx, tagIdx, e.target.value)} />
                       </div>
-                      <div className="spec-cell">
+                      <div className="spec-cell type">
                         <div className="f-select-wrap">
-                          <select className="f-select" value={tag.type} onChange={(e) => updateTagType(famIdx, tagIdx, e.target.value)}>
+                          <select className="f-input f-select mono" value={tag.type}
+                            onChange={(e) => updateTagType(famIdx, tagIdx, e.target.value)}>
                             {TAG_TYPES.map((tt) => <option key={tt} value={tt}>{tt}</option>)}
                           </select>
                           <span className="f-select-chev"><IconChevron /></span>
                         </div>
                       </div>
-                      <button type="button" className="btn" onClick={() => removeTag(famIdx, tagIdx)}>×</button>
+                      <button type="button" className="spec-del" title="Remove tag"
+                        onClick={() => removeTag(famIdx, tagIdx)} disabled={fam.tags.length === 1}
+                        aria-label="Remove tag">
+                        <IconTrash size={14} />
+                      </button>
                     </div>
                   ))}
-                  <button type="button" className="btn btn-ghost" onClick={() => addTag(famIdx)}>Add tag</button>
+                  <button type="button" className="spec-add" onClick={() => addTag(famIdx)}>
+                    <IconPlus size={14} /> Add tag
+                  </button>
                 </div>
               ))}
             </div>
-            <button type="button" className="btn btn-ghost" onClick={addFamily}>Add family</button>
-          </div>
+            <button type="button" className="btn btn-ghost stage-add" onClick={addFamily}>
+              <IconPlus size={14} /> Add tag family
+            </button>
+          </section>
 
-          <div className="f-section">
-            <span className="f-section-title">Entity</span>
-            <span className="f-section-desc">Select tag names as entity identifiers</span>
+          {/* Entity */}
+          <section className="f-section">
+            <div className="f-section-title">Entity <span className="f-req">*</span></div>
+            <p className="f-section-desc">Tags whose values form the series key and determine sharding. Order matters.</p>
             <div className="picker">
               {allTagNames.length === 0 ? (
-                <span className="picker-empty">No tags defined yet</span>
+                <span className="picker-empty">Add tags above, then choose the entity tags.</span>
               ) : (
                 <>
                   <div className="picker-selected">
                     {entityTags.map((tagName, ord) => (
-                      <button key={tagName} type="button" className="picker-chip is-on" onClick={() => toggleEntityTag(tagName)}>
-                        <span className="picker-ord">{ord + 1}</span>{tagName}
+                      <button key={tagName} type="button" className="picker-chip is-on"
+                        onClick={() => toggleEntityTag(tagName)}>
+                        <span className="picker-ord">{ord + 1}</span>
+                        <span>{tagName}</span>
                       </button>
                     ))}
                   </div>
                   <div className="picker-avail">
-                    {availTags.map((tagName) => (
-                      <button key={tagName} type="button" className="picker-chip" onClick={() => toggleEntityTag(tagName)}>
-                        {tagName}
-                      </button>
-                    ))}
+                    {availTags.length === 0 ? (
+                      <span className="picker-all">All tags selected</span>
+                    ) : (
+                      availTags.map((tagName) => (
+                        <button key={tagName} type="button" className="picker-chip"
+                          onClick={() => toggleEntityTag(tagName)}>
+                          <IconPlus size={11} />
+                          <span>{tagName}</span>
+                        </button>
+                      ))
+                    )}
                   </div>
                 </>
               )}
             </div>
-          </div>
+          </section>
 
           {error && <div className="f-error">{error}</div>}
         </div>
@@ -287,7 +364,7 @@ export function StreamForm({ mode, groupName, initialName, onClose }: {
         <div className="modal-foot">
           <button type="button" className="btn btn-ghost" onClick={() => onClose()} disabled={isPending}>Cancel</button>
           <button type="submit" className="btn btn-primary" disabled={isPending}>
-            {isPending ? (isEdit ? 'Saving…' : 'Creating…') : (isEdit ? 'Save' : 'Create')}
+            {isPending ? (isEdit ? 'Saving…' : 'Creating…') : (isEdit ? 'Save changes' : 'Create stream')}
           </button>
         </div>
       </form>

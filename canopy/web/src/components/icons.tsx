@@ -237,6 +237,23 @@ export function IconIndex({ size = 18 }: IconProps) {
   );
 }
 
+export function IconLink({ size = 18 }: IconProps) {
+  return (
+    <Ic size={size}>
+      <path d="M10 13a5 5 0 0 0 7 0l3-3a5 5 0 0 0-7-7l-1 1" />
+      <path d="M14 11a5 5 0 0 0-7 0l-3 3a5 5 0 0 0 7 7l1-1" />
+    </Ic>
+  );
+}
+
+export function IconCheck({ size = 18 }: IconProps) {
+  return (
+    <Ic size={size}>
+      <path d="m5 12 5 5L20 7" />
+    </Ic>
+  );
+}
+
 export function IconAlert({ size = 18 }: IconProps) {
   return (
     <Ic size={size}>

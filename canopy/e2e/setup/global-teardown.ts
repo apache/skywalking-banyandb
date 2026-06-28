@@ -17,35 +17,59 @@
  * under the License.
  */
 
-import { rmSync, readFileSync, existsSync } from 'node:fs';
+import { rmSync, unlinkSync, readdirSync, readFileSync, existsSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 
 export default async function globalTeardown() {
   const stateFile = join(tmpdir(), 'canopy-e2e-state.json');
-  if (!existsSync(stateFile)) return;
-
-  let state: { banyandbPid?: number; dataDir?: string } = {};
-  try {
-    state = JSON.parse(readFileSync(stateFile, 'utf-8'));
-  } catch {
-    // ignore parse errors
-  }
-
-  if (state.banyandbPid) {
-    console.log(`[e2e] Stopping BanyanDB process (pid ${state.banyandbPid})`);
+  if (existsSync(stateFile)) {
+    let state: { banyandbPid?: number; dataDir?: string } = {};
     try {
-      process.kill(state.banyandbPid, 'SIGTERM');
+      state = JSON.parse(readFileSync(stateFile, 'utf-8'));
     } catch {
-      // process may have already exited
+      // ignore parse errors
+    }
+
+    if (state.banyandbPid) {
+      console.log(`[e2e] Stopping BanyanDB process (pid ${state.banyandbPid})`);
+      try {
+        process.kill(state.banyandbPid, 'SIGTERM');
+      } catch {
+        // process may have already exited
+      }
+    }
+
+    if (state.dataDir) {
+      console.log(`[e2e] Removing isolated data directory: ${state.dataDir}`);
+      try {
+        rmSync(state.dataDir, { recursive: true, force: true });
+      } catch {
+        // best-effort cleanup
+      }
+    }
+
+    try {
+      unlinkSync(stateFile);
+    } catch {
+      // best-effort
     }
   }
 
-  if (state.dataDir) {
-    try {
-      rmSync(state.dataDir, { recursive: true, force: true });
-    } catch {
-      // best-effort cleanup
+  // Sweep up any orphaned canopy-e2e-data-* directories left behind by a
+  // previous crashed run (SIGTERM did not fire in time, or the process was
+  // killed externally before teardown ran). Use best-effort remove — a process
+  // that is still holding a data dir alive will keep its inode until SIGKILL
+  // or process exit, but the directory entry itself can still be unlinked.
+  const orphans = readdirSync(tmpdir()).filter((n) => n.startsWith('canopy-e2e-data-'));
+  if (orphans.length > 0) {
+    console.log(`[e2e] Sweeping ${orphans.length} orphaned canopy-e2e-data-* director${orphans.length === 1 ? 'y' : 'ies'}`);
+    for (const name of orphans) {
+      try {
+        rmSync(join(tmpdir(), name), { recursive: true, force: true });
+      } catch {
+        // best-effort
+      }
     }
   }
 

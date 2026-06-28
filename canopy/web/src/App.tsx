@@ -33,6 +33,9 @@ import { StreamForm } from './components/StreamForm.js';
 import { TraceForm } from './components/TraceForm.js';
 import { IndexRuleForm } from './components/IndexRuleForm.js';
 import { IndexRuleBindingForm } from './components/IndexRuleBindingForm.js';
+import { IndexPage } from './pages/IndexPage.js';
+import { apiDataSource } from './data/api.js';
+import { useQuery } from '@tanstack/react-query';
 import type {
   Group, MeasureSchema, StreamSchema, TraceSchema,
   IndexRuleSchema, IndexRuleBindingSchema,
@@ -55,12 +58,12 @@ type ModalState =
   | { kind: 'trace-create'; groupName: string }
   | { kind: 'trace-edit'; groupName: string; resourceName: string }
   | { kind: 'trace-delete'; groupName: string; resourceName: string }
-  | { kind: 'indexrule-create'; groupName: string }
-  | { kind: 'indexrule-edit'; groupName: string; ruleName: string }
-  | { kind: 'indexrule-delete'; groupName: string; ruleName: string }
-  | { kind: 'indexrulebinding-create'; groupName: string }
-  | { kind: 'indexrulebinding-edit'; groupName: string; bindingName: string }
-  | { kind: 'indexrulebinding-delete'; groupName: string; bindingName: string }
+  | { kind: 'indexrule-create'; groupName: string; catalog: string }
+  | { kind: 'indexrule-edit'; groupName: string; ruleName: string; catalog: string }
+  | { kind: 'indexrule-delete'; groupName: string; ruleName: string; catalog: string }
+  | { kind: 'indexrulebinding-create'; groupName: string; catalog: string; presetRuleName?: string }
+  | { kind: 'indexrulebinding-edit'; groupName: string; bindingName: string; catalog: string }
+  | { kind: 'indexrulebinding-delete'; groupName: string; bindingName: string; catalog: string }
   | null;
 
 const TYPE_CATALOG: Record<string, 'CATALOG_MEASURE' | 'CATALOG_STREAM' | 'CATALOG_TRACE' | 'CATALOG_PROPERTY'> = {
@@ -110,14 +113,18 @@ function MetadataGroupRoute() {
           else if (type === 'streams') setModal({ kind: 'stream-create', groupName: group });
           else if (type === 'traces') setModal({ kind: 'trace-create', groupName: group });
         }}
+        onEditResource={(r) => {
+          if (type === 'measures') setModal({ kind: 'measure-edit', groupName: group, resourceName: r.metadata.name });
+          else if (type === 'streams') setModal({ kind: 'stream-edit', groupName: group, resourceName: r.metadata.name });
+          else if (type === 'traces') setModal({ kind: 'trace-edit', groupName: group, resourceName: r.metadata.name });
+        }}
+        onDeleteResource={(r) => {
+          if (type === 'measures') setModal({ kind: 'measure-delete', groupName: group, resourceName: r.metadata.name });
+          else if (type === 'streams') setModal({ kind: 'stream-delete', groupName: group, resourceName: r.metadata.name });
+          else if (type === 'traces') setModal({ kind: 'trace-delete', groupName: group, resourceName: r.metadata.name });
+        }}
         onEditGroup={() => setModal({ kind: 'group-edit', groupName: group })}
         onDeleteGroup={() => setModal({ kind: 'group-delete', groupName: group })}
-        onNewIndexRule={() => setModal({ kind: 'indexrule-create', groupName: group })}
-        onEditIndexRule={(ruleName) => setModal({ kind: 'indexrule-edit', groupName: group, ruleName })}
-        onDeleteIndexRule={(ruleName) => setModal({ kind: 'indexrule-delete', groupName: group, ruleName })}
-        onNewIndexRuleBinding={() => setModal({ kind: 'indexrulebinding-create', groupName: group })}
-        onEditIndexRuleBinding={(bindingName) => setModal({ kind: 'indexrulebinding-edit', groupName: group, bindingName })}
-        onDeleteIndexRuleBinding={(bindingName) => setModal({ kind: 'indexrulebinding-delete', groupName: group, bindingName })}
       />
       {modal?.kind === 'group-edit' && (
         <GroupForm
@@ -132,8 +139,8 @@ function MetadataGroupRoute() {
           initialName={modal.groupName}
           onClose={() => {
             setModal(null);
-            navigate(`/metadata/${type}`);
           }}
+          onDeleted={() => navigate(`/metadata/${type}`)}
         />
       )}
       {modal?.kind === 'measure-create' && (
@@ -166,11 +173,121 @@ function MetadataGroupRoute() {
           }}
         />
       )}
+      {modal?.kind === 'measure-edit' && (
+        <MeasureForm
+          mode="edit"
+          groupName={modal.groupName}
+          initialName={modal.resourceName}
+          onClose={() => setModal(null)}
+        />
+      )}
+      {modal?.kind === 'measure-delete' && (
+        <MeasureForm
+          mode="delete"
+          groupName={modal.groupName}
+          initialName={modal.resourceName}
+          onClose={() => setModal(null)}
+          onDeleted={() => {
+            setModal(null);
+            // The list is refetched by React Query automatically; the
+            // current row vanishes. No navigation needed since the user
+            // is staying on the group page (where the pager still works).
+          }}
+        />
+      )}
+      {modal?.kind === 'stream-edit' && (
+        <StreamForm
+          mode="edit"
+          groupName={modal.groupName}
+          initialName={modal.resourceName}
+          onClose={() => setModal(null)}
+        />
+      )}
+      {modal?.kind === 'stream-delete' && (
+        <StreamForm
+          mode="delete"
+          groupName={modal.groupName}
+          initialName={modal.resourceName}
+          onClose={() => setModal(null)}
+          onDeleted={() => setModal(null)}
+        />
+      )}
+      {modal?.kind === 'trace-edit' && (
+        <TraceForm
+          mode="edit"
+          groupName={modal.groupName}
+          initialName={modal.resourceName}
+          onClose={() => setModal(null)}
+        />
+      )}
+      {modal?.kind === 'trace-delete' && (
+        <TraceForm
+          mode="delete"
+          groupName={modal.groupName}
+          initialName={modal.resourceName}
+          onClose={() => setModal(null)}
+          onDeleted={() => setModal(null)}
+        />
+      )}
+    </>
+  );
+}
+
+function MetadataIndexRoute() {
+  const { type = 'measures', group = '' } = useParams<{ type: string; group: string }>();
+  const navigate = useNavigate();
+  const [modal, setModal] = useState<ModalState>(null);
+
+  // Determine whether the group exists so the page can render a friendly
+  // empty state instead of crashing on a typo'd URL.
+  const { data: groupsData } = useQuery({
+    queryKey: ['groups'],
+    queryFn: () => apiDataSource.listGroups(),
+  });
+  const allGroups = groupsData?.groups ?? [];
+  const catalogForType: Record<string, string> = {
+    measures: 'CATALOG_MEASURE',
+    streams:  'CATALOG_STREAM',
+    traces:   'CATALOG_TRACE',
+  };
+  const targetCatalog = catalogForType[type];
+  const groupExists = allGroups.some((g) => g.name === group && g.catalog === targetCatalog);
+
+  // Lookup the existing rule/binding names so the forms can flag duplicates
+  // before submission.
+  const { data: existingRules = [] } = useQuery({
+    queryKey: ['indexRules', group],
+    queryFn: () => apiDataSource.listIndexRules(group),
+    enabled: groupExists,
+  });
+  const { data: existingBindings = [] } = useQuery({
+    queryKey: ['indexRuleBindings', group],
+    queryFn: () => apiDataSource.listIndexRuleBindings(group),
+    enabled: groupExists,
+  });
+  const existingRuleNames = new Set(existingRules.map((r) => r.metadata.name.toLowerCase()));
+  const existingBindingNames = new Set(existingBindings.map((b) => b.metadata.name.toLowerCase()));
+
+  return (
+    <>
+      <IndexPage
+        type={type}
+        groupName={group}
+        groupExists={groupExists}
+        onNewIndexRule={() => setModal({ kind: 'indexrule-create', groupName: group, catalog: targetCatalog })}
+        onEditIndexRule={(ruleName) => setModal({ kind: 'indexrule-edit', groupName: group, ruleName, catalog: targetCatalog })}
+        onDeleteIndexRule={(ruleName) => setModal({ kind: 'indexrule-delete', groupName: group, ruleName, catalog: targetCatalog })}
+        onNewIndexRuleBinding={(presetRuleName) =>
+          setModal({ kind: 'indexrulebinding-create', groupName: group, catalog: targetCatalog, presetRuleName })}
+        onEditIndexRuleBinding={(bindingName) => setModal({ kind: 'indexrulebinding-edit', groupName: group, bindingName, catalog: targetCatalog })}
+        onDeleteIndexRuleBinding={(bindingName) => setModal({ kind: 'indexrulebinding-delete', groupName: group, bindingName, catalog: targetCatalog })}
+      />
       {modal?.kind === 'indexrule-create' && (
         <IndexRuleForm
           mode="create"
           groupName={modal.groupName}
-          onClose={(created?: IndexRuleSchema) => setModal(null)}
+          existingNames={existingRuleNames}
+          onClose={() => setModal(null)}
         />
       )}
       {modal?.kind === 'indexrule-edit' && (
@@ -193,7 +310,11 @@ function MetadataGroupRoute() {
         <IndexRuleBindingForm
           mode="create"
           groupName={modal.groupName}
-          onClose={(created?: IndexRuleBindingSchema) => setModal(null)}
+          type={type}
+          catalog={targetCatalog}
+          presetRuleName={modal.presetRuleName}
+          existingNames={existingBindingNames}
+          onClose={() => setModal(null)}
         />
       )}
       {modal?.kind === 'indexrulebinding-edit' && (
@@ -201,6 +322,8 @@ function MetadataGroupRoute() {
           mode="edit"
           groupName={modal.groupName}
           initialName={modal.bindingName}
+          type={type}
+          catalog={targetCatalog}
           onClose={() => setModal(null)}
         />
       )}
@@ -209,6 +332,8 @@ function MetadataGroupRoute() {
           mode="delete"
           groupName={modal.groupName}
           initialName={modal.bindingName}
+          type={type}
+          catalog={targetCatalog}
           onClose={() => setModal(null)}
         />
       )}
@@ -251,10 +376,8 @@ function MetadataResourceRoute() {
           mode="delete"
           groupName={modal.groupName}
           initialName={modal.resourceName}
-          onClose={() => {
-            setModal(null);
-            navigate(`/metadata/${type}/${group}`);
-          }}
+          onClose={() => setModal(null)}
+          onDeleted={() => navigate(`/metadata/${type}/${group}`)}
         />
       )}
       {modal?.kind === 'stream-edit' && (
@@ -270,10 +393,8 @@ function MetadataResourceRoute() {
           mode="delete"
           groupName={modal.groupName}
           initialName={modal.resourceName}
-          onClose={() => {
-            setModal(null);
-            navigate(`/metadata/${type}/${group}`);
-          }}
+          onClose={() => setModal(null)}
+          onDeleted={() => navigate(`/metadata/${type}/${group}`)}
         />
       )}
       {modal?.kind === 'trace-edit' && (
@@ -289,10 +410,8 @@ function MetadataResourceRoute() {
           mode="delete"
           groupName={modal.groupName}
           initialName={modal.resourceName}
-          onClose={() => {
-            setModal(null);
-            navigate(`/metadata/${type}/${group}`);
-          }}
+          onClose={() => setModal(null)}
+          onDeleted={() => navigate(`/metadata/${type}/${group}`)}
         />
       )}
     </>
@@ -318,6 +437,7 @@ function AppContent() {
     <Shell>
       <Routes>
         <Route path="/" element={<HomePage />} />
+        <Route path="/metadata/:type/:group/Index" element={<MetadataIndexRoute />} />
         <Route path="/metadata/:type/:group/:name" element={<MetadataResourceRoute />} />
         <Route path="/metadata/:type/:group" element={<MetadataGroupRoute />} />
         <Route path="/metadata/:type" element={<MetadataTypeRoute />} />

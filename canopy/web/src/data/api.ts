@@ -47,6 +47,54 @@ async function apiFetch<T>(url: string, init?: RequestInit): Promise<T> {
 
 const JSON_HEADERS = { 'content-type': 'application/json' };
 
+// BanyanDB liaison speaks grpc-gateway, which serializes `google.protobuf.Timestamp`
+// as RFC3339 strings (`2026-01-01T00:00:00Z`). Internally the web app works with
+// epoch ms (smaller, comparable, easy to feed into `<input type="datetime-local">`),
+// so we convert at the boundary instead of carrying strings through the UI.
+type RawBinding = Omit<IndexRuleBindingSchema, 'beginAt' | 'expireAt'> & {
+  readonly beginAt?: string | number;
+  readonly expireAt?: string | number;
+};
+
+function decodeBinding(raw: RawBinding): IndexRuleBindingSchema {
+  return {
+    ...raw,
+    beginAt: toMs(raw.beginAt),
+    expireAt: toMs(raw.expireAt),
+  };
+}
+
+function toMs(v: string | number | undefined | null): number {
+  if (v == null) return 0;
+  if (typeof v === 'number') return v;
+  const t = Date.parse(v);
+  return Number.isNaN(t) ? 0 : t;
+}
+
+function encodeBinding(
+  b: IndexRuleBindingSchema,
+): Omit<RawBinding, 'beginAt' | 'expireAt'> & { beginAt: string; expireAt: string } {
+  // BanyanDB liaison rejects epoch-ms for `google.protobuf.Timestamp` (returns
+  // 400 "type mismatch"). Convert to RFC3339 strings here. Guard against a
+  // missing or malformed payload so the failure surfaces as a readable error
+  // instead of the cryptic "undefined is not an object (evaluating 'e.beginAt')"
+  // we'd otherwise hit inside `new Date(...)`.
+  if (b == null) {
+    throw new Error('encodeBinding: payload is missing (got ' + String(b) + ')');
+  }
+  if (typeof b.beginAt !== 'number' || !Number.isFinite(b.beginAt)) {
+    throw new Error('encodeBinding: beginAt must be a finite number (got ' + String(b.beginAt) + ')');
+  }
+  if (typeof b.expireAt !== 'number' || !Number.isFinite(b.expireAt)) {
+    throw new Error('encodeBinding: expireAt must be a finite number (got ' + String(b.expireAt) + ')');
+  }
+  return {
+    ...b,
+    beginAt: new Date(b.beginAt).toISOString(),
+    expireAt: new Date(b.expireAt).toISOString(),
+  };
+}
+
 // BanyanDB REST API uses singular resource type names in paths; the app routes use plural.
 const TYPE_SINGULAR: Record<string, string> = {
   measures: 'measure',
@@ -61,7 +109,19 @@ export class ApiDataSource implements DataSource {
   async listGroups(): Promise<GroupListResponse> {
     type RawGroup = Omit<Group, 'name'> & { metadata: { name: string } };
     const data = await apiFetch<{ group?: RawGroup[] }>('/api/v1/group/schema/lists');
-    return { groups: (data.group ?? []).map(g => ({ ...g, name: g.metadata.name })) };
+    // BanyanDB liaison encodes the proto `repeated Group` field as a map keyed
+    // by index ("1": {...}, "2": {...}), so the resulting JS object's
+    // iteration order is whatever the server emitted — non-deterministic
+    // across requests. Sort by name on the client for a stable list order.
+    //
+    // BanyanDB also exposes internal objects prefixed with `_` (e.g.
+    // `_deletion_task`, backing the property schema registry). Strip them at
+    // the data layer so no consumer sees them as user data.
+    const groups = (data.group ?? [])
+      .filter((g) => !g.metadata.name.startsWith('_'))
+      .map((g) => ({ ...g, name: g.metadata.name }))
+      .sort((a, b) => a.name.localeCompare(b.name));
+    return { groups };
   }
 
   async createGroup(req: CreateGroupRequest): Promise<Group> {
@@ -89,7 +149,10 @@ export class ApiDataSource implements DataSource {
     // BanyanDB uses singular key for stream/measure/trace but plural "properties" for property list responses.
     type ListResp = { stream?: StreamSchema[]; measure?: MeasureSchema[]; trace?: TraceSchema[]; property?: PropertySchema[]; properties?: PropertySchema[] };
     const data = await apiFetch<ListResp>(`/api/v1/${singularType}/schema/lists/${group}`);
-    return (data.stream ?? data.measure ?? data.trace ?? data.properties ?? data.property ?? []) as (StreamSchema | MeasureSchema | TraceSchema | PropertySchema)[];
+    // Same map-encoded-repeated-field ordering issue as listGroups — sort by
+    // resource name so the GroupPage table renders in a stable order.
+    const arr = (data.stream ?? data.measure ?? data.trace ?? data.properties ?? data.property ?? []) as (StreamSchema | MeasureSchema | TraceSchema | PropertySchema)[];
+    return arr.slice().sort((a, b) => a.metadata.name.localeCompare(b.metadata.name));
   }
 
   async getResource(type: string, group: string, name: string): Promise<StreamSchema | MeasureSchema | TraceSchema | PropertySchema> {
@@ -153,7 +216,8 @@ export class ApiDataSource implements DataSource {
 
   async listIndexRules(group: string): Promise<IndexRuleSchema[]> {
     const data = await apiFetch<{ indexRule?: IndexRuleSchema[] }>(`/api/v1/index-rule/schema/lists/${group}`);
-    return data.indexRule ?? [];
+    // Sort by name so the IndexPage table is stable across requests.
+    return (data.indexRule ?? []).slice().sort((a, b) => a.metadata.name.localeCompare(b.metadata.name));
   }
 
   async getIndexRule(group: string, name: string): Promise<IndexRuleSchema> {
@@ -182,27 +246,48 @@ export class ApiDataSource implements DataSource {
   // ── IndexRuleBinding CRUD ────────────────────────────────────────────────
 
   async listIndexRuleBindings(group: string): Promise<IndexRuleBindingSchema[]> {
-    const data = await apiFetch<{ indexRuleBinding?: IndexRuleBindingSchema[] }>(`/api/v1/index-rule-binding/schema/lists/${group}`);
-    return data.indexRuleBinding ?? [];
+    const data = await apiFetch<{ indexRuleBinding?: RawBinding[] }>(`/api/v1/index-rule-binding/schema/lists/${group}`);
+    // Sort by name so the IndexPage bindings list is stable across requests.
+    return (data.indexRuleBinding ?? []).map(decodeBinding).slice().sort((a, b) => a.metadata.name.localeCompare(b.metadata.name));
   }
 
   async getIndexRuleBinding(group: string, name: string): Promise<IndexRuleBindingSchema> {
-    const data = await apiFetch<{ indexRuleBinding: IndexRuleBindingSchema }>(`/api/v1/index-rule-binding/schema/${group}/${name}`);
-    return data.indexRuleBinding;
+    const data = await apiFetch<{ indexRuleBinding: RawBinding }>(`/api/v1/index-rule-binding/schema/${group}/${name}`);
+    return decodeBinding(data.indexRuleBinding);
   }
 
   async createIndexRuleBinding(req: CreateIndexRuleBindingRequest): Promise<IndexRuleBindingSchema> {
-    const data = await apiFetch<{ indexRuleBinding: IndexRuleBindingSchema }>('/api/v1/index-rule-binding/schema', {
-      method: 'POST', headers: JSON_HEADERS, body: JSON.stringify(req),
+    // CreateIndexRuleBindingRequest.indexRuleBinding is structurally identical
+    // to IndexRuleBindingSchema; cast for the encoder. Surface a clear error
+    // if the caller passes a malformed request instead of letting the encoder
+    // crash on `e.beginAt` mid-flight.
+    if (req?.indexRuleBinding == null) {
+      throw new Error('createIndexRuleBinding: request is missing indexRuleBinding');
+    }
+    const body = { indexRuleBinding: encodeBinding(req.indexRuleBinding as unknown as IndexRuleBindingSchema) };
+    // BanyanDB liaison write operations return only `{modRevision}` — NOT the
+    // full binding. Decoding `data.indexRuleBinding` (undefined) here would
+    // throw `undefined.beginAt`, which (after minification) surfaced in the
+    // form's error banner as "undefined is not an object (evaluating
+    // 'e.beginAt')". Echo the request payload instead — the form only uses
+    // the result for `onClose(binding)` and the parent's onClose ignores it.
+    await apiFetch<{ modRevision: string }>('/api/v1/index-rule-binding/schema', {
+      method: 'POST', headers: JSON_HEADERS, body: JSON.stringify(body),
     });
-    return data.indexRuleBinding;
+    return req.indexRuleBinding as unknown as IndexRuleBindingSchema;
   }
 
   async updateIndexRuleBinding(group: string, name: string, req: UpdateIndexRuleBindingRequest): Promise<IndexRuleBindingSchema> {
-    const data = await apiFetch<{ indexRuleBinding: IndexRuleBindingSchema }>(`/api/v1/index-rule-binding/schema/${group}/${name}`, {
-      method: 'PUT', headers: JSON_HEADERS, body: JSON.stringify(req),
+    if (req?.indexRuleBinding == null) {
+      throw new Error('updateIndexRuleBinding: request is missing indexRuleBinding');
+    }
+    const body = { indexRuleBinding: encodeBinding(req.indexRuleBinding) };
+    // Same write-response shape as create: BanyanDB returns only the
+    // modRevision. Echo the payload rather than crashing on a missing body.
+    await apiFetch<{ modRevision: string }>(`/api/v1/index-rule-binding/schema/${group}/${name}`, {
+      method: 'PUT', headers: JSON_HEADERS, body: JSON.stringify(body),
     });
-    return data.indexRuleBinding;
+    return req.indexRuleBinding;
   }
 
   async deleteIndexRuleBinding(group: string, name: string): Promise<void> {

@@ -22,22 +22,47 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 
 import type { TraceSchema, CreateTraceRequest, UpdateTraceRequest, TagType } from 'canopy-shared';
 import { apiDataSource } from '../data/api.js';
-import { IconChevron } from './icons.js';
+import { IconChevron, IconPlus, IconTrash } from './icons.js';
+import { useFocusTrap } from './modal-utils.js';
 
 function RoleTagSelect({ label, value, onChange, options }: {
   label: string; value: string; onChange: (v: string) => void; options: string[];
 }) {
   return (
-    <label className="f-field">
-      <span className="f-label">{label}</span>
+    <div className="f-field">
+      <label className="f-label">{label} <span className="f-req">*</span></label>
       <div className="f-select-wrap">
-        <select className="f-input f-select" value={value} onChange={(e) => onChange(e.target.value)}>
+        <select className="f-input f-select mono" value={value} onChange={(e) => onChange(e.target.value)}>
           <option value="">— select —</option>
           {options.map((n) => <option key={n} value={n}>{n}</option>)}
         </select>
         <span className="f-select-chev"><IconChevron size={13} /></span>
       </div>
-    </label>
+    </div>
+  );
+}
+
+// Mirrors the handoff Field wrapper: label + required indicator + hint/error.
+function Field({
+  label, hint, error, required, locked, children,
+}: {
+  label: React.ReactNode;
+  hint?: string;
+  error?: string;
+  required?: boolean;
+  locked?: boolean;
+  children: React.ReactNode;
+}) {
+  return (
+    <div className={`f-field${error ? ' has-error' : ''}`}>
+      <label className="f-label">
+        {label}
+        {required && <span className="f-req">*</span>}
+        {locked && <span className="f-lock">read-only</span>}
+      </label>
+      {children}
+      {error ? <div className="f-error">{error}</div> : hint ? <div className="f-hint">{hint}</div> : null}
+    </div>
   );
 }
 
@@ -53,11 +78,15 @@ const TAG_TYPES = [
 interface TagRow { name: string; type: string; }
 
 /** TraceForm renders a create/edit-trace modal or a delete-trace confirmation dialog. */
-export function TraceForm({ mode, groupName, initialName, onClose }: {
+export function TraceForm({ mode, groupName, initialName, onClose, onDeleted }: {
   mode: 'create' | 'edit' | 'delete';
   groupName: string;
   initialName?: string;
   onClose: (created?: TraceSchema) => void;
+  /** Fired after a confirmed delete — distinct from `onClose` so callers can
+   * navigate away only when the resource was actually deleted, not when the
+   * user cancelled via the X button or backdrop. */
+  onDeleted?: () => void;
 }) {
   const qc = useQueryClient();
 
@@ -110,6 +139,7 @@ export function TraceForm({ mode, groupName, initialName, onClose }: {
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ['resources', 'traces', groupName] });
       onClose();
+      onDeleted?.();
     },
     onError: (e: Error) => setError(e.message),
   });
@@ -160,6 +190,7 @@ export function TraceForm({ mode, groupName, initialName, onClose }: {
 
   const isPending = createMut.isPending || updateMut.isPending || deleteMut.isPending;
   const isEdit = mode === 'edit';
+  const trapRef = useFocusTrap(true, () => onClose());
 
   if (mode === 'delete') {
     return (
@@ -167,16 +198,20 @@ export function TraceForm({ mode, groupName, initialName, onClose }: {
         <div className="modal is-danger" onClick={(e) => e.stopPropagation()}>
           <div className="modal-head">
             <span className="modal-title">Delete trace</span>
-            <button className="modal-x" onClick={() => onClose()} />
+            <button className="modal-x" onClick={() => onClose()} aria-label="Close" />
           </div>
           <div className="modal-body">
-            <p>This will permanently delete trace <span className="mono">{initialName}</span>.</p>
+            <p className="del-warn">
+              You are about to permanently delete the trace{' '}
+              <b className="mono">{initialName}</b> from group{' '}
+              <b className="mono">{groupName}</b>. All stored spans for this trace will be removed.
+            </p>
             {error && <div className="f-error">{error}</div>}
           </div>
           <div className="modal-foot">
             <button className="btn btn-ghost" onClick={() => onClose()} disabled={isPending}>Cancel</button>
             <button className="btn btn-danger" onClick={() => deleteMut.mutate()} disabled={isPending}>
-              {isPending ? 'Deleting…' : 'Delete'}
+              {isPending ? 'Deleting…' : 'Delete trace'}
             </button>
           </div>
         </div>
@@ -186,57 +221,83 @@ export function TraceForm({ mode, groupName, initialName, onClose }: {
 
   return (
     <div className="modal-overlay" onClick={() => onClose()}>
-      <form className="modal is-wide" onSubmit={handleSubmit} onClick={(e) => e.stopPropagation()}>
+      <form className="modal is-wide" ref={trapRef} onSubmit={handleSubmit} onClick={(e) => e.stopPropagation()}>
         <div className="modal-head">
-          <span className="modal-title">{isEdit ? 'Edit trace' : 'New trace'}</span>
-          <button type="button" className="modal-x" onClick={() => onClose()} />
+          <div>
+            <span className="modal-title">{isEdit ? 'Edit trace' : 'Create trace'}</span>
+            <p className="modal-sub">
+              {isEdit
+                ? 'Name is immutable. Update the schema below — it is revalidated on save.'
+                : `Define a trace in group “${groupName}”.`}
+            </p>
+          </div>
+          <button type="button" className="modal-x" onClick={() => onClose()} aria-label="Close" />
         </div>
 
         <div className="modal-body">
-          <div className="f-section">
-            <label className="f-field">
-              <span className="f-label">Name {!isEdit && <span className="f-req">*</span>}</span>
-              <input className="f-input mono" type="text"
-                value={isEdit ? (initialName ?? '') : name}
-                onChange={(e) => { if (!isEdit) setName(e.target.value); }}
-                readOnly={isEdit} autoFocus={!isEdit} />
-            </label>
-          </div>
+          {/* Identity */}
+          <section className="f-section">
+            <div className="f-section-title">Identity</div>
+            <div className="f-grid">
+              <Field
+                label="Name"
+                required={!isEdit}
+                locked={isEdit}
+                hint={isEdit ? undefined : "Unique within the group · letters, digits, '_' and '-'"}
+              >
+                <input className="f-input mono" type="text" placeholder="segment_traces"
+                  value={isEdit ? (initialName ?? '') : name}
+                  onChange={(e) => { if (!isEdit) setName(e.target.value); }}
+                  readOnly={isEdit} autoFocus={!isEdit} />
+              </Field>
+              <Field label="Group" locked hint="Resources are scoped to their group">
+                <input className="f-input mono" type="text" value={groupName} disabled />
+              </Field>
+            </div>
+          </section>
 
-          <div className="f-section">
-            <span className="f-section-title">Tags <span className="f-req">*</span></span>
-            <div className="fam-card">
+          {/* Tags */}
+          <section className="f-section">
+            <div className="f-section-title">Tags <span className="f-req">*</span></div>
+            <div className="spec-list">
               {tags.map((tag, tagIdx) => (
                 <div className="spec-row" key={tagIdx}>
-                  <div className="spec-cell">
-                    <input className="f-input" type="text" placeholder="Tag name"
+                  <div className="spec-cell grow">
+                    <input className="f-input mono" type="text" placeholder="tag_name"
                       value={tag.name} onChange={(e) => updateTagName(tagIdx, e.target.value)} />
                   </div>
-                  <div className="spec-cell">
+                  <div className="spec-cell type">
                     <div className="f-select-wrap">
-                      <select className="f-select" value={tag.type}
+                      <select className="f-input f-select mono" value={tag.type}
                         onChange={(e) => updateTagType(tagIdx, e.target.value)}>
                         {TAG_TYPES.map((tt) => <option key={tt} value={tt}>{tt}</option>)}
                       </select>
                       <span className="f-select-chev"><IconChevron /></span>
                     </div>
                   </div>
-                  <button type="button" className="btn" onClick={() => removeTag(tagIdx)}>×</button>
+                  <button type="button" className="spec-del" title="Remove tag"
+                    onClick={() => removeTag(tagIdx)} disabled={tags.length === 1}
+                    aria-label="Remove tag">
+                    <IconTrash size={14} />
+                  </button>
                 </div>
               ))}
-              <button type="button" className="btn btn-ghost" onClick={addTag}>Add tag</button>
+              <button type="button" className="spec-add" onClick={addTag}>
+                <IconPlus size={14} /> Add tag
+              </button>
             </div>
-          </div>
+          </section>
 
-          <div className="f-section">
-            <span className="f-section-title">Trace role tags <span className="f-req">*</span></span>
-            <span className="f-section-desc">Select which tags serve as trace ID, span ID, and timestamp</span>
-            <div className="f-grid" style={{ gridTemplateColumns: '1fr 1fr 1fr' }}>
+          {/* Reserved tag mapping */}
+          <section className="f-section">
+            <div className="f-section-title">Reserved tag mapping <span className="f-req">*</span></div>
+            <p className="f-section-desc">Map the trace ID, span ID and timestamp to defined tags. These cannot be deleted later.</p>
+            <div className="f-grid">
               <RoleTagSelect label="Trace ID tag" value={traceIdTagName} onChange={setTraceIdTagName} options={allTagNames} />
               <RoleTagSelect label="Span ID tag" value={spanIdTagName} onChange={setSpanIdTagName} options={allTagNames} />
               <RoleTagSelect label="Timestamp tag" value={timestampTagName} onChange={setTimestampTagName} options={allTagNames} />
             </div>
-          </div>
+          </section>
 
           {error && <div className="f-error">{error}</div>}
         </div>
@@ -244,7 +305,7 @@ export function TraceForm({ mode, groupName, initialName, onClose }: {
         <div className="modal-foot">
           <button type="button" className="btn btn-ghost" onClick={() => onClose()} disabled={isPending}>Cancel</button>
           <button type="submit" className="btn btn-primary" disabled={isPending}>
-            {isPending ? (isEdit ? 'Saving…' : 'Creating…') : (isEdit ? 'Save' : 'Create')}
+            {isPending ? (isEdit ? 'Saving…' : 'Creating…') : (isEdit ? 'Save changes' : 'Create trace')}
           </button>
         </div>
       </form>

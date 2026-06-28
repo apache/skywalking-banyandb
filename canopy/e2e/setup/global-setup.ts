@@ -60,7 +60,13 @@ async function waitForReady(url: string, maxAttempts = 60): Promise<void> {
 export default async function globalSetup() {
   const buildRoot = findBuildRoot();
   const binaryPath = join(tmpdir(), 'banyand-e2e');
-  const dataDir = mkdtempSync(join(tmpdir(), 'canopy-e2e-data-'));
+  // Each E2E run gets its own isolated data directory so state from a prior
+  // run (leftover groups, measures, index rules, etc.) cannot leak in. The
+  // directory is named with a UTC timestamp + PID for easy debugging and is
+  // deleted unconditionally in global-teardown.
+  const runStamp = new Date().toISOString().replace(/[:.]/g, '-');
+  const dataDir = mkdtempSync(join(tmpdir(), `canopy-e2e-data-${runStamp}-`));
+  console.log(`[e2e] Isolated data directory: ${dataDir}`);
 
   console.log(`[e2e] Building BanyanDB from source at ${buildRoot}…`);
   execSync(`go build -o ${binaryPath} ./banyand/cmd/server`, {
