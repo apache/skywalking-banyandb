@@ -80,11 +80,11 @@ async function buildTestApp(configOverrides: Partial<Config> = {}): Promise<Fast
   return app;
 }
 
-async function loginAs(app: FastifyInstance, username: string, password: string, endpoint = 'http://upstream-a.test:17913'): Promise<string> {
+async function loginAs(app: FastifyInstance, username: string, password: string): Promise<string> {
   const res = await app.inject({
     method: 'POST',
     url: '/auth/login',
-    payload: { username, password, endpoint },
+    payload: { username, password },
   });
   expect(res.statusCode).toBe(200);
   const setCookie = res.headers['set-cookie'];
@@ -101,13 +101,12 @@ describe('Auth routes', () => {
     const res = await app.inject({
       method: 'POST',
       url: '/auth/login',
-      payload: { username: 'admin', password: 'adminpass', endpoint: 'http://upstream-a.test:17913' },
+      payload: { username: 'admin', password: 'adminpass' },
     });
     expect(res.statusCode).toBe(200);
     const body = JSON.parse(res.body);
     expect(body.user).toBe('admin');
     expect(body.role).toBe('admin');
-    expect(body.endpoint).toBe('http://upstream-a.test:17913');
     expect(res.headers['set-cookie']).toBeTruthy();
   });
 
@@ -115,7 +114,7 @@ describe('Auth routes', () => {
     const res = await app.inject({
       method: 'POST',
       url: '/auth/login',
-      payload: { username: 'admin', password: 'wrongpass', endpoint: 'http://upstream-a.test:17913' },
+      payload: { username: 'admin', password: 'wrongpass' },
     });
     expect(res.statusCode).toBe(401);
     expect(JSON.parse(res.body).error).toBe('invalid_credentials');
@@ -125,19 +124,9 @@ describe('Auth routes', () => {
     const res = await app.inject({
       method: 'POST',
       url: '/auth/login',
-      payload: { username: 'nobody', password: 'pass', endpoint: 'http://upstream-a.test:17913' },
+      payload: { username: 'nobody', password: 'pass' },
     });
     expect(res.statusCode).toBe(401);
-  });
-
-  it('POST /auth/login with malformed endpoint returns 400', async () => {
-    const res = await app.inject({
-      method: 'POST',
-      url: '/auth/login',
-      payload: { username: 'admin', password: 'adminpass', endpoint: 'ftp://bad.endpoint' },
-    });
-    expect(res.statusCode).toBe(400);
-    expect(JSON.parse(res.body).error).toBe('bad_endpoint');
   });
 
   it('GET /auth/session returns user info when authenticated', async () => {
@@ -242,7 +231,7 @@ describe('SPA fallback scoping', () => {
   });
 });
 
-describe('Proxy: per-request endpoint isolation (MF1)', () => {
+describe('Proxy: all sessions use config.banyandbTarget', () => {
   let app: FastifyInstance;
   let mockAgent: MockAgent;
 
@@ -251,6 +240,9 @@ describe('Proxy: per-request endpoint isolation (MF1)', () => {
     mockAgent.disableNetConnect();
     setGlobalDispatcher(mockAgent);
 
+    // The BFF is configured to talk to upstream-a; the alternate pool must
+    // never receive traffic, proving the proxy doesn't honor a per-session
+    // endpoint override (capability intentionally retired).
     const poolA = mockAgent.get('http://upstream-a.test:17913');
     poolA.intercept({ path: '/api/v1/group/schema/lists', method: 'GET' })
       .reply(200, JSON.stringify({ upstream: 'A' }), { headers: { 'content-type': 'application/json' } })
@@ -269,9 +261,9 @@ describe('Proxy: per-request endpoint isolation (MF1)', () => {
     await mockAgent.close();
   });
 
-  it('two concurrent sessions with different endpoints proxy to their own upstream', async () => {
-    const cookieA = await loginAs(app, 'admin', 'adminpass', 'http://upstream-a.test:17913');
-    const cookieB = await loginAs(app, 'reader', 'readpass', 'http://upstream-b.test:17913');
+  it('two concurrent sessions both proxy to config.banyandbTarget', async () => {
+    const cookieA = await loginAs(app, 'admin', 'adminpass');
+    const cookieB = await loginAs(app, 'reader', 'readpass');
 
     const [resA, resB] = await Promise.all([
       app.inject({ method: 'GET', url: '/api/v1/group/schema/lists', headers: { cookie: cookieA } }),
@@ -281,12 +273,12 @@ describe('Proxy: per-request endpoint isolation (MF1)', () => {
     expect(resA.statusCode).toBe(200);
     expect(JSON.parse(resA.body).upstream).toBe('A');
     expect(resB.statusCode).toBe(200);
-    expect(JSON.parse(resB.body).upstream).toBe('B');
+    expect(JSON.parse(resB.body).upstream).toBe('A');
   });
 
   it('/api/* path is forwarded VERBATIM (no prefix mutation)', async () => {
     // The mock intercepts /api/v1/group/schema/lists exactly — if path was mutated this would 404
-    const cookie = await loginAs(app, 'admin', 'adminpass', 'http://upstream-a.test:17913');
+    const cookie = await loginAs(app, 'admin', 'adminpass');
     const res = await app.inject({
       method: 'GET', url: '/api/v1/group/schema/lists', headers: { cookie },
     });
@@ -378,7 +370,7 @@ describe('Upstream auth: attach-if-configured (MF2)', () => {
       upstreamPassword: 'svcpass',
     });
 
-    const cookie = await loginAs(app, 'admin', 'adminpass', 'http://upstream-a.test:17913');
+    const cookie = await loginAs(app, 'admin', 'adminpass');
     const res = await app.inject({ method: 'GET', url: '/api/v1/group/schema/lists', headers: { cookie } });
     expect(res.statusCode).toBe(200);
   });
@@ -389,19 +381,14 @@ describe('Upstream auth: attach-if-configured (MF2)', () => {
       .reply(200, '{}', { headers: { 'content-type': 'application/json' } })
       .times(10);
 
-    const poolB = mockAgent.get('http://upstream-b.test:17913');
-    poolB.intercept({ path: /.*/, method: 'GET' })
-      .reply(200, '{}', { headers: { 'content-type': 'application/json' } })
-      .times(10);
-
     app = await buildTestApp({
       banyandbTarget: 'http://upstream-a.test:17913',
       upstreamUsername: 'svc',
       upstreamPassword: 'svcpass',
     });
 
-    const cookieA = await loginAs(app, 'admin', 'adminpass', 'http://upstream-a.test:17913');
-    const cookieB = await loginAs(app, 'reader', 'readpass', 'http://upstream-b.test:17913');
+    const cookieA = await loginAs(app, 'admin', 'adminpass');
+    const cookieB = await loginAs(app, 'reader', 'readpass');
 
     const [resA, resB] = await Promise.all([
       app.inject({ method: 'GET', url: '/api/v1/group/schema/lists', headers: { cookie: cookieA } }),

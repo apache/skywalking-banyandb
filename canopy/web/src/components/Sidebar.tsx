@@ -233,8 +233,32 @@ export function Sidebar({ collapsed, onToggleCollapse }: SidebarProps) {
   }, [active]);
 
   const isAdmin = session?.role === 'admin';
-  const endpoint = session?.endpoint ?? '';
-  const displayHost = endpoint.replace(/^https?:\/\//, '');
+
+  // The BanyanDB upstream is configured once on the BFF (BANYANDB_TARGET).
+  // Fetch it from /api/meta on mount so the footer's status row shows the
+  // target host and reachability. Re-fetched periodically so the indicator
+  // flips back to green once BanyanDB comes back online.
+  const [banyandbTarget, setBanyandbTarget] = useState<string>('');
+  const [banyandbReachable, setBanyandbReachable] = useState<boolean | null>(null);
+  useEffect(() => {
+    let cancelled = false;
+    const probe = async () => {
+      try {
+        const res = await fetch('/api/meta');
+        if (!res.ok) return;
+        const d = await res.json() as { banyandbTarget?: string; reachable?: boolean };
+        if (cancelled) return;
+        if (d?.banyandbTarget) setBanyandbTarget(d.banyandbTarget);
+        if (typeof d?.reachable === 'boolean') setBanyandbReachable(d.reachable);
+      } catch {
+        /* keep last known state */
+      }
+    };
+    void probe();
+    const handle = setInterval(probe, 10_000);
+    return () => { cancelled = true; clearInterval(handle); };
+  }, []);
+  const displayHost = banyandbTarget.replace(/^https?:\/\//, '');
 
   const signOut = async () => {
     try { await fetch('/auth/logout', { method: 'POST' }); } catch { /* ignore */ }
@@ -406,10 +430,15 @@ export function Sidebar({ collapsed, onToggleCollapse }: SidebarProps) {
           </button>
         </div>
         <div className="side-foot-row">
-          <div className="conn" title={'Connected to ' + endpoint}>
+          <div
+            className={'conn' + (banyandbReachable === false ? ' is-unreachable' : '')}
+            title={banyandbReachable === false
+              ? `Cannot reach BanyanDB at ${banyandbTarget} — check BANYANDB_TARGET and the BanyanDB process.`
+              : 'Connected to ' + banyandbTarget}
+          >
             <span className="conn-dot" />
             <span className="conn-text">
-              <span className="conn-state">Connected</span>
+              <span className="conn-state">{banyandbReachable === false ? 'Unreachable' : 'Connected'}</span>
               <span className="conn-host">{displayHost}</span>
             </span>
           </div>

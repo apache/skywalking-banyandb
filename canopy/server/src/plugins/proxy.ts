@@ -31,8 +31,10 @@ function buildUpstreamAuth(config: Config): string | undefined {
   return undefined;
 }
 
-function getSessionEndpoint(request: FastifyRequest, config: Config): string {
-  return request.session?.endpoint || config.banyandbTarget;
+function getSessionEndpoint(_request: FastifyRequest, config: Config): string {
+  // The BanyanDB upstream is a single BFF-wide setting (config.banyandbTarget).
+  // Per-session endpoint overrides are intentionally not supported.
+  return config.banyandbTarget;
 }
 
 async function forwardRequest(
@@ -153,11 +155,11 @@ export async function registerProxy(app: FastifyInstance, config: Config): Promi
     }
   }
 
-  // /api/* — proxied VERBATIM to session.endpoint (no prefix add/strip)
+  // /api/* — proxied VERBATIM to config.banyandbTarget (no prefix add/strip)
   app.all('/api/*', { preHandler: [requireAuth, enforceRole] }, async (request, reply) => {
-    const sessionEndpoint = getSessionEndpoint(request, config);
+    const upstreamBase = getSessionEndpoint(request, config);
     const upstreamPath = request.url; // VERBATIM — includes /api/v1/... prefix
-    await forwardRequest(sessionEndpoint, upstreamPath, request, reply, config, upstreamAuth);
+    await forwardRequest(upstreamBase, upstreamPath, request, reply, config, upstreamAuth);
   });
 
   // /monitoring/* — forwarded to MONITOR_TARGET with /monitoring prefix STRIPPED

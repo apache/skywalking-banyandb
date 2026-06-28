@@ -98,58 +98,33 @@ const ROLES: Record<Role, { label: string; desc: string; Icon: React.FC<{ size?:
 
 export function LoginPage() {
   const { setSession } = useAuth();
-  const [endpoint, setEndpoint] = useState('localhost:17913');
   const [role, setRole] = useState<Role>('admin');
-  const [username, setUsername] = useState('admin');
+  const [username, setUsername] = useState('');
   const [password, setPassword] = useState('');
   const [showPass, setShowPass] = useState(false);
-  const [remember, setRemember] = useState(true);
   const [errors, setErrors] = useState<Record<string, string>>({});
   const [status, setStatus] = useState<Status>('idle');
   const [errorMsg, setErrorMsg] = useState('');
   const [banyanVersion, setBanyanVersion] = useState<string | null>(null);
   const [banyanReachable, setBanyanReachable] = useState<boolean | null>(null);
-  const [endpointProbeSeq, setEndpointProbeSeq] = useState(0);
 
-  // Probe the BFF's default BanyanDB target on mount so the page can show
-  // an initial reachability indicator before the user has typed anything.
+  // Probe the BFF's configured BanyanDB upstream on mount so the badge can
+  // show the version and reachability before the user has typed anything.
+  // The BanyanDB target itself is configured server-side (BANYANDB_TARGET)
+  // and is no longer a per-session input.
   useEffect(() => {
     fetch('/api/meta')
       .then(r => r.ok ? r.json() as Promise<{ banyanVersion: string | null; reachable?: boolean }> : null)
       .then(d => {
         if (!d) { setBanyanReachable(false); setBanyanVersion(null); return; }
         if (typeof d.reachable === 'boolean') setBanyanReachable(d.reachable);
-        // Only show a version for the endpoint we just probed. A failed probe
+        // Only show a version for the upstream we just probed. A failed probe
         // clears the version so the badge never shows a misleading
         // "BanyanDB · v0.10" while reachable=false.
         setBanyanVersion(d.reachable ? (d.banyanVersion ?? null) : null);
       })
       .catch(() => { setBanyanReachable(false); setBanyanVersion(null); });
   }, []);
-
-  // Re-probe whenever the user types an endpoint in the form so the badge
-  // reflects the target they're actually about to log in against. Debounced
-  // via a token so out-of-order responses can't overwrite a newer result.
-  useEffect(() => {
-    const trimmed = endpoint.trim();
-    if (!trimmed) return;
-    const seq = endpointProbeSeq + 1;
-    setEndpointProbeSeq(seq);
-    const handle = setTimeout(() => {
-      fetch(`/api/probe?endpoint=${encodeURIComponent(trimmed)}`)
-        .then(r => r.ok ? r.json() as Promise<{ banyanVersion: string | null; reachable: boolean }> : null)
-        .then(d => {
-          // Drop stale responses.
-          if (seq !== endpointProbeSeq + 1) return;
-          if (!d) { setBanyanReachable(false); setBanyanVersion(null); return; }
-          setBanyanReachable(d.reachable);
-          setBanyanVersion(d.reachable ? (d.banyanVersion ?? null) : null);
-        })
-        .catch(() => { if (seq === endpointProbeSeq + 1) { setBanyanReachable(false); setBanyanVersion(null); } });
-    }, 400);
-    return () => clearTimeout(handle);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [endpoint]);
 
   const clearFieldError = (key: string) => {
     if (errors[key]) setErrors((prev) => { const next = { ...prev }; delete next[key]; return next; });
@@ -158,7 +133,7 @@ export function LoginPage() {
 
   const pickRole = (nextRole: Role) => {
     setRole(nextRole);
-    setUsername(nextRole === 'admin' ? 'admin' : 'viewer');
+    setUsername('');
     setPassword('');
     setErrors({});
     if (status === 'failed') setStatus('idle');
@@ -166,11 +141,31 @@ export function LoginPage() {
 
   const submit = async () => {
     const fieldErrors: Record<string, string> = {};
-    if (!endpoint.trim()) fieldErrors.endpoint = 'Endpoint is required';
     if (!username.trim()) fieldErrors.username = 'Username is required';
     if (!password) fieldErrors.password = 'Password is required';
     setErrors(fieldErrors);
     if (Object.keys(fieldErrors).length > 0) return;
+
+    // Pre-flight: refuse to log in when BanyanDB is unreachable. Without
+    // this, the user gets a successful login, the sidebar flips to
+    // "Connected", but every /api/* call returns 502 — a confusing trap.
+    // We re-probe /api/meta here (the same endpoint that drives the badge)
+    // so the result is authoritative even if the mount-time probe is stale.
+    let preflightReachable = banyanReachable;
+    try {
+      const probe = await fetch('/api/meta');
+      if (probe.ok) {
+        const meta = await probe.json() as { reachable?: boolean };
+        preflightReachable = typeof meta.reachable === 'boolean' ? meta.reachable : preflightReachable;
+      }
+    } catch {
+      // If the probe itself fails, fall through to the server's own check.
+    }
+    if (preflightReachable === false) {
+      setErrorMsg('Cannot reach the BanyanDB upstream. Check BANYANDB_TARGET on the BFF and the BanyanDB process.');
+      setStatus('failed');
+      return;
+    }
 
     setStatus('connecting');
     setErrorMsg('');
@@ -178,15 +173,12 @@ export function LoginPage() {
       const res = await fetch('/auth/login', {
         method: 'POST',
         headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({ username: username.trim(), password, endpoint: endpoint.trim() }),
+        body: JSON.stringify({ username: username.trim(), password }),
       });
       if (res.ok) {
-        const data = (await res.json()) as { user: string; role: 'admin' | 'readonly'; endpoint: string; banyanVersion: string | null };
-        if (remember) {
-          try { localStorage.setItem('canopy.endpoint', data.endpoint); } catch { /* ignore */ }
-        }
+        const data = (await res.json()) as { user: string; role: 'admin' | 'readonly'; banyanVersion: string | null };
         setStatus('connected');
-        setSession({ user: data.user, role: data.role, endpoint: data.endpoint, banyanVersion: data.banyanVersion ?? null });
+        setSession({ user: data.user, role: data.role, banyanVersion: data.banyanVersion ?? null });
       } else {
         const body = await res.json().catch(() => ({})) as { message?: string };
         setErrorMsg(body.message ?? 'Authentication failed — check your credentials.');
@@ -200,6 +192,11 @@ export function LoginPage() {
 
   const connecting = status === 'connecting';
   const connected = status === 'connected';
+  // Gate the form on BanyanDB reachability — refuse to log in against an
+  // unreachable upstream so the user never sees the "Connected but every
+  // API fails" trap. banyanReachable === null means the probe is still in
+  // flight; we let the user try (the pre-flight in submit() will catch it).
+  const upstreamDown = banyanReachable === false;
 
   return (
     <div className="lf">
@@ -213,27 +210,29 @@ export function LoginPage() {
             <span>{banyanVersion ? `BanyanDB · v${banyanVersion}` : 'BanyanDB'}</span>
             <span className="lf-sep" />
             {banyanReachable === false ? (
-              <span className="lf-warn" title="The default BanyanDB target is unreachable. Sign in with a working endpoint to override it.">Server unreachable</span>
+              <span className="lf-warn" role="alert">
+                <svg className="lf-warn-ico" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+                  <path d="M10.29 3.86 1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0Z" />
+                  <line x1="12" y1="9" x2="12" y2="13" />
+                  <line x1="12" y1="17" x2="12.01" y2="17" />
+                </svg>
+                <span className="lf-warn-label">Server unreachable</span>
+              </span>
             ) : (
               <span className="lf-live">HTTP ready</span>
             )}
           </div>
+          {banyanReachable === false && (
+            <p className="lf-warn-hint" role="status">
+              BanyanDB upstream is unreachable.
+            </p>
+          )}
         </div>
         <div className="lf-formwrap">
           <form
             className="lf-form"
             onSubmit={(e) => { e.preventDefault(); void submit(); }}
           >
-            <Field
-              label="Endpoint"
-              required
-              mono
-              value={endpoint}
-              onChange={(v) => { setEndpoint(v); clearFieldError('endpoint'); }}
-              placeholder="host:port"
-              error={errors.endpoint}
-              onSubmit={() => void submit()}
-            />
             <div className="f-field lf-roles">
               <label className="f-label">Sign in as</label>
               <div className="lf-seg" role="radiogroup" aria-label="Role">
@@ -263,7 +262,7 @@ export function LoginPage() {
               required
               value={username}
               onChange={(v) => { setUsername(v); clearFieldError('username'); }}
-              placeholder={role === 'admin' ? 'admin' : 'viewer'}
+              placeholder="username"
               error={errors.username}
               onSubmit={() => void submit()}
             />
@@ -280,18 +279,6 @@ export function LoginPage() {
               onEye={() => setShowPass((p) => !p)}
               onSubmit={() => void submit()}
             />
-            <div className="lf-row">
-              <button
-                type="button"
-                className={'lf-toggle' + (remember ? ' on' : '')}
-                role="switch"
-                aria-checked={remember}
-                onClick={() => setRemember((p) => !p)}
-              >
-                <span className="lf-switch" />
-                <span className="lf-toggle-label">Remember this connection</span>
-              </button>
-            </div>
             {status === 'failed' && (
               <div className="lf-banner err" role="alert">
                 <span className="lf-dot" />
@@ -306,18 +293,19 @@ export function LoginPage() {
             )}
             <button
               type="submit"
-              className={'btn btn-primary' + (connected ? ' is-ok' : '')}
-              disabled={connecting || connected}
+              className={'btn btn-primary' + (connected ? ' is-ok' : '') + (upstreamDown ? ' is-disabled-by-upstream' : '')}
+              disabled={connecting || connected || upstreamDown}
             >
               {connecting ? (
                 <><span className="spin" />Connecting…</>
               ) : connected ? (
                 'Connected'
+              ) : upstreamDown ? (
+                'Upstream unreachable'
               ) : (
                 'Connect'
               )}
             </button>
-            <p className="lf-hint">Default · <code>admin</code> / <code>admin</code></p>
           </form>
         </div>
       </div>

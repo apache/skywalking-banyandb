@@ -26,24 +26,6 @@ import type { Config } from '../config.js';
 interface LoginBody {
   username: string;
   password: string;
-  endpoint: string;
-}
-
-function normalizeEndpoint(raw: string): string {
-  // Accept bare host:port and normalize to http://
-  // Leave any other scheme (ftp://, etc.) unchanged so isValidHttpUrl rejects it.
-  if (/^https?:\/\//i.test(raw)) return raw;
-  if (/^[a-z][a-z0-9+\-.]*:\/\//i.test(raw)) return raw;
-  return `http://${raw}`;
-}
-
-function isValidHttpUrl(s: string): boolean {
-  try {
-    const u = new URL(s);
-    return u.protocol === 'http:' || u.protocol === 'https:';
-  } catch {
-    return false;
-  }
 }
 
 async function fetchBanyanVersion(target: string): Promise<string | null> {
@@ -65,9 +47,10 @@ async function fetchBanyanVersion(target: string): Promise<string | null> {
 }
 
 export async function registerAuth(app: FastifyInstance, config: Config): Promise<void> {
-  // Unauthenticated — exposes BanyanDB version + reachability for the login page
-  // before credentials are known. Registered before the authenticated /api/*
-  // proxy so Fastify matches this route first.
+  // Unauthenticated — exposes the BFF's configured BanyanDB target, its
+  // version, and reachability so the login page and the Sidebar can render
+  // operator-relevant context before credentials are known. Registered
+  // before the authenticated /api/* proxy so Fastify matches this route first.
   app.get('/api/meta', async (_request: FastifyRequest, reply: FastifyReply) => {
     // fetchBanyanVersion returns null on any failure (timeout, non-200, bad
     // body). Distinguish "we got an answer, the version was empty" from "we
@@ -85,46 +68,14 @@ export async function registerAuth(app: FastifyInstance, config: Config): Promis
       reachable = false;
     }
     const banyanVersion = reachable ? await fetchBanyanVersion(config.banyandbTarget) : null;
-    return reply.send({ banyanVersion, reachable });
-  });
-
-  // Per-endpoint probe — the login page calls this with whatever the user
-  // typed in the endpoint field so the reachability badge reflects the
-  // target they're about to log in against, not the BFF's default.
-  // Unauthenticated by design; the probe only reads the public version
-  // endpoint and doesn't return sensitive info.
-  app.get<{ Querystring: { endpoint?: string } }>('/api/probe', async (request: FastifyRequest, reply: FastifyReply) => {
-    const raw = (request.query as { endpoint?: string })?.endpoint ?? '';
-    const normalizedEndpoint = normalizeEndpoint(raw);
-    if (!isValidHttpUrl(normalizedEndpoint)) {
-      return reply.status(400).send({ error: 'bad_endpoint', message: 'Endpoint must be a valid http(s) URL or host:port' });
-    }
-    let reachable = false;
-    try {
-      const res = await undiciRequest(`${normalizedEndpoint}/api/v1/common/api/version`, {
-        method: 'GET',
-        headersTimeout: 3000,
-        bodyTimeout: 3000,
-      });
-      reachable = res.statusCode > 0 && res.statusCode < 500;
-      await res.body.dump();
-    } catch {
-      reachable = false;
-    }
-    const banyanVersion = reachable ? await fetchBanyanVersion(normalizedEndpoint) : null;
-    return reply.send({ banyanVersion, reachable });
+    return reply.send({ banyanVersion, reachable, banyandbTarget: config.banyandbTarget });
   });
 
   app.post<{ Body: LoginBody }>('/auth/login', async (request: FastifyRequest, reply: FastifyReply) => {
-    const { username, password, endpoint } = request.body as LoginBody;
+    const { username, password } = request.body as LoginBody;
 
-    if (!username || !password || !endpoint) {
-      return reply.status(400).send({ error: 'bad_request', message: 'username, password, and endpoint are required' });
-    }
-
-    const normalizedEndpoint = normalizeEndpoint(endpoint);
-    if (!isValidHttpUrl(normalizedEndpoint)) {
-      return reply.status(400).send({ error: 'bad_endpoint', message: 'Endpoint must be a valid http(s) URL or host:port' });
+    if (!username || !password) {
+      return reply.status(400).send({ error: 'bad_request', message: 'username and password are required' });
     }
 
     // Find user (constant-time compare to prevent timing attacks)
@@ -143,24 +94,17 @@ export async function registerAuth(app: FastifyInstance, config: Config): Promis
       return reply.status(401).send({ error: 'invalid_credentials', message: 'Invalid username or password' });
     }
 
-    const banyanVersion = await fetchBanyanVersion(normalizedEndpoint);
-    // Refuse to log in against an unreachable endpoint — otherwise the user
-    // gets a successful response, the sidebar shows "Connected <endpoint>",
-    // but every subsequent /api/* request returns 502 upstream_error. Tests
-    // that don't spin up a real upstream can disable this via config.
-    if (config.requireUpstreamOnLogin && banyanVersion === null) {
-      return reply.status(502).send({
-        error: 'upstream_unreachable',
-        message: `Cannot reach BanyanDB at ${normalizedEndpoint}. Check that the endpoint is correct and the server is up.`,
-      });
-    }
+    // Cache the BanyanDB version on the session so the brand badge can
+    // render instantly without re-probing on every page load. Upstream
+    // reachability is NOT a login barrier — a stale BANYANDB_TARGET will
+    // surface as a 502 on the first /api/* call, not as a login failure.
+    const banyanVersion = await fetchBanyanVersion(config.banyandbTarget);
 
     request.session.user = user.username;
     request.session.role = user.role;
-    request.session.endpoint = normalizedEndpoint;
     request.session.banyanVersion = banyanVersion;
 
-    return reply.send({ user: user.username, role: user.role, endpoint: normalizedEndpoint, banyanVersion });
+    return reply.send({ user: user.username, role: user.role, banyanVersion });
   });
 
   app.post('/auth/logout', async (request: FastifyRequest, reply: FastifyReply) => {
@@ -173,6 +117,6 @@ export async function registerAuth(app: FastifyInstance, config: Config): Promis
     if (!session?.user) {
       return reply.status(401).send({ error: 'unauthenticated' });
     }
-    return reply.send({ user: session.user, role: session.role, endpoint: session.endpoint, banyanVersion: session.banyanVersion ?? null });
+    return reply.send({ user: session.user, role: session.role, banyanVersion: session.banyanVersion ?? null });
   });
 }

@@ -263,6 +263,18 @@
   .conn-text { display: flex; flex-direction: column; min-width: 0; overflow: hidden; }
   .conn-state { font-size: 11.5px; font-weight: 600; color: var(--text-dim); line-height: 1.3; }
   .conn-host { font-family: var(--mono); font-size: 10.5px; color: var(--text-faint); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; direction: rtl; text-align: left; }
+  /* BanyanDB unreachable — mirror the login page's lf-warn palette so the
+     operator gets a consistent signal in both places. */
+  .conn.is-unreachable {
+    background: rgba(207, 107, 82, 0.10);
+    border: 1px solid rgba(207, 107, 82, 0.35);
+  }
+  .conn.is-unreachable .conn-dot {
+    background: var(--danger);
+    box-shadow: 0 0 0 3px rgba(207, 107, 82, 0.18);
+  }
+  .conn.is-unreachable .conn-state { color: var(--danger); }
+  .conn.is-unreachable .conn-host { color: rgba(207, 107, 82, 0.78); }
   .is-collapsed .conn-text { display: none; }
   .is-collapsed .conn { flex: 0; padding: 6px; justify-content: center; }
   .collapse-btn {
@@ -2403,6 +2415,36 @@
   .lf-live::before {
     content: ""; width: 6px; height: 6px; border-radius: 50%;
     background: var(--accent-2, #4fbd72); box-shadow: 0 0 7px var(--accent-glow);
+  }
+  /* Eye-catching unreachable indicator — pulls from the danger palette so it
+     contrasts with the otherwise muted footer text and isn't missed. */
+  .lf-warn {
+    display: inline-flex; align-items: center; gap: 6px;
+    padding: 3px 8px; border-radius: 6px;
+    color: var(--danger);
+    background: rgba(207, 107, 82, 0.12);
+    border: 1px solid rgba(207, 107, 82, 0.42);
+    box-shadow: 0 0 0 1px rgba(207, 107, 82, 0.06), 0 0 12px rgba(207, 107, 82, 0.18);
+    animation: lf-warn-pulse 1.8s ease-in-out infinite;
+    font-weight: 600;
+  }
+  .lf-warn-ico { flex: none; }
+  .lf-warn-label { letter-spacing: 0.02em; }
+  .lf-warn-hint {
+    margin: 12px 0 0; padding: 8px 10px;
+    font-size: 11.5px; line-height: 1.45;
+    color: var(--danger); background: rgba(207, 107, 82, 0.08);
+    border-left: 2px solid var(--danger); border-radius: 0 4px 4px 0;
+    font-family: var(--mono);
+  }
+  .lf-warn-hint code {
+    color: var(--danger); background: rgba(207, 107, 82, 0.14);
+    border: 1px solid rgba(207, 107, 82, 0.32); border-radius: 4px;
+    padding: 0 5px; font-size: 11px;
+  }
+  @keyframes lf-warn-pulse {
+    0%, 100% { box-shadow: 0 0 0 1px rgba(207, 107, 82, 0.06), 0 0 12px rgba(207, 107, 82, 0.18); }
+    50%      { box-shadow: 0 0 0 1px rgba(207, 107, 82, 0.18), 0 0 18px rgba(207, 107, 82, 0.34); }
   }
 
   @media (max-width: 720px) {
