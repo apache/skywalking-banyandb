@@ -57,7 +57,7 @@ describe('MeasureForm — create mode validation', () => {
   it('requires each tag family to have a name', async () => {
     const user = userEvent.setup();
     const { container } = render(<MeasureForm mode="create" groupName={GROUP} onClose={vi.fn()} />, { wrapper: makeWrapper() });
-    await user.type(screen.getByPlaceholderText('my-measure'), 'mymeasure');
+    await user.type(screen.getByPlaceholderText('service_cpm_minute'), 'mymeasure');
     await user.clear(screen.getByPlaceholderText('Family name'));
     submitForm(container);
     await waitFor(() => expect(screen.getByText('Each tag family must have a name.')).toBeInTheDocument());
@@ -66,7 +66,7 @@ describe('MeasureForm — create mode validation', () => {
   it('requires all tag names to be non-empty', async () => {
     const user = userEvent.setup();
     const { container } = render(<MeasureForm mode="create" groupName={GROUP} onClose={vi.fn()} />, { wrapper: makeWrapper() });
-    await user.type(screen.getByPlaceholderText('my-measure'), 'mymeasure');
+    await user.type(screen.getByPlaceholderText('service_cpm_minute'), 'mymeasure');
     // default family='default', tag name is empty — submit without filling it
     submitForm(container);
     await waitFor(() => expect(screen.getByText('All tags in family "default" must have names.')).toBeInTheDocument());
@@ -75,8 +75,8 @@ describe('MeasureForm — create mode validation', () => {
   it('rejects tag names containing "#"', async () => {
     const user = userEvent.setup();
     const { container } = render(<MeasureForm mode="create" groupName={GROUP} onClose={vi.fn()} />, { wrapper: makeWrapper() });
-    await user.type(screen.getByPlaceholderText('my-measure'), 'mymeasure');
-    await user.type(screen.getByPlaceholderText('Tag name'), 'bad#tag');
+    await user.type(screen.getByPlaceholderText('service_cpm_minute'), 'mymeasure');
+    await user.type(screen.getByPlaceholderText('tag_name'), 'bad#tag');
     submitForm(container);
     await waitFor(() => expect(screen.getByText('Tag name "bad#tag" must not contain "#".')).toBeInTheDocument());
   });
@@ -84,8 +84,8 @@ describe('MeasureForm — create mode validation', () => {
   it('requires all field names to be non-empty when fields are present', async () => {
     const user = userEvent.setup();
     const { container } = render(<MeasureForm mode="create" groupName={GROUP} onClose={vi.fn()} />, { wrapper: makeWrapper() });
-    await user.type(screen.getByPlaceholderText('my-measure'), 'mymeasure');
-    await user.type(screen.getByPlaceholderText('Tag name'), 'mytag');
+    await user.type(screen.getByPlaceholderText('service_cpm_minute'), 'mymeasure');
+    await user.type(screen.getByPlaceholderText('tag_name'), 'mytag');
     await user.click(screen.getByRole('button', { name: /Add field/ }));
     // field name input is empty — submit without filling it
     submitForm(container);
@@ -95,8 +95,8 @@ describe('MeasureForm — create mode validation', () => {
   it('requires at least one entity tag', async () => {
     const user = userEvent.setup();
     const { container } = render(<MeasureForm mode="create" groupName={GROUP} onClose={vi.fn()} />, { wrapper: makeWrapper() });
-    await user.type(screen.getByPlaceholderText('my-measure'), 'mymeasure');
-    await user.type(screen.getByPlaceholderText('Tag name'), 'mytag');
+    await user.type(screen.getByPlaceholderText('service_cpm_minute'), 'mymeasure');
+    await user.type(screen.getByPlaceholderText('tag_name'), 'mytag');
     // valid name + valid tag, no fields, but no entity tag selected
     submitForm(container);
     await waitFor(() => expect(screen.getByText('Select at least one entity tag.')).toBeInTheDocument());
@@ -121,7 +121,7 @@ describe('MeasureForm — edit mode immutable fields', () => {
       <MeasureForm mode="edit" groupName={GROUP} initialName="mymeasure" onClose={vi.fn()} />,
       { wrapper: makeWrapper() },
     );
-    const nameInput = screen.getByPlaceholderText('my-measure');
+    const nameInput = screen.getByPlaceholderText('service_cpm_minute');
     expect(nameInput).toHaveAttribute('readonly');
     expect(nameInput).toHaveValue('mymeasure');
   });

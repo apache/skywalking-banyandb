@@ -46,7 +46,7 @@ const GROUP = 'test-group';
 describe('StreamForm — create mode validation', () => {
   it('requires a name', async () => {
     render(<StreamForm mode="create" groupName={GROUP} onClose={vi.fn()} />, { wrapper: makeWrapper() });
-    fireEvent.click(screen.getByRole('button', { name: /^Create$/ }));
+    fireEvent.click(screen.getByRole('button', { name: /Create stream/i }));
     await waitFor(() => expect(screen.getByText('Name is required.')).toBeInTheDocument());
   });
 
@@ -55,7 +55,7 @@ describe('StreamForm — create mode validation', () => {
     render(<StreamForm mode="create" groupName={GROUP} onClose={vi.fn()} />, { wrapper: makeWrapper() });
     await user.type(screen.getAllByRole('textbox')[0], 'mystream');
     await user.clear(screen.getByPlaceholderText('Family name'));
-    fireEvent.click(screen.getByRole('button', { name: /^Create$/ }));
+    fireEvent.click(screen.getByRole('button', { name: /Create stream/i }));
     await waitFor(() => expect(screen.getByText('Each tag family must have a name.')).toBeInTheDocument());
   });
 
@@ -64,7 +64,7 @@ describe('StreamForm — create mode validation', () => {
     render(<StreamForm mode="create" groupName={GROUP} onClose={vi.fn()} />, { wrapper: makeWrapper() });
     await user.type(screen.getAllByRole('textbox')[0], 'mystream');
     // default family='default', tag name is empty — submit without filling it
-    fireEvent.click(screen.getByRole('button', { name: /^Create$/ }));
+    fireEvent.click(screen.getByRole('button', { name: /Create stream/i }));
     await waitFor(() => expect(screen.getByText('All tags in family "default" must have names.')).toBeInTheDocument());
   });
 
@@ -72,8 +72,8 @@ describe('StreamForm — create mode validation', () => {
     const user = userEvent.setup();
     render(<StreamForm mode="create" groupName={GROUP} onClose={vi.fn()} />, { wrapper: makeWrapper() });
     await user.type(screen.getAllByRole('textbox')[0], 'mystream');
-    await user.type(screen.getByPlaceholderText('Tag name'), 'bad#tag');
-    fireEvent.click(screen.getByRole('button', { name: /^Create$/ }));
+    await user.type(screen.getByPlaceholderText('tag_name'), 'bad#tag');
+    fireEvent.click(screen.getByRole('button', { name: /Create stream/i }));
     await waitFor(() => expect(screen.getByText('Tag name "bad#tag" must not contain "#".')).toBeInTheDocument());
   });
 
@@ -81,9 +81,9 @@ describe('StreamForm — create mode validation', () => {
     const user = userEvent.setup();
     render(<StreamForm mode="create" groupName={GROUP} onClose={vi.fn()} />, { wrapper: makeWrapper() });
     await user.type(screen.getAllByRole('textbox')[0], 'mystream');
-    await user.type(screen.getByPlaceholderText('Tag name'), 'mytag');
+    await user.type(screen.getByPlaceholderText('tag_name'), 'mytag');
     // valid name + valid tag, but no entity tag selected
-    fireEvent.click(screen.getByRole('button', { name: /^Create$/ }));
+    fireEvent.click(screen.getByRole('button', { name: /Create stream/i }));
     await waitFor(() => expect(screen.getByText('At least one entity tag is required.')).toBeInTheDocument());
   });
 });

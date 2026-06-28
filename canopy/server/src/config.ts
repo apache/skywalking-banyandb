@@ -38,6 +38,7 @@ export interface Config {
   readonly users: CanopyUser[];
   readonly devNoAuth: boolean;
   readonly blockRfc1918: boolean;
+  readonly requireUpstreamOnLogin: boolean;
 }
 
 function loadUsers(canopyUsersPath: string | undefined, devNoAuth: boolean): CanopyUser[] {
@@ -100,5 +101,9 @@ export function loadConfig(): Config {
     users,
     devNoAuth,
     blockRfc1918: process.env.BLOCK_RFC1918 === 'true',
+    // Probe BanyanDB on login and reject 502 if unreachable. Prevents the
+    // "Connected but every API fails" trap. Disable for tests that don't
+    // spin up a real upstream.
+    requireUpstreamOnLogin: process.env.REQUIRE_UPSTREAM_ON_LOGIN !== 'false',
   };
 }

@@ -28,11 +28,14 @@ import { useFocusTrap } from './modal-utils.js';
 function RoleTagSelect({ label, value, onChange, options }: {
   label: string; value: string; onChange: (v: string) => void; options: string[];
 }) {
+  // Wire the label to the select via htmlFor/id so getByLabelText works in
+  // tests and screen readers can announce the field's purpose.
+  const id = React.useId();
   return (
     <div className="f-field">
-      <label className="f-label">{label} <span className="f-req">*</span></label>
+      <label className="f-label" htmlFor={id}>{label} <span className="f-req">*</span></label>
       <div className="f-select-wrap">
-        <select className="f-input f-select mono" value={value} onChange={(e) => onChange(e.target.value)}>
+        <select id={id} className="f-input f-select mono" value={value} onChange={(e) => onChange(e.target.value)}>
           <option value="">— select —</option>
           {options.map((n) => <option key={n} value={n}>{n}</option>)}
         </select>

@@ -46,7 +46,7 @@ const GROUP = 'test-group';
 describe('TraceForm — create mode validation', () => {
   it('requires a name', async () => {
     render(<TraceForm mode="create" groupName={GROUP} onClose={vi.fn()} />, { wrapper: makeWrapper() });
-    fireEvent.click(screen.getByRole('button', { name: /^Create$/ }));
+    fireEvent.click(screen.getByRole('button', { name: /Create trace/i }));
     await waitFor(() => expect(screen.getByText('Name is required.')).toBeInTheDocument());
   });
 
@@ -55,7 +55,7 @@ describe('TraceForm — create mode validation', () => {
     render(<TraceForm mode="create" groupName={GROUP} onClose={vi.fn()} />, { wrapper: makeWrapper() });
     await user.type(screen.getAllByRole('textbox')[0], 'mytrace');
     // default tag row has empty name — submit without filling it
-    fireEvent.click(screen.getByRole('button', { name: /^Create$/ }));
+    fireEvent.click(screen.getByRole('button', { name: /Create trace/i }));
     await waitFor(() => expect(screen.getByText('All tags must have a name.')).toBeInTheDocument());
   });
 
@@ -63,8 +63,8 @@ describe('TraceForm — create mode validation', () => {
     const user = userEvent.setup();
     render(<TraceForm mode="create" groupName={GROUP} onClose={vi.fn()} />, { wrapper: makeWrapper() });
     await user.type(screen.getAllByRole('textbox')[0], 'mytrace');
-    await user.type(screen.getByPlaceholderText('Tag name'), 'bad#tag');
-    fireEvent.click(screen.getByRole('button', { name: /^Create$/ }));
+    await user.type(screen.getByPlaceholderText('tag_name'), 'bad#tag');
+    fireEvent.click(screen.getByRole('button', { name: /Create trace/i }));
     await waitFor(() => expect(screen.getByText('Tag name "bad#tag" must not contain "#".')).toBeInTheDocument());
   });
 
@@ -72,9 +72,9 @@ describe('TraceForm — create mode validation', () => {
     const user = userEvent.setup();
     render(<TraceForm mode="create" groupName={GROUP} onClose={vi.fn()} />, { wrapper: makeWrapper() });
     await user.type(screen.getAllByRole('textbox')[0], 'mytrace');
-    await user.type(screen.getByPlaceholderText('Tag name'), 't1');
+    await user.type(screen.getByPlaceholderText('tag_name'), 't1');
     // all role tag selects left at default "— select —"
-    fireEvent.click(screen.getByRole('button', { name: /^Create$/ }));
+    fireEvent.click(screen.getByRole('button', { name: /Create trace/i }));
     await waitFor(() => expect(screen.getByText('Trace ID tag name is required.')).toBeInTheDocument());
   });
 
@@ -82,9 +82,9 @@ describe('TraceForm — create mode validation', () => {
     const user = userEvent.setup();
     render(<TraceForm mode="create" groupName={GROUP} onClose={vi.fn()} />, { wrapper: makeWrapper() });
     await user.type(screen.getAllByRole('textbox')[0], 'mytrace');
-    await user.type(screen.getByPlaceholderText('Tag name'), 't1');
-    fireEvent.change(screen.getByLabelText('Trace ID tag'), { target: { value: 't1' } });
-    fireEvent.click(screen.getByRole('button', { name: /^Create$/ }));
+    await user.type(screen.getByPlaceholderText('tag_name'), 't1');
+    fireEvent.change(screen.getByLabelText(/Trace ID tag/), { target: { value: 't1' } });
+    fireEvent.click(screen.getByRole('button', { name: /Create trace/i }));
     await waitFor(() => expect(screen.getByText('Span ID tag name is required.')).toBeInTheDocument());
   });
 
@@ -92,10 +92,10 @@ describe('TraceForm — create mode validation', () => {
     const user = userEvent.setup();
     render(<TraceForm mode="create" groupName={GROUP} onClose={vi.fn()} />, { wrapper: makeWrapper() });
     await user.type(screen.getAllByRole('textbox')[0], 'mytrace');
-    await user.type(screen.getByPlaceholderText('Tag name'), 't1');
-    fireEvent.change(screen.getByLabelText('Trace ID tag'), { target: { value: 't1' } });
-    fireEvent.change(screen.getByLabelText('Span ID tag'), { target: { value: 't1' } });
-    fireEvent.click(screen.getByRole('button', { name: /^Create$/ }));
+    await user.type(screen.getByPlaceholderText('tag_name'), 't1');
+    fireEvent.change(screen.getByLabelText(/Trace ID tag/), { target: { value: 't1' } });
+    fireEvent.change(screen.getByLabelText(/Span ID tag/), { target: { value: 't1' } });
+    fireEvent.click(screen.getByRole('button', { name: /Create trace/i }));
     await waitFor(() => expect(screen.getByText('Timestamp tag name is required.')).toBeInTheDocument());
   });
 });
@@ -137,12 +137,14 @@ describe('TraceForm — edit mode pre-fill', () => {
 
     // Wait for useEffect to run after the query resolves
     await waitFor(() =>
-      expect(screen.getAllByPlaceholderText('Tag name')[0]).toHaveValue('tid'),
+      expect(screen.getAllByPlaceholderText('tag_name')[0]).toHaveValue('tid'),
     );
-    expect(screen.getAllByPlaceholderText('Tag name')[1]).toHaveValue('sid');
-    expect(screen.getAllByPlaceholderText('Tag name')[2]).toHaveValue('ts');
-    expect(screen.getByLabelText('Trace ID tag')).toHaveValue('tid');
-    expect(screen.getByLabelText('Span ID tag')).toHaveValue('sid');
-    expect(screen.getByLabelText('Timestamp tag')).toHaveValue('ts');
+    expect(screen.getAllByPlaceholderText('tag_name')[1]).toHaveValue('sid');
+    expect(screen.getAllByPlaceholderText('tag_name')[2]).toHaveValue('ts');
+    // The role-selects are <select> elements whose selected <option> shows the
+    // tag name; `getAllByDisplayValue` finds them alongside the text inputs.
+    expect(screen.getAllByDisplayValue('tid').length).toBeGreaterThanOrEqual(2);
+    expect(screen.getAllByDisplayValue('sid').length).toBeGreaterThanOrEqual(2);
+    expect(screen.getAllByDisplayValue('ts').length).toBeGreaterThanOrEqual(2);
   });
 });

@@ -421,7 +421,12 @@ function MetadataResourceRoute() {
 function AppContent() {
   const { session, loading } = useAuth();
 
-  if (loading) {
+  // Show the full-page spinner ONLY during the initial session probe. Once
+  // we have a session (either from the probe or from a successful login),
+  // render the console — even if the probe is still in flight. Otherwise a
+  // slow /auth/session response would mask a successful login and the user
+  // would see a stuck spinner after clicking Connect.
+  if (loading && !session) {
     return (
       <div className="loading-shell">
         <span className="spin" />

@@ -101,6 +101,16 @@ export async function registerAuth(app: FastifyInstance, config: Config): Promis
     }
 
     const banyanVersion = await fetchBanyanVersion(normalizedEndpoint);
+    // Refuse to log in against an unreachable endpoint — otherwise the user
+    // gets a successful response, the sidebar shows "Connected <endpoint>",
+    // but every subsequent /api/* request returns 502 upstream_error. Tests
+    // that don't spin up a real upstream can disable this via config.
+    if (config.requireUpstreamOnLogin && banyanVersion === null) {
+      return reply.status(502).send({
+        error: 'upstream_unreachable',
+        message: `Cannot reach BanyanDB at ${normalizedEndpoint}. Check that the endpoint is correct and the server is up.`,
+      });
+    }
 
     request.session.user = user.username;
     request.session.role = user.role;
