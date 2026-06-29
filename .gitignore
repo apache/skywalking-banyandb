@@ -95,6 +95,9 @@ test/soak/data/
 crash/
 progress.txt
 
+# Node
+node_modules
+
 # Canopy scratch artifacts (handoff bundle, MCP test logs, stray screenshots)
 .handoff-import/
 .playwright-mcp/
