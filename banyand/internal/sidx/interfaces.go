@@ -83,8 +83,11 @@ type SIDX interface {
 	Close() error
 	// Flush flushes the SIDX instance to disk.
 	Flush(partIDsToFlush map[uint64]struct{}) (*FlusherIntroduction, error)
-	// Merge merges the specified parts into a new part.
-	Merge(closeCh <-chan struct{}, partIDstoMerge map[uint64]struct{}, newPartID uint64) (*MergerIntroduction, error)
+	// Merge merges the specified parts into a new part. keep is an optional
+	// opaque per-element predicate: when non-nil, an element is retained only if
+	// keep(data) returns true; nil means retain everything (the lossless bulk
+	// merge path). sidx never decodes data — the caller owns the encoding.
+	Merge(closeCh <-chan struct{}, partIDstoMerge map[uint64]struct{}, newPartID uint64, keep func([]byte) bool) (*MergerIntroduction, error)
 	// StreamingParts returns the streaming parts.
 	StreamingParts(partIDsToSync map[uint64]struct{}, group string, shardID uint32, name string) ([]queue.StreamingPartData, []func())
 	// PartPaths returns filesystem paths for the requested partIDs keyed by partID.

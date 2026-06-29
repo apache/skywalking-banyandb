@@ -76,7 +76,7 @@ func (f *fakeSIDX) Flush(map[uint64]struct{}) (*sidx.FlusherIntroduction, error)
 	panic("not implemented")
 }
 
-func (f *fakeSIDX) Merge(<-chan struct{}, map[uint64]struct{}, uint64) (*sidx.MergerIntroduction, error) {
+func (f *fakeSIDX) Merge(<-chan struct{}, map[uint64]struct{}, uint64, func([]byte) bool) (*sidx.MergerIntroduction, error) {
 	panic("not implemented")
 }
 
@@ -672,7 +672,7 @@ func (f *fakeSIDXInfinite) Flush(map[uint64]struct{}) (*sidx.FlusherIntroduction
 	panic("not implemented")
 }
 
-func (f *fakeSIDXInfinite) Merge(<-chan struct{}, map[uint64]struct{}, uint64) (*sidx.MergerIntroduction, error) {
+func (f *fakeSIDXInfinite) Merge(<-chan struct{}, map[uint64]struct{}, uint64, func([]byte) bool) (*sidx.MergerIntroduction, error) {
 	panic("not implemented")
 }
 

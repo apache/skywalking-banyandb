@@ -391,7 +391,7 @@ func Test_mergeParts(t *testing.T) {
 				closeCh := make(chan struct{})
 				defer close(closeCh)
 				s := &sidx{pm: protector.Nop{}}
-				p, err := s.mergeParts(fileSystem, closeCh, pp, partID, root)
+				p, err := s.mergeParts(fileSystem, closeCh, pp, partID, root, nil)
 				if tt.wantErr != nil {
 					if !errors.Is(err, tt.wantErr) {
 						t.Fatalf("Unexpected error: got %v, want %v", err, tt.wantErr)
@@ -516,7 +516,7 @@ func Test_mergePartsWithConflictTags(t *testing.T) {
 		closeCh := make(chan struct{})
 		defer close(closeCh)
 		s := &sidx{pm: protector.Nop{}}
-		p, mergeErr := s.mergeParts(fileSystem, closeCh, pp, partID, root)
+		p, mergeErr := s.mergeParts(fileSystem, closeCh, pp, partID, root, nil)
 		require.NoError(t, mergeErr)
 		defer func() {
 			if p != nil {
@@ -689,4 +689,96 @@ func cloneBytes(src []byte) []byte {
 	dst := make([]byte, len(src))
 	copy(dst, src)
 	return dst
+}
+
+func Test_filterBlockPointer_withKeepPredicate(t *testing.T) {
+	// 5 entries: rows 0,2,4 start with 'k' (kept); rows 1,3 start with 'd' (dropped).
+	bp := &blockPointer{
+		block: block{
+			userKeys: []int64{10, 20, 30, 40, 50},
+			data: [][]byte{
+				{'k', '1'}, {'d', '2'}, {'k', '3'}, {'d', '4'}, {'k', '5'},
+			},
+			tags: map[string]*tagData{
+				"svc": {
+					name:      "svc",
+					valueType: pbv1.ValueTypeStr,
+					values: []tagRow{
+						{value: []byte("svc1")},
+						{value: []byte("svc2")},
+						{value: []byte("svc3")},
+						{value: []byte("svc4")},
+						{value: []byte("svc5")},
+					},
+				},
+			},
+		},
+	}
+
+	filterBlockPointer(bp, func(d []byte) bool { return len(d) > 0 && d[0] == 'k' })
+
+	require.Equal(t, []int64{10, 30, 50}, bp.userKeys, "userKeys row-alignment")
+	require.Equal(t, [][]byte{{'k', '1'}, {'k', '3'}, {'k', '5'}}, bp.data, "data row-alignment")
+	svcVals := bp.tags["svc"].values
+	require.Len(t, svcVals, 3, "tag values count after filter")
+	require.Equal(t, []byte("svc1"), svcVals[0].value)
+	require.Equal(t, []byte("svc3"), svcVals[1].value)
+	require.Equal(t, []byte("svc5"), svcVals[2].value)
+	require.Equal(t, int64(10), bp.bm.minKey, "minKey after updateMetadata")
+	require.Equal(t, int64(50), bp.bm.maxKey, "maxKey after updateMetadata")
+}
+
+func Test_mergeParts_withKeepPredicate(t *testing.T) {
+	// Encode trace IDs using the same byte layout as the trace engine: [0x01] + traceID.
+	encodeID := func(id string) []byte { return append([]byte{0x01}, []byte(id)...) }
+
+	es := generateElements()
+	es.mustAppend(1, 100, encodeID("traceA"), []Tag{{Name: "svc", Value: []byte("a"), ValueType: pbv1.ValueTypeStr}})
+	es.mustAppend(1, 200, encodeID("traceB"), []Tag{{Name: "svc", Value: []byte("b"), ValueType: pbv1.ValueTypeStr}})
+	es.mustAppend(1, 300, encodeID("traceC"), []Tag{{Name: "svc", Value: []byte("c"), ValueType: pbv1.ValueTypeStr}})
+
+	keep := func(data []byte) bool {
+		if len(data) < 2 || data[0] != 0x01 {
+			return true
+		}
+		return string(data[1:]) != "traceB"
+	}
+
+	tmpPath, defFn := test.Space(require.New(t))
+	defer defFn()
+	fileSystem := fs.NewLocalFileSystem()
+
+	mp := GenerateMemPart()
+	mp.mustInitFromElements(es)
+	pw := newPartWrapper(mp, openMemPart(mp))
+	defer pw.release()
+
+	closeCh := make(chan struct{})
+	defer close(closeCh)
+	s := &sidx{pm: protector.Nop{}}
+	merged, mergeErr := s.mergeParts(fileSystem, closeCh, []*partWrapper{pw}, 99, tmpPath, keep)
+	require.NoError(t, mergeErr)
+	defer merged.release()
+
+	pmi := &partMergeIter{}
+	pmi.mustInitFromPart(merged.p)
+	reader := &blockReader{}
+	reader.init([]*partMergeIter{pmi})
+	decoder := generateTagValuesDecoder()
+	defer releaseTagValuesDecoder(decoder)
+
+	var retained []string
+	for reader.nextBlockMetadata() {
+		reader.loadBlockData(decoder)
+		for _, d := range reader.block.block.data {
+			if len(d) >= 2 && d[0] == 0x01 {
+				retained = append(retained, string(d[1:]))
+			}
+		}
+	}
+	require.NoError(t, reader.error())
+
+	require.NotContains(t, retained, "traceB", "traceB must be absent from merged part")
+	require.Len(t, retained, 2, "exactly traceA and traceC retained")
+	require.Equal(t, uint64(2), merged.p.partMetadata.TotalCount, "partMetadata TotalCount == retained count")
 }
