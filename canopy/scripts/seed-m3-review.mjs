@@ -37,7 +37,7 @@ async function login() {
   const res = await fetch(`${BFF}/auth/login`, {
     method: 'POST',
     headers: { 'content-type': 'application/json' },
-    body: JSON.stringify({ username: 'admin', password: 'admin', endpoint: 'http://127.0.0.1:17913' }),
+    body: JSON.stringify({ username: 'admin', password: 'admin' }),
   });
   if (!res.ok) throw new Error(`login failed: ${res.status} ${await res.text()}`);
   const setCookie = res.headers.get('set-cookie') ?? '';

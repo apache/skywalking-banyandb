@@ -95,6 +95,19 @@ function encodeBinding(
   };
 }
 
+// BanyanDB encodes a group with `metadata.name` (no top-level `name`) on both
+// list and write responses. RawGroup mirrors that wire shape; normalizeGroupResponse
+// lifts `metadata.name` to the top-level `name` the UI relies on. Write responses may
+// omit the group entirely (the liaison returns only a modRevision) — in that case
+// there is nothing to lift, so the (undefined) value passes through and callers that
+// guard on a truthy result (e.g. post-create navigation) keep their behavior.
+type RawGroup = Omit<Group, 'name'> & { metadata: { name: string } };
+
+function normalizeGroupResponse(raw: RawGroup | undefined): Group {
+  if (!raw) return raw as unknown as Group;
+  return { ...raw, name: raw.metadata.name };
+}
+
 // BanyanDB REST API uses singular resource type names in paths; the app routes use plural.
 const TYPE_SINGULAR: Record<string, string> = {
   measures: 'measure',
@@ -107,7 +120,6 @@ export class ApiDataSource implements DataSource {
   // ── Groups ──────────────────────────────────────────────────────────────
 
   async listGroups(): Promise<GroupListResponse> {
-    type RawGroup = Omit<Group, 'name'> & { metadata: { name: string } };
     const data = await apiFetch<{ group?: RawGroup[] }>('/api/v1/group/schema/lists');
     // BanyanDB liaison encodes the proto `repeated Group` field as a map keyed
     // by index ("1": {...}, "2": {...}), so the resulting JS object's
@@ -119,23 +131,23 @@ export class ApiDataSource implements DataSource {
     // the data layer so no consumer sees them as user data.
     const groups = (data.group ?? [])
       .filter((g) => !g.metadata.name.startsWith('_'))
-      .map((g) => ({ ...g, name: g.metadata.name }))
+      .map(normalizeGroupResponse)
       .sort((a, b) => a.name.localeCompare(b.name));
     return { groups };
   }
 
   async createGroup(req: CreateGroupRequest): Promise<Group> {
-    const data = await apiFetch<{ group: Group }>('/api/v1/group/schema', {
+    const data = await apiFetch<{ group?: RawGroup }>('/api/v1/group/schema', {
       method: 'POST', headers: JSON_HEADERS, body: JSON.stringify(req),
     });
-    return data.group;
+    return normalizeGroupResponse(data.group);
   }
 
   async updateGroup(name: string, req: UpdateGroupRequest): Promise<Group> {
-    const data = await apiFetch<{ group: Group }>(`/api/v1/group/schema/${name}`, {
+    const data = await apiFetch<{ group?: RawGroup }>(`/api/v1/group/schema/${name}`, {
       method: 'PUT', headers: JSON_HEADERS, body: JSON.stringify(req),
     });
-    return data.group;
+    return normalizeGroupResponse(data.group);
   }
 
   async deleteGroup(name: string): Promise<void> {

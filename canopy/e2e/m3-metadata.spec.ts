@@ -30,10 +30,9 @@ test.beforeAll(() => {
 async function loginAsAdmin(page: import('@playwright/test').Page) {
   const user = process.env.CANOPY_TEST_USER ?? 'admin';
   const pass = process.env.CANOPY_TEST_PASS ?? 'admin';
-  const endpoint = process.env.BANYANDB_TARGET ?? 'http://127.0.0.1:17913';
 
   const res = await page.request.post('/auth/login', {
-    data: { username: user, password: pass, endpoint },
+    data: { username: user, password: pass },
   });
   expect(res.ok()).toBeTruthy();
 }

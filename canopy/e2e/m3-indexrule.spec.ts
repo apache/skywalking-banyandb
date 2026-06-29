@@ -34,8 +34,7 @@ type ApiCtx = import('@playwright/test').APIRequestContext;
 async function apiLogin(ctx: ApiCtx) {
   const user = process.env.CANOPY_TEST_USER ?? 'admin';
   const pass = process.env.CANOPY_TEST_PASS ?? 'admin';
-  const endpoint = process.env.BANYANDB_TARGET ?? 'http://127.0.0.1:17913';
-  const res = await ctx.post('/auth/login', { data: { username: user, password: pass, endpoint } });
+  const res = await ctx.post('/auth/login', { data: { username: user, password: pass } });
   expect(res.ok()).toBeTruthy();
 }
 
