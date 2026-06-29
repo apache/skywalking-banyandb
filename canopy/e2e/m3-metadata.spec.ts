@@ -93,7 +93,8 @@ test('M3: clicking a resource row navigates to ResourceDetailPage', async ({ pag
   // either rendered.
   const cardOrEmpty = page.locator('.grp-card, .empty').first();
   await expect(cardOrEmpty).toBeVisible();
-  const hasGroup = await page.locator('.grp-card').count() > 0;
+  const groupCard = page.locator('.grp-card').first();
+  const hasGroup = await groupCard.count() > 0;
 
   if (!hasGroup) {
     // No groups — nothing to navigate to
