@@ -79,14 +79,19 @@ export const FAR_FUTURE: number = Date.parse('2099-12-31T00:00:00Z');
 /** Format epoch ms as "YYYY-MM-DDTHH:MM" for `<input type="datetime-local">`. */
 export function msToLocalInput(ms: number | null | undefined): string {
   if (ms == null || !Number.isFinite(ms)) return '';
+  // `<input type="datetime-local">` expresses LOCAL wall-clock time, and
+  // localInputToMs parses it back as local. Shift by the timezone offset so
+  // toISOString() yields the local components (not UTC) — otherwise the
+  // display→parse round-trip drifts by the user's UTC offset.
   const d = new Date(ms);
-  // toISOString gives UTC; slice off the seconds and Z to fit the datetime-local shape.
-  return d.toISOString().slice(0, 16);
+  const local = new Date(d.getTime() - d.getTimezoneOffset() * 60_000);
+  return local.toISOString().slice(0, 16);
 }
 
 /** Parse a "YYYY-MM-DDTHH:MM" string back to epoch ms; returns null when empty/invalid. */
 export function localInputToMs(s: string): number | null {
   if (!s) return null;
+  // No timezone suffix → parsed as local time, matching msToLocalInput.
   const t = new Date(s).getTime();
   return Number.isNaN(t) ? null : t;
 }

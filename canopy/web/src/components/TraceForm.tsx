@@ -170,13 +170,19 @@ export function TraceForm({ mode, groupName, initialName, onClose, onDeleted }: 
     const submittedName = mode === 'edit' ? initialName! : name.trim();
     if (!submittedName) { setError('Name is required.'); return; }
     if (tags.length === 0) { setError('At least one tag is required.'); return; }
+    const seenTagNames = new Set<string>();
     for (const tag of tags) {
       if (!tag.name.trim()) { setError('All tags must have a name.'); return; }
       if (tag.name.includes('#')) { setError(`Tag name "${tag.name}" must not contain "#".`); return; }
+      if (seenTagNames.has(tag.name)) { setError(`Duplicate tag name "${tag.name}".`); return; }
+      seenTagNames.add(tag.name);
     }
     if (!traceIdTagName) { setError('Trace ID tag name is required.'); return; }
     if (!spanIdTagName) { setError('Span ID tag name is required.'); return; }
     if (!timestampTagName) { setError('Timestamp tag name is required.'); return; }
+    if (traceIdTagName === spanIdTagName) { setError('Trace ID and Span ID must reference different tags.'); return; }
+    if (traceIdTagName === timestampTagName) { setError('Trace ID and Timestamp must reference different tags.'); return; }
+    if (spanIdTagName === timestampTagName) { setError('Span ID and Timestamp must reference different tags.'); return; }
     setError('');
 
     const tracePayload = {

@@ -329,7 +329,7 @@ export function ResourceDetailPage({
               <IconPlay size={15} />
               Query
             </button>
-            <button className="btn btn-ghost" onClick={() => navigate(indexPath)}>
+            <button className="btn btn-ghost" onClick={() => navigate(`/metadata/${typeBase}s/${groupName}`)}>
               <IconArrowLeft size={14} />
               Back to group
             </button>

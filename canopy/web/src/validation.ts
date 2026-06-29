@@ -3,10 +3,9 @@
  * license agreements. See the NOTICE file distributed with
  * this work for additional information regarding copyright
  * ownership. Apache Software Foundation (ASF) licenses this file to you under
- * the Apache License, Version 2.0 (the "name License"); you may
+ * the Apache License, Version 2.0 (the "License"); you may
  * not use this file except in compliance with the License.
- * You may
- * obtain a copy of the License at
+ * You may obtain a copy of the License at
  *
  *     http://www.apache.org/licenses/LICENSE-2.0
  *
@@ -210,7 +209,7 @@ export function isGroupValid(e: GroupErrors): boolean {
 
 /** validateStream: name regex, tag families, no `#` in tag names, ≥1 entity tag, entity ⊆ defined tags. */
 export function validateStream(input: StreamInput): string | undefined {
-  const submitted = input.isEdit ? (input.name ?? '').trim() : (input.name ?? '').trim();
+  const submitted = (input.name ?? '').trim();
   if (!submitted) return 'Name is required.';
   if (!NAME_RE.test(submitted)) return 'Name may contain only letters, digits, "_" and "-".';
   if (input.families.length === 0) return 'At least one tag family is required.';

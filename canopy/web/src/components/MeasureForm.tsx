@@ -243,17 +243,24 @@ export function MeasureForm({ mode, groupName, initialName, onClose, onDeleted }
     const submittedName = mode === 'edit' ? initialName! : name.trim();
     if (!submittedName) { setError('Name is required.'); return; }
     if (families.length === 0) { setError('At least one tag family is required.'); return; }
+    const seenTagNames = new Set<string>();
     for (const fam of families) {
       if (!fam.name.trim()) { setError('Each tag family must have a name.'); return; }
       for (const tag of fam.tags) {
         if (!tag.name.trim()) { setError(`All tags in family "${fam.name}" must have names.`); return; }
         if (tag.name.includes('#')) { setError(`Tag name "${tag.name}" must not contain "#".`); return; }
+        if (seenTagNames.has(tag.name)) { setError(`Duplicate tag name "${tag.name}".`); return; }
+        seenTagNames.add(tag.name);
       }
     }
     for (const field of fields) {
       if (!field.name.trim()) { setError('All fields must have a name.'); return; }
     }
     if (entityTags.length === 0) { setError('Select at least one entity tag.'); return; }
+    for (const ent of entityTags) {
+      if (!seenTagNames.has(ent)) { setError(`Entity tag "${ent}" is not defined in any family.`); return; }
+    }
+    if (!indexMode && !interval.trim()) { setError('Interval is required (e.g. 1d, 1h).'); return; }
 
     const measurePayload = {
       metadata: { name: submittedName, group: groupName },

@@ -61,11 +61,6 @@ async function buildTestApp(configOverrides: Partial<Config> = {}): Promise<Fast
     ],
     devNoAuth: false,
     blockRfc1918: false,
-    // Tests don't spin up a real BanyanDB; skip the login-time probe so the
-    // tests can drive /api/* proxy behavior against http.upstream-a.test
-    // (which never resolves). The proxy itself still returns 502 on real
-    // upstream failures — that's covered by the upstream-error tests.
-    requireUpstreamOnLogin: false,
     ...configOverrides,
   };
 

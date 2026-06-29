@@ -19,7 +19,6 @@
 
 import React from 'react';
 import { render, screen, fireEvent, waitFor } from '@testing-library/react';
-import userEvent from '@testing-library/user-event';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 
 import { apiDataSource } from '../data/api.js';
@@ -43,6 +42,14 @@ function makeWrapper() {
   return Wrapper;
 }
 
+// Drive controlled inputs synchronously. `fireEvent.change` sets the whole value
+// in one committed React update, so the subsequent submit always validates against
+// the intended state — unlike async `userEvent.type`, whose per-keystroke timing
+// can race the synchronous submit under load and flake the suite.
+function setValue(el: Element | null, value: string) {
+  fireEvent.change(el as HTMLElement, { target: { value } });
+}
+
 const GROUP = 'test-group';
 
 describe('TraceForm — create mode validation', () => {
@@ -53,48 +60,43 @@ describe('TraceForm — create mode validation', () => {
   });
 
   it('requires all tag names to be non-empty', async () => {
-    const user = userEvent.setup();
     render(<TraceForm mode="create" groupName={GROUP} onClose={vi.fn()} />, { wrapper: makeWrapper() });
-    await user.type(screen.getAllByRole('textbox')[0], 'mytrace');
+    setValue(screen.getAllByRole('textbox')[0], 'mytrace');
     // default tag row has empty name — submit without filling it
     fireEvent.click(screen.getByRole('button', { name: /Create trace/i }));
     await waitFor(() => expect(screen.getByText('All tags must have a name.')).toBeInTheDocument());
   });
 
   it('rejects tag names containing "#"', async () => {
-    const user = userEvent.setup();
     render(<TraceForm mode="create" groupName={GROUP} onClose={vi.fn()} />, { wrapper: makeWrapper() });
-    await user.type(screen.getAllByRole('textbox')[0], 'mytrace');
-    await user.type(screen.getByPlaceholderText('tag_name'), 'bad#tag');
+    setValue(screen.getAllByRole('textbox')[0], 'mytrace');
+    setValue(screen.getByPlaceholderText('tag_name'), 'bad#tag');
     fireEvent.click(screen.getByRole('button', { name: /Create trace/i }));
     await waitFor(() => expect(screen.getByText('Tag name "bad#tag" must not contain "#".')).toBeInTheDocument());
   });
 
   it('requires trace ID tag to be selected', async () => {
-    const user = userEvent.setup();
     render(<TraceForm mode="create" groupName={GROUP} onClose={vi.fn()} />, { wrapper: makeWrapper() });
-    await user.type(screen.getAllByRole('textbox')[0], 'mytrace');
-    await user.type(screen.getByPlaceholderText('tag_name'), 't1');
+    setValue(screen.getAllByRole('textbox')[0], 'mytrace');
+    setValue(screen.getByPlaceholderText('tag_name'), 't1');
     // all role tag selects left at default "— select —"
     fireEvent.click(screen.getByRole('button', { name: /Create trace/i }));
     await waitFor(() => expect(screen.getByText('Trace ID tag name is required.')).toBeInTheDocument());
   });
 
   it('requires span ID tag to be selected', async () => {
-    const user = userEvent.setup();
     render(<TraceForm mode="create" groupName={GROUP} onClose={vi.fn()} />, { wrapper: makeWrapper() });
-    await user.type(screen.getAllByRole('textbox')[0], 'mytrace');
-    await user.type(screen.getByPlaceholderText('tag_name'), 't1');
+    setValue(screen.getAllByRole('textbox')[0], 'mytrace');
+    setValue(screen.getByPlaceholderText('tag_name'), 't1');
     fireEvent.change(screen.getByLabelText(/Trace ID tag/), { target: { value: 't1' } });
     fireEvent.click(screen.getByRole('button', { name: /Create trace/i }));
     await waitFor(() => expect(screen.getByText('Span ID tag name is required.')).toBeInTheDocument());
   });
 
   it('requires timestamp tag to be selected', async () => {
-    const user = userEvent.setup();
     render(<TraceForm mode="create" groupName={GROUP} onClose={vi.fn()} />, { wrapper: makeWrapper() });
-    await user.type(screen.getAllByRole('textbox')[0], 'mytrace');
-    await user.type(screen.getByPlaceholderText('tag_name'), 't1');
+    setValue(screen.getAllByRole('textbox')[0], 'mytrace');
+    setValue(screen.getByPlaceholderText('tag_name'), 't1');
     fireEvent.change(screen.getByLabelText(/Trace ID tag/), { target: { value: 't1' } });
     fireEvent.change(screen.getByLabelText(/Span ID tag/), { target: { value: 't1' } });
     fireEvent.click(screen.getByRole('button', { name: /Create trace/i }));

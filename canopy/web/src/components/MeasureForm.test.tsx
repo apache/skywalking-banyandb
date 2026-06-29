@@ -19,7 +19,6 @@
 
 import React from 'react';
 import { render, screen, fireEvent, waitFor } from '@testing-library/react';
-import userEvent from '@testing-library/user-event';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 
 import { apiDataSource } from '../data/api.js';
@@ -43,6 +42,14 @@ function makeWrapper() {
   return Wrapper;
 }
 
+// Drive controlled inputs synchronously. `fireEvent.change` sets the whole value
+// in one committed React update, so the subsequent submit always validates against
+// the intended state — unlike async `userEvent.type`, whose per-keystroke timing
+// can race the synchronous submit under load and flake the suite.
+function setValue(el: Element | null, value: string) {
+  fireEvent.change(el as HTMLElement, { target: { value } });
+}
+
 function submitForm(container: HTMLElement) {
   fireEvent.submit(container.querySelector('#measure-form') as HTMLFormElement);
 }
@@ -57,57 +64,51 @@ describe('MeasureForm — create mode validation', () => {
   });
 
   it('requires each tag family to have a name', async () => {
-    const user = userEvent.setup();
     const { container } = render(<MeasureForm mode="create" groupName={GROUP} onClose={vi.fn()} />, { wrapper: makeWrapper() });
-    await user.type(screen.getByPlaceholderText('service_cpm_minute'), 'mymeasure');
-    await user.clear(screen.getByPlaceholderText('Family name'));
+    setValue(screen.getByPlaceholderText('service_cpm_minute'), 'mymeasure');
+    setValue(screen.getByPlaceholderText('Family name'), '');
     submitForm(container);
     await waitFor(() => expect(screen.getByText('Each tag family must have a name.')).toBeInTheDocument());
   });
 
   it('requires all tag names to be non-empty', async () => {
-    const user = userEvent.setup();
     const { container } = render(<MeasureForm mode="create" groupName={GROUP} onClose={vi.fn()} />, { wrapper: makeWrapper() });
-    await user.type(screen.getByPlaceholderText('service_cpm_minute'), 'mymeasure');
+    setValue(screen.getByPlaceholderText('service_cpm_minute'), 'mymeasure');
     // default family='default', tag name is empty — submit without filling it
     submitForm(container);
     await waitFor(() => expect(screen.getByText('All tags in family "default" must have names.')).toBeInTheDocument());
   });
 
   it('rejects tag names containing "#"', async () => {
-    const user = userEvent.setup();
     const { container } = render(<MeasureForm mode="create" groupName={GROUP} onClose={vi.fn()} />, { wrapper: makeWrapper() });
-    await user.type(screen.getByPlaceholderText('service_cpm_minute'), 'mymeasure');
-    await user.type(screen.getByPlaceholderText('tag_name'), 'bad#tag');
+    setValue(screen.getByPlaceholderText('service_cpm_minute'), 'mymeasure');
+    setValue(screen.getByPlaceholderText('tag_name'), 'bad#tag');
     submitForm(container);
     await waitFor(() => expect(screen.getByText('Tag name "bad#tag" must not contain "#".')).toBeInTheDocument());
   });
 
   it('requires all field names to be non-empty when fields are present', async () => {
-    const user = userEvent.setup();
     const { container } = render(<MeasureForm mode="create" groupName={GROUP} onClose={vi.fn()} />, { wrapper: makeWrapper() });
-    await user.type(screen.getByPlaceholderText('service_cpm_minute'), 'mymeasure');
-    await user.type(screen.getByPlaceholderText('tag_name'), 'mytag');
-    await user.click(screen.getByRole('button', { name: /Add field/ }));
+    setValue(screen.getByPlaceholderText('service_cpm_minute'), 'mymeasure');
+    setValue(screen.getByPlaceholderText('tag_name'), 'mytag');
+    fireEvent.click(screen.getByRole('button', { name: /Add field/ }));
     // field name input is empty — submit without filling it
     submitForm(container);
     await waitFor(() => expect(screen.getByText('All fields must have a name.')).toBeInTheDocument());
   });
 
   it('requires at least one entity tag', async () => {
-    const user = userEvent.setup();
     const { container } = render(<MeasureForm mode="create" groupName={GROUP} onClose={vi.fn()} />, { wrapper: makeWrapper() });
-    await user.type(screen.getByPlaceholderText('service_cpm_minute'), 'mymeasure');
-    await user.type(screen.getByPlaceholderText('tag_name'), 'mytag');
+    setValue(screen.getByPlaceholderText('service_cpm_minute'), 'mymeasure');
+    setValue(screen.getByPlaceholderText('tag_name'), 'mytag');
     // valid name + valid tag, no fields, but no entity tag selected
     submitForm(container);
     await waitFor(() => expect(screen.getByText('Select at least one entity tag.')).toBeInTheDocument());
   });
 
-  it('does not offer COMPRESSION_METHOD_UNSPECIFIED for new fields', async () => {
-    const user = userEvent.setup();
+  it('does not offer COMPRESSION_METHOD_UNSPECIFIED for new fields', () => {
     const { container } = render(<MeasureForm mode="create" groupName={GROUP} onClose={vi.fn()} />, { wrapper: makeWrapper() });
-    await user.click(screen.getByRole('button', { name: /Add field/ }));
+    fireEvent.click(screen.getByRole('button', { name: /Add field/ }));
     expect(container.querySelector('option[value="COMPRESSION_METHOD_UNSPECIFIED"]')).toBeNull();
   });
 });
