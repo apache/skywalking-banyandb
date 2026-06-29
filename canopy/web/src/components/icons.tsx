@@ -150,3 +150,124 @@ export function IconViewer({ size = 15 }: IconProps) {
     </Ic>
   );
 }
+
+export function IconGroup({ size = 18 }: IconProps) {
+  return (
+    <Ic size={size}>
+      <rect x="3" y="3" width="7" height="7" rx="1" />
+      <rect x="14" y="3" width="7" height="7" rx="1" />
+      <rect x="3" y="14" width="7" height="7" rx="1" />
+      <rect x="14" y="14" width="7" height="7" rx="1" />
+    </Ic>
+  );
+}
+
+export function IconPlus({ size = 18 }: IconProps) {
+  return (
+    <Ic size={size}>
+      <path d="M12 5v14M5 12h14" />
+    </Ic>
+  );
+}
+
+export function IconEdit({ size = 18 }: IconProps) {
+  return (
+    <Ic size={size}>
+      <path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7" />
+      <path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5Z" />
+    </Ic>
+  );
+}
+
+export function IconTrash({ size = 18 }: IconProps) {
+  return (
+    <Ic size={size}>
+      <path d="M3 6h18M8 6V4h8v2M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6" />
+    </Ic>
+  );
+}
+
+export function IconSearch({ size = 18 }: IconProps) {
+  return (
+    <Ic size={size}>
+      <circle cx="11" cy="11" r="7" />
+      <path d="m21 21-4.35-4.35" />
+    </Ic>
+  );
+}
+
+export function IconPlay({ size = 18 }: IconProps) {
+  return (
+    <Ic size={size}>
+      <polygon points="5 3 19 12 5 21 5 3" />
+    </Ic>
+  );
+}
+
+export function IconArrowRight({ size = 18 }: IconProps) {
+  return (
+    <Ic size={size}>
+      <path d="M5 12h14M12 5l7 7-7 7" />
+    </Ic>
+  );
+}
+
+export function IconArrowLeft({ size = 18 }: IconProps) {
+  return (
+    <Ic size={size}>
+      <path d="M19 12H5M12 19l-7-7 7-7" />
+    </Ic>
+  );
+}
+
+export function IconKey({ size = 18 }: IconProps) {
+  return (
+    <Ic size={size}>
+      <circle cx="7.5" cy="15.5" r="5.5" />
+      <path d="m21 2-9.6 9.6M15.5 7.5l3 3L22 7l-3-3" />
+    </Ic>
+  );
+}
+
+export function IconIndex({ size = 18 }: IconProps) {
+  return (
+    <Ic size={size}>
+      <path d="M4 7h16M4 12h10M4 17h6" />
+    </Ic>
+  );
+}
+
+export function IconLink({ size = 18 }: IconProps) {
+  return (
+    <Ic size={size}>
+      <path d="M10 13a5 5 0 0 0 7 0l3-3a5 5 0 0 0-7-7l-1 1" />
+      <path d="M14 11a5 5 0 0 0-7 0l-3 3a5 5 0 0 0 7 7l1-1" />
+    </Ic>
+  );
+}
+
+export function IconCheck({ size = 18 }: IconProps) {
+  return (
+    <Ic size={size}>
+      <path d="m5 12 5 5L20 7" />
+    </Ic>
+  );
+}
+
+export function IconAlert({ size = 18 }: IconProps) {
+  return (
+    <Ic size={size}>
+      <path d="M10.29 3.86 1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0Z" />
+      <path d="M12 9v4M12 17h.01" />
+    </Ic>
+  );
+}
+
+export function IconEmpty({ size = 18 }: IconProps) {
+  return (
+    <Ic size={size}>
+      <circle cx="12" cy="12" r="9" />
+      <path d="M9 9h.01M15 9h.01M9 15a3 3 0 0 0 6 0" />
+    </Ic>
+  );
+}

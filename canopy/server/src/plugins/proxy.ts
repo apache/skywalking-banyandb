@@ -31,8 +31,10 @@ function buildUpstreamAuth(config: Config): string | undefined {
   return undefined;
 }
 
-function getSessionEndpoint(request: FastifyRequest, config: Config): string {
-  return request.session?.endpoint || config.banyandbTarget;
+function getSessionEndpoint(_request: FastifyRequest, config: Config): string {
+  // The BanyanDB upstream is a single BFF-wide setting (config.banyandbTarget).
+  // Per-session endpoint overrides are intentionally not supported.
+  return config.banyandbTarget;
 }
 
 async function forwardRequest(
@@ -58,10 +60,16 @@ async function forwardRequest(
 
   const headers: Record<string, string> = {};
 
-  // Forward relevant headers from client; skip hop-by-hop and let undici manage content-length
+  // Forward relevant headers from client; skip hop-by-hop and let undici manage
+  // content-length. Also drop `cookie` (the BFF session cookie must never leak to
+  // the upstream cluster) and `authorization` (the upstream credential is attached
+  // below from config, never proxied from the browser).
   for (const [k, v] of Object.entries(request.headers)) {
     const lower = k.toLowerCase();
-    if (lower === 'host' || lower === 'connection' || lower === 'transfer-encoding' || lower === 'content-length') continue;
+    if (
+      lower === 'host' || lower === 'connection' || lower === 'transfer-encoding' ||
+      lower === 'content-length' || lower === 'cookie' || lower === 'authorization'
+    ) continue;
     if (typeof v === 'string') headers[k] = v;
   }
 
@@ -140,7 +148,14 @@ async function forwardRequest(
     if (v !== undefined) forwardHeaders[k] = v as string | string[];
   }
   reply.raw.writeHead(upstreamRes.statusCode, forwardHeaders);
-  await upstreamRes.body.pipe(reply.raw);
+  // Tear down the client socket if the upstream stream errors after headers are
+  // sent (e.g. upstream connection drops mid-body). Without this listener the
+  // 'error' event is unhandled and crashes the process. `pipe` returns the
+  // destination (not a Promise), so awaiting it is meaningless — don't.
+  upstreamRes.body.on('error', () => {
+    if (!reply.raw.destroyed) reply.raw.destroy();
+  });
+  upstreamRes.body.pipe(reply.raw);
 }
 
 export async function registerProxy(app: FastifyInstance, config: Config): Promise<void> {
@@ -150,15 +165,14 @@ export async function registerProxy(app: FastifyInstance, config: Config): Promi
   async function requireAuth(request: FastifyRequest, reply: FastifyReply) {
     if (!request.session?.user) {
       await reply.status(401).send({ error: 'unauthenticated', message: 'Login required' });
-      return reply;
     }
   }
 
-  // /api/* — proxied VERBATIM to session.endpoint (no prefix add/strip)
+  // /api/* — proxied VERBATIM to config.banyandbTarget (no prefix add/strip)
   app.all('/api/*', { preHandler: [requireAuth, enforceRole] }, async (request, reply) => {
-    const sessionEndpoint = getSessionEndpoint(request, config);
+    const upstreamBase = getSessionEndpoint(request, config);
     const upstreamPath = request.url; // VERBATIM — includes /api/v1/... prefix
-    await forwardRequest(sessionEndpoint, upstreamPath, request, reply, config, upstreamAuth);
+    await forwardRequest(upstreamBase, upstreamPath, request, reply, config, upstreamAuth);
   });
 
   // /monitoring/* — forwarded to MONITOR_TARGET with /monitoring prefix STRIPPED

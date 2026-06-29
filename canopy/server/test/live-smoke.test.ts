@@ -56,7 +56,6 @@ describe.skipIf(!isLive)('Live smoke tests (requires BANYANDB_TARGET)', () => {
       payload: {
         username: 'admin',
         password: 'admin',
-        endpoint: process.env.BANYANDB_TARGET,
       },
     });
     expect(loginRes.statusCode).toBe(200);
@@ -76,7 +75,7 @@ describe.skipIf(!isLive)('Live smoke tests (requires BANYANDB_TARGET)', () => {
     const loginRes = await app.inject({
       method: 'POST',
       url: '/auth/login',
-      payload: { username: 'admin', password: 'admin', endpoint: process.env.BANYANDB_TARGET },
+      payload: { username: 'admin', password: 'admin' },
     });
     expect(loginRes.statusCode).toBe(200);
   });

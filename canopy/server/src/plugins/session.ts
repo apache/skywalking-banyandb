@@ -25,7 +25,6 @@ declare module '@fastify/secure-session' {
   interface SessionData {
     user: string;
     role: 'admin' | 'readonly';
-    endpoint: string;
     banyanVersion: string | null;
   }
 }
