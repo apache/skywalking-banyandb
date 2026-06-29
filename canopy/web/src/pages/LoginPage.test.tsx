@@ -50,11 +50,12 @@ describe('LoginPage', () => {
     }) as typeof fetch;
   });
 
-  it('renders endpoint, username, and password fields', () => {
+  it('renders username, password, and role fields', () => {
     renderLogin();
-    expect(screen.getByLabelText(/Endpoint/i)).toBeInTheDocument();
     expect(screen.getByLabelText(/Username/i)).toBeInTheDocument();
     expect(screen.getByLabelText(/Password/i)).toBeInTheDocument();
+    // Endpoint is no longer a per-session input — the BFF owns the BanyanDB target.
+    expect(screen.queryByLabelText(/Endpoint/i)).not.toBeInTheDocument();
   });
 
   it('renders the Connect button', () => {
@@ -70,11 +71,11 @@ describe('LoginPage', () => {
 
   it('shows validation errors when submitting empty form', async () => {
     renderLogin();
-    const endpointInput = screen.getByLabelText(/Endpoint/i);
-    fireEvent.change(endpointInput, { target: { value: '' } });
+    const usernameInput = screen.getByLabelText(/Username/i);
+    fireEvent.change(usernameInput, { target: { value: '' } });
     fireEvent.click(screen.getByRole('button', { name: /Connect/i }));
     await waitFor(() => {
-      expect(screen.getByText(/Endpoint is required/i)).toBeInTheDocument();
+      expect(screen.getByText(/Username is required/i)).toBeInTheDocument();
     });
   });
 
@@ -85,7 +86,7 @@ describe('LoginPage', () => {
         return Promise.resolve(new Response(JSON.stringify({ error: 'unauthenticated' }), { status: 401 }));
       }
       if (urlStr.includes('/auth/login')) {
-        return Promise.resolve(new Response(JSON.stringify({ user: 'admin', role: 'admin', endpoint: 'http://localhost:17913' }), { status: 200 }));
+        return Promise.resolve(new Response(JSON.stringify({ user: 'admin', role: 'admin', banyanVersion: '0.10' }), { status: 200 }));
       }
       return Promise.resolve(new Response('{}', { status: 200 }));
     });
@@ -94,8 +95,9 @@ describe('LoginPage', () => {
     const user = userEvent.setup();
     renderLogin();
 
+    const usernameInput = screen.getByLabelText(/Username/i);
     const passwordInput = screen.getByLabelText(/Password/i);
-    await user.clear(passwordInput);
+    await user.type(usernameInput, 'admin');
     await user.type(passwordInput, 'admin');
 
     await user.click(screen.getByRole('button', { name: /Connect/i }));
@@ -124,6 +126,7 @@ describe('LoginPage', () => {
     const user = userEvent.setup();
     renderLogin();
 
+    await user.type(screen.getByLabelText(/Username/i), 'admin');
     await user.type(screen.getByLabelText(/Password/i), 'wrongpass');
     await user.click(screen.getByRole('button', { name: /Connect/i }));
 

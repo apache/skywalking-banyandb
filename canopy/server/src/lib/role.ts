@@ -31,6 +31,5 @@ export async function enforceRole(request: FastifyRequest, reply: FastifyReply):
       error: 'forbidden',
       message: 'Your account has read-only access. This operation requires an admin role.',
     });
-    return reply as unknown as void;
   }
 }

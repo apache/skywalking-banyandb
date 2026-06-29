@@ -22,38 +22,10 @@ import type { FastifyInstance, FastifyRequest, FastifyReply } from 'fastify';
 import { request as undiciRequest } from 'undici';
 
 import type { Config } from '../config.js';
-import { checkEndpointSafe, SsrfError } from '../lib/ssrf.js';
 
 interface LoginBody {
   username: string;
   password: string;
-  endpoint: string;
-}
-
-function normalizeEndpoint(raw: string): string {
-  // Accept bare host:port — normalize to http:// first so URL can parse it.
-  // Leave any other scheme unchanged so isValidHttpUrl rejects it.
-  const withScheme = /^https?:\/\//i.test(raw) ? raw
-    : /^[a-z][a-z0-9+\-.]*:\/\//i.test(raw) ? raw
-    : `http://${raw}`;
-  try {
-    // Canonicalize to origin — strips path, query, fragment, and userinfo.
-    return new URL(withScheme).origin;
-  } catch {
-    return withScheme;
-  }
-}
-
-function isValidHttpUrl(s: string): boolean {
-  try {
-    const u = new URL(s);
-    if (u.protocol !== 'http:' && u.protocol !== 'https:') return false;
-    // Reject embedded credentials (e.g. http://user:pass@host)
-    if (u.username !== '' || u.password !== '') return false;
-    return true;
-  } catch {
-    return false;
-  }
 }
 
 async function fetchBanyanVersion(target: string): Promise<string | null> {
@@ -75,23 +47,35 @@ async function fetchBanyanVersion(target: string): Promise<string | null> {
 }
 
 export async function registerAuth(app: FastifyInstance, config: Config): Promise<void> {
-  // Unauthenticated — exposes BanyanDB version for the login page before credentials are known.
-  // Registered before the authenticated /api/* proxy so Fastify matches this route first.
+  // Unauthenticated — exposes the BFF's configured BanyanDB target, its
+  // version, and reachability so the login page and the Sidebar can render
+  // operator-relevant context before credentials are known. Registered
+  // before the authenticated /api/* proxy so Fastify matches this route first.
   app.get('/api/meta', async (_request: FastifyRequest, reply: FastifyReply) => {
-    const banyanVersion = await fetchBanyanVersion(config.banyandbTarget);
-    return reply.send({ banyanVersion });
+    // fetchBanyanVersion returns null on any failure (timeout, non-200, bad
+    // body). Distinguish "we got an answer, the version was empty" from "we
+    // couldn't reach the server" by probing a lightweight endpoint.
+    let reachable = false;
+    try {
+      const res = await undiciRequest(`${config.banyandbTarget}/api/v1/common/api/version`, {
+        method: 'GET',
+        headersTimeout: 3000,
+        bodyTimeout: 3000,
+      });
+      reachable = res.statusCode > 0 && res.statusCode < 500;
+      await res.body.dump();
+    } catch {
+      reachable = false;
+    }
+    const banyanVersion = reachable ? await fetchBanyanVersion(config.banyandbTarget) : null;
+    return reply.send({ banyanVersion, reachable, banyandbTarget: config.banyandbTarget });
   });
 
   app.post<{ Body: LoginBody }>('/auth/login', async (request: FastifyRequest, reply: FastifyReply) => {
-    const { username, password, endpoint } = request.body as LoginBody;
+    const { username, password } = request.body as LoginBody;
 
-    if (!username || !password || !endpoint) {
-      return reply.status(400).send({ error: 'bad_request', message: 'username, password, and endpoint are required' });
-    }
-
-    const normalizedEndpoint = normalizeEndpoint(endpoint);
-    if (!isValidHttpUrl(normalizedEndpoint)) {
-      return reply.status(400).send({ error: 'bad_endpoint', message: 'Endpoint must be a valid http(s) URL or host:port' });
+    if (!username || !password) {
+      return reply.status(400).send({ error: 'bad_request', message: 'username and password are required' });
     }
 
     // Find user (constant-time compare to prevent timing attacks)
@@ -110,24 +94,17 @@ export async function registerAuth(app: FastifyInstance, config: Config): Promis
       return reply.status(401).send({ error: 'invalid_credentials', message: 'Invalid username or password' });
     }
 
-    // SSRF check before contacting the user-supplied endpoint
-    try {
-      await checkEndpointSafe(normalizedEndpoint, false);
-    } catch (err) {
-      if (err instanceof SsrfError) {
-        return reply.status(400).send({ error: 'bad_endpoint', message: err.message });
-      }
-      throw err;
-    }
-
-    const banyanVersion = await fetchBanyanVersion(normalizedEndpoint);
+    // Cache the BanyanDB version on the session so the brand badge can
+    // render instantly without re-probing on every page load. Upstream
+    // reachability is NOT a login barrier — a stale BANYANDB_TARGET will
+    // surface as a 502 on the first /api/* call, not as a login failure.
+    const banyanVersion = await fetchBanyanVersion(config.banyandbTarget);
 
     request.session.user = user.username;
     request.session.role = user.role;
-    request.session.endpoint = normalizedEndpoint;
     request.session.banyanVersion = banyanVersion;
 
-    return reply.send({ user: user.username, role: user.role, endpoint: normalizedEndpoint, banyanVersion });
+    return reply.send({ user: user.username, role: user.role, banyanVersion });
   });
 
   app.post('/auth/logout', async (request: FastifyRequest, reply: FastifyReply) => {
@@ -140,6 +117,6 @@ export async function registerAuth(app: FastifyInstance, config: Config): Promis
     if (!session?.user) {
       return reply.status(401).send({ error: 'unauthenticated' });
     }
-    return reply.send({ user: session.user, role: session.role, endpoint: session.endpoint, banyanVersion: session.banyanVersion ?? null });
+    return reply.send({ user: session.user, role: session.role, banyanVersion: session.banyanVersion ?? null });
   });
 }

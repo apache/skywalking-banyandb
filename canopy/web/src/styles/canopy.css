@@ -150,6 +150,10 @@
 
   .nav-row.lvl-1 { font-size: 13px; height: calc(var(--row-h) - 3px); }
   .nav-row.lvl-2 { font-size: 12.5px; height: calc(var(--row-h) - 5px); font-weight: 450; }
+  .nav-row.lvl-3 { font-size: 11.5px; height: calc(var(--row-h) - 7px); color: var(--text-faint); font-weight: 400; }
+  .nav-row.lvl-3 .nav-ico { width: 14px; }
+  .nav-row.lvl-3:hover { color: var(--text); background: rgba(255,255,255,.025); }
+  .nav-row.lvl-3.is-active { color: var(--text); }
   .nav-row.is-leaf .nav-label { font-family: var(--mono); letter-spacing: -.2px; }
 
   .nav-row.has-active { color: var(--text); }
@@ -259,6 +263,18 @@
   .conn-text { display: flex; flex-direction: column; min-width: 0; overflow: hidden; }
   .conn-state { font-size: 11.5px; font-weight: 600; color: var(--text-dim); line-height: 1.3; }
   .conn-host { font-family: var(--mono); font-size: 10.5px; color: var(--text-faint); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; direction: rtl; text-align: left; }
+  /* BanyanDB unreachable — mirror the login page's lf-warn palette so the
+     operator gets a consistent signal in both places. */
+  .conn.is-unreachable {
+    background: rgba(207, 107, 82, 0.10);
+    border: 1px solid rgba(207, 107, 82, 0.35);
+  }
+  .conn.is-unreachable .conn-dot {
+    background: var(--danger);
+    box-shadow: 0 0 0 3px rgba(207, 107, 82, 0.18);
+  }
+  .conn.is-unreachable .conn-state { color: var(--danger); }
+  .conn.is-unreachable .conn-host { color: rgba(207, 107, 82, 0.78); }
   .is-collapsed .conn-text { display: none; }
   .is-collapsed .conn { flex: 0; padding: 6px; justify-content: center; }
   .collapse-btn {
@@ -432,6 +448,8 @@
     padding: 3px 8px; border-radius: 6px; margin-left: 12px; vertical-align: middle;
     position: relative; top: -3px;
   }
+  .page-meta-em { color: var(--text); font-weight: 500; }
+  .page-meta-em.is-warn { color: var(--warn); }
 
   /* resource-type overview: group cards */
   .grp-cards { display: grid; grid-template-columns: repeat(auto-fit, minmax(360px, 1fr)); gap: 12px; }
@@ -1175,9 +1193,24 @@
   }
   .modal-title { font-size: 19px; font-weight: 600; letter-spacing: -.3px; margin: 0; }
   .modal-sub { margin: 7px 0 0; font-size: 13px; color: var(--text-dim); line-height: 1.5; }
-  .modal-x { width: 30px; height: 30px; flex-shrink: 0; border-radius: 7px; border: 1px solid var(--border);
-    background: transparent; color: var(--text-dim); font-size: 13px; transition: all .14s; }
-  .modal-x:hover { background: rgba(255,255,255,.05); color: var(--text); }
+  .modal-x {
+    position: relative; width: 30px; height: 30px; flex-shrink: 0;
+    border-radius: 7px; border: 1px solid var(--border);
+    background: transparent; color: var(--text-dim); font-size: 0;
+    transition: all .14s; cursor: pointer;
+  }
+  /* × glyph drawn from two crossed pseudo-elements so we don't have to
+     change the JSX in 16+ modal sites. The 1px diagonal lines sit on top
+     of the empty 30×30 box. */
+  .modal-x::before, .modal-x::after {
+    content: ''; position: absolute; left: 50%; top: 50%;
+    width: 13px; height: 1.5px; border-radius: 1px;
+    background: currentColor; transform-origin: center;
+  }
+  .modal-x::before { transform: translate(-50%, -50%) rotate(45deg); }
+  .modal-x::after  { transform: translate(-50%, -50%) rotate(-45deg); }
+  .modal-x:hover { background: rgba(255,255,255,.05); color: var(--text); border-color: var(--border-strong); }
+  .modal-x:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
   .modal-body { padding: 20px 24px; overflow-y: auto; }
   .modal-foot { display: flex; justify-content: flex-end; gap: 10px;
     padding: 16px 24px; border-top: 1px solid var(--border); flex-shrink: 0; }
@@ -1354,6 +1387,8 @@
     .field-row { grid-template-columns: 1fr 1fr 32px; }
   }
   .spec-cell { min-width: 0; }
+  .spec-cell.grow { min-width: 0; }
+  .spec-cell.type .f-select { width: 100%; }
   .spec-cell .f-input { height: 36px; }
   .spec-del {
     width: 32px; height: 36px; display: grid; place-items: center; align-self: start;
@@ -1398,6 +1433,83 @@
   .picker-ord {
     display: grid; place-items: center; width: 16px; height: 16px; border-radius: 5px;
     background: var(--accent); color: #fff; font-size: 10px; font-weight: 700;
+  }
+
+  /* ============ COMBOBOX (fuzzy-search select) ============ */
+  .f-combo { position: relative; }
+  .f-combo-inputwrap { position: relative; }
+  .f-combo-input {
+    width: 100%; padding-right: 28px;
+    font-family: var(--mono);
+  }
+  .f-combo-chev {
+    position: absolute; right: 9px; top: 50%; transform: translateY(-50%);
+    color: var(--text-faint); pointer-events: none;
+  }
+  .f-combo-chips {
+    display: flex; flex-wrap: wrap; gap: 7px;
+    margin-bottom: 8px;
+  }
+  .f-combo-chip { /* alias of .picker-chip.is-on; explicit class for clarity */
+  }
+  .f-combo-pop {
+    position: fixed;
+    background: var(--panel-2);
+    border: 1px solid var(--border-strong);
+    border-radius: 8px;
+    box-shadow: 0 10px 28px rgba(0,0,0,.45);
+    max-height: 280px; overflow-y: auto;
+    z-index: 1000;
+  }
+  .f-combo-list { list-style: none; margin: 0; padding: 4px; }
+  .f-combo-option {
+    padding: 7px 10px;
+    border-radius: 6px;
+    cursor: pointer;
+    font-size: 13px;
+    color: var(--text);
+    display: flex; align-items: center; gap: 4px;
+    font-family: var(--mono);
+  }
+  .f-combo-option:hover { background: var(--bg-app); }
+  .f-combo-option.is-highlight {
+    background: var(--accent-soft);
+    color: var(--accent);
+  }
+  .f-combo-option.is-selected { font-weight: 600; }
+  .f-combo-empty {
+    padding: 14px 12px;
+    color: var(--text-faint);
+    font-style: italic;
+    font-size: 12.5px;
+    text-align: center;
+  }
+  .f-combo-hl {
+    background: transparent;
+    color: var(--accent);
+    font-weight: 700;
+    padding: 0;
+  }
+
+  /* Read-only "Never expires" indicator rendered in place of the Expire-at
+     input. Sized to match .f-input but visually distinct so the user can tell
+     at a glance that no date applies here. */
+  .f-never-expires {
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+    height: 36px;
+    padding: 0 12px;
+    color: var(--accent);
+    font-family: var(--mono);
+    font-size: 12.5px;
+    cursor: default;
+    user-select: none;
+  }
+  .f-never-expires .never-icon {
+    font-size: 16px;
+    font-weight: 700;
+    line-height: 1;
   }
 
   /* ============ RESOURCE DETAIL ============ */
@@ -2303,6 +2415,36 @@
   .lf-live::before {
     content: ""; width: 6px; height: 6px; border-radius: 50%;
     background: var(--accent-2, #4fbd72); box-shadow: 0 0 7px var(--accent-glow);
+  }
+  /* Eye-catching unreachable indicator — pulls from the danger palette so it
+     contrasts with the otherwise muted footer text and isn't missed. */
+  .lf-warn {
+    display: inline-flex; align-items: center; gap: 6px;
+    padding: 3px 8px; border-radius: 6px;
+    color: var(--danger);
+    background: rgba(207, 107, 82, 0.12);
+    border: 1px solid rgba(207, 107, 82, 0.42);
+    box-shadow: 0 0 0 1px rgba(207, 107, 82, 0.06), 0 0 12px rgba(207, 107, 82, 0.18);
+    animation: lf-warn-pulse 1.8s ease-in-out infinite;
+    font-weight: 600;
+  }
+  .lf-warn-ico { flex: none; }
+  .lf-warn-label { letter-spacing: 0.02em; }
+  .lf-warn-hint {
+    margin: 12px 0 0; padding: 8px 10px;
+    font-size: 11.5px; line-height: 1.45;
+    color: var(--danger); background: rgba(207, 107, 82, 0.08);
+    border-left: 2px solid var(--danger); border-radius: 0 4px 4px 0;
+    font-family: var(--mono);
+  }
+  .lf-warn-hint code {
+    color: var(--danger); background: rgba(207, 107, 82, 0.14);
+    border: 1px solid rgba(207, 107, 82, 0.32); border-radius: 4px;
+    padding: 0 5px; font-size: 11px;
+  }
+  @keyframes lf-warn-pulse {
+    0%, 100% { box-shadow: 0 0 0 1px rgba(207, 107, 82, 0.06), 0 0 12px rgba(207, 107, 82, 0.18); }
+    50%      { box-shadow: 0 0 0 1px rgba(207, 107, 82, 0.18), 0 0 18px rgba(207, 107, 82, 0.34); }
   }
 
   @media (max-width: 720px) {

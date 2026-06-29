@@ -38,3 +38,42 @@ jobs:
       # Run them via their own make targets (e.g. make load-test-barrier).
       pkg: ./api/... ./banyand/... ./bydbctl/... ./fodc/... ./mcp/... ./pkg/... ./scripts/... ./test/cases/... ./test/integration/... ./test/property_repair/...
       timeout-minutes: 50
+
+  # Canopy unit suites run here too. vitest has no native repeat flag, so each
+  # suite is looped to surface timing-sensitive flakiness (e.g. the web form
+  # tests) that a single CI pass would miss. Fails on the first failing run.
+  canopy:
+    if: github.repository == 'apache/skywalking-banyandb'
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    defaults:
+      run:
+        working-directory: canopy
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '24.6.0'
+          cache: 'npm'
+          cache-dependency-path: canopy/package-lock.json
+
+      - name: Install dependencies
+        run: npm install
+
+      - name: Web unit tests (repeated)
+        run: |
+          for i in $(seq 1 50); do
+            echo "::group::web run $i/50"
+            npm run -w web test || { echo "::error::canopy web tests failed on run $i"; exit 1; }
+            echo "::endgroup::"
+          done
+
+      - name: Server unit tests (repeated)
+        run: |
+          for i in $(seq 1 20); do
+            echo "::group::server run $i/20"
+            npm run -w server test || { echo "::error::canopy server tests failed on run $i"; exit 1; }
+            echo "::endgroup::"
+          done

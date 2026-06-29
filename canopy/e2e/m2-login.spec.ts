@@ -37,8 +37,8 @@ test('M2: login page renders design elements', async ({ page }) => {
   await expect(page.locator('.lf-wordmark')).toContainText('Canopy');
   await expect(page.locator('.lf-eyebrow')).toContainText('BanyanDB Console');
 
-  // Form fields
-  await expect(page.getByLabel(/Endpoint/i)).toBeVisible();
+  // Form fields — Endpoint was removed when BanyanDB target became a BFF-only
+  // setting; the login form is now role + username + password only.
   await expect(page.getByLabel(/Username/i)).toBeVisible();
   await expect(page.getByLabel(/Password/i)).toBeVisible();
 
@@ -56,6 +56,7 @@ test('M2: bad credentials show error banner', async ({ page }) => {
   await page.goto('/');
   await expect(page.locator('.lf-card')).toBeVisible();
 
+  await page.getByLabel(/Username/i).fill('admin');
   await page.getByLabel(/Password/i).fill('wrongpassword');
   await page.getByRole('button', { name: /Connect/i }).click();
 
