@@ -287,7 +287,7 @@ export function GroupPage({
         <div className="empty">
           <span className="empty-ico"><IconSearch size={36} /></span>
           <p className="empty-title">No matches</p>
-          <p className="empty-text">No {catalogEntry.singular} in {groupName} matches "{search}".</p>
+          <p className="empty-text">No {catalogEntry.singular} in {groupName} matches &ldquo;{search}&rdquo;.</p>
         </div>
       ) : (
         <>

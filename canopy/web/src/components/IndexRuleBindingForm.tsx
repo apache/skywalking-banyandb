@@ -292,7 +292,7 @@ export function IndexRuleBindingForm({
           <section className="f-section">
             <div className="f-section-title">Subject <span className="f-req">*</span></div>
             <p className="f-section-desc">
-              The resource whose data these rules index. Catalog is fixed to the current page's catalog.
+              The resource whose data these rules index. Catalog is fixed to the current page&rsquo;s catalog.
             </p>
             {presetRuleName && (
               <div className="idx-inline-warn">
@@ -302,7 +302,7 @@ export function IndexRuleBindingForm({
               </div>
             )}
             <div className="f-grid">
-              <Field label="Catalog" locked hint="Bound to the current page's catalog">
+              <Field label="Catalog" locked hint="Bound to the current page&rsquo;s catalog">
                 <input className="f-input mono" type="text" value={lockedCatalog || '—'} disabled />
               </Field>
               <Field label="Resource name" required

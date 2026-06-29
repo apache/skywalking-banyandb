@@ -39,9 +39,11 @@ vi.mock('../data/api.js', () => ({
 
 function makeWrapper() {
   const qc = new QueryClient({ defaultOptions: { queries: { retry: false }, mutations: { retry: false } } });
-  return ({ children }: { children: React.ReactNode }) => (
-    <QueryClientProvider client={qc}>{children}</QueryClientProvider>
-  );
+  function Wrapper({ children }: { children: React.ReactNode }) {
+    return <QueryClientProvider client={qc}>{children}</QueryClientProvider>;
+  }
+  Wrapper.displayName = 'TestWrapper';
+  return Wrapper;
 }
 
 const BEGIN_MS = Date.parse('2026-01-01T00:00:00Z');

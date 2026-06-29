@@ -176,7 +176,11 @@ function useDismiss(open: boolean, onClose: () => void, wrapRef: React.RefObject
 export function Combobox({
   value, options, onChange, placeholder, disabled, noOptionsHint, emptyHint, className, ariaLabel, id,
 }: SingleProps) {
-  const inputId = id ?? useId();
+  // Always call useId so the hook order is stable regardless of whether
+  // the caller passes an explicit id. The id (when given) wins; otherwise
+  // we fall back to the generated id.
+  const generatedId = useId();
+  const inputId = id ?? generatedId;
   const listboxId = `${inputId}-list`;
   const wrapRef = useRef<HTMLDivElement>(null);
   const popRef = useRef<HTMLDivElement>(null);
@@ -287,7 +291,9 @@ export function Combobox({
 export function MultiCombobox({
   value, options, onChange, placeholder, disabled, noOptionsHint, emptyHint, className, ariaLabel, id,
 }: MultiProps) {
-  const inputId = id ?? useId();
+  // See SingleProps for why useId is called unconditionally.
+  const generatedId = useId();
+  const inputId = id ?? generatedId;
   const listboxId = `${inputId}-list`;
   const wrapRef = useRef<HTMLDivElement>(null);
   const popRef = useRef<HTMLDivElement>(null);
@@ -312,7 +318,10 @@ export function MultiCombobox({
       onChange([...value, v]);
     }
     setQuery('');
-    inputRef.current?.focus();
+    // Close the popup after toggling so it doesn't intercept pointer events
+    // on the next chip click. The user can re-open by clicking the input
+    // or typing. This also lets them confirm the chip landed.
+    setOpen(false);
   }
 
   function removeChip(v: string) {

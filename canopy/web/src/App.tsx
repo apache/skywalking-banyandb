@@ -38,7 +38,6 @@ import { apiDataSource } from './data/api.js';
 import { useQuery } from '@tanstack/react-query';
 import type {
   Group, MeasureSchema, StreamSchema, TraceSchema,
-  IndexRuleSchema, IndexRuleBindingSchema,
 } from 'canopy-shared';
 
 const queryClient = new QueryClient({
@@ -235,7 +234,6 @@ function MetadataGroupRoute() {
 
 function MetadataIndexRoute() {
   const { type = 'measures', group = '' } = useParams<{ type: string; group: string }>();
-  const navigate = useNavigate();
   const [modal, setModal] = useState<ModalState>(null);
 
   // Determine whether the group exists so the page can render a friendly

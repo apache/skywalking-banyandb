@@ -183,7 +183,7 @@ function StagesEditor({ stages, errors, onChange }: {
               <input type="checkbox" checked={s.isDefault}
                 onChange={(e) => upd(i, { isDefault: e.target.checked })} />
               Mark as default stage
-              <span className="f-hint-inline"> — adds "{s.name || 'stage-name'}" to ResourceOpts.defaultStages</span>
+              <span className="f-hint-inline"> — adds &ldquo;{s.name || 'stage-name'}&rdquo; to ResourceOpts.defaultStages</span>
             </label>
           </div>
         );

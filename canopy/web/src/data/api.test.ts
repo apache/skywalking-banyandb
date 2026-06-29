@@ -150,7 +150,6 @@ describe('apiDataSource — IndexRuleBinding encoder/decoder', () => {
     const broken: CreateIndexRuleBindingRequest = {
       indexRuleBinding: {
         ...BINDING,
-        // eslint-disable-next-line @typescript-eslint/no-explicit-any
         expireAt: null as unknown as number,
       },
     };

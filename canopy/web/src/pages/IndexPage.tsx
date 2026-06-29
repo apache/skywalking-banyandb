@@ -189,7 +189,7 @@ function RuleTab({
         <div className="empty">
           <span className="empty-ico"><IconSearch size={36} /></span>
           <p className="empty-title">No matches</p>
-          <p className="empty-text">No index rule matches "{filter}".</p>
+          <p className="empty-text">No index rule matches &ldquo;{filter}&rdquo;.</p>
         </div>
       ) : (
         <div className="idx-table">

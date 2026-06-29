@@ -33,7 +33,7 @@ import {
   IconIndex,
 } from '../components/icons.js';
 
-import { CATALOG_MAP, TYPE_TITLES } from './meta-utils.js';
+import { TYPE_TITLES } from './meta-utils.js';
 
 const KIND_LABEL: Record<string, string> = {
   stream: 'Stream', streams: 'Stream',
@@ -399,10 +399,10 @@ export function ResourceDetailPage({
               ? <span className="role-tag is-entity">entity</span>
               : <span className="dim">—</span>;
             return [
-              <span className="mono">{tag.name}</span>,
-              <span className="type-pill">{typeLabel}</span>,
-              <span className="role-cell">{roleCell}</span>,
-              <TagIndexRules rules={rulesForTag(tag.name)} tagName={tag.name} onOpen={openIndexRule}
+              <span key="name" className="mono">{tag.name}</span>,
+              <span key="type" className="type-pill">{typeLabel}</span>,
+              <span key="role" className="role-cell">{roleCell}</span>,
+              <TagIndexRules key="rules" rules={rulesForTag(tag.name)} tagName={tag.name} onOpen={openIndexRule}
                 hoveredRule={hoveredRule} onHoverRule={setHoveredRule} />,
             ];
           });
@@ -433,9 +433,9 @@ export function ResourceDetailPage({
               const comp = stripPrefix(field.compressionMethod);
               const encComp = [enc, comp].filter(Boolean).join(' · ') || <span className="dim">—</span>;
               return [
-                <span className="mono">{field.name}</span>,
-                <span className="type-pill">{typeLabel}</span>,
-                <span className="mono dim">{encComp}</span>,
+                <span key="name" className="mono">{field.name}</span>,
+                <span key="type" className="type-pill">{typeLabel}</span>,
+                <span key="enc" className="mono dim">{encComp}</span>,
               ];
             }) ?? []}
           />
@@ -462,10 +462,10 @@ export function ResourceDetailPage({
                 roleCell = <span className="role-tag is-reserved">timestamp</span>;
               }
               return [
-                <span className="mono">{tag.name}</span>,
-                <span className="type-pill">{typeLabel}</span>,
-                <span className="role-cell">{roleCell}</span>,
-                <TagIndexRules rules={rulesForTag(tag.name)} tagName={tag.name} onOpen={openIndexRule}
+                <span key="name" className="mono">{tag.name}</span>,
+                <span key="type" className="type-pill">{typeLabel}</span>,
+                <span key="role" className="role-cell">{roleCell}</span>,
+                <TagIndexRules key="rules" rules={rulesForTag(tag.name)} tagName={tag.name} onOpen={openIndexRule}
                   hoveredRule={hoveredRule} onHoverRule={setHoveredRule} />,
               ];
             }) ?? []}
@@ -485,8 +485,8 @@ export function ResourceDetailPage({
             rows={(resource as PropertySchema).tags?.map((tag) => {
               const typeLabel = TAG_TYPE_LABEL[tag.type] ?? tag.type;
               return [
-                <span className="mono">{tag.name}</span>,
-                <span className="type-pill">{typeLabel}</span>,
+                <span key="name" className="mono">{tag.name}</span>,
+                <span key="type" className="type-pill">{typeLabel}</span>,
               ];
             }) ?? []}
           />
