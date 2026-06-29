@@ -70,6 +70,7 @@ type tsTable struct {
 	inFlightMu       sync.RWMutex
 	sync.RWMutex
 	shardID common.ShardID
+	isHot   bool
 }
 
 func (tst *tsTable) loadSnapshot(epoch uint64, loadedParts []uint64) error {
@@ -229,7 +230,9 @@ func initTSTable(fileSystem fs.FileSystem, rootPath string, p common.Position,
 		option:     option,
 		l:          l,
 		p:          p,
+		group:      p.Database,
 		pm:         option.protector,
+		isHot:      option.isHot,
 	}
 	if m != nil {
 		tst.metrics = m.(*metrics)

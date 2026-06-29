@@ -1,0 +1,122 @@
+[
+    {
+        "tags": [
+            {
+                "str": {
+                    "value": "t-drop-1"
+                }
+            },
+            {
+                "str": {
+                    "value": "span-t-drop-1"
+                }
+            },
+            {
+                "str": {
+                    "value": "svc-drop-1"
+                }
+            },
+            {
+                "int": {
+                    "value": 100
+                }
+            },
+            {
+                "str": {
+                    "value": "success"
+                }
+            }
+        ],
+        "span": "span-t-drop-1"
+    },
+    {
+        "tags": [
+            {
+                "str": {
+                    "value": "t-drop-2"
+                }
+            },
+            {
+                "str": {
+                    "value": "span-t-drop-2"
+                }
+            },
+            {
+                "str": {
+                    "value": "svc-drop-2"
+                }
+            },
+            {
+                "int": {
+                    "value": 499
+                }
+            },
+            {
+                "str": {
+                    "value": "success"
+                }
+            }
+        ],
+        "span": "span-t-drop-2"
+    },
+    {
+        "tags": [
+            {
+                "str": {
+                    "value": "t-keep-boundary"
+                }
+            },
+            {
+                "str": {
+                    "value": "span-t-keep-boundary"
+                }
+            },
+            {
+                "str": {
+                    "value": "svc-keep-boundary"
+                }
+            },
+            {
+                "int": {
+                    "value": 500
+                }
+            },
+            {
+                "str": {
+                    "value": "success"
+                }
+            }
+        ],
+        "span": "span-t-keep-boundary"
+    },
+    {
+        "tags": [
+            {
+                "str": {
+                    "value": "t-keep-highlat"
+                }
+            },
+            {
+                "str": {
+                    "value": "span-t-keep-highlat"
+                }
+            },
+            {
+                "str": {
+                    "value": "svc-keep-highlat"
+                }
+            },
+            {
+                "int": {
+                    "value": 800
+                }
+            },
+            {
+                "str": {
+                    "value": "success"
+                }
+            }
+        ],
+        "span": "span-t-keep-highlat"
+    }
+]

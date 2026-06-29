@@ -270,7 +270,7 @@ func Test_mergeBlocks_fastPath(t *testing.T) {
 			closeCh := make(chan struct{})
 			defer close(closeCh)
 
-			pm, tf, tagTypes, err := mergeBlocks(closeCh, bw, br, nil)
+			pm, tf, tagTypes, _, err := mergeBlocks(closeCh, bw, br, nil, nil)
 			require.NoError(t, err)
 			require.NotNil(t, pm)
 			require.NotNil(t, tf)
@@ -966,7 +966,7 @@ func Test_multipleRoundMerges(t *testing.T) {
 
 				// Merge all parts for this round
 				closeCh := make(chan struct{})
-				mergedPart, err := tst.mergeParts(fileSystem, closeCh, partsToMerge, partID, tmpPath)
+				mergedPart, _, err := tst.mergeParts(fileSystem, closeCh, partsToMerge, partID, tmpPath, nil)
 				close(closeCh)
 				require.NoError(t, err, "Round %d merge failed", roundIdx+1)
 				require.NotNil(t, mergedPart, "Round %d produced nil merged part", roundIdx+1)
@@ -1239,7 +1239,7 @@ func Test_mergeParts(t *testing.T) {
 				closeCh := make(chan struct{})
 				defer close(closeCh)
 				tst := &tsTable{pm: protector.Nop{}}
-				p, err := tst.mergeParts(fileSystem, closeCh, pp, partID, root)
+				p, _, err := tst.mergeParts(fileSystem, closeCh, pp, partID, root, nil)
 				if tt.wantErr != nil {
 					if !errors.Is(err, tt.wantErr) {
 						t.Fatalf("Unexpected error: got %v, want %v", err, tt.wantErr)
@@ -1341,7 +1341,7 @@ type sidxMergeErrFake struct {
 	fakeSIDX
 }
 
-func (f *sidxMergeErrFake) Merge(<-chan struct{}, map[uint64]struct{}, uint64) (*sidx.MergerIntroduction, error) {
+func (f *sidxMergeErrFake) Merge(<-chan struct{}, map[uint64]struct{}, uint64, func([]byte) bool) (*sidx.MergerIntroduction, error) {
 	return nil, errors.New("sidx merge failed")
 }
 
@@ -1857,7 +1857,7 @@ func mergePartsWithConflictTags(t *testing.T, fileSystem fs.FileSystem, tmpPath 
 	bw.mustInitForFilePart(fileSystem, dstPath, false, int(traceSize))
 
 	closeCh := make(chan struct{})
-	pm, tf, tagTypes, mergeErr := mergeBlocks(closeCh, bw, br, conflictTags)
+	pm, tf, tagTypes, _, mergeErr := mergeBlocks(closeCh, bw, br, conflictTags, nil)
 	close(closeCh)
 	require.NoError(t, mergeErr)
 	require.NotNil(t, pm)

@@ -594,9 +594,9 @@ func (s *supplier) OpenDB(groupSchema *commonv1.Group) (resourceSchema.DB, error
 	segmentIdleTimeout := time.Hour
 	disableRetention := false
 	disableRotation := false
+	foundMatched := false
 	if len(ro.Stages) > 0 && len(s.nodeLabels) > 0 {
 		var ttlNum uint32
-		foundMatched := false
 		for i, st := range ro.Stages {
 			if st.Ttl.Unit != ro.Ttl.Unit {
 				return nil, fmt.Errorf("ttl unit %s is not consistent with stage %s", ro.Ttl.Unit, st.Ttl.Unit)
@@ -625,6 +625,11 @@ func (s *supplier) OpenDB(groupSchema *commonv1.Group) (resourceSchema.DB, error
 			disableRotation = true
 		}
 	}
+	// isHot marks the Hot stage: a group with no staging at all, a node with no
+	// labels (so staging cannot apply), or a node that matched no stage selector.
+	isHot := len(ro.Stages) == 0 || len(s.nodeLabels) == 0 || !foundMatched
+	opt := s.option
+	opt.isHot = isHot
 	group := groupSchema.Metadata.Name
 	opts := storage.TSDBOpts[*tsTable, option]{
 		ShardNum:                       shardNum,
@@ -633,7 +638,7 @@ func (s *supplier) OpenDB(groupSchema *commonv1.Group) (resourceSchema.DB, error
 		TableMetrics:                   s.newMetrics(p),
 		SegmentInterval:                storage.MustToIntervalRule(segInterval),
 		TTL:                            storage.MustToIntervalRule(ttl),
-		Option:                         s.option,
+		Option:                         opt,
 		SeriesIndexFlushTimeoutSeconds: s.option.flushTimeout.Nanoseconds() / int64(time.Second),
 		SeriesIndexCacheMaxBytes:       int(s.option.seriesCacheMaxSize),
 		StorageMetricsFactory:          s.omr.With(storageScope.ConstLabels(meter.ToLabelPairs(common.DBLabelNames(), p.DBLabelValues()))),
@@ -710,12 +715,16 @@ func (qs *queueSupplier) OpenDB(groupSchema *commonv1.Group) (resourceSchema.DB,
 	shardNum := ro.ShardNum
 	group := groupSchema.Metadata.Name
 	metrics, metricsFactory := qs.newMetrics(p)
+	// The liaison write queue has no node labels and performs no staging, so it
+	// is always the Hot stage by the same isHot rule used in supplier.OpenDB.
+	opt := qs.option
+	opt.isHot = true
 	opts := wqueue.Opts[*tsTable, option]{
 		Group:           group,
 		ShardNum:        shardNum,
 		SegmentInterval: storage.MustToIntervalRule(ro.SegmentInterval),
 		Location:        path.Join(qs.path, group),
-		Option:          qs.option,
+		Option:          opt,
 		Metrics:         metrics,
 		MetricsFactory:  metricsFactory,
 		SubQueueCreator: func(fileSystem fs.FileSystem, root string, position common.Position,

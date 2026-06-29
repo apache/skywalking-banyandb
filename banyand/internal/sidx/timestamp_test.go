@@ -332,7 +332,7 @@ func TestMerge_TimestampPropagation(t *testing.T) {
 		raw.IntroduceFlushed(flushIntro)
 		flushIntro.Release()
 
-		mergeIntro, mergeErr := raw.Merge(nil, map[uint64]struct{}{1: {}, 2: {}}, 10)
+		mergeIntro, mergeErr := raw.Merge(nil, map[uint64]struct{}{1: {}, 2: {}}, 10, nil)
 		require.NoError(t, mergeErr)
 		require.NotNil(t, mergeIntro)
 		raw.IntroduceMerged(mergeIntro)()
@@ -376,7 +376,7 @@ func TestMerge_TimestampPropagation(t *testing.T) {
 		raw.IntroduceFlushed(flushIntro)
 		flushIntro.Release()
 
-		mergeIntro, mergeErr := raw.Merge(nil, map[uint64]struct{}{1: {}, 2: {}}, 10)
+		mergeIntro, mergeErr := raw.Merge(nil, map[uint64]struct{}{1: {}, 2: {}}, 10, nil)
 		require.NoError(t, mergeErr)
 		require.NotNil(t, mergeIntro)
 		raw.IntroduceMerged(mergeIntro)()
