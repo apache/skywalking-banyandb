@@ -103,13 +103,22 @@ async function openBindingTab(page: Page, type: string, group: string) {
   await page.goto(`/metadata/${type}/${group}/Index`);
   await expect(page.locator('.page-body')).toBeVisible();
   await page.locator('.idx-tab', { hasText: 'Binding' }).click();
-  await expect(page.locator('.idx-bind-head')).toBeVisible();
+  // The binding tab content renders either an empty state (zero bindings)
+  // or a table whose header row is `.idx-bind-head`. Wait for the tab
+  // itself to be active plus either the head row or the empty state, so
+  // this helper works regardless of how many bindings exist.
+  await expect(page.locator('.idx-tab.is-active', { hasText: 'Binding' })).toBeVisible();
+  await expect(page.locator('.idx-bind-head, .empty').first()).toBeVisible();
 }
 
 async function openRuleTab(page: Page, type: string, group: string) {
   await page.goto(`/metadata/${type}/${group}/Index`);
   await expect(page.locator('.page-body')).toBeVisible();
-  await expect(page.locator('.idx-rule-head')).toBeVisible();
+  // The rule tab content renders either an empty state (zero rules) or a
+  // table whose header row is `.idx-rule-head`. Wait for the tab itself
+  // to be active plus either the head row or the empty state.
+  await expect(page.locator('.idx-tab.is-active', { hasText: 'Rule' })).toBeVisible();
+  await expect(page.locator('.idx-rule-head, .empty').first()).toBeVisible();
 }
 
 // Fill the name, subject, rules, and validity window of the Create/Edit
@@ -291,9 +300,16 @@ test.describe.serial('M3 UI — IndexRuleBinding CRUD (entry: Binding tab)', () 
     await page.locator('.modal-foot .btn-primary').click();
     await expect(page.locator('.modal-title')).toHaveCount(0, { timeout: 10_000 });
 
+    // Default scope is "Needs attention", which hides the just-created
+    // binding (it is active, not orphan/expired). Switch to "All" so the
+    // new row is visible. The filter button label is e.g. "All1" (no space).
+    await page.locator('.idx-filter-btn', { hasText: /^All/ }).click();
+
     // Row appears in the Binding tab table with both rules and the right subject.
+    // Give BanyanDB plenty of time to make the new binding visible — it has
+    // eventual consistency, and the refetch via query invalidation can lag.
     const row = page.locator('.idx-bind-row', { hasText: bindingName });
-    await expect(row).toBeVisible({ timeout: 10_000 });
+    await expect(row).toBeVisible({ timeout: 20_000 });
     await expect(row.locator('.subj-chip', { hasText: streamName })).toBeVisible();
     await expect(row.locator('.idx-tag', { hasText: rule1 })).toBeVisible();
     await expect(row.locator('.idx-tag', { hasText: rule2 })).toBeVisible();
@@ -305,6 +321,10 @@ test.describe.serial('M3 UI — IndexRuleBinding CRUD (entry: Binding tab)', () 
   test('edit the binding — remove one rule, leave the other', async ({ page }) => {
     await loginAsAdmin(page);
     await openBindingTab(page, 'streams', groupName);
+
+    // Default scope is "Needs attention"; the active binding is hidden
+    // there. Switch to "All" so the row is visible.
+    await page.locator('.idx-filter-btn', { hasText: /^All/ }).click();
 
     const row = page.locator('.idx-bind-row', { hasText: bindingName });
     await expect(row).toBeVisible();
@@ -337,6 +357,9 @@ test.describe.serial('M3 UI — IndexRuleBinding CRUD (entry: Binding tab)', () 
   test('delete the binding and confirm it disappears from the table', async ({ page }) => {
     await loginAsAdmin(page);
     await openBindingTab(page, 'streams', groupName);
+
+    // Default scope is "Needs attention"; switch to "All" so the row is visible.
+    await page.locator('.idx-filter-btn', { hasText: /^All/ }).click();
 
     const rowCountBefore = await page.locator('.idx-bind-row').count();
     const row = page.locator('.idx-bind-row', { hasText: bindingName });
@@ -419,9 +442,13 @@ test.describe.serial('M3 UI — IndexRuleBinding CRUD (entry: rule row Bind CTA)
 
     // Switch to the Binding tab and confirm the new binding is listed.
     await page.locator('.idx-tab', { hasText: 'Binding' }).click();
-    await expect(page.locator('.idx-bind-head')).toBeVisible();
+    // Either the table head or the empty state appears once the tab is active;
+    // once we know which, give BanyanDB extra time to surface the binding.
+    await expect(page.locator('.idx-tab.is-active', { hasText: 'Binding' })).toBeVisible();
+    // Default scope is "Needs attention" — switch to "All" so the active binding is visible.
+    await page.locator('.idx-filter-btn', { hasText: /^All/ }).click();
     const bindRow = page.locator('.idx-bind-row', { hasText: bindingName });
-    await expect(bindRow).toBeVisible({ timeout: 10_000 });
+    await expect(bindRow).toBeVisible({ timeout: 20_000 });
     await expect(bindRow.locator('.idx-tag', { hasText: ruleName })).toBeVisible();
   });
 });

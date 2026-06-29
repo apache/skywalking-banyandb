@@ -88,8 +88,12 @@ test('M3: clicking a resource row navigates to ResourceDetailPage', async ({ pag
   await page.goto('/metadata/measures');
   await expect(page.locator('.page-body')).toBeVisible();
 
-  const groupCard = page.locator('.grp-card').first();
-  const hasGroup = await groupCard.count() > 0;
+  // Wait for either a group card or the empty state — the React Query
+  // fetch is async and the test was racing it, calling .count() before
+  // either rendered.
+  const cardOrEmpty = page.locator('.grp-card, .empty').first();
+  await expect(cardOrEmpty).toBeVisible();
+  const hasGroup = await page.locator('.grp-card').count() > 0;
 
   if (!hasGroup) {
     // No groups — nothing to navigate to
