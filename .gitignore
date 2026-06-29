@@ -94,16 +94,3 @@ test/soak/data/
 # Local runtime crash dumps and investigation notes
 crash/
 progress.txt
-
-# Node
-node_modules
-
-# Canopy scratch artifacts (handoff bundle, MCP test logs, stray screenshots)
-.handoff-import/
-.playwright-mcp/
-BanyanDB-handoff.zip
-/canopy/test-results/
-/canopy/e2e/test-results-handoff/
-/canopy/e2e/screenshots/
-# Stray root-level PNGs from Playwright verification / MCP runs.
-/*.png
