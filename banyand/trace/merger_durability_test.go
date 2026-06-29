@@ -170,10 +170,11 @@ func Test_merger_tornSpansBin_stillPanics(t *testing.T) {
 		assert.Truef(t, valid, "panic message did not match canonical fail-fast shapes: %s", got)
 	}()
 
-	_, _ = tst.mergeParts(fileSystem, closeCh, []*partWrapper{
+	mergedPart, _, mergeErr := tst.mergeParts(fileSystem, closeCh, []*partWrapper{
 		newPartWrapper(nil, p1),
 		newPartWrapper(nil, p2),
-	}, 99, tmpPath)
+	}, 99, tmpPath, nil)
+	_, _ = mergedPart, mergeErr
 
 	t.Fatal("mergeParts returned without panicking — torn-part fail-fast contract is broken")
 }

@@ -54,6 +54,23 @@ func (b *block) reset() {
 	b.maxTS = 0
 }
 
+// deepCopyValues clones every span and tag-value byte slice so the block owns
+// its bytes independently of the decoder buffer that produced them.
+func (b *block) deepCopyValues() {
+	for i, s := range b.spans {
+		if s != nil {
+			b.spans[i] = append([]byte(nil), s...)
+		}
+	}
+	for i := range b.tags {
+		for j, v := range b.tags[i].values {
+			if v != nil {
+				b.tags[i].values[j] = append([]byte(nil), v...)
+			}
+		}
+	}
+}
+
 func (b *block) mustInitFromTrace(spans [][]byte, tags [][]*tagValue, timestamps []int64, spanIDs []string) {
 	b.reset()
 	size := len(spans)
