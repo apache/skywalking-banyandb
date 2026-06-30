@@ -21,7 +21,6 @@ import React, { createContext, useContext, useEffect, useState } from 'react';
 export interface Session {
   readonly user: string;
   readonly role: 'admin' | 'readonly';
-  readonly endpoint: string;
   readonly banyanVersion: string | null;
 }
 

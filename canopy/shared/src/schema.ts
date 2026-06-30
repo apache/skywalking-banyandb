@@ -46,17 +46,43 @@ export enum EncodingMethod {
 }
 
 export enum IndexType {
-  TREE = 'INDEX_TYPE_TREE',
-  INVERTED = 'INDEX_TYPE_INVERTED',
+  // BanyanDB liaison's grpc-gateway encodes these as proto-style enum names
+  // (TYPE_TREE / TYPE_INVERTED / TYPE_SKIPPING). The INDEX_TYPE_* variant used
+  // to live here but caused the upstream POST /index-rule/schema endpoint to
+  // 500. Keep the wire format aligned with the liaison so create / update
+  // round-trips succeed.
+  TREE = 'TYPE_TREE',
+  INVERTED = 'TYPE_INVERTED',
+  SKIPPING = 'TYPE_SKIPPING',
+}
+
+export interface IntervalRule {
+  readonly unit: 'UNIT_HOUR' | 'UNIT_DAY';
+  readonly num: number;
+}
+
+export interface LifecycleStage {
+  readonly name: string;
+  readonly shardNum: number;
+  readonly segmentInterval: IntervalRule;
+  readonly ttl: IntervalRule;
+  readonly nodeSelector?: string;
+  readonly close?: boolean;
+  /** Per-stage replicas (proto ResourceOpts.stages[].replicas). Independent
+   * from the group-level resourceOpts.replicas. */
+  readonly replicas?: number;
 }
 
 export interface Group {
   readonly name: string;
-  readonly catalog: 'CATALOG_STREAM' | 'CATALOG_MEASURE' | 'CATALOG_PROPERTY' | 'CATALOG_UNSPECIFIED';
+  readonly catalog: 'CATALOG_STREAM' | 'CATALOG_MEASURE' | 'CATALOG_PROPERTY' | 'CATALOG_TRACE' | 'CATALOG_UNSPECIFIED';
   readonly resourceOpts: {
     readonly shardNum: number;
-    readonly segmentInterval: string;
-    readonly ttl: string;
+    readonly segmentInterval?: IntervalRule;
+    readonly ttl?: IntervalRule;
+    readonly stages?: LifecycleStage[];
+    readonly defaultStages?: string[];
+    readonly replicas?: number;
   };
   readonly updatedAt?: string;
 }
@@ -109,10 +135,7 @@ export interface TraceSchema {
     readonly name: string;
     readonly group: string;
   };
-  readonly tagFamilies: TagFamilySpec[];
-  readonly entity: {
-    readonly tagNames: string[];
-  };
+  readonly tags: TagSpec[];
   readonly traceIdTagName: string;
   readonly spanIdTagName: string;
   readonly timestampTagName: string;
@@ -134,6 +157,11 @@ export interface IndexRuleSchema {
   readonly tags: string[];
   readonly type: IndexType;
   readonly analyzer?: string;
+  /**
+   * When true, the rule still indexes the tags but skips building the
+   * sortable doc-values column. Mirrors `schema.proto` `IndexRule.no_sort`.
+   */
+  readonly noSort?: boolean;
 }
 
 export interface IndexRuleBindingSchema {
@@ -146,8 +174,10 @@ export interface IndexRuleBindingSchema {
     readonly name: string;
     readonly catalog: string;
   };
-  readonly beginAt: string;
-  readonly expireAt: string;
+  /** Validity window start, expressed as epoch milliseconds. */
+  readonly beginAt: number;
+  /** Validity window end, expressed as epoch milliseconds. */
+  readonly expireAt: number;
 }
 
 export interface TopNSchema {
