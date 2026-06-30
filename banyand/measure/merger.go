@@ -260,8 +260,8 @@ func (tst *tsTable) mergeParts(fileSystem fs.FileSystem, closeCh <-chan struct{}
 	if err != nil {
 		return nil, err
 	}
-	pm.mustWriteMetadata(fileSystem, dstPath)
 	mergedTagType.mustWriteTagType(fileSystem, dstPath)
+	pm.mustWriteMetadata(fileSystem, dstPath)
 	// No SyncPath: mustWriteMetadata goes through WriteAtomic which already
 	// fsyncs the parent directory after rename.
 	p := mustOpenFilePart(partID, root, fileSystem)

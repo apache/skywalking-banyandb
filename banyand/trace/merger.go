@@ -515,12 +515,12 @@ func (tst *tsTable) mergeParts(fileSystem fs.FileSystem, closeCh <-chan struct{}
 	if err != nil {
 		return nil, err
 	}
-	pm.MinTimestamp = minTimestamp
-	pm.MaxTimestamp = maxTimestamp
-	pm.mustWriteMetadata(fileSystem, dstPath)
 	tf.mustWriteTraceIDFilter(fileSystem, dstPath)
 	tf.reset()
 	tt.mustWriteTagType(fileSystem, dstPath)
+	pm.MinTimestamp = minTimestamp
+	pm.MaxTimestamp = maxTimestamp
+	pm.mustWriteMetadata(fileSystem, dstPath)
 	// No SyncPath here: each mustWrite* helper goes through fileSystem.WriteAtomic
 	// which already fsyncs the parent directory after rename. The last atomic
 	// metadata write covers all prior dirent changes (data file creations).
