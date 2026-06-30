@@ -287,7 +287,7 @@ func Test_unmarshalBlockMetadata(t *testing.T) {
 			{
 				seriesID:    common.SeriesID(1),
 				tagFamilies: make(map[string]*dataBlock),
-				tagType: make(tagType),
+				tagType:     make(tagType),
 				timestamps: timestampsMetadata{
 					dataBlock: dataBlock{
 						offset: 1,
