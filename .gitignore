@@ -21,6 +21,8 @@
 *.dll
 *.so
 *.dylib
+# stray plugin binary from a bare `go build ./test/plugins/_latencystatussampler/`
+/_latencystatussampler
 bin
 include
 /build

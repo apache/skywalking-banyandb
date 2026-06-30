@@ -19,6 +19,8 @@ syntax = "proto3";
 
 package banyandb.common.v1;
 
+import "google/protobuf/duration.proto";
+import "google/protobuf/struct.proto";
 import "google/protobuf/timestamp.proto";
 import "validate/validate.proto";
 
@@ -109,6 +111,78 @@ message ResourceOpts {
   uint32 replicas = 6;
 }
 
+// PipelineEvent identifies a pipeline-wide event that can be independently enabled.
+enum PipelineEvent {
+  PIPELINE_EVENT_UNSPECIFIED = 0;
+  // In-merge filter during Hot-phase LSM compaction merges.
+  PIPELINE_EVENT_MERGE = 1;
+  // Tail-sampling gate at Hot-phase segment finalization.
+  PIPELINE_EVENT_FINALIZE = 2;
+}
+
+// SamplerPlugin configures a user-supplied native Go plugin (.so) that owns a
+// keep/drop verdict over a vectorized batch of traces.
+message SamplerPlugin {
+  // path is the plugin .so filename, resolved within the data node's trusted plugin directory.
+  string path = 1 [(validate.rules).string.min_len = 1];
+  // symbol is the constructor symbol the engine looks up; defaults to "NewSampler" if empty.
+  string symbol = 2;
+  // abi_version is the ABI version the plugin was built against.
+  uint32 abi_version = 3 [(validate.rules).uint32 = {gte: 1}];
+  // config is the plugin-defined configuration serialized to canonical JSON for the constructor.
+  google.protobuf.Struct config = 4;
+}
+
+// Plugin is one link in a pipeline's processing chain.
+message Plugin {
+  // name is the operator-facing identity for this link.
+  string name = 1 [(validate.rules).string.min_len = 1];
+  // kind selects the plugin type; exactly one arm must be set.
+  oneof kind {
+    // sampler owns a keep/drop verdict over a vectorized batch of traces.
+    SamplerPlugin sampler = 2;
+  }
+}
+
+// StageRule binds the pipeline to one lifecycle stage and declares that stage's
+// retention plugin chain.
+message StageRule {
+  // stage is the stage name from the Group's ResourceOpts.stages.
+  string stage = 1 [(validate.rules).string.min_len = 1];
+  // plugins is the ordered retention chain for this stage.
+  repeated Plugin plugins = 2;
+}
+
+// TracePipelineConfig is the group-scoped, name-less in-merge retention configuration.
+// Identity comes from the carrying Group; there is one config per group by construction.
+message TracePipelineConfig {
+  // enabled activates the pipeline.
+  bool enabled = 1;
+  // plugins is the ordered chain of plugins evaluated by enabled events.
+  repeated Plugin plugins = 2;
+  // merge_grace is the per-trace maturity window for the in-merge filter.
+  // Strictly positive if set; engine default 30s if unset.
+  google.protobuf.Duration merge_grace = 3 [(validate.rules).duration = {
+    gt: {seconds: 0}
+  }];
+  // finalize_grace is the per-segment settling window for the scheduled finalization pass.
+  // Strictly positive if set; engine default 5m if unset.
+  google.protobuf.Duration finalize_grace = 4 [(validate.rules).duration = {
+    gt: {seconds: 0}
+  }];
+  // stages declares per-stage retention rules.
+  repeated StageRule stages = 5;
+  // schema_names lists explicit schema names to target within the Group.
+  repeated string schema_names = 6 [(validate.rules).repeated.items.string.min_len = 1];
+  // schema_name_regex is an RE2 pattern matched against schema names.
+  string schema_name_regex = 7;
+  // enabled_events lists the pipeline-wide events to run.
+  repeated PipelineEvent enabled_events = 8 [(validate.rules).repeated.items.enum = {
+    defined_only: true
+    not_in: [0]
+  }];
+}
+
 // Group is an internal object for Group management
 message Group {
   // metadata define the group's identity
@@ -121,4 +195,7 @@ message Group {
   google.protobuf.Timestamp updated_at = 4;
   // created_at is the first-appearance timestamp; survives updates unchanged.
   google.protobuf.Timestamp created_at = 5;
+  // pipeline carries the optional group-scoped in-merge retention config.
+  // Absent or non-CATALOG_TRACE group means no sampler.
+  optional TracePipelineConfig pipeline = 6;
 }

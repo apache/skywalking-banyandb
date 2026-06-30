@@ -33,12 +33,9 @@ import (
 	"github.com/onsi/gomega/gleak"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials/insecure"
-	"google.golang.org/protobuf/encoding/protojson"
-	"google.golang.org/protobuf/types/known/structpb"
 
 	commonv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/common/v1"
 	databasev1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/database/v1"
-	pipelinev1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/pipeline/v1"
 	"github.com/apache/skywalking-banyandb/pkg/grpchelper"
 	"github.com/apache/skywalking-banyandb/pkg/logger"
 	"github.com/apache/skywalking-banyandb/pkg/pool"
@@ -56,6 +53,20 @@ var (
 	goods      []gleak.Goroutine
 	closeSvr   func()
 	now        time.Time
+
+	// svrSoPath is the bare filename of the staged .so (trusted-dir-relative path).
+	// The validator requires a relative path; the data node resolves it against
+	// --trace-pipeline-trusted-plugin-dir at load time.
+	// Exposed for dynamic_test.go (Update/Remove/InvalidConfig/Restart specs).
+	svrSoPath string
+
+	// svrBinPath is the banyand binary used to boot the external process.
+	// Exposed for the Restart spec so it can relaunch the same binary.
+	svrBinPath string
+
+	// svrTrustedDir is the trusted-plugin directory passed to the server.
+	// The Restart spec re-uses it when relaunching.
+	svrTrustedDir string
 )
 
 var _ = ginkgo.SynchronizedBeforeSuite(func() []byte {
@@ -89,12 +100,8 @@ var _ = ginkgo.SynchronizedBeforeSuite(func() []byte {
 	gomega.Expect(trustedErr).NotTo(gomega.HaveOccurred())
 
 	// Copy the .so into the trusted dir under its bare filename.
-	soPath := filepath.Join(trustedDir, "latencystatussampler.so")
+	soPath := filepath.Join(trustedDir, tracepipeline.PluginSOName)
 	gomega.Expect(copyFile(pluginSrc, soPath)).To(gomega.Succeed())
-
-	// Write the TracePipelineConfig protojson file.
-	configFile := filepath.Join(trustedDir, "pipeline.json")
-	gomega.Expect(writePipelineConfig(configFile)).To(gomega.Succeed())
 
 	// Allocate ports and build the cluster config (property-based schema registry).
 	ports, portsErr := test.AllocateFreePorts(5)
@@ -105,6 +112,8 @@ var _ = ginkgo.SynchronizedBeforeSuite(func() []byte {
 	config := setup.PropertyClusterConfig(dfWriter)
 
 	// Launch the external standalone server.
+	// No static --trace-pipeline-config: the sampler is activated dynamically
+	// via RegisterSamplerRuntime (UpdateGroup) after schema preload (US-CLEANUP-standalone).
 	// ExternalStandalone calls config.AddSchemaServerAddr so that
 	// PreloadSchemaViaProperty can reach the schema server after boot.
 	grpcAddr, _, svClose := setup.ExternalStandalone(
@@ -115,12 +124,18 @@ var _ = ginkgo.SynchronizedBeforeSuite(func() []byte {
 		ports,
 		"--trace-pipeline-native-plugin-enabled=true",
 		"--trace-pipeline-trusted-plugin-dir="+trustedDir,
-		"--trace-pipeline-config="+configFile,
 		"--trace-pipeline-merge-grace-default=0",
 		"--trace-max-merge-parts=2",
 		"--trace-flush-timeout=500ms",
 	)
 	closeSvr = svClose
+
+	// Populate package-level vars for use by other test files (dynamic_test.go).
+	// svrSoPath is the bare (trusted-dir-relative) filename — the validator requires
+	// a relative path; the data node resolves it against the trusted dir at load time.
+	svrSoPath = tracepipeline.PluginSOName
+	svrBinPath = binPath
+	svrTrustedDir = trustedDir
 
 	// Preload trace schemas (group test-trace-pipeline + trace filter + index rules/bindings)
 	// into the running server via the property schema gRPC endpoint. The fixtures are
@@ -130,6 +145,19 @@ var _ = ginkgo.SynchronizedBeforeSuite(func() []byte {
 
 	// Wait until the schema has propagated to the data node.
 	waitForSchemaSync(grpcAddr)
+
+	// Activate the sampler pipeline dynamically via UpdateGroup (US-CLEANUP-standalone).
+	// The data node's KindGroup watch fires and loads the .so plugin into the registry.
+	// All specs in this suite assume the base config (thresholdMs=500) is active.
+	activateCtx, activateCancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer activateCancel()
+	activateConn, activateConnErr := grpchelper.Conn(grpcAddr, 10*time.Second,
+		grpc.WithTransportCredentials(insecure.NewCredentials()))
+	gomega.Expect(activateConnErr).NotTo(gomega.HaveOccurred())
+	defer func() { _ = activateConn.Close() }()
+	tracepipeline.RegisterSamplerRuntime(activateCtx, activateConn,
+		tracepipeline.PipelineGroup,
+		tracepipeline.NewBasePipelineConfig(tracepipeline.PluginSOName, tracepipeline.DefaultMergeGrace))
 
 	ns := timestamp.NowMilli().UnixNano()
 	now = time.Unix(0, ns-ns%int64(time.Minute))
@@ -232,48 +260,6 @@ func copyFile(src, dst string) error {
 	return nil
 }
 
-// writePipelineConfig marshals a TracePipelineConfig (protojson) to cfgPath.
-// The plugin path uses only the bare filename; the server resolves it against
-// the trusted dir passed via --trace-pipeline-trusted-plugin-dir.
-func writePipelineConfig(cfgPath string) error {
-	pluginConfig, structErr := structpb.NewStruct(map[string]interface{}{
-		"thresholdMs":  float64(500),
-		"successValue": "success",
-	})
-	if structErr != nil {
-		return fmt.Errorf("build plugin config struct: %w", structErr)
-	}
-
-	cfg := &pipelinev1.TracePipelineConfig{
-		Metadata: &commonv1.Metadata{
-			Group: "test-trace-pipeline",
-		},
-		Enabled: true,
-		EnabledEvents: []pipelinev1.PipelineEvent{
-			pipelinev1.PipelineEvent_PIPELINE_EVENT_MERGE,
-		},
-		Plugins: []*pipelinev1.Plugin{
-			{
-				Name: "latencystatussampler",
-				Kind: &pipelinev1.Plugin_Sampler{
-					Sampler: &pipelinev1.SamplerPlugin{
-						Path:       "latencystatussampler.so",
-						Symbol:     "NewSampler",
-						AbiVersion: 1,
-						Config:     pluginConfig,
-					},
-				},
-			},
-		},
-	}
-
-	data, marshalErr := protojson.Marshal(cfg)
-	if marshalErr != nil {
-		return fmt.Errorf("marshal pipeline config: %w", marshalErr)
-	}
-	return os.WriteFile(cfgPath, data, 0o600)
-}
-
 // waitForSchemaSync polls the gRPC endpoint until at least one group is listed,
 // confirming the property→data-node schema sync has completed.
 func waitForSchemaSync(grpcAddr string) {
@@ -289,5 +275,30 @@ func waitForSchemaSync(grpcAddr string) {
 		resp, listErr := groupClient.List(ctx, &databasev1.GroupRegistryServiceListRequest{})
 		innerGm.Expect(listErr).NotTo(gomega.HaveOccurred())
 		innerGm.Expect(resp.GetGroup()).NotTo(gomega.BeEmpty(), "no groups visible on standalone yet")
+	}, flags.EventuallyTimeout, 500*time.Millisecond).Should(gomega.Succeed())
+}
+
+// waitForTraceSchema polls until the "filter" trace schema in the pipeline group
+// is visible on the node. WriteBatchEntries calls GetTrace internally, so this
+// gate must pass before seeding data — especially after a restart where the
+// trace schema re-syncs after the group.
+func waitForTraceSchema(grpcAddr string) {
+	conn, connErr := grpchelper.Conn(grpcAddr, 10*time.Second,
+		grpc.WithTransportCredentials(insecure.NewCredentials()))
+	gomega.Expect(connErr).NotTo(gomega.HaveOccurred())
+	defer func() { _ = conn.Close() }()
+
+	traceClient := databasev1.NewTraceRegistryServiceClient(conn)
+	gomega.Eventually(func(innerGm gomega.Gomega) {
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		_, getErr := traceClient.Get(ctx, &databasev1.TraceRegistryServiceGetRequest{
+			Metadata: &commonv1.Metadata{
+				Name:  "filter",
+				Group: tracepipeline.PipelineGroup,
+			},
+		})
+		innerGm.Expect(getErr).NotTo(gomega.HaveOccurred(),
+			"trace schema filter/%s not yet visible after restart", tracepipeline.PipelineGroup)
 	}, flags.EventuallyTimeout, 500*time.Millisecond).Should(gomega.Succeed())
 }

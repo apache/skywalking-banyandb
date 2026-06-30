@@ -33,12 +33,9 @@ import (
 	"github.com/onsi/gomega/gleak"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials/insecure"
-	"google.golang.org/protobuf/encoding/protojson"
-	"google.golang.org/protobuf/types/known/structpb"
 
 	commonv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/common/v1"
 	databasev1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/database/v1"
-	pipelinev1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/pipeline/v1"
 	"github.com/apache/skywalking-banyandb/banyand/metadata/schema"
 	"github.com/apache/skywalking-banyandb/pkg/grpchelper"
 	"github.com/apache/skywalking-banyandb/pkg/logger"
@@ -59,6 +56,44 @@ var (
 	goods      []gleak.Goroutine
 	stopFunc   func()
 	now        time.Time
+
+	// clusterBinPath is the banyand binary used to boot all external nodes.
+	// Exposed for the Restart + LateJoin specs in dynamic_test.go.
+	clusterBinPath string
+
+	// clusterTrustedDir is the trusted-plugin directory shared by both data nodes.
+	// Exposed for dynamic specs that relaunch or add nodes.
+	clusterTrustedDir string
+
+	// clusterSoPath is the bare (trusted-dir-relative) filename of the staged .so.
+	// The validator requires a relative path; the data node resolves it at load time.
+	clusterSoPath string
+
+	// clusterConfig is the PropertyClusterConfig used for the cluster.
+	// Exposed so dynamic specs can launch additional nodes into the same cluster.
+	clusterConfig *setup.ClusterConfig
+
+	// clusterLogDir is the shared log directory for all external processes.
+	clusterLogDir string
+
+	// clusterDN0Ports is the port slice for data node 0. Exposed for the Restart spec.
+	clusterDN0Ports []int
+
+	// closeLiaisonNode is the teardown for the liaison process.
+	closeLiaisonNode func()
+
+	// closeDataNode0 / closeDataNode1 are per-node teardowns exposed so
+	// the Restart spec can stop and relaunch individual nodes.
+	closeDataNode0 func()
+	closeDataNode1 func()
+
+	// clusterDataDir0 is data node 0's data directory.
+	// Preserved across restarts so the node replays the schema store.
+	clusterDataDir0 string
+
+	// liaisonGRPCAddr is the liaison's gRPC address, used by dynamic specs that
+	// need a direct liaison connection for assertions.
+	liaisonGRPCAddr string
 )
 
 var _ = ginkgo.SynchronizedBeforeSuite(func() []byte {
@@ -88,12 +123,8 @@ var _ = ginkgo.SynchronizedBeforeSuite(func() []byte {
 	gomega.Expect(trustedErr).NotTo(gomega.HaveOccurred())
 
 	// Copy the .so into the trusted dir under its bare filename.
-	soPath := filepath.Join(trustedDir, "latencystatussampler.so")
-	gomega.Expect(copyFile(pluginSrc, soPath)).To(gomega.Succeed())
-
-	// Write the TracePipelineConfig protojson file.
-	configFile := filepath.Join(trustedDir, "pipeline.json")
-	gomega.Expect(writePipelineConfig(configFile)).To(gomega.Succeed())
+	soFilePath := filepath.Join(trustedDir, tracepipeline.PluginSOName)
+	gomega.Expect(copyFile(pluginSrc, soFilePath)).To(gomega.Succeed())
 
 	// Discovery file writer and property cluster config.
 	tmpDir, tmpDirCleanup, tmpErr := test.NewSpace()
@@ -126,7 +157,7 @@ var _ = ginkgo.SynchronizedBeforeSuite(func() []byte {
 
 	// Start data node 0 with schema server (dn0Ports[3]) and pipeline plugin flags.
 	ginkgo.By("Starting data node 0 with pipeline plugin")
-	_, closeDataNode0 := setup.ExternalDataNode(
+	_, dn0Close := setup.ExternalDataNode(
 		config,
 		binPath,
 		dataDir0,
@@ -134,7 +165,6 @@ var _ = ginkgo.SynchronizedBeforeSuite(func() []byte {
 		dn0Ports,
 		"--trace-pipeline-native-plugin-enabled=true",
 		"--trace-pipeline-trusted-plugin-dir="+trustedDir,
-		"--trace-pipeline-config="+configFile,
 		"--trace-pipeline-merge-grace-default=0",
 		"--trace-max-merge-parts=2",
 		"--trace-flush-timeout=500ms",
@@ -142,7 +172,7 @@ var _ = ginkgo.SynchronizedBeforeSuite(func() []byte {
 
 	// Start data node 1 (no schema server) with pipeline plugin flags.
 	ginkgo.By("Starting data node 1 with pipeline plugin")
-	_, closeDataNode1 := setup.ExternalDataNode(
+	_, dn1Close := setup.ExternalDataNode(
 		config,
 		binPath,
 		dataDir1,
@@ -150,7 +180,6 @@ var _ = ginkgo.SynchronizedBeforeSuite(func() []byte {
 		dn1Ports,
 		"--trace-pipeline-native-plugin-enabled=true",
 		"--trace-pipeline-trusted-plugin-dir="+trustedDir,
-		"--trace-pipeline-config="+configFile,
 		"--trace-pipeline-merge-grace-default=0",
 		"--trace-max-merge-parts=2",
 		"--trace-flush-timeout=500ms",
@@ -164,7 +193,7 @@ var _ = ginkgo.SynchronizedBeforeSuite(func() []byte {
 
 	// Start liaison node — NO plugin flags (liaison has no merger).
 	ginkgo.By("Starting liaison node")
-	liaisonGRPCAddr, closeLiaisonNode := setup.ExternalLiaisonNode(
+	lnGRPCAddr, lnClose := setup.ExternalLiaisonNode(
 		config,
 		binPath,
 		liaisonDir,
@@ -174,6 +203,19 @@ var _ = ginkgo.SynchronizedBeforeSuite(func() []byte {
 
 	ns := timestamp.NowMilli().UnixNano()
 	now = time.Unix(0, ns-ns%int64(time.Minute))
+
+	// Populate package-level vars for dynamic specs (dynamic_test.go).
+	clusterBinPath = binPath
+	clusterTrustedDir = trustedDir
+	clusterSoPath = tracepipeline.PluginSOName
+	clusterConfig = config
+	clusterLogDir = logDir
+	clusterDN0Ports = dn0Ports
+	clusterDataDir0 = dataDir0
+	liaisonGRPCAddr = lnGRPCAddr
+	closeLiaisonNode = lnClose
+	closeDataNode0 = dn0Close
+	closeDataNode1 = dn1Close
 
 	stopFunc = func() {
 		closeLiaisonNode()
@@ -186,9 +228,25 @@ var _ = ginkgo.SynchronizedBeforeSuite(func() []byte {
 	// with active liaison + data nodes, and the filter trace schema queryable.
 	// This mirrors the logic in setup.waitForActiveDataNodes (setup.go:857).
 	ginkgo.By("Waiting for cluster to be ready")
-	waitForClusterReady(liaisonGRPCAddr)
+	waitForClusterReady(lnGRPCAddr)
 
-	return []byte(liaisonGRPCAddr)
+	// Activate the sampler pipeline dynamically via UpdateGroup (US-CLEANUP).
+	// The KindGroup watch fires on BOTH data nodes; both load the .so plugin from
+	// their shared trusted dir and register the sampler. The liaison's schemaRepo
+	// is ROLE_LIAISON with nativePipelineEnabled=false, so its reconcilePipeline
+	// branch is never reached (doubly-gated: role check + flag check).
+	ginkgo.By("Activating sampler pipeline dynamically via UpdateGroup")
+	activateCtx, activateCancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer activateCancel()
+	activateConn, activateConnErr := grpchelper.Conn(lnGRPCAddr, 10*time.Second,
+		grpc.WithTransportCredentials(insecure.NewCredentials()))
+	gomega.Expect(activateConnErr).NotTo(gomega.HaveOccurred())
+	defer func() { _ = activateConn.Close() }()
+	tracepipeline.RegisterSamplerRuntime(activateCtx, activateConn,
+		tracepipeline.PipelineGroup,
+		tracepipeline.NewBasePipelineConfig(tracepipeline.PluginSOName, tracepipeline.DefaultMergeGrace))
+
+	return []byte(lnGRPCAddr)
 }, func(address []byte) {
 	var connErr error
 	connection, connErr = grpchelper.Conn(string(address), 10*time.Second,
@@ -205,7 +263,11 @@ var _ = ginkgo.SynchronizedAfterSuite(func() {
 	if connection != nil {
 		gomega.Expect(connection.Close()).To(gomega.Succeed())
 	}
-}, func() {})
+}, func() {
+	if stopFunc != nil {
+		stopFunc()
+	}
+})
 
 var _ = ginkgo.ReportAfterSuite("Distributed Trace Pipeline Integration Suite", func(report ginkgo.Report) {
 	if report.SuiteSucceeded {
@@ -289,48 +351,6 @@ func copyFile(src, dst string) error {
 		return fmt.Errorf("copy %q → %q: %w", src, dst, copyErr)
 	}
 	return nil
-}
-
-// writePipelineConfig marshals a TracePipelineConfig (protojson) to cfgPath.
-// The plugin path uses only the bare filename; the server resolves it against
-// the trusted dir passed via --trace-pipeline-trusted-plugin-dir.
-func writePipelineConfig(cfgPath string) error {
-	pluginConfig, structErr := structpb.NewStruct(map[string]interface{}{
-		"thresholdMs":  float64(500),
-		"successValue": "success",
-	})
-	if structErr != nil {
-		return fmt.Errorf("build plugin config struct: %w", structErr)
-	}
-
-	cfg := &pipelinev1.TracePipelineConfig{
-		Metadata: &commonv1.Metadata{
-			Group: "test-trace-pipeline",
-		},
-		Enabled: true,
-		EnabledEvents: []pipelinev1.PipelineEvent{
-			pipelinev1.PipelineEvent_PIPELINE_EVENT_MERGE,
-		},
-		Plugins: []*pipelinev1.Plugin{
-			{
-				Name: "latencystatussampler",
-				Kind: &pipelinev1.Plugin_Sampler{
-					Sampler: &pipelinev1.SamplerPlugin{
-						Path:       "latencystatussampler.so",
-						Symbol:     "NewSampler",
-						AbiVersion: 1,
-						Config:     pluginConfig,
-					},
-				},
-			},
-		},
-	}
-
-	data, marshalErr := protojson.Marshal(cfg)
-	if marshalErr != nil {
-		return fmt.Errorf("marshal pipeline config: %w", marshalErr)
-	}
-	return os.WriteFile(cfgPath, data, 0o600)
 }
 
 // waitForClusterReady polls the liaison until the cluster is fully ready to accept
