@@ -23,6 +23,9 @@ import { join } from 'node:path';
 export default defineConfig({
   testDir: '.',
   testMatch: '**/*.spec.ts',
+  // m3-handoff runs against a different webServer (the handoff design bundle
+  // served by playwright.handoff.config.ts) — exclude it from the main suite.
+  testIgnore: '**/m3-handoff.spec.ts',
   outputDir: './test-results',
   timeout: 60_000,
   expect: { timeout: 10_000 },

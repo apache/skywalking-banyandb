@@ -1,0 +1,90 @@
+[
+    {
+        "tags": [
+            {
+                "str": {
+                    "value": "t-keep-errfast"
+                }
+            },
+            {
+                "str": {
+                    "value": "span-t-keep-errfast"
+                }
+            },
+            {
+                "str": {
+                    "value": "svc-keep-errfast"
+                }
+            },
+            {
+                "int": {
+                    "value": 50
+                }
+            },
+            {
+                "str": {
+                    "value": "error"
+                }
+            }
+        ],
+        "span": "span-t-keep-errfast"
+    },
+    {
+        "tags": [
+            {
+                "str": {
+                    "value": "t-keep-errslow"
+                }
+            },
+            {
+                "str": {
+                    "value": "span-t-keep-errslow"
+                }
+            },
+            {
+                "str": {
+                    "value": "svc-keep-errslow"
+                }
+            },
+            {
+                "int": {
+                    "value": 900
+                }
+            },
+            {
+                "str": {
+                    "value": "error"
+                }
+            }
+        ],
+        "span": "span-t-keep-errslow"
+    },
+    {
+        "tags": [
+            {
+                "str": {
+                    "value": "t-keep-nostatus"
+                }
+            },
+            {
+                "str": {
+                    "value": "span-t-keep-nostatus"
+                }
+            },
+            {
+                "str": {
+                    "value": "svc-keep-nostatus"
+                }
+            },
+            {
+                "int": {
+                    "value": 100
+                }
+            },
+            {
+                "null": null
+            }
+        ],
+        "span": "span-t-keep-nostatus"
+    }
+]

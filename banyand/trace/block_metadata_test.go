@@ -123,10 +123,7 @@ func Test_blockMetadata_marshal_unmarshal(t *testing.T) {
 				traceID:                   "trace1",
 				uncompressedSpanSizeBytes: 100,
 				count:                     1,
-				timestamps: timestampsMetadata{
-					min: 1,
-					max: 1,
-				},
+				timestamps:                timestampsMetadata{},
 				spans: &dataBlock{
 					offset: 10,
 					size:   20,
@@ -145,10 +142,7 @@ func Test_blockMetadata_marshal_unmarshal(t *testing.T) {
 				traceID:                   "trace1",
 				uncompressedSpanSizeBytes: 200,
 				count:                     2,
-				timestamps: timestampsMetadata{
-					min: 2,
-					max: 2,
-				},
+				timestamps:                timestampsMetadata{},
 				spans: &dataBlock{
 					offset: 30,
 					size:   40,
@@ -195,10 +189,7 @@ func Test_unmarshalBlockMetadata(t *testing.T) {
 					offset: 10,
 					size:   20,
 				},
-				timestamps: timestampsMetadata{
-					min: 1,
-					max: 1,
-				},
+				timestamps:                timestampsMetadata{},
 				uncompressedSpanSizeBytes: 100,
 				count:                     1,
 			},
@@ -208,10 +199,7 @@ func Test_unmarshalBlockMetadata(t *testing.T) {
 					offset: 30,
 					size:   40,
 				},
-				timestamps: timestampsMetadata{
-					min: 2,
-					max: 2,
-				},
+				timestamps:                timestampsMetadata{},
 				uncompressedSpanSizeBytes: 200,
 				count:                     2,
 			},

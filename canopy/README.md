@@ -33,7 +33,7 @@ BANYANDB_TARGET=http://<host>:17913 SESSION_SECRET=<secret> CANOPY_USERS=/etc/ca
 
 See `.env.example` for all env vars.
 
-- `BANYANDB_TARGET` — default endpoint prefilled on the login form (HTTP grpc-gateway, NOT :17912 gRPC)
+- `BANYANDB_TARGET` — BanyanDB upstream the BFF proxies to (HTTP grpc-gateway, NOT :17912 gRPC). Single source of truth; the login form no longer accepts an override.
 - `SESSION_SECRET` — **required** — random string for session cookie encryption
 - `CANOPY_USERS` — **required** in production — path to JSON/YAML user list
 - `CANOPY_DEV_NOAUTH=true` — dev only, seeds admin/admin; fails boot in NODE_ENV=production

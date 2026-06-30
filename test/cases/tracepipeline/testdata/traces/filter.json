@@ -1,0 +1,36 @@
+{
+    "metadata": {
+        "name": "filter",
+        "group": "test-trace-pipeline"
+    },
+    "tags": [
+        {
+            "name": "trace_id",
+            "type": "TAG_TYPE_STRING"
+        },
+        {
+            "name": "span_id",
+            "type": "TAG_TYPE_STRING"
+        },
+        {
+            "name": "timestamp",
+            "type": "TAG_TYPE_TIMESTAMP"
+        },
+        {
+            "name": "service_id",
+            "type": "TAG_TYPE_STRING"
+        },
+        {
+            "name": "duration",
+            "type": "TAG_TYPE_INT"
+        },
+        {
+            "name": "status",
+            "type": "TAG_TYPE_STRING"
+        }
+    ],
+    "trace_id_tag_name": "trace_id",
+    "span_id_tag_name": "span_id",
+    "timestamp_tag_name": "timestamp",
+    "updated_at": "2021-04-15T01:30:15.01Z"
+}
