@@ -87,3 +87,26 @@ jobs:
             exit 1
           fi
           echo "✓ ui/ untouched"
+
+  # ── Required-check shims for canopy-only PRs ────────────────────────────────
+  # Branch protection requires the Go pipeline's aggregate checks ("Continuous
+  # Integration" from ci.yml and "push-banyandb-image" from publish-docker.yml).
+  # Those workflows are `paths-ignore: canopy/**`, so on a canopy-only PR they
+  # never run and GitHub parks the required checks as "Expected", blocking merge
+  # even though the change touches no Go code. canopy.yml is the workflow that DOES
+  # run for canopy-only changes (and is itself ignored by ci.yml/publish-docker.yml),
+  # so report the same check contexts here as trivially-successful placeholders —
+  # GitHub's documented pattern for required checks behind path filters. A PR that
+  # also touches Go code triggers the real workflows, which report these contexts
+  # for real.
+  continuous-integration:
+    name: Continuous Integration
+    runs-on: ubuntu-latest
+    steps:
+      - run: echo "Canopy-only change — Go CI (ci.yml) skipped via paths-ignore; required check satisfied."
+
+  push-banyandb-image:
+    name: push-banyandb-image
+    runs-on: ubuntu-latest
+    steps:
+      - run: echo "Canopy-only change — docker image build (publish-docker.yml) skipped via paths-ignore; required check satisfied."

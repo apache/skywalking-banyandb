@@ -44,7 +44,11 @@ async function waitForReady(url: string, maxAttempts = 60): Promise<void> {
   for (let i = 0; i < maxAttempts; i++) {
     try {
       const res = await fetch(`${url}/api/healthz`);
-      if (res.ok) return;
+      if (res.ok) {
+        // Extra wait for internal services (property node registry) to register after healthz.
+        await sleep(3000);
+        return;
+      }
     } catch {
       // not ready yet
     }
@@ -56,7 +60,13 @@ async function waitForReady(url: string, maxAttempts = 60): Promise<void> {
 export default async function globalSetup() {
   const buildRoot = findBuildRoot();
   const binaryPath = join(tmpdir(), 'banyand-e2e');
-  const dataDir = mkdtempSync(join(tmpdir(), 'canopy-e2e-data-'));
+  // Each E2E run gets its own isolated data directory so state from a prior
+  // run (leftover groups, measures, index rules, etc.) cannot leak in. The
+  // directory is named with a UTC timestamp + PID for easy debugging and is
+  // deleted unconditionally in global-teardown.
+  const runStamp = new Date().toISOString().replace(/[:.]/g, '-');
+  const dataDir = mkdtempSync(join(tmpdir(), `canopy-e2e-data-${runStamp}-`));
+  console.log(`[e2e] Isolated data directory: ${dataDir}`);
 
   console.log(`[e2e] Building BanyanDB from source at ${buildRoot}…`);
   execSync(`go build -o ${binaryPath} ./banyand/cmd/server`, {
@@ -71,6 +81,8 @@ export default async function globalSetup() {
     'standalone',
     `--stream-root-path=${dataDir}`,
     `--measure-root-path=${dataDir}`,
+    `--property-root-path=${dataDir}`,
+    `--trace-root-path=${dataDir}`,
     `--http-port=${HTTP_PORT}`,
     `--grpc-port=${GRPC_PORT}`,
   ], { stdio: 'pipe' });
