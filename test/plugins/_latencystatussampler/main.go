@@ -52,6 +52,10 @@ var ABIVersion = sdk.ABIVersion
 type samplerConfig struct {
 	ThresholdMs  int64  `json:"thresholdMs"`
 	SuccessValue string `json:"successValue"`
+	// Panic causes Decide to panic unconditionally. Used by the US-010 soak to
+	// verify that the engine's fail-open recover wrapper absorbs the panic and
+	// the node continues processing without crashing or stalling merges.
+	Panic bool `json:"panic"`
 }
 
 // latencyStatusSampler drops a trace when duration < thresholdMs && status ==
@@ -59,6 +63,9 @@ type samplerConfig struct {
 type latencyStatusSampler struct {
 	thresholdMs  int64
 	successValue string
+	// panicOnDecide causes every Decide call to panic. The engine's recover
+	// wrapper catches the panic and retains all traces (fail-open).
+	panicOnDecide bool
 }
 
 // NewSampler is the constructor symbol the engine looks up. It parses the
@@ -82,8 +89,9 @@ func NewSampler(configJSON []byte) (sdk.Sampler, error) {
 		}
 	}
 	return &latencyStatusSampler{
-		thresholdMs:  cfg.ThresholdMs,
-		successValue: cfg.SuccessValue,
+		thresholdMs:   cfg.ThresholdMs,
+		successValue:  cfg.SuccessValue,
+		panicOnDecide: cfg.Panic,
 	}, nil
 }
 
@@ -106,7 +114,14 @@ func (s *latencyStatusSampler) Close() error { return nil }
 //
 // Any failure to satisfy either condition results in the trace being kept
 // (fail-open).
+//
+// When panicOnDecide is true the function panics immediately; the engine's
+// recover wrapper catches the panic and retains all traces (fail-open). This
+// mode is used exclusively by the US-010 soak to verify engine resilience.
 func (s *latencyStatusSampler) Decide(batch *sdk.TraceBatch) (sdk.Verdict, error) {
+	if s.panicOnDecide {
+		panic("latencystatussampler: intentional panic for US-010 soak (panicOnDecide=true)")
+	}
 	keep := make([]bool, len(batch.Traces))
 	for i := range batch.Traces {
 		keep[i] = s.keepTrace(&batch.Traces[i])

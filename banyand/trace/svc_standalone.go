@@ -30,13 +30,11 @@ import (
 
 	"github.com/pkg/errors"
 	"go.uber.org/multierr"
-	"google.golang.org/protobuf/encoding/protojson"
 
 	"github.com/apache/skywalking-banyandb/api/common"
 	"github.com/apache/skywalking-banyandb/api/data"
 	commonv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/common/v1"
 	databasev1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/database/v1"
-	pipelinev1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/pipeline/v1"
 	tracev1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/trace/v1"
 	"github.com/apache/skywalking-banyandb/banyand/internal/storage"
 	"github.com/apache/skywalking-banyandb/banyand/metadata"
@@ -104,8 +102,6 @@ func (s *standalone) FlagSet() *run.FlagSet {
 	bindVectorizedFlags(fs, &s.option.vectorized)
 	fs.BoolVar(&s.option.nativePipelineEnabled, "trace-pipeline-native-plugin-enabled", false, "enable the native plugin pipeline for in-merge trace retention")
 	fs.StringVar(&s.option.trustedPluginDir, "trace-pipeline-trusted-plugin-dir", "", "trusted directory for native trace pipeline plugins")
-	fs.StringVar(&s.option.pipelineConfigPath, "trace-pipeline-config", "",
-		"path to a TracePipelineConfig (protojson) loaded at startup; static bootstrap ingress — dynamic delivery is the registry RPC")
 	fs.DurationVar(&s.option.mergeGraceDefault, "trace-pipeline-merge-grace-default", 30*time.Second, "default merge_grace for in-merge trace retention filter")
 	fs.DurationVar(&s.option.decideTimeout, "trace-pipeline-decide-timeout", 5*time.Second, "hard per-batch Decide timeout for trace pipeline plugins")
 	fs.IntVar(&s.option.decideTimeoutCircuitBreak, "trace-pipeline-decide-timeout-circuit-break", 3,
@@ -222,50 +218,12 @@ func (s *standalone) PreRun(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
-	if s.option.nativePipelineEnabled && s.option.pipelineConfigPath != "" {
-		if loadErr := s.loadPipelineConfig(); loadErr != nil {
-			return loadErr
-		}
-	}
-
 	s.l.Info().
 		Str("root", s.root).
 		Str("dataPath", s.dataPath).
 		Str("snapshotDir", s.snapshotDir).
 		Msg("trace standalone service initialized")
 
-	return nil
-}
-
-// loadPipelineConfig reads the TracePipelineConfig protojson file at pipelineConfigPath,
-// validates it, and registers all configured sampler plugins for the configured group.
-func (s *standalone) loadPipelineConfig() error {
-	s.l.Info().Str("path", s.option.pipelineConfigPath).Msg("loading pipeline config")
-	cfgBytes, readErr := os.ReadFile(s.option.pipelineConfigPath)
-	if readErr != nil {
-		return fmt.Errorf("failed to read pipeline config %q: %w", s.option.pipelineConfigPath, readErr)
-	}
-	var cfg pipelinev1.TracePipelineConfig
-	if unmarshalErr := protojson.Unmarshal(cfgBytes, &cfg); unmarshalErr != nil {
-		return fmt.Errorf("failed to unmarshal pipeline config %q: %w", s.option.pipelineConfigPath, unmarshalErr)
-	}
-	if validateErr := cfg.Validate(); validateErr != nil {
-		return fmt.Errorf("pipeline config %q is invalid: %w", s.option.pipelineConfigPath, validateErr)
-	}
-	group := cfg.GetMetadata().GetGroup()
-	s.l.Info().Str("group", group).Int("plugins", len(cfg.GetPlugins())).Msg("pipeline config loaded; registering samplers")
-	for _, p := range cfg.GetPlugins() {
-		if p.GetSampler() == nil {
-			continue
-		}
-		s.l.Info().Str("plugin", p.GetName()).Str("path", p.GetSampler().GetPath()).Msg("loading sampler plugin")
-		sampler, loadErr := loadSamplerPlugin(p.GetSampler(), s.option.trustedPluginDir)
-		if loadErr != nil {
-			return fmt.Errorf("failed to load sampler plugin %q for group %q: %w", p.GetName(), group, loadErr)
-		}
-		s.l.Info().Str("plugin", p.GetName()).Str("group", group).Msg("sampler plugin loaded and registered")
-		registerSampler(group, sampler)
-	}
 	return nil
 }
 

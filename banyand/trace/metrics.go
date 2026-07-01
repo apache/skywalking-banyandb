@@ -26,8 +26,9 @@ import (
 )
 
 var (
-	tbScope      = traceScope.SubScope("tst")
-	storageScope = traceScope.SubScope("storage")
+	tbScope       = traceScope.SubScope("tst")
+	storageScope  = traceScope.SubScope("storage")
+	pipelineScope = traceScope.SubScope("pipeline")
 )
 
 type metrics struct {

@@ -56,7 +56,6 @@ type option struct {
 	protector                    protector.Memory
 	tire2Client                  queue.Client
 	trustedPluginDir             string
-	pipelineConfigPath           string
 	seriesCacheMaxSize           run.Bytes
 	flushTimeout                 time.Duration
 	syncInterval                 time.Duration

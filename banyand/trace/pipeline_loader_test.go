@@ -30,7 +30,7 @@ import (
 	"github.com/stretchr/testify/require"
 	"google.golang.org/protobuf/types/known/structpb"
 
-	pipelinev1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/pipeline/v1"
+	commonv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/common/v1"
 	"github.com/apache/skywalking-banyandb/pkg/pipeline/sdk"
 )
 
@@ -117,9 +117,17 @@ func resetPluginCache() {
 // Using a shared path lets plugin.Open return the already-loaded *plugin.Plugin
 // on guard sub-tests that need to reach Lookup (e.g. wrong constructor symbol).
 func TestLoadSamplerPlugin(t *testing.T) {
-	tmpDir, mkdirErr := os.MkdirTemp("", "lssplugin-test-*")
-	require.NoError(t, mkdirErr)
-	defer os.RemoveAll(tmpDir)
+	// Use the package-level sharedPluginDir so the .so is built at the same
+	// path used by pipeline_watch_test.go. The Go plugin runtime deduplicates
+	// opens by content hash; two different paths with identical content produce
+	// "plugin already loaded". Sharing one path avoids that across test funcs.
+	tmpDir := sharedPluginDir
+	if tmpDir == "" {
+		var mkdirErr error
+		tmpDir, mkdirErr = os.MkdirTemp("", "lssplugin-test-*")
+		require.NoError(t, mkdirErr)
+		defer os.RemoveAll(tmpDir)
+	}
 
 	soPath := buildTestPlugin(t, tmpDir)
 	soName := filepath.Base(soPath) // relative name passed to loadSamplerPlugin
@@ -142,7 +150,7 @@ func TestLoadSamplerPlugin(t *testing.T) {
 		})
 		require.NoError(t, cfgErr)
 
-		sp := &pipelinev1.SamplerPlugin{
+		sp := &commonv1.SamplerPlugin{
 			Path:       soName,
 			Symbol:     "NewSampler",
 			AbiVersion: uint32(sdk.ABIVersion),
@@ -160,6 +168,80 @@ func TestLoadSamplerPlugin(t *testing.T) {
 		assert.Contains(t, proj.Tags, "status", "plugin must project the status tag")
 	})
 
+	// Cache sub-tests: verify the (path, symbol, configHash) key semantics.
+	// These run after the happy-path probe so the .so is already registered in
+	// the Go plugin runtime under this path — subsequent plugin.Open calls on
+	// the same path return the cached *plugin.Plugin without "previous failure".
+	cfgLow, cfgLowErr := structpb.NewStruct(map[string]interface{}{
+		"thresholdMs":  float64(100),
+		"successValue": "ok",
+	})
+	require.NoError(t, cfgLowErr)
+
+	cfgHigh, cfgHighErr := structpb.NewStruct(map[string]interface{}{
+		"thresholdMs":  float64(500),
+		"successValue": "ok",
+	})
+	require.NoError(t, cfgHighErr)
+
+	spLow := &commonv1.SamplerPlugin{
+		Path:       soName,
+		Symbol:     "NewSampler",
+		AbiVersion: uint32(sdk.ABIVersion),
+		Config:     cfgLow,
+	}
+	spHigh := &commonv1.SamplerPlugin{
+		Path:       soName,
+		Symbol:     "NewSampler",
+		AbiVersion: uint32(sdk.ABIVersion),
+		Config:     cfgHigh,
+	}
+
+	t.Run("cache same config deduplicates", func(t *testing.T) {
+		resetPluginCache()
+
+		first, firstErr := loadSamplerPlugin(spLow, tmpDir)
+		require.NoError(t, firstErr)
+		require.NotNil(t, first)
+
+		second, secondErr := loadSamplerPlugin(spLow, tmpDir)
+		require.NoError(t, secondErr)
+		require.NotNil(t, second)
+
+		// Same (path, symbol, configHash) => cache hit => identical pointer.
+		assert.Same(t, first, second, "same config must return the cached instance")
+	})
+
+	t.Run("cache changed config produces fresh instance", func(t *testing.T) {
+		resetPluginCache()
+
+		instanceLow, errLow := loadSamplerPlugin(spLow, tmpDir)
+		require.NoError(t, errLow)
+		require.NotNil(t, instanceLow)
+
+		instanceHigh, errHigh := loadSamplerPlugin(spHigh, tmpDir)
+		require.NoError(t, errHigh)
+		require.NotNil(t, instanceHigh)
+
+		// Different config => different key => different (freshly constructed) instance.
+		assert.NotSame(t, instanceLow, instanceHigh, "different config must produce a fresh instance")
+	})
+
+	t.Run("cache ABI mismatch on miss is rejected", func(t *testing.T) {
+		resetPluginCache()
+
+		spBadABI := &commonv1.SamplerPlugin{
+			Path:       soName,
+			Symbol:     "NewSampler",
+			AbiVersion: 999, // proto-level ABI mismatch
+			Config:     cfgLow,
+		}
+		sampler, loadErr := loadSamplerPlugin(spBadABI, tmpDir)
+		require.Error(t, loadErr, "ABI-mismatched plugin must be rejected on a cache miss")
+		assert.Nil(t, sampler)
+		assert.Contains(t, loadErr.Error(), "ABI version")
+	})
+
 	// Guard sub-tests: each expects an error from loadSamplerPlugin.
 	// The missing-path and trusted-dir-escape guards never reach plugin.Open.
 	// The ABI-mismatch guard fires before plugin.Open.
@@ -167,13 +249,13 @@ func TestLoadSamplerPlugin(t *testing.T) {
 	// open from the happy-path sub-test above) so that Lookup can be reached.
 	guardTests := []struct {
 		name        string
-		sp          *pipelinev1.SamplerPlugin
+		sp          *commonv1.SamplerPlugin
 		trustedDir  string
 		errContains string
 	}{
 		{
 			name: "missing path",
-			sp: &pipelinev1.SamplerPlugin{
+			sp: &commonv1.SamplerPlugin{
 				Path:       "",
 				Symbol:     "NewSampler",
 				AbiVersion: uint32(sdk.ABIVersion),
@@ -183,7 +265,7 @@ func TestLoadSamplerPlugin(t *testing.T) {
 		},
 		{
 			name: "ABI mismatch",
-			sp: &pipelinev1.SamplerPlugin{
+			sp: &commonv1.SamplerPlugin{
 				Path:       soName,
 				Symbol:     "NewSampler",
 				AbiVersion: 999,
@@ -193,7 +275,7 @@ func TestLoadSamplerPlugin(t *testing.T) {
 		},
 		{
 			name: "trusted-dir escape",
-			sp: &pipelinev1.SamplerPlugin{
+			sp: &commonv1.SamplerPlugin{
 				Path:       "../escape.so",
 				Symbol:     "NewSampler",
 				AbiVersion: uint32(sdk.ABIVersion),
@@ -206,7 +288,7 @@ func TestLoadSamplerPlugin(t *testing.T) {
 			// plugin.Open returns the cached *plugin.Plugin, Lookup then fails
 			// because "DoesNotExist" is not exported by the plugin.
 			name: "wrong constructor symbol",
-			sp: &pipelinev1.SamplerPlugin{
+			sp: &commonv1.SamplerPlugin{
 				Path:       soName,
 				Symbol:     "DoesNotExist",
 				AbiVersion: uint32(sdk.ABIVersion),
@@ -241,7 +323,7 @@ func TestLoadSamplerPlugin_DotDotPrefixChildNotEscape(t *testing.T) {
 	defer os.RemoveAll(tmpDir)
 	resetPluginCache()
 
-	sp := &pipelinev1.SamplerPlugin{
+	sp := &commonv1.SamplerPlugin{
 		Path:       "..foo/nonexistent.so",
 		Symbol:     "NewSampler",
 		AbiVersion: uint32(sdk.ABIVersion),
