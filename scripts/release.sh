@@ -17,6 +17,12 @@
 #
 
 set -ex
+# Prevent `tar` from writing macOS AppleDouble (._*) and __MACOSX metadata into
+# release archives. Without this, downstream users running `make generate`
+# (which invokes `buf generate`) hit "invalid control character" errors when
+# the macOS-only resource-fork files are picked up by protoc.
+COPYFILE_DISABLE=1
+export COPYFILE_DISABLE
 SCRIPTDIR=$( cd "$( dirname "${BASH_SOURCE[0]}" )" && pwd )
 ROOTDIR=${SCRIPTDIR}/..
 BUILDDIR=${ROOTDIR}/build
@@ -54,7 +60,9 @@ binary(){
     cp -Rfv ./mcp/dist ${bindir}/mcp/
     cp -Rfv ./mcp/package.json ${bindir}/mcp/
     # Package
-    tar -czf ${BUILDDIR}/skywalking-banyandb-${RELEASE_VERSION}-banyand.tgz -C ${bindir} .
+    tar -czf ${BUILDDIR}/skywalking-banyandb-${RELEASE_VERSION}-banyand.tgz \
+      --exclude="._*" --exclude="__MACOSX" \
+      -C ${bindir} .
 
     # Cross compile bydbctl
     TARGET_OS=linux PLATFORMS=linux/amd64,linux/arm64,linux/386 make -C bydbctl release
@@ -65,24 +73,37 @@ binary(){
     # Copy relevant files
     copy_binaries bydbctl
     # Package
-    tar -czf ${BUILDDIR}/skywalking-banyandb-${RELEASE_VERSION}-bydbctl.tgz -C ${bindir} .
+    tar -czf ${BUILDDIR}/skywalking-banyandb-${RELEASE_VERSION}-bydbctl.tgz \
+      --exclude="._*" --exclude="__MACOSX" \
+      -C ${bindir} .
 
     # Build fodc-agent
     rm -rf ${bindir}/bin
     mkdir -p ${bindir}/bin
     copy_binaries fodc/agent
-    tar -czf ${BUILDDIR}/skywalking-banyandb-${RELEASE_VERSION}-fodc-agent.tgz -C ${bindir} .
+    tar -czf ${BUILDDIR}/skywalking-banyandb-${RELEASE_VERSION}-fodc-agent.tgz \
+      --exclude="._*" --exclude="__MACOSX" \
+      -C ${bindir} .
 
     # Build fodc-proxy
     rm -rf ${bindir}/bin
     mkdir -p ${bindir}/bin
     copy_binaries fodc/proxy
-    tar -czf ${BUILDDIR}/skywalking-banyandb-${RELEASE_VERSION}-fodc-proxy.tgz -C ${bindir} .
+    tar -czf ${BUILDDIR}/skywalking-banyandb-${RELEASE_VERSION}-fodc-proxy.tgz \
+      --exclude="._*" --exclude="__MACOSX" \
+      -C ${bindir} .
 }
 
 copy_binaries() {
     local module=$1
-    find ./${module}/build/bin -type f -not -name "*.lock" | while read -r binary
+    # Filter out lock files AND macOS AppleDouble resource-fork files (._*) that
+    # bsdtar emits when run on macOS; otherwise they leak into release tarballs
+    # and break `buf generate` in downstream rebuilds.
+    find ./${module}/build/bin \
+        -type f \
+        -not -name "*.lock" \
+        -not -name "._*" \
+        -not -path "*/__MACOSX/*" | while read -r binary
     do
         # Extract os and arch from the path
         os_arch=$(echo ${binary} | awk -F'/' '{print $(NF-2)"/"$(NF-1)}')
@@ -100,6 +121,8 @@ source(){
     echo "RELEASE_VERSION=${RELEASE_VERSION}" > .env
     tar \
     --exclude=".DS_Store" \
+    --exclude="._*" \
+    --exclude="__MACOSX" \
     --exclude=".github" \
     --exclude=".gitignore" \
     --exclude=".asf.yaml" \

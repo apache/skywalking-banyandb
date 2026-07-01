@@ -32,7 +32,7 @@ var (
 )
 
 // Merge implements Merger interface.
-func (s *sidx) Merge(closeCh <-chan struct{}, partIDtoMerge map[uint64]struct{}, newPartID uint64) (*MergerIntroduction, error) {
+func (s *sidx) Merge(closeCh <-chan struct{}, partIDtoMerge map[uint64]struct{}, newPartID uint64, keep func([]byte) bool) (*MergerIntroduction, error) {
 	// Get current snapshot
 	snap := s.currentSnapshot()
 	if snap == nil {
@@ -60,7 +60,7 @@ func (s *sidx) Merge(closeCh <-chan struct{}, partIDtoMerge map[uint64]struct{},
 	}
 
 	// Create new merged part
-	newPart, err := s.mergeParts(s.fileSystem, closeCh, partsToMerge, newPartID, s.root)
+	newPart, err := s.mergeParts(s.fileSystem, closeCh, partsToMerge, newPartID, s.root, keep)
 	if err != nil {
 		return nil, err
 	}
@@ -77,7 +77,9 @@ func (s *sidx) Merge(closeCh <-chan struct{}, partIDtoMerge map[uint64]struct{},
 	return mergeIntro, nil
 }
 
-func (s *sidx) mergeParts(fileSystem fs.FileSystem, closeCh <-chan struct{}, parts []*partWrapper, partID uint64, root string) (*partWrapper, error) {
+func (s *sidx) mergeParts(fileSystem fs.FileSystem, closeCh <-chan struct{}, parts []*partWrapper, partID uint64, root string,
+	keep func([]byte) bool,
+) (*partWrapper, error) {
 	if len(parts) == 0 {
 		return nil, errNoPartToMerge
 	}
@@ -97,7 +99,7 @@ func (s *sidx) mergeParts(fileSystem fs.FileSystem, closeCh <-chan struct{}, par
 	bw := generateBlockWriter()
 	bw.mustInitForFilePart(fileSystem, dstPath, shouldCache)
 
-	pm, err := mergeBlocks(closeCh, bw, br, conflictTags)
+	pm, err := mergeBlocks(closeCh, bw, br, conflictTags, keep)
 	releaseBlockWriter(bw)
 	releaseBlockReader(br)
 	for i := range pii {
@@ -136,7 +138,7 @@ func (s *sidx) mergeParts(fileSystem fs.FileSystem, closeCh <-chan struct{}, par
 	return newPartWrapper(nil, p), nil
 }
 
-func mergeBlocks(closeCh <-chan struct{}, bw *blockWriter, br *blockReader, conflictTags map[string]struct{}) (*partMetadata, error) {
+func mergeBlocks(closeCh <-chan struct{}, bw *blockWriter, br *blockReader, conflictTags map[string]struct{}, keep func([]byte) bool) (*partMetadata, error) {
 	pendingBlockIsEmpty := true
 	pendingBlock := generateBlockPointer()
 	defer releaseBlockPointer(pendingBlock)
@@ -158,6 +160,17 @@ func mergeBlocks(closeCh <-chan struct{}, bw *blockWriter, br *blockReader, conf
 		br.loadBlockData(getDecoder())
 		renameConflictTags(&br.block.block, conflictTags)
 	}
+	// writeBlock applies the optional keep predicate before persisting; when keep
+	// is nil it writes the block unchanged (lossless bulk path).
+	writeBlock := func(bp *blockPointer) {
+		if keep != nil {
+			filterBlockPointer(bp, keep)
+			if len(bp.userKeys) == 0 {
+				return
+			}
+		}
+		bw.mustWriteBlock(bp.bm.seriesID, &bp.block)
+	}
 	for br.nextBlockMetadata() {
 		select {
 		case <-closeCh:
@@ -176,7 +189,7 @@ func mergeBlocks(closeCh <-chan struct{}, bw *blockWriter, br *blockReader, conf
 		if pendingBlock.bm.seriesID != b.bm.seriesID ||
 			(pendingBlock.isFull() && pendingBlock.bm.maxKey <= b.bm.minKey) ||
 			pendingBlock.block.uncompressedSizeBytes() >= maxUncompressedBlockSize {
-			bw.mustWriteBlock(pendingBlock.bm.seriesID, &pendingBlock.block)
+			writeBlock(pendingBlock)
 			releaseDecoder()
 			loadAndRename()
 			pendingBlock.copyFrom(b)
@@ -198,7 +211,7 @@ func mergeBlocks(closeCh <-chan struct{}, bw *blockWriter, br *blockReader, conf
 			pendingBlock, tmpBlock = tmpBlock, pendingBlock
 			continue
 		}
-		bw.mustWriteBlock(tmpBlock.bm.seriesID, &tmpBlock.block)
+		writeBlock(tmpBlock)
 		releaseDecoder()
 		pendingBlock.reset()
 		tmpBlock.reset()
@@ -208,12 +221,45 @@ func mergeBlocks(closeCh <-chan struct{}, bw *blockWriter, br *blockReader, conf
 		return nil, fmt.Errorf("cannot read block to merge: %w", err)
 	}
 	if !pendingBlockIsEmpty {
-		bw.mustWriteBlock(pendingBlock.bm.seriesID, &pendingBlock.block)
+		writeBlock(pendingBlock)
 	}
 	releaseDecoder()
 	var result partMetadata
 	bw.Flush(&result)
 	return &result, nil
+}
+
+// filterBlockPointer rewrites bp in place to retain only the elements for which
+// keep(data) returns true. userKeys, data, and every tag column stay row-aligned
+// after the compaction; block metadata is updated via updateMetadata.
+func filterBlockPointer(bp *blockPointer, keep func([]byte) bool) {
+	n := len(bp.userKeys)
+	if n == 0 {
+		return
+	}
+	w := 0
+	for r := 0; r < n; r++ {
+		if !keep(bp.data[r]) {
+			continue
+		}
+		if w != r {
+			bp.userKeys[w] = bp.userKeys[r]
+			bp.data[w] = bp.data[r]
+			for _, td := range bp.tags {
+				td.values[w] = td.values[r]
+			}
+		}
+		w++
+	}
+	if w == n {
+		return
+	}
+	bp.userKeys = bp.userKeys[:w]
+	bp.data = bp.data[:w]
+	for _, td := range bp.tags {
+		td.values = td.values[:w]
+	}
+	bp.updateMetadata()
 }
 
 func collectConflictTags(parts []*partWrapper) map[string]struct{} {

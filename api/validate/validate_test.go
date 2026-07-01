@@ -67,6 +67,31 @@ func TestMeasurePassesWithNonPrefixShardingKey(t *testing.T) {
 	assert.NoError(t, err, "Measure() must not reject a non-prefix sharding key")
 }
 
+func TestValidateTracePipelineConfig_StagePluginsRejected(t *testing.T) {
+	// A config with sampler plugins declared only under stages[] must be rejected
+	// with a clear error — not silently accepted (which would load zero samplers
+	// and retain all traces).
+	stagePlugin := &commonv1.Plugin{
+		Name: "lss",
+		Kind: &commonv1.Plugin_Sampler{
+			Sampler: &commonv1.SamplerPlugin{
+				Path:       "sampler.so",
+				Symbol:     "NewSampler",
+				AbiVersion: 1,
+			},
+		},
+	}
+	cfg := &commonv1.TracePipelineConfig{
+		Enabled: true,
+		Stages: []*commonv1.StageRule{
+			{Stage: "warm", Plugins: []*commonv1.Plugin{stagePlugin}},
+		},
+	}
+	err := validateTracePipelineConfig(cfg)
+	assert.Error(t, err, "stages[].plugins with a sampler must be rejected")
+	assert.Contains(t, err.Error(), "stages[].plugins are not supported in v1")
+}
+
 func TestCheckShardingKeySubset(t *testing.T) {
 	tests := []struct {
 		name        string

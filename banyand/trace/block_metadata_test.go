@@ -123,10 +123,7 @@ func Test_blockMetadata_marshal_unmarshal(t *testing.T) {
 				traceID:                   "trace1",
 				uncompressedSpanSizeBytes: 100,
 				count:                     1,
-				timestamps: timestampsMetadata{
-					min: 1,
-					max: 1,
-				},
+				timestamps:                timestampsMetadata{},
 				spans: &dataBlock{
 					offset: 10,
 					size:   20,
@@ -145,10 +142,7 @@ func Test_blockMetadata_marshal_unmarshal(t *testing.T) {
 				traceID:                   "trace1",
 				uncompressedSpanSizeBytes: 200,
 				count:                     2,
-				timestamps: timestampsMetadata{
-					min: 2,
-					max: 2,
-				},
+				timestamps:                timestampsMetadata{},
 				spans: &dataBlock{
 					offset: 30,
 					size:   40,
@@ -195,10 +189,7 @@ func Test_unmarshalBlockMetadata(t *testing.T) {
 					offset: 10,
 					size:   20,
 				},
-				timestamps: timestampsMetadata{
-					min: 1,
-					max: 1,
-				},
+				timestamps:                timestampsMetadata{},
 				uncompressedSpanSizeBytes: 100,
 				count:                     1,
 			},
@@ -208,10 +199,7 @@ func Test_unmarshalBlockMetadata(t *testing.T) {
 					offset: 30,
 					size:   40,
 				},
-				timestamps: timestampsMetadata{
-					min: 2,
-					max: 2,
-				},
+				timestamps:                timestampsMetadata{},
 				uncompressedSpanSizeBytes: 200,
 				count:                     2,
 			},
@@ -219,6 +207,7 @@ func Test_unmarshalBlockMetadata(t *testing.T) {
 		wanted := []blockMetadata{
 			{
 				traceID: "trace1",
+				tags:    make(map[string]*dataBlock),
 				tagType: make(map[string]pbv1.ValueType),
 				spans: &dataBlock{
 					offset: 10,
@@ -230,6 +219,7 @@ func Test_unmarshalBlockMetadata(t *testing.T) {
 			},
 			{
 				traceID: "trace2",
+				tags:    make(map[string]*dataBlock),
 				tagType: make(map[string]pbv1.ValueType),
 				spans: &dataBlock{
 					offset: 30,
@@ -250,6 +240,38 @@ func Test_unmarshalBlockMetadata(t *testing.T) {
 		unmarshaled, err := unmarshalBlockMetadata(nil, marshaled, tagType)
 		require.NoError(t, err)
 		require.Equal(t, wanted, unmarshaled)
+	})
+
+	t.Run("reuse destination clears stale tags", func(t *testing.T) {
+		original := []blockMetadata{
+			{
+				traceID: "trace1",
+				tags:    make(map[string]*dataBlock),
+				tagType: make(map[string]pbv1.ValueType),
+				spans: &dataBlock{
+					offset: 10,
+					size:   20,
+				},
+				timestamps:                timestampsMetadata{},
+				uncompressedSpanSizeBytes: 100,
+				count:                     1,
+			},
+		}
+
+		var marshaled []byte
+		for _, bm := range original {
+			marshaled = bm.marshal(marshaled)
+		}
+
+		tagType := make(map[string]pbv1.ValueType)
+		unmarshaled, err := unmarshalBlockMetadata(nil, marshaled, tagType)
+		require.NoError(t, err)
+		require.Equal(t, original, unmarshaled)
+
+		unmarshaled[0].tags["stale"] = &dataBlock{offset: 99, size: 99}
+		reused, reuseErr := unmarshalBlockMetadata(unmarshaled[:0], marshaled, tagType)
+		require.NoError(t, reuseErr)
+		require.Equal(t, original, reused)
 	})
 
 	t.Run("unmarshal invalid blockMetadata", func(t *testing.T) {

@@ -21,6 +21,8 @@ import (
 	"context"
 	"fmt"
 	"path"
+	"slices"
+	"strings"
 	"time"
 
 	"github.com/pkg/errors"
@@ -40,6 +42,7 @@ import (
 	"github.com/apache/skywalking-banyandb/pkg/fs"
 	"github.com/apache/skywalking-banyandb/pkg/logger"
 	"github.com/apache/skywalking-banyandb/pkg/meter"
+	"github.com/apache/skywalking-banyandb/pkg/pipeline/sdk"
 	resourceSchema "github.com/apache/skywalking-banyandb/pkg/schema"
 	"github.com/apache/skywalking-banyandb/pkg/schema/registry"
 	"github.com/apache/skywalking-banyandb/pkg/timestamp"
@@ -63,21 +66,27 @@ type SchemaService interface {
 
 type schemaRepo struct {
 	resourceSchema.Repository
-	onGroupDelete func(groupName string)
-	l             *logger.Logger
-	metadata      metadata.Repo
-	path          string
-	nodeID        string
-	role          databasev1.Role
+	onGroupDelete         func(groupName string)
+	l                     *logger.Logger
+	metadata              metadata.Repo
+	samplerMeter          *samplerMetrics
+	path                  string
+	nodeID                string
+	trustedPluginDir      string
+	role                  databasev1.Role
+	nativePipelineEnabled bool
 }
 
 func newSchemaRepo(path string, svc *standalone, nodeLabels map[string]string, nodeID string) schemaRepo {
 	sr := schemaRepo{
-		l:        svc.l,
-		path:     path,
-		metadata: svc.metadata,
-		nodeID:   nodeID,
-		role:     databasev1.Role_ROLE_DATA,
+		l:                     svc.l,
+		path:                  path,
+		metadata:              svc.metadata,
+		nodeID:                nodeID,
+		role:                  databasev1.Role_ROLE_DATA,
+		nativePipelineEnabled: svc.option.nativePipelineEnabled,
+		trustedPluginDir:      svc.option.trustedPluginDir,
+		samplerMeter:          newSamplerMetrics(svc.omr.With(pipelineScope)),
 		Repository: resourceSchema.NewRepository(
 			svc.metadata,
 			svc.l,
@@ -92,10 +101,11 @@ func newSchemaRepo(path string, svc *standalone, nodeLabels map[string]string, n
 
 func newLiaisonSchemaRepo(path string, svc *liaison, traceDataNodeRegistry grpc.NodeRegistry) schemaRepo {
 	sr := schemaRepo{
-		l:        svc.l,
-		path:     path,
-		metadata: svc.metadata,
-		role:     databasev1.Role_ROLE_LIAISON,
+		l:            svc.l,
+		path:         path,
+		metadata:     svc.metadata,
+		role:         databasev1.Role_ROLE_LIAISON,
+		samplerMeter: newSamplerMetrics(svc.omr.With(pipelineScope)),
 		Repository: resourceSchema.NewRepository(
 			svc.metadata,
 			svc.l,
@@ -176,6 +186,9 @@ func (sr *schemaRepo) OnAddOrUpdate(metadata schema.Metadata) {
 			Kind:     resourceSchema.EventKindGroup,
 			Metadata: g,
 		})
+		if sr.role == databasev1.Role_ROLE_DATA && sr.nativePipelineEnabled {
+			sr.reconcilePipeline(g.Metadata.Name, g.GetPipeline())
+		}
 	case schema.KindTrace:
 		if err := validate.Trace(metadata.Spec.(*databasev1.Trace)); err != nil {
 			sr.l.Warn().Err(err).Msg("trace is ignored")
@@ -231,6 +244,11 @@ func (sr *schemaRepo) OnDelete(metadata schema.Metadata) {
 			Kind:     resourceSchema.EventKindGroup,
 			Metadata: g,
 		})
+		if sr.role == databasev1.Role_ROLE_DATA && sr.nativePipelineEnabled {
+			removeSamplersForGroup(g.Metadata.Name)
+			sr.samplerMeter.setActiveCount(g.Metadata.Name, 0)
+			sr.samplerMeter.incRemoveTotal(g.Metadata.Name)
+		}
 	case schema.KindTrace:
 		traceSpec := metadata.Spec.(*databasev1.Trace)
 		sr.SendMetadataEvent(resourceSchema.MetadataEvent{
@@ -258,6 +276,119 @@ func (sr *schemaRepo) OnDelete(metadata schema.Metadata) {
 			})
 		}
 	default:
+	}
+}
+
+// mergeEventEnabled reports whether cfg applies to the merge-time pipeline event.
+// v1 only implements the in-merge filter, so a config that does not enable
+// PIPELINE_EVENT_MERGE installs no samplers. An empty enabled_events list defaults
+// to MERGE for backward compatibility.
+func mergeEventEnabled(cfg *commonv1.TracePipelineConfig) bool {
+	events := cfg.GetEnabledEvents()
+	if len(events) == 0 {
+		return true
+	}
+	return slices.Contains(events, commonv1.PipelineEvent_PIPELINE_EVENT_MERGE)
+}
+
+// samplerLoadFailReason maps a plugin load error to a small, stable set of reason
+// codes for the sampler_load_failed metric label, keeping label cardinality bounded
+// (the full error is logged separately). Unrecognized errors fall back to "load_error".
+func samplerLoadFailReason(err error) string {
+	if err == nil {
+		return ""
+	}
+	msg := err.Error()
+	switch {
+	case strings.Contains(msg, "panic"):
+		return "panic"
+	case strings.Contains(msg, "escapes trusted directory"):
+		return "path_escape"
+	case strings.Contains(msg, "ABI version") || strings.Contains(msg, "ABIVersion"):
+		return "abi_mismatch"
+	case strings.Contains(msg, "constructor"):
+		return "ctor_failed"
+	case strings.Contains(msg, "missing symbol") || strings.Contains(msg, "wrong type"):
+		return "symbol_missing"
+	case strings.Contains(msg, "cannot open plugin"):
+		return "open_failed"
+	case strings.Contains(msg, "marshal plugin config"):
+		return "config_marshal"
+	case strings.Contains(msg, "plugin path is empty") || strings.Contains(msg, "trusted plugin dir not configured"):
+		return "config_invalid"
+	default:
+		return "load_error"
+	}
+}
+
+// reconcilePipeline rebuilds the sampler registry for group from cfg.
+// If cfg is nil (or the group is being deleted), it removes the group's entry.
+// On full load success it atomically replaces the slice and stores the per-group
+// merge_grace. If any plugin fails to load, the previous good set is kept intact
+// (fail-open) and an ERROR log is emitted.
+func (sr *schemaRepo) reconcilePipeline(group string, cfg *commonv1.TracePipelineConfig) {
+	// A nil/disabled config, or one that does not enable the merge event, clears the
+	// group's samplers (retain all). enabled_events is honored here so merge filtering
+	// can be disabled without removing the config.
+	if cfg == nil || !cfg.GetEnabled() || !mergeEventEnabled(cfg) {
+		hadSamplers := len(lookupSamplers(group)) > 0
+		removeSamplersForGroup(group)
+		setMergeGraceForGroup(group, 0)
+		sr.samplerMeter.setActiveCount(group, 0)
+		if hadSamplers {
+			sr.samplerMeter.incRemoveTotal(group)
+		}
+		return
+	}
+	// Distinguish register (no previous set) from update (previous set exists).
+	isUpdate := len(lookupSamplers(group)) > 0
+	var newSet []namedSampler
+	for _, p := range cfg.GetPlugins() {
+		sp := p.GetSampler()
+		if sp == nil {
+			continue
+		}
+		var sampler sdk.Sampler
+		var loadErr error
+		func() {
+			defer func() {
+				if rec := recover(); rec != nil {
+					loadErr = fmt.Errorf("panic loading plugin %q: %v", p.GetName(), rec)
+				}
+			}()
+			sampler, loadErr = loadSamplerPlugin(sp, sr.trustedPluginDir)
+		}()
+		if loadErr != nil {
+			sr.samplerMeter.incLoadFailed(group, p.GetName(), samplerLoadFailReason(loadErr))
+			if isUpdate {
+				sr.samplerMeter.incUpdateTotal(group, "rejected")
+			} else {
+				sr.samplerMeter.incRegisterTotal(group, "rejected")
+			}
+			sr.l.Error().
+				Err(loadErr).
+				Str("group", group).
+				Str("plugin", p.GetName()).
+				Msg("sampler plugin load failed; keeping previous good set (fail-open)")
+			return
+		}
+		newSet = append(newSet, namedSampler{
+			name:       p.GetName(),
+			configHash: computeConfigHash(sp),
+			sampler:    sampler,
+		})
+	}
+	replaceSamplersForGroup(group, newSet)
+	var graceNs int64
+	if gd := cfg.GetMergeGrace(); gd != nil {
+		graceNs = gd.AsDuration().Nanoseconds()
+	}
+	setMergeGraceForGroup(group, graceNs)
+	sr.samplerMeter.setActiveCount(group, len(newSet))
+	if isUpdate {
+		sr.samplerMeter.incUpdateTotal(group, "success")
+	} else {
+		sr.samplerMeter.incRegisterTotal(group, "success")
 	}
 }
 
@@ -594,9 +725,9 @@ func (s *supplier) OpenDB(groupSchema *commonv1.Group) (resourceSchema.DB, error
 	segmentIdleTimeout := time.Hour
 	disableRetention := false
 	disableRotation := false
+	foundMatched := false
 	if len(ro.Stages) > 0 && len(s.nodeLabels) > 0 {
 		var ttlNum uint32
-		foundMatched := false
 		for i, st := range ro.Stages {
 			if st.Ttl.Unit != ro.Ttl.Unit {
 				return nil, fmt.Errorf("ttl unit %s is not consistent with stage %s", ro.Ttl.Unit, st.Ttl.Unit)
@@ -625,6 +756,11 @@ func (s *supplier) OpenDB(groupSchema *commonv1.Group) (resourceSchema.DB, error
 			disableRotation = true
 		}
 	}
+	// isHot marks the Hot stage: a group with no staging at all, a node with no
+	// labels (so staging cannot apply), or a node that matched no stage selector.
+	isHot := len(ro.Stages) == 0 || len(s.nodeLabels) == 0 || !foundMatched
+	opt := s.option
+	opt.isHot = isHot
 	group := groupSchema.Metadata.Name
 	opts := storage.TSDBOpts[*tsTable, option]{
 		ShardNum:                       shardNum,
@@ -633,7 +769,7 @@ func (s *supplier) OpenDB(groupSchema *commonv1.Group) (resourceSchema.DB, error
 		TableMetrics:                   s.newMetrics(p),
 		SegmentInterval:                storage.MustToIntervalRule(segInterval),
 		TTL:                            storage.MustToIntervalRule(ttl),
-		Option:                         s.option,
+		Option:                         opt,
 		SeriesIndexFlushTimeoutSeconds: s.option.flushTimeout.Nanoseconds() / int64(time.Second),
 		SeriesIndexCacheMaxBytes:       int(s.option.seriesCacheMaxSize),
 		StorageMetricsFactory:          s.omr.With(storageScope.ConstLabels(meter.ToLabelPairs(common.DBLabelNames(), p.DBLabelValues()))),
@@ -710,12 +846,16 @@ func (qs *queueSupplier) OpenDB(groupSchema *commonv1.Group) (resourceSchema.DB,
 	shardNum := ro.ShardNum
 	group := groupSchema.Metadata.Name
 	metrics, metricsFactory := qs.newMetrics(p)
+	// The liaison write queue has no node labels and performs no staging, so it
+	// is always the Hot stage by the same isHot rule used in supplier.OpenDB.
+	opt := qs.option
+	opt.isHot = true
 	opts := wqueue.Opts[*tsTable, option]{
 		Group:           group,
 		ShardNum:        shardNum,
 		SegmentInterval: storage.MustToIntervalRule(ro.SegmentInterval),
 		Location:        path.Join(qs.path, group),
-		Option:          qs.option,
+		Option:          opt,
 		Metrics:         metrics,
 		MetricsFactory:  metricsFactory,
 		SubQueueCreator: func(fileSystem fs.FileSystem, root string, position common.Position,

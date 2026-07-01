@@ -18,6 +18,7 @@
 package trace
 
 import (
+	"context"
 	"fmt"
 	"path/filepath"
 	"strings"
@@ -28,6 +29,7 @@ import (
 	commonv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/common/v1"
 	"github.com/apache/skywalking-banyandb/banyand/internal/sidx"
 	"github.com/apache/skywalking-banyandb/banyand/internal/storage"
+	"github.com/apache/skywalking-banyandb/banyand/protector"
 	"github.com/apache/skywalking-banyandb/banyand/queue"
 	"github.com/apache/skywalking-banyandb/pkg/fs"
 	"github.com/apache/skywalking-banyandb/pkg/index"
@@ -158,10 +160,13 @@ func (s *syncPartContext) Close() error {
 }
 
 type syncSeriesContext struct {
-	streamer index.ExternalSegmentStreamer
-	segment  storage.Segment[*tsTable, *commonv1.ResourceOpts]
-	l        *logger.Logger
-	fileName string
+	streamer       index.ExternalSegmentStreamer
+	segment        storage.Segment[*tsTable, *commonv1.ResourceOpts]
+	l              *logger.Logger
+	pm             protector.Memory
+	introduceCtx   context.Context
+	fileName       string
+	memWaitTimeout time.Duration
 }
 
 func (s *syncSeriesContext) NewPartType(_ *queue.ChunkedSyncPartContext) error {
@@ -171,6 +176,9 @@ func (s *syncSeriesContext) NewPartType(_ *queue.ChunkedSyncPartContext) error {
 
 func (s *syncSeriesContext) FinishSync() error {
 	if s.streamer != nil {
+		if err := protector.WaitWhileHigh(s.introduceCtx, s.pm, s.memWaitTimeout, s.l, "trace-series-introduce"); err != nil {
+			return err
+		}
 		if err := s.streamer.CompleteSegment(); err != nil {
 			s.l.Error().Err(err).Msg("failed to complete external segment")
 			return err
@@ -190,14 +198,18 @@ func (s *syncSeriesContext) Close() error {
 }
 
 type syncSeriesCallback struct {
-	l          *logger.Logger
-	schemaRepo *schemaRepo
+	l              *logger.Logger
+	schemaRepo     *schemaRepo
+	pm             protector.Memory
+	memWaitTimeout time.Duration
 }
 
-func setUpSeriesSyncCallback(l *logger.Logger, s *schemaRepo) queue.ChunkedSyncHandler {
+func setUpSeriesSyncCallback(l *logger.Logger, s *schemaRepo, pm protector.Memory, memWaitTimeout time.Duration) queue.ChunkedSyncHandler {
 	return &syncSeriesCallback{
-		l:          l,
-		schemaRepo: s,
+		l:              l,
+		schemaRepo:     s,
+		pm:             pm,
+		memWaitTimeout: memWaitTimeout,
 	}
 }
 
@@ -221,8 +233,11 @@ func (s *syncSeriesCallback) CreatePartHandler(ctx *queue.ChunkedSyncPartContext
 		return nil, err
 	}
 	return &syncSeriesContext{
-		l:       s.l,
-		segment: segment,
+		l:              s.l,
+		segment:        segment,
+		pm:             s.pm,
+		memWaitTimeout: s.memWaitTimeout,
+		introduceCtx:   ctx.RetrieveContext(),
 	}, nil
 }
 
@@ -232,12 +247,18 @@ func (s *syncSeriesCallback) HandleFileChunk(ctx *queue.ChunkedSyncPartContext, 
 		return fmt.Errorf("part handler is nil")
 	}
 	seriesCtx := ctx.Handler.(*syncSeriesContext)
+	if seriesCtx.pm.State() == protector.StateHigh {
+		return queue.ErrServerBusy
+	}
 
 	if seriesCtx.segment == nil {
 		return fmt.Errorf("segment is nil")
 	}
 	if seriesCtx.fileName != ctx.FileName {
 		if seriesCtx.streamer != nil {
+			if err := protector.WaitWhileHigh(ctx.RetrieveContext(), seriesCtx.pm, seriesCtx.memWaitTimeout, s.l, "trace-series-introduce"); err != nil {
+				return err
+			}
 			if err := seriesCtx.streamer.CompleteSegment(); err != nil {
 				s.l.Error().Err(err).Str("group", ctx.Group).Msg("failed to complete external segment")
 				return err
@@ -321,6 +342,10 @@ func (s *syncChunkCallback) CreatePartHandler(ctx *queue.ChunkedSyncPartContext)
 func (s *syncChunkCallback) HandleFileChunk(ctx *queue.ChunkedSyncPartContext, chunk []byte) error {
 	if ctx.Handler == nil {
 		return fmt.Errorf("part handler is nil")
+	}
+	partCtx := ctx.Handler.(*syncPartContext)
+	if partCtx.tsTable.pm.State() == protector.StateHigh {
+		return queue.ErrServerBusy
 	}
 	if ctx.PartType != PartTypeCore {
 		return s.handleSidxFileChunk(ctx, chunk)

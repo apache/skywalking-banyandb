@@ -55,11 +55,18 @@ type option struct {
 	mergePolicy                  *mergePolicy
 	protector                    protector.Memory
 	tire2Client                  queue.Client
+	trustedPluginDir             string
 	seriesCacheMaxSize           run.Bytes
 	flushTimeout                 time.Duration
 	syncInterval                 time.Duration
+	memWaitTimeout               time.Duration
+	mergeGraceDefault            time.Duration
+	decideTimeout                time.Duration
 	failedPartsMaxTotalSizeBytes uint64
 	vectorized                   vtrace.VectorizedConfig
+	decideTimeoutCircuitBreak    int
+	nativePipelineEnabled        bool
+	isHot                        bool
 }
 
 // Service allows inspecting the trace data.
