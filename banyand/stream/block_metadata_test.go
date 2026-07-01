@@ -246,6 +246,7 @@ func Test_unmarshalBlockMetadata(t *testing.T) {
 		original := []blockMetadata{
 			{
 				seriesID: common.SeriesID(1),
+				tagType:  make(tagType),
 				timestamps: timestampsMetadata{
 					dataBlock: dataBlock{
 						offset: 1,
@@ -258,6 +259,7 @@ func Test_unmarshalBlockMetadata(t *testing.T) {
 			},
 			{
 				seriesID: common.SeriesID(2),
+				tagType:  make(tagType),
 				timestamps: timestampsMetadata{
 					dataBlock: dataBlock{
 						offset: 2,
@@ -278,6 +280,39 @@ func Test_unmarshalBlockMetadata(t *testing.T) {
 		unmarshaled, err := unmarshalBlockMetadata(nil, marshaled)
 		require.NoError(t, err)
 		require.Equal(t, original, unmarshaled)
+	})
+
+	t.Run("reuse destination clears stale tag families", func(t *testing.T) {
+		original := []blockMetadata{
+			{
+				seriesID:    common.SeriesID(1),
+				tagFamilies: make(map[string]*dataBlock),
+				tagType:     make(tagType),
+				timestamps: timestampsMetadata{
+					dataBlock: dataBlock{
+						offset: 1,
+						size:   1,
+					},
+					min:        1,
+					max:        1,
+					encodeType: encoding.EncodeTypeConst,
+				},
+			},
+		}
+
+		var marshaled []byte
+		for _, bm := range original {
+			marshaled = bm.marshal(marshaled)
+		}
+
+		unmarshaled, err := unmarshalBlockMetadata(nil, marshaled)
+		require.NoError(t, err)
+		require.Len(t, unmarshaled, 1)
+
+		unmarshaled[0].tagFamilies = map[string]*dataBlock{"stale": {offset: 99, size: 99}}
+		reused, reuseErr := unmarshalBlockMetadata(unmarshaled[:0], marshaled)
+		require.NoError(t, reuseErr)
+		require.Equal(t, original, reused)
 	})
 
 	t.Run("unmarshal invalid blockMetadata", func(t *testing.T) {
