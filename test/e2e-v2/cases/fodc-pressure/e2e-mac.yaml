@@ -1,0 +1,58 @@
+# Licensed to the Apache Software Foundation (ASF) under one or more
+# contributor license agreements.  See the NOTICE file distributed with
+# this work for additional information regarding copyright ownership.
+# The ASF licenses this file to You under the Apache License, Version 2.0
+# (the "License"); you may not use this file except in compliance with
+# the License.  You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
+# LOCAL macOS-ADAPTED copy of e2e.yaml. Identical scenario, but drops the CI-only
+# tool-install setup steps (install kubectl / install yq / set PATH) because those
+# scripts download Linux binaries that cannot execute on macOS. The local machine
+# already has darwin kubectl/python3/curl/go on PATH. Do NOT commit this file.
+
+setup:
+  env: kind
+  file: ../fodc/kind.yaml
+  timeout: 20m
+  init-system-environment: ../../script/env
+  kind:
+    import-images:
+      - apache/skywalking-banyandb:latest
+      - apache/skywalking-banyandb-fodc-agent:latest
+      - apache/skywalking-banyandb-fodc-proxy:latest
+    expose-ports:
+      - namespace: default
+        resource: service/fodc-proxy
+        port: 17913
+  steps:
+    - name: Deploy FODC proxy
+      command: kubectl apply -f test/e2e-v2/cases/fodc/fodc-proxy.yaml
+    - name: Deploy standalone BanyanDB with FODC agent sidecar
+      command: kubectl apply -f test/e2e-v2/cases/fodc-pressure/banyandb-cluster.yaml
+    - name: Wait for all workloads to be ready
+      command: |
+        kubectl rollout status deployment/fodc-proxy --timeout=180s
+        kubectl rollout status deployment/banyandb-standalone --timeout=300s
+  wait:
+    - namespace: default
+      resource: deployment/fodc-proxy
+      for: condition=available
+    - namespace: default
+      resource: deployment/banyandb-standalone
+      for: condition=available
+
+verify:
+  retry:
+    count: 20
+    interval: 10s
+  cases:
+    - query: bash test/e2e-v2/cases/fodc-pressure/check-pressure.sh
+      expected: expected/pressure-status.yml

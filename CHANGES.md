@@ -69,6 +69,7 @@ Release Notes.
 - Speed up GCS backup uploads: write each object and its checksum metadata in one request, dropping the per-object `Update` round-trip.
 - Lifecycle migration now archives rows whose measure/stream schema was deleted from the registry, instead of aborting the group.
 - Canopy M3 metadata CRUD: add IndexRule + IndexRuleBinding create/edit/delete forms with admin-only edit/delete, pure `validate*()` module covering 8 input groups (group, stream, measure, trace, index rule, index rule binding, interval, lifecycle stages), `useFocusTrap` + `useDirtyGuard` modal hooks, live `m3-indexrule` e2e (CRUD round-trip + MF2 server-authority negative), and opt-in `m3-handoff` e2e + zero-dep static server for the design-bundle comparison.
+- Add FODC memory-pressure pprof capture: agent grabs heap/goroutine profiles when RSS nears the cgroup limit, served via the proxy.
 
 ### Bug Fixes
 

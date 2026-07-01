@@ -59,6 +59,7 @@ type Watchdog struct {
 	ctx            context.Context
 	recorder       MetricsRecorder
 	nodeInfo       func() (role string, labels map[string]string)
+	postPollHooks  []func(ctx context.Context)
 	log            *logger.Logger
 	cancel         context.CancelFunc
 	client         *http.Client
@@ -98,6 +99,15 @@ func NewWatchdogWithConfig(recorder MetricsRecorder, urls []string, interval tim
 func (w *Watchdog) SetNodeInfoProvider(fn func() (role string, labels map[string]string)) {
 	w.mu.Lock()
 	w.nodeInfo = fn
+	w.mu.Unlock()
+}
+
+// AddPostPollHook registers a callback invoked after each successful metrics poll is forwarded
+// to the recorder. Multiple hooks may be registered; they run in registration order on the poll
+// goroutine, so each must return quickly and offload any slow work to its own goroutine.
+func (w *Watchdog) AddPostPollHook(fn func(ctx context.Context)) {
+	w.mu.Lock()
+	w.postPollHooks = append(w.postPollHooks, fn)
 	w.mu.Unlock()
 }
 
@@ -319,6 +329,13 @@ func (w *Watchdog) pollAndForward(ctx context.Context) (context.Context, error) 
 	ctx = panicdiag.WithBreadcrumb(ctx, "forwarded watchdog metrics", "fodc-watchdog", map[string]string{
 		"metric_count": fmt.Sprintf("%d", len(rawMetrics)),
 	})
+
+	w.mu.RLock()
+	hooks := w.postPollHooks
+	w.mu.RUnlock()
+	for _, hook := range hooks {
+		hook(ctx)
+	}
 
 	w.log.Info().Int("count", len(rawMetrics)).Msg("Successfully polled and forwarded metrics")
 	return ctx, nil

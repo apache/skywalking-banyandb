@@ -75,7 +75,7 @@ var _ = Describe("Lifecycle Integration", func() {
 
 		lifecycleMgr = proxylifecycle.NewManager(agentRegistry, nil, testLogger)
 		metricsAggregator = metricsproxy.NewAggregator(agentRegistry, nil, testLogger)
-		grpcService = grpcproxy.NewFODCService(agentRegistry, metricsAggregator, nil, lifecycleMgr, nil, testLogger, heartbeatInterval)
+		grpcService = grpcproxy.NewFODCService(agentRegistry, metricsAggregator, nil, lifecycleMgr, nil, nil, testLogger, heartbeatInterval)
 		metricsAggregator.SetGRPCService(grpcService)
 		lifecycleMgr.SetGRPCService(grpcService)
 
@@ -92,7 +92,7 @@ var _ = Describe("Lifecycle Integration", func() {
 		Expect(httpListenErr).NotTo(HaveOccurred())
 		proxyHTTPAddr = httpListener.Addr().String()
 		_ = httpListener.Close()
-		httpServer = api.NewServer(metricsAggregator, nil, lifecycleMgr, agentRegistry, nil, testLogger)
+		httpServer = api.NewServer(metricsAggregator, nil, lifecycleMgr, agentRegistry, nil, nil, nil, testLogger)
 		Expect(httpServer.Start(proxyHTTPAddr, 10*time.Second, 10*time.Second)).To(Succeed())
 
 		Eventually(func() error {

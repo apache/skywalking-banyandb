@@ -339,13 +339,19 @@
     - [CrashBreadcrumb.FieldsEntry](#banyandb-fodc-v1-CrashBreadcrumb-FieldsEntry)
     - [CrashPanicRecord](#banyandb-fodc-v1-CrashPanicRecord)
     - [CrashPanicRecord.ProcessMetadataEntry](#banyandb-fodc-v1-CrashPanicRecord-ProcessMetadataEntry)
+    - [FetchPressureProfile](#banyandb-fodc-v1-FetchPressureProfile)
     - [GroupLifecycleInfo](#banyandb-fodc-v1-GroupLifecycleInfo)
     - [InspectAllRequest](#banyandb-fodc-v1-InspectAllRequest)
     - [InspectAllResponse](#banyandb-fodc-v1-InspectAllResponse)
     - [LifecycleData](#banyandb-fodc-v1-LifecycleData)
     - [LifecycleReport](#banyandb-fodc-v1-LifecycleReport)
+    - [ListComplete](#banyandb-fodc-v1-ListComplete)
+    - [ListProfiles](#banyandb-fodc-v1-ListProfiles)
     - [Metric](#banyandb-fodc-v1-Metric)
     - [Metric.LabelsEntry](#banyandb-fodc-v1-Metric-LabelsEntry)
+    - [PressureProfileChunk](#banyandb-fodc-v1-PressureProfileChunk)
+    - [PressureProfileInfo](#banyandb-fodc-v1-PressureProfileInfo)
+    - [PressureProfileRecord](#banyandb-fodc-v1-PressureProfileRecord)
     - [RegisterAgentRequest](#banyandb-fodc-v1-RegisterAgentRequest)
     - [RegisterAgentRequest.LabelsEntry](#banyandb-fodc-v1-RegisterAgentRequest-LabelsEntry)
     - [RegisterAgentResponse](#banyandb-fodc-v1-RegisterAgentResponse)
@@ -357,6 +363,8 @@
     - [StreamLifecycleResponse](#banyandb-fodc-v1-StreamLifecycleResponse)
     - [StreamMetricsRequest](#banyandb-fodc-v1-StreamMetricsRequest)
     - [StreamMetricsResponse](#banyandb-fodc-v1-StreamMetricsResponse)
+    - [StreamPressureProfilesRequest](#banyandb-fodc-v1-StreamPressureProfilesRequest)
+    - [StreamPressureProfilesResponse](#banyandb-fodc-v1-StreamPressureProfilesResponse)
     - [Topology](#banyandb-fodc-v1-Topology)
   
     - [MetricType](#banyandb-fodc-v1-MetricType)
@@ -5384,6 +5392,24 @@ Phase represents the current phase of the deletion task.
 
 
 
+<a name="banyandb-fodc-v1-FetchPressureProfile"></a>
+
+### FetchPressureProfile
+
+
+
+| Field | Type | Label | Description |
+| ----- | ---- | ----- | ----------- |
+| request_id | [string](#string) |  | proxy-generated per fetch; echoed back in every PressureProfileChunk to correlate |
+| profile_id | [string](#string) |  |  |
+| type | [string](#string) |  | &#34;heap&#34; | &#34;goroutine&#34; |
+| filepath | [string](#string) |  | the absolute path the agent reported in PressureProfileInfo.filepath; agent opens it AFTER validating it is within --pressure-profiler-dir |
+
+
+
+
+
+
 <a name="banyandb-fodc-v1-GroupLifecycleInfo"></a>
 
 ### GroupLifecycleInfo
@@ -5460,6 +5486,38 @@ Phase represents the current phase of the deletion task.
 
 
 
+<a name="banyandb-fodc-v1-ListComplete"></a>
+
+### ListComplete
+Agent -&gt; Proxy: sent once after all records for a ListProfiles request have been
+streamed (including the zero-record case), so the proxy knows the agent is done
+without waiting out a fixed window.
+
+
+| Field | Type | Label | Description |
+| ----- | ---- | ----- | ----------- |
+| request_id | [string](#string) |  | echoes ListProfiles.request_id |
+
+
+
+
+
+
+<a name="banyandb-fodc-v1-ListProfiles"></a>
+
+### ListProfiles
+Proxy -&gt; Agent: stream all capture-event metadata for this request id.
+
+
+| Field | Type | Label | Description |
+| ----- | ---- | ----- | ----------- |
+| request_id | [string](#string) |  | proxy-generated per list; echoed back in ListComplete to correlate |
+
+
+
+
+
+
 <a name="banyandb-fodc-v1-Metric"></a>
 
 ### Metric
@@ -5490,6 +5548,68 @@ Phase represents the current phase of the deletion task.
 | ----- | ---- | ----- | ----------- |
 | key | [string](#string) |  |  |
 | value | [string](#string) |  |  |
+
+
+
+
+
+
+<a name="banyandb-fodc-v1-PressureProfileChunk"></a>
+
+### PressureProfileChunk
+One slice of a profile&#39;s bytes during download.
+
+
+| Field | Type | Label | Description |
+| ----- | ---- | ----- | ----------- |
+| request_id | [string](#string) |  | echoes FetchPressureProfile.request_id -- correlates this chunk stream to its fetch |
+| profile_id | [string](#string) |  |  |
+| type | [string](#string) |  | &#34;heap&#34; | &#34;goroutine&#34; |
+| data | [bytes](#bytes) |  | a bounded slice (e.g. &lt;= 1MB) |
+| last | [bool](#bool) |  | true on the final chunk |
+| error | [string](#string) |  | non-empty if the file cannot be served (e.g. evicted / not found) |
+
+
+
+
+
+
+<a name="banyandb-fodc-v1-PressureProfileInfo"></a>
+
+### PressureProfileInfo
+One pprof profile inside a capture event (metadata only, no bytes).
+
+
+| Field | Type | Label | Description |
+| ----- | ---- | ----- | ----------- |
+| type | [string](#string) |  | &#34;heap&#34; | &#34;goroutine&#34; |
+| filename | [string](#string) |  | base name, e.g. &#34;heap.pprof&#34; |
+| filepath | [string](#string) |  | absolute path on the agent&#39;s disk, e.g. /tmp/pressure-profiles/20260627T101112.000000000Z/heap.pprof |
+| format | [string](#string) |  | &#34;pprof&#34; (gzip-compressed protobuf) |
+| size_bytes | [int64](#int64) |  | on-disk size |
+
+
+
+
+
+
+<a name="banyandb-fodc-v1-PressureProfileRecord"></a>
+
+### PressureProfileRecord
+Metadata for one capture event (no bytes). pod/role are NOT carried here:
+the proxy enriches them from the registered AgentIdentity, same as crash.
+
+
+| Field | Type | Label | Description |
+| ----- | ---- | ----- | ----------- |
+| profile_id | [string](#string) |  | = event directory name (UTC ns timestamp) |
+| captured_at | [google.protobuf.Timestamp](#google-protobuf-Timestamp) |  |  |
+| source_endpoint | [string](#string) |  | pprof endpoint pulled, e.g. http://localhost:6060 |
+| rss_bytes | [uint64](#uint64) |  | RSS at trigger (process_resident_memory_bytes); top-N sort key |
+| cgroup_limit_bytes | [uint64](#uint64) |  | cgroup memory.max |
+| trigger_percent | [uint32](#uint32) |  | configured threshold percent (e.g. 75) |
+| threshold_bytes | [uint64](#uint64) |  | cgroup_limit_bytes * trigger_percent / 100 |
+| profiles | [PressureProfileInfo](#banyandb-fodc-v1-PressureProfileInfo) | repeated |  |
 
 
 
@@ -5677,6 +5797,40 @@ Phase represents the current phase of the deletion task.
 
 
 
+<a name="banyandb-fodc-v1-StreamPressureProfilesRequest"></a>
+
+### StreamPressureProfilesRequest
+Agent -&gt; Proxy: either a metadata record (answer to list_profiles) or a byte
+chunk (answer to fetch_profile).
+
+
+| Field | Type | Label | Description |
+| ----- | ---- | ----- | ----------- |
+| record | [PressureProfileRecord](#banyandb-fodc-v1-PressureProfileRecord) |  |  |
+| list_complete | [ListComplete](#banyandb-fodc-v1-ListComplete) |  |  |
+| chunk | [PressureProfileChunk](#banyandb-fodc-v1-PressureProfileChunk) |  |  |
+
+
+
+
+
+
+<a name="banyandb-fodc-v1-StreamPressureProfilesResponse"></a>
+
+### StreamPressureProfilesResponse
+Proxy -&gt; Agent: either &#34;stream all your metadata&#34; or &#34;stream one profile&#39;s bytes&#34;.
+
+
+| Field | Type | Label | Description |
+| ----- | ---- | ----- | ----------- |
+| list_profiles | [ListProfiles](#banyandb-fodc-v1-ListProfiles) |  |  |
+| fetch_profile | [FetchPressureProfile](#banyandb-fodc-v1-FetchPressureProfile) |  |  |
+
+
+
+
+
+
 <a name="banyandb-fodc-v1-Topology"></a>
 
 ### Topology
@@ -5727,6 +5881,7 @@ MetricType represents the Prometheus metric type.
 | StreamClusterTopology | [StreamClusterTopologyRequest](#banyandb-fodc-v1-StreamClusterTopologyRequest) stream | [StreamClusterTopologyResponse](#banyandb-fodc-v1-StreamClusterTopologyResponse) stream | Bi-directional stream for cluster topology |
 | StreamLifecycle | [StreamLifecycleRequest](#banyandb-fodc-v1-StreamLifecycleRequest) stream | [StreamLifecycleResponse](#banyandb-fodc-v1-StreamLifecycleResponse) stream | Bi-directional stream for lifecycle data |
 | StreamCrashDiagnostics | [StreamCrashDiagnosticsRequest](#banyandb-fodc-v1-StreamCrashDiagnosticsRequest) stream | [StreamCrashDiagnosticsResponse](#banyandb-fodc-v1-StreamCrashDiagnosticsResponse) stream | Bi-directional stream for crash diagnostics Agent sends StreamCrashDiagnosticsRequest (panic collections), Proxy sends StreamCrashDiagnosticsResponse (requests) |
+| StreamPressureProfiles | [StreamPressureProfilesRequest](#banyandb-fodc-v1-StreamPressureProfilesRequest) stream | [StreamPressureProfilesResponse](#banyandb-fodc-v1-StreamPressureProfilesResponse) stream | Bi-directional stream for memory-pressure pprof profiles. Proxy drives via StreamPressureProfilesResponse (list metadata, or fetch one profile&#39;s bytes); agent replies with StreamPressureProfilesRequest (metadata records, or binary chunks). |
 
 
 <a name="banyandb-fodc-v1-GroupLifecycleService"></a>

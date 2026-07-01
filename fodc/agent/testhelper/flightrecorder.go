@@ -180,6 +180,7 @@ func NewProxyClientWithCollector(
 		collector,
 		nil,
 		nil,
+		nil,
 		logger,
 	)
 }
@@ -298,6 +299,7 @@ func NewProxyClientWrapper(
 		clusterCollector,
 		lifecycleCollector,
 		nil,
+		nil,
 		logger,
 	)
 	return &ProxyClientWrapper{
@@ -338,6 +340,7 @@ func NewProxyClientWrapperWithCrashDir(
 		clusterCollector,
 		nil,
 		crashWatcher,
+		nil,
 		logger,
 	)
 	return &ProxyClientWrapper{
