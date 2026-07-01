@@ -21,10 +21,12 @@ package validate
 import (
 	"errors"
 	"fmt"
+	"path/filepath"
 	"strings"
 
 	commonv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/common/v1"
 	databasev1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/database/v1"
+	"github.com/apache/skywalking-banyandb/pkg/pipeline/sdk"
 )
 
 const reservedTagSeparator = "#"
@@ -103,6 +105,48 @@ func GroupForNonProperty(group *commonv1.Group) error {
 	}
 	if group.ResourceOpts.Ttl.Unit == commonv1.IntervalRule_UNIT_UNSPECIFIED {
 		return errors.New("group ttl unit is unspecified")
+	}
+	if pipelineCfg := group.GetPipeline(); pipelineCfg != nil {
+		if validateErr := validateTracePipelineConfig(pipelineCfg); validateErr != nil {
+			return fmt.Errorf("group pipeline config is invalid: %w", validateErr)
+		}
+	}
+	return nil
+}
+
+// validateTracePipelineConfig validates the embedded TracePipelineConfig on a Group.
+// It checks each plugin's sampler for trusted-dir-safe path shape and ABI version,
+// then delegates bounds validation to the generated proto validator.
+func validateTracePipelineConfig(cfg *commonv1.TracePipelineConfig) error {
+	if validateErr := cfg.Validate(); validateErr != nil {
+		return fmt.Errorf("proto validation failed: %w", validateErr)
+	}
+	for idx, plugin := range cfg.GetPlugins() {
+		sp := plugin.GetSampler()
+		if sp == nil {
+			continue
+		}
+		if sp.GetPath() == "" {
+			return fmt.Errorf("plugins[%d].sampler.path is empty", idx)
+		}
+		// Reject absolute paths and path segments that escape via "..".
+		cleaned := filepath.Clean(sp.GetPath())
+		if filepath.IsAbs(cleaned) {
+			return fmt.Errorf("plugins[%d].sampler.path must be a relative path, got %q", idx, sp.GetPath())
+		}
+		if cleaned == ".." || strings.HasPrefix(cleaned, ".."+string(filepath.Separator)) {
+			return fmt.Errorf("plugins[%d].sampler.path %q escapes the trusted directory", idx, sp.GetPath())
+		}
+		if sp.GetAbiVersion() != sdk.ABIVersion {
+			return fmt.Errorf("plugins[%d].sampler.abi_version must be %d, got %d", idx, sdk.ABIVersion, sp.GetAbiVersion())
+		}
+	}
+	for idx, stage := range cfg.GetStages() {
+		for jdx, plugin := range stage.GetPlugins() {
+			if plugin.GetSampler() != nil {
+				return fmt.Errorf("stages[%d].plugins[%d]: stages[].plugins are not supported in v1; declare plugins at the top level", idx, jdx)
+			}
+		}
 	}
 	return nil
 }
