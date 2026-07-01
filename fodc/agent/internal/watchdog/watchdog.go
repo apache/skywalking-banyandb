@@ -331,7 +331,8 @@ func (w *Watchdog) pollAndForward(ctx context.Context) (context.Context, error) 
 	})
 
 	w.mu.RLock()
-	hooks := w.postPollHooks
+	hooks := make([]func(context.Context), len(w.postPollHooks))
+	copy(hooks, w.postPollHooks)
 	w.mu.RUnlock()
 	for _, hook := range hooks {
 		hook(ctx)

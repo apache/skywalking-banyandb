@@ -1022,14 +1022,21 @@ func (s *FODCService) CollectList(agentIDs []string) <-chan struct{} {
 	s.listMu.Lock()
 	s.listWaiters[requestID] = waiter
 	s.listMu.Unlock()
-	// Bound the registry entry's lifetime and guarantee the waiter unblocks even if some agent
-	// never acks, regardless of whether collectListTTL stays above the aggregator's timeout.
-	time.AfterFunc(collectListTTL, func() {
+	// Remove the registry entry as soon as the waiter completes (all agents acked), and fall
+	// back to collectListTTL to force-unblock and clean up if some agent never acks. This keeps
+	// waiters/timers from lingering the full TTL under frequent list calls.
+	timer := time.NewTimer(collectListTTL)
+	go func() {
+		select {
+		case <-waiter.done:
+			timer.Stop()
+		case <-timer.C:
+			waiter.forceDone()
+		}
 		s.listMu.Lock()
 		delete(s.listWaiters, requestID)
 		s.listMu.Unlock()
-		waiter.forceDone()
-	})
+	}()
 
 	for _, id := range agentIDs {
 		s.connectionsMu.RLock()
