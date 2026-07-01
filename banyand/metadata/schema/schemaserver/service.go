@@ -193,6 +193,13 @@ func (s *server) Validate() error {
 	return nil
 }
 
+// batchWaitSeconds converts a flush timeout to whole seconds for the index
+// BatchWaitSec, rounding up with a floor of 1. A sub-second flush timeout must
+// still yield a positive wait — a 0-second batch wait risks a tight flush loop.
+func batchWaitSeconds(d time.Duration) int64 {
+	return max(int64((d+time.Second-1)/time.Second), 1)
+}
+
 func (s *server) PreRun(ctx context.Context) error {
 	s.l = logger.GetLogger("schema-server")
 	var err error
@@ -246,7 +253,7 @@ func (s *server) PreRun(ctx context.Context) error {
 			TreeSlotCount:      s.repairTreeSlotCount,
 		},
 		Index: db.IndexConfig{
-			BatchWaitSec:       5,
+			BatchWaitSec:       batchWaitSeconds(s.flushTimeout),
 			WaitForPersistence: false,
 		},
 		Snapshot: db.SnapshotConfig{
