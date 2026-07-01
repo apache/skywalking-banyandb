@@ -166,17 +166,8 @@ jobs:
       - name: Setup build environment
         uses: ./.github/actions/setup-build-env
         with:
-          download-artifacts: 'false'
+          download-artifacts: 'true'
           setup-docker: 'true'
-
-      - name: Cache generate tools
-        uses: actions/cache@v4
-        with:
-          path: bin
-          key: ${{ runner.os }}-generate-tool-${{ hashFiles('**/version.mk') }}
-
-      - name: Generate code
-        run: make generate
 
       - name: Build BanyanDB image
         run: |
