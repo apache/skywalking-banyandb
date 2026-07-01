@@ -375,7 +375,7 @@ export function createMcpServer(banyandbClient: BanyanDBClient): McpServer {
     if (name === 'list_resources_bydbql') {
       return handleListResourcesBydbql(banyandbClient, args);
     }
-    if (name === 'get_generate_bydbql_prompt' || name === 'get_gnerate_bydbql_prompt') {
+    if (name === 'get_generate_bydbql_prompt') {
       return handleGetGenerateBydbqlPrompt(banyandbClient, args);
     }
     if (name === 'validate_bydbql') {
