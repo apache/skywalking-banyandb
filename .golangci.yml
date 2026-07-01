@@ -134,6 +134,13 @@ linters-settings:
 
 run:
   go: "1.25"
+  # Lint build-tag-gated sources too. Without this, files behind
+  # `//go:build trace_pipeline` (the trace pipeline integration suites) are
+  # invisible to `make lint`, letting dead code and formatting debt accumulate
+  # silently — they still compile via `make test-trace-pipeline`, and unused
+  # package-level vars/funcs are not compile errors in Go.
+  build-tags:
+  - trace_pipeline
 issues:
   exclude-rules:
   - path: ".*\\.pb\\.go"

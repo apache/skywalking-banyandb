@@ -40,12 +40,9 @@ import (
 
 var mergeMaxConcurrencyCh = make(chan struct{}, cgroups.CPUs())
 
-var (
+const (
 	mergeTypeMem  = "mem"
 	mergeTypeFile = "file"
-)
-
-var (
 	mergeLaneFast = "fast"
 	mergeLaneSlow = "slow"
 )
@@ -328,7 +325,10 @@ func (tst *tsTable) mergePartsThenSendIntroduction(creator snapshotCreator, part
 	var filter *mergeFilter
 	if tst.option.nativePipelineEnabled {
 		if samplers := lookupSamplers(tst.group); len(samplers) > 0 {
-			graceNs := int64(tst.option.mergeGraceDefault)
+			graceNs := lookupMergeGrace(tst.group)
+			if graceNs <= 0 {
+				graceNs = int64(tst.option.mergeGraceDefault)
+			}
 			if !isMergeHot(parts, graceNs, time.Now().UnixNano()) {
 				chain := newMergeChain(tst.group, "", samplers, tst.option.decideTimeoutCircuitBreak)
 				filter = &mergeFilter{

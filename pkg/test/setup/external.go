@@ -118,6 +118,42 @@ func ExternalCMD(binPath, logPath string, flags ...string) (func(), error) {
 	return teardown, nil
 }
 
+// BuildStandaloneFlags assembles the flag list for an external standalone server
+// WITHOUT the AddSchemaServerAddr side-effect. Use this to capture the flags
+// once for restart scenarios (ExternalStandalone already records the schema
+// address; a second call would duplicate it in the ClusterConfig).
+// The returned slice does NOT include the leading "standalone" subcommand.
+func BuildStandaloneFlags(config *ClusterConfig, path string, ports []int) []string {
+	addr := fmt.Sprintf("%s:%d", host, ports[0])
+	schemaPort := ports[4]
+	ff := []string{
+		"--logging-env=dev",
+		"--logging-level=" + testflags.LogLevel,
+		"--grpc-host=" + host,
+		fmt.Sprintf("--grpc-port=%d", ports[0]),
+		"--http-host=" + host,
+		fmt.Sprintf("--http-port=%d", ports[1]),
+		"--http-grpc-addr=" + addr,
+		"--stream-root-path=" + path,
+		"--measure-root-path=" + path,
+		"--property-root-path=" + path,
+		"--trace-root-path=" + path,
+		"--schema-server-root-path=" + path,
+		"--schema-registry-mode=" + config.SchemaRegistry.Mode,
+		"--node-discovery-mode=" + config.NodeDiscovery.Mode,
+		"--node-host-provider=flag",
+		"--node-host=" + localhost,
+		"--schema-server-grpc-host=" + localhost,
+		fmt.Sprintf("--schema-server-grpc-port=%d", schemaPort),
+	}
+	if config.NodeDiscovery.Mode == ModeFile && config.NodeDiscovery.FileWriter != nil {
+		ff = append(ff, fmt.Sprintf("--node-discovery-file-path=%s", config.NodeDiscovery.FileWriter.Path()))
+	}
+	// Deliberately does NOT call config.AddSchemaServerAddr — the caller's
+	// ExternalStandalone has already done so.
+	return ff
+}
+
 // standaloneFlags assembles the flag list for an external standalone server,
 // mirroring the flag block in standaloneServerWithAuth (setup.go:377-396).
 // The returned slice does NOT include the leading "standalone" subcommand.
@@ -220,6 +256,49 @@ func dataNodeFlags(config *ClusterConfig, dataDir string, ports []int) []string 
 			fmt.Sprintf("--schema-server-grpc-port=%d", schemaPort),
 		)
 		config.AddSchemaServerAddr(schemaAddr)
+	}
+	return ff
+}
+
+// BuildDataNodeFlags assembles the flag list for an external data node
+// WITHOUT the AddSchemaServerAddr side-effect. Use this to capture the flags
+// once for restart scenarios (ExternalDataNode already records the schema
+// address; a second call would duplicate it in the ClusterConfig).
+// The returned slice does NOT include the leading "data" subcommand.
+// ports must contain at least 3 elements: [grpc, gossip, http]; a 4th element
+// enables the schema server (ports[3]) without re-registering its address.
+func BuildDataNodeFlags(config *ClusterConfig, dataDir string, ports []int) []string {
+	nodeHost := localhost
+	runSchemaServer := len(ports) >= 4
+
+	ff := []string{
+		"--grpc-host=" + host,
+		fmt.Sprintf("--grpc-port=%d", ports[0]),
+		fmt.Sprintf("--property-repair-gossip-grpc-port=%d", ports[1]),
+		fmt.Sprintf("--http-port=%d", ports[2]),
+		"--stream-root-path=" + dataDir,
+		"--measure-root-path=" + dataDir,
+		"--property-root-path=" + dataDir,
+		"--trace-root-path=" + dataDir,
+		"--schema-server-root-path=" + dataDir,
+		"--node-host-provider", "flag",
+		"--node-host", nodeHost,
+		"--logging-modules", "trace,sidx,property-schema-registry",
+		"--logging-levels", "debug,debug,debug",
+		"--schema-registry-mode=" + config.SchemaRegistry.Mode,
+		"--node-discovery-mode=" + config.NodeDiscovery.Mode,
+	}
+	if config.NodeDiscovery.Mode == ModeFile && config.NodeDiscovery.FileWriter != nil {
+		ff = append(ff, fmt.Sprintf("--node-discovery-file-path=%s", config.NodeDiscovery.FileWriter.Path()))
+	}
+	if runSchemaServer {
+		schemaPort := ports[3]
+		ff = append(ff,
+			"--schema-server-grpc-host="+nodeHost,
+			fmt.Sprintf("--schema-server-grpc-port=%d", schemaPort),
+		)
+		// Deliberately does NOT call config.AddSchemaServerAddr — the caller's
+		// ExternalDataNode has already done so.
 	}
 	return ff
 }
