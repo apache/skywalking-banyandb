@@ -66,10 +66,15 @@
     - [IntervalRule](#banyandb-common-v1-IntervalRule)
     - [LifecycleStage](#banyandb-common-v1-LifecycleStage)
     - [Metadata](#banyandb-common-v1-Metadata)
+    - [Plugin](#banyandb-common-v1-Plugin)
     - [ResourceOpts](#banyandb-common-v1-ResourceOpts)
+    - [SamplerPlugin](#banyandb-common-v1-SamplerPlugin)
+    - [StageRule](#banyandb-common-v1-StageRule)
+    - [TracePipelineConfig](#banyandb-common-v1-TracePipelineConfig)
   
     - [Catalog](#banyandb-common-v1-Catalog)
     - [IntervalRule.Unit](#banyandb-common-v1-IntervalRule-Unit)
+    - [PipelineEvent](#banyandb-common-v1-PipelineEvent)
   
 - [banyandb/property/v1/property.proto](#banyandb_property_v1_property-proto)
     - [Property](#banyandb-property-v1-Property)
@@ -387,10 +392,6 @@
     - [MeasureService](#banyandb-measure-v1-MeasureService)
   
 - [banyandb/pipeline/v1/trace_pipeline.proto](#banyandb_pipeline_v1_trace_pipeline-proto)
-    - [Plugin](#banyandb-pipeline-v1-Plugin)
-    - [SamplerPlugin](#banyandb-pipeline-v1-SamplerPlugin)
-    - [StageRule](#banyandb-pipeline-v1-StageRule)
-    - [TracePipelineConfig](#banyandb-pipeline-v1-TracePipelineConfig)
     - [TracePipelineRegistryServiceCreateRequest](#banyandb-pipeline-v1-TracePipelineRegistryServiceCreateRequest)
     - [TracePipelineRegistryServiceCreateResponse](#banyandb-pipeline-v1-TracePipelineRegistryServiceCreateResponse)
     - [TracePipelineRegistryServiceDeleteRequest](#banyandb-pipeline-v1-TracePipelineRegistryServiceDeleteRequest)
@@ -403,8 +404,6 @@
     - [TracePipelineRegistryServiceListResponse](#banyandb-pipeline-v1-TracePipelineRegistryServiceListResponse)
     - [TracePipelineRegistryServiceUpdateRequest](#banyandb-pipeline-v1-TracePipelineRegistryServiceUpdateRequest)
     - [TracePipelineRegistryServiceUpdateResponse](#banyandb-pipeline-v1-TracePipelineRegistryServiceUpdateResponse)
-  
-    - [PipelineEvent](#banyandb-pipeline-v1-PipelineEvent)
   
     - [TracePipelineRegistryService](#banyandb-pipeline-v1-TracePipelineRegistryService)
   
@@ -1358,6 +1357,7 @@ Group is an internal object for Group management
 | resource_opts | [ResourceOpts](#banyandb-common-v1-ResourceOpts) |  | resourceOpts indicates the structure of the underlying kv storage |
 | updated_at | [google.protobuf.Timestamp](#google-protobuf-Timestamp) |  | updated_at indicates when resources of the group are updated |
 | created_at | [google.protobuf.Timestamp](#google-protobuf-Timestamp) |  | created_at is the first-appearance timestamp; survives updates unchanged. |
+| pipeline | [TracePipelineConfig](#banyandb-common-v1-TracePipelineConfig) | optional | pipeline carries the optional group-scoped in-merge retention config. Absent or non-CATALOG_TRACE group means no sampler. |
 
 
 
@@ -1420,6 +1420,22 @@ Metadata is for multi-tenant, multi-model use
 
 
 
+<a name="banyandb-common-v1-Plugin"></a>
+
+### Plugin
+Plugin is one link in a pipeline&#39;s processing chain.
+
+
+| Field | Type | Label | Description |
+| ----- | ---- | ----- | ----------- |
+| name | [string](#string) |  | name is the operator-facing identity for this link. |
+| sampler | [SamplerPlugin](#banyandb-common-v1-SamplerPlugin) |  | sampler owns a keep/drop verdict over a vectorized batch of traces. |
+
+
+
+
+
+
 <a name="banyandb-common-v1-ResourceOpts"></a>
 
 ### ResourceOpts
@@ -1434,6 +1450,65 @@ Metadata is for multi-tenant, multi-model use
 | stages | [LifecycleStage](#banyandb-common-v1-LifecycleStage) | repeated | stages defines the ordered lifecycle stages. Data progresses through these stages sequentially. |
 | default_stages | [string](#string) | repeated | default_stages is the name of the default stage |
 | replicas | [uint32](#uint32) |  | replicas is the number of replicas. This is used to ensure high availability and fault tolerance. This is an optional field and defaults to 0. A value of 0 means no replicas, while a value of 1 means one primary shard and one replica. Higher values indicate more replicas. |
+
+
+
+
+
+
+<a name="banyandb-common-v1-SamplerPlugin"></a>
+
+### SamplerPlugin
+SamplerPlugin configures a user-supplied native Go plugin (.so) that owns a
+keep/drop verdict over a vectorized batch of traces.
+
+
+| Field | Type | Label | Description |
+| ----- | ---- | ----- | ----------- |
+| path | [string](#string) |  | path is the plugin .so filename, resolved within the data node&#39;s trusted plugin directory. |
+| symbol | [string](#string) |  | symbol is the constructor symbol the engine looks up; defaults to &#34;NewSampler&#34; if empty. |
+| abi_version | [uint32](#uint32) |  | abi_version is the ABI version the plugin was built against. |
+| config | [google.protobuf.Struct](#google-protobuf-Struct) |  | config is the plugin-defined configuration serialized to canonical JSON for the constructor. |
+
+
+
+
+
+
+<a name="banyandb-common-v1-StageRule"></a>
+
+### StageRule
+StageRule binds the pipeline to one lifecycle stage and declares that stage&#39;s
+retention plugin chain.
+
+
+| Field | Type | Label | Description |
+| ----- | ---- | ----- | ----------- |
+| stage | [string](#string) |  | stage is the stage name from the Group&#39;s ResourceOpts.stages. |
+| plugins | [Plugin](#banyandb-common-v1-Plugin) | repeated | plugins is the ordered retention chain for this stage. |
+
+
+
+
+
+
+<a name="banyandb-common-v1-TracePipelineConfig"></a>
+
+### TracePipelineConfig
+TracePipelineConfig is the group-scoped, name-less in-merge retention configuration.
+Identity comes from the carrying Group; there is one config per group by construction.
+
+
+| Field | Type | Label | Description |
+| ----- | ---- | ----- | ----------- |
+| enabled | [bool](#bool) |  | enabled activates the pipeline. |
+| plugins | [Plugin](#banyandb-common-v1-Plugin) | repeated | plugins is the ordered chain of plugins evaluated by enabled events. |
+| merge_grace | [google.protobuf.Duration](#google-protobuf-Duration) |  | merge_grace is the per-trace maturity window for the in-merge filter. Strictly positive if set; engine default 30s if unset. |
+| finalize_grace | [google.protobuf.Duration](#google-protobuf-Duration) |  | finalize_grace is the per-segment settling window for the scheduled finalization pass. Strictly positive if set; engine default 5m if unset. |
+| stages | [StageRule](#banyandb-common-v1-StageRule) | repeated | stages declares per-stage retention rules. |
+| schema_names | [string](#string) | repeated | schema_names lists explicit schema names to target within the Group. |
+| schema_name_regex | [string](#string) |  | schema_name_regex is an RE2 pattern matched against schema names. |
+| enabled_events | [PipelineEvent](#banyandb-common-v1-PipelineEvent) | repeated | enabled_events lists the pipeline-wide events to run. |
 
 
 
@@ -1467,6 +1542,19 @@ Metadata is for multi-tenant, multi-model use
 | UNIT_UNSPECIFIED | 0 |  |
 | UNIT_HOUR | 1 |  |
 | UNIT_DAY | 2 |  |
+
+
+
+<a name="banyandb-common-v1-PipelineEvent"></a>
+
+### PipelineEvent
+PipelineEvent identifies a pipeline-wide event that can be independently enabled.
+
+| Name | Number | Description |
+| ---- | ------ | ----------- |
+| PIPELINE_EVENT_UNSPECIFIED | 0 |  |
+| PIPELINE_EVENT_MERGE | 1 | In-merge filter during Hot-phase LSM compaction merges. |
+| PIPELINE_EVENT_FINALIZE | 2 | Tail-sampling gate at Hot-phase segment finalization. |
 
 
  
@@ -6084,140 +6172,6 @@ WriteResponse is the response contract for write
 
 
 
-<a name="banyandb-pipeline-v1-Plugin"></a>
-
-### Plugin
-Plugin is one link in a pipeline&#39;s processing chain — a generic, kind-tagged
-envelope around a user-supplied native Go plugin. The set oneof arm selects
-the kind; today the only kind is a sampler (SamplerPlugin). Adding a new kind
-is purely additive: define its payload message and add a new arm to `kind`,
-leaving existing arms and field numbers untouched.
-
-A chain of Plugin (TracePipelineConfig.plugins, StageRule.plugins) is a
-sequential pipe: links run in declared order, each link processes the traces
-the previous link kept, and a link that fails is bypassed (its input passes
-through unchanged). The plugin↔engine contract for each kind (the vectorized
-batch, the projection handshake, the verdict) lives in the pinned Go SDK
-module `pkg/pipeline/sdk`, not in this proto.
-
-
-| Field | Type | Label | Description |
-| ----- | ---- | ----- | ----------- |
-| name | [string](#string) |  | Operator-facing identity for this link, used in diagnostics and admission errors. Must be non-empty; cross-element uniqueness within a chain is enforced server-side. |
-| sampler | [SamplerPlugin](#banyandb-pipeline-v1-SamplerPlugin) |  | Sampler kind: owns a keep/drop verdict over a vectorized batch of traces. |
-
-
-
-
-
-
-<a name="banyandb-pipeline-v1-SamplerPlugin"></a>
-
-### SamplerPlugin
-SamplerPlugin configures a user-supplied native Go plugin (a .so loaded
-in-process via the Go `plugin` package) that owns a keep/drop verdict over a
-vectorized batch of traces. It is the sampler kind of Plugin (Plugin.sampler)
-and is the keep/drop link wherever a chain runs: in a TracePipelineConfig
-chain it gates at the enabled PipelineEvent(s) (merge / finalization); in a
-StageRule chain it is per-stage retention at a stage&#39;s migration-out boundary.
-
-The full plugin↔engine contract (the vectorized batch type, the projection
-handshake, and the verdict shape) lives in the pinned Go SDK module
-`pkg/pipeline/sdk`, not in this proto; this message only locates and admits
-the plugin. Three properties of that contract:
-  - Strong compatibility: the boundary exchanges only stdlib/primitive types
-    defined in the pinned SDK, so no third-party struct version is pinned
-    across the .so boundary. The plugin must be built with the SAME Go
-    toolchain, build tags, and flags (-trimpath, CGO) and the SAME pinned SDK
-    as the running data node; `abi_version` is checked at load.
-  - Vectorized input: the plugin&#39;s Decide is called once per columnar batch of
-    traces, not once per trace.
-  - Projection: the plugin declares the columns it needs (SDK Project →
-    Projection{Tags, SpanIDs, Spans}); the engine materializes only those tag
-    columns and, only when requested, the spans stream — like a query
-    projection.
-
-Operational constraints (Go `plugin`): Linux/macOS only; plugins cannot be
-unloaded, so changing one requires a node restart (no hot-reload); a plugin
-panic is contained with recover() and fails open (the whole batch is
-retained). Loading arbitrary code is operator-only and gated behind a server
-flag plus a trusted plugin directory.
-
-
-| Field | Type | Label | Description |
-| ----- | ---- | ----- | ----------- |
-| path | [string](#string) |  | Plugin .so filename, resolved within the data node&#39;s trusted plugin directory. The engine rejects any path that escapes that directory. |
-| symbol | [string](#string) |  | Constructor symbol the engine looks up; defaults to &#34;NewSampler&#34; if empty. |
-| abi_version | [uint32](#uint32) |  | ABI version the plugin was built against. The engine refuses to load the plugin unless this equals its own compiled sdk.ABIVersion. |
-| config | [google.protobuf.Struct](#google-protobuf-Struct) |  | Plugin-defined configuration, set directly in the pipeline config as a structured object. The engine does not interpret its keys: it serializes the Struct to canonical JSON and hands the bytes to the plugin&#39;s constructor (SDK NewSampler([]byte)), which unmarshals them into the plugin&#39;s own typed config and validates them — a malformed config fails the load. Optional: a plugin that needs no configuration leaves it unset. |
-
-
-
-
-
-
-<a name="banyandb-pipeline-v1-StageRule"></a>
-
-### StageRule
-StageRule binds the pipeline to one lifecycle stage of the targeted Group
-and declares that stage&#39;s retention plugin chain. The rule fires at the
-stage&#39;s migration-out boundary (i.e. when a segment migrates from this stage
-to the next stage); routine compaction is governed by PIPELINE_EVENT_MERGE on
-TracePipelineConfig, not by StageRule.
-
-Per-stage retention uses the SAME chain mechanism as gating: each stage&#39;s
-`plugins` chain owns the keep/drop verdict for traces leaving that stage. A
-StageRule with an empty `plugins` chain has no filtering effect — every trace
-at this stage migrates unchanged. The &#34;rising bar&#34; across stages (Hot keeps
-more, Cold keeps less) is expressed by each stage&#39;s plugin config (see §4.2
-of the design doc), not by a fixed predicate vocabulary.
-
-
-| Field | Type | Label | Description |
-| ----- | ---- | ----- | ----------- |
-| stage | [string](#string) |  | Stage name from the Group&#39;s ResourceOpts.stages (e.g. &#34;hot&#34;, &#34;warm&#34;, &#34;cold&#34;). Must be non-empty; an empty stage name cannot match any lifecycle stage. |
-| plugins | [Plugin](#banyandb-pipeline-v1-Plugin) | repeated | Per-stage retention chain: the ordered plugins (a sequential pipe) that decide keep/drop for traces leaving this stage at its migration-out boundary. Empty means no per-stage drop (every trace migrates). Same contract and composition as the gating chain (see Plugin). |
-
-
-
-
-
-
-<a name="banyandb-pipeline-v1-TracePipelineConfig"></a>
-
-### TracePipelineConfig
-TracePipelineConfig is the root configuration for a storage-node trace pipeline.
-It reuses existing catalog identifiers (group via metadata, stage names, schema
-names) for targeting instead of declaring a parallel metadata model.
-
-The pipeline has up to three filter points:
-  1. PIPELINE_EVENT_MERGE — in-merge filter during Hot-phase LSM compaction (default).
-  2. PIPELINE_EVENT_FINALIZE — tail-sampling gate at Hot-phase finalization.
-  3. Per-stage retention via StageRule.plugins, applied at the stage&#39;s
-     migration-out boundary (when the segment migrates to the next stage).
-     Always implicit when any StageRule carries a plugin chain.
-Events 1 and 2 are toggleable via `enabled_events`. The gating policy those
-events evaluate is the `plugins` chain (a sequential pipe of native Go
-plugins; today each link is a sampler).
-
-
-| Field | Type | Label | Description |
-| ----- | ---- | ----- | ----------- |
-| metadata | [banyandb.common.v1.Metadata](#banyandb-common-v1-Metadata) |  | Identity and revision tracking; metadata.group is the Group this pipeline lives in and applies to, consistent with every other schema resource. Required: every config needs a name/group for registry handling. |
-| enabled | [bool](#bool) |  | Active status of the pipeline. |
-| stages | [StageRule](#banyandb-pipeline-v1-StageRule) | repeated | Per-stage retention rules: which lifecycle stages this pipeline acts on, with the retention plugin chain for each. Each rule fires at its stage&#39;s migration-out boundary regardless of `enabled_events`. Empty means the only filters are the `enabled_events` events (no per-stage drop). |
-| schema_names | [string](#string) | repeated | Explicit schema names to target within the Group (exact match on Metadata.name). Each entry must be non-empty; cross-element uniqueness is enforced server-side. |
-| schema_name_regex | [string](#string) |  | RE2 regular expression matched against schema names. A schema is targeted if it is listed in schema_names OR matches this pattern. When both are empty, every schema in the Group is targeted. |
-| plugins | [Plugin](#banyandb-pipeline-v1-Plugin) | repeated | Gating policy: an ordered chain of plugins (a sequential pipe) evaluated by any enabled event (PIPELINE_EVENT_MERGE and/or PIPELINE_EVENT_FINALIZE). Links run in declared order, each processing the traces the previous link kept; a link that fails is bypassed (fail-open). Today every link is a sampler, so the chain is the conjunction of the links&#39; keep/drop verdicts. Empty means the only retention is the per-stage StageRule plugin chain(s) at migration-out. |
-| enabled_events | [PipelineEvent](#banyandb-pipeline-v1-PipelineEvent) | repeated | Pipeline-wide events to run. Empty defaults to [PIPELINE_EVENT_MERGE] — the in-merge filter is on, the finalization gate is off. To enable the finalization gate, include PIPELINE_EVENT_FINALIZE; to disable the merge filter, list only [PIPELINE_EVENT_FINALIZE]; the explicit empty default value is also acceptable to mean &#34;merge only&#34;. Each element must be a defined, non-UNSPECIFIED value; duplicates are normalized to a set server-side. |
-| merge_grace | [google.protobuf.Duration](#google-protobuf-Duration) |  | Per-trace maturity window for the in-merge filter (§7.1). A trace is eligible for dropping during an LSM compaction merge only once its latest span timestamp is older than `now - merge_grace`; younger traces pass through the merge unchanged. Bounds the expected intra-trace span arrival spread (typically seconds). Used iff `enabled_events` contains PIPELINE_EVENT_MERGE. Strictly positive if set; engine default 30s if unset. |
-| finalize_grace | [google.protobuf.Duration](#google-protobuf-Duration) |  | Per-segment settling window for the scheduled finalization pass (§7.3). A segment is treated as settled, and the authoritative final filter runs, once the event-time watermark exceeds `segment.End &#43; finalize_grace`. Bounds segment-wide late arrival (typically minutes). Used iff `enabled_events` contains PIPELINE_EVENT_FINALIZE. Strictly positive if set; engine default 5m if unset. |
-
-
-
-
-
-
 <a name="banyandb-pipeline-v1-TracePipelineRegistryServiceCreateRequest"></a>
 
 ### TracePipelineRegistryServiceCreateRequest
@@ -6226,7 +6180,7 @@ plugins; today each link is a sampler).
 
 | Field | Type | Label | Description |
 | ----- | ---- | ----- | ----------- |
-| trace_pipeline_config | [TracePipelineConfig](#banyandb-pipeline-v1-TracePipelineConfig) |  |  |
+| trace_pipeline_config | [banyandb.common.v1.TracePipelineConfig](#banyandb-common-v1-TracePipelineConfig) |  |  |
 
 
 
@@ -6273,7 +6227,7 @@ plugins; today each link is a sampler).
 | ----- | ---- | ----- | ----------- |
 | deleted | [bool](#bool) |  |  |
 | delete_time | [int64](#int64) |  | delete_time is the server-assigned tombstone timestamp in unix nanos. |
-| mod_revision | [int64](#int64) |  | mod_revision is the etcd revision of the tombstone; zero if the server did not record one. |
+| mod_revision | [int64](#int64) |  | mod_revision is the revision of the tombstone; zero if the server did not record one. |
 
 
 
@@ -6334,7 +6288,7 @@ plugins; today each link is a sampler).
 
 | Field | Type | Label | Description |
 | ----- | ---- | ----- | ----------- |
-| trace_pipeline_config | [TracePipelineConfig](#banyandb-pipeline-v1-TracePipelineConfig) |  |  |
+| trace_pipeline_config | [banyandb.common.v1.TracePipelineConfig](#banyandb-common-v1-TracePipelineConfig) |  |  |
 
 
 
@@ -6364,7 +6318,7 @@ plugins; today each link is a sampler).
 
 | Field | Type | Label | Description |
 | ----- | ---- | ----- | ----------- |
-| trace_pipeline_config | [TracePipelineConfig](#banyandb-pipeline-v1-TracePipelineConfig) | repeated |  |
+| trace_pipeline_config | [banyandb.common.v1.TracePipelineConfig](#banyandb-common-v1-TracePipelineConfig) | repeated |  |
 
 
 
@@ -6379,7 +6333,7 @@ plugins; today each link is a sampler).
 
 | Field | Type | Label | Description |
 | ----- | ---- | ----- | ----------- |
-| trace_pipeline_config | [TracePipelineConfig](#banyandb-pipeline-v1-TracePipelineConfig) |  |  |
+| trace_pipeline_config | [banyandb.common.v1.TracePipelineConfig](#banyandb-common-v1-TracePipelineConfig) |  |  |
 
 
 
@@ -6401,21 +6355,6 @@ plugins; today each link is a sampler).
 
 
  
-
-
-<a name="banyandb-pipeline-v1-PipelineEvent"></a>
-
-### PipelineEvent
-PipelineEvent identifies a pipeline-wide event that can be independently
-enabled. Per-stage retention (StageRule.plugins) fires implicitly at the
-stage&#39;s migration-out boundary and is not toggleable via this enum.
-
-| Name | Number | Description |
-| ---- | ------ | ----------- |
-| PIPELINE_EVENT_UNSPECIFIED | 0 |  |
-| PIPELINE_EVENT_MERGE | 1 | In-merge filter during Hot-phase LSM compaction merges (Warm/Cold compactions stay lossless). Per-trace drops are gated by `merge_grace` so partial traces are not destroyed prematurely. Cheap, runs often; verdicts wait for trace maturity (see §7.1). |
-| PIPELINE_EVENT_FINALIZE | 2 | Tail-sampling gate at Hot-phase segment finalization, after the segment has settled (event-time watermark past `segment.End &#43; finalize_grace`). Heavy but authoritative; sees the complete trace (see §7.3). |
-
 
  
 
