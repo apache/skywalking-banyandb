@@ -144,7 +144,7 @@ func TestLoadSamplerPlugin(t *testing.T) {
 	t.Run("happy path", func(t *testing.T) {
 		resetPluginCache()
 
-		cfgStruct, cfgErr := structpb.NewStruct(map[string]interface{}{
+		cfgStruct, cfgErr := structpb.NewStruct(map[string]any{
 			"thresholdMs":  float64(300),
 			"successValue": "ok",
 		})
@@ -157,7 +157,7 @@ func TestLoadSamplerPlugin(t *testing.T) {
 			Config:     cfgStruct,
 		}
 
-		sampler, loadErr := loadSamplerPlugin(sp, tmpDir)
+		sampler, loadErr := loadSamplerPlugin(sp, tmpDir, "", nil)
 		require.NoError(t, loadErr)
 		require.NotNil(t, sampler)
 
@@ -172,13 +172,13 @@ func TestLoadSamplerPlugin(t *testing.T) {
 	// These run after the happy-path probe so the .so is already registered in
 	// the Go plugin runtime under this path — subsequent plugin.Open calls on
 	// the same path return the cached *plugin.Plugin without "previous failure".
-	cfgLow, cfgLowErr := structpb.NewStruct(map[string]interface{}{
+	cfgLow, cfgLowErr := structpb.NewStruct(map[string]any{
 		"thresholdMs":  float64(100),
 		"successValue": "ok",
 	})
 	require.NoError(t, cfgLowErr)
 
-	cfgHigh, cfgHighErr := structpb.NewStruct(map[string]interface{}{
+	cfgHigh, cfgHighErr := structpb.NewStruct(map[string]any{
 		"thresholdMs":  float64(500),
 		"successValue": "ok",
 	})
@@ -200,11 +200,11 @@ func TestLoadSamplerPlugin(t *testing.T) {
 	t.Run("cache same config deduplicates", func(t *testing.T) {
 		resetPluginCache()
 
-		first, firstErr := loadSamplerPlugin(spLow, tmpDir)
+		first, firstErr := loadSamplerPlugin(spLow, tmpDir, "", nil)
 		require.NoError(t, firstErr)
 		require.NotNil(t, first)
 
-		second, secondErr := loadSamplerPlugin(spLow, tmpDir)
+		second, secondErr := loadSamplerPlugin(spLow, tmpDir, "", nil)
 		require.NoError(t, secondErr)
 		require.NotNil(t, second)
 
@@ -215,11 +215,11 @@ func TestLoadSamplerPlugin(t *testing.T) {
 	t.Run("cache changed config produces fresh instance", func(t *testing.T) {
 		resetPluginCache()
 
-		instanceLow, errLow := loadSamplerPlugin(spLow, tmpDir)
+		instanceLow, errLow := loadSamplerPlugin(spLow, tmpDir, "", nil)
 		require.NoError(t, errLow)
 		require.NotNil(t, instanceLow)
 
-		instanceHigh, errHigh := loadSamplerPlugin(spHigh, tmpDir)
+		instanceHigh, errHigh := loadSamplerPlugin(spHigh, tmpDir, "", nil)
 		require.NoError(t, errHigh)
 		require.NotNil(t, instanceHigh)
 
@@ -236,7 +236,7 @@ func TestLoadSamplerPlugin(t *testing.T) {
 			AbiVersion: 999, // proto-level ABI mismatch
 			Config:     cfgLow,
 		}
-		sampler, loadErr := loadSamplerPlugin(spBadABI, tmpDir)
+		sampler, loadErr := loadSamplerPlugin(spBadABI, tmpDir, "", nil)
 		require.Error(t, loadErr, "ABI-mismatched plugin must be rejected on a cache miss")
 		assert.Nil(t, sampler)
 		assert.Contains(t, loadErr.Error(), "ABI version")
@@ -302,7 +302,7 @@ func TestLoadSamplerPlugin(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			resetPluginCache()
 
-			sampler, loadErr := loadSamplerPlugin(tc.sp, tc.trustedDir)
+			sampler, loadErr := loadSamplerPlugin(tc.sp, tc.trustedDir, "", nil)
 			require.Error(t, loadErr, "expected an error for guard %q", tc.name)
 			assert.Nil(t, sampler)
 			assert.Contains(t, loadErr.Error(), tc.errContains,
@@ -328,7 +328,7 @@ func TestLoadSamplerPlugin_DotDotPrefixChildNotEscape(t *testing.T) {
 		Symbol:     "NewSampler",
 		AbiVersion: uint32(sdk.ABIVersion),
 	}
-	_, loadErr := loadSamplerPlugin(sp, tmpDir)
+	_, loadErr := loadSamplerPlugin(sp, tmpDir, "", nil)
 	require.Error(t, loadErr, "opening a nonexistent file must still error")
 	assert.NotContains(t, loadErr.Error(), "escapes trusted directory",
 		"a '..'-prefixed child path inside the trusted dir must not be rejected as an escape")

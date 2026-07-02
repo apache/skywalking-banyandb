@@ -110,6 +110,30 @@ func registerSampler(group string, s sdk.Sampler) func() {
 	}
 }
 
+// nameHash is the stable identity of one registered sampler: its plugin name and
+// the hash of its marshaled config. reconcilePipeline compares the desired list
+// against currentSamplerIdentity to skip redundant re-applies.
+type nameHash struct {
+	name       string
+	configHash string
+}
+
+// currentSamplerIdentity returns the (name, configHash) identity of group's
+// registered samplers in declared order, or nil if none.
+func currentSamplerIdentity(group string) []nameHash {
+	localSamplerRegistry.mu.RLock()
+	defer localSamplerRegistry.mu.RUnlock()
+	ns := localSamplerRegistry.m[group]
+	if len(ns) == 0 {
+		return nil
+	}
+	out := make([]nameHash, len(ns))
+	for idx, item := range ns {
+		out[idx] = nameHash{name: item.name, configHash: item.configHash}
+	}
+	return out
+}
+
 // lookupSamplers returns a snapshot of the registered samplers for group in declared
 // order, or nil if none. The snapshot is safe for the caller to hold across a merge
 // without being torn by concurrent registry mutations.
