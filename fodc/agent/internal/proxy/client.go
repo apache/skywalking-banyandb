@@ -39,6 +39,7 @@ import (
 	"github.com/apache/skywalking-banyandb/fodc/agent/internal/flightrecorder"
 	"github.com/apache/skywalking-banyandb/fodc/agent/internal/lifecycle"
 	"github.com/apache/skywalking-banyandb/fodc/agent/internal/metrics"
+	"github.com/apache/skywalking-banyandb/fodc/agent/internal/pressureprofiler"
 	"github.com/apache/skywalking-banyandb/pkg/logger"
 	"github.com/apache/skywalking-banyandb/pkg/panicdiag"
 	"github.com/apache/skywalking-banyandb/pkg/run"
@@ -72,6 +73,8 @@ type Client struct {
 	clusterStateStream fodcv1.FODCService_StreamClusterTopologyClient
 	lifecycleStream    fodcv1.FODCService_StreamLifecycleClient
 	crashStream        fodcv1.FODCService_StreamCrashDiagnosticsClient
+	pressureStream     fodcv1.FODCService_StreamPressureProfilesClient
+	profileSource      ProfileSource
 	client             fodcv1.FODCServiceClient
 	reconnectFn        func(context.Context) // overridable in tests; nil means use reconnect
 
@@ -101,6 +104,7 @@ func NewClient(
 	clusterCollector *cluster.Collector,
 	lifecycleCollector *lifecycle.Collector,
 	collectionLister crashcollector.CollectionLister,
+	profileSource ProfileSource,
 	logger *logger.Logger,
 ) *Client {
 	connMgr := newConnManager(proxyAddr, reconnectInterval, logger)
@@ -117,6 +121,7 @@ func NewClient(
 		clusterCollector:   clusterCollector,
 		lifecycleCollector: lifecycleCollector,
 		collectionLister:   collectionLister,
+		profileSource:      profileSource,
 		logger:             logger,
 		stopCh:             make(chan struct{}),
 		reconnectCh:        make(chan struct{}, 1),
@@ -597,6 +602,231 @@ func (c *Client) handleCrashStream(ctx context.Context, stream fodcv1.FODCServic
 	}
 }
 
+// pressureChunkSize bounds each pprof download chunk so a single gRPC message stays
+// far below the server's max-message-size regardless of profile size.
+const pressureChunkSize = 1 << 20 // 1MB
+
+// ProfileSource is the read side of the pressure profiler the proxy client serves:
+// it lists capture-event metadata and opens a profile file for chunked download.
+type ProfileSource interface {
+	ListProfileRecords() []pressureprofiler.ProfileRecord
+	OpenProfile(path string) (io.ReadCloser, error)
+}
+
+// StartPressureProfilesStream establishes the bi-directional pressure-profiles stream with Proxy.
+func (c *Client) StartPressureProfilesStream(ctx context.Context) error {
+	c.streamsMu.Lock()
+	if c.client == nil {
+		c.streamsMu.Unlock()
+		return fmt.Errorf("client not connected, call Connect() first")
+	}
+	client := c.client
+	agentID := c.agentID
+	c.streamsMu.Unlock()
+
+	if agentID == "" {
+		return fmt.Errorf("agent ID not available, register agent first")
+	}
+
+	md := metadata.New(map[string]string{"agent_id": agentID})
+	ctxWithMetadata := metadata.NewOutgoingContext(ctx, md)
+
+	stream, streamErr := client.StreamPressureProfiles(ctxWithMetadata)
+	if streamErr != nil {
+		return fmt.Errorf("failed to create pressure profiles stream: %w", streamErr)
+	}
+
+	c.streamsMu.Lock()
+	c.pressureStream = stream
+	c.streamsMu.Unlock()
+
+	run.Go(ctx, "fodc.agent.proxy.pressure-stream", c.logger, func(ctx context.Context) {
+		c.handlePressureProfilesStream(ctx, stream)
+	})
+
+	c.logger.Info().Str("agent_id", agentID).Msg("Pressure profiles stream established with Proxy")
+	return nil
+}
+
+// handlePressureProfilesStream serves proxy commands on the pressure-profiles stream:
+// list metadata, or stream one profile's bytes.
+func (c *Client) handlePressureProfilesStream(ctx context.Context, stream fodcv1.FODCService_StreamPressureProfilesClient) {
+	c.streamsMu.RLock()
+	stopCh := c.stopCh
+	c.streamsMu.RUnlock()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-stopCh:
+			return
+		default:
+		}
+		resp, recvErr := stream.Recv()
+		if errors.Is(recvErr, io.EOF) {
+			c.logger.Warn().Msg("Pressure profiles stream closed by Proxy, reconnecting...")
+			run.Go(ctx, "fodc.agent.proxy.reconnect", c.logger, func(ctx context.Context) {
+				c.reconnect(ctx)
+			})
+			return
+		}
+		if recvErr != nil {
+			c.streamsMu.RLock()
+			disconnected := c.disconnected
+			c.streamsMu.RUnlock()
+			if disconnected {
+				c.logger.Debug().Err(recvErr).Msg("Pressure profiles stream closed")
+				return
+			}
+			c.logger.Error().Err(recvErr).Msg("Error receiving from pressure profiles stream, reconnecting...")
+			run.Go(ctx, "fodc.agent.proxy.reconnect", c.logger, func(ctx context.Context) {
+				c.reconnect(ctx)
+			})
+			return
+		}
+		if resp == nil {
+			continue
+		}
+		switch cmd := resp.Command.(type) {
+		case *fodcv1.StreamPressureProfilesResponse_ListProfiles:
+			if sendErr := c.sendProfileRecords(stream, cmd.ListProfiles.GetRequestId()); sendErr != nil {
+				c.logger.Error().Err(sendErr).Msg("Failed to send pressure profile records to proxy")
+			}
+		case *fodcv1.StreamPressureProfilesResponse_FetchProfile:
+			if sendErr := c.sendProfileChunks(stream, cmd.FetchProfile); sendErr != nil {
+				c.logger.Error().Err(sendErr).Msg("Failed to send pressure profile chunks to proxy")
+			}
+		}
+	}
+}
+
+// sendProfileRecords answers a list_profiles command with one metadata record per complete event.
+func (c *Client) sendProfileRecords(stream fodcv1.FODCService_StreamPressureProfilesClient, requestID string) error {
+	c.streamsMu.RLock()
+	source := c.profileSource
+	disconnected := c.disconnected
+	current := c.pressureStream
+	c.streamsMu.RUnlock()
+	if disconnected || current != stream {
+		return fmt.Errorf("pressure profiles stream not established")
+	}
+
+	if source != nil {
+		for _, record := range source.ListProfileRecords() {
+			req := &fodcv1.StreamPressureProfilesRequest{
+				Payload: &fodcv1.StreamPressureProfilesRequest_Record{Record: toProtoRecord(record)},
+			}
+			if sendErr := c.sendPressureRequest(stream, req); sendErr != nil {
+				return sendErr
+			}
+		}
+	}
+
+	// Always signal completion (including the zero-record / nil-source case) so the proxy
+	// returns as soon as this agent is done instead of waiting out its timeout.
+	done := &fodcv1.StreamPressureProfilesRequest{
+		Payload: &fodcv1.StreamPressureProfilesRequest_ListComplete{
+			ListComplete: &fodcv1.ListComplete{RequestId: requestID},
+		},
+	}
+	return c.sendPressureRequest(stream, done)
+}
+
+// sendProfileChunks answers a fetch_profile command by streaming one profile's bytes
+// in bounded chunks; a non-empty chunk error reports a file that cannot be served.
+func (c *Client) sendProfileChunks(stream fodcv1.FODCService_StreamPressureProfilesClient, fetch *fodcv1.FetchPressureProfile) error {
+	c.streamsMu.RLock()
+	source := c.profileSource
+	c.streamsMu.RUnlock()
+	if source == nil {
+		return c.sendPressureRequest(stream, chunkError(fetch, "pressure profiler not available"))
+	}
+
+	file, openErr := source.OpenProfile(fetch.Filepath)
+	if openErr != nil {
+		return c.sendPressureRequest(stream, chunkError(fetch, openErr.Error()))
+	}
+	defer func() { _ = file.Close() }()
+
+	buf := make([]byte, pressureChunkSize)
+	for {
+		n, readErr := file.Read(buf)
+		isEOF := errors.Is(readErr, io.EOF)
+		if n > 0 || isEOF {
+			chunk := &fodcv1.PressureProfileChunk{
+				RequestId: fetch.RequestId,
+				ProfileId: fetch.ProfileId,
+				Type:      fetch.Type,
+				Data:      buf[:n],
+				Last:      isEOF,
+			}
+			req := &fodcv1.StreamPressureProfilesRequest{
+				Payload: &fodcv1.StreamPressureProfilesRequest_Chunk{Chunk: chunk},
+			}
+			if sendErr := c.sendPressureRequest(stream, req); sendErr != nil {
+				return sendErr
+			}
+		}
+		if isEOF {
+			return nil
+		}
+		if readErr != nil {
+			return c.sendPressureRequest(stream, chunkError(fetch, readErr.Error()))
+		}
+	}
+}
+
+// sendPressureRequest sends one message on the pressure stream, guarding against a
+// stream that has been swapped out by a concurrent reconnect.
+func (c *Client) sendPressureRequest(stream fodcv1.FODCService_StreamPressureProfilesClient, req *fodcv1.StreamPressureProfilesRequest) error {
+	c.streamsMu.Lock()
+	defer c.streamsMu.Unlock()
+	if c.pressureStream != stream {
+		return fmt.Errorf("pressure profiles stream changed during send")
+	}
+	if sendErr := stream.Send(req); sendErr != nil {
+		return fmt.Errorf("failed to send pressure profiles message: %w", sendErr)
+	}
+	return nil
+}
+
+func chunkError(fetch *fodcv1.FetchPressureProfile, msg string) *fodcv1.StreamPressureProfilesRequest {
+	return &fodcv1.StreamPressureProfilesRequest{
+		Payload: &fodcv1.StreamPressureProfilesRequest_Chunk{
+			Chunk: &fodcv1.PressureProfileChunk{
+				RequestId: fetch.RequestId,
+				ProfileId: fetch.ProfileId,
+				Type:      fetch.Type,
+				Error:     msg,
+				Last:      true,
+			},
+		},
+	}
+}
+
+func toProtoRecord(record pressureprofiler.ProfileRecord) *fodcv1.PressureProfileRecord {
+	profiles := make([]*fodcv1.PressureProfileInfo, 0, len(record.Profiles))
+	for _, p := range record.Profiles {
+		profiles = append(profiles, &fodcv1.PressureProfileInfo{
+			Type:      p.Type,
+			Filename:  p.Filename,
+			Filepath:  p.Filepath,
+			Format:    p.Format,
+			SizeBytes: p.SizeBytes,
+		})
+	}
+	return &fodcv1.PressureProfileRecord{
+		ProfileId:        record.ProfileID,
+		CapturedAt:       timestamppb.New(record.CapturedAt),
+		SourceEndpoint:   record.SourceEndpoint,
+		RssBytes:         record.RSSBytes,
+		CgroupLimitBytes: record.CgroupLimitBytes,
+		TriggerPercent:   record.TriggerPercent,
+		ThresholdBytes:   record.ThresholdBytes,
+		Profiles:         profiles,
+	}
+}
+
 // handleLifecycleStream handles the lifecycle stream.
 func (c *Client) handleLifecycleStream(ctx context.Context, stream fodcv1.FODCService_StreamLifecycleClient) {
 	c.streamsMu.RLock()
@@ -1025,6 +1255,12 @@ func (c *Client) cleanupStreams() {
 		}
 		c.crashStream = nil
 	}
+	if c.pressureStream != nil {
+		if closeErr := c.pressureStream.CloseSend(); closeErr != nil {
+			c.logger.Warn().Err(closeErr).Msg("Error closing pressure profiles stream")
+		}
+		c.pressureStream = nil
+	}
 	c.client = nil
 	c.streamsMu.Unlock()
 }
@@ -1087,6 +1323,12 @@ func (c *Client) Disconnect() error {
 			c.logger.Warn().Err(closeErr).Msg("Error closing crash diagnostics stream")
 		}
 		c.crashStream = nil
+	}
+	if c.pressureStream != nil {
+		if closeErr := c.pressureStream.CloseSend(); closeErr != nil {
+			c.logger.Warn().Err(closeErr).Msg("Error closing pressure profiles stream")
+		}
+		c.pressureStream = nil
 	}
 	c.streamsMu.Unlock()
 
@@ -1157,6 +1399,15 @@ func (c *Client) Start(ctx context.Context) error {
 		if c.collectionLister != nil {
 			if crashErr := c.StartCrashStream(ctx); crashErr != nil {
 				c.logger.Error().Err(crashErr).Msg("Failed to start crash diagnostics stream, reconnecting...")
+				c.cleanupStreams()
+				time.Sleep(c.reconnectInterval)
+				continue
+			}
+		}
+
+		if c.profileSource != nil {
+			if pressureErr := c.StartPressureProfilesStream(ctx); pressureErr != nil {
+				c.logger.Error().Err(pressureErr).Msg("Failed to start pressure profiles stream, reconnecting...")
 				c.cleanupStreams()
 				time.Sleep(c.reconnectInterval)
 				continue
@@ -1329,6 +1580,10 @@ func (c *Client) reconnect(ctx context.Context) {
 		_ = c.crashStream.CloseSend()
 		c.crashStream = nil
 	}
+	if c.pressureStream != nil {
+		_ = c.pressureStream.CloseSend()
+		c.pressureStream = nil
+	}
 	c.streamsMu.Unlock()
 
 	connResultCh := c.connManager.RequestConnect(ctx)
@@ -1389,6 +1644,14 @@ func (c *Client) reconnect(ctx context.Context) {
 	if c.collectionLister != nil {
 		if crashErr := c.StartCrashStream(ctx); crashErr != nil {
 			c.logger.Error().Err(crashErr).Msg("Failed to restart crash diagnostics stream; will retry")
+			c.scheduleReconnect(ctx)
+			return
+		}
+	}
+
+	if c.profileSource != nil {
+		if pressureErr := c.StartPressureProfilesStream(ctx); pressureErr != nil {
+			c.logger.Error().Err(pressureErr).Msg("Failed to restart pressure profiles stream; will retry")
 			c.scheduleReconnect(ctx)
 			return
 		}

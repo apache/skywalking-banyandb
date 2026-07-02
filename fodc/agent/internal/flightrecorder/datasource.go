@@ -277,6 +277,25 @@ func (ds *Datasource) GetCurrentSnapshot() (map[string]float64, int64) {
 	return values, timestamp
 }
 
+// latestValues fills out[name] with the current value of each metric whose key matches one
+// of names (with the optional label filter). It scans the metric keys directly under the read
+// lock and reads only the matched buffers, avoiding the full-map copy of GetCurrentSnapshot on
+// the watchdog poll path. Names already present in out are skipped.
+func (ds *Datasource) latestValues(out map[string]float64, names []string, labelFilter map[string]string) {
+	ds.mu.RLock()
+	defer ds.mu.RUnlock()
+	for key, buffer := range ds.metrics {
+		for _, name := range names {
+			if _, done := out[name]; done {
+				continue
+			}
+			if metricKeyMatches(key, name, labelFilter) {
+				out[name] = buffer.GetCurrentValue()
+			}
+		}
+	}
+}
+
 // GetDescriptions returns a copy of the descriptions map.
 func (ds *Datasource) GetDescriptions() map[string]string {
 	ds.mu.RLock()
