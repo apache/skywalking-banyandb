@@ -310,6 +310,7 @@ func unmarshalBlockMetadata(dst []blockMetadata, src []byte) ([]blockMetadata, e
 			dst = append(dst, blockMetadata{})
 		}
 		bm := &dst[len(dst)-1]
+		bm.reset()
 		tail, err := bm.unmarshal(src)
 		if err != nil {
 			return dstOrig, fmt.Errorf("cannot unmarshal blockMetadata entries: %w", err)
@@ -391,6 +392,7 @@ func unmarshalBlockMetadataFiltered(dst []blockMetadata, src []byte, wanted []co
 				dst = append(dst, blockMetadata{})
 			}
 			bm := &dst[len(dst)-1]
+			bm.reset()
 			tail, uErr := bm.unmarshal(src)
 			if uErr != nil {
 				return dstOrig, fmt.Errorf("cannot unmarshal blockMetadata entries: %w", uErr)

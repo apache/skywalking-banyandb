@@ -127,6 +127,7 @@ func TestQueryResult_QuotaExceeded(t *testing.T) {
 				cmpopts.IgnoreFields(blockMetadata{}, "timestamps"),
 				cmpopts.IgnoreFields(blockMetadata{}, "elementIDs"),
 				cmpopts.IgnoreFields(blockMetadata{}, "tagFamilies"),
+				cmpopts.IgnoreFields(blockMetadata{}, "tagType"),
 				cmp.AllowUnexported(blockMetadata{}),
 			); diff != "" {
 				t.Errorf("Unexpected blockMetadata (-got +want):\n%s", diff)

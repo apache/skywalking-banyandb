@@ -19,6 +19,7 @@ package measure
 
 import (
 	"errors"
+	"path/filepath"
 	"reflect"
 	"testing"
 	"time"
@@ -972,10 +973,11 @@ var mergedTopNBlock4 = block{
 
 func Test_mergeParts(t *testing.T) {
 	tests := []struct {
-		wantErr error
-		name    string
-		dpsList []*dataPoints
-		want    []blockMetadata
+		wantErr     error
+		name        string
+		dpsList     []*dataPoints
+		want        []blockMetadata
+		wantTagType bool
 	}{
 		{
 			name:    "Test with no data point",
@@ -983,8 +985,9 @@ func Test_mergeParts(t *testing.T) {
 			wantErr: errNoPartToMerge,
 		},
 		{
-			name:    "Test with single part",
-			dpsList: []*dataPoints{dpsTS1},
+			name:        "Test with single part",
+			dpsList:     []*dataPoints{dpsTS1},
+			wantTagType: true,
 			want: []blockMetadata{
 				{seriesID: 1, count: 1, uncompressedSizeBytes: 1654},
 				{seriesID: 2, count: 1, uncompressedSizeBytes: 47},
@@ -992,8 +995,9 @@ func Test_mergeParts(t *testing.T) {
 			},
 		},
 		{
-			name:    "Test with multiple parts with different ts",
-			dpsList: []*dataPoints{dpsTS1, dpsTS2, dpsTS2},
+			name:        "Test with multiple parts with different ts",
+			dpsList:     []*dataPoints{dpsTS1, dpsTS2, dpsTS2},
+			wantTagType: true,
 			want: []blockMetadata{
 				{seriesID: 1, count: 2, uncompressedSizeBytes: 3245},
 				{seriesID: 2, count: 2, uncompressedSizeBytes: 71},
@@ -1001,8 +1005,9 @@ func Test_mergeParts(t *testing.T) {
 			},
 		},
 		{
-			name:    "Test with multiple parts with same ts",
-			dpsList: []*dataPoints{dpsTS11, dpsTS1},
+			name:        "Test with multiple parts with same ts",
+			dpsList:     []*dataPoints{dpsTS11, dpsTS1},
+			wantTagType: true,
 			want: []blockMetadata{
 				{seriesID: 1, count: 1, uncompressedSizeBytes: 1654},
 				{seriesID: 2, count: 1, uncompressedSizeBytes: 47},
@@ -1010,8 +1015,9 @@ func Test_mergeParts(t *testing.T) {
 			},
 		},
 		{
-			name:    "Test with multiple parts with a large quantity of different ts",
-			dpsList: []*dataPoints{generateHugeDatapoints(1, 5000, 1), generateHugeDatapoints(5001, 10000, 2)},
+			name:        "Test with multiple parts with a large quantity of different ts",
+			dpsList:     []*dataPoints{generateHugeDatapoints(1, 5000, 1), generateHugeDatapoints(5001, 10000, 2)},
+			wantTagType: true,
 			want: []blockMetadata{
 				{seriesID: 1, count: 2530, uncompressedSizeBytes: 4025293},
 				{seriesID: 1, count: 2470, uncompressedSizeBytes: 3929833},
@@ -1061,9 +1067,19 @@ func Test_mergeParts(t *testing.T) {
 					cmpopts.IgnoreFields(blockMetadata{}, "timestamps"),
 					cmpopts.IgnoreFields(blockMetadata{}, "field"),
 					cmpopts.IgnoreFields(blockMetadata{}, "tagFamilies"),
+					cmpopts.IgnoreFields(blockMetadata{}, "tagType"),
 					cmp.AllowUnexported(blockMetadata{}),
 				); diff != "" {
 					t.Errorf("Unexpected blockMetadata (-got +want):\n%s", diff)
+				}
+
+				if tt.wantTagType {
+					tagTypeData, readErr := fileSystem.Read(filepath.Join(partPath(root, partID), tagTypeFilename))
+					require.NoError(t, readErr)
+					mergedTagType := make(tagType)
+					require.NoError(t, mergedTagType.unmarshal(tagTypeData))
+					require.Equal(t, pbv1.ValueTypeStrArr, mergedTagType["arrTag"]["strArrTag"])
+					require.Equal(t, pbv1.ValueTypeInt64, mergedTagType["singleTag"]["intTag"])
 				}
 			}
 

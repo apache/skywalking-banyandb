@@ -187,10 +187,19 @@ func (b *block) validate() {
 func (b *block) marshalTagFamily(tf columnFamily, bm *blockMetadata, ww *writers) {
 	hw, w := ww.getColumnMetadataWriterAndColumnWriter(tf.name)
 	cc := tf.columns
+	if bm.tagType == nil {
+		bm.tagType = make(tagType)
+	}
+	tagTypes := bm.tagType[tf.name]
+	if tagTypes == nil {
+		tagTypes = make(map[string]pbv1.ValueType, len(cc))
+		bm.tagType[tf.name] = tagTypes
+	}
 	cfm := generateColumnFamilyMetadata()
 	cmm := cfm.resizeColumnMetadata(len(cc))
 	for i := range cc {
 		cc[i].mustWriteTo(&cmm[i], w)
+		tagTypes[cc[i].name] = cc[i].valueType
 	}
 	bb := bigValuePool.Generate()
 	defer bigValuePool.Release(bb)
