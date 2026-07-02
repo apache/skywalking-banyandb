@@ -32,7 +32,7 @@ services:
     build:
       context: ../..
       dockerfile: test/soak/Dockerfile.banyand
-    container_name: banyandb
+    container_name: ${BANYANDB_CONTAINER_NAME:-banyandb}
     # Run as host UID/GID so the bind-mounted /data dir stays readable
     # from the host shell — needed for snapshot/restore between phases.
     # Override via SOAK_UID/SOAK_GID env if your host differs.

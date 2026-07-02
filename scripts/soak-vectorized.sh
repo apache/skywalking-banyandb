@@ -89,6 +89,14 @@ BANYANDB_PPROF="localhost:6060"
 BANYANDB_GRPC_CONTAINER="banyandb:17912"
 BANYANDB_PPROF_CONTAINER="banyandb:6060"
 
+# Isolate this soak from other docker-compose workflows on a shared host. The
+# compose project name (default "soak" = the compose-file dir basename) and the
+# global container name "banyandb" are both collision points: another workflow's
+# `compose up`/`down` referencing the same project or a container literally named
+# "banyandb" can replace this soak's DB mid-run. Override both with unique names.
+export COMPOSE_PROJECT_NAME="${SOAK_COMPOSE_PROJECT:-soakvec}"
+export BANYANDB_CONTAINER_NAME="${SOAK_BANYANDB_CONTAINER:-banyandb-soakvec}"
+
 # Pass host UID/GID to compose so the BanyanDB container writes the
 # bind-mounted /data dir as the host user (otherwise root-owned files
 # break snapshot/restore from the host shell).
@@ -129,7 +137,7 @@ wait_banyandb_healthy() {
 wait_banyandb_container_healthy() {
   log "Waiting for BanyanDB container to become healthy..."
   local attempts=0
-  until [[ "$(docker inspect -f '{{.State.Health.Status}}' banyandb 2>/dev/null)" == "healthy" ]]; do
+  until [[ "$(docker inspect -f '{{.State.Health.Status}}' "${BANYANDB_CONTAINER_NAME}" 2>/dev/null)" == "healthy" ]]; do
     attempts=$(( attempts + 1 ))
     if (( attempts > 120 )); then
       log "ERROR: BanyanDB container did not become healthy after 120 attempts"
@@ -218,13 +226,13 @@ SOAK_DATA_DIR="${DATA_DIR}" BANYANDB_VEC_ENABLED=false compose_cmd up -d banyand
 wait_banyandb_container_healthy
 
 # Record BanyanDB container image digest.
-BANYANDB_IMAGE_DIGEST=$(docker inspect banyandb --format '{{.Image}}' 2>/dev/null || echo "unknown")
+BANYANDB_IMAGE_DIGEST=$(docker inspect "${BANYANDB_CONTAINER_NAME}" --format '{{.Image}}' 2>/dev/null || echo "unknown")
 log "BanyanDB image digest: ${BANYANDB_IMAGE_DIGEST}"
 
 # Record effective resource limits from running container.
-BANYANDB_CPU_LIMIT=$(docker inspect banyandb \
+BANYANDB_CPU_LIMIT=$(docker inspect "${BANYANDB_CONTAINER_NAME}" \
   --format '{{.HostConfig.NanoCpus}}' 2>/dev/null || echo "unknown")
-BANYANDB_MEM_LIMIT=$(docker inspect banyandb \
+BANYANDB_MEM_LIMIT=$(docker inspect "${BANYANDB_CONTAINER_NAME}" \
   --format '{{.HostConfig.Memory}}' 2>/dev/null || echo "unknown")
 log "BanyanDB limits: cpus_nanocpu=${BANYANDB_CPU_LIMIT} memory_bytes=${BANYANDB_MEM_LIMIT}"
 
@@ -299,7 +307,7 @@ wait_banyandb_container_healthy
 # the log (the log grep is a guaranteed false negative).
 log "Checking vec-flag-honored via container args..."
 VEC_FLAG_HONORED=false
-if docker inspect banyandb --format '{{json .Args}}' 2>/dev/null | grep -q -- '--trace-vectorized-enabled=true'; then
+if docker inspect "${BANYANDB_CONTAINER_NAME}" --format '{{json .Args}}' 2>/dev/null | grep -q -- '--trace-vectorized-enabled=true'; then
   VEC_FLAG_HONORED=true
 fi
 log "Vec flag honored: ${VEC_FLAG_HONORED}"
@@ -326,7 +334,7 @@ log "soak-driver limits (from last run): cpus_nanocpu=${DRIVER_CPU_LIMIT} memory
 # Use --since snapshots instead of unbounded -f >> to keep the log bounded.
 (
   while true; do
-    docker logs --since 60s banyandb 2>&1 >> "${DIST}/banyand.log" || true
+    docker logs --since 60s "${BANYANDB_CONTAINER_NAME}" 2>&1 >> "${DIST}/banyand.log" || true
     sleep 60
   done
 ) &
@@ -346,7 +354,7 @@ echo "ts_utc,rss_bytes,disk_bytes" > "${RSS_CSV}"
 (
   while true; do
     TS_NOW="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
-    RSS=$(docker stats banyandb --no-stream --format '{{.MemUsage}}' 2>/dev/null \
+    RSS=$(docker stats "${BANYANDB_CONTAINER_NAME}" --no-stream --format '{{.MemUsage}}' 2>/dev/null \
       | awk -F'/' '{print $1}' | tr -d ' MiGBkb' || echo 0)
     DISK=$(du -sb "${DATA_DIR}" 2>/dev/null | awk '{print $1}' || echo 0)
     echo "${TS_NOW},${RSS},${DISK}" >> "${RSS_CSV}" || true
@@ -410,7 +418,10 @@ echo "never" > "${WRITE_LOAD_LAST_OK_FILE}"
       --addr "${BANYANDB_GRPC_CONTAINER}" \
       --rps "${SOAK_WRITE_RPS}" \
       --duration "${WRITE_DURATION_SEC}s" 2>&1 | \
-      grep -oE '[0-9]+ spans' | awk '{print $1}' | tail -1 || echo 0)
+      grep -oE '[0-9]+ spans' | awk '{print $1}' | tail -1)
+    # Sanitize to digits only: under pipefail a non-zero pipeline could otherwise
+    # leave a multiline value (e.g. "56000\n0"), breaking the arithmetic below.
+    SWEEP_ROWS=${SWEEP_ROWS//[^0-9]/}
     sweep_total=$(( sweep_total + ${SWEEP_ROWS:-0} ))
     echo "${sweep_total}" > "${WRITE_LOAD_ROWS_FILE}"
     date -u +%Y-%m-%dT%H:%M:%SZ > "${WRITE_LOAD_LAST_OK_FILE}"
