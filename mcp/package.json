@@ -5,6 +5,7 @@
   "type": "module",
   "main": "dist/index.js",
   "scripts": {
+    "build:validator": "node tools/build-validator.js",
     "build": "tsc",
     "start": "node dist/index.js",
     "dev": "tsx src/index.ts",
