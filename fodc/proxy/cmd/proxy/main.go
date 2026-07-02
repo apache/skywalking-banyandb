@@ -33,6 +33,7 @@ import (
 	"github.com/apache/skywalking-banyandb/fodc/proxy/internal/grpc"
 	"github.com/apache/skywalking-banyandb/fodc/proxy/internal/lifecycle"
 	"github.com/apache/skywalking-banyandb/fodc/proxy/internal/metrics"
+	"github.com/apache/skywalking-banyandb/fodc/proxy/internal/pressure"
 	"github.com/apache/skywalking-banyandb/fodc/proxy/internal/registry"
 	"github.com/apache/skywalking-banyandb/pkg/logger"
 	"github.com/apache/skywalking-banyandb/pkg/version"
@@ -129,12 +130,15 @@ func runProxy(_ *cobra.Command, _ []string) error {
 
 	metricsAggregator := metrics.NewAggregator(agentRegistry, nil, log)
 	diagnosticsAggregator := diagnostics.NewAggregator(agentRegistry, nil, log)
+	pressureAggregator := pressure.NewAggregator(agentRegistry, nil, log)
 
-	grpcService := grpc.NewFODCService(agentRegistry, metricsAggregator, clusterStateMgr, lifecycleMgr, diagnosticsAggregator, log, heartbeatInterval)
+	grpcService := grpc.NewFODCService(agentRegistry, metricsAggregator, clusterStateMgr, lifecycleMgr,
+		diagnosticsAggregator, pressureAggregator, log, heartbeatInterval)
 	metricsAggregator.SetGRPCService(grpcService)
 	clusterStateMgr.SetGRPCService(grpcService)
 	lifecycleMgr.SetGRPCService(grpcService)
 	diagnosticsAggregator.SetGRPCService(grpcService)
+	pressureAggregator.SetGRPCService(grpcService)
 
 	grpcServer := grpc.NewServer(grpcService, grpcListenAddr, grpcMaxMsgSize, log)
 	if startErr := grpcServer.Start(); startErr != nil {
@@ -142,7 +146,8 @@ func runProxy(_ *cobra.Command, _ []string) error {
 	}
 	defer grpcServer.Stop()
 
-	apiServer := api.NewServer(metricsAggregator, clusterStateMgr, lifecycleMgr, agentRegistry, diagnosticsAggregator, log)
+	apiServer := api.NewServer(metricsAggregator, clusterStateMgr, lifecycleMgr, agentRegistry,
+		diagnosticsAggregator, pressureAggregator, grpcService, log)
 	if startErr := apiServer.Start(httpListenAddr, httpReadTimeout, httpWriteTimeout); startErr != nil {
 		return fmt.Errorf("failed to start HTTP API server: %w", startErr)
 	}

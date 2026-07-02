@@ -67,6 +67,45 @@ func TestValidateFlags_Valid(t *testing.T) {
 	assert.NoError(t, err)
 }
 
+func TestValidateFlags_PressureTriggerPercent(t *testing.T) {
+	origInterval := metricsPollInterval
+	origPorts := pollMetricsPorts
+	origContainers := containerNames
+	origMemPercent := maxMetricsMemoryUsagePercent
+	origEnabled := pressureProfilerEnabled
+	origTrigger := pressureTriggerPercent
+	defer func() {
+		metricsPollInterval = origInterval
+		pollMetricsPorts = origPorts
+		containerNames = origContainers
+		maxMetricsMemoryUsagePercent = origMemPercent
+		pressureProfilerEnabled = origEnabled
+		pressureTriggerPercent = origTrigger
+	}()
+
+	metricsPollInterval = defaultMetricsPollInterval
+	pollMetricsPorts = []string{"2121"}
+	containerNames = []string{"banyandb"}
+	maxMetricsMemoryUsagePercent = 10
+	pressureProfilerEnabled = true
+
+	for _, invalid := range []int{0, -1, 101} {
+		pressureTriggerPercent = invalid
+		err := validateFlags()
+		assert.Error(t, err, "trigger=%d", invalid)
+		assert.Contains(t, err.Error(), "pressure-profiler-trigger-percent must be between 1 and 100")
+	}
+
+	// A valid value passes.
+	pressureTriggerPercent = 75
+	assert.NoError(t, validateFlags())
+
+	// When the profiler is disabled, an out-of-range value is tolerated.
+	pressureProfilerEnabled = false
+	pressureTriggerPercent = 0
+	assert.NoError(t, validateFlags())
+}
+
 func TestValidateFlags_ZeroInterval(t *testing.T) {
 	origInterval := metricsPollInterval
 	defer func() { metricsPollInterval = origInterval }()

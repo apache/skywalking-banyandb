@@ -55,7 +55,7 @@ func TestProxyClient_SendHeartbeat_RespectsCtxOnBlockingSend(t *testing.T) {
 	fr := flightrecorder.NewFlightRecorder(1000000)
 	pc := NewProxyClient(
 		"localhost:8080", "datanode-hot", "192.168.1.1", []string{"data"},
-		nil, 5*time.Second, 10*time.Second, fr, nil, nil, nil, testLogger,
+		nil, 5*time.Second, 10*time.Second, fr, nil, nil, nil, nil, testLogger,
 	)
 
 	streamCtx, streamCancel := context.WithCancel(context.Background())
@@ -108,7 +108,7 @@ func TestProxyClient_reconnect_DeadlocksWhenHeartbeatBlockedOnSend(t *testing.T)
 	fr := flightrecorder.NewFlightRecorder(1000000)
 	pc := NewProxyClient(
 		"localhost:8080", "datanode-hot", "192.168.1.1", []string{"data"},
-		nil, 10*time.Millisecond, 100*time.Millisecond, fr, nil, nil, nil, testLogger,
+		nil, 10*time.Millisecond, 100*time.Millisecond, fr, nil, nil, nil, nil, testLogger,
 	)
 
 	bgCtx, bgCancel := context.WithCancel(context.Background())

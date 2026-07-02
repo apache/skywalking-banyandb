@@ -1,0 +1,98 @@
+# Licensed to the Apache Software Foundation (ASF) under one or more
+# contributor license agreements.  See the NOTICE file distributed with
+# this work for additional information regarding copyright ownership.
+# The ASF licenses this file to You under the Apache License, Version 2.0
+# (the "License"); you may not use this file except in compliance with
+# the License.  You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
+# Minimal topology for the memory-pressure pprof e2e: a single standalone BanyanDB
+# node co-located with a fodc-agent sidecar, plus the fodc-proxy (deployed
+# separately). The pressure check only needs ONE node that (a) has a cgroup memory
+# limit so banyandb_memory_protector_cgroup_limit_bytes is non-zero, and (b) serves
+# pprof + cluster-state gRPC so the agent resolves a role and connects to the proxy.
+# Standalone keeps it to a single pod: no etcd, no node-discovery file, no second
+# node, and no BanyanDB Service (the agent reaches banyand over localhost in the
+# shared pod; only the fodc-proxy needs a Service).
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: banyandb-standalone
+  labels:
+    app: banyandb-standalone
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: banyandb-standalone
+  template:
+    metadata:
+      labels:
+        app: banyandb-standalone
+    spec:
+      shareProcessNamespace: true
+      containers:
+        - name: banyand
+          image: apache/skywalking-banyandb:latest
+          imagePullPolicy: IfNotPresent
+          args:
+            - standalone
+          ports:
+            - { name: grpc, containerPort: 17912 }
+            - { name: metrics, containerPort: 2121 }
+            - { name: pprof, containerPort: 6060 }
+          # A cgroup memory limit is the whole point: it makes the protector expose a
+          # non-zero banyandb_memory_protector_cgroup_limit_bytes for the agent to read.
+          resources:
+            limits:
+              memory: 512Mi
+              cpu: "1"
+            requests:
+              memory: 256Mi
+              cpu: "250m"
+        - name: fodc-agent
+          image: apache/skywalking-banyandb-fodc-agent:latest
+          imagePullPolicy: IfNotPresent
+          args:
+            - --poll-metrics-ports=2121
+            - --poll-metrics-interval=2s
+            - --cluster-state-ports=17912
+            - --cluster-state-poll-interval=10s
+            - --proxy-addr=fodc-proxy:17912
+            - --prometheus-listen-addr=:9090
+            - --heartbeat-interval=5s
+            - --pod-name=$(POD_NAME)
+            # trigger-percent=1: any RSS above 1% of the memory limit captures, so a
+            # capture fires deterministically without artificially stressing memory.
+            - --pressure-profiler-trigger-percent=1
+            - --pressure-profiler-pprof-port=6060
+            - --pressure-profiler-cooldown=10s
+            - --pressure-profiler-dir=/tmp/pressure-profiles
+          env:
+            - name: POD_NAME
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.name
+          ports:
+            - { name: fodc-metrics, containerPort: 9090 }
+          volumeMounts:
+            # Writable volume for captured pprof profiles (agent rootfs is read-only).
+            - name: pressure-profiles
+              mountPath: /tmp/pressure-profiles
+          resources:
+            limits:
+              memory: 256Mi
+              cpu: "500m"
+            requests:
+              memory: 64Mi
+              cpu: "100m"
+      volumes:
+        - name: pressure-profiles
+          emptyDir: {}
