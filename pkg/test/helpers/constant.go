@@ -115,10 +115,18 @@ type BackupSharedContext struct {
 
 // LifecycleSharedContext is the context shared between test cases in the lifecycle testing.
 type LifecycleSharedContext struct {
-	BaseTime      time.Time
-	Connection    *grpclib.ClientConn
-	LiaisonAddr   string
-	DataAddr      string
+	BaseTime    time.Time
+	Connection  *grpclib.ClientConn
+	LiaisonAddr string
+	DataAddr    string
+	// DataHTTPURL is the hot data node's Prometheus /metrics endpoint. Used
+	// by sender-label verifications that need to scrape banyandb_queue_sub_*
+	// directly from the data node.
+	DataHTTPURL string
+	// WarmHTTPURL is the warm data node's Prometheus /metrics endpoint. Both
+	// data nodes (hot and warm) see migration writes from the lifecycle
+	// publisher, so either endpoint can carry the sender labels.
+	WarmHTTPURL   string
 	SrcDir        string
 	DestDir       string
 	MetadataFlags []string

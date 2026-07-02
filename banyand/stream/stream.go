@@ -54,6 +54,7 @@ type option struct {
 	flushTimeout                 time.Duration
 	elementIndexFlushTimeout     time.Duration
 	syncInterval                 time.Duration
+	memWaitTimeout               time.Duration
 	failedPartsMaxTotalSizeBytes uint64
 }
 

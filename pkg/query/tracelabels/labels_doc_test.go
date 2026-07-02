@@ -28,7 +28,7 @@ import (
 
 func TestDocVocabularySectionEnumeratesAllConstants(t *testing.T) {
 	constants := exportedStringConstants(t)
-	docBytes, readErr := os.ReadFile(filepath.Join("..", "..", "..", "docs", "observability", "vec-query-tracing.md"))
+	docBytes, readErr := os.ReadFile(filepath.Join("..", "..", "..", "docs", "operation", "observability", "tracing.md"))
 	if readErr != nil {
 		t.Fatalf("failed to read vec query tracing doc: %v", readErr)
 	}

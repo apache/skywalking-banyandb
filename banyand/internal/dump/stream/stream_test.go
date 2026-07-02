@@ -67,8 +67,8 @@ func TestDecodeStreamPartFormat(t *testing.T) {
 	totalElements := 0
 
 	for blockIdx, pbm := range p.primaryBlockMetadata {
-		primaryData := make([]byte, pbm.size)
-		fs.MustReadData(p.primary, int64(pbm.offset), primaryData)
+		primaryData := make([]byte, pbm.Size)
+		fs.MustReadData(p.primary, int64(pbm.Offset), primaryData)
 
 		decompressed, decErr := zstd.Decompress(nil, primaryData)
 		require.NoError(t, decErr, "should decompress primary data for primary block %d", blockIdx)
@@ -77,7 +77,7 @@ func TestDecodeStreamPartFormat(t *testing.T) {
 		require.NoError(t, parseErr, "should parse all block metadata from primary block %d", blockIdx)
 
 		for _, bm := range blockMetadatas {
-			timestamps, elementIDs, tsErr := readTimestamps(bm.timestamps, int(bm.count), p.timestamps)
+			timestamps, elementIDs, tsErr := readTimestamps(bm.timestamps, int(bm.count), p.timestamps, nil)
 			require.NoError(t, tsErr, "should read timestamps/elementIDs for series %d", bm.seriesID)
 			assert.Len(t, timestamps, int(bm.count), "should have correct number of timestamps")
 			assert.Len(t, elementIDs, int(bm.count), "should have correct number of elementIDs")
@@ -98,7 +98,8 @@ func TestDecodeStreamPartFormat(t *testing.T) {
 
 				for _, tagMeta := range tagMetadatas {
 					fullTagName := tagFamilyName + "." + tagMeta.name
-					tagValues, tagErr := readTagValues(decoder, tagMeta.dataBlock, fullTagName, int(bm.count), p.tagFamilies[tagFamilyName], tagMeta.valueType)
+					tagValues, tagErr := dump.ReadTagValues(decoder, tagMeta.dataBlock.offset, tagMeta.dataBlock.size,
+						int(bm.count), p.tagFamilies[tagFamilyName], tagMeta.valueType, nil)
 					require.NoError(t, tagErr, "should read tag %s for series %d", fullTagName, bm.seriesID)
 					assert.Len(t, tagValues, int(bm.count), "tag %s should have value for each element", fullTagName)
 				}

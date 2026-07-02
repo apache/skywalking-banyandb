@@ -20,11 +20,9 @@ package lifecycle
 import (
 	"context"
 	"encoding/base64"
+	"errors"
 	"fmt"
-	"path/filepath"
-	"strconv"
 	"sync"
-	"sync/atomic"
 	"time"
 
 	"google.golang.org/protobuf/types/known/timestamppb"
@@ -37,17 +35,17 @@ import (
 	"github.com/apache/skywalking-banyandb/banyand/internal/dump"
 	dumpstream "github.com/apache/skywalking-banyandb/banyand/internal/dump/stream"
 	"github.com/apache/skywalking-banyandb/banyand/metadata"
+	"github.com/apache/skywalking-banyandb/banyand/metadata/schema"
 	"github.com/apache/skywalking-banyandb/banyand/queue"
-	"github.com/apache/skywalking-banyandb/pkg/bus"
 	"github.com/apache/skywalking-banyandb/pkg/convert"
 	"github.com/apache/skywalking-banyandb/pkg/fs"
 	"github.com/apache/skywalking-banyandb/pkg/logger"
 	"github.com/apache/skywalking-banyandb/pkg/node"
 	"github.com/apache/skywalking-banyandb/pkg/partition"
+	pbv1 "github.com/apache/skywalking-banyandb/pkg/pb/v1"
 )
 
 const (
-	streamReplayBatchSize    = 2000
 	streamReplayBatchTimeout = 30 * time.Second
 )
 
@@ -59,20 +57,19 @@ type cachedStreamSchema struct {
 // streamRowReplayer replays a group's stream parts row-by-row.
 type streamRowReplayer struct {
 	selector       node.Selector
-	client         queue.Client
-	publisher      queue.BatchPublisher
+	sender         *batchSender
 	metadata       metadata.Repo
 	fs             fs.FileSystem
 	logger         *logger.Logger
 	schemaCache    map[string]*cachedStreamSchema
 	irResolver     *dump.IndexResolver
 	counter        *uint64
+	archiver       *orphanArchiver
 	group          string
 	irPath         string
-	batch          []bus.Message
+	srcStage       string
 	schemaCacheMu  sync.Mutex
 	irMu           sync.Mutex
-	batchMu        sync.Mutex
 	targetShardNum uint32
 }
 
@@ -80,82 +77,36 @@ func newStreamRowReplayer(
 	group string, targetShardNum uint32,
 	selector node.Selector, client queue.Client,
 	md metadata.Repo, fileSystem fs.FileSystem,
-	l *logger.Logger, counter *uint64,
+	l *logger.Logger, counter *uint64, orphanCfg orphanConfig, srcStage string,
 ) *streamRowReplayer {
 	return &streamRowReplayer{
 		group:          group,
 		targetShardNum: targetShardNum,
 		selector:       selector,
-		client:         client,
-		publisher:      client.NewBatchPublisher(streamReplayBatchTimeout),
+		sender:         newBatchSender(client, data.TopicStreamWrite, rowReplayMaxBatchRows, int(rowReplayMaxBatchBytes), streamReplayBatchTimeout),
+		archiver:       newOrphanArchiver(orphanCfg, group, catalogStream, l),
 		metadata:       md,
 		fs:             fileSystem,
 		logger:         l,
 		schemaCache:    make(map[string]*cachedStreamSchema),
 		counter:        counter,
-		batch:          make([]bus.Message, 0, streamReplayBatchSize),
+		srcStage:       srcStage,
 	}
 }
 
-// Close flushes pending messages, closes the publisher and releases cached
-// IndexResolver handles.
+// Close drains any outstanding batch confirmations, closes the publisher and
+// releases cached IndexResolver handles.
 func (r *streamRowReplayer) Close() (map[string]*common.Error, error) {
-	flushCtx, cancel := context.WithTimeout(context.Background(), streamReplayBatchTimeout)
-	defer cancel()
-	flushErr := r.flushBatch(flushCtx)
-	r.irMu.Lock()
-	if r.irResolver != nil {
-		_ = r.irResolver.Close()
-		r.irResolver = nil
-		r.irPath = ""
-	}
-	r.irMu.Unlock()
-	cee, closeErr := r.publisher.Close()
-	if flushErr != nil {
-		return cee, flushErr
-	}
+	cee, closeErr := r.sender.close()
+	closeIndexResolver(&r.irMu, &r.irResolver, &r.irPath)
 	return cee, closeErr
 }
 
-// flushAndConfirm flushes the buffered batch, closes the publisher to obtain the
-// per-node delivery result for everything sent since the last call, then opens a
-// fresh publisher for subsequent parts. The batch publisher is client-streaming,
-// so per-node errors are only observable once its stream closes; this lets a
-// row-replayed part be confirmed durable before it is marked completed.
-func (r *streamRowReplayer) flushAndConfirm(ctx context.Context) (map[string]*common.Error, error) {
-	flushErr := r.flushBatch(ctx)
-	cee, closeErr := r.publisher.Close()
-	r.publisher = r.client.NewBatchPublisher(streamReplayBatchTimeout)
-	if flushErr != nil {
-		return cee, flushErr
-	}
-	return cee, closeErr
-}
-
-// loadIndexResolver lazily opens an IndexResolver for the current source
-// segment. Only one resolver is kept resident: same segmentPath reuses it
-// (so all shards/parts under a segment share the bluge reader and avoid
-// reopening the same exclusive-locked dir), and a different segmentPath closes
-// the prior one before opening a new one. The replayer's Close releases the
-// last resolver.
+// loadIndexResolver lazily opens (and keeps resident) the IndexResolver for the
+// current source segment via the shared helper. Stream rows carry no indexed
+// values to decode, so the rule-to-tag map is nil.
 func (r *streamRowReplayer) loadIndexResolver(segmentPath string) (*dump.IndexResolver, error) {
-	r.irMu.Lock()
-	defer r.irMu.Unlock()
-	if r.irResolver != nil && r.irPath == segmentPath {
-		return r.irResolver, nil
-	}
-	if r.irResolver != nil {
-		_ = r.irResolver.Close()
-		r.irResolver = nil
-		r.irPath = ""
-	}
-	ir, err := dump.NewIndexResolver(segmentPath, dump.DefaultIndexCacheSize, nil)
-	if err != nil {
-		return nil, fmt.Errorf("open stream index resolver for %s: %w", segmentPath, err)
-	}
-	r.irResolver = ir
-	r.irPath = segmentPath
-	return ir, nil
+	return reloadIndexResolver(&r.irMu, &r.irResolver, &r.irPath, segmentPath, nil)
 }
 
 func (r *streamRowReplayer) loadSchema(ctx context.Context, streamName string) (*cachedStreamSchema, error) {
@@ -166,6 +117,12 @@ func (r *streamRowReplayer) loadSchema(ctx context.Context, streamName string) (
 	}
 	s, err := r.metadata.StreamRegistry().GetStream(ctx, &commonv1.Metadata{Group: r.group, Name: streamName})
 	if err != nil {
+		// A genuine registry not-found means the stream was deleted from the
+		// registry (orphan); any other error (network, closed registry, ...) stays
+		// fatal so a transient failure is never mistaken for a droppable orphan.
+		if errors.Is(err, schema.ErrGRPCResourceNotFound) {
+			return nil, fmt.Errorf("%w: stream %s/%s", errOrphanSchema, r.group, streamName)
+		}
 		return nil, fmt.Errorf("load stream schema %s/%s: %w", r.group, streamName, err)
 	}
 	c := &cachedStreamSchema{
@@ -176,73 +133,57 @@ func (r *streamRowReplayer) loadSchema(ctx context.Context, streamName string) (
 	return c, nil
 }
 
-func (r *streamRowReplayer) replayPart(ctx context.Context, partPath string) (int, error) {
-	partID, parseErr := strconv.ParseUint(filepath.Base(partPath), 16, 64)
+// replayPart opens a source part and replays its rows through the sender. It
+// returns the rows published, the rows dropped because their series could not be
+// resolved (skipped — a series-index gap, mirroring measure: the source segment
+// must be retained), and the rows dropped because their schema was deleted from
+// the registry (orphanSkipped). Both skip counts are this part's delta from the
+// replayer-wide sender tallies. A non-nil error means some rows were not durably
+// delivered. Returns the same partReplayResult shape as the measure replayer.
+func (r *streamRowReplayer) replayPart(ctx context.Context, partPath string) (partReplayResult, error) {
+	partID, shardPath, segmentPath, parseErr := parseReplayPartPath(partPath)
 	if parseErr != nil {
-		return 0, fmt.Errorf("invalid part path %s: %w", partPath, parseErr)
+		return partReplayResult{}, parseErr
 	}
-	shardPath := filepath.Dir(partPath)
-	segmentPath := filepath.Dir(shardPath)
 
-	reader, err := dumpstream.OpenPart(partID, shardPath, r.fs)
-	if err != nil {
-		return 0, fmt.Errorf("open stream part %s: %w", partPath, err)
+	reader, openErr := dumpstream.OpenPart(partID, shardPath, r.fs)
+	if openErr != nil {
+		return partReplayResult{}, fmt.Errorf("open stream part %s: %w", partPath, openErr)
 	}
 	defer reader.Close()
 
 	ir, irErr := r.loadIndexResolver(segmentPath)
 	if irErr != nil {
-		return 0, fmt.Errorf("load stream index resolver for segment %s: %w", segmentPath, irErr)
+		return partReplayResult{}, fmt.Errorf("load stream index resolver for segment %s: %w", segmentPath, irErr)
 	}
 	reader.SetIndexResolver(ir)
 
+	loc, locErr := newSourceLoc(r.srcStage, segmentPath, shardPath, partID)
+	if locErr != nil {
+		return partReplayResult{}, fmt.Errorf("derive source location for part %s: %w", partPath, locErr)
+	}
+
 	it := reader.Iterator()
 	defer it.Close()
-
-	rowCount := 0
-	for it.Next() {
-		row := it.Row()
-		if rowErr := r.publishRow(ctx, row); rowErr != nil {
-			pos := it.Position()
-			r.logger.Warn().Err(rowErr).
-				Str("group", r.group).
-				Str("part", partPath).
-				Int("block_idx", pos.BlockIdx).
-				Int("row_idx", pos.RowIdx).
-				Int("rows_published", rowCount).
-				Msg("stream row-replay aborted mid-part on publish error; will retry on resume")
-			return rowCount, rowErr
-		}
-		rowCount++
-	}
-	if iterErr := it.Err(); iterErr != nil {
-		pos := it.Position()
-		r.logger.Warn().Err(iterErr).
-			Str("group", r.group).
-			Str("part", partPath).
-			Int("block_idx", pos.BlockIdx).
-			Int("row_idx", pos.RowIdx).
-			Int("rows_published", rowCount).
-			Msg("stream row-replay aborted mid-part; will retry on resume")
-		return rowCount, iterErr
-	}
-	if r.counter != nil {
-		atomic.AddUint64(r.counter, 1)
-	}
-	return rowCount, nil
+	// runPart opens the part's archive writer and commits/aborts its manifest; the
+	// orphan rows are appended to that writer (captured by the emit closure) inside replay.
+	var res partReplayResult
+	runErr := r.archiver.runPart(loc, func(pw *orphanPartWriter) error {
+		var replayErr error
+		res, replayErr = r.sender.replay(ctx, r.logger, r.group, partPath, r.counter, it,
+			func() error { return r.publishRow(ctx, pw, it.Row()) })
+		return replayErr
+	})
+	return res, runErr
 }
 
 // buildWriteRequest reconstructs the WriteRequest + InternalWriteRequest pair
-// from a raw stream Row. Separated from publishRow for testability.
-func (r *streamRowReplayer) buildWriteRequest(ctx context.Context, row dumpstream.Row) (*streamv1.WriteRequest, *streamv1.InternalWriteRequest, error) {
-	subject, evList, err := decodeSeriesEntityValues(row.EntityValues)
-	if err != nil {
-		return nil, nil, fmt.Errorf("decode entity values (seriesID=%d): %w", row.SeriesID, err)
-	}
-	cached, err := r.loadSchema(ctx, subject)
-	if err != nil {
-		return nil, nil, err
-	}
+// from a resolved subject + raw stream Row. The subject and its entity TagValues
+// are decoded by the caller so an orphan schema can be archived before the build.
+// Separated from publishRow for testability.
+func (r *streamRowReplayer) buildWriteRequest(
+	cached *cachedStreamSchema, subject string, evList pbv1.EntityValues, row dumpstream.Row,
+) (*streamv1.WriteRequest, *streamv1.InternalWriteRequest, error) {
 	tagFamilies := buildStreamTagFamilies(cached.schema.TagFamilies, cached.schema.Entity, row, evList)
 	wr := &streamv1.WriteRequest{
 		Metadata: &commonv1.Metadata{Group: r.group, Name: subject},
@@ -267,40 +208,57 @@ func (r *streamRowReplayer) buildWriteRequest(ctx context.Context, row dumpstrea
 	return wr, iwr, nil
 }
 
-func (r *streamRowReplayer) publishRow(ctx context.Context, row dumpstream.Row) error {
-	wr, iwr, err := r.buildWriteRequest(ctx, row)
+func (r *streamRowReplayer) publishRow(ctx context.Context, pw *orphanPartWriter, row dumpstream.Row) error {
+	subject, evList, err := decodeSeriesEntityValues(row.EntityValues)
+	if err != nil {
+		return fmt.Errorf("decode entity values (seriesID=%d): %w", row.SeriesID, err)
+	}
+	cached, err := r.loadSchema(ctx, subject)
+	if err != nil {
+		if errors.Is(err, errOrphanSchema) {
+			// Deleted schema: archive (or discard) this row, then skip it. The source
+			// segment is still deleted by the visitor (unlike a sidx-gap skip). A
+			// failed archive write under the archive policy is FATAL — returning it
+			// aborts the part so the source is retained and resume retries, never
+			// silently dropping the orphan row.
+			if archiveErr := r.archiveOrphanRow(pw, subject, evList, row); archiveErr != nil {
+				return archiveErr
+			}
+			loc := pw.loc
+			partLabel := fmt.Sprintf("seg-%s/shard-%d/part-%s", loc.Segment, loc.Shard, loc.Part)
+			return newOrphanSkip(partLabel, uint64(row.SeriesID), subject)
+		}
+		return err
+	}
+	wr, iwr, err := r.buildWriteRequest(cached, subject, evList, row)
 	if err != nil {
 		return err
 	}
-	nodeID, err := r.selector.Pick(r.group, wr.Metadata.Name, iwr.ShardId, 0)
-	if err != nil {
-		return fmt.Errorf("pick target node for %s: %w", wr.Metadata.Name, err)
-	}
-	msg := bus.NewBatchMessageWithNode(bus.MessageID(time.Now().UnixNano()), nodeID, iwr)
-	return r.enqueue(ctx, msg)
+	return r.sender.routeAndEnqueue(ctx, r.logger, r.selector, r.group, wr.Metadata.Name, iwr.ShardId, iwr)
 }
 
-// enqueue appends a message to the batch and flushes when full.
-func (r *streamRowReplayer) enqueue(ctx context.Context, msg bus.Message) error {
-	r.batchMu.Lock()
-	r.batch = append(r.batch, msg)
-	shouldFlush := len(r.batch) >= streamReplayBatchSize
-	r.batchMu.Unlock()
-	if shouldFlush {
-		return r.flushBatch(ctx)
+// archiveOrphanRow writes one orphan stream row to the part archive (a no-op
+// write when policy is discard, which still tallies via the writer). It returns
+// a non-nil error when the archive write fails so the caller can treat it as
+// fatal (under the archive policy) and retain the source segment.
+func (r *streamRowReplayer) archiveOrphanRow(pw *orphanPartWriter, subject string, evList pbv1.EntityValues, row dumpstream.Row) error {
+	rec := &archiveRecord{
+		Group: r.group, Catalog: catalogStream, Measure: subject,
+		Source:    pw.loc,
+		SeriesID:  uint64(row.SeriesID),
+		Entity:    orphanEntityStrings(evList, row.EntityValues),
+		Timestamp: time.Unix(0, row.Timestamp).UTC().Format(time.RFC3339Nano),
+		TimeNanos: row.Timestamp,
+		ElementID: base64.StdEncoding.EncodeToString(convert.Uint64ToBytes(row.ElementID)),
+	}
+	if len(row.Tags) > 0 {
+		rec.Tags = make(map[string]typedValue, len(row.Tags))
+		for name, raw := range row.Tags {
+			rec.Tags[name] = valueWithType(dump.DecodeTagValue(row.TagTypes[name], raw, nil))
+		}
+	}
+	if err := pw.appendRow(rec); err != nil {
+		return fmt.Errorf("archive orphan stream %s row: %w", subject, err)
 	}
 	return nil
-}
-
-func (r *streamRowReplayer) flushBatch(ctx context.Context) error {
-	r.batchMu.Lock()
-	if len(r.batch) == 0 {
-		r.batchMu.Unlock()
-		return nil
-	}
-	pending := r.batch
-	r.batch = make([]bus.Message, 0, streamReplayBatchSize)
-	r.batchMu.Unlock()
-	_, err := r.publisher.Publish(ctx, data.TopicStreamWrite, pending...)
-	return err
 }

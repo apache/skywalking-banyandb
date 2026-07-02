@@ -31,6 +31,11 @@ type (
 // DefBuckets is the default buckets for histograms.
 var DefBuckets = Buckets{.005, .01, .025, .05, .1, .25, .5, 1, 2.5, 5, 10}
 
+// BatchBuckets is the bucket set for batch-stream latency histograms. Batch-mode
+// streams and lifecycle migration replays can run for minutes, so the upper bound
+// extends to 300s instead of the 10s ceiling of DefBuckets.
+var BatchBuckets = Buckets{0.1, 0.5, 1, 2.5, 5, 10, 30, 60, 120, 300}
+
 // Merge merges the given label pairs with the current label pairs.
 func (p LabelPairs) Merge(other LabelPairs) LabelPairs {
 	result := make(LabelPairs, len(p)+len(other))

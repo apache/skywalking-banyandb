@@ -63,9 +63,9 @@ var _ = ginkgo.SynchronizedBeforeSuite(func() []byte {
 	dfWriter := setup.NewDiscoveryFileWriter(tmpDir)
 	config := setup.PropertyClusterConfig(dfWriter)
 	ginkgo.By("Starting data node 0")
-	addrDataNode0, _, closeDataNode0 := setup.DataNodeWithAddrAndDir(config)
+	addrDataNode0, _, _, closeDataNode0 := setup.DataNodeWithAddrAndDir(config)
 	ginkgo.By("Starting data node 1")
-	addrDataNode1, _, closeDataNode1 := setup.DataNodeWithAddrAndDir(config)
+	addrDataNode1, _, _, closeDataNode1 := setup.DataNodeWithAddrAndDir(config)
 	dataNodeAddrs = []string{addrDataNode0, addrDataNode1}
 	ginkgo.By("Loading schema via property")
 	setup.PreloadSchemaViaProperty(config, test_stream.PreloadSchema, test_measure.PreloadSchema, test_trace.PreloadSchema)

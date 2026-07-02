@@ -254,7 +254,7 @@ func (tst *tsTable) mergeParts(fileSystem fs.FileSystem, closeCh <-chan struct{}
 	bw := generateBlockWriter()
 	bw.mustInitForFilePart(fileSystem, dstPath, shouldCache)
 
-	pm, err := mergeBlocks(closeCh, bw, br, conflictColumns)
+	pm, mergedTagType, err := mergeBlocks(closeCh, bw, br, conflictColumns)
 	releaseBlockWriter(bw)
 	releaseBlockReader(br)
 	for i := range pii {
@@ -263,6 +263,7 @@ func (tst *tsTable) mergeParts(fileSystem fs.FileSystem, closeCh <-chan struct{}
 	if err != nil {
 		return nil, err
 	}
+	mergedTagType.mustWriteTagType(fileSystem, dstPath)
 	pm.mustWriteMetadata(fileSystem, dstPath)
 	// No SyncPath: mustWriteMetadata goes through WriteAtomic which already
 	// fsyncs the parent directory after rename.
@@ -272,7 +273,7 @@ func (tst *tsTable) mergeParts(fileSystem fs.FileSystem, closeCh <-chan struct{}
 
 var errClosed = fmt.Errorf("the merger is closed")
 
-func mergeBlocks(closeCh <-chan struct{}, bw *blockWriter, br *blockReader, conflictColumns map[string]map[string]struct{}) (*partMetadata, error) {
+func mergeBlocks(closeCh <-chan struct{}, bw *blockWriter, br *blockReader, conflictColumns map[string]map[string]struct{}) (*partMetadata, *tagType, error) {
 	pendingBlockIsEmpty := true
 	pendingBlock := generateBlockPointer()
 	defer releaseBlockPointer(pendingBlock)
@@ -297,7 +298,7 @@ func mergeBlocks(closeCh <-chan struct{}, bw *blockWriter, br *blockReader, conf
 	for br.nextBlockMetadata() {
 		select {
 		case <-closeCh:
-			return nil, errClosed
+			return nil, nil, errClosed
 		default:
 		}
 		b := br.block
@@ -355,15 +356,16 @@ func mergeBlocks(closeCh <-chan struct{}, bw *blockWriter, br *blockReader, conf
 		releaseDecoder()
 	}
 	if err := br.error(); err != nil {
-		return nil, fmt.Errorf("cannot read block to merge: %w", err)
+		return nil, nil, fmt.Errorf("cannot read block to merge: %w", err)
 	}
 	if !pendingBlockIsEmpty {
 		bw.mustWriteBlock(pendingBlock.bm.seriesID, &pendingBlock.block)
 	}
 	releaseDecoder()
 	var result partMetadata
-	bw.Flush(&result)
-	return &result, nil
+	mergedTagType := make(tagType)
+	bw.Flush(&result, &mergedTagType)
+	return &result, &mergedTagType, nil
 }
 
 func renameConflictColumns(b *block, conflictColumns map[string]map[string]struct{}) {

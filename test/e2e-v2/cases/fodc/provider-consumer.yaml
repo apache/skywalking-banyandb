@@ -1,0 +1,183 @@
+# Licensed to the Apache Software Foundation (ASF) under one or more
+# contributor license agreements.  See the NOTICE file distributed with
+# this work for additional information regarding copyright ownership.
+# The ASF licenses this file to You under the Apache License, Version 2.0
+# (the "License"); you may not use this file except in compliance with
+# the License.  You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
+# SkyWalking e2e provider/consumer demo apps instrumented with the Java agent.
+# An initContainer copies the agent from the skywalking-java image into a shared
+# emptyDir, mirroring the docker-compose `agent` sidecar + sw_agent volume.
+# Consumer POSTs to provider; both report to OAP, generating writes (and, via
+# query priming, reads) into BanyanDB. Applied through envsubst so the
+# ${SW_AGENT_*_COMMIT} tags resolve from test/e2e-v2/script/env.
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: provider
+  labels:
+    app: provider
+spec:
+  selector:
+    app: provider
+  ports:
+    - name: http
+      port: 9090
+      targetPort: 9090
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: consumer
+  labels:
+    app: consumer
+spec:
+  selector:
+    app: consumer
+  ports:
+    - name: http
+      port: 9092
+      targetPort: 9092
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: provider
+  labels:
+    app: provider
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: provider
+  template:
+    metadata:
+      labels:
+        app: provider
+    spec:
+      initContainers:
+        - name: agent-init
+          image: ghcr.io/apache/skywalking-java/skywalking-java:${SW_AGENT_JAVA_COMMIT}-java8
+          command: ["sh", "-c", "cp -r /skywalking/agent /sw-java-agent/"]
+          volumeMounts:
+            - name: sw-agent
+              mountPath: /sw-java-agent
+      containers:
+        - name: provider
+          image: ghcr.io/apache/skywalking/e2e-service-provider:${SW_AGENT_E2E_SERVICE_PROVIDER_COMMIT}
+          imagePullPolicy: IfNotPresent
+          env:
+            - name: JAVA_TOOL_OPTIONS
+              # Cap the heap explicitly: these demo images run Java 8u322, which
+              # predates cgroup-v2 support (8u372+), so on a cgroup-v2 host the JVM
+              # would size its heap off the host's RAM and get OOMKilled despite the
+              # container memory limit.
+              value: -javaagent:/sw-java-agent/agent/skywalking-agent.jar -Xmx512m -Xms128m
+            - name: SW_AGENT_COLLECTOR_BACKEND_SERVICES
+              value: oap:11800
+            - name: SW_LOGGING_OUTPUT
+              value: CONSOLE
+            - name: SW_AGENT_NAME
+              value: e2e-service-provider
+            - name: SW_AGENT_INSTANCE_NAME
+              value: provider1
+            - name: SW_METER_ACTIVE
+              value: "false"
+          ports:
+            - { name: http, containerPort: 9090 }
+          volumeMounts:
+            - name: sw-agent
+              mountPath: /sw-java-agent
+          readinessProbe:
+            tcpSocket:
+              port: 9090
+            initialDelaySeconds: 20
+            periodSeconds: 5
+            failureThreshold: 60
+          resources:
+            limits:
+              memory: 1536Mi
+              cpu: "1"
+            requests:
+              memory: 512Mi
+              cpu: "250m"
+      volumes:
+        - name: sw-agent
+          emptyDir: {}
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: consumer
+  labels:
+    app: consumer
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: consumer
+  template:
+    metadata:
+      labels:
+        app: consumer
+    spec:
+      initContainers:
+        - name: agent-init
+          image: ghcr.io/apache/skywalking-java/skywalking-java:${SW_AGENT_JAVA_COMMIT}-java8
+          command: ["sh", "-c", "cp -r /skywalking/agent /sw-java-agent/"]
+          volumeMounts:
+            - name: sw-agent
+              mountPath: /sw-java-agent
+      containers:
+        - name: consumer
+          image: ghcr.io/apache/skywalking/e2e-service-consumer:${SW_AGENT_E2E_SERVICE_PROVIDER_COMMIT}
+          imagePullPolicy: IfNotPresent
+          env:
+            - name: JAVA_TOOL_OPTIONS
+              # Cap the heap explicitly: these demo images run Java 8u322, which
+              # predates cgroup-v2 support (8u372+), so on a cgroup-v2 host the JVM
+              # would size its heap off the host's RAM and get OOMKilled despite the
+              # container memory limit.
+              value: -javaagent:/sw-java-agent/agent/skywalking-agent.jar -Xmx512m -Xms128m
+            - name: SW_AGENT_COLLECTOR_BACKEND_SERVICES
+              value: oap:11800
+            - name: SW_LOGGING_OUTPUT
+              value: CONSOLE
+            - name: PROVIDER_URL
+              value: http://provider:9090
+            - name: SW_AGENT_NAME
+              value: e2e-service-consumer
+            - name: SW_AGENT_INSTANCE_NAME
+              value: consumer1
+            - name: SW_METER_ACTIVE
+              value: "false"
+          ports:
+            - { name: http, containerPort: 9092 }
+          volumeMounts:
+            - name: sw-agent
+              mountPath: /sw-java-agent
+          readinessProbe:
+            tcpSocket:
+              port: 9092
+            initialDelaySeconds: 20
+            periodSeconds: 5
+            failureThreshold: 60
+          resources:
+            limits:
+              memory: 1536Mi
+              cpu: "1"
+            requests:
+              memory: 512Mi
+              cpu: "250m"
+      volumes:
+        - name: sw-agent
+          emptyDir: {}

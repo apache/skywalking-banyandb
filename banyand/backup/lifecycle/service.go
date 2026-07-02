@@ -52,10 +52,13 @@ import (
 	"github.com/apache/skywalking-banyandb/banyand/backup/snapshot"
 	"github.com/apache/skywalking-banyandb/banyand/internal/storage"
 	"github.com/apache/skywalking-banyandb/banyand/metadata"
+	"github.com/apache/skywalking-banyandb/banyand/metadata/schema"
 	"github.com/apache/skywalking-banyandb/banyand/observability"
 	"github.com/apache/skywalking-banyandb/banyand/protector"
+	"github.com/apache/skywalking-banyandb/banyand/queue"
 	"github.com/apache/skywalking-banyandb/pkg/healthcheck"
 	"github.com/apache/skywalking-banyandb/pkg/logger"
+	"github.com/apache/skywalking-banyandb/pkg/meter"
 	"github.com/apache/skywalking-banyandb/pkg/run"
 	"github.com/apache/skywalking-banyandb/pkg/timestamp"
 	pkgtls "github.com/apache/skywalking-banyandb/pkg/tls"
@@ -69,52 +72,116 @@ type service interface {
 
 var _ service = (*lifecycleService)(nil)
 
+const (
+	// metricsLocalNodeName is the connMgr key for the co-located data node that
+	// receives the lifecycle's native _monitoring measure writes.
+	metricsLocalNodeName = "lifecycle-local"
+	// metricsNodeKeeperInterval is how often the keeper re-checks that the local
+	// data node connection is active and re-registers it if not.
+	metricsNodeKeeperInterval = 10 * time.Second
+	// lifecycleRoleName is the hard-coded role label the lifecycle stamps
+	// on its own _monitoring series and on the wire-level SenderRole
+	// for tier-migration traffic. Mirrors the liaison's "liaison"
+	// pattern at pkg/cmdsetup/liaison.go:170-171.
+	lifecycleRoleName = "lifecycle"
+)
+
 type lifecycleService struct {
 	databasev1.UnimplementedClusterStateServiceServer
 	databasev1.UnimplementedNodeQueryServiceServer
-	metadata          metadata.Repo
-	omr               observability.MetricsRegistry
-	pm                protector.Memory
-	clusterStateMgr   *clusterStateManager
-	l                 *logger.Logger
-	sch               *timestamp.Scheduler
-	grpcServer        *grpclib.Server
-	httpSrv           *http.Server
-	tlsReloader       *pkgtls.Reloader
-	currentNode       *databasev1.Node
-	clientCloser      context.CancelFunc
-	stopCh            chan struct{}
-	measureRoot       string
-	streamRoot        string
-	traceRoot         string
-	progressFilePath  string
-	reportDir         string
-	schedule          string
-	cert              string
-	gRPCAddr          string
-	lifecycleHost     string
-	lifecycleGRPCAddr string
-	lifecycleHTTPAddr string
-	lifecycleCertFile string
-	lifecycleKeyFile  string
-	lifecycleGRPCPort uint32
-	lifecycleHTTPPort uint32
-	maxExecutionTimes int
-	enableTLS         bool
-	insecure          bool
-	lifecycleTLS      bool
-	chunkSize         run.Bytes
+	pm                  protector.Memory
+	omr                 observability.MetricsRegistry
+	metricsClient       queue.Client
+	cyclesTotal         meter.Counter
+	lastRunTimestamp    meter.Gauge
+	lastRunSuccess      meter.Gauge
+	metadata            metadata.Repo
+	l                   *logger.Logger
+	clusterStateMgr     *clusterStateManager
+	metricsKeeperStop   chan struct{}
+	sch                 *timestamp.Scheduler
+	stopCh              chan struct{}
+	clientCloser        context.CancelFunc
+	runCancel           context.CancelFunc
+	currentNode         *databasev1.Node
+	tlsReloader         *pkgtls.Reloader
+	httpSrv             *http.Server
+	grpcServer          *grpclib.Server
+	gRPCAddr            string
+	schedule            string
+	emittedLastRunRole  string
+	emittedLastRunNode  string
+	emittedLastRunGroup string
+	lifecycleCertFile   string
+	lastRunTier         string
+	lastRunRole         string
+	lastRunNode         string
+	lifecycleHost       string
+	lifecycleHTTPAddr   string
+	streamRoot          string
+	traceRoot           string
+	progressFilePath    string
+	reportDir           string
+	emittedLastRunTier  string
+	cert                string
+	lastRunGroup        string
+	lifecycleKeyFile    string
+	lifecycleGRPCAddr   string
+	measureRoot         string
+	orphanPolicyStr     string
+	orphanArchiveSubdir string
+	orphanCfg           orphanConfig
+	localNodeMD         schema.Metadata
+	maxExecutionTimes   int
+	chunkSize           run.Bytes
+	lifecycleGRPCPort   uint32
+	lifecycleHTTPPort   uint32
+	emittedLastRunSet   bool
+	enableTLS           bool
+	insecure            bool
+	lifecycleTLS        bool
 }
 
-// NewService creates a new lifecycle service.
-func NewService(meta metadata.Repo) run.Unit {
+// NewService creates a new lifecycle service. metricsRegistry replaces the
+// previous BypassRegistry, so the protector memory metrics and the lifecycle
+// proof counter emit real series. metricsClient is the native-metrics pipeline to
+// the co-located data node; it is only exercised when native mode is enabled.
+func NewService(
+	meta metadata.Repo,
+	metricsRegistry observability.MetricsRegistry,
+	metricsClient queue.Client,
+) run.Unit {
 	ls := &lifecycleService{
 		metadata:        meta,
-		omr:             observability.BypassRegistry,
+		omr:             metricsRegistry,
+		metricsClient:   metricsClient,
 		clusterStateMgr: &clusterStateManager{},
 	}
 	ls.pm = protector.NewMemory(ls.omr)
 	return ls
+}
+
+// nativeNodeContext augments ctx with the lifecycle node identity that the metric
+// service's native mode stamps onto every _monitoring series. The identity is the
+// lifecycle's own (Type="lifecycle", set via the metric service nodeType); NodeID
+// prefers POD_NAME (downward API) and falls back to the hostname (the pod name in
+// k8s) so series from different pods stay distinct. The lifecycle's own gRPC/HTTP
+// addresses are not computed until Validate (later, and only when scheduled), so
+// the address tags are left empty.
+func nativeNodeContext(ctx context.Context) context.Context {
+	nodeID := os.Getenv("POD_NAME")
+	if nodeID == "" {
+		if hostname, hostErr := os.Hostname(); hostErr == nil {
+			nodeID = hostname
+		}
+	}
+	if nodeID == "" {
+		nodeID = lifecycleRoleName
+	}
+	return context.WithValue(ctx, common.ContextNodeKey, common.Node{
+		NodeID: nodeID,
+		Labels: common.ParseNodeFlags(),
+	})
 }
 
 func (l *lifecycleService) FlagSet() *run.FlagSet {
@@ -138,6 +205,16 @@ func (l *lifecycleService) FlagSet() *run.FlagSet {
 	flagS.IntVar(&l.maxExecutionTimes, "max-execution-times", 0, "Maximum number of times to execute the lifecycle migration. 0 means no limit.")
 	l.chunkSize = run.Bytes(1024 * 1024)
 	flagS.VarP(&l.chunkSize, "chunk-size", "", "Chunk size in bytes for streaming data during migration (default: 1MB)")
+	flagS.StringVar(&l.orphanPolicyStr, "migration-orphan-policy", "archive",
+		"What to do with rows whose schema was deleted from the registry: archive|discard")
+	flagS.StringVar(&l.orphanArchiveSubdir, "migration-orphan-archive-subdir", "archive",
+		"Relative subdirectory, under each catalog's root path, where orphan rows are archived when policy=archive (e.g. <measure-root-path>/archive)")
+	flagS.IntVar(&rowReplayMaxBatchRows, "row-replay-max-batch-rows", rowReplayMaxBatchRows,
+		"Maximum rows per row-replay batch (row-replay is the fallback for parts spanning multiple target segments)")
+	flagS.VarP(&rowReplayMaxBatchBytes, "row-replay-max-batch-bytes", "",
+		"Maximum in-flight marshaled bytes per row-replay batch; caps peak marshal memory for large bodies (default: 32MB)")
+	flagS.DurationVar(&lifecycleSendRetryTimeout, "lifecycle-send-retry-timeout", defaultLifecycleSendRetryTimeout,
+		"Max total time to retry streaming a migration part to a target node on transient failures (target restarting, disconnect, receiver busy)")
 
 	// Lifecycle server flags
 	flagS.BoolVar(&l.lifecycleTLS, "lifecycle-tls", false, "connection uses TLS if true, else plain TCP")
@@ -179,13 +256,36 @@ func (l *lifecycleService) Validate() error {
 			CreatedAt:   timestamppb.Now(),
 		}
 	}
+	policy, err := parseOrphanPolicy(l.orphanPolicyStr)
+	if err != nil {
+		return err
+	}
+	if filepath.IsAbs(l.orphanArchiveSubdir) {
+		return fmt.Errorf("migration-orphan-archive-subdir must be a relative path (under each catalog's root), got %q", l.orphanArchiveSubdir)
+	}
+	// rootDir is resolved per-catalog (under each catalog's root path) via
+	// orphanConfigFor; here we only fix the policy.
+	l.orphanCfg = orphanConfig{policy: policy}
 	return nil
+}
+
+// orphanConfigFor resolves the orphan archive config for a catalog rooted at
+// catalogRoot: the archive lives in the configured relative subdir under that root.
+func (l *lifecycleService) orphanConfigFor(catalogRoot string) orphanConfig {
+	return orphanConfig{policy: l.orphanCfg.policy, rootDir: filepath.Join(catalogRoot, l.orphanArchiveSubdir)}
 }
 
 // PreRun initializes the lifecycle service and its embedded server.
 func (l *lifecycleService) PreRun(_ context.Context) error {
 	l.l = logger.GetLogger("lifecycle")
 
+	// Safe to call With() here: the metrics registry is registered earlier in the
+	// group, so its PreRun (which builds the provider) has already run.
+	lifecycleScope := l.omr.With(observability.RootScope.SubScope("lifecycle"))
+	cycleLabels := []string{"remote_node", "remote_role", "remote_tier", "group"}
+	l.cyclesTotal = lifecycleScope.NewCounter("cycles_total", cycleLabels...)
+	l.lastRunTimestamp = lifecycleScope.NewGauge("last_run_timestamp_seconds", cycleLabels...)
+	l.lastRunSuccess = lifecycleScope.NewGauge("last_run_success", cycleLabels...)
 	if l.schedule != "" && l.lifecycleTLS {
 		var err error
 		l.tlsReloader, err = pkgtls.NewReloader(l.lifecycleCertFile, l.lifecycleKeyFile, l.l)
@@ -202,10 +302,26 @@ func (l *lifecycleService) GracefulStop() {
 		l.sch.Close()
 	}
 
+	// Stop the native metrics node keeper, then close the local metrics pub
+	// client. The metric service may still attempt a final flush concurrently
+	// during shutdown; native metrics are best-effort, so a flush that loses the
+	// race to the closing client simply logs and is dropped.
+	if l.metricsKeeperStop != nil {
+		close(l.metricsKeeperStop)
+		l.metricsKeeperStop = nil
+	}
+	if l.metricsClient != nil {
+		l.metricsClient.GracefulStop()
+	}
+
 	l.l.Info().Msg("Stopping lifecycle server")
 
 	if l.tlsReloader != nil {
 		l.tlsReloader.Stop()
+	}
+
+	if l.runCancel != nil {
+		l.runCancel()
 	}
 
 	if l.clientCloser != nil {
@@ -242,12 +358,83 @@ func (l *lifecycleService) GracefulStop() {
 }
 
 func (l *lifecycleService) Name() string {
-	return "lifecycle"
+	return lifecycleRoleName
+}
+
+// buildLocalNodeMD builds the schema metadata registered on the native metrics
+// pub client for the co-located data node. The ROLE_DATA role is REQUIRED: the
+// pub client's role gate (allowedRoles=[ROLE_DATA]) silently drops a node whose
+// roles do not intersect, which would make native metrics a silent no-op.
+func buildLocalNodeMD(grpcAddr string) schema.Metadata {
+	return schema.Metadata{
+		TypeMeta: schema.TypeMeta{Kind: schema.KindNode},
+		Spec: &databasev1.Node{
+			Metadata:    &commonv1.Metadata{Name: metricsLocalNodeName},
+			GrpcAddress: grpcAddr,
+			Roles:       []databasev1.Role{databasev1.Role_ROLE_DATA},
+		},
+	}
+}
+
+// buildHTTPRouter assembles the lifecycle's HTTP routes: the gRPC-gateway API
+// under /api and, when the metrics registry exposes a Prometheus handler, the
+// /metrics endpoint on the same (existing) HTTP server.
+func (l *lifecycleService) buildHTTPRouter(apiHandler http.Handler) *chi.Mux {
+	mux := chi.NewRouter()
+	mux.Mount("/api", http.StripPrefix("/api", apiHandler))
+	if reg, ok := l.omr.(observability.PrometheusHandlerProvider); ok {
+		mux.Handle("/metrics", reg.PrometheusHandler())
+	}
+	return mux
+}
+
+// startMetricsNodeKeeper registers the co-located data node on the native
+// metrics pub client and keeps the connection active. The pub connManager runs a
+// synchronous health check at registration and does NOT auto-retry an evicted
+// node (NewWithoutMetadata leaves healthCheckInterval==0), so the keeper
+// re-registers whenever the node is not locatable — covering both an initial
+// dial that failed (data node not ready yet) and a later failover eviction.
+func (l *lifecycleService) startMetricsNodeKeeper() {
+	l.localNodeMD = buildLocalNodeMD(l.gRPCAddr)
+	l.metricsKeeperStop = make(chan struct{})
+	// Initial registration dials the local data node so native flushes route there.
+	l.metricsClient.OnAddOrUpdate(l.localNodeMD)
+	run.Go(context.Background(), "backup.lifecycle.metrics-node-keeper", l.l, func(_ context.Context) {
+		ticker := time.NewTicker(metricsNodeKeeperInterval)
+		defer ticker.Stop()
+		for {
+			select {
+			case <-l.metricsKeeperStop:
+				return
+			case <-ticker.C:
+				// HealthyNodes reflects the pub's active-connection state directly.
+				// connMgr.OnAddOrUpdate fans out OnActive synchronously (which seeds
+				// the native selector), so an empty set means the local data node is
+				// not connected and native flushes would drop; force a fresh dial.
+				if len(l.metricsClient.HealthyNodes()) == 0 {
+					// connMgr.OnAddOrUpdate short-circuits an evictable node, so drop
+					// it first to force a fresh dial. queue.Client does not expose
+					// OnDelete, hence the type assertion.
+					if deleter, ok := l.metricsClient.(interface{ OnDelete(schema.Metadata) }); ok {
+						deleter.OnDelete(l.localNodeMD)
+					}
+					l.metricsClient.OnAddOrUpdate(l.localNodeMD)
+				}
+			}
+		}
+	})
 }
 
 func (l *lifecycleService) Serve() run.StopNotify {
 	l.l = logger.GetLogger("lifecycle")
 	l.stopCh = make(chan struct{})
+
+	// Register the co-located data node for native metrics and keep it active.
+	// Native works in both scheduled and one-shot modes (it is a gRPC write that
+	// does not depend on the lifecycle's own HTTP server).
+	if l.omr.NativeEnabled() {
+		l.startMetricsNodeKeeper()
+	}
 
 	// Start gRPC/HTTP servers when schedule is set
 	if l.schedule != "" {
@@ -258,7 +445,12 @@ func (l *lifecycleService) Serve() run.StopNotify {
 	if l.schedule == "" {
 		defer close(done)
 		l.l.Info().Msg("starting lifecycle migration without schedule")
-		if err := l.action(context.Background()); err != nil {
+		// One-shot mode has no scheduler, so derive a cancellable context here
+		// that GracefulStop can cancel to abort an in-flight migration promptly.
+		ctx, cancel := context.WithCancel(context.Background())
+		l.runCancel = cancel
+		defer cancel()
+		if err := l.action(ctx); err != nil {
 			logger.Panicf("failed to run lifecycle migration: %v", err)
 		}
 		return done
@@ -269,6 +461,8 @@ func (l *lifecycleService) Serve() run.StopNotify {
 	var executionCount int
 	err := l.sch.Register(context.Background(), "lifecycle", cron.Descriptor, l.schedule, func(ctx context.Context, triggerTime time.Time, _ *logger.Logger) bool {
 		l.l.Info().Msgf("lifecycle migration triggered at %s", triggerTime)
+		// The scheduler cancels this context on Close (GracefulStop), which lets
+		// the send path abort promptly; its 5-minute wait does not cancel it.
 		if err := l.action(ctx); err != nil {
 			l.l.Error().Err(err).Msg("failed to run lifecycle migration action")
 		}
@@ -352,8 +546,10 @@ func (l *lifecycleService) startServers() {
 		return
 	}
 
-	mux := chi.NewRouter()
-	mux.Mount("/api", http.StripPrefix("/api", gwMux))
+	// Reuse this existing HTTP server for the Prometheus endpoint instead of
+	// opening a separate observability listener. The fodc-agent already scrapes
+	// this port, so the lifecycle metrics appear with zero deployment change.
+	mux := l.buildHTTPRouter(gwMux)
 
 	l.httpSrv = &http.Server{
 		Addr:              l.lifecycleHTTPAddr,
@@ -402,7 +598,26 @@ func (l *lifecycleService) startServers() {
 	})
 }
 
-func (l *lifecycleService) action(ctx context.Context) error {
+func (l *lifecycleService) action(ctx context.Context) (err error) {
+	// Reset the cycle's last-seen (group, remote_*) tuple so an empty
+	// cycle (no parseGroup succeeded) doesn't inherit the previous
+	// cycle's labels. recordLastRun reads these at the end of the
+	// cycle; without the reset, scheduler-driven consecutive cycles
+	// could see a stale group label.
+	l.lastRunGroup = ""
+	l.lastRunNode = ""
+	l.lastRunRole = ""
+	l.lastRunTier = ""
+	// Stamp last-run metrics at the end of this cycle regardless of outcome.
+	// Using defer keeps the success/error bookkeeping in one place even as
+	// the body grows new early returns; the metrics gauge Set()s observe
+	// the same runStart and the success flag, so dashboards see consistent
+	// (timestamp, success) pairs. The named return value lets the defer
+	// observe whether the body succeeded.
+	runStart := time.Now()
+	defer func() {
+		l.recordLastRun(runStart, err)
+	}()
 	progress := LoadProgress(l.progressFilePath, l.l)
 	progress.ClearErrors()
 
@@ -451,6 +666,13 @@ func (l *lifecycleService) action(ctx context.Context) error {
 		l.l.Error().Err(err).Msg("failed to list data nodes")
 		return err
 	}
+	// The lifecycle usually starts together with its co-located data node and
+	// the property-based registry syncs asynchronously, so the node behind
+	// --grpc-addr may not be visible in the first listing. deriveSelfIdentity
+	// needs it for deterministic sender attribution (its address match is
+	// pass 1), so wait briefly for it instead of mis-deriving the identity
+	// from a label fallback.
+	nodes = l.waitForCoLocatedNode(ctx, nodes)
 	labels := common.ParseNodeFlags()
 
 	for _, g := range groups {
@@ -499,6 +721,132 @@ func (l *lifecycleService) action(ctx context.Context) error {
 	return fmt.Errorf("lifecycle migration partially completed, progress file retained; %v groups not fully completed", notCompleteGroups)
 }
 
+// recordCycleGroup stamps the per-group banyandb_lifecycle_cycles_total
+// Inc with the (group, remote_node, remote_role, remote_tier) tuple
+// returned by parseGroup. It also captures the (group, remote_*) tuple
+// as the cycle's last-seen identity, which the deferred recordLastRun
+// reads at the end of the cycle to stamp the cycle-level last_run_*
+// gauges. lastRunTimestamp and lastRunSuccess are intentionally NOT
+// touched here — they are stamped atomically at cycle end in
+// recordLastRun so dashboards see consistent (timestamp, success) pairs
+// for the same (group, remote_*) tuple, and so the success flag
+// reflects the whole-cycle outcome (not the last group's parseGroup
+// result).
+//
+// nil counters are skipped so a lifecycle run with a nil
+// observability.MetricsRegistry (BypassRegistry) doesn't crash.
+func (l *lifecycleService) recordCycleGroup(group, senderNode, senderRole, senderTier string) {
+	if l.cyclesTotal != nil {
+		l.cyclesTotal.Inc(1, senderNode, senderRole, senderTier, group)
+	}
+	l.lastRunGroup = group
+	l.lastRunNode = senderNode
+	l.lastRunRole = senderRole
+	l.lastRunTier = senderTier
+}
+
+// recordLastRun stamps the banyandb_lifecycle_last_run_timestamp_seconds
+// and banyandb_lifecycle_last_run_success gauges with the start time
+// (epoch seconds) and a 0/1 success flag, both using the
+// (group, remote_node, remote_role, remote_tier) tuple from the cycle's
+// last processed group. Called from the deferred end-of-action block so
+// every code path (success, error, panic-recovered) updates both
+// gauges atomically.
+//
+// Prometheus' labeled gauges don't garbage-collect the previous tuple
+// when Set is called with new labels — the old series lingers as
+// "stale" until a scrape expires it. To prevent dashboards from
+// reading a previous cycle's (group, remote_*) tuple as current,
+// recordLastRun Deletes the previously-emitted tuple (tracked in
+// emittedLastRun{Group,Node,Role,Tier}) before stamping the new
+// (current) tuple, and then updates the emitted-tuple fields to
+// reflect the new stamp. The empty-cycle path (no group was processed
+// in the current cycle) still calls Delete on the previous tuple and
+// then Set the all-empty-labels tuple, so the dashboard always sees
+// exactly one current series. nil gauges are skipped so a lifecycle
+// run with a nil observability.MetricsRegistry (BypassRegistry)
+// doesn't crash.
+func (l *lifecycleService) recordLastRun(start time.Time, err error) {
+	success := 0.0
+	if err == nil {
+		success = 1.0
+	}
+	prevLabels := []string{
+		l.emittedLastRunNode, l.emittedLastRunRole, l.emittedLastRunTier, l.emittedLastRunGroup,
+	}
+	if l.emittedLastRunSet {
+		if l.lastRunTimestamp != nil {
+			l.lastRunTimestamp.Delete(prevLabels...)
+		}
+		if l.lastRunSuccess != nil {
+			l.lastRunSuccess.Delete(prevLabels...)
+		}
+	}
+	if l.lastRunTimestamp != nil {
+		l.lastRunTimestamp.Set(float64(start.Unix()), l.lastRunNode, l.lastRunRole, l.lastRunTier, l.lastRunGroup)
+	}
+	if l.lastRunSuccess != nil {
+		l.lastRunSuccess.Set(success, l.lastRunNode, l.lastRunRole, l.lastRunTier, l.lastRunGroup)
+	}
+	// Update the emitted-tuple tracking so the next cycle's recordLastRun
+	// deletes THIS cycle's tuple. emittedLastRunSet is unconditionally
+	// true after a successful Set, even for the all-empty-labels case
+	// (so the next non-empty cycle knows to Delete the all-empty
+	// series). This runs after the Set so a panic in Set doesn't
+	// leave the tracking inconsistent with Prometheus.
+	l.emittedLastRunSet = true
+	l.emittedLastRunGroup = l.lastRunGroup
+	l.emittedLastRunNode = l.lastRunNode
+	l.emittedLastRunRole = l.lastRunRole
+	l.emittedLastRunTier = l.lastRunTier
+}
+
+// waitForCoLocatedNode waits briefly for the data node behind --grpc-addr to
+// appear in the registry listing so deriveSelfIdentity can resolve the sender
+// identity through its deterministic address match (pass 1). The lifecycle
+// typically starts alongside its co-located data node, whose registration
+// propagates through the property-based registry asynchronously, so the first
+// listing may not include it yet. Returns the freshest listing either way; on
+// timeout the label fallbacks (or the empty identity) apply as before.
+func (l *lifecycleService) waitForCoLocatedNode(ctx context.Context, nodes []*databasev1.Node) []*databasev1.Node {
+	const (
+		attempts = 20
+		interval = 500 * time.Millisecond
+	)
+	if l.gRPCAddr == "" || hasGrpcAddress(nodes, l.gRPCAddr) {
+		return nodes
+	}
+	for i := 0; i < attempts; i++ {
+		select {
+		case <-ctx.Done():
+			return nodes
+		case <-time.After(interval):
+		}
+		refreshed, listErr := l.metadata.NodeRegistry().ListNode(ctx, databasev1.Role_ROLE_DATA)
+		if listErr != nil {
+			l.l.Warn().Err(listErr).Msg("failed to re-list data nodes while waiting for the co-located node")
+			continue
+		}
+		nodes = refreshed
+		if hasGrpcAddress(nodes, l.gRPCAddr) {
+			return nodes
+		}
+	}
+	l.l.Warn().Str("grpc_addr", l.gRPCAddr).Msg("co-located data node not visible in the registry; sender identity falls back to node labels")
+	return nodes
+}
+
+// hasGrpcAddress reports whether any node advertises the given gRPC address
+// (loopback host aliases are treated as equivalent, see grpcAddrEqual).
+func hasGrpcAddress(nodes []*databasev1.Node, addr string) bool {
+	for _, n := range nodes {
+		if grpcAddrEqual(n.GrpcAddress, addr) {
+			return true
+		}
+	}
+	return false
+}
+
 // generateReport gathers detailed counts & errors from Progress, writes comprehensive JSON file per run, and keeps only 5 latest.
 func (l *lifecycleService) generateReport(p *Progress) {
 	reportDir := l.reportDir
@@ -534,11 +882,20 @@ func (l *lifecycleService) buildMigrationReport(p *Progress) map[string]interfac
 	defer p.mu.Unlock()
 
 	now := time.Now()
+	// orphans reports, per catalog -> group -> deleted subject, how many rows were
+	// archived or discarded because their schema was deleted from the registry.
+	// This is expected handling (the source segment is still deleted), so it is
+	// reported here rather than as a migration error.
+	orphans := map[string]interface{}{"policy": l.orphanPolicyStr}
+	for catalog, byGroup := range p.OrphanRows {
+		orphans[catalog] = byGroup
+	}
 	report := map[string]interface{}{
 		"generated_at":   now,
 		"report_version": "2.1",
 		"summary":        l.buildSummaryStats(p),
 		"errors":         l.buildErrorSummary(p),
+		"orphans":        orphans,
 		"snapshot_info": map[string]interface{}{
 			"stream_dir":  p.SnapshotStreamDir,
 			"measure_dir": p.SnapshotMeasureDir,
@@ -575,14 +932,14 @@ func (l *lifecycleService) buildSummaryStats(p *Progress) map[string]interface{}
 	totalTraceShards, completedTraceShards := l.calculateTotalCounts(p.TraceShardCounts, p.TraceShardProgress)
 	totalTraceSeries, completedTraceSeries := l.calculateTotalCounts(p.TraceSeriesCounts, p.TraceSeriesProgress)
 
-	// Calculate error counts
-	streamPartErrors := l.countErrors(p.StreamPartErrors)
-	streamSeriesErrors := l.countErrors(p.StreamSeriesErrors)
-	streamElementIndexErrors := l.countErrors(p.StreamElementIndexErrors)
-	measurePartErrors := l.countErrors(p.MeasurePartErrors)
-	measureSeriesErrors := l.countErrors(p.MeasureSeriesErrors)
-	traceShardErrors := l.countErrors(p.TraceShardErrors)
-	traceSeriesErrors := l.countErrors(p.TraceSeriesErrors)
+	// Calculate error counts from the structured MigrationErrors (single source).
+	streamPartErrors := countMigrationErrors(p, catalogStream, scopePart)
+	streamSeriesErrors := countMigrationErrors(p, catalogStream, scopeSeries)
+	streamElementIndexErrors := countMigrationErrors(p, catalogStream, scopeElementIndex)
+	measurePartErrors := countMigrationErrors(p, catalogMeasure, scopePart)
+	measureSeriesErrors := countMigrationErrors(p, catalogMeasure, scopeSeries)
+	traceShardErrors := countMigrationErrors(p, catalogTrace, scopeShard)
+	traceSeriesErrors := countMigrationErrors(p, catalogTrace, scopeSeries)
 
 	return map[string]interface{}{
 		"migration_status": map[string]interface{}{
@@ -687,30 +1044,55 @@ func (l *lifecycleService) buildSyncBreakdown(chunk, replayParts, replayRows map
 
 // buildErrorSummary creates detailed error information.
 func (l *lifecycleService) buildErrorSummary(p *Progress) map[string]interface{} {
-	return map[string]interface{}{
-		"stream_parts":           l.buildErrorDetails(p.StreamPartErrors),
-		"stream_series":          l.buildErrorDetails(p.StreamSeriesErrors),
-		"stream_element_index":   l.buildErrorDetails(p.StreamElementIndexErrors),
-		"measure_parts":          l.buildErrorDetails(p.MeasurePartErrors),
-		"measure_series":         l.buildErrorDetails(p.MeasureSeriesErrors),
-		"trace_parts":            l.buildErrorDetails(p.TraceShardErrors),
-		"trace_series":           l.buildErrorDetails(p.TraceSeriesErrors),
-		"row_replay_node_errors": l.buildNodeErrorDetails(p.RowReplayNodeErrors),
+	// Project the flattened MigrationErrors into the 8 report buckets by their
+	// (catalog, scope), each an array (empty when none) so the JSON shape is
+	// stable.
+	buckets := make(map[string][]MigrationError, len(errorBuckets)+1)
+	for i := range errorBuckets {
+		buckets[errorBuckets[i].name] = []MigrationError{}
 	}
+	buckets[nodeErrorBucket] = []MigrationError{}
+	for i := range p.MigrationErrors {
+		if key := errorBucketKey(p.MigrationErrors[i].Catalog, p.MigrationErrors[i].Scope); key != "" {
+			buckets[key] = append(buckets[key], p.MigrationErrors[i])
+		}
+	}
+	out := make(map[string]interface{}, len(buckets))
+	for k := range buckets {
+		out[k] = buckets[k]
+	}
+	return out
 }
 
-// buildNodeErrorDetails copies the group→node→message error map for the report,
-// returning an empty map (never nil) so the JSON shape is stable.
-func (l *lifecycleService) buildNodeErrorDetails(nodeErrors map[string]map[string]string) map[string]interface{} {
-	result := make(map[string]interface{}, len(nodeErrors))
-	for group, nodes := range nodeErrors {
-		groupErrors := make(map[string]interface{}, len(nodes))
-		for nodeID, msg := range nodes {
-			groupErrors[nodeID] = msg
-		}
-		result[group] = groupErrors
+// errorBuckets is the single source of truth for the report's error buckets:
+// each entry names a bucket and the (catalog, scope) it holds. Node-scoped
+// errors share nodeErrorBucket across catalogs and are handled separately.
+var errorBuckets = []struct {
+	name, catalog, scope string
+}{
+	{"stream_parts", catalogStream, scopePart},
+	{"stream_series", catalogStream, scopeSeries},
+	{"stream_element_index", catalogStream, scopeElementIndex},
+	{"measure_parts", catalogMeasure, scopePart},
+	{"measure_series", catalogMeasure, scopeSeries},
+	{"trace_parts", catalogTrace, scopeShard},
+	{"trace_series", catalogTrace, scopeSeries},
+}
+
+const nodeErrorBucket = "row_replay_node_errors"
+
+// errorBucketKey maps a migration error's catalog+scope to its report bucket
+// name, or "" if it has none. Node-scoped errors share one bucket across catalogs.
+func errorBucketKey(catalog, scope string) string {
+	if scope == scopeNode {
+		return nodeErrorBucket
 	}
-	return result
+	for i := range errorBuckets {
+		if errorBuckets[i].catalog == catalog && errorBuckets[i].scope == scope {
+			return errorBuckets[i].name
+		}
+	}
+	return ""
 }
 
 // Helper functions.
@@ -725,45 +1107,16 @@ func (l *lifecycleService) calculateTotalCounts(counts, progress map[string]int)
 	return totalCount, totalProgress
 }
 
-func (l *lifecycleService) countErrors(errorMaps interface{}) int {
-	switch v := errorMaps.(type) {
-	// New four-level structure: map[group]map[segmentID]map[shardID]map[partID]error
-	case map[string]map[string]map[common.ShardID]map[uint64]string:
-		total := 0
-		for _, segments := range v {
-			for _, shards := range segments {
-				for _, parts := range shards {
-					total += len(parts)
-				}
-			}
+// countMigrationErrors counts the structured migration errors matching the given
+// catalog and scope, the single source for the report's per-resource error tally.
+func countMigrationErrors(p *Progress, catalog, scope string) int {
+	n := 0
+	for i := range p.MigrationErrors {
+		if p.MigrationErrors[i].Catalog == catalog && p.MigrationErrors[i].Scope == scope {
+			n++
 		}
-		return total
-	// New three-level structure: map[group]map[segmentID]map[shardID]error
-	case map[string]map[string]map[common.ShardID]string:
-		total := 0
-		for _, segments := range v {
-			for _, shards := range segments {
-				total += len(shards)
-			}
-		}
-		return total
-	// Legacy two-level structure: map[group]map[partID]error
-	case map[string]map[uint64]string:
-		total := 0
-		for _, groupErrors := range v {
-			total += len(groupErrors)
-		}
-		return total
-	// Legacy two-level structure: map[group]map[shardID]error
-	case map[string]map[string]string:
-		total := 0
-		for _, groupErrors := range v {
-			total += len(groupErrors)
-		}
-		return total
-	default:
-		return 0
 	}
+	return n
 }
 
 func (l *lifecycleService) calculatePercentage(completed, total int) float64 {
@@ -771,73 +1124,6 @@ func (l *lifecycleService) calculatePercentage(completed, total int) float64 {
 		return 0.0
 	}
 	return float64(completed) / float64(total) * 100.0
-}
-
-func (l *lifecycleService) buildErrorDetails(errorMaps interface{}) map[string]interface{} {
-	result := make(map[string]interface{})
-
-	switch v := errorMaps.(type) {
-	// New four-level structure: map[group]map[segmentID]map[shardID]map[partID]error
-	case map[string]map[string]map[common.ShardID]map[uint64]string:
-		for group, segments := range v {
-			groupDetails := make(map[string]interface{})
-			for segmentID, shards := range segments {
-				segmentDetails := make(map[string]interface{})
-				for shardID, parts := range shards {
-					if len(parts) > 0 {
-						// Copy the inner map so the report does not alias
-						// Progress state; aliasing would race with a
-						// concurrent Mark*Error during JSON marshaling.
-						partDetails := make(map[uint64]string, len(parts))
-						for partID, errorMsg := range parts {
-							partDetails[partID] = errorMsg
-						}
-						segmentDetails[fmt.Sprintf("shard_%d", shardID)] = partDetails
-					}
-				}
-				if len(segmentDetails) > 0 {
-					groupDetails[segmentID] = segmentDetails
-				}
-			}
-			if len(groupDetails) > 0 {
-				result[group] = groupDetails
-			}
-		}
-	// New three-level structure: map[group]map[segmentID]map[shardID]error
-	case map[string]map[string]map[common.ShardID]string:
-		for group, segments := range v {
-			groupDetails := make(map[string]interface{})
-			for segmentID, shards := range segments {
-				if len(shards) > 0 {
-					// Convert ShardID keys to strings for JSON serialization
-					shardDetails := make(map[string]string)
-					for shardID, errorMsg := range shards {
-						shardDetails[fmt.Sprintf("shard_%d", shardID)] = errorMsg
-					}
-					groupDetails[segmentID] = shardDetails
-				}
-			}
-			if len(groupDetails) > 0 {
-				result[group] = groupDetails
-			}
-		}
-	// Legacy two-level structure: map[group]map[partID]error
-	case map[string]map[uint64]string:
-		for group, groupErrors := range v {
-			if len(groupErrors) > 0 {
-				result[group] = groupErrors
-			}
-		}
-	// Legacy two-level structure: map[group]map[shardID]error
-	case map[string]map[string]string:
-		for group, groupErrors := range v {
-			if len(groupErrors) > 0 {
-				result[group] = groupErrors
-			}
-		}
-	}
-
-	return result
 }
 
 // rotateReportFiles keeps only the 5 most recent report files.
@@ -917,11 +1203,12 @@ func (l *lifecycleService) getGroupsToProcess(ctx context.Context, progress *Pro
 func (l *lifecycleService) processStreamGroup(ctx context.Context, g *commonv1.Group,
 	streamDir string, nodes []*databasev1.Node, labels map[string]string, progress *Progress,
 ) {
-	group, err := parseGroup(g, labels, nodes, l.l, l.metadata, l.clusterStateMgr)
+	group, senderNode, senderRole, senderTier, err := parseGroup(g, labels, nodes, l.l, l.metadata, l.clusterStateMgr, l.omr)
 	if err != nil {
 		l.l.Error().Err(err).Msgf("failed to parse group %s", g.Metadata.Name)
 		return
 	}
+	l.recordCycleGroup(g.Metadata.Name, senderNode, senderRole, senderTier)
 	defer group.Close()
 	tr := l.getRemovalSegmentsTimeRange(group)
 	if tr.Start.IsZero() && tr.End.IsZero() {
@@ -942,7 +1229,7 @@ func (l *lifecycleService) processStreamGroup(ctx context.Context, g *commonv1.G
 }
 
 // processStreamGroupFileBased uses file-based migration instead of element-based queries.
-func (l *lifecycleService) processStreamGroupFileBased(_ context.Context, g *GroupConfig, streamDir string,
+func (l *lifecycleService) processStreamGroupFileBased(ctx context.Context, g *GroupConfig, streamDir string,
 	tr *timestamp.TimeRange, progress *Progress,
 ) ([]string, error) {
 	if progress.IsStreamGroupDeleted(g.Metadata.Name) {
@@ -961,8 +1248,7 @@ func (l *lifecycleService) processStreamGroupFileBased(_ context.Context, g *Gro
 	}
 
 	// Use the file-based migration with existing visitor pattern
-	//nolint:contextcheck // migration drives its own context lifecycle for batch publish.
-	segmentSuffixes, err := migrateStreamWithFileBasedAndProgress(rootDir, *tr, g, l.l, progress, int(l.chunkSize), l.metadata)
+	segmentSuffixes, err := migrateStreamWithFileBasedAndProgress(ctx, rootDir, *tr, g, l.l, progress, int(l.chunkSize), l.metadata, l.orphanConfigFor(l.streamRoot))
 	if err != nil {
 		return nil, fmt.Errorf("file-based stream migration failed: %w", err)
 	}
@@ -1037,11 +1323,12 @@ func (l *lifecycleService) deleteExpiredStreamSegments(ctx context.Context, g *c
 func (l *lifecycleService) processMeasureGroup(ctx context.Context, g *commonv1.Group, measureDir string,
 	nodes []*databasev1.Node, labels map[string]string, progress *Progress,
 ) {
-	group, err := parseGroup(g, labels, nodes, l.l, l.metadata, l.clusterStateMgr)
+	group, senderNode, senderRole, senderTier, err := parseGroup(g, labels, nodes, l.l, l.metadata, l.clusterStateMgr, l.omr)
 	if err != nil {
 		l.l.Error().Err(err).Msgf("failed to parse group %s", g.Metadata.Name)
 		return
 	}
+	l.recordCycleGroup(g.Metadata.Name, senderNode, senderRole, senderTier)
 	defer group.Close()
 
 	tr := l.getRemovalSegmentsTimeRange(group)
@@ -1066,7 +1353,7 @@ func (l *lifecycleService) processMeasureGroup(ctx context.Context, g *commonv1.
 }
 
 // processMeasureGroupFileBased uses file-based migration instead of query-based migration.
-func (l *lifecycleService) processMeasureGroupFileBased(_ context.Context, g *GroupConfig, measureDir string,
+func (l *lifecycleService) processMeasureGroupFileBased(ctx context.Context, g *GroupConfig, measureDir string,
 	tr *timestamp.TimeRange, progress *Progress,
 ) ([]string, error) {
 	if progress.IsMeasureGroupDeleted(g.Metadata.Name) {
@@ -1085,8 +1372,7 @@ func (l *lifecycleService) processMeasureGroupFileBased(_ context.Context, g *Gr
 	}
 
 	// Use the file-based migration with existing visitor pattern
-	//nolint:contextcheck // migration drives its own context lifecycle for batch publish.
-	segmentSuffixes, err := migrateMeasureWithFileBasedAndProgress(rootDir, *tr, g, l.l, progress, int(l.chunkSize), l.metadata)
+	segmentSuffixes, err := migrateMeasureWithFileBasedAndProgress(ctx, rootDir, *tr, g, l.l, progress, int(l.chunkSize), l.metadata, l.orphanConfigFor(l.measureRoot))
 	if err != nil {
 		return nil, fmt.Errorf("file-based measure migration failed: %w", err)
 	}
@@ -1144,11 +1430,12 @@ func (l *lifecycleService) deleteExpiredTraceSegments(ctx context.Context, g *co
 func (l *lifecycleService) processTraceGroup(ctx context.Context, g *commonv1.Group, traceDir string,
 	nodes []*databasev1.Node, labels map[string]string, progress *Progress,
 ) {
-	group, err := parseGroup(g, labels, nodes, l.l, l.metadata, l.clusterStateMgr)
+	group, senderNode, senderRole, senderTier, err := parseGroup(g, labels, nodes, l.l, l.metadata, l.clusterStateMgr, l.omr)
 	if err != nil {
 		l.l.Error().Err(err).Msgf("failed to parse group %s", g.Metadata.Name)
 		return
 	}
+	l.recordCycleGroup(g.Metadata.Name, senderNode, senderRole, senderTier)
 	defer group.Close()
 
 	tr := l.getRemovalSegmentsTimeRange(group)
@@ -1172,7 +1459,7 @@ func (l *lifecycleService) processTraceGroup(ctx context.Context, g *commonv1.Gr
 	progress.Save(l.progressFilePath, l.l)
 }
 
-func (l *lifecycleService) processTraceGroupFileBased(_ context.Context, g *GroupConfig, traceDir string,
+func (l *lifecycleService) processTraceGroupFileBased(ctx context.Context, g *GroupConfig, traceDir string,
 	tr *timestamp.TimeRange, progress *Progress,
 ) ([]string, error) {
 	if progress.IsTraceGroupDeleted(g.Metadata.Name) {
@@ -1191,8 +1478,7 @@ func (l *lifecycleService) processTraceGroupFileBased(_ context.Context, g *Grou
 	}
 
 	// Use the file-based migration with existing visitor pattern
-	//nolint:contextcheck // migration drives its own context lifecycle for batch publish.
-	segmentSuffixes, err := migrateTraceWithFileBasedAndProgress(rootDir, *tr, g, l.l, progress, int(l.chunkSize), l.metadata)
+	segmentSuffixes, err := migrateTraceWithFileBasedAndProgress(ctx, rootDir, *tr, g, l.l, progress, int(l.chunkSize), l.metadata)
 	if err != nil {
 		return nil, fmt.Errorf("file-based trace migration failed: %w", err)
 	}

@@ -16,27 +16,35 @@
 # specific language governing permissions and limitations
 # under the License.
 
-# Per-tier data presence check for migrated measure groups via the liaison
-# HTTP API. Probes the most recent N days; for each day issues a tier-shaped
-# query at the granularity that tier stores:
+# Per-tier data presence check for migrated measure and stream groups via
+# the liaison HTTP API. Probes the most recent N days; for each day issues
+# a query shaped to the granularity that probe target stores:
 #
-#   - sw_metricsDay    : full-day window  (00:00:00 .. 23:59:59 UTC)
-#   - sw_metricsHour   : the 08:00 hour   (08:00:00 .. 08:59:59 UTC)
-#   - sw_metricsMinute : the 08:08 minute (08:08:00 .. 08:08:59 UTC)
+#   measure:
+#     - sw_metricsDay    : full-day window  (00:00:00 .. 23:59:59 UTC)
+#     - sw_metricsHour   : the 08:00 hour   (08:00:00 .. 08:59:59 UTC)
+#     - sw_metricsMinute : the 08:08 minute (08:08:00 .. 08:08:59 UTC)
+#   stream:
+#     - sw_recordsLog / log                              : the 08:00 hour
+#     - sw_recordsBrowserErrorLog / browser_error_log    : the 08:00 hour
 #
 # A trailing "★MISSING" marker is appended whenever the probe returns zero
-# data points. There is no per-tier row-count threshold — any non-zero
-# response counts as "present".
+# data points / elements. There is no per-tier row-count threshold — any
+# non-zero response counts as "present". Days beyond a group's retention
+# are expected to be missing (record groups typically keep far fewer days
+# than metrics).
 #
 # Prereqs: kubectl port-forward to a liaison HTTP port (default 17913).
 #
 # Override via env:
 #   LIAISON_HTTP (default: http://127.0.0.1:17913)
 #   DAYS         (default: 15) - number of most recent UTC days to probe
+#   CATALOGS     (default: "measure stream") - which catalogs to probe
 set -euo pipefail
 
 LIAISON_HTTP="${LIAISON_HTTP:-http://127.0.0.1:17913}"
 DAYS="${DAYS:-15}"
+CATALOGS="${CATALOGS:-measure stream}"
 
 # Emit today, today-1, ..., today-(N-1) in YYYY-MM-DD UTC. GNU and BSD
 # `date` use different flags for "N days ago" — probe once and pick the
@@ -58,12 +66,12 @@ day_minus() {
     esac
 }
 
-# Count occurrences of "timestamp" inside the response body — the liaison
-# /api/v1/measure/data response only carries one `"timestamp"` field per
-# data point, so this is a reliable row count without invoking jq/python.
+# Count rows in the response body without invoking jq/python:
+#   - /api/v1/measure/data carries one `"timestamp"` field per data point
+#   - /api/v1/stream/data  carries one `"elementId"` field per element
 # `grep -o` returns exit 1 when there are zero matches; isolate it in a
-# subshell + `|| echo 0` so empty responses don't trip `set -e`/pipefail.
-probe() {
+# subshell + `|| true` so empty responses don't trip `set -e`/pipefail.
+probe_measure() {
     local group="$1" measure="$2" begin="$3" end="$4"
     local body resp
     body=$(cat <<EOF
@@ -80,22 +88,63 @@ EOF
 )
     resp=$(curl -s -XPOST "$LIAISON_HTTP/api/v1/measure/data" \
         -H 'Content-Type: application/json' -d "$body" || true)
-    # Tolerate grep's exit 1 on zero matches by wrapping it in `|| true`,
-    # so the pipeline always reaches wc with a (possibly empty) input.
+    printf '%s' "$resp" | { grep -o '"timestamp"' || true; } | wc -l | tr -d ' '
+}
+
+probe_stream() {
+    local group="$1" stream="$2" begin="$3" end="$4"
+    local body resp
+    body=$(cat <<EOF
+{
+  "groups": ["$group"],
+  "name": "$stream",
+  "stages": ["hot","warm","cold"],
+  "timeRange": {"begin": "$begin", "end": "$end"},
+  "projection": {"tagFamilies":[{"name":"searchable","tags":["unique_id"]}]},
+  "limit": 100000
+}
+EOF
+)
+    resp=$(curl -s -XPOST "$LIAISON_HTTP/api/v1/stream/data" \
+        -H 'Content-Type: application/json' -d "$body" || true)
+    printf '%s' "$resp" | { grep -o '"elementId"' || true; } | wc -l | tr -d ' '
+}
+
+# Probe an index-mode measure. Index-mode measures store every data point as a
+# bluge document in the segment-level sidx and carry NO fields, so the query
+# omits fieldProjection and projects the entity tag (storage-only/id) that every
+# metadata measure has. Any non-zero data-point count means "present".
+probe_measure_indexmode() {
+    local group="$1" measure="$2" begin="$3" end="$4"
+    local body resp
+    body=$(cat <<EOF
+{
+  "groups": ["$group"],
+  "name": "$measure",
+  "stages": ["hot"],
+  "timeRange": {"begin": "$begin", "end": "$end"},
+  "tagProjection": {"tagFamilies":[{"name":"storage-only","tags":["id"]}]},
+  "limit": 100000
+}
+EOF
+)
+    resp=$(curl -s -XPOST "$LIAISON_HTTP/api/v1/measure/data" \
+        -H 'Content-Type: application/json' -d "$body" || true)
     printf '%s' "$resp" | { grep -o '"timestamp"' || true; } | wc -l | tr -d ' '
 }
 
 echo "data presence check across most recent $DAYS day(s)"
-echo "  liaison: $LIAISON_HTTP"
+echo "  liaison : $LIAISON_HTTP"
+echo "  catalogs: $CATALOGS"
 echo
 
 scan() {
-    local label="$1" group="$2" measure="$3" begin_suffix="$4" end_suffix="$5" window_label="$6"
-    echo "-- $label ($group / $measure, window: $window_label) --"
+    local probe_fn="$1" label="$2" group="$3" name="$4" begin_suffix="$5" end_suffix="$6" window_label="$7"
+    echo "-- $label ($group / $name, window: $window_label) --"
     local bad=0 i=0 day n marker
     while [ "$i" -lt "$DAYS" ]; do
         day=$(day_minus "$i")
-        n=$(probe "$group" "$measure" "${day}${begin_suffix}" "${day}${end_suffix}")
+        n=$("$probe_fn" "$group" "$name" "${day}${begin_suffix}" "${day}${end_suffix}")
         marker=""
         if [ "${n:-0}" -eq 0 ]; then
             marker="  ★MISSING"
@@ -108,6 +157,14 @@ scan() {
     echo
 }
 
-scan "Day tier"    sw_metricsDay    service_apdex_day    T00:00:00Z T23:59:59Z "full day"
-scan "Hour tier"   sw_metricsHour   service_apdex_hour   T08:00:00Z T08:59:59Z "08:00..09:00"
-scan "Minute tier" sw_metricsMinute service_apdex_minute T08:08:00Z T08:08:59Z "08:08..08:09"
+case " $CATALOGS " in *" measure "*)
+    scan probe_measure "Day tier"    sw_metricsDay    service_apdex_day    T00:00:00Z T23:59:59Z "full day"
+    scan probe_measure "Hour tier"   sw_metricsHour   service_apdex_hour   T08:00:00Z T08:59:59Z "08:00..09:00"
+    scan probe_measure "Minute tier" sw_metricsMinute service_apdex_minute T08:08:00Z T08:08:59Z "08:08..08:09"
+    scan probe_measure_indexmode "Index-mode metadata" sw_metadata instance_traffic_minute T00:00:00Z T23:59:59Z "full day"
+;; esac
+
+case " $CATALOGS " in *" stream "*)
+    scan probe_stream "Log records"           sw_recordsLog             log               T08:00:00Z T08:59:59Z "08:00..09:00"
+    scan probe_stream "Browser error records" sw_recordsBrowserErrorLog browser_error_log T08:00:00Z T08:59:59Z "08:00..09:00"
+;; esac

@@ -35,9 +35,9 @@ func init() {
 		dfWriter := setup.NewDiscoveryFileWriter(tmpDir)
 		config := setup.PropertyClusterConfig(dfWriter)
 		By("Starting data node 0")
-		_, dn0Path, closeDataNode0 := setup.DataNodeWithAddrAndDir(config)
+		_, dn0Path, _, closeDataNode0 := setup.DataNodeWithAddrAndDir(config)
 		By("Starting data node 1")
-		_, dn1Path, closeDataNode1 := setup.DataNodeWithAddrAndDir(config)
+		_, dn1Path, _, closeDataNode1 := setup.DataNodeWithAddrAndDir(config)
 		By("Starting liaison node")
 		liaisonAddr, liaisonPath, closerLiaisonNode := setup.LiaisonNodeWithAddrAndDir(config)
 		return deletion.SetupResult{

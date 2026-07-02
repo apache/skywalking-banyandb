@@ -43,6 +43,12 @@ service FODCService {
   // Bi-directional stream for crash diagnostics
   // Agent sends StreamCrashDiagnosticsRequest (panic collections), Proxy sends StreamCrashDiagnosticsResponse (requests)
   rpc StreamCrashDiagnostics(stream StreamCrashDiagnosticsRequest) returns (stream StreamCrashDiagnosticsResponse);
+
+  // Bi-directional stream for memory-pressure pprof profiles.
+  // Proxy drives via StreamPressureProfilesResponse (list metadata, or fetch one
+  // profile's bytes); agent replies with StreamPressureProfilesRequest (metadata
+  // records, or binary chunks).
+  rpc StreamPressureProfiles(stream StreamPressureProfilesRequest) returns (stream StreamPressureProfilesResponse);
 }
 
 message RegisterAgentRequest {
@@ -64,12 +70,23 @@ message StreamMetricsRequest {
   google.protobuf.Timestamp timestamp = 2;
 }
 
+// MetricType represents the Prometheus metric type.
+enum MetricType {
+  METRIC_TYPE_UNSPECIFIED = 0;
+  METRIC_TYPE_GAUGE = 1;
+  METRIC_TYPE_COUNTER = 2;
+  METRIC_TYPE_HISTOGRAM = 3;
+  METRIC_TYPE_SUMMARY = 4;
+  METRIC_TYPE_UNTYPED = 5;
+}
+
 message Metric {
   string name = 1;
   map<string, string> labels = 2;
   double value = 3;
   string description = 4;
   google.protobuf.Timestamp timestamp = 5;
+  MetricType type = 6;
 }
 
 message StreamMetricsResponse {
@@ -164,6 +181,75 @@ message StreamCrashDiagnosticsRequest {
 message StreamCrashDiagnosticsResponse {
   // Request crash diagnostics from agent
   bool request_diagnostics = 1;
+}
+
+// One pprof profile inside a capture event (metadata only, no bytes).
+message PressureProfileInfo {
+  string type = 1; // "heap" | "goroutine"
+  string filename = 2; // base name, e.g. "heap.pprof"
+  string filepath = 3; // absolute path on the agent's disk, e.g. /tmp/pressure-profiles/20260627T101112.000000000Z/heap.pprof
+  string format = 4; // "pprof" (gzip-compressed protobuf)
+  int64 size_bytes = 5; // on-disk size
+}
+
+// Metadata for one capture event (no bytes). pod/role are NOT carried here:
+// the proxy enriches them from the registered AgentIdentity, same as crash.
+message PressureProfileRecord {
+  string profile_id = 1; // = event directory name (UTC ns timestamp)
+  google.protobuf.Timestamp captured_at = 2;
+  string source_endpoint = 3; // pprof endpoint pulled, e.g. http://localhost:6060
+  uint64 rss_bytes = 4; // RSS at trigger (process_resident_memory_bytes); top-N sort key
+  uint64 cgroup_limit_bytes = 5; // cgroup memory.max
+  uint32 trigger_percent = 6; // configured threshold percent (e.g. 75)
+  uint64 threshold_bytes = 7; // cgroup_limit_bytes * trigger_percent / 100
+  repeated PressureProfileInfo profiles = 8;
+}
+
+// One slice of a profile's bytes during download.
+message PressureProfileChunk {
+  string request_id = 1; // echoes FetchPressureProfile.request_id -- correlates this chunk stream to its fetch
+  string profile_id = 2;
+  string type = 3; // "heap" | "goroutine"
+  bytes data = 4; // a bounded slice (e.g. <= 1MB)
+  bool last = 5; // true on the final chunk
+  string error = 6; // non-empty if the file cannot be served (e.g. evicted / not found)
+}
+
+// Agent -> Proxy: either a metadata record (answer to list_profiles) or a byte
+// chunk (answer to fetch_profile).
+message StreamPressureProfilesRequest {
+  oneof payload {
+    PressureProfileRecord record = 1;
+    ListComplete list_complete = 2;
+    PressureProfileChunk chunk = 3;
+  }
+}
+
+// Agent -> Proxy: sent once after all records for a ListProfiles request have been
+// streamed (including the zero-record case), so the proxy knows the agent is done
+// without waiting out a fixed window.
+message ListComplete {
+  string request_id = 1; // echoes ListProfiles.request_id
+}
+
+message FetchPressureProfile {
+  string request_id = 1; // proxy-generated per fetch; echoed back in every PressureProfileChunk to correlate
+  string profile_id = 2;
+  string type = 3; // "heap" | "goroutine"
+  string filepath = 4; // the absolute path the agent reported in PressureProfileInfo.filepath; agent opens it AFTER validating it is within --pressure-profiler-dir
+}
+
+// Proxy -> Agent: either "stream all your metadata" or "stream one profile's bytes".
+message StreamPressureProfilesResponse {
+  oneof command {
+    ListProfiles list_profiles = 1;
+    FetchPressureProfile fetch_profile = 2;
+  }
+}
+
+// Proxy -> Agent: stream all capture-event metadata for this request id.
+message ListProfiles {
+  string request_id = 1; // proxy-generated per list; echoed back in ListComplete to correlate
 }
 
 // GroupLifecycleService provides group lifecycle information from liaison nodes.

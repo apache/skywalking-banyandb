@@ -304,6 +304,14 @@ func TestMeasureIndexedTagResolvedFromIndex(t *testing.T) {
 
 	const total = 2
 	baseTS := time.Now().Truncate(time.Minute)
+	// Keep all `total` points (one minute apart) inside a single daily segment.
+	// Near local midnight the default span would cross the day boundary and split
+	// the series across two segments, which breaks the single-segment resolver
+	// below; pull the window back so it ends before midnight.
+	midnight := time.Date(baseTS.Year(), baseTS.Month(), baseTS.Day(), 0, 0, 0, 0, baseTS.Location()).Add(24 * time.Hour)
+	if span := time.Duration(total) * time.Minute; baseTS.Add(span).After(midnight) {
+		baseTS = midnight.Add(-span - time.Minute)
+	}
 	bp := pipeline.NewBatchPublisher(5 * time.Second)
 	for i := 0; i < total; i++ {
 		iStr := strconv.Itoa(i)
@@ -353,22 +361,13 @@ func TestMeasureIndexedTagResolvedFromIndex(t *testing.T) {
 
 	// Stop the live service so it releases bluge's exclusive lock on the series
 	// index; the dump (like the offline CLI) reads the index from a quiesced
-	// database. Deferred cleanup is suppressed via the stopped flag.
+	// database. The write path above is synchronous (safe-batch insert blocks
+	// until the series index is persisted), so the index is already durable on
+	// disk before this stop. Deferred cleanup is suppressed via the stopped flag.
 	moduleDefer()
 	stopped = true
 
 	segmentPath := findSidxSegmentPath(t, rootPath)
-
-	// The series index persists asynchronously (unsafe batches + persister) and is
-	// flushed on stop; after a hard stop there is a brief window before all series
-	// are readable on disk. The fallback scan below sources EntityValues purely
-	// from this index, so wait until every written series is visible before
-	// asserting, otherwise the scan can race the flush and recover nothing.
-	sidxPath := filepath.Join(segmentPath, "sidx")
-	require.Eventually(t, func() bool {
-		count, _ := inverted.ReadOnlyDocCount(sidxPath)
-		return count >= int64(total)
-	}, 30*time.Second, 100*time.Millisecond, "series index not fully persisted after stop")
 
 	ruleToTag := map[uint32]dump.IndexedTagSpec{
 		strRuleID: {Family: "default", Name: "idxStr", Type: pbv1.ValueTypeStr},
@@ -598,15 +597,34 @@ func strArrTagValue(vals ...string) *modelv1.TagValue {
 	return &modelv1.TagValue{Value: &modelv1.TagValue_StrArray{StrArray: &modelv1.StrArray{Value: vals}}}
 }
 
+// findSidxSegmentPath returns the segment directory whose series index (sidx)
+// actually holds the written series. When the data lands near a segment-interval
+// boundary an empty adjacent (e.g. next-day) segment dir can also exist, so
+// picking the lexically-last sidx is wrong -- it can select the empty segment and
+// make later reads see zero docs. Choose the sidx with the most documents.
 func findSidxSegmentPath(t *testing.T, root string) string {
 	t.Helper()
-	var seg string
-	_ = filepath.WalkDir(root, func(path string, d fs.DirEntry, err error) error {
+	var seg, candidates string
+	best := int64(-1)
+	count := 0
+	_ = filepath.WalkDir(root, func(p string, d fs.DirEntry, err error) error {
 		if err == nil && d.IsDir() && d.Name() == "sidx" {
-			seg = filepath.Dir(path)
+			c, e := inverted.ReadOnlyDocCount(p)
+			candidates += fmt.Sprintf("{path=%s count=%d err=%v} ", p, c, e)
+			count++
+			if c > best {
+				best = c
+				seg = filepath.Dir(p)
+			}
 		}
 		return nil
 	})
 	require.NotEmpty(t, seg, "sidx directory not found under %s", root)
+	// Record the selection: near a segment-interval boundary more than one sidx
+	// dir can exist (an empty adjacent segment), so logging the candidates and the
+	// chosen one makes any future mis-selection self-evident.
+	logger.GetLogger("dump-measure-test").Info().
+		Int("candidates", count).Str("chosen", seg).Int64("chosenDocs", best).
+		Msgf("findSidxSegmentPath selected series-index segment among: %s", candidates)
 	return seg
 }

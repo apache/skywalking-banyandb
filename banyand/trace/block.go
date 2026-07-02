@@ -54,6 +54,23 @@ func (b *block) reset() {
 	b.maxTS = 0
 }
 
+// deepCopyValues clones every span and tag-value byte slice so the block owns
+// its bytes independently of the decoder buffer that produced them.
+func (b *block) deepCopyValues() {
+	for i, s := range b.spans {
+		if s != nil {
+			b.spans[i] = append([]byte(nil), s...)
+		}
+	}
+	for i := range b.tags {
+		for j, v := range b.tags[i].values {
+			if v != nil {
+				b.tags[i].values[j] = append([]byte(nil), v...)
+			}
+		}
+	}
+}
+
 func (b *block) mustInitFromTrace(spans [][]byte, tags [][]*tagValue, timestamps []int64, spanIDs []string) {
 	b.reset()
 	size := len(spans)
@@ -485,36 +502,46 @@ func (bc *blockCursor) copyAllTo(r *model.TraceResult) {
 	}
 }
 
-func (bc *blockCursor) loadData(tmpBlock *block) bool {
-	tmpBlock.reset()
-	bc.bm.tagProjection = bc.tagProjection
+// resolveTagProjection maps each projected tag name to its typed on-disk tag
+// block in bc.bm.tags (handling type-suffixed tag names) and rewrites
+// bc.bm.tags / bc.bm.tagProjection to the resolved projection. It mutates only
+// bc.bm and is shared by the row path (loadData) and the vectorized path.
+func (bc *blockCursor) resolveTagProjection() {
 	var t map[string]*dataBlock
-	projectionNames := make([]string, len(bc.tagProjection.Names))
-	copy(projectionNames, bc.tagProjection.Names)
-	for i, name := range bc.tagProjection.Names {
-		for typedTag, block := range bc.bm.tags {
-			if decodeTypedTag(typedTag) != name {
-				continue
-			}
-			if hasTypeSuffix(typedTag) {
-				schemaType, ok := bc.schemaTagTypes[name]
-				if !ok {
+	var projectionNames []string
+	if bc.tagProjection != nil && len(bc.tagProjection.Names) > 0 {
+		projectionNames = make([]string, len(bc.tagProjection.Names))
+		copy(projectionNames, bc.tagProjection.Names)
+		for i, name := range bc.tagProjection.Names {
+			for typedTag, block := range bc.bm.tags {
+				if decodeTypedTag(typedTag) != name {
 					continue
 				}
-				if bmType, ok := bc.bm.tagType[typedTag]; !ok || bmType != schemaType {
-					continue
+				if hasTypeSuffix(typedTag) {
+					schemaType, ok := bc.schemaTagTypes[name]
+					if !ok {
+						continue
+					}
+					if bmType, ok := bc.bm.tagType[typedTag]; !ok || bmType != schemaType {
+						continue
+					}
+					projectionNames[i] = typedTag
 				}
-				projectionNames[i] = typedTag
+				if t == nil {
+					t = make(map[string]*dataBlock, len(bc.tagProjection.Names))
+				}
+				t[typedTag] = block
 			}
-			if t == nil {
-				t = make(map[string]*dataBlock, len(bc.tagProjection.Names))
-			}
-			t[typedTag] = block
 		}
 	}
 
 	bc.bm.tags = t
 	bc.bm.tagProjection = &model.TagProjection{Names: projectionNames}
+}
+
+func (bc *blockCursor) loadData(tmpBlock *block) bool {
+	tmpBlock.reset()
+	bc.resolveTagProjection()
 	tmpBlock.mustReadFrom(&bc.tagValuesDecoder, bc.p, bc.bm)
 	if len(tmpBlock.spans) == 0 {
 		return false

@@ -30,8 +30,9 @@
 #                                 binary at /banyand-migration.
 #   - resources.limits.memory     migration sets GOMEMLIMIT to 85% of this.
 #   - volumeMounts / volumes      one (mountPath, PVC) pair per node × catalog
-#                                 the plan references. Mount measure PVCs at
-#                                 /mnt/<node>/measure and hot schema-property
+#                                 the plans reference. Mount measure PVCs at
+#                                 /mnt/<node>/measure, stream PVCs at
+#                                 /mnt/<node>/stream, and hot schema-property
 #                                 PVCs at /mnt/<node>/schema-property.
 apiVersion: v1
 kind: Pod
@@ -54,14 +55,18 @@ spec:
           memory: "20Gi"
       volumeMounts:
         - { name: work,                  mountPath: /work }
-        # Measure + schema-property PVCs from each node the plan references.
-        # `subPath` is only needed when the live pod uses a sub-key per
-        # catalog (typical for the hot tier in the official helm chart).
+        # Measure + stream + schema-property PVCs from each node the plans
+        # reference. `subPath` is only needed when the live pod uses a
+        # sub-key per catalog (typical for the hot tier in the official
+        # helm chart).
         - { name: hot-0-measure,         mountPath: /mnt/hot-0/measure,         subPath: measure         }
+        - { name: hot-0-stream,          mountPath: /mnt/hot-0/stream,          subPath: stream          }
         - { name: hot-0-schema-property, mountPath: /mnt/hot-0/schema-property, subPath: schema-property }
         - { name: hot-1-measure,         mountPath: /mnt/hot-1/measure,         subPath: measure         }
+        - { name: hot-1-stream,          mountPath: /mnt/hot-1/stream,          subPath: stream          }
         - { name: hot-1-schema-property, mountPath: /mnt/hot-1/schema-property, subPath: schema-property }
-        # Consolidated (single-catalog-per-PVC) warm + cold tiers — no subPath.
+        # Consolidated warm + cold tiers: one PVC per node holding both
+        # catalogs' subtrees (measure/ and stream/) — no subPath.
         - { name: warn-0,                mountPath: /mnt/warn-0 }
         - { name: warn-1,                mountPath: /mnt/warn-1 }
         - { name: cold-0,                mountPath: /mnt/cold-0 }
@@ -72,8 +77,10 @@ spec:
         sizeLimit: 4Gi
     # Replace each claimName below with the PVC name your cluster uses.
     - { name: hot-0-measure,         persistentVolumeClaim: { claimName: hot-measure-data-demo-banyandb-data-hot-0         } }
+    - { name: hot-0-stream,          persistentVolumeClaim: { claimName: hot-stream-data-demo-banyandb-data-hot-0           } }
     - { name: hot-0-schema-property, persistentVolumeClaim: { claimName: hot-schema-property-data-demo-banyandb-data-hot-0 } }
     - { name: hot-1-measure,         persistentVolumeClaim: { claimName: hot-measure-data-demo-banyandb-data-hot-1         } }
+    - { name: hot-1-stream,          persistentVolumeClaim: { claimName: hot-stream-data-demo-banyandb-data-hot-1           } }
     - { name: hot-1-schema-property, persistentVolumeClaim: { claimName: hot-schema-property-data-demo-banyandb-data-hot-1 } }
     - { name: warn-0,                persistentVolumeClaim: { claimName: warm-data-demo-banyandb-data-warm-0               } }
     - { name: warn-1,                persistentVolumeClaim: { claimName: warm-data-demo-banyandb-data-warm-1               } }

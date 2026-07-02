@@ -26,8 +26,9 @@ import (
 )
 
 var (
-	streamScope = observability.RootScope.SubScope("trace")
-	tbScope     = streamScope.SubScope("tst")
+	tbScope       = traceScope.SubScope("tst")
+	storageScope  = traceScope.SubScope("storage")
+	pipelineScope = traceScope.SubScope("pipeline")
 )
 
 type metrics struct {
@@ -65,6 +66,14 @@ type metrics struct {
 	totalMergeLatency      meter.Counter
 	totalMerged            meter.Counter
 	totalMergeQueueLatency meter.Counter
+
+	pipelineTracesEvaluated meter.Counter
+	pipelineTracesDropped   meter.Counter
+	pipelineTracesRetained  meter.Counter
+	pipelineTracesImmature  meter.Counter
+	pipelinePluginErrors    meter.Counter
+	pipelineAmbiguous       meter.Counter
+	pipelineSidxPruned      meter.Counter
 
 	tbMetrics
 }
@@ -258,6 +267,65 @@ func (tst *tsTable) incTotalMergeQueueLatency(delta float64, typ, lane string) {
 	tst.metrics.totalMergeQueueLatency.Inc(delta, typ, lane)
 }
 
+// The pipeline metric increment helpers below are wired into the merge filter by
+// the config-driven activation story.
+
+//nolint:unused
+func (tst *tsTable) incPipelineTracesEvaluated(delta int) {
+	if tst == nil || tst.metrics == nil {
+		return
+	}
+	tst.metrics.pipelineTracesEvaluated.Inc(float64(delta))
+}
+
+//nolint:unused
+func (tst *tsTable) incPipelineTracesDropped(delta int) {
+	if tst == nil || tst.metrics == nil {
+		return
+	}
+	tst.metrics.pipelineTracesDropped.Inc(float64(delta))
+}
+
+//nolint:unused
+func (tst *tsTable) incPipelineTracesRetained(delta int) {
+	if tst == nil || tst.metrics == nil {
+		return
+	}
+	tst.metrics.pipelineTracesRetained.Inc(float64(delta))
+}
+
+//nolint:unused
+func (tst *tsTable) incPipelineTracesImmature(delta int) {
+	if tst == nil || tst.metrics == nil {
+		return
+	}
+	tst.metrics.pipelineTracesImmature.Inc(float64(delta))
+}
+
+//nolint:unused
+func (tst *tsTable) incPipelinePluginErrors(delta int, reason string) {
+	if tst == nil || tst.metrics == nil {
+		return
+	}
+	tst.metrics.pipelinePluginErrors.Inc(float64(delta), reason)
+}
+
+//nolint:unused
+func (tst *tsTable) incPipelineAmbiguous(delta int) {
+	if tst == nil || tst.metrics == nil {
+		return
+	}
+	tst.metrics.pipelineAmbiguous.Inc(float64(delta))
+}
+
+//nolint:unused
+func (tst *tsTable) incPipelineSidxPruned(delta int) {
+	if tst == nil || tst.metrics == nil {
+		return
+	}
+	tst.metrics.pipelineSidxPruned.Inc(float64(delta))
+}
+
 func (tst *tsTable) addPendingDataCount(delta int64) {
 	tst.pendingDataCount.Add(delta)
 	if tst.metrics == nil {
@@ -317,6 +385,13 @@ func (m *metrics) DeleteAll() {
 	m.totalMerged.Delete("file", "slow")
 	m.totalMergeQueueLatency.Delete("file", "fast")
 	m.totalMergeQueueLatency.Delete("file", "slow")
+
+	m.pipelineTracesEvaluated.Delete()
+	m.pipelineTracesDropped.Delete()
+	m.pipelineTracesRetained.Delete()
+	m.pipelineTracesImmature.Delete()
+	m.pipelineAmbiguous.Delete()
+	m.pipelineSidxPruned.Delete()
 }
 
 func (s *supplier) newMetrics(p common.Position) storage.Metrics {
@@ -349,6 +424,13 @@ func (s *supplier) newMetrics(p common.Position) storage.Metrics {
 		totalMergeLatency:          factory.NewCounter("total_merge_latency", "type", "lane"),
 		totalMerged:                factory.NewCounter("total_merged", "type", "lane"),
 		totalMergeQueueLatency:     factory.NewCounter("total_merge_queue_latency", "type", "lane"),
+		pipelineTracesEvaluated:    factory.NewCounter("pipeline_traces_evaluated"),
+		pipelineTracesDropped:      factory.NewCounter("pipeline_traces_dropped"),
+		pipelineTracesRetained:     factory.NewCounter("pipeline_traces_retained"),
+		pipelineTracesImmature:     factory.NewCounter("pipeline_traces_immature"),
+		pipelinePluginErrors:       factory.NewCounter("pipeline_plugin_errors", "reason"),
+		pipelineAmbiguous:          factory.NewCounter("pipeline_ambiguous"),
+		pipelineSidxPruned:         factory.NewCounter("pipeline_sidx_pruned"),
 		tbMetrics: tbMetrics{
 			totalMemParts:                  factory.NewGauge("total_mem_part", common.ShardLabelNames()...),
 			totalMemElements:               factory.NewGauge("total_mem_elements", common.ShardLabelNames()...),
@@ -396,6 +478,13 @@ func (qs *queueSupplier) newMetrics(p common.Position) (storage.Metrics, observa
 		totalMergeLatency:          factory.NewCounter("total_merge_latency", "type", "lane"),
 		totalMerged:                factory.NewCounter("total_merged", "type", "lane"),
 		totalMergeQueueLatency:     factory.NewCounter("total_merge_queue_latency", "type", "lane"),
+		pipelineTracesEvaluated:    factory.NewCounter("pipeline_traces_evaluated"),
+		pipelineTracesDropped:      factory.NewCounter("pipeline_traces_dropped"),
+		pipelineTracesRetained:     factory.NewCounter("pipeline_traces_retained"),
+		pipelineTracesImmature:     factory.NewCounter("pipeline_traces_immature"),
+		pipelinePluginErrors:       factory.NewCounter("pipeline_plugin_errors", "reason"),
+		pipelineAmbiguous:          factory.NewCounter("pipeline_ambiguous"),
+		pipelineSidxPruned:         factory.NewCounter("pipeline_sidx_pruned"),
 		tbMetrics: tbMetrics{
 			totalMemParts:                  factory.NewGauge("total_mem_part", common.ShardLabelNames()...),
 			totalMemElements:               factory.NewGauge("total_mem_elements", common.ShardLabelNames()...),

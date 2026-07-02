@@ -19,6 +19,7 @@ package stream
 
 import (
 	"errors"
+	"path/filepath"
 	"reflect"
 	"testing"
 
@@ -319,6 +320,13 @@ func Test_mergeParts(t *testing.T) {
 				); diff != "" {
 					t.Errorf("Unexpected blockMetadata (-got +want):\n%s", diff)
 				}
+
+				tagTypeData, readErr := fileSystem.Read(filepath.Join(partPath(root, partID), tagTypeFilename))
+				require.NoError(t, readErr)
+				mergedTagType := make(tagType)
+				require.NoError(t, mergedTagType.unmarshal(tagTypeData))
+				require.Equal(t, pbv1.ValueTypeStrArr, mergedTagType["arrTag"]["strArrTag"])
+				require.Equal(t, pbv1.ValueTypeInt64, mergedTagType["singleTag"]["intTag"])
 			}
 
 			t.Run("memory parts", func(t *testing.T) {

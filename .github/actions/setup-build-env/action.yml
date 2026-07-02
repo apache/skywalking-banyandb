@@ -37,7 +37,7 @@ runs:
         name: build-artifacts
 
     - name: Setup Node.js
-      uses: actions/setup-node@v4
+      uses: actions/setup-node@v6
       with:
         node-version: 24.6.0
         cache: 'npm'
@@ -46,11 +46,23 @@ runs:
           mcp/package-lock.json
 
     - name: Install Go
-      uses: actions/setup-go@v5
+      uses: actions/setup-go@v6
       with:
         go-version-file: 'go.mod'
         cache: true
 
+    # setup-go@v6 exports GOTOOLCHAIN=local to the job env, which prevents
+    # later steps (e.g. the skywalking-infra-e2e action building itself from
+    # source with a higher go.mod requirement) from fetching the toolchain
+    # they need. Reset to Go's default so those builds can self-provision.
+    - name: Reset GOTOOLCHAIN to auto
+      shell: bash
+      run: echo "GOTOOLCHAIN=auto" >> "$GITHUB_ENV"
+
+    - name: Set up QEMU
+      if: inputs.setup-docker == 'true'
+      uses: docker/setup-qemu-action@06116385d9baf250c9f4dcb4858b16962ea869c3
+
     - name: Set up Docker Buildx
       if: inputs.setup-docker == 'true'
-      uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f
+      uses: docker/setup-buildx-action@d7f5e7f509e45cec5c76c4d5afdd7de93d0b3df5

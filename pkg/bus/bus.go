@@ -51,6 +51,7 @@ type Message struct {
 	nodeSelectors map[string][]string
 	timeRange     *modelv1.TimeRange
 	node          string
+	group         string
 	id            MessageID
 	batchMode     bool
 }
@@ -68,6 +69,13 @@ func (m Message) Data() interface{} {
 // Node returns the node name of the Message.
 func (m Message) Node() string {
 	return m.node
+}
+
+// Group returns the business group the Message belongs to.
+// It is set for pre-marshaled ([]byte) payloads whose group cannot be
+// recovered from the body, so the queue metrics can still be labeled by group.
+func (m Message) Group() string {
+	return m.group
 }
 
 // NodeSelectors returns the node selectors of the Message.
@@ -95,9 +103,23 @@ func NewBatchMessageWithNode(id MessageID, node string, data interface{}) Messag
 	return Message{id: id, node: node, payload: data, batchMode: true}
 }
 
+// NewBatchMessageWithNodeAndGroup returns a new batch Message carrying an explicit business group.
+// Use it for pre-marshaled ([]byte) payloads whose group is embedded in the opaque body and
+// therefore not recoverable by the publisher metrics path.
+func NewBatchMessageWithNodeAndGroup(id MessageID, node, group string, data interface{}) Message {
+	return Message{id: id, node: node, group: group, payload: data, batchMode: true}
+}
+
 // NewMessageWithNode returns a new Message with a MessageID and NodeID and embed data.
 func NewMessageWithNode(id MessageID, node string, data interface{}) Message {
 	return Message{id: id, node: node, payload: data}
+}
+
+// NewMessageWithNodeAndGroup returns a new Message carrying an explicit business group.
+// Use it for pre-marshaled ([]byte) payloads (e.g. secondary-index sync), where the group
+// is embedded in the opaque body and therefore not recoverable by the publisher metrics path.
+func NewMessageWithNodeAndGroup(id MessageID, node, group string, data interface{}) Message {
+	return Message{id: id, node: node, group: group, payload: data}
 }
 
 // NewMessageWithNodeSelectors returns a new Message with a MessageID and NodeSelectors and embed data.

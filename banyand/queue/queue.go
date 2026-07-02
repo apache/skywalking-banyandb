@@ -40,6 +40,10 @@ import (
 // self-probing without a special-cased branch in the caller.
 var ErrNotImplemented = errors.New("not implemented")
 
+// ErrServerBusy signals the receiver is under memory pressure and the sender
+// should back off and retry the whole part.
+var ErrServerBusy = errors.New("receiver under memory pressure")
+
 // Queue builds a data transmission tunnel between subscribers and publishers.
 //
 //go:generate mockgen -destination=./queue_mock.go -package=queue github.com/apache/skywalking-banyandb/pkg/bus MessageListener
@@ -59,6 +63,13 @@ type Client interface {
 	route.TableProvider
 	NewBatchPublisher(timeout time.Duration) BatchPublisher
 	NewChunkedSyncClient(node string, chunkSize uint32) (ChunkedSyncClient, error)
+	// SetSelfNode stamps the publisher's own node identity onto the wire
+	// (SenderNode / SenderRole / SenderTier on every SendRequest) and onto
+	// the banyandb_lifecycle_migration_* metric labels. Pass "" for any
+	// dimension the caller doesn't know (e.g. the lifecycle has no Role
+	// enum entry; the tier is untracked when the co-located data node's
+	// tier isn't known at boot time).
+	SetSelfNode(name, role, tier string)
 	// NewNodeSchemaStatusClient returns a client for the cluster.v1
 	// NodeSchemaStatusService against the named node, sharing the underlying
 	// *grpc.ClientConn from this queue client's existing connection pool.
@@ -129,7 +140,10 @@ type ChunkedSyncClient interface {
 
 // ChunkedSyncPartContext represents the context for a chunked sync operation.
 type ChunkedSyncPartContext struct {
-	Handler               PartHandler
+	Handler PartHandler
+	// Context carries the gRPC stream context for receive-side cancellation
+	// (memory wait upper bound / disconnect).
+	Context               context.Context
 	Group                 string
 	FileName              string
 	PartType              string
@@ -143,6 +157,15 @@ type ChunkedSyncPartContext struct {
 	MinKey                int64
 	MaxKey                int64
 	ShardID               uint32
+}
+
+// RetrieveContext returns the part's stream context, or context.Background()
+// if none was set. Used by receive handlers to bound memory-pressure waits.
+func (c *ChunkedSyncPartContext) RetrieveContext() context.Context {
+	if c.Context == nil {
+		return context.Background()
+	}
+	return c.Context
 }
 
 // Close releases resources associated with the context.

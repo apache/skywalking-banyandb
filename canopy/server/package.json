@@ -1,0 +1,38 @@
+{
+  "name": "canopy-server",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "engines": { "node": "24.6.0" },
+  "main": "dist/index.js",
+  "scripts": {
+    "dev": "node --loader ts-node/esm src/index.ts",
+    "build": "tsc",
+    "typecheck": "tsc --noEmit",
+    "lint": "eslint src test",
+    "test": "vitest run",
+    "test:watch": "vitest"
+  },
+  "dependencies": {
+    "fastify": "^5.4.0",
+    "@fastify/static": "^9.1.3",
+    "@fastify/secure-session": "^8.1.1",
+    "@fastify/cookie": "^11.0.2",
+    "undici": "^7.10.0",
+    "bcryptjs": "^3.0.2",
+    "js-yaml": "^4.1.0",
+    "canopy-shared": "*"
+  },
+  "devDependencies": {
+    "@types/node": "^22.15.29",
+    "@types/bcryptjs": "^2.4.6",
+    "@types/js-yaml": "^4.0.9",
+    "@typescript-eslint/eslint-plugin": "^8.35.0",
+    "@typescript-eslint/parser": "^8.35.0",
+    "eslint": "^9.30.1",
+    "nock": "^14.0.5",
+    "ts-node": "^10.9.2",
+    "typescript": "^5.8.3",
+    "vitest": "^3.2.4"
+  }
+}

@@ -218,6 +218,101 @@ func (bsn *blockScanner) scan(ctx context.Context, blockCh chan *blockScanResult
 	releaseBlockScanResultBatch(batch)
 }
 
+func (bsn *blockScanner) scanSync(ctx context.Context, consume func(*blockScanResultBatch) error) error {
+	if len(bsn.parts) < 1 {
+		return nil
+	}
+	if !bsn.checkContext(ctx) {
+		return ctx.Err()
+	}
+
+	var (
+		totalBlockBytes uint64
+		scannedBlocks   int
+	)
+
+	var skipRecorder blockSkipRecorderFunc
+	if tracer := query.GetTracer(ctx); tracer != nil {
+		span, spanCtx := tracer.StartSpan(ctx, "sidx.scan-blocks")
+		bsn.span = span
+		ctx = spanCtx
+		skipRecorder = bsn.recordSkip
+		span.Tagf("part_count", "%d", len(bsn.parts))
+		span.Tagf("series_id_count", "%d", len(bsn.seriesIDs))
+		span.Tagf("min_key", "%d", bsn.minKey)
+		span.Tagf("max_key", "%d", bsn.maxKey)
+		span.Tagf("ascending", "%t", bsn.asc)
+		span.Tagf("batch_size", "%d", bsn.batchSize)
+		defer func() {
+			if span != nil {
+				span.Tagf("scanned_blocks", "%d", scannedBlocks)
+				span.Tagf("total_block_bytes", "%d", totalBlockBytes)
+				bsn.flushSkipSummaryToSpan()
+				span.Stop()
+			}
+		}()
+	}
+
+	it := generateIter()
+	defer releaseIter(it)
+
+	it.init(bsn.parts, bsn.seriesIDs, bsn.minKey, bsn.maxKey, bsn.filter, bsn.asc, skipRecorder)
+	batch := generateBlockScanResultBatch()
+	if it.Error() != nil {
+		batch.err = fmt.Errorf("cannot init iter: %w", it.Error())
+		return consume(batch)
+	}
+
+	batchThreshold := bsn.batchSize
+	if batchThreshold <= 0 {
+		batchThreshold = blockScannerBatchSize
+	}
+
+	for it.nextBlock() {
+		if !bsn.checkContext(ctx) {
+			releaseBlockScanResultBatch(batch)
+			return ctx.Err()
+		}
+
+		bm, p := it.current()
+		if err := bsn.validateBlockMetadata(bm, p, it); err != nil {
+			batch.err = err
+			return consume(batch)
+		}
+
+		blockSize := bm.uncompressedSize
+		if exceeded, err := bsn.checkQuotaExceeded(totalBlockBytes, blockSize, batch); exceeded {
+			if err != nil {
+				batch.err = err
+			}
+			return consume(batch)
+		}
+
+		bsn.addBlockToBatch(batch, bm, p)
+		totalBlockBytes += blockSize
+		scannedBlocks++
+
+		if len(batch.bss) >= batchThreshold || len(batch.bss) >= cap(batch.bss) {
+			if consumeErr := consume(batch); consumeErr != nil {
+				return consumeErr
+			}
+			batch = generateBlockScanResultBatch()
+		}
+	}
+
+	if it.Error() != nil {
+		batch.err = fmt.Errorf("cannot iterate iter: %w", it.Error())
+		return consume(batch)
+	}
+
+	if len(batch.bss) > 0 {
+		return consume(batch)
+	}
+
+	releaseBlockScanResultBatch(batch)
+	return nil
+}
+
 // checkContext returns false if context is canceled.
 func (bsn *blockScanner) checkContext(ctx context.Context) bool {
 	select {

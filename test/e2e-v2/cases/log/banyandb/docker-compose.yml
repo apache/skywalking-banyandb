@@ -20,7 +20,7 @@ services:
     extends:
       file: ../../../script/docker-compose/base-compose.yml
       service: banyandb
-    command: standalone ${BANYANDB_MEASURE_VECTORIZED_FLAGS:---measure-vectorized-enabled=false}
+    command: standalone ${BANYANDB_MEASURE_VECTORIZED_FLAGS:---measure-vectorized-enabled=false} ${BANYANDB_TRACE_VECTORIZED_FLAGS:---trace-vectorized-enabled=false}
     networks:
       - e2e
 

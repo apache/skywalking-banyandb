@@ -110,6 +110,61 @@ load-test-barrier: ## Run the schema-barrier CP-6 SLO load harness (3 data nodes
 	@echo "Override profile via LOAD_FLAGS, e.g. LOAD_FLAGS='-loadtest.measure=30s -loadtest.callers=20'"
 	go test -tags=loadtest -timeout 30m -count=1 -v ./test/load/schema_barrier/... $(LOAD_FLAGS)
 
+##@ Trace pipeline plugin targets
+# Linux and macOS only — Go plugins require CGO and are not supported on Windows.
+# These targets MUST NOT be included in test-race: a plugin built without -race
+# cannot be loaded by a -race host (the Go runtime rejects the mismatch with a
+# "plugin was built with a different version of package runtime" error at
+# plugin.Open time).  The in-package guards in banyand/trace (diskSurvivorSpans,
+# TestInMergeFilter_DisabledFlag_LegacyIdentity, TestInMergeFilter_FailOpenNegativeControl)
+# remain the sole race-checked coverage of the merge filter path.
+
+PLUGIN_OUTPUT_DIR ?= build/bin/plugins
+BANYAND_SERVER_CGO_BIN ?= banyand/build/bin/dev/banyand-server
+
+.PHONY: build-trace-pipeline-plugin
+build-trace-pipeline-plugin: ## Build the latencystatussampler.so plugin (Linux/macOS only; requires a C toolchain)
+	@if ! command -v gcc > /dev/null 2>&1 && ! command -v clang > /dev/null 2>&1; then \
+		echo "ERROR: build-trace-pipeline-plugin requires a C toolchain (gcc or clang) but neither was found in PATH."; \
+		exit 1; \
+	fi
+	@mkdir -p $(PLUGIN_OUTPUT_DIR)
+	CGO_ENABLED=1 go build -buildmode=plugin -trimpath \
+		-o $(PLUGIN_OUTPUT_DIR)/latencystatussampler.so \
+		./test/plugins/_latencystatussampler
+	@echo "Built $(PLUGIN_OUTPUT_DIR)/latencystatussampler.so"
+
+.PHONY: build-trace-pipeline-server
+build-trace-pipeline-server: ## Build banyand-server with explicit CGO_ENABLED=1 for plugin hosting (Linux/macOS only)
+	@if ! command -v gcc > /dev/null 2>&1 && ! command -v clang > /dev/null 2>&1; then \
+		echo "ERROR: build-trace-pipeline-server requires a C toolchain (gcc or clang) but neither was found in PATH."; \
+		exit 1; \
+	fi
+	@# ui/dist must contain at least one embeddable (non-hidden) file for
+	@# ui/embed.go's //go:embed dist to succeed.  Create a placeholder when the
+	@# UI has not been built (dev / CI without the UI step).
+	@mkdir -p ui/dist
+	@if [ ! -f ui/dist/index.html ]; then touch ui/dist/index.html; fi
+	@mkdir -p $(dir $(BANYAND_SERVER_CGO_BIN))
+	CGO_ENABLED=1 go build -trimpath \
+		-o $(BANYAND_SERVER_CGO_BIN) \
+		github.com/apache/skywalking-banyandb/banyand/cmd/server
+	@echo "Built $(BANYAND_SERVER_CGO_BIN)"
+
+.PHONY: test-trace-pipeline
+# NOTE: no -race flag — see comment above.  Plugins and -race require both the
+# .so and the host to be race-built; the simple CGO_ENABLED=1 targets here do
+# not pass -race, so the suite is intentionally excluded from the race lane.
+test-trace-pipeline: build-trace-pipeline-plugin build-trace-pipeline-server $(GINKGO) ## Build the .so + CGO server, then run the pipeline integration suites (Linux/macOS only; excluded from test-race)
+	BANYAND_BIN=$(mk_dir)$(BANYAND_SERVER_CGO_BIN) \
+	BANYAND_TRACE_PLUGIN=$(mk_dir)$(PLUGIN_OUTPUT_DIR)/latencystatussampler.so \
+	$(GINKGO) \
+	  --tags trace_pipeline \
+	  -ldflags "-X github.com/apache/skywalking-banyandb/pkg/test/flags.eventuallyTimeout=30s -X github.com/apache/skywalking-banyandb/pkg/test/flags.consistentlyTimeout=10s -X github.com/apache/skywalking-banyandb/pkg/test/flags.LogLevel=error" \
+	  -timeout 10m \
+	  ./test/integration/standalone/pipeline/... \
+	  ./test/integration/distributed/pipeline/...
+
 ##@ Code quality targets
 
 lint: TARGET=lint
@@ -208,13 +263,13 @@ include scripts/build/license.mk
 
 license-check: $(LICENSE_EYE)
 license-check: TARGET=license-check
-license-check: PROJECTS:=ui mcp
+license-check: PROJECTS:=ui mcp canopy
 license-check: default ## Check license header
 	$(LICENSE_EYE) header check
- 
+
 license-fix: $(LICENSE_EYE)
 license-fix: TARGET=license-fix
-license-fix: PROJECTS:=ui mcp
+license-fix: PROJECTS:=ui mcp canopy
 license-fix: default ## Fix license header issues
 	$(LICENSE_EYE) header fix
 
@@ -266,7 +321,6 @@ release-source: ## Package source archive
 release-sign: ## Sign artifacts
 	${RELEASE_SCRIPTS} -k banyand
 	${RELEASE_SCRIPTS} -k bydbctl
-	${RELEASE_SCRIPTS} -k mcp
 	${RELEASE_SCRIPTS} -k fodc-agent
 	${RELEASE_SCRIPTS} -k fodc-proxy
 	${RELEASE_SCRIPTS} -k src
@@ -281,6 +335,7 @@ release-push-candidate: ## Push release candidate
 .PHONY: all $(PROJECTS) clean build  default nuke
 .PHONY: lint check tidy format pre-push generate-test-cases capture-test-cases generate-trace-test-cases capture-trace-test-cases check-import-boundaries
 .PHONY: test test-race test-coverage test-ci test-docker
+.PHONY: build-trace-pipeline-plugin build-trace-pipeline-server test-trace-pipeline
 .PHONY: license-check license-fix license-dep
 .PHONY: release release-binary release-source release-sign release-assembly
 .PHONY: vendor-update

@@ -55,6 +55,42 @@ func (s *sidx) StreamingQuery(ctx context.Context, req QueryRequest) (<-chan *Qu
 	return resultsCh, errCh
 }
 
+// QuerySync executes the query synchronously without spawning scanner or cursor workers.
+func (s *sidx) QuerySync(ctx context.Context, req QueryRequest) ([]*QueryResponse, error) {
+	if validateErr := req.Validate(); validateErr != nil {
+		return nil, validateErr
+	}
+	s.totalQueries.Add(1)
+
+	var queryErr error
+	ctx, span := startStreamingSpan(ctx, req)
+	defer func() {
+		finalizeStreamingSpan(span, &queryErr)
+	}()
+
+	snap := s.currentSnapshot()
+	if snap == nil {
+		if span != nil {
+			span.Tag("snapshot", "nil")
+		}
+		return nil, nil
+	}
+	defer snap.decRef() //nolint:contextcheck // reference counting cleanup does not require context.
+
+	resources, ok := s.prepareSyncResources(ctx, req, snap, span)
+	if !ok {
+		return nil, nil
+	}
+	defer resources.cleanup()
+
+	results, processErr := s.processSyncLoop(ctx, req, resources)
+	if processErr != nil {
+		queryErr = processErr
+		return nil, processErr
+	}
+	return results, nil
+}
+
 type batchMetrics struct {
 	totalBlocksScanned    int
 	totalCursorsCreated   int
@@ -106,6 +142,14 @@ func (s *sidx) runStreamingQuery(ctx context.Context, req QueryRequest, resultsC
 type streamingQueryResources struct {
 	tagsToLoad map[string]struct{}
 	blockCh    <-chan *blockScanResultBatch
+	heap       *blockCursorHeap
+	cleanup    func()
+	asc        bool
+}
+
+type syncQueryResources struct {
+	tagsToLoad map[string]struct{}
+	scanner    *blockScanner
 	heap       *blockCursorHeap
 	cleanup    func()
 	asc        bool
@@ -238,6 +282,137 @@ func (s *sidx) prepareStreamingResources(
 		heap:       blockHeap,
 		cleanup:    cleanup,
 	}, true
+}
+
+func (s *sidx) prepareSyncResources(
+	ctx context.Context,
+	req QueryRequest,
+	snap *Snapshot,
+	span *query.Span,
+) (*syncQueryResources, bool) {
+	var prepareSpan *query.Span
+	if tracer := query.GetTracer(ctx); tracer != nil {
+		prepareSpan, _ = tracer.StartSpan(ctx, "sidx.prepare-sync-resources")
+		defer prepareSpan.Stop()
+	}
+
+	minKey, maxKey := extractKeyRange(req)
+	asc := extractOrdering(req)
+	parts := selectPartsForQuery(snap, minKey, maxKey, req.MinTimestamp, req.MaxTimestamp)
+	if span != nil {
+		span.Tagf("min_key", "%d", minKey)
+		span.Tagf("max_key", "%d", maxKey)
+		span.Tagf("ascending", "%t", asc)
+		span.Tagf("part_count", "%d", len(parts))
+	}
+	if prepareSpan != nil {
+		prepareSpan.Tagf("min_key", "%d", minKey)
+		prepareSpan.Tagf("max_key", "%d", maxKey)
+		prepareSpan.Tagf("ascending", "%t", asc)
+		prepareSpan.Tagf("part_count", "%d", len(parts))
+	}
+	if len(parts) == 0 {
+		return nil, false
+	}
+
+	seriesIDs := make([]common.SeriesID, len(req.SeriesIDs))
+	copy(seriesIDs, req.SeriesIDs)
+	sort.Slice(seriesIDs, func(i, j int) bool {
+		return seriesIDs[i] < seriesIDs[j]
+	})
+
+	tagsToLoad := determineTagsToLoad(req)
+	bs := &blockScanner{
+		pm:        s.pm,
+		filter:    req.Filter,
+		l:         s.l,
+		parts:     parts,
+		seriesIDs: seriesIDs,
+		minKey:    minKey,
+		maxKey:    maxKey,
+		asc:       asc,
+		batchSize: req.MaxBatchSize,
+	}
+	blockHeap := generateBlockCursorHeap(asc)
+	cleanup := func() {
+		bs.close()
+		releaseBlockCursorHeap(blockHeap)
+	}
+	return &syncQueryResources{
+		tagsToLoad: tagsToLoad,
+		scanner:    bs,
+		asc:        asc,
+		heap:       blockHeap,
+		cleanup:    cleanup,
+	}, true
+}
+
+// errSyncBudgetReached signals that the sync query loop has collected MaxBatchSize
+// distinct results and the block scan can stop early. It is not a failure.
+var errSyncBudgetReached = errors.New("sidx: sync query result budget reached")
+
+func (s *sidx) processSyncLoop(ctx context.Context, req QueryRequest, resources *syncQueryResources) ([]*QueryResponse, error) {
+	var results []*QueryResponse
+	var metrics *batchMetrics
+	if query.GetTracer(ctx) != nil {
+		metrics = &batchMetrics{}
+	}
+	// When MaxBatchSize bounds the result, stop scanning once that many distinct
+	// elements (= trace IDs; mergeSync dedups by data) have been collected. The block
+	// iterator yields blocks in key order, so the first MaxBatchSize distinct elements
+	// are the ordered top-N. This mirrors the streaming path, which stops via consumer
+	// backpressure; the sync path has none, so without this it decodes every matching
+	// block. MaxBatchSize<=0 keeps the full scan.
+	var budgetCounter *distinctDataCounter
+	if req.MaxBatchSize > 0 {
+		budgetCounter = newDistinctDataCounter()
+	}
+	budgetReached := false
+	consume := func(batch *blockScanResultBatch) error {
+		defer releaseBlockScanResultBatch(batch)
+		if batch.err != nil {
+			return batch.err
+		}
+		if metrics != nil {
+			metrics.totalBlocksScanned += len(batch.bss)
+		}
+		cursors, cursorsErr := s.buildCursorsForBatchSync(ctx, batch, resources.tagsToLoad, req, resources.asc, metrics)
+		if cursorsErr != nil {
+			return cursorsErr
+		}
+		if metrics != nil {
+			metrics.totalCursorsCreated += len(cursors)
+		}
+		resources.heap.pushCursors(cursors)
+		chunks, mergeErr := resources.heap.mergeSync(ctx, req.MaxBatchSize, metrics)
+		if mergeErr != nil {
+			return mergeErr
+		}
+		results = append(results, chunks...)
+		if budgetCounter != nil {
+			for _, chunk := range chunks {
+				budgetCounter.add(chunk)
+			}
+			if budgetCounter.count >= req.MaxBatchSize {
+				budgetReached = true
+				return errSyncBudgetReached
+			}
+		}
+		return nil
+	}
+	if scanErr := resources.scanner.scanSync(ctx, consume); scanErr != nil && !errors.Is(scanErr, errSyncBudgetReached) {
+		return nil, scanErr
+	}
+	// When the budget was reached the last consume already drained the heap; only the
+	// completed-scan path needs a final flush of any cursors left in the heap.
+	if !budgetReached {
+		chunks, mergeErr := resources.heap.mergeSync(ctx, req.MaxBatchSize, metrics)
+		if mergeErr != nil {
+			return nil, mergeErr
+		}
+		results = append(results, chunks...)
+	}
+	return results, nil
 }
 
 func (s *sidx) processStreamingLoop(
@@ -458,6 +633,44 @@ func (s *sidx) buildCursorsForBatch(
 		return nil, err
 	}
 
+	return cursors, nil
+}
+
+func (s *sidx) buildCursorsForBatchSync(
+	ctx context.Context,
+	batch *blockScanResultBatch,
+	tagsToLoad map[string]struct{},
+	req QueryRequest,
+	asc bool,
+	metrics *batchMetrics,
+) ([]*blockCursor, error) {
+	if len(batch.bss) == 0 {
+		return nil, nil
+	}
+	tmpBlock := generateBlock()
+	defer releaseBlock(tmpBlock)
+
+	cursors := make([]*blockCursor, 0, len(batch.bss))
+	for _, bsResult := range batch.bss {
+		if ctxErr := ctx.Err(); ctxErr != nil {
+			for _, cursor := range cursors {
+				releaseBlockCursor(cursor)
+			}
+			return nil, ctxErr
+		}
+		bc := generateBlockCursor()
+		bc.init(bsResult.p, &bsResult.bm, req)
+		if s.loadBlockCursor(bc, tmpBlock, bsResult, tagsToLoad, req, s.pm, metrics) {
+			if asc {
+				bc.idx = 0
+			} else {
+				bc.idx = len(bc.userKeys) - 1
+			}
+			cursors = append(cursors, bc)
+			continue
+		}
+		releaseBlockCursor(bc)
+	}
 	return cursors, nil
 }
 

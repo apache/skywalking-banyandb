@@ -20,10 +20,6 @@ package lifecycle
 import (
 	"context"
 	"fmt"
-	"path/filepath"
-	"strconv"
-	"sync"
-	"sync/atomic"
 	"time"
 
 	"github.com/apache/skywalking-banyandb/api/common"
@@ -35,7 +31,6 @@ import (
 	"github.com/apache/skywalking-banyandb/banyand/metadata"
 	"github.com/apache/skywalking-banyandb/banyand/metadata/schema"
 	"github.com/apache/skywalking-banyandb/banyand/queue"
-	"github.com/apache/skywalking-banyandb/pkg/bus"
 	"github.com/apache/skywalking-banyandb/pkg/fs"
 	"github.com/apache/skywalking-banyandb/pkg/logger"
 	"github.com/apache/skywalking-banyandb/pkg/node"
@@ -43,7 +38,6 @@ import (
 )
 
 const (
-	traceReplayBatchSize    = 2000
 	traceReplayBatchTimeout = 30 * time.Second
 	traceReplayVersion      = 1 // trace Row has no version; receiver requires version > 0.
 )
@@ -53,16 +47,13 @@ const (
 // returns an error.
 type traceRowReplayer struct {
 	selector       node.Selector
-	client         queue.Client
-	publisher      queue.BatchPublisher
+	sender         *batchSender
 	fs             fs.FileSystem
 	logger         *logger.Logger
 	schema         *databasev1.Trace
 	traceName      string
 	counter        *uint64
 	group          string
-	batch          []bus.Message
-	batchMu        sync.Mutex
 	targetShardNum uint32
 }
 
@@ -88,50 +79,25 @@ func newTraceRowReplayer(
 		group:          group,
 		targetShardNum: targetShardNum,
 		selector:       selector,
-		client:         client,
-		publisher:      client.NewBatchPublisher(traceReplayBatchTimeout),
+		sender:         newBatchSender(client, data.TopicTraceWrite, rowReplayMaxBatchRows, int(rowReplayMaxBatchBytes), traceReplayBatchTimeout),
 		fs:             fileSystem,
 		logger:         l,
 		schema:         t,
 		traceName:      t.Metadata.Name,
 		counter:        counter,
-		batch:          make([]bus.Message, 0, traceReplayBatchSize),
 	}, nil
 }
 
-// Close flushes pending messages and closes the publisher.
+// Close drains any outstanding batch confirmations and closes the publisher.
 func (r *traceRowReplayer) Close() (map[string]*common.Error, error) {
-	flushCtx, cancel := context.WithTimeout(context.Background(), traceReplayBatchTimeout)
-	defer cancel()
-	flushErr := r.flushBatch(flushCtx)
-	cee, closeErr := r.publisher.Close()
-	if flushErr != nil {
-		return cee, flushErr
-	}
-	return cee, closeErr
-}
-
-// flushAndConfirm flushes the buffered batch, closes the publisher to obtain the
-// per-node delivery result for everything sent since the last call, then opens a
-// fresh publisher for subsequent shards. The batch publisher is client-streaming,
-// so per-node errors are only observable once its stream closes; this lets a
-// row-replayed shard be confirmed durable before it is marked completed.
-func (r *traceRowReplayer) flushAndConfirm(ctx context.Context) (map[string]*common.Error, error) {
-	flushErr := r.flushBatch(ctx)
-	cee, closeErr := r.publisher.Close()
-	r.publisher = r.client.NewBatchPublisher(traceReplayBatchTimeout)
-	if flushErr != nil {
-		return cee, flushErr
-	}
-	return cee, closeErr
+	return r.sender.close()
 }
 
 func (r *traceRowReplayer) replayPart(ctx context.Context, partPath string) (int, error) {
-	partID, parseErr := strconv.ParseUint(filepath.Base(partPath), 16, 64)
+	partID, shardPath, _, parseErr := parseReplayPartPath(partPath)
 	if parseErr != nil {
-		return 0, fmt.Errorf("invalid part path %s: %w", partPath, parseErr)
+		return 0, parseErr
 	}
-	shardPath := filepath.Dir(partPath)
 
 	reader, err := dumptrace.OpenPart(partID, shardPath, r.fs)
 	if err != nil {
@@ -141,40 +107,11 @@ func (r *traceRowReplayer) replayPart(ctx context.Context, partPath string) (int
 
 	it := reader.Iterator()
 	defer it.Close()
-
-	rowCount := 0
-	for it.Next() {
-		row := it.Row()
-		if rowErr := r.publishRow(ctx, row); rowErr != nil {
-			pos := it.Position()
-			r.logger.Warn().Err(rowErr).
-				Str("group", r.group).
-				Str("trace", r.traceName).
-				Str("part", partPath).
-				Int("block_idx", pos.BlockIdx).
-				Int("row_idx", pos.RowIdx).
-				Int("rows_published", rowCount).
-				Msg("trace row-replay aborted mid-part on publish error; will retry on resume")
-			return rowCount, rowErr
-		}
-		rowCount++
-	}
-	if iterErr := it.Err(); iterErr != nil {
-		pos := it.Position()
-		r.logger.Warn().Err(iterErr).
-			Str("group", r.group).
-			Str("trace", r.traceName).
-			Str("part", partPath).
-			Int("block_idx", pos.BlockIdx).
-			Int("row_idx", pos.RowIdx).
-			Int("rows_published", rowCount).
-			Msg("trace row-replay aborted mid-part; will retry on resume")
-		return rowCount, iterErr
-	}
-	if r.counter != nil {
-		atomic.AddUint64(r.counter, 1)
-	}
-	return rowCount, nil
+	// Prefix the part label with the trace name so the shared driver's timing and
+	// abort logs keep the trace identity the old per-type logs carried.
+	res, err := r.sender.replay(ctx, r.logger, r.group, r.traceName+"/"+partPath, r.counter, it,
+		func() error { return r.publishRow(ctx, it.Row()) })
+	return res.rows, err
 }
 
 // buildWriteRequest reconstructs the WriteRequest + InternalWriteRequest pair
@@ -199,35 +136,5 @@ func (r *traceRowReplayer) buildWriteRequest(row dumptrace.Row) (*tracev1.WriteR
 
 func (r *traceRowReplayer) publishRow(ctx context.Context, row dumptrace.Row) error {
 	_, iwr := r.buildWriteRequest(row)
-	nodeID, err := r.selector.Pick(r.group, r.traceName, iwr.ShardId, 0)
-	if err != nil {
-		return fmt.Errorf("pick target node for trace %s: %w", r.traceName, err)
-	}
-	msg := bus.NewBatchMessageWithNode(bus.MessageID(time.Now().UnixNano()), nodeID, iwr)
-	return r.enqueue(ctx, msg)
-}
-
-// enqueue appends a message to the batch and flushes when full.
-func (r *traceRowReplayer) enqueue(ctx context.Context, msg bus.Message) error {
-	r.batchMu.Lock()
-	r.batch = append(r.batch, msg)
-	shouldFlush := len(r.batch) >= traceReplayBatchSize
-	r.batchMu.Unlock()
-	if shouldFlush {
-		return r.flushBatch(ctx)
-	}
-	return nil
-}
-
-func (r *traceRowReplayer) flushBatch(ctx context.Context) error {
-	r.batchMu.Lock()
-	if len(r.batch) == 0 {
-		r.batchMu.Unlock()
-		return nil
-	}
-	pending := r.batch
-	r.batch = make([]bus.Message, 0, traceReplayBatchSize)
-	r.batchMu.Unlock()
-	_, err := r.publisher.Publish(ctx, data.TopicTraceWrite, pending...)
-	return err
+	return r.sender.routeAndEnqueue(ctx, r.logger, r.selector, r.group, r.traceName, iwr.ShardId, iwr)
 }

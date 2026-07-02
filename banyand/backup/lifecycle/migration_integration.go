@@ -18,6 +18,7 @@
 package lifecycle
 
 import (
+	"context"
 	"strings"
 
 	"github.com/apache/skywalking-banyandb/api/common"
@@ -32,8 +33,8 @@ import (
 )
 
 // migrateStreamWithFileBasedAndProgress performs file-based stream migration with progress tracking.
-func migrateStreamWithFileBasedAndProgress(tsdbRootPath string, timeRange timestamp.TimeRange, group *GroupConfig,
-	logger *logger.Logger, progress *Progress, chunkSize int, md metadata.Repo,
+func migrateStreamWithFileBasedAndProgress(ctx context.Context, tsdbRootPath string, timeRange timestamp.TimeRange, group *GroupConfig,
+	logger *logger.Logger, progress *Progress, chunkSize int, md metadata.Repo, orphanCfg orphanConfig,
 ) ([]string, error) {
 	// Convert segment Interval to IntervalRule using storage.MustToIntervalRule
 	segmentIntervalRule := storage.MustToIntervalRule(group.SegmentInterval)
@@ -55,8 +56,9 @@ func migrateStreamWithFileBasedAndProgress(tsdbRootPath string, timeRange timest
 
 	// Create file-based migration visitor with progress tracking and target stage interval
 	visitor := newStreamMigrationVisitor(
-		group.Group, group.TargetShardNum, group.TargetReplicas, group.NodeSelector, group.QueueClient,
+		ctx, group.Group, group.TargetShardNum, group.TargetReplicas, group.NodeSelector, group.QueueClient,
 		logger, progress, chunkSize, targetStageInterval, md,
+		group.SourceStage, group.TargetStage, segmentIntervalRule, orphanCfg,
 	)
 	defer visitor.Close()
 
@@ -67,11 +69,14 @@ func migrateStreamWithFileBasedAndProgress(tsdbRootPath string, timeRange timest
 		visitor.SetStreamElementIndexCount(counter.elementIndexCount)
 	}
 
-	// Use the existing VisitStreamsInTimeRange function with our file-based visitor
+	// Use the existing VisitStreamsInTimeRange function with our file-based visitor.
+	// The walk's own suffix list is discarded: it is identical to the pre-walk
+	// segmentSuffixes (same read-only snapshot, same filter), which we reuse below.
 	_, err = stream.VisitStreamsInTimeRange(tsdbRootPath, timeRange, visitor, segmentIntervalRule)
 	if err != nil {
 		return nil, err
 	}
+	segmentSuffixes = excludeRetainedSuffixes(segmentSuffixes, visitor.SkippedSourceSegmentStarts(), segmentIntervalRule, logger)
 	return segmentSuffixes, nil
 }
 
@@ -121,8 +126,8 @@ func (pcv *partCountVisitor) VisitElementIndex(_ *timestamp.TimeRange, _ common.
 }
 
 // migrateMeasureWithFileBasedAndProgress performs file-based measure migration with progress tracking.
-func migrateMeasureWithFileBasedAndProgress(tsdbRootPath string, timeRange timestamp.TimeRange, group *GroupConfig,
-	logger *logger.Logger, progress *Progress, chunkSize int, md metadata.Repo,
+func migrateMeasureWithFileBasedAndProgress(ctx context.Context, tsdbRootPath string, timeRange timestamp.TimeRange, group *GroupConfig,
+	logger *logger.Logger, progress *Progress, chunkSize int, md metadata.Repo, orphanCfg orphanConfig,
 ) ([]string, error) {
 	// Convert segment interval to IntervalRule using storage.MustToIntervalRule
 	segmentIntervalRule := storage.MustToIntervalRule(group.SegmentInterval)
@@ -143,8 +148,9 @@ func migrateMeasureWithFileBasedAndProgress(tsdbRootPath string, timeRange times
 
 	// Create file-based migration visitor with progress tracking and target stage interval
 	visitor := newMeasureMigrationVisitor(
-		group.Group, group.TargetShardNum, group.TargetReplicas, group.NodeSelector, group.QueueClient,
+		ctx, group.Group, group.TargetShardNum, group.TargetReplicas, group.NodeSelector, group.QueueClient,
 		logger, progress, chunkSize, targetStageInterval, md,
+		group.SourceStage, group.TargetStage, segmentIntervalRule, orphanCfg,
 	)
 	defer visitor.Close()
 
@@ -154,12 +160,51 @@ func migrateMeasureWithFileBasedAndProgress(tsdbRootPath string, timeRange times
 		visitor.SetMeasureSeriesCount(counter.seriesFileCount)
 	}
 
-	// Use the existing VisitMeasuresInTimeRange function with our file-based visitor
+	// Use the existing VisitMeasuresInTimeRange function with our file-based visitor.
+	// The walk's own suffix list is discarded: it is identical to the pre-walk
+	// segmentSuffixes (same read-only snapshot, same filter), which we reuse below.
 	_, err = measure.VisitMeasuresInTimeRange(tsdbRootPath, timeRange, visitor, segmentIntervalRule)
 	if err != nil {
 		return nil, err
 	}
+	// Retain (do not delete) source segments where row-replay skipped unresolved
+	// rows: deleting them would silently and permanently drop that data (S1).
+	segmentSuffixes = excludeRetainedSuffixes(segmentSuffixes, visitor.SkippedSourceSegmentStarts(), segmentIntervalRule, logger)
 	return segmentSuffixes, nil
+}
+
+// excludeRetainedSuffixes removes from suffixes any segment whose start instant
+// is in retainedStarts, so the post-migration delete pass leaves those source
+// segments in place. A suffix that fails to parse is kept in the delete set (the
+// prior behavior), but logged.
+func excludeRetainedSuffixes(suffixes []string, retainedStarts []int64, rule storage.IntervalRule, logger *logger.Logger) []string {
+	if len(retainedStarts) == 0 || len(suffixes) == 0 {
+		return suffixes
+	}
+	retained := make(map[int64]struct{}, len(retainedStarts))
+	for _, start := range retainedStarts {
+		retained[start] = struct{}{}
+	}
+	kept := make([]string, 0, len(suffixes))
+	var skipped []string
+	for _, suffix := range suffixes {
+		start, parseErr := storage.ParseSegmentTime(suffix, rule)
+		if parseErr != nil {
+			logger.Warn().Err(parseErr).Str("suffix", suffix).Msg("cannot parse segment suffix for retention check; keeping in delete set")
+			kept = append(kept, suffix)
+			continue
+		}
+		if _, ok := retained[start.UnixNano()]; ok {
+			skipped = append(skipped, suffix)
+			continue
+		}
+		kept = append(kept, suffix)
+	}
+	if len(skipped) > 0 {
+		logger.Warn().Strs("retained_suffixes", skipped).
+			Msg("retaining source segments with unresolved row-replay skips; excluded from expired-segment deletion")
+	}
+	return kept
 }
 
 // countMeasureParts counts the total number of source items in the given time range.
@@ -201,7 +246,7 @@ func (pcv *measurePartCountVisitor) VisitPart(_ *timestamp.TimeRange, _ common.S
 }
 
 // migrateTraceWithFileBasedAndProgress performs file-based trace migration with progress tracking.
-func migrateTraceWithFileBasedAndProgress(tsdbRootPath string, timeRange timestamp.TimeRange, group *GroupConfig,
+func migrateTraceWithFileBasedAndProgress(ctx context.Context, tsdbRootPath string, timeRange timestamp.TimeRange, group *GroupConfig,
 	logger *logger.Logger, progress *Progress, chunkSize int, md metadata.Repo,
 ) ([]string, error) {
 	// Convert segment interval to IntervalRule using storage.MustToIntervalRule
@@ -223,8 +268,9 @@ func migrateTraceWithFileBasedAndProgress(tsdbRootPath string, timeRange timesta
 
 	// Create file-based migration visitor with progress tracking and target stage interval
 	visitor := newTraceMigrationVisitor(
-		group.Group, group.TargetShardNum, group.TargetReplicas, group.NodeSelector, group.QueueClient,
+		ctx, group.Group, group.TargetShardNum, group.TargetReplicas, group.NodeSelector, group.QueueClient,
 		logger, progress, chunkSize, targetStageInterval, md,
+		group.SourceStage, group.TargetStage, segmentIntervalRule,
 	)
 	defer visitor.Close()
 

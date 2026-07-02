@@ -39,6 +39,10 @@ const (
 	initialBackoff       = 100 * time.Millisecond
 	maxBackoff           = 5 * time.Second
 	nodeInfoFetchTimeout = 30 * time.Second
+	// nodeRoleResolveBudget bounds how long the initial node-role resolution retries.
+	// Keep it below nodeInfoFetchTimeout so the poll finishes before StartCollector's
+	// WaitForNodeFetched deadline.
+	nodeRoleResolveBudget = 25 * time.Second
 )
 
 // TopologyMap represents processed cluster data for a single endpoint.
@@ -66,6 +70,7 @@ type Collector struct {
 	podName         string
 	addrs           []string
 	interval        time.Duration
+	resolveBudget   time.Duration
 	mu              sync.RWMutex
 }
 
@@ -76,6 +81,7 @@ func NewCollector(log *logger.Logger, addrs []string, interval time.Duration, po
 		addrs:           addrs,
 		interval:        interval,
 		podName:         podName,
+		resolveBudget:   nodeRoleResolveBudget,
 		closer:          run.NewCloser(0),
 		nodeFetchedCh:   make(chan struct{}),
 		clients:         make([]*endpointClient, 0, len(addrs)),
@@ -234,6 +240,11 @@ func (c *Collector) collectLoop(ctx context.Context) {
 		case <-c.closer.CloseNotify():
 			return
 		case <-ticker.C:
+			// Re-poll the current node every tick, not just at startup: a node may not have
+			// assumed its role (or populated its labels) when the agent first polls, and
+			// without a refresh GetNodeInfo would stay ROLE_UNSPECIFIED with no labels for
+			// the life of the process, leaving node_role/node_type unresolved on slow nodes.
+			c.pollCurrentNode(ctx)
 			c.collectClusterState(ctx)
 		}
 	}
@@ -257,6 +268,48 @@ func (c *Collector) updateCurrentNodes(nodes map[string]*databasev1.Node) {
 	c.currentNodes = nodes
 	c.mu.Unlock()
 	c.log.Info().Int("nodes_count", len(nodes)).Msg("Updated current nodes from all endpoints")
+}
+
+// ResolveNodeRole polls the current node until a resolved (non-unspecified) role is
+// obtained or resolveBudget elapses, then returns the role string and labels. All
+// per-attempt fetches share a budget-scoped context, so the total runtime is bounded by
+// resolveBudget regardless of the per-attempt gRPC timeouts and backoffs. This guards the
+// startup race where the sibling lifecycle/banyandb gRPC server is not yet listening when
+// the agent first polls, which previously left node_role permanently ROLE_UNSPECIFIED.
+// It does not touch nodeFetchedCh, so the collector's readiness signal stays prompt.
+func (c *Collector) ResolveNodeRole(ctx context.Context) (nodeRole string, nodeLabels map[string]string) {
+	budgetCtx, cancel := context.WithTimeout(ctx, c.resolveBudget)
+	defer cancel()
+	backoff := initialBackoff
+	for !c.hasResolvedRole() {
+		c.pollCurrentNode(budgetCtx)
+		if c.hasResolvedRole() || budgetCtx.Err() != nil || c.closer.Closed() {
+			break
+		}
+		select {
+		case <-budgetCtx.Done():
+		case <-c.closer.CloseNotify():
+		case <-time.After(backoff):
+		}
+		if budgetCtx.Err() != nil || c.closer.Closed() {
+			break
+		}
+		backoff = min(backoff*2, maxBackoff)
+	}
+	return c.GetNodeInfo()
+}
+
+// hasResolvedRole reports whether any current node has a known (non-unspecified) role.
+func (c *Collector) hasResolvedRole() bool {
+	c.mu.RLock()
+	defer c.mu.RUnlock()
+	unspecified := databasev1.Role_name[int32(databasev1.Role_ROLE_UNSPECIFIED)]
+	for _, node := range c.currentNodes {
+		if node != nil && NodeRoleFromNode(node) != unspecified {
+			return true
+		}
+	}
+	return false
 }
 
 func (c *Collector) updateClusterStates(states map[string]*databasev1.GetClusterStateResponse) {
@@ -488,10 +541,14 @@ func NodeRoleFromNode(node *databasev1.Node) string {
 }
 
 // GenerateClusterStateAddrs generates cluster state gRPC addresses from the given ports.
+// The local node is addressed via the IPv4 loopback (127.0.0.1) rather than "localhost":
+// "localhost" can resolve to the IPv6 loopback (::1), and gRPC's dial then fails with
+// "cannot assign requested address" in pods without an IPv6 loopback, leaving the node's
+// role/labels unresolved.
 func GenerateClusterStateAddrs(ports []string) []string {
 	addrs := make([]string, 0, len(ports))
 	for _, port := range ports {
-		addrs = append(addrs, fmt.Sprintf("localhost:%s", port))
+		addrs = append(addrs, fmt.Sprintf("127.0.0.1:%s", port))
 	}
 	return addrs
 }

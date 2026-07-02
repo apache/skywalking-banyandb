@@ -1,6 +1,6 @@
 module github.com/apache/skywalking-banyandb
 
-go 1.25.0
+go 1.25.3
 
 require (
 	cloud.google.com/go/storage v1.62.0
@@ -176,7 +176,7 @@ require (
 	github.com/pelletier/go-toml/v2 v2.3.0 // indirect
 	github.com/pmezard/go-difflib v1.0.1-0.20181226105442-5d4384ee4fb2 // indirect
 	github.com/power-devops/perfstat v0.0.0-20240221224432-82ca36839d55 // indirect
-	github.com/prometheus/client_model v0.6.2 // indirect
+	github.com/prometheus/client_model v0.6.2
 	github.com/prometheus/common v0.67.5
 	github.com/prometheus/procfs v0.20.1 // indirect
 	github.com/robfig/cron/v3 v3.0.1
@@ -208,7 +208,7 @@ require (
 
 replace (
 	github.com/benbjohnson/clock v1.3.0 => github.com/SkyAPM/clock v1.3.1-0.20220809233656-dc7607c94a97
-	github.com/blugelabs/bluge => github.com/SkyAPM/bluge v0.0.0-20250804100126-cccf29a55f01
+	github.com/blugelabs/bluge => github.com/SkyAPM/bluge v0.0.0-20260625022800-42385daf66b8
 	github.com/blugelabs/bluge_segment_api => github.com/zinclabs/bluge_segment_api v1.0.0
 	github.com/blugelabs/ice => github.com/SkyAPM/ice v0.0.0-20250619023539-b5173603b0b3
 )

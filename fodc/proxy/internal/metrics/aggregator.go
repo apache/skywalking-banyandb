@@ -20,6 +20,7 @@ package metrics
 
 import (
 	"context"
+	"maps"
 	"strings"
 	"sync"
 	"time"
@@ -35,6 +36,13 @@ const (
 	// maxCollectionTimeout is the maximum timeout allowed for collecting metrics,
 	// preventing excessively long waits for wide time windows.
 	maxCollectionTimeout = 5 * time.Minute
+	// podNameLabelName and containerNameLabelName are first-class node identity labels that are
+	// already stamped per metric, so they are not re-applied as namespaced node labels.
+	podNameLabelName       = "pod_name"
+	containerNameLabelName = "container_name"
+	// nodeLabelPrefix namespaces a node's own labels (e.g. the data-node tier "type" becomes
+	// "node_type") so they can never collide with a metric-intrinsic label of the same name.
+	nodeLabelPrefix = "node_"
 )
 
 // AggregatedMetric represents an aggregated metric with node metadata.
@@ -44,6 +52,7 @@ type AggregatedMetric struct {
 	Name        string
 	AgentID     string
 	Description string
+	Type        string // lowercase prometheus type: "counter","gauge","histogram","summary","untyped",""
 	Value       float64
 }
 
@@ -88,18 +97,45 @@ func (ma *Aggregator) SetGRPCService(grpcService RequestSender) {
 	ma.grpcService = grpcService
 }
 
+// protoMetricTypeToString converts a proto MetricType enum to its lowercase string representation.
+// UNSPECIFIED maps to "" (unknown, causes proxy to fall back to suffix heuristic).
+func protoMetricTypeToString(mt fodcv1.MetricType) string {
+	switch mt {
+	case fodcv1.MetricType_METRIC_TYPE_COUNTER:
+		return "counter"
+	case fodcv1.MetricType_METRIC_TYPE_GAUGE:
+		return "gauge"
+	case fodcv1.MetricType_METRIC_TYPE_HISTOGRAM:
+		return "histogram"
+	case fodcv1.MetricType_METRIC_TYPE_SUMMARY:
+		return "summary"
+	case fodcv1.MetricType_METRIC_TYPE_UNTYPED:
+		return "untyped"
+	default:
+		return ""
+	}
+}
+
 // ProcessMetricsFromAgent processes metrics received from an agent.
 func (ma *Aggregator) ProcessMetricsFromAgent(ctx context.Context, agentID string, agentInfo *registry.AgentInfo, req *fodcv1.StreamMetricsRequest) error {
 	aggregatedMetrics := make([]*AggregatedMetric, 0, len(req.Metrics))
 
 	for _, metric := range req.Metrics {
-		labels := make(map[string]string)
-		for key, value := range metric.Labels {
-			labels[key] = value
-		}
+		labels := make(map[string]string, len(metric.Labels))
+		maps.Copy(labels, metric.Labels)
 
+		// Overlay the agent's node labels under a "node_" prefix so they can never collide
+		// with a metric-intrinsic label of the same name (e.g. the merge "type"). pod_name and
+		// container_name are already first-class labels and are skipped. A namespaced label
+		// already present (stamped per metric by the agent) is left untouched.
 		for key, value := range agentInfo.Labels {
-			labels[key] = value
+			if value == "" || key == podNameLabelName || key == containerNameLabelName {
+				continue
+			}
+			prefixed := nodeLabelPrefix + key
+			if _, exists := labels[prefixed]; !exists {
+				labels[prefixed] = value
+			}
 		}
 
 		var timestamp time.Time
@@ -119,6 +155,7 @@ func (ma *Aggregator) ProcessMetricsFromAgent(ctx context.Context, agentID strin
 			Timestamp:   timestamp,
 			AgentID:     agentID,
 			Description: metric.Description,
+			Type:        protoMetricTypeToString(metric.Type),
 		}
 
 		aggregatedMetrics = append(aggregatedMetrics, aggregatedMetric)

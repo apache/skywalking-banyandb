@@ -28,13 +28,16 @@ import (
 	"strings"
 	"time"
 
+	"github.com/google/uuid"
 	"google.golang.org/protobuf/encoding/protojson"
 
 	fodcv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/fodc/v1"
+	"github.com/apache/skywalking-banyandb/fodc/internal/pprofcapture"
 	"github.com/apache/skywalking-banyandb/fodc/proxy/internal/cluster"
 	"github.com/apache/skywalking-banyandb/fodc/proxy/internal/diagnostics"
 	"github.com/apache/skywalking-banyandb/fodc/proxy/internal/lifecycle"
 	"github.com/apache/skywalking-banyandb/fodc/proxy/internal/metrics"
+	"github.com/apache/skywalking-banyandb/fodc/proxy/internal/pressure"
 	"github.com/apache/skywalking-banyandb/fodc/proxy/internal/registry"
 	"github.com/apache/skywalking-banyandb/pkg/logger"
 )
@@ -48,12 +51,19 @@ var lifecycleGroupMarshaler = protojson.MarshalOptions{
 	EmitUnpopulated: true,
 }
 
+// ProfileFetcher streams one pressure profile's bytes from an agent, invoking onChunk per slice.
+type ProfileFetcher interface {
+	FetchPressureProfile(ctx context.Context, agentID string, fetch *fodcv1.FetchPressureProfile, onChunk func([]byte) error) error
+}
+
 // Server exposes REST and Prometheus-style endpoints for external consumption.
 type Server struct {
 	metricsAggregator          *metrics.Aggregator
 	clusterStateCollector      *cluster.Manager
 	lifecycleManager           *lifecycle.Manager
 	crashDiagnosticsAggregator *diagnostics.Aggregator
+	pressureAggregator         *pressure.Aggregator
+	profileFetcher             ProfileFetcher
 	registry                   *registry.AgentRegistry
 	server                     *http.Server
 	logger                     *logger.Logger
@@ -67,6 +77,8 @@ func NewServer(
 	lifecycleManager *lifecycle.Manager,
 	registry *registry.AgentRegistry,
 	crashDiagnosticsAggregator *diagnostics.Aggregator,
+	pressureAggregator *pressure.Aggregator,
+	profileFetcher ProfileFetcher,
 	logger *logger.Logger,
 ) *Server {
 	return &Server{
@@ -74,6 +86,8 @@ func NewServer(
 		clusterStateCollector:      clusterStateCollector,
 		lifecycleManager:           lifecycleManager,
 		crashDiagnosticsAggregator: crashDiagnosticsAggregator,
+		pressureAggregator:         pressureAggregator,
+		profileFetcher:             profileFetcher,
 		registry:                   registry,
 		logger:                     logger,
 		startTime:                  time.Now(),
@@ -90,6 +104,8 @@ func (s *Server) Start(listenAddr string, readTimeout, writeTimeout time.Duratio
 	mux.HandleFunc("/cluster/topology", s.handleClusterTopology)
 	mux.HandleFunc("/cluster/lifecycle", s.handleClusterLifecycle)
 	mux.HandleFunc("/diagnostics", s.handleDiagnostics)
+	mux.HandleFunc("/pressure-profiles", s.handlePressureProfiles)
+	mux.HandleFunc("/pressure-profiles/{pod_name}/{profile_id}/{type}", s.handlePressureProfileDownload)
 
 	s.server = &http.Server{
 		Addr:         listenAddr,
@@ -270,82 +286,137 @@ func (s *Server) handleHealth(w http.ResponseWriter, r *http.Request) {
 }
 
 // formatPrometheusText formats aggregated metrics as Prometheus text format.
+//
+// Metrics with a known Type (non-empty) are emitted using the real type. Metrics with
+// Type=="" (pre-upgrade agents) fall back to the legacy suffix-heuristic path so behavior
+// is unchanged for those metrics.
 func (s *Server) formatPrometheusText(aggregatedMetrics []*metrics.AggregatedMetric) string {
 	if len(aggregatedMetrics) == 0 {
 		return ""
 	}
 
-	metricMap := make(map[string]*metricGroup)
-	histogramBases := make(map[string]bool)
-
-	for _, metric := range aggregatedMetrics {
-		key := metric.Name
-		group, exists := metricMap[key]
-		if !exists {
-			group = &metricGroup{
-				name:        metric.Name,
-				description: metric.Description,
-				metrics:     make([]*metrics.AggregatedMetric, 0),
-			}
-			metricMap[key] = group
-		}
-		group.metrics = append(group.metrics, metric)
-
-		if strings.HasSuffix(metric.Name, "_bucket") ||
-			strings.HasSuffix(metric.Name, "_sum") ||
-			strings.HasSuffix(metric.Name, "_count") {
-			baseName := getHistogramBaseName(metric.Name)
-			if baseName != "" {
-				histogramBases[baseName] = true
-			}
-		}
-	}
-
-	histogramMetrics := make(map[string][]*metrics.AggregatedMetric)
-	regularMetrics := make(map[string]*metricGroup)
-
-	for name, group := range metricMap {
-		baseName := getHistogramBaseName(name)
-		if baseName != "" && histogramBases[baseName] {
-			histogramMetrics[baseName] = append(histogramMetrics[baseName], group.metrics...)
+	// Partition into typed (type known from agent) and untyped (legacy/unknown).
+	var typed []*metrics.AggregatedMetric
+	var untyped []*metrics.AggregatedMetric
+	for _, m := range aggregatedMetrics {
+		if m.Type != "" {
+			typed = append(typed, m)
 		} else {
-			regularMetrics[name] = group
+			untyped = append(untyped, m)
 		}
 	}
 
 	var builder strings.Builder
+	remainingUntyped := writeTypedFamilies(&builder, typed, untyped)
+	writeUntypedFamilies(&builder, remainingUntyped)
+	return builder.String()
+}
+
+// writeTypedFamilies groups typed metrics by family base and emits one "# TYPE" line per
+// family using the real type. The family base for histogram/summary component series
+// (_bucket/_sum/_count) is the name with the suffix stripped; bare summary quantile series
+// and all counter/gauge/untyped series use the name as-is. Untyped metrics whose base
+// collides with a typed family are absorbed under the authoritative typed line — this
+// prevents a mixed-version rollout from emitting two conflicting "# TYPE" lines for one
+// name. The untyped metrics with no typed-family collision are returned for the legacy path.
+func writeTypedFamilies(builder *strings.Builder, typed, untyped []*metrics.AggregatedMetric) []*metrics.AggregatedMetric {
+	typedFamilyOrder := make([]string, 0)
+	typedFamilies := make(map[string]*metricGroup) // base → group
+	for _, m := range typed {
+		base := typedFamilyBase(m.Name, m.Type)
+		grp, exists := typedFamilies[base]
+		if !exists {
+			grp = &metricGroup{
+				name:        base,
+				description: m.Description,
+				metricType:  m.Type,
+				metrics:     make([]*metrics.AggregatedMetric, 0),
+			}
+			typedFamilies[base] = grp
+			typedFamilyOrder = append(typedFamilyOrder, base)
+		}
+		grp.metrics = append(grp.metrics, m)
+	}
+
+	remainingUntyped := make([]*metrics.AggregatedMetric, 0, len(untyped))
+	for _, m := range untyped {
+		grp := matchTypedFamily(typedFamilies, m.Name)
+		if grp == nil {
+			remainingUntyped = append(remainingUntyped, m)
+			continue
+		}
+		if grp.description == "" && m.Description != "" {
+			grp.description = m.Description
+		}
+		grp.metrics = append(grp.metrics, m)
+	}
+
+	sort.Strings(typedFamilyOrder)
+	for _, base := range typedFamilyOrder {
+		grp := typedFamilies[base]
+		if grp.description != "" {
+			builder.WriteString(fmt.Sprintf("# HELP %s %s\n", base, grp.description))
+		}
+		builder.WriteString(fmt.Sprintf("# TYPE %s %s\n", base, grp.metricType))
+		for _, m := range grp.metrics {
+			builder.WriteString(formatMetricLine(m))
+		}
+	}
+	return remainingUntyped
+}
+
+// writeUntypedFamilies emits metrics with no known type using the legacy suffix heuristic:
+// a base name with a _bucket/_sum/_count sibling is treated as a histogram, everything else
+// as a gauge. This preserves pre-typed behavior for pre-upgrade agents.
+func writeUntypedFamilies(builder *strings.Builder, untyped []*metrics.AggregatedMetric) {
+	if len(untyped) == 0 {
+		return
+	}
+	metricMap := make(map[string]*metricGroup)
+	histogramBases := make(map[string]bool)
+	for _, m := range untyped {
+		grp, exists := metricMap[m.Name]
+		if !exists {
+			grp = &metricGroup{
+				name:        m.Name,
+				description: m.Description,
+				metrics:     make([]*metrics.AggregatedMetric, 0),
+			}
+			metricMap[m.Name] = grp
+		}
+		grp.metrics = append(grp.metrics, m)
+		if baseName := getHistogramBaseName(m.Name); baseName != "" {
+			histogramBases[baseName] = true
+		}
+	}
+
+	histogramMetricsMap := make(map[string][]*metrics.AggregatedMetric)
+	regularMetrics := make(map[string]*metricGroup)
+	for name, grp := range metricMap {
+		baseName := getHistogramBaseName(name)
+		if baseName != "" && histogramBases[baseName] {
+			histogramMetricsMap[baseName] = append(histogramMetricsMap[baseName], grp.metrics...)
+		} else {
+			regularMetrics[name] = grp
+		}
+	}
 
 	histogramNames := make([]string, 0, len(histogramBases))
 	for baseName := range histogramBases {
 		histogramNames = append(histogramNames, baseName)
 	}
 	sort.Strings(histogramNames)
-
 	for _, baseName := range histogramNames {
-		allMetrics := histogramMetrics[baseName]
-		if len(allMetrics) == 0 {
+		allM := histogramMetricsMap[baseName]
+		if len(allM) == 0 {
 			continue
 		}
-
-		description := allMetrics[0].Description
-		if description != "" {
+		if description := allM[0].Description; description != "" {
 			builder.WriteString(fmt.Sprintf("# HELP %s %s\n", baseName, description))
 		}
 		builder.WriteString(fmt.Sprintf("# TYPE %s histogram\n", baseName))
-
-		for _, metric := range allMetrics {
-			labelParts := make([]string, 0, len(metric.Labels))
-			for key, value := range metric.Labels {
-				labelParts = append(labelParts, fmt.Sprintf(`%s="%s"`, key, value))
-			}
-			sort.Strings(labelParts)
-
-			labelStr := ""
-			if len(labelParts) > 0 {
-				labelStr = "{" + strings.Join(labelParts, ",") + "}"
-			}
-
-			builder.WriteString(fmt.Sprintf("%s%s %s\n", metric.Name, labelStr, formatFloat(metric.Value)))
+		for _, m := range allM {
+			builder.WriteString(formatMetricLine(m))
 		}
 	}
 
@@ -354,31 +425,76 @@ func (s *Server) formatPrometheusText(aggregatedMetrics []*metrics.AggregatedMet
 		regularNames = append(regularNames, name)
 	}
 	sort.Strings(regularNames)
-
 	for _, name := range regularNames {
-		group := regularMetrics[name]
-		if group.description != "" {
-			builder.WriteString(fmt.Sprintf("# HELP %s %s\n", group.name, group.description))
+		grp := regularMetrics[name]
+		if grp.description != "" {
+			builder.WriteString(fmt.Sprintf("# HELP %s %s\n", grp.name, grp.description))
 		}
-		builder.WriteString(fmt.Sprintf("# TYPE %s gauge\n", group.name))
-
-		for _, metric := range group.metrics {
-			labelParts := make([]string, 0, len(metric.Labels))
-			for key, value := range metric.Labels {
-				labelParts = append(labelParts, fmt.Sprintf(`%s="%s"`, key, value))
-			}
-			sort.Strings(labelParts)
-
-			labelStr := ""
-			if len(labelParts) > 0 {
-				labelStr = "{" + strings.Join(labelParts, ",") + "}"
-			}
-
-			builder.WriteString(fmt.Sprintf("%s%s %s\n", group.name, labelStr, formatFloat(metric.Value)))
+		builder.WriteString(fmt.Sprintf("# TYPE %s gauge\n", grp.name))
+		for _, m := range grp.metrics {
+			builder.WriteString(formatMetricLine(m))
 		}
 	}
+}
 
-	return builder.String()
+// matchTypedFamily returns the typed family an untyped series belongs to, or nil if none.
+// It checks the exact name first (counter/gauge/untyped series and bare summary quantile
+// series), then the histogram/summary component base after trimming a trailing
+// _bucket/_sum/_count suffix. Used to fold pre-upgrade (untyped) samples into the
+// authoritative typed family so the proxy never emits two TYPE lines for one name.
+func matchTypedFamily(typedFamilies map[string]*metricGroup, name string) *metricGroup {
+	if grp, ok := typedFamilies[name]; ok {
+		return grp
+	}
+	for _, suffix := range []string{"_bucket", "_sum", "_count"} {
+		if strings.HasSuffix(name, suffix) {
+			base := strings.TrimSuffix(name, suffix)
+			if base != "" {
+				if grp, ok := typedFamilies[base]; ok {
+					return grp
+				}
+			}
+			break
+		}
+	}
+	return nil
+}
+
+// typedFamilyBase returns the Prometheus family base name for a typed series.
+// For histogram/summary component series the trailing _bucket/_sum/_count is stripped.
+// For all other types (counter, gauge, untyped) the name is used as-is.
+func typedFamilyBase(name, metricType string) string {
+	switch metricType {
+	case "histogram", "summary":
+		for _, suffix := range []string{"_bucket", "_sum", "_count"} {
+			if strings.HasSuffix(name, suffix) {
+				base := strings.TrimSuffix(name, suffix)
+				if base != "" {
+					return base
+				}
+			}
+		}
+	}
+	return name
+}
+
+// labelValueEscaper escapes the three characters that are special inside a Prometheus
+// text-exposition label value: backslash, double-quote, and line feed. The replacements are
+// applied in a single left-to-right pass, so an escaped backslash is not re-escaped.
+var labelValueEscaper = strings.NewReplacer(`\`, `\\`, `"`, `\"`, "\n", `\n`)
+
+// formatMetricLine renders a single metric sample as a Prometheus text line.
+func formatMetricLine(m *metrics.AggregatedMetric) string {
+	labelParts := make([]string, 0, len(m.Labels))
+	for k, v := range m.Labels {
+		labelParts = append(labelParts, fmt.Sprintf(`%s="%s"`, k, labelValueEscaper.Replace(v)))
+	}
+	sort.Strings(labelParts)
+	labelStr := ""
+	if len(labelParts) > 0 {
+		labelStr = "{" + strings.Join(labelParts, ",") + "}"
+	}
+	return fmt.Sprintf("%s%s %s\n", m.Name, labelStr, formatFloat(m.Value))
 }
 
 // formatMetricsWindowJSON formats aggregated metrics as JSON for metrics-windows endpoint.
@@ -480,6 +596,7 @@ func getHistogramBaseName(metricName string) string {
 type metricGroup struct {
 	name        string
 	description string
+	metricType  string
 	metrics     []*metrics.AggregatedMetric
 }
 
@@ -575,6 +692,126 @@ func (s *Server) handleDiagnostics(w http.ResponseWriter, r *http.Request) {
 	if encodeErr := json.NewEncoder(w).Encode(records); encodeErr != nil {
 		s.logger.Error().Err(encodeErr).Msg("Failed to encode diagnostics response")
 	}
+}
+
+// handlePressureProfiles handles GET /pressure-profiles, listing capture-event metadata.
+func (s *Server) handlePressureProfiles(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	if s.pressureAggregator == nil {
+		http.Error(w, "Pressure aggregator not available", http.StatusServiceUnavailable)
+		return
+	}
+	filter := &pressure.Filter{
+		Role:    r.URL.Query().Get("role"),
+		PodName: r.URL.Query().Get("pod_name"),
+	}
+	records, collectErr := s.pressureAggregator.CollectProfiles(r.Context(), filter)
+	if collectErr != nil {
+		s.logger.Error().Err(collectErr).Msg("Failed to collect pressure profiles")
+		http.Error(w, "Failed to collect pressure profiles", http.StatusInternalServerError)
+		return
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusOK)
+	if encodeErr := json.NewEncoder(w).Encode(records); encodeErr != nil {
+		s.logger.Error().Err(encodeErr).Msg("Failed to encode pressure profiles response")
+	}
+}
+
+// handlePressureProfileDownload handles GET /pressure-profiles/{pod_name}/{profile_id}/{type},
+// streaming one pprof binary straight from the agent to the client without buffering it in
+// the proxy and without the server-wide write timeout cutting off a large download.
+func (s *Server) handlePressureProfileDownload(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	if s.pressureAggregator == nil || s.profileFetcher == nil {
+		http.Error(w, "Pressure profiles not available", http.StatusServiceUnavailable)
+		return
+	}
+	podName := r.PathValue("pod_name")
+	profileID := r.PathValue("profile_id")
+	profType := r.PathValue("type")
+	if !pprofcapture.IsValidType(profType) {
+		http.Error(w, "Unknown profile type", http.StatusBadRequest)
+		return
+	}
+
+	// Resolve from the cache first; only pay the refresh round-trip on a miss (the cache is
+	// populated by a prior list, or becomes populated by this refresh). This avoids the
+	// fixed ~2s CollectProfiles window on every download.
+	agentID, filePath, role, ok := s.pressureAggregator.LookupForDownload(podName, profileID, profType)
+	if !ok {
+		if _, collectErr := s.pressureAggregator.CollectProfiles(r.Context(), &pressure.Filter{PodName: podName}); collectErr != nil {
+			s.logger.Error().Err(collectErr).Str("pod_name", podName).Msg("Failed to refresh pressure profiles for download")
+		}
+		agentID, filePath, role, ok = s.pressureAggregator.LookupForDownload(podName, profileID, profType)
+	}
+	if !ok {
+		http.Error(w, "Profile not found", http.StatusNotFound)
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/octet-stream")
+	// Sanitize + quote every interpolated value (pod/role/profileID come from the untrusted
+	// request path) so they cannot inject Content-Disposition header syntax.
+	filename := fmt.Sprintf("%s-%s-%s-%s.pprof", sanitizeFilenamePart(podName), sanitizeFilenamePart(role), sanitizeFilenamePart(profileID), profType)
+	w.Header().Set("Content-Disposition", fmt.Sprintf("attachment; filename=%q", filename))
+
+	// Lift the server-wide WriteTimeout for this streaming handler only; other endpoints stay
+	// protected. If it cannot be lifted, large transfers may be truncated at the timeout.
+	controller := http.NewResponseController(w)
+	if deadlineErr := controller.SetWriteDeadline(time.Time{}); deadlineErr != nil {
+		s.logger.Warn().Err(deadlineErr).Msg("Failed to lift write deadline for pressure profile download; large transfers may truncate")
+	}
+
+	fetch := &fodcv1.FetchPressureProfile{
+		RequestId: uuid.NewString(),
+		ProfileId: profileID,
+		Type:      profType,
+		Filepath:  filePath,
+	}
+	written := false
+	onChunk := func(data []byte) error {
+		written = true
+		if _, writeErr := w.Write(data); writeErr != nil {
+			return writeErr
+		}
+		_ = controller.Flush()
+		return nil
+	}
+	if fetchErr := s.profileFetcher.FetchPressureProfile(r.Context(), agentID, fetch, onChunk); fetchErr != nil {
+		if !written {
+			// Nothing has been written yet, so the status line is still open: the agent
+			// could not serve the file (e.g. it was evicted between list and download).
+			// Surface a real error instead of an empty 200.
+			w.Header().Del("Content-Disposition")
+			http.Error(w, fmt.Sprintf("Profile not available: %v", fetchErr), http.StatusNotFound)
+			return
+		}
+		// Bytes are already on the wire, so the connection is simply truncated; the client
+		// sees an incomplete download. Log for diagnosis.
+		s.logger.Error().Err(fetchErr).Str("pod_name", podName).Str("profile_id", profileID).
+			Str("type", profType).Msg("Failed to stream pressure profile")
+	}
+}
+
+// sanitizeFilenamePart keeps only filename-safe characters so values interpolated into the
+// Content-Disposition header (pod name, role, profile id taken from the request path) cannot
+// inject header syntax or path separators.
+func sanitizeFilenamePart(s string) string {
+	return strings.Map(func(r rune) rune {
+		switch {
+		case r >= 'a' && r <= 'z', r >= 'A' && r <= 'Z', r >= '0' && r <= '9', r == '.', r == '_', r == '-':
+			return r
+		default:
+			return '_'
+		}
+	}, s)
 }
 
 func marshalLifecycleGroups(groups []*fodcv1.GroupLifecycleInfo) ([]json.RawMessage, error) {

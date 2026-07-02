@@ -22,7 +22,6 @@ import (
 
 	"github.com/apache/skywalking-banyandb/api/common"
 	"github.com/apache/skywalking-banyandb/banyand/internal/dump"
-	"github.com/apache/skywalking-banyandb/pkg/compress/zstd"
 	"github.com/apache/skywalking-banyandb/pkg/encoding"
 	pbv1 "github.com/apache/skywalking-banyandb/pkg/pb/v1"
 )
@@ -32,14 +31,9 @@ import (
 func (p *PartReader) Iterator() *dump.Iterator[Row] {
 	var blocks []*blockMetadata
 	for i := range p.primaryBlockMetadata {
-		pbm := p.primaryBlockMetadata[i]
-		primaryData := make([]byte, pbm.size)
-		if readErr := dump.ReadData(p.primary, int64(pbm.offset), primaryData); readErr != nil {
-			return dump.NewErrIterator[Row](fmt.Errorf("cannot read primary block: %w", readErr))
-		}
-		decompressed, err := zstd.Decompress(nil, primaryData)
+		decompressed, err := dump.ReadPrimaryBlock(p.primary, p.primaryBlockMetadata[i])
 		if err != nil {
-			return dump.NewErrIterator[Row](fmt.Errorf("cannot decompress primary block: %w", err))
+			return dump.NewErrIterator[Row](err)
 		}
 		bms, err := parseBlockMetadata(decompressed)
 		if err != nil {
@@ -68,8 +62,14 @@ func (p *PartReader) Iterator() *dump.Iterator[Row] {
 }
 
 func (p *PartReader) decodeBlock(decoder *encoding.BytesBlockDecoder, bm *blockMetadata) ([]Row, error) {
+	// The decoder's internal buffer accumulates every decoded string block and is
+	// never reset on its own. Stream tags are all strings, so without this it
+	// grows to hold the entire part's tag data (the dominant resident cost).
+	// Decoded values alias it but the proto build copies them before the next
+	// block, so bounding it to one block is safe.
+	decoder.Reset()
 	count := int(bm.count)
-	timestamps, elementIDs, err := readTimestamps(bm.timestamps, count, p.timestamps)
+	timestamps, elementIDs, err := readTimestamps(bm.timestamps, count, p.timestamps, p.reuseScratch)
 	if err != nil {
 		return nil, fmt.Errorf("cannot read timestamps/elementIDs for series %d: %w", bm.seriesID, err)
 	}
@@ -84,7 +84,7 @@ func (p *PartReader) decodeBlock(decoder *encoding.BytesBlockDecoder, bm *blockM
 		if metaReader == nil || valueReader == nil {
 			continue
 		}
-		metaData := make([]byte, tagFamilyBlock.size)
+		metaData := dump.ReadBuf(p.reuseScratch, (*dump.ReadScratch).MetaBuf, int(tagFamilyBlock.size))
 		if readErr := dump.ReadData(metaReader, int64(tagFamilyBlock.offset), metaData); readErr != nil {
 			return nil, fmt.Errorf("cannot read tag family %s for series %d: %w", tagFamilyName, bm.seriesID, readErr)
 		}
@@ -94,7 +94,7 @@ func (p *PartReader) decodeBlock(decoder *encoding.BytesBlockDecoder, bm *blockM
 		}
 		for _, tagMeta := range tagMetadatas {
 			fullTagName := tagFamilyName + "." + tagMeta.name
-			values, tagErr := readTagValues(decoder, tagMeta.dataBlock, fullTagName, count, valueReader, tagMeta.valueType)
+			values, tagErr := dump.ReadTagValues(decoder, tagMeta.dataBlock.offset, tagMeta.dataBlock.size, count, valueReader, tagMeta.valueType, p.reuseScratch)
 			if tagErr != nil {
 				return nil, fmt.Errorf("cannot read tag %s for series %d: %w", fullTagName, bm.seriesID, tagErr)
 			}

@@ -19,6 +19,8 @@
 package observability
 
 import (
+	"net/http"
+
 	"github.com/apache/skywalking-banyandb/pkg/meter"
 	"github.com/apache/skywalking-banyandb/pkg/run"
 )
@@ -45,4 +47,13 @@ type MetricsRegistry interface {
 	With(scope meter.Scope) Factory
 	// NativeEnabled returns whether the native mode is enabled.
 	NativeEnabled() bool
+}
+
+// PrometheusHandlerProvider is an optional interface implemented by a
+// MetricsRegistry that can expose its Prometheus exposition handler for mounting
+// on an external HTTP router, instead of serving it on the registry's own
+// listener. The lifecycle command uses this to serve /metrics on its existing
+// HTTP port rather than opening a separate observability listener.
+type PrometheusHandlerProvider interface {
+	PrometheusHandler() http.Handler
 }

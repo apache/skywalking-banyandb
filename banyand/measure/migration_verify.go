@@ -18,7 +18,6 @@
 package measure
 
 import (
-	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -61,16 +60,54 @@ type SegmentReport struct {
 // EntryGroupReport aggregates source row count + target per-seg report
 // for one (entry, group) pair. Both source and target are read-only;
 // the verify command never mutates the dataset.
+//
+// IndexMode-prefixed fields are populated only when the (entry, group) is an
+// index-mode measure group: those groups carry their data in the segment sidx
+// (one doc per series), so they are reconciled at the document level (doc count,
+// distinct doc-id, per-(series,timestamp) value digest) instead of part rows.
 type EntryGroupReport struct {
-	Group       string
-	EntryStage  string
-	EntryTarget string
-	TargetGroup string
-	EntryNodes  []string
-	SrcRoots    []string
-	TargetSegs  []SegmentReport
-	SrcRows     uint64
-	SrcParts    int
+	Group             string
+	EntryStage        string
+	EntryTarget       string
+	TargetGroup       string
+	EntryNodes        []string
+	SrcRoots          []string
+	TargetSegs        []SegmentReport
+	ValueMismatches   []IndexModeValueMismatch
+	SegAligns         []IndexModeSegAlign
+	SrcRows           uint64
+	SrcDocs           uint64
+	TgtDocs           uint64
+	SrcDistinctIDs    uint64
+	TgtDistinctIDs    uint64
+	ExpectDistinctIDs uint64
+	SrcParts          int
+	IndexMode         bool
+}
+
+// IndexModeValueMismatch is one (seriesID, timestamp) key whose value digest did
+// not reconcile between source and target during an index-mode verify. The
+// reconciliation unit is (Segment, SeriesID) — the unit the runtime upserts
+// index-mode data on. Kind is one of "missing" (in source, absent in target),
+// "extra" (in target, absent in source) or "tampered" (present on both sides but
+// the digests differ — a changed value or a dropped index-only field).
+type IndexModeValueMismatch struct {
+	Kind     string
+	Segment  string
+	SeriesID uint64
+}
+
+// IndexModeSegAlign reports one target segment's alignment during an index-mode
+// verify: how many source segments fed it (SrcSegs), how many source docs routed
+// in (SrcDocs) and how many target docs survived (TgtDocs). Aligned is true only
+// when exactly one source segment fed the target and no docs collapsed (a 1:1
+// byte-copy candidate); otherwise the segment was merged or split-into.
+type IndexModeSegAlign struct {
+	Segment string
+	SrcSegs int
+	SrcDocs uint64
+	TgtDocs uint64
+	Aligned bool
 }
 
 // VerifyShardParts reads <shardDir>'s newest `.snp`, confirms every
@@ -127,24 +164,25 @@ func VerifyShardParts(shardDir string, fileSystem fs.FileSystem) (uint64, int, e
 		if parseErr != nil {
 			return 0, 0, fmt.Errorf("parse partID %q: %w", name, parseErr)
 		}
-		var rows uint64
-		var openErr error
-		func() {
-			defer func() {
-				if r := recover(); r != nil {
-					openErr = fmt.Errorf("open part %s panicked: %v", name, r)
-				}
-			}()
-			p := mustOpenFilePart(partID, shardDir, fileSystem)
-			defer p.close()
-			rows = p.partMetadata.TotalCount
-		}()
+		rows, openErr := partRowCount(partID, name, shardDir, fileSystem)
 		if openErr != nil {
 			return 0, 0, openErr
 		}
 		rowsTotal += rows
 	}
 	return rowsTotal, len(partNames), nil
+}
+
+// partRowCount opens one part with panic recovery and returns its TotalCount.
+func partRowCount(partID uint64, name, shardDir string, fileSystem fs.FileSystem) (rows uint64, err error) {
+	defer func() {
+		if r := recover(); r != nil {
+			err = fmt.Errorf("open part %s panicked: %v", name, r)
+		}
+	}()
+	p := mustOpenFilePart(partID, shardDir, fileSystem)
+	defer p.close()
+	return p.partMetadata.TotalCount, nil
 }
 
 // CountBlugeDocs opens the bluge index at path read-only and returns the
@@ -287,7 +325,7 @@ func SumGroupSourceRows(srcRoots []string, fileSystem fs.FileSystem) (uint64, in
 					continue
 				}
 				shardDir := filepath.Join(segDir, sh.Name())
-				rows, parts, partsErr := VerifyShardParts(shardDir, fileSystem)
+				rows, parts, partsErr := sumShardPartsOnDisk(shardDir, fileSystem)
 				if partsErr != nil {
 					return 0, 0, fmt.Errorf("src shard %s: %w", shardDir, partsErr)
 				}
@@ -299,103 +337,30 @@ func SumGroupSourceRows(srcRoots []string, fileSystem fs.FileSystem) (uint64, in
 	return totalRows, totalParts, nil
 }
 
-// MigrationVerify drives a `migration verify` run end-to-end against a
-// DirectCopyConfig. For every (entry, group) it:
-//
-//  1. Resolves the source roots via the same plan→cfg helper that
-//     `copy` uses (so verify always sees what copy saw).
-//  2. Sums source row counts by opening each `src/seg-*/shard-*/<partID>/`.
-//  3. Enumerates `target/seg-*/`, opens every part + per-seg union sidx,
-//     and flags whether each seg's start time is grid-aligned.
-//  4. Builds an EntryGroupReport and hands it to `onReport` IMMEDIATELY
-//     (callback fires inside the loop, not after) so the operator sees
-//     numbers as they arrive — important on cold-tier scans where a
-//     single (entry, group) can take minutes to finish.
-//
-// The function is read-only. Errors returned here mean "I could not
-// read this PVC at all" (bad path, permission, broken FS); per-(entry,
-// group) data failures are surfaced through the report itself, never
-// suppress the callback for sibling pairs.
-//
-// Pairs with empty source AND empty target are skipped (no callback).
-func MigrationVerify(ctx context.Context, cfg DirectCopyConfig, onReport func(EntryGroupReport)) error {
-	if err := validateDirectCopyConfig(&cfg); err != nil {
-		return err
-	}
-	//nolint:contextcheck // bluge reader.Search inside walkSchemaPropertyShard already uses its own context.
-	resourceOpts, err := loadGroupResourceOptsFromSchema(cfg.BackupDir, cfg.Date, cfg.SchemaPropertyPath, cfg.Groups)
+// sumShardPartsOnDisk pattern-scans <shardDir>/<partID> dirs — the same
+// discovery the copy path uses; source shards may lack a migration-written
+// .snp — and sums their TotalCount.
+func sumShardPartsOnDisk(shardDir string, fileSystem fs.FileSystem) (uint64, int, error) {
+	entries, err := os.ReadDir(shardDir)
 	if err != nil {
-		return fmt.Errorf("load group resource opts: %w", err)
+		return 0, 0, fmt.Errorf("read shard: %w", err)
 	}
-
-	fileSystem := fs.NewLocalFileSystem()
-	for entryIdx, entry := range cfg.Entries {
-		if ctx.Err() != nil {
-			return ctx.Err()
+	var rowsTotal uint64
+	parts := 0
+	for _, e := range entries {
+		if !e.IsDir() || !directCopyPartDirPattern.MatchString(e.Name()) {
+			continue
 		}
-		entryTag := fmt.Sprintf("entry [%d/%d]", entryIdx+1, len(cfg.Entries))
-		for _, group := range cfg.Groups {
-			if ctx.Err() != nil {
-				return ctx.Err()
-			}
-			opts, ok := resourceOpts[group]
-			if !ok || opts == nil {
-				return fmt.Errorf("%s group %s: ResourceOpts not found in backup schema-property catalog", entryTag, group)
-			}
-			ir, irErr := resolveStageInterval(opts, entry.Stage)
-			if irErr != nil {
-				return fmt.Errorf("%s stage=%s group %s: %w", entryTag, entry.Stage, group, irErr)
-			}
-
-			srcRoots := resolveEntrySrcRoots(cfg, entry, group)
-			targetGroup := filepath.Join(entry.Target, group)
-			if len(srcRoots) == 0 {
-				// Confirm whether the target carries any parts so the
-				// operator can still see them (rare but possible after
-				// a partial copy). Empty src + empty tgt is silenced.
-				//nolint:contextcheck // bluge reader.Search inside CountBlugeDocs already uses its own context.
-				segs, segErr := EnumerateGroupTarget(targetGroup, ir, fileSystem)
-				if segErr != nil {
-					return fmt.Errorf("%s stage=%s group %s: target: %w", entryTag, entry.Stage, group, segErr)
-				}
-				if len(segs) == 0 {
-					continue
-				}
-				onReport(EntryGroupReport{
-					Group:       group,
-					EntryStage:  entry.Stage,
-					EntryTarget: entry.Target,
-					EntryNodes:  entry.Nodes,
-					SrcRoots:    nil,
-					TargetGroup: targetGroup,
-					TargetSegs:  segs,
-				})
-				continue
-			}
-
-			srcRows, srcParts, srcErr := SumGroupSourceRows(srcRoots, fileSystem)
-			if srcErr != nil {
-				return fmt.Errorf("%s stage=%s group %s: src: %w", entryTag, entry.Stage, group, srcErr)
-			}
-
-			//nolint:contextcheck // bluge reader.Search inside CountBlugeDocs already uses its own context.
-			segs, segErr := EnumerateGroupTarget(targetGroup, ir, fileSystem)
-			if segErr != nil {
-				return fmt.Errorf("%s stage=%s group %s: target: %w", entryTag, entry.Stage, group, segErr)
-			}
-
-			onReport(EntryGroupReport{
-				Group:       group,
-				EntryStage:  entry.Stage,
-				EntryTarget: entry.Target,
-				EntryNodes:  entry.Nodes,
-				SrcRoots:    srcRoots,
-				SrcRows:     srcRows,
-				SrcParts:    srcParts,
-				TargetGroup: targetGroup,
-				TargetSegs:  segs,
-			})
+		partID, parseErr := strconv.ParseUint(e.Name(), 16, 64)
+		if parseErr != nil {
+			return 0, 0, fmt.Errorf("parse partID %q: %w", e.Name(), parseErr)
 		}
+		rows, openErr := partRowCount(partID, e.Name(), shardDir, fileSystem)
+		if openErr != nil {
+			return 0, 0, openErr
+		}
+		rowsTotal += rows
+		parts++
 	}
-	return nil
+	return rowsTotal, parts, nil
 }

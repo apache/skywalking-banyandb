@@ -849,6 +849,124 @@ func (bch *blockCursorHeap) merge(ctx context.Context, batchSize int, resultsCh 
 	return nil
 }
 
+func (bch *blockCursorHeap) mergeSync(ctx context.Context, batchSize int, metrics *batchMetrics) ([]*QueryResponse, error) {
+	if !bch.initialized || bch.Len() == 0 {
+		return nil, nil
+	}
+
+	step := -1
+	if bch.asc {
+		step = 1
+	}
+
+	var results []*QueryResponse
+	batch := &QueryResponse{
+		Keys:    make([]int64, 0),
+		Data:    make([][]byte, 0),
+		SIDs:    make([]common.SeriesID, 0),
+		PartIDs: make([]uint64, 0),
+	}
+	seenData := make(map[uint64][][]byte)
+
+	for bch.Len() > 0 {
+		if ctxErr := ctx.Err(); ctxErr != nil {
+			return nil, ctxErr
+		}
+		topBC := bch.bcc[0]
+		if topBC.idx < 0 || topBC.idx >= len(topBC.userKeys) {
+			heap.Pop(bch)
+			continue
+		}
+
+		currentData := topBC.data[topBC.idx]
+		h := convert.Hash(currentData)
+		bucket := seenData[h]
+		duplicate := false
+		for _, existing := range bucket {
+			if bytes.Equal(existing, currentData) {
+				duplicate = true
+				break
+			}
+		}
+		if !duplicate && topBC.copyTo(batch) {
+			seenData[h] = append(bucket, currentData)
+		}
+
+		topBC.idx += step
+		if bch.asc {
+			if topBC.idx >= len(topBC.userKeys) {
+				heap.Pop(bch)
+			} else {
+				heap.Fix(bch, 0)
+			}
+		} else {
+			if topBC.idx < 0 {
+				heap.Pop(bch)
+			} else {
+				heap.Fix(bch, 0)
+			}
+		}
+
+		if batchSize > 0 && batch.Len() >= batchSize {
+			if metrics != nil {
+				metrics.record(batch)
+			}
+			results = append(results, batch)
+			batch = &QueryResponse{
+				Keys:    make([]int64, 0),
+				Data:    make([][]byte, 0),
+				SIDs:    make([]common.SeriesID, 0),
+				PartIDs: make([]uint64, 0),
+			}
+		}
+	}
+
+	if batch.Len() > 0 {
+		if metrics != nil {
+			metrics.record(batch)
+		}
+		results = append(results, batch)
+	}
+	return results, nil
+}
+
+// distinctDataCounter accumulates distinct data values (= trace IDs) across sidx
+// merge chunks using hash buckets with collision checks. mergeSync dedups data
+// only within a single batch, so the sync query loop uses this to count distinct
+// results across batches and bound scanning the same way the streaming consumer
+// terminates on distinct-trace count.
+type distinctDataCounter struct {
+	seen  map[uint64][][]byte
+	count int
+}
+
+func newDistinctDataCounter() *distinctDataCounter {
+	return &distinctDataCounter{seen: make(map[uint64][][]byte)}
+}
+
+// add records every data value in chunk and returns the running distinct count.
+func (d *distinctDataCounter) add(chunk *QueryResponse) int {
+	if chunk == nil {
+		return d.count
+	}
+	for _, data := range chunk.Data {
+		h := convert.Hash(data)
+		bucket := d.seen[h]
+		duplicate := false
+		for _, existing := range bucket {
+			if bytes.Equal(existing, data) {
+				duplicate = true
+				break
+			}
+		}
+		if !duplicate {
+			d.seen[h] = append(bucket, data)
+			d.count++
+		}
+	}
+	return d.count
+}
+
 var blockCursorHeapPool = pool.Register[*blockCursorHeap]("sidx-blockCursorHeap")
 
 func generateBlockCursorHeap(asc bool) *blockCursorHeap {

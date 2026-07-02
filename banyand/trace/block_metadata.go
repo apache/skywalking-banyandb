@@ -18,6 +18,7 @@
 package trace
 
 import (
+	"bytes"
 	"fmt"
 	"maps"
 	"sort"
@@ -265,6 +266,7 @@ func unmarshalBlockMetadata(dst []blockMetadata, src []byte, tagType map[string]
 			dst = append(dst, blockMetadata{})
 		}
 		bm := &dst[len(dst)-1]
+		bm.reset()
 		tail, err := bm.unmarshal(src, tagType)
 		if err != nil {
 			return dstOrig, fmt.Errorf("cannot unmarshal blockMetadata entries: %w", err)
@@ -278,6 +280,80 @@ func unmarshalBlockMetadata(dst []blockMetadata, src []byte, tagType map[string]
 			}
 		}
 		pre = bm
+	}
+	return dst, nil
+}
+
+// skipBlockMetadataAfterTraceID advances src — positioned immediately after a
+// blockMetadata entry's traceID — past the entry's remaining fields without allocating
+// its tag map. It mirrors the field order of blockMetadata.marshal after the traceID, so
+// it consumes precisely the rest of one entry.
+func skipBlockMetadataAfterTraceID(src []byte) ([]byte, error) {
+	src, _ = encoding.BytesToVarUint64(src) // uncompressedSpanSizeBytes
+	src, _ = encoding.BytesToVarUint64(src) // count
+	src, _ = encoding.BytesToVarUint64(src) // spans.offset
+	src, _ = encoding.BytesToVarUint64(src) // spans.size
+	var tagCount uint64
+	src, tagCount = encoding.BytesToVarUint64(src)
+	for i := uint64(0); i < tagCount; i++ {
+		var err error
+		src, _, err = encoding.DecodeBytes(src) // tag name
+		if err != nil {
+			return nil, fmt.Errorf("cannot skip tag name: %w", err)
+		}
+		src, _ = encoding.BytesToVarUint64(src) // dataBlock.offset
+		src, _ = encoding.BytesToVarUint64(src) // dataBlock.size
+	}
+	return src, nil
+}
+
+// unmarshalBlockMetadataFiltered decodes only the blockMetadata entries in src whose
+// traceID appears in wanted, cheaply skipping the rest. Both the src entries and wanted
+// are sorted by traceID, so a single merge-walk over them suffices. The result is
+// equivalent to filtering unmarshalBlockMetadata's output to entries whose traceID is in
+// wanted, but it avoids building the tag map for skipped entries — the dominant cost when
+// only a few of the granule's entries are requested (e.g. a trace-id point lookup). Each
+// entry's traceID is decoded once up front to decide; matched entries are then fully
+// decoded, so the overhead on a full scan (every entry matched) is one extra traceID
+// decode per entry and no extra allocation.
+func unmarshalBlockMetadataFiltered(dst []blockMetadata, src []byte, tagType map[string]pbv1.ValueType, wanted []string) ([]blockMetadata, error) {
+	dstOrig := dst
+	wantIdx := 0
+	var pre *blockMetadata
+	for len(src) > 0 && wantIdx < len(wanted) {
+		rest, traceID, err := encoding.DecodeBytes(src)
+		if err != nil {
+			return dstOrig, fmt.Errorf("cannot unmarshal traceID: %w", err)
+		}
+		for wantIdx < len(wanted) && bytes.Compare(convert.StringToBytes(wanted[wantIdx]), traceID) < 0 {
+			wantIdx++
+		}
+		if wantIdx < len(wanted) && bytes.Equal(convert.StringToBytes(wanted[wantIdx]), traceID) {
+			if len(dst) < cap(dst) {
+				dst = dst[:len(dst)+1]
+			} else {
+				dst = append(dst, blockMetadata{})
+			}
+			bm := &dst[len(dst)-1]
+			bm.reset()
+			tail, uErr := bm.unmarshal(src, tagType)
+			if uErr != nil {
+				return dstOrig, fmt.Errorf("cannot unmarshal blockMetadata entries: %w", uErr)
+			}
+			if pre != nil {
+				if vErr := validateBlockMetadataOrder(pre, bm); vErr != nil {
+					return dstOrig, vErr
+				}
+			}
+			pre = bm
+			src = tail
+			continue
+		}
+		tail, sErr := skipBlockMetadataAfterTraceID(rest)
+		if sErr != nil {
+			return dstOrig, fmt.Errorf("cannot skip blockMetadata entry: %w", sErr)
+		}
+		src = tail
 	}
 	return dst, nil
 }

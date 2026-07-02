@@ -171,6 +171,11 @@ var _ = ginkgo.Describe("Publish and Broadcast", func() {
 			p.OnAddOrUpdate(node1)
 			node2 := getDataNode("node2", addr2)
 			p.OnAddOrUpdate(node2)
+			// Wait for both nodes to finish connecting before publishing; otherwise the
+			// first Publish can race the async connection setup and fail to get a client.
+			gomega.Eventually(func() int {
+				return p.connMgr.ActiveCount()
+			}, flags.EventuallyTimeout).Should(gomega.Equal(2))
 
 			bp := p.NewBatchPublisher(15 * time.Second)
 			ctx := context.TODO()

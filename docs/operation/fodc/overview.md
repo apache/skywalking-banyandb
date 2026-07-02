@@ -69,7 +69,7 @@ Key characteristics:
                  |  - Cluster topology view                |
 External         |  - Aggregated metrics (/metrics         |
 Clients &  <---- |    and /metrics-windows)                |
-Ecosystem        |  - Config view (/cluster/config)        |
+Ecosystem        |  - Lifecycle view (/cluster/lifecycle)  |
                  |  - On-demand control APIs               |
                  +-----------------^-----------------------+
                                    |
@@ -145,16 +145,16 @@ Each FODC Agent exposes a **Prometheus-compatible** endpoint:
 
 ### Proxy Metric Exposure
 
-The FODC Proxy provides aggregated / enriched metric endpoints:
+The FODC Proxy aggregates the metrics of **all** registered agents and re-exposes them through two endpoints. Both accept optional `role` and `pod_name` query parameters to scope the result to a subset of nodes:
 
 - `GET /metrics`
-    - Proxy’s own metrics (health, number of agents, RPC latency, etc.)
+    - Returns the **aggregated, latest** per-node metrics from every agent in **Prometheus text exposition format** (`Content-Type: text/plain; version=0.0.4`).
+    - On each request the proxy collects the current sample from the agents on demand, then concatenates them — so scraping the proxy once yields every node's series. This is the **single scrape target** for a Prometheus-based setup; per-node identity is carried in the `pod_name` and `container_name` labels (see [Observability › Metrics Providers](../observability/providers.md)).
+    - This endpoint exposes the aggregated node metrics, **not** a proxy-only view; the proxy's own health and agent counts are served separately by `GET /health` (status, online/total agents, uptime).
 - `GET /metrics-windows`
-    - Returns metrics **within the maintained time window** for all known agents
-    - Includes **additional node metadata**, such as:
-        - Node role (`liaison`, `datanode-hot`, `datanode-warm`, `datanode-cold`, etc.)
-        - Node IDs and cluster membership
-        - Location / shard information (if available)
+    - Returns metrics as **JSON** — an array of time series, each with `name`, `description`, `labels`, `agent_id`, `pod_name`, and a time-sorted `data` array of `{timestamp, value}` points.
+    - When **both** `start_time` and `end_time` (RFC3339) are supplied, it returns the samples held in the agents' in-memory sliding window for that range; otherwise it falls back to the latest sample (the same data as `/metrics`, in JSON form).
+    - Each series carries whatever labels the underlying metric has (including `node_role` and `container_name`); richer cluster metadata such as node IDs, membership, and roles is served by `GET /cluster/topology`. This endpoint is intended for short-term trend queries and incident triage, **not** as a Prometheus scrape target.
 
 This makes FODC a **drop-in component** for Prometheus-based ecosystems, while preserving richer semantic context about each node.
 
@@ -173,20 +173,18 @@ The FODC Proxy maintains an up-to-date view of cluster topology based on **Agent
 
 ### Topology & Status API
 
-The Proxy exposes a unified cluster discovery endpoint:
+The Proxy exposes a cluster discovery endpoint:
 
-- `GET /cluster`
-    - Returns the list of all registered nodes
-    - Includes:
-        - Node identity (ID, name, address)
-        - Role:
-            - `liaison`
-            - `datanode-hot`
-            - `datanode-warm`
-            - `datanode-cold`
-            - (extensible for future roles)
-        - Agent status (online/offline, last heartbeat time)
-        - Key runtime indicators (optional: load, health, etc.)
+- `GET /cluster/topology`
+    - Triggers a topology collection across all registered agents and returns the merged snapshot as JSON: `{ "nodes": [...], "calls": [...] }`.
+    - Each `nodes` entry carries:
+        - Node identity — `metadata.name` and `grpc_address`
+        - `labels` — e.g. `pod_name` and `type` (`hot` / `warm` / `cold`)
+        - `roles` — role-name strings such as `ROLE_META`, `ROLE_DATA`, `ROLE_LIAISON` (extensible for future roles)
+        - Agent `status` (online/offline) and `last_heartbeat`
+    - `calls` describes the node-to-node call graph reported by the agents (route-table membership, not data flow).
+
+See [Proxy APIs and CLI Flags](./apis.md) for the full response schema. To turn this node inventory into a directed, weighted topology of the actual data flow — joining it with the queue metrics for per-edge throughput, latency, and errors — see [Cluster Topology Rendering](./topology.md).
 
 This simplifies integration with:
 
@@ -196,35 +194,30 @@ This simplifies integration with:
 
 ---
 
-## Node Configuration Collection
+## Cluster Lifecycle and Group Information
 
-FODC also collects and exposes static and dynamic configuration for each node.
+Beyond topology, the Proxy aggregates per-group lifecycle data and per-pod lifecycle reports from the agents.
 
-### What Is Collected
+### Lifecycle API
 
-Typical configuration categories include:
-
-- **Startup parameters**
-    - Command-line flags
-    - Environment variables (where permitted)
-- **Affected configurations**
-    - Configurations used by the database node in the runtime.
-
-### Configuration API
-
-The FODC Proxy aggregates configuration from all Agents and exposes it via:
-
-- `GET /cluster/config`
-    - Returns configuration for all nodes in the cluster
-- Potential filters (implementation-dependent):
-    - `GET /cluster/config?node_id=<id>`
-    - `GET /cluster/config?role=datanode-hot`
+- `GET /cluster/lifecycle`
+    - Triggers lifecycle-data collection from all agents that support the lifecycle stream and returns JSON with two sections:
+        - `groups` — group lifecycle information (group name, catalog type, resource options such as shard count / segment interval / TTL, and data info), collected from the first agent that provides it (typically the liaison node).
+        - `lifecycle_statuses` — per-pod lifecycle reports, i.e. the JSON report files read from each agent's lifecycle report directory.
+    - Agents that do not support the lifecycle stream are silently skipped.
 
 This allows:
 
-- Quickly verifying configuration consistency across nodes and tiers
-- Comparing pre- and post-incident configuration states
-- Supporting automated configuration audits and drift detection
+- Verifying group / resource-option consistency across the cluster
+- Reviewing lifecycle (rotation / TTL / migration) reports per node
+- Correlating group settings with observed behavior during incident triage
+
+### Crash Diagnostics API
+
+- `GET /diagnostics`
+    - Aggregates crash diagnostic records (structured panic records and on-disk crash artifacts) from all connected agents, with optional `role` and `pod_name` filters.
+
+See [Proxy APIs and CLI Flags](./apis.md) for the full request/response schemas of both endpoints.
 
 ---
 

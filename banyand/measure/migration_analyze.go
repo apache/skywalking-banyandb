@@ -48,12 +48,29 @@ import (
 type AnalyzeGroupResult struct {
 	SamplesByVersion   []AnalyzeKeyMulti
 	PerPartDups        []AnalyzePerPart
+	ValueConflicts     []AnalyzeValueConflict
 	TotalRows          uint64
 	UniqueKeys         uint64
 	DuplicateRows      uint64
 	PerPartDupRows     uint64
 	KeysWithDuplicates uint64 // count of (sid, ts) keys that appear in >1 physical rows
+	ValueConflictKeys  uint64 // count of (sid, ts) keys with >1 row whose value digests differ
 	PartsScanned       int
+}
+
+// AnalyzeValueConflict is one (seriesID, timestamp) key that appears in more
+// than one index-mode sidx document whose value digests differ. Unlike a plain
+// version duplicate (where the value legitimately evolves with the version), a
+// value conflict flags documents that share the SAME key yet carry diverging
+// data values — the signal used to separate normal version dedup from an
+// abnormal value inconsistency or dropped field. Digests are version-EXCLUDED
+// data digests, so docs differing only by version digest identically and are not
+// reported as a conflict.
+type AnalyzeValueConflict struct {
+	Versions  []int64
+	Digests   []uint64
+	SeriesID  uint64
+	Timestamp int64
 }
 
 // AnalyzePerPart is one row in the per-part dup breakdown — non-zero
@@ -142,13 +159,6 @@ func (t *pathTable) get(i uint32) string {
 type analyzeRowSrc struct {
 	version int64
 	pathIdx uint32
-}
-
-// ResolveEntrySrcRoots is the exported wrapper around resolveEntrySrcRoots
-// so cmd/migration can reach the same plan→roots logic the copy + verify
-// pipelines use internally.
-func ResolveEntrySrcRoots(cfg DirectCopyConfig, entry DirectCopyEntry, group string) []string {
-	return resolveEntrySrcRoots(cfg, entry, group)
 }
 
 // AnalyzeMissingRow names one row that exists in src but not in tgt

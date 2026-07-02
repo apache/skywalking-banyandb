@@ -39,6 +39,7 @@ import (
 	"github.com/apache/skywalking-banyandb/fodc/agent/internal/ktm"
 	"github.com/apache/skywalking-banyandb/fodc/agent/internal/lifecycle"
 	fodcmetrics "github.com/apache/skywalking-banyandb/fodc/agent/internal/metrics"
+	"github.com/apache/skywalking-banyandb/fodc/agent/internal/pressureprofiler"
 	"github.com/apache/skywalking-banyandb/fodc/agent/internal/proxy"
 	"github.com/apache/skywalking-banyandb/fodc/agent/internal/server"
 	"github.com/apache/skywalking-banyandb/fodc/agent/internal/watchdog"
@@ -61,6 +62,13 @@ const (
 	defaultReconnectInterval              = 5 * time.Second
 	defaultClusterStatePollInterval       = 30 * time.Second
 	defaultMaxDiagnosisMemoryUsagePercent = 5
+
+	defaultPressureTriggerPercent = 75
+	defaultPressurePprofPort      = "6060"
+	defaultPressureCooldown       = 5 * time.Minute
+	defaultPressureDir            = "/tmp/pressure-profiles"
+	defaultPressureMaxArtifacts   = 16
+	defaultPressureMaxDiskBytes   = 512 * 1024 * 1024
 )
 
 var (
@@ -84,6 +92,13 @@ var (
 	lifecyclePort                      int
 	lifecycleReportDir                 string
 	lifecycleCacheTTL                  time.Duration
+	pressureProfilerEnabled            bool
+	pressureTriggerPercent             int
+	pressurePprofPort                  string
+	pressureCooldown                   time.Duration
+	pressureDir                        string
+	pressureMaxArtifacts               int
+	pressureMaxDiskBytes               int64
 	rootCmd                            = &cobra.Command{
 		Use:     "fodc",
 		Short:   "First Occurrence Data Collection (FODC) agent",
@@ -139,6 +154,20 @@ func init() {
 		"Directory where lifecycle sidecar writes report files")
 	rootCmd.Flags().DurationVar(&lifecycleCacheTTL, "lifecycle-cache-ttl", 10*time.Minute,
 		"TTL for cached lifecycle data. After expiry, the next collection call refreshes the cache")
+	rootCmd.Flags().BoolVar(&pressureProfilerEnabled, "pressure-profiler-enabled", true,
+		"Enable automatic heap+goroutine pprof capture when the monitored container's RSS approaches its cgroup memory limit")
+	rootCmd.Flags().IntVar(&pressureTriggerPercent, "pressure-profiler-trigger-percent", defaultPressureTriggerPercent,
+		"Capture when RSS / cgroup_max reaches this percentage (usage = process_resident_memory_bytes)")
+	rootCmd.Flags().StringVar(&pressurePprofPort, "pressure-profiler-pprof-port", defaultPressurePprofPort,
+		"Port of the monitored container's pprof endpoint to capture from")
+	rootCmd.Flags().DurationVar(&pressureCooldown, "pressure-profiler-cooldown", defaultPressureCooldown,
+		"Minimum interval between two pprof captures")
+	rootCmd.Flags().StringVar(&pressureDir, "pressure-profiler-dir", defaultPressureDir,
+		"Directory (absolute, on a writable volume) where captured profiles are stored")
+	rootCmd.Flags().IntVar(&pressureMaxArtifacts, "pressure-profiler-max-artifacts", defaultPressureMaxArtifacts,
+		"Maximum number of capture events to retain; the lowest-RSS events are evicted first")
+	rootCmd.Flags().Int64Var(&pressureMaxDiskBytes, "pressure-profiler-max-disk-bytes", defaultPressureMaxDiskBytes,
+		"Maximum total on-disk bytes for retained capture events (0 disables the disk bound)")
 }
 
 func calculateCapacity(log *logger.Logger) int64 {
@@ -273,11 +302,42 @@ func runFODC(_ *cobra.Command, _ []string) error {
 	var nodeRole string
 	var nodeLabels map[string]string
 	if clusterCollector != nil {
-		nodeRole, nodeLabels = clusterCollector.GetNodeInfo()
+		nodeRole, nodeLabels = clusterCollector.ResolveNodeRole(ctx)
 		log.Info().Str("node_role", nodeRole).Int("labels_count", len(nodeLabels)).Msg("Node info fetched")
 	}
 
 	wd := watchdog.NewWatchdogWithConfig(fr, metricsEndpoints, metricsPollInterval, nodeRole, podName, containerNames)
+	if clusterCollector != nil {
+		// Stamp the node role and labels live from the collector, which keeps resolving after
+		// startup, instead of the one-shot snapshot captured above.
+		wd.SetNodeInfoProvider(clusterCollector.GetNodeInfo)
+	}
+
+	var profileSource proxy.ProfileSource
+	if pressureProfilerEnabled {
+		roleProvider := func() string { return nodeRole }
+		if clusterCollector != nil {
+			roleProvider = func() string { role, _ := clusterCollector.GetNodeInfo(); return role }
+		}
+		pp, ppErr := pressureprofiler.New(pressureprofiler.Config{
+			Dir:            pressureDir,
+			PprofPort:      pressurePprofPort,
+			PodName:        podName,
+			RoleProvider:   roleProvider,
+			Cooldown:       pressureCooldown,
+			MaxDiskBytes:   pressureMaxDiskBytes,
+			TriggerPercent: pressureTriggerPercent,
+			MaxArtifacts:   pressureMaxArtifacts,
+		}, fr, prom.NewProvider(panicScope, reg), log)
+		if ppErr != nil {
+			cluster.StopCollector(clusterCollector)
+			_ = metricsServer.Stop(ctx)
+			return fmt.Errorf("failed to start pressure profiler: %w", ppErr)
+		}
+		// Drive evaluation off the watchdog's poll completion (same cadence, freshest values).
+		wd.AddPostPollHook(pp.OnPollComplete)
+		profileSource = pp
+	}
 
 	stopKTM := initializeKTM(ctx, log, fr)
 
@@ -310,7 +370,7 @@ func runFODC(_ *cobra.Command, _ []string) error {
 		}
 		return fmt.Errorf("failed to start metrics server: %w", startErr)
 	}
-	proxyClient := startProxyClient(ctx, log, fr, nodeRole, nodeLabels, clusterCollector, crashCollectionLister)
+	proxyClient := startProxyClient(ctx, log, fr, nodeRole, nodeLabels, clusterCollector, crashCollectionLister, profileSource)
 
 	sigCh := make(chan os.Signal, 1)
 	signal.Notify(sigCh, os.Interrupt, syscall.SIGTERM)
@@ -421,12 +481,15 @@ func validateFlags() error {
 	if maxFODCDiagnosisMemoryUsagePercent < 0 || maxFODCDiagnosisMemoryUsagePercent > 100 {
 		return fmt.Errorf("max-fodc-diagnosis-memory-usage-percentage must be between 0 and 100")
 	}
+	if pressureProfilerEnabled && (pressureTriggerPercent < 1 || pressureTriggerPercent > 100) {
+		return fmt.Errorf("pressure-profiler-trigger-percent must be between 1 and 100, got %d", pressureTriggerPercent)
+	}
 	return nil
 }
 
 func startProxyClient(ctx context.Context, log *logger.Logger, fr *flightrecorder.FlightRecorder,
 	nodeRole string, nodeLabels map[string]string, collector *cluster.Collector,
-	collectionLister crashcollector.CollectionLister,
+	collectionLister crashcollector.CollectionLister, profileSource proxy.ProfileSource,
 ) *proxy.Client {
 	if proxyAddr == "" || podName == "" || nodeRole == "" {
 		log.Info().Msg("Proxy client not started (missing: --proxy-addr, --pod-name, and --node-role)")
@@ -434,12 +497,15 @@ func startProxyClient(ctx context.Context, log *logger.Logger, fr *flightrecorde
 	}
 	var lifecycleCollector *lifecycle.Collector
 	if lifecyclePort > 0 {
-		grpcAddr := fmt.Sprintf("localhost:%d", lifecyclePort)
+		// Use the IPv4 loopback rather than "localhost" so the dial never resolves to the
+		// IPv6 loopback (::1), which fails with "cannot assign requested address" in pods
+		// without an IPv6 loopback.
+		grpcAddr := fmt.Sprintf("127.0.0.1:%d", lifecyclePort)
 		lifecycleCollector = lifecycle.NewCollector(log, grpcAddr, lifecycleReportDir, lifecycleCacheTTL)
 		log.Info().Str("grpc_addr", grpcAddr).Msg("Lifecycle collector initialized")
 	}
 	client := proxy.NewClient(proxyAddr, nodeRole, podName, containerNames, nodeLabels,
-		heartbeatInterval, reconnectInterval, fr, collector, lifecycleCollector, collectionLister, log)
+		heartbeatInterval, reconnectInterval, fr, collector, lifecycleCollector, collectionLister, profileSource, log)
 	panicdiag.GoWithRecovery(ctx, panicdiag.RecoveryOptions{
 		Component: "fodc-agent-proxy-client",
 		Logger:    log,

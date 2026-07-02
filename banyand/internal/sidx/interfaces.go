@@ -70,6 +70,8 @@ type SIDX interface {
 	// The returned QueryResponse channel contains ordered batches limited by req.MaxBatchSize
 	// unique Data elements (when positive). The error channel delivers any fatal execution error.
 	StreamingQuery(ctx context.Context, req QueryRequest) (<-chan *QueryResponse, <-chan error)
+	// QuerySync executes the query synchronously and returns all matching responses.
+	QuerySync(ctx context.Context, req QueryRequest) ([]*QueryResponse, error)
 	// ScanQuery executes a synchronous full scan query without requiring series IDs.
 	// It scans all blocks in parts sequentially and applies filters to each row.
 	// Returns a slice of QueryResponse objects containing all matching results.
@@ -81,8 +83,11 @@ type SIDX interface {
 	Close() error
 	// Flush flushes the SIDX instance to disk.
 	Flush(partIDsToFlush map[uint64]struct{}) (*FlusherIntroduction, error)
-	// Merge merges the specified parts into a new part.
-	Merge(closeCh <-chan struct{}, partIDstoMerge map[uint64]struct{}, newPartID uint64) (*MergerIntroduction, error)
+	// Merge merges the specified parts into a new part. keep is an optional
+	// opaque per-element predicate: when non-nil, an element is retained only if
+	// keep(data) returns true; nil means retain everything (the lossless bulk
+	// merge path). sidx never decodes data — the caller owns the encoding.
+	Merge(closeCh <-chan struct{}, partIDstoMerge map[uint64]struct{}, newPartID uint64, keep func([]byte) bool) (*MergerIntroduction, error)
 	// StreamingParts returns the streaming parts.
 	StreamingParts(partIDsToSync map[uint64]struct{}, group string, shardID uint32, name string) ([]queue.StreamingPartData, []func())
 	// PartPaths returns filesystem paths for the requested partIDs keyed by partID.
@@ -191,12 +196,10 @@ func (qr *QueryResponse) Validate() error {
 func (qr *QueryResponse) CopyFrom(other *QueryResponse) {
 	qr.Error = other.Error
 
-	// Copy parallel arrays
 	qr.Keys = append(qr.Keys[:0], other.Keys...)
 	qr.SIDs = append(qr.SIDs[:0], other.SIDs...)
 	qr.PartIDs = append(qr.PartIDs[:0], other.PartIDs...)
 
-	// Deep copy data
 	if cap(qr.Data) < len(other.Data) {
 		qr.Data = make([][]byte, len(other.Data))
 	} else {
@@ -206,35 +209,19 @@ func (qr *QueryResponse) CopyFrom(other *QueryResponse) {
 		qr.Data[i] = append(qr.Data[i][:0], data...)
 	}
 
-	// Copy metadata
 	qr.Metadata = other.Metadata
 }
 
 // Stats contains system statistics and performance metrics.
 type Stats struct {
-	// MemoryUsageBytes tracks current memory usage
 	MemoryUsageBytes int64
-
-	// DiskUsageBytes tracks current disk usage
-	DiskUsageBytes int64
-
-	// ElementCount tracks total number of elements
-	ElementCount int64
-
-	// PartCount tracks number of parts (memory + disk)
-	PartCount int64
-
-	// QueryCount tracks total queries executed
-	QueryCount atomic.Int64
-
-	// WriteCount tracks total write operations
-	WriteCount atomic.Int64
-
-	// LastFlushTime tracks when last flush occurred
-	LastFlushTime int64
-
-	// LastMergeTime tracks when last merge occurred
-	LastMergeTime int64
+	DiskUsageBytes   int64
+	ElementCount     int64
+	PartCount        int64
+	QueryCount       atomic.Int64
+	WriteCount       atomic.Int64
+	LastFlushTime    int64
+	LastMergeTime    int64
 }
 
 // ResponseMetadata provides query execution information for monitoring and debugging.
@@ -339,7 +326,6 @@ func (wr WriteRequest) Validate() error {
 	if len(wr.Data) == 0 {
 		return fmt.Errorf("data cannot be empty")
 	}
-	// Validate tags if present
 	for i, tag := range wr.Tags {
 		if tag.Name == "" {
 			return fmt.Errorf("tag[%d] name cannot be empty", i)
@@ -356,7 +342,6 @@ func (qr QueryRequest) Validate() error {
 	if qr.MaxBatchSize < 0 {
 		return fmt.Errorf("maxBatchSize cannot be negative")
 	}
-	// Validate key range
 	if qr.MinKey != nil && qr.MaxKey != nil && *qr.MinKey > *qr.MaxKey {
 		return fmt.Errorf("MinKey cannot be greater than MaxKey")
 	}
@@ -395,7 +380,6 @@ func (qr *QueryRequest) Reset() {
 
 // CopyFrom copies the QueryRequest from other to qr.
 func (qr *QueryRequest) CopyFrom(other *QueryRequest) {
-	// Deep copy for SeriesIDs if it's a slice
 	if other.SeriesIDs != nil {
 		qr.SeriesIDs = make([]common.SeriesID, len(other.SeriesIDs))
 		copy(qr.SeriesIDs, other.SeriesIDs)
@@ -406,7 +390,6 @@ func (qr *QueryRequest) CopyFrom(other *QueryRequest) {
 	qr.Filter = other.Filter
 	qr.Order = other.Order
 
-	// Deep copy if TagProjection is a slice
 	if other.TagProjection != nil {
 		qr.TagProjection = make([]model.TagProjection, len(other.TagProjection))
 		copy(qr.TagProjection, other.TagProjection)
@@ -416,7 +399,6 @@ func (qr *QueryRequest) CopyFrom(other *QueryRequest) {
 
 	qr.MaxBatchSize = other.MaxBatchSize
 
-	// Copy key range pointers
 	if other.MinKey != nil {
 		minKey := *other.MinKey
 		qr.MinKey = &minKey
@@ -443,101 +425,3 @@ func (qr *QueryRequest) CopyFrom(other *QueryRequest) {
 		qr.MaxTimestamp = nil
 	}
 }
-
-// Interface Usage Examples and Best Practices
-//
-// These examples demonstrate how the component interfaces work together and can be used
-// independently for testing, mocking, and modular implementations.
-
-// Example: Using Writer interface independently
-//
-//	writer := NewWriter(options)
-//	reqs := []WriteRequest{
-//		{SeriesID: 1, Key: 100, Data: []byte("data1")},
-//		{SeriesID: 1, Key: 101, Data: []byte("data2")},
-//	}
-//	if err := writer.Write(ctx, reqs); err != nil {
-//		log.Fatalf("write failed: %v", err)
-//	}
-
-// Example: Using StreamingQuery interface independently
-//
-//	querier := NewQuerier(options)
-//	req := QueryRequest{
-//		Name: "my-index",
-//		Filter: createKeyRangeFilter(100, 200),
-//		Order: &index.OrderBy{Sort: modelv1.Sort_SORT_ASC},
-//	}
-//	resultsCh, errCh := querier.StreamingQuery(ctx, req)
-//	for batch := range resultsCh {
-//		if batch.Error != nil {
-//			log.Printf("query execution error: %v", batch.Error)
-//		}
-//		// Process batch.Keys, batch.Data, batch.Tags, etc.
-//	}
-//	if err := <-errCh; err != nil {
-//		log.Fatalf("query failed: %v", err)
-//	}
-
-// Example: Interface composition in SIDX
-//
-//	type sidxImpl struct {
-//		writer  Writer
-//		querier Querier
-//		flusher Flusher
-//		merger  Merger
-//	}
-//
-//	func (s *sidxImpl) Write(ctx context.Context, reqs []WriteRequest) error {
-//		return s.writer.Write(ctx, reqs)
-//	}
-//
-//	func (s *sidxImpl) StreamingQuery(ctx context.Context, req QueryRequest) (<-chan *QueryResponse, <-chan error) {
-//		return s.querier.StreamingQuery(ctx, req)
-//	}
-//
-//	func (s *sidxImpl) Flush() error {
-//		return s.flusher.Flush()
-//	}
-//
-//	func (s *sidxImpl) Merge() error {
-//		return s.merger.Merge()
-//	}
-
-// Example: Mock implementations for testing
-//
-//	type mockWriter struct {
-//		writeFunc func(context.Context, []WriteRequest) error
-//	}
-//
-//	func (m *mockWriter) Write(ctx context.Context, reqs []WriteRequest) error {
-//		if m.writeFunc != nil {
-//			return m.writeFunc(ctx, reqs)
-//		}
-//		return nil
-//	}
-//
-//	// Test usage
-//	writer := &mockWriter{
-//		writeFunc: func(ctx context.Context, reqs []WriteRequest) error {
-//			// Custom test logic
-//			return nil
-//		},
-//	}
-
-//nolint:godot
-// Interface Design Principles.
-//
-// 1. **Single Responsibility**: Each interface has a focused, well-defined purpose.
-// 2. **Minimal Surface Area**: Interfaces expose only essential methods
-// 3. **Composability**: Interfaces can be combined to create larger systems
-// 4. **Testability**: Small interfaces are easy to mock and test
-// 5. **Modularity**: Implementations can be swapped independently
-// 6. **Documentation**: Clear contracts and usage examples
-//
-// Interface Decoupling Benefits:
-// - Independent testing of components
-// - Easy mocking for unit tests
-// - Flexible implementation strategies
-// - Clear separation of concerns
-// - Simplified dependency injection

@@ -19,11 +19,13 @@ package cluster
 
 import (
 	"context"
+	"fmt"
 	"testing"
 	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"google.golang.org/grpc"
 
 	commonv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/common/v1"
 	databasev1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/database/v1"
@@ -346,15 +348,15 @@ func TestCollector_GetNodeInfo_NoNode(t *testing.T) {
 	assert.Nil(t, nodeLabels)
 }
 
-func TestGenerateLifecycleAddrs(t *testing.T) {
+func TestGenerateClusterStateAddrsTable(t *testing.T) {
 	tests := []struct {
 		name     string
 		ports    []string
 		expected []string
 	}{
 		{"empty ports", []string{}, []string{}},
-		{"single port", []string{"17914"}, []string{"localhost:17914"}},
-		{"multiple ports", []string{"17914", "17915", "17916"}, []string{"localhost:17914", "localhost:17915", "localhost:17916"}},
+		{"single port", []string{"17914"}, []string{"127.0.0.1:17914"}},
+		{"multiple ports", []string{"17914", "17915", "17916"}, []string{"127.0.0.1:17914", "127.0.0.1:17915", "127.0.0.1:17916"}},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -766,6 +768,54 @@ func TestProcessClusterStates_EmptyPodName(t *testing.T) {
 	}
 }
 
+type fakeNodeQueryClient struct {
+	node      *databasev1.Node
+	failCount int
+	calls     int
+}
+
+func (f *fakeNodeQueryClient) GetCurrentNode(_ context.Context, _ *databasev1.GetCurrentNodeRequest,
+	_ ...grpc.CallOption,
+) (*databasev1.GetCurrentNodeResponse, error) {
+	f.calls++
+	if f.calls <= f.failCount {
+		return nil, fmt.Errorf("simulated unavailable on call %d", f.calls)
+	}
+	return &databasev1.GetCurrentNodeResponse{Node: f.node}, nil
+}
+
+func TestCollector_ResolveNodeRole_ResolvesAfterTransientFailure(t *testing.T) {
+	log := initTestLogger(t)
+	c := NewCollector(log, []string{"test"}, time.Second, "test-pod")
+	c.resolveBudget = 5 * time.Second
+	node := &databasev1.Node{
+		Metadata: &commonv1.Metadata{Name: "data-0"},
+		Roles:    []databasev1.Role{databasev1.Role_ROLE_DATA},
+	}
+	// fetchCurrentNodeFromEndpoint itself retries maxRetries(=3) times per poll, so
+	// failing the first 3 GetCurrentNode calls forces a second outer poll iteration.
+	fake := &fakeNodeQueryClient{node: node, failCount: maxRetries}
+	c.clients = []*endpointClient{{nodeQueryClient: fake, addr: "test"}}
+	role, _ := c.ResolveNodeRole(context.Background())
+	assert.Equal(t, databasev1.Role_name[int32(databasev1.Role_ROLE_DATA)], role)
+	assert.Greater(t, fake.calls, maxRetries)
+}
+
+func TestCollector_ResolveNodeRole_GivesUpWithinBudget(t *testing.T) {
+	log := initTestLogger(t)
+	c := NewCollector(log, []string{"test"}, time.Second, "test-pod")
+	c.resolveBudget = 500 * time.Millisecond
+	fake := &fakeNodeQueryClient{failCount: 1 << 30} // always fails
+	c.clients = []*endpointClient{{nodeQueryClient: fake, addr: "test"}}
+	start := time.Now()
+	role, _ := c.ResolveNodeRole(context.Background())
+	elapsed := time.Since(start)
+	assert.Equal(t, databasev1.Role_name[int32(databasev1.Role_ROLE_UNSPECIFIED)], role)
+	// Total runtime must stay bounded by the budget (plus slack for one in-flight gRPC
+	// attempt), proving the budget-scoped context actually caps the retry loop.
+	assert.Less(t, elapsed, c.resolveBudget+2*time.Second)
+}
+
 func TestProcessClusterStates_ComplexTopology(t *testing.T) {
 	log := initTestLogger(t)
 	collector := NewCollector(log, []string{"localhost:17914", "localhost:17915", "localhost:17916"}, 10*time.Second, "test-pod")
@@ -894,4 +944,12 @@ func TestProcessClusterStates_ComplexTopology(t *testing.T) {
 	for _, expectedCall := range expectedCalls {
 		assert.Contains(t, callMap, expectedCall, "Expected call %s to be present", expectedCall)
 	}
+}
+
+func TestGenerateClusterStateAddrs_UsesIPv4Loopback(t *testing.T) {
+	// Must use 127.0.0.1, not "localhost": the latter can resolve to ::1 and fail to dial
+	// in pods without an IPv6 loopback, leaving the node role/labels unresolved.
+	assert.Equal(t, []string{"127.0.0.1:17912", "127.0.0.1:17914"},
+		GenerateClusterStateAddrs([]string{"17912", "17914"}))
+	assert.Empty(t, GenerateClusterStateAddrs(nil))
 }

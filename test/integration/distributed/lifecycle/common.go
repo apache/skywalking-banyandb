@@ -51,6 +51,8 @@ type setupResult struct {
 	tenDaysBeforeNow          time.Time
 	stopFunc                  func()
 	dataAddr                  string
+	dataHTTPURL               string
+	warmHTTPURL               string
 	liaisonAddr               string
 	srcDir                    string
 	destDir                   string
@@ -75,10 +77,10 @@ var _ = ginkgo.SynchronizedBeforeSuite(func() []byte {
 	dfWriter := setup.NewDiscoveryFileWriter(tmpDir)
 	config := setup.PropertyClusterConfig(dfWriter)
 	ginkgo.By("Starting hot data node")
-	dataAddr, srcDir, closeDataNode0 := setup.DataNodeWithAddrAndDir(config, "--node-labels", "type=hot",
+	dataAddr, srcDir, dataHTTPURL, closeDataNode0 := setup.DataNodeWithAddrAndDir(config, "--node-labels", "type=hot",
 		"--measure-flush-timeout", "0s", "--stream-flush-timeout", "0s", "--trace-flush-timeout", "0s")
 	ginkgo.By("Starting warm data node")
-	_, destDir, closeDataNode1 := setup.DataNodeWithAddrAndDir(config, "--node-labels", "type=warm",
+	_, destDir, warmHTTPURL, closeDataNode1 := setup.DataNodeWithAddrAndDir(config, "--node-labels", "type=warm",
 		"--has-meta-role=false",
 		"--measure-flush-timeout", "0s", "--stream-flush-timeout", "0s", "--trace-flush-timeout", "0s")
 	setup.PreloadSchemaViaProperty(config, test_stream.LoadSchemaWithStages, test_measure.LoadSchemaWithStages,
@@ -104,6 +106,8 @@ var _ = ginkgo.SynchronizedBeforeSuite(func() []byte {
 	time.Sleep(flags.ConsistentlyTimeout)
 	result = setupResult{
 		dataAddr:                  dataAddr,
+		dataHTTPURL:               dataHTTPURL,
+		warmHTTPURL:               warmHTTPURL,
 		liaisonAddr:               liaisonAddr,
 		srcDir:                    srcDir,
 		destDir:                   destDir,
@@ -129,6 +133,8 @@ var _ = ginkgo.SynchronizedBeforeSuite(func() []byte {
 	caseslifecycle.SharedContext = helpers.LifecycleSharedContext{
 		LiaisonAddr:   result.liaisonAddr,
 		DataAddr:      result.dataAddr,
+		DataHTTPURL:   result.dataHTTPURL,
+		WarmHTTPURL:   result.warmHTTPURL,
 		Connection:    connection,
 		SrcDir:        result.srcDir,
 		DestDir:       result.destDir,

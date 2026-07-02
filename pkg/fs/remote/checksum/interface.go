@@ -29,4 +29,7 @@ type Verifier interface {
 
 	// ComputeAndWrap returns a reader that computes the checksum while reading.
 	ComputeAndWrap(r io.Reader) (wrappedReader io.Reader, getHash func() (string, error))
+
+	// Sum reads r to completion and returns the hex-encoded checksum of its contents.
+	Sum(r io.Reader) (string, error)
 }

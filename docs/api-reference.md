@@ -66,10 +66,15 @@
     - [IntervalRule](#banyandb-common-v1-IntervalRule)
     - [LifecycleStage](#banyandb-common-v1-LifecycleStage)
     - [Metadata](#banyandb-common-v1-Metadata)
+    - [Plugin](#banyandb-common-v1-Plugin)
     - [ResourceOpts](#banyandb-common-v1-ResourceOpts)
+    - [SamplerPlugin](#banyandb-common-v1-SamplerPlugin)
+    - [StageRule](#banyandb-common-v1-StageRule)
+    - [TracePipelineConfig](#banyandb-common-v1-TracePipelineConfig)
   
     - [Catalog](#banyandb-common-v1-Catalog)
     - [IntervalRule.Unit](#banyandb-common-v1-IntervalRule-Unit)
+    - [PipelineEvent](#banyandb-common-v1-PipelineEvent)
   
 - [banyandb/property/v1/property.proto](#banyandb_property_v1_property-proto)
     - [Property](#banyandb-property-v1-Property)
@@ -339,13 +344,19 @@
     - [CrashBreadcrumb.FieldsEntry](#banyandb-fodc-v1-CrashBreadcrumb-FieldsEntry)
     - [CrashPanicRecord](#banyandb-fodc-v1-CrashPanicRecord)
     - [CrashPanicRecord.ProcessMetadataEntry](#banyandb-fodc-v1-CrashPanicRecord-ProcessMetadataEntry)
+    - [FetchPressureProfile](#banyandb-fodc-v1-FetchPressureProfile)
     - [GroupLifecycleInfo](#banyandb-fodc-v1-GroupLifecycleInfo)
     - [InspectAllRequest](#banyandb-fodc-v1-InspectAllRequest)
     - [InspectAllResponse](#banyandb-fodc-v1-InspectAllResponse)
     - [LifecycleData](#banyandb-fodc-v1-LifecycleData)
     - [LifecycleReport](#banyandb-fodc-v1-LifecycleReport)
+    - [ListComplete](#banyandb-fodc-v1-ListComplete)
+    - [ListProfiles](#banyandb-fodc-v1-ListProfiles)
     - [Metric](#banyandb-fodc-v1-Metric)
     - [Metric.LabelsEntry](#banyandb-fodc-v1-Metric-LabelsEntry)
+    - [PressureProfileChunk](#banyandb-fodc-v1-PressureProfileChunk)
+    - [PressureProfileInfo](#banyandb-fodc-v1-PressureProfileInfo)
+    - [PressureProfileRecord](#banyandb-fodc-v1-PressureProfileRecord)
     - [RegisterAgentRequest](#banyandb-fodc-v1-RegisterAgentRequest)
     - [RegisterAgentRequest.LabelsEntry](#banyandb-fodc-v1-RegisterAgentRequest-LabelsEntry)
     - [RegisterAgentResponse](#banyandb-fodc-v1-RegisterAgentResponse)
@@ -357,7 +368,11 @@
     - [StreamLifecycleResponse](#banyandb-fodc-v1-StreamLifecycleResponse)
     - [StreamMetricsRequest](#banyandb-fodc-v1-StreamMetricsRequest)
     - [StreamMetricsResponse](#banyandb-fodc-v1-StreamMetricsResponse)
+    - [StreamPressureProfilesRequest](#banyandb-fodc-v1-StreamPressureProfilesRequest)
+    - [StreamPressureProfilesResponse](#banyandb-fodc-v1-StreamPressureProfilesResponse)
     - [Topology](#banyandb-fodc-v1-Topology)
+  
+    - [MetricType](#banyandb-fodc-v1-MetricType)
   
     - [FODCService](#banyandb-fodc-v1-FODCService)
     - [GroupLifecycleService](#banyandb-fodc-v1-GroupLifecycleService)
@@ -375,6 +390,22 @@
     - [DeleteExpiredSegmentsResponse](#banyandb-measure-v1-DeleteExpiredSegmentsResponse)
   
     - [MeasureService](#banyandb-measure-v1-MeasureService)
+  
+- [banyandb/pipeline/v1/trace_pipeline.proto](#banyandb_pipeline_v1_trace_pipeline-proto)
+    - [TracePipelineRegistryServiceCreateRequest](#banyandb-pipeline-v1-TracePipelineRegistryServiceCreateRequest)
+    - [TracePipelineRegistryServiceCreateResponse](#banyandb-pipeline-v1-TracePipelineRegistryServiceCreateResponse)
+    - [TracePipelineRegistryServiceDeleteRequest](#banyandb-pipeline-v1-TracePipelineRegistryServiceDeleteRequest)
+    - [TracePipelineRegistryServiceDeleteResponse](#banyandb-pipeline-v1-TracePipelineRegistryServiceDeleteResponse)
+    - [TracePipelineRegistryServiceExistRequest](#banyandb-pipeline-v1-TracePipelineRegistryServiceExistRequest)
+    - [TracePipelineRegistryServiceExistResponse](#banyandb-pipeline-v1-TracePipelineRegistryServiceExistResponse)
+    - [TracePipelineRegistryServiceGetRequest](#banyandb-pipeline-v1-TracePipelineRegistryServiceGetRequest)
+    - [TracePipelineRegistryServiceGetResponse](#banyandb-pipeline-v1-TracePipelineRegistryServiceGetResponse)
+    - [TracePipelineRegistryServiceListRequest](#banyandb-pipeline-v1-TracePipelineRegistryServiceListRequest)
+    - [TracePipelineRegistryServiceListResponse](#banyandb-pipeline-v1-TracePipelineRegistryServiceListResponse)
+    - [TracePipelineRegistryServiceUpdateRequest](#banyandb-pipeline-v1-TracePipelineRegistryServiceUpdateRequest)
+    - [TracePipelineRegistryServiceUpdateResponse](#banyandb-pipeline-v1-TracePipelineRegistryServiceUpdateResponse)
+  
+    - [TracePipelineRegistryService](#banyandb-pipeline-v1-TracePipelineRegistryService)
   
 - [banyandb/property/v1/gossip.proto](#banyandb_property_v1_gossip-proto)
     - [PropagationContext](#banyandb-property-v1-PropagationContext)
@@ -1326,6 +1357,7 @@ Group is an internal object for Group management
 | resource_opts | [ResourceOpts](#banyandb-common-v1-ResourceOpts) |  | resourceOpts indicates the structure of the underlying kv storage |
 | updated_at | [google.protobuf.Timestamp](#google-protobuf-Timestamp) |  | updated_at indicates when resources of the group are updated |
 | created_at | [google.protobuf.Timestamp](#google-protobuf-Timestamp) |  | created_at is the first-appearance timestamp; survives updates unchanged. |
+| pipeline | [TracePipelineConfig](#banyandb-common-v1-TracePipelineConfig) | optional | pipeline carries the optional group-scoped in-merge retention config. Absent or non-CATALOG_TRACE group means no sampler. |
 
 
 
@@ -1388,6 +1420,22 @@ Metadata is for multi-tenant, multi-model use
 
 
 
+<a name="banyandb-common-v1-Plugin"></a>
+
+### Plugin
+Plugin is one link in a pipeline&#39;s processing chain.
+
+
+| Field | Type | Label | Description |
+| ----- | ---- | ----- | ----------- |
+| name | [string](#string) |  | name is the operator-facing identity for this link. |
+| sampler | [SamplerPlugin](#banyandb-common-v1-SamplerPlugin) |  | sampler owns a keep/drop verdict over a vectorized batch of traces. |
+
+
+
+
+
+
 <a name="banyandb-common-v1-ResourceOpts"></a>
 
 ### ResourceOpts
@@ -1402,6 +1450,65 @@ Metadata is for multi-tenant, multi-model use
 | stages | [LifecycleStage](#banyandb-common-v1-LifecycleStage) | repeated | stages defines the ordered lifecycle stages. Data progresses through these stages sequentially. |
 | default_stages | [string](#string) | repeated | default_stages is the name of the default stage |
 | replicas | [uint32](#uint32) |  | replicas is the number of replicas. This is used to ensure high availability and fault tolerance. This is an optional field and defaults to 0. A value of 0 means no replicas, while a value of 1 means one primary shard and one replica. Higher values indicate more replicas. |
+
+
+
+
+
+
+<a name="banyandb-common-v1-SamplerPlugin"></a>
+
+### SamplerPlugin
+SamplerPlugin configures a user-supplied native Go plugin (.so) that owns a
+keep/drop verdict over a vectorized batch of traces.
+
+
+| Field | Type | Label | Description |
+| ----- | ---- | ----- | ----------- |
+| path | [string](#string) |  | path is the plugin .so filename, resolved within the data node&#39;s trusted plugin directory. |
+| symbol | [string](#string) |  | symbol is the constructor symbol the engine looks up; defaults to &#34;NewSampler&#34; if empty. |
+| abi_version | [uint32](#uint32) |  | abi_version is the ABI version the plugin was built against. |
+| config | [google.protobuf.Struct](#google-protobuf-Struct) |  | config is the plugin-defined configuration serialized to canonical JSON for the constructor. |
+
+
+
+
+
+
+<a name="banyandb-common-v1-StageRule"></a>
+
+### StageRule
+StageRule binds the pipeline to one lifecycle stage and declares that stage&#39;s
+retention plugin chain.
+
+
+| Field | Type | Label | Description |
+| ----- | ---- | ----- | ----------- |
+| stage | [string](#string) |  | stage is the stage name from the Group&#39;s ResourceOpts.stages. |
+| plugins | [Plugin](#banyandb-common-v1-Plugin) | repeated | plugins is the ordered retention chain for this stage. |
+
+
+
+
+
+
+<a name="banyandb-common-v1-TracePipelineConfig"></a>
+
+### TracePipelineConfig
+TracePipelineConfig is the group-scoped, name-less in-merge retention configuration.
+Identity comes from the carrying Group; there is one config per group by construction.
+
+
+| Field | Type | Label | Description |
+| ----- | ---- | ----- | ----------- |
+| enabled | [bool](#bool) |  | enabled activates the pipeline. |
+| plugins | [Plugin](#banyandb-common-v1-Plugin) | repeated | plugins is the ordered chain of plugins evaluated by enabled events. |
+| merge_grace | [google.protobuf.Duration](#google-protobuf-Duration) |  | merge_grace is the per-trace maturity window for the in-merge filter. Strictly positive if set; engine default 30s if unset. |
+| finalize_grace | [google.protobuf.Duration](#google-protobuf-Duration) |  | finalize_grace is the per-segment settling window for the scheduled finalization pass. Strictly positive if set; engine default 5m if unset. |
+| stages | [StageRule](#banyandb-common-v1-StageRule) | repeated | stages declares per-stage retention rules. |
+| schema_names | [string](#string) | repeated | schema_names lists explicit schema names to target within the Group. |
+| schema_name_regex | [string](#string) |  | schema_name_regex is an RE2 pattern matched against schema names. |
+| enabled_events | [PipelineEvent](#banyandb-common-v1-PipelineEvent) | repeated | enabled_events lists the pipeline-wide events to run. |
 
 
 
@@ -1435,6 +1542,19 @@ Metadata is for multi-tenant, multi-model use
 | UNIT_UNSPECIFIED | 0 |  |
 | UNIT_HOUR | 1 |  |
 | UNIT_DAY | 2 |  |
+
+
+
+<a name="banyandb-common-v1-PipelineEvent"></a>
+
+### PipelineEvent
+PipelineEvent identifies a pipeline-wide event that can be independently enabled.
+
+| Name | Number | Description |
+| ---- | ------ | ----------- |
+| PIPELINE_EVENT_UNSPECIFIED | 0 |  |
+| PIPELINE_EVENT_MERGE | 1 | In-merge filter during Hot-phase LSM compaction merges. |
+| PIPELINE_EVENT_FINALIZE | 2 | Tail-sampling gate at Hot-phase segment finalization. |
 
 
  
@@ -2485,6 +2605,10 @@ PartResult contains the result for individual parts.
 | body | [bytes](#bytes) |  |  |
 | batch_mod | [bool](#bool) |  |  |
 | version_info | [VersionInfo](#banyandb-cluster-v1-VersionInfo) |  | version_info contains version information |
+| group | [string](#string) |  | group is the business group associated with this message. |
+| sender_node | [string](#string) |  | sender_node is the BanyanDB node name of the sender; set only on the first message of a stream. |
+| sender_role | [string](#string) |  | sender_role is the role of the sender node; set only on the first message of a stream. |
+| sender_tier | [string](#string) |  | sender_tier is the storage tier label of the sender node; set only on the first message of a stream. |
 
 
 
@@ -2540,6 +2664,9 @@ SyncMetadata contains metadata for the sync operation.
 | topic | [string](#string) |  | Sync topic (stream-part-sync or measure-part-sync). |
 | timestamp | [int64](#int64) |  | Timestamp when sync started. |
 | total_parts | [uint32](#uint32) |  | Total number of parts being synced. |
+| sender_node | [string](#string) |  | sender_node is the BanyanDB node name of the sender. |
+| sender_role | [string](#string) |  | sender_role is the role of the sender node. |
+| sender_tier | [string](#string) |  | sender_tier is the storage tier label of the sender node. |
 
 
 
@@ -2662,6 +2789,7 @@ SyncStatus represents the status of a sync operation.
 | SYNC_STATUS_SYNC_COMPLETE | 5 | Entire sync operation completed successfully. |
 | SYNC_STATUS_VERSION_UNSUPPORTED | 6 | Version not supported for sync operations. |
 | SYNC_STATUS_FORMAT_VERSION_MISMATCH | 7 | File format version incompatible. |
+| SYNC_STATUS_SERVER_BUSY | 8 | Receiver under memory pressure; sender should back off and retry the whole part. |
 
 
  
@@ -5352,6 +5480,24 @@ Phase represents the current phase of the deletion task.
 
 
 
+<a name="banyandb-fodc-v1-FetchPressureProfile"></a>
+
+### FetchPressureProfile
+
+
+
+| Field | Type | Label | Description |
+| ----- | ---- | ----- | ----------- |
+| request_id | [string](#string) |  | proxy-generated per fetch; echoed back in every PressureProfileChunk to correlate |
+| profile_id | [string](#string) |  |  |
+| type | [string](#string) |  | &#34;heap&#34; | &#34;goroutine&#34; |
+| filepath | [string](#string) |  | the absolute path the agent reported in PressureProfileInfo.filepath; agent opens it AFTER validating it is within --pressure-profiler-dir |
+
+
+
+
+
+
 <a name="banyandb-fodc-v1-GroupLifecycleInfo"></a>
 
 ### GroupLifecycleInfo
@@ -5428,6 +5574,38 @@ Phase represents the current phase of the deletion task.
 
 
 
+<a name="banyandb-fodc-v1-ListComplete"></a>
+
+### ListComplete
+Agent -&gt; Proxy: sent once after all records for a ListProfiles request have been
+streamed (including the zero-record case), so the proxy knows the agent is done
+without waiting out a fixed window.
+
+
+| Field | Type | Label | Description |
+| ----- | ---- | ----- | ----------- |
+| request_id | [string](#string) |  | echoes ListProfiles.request_id |
+
+
+
+
+
+
+<a name="banyandb-fodc-v1-ListProfiles"></a>
+
+### ListProfiles
+Proxy -&gt; Agent: stream all capture-event metadata for this request id.
+
+
+| Field | Type | Label | Description |
+| ----- | ---- | ----- | ----------- |
+| request_id | [string](#string) |  | proxy-generated per list; echoed back in ListComplete to correlate |
+
+
+
+
+
+
 <a name="banyandb-fodc-v1-Metric"></a>
 
 ### Metric
@@ -5441,6 +5619,7 @@ Phase represents the current phase of the deletion task.
 | value | [double](#double) |  |  |
 | description | [string](#string) |  |  |
 | timestamp | [google.protobuf.Timestamp](#google-protobuf-Timestamp) |  |  |
+| type | [MetricType](#banyandb-fodc-v1-MetricType) |  |  |
 
 
 
@@ -5457,6 +5636,68 @@ Phase represents the current phase of the deletion task.
 | ----- | ---- | ----- | ----------- |
 | key | [string](#string) |  |  |
 | value | [string](#string) |  |  |
+
+
+
+
+
+
+<a name="banyandb-fodc-v1-PressureProfileChunk"></a>
+
+### PressureProfileChunk
+One slice of a profile&#39;s bytes during download.
+
+
+| Field | Type | Label | Description |
+| ----- | ---- | ----- | ----------- |
+| request_id | [string](#string) |  | echoes FetchPressureProfile.request_id -- correlates this chunk stream to its fetch |
+| profile_id | [string](#string) |  |  |
+| type | [string](#string) |  | &#34;heap&#34; | &#34;goroutine&#34; |
+| data | [bytes](#bytes) |  | a bounded slice (e.g. &lt;= 1MB) |
+| last | [bool](#bool) |  | true on the final chunk |
+| error | [string](#string) |  | non-empty if the file cannot be served (e.g. evicted / not found) |
+
+
+
+
+
+
+<a name="banyandb-fodc-v1-PressureProfileInfo"></a>
+
+### PressureProfileInfo
+One pprof profile inside a capture event (metadata only, no bytes).
+
+
+| Field | Type | Label | Description |
+| ----- | ---- | ----- | ----------- |
+| type | [string](#string) |  | &#34;heap&#34; | &#34;goroutine&#34; |
+| filename | [string](#string) |  | base name, e.g. &#34;heap.pprof&#34; |
+| filepath | [string](#string) |  | absolute path on the agent&#39;s disk, e.g. /tmp/pressure-profiles/20260627T101112.000000000Z/heap.pprof |
+| format | [string](#string) |  | &#34;pprof&#34; (gzip-compressed protobuf) |
+| size_bytes | [int64](#int64) |  | on-disk size |
+
+
+
+
+
+
+<a name="banyandb-fodc-v1-PressureProfileRecord"></a>
+
+### PressureProfileRecord
+Metadata for one capture event (no bytes). pod/role are NOT carried here:
+the proxy enriches them from the registered AgentIdentity, same as crash.
+
+
+| Field | Type | Label | Description |
+| ----- | ---- | ----- | ----------- |
+| profile_id | [string](#string) |  | = event directory name (UTC ns timestamp) |
+| captured_at | [google.protobuf.Timestamp](#google-protobuf-Timestamp) |  |  |
+| source_endpoint | [string](#string) |  | pprof endpoint pulled, e.g. http://localhost:6060 |
+| rss_bytes | [uint64](#uint64) |  | RSS at trigger (process_resident_memory_bytes); top-N sort key |
+| cgroup_limit_bytes | [uint64](#uint64) |  | cgroup memory.max |
+| trigger_percent | [uint32](#uint32) |  | configured threshold percent (e.g. 75) |
+| threshold_bytes | [uint64](#uint64) |  | cgroup_limit_bytes * trigger_percent / 100 |
+| profiles | [PressureProfileInfo](#banyandb-fodc-v1-PressureProfileInfo) | repeated |  |
 
 
 
@@ -5644,6 +5885,40 @@ Phase represents the current phase of the deletion task.
 
 
 
+<a name="banyandb-fodc-v1-StreamPressureProfilesRequest"></a>
+
+### StreamPressureProfilesRequest
+Agent -&gt; Proxy: either a metadata record (answer to list_profiles) or a byte
+chunk (answer to fetch_profile).
+
+
+| Field | Type | Label | Description |
+| ----- | ---- | ----- | ----------- |
+| record | [PressureProfileRecord](#banyandb-fodc-v1-PressureProfileRecord) |  |  |
+| list_complete | [ListComplete](#banyandb-fodc-v1-ListComplete) |  |  |
+| chunk | [PressureProfileChunk](#banyandb-fodc-v1-PressureProfileChunk) |  |  |
+
+
+
+
+
+
+<a name="banyandb-fodc-v1-StreamPressureProfilesResponse"></a>
+
+### StreamPressureProfilesResponse
+Proxy -&gt; Agent: either &#34;stream all your metadata&#34; or &#34;stream one profile&#39;s bytes&#34;.
+
+
+| Field | Type | Label | Description |
+| ----- | ---- | ----- | ----------- |
+| list_profiles | [ListProfiles](#banyandb-fodc-v1-ListProfiles) |  |  |
+| fetch_profile | [FetchPressureProfile](#banyandb-fodc-v1-FetchPressureProfile) |  |  |
+
+
+
+
+
+
 <a name="banyandb-fodc-v1-Topology"></a>
 
 ### Topology
@@ -5660,6 +5935,22 @@ Phase represents the current phase of the deletion task.
 
 
  
+
+
+<a name="banyandb-fodc-v1-MetricType"></a>
+
+### MetricType
+MetricType represents the Prometheus metric type.
+
+| Name | Number | Description |
+| ---- | ------ | ----------- |
+| METRIC_TYPE_UNSPECIFIED | 0 |  |
+| METRIC_TYPE_GAUGE | 1 |  |
+| METRIC_TYPE_COUNTER | 2 |  |
+| METRIC_TYPE_HISTOGRAM | 3 |  |
+| METRIC_TYPE_SUMMARY | 4 |  |
+| METRIC_TYPE_UNTYPED | 5 |  |
+
 
  
 
@@ -5678,6 +5969,7 @@ Phase represents the current phase of the deletion task.
 | StreamClusterTopology | [StreamClusterTopologyRequest](#banyandb-fodc-v1-StreamClusterTopologyRequest) stream | [StreamClusterTopologyResponse](#banyandb-fodc-v1-StreamClusterTopologyResponse) stream | Bi-directional stream for cluster topology |
 | StreamLifecycle | [StreamLifecycleRequest](#banyandb-fodc-v1-StreamLifecycleRequest) stream | [StreamLifecycleResponse](#banyandb-fodc-v1-StreamLifecycleResponse) stream | Bi-directional stream for lifecycle data |
 | StreamCrashDiagnostics | [StreamCrashDiagnosticsRequest](#banyandb-fodc-v1-StreamCrashDiagnosticsRequest) stream | [StreamCrashDiagnosticsResponse](#banyandb-fodc-v1-StreamCrashDiagnosticsResponse) stream | Bi-directional stream for crash diagnostics Agent sends StreamCrashDiagnosticsRequest (panic collections), Proxy sends StreamCrashDiagnosticsResponse (requests) |
+| StreamPressureProfiles | [StreamPressureProfilesRequest](#banyandb-fodc-v1-StreamPressureProfilesRequest) stream | [StreamPressureProfilesResponse](#banyandb-fodc-v1-StreamPressureProfilesResponse) stream | Bi-directional stream for memory-pressure pprof profiles. Proxy drives via StreamPressureProfilesResponse (list metadata, or fetch one profile&#39;s bytes); agent replies with StreamPressureProfilesRequest (metadata records, or binary chunks). |
 
 
 <a name="banyandb-fodc-v1-GroupLifecycleService"></a>
@@ -5868,6 +6160,222 @@ WriteResponse is the response contract for write
 | Write | [WriteRequest](#banyandb-measure-v1-WriteRequest) stream | [WriteResponse](#banyandb-measure-v1-WriteResponse) stream |  |
 | TopN | [TopNRequest](#banyandb-measure-v1-TopNRequest) | [TopNResponse](#banyandb-measure-v1-TopNResponse) |  |
 | DeleteExpiredSegments | [DeleteExpiredSegmentsRequest](#banyandb-measure-v1-DeleteExpiredSegmentsRequest) | [DeleteExpiredSegmentsResponse](#banyandb-measure-v1-DeleteExpiredSegmentsResponse) |  |
+
+ 
+
+
+
+<a name="banyandb_pipeline_v1_trace_pipeline-proto"></a>
+<p align="right"><a href="#top">Top</a></p>
+
+## banyandb/pipeline/v1/trace_pipeline.proto
+
+
+
+<a name="banyandb-pipeline-v1-TracePipelineRegistryServiceCreateRequest"></a>
+
+### TracePipelineRegistryServiceCreateRequest
+
+
+
+| Field | Type | Label | Description |
+| ----- | ---- | ----- | ----------- |
+| trace_pipeline_config | [banyandb.common.v1.TracePipelineConfig](#banyandb-common-v1-TracePipelineConfig) |  |  |
+
+
+
+
+
+
+<a name="banyandb-pipeline-v1-TracePipelineRegistryServiceCreateResponse"></a>
+
+### TracePipelineRegistryServiceCreateResponse
+
+
+
+| Field | Type | Label | Description |
+| ----- | ---- | ----- | ----------- |
+| mod_revision | [int64](#int64) |  |  |
+
+
+
+
+
+
+<a name="banyandb-pipeline-v1-TracePipelineRegistryServiceDeleteRequest"></a>
+
+### TracePipelineRegistryServiceDeleteRequest
+
+
+
+| Field | Type | Label | Description |
+| ----- | ---- | ----- | ----------- |
+| metadata | [banyandb.common.v1.Metadata](#banyandb-common-v1-Metadata) |  |  |
+
+
+
+
+
+
+<a name="banyandb-pipeline-v1-TracePipelineRegistryServiceDeleteResponse"></a>
+
+### TracePipelineRegistryServiceDeleteResponse
+
+
+
+| Field | Type | Label | Description |
+| ----- | ---- | ----- | ----------- |
+| deleted | [bool](#bool) |  |  |
+| delete_time | [int64](#int64) |  | delete_time is the server-assigned tombstone timestamp in unix nanos. |
+| mod_revision | [int64](#int64) |  | mod_revision is the revision of the tombstone; zero if the server did not record one. |
+
+
+
+
+
+
+<a name="banyandb-pipeline-v1-TracePipelineRegistryServiceExistRequest"></a>
+
+### TracePipelineRegistryServiceExistRequest
+
+
+
+| Field | Type | Label | Description |
+| ----- | ---- | ----- | ----------- |
+| metadata | [banyandb.common.v1.Metadata](#banyandb-common-v1-Metadata) |  |  |
+
+
+
+
+
+
+<a name="banyandb-pipeline-v1-TracePipelineRegistryServiceExistResponse"></a>
+
+### TracePipelineRegistryServiceExistResponse
+
+
+
+| Field | Type | Label | Description |
+| ----- | ---- | ----- | ----------- |
+| has_group | [bool](#bool) |  |  |
+| has_trace_pipeline_config | [bool](#bool) |  |  |
+
+
+
+
+
+
+<a name="banyandb-pipeline-v1-TracePipelineRegistryServiceGetRequest"></a>
+
+### TracePipelineRegistryServiceGetRequest
+
+
+
+| Field | Type | Label | Description |
+| ----- | ---- | ----- | ----------- |
+| metadata | [banyandb.common.v1.Metadata](#banyandb-common-v1-Metadata) |  |  |
+
+
+
+
+
+
+<a name="banyandb-pipeline-v1-TracePipelineRegistryServiceGetResponse"></a>
+
+### TracePipelineRegistryServiceGetResponse
+
+
+
+| Field | Type | Label | Description |
+| ----- | ---- | ----- | ----------- |
+| trace_pipeline_config | [banyandb.common.v1.TracePipelineConfig](#banyandb-common-v1-TracePipelineConfig) |  |  |
+
+
+
+
+
+
+<a name="banyandb-pipeline-v1-TracePipelineRegistryServiceListRequest"></a>
+
+### TracePipelineRegistryServiceListRequest
+
+
+
+| Field | Type | Label | Description |
+| ----- | ---- | ----- | ----------- |
+| group | [string](#string) |  |  |
+
+
+
+
+
+
+<a name="banyandb-pipeline-v1-TracePipelineRegistryServiceListResponse"></a>
+
+### TracePipelineRegistryServiceListResponse
+
+
+
+| Field | Type | Label | Description |
+| ----- | ---- | ----- | ----------- |
+| trace_pipeline_config | [banyandb.common.v1.TracePipelineConfig](#banyandb-common-v1-TracePipelineConfig) | repeated |  |
+
+
+
+
+
+
+<a name="banyandb-pipeline-v1-TracePipelineRegistryServiceUpdateRequest"></a>
+
+### TracePipelineRegistryServiceUpdateRequest
+
+
+
+| Field | Type | Label | Description |
+| ----- | ---- | ----- | ----------- |
+| trace_pipeline_config | [banyandb.common.v1.TracePipelineConfig](#banyandb-common-v1-TracePipelineConfig) |  |  |
+
+
+
+
+
+
+<a name="banyandb-pipeline-v1-TracePipelineRegistryServiceUpdateResponse"></a>
+
+### TracePipelineRegistryServiceUpdateResponse
+
+
+
+| Field | Type | Label | Description |
+| ----- | ---- | ----- | ----------- |
+| mod_revision | [int64](#int64) |  |  |
+
+
+
+
+
+ 
+
+ 
+
+ 
+
+
+<a name="banyandb-pipeline-v1-TracePipelineRegistryService"></a>
+
+### TracePipelineRegistryService
+TracePipelineRegistryService manages TracePipelineConfig resources, mirroring
+the registry services of every other schema resource. Create/Update run the
+admission and conflict checks of §2.3/§2.4 of the design.
+
+| Method Name | Request Type | Response Type | Description |
+| ----------- | ------------ | ------------- | ------------|
+| Create | [TracePipelineRegistryServiceCreateRequest](#banyandb-pipeline-v1-TracePipelineRegistryServiceCreateRequest) | [TracePipelineRegistryServiceCreateResponse](#banyandb-pipeline-v1-TracePipelineRegistryServiceCreateResponse) |  |
+| Update | [TracePipelineRegistryServiceUpdateRequest](#banyandb-pipeline-v1-TracePipelineRegistryServiceUpdateRequest) | [TracePipelineRegistryServiceUpdateResponse](#banyandb-pipeline-v1-TracePipelineRegistryServiceUpdateResponse) |  |
+| Delete | [TracePipelineRegistryServiceDeleteRequest](#banyandb-pipeline-v1-TracePipelineRegistryServiceDeleteRequest) | [TracePipelineRegistryServiceDeleteResponse](#banyandb-pipeline-v1-TracePipelineRegistryServiceDeleteResponse) |  |
+| Get | [TracePipelineRegistryServiceGetRequest](#banyandb-pipeline-v1-TracePipelineRegistryServiceGetRequest) | [TracePipelineRegistryServiceGetResponse](#banyandb-pipeline-v1-TracePipelineRegistryServiceGetResponse) |  |
+| List | [TracePipelineRegistryServiceListRequest](#banyandb-pipeline-v1-TracePipelineRegistryServiceListRequest) | [TracePipelineRegistryServiceListResponse](#banyandb-pipeline-v1-TracePipelineRegistryServiceListResponse) |  |
+| Exist | [TracePipelineRegistryServiceExistRequest](#banyandb-pipeline-v1-TracePipelineRegistryServiceExistRequest) | [TracePipelineRegistryServiceExistResponse](#banyandb-pipeline-v1-TracePipelineRegistryServiceExistResponse) | Exist doesn&#39;t expose an HTTP endpoint. Please use HEAD method to touch Get instead. |
 
  
 

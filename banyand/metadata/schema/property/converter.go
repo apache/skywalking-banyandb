@@ -244,7 +244,10 @@ func buildRevisionCriteria(sinceRevision int64) *modelv1.Criteria {
 	}
 }
 
-func buildSchemaQuery(kind schema.Kind, group, name string, sinceRevision int64) *propertyv1.QueryRequest {
+// BuildSchemaQuery builds the property QueryRequest the schema server issues
+// to look up schema docs of one kind, optionally narrowed to a group, a name
+// and a minimum mod revision.
+func BuildSchemaQuery(kind schema.Kind, group, name string, sinceRevision int64) *propertyv1.QueryRequest {
 	query := &propertyv1.QueryRequest{
 		Groups: []string{schema.SchemaGroup},
 		Name:   kind.String(),

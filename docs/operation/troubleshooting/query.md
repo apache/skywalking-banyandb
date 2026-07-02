@@ -47,7 +47,7 @@ If the query includes an invalid time range, the query will fail. Ensure that th
 
 Please refer to the [Troubleshooting No Data Issue](./no-data.md) guide to identify and resolve the issue.
 
-**Valid Old Data Missing**: If you see valid old data(it's TTL is not reached) is missing, some of data servers may be down, the new data is still ingested into the database, but the query results may be incomplete. Please check the [Active Data Servers](../observability.md#active-instances) to ensure that all data servers are running. The old data will be available once the data servers are back online.
+**Valid Old Data Missing**: If you see valid old data(it's TTL is not reached) is missing, some of data servers may be down, the new data is still ingested into the database, but the query results may be incomplete. Please check the [Active Data Servers](../observability/metrics.md#active-instances) to ensure that all data servers are running. The old data will be available once the data servers are back online.
 
 ### Duplicate Data
 
@@ -65,6 +65,8 @@ Please refer to the [Troubleshooting No Data Issue](./no-data.md) guide to ident
 ## Query Performance Issues
 
 Use query tracing to understand execution plans and identify bottlenecks. To enable query tracing, set the `trace` field to `true` in the [MeasureQueryRequest](../../api-reference.md#queryrequest) and [StreamQueryRequest](../../api-reference.md#queryrequest-1). The query results will include detailed tracing information to help you identify performance issues.
+
+> **Note:** Distributed **measure** queries run through the vectorized query path by default, which emits a different span tree (`distributed-…`, `broadcast-agg`, `groupby-agg-map`, `reduce-raw-frames`, …). See [Vectorized Measure Query Tracing](../observability/tracing.md#vectorized-measure-query-tracing) for that span shape plus worked empty-result and slow-query diagnosis walkthroughs. The span names below describe the per-data-node read path — used by stream and trace queries, and by measure when the [row-path rollback](./measure-vec-flag-off-rollback.md) is enabled.
 
 There are some important nodes in the trace result:
 
@@ -131,9 +133,9 @@ The `PartID` is 377403, which means this block is in the data part `part_377403_
 When you faced the following error:
 
 ```json
-{"level":"error","module":"QUERY.MEASURE.MINUTE.SERVICE_CPM_MINUTE","error":"failed to query measure: context canceled: memory acquisition failed (currentUsage: 455081320, limit: 5, size: 1428, blockedDuration: 31.874045791s): context canceled","req":{"groups":["minute"], "name":"service_cpm_minute", "timeRange":{"begin":"2025-01-22T10:39:58Z", "end":"2025-01-22T11:09:58Z"}, "fieldProjection":{"names":["total", "value"]}},"time":"2025-01-22T11:11:38Z","message":"fail to query"}
+{"level":"error","module":"QUERY.MEASURE.MINUTE.SERVICE_CPM_MINUTE","error":"failed to query measure: context canceled: memory acquisition failed (currentUsage: 455081320, limit: 5, size: 1428, attempts: 7, blockedDuration: 31.874045791s): context canceled","req":{"groups":["minute"], "name":"service_cpm_minute", "timeRange":{"begin":"2025-01-22T10:39:58Z", "end":"2025-01-22T11:09:58Z"}, "fieldProjection":{"names":["total", "value"]}},"time":"2025-01-22T11:11:38Z","message":"fail to query"}
 ```
 
-It means the query service has reached the memory limit. The query service will stop if the memory usage exceeds the limit. The memory limit is controlled by the `allowed-bytes` or `allowed-percent` flags. If the memory is sucient, you can increase the memory limit by setting the `allowed-bytes` or `allowed-percent` flags. Please refer to the [Configuration](../configuration.md#data--storage) documentation for more information on setting the memory limit.
+It means the query service has reached the memory limit and stopped executing the query to protect the process — this is BanyanDB's **memory protector** (see **Key Signal #5, Memory / GC pressure**, in [Observability › Key Signals to Watch](../observability/overview.md#key-signals-to-watch)). The memory limit is controlled by the `allowed-bytes` or `allowed-percent` flags: `allowed-percent` defaults to **75** (percent of total memory) and `allowed-bytes` takes effect only when it is set to a non-zero value. If the host has sufficient memory, you can raise the limit by setting `allowed-bytes` or `allowed-percent`. Please refer to the [Configuration](../configuration.md#data--storage) documentation for more information on setting the memory limit.
 
-BanyanDB get the cgroup memory limit. If the memory limit is not set, BanyanDB will ignore the memory limit.
+BanyanDB reads the cgroup memory limit. If the memory limit is not set, BanyanDB will ignore the memory limit.

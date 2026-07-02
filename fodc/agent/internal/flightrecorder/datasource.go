@@ -67,6 +67,7 @@ func UpdateTimestampRingBuffer(trb *TimestampRingBuffer, v int64) {
 type Datasource struct {
 	metrics      map[string]*MetricRingBuffer // Map from metric name+labels to RingBuffer storing metric values
 	descriptions map[string]string            // Map from metric name to HELP content descriptions
+	types        map[string]string            // Map from metric name to Prometheus type string
 	timestamps   *TimestampRingBuffer         // RingBuffer storing timestamps for each polling cycle
 	mu           sync.RWMutex
 	CapacitySize int64 // Memory limit in bytes
@@ -78,6 +79,7 @@ func NewDatasource() *Datasource {
 		metrics:      make(map[string]*MetricRingBuffer),
 		timestamps:   NewTimestampRingBuffer(),
 		descriptions: make(map[string]string),
+		types:        make(map[string]string),
 		CapacitySize: 0,
 	}
 }
@@ -102,6 +104,9 @@ func (ds *Datasource) Update(m *metrics.RawMetric) error {
 	}
 	if m.Desc != "" {
 		ds.descriptions[m.Name] = m.Desc
+	}
+	if m.Type != "" {
+		ds.types[m.Name] = m.Type
 	}
 	UpdateMetricRingBuffer(ds.metrics[metricKey], m.Value)
 
@@ -139,6 +144,9 @@ func (ds *Datasource) UpdateBatch(rawMetrics []metrics.RawMetric, timestamp int6
 		}
 		if m.Desc != "" {
 			ds.descriptions[m.Name] = m.Desc
+		}
+		if m.Type != "" {
+			ds.types[m.Name] = m.Type
 		}
 		buffer := ds.metrics[metricKey]
 		UpdateMetricRingBuffer(buffer, m.Value)
@@ -248,6 +256,46 @@ func (ds *Datasource) GetTimestamps() *TimestampRingBuffer {
 	return ds.timestamps
 }
 
+// GetCurrentSnapshot returns the latest value of every metric together with the
+// latest timestamp, all captured under a single lock. UpdateBatch mutates under
+// the same lock, so the returned values and timestamp always belong to the same
+// batch: callers never observe a mix of an old metric value and a new timestamp
+// (or vice versa) while an UpdateBatch is in flight. The map is keyed by the same
+// metric key as GetMetrics.
+func (ds *Datasource) GetCurrentSnapshot() (map[string]float64, int64) {
+	ds.mu.RLock()
+	defer ds.mu.RUnlock()
+
+	values := make(map[string]float64, len(ds.metrics))
+	for k, buffer := range ds.metrics {
+		values[k] = buffer.GetCurrentValue()
+	}
+	var timestamp int64
+	if ds.timestamps != nil {
+		timestamp = ds.timestamps.GetCurrentValue()
+	}
+	return values, timestamp
+}
+
+// latestValues fills out[name] with the current value of each metric whose key matches one
+// of names (with the optional label filter). It scans the metric keys directly under the read
+// lock and reads only the matched buffers, avoiding the full-map copy of GetCurrentSnapshot on
+// the watchdog poll path. Names already present in out are skipped.
+func (ds *Datasource) latestValues(out map[string]float64, names []string, labelFilter map[string]string) {
+	ds.mu.RLock()
+	defer ds.mu.RUnlock()
+	for key, buffer := range ds.metrics {
+		for _, name := range names {
+			if _, done := out[name]; done {
+				continue
+			}
+			if metricKeyMatches(key, name, labelFilter) {
+				out[name] = buffer.GetCurrentValue()
+			}
+		}
+	}
+}
+
 // GetDescriptions returns a copy of the descriptions map.
 func (ds *Datasource) GetDescriptions() map[string]string {
 	ds.mu.RLock()
@@ -255,6 +303,18 @@ func (ds *Datasource) GetDescriptions() map[string]string {
 
 	result := make(map[string]string)
 	for k, v := range ds.descriptions {
+		result[k] = v
+	}
+	return result
+}
+
+// GetTypes returns a copy of the types map.
+func (ds *Datasource) GetTypes() map[string]string {
+	ds.mu.RLock()
+	defer ds.mu.RUnlock()
+
+	result := make(map[string]string)
+	for k, v := range ds.types {
 		result[k] = v
 	}
 	return result

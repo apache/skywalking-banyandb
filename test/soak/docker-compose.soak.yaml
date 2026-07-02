@@ -23,7 +23,7 @@
 #
 # Key differences from the quick-start compose:
 #  - BanyanDB is built from local source (multi-stage Go build) instead of pulling a hub image.
-#  - The --measure-vectorized-enabled flag is controlled by BANYANDB_VEC_ENABLED (default: false).
+#  - The --measure-vectorized-enabled and --trace-vectorized-enabled flags are controlled by BANYANDB_VEC_ENABLED (default: false).
 #  - Every container has explicit memory and CPU limits so a 31 GB no-swap host cannot OOM-kill silently.
 #  - SOAK_DATA_DIR (default ./data) is bind-mounted so snapshots can be copied between phases.
 
@@ -40,6 +40,7 @@ services:
     command:
       - standalone
       - --measure-vectorized-enabled=${BANYANDB_VEC_ENABLED:-false}
+      - --trace-vectorized-enabled=${BANYANDB_VEC_ENABLED:-false}
       - --measure-root-path=/data
       - --stream-root-path=/data
       - --property-root-path=/data

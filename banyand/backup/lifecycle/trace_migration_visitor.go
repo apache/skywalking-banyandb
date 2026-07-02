@@ -43,6 +43,7 @@ import (
 
 // traceMigrationVisitor implements the trace.Visitor interface for file-based migration.
 type traceMigrationVisitor struct {
+	ctx                     context.Context
 	client                  queue.Client
 	lfs                     fs.FileSystem
 	metadata                metadata.Repo
@@ -52,7 +53,10 @@ type traceMigrationVisitor struct {
 	progress                *Progress
 	replayer                *traceRowReplayer
 	group                   string
+	sourceStage             string
+	targetStage             string
 	targetStageInterval     storage.IntervalRule
+	sourceSegmentInterval   storage.IntervalRule
 	chunkSize               int
 	partsCopiedSingleTarget uint64
 	partsReplayedRowLevel   uint64
@@ -61,23 +65,42 @@ type traceMigrationVisitor struct {
 }
 
 // newTraceMigrationVisitor creates a new file-based migration visitor.
-func newTraceMigrationVisitor(group *commonv1.Group, shardNum, replicas uint32, selector node.Selector, client queue.Client,
+func newTraceMigrationVisitor(ctx context.Context, group *commonv1.Group, shardNum, replicas uint32, selector node.Selector, client queue.Client,
 	l *logger.Logger, progress *Progress, chunkSize int, targetStageInterval storage.IntervalRule, md metadata.Repo,
+	sourceStage, targetStage string, sourceSegmentInterval storage.IntervalRule,
 ) *traceMigrationVisitor {
 	return &traceMigrationVisitor{
-		group:               group.Metadata.Name,
-		targetShardNum:      shardNum,
-		replicas:            replicas,
-		selector:            selector,
-		client:              client,
-		chunkedClients:      make(map[string]queue.ChunkedSyncClient),
-		logger:              l,
-		progress:            progress,
-		chunkSize:           chunkSize,
-		targetStageInterval: targetStageInterval,
-		metadata:            md,
-		lfs:                 fs.NewLocalFileSystem(),
+		ctx:                   ctx,
+		group:                 group.Metadata.Name,
+		sourceStage:           sourceStage,
+		targetStage:           targetStage,
+		sourceSegmentInterval: sourceSegmentInterval,
+		targetShardNum:        shardNum,
+		replicas:              replicas,
+		selector:              selector,
+		client:                client,
+		chunkedClients:        make(map[string]queue.ChunkedSyncClient),
+		logger:                l,
+		progress:              progress,
+		chunkSize:             chunkSize,
+		targetStageInterval:   targetStageInterval,
+		metadata:              md,
+		lfs:                   fs.NewLocalFileSystem(),
 	}
+}
+
+// recordError appends a structured trace migration error to the report, keyed
+// by the SOURCE segment. Trace is shard-scoped, so there is no part field.
+func (mv *traceMigrationVisitor) recordError(scope string, segmentTR *timestamp.TimeRange,
+	shardID common.ShardID, msg string,
+) {
+	seg, interval := segmentErrorLocation(segmentTR, mv.sourceSegmentInterval)
+	s := uint32(shardID)
+	mv.progress.AddMigrationError(MigrationError{
+		SourceStage: mv.sourceStage, TargetStage: mv.targetStage, Group: mv.group,
+		Catalog: catalogTrace, Scope: scope, Segment: seg, Interval: interval,
+		Shard: &s, Error: msg,
+	})
 }
 
 // CounterSnapshot returns the current (chunk-sync shards, row-replay parts)
@@ -213,7 +236,7 @@ func (mv *traceMigrationVisitor) VisitSeries(segmentTR *timestamp.TimeRange, ser
 			segmentFile, err := mv.lfs.OpenFile(segmentFilePath)
 			if err != nil {
 				errorMsg := fmt.Sprintf("failed to open trace segment file %s: %v", segmentFilePath, err)
-				mv.progress.MarkTraceSeriesError(mv.group, segmentIDStr, shardID, errorMsg)
+				mv.recordError(scopeSeries, segmentTR, shardID, errorMsg)
 				mv.logger.Error().
 					Str("path", segmentFilePath).
 					Err(err).
@@ -241,19 +264,13 @@ func (mv *traceMigrationVisitor) VisitSeries(segmentTR *timestamp.TimeRange, ser
 		segmentIDStr := getSegmentTimeRange(targetSegmentTime, mv.targetStageInterval).String()
 		for _, shardID := range shardIDs {
 			targetShardID := mv.calculateTargetShardID(uint32(shardID))
-			ff := make([]queue.FileInfo, 0, len(files))
-			for _, file := range files {
-				ff = append(ff, queue.FileInfo{
-					Name:   file.name,
-					Reader: file.file.SequentialRead(),
-				})
-			}
-			partData := mv.createStreamingSegmentFromFiles(targetShardID, ff, segmentTR, data.TopicTraceSeriesSync.String())
-
-			// Stream segment to target shard replicas
-			if err := mv.streamPartToTargetShard(targetShardID, []queue.StreamingPartData{partData}); err != nil {
+			// Stream segment to target shard replicas. The factory rebuilds the
+			// part on every retry so each attempt gets fresh offset-0 readers.
+			if err := mv.streamPartToTargetShard(targetShardID, func() ([]queue.StreamingPartData, error) {
+				return []queue.StreamingPartData{mv.createStreamingSegmentFromFiles(targetShardID, files, segmentTR, data.TopicTraceSeriesSync.String())}, nil
+			}); err != nil {
 				errorMsg := fmt.Sprintf("failed to stream trace segment to target shard %d: %v", targetShardID, err)
-				mv.progress.MarkTraceSeriesError(mv.group, segmentIDStr, shardID, errorMsg)
+				mv.recordError(scopeSeries, segmentTR, shardID, errorMsg)
 				return fmt.Errorf("failed to stream trace segment to target shard %d: %w", targetShardID, err)
 			}
 			// Mark segment as completed for this specific target segment
@@ -298,47 +315,61 @@ func (mv *traceMigrationVisitor) VisitShard(timestampTR *timestamp.TimeRange, so
 	// Decide from the source shard's own [start, end) boundaries.
 	targetSegments := calculateTargetSegments(timestampTR.Start, timestampTR.End, mv.targetStageInterval)
 	if len(targetSegments) > 1 {
-		return mv.visitShardRowReplay(context.Background(), sourceShardID, shardPath, segmentIDStr, targetSegments)
+		return mv.visitShardRowReplay(mv.ctx, timestampTR, sourceShardID, shardPath, segmentIDStr, targetSegments)
 	}
 	atomic.AddUint64(&mv.partsCopiedSingleTarget, 1)
 	mv.progress.AddTraceChunkSyncShard(mv.group)
-	allParts := make([]queue.StreamingPartData, 0)
-
-	sidxPartData, sidxReleases, err := mv.generateAllSidxPartData(timestampTR, sourceShardID, filepath.Join(shardPath, "sidx"))
-	if err != nil {
-		return fmt.Errorf("failed to generate sidx part data: %s: %w", shardPath, err)
-	}
-	defer func() {
-		for _, release := range sidxReleases {
-			release()
-		}
-	}()
-	allParts = append(allParts, sidxPartData...)
-
-	partDatas, partDataReleases, err := mv.generateAllPartData(timestampTR, sourceShardID, shardPath)
-	if err != nil {
-		return fmt.Errorf("failed to generate core par data: %s: %w", shardPath, err)
-	}
-	defer func() {
-		for _, release := range partDataReleases {
-			release()
-		}
-	}()
-	allParts = append(allParts, partDatas...)
 
 	targetShardID := mv.calculateTargetShardID(uint32(sourceShardID))
 
-	sort.Slice(allParts, func(i, j int) bool {
-		if allParts[i].ID == allParts[j].ID {
-			return allParts[i].PartType < allParts[j].PartType
+	// Regenerate the sidx + core parts each attempt for fresh offset-0 readers,
+	// releasing the prior attempt's handles first; the deferred call frees the last set.
+	var prevRelease func()
+	defer func() {
+		if prevRelease != nil {
+			prevRelease()
 		}
-		return allParts[i].ID < allParts[j].ID
-	})
+	}()
+	mk := func() ([]queue.StreamingPartData, error) {
+		if prevRelease != nil {
+			prevRelease()
+		}
+		var releases []func()
+		// Captures releases by reference, so it frees whatever this attempt has
+		// opened by call time — including the partial set on an early return.
+		prevRelease = func() {
+			for _, release := range releases {
+				release()
+			}
+		}
+		allParts := make([]queue.StreamingPartData, 0)
+		sidxPartData, sidxReleases, genErr := mv.generateAllSidxPartData(timestampTR, sourceShardID, filepath.Join(shardPath, "sidx"))
+		if genErr != nil {
+			return nil, fmt.Errorf("failed to generate sidx part data: %s: %w", shardPath, genErr)
+		}
+		releases = append(releases, sidxReleases...)
+		allParts = append(allParts, sidxPartData...)
+
+		partDatas, partDataReleases, genErr := mv.generateAllPartData(timestampTR, sourceShardID, shardPath)
+		if genErr != nil {
+			return nil, fmt.Errorf("failed to generate core par data: %s: %w", shardPath, genErr)
+		}
+		releases = append(releases, partDataReleases...)
+		allParts = append(allParts, partDatas...)
+
+		sort.Slice(allParts, func(i, j int) bool {
+			if allParts[i].ID == allParts[j].ID {
+				return allParts[i].PartType < allParts[j].PartType
+			}
+			return allParts[i].ID < allParts[j].ID
+		})
+		return allParts, nil
+	}
 
 	// Stream part to target segment
-	if err := mv.streamPartToTargetShard(targetShardID, allParts); err != nil {
+	if err := mv.streamPartToTargetShard(targetShardID, mk); err != nil {
 		errorMsg := fmt.Errorf("failed to stream to target shard %d: %w", targetShardID, err)
-		mv.progress.MarkTraceShardError(mv.group, segmentIDStr, sourceShardID, errorMsg.Error())
+		mv.recordError(scopeShard, timestampTR, sourceShardID, errorMsg.Error())
 		return fmt.Errorf("failed to stream trace shard to target segment shard: %w", err)
 	}
 
@@ -356,7 +387,7 @@ func (mv *traceMigrationVisitor) VisitShard(timestampTR *timestamp.TimeRange, so
 // republishes each row through the real write API. Sidx parts and the source
 // series-index are intentionally skipped: the receiver's writeCallback
 // rebuilds those indices as part of the normal write flow.
-func (mv *traceMigrationVisitor) visitShardRowReplay(ctx context.Context, sourceShardID common.ShardID,
+func (mv *traceMigrationVisitor) visitShardRowReplay(ctx context.Context, timestampTR *timestamp.TimeRange, sourceShardID common.ShardID,
 	shardPath, segmentIDStr string, targetSegments []time.Time,
 ) error {
 	replayer, err := mv.ensureReplayer(ctx)
@@ -385,32 +416,20 @@ func (mv *traceMigrationVisitor) visitShardRowReplay(ctx context.Context, source
 			continue
 		}
 		partPath := filepath.Join(shardPath, name)
-		rowCount, replayErr := replayer.replayPart(ctx, partPath)
-		if replayErr != nil {
-			mv.progress.MarkTraceShardError(mv.group, segmentIDStr, sourceShardID, replayErr.Error())
-			return fmt.Errorf("row-replay trace part %s: %w", partPath, replayErr)
+		// replayPart sends and confirms the part's rows through the bounded pipeline,
+		// draining all in-flight confirmations before returning. A non-nil error
+		// marks the whole shard errored so resume re-replays it, never skipping a
+		// shard whose rows were not durably delivered.
+		rowCount, partErr := replayer.replayPart(ctx, partPath)
+		if partErr != nil {
+			recordReplayNodeErrors(mv.progress, mv.group, mv.sourceStage, mv.targetStage, catalogTrace, partErr)
+			mv.recordError(scopeShard, timestampTR, sourceShardID, partErr.Error())
+			return fmt.Errorf("row-replay trace part %s: %w", partPath, partErr)
 		}
 		totalRows += rowCount
 		partsReplayed++
 	}
 
-	// Confirm this shard's rows reached every node before marking it completed.
-	// replayPart only enqueues; the batch publisher is client-streaming so
-	// per-node errors surface only when its stream closes, so flushAndConfirm
-	// closes the publisher to collect that result (then opens a fresh one for the
-	// next shard). Marking before this confirmation could report success for rows
-	// a flush failure never delivered, and the resume guard would then skip the
-	// whole shard, losing data.
-	cee, flushErr := replayer.flushAndConfirm(ctx)
-	if flushErr != nil || len(cee) > 0 {
-		mv.progress.RecordRowReplayNodeErrors(mv.group, cee)
-		confirmErr := flushErr
-		if confirmErr == nil {
-			confirmErr = fmt.Errorf("%d node error(s)", len(cee))
-		}
-		mv.progress.MarkTraceShardError(mv.group, segmentIDStr, sourceShardID, confirmErr.Error())
-		return fmt.Errorf("confirm row-replay trace shard %s: %w", shardPath, confirmErr)
-	}
 	mv.progress.MarkTraceShardCompleted(mv.group, segmentIDStr, sourceShardID)
 	mv.progress.MarkSourceTraceShardCompleted(mv.group, segmentIDStr, sourceShardID)
 	mv.progress.AddTraceRowReplay(mv.group, partsReplayed, totalRows)
@@ -502,6 +521,12 @@ func (mv *traceMigrationVisitor) generateAllSidxPartData(
 			// Create StreamingPartData with PartType = index name
 			partData, err := sidx.ParsePartMetadata(mv.lfs, partPath)
 			if err != nil {
+				// Release this part's just-opened handles and all earlier parts'
+				// so a mid-way metadata failure does not leak file descriptors.
+				release()
+				for _, r := range releases {
+					r()
+				}
 				return nil, nil, fmt.Errorf("failed to parse sidx part metadata: %s: %w", partPath, err)
 			}
 			partData.Group = mv.group
@@ -555,6 +580,10 @@ func (mv *traceMigrationVisitor) generateAllPartData(
 		partPath := filepath.Join(shardPath, name)
 		parts, releases, err := mv.generatePartData(segmentTR, sourceShardID, partPath)
 		if err != nil {
+			// Release earlier parts' handles so a mid-loop failure does not leak.
+			for _, r := range allReleases {
+				r()
+			}
 			return nil, nil, fmt.Errorf("failed to generate part data for path %s: %w", partPath, err)
 		}
 		allParts = append(allParts, parts...)
@@ -627,21 +656,24 @@ func (mv *traceMigrationVisitor) calculateTargetShardID(sourceShardID uint32) ui
 	return calculateTargetShardID(sourceShardID, mv.targetShardNum)
 }
 
-// streamPartToTargetShard sends part data to all replicas of the target shard.
-func (mv *traceMigrationVisitor) streamPartToTargetShard(targetShardID uint32, partData []queue.StreamingPartData) error {
+// streamPartToTargetShard sends the parts to every replica with bounded
+// exponential-backoff retry (transient: target restarting, disconnect,
+// receiver SERVER_BUSY). streamPartToNode closes the parts' readers after each
+// send, so mk() is called per attempt to rebuild fresh offset-0 readers.
+func (mv *traceMigrationVisitor) streamPartToTargetShard(targetShardID uint32, mk func() ([]queue.StreamingPartData, error)) error {
 	copies := mv.replicas + 1
 
 	// Send to all replicas using the exact pattern from steps.go:219-236
 	for replicaID := uint32(0); replicaID < copies; replicaID++ {
-		// Use selector.Pick exactly like steps.go:220
-		nodeID, err := mv.selector.Pick(mv.group, "", targetShardID, replicaID)
+		err := pickAndRun(mv.ctx, mv.logger, mv.selector, mv.group, "", targetShardID, replicaID, func(nodeID string) error {
+			partData, mkErr := mk()
+			if mkErr != nil {
+				return mkErr
+			}
+			return mv.streamPartToNode(nodeID, targetShardID, partData)
+		})
 		if err != nil {
-			return fmt.Errorf("failed to pick node for shard %d replica %d: %w", targetShardID, replicaID, err)
-		}
-
-		// Stream part data to target node using chunked sync
-		if err := mv.streamPartToNode(nodeID, targetShardID, partData); err != nil {
-			return fmt.Errorf("failed to stream trace part to node %s: %w", nodeID, err)
+			return fmt.Errorf("failed to stream trace part to shard %d replica %d: %w", targetShardID, replicaID, err)
 		}
 	}
 
@@ -663,8 +695,7 @@ func (mv *traceMigrationVisitor) streamPartToNode(nodeID string, targetShardID u
 	}
 
 	// Stream using chunked transfer (same as syncer.go:202)
-	ctx := context.Background()
-	result, err := chunkedClient.SyncStreamingParts(ctx, partData)
+	result, err := chunkedClient.SyncStreamingParts(mv.ctx, partData)
 	if err != nil {
 		return fmt.Errorf("failed to sync streaming parts to node %s: %w", nodeID, err)
 	}
@@ -691,7 +722,7 @@ func (mv *traceMigrationVisitor) streamPartToNode(nodeID string, targetShardID u
 func (mv *traceMigrationVisitor) Close() error {
 	if mv.replayer != nil {
 		cee, replayCloseErr := mv.replayer.Close()
-		mv.progress.RecordRowReplayNodeErrors(mv.group, cee)
+		recordNodeErrors(mv.progress, mv.group, mv.sourceStage, mv.targetStage, catalogTrace, cee)
 		if replayCloseErr != nil {
 			mv.logger.Warn().Err(replayCloseErr).Interface("node_errors", cee).Msg("failed to close trace row replayer")
 		} else if len(cee) > 0 {
@@ -717,15 +748,22 @@ func (mv *traceMigrationVisitor) Close() error {
 // createStreamingSegmentFromFiles creates StreamingPartData from segment files.
 func (mv *traceMigrationVisitor) createStreamingSegmentFromFiles(
 	targetShardID uint32,
-	files []queue.FileInfo,
+	files []fileInfo,
 	segmentTR *timestamp.TimeRange,
 	topic string,
 ) queue.StreamingPartData {
+	filesInfo := make([]queue.FileInfo, 0, len(files))
+	for _, file := range files {
+		filesInfo = append(filesInfo, queue.FileInfo{
+			Name:   file.name,
+			Reader: file.file.SequentialRead(),
+		})
+	}
 	segmentData := queue.StreamingPartData{
 		Group:        mv.group,
 		ShardID:      targetShardID, // Use calculated target shard
 		Topic:        topic,         // Use the new topic
-		Files:        files,
+		Files:        filesInfo,
 		MinTimestamp: segmentTR.Start.UnixNano(),
 		MaxTimestamp: segmentTR.End.UnixNano(),
 	}

@@ -39,10 +39,16 @@ import (
 	"github.com/apache/skywalking-banyandb/fodc/agent/internal/flightrecorder"
 	"github.com/apache/skywalking-banyandb/fodc/agent/internal/lifecycle"
 	"github.com/apache/skywalking-banyandb/fodc/agent/internal/metrics"
+	"github.com/apache/skywalking-banyandb/fodc/agent/internal/pressureprofiler"
 	"github.com/apache/skywalking-banyandb/pkg/logger"
 	"github.com/apache/skywalking-banyandb/pkg/panicdiag"
 	"github.com/apache/skywalking-banyandb/pkg/run"
 )
+
+// defaultReconnectRetryInterval is the fallback delay scheduleReconnect uses when the client was
+// created without a positive reconnect interval. In practice c.reconnectInterval is always set from
+// the --reconnect-interval flag; this only guards a zero value.
+const defaultReconnectRetryInterval = 10 * time.Second
 
 // MetricsRequestFilter defines filters for metrics requests.
 type MetricsRequestFilter struct {
@@ -67,7 +73,10 @@ type Client struct {
 	clusterStateStream fodcv1.FODCService_StreamClusterTopologyClient
 	lifecycleStream    fodcv1.FODCService_StreamLifecycleClient
 	crashStream        fodcv1.FODCService_StreamCrashDiagnosticsClient
+	pressureStream     fodcv1.FODCService_StreamPressureProfilesClient
+	profileSource      ProfileSource
 	client             fodcv1.FODCServiceClient
+	reconnectFn        func(context.Context) // overridable in tests; nil means use reconnect
 
 	proxyAddr      string
 	nodeRole       string
@@ -95,6 +104,7 @@ func NewClient(
 	clusterCollector *cluster.Collector,
 	lifecycleCollector *lifecycle.Collector,
 	collectionLister crashcollector.CollectionLister,
+	profileSource ProfileSource,
 	logger *logger.Logger,
 ) *Client {
 	connMgr := newConnManager(proxyAddr, reconnectInterval, logger)
@@ -111,6 +121,7 @@ func NewClient(
 		clusterCollector:   clusterCollector,
 		lifecycleCollector: lifecycleCollector,
 		collectionLister:   collectionLister,
+		profileSource:      profileSource,
 		logger:             logger,
 		stopCh:             make(chan struct{}),
 		reconnectCh:        make(chan struct{}, 1),
@@ -591,6 +602,231 @@ func (c *Client) handleCrashStream(ctx context.Context, stream fodcv1.FODCServic
 	}
 }
 
+// pressureChunkSize bounds each pprof download chunk so a single gRPC message stays
+// far below the server's max-message-size regardless of profile size.
+const pressureChunkSize = 1 << 20 // 1MB
+
+// ProfileSource is the read side of the pressure profiler the proxy client serves:
+// it lists capture-event metadata and opens a profile file for chunked download.
+type ProfileSource interface {
+	ListProfileRecords() []pressureprofiler.ProfileRecord
+	OpenProfile(path string) (io.ReadCloser, error)
+}
+
+// StartPressureProfilesStream establishes the bi-directional pressure-profiles stream with Proxy.
+func (c *Client) StartPressureProfilesStream(ctx context.Context) error {
+	c.streamsMu.Lock()
+	if c.client == nil {
+		c.streamsMu.Unlock()
+		return fmt.Errorf("client not connected, call Connect() first")
+	}
+	client := c.client
+	agentID := c.agentID
+	c.streamsMu.Unlock()
+
+	if agentID == "" {
+		return fmt.Errorf("agent ID not available, register agent first")
+	}
+
+	md := metadata.New(map[string]string{"agent_id": agentID})
+	ctxWithMetadata := metadata.NewOutgoingContext(ctx, md)
+
+	stream, streamErr := client.StreamPressureProfiles(ctxWithMetadata)
+	if streamErr != nil {
+		return fmt.Errorf("failed to create pressure profiles stream: %w", streamErr)
+	}
+
+	c.streamsMu.Lock()
+	c.pressureStream = stream
+	c.streamsMu.Unlock()
+
+	run.Go(ctx, "fodc.agent.proxy.pressure-stream", c.logger, func(ctx context.Context) {
+		c.handlePressureProfilesStream(ctx, stream)
+	})
+
+	c.logger.Info().Str("agent_id", agentID).Msg("Pressure profiles stream established with Proxy")
+	return nil
+}
+
+// handlePressureProfilesStream serves proxy commands on the pressure-profiles stream:
+// list metadata, or stream one profile's bytes.
+func (c *Client) handlePressureProfilesStream(ctx context.Context, stream fodcv1.FODCService_StreamPressureProfilesClient) {
+	c.streamsMu.RLock()
+	stopCh := c.stopCh
+	c.streamsMu.RUnlock()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-stopCh:
+			return
+		default:
+		}
+		resp, recvErr := stream.Recv()
+		if errors.Is(recvErr, io.EOF) {
+			c.logger.Warn().Msg("Pressure profiles stream closed by Proxy, reconnecting...")
+			run.Go(ctx, "fodc.agent.proxy.reconnect", c.logger, func(ctx context.Context) {
+				c.reconnect(ctx)
+			})
+			return
+		}
+		if recvErr != nil {
+			c.streamsMu.RLock()
+			disconnected := c.disconnected
+			c.streamsMu.RUnlock()
+			if disconnected {
+				c.logger.Debug().Err(recvErr).Msg("Pressure profiles stream closed")
+				return
+			}
+			c.logger.Error().Err(recvErr).Msg("Error receiving from pressure profiles stream, reconnecting...")
+			run.Go(ctx, "fodc.agent.proxy.reconnect", c.logger, func(ctx context.Context) {
+				c.reconnect(ctx)
+			})
+			return
+		}
+		if resp == nil {
+			continue
+		}
+		switch cmd := resp.Command.(type) {
+		case *fodcv1.StreamPressureProfilesResponse_ListProfiles:
+			if sendErr := c.sendProfileRecords(stream, cmd.ListProfiles.GetRequestId()); sendErr != nil {
+				c.logger.Error().Err(sendErr).Msg("Failed to send pressure profile records to proxy")
+			}
+		case *fodcv1.StreamPressureProfilesResponse_FetchProfile:
+			if sendErr := c.sendProfileChunks(stream, cmd.FetchProfile); sendErr != nil {
+				c.logger.Error().Err(sendErr).Msg("Failed to send pressure profile chunks to proxy")
+			}
+		}
+	}
+}
+
+// sendProfileRecords answers a list_profiles command with one metadata record per complete event.
+func (c *Client) sendProfileRecords(stream fodcv1.FODCService_StreamPressureProfilesClient, requestID string) error {
+	c.streamsMu.RLock()
+	source := c.profileSource
+	disconnected := c.disconnected
+	current := c.pressureStream
+	c.streamsMu.RUnlock()
+	if disconnected || current != stream {
+		return fmt.Errorf("pressure profiles stream not established")
+	}
+
+	if source != nil {
+		for _, record := range source.ListProfileRecords() {
+			req := &fodcv1.StreamPressureProfilesRequest{
+				Payload: &fodcv1.StreamPressureProfilesRequest_Record{Record: toProtoRecord(record)},
+			}
+			if sendErr := c.sendPressureRequest(stream, req); sendErr != nil {
+				return sendErr
+			}
+		}
+	}
+
+	// Always signal completion (including the zero-record / nil-source case) so the proxy
+	// returns as soon as this agent is done instead of waiting out its timeout.
+	done := &fodcv1.StreamPressureProfilesRequest{
+		Payload: &fodcv1.StreamPressureProfilesRequest_ListComplete{
+			ListComplete: &fodcv1.ListComplete{RequestId: requestID},
+		},
+	}
+	return c.sendPressureRequest(stream, done)
+}
+
+// sendProfileChunks answers a fetch_profile command by streaming one profile's bytes
+// in bounded chunks; a non-empty chunk error reports a file that cannot be served.
+func (c *Client) sendProfileChunks(stream fodcv1.FODCService_StreamPressureProfilesClient, fetch *fodcv1.FetchPressureProfile) error {
+	c.streamsMu.RLock()
+	source := c.profileSource
+	c.streamsMu.RUnlock()
+	if source == nil {
+		return c.sendPressureRequest(stream, chunkError(fetch, "pressure profiler not available"))
+	}
+
+	file, openErr := source.OpenProfile(fetch.Filepath)
+	if openErr != nil {
+		return c.sendPressureRequest(stream, chunkError(fetch, openErr.Error()))
+	}
+	defer func() { _ = file.Close() }()
+
+	buf := make([]byte, pressureChunkSize)
+	for {
+		n, readErr := file.Read(buf)
+		isEOF := errors.Is(readErr, io.EOF)
+		if n > 0 || isEOF {
+			chunk := &fodcv1.PressureProfileChunk{
+				RequestId: fetch.RequestId,
+				ProfileId: fetch.ProfileId,
+				Type:      fetch.Type,
+				Data:      buf[:n],
+				Last:      isEOF,
+			}
+			req := &fodcv1.StreamPressureProfilesRequest{
+				Payload: &fodcv1.StreamPressureProfilesRequest_Chunk{Chunk: chunk},
+			}
+			if sendErr := c.sendPressureRequest(stream, req); sendErr != nil {
+				return sendErr
+			}
+		}
+		if isEOF {
+			return nil
+		}
+		if readErr != nil {
+			return c.sendPressureRequest(stream, chunkError(fetch, readErr.Error()))
+		}
+	}
+}
+
+// sendPressureRequest sends one message on the pressure stream, guarding against a
+// stream that has been swapped out by a concurrent reconnect.
+func (c *Client) sendPressureRequest(stream fodcv1.FODCService_StreamPressureProfilesClient, req *fodcv1.StreamPressureProfilesRequest) error {
+	c.streamsMu.Lock()
+	defer c.streamsMu.Unlock()
+	if c.pressureStream != stream {
+		return fmt.Errorf("pressure profiles stream changed during send")
+	}
+	if sendErr := stream.Send(req); sendErr != nil {
+		return fmt.Errorf("failed to send pressure profiles message: %w", sendErr)
+	}
+	return nil
+}
+
+func chunkError(fetch *fodcv1.FetchPressureProfile, msg string) *fodcv1.StreamPressureProfilesRequest {
+	return &fodcv1.StreamPressureProfilesRequest{
+		Payload: &fodcv1.StreamPressureProfilesRequest_Chunk{
+			Chunk: &fodcv1.PressureProfileChunk{
+				RequestId: fetch.RequestId,
+				ProfileId: fetch.ProfileId,
+				Type:      fetch.Type,
+				Error:     msg,
+				Last:      true,
+			},
+		},
+	}
+}
+
+func toProtoRecord(record pressureprofiler.ProfileRecord) *fodcv1.PressureProfileRecord {
+	profiles := make([]*fodcv1.PressureProfileInfo, 0, len(record.Profiles))
+	for _, p := range record.Profiles {
+		profiles = append(profiles, &fodcv1.PressureProfileInfo{
+			Type:      p.Type,
+			Filename:  p.Filename,
+			Filepath:  p.Filepath,
+			Format:    p.Format,
+			SizeBytes: p.SizeBytes,
+		})
+	}
+	return &fodcv1.PressureProfileRecord{
+		ProfileId:        record.ProfileID,
+		CapturedAt:       timestamppb.New(record.CapturedAt),
+		SourceEndpoint:   record.SourceEndpoint,
+		RssBytes:         record.RSSBytes,
+		CgroupLimitBytes: record.CgroupLimitBytes,
+		TriggerPercent:   record.TriggerPercent,
+		ThresholdBytes:   record.ThresholdBytes,
+		Profiles:         profiles,
+	}
+}
+
 // handleLifecycleStream handles the lifecycle stream.
 func (c *Client) handleLifecycleStream(ctx context.Context, stream fodcv1.FODCService_StreamLifecycleClient) {
 	c.streamsMu.RLock()
@@ -712,6 +948,7 @@ func (c *Client) RetrieveAndSendMetrics(_ context.Context, filter *MetricsReques
 	allMetrics := ds.GetMetrics()
 	timestamps := ds.GetTimestamps()
 	descriptions := ds.GetDescriptions()
+	types := ds.GetTypes()
 
 	if filter != nil && (filter.StartTime != nil || filter.EndTime != nil) {
 		if timestamps == nil {
@@ -756,7 +993,7 @@ func (c *Client) RetrieveAndSendMetrics(_ context.Context, filter *MetricsReques
 			c.streamsMu.Unlock()
 			return fmt.Errorf("metrics stream changed during send")
 		}
-		sendErr := c.sendFilteredMetrics(metricsStream, allMetrics, timestampValues, descriptions, filter)
+		sendErr := c.sendFilteredMetrics(metricsStream, allMetrics, timestampValues, descriptions, types, filter)
 		c.streamsMu.Unlock()
 		return sendErr
 	}
@@ -766,9 +1003,27 @@ func (c *Client) RetrieveAndSendMetrics(_ context.Context, filter *MetricsReques
 		c.streamsMu.Unlock()
 		return fmt.Errorf("metrics stream changed during send")
 	}
-	sendErr := c.sendLatestMetrics(metricsStream, allMetrics, descriptions)
+	sendErr := c.sendLatestMetrics(metricsStream, allMetrics, descriptions, types)
 	c.streamsMu.Unlock()
 	return sendErr
+}
+
+// toProtoMetricType converts a lowercase prometheus type string to the proto enum.
+func toProtoMetricType(t string) fodcv1.MetricType {
+	switch t {
+	case "counter":
+		return fodcv1.MetricType_METRIC_TYPE_COUNTER
+	case "gauge":
+		return fodcv1.MetricType_METRIC_TYPE_GAUGE
+	case "histogram":
+		return fodcv1.MetricType_METRIC_TYPE_HISTOGRAM
+	case "summary":
+		return fodcv1.MetricType_METRIC_TYPE_SUMMARY
+	case "untyped":
+		return fodcv1.MetricType_METRIC_TYPE_UNTYPED
+	default:
+		return fodcv1.MetricType_METRIC_TYPE_UNSPECIFIED
+	}
 }
 
 // sendLatestMetrics sends the latest metrics (most recent values).
@@ -776,6 +1031,7 @@ func (c *Client) sendLatestMetrics(
 	stream fodcv1.FODCService_StreamMetricsClient,
 	allMetrics map[string]*flightrecorder.MetricRingBuffer,
 	descriptions map[string]string,
+	types map[string]string,
 ) error {
 	protoMetrics := make([]*fodcv1.Metric, 0)
 
@@ -803,6 +1059,7 @@ func (c *Client) sendLatestMetrics(
 			Labels:      labelsMap,
 			Value:       metricValue,
 			Description: descriptions[parsedKey.Name],
+			Type:        toProtoMetricType(metrics.ResolveMetricType(types, parsedKey.Name)),
 		}
 
 		protoMetrics = append(protoMetrics, protoMetric)
@@ -826,6 +1083,7 @@ func (c *Client) sendFilteredMetrics(
 	allMetrics map[string]*flightrecorder.MetricRingBuffer,
 	timestampValues []int64,
 	descriptions map[string]string,
+	types map[string]string,
 	filter *MetricsRequestFilter,
 ) error {
 	protoMetrics := make([]*fodcv1.Metric, 0)
@@ -871,6 +1129,7 @@ func (c *Client) sendFilteredMetrics(
 				Value:       metricValues[idx],
 				Description: description,
 				Timestamp:   timestamppb.New(timestamp),
+				Type:        toProtoMetricType(metrics.ResolveMetricType(types, parsedKey.Name)),
 			}
 
 			protoMetrics = append(protoMetrics, protoMetric)
@@ -996,6 +1255,12 @@ func (c *Client) cleanupStreams() {
 		}
 		c.crashStream = nil
 	}
+	if c.pressureStream != nil {
+		if closeErr := c.pressureStream.CloseSend(); closeErr != nil {
+			c.logger.Warn().Err(closeErr).Msg("Error closing pressure profiles stream")
+		}
+		c.pressureStream = nil
+	}
 	c.client = nil
 	c.streamsMu.Unlock()
 }
@@ -1058,6 +1323,12 @@ func (c *Client) Disconnect() error {
 			c.logger.Warn().Err(closeErr).Msg("Error closing crash diagnostics stream")
 		}
 		c.crashStream = nil
+	}
+	if c.pressureStream != nil {
+		if closeErr := c.pressureStream.CloseSend(); closeErr != nil {
+			c.logger.Warn().Err(closeErr).Msg("Error closing pressure profiles stream")
+		}
+		c.pressureStream = nil
 	}
 	c.streamsMu.Unlock()
 
@@ -1128,6 +1399,15 @@ func (c *Client) Start(ctx context.Context) error {
 		if c.collectionLister != nil {
 			if crashErr := c.StartCrashStream(ctx); crashErr != nil {
 				c.logger.Error().Err(crashErr).Msg("Failed to start crash diagnostics stream, reconnecting...")
+				c.cleanupStreams()
+				time.Sleep(c.reconnectInterval)
+				continue
+			}
+		}
+
+		if c.profileSource != nil {
+			if pressureErr := c.StartPressureProfilesStream(ctx); pressureErr != nil {
+				c.logger.Error().Err(pressureErr).Msg("Failed to start pressure profiles stream, reconnecting...")
 				c.cleanupStreams()
 				time.Sleep(c.reconnectInterval)
 				continue
@@ -1300,6 +1580,10 @@ func (c *Client) reconnect(ctx context.Context) {
 		_ = c.crashStream.CloseSend()
 		c.crashStream = nil
 	}
+	if c.pressureStream != nil {
+		_ = c.pressureStream.CloseSend()
+		c.pressureStream = nil
+	}
 	c.streamsMu.Unlock()
 
 	connResultCh := c.connManager.RequestConnect(ctx)
@@ -1312,10 +1596,11 @@ func (c *Client) reconnect(ctx context.Context) {
 	}
 
 	if connResult.err != nil {
-		c.logger.Error().Err(connResult.err).Msg("Failed to reconnect to Proxy")
-		if disconnectErr := c.Disconnect(); disconnectErr != nil {
-			c.logger.Warn().Err(disconnectErr).Msg("Failed to disconnect")
-		}
+		// Transient failure (e.g. the proxy pod is mid-rollout). Do NOT call Disconnect here: that
+		// latches c.disconnected and the guard at the top of reconnect would suppress every future
+		// attempt. Schedule another try so the agent recovers once the proxy is ready again.
+		c.logger.Error().Err(connResult.err).Msg("Failed to reconnect to Proxy; will retry")
+		c.scheduleReconnect(ctx)
 		return
 	}
 
@@ -1325,36 +1610,89 @@ func (c *Client) reconnect(ctx context.Context) {
 		c.streamsMu.Unlock()
 	}
 
+	// Each stream (re)start below can fail transiently when the new proxy pod is not yet accepting
+	// RPCs. reconnect() has already torn down the heartbeat ticker and all stream receive-loops -
+	// the only mechanisms that would otherwise re-trigger a reconnect - so returning here without
+	// rescheduling leaves the agent permanently disconnected (agents_online drops to 0 until a
+	// manual pod restart). Always schedule another attempt on failure.
 	if regErr := c.StartRegistrationStream(ctx); regErr != nil {
-		c.logger.Error().Err(regErr).Msg("Failed to restart registration stream")
+		c.logger.Error().Err(regErr).Msg("Failed to restart registration stream; will retry")
+		c.scheduleReconnect(ctx)
 		return
 	}
 
 	if metricsErr := c.StartMetricsStream(ctx); metricsErr != nil {
-		c.logger.Error().Err(metricsErr).Msg("Failed to restart metrics stream")
+		c.logger.Error().Err(metricsErr).Msg("Failed to restart metrics stream; will retry")
+		c.scheduleReconnect(ctx)
 		return
 	}
 
 	if clusterStateErr := c.StartClusterStateStream(ctx); clusterStateErr != nil {
-		c.logger.Error().Err(clusterStateErr).Msg("Failed to restart cluster state stream")
+		c.logger.Error().Err(clusterStateErr).Msg("Failed to restart cluster state stream; will retry")
+		c.scheduleReconnect(ctx)
 		return
 	}
 
 	if c.lifecycleCollector != nil {
 		if lifecycleErr := c.StartLifecycleStream(ctx); lifecycleErr != nil {
-			c.logger.Error().Err(lifecycleErr).Msg("Failed to restart lifecycle stream")
+			c.logger.Error().Err(lifecycleErr).Msg("Failed to restart lifecycle stream; will retry")
+			c.scheduleReconnect(ctx)
 			return
 		}
 	}
 
 	if c.collectionLister != nil {
 		if crashErr := c.StartCrashStream(ctx); crashErr != nil {
-			c.logger.Error().Err(crashErr).Msg("Failed to restart crash diagnostics stream")
+			c.logger.Error().Err(crashErr).Msg("Failed to restart crash diagnostics stream; will retry")
+			c.scheduleReconnect(ctx)
+			return
+		}
+	}
+
+	if c.profileSource != nil {
+		if pressureErr := c.StartPressureProfilesStream(ctx); pressureErr != nil {
+			c.logger.Error().Err(pressureErr).Msg("Failed to restart pressure profiles stream; will retry")
+			c.scheduleReconnect(ctx)
 			return
 		}
 	}
 
 	c.logger.Info().Msg("Successfully reconnected to Proxy")
+}
+
+// scheduleReconnect arms a delayed reconnect attempt after a transient failure during reconnect
+// (e.g. the proxy pod not yet ready), so the agent keeps retrying instead of stalling forever.
+// reconnect() is single-flight and re-checks ctx and c.disconnected, so a timer that fires after
+// shutdown is a harmless no-op. Each failed reconnect arms exactly one timer, so retries proceed at
+// roughly one per interval rather than in a tight loop.
+func (c *Client) scheduleReconnect(ctx context.Context) {
+	c.streamsMu.Lock()
+	disconnected := c.disconnected
+	interval := c.reconnectInterval
+	c.streamsMu.Unlock()
+
+	if disconnected {
+		return
+	}
+	if interval <= 0 {
+		interval = defaultReconnectRetryInterval
+	}
+
+	select {
+	case <-ctx.Done():
+		return
+	default:
+	}
+
+	reconnectFn := c.reconnect
+	if c.reconnectFn != nil {
+		reconnectFn = c.reconnectFn
+	}
+
+	c.logger.Info().Dur("retry_in", interval).Msg("Scheduling proxy reconnect retry")
+	time.AfterFunc(interval, func() {
+		reconnectFn(ctx)
+	})
 }
 
 // startHeartbeat starts the heartbeat ticker.

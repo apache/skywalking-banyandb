@@ -54,6 +54,11 @@ func (p *PartReader) Iterator() *dump.Iterator[Row] {
 }
 
 func (p *PartReader) decodeBlock(decoder *encoding.BytesBlockDecoder, bm *blockMetadata) ([]Row, error) {
+	// The decoder's internal buffer accumulates every decoded span/string block
+	// and is never reset on its own, so without this it grows to hold the whole
+	// part's data. Decoded values alias it but the proto build copies them before
+	// the next block, so bounding it to one block is safe.
+	decoder.Reset()
 	count := int(bm.count)
 	spans, spanIDs, err := readSpans(decoder, bm.spans, count, p.spans)
 	if err != nil {

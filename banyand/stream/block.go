@@ -190,10 +190,19 @@ func (b *block) validate() {
 func (b *block) marshalTagFamily(tf tagFamily, bm *blockMetadata, ww *writers) {
 	hw, w, fw := ww.getWriters(tf.name)
 	cc := tf.tags
+	if bm.tagType == nil {
+		bm.tagType = make(tagType)
+	}
+	tagTypes := bm.tagType[tf.name]
+	if tagTypes == nil {
+		tagTypes = make(map[string]pbv1.ValueType, len(cc))
+		bm.tagType[tf.name] = tagTypes
+	}
 	cfm := generateTagFamilyMetadata()
 	cmm := cfm.resizeTagMetadata(len(cc))
 	for i := range cc {
 		cc[i].mustWriteTo(&cmm[i], w, fw)
+		tagTypes[cc[i].name] = cc[i].valueType
 	}
 	bb := bigValuePool.Generate()
 	defer bigValuePool.Release(bb)

@@ -29,13 +29,15 @@ import (
 	"github.com/apache/skywalking-banyandb/pkg/logger"
 )
 
-func (s *server) handleEOF(stream clusterv1.Service_SendServer, topic *bus.Topic, dataCollection []any, writeEntity *clusterv1.SendRequest) {
+func (s *server) handleEOF(stream clusterv1.Service_SendServer, topic *bus.Topic, dataCollection []any,
+	writeEntity *clusterv1.SendRequest, identity *streamIdentity, start time.Time,
+) {
 	if len(dataCollection) < 1 {
 		return
 	}
 	listeners := s.getListeners(*topic)
 	if len(listeners) == 0 {
-		s.reply(stream, writeEntity, nil, "no listener found")
+		s.replyWithErrType(stream, writeEntity, nil, "no listener found", identity, "no_listener")
 		return
 	}
 	if len(listeners) > 1 {
@@ -43,30 +45,36 @@ func (s *server) handleEOF(stream clusterv1.Service_SendServer, topic *bus.Topic
 	}
 	listener := listeners[0]
 	if le := listener.CheckHealth(); le != nil {
-		s.reply(stream, writeEntity, le, "")
+		s.replyWithErrType(stream, writeEntity, le, "", identity, "handler_error")
 		return
 	}
+	// Tick started immediately before Rev so that started and finished are always paired;
+	// pre-Rev early returns (len<1, no-listener, CheckHealth fail) produce no metric change.
+	if s.metrics != nil {
+		s.metrics.totalStarted.Inc(1, identity.operation, identity.group, identity.senderNode, identity.senderRole, identity.senderTier)
+		s.metrics.totalBatchStarted.Inc(1, identity.operation, identity.group, identity.senderNode, identity.senderRole, identity.senderTier)
+		s.metrics.totalMessageStarted.Inc(float64(len(dataCollection)), identity.operation, identity.group, identity.senderNode, identity.senderRole, identity.senderTier)
+	}
 	message := listener.Rev(stream.Context(), bus.NewMessage(bus.MessageID(0), dataCollection))
-	var resp *clusterv1.SendResponse
-	data := message.Data()
-	if data != nil {
-		switch d := data.(type) {
-		case *common.Error:
-			resp = &clusterv1.SendResponse{
-				MessageId: writeEntity.MessageId,
-				Error:     d.Error(),
-				Status:    d.Status(),
-			}
-		default:
-			resp = &clusterv1.SendResponse{
-				MessageId: writeEntity.MessageId,
-			}
-		}
+	if s.metrics != nil {
+		s.metrics.totalMessageFinished.Inc(float64(len(dataCollection)), identity.operation, identity.group, identity.senderNode, identity.senderRole, identity.senderTier)
+		s.metrics.totalBatchFinished.Inc(1, identity.operation, identity.group, identity.senderNode, identity.senderRole, identity.senderTier)
+		s.metrics.totalBatchLatency.Observe(time.Since(start).Seconds(), identity.operation, identity.group, identity.senderNode, identity.senderRole, identity.senderTier)
+	}
+	// writeEntity is nil when the stream closed (Recv returned io.EOF), so guard the ID access.
+	var msgID uint64
+	if writeEntity != nil {
+		msgID = writeEntity.MessageId
+	}
+	resp := &clusterv1.SendResponse{MessageId: msgID}
+	if ce, ok := message.Data().(*common.Error); ok {
+		resp.Error = ce.Error()
+		resp.Status = ce.Status()
 	}
 	if errSend := stream.Send(resp); errSend != nil {
 		s.log.Error().Stringer("written", writeEntity).Err(errSend).Msg("failed to send write response")
-		if writeEntity != nil {
-			s.metrics.totalMsgSentErr.Inc(1, writeEntity.Topic)
+		if s.metrics != nil && writeEntity != nil {
+			s.metrics.totalErr.Inc(1, identity.operation, identity.group, identity.senderNode, identity.senderRole, identity.senderTier, "send_error")
 		}
 	}
 }
@@ -81,9 +89,7 @@ func (s *server) handleRecvError(err error) error {
 
 func (s *server) handleBatch(dataCollection *[]any, writeEntity *clusterv1.SendRequest, start *time.Time) {
 	if len(*dataCollection) == 0 {
-		s.metrics.totalStarted.Inc(1, writeEntity.Topic)
 		*start = time.Now()
 	}
 	*dataCollection = append(*dataCollection, writeEntity.Body)
-	s.metrics.totalMsgSent.Inc(1, writeEntity.Topic)
 }

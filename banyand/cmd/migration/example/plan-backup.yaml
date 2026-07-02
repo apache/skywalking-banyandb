@@ -19,9 +19,14 @@
 # snapshot on a workstation. Adapt every path / date / group / target to
 # your own environment before running. Field reference: README.md.
 #
-# Source mode: `backup` — reads measure + schema-property from a
+# Source mode: `backup` — reads measure + stream + schema-property from a
 # downloaded snapshot laid out as
-#   <root>/<node>/<date>/{measure,schema-property}/...
+#   <root>/<node>/<date>/{measure,stream,schema-property}/...
+#
+# One plan may mix measure and stream groups: each group's catalog is
+# resolved from the schema-property catalog and routed to its executor,
+# and both catalogs' group trees land under the same entry target. A
+# single-catalog plan is this same file with only that catalog's groups.
 
 staging_dir: /tmp/banyandb-staging
 
@@ -31,11 +36,16 @@ source:
     date: 2026-05-19
 
 groups:
+  # measure groups
   - sw_metricsMinute
   - sw_metricsHour
   - sw_metricsDay
+  # stream groups
+  - sw_records
+  - sw_recordsLog
+  - sw_recordsBrowserErrorLog
 
 entries:
-  - { stage: hot,  target: /tmp/banyandb-copy/hot/measure-data,  nodes: [hot-0, hot-1]   }
-  - { stage: warm, target: /tmp/banyandb-copy/warm/measure-data, nodes: [warn-0, warn-1] }
-  - { stage: cold, target: /tmp/banyandb-copy/cold/measure-data, nodes: [cold-0]         }
+  - { stage: hot,  target: /tmp/banyandb-copy/hot/data,  nodes: [hot-0, hot-1]   }
+  - { stage: warm, target: /tmp/banyandb-copy/warm/data, nodes: [warn-0, warn-1] }
+  - { stage: cold, target: /tmp/banyandb-copy/cold/data, nodes: [cold-0]         }

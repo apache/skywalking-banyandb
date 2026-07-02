@@ -18,6 +18,12 @@ name: publish-docker
 
 on:
   pull_request:
+    paths-ignore:
+      - 'canopy/**'
+      - 'ui/**'
+      - 'docs/**'
+      - '**.md'
+      - '.github/workflows/canopy.yml'
   push:
     branches:
       - main
@@ -68,7 +74,7 @@ jobs:
           make -C mcp docker || make -C mcp docker 
           docker image ls
       - name: Log in to the Container registry
-        uses: docker/login-action@c94ce9fb468520275223c153574b00df6fe4bcc9
+        uses: docker/login-action@650006c6eb7dba73a995cc03b0b2d7f5ca915bee
         if: github.ref == 'refs/heads/main'
         with:
           registry: ${{ env.HUB }}

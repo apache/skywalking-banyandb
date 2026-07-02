@@ -75,7 +75,7 @@ func runSingleShotScenario(t *testing.T, cfg Config) {
 		t.Fatalf("initialize logger: %v", initErr)
 	}
 	gomega.RegisterTestingT(t)
-	cluster, base, clusterErr := startBenchCluster(t, cfg.Mode == modeVec)
+	cluster, base, clusterErr := startBenchCluster(t, cfg, cfg.Mode == modeVec)
 	if clusterErr != nil {
 		t.Fatalf("start cluster: %v", clusterErr)
 	}
@@ -86,8 +86,8 @@ func runSingleShotScenario(t *testing.T, cfg Config) {
 	if writeErr != nil {
 		t.Fatalf("write benchmark data: %v", writeErr)
 	}
-	t.Logf("loaded cardinality=%d mode=%s rows=%d duration=%s rows_per_sec=%.2f",
-		cfg.Cardinality, cfg.Mode, writeSummary.Rows, writeSummary.Duration, writeSummary.RowsPerSec)
+	t.Logf("loaded engine=%s cardinality=%d mode=%s rows=%d duration=%s rows_per_sec=%.2f",
+		cfg.Engine, cfg.Cardinality, cfg.Mode, writeSummary.Rows, writeSummary.Duration, writeSummary.RowsPerSec)
 	result, runErr := runScenarioBenchmark(ctx, cluster.conn, cfg, cfg.Scenario, cfg.Cardinality, cfg.Mode, base)
 	if runErr != nil {
 		t.Fatalf("run scenario: %v", runErr)
@@ -96,8 +96,8 @@ func runSingleShotScenario(t *testing.T, cfg Config) {
 	if shardErr != nil {
 		t.Fatalf("write shard: %v", shardErr)
 	}
-	t.Logf("shard written: %s (mode=%s scenario=%s cardinality=%d rows=%d qps=%.2f)",
-		shardPath, cfg.Mode, cfg.Scenario, cfg.Cardinality, result.ResponseRows, result.QPS)
+	t.Logf("shard written: %s (engine=%s mode=%s scenario=%s cardinality=%d rows=%d traces=%d spans=%d qps=%.2f)",
+		shardPath, cfg.Engine, cfg.Mode, cfg.Scenario, cfg.Cardinality, result.ResponseRows, result.ResponseTraces, result.ResponseSpans, result.QPS)
 }
 
 // runMergeShards reads every shard the orchestrator produced, computes vec
@@ -119,6 +119,9 @@ func runMergeShards(t *testing.T, cfg Config) {
 		if a.Scenario != b.Scenario {
 			return a.Scenario < b.Scenario
 		}
+		if a.variantKey() != b.variantKey() {
+			return a.variantKey() < b.variantKey()
+		}
 		if a.Mode != b.Mode {
 			return a.Mode == modeRow
 		}
@@ -126,12 +129,13 @@ func runMergeShards(t *testing.T, cfg Config) {
 	})
 	type comboKey struct {
 		scenario    Scenario
+		variant     string
 		cardinality int
 	}
 	rowByCombo := make(map[comboKey]Result, len(results)/2+1)
 	for _, r := range results {
 		if r.Mode == modeRow {
-			rowByCombo[comboKey{r.Scenario, r.Cardinality}] = r
+			rowByCombo[comboKey{scenario: r.Scenario, cardinality: r.Cardinality, variant: r.variantKey()}] = r
 		}
 	}
 	var correctnessErrs []string
@@ -139,11 +143,12 @@ func runMergeShards(t *testing.T, cfg Config) {
 		if results[i].Mode != modeVec {
 			continue
 		}
-		rowResult, ok := rowByCombo[comboKey{results[i].Scenario, results[i].Cardinality}]
+		rowResult, ok := rowByCombo[comboKey{scenario: results[i].Scenario, cardinality: results[i].Cardinality, variant: results[i].variantKey()}]
 		if !ok {
 			results[i].Correctness = "no row counterpart"
 			correctnessErrs = append(correctnessErrs,
-				fmt.Sprintf("scenario=%s cardinality=%d: vec shard without matching row shard", results[i].Scenario, results[i].Cardinality))
+				fmt.Sprintf("scenario=%s cardinality=%d variant=%s: vec shard without matching row shard",
+					results[i].Scenario, results[i].Cardinality, results[i].variantKey()))
 			continue
 		}
 		verdict := compareModeResults(rowResult, results[i], cfg.SmallExactRows)
@@ -157,11 +162,13 @@ func runMergeShards(t *testing.T, cfg Config) {
 		// Dump prototext samples so the source of a hash divergence
 		// (TagFamily order, oneof variant, missing field) is visible in
 		// the test log without a follow-up instrumentation pass.
-		t.Logf("=== sample dump for scenario=%s cardinality=%d ===", results[i].Scenario, results[i].Cardinality)
+		t.Logf("=== sample dump for scenario=%s cardinality=%d variant=%s ===", results[i].Scenario, results[i].Cardinality, results[i].variantKey())
 		t.Logf("--- row sample DataPoint ---\n%s", rowResult.SampleDataPointText)
 		t.Logf("--- vec sample DataPoint ---\n%s", results[i].SampleDataPointText)
+		t.Logf("--- row sample Trace ---\n%s", rowResult.SampleTraceText)
+		t.Logf("--- vec sample Trace ---\n%s", results[i].SampleTraceText)
 		correctnessErrs = append(correctnessErrs,
-			fmt.Sprintf("scenario=%s cardinality=%d: %s", results[i].Scenario, results[i].Cardinality, verdict))
+			fmt.Sprintf("scenario=%s cardinality=%d variant=%s: %s", results[i].Scenario, results[i].Cardinality, results[i].variantKey(), verdict))
 	}
 	report := newReportFromShards(cfg, results)
 	jsonPath, mdPath, reportErr := writeReport(report, cfg.ReportDir)
@@ -178,8 +185,12 @@ func runMergeShards(t *testing.T, cfg Config) {
 // against an already-prepared cluster, capturing CPU and heap profiles for
 // the timed phase.
 func runScenarioBenchmark(ctx context.Context, conn *grpc.ClientConn, cfg Config, scenario Scenario, cardinality int, mode string, base time.Time) (Result, error) {
+	if cfg.Engine == engineTrace {
+		return runTraceScenarioBenchmark(ctx, conn, cfg, scenario, cardinality, mode, base)
+	}
 	entities, pointsEach := splitCardinality(cardinality)
 	result := Result{
+		Engine:          engineMeasure,
 		Mode:            mode,
 		Scenario:        scenario,
 		Cardinality:     cardinality,
@@ -222,10 +233,10 @@ func runScenarioBenchmark(ctx context.Context, conn *grpc.ClientConn, cfg Config
 	return result, nil
 }
 
-// startBenchCluster brings up a local distributed cluster (2 data nodes + 1
-// liaison) in-process. When vectorized is true every node is started with
-// --measure-vectorized-enabled=true.
-func startBenchCluster(t *testing.T, vectorized bool) (benchCluster, time.Time, error) {
+// startBenchCluster brings up a local distributed cluster in-process. Measure
+// runs use two data nodes; trace runs use DQB_DATA_NODES. When vectorized is
+// true every node is started with the selected engine's vectorized flag.
+func startBenchCluster(t *testing.T, cfg Config, vectorized bool) (benchCluster, time.Time, error) {
 	t.Helper()
 	savedWireModeRaw := data.MeasureWireModeRaw()
 	tmpDir, cleanup, spaceErr := test.NewSpace()
@@ -234,20 +245,22 @@ func startBenchCluster(t *testing.T, vectorized bool) (benchCluster, time.Time, 
 	}
 	dfWriter := setup.NewDiscoveryFileWriter(tmpDir)
 	config := setup.PropertyClusterConfig(dfWriter)
-	// --measure-vectorized-enabled defaults to true (pkg/query/vectorized/
-	// measure/config.go DefaultConfig). Pass the flag explicitly for both
-	// modes so "row" mode genuinely disables vec dispatch + the raw-frame
-	// wire codec; without =false the row cluster silently runs the vec
-	// engine and the comparison degenerates into two copies of vec.
-	vecFlag := "--measure-vectorized-enabled=false"
-	if vectorized {
-		vecFlag = "--measure-vectorized-enabled=true"
+	flags := clusterFlags(cfg, vectorized)
+	dataNodeCount := 2
+	if cfg.Engine == engineTrace {
+		dataNodeCount = cfg.DataNodes
 	}
-	flags := []string{vecFlag}
-	closeDataNode0 := setup.DataNode(config, flags...)
-	closeDataNode1 := setup.DataNode(config, flags...)
-	setup.PreloadSchemaViaProperty(config, testmeasure.PreloadSchema)
-	config.AddLoadedKinds(schema.KindMeasure)
+	closeDataNodes := make([]func(), 0, dataNodeCount)
+	for nodeIdx := 0; nodeIdx < dataNodeCount; nodeIdx++ {
+		closeDataNodes = append(closeDataNodes, setup.DataNode(config, flags...))
+	}
+	if cfg.Engine == engineTrace {
+		setup.PreloadSchemaViaProperty(config, preloadTraceBenchSchema(cfg.ShardNum))
+		config.AddLoadedKinds(schema.KindTrace)
+	} else {
+		setup.PreloadSchemaViaProperty(config, testmeasure.PreloadSchema)
+		config.AddLoadedKinds(schema.KindMeasure)
+	}
 	liaisonAddr, closeLiaison := setup.LiaisonNode(config, flags...)
 	// Bump the gRPC client's max receive size so visibility checks at
 	// high cardinality (100K+ rows of proto-encoded DataPoints exceed the
@@ -261,8 +274,9 @@ func startBenchCluster(t *testing.T, vectorized bool) (benchCluster, time.Time, 
 	)
 	if connErr != nil {
 		closeLiaison()
-		closeDataNode0()
-		closeDataNode1()
+		for _, closeDataNode := range closeDataNodes {
+			closeDataNode()
+		}
 		cleanup()
 		data.SetMeasureWireModeRaw(savedWireModeRaw)
 		return benchCluster{}, time.Time{}, fmt.Errorf("connect liaison: %w", connErr)
@@ -285,12 +299,33 @@ func startBenchCluster(t *testing.T, vectorized bool) (benchCluster, time.Time, 
 			t.Logf("close benchmark connection: %v", closeErr)
 		}
 		closeLiaison()
-		closeDataNode0()
-		closeDataNode1()
+		for _, closeDataNode := range closeDataNodes {
+			closeDataNode()
+		}
 		cleanup()
 		data.SetMeasureWireModeRaw(savedWireModeRaw)
 	}
 	return benchCluster{conn: conn, close: closeFn}, base, nil
+}
+
+func clusterFlags(cfg Config, vectorized bool) []string {
+	if cfg.Engine == engineTrace {
+		vecFlag := "--trace-vectorized-enabled=false"
+		if vectorized {
+			vecFlag = "--trace-vectorized-enabled=true"
+		}
+		return []string{vecFlag, fmt.Sprintf("--trace-vectorized-query-memory-mib=%d", cfg.QueryMemoryMiB)}
+	}
+	// --measure-vectorized-enabled defaults to true (pkg/query/vectorized/
+	// measure/config.go DefaultConfig). Pass the flag explicitly for both
+	// modes so "row" mode genuinely disables vec dispatch + the raw-frame
+	// wire codec; without =false the row cluster silently runs the vec
+	// engine and the comparison degenerates into two copies of vec.
+	vecFlag := "--measure-vectorized-enabled=false"
+	if vectorized {
+		vecFlag = "--measure-vectorized-enabled=true"
+	}
+	return []string{vecFlag}
 }
 
 // compareModeResults reports whether a vec result matches its row baseline.
@@ -304,7 +339,17 @@ func compareModeResults(rowResult, vecResult Result, exactRowsLimit int) string 
 	if rowResult.ResponseRows != vecResult.ResponseRows {
 		return fmt.Sprintf("mismatch: rows row=%d vec=%d", rowResult.ResponseRows, vecResult.ResponseRows)
 	}
-	if rowResult.Cardinality <= exactRowsLimit && rowResult.ApproxResultHash != vecResult.ApproxResultHash {
+	if rowResult.Engine == engineTrace {
+		if rowResult.ResponseTraces != vecResult.ResponseTraces || rowResult.ResponseSpans != vecResult.ResponseSpans {
+			return fmt.Sprintf("mismatch: traces/spans row=%d/%d vec=%d/%d",
+				rowResult.ResponseTraces, rowResult.ResponseSpans, vecResult.ResponseTraces, vecResult.ResponseSpans)
+		}
+		if rowResult.ApproxResultHash != vecResult.ApproxResultHash {
+			return fmt.Sprintf("mismatch: trace hash row=%d vec=%d", rowResult.ApproxResultHash, vecResult.ApproxResultHash)
+		}
+		return "matched"
+	}
+	if rowResult.ResponseRows <= exactRowsLimit && rowResult.ApproxResultHash != vecResult.ApproxResultHash {
 		return fmt.Sprintf("mismatch: hash row=%d vec=%d", rowResult.ApproxResultHash, vecResult.ApproxResultHash)
 	}
 	if rowResult.ApproxResultHash != vecResult.ApproxResultHash {

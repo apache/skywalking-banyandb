@@ -33,7 +33,6 @@ import (
 	"github.com/apache/skywalking-banyandb/banyand/internal/dump"
 	internalencoding "github.com/apache/skywalking-banyandb/banyand/internal/encoding"
 	"github.com/apache/skywalking-banyandb/pkg/bytes"
-	"github.com/apache/skywalking-banyandb/pkg/compress/zstd"
 	"github.com/apache/skywalking-banyandb/pkg/convert"
 	"github.com/apache/skywalking-banyandb/pkg/encoding"
 	"github.com/apache/skywalking-banyandb/pkg/fs"
@@ -50,14 +49,6 @@ type PartMetadata struct {
 	MinTimestamp          int64  `json:"minTimestamp"`
 	MaxTimestamp          int64  `json:"maxTimestamp"`
 	ID                    uint64 `json:"-"`
-}
-
-type primaryBlockMetadata struct {
-	seriesID     common.SeriesID
-	minTimestamp int64
-	maxTimestamp int64
-	offset       uint64
-	size         uint64
 }
 
 type dataBlock struct {
@@ -105,8 +96,9 @@ type PartReader struct {
 	tagFamilies          map[string]fs.Reader
 	seriesMap            map[common.SeriesID][]byte // part-level smeta.bin, nil if absent
 	indexResolver        *dump.IndexResolver        // optional; resolves indexed (non-column) tags
+	reuseScratch         *dump.ReadScratch          // optional; reuses file-read buffers across blocks
 	path                 string
-	primaryBlockMetadata []primaryBlockMetadata
+	primaryBlockMetadata []dump.PrimaryBlockMetadata
 	partMetadata         PartMetadata
 }
 
@@ -149,7 +141,7 @@ func OpenPart(id uint64, root string, fileSystem fs.FileSystem) (*PartReader, er
 	if err != nil {
 		return nil, fmt.Errorf("cannot open meta.bin: %w", err)
 	}
-	p.primaryBlockMetadata, err = readPrimaryBlockMetadata(metaFile)
+	p.primaryBlockMetadata, err = dump.ReadPrimaryBlockMetadata(metaFile)
 	fs.MustClose(metaFile)
 	if err != nil {
 		return nil, fmt.Errorf("cannot read primary block metadata: %w", err)
@@ -247,52 +239,20 @@ func (p *PartReader) SeriesMap() map[common.SeriesID][]byte { return p.seriesMap
 // resolver is owned by the caller (the PartReader does not close it).
 func (p *PartReader) SetIndexResolver(r *dump.IndexResolver) { p.indexResolver = r }
 
+// SetReuseBuffers turns on (or off) reuse of the per-block file-read scratch
+// buffers. Off by default, which preserves the fresh-allocation behavior.
+func (p *PartReader) SetReuseBuffers(on bool) {
+	if on {
+		p.reuseScratch = &dump.ReadScratch{}
+		return
+	}
+	p.reuseScratch = nil
+}
+
 // Close releases all file handles. Safe to call multiple times.
 func (p *PartReader) Close() error {
 	closePart(p)
 	return nil
-}
-
-func readPrimaryBlockMetadata(r fs.Reader) ([]primaryBlockMetadata, error) {
-	sr := r.SequentialRead()
-	data, err := io.ReadAll(sr)
-	fs.MustClose(sr)
-	if err != nil {
-		return nil, fmt.Errorf("cannot read: %w", err)
-	}
-
-	decompressed, err := zstd.Decompress(nil, data)
-	if err != nil {
-		return nil, fmt.Errorf("cannot decompress: %w", err)
-	}
-
-	var result []primaryBlockMetadata
-	src := decompressed
-	for len(src) > 0 {
-		var pbm primaryBlockMetadata
-		src, err = unmarshalPrimaryBlockMetadata(&pbm, src)
-		if err != nil {
-			return nil, err
-		}
-		result = append(result, pbm)
-	}
-	return result, nil
-}
-
-func unmarshalPrimaryBlockMetadata(pbm *primaryBlockMetadata, src []byte) ([]byte, error) {
-	if len(src) < 40 {
-		return nil, fmt.Errorf("insufficient data")
-	}
-	pbm.seriesID = common.SeriesID(encoding.BytesToUint64(src))
-	src = src[8:]
-	pbm.minTimestamp = int64(encoding.BytesToUint64(src))
-	src = src[8:]
-	pbm.maxTimestamp = int64(encoding.BytesToUint64(src))
-	src = src[8:]
-	pbm.offset = encoding.BytesToUint64(src)
-	src = src[8:]
-	pbm.size = encoding.BytesToUint64(src)
-	return src[8:], nil
 }
 
 func parseBlockMetadata(src []byte) ([]*blockMetadata, error) {
@@ -408,8 +368,8 @@ func (cm *columnMetadata) unmarshal(src []byte) ([]byte, error) {
 	return src, nil
 }
 
-func readTimestamps(tm timestampsMetadata, count int, reader fs.Reader) ([]int64, []int64, error) {
-	data := make([]byte, tm.dataBlock.size)
+func readTimestamps(tm timestampsMetadata, count int, reader fs.Reader, scratch *dump.ReadScratch) ([]int64, []int64, error) {
+	data := dump.ReadBuf(scratch, (*dump.ReadScratch).TSBuf, int(tm.dataBlock.size))
 	if err := dump.ReadData(reader, int64(tm.dataBlock.offset), data); err != nil {
 		return nil, nil, fmt.Errorf("cannot read timestamps: %w", err)
 	}
@@ -442,33 +402,12 @@ func readTimestamps(tm timestampsMetadata, count int, reader fs.Reader) ([]int64
 	return timestamps, versions, nil
 }
 
-func readTagValues(decoder *encoding.BytesBlockDecoder, tagBlock dataBlock, _ string, count int,
-	valueReader fs.Reader, valueType pbv1.ValueType,
-) ([][]byte, error) {
-	// Read tag values
-	bb := &bytes.Buffer{}
-	bb.Buf = make([]byte, tagBlock.size)
-	if err := dump.ReadData(valueReader, int64(tagBlock.offset), bb.Buf); err != nil {
-		return nil, fmt.Errorf("cannot read tag values: %w", err)
-	}
-
-	// Decode values using the internal encoding package
-	var err error
-	var values [][]byte
-	values, err = internalencoding.DecodeTagValues(values, decoder, bb, valueType, count)
-	if err != nil {
-		return nil, fmt.Errorf("cannot decode tag values: %w", err)
-	}
-
-	return values, nil
-}
-
 func readFieldValues(decoder *encoding.BytesBlockDecoder, fieldBlock dataBlock, _ string, count int,
-	valueReader fs.Reader, valueType pbv1.ValueType,
+	valueReader fs.Reader, valueType pbv1.ValueType, scratch *dump.ReadScratch,
 ) ([][]byte, error) {
 	// Read field values
 	bb := &bytes.Buffer{}
-	bb.Buf = make([]byte, fieldBlock.size)
+	bb.Buf = dump.ReadBuf(scratch, (*dump.ReadScratch).ValueBuf, int(fieldBlock.size))
 	if err := dump.ReadData(valueReader, int64(fieldBlock.offset), bb.Buf); err != nil {
 		return nil, fmt.Errorf("cannot read field values: %w", err)
 	}
@@ -603,13 +542,9 @@ func DiscoverColumns(shardPath string, fileSystem fs.FileSystem) ([]string, []st
 
 	// Read primary block to discover field names
 	if len(p.primaryBlockMetadata) > 0 {
-		primaryData := make([]byte, p.primaryBlockMetadata[0].size)
-		if readErr := dump.ReadData(p.primary, int64(p.primaryBlockMetadata[0].offset), primaryData); readErr != nil {
-			return nil, nil, fmt.Errorf("cannot read primary block: %w", readErr)
-		}
-		decompressed, err := zstd.Decompress(nil, primaryData)
+		decompressed, err := dump.ReadPrimaryBlock(p.primary, p.primaryBlockMetadata[0])
 		if err != nil {
-			return nil, nil, fmt.Errorf("cannot decompress primary block: %w", err)
+			return nil, nil, err
 		}
 		blockMetadatas, err := parseBlockMetadata(decompressed)
 		if err != nil {

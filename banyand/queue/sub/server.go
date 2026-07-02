@@ -347,6 +347,14 @@ func (s *server) Serve() run.StopNotify {
 	}
 	mux := chi.NewRouter()
 	mux.Mount("/api", http.StripPrefix("/api", gwMux))
+	// Mount /metrics when the metrics registry exposes a Prometheus handler.
+	// The data node's HTTP server doubles as a Prometheus scrape target, so
+	// monitoring tooling (and integration tests) can read banyandb_queue_sub_*
+	// directly. The handler is only registered when omr is wired to a real
+	// registry; BypassRegistry / nil registries leave /metrics absent (404).
+	if reg, ok := s.omr.(observability.PrometheusHandlerProvider); ok {
+		mux.Handle("/metrics", reg.PrometheusHandler())
+	}
 	s.httpSrv = &http.Server{
 		Addr:              s.httpAddr,
 		Handler:           mux,
@@ -436,83 +444,30 @@ func (s *server) SetNodeSchemaStatusRepo(svc metadata.Service) {
 }
 
 type metrics struct {
-	totalStarted  meter.Counter
-	totalFinished meter.Counter
-	totalErr      meter.Counter
-	totalLatency  meter.Counter
-
-	totalMsgReceived    meter.Counter
-	totalMsgReceivedErr meter.Counter
-	totalMsgSent        meter.Counter
-	totalMsgSentErr     meter.Counter
-
-	// Chunk ordering metrics
-	outOfOrderChunksReceived meter.Counter
-	chunksBuffered           meter.Counter
-	bufferTimeouts           meter.Counter
-	largeGapsRejected        meter.Counter
-	bufferCapacityExceeded   meter.Counter
-	finishSyncErr            meter.Counter
-
-	// Chunked sync saturation metrics
-	activeSyncSessions meter.Gauge
-	reorderBuffered    meter.Gauge
-
-	// Chunked sync outcome metrics
-	chunkedSyncAbortedTotal meter.Counter
-	chunkedSyncFailedParts  meter.Counter
-	chunkedSyncTotalBytes   meter.Counter
-	chunkedSyncDurationSecs meter.Histogram
+	totalStarted         meter.Counter
+	totalFinished        meter.Counter
+	totalLatency         meter.Histogram
+	totalErr             meter.Counter
+	receivedBytes        meter.Counter
+	totalBatchStarted    meter.Counter
+	totalBatchFinished   meter.Counter
+	totalBatchLatency    meter.Histogram
+	totalMessageStarted  meter.Counter
+	totalMessageFinished meter.Counter
 }
 
 func newMetrics(factory observability.Factory) *metrics {
+	labels := []string{"operation", "group", "remote_node", "remote_role", "remote_tier"}
 	return &metrics{
-		totalStarted:        factory.NewCounter("total_started", "topic"),
-		totalFinished:       factory.NewCounter("total_finished", "topic"),
-		totalErr:            factory.NewCounter("total_err", "topic"),
-		totalLatency:        factory.NewCounter("total_latency", "topic"),
-		totalMsgReceived:    factory.NewCounter("total_msg_received", "topic"),
-		totalMsgReceivedErr: factory.NewCounter("total_msg_received_err", "topic"),
-		totalMsgSent:        factory.NewCounter("total_msg_sent", "topic"),
-		totalMsgSentErr:     factory.NewCounter("total_msg_sent_err", "topic"),
-
-		// Chunk ordering metrics
-		outOfOrderChunksReceived: factory.NewCounter("out_of_order_chunks_received", "topic"),
-		chunksBuffered:           factory.NewCounter("chunks_buffered", "topic"),
-		bufferTimeouts:           factory.NewCounter("buffer_timeouts", "topic"),
-		largeGapsRejected:        factory.NewCounter("large_gaps_rejected", "topic"),
-		bufferCapacityExceeded:   factory.NewCounter("buffer_capacity_exceeded", "topic"),
-		finishSyncErr:            factory.NewCounter("finish_sync_err", "topic"),
-
-		// Chunked sync saturation metrics
-		activeSyncSessions: factory.NewGauge("chunked_sync_active_sessions", "topic"),
-		reorderBuffered:    factory.NewGauge("chunk_reorder_buffered_chunks", "topic"),
-
-		// Chunked sync outcome metrics
-		chunkedSyncAbortedTotal: factory.NewCounter("chunked_sync_aborted_total", "topic", "reason"),
-		chunkedSyncFailedParts:  factory.NewCounter("chunked_sync_failed_parts_total", "topic"),
-		chunkedSyncTotalBytes:   factory.NewCounter("chunked_sync_total_bytes_received", "topic"),
-		chunkedSyncDurationSecs: factory.NewHistogram("chunked_sync_duration_seconds", meter.DefBuckets, "topic"),
-	}
-}
-
-// updateChunkOrderMetrics updates chunk ordering metrics.
-func (s *server) updateChunkOrderMetrics(event, topic string) {
-	if s.metrics == nil {
-		return // Skip metrics if not initialized (e.g., during tests)
-	}
-	switch event {
-	case "out_of_order_received":
-		s.metrics.outOfOrderChunksReceived.Inc(1, topic)
-	case "chunk_buffered":
-		s.metrics.chunksBuffered.Inc(1, topic)
-	case "buffer_timeout":
-		s.metrics.bufferTimeouts.Inc(1, topic)
-	case "gap_too_large":
-		s.metrics.largeGapsRejected.Inc(1, topic)
-	case "buffer_full":
-		s.metrics.bufferCapacityExceeded.Inc(1, topic)
-	case "finish_sync_err":
-		s.metrics.finishSyncErr.Inc(1, topic)
+		totalStarted:         factory.NewCounter("total_started", labels...),
+		totalFinished:        factory.NewCounter("total_finished", labels...),
+		totalLatency:         factory.NewHistogram("total_latency", meter.DefBuckets, labels...),
+		totalErr:             factory.NewCounter("total_err", append(labels, "error_type")...),
+		receivedBytes:        factory.NewCounter("received_bytes", labels...),
+		totalBatchStarted:    factory.NewCounter("total_batch_started", labels...),
+		totalBatchFinished:   factory.NewCounter("total_batch_finished", labels...),
+		totalBatchLatency:    factory.NewHistogram("total_batch_latency", meter.BatchBuckets, labels...),
+		totalMessageStarted:  factory.NewCounter("total_message_started", labels...),
+		totalMessageFinished: factory.NewCounter("total_message_finished", labels...),
 	}
 }

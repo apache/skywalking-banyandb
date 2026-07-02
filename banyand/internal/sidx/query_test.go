@@ -19,6 +19,7 @@ package sidx
 
 import (
 	"context"
+	"fmt"
 	"sort"
 	"strings"
 	"testing"
@@ -76,6 +77,87 @@ func TestSIDX_Query_BasicQuery(t *testing.T) {
 	}
 }
 
+func TestSIDX_QuerySyncMatchesStreamingQuery(t *testing.T) {
+	sidx := createTestSIDX(t)
+	defer func() {
+		assert.NoError(t, sidx.Close())
+	}()
+
+	ctx := context.Background()
+	reqs := []WriteRequest{
+		createTestWriteRequest(1, 100, "data100"),
+		createTestWriteRequest(1, 200, "data200"),
+		createTestWriteRequest(1, 150, "data150"),
+	}
+	writeTestData(t, sidx, reqs, 44, 44)
+	waitForIntroducerLoop()
+
+	queryReq := createTestQueryRequest(1)
+	queryReq.MaxBatchSize = 2
+	streamingRows := collectStreamingRows(ctx, t, sidx, queryReq)
+	syncQuerier, ok := sidx.(interface {
+		QuerySync(context.Context, QueryRequest) ([]*QueryResponse, error)
+	})
+	require.True(t, ok)
+	syncRows, err := syncQuerier.QuerySync(ctx, queryReq)
+	require.NoError(t, err)
+	require.Equal(t, flattenQueryRows(streamingRows), flattenQueryRows(syncRows))
+}
+
+// TestSIDX_QuerySync_EarlyStopAtMaxBatchSize verifies the sync query path stops
+// scanning once MaxBatchSize distinct results are collected, while still returning
+// the correct ordered top-N. Blocks are per series, so writing many single-element
+// series forces the scan across multiple batches (blockScannerBatchSize); the block
+// iterator yields them in ascending key order, so the bounded result's prefix must
+// equal the uncapped, fully-ordered scan's prefix.
+func TestSIDX_QuerySync_EarlyStopAtMaxBatchSize(t *testing.T) {
+	s := createTestSIDX(t)
+	defer func() {
+		assert.NoError(t, s.Close())
+	}()
+	ctx := context.Background()
+
+	const seriesCount = 80
+	seriesIDs := make([]common.SeriesID, 0, seriesCount)
+	for i := range seriesCount {
+		key := int64(i + 1)
+		series := common.SeriesID(i + 1)
+		seriesIDs = append(seriesIDs, series)
+		writeTestData(t, s, []WriteRequest{
+			createTestWriteRequest(series, key, fmt.Sprintf("data%03d", key)),
+		}, 44, uint64(i+1))
+	}
+	waitForIntroducerLoop()
+
+	syncQuerier, ok := s.(interface {
+		QuerySync(context.Context, QueryRequest) ([]*QueryResponse, error)
+	})
+	require.True(t, ok)
+
+	baseReq := createTestQueryRequest(seriesIDs...)
+
+	// Uncapped scan reads every block and returns all elements in key order.
+	uncapped, err := syncQuerier.QuerySync(ctx, baseReq)
+	require.NoError(t, err)
+	uncappedRows := flattenQueryRows(uncapped)
+	require.Len(t, uncappedRows, seriesCount)
+
+	const maxBatch = 10
+	cappedReq := baseReq
+	cappedReq.MaxBatchSize = maxBatch
+	capped, err := syncQuerier.QuerySync(ctx, cappedReq)
+	require.NoError(t, err)
+	cappedRows := flattenQueryRows(capped)
+
+	// Bounded query collected at least MaxBatchSize and stopped before reading every block.
+	require.GreaterOrEqual(t, len(cappedRows), maxBatch, "must collect at least MaxBatchSize results")
+	require.Less(t, len(cappedRows), seriesCount, "must stop scanning before reading every block")
+
+	// The bounded result is the correct ordered top-N: its first MaxBatchSize rows
+	// equal the first MaxBatchSize rows of the uncapped, fully-ordered scan.
+	require.Equal(t, uncappedRows[:maxBatch], cappedRows[:maxBatch])
+}
+
 func TestSIDX_Query_EmptyResult(t *testing.T) {
 	sidx := createTestSIDX(t)
 	defer func() {
@@ -97,6 +179,42 @@ func TestSIDX_Query_EmptyResult(t *testing.T) {
 	}
 
 	assert.Equal(t, 0, resultCount)
+}
+
+type queryRow struct {
+	data   string
+	key    int64
+	series common.SeriesID
+	partID uint64
+}
+
+func collectStreamingRows(ctx context.Context, t *testing.T, sidx SIDX, req QueryRequest) []*QueryResponse {
+	t.Helper()
+	resultsCh, errCh := sidx.StreamingQuery(ctx, req)
+	var results []*QueryResponse
+	for res := range resultsCh {
+		require.NoError(t, res.Error)
+		results = append(results, res)
+	}
+	if err, ok := <-errCh; ok {
+		require.NoError(t, err)
+	}
+	return results
+}
+
+func flattenQueryRows(results []*QueryResponse) []queryRow {
+	var rows []queryRow
+	for _, result := range results {
+		for rowIdx := range result.Keys {
+			rows = append(rows, queryRow{
+				key:    result.Keys[rowIdx],
+				data:   string(result.Data[rowIdx]),
+				series: result.SIDs[rowIdx],
+				partID: result.PartIDs[rowIdx],
+			})
+		}
+	}
+	return rows
 }
 
 func TestSIDX_Query_KeyRangeFilter(t *testing.T) {

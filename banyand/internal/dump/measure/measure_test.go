@@ -72,8 +72,8 @@ func TestDecodeMeasurePartFormat(t *testing.T) {
 	totalDataPoints := 0
 
 	for blockIdx, pbm := range p.primaryBlockMetadata {
-		primaryData := make([]byte, pbm.size)
-		fs.MustReadData(p.primary, int64(pbm.offset), primaryData)
+		primaryData := make([]byte, pbm.Size)
+		fs.MustReadData(p.primary, int64(pbm.Offset), primaryData)
 
 		decompressed, decErr := zstd.Decompress(nil, primaryData)
 		require.NoError(t, decErr, "should decompress primary data for primary block %d", blockIdx)
@@ -82,7 +82,7 @@ func TestDecodeMeasurePartFormat(t *testing.T) {
 		require.NoError(t, parseErr, "should parse all block metadata from primary block %d", blockIdx)
 
 		for _, bm := range blockMetadatas {
-			timestamps, versions, tsErr := readTimestamps(bm.timestamps, int(bm.count), p.timestamps)
+			timestamps, versions, tsErr := readTimestamps(bm.timestamps, int(bm.count), p.timestamps, nil)
 			require.NoError(t, tsErr, "should read timestamps/versions for series %d", bm.seriesID)
 			assert.Len(t, timestamps, int(bm.count), "should have correct number of timestamps")
 			assert.Len(t, versions, int(bm.count), "should have correct number of versions")
@@ -95,7 +95,7 @@ func TestDecodeMeasurePartFormat(t *testing.T) {
 			}
 
 			for _, colMeta := range bm.field.columns {
-				fieldValues, fErr := readFieldValues(decoder, colMeta.dataBlock, colMeta.name, int(bm.count), p.fieldValues, colMeta.valueType)
+				fieldValues, fErr := readFieldValues(decoder, colMeta.dataBlock, colMeta.name, int(bm.count), p.fieldValues, colMeta.valueType, nil)
 				require.NoError(t, fErr, "should read field %s for series %d", colMeta.name, bm.seriesID)
 				assert.Len(t, fieldValues, int(bm.count), "field %s should have value for each data point", colMeta.name)
 			}
@@ -110,7 +110,7 @@ func TestDecodeMeasurePartFormat(t *testing.T) {
 
 				for _, colMeta := range cfm.columns {
 					fullTagName := tagFamilyName + "." + colMeta.name
-					tagValues, tErr := readTagValues(decoder, colMeta.dataBlock, fullTagName, int(bm.count), p.tagFamilies[tagFamilyName], colMeta.valueType)
+					tagValues, tErr := dump.ReadTagValues(decoder, colMeta.dataBlock.offset, colMeta.dataBlock.size, int(bm.count), p.tagFamilies[tagFamilyName], colMeta.valueType, nil)
 					require.NoError(t, tErr, "should read tag %s for series %d", fullTagName, bm.seriesID)
 					assert.Len(t, tagValues, int(bm.count), "tag %s should have value for each data point", fullTagName)
 				}

@@ -61,6 +61,7 @@ func (d *dataBlock) unmarshal(src []byte) []byte {
 
 type blockMetadata struct {
 	tagFamilies           map[string]*dataBlock
+	tagType               tagType
 	tagProjection         []model.TagProjection
 	timestamps            timestampsMetadata
 	elementIDs            elementIDsMetadata
@@ -75,6 +76,16 @@ func (bm *blockMetadata) copyFrom(src *blockMetadata) {
 	bm.count = src.count
 	bm.timestamps.copyFrom(&src.timestamps)
 	bm.elementIDs.copyFrom(&src.elementIDs)
+	if src.tagType == nil {
+		bm.tagType = nil
+	} else {
+		if bm.tagType == nil {
+			bm.tagType = make(tagType, len(src.tagType))
+		} else {
+			bm.tagType.reset()
+		}
+		bm.tagType.copyFrom(src.tagType)
+	}
 	for k, db := range src.tagFamilies {
 		if bm.tagFamilies == nil {
 			bm.tagFamilies = make(map[string]*dataBlock)
@@ -102,6 +113,11 @@ func (bm *blockMetadata) reset() {
 	bm.count = 0
 	bm.timestamps.reset()
 	bm.elementIDs.reset()
+	if bm.tagType == nil {
+		bm.tagType = make(tagType)
+	} else {
+		bm.tagType.reset()
+	}
 	for k := range bm.tagFamilies {
 		bm.tagFamilies[k].reset()
 		delete(bm.tagFamilies, k)
@@ -294,6 +310,7 @@ func unmarshalBlockMetadata(dst []blockMetadata, src []byte) ([]blockMetadata, e
 			dst = append(dst, blockMetadata{})
 		}
 		bm := &dst[len(dst)-1]
+		bm.reset()
 		tail, err := bm.unmarshal(src)
 		if err != nil {
 			return dstOrig, fmt.Errorf("cannot unmarshal blockMetadata entries: %w", err)
@@ -307,6 +324,93 @@ func unmarshalBlockMetadata(dst []blockMetadata, src []byte) ([]blockMetadata, e
 			}
 		}
 		pre = bm
+	}
+	return dst, nil
+}
+
+// skipBlockMetadataAfterSeriesID advances src — positioned immediately after a
+// blockMetadata entry's 8-byte seriesID — past the entry's remaining fields without
+// allocating its tagFamilies map. It mirrors the field order of blockMetadata.marshal
+// after the seriesID, so it consumes precisely the rest of one entry.
+func skipBlockMetadataAfterSeriesID(src []byte) ([]byte, error) {
+	src, _ = encoding.BytesToVarUint64(src) // uncompressedSizeBytes
+	src, _ = encoding.BytesToVarUint64(src) // count
+	// timestampsMetadata: dataBlock(offset,size) + min(8) + max(8) + encodeType(1) + elementIDsOffset(varint).
+	src, _ = encoding.BytesToVarUint64(src) // timestamps.dataBlock.offset
+	src, _ = encoding.BytesToVarUint64(src) // timestamps.dataBlock.size
+	if len(src) < 17 {
+		return nil, errors.New("cannot skip timestampsMetadata: insufficient bytes")
+	}
+	src = src[17:]                          // min(8) + max(8) + encodeType(1)
+	src, _ = encoding.BytesToVarUint64(src) // timestamps.elementIDsOffset
+	// elementIDsMetadata: dataBlock(offset,size) + encodeType(1).
+	src, _ = encoding.BytesToVarUint64(src) // elementIDs.dataBlock.offset
+	src, _ = encoding.BytesToVarUint64(src) // elementIDs.dataBlock.size
+	if len(src) < 1 {
+		return nil, errors.New("cannot skip elementIDsMetadata: insufficient bytes")
+	}
+	src = src[1:] // elementIDs.encodeType
+	var tagFamilyCount uint64
+	src, tagFamilyCount = encoding.BytesToVarUint64(src)
+	for i := uint64(0); i < tagFamilyCount; i++ {
+		var err error
+		src, _, err = encoding.DecodeBytes(src) // tagFamily name
+		if err != nil {
+			return nil, fmt.Errorf("cannot skip tagFamily name: %w", err)
+		}
+		src, _ = encoding.BytesToVarUint64(src) // dataBlock.offset
+		src, _ = encoding.BytesToVarUint64(src) // dataBlock.size
+	}
+	return src, nil
+}
+
+// unmarshalBlockMetadataFiltered decodes only the blockMetadata entries in src whose
+// seriesID appears in wanted, cheaply skipping the rest. Both the src entries and wanted
+// are sorted by seriesID, so a single merge-walk over them suffices. The result is
+// equivalent to filtering unmarshalBlockMetadata's output to entries whose seriesID is in
+// wanted, but it avoids building the tagFamilies map for skipped entries — the dominant
+// cost when only a few of the granule's series are requested. Each entry's seriesID is
+// decoded once up front to decide; matched entries are then fully decoded, so the overhead
+// on a full scan (every entry matched) is one extra 8-byte read per entry and no extra
+// allocation.
+func unmarshalBlockMetadataFiltered(dst []blockMetadata, src []byte, wanted []common.SeriesID) ([]blockMetadata, error) {
+	dstOrig := dst
+	wantIdx := 0
+	var pre *blockMetadata
+	for len(src) > 0 && wantIdx < len(wanted) {
+		if len(src) < 8 {
+			return dstOrig, errors.New("cannot unmarshal blockMetadata from less than 8 bytes")
+		}
+		seriesID := common.SeriesID(encoding.BytesToUint64(src))
+		for wantIdx < len(wanted) && wanted[wantIdx] < seriesID {
+			wantIdx++
+		}
+		if wantIdx < len(wanted) && wanted[wantIdx] == seriesID {
+			if len(dst) < cap(dst) {
+				dst = dst[:len(dst)+1]
+			} else {
+				dst = append(dst, blockMetadata{})
+			}
+			bm := &dst[len(dst)-1]
+			bm.reset()
+			tail, uErr := bm.unmarshal(src)
+			if uErr != nil {
+				return dstOrig, fmt.Errorf("cannot unmarshal blockMetadata entries: %w", uErr)
+			}
+			if pre != nil {
+				if vErr := validateBlockMetadataOrder(pre, bm); vErr != nil {
+					return dstOrig, vErr
+				}
+			}
+			pre = bm
+			src = tail
+			continue
+		}
+		tail, sErr := skipBlockMetadataAfterSeriesID(src[8:])
+		if sErr != nil {
+			return dstOrig, fmt.Errorf("cannot skip blockMetadata entry: %w", sErr)
+		}
+		src = tail
 	}
 	return dst, nil
 }

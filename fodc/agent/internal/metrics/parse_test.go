@@ -1076,6 +1076,51 @@ func TestParse_LabelValueWithNumbers(t *testing.T) {
 	assert.Equal(t, "value123", metrics[0].Labels[0].Value)
 }
 
+// TestParse_TypePropagation verifies that expfmt-derived types are correctly set on
+// RawMetric.Type, including base-name resolution for histogram component series.
+func TestParse_TypePropagation(t *testing.T) {
+	text := `# HELP http_requests_total Total HTTP requests
+# TYPE http_requests_total counter
+http_requests_total{method="GET"} 1234
+# HELP request_latency Request latency histogram
+# TYPE request_latency histogram
+request_latency_bucket{le="0.1"} 10
+request_latency_bucket{le="0.5"} 25
+request_latency_bucket{le="+Inf"} 30
+request_latency_sum 12.5
+request_latency_count 30
+# HELP cpu_usage CPU usage
+# TYPE cpu_usage gauge
+cpu_usage 75.5`
+
+	result, parseErr := ParseWithAgentLabels(text, "", "", "")
+
+	require.NoError(t, parseErr)
+
+	// Build a name→type map for easy assertion.
+	typeByName := make(map[string][]string)
+	for _, m := range result {
+		typeByName[m.Name] = append(typeByName[m.Name], m.Type)
+	}
+
+	// Counter: all series for http_requests_total must be "counter".
+	for _, typ := range typeByName["http_requests_total"] {
+		assert.Equal(t, "counter", typ, "http_requests_total should be counter")
+	}
+
+	// Gauge.
+	for _, typ := range typeByName["cpu_usage"] {
+		assert.Equal(t, "gauge", typ, "cpu_usage should be gauge")
+	}
+
+	// Histogram component series must all resolve to "histogram".
+	for _, name := range []string{"request_latency_bucket", "request_latency_sum", "request_latency_count"} {
+		for _, typ := range typeByName[name] {
+			assert.Equal(t, "histogram", typ, "%s should resolve to histogram via base name", name)
+		}
+	}
+}
+
 func TestParse_WithAgentIdentityLabels(t *testing.T) {
 	text := `cpu_usage{instance="localhost"} 75.5
 http_requests_total{method="GET"} 100`
@@ -1106,15 +1151,15 @@ http_requests_total{method="GET"} 100`
 			if label.Value == "localhost" {
 				hasInstanceLabel = true
 			}
-		case "node_role":
+		case labelNodeRole:
 			if label.Value == testNodeRole {
 				hasNodeRole = true
 			}
-		case "pod_name":
+		case labelPodName:
 			if label.Value == "test-pod" {
 				hasPodName = true
 			}
-		case "container_name":
+		case labelContainerName:
 			if label.Value == testContainerName {
 				hasContainerName = true
 			}
@@ -1141,15 +1186,15 @@ http_requests_total{method="GET"} 100`
 			if label.Value == "GET" {
 				hasMethodLabel = true
 			}
-		case "node_role":
+		case labelNodeRole:
 			if label.Value == testNodeRole {
 				hasNodeRole = true
 			}
-		case "pod_name":
+		case labelPodName:
 			if label.Value == "test-pod" {
 				hasPodName = true
 			}
-		case "container_name":
+		case labelContainerName:
 			if label.Value == testContainerName {
 				hasContainerName = true
 			}
@@ -1186,10 +1231,10 @@ func TestParse_WithPartialAgentIdentityLabels(t *testing.T) {
 	hasNodeRole := false
 	hasContainerName := false
 	for _, label := range metrics[0].Labels {
-		if label.Name == "node_role" && label.Value == testNodeRole {
+		if label.Name == labelNodeRole && label.Value == testNodeRole {
 			hasNodeRole = true
 		}
-		if label.Name == "container_name" && label.Value == testContainerName {
+		if label.Name == labelContainerName && label.Value == testContainerName {
 			hasContainerName = true
 		}
 	}
@@ -1207,4 +1252,31 @@ func TestParse_WithoutAgentIdentityLabels(t *testing.T) {
 	require.Len(t, metrics[0].Labels, 1) // Only original label
 	assert.Equal(t, "instance", metrics[0].Labels[0].Name)
 	assert.Equal(t, "localhost", metrics[0].Labels[0].Value)
+}
+
+func TestParseWithNodeLabels_NamespacesAndSkips(t *testing.T) {
+	// A merge metric with an intrinsic "type" label, scraped from a hot data node.
+	text := `banyandb_measure_total_merged_parts{type="file"} 3`
+
+	metrics, err := ParseWithNodeLabels(text, "ROLE_DATA", "demo-banyandb-data-hot-0", "data",
+		map[string]string{"type": "hot", labelPodName: "demo-banyandb-data-hot-0", labelContainerName: "data", "empty": ""})
+
+	require.NoError(t, err)
+	require.Len(t, metrics, 1)
+
+	got := make(map[string]string)
+	for _, l := range metrics[0].Labels {
+		got[l.Name] = l.Value
+	}
+	// Intrinsic type is preserved; the node tier is namespaced to node_type (no collision).
+	assert.Equal(t, "file", got["type"])
+	assert.Equal(t, "hot", got["node_type"])
+	// First-class identity labels are not re-applied under the node_ prefix, and empty values are skipped.
+	assert.Equal(t, "demo-banyandb-data-hot-0", got[labelPodName])
+	_, hasNodePodName := got["node_pod_name"]
+	assert.False(t, hasNodePodName)
+	_, hasNodeContainer := got["node_container_name"]
+	assert.False(t, hasNodeContainer)
+	_, hasNodeEmpty := got["node_empty"]
+	assert.False(t, hasNodeEmpty)
 }

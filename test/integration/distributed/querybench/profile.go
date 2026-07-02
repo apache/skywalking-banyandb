@@ -72,11 +72,20 @@ func allocationDelta(before, after processSnapshot, queries int) AllocationStats
 }
 
 func startProfile(reportDir string, scenario Scenario, cardinality int, mode string, enabled bool) (*profileRecorder, error) {
+	return startProfileWithVariant(reportDir, scenario, cardinality, mode, "", enabled)
+}
+
+func startProfileWithVariant(reportDir string, scenario Scenario, cardinality int, mode, variant string, enabled bool) (*profileRecorder, error) {
 	recorder := &profileRecorder{paths: make(map[string]string)}
 	if !enabled {
 		return recorder, nil
 	}
-	profileDir := filepath.Join(reportDir, "profiles", string(scenario), strconv.Itoa(cardinality), mode)
+	pathParts := []string{reportDir, "profiles", string(scenario), strconv.Itoa(cardinality)}
+	if variant != "" {
+		pathParts = append(pathParts, sanitizeProfilePath(variant))
+	}
+	pathParts = append(pathParts, mode)
+	profileDir := filepath.Join(pathParts...)
 	if mkdirErr := os.MkdirAll(profileDir, 0o755); mkdirErr != nil {
 		return nil, fmt.Errorf("create profile directory: %w", mkdirErr)
 	}
@@ -96,6 +105,11 @@ func startProfile(reportDir string, scenario Scenario, cardinality int, mode str
 	recorder.paths["cpu"] = cpuPath
 	recorder.paths["heap"] = filepath.Join(profileDir, "heap.pprof")
 	return recorder, nil
+}
+
+func sanitizeProfilePath(value string) string {
+	replacer := strings.NewReplacer(",", "_", "=", "-", " ", "", "/", "_")
+	return replacer.Replace(value)
 }
 
 func (r *profileRecorder) stop() (map[string]string, error) {

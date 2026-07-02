@@ -79,6 +79,14 @@ func (v *sha256Verifier) ComputeAndWrap(r io.Reader) (io.Reader, func() (string,
 	return hr, hr.getHash
 }
 
+func (v *sha256Verifier) Sum(r io.Reader) (string, error) {
+	wrapped, getHash := v.ComputeAndWrap(r)
+	if _, err := io.Copy(io.Discard, wrapped); err != nil {
+		return "", err
+	}
+	return getHash()
+}
+
 func (v *sha256Verifier) Wrap(rc io.ReadCloser, expected string) io.ReadCloser {
 	h := sha256.New()
 	return &verifyingReadCloser{

@@ -25,6 +25,8 @@ import (
 	"fmt"
 	"io"
 	"io/fs"
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"sort"
@@ -43,6 +45,7 @@ import (
 	streamv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/stream/v1"
 	tracev1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/trace/v1"
 	"github.com/apache/skywalking-banyandb/banyand/backup/lifecycle"
+	"github.com/apache/skywalking-banyandb/banyand/observability"
 	"github.com/apache/skywalking-banyandb/pkg/grpchelper"
 	"github.com/apache/skywalking-banyandb/pkg/test/flags"
 	"github.com/apache/skywalking-banyandb/pkg/test/helpers"
@@ -227,6 +230,151 @@ func verifyLifecycleStages(sc helpers.SharedContext, verifyFn func(gomega.Gomega
 	})
 }
 
+// verifyMigrationMetrics asserts the lifecycle tier-migration publisher emitted
+// the banyandb_lifecycle_migration_* family (the mirror of banyandb_queue_pub_*)
+// during the migration. The registry's Prometheus counters persist after the
+// command stops, so we scrape its handler directly rather than a live HTTP port.
+//
+// In addition to the publisher-side family, this function also scrapes the
+// data node's /metrics endpoint (SharedContext.WarmHTTPURL) to verify the
+// RECEIVER recorded non-empty SENDER labels on its banyandb_queue_sub_total_finished
+// family. The receiver reads r.GetSenderNode() / r.GetSenderRole() /
+// r.GetSenderTier() on each wire SendRequest — those are populated by the
+// publisher only when SetSelfNode was called on the migration client.
+//
+// This is the direct sender-label check the original patch required.
+func verifyMigrationMetrics(reg observability.MetricsRegistry) {
+	provider, ok := reg.(observability.PrometheusHandlerProvider)
+	gomega.Expect(ok).To(gomega.BeTrue(), "lifecycle metrics registry must expose a Prometheus handler")
+	rec := httptest.NewRecorder()
+	provider.PrometheusHandler().ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/metrics", nil))
+	gomega.Expect(rec.Code).To(gomega.Equal(http.StatusOK))
+	body := rec.Body.String()
+	// Last-run metrics (banyandb_lifecycle_last_run_timestamp_seconds +
+	// banyandb_lifecycle_last_run_success) are stamped by the deferred
+	// recordLastRun() at the end of action() with the (remote_node,
+	// remote_role, remote_tier, group) label set, sourced from the
+	// cycle's last processed group. A successful cycle must set
+	// success=1 with a non-zero epoch; an empty value would mean the
+	// gauges were never registered (PreRun not run) or the action never
+	// reached the defer. Prometheus emits floats in scientific notation
+	// for large values like epoch seconds (e.g. 1.781007822e+09), so the
+	// assertion accepts either fixed or scientific form. The metric
+	// names now carry labels — Prometheus' exposition format sorts label
+	// names alphabetically (group, remote_node, remote_role, remote_tier),
+	// and the regex requires all four to be present so a regression to
+	// the unlabeled form fails the regex. The label block is captured as
+	// a single `[^}]*` then each required label is asserted with a
+	// lookbehind-style positive check; an explicit per-label regex would
+	// be more readable but the leading-label-alphabetical-ordering
+	// invariant lets us keep the assertion to a single MatchRegexp.
+	allLabels := `group="[^"]*"[^}]*remote_node="[^"]*"[^}]*remote_role="[^"]*"[^}]*remote_tier="[^"]*"`
+	gomega.Expect(body).To(gomega.MatchRegexp(
+		`(?m)^banyandb_lifecycle_last_run_timestamp_seconds\{`+allLabels+`\} (?:[1-9]\d{9}|[1-9]\.\d+e\+0?[89])`),
+		"banyandb_lifecycle_last_run_timestamp_seconds must be set to a non-zero epoch with all four labels, got:\n"+body)
+	gomega.Expect(body).To(gomega.MatchRegexp(
+		`(?m)^banyandb_lifecycle_last_run_success\{`+allLabels+`\} 1$`),
+		"banyandb_lifecycle_last_run_success must be 1 after a successful cycle, with all four labels, got:\n"+body)
+	// A successful migration send increments total_finished; the measure/stream/trace
+	// part files are sent via the file-sync operation, so that label must be present.
+	gomega.Expect(body).To(gomega.MatchRegexp(`banyandb_lifecycle_migration_total_finished\{[^}]*\} [1-9]`),
+		"expected a non-zero banyandb_lifecycle_migration_total_finished series, got:\n"+body)
+	gomega.Expect(body).To(gomega.ContainSubstring(`operation="file-sync"`),
+		"file-sync part migration must be metered in the banyandb_lifecycle_migration_* family")
+	// Every banyandb_lifecycle_migration_total_finished series must carry a
+	// non-empty remote_node and a non-empty remote_tier (matching the
+	// destination data node). The test migrates hot -> warm, so remote_tier
+	// is "warm" (the destination).
+	gomega.Expect(body).To(gomega.MatchRegexp(`(?m)^banyandb_lifecycle_migration_total_finished\{[^}]*remote_node="[^"]+"[^}]*\} [1-9]`),
+		"every banyandb_lifecycle_migration_total_finished series must have a non-empty remote_node label (destination), got:\n"+body)
+	gomega.Expect(body).To(gomega.MatchRegexp(`(?m)^banyandb_lifecycle_migration_total_finished\{[^}]*remote_tier="warm"[^}]*\} [1-9]`),
+		"every banyandb_lifecycle_migration_total_finished series must have remote_tier=\"warm\" (the destination tier, since the test migrates hot->warm), got:\n"+body)
+
+	// The lifecycle's own metric family is the PUBLISHER-side mirror — it
+	// records the destination (remote_*). To confirm the SENDER identity was
+	// stamped on the wire and the receiver recorded it, we scrape the data
+	// node's /metrics for the banyandb_queue_sub_total_finished family
+	// (see verifyDataNodeSenderLabels below).
+
+	// === SENDER-LABEL VERIFICATION on the receiver (data node) ===
+	// Scrape the warm data node's Prometheus endpoint and assert that
+	// banyandb_queue_sub_total_finished series have non-empty
+	// sender_node / sender_role / sender_tier. The lifecycle publisher
+	// stamps those via SetSelfNode; without the fix, the data node records
+	// empty strings for these labels.
+	verifyDataNodeSenderLabels()
+}
+
+// verifyDataNodeSenderLabels scrapes the data node's /metrics endpoint and
+// asserts that the receiver's banyandb_queue_sub_total_finished series carry
+// non-empty sender labels — the direct evidence that the lifecycle publisher's
+// SetSelfNode fix is in place.
+//
+// Note on label naming: the receiver's banyandb_queue_sub_* family uses
+// REMOTE_* labels (remote_node, remote_role, remote_tier) to identify the
+// SENDER of each message — the lifecycle is "remote" from the data node's
+// point of view. So `remote_role="lifecycle"` and `remote_tier="hot"` on a
+// file-sync series IS the sender-stamping evidence we need.
+//
+// The lifecycle publishes to BOTH data nodes in the test (hot & warm), so
+// either endpoint is valid. We check both, accepting whichever responds.
+//
+// At-least-one check: every runLifecycleMigration invocation passes
+// --grpc-addr=SharedContext.DataAddr (the hot data node), so resolveSelfIdentity
+// resolves the sender through the registry's GrpcAddress match and the stamped
+// tier is the hot node's `type` label. The lifecycle service waits for the
+// co-located node to become visible in the registry before resolving, so the
+// match is deterministic. The assertion requires AT LEAST ONE
+// banyandb_queue_sub_total_finished series to carry the populated labels,
+// proving the SetSelfNode fix is wired end-to-end.
+func verifyDataNodeSenderLabels() {
+	urls := []string{SharedContext.WarmHTTPURL, SharedContext.DataHTTPURL}
+	for _, base := range urls {
+		if base == "" {
+			continue
+		}
+		ginkgo.By("scraping data node metrics at " + base + "/metrics")
+		// Use a small client-level timeout so a half-open TCP socket or
+		// stuck data-node HTTP handler cannot stall the spec indefinitely.
+		// The data node is a local process that serves /metrics in <100ms
+		// in practice, so 5s is a comfortable upper bound that still
+		// catches genuine hangs well within the spec's overall deadline.
+		scrapeClient := &http.Client{Timeout: 5 * time.Second}
+		resp, err := scrapeClient.Get(base + "/metrics") //nolint:gosec // test-only URL
+		if err != nil {
+			ginkgo.By("skipping " + base + " (" + err.Error() + ")")
+			continue
+		}
+		func() {
+			defer resp.Body.Close()
+			gomega.Expect(resp.StatusCode).To(gomega.Equal(http.StatusOK),
+				"data node "+base+"/metrics must return 200")
+			rawBody, readErr := io.ReadAll(resp.Body)
+			gomega.Expect(readErr).NotTo(gomega.HaveOccurred())
+			body := string(rawBody)
+			// At least one banyandb_queue_sub_total_finished series must
+			// carry the sender-stamped labels. The lifecycle derives its
+			// self identity (sender_node, sender_role, sender_tier) from
+			// already-known inputs — its --grpc-addr (the co-located
+			// data node) and the data-node registry — and calls
+			// SetSelfNode(senderNode, "lifecycle", senderTier). The
+			// hard-coded "lifecycle" role and the matched data node's
+			// Metadata.Name and Labels["type"] populate the three
+			// remote_* labels the receiver records.
+			ginkgo.By("scraping data node " + base + " for sender labels: " + fmt.Sprintf("%d bytes", len(body)))
+			gomega.Expect(body).To(gomega.MatchRegexp(`(?m)^banyandb_queue_sub_total_finished\{[^}]*remote_node="[^"]+"[^}]*\} [1-9]`),
+				"at least one banyandb_queue_sub_total_finished series on "+base+" must carry a non-empty remote_node label (sender node), got:\n"+body)
+			gomega.Expect(body).To(gomega.MatchRegexp(`(?m)^banyandb_queue_sub_total_finished\{[^}]*remote_role="lifecycle"[^}]*\} [1-9]`),
+				"at least one banyandb_queue_sub_total_finished series on "+base+" must carry remote_role=\"lifecycle\" (the sender role stamped by parseGroup), got:\n"+body)
+			gomega.Expect(body).To(gomega.MatchRegexp(`(?m)^banyandb_queue_sub_total_finished\{[^}]*remote_tier="hot"[^}]*\} [1-9]`),
+				"at least one banyandb_queue_sub_total_finished series on "+base+" must carry remote_tier=\"hot\" "+
+					"(the co-located hot data node's type label, resolved via the lifecycle's --grpc-addr registry match), got:\n"+body)
+		}()
+		return
+	}
+	ginkgo.By("no data node HTTP URL available; skipping sender-label scrape")
+}
+
 func verifySourceDirectoriesAfterMigration() {
 	streamSrcPath := filepath.Join(SharedContext.SrcDir, "stream", "data", "default")
 	streamEntries, err := os.ReadDir(streamSrcPath)
@@ -355,9 +503,9 @@ func verifyMigrationReport(rf string) {
 		} {
 			v, found := errs[key]
 			gomega.Expect(found).To(gomega.BeTrue(), "errors.%s must be present in %s", key, path)
-			errMap, isMap := v.(map[string]interface{})
-			gomega.Expect(isMap).To(gomega.BeTrue(), "errors.%s must be a map in %s", key, path)
-			gomega.Expect(errMap).To(gomega.BeEmpty(), "errors.%s must be empty for a clean cycle in %s", key, path)
+			errList, isList := v.([]interface{})
+			gomega.Expect(isList).To(gomega.BeTrue(), "errors.%s must be an array in %s", key, path)
+			gomega.Expect(errList).To(gomega.BeEmpty(), "errors.%s must be empty for a clean cycle in %s", key, path)
 		}
 
 		// report_version 2.1: every catalog carries a sync_breakdown block, and
@@ -372,9 +520,9 @@ func verifyMigrationReport(rf string) {
 		// row_replay_node_errors must surface and stay empty for a clean cycle.
 		nodeErrs, found := errs["row_replay_node_errors"]
 		gomega.Expect(found).To(gomega.BeTrue(), "errors.row_replay_node_errors must be present in %s", path)
-		nodeErrMap, isMap := nodeErrs.(map[string]interface{})
-		gomega.Expect(isMap).To(gomega.BeTrue(), "errors.row_replay_node_errors must be a map in %s", path)
-		gomega.Expect(nodeErrMap).To(gomega.BeEmpty(), "errors.row_replay_node_errors must be empty for a clean cycle in %s", path)
+		nodeErrList, isList := nodeErrs.([]interface{})
+		gomega.Expect(isList).To(gomega.BeTrue(), "errors.row_replay_node_errors must be an array in %s", path)
+		gomega.Expect(nodeErrList).To(gomega.BeEmpty(), "errors.row_replay_node_errors must be empty for a clean cycle in %s", path)
 	}
 	gomega.Expect(jsonReports).To(gomega.BeNumerically(">", 0), "no JSON report files found under %s", rf)
 }
@@ -508,9 +656,32 @@ func crossSegmentTimestamps() (single, left, right time.Time) {
 }
 
 // runLifecycleMigration runs a single hot->warm lifecycle migration, pointing
-// every root path at the shared source dir and writing its report to reportDir.
-func runLifecycleMigration(progressFile, reportDir string) {
-	lifecycleCmd := lifecycle.NewCommand()
+// the lifecycle service at the co-located data node. Returns the MetricsRegistry
+// the lifecycle service registered its metrics with so the test can scrape them.
+//
+// The integration test cluster has the data node bound to "localhost"
+// (pkg/test/setup/setup.go:host = "localhost") and its GrpcAddress
+// registered as `localhost:<port>`. The lifecycle CLI's resolveSelfIdentity
+// matches selfPodHost against the host portion of the registered
+// GrpcAddress, so we set POD_NAME=localhost for the duration of the
+// call (and restore the prior value on exit) so selfPodHostname()
+// returns "localhost" and matches the data node. In production this
+// is set by the K8s downward API to the lifecycle pod's actual pod
+// name (e.g. demo-banyandb-data-hot-0); the integration test uses
+// "localhost" because the data node's bind address is the loopback.
+func runLifecycleMigration(progressFile, reportDir string) observability.MetricsRegistry {
+	lifecycleCmd, reg := lifecycle.NewCommandWithRegistry()
+	priorPodName, priorHad := os.LookupEnv("POD_NAME")
+	if err := os.Setenv("POD_NAME", "localhost"); err != nil {
+		gomega.Expect(err).NotTo(gomega.HaveOccurred())
+	}
+	defer func() {
+		if priorHad {
+			_ = os.Setenv("POD_NAME", priorPodName)
+		} else {
+			_ = os.Unsetenv("POD_NAME")
+		}
+	}()
 	args := []string{
 		"--grpc-addr", SharedContext.DataAddr,
 		"--stream-root-path", SharedContext.SrcDir,
@@ -522,6 +693,7 @@ func runLifecycleMigration(progressFile, reportDir string) {
 	args = append(args, SharedContext.MetadataFlags...)
 	lifecycleCmd.SetArgs(args)
 	gomega.Expect(lifecycleCmd.Execute()).To(gomega.Succeed())
+	return reg
 }
 
 // drainWriteAcks closes a client-streaming write and fails the spec on any
@@ -737,7 +909,11 @@ var _ = ginkgo.Describe("Measure cross-segment migration", ginkgo.Ordered, func(
 		gomega.Expect(err).NotTo(gomega.HaveOccurred())
 		defer os.RemoveAll(dir)
 		rf := filepath.Join(dir, "report")
-		runLifecycleMigration(filepath.Join(dir, "progress.json"), rf)
+		migrationMetrics := runLifecycleMigration(filepath.Join(dir, "progress.json"), rf)
+		// This Describe seeds sw_cross_segment immediately above and migrates it
+		// here, so the tier-migration publisher always emits the
+		// banyandb_lifecycle_migration_* family regardless of spec ordering.
+		verifyMigrationMetrics(migrationMetrics)
 
 		// === 4. Verify the destination directory contains multiple seg-* folders for
 		//        sw_cross_segment. Pre-fix, the cross-segment part would copy entirely
@@ -834,6 +1010,143 @@ var _ = ginkgo.Describe("Measure cross-segment migration", ginkgo.Ordered, func(
 		expectValues(runQuery(singleTargetTS, crossRightTS.Add(time.Millisecond), 3),
 			map[int64]int64{msVal(singleTargetTS): 100, msVal(crossLeftTS): 200, msVal(crossRightTS): 300},
 			"Q4 cross-segment aggregate")
+	})
+
+	// sidx-completeness regression: every DISTINCT series written must remain
+	// resolvable on the warm stage after migration. A measure query resolves each
+	// series via the segment series-index (sidx); if migration drops a series from
+	// the target sidx, that series' rows become invisible to queries. The single
+	// pre-existing entity-a case above cannot catch a many-series sidx gap, so this
+	// writes a large distinct-series set through BOTH the chunk-sync (T0 -> seg-A ->
+	// target α) and row-replay (T1/T2 -> straddling seg-B -> α/β) paths and asserts
+	// the warm stage returns every one of them.
+	ginkgo.It("every distinct series survives cross-segment migration (sidx completeness)", func() {
+		const numSeries = 64
+		entityID := func(i int) string { return fmt.Sprintf("xseg-%04d", i) }
+		singleTargetTS, crossLeftTS, crossRightTS := crossSegmentTimestamps()
+
+		ctx, cancel := context.WithTimeout(context.Background(), 120*time.Second)
+		defer cancel()
+		liaisonConn, dialErr := grpchelper.Conn(SharedContext.LiaisonAddr, 10*time.Second,
+			grpc.WithTransportCredentials(insecure.NewCredentials()))
+		gomega.Expect(dialErr).NotTo(gomega.HaveOccurred(), "dial liaison")
+		defer func() { _ = liaisonConn.Close() }()
+		measureClient := measurev1.NewMeasureServiceClient(liaisonConn)
+		writeStream, writeErr := measureClient.Write(ctx)
+		gomega.Expect(writeErr).NotTo(gomega.HaveOccurred(), "open Write stream")
+
+		md := &commonv1.Metadata{Group: crossGroup, Name: crossMeasure}
+		first := true
+		sendRow := func(ts time.Time, eID string, value int64) {
+			req := &measurev1.WriteRequest{
+				DataPoint: &measurev1.DataPointValue{
+					Timestamp: timestamppb.New(ts),
+					Version:   ts.UnixNano(),
+					TagFamilies: []*modelv1.TagFamilyForWrite{
+						{Tags: []*modelv1.TagValue{
+							{Value: &modelv1.TagValue_Str{Str: &modelv1.Str{Value: eID}}},
+						}},
+					},
+					Fields: []*modelv1.FieldValue{
+						{Value: &modelv1.FieldValue_Int{Int: &modelv1.Int{Value: value}}},
+					},
+				},
+				MessageId: uint64(time.Now().UnixNano()),
+			}
+			if first {
+				req.Metadata = md
+				first = false
+			}
+			gomega.Expect(writeStream.Send(req)).To(gomega.Succeed())
+		}
+		ginkgo.By(fmt.Sprintf("seeding %d distinct series across chunk-sync (T0) and row-replay (T1,T2) paths", numSeries))
+		for i := 0; i < numSeries; i++ {
+			e := entityID(i)
+			sendRow(singleTargetTS, e, int64(i)+1) // source seg-A (chunk-sync)  -> target α
+			sendRow(crossLeftTS, e, int64(i)+1)    // straddling seg-B (row-replay) -> target α
+			sendRow(crossRightTS, e, int64(i)+1)   // straddling seg-B (row-replay) -> target β
+		}
+		drainWriteAcks(writeStream.Recv, writeStream.CloseSend)
+		time.Sleep(flags.ConsistentlyTimeout)
+
+		ginkgo.By("running lifecycle migration")
+		dir, err := os.MkdirTemp("", "lifecycle-sidx-completeness")
+		gomega.Expect(err).NotTo(gomega.HaveOccurred())
+		defer os.RemoveAll(dir)
+		runLifecycleMigration(filepath.Join(dir, "progress.json"), filepath.Join(dir, "report"))
+
+		ginkgo.By("warm stage must return every distinct series across the full cross-segment range")
+		queryClient := measurev1.NewMeasureServiceClient(liaisonConn)
+		dpEntityID := func(dp *measurev1.DataPoint) string {
+			for _, tf := range dp.GetTagFamilies() {
+				for _, tag := range tf.GetTags() {
+					if tag.GetKey() == "entity_id" {
+						return tag.GetValue().GetStr().GetValue()
+					}
+				}
+			}
+			return ""
+		}
+		// Limit MUST exceed the total written rows: a measure query defaults to
+		// Limit=100, which would silently truncate the 3*numSeries rows and look
+		// like data loss (it is not).
+		gomega.Eventually(func() error {
+			resp, qErr := queryClient.Query(ctx, &measurev1.QueryRequest{
+				Groups: []string{crossGroup},
+				Name:   crossMeasure,
+				TimeRange: &modelv1.TimeRange{
+					Begin: timestamppb.New(singleTargetTS),
+					End:   timestamppb.New(crossRightTS.Add(time.Millisecond)),
+				},
+				TagProjection: &modelv1.TagProjection{
+					TagFamilies: []*modelv1.TagProjection_TagFamily{
+						{Name: "default", Tags: []string{"entity_id"}},
+					},
+				},
+				FieldProjection: &measurev1.QueryRequest_FieldProjection{Names: []string{"value"}},
+				Stages:          []string{"warm"},
+				Limit:           uint32(numSeries * 10),
+			})
+			if qErr != nil {
+				return qErr
+			}
+			t0ms, t1ms, t2ms := singleTargetTS.UnixMilli(), crossLeftTS.UnixMilli(), crossRightTS.UnixMilli()
+			perSeries := make(map[string]map[int64]bool, numSeries)
+			for _, dp := range resp.GetDataPoints() {
+				eid := dpEntityID(dp)
+				if !strings.HasPrefix(eid, "xseg-") {
+					continue
+				}
+				m := perSeries[eid]
+				if m == nil {
+					m = make(map[int64]bool, 3)
+					perSeries[eid] = m
+				}
+				m[dp.GetTimestamp().AsTime().UnixMilli()] = true
+			}
+			var full, missT0, missT1, missT2 int
+			for i := 0; i < numSeries; i++ {
+				m := perSeries[entityID(i)]
+				if len(m) == 3 {
+					full++
+				}
+				if !m[t0ms] {
+					missT0++
+				}
+				if !m[t1ms] {
+					missT1++
+				}
+				if !m[t2ms] {
+					missT2++
+				}
+			}
+			if full != numSeries {
+				return fmt.Errorf("of %d series, full(3 rows)=%d; missing-by-ts: T0(chunk-sync→α)=%d "+
+					"T1(row-replay→α)=%d T2(row-replay→β)=%d", numSeries, full, missT0, missT1, missT2)
+			}
+			return nil
+		}, flags.EventuallyTimeout).Should(gomega.Succeed(),
+			"every distinct series (chunk-sync T0 + row-replay T1/T2) must be queryable on the warm stage after migration")
 	})
 })
 

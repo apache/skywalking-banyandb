@@ -170,6 +170,8 @@ func (s *dataSVC) FlagSet() *run.FlagSet {
 	flagS.StringVar(&s.root, "measure-root-path", "/tmp", "the root path of measure")
 	flagS.StringVar(&s.dataPath, "measure-data-path", "", "the data directory path of measure. If not set, <measure-root-path>/measure/data will be used")
 	flagS.DurationVar(&s.option.flushTimeout, "measure-flush-timeout", defaultFlushTimeout, "the memory data timeout of measure")
+	flagS.DurationVar(&s.option.memWaitTimeout, "measure-lifecycle-receive-mem-wait-timeout", 5*time.Minute,
+		"max time the migration receiver waits for memory to recover before introducing an external segment")
 	s.option.mergePolicy = newDefaultMergePolicy()
 	flagS.VarP(&s.option.mergePolicy.maxFanOutSize, "measure-max-fan-out-size", "", "the upper bound of a single file size after merge of measure")
 	s.option.seriesCacheMaxSize = run.Bytes(32 << 20)
@@ -310,7 +312,7 @@ func (s *dataSVC) PreRun(ctx context.Context) error {
 	}
 
 	s.pipeline.RegisterChunkedSyncHandler(data.TopicMeasurePartSync, setUpChunkedSyncCallback(s.l, s.schemaRepo))
-	s.pipeline.RegisterChunkedSyncHandler(data.TopicMeasureSeriesSync, setUpSyncSeriesCallback(s.l, s.schemaRepo))
+	s.pipeline.RegisterChunkedSyncHandler(data.TopicMeasureSeriesSync, setUpSyncSeriesCallback(s.l, s.schemaRepo, s.pm, s.option.memWaitTimeout))
 	err = s.pipeline.Subscribe(data.TopicMeasureSeriesIndexInsert, setUpIndexCallback(s.l, s.schemaRepo, data.TopicMeasureSeriesIndexInsert))
 	if err != nil {
 		return err
