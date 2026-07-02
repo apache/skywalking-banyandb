@@ -124,6 +124,7 @@ Release Notes.
 - Fix lifecycle row-replay OOM on large measure parts by streaming the dump reader, pooling size-classed marshal buffers, and bounding in-flight batch bytes (default 32 MiB); peak heap drops ~1.5 GB→~296 MB.
 - Consolidate lifecycle migration report errors into a single flat list of structured, stage-aware entries.
 - Fix backup container OOM from overlapping scheduled runs; serialize runs and upload small snapshot files concurrently.
+- Lifecycle only handles stream/measure/trace snapshots, skipping other catalogs.
 
 ### Document
 
