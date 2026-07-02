@@ -27,6 +27,7 @@ import (
 	"plugin"
 	"runtime"
 	"strings"
+	"sync"
 	"syscall"
 	"testing"
 
@@ -47,42 +48,6 @@ import (
 // telemetryPluginPkgPath is the path to the telemetrysampler plugin source
 // relative to this file's directory (banyand/trace).
 const telemetryPluginPkgPath = "../../test/plugins/_telemetrysampler"
-
-// buildTelemetryPlugin compiles the telemetrysampler plugin into dir and
-// returns the absolute path to the resulting .so. If the build is not possible
-// (Windows, CGO unavailable, no C toolchain, or go not found), the test is
-// skipped with an actionable message. The .so is built WITHOUT -race so it can
-// be loaded by a non-race host.
-func buildTelemetryPlugin(t *testing.T, dir string) string {
-	t.Helper()
-	if runtime.GOOS == "windows" {
-		t.Skip("Go plugins are not supported on Windows")
-	}
-
-	goExe, lookErr := exec.LookPath("go")
-	if lookErr != nil {
-		t.Skip("buildTelemetryPlugin skipped: 'go' binary not found in PATH")
-	}
-
-	soPath := filepath.Join(dir, "telemetrysampler.so")
-
-	_, thisFile, _, ok := runtime.Caller(0)
-	if !ok {
-		t.Skip("buildTelemetryPlugin skipped: cannot determine source file path via runtime.Caller")
-	}
-	absPluginDir := filepath.Clean(filepath.Join(filepath.Dir(thisFile), telemetryPluginPkgPath))
-
-	// Do NOT pass -race: this test exercises the non-race .so path explicitly.
-	// The raceDetectorEnabled skip-guard at the top of the test prevents a
-	// race-instrumented host from attempting to load a non-race .so.
-	cmd := exec.Command(goExe, "build", "-buildmode=plugin", "-o", soPath, absPluginDir)
-	cmd.Env = append(os.Environ(), "CGO_ENABLED=1")
-	out, buildErr := cmd.CombinedOutput()
-	if buildErr != nil {
-		t.Skipf("buildTelemetryPlugin skipped: cannot build .so (CGO may be unavailable): %v\n%s", buildErr, out)
-	}
-	return soPath
-}
 
 // captureStderr redirects the process-level stderr file descriptor around fn,
 // capturing all bytes written to fd 2 during the call. It reads the pipe after
@@ -145,33 +110,12 @@ func TestPluginTelemetry_RealSO_MetricsAndLogging(t *testing.T) {
 	resetRegistries()
 	defer resetRegistries()
 
-	dir := t.TempDir()
-	soPath := buildTelemetryPlugin(t, dir)
-	soName := filepath.Base(soPath)
-
-	// Probe: even a matching non-race build may be rejected by the runtime when
-	// compiler versions differ. Treat that as an environment skip, not a failure.
-	if _, probeErr := plugin.Open(soPath); isPluginToolchainMismatch(probeErr) {
-		t.Skipf("TestPluginTelemetry_RealSO_MetricsAndLogging skipped: "+
-			"host cannot load freshly built plugin (toolchain mismatch): %v", probeErr)
-	}
-
-	// Build a real prom-backed observability factory scoped to the pipeline namespace.
-	reg := prometheus.NewRegistry()
-	promProvider := prom.NewProvider(pipelineScope, reg)
-	factory := services.NewFactory(promProvider, nil, nil)
+	// newRealSOSchemaRepo handles build, probe, and skip-on-failure.
+	// All real-.so tests share a single .so (see newRealSOSchemaRepo).
+	sr, soName, reg := newRealSOSchemaRepo(t)
 
 	const group = "realso-group"
 	const pluginName = "tel"
-
-	sr := schemaRepo{
-		l:                      logger.GetLogger("trace"),
-		role:                   databasev1.Role_ROLE_DATA,
-		nativePipelineEnabled:  true,
-		trustedPluginDir:       dir,
-		samplerMeter:           newSamplerMetrics(factory),
-		pluginTelemetryFactory: factory,
-	}
 
 	// logEvery=100 (the plugin default): batchN==1 satisfies 1%100==1 → logs on
 	// the very first batch. logEvery=1 would give 1%1==0 which never matches.
@@ -267,4 +211,265 @@ func metricFamilyNames(mfs []*dto.MetricFamily) []string {
 		names = append(names, mf.GetName())
 	}
 	return names
+}
+
+// sharedSO holds the result of the once-per-process .so build and probe.
+// Go deduplicates plugins by their internal package path (not by filesystem
+// path), so all real-.so tests must share a single .so file: a second
+// plugin.Open on a different filesystem path but the same internal plugin
+// path causes a "previous failure" error in the Go runtime.
+var sharedSO struct {
+	dir        string
+	soPath     string
+	skipReason string // non-empty → tests must skip
+	sync.Once
+}
+
+// initSharedSO builds the telemetrysampler .so exactly once into a
+// process-scoped temp directory and probes that the host can load it.
+// Results are stored in sharedSO; the caller must check sharedSO.skipReason.
+func initSharedSO() {
+	// os.MkdirTemp creates a directory that persists for the process lifetime
+	// (not cleaned by t.Cleanup), which is intentional: the .so must outlive
+	// any individual test's cleanup to prevent the path from being invalidated
+	// while the process-level plugin registration still references it.
+	dir, mkErr := os.MkdirTemp("", "realso-shared-*")
+	if mkErr != nil {
+		sharedSO.skipReason = "initSharedSO: os.MkdirTemp failed: " + mkErr.Error()
+		return
+	}
+	sharedSO.dir = dir
+
+	goExe, lookErr := exec.LookPath("go")
+	if lookErr != nil {
+		sharedSO.skipReason = "initSharedSO: 'go' binary not found in PATH"
+		return
+	}
+	soPath := filepath.Join(dir, "telemetrysampler.so")
+
+	_, thisFile, _, ok := runtime.Caller(0)
+	if !ok {
+		sharedSO.skipReason = "initSharedSO: cannot determine source file path via runtime.Caller"
+		return
+	}
+	absPluginDir := filepath.Clean(filepath.Join(filepath.Dir(thisFile), telemetryPluginPkgPath))
+
+	cmd := exec.Command(goExe, "build", "-buildmode=plugin", "-o", soPath, absPluginDir)
+	cmd.Env = append(os.Environ(), "CGO_ENABLED=1")
+	out, buildErr := cmd.CombinedOutput()
+	if buildErr != nil {
+		sharedSO.skipReason = "initSharedSO: cannot build .so (CGO may be unavailable): " +
+			buildErr.Error() + "\n" + string(out)
+		return
+	}
+	sharedSO.soPath = soPath
+
+	_, probeErr := plugin.Open(soPath)
+	if isPluginToolchainMismatch(probeErr) {
+		sharedSO.skipReason = "initSharedSO: host cannot load freshly built plugin (toolchain mismatch): " +
+			probeErr.Error()
+		return
+	}
+	if probeErr != nil {
+		sharedSO.skipReason = "initSharedSO: plugin.Open probe failed: " + probeErr.Error()
+	}
+}
+
+// newRealSOSchemaRepo is a shared setup helper for real-.so tests: it ensures
+// the telemetrysampler .so is built and probed (skipping on CGO unavailability
+// or toolchain mismatch), and returns a ready-to-use schemaRepo together with
+// the .so file name (for Plugin.Path) and the prometheus registry.
+//
+// All real-.so tests share a single .so file because Go deduplicates plugins
+// by their internal package path: opening the same plugin package from two
+// different filesystem paths in the same process causes a "previous failure"
+// error on the second open.
+func newRealSOSchemaRepo(t *testing.T) (sr schemaRepo, soName string, reg *prometheus.Registry) {
+	t.Helper()
+	sharedSO.Do(initSharedSO)
+	if sharedSO.skipReason != "" {
+		t.Skip(sharedSO.skipReason)
+	}
+
+	reg = prometheus.NewRegistry()
+	promProvider := prom.NewProvider(pipelineScope, reg)
+	factory := services.NewFactory(promProvider, nil, nil)
+
+	sr = schemaRepo{
+		l:                      logger.GetLogger("trace"),
+		role:                   databasev1.Role_ROLE_DATA,
+		nativePipelineEnabled:  true,
+		trustedPluginDir:       sharedSO.dir,
+		samplerMeter:           newSamplerMetrics(factory),
+		pluginTelemetryFactory: factory,
+	}
+	soName = filepath.Base(sharedSO.soPath)
+	return sr, soName, reg
+}
+
+// makeSamplerCfg builds a TracePipelineConfig with a single telemetrysampler
+// plugin entry using the given soName, logEvery value, and plugin name.
+func makeSamplerCfg(soName, pluginName string, logEvery float64) *commonv1.TracePipelineConfig {
+	cfgStruct, structErr := structpb.NewStruct(map[string]any{"logEvery": logEvery})
+	if structErr != nil {
+		panic("makeSamplerCfg: structpb.NewStruct failed: " + structErr.Error())
+	}
+	return &commonv1.TracePipelineConfig{
+		Enabled: true,
+		Plugins: []*commonv1.Plugin{
+			{
+				Name: pluginName,
+				Kind: &commonv1.Plugin_Sampler{
+					Sampler: &commonv1.SamplerPlugin{
+						Path:       soName,
+						Symbol:     "NewSampler",
+						AbiVersion: uint32(sdk.ABIVersion),
+						Config:     cfgStruct,
+					},
+				},
+			},
+		},
+	}
+}
+
+// TestPluginTelemetry_RealSO_ConfigParamLogEvery proves that the logEvery config
+// parameter reaches the real .so and changes the log-emission frequency.
+//
+// The plugin logs "batch decided" when batchN % logEvery == 1 (batchN starts at 1
+// and increments per Decide call on the instance).
+//   - Sub-case A: logEvery=2 → batches 1,3,5 satisfy n%2==1 → 3 log lines in 5 calls.
+//   - Sub-case B: logEvery=1000 → only batch 1 satisfies n%1000==1 → 1 log line in 5 calls.
+func TestPluginTelemetry_RealSO_ConfigParamLogEvery(t *testing.T) {
+	if raceDetectorEnabled {
+		t.Skip("TestPluginTelemetry_RealSO_ConfigParamLogEvery skipped: race detector active; " +
+			"a non-race .so cannot be loaded into a race-instrumented host")
+	}
+
+	resetRegistries()
+	defer resetRegistries()
+
+	sr, soName, _ := newRealSOSchemaRepo(t)
+
+	const pluginName = "tel"
+
+	// --- Sub-case A: logEvery=2 ---
+	// batchN%2==1 for batchN in {1,3,5}: expect exactly 3 "batch decided" lines.
+	const groupA = "cfgparam-a"
+	cfgA := makeSamplerCfg(soName, pluginName, float64(2))
+	sr.reconcilePipeline(groupA, cfgA)
+
+	samplersA := lookupSamplers(groupA)
+	require.NotEmpty(t, samplersA, "reconcilePipeline must register at least one sampler for group %q", groupA)
+
+	batchSingle := &sdk.TraceBatch{Traces: make([]sdk.TraceBlock, 1)}
+	var countA int
+	capturedA := captureStderr(t, func() {
+		for range 5 {
+			_, decideErr := samplersA[0].Decide(batchSingle)
+			require.NoError(t, decideErr, "Decide must not error (group %q)", groupA)
+		}
+	})
+	countA = strings.Count(capturedA, "batch decided")
+
+	// --- Sub-case B: logEvery=1000 ---
+	// batchN%1000==1 only for batchN==1: expect exactly 1 "batch decided" line.
+	const groupB = "cfgparam-b"
+	cfgB := makeSamplerCfg(soName, pluginName, float64(1000))
+	sr.reconcilePipeline(groupB, cfgB)
+
+	samplersB := lookupSamplers(groupB)
+	require.NotEmpty(t, samplersB, "reconcilePipeline must register at least one sampler for group %q", groupB)
+
+	var countB int
+	capturedB := captureStderr(t, func() {
+		for range 5 {
+			_, decideErr := samplersB[0].Decide(batchSingle)
+			require.NoError(t, decideErr, "Decide must not error (group %q)", groupB)
+		}
+	})
+	countB = strings.Count(capturedB, "batch decided")
+
+	// logEvery=2: batches 1,3,5 satisfy batchN%2==1 → 3 log lines.
+	assert.Equal(t, 3, countA,
+		"logEvery=2: expected 3 log lines (batches 1,3,5 satisfy batchN%%2==1); got %d\nstderr:\n%s", countA, capturedA)
+	// logEvery=1000: only batch 1 satisfies batchN%1000==1 → 1 log line.
+	assert.Equal(t, 1, countB,
+		"logEvery=1000: expected 1 log line (only batch 1 satisfies batchN%%1000==1); got %d\nstderr:\n%s", countB, capturedB)
+	assert.Greater(t, countA, countB, "logEvery=2 must produce more log lines than logEvery=1000")
+}
+
+// TestPluginTelemetry_RealSO_MalformedConfigFailOpen proves that a malformed
+// config value (a string where the plugin's NewSampler expects an int64) causes
+// the real .so's constructor to return an error, and that the engine handles this
+// fail-open: no sampler is registered and the engine is not wedged.
+//
+// Note: structpb always produces valid JSON, but the TYPE mismatch
+// ({"logEvery":"not-a-number"} where the plugin wants int64) causes
+// json.Unmarshal into samplerConfig to fail → NewSampler returns
+// "telemetrysampler: invalid config JSON" → reconcilePipeline keeps previous
+// (empty) set → lookupSamplers returns nil (fail-open: all traces retained).
+func TestPluginTelemetry_RealSO_MalformedConfigFailOpen(t *testing.T) {
+	if raceDetectorEnabled {
+		t.Skip("TestPluginTelemetry_RealSO_MalformedConfigFailOpen skipped: race detector active; " +
+			"a non-race .so cannot be loaded into a race-instrumented host")
+	}
+
+	resetRegistries()
+	defer resetRegistries()
+
+	sr, soName, _ := newRealSOSchemaRepo(t)
+
+	const (
+		group      = "malformed-cfg"
+		pluginName = "tel"
+	)
+
+	// Build a config whose logEvery value is a STRING — valid JSON from structpb's
+	// perspective, but the plugin's json.Unmarshal into int64 will fail, causing
+	// NewSampler to return "telemetrysampler: invalid config JSON".
+	badCfgStruct, badStructErr := structpb.NewStruct(map[string]any{"logEvery": "not-a-number"})
+	require.NoError(t, badStructErr, "structpb.NewStruct for bad config must succeed (structpb always accepts string values)")
+
+	badCfg := &commonv1.TracePipelineConfig{
+		Enabled: true,
+		Plugins: []*commonv1.Plugin{
+			{
+				Name: pluginName,
+				Kind: &commonv1.Plugin_Sampler{
+					Sampler: &commonv1.SamplerPlugin{
+						Path:       soName,
+						Symbol:     "NewSampler",
+						AbiVersion: uint32(sdk.ABIVersion),
+						Config:     badCfgStruct,
+					},
+				},
+			},
+		},
+	}
+
+	// The engine must not panic when the plugin constructor returns an error.
+	require.NotPanics(t, func() { sr.reconcilePipeline(group, badCfg) })
+
+	// Fail-open: the constructor error leaves the group with no samplers
+	// (the previous set was empty), so all traces are retained.
+	assert.Empty(t, lookupSamplers(group),
+		"lookupSamplers must be empty after a constructor-error reconcile (fail-open path)")
+
+	// Prove the engine is not wedged: a valid config for the same group must
+	// register successfully and produce working Decide calls.
+	goodCfg := makeSamplerCfg(soName, pluginName, float64(100))
+	require.NotPanics(t, func() { sr.reconcilePipeline(group, goodCfg) })
+
+	samplersAfterRecovery := lookupSamplers(group)
+	require.NotEmpty(t, samplersAfterRecovery,
+		"lookupSamplers must be non-empty after a valid-config reconcile (engine must recover from bad-config)")
+
+	// Verify the recovered sampler works: a 2-trace batch must return keep-all.
+	batch := &sdk.TraceBatch{Traces: make([]sdk.TraceBlock, 2)}
+	verdict, decideErr := samplersAfterRecovery[0].Decide(batch)
+	require.NoError(t, decideErr, "Decide must not error after recovery")
+	require.Len(t, verdict.Keep, 2, "Decide must return a Keep slice of length 2 after recovery")
+	for idx, keep := range verdict.Keep {
+		assert.True(t, keep, "verdict.Keep[%d] must be true after recovery (sampler keeps all traces)", idx)
+	}
 }
