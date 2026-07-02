@@ -26,6 +26,7 @@ import (
 
 	"github.com/apache/skywalking-banyandb/api/common"
 	"github.com/apache/skywalking-banyandb/banyand/internal/storage"
+	"github.com/apache/skywalking-banyandb/banyand/queue"
 	"github.com/apache/skywalking-banyandb/pkg/convert"
 	"github.com/apache/skywalking-banyandb/pkg/fs"
 	"github.com/apache/skywalking-banyandb/pkg/logger"
@@ -106,8 +107,27 @@ func TestMustAddFilePart_FilesOnDisk(t *testing.T) {
 	partID := uint64(1)
 	destPath := partPath(tabDir, partID)
 	buildAndFlushMeasureMemPart(t, fileSystem, dps, destPath)
+	var metadata partMetadata
+	metadata.mustReadMetadata(fileSystem, destPath)
+	partCtx := &syncPartContext{
+		tsTable:    tst,
+		fileSystem: fileSystem,
+		partPath:   destPath,
+		partMeta:   metadata,
+		partID:     partID,
+	}
+	chunkCtx := &queue.ChunkedSyncPartContext{Handler: partCtx, FileName: tagTypeFilename}
+	wantTagType := tagType{"singleTag": {"strTag": pbv1.ValueTypeStr}}.marshal()
+	callback := &syncCallback{l: logger.GetLogger("test")}
+	require.NoError(t, callback.HandleFileChunk(chunkCtx, wantTagType[:len(wantTagType)/2]))
+	require.NoError(t, callback.HandleFileChunk(chunkCtx, wantTagType[len(wantTagType)/2:]))
+	require.Equal(t, wantTagType, partCtx.tagTypeBuffer)
+	require.NoError(t, partCtx.FinishSync())
+	require.Nil(t, partCtx.tagTypeBuffer)
 
-	tst.mustAddFilePart(partID)
+	gotTagType, readErr := fileSystem.Read(filepath.Join(destPath, tagTypeFilename))
+	require.NoError(t, readErr)
+	require.Equal(t, wantTagType, gotTagType)
 
 	snp := tst.currentSnapshot()
 	require.NotNil(t, snp, "snapshot must not be nil after mustAddFilePart")
@@ -190,11 +210,17 @@ func TestFilePart_ErrorCleanup(t *testing.T) {
 	spc.writers = w
 
 	spc.writers.metaWriter.MustWrite([]byte("partial"))
+	tagTypeData := tagType{"singleTag": {"strTag": pbv1.ValueTypeStr}}.marshal()
+	callback := &syncCallback{l: logger.GetLogger("test")}
+	chunkCtx := &queue.ChunkedSyncPartContext{Handler: spc, FileName: tagTypeFilename}
+	require.NoError(t, callback.HandleFileChunk(chunkCtx, tagTypeData))
+	require.Equal(t, tagTypeData, spc.tagTypeBuffer)
 
 	_, statErr := os.Stat(destPath)
 	require.NoError(t, statErr, "part directory must exist before Close")
 
 	require.NoError(t, spc.Close())
+	require.Nil(t, spc.tagTypeBuffer)
 
 	_, statErr = os.Stat(destPath)
 	require.True(t, os.IsNotExist(statErr), "incomplete part directory must be removed after Close without FinishSync")

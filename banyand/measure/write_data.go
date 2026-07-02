@@ -20,6 +20,7 @@ package measure
 import (
 	"context"
 	"fmt"
+	"path/filepath"
 	"strings"
 	"sync/atomic"
 	"time"
@@ -41,12 +42,13 @@ type syncPartContext struct {
 	// can drive refCount to 0; releasing earlier lets each sync call bottom out
 	// there, so the next session's incRef re-runs initTSTable and deletes the
 	// in-flight part.
-	segment    storage.Segment[*tsTable, *commonv1.ResourceOpts]
-	fileSystem fs.FileSystem
-	writers    *writers
-	partPath   string
-	partMeta   partMetadata
-	partID     uint64
+	segment       storage.Segment[*tsTable, *commonv1.ResourceOpts]
+	fileSystem    fs.FileSystem
+	writers       *writers
+	partPath      string
+	tagTypeBuffer []byte
+	partMeta      partMetadata
+	partID        uint64
 }
 
 func (s *syncPartContext) NewPartType(_ *queue.ChunkedSyncPartContext) error {
@@ -58,6 +60,9 @@ func (s *syncPartContext) FinishSync() error {
 	// Close writers first so file data is flushed before we write metadata.
 	s.releaseCoreWriters()
 
+	if len(s.tagTypeBuffer) > 0 {
+		fs.MustFlushAtomic(s.fileSystem, s.tagTypeBuffer, filepath.Join(s.partPath, tagTypeFilename), storage.FilePerm)
+	}
 	s.partMeta.mustWriteMetadata(s.fileSystem, s.partPath)
 	// No SyncPath: mustWriteMetadata goes through WriteAtomic which already
 	// fsyncs the parent directory after rename.
@@ -90,6 +95,7 @@ func (s *syncPartContext) Close() error {
 	}
 	s.tsTable = nil
 	s.fileSystem = nil
+	s.tagTypeBuffer = nil
 	return nil
 }
 
@@ -167,6 +173,8 @@ func (s *syncCallback) HandleFileChunk(ctx *queue.ChunkedSyncPartContext, chunk 
 	// Select the appropriate writer based on the filename and write the chunk.
 	fileName := ctx.FileName
 	switch {
+	case fileName == tagTypeFilename:
+		partCtx.tagTypeBuffer = append(partCtx.tagTypeBuffer, chunk...)
 	case fileName == measureMetaName:
 		partCtx.writers.metaWriter.MustWrite(chunk)
 	case fileName == measurePrimaryName:

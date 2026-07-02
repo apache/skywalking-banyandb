@@ -144,6 +144,7 @@ func (sw *writers) getColumnMetadataWriterAndColumnWriter(columnName string) (*w
 
 type blockWriter struct {
 	writers                    writers
+	tagType                    tagType
 	metaData                   []byte
 	primaryBlockData           []byte
 	primaryBlockMetadata       primaryBlockMetadata
@@ -162,6 +163,11 @@ type blockWriter struct {
 
 func (bw *blockWriter) reset() {
 	bw.writers.reset()
+	if bw.tagType == nil {
+		bw.tagType = make(tagType)
+	} else {
+		bw.tagType.reset()
+	}
 	bw.sidLast = 0
 	bw.sidFirst = 0
 	bw.minTimestampLast = 0
@@ -220,6 +226,7 @@ func (bw *blockWriter) mustWriteBlock(sid common.SeriesID, b *block) {
 
 	bm := generateBlockMetadata()
 	b.mustWriteTo(sid, bm, &bw.writers)
+	bw.tagType.copyFrom(bm.tagType)
 	tm := &bm.timestamps
 	if bw.totalCount == 0 || tm.min < bw.totalMinTimestamp {
 		bw.totalMinTimestamp = tm.min
@@ -261,7 +268,7 @@ func (bw *blockWriter) mustFlushPrimaryBlock(data []byte) {
 	bw.sidFirst = 0
 }
 
-func (bw *blockWriter) Flush(pm *partMetadata) {
+func (bw *blockWriter) Flush(pm *partMetadata, tt *tagType) {
 	pm.UncompressedSizeBytes = bw.totalUncompressedSizeBytes
 	pm.TotalCount = bw.totalCount
 	pm.BlocksCount = bw.totalBlocksCount
@@ -276,6 +283,7 @@ func (bw *blockWriter) Flush(pm *partMetadata) {
 	bigValuePool.Release(bb)
 
 	pm.CompressedSizeBytes = bw.writers.totalBytesWritten()
+	tt.copyFrom(bw.tagType)
 
 	bw.writers.MustClose()
 	bw.reset()
@@ -285,6 +293,7 @@ func generateBlockWriter() *blockWriter {
 	v := blockWriterPool.Get()
 	if v == nil {
 		return &blockWriter{
+			tagType: make(tagType),
 			writers: writers{
 				tagFamilyMetadataWriters: make(map[string]*writer),
 				tagFamilyWriters:         make(map[string]*writer),
