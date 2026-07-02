@@ -51,12 +51,12 @@ type soakResult struct {
 	Engine                    string  `json:"engine"`
 	Iterations                int     `json:"iterations"`
 	QueryCountDelta           int64   `json:"query_count_delta"`
-	QueryCountMonotonic       bool    `json:"query_count_monotonic"`
-	LivenessPass              bool    `json:"liveness_pass"`
 	HeapInuseBaseline         uint64  `json:"heap_inuse_baseline_bytes"`
 	HeapInuseEnd              uint64  `json:"heap_inuse_end_bytes"`
 	HeapGrowthPct             float64 `json:"heap_growth_pct"`
 	HeapGrowthMaxPct          int     `json:"heap_growth_max_pct"`
+	QueryCountMonotonic       bool    `json:"query_count_monotonic"`
+	LivenessPass              bool    `json:"liveness_pass"`
 	HeapLeakPass              bool    `json:"heap_leak_pass"`
 	BudgetScenarioResultBound bool    `json:"budget_scenario_result_bound"`
 	BudgetScenarioHeapPass    bool    `json:"budget_scenario_heap_pass"`
@@ -91,6 +91,8 @@ const soakBudgetMiB = 2
 // DQB_IN_CONTAINER=1 and hard-fails if that gate is not set, mirroring the
 // DQB_IN_CONTAINER guard in TestDistributedQueryBench. This ensures the soak
 // runs only inside the resource-limited container launched by run-docker.sh.
+//
+//nolint:gocyclo // sequential two-phase soak; splitting the parity/budget phases would scatter shared cluster/ctx/cfg setup.
 func TestTraceVecSoak(t *testing.T) {
 	cfg := LoadConfig()
 	if !cfg.Soak {
@@ -134,11 +136,12 @@ func TestTraceVecSoak(t *testing.T) {
 		t.Fatalf("write parity fixture: %v", parityWriteErr)
 	}
 
-	parityReq, parityReqErr := buildTraceScenarioQuery(ScenarioTraceTagFilter, parityCfg, deriveTraceShape(parityCfg.Cardinality, parityCfg.SpansPerTrace, parityCfg.SpanDist), parityBase)
+	parityShape := deriveTraceShape(parityCfg.Cardinality, parityCfg.SpansPerTrace, parityCfg.SpanDist)
+	parityReq, parityReqErr := buildTraceScenarioQuery(ScenarioTraceTagFilter, parityCfg, parityShape, parityBase)
 	if parityReqErr != nil {
 		t.Fatalf("build parity query: %v", parityReqErr)
 	}
-	expectedParityTraces := expectedTraceResultCount(ScenarioTraceTagFilter, parityCfg, deriveTraceShape(parityCfg.Cardinality, parityCfg.SpansPerTrace, parityCfg.SpanDist))
+	expectedParityTraces := expectedTraceResultCount(ScenarioTraceTagFilter, parityCfg, parityShape)
 	if visErr := waitForTraceVisibility(soakCtx, parityCluster.conn, parityReq, ScenarioTraceTagFilter, parityCfg.Cardinality, expectedParityTraces); visErr != nil {
 		t.Fatalf("parity fixture not visible: %v", visErr)
 	}
@@ -290,7 +293,7 @@ func TestTraceVecSoak(t *testing.T) {
 	// mid-scan. A leak here would cause the heap to grow monotonically.
 	const budgetIterCount = 50
 	budgetResultBound := true
-	var firstBudgetTraceCount int = -1
+	firstBudgetTraceCount := -1
 	t.Logf("[soak] running %d iterations over budget fixture (budget=%d MiB heavytail)", budgetIterCount, soakBudgetMiB)
 	for iterIdx := 0; iterIdx < budgetIterCount; iterIdx++ {
 		iterCtx, iterCancel := context.WithTimeout(budgetCtx, queryTimeout(budgetCfg.Cardinality))
@@ -353,7 +356,8 @@ func TestTraceVecSoak(t *testing.T) {
 			budgetHeapBaseline, budgetHeapEnd, budgetHeapGrowthPct, cfg.SoakHeapGrowthMaxPct)
 	}
 
-	t.Logf("[soak] budget results: query_count_delta=%d liveness=%v result_bound=%v heap_growth=%.2f%% heap_pass=%v goroutine_baseline=%d goroutine_end=%d goroutine_delta=%d goroutine_pass=%v overall=%v",
+	t.Logf("[soak] budget results: query_count_delta=%d liveness=%v result_bound=%v heap_growth=%.2f%% heap_pass=%v "+
+		"goroutine_baseline=%d goroutine_end=%d goroutine_delta=%d goroutine_pass=%v overall=%v",
 		budgetQueryCountDelta, budgetLivenessPass, budgetResultBound, budgetHeapGrowthPct, budgetHeapPass,
 		budgetGoroutineBaseline, budgetGoroutineEnd, budgetGoroutineDelta, budgetGoroutinePass, budgetScenarioPass)
 
@@ -483,7 +487,7 @@ func emitSoakResult(t *testing.T, cfg Config, result soakResult) {
 		t.Logf("[soak] could not marshal soak result: %v", marshalErr)
 		return
 	}
-	if writeErr := os.WriteFile(outPath, body, 0o644); writeErr != nil {
+	if writeErr := os.WriteFile(outPath, body, 0o600); writeErr != nil {
 		t.Logf("[soak] could not write soak result to %s: %v", outPath, writeErr)
 		return
 	}

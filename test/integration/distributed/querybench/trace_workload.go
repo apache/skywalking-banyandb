@@ -449,7 +449,14 @@ func (c Config) effectiveQueryIterations(scenario Scenario) int {
 	return c.QueryIterations
 }
 
-func runTraceScenarioQueries(ctx context.Context, conn *grpc.ClientConn, req *tracev1.QueryRequest, cfg Config, scenario Scenario, cardinality int) (traceQueryRunSummary, error) {
+func runTraceScenarioQueries(
+	ctx context.Context,
+	conn *grpc.ClientConn,
+	req *tracev1.QueryRequest,
+	cfg Config,
+	scenario Scenario,
+	cardinality int,
+) (traceQueryRunSummary, error) {
 	client := tracev1.NewTraceServiceClient(conn)
 	for warmupIdx := 0; warmupIdx < cfg.WarmupIterations; warmupIdx++ {
 		warmupCtx, cancel := context.WithTimeout(ctx, queryTimeout(cardinality))
