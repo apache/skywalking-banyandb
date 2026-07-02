@@ -266,6 +266,7 @@ func unmarshalBlockMetadata(dst []blockMetadata, src []byte, tagType map[string]
 			dst = append(dst, blockMetadata{})
 		}
 		bm := &dst[len(dst)-1]
+		bm.reset()
 		tail, err := bm.unmarshal(src, tagType)
 		if err != nil {
 			return dstOrig, fmt.Errorf("cannot unmarshal blockMetadata entries: %w", err)
@@ -334,6 +335,7 @@ func unmarshalBlockMetadataFiltered(dst []blockMetadata, src []byte, tagType map
 				dst = append(dst, blockMetadata{})
 			}
 			bm := &dst[len(dst)-1]
+			bm.reset()
 			tail, uErr := bm.unmarshal(src, tagType)
 			if uErr != nil {
 				return dstOrig, fmt.Errorf("cannot unmarshal blockMetadata entries: %w", uErr)
