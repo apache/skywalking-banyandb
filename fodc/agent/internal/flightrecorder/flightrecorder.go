@@ -20,6 +20,7 @@ package flightrecorder
 import (
 	"fmt"
 	"runtime"
+	"strings"
 	"sync"
 	"time"
 
@@ -77,6 +78,50 @@ func (fr *FlightRecorder) GetDatasources() []*Datasource {
 	result := make([]*Datasource, len(fr.datasources))
 	copy(result, fr.datasources)
 	return result
+}
+
+// LatestValues returns the latest scraped value for each requested metric name that has a
+// series matching labelFilter; names with no match are absent from the result. It snapshots
+// the datasources once and resolves all names in a single pass. When several series share a
+// name, an empty filter takes the first found.
+func (fr *FlightRecorder) LatestValues(names []string, labelFilter map[string]string) map[string]float64 {
+	out := make(map[string]float64, len(names))
+	if len(names) == 0 {
+		return out
+	}
+
+	fr.mu.RLock()
+	defer fr.mu.RUnlock()
+
+	for _, ds := range fr.datasources {
+		ds.latestValues(out, names, labelFilter)
+		if len(out) == len(names) {
+			break
+		}
+	}
+	return out
+}
+
+// metricKeyMatches reports whether a metric key produced by metrics.MetricKey.String()
+// (either "name" or `name{l1="v1",l2="v2"}`) has the given name and contains every
+// label in labelFilter.
+func metricKeyMatches(key, name string, labelFilter map[string]string) bool {
+	if !strings.HasPrefix(key, name) {
+		return false
+	}
+	rest := key[len(name):]
+	if rest != "" && !strings.HasPrefix(rest, "{") {
+		return false
+	}
+	for ln, lv := range labelFilter {
+		// Anchor the label name on a boundary ('{' for the first label, ',' otherwise) so a
+		// filter label `l` does not falsely match a longer label like `xl` in the key.
+		needle := ln + `="` + lv + `"`
+		if !strings.Contains(rest, "{"+needle) && !strings.Contains(rest, ","+needle) {
+			return false
+		}
+	}
+	return true
 }
 
 // SetCapacitySize sets the memory limit for the flight recorder.
