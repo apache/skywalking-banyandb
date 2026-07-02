@@ -481,6 +481,9 @@ func validateFlags() error {
 	if maxFODCDiagnosisMemoryUsagePercent < 0 || maxFODCDiagnosisMemoryUsagePercent > 100 {
 		return fmt.Errorf("max-fodc-diagnosis-memory-usage-percentage must be between 0 and 100")
 	}
+	if pressureProfilerEnabled && (pressureTriggerPercent < 1 || pressureTriggerPercent > 100) {
+		return fmt.Errorf("pressure-profiler-trigger-percent must be between 1 and 100, got %d", pressureTriggerPercent)
+	}
 	return nil
 }
 

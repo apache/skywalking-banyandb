@@ -948,6 +948,15 @@ func (s *FODCService) StreamPressureProfiles(stream fodcv1.FODCService_StreamPre
 	}
 	s.connectionsMu.Unlock()
 
+	// round accumulates the current list round's records; on ListComplete it is swapped into the
+	// cache in one shot and reset. Keeping it goroutine-local means a mid-round disconnect simply
+	// discards it (no orphan state), and the deferred cleanup runs on this same goroutine after
+	// the loop, so it can never race a ListComplete swap.
+	var round []*fodcv1.PressureProfileRecord
+	if s.pressureAggregator != nil {
+		defer s.pressureAggregator.RemoveAgent(agentID)
+	}
+
 	for {
 		req, recvErr := stream.Recv()
 		if errors.Is(recvErr, io.EOF) {
@@ -964,24 +973,17 @@ func (s *FODCService) StreamPressureProfiles(stream fodcv1.FODCService_StreamPre
 			}
 			return recvErr
 		}
-		s.handlePressurePayload(agentID, req)
+		s.handlePressurePayload(agentID, req, &round)
 	}
 }
 
 // handlePressurePayload routes one stream message: a metadata record to the aggregator,
 // or a download chunk to the waiting fetch handler.
-func (s *FODCService) handlePressurePayload(agentID string, req *fodcv1.StreamPressureProfilesRequest) {
+func (s *FODCService) handlePressurePayload(agentID string, req *fodcv1.StreamPressureProfilesRequest, round *[]*fodcv1.PressureProfileRecord) {
 	switch payload := req.Payload.(type) {
 	case *fodcv1.StreamPressureProfilesRequest_Record:
-		if s.pressureAggregator == nil {
-			return
-		}
-		agentInfo, getErr := s.registry.GetAgentByID(agentID)
-		if getErr != nil {
-			s.logger.Error().Err(getErr).Str("agent_id", agentID).Msg("Failed to get agent info for pressure profile record")
-			return
-		}
-		s.pressureAggregator.ProcessProfileFromAgent(agentID, agentInfo, payload.Record)
+		// Accumulate the round locally; it is committed to the cache on ListComplete.
+		*round = append(*round, payload.Record)
 	case *fodcv1.StreamPressureProfilesRequest_Chunk:
 		s.connectionsMu.RLock()
 		conn := s.connections[agentID]
@@ -990,12 +992,16 @@ func (s *FODCService) handlePressurePayload(agentID string, req *fodcv1.StreamPr
 			conn.deliverChunk(payload.Chunk)
 		}
 	case *fodcv1.StreamPressureProfilesRequest_ListComplete:
-		// Promote the agent's staged list into the cache before waking the waiting
-		// CollectProfiles, so the snapshot it returns reflects this round's full set
-		// (and drops events the agent has evicted).
+		// Commit the accumulated round into the cache (replacing the agent's whole set, so evicted
+		// events drop out) before waking the waiting CollectProfiles, then reset the accumulator.
 		if s.pressureAggregator != nil {
-			s.pressureAggregator.FinalizeAgentList(agentID)
+			if agentInfo, getErr := s.registry.GetAgentByID(agentID); getErr != nil {
+				s.logger.Error().Err(getErr).Str("agent_id", agentID).Msg("Failed to get agent info for pressure profile list")
+			} else {
+				s.pressureAggregator.ReplaceAgentProfiles(agentID, agentInfo, *round)
+			}
 		}
+		*round = nil
 		s.ackList(payload.ListComplete.RequestId, agentID)
 	}
 }

@@ -52,57 +52,48 @@ func profileIDs(records []*AggregatedPressureProfile) map[string]struct{} {
 	return out
 }
 
-// TestFinalizeAgentListReplacesEvictedEntries pins the stale-cache fix: a second list round
-// that no longer reports a profile must drop it from the cache, not keep serving it.
-func TestFinalizeAgentListReplacesEvictedEntries(t *testing.T) {
+func recs(ids ...string) []*fodcv1.PressureProfileRecord {
+	out := make([]*fodcv1.PressureProfileRecord, 0, len(ids))
+	for _, id := range ids {
+		out = append(out, record(id))
+	}
+	return out
+}
+
+// TestReplaceAgentProfilesDropsEvicted pins the stale-cache fix: a later round that no longer
+// reports a profile drops it from the cache, and an empty round removes the agent entirely.
+func TestReplaceAgentProfilesDropsEvicted(t *testing.T) {
 	a := newTestAggregator(t)
 	info := agentInfo("pod-1")
 
-	// Round 1: the agent reports two events.
-	a.ProcessProfileFromAgent("agent-1", info, record("evt-a"))
-	a.ProcessProfileFromAgent("agent-1", info, record("evt-b"))
-	// Staged records are not yet visible before the round is finalized.
-	assert.Empty(t, a.snapshotCache(nil), "records must not be visible before ListComplete")
+	a.ReplaceAgentProfiles("agent-1", info, recs("evt-a", "evt-b"))
+	assert.Equal(t, map[string]struct{}{"evt-a": {}, "evt-b": {}}, profileIDs(a.snapshotCache(nil)))
 
-	a.FinalizeAgentList("agent-1")
-	got := profileIDs(a.snapshotCache(nil))
-	assert.Equal(t, map[string]struct{}{"evt-a": {}, "evt-b": {}}, got)
+	// evt-a was evicted on the agent's disk, so the next round reports only evt-b.
+	a.ReplaceAgentProfiles("agent-1", info, recs("evt-b"))
+	assert.Equal(t, map[string]struct{}{"evt-b": {}}, profileIDs(a.snapshotCache(nil)), "evicted evt-a must be dropped")
 
-	// Round 2: evt-a was evicted on the agent's disk, so only evt-b is reported.
-	a.ProcessProfileFromAgent("agent-1", info, record("evt-b"))
-	a.FinalizeAgentList("agent-1")
-	got = profileIDs(a.snapshotCache(nil))
-	assert.Equal(t, map[string]struct{}{"evt-b": {}}, got, "evicted evt-a must be dropped")
+	// An empty round drops the agent's entry entirely.
+	a.ReplaceAgentProfiles("agent-1", info, nil)
+	assert.Empty(t, a.snapshotCache(nil))
 }
 
-// TestFinalizeAgentListIsPerAgent verifies finalizing one agent's round does not disturb
-// another agent's cached entries.
-func TestFinalizeAgentListIsPerAgent(t *testing.T) {
+// TestReplaceAgentProfilesIsPerAgent verifies replacing one agent's set does not disturb another's.
+func TestReplaceAgentProfilesIsPerAgent(t *testing.T) {
 	a := newTestAggregator(t)
-	a.ProcessProfileFromAgent("agent-1", agentInfo("pod-1"), record("a1"))
-	a.FinalizeAgentList("agent-1")
-	a.ProcessProfileFromAgent("agent-2", agentInfo("pod-2"), record("a2"))
-	a.FinalizeAgentList("agent-2")
-
+	a.ReplaceAgentProfiles("agent-1", agentInfo("pod-1"), recs("a1"))
+	a.ReplaceAgentProfiles("agent-2", agentInfo("pod-2"), recs("a2"))
 	assert.Equal(t, map[string]struct{}{"a1": {}, "a2": {}}, profileIDs(a.snapshotCache(nil)))
 
-	// A fresh (empty) round for agent-1 clears only agent-1.
-	a.FinalizeAgentList("agent-1")
+	a.ReplaceAgentProfiles("agent-1", agentInfo("pod-1"), nil)
 	assert.Equal(t, map[string]struct{}{"a2": {}}, profileIDs(a.snapshotCache(nil)))
 }
 
-// TestRemoveAgentClearsStaging verifies a disconnect drops both cached and in-flight staged
-// records for the agent.
-func TestRemoveAgentClearsStaging(t *testing.T) {
+// TestRemoveAgent drops the agent's cached set on disconnect.
+func TestRemoveAgent(t *testing.T) {
 	a := newTestAggregator(t)
-	info := agentInfo("pod-1")
-	a.ProcessProfileFromAgent("agent-1", info, record("a1"))
-	a.FinalizeAgentList("agent-1")
-	a.ProcessProfileFromAgent("agent-1", info, record("a2")) // staged, not yet finalized
-
+	a.ReplaceAgentProfiles("agent-1", agentInfo("pod-1"), recs("a1"))
+	assert.NotEmpty(t, a.snapshotCache(nil))
 	a.RemoveAgent("agent-1")
-	assert.Empty(t, a.snapshotCache(nil))
-	// A finalize after removal must not resurrect the staged record.
-	a.FinalizeAgentList("agent-1")
 	assert.Empty(t, a.snapshotCache(nil))
 }

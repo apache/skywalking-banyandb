@@ -77,13 +77,11 @@ type RequestSender interface {
 type Aggregator struct {
 	registry    *registry.AgentRegistry
 	grpcService RequestSender
-	// cache is the live, queryable set: agentID -> profileID -> record.
-	cache map[string]map[string]*AggregatedPressureProfile
-	// staging holds the records of an in-progress list round, same shape as cache. A round's
-	// records land here as they stream in and the whole per-agent map is promoted to cache in
-	// one swap on ListComplete (FinalizeAgentList), so events the agent has evicted from its
-	// disk drop out of the cache instead of lingering as unservable entries.
-	staging map[string]map[string]*AggregatedPressureProfile
+	// cache is the live, queryable set: agentID -> profileID -> record. Each agent's whole set
+	// is replaced in one shot on ListComplete (ReplaceAgentProfiles), so events the agent has
+	// evicted from its disk drop out instead of lingering as unservable entries. The per-round
+	// accumulation lives in the pressure stream handler's local state, not here.
+	cache   map[string]map[string]*AggregatedPressureProfile
 	log     *logger.Logger
 	cacheMu sync.RWMutex
 	mu      sync.RWMutex
@@ -96,7 +94,6 @@ func NewAggregator(reg *registry.AgentRegistry, grpcService RequestSender, log *
 		grpcService: grpcService,
 		log:         log,
 		cache:       make(map[string]map[string]*AggregatedPressureProfile),
-		staging:     make(map[string]map[string]*AggregatedPressureProfile),
 	}
 }
 
@@ -112,15 +109,32 @@ func (a *Aggregator) RemoveAgent(agentID string) {
 	a.cacheMu.Lock()
 	defer a.cacheMu.Unlock()
 	delete(a.cache, agentID)
-	delete(a.staging, agentID)
 }
 
-// ProcessProfileFromAgent caches the metadata of one capture event, enriched with the
-// agent's pod name and role.
-func (a *Aggregator) ProcessProfileFromAgent(agentID string, agentInfo *registry.AgentInfo, record *fodcv1.PressureProfileRecord) {
-	if record == nil {
+// ReplaceAgentProfiles replaces an agent's whole cached set with the records of its just-completed
+// list round, enriched with the agent's pod name and role. An empty round drops the agent's entry.
+// Called on ListComplete with the records accumulated by the pressure stream handler for that round,
+// so events the agent has evicted from its disk drop out instead of lingering as unservable entries.
+func (a *Aggregator) ReplaceAgentProfiles(agentID string, agentInfo *registry.AgentInfo, records []*fodcv1.PressureProfileRecord) {
+	byProfile := make(map[string]*AggregatedPressureProfile, len(records))
+	for _, record := range records {
+		if record == nil {
+			continue
+		}
+		byProfile[record.ProfileId] = buildAggregated(agentID, agentInfo, record)
+	}
+
+	a.cacheMu.Lock()
+	defer a.cacheMu.Unlock()
+	if len(byProfile) == 0 {
+		delete(a.cache, agentID)
 		return
 	}
+	a.cache[agentID] = byProfile
+}
+
+// buildAggregated converts one wire record into a cache entry enriched with the agent's identity.
+func buildAggregated(agentID string, agentInfo *registry.AgentInfo, record *fodcv1.PressureProfileRecord) *AggregatedPressureProfile {
 	profiles := make([]ProfileInfo, 0, len(record.Profiles))
 	for _, p := range record.Profiles {
 		profiles = append(profiles, ProfileInfo{
@@ -146,32 +160,7 @@ func (a *Aggregator) ProcessProfileFromAgent(agentID string, agentInfo *registry
 	if record.CapturedAt != nil {
 		agg.CapturedAt = record.CapturedAt.AsTime()
 	}
-
-	a.cacheMu.Lock()
-	agentStaging := a.staging[agentID]
-	if agentStaging == nil {
-		agentStaging = make(map[string]*AggregatedPressureProfile)
-		a.staging[agentID] = agentStaging
-	}
-	agentStaging[record.ProfileId] = agg
-	a.cacheMu.Unlock()
-}
-
-// FinalizeAgentList promotes the records staged during the agent's just-completed list
-// round into the live cache, replacing all of that agent's previous entries. Events the
-// agent no longer reports (evicted from its disk) are dropped, keeping the proxy view in
-// sync with what the agent can actually serve. Called when ListComplete arrives.
-func (a *Aggregator) FinalizeAgentList(agentID string) {
-	a.cacheMu.Lock()
-	defer a.cacheMu.Unlock()
-	if staged, ok := a.staging[agentID]; ok {
-		a.cache[agentID] = staged
-		delete(a.staging, agentID)
-		return
-	}
-	// The agent streamed no records this round, i.e. it reported an empty set: drop everything
-	// previously cached for it.
-	delete(a.cache, agentID)
+	return agg
 }
 
 // CollectProfiles triggers a refresh from all matching agents, waits a short window for
