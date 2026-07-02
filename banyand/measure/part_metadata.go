@@ -186,6 +186,27 @@ func (tt tagType) unmarshal(src []byte) error {
 	return nil
 }
 
+func (tt tagType) mustReadTagType(fileSystem fs.FileSystem, partPath string) {
+	tt.reset()
+	tagTypePath := filepath.Join(partPath, tagTypeFilename)
+	data, err := fileSystem.Read(tagTypePath)
+	if err != nil {
+		var fsErr *fs.FileSystemError
+		if errors.As(err, &fsErr) && fsErr.Code == fs.IsNotExistError {
+			return
+		}
+		logger.Panicf("cannot read %s: %s", tagTypePath, err)
+		return
+	}
+	if len(data) == 0 {
+		return
+	}
+	if err = tt.unmarshal(data); err != nil {
+		logger.Panicf("cannot parse %q: %s", tagTypePath, err)
+		return
+	}
+}
+
 func (tt tagType) mustWriteTagType(fileSystem fs.FileSystem, partPath string) {
 	if len(tt) == 0 {
 		return
