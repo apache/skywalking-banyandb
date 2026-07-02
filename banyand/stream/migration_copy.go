@@ -701,7 +701,7 @@ func slowCopyOneStreamPart(in streamProcessPartInput, srcPartID uint64) (streamP
 	defer releaseLive()
 	defer func() {
 		for _, el := range buckets {
-			releaseElements(el)
+			releaseStreamSlowCopyElements(el)
 		}
 	}()
 
@@ -806,7 +806,7 @@ func runStreamFlushWorker(flushCh <-chan streamFlushJob, fileSystem fs.FileSyste
 }
 
 func directCopyStreamFlushBucket(el *elements, fileSystem fs.FileSystem, partPath string) (sz int64, err error) {
-	defer releaseElements(el)
+	defer releaseStreamSlowCopyElements(el)
 	if mkErr := os.MkdirAll(filepath.Dir(partPath), storage.DirPerm); mkErr != nil {
 		return 0, mkErr
 	}
@@ -824,6 +824,15 @@ func directCopyStreamFlushBucket(el *elements, fileSystem fs.FileSystem, partPat
 	mp.mustInitFromElements(el)
 	mp.mustFlush(fileSystem, partPath)
 	return int64(mp.partMetadata.CompressedSizeBytes), nil
+}
+
+func releaseStreamSlowCopyElements(el *elements) {
+	for rowIdx := range el.tagFamilies {
+		for familyIdx := range el.tagFamilies[rowIdx] {
+			el.tagFamilies[rowIdx][familyIdx].values = nil
+		}
+	}
+	releaseElements(el)
 }
 
 // ── Utility helpers ───────────────────────────────────────────────.
