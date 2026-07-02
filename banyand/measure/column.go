@@ -71,15 +71,6 @@ func decodeTypedColumn(key string) string {
 	return key
 }
 
-func hasTypeSuffix(key string) bool {
-	for suffix := range suffixToValueType {
-		if strings.HasSuffix(key, typedColumnSeparator+suffix) {
-			return true
-		}
-	}
-	return false
-}
-
 func generateInt64Slice(length int) *[]int64 {
 	v := int64SlicePool.Get()
 	if v == nil {

@@ -72,15 +72,6 @@ func decodeTypedTag(key string) string {
 	return key
 }
 
-func hasTypeSuffix(key string) bool {
-	for suffix := range suffixToValueType {
-		if strings.HasSuffix(key, typedTagSeparator+suffix) {
-			return true
-		}
-	}
-	return false
-}
-
 type tag struct {
 	uniqueValues map[string]struct{}
 	min          []byte

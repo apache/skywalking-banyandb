@@ -239,7 +239,8 @@ func (b *block) unmarshalTagFamily(decoder *encoding.BytesBlockDecoder, tfIndex 
 NEXT:
 	for j := range tagProjection {
 		tp := tagProjection[j]
-		if schemaType, ok := schemaTagTypes[tp]; ok {
+		schemaType, hasSchemaType := schemaTagTypes[tp]
+		if hasSchemaType {
 			typedName := encodeTypedTag(tp, schemaType)
 			for i := range tfm.tagMetadata {
 				if tfm.tagMetadata[i].name == typedName {
@@ -251,6 +252,9 @@ NEXT:
 		}
 		for i := range tfm.tagMetadata {
 			if tfm.tagMetadata[i].name == tp {
+				if hasSchemaType && tfm.tagMetadata[i].valueType != schemaType {
+					continue
+				}
 				cc[j].mustReadValues(decoder, valueReader, tfm.tagMetadata[i], uint64(b.Len()))
 				continue NEXT
 			}
@@ -716,28 +720,38 @@ func fastTagAppend(bi, b *blockPointer, offset int) error {
 	if len(bi.tagFamilies) != len(b.tagFamilies) {
 		return fmt.Errorf("unexpected number of tag families: got %d; want %d", len(b.tagFamilies), len(bi.tagFamilies))
 	}
+	existingDataSize := len(bi.timestamps)
 	for i := range bi.tagFamilies {
 		if bi.tagFamilies[i].name != b.tagFamilies[i].name {
+			rollbackFastTagAppend(bi, existingDataSize)
 			return fmt.Errorf("unexpected tag family name: got %q; want %q", b.tagFamilies[i].name, bi.tagFamilies[i].name)
 		}
 		if len(bi.tagFamilies[i].tags) != len(b.tagFamilies[i].tags) {
+			rollbackFastTagAppend(bi, existingDataSize)
 			return fmt.Errorf("unexpected number of tags for tag family %q: got %d; want %d",
 				bi.tagFamilies[i].name, len(b.tagFamilies[i].tags), len(bi.tagFamilies[i].tags))
 		}
 		for j := range bi.tagFamilies[i].tags {
 			if bi.tagFamilies[i].tags[j].name != b.tagFamilies[i].tags[j].name {
+				rollbackFastTagAppend(bi, existingDataSize)
 				return fmt.Errorf("unexpected tag name for tag family %q: got %q; want %q",
 					bi.tagFamilies[i].name, b.tagFamilies[i].tags[j].name, bi.tagFamilies[i].tags[j].name)
 			}
-		}
-	}
-	for i := range bi.tagFamilies {
-		for j := range bi.tagFamilies[i].tags {
 			assertIdxAndOffset(b.tagFamilies[i].tags[j].name, len(b.tagFamilies[i].tags[j].values), b.idx, offset)
 			bi.tagFamilies[i].tags[j].values = append(bi.tagFamilies[i].tags[j].values, b.tagFamilies[i].tags[j].values[b.idx:offset]...)
 		}
 	}
 	return nil
+}
+
+func rollbackFastTagAppend(bi *blockPointer, existingDataSize int) {
+	for i := range bi.tagFamilies {
+		for j := range bi.tagFamilies[i].tags {
+			if len(bi.tagFamilies[i].tags[j].values) > existingDataSize {
+				bi.tagFamilies[i].tags[j].values = bi.tagFamilies[i].tags[j].values[:existingDataSize]
+			}
+		}
+	}
 }
 
 func fullTagAppend(bi, b *blockPointer, offset int) {

@@ -27,7 +27,6 @@ import (
 
 	databasev1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/database/v1"
 	modelv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/model/v1"
-	"github.com/apache/skywalking-banyandb/pkg/bytes"
 	"github.com/apache/skywalking-banyandb/pkg/cgroups"
 	"github.com/apache/skywalking-banyandb/pkg/encoding"
 	"github.com/apache/skywalking-banyandb/pkg/fs"
@@ -389,8 +388,7 @@ func renameConflictColumns(b *block, conflictColumns map[string]map[string]struc
 func collectConflictColumns(parts []*partWrapper) map[string]map[string]struct{} {
 	familyColumnTypes := make(map[string]map[string]map[pbv1.ValueType]struct{})
 	for _, pw := range parts {
-		partTypes := readPartColumnTypes(pw.p)
-		for cf, cc := range partTypes {
+		for cf, cc := range pw.p.tagType {
 			columnTypes := familyColumnTypes[cf]
 			if columnTypes == nil {
 				columnTypes = make(map[string]map[pbv1.ValueType]struct{})
@@ -423,44 +421,6 @@ func collectConflictColumns(parts []*partWrapper) map[string]map[string]struct{}
 		}
 	}
 	return conflictColumns
-}
-
-func readPartColumnTypes(p *part) map[string]map[string]pbv1.ValueType {
-	if len(p.tagFamilyMetadata) == 0 || len(p.primaryBlockMetadata) == 0 {
-		return nil
-	}
-	pmi := generatePartMergeIter()
-	defer releasePartMergeIter(pmi)
-	pmi.mustInitFromPart(p)
-
-	result := make(map[string]map[string]pbv1.ValueType)
-	bb := bigValuePool.Generate()
-	defer bigValuePool.Release(bb)
-	for pmi.nextBlockMetadata() {
-		for cf, db := range pmi.block.bm.tagFamilies {
-			reader, ok := p.tagFamilyMetadata[cf]
-			if !ok {
-				continue
-			}
-			bb.Buf = bytes.ResizeExact(bb.Buf, int(db.size))
-			fs.MustReadData(reader, int64(db.offset), bb.Buf)
-			cfm := generateColumnFamilyMetadata()
-			if _, err := cfm.unmarshal(bb.Buf); err != nil {
-				releaseColumnFamilyMetadata(cfm)
-				continue
-			}
-			cft := result[cf]
-			if cft == nil {
-				cft = make(map[string]pbv1.ValueType)
-				result[cf] = cft
-			}
-			for i := range cfm.columnMetadata {
-				cft[cfm.columnMetadata[i].name] = cfm.columnMetadata[i].valueType
-			}
-			releaseColumnFamilyMetadata(cfm)
-		}
-	}
-	return result
 }
 
 func mergeTwoBlocks(target, left, right *blockPointer) {

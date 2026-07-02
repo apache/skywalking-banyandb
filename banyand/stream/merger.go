@@ -25,7 +25,6 @@ import (
 
 	"github.com/dustin/go-humanize"
 
-	pkgbytes "github.com/apache/skywalking-banyandb/pkg/bytes"
 	"github.com/apache/skywalking-banyandb/pkg/cgroups"
 	"github.com/apache/skywalking-banyandb/pkg/encoding"
 	"github.com/apache/skywalking-banyandb/pkg/fs"
@@ -374,8 +373,7 @@ func renameConflictTags(b *block, conflictTags map[string]map[string]struct{}) {
 func collectConflictTags(parts []*partWrapper) map[string]map[string]struct{} {
 	familyTagTypes := make(map[string]map[string]map[pbv1.ValueType]struct{})
 	for _, pw := range parts {
-		partTypes := readPartTagTypes(pw.p)
-		for tf, tt := range partTypes {
+		for tf, tt := range pw.p.tagType {
 			tagTypes := familyTagTypes[tf]
 			if tagTypes == nil {
 				tagTypes = make(map[string]map[pbv1.ValueType]struct{})
@@ -408,44 +406,6 @@ func collectConflictTags(parts []*partWrapper) map[string]map[string]struct{} {
 		}
 	}
 	return conflictTags
-}
-
-func readPartTagTypes(p *part) map[string]map[string]pbv1.ValueType {
-	if len(p.tagFamilyMetadata) == 0 || len(p.primaryBlockMetadata) == 0 {
-		return nil
-	}
-	pmi := generatePartMergeIter()
-	defer releasePartMergeIter(pmi)
-	pmi.mustInitFromPart(p)
-
-	result := make(map[string]map[string]pbv1.ValueType)
-	bb := bigValuePool.Generate()
-	defer bigValuePool.Release(bb)
-	for pmi.nextBlockMetadata() {
-		for tf, db := range pmi.block.bm.tagFamilies {
-			reader, ok := p.tagFamilyMetadata[tf]
-			if !ok {
-				continue
-			}
-			bb.Buf = pkgbytes.ResizeExact(bb.Buf, int(db.size))
-			fs.MustReadData(reader, int64(db.offset), bb.Buf)
-			tfm := generateTagFamilyMetadata()
-			if err := tfm.unmarshal(bb.Buf); err != nil {
-				releaseTagFamilyMetadata(tfm)
-				continue
-			}
-			tft := result[tf]
-			if tft == nil {
-				tft = make(map[string]pbv1.ValueType)
-				result[tf] = tft
-			}
-			for i := range tfm.tagMetadata {
-				tft[tfm.tagMetadata[i].name] = tfm.tagMetadata[i].valueType
-			}
-			releaseTagFamilyMetadata(tfm)
-		}
-	}
-	return result
 }
 
 func mergeTwoBlocks(target, left, right *blockPointer) {

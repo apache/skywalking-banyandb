@@ -280,13 +280,3 @@ func TestDecodeTypedTag(t *testing.T) {
 	assert.Equal(t, "arr.int", decodeTypedTag("arr.int"))
 	assert.Equal(t, "data.bin", decodeTypedTag("data.bin"))
 }
-
-func TestHasTypeSuffix(t *testing.T) {
-	assert.True(t, hasTypeSuffix("state#int"))
-	assert.True(t, hasTypeSuffix("state#str"))
-	assert.True(t, hasTypeSuffix("http.status#int"))
-	assert.True(t, hasTypeSuffix("data#bin"))
-	assert.False(t, hasTypeSuffix("simple"))
-	assert.False(t, hasTypeSuffix("my.str"))
-	assert.False(t, hasTypeSuffix("data.bin"))
-}

@@ -713,10 +713,7 @@ type measureSetupOptions struct {
 	withInterval    bool
 }
 
-const (
-	schemaChangeGroupName = "sw_metric"
-	defaultTagFamily      = "default"
-)
+const schemaChangeGroupName = "sw_metric"
 
 func setupSchemaChangeMeasure(svcs *services, measureName string, opts measureSetupOptions) *measureSchemaChangeEnv {
 	ctx := context.TODO()
