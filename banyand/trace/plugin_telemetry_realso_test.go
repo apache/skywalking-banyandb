@@ -307,6 +307,277 @@ func newRealSOSchemaRepo(t *testing.T) (sr schemaRepo, soName string, reg *prome
 	return sr, soName, reg
 }
 
+// faultyPluginPkgPath is the path to the faultysampler plugin source relative to
+// this file's directory (banyand/trace). It is a distinct Go package from
+// _telemetrysampler, so its .so can be loaded in the same process without the
+// Go plugin-dedup "previous failure" error.
+const faultyPluginPkgPath = "../../test/plugins/_faultysampler"
+
+// sharedFaultySO holds the result of the once-per-process .so build and probe
+// for the _faultysampler plugin. Strings/pointer fields come first so the
+// compiler can satisfy fieldalignment before the embedded sync.Once.
+var sharedFaultySO struct {
+	dir        string
+	soPath     string
+	skipReason string // non-empty → tests must skip
+	sync.Once
+}
+
+// initSharedFaultySO builds the faultysampler .so exactly once into a
+// process-scoped temp directory and probes that the host can load it.
+func initSharedFaultySO() {
+	dir, mkErr := os.MkdirTemp("", "realso-faulty-*")
+	if mkErr != nil {
+		sharedFaultySO.skipReason = "initSharedFaultySO: os.MkdirTemp failed: " + mkErr.Error()
+		return
+	}
+	sharedFaultySO.dir = dir
+
+	goExe, lookErr := exec.LookPath("go")
+	if lookErr != nil {
+		sharedFaultySO.skipReason = "initSharedFaultySO: 'go' binary not found in PATH"
+		return
+	}
+	soPath := filepath.Join(dir, "faultysampler.so")
+
+	_, thisFile, _, ok := runtime.Caller(0)
+	if !ok {
+		sharedFaultySO.skipReason = "initSharedFaultySO: cannot determine source file path via runtime.Caller"
+		return
+	}
+	absPluginDir := filepath.Clean(filepath.Join(filepath.Dir(thisFile), faultyPluginPkgPath))
+
+	cmd := exec.Command(goExe, "build", "-buildmode=plugin", "-o", soPath, absPluginDir)
+	cmd.Env = append(os.Environ(), "CGO_ENABLED=1")
+	out, buildErr := cmd.CombinedOutput()
+	if buildErr != nil {
+		sharedFaultySO.skipReason = "initSharedFaultySO: cannot build .so (CGO may be unavailable): " +
+			buildErr.Error() + "\n" + string(out)
+		return
+	}
+	sharedFaultySO.soPath = soPath
+
+	_, probeErr := plugin.Open(soPath)
+	if isPluginToolchainMismatch(probeErr) {
+		sharedFaultySO.skipReason = "initSharedFaultySO: host cannot load freshly built plugin (toolchain mismatch): " +
+			probeErr.Error()
+		return
+	}
+	if probeErr != nil {
+		sharedFaultySO.skipReason = "initSharedFaultySO: plugin.Open probe failed: " + probeErr.Error()
+	}
+}
+
+// newRealSOFaultyRepo sets up the faultysampler .so and returns a schemaRepo,
+// the .so base name (for Plugin.Path), and a fresh prometheus.Registry. It
+// skips the test when CGO is unavailable or there is a toolchain mismatch.
+func newRealSOFaultyRepo(t *testing.T) (sr schemaRepo, soName string, reg *prometheus.Registry) {
+	t.Helper()
+	sharedFaultySO.Do(initSharedFaultySO)
+	if sharedFaultySO.skipReason != "" {
+		t.Skip(sharedFaultySO.skipReason)
+	}
+
+	reg = prometheus.NewRegistry()
+	promProvider := prom.NewProvider(pipelineScope, reg)
+	factory := services.NewFactory(promProvider, nil, nil)
+
+	sr = schemaRepo{
+		l:                      logger.GetLogger("trace"),
+		role:                   databasev1.Role_ROLE_DATA,
+		nativePipelineEnabled:  true,
+		trustedPluginDir:       sharedFaultySO.dir,
+		samplerMeter:           newSamplerMetrics(factory),
+		pluginTelemetryFactory: factory,
+	}
+	soName = filepath.Base(sharedFaultySO.soPath)
+	return sr, soName, reg
+}
+
+// makeFaultyCfg builds a TracePipelineConfig with one faultysampler plugin entry.
+// faults is marshaled into structpb and passed as the plugin config.
+func makeFaultyCfg(soName, pluginName string, faults map[string]any) *commonv1.TracePipelineConfig {
+	cfgStruct, structErr := structpb.NewStruct(faults)
+	if structErr != nil {
+		panic("makeFaultyCfg: structpb.NewStruct failed: " + structErr.Error())
+	}
+	return &commonv1.TracePipelineConfig{
+		Enabled: true,
+		Plugins: []*commonv1.Plugin{
+			{
+				Name: pluginName,
+				Kind: &commonv1.Plugin_Sampler{
+					Sampler: &commonv1.SamplerPlugin{
+						Path:       soName,
+						Symbol:     "NewSampler",
+						AbiVersion: uint32(sdk.ABIVersion),
+						Config:     cfgStruct,
+					},
+				},
+			},
+		},
+	}
+}
+
+// gatherCounterValue returns the counter value for the first metric in family
+// familyName whose labels match all entries in wantLabels, or 0 if not found.
+func gatherCounterValue(mfs []*dto.MetricFamily, familyName string, wantLabels map[string]string) float64 {
+	for _, mf := range mfs {
+		if mf.GetName() != familyName {
+			continue
+		}
+		for _, m := range mf.GetMetric() {
+			match := true
+			for k, v := range wantLabels {
+				if labelValue(m, k) != v {
+					match = false
+					break
+				}
+			}
+			if match {
+				return m.GetCounter().GetValue()
+			}
+		}
+	}
+	return 0
+}
+
+// countFamilySeriesForGroup counts how many metric series in familyName have a
+// "group" label equal to group.
+func countFamilySeriesForGroup(mfs []*dto.MetricFamily, familyName, group string) int {
+	for _, mf := range mfs {
+		if mf.GetName() != familyName {
+			continue
+		}
+		count := 0
+		for _, m := range mf.GetMetric() {
+			if labelValue(m, "group") == group {
+				count++
+			}
+		}
+		return count
+	}
+	return 0
+}
+
+// TestPluginTelemetry_RealSO_FaultInjection loads the _faultysampler .so and
+// verifies that the host telemetry bounds hold under adversarial plugin behavior:
+//
+//   - flood_logs_are_rate_limited: 500 Logger.Info calls per Decide are clamped
+//     by the 50/s burst-100 token bucket; logged + dropped == 500.
+//   - cardinality_is_capped: 130 Decide calls each registering a unique Counter
+//     label value are capped at 100 kept + 1 overflow series; 30 rejected.
+//   - usehost_panic_is_isolated: a panic in UseHost is recovered; the sampler is
+//     still registered, keeps all traces, and the panic counter is incremented.
+func TestPluginTelemetry_RealSO_FaultInjection(t *testing.T) {
+	if raceDetectorEnabled {
+		t.Skip("TestPluginTelemetry_RealSO_FaultInjection skipped: race detector active; " +
+			"a non-race .so cannot be loaded into a race-instrumented host")
+	}
+
+	resetRegistries()
+	defer resetRegistries()
+
+	sr, soName, reg := newRealSOFaultyRepo(t)
+
+	t.Run("flood_logs_are_rate_limited", func(t *testing.T) {
+		const group = "fault-flood"
+		cfg := makeFaultyCfg(soName, "fault", map[string]any{
+			"floodLogs":  true,
+			"floodCount": float64(500),
+		})
+		sr.reconcilePipeline(group, cfg)
+
+		samplers := lookupSamplers(group)
+		require.NotEmpty(t, samplers, "reconcilePipeline must register at least one sampler for group %q", group)
+
+		var logged int
+		batch := &sdk.TraceBatch{Traces: make([]sdk.TraceBlock, 1)}
+		captured := captureStderr(t, func() {
+			_, decideErr := samplers[0].Decide(batch)
+			require.NoError(t, decideErr, "Decide must not return an error")
+		})
+		logged = strings.Count(captured, "flood log line")
+
+		mfs, gatherErr := reg.Gather()
+		require.NoError(t, gatherErr, "prometheus registry Gather must succeed")
+
+		dropped := gatherCounterValue(mfs,
+			"banyandb_trace_pipeline_plugin_log_dropped_total",
+			map[string]string{"group": group, "plugin_name": "fault"})
+
+		assert.Greater(t, logged, 0,
+			"at least one log line must pass the rate limiter; got 0")
+		assert.Less(t, logged, 500,
+			"rate limiter must clamp output below 500; got %d", logged)
+		assert.Greater(t, dropped, float64(0),
+			"plugin_log_dropped_total must be >0 when 500 lines are emitted at once; got %v", dropped)
+		assert.Equal(t, 500, logged+int(dropped),
+			"every Info call must either be logged or counted as dropped: logged=%d dropped=%v", logged, dropped)
+	})
+
+	t.Run("cardinality_is_capped", func(t *testing.T) {
+		const group = "fault-card"
+		cfg := makeFaultyCfg(soName, "fault", map[string]any{
+			"explodeCardinality": true,
+		})
+		sr.reconcilePipeline(group, cfg)
+
+		samplers := lookupSamplers(group)
+		require.NotEmpty(t, samplers, "reconcilePipeline must register at least one sampler for group %q", group)
+
+		batch := &sdk.TraceBatch{Traces: make([]sdk.TraceBlock, 1)}
+		for range 130 {
+			_, decideErr := samplers[0].Decide(batch)
+			require.NoError(t, decideErr, "Decide must not return an error")
+		}
+
+		mfs, gatherErr := reg.Gather()
+		require.NoError(t, gatherErr, "prometheus registry Gather must succeed")
+
+		rejected := gatherCounterValue(mfs,
+			"banyandb_trace_pipeline_plugin_telemetry_series_rejected_total",
+			map[string]string{"group": group, "plugin_name": "fault"})
+		assert.Equal(t, float64(30), rejected,
+			"series_rejected must equal 130 calls − 100 cap = 30; got %v", rejected)
+
+		boomSeries := countFamilySeriesForGroup(mfs, "banyandb_trace_pipeline_plugin_boom", group)
+		assert.Equal(t, 101, boomSeries,
+			"boom family must have 101 series for group %q (100 kept + 1 __overflow__); got %d", group, boomSeries)
+	})
+
+	t.Run("usehost_panic_is_isolated", func(t *testing.T) {
+		const group = "fault-panic"
+		cfg := makeFaultyCfg(soName, "fault", map[string]any{
+			"panicInUseHost": true,
+		})
+
+		require.NotPanics(t, func() { sr.reconcilePipeline(group, cfg) },
+			"reconcilePipeline must not panic when the plugin's UseHost panics")
+
+		samplers := lookupSamplers(group)
+		require.NotEmpty(t, samplers,
+			"sampler must still be registered after a UseHost panic (fail-open)")
+
+		batch := &sdk.TraceBatch{Traces: make([]sdk.TraceBlock, 2)}
+		verdict, decideErr := samplers[0].Decide(batch)
+		require.NoError(t, decideErr, "Decide must not return an error after a UseHost panic")
+		require.Len(t, verdict.Keep, 2, "Decide must return a Keep slice of length 2 (fail-open)")
+		for idx, keep := range verdict.Keep {
+			assert.True(t, keep, "verdict.Keep[%d] must be true (sampler keeps all traces)", idx)
+		}
+
+		mfs, gatherErr := reg.Gather()
+		require.NoError(t, gatherErr, "prometheus registry Gather must succeed")
+
+		panicCount := gatherCounterValue(mfs,
+			"banyandb_trace_pipeline_plugin_telemetry_panic_total",
+			map[string]string{"group": group, "plugin_name": "fault"})
+		assert.Equal(t, float64(1), panicCount,
+			"plugin_telemetry_panic_total must equal 1 after one UseHost panic; got %v", panicCount)
+	})
+}
+
 // makeSamplerCfg builds a TracePipelineConfig with a single telemetrysampler
 // plugin entry using the given soName, logEvery value, and plugin name.
 func makeSamplerCfg(soName, pluginName string, logEvery float64) *commonv1.TracePipelineConfig {
