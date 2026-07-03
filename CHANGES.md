@@ -126,6 +126,7 @@ Release Notes.
 - Consolidate lifecycle migration report errors into a single flat list of structured, stage-aware entries.
 - Fix backup container OOM from overlapping scheduled runs; serialize runs and upload small snapshot files concurrently.
 - Fix block metadata reset before unmarshal for stream and trace.
+- Lifecycle only handles stream/measure/trace snapshots, skipping other catalogs.
 
 ### Document
 
