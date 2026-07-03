@@ -717,7 +717,7 @@ projection:
 			return buf.String()
 		}
 		Eventually(issue, flags.EventuallyTimeout).ShouldNot(ContainSubstring("code:"))
-		Eventually(func() int {
+		test.EventuallyConsistently(func() int {
 			out := issue()
 			GinkgoWriter.Println(out)
 			resp := new(streamv1.QueryResponse)
@@ -1036,7 +1036,7 @@ func queryData(rootCmd *cobra.Command, addr, group, id string, dataCount int, ve
 		Expect(err).NotTo(HaveOccurred())
 		return buf.String()
 	}
-	Eventually(func() error {
+	test.EventuallyConsistently(func() error {
 		out := issue()
 		resp := new(propertyv1.QueryResponse)
 		helpers.UnmarshalYAML([]byte(out), resp)

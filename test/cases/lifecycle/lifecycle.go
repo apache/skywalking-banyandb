@@ -47,6 +47,7 @@ import (
 	"github.com/apache/skywalking-banyandb/banyand/backup/lifecycle"
 	"github.com/apache/skywalking-banyandb/banyand/observability"
 	"github.com/apache/skywalking-banyandb/pkg/grpchelper"
+	"github.com/apache/skywalking-banyandb/pkg/test"
 	"github.com/apache/skywalking-banyandb/pkg/test/flags"
 	"github.com/apache/skywalking-banyandb/pkg/test/helpers"
 	measureTestData "github.com/apache/skywalking-banyandb/test/cases/measure/data"
@@ -198,7 +199,7 @@ func verifyLifecycleStages(sc helpers.SharedContext, verifyFn func(gomega.Gomega
 	})
 
 	// Verify hot+warm stages exist after migration
-	gomega.Eventually(func(innerGm gomega.Gomega) {
+	test.EventuallyConsistently(func(innerGm gomega.Gomega) {
 		verifyFn(innerGm, sc, helpers.Args{
 			Input:           args.Input,
 			Duration:        args.Duration,
@@ -209,7 +210,7 @@ func verifyLifecycleStages(sc helpers.SharedContext, verifyFn func(gomega.Gomega
 	}, flags.EventuallyTimeout).Should(gomega.Succeed())
 
 	// Verify warm stage only after retention
-	gomega.Eventually(func(innerGm gomega.Gomega) {
+	test.EventuallyConsistently(func(innerGm gomega.Gomega) {
 		verifyFn(innerGm, sc, helpers.Args{
 			Input:           args.Input,
 			Duration:        args.Duration,
@@ -965,7 +966,7 @@ var _ = ginkgo.Describe("Measure cross-segment migration", ginkgo.Ordered, func(
 				Stages: []string{"warm"},
 			}
 			var resp *measurev1.QueryResponse
-			gomega.Eventually(func() error {
+			test.EventuallyConsistently(func() error {
 				var qErr error
 				resp, qErr = queryClient.Query(ctx, req)
 				if qErr != nil {
@@ -1254,7 +1255,7 @@ var _ = ginkgo.Describe("Stream cross-segment migration", ginkgo.Ordered, func()
 				Stages:  []string{"warm"},
 			}
 			var resp *streamv1.QueryResponse
-			gomega.Eventually(func() error {
+			test.EventuallyConsistently(func() error {
 				var qErr error
 				resp, qErr = queryClient.Query(ctx, req)
 				if qErr != nil {
@@ -1426,7 +1427,7 @@ var _ = ginkgo.Describe("Trace cross-segment migration", ginkgo.Ordered, func() 
 				Stages: []string{"warm"},
 			}
 			var resp *tracev1.QueryResponse
-			gomega.Eventually(func() error {
+			test.EventuallyConsistently(func() error {
 				var qErr error
 				resp, qErr = queryClient.Query(ctx, req)
 				if qErr != nil {

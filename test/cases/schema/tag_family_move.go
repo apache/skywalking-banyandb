@@ -33,6 +33,7 @@ import (
 	measurev1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/measure/v1"
 	modelv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/model/v1"
 	streamv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/stream/v1"
+	"github.com/apache/skywalking-banyandb/pkg/test"
 )
 
 const (
@@ -565,7 +566,7 @@ func queryTagFamilyMoveStream(
 		}
 	}
 	var resp *streamv1.QueryResponse
-	gm.Eventually(func() int {
+	test.EventuallyConsistently(func() int {
 		queryResp, queryErr := client.Query(ctx, &streamv1.QueryRequest{
 			Groups: []string{groupName},
 			Name:   "tfm_stream",
@@ -610,7 +611,7 @@ func queryStorageToSearchableMoveStream(
 		}
 	}
 	var resp *streamv1.QueryResponse
-	gm.Eventually(func() int {
+	test.EventuallyConsistently(func() int {
 		queryResp, queryErr := client.Query(ctx, &streamv1.QueryRequest{
 			Groups: []string{groupName},
 			Name:   "tfm_storage_stream",
@@ -684,7 +685,7 @@ func queryTagFamilyMoveMeasure(
 ) []*measurev1.DataPoint {
 	projection := tagFamilyMoveMeasureProjection(movedProjection)
 	var resp *measurev1.QueryResponse
-	gm.Eventually(func() int {
+	test.EventuallyConsistently(func() int {
 		queryResp, queryErr := client.Query(ctx, &measurev1.QueryRequest{
 			Groups: []string{groupName},
 			Name:   "tfm_measure",
@@ -719,7 +720,7 @@ func queryStorageToSearchableMoveMeasure(
 ) []*measurev1.DataPoint {
 	projection := tagFamilyMoveMeasureStorageToSearchableProjection(movedProjection)
 	var resp *measurev1.QueryResponse
-	gm.Eventually(func() int {
+	test.EventuallyConsistently(func() int {
 		queryResp, queryErr := client.Query(ctx, &measurev1.QueryRequest{
 			Groups: []string{groupName},
 			Name:   "tfm_storage_measure",

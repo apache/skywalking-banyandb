@@ -31,6 +31,7 @@ import (
 	measurev1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/measure/v1"
 	modelv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/model/v1"
 	streamv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/stream/v1"
+	"github.com/apache/skywalking-banyandb/pkg/test"
 	"github.com/apache/skywalking-banyandb/pkg/timestamp"
 )
 
@@ -248,7 +249,7 @@ var _ = g.Describe("Schema time-range clamp", func() {
 		// data-node ack returns when mustAddMemPart's applied channel
 		// fires, but the query fan-out can still race the new memPart
 		// becoming visible. Mirrors the deletion.go retry pattern.
-		gm.Eventually(func() int {
+		test.EventuallyConsistently(func() int {
 			baselineResp, baselineErr := queryMeasureRange(ctx, clients.MeasureWriteClient, group1, measureName,
 				tData1.Add(-time.Hour), time.Now().Add(time.Hour), 0)
 			if baselineErr != nil {
