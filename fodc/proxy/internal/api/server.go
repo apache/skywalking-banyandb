@@ -28,13 +28,16 @@ import (
 	"strings"
 	"time"
 
+	"github.com/google/uuid"
 	"google.golang.org/protobuf/encoding/protojson"
 
 	fodcv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/fodc/v1"
+	"github.com/apache/skywalking-banyandb/fodc/internal/pprofcapture"
 	"github.com/apache/skywalking-banyandb/fodc/proxy/internal/cluster"
 	"github.com/apache/skywalking-banyandb/fodc/proxy/internal/diagnostics"
 	"github.com/apache/skywalking-banyandb/fodc/proxy/internal/lifecycle"
 	"github.com/apache/skywalking-banyandb/fodc/proxy/internal/metrics"
+	"github.com/apache/skywalking-banyandb/fodc/proxy/internal/pressure"
 	"github.com/apache/skywalking-banyandb/fodc/proxy/internal/registry"
 	"github.com/apache/skywalking-banyandb/pkg/logger"
 )
@@ -48,12 +51,19 @@ var lifecycleGroupMarshaler = protojson.MarshalOptions{
 	EmitUnpopulated: true,
 }
 
+// ProfileFetcher streams one pressure profile's bytes from an agent, invoking onChunk per slice.
+type ProfileFetcher interface {
+	FetchPressureProfile(ctx context.Context, agentID string, fetch *fodcv1.FetchPressureProfile, onChunk func([]byte) error) error
+}
+
 // Server exposes REST and Prometheus-style endpoints for external consumption.
 type Server struct {
 	metricsAggregator          *metrics.Aggregator
 	clusterStateCollector      *cluster.Manager
 	lifecycleManager           *lifecycle.Manager
 	crashDiagnosticsAggregator *diagnostics.Aggregator
+	pressureAggregator         *pressure.Aggregator
+	profileFetcher             ProfileFetcher
 	registry                   *registry.AgentRegistry
 	server                     *http.Server
 	logger                     *logger.Logger
@@ -67,6 +77,8 @@ func NewServer(
 	lifecycleManager *lifecycle.Manager,
 	registry *registry.AgentRegistry,
 	crashDiagnosticsAggregator *diagnostics.Aggregator,
+	pressureAggregator *pressure.Aggregator,
+	profileFetcher ProfileFetcher,
 	logger *logger.Logger,
 ) *Server {
 	return &Server{
@@ -74,6 +86,8 @@ func NewServer(
 		clusterStateCollector:      clusterStateCollector,
 		lifecycleManager:           lifecycleManager,
 		crashDiagnosticsAggregator: crashDiagnosticsAggregator,
+		pressureAggregator:         pressureAggregator,
+		profileFetcher:             profileFetcher,
 		registry:                   registry,
 		logger:                     logger,
 		startTime:                  time.Now(),
@@ -90,6 +104,8 @@ func (s *Server) Start(listenAddr string, readTimeout, writeTimeout time.Duratio
 	mux.HandleFunc("/cluster/topology", s.handleClusterTopology)
 	mux.HandleFunc("/cluster/lifecycle", s.handleClusterLifecycle)
 	mux.HandleFunc("/diagnostics", s.handleDiagnostics)
+	mux.HandleFunc("/pressure-profiles", s.handlePressureProfiles)
+	mux.HandleFunc("/pressure-profiles/{pod_name}/{profile_id}/{type}", s.handlePressureProfileDownload)
 
 	s.server = &http.Server{
 		Addr:         listenAddr,
@@ -676,6 +692,126 @@ func (s *Server) handleDiagnostics(w http.ResponseWriter, r *http.Request) {
 	if encodeErr := json.NewEncoder(w).Encode(records); encodeErr != nil {
 		s.logger.Error().Err(encodeErr).Msg("Failed to encode diagnostics response")
 	}
+}
+
+// handlePressureProfiles handles GET /pressure-profiles, listing capture-event metadata.
+func (s *Server) handlePressureProfiles(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	if s.pressureAggregator == nil {
+		http.Error(w, "Pressure aggregator not available", http.StatusServiceUnavailable)
+		return
+	}
+	filter := &pressure.Filter{
+		Role:    r.URL.Query().Get("role"),
+		PodName: r.URL.Query().Get("pod_name"),
+	}
+	records, collectErr := s.pressureAggregator.CollectProfiles(r.Context(), filter)
+	if collectErr != nil {
+		s.logger.Error().Err(collectErr).Msg("Failed to collect pressure profiles")
+		http.Error(w, "Failed to collect pressure profiles", http.StatusInternalServerError)
+		return
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusOK)
+	if encodeErr := json.NewEncoder(w).Encode(records); encodeErr != nil {
+		s.logger.Error().Err(encodeErr).Msg("Failed to encode pressure profiles response")
+	}
+}
+
+// handlePressureProfileDownload handles GET /pressure-profiles/{pod_name}/{profile_id}/{type},
+// streaming one pprof binary straight from the agent to the client without buffering it in
+// the proxy and without the server-wide write timeout cutting off a large download.
+func (s *Server) handlePressureProfileDownload(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	if s.pressureAggregator == nil || s.profileFetcher == nil {
+		http.Error(w, "Pressure profiles not available", http.StatusServiceUnavailable)
+		return
+	}
+	podName := r.PathValue("pod_name")
+	profileID := r.PathValue("profile_id")
+	profType := r.PathValue("type")
+	if !pprofcapture.IsValidType(profType) {
+		http.Error(w, "Unknown profile type", http.StatusBadRequest)
+		return
+	}
+
+	// Resolve from the cache first; only pay the refresh round-trip on a miss (the cache is
+	// populated by a prior list, or becomes populated by this refresh). This avoids the
+	// fixed ~2s CollectProfiles window on every download.
+	agentID, filePath, role, ok := s.pressureAggregator.LookupForDownload(podName, profileID, profType)
+	if !ok {
+		if _, collectErr := s.pressureAggregator.CollectProfiles(r.Context(), &pressure.Filter{PodName: podName}); collectErr != nil {
+			s.logger.Error().Err(collectErr).Str("pod_name", podName).Msg("Failed to refresh pressure profiles for download")
+		}
+		agentID, filePath, role, ok = s.pressureAggregator.LookupForDownload(podName, profileID, profType)
+	}
+	if !ok {
+		http.Error(w, "Profile not found", http.StatusNotFound)
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/octet-stream")
+	// Sanitize + quote every interpolated value (pod/role/profileID come from the untrusted
+	// request path) so they cannot inject Content-Disposition header syntax.
+	filename := fmt.Sprintf("%s-%s-%s-%s.pprof", sanitizeFilenamePart(podName), sanitizeFilenamePart(role), sanitizeFilenamePart(profileID), profType)
+	w.Header().Set("Content-Disposition", fmt.Sprintf("attachment; filename=%q", filename))
+
+	// Lift the server-wide WriteTimeout for this streaming handler only; other endpoints stay
+	// protected. If it cannot be lifted, large transfers may be truncated at the timeout.
+	controller := http.NewResponseController(w)
+	if deadlineErr := controller.SetWriteDeadline(time.Time{}); deadlineErr != nil {
+		s.logger.Warn().Err(deadlineErr).Msg("Failed to lift write deadline for pressure profile download; large transfers may truncate")
+	}
+
+	fetch := &fodcv1.FetchPressureProfile{
+		RequestId: uuid.NewString(),
+		ProfileId: profileID,
+		Type:      profType,
+		Filepath:  filePath,
+	}
+	written := false
+	onChunk := func(data []byte) error {
+		written = true
+		if _, writeErr := w.Write(data); writeErr != nil {
+			return writeErr
+		}
+		_ = controller.Flush()
+		return nil
+	}
+	if fetchErr := s.profileFetcher.FetchPressureProfile(r.Context(), agentID, fetch, onChunk); fetchErr != nil {
+		if !written {
+			// Nothing has been written yet, so the status line is still open: the agent
+			// could not serve the file (e.g. it was evicted between list and download).
+			// Surface a real error instead of an empty 200.
+			w.Header().Del("Content-Disposition")
+			http.Error(w, fmt.Sprintf("Profile not available: %v", fetchErr), http.StatusNotFound)
+			return
+		}
+		// Bytes are already on the wire, so the connection is simply truncated; the client
+		// sees an incomplete download. Log for diagnosis.
+		s.logger.Error().Err(fetchErr).Str("pod_name", podName).Str("profile_id", profileID).
+			Str("type", profType).Msg("Failed to stream pressure profile")
+	}
+}
+
+// sanitizeFilenamePart keeps only filename-safe characters so values interpolated into the
+// Content-Disposition header (pod name, role, profile id taken from the request path) cannot
+// inject header syntax or path separators.
+func sanitizeFilenamePart(s string) string {
+	return strings.Map(func(r rune) rune {
+		switch {
+		case r >= 'a' && r <= 'z', r >= 'A' && r <= 'Z', r >= '0' && r <= '9', r == '.', r == '_', r == '-':
+			return r
+		default:
+			return '_'
+		}
+	}, s)
 }
 
 func marshalLifecycleGroups(groups []*fodcv1.GroupLifecycleInfo) ([]json.RawMessage, error) {

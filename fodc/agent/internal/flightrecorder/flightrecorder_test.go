@@ -627,3 +627,55 @@ func TestFlightRecorder_Update_ReusesFirstDatasource(t *testing.T) {
 	// Should reuse the same datasource
 	assert.Equal(t, firstDS, datasources2[0])
 }
+
+// TestMetricKeyMatches pins the boundary-anchored key matching used by LatestValues.
+func TestMetricKeyMatches(t *testing.T) {
+	cases := []struct {
+		filter map[string]string
+		key    string
+		name   string
+		want   bool
+	}{
+		{nil, "m", "m", true},
+		{nil, `m{a="1"}`, "m", true},
+		{nil, "m_total", "m", false}, // a longer metric name must not match
+		{map[string]string{"a": "1"}, `m{a="1"}`, "m", true},
+		{map[string]string{"a": "2"}, `m{a="1"}`, "m", false},
+		{map[string]string{"a": "1"}, `m{xa="1"}`, "m", false}, // boundary: xa is not a
+		{map[string]string{"b": "2"}, `m{a="1",b="2"}`, "m", true},
+	}
+	for _, c := range cases {
+		assert.Equal(t, c.want, metricKeyMatches(c.key, c.name, c.filter), "key=%s name=%s filter=%v", c.key, c.name, c.filter)
+	}
+}
+
+// TestLatestValues resolves multiple metrics by name and label filter in one pass.
+func TestLatestValues(t *testing.T) {
+	fr := NewFlightRecorder(0)
+	require.NoError(t, fr.Update([]metrics.RawMetric{
+		{Name: "process_resident_memory_bytes", Value: 1290, Labels: []metrics.Label{{Name: "container_name", Value: "data"}}},
+		{Name: "banyandb_memory_protector_cgroup_limit_bytes", Value: 4096},
+		{Name: "process_resident_memory_bytes_total", Value: 999},
+	}))
+
+	// Batch resolve both names in a single snapshot.
+	values := fr.LatestValues([]string{"process_resident_memory_bytes", "banyandb_memory_protector_cgroup_limit_bytes"}, nil)
+	assert.Equal(t, float64(1290), values["process_resident_memory_bytes"])
+	assert.Equal(t, float64(4096), values["banyandb_memory_protector_cgroup_limit_bytes"])
+
+	// Prefix must not match a longer metric name; missing names are absent from the result.
+	_, ok := fr.LatestValues([]string{"process_resident_memory"}, nil)["process_resident_memory"]
+	assert.False(t, ok)
+	_, ok = fr.LatestValues([]string{"does_not_exist"}, nil)["does_not_exist"]
+	assert.False(t, ok)
+
+	// Label filter selects the matching series.
+	match := fr.LatestValues([]string{"process_resident_memory_bytes"}, map[string]string{"container_name": "data"})
+	assert.Equal(t, float64(1290), match["process_resident_memory_bytes"])
+
+	_, ok = fr.LatestValues([]string{"process_resident_memory_bytes"}, map[string]string{"container_name": "liaison"})["process_resident_memory_bytes"]
+	assert.False(t, ok)
+
+	// An empty name list returns an empty map.
+	assert.Empty(t, fr.LatestValues(nil, nil))
+}

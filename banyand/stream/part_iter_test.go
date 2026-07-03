@@ -136,6 +136,7 @@ func Test_partIter_nextBlock(t *testing.T) {
 					cmpopts.IgnoreFields(blockMetadata{}, "timestamps"),
 					cmpopts.IgnoreFields(blockMetadata{}, "elementIDs"),
 					cmpopts.IgnoreFields(blockMetadata{}, "tagFamilies"),
+					cmpopts.IgnoreFields(blockMetadata{}, "tagType"),
 					cmp.AllowUnexported(blockMetadata{}),
 				); diff != "" {
 					t.Errorf("Unexpected blockMetadata (-got +want):\n%s", diff)
@@ -199,6 +200,7 @@ func Test_partMergeIter_nextBlock(t *testing.T) {
 					cmpopts.IgnoreFields(blockMetadata{}, "timestamps"),
 					cmpopts.IgnoreFields(blockMetadata{}, "elementIDs"),
 					cmpopts.IgnoreFields(blockMetadata{}, "tagFamilies"),
+					cmpopts.IgnoreFields(blockMetadata{}, "tagType"),
 					cmp.AllowUnexported(blockMetadata{}),
 				); diff != "" {
 					t.Errorf("Unexpected blockMetadata (-got +want):\n%s", diff)

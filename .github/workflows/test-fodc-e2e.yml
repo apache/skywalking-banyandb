@@ -142,5 +142,52 @@ jobs:
           if [ -f /tmp/write-load.log ]; then
             echo "::group::write-load output"
             cat /tmp/write-load.log
-            echo "::endgroup::"  
+            echo "::endgroup::"
           fi
+
+  # Second FODC e2e scenario: memory-pressure pprof capture against a real BanyanDB
+  # cluster + fodc-agent + fodc-proxy. Kept as a separate job (not a matrix leg with
+  # fodc-kind) because the two scenarios use different harnesses and, unlike the
+  # eBPF/KTM check above, this one is a hard gate (no continue-on-error). It runs via
+  # the skywalking-infra-e2e harness (test/e2e-v2/cases/fodc-pressure/e2e.yaml).
+  fodc-pressure-kind:
+    if: ${{ inputs.should_run }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          fetch-tags: true
+
+      - name: Load env
+        run: grep -v '^#' test/e2e-v2/script/env >> "$GITHUB_ENV"
+
+      - name: Setup build environment
+        uses: ./.github/actions/setup-build-env
+        with:
+          download-artifacts: 'true'
+          setup-docker: 'true'
+
+      - name: Build BanyanDB image
+        run: |
+          make -C banyand release
+          make -C banyand docker
+
+      - name: Build FODC agent image
+        run: |
+          make -C fodc/agent release
+          make -C fodc/agent docker
+
+      - name: Build FODC proxy image
+        run: |
+          make -C fodc/proxy release
+          make -C fodc/proxy docker
+
+      - name: List built images
+        run: docker image ls | grep -E 'skywalking-banyandb' || true
+
+      - name: Run FODC memory-pressure pprof e2e
+        uses: apache/skywalking-infra-e2e@ef073adb8b9e148e4eaf3f905fa4e238ee5cc7d6
+        with:
+          e2e-file: $GITHUB_WORKSPACE/test/e2e-v2/cases/fodc-pressure/e2e.yaml

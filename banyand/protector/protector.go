@@ -79,30 +79,28 @@ var _ Memory = (*memory)(nil)
 
 // Memory is a protector that stops the query services when the memory usage exceeds the limit.
 type memory struct {
-	omr            observability.MetricsRegistry
-	limitGauge     meter.Gauge
-	usageGauge     meter.Gauge
-	l              *logger.Logger
-	closed         chan struct{}
-	blockedChan    chan struct{}
-	allowedPercent int
-	allowedBytes   run.Bytes
-	limit          atomic.Uint64
-	usage          uint64
+	omr              observability.MetricsRegistry
+	limitGauge       meter.Gauge
+	usageGauge       meter.Gauge
+	cgroupLimitGauge meter.Gauge
+	overLimitCounter meter.Counter
+	l                *logger.Logger
+	closed           chan struct{}
+	blockedChan      chan struct{}
+	allowedPercent   int
+	allowedBytes     run.Bytes
+	limit            atomic.Uint64
+	usage            uint64
 }
 
 // NewMemory creates a new Memory protector.
 func NewMemory(omr observability.MetricsRegistry) Memory {
 	queueSize := cgroups.CPUs()
-	factory := omr.With(scope)
-
 	return &memory{
 		omr:         omr,
 		blockedChan: make(chan struct{}, queueSize),
 		closed:      make(chan struct{}),
 		l:           logger.GetLogger("memory-protector"),
-		limitGauge:  factory.NewGauge("limit"),
-		usageGauge:  factory.NewGauge("usage"),
 	}
 }
 
@@ -227,9 +225,31 @@ func (m *memory) Validate() error {
 	return nil
 }
 
+// cgroupLimitGaugeValue maps a raw cgroup memory limit to the gauge value: an
+// unlimited ("max" => -1), unreadable, or implausibly large limit reports 0,
+// which downstream consumers treat as "no container memory limit".
+func cgroupLimitGaugeValue(limit int64, err error) float64 {
+	if err != nil || !cgroupLimitValid(limit) {
+		return 0
+	}
+	return float64(limit)
+}
+
+// cgroupLimitValid reports whether a raw cgroup memory limit is a real bound, i.e. not
+// unlimited ("max" => -1), zero, or implausibly large (the protector's own sanity ceiling).
+func cgroupLimitValid(limit int64) bool {
+	return limit > 0 && limit <= 1e18
+}
+
 // PreRun initializes the protector.
 func (m *memory) PreRun(context.Context) error {
 	m.l = logger.GetLogger(m.Name())
+	factory := m.omr.With(scope)
+	m.limitGauge = factory.NewGauge("limit")
+	m.usageGauge = factory.NewGauge("usage")
+	m.overLimitCounter = factory.NewCounter("over_limit_total")
+	m.cgroupLimitGauge = factory.NewGauge("cgroup_limit_bytes")
+
 	if m.allowedBytes > 0 {
 		m.limit.Store(uint64(m.allowedBytes))
 		m.l.Info().
@@ -237,11 +257,12 @@ func (m *memory) PreRun(context.Context) error {
 			Msg("memory protector enabled")
 	} else {
 		cgLimit, err := cgroups.MemoryLimit()
+		m.cgroupLimitGauge.Set(cgroupLimitGaugeValue(cgLimit, err))
 		if err != nil {
 			m.l.Warn().Err(err).Msg("failed to get memory limit from cgroups, disable memory protector")
 			return nil
 		}
-		if cgLimit <= 0 || cgLimit > 1e18 {
+		if !cgroupLimitValid(cgLimit) {
 			m.l.Warn().Int64("cgroup_memory_limit", cgLimit).Msg("cgroup memory limit is invalid, disable memory protector")
 			return nil
 		}
@@ -291,8 +312,10 @@ func (m *memory) Serve() run.StopNotify {
 				}
 
 				atomic.StoreUint64(&m.usage, usedBytes)
+				m.usageGauge.Set(float64(usedBytes))
 
 				if usedBytes > m.limit.Load() {
+					m.overLimitCounter.Inc(1)
 					m.l.Warn().Str("used", humanize.Bytes(usedBytes)).Str("limit", humanize.Bytes(m.limit.Load())).Msg("memory usage exceeds limit")
 				}
 			}
