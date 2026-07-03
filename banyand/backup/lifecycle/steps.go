@@ -60,6 +60,15 @@ func (l *lifecycleService) getSnapshots(ctx context.Context, groups []*commonv1.
 		return "", "", "", err
 	}
 	for _, snp := range snn {
+		// A data node broadcasts the snapshot request to every catalog listener it runs, so the
+		// response also carries property and schema-property snapshots. The lifecycle only migrates
+		// stream/measure/trace and has no property/schema root configured, so skip the rest to avoid
+		// resolving them against an empty root (which fails os.Stat and logs a spurious error).
+		switch snp.Catalog {
+		case commonv1.Catalog_CATALOG_STREAM, commonv1.Catalog_CATALOG_MEASURE, commonv1.Catalog_CATALOG_TRACE:
+		default:
+			continue
+		}
 		snapshotDir, errDir := snapshot.Dir(snp, l.streamRoot, l.measureRoot, "", l.traceRoot, "")
 		if errDir != nil {
 			l.l.Error().Err(errDir).Msgf("Failed to get snapshot directory for %s", snp.Name)
