@@ -19,6 +19,8 @@ package stream_test
 
 import (
 	"context"
+	"errors"
+	"fmt"
 	"strconv"
 	"time"
 
@@ -508,9 +510,12 @@ var _ = Describe("Schema Change", func() {
 			changeExtraTagType(svcs, streamName, groupName)
 			writeSchemaChangeData(svcs, streamName, groupName, now.Add(-1*time.Hour), 3,
 				writeDataOptions{extraTag: extraTagString, traceIDPrefix: "trace_new_", elementIDOffset: 5})
-			partCountBeforeMerge := getTotalStreamPartCount(svcs, groupName)
-			Eventually(func() int64 {
-				return getTotalStreamPartCount(svcs, groupName)
+			partCountBeforeMerge, partCountErr := getTotalStreamPartCount(svcs, groupName)
+			Expect(partCountErr).ShouldNot(HaveOccurred())
+			Eventually(func(innerGm Gomega) int64 {
+				currentPartCount, currentPartCountErr := getTotalStreamPartCount(svcs, groupName)
+				innerGm.Expect(currentPartCountErr).ShouldNot(HaveOccurred())
+				return currentPartCount
 			}, flags.EventuallyTimeout).Should(BeNumerically("<", partCountBeforeMerge))
 
 			Eventually(func(innerGm Gomega) {
@@ -961,10 +966,13 @@ func querySchemaChangeData(svcs *services, name, group string, begin, end time.T
 	return resp.Elements
 }
 
-func getTotalStreamPartCount(svcs *services, group string) int64 {
+func getTotalStreamPartCount(svcs *services, group string) (int64, error) {
 	dataInfo, err := svcs.stream.CollectDataInfo(context.TODO(), group)
-	if err != nil || dataInfo == nil {
-		return 0
+	if err != nil {
+		return 0, fmt.Errorf("collect stream data info: %w", err)
+	}
+	if dataInfo == nil {
+		return 0, errors.New("stream data info is nil")
 	}
 	var total int64
 	for _, seg := range dataInfo.SegmentInfo {
@@ -972,5 +980,5 @@ func getTotalStreamPartCount(svcs *services, group string) int64 {
 			total += shard.PartCount
 		}
 	}
-	return total
+	return total, nil
 }

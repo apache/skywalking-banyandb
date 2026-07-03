@@ -20,6 +20,7 @@ package measure_test
 import (
 	"context"
 	"errors"
+	"fmt"
 	"strconv"
 	"time"
 
@@ -513,9 +514,12 @@ var _ = Describe("Schema Change", func() {
 			changeExtraMeasureTagType(svcs, measureName)
 			writeSchemaChangeMeasureData(svcs, measureName, now.Add(-1*time.Hour), 3,
 				measureWriteDataOptions{withExtraTagString: true, entityIDPrefix: "entity_new_"})
-			partCountBeforeMerge := getTotalMeasurePartCount(svcs, groupName)
-			Eventually(func() int64 {
-				return getTotalMeasurePartCount(svcs, groupName)
+			partCountBeforeMerge, partCountErr := getTotalMeasurePartCount(svcs, groupName)
+			Expect(partCountErr).ShouldNot(HaveOccurred())
+			Eventually(func(innerGm Gomega) int64 {
+				currentPartCount, currentPartCountErr := getTotalMeasurePartCount(svcs, groupName)
+				innerGm.Expect(currentPartCountErr).ShouldNot(HaveOccurred())
+				return currentPartCount
 			}, flags.EventuallyTimeout).Should(BeNumerically("<", partCountBeforeMerge))
 
 			Eventually(func(innerGm Gomega) {
@@ -1087,10 +1091,13 @@ func queryMeasureWithDeletedFieldProjection(svcs *services, measureName string, 
 	}
 }
 
-func getTotalMeasurePartCount(svcs *services, group string) int64 {
+func getTotalMeasurePartCount(svcs *services, group string) (int64, error) {
 	dataInfo, err := svcs.measure.CollectDataInfo(context.TODO(), group)
-	if err != nil || dataInfo == nil {
-		return 0
+	if err != nil {
+		return 0, fmt.Errorf("collect measure data info: %w", err)
+	}
+	if dataInfo == nil {
+		return 0, errors.New("measure data info is nil")
 	}
 	var total int64
 	for _, seg := range dataInfo.SegmentInfo {
@@ -1098,5 +1105,5 @@ func getTotalMeasurePartCount(svcs *services, group string) int64 {
 			total += shard.PartCount
 		}
 	}
-	return total
+	return total, nil
 }
