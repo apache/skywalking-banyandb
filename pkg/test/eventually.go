@@ -45,7 +45,9 @@ type ECAssertion struct {
 // intervals follow gomega.Eventually semantics — (timeout) or (timeout, polling).
 // They can also be set fluently via WithTimeout/WithPolling. When the timeout is
 // omitted it defaults to flags.EventuallyTimeout; the Consistently window always
-// uses flags.ConsistentlyTimeout and reuses the polling interval, if any.
+// uses flags.StabilityTimeout and reuses the polling interval, if any. The window
+// is deliberately short — it runs after every converged assertion, so its length
+// multiplies across whole suites.
 func EventuallyConsistently(actual interface{}, intervals ...interface{}) ECAssertion {
 	a := ECAssertion{actual: actual}
 	if len(intervals) > 0 {
@@ -100,7 +102,7 @@ func (a ECAssertion) eventuallyIntervals() []interface{} {
 }
 
 func (a ECAssertion) consistentlyIntervals() []interface{} {
-	out := []interface{}{flags.ConsistentlyTimeout}
+	out := []interface{}{flags.StabilityTimeout}
 	if a.polling != nil {
 		out = append(out, a.polling)
 	}
