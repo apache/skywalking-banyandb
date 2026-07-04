@@ -70,16 +70,18 @@ clean-build:
 	rm -rf dist
 
 .PHONY: test
-test:
-	@echo "No test"
+test: install
+	npm run build:validator
+	npm test
+	go test ./tools/...
 
 .PHONY: test-race
-test-race:
-	@echo "No test"
+test-race: install
+	npm test
 
 .PHONY: test-coverage
-test-coverage:
-	@echo "No test"
+test-coverage: install
+	go test -cover ./tools/...
 
 .PHONY: release
 release: build

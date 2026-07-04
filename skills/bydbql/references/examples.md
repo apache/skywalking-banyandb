@@ -8,8 +8,8 @@ These examples map natural language to single read-only BydbQL statements.
 ```
 
 ```text
-"Find logs where service is frontend"
-=> SELECT * FROM STREAM <stream_name> IN <group> WHERE service = 'frontend'
+"Find logs where service is frontend in the last 30 minutes"
+=> SELECT * FROM STREAM <stream_name> IN <group> TIME > '-30m' WHERE service = 'frontend'
 ```
 
 ```text

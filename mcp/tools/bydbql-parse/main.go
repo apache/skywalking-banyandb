@@ -47,17 +47,23 @@ func main() {
 		os.Exit(1)
 	}
 
-	grammar, parseErr := bydbql.ParseQuery(req.Query)
+	writeResponse(validate(req.Query))
+}
+
+// validate performs parse-only BydbQL syntax validation and reports the
+// detected query type. It never executes the query or verifies live schema
+// existence, so callers can unit-test the parse contract without a database.
+func validate(query string) validateResponse {
+	grammar, parseErr := bydbql.ParseQuery(query)
 	if parseErr != nil {
-		writeResponse(validateResponse{
+		return validateResponse{
 			Valid:      false,
 			Message:    fmt.Sprintf("failed to parse BydbQL: %v", parseErr),
 			SyntaxOnly: true,
-		})
-		return
+		}
 	}
 
-	writeResponse(validateResponse{
+	return validateResponse{
 		Valid:      true,
 		Message:    "valid BydbQL syntax",
 		QueryType:  queryType(grammar),
@@ -65,7 +71,7 @@ func main() {
 		Warnings: []string{
 			"parse-only validation does not verify group, resource, tag, field, or index-rule existence",
 		},
-	})
+	}
 }
 
 func queryType(grammar *bydbql.Grammar) string {

@@ -17,7 +17,6 @@
 
 import { spawn } from 'node:child_process';
 import { existsSync } from 'node:fs';
-import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
@@ -32,60 +31,36 @@ export type BydbQLParseValidationResult = {
   warnings?: string[];
 };
 
-type ValidatorCommand = {
-  command: string;
-  args: string[];
-  cwd: string;
-};
-
 function mcpRootDir(): string {
   const modulePath = fileURLToPath(import.meta.url);
   return path.resolve(path.dirname(modulePath), '..', '..');
 }
 
-function validatorCommands(rootDir: string): ValidatorCommand[] {
-  const binaryPath = path.join(rootDir, 'tools', 'bin', validatorBinaryName);
-  if (existsSync(binaryPath)) {
-    return [
-      { command: binaryPath, args: [], cwd: rootDir },
-      { command: 'go', args: ['run', './tools/bydbql-parse'], cwd: rootDir },
-    ];
-  }
-
-  return [{ command: 'go', args: ['run', './tools/bydbql-parse'], cwd: rootDir }];
-}
-
-function validationEnvironment(): NodeJS.ProcessEnv {
-  return {
-    ...process.env,
-    GOCACHE: process.env.GOCACHE || path.join(tmpdir(), 'banyandb-mcp-go-build-cache'),
-    GOMODCACHE: process.env.GOMODCACHE || path.join(tmpdir(), 'banyandb-mcp-go-mod-cache'),
-    GOPATH: process.env.GOPATH || path.join(tmpdir(), 'banyandb-mcp-go-path'),
-    GOFLAGS: process.env.GOFLAGS || '-mod=readonly',
-  };
+// Resolves the prebuilt validator binary path. The binary is a build artifact
+// produced by `npm run build:validator`; it is intentionally not shelled out to
+// `go run` at query time so the plugin's runtime does not depend on a Go
+// toolchain and does not pay a cold-compile cost inside the validation timeout.
+export function validatorBinaryPath(rootDir: string = mcpRootDir()): string {
+  return path.join(rootDir, 'tools', 'bin', validatorBinaryName);
 }
 
 export async function validateBydbQLSyntax(query: string): Promise<BydbQLParseValidationResult> {
-  const rootDir = mcpRootDir();
-  const validators = validatorCommands(rootDir);
-  let lastError: Error | undefined;
-
-  for (const validator of validators) {
-    try {
-      return await executeValidator(validator, query);
-    } catch (executionError) {
-      lastError = executionError instanceof Error ? executionError : new Error(String(executionError));
-    }
+  const binaryPath = validatorBinaryPath();
+  if (!existsSync(binaryPath)) {
+    throw new Error(
+      `BydbQL validator binary not found at ${binaryPath}. ` +
+        'Build it once with `npm run build:validator` (requires the Go toolchain) before starting the MCP server.',
+    );
   }
 
-  throw lastError ?? new Error('BydbQL parser validation failed');
+  return executeValidator(binaryPath, query);
 }
 
-async function executeValidator(validator: ValidatorCommand, query: string): Promise<BydbQLParseValidationResult> {
+async function executeValidator(binaryPath: string, query: string): Promise<BydbQLParseValidationResult> {
   return new Promise((resolve, reject) => {
-    const childProcess = spawn(validator.command, validator.args, {
-      cwd: validator.cwd,
-      env: validationEnvironment(),
+    const childProcess = spawn(binaryPath, [], {
+      cwd: path.dirname(binaryPath),
+      env: process.env,
       stdio: ['pipe', 'pipe', 'pipe'],
     });
 

@@ -8,7 +8,7 @@ Use this reference to generate one read-only BanyanDB Query Language statement f
 - Resource types: `STREAM`, `MEASURE`, `TRACE`, `PROPERTY`.
 - `FROM <RESOURCE_TYPE> <resource_name> IN <group>[, <group>...]` is required.
 - Parentheses around group lists are optional: `IN default, staging` and `IN (default, staging)` are both valid.
-- `TIME` is required for `STREAM`, `MEASURE`, `TRACE`, and `SHOW TOP` queries. `PROPERTY` queries do not use `TIME`.
+- `TIME` is strongly recommended for `STREAM`, `MEASURE`, `TRACE`, and `SHOW TOP` queries and is normally expected at execution, but the grammar treats it as optional, so the parser (and `validate_bydbql`) will not flag its absence. `PROPERTY` queries do not use `TIME`.
 - Keywords are case-insensitive. Identifiers are case-sensitive and should match schema names exactly.
 - Identifiers may be simple (`service_id`), dotted (`http.method`), or quoted when needed (`"count"`). String filter values should use single quotes.
 - Clause order for `SELECT`: `SELECT` -> `FROM` -> `TIME` -> `WHERE` -> `GROUP BY` -> `ORDER BY` -> `WITH QUERY_TRACE` -> `LIMIT` -> `OFFSET`.
