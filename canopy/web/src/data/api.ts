@@ -26,7 +26,7 @@ import type {
   CreateIndexRuleRequest, UpdateIndexRuleRequest, IndexRuleSchema,
   CreateIndexRuleBindingRequest, UpdateIndexRuleBindingRequest, IndexRuleBindingSchema,
   PropertySchema,
-  QueryRequest, QueryResponse,
+  QueryRequest, QueryResponse, TopNQueryRequest, TopNQueryResponse,
 } from 'canopy-shared';
 
 import type { DataSource } from './DataSource.js';
@@ -315,9 +315,114 @@ export class ApiDataSource implements DataSource {
 
   // ── Query ─────────────────────────────────────────────────────────────────
 
-  async runQuery(_request: QueryRequest): Promise<QueryResponse> {
-    throw new Error('runQuery not implemented until M4');
+  // Wire shape (see implement-m4-note.md decision #24): BanyanDB's BydbQL
+  // gateway accepts a single { query: string } and returns a `oneof result`
+  // carrying one of stream_result / measure_result / trace_result /
+  // topn_result / property_result. We dispatch by the consumer-provided
+  // request shape: topN → POST /v1/measure/topn with the structured TopN
+  // request; everything else → POST /v1/bydbql/query with the BydbQL string.
+  //
+  // The result views consume a uniform VIEW-MODEL (flat key→value map per
+  // element). This method flattens the wire shape into that view-model so
+  // the views don't need to know about tag_families / data_points / lists.
+
+  async runQuery(request: QueryRequest): Promise<QueryResponse> {
+    // TopN → /v1/measure/topn (separate endpoint per plan SF5)
+    if ((request as unknown as { topN?: TopNQueryRequest }).topN) {
+      const topN = (request as unknown as { topN: TopNQueryRequest }).topN;
+      const data = await apiFetch<TopNQueryResponse>('/api/v1/measure/topn', {
+        method: 'POST', headers: JSON_HEADERS,
+        body: JSON.stringify(topN),
+      });
+      const flat = flattenTopNResponse(data);
+      const truncated = flat.length > MAX_QUERY_ROWS;
+      return {
+        elements: truncated ? flat.slice(0, MAX_QUERY_ROWS) : flat,
+        totalRowCount: flat.length,
+        truncated,
+      };
+    }
+    // measure / stream / trace → /v1/bydbql/query with the BydbQL string.
+    const data = await apiFetch<QueryResponse>(
+      '/api/v1/bydbql/query',
+      { method: 'POST', headers: JSON_HEADERS, body: JSON.stringify(request) },
+    );
+    const flat = flattenQueryResponse(data);
+    const truncated = flat.length > MAX_QUERY_ROWS;
+    return {
+      ...data,
+      elements: truncated ? flat.slice(0, MAX_QUERY_ROWS) : flat,
+      totalRowCount: flat.length,
+      truncated,
+    };
   }
 }
+
+// ── Wire-shape → view-model flatteners ─────────────────────────────────────
+
+export function flattenQueryResponse(data: QueryResponse): Record<string, unknown>[] {
+  if (data.stream_result?.elements) return data.stream_result.elements.map(flattenStreamElement);
+  if (data.measure_result?.data_points) return data.measure_result.data_points.map(flattenMeasureDataPoint);
+  if (data.trace_result?.elements) return data.trace_result.elements.map(flattenTraceSpan);
+  return [];
+}
+
+function flattenStreamElement(e: { element_id: string; timestamp?: string; tag_families?: readonly { tags?: readonly { key: string; value: unknown }[] }[] }): Record<string, unknown> {
+  const flat: Record<string, unknown> = { element_id: e.element_id, timestamp: e.timestamp };
+  for (const fam of e.tag_families ?? []) {
+    for (const t of fam.tags ?? []) {
+      flat[t.key] = t.value;
+    }
+  }
+  return flat;
+}
+
+function flattenMeasureDataPoint(dp: { timestamp?: string; tag_families?: readonly { tags?: readonly { key: string; value: unknown }[] }[]; fields?: readonly { name: string; value: { str?: unknown; int?: number; float?: number } }[] }): Record<string, unknown> {
+  const flat: Record<string, unknown> = { timestamp: dp.timestamp };
+  for (const fam of dp.tag_families ?? []) {
+    for (const t of fam.tags ?? []) {
+      flat[t.key] = t.value;
+    }
+  }
+  for (const f of dp.fields ?? []) {
+    flat[f.name] = f.value.float ?? f.value.int ?? f.value.str;
+  }
+  return flat;
+}
+
+function flattenTraceSpan(s: { span_id?: string; trace_id?: string; name?: string; timestamp?: string; duration?: number; tag_families?: readonly { tags?: readonly { key: string; value: unknown }[] }[] }): Record<string, unknown> {
+  const flat: Record<string, unknown> = {
+    trace_id: s.trace_id,
+    span_id: s.span_id,
+    name: s.name,
+    timestamp: s.timestamp,
+    duration: s.duration,
+  };
+  for (const fam of s.tag_families ?? []) {
+    for (const t of fam.tags ?? []) {
+      flat[t.key] = t.value;
+    }
+  }
+  return flat;
+}
+
+export function flattenTopNResponse(data: TopNQueryResponse): Record<string, unknown>[] {
+  const flat: Record<string, unknown>[] = [];
+  for (const list of data.lists ?? []) {
+    for (const item of list.items ?? []) {
+      const row: Record<string, unknown> = { timestamp: list.timestamp };
+      for (const t of item.entity ?? []) {
+        row[t.key] = t.value;
+      }
+      row.value = item.value?.float ?? item.value?.int ?? item.value?.str;
+      flat.push(row);
+    }
+  }
+  return flat;
+}
+
+// Bound applied to result rendering per plan SF2. Configurable; lifted to a
+// module-level constant so future config plumbing can rebind it.
+export const MAX_QUERY_ROWS = 1000;
 
 export const apiDataSource = new ApiDataSource();

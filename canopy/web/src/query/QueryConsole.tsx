@@ -1,0 +1,448 @@
+/*
+ * Licensed to Apache Software Foundation (ASF) under one or more contributor
+ * license agreements. See the NOTICE file distributed with
+ * this work for additional information regarding copyright
+ * ownership. Apache Software Foundation (ASF) licenses this file to you under
+ * the Apache License, Version 2.0 (the "License"); you may
+ * not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing,
+ * software distributed under the License is distributed on an
+ * "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
+ * KIND, either express or implied.  See the License for the
+ * specific language governing permissions and limitations
+ * under the License.
+ */
+
+// QueryConsole.tsx — dual-mode query console: visual builder ⇄ raw BydbQL.
+// Ported from .handoff-import/banyandb/project/query-console.jsx.
+// 348px builder rail + resizer, result-panel host, Builder/Code segmented
+// toggle, Eject/Resync, dirty-warning modal on Resync, Run, deep-link seed.
+
+import React, { useEffect, useMemo, useRef, useState } from 'react';
+import { useLocation } from 'react-router-dom';
+import { QueryBuilder } from './QueryBuilder.js';
+import { CodeEditor } from './CodeEditor.js';
+import { MeasureResultView } from './results/MeasureResultView.js';
+import { StreamResultView } from './results/StreamResultView.js';
+import { TraceResultView } from './results/TraceResultView.js';
+import { TopNResultView } from './results/TopNResultView.js';
+import {
+  buildBydbQL, qbDataCatalog, qbEmptyWhere, qbPruneWhere, qbNewCond,
+  qbProtoCatalog,
+  type QBBuilderState,
+} from './bydbql.js';
+import { apiDataSource } from '../data/api.js';
+import { useRunQuery } from '../data/hooks.js';
+import type { Group, QueryResponse, QueryRequest } from 'canopy-shared';
+
+const QB_STORE = 'canopy.query.v3';
+const QB_RAIL_DEFAULT = 348;
+const QB_RAIL_MIN = 280;
+const QB_RAIL_MAX = 720;
+
+interface QuerySeed {
+  readonly catalog: 'measures' | 'streams' | 'traces' | 'topn';
+  readonly group: string;
+  readonly resource: string;
+}
+
+function defaultState(groups: Group[]): QBBuilderState {
+  const firstGroup = groups.find((g) => g.catalog === 'CATALOG_MEASURE') ?? groups[0];
+  return {
+    catalog: 'measures',
+    group: firstGroup?.name ?? '',
+    resource: '',
+    select: [],
+    projection: [],
+    where: qbEmptyWhere(),
+    groupBy: [],
+    time: { mode: 'relative', rel: '-30m', from: '', to: '' },
+    orderField: 'time',
+    orderDir: 'DESC',
+    limit: 100,
+    trace: false,
+    topN: 10,
+    aggFn: '',
+    fromAgg: null,
+    fromResource: null,
+  };
+}
+
+export function QueryConsole() {
+  const location = useLocation();
+  const seed = (location.state as { seed?: QuerySeed } | null)?.seed;
+
+  const [groups, setGroups] = useState<Group[]>([]);
+  const [groupsLoaded, setGroupsLoaded] = useState(false);
+  const [groupsError, setGroupsError] = useState<string | null>(null);
+
+  const [state, setState] = useState<QBBuilderState>(() => {
+    try {
+      const raw = localStorage.getItem(QB_STORE);
+      if (raw) {
+        const parsed = JSON.parse(raw) as { builder?: QBBuilderState };
+        if (parsed?.builder) return parsed.builder;
+      }
+    } catch { /* ignore */ }
+    return defaultState([]);
+  });
+  const [mode, setMode] = useState<'builder' | 'code'>('builder');
+  const [code, setCode] = useState('');
+  const [codeDirty, setCodeDirty] = useState(false);
+  const [status, setStatus] = useState<'idle' | 'running' | 'done' | 'error'>('idle');
+  const [response, setResponse] = useState<QueryResponse | null>(null);
+  const [errorMsg, setErrorMsg] = useState<string | null>(null);
+  const [showTrace, setShowTrace] = useState(false);
+  const [railW, setRailW] = useState<number>(() => {
+    try {
+      const v = parseInt(localStorage.getItem('canopy.qb-rail-w') ?? '', 10);
+      if (Number.isFinite(v)) return Math.min(QB_RAIL_MAX, Math.max(QB_RAIL_MIN, v));
+    } catch { /* ignore */ }
+    return QB_RAIL_DEFAULT;
+  });
+  const [confirmDiscard, setConfirmDiscard] = useState<'builder' | 'resync' | null>(null);
+  const railDragRef = useRef(false);
+
+  // Load groups
+  useEffect(() => {
+    let cancelled = false;
+    apiDataSource.listGroups().then(
+      (resp) => { if (!cancelled) { setGroups(resp.groups); setGroupsLoaded(true); } },
+      (err: unknown) => { if (!cancelled) { setGroupsError(err instanceof Error ? err.message : String(err)); setGroupsLoaded(true); } },
+    );
+    return () => { cancelled = true; };
+  }, []);
+
+  // Apply deep-link seed once groups are loaded
+  useEffect(() => {
+    if (!groupsLoaded || !seed) return;
+    setState((cur) => ({
+      ...cur,
+      catalog: seed.catalog,
+      group: seed.group,
+      resource: seed.resource,
+      fromResource: `${seed.group}/${seed.resource}`,
+      fromAgg: null,
+    }));
+  }, [groupsLoaded, seed]);
+
+  // Persist builder state
+  useEffect(() => {
+    try {
+      localStorage.setItem(QB_STORE, JSON.stringify({ mode, builder: state, code, codeDirty }));
+    } catch { /* quota */ }
+  }, [mode, state, code, codeDirty]);
+
+  // Persist rail width
+  useEffect(() => {
+    try { localStorage.setItem('canopy.qb-rail-w', String(railW)); } catch { /* ignore */ }
+  }, [railW]);
+
+  const generated = useMemo(() => buildBydbQL(state), [state]);
+  const codeEdited = codeDirty && code.trim() !== '' && code.trim() !== generated.trim();
+
+  const patch = (p: Partial<QBBuilderState>) => setState((s) => ({ ...s, ...p }));
+
+  const srcCat = qbDataCatalog(state.catalog);
+  // srcCat is the data catalog ('measures' | 'streams' | 'traces'); map to
+  // the BanyanDB proto enum used by group filtering. qbProtoCatalog returns
+  // undefined for 'topn', but srcCat is already normalized away from that.
+  const protoCatalog = qbProtoCatalog(srcCat);
+  const filteredGroups = groups.filter((g) => g.catalog === protoCatalog);
+  const groupNames = filteredGroups.map((g) => g.name);
+  // Fetch resources for the current group
+  const [resourceList, setResourceList] = useState<readonly { name: string }[]>([]);
+  useEffect(() => {
+    let cancelled = false;
+    if (!state.group) { setResourceList([]); return; }
+    const cat = srcCat;
+    apiDataSource.listResourcesInGroup(cat, state.group).then(
+      (rs) => { if (!cancelled) setResourceList(rs.map((r) => ({ name: r.metadata.name }))); },
+      () => { if (!cancelled) setResourceList([]); },
+    );
+    return () => { cancelled = true; };
+  }, [state.group, srcCat]);
+
+  const currentResource = resourceList.find((r) => r.name === state.resource);
+  // Field / tag lists — stream/measure carry tagFamilies; trace same.
+  const tags: string[] = useMemo(() => {
+    const r = currentResource as { tagFamilies?: { tags?: { name: string }[] }[] } | undefined;
+    if (!r?.tagFamilies) return [];
+    return r.tagFamilies.flatMap((f) => (f.tags ?? []).map((t) => t.name));
+  }, [currentResource]);
+  const fields: string[] = useMemo(() => {
+    const r = currentResource as { fields?: { name: string }[] } | undefined;
+    return r?.fields?.map((f) => f.name) ?? [];
+  }, [currentResource]);
+
+  // Re-prune WHERE tags when resource changes
+  useEffect(() => {
+    setState((s) => ({ ...s, where: qbPruneWhere(s.where, tags) }));
+  }, [state.resource]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // Auto-pick a group once groups load so the rail renders real content
+  // on initial load instead of "— none —". Prefers the canonical handoff
+  // group `sw_metric` (with `service_cpm_minute` selected below) so the
+  // rail matches the handoff's /#/query baseline; otherwise falls back to
+  // the alphabetically-first measure group. Skipped if the user (or a
+  // deep-link seed) already picked a group.
+  useEffect(() => {
+    if (!groupsLoaded) return;
+    if (state.group) return;
+    const measureGroups = groups.filter((g) => g.catalog === 'CATALOG_MEASURE');
+    const canonical = measureGroups.find((g) => g.name === 'sw_metric');
+    const first = canonical ?? [...measureGroups].sort((a, b) => a.name.localeCompare(b.name))[0];
+    if (!first) return;
+    patch({ group: first.name });
+  }, [groupsLoaded, groups, state.group]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // Auto-select the canonical resource of the chosen group so the rail
+  // renders real content instead of "— none —" on initial load. Prefers
+  // `service_cpm_minute` (the handoff-canonical measure) when present so
+  // the rail matches the handoff's `sw_metric / service_cpm_minute`
+  // baseline. Skips the auto-generated `_top_n_result` table the topn
+  // registry creates alongside the user's measures. Skipped if the user
+  // (or a deep-link seed) already picked a resource.
+  useEffect(() => {
+    if (!state.resource && resourceList.length > 0) {
+      const canonical = resourceList.find((r) => r.name === 'service_cpm_minute');
+      if (canonical) { patch({ resource: canonical.name }); return; }
+      const candidates = resourceList
+        .filter((r) => r.name !== '_top_n_result')
+        .map((r) => r.name)
+        .sort();
+      const picked = candidates[0] ?? resourceList[0]?.name ?? '';
+      if (picked) patch({ resource: picked });
+    }
+  }, [resourceList, state.resource]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  const runMutation = useRunQuery();
+
+  const run = async () => {
+    if (runMutation.isPending) return;
+    const activeQuery = mode === 'code' ? code : generated;
+    if (!activeQuery.trim()) {
+      setErrorMsg('Empty query.');
+      setStatus('error');
+      return;
+    }
+    setStatus('running');
+    setErrorMsg(null);
+    // BanyanDB's BydbQL gateway accepts a single { query: string } and parses
+    // it server-side. For TopN, dispatch to /v1/measure/topn with the
+    // structured TopNRequest instead.
+    const req: QueryRequest = state.catalog === 'topn'
+      ? {
+          query: activeQuery,
+          topN: {
+            groups: state.group ? [state.group] : [],
+            name: state.resource,
+            top_n: state.topN,
+            agg: state.aggFn ? { function: state.aggFn, field_name: '' } : undefined,
+            field_value_sort: state.orderDir === 'ASC' ? 'SORT_ASC' : 'SORT_DESC',
+            time_range: state.time.mode === 'absolute' && (state.time.from || state.time.to)
+              ? { begin: state.time.from, end: state.time.to }
+              : undefined,
+            trace: state.trace,
+          },
+        }
+      : {
+          query: activeQuery,
+        };
+    try {
+      const resp = await runMutation.mutateAsync(req);
+      setResponse(resp);
+      setShowTrace(!!state.trace);
+      setStatus('done');
+    } catch (err) {
+      setErrorMsg(err instanceof Error ? err.message : String(err));
+      setStatus('error');
+    }
+  };
+
+  // Cmd/Ctrl+Enter to run
+  const runRef = useRef(run);
+  runRef.current = run;
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if ((e.metaKey || e.ctrlKey) && e.key === 'Enter') { e.preventDefault(); runRef.current(); }
+    };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, []);
+
+  const startRailDrag = (e: React.PointerEvent) => {
+    e.preventDefault();
+    const startX = e.clientX;
+    const startW = railW;
+    const move = (ev: PointerEvent) => {
+      const w = Math.min(QB_RAIL_MAX, Math.max(QB_RAIL_MIN, startW + (ev.clientX - startX)));
+      setRailW(w);
+      railDragRef.current = true;
+    };
+    const up = () => {
+      window.removeEventListener('pointermove', move);
+      window.removeEventListener('pointerup', up);
+      document.body.classList.remove('qb-resizing');
+    };
+    document.body.classList.add('qb-resizing');
+    window.addEventListener('pointermove', move);
+    window.addEventListener('pointerup', up);
+  };
+
+  const ejectToCode = () => { setCode(generated); setCodeDirty(false); setMode('code'); };
+  const backToBuilder = () => {
+    if (codeEdited) { setConfirmDiscard('builder'); return; }
+    setCodeDirty(false); setMode('builder');
+  };
+  const resync = () => {
+    if (codeEdited) { setConfirmDiscard('resync'); return; }
+    setCode(generated); setCodeDirty(false);
+  };
+  const doDiscard = () => {
+    if (confirmDiscard === 'builder') { setCodeDirty(false); setMode('builder'); }
+    else { setCode(generated); setCodeDirty(false); }
+    setConfirmDiscard(null);
+  };
+
+  return (
+    <div className="page-body query-body">
+      <div className="page-head qb-page-head">
+        <div className="page-title-row">
+          <h1 className="page-title">Query</h1>
+          <div className="page-actions">
+            <div className="qb-mode-seg" role="tablist" aria-label="Query mode">
+              <button role="tab" className={'qb-mode-btn' + (mode === 'builder' ? ' is-on' : '')} onClick={() => (mode === 'builder' ? undefined : backToBuilder())}>
+                Builder
+              </button>
+              <button role="tab" className={'qb-mode-btn' + (mode === 'code' ? ' is-on' : '')} onClick={() => (mode === 'code' ? undefined : ejectToCode())}>
+                Code
+              </button>
+            </div>
+            <button type="button" className="qb-btn qb-btn-primary" disabled={status === 'running'} onClick={run}>
+              <span aria-hidden="true">▶</span>
+              {status === 'running' ? 'Running…' : 'Run'}
+              <kbd className="kbd qb-kbd">{typeof navigator !== 'undefined' && /Mac/i.test(navigator.platform) ? '⌘↵' : 'Ctrl↵'}</kbd>
+            </button>
+          </div>
+        </div>
+        <p className="page-meta">Compose BydbQL visually, or eject to raw code for advanced refinement</p>
+      </div>
+
+      <div className="qb-split" style={{ ['--qb-rail-w' as never]: `${railW}px` }}>
+        <div className="qb-rail">
+          {mode === 'builder' ? (
+            <>
+              <QueryBuilder
+                state={state}
+                onChange={patch}
+                tags={tags}
+                fields={fields}
+                groupNames={groupNames}
+                resourceNames={resourceList.map((r) => r.name)}
+              />
+              <div className="qb-rail-foot">
+                <button type="button" className="qb-btn qb-btn-ghost" onClick={ejectToCode}>
+                  Eject to code
+                </button>
+                {codeEdited && (
+                  <span className="qb-rail-note">Code edited · use Resync to pull builder changes in</span>
+                )}
+              </div>
+            </>
+          ) : (
+            <>
+              <CodeEditor
+                value={code}
+                onChange={(v) => { setCode(v); setCodeDirty(true); }}
+                hint="Edit BydbQL directly. Resync pulls builder changes back in (discards edits)."
+              />
+              <div className="qb-rail-foot">
+                <button type="button" className="qb-btn qb-btn-ghost" onClick={resync} disabled={!codeDirty}>
+                  Resync from builder
+                </button>
+                <button type="button" className="qb-btn qb-btn-ghost" onClick={backToBuilder}>
+                  Back to builder
+                </button>
+              </div>
+            </>
+          )}
+          {groupsError && <div className="qb-error">Could not load groups: {groupsError}</div>}
+        </div>
+
+        <div className="qb-resizer" role="separator" aria-orientation="vertical" aria-label="Resize builder rail" tabIndex={0} onPointerDown={startRailDrag}
+          onKeyDown={(e) => {
+            if (e.key === 'ArrowLeft') { e.preventDefault(); setRailW((w) => Math.max(QB_RAIL_MIN, w - 16)); }
+            else if (e.key === 'ArrowRight') { e.preventDefault(); setRailW((w) => Math.min(QB_RAIL_MAX, w + 16)); }
+          }}
+        />
+
+        <div className="qb-results">
+          {status === 'idle' && (
+            <div className="qb-empty">
+              <p>Run a query to see results here.</p>
+            </div>
+          )}
+          {status === 'running' && (
+            <div className="qb-empty"><p>Running…</p></div>
+          )}
+          {status === 'error' && (
+            <div className="qb-error">{errorMsg}</div>
+          )}
+          {status === 'done' && response && (
+            <>
+              <ResultViewRouter state={state} response={response} showTrace={showTrace} setShowTrace={setShowTrace} />
+              {response.truncated && (
+                <div className="qb-trunc">
+                  showing first {response.elements?.length ?? 0} of {response.totalRowCount ?? '?'} rows
+                </div>
+              )}
+            </>
+          )}
+        </div>
+      </div>
+
+      {confirmDiscard && (
+        <div className="modal-backdrop" role="dialog" aria-modal="true" aria-labelledby="qb-discard-title">
+          <div className="modal">
+            <h2 id="qb-discard-title" className="modal-title">
+              {confirmDiscard === 'builder' ? 'Discard code edits?' : 'Discard code edits and resync?'}
+            </h2>
+            <p className="modal-body">The code has been edited manually. {confirmDiscard === 'builder' ? 'Returning to the builder' : 'Resyncing'} will discard those edits.</p>
+            <div className="modal-actions">
+              <button type="button" className="qb-btn qb-btn-ghost" onClick={() => setConfirmDiscard(null)}>Keep edits</button>
+              <button type="button" className="qb-btn qb-btn-danger" onClick={doDiscard}>Discard</button>
+            </div>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+function ResultViewRouter({ state, response, showTrace, setShowTrace }: {
+  state: QBBuilderState;
+  response: QueryResponse;
+  showTrace: boolean;
+  setShowTrace: (v: boolean) => void;
+}) {
+  switch (state.catalog) {
+    case 'topn':
+      return <TopNResultView response={response} showTrace={showTrace} setShowTrace={setShowTrace} />;
+    case 'measures':
+      return <MeasureResultView response={response} state={state} showTrace={showTrace} setShowTrace={setShowTrace} />;
+    case 'streams':
+      return <StreamResultView response={response} state={state} showTrace={showTrace} setShowTrace={setShowTrace} />;
+    case 'traces':
+      return <TraceResultView response={response} state={state} showTrace={showTrace} setShowTrace={setShowTrace} />;
+    default:
+      return <div className="qb-empty"><p>Unsupported catalog: {state.catalog}</p></div>;
+  }
+}
+
+// Re-export to keep tree-shaking honest
+export { qbNewCond };

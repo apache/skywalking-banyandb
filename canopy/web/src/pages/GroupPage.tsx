@@ -349,7 +349,18 @@ export function GroupPage({
                     <button
                       className="rc-act"
                       title={`Query this ${catalogEntry.singular}`}
-                      onClick={() => navigate('/query')}
+                      onClick={() => navigate('/query', {
+                        state: {
+                          seed: {
+                            catalog: type === 'measures' ? 'measures'
+                              : type === 'streams' ? 'streams'
+                              : type === 'traces' ? 'traces'
+                              : 'measures',
+                            group: groupName,
+                            resource: r.metadata.name,
+                          },
+                        },
+                      })}
                     >
                       <IconPlay size={14} />
                     </button>

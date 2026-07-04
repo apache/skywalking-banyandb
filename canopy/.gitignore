@@ -6,4 +6,4 @@ server/dist/
 .env
 *.local
 e2e/screenshots/*.png
-e2e/test-results/
+test-results/

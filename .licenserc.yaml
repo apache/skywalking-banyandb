@@ -83,9 +83,31 @@ header: # `header` section is configurations for source codes license header.
     - '**/buf.lock'
     - '**/ginkgo.report'
     - 'ui'
-    - 'canopy'
-    - '**/.omc/**'
+    # `canopy` removed — when the canopy subdir invokes license-eye with this
+    # root config via --config, the canopy code IS the surface under check
+    # (the canopy/.licenserc.yaml is no longer authoritative for the OMC
+    # runtime state exclusions — those live here).
     - '**/*.jsonl'
+    # OMC runtime state + uncommitted handoff / playwright artefacts. The
+    # license-check target runs license-eye from each subdir with --config
+    # pointing at this root file (so these patterns reach everything via
+    # `**/`), and also when invoked directly from the repo root.
+    - '**/agent-replay-*.jsonl'
+    - '**/idle-notif-cooldown.json'
+    - '**/pre-tool-advisory-throttle.json'
+    - '**/ralplan-state.json'
+    - '**/subagent-tracking-state.json'
+    - '**/hud-stdin-cache.json'
+    - '**/.handoff-import/**'
+    - '**/.playwright-mcp/**'
+    - '**/.gitkeep'
+    - '**/.env'
+    - '**/.env.example'
+    - '**/.prettierignore'
+    - '**/.eslintrc*'
+    - '**/.gitignore'
+    - '.handoff-import'
+    - '.playwright-mcp'
     - '.github/PULL_REQUEST_TEMPLATE'
     - '**/*.prof'
     - '**/baseline.txt'

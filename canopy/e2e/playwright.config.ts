@@ -35,7 +35,9 @@ export default defineConfig({
     command: 'node dist/src/index.js',
     cwd: join(__dirname, '..', 'server'),
     port: 4000,
-    reuseExistingServer: false,
+    // reuseExistingServer so the harness can be run against a dev BFF
+    // (npm run dev in canopy/server) without port-collision failures.
+    reuseExistingServer: true,
     timeout: 30_000,
     env: {
       SESSION_SECRET: 'canopy-e2e-test-secret-32chars!!',
@@ -48,7 +50,11 @@ export default defineConfig({
   use: {
     baseURL: process.env.CANOPY_URL || 'http://localhost:4000',
     trace: 'on-first-retry',
-    screenshot: 'only-on-failure',
+    // 'on' so every test captures a screenshot — combined with toHaveScreenshot()
+    // assertions in m4-query.spec.ts and m4-handoff-capture.spec.ts this is
+    // the pixel-regression gate: a UI change that diverges from the committed
+    // baseline fails the test (NOT a soft warning).
+    screenshot: 'on',
   },
   projects: [
     {

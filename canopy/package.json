@@ -14,6 +14,7 @@
     "dev:web": "npm run -w web dev",
     "dev:server": "npm run -w server dev",
     "build": "npm run -w shared build && npm run -w web build && npm run -w server build",
+    "build:web": "npm run -w web build",
     "test": "npm run -w web test && npm run -w server test",
     "lint": "npm run -w web lint && npm run -w server lint",
     "pree2e": "npm run build",
@@ -24,5 +25,9 @@
     "@playwright/test": "^1.52.0",
     "@testing-library/dom": "^10.4.1",
     "typescript": "^5.8.3"
+  },
+  "dependencies": {
+    "@rollup/rollup-linux-x64-gnu": "^4.62.2",
+    "@vitest/coverage-v8": "^4.1.9"
   }
 }
