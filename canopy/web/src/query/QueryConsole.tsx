@@ -37,7 +37,7 @@ import {
 } from './bydbql.js';
 import { apiDataSource } from '../data/api.js';
 import { useRunQuery } from '../data/hooks.js';
-import type { Group, QueryResponse, QueryRequest } from 'canopy-shared';
+import type { Group, MeasureSchema, QueryResponse, QueryRequest } from 'canopy-shared';
 
 const QB_STORE = 'canopy.query.v3';
 const QB_RAIL_DEFAULT = 348;
@@ -155,13 +155,26 @@ export function QueryConsole() {
   const filteredGroups = groups.filter((g) => g.catalog === protoCatalog);
   const groupNames = filteredGroups.map((g) => g.name);
   // Fetch resources for the current group
-  const [resourceList, setResourceList] = useState<readonly { name: string }[]>([]);
+  // Keep the full resource objects — the SELECT row reads tagFamilies +
+  // fields off currentResource to render the per-resource tag chips and
+  // field options. Stripping to `{name}` only would leave the SELECT row
+  // empty even though the live cluster had tag/field metadata.
+  type ResourceWithSchema = MeasureSchema & { name: string };
+  const [resourceList, setResourceList] = useState<readonly ResourceWithSchema[]>([]);
   useEffect(() => {
     let cancelled = false;
     if (!state.group) { setResourceList([]); return; }
     const cat = srcCat;
     apiDataSource.listResourcesInGroup(cat, state.group).then(
-      (rs) => { if (!cancelled) setResourceList(rs.map((r) => ({ name: r.metadata.name }))); },
+      (rs) => {
+        if (!cancelled) {
+          // Normalize once: listResourcesInGroup returns the typed union
+          // but for measures we know it's MeasureSchema-shaped.
+          setResourceList(
+            rs.map((r) => ({ ...(r as object), name: (r as { metadata: { name: string } }).metadata.name })) as readonly ResourceWithSchema[],
+          );
+        }
+      },
       () => { if (!cancelled) setResourceList([]); },
     );
     return () => { cancelled = true; };
@@ -222,7 +235,23 @@ export function QueryConsole() {
 
   const runMutation = useRunQuery();
 
+  // Surface invalid absolute time ranges (TO <= FROM) as an inline error
+  // and disable Run so the user can't fire a query that will return no
+  // rows or fail server-side. The validation only fires when both FROM
+  // and TO are set; an open-ended range (only one bound) is valid.
+  const timeRangeError: string | null = (() => {
+    const { mode, from, to } = state.time;
+    if (mode !== 'absolute' || !from || !to) return null;
+    if (from >= to) return 'TO must be later than FROM.';
+    return null;
+  })();
+
   const run = async () => {
+    if (timeRangeError) {
+      setErrorMsg(timeRangeError);
+      setStatus('error');
+      return;
+    }
     if (runMutation.isPending) return;
     const activeQuery = mode === 'code' ? code : generated;
     if (!activeQuery.trim()) {
@@ -323,11 +352,6 @@ export function QueryConsole() {
                 Code
               </button>
             </div>
-            <button type="button" className="qb-btn qb-btn-primary" disabled={status === 'running'} onClick={run}>
-              <span aria-hidden="true">▶</span>
-              {status === 'running' ? 'Running…' : 'Run'}
-              <kbd className="kbd qb-kbd">{typeof navigator !== 'undefined' && /Mac/i.test(navigator.platform) ? '⌘↵' : 'Ctrl↵'}</kbd>
-            </button>
           </div>
         </div>
         <p className="page-meta">Compose BydbQL visually, or eject to raw code for advanced refinement</p>
@@ -344,11 +368,19 @@ export function QueryConsole() {
                 fields={fields}
                 groupNames={groupNames}
                 resourceNames={resourceList.map((r) => r.name)}
+                isRunning={runMutation.isPending}
+                onEjectToCode={() => { setCode(generated); setCodeDirty(false); setMode('code'); }}
+                onRun={run}
+                onReset={() => {
+                  setState(defaultState(groups));
+                  setCode('');
+                  setCodeDirty(false);
+                  setStatus('idle');
+                  setErrorMsg(null);
+                  setResponse(null);
+                }}
               />
               <div className="qb-rail-foot">
-                <button type="button" className="qb-btn qb-btn-ghost" onClick={ejectToCode}>
-                  Eject to code
-                </button>
                 {codeEdited && (
                   <span className="qb-rail-note">Code edited · use Resync to pull builder changes in</span>
                 )}
@@ -365,8 +397,19 @@ export function QueryConsole() {
                 <button type="button" className="qb-btn qb-btn-ghost" onClick={resync} disabled={!codeDirty}>
                   Resync from builder
                 </button>
+                <span className="qb-gap" />
                 <button type="button" className="qb-btn qb-btn-ghost" onClick={backToBuilder}>
                   Back to builder
+                </button>
+                <button
+                  type="button"
+                  className="qb-btn qb-btn-primary"
+                  disabled={status === 'running'}
+                  onClick={run}
+                >
+                  <span aria-hidden="true">▶</span>
+                  {status === 'running' ? 'Running…' : 'Run'}
+                  <kbd className="kbd qb-kbd">{typeof navigator !== 'undefined' && /Mac/i.test(navigator.platform) ? '⌘↵' : 'Ctrl↵'}</kbd>
                 </button>
               </div>
             </>
@@ -383,15 +426,44 @@ export function QueryConsole() {
 
         <div className="qb-results">
           {status === 'idle' && (
-            <div className="qb-empty">
-              <p>Run a query to see results here.</p>
+            <div className="result-card">
+              <div className="result-bar">
+                <span className="result-tab is-active">Result</span>
+                <span className="result-tab">Trace</span>
+                <span className="result-status"><span className="rs idle">not run</span></span>
+              </div>
+              <div className="result-pane">
+                <div className="empty">
+                  <h3 className="empty-title">No results yet</h3>
+                  <p className="empty-text">Build or write a query above, then run it to inspect rows and the execution trace.</p>
+                </div>
+              </div>
             </div>
           )}
           {status === 'running' && (
-            <div className="qb-empty"><p>Running…</p></div>
+            <div className="result-card">
+              <div className="result-bar">
+                <span className="result-tab is-active">Result</span>
+                <span className="result-tab">Trace</span>
+                <span className="result-status"><span className="rs run">executing…</span></span>
+              </div>
+              <div className="result-pane">
+                <div className="empty">
+                  <h3 className="empty-title">Running query…</h3>
+                  <p className="empty-text">Executing against the cluster.</p>
+                </div>
+              </div>
+            </div>
           )}
           {status === 'error' && (
-            <div className="qb-error">{errorMsg}</div>
+            <div className="result-card">
+              <div className="result-bar">
+                <span className="result-tab is-active">Result</span>
+                <span className="result-tab">Trace</span>
+                <span className="result-status"><span className="rs fail">error</span></span>
+              </div>
+              <div className="result-pane qb-error">{errorMsg}</div>
+            </div>
           )}
           {status === 'done' && response && (
             <>

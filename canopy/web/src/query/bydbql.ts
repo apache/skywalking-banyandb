@@ -57,8 +57,12 @@ export const qbDataCatalog = (catalog: string): 'measures' | 'streams' | 'traces
 // for 'topn' so callers can detect "TopN uses its own endpoint" without a
 // separate equality check.
 export type QBProtoCatalog = 'CATALOG_MEASURE' | 'CATALOG_STREAM' | 'CATALOG_TRACE' | undefined;
+// BanyanDB's catalog enum is singular ('CATALOG_MEASURE' / 'CATALOG_STREAM' /
+// 'CATALOG_TRACE'), NOT plural. The handoff's short name ('measures' /
+// 'streams' / 'traces' / 'topn') is the API-level key — when we render
+// the REST gateway's Catalog value, the S must be dropped.
 export const qbProtoCatalog = (catalog: string): QBProtoCatalog =>
-  catalog === 'topn' ? undefined : `CATALOG_${qbDataCatalog(catalog).toUpperCase()}` as QBProtoCatalog;
+  catalog === 'topn' ? undefined : `CATALOG_${qbDataCatalog(catalog).slice(0, -1).toUpperCase()}` as QBProtoCatalog;
 
 export interface QB_OP_DEF {
   readonly value: string;
@@ -156,7 +160,7 @@ export interface QBWhereGroupWithConn extends QBWhereGroup {
 
 export type QBWhereNode = QBWhereLeafWithConn | QBWhereGroupWithConn;
 
-const qbIsGroup = (n: QBWhereNode | undefined | null): n is QBWhereGroupWithConn =>
+export const qbIsGroup = (n: QBWhereNode | undefined | null): n is QBWhereGroupWithConn =>
   !!(n && Array.isArray((n as QBWhereGroupWithConn).children));
 
 // connector joining child i to the previous sibling (legacy trees fall back

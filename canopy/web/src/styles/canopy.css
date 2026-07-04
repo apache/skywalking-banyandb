@@ -535,13 +535,13 @@
   .qb-rail { width: var(--qb-rail-w, 348px); flex-shrink: 0; min-height: 0; display: flex; flex-direction: column; }
   /* draggable divider between the builder rail and results */
   .qb-resizer {
-    flex: 0 0 16px; align-self: stretch;
+    flex: 0 0 8px; align-self: stretch;
     display: flex; align-items: center; justify-content: center;
     background: transparent; cursor: col-resize; touch-action: none; outline: none;
   }
-  .qb-resizer-grip { width: 3px; height: 44px; border-radius: 2px; background: var(--border-strong); transition: background .13s, height .13s; }
-  .qb-resizer:hover .qb-resizer-grip, .qb-resizer:focus-visible .qb-resizer-grip { background: var(--text-faint); height: 64px; }
-  .qb-resizer.is-dragging .qb-resizer-grip { background: var(--accent); height: 64px; }
+  .qb-resizer-grip { width: 1px; height: 100%; border-radius: 1px; background: var(--border); transition: background .13s, width .13s; }
+  .qb-resizer:hover .qb-resizer-grip, .qb-resizer:focus-visible .qb-resizer-grip { background: var(--border-strong); width: 3px; }
+  .qb-resizer.is-dragging .qb-resizer-grip { background: var(--accent); width: 3px; }
   body.qb-resizing { cursor: col-resize; user-select: none; }
   .qb-rail > .qb-card, .qb-rail > .editor-card { flex: 1; min-height: 0; display: flex; flex-direction: column; }
   .qb-rail-scroll { flex: 1; min-height: 0; overflow-y: auto; }
@@ -571,6 +571,10 @@
   /* rail foot: generated line on one row, actions on the next */
   .qb-foot-row { display: flex; align-items: center; gap: 7px; min-width: 0; width: 100%; }
   .qb-rail .qb-foot { flex-direction: column; flex-wrap: nowrap; align-items: stretch; gap: 9px; padding: 11px 14px; border-top: 1px solid var(--border); }
+  .qb-rail-foot { display: flex; align-items: center; gap: 8px; padding: 10px 14px; border-top: 1px solid var(--border); background: rgba(255,255,255,.012); flex-wrap: wrap; }
+  .qb-rail-foot .qb-btn { height: 32px; padding: 0 11px; font-size: 12.5px; white-space: nowrap; }
+  .qb-rail-foot .qb-btn-primary { margin-left: auto; }
+  .qb-rail-foot .qb-kbd { display: none; }
   .qb-rail .qb-eject { padding: 0 9px; }
   .qb-rail .qb-foot .btn { height: 32px; padding: 0 11px; font-size: 12.5px; }
   .qb-rail .qb-foot .kbd { display: none; }
@@ -680,15 +684,76 @@
 
   .qb-card { border: 1px solid var(--border-strong); border-radius: 12px; overflow: hidden; background: var(--panel); }
 
-  /* one clause row: keyword column + body */
-  .qb-clause { display: grid; grid-template-columns: 116px 1fr; gap: 16px; padding: 14px 20px; border-bottom: 1px solid var(--border); }
+  /* search input above the catalog tabs in the FROM clause */
+  .qb-search { position: relative; display: flex; align-items: center; }
+  .qb-search-ico { position: absolute; left: 10px; top: 50%; transform: translateY(-50%); color: var(--text-faint); display: inline-flex; }
+  .qb-search-input {
+    width: 100%; height: 32px; padding: 0 10px 0 32px;
+    background: var(--panel-2); color: var(--text);
+    border: 1px solid var(--border); border-radius: 8px;
+    font-size: 12.5px; font-family: inherit;
+  }
+  .qb-search-input::placeholder { color: var(--text-faint); }
+  .qb-search-input:focus { outline: none; border-color: var(--accent); }
+
+  /* native select wrapped in a styled container with a chevron — matches the
+     handoff's qb-select-wrap / qb-select-chev silhouette */
+  .qb-select-wrap { position: relative; display: inline-flex; align-items: center; min-width: 0; }
+  .qb-select-wrap > select {
+    appearance: none; -webkit-appearance: none; -moz-appearance: none;
+    width: 100%; height: 30px; padding: 0 24px 0 10px;
+    background: var(--panel-2); color: var(--text);
+    border: 1px solid var(--border); border-radius: 7px;
+    font-family: var(--mono); font-size: 12px;
+    line-height: 1; cursor: pointer;
+  }
+  .qb-select-wrap > select:focus { outline: none; border-color: var(--accent); }
+  .qb-select-wrap > select option { background: var(--panel); color: var(--text); }
+  .qb-select-chev { position: absolute; right: 8px; top: 50%; transform: translateY(-50%); color: var(--text-faint); pointer-events: none; display: inline-flex; }
+
+  /* one clause row: keyword column + body. The handoff uses `.qb-clause` /
+     `.qb-kw-col` / `.qb-kw`; the impl port (QueryBuilder.tsx) uses
+     `.qb-section` / `.qb-section-h`. Both must render the same 2-column
+     grid so the rendered DOM matches the handoff silhouette. The handoff
+     overrides this inside the narrow rail (348px) to a single-column
+     stack — keyword on top, body below — so the keyword sits at the
+     top of each clause. */
+  .qb-clause, .qb-section { display: grid; grid-template-columns: 116px 1fr; column-gap: 16px; row-gap: 10px; padding: 14px 20px; border-bottom: 1px solid var(--border); align-items: stretch; }
+  .qb-rail .qb-clause, .qb-rail .qb-section { grid-template-columns: 1fr; column-gap: 0; row-gap: 9px; padding: 13px 14px 15px; }
+  .qb-section:last-child { border-bottom: none; }
+  /* Place the keyword in column 1 and any other direct child in column 2
+     (only when the wide 2-column grid is in effect; the .qb-rail override
+     above collapses to 1fr so the keyword and body stack vertically). */
+  .qb-clause > .qb-kw-col, .qb-clause > .clause-body, .qb-section > .qb-section-h { grid-column: 1; }
+  .qb-clause > :not(.qb-kw-col):not(.clause-body), .qb-section > :not(.qb-section-h) { grid-column: 2; }
+  .qb-rail .qb-clause > .qb-kw-col, .qb-rail .qb-clause > .clause-body, .qb-rail .qb-section > .qb-section-h,
+  .qb-rail .qb-clause > :not(.qb-kw-col):not(.clause-body), .qb-rail .qb-section > :not(.qb-section-h) { grid-column: 1; }
   .qb-kw-col { display: flex; flex-direction: column; gap: 5px; padding-top: 7px; }
+  .qb-rail .qb-kw-col { flex-direction: row; align-items: baseline; gap: 8px; padding-top: 0; }
   .qb-kw.has-hint { cursor: help; }
-  .qb-kw { font-family: var(--mono); font-size: 12.5px; font-weight: 600; letter-spacing: .5px; color: var(--accent); }
+  /* .qb-kw: the handoff's keyword col (stacks keyword + opt sub-label
+     vertically in the wide layout). */
+  .qb-kw {
+    display: flex; flex-direction: column; gap: 5px;
+    font-family: var(--mono); font-size: 12.5px; font-weight: 600; letter-spacing: .5px; color: var(--accent); padding-top: 7px;
+  }
+  /* .qb-section-h: the impl's keyword row (WHERE + optional on the same
+     row, with optional pushed to the right edge — matches the
+     handoff's row layout in the empty-WHERE screenshot). */
+  .qb-section-h {
+    display: flex; flex-direction: row; align-items: baseline; gap: 8px;
+    font-family: var(--mono); font-size: 12.5px; font-weight: 600; letter-spacing: .5px; color: var(--accent); padding-top: 0;
+  }
+  .qb-rail .qb-kw, .qb-rail .qb-section-h { padding-top: 0; }
   .qb-opt { font-size: 10px; text-transform: uppercase; letter-spacing: .5px; color: var(--text-faint); }
   .qb-body { min-width: 0; display: flex; flex-direction: column; gap: 10px; }
   .qb-stack { display: flex; flex-direction: column; gap: 8px; }
   .qb-row { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
+  .qb-cond-row { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; }
+  .qb-row-add { display: inline-flex; align-items: center; gap: 6px; height: 30px; padding: 0 11px; border: 1px dashed var(--border-strong); border-radius: 7px; background: transparent; color: var(--text-dim); font-family: inherit; font-size: 12.5px; cursor: pointer; }
+  .qb-row-add:hover { color: var(--text); border-color: var(--accent); }
+  .qb-trace-row { display: inline-flex; align-items: center; gap: 7px; font-size: 12.5px; color: var(--text-dim); cursor: pointer; margin-top: 4px; }
+  .qb-trace-row input { accent-color: var(--accent); cursor: pointer; }
   .qb-hint { font-size: 12px; color: var(--text-faint); line-height: 1.5; }
   .qb-dim { font-size: 12.5px; color: var(--text-faint); font-style: italic; }
   .qb-gap { flex: 1 1 auto; }
@@ -708,6 +773,17 @@
   }
   .qb-group-head { display: flex; align-items: center; gap: 10px; min-height: 28px; }
   .qb-group-tag { font-family: var(--mono); font-size: 10.5px; font-weight: 600; letter-spacing: .5px; text-transform: uppercase; color: var(--text-faint); }
+
+  /* nested WHERE group card — green left accent + panel-2 fill,
+     matches the handoff's qb-group:not(.is-root) treatment. */
+  .qb-group-card {
+    display: flex; flex-direction: column; gap: 10px;
+    border: 1px solid var(--border-strong);
+    border-left: 2px solid var(--accent);
+    border-radius: 10px;
+    padding: 12px 12px 12px 14px;
+    background: var(--panel-2);
+  }
 
   /* AND / OR combinator toggle */
   .qb-comb-seg { display: inline-flex; padding: 3px; gap: 2px; background: var(--panel-2); border: 1px solid var(--border-strong); border-radius: 8px; }
@@ -865,7 +941,7 @@
 
   /* add / delete row controls */
   .qb-add {
-    display: inline-flex; align-items: center; gap: 6px; align-self: flex-start;
+    display: inline-flex; align-items: center; gap: 6px; align-self: flex-start; justify-self: start;
     white-space: nowrap;
     height: 32px; padding: 0 12px; border-radius: 8px;
     border: 1px dashed var(--border-strong); background: transparent; color: var(--text-dim);
@@ -924,7 +1000,10 @@
   .rs.idle { color: var(--text-faint); }
   .rs.run { color: var(--accent); }
   .rs.ok { color: var(--ok); }
-  .result-pane .empty { border: none; padding: 48px 24px; background: none; }
+  .rs.fail { color: var(--danger); }
+  .result-pane .empty { border: none; padding: 48px 24px; background: none; text-align: center; }
+  .result-pane .empty-title { font-size: 15px; font-weight: 600; color: var(--text); margin: 0 0 6px; }
+  .result-pane .empty-text { font-size: 13px; color: var(--text-dim); line-height: 1.5; margin: 0; }
 
   /* ============ MEASURE RESULT VIEW (table ⇄ chart ⇄ trace) ============ */
   .result-bar button.result-tab { background: none; border: none; font-family: inherit; padding: 0; display: inline-flex; align-items: center; gap: 6px; }
