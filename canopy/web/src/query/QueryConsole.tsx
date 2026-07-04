@@ -391,26 +391,35 @@ export function QueryConsole() {
               <CodeEditor
                 value={code}
                 onChange={(v) => { setCode(v); setCodeDirty(true); }}
-                hint="Edit BydbQL directly. Resync pulls builder changes back in (discards edits)."
+                hint={codeDirty ? 'edited' : 'from builder'}
+                toolbarRight={(
+                  <button type="button" className="btn btn-ghost" onClick={backToBuilder} title="Back to builder">
+                    <span aria-hidden="true">←</span> Builder
+                  </button>
+                )}
               />
-              <div className="qb-rail-foot">
-                <button type="button" className="qb-btn qb-btn-ghost" onClick={resync} disabled={!codeDirty}>
-                  Resync from builder
-                </button>
-                <span className="qb-gap" />
-                <button type="button" className="qb-btn qb-btn-ghost" onClick={backToBuilder}>
-                  Back to builder
-                </button>
-                <button
-                  type="button"
-                  className="qb-btn qb-btn-primary"
-                  disabled={status === 'running'}
-                  onClick={run}
-                >
-                  <span aria-hidden="true">▶</span>
-                  {status === 'running' ? 'Running…' : 'Run'}
-                  <kbd className="kbd qb-kbd">{typeof navigator !== 'undefined' && /Mac/i.test(navigator.platform) ? '⌘↵' : 'Ctrl↵'}</kbd>
-                </button>
+              <div className="qb-foot">
+                <div className="qb-foot-row">
+                  <button
+                    type="button"
+                    className="btn btn-ghost"
+                    onClick={resync}
+                    title={codeEdited ? 'Regenerate from the builder — asks before overwriting your edits' : 'Regenerate from the builder'}
+                  >
+                    <span aria-hidden="true">≡</span> Re-sync
+                  </button>
+                  <span className="qb-gap" />
+                  <button
+                    type="button"
+                    className="btn btn-primary"
+                    disabled={status === 'running'}
+                    onClick={run}
+                  >
+                    <span aria-hidden="true">▶</span>
+                    {status === 'running' ? 'Running…' : 'Run'}
+                    <kbd className="kbd">{typeof navigator !== 'undefined' && /Mac/i.test(navigator.platform) ? '⌘↵' : 'Ctrl↵'}</kbd>
+                  </button>
+                </div>
               </div>
             </>
           )}

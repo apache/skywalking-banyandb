@@ -127,6 +127,7 @@ Release Notes.
 - Fix backup container OOM from overlapping scheduled runs; serialize runs and upload small snapshot files concurrently.
 - Fix block metadata reset before unmarshal for stream and trace.
 - Lifecycle only handles stream/measure/trace snapshots, skipping other catalogs.
+- Align code-mode editor with the handoff toolbar + footer (move "← Builder" back button into the toolbar, switch the footer to `qb-foot`/`qb-foot-row`, restore the ⌘/Ctrl+↵ kbd hint on Run, switch markup to the handoff class names, and drop the syntax-highlight `<pre>` that double-rendered side-by-side with the textarea).
 
 ### Document
 

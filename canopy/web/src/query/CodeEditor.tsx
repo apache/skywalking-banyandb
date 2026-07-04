@@ -1,11 +1,11 @@
 /*
  * Licensed to Apache Software Foundation (ASF) under one or more contributor
- * license agreements. See the NOTICE file distributed with
- * this work for additional information regarding copyright
- * ownership. Apache Software Foundation (ASF) licenses this file to you under
- * the Apache License, Version 2.0 (the "License"); you may
- * not use this file except in compliance with the License.
- * You may obtain a copy of the License at
+ * license agreements. See the NOTICE file distributed with this
+ * work for additional information regarding copyright
+ * ownership. Apache Software Foundation (ASF) licenses this file
+ * to you under the Apache License, Version 2.0 (the
+ * "License"); you may not use this file except in compliance
+ * with the License. You may obtain a copy of the License at
  *
  *     http://www.apache.org/licenses/LICENSE-2.0
  *
@@ -17,10 +17,19 @@
  * under the License.
  */
 
-// CodeEditor.tsx — textarea + line-number gutter + BydbQL syntax highlight.
-// Ported from .handoff-import/banyandb/project/code.jsx. Verbatim shape: a
-// transparent <textarea> layered over a highlighted <pre> with synced scroll,
-// regex JSON / BydbQL tokenizer, lang pill + hints.
+// CodeEditor.tsx — textarea + line-number gutter.
+//
+// Markup mirrors the handoff's `editor-card` / `editor-toolbar` / `tb-left` /
+// `tb-right` / `lang-pill` / `tb-hint` / `editor-area` / `gutter` / `gutter-num`
+// / `code-input` class names so the styles in canopy.css (copied verbatim from
+// the handoff) apply unchanged. Optional `toolbarRight` slot lets the caller
+// drop a button (e.g. "← Builder") into the top-right of the toolbar.
+//
+// The handoff has no syntax highlight — it is a plain textarea. We previously
+// carried a regex-highlight <pre> layered behind the textarea per decision #10
+// in implement-m4-note.md, but it caused a double-rendered side-by-side look
+// when the handoff's flex layout placed both as siblings; dropped in favor of
+// the verbatim handoff rendering.
 
 import React, { useMemo, useRef } from 'react';
 
@@ -31,56 +40,36 @@ interface CodeEditorProps {
   readonly hint?: string;
   readonly readOnly?: boolean;
   readonly ariaLabel?: string;
+  /** Right-aligned node in the toolbar (e.g. a "← Builder" back button). */
+  readonly toolbarRight?: React.ReactNode;
 }
 
-/** Tokenize BydbQL: keywords, strings, numbers, identifiers. */
-function tokenize(src: string): string {
-  // Escape first so highlights don't escape out of <pre>.
-  const esc = src
-    .replace(/&/g, '&amp;')
-    .replace(/</g, '&lt;')
-    .replace(/>/g, '&gt;');
-  // Keywords
-  const kwRe = /\b(MEASURE|STREAM|TRACE|TOPN|TOP|SELECT|FROM|IN|WHERE|GROUP BY|ORDER BY|LIMIT|AGGREGATE BY|WITH QUERY_TRACE|TIME|NOW)\b/g;
-  let out = esc.replace(kwRe, '<span class="ce-kw">$1</span>');
-  // Strings
-  out = out.replace(/'([^'\\]*(?:\\.[^'\\]*)*)'/g, "<span class=\"ce-str\">'$1'</span>");
-  // Numbers (avoid those already inside kw / str spans — best-effort)
-  out = out.replace(/(^|[\s(,=])(-?\d+(?:\.\d+)?)(?=$|[\s,)])/g, '$1<span class="ce-num">$2</span>');
-  // Single-line comments
-  out = out.replace(/(^|\s)(#[^\n]*)/g, '$1<span class="ce-cm">$2</span>');
-  return out;
-}
-
-export function CodeEditor({ value, onChange, language = 'BydbQL', hint, readOnly, ariaLabel }: CodeEditorProps) {
+export function CodeEditor({ value, onChange, language = 'BydbQL', hint, readOnly, ariaLabel, toolbarRight }: CodeEditorProps) {
   const taRef = useRef<HTMLTextAreaElement | null>(null);
   const gutterRef = useRef<HTMLDivElement | null>(null);
-  const preRef = useRef<HTMLPreElement | null>(null);
   const lines = useMemo(() => (value ?? '').split('\n').length, [value]);
-  const highlighted = useMemo(() => tokenize(value ?? '') + '\n', [value]);
   const syncScroll = (e: React.UIEvent<HTMLTextAreaElement>) => {
     const ta = e.currentTarget;
     if (gutterRef.current) gutterRef.current.scrollTop = ta.scrollTop;
-    if (preRef.current) preRef.current.scrollTop = ta.scrollTop;
   };
   return (
     <div className="editor-card" aria-label={ariaLabel ?? 'BydbQL editor'}>
-      <div className="editor-card-head">
-        <span className="editor-pill">{language}</span>
-        {hint && <span className="editor-hint">{hint}</span>}
+      <div className="editor-toolbar">
+        <div className="tb-left">
+          <span className="lang-pill">{language}</span>
+          {hint && <span className="tb-hint">{hint}</span>}
+        </div>
+        {toolbarRight && <div className="tb-right">{toolbarRight}</div>}
       </div>
-      <div className="editor-card-body">
-        <div className="editor-gutter" ref={gutterRef} aria-hidden="true">
+      <div className="editor-area">
+        <div className="gutter" ref={gutterRef} aria-hidden="true">
           {Array.from({ length: lines }, (_, i) => (
-            <div key={i} className="editor-line-no">{i + 1}</div>
+            <div key={i} className="gutter-num">{i + 1}</div>
           ))}
         </div>
-        <pre className="editor-pre" ref={preRef} aria-hidden="true">
-          <code dangerouslySetInnerHTML={{ __html: highlighted }} />
-        </pre>
         <textarea
           ref={taRef}
-          className="editor-ta"
+          className="code-input"
           value={value}
           onChange={(e) => onChange(e.target.value)}
           onScroll={syncScroll}

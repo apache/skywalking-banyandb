@@ -570,14 +570,13 @@
 
   /* rail foot: generated line on one row, actions on the next */
   .qb-foot-row { display: flex; align-items: center; gap: 7px; min-width: 0; width: 100%; }
-  .qb-rail .qb-foot { flex-direction: column; flex-wrap: nowrap; align-items: stretch; gap: 9px; padding: 11px 14px; border-top: 1px solid var(--border); }
+  .qb-rail .qb-foot { gap: 9px; padding: 11px 14px; border-top: 1px solid var(--border); }
   .qb-rail-foot { display: flex; align-items: center; gap: 8px; padding: 10px 14px; border-top: 1px solid var(--border); background: rgba(255,255,255,.012); flex-wrap: wrap; }
   .qb-rail-foot .qb-btn { height: 32px; padding: 0 11px; font-size: 12.5px; white-space: nowrap; }
   .qb-rail-foot .qb-btn-primary { margin-left: auto; }
   .qb-rail-foot .qb-kbd { display: none; }
   .qb-rail .qb-eject { padding: 0 9px; }
   .qb-rail .qb-foot .btn { height: 32px; padding: 0 11px; font-size: 12.5px; }
-  .qb-rail .qb-foot .kbd { display: none; }
 
   /* narrow viewports fall back to the stacked layout */
   @media (max-width: 1100px) {
