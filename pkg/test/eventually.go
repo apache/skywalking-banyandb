@@ -71,18 +71,20 @@ func (a ECAssertion) WithPolling(polling time.Duration) ECAssertion {
 	return a
 }
 
-// Should asserts the matcher is reached and then held. optionalDescription is
-// forwarded to both assertions, matching gomega's Should.
-func (a ECAssertion) Should(matcher gomegatypes.GomegaMatcher, optionalDescription ...interface{}) {
-	gomega.EventuallyWithOffset(1, a.actual, a.eventuallyIntervals()...).Should(matcher, optionalDescription...)
-	gomega.ConsistentlyWithOffset(1, a.actual, a.consistentlyIntervals()...).Should(matcher, optionalDescription...)
+// Should asserts the matcher is reached and then held. It returns true only when
+// both the Eventually and the Consistently assertion pass, matching the bool
+// return of gomega's Should. optionalDescription is forwarded to both assertions.
+func (a ECAssertion) Should(matcher gomegatypes.GomegaMatcher, optionalDescription ...interface{}) bool {
+	return gomega.EventuallyWithOffset(1, a.actual, a.eventuallyIntervals()...).Should(matcher, optionalDescription...) &&
+		gomega.ConsistentlyWithOffset(1, a.actual, a.consistentlyIntervals()...).Should(matcher, optionalDescription...)
 }
 
-// ShouldNot asserts the matcher is avoided and then kept avoided. optionalDescription
-// is forwarded to both assertions, matching gomega's ShouldNot.
-func (a ECAssertion) ShouldNot(matcher gomegatypes.GomegaMatcher, optionalDescription ...interface{}) {
-	gomega.EventuallyWithOffset(1, a.actual, a.eventuallyIntervals()...).ShouldNot(matcher, optionalDescription...)
-	gomega.ConsistentlyWithOffset(1, a.actual, a.consistentlyIntervals()...).ShouldNot(matcher, optionalDescription...)
+// ShouldNot asserts the matcher is avoided and then kept avoided. It returns true
+// only when both assertions pass, matching the bool return of gomega's ShouldNot.
+// optionalDescription is forwarded to both assertions.
+func (a ECAssertion) ShouldNot(matcher gomegatypes.GomegaMatcher, optionalDescription ...interface{}) bool {
+	return gomega.EventuallyWithOffset(1, a.actual, a.eventuallyIntervals()...).ShouldNot(matcher, optionalDescription...) &&
+		gomega.ConsistentlyWithOffset(1, a.actual, a.consistentlyIntervals()...).ShouldNot(matcher, optionalDescription...)
 }
 
 func (a ECAssertion) eventuallyIntervals() []interface{} {

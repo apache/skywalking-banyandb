@@ -967,8 +967,12 @@ var _ = ginkgo.Describe("Measure cross-segment migration", ginkgo.Ordered, func(
 			}
 			var resp *measurev1.QueryResponse
 			test.EventuallyConsistently(func() error {
+				// A per-poll context keeps the Eventually+Consistently polling from
+				// draining the It-level write context's fixed budget.
+				qCtx, qCancel := context.WithTimeout(context.Background(), 10*time.Second)
+				defer qCancel()
 				var qErr error
-				resp, qErr = queryClient.Query(ctx, req)
+				resp, qErr = queryClient.Query(qCtx, req)
 				if qErr != nil {
 					return qErr
 				}
@@ -1256,8 +1260,10 @@ var _ = ginkgo.Describe("Stream cross-segment migration", ginkgo.Ordered, func()
 			}
 			var resp *streamv1.QueryResponse
 			test.EventuallyConsistently(func() error {
+				qCtx, qCancel := context.WithTimeout(context.Background(), 10*time.Second)
+				defer qCancel()
 				var qErr error
-				resp, qErr = queryClient.Query(ctx, req)
+				resp, qErr = queryClient.Query(qCtx, req)
 				if qErr != nil {
 					return qErr
 				}
@@ -1428,8 +1434,10 @@ var _ = ginkgo.Describe("Trace cross-segment migration", ginkgo.Ordered, func() 
 			}
 			var resp *tracev1.QueryResponse
 			test.EventuallyConsistently(func() error {
+				qCtx, qCancel := context.WithTimeout(context.Background(), 10*time.Second)
+				defer qCancel()
 				var qErr error
-				resp, qErr = queryClient.Query(ctx, req)
+				resp, qErr = queryClient.Query(qCtx, req)
 				if qErr != nil {
 					return qErr
 				}
