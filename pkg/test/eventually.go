@@ -18,6 +18,8 @@
 package test
 
 import (
+	"reflect"
+	"sync/atomic"
 	"time"
 
 	"github.com/onsi/gomega"
@@ -44,10 +46,10 @@ type ECAssertion struct {
 //
 // intervals follow gomega.Eventually semantics — (timeout) or (timeout, polling).
 // They can also be set fluently via WithTimeout/WithPolling. When the timeout is
-// omitted it defaults to flags.EventuallyTimeout; the Consistently window always
-// uses flags.StabilityTimeout and reuses the polling interval, if any. The window
-// is deliberately short — it runs after every converged assertion, so its length
-// multiplies across whole suites.
+// omitted it defaults to flags.EventuallyTimeout. The Consistently window always
+// runs and reuses the polling interval, if any; its length adapts to how the
+// Eventually phase converged — flags.QuickStabilityTimeout after a first-try
+// success, flags.StabilityTimeout after a retried convergence (see Should).
 func EventuallyConsistently(actual interface{}, intervals ...interface{}) ECAssertion {
 	a := ECAssertion{actual: actual}
 	if len(intervals) > 0 {
@@ -76,17 +78,52 @@ func (a ECAssertion) WithPolling(polling time.Duration) ECAssertion {
 // Should asserts the matcher is reached and then held. It returns true only when
 // both the Eventually and the Consistently assertion pass, matching the bool
 // return of gomega's Should. optionalDescription is forwarded to both assertions.
+//
+// The Consistently phase always runs, but its window is adaptive. When the
+// Eventually phase succeeds on its very first evaluation, the state was already
+// settled before the assertion began, so a short flags.QuickStabilityTimeout
+// window (still a dozen re-samples) suffices to reject a one-off lucky match.
+// Only assertions that had to retry — proof of an in-flight async process that
+// could still regress — pay the full flags.StabilityTimeout window. This keeps
+// the regression guard everywhere without charging every static assertion in
+// the large query tables for a full window.
 func (a ECAssertion) Should(matcher gomegatypes.GomegaMatcher, optionalDescription ...interface{}) bool {
-	return gomega.EventuallyWithOffset(1, a.actual, a.eventuallyIntervals()...).Should(matcher, optionalDescription...) &&
-		gomega.ConsistentlyWithOffset(1, a.actual, a.consistentlyIntervals()...).Should(matcher, optionalDescription...)
+	probe, attempts := countEvaluations(a.actual)
+	if !gomega.EventuallyWithOffset(1, probe, a.eventuallyIntervals()...).Should(matcher, optionalDescription...) {
+		return false
+	}
+	return gomega.ConsistentlyWithOffset(1, a.actual, a.consistentlyIntervals(atomic.LoadInt32(attempts))...).Should(matcher, optionalDescription...)
 }
 
 // ShouldNot asserts the matcher is avoided and then kept avoided. It returns true
 // only when both assertions pass, matching the bool return of gomega's ShouldNot.
-// optionalDescription is forwarded to both assertions.
+// optionalDescription is forwarded to both assertions. The stability window is
+// adaptive — see Should.
 func (a ECAssertion) ShouldNot(matcher gomegatypes.GomegaMatcher, optionalDescription ...interface{}) bool {
-	return gomega.EventuallyWithOffset(1, a.actual, a.eventuallyIntervals()...).ShouldNot(matcher, optionalDescription...) &&
-		gomega.ConsistentlyWithOffset(1, a.actual, a.consistentlyIntervals()...).ShouldNot(matcher, optionalDescription...)
+	probe, attempts := countEvaluations(a.actual)
+	if !gomega.EventuallyWithOffset(1, probe, a.eventuallyIntervals()...).ShouldNot(matcher, optionalDescription...) {
+		return false
+	}
+	return gomega.ConsistentlyWithOffset(1, a.actual, a.consistentlyIntervals(atomic.LoadInt32(attempts))...).ShouldNot(matcher, optionalDescription...)
+}
+
+// countEvaluations wraps a func-typed actual so every gomega poll increments a
+// counter, letting the caller tell first-try convergence from retried
+// convergence. Non-func actuals (plain values, channels) are returned as-is
+// with the counter pre-set past 1, so they conservatively keep the full
+// stability window.
+func countEvaluations(actual interface{}) (interface{}, *int32) {
+	attempts := new(int32)
+	v := reflect.ValueOf(actual)
+	if v.Kind() != reflect.Func {
+		*attempts = 2
+		return actual, attempts
+	}
+	probe := reflect.MakeFunc(v.Type(), func(args []reflect.Value) []reflect.Value {
+		atomic.AddInt32(attempts, 1)
+		return v.Call(args)
+	}).Interface()
+	return probe, attempts
 }
 
 func (a ECAssertion) eventuallyIntervals() []interface{} {
@@ -101,8 +138,12 @@ func (a ECAssertion) eventuallyIntervals() []interface{} {
 	return out
 }
 
-func (a ECAssertion) consistentlyIntervals() []interface{} {
-	out := []interface{}{flags.StabilityTimeout}
+func (a ECAssertion) consistentlyIntervals(eventuallyAttempts int32) []interface{} {
+	window := flags.StabilityTimeout
+	if eventuallyAttempts == 1 {
+		window = flags.QuickStabilityTimeout
+	}
+	out := []interface{}{window}
 	if a.polling != nil {
 		out = append(out, a.polling)
 	}
