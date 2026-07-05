@@ -15,6 +15,31 @@ in sync.
 | `skills/bydbql/` | The `bydbql` skill and its `references/`. |
 | `mcp/` | The MCP server source, the TypeScript build output (`dist/`), and the `bydbql-parse` validator tool. |
 
+## Install from a GitHub marketplace
+
+The repository includes a Codex marketplace at `.agents/plugins/marketplace.json`.
+Codex can install that marketplace directly from GitHub; users do not need to
+clone the repository just to make the plugin appear in the plugin directory.
+
+```bash
+codex plugin marketplace add apache/skywalking-banyandb --ref main
+codex plugin add banyandb-bydbql@banyandb
+```
+
+For a fork or development branch, replace the repository and ref:
+
+```bash
+codex plugin marketplace add JophieQu/skywalking-banyandb --ref <branch>
+codex plugin add banyandb-bydbql@banyandb
+```
+
+The marketplace entry points at `./` because the plugin manifest, MCP
+configuration, skills, and MCP source live at the repository root.
+
+This remote install flow publishes the plugin to Codex. The current MCP runtime
+is source-based, so starting the MCP tools still requires the build artifacts
+described below to exist in the installed plugin copy.
+
 ## Required build before loading
 
 Both the MCP server (`mcp/dist/index.js`) and the BydbQL parse validator
