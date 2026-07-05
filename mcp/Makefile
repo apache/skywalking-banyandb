@@ -34,7 +34,7 @@ check-version: install
 
 .PHONY: install
 install:
-	npm install
+	npm ci
 
 .PHONY: lint
 lint: install

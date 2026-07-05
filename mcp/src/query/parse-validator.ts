@@ -81,7 +81,7 @@ async function executeValidator(binaryPath: string, query: string): Promise<Bydb
       stdout += chunk.toString('utf-8');
     });
 
-    childProcess.stderr.on('data', (chunk: Buffer) => {
+    childProcess.stderr.on('data', `(chunk: Buffer) => {
       stderr += chunk.toString('utf-8');
     });
 
