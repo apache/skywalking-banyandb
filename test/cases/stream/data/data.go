@@ -409,6 +409,51 @@ func loadDataWithElementIDMap(stream streamv1.StreamService_WriteClient, metadat
 	}
 }
 
+// SeedAll seeds stream data for the full integration test suite using baseTime as the reference time and interval as the write interval.
+func SeedAll(conn *grpclib.ClientConn, baseTime time.Time, interval time.Duration) {
+	Write(conn, "sw", baseTime, interval)
+	// Seed stream data in a fully expired segment, well past the "default"
+	// group's 3-day TTL. It must never surface in query results: it backs the
+	// "excludes data expired beyond TTL" case, which fails without the retention
+	// filter that drops fully expired segments.
+	WriteToGroup(conn, "sw", "default", "sw", baseTime.AddDate(0, 0, -6), interval)
+	Write(conn, "duplicated", baseTime, 0)
+	WriteDeduplicationTest(conn, "deduplication_test", baseTime, time.Millisecond)
+	WriteToGroup(conn, "sw", "updated", "sw_updated", baseTime.Add(time.Minute), interval)
+	WriteMixed(conn, baseTime.Add(2*time.Minute), interval,
+		WriteSpec{
+			Metadata: &commonv1.Metadata{Name: "sw", Group: "default-spec"},
+			DataFile: "sw_schema_order.json",
+		},
+		WriteSpec{
+			Spec: []*streamv1.TagFamilySpec{
+				{
+					Name:     "data",
+					TagNames: []string{"data_binary"},
+				},
+				{
+					Name:     "searchable",
+					TagNames: []string{"trace_id", "state", "service_id", "service_instance_id", "endpoint_id", "duration", "start_time", "http.method", "status_code", "span_id"},
+				},
+			},
+			DataFile: "sw_spec_order.json",
+		},
+		WriteSpec{
+			Metadata: &commonv1.Metadata{Name: "sw", Group: "default-spec2"},
+			Spec: []*streamv1.TagFamilySpec{
+				{
+					Name:     "searchable",
+					TagNames: []string{"span_id", "status_code", "http.method", "duration", "state", "endpoint_id", "service_instance_id", "start_time", "service_id", "trace_id"},
+				},
+				{
+					Name:     "data",
+					TagNames: []string{"data_binary"},
+				},
+			},
+			DataFile: "sw_spec_order2.json",
+		})
+}
+
 // WriteDeduplicationTest writes data with element IDs specified in the data file for deduplication tests.
 func WriteDeduplicationTest(conn *grpclib.ClientConn, name string, baseTime time.Time, interval time.Duration) {
 	metadata := &commonv1.Metadata{
