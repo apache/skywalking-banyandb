@@ -9,17 +9,33 @@ in sync.
 
 | Path | Purpose |
 |------|---------|
-| `.claude-plugin/plugin.json` | Claude plugin manifest. |
+| `.claude-plugin/plugin.json` | Claude Code plugin manifest. |
+| `.claude-plugin/marketplace.json` | Claude Code plugin marketplace catalog. |
 | `.codex-plugin/plugin.json` | Codex plugin manifest. |
+| `.agents/plugins/marketplace.json` | Codex plugin marketplace catalog. |
 | `.mcp.json` | MCP server definition referenced by both manifests. |
 | `skills/bydbql/` | The `bydbql` skill and its `references/`. |
 | `mcp/` | The MCP server source, the TypeScript build output (`dist/`), and the `bydbql-parse` validator tool. |
 
 ## Install from a GitHub marketplace
 
-The repository includes a Codex marketplace at `.agents/plugins/marketplace.json`.
-Codex can install that marketplace directly from GitHub; users do not need to
+The repository includes both a Codex marketplace at `.agents/plugins/marketplace.json`
+and a Claude Code marketplace at `.claude-plugin/marketplace.json`.
+Both can install the plugin directly from GitHub; users do not need to
 clone the repository just to make the plugin appear in the plugin directory.
+
+### Claude Code
+
+```bash
+# Direct install (no marketplace needed):
+/plugin install apache/skywalking-banyandb
+
+# Or add the marketplace first, then install from it:
+/plugin marketplace add apache/skywalking-banyandb
+/plugin install banyandb-bydbql@banyandb
+```
+
+### Codex
 
 ```bash
 codex plugin marketplace add apache/skywalking-banyandb --ref main
@@ -29,16 +45,21 @@ codex plugin add banyandb-bydbql@banyandb
 For a fork or development branch, replace the repository and ref:
 
 ```bash
+# Claude Code
+/plugin marketplace add JophieQu/skywalking-banyandb --ref <branch>
+/plugin install banyandb-bydbql@banyandb
+
+# Codex
 codex plugin marketplace add JophieQu/skywalking-banyandb --ref <branch>
 codex plugin add banyandb-bydbql@banyandb
 ```
 
-The marketplace entry points at `./` because the plugin manifest, MCP
+Both marketplace entries point at `./` because the plugin manifest, MCP
 configuration, skills, and MCP source live at the repository root.
 
-This remote install flow publishes the plugin to Codex. The current MCP runtime
-is source-based, so starting the MCP tools still requires the build artifacts
-described below to exist in the installed plugin copy.
+This remote install flow publishes the plugin to Claude Code and Codex. The
+current MCP runtime is source-based, so starting the MCP tools still requires
+the build artifacts described below to exist in the installed plugin copy.
 
 ## Required build before loading
 
@@ -78,13 +99,14 @@ recompiling.
 }
 ```
 
-Codex installs this marketplace entry from `source.path: "./"`, so the installed
-plugin root is the repository root. The MCP loader resolves `cwd: "."` relative
-to that installed plugin root, then resolves `./mcp/dist/index.js` from the same
-directory. This means the checked-out layout and installed layout are expected
-to match: `.mcp.json`, `mcp/dist/`, `mcp/tools/bin/`, and `skills/` all live
-under the plugin root. If you manually copy only part of the repository, keep
-that layout or update the relative paths in `.mcp.json`.
+Both Claude Code and Codex resolve the plugin root to the repository root
+(whether installed via marketplace or direct GitHub install). The MCP loader
+resolves `cwd: "."` relative to that installed plugin root, then resolves
+`./mcp/dist/index.js` from the same directory. This means the checked-out layout
+and installed layout are expected to match: `.mcp.json`, `mcp/dist/`,
+`mcp/tools/bin/`, and `skills/` all live under the plugin root. If you manually
+copy only part of the repository, keep that layout or update the relative paths
+in `.mcp.json`.
 
 ## Keeping the manifests in sync
 
@@ -95,3 +117,7 @@ identical except for the `version` field — the Codex manifest carries a
 if the Codex version does not use the Claude version as its base. When you change
 one manifest (description, keywords, `interface`, `skills`, `mcpServers`, etc.),
 mirror the exact change into the other and run that check.
+
+The marketplace catalogs (`.claude-plugin/marketplace.json` and
+`.agents/plugins/marketplace.json`) serve the same plugin under their respective
+platform formats and do not need to be field-identical.
