@@ -366,12 +366,12 @@ var _ = Describe("trace handoff", func() {
 		}, flags.EventuallyTimeout).Should(Equal(0))
 
 		By("verifying the replayed trace can be queried")
-		Eventually(func() error {
+		test.EventuallyConsistently(func() error {
 			return queryTrace(connection, traceID, writeTime)
 		}, flags.EventuallyTimeout).Should(Succeed())
 
 		By("verifying sidx data was replayed correctly by querying via indexed tag")
-		Eventually(func() error {
+		test.EventuallyConsistently(func() error {
 			return queryTraceByService(connection, "handoff_service", writeTime)
 		}, flags.EventuallyTimeout).Should(Succeed())
 
@@ -387,7 +387,7 @@ var _ = Describe("trace handoff", func() {
 		dnHandles[otherIndex].stop()
 		defer dnHandles[otherIndex].start(discoveryFilePath)
 
-		Eventually(func() error {
+		test.EventuallyConsistently(func() error {
 			return queryTrace(connection, traceID, writeTime)
 		}, flags.EventuallyTimeout).Should(Succeed())
 

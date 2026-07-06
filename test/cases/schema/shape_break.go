@@ -31,6 +31,7 @@ import (
 	databasev1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/database/v1"
 	measurev1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/measure/v1"
 	modelv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/model/v1"
+	"github.com/apache/skywalking-banyandb/pkg/test"
 	"github.com/apache/skywalking-banyandb/pkg/timestamp"
 )
 
@@ -209,7 +210,7 @@ var _ = g.Describe("Schema shape-break rejection", func() {
 		// schema-consistency suite already uses this Eventually pattern
 		// in deletion.go for the same reason; mirror it here.
 		var queryResp1 *measurev1.QueryResponse
-		gm.Eventually(func() int {
+		test.EventuallyConsistently(func() int {
 			var queryErr1 error
 			queryResp1, queryErr1 = queryMeasureRange(ctx, clients.MeasureWriteClient, groupName, measureName,
 				createdAt1.AsTime(), time.Now().Add(time.Hour), r1)
@@ -455,7 +456,7 @@ var _ = g.Describe("Schema shape-break rejection", func() {
 
 		// Eventually retry — see the  baseline above for the
 		// distributed write→query visibility race.
-		gm.Eventually(func() int {
+		test.EventuallyConsistently(func() int {
 			queryResp1, queryErr1 := queryMeasureRange(ctx, clients.MeasureWriteClient, groupName, measureName,
 				createdAt1.AsTime(), time.Now().Add(time.Hour), r1)
 			if queryErr1 != nil {
@@ -516,7 +517,7 @@ var _ = g.Describe("Schema shape-break rejection", func() {
 
 		// Post-write query [CreatedAt2, now+1h] must return the newly-written point.
 		// Same write→query visibility race as the  baseline.
-		gm.Eventually(func() int {
+		test.EventuallyConsistently(func() int {
 			queryResp3, queryErr3 := queryMeasureRange(ctx, clients.MeasureWriteClient, groupName, measureName,
 				createdAt2.AsTime(), time.Now().Add(time.Hour), r2)
 			if queryErr3 != nil {

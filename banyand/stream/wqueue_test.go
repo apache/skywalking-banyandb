@@ -79,10 +79,14 @@ func Test_newWriteQueue(t *testing.T) {
 	require.NotNil(t, tst)
 	defer tst.Close()
 
-	// Wait for the creator to be set to snapshotCreatorSyncer
+	// Seed one batch of elements so the flush -> sync pipeline has a part to sync,
+	// then wait for the syncer to claim the snapshot. Re-adding elements on every
+	// poll (the previous approach) reset the snapshot creator back to
+	// snapshotCreatorMemPart each iteration, so a flush+sync that lagged the poll's
+	// 100ms window was never observed and this wait flaked under load. Adding once
+	// leaves the creator to settle on snapshotCreatorSyncer and stay there.
+	tst.mustAddElements(es)
 	assert.Eventually(t, func() bool {
-		tst.mustAddElements(es)
-		time.Sleep(100 * time.Millisecond)
 		s := tst.currentSnapshot()
 		if s == nil {
 			return false

@@ -28,6 +28,7 @@ import (
 
 	"github.com/apache/skywalking-banyandb/pkg/grpchelper"
 	"github.com/apache/skywalking-banyandb/pkg/pool"
+	"github.com/apache/skywalking-banyandb/pkg/test"
 	"github.com/apache/skywalking-banyandb/pkg/test/flags"
 	"github.com/apache/skywalking-banyandb/pkg/test/gmatcher"
 	"github.com/apache/skywalking-banyandb/pkg/test/helpers"
@@ -63,7 +64,7 @@ var _ = g.Describe("Query service_cpm_minute", func() {
 	})
 	g.It("queries service_cpm_minute by id after updating", func() {
 		casesMeasureData.Write(conn, "service_cpm_minute", "sw_metric", "service_cpm_minute_data1.json", baseTime, interval)
-		gm.Eventually(func(innerGm gm.Gomega) {
+		test.EventuallyConsistently(func(innerGm gm.Gomega) {
 			casesMeasureData.VerifyFn(innerGm, helpers.SharedContext{
 				Connection: conn,
 				BaseTime:   baseTime,

@@ -323,9 +323,17 @@ func startingEachTest(nodes *[]*nodeContext, ctrl *gomock.Controller, c *testCas
 }
 
 func startDataNodes(ctrl *gomock.Controller, nodes []node, groups []group) []*nodeContext {
+	// Allocate every node's gossip port in a single call so all ports are held
+	// simultaneously and are guaranteed distinct. Allocating one port per node
+	// separately releases each port before the async gossip server binds it,
+	// letting the OS hand the same just-released port to two nodes that then race
+	// to bind it — the loser hits "address already in use", the gossip server
+	// silently never comes up, and the readiness dial times out.
+	ports, err := test.AllocateFreePorts(len(nodes))
+	gomega.Expect(err).NotTo(gomega.HaveOccurred())
 	result := make([]*nodeContext, 0, len(nodes))
-	for _, n := range nodes {
-		result = append(result, startEachNode(ctrl, n, groups))
+	for i, n := range nodes {
+		result = append(result, startEachNode(ctrl, n, groups, ports[i]))
 	}
 
 	// registering the node in the gossip system
@@ -351,7 +359,7 @@ func startDataNodes(ctrl *gomock.Controller, nodes []node, groups []group) []*no
 	return result
 }
 
-func startEachNode(ctrl *gomock.Controller, node node, groups []group) *nodeContext {
+func startEachNode(ctrl *gomock.Controller, node node, groups []group, port int) *nodeContext {
 	if node.treeSlotCount == 0 {
 		node.treeSlotCount = 32 // default value for tree slot count
 	}
@@ -382,12 +390,10 @@ func startEachNode(ctrl *gomock.Controller, node node, groups []group) *nodeCont
 	mockRepo.EXPECT().RegisterHandler("", schema.KindGroup, gomock.Any()).MaxTimes(1)
 	mockRepo.EXPECT().GroupRegistry().Return(mockGroup).AnyTimes()
 
-	ports, err := test.AllocateFreePorts(1)
-	gomega.Expect(err).NotTo(gomega.HaveOccurred())
 	messenger := gossip.NewMessengerWithoutMetadata("property-repair",
 		func(n *databasev1.Node) string { return n.PropertyRepairGossipGrpcAddress },
-		observability.NewBypassRegistry(), ports[0])
-	addr := fmt.Sprintf("127.0.0.1:%d", ports[0])
+		observability.NewBypassRegistry(), port)
+	addr := fmt.Sprintf("127.0.0.1:%d", port)
 	result.nodeID = addr
 	err = messenger.Validate()
 	gomega.Expect(err).NotTo(gomega.HaveOccurred())
@@ -531,7 +537,7 @@ func queryPropertyWithVerify(db *database, p property) {
 	}, groupField, entityID)
 	gomega.Expect(err).NotTo(gomega.HaveOccurred())
 
-	gomega.Eventually(func() *property {
+	test.EventuallyConsistently(func() *property {
 		dataList, err := s.search(context.Background(), query, nil, 10)
 		if err != nil {
 			return nil
