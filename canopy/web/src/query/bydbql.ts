@@ -18,6 +18,8 @@
  */
 
 // bydbql.ts — pure BydbQL codegen for the M4 QueryConsole.
+
+import type { Group } from 'canopy-shared';
 // Ported verbatim from .handoff-import/banyandb/project/query-builder.jsx
 // (qbNodeSQL / buildBydbQL / qbQuote / QB_CATALOGS / QB_OPS / QB_AGGS /
 // QB_TIMES / QB_COMBINATORS / QB_TOPN_OPS / QB_TOPN_AGGS).
@@ -380,4 +382,116 @@ export const qbPruneWhere = (
     }
   }
   return { ...group, children: pruned as readonly QBWhereLeafWithConn[] };
+};
+
+// ── Fuzzy resource search (From-row search box) ─────────────────────────────
+
+/** A resource row in the search index, before scoring. */
+export interface QBSearchHitRaw {
+  readonly catalog: QB_CATALOG_VALUE;
+  readonly group: string;
+  readonly resource: string;
+  readonly label: string;
+}
+
+/** A scored search hit with the matched character indices highlighted. */
+export interface QBSearchHit extends QBSearchHitRaw {
+  readonly score: number;
+  readonly marks: readonly number[];
+  readonly gmarks: readonly number[];
+}
+
+/** Map of `${dataCatalog}/${groupName}` → resource names for that group. */
+export type GroupResourcesMap = ReadonlyMap<string, readonly string[]>;
+
+/** Map BanyanDB's `CATALOG_*` enum to our short catalog key. */
+const protoCatalogToData = (c: Group['catalog']): 'measures' | 'streams' | 'traces' | null => {
+  switch (c) {
+    case 'CATALOG_MEASURE':
+      return 'measures';
+    case 'CATALOG_STREAM':
+      return 'streams';
+    case 'CATALOG_TRACE':
+      return 'traces';
+    default:
+      return null;
+  }
+};
+
+/**
+ * Flatten every queryable target (measures / streams / traces / top-n) into one
+ * searchable index. Top-N entries are derived per-measure (their schema lives
+ * in the measures catalog).
+ */
+export const qbSearchIndex = (
+  groups: readonly Group[],
+  groupResources: GroupResourcesMap,
+): readonly QBSearchHitRaw[] => {
+  const out: QBSearchHitRaw[] = [];
+  for (const c of QB_CATALOGS) {
+    const src = qbDataCatalog(c.value); // 'topn' → 'measures'
+    for (const g of groups) {
+      const dataKey = protoCatalogToData(g.catalog);
+      if (dataKey !== src) continue;
+      const resources = groupResources.get(`${src}/${g.name}`) ?? [];
+      for (const r of resources) {
+        out.push({ catalog: c.value, group: g.name, resource: r, label: c.label });
+      }
+    }
+  }
+  return out;
+};
+
+/**
+ * Subsequence fuzzy match. Returns null on miss, else `{score, marks}` where
+ * `marks` are the matched character indices in `text`. Rewards contiguous runs
+ * and word-boundary hits; favours short, early matches.
+ */
+export const qbFuzzy = (
+  query: string,
+  text: string,
+): { score: number; marks: readonly number[] } | null => {
+  const q = (query || '').toLowerCase();
+  const t = (text || '').toLowerCase();
+  if (!q) return { score: 0, marks: [] };
+  let qi = 0;
+  let score = 0;
+  let prev = -2;
+  const marks: number[] = [];
+  for (let ti = 0; ti < t.length && qi < q.length; ti++) {
+    if (t[ti] === q[qi]) {
+      marks.push(ti);
+      score += ti === prev + 1 ? 6 : 1; // contiguous run
+      if (ti === 0 || /[^a-z0-9]/i.test(t[ti - 1])) score += 4; // word boundary
+      prev = ti;
+      qi++;
+    }
+  }
+  if (qi < q.length) return null;
+  score += Math.max(0, 12 - text.length / 4) + (marks[0] === 0 ? 8 : 0);
+  return { score, marks };
+};
+
+/** Rank the index against a query. Matches both resource name and group name. */
+export const qbSearchResults = (
+  index: readonly QBSearchHitRaw[],
+  query: string,
+  limit: number,
+): readonly QBSearchHit[] => {
+  const q = (query || '').trim();
+  if (!q) return [];
+  const scored: QBSearchHit[] = [];
+  for (const it of index) {
+    const m = qbFuzzy(q, it.resource);
+    const gm = qbFuzzy(q, it.group);
+    if (!m && !gm) continue;
+    scored.push({
+      ...it,
+      marks: m ? m.marks : [],
+      gmarks: !m && gm ? gm.marks : [],
+      score: (m ? m.score : 0) + (gm ? gm.score * 0.4 : 0),
+    });
+  }
+  scored.sort((a, b) => b.score - a.score);
+  return scored.slice(0, limit || 8);
 };

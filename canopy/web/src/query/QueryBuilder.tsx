@@ -30,10 +30,12 @@ import React from 'react';
 import {
   QB_CATALOGS, QB_CAT, QB_OPS, QB_AGGS, QB_TIMES, QB_COMBINATORS,
   qbDataCatalog, qbIsGroup, qbNewCond, qbNewGroup, qbEmptyWhere, qbPruneWhere,
+  qbSearchIndex, qbSearchResults,
     buildBydbQL,
     type QBWhereNode, type QBWhereGroupWithConn, type QBWhereLeafWithConn,
-  type QBBuilderState, type QB_CATALOG_VALUE, type QBWhereLeafWithConn,
+    type QBBuilderState, type QB_CATALOG_VALUE, type QBSearchHit, type GroupResourcesMap,
 } from './bydbql.js';
+import type { Group } from 'canopy-shared';
 
 // Catalog icons — same paths as the handoff's icons.jsx (Measure / Stream /
 // Trace / Top-N). Inline SVG so the rail matches without a separate import.
@@ -124,6 +126,118 @@ const IconParens = (p: React.SVGProps<SVGSVGElement>) => (
   </svg>
 );
 
+/* ---- fuzzy resource search box (From row) ---- */
+// Render a string with matched characters highlighted via <mark className="qb-fz-hl">.
+function QBHighlight({ text, marks }: { readonly text: string; readonly marks: readonly number[] }) {
+  if (!marks || !marks.length) return <>{text}</>;
+  const set = new Set<number>(marks);
+  return (
+    <>
+      {text.split('').map((ch, i) => (set.has(i) ? <mark key={i} className="qb-fz-hl">{ch}</mark> : ch))}
+    </>
+  );
+}
+
+interface QBResourceSearchProps {
+  readonly groups: readonly Group[];
+  readonly groupResources: GroupResourcesMap;
+  readonly onPick: (catalog: QB_CATALOG_VALUE, group: string, resource: string) => void;
+}
+
+// Search box: type a name, arrow/enter to jump to that resource across every
+// catalog. Ported from the handoff's QBResourceSearch in
+// .handoff-import/banyandb/project/query-builder.jsx.
+function QBResourceSearch({ groups, groupResources, onPick }: QBResourceSearchProps) {
+  const [q, setQ] = React.useState('');
+  const [open, setOpen] = React.useState(false);
+  const [active, setActive] = React.useState(0);
+  const wrapRef = React.useRef<HTMLDivElement | null>(null);
+  const inputRef = React.useRef<HTMLInputElement | null>(null);
+
+  const index = React.useMemo(() => qbSearchIndex(groups, groupResources), [groups, groupResources]);
+  const results = React.useMemo(() => qbSearchResults(index, q, 8), [index, q]);
+
+  React.useEffect(() => { setActive(0); }, [q]);
+  React.useEffect(() => {
+    const onDoc = (e: MouseEvent) => {
+      if (wrapRef.current && !wrapRef.current.contains(e.target as Node)) setOpen(false);
+    };
+    document.addEventListener('mousedown', onDoc);
+    return () => document.removeEventListener('mousedown', onDoc);
+  }, []);
+
+  const pick = (it: QBSearchHit) => {
+    onPick(it.catalog, it.group, it.resource);
+    setQ('');
+    setOpen(false);
+    if (inputRef.current) inputRef.current.blur();
+  };
+
+  const onKey = (e: React.KeyboardEvent<HTMLInputElement>) => {
+    if (e.key === 'Escape') { setOpen(false); return; }
+    if (!results.length) return;
+    if (e.key === 'ArrowDown') { e.preventDefault(); setActive((a) => Math.min(results.length - 1, a + 1)); }
+    else if (e.key === 'ArrowUp') { e.preventDefault(); setActive((a) => Math.max(0, a - 1)); }
+    else if (e.key === 'Enter') { e.preventDefault(); pick(results[active]); }
+  };
+
+  const showMenu = open && q.trim().length > 0;
+  return (
+    <div className="qb-search" ref={wrapRef}>
+      <span className="qb-search-ico"><IconSearch width={15} height={15} /></span>
+      <input
+        ref={inputRef}
+        className="qb-search-input"
+        value={q}
+        placeholder="Search any measure, stream, trace or Top-N by name…"
+        aria-label="Search resources by name"
+        autoComplete="off"
+        spellCheck={false}
+        onChange={(e) => { setQ(e.target.value); setOpen(true); }}
+        onFocus={() => setOpen(true)}
+        onKeyDown={onKey}
+      />
+      {q && (
+        <button
+          type="button"
+          className="qb-search-clear"
+          title="Clear search"
+          aria-label="Clear search"
+          onMouseDown={(e) => e.preventDefault()}
+          onClick={() => { setQ(''); if (inputRef.current) inputRef.current.focus(); }}
+        >
+          <IconClose width={13} height={13} />
+        </button>
+      )}
+      {showMenu && (
+        <div className="qb-search-menu" role="listbox">
+          {results.length === 0 ? (
+            <div className="qb-search-empty">No measure, stream, trace or Top-N named &ldquo;{q.trim()}&rdquo;</div>
+          ) : results.map((it, i) => {
+            const Ico = CATALOG_ICON[it.catalog];
+            return (
+              <button
+                key={`${it.catalog}/${it.group}/${it.resource}`}
+                type="button"
+                role="option"
+                aria-selected={i === active}
+                className={'qb-search-item' + (i === active ? ' is-active' : '')}
+                onMouseEnter={() => setActive(i)}
+                onMouseDown={(e) => e.preventDefault()}
+                onClick={() => pick(it)}
+              >
+                <span className="qb-search-badge">{Ico && <Ico width={13} height={13} />} {it.label}</span>
+                <span className="qb-search-name mono"><QBHighlight text={it.resource} marks={it.marks} /></span>
+                <span className="qb-search-grp mono">in <QBHighlight text={it.group} marks={it.gmarks} /></span>
+              </button>
+            );
+          })}
+        </div>
+      )}
+    </div>
+  );
+}
+
 export interface QueryBuilderProps {
   readonly state: QBBuilderState;
   readonly onChange: (patch: Partial<QBBuilderState>) => void;
@@ -131,6 +245,12 @@ export interface QueryBuilderProps {
   readonly fields: readonly string[];
   readonly groupNames: readonly string[];
   readonly resourceNames: readonly string[];
+  /** All groups (used by the From-row fuzzy search to enumerate every catalog). */
+  readonly groups: readonly Group[];
+  /** Pre-fetched resources keyed by `${dataCatalog}/${groupName}`. */
+  readonly groupResources: GroupResourcesMap;
+  /** Called when the user picks a hit in the From-row fuzzy search. */
+  readonly onPickResource: (catalog: QB_CATALOG_VALUE, group: string, resource: string) => void;
   readonly isRunning: boolean;
   readonly onEjectToCode: () => void;
   readonly onRun: () => void;
@@ -273,6 +393,7 @@ function QBRow({ node, index, tags, fields, isFirst, onChange, onRemove, onAddCo
 
 export function QueryBuilder({
   state, onChange, tags, fields, groupNames, resourceNames,
+  groups, groupResources, onPickResource,
   isRunning, onEjectToCode, onRun, onReset,
 }: QueryBuilderProps) {
   const cat = QB_CAT(state.catalog);
@@ -345,18 +466,11 @@ export function QueryBuilder({
       {/* ── FROM ─────────────────────────────────────────────── */}
       <div className="qb-section">
         <div className="qb-section-h" title="Pick what to query, then the group and resource it lives in.">FROM</div>
-        <div className="qb-search">
-          <span className="qb-search-ico"><IconSearch width={15} height={15} /></span>
-          <input
-            className="qb-search-input"
-            placeholder="Search any measure, stream, trace or Top-N by name…"
-            aria-label="Search resources by name"
-            autoComplete="off"
-            spellCheck={false}
-            value=""
-            onChange={() => { /* future: fuzzy filter on the catalog list */ }}
-          />
-        </div>
+        <QBResourceSearch
+          groups={groups}
+          groupResources={groupResources}
+          onPick={onPickResource}
+        />
         <div className="qb-cat-seg" role="tablist" aria-label="Target type">
           {QB_CATALOGS.map((c) => {
             const Ico = CATALOG_ICON[c.value];

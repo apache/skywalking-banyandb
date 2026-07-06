@@ -33,7 +33,7 @@ import { TopNResultView } from './results/TopNResultView.js';
 import {
   buildBydbQL, qbDataCatalog, qbEmptyWhere, qbPruneWhere, qbNewCond,
   qbProtoCatalog,
-  type QBBuilderState,
+  type QBBuilderState, type GroupResourcesMap, type QB_CATALOG_VALUE,
 } from './bydbql.js';
 import { apiDataSource } from '../data/api.js';
 import { useRunQuery } from '../data/hooks.js';
@@ -147,6 +147,27 @@ export function QueryConsole() {
 
   const patch = (p: Partial<QBBuilderState>) => setState((s) => ({ ...s, ...p }));
 
+  // Handler for the From-row fuzzy search: pick any catalog/group/resource
+  // combo, cascade-reset SELECT/WHERE/GROUP BY, and stamp fromResource so the
+  // pre-filled banner shows. Mirrors the handoff's pickResource in
+  // .handoff-import/banyandb/project/query-console.jsx.
+  const onPickResource = (catalog: QB_CATALOG_VALUE, group: string, resource: string) => {
+    const isMeasure = catalog === 'measures';
+    patch({
+      catalog,
+      group,
+      resource,
+      select: isMeasure ? [] : [],
+      projection: isMeasure ? [] : [],
+      where: qbEmptyWhere(),
+      groupBy: [],
+      orderField: 'time',
+      orderDir: 'DESC',
+      fromResource: `${group}/${resource}`,
+      fromAgg: null,
+    });
+  };
+
   const srcCat = qbDataCatalog(state.catalog);
   // srcCat is the data catalog ('measures' | 'streams' | 'traces'); map to
   // the BanyanDB proto enum used by group filtering. qbProtoCatalog returns
@@ -161,6 +182,11 @@ export function QueryConsole() {
   // empty even though the live cluster had tag/field metadata.
   type ResourceWithSchema = MeasureSchema & { name: string };
   const [resourceList, setResourceList] = useState<readonly ResourceWithSchema[]>([]);
+  // Cached resource names keyed by `${dataCatalog}/${groupName}` so the From-row
+  // fuzzy search can span every catalog at once. The per-group fetch below
+  // primes the current entry; the prefetch effect after this block fills the
+  // rest in the background.
+  const [groupResources, setGroupResources] = useState<Map<string, readonly string[]>>(new Map());
   useEffect(() => {
     let cancelled = false;
     if (!state.group) { setResourceList([]); return; }
@@ -173,12 +199,52 @@ export function QueryConsole() {
           setResourceList(
             rs.map((r) => ({ ...(r as object), name: (r as { metadata: { name: string } }).metadata.name })) as readonly ResourceWithSchema[],
           );
+          setGroupResources((prev) => {
+            const next = new Map(prev);
+            next.set(
+              `${cat}/${state.group}`,
+              rs.map((r) => (r as { metadata: { name: string } }).metadata.name),
+            );
+            return next;
+          });
         }
       },
       () => { if (!cancelled) setResourceList([]); },
     );
     return () => { cancelled = true; };
   }, [state.group, srcCat]);
+
+  // Pre-fetch resources for every group so the From-row fuzzy search has the
+  // full index as soon as possible. Runs once per `groups` change.
+  useEffect(() => {
+    if (!groupsLoaded || groups.length === 0) return;
+    let cancelled = false;
+    const fetches = groups.map(async (g) => {
+      let dataCat: 'measures' | 'streams' | 'traces' | null = null;
+      switch (g.catalog) {
+        case 'CATALOG_MEASURE': dataCat = 'measures'; break;
+        case 'CATALOG_STREAM': dataCat = 'streams'; break;
+        case 'CATALOG_TRACE': dataCat = 'traces'; break;
+        default: return null; // PROPERTY / UNSPECIFIED — skip
+      }
+      const rs = await apiDataSource.listResourcesInGroup(dataCat, g.name);
+      return {
+        key: `${dataCat}/${g.name}`,
+        names: rs.map((r) => (r as { metadata: { name: string } }).metadata.name).sort(),
+      };
+    });
+    Promise.allSettled(fetches).then((results) => {
+      if (cancelled) return;
+      setGroupResources((prev) => {
+        const next = new Map(prev);
+        for (const r of results) {
+          if (r.status === 'fulfilled' && r.value) next.set(r.value.key, r.value.names);
+        }
+        return next;
+      });
+    });
+    return () => { cancelled = true; };
+  }, [groupsLoaded, groups]);
 
   const currentResource = resourceList.find((r) => r.name === state.resource);
   // Field / tag lists — stream/measure carry tagFamilies; trace same.
@@ -368,6 +434,9 @@ export function QueryConsole() {
                 fields={fields}
                 groupNames={groupNames}
                 resourceNames={resourceList.map((r) => r.name)}
+                groups={groups}
+                groupResources={groupResources}
+                onPickResource={onPickResource}
                 isRunning={runMutation.isPending}
                 onEjectToCode={() => { setCode(generated); setCodeDirty(false); setMode('code'); }}
                 onRun={run}
