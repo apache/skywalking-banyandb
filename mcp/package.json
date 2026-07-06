@@ -8,6 +8,7 @@
     "build:validator": "node tools/build-validator.js",
     "build": "tsc",
     "build:all": "npm run build && npm run build:validator",
+    "check:plugin-manifests": "node tools/check-plugin-manifests.js",
     "start": "node dist/index.js",
     "dev": "tsx src/index.ts",
     "test": "vitest run",

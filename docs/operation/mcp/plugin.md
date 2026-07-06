@@ -78,15 +78,20 @@ recompiling.
 }
 ```
 
-`cwd: "."` and `args: ["./mcp/dist/index.js"]` are resolved relative to the plugin
-root (the repository root when developing from a checkout). Load the plugin from
-the repository root, or adjust these relative paths to match your install
-location if the plugin loader resolves them differently.
+Codex installs this marketplace entry from `source.path: "./"`, so the installed
+plugin root is the repository root. The MCP loader resolves `cwd: "."` relative
+to that installed plugin root, then resolves `./mcp/dist/index.js` from the same
+directory. This means the checked-out layout and installed layout are expected
+to match: `.mcp.json`, `mcp/dist/`, `mcp/tools/bin/`, and `skills/` all live
+under the plugin root. If you manually copy only part of the repository, keep
+that layout or update the relative paths in `.mcp.json`.
 
 ## Keeping the manifests in sync
 
 `.claude-plugin/plugin.json` and `.codex-plugin/plugin.json` are intentionally
 identical except for the `version` field — the Codex manifest carries a
-`+codex.<timestamp>` build-metadata suffix. When you change one manifest
-(description, keywords, `interface`, `skills`, `mcpServers`, etc.), mirror the
-exact change into the other and keep the `version` values as the only difference.
+`+codex.<timestamp>` build-metadata suffix. `make -C mcp test` runs
+`npm run check:plugin-manifests`, which fails if any non-version field drifts or
+if the Codex version does not use the Claude version as its base. When you change
+one manifest (description, keywords, `interface`, `skills`, `mcpServers`, etc.),
+mirror the exact change into the other and run that check.

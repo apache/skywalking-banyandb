@@ -71,6 +71,7 @@ clean-build:
 
 .PHONY: test
 test: install
+	npm run check:plugin-manifests
 	npm run build:validator
 	npm test
 	go test ./tools/...
