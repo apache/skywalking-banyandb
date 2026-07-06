@@ -74,6 +74,7 @@ type schemaRepo struct {
 	path                   string
 	nodeID                 string
 	trustedPluginDir       string
+	finalizeGraceDefault   time.Duration
 	role                   databasev1.Role
 	nativePipelineEnabled  bool
 }
@@ -88,6 +89,7 @@ func newSchemaRepo(path string, svc *standalone, nodeLabels map[string]string, n
 		role:                   databasev1.Role_ROLE_DATA,
 		nativePipelineEnabled:  svc.option.nativePipelineEnabled,
 		trustedPluginDir:       svc.option.trustedPluginDir,
+		finalizeGraceDefault:   svc.option.finalizeGraceDefault,
 		samplerMeter:           newSamplerMetrics(pipelineFactory),
 		pluginTelemetryFactory: pipelineFactory,
 		Repository: resourceSchema.NewRepository(
@@ -253,6 +255,8 @@ func (sr *schemaRepo) OnDelete(metadata schema.Metadata) {
 			removeSamplersForGroup(g.Metadata.Name)
 			teardownGroupTelemetry(g.Metadata.Name)
 			setMergeGraceForGroup(g.Metadata.Name, 0)
+			setFinalizeGraceForGroup(g.Metadata.Name, 0)
+			setFinalizeConfigForGroup(g.Metadata.Name, nil)
 			sr.samplerMeter.setActiveCount(g.Metadata.Name, 0)
 			sr.samplerMeter.incRemoveTotal(g.Metadata.Name)
 		}
@@ -298,6 +302,14 @@ func mergeEventEnabled(cfg *commonv1.TracePipelineConfig) bool {
 	return slices.Contains(events, commonv1.PipelineEvent_PIPELINE_EVENT_MERGE)
 }
 
+// finalizeEventEnabled reports whether cfg applies to the scheduled finalization
+// pass. Unlike MERGE, an empty enabled_events list does NOT default finalize on:
+// finalization is an extra background procedure and must be opted into explicitly
+// (empty list keeps only the backward-compatible MERGE default).
+func finalizeEventEnabled(cfg *commonv1.TracePipelineConfig) bool {
+	return slices.Contains(cfg.GetEnabledEvents(), commonv1.PipelineEvent_PIPELINE_EVENT_FINALIZE)
+}
+
 // samplerLoadFailReason maps a plugin load error to a small, stable set of reason
 // codes for the sampler_load_failed metric label, keeping label cardinality bounded
 // (the full error is logged separately). Unrecognized errors fall back to "load_error".
@@ -334,14 +346,18 @@ func samplerLoadFailReason(err error) string {
 // merge_grace. If any plugin fails to load, the previous good set is kept intact
 // (fail-open) and an ERROR log is emitted.
 func (sr *schemaRepo) reconcilePipeline(group string, cfg *commonv1.TracePipelineConfig) {
-	// A nil/disabled config, or one that does not enable the merge event, clears the
-	// group's samplers (retain all). enabled_events is honored here so merge filtering
-	// can be disabled without removing the config.
-	if cfg == nil || !cfg.GetEnabled() || !mergeEventEnabled(cfg) {
+	// A nil/disabled config, or one that enables NEITHER the merge nor the finalize
+	// event, clears the group's samplers (retain all). The sampler set is shared by
+	// both events (DD11: finalize reuses the group's registered samplers), so it is
+	// cleared only when both are off. enabled_events is honored here so filtering can
+	// be disabled without removing the config.
+	if cfg == nil || !cfg.GetEnabled() || (!mergeEventEnabled(cfg) && !finalizeEventEnabled(cfg)) {
 		hadSamplers := len(lookupSamplers(group)) > 0
 		removeSamplersForGroup(group)
 		teardownGroupTelemetry(group)
 		setMergeGraceForGroup(group, 0)
+		setFinalizeGraceForGroup(group, 0)
+		setFinalizeConfigForGroup(group, nil)
 		sr.samplerMeter.setActiveCount(group, 0)
 		if hadSamplers {
 			sr.samplerMeter.incRemoveTotal(group)
@@ -449,6 +465,22 @@ func (sr *schemaRepo) reconcilePipeline(group string, cfg *commonv1.TracePipelin
 		graceNs = gd.AsDuration().Nanoseconds()
 	}
 	setMergeGraceForGroup(group, graceNs)
+	// Store finalize_grace + threshold config ONLY when the FINALIZE event is enabled;
+	// a finalize config entry is what marks a group for the background finalize scanner
+	// (a merge-only group must not be scanned). The proto carries no threshold-override
+	// fields in v1, so the config registry holds defaults (filled by lookupFinalizeConfig).
+	// finalize_grace falls back to option.finalizeGraceDefault at lookup time when unset.
+	if finalizeEventEnabled(cfg) {
+		var finalizeGraceNs int64
+		if fg := cfg.GetFinalizeGrace(); fg != nil {
+			finalizeGraceNs = fg.AsDuration().Nanoseconds()
+		}
+		setFinalizeGraceForGroup(group, finalizeGraceNs)
+		setFinalizeConfigForGroup(group, &finalizeConfig{})
+	} else {
+		setFinalizeGraceForGroup(group, 0)
+		setFinalizeConfigForGroup(group, nil)
+	}
 	sr.samplerMeter.setActiveCount(group, len(newSet))
 	if isUpdate {
 		sr.samplerMeter.incUpdateTotal(group, "success")

@@ -41,10 +41,12 @@ import (
 var mergeMaxConcurrencyCh = make(chan struct{}, cgroups.CPUs())
 
 const (
-	mergeTypeMem  = "mem"
-	mergeTypeFile = "file"
-	mergeLaneFast = "fast"
-	mergeLaneSlow = "slow"
+	mergeTypeMem      = "mem"
+	mergeTypeFile     = "file"
+	mergeTypeFinalize = "finalize"
+	mergeLaneFast     = "fast"
+	mergeLaneSlow     = "slow"
+	mergeLaneFinalize = "finalize"
 )
 
 const defaultSmallMergeThreshold = 32 << 20 // 32MB fallback
@@ -225,6 +227,27 @@ func (tst *tsTable) dispatchAllMerges(threshold uint64, fastCh, slowCh chan *mer
 		if tst.inFlight == nil {
 			tst.inFlight = make(map[uint64]struct{})
 		}
+		// Re-check membership under the lock before pinning. getPartsToMerge already
+		// skips in-flight parts, but the finalize scanner is a second, concurrent part
+		// selector: it may have pinned one of these parts in the window between
+		// getPartsToMerge's RLock and this Lock. Pinning it here anyway would let both
+		// actors merge the same part, and since snapshot.remove tolerates an absent id
+		// both merge outputs would survive — duplicating traces. On conflict, abandon
+		// this dispatch cycle (the next flush trigger re-dispatches).
+		conflict := false
+		for _, pw := range dst {
+			if _, inFlight := tst.inFlight[pw.ID()]; inFlight {
+				conflict = true
+				break
+			}
+		}
+		if conflict {
+			tst.inFlightMu.Unlock()
+			for _, pw := range dst {
+				pw.decRef()
+			}
+			return false
+		}
 		for _, pw := range dst {
 			tst.inFlight[pw.ID()] = struct{}{}
 		}
@@ -288,7 +311,7 @@ func (tst *tsTable) mergeLaneWorker(ch chan *mergeDispatchRequest, merges chan *
 		tst.incTotalMergeLoopStarted(1)
 		_, mergeErr := tst.mergePartsThenSendIntroduction(
 			snapshotCreatorMerger, req.parts, req.toBeMerged, merges,
-			tst.loopCloser.CloseNotify(), req.typ, req.lane,
+			tst.loopCloser.CloseNotify(), req.typ, req.lane, nil,
 		)
 		tst.incTotalMergeLoopFinished(1)
 		<-mergeMaxConcurrencyCh
@@ -315,32 +338,63 @@ func (tst *tsTable) releaseDispatchRequest(req *mergeDispatchRequest) {
 	}
 }
 
+// mergeOverrides lets the finalize round drive mergePartsThenSendIntroduction with a
+// pre-built sampler filter (bypassing the hot-path isMergeHot/merge_grace build) and a
+// finalize-generation stamp for the output part. A nil *mergeOverrides means the hot /
+// flusher path: build the filter from merge-time rules and min-propagate finalizeGen.
+type mergeOverrides struct {
+	filter      *mergeFilter
+	finalizeGen *uint64
+}
+
+// buildHotMergeFilter builds the in-merge retention filter for the hot / flusher merge
+// path from the merge-time rules (registered samplers + merge_grace maturity). It
+// returns nil when the native pipeline is off, no samplers are registered, or the merge
+// is still hot (parts younger than merge_grace), in which case the merge runs unfiltered.
+func (tst *tsTable) buildHotMergeFilter(parts []*partWrapper) *mergeFilter {
+	if !tst.option.nativePipelineEnabled {
+		return nil
+	}
+	samplers := lookupSamplers(tst.group)
+	if len(samplers) == 0 {
+		return nil
+	}
+	graceNs := lookupMergeGrace(tst.group)
+	if graceNs <= 0 {
+		graceNs = int64(tst.option.mergeGraceDefault)
+	}
+	if isMergeHot(parts, graceNs, time.Now().UnixNano()) {
+		return nil
+	}
+	chain := newMergeChain(tst.group, "", samplers, tst.option.decideTimeoutCircuitBreak)
+	return &mergeFilter{
+		chain:       chain,
+		timeout:     tst.option.decideTimeout,
+		stageBudget: resolveStageBudget(tst.option),
+		forceSlow:   len(chain.projection.Tags) > 0,
+	}
+}
+
 func (tst *tsTable) mergePartsThenSendIntroduction(creator snapshotCreator, parts []*partWrapper, merged map[uint64]struct{}, merges chan *mergerIntroduction,
-	closeCh <-chan struct{}, typ string, lane string,
+	closeCh <-chan struct{}, typ string, lane string, ov *mergeOverrides,
 ) (*partWrapper, error) {
 	reservedSpace := tst.reserveSpace(parts)
 	defer releaseDiskSpace(reservedSpace)
 	start := time.Now()
 	newPartID := atomic.AddUint64(&tst.curPartID, 1)
 	var filter *mergeFilter
-	if tst.option.nativePipelineEnabled {
-		if samplers := lookupSamplers(tst.group); len(samplers) > 0 {
-			graceNs := lookupMergeGrace(tst.group)
-			if graceNs <= 0 {
-				graceNs = int64(tst.option.mergeGraceDefault)
-			}
-			if !isMergeHot(parts, graceNs, time.Now().UnixNano()) {
-				chain := newMergeChain(tst.group, "", samplers, tst.option.decideTimeoutCircuitBreak)
-				filter = &mergeFilter{
-					chain:       chain,
-					timeout:     tst.option.decideTimeout,
-					stageBudget: resolveStageBudget(tst.option),
-					forceSlow:   len(chain.projection.Tags) > 0,
-				}
-			}
-		}
+	var finalizeGenOverride *uint64
+	if ov != nil {
+		filter = ov.filter
+		finalizeGenOverride = ov.finalizeGen
 	}
-	newPart, dropped, err := tst.mergeParts(tst.fileSystem, closeCh, parts, newPartID, tst.root, filter)
+	// Hot / flusher path (no pre-built filter): build the in-merge retention filter from
+	// the merge-time rules. The finalize path supplies its own filter via ov, so this
+	// hot build is skipped there.
+	if filter == nil {
+		filter = tst.buildHotMergeFilter(parts)
+	}
+	newPart, dropped, err := tst.mergeParts(tst.fileSystem, closeCh, parts, newPartID, tst.root, filter, finalizeGenOverride)
 	if err != nil {
 		return nil, err
 	}
@@ -547,7 +601,7 @@ func (tst *tsTable) removeSidxPartOnFailure(sidxName string, partID uint64) {
 }
 
 func (tst *tsTable) mergeParts(fileSystem fs.FileSystem, closeCh <-chan struct{}, parts []*partWrapper, partID uint64, root string,
-	filter *mergeFilter,
+	filter *mergeFilter, finalizeGenOverride *uint64,
 ) (*partWrapper, map[string]struct{}, error) {
 	if len(parts) == 0 {
 		return nil, nil, errNoPartToMerge
@@ -600,6 +654,23 @@ func (tst *tsTable) mergeParts(fileSystem fs.FileSystem, closeCh <-chan struct{}
 	tt.mustWriteTagType(fileSystem, dstPath)
 	pm.MinTimestamp = minTimestamp
 	pm.MaxTimestamp = maxTimestamp
+	// Finalization-sampling generation stamp, applied BEFORE the on-disk metadata write
+	// (and the subsequent re-open below) so it survives restart. finalizeGenOverride set
+	// => this is a finalize round: stamp the output at the round's generation. nil => any
+	// other merge (hot/flusher): min-propagate from inputs so a merge is "finalized" only
+	// as much as its least-finalized input — merging two G-stamped parts stays G (never
+	// un-finalizes), merging a G part with an unstamped late part yields 0 (selectable).
+	if finalizeGenOverride != nil {
+		pm.FinalizeGen = *finalizeGenOverride
+	} else {
+		minGen := parts[0].p.partMetadata.FinalizeGen
+		for _, pw := range parts[1:] {
+			if g := pw.p.partMetadata.FinalizeGen; g < minGen {
+				minGen = g
+			}
+		}
+		pm.FinalizeGen = minGen
+	}
 	pm.mustWriteMetadata(fileSystem, dstPath)
 	// No SyncPath here: each mustWrite* helper goes through fileSystem.WriteAtomic
 	// which already fsyncs the parent directory after rename. The last atomic

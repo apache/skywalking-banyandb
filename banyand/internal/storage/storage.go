@@ -116,6 +116,13 @@ type TSDB[T TSTable, O any] interface {
 	// stats) returns them without reopening or refreshing their idle timer. The
 	// caller must DecRef every returned segment (a no-op for a closed one).
 	SelectSegments(timeRange timestamp.TimeRange, reopenClosed bool) ([]Segment[T, O], error)
+	// PeekSegments returns lightweight descriptors of the segments overlapping
+	// timeRange WITHOUT opening (incRef-ing) any of them. It lets background
+	// housekeeping inspect per-shard on-disk state cheaply and decide whether a
+	// segment is worth reopening for real work, avoiding a reopen storm over cold
+	// segments. The returned ShardPaths are on-disk directories; the caller reads
+	// them read-only.
+	PeekSegments(timeRange timestamp.TimeRange) []SegmentPeek
 	// SegmentInterval returns the current segment interval rule.
 	SegmentInterval() IntervalRule
 	Tick(ts int64)
@@ -131,6 +138,16 @@ type TSDB[T TSTable, O any] interface {
 	DeleteOldestSegment() (bool, error)
 	// Drop closes the database and removes all data files from disk.
 	Drop() error
+}
+
+// SegmentPeek describes a segment discoverable WITHOUT opening (incRef-ing) it — the
+// segment's time range plus the on-disk paths of its existing shard directories.
+// Background housekeeping (e.g. the trace finalize scanner) uses it to inspect
+// per-shard on-disk state before deciding whether to reopen the segment.
+type SegmentPeek struct {
+	Start      time.Time
+	End        time.Time
+	ShardPaths []string
 }
 
 // Segment is a time range of data.
