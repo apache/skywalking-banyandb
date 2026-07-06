@@ -590,7 +590,7 @@ func releaseStreamSlowCopyArena(a *streamSlowCopyArena) {
 	streamSlowCopyArenaPool.Put(a)
 }
 
-// releaseArenaElements returns an elements to the pool WITHOUT releasing its
+// releaseArenaElements returns elements to the pool WITHOUT releasing its
 // tagValues into the tagValue pool. The slow-copy path fills elements with
 // tagValues owned by a per-call streamSlowCopyArena; releasing them via the
 // normal releaseElements would put arena-backed *tagValue pointers into the
