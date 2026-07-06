@@ -98,8 +98,11 @@ license-fix: $(LICENSE_EYE) ## Fix license header issues
 	$(LICENSE_EYE) header fix
 
 .PHONY: license-dep
-license-dep:$(LICENSE_EYE)
+license-dep: $(LICENSE_EYE)
 	@rm -rf licenses
+	@lock_backup=$$(mktemp); \
+	cp package-lock.json "$$lock_backup"; \
+	trap 'cp "$$lock_backup" package-lock.json; rm -f "$$lock_backup"' EXIT; \
 	$(LICENSE_EYE) dep resolve -o mcp-licenses -s LICENSE.tpl
 
 .PHONY: vendor-update
@@ -114,4 +117,3 @@ check:
 	$(MAKE) test-coverage
 	$(MAKE) license-dep
 	$(MAKE) vendor-update
-
