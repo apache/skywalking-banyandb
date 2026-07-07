@@ -177,6 +177,8 @@ catalog:
             path: "/operation/mcp/inspector"
           - name: "Build and Package"
             path: "/operation/mcp/build"
+          - name: "Plugin Packaging"
+            path: "/operation/mcp/plugin"
       - name: "First Occurrence Data Collection (FODC)"
         catalog:
           - name: "Overview"

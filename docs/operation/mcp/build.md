@@ -62,6 +62,22 @@ npm run build
 
 This compiles TypeScript to JavaScript in the `dist/` directory.
 
+### 2b. Build the BydbQL validator binary
+
+The `validate_bydbql` tool runs the prebuilt Go validator at `tools/bin/bydbql-parse`.
+Build it (requires the Go toolchain) so the tool does not depend on `go run` at
+runtime:
+
+```bash
+npm run build:validator
+```
+
+To produce both the TypeScript output and the validator binary in one step:
+
+```bash
+npm run build:all
+```
+
 The runtime is organized into small modules:
 
 - `src/index.ts` wires together configuration, transport selection, and startup.

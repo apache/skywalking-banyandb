@@ -24,7 +24,7 @@ import { isLoopbackHost, startHttpServer } from './server/http.js';
 import { createMcpServer } from './server/mcp.js';
 import { log, setupGlobalErrorHandlers } from './utils/logger.js';
 
-dotenv.config();
+dotenv.config({ quiet: true });
 setupGlobalErrorHandlers();
 
 async function main() {
