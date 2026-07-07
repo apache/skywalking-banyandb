@@ -183,7 +183,7 @@ traces:
     - key: duration
       value:
         int:
-          value: "150"
+          value: "155"
     - key: trace_id
       value:
         str:
@@ -436,7 +436,7 @@ traces:
     - key: duration
       value:
         int:
-          value: "180"
+          value: "185"
     - key: trace_id
       value:
         str:

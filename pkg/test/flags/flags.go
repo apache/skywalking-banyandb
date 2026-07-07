@@ -30,6 +30,10 @@ var (
 
 	consistentlyTimeout string
 
+	stabilityTimeout string
+
+	quickStabilityTimeout string
+
 	requireKTM string
 
 	// EventuallyTimeout is the timeout of async time cases execution.
@@ -37,6 +41,17 @@ var (
 
 	// ConsistentlyTimeout is the timeout of async time cases execution.
 	ConsistentlyTimeout time.Duration
+
+	// StabilityTimeout is the Consistently window test.EventuallyConsistently
+	// appends after an assertion that had to retry before converging.
+	StabilityTimeout time.Duration
+
+	// QuickStabilityTimeout is the Consistently window appended after an
+	// assertion that converged on its first evaluation. It is intentionally
+	// short — the window runs after every assertion, so its length multiplies
+	// across whole integration suites — yet still re-samples the state a dozen
+	// times to reject one-off lucky matches.
+	QuickStabilityTimeout time.Duration
 
 	// NeverTimeout is the timeout of async time cases execution.
 	NeverTimeout time.Duration
@@ -57,6 +72,12 @@ func init() {
 	}
 	if consistentlyTimeout == "" {
 		consistentlyTimeout = "5s"
+	}
+	if stabilityTimeout == "" {
+		stabilityTimeout = "2s"
+	}
+	if quickStabilityTimeout == "" {
+		quickStabilityTimeout = "200ms"
 	}
 	if requireKTM == "" {
 		requireKTM = "false"
@@ -81,4 +102,14 @@ func init() {
 		panic(err)
 	}
 	ConsistentlyTimeout = d
+	d, err = time.ParseDuration(stabilityTimeout)
+	if err != nil {
+		panic(err)
+	}
+	StabilityTimeout = d
+	d, err = time.ParseDuration(quickStabilityTimeout)
+	if err != nil {
+		panic(err)
+	}
+	QuickStabilityTimeout = d
 }

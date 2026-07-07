@@ -29,6 +29,7 @@ import (
 	commonv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/common/v1"
 	databasev1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/database/v1"
 	"github.com/apache/skywalking-banyandb/pkg/grpchelper"
+	"github.com/apache/skywalking-banyandb/pkg/test"
 	"github.com/apache/skywalking-banyandb/pkg/test/flags"
 	"github.com/apache/skywalking-banyandb/pkg/test/helpers"
 	"github.com/apache/skywalking-banyandb/pkg/test/setup"
@@ -160,7 +161,7 @@ func verifyStreamDataContentWithArgs(conn *grpc.ClientConn, baseTime time.Time, 
 		Connection: conn,
 		BaseTime:   baseTime,
 	}
-	gm.Eventually(func(innerGm gm.Gomega) {
+	test.EventuallyConsistently(func(innerGm gm.Gomega) {
 		casesstreamdata.VerifyFn(innerGm, sharedContext, args)
 	}, flags.EventuallyTimeout).Should(gm.Succeed(),
 		"Should be able to query and verify stream data content")

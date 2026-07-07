@@ -44,6 +44,7 @@ import (
 	streamv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/stream/v1"
 	"github.com/apache/skywalking-banyandb/banyand/backup/lifecycle"
 	"github.com/apache/skywalking-banyandb/pkg/grpchelper"
+	"github.com/apache/skywalking-banyandb/pkg/test"
 	"github.com/apache/skywalking-banyandb/pkg/test/flags"
 )
 
@@ -316,7 +317,7 @@ var _ = ginkgo.Describe("Lifecycle orphan-schema archive", ginkgo.Ordered, func(
 
 		ginkgo.By("verifying the kept measure migrated and is queryable on the warm stage")
 		queryClient := measurev1.NewMeasureServiceClient(conn)
-		gomega.Eventually(func() error {
+		test.EventuallyConsistently(func() error {
 			resp, qErr := queryClient.Query(ctx, &measurev1.QueryRequest{
 				Groups: []string{group}, Name: keep,
 				TimeRange:       &modelv1.TimeRange{Begin: timestamppb.New(leftTS.Add(-time.Hour)), End: timestamppb.New(rightTS.Add(time.Hour))},
@@ -458,7 +459,7 @@ var _ = ginkgo.Describe("Lifecycle orphan-schema archive", ginkgo.Ordered, func(
 
 		ginkgo.By("verifying the kept stream migrated and is queryable on the warm stage")
 		queryClient := streamv1.NewStreamServiceClient(conn)
-		gomega.Eventually(func() error {
+		test.EventuallyConsistently(func() error {
 			resp, qErr := queryClient.Query(ctx, &streamv1.QueryRequest{
 				Groups: []string{group}, Name: keep,
 				TimeRange:  &modelv1.TimeRange{Begin: timestamppb.New(leftTS.Add(-time.Hour)), End: timestamppb.New(rightTS.Add(time.Hour))},

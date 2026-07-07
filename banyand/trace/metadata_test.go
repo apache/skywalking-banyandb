@@ -34,6 +34,7 @@ import (
 	modelv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/model/v1"
 	tracev1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/trace/v1"
 	"github.com/apache/skywalking-banyandb/pkg/bus"
+	"github.com/apache/skywalking-banyandb/pkg/test"
 	"github.com/apache/skywalking-banyandb/pkg/test/flags"
 	"github.com/apache/skywalking-banyandb/pkg/timestamp"
 )
@@ -268,7 +269,7 @@ var _ = Describe("Metadata", func() {
 				deleteTraceExtraTag(svcs, traceName, groupName)
 				writeSchemaChangeTraceData(svcs, traceName, groupName, now.Add(-1*time.Hour), 3, writeTraceDataOptions{})
 
-				Eventually(func(innerGm Gomega) {
+				test.EventuallyConsistently(func(innerGm Gomega) {
 					spans := querySchemaChangeTraceData(svcs, traceName, groupName, now.Add(-3*time.Hour), now,
 						[]string{"trace_id", "service_id", "duration"})
 					innerGm.Expect(spans).To(HaveLen(8))
@@ -434,7 +435,7 @@ var _ = Describe("Metadata", func() {
 				deleteTraceExtraTag(svcs, traceName, groupName)
 				writeSchemaChangeTraceData(svcs, traceName, groupName, now.Add(-1*time.Hour), 3, writeTraceDataOptions{})
 
-				Eventually(func(innerGm Gomega) {
+				test.EventuallyConsistently(func(innerGm Gomega) {
 					err := queryWithDeletedTagCondition(svcs, traceName, groupName, now)
 					innerGm.Expect(err).To(HaveOccurred())
 					innerGm.Expect(err.Error()).To(ContainSubstring("extra_tag"))
@@ -452,7 +453,7 @@ var _ = Describe("Metadata", func() {
 				deleteTraceExtraTag(svcs, traceName, groupName)
 				writeSchemaChangeTraceData(svcs, traceName, groupName, now.Add(-1*time.Hour), 3, writeTraceDataOptions{})
 
-				Eventually(func(innerGm Gomega) {
+				test.EventuallyConsistently(func(innerGm Gomega) {
 					err := queryWithDeletedTagProjection(svcs, traceName, groupName, now)
 					innerGm.Expect(err).To(HaveOccurred())
 					innerGm.Expect(err.Error()).To(ContainSubstring("extra_tag"))
