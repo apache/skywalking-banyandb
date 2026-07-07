@@ -195,9 +195,17 @@ export function toTagValueParams(params: BydbQLParam[]): TagValueParam[] {
       case 'int':
         return { int: { value: validateParamInteger(param.value, position) } };
       case 'str_array':
-        return { strArray: { value: validateParamArray(param.value, position).map((entry) => validateParamString(entry, position)) } };
+        return {
+          strArray: {
+            value: validateParamArray(param.value, position).map((entry) => validateParamString(entry, position)),
+          },
+        };
       case 'int_array':
-        return { intArray: { value: validateParamArray(param.value, position).map((entry) => validateParamInteger(entry, position)) } };
+        return {
+          intArray: {
+            value: validateParamArray(param.value, position).map((entry) => validateParamInteger(entry, position)),
+          },
+        };
       case 'null':
         return { null: null };
       default:

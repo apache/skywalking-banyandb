@@ -25,7 +25,12 @@ import { loadQueryContext } from '../query/context.js';
 import { generateBydbQL } from '../query/llm-prompt.js';
 import type { BydbQLParseValidationResult } from '../query/parse-validator.js';
 import { validateBydbQLSyntax } from '../query/parse-validator.js';
-import { normalizeQueryHints, toTagValueParams, validateListGroupsArgs, validateQueryHints } from '../query/validation.js';
+import {
+  normalizeQueryHints,
+  toTagValueParams,
+  validateListGroupsArgs,
+  validateQueryHints,
+} from '../query/validation.js';
 
 export function truncateText(text: string, maxLength: number): string {
   if (text.length <= maxLength) {
@@ -80,7 +85,8 @@ function buildListToolsResponse() {
           properties: {
             BydbQL: {
               type: 'string',
-              description: 'BydbQL query to execute against BanyanDB. May contain `?` placeholders bound by the params array.',
+              description:
+                'BydbQL query to execute against BanyanDB. May contain `?` placeholders bound by the params array.',
             },
             params: {
               type: 'array',
