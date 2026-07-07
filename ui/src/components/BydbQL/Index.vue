@@ -49,6 +49,10 @@ SELECT * FROM STREAM log in sw_recordsLog TIME > '-30m'`);
   const executionTime = ref(0);
   const codeMirrorInstance = ref(null);
   const editorLoading = ref(true);
+  // Positional parameters bound to `?` placeholders in the query, in order of appearance
+  const queryParams = ref([]);
+  const paramTypes = ['str', 'int', 'str_array', 'int_array', 'null'];
+  const integerPattern = /^-?\d+$/;
 
   const hasResult = computed(() => queryResult.value !== null);
   const resultType = computed(() => {
@@ -262,7 +266,21 @@ SELECT * FROM STREAM log in sw_recordsLog TIME > '-30m'`);
       .join('\n')
       .trim();
 
-    const response = await executeBydbQLQuery({ query: cleanQuery });
+    let boundParams;
+    try {
+      boundParams = buildBoundParams();
+    } catch (paramError) {
+      loading.value = false;
+      error.value = paramError.message;
+      ElMessage.error(paramError.message);
+      return;
+    }
+
+    const requestBody = { query: cleanQuery };
+    if (boundParams.length > 0) {
+      requestBody.params = boundParams;
+    }
+    const response = await executeBydbQLQuery(requestBody);
     const endTime = performance.now();
     loading.value = false;
     executionTime.value = Math.round(endTime - startTime);
@@ -281,6 +299,62 @@ SELECT * FROM STREAM log in sw_recordsLog TIME > '-30m'`);
     queryResult.value = null;
     error.value = null;
     executionTime.value = 0;
+    queryParams.value = [];
+  }
+
+  function addParam() {
+    queryParams.value.push({ type: 'str', value: '' });
+  }
+
+  function removeParam(index) {
+    queryParams.value.splice(index, 1);
+  }
+
+  function splitArrayValue(raw, position) {
+    const entries = raw
+      .split(',')
+      .map((entry) => entry.trim())
+      .filter((entry) => entry !== '');
+    if (entries.length === 0) {
+      throw new Error(`${position} must contain at least one value`);
+    }
+    return entries;
+  }
+
+  // Convert the parameter rows to protojson TagValue form accepted by the HTTP API.
+  // Keep in sync with toTagValueParams in mcp/src/query/validation.ts, which builds
+  // the same shapes independently. The server-side timestamp variant is deliberately
+  // not exposed here: an RFC3339 str is equivalent for TIME positions.
+  function buildBoundParams() {
+    return queryParams.value.map((param, index) => {
+      const position = `Parameter #${index + 1}`;
+      switch (param.type) {
+        case 'str':
+          return { str: { value: param.value } };
+        case 'int': {
+          const trimmed = param.value.trim();
+          if (!integerPattern.test(trimmed)) {
+            throw new Error(`${position} must be an integer`);
+          }
+          return { int: { value: trimmed } };
+        }
+        case 'str_array':
+          return { strArray: { value: splitArrayValue(param.value, position) } };
+        case 'int_array': {
+          const entries = splitArrayValue(param.value, position);
+          for (const entry of entries) {
+            if (!integerPattern.test(entry)) {
+              throw new Error(`${position} must be a comma-separated list of integers`);
+            }
+          }
+          return { intArray: { value: entries } };
+        }
+        case 'null':
+          return { null: null };
+        default:
+          throw new Error(`${position} has an unknown type`);
+      }
+    });
   }
 
   function onCodeMirrorReady(cm) {
@@ -584,6 +658,26 @@ SELECT * FROM STREAM log in sw_recordsLog TIME > '-30m'`);
           @ready="onCodeMirrorReady"
         />
       </div>
+      <div class="query-params-container">
+        <div class="params-header">
+          <span class="params-title">Parameters (bound to ? placeholders in order)</span>
+          <el-button size="small" @click="addParam" :disabled="loading"> Add Parameter </el-button>
+        </div>
+        <div v-for="(param, index) in queryParams" :key="index" class="param-row">
+          <span class="param-index">?{{ index + 1 }}</span>
+          <el-select v-model="param.type" size="small" class="param-type">
+            <el-option v-for="paramType in paramTypes" :key="paramType" :label="paramType" :value="paramType" />
+          </el-select>
+          <el-input
+            v-model="param.value"
+            size="small"
+            class="param-value"
+            :disabled="param.type === 'null'"
+            :placeholder="param.type.endsWith('_array') ? 'Comma-separated values' : 'Value'"
+          />
+          <el-button size="small" type="danger" text @click="removeParam(index)"> Remove </el-button>
+        </div>
+      </div>
     </el-card>
     <el-card shadow="always" class="result-card">
       <template #header>
@@ -673,6 +767,45 @@ SELECT * FROM STREAM log in sw_recordsLog TIME > '-30m'`);
   .header-actions {
     display: flex;
     gap: 10px;
+  }
+
+  .query-params-container {
+    margin-top: 10px;
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+  }
+
+  .params-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+  }
+
+  .params-title {
+    font-size: 13px;
+    color: var(--el-text-color-secondary);
+  }
+
+  .param-row {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+  }
+
+  .param-index {
+    font-family: monospace;
+    font-size: 12px;
+    color: var(--el-text-color-secondary);
+    min-width: 24px;
+  }
+
+  .param-type {
+    width: 120px;
+  }
+
+  .param-value {
+    flex: 1;
   }
 
   .header-right {

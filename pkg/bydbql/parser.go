@@ -52,6 +52,7 @@ func init() {
 		{Name: "Int", Pattern: `[-+]?\d+`},
 		{Name: "String", Pattern: `'(?:[^'\\]|\\.)*'|"(?:[^"\\]|\\.)*"`},
 		{Name: "QuotedIdent", Pattern: `"[a-zA-Z_][a-zA-Z0-9_.]*"|'[a-zA-Z_][a-zA-Z0-9_.]*'`},
+		{Name: "Param", Pattern: `\?`},
 		{Name: "Operators", Pattern: `!=|>=|<=|::|[=><,.()*]`},
 		{Name: "whitespace", Pattern: `\s+`},
 	})

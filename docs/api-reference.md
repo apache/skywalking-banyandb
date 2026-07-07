@@ -2117,6 +2117,7 @@ QueryRequest is the main request message for BydbQL queries
 | Field | Type | Label | Description |
 | ----- | ---- | ----- | ----------- |
 | query | [string](#string) |  | query is the BydbQL query string |
+| params | [banyandb.model.v1.TagValue](#banyandb-model-v1-TagValue) | repeated | params are bound to the `?` placeholders in the query string by their order of appearance. The number of params must match the number of placeholders. Accepted variants depend on the placeholder&#39;s position: str/timestamp for TIME values, str/int/null for scalar comparisons, str/int/null/str_array/int_array for IN/MATCH/HAVING value lists (arrays expand in place), and int for LIMIT/OFFSET/TOP N counts. binary_data is rejected everywhere. |
 
 
 
