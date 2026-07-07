@@ -35,6 +35,7 @@ import (
 	streamv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/stream/v1"
 	"github.com/apache/skywalking-banyandb/banyand/stream"
 	"github.com/apache/skywalking-banyandb/pkg/bus"
+	"github.com/apache/skywalking-banyandb/pkg/test"
 	"github.com/apache/skywalking-banyandb/pkg/test/flags"
 	"github.com/apache/skywalking-banyandb/pkg/timestamp"
 )
@@ -395,7 +396,7 @@ var _ = Describe("Schema Change", func() {
 			deleteExtraTag(svcs, streamName, groupName)
 			writeSchemaChangeData(svcs, streamName, groupName, now.Add(-1*time.Hour), 3, writeDataOptions{})
 
-			Eventually(func(innerGm Gomega) {
+			test.EventuallyConsistently(func(innerGm Gomega) {
 				elements := querySchemaChangeData(svcs, streamName, groupName, now.Add(-3*time.Hour), now,
 					[]string{"trace_id", "service_id", "duration"}, nil)
 				innerGm.Expect(elements).To(HaveLen(8))
@@ -507,7 +508,7 @@ var _ = Describe("Schema Change", func() {
 			deleteExtraTag(svcs, streamName, groupName)
 			writeSchemaChangeData(svcs, streamName, groupName, now.Add(-1*time.Hour), 3, writeDataOptions{})
 
-			Eventually(func(innerGm Gomega) {
+			test.EventuallyConsistently(func(innerGm Gomega) {
 				err := queryWithDeletedTagCondition(svcs, streamName, groupName, now)
 				innerGm.Expect(err).To(HaveOccurred())
 				innerGm.Expect(err.Error()).To(ContainSubstring("extra_tag"))
@@ -525,7 +526,7 @@ var _ = Describe("Schema Change", func() {
 			deleteExtraTag(svcs, streamName, groupName)
 			writeSchemaChangeData(svcs, streamName, groupName, now.Add(-1*time.Hour), 3, writeDataOptions{})
 
-			Eventually(func(innerGm Gomega) {
+			test.EventuallyConsistently(func(innerGm Gomega) {
 				err := queryWithDeletedTagProjection(svcs, streamName, groupName, now)
 				innerGm.Expect(err).To(HaveOccurred())
 				innerGm.Expect(err.Error()).To(ContainSubstring("extra_tag"))
@@ -545,7 +546,7 @@ var _ = Describe("Schema Change", func() {
 			deleteExtraTagFamily(svcs, streamName, groupName)
 			writeSchemaChangeData(svcs, streamName, groupName, now.Add(-1*time.Hour), 3, writeDataOptions{traceIDPrefix: "trace_new_", elementIDOffset: 5})
 
-			Eventually(func(innerGm Gomega) {
+			test.EventuallyConsistently(func(innerGm Gomega) {
 				elements := querySchemaChangeData(svcs, streamName, groupName, now.Add(-3*time.Hour), now,
 					[]string{"trace_id", "service_id", "duration"}, nil)
 				innerGm.Expect(elements).To(HaveLen(8))

@@ -32,6 +32,7 @@ import (
 	databasev1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/database/v1"
 	tracev1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/trace/v1"
 	"github.com/apache/skywalking-banyandb/bydbctl/internal/cmd"
+	"github.com/apache/skywalking-banyandb/pkg/test"
 	"github.com/apache/skywalking-banyandb/pkg/test/flags"
 	"github.com/apache/skywalking-banyandb/pkg/test/helpers"
 	"github.com/apache/skywalking-banyandb/pkg/test/setup"
@@ -277,7 +278,7 @@ orderBy:
 			return buf.String()
 		}
 		Eventually(issue, flags.EventuallyTimeout).ShouldNot(ContainSubstring("code:"))
-		Eventually(func() int {
+		test.EventuallyConsistently(func() int {
 			out := issue()
 			resp := new(tracev1.QueryResponse)
 			helpers.UnmarshalYAML([]byte(out), resp)
@@ -316,7 +317,7 @@ orderBy:
 			return buf.String()
 		}
 		Eventually(issue, flags.EventuallyTimeout).ShouldNot(ContainSubstring("code:"))
-		Eventually(func() int {
+		test.EventuallyConsistently(func() int {
 			out := issue()
 			resp := new(tracev1.QueryResponse)
 			helpers.UnmarshalYAML([]byte(out), resp)

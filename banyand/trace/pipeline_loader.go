@@ -18,6 +18,8 @@
 package trace
 
 import (
+	"crypto/sha256"
+	"encoding/hex"
 	"fmt"
 	"path/filepath"
 	"plugin"
@@ -26,9 +28,28 @@ import (
 
 	"google.golang.org/protobuf/encoding/protojson"
 
-	pipelinev1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/pipeline/v1"
+	commonv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/common/v1"
 	"github.com/apache/skywalking-banyandb/pkg/pipeline/sdk"
 )
+
+// computeConfigHash returns the sha256 hex of the protojson-marshaled
+// SamplerPlugin.config (or of "{}" when config is nil). It mirrors the hash
+// used inside loadSamplerPlugin for the pluginCacheKey so callers can build
+// namedSampler entries without re-computing the hash.
+func computeConfigHash(sp *commonv1.SamplerPlugin) string {
+	var cfgJSON []byte
+	if cfg := sp.GetConfig(); cfg != nil {
+		var marshalErr error
+		cfgJSON, marshalErr = protojson.Marshal(cfg)
+		if marshalErr != nil {
+			cfgJSON = []byte("{}")
+		}
+	} else {
+		cfgJSON = []byte("{}")
+	}
+	hashBytes := sha256.Sum256(cfgJSON)
+	return hex.EncodeToString(hashBytes[:])
+}
 
 // pathWithin reports whether target is base itself or a descendant of base.
 // It treats only a bare ".." or a ".."+separator prefix as an escape, so a
@@ -42,15 +63,18 @@ func pathWithin(base, target string) bool {
 	return rel != ".." && !strings.HasPrefix(rel, ".."+string(filepath.Separator))
 }
 
-// pluginCache caches loaded .so plugins by (path, symbol) to avoid re-opening.
-// Go plugins cannot be unloaded; we re-use cached ones.
+// pluginCache caches loaded .so plugins by (path, symbol, configHash) to avoid
+// re-opening the same .so with the same config. Go plugins cannot be unloaded;
+// we re-use cached instances. A different config yields a different key and
+// triggers a fresh ABI-checked construction.
 var pluginCache = &loadedPluginCache{
 	m: make(map[pluginCacheKey]sdk.Sampler),
 }
 
 type pluginCacheKey struct {
-	path   string
-	symbol string
+	path       string
+	symbol     string
+	configHash string // sha256 hex of the protojson-marshaled config (or of "{}" when nil)
 }
 
 type loadedPluginCache struct {
@@ -60,7 +84,7 @@ type loadedPluginCache struct {
 
 // loadSamplerPlugin loads (or returns cached) a sampler plugin from the given SamplerPlugin config.
 // trustedDir is the only directory .so paths may resolve within; empty trustedDir disables loading.
-func loadSamplerPlugin(sp *pipelinev1.SamplerPlugin, trustedDir string) (_ sdk.Sampler, retErr error) {
+func loadSamplerPlugin(sp *commonv1.SamplerPlugin, trustedDir string) (_ sdk.Sampler, retErr error) {
 	if trustedDir == "" {
 		return nil, fmt.Errorf("trusted plugin dir not configured")
 	}
@@ -89,7 +113,25 @@ func loadSamplerPlugin(sp *pipelinev1.SamplerPlugin, trustedDir string) (_ sdk.S
 		symbol = "NewSampler"
 	}
 
-	key := pluginCacheKey{path: resolvedPath, symbol: symbol}
+	// Marshal config before the cache lookup so the hash is part of the key.
+	// protojson map-key ordering is deterministic for google.protobuf.Struct
+	// (keys are sorted lexicographically by the protojson encoder), so hashing
+	// the raw output is stable across calls with the same logical config.
+	// A nil config hashes the canonical empty JSON object "{}".
+	var cfgJSON []byte
+	if cfg := sp.GetConfig(); cfg != nil {
+		var marshalErr error
+		cfgJSON, marshalErr = protojson.Marshal(cfg)
+		if marshalErr != nil {
+			return nil, fmt.Errorf("cannot marshal plugin config: %w", marshalErr)
+		}
+	} else {
+		cfgJSON = []byte("{}")
+	}
+	hashBytes := sha256.Sum256(cfgJSON)
+	configHash := hex.EncodeToString(hashBytes[:])
+
+	key := pluginCacheKey{path: resolvedPath, symbol: symbol, configHash: configHash}
 	pluginCache.mu.Lock()
 	defer pluginCache.mu.Unlock()
 	if cached, ok := pluginCache.m[key]; ok {
@@ -134,17 +176,6 @@ func loadSamplerPlugin(sp *pipelinev1.SamplerPlugin, trustedDir string) (_ sdk.S
 	ctor, ok := ctorSym.(func([]byte) (sdk.Sampler, error))
 	if !ok {
 		return nil, fmt.Errorf("plugin %q symbol %q has wrong type", resolvedPath, symbol)
-	}
-
-	var cfgJSON []byte
-	if cfg := sp.GetConfig(); cfg != nil {
-		var marshalErr error
-		cfgJSON, marshalErr = protojson.Marshal(cfg)
-		if marshalErr != nil {
-			return nil, fmt.Errorf("cannot marshal plugin config: %w", marshalErr)
-		}
-	} else {
-		cfgJSON = []byte("{}")
 	}
 
 	var sampler sdk.Sampler

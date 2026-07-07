@@ -20,12 +20,14 @@ package measure
 import (
 	"context"
 	"fmt"
+	"path/filepath"
 	"strconv"
 	"time"
 
 	"github.com/apache/skywalking-banyandb/api/data"
 	"github.com/apache/skywalking-banyandb/banyand/internal/storage"
 	"github.com/apache/skywalking-banyandb/banyand/queue"
+	"github.com/apache/skywalking-banyandb/pkg/bytes"
 	"github.com/apache/skywalking-banyandb/pkg/compress/zstd"
 	"github.com/apache/skywalking-banyandb/pkg/pool"
 	"github.com/apache/skywalking-banyandb/pkg/watcher"
@@ -132,6 +134,7 @@ func (tst *tsTable) syncLoop(syncCh chan *syncIntroduction, flusherNotifier watc
 
 func createPartFileReaders(part *part) ([]queue.FileInfo, func()) {
 	var files []queue.FileInfo
+	var buffersToRelease []*bytes.Buffer
 
 	buf := bigValuePool.Generate()
 	// Stream metadata.
@@ -177,8 +180,24 @@ func createPartFileReaders(part *part) ([]queue.FileInfo, func()) {
 		}
 	}
 
+	if part.fileSystem != nil {
+		tagTypePath := filepath.Join(part.path, tagTypeFilename)
+		if tagTypeData, readErr := part.fileSystem.Read(tagTypePath); readErr == nil && len(tagTypeData) > 0 {
+			tagTypeBuffer := bigValuePool.Generate()
+			tagTypeBuffer.Buf = append(tagTypeBuffer.Buf[:0], tagTypeData...)
+			buffersToRelease = append(buffersToRelease, tagTypeBuffer)
+			files = append(files, queue.FileInfo{
+				Name:   tagTypeFilename,
+				Reader: tagTypeBuffer.SequentialRead(),
+			})
+		}
+	}
+
 	return files, func() {
 		bigValuePool.Release(bb)
+		for _, buffer := range buffersToRelease {
+			bigValuePool.Release(buffer)
+		}
 	}
 }
 

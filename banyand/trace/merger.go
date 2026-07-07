@@ -40,12 +40,9 @@ import (
 
 var mergeMaxConcurrencyCh = make(chan struct{}, cgroups.CPUs())
 
-var (
+const (
 	mergeTypeMem  = "mem"
 	mergeTypeFile = "file"
-)
-
-var (
 	mergeLaneFast = "fast"
 	mergeLaneSlow = "slow"
 )
@@ -328,7 +325,10 @@ func (tst *tsTable) mergePartsThenSendIntroduction(creator snapshotCreator, part
 	var filter *mergeFilter
 	if tst.option.nativePipelineEnabled {
 		if samplers := lookupSamplers(tst.group); len(samplers) > 0 {
-			graceNs := int64(tst.option.mergeGraceDefault)
+			graceNs := lookupMergeGrace(tst.group)
+			if graceNs <= 0 {
+				graceNs = int64(tst.option.mergeGraceDefault)
+			}
 			if !isMergeHot(parts, graceNs, time.Now().UnixNano()) {
 				chain := newMergeChain(tst.group, "", samplers, tst.option.decideTimeoutCircuitBreak)
 				filter = &mergeFilter{
@@ -595,12 +595,12 @@ func (tst *tsTable) mergeParts(fileSystem fs.FileSystem, closeCh <-chan struct{}
 	if err != nil {
 		return nil, nil, err
 	}
-	pm.MinTimestamp = minTimestamp
-	pm.MaxTimestamp = maxTimestamp
-	pm.mustWriteMetadata(fileSystem, dstPath)
 	tf.mustWriteTraceIDFilter(fileSystem, dstPath)
 	tf.reset()
 	tt.mustWriteTagType(fileSystem, dstPath)
+	pm.MinTimestamp = minTimestamp
+	pm.MaxTimestamp = maxTimestamp
+	pm.mustWriteMetadata(fileSystem, dstPath)
 	// No SyncPath here: each mustWrite* helper goes through fileSystem.WriteAtomic
 	// which already fsyncs the parent directory after rename. The last atomic
 	// metadata write covers all prior dirent changes (data file creations).

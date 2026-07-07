@@ -17,65 +17,6 @@
 
 traces:
 - spans:
-  - span: trace_006_span_1
-    spanId: span_006_1
-    tags:
-    - key: service_id
-      value:
-        str:
-          value: payment_service
-    - key: duration
-      value:
-        int:
-          value: "1190"
-    - key: trace_id
-      value:
-        str:
-          value: trace_006
-    - key: span_id
-      value:
-        str:
-          value: span_006_1
-  - span: trace_006_span_2
-    spanId: span_006_2
-    tags:
-    - key: service_id
-      value:
-        str:
-          value: payment_service
-    - key: duration
-      value:
-        int:
-          value: "280"
-    - key: trace_id
-      value:
-        str:
-          value: trace_006
-    - key: span_id
-      value:
-        str:
-          value: span_006_2
-  - span: trace_006_span_3
-    spanId: span_006_3
-    tags:
-    - key: service_id
-      value:
-        str:
-          value: payment_service
-    - key: duration
-      value:
-        int:
-          value: "150"
-    - key: trace_id
-      value:
-        str:
-          value: trace_006
-    - key: span_id
-      value:
-        str:
-          value: span_006_3
-  traceId: trace_006
-- spans:
   - span: trace_003_span_1
     spanId: span_003_1
     tags:
@@ -134,6 +75,65 @@ traces:
         str:
           value: span_003_3
   traceId: trace_003
+- spans:
+  - span: trace_006_span_1
+    spanId: span_006_1
+    tags:
+    - key: service_id
+      value:
+        str:
+          value: payment_service
+    - key: duration
+      value:
+        int:
+          value: "1190"
+    - key: trace_id
+      value:
+        str:
+          value: trace_006
+    - key: span_id
+      value:
+        str:
+          value: span_006_1
+  - span: trace_006_span_2
+    spanId: span_006_2
+    tags:
+    - key: service_id
+      value:
+        str:
+          value: payment_service
+    - key: duration
+      value:
+        int:
+          value: "280"
+    - key: trace_id
+      value:
+        str:
+          value: trace_006
+    - key: span_id
+      value:
+        str:
+          value: span_006_2
+  - span: trace_006_span_3
+    spanId: span_006_3
+    tags:
+    - key: service_id
+      value:
+        str:
+          value: payment_service
+    - key: duration
+      value:
+        int:
+          value: "155"
+    - key: trace_id
+      value:
+        str:
+          value: trace_006
+    - key: span_id
+      value:
+        str:
+          value: span_006_3
+  traceId: trace_006
 - spans:
   - span: trace_005_span_1
     spanId: span_005_1
@@ -280,7 +280,7 @@ traces:
     - key: duration
       value:
         int:
-          value: "180"
+          value: "185"
     - key: trace_id
       value:
         str:
