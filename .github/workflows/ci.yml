@@ -81,6 +81,8 @@ jobs:
         run: make check-req
       - name: Build binaries, UI dist and MCP dist
         run: make build
+      - name: Test MCP (Go validator tool + TypeScript safety layer)
+        run: make -C mcp test
       - name: Lint
         run: make lint
       - name: Generate dependencies licenses

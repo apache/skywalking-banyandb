@@ -17,6 +17,7 @@
 
 node_modules/
 dist/
+tools/bin/
 *.log
 .DS_Store
 .env

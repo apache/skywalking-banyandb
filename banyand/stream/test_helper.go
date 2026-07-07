@@ -29,6 +29,7 @@ import (
 	"github.com/apache/skywalking-banyandb/pkg/convert"
 	"github.com/apache/skywalking-banyandb/pkg/fs"
 	"github.com/apache/skywalking-banyandb/pkg/index"
+	pbv1 "github.com/apache/skywalking-banyandb/pkg/pb/v1"
 )
 
 // DumpTag describes one tag of a stream row for the dump test builder. Value is a
@@ -61,10 +62,14 @@ func BuildPartForDump(tmpPath string, fileSystem fs.FileSystem, partID uint64, r
 		if r.Entity != "" {
 			r.SeriesID = common.SeriesID(convert.Hash([]byte(r.Entity)))
 		}
+	}
+	projections := collectDumpTagProjections(rows)
+	for i := range rows {
+		r := &rows[i]
 		es.seriesIDs = append(es.seriesIDs, r.SeriesID)
 		es.timestamps = append(es.timestamps, r.Timestamp)
 		es.elementIDs = append(es.elementIDs, r.ElementID)
-		es.tagFamilies = append(es.tagFamilies, buildDumpTagFamilies(r.Tags))
+		es.tagFamilies = append(es.tagFamilies, buildDumpTagFamilies(r.Tags, projections[r.SeriesID]))
 	}
 
 	mp := generateMemPart()
@@ -146,35 +151,106 @@ func EntityDumpRows(entities []string) []DumpRow {
 	return rows
 }
 
-func buildDumpTagFamilies(tags []DumpTag) []tagValues {
-	order := make([]string, 0)
-	byFamily := make(map[string][]*tagValue)
-	for _, tg := range tags {
-		if _, ok := byFamily[tg.Family]; !ok {
-			order = append(order, tg.Family)
+type dumpTagProjection struct {
+	Family string
+	Tags   []dumpProjectedTag
+}
+
+type dumpProjectedTag struct {
+	Name string
+	Type databasev1.TagType
+}
+
+func collectDumpTagProjections(rows []DumpRow) map[common.SeriesID][]dumpTagProjection {
+	projections := make(map[common.SeriesID][]dumpTagProjection)
+	familyIndexes := make(map[common.SeriesID]map[string]int)
+	tagIndexes := make(map[common.SeriesID]map[string]map[string]int)
+	for _, row := range rows {
+		projection := projections[row.SeriesID]
+		if familyIndexes[row.SeriesID] == nil {
+			familyIndexes[row.SeriesID] = make(map[string]int)
+			tagIndexes[row.SeriesID] = make(map[string]map[string]int)
 		}
-		byFamily[tg.Family] = append(byFamily[tg.Family], encodeDumpTag(tg.Name, tg.Value))
+		for _, tag := range row.Tags {
+			familyIdx, familyExists := familyIndexes[row.SeriesID][tag.Family]
+			if !familyExists {
+				familyIdx = len(projection)
+				familyIndexes[row.SeriesID][tag.Family] = familyIdx
+				tagIndexes[row.SeriesID][tag.Family] = make(map[string]int)
+				projection = append(projection, dumpTagProjection{Family: tag.Family})
+			}
+			tagType := dumpTagType(tag.Value)
+			if tagIdx, tagExists := tagIndexes[row.SeriesID][tag.Family][tag.Name]; tagExists {
+				if projection[familyIdx].Tags[tagIdx].Type != tagType {
+					panic(fmt.Sprintf("dump tag %s.%s changes type from %s to %s", tag.Family, tag.Name, projection[familyIdx].Tags[tagIdx].Type, tagType))
+				}
+				continue
+			}
+			tagIndexes[row.SeriesID][tag.Family][tag.Name] = len(projection[familyIdx].Tags)
+			projection[familyIdx].Tags = append(projection[familyIdx].Tags, dumpProjectedTag{Name: tag.Name, Type: tagType})
+		}
+		projections[row.SeriesID] = projection
 	}
-	out := make([]tagValues, 0, len(order))
-	for _, family := range order {
-		out = append(out, tagValues{tag: family, values: byFamily[family]})
+	return projections
+}
+
+func buildDumpTagFamilies(tags []DumpTag, projection []dumpTagProjection) []tagValues {
+	byFamily := make(map[string]map[string]*tagValue)
+	for _, tag := range tags {
+		if byFamily[tag.Family] == nil {
+			byFamily[tag.Family] = make(map[string]*tagValue)
+		}
+		byFamily[tag.Family][tag.Name] = encodeDumpTag(tag.Name, tag.Value)
+	}
+	out := make([]tagValues, 0, len(projection))
+	for _, family := range projection {
+		values := make([]*tagValue, 0, len(family.Tags))
+		for _, tag := range family.Tags {
+			if value := byFamily[family.Family][tag.Name]; value != nil {
+				values = append(values, value)
+				continue
+			}
+			values = append(values, encodeTagValue(tag.Name, tag.Type, pbv1.NullTagValue))
+		}
+		out = append(out, tagValues{tag: family.Family, values: values})
 	}
 	return out
 }
 
 func encodeDumpTag(name string, value any) *tagValue {
-	switch v := value.(type) {
+	return encodeTagValue(name, dumpTagType(value), dumpTagValue(name, value))
+}
+
+func dumpTagType(value any) databasev1.TagType {
+	switch value.(type) {
 	case string:
-		return encodeTagValue(name, databasev1.TagType_TAG_TYPE_STRING, &modelv1.TagValue{Value: &modelv1.TagValue_Str{Str: &modelv1.Str{Value: v}}})
+		return databasev1.TagType_TAG_TYPE_STRING
 	case int64:
-		return encodeTagValue(name, databasev1.TagType_TAG_TYPE_INT, &modelv1.TagValue{Value: &modelv1.TagValue_Int{Int: &modelv1.Int{Value: v}}})
+		return databasev1.TagType_TAG_TYPE_INT
 	case []string:
-		return encodeTagValue(name, databasev1.TagType_TAG_TYPE_STRING_ARRAY, &modelv1.TagValue{Value: &modelv1.TagValue_StrArray{StrArray: &modelv1.StrArray{Value: v}}})
+		return databasev1.TagType_TAG_TYPE_STRING_ARRAY
 	case []int64:
-		return encodeTagValue(name, databasev1.TagType_TAG_TYPE_INT_ARRAY, &modelv1.TagValue{Value: &modelv1.TagValue_IntArray{IntArray: &modelv1.IntArray{Value: v}}})
+		return databasev1.TagType_TAG_TYPE_INT_ARRAY
 	case []byte:
-		return encodeTagValue(name, databasev1.TagType_TAG_TYPE_DATA_BINARY, &modelv1.TagValue{Value: &modelv1.TagValue_BinaryData{BinaryData: v}})
+		return databasev1.TagType_TAG_TYPE_DATA_BINARY
 	default:
 		panic(fmt.Sprintf("unsupported dump tag value type %T", value))
+	}
+}
+
+func dumpTagValue(name string, value any) *modelv1.TagValue {
+	switch v := value.(type) {
+	case string:
+		return &modelv1.TagValue{Value: &modelv1.TagValue_Str{Str: &modelv1.Str{Value: v}}}
+	case int64:
+		return &modelv1.TagValue{Value: &modelv1.TagValue_Int{Int: &modelv1.Int{Value: v}}}
+	case []string:
+		return &modelv1.TagValue{Value: &modelv1.TagValue_StrArray{StrArray: &modelv1.StrArray{Value: v}}}
+	case []int64:
+		return &modelv1.TagValue{Value: &modelv1.TagValue_IntArray{IntArray: &modelv1.IntArray{Value: v}}}
+	case []byte:
+		return &modelv1.TagValue{Value: &modelv1.TagValue_BinaryData{BinaryData: v}}
+	default:
+		panic(fmt.Sprintf("unsupported dump tag %s value type %T", name, value))
 	}
 }

@@ -96,7 +96,7 @@ function validateQueryHintResourceType(rawValue: string): (typeof allowedQueryHi
   return value as (typeof allowedQueryHintResourceTypes)[number];
 }
 
-function validateBydbQL(rawValue: string): string {
+export function validateBydbQL(rawValue: string): string {
   const value = validateTextInput('BydbQL', rawValue, maxBydbQLLength);
   if (!allowedQueryPrefixPatterns.some((pattern) => pattern.test(value))) {
     throw new Error('BydbQL must be a read-only SELECT or SHOW TOP query');

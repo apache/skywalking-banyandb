@@ -34,7 +34,7 @@ check-version: install
 
 .PHONY: install
 install:
-	npm install
+	npm ci
 
 .PHONY: lint
 lint: install
@@ -70,16 +70,19 @@ clean-build:
 	rm -rf dist
 
 .PHONY: test
-test:
-	@echo "No test"
+test: install
+	npm run check:plugin-manifests
+	npm run build:validator
+	npm test
+	go test ./tools/...
 
 .PHONY: test-race
-test-race:
-	@echo "No test"
+test-race: install
+	npm test
 
 .PHONY: test-coverage
-test-coverage:
-	@echo "No test"
+test-coverage: install
+	go test -cover ./tools/...
 
 .PHONY: release
 release: build
@@ -96,8 +99,11 @@ license-fix: $(LICENSE_EYE) ## Fix license header issues
 	$(LICENSE_EYE) header fix
 
 .PHONY: license-dep
-license-dep:$(LICENSE_EYE)
+license-dep: $(LICENSE_EYE)
 	@rm -rf licenses
+	@lock_backup=$$(mktemp); \
+	cp package-lock.json "$$lock_backup"; \
+	trap 'cp "$$lock_backup" package-lock.json; rm -f "$$lock_backup"' EXIT; \
 	$(LICENSE_EYE) dep resolve -o mcp-licenses -s LICENSE.tpl
 
 .PHONY: vendor-update
@@ -112,4 +118,3 @@ check:
 	$(MAKE) test-coverage
 	$(MAKE) license-dep
 	$(MAKE) vendor-update
-
