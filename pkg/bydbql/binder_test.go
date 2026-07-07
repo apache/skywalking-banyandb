@@ -98,6 +98,13 @@ var _ = Describe("BindParams", func() {
 			Expect(err).To(HaveOccurred())
 			Expect(err.Error()).To(ContainSubstring("time clause"))
 		})
+
+		It("rejects an int parameter in the TIME clause", func() {
+			grammar := parse("SELECT * FROM STREAM sw IN default TIME > ?")
+			err := BindParams(grammar, []*modelv1.TagValue{intParam(1720000000)})
+			Expect(err).To(HaveOccurred())
+			Expect(err.Error()).To(ContainSubstring("only accepts str or timestamp"))
+		})
 	})
 
 	Describe("WHERE clause binding", func() {
@@ -382,7 +389,7 @@ var _ = Describe("BindParams", func() {
 	})
 
 	Describe("parameter type acceptance matrix across all placeholder paths", func() {
-		timeAccepted := map[string]bool{"str": true, "int": true, "timestamp": true}
+		timeAccepted := map[string]bool{"str": true, "timestamp": true}
 		scalarAccepted := map[string]bool{"str": true, "int": true, "null": true}
 		listAccepted := map[string]bool{"str": true, "int": true, "null": true, "str_array": true, "int_array": true}
 		intAccepted := map[string]bool{"int": true}

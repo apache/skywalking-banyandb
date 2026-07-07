@@ -217,7 +217,7 @@ Note that unlike some SQL implementations where `ORDER BY ?` silently degrades t
 
 - `binary_data` parameters are rejected in every position (BydbQL has no binary literal).
 - `timestamp` parameters are accepted only in `TIME` positions and are validated: a missing or out-of-range timestamp is rejected at bind time.
-- An `int` parameter in a `TIME` position binds (matching an integer literal), but the transformer cannot parse a bare integer as a timestamp, so the query fails; use `str` or `timestamp` instead.
+- `int` parameters are rejected in `TIME` positions at bind time: the transformer cannot parse a bare integer as a timestamp, so use `str` or `timestamp` instead.
 - `int` parameters in `LIMIT`/`OFFSET`/`TOP N` positions must be within `[0, 2147483647]`; out-of-range values are rejected at bind time instead of silently wrapping.
 - Empty arrays, parameters without a value, and `nil` entries are rejected everywhere.
 - A `?` inside a quoted string literal is part of the string, not a placeholder: `WHERE msg = 'why?'` consumes no parameter.

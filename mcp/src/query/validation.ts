@@ -28,6 +28,8 @@ const allowedQueryPrefixPatterns = [/^\s*SELECT\b/i, /^\s*SHOW\s+TOP\b/i];
 
 const maxParamCount = 64;
 const maxParamValueLength = 4096;
+// An int64 is at most 19 digits plus an optional sign.
+const maxIntParamLength = 20;
 const maxParamArrayLength = 256;
 const allowedParamTypes = ['str', 'int', 'str_array', 'int_array', 'null'] as const;
 const integerPattern = /^-?\d+$/;
@@ -154,10 +156,10 @@ function validateParamInteger(value: unknown, position: number): string {
   if (typeof value === 'number' && Number.isSafeInteger(value)) {
     return String(value);
   }
-  if (typeof value === 'string' && integerPattern.test(value)) {
+  if (typeof value === 'string' && value.length <= maxIntParamLength && integerPattern.test(value)) {
     return value;
   }
-  throw new Error(`params[${position}]: int value must be an integer`);
+  throw new Error(`params[${position}]: int value must be an integer of at most ${maxIntParamLength} characters`);
 }
 
 function validateParamArray(value: unknown, position: number): unknown[] {

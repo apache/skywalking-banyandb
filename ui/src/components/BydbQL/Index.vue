@@ -53,6 +53,10 @@ SELECT * FROM STREAM log in sw_recordsLog TIME > '-30m'`);
   const queryParams = ref([]);
   const paramTypes = ['str', 'int', 'str_array', 'int_array', 'null'];
   const integerPattern = /^-?\d+$/;
+  // An int64 is at most 19 digits plus an optional sign
+  const maxIntLength = 20;
+  // Stable row identity so removing a row does not shift input state onto its neighbors
+  let paramSeq = 0;
 
   const hasResult = computed(() => queryResult.value !== null);
   const resultType = computed(() => {
@@ -303,7 +307,8 @@ SELECT * FROM STREAM log in sw_recordsLog TIME > '-30m'`);
   }
 
   function addParam() {
-    queryParams.value.push({ type: 'str', value: '' });
+    paramSeq += 1;
+    queryParams.value.push({ id: paramSeq, type: 'str', value: '' });
   }
 
   function removeParam(index) {
@@ -333,8 +338,8 @@ SELECT * FROM STREAM log in sw_recordsLog TIME > '-30m'`);
           return { str: { value: param.value } };
         case 'int': {
           const trimmed = param.value.trim();
-          if (!integerPattern.test(trimmed)) {
-            throw new Error(`${position} must be an integer`);
+          if (trimmed.length > maxIntLength || !integerPattern.test(trimmed)) {
+            throw new Error(`${position} must be an integer of at most ${maxIntLength} characters`);
           }
           return { int: { value: trimmed } };
         }
@@ -343,7 +348,7 @@ SELECT * FROM STREAM log in sw_recordsLog TIME > '-30m'`);
         case 'int_array': {
           const entries = splitArrayValue(param.value, position);
           for (const entry of entries) {
-            if (!integerPattern.test(entry)) {
+            if (entry.length > maxIntLength || !integerPattern.test(entry)) {
               throw new Error(`${position} must be a comma-separated list of integers`);
             }
           }
@@ -663,7 +668,7 @@ SELECT * FROM STREAM log in sw_recordsLog TIME > '-30m'`);
           <span class="params-title">Parameters (bound to ? placeholders in order)</span>
           <el-button size="small" @click="addParam" :disabled="loading"> Add Parameter </el-button>
         </div>
-        <div v-for="(param, index) in queryParams" :key="index" class="param-row">
+        <div v-for="(param, index) in queryParams" :key="param.id" class="param-row">
           <span class="param-index">?{{ index + 1 }}</span>
           <el-select v-model="param.type" size="small" class="param-type">
             <el-option v-for="paramType in paramTypes" :key="paramType" :label="paramType" :value="paramType" />

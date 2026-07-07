@@ -275,9 +275,6 @@ func bindTimeValue(v *GrammarTimeValue, p *modelv1.TagValue) error {
 	case *modelv1.TagValue_Str:
 		strVal := val.Str.GetValue()
 		v.String = &strVal
-	case *modelv1.TagValue_Int:
-		intVal := val.Int.GetValue()
-		v.Integer = &intVal
 	case *modelv1.TagValue_Timestamp:
 		// A nil inner timestamp would silently decode as the Unix epoch and an
 		// out-of-range one would format as a nonsense year; reject both here.
@@ -287,7 +284,9 @@ func bindTimeValue(v *GrammarTimeValue, p *modelv1.TagValue) error {
 		strVal := val.Timestamp.AsTime().Format(time.RFC3339Nano)
 		v.String = &strVal
 	default:
-		return fmt.Errorf("time clause only accepts str, int, or timestamp parameters, got %T", p.Value)
+		// int is rejected as well: the transformer cannot parse a bare integer
+		// as a timestamp, so accepting it would only defer a certain failure.
+		return fmt.Errorf("time clause only accepts str or timestamp parameters, got %T", p.Value)
 	}
 	v.Param = false
 	return nil

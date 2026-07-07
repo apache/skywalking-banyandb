@@ -99,15 +99,6 @@ func equivalenceCases() []equivalenceCase {
 				timestampParam(time.Date(2026, 7, 6, 11, 0, 0, 0, time.UTC)),
 			},
 		},
-		{
-			// An int TIME value is grammatically valid but the transformer cannot
-			// parse a bare integer as a timestamp; both sides must fail identically.
-			name:          "int param in TIME >",
-			parameterized: base + "TIME > ?",
-			literal:       base + "TIME > 1720000000",
-			params:        []*modelv1.TagValue{intParam(1720000000)},
-			expectError:   true,
-		},
 		// Scalar comparisons: every operator, every accepted parameter type
 		{
 			name:          "str param in =",
