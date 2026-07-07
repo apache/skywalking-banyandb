@@ -590,6 +590,24 @@ func releaseStreamSlowCopyArena(a *streamSlowCopyArena) {
 	streamSlowCopyArenaPool.Put(a)
 }
 
+// releaseArenaElements returns elements to the pool WITHOUT releasing its
+// tagValues into the tagValue pool. The slow-copy path fills elements with
+// tagValues owned by a per-call streamSlowCopyArena; releasing them via the
+// normal releaseElements would put arena-backed *tagValue pointers into the
+// global tagValuePool, where they alias memory the arena still owns and reuses —
+// corrupting later writes. Clearing tagFamilies drops the arena pointers so none
+// linger in the pooled elements.
+func releaseArenaElements(e *elements) {
+	e.seriesIDs = e.seriesIDs[:0]
+	e.timestamps = e.timestamps[:0]
+	e.elementIDs = e.elementIDs[:0]
+	for i := range e.tagFamilies {
+		e.tagFamilies[i] = nil
+	}
+	e.tagFamilies = e.tagFamilies[:0]
+	elementsPool.Put(e)
+}
+
 // appendStreamBlockRowToBuckets routes one row to the correct per-aligned-segment bucket.
 func appendStreamBlockRowToBuckets(
 	ir storage.IntervalRule,
@@ -701,7 +719,7 @@ func slowCopyOneStreamPart(in streamProcessPartInput, srcPartID uint64) (streamP
 	defer releaseLive()
 	defer func() {
 		for _, el := range buckets {
-			releaseStreamSlowCopyElements(el)
+			releaseArenaElements(el)
 		}
 	}()
 
@@ -806,7 +824,7 @@ func runStreamFlushWorker(flushCh <-chan streamFlushJob, fileSystem fs.FileSyste
 }
 
 func directCopyStreamFlushBucket(el *elements, fileSystem fs.FileSystem, partPath string) (sz int64, err error) {
-	defer releaseStreamSlowCopyElements(el)
+	defer releaseArenaElements(el)
 	if mkErr := os.MkdirAll(filepath.Dir(partPath), storage.DirPerm); mkErr != nil {
 		return 0, mkErr
 	}
@@ -824,15 +842,6 @@ func directCopyStreamFlushBucket(el *elements, fileSystem fs.FileSystem, partPat
 	mp.mustInitFromElements(el)
 	mp.mustFlush(fileSystem, partPath)
 	return int64(mp.partMetadata.CompressedSizeBytes), nil
-}
-
-func releaseStreamSlowCopyElements(el *elements) {
-	for rowIdx := range el.tagFamilies {
-		for familyIdx := range el.tagFamilies[rowIdx] {
-			el.tagFamilies[rowIdx][familyIdx].values = nil
-		}
-	}
-	releaseElements(el)
 }
 
 // ── Utility helpers ───────────────────────────────────────────────.

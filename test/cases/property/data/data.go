@@ -91,7 +91,12 @@ func verifyWithContext(ctx context.Context, innerGm gm.Gomega, sharedContext hel
 	helpers.UnmarshalYAML(w, want)
 	innerGm.Expect(resp.GetProperties()).To(gm.HaveLen(len(want.GetProperties())), query.String())
 	if query.OrderBy == nil {
+		// The server returns unordered scans in nondeterministic order, so both
+		// sides must be sorted before the order-sensitive cmp.Equal below.
 		slices.SortFunc(want.GetProperties(), func(a, b *propertyv1.Property) int {
+			return strings.Compare(a.Id, b.Id)
+		})
+		slices.SortFunc(resp.GetProperties(), func(a, b *propertyv1.Property) int {
 			return strings.Compare(a.Id, b.Id)
 		})
 	}

@@ -26,6 +26,7 @@ import (
 	gm "github.com/onsi/gomega"
 	"google.golang.org/protobuf/types/known/timestamppb"
 
+	"github.com/apache/skywalking-banyandb/pkg/test"
 	"github.com/apache/skywalking-banyandb/pkg/test/flags"
 	"github.com/apache/skywalking-banyandb/pkg/test/helpers"
 	stream_test_data "github.com/apache/skywalking-banyandb/test/cases/stream/data"
@@ -105,7 +106,7 @@ var streamEntries = []any{
 // RegisterTable registers the stream test table with the given description.
 func RegisterTable(description string) bool {
 	return g.DescribeTable(description, append([]any{func(args helpers.Args) {
-		gm.Eventually(func(innerGm gm.Gomega) {
+		test.EventuallyConsistently(func(innerGm gm.Gomega) {
 			verify(innerGm, args)
 		}, flags.EventuallyTimeout).Should(gm.Succeed())
 	}}, streamEntries...)...)

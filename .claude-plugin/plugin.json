@@ -1,0 +1,37 @@
+{
+  "name": "banyandb-bydbql",
+  "version": "0.1.0",
+  "description": "Generate, validate, and execute read-only BanyanDB BydbQL for SkyWalking data.",
+  "author": {
+    "name": "Apache SkyWalking BanyanDB contributors"
+  },
+  "homepage": "https://github.com/apache/skywalking-banyandb",
+  "repository": "https://github.com/apache/skywalking-banyandb",
+  "license": "Apache-2.0",
+  "keywords": [
+    "banyandb",
+    "bydbql",
+    "mcp",
+    "observability",
+    "query"
+  ],
+  "skills": "./skills/",
+  "mcpServers": "./.mcp.json",
+  "interface": {
+    "displayName": "BanyanDB BydbQL",
+    "shortDescription": "Generate and run BanyanDB BydbQL.",
+    "longDescription": "Translate natural language into read-only BanyanDB BydbQL for SkyWalking metrics, logs, traces, and properties with live schema discovery and syntax validation.",
+    "developerName": "Apache SkyWalking BanyanDB contributors",
+    "category": "Developer Tools",
+    "capabilities": [
+      "Interactive",
+      "Read"
+    ],
+    "websiteURL": "https://github.com/apache/skywalking-banyandb",
+    "defaultPrompt": [
+      "Generate a BydbQL query for recent BanyanDB metrics.",
+      "Query recent SkyWalking trace records with BydbQL."
+    ],
+    "brandColor": "#2F72BC"
+  }
+}

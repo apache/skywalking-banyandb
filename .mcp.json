@@ -1,0 +1,15 @@
+{
+  "mcpServers": {
+    "banyandb": {
+      "cwd": ".",
+      "command": "node",
+      "args": [
+        "./mcp/dist/index.js"
+      ],
+      "env": {
+        "TRANSPORT": "stdio",
+        "BANYANDB_ADDRESS": "localhost:17900"
+      }
+    }
+  }
+}

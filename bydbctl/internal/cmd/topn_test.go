@@ -32,6 +32,7 @@ import (
 	databasev1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/database/v1"
 	measurev1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/measure/v1"
 	"github.com/apache/skywalking-banyandb/bydbctl/internal/cmd"
+	"github.com/apache/skywalking-banyandb/pkg/test"
 	"github.com/apache/skywalking-banyandb/pkg/test/flags"
 	"github.com/apache/skywalking-banyandb/pkg/test/helpers"
 	"github.com/apache/skywalking-banyandb/pkg/test/setup"
@@ -312,7 +313,7 @@ tagProjection:
 			return buf.String()
 		}
 		Eventually(issue, flags.EventuallyTimeout).ShouldNot(ContainSubstring("code:"))
-		Eventually(func() int {
+		test.EventuallyConsistently(func() int {
 			out := issue()
 			GinkgoWriter.Println(out)
 			resp := new(measurev1.QueryResponse)
@@ -341,7 +342,7 @@ fieldValueSort: 1`, startStr, endStr)))
 			return buf.String()
 		}
 		Eventually(issue1, flags.EventuallyTimeout).ShouldNot(ContainSubstring("code:"))
-		Eventually(func() int {
+		test.EventuallyConsistently(func() int {
 			out := issue1()
 			GinkgoWriter.Println(out)
 			resp := new(measurev1.TopNResponse)
@@ -384,7 +385,7 @@ fieldValueSort: 1`))
 			return buf.String()
 		}
 		Eventually(issue1, flags.EventuallyTimeout).ShouldNot(ContainSubstring("code:"))
-		Eventually(func() int {
+		test.EventuallyConsistently(func() int {
 			out := issue1()
 			GinkgoWriter.Println(out)
 			resp := new(measurev1.TopNResponse)

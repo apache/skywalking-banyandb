@@ -255,7 +255,7 @@ func registerE2EIndexRule(t *testing.T, conn *grpc.ClientConn, group, subjectNam
 // ready yet" (registry writes propagate to the serving modules asynchronously).
 func awaitRows(t *testing.T, want int, fn func() (int, error)) {
 	t.Helper()
-	gomega.Eventually(func() int {
+	test.EventuallyConsistently(func() int {
 		n, err := fn()
 		if err != nil {
 			return -1
@@ -270,7 +270,7 @@ func awaitRows(t *testing.T, want int, fn func() (int, error)) {
 // registered instance, so plain one-shot assertions are CI-hostile.
 func expectRows(t *testing.T, want int, explain string, fn func() (int, error)) {
 	t.Helper()
-	gomega.Eventually(func() int {
+	test.EventuallyConsistently(func() int {
 		n, err := fn()
 		if err != nil {
 			return -1
@@ -289,7 +289,7 @@ var e2ePartDirPattern = regexp.MustCompile(`^[0-9a-f]{16}$`)
 func awaitPartsOnDisk(t *testing.T, catalogDataRoot, group string, segStart time.Time) {
 	t.Helper()
 	segDir := filepath.Join(catalogDataRoot, group, "seg-"+segStart.Format("20060102"), "shard-0")
-	gomega.Eventually(func() int {
+	test.EventuallyConsistently(func() int {
 		entries, err := os.ReadDir(segDir)
 		if err != nil {
 			return -1

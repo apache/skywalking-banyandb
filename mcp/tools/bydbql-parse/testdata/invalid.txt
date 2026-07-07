@@ -1,0 +1,22 @@
+# Curated inputs that MUST be rejected by parse-only validation.
+# One input per line. Blank lines and lines starting with '#' are ignored.
+# Empty-string input is covered separately by the unit test.
+
+# Not a read-only SELECT / SHOW TOP statement.
+DELETE FROM STREAM sw IN default
+INSERT INTO STREAM sw IN default
+
+# Multi-statement / statement terminators are not part of the grammar.
+SELECT * FROM STREAM sw IN default;
+SELECT * FROM STREAM sw IN default SELECT * FROM STREAM sw IN default
+
+# SQL comment syntax is not tokenizable.
+SELECT * FROM STREAM sw IN default -- trailing comment
+SELECT * FROM STREAM sw IN default /* block comment */
+
+# Structural errors.
+SELECT
+FROM STREAM sw IN default
+SELECT * FROM STREAM sw
+SELECT * FROM PLANET sw IN default
+SHOW TOP FROM MEASURE service_latency IN production
