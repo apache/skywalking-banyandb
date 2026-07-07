@@ -5,9 +5,14 @@
   "type": "module",
   "main": "dist/index.js",
   "scripts": {
+    "build:validator": "node tools/build-validator.js",
     "build": "tsc",
+    "build:all": "npm run build && npm run build:validator",
+    "check:plugin-manifests": "node tools/check-plugin-manifests.js",
     "start": "node dist/index.js",
     "dev": "tsx src/index.ts",
+    "test": "vitest run",
+    "test:watch": "vitest",
     "lint": "eslint src/**/*.ts",
     "format": "prettier --write src/**/*.ts",
     "format:check": "prettier --check src/**/*.ts"
@@ -36,7 +41,8 @@
     "semver": "^7.8.0",
     "tsx": "^4.21.0",
     "typescript": "^5.9.3",
-    "typescript-eslint": "^8.59.2"
+    "typescript-eslint": "^8.59.2",
+    "vitest": "^2.1.9"
   },
   "engines": {
     "node": ">=24.6.0"

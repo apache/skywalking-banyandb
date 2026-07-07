@@ -32,6 +32,7 @@ import (
 	databasev1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/database/v1"
 	streamv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/stream/v1"
 	"github.com/apache/skywalking-banyandb/bydbctl/internal/cmd"
+	"github.com/apache/skywalking-banyandb/pkg/test"
 	"github.com/apache/skywalking-banyandb/pkg/test/flags"
 	"github.com/apache/skywalking-banyandb/pkg/test/helpers"
 	"github.com/apache/skywalking-banyandb/pkg/test/setup"
@@ -263,7 +264,7 @@ projection:
 			return buf.String()
 		}
 		Eventually(issue, flags.EventuallyTimeout).ShouldNot(ContainSubstring("code:"))
-		Eventually(func() int {
+		test.EventuallyConsistently(func() int {
 			out := issue()
 			resp := new(streamv1.QueryResponse)
 			helpers.UnmarshalYAML([]byte(out), resp)
@@ -303,7 +304,7 @@ projection:
 			return buf.String()
 		}
 		Eventually(issue, flags.EventuallyTimeout).ShouldNot(ContainSubstring("code:"))
-		Eventually(func() int {
+		test.EventuallyConsistently(func() int {
 			out := issue()
 			resp := new(streamv1.QueryResponse)
 			helpers.UnmarshalYAML([]byte(out), resp)

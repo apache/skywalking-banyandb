@@ -37,6 +37,7 @@ import (
 	modelv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/model/v1"
 	"github.com/apache/skywalking-banyandb/banyand/measure"
 	"github.com/apache/skywalking-banyandb/pkg/bus"
+	"github.com/apache/skywalking-banyandb/pkg/test"
 	"github.com/apache/skywalking-banyandb/pkg/test/flags"
 	"github.com/apache/skywalking-banyandb/pkg/timestamp"
 )
@@ -401,7 +402,7 @@ var _ = Describe("Schema Change", func() {
 			deleteExtraMeasureTag(svcs, measureName)
 			writeSchemaChangeMeasureData(svcs, measureName, now.Add(-1*time.Hour), 3, measureWriteDataOptions{entityIDPrefix: "entity_new_"})
 
-			Eventually(func(innerGm Gomega) {
+			test.EventuallyConsistently(func(innerGm Gomega) {
 				dataPoints := querySchemaChangeMeasureData(svcs, measureName, now.Add(-3*time.Hour), now,
 					[]string{"id", "entity_id"}, []string{"total"})
 				innerGm.Expect(dataPoints).To(HaveLen(8))
@@ -566,7 +567,7 @@ var _ = Describe("Schema Change", func() {
 			deleteExtraMeasureTagFamily(svcs, measureName)
 			writeSchemaChangeMeasureData(svcs, measureName, now.Add(-1*time.Hour), 3, measureWriteDataOptions{entityIDPrefix: "entity_new_"})
 
-			Eventually(func(innerGm Gomega) {
+			test.EventuallyConsistently(func(innerGm Gomega) {
 				dataPoints := querySchemaChangeMeasureData(svcs, measureName, now.Add(-3*time.Hour), now,
 					[]string{"id", "entity_id"}, []string{"total"})
 				innerGm.Expect(dataPoints).To(HaveLen(8))
@@ -594,7 +595,7 @@ var _ = Describe("Schema Change", func() {
 				deleteExtraMeasureTag(svcs, measureName)
 				writeSchemaChangeMeasureData(svcs, measureName, now.Add(-1*time.Hour), 3, measureWriteDataOptions{entityIDPrefix: "entity_new_"})
 
-				Eventually(func(innerGm Gomega) {
+				test.EventuallyConsistently(func(innerGm Gomega) {
 					err := queryMeasureWithDeletedTagCondition(svcs, measureName, now)
 					innerGm.Expect(err).To(HaveOccurred())
 					innerGm.Expect(err.Error()).To(ContainSubstring("extra_tag"))
@@ -612,7 +613,7 @@ var _ = Describe("Schema Change", func() {
 				deleteExtraMeasureTag(svcs, measureName)
 				writeSchemaChangeMeasureData(svcs, measureName, now.Add(-1*time.Hour), 3, measureWriteDataOptions{entityIDPrefix: "entity_new_"})
 
-				Eventually(func(innerGm Gomega) {
+				test.EventuallyConsistently(func(innerGm Gomega) {
 					err := queryMeasureWithDeletedTagProjection(svcs, measureName, now)
 					innerGm.Expect(err).To(HaveOccurred())
 					innerGm.Expect(err.Error()).To(ContainSubstring("extra_tag"))
@@ -630,7 +631,7 @@ var _ = Describe("Schema Change", func() {
 				deleteExtraField(svcs, measureName)
 				writeSchemaChangeMeasureData(svcs, measureName, now.Add(-1*time.Hour), 3, measureWriteDataOptions{entityIDPrefix: "entity_new_"})
 
-				Eventually(func(innerGm Gomega) {
+				test.EventuallyConsistently(func(innerGm Gomega) {
 					err := queryMeasureWithDeletedFieldProjection(svcs, measureName, now)
 					innerGm.Expect(err).To(HaveOccurred())
 					innerGm.Expect(err.Error()).To(ContainSubstring("extra_field"))

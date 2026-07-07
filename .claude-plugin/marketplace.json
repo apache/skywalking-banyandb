@@ -1,0 +1,13 @@
+{
+  "name": "banyandb",
+  "owner": {
+    "name": "Apache SkyWalking BanyanDB contributors"
+  },
+  "plugins": [
+    {
+      "name": "banyandb-bydbql",
+      "source": "./",
+      "description": "Generate, validate, and execute read-only BanyanDB BydbQL for SkyWalking data."
+    }
+  ]
+}

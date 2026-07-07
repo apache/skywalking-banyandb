@@ -1,0 +1,28 @@
+# Curated BydbQL statements that MUST parse successfully.
+# One statement per line. Blank lines and lines starting with '#' are ignored.
+# Do not scrape the skill docs here: those contain placeholders such as
+# <stream_name> and clause fragments that intentionally do not parse.
+
+# STREAM
+SELECT * FROM STREAM sw IN default
+SELECT * FROM STREAM logs IN default TIME > '-30m' WHERE message MATCH('error') LIMIT 100
+SELECT trace_id, service_id FROM STREAM sw IN group1, group2 TIME BETWEEN '-2h' AND 'now' WHERE service_id = 'webapp' ORDER BY start_time DESC LIMIT 100
+SELECT * FROM STREAM sw IN default ON warn, cold STAGES TIME > '-30m'
+SELECT * FROM STREAM logs IN default TIME > '-30m' WITH QUERY_TRACE
+
+# MEASURE
+SELECT * FROM MEASURE service_cpm_minute IN metricsMinute TIME > '-3d'
+SELECT service, MEAN(response_time) FROM MEASURE http_metrics IN metricsMinute TIME > '-30m' WHERE region = 'us-west' GROUP BY service
+SELECT status::TAG, status::FIELD FROM MEASURE http_requests IN default TIME > '-30m' WHERE path = '/api/v1/users'
+
+# TRACE
+SELECT () FROM TRACE sw_trace IN default TIME > '-30m' WHERE status = 'error' LIMIT 50
+SELECT trace_id, operation_name FROM TRACE zipkin_span IN default TIME > '-30m' WHERE operation_name MATCH(('GET', 'POST'), 'keyword') ORDER BY timestamp_millis DESC LIMIT 30
+
+# PROPERTY (no TIME clause)
+SELECT * FROM PROPERTY server_metadata IN datacenter-1 WHERE ID = 'server-1a2b3c'
+SELECT ip, region FROM PROPERTY server_metadata IN datacenter-1 WHERE ID IN ('server-1', 'server-2') LIMIT 10
+
+# SHOW TOP
+SHOW TOP 10 FROM MEASURE service_latency IN production TIME > '-30m' WHERE http_method = 'GET' AGGREGATE BY MEAN ORDER BY DESC
+SHOW TOP 5 FROM MEASURE endpoint_errors IN production TIME BETWEEN '-24h' AND 'now' WHERE status_code = '500' AGGREGATE BY SUM ORDER BY DESC
