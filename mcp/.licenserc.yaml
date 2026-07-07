@@ -66,6 +66,8 @@ header: # `header` section is configurations for source codes license header.
     - '*.json'
     - 'LICENSE*'
     - '*.md'
+    - '**/testdata/**'
+    - 'tools/bin'
     - '.prettierignore'
     - '.dockerignore'
     - 'banyandb-data'
