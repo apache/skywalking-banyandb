@@ -18,10 +18,13 @@
 package trace
 
 import (
+	"bytes"
+	"encoding/json"
 	"strings"
 	"testing"
 	"time"
 
+	"github.com/rs/zerolog"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
@@ -212,17 +215,23 @@ func TestPluginTelemetry_LogRateLimit(t *testing.T) {
 		"emitting beyond burst capacity must increment plugin_log_dropped_total")
 }
 
-// TestPluginTelemetry_LogMsgTruncated verifies that messages longer than
-// maxMsgLen are truncated before logging.
+// TestPluginTelemetry_LogMsgTruncated verifies that the production emit path
+// (emitEvent) truncates a message longer than maxMsgLen before it is written. It
+// drives the real emitEvent with a zerolog event wired to a buffer and asserts the
+// emitted "message" field, rather than re-implementing the truncation in the test.
 func TestPluginTelemetry_LogMsgTruncated(t *testing.T) {
-	// Build a pluginLogger directly and test emitEvent via a no-op event.
 	longMsg := strings.Repeat("A", maxMsgLen+100)
-	// Truncation happens inside emitEvent; verify the helper directly.
-	truncated := longMsg
-	if len(truncated) > maxMsgLen {
-		truncated = truncated[:maxMsgLen]
-	}
-	assert.Equal(t, maxMsgLen, len(truncated), "truncated message must be exactly maxMsgLen bytes")
+
+	var buf bytes.Buffer
+	lg := zerolog.New(&buf)
+	emitEvent(lg.Info(), longMsg, nil)
+
+	var out map[string]any
+	require.NoError(t, json.Unmarshal(buf.Bytes(), &out))
+	msg, ok := out[zerolog.MessageFieldName].(string)
+	require.True(t, ok, "emitted log must carry a message field")
+	assert.Len(t, msg, maxMsgLen, "emitEvent must truncate the message to maxMsgLen bytes")
+	assert.Equal(t, strings.Repeat("A", maxMsgLen), msg, "truncated message must be the maxMsgLen-byte prefix")
 }
 
 // TestPluginTelemetry_LogFieldsCapped verifies that more than maxLogFields pairs

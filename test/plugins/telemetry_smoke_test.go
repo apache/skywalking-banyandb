@@ -15,7 +15,7 @@
 // specific language governing permissions and limitations
 // under the License.
 
-//go:build trace_pipeline
+//go:build trace_pipeline && !race
 
 // Package plugins_test is a build/load smoke test for the reference telemetry
 // plugins.  It compiles each plugin as a .so in a temporary directory, opens

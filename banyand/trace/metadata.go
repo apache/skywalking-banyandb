@@ -359,7 +359,13 @@ func (sr *schemaRepo) reconcilePipeline(group string, cfg *commonv1.TracePipelin
 		if sp == nil {
 			continue
 		}
-		desired = append(desired, nameHash{name: p.GetName(), configHash: computeConfigHash(sp)})
+		desired = append(desired, nameHash{
+			name:       p.GetName(),
+			configHash: computeConfigHash(sp),
+			path:       sp.GetPath(),
+			symbol:     sp.GetSymbol(),
+			abiVersion: sp.GetAbiVersion(),
+		})
 	}
 	current := currentSamplerIdentity(group)
 	if len(desired) == len(current) {
@@ -432,6 +438,9 @@ func (sr *schemaRepo) reconcilePipeline(group string, cfg *commonv1.TracePipelin
 			name:       p.GetName(),
 			configHash: computeConfigHash(sp),
 			sampler:    sampler,
+			path:       sp.GetPath(),
+			symbol:     sp.GetSymbol(),
+			abiVersion: sp.GetAbiVersion(),
 		})
 	}
 	replaceSamplersForGroup(group, newSet)
