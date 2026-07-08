@@ -657,6 +657,55 @@ flowchart TD
     B4 --> C5
 ```
 
+## Implementation: finalization sampling (PIPELINE_EVENT_FINALIZE, v1)
+
+Finalization sampling is the background backstop for the in-merge filter. The in-merge
+sampler (`PIPELINE_EVENT_MERGE`) only drops traces during opportunistic merges of parts
+older than `merge_grace`; when hot writing rotates to the next segment, the just-cooled
+segment can be left with parts the in-merge sampler never revisited. The finalize pass
+sweeps those cooled parts through the **same** registered sampler chain.
+
+**Semantics — best-effort, misses accepted.** Coverage is best-effort-when-resources-allow,
+**not guaranteed**. The pass yields under memory pressure and never blocks the hot
+write/merge/query path, so a segment can be born → cool → never-finalized → TTL-deleted
+un-sampled. That is an accepted outcome (there is no finalize-before-delete gate).
+
+**Model (per-shard, trace-owned scanner).**
+- A single node-wide scanner goroutine ticks (every `defaultFinalizeScanInterval`, 10m)
+  and, for each group with the FINALIZE event enabled, selects cooled segments via
+  `tsdb.SelectSegments(range, reopenClosed=true)` — reopening idle-closed segments so the
+  common cooled-and-reclaimed case is still covered — then evaluates each shard.
+- Finalize compute is **serialized (concurrency-1)** and reuses the hot merge path
+  (`mergePartsThenSendIntroduction` → `mergeParts` + per-sidx `Merge` + the shard's
+  introducer loop), so core and sidx follow exactly the code a hot merge uses. It never
+  acquires the hot merge semaphore (`mergeMaxConcurrencyCh`).
+- Each cooled part carries a per-part `finalizeGen` stamp; a round force-merges the
+  cooled, non-hot parts through the sampler and stamps the output at the shard's next
+  generation, written to disk **before** the part's metadata is persisted so a crash
+  cannot cause a double-sample on replay. A round re-samples the cooled set (like the
+  in-merge filter re-samples on every merge); re-sampling already-kept survivors through
+  a deterministic sampler is idempotent, and rounds are hard-capped.
+- Per-shard finalize state (`finalize.json`) records the generation, cooldown clock,
+  round count, terminal flag, and an arrival-based unsampled-bytes counter (incremented
+  O(1) on the flush path only once the shard has been finalized).
+
+**Knobs** (the proto carries `finalize_grace`; the rest are engine defaults in v1):
+- `finalize_grace` (default **5m**) — per-segment settling window; a segment is eligible
+  only when `segEnd < now − finalize_grace`, and parts hotter than this are skipped.
+- `--trace-pipeline-finalize-grace-default` — node default when a group sets no
+  `finalize_grace`.
+- **FLOOR** (default **8 MiB** uncompressed) — absolute minimum newly-arrived unsampled
+  bytes to warrant a re-round; smaller trickles are left (accepted miss).
+- **RATIO** (default **0.10**) — for large segments, re-round only when new unsampled
+  bytes reach this fraction of the segment total.
+- **finalize_cooldown** (default = `finalize_grace`) — at most one round per window.
+- **max_finalize_rounds** (default **8**) — hard per-shard lifetime cap; after it the
+  shard is marked terminal and never re-scanned.
+
+**Observability.** Finalize rounds emit the existing merge metrics under
+`type="finalize"`/`lane="finalize"` (`total_merged`, `total_merge_latency`,
+`total_merged_parts`), distinct from the hot-merge labels.
+
 ## References
 
 - OpenTelemetry Collector — Tail Sampling Processor (`tailsamplingprocessor`): the keep-all-errors / latency / probabilistic-policy model a typical sampler plugin implements.

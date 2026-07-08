@@ -68,6 +68,7 @@ type standalone struct {
 	metadata           metadata.Repo
 	l                  *logger.Logger
 	diskMonitor        *storage.DiskMonitor
+	finalizeCloser     *run.Closer
 	schemaRepo         schemaRepo
 	snapshotDir        string
 	root               string
@@ -103,6 +104,8 @@ func (s *standalone) FlagSet() *run.FlagSet {
 	fs.BoolVar(&s.option.nativePipelineEnabled, "trace-pipeline-native-plugin-enabled", false, "enable the native plugin pipeline for in-merge trace retention")
 	fs.StringVar(&s.option.trustedPluginDir, "trace-pipeline-trusted-plugin-dir", "", "trusted directory for native trace pipeline plugins")
 	fs.DurationVar(&s.option.mergeGraceDefault, "trace-pipeline-merge-grace-default", 30*time.Second, "default merge_grace for in-merge trace retention filter")
+	fs.DurationVar(&s.option.finalizeGraceDefault, "trace-pipeline-finalize-grace-default", 5*time.Minute,
+		"default finalize_grace (per-segment settling window) for finalization sampling")
 	fs.DurationVar(&s.option.decideTimeout, "trace-pipeline-decide-timeout", 5*time.Second, "hard per-batch Decide timeout for trace pipeline plugins")
 	fs.IntVar(&s.option.decideTimeoutCircuitBreak, "trace-pipeline-decide-timeout-circuit-break", 3,
 		"consecutive-timeout threshold to disable a (group,schema) pipeline chain")
@@ -218,6 +221,21 @@ func (s *standalone) PreRun(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
+	// Start the background finalization-sampling scanner when the native pipeline is
+	// enabled. It is a single node-wide goroutine (concurrency-1) that sweeps cooled
+	// segments of finalize-enabled groups; it is inert until a group enables the
+	// FINALIZE event, so starting it unconditionally-under-the-flag is safe.
+	if s.option.nativePipelineEnabled {
+		s.finalizeCloser = run.NewCloser(1)
+		// Launch via run.Go (not a bare `go`) so a panic in the scan loop is recovered
+		// and reported instead of crashing the process; the loop's deferred closer.Done
+		// still fires during panic unwinding. It uses the run.Closer for cancellation,
+		// hence the contextcheck suppression (mirrors the tsTable background loops).
+		run.Go(context.Background(), "trace.finalize-scanner", s.l, func(_ context.Context) { //nolint:contextcheck
+			s.schemaRepo.finalizeScanLoop(s.finalizeCloser, defaultFinalizeScanInterval) //nolint:contextcheck
+		})
+	}
+
 	s.l.Info().
 		Str("root", s.root).
 		Str("dataPath", s.dataPath).
@@ -232,6 +250,11 @@ func (s *standalone) Serve() run.StopNotify {
 }
 
 func (s *standalone) GracefulStop() {
+	// Stop the finalize scanner before closing the schema repo so no round starts
+	// against a segment whose tables are being torn down.
+	if s.finalizeCloser != nil {
+		s.finalizeCloser.CloseThenWait()
+	}
 	// Stop disk monitor
 	if s.diskMonitor != nil {
 		s.diskMonitor.Stop()
