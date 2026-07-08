@@ -30,6 +30,7 @@ import (
 	"github.com/apache/skywalking-banyandb/pkg/cgroups"
 	"github.com/apache/skywalking-banyandb/pkg/encoding"
 	"github.com/apache/skywalking-banyandb/pkg/fs"
+	pbv1 "github.com/apache/skywalking-banyandb/pkg/pb/v1"
 	"github.com/apache/skywalking-banyandb/pkg/watcher"
 )
 
@@ -237,6 +238,7 @@ func (tst *tsTable) mergeParts(fileSystem fs.FileSystem, closeCh <-chan struct{}
 		return nil, errNoPartToMerge
 	}
 	dstPath := partPath(root, partID)
+	conflictColumns := collectConflictColumns(parts)
 	var totalSize int64
 	pii := make([]*partMergeIter, 0, len(parts))
 	for i := range parts {
@@ -251,7 +253,7 @@ func (tst *tsTable) mergeParts(fileSystem fs.FileSystem, closeCh <-chan struct{}
 	bw := generateBlockWriter()
 	bw.mustInitForFilePart(fileSystem, dstPath, shouldCache)
 
-	pm, mergedTagType, err := mergeBlocks(closeCh, bw, br)
+	pm, mergedTagType, err := mergeBlocks(closeCh, bw, br, conflictColumns)
 	releaseBlockWriter(bw)
 	releaseBlockReader(br)
 	for i := range pii {
@@ -270,7 +272,7 @@ func (tst *tsTable) mergeParts(fileSystem fs.FileSystem, closeCh <-chan struct{}
 
 var errClosed = fmt.Errorf("the merger is closed")
 
-func mergeBlocks(closeCh <-chan struct{}, bw *blockWriter, br *blockReader) (*partMetadata, *tagType, error) {
+func mergeBlocks(closeCh <-chan struct{}, bw *blockWriter, br *blockReader, conflictColumns map[string]map[string]struct{}) (*partMetadata, *tagType, error) {
 	pendingBlockIsEmpty := true
 	pendingBlock := generateBlockPointer()
 	defer releaseBlockPointer(pendingBlock)
@@ -288,6 +290,10 @@ func mergeBlocks(closeCh <-chan struct{}, bw *blockWriter, br *blockReader) (*pa
 			decoder = nil
 		}
 	}
+	loadAndRename := func() {
+		br.loadBlockData(getDecoder())
+		renameConflictColumns(&br.block.block, conflictColumns)
+	}
 	for br.nextBlockMetadata() {
 		select {
 		case <-closeCh:
@@ -297,7 +303,7 @@ func mergeBlocks(closeCh <-chan struct{}, bw *blockWriter, br *blockReader) (*pa
 		b := br.block
 
 		if pendingBlockIsEmpty {
-			br.loadBlockData(getDecoder())
+			loadAndRename()
 			pendingBlock.copyFrom(b)
 			pendingBlockIsEmpty = false
 			continue
@@ -307,7 +313,7 @@ func mergeBlocks(closeCh <-chan struct{}, bw *blockWriter, br *blockReader) (*pa
 			(pendingBlock.isFull() && pendingBlock.bm.timestamps.max <= b.bm.timestamps.min) {
 			bw.mustWriteBlock(pendingBlock.bm.seriesID, &pendingBlock.block)
 			releaseDecoder()
-			br.loadBlockData(getDecoder())
+			loadAndRename()
 			pendingBlock.copyFrom(b)
 			continue
 		}
@@ -318,7 +324,7 @@ func mergeBlocks(closeCh <-chan struct{}, bw *blockWriter, br *blockReader) (*pa
 		}
 		tmpBlock.reset()
 		tmpBlock.bm.seriesID = b.bm.seriesID
-		br.loadBlockData(getDecoder())
+		loadAndRename()
 		mergeTwoBlocks(tmpBlock, pendingBlock, b)
 		if len(tmpBlock.timestamps) <= maxBlockLength && tmpBlock.uncompressedSizeBytes() <= maxUncompressedBlockSize {
 			if len(tmpBlock.timestamps) == 0 {
@@ -359,6 +365,62 @@ func mergeBlocks(closeCh <-chan struct{}, bw *blockWriter, br *blockReader) (*pa
 	mergedTagType := make(tagType)
 	bw.Flush(&result, &mergedTagType)
 	return &result, &mergedTagType, nil
+}
+
+func renameConflictColumns(b *block, conflictColumns map[string]map[string]struct{}) {
+	if len(conflictColumns) == 0 {
+		return
+	}
+	for i := range b.tagFamilies {
+		columns := conflictColumns[b.tagFamilies[i].name]
+		if columns == nil {
+			continue
+		}
+		cc := b.tagFamilies[i].columns
+		for j := range cc {
+			if _, ok := columns[cc[j].name]; ok {
+				cc[j].name = encodeTypedColumn(cc[j].name, cc[j].valueType)
+			}
+		}
+	}
+}
+
+func collectConflictColumns(parts []*partWrapper) map[string]map[string]struct{} {
+	familyColumnTypes := make(map[string]map[string]map[pbv1.ValueType]struct{})
+	for _, pw := range parts {
+		for cf, cc := range pw.p.tagType {
+			columnTypes := familyColumnTypes[cf]
+			if columnTypes == nil {
+				columnTypes = make(map[string]map[pbv1.ValueType]struct{})
+				familyColumnTypes[cf] = columnTypes
+			}
+			for name, vt := range cc {
+				decoded := decodeTypedColumn(name)
+				valueTypes := columnTypes[decoded]
+				if valueTypes == nil {
+					valueTypes = make(map[pbv1.ValueType]struct{})
+					columnTypes[decoded] = valueTypes
+				}
+				valueTypes[vt] = struct{}{}
+			}
+		}
+	}
+	var conflictColumns map[string]map[string]struct{}
+	for cf, columnTypes := range familyColumnTypes {
+		for name, valueTypes := range columnTypes {
+			if len(valueTypes) <= 1 {
+				continue
+			}
+			if conflictColumns == nil {
+				conflictColumns = make(map[string]map[string]struct{})
+			}
+			if conflictColumns[cf] == nil {
+				conflictColumns[cf] = make(map[string]struct{})
+			}
+			conflictColumns[cf][name] = struct{}{}
+		}
+	}
+	return conflictColumns
 }
 
 func mergeTwoBlocks(target, left, right *blockPointer) {
