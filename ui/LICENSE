@@ -29,7 +29,7 @@ Apache-2.0 licenses
 ========================================================================
 
     detect-libc 2.1.2 Apache-2.0
-    echarts 5.6.0 Apache-2.0
+    echarts 6.1.0 Apache-2.0
 
 ========================================================================
 BSD-2-Clause licenses
@@ -43,7 +43,7 @@ BSD-3-Clause licenses
 
     normalize-wheel-es 1.2.0 BSD-3-Clause
     source-map-js 1.2.1 BSD-3-Clause
-    zrender 5.6.1 BSD-3-Clause
+    zrender 6.1.0 BSD-3-Clause
 
 ========================================================================
 ISC licenses
