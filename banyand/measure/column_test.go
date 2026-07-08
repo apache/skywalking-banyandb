@@ -271,3 +271,22 @@ func getColumnEncodeTypeName(encType encoding.EncodeType) string {
 		return fmt.Sprintf("Unknown(%d)", encType)
 	}
 }
+
+func TestEncodeTypedColumn(t *testing.T) {
+	assert.Equal(t, "state#int", encodeTypedColumn("state", pbv1.ValueTypeInt64))
+	assert.Equal(t, "state#str", encodeTypedColumn("state", pbv1.ValueTypeStr))
+	assert.Equal(t, "http.status#int", encodeTypedColumn("http.status", pbv1.ValueTypeInt64))
+	assert.Equal(t, "data#bin", encodeTypedColumn("data", pbv1.ValueTypeBinaryData))
+	assert.Equal(t, "unknown", encodeTypedColumn("unknown", pbv1.ValueTypeUnknown))
+}
+
+func TestDecodeTypedColumn(t *testing.T) {
+	assert.Equal(t, "state", decodeTypedColumn("state#int"))
+	assert.Equal(t, "state", decodeTypedColumn("state#str"))
+	assert.Equal(t, "http.status", decodeTypedColumn("http.status#int"))
+	assert.Equal(t, "http.status", decodeTypedColumn("http.status"))
+	assert.Equal(t, "simple", decodeTypedColumn("simple"))
+	assert.Equal(t, "my.str", decodeTypedColumn("my.str"))
+	assert.Equal(t, "arr.int", decodeTypedColumn("arr.int"))
+	assert.Equal(t, "data.bin", decodeTypedColumn("data.bin"))
+}
