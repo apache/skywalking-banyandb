@@ -144,6 +144,7 @@ Release Notes.
 - Set Ginkgo `--repeat` to 0 in the flaky-test workflow so the hourly run completes within the 50-minute timeout.
 - Refactor the dump tool into a reusable `banyand/dump` parser library.
 - Strip macOS AppleDouble (`._*`) and `__MACOSX/` metadata from every release tarball (src, banyand, bydbctl, fodc-agent, fodc-proxy) so downstream users running `make generate` from a downloaded source tarball no longer hit "invalid control character" errors when `buf generate` walks the resource-fork files; export `COPYFILE_DISABLE=1` and filter `._*` files at the source.
+- Bump Go and ui/mcp dependencies to clear Dependabot advisories: `golang.org/x/net` v0.52.0→v0.56.0 (CVE-2026-25680), `opencontainers/runc` v1.3.3→v1.3.6 (CVE-2026-41579). Refresh mcp/ui lockfiles and license attribution.
 
 ## 0.10.0
 
