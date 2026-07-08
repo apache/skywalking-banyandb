@@ -176,10 +176,8 @@ function validateParamArray(value: unknown, position: number): unknown[] {
  * Validate BydbQL parameters and convert them to protojson TagValue form
  * accepted by the BanyanDB HTTP API.
  *
- * Keep in sync with `buildBoundParams` in ui/src/components/BydbQL/Index.vue,
- * which builds the same shapes independently (no shared package exists between
- * mcp/ and ui/). The server-side `timestamp` variant is deliberately not exposed
- * here: an RFC3339 `str` is equivalent for TIME positions.
+ * The server-side `timestamp` variant is deliberately not exposed here:
+ * an RFC3339 `str` is equivalent for TIME positions.
  */
 export function toTagValueParams(params: BydbQLParam[]): TagValueParam[] {
   if (params.length > maxParamCount) {
