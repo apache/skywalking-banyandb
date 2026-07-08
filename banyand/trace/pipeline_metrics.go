@@ -40,6 +40,16 @@ type samplerMetrics struct {
 	// samplerLoadFailed{group,name,reason} counts individual plugin load failures
 	// on the fail-open path.
 	samplerLoadFailed meter.Counter
+	// pluginTelemetrySeriesRejectedTotal{group,plugin_name} counts metric series
+	// registrations rejected by the host (reserved labels, cardinality overflow,
+	// or registration panic).
+	pluginTelemetrySeriesRejectedTotal meter.Counter
+	// pluginLogDroppedTotal{group,plugin_name} counts log lines dropped by the
+	// host rate-limiter on behalf of a plugin.
+	pluginLogDroppedTotal meter.Counter
+	// pluginTelemetryPanicTotal{group,plugin_name} counts panics recovered inside
+	// the host telemetry adapter.
+	pluginTelemetryPanicTotal meter.Counter
 }
 
 // newSamplerMetrics creates a samplerMetrics wired to factory. If factory is
@@ -49,11 +59,14 @@ func newSamplerMetrics(factory observability.Factory) *samplerMetrics {
 		factory = observability.BypassRegistry.With(pipelineScope)
 	}
 	return &samplerMetrics{
-		samplerActiveCount:   factory.NewGauge("sampler_active_count", "group"),
-		samplerRegisterTotal: factory.NewCounter("sampler_register_total", "group", "result"),
-		samplerUpdateTotal:   factory.NewCounter("sampler_update_total", "group", "result"),
-		samplerRemoveTotal:   factory.NewCounter("sampler_remove_total", "group"),
-		samplerLoadFailed:    factory.NewCounter("sampler_load_failed", "group", "name", "reason"),
+		samplerActiveCount:                 factory.NewGauge("sampler_active_count", "group"),
+		samplerRegisterTotal:               factory.NewCounter("sampler_register_total", "group", "result"),
+		samplerUpdateTotal:                 factory.NewCounter("sampler_update_total", "group", "result"),
+		samplerRemoveTotal:                 factory.NewCounter("sampler_remove_total", "group"),
+		samplerLoadFailed:                  factory.NewCounter("sampler_load_failed", "group", "name", "reason"),
+		pluginTelemetrySeriesRejectedTotal: factory.NewCounter("plugin_telemetry_series_rejected_total", "group", "plugin_name"),
+		pluginLogDroppedTotal:              factory.NewCounter("plugin_log_dropped_total", "group", "plugin_name"),
+		pluginTelemetryPanicTotal:          factory.NewCounter("plugin_telemetry_panic_total", "group", "plugin_name"),
 	}
 }
 
@@ -90,4 +103,25 @@ func (m *samplerMetrics) incLoadFailed(group, name, reason string) {
 		return
 	}
 	m.samplerLoadFailed.Inc(1, group, name, reason)
+}
+
+func (m *samplerMetrics) incSeriesRejected(group, plugin string) {
+	if m == nil {
+		return
+	}
+	m.pluginTelemetrySeriesRejectedTotal.Inc(1, group, plugin)
+}
+
+func (m *samplerMetrics) incLogDropped(group, plugin string) {
+	if m == nil {
+		return
+	}
+	m.pluginLogDroppedTotal.Inc(1, group, plugin)
+}
+
+func (m *samplerMetrics) incTelemetryPanic(group, plugin string) {
+	if m == nil {
+		return
+	}
+	m.pluginTelemetryPanicTotal.Inc(1, group, plugin)
 }

@@ -66,27 +66,30 @@ type SchemaService interface {
 
 type schemaRepo struct {
 	resourceSchema.Repository
-	onGroupDelete         func(groupName string)
-	l                     *logger.Logger
-	metadata              metadata.Repo
-	samplerMeter          *samplerMetrics
-	path                  string
-	nodeID                string
-	trustedPluginDir      string
-	role                  databasev1.Role
-	nativePipelineEnabled bool
+	onGroupDelete          func(groupName string)
+	l                      *logger.Logger
+	metadata               metadata.Repo
+	samplerMeter           *samplerMetrics
+	pluginTelemetryFactory observability.Factory
+	path                   string
+	nodeID                 string
+	trustedPluginDir       string
+	role                   databasev1.Role
+	nativePipelineEnabled  bool
 }
 
 func newSchemaRepo(path string, svc *standalone, nodeLabels map[string]string, nodeID string) schemaRepo {
+	pipelineFactory := svc.omr.With(pipelineScope)
 	sr := schemaRepo{
-		l:                     svc.l,
-		path:                  path,
-		metadata:              svc.metadata,
-		nodeID:                nodeID,
-		role:                  databasev1.Role_ROLE_DATA,
-		nativePipelineEnabled: svc.option.nativePipelineEnabled,
-		trustedPluginDir:      svc.option.trustedPluginDir,
-		samplerMeter:          newSamplerMetrics(svc.omr.With(pipelineScope)),
+		l:                      svc.l,
+		path:                   path,
+		metadata:               svc.metadata,
+		nodeID:                 nodeID,
+		role:                   databasev1.Role_ROLE_DATA,
+		nativePipelineEnabled:  svc.option.nativePipelineEnabled,
+		trustedPluginDir:       svc.option.trustedPluginDir,
+		samplerMeter:           newSamplerMetrics(pipelineFactory),
+		pluginTelemetryFactory: pipelineFactory,
 		Repository: resourceSchema.NewRepository(
 			svc.metadata,
 			svc.l,
@@ -100,12 +103,14 @@ func newSchemaRepo(path string, svc *standalone, nodeLabels map[string]string, n
 }
 
 func newLiaisonSchemaRepo(path string, svc *liaison, traceDataNodeRegistry grpc.NodeRegistry) schemaRepo {
+	pipelineFactory := svc.omr.With(pipelineScope)
 	sr := schemaRepo{
-		l:            svc.l,
-		path:         path,
-		metadata:     svc.metadata,
-		role:         databasev1.Role_ROLE_LIAISON,
-		samplerMeter: newSamplerMetrics(svc.omr.With(pipelineScope)),
+		l:                      svc.l,
+		path:                   path,
+		metadata:               svc.metadata,
+		role:                   databasev1.Role_ROLE_LIAISON,
+		samplerMeter:           newSamplerMetrics(pipelineFactory),
+		pluginTelemetryFactory: pipelineFactory,
 		Repository: resourceSchema.NewRepository(
 			svc.metadata,
 			svc.l,
@@ -246,6 +251,8 @@ func (sr *schemaRepo) OnDelete(metadata schema.Metadata) {
 		})
 		if sr.role == databasev1.Role_ROLE_DATA && sr.nativePipelineEnabled {
 			removeSamplersForGroup(g.Metadata.Name)
+			teardownGroupTelemetry(g.Metadata.Name)
+			setMergeGraceForGroup(g.Metadata.Name, 0)
 			sr.samplerMeter.setActiveCount(g.Metadata.Name, 0)
 			sr.samplerMeter.incRemoveTotal(g.Metadata.Name)
 		}
@@ -333,6 +340,7 @@ func (sr *schemaRepo) reconcilePipeline(group string, cfg *commonv1.TracePipelin
 	if cfg == nil || !cfg.GetEnabled() || !mergeEventEnabled(cfg) {
 		hadSamplers := len(lookupSamplers(group)) > 0
 		removeSamplersForGroup(group)
+		teardownGroupTelemetry(group)
 		setMergeGraceForGroup(group, 0)
 		sr.samplerMeter.setActiveCount(group, 0)
 		if hadSamplers {
@@ -340,23 +348,77 @@ func (sr *schemaRepo) reconcilePipeline(group string, cfg *commonv1.TracePipelin
 		}
 		return
 	}
+	// Idempotent skip: if the desired identity list (name+configHash in order) equals
+	// the currently registered one, this is a redundant watch-replay re-apply. Return
+	// early with no reload, no UseHost, no teardown, no swap, and no metrics churn.
+	// This is defense-in-depth for the same-group re-reconcile race on top of the
+	// once-only-UseHost invariant enforced inside loadSamplerPlugin.
+	desired := make([]nameHash, 0, len(cfg.GetPlugins()))
+	for _, p := range cfg.GetPlugins() {
+		sp := p.GetSampler()
+		if sp == nil {
+			continue
+		}
+		desired = append(desired, nameHash{
+			name:       p.GetName(),
+			configHash: computeConfigHash(sp),
+			path:       sp.GetPath(),
+			symbol:     sp.GetSymbol(),
+			abiVersion: sp.GetAbiVersion(),
+		})
+	}
+	current := currentSamplerIdentity(group)
+	if len(desired) == len(current) {
+		identical := true
+		for idx := range desired {
+			if desired[idx] != current[idx] {
+				identical = false
+				break
+			}
+		}
+		if identical {
+			return
+		}
+	}
+	// Config actually changed: tear down the old adapters' series before rebuilding
+	// them for the new instances.
+	teardownGroupTelemetry(group)
 	// Distinguish register (no previous set) from update (previous set exists).
-	isUpdate := len(lookupSamplers(group)) > 0
+	isUpdate := len(current) > 0
 	var newSet []namedSampler
 	for _, p := range cfg.GetPlugins() {
 		sp := p.GetSampler()
 		if sp == nil {
 			continue
 		}
+		pluginName := p.GetName()
+		bindHost := func(s sdk.Sampler) {
+			ha, ok := s.(sdk.HostAware)
+			if !ok {
+				return
+			}
+			tel := newPluginTelemetry(sr.pluginTelemetryFactory, logger.GetLogger("trace"), sr.samplerMeter, group, pluginName)
+			func() {
+				defer func() {
+					if r := recover(); r != nil {
+						sr.samplerMeter.incTelemetryPanic(group, pluginName)
+						sr.l.Warn().Str("group", group).Str("plugin", pluginName).Interface("panic", r).
+							Msg("plugin UseHost panicked; telemetry disabled for this plugin")
+					}
+				}()
+				ha.UseHost(tel)
+			}()
+			registerGroupTelemetry(group, tel)
+		}
 		var sampler sdk.Sampler
 		var loadErr error
 		func() {
 			defer func() {
 				if rec := recover(); rec != nil {
-					loadErr = fmt.Errorf("panic loading plugin %q: %v", p.GetName(), rec)
+					loadErr = fmt.Errorf("panic loading plugin %q: %v", pluginName, rec)
 				}
 			}()
-			sampler, loadErr = loadSamplerPlugin(sp, sr.trustedPluginDir)
+			sampler, loadErr = loadSamplerPlugin(sp, sr.trustedPluginDir, group, bindHost)
 		}()
 		if loadErr != nil {
 			sr.samplerMeter.incLoadFailed(group, p.GetName(), samplerLoadFailReason(loadErr))
@@ -376,6 +438,9 @@ func (sr *schemaRepo) reconcilePipeline(group string, cfg *commonv1.TracePipelin
 			name:       p.GetName(),
 			configHash: computeConfigHash(sp),
 			sampler:    sampler,
+			path:       sp.GetPath(),
+			symbol:     sp.GetSymbol(),
+			abiVersion: sp.GetAbiVersion(),
 		})
 	}
 	replaceSamplersForGroup(group, newSet)
