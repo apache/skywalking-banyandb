@@ -80,11 +80,14 @@ func (b *bydbQLService) Query(ctx context.Context, req *bydbqlv1.QueryRequest) (
 		}
 	}()
 
-	// parse query and transform to native request
+	// parse query, bind parameters, and transform to native request
 	parseStart := time.Now()
 	query, err := bydbql.ParseQuery(req.Query)
 	if err != nil {
 		return nil, status.Errorf(codes.InvalidArgument, "failed to parse query: %v", err)
+	}
+	if err = bydbql.BindParams(query, req.Params); err != nil {
+		return nil, status.Errorf(codes.InvalidArgument, "failed to bind parameters: %v", err)
 	}
 	result, err := b.transformer.Transform(ctx, query)
 	if err != nil {

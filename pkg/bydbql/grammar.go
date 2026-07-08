@@ -33,6 +33,11 @@ import (
 type Grammar struct {
 	Select *GrammarSelectStatement `parser:"  @@"`
 	TopN   *GrammarTopNStatement   `parser:"| @@"`
+
+	// paramsBound records that BindParams has completed on this grammar: a
+	// bound grammar rejects further binding and lets the transformer skip the
+	// unbound-placeholder walk.
+	paramsBound bool
 }
 
 // GrammarSelectStatement represents a SELECT statement in Participle grammar.
@@ -55,7 +60,8 @@ type GrammarTopNStatement struct {
 	Pos            lexer.Position
 	Show           string                        `parser:"@'SHOW'"`
 	Top            string                        `parser:"@'TOP'"`
-	N              int                           `parser:"@Int"`
+	N              int                           `parser:"( @Int"`
+	NParam         bool                          `parser:"| @Param )"`
 	From           *GrammarFromClause            `parser:"@@"`
 	Time           *GrammarTimeClause            `parser:"@@?"`
 	Where          *GrammarTopNWhereClause       `parser:"@@?"`
@@ -74,7 +80,8 @@ type GrammarProjection struct {
 
 // GrammarTopNProjection represents TOP N projection.
 type GrammarTopNProjection struct {
-	N            int                    `parser:"@Int"`
+	N            int                    `parser:"( @Int"`
+	NParam       bool                   `parser:"| @Param )"`
 	OrderField   *GrammarIdentifierPath `parser:"@@"`
 	Direction    *string                `parser:"@('ASC'|'DESC')?"`
 	OtherColumns []*GrammarColumn       `parser:"  ( ',' @@ ( ',' @@ )* )?"`
@@ -140,10 +147,11 @@ type GrammarTimeBetween struct {
 	End     *GrammarTimeValue `parser:"@@"`
 }
 
-// GrammarTimeValue represents a time value (string or integer).
+// GrammarTimeValue represents a time value (string, integer, or a `?` placeholder).
 type GrammarTimeValue struct {
 	String  *string `parser:"  @String"`
 	Integer *int64  `parser:"| @Int"`
+	Param   bool    `parser:"| @Param"`
 }
 
 // GrammarSelectWhereClause represents WHERE clause.
@@ -251,6 +259,7 @@ type GrammarValue struct {
 	String  *string `parser:"  @String"`
 	Integer *int64  `parser:"| @Int"`
 	Null    bool    `parser:"| @'NULL'"`
+	Param   bool    `parser:"| @Param"`
 }
 
 // GrammarIdentifierPart Can be either an Ident or a Keyword (keywords are allowed in paths, but not as standalone identifiers).
@@ -319,13 +328,15 @@ type GrammarOrderByWithIdent struct {
 // GrammarLimitClause represents LIMIT clause.
 type GrammarLimitClause struct {
 	Limit string `parser:"@'LIMIT'"`
-	Value int    `parser:"@Int"`
+	Value int    `parser:"( @Int"`
+	Param bool   `parser:"| @Param )"`
 }
 
 // GrammarOffsetClause represents OFFSET clause.
 type GrammarOffsetClause struct {
 	Offset string `parser:"@'OFFSET'"`
-	Value  int    `parser:"@Int"`
+	Value  int    `parser:"( @Int"`
+	Param  bool   `parser:"| @Param )"`
 }
 
 // GrammarWithTraceClause represents WITH QUERY_TRACE clause.
