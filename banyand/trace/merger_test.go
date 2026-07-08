@@ -966,7 +966,7 @@ func Test_multipleRoundMerges(t *testing.T) {
 
 				// Merge all parts for this round
 				closeCh := make(chan struct{})
-				mergedPart, _, err := tst.mergeParts(fileSystem, closeCh, partsToMerge, partID, tmpPath, nil)
+				mergedPart, _, err := tst.mergeParts(fileSystem, closeCh, partsToMerge, partID, tmpPath, nil, nil)
 				close(closeCh)
 				require.NoError(t, err, "Round %d merge failed", roundIdx+1)
 				require.NotNil(t, mergedPart, "Round %d produced nil merged part", roundIdx+1)
@@ -1239,7 +1239,7 @@ func Test_mergeParts(t *testing.T) {
 				closeCh := make(chan struct{})
 				defer close(closeCh)
 				tst := &tsTable{pm: protector.Nop{}}
-				p, _, err := tst.mergeParts(fileSystem, closeCh, pp, partID, root, nil)
+				p, _, err := tst.mergeParts(fileSystem, closeCh, pp, partID, root, nil, nil)
 				if tt.wantErr != nil {
 					if !errors.Is(err, tt.wantErr) {
 						t.Fatalf("Unexpected error: got %v, want %v", err, tt.wantErr)
@@ -1392,7 +1392,7 @@ func Test_mergePartsThenSendIntroduction_cleansUpOnSidxMergeError(t *testing.T) 
 	merges := make(chan *mergerIntroduction, 1)
 	closeCh := make(chan struct{})
 
-	_, err := tst.mergePartsThenSendIntroduction(snapshotCreatorMerger, parts, merged, merges, closeCh, mergeTypeFile, mergeLaneFast)
+	_, err := tst.mergePartsThenSendIntroduction(snapshotCreatorMerger, parts, merged, merges, closeCh, mergeTypeFile, mergeLaneFast, nil)
 	require.Error(t, err)
 	require.Contains(t, err.Error(), "sidx merge failed")
 
