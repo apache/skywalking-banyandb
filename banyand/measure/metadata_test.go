@@ -20,6 +20,7 @@ package measure_test
 import (
 	"context"
 	"errors"
+	"fmt"
 	"strconv"
 	"time"
 
@@ -408,7 +409,7 @@ var _ = Describe("Schema Change", func() {
 
 				for _, dp := range dataPoints {
 					for _, tf := range dp.TagFamilies {
-						if tf.Name == "default" {
+						if tf.Name == defaultTagFamily {
 							for _, tag := range tf.Tags {
 								innerGm.Expect(tag.Key).NotTo(Equal("extra_tag"),
 									"deleted tag should not be returned in query results")
@@ -441,7 +442,7 @@ var _ = Describe("Schema Change", func() {
 				newDataCount := 0
 				for _, dp := range dataPoints {
 					for _, tf := range dp.TagFamilies {
-						if tf.Name == "default" {
+						if tf.Name == defaultTagFamily {
 							for _, tag := range tf.Tags {
 								if tag.Key == "extra_tag" {
 									if tag.Value.GetInt() != nil {
@@ -481,7 +482,7 @@ var _ = Describe("Schema Change", func() {
 				stringCount := 0
 				for _, dp := range dataPoints {
 					for _, tf := range dp.TagFamilies {
-						if tf.Name == "default" {
+						if tf.Name == defaultTagFamily {
 							for _, tag := range tf.Tags {
 								if tag.Key == "extra_tag" {
 									switch tag.Value.GetValue().(type) {
@@ -497,6 +498,59 @@ var _ = Describe("Schema Change", func() {
 				}
 				innerGm.Expect(nullCount).To(Equal(5), "old data with INT type should return null after schema changed to STRING")
 				innerGm.Expect(stringCount).To(Equal(3), "new data should have STRING extra_tag values")
+			}, flags.EventuallyTimeout).Should(Succeed())
+
+			env.cleanup()
+		})
+	})
+
+	Context("Measure schema with changed tag type after merge", func() {
+		It("querying data should return correct values after parts with different types are merged", func() {
+			measureName := "schema_change_tag_type_merge"
+			now := timestamp.NowMilli()
+
+			env := setupSchemaChangeMeasure(svcs, measureName, measureSetupOptions{withExtraTag: true})
+			writeSchemaChangeMeasureData(svcs, measureName, now.Add(-2*time.Hour), 5,
+				measureWriteDataOptions{withExtraTag: true})
+			changeExtraMeasureTagType(svcs, measureName)
+			writeSchemaChangeMeasureData(svcs, measureName, now.Add(-1*time.Hour), 3,
+				measureWriteDataOptions{withExtraTagString: true, entityIDPrefix: "entity_new_"})
+			partCountBeforeMerge, partCountErr := getTotalMeasurePartCount(svcs, groupName)
+			Expect(partCountErr).ShouldNot(HaveOccurred())
+			Eventually(func(innerGm Gomega) int64 {
+				currentPartCount, currentPartCountErr := getTotalMeasurePartCount(svcs, groupName)
+				innerGm.Expect(currentPartCountErr).ShouldNot(HaveOccurred())
+				return currentPartCount
+			}, flags.EventuallyTimeout).Should(BeNumerically("<", partCountBeforeMerge))
+
+			Eventually(func(innerGm Gomega) {
+				dataPoints := querySchemaChangeMeasureData(svcs, measureName,
+					now.Add(-3*time.Hour), now,
+					[]string{"id", "entity_id", "extra_tag"}, []string{"total"})
+				innerGm.Expect(dataPoints).To(HaveLen(8))
+
+				nullCount := 0
+				stringCount := 0
+				for _, dp := range dataPoints {
+					for _, tf := range dp.TagFamilies {
+						if tf.Name == defaultTagFamily {
+							for _, tag := range tf.Tags {
+								if tag.Key == "extra_tag" {
+									switch tag.Value.GetValue().(type) {
+									case *modelv1.TagValue_Null:
+										nullCount++
+									case *modelv1.TagValue_Str:
+										stringCount++
+									}
+								}
+							}
+						}
+					}
+				}
+				innerGm.Expect(nullCount).To(Equal(5),
+					"old data with int type should return null after schema changed to STRING and parts merged")
+				innerGm.Expect(stringCount).To(Equal(3),
+					"new data should have string extra_tag values after merge")
 			}, flags.EventuallyTimeout).Should(Succeed())
 
 			env.cleanup()
@@ -1036,4 +1090,21 @@ func queryMeasureWithDeletedFieldProjection(svcs *services, measureName string, 
 	default:
 		return errors.New("unexpected data type")
 	}
+}
+
+func getTotalMeasurePartCount(svcs *services, group string) (int64, error) {
+	dataInfo, err := svcs.measure.CollectDataInfo(context.TODO(), group)
+	if err != nil {
+		return 0, fmt.Errorf("collect measure data info: %w", err)
+	}
+	if dataInfo == nil {
+		return 0, errors.New("measure data info is nil")
+	}
+	var total int64
+	for _, seg := range dataInfo.SegmentInfo {
+		for _, shard := range seg.ShardInfo {
+			total += shard.PartCount
+		}
+	}
+	return total, nil
 }

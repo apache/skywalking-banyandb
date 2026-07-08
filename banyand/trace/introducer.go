@@ -324,7 +324,29 @@ func (tst *tsTable) introducePart(nextIntroduction *introduction, epoch uint64) 
 	}
 }
 
+// accountUnsampledFlushed is the arrival-based unsampled-bytes accounting for
+// finalization sampling. Once this shard has been finalized at least once (cached
+// generation > 0), a newly-flushed part is new unsampled data arriving into a cooled
+// segment; accumulate its uncompressed span bytes so the finalize scanner can decide
+// whether another round is warranted. It performs O(1) atomic loads/adds over already
+// in-memory part metadata and takes no filesystem — there is NO metadata I/O on the
+// hot flush path (Phase 3 acceptance).
+func (tst *tsTable) accountUnsampledFlushed(flushed map[uint64]*partWrapper) {
+	if tst.finalizeGenCached.Load() == 0 {
+		return
+	}
+	var newBytes int64
+	for _, pw := range flushed {
+		newBytes += int64(pw.p.partMetadata.UncompressedSpanSizeBytes)
+	}
+	if newBytes > 0 {
+		tst.unsampledBytes.Add(newBytes)
+	}
+}
+
 func (tst *tsTable) introduceFlushed(nextIntroduction *flusherIntroduction, epoch uint64) {
+	tst.accountUnsampledFlushed(nextIntroduction.flushed)
+
 	// Create generic transaction
 	txn := snapshotpkg.NewTransaction()
 	defer txn.Release()
@@ -375,6 +397,10 @@ func (tst *tsTable) introduceFlushed(nextIntroduction *flusherIntroduction, epoc
 // The snapshots are updated atomically so the syncer can always find
 // the corresponding index once a flushed trace part becomes visible.
 func (tst *tsTable) introduceFlushedForSync(nextIntroduction *flusherIntroduction, epoch uint64) {
+	// No unsampled-bytes accounting here: on the sync path these parts are handed off
+	// to other nodes rather than retained locally for finalization, so counting them
+	// would inflate the counter and trigger no-op finalize rounds (finding #9).
+
 	// Create generic transaction
 	txn := snapshotpkg.NewTransaction()
 	defer txn.Release()
