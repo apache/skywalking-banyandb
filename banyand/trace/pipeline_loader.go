@@ -75,6 +75,7 @@ type pluginCacheKey struct {
 	path       string
 	symbol     string
 	configHash string // sha256 hex of the protojson-marshaled config (or of "{}" when nil)
+	group      string // "" for a shared (non-HostAware) instance; group name for a per-group HostAware instance
 }
 
 type loadedPluginCache struct {
@@ -84,7 +85,12 @@ type loadedPluginCache struct {
 
 // loadSamplerPlugin loads (or returns cached) a sampler plugin from the given SamplerPlugin config.
 // trustedDir is the only directory .so paths may resolve within; empty trustedDir disables loading.
-func loadSamplerPlugin(sp *commonv1.SamplerPlugin, trustedDir string) (_ sdk.Sampler, retErr error) {
+// group scopes a HostAware instance to one group so its injected telemetry is per-group; a
+// non-HostAware sampler is cached under the shared key (group=="") and re-used across groups.
+// bindHost, when non-nil, is invoked EXACTLY ONCE on a freshly constructed HostAware sampler,
+// under pluginCache.mu and BEFORE the instance is stored, so no concurrent cache-hit can hand a
+// not-yet-hosted instance to a merge. It is never called on a cache hit. bindHost may be nil.
+func loadSamplerPlugin(sp *commonv1.SamplerPlugin, trustedDir, group string, bindHost func(sdk.Sampler)) (_ sdk.Sampler, retErr error) {
 	if trustedDir == "" {
 		return nil, fmt.Errorf("trusted plugin dir not configured")
 	}
@@ -134,7 +140,16 @@ func loadSamplerPlugin(sp *commonv1.SamplerPlugin, trustedDir string) (_ sdk.Sam
 	key := pluginCacheKey{path: resolvedPath, symbol: symbol, configHash: configHash}
 	pluginCache.mu.Lock()
 	defer pluginCache.mu.Unlock()
+	// 3-step lookup, all under pluginCache.mu:
+	//  1. shared key (group=="") — a non-HostAware instance re-used across groups.
+	//  2. group key — an already-hosted HostAware instance; return WITHOUT calling bindHost.
+	//  3. miss — fall through to construct (ABI check, plugin.Open, ctor) under the lock.
 	if cached, ok := pluginCache.m[key]; ok {
+		return cached, nil
+	}
+	groupKey := key
+	groupKey.group = group
+	if cached, ok := pluginCache.m[groupKey]; ok {
 		return cached, nil
 	}
 
@@ -143,6 +158,33 @@ func loadSamplerPlugin(sp *commonv1.SamplerPlugin, trustedDir string) (_ sdk.Sam
 			sp.GetAbiVersion(), sdk.ABIVersion)
 	}
 
+	sampler, err := newSamplerFromPlugin(resolvedPath, symbol, cfgJSON)
+	if err != nil {
+		return nil, err
+	}
+
+	// Classify the freshly constructed instance and key it accordingly. For a
+	// HostAware sampler, inject the host via bindHost while still holding
+	// pluginCache.mu and BEFORE storing, so no concurrent cache-hit can observe a
+	// not-yet-hosted instance. UseHost/telemetry setup thus runs under the same
+	// lock that already guards plugin.Open and the constructor; keep it fast.
+	if _, isHostAware := sampler.(sdk.HostAware); isHostAware {
+		key.group = group
+		if bindHost != nil {
+			bindHost(sampler)
+		}
+	}
+	pluginCache.m[key] = sampler
+	return sampler, nil
+}
+
+// newSamplerFromPlugin opens the .so, verifies its ABIVersion symbol, and calls
+// the constructor. It is a package var so tests can substitute a Go sampler and
+// exercise the cache/keying/bindHost logic under -race without a real .so. The
+// default implementation is behavior-preserving: it is the exact plugin.Open +
+// ABI check + constructor sequence that loadSamplerPlugin ran inline before the
+// seam was introduced.
+var newSamplerFromPlugin = func(resolvedPath, symbol string, cfgJSON []byte) (sdk.Sampler, error) {
 	var p *plugin.Plugin
 	var openErr error
 	func() {
@@ -194,7 +236,5 @@ func loadSamplerPlugin(sp *commonv1.SamplerPlugin, trustedDir string) (_ sdk.Sam
 	if sampler == nil {
 		return nil, fmt.Errorf("plugin %q constructor returned nil sampler", resolvedPath)
 	}
-
-	pluginCache.m[key] = sampler
 	return sampler, nil
 }

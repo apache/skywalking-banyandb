@@ -256,6 +256,64 @@ The sampler is the only kind this design ships, but `Plugin` is a generic envelo
 
 The same three-step pattern (proto arm → SDK sub-interface + constructor → engine dispatch) covers any future kind (exporter, router, …); the discriminator is always the set `oneof` arm, cross-checked by `Plugin.Kind()`.
 
+### 2.7 Plugin Telemetry (Meter + Logger)
+
+A plugin opts into bounded telemetry by implementing `sdk.HostAware` in addition to `sdk.Sampler`. The engine type-asserts the constructed sampler to `sdk.HostAware` and, if present, calls `UseHost(h)` **exactly once per group** before the plugin's first `Decide`. Plugins that do not implement `sdk.HostAware` are unaffected; there is no ABI change — delivery is via type assertion, not a new constructor argument.
+
+**Frozen SDK façade** (`pkg/pipeline/sdk/telemetry.go`):
+
+```go
+// Host is the telemetry context the engine injects into a HostAware plugin.
+type Host interface {
+    Meter()  Meter   // metric surface scoped to this plugin's group
+    Logger() Logger  // logging surface scoped to this plugin's group
+}
+
+// HostAware is the optional interface a plugin implements to receive a Host.
+type HostAware interface {
+    UseHost(Host) // called once, before the first Decide
+}
+
+// Meter is the bounded metric surface.
+type Meter interface {
+    Counter(name string, labelNames ...string) Counter
+    Gauge(name string, labelNames ...string) Gauge
+    Histogram(name string, buckets []float64, labelNames ...string) Histogram
+}
+
+// Logger is the bounded logging surface (no third-party logger types cross the .so boundary).
+type Logger interface {
+    Debug(msg string, keysAndValues ...any)
+    Info(msg string, keysAndValues ...any)
+    Warn(msg string, keysAndValues ...any)
+    Error(msg string, keysAndValues ...any)
+}
+```
+
+**Host-enforced bounds.** The engine owns and enforces every resource limit — the plugin can request arbitrarily but the host silently clamps:
+
+| Resource | Bound |
+|---|---|
+| Metric name prefix | Forced to `banyandb_trace_pipeline_plugin_` |
+| Labels | `{group, plugin_name}` always present; plugin-supplied labels appended |
+| Cardinality cap | **100** distinct label-value series per plugin; overflow series are counted under an `_overflow` sentinel and not registered in Prometheus |
+| Log rate | **50 lines/s**, burst **100** |
+| Log message size | **1 KiB** (truncated if exceeded) |
+| Structured fields per log call | **16** key/value pairs (excess pairs dropped) |
+| Default log level | **INFO** (Debug calls are no-ops unless the data node's `--log-level=debug` is set) |
+
+**Per-group instance delivery.** Because `UseHost` is called once *per group*, a `HostAware` plugin receives a distinct `Host` (and therefore a distinct `Meter` scope) for every group it is registered under. Metrics emitted from group `sw_trace` and group `sw_zipkinTrace` carry different `{group}` label values and are counted against independent cardinality budgets. Non-`HostAware` plugins share a single sampler instance across groups and receive no Host.
+
+**Plugin may cache the Host.** `UseHost` is called before the first `Decide` and not called again for the lifetime of the group config. A plugin should cache `h` in a struct field and use it freely in `Decide`; there is no need to call `UseHost` again or to check for a new Host on each batch.
+
+**Series reclaim on teardown.** The host never calls `Close` on `sdk.Counter`/`sdk.Gauge`/`sdk.Histogram` objects (Go has no finalizer contract here). When a pipeline config is removed, the host calls `sdk.Plugin.Close()` and then deletes every metric series registered by that plugin instance, reclaiming Prometheus memory without a process restart.
+
+**No ABI bump.** The addition of `sdk.HostAware` / `sdk.Host` / `sdk.Meter` / `sdk.Logger` to `pkg/pipeline/sdk` is backward-compatible: old plugins that do not implement `sdk.HostAware` simply fail the type assertion and receive no Host. `sdk.ABIVersion` remains **1**.
+
+**D7 caveat — transitive zerolog dependency.** The `.so` already links `zerolog` transitively via `pbv1` (`pkg/pb/v1`). The `sdk.Logger` façade avoids widening that coupling to plugin authors (no `zerolog.Logger` or `zerolog.Event` crosses the `.so` boundary) rather than eliminating the transitive link. Plugin authors should not rely on `zerolog` being present; use only the `sdk.Logger` interface.
+
+Reference plugins demonstrating well-behaved and adversarial use of the façade live at [`test/plugins/_telemetrysampler`](../../test/plugins/_telemetrysampler) (keeps all traces, emits bounded counter + sparse Info log) and [`test/plugins/_faultysampler`](../../test/plugins/_faultysampler) (panic in UseHost, log flood, cardinality explosion — verifies host bounds hold). Build them with `make build-trace-pipeline-telemetry-plugins`.
+
 ## Retention-Decision Timing & Trace Completeness
 
 Both the plugin gating policy (§1.1) and the per-stage retention plugin (§1.2) operate on the **whole** trace, not on individual spans as they arrive: `D_total` needs the earliest start and latest end, `has_error` scans all spans, and tag matchers scan all spans. Spans of one trace, however, arrive at the storage node anywhere from milliseconds to hours apart, and BanyanDB writes each span into the segment selected by its **event time** (the `start_time` tag), not its arrival time (`banyand/trace/write_standalone.go`). There is no live partial-trace buffer; a trace exists only as spans co-located by `trace_id` inside a segment's parts.
