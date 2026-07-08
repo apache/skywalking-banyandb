@@ -49,6 +49,37 @@ func lookupMergeGrace(group string) int64 {
 	return localMergeGraceRegistry.m[group]
 }
 
+// localMergeEventRegistry records, per group, whether the MERGE pipeline event is
+// enabled. The sampler set is shared by MERGE and FINALIZE (DD11), so the presence of
+// samplers alone does NOT mean hot merges should be filtered: a FINALIZE-only group
+// registers samplers for the background pass but must not touch the hot merge path.
+// buildHotMergeFilter consults this flag so enabled_events reliably gates MERGE-time
+// filtering independently of FINALIZE.
+var localMergeEventRegistry = struct {
+	m  map[string]bool
+	mu sync.RWMutex
+}{m: make(map[string]bool)}
+
+// setMergeEventForGroup records whether the MERGE event is enabled for group.
+// enabled == false removes the entry.
+func setMergeEventForGroup(group string, enabled bool) {
+	localMergeEventRegistry.mu.Lock()
+	if enabled {
+		localMergeEventRegistry.m[group] = true
+	} else {
+		delete(localMergeEventRegistry.m, group)
+	}
+	localMergeEventRegistry.mu.Unlock()
+}
+
+// mergeEventEnabledForGroup reports whether the MERGE-time retention filter should run
+// for group (false when only FINALIZE is enabled, or nothing is configured).
+func mergeEventEnabledForGroup(group string) bool {
+	localMergeEventRegistry.mu.RLock()
+	defer localMergeEventRegistry.mu.RUnlock()
+	return localMergeEventRegistry.m[group]
+}
+
 // Finalization-sampling threshold defaults (see .omc/plans/trace-finalize-sampling.md
 // DD2). They bound whether a cooled segment warrants another finalize round.
 const (
@@ -208,6 +239,10 @@ func registerSampler(group string, s sdk.Sampler) func() {
 	localSamplerRegistry.mu.Lock()
 	localSamplerRegistry.m[group] = append(localSamplerRegistry.m[group], namedSampler{sampler: s})
 	localSamplerRegistry.mu.Unlock()
+	// Direct registration models an active MERGE-filter sampler (the production reconcile
+	// path sets this from mergeEventEnabled); without it buildHotMergeFilter would treat
+	// the group as MERGE-disabled and skip filtering.
+	setMergeEventForGroup(group, true)
 	return func() {
 		localSamplerRegistry.mu.Lock()
 		defer localSamplerRegistry.mu.Unlock()
@@ -220,6 +255,7 @@ func registerSampler(group string, s sdk.Sampler) func() {
 		}
 		if len(localSamplerRegistry.m[group]) == 0 {
 			delete(localSamplerRegistry.m, group)
+			setMergeEventForGroup(group, false)
 		}
 	}
 }

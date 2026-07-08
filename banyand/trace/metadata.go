@@ -255,6 +255,7 @@ func (sr *schemaRepo) OnDelete(metadata schema.Metadata) {
 			removeSamplersForGroup(g.Metadata.Name)
 			teardownGroupTelemetry(g.Metadata.Name)
 			setMergeGraceForGroup(g.Metadata.Name, 0)
+			setMergeEventForGroup(g.Metadata.Name, false)
 			setFinalizeGraceForGroup(g.Metadata.Name, 0)
 			setFinalizeConfigForGroup(g.Metadata.Name, nil)
 			sr.samplerMeter.setActiveCount(g.Metadata.Name, 0)
@@ -356,6 +357,7 @@ func (sr *schemaRepo) reconcilePipeline(group string, cfg *commonv1.TracePipelin
 		removeSamplersForGroup(group)
 		teardownGroupTelemetry(group)
 		setMergeGraceForGroup(group, 0)
+		setMergeEventForGroup(group, false)
 		setFinalizeGraceForGroup(group, 0)
 		setFinalizeConfigForGroup(group, nil)
 		sr.samplerMeter.setActiveCount(group, 0)
@@ -465,6 +467,7 @@ func (sr *schemaRepo) reconcilePipeline(group string, cfg *commonv1.TracePipelin
 		graceNs = gd.AsDuration().Nanoseconds()
 	}
 	setMergeGraceForGroup(group, graceNs)
+	setMergeEventForGroup(group, mergeEventEnabled(cfg))
 	// Store finalize_grace + threshold config ONLY when the FINALIZE event is enabled;
 	// a finalize config entry is what marks a group for the background finalize scanner
 	// (a merge-only group must not be scanned). The proto carries no threshold-override

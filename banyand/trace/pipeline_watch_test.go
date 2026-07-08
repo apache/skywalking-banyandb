@@ -47,6 +47,10 @@ func resetRegistries() {
 	localMergeGraceRegistry.m = make(map[string]int64)
 	localMergeGraceRegistry.mu.Unlock()
 
+	localMergeEventRegistry.mu.Lock()
+	localMergeEventRegistry.m = make(map[string]bool)
+	localMergeEventRegistry.mu.Unlock()
+
 	localFinalizeGraceRegistry.mu.Lock()
 	localFinalizeGraceRegistry.m = make(map[string]int64)
 	localFinalizeGraceRegistry.mu.Unlock()

@@ -359,6 +359,12 @@ func (tst *tsTable) buildHotMergeFilter(parts []*partWrapper) *mergeFilter {
 	if len(samplers) == 0 {
 		return nil
 	}
+	// The sampler set is shared with FINALIZE (DD11); only filter hot merges when the
+	// MERGE event is actually enabled for this group, so a FINALIZE-only config does
+	// not silently filter hot merges.
+	if !mergeEventEnabledForGroup(tst.group) {
+		return nil
+	}
 	graceNs := lookupMergeGrace(tst.group)
 	if graceNs <= 0 {
 		graceNs = int64(tst.option.mergeGraceDefault)

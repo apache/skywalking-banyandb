@@ -43,7 +43,12 @@ type finalizeState struct {
 	// empty means never finalized. It is the cooldown clock.
 	LastFinalizedAt string `json:"lastFinalizedAt,omitempty"`
 	// FinalizeGeneration is the shard's monotonic current generation; 0 = never
-	// finalized. A part is selectable when its FinalizeGen < this value.
+	// finalized. A round targets generation gNext = FinalizeGeneration + 1 and selects
+	// every part with FinalizeGen < gNext — i.e. FinalizeGen <= FinalizeGeneration — so
+	// each round re-samples the whole cooled set (survivors stamped at the current
+	// generation are included). The stamp exists for crash-safety: after a committed
+	// round both the parts and this field read gNext, so a replay (which recomputes
+	// gNext) excludes them.
 	FinalizeGeneration uint64 `json:"finalizeGeneration,omitempty"`
 	// UnsampledBytes accumulates uncompressed span bytes of parts that arrived into
 	// this shard after it cooled/was-finalized; it gates the re-round threshold and

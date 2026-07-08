@@ -28,6 +28,29 @@ import (
 	commonv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/common/v1"
 )
 
+// TestBuildHotMergeFilter_MergeEventGate verifies that the hot merge filter is applied
+// only when the MERGE event is enabled for the group — even though the sampler set is
+// shared with FINALIZE (DD11). A FINALIZE-only group (samplers registered, MERGE event
+// off) must NOT filter hot merges.
+func TestBuildHotMergeFilter_MergeEventGate(t *testing.T) {
+	resetRegistries()
+	defer resetRegistries()
+
+	const group = "merge-gate-group"
+	replaceSamplersForGroup(group, []namedSampler{{name: "s", sampler: &dummySampler{}}})
+	tst := &tsTable{group: group, option: option{nativePipelineEnabled: true, mergeGraceDefault: time.Second}}
+	// An ancient (non-hot) part so hotness never masks the gate.
+	parts := []*partWrapper{{p: &part{partMetadata: partMetadata{MaxTimestamp: 1, TotalCount: 1}}}}
+
+	// FINALIZE-only: samplers registered, MERGE event disabled → no hot-merge filter.
+	setMergeEventForGroup(group, false)
+	assert.Nil(t, tst.buildHotMergeFilter(parts), "FINALIZE-only group must not filter hot merges")
+
+	// MERGE enabled → the filter is built.
+	setMergeEventForGroup(group, true)
+	assert.NotNil(t, tst.buildHotMergeFilter(parts), "MERGE-enabled group must filter hot merges")
+}
+
 // TestFinalizeEventEnabled_Matrix verifies the finalize event gate. Unlike MERGE,
 // an empty enabled_events list must NOT default finalize on.
 func TestFinalizeEventEnabled_Matrix(t *testing.T) {
