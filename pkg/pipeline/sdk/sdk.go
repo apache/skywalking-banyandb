@@ -42,12 +42,13 @@
 // chain this is the conjunction of the links' keep/drop verdicts.
 //
 // The boundary deliberately crosses only stdlib slices plus the engine's
-// stable, byte-sized pbv1.ValueType enum, so no banyand/trace-internal struct
-// is shared across the .so boundary.
+// stable, byte-sized valuetype.ValueType enum (a dependency-free leaf package,
+// re-exported by pkg/pb/v1 as pbv1.ValueType), so no banyand/trace-internal
+// struct — and no logging/meter dependency — is shared across the .so boundary.
 package sdk
 
 import (
-	pbv1 "github.com/apache/skywalking-banyandb/pkg/pb/v1"
+	"github.com/apache/skywalking-banyandb/pkg/pb/v1/valuetype"
 )
 
 // ABIVersion is compiled into the host and must be re-exported, unchanged, by
@@ -81,11 +82,13 @@ type Plugin interface {
 	// plugin's lifetime.
 	Kind() Kind
 
-	// Project is the column-selection handshake, called once at load. The
-	// engine honors it for the plugin's lifetime: Tags drives the native tag
-	// projection (only those tag columns are decoded); SpanIDs and Spans gate
-	// the spans stream. Intrinsic columns (TraceID, MinTS, MaxTS) are always
-	// present regardless of the projection.
+	// Project is the column-selection handshake called when a merge chain is
+	// built (once per merge, not necessarily once per process load). The engine
+	// unions the projections from all samplers in the chain and honors the
+	// result for that chain's lifetime: Tags drives the native tag projection
+	// (only those tag columns are decoded); SpanIDs and Spans gate the spans
+	// stream. Intrinsic columns (TraceID, MinTS, MaxTS) are always present
+	// regardless of the projection.
 	Project() Projection
 
 	// Close releases any resources the plugin holds. It is called once when the
@@ -196,7 +199,7 @@ type TagColumn struct {
 	Values [][]byte
 	// ValueType is the engine's stable, byte-sized type tag for every value in
 	// the column.
-	ValueType pbv1.ValueType
+	ValueType valuetype.ValueType
 }
 
 // Verdict is the per-trace decision, aligned to TraceBatch.Traces.

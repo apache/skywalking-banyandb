@@ -21,8 +21,8 @@ import (
 	"fmt"
 
 	"github.com/apache/skywalking-banyandb/pkg/convert"
-	"github.com/apache/skywalking-banyandb/pkg/encoding"
-	pbv1 "github.com/apache/skywalking-banyandb/pkg/pb/v1"
+	"github.com/apache/skywalking-banyandb/pkg/encoding/vararray"
+	"github.com/apache/skywalking-banyandb/pkg/pb/v1/valuetype"
 )
 
 // Value is a single decoded tag value. The accessor matching ValueType returns
@@ -35,7 +35,7 @@ type Value struct {
 	intArr    []int64
 	int64Val  int64
 	floatVal  float64
-	valueType pbv1.ValueType
+	valueType valuetype.ValueType
 	null      bool
 }
 
@@ -43,7 +43,7 @@ type Value struct {
 func (v Value) IsNull() bool { return v.null }
 
 // ValueType returns the type tag of the decoded value.
-func (v Value) ValueType() pbv1.ValueType { return v.valueType }
+func (v Value) ValueType() valuetype.ValueType { return v.valueType }
 
 // Str returns the string value (valid for ValueTypeStr).
 func (v Value) Str() string { return v.str }
@@ -77,31 +77,31 @@ func (c *TagColumn) At(row int) (Value, error) {
 // block, into a typed Value. It mirrors the engine's own per-row decode so a
 // plugin never needs to import banyand/trace internals. A nil raw value yields
 // a null Value.
-func DecodeTagValue(valueType pbv1.ValueType, raw []byte) (Value, error) {
+func DecodeTagValue(valueType valuetype.ValueType, raw []byte) (Value, error) {
 	if raw == nil {
 		return Value{valueType: valueType, null: true}, nil
 	}
 	switch valueType {
-	case pbv1.ValueTypeStr:
+	case valuetype.ValueTypeStr:
 		return Value{valueType: valueType, str: string(raw)}, nil
-	case pbv1.ValueTypeInt64:
+	case valuetype.ValueTypeInt64:
 		if len(raw) != 8 {
 			return Value{}, fmt.Errorf("int64: expected 8 bytes, got %d", len(raw))
 		}
 		return Value{valueType: valueType, int64Val: convert.BytesToInt64(raw)}, nil
-	case pbv1.ValueTypeFloat64:
+	case valuetype.ValueTypeFloat64:
 		if len(raw) != 8 {
 			return Value{}, fmt.Errorf("float64: expected 8 bytes, got %d", len(raw))
 		}
 		return Value{valueType: valueType, floatVal: convert.BytesToFloat64(raw)}, nil
-	case pbv1.ValueTypeBinaryData:
+	case valuetype.ValueTypeBinaryData:
 		return Value{valueType: valueType, bytes: raw}, nil
-	case pbv1.ValueTypeTimestamp:
+	case valuetype.ValueTypeTimestamp:
 		if len(raw) != 8 {
 			return Value{}, fmt.Errorf("timestamp: expected 8 bytes, got %d", len(raw))
 		}
 		return Value{valueType: valueType, int64Val: convert.BytesToInt64(raw)}, nil
-	case pbv1.ValueTypeInt64Arr:
+	case valuetype.ValueTypeInt64Arr:
 		if len(raw)%8 != 0 {
 			return Value{}, fmt.Errorf("int64 array: length %d is not a multiple of 8", len(raw))
 		}
@@ -110,10 +110,10 @@ func DecodeTagValue(valueType pbv1.ValueType, raw []byte) (Value, error) {
 			values = append(values, convert.BytesToInt64(raw[i:i+8]))
 		}
 		return Value{valueType: valueType, intArr: values}, nil
-	case pbv1.ValueTypeStrArr:
+	case valuetype.ValueTypeStrArr:
 		var values []string
 		for idx := 0; idx < len(raw); {
-			end, next, err := encoding.UnmarshalVarArray(raw, idx)
+			end, next, err := vararray.UnmarshalVarArray(raw, idx)
 			if err != nil {
 				return Value{}, fmt.Errorf("str array: %w", err)
 			}
@@ -121,7 +121,7 @@ func DecodeTagValue(valueType pbv1.ValueType, raw []byte) (Value, error) {
 			idx = next
 		}
 		return Value{valueType: valueType, strArr: values}, nil
-	case pbv1.ValueTypeUnknown:
+	case valuetype.ValueTypeUnknown:
 		return Value{valueType: valueType, null: true}, nil
 	default:
 		return Value{}, fmt.Errorf("unsupported value type: %d", valueType)

@@ -40,7 +40,7 @@ import (
 	"encoding/json"
 	"fmt"
 
-	pbv1 "github.com/apache/skywalking-banyandb/pkg/pb/v1"
+	"github.com/apache/skywalking-banyandb/pkg/pb/v1/valuetype"
 	"github.com/apache/skywalking-banyandb/pkg/pipeline/sdk"
 )
 
@@ -160,7 +160,7 @@ func (s *latencyStatusSampler) keepTrace(b *sdk.TraceBlock) bool {
 	// Decode duration as int64 milliseconds.
 	var durationMs int64
 	switch durVal.ValueType() {
-	case pbv1.ValueTypeInt64:
+	case valuetype.ValueTypeInt64:
 		durationMs = durVal.Int64()
 	default:
 		return true // fail open: unexpected duration type
@@ -169,7 +169,7 @@ func (s *latencyStatusSampler) keepTrace(b *sdk.TraceBlock) bool {
 	// Decode status as string.
 	var statusStr string
 	switch statusVal.ValueType() {
-	case pbv1.ValueTypeStr:
+	case valuetype.ValueTypeStr:
 		statusStr = statusVal.Str()
 	default:
 		return true // fail open: unexpected status type

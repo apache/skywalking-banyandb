@@ -47,6 +47,10 @@ func resetRegistries() {
 	localMergeGraceRegistry.m = make(map[string]int64)
 	localMergeGraceRegistry.mu.Unlock()
 
+	pluginTelemetryRegistry.mu.Lock()
+	pluginTelemetryRegistry.m = make(map[string][]*pluginTelemetry)
+	pluginTelemetryRegistry.mu.Unlock()
+
 	resetPluginCache()
 }
 
@@ -65,7 +69,7 @@ func makeDataSchemaRepo(trustedDir string) schemaRepo {
 
 // makeSamplerPlugin builds a SamplerPlugin for soName inside trustedDir.
 func makeSamplerPlugin(soName string, thresholdMs float64) (*commonv1.SamplerPlugin, error) {
-	cfgStruct, cfgErr := structpb.NewStruct(map[string]interface{}{
+	cfgStruct, cfgErr := structpb.NewStruct(map[string]any{
 		"thresholdMs":  thresholdMs,
 		"successValue": "ok",
 	})
@@ -404,12 +408,10 @@ func TestReconcilePipeline_ConcurrentRace(t *testing.T) {
 	const workers = 8
 	const iterations = 100
 
-	for wID := 0; wID < workers; wID++ {
-		wg.Add(1)
-		go func(id int) {
-			defer wg.Done()
-			for i := 0; i < iterations; i++ {
-				switch (id + i) % 3 {
+	for wID := range workers {
+		wg.Go(func() {
+			for i := range iterations {
+				switch (wID + i) % 3 {
 				case 0:
 					replaceSamplersForGroup(group, []namedSampler{{name: "d", sampler: dummy}})
 					setMergeGraceForGroup(group, int64(i+1)*int64(time.Second))
@@ -421,7 +423,7 @@ func TestReconcilePipeline_ConcurrentRace(t *testing.T) {
 					_ = lookupMergeGrace(group)
 				}
 			}
-		}(wID)
+		})
 	}
 	wg.Wait()
 }
