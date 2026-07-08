@@ -363,6 +363,17 @@ var _ = Describe("BindParams equivalence with literal queries", func() {
 	Describe("literal count wrap guard", func() {
 		// The bound path rejects out-of-range counts at bind time; the literal
 		// path must be equally strict instead of wrapping in the uint32 cast.
+		It("accepts the uint32 maximum as a literal LIMIT", func() {
+			// Regression for the pre-existing max-limit integration case:
+			// LIMIT is uint32 on the wire, so 4294967295 is a legal literal.
+			grammar, err := ParseQuery("SELECT * FROM STREAM sw IN default LIMIT 4294967295")
+			Expect(err).To(BeNil())
+			Expect(BindParams(grammar, nil)).To(Succeed())
+			result, err := transformer.Transform(context.Background(), grammar)
+			Expect(err).To(BeNil())
+			Expect(result).NotTo(BeNil())
+		})
+
 		It("rejects a negative literal LIMIT", func() {
 			grammar, err := ParseQuery("SELECT * FROM STREAM sw IN default LIMIT -5")
 			Expect(err).To(BeNil())

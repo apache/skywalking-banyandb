@@ -87,21 +87,21 @@ func (b *binder) collect(g *Grammar) {
 	if g.Select != nil {
 		if g.Select.Projection != nil && g.Select.Projection.TopN != nil {
 			topN := g.Select.Projection.TopN
-			b.collectIntSlot(&topN.N, &topN.NParam)
+			b.collectIntSlot(&topN.N, &topN.NParam, math.MaxInt32)
 		}
 		b.collectTime(g.Select.Time)
 		if g.Select.Where != nil {
 			b.collectOrExpr(g.Select.Where.Expr)
 		}
 		if g.Select.Limit != nil {
-			b.collectIntSlot(&g.Select.Limit.Value, &g.Select.Limit.Param)
+			b.collectIntSlot(&g.Select.Limit.Value, &g.Select.Limit.Param, math.MaxUint32)
 		}
 		if g.Select.Offset != nil {
-			b.collectIntSlot(&g.Select.Offset.Value, &g.Select.Offset.Param)
+			b.collectIntSlot(&g.Select.Offset.Value, &g.Select.Offset.Param, math.MaxUint32)
 		}
 	}
 	if g.TopN != nil {
-		b.collectIntSlot(&g.TopN.N, &g.TopN.NParam)
+		b.collectIntSlot(&g.TopN.N, &g.TopN.NParam, math.MaxInt32)
 		b.collectTime(g.TopN.Time)
 		if g.TopN.Where != nil {
 			b.collectAndExpr(g.TopN.Where.Expr)
@@ -110,11 +110,12 @@ func (b *binder) collect(g *Grammar) {
 }
 
 // validateCountValue rejects count values that would silently wrap when the
-// transformer narrows them to int32/uint32. It guards both the bound path and
-// the literal path so the two cannot diverge.
-func validateCountValue(label string, value int64) error {
-	if value < 0 || value > math.MaxInt32 {
-		return fmt.Errorf("%s value %d is out of range [0, %d]", label, value, math.MaxInt32)
+// transformer narrows them: LIMIT/OFFSET are uint32 on the wire while the TOP N
+// counts are int32, so each position passes its own upper bound. It guards both
+// the bound path and the literal path so the two cannot diverge.
+func validateCountValue(label string, value, maxValue int64) error {
+	if value < 0 || value > maxValue {
+		return fmt.Errorf("%s value %d is out of range [0, %d]", label, value, maxValue)
 	}
 	return nil
 }
@@ -124,23 +125,23 @@ func validateCountValue(label string, value int64) error {
 func validateGrammarCounts(g *Grammar) error {
 	if g.Select != nil {
 		if g.Select.Projection != nil && g.Select.Projection.TopN != nil {
-			if err := validateCountValue("TOP", int64(g.Select.Projection.TopN.N)); err != nil {
+			if err := validateCountValue("TOP", int64(g.Select.Projection.TopN.N), math.MaxInt32); err != nil {
 				return err
 			}
 		}
 		if g.Select.Limit != nil {
-			if err := validateCountValue("LIMIT", int64(g.Select.Limit.Value)); err != nil {
+			if err := validateCountValue("LIMIT", int64(g.Select.Limit.Value), math.MaxUint32); err != nil {
 				return err
 			}
 		}
 		if g.Select.Offset != nil {
-			if err := validateCountValue("OFFSET", int64(g.Select.Offset.Value)); err != nil {
+			if err := validateCountValue("OFFSET", int64(g.Select.Offset.Value), math.MaxUint32); err != nil {
 				return err
 			}
 		}
 	}
 	if g.TopN != nil {
-		if err := validateCountValue("SHOW TOP", int64(g.TopN.N)); err != nil {
+		if err := validateCountValue("SHOW TOP", int64(g.TopN.N), math.MaxInt32); err != nil {
 			return err
 		}
 	}
@@ -148,8 +149,8 @@ func validateGrammarCounts(g *Grammar) error {
 }
 
 // collectIntSlot registers a placeholder in an integer-only position
-// (LIMIT, OFFSET, or a TOP N count).
-func (b *binder) collectIntSlot(value *int, param *bool) {
+// (LIMIT, OFFSET, or a TOP N count) with that position's upper bound.
+func (b *binder) collectIntSlot(value *int, param *bool, maxValue int64) {
 	if !*param {
 		return
 	}
@@ -163,7 +164,7 @@ func (b *binder) collectIntSlot(value *int, param *bool) {
 			return fmt.Errorf("this position only accepts int parameters, got %T", p.Value)
 		}
 		bound := intVal.Int.GetValue()
-		if err := validateCountValue("int parameter", bound); err != nil {
+		if err := validateCountValue("int parameter", bound, maxValue); err != nil {
 			return err
 		}
 		*value = int(bound)

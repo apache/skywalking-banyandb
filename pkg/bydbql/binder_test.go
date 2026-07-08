@@ -261,8 +261,23 @@ var _ = Describe("BindParams", func() {
 			Expect(err.Error()).To(ContainSubstring("out of range"))
 		})
 
-		It("rejects an int parameter beyond int32 in OFFSET", func() {
+		It("accepts the uint32 maximum in LIMIT", func() {
+			// LIMIT/OFFSET are uint32 on the wire, so their bound accepts up to
+			// math.MaxUint32 — the same value the max-limit literal query uses.
+			grammar := parse("SELECT * FROM STREAM sw IN default LIMIT ?")
+			Expect(BindParams(grammar, []*modelv1.TagValue{intParam(math.MaxUint32)})).To(Succeed())
+			Expect(grammar.Select.Limit.Value).To(Equal(int(math.MaxUint32)))
+		})
+
+		It("rejects an int parameter beyond uint32 in OFFSET", func() {
 			grammar := parse("SELECT * FROM STREAM sw IN default OFFSET ?")
+			err := BindParams(grammar, []*modelv1.TagValue{intParam(math.MaxUint32 + 1)})
+			Expect(err).To(HaveOccurred())
+			Expect(err.Error()).To(ContainSubstring("out of range"))
+		})
+
+		It("rejects an int parameter beyond int32 in the SHOW TOP count", func() {
+			grammar := parse("SHOW TOP ? FROM MEASURE metrics IN default")
 			err := BindParams(grammar, []*modelv1.TagValue{intParam(math.MaxInt32 + 1)})
 			Expect(err).To(HaveOccurred())
 			Expect(err.Error()).To(ContainSubstring("out of range"))
