@@ -134,6 +134,22 @@ build-trace-pipeline-plugin: ## Build the latencystatussampler.so plugin (Linux/
 		./test/plugins/_latencystatussampler
 	@echo "Built $(PLUGIN_OUTPUT_DIR)/latencystatussampler.so"
 
+.PHONY: build-trace-pipeline-telemetry-plugins
+build-trace-pipeline-telemetry-plugins: ## Build telemetrysampler.so and faultysampler.so reference plugins (Linux/macOS only; requires a C toolchain)
+	@if ! command -v gcc > /dev/null 2>&1 && ! command -v clang > /dev/null 2>&1; then \
+		echo "ERROR: build-trace-pipeline-telemetry-plugins requires a C toolchain (gcc or clang) but neither was found in PATH."; \
+		exit 1; \
+	fi
+	@mkdir -p $(PLUGIN_OUTPUT_DIR)
+	CGO_ENABLED=1 go build -buildmode=plugin -trimpath \
+		-o $(PLUGIN_OUTPUT_DIR)/telemetrysampler.so \
+		./test/plugins/_telemetrysampler
+	@echo "Built $(PLUGIN_OUTPUT_DIR)/telemetrysampler.so"
+	CGO_ENABLED=1 go build -buildmode=plugin -trimpath \
+		-o $(PLUGIN_OUTPUT_DIR)/faultysampler.so \
+		./test/plugins/_faultysampler
+	@echo "Built $(PLUGIN_OUTPUT_DIR)/faultysampler.so"
+
 .PHONY: build-trace-pipeline-server
 build-trace-pipeline-server: ## Build banyand-server with explicit CGO_ENABLED=1 for plugin hosting (Linux/macOS only)
 	@if ! command -v gcc > /dev/null 2>&1 && ! command -v clang > /dev/null 2>&1; then \
@@ -335,7 +351,7 @@ release-push-candidate: ## Push release candidate
 .PHONY: all $(PROJECTS) clean build  default nuke
 .PHONY: lint check tidy format pre-push generate-test-cases capture-test-cases generate-trace-test-cases capture-trace-test-cases check-import-boundaries
 .PHONY: test test-race test-coverage test-ci test-docker
-.PHONY: build-trace-pipeline-plugin build-trace-pipeline-server test-trace-pipeline
+.PHONY: build-trace-pipeline-plugin build-trace-pipeline-telemetry-plugins build-trace-pipeline-server test-trace-pipeline
 .PHONY: license-check license-fix license-dep
 .PHONY: release release-binary release-source release-sign release-assembly
 .PHONY: vendor-update

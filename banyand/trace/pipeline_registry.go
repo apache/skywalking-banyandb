@@ -49,13 +49,19 @@ func lookupMergeGrace(group string) int64 {
 	return localMergeGraceRegistry.m[group]
 }
 
-// namedSampler pairs a sampler instance with its stable identity and config hash.
-// name is the plugin name within the group's plugins list; configHash is the hash
-// of the marshaled SamplerPlugin.config bytes, used by the config-aware loader cache.
+// namedSampler pairs a sampler instance with its stable identity. The identity is the
+// plugin name plus everything that selects which code runs: the config hash AND the
+// plugin reference (path, symbol, ABI version). reconcilePipeline compares this identity
+// to decide whether a re-apply is redundant, so all fields that change the loaded plugin
+// must be captured here — otherwise a path/symbol/ABI swap under an unchanged config JSON
+// would be skipped and keep the stale plugin.
 type namedSampler struct {
 	sampler    sdk.Sampler
 	name       string
 	configHash string
+	path       string
+	symbol     string
+	abiVersion uint32
 }
 
 // localSamplerRegistry maps group → ordered named samplers for in-process, flag-gated
@@ -108,6 +114,41 @@ func registerSampler(group string, s sdk.Sampler) func() {
 			delete(localSamplerRegistry.m, group)
 		}
 	}
+}
+
+// nameHash is the stable identity of one registered sampler: its plugin name, config
+// hash, and plugin reference (path, symbol, ABI version). reconcilePipeline compares the
+// desired list against currentSamplerIdentity to skip redundant re-applies; including the
+// plugin reference ensures a path/symbol/ABI change (even with an unchanged config JSON)
+// triggers a rebuild.
+type nameHash struct {
+	name       string
+	configHash string
+	path       string
+	symbol     string
+	abiVersion uint32
+}
+
+// currentSamplerIdentity returns the (name, configHash) identity of group's
+// registered samplers in declared order, or nil if none.
+func currentSamplerIdentity(group string) []nameHash {
+	localSamplerRegistry.mu.RLock()
+	defer localSamplerRegistry.mu.RUnlock()
+	ns := localSamplerRegistry.m[group]
+	if len(ns) == 0 {
+		return nil
+	}
+	out := make([]nameHash, len(ns))
+	for idx, item := range ns {
+		out[idx] = nameHash{
+			name:       item.name,
+			configHash: item.configHash,
+			path:       item.path,
+			symbol:     item.symbol,
+			abiVersion: item.abiVersion,
+		}
+	}
+	return out
 }
 
 // lookupSamplers returns a snapshot of the registered samplers for group in declared

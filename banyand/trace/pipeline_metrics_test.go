@@ -41,8 +41,9 @@ type labeledCall struct {
 }
 
 type fakeMetricCounter struct {
-	calls []labeledCall
-	mu    sync.Mutex
+	calls   []labeledCall
+	deletes [][]string
+	mu      sync.Mutex
 }
 
 func (f *fakeMetricCounter) Inc(delta float64, labels ...string) {
@@ -53,7 +54,38 @@ func (f *fakeMetricCounter) Inc(delta float64, labels ...string) {
 	f.mu.Unlock()
 }
 
-func (f *fakeMetricCounter) Delete(_ ...string) bool { return true }
+func (f *fakeMetricCounter) Delete(labels ...string) bool {
+	cp := make([]string, len(labels))
+	copy(cp, labels)
+	f.mu.Lock()
+	f.deletes = append(f.deletes, cp)
+	f.mu.Unlock()
+	return true
+}
+
+// deletesWithPrefix counts recorded Delete calls whose label slice starts with
+// the given prefix.
+func (f *fakeMetricCounter) deletesWithPrefix(prefix ...string) int {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	count := 0
+	for _, d := range f.deletes {
+		if len(d) < len(prefix) {
+			continue
+		}
+		match := true
+		for idx, lv := range prefix {
+			if d[idx] != lv {
+				match = false
+				break
+			}
+		}
+		if match {
+			count++
+		}
+	}
+	return count
+}
 
 func (f *fakeMetricCounter) callsWithLabels(labels ...string) int {
 	f.mu.Lock()
@@ -150,6 +182,13 @@ func newFakeMetricFactory() *fakeMetricFactory {
 func (f *fakeMetricFactory) NewCounter(name string, _ ...string) meter.Counter {
 	f.mu.Lock()
 	defer f.mu.Unlock()
+	// Memoize by name so repeated NewCounter for the same series name returns the
+	// same handle, mirroring the real registry: two groups sharing a plugin metric
+	// name wrap ONE physical series and disambiguate via their prepended group
+	// label value. This is what the cross-group attribution assertion depends on.
+	if c, ok := f.counters[name]; ok {
+		return c
+	}
 	c := &fakeMetricCounter{}
 	f.counters[name] = c
 	return c
@@ -158,6 +197,9 @@ func (f *fakeMetricFactory) NewCounter(name string, _ ...string) meter.Counter {
 func (f *fakeMetricFactory) NewGauge(name string, _ ...string) meter.Gauge {
 	f.mu.Lock()
 	defer f.mu.Unlock()
+	if g, ok := f.gauges[name]; ok {
+		return g
+	}
 	g := &fakeMetricGauge{}
 	f.gauges[name] = g
 	return g
@@ -278,50 +320,54 @@ func TestSamplerMetrics_RegisterUpdateRemove(t *testing.T) {
 	assert.Equal(t, float64(0), lastVal, "sampler_active_count must be 0 after remove")
 }
 
-// TestSamplerMetrics_SuccessRegisterAndUpdate exercises the success path by
-// injecting a pre-built sampler via replaceSamplersForGroup to bypass plugin
-// loading, then verifying success labels are emitted.
-func TestSamplerMetrics_SuccessRegisterAndUpdate(t *testing.T) {
+// TestSamplerMetrics_SuccessUpdateAndIdempotentSkip exercises the success metric
+// path via a real config change and verifies the idempotent-skip: an
+// empty-plugins config on an empty registry is a no-op (no metric churn), while a
+// transition from a previously registered set to the empty set is a genuine
+// update that emits update-success and sets active_count=0. A second identical
+// empty reconcile is then skipped.
+func TestSamplerMetrics_SuccessUpdateAndIdempotentSkip(t *testing.T) {
 	resetRegistries()
 	defer resetRegistries()
 
 	factory := newFakeMetricFactory()
-	// Build a schemaRepo whose trustedPluginDir doesn't matter because we will
-	// call replaceSamplersForGroup + setMergeGraceForGroup directly and then
-	// exercise the metric emission path via a cfg with zero plugins (so the
-	// loop body never runs, no load is attempted, and replaceSamplersForGroup
-	// is called with an empty slice).
 	sr := makeMeteredSchemaRepo(factory)
 
 	const group = "success-group"
 
-	// Empty-plugins config → register success with active_count == 0.
+	// Empty-plugins config on an empty registry: desired == current == [] →
+	// idempotent skip. No register/update/active metric is emitted.
 	emptyCfg := &commonv1.TracePipelineConfig{Enabled: true}
 	sr.reconcilePipeline(group, emptyCfg)
 
 	regTotal := factory.counter("sampler_register_total")
-	require.NotNil(t, regTotal)
-	assert.Equal(t, 1, regTotal.callsWithLabels(group, "success"),
-		"empty-plugins register must emit sampler_register_total{group,result=success}")
+	if regTotal != nil {
+		assert.Equal(t, 0, regTotal.callsWithLabels(group, "success"),
+			"empty-plugins config on an empty registry must be idempotently skipped")
+	}
+
+	// Seed a previously registered set, then reconcile to the empty-plugins
+	// config. desired ([]) != current (one sampler) → genuine update → success.
+	dummy := &dummySampler{}
+	replaceSamplersForGroup(group, []namedSampler{{name: "d", sampler: dummy}})
+	sr.reconcilePipeline(group, emptyCfg)
+
+	updTotal := factory.counter("sampler_update_total")
+	require.NotNil(t, updTotal)
+	assert.Equal(t, 1, updTotal.callsWithLabels(group, "success"),
+		"a set→empty transition must emit sampler_update_total{group,result=success}")
 
 	activeGauge := factory.gauge("sampler_active_count")
 	require.NotNil(t, activeGauge)
 	lastVal, ok := activeGauge.lastValue(group)
 	require.True(t, ok)
-	assert.Equal(t, float64(0), lastVal, "active_count must be 0 for empty plugins set")
+	assert.Equal(t, float64(0), lastVal, "active_count must be 0 after clearing to the empty set")
 
-	// Second call with empty plugins → update success.
+	// Second identical empty reconcile: desired == current == [] → skipped, so
+	// update-success stays at exactly 1.
 	sr.reconcilePipeline(group, emptyCfg)
-
-	updTotal := factory.counter("sampler_update_total")
-	require.NotNil(t, updTotal)
-	// After the first call the set is empty (len==0) → isUpdate == false on
-	// second call too. This is the expected behavior: a zero-sampler set does
-	// not count as "has previous set". Document this explicitly.
-	// Both calls land on register_total because lookupSamplers returns nil for
-	// an empty replacement.
-	assert.GreaterOrEqual(t, regTotal.callsWithLabels(group, "success"), 1,
-		"subsequent empty-plugin configs still count as register (no active sampler present)")
+	assert.Equal(t, 1, updTotal.callsWithLabels(group, "success"),
+		"a redundant identical empty reconcile must be idempotently skipped")
 }
 
 // TestSamplerMetrics_OnDeleteKindGroup verifies that the OnDelete KindGroup

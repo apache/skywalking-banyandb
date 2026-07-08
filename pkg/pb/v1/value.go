@@ -30,21 +30,26 @@ import (
 	"github.com/apache/skywalking-banyandb/pkg/convert"
 	"github.com/apache/skywalking-banyandb/pkg/encoding"
 	"github.com/apache/skywalking-banyandb/pkg/logger"
+	"github.com/apache/skywalking-banyandb/pkg/pb/v1/valuetype"
 )
 
-// ValueType is the type of the tag and field value.
-type ValueType byte
+// ValueType is the type of the tag and field value. It is aliased to the
+// dependency-free valuetype leaf package so consumers that need only the type
+// tag (e.g. the plugin SDK) can avoid pulling in this package's heavier deps;
+// the constants below re-export the leaf's values so pbv1.ValueType* usages are
+// unchanged.
+type ValueType = valuetype.ValueType
 
-// ValueType constants.
+// ValueType constants (re-exported from the valuetype leaf).
 const (
-	ValueTypeUnknown ValueType = iota
-	ValueTypeStr
-	ValueTypeInt64
-	ValueTypeFloat64
-	ValueTypeBinaryData
-	ValueTypeStrArr
-	ValueTypeInt64Arr
-	ValueTypeTimestamp
+	ValueTypeUnknown    = valuetype.ValueTypeUnknown
+	ValueTypeStr        = valuetype.ValueTypeStr
+	ValueTypeInt64      = valuetype.ValueTypeInt64
+	ValueTypeFloat64    = valuetype.ValueTypeFloat64
+	ValueTypeBinaryData = valuetype.ValueTypeBinaryData
+	ValueTypeStrArr     = valuetype.ValueTypeStrArr
+	ValueTypeInt64Arr   = valuetype.ValueTypeInt64Arr
+	ValueTypeTimestamp  = valuetype.ValueTypeTimestamp
 )
 
 // MustTagValueToValueType converts modelv1.TagValue to ValueType.
