@@ -30,9 +30,16 @@ import (
 // indistinguishable from one parsed with literal values, so the transformer needs no
 // placeholder awareness. Callers must invoke it before Transform even when params is empty,
 // so a query holding unbound placeholders is rejected instead of silently misinterpreted.
-// Parameter positions in error messages are 1-based. On error the grammar may be partially
-// bound and must be discarded; binding is not retryable on the same grammar.
+// Parameter positions in error messages are 1-based.
+//
+// Binding mutates the grammar in place, so a grammar binds exactly once: rebinding is
+// rejected and a failed bind leaves the grammar partially bound and unusable — parse the
+// query again in both cases. Parse-once/bind-many reuse requires an immutable binding
+// design and is tracked as a follow-up.
 func BindParams(g *Grammar, params []*modelv1.TagValue) error {
+	if g.paramsBound {
+		return fmt.Errorf("grammar is already bound; parse the query again to bind new parameters")
+	}
 	b := &binder{}
 	b.collect(g)
 	if len(b.slots) != len(params) {
@@ -47,14 +54,16 @@ func BindParams(g *Grammar, params []*modelv1.TagValue) error {
 		}
 	}
 	b.expandLists()
+	g.paramsBound = true
 	return nil
 }
 
-// countUnboundParams reports how many `?` placeholders in the grammar are still unbound.
+// countUnboundParams reports how many `?` placeholders in the grammar are still
+// unbound, using the same traversal as binding but without allocating slots.
 func countUnboundParams(g *Grammar) int {
-	b := &binder{}
+	b := &binder{countOnly: true}
 	b.collect(g)
-	return len(b.slots)
+	return b.count
 }
 
 type listContainer struct {
@@ -66,6 +75,9 @@ type binder struct {
 	expansions map[*GrammarValue][]*GrammarValue
 	slots      []func(*modelv1.TagValue) error
 	lists      []listContainer
+	// countOnly makes collect count placeholders instead of building slots.
+	countOnly bool
+	count     int
 }
 
 // collect gathers placeholder slots in their order of appearance in the query
@@ -97,10 +109,52 @@ func (b *binder) collect(g *Grammar) {
 	}
 }
 
+// validateCountValue rejects count values that would silently wrap when the
+// transformer narrows them to int32/uint32. It guards both the bound path and
+// the literal path so the two cannot diverge.
+func validateCountValue(label string, value int64) error {
+	if value < 0 || value > math.MaxInt32 {
+		return fmt.Errorf("%s value %d is out of range [0, %d]", label, value, math.MaxInt32)
+	}
+	return nil
+}
+
+// validateGrammarCounts applies the wrap guard to every literal count position
+// of a grammar: LIMIT, OFFSET, and the two TOP N counts.
+func validateGrammarCounts(g *Grammar) error {
+	if g.Select != nil {
+		if g.Select.Projection != nil && g.Select.Projection.TopN != nil {
+			if err := validateCountValue("TOP", int64(g.Select.Projection.TopN.N)); err != nil {
+				return err
+			}
+		}
+		if g.Select.Limit != nil {
+			if err := validateCountValue("LIMIT", int64(g.Select.Limit.Value)); err != nil {
+				return err
+			}
+		}
+		if g.Select.Offset != nil {
+			if err := validateCountValue("OFFSET", int64(g.Select.Offset.Value)); err != nil {
+				return err
+			}
+		}
+	}
+	if g.TopN != nil {
+		if err := validateCountValue("SHOW TOP", int64(g.TopN.N)); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
 // collectIntSlot registers a placeholder in an integer-only position
 // (LIMIT, OFFSET, or a TOP N count).
 func (b *binder) collectIntSlot(value *int, param *bool) {
 	if !*param {
+		return
+	}
+	if b.countOnly {
+		b.count++
 		return
 	}
 	b.slots = append(b.slots, func(p *modelv1.TagValue) error {
@@ -108,11 +162,9 @@ func (b *binder) collectIntSlot(value *int, param *bool) {
 		if !ok {
 			return fmt.Errorf("this position only accepts int parameters, got %T", p.Value)
 		}
-		// The transformer narrows these counts to int32/uint32; reject values
-		// that would silently wrap instead of letting the cast corrupt them.
 		bound := intVal.Int.GetValue()
-		if bound < 0 || bound > math.MaxInt32 {
-			return fmt.Errorf("int parameter %d is out of range [0, %d] for this position", bound, math.MaxInt32)
+		if err := validateCountValue("int parameter", bound); err != nil {
+			return err
 		}
 		*value = int(bound)
 		*param = false
@@ -133,6 +185,10 @@ func (b *binder) collectTime(clause *GrammarTimeClause) {
 
 func (b *binder) collectTimeValue(v *GrammarTimeValue) {
 	if v == nil || !v.Param {
+		return
+	}
+	if b.countOnly {
+		b.count++
 		return
 	}
 	b.slots = append(b.slots, func(p *modelv1.TagValue) error { return bindTimeValue(v, p) })
@@ -204,6 +260,10 @@ func (b *binder) collectScalarValue(v *GrammarValue) {
 	if v == nil || !v.Param {
 		return
 	}
+	if b.countOnly {
+		b.count++
+		return
+	}
 	b.slots = append(b.slots, func(p *modelv1.TagValue) error { return bindScalarValue(v, p) })
 }
 
@@ -214,9 +274,13 @@ func (b *binder) collectValueList(values []*GrammarValue, assign func([]*Grammar
 			continue
 		}
 		hasParam = true
+		if b.countOnly {
+			b.count++
+			continue
+		}
 		b.slots = append(b.slots, func(p *modelv1.TagValue) error { return b.bindListValue(v, p) })
 	}
-	if hasParam {
+	if hasParam && !b.countOnly {
 		b.lists = append(b.lists, listContainer{values: values, assign: assign})
 	}
 }

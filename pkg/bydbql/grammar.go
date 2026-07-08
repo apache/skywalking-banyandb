@@ -33,6 +33,11 @@ import (
 type Grammar struct {
 	Select *GrammarSelectStatement `parser:"  @@"`
 	TopN   *GrammarTopNStatement   `parser:"| @@"`
+
+	// paramsBound records that BindParams has completed on this grammar: a
+	// bound grammar rejects further binding and lets the transformer skip the
+	// unbound-placeholder walk.
+	paramsBound bool
 }
 
 // GrammarSelectStatement represents a SELECT statement in Participle grammar.

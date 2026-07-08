@@ -360,6 +360,28 @@ var _ = Describe("BindParams equivalence with literal queries", func() {
 		transformer = NewTransformer(mockRepo)
 	})
 
+	Describe("literal count wrap guard", func() {
+		// The bound path rejects out-of-range counts at bind time; the literal
+		// path must be equally strict instead of wrapping in the uint32 cast.
+		It("rejects a negative literal LIMIT", func() {
+			grammar, err := ParseQuery("SELECT * FROM STREAM sw IN default LIMIT -5")
+			Expect(err).To(BeNil())
+			Expect(BindParams(grammar, nil)).To(Succeed())
+			_, err = transformer.Transform(context.Background(), grammar)
+			Expect(err).To(HaveOccurred())
+			Expect(err.Error()).To(ContainSubstring("out of range"))
+		})
+
+		It("rejects an int32-overflowing literal SHOW TOP count", func() {
+			grammar, err := ParseQuery("SHOW TOP 3000000000 FROM MEASURE svc_topn IN default")
+			Expect(err).To(BeNil())
+			Expect(BindParams(grammar, nil)).To(Succeed())
+			_, err = transformer.Transform(context.Background(), grammar)
+			Expect(err).To(HaveOccurred())
+			Expect(err.Error()).To(ContainSubstring("out of range"))
+		})
+	})
+
 	for _, testCase := range equivalenceCases() {
 		It(testCase.name, func() {
 			boundGrammar, err := ParseQuery(testCase.parameterized)
@@ -370,7 +392,7 @@ var _ = Describe("BindParams equivalence with literal queries", func() {
 			Expect(BindParams(literalGrammar, nil)).To(Succeed())
 
 			// The bound AST must be indistinguishable from the literal AST
-			astDiff := cmp.Diff(literalGrammar, boundGrammar, cmpopts.IgnoreTypes(lexer.Position{}))
+			astDiff := cmp.Diff(literalGrammar, boundGrammar, cmpopts.IgnoreTypes(lexer.Position{}), cmpopts.IgnoreUnexported(Grammar{}))
 			Expect(astDiff).To(BeEmpty(), "AST mismatch:\n%s", astDiff)
 
 			// Both must transform to the same native query request

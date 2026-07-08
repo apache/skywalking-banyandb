@@ -33,6 +33,8 @@ const maxIntParamLength = 20;
 const maxParamArrayLength = 256;
 const allowedParamTypes = ['str', 'int', 'str_array', 'int_array', 'null'] as const;
 const integerPattern = /^-?\d+$/;
+const int64Min = BigInt('-9223372036854775808');
+const int64Max = BigInt('9223372036854775807');
 
 export type BydbQLParam = {
   type: (typeof allowedParamTypes)[number];
@@ -157,6 +159,12 @@ function validateParamInteger(value: unknown, position: number): string {
     return String(value);
   }
   if (typeof value === 'string' && value.length <= maxIntParamLength && integerPattern.test(value)) {
+    // Reject int64 overflow here with a specific message instead of deferring
+    // the failure to an opaque protojson decoding error on the server.
+    const parsed = BigInt(value);
+    if (parsed < int64Min || parsed > int64Max) {
+      throw new Error(`params[${position}]: int value ${value} is out of the int64 range`);
+    }
     return value;
   }
   throw new Error(`params[${position}]: int value must be an integer of at most ${maxIntParamLength} characters`);

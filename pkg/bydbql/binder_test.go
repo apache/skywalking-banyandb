@@ -276,13 +276,15 @@ var _ = Describe("BindParams", func() {
 			Expect(BindParams(grammar, params)).To(Succeed())
 			err := BindParams(grammar, params)
 			Expect(err).To(HaveOccurred())
-			Expect(err.Error()).To(ContainSubstring("0 placeholder(s) but 1 parameter(s)"))
+			Expect(err.Error()).To(ContainSubstring("already bound"))
 		})
 
-		It("treats a second bind with no parameters as a no-op", func() {
+		It("rejects a second bind even with no parameters", func() {
 			grammar := parse("SELECT * FROM STREAM sw IN default WHERE service_id = ?")
 			Expect(BindParams(grammar, []*modelv1.TagValue{strParam("svc")})).To(Succeed())
-			Expect(BindParams(grammar, nil)).To(Succeed())
+			err := BindParams(grammar, nil)
+			Expect(err).To(HaveOccurred())
+			Expect(err.Error()).To(ContainSubstring("already bound"))
 			Expect(*grammar.Select.Where.Expr.Left.Left.Binary.Tail.Compare.Value.String).To(Equal("svc"))
 		})
 	})
