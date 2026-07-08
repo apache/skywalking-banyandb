@@ -178,86 +178,84 @@
 Apache-2.0 licenses
 ========================================================================
 
-    cel.dev/expr v0.25.1 Apache-2.0
+    cel.dev/expr v0.25.2 Apache-2.0
     cloud.google.com/go v0.123.0 Apache-2.0
-    cloud.google.com/go/auth v0.20.0 Apache-2.0
+    cloud.google.com/go/auth v0.21.0 Apache-2.0
     cloud.google.com/go/auth/oauth2adapt v0.2.8 Apache-2.0
     cloud.google.com/go/compute/metadata v0.9.0 Apache-2.0
-    cloud.google.com/go/iam v1.7.0 Apache-2.0
-    cloud.google.com/go/monitoring v1.25.0 Apache-2.0
-    cloud.google.com/go/storage v1.62.0 Apache-2.0
-    github.com/GoogleCloudPlatform/opentelemetry-operations-go/detectors/gcp v1.32.0 Apache-2.0
-    github.com/GoogleCloudPlatform/opentelemetry-operations-go/exporter/metric v0.56.0 Apache-2.0
-    github.com/GoogleCloudPlatform/opentelemetry-operations-go/internal/resourcemapping v0.56.0 Apache-2.0
+    cloud.google.com/go/iam v1.11.0 Apache-2.0
+    cloud.google.com/go/monitoring v1.29.0 Apache-2.0
+    cloud.google.com/go/storage v1.63.0 Apache-2.0
+    github.com/GoogleCloudPlatform/opentelemetry-operations-go/detectors/gcp v1.33.0 Apache-2.0
+    github.com/GoogleCloudPlatform/opentelemetry-operations-go/exporter/metric v0.57.0 Apache-2.0
+    github.com/GoogleCloudPlatform/opentelemetry-operations-go/internal/resourcemapping v0.57.0 Apache-2.0
     github.com/SkyAPM/bluge v0.0.0-20260625022800-42385daf66b8 Apache-2.0
     github.com/SkyAPM/ice v0.0.0-20250619023539-b5173603b0b3 Apache-2.0
     github.com/SkyAPM/ktm-ebpf v0.0.0-20260228024820-81a19d950bff Apache-2.0
     github.com/apache/skywalking-cli v0.0.0-20240227151024-ee371a210afe Apache-2.0
-    github.com/aws/aws-sdk-go-v2 v1.41.5 Apache-2.0
-    github.com/aws/aws-sdk-go-v2/aws/protocol/eventstream v1.7.8 Apache-2.0
-    github.com/aws/aws-sdk-go-v2/config v1.32.14 Apache-2.0
-    github.com/aws/aws-sdk-go-v2/credentials v1.19.14 Apache-2.0
-    github.com/aws/aws-sdk-go-v2/feature/ec2/imds v1.18.21 Apache-2.0
-    github.com/aws/aws-sdk-go-v2/internal/configsources v1.4.21 Apache-2.0
-    github.com/aws/aws-sdk-go-v2/internal/endpoints/v2 v2.7.21 Apache-2.0
-    github.com/aws/aws-sdk-go-v2/internal/ini v1.8.6 Apache-2.0
-    github.com/aws/aws-sdk-go-v2/internal/v4a v1.4.22 Apache-2.0
-    github.com/aws/aws-sdk-go-v2/service/internal/accept-encoding v1.13.7 Apache-2.0
-    github.com/aws/aws-sdk-go-v2/service/internal/checksum v1.9.13 Apache-2.0
-    github.com/aws/aws-sdk-go-v2/service/internal/presigned-url v1.13.21 Apache-2.0
-    github.com/aws/aws-sdk-go-v2/service/internal/s3shared v1.19.21 Apache-2.0
-    github.com/aws/aws-sdk-go-v2/service/s3 v1.99.0 Apache-2.0
-    github.com/aws/aws-sdk-go-v2/service/signin v1.0.9 Apache-2.0
-    github.com/aws/aws-sdk-go-v2/service/sso v1.30.15 Apache-2.0
-    github.com/aws/aws-sdk-go-v2/service/ssooidc v1.35.19 Apache-2.0
-    github.com/aws/aws-sdk-go-v2/service/sts v1.41.10 Apache-2.0
-    github.com/aws/smithy-go v1.24.3 Apache-2.0
+    github.com/aws/aws-sdk-go-v2 v1.42.1 Apache-2.0
+    github.com/aws/aws-sdk-go-v2/aws/protocol/eventstream v1.7.14 Apache-2.0
+    github.com/aws/aws-sdk-go-v2/config v1.32.28 Apache-2.0
+    github.com/aws/aws-sdk-go-v2/credentials v1.19.27 Apache-2.0
+    github.com/aws/aws-sdk-go-v2/feature/ec2/imds v1.18.30 Apache-2.0
+    github.com/aws/aws-sdk-go-v2/internal/configsources v1.4.30 Apache-2.0
+    github.com/aws/aws-sdk-go-v2/internal/endpoints/v2 v2.7.30 Apache-2.0
+    github.com/aws/aws-sdk-go-v2/internal/v4a v1.4.31 Apache-2.0
+    github.com/aws/aws-sdk-go-v2/service/internal/accept-encoding v1.13.13 Apache-2.0
+    github.com/aws/aws-sdk-go-v2/service/internal/checksum v1.9.23 Apache-2.0
+    github.com/aws/aws-sdk-go-v2/service/internal/presigned-url v1.13.30 Apache-2.0
+    github.com/aws/aws-sdk-go-v2/service/internal/s3shared v1.19.31 Apache-2.0
+    github.com/aws/aws-sdk-go-v2/service/s3 v1.105.0 Apache-2.0
+    github.com/aws/aws-sdk-go-v2/service/signin v1.3.0 Apache-2.0
+    github.com/aws/aws-sdk-go-v2/service/sso v1.32.0 Apache-2.0
+    github.com/aws/aws-sdk-go-v2/service/ssooidc v1.37.0 Apache-2.0
+    github.com/aws/aws-sdk-go-v2/service/sts v1.44.0 Apache-2.0
+    github.com/aws/smithy-go v1.27.3 Apache-2.0
     github.com/blevesearch/segment v0.9.1 Apache-2.0
     github.com/blevesearch/vellum v1.2.0 Apache-2.0
     github.com/cncf/xds/go v0.0.0-20260202195803-dba9d589def2 Apache-2.0
-    github.com/containerd/continuity v0.4.5 Apache-2.0
+    github.com/containerd/continuity v0.5.0 Apache-2.0
     github.com/containerd/errdefs v1.0.0 Apache-2.0
     github.com/containerd/errdefs/pkg v0.3.0 Apache-2.0
     github.com/distribution/reference v0.6.0 Apache-2.0
-    github.com/docker/cli v29.4.0+incompatible Apache-2.0
-    github.com/docker/go-connections v0.6.0 Apache-2.0
+    github.com/docker/cli v29.6.1+incompatible Apache-2.0
+    github.com/docker/go-connections v0.7.0 Apache-2.0
     github.com/docker/go-units v0.5.0 Apache-2.0
     github.com/envoyproxy/go-control-plane/envoy v1.37.0 Apache-2.0
     github.com/envoyproxy/protoc-gen-validate v1.3.3 Apache-2.0
-    github.com/go-ini/ini v1.67.0 Apache-2.0
     github.com/go-jose/go-jose/v4 v4.1.4 Apache-2.0
     github.com/go-logr/logr v1.4.3 Apache-2.0
     github.com/go-logr/stdr v1.2.2 Apache-2.0
-    github.com/google/pprof v0.0.0-20260402051712-545e8a4df936 Apache-2.0
+    github.com/google/pprof v0.0.0-20260604005048-7023385849c0 Apache-2.0
     github.com/google/s2a-go v0.1.9 Apache-2.0
     github.com/google/shlex v0.0.0-20191202100458-e7afc7fbc510 Apache-2.0
-    github.com/googleapis/enterprise-certificate-proxy v0.3.14 Apache-2.0
+    github.com/googleapis/enterprise-certificate-proxy v0.3.18 Apache-2.0
     github.com/grpc-ecosystem/go-grpc-middleware/providers/prometheus v1.1.0 Apache-2.0
     github.com/grpc-ecosystem/go-grpc-middleware/v2 v2.3.3 Apache-2.0
     github.com/inconshreveable/mousetrap v1.1.0 Apache-2.0
     github.com/machinebox/graphql v0.2.2 Apache-2.0
     github.com/minio/crc64nvme v1.1.1 Apache-2.0
     github.com/minio/md5-simd v1.1.2 Apache-2.0
-    github.com/minio/minio-go/v7 v7.0.100 Apache-2.0
+    github.com/minio/minio-go/v7 v7.2.1 Apache-2.0
     github.com/moby/docker-image-spec v1.3.1 Apache-2.0
-    github.com/moby/moby/api v1.54.1 Apache-2.0
-    github.com/moby/moby/client v0.4.0 Apache-2.0
-    github.com/moby/sys/user v0.4.0 Apache-2.0
+    github.com/moby/moby/api v1.55.0 Apache-2.0
+    github.com/moby/moby/client v0.5.0 Apache-2.0
+    github.com/moby/sys/user v0.4.1 Apache-2.0
     github.com/moby/term v0.5.2 Apache-2.0
     github.com/mschoch/smat v0.2.0 Apache-2.0
     github.com/oklog/run v1.2.0 Apache-2.0
     github.com/opencontainers/go-digest v1.0.0 Apache-2.0
     github.com/opencontainers/image-spec v1.1.1 Apache-2.0
-    github.com/opencontainers/runc v1.3.3 Apache-2.0
+    github.com/opencontainers/runc v1.3.6 Apache-2.0
     github.com/ory/dockertest/v3 v3.12.0 Apache-2.0
     github.com/prometheus/client_golang v1.23.2 Apache-2.0
     github.com/prometheus/client_model v0.6.2 Apache-2.0
-    github.com/prometheus/common v0.67.5 Apache-2.0
-    github.com/prometheus/procfs v0.20.1 Apache-2.0
+    github.com/prometheus/common v0.69.0 Apache-2.0
+    github.com/prometheus/procfs v0.21.1 Apache-2.0
     github.com/spf13/afero v1.15.0 Apache-2.0
     github.com/spf13/cobra v1.10.2 Apache-2.0
-    github.com/spiffe/go-spiffe/v2 v2.6.0 Apache-2.0
-    github.com/tklauser/numcpus v0.11.0 Apache-2.0
+    github.com/spiffe/go-spiffe/v2 v2.8.1 Apache-2.0
+    github.com/tklauser/numcpus v0.12.0 Apache-2.0
     github.com/xeipuuv/gojsonpointer v0.0.0-20190905194746-02993c407bfb Apache-2.0
     github.com/xeipuuv/gojsonreference v0.0.0-20180127040603-bd5ef7bd5415 Apache-2.0
     github.com/xeipuuv/gojsonschema v1.2.0 Apache-2.0
@@ -265,25 +263,26 @@ Apache-2.0 licenses
     go.opentelemetry.io/auto/sdk v1.2.1 Apache-2.0
     go.uber.org/mock v0.6.0 Apache-2.0
     go.yaml.in/yaml/v2 v2.4.4 Apache-2.0
-    google.golang.org/genproto v0.0.0-20260406210006-6f92a3bedf2d Apache-2.0
-    google.golang.org/genproto/googleapis/api v0.0.0-20260406210006-6f92a3bedf2d Apache-2.0
-    google.golang.org/genproto/googleapis/rpc v0.0.0-20260406210006-6f92a3bedf2d Apache-2.0
-    google.golang.org/grpc v1.80.0 Apache-2.0
-    skywalking.apache.org/repo/goapi v0.0.0-20251021000546-17778a1a5d70 Apache-2.0
+    google.golang.org/genproto v0.0.0-20260706201446-f0a921348800 Apache-2.0
+    google.golang.org/genproto/googleapis/api v0.0.0-20260706201446-f0a921348800 Apache-2.0
+    google.golang.org/genproto/googleapis/rpc v0.0.0-20260706201446-f0a921348800 Apache-2.0
+    google.golang.org/grpc v1.82.0 Apache-2.0
+    gopkg.in/ini.v1 v1.67.3 Apache-2.0
+    skywalking.apache.org/repo/goapi v0.0.0-20260521015734-5c05525a3cce Apache-2.0
 
 ========================================================================
 Apache-2.0 and BSD-3-Clause licenses
 ========================================================================
 
     github.com/RoaringBitmap/roaring v1.9.4 Apache-2.0 and BSD-3-Clause
-    go.opentelemetry.io/contrib/detectors/gcp v1.43.0 Apache-2.0 and BSD-3-Clause
-    go.opentelemetry.io/contrib/instrumentation/google.golang.org/grpc/otelgrpc v0.68.0 Apache-2.0 and BSD-3-Clause
-    go.opentelemetry.io/contrib/instrumentation/net/http/otelhttp v0.68.0 Apache-2.0 and BSD-3-Clause
-    go.opentelemetry.io/otel v1.43.0 Apache-2.0 and BSD-3-Clause
-    go.opentelemetry.io/otel/metric v1.43.0 Apache-2.0 and BSD-3-Clause
-    go.opentelemetry.io/otel/sdk v1.43.0 Apache-2.0 and BSD-3-Clause
-    go.opentelemetry.io/otel/sdk/metric v1.43.0 Apache-2.0 and BSD-3-Clause
-    go.opentelemetry.io/otel/trace v1.43.0 Apache-2.0 and BSD-3-Clause
+    go.opentelemetry.io/contrib/detectors/gcp v1.44.0 Apache-2.0 and BSD-3-Clause
+    go.opentelemetry.io/contrib/instrumentation/google.golang.org/grpc/otelgrpc v0.69.0 Apache-2.0 and BSD-3-Clause
+    go.opentelemetry.io/contrib/instrumentation/net/http/otelhttp v0.69.0 Apache-2.0 and BSD-3-Clause
+    go.opentelemetry.io/otel v1.44.0 Apache-2.0 and BSD-3-Clause
+    go.opentelemetry.io/otel/metric v1.44.0 Apache-2.0 and BSD-3-Clause
+    go.opentelemetry.io/otel/sdk v1.44.0 Apache-2.0 and BSD-3-Clause
+    go.opentelemetry.io/otel/sdk/metric v1.44.0 Apache-2.0 and BSD-3-Clause
+    go.opentelemetry.io/otel/trace v1.44.0 Apache-2.0 and BSD-3-Clause
 
 ========================================================================
 BSD-2-Clause licenses
@@ -292,6 +291,7 @@ BSD-2-Clause licenses
     github.com/kamstrup/intmap v0.5.2 BSD-2-Clause
     github.com/pkg/errors v0.9.1 BSD-2-Clause
     github.com/russross/blackfriday/v2 v2.1.0 BSD-2-Clause
+    github.com/zeebo/xxh3 v1.1.0 BSD-2-Clause
 
 ========================================================================
 BSD-2-Clause and ISC licenses
@@ -310,42 +310,42 @@ BSD-3-Clause licenses
 ========================================================================
 
     dario.cat/mergo v1.0.2 BSD-3-Clause
-    github.com/bits-and-blooms/bitset v1.24.4 BSD-3-Clause
+    github.com/bits-and-blooms/bitset v1.24.5 BSD-3-Clause
     github.com/blevesearch/mmap-go v1.2.0 BSD-3-Clause
     github.com/blevesearch/snowballstem v0.9.0 BSD-3-Clause
-    github.com/fsnotify/fsnotify v1.9.0 BSD-3-Clause
+    github.com/fsnotify/fsnotify v1.10.1 BSD-3-Clause
     github.com/golang/snappy v1.0.0 BSD-3-Clause
     github.com/google/go-cmp v0.7.0 BSD-3-Clause
     github.com/google/uuid v1.6.0 BSD-3-Clause
-    github.com/googleapis/gax-go/v2 v2.21.0 BSD-3-Clause
-    github.com/grpc-ecosystem/grpc-gateway/v2 v2.28.0 BSD-3-Clause
+    github.com/googleapis/gax-go/v2 v2.23.0 BSD-3-Clause
+    github.com/grpc-ecosystem/grpc-gateway/v2 v2.29.0 BSD-3-Clause
     github.com/klauspost/crc32 v1.3.0 BSD-3-Clause
-    github.com/lufia/plan9stats v0.0.0-20260330125221-c963978e514e BSD-3-Clause
+    github.com/lufia/plan9stats v0.0.0-20260627054121-477a66015f15 BSD-3-Clause
     github.com/munnerz/goautoneg v0.0.0-20191010083416-a7dc8b61c822 BSD-3-Clause
     github.com/planetscale/vtprotobuf v0.6.1-0.20240319094008-0393e58bdf10 BSD-3-Clause
     github.com/pmezard/go-difflib v1.0.1-0.20181226105442-5d4384ee4fb2 BSD-3-Clause
     github.com/shirou/gopsutil/v3 v3.24.5 BSD-3-Clause
     github.com/spf13/pflag v1.0.10 BSD-3-Clause
-    github.com/tklauser/go-sysconf v0.3.16 BSD-3-Clause
+    github.com/tklauser/go-sysconf v0.4.0 BSD-3-Clause
     github.com/xhit/go-str2duration/v2 v2.1.0 BSD-3-Clause
-    golang.org/x/crypto v0.49.0 BSD-3-Clause
-    golang.org/x/exp v0.0.0-20260312153236-7ab1446f8b90 BSD-3-Clause
-    golang.org/x/mod v0.34.0 BSD-3-Clause
-    golang.org/x/net v0.52.0 BSD-3-Clause
+    golang.org/x/crypto v0.53.0 BSD-3-Clause
+    golang.org/x/exp v0.0.0-20260611194520-c48552f49976 BSD-3-Clause
+    golang.org/x/mod v0.37.0 BSD-3-Clause
+    golang.org/x/net v0.56.0 BSD-3-Clause
     golang.org/x/oauth2 v0.36.0 BSD-3-Clause
-    golang.org/x/sync v0.20.0 BSD-3-Clause
-    golang.org/x/sys v0.43.0 BSD-3-Clause
-    golang.org/x/text v0.35.0 BSD-3-Clause
+    golang.org/x/sync v0.21.0 BSD-3-Clause
+    golang.org/x/sys v0.46.0 BSD-3-Clause
+    golang.org/x/text v0.39.0 BSD-3-Clause
     golang.org/x/time v0.15.0 BSD-3-Clause
-    golang.org/x/tools v0.43.0 BSD-3-Clause
-    google.golang.org/api v0.275.0 BSD-3-Clause
+    golang.org/x/tools v0.47.0 BSD-3-Clause
+    google.golang.org/api v0.287.1 BSD-3-Clause
     google.golang.org/protobuf v1.36.11 BSD-3-Clause
 
 ========================================================================
 BSD-3-Clause and Apache-2.0 and MIT licenses
 ========================================================================
 
-    github.com/klauspost/compress v1.18.5 BSD-3-Clause and Apache-2.0 and MIT
+    github.com/klauspost/compress v1.19.0 BSD-3-Clause and Apache-2.0 and MIT
 
 ========================================================================
 ISC licenses
@@ -357,11 +357,11 @@ ISC licenses
 MIT licenses
 ========================================================================
 
-    github.com/Azure/azure-sdk-for-go/sdk/azcore v1.21.0 MIT
+    github.com/Azure/azure-sdk-for-go/sdk/azcore v1.22.0 MIT
     github.com/Azure/azure-sdk-for-go/sdk/internal v1.12.0 MIT
-    github.com/Azure/azure-sdk-for-go/sdk/storage/azblob v1.6.4 MIT
+    github.com/Azure/azure-sdk-for-go/sdk/storage/azblob v1.8.0 MIT
     github.com/Azure/go-ansiterm v0.0.0-20250102033503-faa5f7b0171c MIT
-    github.com/Masterminds/semver/v3 v3.4.0 MIT
+    github.com/Masterminds/semver/v3 v3.5.0 MIT
     github.com/Microsoft/go-winio v0.6.2 MIT
     github.com/VictoriaMetrics/fastcache v1.13.3 MIT
     github.com/alecthomas/participle/v2 v2.1.4 MIT
@@ -372,42 +372,41 @@ MIT licenses
     github.com/caio/go-tdigest v3.1.0+incompatible MIT
     github.com/cenkalti/backoff/v4 v4.3.0 MIT
     github.com/cespare/xxhash/v2 v2.3.0 MIT
-    github.com/cilium/ebpf v0.21.0 MIT
+    github.com/cilium/ebpf v0.22.0 MIT
     github.com/cpuguy83/go-md2man/v2 v2.0.7 MIT
     github.com/dgryski/go-metro v0.0.0-20250106013310-edb8663e5e33 MIT
     github.com/dustin/go-humanize v1.0.1 MIT
-    github.com/felixge/httpsnoop v1.0.4 MIT
-    github.com/go-chi/chi/v5 v5.2.5 MIT
+    github.com/felixge/httpsnoop v1.1.0 MIT
+    github.com/go-chi/chi/v5 v5.3.1 MIT
     github.com/go-ole/go-ole v1.3.0 MIT
     github.com/go-resty/resty/v2 v2.17.2 MIT
     github.com/go-task/slim-sprig/v3 v3.0.0 MIT
     github.com/go-viper/mapstructure/v2 v2.5.0 MIT
-    github.com/golang-jwt/jwt/v5 v5.3.1 MIT
-    github.com/klauspost/cpuid/v2 v2.3.0 MIT
-    github.com/mattn/go-colorable v0.1.14 MIT
-    github.com/mattn/go-isatty v0.0.21 MIT
+    github.com/klauspost/cpuid/v2 v2.4.0 MIT
+    github.com/mattn/go-colorable v0.1.15 MIT
+    github.com/mattn/go-isatty v0.0.22 MIT
     github.com/montanaflynn/stats v0.9.0 MIT
-    github.com/onsi/ginkgo/v2 v2.28.1 MIT
-    github.com/onsi/gomega v1.39.1 MIT
-    github.com/pelletier/go-toml/v2 v2.3.0 MIT
+    github.com/onsi/ginkgo/v2 v2.32.0 MIT
+    github.com/onsi/gomega v1.42.1 MIT
+    github.com/pelletier/go-toml/v2 v2.4.3 MIT
     github.com/philhofer/fwd v1.2.0 MIT
     github.com/power-devops/perfstat v0.0.0-20240221224432-82ca36839d55 MIT
     github.com/robfig/cron/v3 v3.0.1 MIT
     github.com/rs/xid v1.6.0 MIT
-    github.com/rs/zerolog v1.35.0 MIT
+    github.com/rs/zerolog v1.35.1 MIT
     github.com/sagikazarmark/locafero v0.12.0 MIT
     github.com/sirupsen/logrus v1.9.4 MIT
     github.com/spf13/cast v1.10.0 MIT
     github.com/spf13/viper v1.21.0 MIT
     github.com/stretchr/testify v1.11.1 MIT
     github.com/subosito/gotenv v1.6.0 MIT
-    github.com/tinylib/msgp v1.6.3 MIT
+    github.com/tinylib/msgp v1.6.4 MIT
     github.com/urfave/cli/v2 v2.27.7 MIT
     github.com/xrash/smetrics v0.0.0-20250705151800-55b8f293f342 MIT
     github.com/yusufpapurcu/wmi v1.2.4 MIT
     go.uber.org/automaxprocs v1.6.0 MIT
     go.uber.org/multierr v1.11.0 MIT
-    go.uber.org/zap v1.27.1 MIT
+    go.uber.org/zap v1.28.0 MIT
 
 ========================================================================
 MIT and Apache-2.0 licenses
@@ -427,7 +426,7 @@ MPL-2.0 licenses
 ========================================================================
 
     github.com/hashicorp/golang-lru v1.0.2 MPL-2.0
-    github.com/shoenig/go-m1cpu v0.2.1 MPL-2.0
+    github.com/shoenig/go-m1cpu v0.2.2 MPL-2.0
 
 ========================================================================
 UI related licenses
@@ -483,7 +482,7 @@ ISC licenses
     graceful-fs 4.2.11 ISC
     inherits 2.0.4 ISC
     picocolors 1.1.1 ISC
-    semver 7.8.4 ISC
+    semver 7.8.5 ISC
     yaml 2.9.0 ISC
 
 ========================================================================
@@ -505,21 +504,21 @@ MIT licenses
     @parcel/watcher-linux-x64-musl 2.5.6 MIT
     @popperjs/core 2.11.8 MIT
     @tanstack/match-sorter-utils 8.19.4 MIT
-    @tanstack/query-core 5.101.0 MIT
-    @tanstack/vue-query 5.101.0 MIT
+    @tanstack/query-core 5.101.2 MIT
+    @tanstack/vue-query 5.101.2 MIT
     @types/lodash 4.17.24 MIT
     @types/lodash-es 4.17.12 MIT
     @types/web-bluetooth 0.0.21 MIT
-    @vue/compiler-core 3.5.38 MIT
-    @vue/compiler-dom 3.5.38 MIT
-    @vue/compiler-sfc 3.5.38 MIT
-    @vue/compiler-ssr 3.5.38 MIT
+    @vue/compiler-core 3.5.39 MIT
+    @vue/compiler-dom 3.5.39 MIT
+    @vue/compiler-sfc 3.5.39 MIT
+    @vue/compiler-ssr 3.5.39 MIT
     @vue/devtools-api 6.6.4 MIT
-    @vue/reactivity 3.5.38 MIT
-    @vue/runtime-core 3.5.38 MIT
-    @vue/runtime-dom 3.5.38 MIT
-    @vue/server-renderer 3.5.38 MIT
-    @vue/shared 3.5.38 MIT
+    @vue/reactivity 3.5.39 MIT
+    @vue/runtime-core 3.5.39 MIT
+    @vue/runtime-dom 3.5.39 MIT
+    @vue/server-renderer 3.5.39 MIT
+    @vue/shared 3.5.39 MIT
     @vueuse/core 14.3.0 MIT
     @vueuse/metadata 14.3.0 MIT
     @vueuse/shared 14.3.0 MIT
@@ -532,11 +531,11 @@ MIT licenses
     element-plus 2.14.2 MIT
     estree-walker 2.0.2 MIT
     immediate 3.0.6 MIT
-    immutable 5.1.6 MIT
+    immutable 5.1.9 MIT
     is-extglob 2.1.1 MIT
     is-glob 4.0.3 MIT
     isarray 1.0.0 MIT
-    js-yaml 4.2.0 MIT
+    js-yaml 4.3.0 MIT
     jsonfile 6.2.1 MIT
     lie 3.3.0 MIT
     lodash 4.18.1 MIT
@@ -545,11 +544,11 @@ MIT licenses
     magic-string 0.30.21 MIT
     memoize-one 6.0.0 MIT
     mitt 3.0.1 MIT
-    nanoid 3.3.12 MIT
+    nanoid 3.3.15 MIT
     node-addon-api 7.1.1 MIT
-    picomatch 4.0.4 MIT
+    picomatch 4.0.5 MIT
     pinia 2.3.1 MIT
-    postcss 8.5.15 MIT
+    postcss 8.5.16 MIT
     process-nextick-args 2.0.1 MIT
     readable-stream 2.3.8 MIT
     readdirp 5.0.0 MIT
@@ -560,8 +559,8 @@ MIT licenses
     string_decoder 1.1.1 MIT
     universalify 2.0.1 MIT
     util-deprecate 1.0.2 MIT
-    vue 3.5.38 MIT
-    vue-component-type-helpers 3.3.5 MIT
+    vue 3.5.39 MIT
+    vue-component-type-helpers 3.3.6 MIT
     vue-demi 0.14.10 MIT
     vue-router 4.6.4 MIT
 
@@ -607,8 +606,8 @@ BSD-2-Clause licenses
 BSD-3-Clause licenses
 ========================================================================
 
-    fast-uri 3.1.2 BSD-3-Clause
-    qs 6.15.2 BSD-3-Clause
+    fast-uri 3.1.3 BSD-3-Clause
+    qs 6.15.3 BSD-3-Clause
 
 ========================================================================
 ISC licenses
@@ -631,7 +630,8 @@ MIT licenses
     accepts 2.0.0 MIT
     ajv 8.20.0 MIT
     ajv-formats 3.0.1 MIT
-    body-parser 2.2.2 MIT
+    body-parser 2.3.0 MIT
+    body-parser/node_modules/content-type 2.0.0 MIT
     bytes 3.1.2 MIT
     call-bind-apply-helpers 1.0.2 MIT
     call-bound 1.0.4 MIT
@@ -665,9 +665,9 @@ MIT licenses
     gopd 1.2.0 MIT
     has-symbols 1.1.0 MIT
     hasown 2.0.4 MIT
-    hono 4.12.25 MIT
+    hono 4.12.28 MIT
     http-errors 2.0.1 MIT
-    iconv-lite 0.7.2 MIT
+    iconv-lite 0.7.3 MIT
     ip-address 10.2.0 MIT
     ipaddr.js 1.9.1 MIT
     is-promise 4.0.0 MIT
@@ -688,7 +688,7 @@ MIT licenses
     path-to-regexp 8.4.2 MIT
     pkce-challenge 5.0.1 MIT
     proxy-addr 2.0.7 MIT
-    range-parser 1.2.1 MIT
+    range-parser 1.3.0 MIT
     raw-body 3.0.2 MIT
     require-from-string 2.0.2 MIT
     router 2.2.0 MIT
