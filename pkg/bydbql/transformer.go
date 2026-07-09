@@ -99,18 +99,98 @@ func NewTransformer(registry metadata.Repo) *Transformer {
 	}
 }
 
-// Transform transforms a Grammar into a native query request.
+// transformRun holds the per-request state of a single transformation: the
+// stateless Transformer plus the bound parameter overlay (nil for a literal or
+// in-place-bound grammar). The conversion methods hang off transformRun so the
+// shared Transformer stays safe for concurrent requests.
+type transformRun struct {
+	*Transformer
+	bound []resolvedParam
+}
+
+// resolveValue returns the effective literal value node for a scalar position:
+// the overlay's bound node for a placeholder, or the node itself for a literal
+// (also the in-place-bound path, where bound is nil and the node was mutated).
+func (r *transformRun) resolveValue(v *GrammarValue) *GrammarValue {
+	if v != nil && v.Param && r.bound != nil {
+		return r.bound[v.ParamIndex].values[0]
+	}
+	return v
+}
+
+// resolveValues expands a list of value nodes, splicing each placeholder's bound
+// values (one, or several for an array) in place of the placeholder node. A list
+// with no placeholder (a literal list, or a re-resolve of an already-expanded
+// one) is returned unchanged, so the bound path allocates only when it must.
+func (r *transformRun) resolveValues(values []*GrammarValue) []*GrammarValue {
+	if r.bound == nil {
+		return values
+	}
+	hasParam := false
+	for _, v := range values {
+		if v != nil && v.Param {
+			hasParam = true
+			break
+		}
+	}
+	if !hasParam {
+		return values
+	}
+	out := make([]*GrammarValue, 0, len(values))
+	for _, v := range values {
+		if v != nil && v.Param {
+			out = append(out, r.bound[v.ParamIndex].values...)
+			continue
+		}
+		out = append(out, v)
+	}
+	return out
+}
+
+// resolveTimeString returns a TIME value's effective string: the overlay's bound
+// string for a placeholder, or the node's own literal.
+func (r *transformRun) resolveTimeString(v *GrammarTimeValue) string {
+	if v != nil && v.Param && r.bound != nil {
+		return r.bound[v.ParamIndex].timeStr
+	}
+	return v.ToString()
+}
+
+// resolveCount returns a count position's effective value: the overlay's bound
+// int for a placeholder, or the node's own literal.
+func (r *transformRun) resolveCount(value int, param bool, paramIndex int) int {
+	if param && r.bound != nil {
+		return r.bound[paramIndex].count
+	}
+	return value
+}
+
+// Transform transforms a Grammar into a native query request. The grammar must
+// be free of unbound placeholders: either a literal query or one bound in place
+// by BindParams. Use TransformBound for a reusable prepared statement.
 func (t *Transformer) Transform(ctx context.Context, grammar *Grammar) (*TransformResult, error) {
+	return (&transformRun{Transformer: t}).transform(ctx, grammar)
+}
+
+// TransformBound transforms a bound prepared statement, reading parameter values
+// from the per-request overlay instead of the immutable template.
+func (t *Transformer) TransformBound(ctx context.Context, bq *BoundQuery) (*TransformResult, error) {
+	return (&transformRun{Transformer: t, bound: bq.values}).transform(ctx, bq.stmt.template)
+}
+
+func (r *transformRun) transform(ctx context.Context, grammar *Grammar) (*TransformResult, error) {
 	// Defense in depth: an unbound placeholder would otherwise transform into an
-	// empty string or a zero count silently instead of failing loudly. A bound
-	// grammar is guaranteed placeholder-free, so it skips the walk.
-	if !grammar.paramsBound {
+	// empty string or a zero count silently instead of failing loudly. The
+	// overlay path (r.bound != nil) carries the values; the in-place path sets
+	// paramsBound; a literal grammar has no placeholders to begin with.
+	if !grammar.paramsBound && r.bound == nil {
 		if unbound := countUnboundParams(grammar); unbound > 0 {
-			return nil, fmt.Errorf("query contains %d unbound placeholder(s); BindParams must be called before Transform", unbound)
+			return nil, fmt.Errorf("query contains %d unbound placeholder(s); bind parameters before transforming", unbound)
 		}
 	}
 	// Literal counts get the same wrap guard as bound parameters, so LIMIT -5
-	// fails loudly instead of wrapping when narrowed to uint32.
+	// fails loudly instead of wrapping when narrowed to uint32. Overlay counts
+	// were already range-checked at Bind time.
 	if err := validateGrammarCounts(grammar); err != nil {
 		return nil, err
 	}
@@ -119,13 +199,13 @@ func (t *Transformer) Transform(ctx context.Context, grammar *Grammar) (*Transfo
 		resourceType := grammar.Select.From.ResourceType
 		switch strings.ToUpper(resourceType) {
 		case "STREAM":
-			return t.transformStreamQuery(ctx, grammar)
+			return r.transformStreamQuery(ctx, grammar)
 		case "MEASURE":
-			return t.transformMeasureQuery(ctx, grammar)
+			return r.transformMeasureQuery(ctx, grammar)
 		case "TRACE":
-			return t.transformTraceQuery(ctx, grammar)
+			return r.transformTraceQuery(ctx, grammar)
 		case "PROPERTY":
-			return t.transformPropertyQuery(ctx, grammar)
+			return r.transformPropertyQuery(ctx, grammar)
 		default:
 			return nil, fmt.Errorf("unsupported resource type in select statement: %s", resourceType)
 		}
@@ -133,14 +213,14 @@ func (t *Transformer) Transform(ctx context.Context, grammar *Grammar) (*Transfo
 	if grammar.TopN != nil {
 		resourceType := grammar.TopN.From.ResourceType
 		if strings.EqualFold(resourceType, "MEASURE") {
-			return t.transformTopNMeasureQuery(ctx, grammar)
+			return r.transformTopNMeasureQuery(ctx, grammar)
 		}
 		return nil, fmt.Errorf("unsupported resource type in topn statement: %s", resourceType)
 	}
 	return nil, errors.New("grammar must contain either Select or TopN statement")
 }
 
-func (t *Transformer) transformStreamQuery(ctx context.Context, grammar *Grammar) (*TransformResult, error) {
+func (r *transformRun) transformStreamQuery(ctx context.Context, grammar *Grammar) (*TransformResult, error) {
 	statement := grammar.Select
 	if statement == nil {
 		return nil, errors.New("stream query must be a select statement")
@@ -151,15 +231,15 @@ func (t *Transformer) transformStreamQuery(ctx context.Context, grammar *Grammar
 	resourceName := statement.From.ResourceName
 
 	// validate query
-	if err := t.validateGroupOrResourceName(groups, resourceName); err != nil {
+	if err := r.validateGroupOrResourceName(groups, resourceName); err != nil {
 		return nil, err
 	}
 
 	// query schema for getting tags
-	projection, _, allTags, _, err := t.convertTagAndField(
+	projection, _, allTags, _, err := r.convertTagAndField(
 		groups, resourceName,
 		func(group, name string) ([]*databasev1.TagFamilySpec, []*databasev1.FieldSpec, error) {
-			stream, getErr := t.schemaRegistry.StreamRegistry().GetStream(ctx, &commonv1.Metadata{
+			stream, getErr := r.schemaRegistry.StreamRegistry().GetStream(ctx, &commonv1.Metadata{
 				Name:  name,
 				Group: group,
 			})
@@ -173,26 +253,26 @@ func (t *Transformer) transformStreamQuery(ctx context.Context, grammar *Grammar
 	}
 
 	// convert time range
-	timeRange, err := t.convertTimeRange(time.Now(), statement.Time)
+	timeRange, err := r.convertTimeRange(time.Now(), statement.Time)
 	if err != nil {
 		return nil, fmt.Errorf("failed to convert time range: %w", err)
 	}
 
 	// convert order by
-	orderBy := t.convertSelectOrderBy(statement.OrderBy)
+	orderBy := r.convertSelectOrderBy(statement.OrderBy)
 
 	// convert criteria
-	criteria, err := t.convertSelectCriteria(statement.Where, allTags)
+	criteria, err := r.convertSelectCriteria(statement.Where, allTags)
 	if err != nil {
 		return nil, fmt.Errorf("failed to convert criteria: %w", err)
 	}
 
 	var offset, limit uint32
 	if statement.Offset != nil {
-		offset = uint32(statement.Offset.Value)
+		offset = uint32(r.resolveCount(statement.Offset.Value, statement.Offset.Param, statement.Offset.ParamIndex))
 	}
 	if statement.Limit != nil {
-		limit = uint32(statement.Limit.Value)
+		limit = uint32(r.resolveCount(statement.Limit.Value, statement.Limit.Param, statement.Limit.ParamIndex))
 	}
 
 	// extract stages
@@ -219,7 +299,7 @@ func (t *Transformer) transformStreamQuery(ctx context.Context, grammar *Grammar
 	}, nil
 }
 
-func (t *Transformer) transformMeasureQuery(ctx context.Context, grammar *Grammar) (*TransformResult, error) {
+func (r *transformRun) transformMeasureQuery(ctx context.Context, grammar *Grammar) (*TransformResult, error) {
 	statement := grammar.Select
 	if statement == nil {
 		return nil, errors.New("measure query must be a select statement")
@@ -230,15 +310,15 @@ func (t *Transformer) transformMeasureQuery(ctx context.Context, grammar *Gramma
 	resourceName := statement.From.ResourceName
 
 	// validate query
-	if err := t.validateGroupOrResourceName(groups, resourceName); err != nil {
+	if err := r.validateGroupOrResourceName(groups, resourceName); err != nil {
 		return nil, err
 	}
 
 	// query schema for getting tags and fields
-	projection, fields, allTags, allFields, err := t.convertTagAndField(
+	projection, fields, allTags, allFields, err := r.convertTagAndField(
 		groups, resourceName,
 		func(group, name string) ([]*databasev1.TagFamilySpec, []*databasev1.FieldSpec, error) {
-			measure, getErr := t.schemaRegistry.MeasureRegistry().GetMeasure(ctx, &commonv1.Metadata{
+			measure, getErr := r.schemaRegistry.MeasureRegistry().GetMeasure(ctx, &commonv1.Metadata{
 				Name:  name,
 				Group: group,
 			})
@@ -259,28 +339,28 @@ func (t *Transformer) transformMeasureQuery(ctx context.Context, grammar *Gramma
 	}
 
 	// convert time range
-	timeRange, err := t.convertTimeRange(time.Now(), statement.Time)
+	timeRange, err := r.convertTimeRange(time.Now(), statement.Time)
 	if err != nil {
 		return nil, fmt.Errorf("failed to convert time range: %w", err)
 	}
 
 	// convert order by
-	orderBy := t.convertSelectOrderBy(statement.OrderBy)
+	orderBy := r.convertSelectOrderBy(statement.OrderBy)
 
 	// convert criteria
-	criteria, err := t.convertSelectCriteria(statement.Where, allTags)
+	criteria, err := r.convertSelectCriteria(statement.Where, allTags)
 	if err != nil {
 		return nil, fmt.Errorf("failed to convert criteria: %w", err)
 	}
 
 	// convert aggregation
-	agg, err := t.convertAggregation(statement.Projection, allFields)
+	agg, err := r.convertAggregation(statement.Projection, allFields)
 	if err != nil {
 		return nil, fmt.Errorf("failed to convert aggregation: %w", err)
 	}
 
 	// convert group by
-	groupBy, err := t.convertGroupBy(statement.GroupBy, projection, fields)
+	groupBy, err := r.convertGroupBy(statement.GroupBy, projection, fields)
 	if err != nil {
 		return nil, fmt.Errorf("failed to convert group by: %w", err)
 	}
@@ -288,17 +368,17 @@ func (t *Transformer) transformMeasureQuery(ctx context.Context, grammar *Gramma
 		return nil, errors.New("when aggregation and group by are both present, group by must include a field")
 	}
 
-	top, err := t.convertTOP(statement.Projection, allFields)
+	top, err := r.convertTOP(statement.Projection, allFields)
 	if err != nil {
 		return nil, fmt.Errorf("failed to convert top: %w", err)
 	}
 
 	var offset, limit uint32
 	if statement.Offset != nil {
-		offset = uint32(statement.Offset.Value)
+		offset = uint32(r.resolveCount(statement.Offset.Value, statement.Offset.Param, statement.Offset.ParamIndex))
 	}
 	if statement.Limit != nil {
-		limit = uint32(statement.Limit.Value)
+		limit = uint32(r.resolveCount(statement.Limit.Value, statement.Limit.Param, statement.Limit.ParamIndex))
 	}
 
 	// extract stages
@@ -329,7 +409,7 @@ func (t *Transformer) transformMeasureQuery(ctx context.Context, grammar *Gramma
 	}, nil
 }
 
-func (t *Transformer) transformTraceQuery(ctx context.Context, grammar *Grammar) (*TransformResult, error) {
+func (r *transformRun) transformTraceQuery(ctx context.Context, grammar *Grammar) (*TransformResult, error) {
 	statement := grammar.Select
 	if statement == nil {
 		return nil, errors.New("trace query must be a select statement")
@@ -340,11 +420,11 @@ func (t *Transformer) transformTraceQuery(ctx context.Context, grammar *Grammar)
 	resourceName := statement.From.ResourceName
 
 	// validate query
-	if err := t.validateGroupOrResourceName(groups, resourceName); err != nil {
+	if err := r.validateGroupOrResourceName(groups, resourceName); err != nil {
 		return nil, err
 	}
 
-	timeRange, err := t.convertTimeRange(time.Now(), statement.Time)
+	timeRange, err := r.convertTimeRange(time.Now(), statement.Time)
 	if err != nil {
 		return nil, fmt.Errorf("failed to convert time range: %w", err)
 	}
@@ -352,7 +432,7 @@ func (t *Transformer) transformTraceQuery(ctx context.Context, grammar *Grammar)
 	// query the trace schema for getting tags
 	allTags := make(map[string]*tagSpecWithFamily)
 	for _, g := range groups {
-		trace, getErr := t.schemaRegistry.TraceRegistry().GetTrace(ctx, &commonv1.Metadata{
+		trace, getErr := r.schemaRegistry.TraceRegistry().GetTrace(ctx, &commonv1.Metadata{
 			Name:  resourceName,
 			Group: g,
 		})
@@ -391,20 +471,20 @@ func (t *Transformer) transformTraceQuery(ctx context.Context, grammar *Grammar)
 	}
 
 	// convert criteria
-	criteria, err := t.convertSelectCriteria(statement.Where, allTags)
+	criteria, err := r.convertSelectCriteria(statement.Where, allTags)
 	if err != nil {
 		return nil, fmt.Errorf("failed to convert criteria: %w", err)
 	}
 
 	// convert order by
-	orderBy := t.convertSelectOrderBy(statement.OrderBy)
+	orderBy := r.convertSelectOrderBy(statement.OrderBy)
 
 	var offset, limit uint32
 	if statement.Offset != nil {
-		offset = uint32(statement.Offset.Value)
+		offset = uint32(r.resolveCount(statement.Offset.Value, statement.Offset.Param, statement.Offset.ParamIndex))
 	}
 	if statement.Limit != nil {
-		limit = uint32(statement.Limit.Value)
+		limit = uint32(r.resolveCount(statement.Limit.Value, statement.Limit.Param, statement.Limit.ParamIndex))
 	}
 
 	// extract stages
@@ -431,7 +511,7 @@ func (t *Transformer) transformTraceQuery(ctx context.Context, grammar *Grammar)
 	}, nil
 }
 
-func (t *Transformer) transformPropertyQuery(ctx context.Context, grammar *Grammar) (*TransformResult, error) {
+func (r *transformRun) transformPropertyQuery(ctx context.Context, grammar *Grammar) (*TransformResult, error) {
 	statement := grammar.Select
 	if statement == nil {
 		return nil, errors.New("property query must be a select statement")
@@ -442,14 +522,14 @@ func (t *Transformer) transformPropertyQuery(ctx context.Context, grammar *Gramm
 	resourceName := statement.From.ResourceName
 
 	// validate query
-	if err := t.validateGroupOrResourceName(groups, resourceName); err != nil {
+	if err := r.validateGroupOrResourceName(groups, resourceName); err != nil {
 		return nil, err
 	}
 
 	// get property schema to extract all tags
 	allTags := make(map[string]*tagSpecWithFamily)
 	for _, g := range groups {
-		property, getErr := t.schemaRegistry.PropertyRegistry().GetProperty(ctx, &commonv1.Metadata{
+		property, getErr := r.schemaRegistry.PropertyRegistry().GetProperty(ctx, &commonv1.Metadata{
 			Name:  resourceName,
 			Group: g,
 		})
@@ -499,7 +579,7 @@ func (t *Transformer) transformPropertyQuery(ctx context.Context, grammar *Gramm
 	var criteria *modelv1.Criteria
 	if statement.Where != nil && statement.Where.Expr != nil {
 		var extractErr error
-		ids, criteria, extractErr = t.extractIDsAndCriteria(statement.Where.Expr, allTags)
+		ids, criteria, extractErr = r.extractIDsAndCriteria(statement.Where.Expr, allTags)
 		if extractErr != nil {
 			return nil, fmt.Errorf("failed to convert criteria: %w", extractErr)
 		}
@@ -508,13 +588,13 @@ func (t *Transformer) transformPropertyQuery(ctx context.Context, grammar *Gramm
 	// handle limit
 	var limit uint32
 	if statement.Limit != nil {
-		limit = uint32(statement.Limit.Value)
+		limit = uint32(r.resolveCount(statement.Limit.Value, statement.Limit.Param, statement.Limit.ParamIndex))
 	}
 
 	// handle ORDER BY
 	var orderBy *propertyv1.QueryOrder
 	if statement.OrderBy != nil {
-		modelQueryOrder := t.convertSelectOrderBy(statement.OrderBy)
+		modelQueryOrder := r.convertSelectOrderBy(statement.OrderBy)
 		if modelQueryOrder != nil {
 			orderBy = &propertyv1.QueryOrder{
 				TagName: modelQueryOrder.IndexRuleName,
@@ -539,7 +619,7 @@ func (t *Transformer) transformPropertyQuery(ctx context.Context, grammar *Gramm
 	}, nil
 }
 
-func (t *Transformer) transformTopNMeasureQuery(ctx context.Context, grammar *Grammar) (*TransformResult, error) {
+func (r *transformRun) transformTopNMeasureQuery(ctx context.Context, grammar *Grammar) (*TransformResult, error) {
 	statement := grammar.TopN
 	if statement == nil {
 		return nil, errors.New("topn measure query must be a topn statement")
@@ -550,12 +630,12 @@ func (t *Transformer) transformTopNMeasureQuery(ctx context.Context, grammar *Gr
 	resourceName := statement.From.ResourceName
 
 	// validate query
-	if err := t.validateGroupOrResourceName(groups, resourceName); err != nil {
+	if err := r.validateGroupOrResourceName(groups, resourceName); err != nil {
 		return nil, err
 	}
 
 	// convert time range
-	timeRange, err := t.convertTimeRange(time.Now(), statement.Time)
+	timeRange, err := r.convertTimeRange(time.Now(), statement.Time)
 	if err != nil {
 		return nil, fmt.Errorf("failed to convert time range: %w", err)
 	}
@@ -563,20 +643,20 @@ func (t *Transformer) transformTopNMeasureQuery(ctx context.Context, grammar *Gr
 	// convert agg
 	var aggFunc modelv1.AggregationFunction
 	if statement.AggregateBy != nil {
-		aggFunc, err = t.convertAggregationFunc(statement.AggregateBy.Function.Function)
+		aggFunc, err = r.convertAggregationFunc(statement.AggregateBy.Function.Function)
 		if err != nil {
 			return nil, err
 		}
 	}
 
 	// convert conditions
-	conditions, err := t.convertTopNAndConditions(ctx, statement.Where, groups, resourceName)
+	conditions, err := r.convertTopNAndConditions(ctx, statement.Where, groups, resourceName)
 	if err != nil {
 		return nil, fmt.Errorf("failed to convert criteria: %w", err)
 	}
 
 	// convert order by
-	orderBy := t.convertTopNOrderBy(statement.OrderBy)
+	orderBy := r.convertTopNOrderBy(statement.OrderBy)
 	sort := modelv1.Sort_SORT_UNSPECIFIED
 	if orderBy != nil {
 		sort = orderBy.Sort
@@ -595,7 +675,7 @@ func (t *Transformer) transformTopNMeasureQuery(ctx context.Context, grammar *Gr
 			Groups:         groups,
 			Name:           resourceName,
 			TimeRange:      timeRange,
-			TopN:           int32(statement.N),
+			TopN:           int32(r.resolveCount(statement.N, statement.NParam, statement.NParamIndex)),
 			Agg:            aggFunc,
 			Conditions:     conditions,
 			FieldValueSort: sort,
@@ -605,22 +685,22 @@ func (t *Transformer) transformTopNMeasureQuery(ctx context.Context, grammar *Gr
 	}, nil
 }
 
-func (t *Transformer) convertSelectCriteria(where *GrammarSelectWhereClause, allTags map[string]*tagSpecWithFamily) (*modelv1.Criteria, error) {
+func (r *transformRun) convertSelectCriteria(where *GrammarSelectWhereClause, allTags map[string]*tagSpecWithFamily) (*modelv1.Criteria, error) {
 	if where == nil || where.Expr == nil {
 		return nil, nil
 	}
 
-	return t.convertOrExpr(where.Expr, allTags, nil)
+	return r.convertOrExpr(where.Expr, allTags, nil)
 }
 
-func (t *Transformer) convertTopNAndConditions(ctx context.Context, where *GrammarTopNWhereClause, groups []string, resourceName string) ([]*modelv1.Condition, error) {
+func (r *transformRun) convertTopNAndConditions(ctx context.Context, where *GrammarTopNWhereClause, groups []string, resourceName string) ([]*modelv1.Condition, error) {
 	if where == nil || where.Expr == nil {
 		return nil, nil
 	}
 
 	allTags := make(map[string]*tagSpecWithFamily)
 	for _, g := range groups {
-		aggregation, getErr := t.schemaRegistry.TopNAggregationRegistry().GetTopNAggregation(ctx, &commonv1.Metadata{
+		aggregation, getErr := r.schemaRegistry.TopNAggregationRegistry().GetTopNAggregation(ctx, &commonv1.Metadata{
 			Name:  resourceName,
 			Group: g,
 		})
@@ -628,7 +708,7 @@ func (t *Transformer) convertTopNAndConditions(ctx context.Context, where *Gramm
 			return nil, fmt.Errorf("failed to get topn aggregation %s/%s: %w", g, resourceName, getErr)
 		}
 		sourceMeasure := aggregation.SourceMeasure
-		measure, getErr := t.schemaRegistry.MeasureRegistry().GetMeasure(ctx, sourceMeasure)
+		measure, getErr := r.schemaRegistry.MeasureRegistry().GetMeasure(ctx, sourceMeasure)
 		if getErr != nil {
 			return nil, fmt.Errorf("failed to get measure %s/%s: %w", sourceMeasure.Group, sourceMeasure.Name, getErr)
 		}
@@ -644,7 +724,7 @@ func (t *Transformer) convertTopNAndConditions(ctx context.Context, where *Gramm
 	}
 
 	var conditions []*modelv1.Condition
-	_, err := t.convertAndExpr(where.Expr, allTags, func(c *modelv1.Condition) {
+	_, err := r.convertAndExpr(where.Expr, allTags, func(c *modelv1.Condition) {
 		conditions = append(conditions, c)
 	})
 	if err != nil {
@@ -654,7 +734,7 @@ func (t *Transformer) convertTopNAndConditions(ctx context.Context, where *Gramm
 	return conditions, nil
 }
 
-func (t *Transformer) convertGroupBy(g *GrammarGroupByClause, queryTags *modelv1.TagProjection, queryFields []string) (*measurev1.QueryRequest_GroupBy, error) {
+func (r *transformRun) convertGroupBy(g *GrammarGroupByClause, queryTags *modelv1.TagProjection, queryFields []string) (*measurev1.QueryRequest_GroupBy, error) {
 	if g == nil {
 		return nil, nil
 	}
@@ -754,7 +834,7 @@ func (t *Transformer) convertGroupBy(g *GrammarGroupByClause, queryTags *modelv1
 	return groupBy, nil
 }
 
-func (t *Transformer) convertAggregation(projection *GrammarProjection, allFields map[string]*databasev1.FieldSpec) (*measurev1.QueryRequest_Aggregation, error) {
+func (r *transformRun) convertAggregation(projection *GrammarProjection, allFields map[string]*databasev1.FieldSpec) (*measurev1.QueryRequest_Aggregation, error) {
 	var columns []*GrammarColumn
 	if projection != nil && len(projection.Columns) > 0 {
 		columns = append(columns, projection.Columns...)
@@ -789,7 +869,7 @@ func (t *Transformer) convertAggregation(projection *GrammarProjection, allField
 		return nil, fmt.Errorf("field %s not found in schema", aggColName)
 	}
 
-	aggFunc, err := t.convertAggregationFunc(aggCol.Aggregate.Function)
+	aggFunc, err := r.convertAggregationFunc(aggCol.Aggregate.Function)
 	if err != nil {
 		return nil, err
 	}
@@ -800,7 +880,7 @@ func (t *Transformer) convertAggregation(projection *GrammarProjection, allField
 	}, nil
 }
 
-func (t *Transformer) convertAggregationFunc(f string) (modelv1.AggregationFunction, error) {
+func (r *transformRun) convertAggregationFunc(f string) (modelv1.AggregationFunction, error) {
 	switch strings.ToUpper(f) {
 	case "MEAN", "AVG":
 		return modelv1.AggregationFunction_AGGREGATION_FUNCTION_MEAN, nil
@@ -817,12 +897,12 @@ func (t *Transformer) convertAggregationFunc(f string) (modelv1.AggregationFunct
 	}
 }
 
-func (t *Transformer) convertOrExpr(expr *GrammarOrExpr, allTags map[string]*tagSpecWithFamily, accept func(c *modelv1.Condition)) (*modelv1.Criteria, error) {
+func (r *transformRun) convertOrExpr(expr *GrammarOrExpr, allTags map[string]*tagSpecWithFamily, accept func(c *modelv1.Condition)) (*modelv1.Criteria, error) {
 	if expr == nil {
 		return nil, nil
 	}
 
-	leftCriteria, err := t.convertAndExpr(expr.Left, allTags, accept)
+	leftCriteria, err := r.convertAndExpr(expr.Left, allTags, accept)
 	if err != nil {
 		return nil, err
 	}
@@ -833,7 +913,7 @@ func (t *Transformer) convertOrExpr(expr *GrammarOrExpr, allTags map[string]*tag
 
 	// process all OR operations
 	for _, orRight := range expr.Right {
-		rightCriteria, err := t.convertAndExpr(orRight.Right, allTags, accept)
+		rightCriteria, err := r.convertAndExpr(orRight.Right, allTags, accept)
 		if err != nil {
 			return nil, err
 		}
@@ -852,12 +932,12 @@ func (t *Transformer) convertOrExpr(expr *GrammarOrExpr, allTags map[string]*tag
 	return leftCriteria, nil
 }
 
-func (t *Transformer) convertAndExpr(expr *GrammarAndExpr, allTags map[string]*tagSpecWithFamily, accept func(c *modelv1.Condition)) (*modelv1.Criteria, error) {
+func (r *transformRun) convertAndExpr(expr *GrammarAndExpr, allTags map[string]*tagSpecWithFamily, accept func(c *modelv1.Condition)) (*modelv1.Criteria, error) {
 	if expr == nil {
 		return nil, nil
 	}
 
-	leftCriteria, err := t.convertPredicate(expr.Left, allTags, accept)
+	leftCriteria, err := r.convertPredicate(expr.Left, allTags, accept)
 	if err != nil {
 		return nil, err
 	}
@@ -868,7 +948,7 @@ func (t *Transformer) convertAndExpr(expr *GrammarAndExpr, allTags map[string]*t
 
 	// process all AND operations
 	for _, andRight := range expr.Right {
-		rightCriteria, err := t.convertPredicate(andRight.Right, allTags, accept)
+		rightCriteria, err := r.convertPredicate(andRight.Right, allTags, accept)
 		if err != nil {
 			return nil, err
 		}
@@ -887,31 +967,31 @@ func (t *Transformer) convertAndExpr(expr *GrammarAndExpr, allTags map[string]*t
 	return leftCriteria, nil
 }
 
-func (t *Transformer) convertPredicate(pred *GrammarPredicate, allTags map[string]*tagSpecWithFamily, accept func(c *modelv1.Condition)) (*modelv1.Criteria, error) {
+func (r *transformRun) convertPredicate(pred *GrammarPredicate, allTags map[string]*tagSpecWithFamily, accept func(c *modelv1.Condition)) (*modelv1.Criteria, error) {
 	if pred == nil {
 		return nil, nil
 	}
 
 	if pred.Paren != nil {
-		return t.convertOrExpr(pred.Paren, allTags, accept)
+		return r.convertOrExpr(pred.Paren, allTags, accept)
 	}
 
 	if pred.Binary != nil {
-		return t.convertBinaryPredicate(pred.Binary, allTags, accept)
+		return r.convertBinaryPredicate(pred.Binary, allTags, accept)
 	}
 
 	if pred.In != nil {
-		return t.convertInPredicate(pred.In, allTags, accept)
+		return r.convertInPredicate(pred.In, allTags, accept)
 	}
 
 	if pred.Having != nil {
-		return t.convertHavingPredicate(pred.Having, allTags, accept)
+		return r.convertHavingPredicate(pred.Having, allTags, accept)
 	}
 
 	return nil, errors.New("empty predicate")
 }
 
-func (t *Transformer) convertBinaryPredicate(
+func (r *transformRun) convertBinaryPredicate(
 	pred *GrammarBinaryPredicate,
 	allTags map[string]*tagSpecWithFamily,
 	accept func(c *modelv1.Condition),
@@ -927,17 +1007,17 @@ func (t *Transformer) convertBinaryPredicate(
 	}
 
 	if pred.Tail.Match != nil {
-		return t.convertMatchPredicate(identifierName, pred.Tail.Match, accept)
+		return r.convertMatchPredicate(identifierName, pred.Tail.Match, accept)
 	}
 
 	if pred.Tail.Compare != nil {
-		return t.convertComparePredicate(identifierName, pred.Tail.Compare, tagSpec, accept)
+		return r.convertComparePredicate(identifierName, pred.Tail.Compare, tagSpec, accept)
 	}
 
 	return nil, errors.New("empty binary predicate tail")
 }
 
-func (t *Transformer) convertMatchPredicate(identifierName string, match *GrammarMatchTail, accept func(c *modelv1.Condition)) (*modelv1.Criteria, error) {
+func (r *transformRun) convertMatchPredicate(identifierName string, match *GrammarMatchTail, accept func(c *modelv1.Condition)) (*modelv1.Criteria, error) {
 	if match.Values == nil {
 		return nil, fmt.Errorf("MATCH operator requires values")
 	}
@@ -948,6 +1028,9 @@ func (t *Transformer) convertMatchPredicate(identifierName string, match *Gramma
 	} else if match.Values.Array != nil {
 		values = match.Values.Array
 	}
+	// Expand any placeholder into its bound value(s); a single placeholder
+	// bound to an array becomes multiple values, matching the literal form.
+	values = r.resolveValues(values)
 
 	if len(values) == 0 {
 		return nil, fmt.Errorf("MATCH requires at least one value")
@@ -970,14 +1053,14 @@ func (t *Transformer) convertMatchPredicate(identifierName string, match *Gramma
 		// single value: set as Str
 		cond.Value = &modelv1.TagValue{
 			Value: &modelv1.TagValue_Str{
-				Str: &modelv1.Str{Value: t.grammarValueToString(values[0])},
+				Str: &modelv1.Str{Value: r.grammarValueToString(values[0])},
 			},
 		}
 	} else {
 		// multiple values: set as string array
 		strArr := make([]string, len(values))
 		for i, val := range values {
-			strArr[i] = t.grammarValueToString(val)
+			strArr[i] = r.grammarValueToString(val)
 		}
 		cond.Value = &modelv1.TagValue{
 			Value: &modelv1.TagValue_StrArray{
@@ -1016,7 +1099,7 @@ func (t *Transformer) convertMatchPredicate(identifierName string, match *Gramma
 	}, nil
 }
 
-func (t *Transformer) convertComparePredicate(
+func (r *transformRun) convertComparePredicate(
 	identifierName string,
 	compare *GrammarCompareTail,
 	tagSpec *tagSpecWithFamily,
@@ -1024,10 +1107,10 @@ func (t *Transformer) convertComparePredicate(
 ) (*modelv1.Criteria, error) {
 	cond := &modelv1.Condition{
 		Name: identifierName,
-		Op:   t.convertCompareOp(compare.Operator),
+		Op:   r.convertCompareOp(compare.Operator),
 	}
 
-	if err := t.setGrammarConditionValue(cond, compare.Value, tagSpec); err != nil {
+	if err := r.setGrammarConditionValue(cond, compare.Value, tagSpec); err != nil {
 		return nil, fmt.Errorf("failed to set condition for tag %s: %w", identifierName, err)
 	}
 
@@ -1042,7 +1125,7 @@ func (t *Transformer) convertComparePredicate(
 	}, nil
 }
 
-func (t *Transformer) convertInPredicate(pred *GrammarInPredicate, allTags map[string]*tagSpecWithFamily, accept func(c *modelv1.Condition)) (*modelv1.Criteria, error) {
+func (r *transformRun) convertInPredicate(pred *GrammarInPredicate, allTags map[string]*tagSpecWithFamily, accept func(c *modelv1.Condition)) (*modelv1.Criteria, error) {
 	identifierName, nameErr := pred.Identifier.ToString(false)
 	if nameErr != nil {
 		return nil, fmt.Errorf("failed to parse identifier: %w", nameErr)
@@ -1063,7 +1146,7 @@ func (t *Transformer) convertInPredicate(pred *GrammarInPredicate, allTags map[s
 		Op:   op,
 	}
 
-	if err := t.setGrammarMultiValueCondition(cond, pred.Values, tagSpec); err != nil {
+	if err := r.setGrammarMultiValueCondition(cond, pred.Values, tagSpec); err != nil {
 		return nil, fmt.Errorf("failed to set condition for tag %s: %w", identifierName, err)
 	}
 
@@ -1078,7 +1161,7 @@ func (t *Transformer) convertInPredicate(pred *GrammarInPredicate, allTags map[s
 	}, nil
 }
 
-func (t *Transformer) convertHavingPredicate(
+func (r *transformRun) convertHavingPredicate(
 	pred *GrammarHavingPredicate,
 	allTags map[string]*tagSpecWithFamily,
 	accept func(c *modelv1.Condition),
@@ -1103,11 +1186,21 @@ func (t *Transformer) convertHavingPredicate(
 		Op:   op,
 	}
 
+	// Preserve the literal single-vs-list form: a single-value HAVING stays
+	// single unless a bound array expands it to several values, while a
+	// parenthesized list stays a list regardless of count.
+	wasSingle := pred.Values.Single != nil
+	values := pred.Values.Array
+	if wasSingle {
+		values = []*GrammarValue{pred.Values.Single}
+	}
+	values = r.resolveValues(values)
+
 	var err error
-	if pred.Values.Single != nil {
-		err = t.setGrammarConditionValue(cond, pred.Values.Single, tagSpec)
-	} else if pred.Values.Array != nil {
-		err = t.setGrammarMultiValueCondition(cond, pred.Values.Array, tagSpec)
+	if wasSingle && len(values) == 1 {
+		err = r.setGrammarConditionValue(cond, values[0], tagSpec)
+	} else {
+		err = r.setGrammarMultiValueCondition(cond, values, tagSpec)
 	}
 
 	if err != nil {
@@ -1125,7 +1218,8 @@ func (t *Transformer) convertHavingPredicate(
 	}, nil
 }
 
-func (t *Transformer) setGrammarConditionValue(cond *modelv1.Condition, val *GrammarValue, tagSpec *tagSpecWithFamily) error {
+func (r *transformRun) setGrammarConditionValue(cond *modelv1.Condition, val *GrammarValue, tagSpec *tagSpecWithFamily) error {
+	val = r.resolveValue(val)
 	if val.Null {
 		cond.Value = &modelv1.TagValue{
 			Value: &modelv1.TagValue_Null{
@@ -1140,12 +1234,12 @@ func (t *Transformer) setGrammarConditionValue(cond *modelv1.Condition, val *Gra
 		// Convert to Str
 		cond.Value = &modelv1.TagValue{
 			Value: &modelv1.TagValue_Str{
-				Str: &modelv1.Str{Value: t.grammarValueToString(val)},
+				Str: &modelv1.Str{Value: r.grammarValueToString(val)},
 			},
 		}
 
 	case databasev1.TagType_TAG_TYPE_INT, databasev1.TagType_TAG_TYPE_INT_ARRAY:
-		intVal, err := t.grammarValueToInt64(val)
+		intVal, err := r.grammarValueToInt64(val)
 		if err != nil {
 			return err
 		}
@@ -1165,7 +1259,8 @@ func (t *Transformer) setGrammarConditionValue(cond *modelv1.Condition, val *Gra
 	return nil
 }
 
-func (t *Transformer) setGrammarMultiValueCondition(cond *modelv1.Condition, values []*GrammarValue, tagSpec *tagSpecWithFamily) error {
+func (r *transformRun) setGrammarMultiValueCondition(cond *modelv1.Condition, values []*GrammarValue, tagSpec *tagSpecWithFamily) error {
+	values = r.resolveValues(values)
 	switch tagSpec.tag.Type {
 	case databasev1.TagType_TAG_TYPE_STRING, databasev1.TagType_TAG_TYPE_STRING_ARRAY:
 		strArr := make([]string, len(values))
@@ -1173,7 +1268,7 @@ func (t *Transformer) setGrammarMultiValueCondition(cond *modelv1.Condition, val
 			if val.Null {
 				return fmt.Errorf("NULL is not allowed in array values")
 			}
-			strArr[i] = t.grammarValueToString(val)
+			strArr[i] = r.grammarValueToString(val)
 		}
 		cond.Value = &modelv1.TagValue{
 			Value: &modelv1.TagValue_StrArray{
@@ -1187,7 +1282,7 @@ func (t *Transformer) setGrammarMultiValueCondition(cond *modelv1.Condition, val
 			if val.Null {
 				return fmt.Errorf("NULL is not allowed in array values")
 			}
-			intVal, err := t.grammarValueToInt64(val)
+			intVal, err := r.grammarValueToInt64(val)
 			if err != nil {
 				return err
 			}
@@ -1206,25 +1301,25 @@ func (t *Transformer) setGrammarMultiValueCondition(cond *modelv1.Condition, val
 	return nil
 }
 
-func (t *Transformer) convertTimeRange(now time.Time, timeClause *GrammarTimeClause) (*modelv1.TimeRange, error) {
+func (r *transformRun) convertTimeRange(now time.Time, timeClause *GrammarTimeClause) (*modelv1.TimeRange, error) {
 	if timeClause == nil {
 		return nil, nil
 	}
 	var begin, end time.Time
 
 	if timeClause.Between != nil {
-		beginTS, err := t.parseTimestamp(now, timeClause.Between.Begin.ToString())
+		beginTS, err := r.parseTimestamp(now, r.resolveTimeString(timeClause.Between.Begin))
 		if err != nil {
 			return nil, err
 		}
-		endTS, err := t.parseTimestamp(now, timeClause.Between.End.ToString())
+		endTS, err := r.parseTimestamp(now, r.resolveTimeString(timeClause.Between.End))
 		if err != nil {
 			return nil, err
 		}
 		begin = *beginTS
 		end = *endTS
 	} else if timeClause.Comparator != nil && timeClause.Value != nil {
-		timestamp, err := t.parseTimestamp(now, timeClause.Value.ToString())
+		timestamp, err := r.parseTimestamp(now, r.resolveTimeString(timeClause.Value))
 		if err != nil {
 			return nil, err
 		}
@@ -1255,7 +1350,7 @@ func (t *Transformer) convertTimeRange(now time.Time, timeClause *GrammarTimeCla
 	}, nil
 }
 
-func (t *Transformer) parseTimestamp(now time.Time, timestamp string) (*time.Time, error) {
+func (r *transformRun) parseTimestamp(now time.Time, timestamp string) (*time.Time, error) {
 	// Try parsing as absolute time first (RFC3339)
 	if parsedTime, err := time.Parse(time.RFC3339, timestamp); err == nil {
 		return &parsedTime, nil
@@ -1275,7 +1370,7 @@ func (t *Transformer) parseTimestamp(now time.Time, timestamp string) (*time.Tim
 	return &resultTime, nil
 }
 
-func (t *Transformer) convertTagAndField(
+func (r *transformRun) convertTagAndField(
 	groups []string,
 	name string,
 	query func(group, name string) ([]*databasev1.TagFamilySpec, []*databasev1.FieldSpec, error),
@@ -1323,12 +1418,12 @@ func (t *Transformer) convertTagAndField(
 
 	if includeAll {
 		for _, spec := range allTags {
-			if addErr := t.checkOrAddGrammarTagOrField(allTags, allFields, &targetTagFamilies, &targetFields, columnExists, spec.tag.Name, columnTypeTag, nil); addErr != nil {
+			if addErr := r.checkOrAddGrammarTagOrField(allTags, allFields, &targetTagFamilies, &targetFields, columnExists, spec.tag.Name, columnTypeTag, nil); addErr != nil {
 				return nil, nil, nil, nil, addErr
 			}
 		}
 		for _, f := range allFields {
-			if addErr := t.checkOrAddGrammarTagOrField(allTags, allFields, &targetTagFamilies, &targetFields, columnExists, f.Name, columnTypeField, nil); addErr != nil {
+			if addErr := r.checkOrAddGrammarTagOrField(allTags, allFields, &targetTagFamilies, &targetFields, columnExists, f.Name, columnTypeField, nil); addErr != nil {
 				return nil, nil, nil, nil, addErr
 			}
 		}
@@ -1346,7 +1441,7 @@ func (t *Transformer) convertTagAndField(
 		if col.TypeSpec != nil {
 			colType = strings.ToUpper(*col.TypeSpec)
 		}
-		if addErr := t.checkOrAddGrammarTagOrField(allTags, allFields, &targetTagFamilies, &targetFields, columnExists, colName, colType, col.Aggregate); addErr != nil {
+		if addErr := r.checkOrAddGrammarTagOrField(allTags, allFields, &targetTagFamilies, &targetFields, columnExists, colName, colType, col.Aggregate); addErr != nil {
 			return nil, nil, nil, nil, addErr
 		}
 	}
@@ -1358,7 +1453,7 @@ func (t *Transformer) convertTagAndField(
 	return tagProjection, targetFields, allTags, allFields, nil
 }
 
-func (t *Transformer) findGrammarTagOrField(
+func (r *transformRun) findGrammarTagOrField(
 	sourceTags map[string]*tagSpecWithFamily,
 	sourceFields map[string]*databasev1.FieldSpec,
 	targetName string,
@@ -1378,7 +1473,7 @@ type tagSpecWithFamily struct {
 	family string
 }
 
-func (t *Transformer) checkOrAddGrammarTagOrField(
+func (r *transformRun) checkOrAddGrammarTagOrField(
 	sourceTags map[string]*tagSpecWithFamily,
 	sourceFields map[string]*databasev1.FieldSpec,
 	targetTags *[]*modelv1.TagProjection_TagFamily,
@@ -1412,7 +1507,7 @@ func (t *Transformer) checkOrAddGrammarTagOrField(
 		return nil
 	}
 
-	tag, field := t.findGrammarTagOrField(sourceTags, sourceFields, colName, colType)
+	tag, field := r.findGrammarTagOrField(sourceTags, sourceFields, colName, colType)
 	if tag == nil && field == nil {
 		return fmt.Errorf("column %s not found in schema", colName)
 	}
@@ -1472,7 +1567,7 @@ func (t *Transformer) checkOrAddGrammarTagOrField(
 	return nil
 }
 
-func (t *Transformer) validateGroupOrResourceName(groups []string, resourceName string) error {
+func (r *transformRun) validateGroupOrResourceName(groups []string, resourceName string) error {
 	if len(groups) == 0 {
 		return errors.New("at least one group must be specified")
 	}
@@ -1483,7 +1578,7 @@ func (t *Transformer) validateGroupOrResourceName(groups []string, resourceName 
 	return nil
 }
 
-func (t *Transformer) convertSelectOrderBy(orderBy *GrammarSelectOrderByClause) *modelv1.QueryOrder {
+func (r *transformRun) convertSelectOrderBy(orderBy *GrammarSelectOrderByClause) *modelv1.QueryOrder {
 	if orderBy == nil {
 		return nil
 	}
@@ -1513,7 +1608,7 @@ func (t *Transformer) convertSelectOrderBy(orderBy *GrammarSelectOrderByClause) 
 	}
 }
 
-func (t *Transformer) convertTopNOrderBy(orderBy *GrammarTopNOrderByClause) *modelv1.QueryOrder {
+func (r *transformRun) convertTopNOrderBy(orderBy *GrammarTopNOrderByClause) *modelv1.QueryOrder {
 	if orderBy == nil {
 		return nil
 	}
@@ -1528,7 +1623,7 @@ func (t *Transformer) convertTopNOrderBy(orderBy *GrammarTopNOrderByClause) *mod
 	}
 }
 
-func (t *Transformer) convertCompareOp(op string) modelv1.Condition_BinaryOp {
+func (r *transformRun) convertCompareOp(op string) modelv1.Condition_BinaryOp {
 	switch op {
 	case "=":
 		return modelv1.Condition_BINARY_OP_EQ
@@ -1547,7 +1642,7 @@ func (t *Transformer) convertCompareOp(op string) modelv1.Condition_BinaryOp {
 	}
 }
 
-func (t *Transformer) convertTOP(projection *GrammarProjection, fields map[string]*databasev1.FieldSpec) (*measurev1.QueryRequest_Top, error) {
+func (r *transformRun) convertTOP(projection *GrammarProjection, fields map[string]*databasev1.FieldSpec) (*measurev1.QueryRequest_Top, error) {
 	if projection == nil || projection.TopN == nil {
 		return nil, nil
 	}
@@ -1570,13 +1665,14 @@ func (t *Transformer) convertTOP(projection *GrammarProjection, fields map[strin
 	}
 
 	return &measurev1.QueryRequest_Top{
-		Number:         int32(topn.N),
+		Number:         int32(r.resolveCount(topn.N, topn.NParam, topn.NParamIndex)),
 		FieldName:      orderFieldName,
 		FieldValueSort: sort,
 	}, nil
 }
 
-func (t *Transformer) grammarValueToString(val *GrammarValue) string {
+func (r *transformRun) grammarValueToString(val *GrammarValue) string {
+	val = r.resolveValue(val)
 	if val.String != nil {
 		return *val.String
 	}
@@ -1586,7 +1682,8 @@ func (t *Transformer) grammarValueToString(val *GrammarValue) string {
 	return ""
 }
 
-func (t *Transformer) grammarValueToInt64(val *GrammarValue) (int64, error) {
+func (r *transformRun) grammarValueToInt64(val *GrammarValue) (int64, error) {
+	val = r.resolveValue(val)
 	if val.Integer != nil {
 		return *val.Integer, nil
 	}
@@ -1602,13 +1699,13 @@ func (t *Transformer) grammarValueToInt64(val *GrammarValue) (int64, error) {
 
 // extractIDsAndCriteria separates ID conditions from other conditions in property queries.
 // ID conditions are extracted into a string array, while other conditions are converted to criteria.
-func (t *Transformer) extractIDsAndCriteria(expr *GrammarOrExpr, allTags map[string]*tagSpecWithFamily) ([]string, *modelv1.Criteria, error) {
+func (r *transformRun) extractIDsAndCriteria(expr *GrammarOrExpr, allTags map[string]*tagSpecWithFamily) ([]string, *modelv1.Criteria, error) {
 	if expr == nil {
 		return nil, nil, nil
 	}
 
 	// Process the expression tree and collect IDs and criteria
-	ids, criteria, err := t.extractIDsFromOrExpr(expr, allTags)
+	ids, criteria, err := r.extractIDsFromOrExpr(expr, allTags)
 	if err != nil {
 		return nil, nil, err
 	}
@@ -1617,8 +1714,8 @@ func (t *Transformer) extractIDsAndCriteria(expr *GrammarOrExpr, allTags map[str
 }
 
 // extractIDsFromOrExpr processes OR expressions for ID extraction.
-func (t *Transformer) extractIDsFromOrExpr(expr *GrammarOrExpr, allTags map[string]*tagSpecWithFamily) ([]string, *modelv1.Criteria, error) {
-	leftIDs, leftCriteria, err := t.extractIDsFromAndExpr(expr.Left, allTags)
+func (r *transformRun) extractIDsFromOrExpr(expr *GrammarOrExpr, allTags map[string]*tagSpecWithFamily) ([]string, *modelv1.Criteria, error) {
+	leftIDs, leftCriteria, err := r.extractIDsFromAndExpr(expr.Left, allTags)
 	if err != nil {
 		return nil, nil, err
 	}
@@ -1633,7 +1730,7 @@ func (t *Transformer) extractIDsFromOrExpr(expr *GrammarOrExpr, allTags map[stri
 	currentCriteria := leftCriteria
 
 	for _, orRight := range expr.Right {
-		rightIDs, rightCriteria, err := t.extractIDsFromAndExpr(orRight.Right, allTags)
+		rightIDs, rightCriteria, err := r.extractIDsFromAndExpr(orRight.Right, allTags)
 		if err != nil {
 			return nil, nil, err
 		}
@@ -1658,8 +1755,8 @@ func (t *Transformer) extractIDsFromOrExpr(expr *GrammarOrExpr, allTags map[stri
 }
 
 // extractIDsFromAndExpr processes AND expressions for ID extraction.
-func (t *Transformer) extractIDsFromAndExpr(expr *GrammarAndExpr, allTags map[string]*tagSpecWithFamily) ([]string, *modelv1.Criteria, error) {
-	leftIDs, leftCriteria, err := t.extractIDsFromPredicate(expr.Left, allTags)
+func (r *transformRun) extractIDsFromAndExpr(expr *GrammarAndExpr, allTags map[string]*tagSpecWithFamily) ([]string, *modelv1.Criteria, error) {
+	leftIDs, leftCriteria, err := r.extractIDsFromPredicate(expr.Left, allTags)
 	if err != nil {
 		return nil, nil, err
 	}
@@ -1674,7 +1771,7 @@ func (t *Transformer) extractIDsFromAndExpr(expr *GrammarAndExpr, allTags map[st
 	currentCriteria := leftCriteria
 
 	for _, andRight := range expr.Right {
-		rightIDs, rightCriteria, err := t.extractIDsFromPredicate(andRight.Right, allTags)
+		rightIDs, rightCriteria, err := r.extractIDsFromPredicate(andRight.Right, allTags)
 		if err != nil {
 			return nil, nil, err
 		}
@@ -1699,9 +1796,9 @@ func (t *Transformer) extractIDsFromAndExpr(expr *GrammarAndExpr, allTags map[st
 }
 
 // extractIDsFromPredicate processes predicates for ID extraction.
-func (t *Transformer) extractIDsFromPredicate(pred *GrammarPredicate, allTags map[string]*tagSpecWithFamily) ([]string, *modelv1.Criteria, error) {
+func (r *transformRun) extractIDsFromPredicate(pred *GrammarPredicate, allTags map[string]*tagSpecWithFamily) ([]string, *modelv1.Criteria, error) {
 	if pred.Paren != nil {
-		return t.extractIDsFromOrExpr(pred.Paren, allTags)
+		return r.extractIDsFromOrExpr(pred.Paren, allTags)
 	}
 
 	if pred.Binary != nil {
@@ -1714,17 +1811,17 @@ func (t *Transformer) extractIDsFromPredicate(pred *GrammarPredicate, allTags ma
 		if strings.EqualFold(identifierName, "ID") {
 			if pred.Binary.Tail.Compare != nil && pred.Binary.Tail.Compare.Operator == "=" {
 				// ID = 'value'
-				if pred.Binary.Tail.Compare.Value.Null {
+				if r.resolveValue(pred.Binary.Tail.Compare.Value).Null {
 					return nil, nil, fmt.Errorf("ID cannot be NULL")
 				}
-				idValue := t.grammarValueToString(pred.Binary.Tail.Compare.Value)
+				idValue := r.grammarValueToString(pred.Binary.Tail.Compare.Value)
 				return []string{idValue}, nil, nil
 			}
 			return nil, nil, fmt.Errorf("unsupported operator for ID condition (only = is supported)")
 		}
 
 		// Not an ID condition, convert to criteria
-		criteria, err := t.convertBinaryPredicate(pred.Binary, allTags, nil)
+		criteria, err := r.convertBinaryPredicate(pred.Binary, allTags, nil)
 		return nil, criteria, err
 	}
 
@@ -1740,27 +1837,28 @@ func (t *Transformer) extractIDsFromPredicate(pred *GrammarPredicate, allTags ma
 				return nil, nil, fmt.Errorf("NOT IN is not supported for ID condition")
 			}
 			// ID IN ('value1', 'value2', ...)
-			if len(pred.In.Values) == 0 {
+			values := r.resolveValues(pred.In.Values)
+			if len(values) == 0 {
 				return nil, nil, fmt.Errorf("ID IN requires at least one value")
 			}
-			ids := make([]string, 0, len(pred.In.Values))
-			for _, val := range pred.In.Values {
+			ids := make([]string, 0, len(values))
+			for _, val := range values {
 				if val.Null {
 					return nil, nil, fmt.Errorf("ID cannot be NULL in IN clause")
 				}
-				ids = append(ids, t.grammarValueToString(val))
+				ids = append(ids, r.grammarValueToString(val))
 			}
 			return ids, nil, nil
 		}
 
 		// not an ID condition, convert to criteria
-		criteria, err := t.convertInPredicate(pred.In, allTags, nil)
+		criteria, err := r.convertInPredicate(pred.In, allTags, nil)
 		return nil, criteria, err
 	}
 
 	if pred.Having != nil {
 		// HAVING is not an ID condition
-		criteria, err := t.convertHavingPredicate(pred.Having, allTags, nil)
+		criteria, err := r.convertHavingPredicate(pred.Having, allTags, nil)
 		return nil, criteria, err
 	}
 
