@@ -101,6 +101,19 @@ func NewTransformer(registry metadata.Repo) *Transformer {
 
 // Transform transforms a Grammar into a native query request.
 func (t *Transformer) Transform(ctx context.Context, grammar *Grammar) (*TransformResult, error) {
+	// Defense in depth: an unbound placeholder would otherwise transform into an
+	// empty string or a zero count silently instead of failing loudly. A bound
+	// grammar is guaranteed placeholder-free, so it skips the walk.
+	if !grammar.paramsBound {
+		if unbound := countUnboundParams(grammar); unbound > 0 {
+			return nil, fmt.Errorf("query contains %d unbound placeholder(s); BindParams must be called before Transform", unbound)
+		}
+	}
+	// Literal counts get the same wrap guard as bound parameters, so LIMIT -5
+	// fails loudly instead of wrapping when narrowed to uint32.
+	if err := validateGrammarCounts(grammar); err != nil {
+		return nil, err
+	}
 	if grammar.Select != nil {
 		// Extract resource type from SELECT statement
 		resourceType := grammar.Select.From.ResourceType

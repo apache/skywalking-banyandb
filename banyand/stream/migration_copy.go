@@ -767,7 +767,7 @@ func slowCopyOneStreamPart(in streamProcessPartInput, srcPartID uint64) (streamP
 			bm := &bms[j]
 			bm.tagProjection = in.tagProjection
 			b := generateBlock()
-			b.mustReadFrom(in.decoder, p, *bm)
+			b.mustReadFrom(in.decoder, p, *bm, nil)
 			liveBlocks = append(liveBlocks, b)
 
 			for k := uint64(0); k < bm.count; k++ {

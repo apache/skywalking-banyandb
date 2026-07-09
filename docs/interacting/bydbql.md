@@ -34,11 +34,14 @@ BydbQL Query String
         ↓
 Abstract Syntax Tree (AST)
         ↓
+ Parameter Binding
+        ↓
    Transformer
 ```
 
 - **Lexer**: Breaks the query string into a sequence of tokens.
 - **Parser**: Builds an Abstract Syntax Tree (AST) from the tokens, validating the query's syntax.
+- **Parameter Binding**: Fills the `?` placeholders in the AST from the request's `params` (see section 2.6); it always runs, so a query holding unbound placeholders is rejected.
 - **Transformer**: Traverses the AST, performs semantic analysis using a schema, and transforms the AST into the appropriate target protobuf `Stream/Measure/Property/Traces/TopN Request` message.
 
 ### 2.2. Distinguishing Query Types
@@ -153,6 +156,76 @@ TIME < '-1d'
 ```
 
 The `parseTime` function automatically determines whether a timestamp is absolute (RFC3339) or relative (duration string) and converts it appropriately.
+
+## 2.6. Parameter Binding
+
+BydbQL supports positional parameter binding with the `?` placeholder, so untrusted values never need to be concatenated into the query string. This eliminates QL injection: a bound value is always treated as a plain value and can never alter the query structure.
+
+```sql
+SELECT trace_id, message
+FROM STREAM logs IN group1
+TIME > ?
+WHERE message MATCH(?)
+```
+
+Parameters are supplied alongside the query and are bound to the placeholders in their order of appearance. Each parameter is a `model.v1.TagValue`. Over HTTP:
+
+```json
+POST /api/v1/bydbql/query
+{
+  "query": "SELECT trace_id, message FROM STREAM logs IN group1 TIME > ? WHERE message MATCH(?)",
+  "params": [
+    {"str": {"value": "-30m"}},
+    {"str": {"value": "error"}}
+  ]
+}
+```
+
+### 2.6.1. Supported Positions
+
+Placeholders are accepted in *value* positions only. The complete list, with the parameter types each position accepts:
+
+| Position | Example | Accepted parameter types |
+|---|---|---|
+| `TIME` comparison value | `TIME > ?` | `str` (RFC3339, relative like `-30m`, or `now`), `timestamp` |
+| `TIME BETWEEN` boundaries | `TIME BETWEEN ? AND ?` | same as above; each boundary binds independently |
+| Scalar comparison value (`=`, `!=`, `>`, `>=`, `<`, `<=`) | `WHERE service_id = ?` | `str`, `int`, `null` |
+| `IN` / `NOT IN` value list | `IN (?, ?)`, `IN (?)`, `IN ('a', ?)` | `str`, `int`, `null`, `str_array`, `int_array` |
+| `MATCH` value list | `MATCH(?)`, `MATCH(?, 'analyzer')` | `str`, `int`, `null`, `str_array`, `int_array` |
+| `HAVING` / `NOT HAVING` values | `HAVING ?`, `HAVING (?)` | `str`, `int`, `null`, `str_array`, `int_array` |
+| `LIMIT` count | `LIMIT ?` | `int` only |
+| `OFFSET` count | `OFFSET ?` | `int` only |
+| `SHOW TOP N` count | `SHOW TOP ? FROM MEASURE ...` | `int` only |
+| `SELECT TOP N` projection count | `SELECT TOP ? field ...` | `int` only |
+
+Array expansion: an array parameter bound inside a value list expands in place — `WHERE service_id IN (?)` with a three-entry `str_array` behaves exactly like listing the three strings literally, and literals can be mixed around it (`IN ('a', ?, 'b')`). The container keeps the form a literal query would have: a single-value `HAVING ?` stays a single value unless the array holds multiple entries, while a parenthesized `HAVING (?)` stays a list regardless of the entry count.
+
+### 2.6.2. Unsupported Positions
+
+Placeholders in any position that determines the query *structure* rather than a compared *value* are rejected at parse time with a syntax error. Bound parameters therefore can never change the shape of a query, which is what makes binding injection-proof.
+
+| Category | Positions | Example (all syntax errors) |
+|---|---|---|
+| Resource identifiers | resource name, group name, stage name | `FROM STREAM ?`, `IN ?`, `ON ? STAGES` |
+| Column identifiers | projection columns, condition left-hand side, `ORDER BY` / `GROUP BY` columns, aggregate function arguments | `SELECT ?`, `WHERE ? = 'a'`, `ORDER BY ?`, `SUM(?)` |
+| Function options | `MATCH` analyzer and operator options | `MATCH('x', ?)` |
+| Structure | operators, `ASC`/`DESC`, keywords, doubled placeholders | `= ??` |
+
+Note that unlike some SQL implementations where `ORDER BY ?` silently degrades to a no-op constant sort, BydbQL rejects it outright.
+
+### 2.6.3. Type Rules Summary
+
+- `binary_data` parameters are rejected in every position (BydbQL has no binary literal).
+- `timestamp` parameters are accepted only in `TIME` positions and are validated: a missing or out-of-range timestamp is rejected at bind time.
+- `int` parameters are rejected in `TIME` positions at bind time: the transformer cannot parse a bare integer as a timestamp, so use `str` or `timestamp` instead.
+- `int` parameters in count positions must fit the wire type of the position — `[0, 4294967295]` for `LIMIT`/`OFFSET` and `[0, 2147483647]` for the `TOP N` counts; out-of-range values are rejected at bind time instead of silently wrapping, and literal counts are held to the same bounds.
+- Empty arrays, parameters without a value, and `nil` entries are rejected everywhere.
+- A `?` inside a quoted string literal is part of the string, not a placeholder: `WHERE msg = 'why?'` consumes no parameter.
+- After binding passes, values are checked against the tag schema by the same rules as literals: a `str` that cannot parse as an integer fails against an `INT` tag, while an `int` bound to a `STRING` tag is converted, exactly as if written literally.
+
+### 2.6.4. Errors
+
+The request fails with `InvalidArgument` when the number of parameters does not match the number of placeholders, or when a parameter type is not accepted at its placeholder's position. Error messages include the 1-based position of the offending parameter (the first `?` is parameter #1).
 
 ## 3. WHERE Statement
 

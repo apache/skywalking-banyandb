@@ -63,6 +63,7 @@ type part struct {
 	tagFamilyMetadata    map[string]fs.Reader
 	tagFamilies          map[string]fs.Reader
 	tagFamilyFilter      map[string]fs.Reader
+	tagType              tagType
 	seriesMetadata       fs.Reader // Optional: series metadata reader
 	path                 string
 	primaryBlockMetadata []primaryBlockMetadata
@@ -93,6 +94,7 @@ func (p *part) String() string {
 func openMemPart(mp *memPart) *part {
 	var p part
 	p.partMetadata = mp.partMetadata
+	p.tagType = mp.tagType
 
 	p.primaryBlockMetadata = mustReadPrimaryBlockMetadata(p.primaryBlockMetadata[:0], &mp.meta)
 
@@ -326,6 +328,8 @@ func mustOpenFilePart(id uint64, root string, fileSystem fs.FileSystem) *part {
 	fs.CleanupLeftoverTmp(fileSystem, partPath)
 	p.partMetadata.mustReadMetadata(fileSystem, partPath)
 	p.partMetadata.ID = id
+	p.tagType = make(tagType)
+	p.tagType.mustReadTagType(fileSystem, partPath)
 
 	metaPath := path.Join(partPath, metaFilename)
 	pr := mustOpenReader(metaPath, fileSystem)

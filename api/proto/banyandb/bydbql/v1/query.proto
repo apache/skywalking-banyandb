@@ -21,6 +21,7 @@ package banyandb.bydbql.v1;
 
 import "banyandb/measure/v1/query.proto";
 import "banyandb/measure/v1/topn.proto";
+import "banyandb/model/v1/common.proto";
 import "banyandb/property/v1/rpc.proto";
 import "banyandb/stream/v1/query.proto";
 import "banyandb/trace/v1/query.proto";
@@ -33,6 +34,13 @@ option java_package = "org.apache.skywalking.banyandb.bydbql.v1";
 message QueryRequest {
   // query is the BydbQL query string
   string query = 1 [(validate.rules).string.min_len = 1];
+  // params are bound to the `?` placeholders in the query string by their order of appearance.
+  // The number of params must match the number of placeholders.
+  // Accepted variants depend on the placeholder's position: str/timestamp for TIME values,
+  // str/int/null for scalar comparisons, str/int/null/str_array/int_array for IN/MATCH/HAVING
+  // value lists (arrays expand in place), and int for LIMIT/OFFSET/TOP N counts.
+  // binary_data is rejected everywhere.
+  repeated model.v1.TagValue params = 2;
 }
 
 // QueryResponse contains the result of a BydbQL query

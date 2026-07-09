@@ -70,6 +70,7 @@ var streamEntries = []any{
 	g.Entry("global index", helpers.Args{Input: "global_index", Duration: 1 * time.Hour}),
 	g.Entry("multi-global index", helpers.Args{Input: "global_indices", Duration: 1 * time.Hour}),
 	g.Entry("filter by non-indexed tag", helpers.Args{Input: "filter_tag", Duration: 1 * time.Hour}),
+	g.Entry("filter with bound parameters", helpers.Args{Input: "params_bind", Want: "filter_tag", Duration: 1 * time.Hour}),
 	g.Entry("filter hidden tag projection", helpers.Args{Input: "filter_hidden_tag", Duration: 1 * time.Hour}),
 	g.Entry("filter by non-indexed tag order by duration desc with limit 3", helpers.Args{Input: "sort_duration_no_index_limit", Duration: 1 * time.Hour}),
 	g.Entry("get empty result by non-indexed tag", helpers.Args{Input: "filter_tag_empty", Duration: 1 * time.Hour, WantEmpty: true}),
