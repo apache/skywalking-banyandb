@@ -175,6 +175,9 @@ func (t *Transformer) Transform(ctx context.Context, grammar *Grammar) (*Transfo
 // TransformBound transforms a bound prepared statement, reading parameter values
 // from the per-request overlay instead of the immutable template.
 func (t *Transformer) TransformBound(ctx context.Context, bq *BoundQuery) (*TransformResult, error) {
+	if bq == nil || bq.stmt == nil {
+		return nil, errors.New("nil bound query; construct it with PreparedStatement.Bind")
+	}
 	return (&transformRun{Transformer: t, bound: bq.values}).transform(ctx, bq.stmt.template)
 }
 

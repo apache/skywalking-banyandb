@@ -18,6 +18,7 @@
 package bydbql
 
 import (
+	"context"
 	"math"
 	"strings"
 	"testing"
@@ -186,6 +187,13 @@ func TestBindErrors(t *testing.T) {
 	}
 	if _, err = ps.Bind([]*modelv1.TagValue{{}}); err == nil || !strings.Contains(err.Error(), "has no value") {
 		t.Errorf("nil value: got %v", err)
+	}
+}
+
+func TestTransformBoundRejectsNil(t *testing.T) {
+	var transformer Transformer
+	if _, err := transformer.TransformBound(context.Background(), nil); err == nil {
+		t.Fatal("TransformBound(nil) must return an error, not panic")
 	}
 }
 
