@@ -360,37 +360,76 @@ export class ApiDataSource implements DataSource {
 
 // ── Wire-shape → view-model flatteners ─────────────────────────────────────
 
+// Wire-shape note: BanyanDB's protojson serializer emits camelCase, NOT the
+// snake_case declared in api-dto.ts. The flattener therefore reads camelCase
+// keys. See implement-m4-note.md #33 (the DTOs are aspirational; the wire
+// is what we actually receive). The DTO types still describe snake_case
+// because that's what the .proto files use, but runtime data is camelCase.
+
+function readFieldValue(v: unknown): number | string | undefined {
+  if (!v || typeof v !== 'object') return undefined;
+  const o = v as { float?: unknown; int?: unknown; str?: unknown };
+  if (typeof o.float === 'number') return o.float;
+  // protojson renders int64/str as {"int": {"value": "2600"}} / {"str": {"value": "x"}}
+  // to preserve 64-bit precision. Some BanyanDB versions also flatten to just
+  // {"int": <number>} / {"str": <string>}.
+  const innerInt = (o.int as { value?: unknown } | number | undefined);
+  if (innerInt !== undefined) {
+    const raw = typeof innerInt === 'object' && innerInt !== null ? (innerInt as { value?: unknown }).value : innerInt;
+    if (typeof raw === 'string') return Number(raw);
+    if (typeof raw === 'number') return raw;
+  }
+  const innerStr = (o.str as { value?: unknown } | string | undefined);
+  if (innerStr !== undefined) {
+    const raw = typeof innerStr === 'object' && innerStr !== null ? (innerStr as { value?: unknown }).value : innerStr;
+    if (typeof raw === 'string') return raw;
+  }
+  return undefined;
+}
+
 export function flattenQueryResponse(data: QueryResponse): Record<string, unknown>[] {
-  if (data.stream_result?.elements) return data.stream_result.elements.map(flattenStreamElement);
-  if (data.measure_result?.data_points) return data.measure_result.data_points.map(flattenMeasureDataPoint);
-  if (data.trace_result?.elements) return data.trace_result.elements.map(flattenTraceSpan);
+  const d = data as unknown as Record<string, unknown>;
+  // Runtime protojson uses camelCase, but test fixtures and some static mocks
+  // still use snake_case. Accept both so downstream views always get elements.
+  const streamResult = (d.streamResult ?? d.stream_result) as { elements?: unknown[] } | undefined;
+  const measureResult = (d.measureResult ?? d.measure_result) as { dataPoints?: unknown[]; data_points?: unknown[] } | undefined;
+  const traceResult = (d.traceResult ?? d.trace_result) as { elements?: unknown[] } | undefined;
+  if (streamResult?.elements) return streamResult.elements.map((e) => flattenStreamElement(e as never));
+  const measurePoints = measureResult?.dataPoints ?? measureResult?.data_points;
+  if (measurePoints) return measurePoints.map((e) => flattenMeasureDataPoint(e as never));
+  if (traceResult?.elements) return traceResult.elements.map((e) => flattenTraceSpan(e as never));
   return [];
 }
 
-function flattenStreamElement(e: { element_id: string; timestamp?: string; tag_families?: readonly { tags?: readonly { key: string; value: unknown }[] }[] }): Record<string, unknown> {
+function flattenStreamElement(e: { element_id?: string; timestamp?: string; tagFamilies?: readonly { tags?: readonly { key: string; value: unknown }[] }[]; tag_families?: readonly { tags?: readonly { key: string; value: unknown }[] }[] }): Record<string, unknown> {
   const flat: Record<string, unknown> = { element_id: e.element_id, timestamp: e.timestamp };
-  for (const fam of e.tag_families ?? []) {
+  const families = e.tagFamilies ?? e.tag_families ?? [];
+  for (const fam of families) {
     for (const t of fam.tags ?? []) {
-      flat[t.key] = t.value;
+      flat[t.key] = readFieldValue(t.value) ?? t.value;
     }
   }
   return flat;
 }
 
-function flattenMeasureDataPoint(dp: { timestamp?: string; tag_families?: readonly { tags?: readonly { key: string; value: unknown }[] }[]; fields?: readonly { name: string; value: { str?: unknown; int?: number; float?: number } }[] }): Record<string, unknown> {
+function flattenMeasureDataPoint(dp: { timestamp?: string; sid?: string; version?: number; tagFamilies?: readonly { tags?: readonly { key: string; value: unknown }[] }[]; tag_families?: readonly { tags?: readonly { key: string; value: unknown }[] }[]; fields?: readonly { name: string; value: unknown }[] }): Record<string, unknown> {
   const flat: Record<string, unknown> = { timestamp: dp.timestamp };
-  for (const fam of dp.tag_families ?? []) {
+  if (dp.sid !== undefined) flat.sid = dp.sid;
+  if (dp.version !== undefined) flat.version = dp.version;
+  const families = dp.tagFamilies ?? dp.tag_families ?? [];
+  for (const fam of families) {
     for (const t of fam.tags ?? []) {
-      flat[t.key] = t.value;
+      flat[t.key] = readFieldValue(t.value) ?? t.value;
     }
   }
   for (const f of dp.fields ?? []) {
-    flat[f.name] = f.value.float ?? f.value.int ?? f.value.str;
+    const v = readFieldValue(f.value);
+    if (v !== undefined) flat[f.name] = v;
   }
   return flat;
 }
 
-function flattenTraceSpan(s: { span_id?: string; trace_id?: string; name?: string; timestamp?: string; duration?: number; tag_families?: readonly { tags?: readonly { key: string; value: unknown }[] }[] }): Record<string, unknown> {
+function flattenTraceSpan(s: { span_id?: string; trace_id?: string; name?: string; timestamp?: string; duration?: number; tagFamilies?: readonly { tags?: readonly { key: string; value: unknown }[] }[]; tag_families?: readonly { tags?: readonly { key: string; value: unknown }[] }[] }): Record<string, unknown> {
   const flat: Record<string, unknown> = {
     trace_id: s.trace_id,
     span_id: s.span_id,
@@ -398,9 +437,10 @@ function flattenTraceSpan(s: { span_id?: string; trace_id?: string; name?: strin
     timestamp: s.timestamp,
     duration: s.duration,
   };
-  for (const fam of s.tag_families ?? []) {
+  const families = s.tagFamilies ?? s.tag_families ?? [];
+  for (const fam of families) {
     for (const t of fam.tags ?? []) {
-      flat[t.key] = t.value;
+      flat[t.key] = readFieldValue(t.value) ?? t.value;
     }
   }
   return flat;
@@ -412,7 +452,7 @@ export function flattenTopNResponse(data: TopNQueryResponse): Record<string, unk
     for (const item of list.items ?? []) {
       const row: Record<string, unknown> = { timestamp: list.timestamp };
       for (const t of item.entity ?? []) {
-        row[t.key] = t.value;
+        row[t.key] = readFieldValue(t.value) ?? t.value;
       }
       row.value = item.value?.float ?? item.value?.int ?? item.value?.str;
       flat.push(row);

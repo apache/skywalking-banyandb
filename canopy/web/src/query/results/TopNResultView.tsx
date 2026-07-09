@@ -23,62 +23,90 @@
 // milestone). Flat ranked rows with entity tags + value; per-interval vs
 // rolled-up is reflected by row timestamps.
 
-import React from 'react';
+import React, { useState } from 'react';
 import type { QueryResponse } from 'canopy-shared';
+import { ResultPanel } from './ResultPanel.js';
+import { ResultEmpty } from './ResultEmpty.js';
+import { TraceView } from './TraceView.js';
 
 interface Props {
   readonly response: QueryResponse;
   readonly showTrace: boolean;
   readonly setShowTrace: (v: boolean) => void;
+  readonly execMs?: number;
 }
 
 type Elem = Record<string, unknown>;
 
-export function TopNResultView({ response, showTrace, setShowTrace }: Props) {
+export function TopNResultView({ response, showTrace, setShowTrace, execMs }: Props) {
   const elements = (response.elements ?? []) as readonly Elem[];
-  if (elements.length === 0) {
-    return <div className="rv-empty">No leaderboard data.</div>;
-  }
-  // Stable column set: all keys except value/timestamp, sorted alphabetically
+  const [view, setView] = useState<'leaderboard' | 'json'>('leaderboard');
+
+  const onExport = () => {
+    const blob = new Blob([JSON.stringify(response, null, 2)], { type: 'application/json' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `topn-result-${Date.now()}.json`;
+    a.click();
+    URL.revokeObjectURL(url);
+  };
+
+  const actions = (
+    <>
+      <button type="button" className={'result-view-btn' + (view === 'leaderboard' ? ' is-on' : '')} onClick={() => setView('leaderboard')}>Leaderboard</button>
+      <button type="button" className={'result-view-btn' + (view === 'json' ? ' is-on' : '')} onClick={() => setView('json')}>JSON</button>
+      <button type="button" className="result-view-btn" onClick={onExport}>Export</button>
+    </>
+  );
+
+  return (
+    <ResultPanel catalog="topn" response={response} execMs={execMs} traceEnabled={showTrace} showTrace={showTrace} setShowTrace={setShowTrace} actions={actions}>
+      {showTrace ? (
+        <TraceView response={response} />
+      ) : view === 'json' ? (
+        <div className="rv-trace"><pre>{JSON.stringify(response, null, 2)}</pre></div>
+      ) : elements.length === 0 ? (
+        <ResultEmpty title="No leaderboard data" text="The Top-N query returned no ranked series for this measure and window." />
+      ) : (
+        <LeaderboardTable elements={elements} />
+      )}
+    </ResultPanel>
+  );
+}
+
+function LeaderboardTable({ elements }: { elements: readonly Elem[] }) {
   const allKeys = new Set<string>();
   for (const e of elements) for (const k of Object.keys(e)) allKeys.add(k);
   const tagCols = [...allKeys].filter((k) => k !== 'value' && k !== 'timestamp').sort();
   const max = Math.max(...elements.map((e) => Number(e.value ?? 0)));
   return (
-    <div className="rv-root">
-      <div className="rv-tabs">
-        <button type="button" className="rv-tab is-on">Leaderboard</button>
-        {showTrace && (
-          <button type="button" className="rv-tab is-on" onClick={() => setShowTrace(!showTrace)}>Trace</button>
-        )}
-      </div>
-      <div className="rv-table-wrap">
-        <table className="rv-table rv-topn-table">
-          <thead>
-            <tr>
-              <th>#</th>
-              {tagCols.map((c) => <th key={c}>{c}</th>)}
-              <th>value</th>
-            </tr>
-          </thead>
-          <tbody>
-            {elements.map((e, i) => {
-              const v = Number(e.value ?? 0);
-              const pct = max ? Math.max(0, Math.min(100, (v / max) * 100)) : 0;
-              return (
-                <tr key={i}>
-                  <td>{i + 1}</td>
-                  {tagCols.map((c) => <td key={c}>{String(e[c] ?? '')}</td>)}
-                  <td className="rv-topn-val">
-                    <span className="rv-topn-bar" style={{ width: `${pct.toFixed(1)}%` }} />
-                    <span className="rv-topn-vtxt">{v.toFixed(2)}</span>
-                  </td>
-                </tr>
-              );
-            })}
-          </tbody>
-        </table>
-      </div>
+    <div className="rv-table-wrap">
+      <table className="rv-table rv-topn-table">
+        <thead>
+          <tr>
+            <th>#</th>
+            {tagCols.map((c) => <th key={c}>{c}</th>)}
+            <th>value</th>
+          </tr>
+        </thead>
+        <tbody>
+          {elements.map((e, i) => {
+            const v = Number(e.value ?? 0);
+            const pct = max ? Math.max(0, Math.min(100, (v / max) * 100)) : 0;
+            return (
+              <tr key={i}>
+                <td>{i + 1}</td>
+                {tagCols.map((c) => <td key={c}>{String(e[c] ?? '')}</td>)}
+                <td className="rv-topn-val">
+                  <span className="rv-topn-bar" style={{ width: `${pct.toFixed(1)}%` }} />
+                  <span className="rv-topn-vtxt">{v.toFixed(2)}</span>
+                </td>
+              </tr>
+            );
+          })}
+        </tbody>
+      </table>
     </div>
   );
 }

@@ -23,7 +23,7 @@
 // canopy/web/src/data/fixtures/query/ — no synthesized mocks.
 
 import { describe, it, expect } from 'vitest';
-import { render, screen, fireEvent } from '@testing-library/react';
+import { render, screen, fireEvent, waitFor } from '@testing-library/react';
 import { MemoryRouter } from 'react-router-dom';
 import { MeasureResultView } from './MeasureResultView.js';
 import { StreamResultView } from './StreamResultView.js';
@@ -62,7 +62,7 @@ const MEASURE_STATE = {
   where: { combinator: 'AND' as const, children: [] },
   groupBy: [],
   time: { mode: 'relative' as const, rel: '-30m', from: '', to: '' },
-  orderField: 'time', orderDir: 'DESC' as const, limit: 100,
+  orderField: 'time', orderDir: 'DESC' as const, limit: 100, offset: 0,
   trace: false, topN: 10, aggFn: '', fromAgg: null, fromResource: null,
 };
 const STREAM_STATE = { ...MEASURE_STATE, catalog: 'streams' as const, projection: ['level', 'service', 'trace_id', 'duration_ms', 'body'] };
@@ -93,11 +93,105 @@ describe('MeasureResultView', () => {
     const truncated = { ...measure, truncated: true, totalRowCount: 5000 };
     render(
       <div>
-        <MeasureResultView response={truncated} state={MEASURE_STATE} showTrace={false} setShowTrace={() => {}} />
+        <MeasureResultView response={truncated} state={MEASURE_STATE} showTrace={false} setShowTrace={() => {}} hasMore={false} onLoadMore={() => {}} isLoadingMore={false} />
         <div className="qb-trunc">showing first 20 of 5000 rows</div>
       </div>,
     );
     expect(screen.getByText(/showing first 20 of 5000/)).toBeInTheDocument();
+  });
+  it('renders all known tag columns when "all tags" is selected (empty projection)', () => {
+    const stateAllTags = { ...MEASURE_STATE, select: [], projection: [] };
+    renderWithRouter(
+      <MeasureResultView response={measure} state={stateAllTags} showTrace={false} setShowTrace={() => {}} hasMore={false} onLoadMore={() => {}} isLoadingMore={false} tags={['host_id', 'region']} />,
+    );
+    expect(screen.getByText('host_id')).toBeInTheDocument();
+    expect(screen.getByText('region')).toBeInTheDocument();
+  });
+
+  it('toggles sid/version metadata columns in table view', () => {
+    const measureWithMeta = {
+      ...measure,
+      elements: measure.elements.map((e, i) => ({ ...e, sid: `0x${i.toString(16).padStart(8, '0')}`, version: 1 + (i % 3) })),
+    };
+    renderWithRouter(
+      <MeasureResultView response={measureWithMeta} state={MEASURE_STATE} showTrace={false} setShowTrace={() => {}} hasMore={false} onLoadMore={() => {}} isLoadingMore={false} />,
+    );
+    // Switch to table view so the metadata toggle appears.
+    fireEvent.click(screen.getByRole('button', { name: 'Table' }));
+    expect(screen.queryByRole('columnheader', { name: 'sid' })).not.toBeInTheDocument();
+
+    // Reveal metadata columns.
+    fireEvent.click(screen.getByRole('button', { name: /sid \/ version/i }));
+    expect(screen.getByRole('columnheader', { name: 'sid' })).toBeInTheDocument();
+    expect(screen.getByRole('columnheader', { name: 'version' })).toBeInTheDocument();
+    expect(screen.getByText('0x00000000')).toBeInTheDocument();
+    expect(screen.getAllByText('1').length).toBeGreaterThanOrEqual(1);
+
+    // Hide metadata columns again.
+    fireEvent.click(screen.getByRole('button', { name: /sid \/ version/i }));
+    expect(screen.queryByRole('columnheader', { name: 'sid' })).not.toBeInTheDocument();
+  });
+
+  it('formats table timestamps based on the measure interval', () => {
+    const stateNoAgg = { ...MEASURE_STATE, select: [] };
+    renderWithRouter(
+      <MeasureResultView response={measure} state={stateNoAgg} showTrace={false} setShowTrace={() => {}} hasMore={false} onLoadMore={() => {}} isLoadingMore={false} interval="1m" />,
+    );
+    // Minute interval -> timestamps render as HH:MM.
+    expect(screen.getAllByText('11:30').length).toBeGreaterThan(0);
+    expect(screen.getAllByText('11:31').length).toBeGreaterThan(0);
+  });
+
+  it('renders date-only timestamps for daily measure interval', () => {
+    const stateNoAgg = { ...MEASURE_STATE, select: [] };
+    renderWithRouter(
+      <MeasureResultView response={measure} state={stateNoAgg} showTrace={false} setShowTrace={() => {}} hasMore={false} onLoadMore={() => {}} isLoadingMore={false} interval="1d" />,
+    );
+    // Daily interval -> timestamps render as YYYY-MM-DD.
+    expect(screen.getAllByText('2026-06-29').length).toBeGreaterThan(0);
+  });
+
+  it('shows ISO + epoch tooltip on timestamp cell hover', async () => {
+    const stateNoAgg = { ...MEASURE_STATE, select: [] };
+    renderWithRouter(
+      <MeasureResultView response={measure} state={stateNoAgg} showTrace={false} setShowTrace={() => {}} hasMore={false} onLoadMore={() => {}} isLoadingMore={false} interval="1m" />,
+    );
+    const cell = document.querySelector('.ts-cell');
+    expect(cell).toBeTruthy();
+    fireEvent.mouseEnter(cell!);
+    expect(document.querySelector('.ts-tip')).toBeTruthy();
+    expect(document.querySelector('.ts-tip')?.textContent).toContain('ISO');
+    expect(document.querySelector('.ts-tip')?.textContent).toContain('Epoch');
+    fireEvent.mouseLeave(cell!);
+    await waitFor(() => { expect(document.querySelector('.ts-tip')).toBeFalsy(); });
+  });
+
+  it('renders the Trace tab from the nested measureResult.trace shape', () => {
+    const stateTraced = { ...MEASURE_STATE, trace: true };
+    const tracedResponse: QueryResponse = {
+      ...measure,
+      measure_result: {
+        ...(measure.measure_result ?? {}),
+        trace: {
+          traceId: 'test-trace',
+          spans: [
+            {
+              message: 'measure-grpc',
+              duration: '1500000',
+              tags: [{ key: 'rows_out', value: '10' }],
+              children: [{ message: 'scan', duration: '500000', tags: [], children: [] }],
+            },
+          ],
+        },
+      },
+    };
+    renderWithRouter(
+      <MeasureResultView response={tracedResponse} state={stateTraced} showTrace={true} setShowTrace={() => {}} hasMore={false} onLoadMore={() => {}} isLoadingMore={false} />,
+    );
+    expect(screen.getByText('measure-grpc')).toBeInTheDocument();
+    expect(screen.getByText('scan')).toBeInTheDocument();
+    expect(screen.getByText('rows_out: 10')).toBeInTheDocument();
+    expect(screen.getByText(/test-trace/i)).toBeInTheDocument();
   });
 });
 

@@ -202,9 +202,20 @@ export interface TopNList {
   readonly items: readonly TopNItem[];
 }
 
+export interface QueryTraceSpan {
+  readonly startTime?: string;
+  readonly endTime?: string;
+  readonly error?: boolean;
+  readonly tags?: ReadonlyArray<{ readonly key: string; readonly value: string }>;
+  readonly message?: string;
+  readonly children?: ReadonlyArray<QueryTraceSpan>;
+  readonly duration?: string;
+}
+
 export interface QueryTrace {
-  readonly stages?: ReadonlyArray<unknown>;
-  readonly totalDurationMs?: number;
+  readonly traceId?: string;
+  readonly spans?: ReadonlyArray<QueryTraceSpan>;
+  readonly error?: boolean;
 }
 
 // Wire responses — bydbql returns ONE of these inside its `result` oneof.

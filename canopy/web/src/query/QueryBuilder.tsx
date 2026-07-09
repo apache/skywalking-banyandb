@@ -28,12 +28,12 @@
 
 import React from 'react';
 import {
-  QB_CATALOGS, QB_CAT, QB_OPS, QB_AGGS, QB_TIMES, QB_COMBINATORS,
+  QB_CATALOGS, QB_CAT, QB_OPS, QB_OP, QB_AGGS, QB_TOPN_OPS, QB_TOPN_AGGS, QB_TIMES, QB_COMBINATORS,
   qbDataCatalog, qbIsGroup, qbNewCond, qbNewGroup, qbEmptyWhere, qbPruneWhere,
-  qbSearchIndex, qbSearchResults,
-    buildBydbQL,
-    type QBWhereNode, type QBWhereGroupWithConn, type QBWhereLeafWithConn,
-    type QBBuilderState, type QB_CATALOG_VALUE, type QBSearchHit, type GroupResourcesMap,
+  qbSearchIndex, qbSearchResults, qbConnSummary,
+  buildBydbQL,
+  type QBWhereNode, type QBWhereLeafWithConn,
+  type QBBuilderState, type QB_CATALOG_VALUE, type QBSearchHit, type GroupResourcesMap,
 } from './bydbql.js';
 import type { Group } from 'canopy-shared';
 
@@ -104,11 +104,6 @@ const IconSearch = (p: React.SVGProps<SVGSVGElement>) => (
   <svg {...p} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round">
     <circle cx="11" cy="11" r="7" />
     <path d="m21 21-4.3-4.3" />
-  </svg>
-);
-const IconFormat = (p: React.SVGProps<SVGSVGElement>) => (
-  <svg {...p} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round">
-    <path d="M3 6h18M3 12h12M3 18h6" />
   </svg>
 );
 const IconPlay = (p: React.SVGProps<SVGSVGElement>) => (
@@ -254,7 +249,14 @@ export interface QueryBuilderProps {
   readonly isRunning: boolean;
   readonly onEjectToCode: () => void;
   readonly onRun: () => void;
-  readonly onReset: () => void;
+  /** True once the query has been run at least once — collapses clauses into accordion summaries. */
+  readonly hasRun?: boolean;
+  /** Compact accordion mode (default true); false expands every clause like pre-run. */
+  readonly compact?: boolean;
+  readonly setCompact?: (v: boolean) => void;
+  /** Key of the currently expanded accordion section, or null when all are collapsed. */
+  readonly openSection?: string | null;
+  readonly setOpenSection?: (v: string | null) => void;
 }
 
 /* ---- QBRow: one row in the WHERE list — either a leaf condition or a
@@ -263,9 +265,9 @@ export interface QueryBuilderProps {
    recursive tree. ---- */
 interface QBRowProps {
   readonly node: QBWhereNode;
-  readonly index: number;
   readonly tags: readonly string[];
   readonly fields: readonly string[];
+  readonly ops?: readonly { value: string; label: string }[];
   readonly isFirst: boolean;
   readonly onChange: (next: QBWhereNode) => void;
   readonly onRemove: () => void;
@@ -274,7 +276,7 @@ interface QBRowProps {
   readonly onUpdateCond: (patch: Partial<QBWhereLeafWithConn>) => void;
 }
 
-function QBRow({ node, index, tags, fields, isFirst, onChange, onRemove, onAddCond, onAddGroup, onUpdateCond }: QBRowProps) {
+function QBRow({ node, tags, fields, ops, isFirst, onChange, onRemove, onAddCond, onAddGroup, onUpdateCond }: QBRowProps) {
   if (qbIsGroup(node)) {
     // nested group card
     return (
@@ -311,9 +313,9 @@ function QBRow({ node, index, tags, fields, isFirst, onChange, onRemove, onAddCo
                 <QBRow
                   key={i}
                   node={c}
-                  index={i}
                   tags={tags}
                   fields={fields}
+                  ops={ops}
                   isFirst={i === 0}
                   onChange={(nc) => onChange({ ...node, children: node.children.map((cc, idx) => (idx === i ? nc : cc)) })}
                   onRemove={() => onChange({ ...node, children: node.children.filter((_, idx) => idx !== i) })}
@@ -368,7 +370,7 @@ function QBRow({ node, index, tags, fields, isFirst, onChange, onRemove, onAddCo
         </span>
         <span className="qb-select-wrap">
           <select aria-label="Operator" value={leaf.op} onChange={(e) => onUpdateCond({ op: e.target.value })}>
-            {QB_OPS.map((o) => <option key={o.value} value={o.value}>{o.label}</option>)}
+            {(ops ?? QB_OPS).map((o) => <option key={o.value} value={o.value}>{o.label}</option>)}
           </select>
           <span className="qb-select-chev"><IconChev width={13} height={13} /></span>
         </span>
@@ -391,15 +393,105 @@ function QBRow({ node, index, tags, fields, isFirst, onChange, onRemove, onAddCo
   );
 }
 
+interface QBSectionProps {
+  readonly kw: string;
+  readonly sum: string;
+  readonly hint?: string;
+  readonly optional?: boolean;
+  readonly open: boolean;
+  readonly acc: boolean;
+  readonly onToggle: () => void;
+  readonly children: React.ReactNode;
+}
+
+/** Clause wrapper: flat while composing, accordion row after the first run. */
+function QBSection({ kw, sum, hint, optional, open, acc, onToggle, children }: QBSectionProps) {
+  if (!acc) {
+    return (
+      <div className="qb-section">
+        <div className="qb-section-h" title={hint}>
+          <span>{kw}</span>
+          {optional && <span className="qb-opt">optional</span>}
+        </div>
+        {children}
+      </div>
+    );
+  }
+  return (
+    <div className={'qb-acc' + (open ? ' is-open' : '')}>
+      <button type="button" className="qb-acc-head" title={hint} aria-expanded={open} onClick={onToggle}>
+        <span className="qb-acc-chev">{open ? '▾' : '▸'}</span>
+        <span className="qb-kw">{kw}</span>
+        {!open && <span className="qb-acc-sum mono">{sum}</span>}
+        <span className="qb-acc-edit">{open ? 'collapse' : 'edit'}</span>
+      </button>
+      {open && <div className="qb-acc-body"><div className="qb-body">{children}</div></div>}
+    </div>
+  );
+}
+
+function countConds(node: QBWhereNode): number {
+  if (qbIsGroup(node)) return node.children.reduce((sum, c) => sum + countConds(c), 0);
+  return 1;
+}
+
+function condText(c: QBWhereLeafWithConn): string {
+  return `${c.tag} ${QB_OP(c.op).sql} ${c.value !== '' ? c.value : '…'}`;
+}
+
+function buildSummaries(state: QBBuilderState): Record<string, string> {
+  const cat = QB_CAT(state.catalog);
+  const fieldsTxt = (state.select ?? []).filter((r) => r.field).map((r) =>
+    r.fn ? `${r.fn.toLowerCase()}(${r.field})` : r.field,
+  ).join(', ');
+  const tagsTxt = (state.projection ?? []).length ? state.projection.join(', ') : 'all tags';
+  const where = state.where;
+  const nConds = where.children.length ? countConds(where) : 0;
+  const time = state.time;
+  const timeTxt = time.mode === 'relative'
+    ? (time.rel ? `last ${time.rel.replace(/^-/, '')}` : 'all time')
+    : (time.from && time.to ? `${time.from} → ${time.to}`
+      : time.from ? `since ${time.from}`
+      : time.to ? `until ${time.to}`
+      : 'all time');
+  return {
+    from: `${cat.kw.toLowerCase()} ${state.resource || '—'} in ${state.group || '—'}`,
+    select: state.catalog === 'measures' ? (fieldsTxt ? `${tagsTxt} · ${fieldsTxt}` : tagsTxt) : tagsTxt,
+    where: nConds === 0 ? 'no filters'
+      : (nConds === 1 && !qbIsGroup(where.children[0])) ? condText(where.children[0] as QBWhereLeafWithConn)
+      : `${nConds} conditions · ${qbConnSummary(where)}`,
+    groupBy: (state.groupBy ?? []).length ? state.groupBy.join(', ') : 'no grouping',
+    time: timeTxt,
+    order: state.catalog === 'topn'
+      ? `value ${(state.orderDir || 'DESC').toLowerCase()} · limit ${state.limit}`
+      : `${state.orderField || 'time'} ${(state.orderDir || 'DESC').toLowerCase()} · limit ${state.limit}`,
+    top: `top ${state.topN} series`,
+    agg: state.aggFn ? `${state.aggFn.toLowerCase()} over range` : 'pre-aggregated value',
+    orderTopn: `value ${(state.orderDir || 'DESC').toLowerCase()}`,
+  };
+}
+
 export function QueryBuilder({
   state, onChange, tags, fields, groupNames, resourceNames,
   groups, groupResources, onPickResource,
-  isRunning, onEjectToCode, onRun, onReset,
+  isRunning, onEjectToCode, onRun,
+  hasRun = false, compact = true, setCompact, openSection = null, setOpenSection,
 }: QueryBuilderProps) {
   const cat = QB_CAT(state.catalog);
   const isTopN = state.catalog === 'topn';
   const isMeasure = state.catalog === 'measures';
   const where = state.where;
+  const accOn = hasRun && compact;
+  const sums = React.useMemo(() => buildSummaries(state), [state]);
+  const sectionProps = (key: string, kw: string, sum: string, optional = false, hint = '') => ({
+    kw,
+    sum,
+    hint,
+    optional,
+    acc: accOn,
+    open: openSection === key,
+    onToggle: () => setOpenSection?.(openSection === key ? null : key),
+  });
 
   const setCatalog = (catalog: QB_CATALOG_VALUE) => {
     const first = groupNames[0] ?? '';
@@ -413,6 +505,7 @@ export function QueryBuilder({
       groupBy: [],
       orderField: 'time',
       orderDir: 'DESC',
+      offset: 0,
       time: catalog === 'topn'
         ? { mode: 'relative', rel: '-30m', from: '', to: '' }
         : state.time,
@@ -451,21 +544,22 @@ export function QueryBuilder({
     const next = where.children.map((c, idx) => (idx === i ? { ...c, ...patch } : c));
     setWhere(next);
   };
-  const removeCondition = (i: number) => {
-    setWhere(where.children.filter((_, idx) => idx !== i));
-  };
-  const setConn = (i: number, conn: 'AND' | 'OR') => {
-    if (i === 0) return;
-    updateCondition(i, { conn });
-  };
   const setTime = (patch: Partial<QBBuilderState['time']>) => onChange({ time: { ...state.time, ...patch } });
   const setOrder = (patch: Partial<Pick<QBBuilderState, 'orderField' | 'orderDir'>>) => onChange(patch);
 
   return (
     <div className="qb-card" data-catalog={state.catalog}>
+      <div className="qb-rail-scroll">
+        {hasRun && (
+          <div className="qb-viewbar">
+            <span>{compact ? 'Clauses collapsed to summaries — click one to edit' : 'Showing full clause editors'}</span>
+            <button type="button" onClick={() => setCompact?.(!compact)}>
+              {compact ? 'Expand all' : 'Collapse'}
+            </button>
+          </div>
+        )}
       {/* ── FROM ─────────────────────────────────────────────── */}
-      <div className="qb-section">
-        <div className="qb-section-h" title="Pick what to query, then the group and resource it lives in.">FROM</div>
+      <QBSection {...sectionProps('from', 'FROM', sums.from, false, 'Pick what to query, then the group and resource it lives in.')}>
         <QBResourceSearch
           groups={groups}
           groupResources={groupResources}
@@ -508,12 +602,13 @@ export function QueryBuilder({
             <span className="qb-select-chev"><IconChev width={13} height={13} /></span>
           </span>
         </div>
-      </div>
+      </QBSection>
 
       {/* ── SELECT ────────────────────────────────────────────── */}
       {!isTopN && (
-        <div className="qb-section">
-          <div className="qb-section-h">SELECT</div>
+        <QBSection {...sectionProps('select', 'SELECT', sums.select, false, state.catalog === 'measures'
+          ? 'Project the tags to return — typically the entity tags — and optionally add fields with an aggregation.'
+          : 'Project specific tags, or return all tags.')}>
           {isMeasure ? (
             <>
               <div className="qb-sub-label">Tags <span className="qb-sub-req">required</span></div>
@@ -609,85 +704,63 @@ export function QueryBuilder({
               ))}
             </div>
           )}
-        </div>
+        </QBSection>
       )}
 
       {/* ── WHERE ────────────────────────────────────────────── */}
-      {!isTopN && (
-        <div className="qb-section">
-          <div
-            className="qb-section-h"
-            title="Filter by tag values. Pick AND / OR between each condition — AND binds tighter than OR; nest groups for explicit parentheses."
-          >
-            <span>WHERE</span>
-            <span className="qb-opt">optional</span>
-          </div>
-          {/* 'Conditions' group tag — matches the handoff's qb-group-head
-              label on the root WHERE group. */}
-          {where.children.length > 0 && (
-            <div className="qb-group-head">
-              <span className="qb-group-tag">Conditions</span>
-            </div>
-          )}
-          {where.children.map((c, i) => (
-            <QBRow
-              key={i}
-              node={c}
-              index={i}
-              tags={tags}
-              fields={fields}
-              isFirst={i === 0}
-              onChange={(nc) => setChildWhere(i, nc)}
-              onRemove={() => removeChild(i)}
-              onAddCond={() => {
-                // append to the nested group if this row is a group;
-                // otherwise treat as inserting a new root-level row
-                if (qbIsGroup(c)) {
-                  setChildWhere(i, {
-                    ...c,
-                    children: [...c.children, qbNewCond(tags)],
-                  });
-                } else {
-                  setWhere([...where.children.slice(0, i + 1), qbNewGroup(tags), ...where.children.slice(i + 1)]);
-                }
-              }}
-              onAddGroup={() => {
-                if (qbIsGroup(c)) {
-                  setChildWhere(i, {
-                    ...c,
-                    children: [...c.children, qbNewGroup(tags)],
-                  });
-                } else {
-                  setWhere([...where.children.slice(0, i + 1), qbNewGroup(tags), ...where.children.slice(i + 1)]);
-                }
-              }}
-              onUpdateCond={(patch) => updateCondition(i, patch)}
-            />
-          ))}
-          <button type="button" className="qb-add" onClick={addCondition} disabled={!tags.length}>
-            <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round">
-              <path d="M12 5v14M5 12h14" />
-            </svg>
-            Add condition
+      <QBSection {...sectionProps('where', 'WHERE', sums.where, true, 'Filter by tag values. Pick AND / OR between each condition — AND binds tighter than OR; nest groups for explicit parentheses.')}
+      >
+        {where.children.map((c, i) => (
+          <QBRow
+            key={i}
+            node={c}
+            tags={tags}
+            fields={fields}
+            ops={isTopN ? QB_TOPN_OPS : QB_OPS}
+            isFirst={i === 0}
+            onChange={(nc) => setChildWhere(i, nc)}
+            onRemove={() => removeChild(i)}
+            onAddCond={() => {
+              // append to the nested group if this row is a group;
+              // otherwise treat as inserting a new root-level row
+              if (qbIsGroup(c)) {
+                setChildWhere(i, {
+                  ...c,
+                  children: [...c.children, qbNewCond(tags)],
+                });
+              } else {
+                setWhere([...where.children.slice(0, i + 1), qbNewGroup(tags), ...where.children.slice(i + 1)]);
+              }
+            }}
+            onAddGroup={() => {
+              if (qbIsGroup(c)) {
+                setChildWhere(i, {
+                  ...c,
+                  children: [...c.children, qbNewGroup(tags)],
+                });
+              } else {
+                setWhere([...where.children.slice(0, i + 1), qbNewGroup(tags), ...where.children.slice(i + 1)]);
+              }
+            }}
+            onUpdateCond={(patch) => updateCondition(i, patch)}
+          />
+        ))}
+        <button type="button" className="qb-add" onClick={addCondition} disabled={!tags.length}>
+          <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round">
+            <path d="M12 5v14M5 12h14" />
+          </svg>
+          Add condition
+        </button>
+        {where.children.length > 0 && (
+          <button type="button" className="qb-add" onClick={addGroup} disabled={!tags.length}>
+            <IconParens width={13} height={13} />
+            Add group
           </button>
-          {where.children.length > 0 && (
-            <button type="button" className="qb-add" onClick={addGroup} disabled={!tags.length}>
-              <IconParens width={13} height={13} />
-              Add group
-            </button>
-          )}
-        </div>
-      )}
+        )}
+      </QBSection>
 
       {/* ── TIME ─────────────────────────────────────────────── */}
-      <div className="qb-section">
-        <div
-          className="qb-section-h"
-          title="Bound the query to an explicit start/end window, or a recent relative range."
-        >
-          <span>TIME</span>
-          <span className="qb-opt">optional</span>
-        </div>
+      <QBSection {...sectionProps('time', 'TIME', sums.time, true, 'Bound the query to an explicit start/end window, or a recent relative range.')}>
         <div className="qb-time">
           <div className="qb-time-seg" role="tablist" aria-label="Time range mode">
             <button
@@ -757,18 +830,12 @@ export function QueryBuilder({
             </span>
           )}
         </div>
-      </div>
+      </QBSection>
 
       {/* ── GROUP BY (measures only) ─────────────────────────── */}
       {isMeasure && (
-        <div className="qb-section">
-          <div
-            className="qb-section-h"
-            title="Aggregate separately per distinct combination of these tags."
-          >
-            <span>GROUP BY</span>
-            <span className="qb-opt">optional</span>
-          </div>
+        <QBSection {...sectionProps('groupby', 'GROUP BY', sums.groupBy, true, 'Aggregate separately per distinct combination of these tags.')}
+        >
           <div className="qb-chips">
             <button
               type="button"
@@ -789,13 +856,12 @@ export function QueryBuilder({
               </button>
             ))}
           </div>
-        </div>
+        </QBSection>
       )}
 
-      {/* ── ORDER + LIMIT ────────────────────────────────────── */}
+      {/* ── ORDER + LIMIT (measures / streams / traces) ──────── */}
       {!isTopN && (
-        <div className="qb-section">
-          <div className="qb-section-h">ORDER BY</div>
+        <QBSection {...sectionProps('order', 'ORDER BY', sums.order, true)}>
           <div className="qb-row">
             <span className="qb-select-wrap">
               <select aria-label="Order field" value={state.orderField} onChange={(e) => setOrder({ orderField: e.target.value })}>
@@ -829,74 +895,102 @@ export function QueryBuilder({
               onChange={(e) => onChange({ limit: Math.max(1, Number(e.target.value) || 0) })}
             />
           </div>
-        </div>
+        </QBSection>
       )}
 
-      {/* ── TOP-N specifics ──────────────────────────────────── */}
+      {/* ── TOP-N rail: SHOW TOP / WHERE / AGGREGATE BY / ORDER BY */}
       {isTopN && (
-        <div className="qb-section">
-          <div className="qb-section-h">TOP-N</div>
-          <div className="qb-row">
-            <label className="qb-inline-kw">TOP</label>
-            <input type="number" min={1} max={1000} aria-label="Top N" value={state.topN} onChange={(e) => onChange({ topN: Math.max(1, Number(e.target.value) || 0) })} />
-            <label className="qb-inline-kw">AGGREGATE BY</label>
-            <select aria-label="Aggregate function" value={state.aggFn} onChange={(e) => onChange({ aggFn: e.target.value })}>
-              <option value="">none</option>
-              {['SUM', 'MEAN', 'COUNT', 'MAX', 'MIN'].map((a) => <option key={a} value={a}>{a}</option>)}
-            </select>
-            <select aria-label="Top-N order direction" value={state.orderDir} onChange={(e) => onChange({ orderDir: e.target.value as 'ASC' | 'DESC' })}>
-              <option value="DESC">value DESC</option>
-              <option value="ASC">value ASC</option>
-            </select>
-          </div>
-        </div>
+        <React.Fragment>
+          <QBSection {...sectionProps('top', 'SHOW TOP', sums.top)}>
+            <div className="qb-row">
+              <label className="qb-inline-kw">TOP</label>
+              <input
+                className="qb-input qb-num mono"
+                type="number"
+                min={1}
+                max={1000}
+                aria-label="Top N"
+                value={state.topN}
+                onChange={(e) => onChange({ topN: Math.max(1, Number(e.target.value) || 0) })}
+              />
+              <span className="qb-dim">series</span>
+            </div>
+          </QBSection>
+
+          <QBSection {...sectionProps('agg', 'AGGREGATE BY', sums.agg, true, 'Apply an aggregation over the time range before ranking.')}
+          >
+            <span className="qb-select-wrap">
+              <select aria-label="Aggregate function" value={state.aggFn} onChange={(e) => onChange({ aggFn: e.target.value })}>
+                {QB_TOPN_AGGS.map((a) => <option key={a.value} value={a.value}>{a.label}</option>)}
+              </select>
+              <span className="qb-select-chev"><IconChev width={13} height={13} /></span>
+            </span>
+          </QBSection>
+
+          <QBSection {...sectionProps('order', 'ORDER BY', sums.order, true)}>
+            <div className="qb-row">
+              <label className="qb-inline-kw">value</label>
+              <div className="qb-dir-seg" role="group" aria-label="Order direction">
+                <button
+                  type="button"
+                  className={'qb-dir-btn' + (state.orderDir === 'DESC' ? ' is-on' : '')}
+                  onClick={() => setOrder({ orderDir: 'DESC' })}
+                >DESC</button>
+                <button
+                  type="button"
+                  className={'qb-dir-btn' + (state.orderDir === 'ASC' ? ' is-on' : '')}
+                  onClick={() => setOrder({ orderDir: 'ASC' })}
+                >ASC</button>
+              </div>
+              <label className="qb-inline-kw">LIMIT</label>
+              <input
+                className="qb-input qb-num mono"
+                type="number"
+                min={1}
+                max={10000}
+                aria-label="Limit"
+                value={state.limit}
+                onChange={(e) => onChange({ limit: Math.max(1, Number(e.target.value) || 0) })}
+              />
+            </div>
+          </QBSection>
+        </React.Fragment>
       )}
+
+      </div>
 
       {/* ── Generated BydbQL footer (matches the handoff's qb-foot) ──
-          Shows the live query, a Trace toggle, and the Eject-to-code
-          + Run controls — the same widgets the handoff's qb-foot
-          renders. The handoff's `Edit as code` button is implemented
-          as the parent (QueryConsole)'s ejectToCode which switches
-          into the Code mode. */}
+          Single row: Edit as code + Trace on the left, generated query
+          preview pushed to the right, then Run. */}
       <div className="qb-foot">
-        <div className="qb-foot-row">
-          <span className="lang-pill">BydbQL</span>
-          <code className="qb-gen-line mono" title={buildBydbQL(state)}>
-            {buildBydbQL(state).replace(/\s*\n\s*/g, ' ')}
-          </code>
-        </div>
-        <div className="qb-foot-row">
-
-          <button
-            type="button"
-            className="qb-eject"
-            onClick={onEjectToCode}
-            title="Eject the current builder state into raw BydbQL for editing"
-          >
-            Edit as code <IconArrowRight width={13} height={13} />
-          </button>
-          <button
-            type="button"
-            className={'qb-trace-btn' + (state.trace ? ' is-on' : '')}
-            onClick={() => onChange({ trace: !state.trace })}
-            title="Append WITH QUERY_TRACE to capture per-span execution timings"
-          >
-            <span className="qb-trace-dot" /> Trace
-          </button>
-          <span className="qb-gap" />
-          <button type="button" className="btn btn-ghost" title="Reset query" onClick={onReset}>
-            <IconFormat width={15} height={15} />
-          </button>
-          <button
-            type="button"
-            className="btn btn-primary"
-            disabled={isRunning}
-            onClick={onRun}
-          >
-            <IconPlay width={15} height={15} /> Run
-            <kbd className="kbd">{typeof navigator !== 'undefined' && /Mac/i.test(navigator.platform) ? '⌘↵' : 'Ctrl↵'}</kbd>
-          </button>
-        </div>
+        <button
+          type="button"
+          className="qb-eject"
+          onClick={onEjectToCode}
+          title="Eject the current builder state into raw BydbQL for editing"
+        >
+          Edit as code <IconArrowRight width={13} height={13} />
+        </button>
+        <button
+          type="button"
+          className={'qb-trace-btn' + (state.trace ? ' is-on' : '')}
+          onClick={() => onChange({ trace: !state.trace })}
+          title="Append WITH QUERY_TRACE to capture per-span execution timings"
+        >
+          <span className="qb-trace-dot" /> Trace
+        </button>
+        <span className="qb-gap" />
+        <code className="qb-gen-line mono" title={buildBydbQL(state, tags)}>
+          {buildBydbQL(state, tags).replace(/\s*\n\s*/g, ' ')}
+        </code>
+        <button
+          type="button"
+          className="btn btn-primary"
+          disabled={isRunning}
+          onClick={onRun}
+        >
+          <IconPlay width={15} height={15} /> Run
+        </button>
       </div>
     </div>
   );

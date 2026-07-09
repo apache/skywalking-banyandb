@@ -117,7 +117,7 @@ func main() {
 
 	if *wipe {
 		for _, n := range []string{groupMeasure, groupStream, groupTrace} {
-			if _, err := gc.Delete(ctx, &databasev1.GroupRegistryServiceDeleteRequest{Group: n}); err != nil {
+			if _, err := gc.Delete(ctx, &databasev1.GroupRegistryServiceDeleteRequest{Group: n, Force: true}); err != nil {
 				log.Printf("delete group %s: %v (continuing)", n, err)
 			}
 		}
@@ -173,6 +173,7 @@ func main() {
 				{Name: "memory_usage", FieldType: databasev1.FieldType_FIELD_TYPE_FLOAT, EncodingMethod: databasev1.EncodingMethod_ENCODING_METHOD_GORILLA, CompressionMethod: databasev1.CompressionMethod_COMPRESSION_METHOD_ZSTD},
 				{Name: "latency_ms", FieldType: databasev1.FieldType_FIELD_TYPE_FLOAT, EncodingMethod: databasev1.EncodingMethod_ENCODING_METHOD_GORILLA, CompressionMethod: databasev1.CompressionMethod_COMPRESSION_METHOD_ZSTD},
 			},
+			Interval: "30s",
 		},
 	}); err != nil && !ignoreAlreadyExists(err) {
 		log.Fatalf("create measure schema: %v", err)
@@ -200,6 +201,7 @@ func main() {
 				{Name: "total", FieldType: databasev1.FieldType_FIELD_TYPE_INT, EncodingMethod: databasev1.EncodingMethod_ENCODING_METHOD_GORILLA, CompressionMethod: databasev1.CompressionMethod_COMPRESSION_METHOD_ZSTD},
 				{Name: "value", FieldType: databasev1.FieldType_FIELD_TYPE_INT, EncodingMethod: databasev1.EncodingMethod_ENCODING_METHOD_GORILLA, CompressionMethod: databasev1.CompressionMethod_COMPRESSION_METHOD_ZSTD},
 			},
+			Interval: "1m",
 		},
 	}); err != nil && !ignoreAlreadyExists(err) {
 		log.Fatalf("create cpm measure schema: %v", err)
@@ -378,7 +380,7 @@ func writeMeasure(ctx context.Context, c measurev1.MeasureServiceClient, baseMs 
 
 // writeCpmMeasure writes the canonical service_cpm_minute rows that mirror
 // the handoff's sw_metric / service_cpm_minute schema (entity_id + service_id
-// + service_name + total / value). 80 rows = ~1 row per minute over ~80
+// + service_name + total / value). 80 rows = one row per minute over ~80
 // minutes, which is enough to render a populated result view.
 func writeCpmMeasure(ctx context.Context, c measurev1.MeasureServiceClient, baseMs int64, rows int) error {
 	rng := rand.New(rand.NewSource(73))
@@ -388,7 +390,7 @@ func writeCpmMeasure(ctx context.Context, c measurev1.MeasureServiceClient, base
 	}
 	md := &commonv1.Metadata{Group: groupMeasure, Name: measureCPMName}
 	for i := 0; i < rows; i++ {
-		t := time.UnixMilli(baseMs + int64(i)*30_000)
+		t := time.UnixMilli(baseMs + int64(i)*60_000)
 		svc := services[rng.Intn(len(services))]
 		req := &measurev1.WriteRequest{
 			Metadata:  md,
@@ -609,5 +611,7 @@ func countTrace(ctx context.Context, c tracev1.TraceServiceClient, baseMs int64)
 
 func baseTimestamp(rows int) int64 {
 	now := time.Now().UnixMilli()
-	return now - int64(rows)*30_000 - 2*3600_000
+	// Start just far enough in the past so the full batch lands within the
+	// default "Last 30 minutes" relative range in the Canopy query builder.
+	return now - int64(rows)*30_000 - 60_000
 }

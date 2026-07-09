@@ -37,6 +37,7 @@ const baseState: QBBuilderState = {
   orderField: 'time',
   orderDir: 'DESC',
   limit: 100,
+  offset: 0,
   trace: false,
   topN: 10,
   aggFn: '',
@@ -136,12 +137,12 @@ describe('qbNodeSQL', () => {
 });
 
 describe('qbTimeSQL', () => {
-  it('renders relative time as NOW() offset', () => {
-    expect(qbTimeSQL({ mode: 'relative', rel: '-5m', from: '', to: '' })).toBe('TIME > NOW() -5m');
+  it('renders relative time as a quoted duration', () => {
+    expect(qbTimeSQL({ mode: 'relative', rel: '-5m', from: '', to: '' })).toBe("TIME > '-5m'");
   });
-  it('renders absolute range', () => {
+  it('renders absolute range with BETWEEN', () => {
     expect(qbTimeSQL({ mode: 'absolute', rel: '', from: '2026-01-01', to: '2026-02-01' }))
-      .toBe("TIME >= '2026-01-01' AND TIME <= '2026-02-01'");
+      .toBe("TIME BETWEEN '2026-01-01' AND '2026-02-01'");
   });
   it('renders one-sided absolute bounds', () => {
     expect(qbTimeSQL({ mode: 'absolute', rel: '', from: '2026-01-01', to: '' })).toBe("TIME >= '2026-01-01'");
@@ -162,14 +163,26 @@ describe('buildBydbQL', () => {
     expect(out).toContain('MEASURE cpu');
     expect(out).toContain('IN g1');
     expect(out).toContain('SELECT host_id, MEAN(value)');
-    expect(out).toContain('TIME > NOW() -30m');
+    expect(out).toContain("TIME > '-30m'");
     expect(out).toContain('ORDER BY time DESC');
     expect(out).toContain('LIMIT 100');
   });
-  it('builds a stream query with no SELECT (all tags)', () => {
+  it('expands "all tags" to explicit tag list for measures with aggregation', () => {
+    // `SELECT *, MEAN(total)` is invalid BydbQL, so empty projection must be
+    // expanded to the known tag list when tags are supplied.
+    const s: QBBuilderState = {
+      ...baseState,
+      projection: [],
+      select: [{ field: 'value', fn: 'MEAN' }],
+    };
+    const out = buildBydbQL(s, ['host_id', 'region']);
+    expect(out).toContain('SELECT host_id, region, MEAN(value)');
+  });
+  it('builds a stream query with SELECT * (all tags)', () => {
     const s: QBBuilderState = { ...baseState, catalog: 'streams', projection: [], resource: 'logs' };
     expect(buildBydbQL(s)).toContain('STREAM logs');
-    expect(buildBydbQL(s)).not.toContain('SELECT');
+    // Per grammar line 305, SELECT is required even for "all columns" — emitted as `SELECT *`.
+    expect(buildBydbQL(s)).toContain('SELECT *');
   });
   it('builds a stream query with projected tags', () => {
     const s: QBBuilderState = { ...baseState, catalog: 'streams', projection: ['level', 'msg'], resource: 'logs' };
@@ -179,6 +192,24 @@ describe('buildBydbQL', () => {
     const s: QBBuilderState = { ...baseState, catalog: 'traces', projection: ['span_id'], resource: 'spans', trace: true };
     expect(buildBydbQL(s)).toContain('TRACE spans');
     expect(buildBydbQL(s)).toContain('WITH QUERY_TRACE');
+  });
+  it('places WITH QUERY_TRACE before LIMIT/OFFSET to match the parser grammar', () => {
+    const s: QBBuilderState = {
+      ...baseState,
+      catalog: 'measures',
+      projection: ['host_id'],
+      resource: 'cpu',
+      trace: true,
+      limit: 50,
+      offset: 10,
+    };
+    const out = buildBydbQL(s);
+    const withIdx = out.indexOf('WITH QUERY_TRACE');
+    const limitIdx = out.indexOf('LIMIT 50');
+    const offsetIdx = out.indexOf('OFFSET 10');
+    expect(withIdx).toBeGreaterThan(-1);
+    expect(limitIdx).toBeGreaterThan(withIdx);
+    expect(offsetIdx).toBeGreaterThan(withIdx);
   });
   it('builds a Top-N query with TOP / AGGREGATE BY / ORDER BY value', () => {
     const s: QBBuilderState = {
@@ -208,7 +239,50 @@ describe('buildBydbQL', () => {
     const s: QBBuilderState = { ...baseState, catalog: 'topn', projection: [], select: [], topN: 3 };
     const out = buildBydbQL(s);
     expect(out).toContain('TOP 3');
-    expect(out).not.toContain('SELECT');
+    // Top-N starts with `SHOW TOP`, not `SELECT` — see line 620 grammar.
+    expect(out.startsWith('SHOW TOP')).toBe(true);
+  });
+  it('starts with SELECT (or SHOW for Top-N) per BydbQL grammar', () => {
+    // Regression: BanyanDB's parser rejects queries that start with MEASURE/STREAM/TRACE
+    // (the handoff's buildBydbQL had this bug; see docs/interacting/bydbql.md line 305/441/620).
+    const cases: Array<{ catalog: QBBuilderState['catalog']; firstToken: string }> = [
+      { catalog: 'measures', firstToken: 'SELECT' },
+      { catalog: 'streams', firstToken: 'SELECT' },
+      { catalog: 'traces', firstToken: 'SELECT' },
+      { catalog: 'topn', firstToken: 'SHOW' },
+    ];
+    for (const { catalog, firstToken } of cases) {
+      const s: QBBuilderState = {
+        ...baseState,
+        catalog,
+        projection: catalog === 'measures' ? ['host_id'] : [],
+        select: [],
+        ...(catalog === 'topn' ? { topN: 5, aggFn: 'MEAN' } : {}),
+      };
+      const out = buildBydbQL(s);
+      const firstLine = out.split('\n').find((l) => l.trim().length > 0) ?? '';
+      expect(firstLine.startsWith(firstToken)).toBe(true);
+    }
+  });
+  it('orders clauses SELECT / FROM / TIME / WHERE / GROUP BY / ORDER BY / LIMIT', () => {
+    const where: QBWhereGroupWithConn = {
+      combinator: 'AND',
+      children: [{ tag: 'host_id', op: 'BINARY_OP_EQ', value: 'h1' }],
+    };
+    const s: QBBuilderState = {
+      ...baseState,
+      select: [{ field: 'value', fn: 'MEAN' }],
+      groupBy: ['host_id'],
+      where,
+    };
+    const out = buildBydbQL(s);
+    // Tokenize each non-empty line's leading keyword; assert the sequence.
+    const order: string[] = [];
+    for (const line of out.split('\n')) {
+      const kw = line.trim().split(/\s+/)[0];
+      if (kw) order.push(kw);
+    }
+    expect(order).toEqual(['SELECT', 'FROM', 'IN', 'TIME', 'WHERE', 'GROUP', 'ORDER', 'LIMIT']);
   });
 });
 

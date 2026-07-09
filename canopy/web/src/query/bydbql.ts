@@ -253,16 +253,28 @@ export const qbNodeSQL = (node: QBWhereNode | null | undefined, depth: number): 
   return `${leaf.tag} ${op.sql} ${qbQuote(leaf.op, leaf.value)}`;
 };
 
-/** Render the time range as a BydbQL TIME clause fragment (or '' when unset). */
+/** Render the time range as a BydbQL TIME clause fragment (or '' when unset).
+ *  Per docs/interacting/bydbql.md §2.5.3:
+ *    TIME > '-30m'                              relative
+ *    TIME BETWEEN '-1h' AND 'now'                relative range
+ *    TIME >= '2023-01-01T00:00:00Z'             absolute (single bound)
+ *    TIME BETWEEN '2023-01-01' AND '2023-02-01'  absolute range
+ */
 export const qbTimeSQL = (time: {
   readonly mode: string;
   readonly rel: string;
   readonly from: string;
   readonly to: string;
 }): string => {
-  if (time.mode === 'relative' && time.rel) return `TIME > NOW() ${time.rel}`;
+  if (time.mode === 'relative') {
+    if (time.rel && (time.from || time.to)) {
+      // ranged relative
+      return `TIME BETWEEN '${time.rel}' AND '${time.to || 'now'}'`;
+    }
+    if (time.rel) return `TIME > '${time.rel}'`;
+  }
   if (time.mode === 'absolute') {
-    if (time.from && time.to) return `TIME >= '${time.from}' AND TIME <= '${time.to}'`;
+    if (time.from && time.to) return `TIME BETWEEN '${time.from}' AND '${time.to}'`;
     if (time.from) return `TIME >= '${time.from}'`;
     if (time.to) return `TIME <= '${time.to}'`;
   }
@@ -288,6 +300,7 @@ export interface QBBuilderState {
   readonly orderField: string;
   readonly orderDir: 'ASC' | 'DESC';
   readonly limit: number;
+  readonly offset: number;
   readonly trace: boolean;
   readonly topN: number;
   readonly aggFn: string;
@@ -295,50 +308,82 @@ export interface QBBuilderState {
   readonly fromResource: string | null;
 }
 
-/** Build a BydbQL string from a builder state. Mirrors the handoff's buildBydbQL. */
-export const buildBydbQL = (b: QBBuilderState): string => {
+/** Build a BydbQL string from a builder state. Mirrors the handoff's buildBydbQL.
+    @param tags Optional list of tag names for the current resource. Used when
+    a measure query selects "all tags" (empty projection) so the generated SQL
+    can list explicit tags instead of omitting them. */
+export const buildBydbQL = (b: QBBuilderState, tags?: readonly string[]): string => {
   const cat = QB_CAT(b.catalog);
   // Top-N is a separate BydbQL shape; route through a different codegen path.
   if (b.catalog === 'topn') {
     return buildTopNBydbQL(b, cat);
   }
   const parts: string[] = [];
-  parts.push(`${cat.kw} ${b.resource || '_'}`);
-  parts.push(`IN ${b.group || '_'}`);
-  // SELECT (measures): tags + optional fields with aggregation
+  // 1. SELECT projection. Per docs/interacting/bydbql.md line 305/441 the
+  //    SELECT clause is required for ALL query types (measures, streams,
+  //    traces); "all tags" is expressed as `SELECT *`, not by omitting SELECT.
+  //    For measures, mixing `*` with aggregation functions is invalid grammar,
+  //    so when "all tags" is chosen (empty projection) we expand to the known
+  //    tag list; if tags are unknown we fall back to the original behavior.
   if (b.catalog === 'measures') {
-    const tags = (b.projection ?? []).join(', ');
+    const projection = b.projection ?? [];
+    const tagPart = projection.length
+      ? projection.join(', ')
+      : (tags?.length ? tags.join(', ') : '');
     const fields = (b.select ?? [])
       .filter((r) => r.field)
       .map((r) => (r.fn ? `${r.fn}(${r.field})` : r.field))
       .join(', ');
-    const select = [tags, fields].filter(Boolean).join(', ');
+    const select = [tagPart, fields].filter(Boolean).join(', ');
     parts.push(`SELECT ${select || '*'}`);
-    if ((b.groupBy ?? []).length) parts.push(`GROUP BY ${(b.groupBy ?? []).join(', ')}`);
   } else if ((b.projection ?? []).length) {
     parts.push(`SELECT ${(b.projection ?? []).join(', ')}`);
+  } else {
+    parts.push('SELECT *');
   }
-  const where = qbNodeSQL(b.where, 0);
-  if (where) parts.push(`WHERE ${where}`);
+  // 2. FROM <CATALOG> <resource> IN <group> (grammar lines 48-50).
+  parts.push(`FROM ${cat.kw} ${b.resource || '_'}`);
+  parts.push(`IN ${b.group || '_'}`);
+  // 3. TIME — required for streams/measures/traces per docs/interacting/bydbql.md line 63.
   const t = qbTimeSQL(b.time);
   if (t) parts.push(t);
+  // 4. WHERE.
+  const where = qbNodeSQL(b.where, 0);
+  if (where) parts.push(`WHERE ${where}`);
+  // 5. GROUP BY — measures only (grammar line 441).
+  if (b.catalog === 'measures' && (b.groupBy ?? []).length) {
+    parts.push(`GROUP BY ${(b.groupBy ?? []).join(', ')}`);
+  }
+  // 6. ORDER BY.
   if (b.orderField) parts.push(`ORDER BY ${b.orderField} ${b.orderDir || 'DESC'}`);
-  if (b.limit && b.limit > 0) parts.push(`LIMIT ${b.limit}`);
+  // 7. WITH QUERY_TRACE. Must appear BEFORE LIMIT/OFFSET in the actual grammar
+  // (grammar.go GrammarSelectStatement: Select -> ... -> OrderBy -> WithQueryTrace -> Limit -> Offset).
   if (b.trace) parts.push('WITH QUERY_TRACE');
+  // 8. LIMIT.
+  if (b.limit && b.limit > 0) parts.push(`LIMIT ${b.limit}`);
+  // 8b. OFFSET (server-side paging per docs/interacting/bydbql.md line 305/441).
+  if (b.offset && b.offset > 0) parts.push(`OFFSET ${b.offset}`);
   return parts.join('\n');
 };
 
 const buildTopNBydbQL = (b: QBBuilderState, cat: QB_CATALOG_DEF): string => {
   const parts: string[] = [];
-  parts.push(`${cat.kw} ${b.resource || '_'}`);
+  // Grammar (docs/interacting/bydbql.md line 620):
+  //   topn_query ::= SHOW TOP <n> from_measure_clause TIME time_condition
+  //                  [WHERE topn_criteria] [AGGREGATE BY agg_function]
+  //                  [ORDER BY value ["ASC"|"DESC"]] [WITH QUERY_TRACE]
+  parts.push(`SHOW TOP ${b.topN || 10}`);
+  parts.push(`FROM ${cat.kw} ${b.resource || '_'}`);
   parts.push(`IN ${b.group || '_'}`);
-  parts.push(`TOP ${b.topN || 10}`);
-  if (b.aggFn) parts.push(`AGGREGATE BY ${b.aggFn}`);
-  const where = qbNodeSQL(b.where, 0);
-  if (where) parts.push(`WHERE ${where}`);
   const t = qbTimeSQL(b.time);
   if (t) parts.push(t);
+  const where = qbNodeSQL(b.where, 0);
+  if (where) parts.push(`WHERE ${where}`);
+  if (b.aggFn) parts.push(`AGGREGATE BY ${b.aggFn}`);
   parts.push(`ORDER BY value ${b.orderDir || 'DESC'}`);
+  if (b.limit && b.limit > 0) parts.push(`LIMIT ${b.limit}`);
+  if (b.offset && b.offset > 0) parts.push(`OFFSET ${b.offset}`);
+  if (b.trace) parts.push('WITH QUERY_TRACE');
   return parts.join('\n');
 };
 
