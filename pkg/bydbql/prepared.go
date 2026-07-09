@@ -147,7 +147,7 @@ func (ps *PreparedStatement) Bind(params []*modelv1.TagValue) (*BoundQuery, erro
 	values := make([]resolvedParam, len(ps.specs))
 	for i, spec := range ps.specs {
 		p := params[i]
-		if p.GetValue() == nil {
+		if p == nil || p.GetValue() == nil {
 			return nil, fmt.Errorf("parameter #%d has no value", i+1)
 		}
 		var err error

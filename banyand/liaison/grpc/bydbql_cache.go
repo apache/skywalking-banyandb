@@ -50,8 +50,8 @@ type preparedCache struct {
 
 // newPreparedCache builds a cache holding up to size entries and maxBytes of
 // accounted size. A size <= 0 disables caching (lru is nil): getOrPrepare then
-// parses every request, each counted as a miss. A maxBytes <= 0 drops the byte
-// bound, leaving only the count.
+// parses every request and bypasses the cache without recording hits or misses.
+// A maxBytes <= 0 drops the byte bound, leaving only the count.
 func newPreparedCache(size, maxBytes int, m *metrics) *preparedCache {
 	c := &preparedCache{maxBytes: maxBytes, metrics: m}
 	if size > 0 {

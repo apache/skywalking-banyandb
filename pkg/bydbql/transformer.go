@@ -178,6 +178,12 @@ func (t *Transformer) TransformBound(ctx context.Context, bq *BoundQuery) (*Tran
 	if bq == nil || bq.stmt == nil {
 		return nil, errors.New("nil bound query; construct it with PreparedStatement.Bind")
 	}
+	// The template's ParamIndex values index into bq.values, so a mismatched
+	// overlay would panic on an out-of-range read; fail fast instead.
+	if len(bq.values) != len(bq.stmt.specs) {
+		return nil, fmt.Errorf("bound query has %d value(s) but the statement has %d placeholder(s); construct it with PreparedStatement.Bind",
+			len(bq.values), len(bq.stmt.specs))
+	}
 	return (&transformRun{Transformer: t, bound: bq.values}).transform(ctx, bq.stmt.template)
 }
 

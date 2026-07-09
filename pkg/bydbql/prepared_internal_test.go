@@ -186,7 +186,12 @@ func TestBindErrors(t *testing.T) {
 		t.Errorf("array in scalar: got %v", err)
 	}
 	if _, err = ps.Bind([]*modelv1.TagValue{{}}); err == nil || !strings.Contains(err.Error(), "has no value") {
-		t.Errorf("nil value: got %v", err)
+		t.Errorf("empty value: got %v", err)
+	}
+	// A nil parameter element must produce a clean error, not a panic: the proto
+	// getter is nil-safe, so p.GetValue() returns nil and Bind reports "has no value".
+	if _, err = ps.Bind([]*modelv1.TagValue{nil}); err == nil || !strings.Contains(err.Error(), "has no value") {
+		t.Errorf("nil element: got %v", err)
 	}
 }
 
@@ -194,6 +199,20 @@ func TestTransformBoundRejectsNil(t *testing.T) {
 	var transformer Transformer
 	if _, err := transformer.TransformBound(context.Background(), nil); err == nil {
 		t.Fatal("TransformBound(nil) must return an error, not panic")
+	}
+}
+
+func TestTransformBoundRejectsMismatchedOverlay(t *testing.T) {
+	ps, err := Prepare("SELECT * FROM STREAM sw IN default WHERE service_id = ?")
+	if err != nil {
+		t.Fatalf("Prepare: %v", err)
+	}
+	var transformer Transformer
+	// An overlay shorter than the placeholder count would otherwise panic on an
+	// out-of-range ParamIndex; TransformBound must reject it up front.
+	bq := &BoundQuery{stmt: ps, values: nil}
+	if _, err := transformer.TransformBound(context.Background(), bq); err == nil {
+		t.Fatal("TransformBound must reject an overlay that does not match the placeholder count")
 	}
 }
 
