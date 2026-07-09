@@ -137,6 +137,8 @@ type server struct {
 	queryAccessLogRecorders  []queryAccessLogRecorder
 	maxRecvMsgSize           run.Bytes
 	grpcBufferMemoryRatio    float64
+	bydbqlCacheSize          int
+	bydbqlCacheMaxBytes      int
 	port                     uint32
 	tls                      bool
 	enableIngestionAccessLog bool
@@ -364,6 +366,7 @@ func (s *server) PreRun(ctx context.Context) error {
 	s.measureSVC.metrics = metrics
 	s.traceSVC.metrics = metrics
 	s.bydbQLSVC.metrics = metrics
+	s.bydbQLSVC.cache = newPreparedCache(s.bydbqlCacheSize, s.bydbqlCacheMaxBytes, metrics)
 	s.propertyServer.metrics = metrics
 	if s.barrierSVC != nil {
 		s.barrierSVC.metrics = metrics
@@ -449,6 +452,10 @@ func (s *server) FlagSet() *run.FlagSet {
 	fs.DurationVar(&s.traceSVC.maxWaitDuration, "trace-metadata-cache-wait-duration", 0,
 		"the maximum duration to wait for metadata cache to load (for testing purposes)")
 	fs.IntVar(&s.propertyServer.repairQueueCount, "property-repair-queue-count", 128, "the number of queues for property repair")
+	fs.IntVar(&s.bydbqlCacheSize, "bydbql-prepared-cache-size", 2000,
+		"max number of prepared BydbQL statements cached on the query path; 0 disables the cache")
+	fs.IntVar(&s.bydbqlCacheMaxBytes, "bydbql-prepared-cache-max-bytes", 10*1024*1024,
+		"max total estimated size (bytes) of the cached BydbQL prepared statements; 0 removes the byte bound")
 	s.grpcBufferMemoryRatio = 0.1
 	fs.Float64Var(&s.grpcBufferMemoryRatio, "grpc-buffer-memory-ratio", 0.1,
 		"ratio of memory limit to use for gRPC buffer size calculation (0.0 < ratio <= 1.0)")

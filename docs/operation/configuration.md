@@ -89,6 +89,11 @@ The following flags are used to configure the timeout of data sending from liais
 - `--measure-write-timeout duration`: Measure write timeout (default: 1m).
 - `--trace-write-timeout duration`: Trace write timeout (default: 1m).
 
+The following flags tune the BydbQL prepared-statement cache on the query path. The cache stores parsed statements keyed by query text so repeated, parameterized (`?`) queries skip re-parsing; literal queries without placeholders are never cached. It is bounded by both an entry count and the estimated in-memory size of the cached statements, evicting least-recently-used entries when either bound is exceeded. Effectiveness is observable via the `bydbql_prepared_cache_*` metrics (a hit/miss counter plus hit-ratio, entry-count, and byte-size gauges).
+
+- `--bydbql-prepared-cache-size int`: Max number of prepared BydbQL statements cached on the query path; `0` disables the cache (default: 2000).
+- `--bydbql-prepared-cache-max-bytes int`: Max total estimated size (in bytes) of the cached prepared statements; `0` removes the byte bound (default: 10485760, i.e. 10MiB).
+
 ### TLS
 
 If you want to enable TLS for the communication between the client and liaison/standalone, you can use the following flags:

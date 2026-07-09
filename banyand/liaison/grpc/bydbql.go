@@ -44,6 +44,7 @@ type bydbQLService struct {
 	metrics        *metrics
 	repo           metadata.Repo
 	transformer    *bydbql.Transformer
+	cache          *preparedCache
 	streamSvc      *streamService
 	measureSvc     *measureService
 	traceSvc       *traceService
@@ -80,16 +81,17 @@ func (b *bydbQLService) Query(ctx context.Context, req *bydbqlv1.QueryRequest) (
 		}
 	}()
 
-	// parse query, bind parameters, and transform to native request
+	// prepare (parse once, cached), bind parameters, and transform to native request
 	parseStart := time.Now()
-	query, err := bydbql.ParseQuery(req.Query)
+	stmt, err := b.cache.getOrPrepare(req.Query)
 	if err != nil {
 		return nil, status.Errorf(codes.InvalidArgument, "failed to parse query: %v", err)
 	}
-	if err = bydbql.BindParams(query, req.Params); err != nil {
+	bound, err := stmt.Bind(req.Params)
+	if err != nil {
 		return nil, status.Errorf(codes.InvalidArgument, "failed to bind parameters: %v", err)
 	}
-	result, err := b.transformer.Transform(ctx, query)
+	result, err := b.transformer.TransformBound(ctx, bound)
 	if err != nil {
 		return nil, status.Errorf(codes.Internal, "failed to transform to native request: %v", err)
 	}

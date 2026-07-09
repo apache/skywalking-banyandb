@@ -227,3 +227,90 @@ func BenchmarkBinding(b *testing.B) {
 		}
 	})
 }
+
+func TestNumPlaceholders(t *testing.T) {
+	cases := map[string]int{
+		"SELECT * FROM STREAM sw IN default":                                  0,
+		"SELECT * FROM STREAM sw IN default WHERE service_id = ?":             1,
+		"SELECT * FROM STREAM sw IN default TIME > ? WHERE a = ? LIMIT ?":     3,
+		"SELECT * FROM STREAM sw IN default WHERE a IN (?, ?) AND b MATCH(?)": 3,
+	}
+	for query, want := range cases {
+		ps, err := Prepare(query)
+		if err != nil {
+			t.Fatalf("Prepare %q: %v", query, err)
+		}
+		if got := ps.NumPlaceholders(); got != want {
+			t.Errorf("NumPlaceholders(%q) = %d, want %d", query, got, want)
+		}
+	}
+}
+
+func TestEstimatedSize(t *testing.T) {
+	ps, err := Prepare("SELECT * FROM STREAM sw IN default WHERE service_id = ?")
+	if err != nil {
+		t.Fatalf("Prepare: %v", err)
+	}
+	if sz := ps.EstimatedSize(); sz <= 0 {
+		t.Fatalf("EstimatedSize = %d, want > 0", sz)
+	}
+	// The same query yields the same footprint.
+	ps2, err := Prepare("SELECT * FROM STREAM sw IN default WHERE service_id = ?")
+	if err != nil {
+		t.Fatalf("Prepare: %v", err)
+	}
+	if ps.EstimatedSize() != ps2.EstimatedSize() {
+		t.Errorf("EstimatedSize not deterministic: %d vs %d", ps.EstimatedSize(), ps2.EstimatedSize())
+	}
+	// A statement with more grammar nodes retains more memory.
+	simple, err := Prepare("SELECT * FROM STREAM sw IN default")
+	if err != nil {
+		t.Fatalf("Prepare simple: %v", err)
+	}
+	rich, err := Prepare("SELECT * FROM STREAM sw IN default WHERE a = ? AND b IN (?, ?) AND c MATCH(?) LIMIT ? OFFSET ?")
+	if err != nil {
+		t.Fatalf("Prepare rich: %v", err)
+	}
+	if rich.EstimatedSize() <= simple.EstimatedSize() {
+		t.Errorf("rich size %d not larger than simple %d", rich.EstimatedSize(), simple.EstimatedSize())
+	}
+}
+
+// TestDeepSizeBranches drives deepSize through real prepared statements, which
+// exercise all of its branches: nil and non-nil pointers (absent vs present
+// optional clauses), structs (grammar nodes), nil and non-nil slices (empty vs
+// populated IN lists and the groups list), strings (identifiers and literals), and
+// scalar defaults (LIMIT ints, bool flags).
+func TestDeepSizeBranches(t *testing.T) {
+	sizeOf := func(query string) int {
+		ps, err := Prepare(query)
+		if err != nil {
+			t.Fatalf("Prepare %q: %v", query, err)
+		}
+		return ps.EstimatedSize()
+	}
+
+	// A minimal query already covers structs, absent/present pointers, the groups
+	// slice, strings, and scalar fields; its footprint must be positive.
+	base := sizeOf("SELECT * FROM STREAM sw IN default")
+	if base <= 0 {
+		t.Fatalf("base size = %d, want > 0", base)
+	}
+	// A longer string literal adds out-of-line string bytes (String branch).
+	shortStr := sizeOf("SELECT * FROM STREAM sw IN default WHERE service_id = 'x'")
+	longStr := sizeOf("SELECT * FROM STREAM sw IN default WHERE service_id = 'xxxxxxxxxxxxxxxxxxxxxxxx'")
+	if longStr <= shortStr {
+		t.Errorf("longer string literal did not grow size: %d <= %d", longStr, shortStr)
+	}
+	// A longer IN list adds slice-backing and value-node bytes (Slice/Pointer).
+	oneElem := sizeOf("SELECT * FROM STREAM sw IN default WHERE service_id IN (?)")
+	manyElem := sizeOf("SELECT * FROM STREAM sw IN default WHERE service_id IN (?, ?, ?, ?, ?)")
+	if manyElem <= oneElem {
+		t.Errorf("longer IN list did not grow size: %d <= %d", manyElem, oneElem)
+	}
+	// Adding optional clauses turns nil pointers non-nil and adds int/bool scalars.
+	withClauses := sizeOf("SELECT * FROM STREAM sw IN default TIME > ? WHERE a = ? LIMIT ? OFFSET ?")
+	if withClauses <= base {
+		t.Errorf("added clauses did not grow size: %d <= %d", withClauses, base)
+	}
+}

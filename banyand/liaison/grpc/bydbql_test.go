@@ -31,7 +31,8 @@ import (
 )
 
 func newTestBydbQLService() *bydbQLService {
-	return &bydbQLService{metrics: newBypassMetrics()}
+	m := newBypassMetrics()
+	return &bydbQLService{metrics: m, cache: newPreparedCache(16, 1<<20, m)}
 }
 
 func bydbqlStrParam(v string) *modelv1.TagValue {

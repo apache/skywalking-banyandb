@@ -20,6 +20,7 @@ package bydbql
 import (
 	"fmt"
 	"math"
+	"reflect"
 
 	modelv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/model/v1"
 )
@@ -65,6 +66,55 @@ func Prepare(query string) (*PreparedStatement, error) {
 	p := &preparer{}
 	p.walkGrammar(g)
 	return &PreparedStatement{template: g, specs: p.specs}, nil
+}
+
+// NumPlaceholders reports how many `?` placeholders the statement carries. A zero
+// count means a literal query with no reusable parameters.
+func (ps *PreparedStatement) NumPlaceholders() int {
+	return len(ps.specs)
+}
+
+// EstimatedSize returns an approximate in-memory byte footprint of the prepared
+// statement — its parsed grammar template and placeholder specs. It is a
+// heuristic for cache byte-accounting (a reflection walk of the object graph),
+// not an exact measurement, and is meant to be called off the hot path.
+func (ps *PreparedStatement) EstimatedSize() int {
+	return deepSize(reflect.ValueOf(ps))
+}
+
+// deepSize sums the bytes reachable from v: the inline size of each pointed-to
+// value plus the out-of-line bytes of strings and slice backing arrays. Inline
+// struct/array fields are already covered by their container's size, so only
+// their referenced memory is added. It is shaped for the grammar, an acyclic tree
+// of concrete structs, pointers, slices, strings, and scalars.
+func deepSize(v reflect.Value) int {
+	switch v.Kind() {
+	case reflect.Pointer:
+		if v.IsNil() {
+			return 0
+		}
+		elem := v.Elem()
+		return int(elem.Type().Size()) + deepSize(elem)
+	case reflect.Struct:
+		total := 0
+		for i := 0; i < v.NumField(); i++ {
+			total += deepSize(v.Field(i))
+		}
+		return total
+	case reflect.Slice:
+		if v.IsNil() {
+			return 0
+		}
+		total := v.Cap() * int(v.Type().Elem().Size())
+		for i := 0; i < v.Len(); i++ {
+			total += deepSize(v.Index(i))
+		}
+		return total
+	case reflect.String:
+		return v.Len()
+	default:
+		return 0
+	}
 }
 
 // resolvedParam holds one placeholder's bound value in the per-request overlay.
