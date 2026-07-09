@@ -65,13 +65,45 @@ jobs:
       - name: Build Linux binaries
         run: |
           TARGET_OS=linux PLATFORMS=linux/amd64,linux/arm64 make release
+      # Regression gate (Critic Major #2 / plugin-packaging DD6): the default
+      # banyand-server binary must stay CGO_ENABLED=0 and statically linked —
+      # a Go plugin host requires CGO+dynamic linking, so any accidental drift
+      # here would silently make the default image plugin-hostable (a
+      # supply-chain/size/CVE-surface regression) or, worse, break the
+      # "default path 100% intact" invariant the -plugins variant depends on.
+      # Checked on the raw cross-compiled binaries (before dockerizing) with
+      # `file`, since the runtime busybox:stable-glibc image intentionally
+      # carries no `file`/`ldd` to inspect itself with.
+      - name: Assert default banyand-server binaries are static (no CGO)
+        run: |
+          set -e
+          for arch in amd64 arm64; do
+            for variant in static slim; do
+              bin="banyand/build/bin/linux/${arch}/banyand-server-${variant}"
+              echo "Checking $bin"
+              # Fail if the expected binary is missing, so a moved/renamed
+              # output path can never make this gate pass vacuously.
+              test -f "$bin" || { echo "FAIL: expected release binary $bin not found" >&2; exit 1; }
+              desc=$(file "$bin")
+              echo "$desc"
+              if echo "$desc" | grep -qi "dynamically linked"; then
+                echo "FAIL: $bin is dynamically linked; the default/slim images must stay CGO_ENABLED=0 static" >&2
+                exit 1
+              fi
+              # Assert the positive too: the binary must actually report as static.
+              if ! echo "$desc" | grep -qi "statically linked"; then
+                echo "FAIL: $bin does not report as statically linked; got: $desc" >&2
+                exit 1
+              fi
+            done
+          done
       - name: Build docker image
         if: github.ref != 'refs/heads/main' # Only build docker image on PR(Push image when pushed to main branch)
         run: |
           make docker.build || make docker.build
           BINARYTYPE=slim make -C banyand docker || BINARYTYPE=slim make -C banyand docker
           make -C test/docker build || make -C test/docker build
-          make -C mcp docker || make -C mcp docker 
+          make -C mcp docker || make -C mcp docker
           docker image ls
       - name: Log in to the Container registry
         uses: docker/login-action@650006c6eb7dba73a995cc03b0b2d7f5ca915bee
@@ -86,3 +118,91 @@ jobs:
           PLATFORMS=linux/amd64,linux/arm64 make docker.push || PLATFORMS=linux/amd64,linux/arm64 make docker.push
           PLATFORMS=linux/amd64,linux/arm64 BINARYTYPE=slim make -C banyand docker.push || PLATFORMS=linux/amd64,linux/arm64 BINARYTYPE=slim make -C banyand docker.push
           make -C test/docker push || make -C test/docker push
+
+  # push-banyandb-plugins-image builds/pushes BOTH plugin images at the SAME
+  # <sha> tag (plan DD2/DD6; see docs/operation/plugins.md):
+  #   - skywalking-banyandb:<sha>-plugins          (CGO host image, final-plugins stage)
+  #   - skywalking-banyandb:<sha>-plugins-carrier  (carrier image, final-carrier stage)
+  # Same repo, distinguished by tag suffix. They MUST ship together: the carrier
+  # .so is loaded by the host
+  # binary via plugin.Open, which demands exact toolchain parity — guaranteed
+  # here because both come from one build-plugins-base at one commit in one CI
+  # run. It is a SEPARATE job — not a step bolted onto push-banyandb-image —
+  # deliberately: this build is slower (a from-source CGO compile inside the
+  # Dockerfile, arm64 under QEMU emulation) and must never be able to fail or
+  # time out the default image publish (Critic Major #2). It has NO
+  # `needs:`/artifact dependency on push-banyandb-image: it checks out and
+  # compiles from source independently, so the two jobs' failure domains are
+  # fully isolated.
+  #
+  # timeout-minutes: 180 is an ESTIMATE, not a measured figure — the
+  # arm64-under-QEMU CGO compile time has not yet been observed on CI hardware.
+  # If it proves too slow to fit this budget, the plan's DD3 escape hatch is to
+  # switch the arm64 build to a cross-CGO toolchain (install
+  # gcc-aarch64-linux-gnu and set CC/CXX per GOARCH in the builder stage) —
+  # a same-artifact swap, not a scope change. Revisit this number after the
+  # first real arm64 run.
+  push-banyandb-plugins-image:
+    if: github.repository == 'apache/skywalking-banyandb'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+    timeout-minutes: 180
+    env:
+      TAG: ${{ github.sha }}
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          fetch-tags: true
+      - name: Setup build environment
+        uses: ./.github/actions/setup-build-env
+        with:
+          download-artifacts: 'false'
+          setup-docker: 'true'
+      - name: Cache Tools
+        uses: actions/cache@v4
+        id: cache-tool
+        with:
+          path: bin
+          key: ${{ runner.os }}-build-tool-${{ hashFiles('**version.mk') }}
+      - name: Generate codes
+        run: make generate
+      # The -plugins HOST Dockerfile builder stage COPYs the full source tree
+      # (via the named build context "reporoot") and compiles banyand-server
+      # with CGO_ENABLED=1; the carrier builder stage compiles every
+      # plugins/*.so the same way. `make release` here only supplies the FOUR
+      # companion binaries (backup/restore/lifecycle/migration) that don't host
+      # plugins and stay plain CGO_ENABLED=0 static, reused unmodified from
+      # banyand/Dockerfile's default path (host image only).
+      - name: Build companion binaries (backup/restore/lifecycle/migration)
+        run: |
+          # download-artifacts:false above, so the prebuilt ui/dist artifact is
+          # absent and `make release` would fail compiling the UI-embedding
+          # banyand-server-static (ui/embed.go `//go:embed dist`). This job needs
+          # only the non-UI companion binaries; the -plugins host is built
+          # slim/no-UI inside Docker. Stub ui/dist (same placeholder the -plugins
+          # Docker builder stage uses) so the release build compiles.
+          mkdir -p ui/dist && touch ui/dist/index.html
+          TARGET_OS=linux PLATFORMS=linux/amd64,linux/arm64 make release
+      - name: Build plugin images (host + carrier)
+        if: github.ref != 'refs/heads/main' # Only build on PR; push when merged to main
+        run: |
+          BINARYTYPE=plugins make -C banyand docker || BINARYTYPE=plugins make -C banyand docker
+          make -C banyand docker.plugins-carrier || make -C banyand docker.plugins-carrier
+          docker image ls
+      - name: Log in to the Container registry
+        uses: docker/login-action@650006c6eb7dba73a995cc03b0b2d7f5ca915bee
+        if: github.ref == 'refs/heads/main'
+        with:
+          registry: ${{ env.HUB }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - name: Push plugin images (host + carrier, same <sha> tag)
+        if: github.ref == 'refs/heads/main'
+        run: |
+          PLATFORMS=linux/amd64,linux/arm64 BINARYTYPE=plugins make -C banyand docker.push || \
+            PLATFORMS=linux/amd64,linux/arm64 BINARYTYPE=plugins make -C banyand docker.push
+          PLATFORMS=linux/amd64,linux/arm64 make -C banyand docker.plugins-carrier.push || \
+            PLATFORMS=linux/amd64,linux/arm64 make -C banyand docker.plugins-carrier.push
