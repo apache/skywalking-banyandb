@@ -71,6 +71,7 @@ type metrics struct {
 	bydbqlPreparedCacheHitRatio meter.Gauge
 	bydbqlPreparedCacheCount    meter.Gauge
 	bydbqlPreparedCacheBytes    meter.Gauge
+	bydbqlSlowQueryTotal        meter.Counter
 }
 
 func newMetrics(factory observability.Factory) *metrics {
@@ -105,6 +106,7 @@ func newMetrics(factory observability.Factory) *metrics {
 		bydbqlPreparedCacheHitRatio:        factory.NewGauge("bydbql_prepared_cache_hit_ratio"),
 		bydbqlPreparedCacheCount:           factory.NewGauge("bydbql_prepared_cache_count"),
 		bydbqlPreparedCacheBytes:           factory.NewGauge("bydbql_prepared_cache_bytes"),
+		bydbqlSlowQueryTotal:               factory.NewCounter("bydbql_slow_query_total"),
 	}
 }
 

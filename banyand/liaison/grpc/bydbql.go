@@ -35,6 +35,7 @@ import (
 	"github.com/apache/skywalking-banyandb/pkg/accesslog"
 	"github.com/apache/skywalking-banyandb/pkg/bydbql"
 	"github.com/apache/skywalking-banyandb/pkg/logger"
+	"github.com/apache/skywalking-banyandb/pkg/run"
 )
 
 type bydbQLService struct {
@@ -49,6 +50,10 @@ type bydbQLService struct {
 	measureSvc     *measureService
 	traceSvc       *traceService
 	propertyServer *propertyServer
+	// dumper tracks and periodically logs the top cache-miss and slow queries; it is
+	// nil (its observe methods no-op) unless the periodic top-K log is enabled.
+	dumper        *topKDumper
+	slowThreshold time.Duration
 }
 
 func (b *bydbQLService) setLogger(log *logger.Logger) {
@@ -66,6 +71,10 @@ func (b *bydbQLService) activeQueryAccessLog(root string, sampled bool) (err err
 func (b *bydbQLService) Query(ctx context.Context, req *bydbqlv1.QueryRequest) (resp *bydbqlv1.QueryResponse, err error) {
 	start := time.Now()
 	b.metrics.totalStarted.Inc(1, "", "bydbql", "query")
+	// cacheResult tags the access-log entry with the prepared-statement cache
+	// outcome so operators can find un-cached queries: entries logged under
+	// "bydbql-miss" / "bydbql-bypass" are the ones that did not hit the cache.
+	var cacheResult string
 	defer func() {
 		duration := time.Since(start)
 		b.metrics.totalFinished.Inc(1, "", "bydbql", "query")
@@ -74,8 +83,17 @@ func (b *bydbQLService) Query(ctx context.Context, req *bydbqlv1.QueryRequest) (
 		}
 		b.metrics.totalLatency.Inc(duration.Seconds(), "", "bydbql", "query")
 
+		if b.slowThreshold > 0 && duration > b.slowThreshold {
+			b.metrics.bydbqlSlowQueryTotal.Inc(1)
+			b.dumper.observeSlow(req.Query, duration)
+		}
+
 		if b.queryAccessLog != nil {
-			if errAccessLog := b.queryAccessLog.WriteQuery("bydbql", start, duration, req, err); errAccessLog != nil {
+			service := "bydbql"
+			if cacheResult != "" {
+				service = "bydbql-" + cacheResult
+			}
+			if errAccessLog := b.queryAccessLog.WriteQuery(service, start, duration, req, err); errAccessLog != nil {
 				b.l.Error().Err(errAccessLog).Msg("bydbql access log error")
 			}
 		}
@@ -83,9 +101,12 @@ func (b *bydbQLService) Query(ctx context.Context, req *bydbqlv1.QueryRequest) (
 
 	// prepare (parse once, cached), bind parameters, and transform to native request
 	parseStart := time.Now()
-	stmt, err := b.cache.getOrPrepare(req.Query)
+	stmt, cacheResult, err := b.cache.getOrPrepare(req.Query)
 	if err != nil {
 		return nil, status.Errorf(codes.InvalidArgument, "failed to parse query: %v", err)
+	}
+	if cacheResult == "miss" {
+		b.dumper.observeMiss(req.Query)
 	}
 	bound, err := stmt.Bind(req.Params)
 	if err != nil {
@@ -143,6 +164,79 @@ func (b *bydbQLService) Query(ctx context.Context, req *bydbqlv1.QueryRequest) (
 		return nil, fmt.Errorf("unknown query type: %v", result.Type)
 	}
 	return resp, nil
+}
+
+// topKDumper tracks the top cache-miss and slow queries and, on a supervised
+// goroutine, periodically logs the cumulative top-K. All methods are nil-safe, so the
+// call sites need no guards when the top-K log is disabled (the dumper is nil).
+type topKDumper struct {
+	miss   *topK
+	slow   *topK
+	l      *logger.Logger
+	cancel context.CancelFunc
+}
+
+// newTopKDumper starts the trackers and the dump goroutine; a non-positive interval
+// disables the feature and returns nil.
+func newTopKDumper(interval time.Duration, l *logger.Logger) *topKDumper {
+	if interval <= 0 {
+		return nil
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	d := &topKDumper{miss: newTopK(bydbqlTopKSize), slow: newTopK(bydbqlTopKSize), l: l, cancel: cancel}
+	run.Go(ctx, "liaison.grpc.bydbql.topk-dump", l, func(ctx context.Context) {
+		ticker := time.NewTicker(interval)
+		defer ticker.Stop()
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case <-ticker.C:
+				d.dump()
+			}
+		}
+	})
+	return d
+}
+
+func (d *topKDumper) observeMiss(query string) {
+	if d != nil {
+		d.miss.observe(query, 0)
+	}
+}
+
+func (d *topKDumper) observeSlow(query string, dur time.Duration) {
+	if d != nil {
+		d.slow.observe(query, dur)
+	}
+}
+
+func (d *topKDumper) close() {
+	if d != nil && d.cancel != nil {
+		d.cancel()
+	}
+}
+
+func (d *topKDumper) dump() {
+	d.logTopK(d.miss, "top bydbql cache-miss queries", func(s topKSlot) string {
+		return fmt.Sprintf("%q count=%d", s.key, s.count)
+	})
+	d.logTopK(d.slow, "top bydbql slow queries", func(s topKSlot) string {
+		return fmt.Sprintf("%q count=%d max_latency=%s", s.key, s.count, s.maxDur)
+	})
+}
+
+// logTopK snapshots one tracker and logs its entries formatted by line.
+func (d *topKDumper) logTopK(tk *topK, msg string, line func(topKSlot) string) {
+	entries := tk.snapshot()
+	if len(entries) == 0 {
+		return
+	}
+	lines := make([]string, len(entries))
+	for i, s := range entries {
+		lines[i] = line(s)
+	}
+	d.l.Info().Strs("top", lines).Msg(msg)
 }
 
 func (b *bydbQLService) Close() error {

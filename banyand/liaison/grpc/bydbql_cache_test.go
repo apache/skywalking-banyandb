@@ -42,7 +42,7 @@ func bydbqlLiteralQuery(i int) string {
 func probeEntryCost(t *testing.T) int {
 	t.Helper()
 	c := newPreparedCache(10, 0, nil)
-	_, err := c.getOrPrepare(bydbqlQuery(0))
+	_, _, err := c.getOrPrepare(bydbqlQuery(0))
 	require.NoError(t, err)
 	require.Positive(t, c.curBytes.Load())
 	return int(c.curBytes.Load())
@@ -50,10 +50,10 @@ func probeEntryCost(t *testing.T) int {
 
 func TestPreparedCacheHitReturnsSameInstance(t *testing.T) {
 	c := newPreparedCache(16, 0, nil)
-	first, err := c.getOrPrepare(bydbqlQuery(0))
+	first, _, err := c.getOrPrepare(bydbqlQuery(0))
 	require.NoError(t, err)
 	require.NotNil(t, first)
-	second, err := c.getOrPrepare(bydbqlQuery(0))
+	second, _, err := c.getOrPrepare(bydbqlQuery(0))
 	require.NoError(t, err)
 	assert.Same(t, first, second, "a cache hit must return the same prepared statement")
 	assert.Equal(t, uint64(1), c.hits.Load())
@@ -62,18 +62,20 @@ func TestPreparedCacheHitReturnsSameInstance(t *testing.T) {
 
 func TestPreparedCacheEvictsLeastRecentlyUsedByCount(t *testing.T) {
 	c := newPreparedCache(2, 0, nil)
-	_, _ = c.getOrPrepare(bydbqlQuery(1))
-	_, _ = c.getOrPrepare(bydbqlQuery(2))
-	// Touch q1 so q2 becomes the least-recently-used entry.
-	_, _ = c.getOrPrepare(bydbqlQuery(1))
-	// Adding q3 must evict q2, not q1.
-	_, _ = c.getOrPrepare(bydbqlQuery(3))
+	get := func(i int) {
+		_, _, err := c.getOrPrepare(bydbqlQuery(i))
+		require.NoError(t, err)
+	}
+	get(1)
+	get(2)
+	get(1) // touch q1 so q2 becomes the least-recently-used entry
+	get(3) // adding q3 must evict q2, not q1
 	assert.Equal(t, 2, c.lru.Len())
 
 	missBefore := c.misses.Load()
-	_, _ = c.getOrPrepare(bydbqlQuery(1))
+	get(1)
 	assert.Equal(t, missBefore, c.misses.Load(), "recently used q1 should still be cached")
-	_, _ = c.getOrPrepare(bydbqlQuery(2))
+	get(2)
 	assert.Equal(t, missBefore+1, c.misses.Load(), "least-recently-used q2 should have been evicted")
 }
 
@@ -84,7 +86,7 @@ func TestPreparedCacheEvictsByBytes(t *testing.T) {
 	maxBytes := perEntry*2 + perEntry/2
 	c := newPreparedCache(100, maxBytes, nil)
 	for i := 0; i < 5; i++ {
-		_, err := c.getOrPrepare(bydbqlQuery(i))
+		_, _, err := c.getOrPrepare(bydbqlQuery(i))
 		require.NoError(t, err)
 	}
 	assert.LessOrEqual(t, int(c.curBytes.Load()), maxBytes, "byte cap must bound total accounted size")
@@ -94,7 +96,7 @@ func TestPreparedCacheEvictsByBytes(t *testing.T) {
 
 func TestPreparedCacheSkipsOversizedQuery(t *testing.T) {
 	c := newPreparedCache(16, 8, nil) // every real query exceeds 8 bytes
-	stmt, err := c.getOrPrepare(bydbqlQuery(0))
+	stmt, _, err := c.getOrPrepare(bydbqlQuery(0))
 	require.NoError(t, err)
 	require.NotNil(t, stmt, "an oversized query must still be prepared, just not cached")
 	assert.Equal(t, 0, c.lru.Len())
@@ -103,10 +105,10 @@ func TestPreparedCacheSkipsOversizedQuery(t *testing.T) {
 
 func TestPreparedCacheDisabled(t *testing.T) {
 	c := newPreparedCache(0, 0, nil)
-	first, err := c.getOrPrepare(bydbqlQuery(0))
+	first, _, err := c.getOrPrepare(bydbqlQuery(0))
 	require.NoError(t, err)
 	require.NotNil(t, first)
-	second, err := c.getOrPrepare(bydbqlQuery(0))
+	second, _, err := c.getOrPrepare(bydbqlQuery(0))
 	require.NoError(t, err)
 	assert.NotSame(t, first, second, "a disabled cache must re-prepare every request")
 	assert.Nil(t, c.lru, "a disabled cache holds no LRU")
@@ -117,10 +119,10 @@ func TestPreparedCacheDisabled(t *testing.T) {
 
 func TestPreparedCacheSkipsLiteralQuery(t *testing.T) {
 	c := newPreparedCache(16, 1<<20, nil)
-	first, err := c.getOrPrepare(bydbqlLiteralQuery(0))
+	first, _, err := c.getOrPrepare(bydbqlLiteralQuery(0))
 	require.NoError(t, err)
 	require.NotNil(t, first)
-	second, err := c.getOrPrepare(bydbqlLiteralQuery(0))
+	second, _, err := c.getOrPrepare(bydbqlLiteralQuery(0))
 	require.NoError(t, err)
 	// A placeholder-free query is not a reusable template: never cached, re-parsed
 	// each time, and not counted so it cannot depress hit_ratio.
@@ -130,9 +132,22 @@ func TestPreparedCacheSkipsLiteralQuery(t *testing.T) {
 	assert.Equal(t, uint64(0), c.misses.Load())
 }
 
+func TestPreparedCacheBypassNotCounted(t *testing.T) {
+	// A literal query is counted as a bypass (emit("bypass")) but must not move the
+	// hit/miss counters, so the hit ratio stays meaningful.
+	c := newPreparedCache(16, 1<<20, newBypassMetrics())
+	for i := 0; i < 5; i++ {
+		_, _, err := c.getOrPrepare(bydbqlLiteralQuery(i))
+		require.NoError(t, err)
+	}
+	assert.Equal(t, 0, c.lru.Len(), "literal queries are never cached")
+	assert.Equal(t, uint64(0), c.hits.Load())
+	assert.Equal(t, uint64(0), c.misses.Load(), "a bypass must not count as a hit or miss")
+}
+
 func TestPreparedCacheParseErrorNotCached(t *testing.T) {
 	c := newPreparedCache(16, 0, nil)
-	_, err := c.getOrPrepare("NOT A QUERY")
+	_, _, err := c.getOrPrepare("NOT A QUERY")
 	require.Error(t, err)
 	assert.Equal(t, 0, c.lru.Len(), "a parse failure must not be cached")
 	// A parse failure is not a cache event, so it must not move hit/miss counters.
@@ -144,9 +159,9 @@ func TestPreparedCacheEmitsMetrics(t *testing.T) {
 	// A non-nil metrics wiring exercises emit() end to end (counter label, hit-ratio
 	// math, and the count/bytes gauges) on both the miss and hit paths.
 	c := newPreparedCache(4, 1<<20, newBypassMetrics())
-	_, err := c.getOrPrepare(bydbqlQuery(0))
+	_, _, err := c.getOrPrepare(bydbqlQuery(0))
 	require.NoError(t, err)
-	_, err = c.getOrPrepare(bydbqlQuery(0))
+	_, _, err = c.getOrPrepare(bydbqlQuery(0))
 	require.NoError(t, err)
 	assert.Equal(t, uint64(1), c.hits.Load())
 	assert.Equal(t, uint64(1), c.misses.Load())
@@ -170,7 +185,7 @@ func TestPreparedCacheConcurrentReuse(t *testing.T) {
 		go func(n int) {
 			defer wg.Done()
 			for j := 0; j < iters; j++ {
-				stmt, err := c.getOrPrepare(bydbqlQuery((n*iters + j) % keys))
+				stmt, _, err := c.getOrPrepare(bydbqlQuery((n*iters + j) % keys))
 				assert.NoError(t, err)
 				assert.NotNil(t, stmt)
 			}

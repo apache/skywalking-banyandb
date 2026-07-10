@@ -68,14 +68,15 @@ func newPreparedCache(size, maxBytes int, m *metrics) *preparedCache {
 }
 
 // getOrPrepare returns the prepared statement for query, parsing and caching it on
-// a miss. It records the cache metrics internally, so callers handle only the parse
-// error.
-func (c *preparedCache) getOrPrepare(query string) (*bydbql.PreparedStatement, error) {
+// a miss. It records the cache metrics internally; the returned result ("hit",
+// "miss", "bypass", or "" for a disabled cache) lets the caller tag the query
+// access log so un-cached queries can be found. Callers handle only the parse error.
+func (c *preparedCache) getOrPrepare(query string) (*bydbql.PreparedStatement, string, error) {
 	if c.lru != nil {
 		if v, ok := c.lru.Get(query); ok {
 			c.hits.Add(1)
-			c.emit(true)
-			return v.(*cacheValue).ps, nil
+			c.emit("hit")
+			return v.(*cacheValue).ps, "hit", nil
 		}
 	}
 	ps, err := bydbql.Prepare(query)
@@ -83,20 +84,24 @@ func (c *preparedCache) getOrPrepare(query string) (*bydbql.PreparedStatement, e
 		// A parse failure is not a cache event: it is never cached (so it cannot
 		// pin memory) and is already counted by the RPC-level error metric.
 		// Excluding it keeps hit_ratio from being depressed by malformed queries.
-		return nil, err
+		return nil, "", err
+	}
+	if c.lru == nil {
+		return ps, "", nil // caching disabled entirely; nothing to record
 	}
 	// Only parameterized queries are reusable templates worth caching. A literal
 	// query bakes its values into the text, so every distinct value is a unique key
-	// that would never hit and would only evict useful templates. A literal query
-	// (and a disabled cache) therefore bypasses without touching cache or metrics,
-	// so hit_ratio reflects only genuinely cacheable queries.
-	if c.lru == nil || ps.NumPlaceholders() == 0 {
-		return ps, nil
+	// that would never hit and would only evict useful templates. It bypasses the
+	// cache; a bypass is counted separately from hit/miss so the hit ratio still
+	// reflects only cacheable queries.
+	if ps.NumPlaceholders() == 0 {
+		c.emit("bypass")
+		return ps, "bypass", nil
 	}
 	c.misses.Add(1)
 	c.store(query, ps)
-	c.emit(false)
-	return ps, nil
+	c.emit("miss")
+	return ps, "miss", nil
 }
 
 // store caches ps under the byte bound, skipping a statement that alone exceeds
@@ -117,14 +122,11 @@ func (c *preparedCache) store(query string, ps *bydbql.PreparedStatement) {
 	}
 }
 
-// emit publishes the cache counter and gauges from the atomic counters.
-func (c *preparedCache) emit(hit bool) {
+// emit publishes the cache counter (labeled by result: hit/miss/bypass) and the
+// gauges from the atomic counters.
+func (c *preparedCache) emit(result string) {
 	if c.metrics == nil {
 		return
-	}
-	result := "miss"
-	if hit {
-		result = "hit"
 	}
 	hits, misses := c.hits.Load(), c.misses.Load()
 	c.metrics.bydbqlPreparedCacheTotal.Inc(1, result)
