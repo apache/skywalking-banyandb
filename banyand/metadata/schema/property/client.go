@@ -846,10 +846,78 @@ func (r *SchemaRegistry) ListTrace(ctx context.Context, opt schema.ListOpt) ([]*
 	return listResources[*databasev1.Trace](ctx, r, schema.KindTrace, opt.Group, true)
 }
 
+// pipelineEnabledWithSampler reports whether an enabled trace pipeline declares
+// at least one sampler plugin. The single-trace-per-group constraint applies
+// only to such groups.
+func pipelineEnabledWithSampler(cfg *commonv1.TracePipelineConfig) bool {
+	if cfg == nil || !cfg.GetEnabled() {
+		return false
+	}
+	for _, plugin := range cfg.GetPlugins() {
+		if plugin.GetSampler() != nil {
+			return true
+		}
+	}
+	return false
+}
+
+// checkTraceAgainstPipeline enforces, at registration time, that a group whose
+// trace pipeline is enabled with a sampler plugin holds at most one trace. It
+// rejects a create/update that would introduce a second, differently-named
+// trace into such a group; the trace being updated is excluded by name.
+func (r *SchemaRegistry) checkTraceAgainstPipeline(ctx context.Context, trace *databasev1.Trace) error {
+	groupName := trace.GetMetadata().GetGroup()
+	g, groupErr := r.GetGroup(ctx, groupName)
+	if groupErr != nil {
+		// The group must exist for the trace create/update to succeed; let the
+		// downstream group validation surface a missing/broken group rather than
+		// masking it. Skip the cross-entity check when the group can't be read.
+		return nil
+	}
+	if !pipelineEnabledWithSampler(g.GetPipeline()) {
+		return nil
+	}
+	traces, listErr := r.ListTrace(ctx, schema.ListOpt{Group: groupName})
+	if listErr != nil {
+		return listErr
+	}
+	selfName := trace.GetMetadata().GetName()
+	for _, existing := range traces {
+		if existing.GetMetadata().GetName() != selfName {
+			return status.Errorf(codes.FailedPrecondition,
+				"group %q has an enabled sampler pipeline and may contain only one trace; trace %q already exists",
+				groupName, existing.GetMetadata().GetName())
+		}
+	}
+	return nil
+}
+
+// checkPipelineAgainstTraces enforces the inverse constraint: a sampler pipeline
+// may be enabled on a group only while the group holds at most one trace.
+func (r *SchemaRegistry) checkPipelineAgainstTraces(ctx context.Context, group *commonv1.Group) error {
+	if !pipelineEnabledWithSampler(group.GetPipeline()) {
+		return nil
+	}
+	groupName := group.GetMetadata().GetName()
+	traces, listErr := r.ListTrace(ctx, schema.ListOpt{Group: groupName})
+	if listErr != nil {
+		return listErr
+	}
+	if len(traces) > 1 {
+		return status.Errorf(codes.FailedPrecondition,
+			"group %q has %d traces; a sampler pipeline may only be enabled on a group with at most one trace",
+			groupName, len(traces))
+	}
+	return nil
+}
+
 // CreateTrace creates a trace schema.
 func (r *SchemaRegistry) CreateTrace(ctx context.Context, trace *databasev1.Trace) (int64, error) {
 	if validateErr := validate.Trace(trace); validateErr != nil {
 		return 0, validateErr
+	}
+	if pipelineErr := r.checkTraceAgainstPipeline(ctx, trace); pipelineErr != nil {
+		return 0, pipelineErr
 	}
 	now := time.Now().UnixNano()
 	trace.Metadata.ModRevision = now
@@ -861,6 +929,9 @@ func (r *SchemaRegistry) CreateTrace(ctx context.Context, trace *databasev1.Trac
 func (r *SchemaRegistry) UpdateTrace(ctx context.Context, trace *databasev1.Trace) (int64, error) {
 	if validateErr := validate.Trace(trace); validateErr != nil {
 		return 0, validateErr
+	}
+	if pipelineErr := r.checkTraceAgainstPipeline(ctx, trace); pipelineErr != nil {
+		return 0, pipelineErr
 	}
 	now := time.Now().UnixNano()
 	trace.Metadata.ModRevision = now
@@ -893,6 +964,9 @@ func (r *SchemaRegistry) CreateGroup(ctx context.Context, group *commonv1.Group)
 	if validateErr := validate.Group(group); validateErr != nil {
 		return 0, validateErr
 	}
+	if pipelineErr := r.checkPipelineAgainstTraces(ctx, group); pipelineErr != nil {
+		return 0, pipelineErr
+	}
 	now := time.Now().UnixNano()
 	group.Metadata.ModRevision = now
 	group.UpdatedAt = timestamppb.Now()
@@ -903,6 +977,9 @@ func (r *SchemaRegistry) CreateGroup(ctx context.Context, group *commonv1.Group)
 func (r *SchemaRegistry) UpdateGroup(ctx context.Context, group *commonv1.Group) (int64, error) {
 	if validateErr := validate.Group(group); validateErr != nil {
 		return 0, validateErr
+	}
+	if pipelineErr := r.checkPipelineAgainstTraces(ctx, group); pipelineErr != nil {
+		return 0, pipelineErr
 	}
 	now := time.Now().UnixNano()
 	group.Metadata.ModRevision = now
