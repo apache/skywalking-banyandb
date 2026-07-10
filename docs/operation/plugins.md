@@ -94,6 +94,16 @@ group's pipeline config (`TracePipelineConfig` on the `Group`,
 }
 ```
 
+Attaching this `pipeline` to the group is what **activates** the plugin: the data
+node watches the schema registry and, on the group add/update, reconciles the
+pipeline and calls `plugin.Open` on the mounted `.so`. Register it through any
+standard schema API — all go through `GroupRegistryService` and preserve the
+nested `pipeline` field: `bydbctl group update -f group.yaml` (with a `pipeline:`
+block), `PUT /api/v1/group/schema/{group}`, or the gRPC `GroupRegistryService.Update`
+(see `test/cases/tracepipeline/ops.go`). Verify with
+`banyandb_trace_pipeline_sampler_active_count{group=…}` `>0` (metrics port `2121`);
+a bad `.so` fails open + loud (`…_sampler_load_failed`), leaving the node healthy.
+
 ## Delivering the carrier (first-party) and third-party plugins
 
 The loader supports exactly **one** trusted dir
