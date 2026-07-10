@@ -79,6 +79,33 @@ func TestTopKSnapshotSortedAndCumulative(t *testing.T) {
 	assert.Len(t, tk.snapshot(), 2)
 }
 
+func TestTopKSnapshotByLatency(t *testing.T) {
+	tk := newTopK(bydbqlTopKSize)
+	tk.observe("frequent", time.Millisecond) // high count, low latency
+	tk.observe("frequent", time.Millisecond)
+	tk.observe("frequent", time.Millisecond)
+	tk.observe("rare-but-slow", time.Second) // count 1, catastrophic latency
+
+	assert.Equal(t, "frequent", tk.snapshot()[0].key, "snapshot ranks by count")
+	assert.Equal(t, "rare-but-slow", tk.snapshotByLatency()[0].key,
+		"snapshotByLatency surfaces the catastrophic outlier first")
+}
+
+func TestTopKDeterministicTieBreak(t *testing.T) {
+	// Equal counts and durations must order by key, not by map iteration.
+	a := newTopK(bydbqlTopKSize)
+	b := newTopK(bydbqlTopKSize)
+	for _, k := range []string{"c", "a", "b"} {
+		a.observe(k, 0)
+	}
+	for _, k := range []string{"b", "c", "a"} {
+		b.observe(k, 0)
+	}
+	assert.Equal(t, a.snapshot(), b.snapshot(), "same entries yield the same order regardless of insertion")
+	snap := a.snapshot()
+	assert.Equal(t, []string{"a", "b", "c"}, []string{snap[0].key, snap[1].key, snap[2].key})
+}
+
 func TestTopKConcurrentObserve(t *testing.T) {
 	tk := newTopK(bydbqlTopKSize)
 	const workers, iters = 16, 500

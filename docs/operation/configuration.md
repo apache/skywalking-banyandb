@@ -97,7 +97,7 @@ The following flags tune the BydbQL prepared-statement cache on the query path. 
 These flags surface the queries behind cache misses and slow responses without exposing high-cardinality query text as metric labels: Prometheus gets only two counters (`bydbql_prepared_cache_total{result="miss"}` and `bydbql_slow_query_total`), while the specific hot queries are logged.
 
 - `--bydbql-slow-query-threshold duration`: End-to-end latency above which a BydbQL query is counted as slow (increments `bydbql_slow_query_total`) and tracked in the slow-query top-K; `0` disables slow-query tracking (default: `1s`).
-- `--bydbql-topk-log-interval duration`: How often to log the top-10 cache-miss and slow queries (by occurrence count since process start, with each entry's max latency). Uses a bounded approximate heavy-hitters tracker, so it costs O(1) and never grows unbounded; `0` disables the top-K log (default: `5m`).
+- `--bydbql-topk-log-interval duration`: How often to log the hottest cache-miss and slow queries. Counts are cumulative since process start. The cache-miss list only shows templates re-parsed at least twice (`count>=2`): every template misses once on its cold-start lookup, so a `count==1` entry is benign and is filtered out — only repeatedly evicted-and-re-parsed (thrashing) templates are surfaced. The slow-query list is ranked by peak latency (`max_latency`) so a rarely-but-catastrophically slow query is not buried under frequently-mildly-slow ones. Uses a bounded approximate heavy-hitters tracker (128 entries), so it costs O(1) and never grows unbounded; `0` disables the top-K log (default: `5m`).
 
 #### Diagnosing an ineffective BydbQL cache
 

@@ -121,8 +121,18 @@ func TestBydbQLQuery_TracksSlowQuery(t *testing.T) {
 func TestBydbQLDumpTopK(t *testing.T) {
 	d := newTestDumper(logger.GetLogger("test-bydbql"))
 	d.miss.observe("q-miss", 0)
+	d.miss.observe("q-miss", 0) // count>=2 so it survives the cold-start filter
 	d.slow.observe("q-slow", time.Millisecond)
 	d.dump() // must not panic; the cumulative trackers keep their entries
 	assert.NotEmpty(t, d.miss.snapshot())
 	assert.NotEmpty(t, d.slow.snapshot())
+}
+
+func TestFormatTopKFiltersColdStartMisses(t *testing.T) {
+	entries := []topKSlot{
+		{key: "thrashing", count: 5},
+		{key: "cold-start", count: 1},
+	}
+	lines := formatTopK(entries, minReparseMisses, func(s topKSlot) string { return s.key })
+	assert.Equal(t, []string{"thrashing"}, lines, "count==1 cold-start misses are filtered out")
 }

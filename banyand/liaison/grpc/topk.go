@@ -24,8 +24,11 @@ import (
 	"time"
 )
 
-// bydbqlTopKSize is the number of hot entries each top-K tracker keeps.
-const bydbqlTopKSize = 10
+// bydbqlTopKSize is the number of hot entries each top-K tracker keeps. It is sized
+// well above the expected number of distinct parameterized query templates so the
+// Space-Saving eviction (and its count over-estimate) effectively never triggers for
+// a normal workload, keeping the reported counts exact while still bounding memory.
+const bydbqlTopKSize = 128
 
 // topKSlot is one tracked query and its accumulated statistics.
 type topKSlot struct {
@@ -37,8 +40,8 @@ type topKSlot struct {
 // topK is a bounded approximate heavy-hitters tracker (Space-Saving): it keeps at
 // most k entries and, when full, evicts the least-frequent one, letting the new key
 // inherit that entry's count + 1 so a fresh key gets a fair chance instead of being
-// evicted again immediately. With k small (10) the min scan and the snapshot sort are
-// effectively O(1), and observing an existing key needs no reordering at all.
+// evicted again immediately. With k modest (128) the min scan and the snapshot sort are
+// cheap, and observing an existing key needs no reordering at all.
 type topK struct {
 	slots map[string]*topKSlot
 	k     int
@@ -80,15 +83,50 @@ func (t *topK) observe(key string, dur time.Duration) {
 	t.slots[key] = &topKSlot{key: key, count: minCount + 1, maxDur: dur}
 }
 
-// snapshot returns the tracked entries sorted by count descending. The tracker is
-// cumulative, so each dump reflects the hottest queries since process start.
+// snapshot returns the tracked entries ranked by frequency: (count desc, maxDur desc,
+// key asc). The tracker is cumulative, so each dump reflects the hottest queries since
+// process start. The full tie-break makes the order deterministic across dumps.
 func (t *topK) snapshot() []topKSlot {
+	out := t.copyOut()
+	sort.Slice(out, func(i, j int) bool { return lessByCount(out[i], out[j]) })
+	return out
+}
+
+// snapshotByLatency returns the tracked entries ranked by peak latency: (maxDur desc,
+// count desc, key asc), so a rarely-but-catastrophically slow query is not buried under
+// frequently-mildly-slow ones.
+func (t *topK) snapshotByLatency() []topKSlot {
+	out := t.copyOut()
+	sort.Slice(out, func(i, j int) bool { return lessByLatency(out[i], out[j]) })
+	return out
+}
+
+func (t *topK) copyOut() []topKSlot {
 	t.mu.Lock()
 	out := make([]topKSlot, 0, len(t.slots))
 	for _, s := range t.slots {
 		out = append(out, *s)
 	}
 	t.mu.Unlock()
-	sort.Slice(out, func(i, j int) bool { return out[i].count > out[j].count })
 	return out
+}
+
+func lessByCount(a, b topKSlot) bool {
+	if a.count != b.count {
+		return a.count > b.count
+	}
+	if a.maxDur != b.maxDur {
+		return a.maxDur > b.maxDur
+	}
+	return a.key < b.key
+}
+
+func lessByLatency(a, b topKSlot) bool {
+	if a.maxDur != b.maxDur {
+		return a.maxDur > b.maxDur
+	}
+	if a.count != b.count {
+		return a.count > b.count
+	}
+	return a.key < b.key
 }

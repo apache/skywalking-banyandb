@@ -217,26 +217,39 @@ func (d *topKDumper) close() {
 	}
 }
 
+// minReparseMisses is the smallest cumulative miss count worth logging. Every
+// parameterized template misses exactly once on its cold-start lookup, so count==1 is
+// benign; only count>=2 means the template was evicted and re-parsed (thrashing).
+const minReparseMisses = 2
+
 func (d *topKDumper) dump() {
-	d.logTopK(d.miss, "top bydbql cache-miss queries", func(s topKSlot) string {
+	d.logTopK(d.miss.snapshot(), minReparseMisses, "top bydbql cache-miss queries", func(s topKSlot) string {
 		return fmt.Sprintf("%q count=%d", s.key, s.count)
 	})
-	d.logTopK(d.slow, "top bydbql slow queries", func(s topKSlot) string {
+	d.logTopK(d.slow.snapshotByLatency(), 1, "top bydbql slow queries", func(s topKSlot) string {
 		return fmt.Sprintf("%q count=%d max_latency=%s", s.key, s.count, s.maxDur)
 	})
 }
 
-// logTopK snapshots one tracker and logs its entries formatted by line.
-func (d *topKDumper) logTopK(tk *topK, msg string, line func(topKSlot) string) {
-	entries := tk.snapshot()
-	if len(entries) == 0 {
+// logTopK logs the entries with at least minCount occurrences, formatted by line.
+func (d *topKDumper) logTopK(entries []topKSlot, minCount uint64, msg string, line func(topKSlot) string) {
+	lines := formatTopK(entries, minCount, line)
+	if len(lines) == 0 {
 		return
 	}
-	lines := make([]string, len(entries))
-	for i, s := range entries {
-		lines[i] = line(s)
-	}
 	d.l.Info().Strs("top", lines).Msg(msg)
+}
+
+// formatTopK renders the entries with at least minCount occurrences into log lines.
+func formatTopK(entries []topKSlot, minCount uint64, line func(topKSlot) string) []string {
+	lines := make([]string, 0, len(entries))
+	for _, s := range entries {
+		if s.count < minCount {
+			continue
+		}
+		lines = append(lines, line(s))
+	}
+	return lines
 }
 
 func (b *bydbQLService) Close() error {
