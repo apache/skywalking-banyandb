@@ -930,17 +930,17 @@ func (r *SchemaRegistry) UpdateTrace(ctx context.Context, trace *databasev1.Trac
 	if validateErr := validate.Trace(trace); validateErr != nil {
 		return 0, validateErr
 	}
-	if pipelineErr := r.checkTraceAgainstPipeline(ctx, trace); pipelineErr != nil {
-		return 0, pipelineErr
-	}
 	now := time.Now().UnixNano()
 	trace.Metadata.ModRevision = now
 	trace.UpdatedAt = timestamppb.Now()
+	// The pipeline check runs as an updateResource validator so it executes only
+	// after the existing trace has been loaded — a missing trace surfaces as
+	// not-found rather than FailedPrecondition.
 	return updateResource(ctx, r, schema.KindTrace, trace, func(prev *databasev1.Trace) error {
 		if err := validate.TraceUpdate(prev, trace); err != nil {
 			return fmt.Errorf("validation failed: %w", err)
 		}
-		return nil
+		return r.checkTraceAgainstPipeline(ctx, trace)
 	})
 }
 
@@ -978,13 +978,15 @@ func (r *SchemaRegistry) UpdateGroup(ctx context.Context, group *commonv1.Group)
 	if validateErr := validate.Group(group); validateErr != nil {
 		return 0, validateErr
 	}
-	if pipelineErr := r.checkPipelineAgainstTraces(ctx, group); pipelineErr != nil {
-		return 0, pipelineErr
-	}
 	now := time.Now().UnixNano()
 	group.Metadata.ModRevision = now
 	group.UpdatedAt = timestamppb.Now()
-	return updateResource(ctx, r, schema.KindGroup, group)
+	// The pipeline check runs as an updateResource validator so it executes only
+	// after the existing group has been confirmed — a missing group surfaces as
+	// not-found rather than FailedPrecondition.
+	return updateResource(ctx, r, schema.KindGroup, group, func(_ *commonv1.Group) error {
+		return r.checkPipelineAgainstTraces(ctx, group)
+	})
 }
 
 // DeleteGroup deletes a group and all its resources.

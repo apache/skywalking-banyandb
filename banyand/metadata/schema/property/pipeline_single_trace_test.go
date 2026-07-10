@@ -175,3 +175,29 @@ func TestCreateGroup_WithSamplerPipelineNoTraces(t *testing.T) {
 	_, groupErr := reg.CreateGroup(ctx, traceGroup(samplerPipeline(true)))
 	require.NoError(t, groupErr)
 }
+
+// TestUpdateTrace_MissingTraceReturnsNotFound verifies the pipeline check does
+// not mask a not-found error: updating a non-existent trace in a sampler-enabled
+// group reports not-found, because the check runs after existence is confirmed.
+func TestUpdateTrace_MissingTraceReturnsNotFound(t *testing.T) {
+	reg, ctx := newTraceRegistry(t)
+	_, groupErr := reg.CreateGroup(ctx, traceGroup(samplerPipeline(true)))
+	require.NoError(t, groupErr)
+	_, createErr := reg.CreateTrace(ctx, traceNamed("trace-a"))
+	require.NoError(t, createErr)
+
+	_, updateErr := reg.UpdateTrace(ctx, traceNamed("trace-b"))
+	require.Error(t, updateErr)
+	require.NotEqual(t, codes.FailedPrecondition, status.Code(updateErr))
+	require.Contains(t, updateErr.Error(), "not exist")
+}
+
+// TestUpdateGroup_MissingGroupReturnsNotFound verifies updating a non-existent
+// group with a sampler pipeline reports not-found rather than FailedPrecondition.
+func TestUpdateGroup_MissingGroupReturnsNotFound(t *testing.T) {
+	reg, ctx := newTraceRegistry(t)
+	_, updateErr := reg.UpdateGroup(ctx, traceGroup(samplerPipeline(true)))
+	require.Error(t, updateErr)
+	require.NotEqual(t, codes.FailedPrecondition, status.Code(updateErr))
+	require.Contains(t, updateErr.Error(), "not exist")
+}
