@@ -150,6 +150,23 @@ build-trace-pipeline-telemetry-plugins: ## Build telemetrysampler.so and faultys
 		./test/plugins/_faultysampler
 	@echo "Built $(PLUGIN_OUTPUT_DIR)/faultysampler.so"
 
+.PHONY: build-plugins
+build-plugins: ## Build every plugins/<vendor>/<name> sampler into $(PLUGIN_OUTPUT_DIR) (Linux/macOS only; requires a C toolchain)
+	@if ! command -v gcc > /dev/null 2>&1 && ! command -v clang > /dev/null 2>&1; then \
+		echo "ERROR: build-plugins requires a C toolchain (gcc or clang) but neither was found in PATH."; \
+		exit 1; \
+	fi
+	@mkdir -p $(PLUGIN_OUTPUT_DIR)
+	@set -e; for dir in plugins/*/*/; do \
+		[ -f "$$dir/main.go" ] || continue; \
+		name=$$(basename "$$dir"); \
+		echo "Building $(PLUGIN_OUTPUT_DIR)/$$name.so from $$dir"; \
+		CGO_ENABLED=1 go build -buildmode=plugin -trimpath \
+			-o $(PLUGIN_OUTPUT_DIR)/$$name.so \
+			./$$dir; \
+	done
+	@echo "Built plugins into $(PLUGIN_OUTPUT_DIR)"
+
 .PHONY: build-trace-pipeline-server
 build-trace-pipeline-server: ## Build banyand-server with explicit CGO_ENABLED=1 for plugin hosting (Linux/macOS only)
 	@if ! command -v gcc > /dev/null 2>&1 && ! command -v clang > /dev/null 2>&1; then \

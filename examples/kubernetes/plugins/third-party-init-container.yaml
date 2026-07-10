@@ -1,0 +1,85 @@
+# Licensed to the Apache Software Foundation (ASF) under one
+# or more contributor license agreements.  See the NOTICE file
+# distributed with this work for additional information
+# regarding copyright ownership.  The ASF licenses this file
+# to you under the Apache License, Version 2.0 (the
+# "License"); you may not use this file except in compliance
+# with the License.  You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
+# Data-node StatefulSet fragment: FIRST-PARTY + THIRD-PARTY plugins together
+# via the PORTABLE initContainer + emptyDir mechanism (all Kubernetes versions,
+# incl. pre-1.31 without image-volume support). See docs/operation/plugins.md.
+#
+# One shared emptyDir is mounted at /plugins in the main container. Two
+# initContainers populate it before the node starts:
+#   - the first-party CARRIER (busybox-based) copies its .so into /plugins/
+#     -> SamplerPlugin.path=<name>.so
+#   - the operator's third-party carrier copies its .so into /plugins/thirdparty/
+#     -> SamplerPlugin.path=thirdparty/<name>.so
+# Both carrier images need a shell + `cp` (busybox-based); a scratch/.so-only
+# image can't do this — use the image-volume mechanism for those.
+#
+# PARITY: the first-party carrier tag MUST equal the host image tag (lockstep).
+# Third-party .so parity is the operator's responsibility; a mismatch is
+# rejected loudly (fail-open: ERROR log + sampler_load_failed), never silently.
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: banyandb-data
+  labels:
+    app.kubernetes.io/name: banyandb
+    app.kubernetes.io/component: data
+spec:
+  serviceName: banyandb-data
+  replicas: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: banyandb
+      app.kubernetes.io/component: data
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: banyandb
+        app.kubernetes.io/component: data
+    spec:
+      initContainers:
+        - name: install-firstparty-plugins
+          # First-party busybox carrier at the SAME tag as the host image.
+          image: apache/skywalking-banyandb:<TAG>-plugins-carrier
+          command: ["sh", "-c", "cp /plugins/*.so /out/"]
+          volumeMounts:
+            - name: plugins
+              mountPath: /out
+        - name: install-thirdparty-plugins
+          # Operator's own busybox-based carrier (needs a shell + cp).
+          image: registry.example.com/acme/banyandb-plugins-carrier:1.0.0
+          command: ["sh", "-c", "mkdir -p /out/thirdparty && cp /opt/plugins/*.so /out/thirdparty/"]
+          volumeMounts:
+            - name: plugins
+              mountPath: /out
+      containers:
+        - name: banyandb-data
+          image: apache/skywalking-banyandb:<TAG>-plugins
+          args:
+            - data
+            - -trace-pipeline-native-plugin-enabled=true
+            - -trace-pipeline-trusted-plugin-dir=/plugins
+          ports:
+            - name: grpc
+              containerPort: 17912
+            - name: http
+              containerPort: 17913
+          volumeMounts:
+            - name: plugins
+              mountPath: /plugins
+      volumes:
+        - name: plugins
+          emptyDir: {}
