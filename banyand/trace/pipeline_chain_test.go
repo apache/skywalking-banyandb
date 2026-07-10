@@ -28,6 +28,7 @@ import (
 	"github.com/apache/skywalking-banyandb/pkg/fs"
 	pbv1 "github.com/apache/skywalking-banyandb/pkg/pb/v1"
 	"github.com/apache/skywalking-banyandb/pkg/pipeline/sdk"
+	"github.com/apache/skywalking-banyandb/pkg/pipeline/sdk/sdktest"
 	"github.com/apache/skywalking-banyandb/pkg/test"
 )
 
@@ -200,9 +201,16 @@ func TestMergeFilter_FailOpenOnPanic(t *testing.T) {
 	require.Empty(t, dropped)
 }
 
+// TestMergeChain_Timeout_FailsOpen builds its batch via sdktest (rather than a
+// hand-built literal &sdk.TraceBatch{...}) as proof-of-use of the offline dev
+// toolkit's fixture builder from inside the engine's own test suite.
 func TestMergeChain_Timeout_FailsOpen(t *testing.T) {
 	chain := newMergeChain("g", "s", []sdk.Sampler{&sleepSampler{d: 200 * time.Millisecond}}, 0)
-	batch := &sdk.TraceBatch{Traces: []sdk.TraceBlock{{TraceID: "x"}, {TraceID: "y"}}}
+	traceX, buildErr := sdktest.NewTrace("x").Build()
+	require.NoError(t, buildErr)
+	traceY, buildErr := sdktest.NewTrace("y").Build()
+	require.NoError(t, buildErr)
+	batch := sdktest.Batch(traceX, traceY)
 	verdict, err := chain.Execute(batch, 10*time.Millisecond)
 	require.Error(t, err)
 	require.Equal(t, "timeout", err.Error())
@@ -211,7 +219,9 @@ func TestMergeChain_Timeout_FailsOpen(t *testing.T) {
 
 func TestMergeChain_CircuitBreakerOpens(t *testing.T) {
 	chain := newMergeChain("g", "s", []sdk.Sampler{&sleepSampler{d: 200 * time.Millisecond}}, 2)
-	batch := &sdk.TraceBatch{Traces: []sdk.TraceBlock{{TraceID: "x"}}}
+	traceX, buildErr := sdktest.NewTrace("x").Build()
+	require.NoError(t, buildErr)
+	batch := sdktest.Batch(traceX)
 	_, err1 := chain.Execute(batch, 10*time.Millisecond)
 	require.Equal(t, "timeout", err1.Error())
 	_, err2 := chain.Execute(batch, 10*time.Millisecond)

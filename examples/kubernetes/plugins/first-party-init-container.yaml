@@ -1,0 +1,73 @@
+# Licensed to the Apache Software Foundation (ASF) under one
+# or more contributor license agreements.  See the NOTICE file
+# distributed with this work for additional information
+# regarding copyright ownership.  The ASF licenses this file
+# to you under the Apache License, Version 2.0 (the
+# "License"); you may not use this file except in compliance
+# with the License.  You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
+# Data-node StatefulSet fragment: FIRST-PARTY plugins via the PORTABLE
+# initContainer + emptyDir mechanism (works on all Kubernetes versions, incl.
+# pre-1.31 without image-volume support). See docs/operation/plugins.md.
+#
+# A shared emptyDir is mounted at /plugins in both the initContainer and the
+# main container. The initContainer runs the CARRIER image
+# (the `-plugins-carrier`-tagged image) — which is busybox-based, so it has a shell +
+# `cp` — and copies its /plugins/*.so into the shared volume. The host then
+# loads them from /plugins. Reference by SamplerPlugin.path=latencystatussampler.so.
+#
+# LOCKSTEP: the carrier tag MUST equal the host image tag (plugin.Open parity).
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: banyandb-data
+  labels:
+    app.kubernetes.io/name: banyandb
+    app.kubernetes.io/component: data
+spec:
+  serviceName: banyandb-data
+  replicas: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: banyandb
+      app.kubernetes.io/component: data
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: banyandb
+        app.kubernetes.io/component: data
+    spec:
+      initContainers:
+        - name: install-firstparty-plugins
+          # The busybox-based carrier at the SAME tag as the host image below.
+          image: apache/skywalking-banyandb:<TAG>-plugins-carrier
+          command: ["sh", "-c", "cp /plugins/*.so /out/"]
+          volumeMounts:
+            - name: plugins
+              mountPath: /out
+      containers:
+        - name: banyandb-data
+          image: apache/skywalking-banyandb:<TAG>-plugins
+          args:
+            - data
+            - -trace-pipeline-native-plugin-enabled=true
+            - -trace-pipeline-trusted-plugin-dir=/plugins
+          ports:
+            - name: grpc
+              containerPort: 17912
+            - name: http
+              containerPort: 17913
+          volumeMounts:
+            - name: plugins
+              mountPath: /plugins
+      volumes:
+        - name: plugins
+          emptyDir: {}
