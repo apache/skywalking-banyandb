@@ -34,6 +34,7 @@
     --ok: #3ecf8e;
     --warn: #d98a3c;
     --danger: #cf6b52;
+    --info: #56c2d6;
     --accent: #3a9d5d;
     --accent-soft: rgba(58,157,93,.15);
     --accent-glow: rgba(58,157,93,.35);
@@ -994,7 +995,7 @@
     display: flex; align-items: center; gap: 14px;
     padding: 0 16px; min-height: 44px; border-bottom: 1px solid var(--border);
   }
-  .result-tabs { display: flex; align-items: center; gap: 4px; }
+  .result-tabs { display: flex; align-items: center; gap: 20px; }
   .result-tab {
     font-size: 13px; font-weight: 500; color: var(--text-faint);
     height: 44px; display: flex; align-items: center;
@@ -1018,13 +1019,14 @@
   .rs.run { color: var(--accent); }
   .rs.ok { color: var(--ok); }
   .rs.fail { color: var(--danger); }
+  .rs.meta { color: var(--info); }
   .result-pane .empty { border: none; padding: 48px 24px; background: none; text-align: center; }
   .result-pane .empty-title { font-size: 15px; font-weight: 600; color: var(--text); margin: 0 0 6px; }
   .result-pane .empty-text { font-size: 13px; color: var(--text-dim); line-height: 1.5; margin: 0; }
 
   /* ============ MEASURE RESULT VIEW (table ⇄ chart ⇄ trace) ============ */
   .result-bar button.result-tab { background: none; border: none; font-family: inherit; padding: 0; display: inline-flex; align-items: center; gap: 6px; }
-  .mr-trace-on { width: 6px; height: 6px; border-radius: 50%; background: var(--ok); box-shadow: 0 0 0 3px color-mix(in srgb, var(--ok) 18%, transparent); }
+  .mr-trace-on { width: 6px; height: 6px; border-radius: 50%; background: var(--info); box-shadow: 0 0 0 3px color-mix(in srgb, var(--info) 18%, transparent); }
 
   .mr-toolbar { display: flex; align-items: center; gap: 12px; padding: 10px 16px; border-bottom: 1px solid var(--border); background: rgba(255,255,255,.012); }
   .mr-tool-label { font-size: 12.5px; color: var(--text-dim); }
