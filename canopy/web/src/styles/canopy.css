@@ -1289,7 +1289,7 @@
   .sf-sel { height: 24px; width: 100%; border-radius: 6px; background: var(--panel-3); border: 1px solid var(--border-strong); color: var(--text-dim); font-family: var(--mono); font-size: 10.5px; padding: 0 4px; cursor: pointer; }
   .sf-sel:hover { color: var(--text); }
   .sf-src { font-size: 9px; font-family: var(--mono); font-weight: 600; letter-spacing: .4px; text-align: center; padding: 2px 0; border-radius: 4px; }
-  .sf-src.type { color: var(--ok); background: rgba(62,207,142,.13); }
+  .sf-src.type { color: #4a9fe8; background: rgba(74,159,232,.13); }
   .sf-src.value { color: var(--accent); background: var(--accent-soft); }
   .sf-src.convention { color: var(--warn); background: rgba(217,138,60,.14); }
   .sf-src.user { color: var(--tok-kw); background: rgba(155,140,240,.16); }
