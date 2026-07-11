@@ -214,11 +214,18 @@ export function StreamResultView({ response, state, showTrace, setShowTrace, exe
   };
 
   const count = elements.length;
-  const total = response.totalRowCount ?? count;
+  const total = response.totalRowCount ?? 0;
+  // The BFF overwrites totalRowCount with the current page size, so the total
+  // is only trustworthy when the backend reports more rows than we have loaded.
+  const hasReliableTotal = total > count;
   const subBar = (
     <div className="sr-toolbar">
       <span className="sr-count">
-        {count > 0 ? `showing ${count.toLocaleString('en-US')} of ${total.toLocaleString('en-US')}` : 'no results'}
+        {count > 0
+          ? (hasReliableTotal
+            ? `showing ${count.toLocaleString('en-US')} of ${total.toLocaleString('en-US')}`
+            : `${count.toLocaleString('en-US')} rows loaded`)
+          : 'no results'}
         {state.orderField && ` · order by ${state.orderField} ${state.orderDir.toLowerCase()}`}
       </span>
       <div className="sr-tool-right">
