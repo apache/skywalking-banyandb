@@ -71,6 +71,12 @@ interface Props {
   readonly execMs?: number;
   /** Schema tag specs (name + type) so the view can infer roles from type. */
   readonly tagSpecs?: readonly TagSpec[];
+  /** True when the last page returned a full LIMIT — i.e. more rows likely exist. */
+  readonly hasMore: boolean;
+  /** Called when the user clicks "Load more" — should re-run with offset+=limit. */
+  readonly onLoadMore: () => void;
+  /** Disables the button + shows a spinner label while the next page is in flight. */
+  readonly isLoadingMore: boolean;
 }
 
 const RESERVED_FIELDS = new Set(['element_id', 'timestamp']);
@@ -124,7 +130,7 @@ function srAutoPick(config: readonly Pick<StreamTagConfig, 'name' | 'role'>[]): 
   return picked;
 }
 
-export function StreamResultView({ response, state, showTrace, setShowTrace, execMs, tagSpecs }: Props) {
+export function StreamResultView({ response, state, showTrace, setShowTrace, execMs, tagSpecs, hasMore, onLoadMore, isLoadingMore }: Props) {
   const [view, setView] = useState<'console' | 'table' | 'json'>('console');
   const [expanded, setExpanded] = useState<Set<number>>(new Set());
   const [inspecting, setInspecting] = useState<{ tag: string; bytes: Uint8Array } | null>(null);
@@ -266,9 +272,19 @@ export function StreamResultView({ response, state, showTrace, setShowTrace, exe
           expanded={expanded}
           setExpanded={setExpanded}
           setInspecting={setInspecting}
+          hasMore={hasMore}
+          onLoadMore={onLoadMore}
+          isLoadingMore={isLoadingMore}
         />
       ) : view === 'table' ? (
-        <TableView elements={elements} config={tagConfig} setInspecting={setInspecting} />
+        <TableView
+          elements={elements}
+          config={tagConfig}
+          setInspecting={setInspecting}
+          hasMore={hasMore}
+          onLoadMore={onLoadMore}
+          isLoadingMore={isLoadingMore}
+        />
       ) : (
         <div className="rv-trace"><pre>{JSON.stringify(response, null, 2)}</pre></div>
       )}
@@ -280,12 +296,15 @@ export function StreamResultView({ response, state, showTrace, setShowTrace, exe
   );
 }
 
-function ConsoleView({ elements, config, expanded, setExpanded, setInspecting }: {
+function ConsoleView({ elements, config, expanded, setExpanded, setInspecting, hasMore, onLoadMore, isLoadingMore }: {
   elements: readonly Elem[];
   config: readonly StreamTagConfig[];
   expanded: Set<number>;
   setExpanded: (v: Set<number>) => void;
   setInspecting: (v: { tag: string; bytes: Uint8Array }) => void;
+  hasMore: boolean;
+  onLoadMore: () => void;
+  isLoadingMore: boolean;
 }) {
   if (elements.length === 0) return <ResultEmpty title="No events" text="The stream query matched no events in this window." />;
 
@@ -340,14 +359,24 @@ function ConsoleView({ elements, config, expanded, setExpanded, setInspecting }:
           </div>
         );
       })}
+      {hasMore && (
+        <div className="rv-loadmore">
+          <button type="button" className="rv-loadmore-btn" onClick={onLoadMore} disabled={isLoadingMore}>
+            {isLoadingMore ? 'Loading…' : `Load more (${elements.length} shown)`}
+          </button>
+        </div>
+      )}
     </div>
   );
 }
 
-function TableView({ elements, config, setInspecting }: {
+function TableView({ elements, config, setInspecting, hasMore, onLoadMore, isLoadingMore }: {
   elements: readonly Elem[];
   config: readonly StreamTagConfig[];
   setInspecting: (v: { tag: string; bytes: Uint8Array }) => void;
+  hasMore: boolean;
+  onLoadMore: () => void;
+  isLoadingMore: boolean;
 }) {
   if (elements.length === 0) return <ResultEmpty title="No events" text="The stream query matched no events in this window." />;
   const cols = ['timestamp', ...config.map((c) => c.name), 'element_id'];
@@ -370,6 +399,13 @@ function TableView({ elements, config, setInspecting }: {
           ))}
         </tbody>
       </table>
+      {hasMore && (
+        <div className="rv-loadmore">
+          <button type="button" className="rv-loadmore-btn" onClick={onLoadMore} disabled={isLoadingMore}>
+            {isLoadingMore ? 'Loading…' : `Load more (${elements.length} shown)`}
+          </button>
+        </div>
+      )}
     </div>
   );
 }

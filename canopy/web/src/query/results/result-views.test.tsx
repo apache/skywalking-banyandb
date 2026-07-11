@@ -22,7 +22,7 @@
 // REAL responses captured from a live BanyanDB under
 // canopy/web/src/data/fixtures/query/ — no synthesized mocks.
 
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, vi } from 'vitest';
 import { render, screen, fireEvent, waitFor } from '@testing-library/react';
 import { MemoryRouter } from 'react-router-dom';
 import { MeasureResultView } from './MeasureResultView.js';
@@ -206,7 +206,7 @@ describe('MeasureResultView', () => {
 describe('StreamResultView', () => {
   it('renders the console view with severity-coded pills', () => {
     renderWithRouter(
-      <StreamResultView response={stream} state={STREAM_STATE} showTrace={false} setShowTrace={() => {}} tagSpecs={STREAM_TAG_SPECS} />,
+      <StreamResultView response={stream} state={STREAM_STATE} showTrace={false} setShowTrace={() => {}} tagSpecs={STREAM_TAG_SPECS} hasMore={false} onLoadMore={() => {}} isLoadingMore={false} />,
     );
     // 'ERROR' severity should appear as a colored categorical badge in the console.
     expect(screen.getAllByText(/ERROR/).length).toBeGreaterThan(0);
@@ -216,7 +216,7 @@ describe('StreamResultView', () => {
 
   it('switches to the table view when the Table tab is clicked', () => {
     renderWithRouter(
-      <StreamResultView response={stream} state={STREAM_STATE} showTrace={false} setShowTrace={() => {}} tagSpecs={STREAM_TAG_SPECS} />,
+      <StreamResultView response={stream} state={STREAM_STATE} showTrace={false} setShowTrace={() => {}} tagSpecs={STREAM_TAG_SPECS} hasMore={false} onLoadMore={() => {}} isLoadingMore={false} />,
     );
     fireEvent.click(screen.getByRole('button', { name: 'Table' }));
     // The table headers should now render — including the reserved timestamp + element_id columns.
@@ -227,7 +227,7 @@ describe('StreamResultView', () => {
 
   it('opens the Tag rendering popover and lets the user override a role', () => {
     renderWithRouter(
-      <StreamResultView response={stream} state={STREAM_STATE} showTrace={false} setShowTrace={() => {}} tagSpecs={STREAM_TAG_SPECS} />,
+      <StreamResultView response={stream} state={STREAM_STATE} showTrace={false} setShowTrace={() => {}} tagSpecs={STREAM_TAG_SPECS} hasMore={false} onLoadMore={() => {}} isLoadingMore={false} />,
     );
     fireEvent.click(screen.getByRole('button', { name: 'Tags' }));
     expect(screen.getByText('Tag rendering')).toBeInTheDocument();
@@ -242,7 +242,7 @@ describe('StreamResultView', () => {
 
   it('expands a console row to show the detail grid', () => {
     renderWithRouter(
-      <StreamResultView response={stream} state={STREAM_STATE} showTrace={false} setShowTrace={() => {}} tagSpecs={STREAM_TAG_SPECS} />,
+      <StreamResultView response={stream} state={STREAM_STATE} showTrace={false} setShowTrace={() => {}} tagSpecs={STREAM_TAG_SPECS} hasMore={false} onLoadMore={() => {}} isLoadingMore={false} />,
     );
     const rows = document.querySelectorAll('.slog-main');
     expect(rows.length).toBeGreaterThan(0);
@@ -251,6 +251,18 @@ describe('StreamResultView', () => {
     // Reserved spine fields always appear in the detail grid.
     expect(screen.getByText('element_id')).toBeInTheDocument();
     expect(screen.getByText('timestamp')).toBeInTheDocument();
+  });
+
+  it('shows Load more in console and table when hasMore is true', () => {
+    const loadMore = vi.fn();
+    renderWithRouter(
+      <StreamResultView response={stream} state={STREAM_STATE} showTrace={false} setShowTrace={() => {}} tagSpecs={STREAM_TAG_SPECS} hasMore={true} onLoadMore={loadMore} isLoadingMore={false} />,
+    );
+    expect(screen.getByRole('button', { name: /Load more/i })).toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: /Table/i }));
+    expect(screen.getByRole('button', { name: /Load more/i })).toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: /Load more/i }));
+    expect(loadMore).toHaveBeenCalledTimes(1);
   });
 });
 
