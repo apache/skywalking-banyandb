@@ -49,15 +49,19 @@ describe('Layer 1 — srRoleFromType', () => {
 });
 
 describe('Layer 2 — srRoleFromValue', () => {
-  it('low-cardinality numeric → id', () => {
-    expect(srRoleFromValue('TAG_TYPE_INT', [1, 2, 3, 1, 2], 'number')).toBe('id');
+  it('numeric strings in a STRING column → number', () => {
+    expect(srRoleFromValue('TAG_TYPE_STRING', ['200', '404', '503', '200'], 'text')).toBe('number');
   });
-  it('low-cardinality string → id', () => {
-    expect(srRoleFromValue('TAG_TYPE_STRING', ['a', 'b', 'a', 'b'], 'text')).toBe('id');
+  it('hex / uuid strings → id', () => {
+    expect(srRoleFromValue('TAG_TYPE_STRING', ['cb2f9b0583567d4e', 'e466554881174205'], 'text')).toBe('id');
+    expect(srRoleFromValue('TAG_TYPE_STRING', ['550e8400-e29b-41d4-a716-446655440000'], 'text')).toBe('id');
   });
   it('long string → body', () => {
     const longBody = 'a'.repeat(50);
     expect(srRoleFromValue('TAG_TYPE_STRING', [longBody, longBody + 'x'], 'text')).toBe('body');
+  });
+  it('plain short strings stay text', () => {
+    expect(srRoleFromValue('TAG_TYPE_STRING', ['a', 'b', 'a', 'b'], 'text')).toBe('text');
   });
   it('returns hint when no refinement applies', () => {
     expect(srRoleFromValue('TAG_TYPE_INT', [1, 2, 3, 4, 5, 6, 7, 8, 9, 10], 'number')).toBe('number');
@@ -132,7 +136,7 @@ describe('srInferRole — full 4-layer ladder', () => {
     });
   });
   it('layer 2 (value) refines layer 1 (type)', () => {
-    expect(srInferRole('user_id', 'TAG_TYPE_STRING', ['u1', 'u2', 'u3', 'u1'], NO_OVERRIDES)).toEqual({
+    expect(srInferRole('request_id', 'TAG_TYPE_STRING', ['cb2f9b0583567d4e', 'e466554881174205'], NO_OVERRIDES)).toEqual({
       role: 'id', layer: 2,
     });
   });

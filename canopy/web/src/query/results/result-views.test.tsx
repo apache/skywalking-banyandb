@@ -200,9 +200,9 @@ describe('StreamResultView', () => {
     renderWithRouter(
       <StreamResultView response={stream} state={STREAM_STATE} showTrace={false} setShowTrace={() => {}} />,
     );
-    // 'ERROR' severity should appear in the console (one of the 12 seeded events)
+    // 'ERROR' severity should appear as a colored pill in the console.
     expect(screen.getAllByText(/ERROR/).length).toBeGreaterThan(0);
-    // service names from the seed
+    // service names from the seed should render as service pills.
     expect(screen.getAllByText(/order-svc/).length).toBeGreaterThan(0);
   });
 
@@ -213,6 +213,28 @@ describe('StreamResultView', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Table' }));
     // The table headers should now render — at least one column header from projection
     expect(screen.getAllByRole('columnheader').length).toBeGreaterThan(0);
+  });
+
+  it('opens the Tag rendering popover and lets the user override a role', () => {
+    renderWithRouter(
+      <StreamResultView response={stream} state={STREAM_STATE} showTrace={false} setShowTrace={() => {}} />,
+    );
+    fireEvent.click(screen.getByRole('button', { name: 'Tags' }));
+    expect(screen.getByText('Tag rendering')).toBeInTheDocument();
+    // trace_id is inferred as id by convention.
+    const row = screen.getByText('trace_id').closest('.sfields-row');
+    expect(row).toBeTruthy();
+    expect(row?.querySelector('.sf-src')).toHaveTextContent(/AUTO|CONV/);
+  });
+
+  it('expands a console row to show the detail grid', () => {
+    renderWithRouter(
+      <StreamResultView response={stream} state={STREAM_STATE} showTrace={false} setShowTrace={() => {}} />,
+    );
+    const rows = document.querySelectorAll('.slog-main');
+    expect(rows.length).toBeGreaterThan(0);
+    fireEvent.click(rows[0]!);
+    expect(document.querySelector('.slog-detail')).toBeTruthy();
   });
 });
 

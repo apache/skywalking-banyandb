@@ -68,6 +68,7 @@ const SR_CONVENTIONS: Record<string, SR_ROLE> = {
   // http_status
   status: 'http_status',
   status_code: 'http_status',
+  statuscode: 'http_status',
   'status.code': 'http_status',
   http_status: 'http_status',
   'http.status': 'http_status',
@@ -76,6 +77,7 @@ const SR_CONVENTIONS: Record<string, SR_ROLE> = {
   // service
   service: 'service',
   service_name: 'service',
+  service_id: 'service',
   svc: 'service',
   'service.name': 'service',
   // id
@@ -83,6 +85,11 @@ const SR_CONVENTIONS: Record<string, SR_ROLE> = {
   traceid: 'id',
   span_id: 'id',
   spanid: 'id',
+  endpoint_id: 'id',
+  instance_id: 'id',
+  user_id: 'id',
+  userid: 'id',
+  'user.id': 'id',
   'trace.id': 'id',
   'span.id': 'id',
   // duration_ms
@@ -104,6 +111,9 @@ const SR_CONVENTIONS: Record<string, SR_ROLE> = {
   msg: 'body',
   log: 'body',
   log_message: 'body',
+  endpoint: 'body',
+  operation: 'body',
+  operation_name: 'body',
 };
 
 // Convention keys preserve the user's tag-name punctuation: 'service_name'
@@ -132,6 +142,19 @@ export const srRoleFromType = (type: SR_TAG_TYPE | string): SR_ROLE => {
   }
 };
 
+const HEXLIKE_RE = /^(?:[0-9a-f]{6,}|0x[0-9a-f]+)$/i;
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+function looksLikeId(v: unknown): boolean {
+  const s = String(v ?? '');
+  return HEXLIKE_RE.test(s) || UUID_RE.test(s);
+}
+
+function looksLikeNumber(v: unknown): boolean {
+  const s = String(v ?? '');
+  return /^-?\d+(\.\d+)?$/.test(s);
+}
+
 /** Layer 2 — refine a role from value cardinality + shape. */
 export const srRoleFromValue = (
   type: SR_TAG_TYPE | string,
@@ -142,21 +165,23 @@ export const srRoleFromValue = (
   if (type === 'TAG_TYPE_STRING_ARRAY' || type === 'TAG_TYPE_INT_ARRAY') return 'array';
   if (type === 'TAG_TYPE_TIMESTAMP') return 'time';
   if (sample.length === 0) return hint;
-  const distinct = new Set(sample.map((v) => String(v)));
-  // Long strings beat low cardinality — a short list of long bodies is a body,
-  // not an id. (Check this BEFORE the cardinality rule.)
+  // For strings, use value shape to decide between number / id / body / text.
   if (type === 'TAG_TYPE_STRING') {
     let totalLen = 0;
-    for (const v of sample) totalLen += String(v).length;
+    let numberLikeCount = 0;
+    let idLikeCount = 0;
+    for (const v of sample) {
+      const s = String(v);
+      totalLen += s.length;
+      if (looksLikeNumber(v)) numberLikeCount++;
+      else if (looksLikeId(v)) idLikeCount++;
+    }
+    // A string column that stores numeric codes (e.g. status_code) renders as a number.
+    if (numberLikeCount === sample.length) return 'number';
+    // Long strings are bodies, even when cardinality is low.
     if (totalLen / sample.length > 40) return 'body';
-  }
-  // low cardinality + numeric → id
-  if (type === 'TAG_TYPE_INT' || type === 'TAG_TYPE_INT64') {
-    if (distinct.size <= 8 && sample.length >= 2) return 'id';
-  }
-  // low cardinality + string → id
-  if (type === 'TAG_TYPE_STRING') {
-    if (distinct.size <= 8 && sample.length >= 2) return 'id';
+    // Hex / UUID / snowflake identifiers render as id.
+    if (idLikeCount >= sample.length / 2) return 'id';
   }
   return hint;
 };
@@ -245,6 +270,22 @@ export const srColStats = (sample: readonly unknown[]): SR_COL_STATS => {
 
 // ── Semantic color helpers used by the result views ─────────────────────────
 
+/** Layer number → short source label used in the tag-rendering popover. */
+export const srLayerLabel = (layer: 1 | 2 | 3 | 4): 'TYPE' | 'AUTO' | 'CONV' | 'SET' => {
+  switch (layer) {
+    case 1: return 'TYPE';
+    case 2: return 'AUTO';
+    case 3: return 'CONV';
+    case 4: return 'SET';
+  }
+};
+
+/** All renderable roles exposed in the "shown as" override dropdown. */
+export const SR_ROLE_OPTIONS: readonly SR_ROLE[] = [
+  'severity', 'http_status', 'service', 'id', 'duration_ms', 'duration_ns',
+  'time', 'body', 'binary', 'array', 'number', 'text',
+];
+
 /** HTTP status code → semantic CSS var name (matches the handoff's srHttpColor). */
 export const srHttpColor = (v: unknown): string => {
   const n = typeof v === 'number' ? v : parseInt(String(v), 10);
@@ -272,16 +313,42 @@ export const srSeverityColor = (v: unknown): string => {
   return SR_SEVERITY[k] ?? 'var(--text)';
 };
 
-/** Format a value for display given its resolved role. */
+// Service-color palette: soft, distinguishable hues that stay readable on the
+// dark panel background. Colors are assigned deterministically by hashing the
+// service name so the same service always gets the same pill color.
+const SR_SERVICE_COLORS = [
+  '#3d82f6', '#3cc8b4', '#9b8cf0', '#d98a3c', '#e0707a',
+  '#56c2d6', '#7fc296', '#c77dbf', '#d8b13c', '#6b9fff',
+];
+
+/** Service identifier → stable accent color from the handoff palette. */
+export const srServiceColor = (v: unknown): string => {
+  const s = String(v ?? '');
+  if (!s) return 'var(--text-dim)';
+  let hash = 0;
+  for (let i = 0; i < s.length; i++) {
+    hash = (hash * 31 + s.charCodeAt(i)) >>> 0;
+  }
+  return SR_SERVICE_COLORS[hash % SR_SERVICE_COLORS.length];
+};
+
+/** Format a value for display given its resolved role.
+ *  The returned `color` is an optional CSS color the caller can apply to the
+ *  pill / text so semantic roles (severity, http_status, service, id) render
+ *  with the handoff's accent palette. */
 export const srRenderValue = (
   role: SR_ROLE,
   value: unknown,
-): { readonly display: string; readonly title?: string } => {
+): { readonly display: string; readonly title?: string; readonly color?: string } => {
   switch (role) {
     case 'binary':
       return { display: 'binary', title: 'DATA_BINARY — open inspector to view bytes' };
     case 'array':
       return { display: Array.isArray(value) ? value.join(', ') : String(value) };
+    case 'service':
+      return { display: value == null ? '' : String(value), color: srServiceColor(value) };
+    case 'id':
+      return { display: value == null ? '' : String(value), color: '#6b9fff' };
     case 'time': {
       const t = typeof value === 'number' ? value : Date.parse(String(value));
       if (!Number.isFinite(t)) return { display: String(value) };

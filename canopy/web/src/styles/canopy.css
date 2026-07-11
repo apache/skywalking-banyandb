@@ -1301,6 +1301,33 @@
   .mtbl th .sf-role { display: inline-block; margin-left: 7px; font-family: var(--mono); font-size: 8.5px; font-weight: 500; letter-spacing: .3px; text-transform: none; color: var(--text-faint); border: 1px solid var(--border); border-radius: 4px; padding: 1px 4px; vertical-align: middle; }
   .mtbl th.num .sf-role { margin-left: 5px; }
 
+  /* ============ STREAM RESULT VIEW (toolbar + view switcher) ============ */
+  .sr-toolbar { display: flex; align-items: center; gap: 12px; padding: 10px 16px; border-bottom: 1px solid var(--border); background: rgba(255,255,255,.012); }
+  .sr-count { font-size: 12.5px; color: var(--text-faint); }
+  .sr-tool-right { margin-left: auto; display: flex; align-items: center; gap: 10px; }
+  .sr-view-seg { display: inline-flex; padding: 3px; gap: 2px; background: var(--panel); border: 1px solid var(--border-strong); border-radius: 8px; }
+  .sr-view-btn { display: inline-flex; align-items: center; gap: 6px; height: 28px; padding: 0 11px; border: none; background: transparent; color: var(--text-dim); border-radius: 6px; font-size: 12px; font-weight: 500; transition: all .13s; }
+  .sr-view-btn:hover:not(:disabled) { color: var(--text); }
+  .sr-view-btn.is-on { background: var(--accent-soft); color: var(--accent); }
+  .sr-view-btn:disabled { opacity: .4; cursor: not-allowed; }
+
+  /* value pills: service / id / severity / status / number share the handoff pill shape */
+  .scat { display: inline-flex; align-items: center; height: 18px; padding: 0 7px; border-radius: 5px; font-family: var(--mono); font-size: 10.5px; font-weight: 600; letter-spacing: .3px; line-height: 1; white-space: nowrap; border: 1px solid transparent; vertical-align: middle; }
+  .scat.scat-severity,
+  .scat.scat-http_status,
+  .scat.scat-service,
+  .scat.scat-id,
+  .scat.scat-number,
+  .scat.scat-duration_ms,
+  .scat.scat-duration_ns { color: #08100a; }
+  .scat.scat-text,
+  .scat.scat-time,
+  .scat.scat-array { background: var(--panel-2); border-color: var(--border); color: var(--text-dim); font-weight: 500; }
+  .scat.scat-body { background: transparent; border-color: transparent; color: var(--text); font-family: inherit; font-size: 12.5px; font-weight: 400; letter-spacing: 0; height: auto; padding: 0; }
+
+  /* Tag rendering popover fine-tuning */
+  .sf-btn svg { color: var(--text-faint); }
+
   /* ============ TRACE RESULT VIEW (span inspector) ============ */
   .layer-tag { font-size: 9.5px; padding: 1px 6px; border-radius: 4px; display: inline-block; white-space: nowrap; justify-self: start; }
   .tin { display: flex; flex-direction: column; font-size: 12.5px; max-height: 460px; overflow: auto; }
