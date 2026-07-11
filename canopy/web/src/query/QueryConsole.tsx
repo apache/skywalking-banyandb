@@ -31,6 +31,7 @@ import { StreamResultView } from './results/StreamResultView.js';
 import { TraceResultView } from './results/TraceResultView.js';
 import { TopNResultView } from './results/TopNResultView.js';
 import { ResultEmpty } from './results/ResultEmpty.js';
+import { ResultError } from './results/ResultError.js';
 import {
   buildBydbQL, qbDataCatalog, qbEmptyWhere, qbPruneWhere, qbNewCond,
   qbProtoCatalog,
@@ -614,14 +615,16 @@ export function QueryConsole() {
               </div>
             </div>
           )}
-          {status === 'error' && (
+          {status === 'error' && errorMsg && (
             <div className="result-card">
               <div className="result-bar">
                 <span className="result-tab is-active">Result</span>
                 <span className="result-tab">Trace</span>
-                <span className="result-status"><span className="rs fail">error</span></span>
+                <span className="result-status"><span className="rs fail">failed</span></span>
               </div>
-              <div className="result-pane qb-error">{errorMsg}</div>
+              <div className="result-pane">
+                <ResultError message={errorMsg} onRetry={() => run(false)} />
+              </div>
             </div>
           )}
           {status === 'done' && response && (
