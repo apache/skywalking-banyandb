@@ -67,6 +67,14 @@ const MEASURE_STATE = {
 };
 const STREAM_STATE = { ...MEASURE_STATE, catalog: 'streams' as const, projection: ['level', 'service', 'trace_id', 'duration_ms', 'body'] };
 
+const STREAM_TAG_SPECS = [
+  { name: 'level', type: 'TAG_TYPE_STRING' },
+  { name: 'service', type: 'TAG_TYPE_STRING' },
+  { name: 'trace_id', type: 'TAG_TYPE_STRING' },
+  { name: 'duration_ms', type: 'TAG_TYPE_INT' },
+  { name: 'body', type: 'TAG_TYPE_STRING' },
+];
+
 function renderWithRouter(node: React.ReactNode) {
   return render(<MemoryRouter>{node}</MemoryRouter>);
 }
@@ -198,43 +206,51 @@ describe('MeasureResultView', () => {
 describe('StreamResultView', () => {
   it('renders the console view with severity-coded pills', () => {
     renderWithRouter(
-      <StreamResultView response={stream} state={STREAM_STATE} showTrace={false} setShowTrace={() => {}} />,
+      <StreamResultView response={stream} state={STREAM_STATE} showTrace={false} setShowTrace={() => {}} tagSpecs={STREAM_TAG_SPECS} />,
     );
-    // 'ERROR' severity should appear as a colored pill in the console.
+    // 'ERROR' severity should appear as a colored categorical badge in the console.
     expect(screen.getAllByText(/ERROR/).length).toBeGreaterThan(0);
-    // service names from the seed should render as service pills.
+    // service names from the seed should render as categorical badges.
     expect(screen.getAllByText(/order-svc/).length).toBeGreaterThan(0);
   });
 
   it('switches to the table view when the Table tab is clicked', () => {
     renderWithRouter(
-      <StreamResultView response={stream} state={STREAM_STATE} showTrace={false} setShowTrace={() => {}} />,
+      <StreamResultView response={stream} state={STREAM_STATE} showTrace={false} setShowTrace={() => {}} tagSpecs={STREAM_TAG_SPECS} />,
     );
     fireEvent.click(screen.getByRole('button', { name: 'Table' }));
-    // The table headers should now render — at least one column header from projection
+    // The table headers should now render — including the reserved timestamp + element_id columns.
     expect(screen.getAllByRole('columnheader').length).toBeGreaterThan(0);
+    expect(screen.getByRole('columnheader', { name: 'timestamp' })).toBeInTheDocument();
+    expect(screen.getByRole('columnheader', { name: 'element_id' })).toBeInTheDocument();
   });
 
   it('opens the Tag rendering popover and lets the user override a role', () => {
     renderWithRouter(
-      <StreamResultView response={stream} state={STREAM_STATE} showTrace={false} setShowTrace={() => {}} />,
+      <StreamResultView response={stream} state={STREAM_STATE} showTrace={false} setShowTrace={() => {}} tagSpecs={STREAM_TAG_SPECS} />,
     );
     fireEvent.click(screen.getByRole('button', { name: 'Tags' }));
     expect(screen.getByText('Tag rendering')).toBeInTheDocument();
-    // trace_id is inferred as id by convention.
+    // trace_id is inferred as id from its hex-like values (layer 2 / AUTO).
     const row = screen.getByText('trace_id').closest('.sfields-row');
     expect(row).toBeTruthy();
     expect(row?.querySelector('.sf-src')).toHaveTextContent(/AUTO|CONV/);
+    // Reserved spine fields are not configurable in the popover.
+    expect(screen.queryByText('element_id')).not.toBeInTheDocument();
+    expect(screen.queryByText('timestamp')).not.toBeInTheDocument();
   });
 
   it('expands a console row to show the detail grid', () => {
     renderWithRouter(
-      <StreamResultView response={stream} state={STREAM_STATE} showTrace={false} setShowTrace={() => {}} />,
+      <StreamResultView response={stream} state={STREAM_STATE} showTrace={false} setShowTrace={() => {}} tagSpecs={STREAM_TAG_SPECS} />,
     );
     const rows = document.querySelectorAll('.slog-main');
     expect(rows.length).toBeGreaterThan(0);
     fireEvent.click(rows[0]!);
     expect(document.querySelector('.slog-detail')).toBeTruthy();
+    // Reserved spine fields always appear in the detail grid.
+    expect(screen.getByText('element_id')).toBeInTheDocument();
+    expect(screen.getByText('timestamp')).toBeInTheDocument();
   });
 });
 

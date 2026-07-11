@@ -18,10 +18,9 @@
  */
 
 // StreamResultView.tsx — stream query result view (Console + Table + Fields + binary).
-// Refactored to match the handoff stream-result design:
+// Refactored to match the handoff stream-results design:
 //   - 4-layer role inference (type → value → convention → user override)
-//   - One-line summary with colored pills (service / id / severity / status / number)
-//     plus a body text segment
+//   - One-line summary with colored pills (cat badges + body + numeric meta)
 //   - Expandable row detail grid
 //   - "Tag rendering" popover to toggle summary visibility and override roles
 //   - Tags / Console / Table view-mode switcher
@@ -36,8 +35,9 @@ import {
   srInferRole,
   srRenderValue,
   srLayerLabel,
-  srSeverityColor,
-  srHttpColor,
+  srCatColor,
+  srConventionFor,
+  isValidRole,
   SR_ROLE_OPTIONS,
   type SR_ROLE,
   type SR_TAG_TYPE,
@@ -58,6 +58,7 @@ interface StreamTagConfig {
   readonly name: string;
   readonly type: string;
   readonly role: SR_ROLE;
+  readonly inferred: SR_ROLE;
   readonly layer: 1 | 2 | 3 | 4;
   readonly visible: boolean;
 }
@@ -72,20 +73,17 @@ interface Props {
   readonly tagSpecs?: readonly TagSpec[];
 }
 
-const ALL_ROLES: readonly SR_ROLE[] = SR_ROLE_OPTIONS;
+const RESERVED_FIELDS = new Set(['element_id', 'timestamp']);
 
-const ROLE_LABEL: Record<SR_ROLE, string> = {
-  severity: 'severity',
-  http_status: 'status',
-  service: 'service',
-  id: 'id',
-  duration_ms: 'duration',
-  duration_ns: 'duration',
-  time: 'time',
+const ROLE_LABEL: Record<SR_ROLE | 'auto', string> = {
+  auto: 'auto',
+  cat: 'badge',
   body: 'body',
+  id: 'id',
+  numeric: 'number',
+  time: 'time',
+  list: 'list',
   binary: 'binary',
-  array: 'array',
-  number: 'number',
   text: 'text',
 };
 
@@ -97,22 +95,33 @@ function typeLabel(type: string): string {
     case 'int64': return 'int';
     case 'data_binary': return 'binary';
     case 'string_array':
+    case 'int_array':
     case 'int64_array': return 'array';
     default: return normalized;
   }
 }
 
-function isSummaryRole(role: SR_ROLE): boolean {
-  return role === 'service' || role === 'id' || role === 'number' ||
-    role === 'severity' || role === 'http_status' || role === 'duration_ms' || role === 'duration_ns';
-}
-
-function defaultVisible(role: SR_ROLE): boolean {
-  return isSummaryRole(role);
-}
-
 function storageKey(group: string, resource: string): string {
   return `canopy.stream.render.${group}.${resource}`;
+}
+
+/** Decide which projected tags surface on the one-line summary vs. stay folded
+ *  into the expanded detail. Driven by display ROLE, never by tag name. */
+function srAutoPick(config: readonly Pick<StreamTagConfig, 'name' | 'role'>[]): Set<string> {
+  const picked = new Set<string>();
+  config
+    .filter((c) => c.role === 'cat')
+    .sort((a, b) => Number(srConventionFor(b.name) != null) - Number(srConventionFor(a.name) != null))
+    .slice(0, 3)
+    .forEach((c) => picked.add(c.name));
+  const body = config.find((c) => c.role === 'body' && !picked.has(c.name))
+    ?? config.find((c) => c.role === 'text' && !picked.has(c.name));
+  if (body) picked.add(body.name);
+  config
+    .filter((c) => c.role === 'numeric' && !picked.has(c.name))
+    .slice(0, 2)
+    .forEach((c) => picked.add(c.name));
+  return picked;
 }
 
 export function StreamResultView({ response, state, showTrace, setShowTrace, execMs, tagSpecs }: Props) {
@@ -125,8 +134,9 @@ export function StreamResultView({ response, state, showTrace, setShowTrace, exe
   const elements = useMemo(() => (response.elements ?? []) as readonly Elem[], [response]);
 
   // Tags to render: explicit projection, or all keys from the first element.
+  // element_id and timestamp are reserved spine fields and never configurable.
   const tagNames = useMemo(
-    () => (state.projection.length ? state.projection : Object.keys(elements[0] ?? {})),
+    () => (state.projection.length ? state.projection : Object.keys(elements[0] ?? {})).filter((n) => !RESERVED_FIELDS.has(n)),
     [state.projection, elements],
   );
 
@@ -143,8 +153,14 @@ export function StreamResultView({ response, state, showTrace, setShowTrace, exe
     try {
       const raw = localStorage.getItem(persistedKey);
       if (raw) {
-        const parsed = JSON.parse(raw) as { overrides?: Record<string, SR_ROLE>; visible?: Record<string, boolean> };
-        return { overrides: parsed.overrides ?? {}, visible: parsed.visible ?? {} };
+        const parsed = JSON.parse(raw) as { overrides?: Record<string, string>; visible?: Record<string, boolean> };
+        const overrides: Record<string, SR_ROLE> = {};
+        if (parsed.overrides) {
+          for (const [k, v] of Object.entries(parsed.overrides)) {
+            if (isValidRole(v)) overrides[k] = v;
+          }
+        }
+        return { overrides, visible: parsed.visible ?? {} };
       }
     } catch { /* ignore */ }
     return { overrides: {}, visible: {} };
@@ -161,23 +177,24 @@ export function StreamResultView({ response, state, showTrace, setShowTrace, exe
   }, [persistedKey, overrides, visibility]);
 
   // Resolve per-tag config (type / inferred role / override / visibility).
-  const tagConfig = useMemo((): readonly StreamTagConfig[] => {
+  const inferredConfig = useMemo((): readonly StreamTagConfig[] => {
     return tagNames.map((name) => {
       const type = typeMap[name] ?? 'TAG_TYPE_STRING';
       const sample = elements.map((e) => e[name]).filter((v) => v !== undefined);
       const inferred = srInferRole(name, type, sample, overrides);
-      const visible = visibility[name] ?? defaultVisible(inferred.role);
-      return { name, type, role: inferred.role, layer: inferred.layer, visible };
+      return { name, type, role: inferred.role, inferred: inferred.role, layer: inferred.layer, visible: false };
     });
-  }, [tagNames, typeMap, elements, overrides, visibility]);
+  }, [tagNames, typeMap, elements, overrides]);
 
-  const configMap = useMemo(() => {
-    const map: Record<string, StreamTagConfig> = {};
-    for (const c of tagConfig) map[c.name] = c;
-    return map;
-  }, [tagConfig]);
+  const tagConfig = useMemo((): readonly StreamTagConfig[] => {
+    const autoPicked = srAutoPick(inferredConfig);
+    return inferredConfig.map((c) => ({
+      ...c,
+      visible: visibility[c.name] ?? autoPicked.has(c.name),
+    }));
+  }, [inferredConfig, visibility]);
 
-  const setOverride = (name: string, role: SR_ROLE) => {
+  const setOverride = (name: string, role: SR_ROLE | null) => {
     setOverrides((prev) => {
       const next = { ...prev };
       if (role) next[name] = role;
@@ -187,17 +204,7 @@ export function StreamResultView({ response, state, showTrace, setShowTrace, exe
   };
 
   const toggleVisible = (name: string) => {
-    setVisibility((prev) => ({ ...prev, [name]: !(prev[name] ?? defaultVisible(configMap[name]?.role ?? 'text')) }));
-  };
-
-  const onExport = () => {
-    const blob = new Blob([JSON.stringify(response, null, 2)], { type: 'application/json' });
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement('a');
-    a.href = url;
-    a.download = `stream-result-${Date.now()}.json`;
-    a.click();
-    URL.revokeObjectURL(url);
+    setVisibility((prev) => ({ ...prev, [name]: !(prev[name] ?? srAutoPick(inferredConfig).has(name)) }));
   };
 
   const count = elements.length;
@@ -221,6 +228,7 @@ export function StreamResultView({ response, state, showTrace, setShowTrace, exe
           {showFields && (
             <TagRenderingPopover
               config={tagConfig}
+              overrides={overrides}
               onClose={() => setShowFields(false)}
               onToggle={toggleVisible}
               onRoleChange={setOverride}
@@ -288,44 +296,43 @@ function ConsoleView({ elements, config, expanded, setExpanded, setInspecting }:
     setExpanded(next);
   };
 
-  // Body tag is the first tag with role 'body'; fallback to the first 'text'
-  // tag that is not a metadata column (element_id / timestamp) so
-  // endpoint-like columns become the summary line.
-  const bodyTag = config.find((c) => c.role === 'body') ??
-    config.find((c) => c.role === 'text' && !/^(element_id|timestamp|ts|time)$/.test(c.name));
-
   return (
     <div className="slog">
       {elements.map((e, i) => {
-        const tsRaw = e.timestamp ?? e.ts ?? e.time;
-        const timeStr = formatTimestamp(tsRaw);
+        const timeStr = formatTimestamp(e.timestamp);
         const isOpen = expanded.has(i);
+        const visible = config.filter((c) => c.visible);
+        const badgeCols = visible.filter((c) => c.role === 'cat');
+        const bodyCol = visible.find((c) => c.role === 'body') ?? visible.find((c) => c.role === 'text');
+        const metaCols = visible.filter((c) => c.role === 'numeric');
+        const bodyVal = bodyCol ? e[bodyCol.name] : e.element_id;
         return (
           <div key={i} className={'slog-row' + (isOpen ? ' is-open' : '')}>
             <div className="slog-main" onClick={() => toggle(i)}>
               <span className="slog-chev">{isOpen ? '▼' : '▶'}</span>
               <span className="slog-ts">{timeStr}</span>
-              <span className="slog-line">
-                <span className="slog-badges">
-                  {config.filter((c) => c.visible && c.role !== 'body').map((c) => (
-                    <ValuePill key={c.name} tag={c.name} role={c.role} value={e[c.name]} setInspecting={setInspecting} />
-                  ))}
-                </span>
-                {bodyTag && (
-                  <span className="slog-body">
-                    {srRenderValue(bodyTag.role, e[bodyTag.name]).display}
-                  </span>
+              <div className="slog-line">
+                {badgeCols.length > 0 && (
+                  <span className="slog-badges">{badgeCols.map((c) => <ValuePill key={c.name} tag={c.name} role={c.role} value={e[c.name]} setInspecting={setInspecting} />)}</span>
                 )}
-              </span>
+                <span className={'slog-body' + (bodyCol && bodyCol.role === 'body' ? '' : ' is-fallback')}>
+                  {String(bodyVal ?? '')}
+                </span>
+                {metaCols.length > 0 && (
+                  <span className="slog-meta">{metaCols.map((c) => (
+                    <span key={c.name} className="slog-metacell"><ValuePill tag={c.name} role={c.role} value={e[c.name]} setInspecting={setInspecting} /></span>
+                  ))}</span>
+                )}
+              </div>
             </div>
             {isOpen && (
               <div className="slog-detail">
+                <div className="slog-kv"><span className="slog-k">element_id</span><span className="slog-v mono">{String(e.element_id ?? '')}</span></div>
+                <div className="slog-kv"><span className="slog-k">timestamp</span><span className="slog-v mono">{timeStr}</span></div>
                 {config.map((c) => (
                   <div key={c.name} className="slog-kv">
                     <span className="slog-k">{c.name}</span>
-                    <span className="slog-v">
-                      <ValuePill tag={c.name} role={c.role} value={e[c.name]} setInspecting={setInspecting} />
-                    </span>
+                    <span className="slog-v"><ValuePill tag={c.name} role={c.role} value={e[c.name]} setInspecting={setInspecting} /></span>
                   </div>
                 ))}
               </div>
@@ -343,7 +350,7 @@ function TableView({ elements, config, setInspecting }: {
   setInspecting: (v: { tag: string; bytes: Uint8Array }) => void;
 }) {
   if (elements.length === 0) return <ResultEmpty title="No events" text="The stream query matched no events in this window." />;
-  const cols = config.map((c) => c.name);
+  const cols = ['timestamp', ...config.map((c) => c.name), 'element_id'];
   return (
     <div className="rv-table-wrap">
       <table className="rv-table">
@@ -354,12 +361,10 @@ function TableView({ elements, config, setInspecting }: {
           {elements.map((e, i) => (
             <tr key={i}>
               {cols.map((c) => {
+                if (c === 'timestamp') return <td key={c} className="mono dim">{formatTimestamp(e.timestamp)}</td>;
+                if (c === 'element_id') return <td key={c} className="mono faint">{String(e.element_id ?? '')}</td>;
                 const cfg = config.find((x) => x.name === c)!;
-                return (
-                  <td key={c}>
-                    <ValuePill tag={c} role={cfg.role} value={e[c]} setInspecting={setInspecting} />
-                  </td>
-                );
+                return <td key={c}><ValuePill tag={c} role={cfg.role} value={e[c]} setInspecting={setInspecting} /></td>;
               })}
             </tr>
           ))}
@@ -375,20 +380,17 @@ function ValuePill({ tag, role, value, setInspecting }: {
   value: unknown;
   setInspecting?: (v: { tag: string; bytes: Uint8Array }) => void;
 }) {
-  const rendered = srRenderValue(role, value);
-  const color = role === 'severity' ? srSeverityColor(value)
-    : role === 'http_status' ? srHttpColor(value)
-    : rendered.color;
+  if (value == null || value === '') return <span className="mono faint">∅</span>;
 
   if (role === 'binary' && value instanceof Uint8Array) {
     return (
       <button type="button" className="sbin sbin-btn" onClick={() => setInspecting?.({ tag, bytes: value })}>
-        <IconBinary width={11} height={11} /> {rendered.display} <span className="sbin-caret">▾</span>
+        <IconBinary width={11} height={11} /> binary <span className="sbin-caret">▾</span>
       </button>
     );
   }
 
-  if (role === 'array' && Array.isArray(value)) {
+  if (role === 'list' && Array.isArray(value)) {
     return (
       <span className="sarr">
         {value.map((v, i) => (
@@ -398,43 +400,54 @@ function ValuePill({ tag, role, value, setInspecting }: {
     );
   }
 
-  const style: React.CSSProperties = color ? {
-    background: color,
-    color: isLightColor(color) ? '#08100a' : undefined,
-    borderColor: 'transparent',
-  } : {};
-
-  return (
-    <span className={'scat scat-' + role} style={style} title={rendered.title}>
-      {rendered.display}
-    </span>
-  );
-}
-
-function isLightColor(color: string): boolean {
-  // Heuristic: the service palette and id blue are light enough that dark text
-  // reads better. Semantic vars are not colors, so they return false.
-  if (color.startsWith('var(')) return false;
-  const light = ['#3d82f6', '#6b9fff', '#56c2d6', '#7fc296', '#3cc8b4', '#9b8cf0', '#d98a3c', '#e0707a', '#c77dbf', '#d8b13c'];
-  return light.includes(color);
+  switch (role) {
+    case 'time':
+      return <span className="snum dim">{formatTimestamp(value)}</span>;
+    case 'numeric': {
+      const rendered = srRenderValue(role, value, tag);
+      return <span className="snum strong">{rendered.display}</span>;
+    }
+    case 'id': {
+      const rendered = srRenderValue(role, value, tag);
+      return <span className="sid" title={rendered.title}>{rendered.display}</span>;
+    }
+    case 'cat': {
+      const color = srCatColor(tag, value);
+      return (
+        <span
+          className="scat"
+          style={{ color, background: `color-mix(in srgb, ${color} 15%, transparent)`, borderColor: `color-mix(in srgb, ${color} 32%, transparent)` }}
+        >
+          {String(value)}
+        </span>
+      );
+    }
+    case 'body':
+      return <span className="sbody">{String(value)}</span>;
+    default:
+      return <span className="mono dim">{String(value)}</span>;
+  }
 }
 
 function formatTimestamp(raw: unknown): string {
   if (raw == null) return '';
+  let n: number;
   if (typeof raw === 'number') {
-    const d = new Date(raw > 1e12 ? raw : raw * 1000);
-    return d.toISOString().replace('T', ' ').replace('Z', '');
+    n = raw > 1e12 ? raw : raw * 1000;
+  } else {
+    n = Date.parse(String(raw));
   }
-  const d = new Date(String(raw));
-  if (Number.isNaN(d.getTime())) return String(raw);
-  return d.toISOString().replace('T', ' ').replace('Z', '');
+  if (!Number.isFinite(n)) return String(raw);
+  const d = new Date(n);
+  return `${String(d.getUTCHours()).padStart(2, '0')}:${String(d.getUTCMinutes()).padStart(2, '0')}:${String(d.getUTCSeconds()).padStart(2, '0')}.${String(d.getUTCMilliseconds()).padStart(3, '0')}`;
 }
 
-function TagRenderingPopover({ config, onClose, onToggle, onRoleChange }: {
+function TagRenderingPopover({ config, overrides, onClose, onToggle, onRoleChange }: {
   config: readonly StreamTagConfig[];
+  overrides: Record<string, SR_ROLE>;
   onClose: () => void;
   onToggle: (name: string) => void;
-  onRoleChange: (name: string, role: SR_ROLE) => void;
+  onRoleChange: (name: string, role: SR_ROLE | null) => void;
 }) {
   // Close when clicking outside the popover.
   const selfRef = useRef<HTMLDivElement | null>(null);
@@ -469,10 +482,16 @@ function TagRenderingPopover({ config, onClose, onToggle, onRoleChange }: {
             <span className="sf-arrow">→</span>
             <select
               className="sf-sel"
-              value={c.role}
-              onChange={(e) => onRoleChange(c.name, e.target.value as SR_ROLE)}
+              value={overrides[c.name] ?? 'auto'}
+              onChange={(e) => {
+                const v = e.target.value;
+                onRoleChange(c.name, v === 'auto' ? null : (v as SR_ROLE));
+              }}
             >
-              {ALL_ROLES.map((r) => <option key={r} value={r}>{ROLE_LABEL[r]}</option>)}
+              <option value="auto">auto · {ROLE_LABEL[c.inferred]}</option>
+              {SR_ROLE_OPTIONS.filter((r) => r !== 'auto').map((r) => (
+                <option key={r} value={r}>{ROLE_LABEL[r as SR_ROLE]}</option>
+              ))}
             </select>
             <span className={'sf-src ' + srLayerLabel(c.layer).toLowerCase()}>{srLayerLabel(c.layer)}</span>
           </div>

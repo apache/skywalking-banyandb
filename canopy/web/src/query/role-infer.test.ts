@@ -21,7 +21,7 @@ import { describe, it, expect } from 'vitest';
 import {
   srRoleFromType, srRoleFromValue, srRoleFromConvention, srRoleFromOverride,
   srInferRole, srInferRoleFromSchema, srColStats,
-  srHttpColor, srSeverityColor, srRenderValue,
+  srHttpColor, srSeverityColor, srRenderValue, srCatColor,
   type SR_ROLE,
 } from './role-infer.js';
 
@@ -31,16 +31,16 @@ describe('Layer 1 — srRoleFromType', () => {
   it('DATA_BINARY → binary', () => {
     expect(srRoleFromType('TAG_TYPE_DATA_BINARY')).toBe('binary');
   });
-  it('STRING_ARRAY / INT_ARRAY → array', () => {
-    expect(srRoleFromType('TAG_TYPE_STRING_ARRAY')).toBe('array');
-    expect(srRoleFromType('TAG_TYPE_INT_ARRAY')).toBe('array');
+  it('STRING_ARRAY / INT_ARRAY → list', () => {
+    expect(srRoleFromType('TAG_TYPE_STRING_ARRAY')).toBe('list');
+    expect(srRoleFromType('TAG_TYPE_INT_ARRAY')).toBe('list');
   });
   it('TIMESTAMP → time', () => {
     expect(srRoleFromType('TAG_TYPE_TIMESTAMP')).toBe('time');
   });
-  it('INT / INT64 → number', () => {
-    expect(srRoleFromType('TAG_TYPE_INT')).toBe('number');
-    expect(srRoleFromType('TAG_TYPE_INT64')).toBe('number');
+  it('INT / INT64 → numeric', () => {
+    expect(srRoleFromType('TAG_TYPE_INT')).toBe('numeric');
+    expect(srRoleFromType('TAG_TYPE_INT64')).toBe('numeric');
   });
   it('STRING (and unknown) → text', () => {
     expect(srRoleFromType('TAG_TYPE_STRING')).toBe('text');
@@ -49,9 +49,6 @@ describe('Layer 1 — srRoleFromType', () => {
 });
 
 describe('Layer 2 — srRoleFromValue', () => {
-  it('numeric strings in a STRING column → number', () => {
-    expect(srRoleFromValue('TAG_TYPE_STRING', ['200', '404', '503', '200'], 'text')).toBe('number');
-  });
   it('hex / uuid strings → id', () => {
     expect(srRoleFromValue('TAG_TYPE_STRING', ['cb2f9b0583567d4e', 'e466554881174205'], 'text')).toBe('id');
     expect(srRoleFromValue('TAG_TYPE_STRING', ['550e8400-e29b-41d4-a716-446655440000'], 'text')).toBe('id');
@@ -60,63 +57,51 @@ describe('Layer 2 — srRoleFromValue', () => {
     const longBody = 'a'.repeat(50);
     expect(srRoleFromValue('TAG_TYPE_STRING', [longBody, longBody + 'x'], 'text')).toBe('body');
   });
+  it('closed string set → cat', () => {
+    expect(srRoleFromValue('TAG_TYPE_STRING', ['INFO', 'DEBUG', 'WARN', 'INFO', 'DEBUG', 'WARN'], 'text')).toBe('cat');
+  });
   it('plain short strings stay text', () => {
-    expect(srRoleFromValue('TAG_TYPE_STRING', ['a', 'b', 'a', 'b'], 'text')).toBe('text');
+    expect(srRoleFromValue('TAG_TYPE_STRING', ['a', 'b', 'c', 'd'], 'text')).toBe('text');
+  });
+  it('tiny int set → cat', () => {
+    expect(srRoleFromValue('TAG_TYPE_INT', [1, 2, 1, 2, 1, 2], 'numeric')).toBe('cat');
   });
   it('returns hint when no refinement applies', () => {
-    expect(srRoleFromValue('TAG_TYPE_INT', [1, 2, 3, 4, 5, 6, 7, 8, 9, 10], 'number')).toBe('number');
+    expect(srRoleFromValue('TAG_TYPE_INT', [1, 2, 3, 4, 5, 6, 7, 8, 9, 10], 'numeric')).toBe('numeric');
   });
 });
 
 describe('Layer 3 — srRoleFromConvention (name-based)', () => {
-  it('level → severity', () => {
-    expect(srRoleFromConvention('level')).toBe('severity');
-    expect(srRoleFromConvention('Level')).toBe('severity');
-    expect(srRoleFromConvention('log_level')).toBe('severity');
-    expect(srRoleFromConvention('log.level')).toBe('severity');
+  it('level / severity → cat', () => {
+    expect(srRoleFromConvention('level')).toBe('cat');
+    expect(srRoleFromConvention('Level')).toBe('cat');
+    expect(srRoleFromConvention('log_level')).toBe('cat');
+    expect(srRoleFromConvention('log.level')).toBe('cat');
+    expect(srRoleFromConvention('severity')).toBe('cat');
   });
-  it('status / http_status → http_status', () => {
-    expect(srRoleFromConvention('status')).toBe('http_status');
-    expect(srRoleFromConvention('status_code')).toBe('http_status');
-    expect(srRoleFromConvention('http_status')).toBe('http_status');
-    expect(srRoleFromConvention('http.status')).toBe('http_status');
+  it('status / http_status_code → cat', () => {
+    expect(srRoleFromConvention('status_code')).toBe('cat');
+    expect(srRoleFromConvention('http_status_code')).toBe('cat');
+    expect(srRoleFromConvention('http.status_code')).toBe('cat');
   });
-  it('duration → duration_ms', () => {
-    expect(srRoleFromConvention('duration')).toBe('duration_ms');
-    expect(srRoleFromConvention('duration_ms')).toBe('duration_ms');
-    expect(srRoleFromConvention('latency_ms')).toBe('duration_ms');
-    expect(srRoleFromConvention('elapsed')).toBe('duration_ms');
+  it('span_layer → cat', () => {
+    expect(srRoleFromConvention('span_layer')).toBe('cat');
   });
-  it('service / service_name → service', () => {
-    expect(srRoleFromConvention('service')).toBe('service');
-    // The user's complaint: a real tag named `service_name` must resolve
-    // without the lookup stripping the underscore.
-    expect(srRoleFromConvention('service_name')).toBe('service');
-    expect(srRoleFromConvention('Service_Name')).toBe('service');
-    expect(srRoleFromConvention('service.name')).toBe('service');
-  });
-  it('trace_id / span_id → id', () => {
-    expect(srRoleFromConvention('trace_id')).toBe('id');
-    expect(srRoleFromConvention('span_id')).toBe('id');
-    expect(srRoleFromConvention('TraceId')).toBe('id');
-  });
-  it('body / message → body', () => {
-    expect(srRoleFromConvention('message')).toBe('body');
-    expect(srRoleFromConvention('log_message')).toBe('body');
-  });
-  it('returns null for unknown names', () => {
+  it('returns null for names with no convention', () => {
+    expect(srRoleFromConvention('duration')).toBeNull();
+    expect(srRoleFromConvention('service')).toBeNull();
+    expect(srRoleFromConvention('service_name')).toBeNull();
+    expect(srRoleFromConvention('trace_id')).toBeNull();
+    expect(srRoleFromConvention('body')).toBeNull();
     expect(srRoleFromConvention('definitely_not_a_known_field')).toBeNull();
-    // Critically: servicename (no underscore) is NOT the same as service_name.
-    // The old normalization collapsed them; we no longer do.
-    expect(srRoleFromConvention('servicename')).toBeNull();
   });
 });
 
 describe('Layer 4 — srRoleFromOverride', () => {
   it('returns the override for known names', () => {
-    expect(srRoleFromOverride('foo', { foo: 'severity' })).toBe('severity');
-    const m = new Map<string, SR_ROLE>([['foo', 'severity']]);
-    expect(srRoleFromOverride('foo', m)).toBe('severity');
+    expect(srRoleFromOverride('foo', { foo: 'cat' })).toBe('cat');
+    const m = new Map<string, SR_ROLE>([['foo', 'id']]);
+    expect(srRoleFromOverride('foo', m)).toBe('id');
   });
   it('returns null for unknown names', () => {
     expect(srRoleFromOverride('foo', {})).toBeNull();
@@ -126,13 +111,13 @@ describe('Layer 4 — srRoleFromOverride', () => {
 
 describe('srInferRole — full 4-layer ladder', () => {
   it('layer 4 (override) wins over convention / type / value', () => {
-    expect(srInferRole('level', 'TAG_TYPE_STRING', ['INFO'], { level: 'service' })).toEqual({
-      role: 'service', layer: 4,
+    expect(srInferRole('level', 'TAG_TYPE_STRING', ['INFO'], { level: 'id' })).toEqual({
+      role: 'id', layer: 4,
     });
   });
   it('layer 3 (convention) wins over type / value', () => {
     expect(srInferRole('level', 'TAG_TYPE_STRING', ['INFO'], NO_OVERRIDES)).toEqual({
-      role: 'severity', layer: 3,
+      role: 'cat', layer: 3,
     });
   });
   it('layer 2 (value) refines layer 1 (type)', () => {
@@ -149,8 +134,8 @@ describe('srInferRole — full 4-layer ladder', () => {
 
 describe('srInferRoleFromSchema — when no sample values are available', () => {
   it('uses override > convention > type', () => {
-    expect(srInferRoleFromSchema('level', 'TAG_TYPE_STRING', {})).toEqual({ role: 'severity', layer: 3 });
-    expect(srInferRoleFromSchema('level', 'TAG_TYPE_STRING', { level: 'service' })).toEqual({ role: 'service', layer: 4 });
+    expect(srInferRoleFromSchema('level', 'TAG_TYPE_STRING', {})).toEqual({ role: 'cat', layer: 3 });
+    expect(srInferRoleFromSchema('level', 'TAG_TYPE_STRING', { level: 'id' })).toEqual({ role: 'id', layer: 4 });
     expect(srInferRoleFromSchema('payload', 'TAG_TYPE_STRING', {})).toEqual({ role: 'text', layer: 1 });
   });
 });
@@ -168,6 +153,10 @@ describe('srColStats', () => {
     expect(s.total).toBe(4);
     expect(s.min).toBe(1);
     expect(s.max).toBe(4);
+  });
+  it('flags hex/uuid identifiers as idLike', () => {
+    const s = srColStats(['cb2f9b0583567d4e', 'e466554881174205']);
+    expect(s.idLike).toBe(true);
   });
   it('returns zeros for an empty sample', () => {
     expect(srColStats([])).toEqual({ distinct: 0, total: 0 });
@@ -188,22 +177,37 @@ describe('semantic colors', () => {
     expect(srSeverityColor('INFO')).toBe('var(--accent)');
     expect(srSeverityColor('???')).toBe('var(--text)');
   });
+  it('srCatColor uses convention maps', () => {
+    expect(srCatColor('level', 'ERROR')).toBe('var(--danger)');
+    expect(srCatColor('status_code', 503)).toBe('var(--danger)');
+  });
 });
 
 describe('srRenderValue', () => {
-  it('renders array as comma-list', () => {
-    expect(srRenderValue('array', ['a', 'b', 'c']).display).toBe('a, b, c');
+  it('renders list as comma-list', () => {
+    expect(srRenderValue('list', ['a', 'b', 'c']).display).toBe('a, b, c');
+  });
+  it('renders id truncated', () => {
+    expect(srRenderValue('id', 'cb2f9b0583567d4e').display).toMatch(/^cb2f9b0…7d4e$/);
   });
   it('renders time as ISO', () => {
     const r = srRenderValue('time', 1700000000000);
     expect(r.display.startsWith('2023-')).toBe(true);
   });
-  it('renders duration_ms under 1s as ms, over 1s as s', () => {
-    expect(srRenderValue('duration_ms', 250).display).toBe('250 ms');
-    expect(srRenderValue('duration_ms', 2500).display).toBe('2.50 s');
+  it('renders numeric with locale', () => {
+    expect(srRenderValue('numeric', 2500).display).toBe('2,500');
+  });
+  it('renders duration-named numeric as ms/s', () => {
+    expect(srRenderValue('numeric', 250, 'duration_ms').display).toBe('250 ms');
+    expect(srRenderValue('numeric', 2500, 'duration_ms').display).toBe('2.50 s');
   });
   it('renders binary as the binary placeholder with a tooltip', () => {
     expect(srRenderValue('binary', null).display).toBe('binary');
     expect(srRenderValue('binary', null).title).toContain('DATA_BINARY');
+  });
+  it('renders cat with a color when name is provided', () => {
+    const r = srRenderValue('cat', 'ERROR', 'level');
+    expect(r.display).toBe('ERROR');
+    expect(r.color).toBe('var(--danger)');
   });
 });
