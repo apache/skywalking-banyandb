@@ -556,7 +556,7 @@ export function QueryConsole() {
                     type="button"
                     className="btn btn-primary"
                     disabled={status === 'running'}
-                    onClick={run}
+                    onClick={() => run(false)}
                   >
                     <span aria-hidden="true">▶</span>
                     {status === 'running' ? 'Running…' : 'Run'}
@@ -600,7 +600,7 @@ export function QueryConsole() {
               </div>
             </div>
           )}
-          {status === 'running' && (
+          {status === 'running' && !response && (
             <div className="result-card">
               <div className="result-bar">
                 <span className="result-tab is-active">Result</span>
@@ -627,7 +627,7 @@ export function QueryConsole() {
               </div>
             </div>
           )}
-          {status === 'done' && response && (
+          {response && (
             <>
               <ResultViewRouter
                 state={state}

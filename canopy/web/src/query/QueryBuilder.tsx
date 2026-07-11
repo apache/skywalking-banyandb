@@ -987,7 +987,7 @@ export function QueryBuilder({
           type="button"
           className="btn btn-primary"
           disabled={isRunning}
-          onClick={onRun}
+          onClick={() => onRun()}
         >
           <IconPlay width={15} height={15} /> Run
         </button>
