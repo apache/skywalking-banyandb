@@ -463,8 +463,8 @@ function buildSummaries(state: QBBuilderState): Record<string, string> {
     groupBy: (state.groupBy ?? []).length ? state.groupBy.join(', ') : 'no grouping',
     time: timeTxt,
     order: state.catalog === 'topn'
-      ? `value ${(state.orderDir || 'DESC').toLowerCase()} · limit ${state.limit}`
-      : `${state.orderField || 'time'} ${(state.orderDir || 'DESC').toLowerCase()} · limit ${state.limit}`,
+      ? `value ${(state.orderDir || 'DESC').toLowerCase()} · limit ${state.limit}${state.offset ? ` · offset ${state.offset}` : ''}`
+      : `${state.orderField || 'time'} ${(state.orderDir || 'DESC').toLowerCase()} · limit ${state.limit}${state.offset ? ` · offset ${state.offset}` : ''}`,
     top: `top ${state.topN} series`,
     agg: state.aggFn ? `${state.aggFn.toLowerCase()} over range` : 'pre-aggregated value',
     orderTopn: `value ${(state.orderDir || 'DESC').toLowerCase()}`,
@@ -894,6 +894,16 @@ export function QueryBuilder({
               value={state.limit}
               onChange={(e) => onChange({ limit: Math.max(1, Number(e.target.value) || 0) })}
             />
+            <label className="qb-inline-kw">OFFSET</label>
+            <input
+              className="qb-input qb-num mono"
+              type="number"
+              min={0}
+              max={100000}
+              aria-label="Offset"
+              value={state.offset}
+              onChange={(e) => onChange({ offset: Math.max(0, Number(e.target.value) || 0) })}
+            />
           </div>
         </QBSection>
       )}
@@ -951,6 +961,16 @@ export function QueryBuilder({
                 aria-label="Limit"
                 value={state.limit}
                 onChange={(e) => onChange({ limit: Math.max(1, Number(e.target.value) || 0) })}
+              />
+              <label className="qb-inline-kw">OFFSET</label>
+              <input
+                className="qb-input qb-num mono"
+                type="number"
+                min={0}
+                max={100000}
+                aria-label="Offset"
+                value={state.offset}
+                onChange={(e) => onChange({ offset: Math.max(0, Number(e.target.value) || 0) })}
               />
             </div>
           </QBSection>
