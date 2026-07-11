@@ -128,6 +128,7 @@ export function QueryConsole() {
   // Builder post-run accordion: collapse clauses into summaries after the first run.
   const [builderCompact, setBuilderCompact] = useState(true);
   const [builderOpenSection, setBuilderOpenSection] = useState<string | null>(null);
+  const [isResizing, setIsResizing] = useState(false);
   const railDragRef = useRef(false);
 
   // Load groups
@@ -438,17 +439,19 @@ export function QueryConsole() {
     e.preventDefault();
     const startX = e.clientX;
     const startW = railW;
+    setIsResizing(true);
+    railDragRef.current = true;
+    document.body.classList.add('qb-resizing');
     const move = (ev: PointerEvent) => {
       const w = Math.min(QB_RAIL_MAX, Math.max(QB_RAIL_MIN, startW + (ev.clientX - startX)));
       setRailW(w);
-      railDragRef.current = true;
     };
     const up = () => {
+      setIsResizing(false);
       window.removeEventListener('pointermove', move);
       window.removeEventListener('pointerup', up);
       document.body.classList.remove('qb-resizing');
     };
-    document.body.classList.add('qb-resizing');
     window.addEventListener('pointermove', move);
     window.addEventListener('pointerup', up);
   };
@@ -512,11 +515,11 @@ export function QueryConsole() {
                 openSection={builderOpenSection}
                 setOpenSection={setBuilderOpenSection}
               />
-              <div className="qb-rail-foot">
-                {codeEdited && (
+              {codeEdited && (
+                <div className="qb-rail-foot">
                   <span className="qb-rail-note">Code edited · use Resync to pull builder changes in</span>
-                )}
-              </div>
+                </div>
+              )}
             </>
           ) : (
             <>
@@ -558,12 +561,20 @@ export function QueryConsole() {
           {groupsError && <div className="qb-error">Could not load groups: {groupsError}</div>}
         </div>
 
-        <div className="qb-resizer" role="separator" aria-orientation="vertical" aria-label="Resize builder rail" tabIndex={0} onPointerDown={startRailDrag}
+        <div
+          className={'qb-resizer' + (isResizing ? ' is-dragging' : '')}
+          role="separator"
+          aria-orientation="vertical"
+          aria-label="Resize builder rail"
+          tabIndex={0}
+          onPointerDown={startRailDrag}
           onKeyDown={(e) => {
             if (e.key === 'ArrowLeft') { e.preventDefault(); setRailW((w) => Math.max(QB_RAIL_MIN, w - 16)); }
             else if (e.key === 'ArrowRight') { e.preventDefault(); setRailW((w) => Math.min(QB_RAIL_MAX, w + 16)); }
           }}
-        />
+        >
+          <div className="qb-resizer-grip" />
+        </div>
 
         <div className="qb-results">
           {status === 'idle' && (

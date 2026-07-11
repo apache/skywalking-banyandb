@@ -524,26 +524,39 @@
   /* ============ QUERY EDITOR ============ */
   /* Query page = full-height split: builder docks left as a 348px rail with its
      own scroll; results own the right side full-height (explore pattern). */
-  .query-body { max-width: none; height: 100%; display: flex; flex-direction: column; }
-  .query-body .page-head { margin-bottom: 18px; }
+  .query-body { max-width: none; height: 100%; display: flex; flex-direction: column; padding: 24px 32px 32px; }
+  .query-body .page-head { margin-bottom: 22px; }
   /* qb-page-head — horizontal title-row so the actions pin to the right edge */
   /* qb-page-head — slim header matching the handoff: title + meta on the left,
      Builder/Code mode switch pinned to the right. */
   .qb-page-head .page-title-row { display: flex; align-items: flex-start; justify-content: space-between; gap: 24px; width: 100%; }
-  .qb-page-head .page-title { font-size: 21px; font-weight: 700; letter-spacing: -.02em; line-height: 1.2; margin: 0; }
-  .qb-page-head .page-meta { font-size: 13px; color: var(--text-dim); margin: 2px 0 0; }
+  .qb-page-head .page-title { font-size: 28px; font-weight: 700; letter-spacing: -.02em; line-height: 1.15; margin: 0; }
+  .qb-page-head .page-meta { font-size: 14px; color: var(--text-dim); margin: 4px 0 0; }
   .qb-page-head .page-actions { display: flex; align-items: center; gap: 9px; flex-shrink: 0; padding-top: 2px; }
   .qb-split { flex: 1; min-height: 0; display: flex; align-items: stretch; gap: 0; }
   .qb-rail { width: var(--qb-rail-w, 348px); flex-shrink: 0; min-height: 0; display: flex; flex-direction: column; }
   /* draggable divider between the builder rail and results */
   .qb-resizer {
-    flex: 0 0 8px; align-self: stretch;
+    flex: 0 0 10px; align-self: stretch;
     display: flex; align-items: center; justify-content: center;
     background: transparent; cursor: col-resize; touch-action: none; outline: none;
   }
-  .qb-resizer-grip { width: 1px; height: 100%; border-radius: 1px; background: var(--border); transition: background .13s, width .13s; }
-  .qb-resizer:hover .qb-resizer-grip, .qb-resizer:focus-visible .qb-resizer-grip { background: var(--border-strong); width: 3px; }
-  .qb-resizer.is-dragging .qb-resizer-grip { background: var(--accent); width: 3px; }
+  .qb-resizer-grip {
+    position: relative;
+    width: 0; height: 100%;
+    background: transparent;
+  }
+  /* centered drag handle */
+  .qb-resizer-grip::before {
+    content: '';
+    position: absolute; top: 50%; left: 50%;
+    transform: translate(-50%, -50%);
+    width: 3px; height: 32px; border-radius: 2px;
+    background: rgba(255,255,255,.18);
+    transition: background .13s, width .13s;
+  }
+  .qb-resizer:hover .qb-resizer-grip::before, .qb-resizer:focus-visible .qb-resizer-grip::before { background: rgba(255,255,255,.30); width: 3px; }
+  .qb-resizer.is-dragging .qb-resizer-grip::before, body.qb-resizing .qb-resizer .qb-resizer-grip::before { background: var(--accent); width: 3px; }
   body.qb-resizing { cursor: col-resize; user-select: none; }
   .qb-rail > .qb-card, .qb-rail > .editor-card { flex: 1; min-height: 0; display: flex; flex-direction: column; }
   .qb-rail-scroll { flex: 1; min-height: 0; overflow-y: auto; }
