@@ -80,6 +80,7 @@ type DiskMonitor struct {
 	config         RetentionConfig
 	snapshotMaxAge time.Duration
 	isActive       atomic.Bool
+	started        atomic.Bool
 }
 
 type diskMonitorMetrics struct {
@@ -145,6 +146,10 @@ func NewDiskMonitor(service RetentionService, config RetentionConfig, omr observ
 
 // Start begins monitoring disk usage and starts the forced retention process.
 func (dm *DiskMonitor) Start() {
+	// Mark the monitor as started so Stop() knows a doneCh close is guaranteed
+	// (either from the disabled path below or from monitorLoop on exit).
+	dm.started.Store(true)
+
 	if dm.config.CheckInterval <= 0 {
 		dm.logger.Warn().Msg("disk monitor check interval is 0 or negative, monitor disabled")
 		// No monitor loop will run, so release Stop()'s wait immediately.
@@ -168,6 +173,14 @@ func (dm *DiskMonitor) Start() {
 
 // Stop stops the disk monitor gracefully.
 func (dm *DiskMonitor) Stop() {
+	// If Start() was never called, no monitor loop exists and doneCh will never
+	// be closed, so there is nothing to stop or wait for. Returning here keeps
+	// Stop() safe to call on a constructed-but-unstarted monitor.
+	if !dm.started.Load() {
+		dm.logger.Info().Msg("disk monitor stopped")
+		return
+	}
+
 	if dm.ticker != nil {
 		dm.ticker.Stop()
 	}
