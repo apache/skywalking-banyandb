@@ -75,6 +75,7 @@ type DiskMonitor struct {
 	logger         *logger.Logger
 	ticker         *time.Ticker
 	stopCh         chan struct{}
+	doneCh         chan struct{}
 	metrics        *diskMonitorMetrics
 	config         RetentionConfig
 	snapshotMaxAge time.Duration
@@ -136,6 +137,7 @@ func NewDiskMonitor(service RetentionService, config RetentionConfig, omr observ
 		config:         config,
 		logger:         logger,
 		stopCh:         make(chan struct{}),
+		doneCh:         make(chan struct{}),
 		metrics:        metrics,
 		snapshotMaxAge: 24 * time.Hour, // Always keep snapshots newer than 24h
 	}
@@ -145,6 +147,8 @@ func NewDiskMonitor(service RetentionService, config RetentionConfig, omr observ
 func (dm *DiskMonitor) Start() {
 	if dm.config.CheckInterval <= 0 {
 		dm.logger.Warn().Msg("disk monitor check interval is 0 or negative, monitor disabled")
+		// No monitor loop will run, so release Stop()'s wait immediately.
+		close(dm.doneCh)
 		return
 	}
 
@@ -169,15 +173,24 @@ func (dm *DiskMonitor) Stop() {
 	}
 	close(dm.stopCh)
 
-	// Wait for any active cleanup to finish
-	for dm.isActive.Load() {
-		time.Sleep(100 * time.Millisecond)
-	}
+	// Wait for the monitor loop (including any in-flight cleanup cycle) to
+	// exit. The loop clears isActive on exit, so we must not poll isActive
+	// here: once stopCh is closed the loop may return without ever running
+	// another cleanup cycle, leaving isActive set and hanging Stop() forever.
+	<-dm.doneCh
 
 	dm.logger.Info().Msg("disk monitor stopped")
 }
 
 func (dm *DiskMonitor) monitorLoop(serviceName string) {
+	defer func() {
+		// Deactivate on exit so a forced cleanup that is still active when the
+		// monitor stops does not leave the monitor marked active, and to unblock
+		// Stop() which waits on doneCh.
+		dm.isActive.Store(false)
+		dm.metrics.forcedRetentionActive.Set(0, serviceName)
+		close(dm.doneCh)
+	}()
 	for {
 		select {
 		case <-dm.stopCh:
@@ -296,9 +309,13 @@ func (dm *DiskMonitor) runForcedCleanup(serviceName string, _ int) {
 			return
 		}
 
-		// Sleep for cooldown period
+		// Sleep for cooldown period, aborting early if the monitor is stopping
+		// so shutdown is not delayed by a full cooldown interval.
 		dm.logger.Debug().Dur("cooldown", dm.config.Cooldown).Msg("cooling down between deletions")
-		time.Sleep(dm.config.Cooldown)
+		select {
+		case <-time.After(dm.config.Cooldown):
+		case <-dm.stopCh:
+		}
 	} else {
 		// No more segments to delete, stop cleanup
 		dm.logger.Warn().Msg("no more segments available for deletion, stopping forced cleanup")
