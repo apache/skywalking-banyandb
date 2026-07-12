@@ -463,8 +463,8 @@ function buildSummaries(state: QBBuilderState): Record<string, string> {
     groupBy: (state.groupBy ?? []).length ? state.groupBy.join(', ') : 'no grouping',
     time: timeTxt,
     order: state.catalog === 'topn'
-      ? `value ${(state.orderDir || 'DESC').toLowerCase()} · limit ${state.limit}${state.offset ? ` · offset ${state.offset}` : ''}`
-      : `${state.orderField || 'time'} ${(state.orderDir || 'DESC').toLowerCase()} · limit ${state.limit}${state.offset ? ` · offset ${state.offset}` : ''}`,
+      ? `value ${(state.orderDir || 'DESC').toLowerCase()} · limit ${state.limit}${state.offset ? `, off ${state.offset}` : ''}`
+      : `${state.orderField || 'time'} ${(state.orderDir || 'DESC').toLowerCase()} · limit ${state.limit}${state.offset ? `, off ${state.offset}` : ''}`,
     top: `top ${state.topN} series`,
     agg: state.aggFn ? `${state.aggFn.toLowerCase()} over range` : 'pre-aggregated value',
     orderTopn: `value ${(state.orderDir || 'DESC').toLowerCase()}`,
