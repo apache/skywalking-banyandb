@@ -393,11 +393,20 @@ export function flattenQueryResponse(data: QueryResponse): Record<string, unknow
   // still use snake_case. Accept both so downstream views always get elements.
   const streamResult = (d.streamResult ?? d.stream_result) as { elements?: unknown[] } | undefined;
   const measureResult = (d.measureResult ?? d.measure_result) as { dataPoints?: unknown[]; data_points?: unknown[] } | undefined;
-  const traceResult = (d.traceResult ?? d.trace_result) as { elements?: unknown[] } | undefined;
+  const traceResult = (d.traceResult ?? d.trace_result) as { traces?: unknown[] } | undefined;
   if (streamResult?.elements) return streamResult.elements.map((e) => flattenStreamElement(e as never));
   const measurePoints = measureResult?.dataPoints ?? measureResult?.data_points;
   if (measurePoints) return measurePoints.map((e) => flattenMeasureDataPoint(e as never));
-  if (traceResult?.elements) return traceResult.elements.map((e) => flattenTraceSpan(e as never));
+  if (traceResult?.traces) {
+    const flat: Record<string, unknown>[] = [];
+    for (const t of traceResult.traces) {
+      const trace = t as { trace_id?: string; spans?: unknown[] };
+      for (const s of trace.spans ?? []) {
+        flat.push(flattenTraceSpan(s as never, trace.trace_id));
+      }
+    }
+    return flat;
+  }
   return [];
 }
 
@@ -429,19 +438,30 @@ function flattenMeasureDataPoint(dp: { timestamp?: string; sid?: string; version
   return flat;
 }
 
-function flattenTraceSpan(s: { span_id?: string; trace_id?: string; name?: string; timestamp?: string; duration?: number; tagFamilies?: readonly { tags?: readonly { key: string; value: unknown }[] }[]; tag_families?: readonly { tags?: readonly { key: string; value: unknown }[] }[] }): Record<string, unknown> {
+function flattenTraceSpan(
+  s: {
+    span_id?: string;
+    trace_id?: string;
+    name?: string;
+    timestamp?: string;
+    duration?: number;
+    tags?: readonly { key: string; value: unknown }[];
+    tag_families?: readonly { tags?: readonly { key: string; value: unknown }[] }[];
+    span?: unknown;
+  },
+  parentTraceId?: string,
+): Record<string, unknown> {
   const flat: Record<string, unknown> = {
-    trace_id: s.trace_id,
+    trace_id: s.trace_id ?? parentTraceId,
     span_id: s.span_id,
     name: s.name,
     timestamp: s.timestamp,
     duration: s.duration,
   };
-  const families = s.tagFamilies ?? s.tag_families ?? [];
-  for (const fam of families) {
-    for (const t of fam.tags ?? []) {
-      flat[t.key] = readFieldValue(t.value) ?? t.value;
-    }
+  if (s.span !== undefined) flat.span = s.span;
+  const tagList = s.tags ?? s.tag_families?.flatMap((f) => f.tags ?? []) ?? [];
+  for (const t of tagList) {
+    flat[t.key] = readFieldValue(t.value) ?? t.value;
   }
   return flat;
 }

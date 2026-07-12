@@ -288,9 +288,9 @@ describe('TraceResultView', () => {
     tag_families: [{ tags: [{ key: 'bytes', value: 'eyJ4IjoxMjN9' }] }],
   };
   const traceResponse: QueryResponse = {
-    trace_result: { elements: [traceWire, traceWireWithBytes] as never[] },
+    trace_result: { traces: [{ trace_id: 't1', spans: [traceWire, traceWireWithBytes] as never[] }] },
     elements: [
-      flattenQueryResponse({ trace_result: { elements: [traceWire, traceWireWithBytes] as never[] } } as QueryResponse)[0],
+      flattenQueryResponse({ trace_result: { traces: [{ trace_id: 't1', spans: [traceWire, traceWireWithBytes] as never[] }] } } as QueryResponse)[0],
       { trace_id: 't1', span_id: 's2', name: 'db.query', timestamp: '2026-06-29T11:55:00.020Z', duration: 12,
         bytes: new Uint8Array([123, 34, 120, 125]) },
     ],
