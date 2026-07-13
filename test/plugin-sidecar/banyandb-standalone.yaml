@@ -1,0 +1,81 @@
+# Licensed to the Apache Software Foundation (ASF) under one or more
+# contributor license agreements.  See the NOTICE file distributed with
+# this work for additional information regarding copyright ownership.
+# The ASF licenses this file to You under the Apache License, Version 2.0
+# (the "License"); you may not use this file except in compliance with
+# the License.  You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
+# Standalone BanyanDB (data-node role → hosts plugins) proving the
+# CGO "-plugins" host image + carrier-mount design works in real Kubernetes.
+#
+# Plugin delivery = the busybox CARRIER image as an initContainer that copies
+# its /plugins/*.so into a shared emptyDir mounted at /plugins in the main
+# container. This is the version-agnostic path (works on any Kubernetes;
+# busybox gives us `cp`). On Kubernetes >= 1.31 an OCI image volume mounting
+# the carrier read-only at /plugins is the alternative (no initContainer, no
+# copy) — see docs/operation/plugins.md; the initContainer path is the one
+# exercised by this gate.
+#
+# ${HOST_IMAGE} / ${CARRIER_IMAGE} are substituted by run.sh (envsubst) and
+# loaded into the kind node via `kind load docker-image`, so imagePullPolicy is
+# IfNotPresent (never reach out to a registry).
+apiVersion: v1
+kind: Pod
+metadata:
+  name: banyandb-plugin
+  labels:
+    app: banyandb-plugin
+spec:
+  initContainers:
+    # The first-party carrier (busybox-based) populates the shared /plugins
+    # volume. Same tag as the host image → lockstep toolchain parity.
+    - name: install-plugins
+      image: ${CARRIER_IMAGE}
+      imagePullPolicy: IfNotPresent
+      command: ["sh", "-c", "cp /plugins/*.so /shared/ && ls -l /shared"]
+      volumeMounts:
+        - name: plugins
+          mountPath: /shared
+  containers:
+    - name: banyandb
+      # The CGO/dynamic, plugin-capable host image (gcr.io/distroless/base-debian12).
+      image: ${HOST_IMAGE}
+      imagePullPolicy: IfNotPresent
+      args:
+        - standalone
+        - --trace-pipeline-native-plugin-enabled=true
+        - --trace-pipeline-trusted-plugin-dir=/plugins
+        # merge grace 0 (harmless for the load assertion).
+        - --trace-pipeline-merge-grace-default=0
+        # Shorten the data node's property-schema sync interval (default 30s) so
+        # that once its schema client finishes its (~60s hardcoded) init-wait,
+        # the registered group pipeline reconciles promptly on the next sync.
+        - --schema-property-client-sync-interval=2s
+      ports:
+        - name: grpc
+          containerPort: 17912
+        - name: http
+          containerPort: 17913
+        - name: metrics
+          containerPort: 2121
+      readinessProbe:
+        httpGet:
+          path: /api/healthz
+          port: 17913
+        initialDelaySeconds: 5
+        periodSeconds: 3
+        failureThreshold: 60
+      volumeMounts:
+        - name: plugins
+          mountPath: /plugins
+  volumes:
+    - name: plugins
+      emptyDir: {}

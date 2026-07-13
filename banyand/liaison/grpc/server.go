@@ -137,6 +137,10 @@ type server struct {
 	queryAccessLogRecorders  []queryAccessLogRecorder
 	maxRecvMsgSize           run.Bytes
 	grpcBufferMemoryRatio    float64
+	bydbqlSlowThreshold      time.Duration
+	bydbqlTopKLogInterval    time.Duration
+	bydbqlCacheSize          int
+	bydbqlCacheMaxBytes      int
 	port                     uint32
 	tls                      bool
 	enableIngestionAccessLog bool
@@ -279,7 +283,7 @@ func NewServer(_ context.Context, tir1Client, tir2Client, broadcaster queue.Clie
 		)
 	}
 	s.accessLogRecorders = []accessLogRecorder{streamSVC, measureSVC, traceSVC, s.propertyServer}
-	s.queryAccessLogRecorders = []queryAccessLogRecorder{streamSVC, measureSVC, traceSVC, s.propertyServer}
+	s.queryAccessLogRecorders = []queryAccessLogRecorder{streamSVC, measureSVC, traceSVC, s.propertyServer, bydbQLSVC}
 
 	return s
 }
@@ -364,6 +368,11 @@ func (s *server) PreRun(ctx context.Context) error {
 	s.measureSVC.metrics = metrics
 	s.traceSVC.metrics = metrics
 	s.bydbQLSVC.metrics = metrics
+	s.bydbQLSVC.cache = newPreparedCache(s.bydbqlCacheSize, s.bydbqlCacheMaxBytes, metrics)
+	s.bydbQLSVC.slowThreshold = s.bydbqlSlowThreshold
+	// The dump goroutine lives for the server's lifetime and is stopped by Close(),
+	// so it is rooted at a background context rather than PreRun's setup context.
+	s.bydbQLSVC.dumper = newTopKDumper(s.bydbqlTopKLogInterval, s.bydbQLSVC.l) //nolint:contextcheck
 	s.propertyServer.metrics = metrics
 	if s.barrierSVC != nil {
 		s.barrierSVC.metrics = metrics
@@ -449,6 +458,14 @@ func (s *server) FlagSet() *run.FlagSet {
 	fs.DurationVar(&s.traceSVC.maxWaitDuration, "trace-metadata-cache-wait-duration", 0,
 		"the maximum duration to wait for metadata cache to load (for testing purposes)")
 	fs.IntVar(&s.propertyServer.repairQueueCount, "property-repair-queue-count", 128, "the number of queues for property repair")
+	fs.IntVar(&s.bydbqlCacheSize, "bydbql-prepared-cache-size", 2000,
+		"max number of prepared BydbQL statements cached on the query path; 0 disables the cache")
+	fs.IntVar(&s.bydbqlCacheMaxBytes, "bydbql-prepared-cache-max-bytes", 10*1024*1024,
+		"max total estimated size (bytes) of the cached BydbQL prepared statements; 0 removes the byte bound")
+	fs.DurationVar(&s.bydbqlSlowThreshold, "bydbql-slow-query-threshold", time.Second,
+		"end-to-end latency above which a BydbQL query is counted as slow; 0 disables slow-query tracking")
+	fs.DurationVar(&s.bydbqlTopKLogInterval, "bydbql-topk-log-interval", 5*time.Minute,
+		"how often to log the top BydbQL cache-miss and slow queries; 0 disables the top-K log")
 	s.grpcBufferMemoryRatio = 0.1
 	fs.Float64Var(&s.grpcBufferMemoryRatio, "grpc-buffer-memory-ratio", 0.1,
 		"ratio of memory limit to use for gRPC buffer size calculation (0.0 < ratio <= 1.0)")
@@ -717,6 +734,11 @@ func (s *server) GracefulStop() {
 	stopped := make(chan struct{})
 	go func() {
 		s.ser.GracefulStop()
+		// The top-K dumper is independent of the access log, so stop its goroutine
+		// unconditionally (nil-safe when the feature is disabled).
+		if s.bydbQLSVC != nil {
+			s.bydbQLSVC.dumper.close()
+		}
 		if s.enableIngestionAccessLog {
 			for _, alr := range s.accessLogRecorders {
 				_ = alr.Close()

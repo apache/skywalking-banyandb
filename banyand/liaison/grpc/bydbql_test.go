@@ -20,6 +20,7 @@ package grpc
 import (
 	"context"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -28,10 +29,12 @@ import (
 
 	bydbqlv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/bydbql/v1"
 	modelv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/model/v1"
+	"github.com/apache/skywalking-banyandb/pkg/logger"
 )
 
 func newTestBydbQLService() *bydbQLService {
-	return &bydbQLService{metrics: newBypassMetrics()}
+	m := newBypassMetrics()
+	return &bydbQLService{metrics: m, cache: newPreparedCache(16, 1<<20, m)}
 }
 
 func bydbqlStrParam(v string) *modelv1.TagValue {
@@ -87,4 +90,49 @@ func TestBydbQLQuery_ParamTypeMismatch_ReturnsInvalidArgument(t *testing.T) {
 	require.True(t, ok)
 	assert.Equal(t, codes.InvalidArgument, st.Code())
 	assert.Contains(t, st.Message(), "failed to bind parameters")
+}
+
+// newTestDumper builds a topKDumper without starting the dump goroutine.
+func newTestDumper(l *logger.Logger) *topKDumper {
+	return &topKDumper{miss: newTopK(bydbqlTopKSize), slow: newTopK(bydbqlTopKSize), l: l}
+}
+
+func TestBydbQLQuery_TracksCacheMiss(t *testing.T) {
+	svc := newTestBydbQLService()
+	svc.dumper = newTestDumper(nil)
+	// A cacheable query misses on first sight; the miss is observed before Bind runs
+	// (Bind then fails on missing params, but the miss was already recorded).
+	_, _ = svc.Query(context.Background(), &bydbqlv1.QueryRequest{
+		Query: "SELECT * FROM STREAM sw IN default WHERE service_id = ?",
+	})
+	assert.NotEmpty(t, svc.dumper.miss.snapshot(), "a cacheable miss must be tracked")
+}
+
+func TestBydbQLQuery_TracksSlowQuery(t *testing.T) {
+	svc := newTestBydbQLService()
+	svc.slowThreshold = time.Nanosecond // any query exceeds it
+	svc.dumper = newTestDumper(nil)
+	_, _ = svc.Query(context.Background(), &bydbqlv1.QueryRequest{
+		Query: "SELECT * FROM STREAM sw IN default WHERE service_id = ?",
+	})
+	assert.NotEmpty(t, svc.dumper.slow.snapshot(), "a query over the threshold must be tracked")
+}
+
+func TestBydbQLDumpTopK(t *testing.T) {
+	d := newTestDumper(logger.GetLogger("test-bydbql"))
+	d.miss.observe("q-miss", 0)
+	d.miss.observe("q-miss", 0) // count>=2 so it survives the cold-start filter
+	d.slow.observe("q-slow", time.Millisecond)
+	d.dump() // must not panic; the cumulative trackers keep their entries
+	assert.NotEmpty(t, d.miss.snapshot())
+	assert.NotEmpty(t, d.slow.snapshot())
+}
+
+func TestFormatTopKFiltersColdStartMisses(t *testing.T) {
+	entries := []topKSlot{
+		{key: "thrashing", count: 5},
+		{key: "cold-start", count: 1},
+	}
+	lines := formatTopK(entries, minReparseMisses, func(s topKSlot) string { return s.key })
+	assert.Equal(t, []string{"thrashing"}, lines, "count==1 cold-start misses are filtered out")
 }
