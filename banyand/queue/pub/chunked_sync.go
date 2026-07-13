@@ -120,7 +120,17 @@ func (c *chunkedSyncClient) SyncStreamingParts(ctx context.Context, parts []queu
 
 	chunkedClient := clusterv1.NewChunkedSyncServiceClient(c.conn)
 
-	stream, err := chunkedClient.SyncPart(ctx)
+	// Bind the stream to a cancellable context scoped to this call. gRPC spawns a
+	// per-stream cleanup goroutine (newClientStreamWithParams) that only exits when
+	// this context is cancelled or the ClientConn closes — CloseSend() alone does
+	// NOT release it. Callers pass a process-lifetime context (the write-queue
+	// syncer's loopCloser.Ctx()), so without this cancel every sync would leak one
+	// reaper goroutine forever. defer cancel() guarantees release on every return
+	// path (early return, error, or SyncResult break before io.EOF).
+	streamCtx, cancel := context.WithCancel(ctx)
+	defer cancel()
+
+	stream, err := chunkedClient.SyncPart(streamCtx)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create sync stream: %w", err)
 	}

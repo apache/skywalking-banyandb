@@ -131,6 +131,7 @@ Release Notes.
 - Fix backup container OOM from overlapping scheduled runs; serialize runs and upload small snapshot files concurrently.
 - Fix block metadata reset before unmarshal for stream and trace.
 - Lifecycle only handles stream/measure/trace snapshots, skipping other catalogs.
+- Fix liaison goroutine leak from uncancelled gRPC SyncPart stream context in write-queue part sync.
 
 ### Document
 
