@@ -183,7 +183,9 @@ export function QueryConsole() {
       projection: isMeasure ? [] : [],
       where: qbEmptyWhere(),
       groupBy: [],
-      orderField: 'time',
+      // Trace queries filter by trace_id and the default m4 schema has no
+      // order-able index, so leave orderField empty to avoid server-side errors.
+      orderField: catalog === 'traces' ? '' : 'time',
       orderDir: 'DESC',
       fromResource: `${group}/${resource}`,
       fromAgg: null,

@@ -183,8 +183,9 @@ export function TraceResultView({ response, state, showTrace, setShowTrace, exec
   }, [tagSpecs, elements]);
 
   // All configurable tag names = element keys minus reserved spine fields.
+  // The opaque `span` bytes are rendered in their own inspector, not as a tag.
   const tagNames = useMemo(() => {
-    const reserved = new Set(['trace_id', 'span_id', tsField]);
+    const reserved = new Set(['trace_id', 'span_id', tsField, 'span']);
     return (state.projection.length ? state.projection : Object.keys(elements[0] ?? {})).filter((n) => !reserved.has(n));
   }, [state.projection, elements, tsField]);
 

@@ -56,7 +56,7 @@ export const SR_ROLES: readonly SR_ROLE[] = ['cat', 'body', 'id', 'numeric', 'ti
 
 /** Layer 3 — name-convention roles + semantic color maps. Strip this and layers 1–2 still render. */
 interface Convention {
-  readonly role: 'cat';
+  readonly role: SR_ROLE;
   readonly label: string;
   readonly colors?: Record<string, string>;
   readonly http?: boolean;
@@ -92,6 +92,12 @@ const SR_CONVENTIONS: Record<string, Convention> = {
   http_status_code: { role: 'cat', http: true, label: 'http status' },
   'http.status_code': { role: 'cat', http: true, label: 'http status' },
   span_layer: { role: 'cat', colors: SR_LAYER, label: 'span layer' },
+  trace_id: { role: 'id', label: 'trace id' },
+  span_id: { role: 'id', label: 'span id' },
+  parent_span_id: { role: 'id', label: 'parent span id' },
+  endpoint: { role: 'body', label: 'endpoint' },
+  operation_name: { role: 'body', label: 'operation' },
+  endpoint_name: { role: 'body', label: 'endpoint' },
 };
 
 // Convention keys preserve the user's tag-name punctuation: 'service_name'

@@ -368,7 +368,7 @@ export class ApiDataSource implements DataSource {
 
 function readFieldValue(v: unknown): number | string | undefined {
   if (!v || typeof v !== 'object') return undefined;
-  const o = v as { float?: unknown; int?: unknown; str?: unknown };
+  const o = v as { float?: unknown; int?: unknown; str?: unknown; timestamp?: unknown };
   if (typeof o.float === 'number') return o.float;
   // protojson renders int64/str as {"int": {"value": "2600"}} / {"str": {"value": "x"}}
   // to preserve 64-bit precision. Some BanyanDB versions also flatten to just
@@ -383,6 +383,15 @@ function readFieldValue(v: unknown): number | string | undefined {
   if (innerStr !== undefined) {
     const raw = typeof innerStr === 'object' && innerStr !== null ? (innerStr as { value?: unknown }).value : innerStr;
     if (typeof raw === 'string') return raw;
+  }
+  // TIMESTAMP tags are transmitted as {"timestamp": "2026-07-13T...Z"}.
+  const ts = (o.timestamp as { value?: unknown } | string | undefined);
+  if (ts !== undefined) {
+    const raw = typeof ts === 'object' && ts !== null ? (ts as { value?: unknown }).value : ts;
+    if (typeof raw === 'string') {
+      const ms = Date.parse(raw);
+      if (Number.isFinite(ms)) return ms;
+    }
   }
   return undefined;
 }

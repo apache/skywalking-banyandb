@@ -336,6 +336,11 @@ export const buildBydbQL = (b: QBBuilderState, tags?: readonly string[]): string
       .join(', ');
     const select = [tagPart, fields].filter(Boolean).join(', ');
     parts.push(`SELECT ${select || '*'}`);
+  } else if (b.catalog === 'traces') {
+    // BanyanDB's trace query only returns projected tags; SELECT * yields none.
+    // Expand to the known tag list so the result view has data to render.
+    const projection = b.projection ?? [];
+    parts.push(`SELECT ${projection.length ? projection.join(', ') : (tags?.length ? tags.join(', ') : '*')}`);
   } else if ((b.projection ?? []).length) {
     parts.push(`SELECT ${(b.projection ?? []).join(', ')}`);
   } else {
@@ -355,7 +360,9 @@ export const buildBydbQL = (b: QBBuilderState, tags?: readonly string[]): string
     parts.push(`GROUP BY ${(b.groupBy ?? []).join(', ')}`);
   }
   // 6. ORDER BY.
-  if (b.orderField) parts.push(`ORDER BY ${b.orderField} ${b.orderDir || 'DESC'}`);
+  // Trace queries are filtered by trace_id and have no usable index-based ordering
+  // in the default m4-traces schema; emitting ORDER BY time causes a server error.
+  if (b.orderField && b.catalog !== 'traces') parts.push(`ORDER BY ${b.orderField} ${b.orderDir || 'DESC'}`);
   // 7. WITH QUERY_TRACE. Must appear BEFORE LIMIT/OFFSET in the actual grammar
   // (grammar.go GrammarSelectStatement: Select -> ... -> OrderBy -> WithQueryTrace -> Limit -> Offset).
   if (b.trace) parts.push('WITH QUERY_TRACE');

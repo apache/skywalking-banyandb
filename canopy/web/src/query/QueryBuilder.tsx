@@ -464,7 +464,9 @@ function buildSummaries(state: QBBuilderState): Record<string, string> {
     time: timeTxt,
     order: state.catalog === 'topn'
       ? `value ${(state.orderDir || 'DESC').toLowerCase()} · limit ${state.limit}${state.offset ? `, off ${state.offset}` : ''}`
-      : `${state.orderField || 'time'} ${(state.orderDir || 'DESC').toLowerCase()} · limit ${state.limit}${state.offset ? `, off ${state.offset}` : ''}`,
+      : state.orderField
+        ? `${state.orderField} ${(state.orderDir || 'DESC').toLowerCase()} · limit ${state.limit}${state.offset ? `, off ${state.offset}` : ''}`
+        : `no order · limit ${state.limit}${state.offset ? `, off ${state.offset}` : ''}`,
     top: `top ${state.topN} series`,
     agg: state.aggFn ? `${state.aggFn.toLowerCase()} over range` : 'pre-aggregated value',
     orderTopn: `value ${(state.orderDir || 'DESC').toLowerCase()}`,
@@ -503,7 +505,7 @@ export function QueryBuilder({
       projection: catalog === 'measures' ? (tags[0] ? [tags[0]] : []) : [],
       where: qbEmptyWhere(),
       groupBy: [],
-      orderField: 'time',
+      orderField: catalog === 'traces' ? '' : 'time',
       orderDir: 'DESC',
       offset: 0,
       time: catalog === 'topn'
