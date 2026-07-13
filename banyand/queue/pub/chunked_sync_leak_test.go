@@ -40,15 +40,28 @@ import (
 // goroutine leaks forever.
 const reaperFrame = "newClientStreamWithParams"
 
+// dumpAllGoroutines returns the full goroutine stack dump, growing the buffer
+// until runtime.Stack reports it fit (it truncates to the buffer size otherwise,
+// which would undercount goroutines in a busy CI environment).
+func dumpAllGoroutines() string {
+	size := 1 << 20
+	for {
+		buf := make([]byte, size)
+		n := runtime.Stack(buf, true)
+		if n < len(buf) {
+			return string(buf[:n])
+		}
+		size *= 2
+	}
+}
+
 // countReaperGoroutines returns the number of live goroutines currently parked
 // in the gRPC client-stream reaper. It counts whole goroutine blocks (not raw
 // substring hits) so it is robust to grpc's internal closure numbering and to
 // unrelated goroutine noise.
 func countReaperGoroutines() int {
-	buf := make([]byte, 1<<22)
-	n := runtime.Stack(buf, true)
 	count := 0
-	for _, g := range strings.Split(string(buf[:n]), "\n\ngoroutine ") {
+	for _, g := range strings.Split(dumpAllGoroutines(), "\n\ngoroutine ") {
 		if strings.Contains(g, reaperFrame) {
 			count++
 		}
@@ -75,9 +88,7 @@ func stableReaperCount() int {
 // firstReaperStack returns one reaper goroutine's stack, surfaced in the failure
 // message so a regression is immediately actionable.
 func firstReaperStack() string {
-	buf := make([]byte, 1<<22)
-	n := runtime.Stack(buf, true)
-	for _, g := range strings.Split(string(buf[:n]), "\n\ngoroutine ") {
+	for _, g := range strings.Split(dumpAllGoroutines(), "\n\ngoroutine ") {
 		if strings.Contains(g, reaperFrame) {
 			return "goroutine " + strings.TrimSpace(g)
 		}
