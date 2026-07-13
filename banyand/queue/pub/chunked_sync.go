@@ -122,7 +122,7 @@ func (c *chunkedSyncClient) SyncStreamingParts(ctx context.Context, parts []queu
 
 	// Bind the stream to a cancellable context scoped to this call. gRPC spawns a
 	// per-stream cleanup goroutine (newClientStreamWithParams) that only exits when
-	// this context is cancelled or the ClientConn closes — CloseSend() alone does
+	// this context is canceled or the ClientConn closes — CloseSend() alone does
 	// NOT release it. Callers pass a process-lifetime context (the write-queue
 	// syncer's loopCloser.Ctx()), so without this cancel every sync would leak one
 	// reaper goroutine forever. defer cancel() guarantees release on every return

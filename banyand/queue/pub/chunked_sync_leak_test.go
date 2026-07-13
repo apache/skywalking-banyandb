@@ -34,9 +34,9 @@ import (
 // reaperFrame is the gRPC client-side stream cleanup goroutine that
 // (*clientStream) spawns per streaming RPC in newClientStreamWithParams. It
 // blocks on `select { <-cc.ctx.Done(); <-ctx.Done() }` and only exits when the
-// per-call context is cancelled or the ClientConn is closed — NOT when the
+// per-call context is canceled or the ClientConn is closed — NOT when the
 // stream is drained or CloseSend() is called (see grpc stream.go). SyncPart is a
-// streaming RPC, so each call spawns one; if its context is never cancelled the
+// streaming RPC, so each call spawns one; if its context is never canceled the
 // goroutine leaks forever.
 const reaperFrame = "newClientStreamWithParams"
 
@@ -121,16 +121,16 @@ func leakTestParts() []queue.StreamingPartData {
 // TestSyncStreamingPartsDoesNotLeakReaperGoroutines is a regression guard for the
 // production goroutine leak where a liaison accumulated 347k goroutines parked in
 // grpc's newClientStreamWithParams reaper, all from SyncPart streams whose context
-// was never cancelled.
+// was never canceled.
 //
 // SyncStreamingParts opens a SyncPart client stream and only CloseSend()s it; the
 // reaper exits solely on context cancellation / ClientConn close. In production
 // the caller passes the write-queue syncer's process-lifetime loopCloser.Ctx()
-// (context.WithCancel(context.Background()), cancelled only at shutdown), and the
+// (context.WithCancel(context.Background()), canceled only at shutdown), and the
 // client breaks out of the Recv loop on the SyncResult frame before reading the
 // trailing io.EOF — so the stream is never finished and the reaper leaks.
 //
-// This test reproduces exactly that condition: a single never-cancelled context
+// This test reproduces exactly that condition: a single never-canceled context
 // shared across many syncs. It passes only because SyncStreamingParts derives a
 // per-call cancellable context and defer-cancels it (chunked_sync.go). Reverting
 // that fix makes reapers accumulate ~1 per sync and this test fails.
@@ -151,7 +151,7 @@ func TestSyncStreamingPartsDoesNotLeakReaperGoroutines(t *testing.T) {
 
 	baseline := stableReaperCount()
 
-	// Reproduce the production trigger: the caller's context is NEVER cancelled
+	// Reproduce the production trigger: the caller's context is NEVER canceled
 	// while the syncs run (mirrors loopCloser.Ctx()).
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
@@ -170,15 +170,15 @@ func TestSyncStreamingPartsDoesNotLeakReaperGoroutines(t *testing.T) {
 
 	after := stableReaperCount()
 	leaked := after - baseline
-	t.Logf("reaper goroutines: baseline=%d after=%d leaked=%d over %d syncs (never-cancelled context)",
+	t.Logf("reaper goroutines: baseline=%d after=%d leaked=%d over %d syncs (never-canceled context)",
 		baseline, after, leaked, iterations)
 
 	// Each leaked sync would park exactly one reaper; allow a tiny slack for
 	// scheduling. A number near `iterations` means the SyncPart stream context is
-	// no longer being cancelled — the leak has regressed.
+	// no longer being canceled — the leak has regressed.
 	if leaked > 2 {
-		t.Fatalf("SyncStreamingParts leaked %d gRPC reaper goroutines over %d syncs with a never-cancelled "+
-			"context — SyncPart's stream context must be cancelled on every return path (chunked_sync.go). "+
+		t.Fatalf("SyncStreamingParts leaked %d gRPC reaper goroutines over %d syncs with a never-canceled "+
+			"context — SyncPart's stream context must be canceled on every return path (chunked_sync.go). "+
 			"Sample leaked stack:\n%s", leaked, iterations, firstReaperStack())
 	}
 }
