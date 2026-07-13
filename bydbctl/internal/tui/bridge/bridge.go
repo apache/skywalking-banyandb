@@ -262,6 +262,12 @@ func (toolBridge *ToolBridge) describeSchema(ctx context.Context, arguments map[
 	if schemaErr != nil {
 		return Result{Err: fmt.Errorf("schema description failed")}
 	}
+	if querySession != nil {
+		setSessionSchema(querySession, snapshot)
+	}
+	toolBridge.mu.Lock()
+	toolBridge.planAttempts = 0
+	toolBridge.mu.Unlock()
 	return jsonResult(map[string]any{
 		"type":           snapshot.Type,
 		"name":           snapshot.Name,
@@ -449,11 +455,25 @@ func (toolBridge *ToolBridge) proposeQueryPlan(ctx context.Context, callID strin
 			"schema_hint": queryPlanSchemaHint(),
 		})
 	}
+	for planIndex, plan := range plans {
+		if rankedCandidates := toolBridge.rankedCatalogCandidates(); len(rankedCandidates) != 0 &&
+			!resourceIsRanked(rankedCandidates, plan.Resource.Type, plan.Resource.Name, plan.Resource.Groups) {
+			return Result{Err: fmt.Errorf("query plan step %d selects a resource outside the top five catalog candidates", planIndex+1)}
+		}
+		if !schemaReadyForPlan(querySession, plan.Resource) {
+			return jsonResult(map[string]any{
+				"valid":       false,
+				"message":     schemaNotReadyMessage(planIndex+1, plan.Resource),
+				"step":        planIndex + 1,
+				"schema_hint": queryPlanSchemaHint(),
+			})
+		}
+	}
 	attempt, allowed := toolBridge.reservePlanAttempt()
 	if !allowed {
 		return jsonResult(map[string]any{
 			"valid":   false,
-			"message": "automatic query plan repair limit reached after two repairs",
+			"message": planRepairLimitMessage(),
 		})
 	}
 	if attempt > 1 {
@@ -470,10 +490,6 @@ func (toolBridge *ToolBridge) proposeQueryPlan(ctx context.Context, callID strin
 	plannedQueries := make([]session.PlannedQuery, 0, len(plans))
 	var selectedSnapshot session.SchemaSnapshot
 	for planIndex, plan := range plans {
-		if rankedCandidates := toolBridge.rankedCatalogCandidates(); len(rankedCandidates) != 0 &&
-			!resourceIsRanked(rankedCandidates, plan.Resource.Type, plan.Resource.Name, plan.Resource.Groups) {
-			return Result{Err: fmt.Errorf("query plan step %d selects a resource outside the top five catalog candidates", planIndex+1)}
-		}
 		if !resourceIsDiscoverable(querySession.SchemaSnapshot.Catalog, plan.Resource) {
 			return Result{Err: fmt.Errorf("query plan step %d selects a resource outside the discovered catalog", planIndex+1)}
 		}
@@ -668,7 +684,7 @@ func (toolBridge *ToolBridge) probeBydbQL(ctx context.Context, callID string, ar
 	query := stringArgument(arguments, "query")
 	plannedQuery := querySession.CurrentPlannedQuery()
 	if plannedQuery == nil || plannedQuery.Query != query {
-		return Result{Err: fmt.Errorf("probe_bydbql requires the current compiled query plan statement")}
+		return Result{Err: fmt.Errorf("probe_bydbql requires propose_query_plan to return valid=true first; validate_bydbql alone does not register a candidate")}
 	}
 	schemaSnapshot, schemaErr := toolBridge.executor.DiscoverSchema(ctx, tools.SchemaRequest{
 		Type:   plannedQuery.ResourceType,
@@ -722,7 +738,7 @@ func (toolBridge *ToolBridge) executeBydbQL(ctx context.Context, callID string, 
 	query := stringArgument(arguments, "query")
 	plannedQuery := querySession.CurrentPlannedQuery()
 	if plannedQuery == nil || plannedQuery.Query != query {
-		return Result{Err: fmt.Errorf("execute_bydbql requires the current compiled query plan statement")}
+		return Result{Err: fmt.Errorf("execute_bydbql requires propose_query_plan to return valid=true first; validate_bydbql alone does not register a candidate")}
 	}
 	schemaSnapshot, schemaErr := toolBridge.executor.DiscoverSchema(ctx, tools.SchemaRequest{
 		Type:   plannedQuery.ResourceType,
@@ -1228,6 +1244,67 @@ func executionResultToProbe(query string, executionResult session.ExecutionResul
 		}
 	}
 	return probeSummary
+}
+
+func schemaReadyForPlan(querySession *session.QuerySession, resource planner.Resource) bool {
+	if querySession == nil {
+		return false
+	}
+	snapshot := querySession.SchemaSnapshot
+	if !snapshot.Loaded || len(snapshot.Columns) == 0 {
+		return false
+	}
+	return planResourceMatchesSnapshot(resource, snapshot)
+}
+
+func planResourceMatchesSnapshot(resource planner.Resource, snapshot session.SchemaSnapshot) bool {
+	if !strings.EqualFold(strings.TrimSpace(snapshot.Name), strings.TrimSpace(resource.Name)) {
+		return false
+	}
+	if snapshot.Type != "" && resource.Type != "" && !catalogTypesCompatible(resource.Type, snapshot.Type) {
+		return false
+	}
+	return planGroupsMatchSnapshot(resource.Groups, snapshot.Groups)
+}
+
+func planGroupsMatchSnapshot(planGroups, snapshotGroups []string) bool {
+	if len(planGroups) == 0 {
+		return len(snapshotGroups) > 0
+	}
+	for _, planGroup := range planGroups {
+		groupMatched := false
+		for _, snapshotGroup := range snapshotGroups {
+			if strings.EqualFold(strings.TrimSpace(planGroup), strings.TrimSpace(snapshotGroup)) {
+				groupMatched = true
+				break
+			}
+		}
+		if !groupMatched {
+			return false
+		}
+	}
+	return true
+}
+
+func schemaNotReadyMessage(step int, resource planner.Resource) string {
+	groupLabel := strings.Join(resource.Groups, ", ")
+	if groupLabel == "" {
+		groupLabel = "<group>"
+	}
+	return fmt.Sprintf(
+		"query plan step %d: call describe_schema for %s %s in %s before propose_query_plan; use only typed columns from describe_schema",
+		step,
+		resource.Type,
+		resource.Name,
+		groupLabel,
+	)
+}
+
+func planRepairLimitMessage() string {
+	return fmt.Sprintf(
+		"automatic query plan repair limit reached after %d attempts; call describe_schema when columns are unknown, submit one corrected plan, and do not call validate_bydbql, probe_bydbql, or execute_bydbql until propose_query_plan returns valid=true",
+		maxPlanAttempts,
+	)
 }
 
 func probeOutputSummary(probeSummary *session.ProbeSummary) string {

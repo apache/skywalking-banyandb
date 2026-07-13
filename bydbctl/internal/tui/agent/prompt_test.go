@@ -50,6 +50,8 @@ func TestBuildBydbqlPromptIncludesOutputContract(t *testing.T) {
 		"query workspace assistant",
 		"propose_query_plan",
 		"Never publish a raw BYDBQL statement in free text",
+		"Controlled workflow",
+		"describe_schema",
 		"Context JSON:",
 		"top slow endpoints",
 		"Use only the provided bydbctl tools",

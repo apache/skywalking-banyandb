@@ -31,6 +31,9 @@ func TestBuildInitialPrompt(t *testing.T) {
 	for _, expected := range []string{
 		"Generate a query",
 		"propose_query_plan",
+		"describe_schema",
+		"Controlled workflow",
+		"validate_bydbql is parse/safety-only",
 		"at most five catalog candidates",
 		"Use only the provided bydbctl tools",
 		"query workspace assistant",

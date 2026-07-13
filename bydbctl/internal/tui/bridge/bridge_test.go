@@ -29,6 +29,15 @@ import (
 	"github.com/apache/skywalking-banyandb/bydbctl/internal/tui/tools"
 )
 
+func querySessionWithSchema(schema session.SchemaSnapshot) *session.QuerySession {
+	return &session.QuerySession{
+		ResourceType:   schema.Type,
+		ResourceName:   schema.Name,
+		Groups:         append([]string(nil), schema.Groups...),
+		SchemaSnapshot: schema,
+	}
+}
+
 func TestBridgeValidatesRawBydbQLWithoutPublishingAProviderCandidate(t *testing.T) {
 	validator := &stubValidator{report: session.ValidationReport{Valid: true, Message: "valid", QueryType: "MEASURE"}}
 	toolBridge := New(Config{Validator: validator, Executor: &stubExecutor{}})
@@ -84,6 +93,15 @@ func TestBridgeCompilesStructuredQueryPlanBeforePublishingCandidate(t *testing.T
 		Validator: &stubValidator{report: session.ValidationReport{Valid: true, Message: "valid", QueryType: "MEASURE"}},
 	})
 	querySession := &session.QuerySession{SchemaSnapshot: session.SchemaSnapshot{
+		Loaded: true,
+		Type:   session.ResourceTypeMeasure,
+		Name:   "service_latency",
+		Groups: []string{"production"},
+		Columns: []session.SchemaColumn{
+			{Name: "endpoint", Kind: session.SchemaColumnTag, Type: session.SchemaValueTypeString, Indexed: true},
+			{Name: "status", Kind: session.SchemaColumnTag, Type: session.SchemaValueTypeInt},
+			{Name: "latency", Kind: session.SchemaColumnField, Type: session.SchemaValueTypeFloat},
+		},
 		AvailableGroups: []string{"production", "staging"},
 		Catalog: []session.CatalogEntry{
 			{Group: "production", Type: session.ResourceTypeMeasure, Name: "service_latency"},
@@ -204,7 +222,7 @@ func TestBridgeCompilesWorkflowPlanIntoIndividuallyApprovedSteps(t *testing.T) {
 		Executor:  &stubExecutor{schema: schema},
 		Validator: &stubValidator{report: session.ValidationReport{Valid: true, QueryType: "STREAM"}},
 	})
-	querySession := &session.QuerySession{}
+	querySession := querySessionWithSchema(schema)
 	toolBridge.SetSession(querySession)
 	result := toolBridge.Call(context.Background(), Call{
 		Name: ToolProposeQueryPlan,
@@ -255,7 +273,7 @@ func TestBridgeAdvancesOnlyOneWorkflowStepAtATime(t *testing.T) {
 		Executor:  executor,
 		Validator: &stubValidator{report: session.ValidationReport{Valid: true, QueryType: "STREAM"}},
 	})
-	querySession := &session.QuerySession{}
+	querySession := querySessionWithSchema(schema)
 	toolBridge.SetSession(querySession)
 	proposal := toolBridge.Call(context.Background(), Call{
 		Name: ToolProposeQueryPlan,
@@ -389,7 +407,7 @@ func TestBridgeLimitsAutomaticPlanRepairsToTwoAfterTheInitialAttempt(t *testing.
 		},
 	}
 	toolBridge := New(Config{Executor: &stubExecutor{schema: schema}, Validator: &stubValidator{report: session.ValidationReport{Valid: true}}})
-	toolBridge.SetSession(&session.QuerySession{})
+	toolBridge.SetSession(querySessionWithSchema(schema))
 	invalidPlan := map[string]any{
 		"resource": map[string]any{"type": "MEASURE", "name": "service_latency", "groups": []any{"production"}},
 		"filter":   map[string]any{"column": "unknown", "operator": "=", "value": 1},
@@ -402,8 +420,121 @@ func TestBridgeLimitsAutomaticPlanRepairsToTwoAfterTheInitialAttempt(t *testing.
 		}
 	}
 	result := toolBridge.Call(context.Background(), Call{Name: ToolProposeQueryPlan, Arguments: map[string]any{"plan": invalidPlan}})
-	if result.Err != nil || !strings.Contains(result.Content, "repair limit") {
-		t.Fatalf("expected repair limit after two automatic repairs, got %+v", result)
+	if result.Err != nil || !strings.Contains(result.Content, planRepairLimitMessage()) {
+		t.Fatalf("expected repair limit after automatic repairs, got %+v", result)
+	}
+}
+
+func TestBridgeRejectsProposeBeforeTypedSchema(t *testing.T) {
+	schema := session.SchemaSnapshot{
+		Type:   session.ResourceTypeMeasure,
+		Name:   "service_latency",
+		Groups: []string{"production"},
+		Loaded: true,
+		Columns: []session.SchemaColumn{
+			{Name: "latency", Kind: session.SchemaColumnField, Type: session.SchemaValueTypeFloat},
+		},
+	}
+	toolBridge := New(Config{
+		Executor:  &stubExecutor{schema: schema},
+		Validator: &stubValidator{report: session.ValidationReport{Valid: true}},
+	})
+	toolBridge.SetSession(&session.QuerySession{})
+	toolBridge.SetRankedCandidates([]session.CatalogEntry{
+		{Group: "production", Type: session.ResourceTypeMeasure, Name: "service_latency"},
+	})
+	plan := map[string]any{
+		"resource": map[string]any{"type": "MEASURE", "name": "service_latency", "groups": []any{"production"}},
+		"projection": []any{map[string]any{"column": "latency"}},
+		"limit": 10,
+	}
+	for attempt := 0; attempt < 4; attempt++ {
+		result := toolBridge.Call(context.Background(), Call{Name: ToolProposeQueryPlan, Arguments: map[string]any{"plan": plan}})
+		if result.Err != nil || !strings.Contains(result.Content, "describe_schema") || strings.Contains(result.Content, planRepairLimitMessage()) {
+			t.Fatalf("expected describe_schema gate at attempt %d, got %+v", attempt+1, result)
+		}
+	}
+}
+
+func TestBridgeDescribeSchemaResetsPlanRepairBudget(t *testing.T) {
+	schema := session.SchemaSnapshot{
+		Type:   session.ResourceTypeMeasure,
+		Name:   "service_latency",
+		Groups: []string{"production"},
+		Loaded: true,
+		Columns: []session.SchemaColumn{
+			{Name: "latency", Kind: session.SchemaColumnField, Type: session.SchemaValueTypeFloat},
+		},
+	}
+	toolBridge := New(Config{
+		Executor:  &stubExecutor{schema: schema},
+		Validator: &stubValidator{report: session.ValidationReport{Valid: true}},
+	})
+	toolBridge.SetSession(querySessionWithSchema(schema))
+	toolBridge.SetRankedCandidates([]session.CatalogEntry{
+		{Group: "production", Type: session.ResourceTypeMeasure, Name: "service_latency"},
+	})
+	invalidPlan := map[string]any{
+		"resource": map[string]any{"type": "MEASURE", "name": "service_latency", "groups": []any{"production"}},
+		"filter":   map[string]any{"column": "unknown", "operator": "=", "value": 1},
+		"limit":    10,
+	}
+	for attempt := 0; attempt < 3; attempt++ {
+		result := toolBridge.Call(context.Background(), Call{Name: ToolProposeQueryPlan, Arguments: map[string]any{"plan": invalidPlan}})
+		if result.Err != nil || !strings.Contains(result.Content, `"valid":false`) || strings.Contains(result.Content, planRepairLimitMessage()) {
+			t.Fatalf("expected repairable proposal failure at attempt %d, got %+v", attempt+1, result)
+		}
+	}
+	limitResult := toolBridge.Call(context.Background(), Call{Name: ToolProposeQueryPlan, Arguments: map[string]any{"plan": invalidPlan}})
+	if limitResult.Err != nil || !strings.Contains(limitResult.Content, planRepairLimitMessage()) {
+		t.Fatalf("expected repair limit before describe_schema reset, got %+v", limitResult)
+	}
+	describeResult := toolBridge.Call(context.Background(), Call{
+		Name: ToolDescribeSchema,
+		Arguments: map[string]any{
+			"type":   "MEASURE",
+			"name":   "service_latency",
+			"groups": []any{"production"},
+		},
+	})
+	if describeResult.Err != nil {
+		t.Fatalf("describe_schema failed: %v", describeResult.Err)
+	}
+	retryResult := toolBridge.Call(context.Background(), Call{Name: ToolProposeQueryPlan, Arguments: map[string]any{"plan": invalidPlan}})
+	if retryResult.Err != nil || !strings.Contains(retryResult.Content, `"valid":false`) || strings.Contains(retryResult.Content, planRepairLimitMessage()) {
+		t.Fatalf("expected describe_schema to reset repair budget, got %+v", retryResult)
+	}
+}
+
+func TestBridgeDescribeSchemaUpdatesSession(t *testing.T) {
+	schema := session.SchemaSnapshot{
+		Type:   session.ResourceTypeMeasure,
+		Name:   "service_latency",
+		Groups: []string{"production"},
+		Loaded: true,
+		Columns: []session.SchemaColumn{
+			{Name: "latency", Kind: session.SchemaColumnField, Type: session.SchemaValueTypeFloat},
+		},
+	}
+	toolBridge := New(Config{Executor: &stubExecutor{schema: schema}})
+	toolBridge.SetSession(&session.QuerySession{UserGoal: "latency"})
+	toolBridge.SetRankedCandidates([]session.CatalogEntry{
+		{Group: "production", Type: session.ResourceTypeMeasure, Name: "service_latency"},
+	})
+	result := toolBridge.Call(context.Background(), Call{
+		Name: ToolDescribeSchema,
+		Arguments: map[string]any{
+			"type":   "MEASURE",
+			"name":   "service_latency",
+			"groups": []any{"production"},
+		},
+	})
+	if result.Err != nil {
+		t.Fatalf("describe_schema failed: %v", result.Err)
+	}
+	bridgeSession := toolBridge.SessionSnapshot()
+	if bridgeSession == nil || bridgeSession.ResourceName != "service_latency" || len(bridgeSession.SchemaSnapshot.Columns) != 1 {
+		t.Fatalf("expected describe_schema to update bridge session, got %+v", bridgeSession)
 	}
 }
 
@@ -565,7 +696,7 @@ func TestBridgeRejectsExecutionOutsideACompiledPlan(t *testing.T) {
 		Name:      ToolExecuteBydbQL,
 		Arguments: map[string]any{"query": "SELECT * FROM MEASURE latency IN production TIME > '-30m' LIMIT 10"},
 	})
-	if result.Err == nil || !strings.Contains(result.Err.Error(), "compiled query plan") {
+	if result.Err == nil || !strings.Contains(result.Err.Error(), "propose_query_plan to return valid=true") {
 		t.Fatalf("expected execution plan rejection, got %+v", result)
 	}
 }

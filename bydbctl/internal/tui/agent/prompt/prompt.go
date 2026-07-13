@@ -16,7 +16,7 @@
 // under the License.
 
 // Package prompt builds BYDBQL generation prompts for agent adapters.
-// Reference content is derived from skills/bydbql/references/.
+// Workflow guidance is aligned with skills/bydbql/SKILL.md and references/.
 package prompt
 
 import (
@@ -56,6 +56,7 @@ func buildInitial(input Input) string {
 	promptBuffer.WriteString("Task:\n")
 	promptBuffer.WriteString(taskPrompt)
 	promptBuffer.WriteString("\n\n")
+	writeWorkflow(&promptBuffer, true)
 	writeHardRules(&promptBuffer, true, input.ExecutionPolicy)
 	writeNLRules(&promptBuffer)
 	writeReferences(&promptBuffer)
@@ -75,6 +76,7 @@ func buildRevise(input Input) string {
 	promptBuffer.WriteString("Task:\n")
 	promptBuffer.WriteString(taskPrompt)
 	promptBuffer.WriteString("\n\n")
+	writeWorkflow(&promptBuffer, false)
 	writeHardRules(&promptBuffer, false, input.ExecutionPolicy)
 	writeNLRules(&promptBuffer)
 	writeReferences(&promptBuffer)
@@ -89,20 +91,40 @@ func writeRole(prompt *bytes.Buffer) {
 	prompt.WriteString("Have a useful multi-turn conversation, discover schemas, and produce typed query plans when a query is ready.\n\n")
 }
 
+func writeWorkflow(prompt *bytes.Buffer, initial bool) {
+	prompt.WriteString("Controlled workflow (follow in order when the user asks for a query):\n")
+	prompt.WriteString("1. If the group, resource name, or type is missing or ambiguous, call list_groups_schemas.\n")
+	prompt.WriteString("2. Pick a resource from schema.ranked_candidates, then call describe_schema for that exact resource before any propose_query_plan call.\n")
+	prompt.WriteString("3. Build a typed plan using only columns and indexed_fields returned by describe_schema. Never invent tags, fields, groups, or indexes.\n")
+	prompt.WriteString("4. Submit the plan with propose_query_plan and do not end the turn until it returns valid=true.\n")
+	prompt.WriteString("5. After valid=true, bydbctl may auto-probe the compiled statement; use probe findings to refine the plan when needed.\n")
+	prompt.WriteString("6. Keep every statement read-only: only SELECT and SHOW TOP, one statement, no semicolons, and no SQL comments.\n")
+	prompt.WriteString("7. validate_bydbql is parse/safety-only. It does not register a candidate and does not prove schema or index-rule correctness.\n")
+	prompt.WriteString("8. probe_bydbql and execute_bydbql accept only the exact query from the latest successful propose_query_plan.\n")
+	prompt.WriteString("9. When the plan includes ORDER BY or the user asks for latest/top/ranking, sort only by TIME or schema.indexed_fields; omit ORDER BY when no indexed field fits.\n")
+	if initial {
+		prompt.WriteString("10. Omitted time and row-count constraints render as last 30 minutes and LIMIT 10.\n")
+	} else {
+		prompt.WriteString("10. Fix validation_error, probe_summary.error, or execution_summary.error while preserving correct parts of the prior plan.\n")
+	}
+	prompt.WriteString("\n")
+}
+
 func writeHardRules(prompt *bytes.Buffer, initial bool, executionPolicy string) {
 	policy := approval.NormalizeExecutionPolicy(executionPolicy)
 	prompt.WriteString("Hard rules:\n")
 	prompt.WriteString("- Never publish a raw BYDBQL statement in free text. Publish candidates only through propose_query_plan.\n")
 	prompt.WriteString("- The session working directory is not a codebase. Do not read files, search source, or run shell commands.\n")
-	prompt.WriteString("- For a query-planning request, start with an MCP tool call: list_groups_schemas, or describe_schema when schema.ranked_candidates already names one resource.\n")
+	prompt.WriteString("- For a query-planning request, never call propose_query_plan before describe_schema returns typed columns for the target resource.\n")
 	prompt.WriteString("- A normal conversational response is valid when no query is ready.\n")
 	prompt.WriteString("- Submit a typed query plan only when the user asks for a query and the request is specific enough.\n")
 	prompt.WriteString("- When you submit a query plan, do not end the turn until propose_query_plan returns valid=true. Free-text BYDBQL is ignored by bydbctl.\n")
+	prompt.WriteString("- Do not call probe_bydbql or execute_bydbql with hand-written BYDBQL, even when validate_bydbql returned valid=true.\n")
 	prompt.WriteString("- For a new query plan, rank at most five catalog candidates, and call describe_schema for at most three.\n")
 	prompt.WriteString("- Use only the typed columns returned by describe_schema. Do not invent a resource, group, field, tag, type, or index.\n")
 	prompt.WriteString("- Use only the provided bydbctl tools. Do not use shell commands, external MCP servers, downloads, or runtime tool registration.\n")
 	prompt.WriteString("- propose_query_plan accepts a plan or workflow. Its result is the only structured candidate that bydbctl will show.\n")
-	prompt.WriteString("- You may call validate_bydbql on compiled statements or plans whenever helpful.\n")
+	prompt.WriteString("- validate_bydbql may help debug syntax, but only a successful propose_query_plan registers the workspace candidate.\n")
 	switch policy {
 	case approval.PolicyTrustSession:
 		prompt.WriteString("- Execution policy is trust_session: mutating statements are also auto-approved when supported.\n")
@@ -137,7 +159,7 @@ func writeNLRules(prompt *bytes.Buffer) {
 	prompt.WriteString("- Distinguish time ranges from data-point limits; use the user wording when it is explicit.\n")
 	prompt.WriteString("- A goal spanning multiple resources requires a workflow with one independently approved plan step per resource.\n")
 	prompt.WriteString("- conversation lists prior user hints and compiled candidates; continue from the latest state.\n")
-	prompt.WriteString("- When the user asks for a query that should return data, inspect schema, compile a plan, probe it, and use the preview to refine the plan before finishing the turn.\n\n")
+	prompt.WriteString("- When the user asks for a query that should return data, inspect schema with describe_schema, compile a plan, and rely on propose_query_plan plus the auto-probe preview to refine before finishing the turn.\n\n")
 }
 
 func writeReferences(prompt *bytes.Buffer) {

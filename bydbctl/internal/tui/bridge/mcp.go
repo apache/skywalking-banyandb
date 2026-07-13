@@ -218,7 +218,7 @@ func toolDefinitions() []map[string]any {
 		},
 		{
 			"name":        ToolDescribeSchema,
-			"description": "Describe a BanyanDB schema using the TUI session's authenticated connection.",
+			"description": "Describe a BanyanDB schema and typed columns for one ranked catalog resource. Call this before propose_query_plan for that resource.",
 			"inputSchema": map[string]any{
 				"type": "object",
 				"properties": map[string]any{
@@ -230,12 +230,12 @@ func toolDefinitions() []map[string]any {
 		},
 		{
 			"name":        ToolProposeQueryPlan,
-			"description": "Submit a typed, structured query plan for deterministic local BYDBQL compilation. Use resource.type TOPN with top_n for SHOW TOP goals; use MEASURE/STREAM/TRACE/PROPERTY for SELECT goals.",
+			"description": "Submit a typed query plan after describe_schema returns columns for the same resource. This is the only path that registers a BYDBQL candidate in bydbctl.",
 			"inputSchema": proposeQueryPlanInputSchema(),
 		},
 		{
 			"name":        ToolValidateBydbQL,
-			"description": "Validate one read-only BYDBQL statement without publishing an executable candidate.",
+			"description": "Parse/safety-check one read-only BYDBQL statement. This does not register a workspace candidate and does not replace propose_query_plan.",
 			"inputSchema": map[string]any{
 				"type":       "object",
 				"required":   []string{"query"},
@@ -244,7 +244,7 @@ func toolDefinitions() []map[string]any {
 		},
 		{
 			"name":        ToolProbeBydbQL,
-			"description": "Run a bounded read-only probe against the current compiled query plan to verify it returns data.",
+			"description": "Run a bounded read-only probe for the exact query returned by the latest successful propose_query_plan.",
 			"inputSchema": map[string]any{
 				"type":       "object",
 				"required":   []string{"query"},

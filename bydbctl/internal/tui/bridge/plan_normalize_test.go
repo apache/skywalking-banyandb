@@ -114,9 +114,19 @@ func TestProposeQueryPlanCompilesNormalizedShowTopPlanForMeasureCatalogEntry(t *
 		Executor:  &stubExecutor{schema: schema},
 		Validator: &stubValidator{report: session.ValidationReport{Valid: true, Message: "valid", QueryType: "TOPN"}},
 	})
-	toolBridge.SetSession(&session.QuerySession{SchemaSnapshot: session.SchemaSnapshot{Catalog: []session.CatalogEntry{
-		{Group: "sw_metrics", Type: session.ResourceTypeMeasure, Name: "service_endpoint_latency"},
-	}}})
+	toolBridge.SetSession(&session.QuerySession{SchemaSnapshot: session.SchemaSnapshot{
+		Loaded: true,
+		Type:   session.ResourceTypeMeasure,
+		Name:   "service_endpoint_latency",
+		Groups: []string{"sw_metrics"},
+		Columns: []session.SchemaColumn{
+			{Name: "endpoint", Kind: session.SchemaColumnTag, Type: session.SchemaValueTypeString, Indexed: true},
+			{Name: "latency", Kind: session.SchemaColumnField, Type: session.SchemaValueTypeFloat},
+		},
+		Catalog: []session.CatalogEntry{
+			{Group: "sw_metrics", Type: session.ResourceTypeMeasure, Name: "service_endpoint_latency"},
+		},
+	}})
 	toolBridge.SetRankedCandidates([]session.CatalogEntry{
 		{Group: "sw_metrics", Type: session.ResourceTypeMeasure, Name: "service_endpoint_latency"},
 	})

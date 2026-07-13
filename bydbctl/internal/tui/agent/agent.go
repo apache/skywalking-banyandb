@@ -80,6 +80,7 @@ type ConversationTurnPayload struct {
 type RequestPayload struct {
 	Constraints      Constraints               `json:"constraints"`
 	Schema           SchemaSummary             `json:"schema"`
+	Workflow         WorkflowGuidance          `json:"workflow"`
 	QueryHints       QueryHints                `json:"query_hints"`
 	TimeRange        TimeRangePayload          `json:"time_range"`
 	ExecutionSummary *ExecutionSummary         `json:"execution_summary,omitempty"`
@@ -120,6 +121,14 @@ type SchemaSummary struct {
 	RankedCandidates   []CatalogEntrySummary `json:"ranked_candidates,omitempty"`
 	Type               string                `json:"type"`
 	Name               string                `json:"name"`
+	TypedColumnsReady  bool                  `json:"typed_columns_ready,omitempty"`
+}
+
+// WorkflowGuidance exposes orchestration limits and gates to the agent.
+type WorkflowGuidance struct {
+	MaxPlanAttempts                  int  `json:"max_plan_attempts"`
+	MaxSchemaDescriptions            int  `json:"max_schema_descriptions"`
+	RequireDescribeSchemaBeforePropose bool `json:"require_describe_schema_before_propose"`
 }
 
 // SchemaColumnSummary is a typed column contract exposed to an ACP provider.
@@ -308,11 +317,17 @@ func buildRequestPayload(querySession *session.QuerySession, hints QueryHints, t
 		}
 	}
 	readOnlyCandidate := approval.IsReadOnlyBYDBQL(candidate)
+	typedColumnsReady := querySession.SchemaSnapshot.Loaded && len(querySession.SchemaSnapshot.Columns) > 0
 	return RequestPayload{
 		Goal:         querySession.UserGoal,
 		Candidate:    candidate,
 		TemplateHint: strings.TrimSpace(templateHint),
 		QueryHints:   hints,
+		Workflow: WorkflowGuidance{
+			MaxPlanAttempts:                  3,
+			MaxSchemaDescriptions:            3,
+			RequireDescribeSchemaBeforePropose: true,
+		},
 		TimeRange: TimeRangePayload{
 			Start: strings.TrimSpace(querySession.TimeRange.Start),
 			End:   strings.TrimSpace(querySession.TimeRange.End),
@@ -339,6 +354,7 @@ func buildRequestPayload(querySession *session.QuerySession, hints QueryHints, t
 			AvailableResources: append([]string(nil), querySession.SchemaSnapshot.ResourceNames...),
 			AvailableGroups:    append([]string(nil), querySession.SchemaSnapshot.AvailableGroups...),
 			Catalog:            catalogSummary(querySession.SchemaSnapshot.Catalog),
+			TypedColumnsReady:  typedColumnsReady,
 		},
 		ExecutionSummary: executionSummary,
 		ProbeSummary:     probeSummary,
