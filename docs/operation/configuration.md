@@ -89,6 +89,33 @@ The following flags are used to configure the timeout of data sending from liais
 - `--measure-write-timeout duration`: Measure write timeout (default: 1m).
 - `--trace-write-timeout duration`: Trace write timeout (default: 1m).
 
+The following flags tune the BydbQL prepared-statement cache on the query path. The cache stores parsed statements keyed by query text so repeated, parameterized (`?`) queries skip re-parsing; literal queries without placeholders are never cached. It is bounded by both an entry count and the estimated in-memory size of the cached statements, evicting least-recently-used entries when either bound is exceeded. Effectiveness is observable via the `bydbql_prepared_cache_*` metrics (a `hit`/`miss`/`bypass` counter plus hit-ratio, entry-count, and byte-size gauges).
+
+- `--bydbql-prepared-cache-size int`: Max number of prepared BydbQL statements cached on the query path; `0` disables the cache (default: 2000).
+- `--bydbql-prepared-cache-max-bytes int`: Max total estimated size (in bytes) of the cached prepared statements; `0` removes the byte bound (default: 10485760, i.e. 10MiB).
+
+These flags surface the queries behind cache misses and slow responses without exposing high-cardinality query text as metric labels: Prometheus gets only two counters (`bydbql_prepared_cache_total{result="miss"}` and `bydbql_slow_query_total`), while the specific hot queries are logged.
+
+- `--bydbql-slow-query-threshold duration`: End-to-end latency above which a BydbQL query is counted as slow (increments `bydbql_slow_query_total`) and tracked in the slow-query top-K; `0` disables slow-query tracking (default: `1s`).
+- `--bydbql-topk-log-interval duration`: How often to log the hottest cache-miss and slow queries. Counts are cumulative since process start. The cache-miss list only shows templates re-parsed at least twice (`count>=2`): every template misses once on its cold-start lookup, so a `count==1` entry is benign and is filtered out — only repeatedly evicted-and-re-parsed (thrashing) templates are surfaced. The slow-query list is ranked by peak latency (`max_latency`) so a rarely-but-catastrophically slow query is not buried under frequently-mildly-slow ones. Uses a bounded approximate heavy-hitters tracker (128 entries), so it costs O(1) and never grows unbounded; `0` disables the top-K log (default: `5m`).
+
+#### Diagnosing an ineffective BydbQL cache
+
+A cache hit costs about 25 ns and 0 allocations, so the cache is effectively free when it works. When it does not, every request re-parses the query — for a wide trace/log query that is roughly **220 µs and ~147 KB / ~2,100 allocations per request** (about four orders of magnitude more CPU and heap churn than a hit). Watch these signals; several going abnormal together points at an ineffective cache:
+
+- **`bydbql_prepared_cache_hit_ratio` drops toward 0** and the **`miss` rate of `bydbql_prepared_cache_total{result="miss"}` climbs** — the primary indicator.
+- **BydbQL query latency rises** (the liaison gRPC `query` latency series) because the parse cost is added back to every request.
+- **Process CPU and Go GC pressure rise** — each miss allocates a fresh parse tree, so the allocation rate, GC frequency, GC pause, and GC CPU fraction all increase.
+- **`bydbql_prepared_cache_count` / `bydbql_prepared_cache_bytes` sit pinned at the cap while the miss rate stays high** — the set of distinct query templates exceeds the cache capacity and entries are constantly evicted.
+- **The `bypass` rate of `bydbql_prepared_cache_total{result="bypass"}` is high** — many queries are literal (contain no `?`) and are never cached. Bypasses are excluded from the hit ratio.
+
+To find the exact queries behind a high miss/bypass rate, enable the query access log (`--enable-query-access-log`). Each BydbQL entry is tagged with its cache outcome via the log's service field: `bydbql-hit`, `bydbql-miss` (cacheable but not in the cache), and `bydbql-bypass` (literal, never cached). Filtering the `bydbql-query-*` log for `bydbql-miss` / `bydbql-bypass` yields exactly the queries that did not hit the cache, together with their full text.
+
+Remedies:
+
+- **High miss rate with the cache pinned at capacity** → the working set of distinct query templates is larger than the cache. Raise `--bydbql-prepared-cache-size` (and `--bydbql-prepared-cache-max-bytes` if the byte bound binds first) until the hit ratio recovers.
+- **High bypass rate (near-empty cache)** → queries are not parameterized. Literal queries (no `?`) are never cached, and inlining values (e.g. `id = 'a' OR id = 'b' …`) explodes the template count. Use the `bydbql-bypass` access-log entries to find them, then parameterize the varying values with `?`, and express value sets as `IN (?)` bound to a `str_array`/`int_array` so a query is one reusable template regardless of the number of values.
+
 ### TLS
 
 If you want to enable TLS for the communication between the client and liaison/standalone, you can use the following flags:

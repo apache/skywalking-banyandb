@@ -377,7 +377,7 @@ var _ = Describe("BindParams", func() {
 			}
 			walk(reflect.TypeOf(Grammar{}))
 			Expect(found).To(Equal(expected),
-				"grammar @Param positions changed: wire any new position into binder.collect, the acceptance matrix, and this list")
+				"grammar @Param positions changed: wire any new position into binder.collect, preparer.walkGrammar, the acceptance matrix, and this list")
 		})
 	})
 
