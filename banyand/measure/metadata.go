@@ -524,6 +524,7 @@ func (sr *schemaRepo) collectShardInfo(table any, shardID uint32) *databasev1.Sh
 		PartCount:         int64(partCount),
 		InvertedIndexInfo: &databasev1.InvertedIndexInfo{},
 		SidxInfo:          &databasev1.SIDXInfo{},
+		FilePartCount:     int64(filePartCount),
 	}
 }
 
