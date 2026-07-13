@@ -34,8 +34,8 @@ import (
 //
 // Binding mutates the grammar in place, so a grammar binds exactly once: rebinding is
 // rejected and a failed bind leaves the grammar partially bound and unusable — parse the
-// query again in both cases. Parse-once/bind-many reuse requires an immutable binding
-// design and is tracked as a follow-up.
+// query again in both cases. For parse-once/bind-many reuse, use Prepare and
+// (*PreparedStatement).Bind, which never mutate the parsed template.
 func BindParams(g *Grammar, params []*modelv1.TagValue) error {
 	if g.paramsBound {
 		return fmt.Errorf("grammar is already bound; parse the query again to bind new parameters")
@@ -159,15 +159,11 @@ func (b *binder) collectIntSlot(value *int, param *bool, maxValue int64) {
 		return
 	}
 	b.slots = append(b.slots, func(p *modelv1.TagValue) error {
-		intVal, ok := p.Value.(*modelv1.TagValue_Int)
-		if !ok {
-			return fmt.Errorf("this position only accepts int parameters, got %T", p.Value)
-		}
-		bound := intVal.Int.GetValue()
-		if err := validateCountValue("int parameter", bound, maxValue); err != nil {
+		bound, err := resolveCountParam(p, maxValue)
+		if err != nil {
 			return err
 		}
-		*value = int(bound)
+		*value = bound
 		*param = false
 		return nil
 	})
@@ -287,31 +283,17 @@ func (b *binder) collectValueList(values []*GrammarValue, assign func([]*Grammar
 }
 
 func (b *binder) bindListValue(v *GrammarValue, p *modelv1.TagValue) error {
-	switch val := p.Value.(type) {
+	switch p.Value.(type) {
 	case *modelv1.TagValue_Str, *modelv1.TagValue_Int, *modelv1.TagValue_Null:
 		return bindScalarValue(v, p)
-	case *modelv1.TagValue_StrArray:
-		if len(val.StrArray.GetValue()) == 0 {
-			return fmt.Errorf("array parameter must not be empty")
-		}
-		expanded := make([]*GrammarValue, 0, len(val.StrArray.GetValue()))
-		for _, s := range val.StrArray.GetValue() {
-			expanded = append(expanded, &GrammarValue{String: &s})
-		}
-		b.recordExpansion(v, expanded)
-	case *modelv1.TagValue_IntArray:
-		if len(val.IntArray.GetValue()) == 0 {
-			return fmt.Errorf("array parameter must not be empty")
-		}
-		expanded := make([]*GrammarValue, 0, len(val.IntArray.GetValue()))
-		for _, i := range val.IntArray.GetValue() {
-			expanded = append(expanded, &GrammarValue{Integer: &i})
-		}
-		b.recordExpansion(v, expanded)
 	default:
-		return fmt.Errorf("value list only accepts str, int, null, str_array, or int_array parameters, got %T", p.Value)
+		expanded, err := resolveArrayElements(p)
+		if err != nil {
+			return err
+		}
+		b.recordExpansion(v, expanded)
+		return nil
 	}
-	return nil
 }
 
 func (b *binder) recordExpansion(v *GrammarValue, expanded []*GrammarValue) {
@@ -336,40 +318,115 @@ func (b *binder) expandLists() {
 }
 
 func bindTimeValue(v *GrammarTimeValue, p *modelv1.TagValue) error {
-	switch val := p.Value.(type) {
-	case *modelv1.TagValue_Str:
-		strVal := val.Str.GetValue()
-		v.String = &strVal
-	case *modelv1.TagValue_Timestamp:
-		// A nil inner timestamp would silently decode as the Unix epoch and an
-		// out-of-range one would format as a nonsense year; reject both here.
-		if err := val.Timestamp.CheckValid(); err != nil {
-			return fmt.Errorf("invalid timestamp parameter: %w", err)
-		}
-		strVal := val.Timestamp.AsTime().Format(time.RFC3339Nano)
-		v.String = &strVal
-	default:
-		// int is rejected as well: the transformer cannot parse a bare integer
-		// as a timestamp, so accepting it would only defer a certain failure.
-		return fmt.Errorf("time clause only accepts str or timestamp parameters, got %T", p.Value)
+	strVal, err := resolveTimeParam(p)
+	if err != nil {
+		return err
 	}
+	v.String = &strVal
 	v.Param = false
 	return nil
 }
 
 func bindScalarValue(v *GrammarValue, p *modelv1.TagValue) error {
+	resolved, err := resolveScalarParam(p)
+	if err != nil {
+		return err
+	}
+	v.String, v.Integer, v.Null = resolved.String, resolved.Integer, resolved.Null
+	v.Param = false
+	return nil
+}
+
+// resolveScalarParam produces a fresh literal value node for a str/int/null
+// parameter. It is the single source of scalar type acceptance, shared by the
+// in-place bind path and the reusable Bind path.
+func resolveScalarParam(p *modelv1.TagValue) (*GrammarValue, error) {
 	switch val := p.Value.(type) {
 	case *modelv1.TagValue_Str:
 		strVal := val.Str.GetValue()
-		v.String = &strVal
+		return &GrammarValue{String: &strVal}, nil
 	case *modelv1.TagValue_Int:
 		intVal := val.Int.GetValue()
-		v.Integer = &intVal
+		return &GrammarValue{Integer: &intVal}, nil
 	case *modelv1.TagValue_Null:
-		v.Null = true
+		return &GrammarValue{Null: true}, nil
 	default:
-		return fmt.Errorf("this position only accepts str, int, or null parameters, got %T", p.Value)
+		return nil, fmt.Errorf("this position only accepts str, int, or null parameters, got %T", p.Value)
 	}
-	v.Param = false
-	return nil
+}
+
+// resolveTimeParam produces the time string for a str/timestamp parameter. int
+// is rejected: the transformer cannot parse a bare integer as a timestamp, so
+// accepting it would only defer a certain failure.
+func resolveTimeParam(p *modelv1.TagValue) (string, error) {
+	switch val := p.Value.(type) {
+	case *modelv1.TagValue_Str:
+		return val.Str.GetValue(), nil
+	case *modelv1.TagValue_Timestamp:
+		// A nil inner timestamp would silently decode as the Unix epoch and an
+		// out-of-range one would format as a nonsense year; reject both here.
+		if err := val.Timestamp.CheckValid(); err != nil {
+			return "", fmt.Errorf("invalid timestamp parameter: %w", err)
+		}
+		return val.Timestamp.AsTime().Format(time.RFC3339Nano), nil
+	default:
+		return "", fmt.Errorf("time clause only accepts str or timestamp parameters, got %T", p.Value)
+	}
+}
+
+// resolveArrayElements produces the literal nodes a str_array/int_array
+// parameter expands to, rejecting empty arrays.
+func resolveArrayElements(p *modelv1.TagValue) ([]*GrammarValue, error) {
+	switch val := p.Value.(type) {
+	case *modelv1.TagValue_StrArray:
+		if len(val.StrArray.GetValue()) == 0 {
+			return nil, fmt.Errorf("array parameter must not be empty")
+		}
+		expanded := make([]*GrammarValue, 0, len(val.StrArray.GetValue()))
+		for _, s := range val.StrArray.GetValue() {
+			expanded = append(expanded, &GrammarValue{String: &s})
+		}
+		return expanded, nil
+	case *modelv1.TagValue_IntArray:
+		if len(val.IntArray.GetValue()) == 0 {
+			return nil, fmt.Errorf("array parameter must not be empty")
+		}
+		expanded := make([]*GrammarValue, 0, len(val.IntArray.GetValue()))
+		for _, i := range val.IntArray.GetValue() {
+			expanded = append(expanded, &GrammarValue{Integer: &i})
+		}
+		return expanded, nil
+	default:
+		return nil, fmt.Errorf("value list only accepts str, int, null, str_array, or int_array parameters, got %T", p.Value)
+	}
+}
+
+// resolveListParam produces the value node(s) an IN/MATCH/HAVING placeholder
+// resolves to: one for a scalar, N for an array expanded in place. It mirrors
+// bindListValue's scalar-vs-array split so both paths accept the same types.
+func resolveListParam(p *modelv1.TagValue) ([]*GrammarValue, error) {
+	switch p.Value.(type) {
+	case *modelv1.TagValue_Str, *modelv1.TagValue_Int, *modelv1.TagValue_Null:
+		v, err := resolveScalarParam(p)
+		if err != nil {
+			return nil, err
+		}
+		return []*GrammarValue{v}, nil
+	default:
+		return resolveArrayElements(p)
+	}
+}
+
+// resolveCountParam produces the int for a LIMIT/OFFSET/TOP N parameter within
+// that position's upper bound.
+func resolveCountParam(p *modelv1.TagValue, maxValue int64) (int, error) {
+	intVal, ok := p.Value.(*modelv1.TagValue_Int)
+	if !ok {
+		return 0, fmt.Errorf("this position only accepts int parameters, got %T", p.Value)
+	}
+	bound := intVal.Int.GetValue()
+	if err := validateCountValue("int parameter", bound, maxValue); err != nil {
+		return 0, err
+	}
+	return int(bound), nil
 }

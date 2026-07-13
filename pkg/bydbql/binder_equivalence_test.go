@@ -19,6 +19,8 @@ package bydbql_test
 
 import (
 	"context"
+	"fmt"
+	"sync"
 	"time"
 
 	"github.com/alecthomas/participle/v2/lexer"
@@ -329,6 +331,20 @@ func equivalenceCases() []equivalenceCase {
 			params:          []*modelv1.TagValue{intParam(5), strParam("-1h"), strParam("svc")},
 			ignoreTimeRange: true,
 		},
+		// PROPERTY query: the id-extraction path resolves placeholders separately
+		// from the criteria path, so it needs its own coverage.
+		{
+			name:          "str param in PROPERTY id =",
+			parameterized: "SELECT env FROM PROPERTY sw_prop IN default WHERE id = ?",
+			literal:       "SELECT env FROM PROPERTY sw_prop IN default WHERE id = 'k1'",
+			params:        []*modelv1.TagValue{strParam("k1")},
+		},
+		{
+			name:          "str_array param expands in PROPERTY id IN with a criteria param",
+			parameterized: "SELECT env FROM PROPERTY sw_prop IN default WHERE id IN (?) AND env = ?",
+			literal:       "SELECT env FROM PROPERTY sw_prop IN default WHERE id IN ('k1', 'k2') AND env = 'prod'",
+			params:        []*modelv1.TagValue{strArrayParam("k1", "k2"), strParam("prod")},
+		},
 	}
 }
 
@@ -353,10 +369,16 @@ var _ = Describe("BindParams equivalence with literal queries", func() {
 			}},
 			Fields: []*databasev1.FieldSpec{{Name: "value", FieldType: databasev1.FieldType_FIELD_TYPE_INT}},
 		}, nil).AnyTimes()
+		propertyRegistry := schema.NewMockProperty(ctrl)
+		propertyRegistry.EXPECT().GetProperty(gomock.Any(), gomock.Any()).Return(&databasev1.Property{
+			Metadata: &commonv1.Metadata{Name: "sw_prop", Group: "default"},
+			Tags:     []*databasev1.TagSpec{{Name: "env", Type: databasev1.TagType_TAG_TYPE_STRING}},
+		}, nil).AnyTimes()
 		mockRepo := metadata.NewMockRepo(ctrl)
 		mockRepo.EXPECT().StreamRegistry().AnyTimes().Return(streamRegistry)
 		mockRepo.EXPECT().TopNAggregationRegistry().AnyTimes().Return(topNRegistry)
 		mockRepo.EXPECT().MeasureRegistry().AnyTimes().Return(measureRegistry)
+		mockRepo.EXPECT().PropertyRegistry().AnyTimes().Return(propertyRegistry)
 		transformer = NewTransformer(mockRepo)
 	})
 
@@ -406,19 +428,31 @@ var _ = Describe("BindParams equivalence with literal queries", func() {
 			astDiff := cmp.Diff(literalGrammar, boundGrammar, cmpopts.IgnoreTypes(lexer.Position{}), cmpopts.IgnoreUnexported(Grammar{}))
 			Expect(astDiff).To(BeEmpty(), "AST mismatch:\n%s", astDiff)
 
-			// Both must transform to the same native query request
+			// Both the in-place bind and the reusable Prepare/Bind path must
+			// transform to the same native request as the literal query.
 			ctx := context.Background()
 			literalResult, literalErr := transformer.Transform(ctx, literalGrammar)
 			boundResult, boundErr := transformer.Transform(ctx, boundGrammar)
+
+			prepared, prepErr := Prepare(testCase.parameterized)
+			Expect(prepErr).To(BeNil())
+			bq, bindErr := prepared.Bind(testCase.params)
+			Expect(bindErr).To(BeNil())
+			preparedResult, preparedErr := transformer.TransformBound(ctx, bq)
+
 			if literalErr != nil {
 				Expect(testCase.expectError).To(BeTrue(), "unexpected transform error: %v", literalErr)
 				Expect(boundErr).To(HaveOccurred())
 				Expect(boundErr.Error()).To(Equal(literalErr.Error()))
+				Expect(preparedErr).To(HaveOccurred())
+				Expect(preparedErr.Error()).To(Equal(literalErr.Error()))
 				return
 			}
 			Expect(testCase.expectError).To(BeFalse(), "expected a transform error but both sides succeeded")
 			Expect(boundErr).To(BeNil())
+			Expect(preparedErr).To(BeNil())
 			Expect(boundResult.Type).To(Equal(literalResult.Type))
+			Expect(preparedResult.Type).To(Equal(literalResult.Type))
 			// SELECT * projections are built from a map, so their tag order is
 			// nondeterministic per Transform call; sort them before comparing.
 			opts := []cmp.Option{
@@ -430,8 +464,47 @@ var _ = Describe("BindParams equivalence with literal queries", func() {
 					protocmp.IgnoreFields(&streamv1.QueryRequest{}, "time_range"),
 					protocmp.IgnoreFields(&measurev1.TopNRequest{}, "time_range"))
 			}
-			requestDiff := cmp.Diff(literalResult.QueryRequest, boundResult.QueryRequest, opts...)
-			Expect(requestDiff).To(BeEmpty(), "query request mismatch:\n%s", requestDiff)
+			Expect(cmp.Diff(literalResult.QueryRequest, boundResult.QueryRequest, opts...)).
+				To(BeEmpty(), "in-place bind request mismatch")
+			Expect(cmp.Diff(literalResult.QueryRequest, preparedResult.QueryRequest, opts...)).
+				To(BeEmpty(), "prepared bind request mismatch")
 		})
 	}
+
+	It("reuses one prepared statement concurrently without cross-talk", func() {
+		prepared, err := Prepare("SELECT * FROM STREAM sw IN default WHERE service_id = ?")
+		Expect(err).To(BeNil())
+		const workers = 32
+		var wg sync.WaitGroup
+		errs := make(chan error, workers)
+		for i := 0; i < workers; i++ {
+			wg.Add(1)
+			go func(n int) {
+				defer wg.Done()
+				want := fmt.Sprintf("svc-%d", n)
+				bq, bindErr := prepared.Bind([]*modelv1.TagValue{strParam(want)})
+				if bindErr != nil {
+					errs <- bindErr
+					return
+				}
+				result, transformErr := transformer.TransformBound(context.Background(), bq)
+				if transformErr != nil {
+					errs <- transformErr
+					return
+				}
+				got := result.QueryRequest.(*streamv1.QueryRequest).Criteria.GetCondition().GetValue().GetStr().GetValue()
+				if got != want {
+					errs <- fmt.Errorf("worker %d: got %q, want %q", n, got, want)
+				}
+			}(i)
+		}
+		wg.Wait()
+		close(errs)
+		for e := range errs {
+			Expect(e).NotTo(HaveOccurred())
+		}
+		// Under -race, correct per-worker results also prove the shared template
+		// is never mutated during concurrent binds. TestBindTemplateStaysImmutable
+		// asserts the template fields directly.
+	})
 })
