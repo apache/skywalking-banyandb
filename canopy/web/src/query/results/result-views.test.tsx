@@ -66,6 +66,7 @@ const MEASURE_STATE = {
   trace: false, topN: 10, aggFn: '', fromAgg: null, fromResource: null,
 };
 const STREAM_STATE = { ...MEASURE_STATE, catalog: 'streams' as const, projection: ['level', 'service', 'trace_id', 'duration_ms', 'body'] };
+const TRACE_STATE = { ...MEASURE_STATE, catalog: 'traces' as const, projection: [] };
 
 const STREAM_TAG_SPECS = [
   { name: 'level', type: 'TAG_TYPE_STRING' },
@@ -292,26 +293,26 @@ describe('TraceResultView', () => {
     elements: [
       flattenQueryResponse({ trace_result: { traces: [{ trace_id: 't1', spans: [traceWire, traceWireWithBytes] as never[] }] } } as QueryResponse)[0],
       { trace_id: 't1', span_id: 's2', name: 'db.query', timestamp: '2026-06-29T11:55:00.020Z', duration: 12,
-        bytes: new Uint8Array([123, 34, 120, 125]) },
+        span: new Uint8Array([123, 34, 120, 125]) },
     ],
     totalRowCount: 2,
     truncated: false,
   };
   it('renders the flat span table (no parent/child hierarchy)', () => {
     renderWithRouter(
-      <TraceResultView response={traceResponse} state={MEASURE_STATE} showTrace={false} setShowTrace={() => {}} />,
+      <TraceResultView response={traceResponse} state={TRACE_STATE} showTrace={false} setShowTrace={() => {}} hasMore={false} onLoadMore={() => {}} isLoadingMore={false} />,
     );
-    expect(screen.getAllByText('t1').length).toBeGreaterThanOrEqual(2);
+    expect(screen.getAllByText('s1').length).toBeGreaterThanOrEqual(1);
   });
 
-  it('opens the TraceDecoderModal when "Decode bytes" is clicked', () => {
+  it('opens the TraceDecoderModal when "Decode" is clicked', () => {
     renderWithRouter(
-      <TraceResultView response={traceResponse} state={MEASURE_STATE} showTrace={false} setShowTrace={() => {}} />,
+      <TraceResultView response={traceResponse} state={TRACE_STATE} showTrace={false} setShowTrace={() => {}} hasMore={false} onLoadMore={() => {}} isLoadingMore={false} />,
     );
-    const decodes = screen.getAllByRole('button', { name: /decode bytes/i });
+    // Expand the row that carries span bytes.
+    fireEvent.click(screen.getByText('db.query'));
+    const decodes = screen.getAllByRole('button', { name: /decode/i });
     expect(decodes.length).toBeGreaterThan(0);
-    // Two rows → two "Decode bytes" buttons, only the one whose row carries
-    // bytes is enabled. Click that one.
     const enabled = decodes.find((b) => !b.hasAttribute('disabled'));
     expect(enabled).toBeDefined();
     fireEvent.click(enabled!);

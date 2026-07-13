@@ -712,7 +712,7 @@ function ResultViewRouter({ state, response, showTrace, setShowTrace, hasMore, o
     case 'streams':
       return <StreamResultView response={response} state={state} showTrace={showTrace} setShowTrace={setShowTrace} execMs={execMs} tagSpecs={tagSpecs} hasMore={hasMore} onLoadMore={onLoadMore} isLoadingMore={isLoadingMore} />;
     case 'traces':
-      return <TraceResultView response={response} state={state} showTrace={showTrace} setShowTrace={setShowTrace} execMs={execMs} />;
+      return <TraceResultView response={response} state={state} showTrace={showTrace} setShowTrace={setShowTrace} execMs={execMs} tagSpecs={tagSpecs} hasMore={hasMore} onLoadMore={onLoadMore} isLoadingMore={isLoadingMore} />;
     default:
       return <div className="qb-empty"><p>Unsupported catalog: {state.catalog}</p></div>;
   }
