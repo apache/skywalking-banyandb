@@ -512,16 +512,33 @@ var _ = Describe("Schema Change", func() {
 			env := setupSchemaChangeMeasure(svcs, measureName, measureSetupOptions{withExtraTag: true})
 			writeSchemaChangeMeasureData(svcs, measureName, now.Add(-2*time.Hour), 5,
 				measureWriteDataOptions{withExtraTag: true})
+			filePartCountAfterFirstBatch, filePartCountErr := getMeasureFilePartCount(svcs, groupName)
+			Expect(filePartCountErr).ShouldNot(HaveOccurred())
 			changeExtraMeasureTagType(svcs, measureName)
 			writeSchemaChangeMeasureData(svcs, measureName, now.Add(-1*time.Hour), 3,
 				measureWriteDataOptions{withExtraTagString: true, entityIDPrefix: "entity_new_"})
+			// Wait for the second batch to flush to disk, creating additional
+			// file parts that the merge loop can pick up. Without this gate the
+			// merge Eventually below also has to absorb flush latency, which can
+			// exceed 30 s on resource-constrained CI runners with -race.
+			Eventually(func(innerGm Gomega) int64 {
+				currentFilePartCount, currentFilePartCountErr := getMeasureFilePartCount(svcs, groupName)
+				innerGm.Expect(currentFilePartCountErr).ShouldNot(HaveOccurred())
+				return currentFilePartCount
+			}, flags.EventuallyTimeout).Should(BeNumerically(">", filePartCountAfterFirstBatch))
 			partCountBeforeMerge, partCountErr := getTotalMeasurePartCount(svcs, groupName)
 			Expect(partCountErr).ShouldNot(HaveOccurred())
+			// The background merge runs asynchronously; under the full parallel -race
+			// suite on CI its goroutine competes for CPU and snapshot locks with every
+			// other test. Poll on a relaxed interval (rather than Gomega's ~10ms
+			// default) so this wait does not starve the merge it is waiting for, with a
+			// generous, environment-scaled budget for merge latency. The post-merge
+			// part count is stable (no further writes), so slow polling never misses it.
 			Eventually(func(innerGm Gomega) int64 {
 				currentPartCount, currentPartCountErr := getTotalMeasurePartCount(svcs, groupName)
 				innerGm.Expect(currentPartCountErr).ShouldNot(HaveOccurred())
 				return currentPartCount
-			}, flags.EventuallyTimeout).Should(BeNumerically("<", partCountBeforeMerge))
+			}, 10*flags.EventuallyTimeout, 500*time.Millisecond).Should(BeNumerically("<", partCountBeforeMerge))
 
 			Eventually(func(innerGm Gomega) {
 				dataPoints := querySchemaChangeMeasureData(svcs, measureName,
@@ -1104,6 +1121,23 @@ func getTotalMeasurePartCount(svcs *services, group string) (int64, error) {
 	for _, seg := range dataInfo.SegmentInfo {
 		for _, shard := range seg.ShardInfo {
 			total += shard.PartCount
+		}
+	}
+	return total, nil
+}
+
+func getMeasureFilePartCount(svcs *services, group string) (int64, error) {
+	dataInfo, err := svcs.measure.CollectDataInfo(context.TODO(), group)
+	if err != nil {
+		return 0, fmt.Errorf("collect measure data info: %w", err)
+	}
+	if dataInfo == nil {
+		return 0, errors.New("measure data info is nil")
+	}
+	var total int64
+	for _, seg := range dataInfo.SegmentInfo {
+		for _, shard := range seg.ShardInfo {
+			total += shard.FilePartCount
 		}
 	}
 	return total, nil
