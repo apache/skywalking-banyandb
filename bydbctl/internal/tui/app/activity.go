@@ -108,6 +108,9 @@ func activityTitle(event agent.Event) string {
 		toolName := fallback(event.ToolName, "tool")
 		return fmt.Sprintf("tool %s: %s", toolName, fallback(string(event.Status), "updated"))
 	case agent.EventKindCandidate:
+		if event.Status == agent.EventStatusFailed {
+			return "candidate: draft"
+		}
 		return "candidate: validated"
 	case agent.EventKindClarification:
 		return "agent question: " + fallback(singleLine(event.Message), "clarification needed")

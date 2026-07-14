@@ -525,6 +525,42 @@ func TestReviseWithAgentAllowsConversationThatMentionsSelect(t *testing.T) {
 	}
 }
 
+func TestCompleteAgentTurnKeepsDraftCandidateFromFailedPropose(t *testing.T) {
+	runner := NewRunner(Config{})
+	querySession := &session.QuerySession{
+		SchemaSnapshot: session.SchemaSnapshot{
+			Type:   session.ResourceTypeMeasure,
+			Name:   "service_latency",
+			Groups: []string{"production"},
+			Loaded: true,
+		},
+	}
+	completeErr := runner.completeAgentTurn(context.Background(), querySession, "cpu usage", []agent.Event{{
+		Kind:      agent.EventKindCandidate,
+		Origin:    agent.EventOriginToolBridge,
+		ToolName:  bridge.ToolProposeQueryPlan,
+		Candidate: "SELECT * FROM STREAM sw IN default WHERE",
+		Status:    agent.EventStatusFailed,
+		Message:   `typed schema metadata is required to use column "unknown"`,
+	}, {
+		Kind:    agent.EventKindFinalResponse,
+		Message: "I could not validate the plan yet",
+	}})
+	if completeErr != nil {
+		t.Fatalf("completeAgentTurn returned error: %v", completeErr)
+	}
+	if querySession.Phase != session.PhaseValidate {
+		t.Fatalf("expected validate phase, got %s", querySession.Phase)
+	}
+	currentCandidate := querySession.CurrentCandidate()
+	if currentCandidate == nil || !strings.Contains(currentCandidate.Query, "STREAM sw") {
+		t.Fatalf("expected draft candidate in session, got %+v", currentCandidate)
+	}
+	if !strings.Contains(querySession.Conversation[0].Response, "typed schema metadata") {
+		t.Fatalf("expected draft failure explanation, got %+v", querySession.Conversation)
+	}
+}
+
 func TestCompleteAgentTurnDoesNotTreatToolOutputAsConversation(t *testing.T) {
 	runner := NewRunner(Config{})
 	querySession := &session.QuerySession{}

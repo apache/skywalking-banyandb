@@ -20,6 +20,7 @@ package cmd
 import (
 	"fmt"
 	"os"
+	"strings"
 	"time"
 
 	tea "github.com/charmbracelet/bubbletea"
@@ -28,6 +29,7 @@ import (
 
 	"github.com/apache/skywalking-banyandb/bydbctl/internal/tui/agent"
 	"github.com/apache/skywalking-banyandb/bydbctl/internal/tui/agent/acp"
+	"github.com/apache/skywalking-banyandb/bydbctl/internal/tui/agent/builtin"
 	tuiapp "github.com/apache/skywalking-banyandb/bydbctl/internal/tui/app"
 	"github.com/apache/skywalking-banyandb/bydbctl/internal/tui/applog"
 	"github.com/apache/skywalking-banyandb/bydbctl/internal/tui/approval"
@@ -38,14 +40,17 @@ import (
 )
 
 const (
-	agentProviderACP      = "acp"
-	agentProviderCodexACP = "codex-acp"
+	agentProviderBuiltin    = "builtin"
+	agentProviderACP        = "acp"
+	agentProviderCodexACP   = "codex-acp"
 )
 
 func newAgentCmd() *cobra.Command {
 	var agentProvider string
 	var acpCommand string
 	var acpArgs []string
+	var agentModel string
+	var agentBaseURL string
 	var mcpConfig string
 	var initialGoal string
 	var initialStart string
@@ -82,18 +87,32 @@ func newAgentCmd() *cobra.Command {
 				Executor:  executor,
 				Validator: tuibysql.NewSemanticValidator(),
 			})
-			bridgeServer, bridgeErr := bridge.StartSocketServer(toolBridge)
-			if bridgeErr != nil {
-				return fmt.Errorf("failed to start controlled tool bridge: %w", bridgeErr)
+			var mcpServers any
+			if usesACPToolBridge(agentProvider) {
+				bridgeServer, bridgeErr := bridge.StartSocketServer(toolBridge)
+				if bridgeErr != nil {
+					return fmt.Errorf("failed to start controlled tool bridge: %w", bridgeErr)
+				}
+				defer func() {
+					_ = bridgeServer.Close()
+				}()
+				executable, executableErr := os.Executable()
+				if executableErr != nil {
+					return fmt.Errorf("failed to locate bydbctl executable: %w", executableErr)
+				}
+				mcpServers = bridgeServer.MCPServerConfig(executable)
 			}
-			defer func() {
-				_ = bridgeServer.Close()
-			}()
-			executable, executableErr := os.Executable()
-			if executableErr != nil {
-				return fmt.Errorf("failed to locate bydbctl executable: %w", executableErr)
-			}
-			agentGateway, gatewayErr := newAgentGateway(agentProvider, acpCommand, acpArgs, workingDirectory, bridgeServer.MCPServerConfig(executable))
+			agentGateway, gatewayErr := newAgentGateway(agentGatewayOptions{
+				provider:         agentProvider,
+				acpCommand:       acpCommand,
+				acpArgs:          acpArgs,
+				workingDirectory: workingDirectory,
+				mcpServers:       mcpServers,
+				toolBridge:       toolBridge,
+				model:            strings.TrimSpace(agentModel),
+				baseURL:          strings.TrimSpace(agentBaseURL),
+				apiKey:           strings.TrimSpace(os.Getenv("BYDBCTL_AGENT_API_KEY")),
+			})
 			if gatewayErr != nil {
 				return gatewayErr
 			}
@@ -123,9 +142,11 @@ func newAgentCmd() *cobra.Command {
 			return nil
 		},
 	}
-	agentCmd.Flags().StringVar(&agentProvider, "agent", agentProviderCodexACP, "ACP-compatible agent adapter: codex-acp or acp")
+	agentCmd.Flags().StringVar(&agentProvider, "agent", agentProviderBuiltin, "agent adapter: builtin, codex-acp, or acp")
 	agentCmd.Flags().StringVar(&acpCommand, "acp-command", "", "ACP-compatible stdio command used by --agent acp")
 	agentCmd.Flags().StringArrayVar(&acpArgs, "acp-arg", nil, "argument passed to --acp-command; may be repeated")
+	agentCmd.Flags().StringVar(&agentModel, "agent-model", "", "chat model for --agent builtin; default from BYDBCTL_AGENT_MODEL or gpt-4o-mini")
+	agentCmd.Flags().StringVar(&agentBaseURL, "agent-base-url", "", "OpenAI-compatible base URL for --agent builtin; default from BYDBCTL_AGENT_BASE_URL")
 	agentCmd.Flags().StringVar(&mcpConfig, "mcp-config", "", "deprecated: external MCP configuration is rejected")
 	agentCmd.Flags().StringVar(&initialGoal, "goal", "", "initial natural language query goal")
 	agentCmd.Flags().StringVar(&initialStart, "start", "-30m", "initial BYDBQL time start")
@@ -136,14 +157,56 @@ func newAgentCmd() *cobra.Command {
 	return agentCmd
 }
 
-func newAgentGateway(provider, acpCommand string, acpArgs []string, workingDirectory string, mcpServers any) (agent.Gateway, error) {
+type agentGatewayOptions struct {
+	provider         string
+	acpCommand       string
+	acpArgs          []string
+	workingDirectory string
+	mcpServers       any
+	toolBridge       *bridge.ToolBridge
+	model            string
+	baseURL          string
+	apiKey           string
+}
+
+func usesACPToolBridge(provider string) bool {
 	switch provider {
-	case agentProviderACP:
-		return acp.NewGateway(acpCommand, acpArgs...).WithWorkingDirectory(workingDirectory).WithMCPServers(mcpServers), nil
-	case agentProviderCodexACP:
-		return acp.NewGateway("npx", "-y", "@agentclientprotocol/codex-acp").WithWorkingDirectory(workingDirectory).WithMCPServers(mcpServers), nil
+	case agentProviderACP, agentProviderCodexACP:
+		return true
 	default:
-		return nil, fmt.Errorf("unsupported agent provider %q; use codex-acp or acp", provider)
+		return false
+	}
+}
+
+func newAgentGateway(opts agentGatewayOptions) (agent.Gateway, error) {
+	switch opts.provider {
+	case agentProviderBuiltin, "":
+		modelName := opts.model
+		if modelName == "" {
+			modelName = strings.TrimSpace(os.Getenv("BYDBCTL_AGENT_MODEL"))
+		}
+		baseURL := opts.baseURL
+		if baseURL == "" {
+			baseURL = strings.TrimSpace(os.Getenv("BYDBCTL_AGENT_BASE_URL"))
+		}
+		chatModel, modelErr := builtin.NewOpenAIChatModel(builtin.ModelConfig{
+			APIKey:  opts.apiKey,
+			BaseURL: baseURL,
+			Model:   modelName,
+		})
+		if modelErr != nil {
+			return nil, modelErr
+		}
+		return builtin.NewGateway(builtin.Config{ToolBridge: opts.toolBridge, Model: chatModel})
+	case agentProviderACP:
+		if strings.TrimSpace(opts.acpCommand) == "" {
+			return nil, fmt.Errorf("--acp-command is required when --agent acp")
+		}
+		return acp.NewGateway(opts.acpCommand, opts.acpArgs...).WithWorkingDirectory(opts.workingDirectory).WithMCPServers(opts.mcpServers), nil
+	case agentProviderCodexACP:
+		return acp.NewGateway("npx", "-y", "@agentclientprotocol/codex-acp").WithWorkingDirectory(opts.workingDirectory).WithMCPServers(opts.mcpServers), nil
+	default:
+		return nil, fmt.Errorf("unsupported agent provider %q; use builtin, codex-acp, or acp", opts.provider)
 	}
 }
 

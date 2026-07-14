@@ -396,7 +396,65 @@ func TestBridgeAutoExecutesReadWithoutApprovalAndDoesNotReturnRows(t *testing.T)
 	}
 }
 
-func TestBridgeLimitsAutomaticPlanRepairsToTwoAfterTheInitialAttempt(t *testing.T) {
+func TestBridgeProposeFailurePublishesDraftCandidate(t *testing.T) {
+	schema := session.SchemaSnapshot{
+		Type:   session.ResourceTypeMeasure,
+		Name:   "service_latency",
+		Groups: []string{"production"},
+		Loaded: true,
+		Columns: []session.SchemaColumn{
+			{Name: "latency", Kind: session.SchemaColumnField, Type: session.SchemaValueTypeFloat},
+		},
+	}
+	toolBridge := New(Config{
+		Executor:  &stubExecutor{schema: schema},
+		Validator: &stubValidator{report: session.ValidationReport{Valid: true}},
+	})
+	toolBridge.SetSession(querySessionWithSchema(schema))
+	toolBridge.SetRankedCandidates([]session.CatalogEntry{
+		{Group: "production", Type: session.ResourceTypeMeasure, Name: "service_latency"},
+	})
+	result := toolBridge.Call(context.Background(), Call{
+		Name: ToolProposeQueryPlan,
+		Arguments: map[string]any{
+			"plan": map[string]any{
+				"resource": map[string]any{"type": "MEASURE", "name": "service_latency", "groups": []any{"production"}},
+				"filter":   map[string]any{"column": "unknown", "operator": "=", "value": 1},
+				"limit":    10,
+			},
+		},
+	})
+	if result.Err != nil || !strings.Contains(result.Content, `"valid":false`) {
+		t.Fatalf("expected repairable proposal failure, got %+v", result)
+	}
+	if !strings.Contains(result.Content, `"draft_query"`) {
+		t.Fatalf("expected draft_query in failure payload, got %s", result.Content)
+	}
+	var candidateEvent *agent.Event
+	for {
+		select {
+		case event := <-toolBridge.Events():
+			if event.Kind == agent.EventKindCandidate {
+				copiedEvent := event
+				candidateEvent = &copiedEvent
+			}
+		default:
+			goto drained
+		}
+	}
+drained:
+	if candidateEvent == nil {
+		t.Fatal("expected draft candidate event")
+	}
+	if candidateEvent.Status != agent.EventStatusFailed {
+		t.Fatalf("expected draft candidate status, got %s", candidateEvent.Status)
+	}
+	if !strings.Contains(candidateEvent.Candidate, "SELECT * FROM MEASURE service_latency") {
+		t.Fatalf("unexpected draft candidate: %s", candidateEvent.Candidate)
+	}
+}
+
+func TestBridgeLimitsAutomaticPlanRepairs(t *testing.T) {
 	schema := session.SchemaSnapshot{
 		Type:   session.ResourceTypeMeasure,
 		Name:   "service_latency",
@@ -413,10 +471,13 @@ func TestBridgeLimitsAutomaticPlanRepairsToTwoAfterTheInitialAttempt(t *testing.
 		"filter":   map[string]any{"column": "unknown", "operator": "=", "value": 1},
 		"limit":    10,
 	}
-	for attempt := 0; attempt < 3; attempt++ {
+	for attempt := 0; attempt < MaxPlanRepairAttempts; attempt++ {
 		result := toolBridge.Call(context.Background(), Call{Name: ToolProposeQueryPlan, Arguments: map[string]any{"plan": invalidPlan}})
 		if result.Err != nil || !strings.Contains(result.Content, `"valid":false`) || strings.Contains(result.Content, "repair limit") {
 			t.Fatalf("expected repairable proposal failure at attempt %d, got %+v", attempt+1, result)
+		}
+		if !strings.Contains(result.Content, `"attempts_remaining"`) {
+			t.Fatalf("expected attempts_remaining in failure payload at attempt %d, got %s", attempt+1, result.Content)
 		}
 	}
 	result := toolBridge.Call(context.Background(), Call{Name: ToolProposeQueryPlan, Arguments: map[string]any{"plan": invalidPlan}})
@@ -479,7 +540,7 @@ func TestBridgeDescribeSchemaResetsPlanRepairBudget(t *testing.T) {
 		"filter":   map[string]any{"column": "unknown", "operator": "=", "value": 1},
 		"limit":    10,
 	}
-	for attempt := 0; attempt < 3; attempt++ {
+	for attempt := 0; attempt < MaxPlanRepairAttempts; attempt++ {
 		result := toolBridge.Call(context.Background(), Call{Name: ToolProposeQueryPlan, Arguments: map[string]any{"plan": invalidPlan}})
 		if result.Err != nil || !strings.Contains(result.Content, `"valid":false`) || strings.Contains(result.Content, planRepairLimitMessage()) {
 			t.Fatalf("expected repairable proposal failure at attempt %d, got %+v", attempt+1, result)

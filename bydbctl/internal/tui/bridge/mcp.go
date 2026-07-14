@@ -209,6 +209,11 @@ func callSocket(socketPath string, call Call) (string, error) {
 	return response.Result, nil
 }
 
+// ToolDefinitions returns the closed bydbctl controlled tool schemas.
+func ToolDefinitions() []map[string]any {
+	return toolDefinitions()
+}
+
 func toolDefinitions() []map[string]any {
 	return []map[string]any{
 		{
@@ -218,7 +223,7 @@ func toolDefinitions() []map[string]any {
 		},
 		{
 			"name":        ToolDescribeSchema,
-			"description": "Describe a BanyanDB schema and typed columns for one ranked catalog resource. Call this before propose_query_plan for that resource.",
+			"description": "Describe a BanyanDB schema and typed columns for one ranked catalog resource. Returns columns, indexed_fields, and plan_example. Call this before propose_query_plan for that resource.",
 			"inputSchema": map[string]any{
 				"type": "object",
 				"properties": map[string]any{
@@ -230,7 +235,7 @@ func toolDefinitions() []map[string]any {
 		},
 		{
 			"name":        ToolProposeQueryPlan,
-			"description": "Submit a typed query plan after describe_schema returns columns for the same resource. This is the only path that registers a BYDBQL candidate in bydbctl.",
+			"description": "Submit a typed query plan after describe_schema returns columns for the same resource. On valid=false, read repair_hint, columns, plan_example, and attempts_remaining, then resubmit. This is the only path that registers a BYDBQL candidate in bydbctl.",
 			"inputSchema": proposeQueryPlanInputSchema(),
 		},
 		{

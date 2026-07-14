@@ -37,7 +37,6 @@ import (
 
 const (
 	eventBufferSize       = 64
-	maxPlanAttempts       = 3
 	maxSchemaDescriptions = 3
 	maxProbePreviewRows   = 10
 	ToolListGroupsSchemas = "list_groups_schemas"
@@ -268,7 +267,7 @@ func (toolBridge *ToolBridge) describeSchema(ctx context.Context, arguments map[
 	toolBridge.mu.Lock()
 	toolBridge.planAttempts = 0
 	toolBridge.mu.Unlock()
-	return jsonResult(map[string]any{
+	response := map[string]any{
 		"type":           snapshot.Type,
 		"name":           snapshot.Name,
 		"groups":         snapshot.Groups,
@@ -276,7 +275,11 @@ func (toolBridge *ToolBridge) describeSchema(ctx context.Context, arguments map[
 		"fields":         snapshot.Fields,
 		"columns":        columnsForProvider(snapshot.Columns),
 		"indexed_fields": snapshot.IndexedFields,
-	})
+	}
+	if planExample := buildDescribePlanExample(snapshot); planExample != nil {
+		response["plan_example"] = planExample
+	}
+	return jsonResult(response)
 }
 
 const maxCatalogCandidates = 5
@@ -461,12 +464,7 @@ func (toolBridge *ToolBridge) proposeQueryPlan(ctx context.Context, callID strin
 			return Result{Err: fmt.Errorf("query plan step %d selects a resource outside the top five catalog candidates", planIndex+1)}
 		}
 		if !schemaReadyForPlan(querySession, plan.Resource) {
-			return jsonResult(map[string]any{
-				"valid":       false,
-				"message":     schemaNotReadyMessage(planIndex+1, plan.Resource),
-				"step":        planIndex + 1,
-				"schema_hint": queryPlanSchemaHint(),
-			})
+			return jsonResult(planFailurePayload(querySession, schemaNotReadyMessage(planIndex+1, plan.Resource), planIndex+1, 0, ""))
 		}
 	}
 	attempt, allowed := toolBridge.reservePlanAttempt()
@@ -481,7 +479,7 @@ func (toolBridge *ToolBridge) proposeQueryPlan(ctx context.Context, callID strin
 			ID:        callID,
 			Kind:      agent.EventKindPlanUpdate,
 			ToolName:  ToolProposeQueryPlan,
-			Message:   fmt.Sprintf("repairing query plan (%d of %d attempts)", attempt, maxPlanAttempts),
+			Message:   fmt.Sprintf("repairing query plan (%d of %d attempts)", attempt, MaxPlanRepairAttempts),
 			Status:    agent.EventStatusRunning,
 			StartedAt: toolBridge.now(),
 		})
@@ -499,23 +497,17 @@ func (toolBridge *ToolBridge) proposeQueryPlan(ctx context.Context, callID strin
 		}
 		compiled, compileErr := planner.Compile(plan, snapshot)
 		if compileErr != nil {
-			return jsonResult(map[string]any{
-				"valid":       false,
-				"message":     compileErr.Error(),
-				"step":        planIndex + 1,
-				"schema_hint": queryPlanSchemaHint(),
-			})
+			draftQuery := planner.CompileDisplayDraft(plan)
+			toolBridge.emitProposeCandidate(callID, draftQuery, true, compileErr.Error())
+			return jsonResult(planFailurePayload(querySession, compileErr.Error(), planIndex+1, attempt, draftQuery))
 		}
 		validation, validationErr := toolBridge.validator.Validate(ctx, compiled.Query, &snapshot)
 		if validationErr != nil {
 			return Result{Err: fmt.Errorf("failed to validate query plan step %d: %w", planIndex+1, validationErr)}
 		}
 		if !validation.Valid {
-			return jsonResult(map[string]any{
-				"valid":   false,
-				"message": validation.Message,
-				"step":    planIndex + 1,
-			})
+			toolBridge.emitProposeCandidate(callID, compiled.Query, true, validation.Message)
+			return jsonResult(planFailurePayload(querySession, validation.Message, planIndex+1, attempt, compiled.Query))
 		}
 		if planIndex == 0 {
 			selectedSnapshot = snapshot
@@ -547,6 +539,7 @@ func (toolBridge *ToolBridge) proposeQueryPlan(ctx context.Context, callID strin
 			if probeSummary.Error != "" {
 				response["valid"] = false
 				response["message"] = probeSummary.Error
+				toolBridge.emitProposeCandidate(callID, firstQuery.Query, true, probeSummary.Error)
 				return jsonResult(response)
 			}
 			toolBridge.emit(agent.Event{
@@ -560,15 +553,7 @@ func (toolBridge *ToolBridge) proposeQueryPlan(ctx context.Context, callID strin
 			})
 		}
 	}
-	toolBridge.emit(agent.Event{
-		ID:          callID,
-		Kind:        agent.EventKindCandidate,
-		ToolName:    ToolProposeQueryPlan,
-		Candidate:   firstQuery.Query,
-		Message:     "query plan compiled through controlled tool",
-		Status:      agent.EventStatusSucceeded,
-		CompletedAt: toolBridge.now(),
-	})
+	toolBridge.emitProposeCandidate(callID, firstQuery.Query, false, "query plan compiled through controlled tool")
 	return jsonResult(response)
 }
 
@@ -608,7 +593,7 @@ func resourceIsDiscoverable(catalog []session.CatalogEntry, resource planner.Res
 func (toolBridge *ToolBridge) reservePlanAttempt() (int, bool) {
 	toolBridge.mu.Lock()
 	defer toolBridge.mu.Unlock()
-	if toolBridge.planAttempts >= maxPlanAttempts {
+	if toolBridge.planAttempts >= MaxPlanRepairAttempts {
 		return toolBridge.planAttempts, false
 	}
 	toolBridge.planAttempts++
@@ -644,7 +629,6 @@ func decodePlanArgument(value any, target any) error {
 		return fmt.Errorf("failed to encode plan input: %w", marshalErr)
 	}
 	decoder := json.NewDecoder(bytes.NewReader(encodedValue))
-	decoder.DisallowUnknownFields()
 	decoder.UseNumber()
 	if decodeErr := decoder.Decode(target); decodeErr != nil {
 		return fmt.Errorf("failed to decode plan input: %w", decodeErr)
@@ -1297,13 +1281,6 @@ func schemaNotReadyMessage(step int, resource planner.Resource) string {
 		resource.Type,
 		resource.Name,
 		groupLabel,
-	)
-}
-
-func planRepairLimitMessage() string {
-	return fmt.Sprintf(
-		"automatic query plan repair limit reached after %d attempts; call describe_schema when columns are unknown, submit one corrected plan, and do not call validate_bydbql, probe_bydbql, or execute_bydbql until propose_query_plan returns valid=true",
-		maxPlanAttempts,
 	)
 }
 

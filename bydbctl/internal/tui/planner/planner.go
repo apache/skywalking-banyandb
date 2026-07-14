@@ -286,10 +286,11 @@ func compileProjections(projections []Projection, aggregate *Aggregate, resource
 			}
 			return "*", nil
 		}
-		if _, columnErr := typedColumn(columnName, schema); columnErr != nil {
+		column, columnErr := typedColumn(columnName, schema)
+		if columnErr != nil {
 			return "", columnErr
 		}
-		compiled = append(compiled, columnName)
+		compiled = append(compiled, column.Name)
 	}
 	return strings.Join(compiled, ", "), nil
 }
@@ -308,7 +309,7 @@ func compileAggregate(aggregate Aggregate, resource Resource, schema session.Sch
 	if column.Type != session.SchemaValueTypeInt && column.Type != session.SchemaValueTypeFloat {
 		return "", fmt.Errorf("aggregation column %q must be numeric", aggregate.Column)
 	}
-	return fmt.Sprintf("%s(%s)", aggregate.Function, strings.TrimSpace(aggregate.Column)), nil
+	return fmt.Sprintf("%s(%s)", aggregate.Function, column.Name), nil
 }
 
 func compileGroups(groups []string, schema session.SchemaSnapshot) (string, error) {
@@ -317,10 +318,11 @@ func compileGroups(groups []string, schema session.SchemaSnapshot) (string, erro
 	}
 	compiled := make([]string, 0, len(groups))
 	for _, group := range groups {
-		if _, columnErr := typedColumn(group, schema); columnErr != nil {
+		column, columnErr := typedColumn(group, schema)
+		if columnErr != nil {
 			return "", columnErr
 		}
-		compiled = append(compiled, strings.TrimSpace(group))
+		compiled = append(compiled, column.Name)
 	}
 	return strings.Join(compiled, ", "), nil
 }
@@ -374,13 +376,13 @@ func compileComparison(predicate Predicate, schema session.SchemaSnapshot) (stri
 			}
 			compiledValues = append(compiledValues, compiledValue)
 		}
-		return fmt.Sprintf("%s %s (%s)", strings.TrimSpace(predicate.Column), predicate.Operator, strings.Join(compiledValues, ", ")), nil
+		return fmt.Sprintf("%s %s (%s)", column.Name, predicate.Operator, strings.Join(compiledValues, ", ")), nil
 	}
 	compiledValue, valueErr := compileValue(predicate.Value, column.Type)
 	if valueErr != nil {
 		return "", valueErr
 	}
-	return fmt.Sprintf("%s %s %s", strings.TrimSpace(predicate.Column), predicate.Operator, compiledValue), nil
+	return fmt.Sprintf("%s %s %s", column.Name, predicate.Operator, compiledValue), nil
 }
 
 func compileOrder(order *Order, schema session.SchemaSnapshot) (string, error) {
@@ -401,7 +403,7 @@ func compileOrder(order *Order, schema session.SchemaSnapshot) (string, error) {
 	if !column.Indexed {
 		return "", fmt.Errorf("ORDER BY column %q is not indexed", columnName)
 	}
-	return columnName + " " + string(order.Direction), nil
+	return column.Name + " " + string(order.Direction), nil
 }
 
 func compileLimit(limit int) (int, error) {
@@ -533,6 +535,51 @@ func floatValue(value any) (string, error) {
 		}
 	}
 	return "", fmt.Errorf("value %v must be numeric", value)
+}
+
+// CompileDisplayDraft renders a best-effort BYDBQL sketch for UI preview when full compilation fails.
+func CompileDisplayDraft(plan QueryPlan) string {
+	resourceName := strings.TrimSpace(plan.Resource.Name)
+	if resourceName == "" || len(plan.Resource.Groups) == 0 {
+		return ""
+	}
+	groups := groupExpression(plan.Resource.Groups)
+	timeClause := compileTimeRange(plan.TimeRange)
+	if plan.Resource.Type == session.ResourceTypeTopN {
+		topN := plan.TopN
+		if topN == 0 {
+			topN = defaultLimit
+		}
+		function := AggregateSum
+		if plan.Aggregate != nil && plan.Aggregate.Function != "" {
+			function = plan.Aggregate.Function
+		}
+		direction := OrderDescending
+		if plan.OrderBy != nil && plan.OrderBy.Direction != "" {
+			direction = plan.OrderBy.Direction
+		}
+		return fmt.Sprintf(
+			"SHOW TOP %d FROM MEASURE %s IN %s %s AGGREGATE BY %s ORDER BY %s",
+			topN,
+			resourceName,
+			groups,
+			timeClause,
+			function,
+			direction,
+		)
+	}
+	resourceType := plan.Resource.Type
+	if resourceType == "" {
+		resourceType = session.ResourceTypeMeasure
+	}
+	limit, limitErr := compileLimit(plan.Limit)
+	if limitErr != nil {
+		limit = defaultLimit
+	}
+	if resourceType == session.ResourceTypeProperty {
+		return fmt.Sprintf("SELECT * FROM PROPERTY %s IN %s LIMIT %d", resourceName, groups, limit)
+	}
+	return fmt.Sprintf("SELECT * FROM %s %s IN %s %s LIMIT %d", resourceType, resourceName, groups, timeClause, limit)
 }
 
 func groupExpression(groups []string) string {

@@ -324,7 +324,7 @@ func buildRequestPayload(querySession *session.QuerySession, hints QueryHints, t
 		TemplateHint: strings.TrimSpace(templateHint),
 		QueryHints:   hints,
 		Workflow: WorkflowGuidance{
-			MaxPlanAttempts:                  3,
+			MaxPlanAttempts:                  8,
 			MaxSchemaDescriptions:            3,
 			RequireDescribeSchemaBeforePropose: true,
 		},

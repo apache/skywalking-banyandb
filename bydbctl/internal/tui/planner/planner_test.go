@@ -142,3 +142,16 @@ func TestCompileRejectsUnsupportedPlanShapes(t *testing.T) {
 		})
 	}
 }
+
+func TestCompileDisplayDraftRendersResourceSkeleton(t *testing.T) {
+	draft := CompileDisplayDraft(QueryPlan{
+		Resource: Resource{Type: session.ResourceTypeMeasure, Name: "instance_jvm_cpu_hour", Groups: []string{"sw_metricsHour"}},
+		Limit:    5,
+	})
+	if !strings.Contains(draft, "SELECT * FROM MEASURE instance_jvm_cpu_hour IN sw_metricsHour") {
+		t.Fatalf("unexpected display draft: %s", draft)
+	}
+	if !strings.Contains(draft, "LIMIT 5") {
+		t.Fatalf("expected limit in display draft: %s", draft)
+	}
+}

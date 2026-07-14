@@ -710,6 +710,10 @@ func (runner *Runner) completeAgentTurn(ctx context.Context, querySession *sessi
 		return fmt.Errorf("failed to validate agent candidate: %w", validationErr)
 	}
 	explanation := NormalizeAgentDisplayText(finalExplanation(turnEvents))
+	if candidateEvent := finalProposeCandidateEvent(turnEvents); candidateEvent != nil &&
+		candidateEvent.Status == agent.EventStatusFailed && strings.TrimSpace(candidateEvent.Message) != "" {
+		explanation = NormalizeAgentDisplayText(candidateEvent.Message)
+	}
 	querySession.AddCandidate(session.BydbqlCandidate{
 		ID:          fmt.Sprintf("candidate-%d", len(querySession.Candidates)+1),
 		Query:       candidate,
@@ -1047,16 +1051,25 @@ func buildTimeClause(timeRange session.TimeRange) string {
 }
 
 func finalCandidate(events []agent.Event) string {
+	if candidateEvent := finalProposeCandidateEvent(events); candidateEvent != nil {
+		return cleanBydbqlCandidate(candidateEvent.Candidate)
+	}
+	return ""
+}
+
+func finalProposeCandidateEvent(events []agent.Event) *agent.Event {
 	for eventIdx := len(events) - 1; eventIdx >= 0; eventIdx-- {
 		event := events[eventIdx]
 		if event.Kind != agent.EventKindCandidate || event.Origin != agent.EventOriginToolBridge || event.ToolName != bridge.ToolProposeQueryPlan {
 			continue
 		}
 		if candidate := cleanBydbqlCandidate(event.Candidate); candidate != "" {
-			return candidate
+			copiedEvent := event
+			copiedEvent.Candidate = candidate
+			return &copiedEvent
 		}
 	}
-	return ""
+	return nil
 }
 
 func agentOutputText(events []agent.Event) string {

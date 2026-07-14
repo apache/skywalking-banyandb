@@ -53,6 +53,13 @@ func TestNormalizePlanArgumentRepairsCommonAgentMistakes(t *testing.T) {
 		t.Fatalf("unexpected order_by: %+v", orderBy)
 	}
 
+	filterNormalized := normalizeFilter(map[string]any{
+		"column": "status", "operator": "==", "value": 500,
+	}).(map[string]any)
+	if filterNormalized["operator"] != "=" {
+		t.Fatalf("expected normalized operator, got %#v", filterNormalized["operator"])
+	}
+
 	var plan planner.QueryPlan
 	if decodeErr := decodePlanArgument(normalized, &plan); decodeErr != nil {
 		t.Fatalf("failed to decode normalized plan: %v", decodeErr)

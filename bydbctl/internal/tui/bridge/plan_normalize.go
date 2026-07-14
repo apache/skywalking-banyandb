@@ -59,6 +59,15 @@ func normalizePlanArgument(value any) any {
 	if normalized["time_range"] != nil {
 		normalized["time_range"] = normalizeTimeRange(normalized["time_range"])
 	}
+	if normalized["projection"] != nil {
+		normalized["projection"] = normalizeProjection(normalized["projection"])
+	}
+	if normalized["filter"] != nil {
+		normalized["filter"] = normalizeFilter(normalized["filter"])
+	}
+	if normalized["group_by"] != nil {
+		normalized["group_by"] = normalizeStringSlice(normalized["group_by"])
+	}
 	return normalized
 }
 
@@ -157,6 +166,111 @@ func normalizeTimeRange(value any) any {
 		return value
 	}
 	return copyPlanMap(timeRange)
+}
+
+func normalizeProjection(value any) any {
+	switch typed := value.(type) {
+	case string:
+		columns := strings.Split(typed, ",")
+		projection := make([]any, 0, len(columns))
+		for _, column := range columns {
+			trimmedColumn := strings.TrimSpace(column)
+			if trimmedColumn == "" {
+				continue
+			}
+			projection = append(projection, map[string]any{"column": trimmedColumn})
+		}
+		return projection
+	case []any:
+		normalized := make([]any, 0, len(typed))
+		for _, item := range typed {
+			switch entry := item.(type) {
+			case string:
+				trimmedColumn := strings.TrimSpace(entry)
+				if trimmedColumn != "" {
+					normalized = append(normalized, map[string]any{"column": trimmedColumn})
+				}
+			case map[string]any:
+				normalized = append(normalized, copyPlanMap(entry))
+			default:
+				normalized = append(normalized, item)
+			}
+		}
+		return normalized
+	default:
+		return value
+	}
+}
+
+func normalizeFilter(value any) any {
+	filterMap, ok := value.(map[string]any)
+	if !ok {
+		return value
+	}
+	normalized := copyPlanMap(filterMap)
+	if operator, operatorOK := normalized["operator"].(string); operatorOK {
+		normalized["operator"] = normalizeFilterOperator(operator)
+	}
+	if children, childrenOK := normalized["children"].([]any); childrenOK {
+		normalizedChildren := make([]any, 0, len(children))
+		for _, child := range children {
+			normalizedChildren = append(normalizedChildren, normalizeFilter(child))
+		}
+		normalized["children"] = normalizedChildren
+	}
+	return normalized
+}
+
+func normalizeFilterOperator(operator string) string {
+	switch strings.ToUpper(strings.TrimSpace(operator)) {
+	case "=", "==", "EQ", "EQUAL", "EQUALS":
+		return "="
+	case "!=", "<>", "NE", "NOT_EQUAL", "NOT EQUAL":
+		return "!="
+	case "GT", ">":
+		return ">"
+	case "GTE", ">=", "GE":
+		return ">="
+	case "LT", "<":
+		return "<"
+	case "LTE", "<=", "LE":
+		return "<="
+	case "IN":
+		return "IN"
+	case "NOT IN", "NOTIN", "NOT_IN":
+		return "NOT IN"
+	case "AND":
+		return "AND"
+	case "OR":
+		return "OR"
+	default:
+		return strings.TrimSpace(operator)
+	}
+}
+
+func normalizeStringSlice(value any) []any {
+	switch typed := value.(type) {
+	case []any:
+		return typed
+	case []string:
+		normalized := make([]any, 0, len(typed))
+		for _, item := range typed {
+			normalized = append(normalized, item)
+		}
+		return normalized
+	case string:
+		parts := strings.Split(typed, ",")
+		normalized := make([]any, 0, len(parts))
+		for _, part := range parts {
+			trimmedPart := strings.TrimSpace(part)
+			if trimmedPart != "" {
+				normalized = append(normalized, trimmedPart)
+			}
+		}
+		return normalized
+	default:
+		return nil
+	}
 }
 
 func normalizeGroups(groups any) []any {
