@@ -84,6 +84,10 @@ describe('qbQuote', () => {
   it('renders empty values as empty-string literal', () => {
     expect(qbQuote('BINARY_OP_EQ', '')).toBe("''");
   });
+  it('forceString quotes numeric-looking values for string tags', () => {
+    expect(qbQuote('BINARY_OP_EQ', '00000001', true)).toBe("'00000001'");
+    expect(qbQuote('BINARY_OP_IN', '00000001, 00000002', true)).toBe("('00000001', '00000002')");
+  });
 });
 
 describe('qbNodeSQL', () => {
@@ -133,6 +137,16 @@ describe('qbNodeSQL', () => {
     };
     // After dropping the empty leaf, the segment has one item — no parens.
     expect(qbNodeSQL(where, 0)).toBe('a = 1');
+  });
+  it('quotes numeric-looking values when the tag is in stringTags', () => {
+    const where: QBWhereGroupWithConn = {
+      combinator: 'AND',
+      children: [
+        { tag: 'trace_id', op: 'BINARY_OP_EQ', value: '00000001' },
+        { tag: 'duration_ms', op: 'BINARY_OP_EQ', value: '654' },
+      ],
+    };
+    expect(qbNodeSQL(where, 0, new Set(['trace_id']))).toBe("(trace_id = '00000001' AND duration_ms = 654)");
   });
 });
 
@@ -212,6 +226,16 @@ describe('buildBydbQL', () => {
     const out = buildBydbQL(s);
     expect(out).toContain('WHERE trace_id = \'t1\'');
     expect(out).not.toContain('ORDER BY');
+  });
+  it('quotes numeric-looking string tag values when stringTags is provided', () => {
+    const where: QBWhereGroupWithConn = {
+      combinator: 'AND',
+      children: [{ tag: 'trace_id', op: 'BINARY_OP_EQ', value: '00000001' }],
+    };
+    const s: QBBuilderState = { ...baseState, catalog: 'traces', resource: 'spans', where };
+    const out = buildBydbQL(s, ['trace_id', 'span_id'], new Set(['trace_id']));
+    expect(out).toContain("WHERE trace_id = '00000001'");
+    expect(out).not.toContain('WHERE trace_id = 00000001');
   });
   it('places WITH QUERY_TRACE before LIMIT/OFFSET to match the parser grammar', () => {
     const s: QBBuilderState = {

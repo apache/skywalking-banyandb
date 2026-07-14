@@ -200,15 +200,18 @@ export const qbConnSummary = (root: QBWhereGroupWithConn): 'AND' | 'OR' | 'mixed
 
 const QB_NUM = (s: string): boolean => /^-?\d+(\.\d+)?$/.test(s.trim());
 
-/** Format a literal value for BydbQL. IN / NOT IN expand a comma list. */
-export const qbQuote = (op: string, raw: string | null | undefined): string => {
+/** Format a literal value for BydbQL. IN / NOT IN expand a comma list.
+ *  When forceString is true the value is always quoted, even if it looks
+ *  numeric — this is required for string tags such as trace_id that happen
+ *  to contain only digits. */
+export const qbQuote = (op: string, raw: string | null | undefined, forceString = false): string => {
   const value = (raw == null ? '' : String(raw)).trim();
   if (op === 'BINARY_OP_IN' || op === 'BINARY_OP_NOT_IN') {
     const parts = value.split(',').map((x) => x.trim()).filter(Boolean);
-    return '(' + parts.map((p) => (QB_NUM(p) ? p : `'${p}'`)).join(', ') + ')';
+    return '(' + parts.map((p) => (forceString || !QB_NUM(p) ? `'${p}'` : p)).join(', ') + ')';
   }
   if (value === '') return "''";
-  return QB_NUM(value) ? value : `'${value}'`;
+  return forceString || !QB_NUM(value) ? `'${value}'` : value;
 };
 
 // ── WHERE expression: recursive groups with () / AND / OR ──────────────────
@@ -230,12 +233,15 @@ export const qbWhereRoot = (
   };
 };
 
-/** Recursive WHERE → BydbQL string. depth is used for parens (deeper = more). */
-export const qbNodeSQL = (node: QBWhereNode | null | undefined, depth: number): string => {
+/** Recursive WHERE → BydbQL string. depth is used for parens (deeper = more).
+ *  stringTags forces quoting for tags whose schema type is STRING (e.g.
+ *  trace_id, status_code) so numeric-looking string values don't become
+ *  unquoted integer literals. */
+export const qbNodeSQL = (node: QBWhereNode | null | undefined, depth: number, stringTags?: ReadonlySet<string>): string => {
   if (!node) return '';
   if (qbIsGroup(node)) {
     const items = node.children
-      .map((c) => ({ sql: qbNodeSQL(c, depth + 1) }))
+      .map((c) => ({ sql: qbNodeSQL(c, depth + 1, stringTags) }))
       .filter((x) => x.sql);
     if (items.length === 0) return '';
     // AND binds tighter than OR: split into OR-separated AND-runs and
@@ -250,7 +256,7 @@ export const qbNodeSQL = (node: QBWhereNode | null | undefined, depth: number): 
   const leaf = node as QBWhereLeafWithConn;
   if (!leaf.tag || !leaf.op) return '';
   const op = QB_OP(leaf.op);
-  return `${leaf.tag} ${op.sql} ${qbQuote(leaf.op, leaf.value)}`;
+  return `${leaf.tag} ${op.sql} ${qbQuote(leaf.op, leaf.value, stringTags?.has(leaf.tag))}`;
 };
 
 /** Render the time range as a BydbQL TIME clause fragment (or '' when unset).
@@ -311,12 +317,15 @@ export interface QBBuilderState {
 /** Build a BydbQL string from a builder state. Mirrors the handoff's buildBydbQL.
     @param tags Optional list of tag names for the current resource. Used when
     a measure query selects "all tags" (empty projection) so the generated SQL
-    can list explicit tags instead of omitting them. */
-export const buildBydbQL = (b: QBBuilderState, tags?: readonly string[]): string => {
+    can list explicit tags instead of omitting them.
+    @param stringTags Optional set of tag names whose schema type is STRING.
+    Values for these tags are always quoted so numeric-looking strings such as
+    trace_id are not rendered as integer literals. */
+export const buildBydbQL = (b: QBBuilderState, tags?: readonly string[], stringTags?: ReadonlySet<string>): string => {
   const cat = QB_CAT(b.catalog);
   // Top-N is a separate BydbQL shape; route through a different codegen path.
   if (b.catalog === 'topn') {
-    return buildTopNBydbQL(b, cat);
+    return buildTopNBydbQL(b, cat, stringTags);
   }
   const parts: string[] = [];
   // 1. SELECT projection. Per docs/interacting/bydbql.md line 305/441 the
@@ -353,7 +362,7 @@ export const buildBydbQL = (b: QBBuilderState, tags?: readonly string[]): string
   const t = qbTimeSQL(b.time);
   if (t) parts.push(t);
   // 4. WHERE.
-  const where = qbNodeSQL(b.where, 0);
+  const where = qbNodeSQL(b.where, 0, stringTags);
   if (where) parts.push(`WHERE ${where}`);
   // 5. GROUP BY — measures only (grammar line 441).
   if (b.catalog === 'measures' && (b.groupBy ?? []).length) {
@@ -380,7 +389,7 @@ export const buildBydbQL = (b: QBBuilderState, tags?: readonly string[]): string
   return parts.join('\n');
 };
 
-const buildTopNBydbQL = (b: QBBuilderState, cat: QB_CATALOG_DEF): string => {
+const buildTopNBydbQL = (b: QBBuilderState, cat: QB_CATALOG_DEF, stringTags?: ReadonlySet<string>): string => {
   const parts: string[] = [];
   // Grammar (docs/interacting/bydbql.md line 620):
   //   topn_query ::= SHOW TOP <n> from_measure_clause TIME time_condition
@@ -391,7 +400,7 @@ const buildTopNBydbQL = (b: QBBuilderState, cat: QB_CATALOG_DEF): string => {
   parts.push(`IN ${b.group || '_'}`);
   const t = qbTimeSQL(b.time);
   if (t) parts.push(t);
-  const where = qbNodeSQL(b.where, 0);
+  const where = qbNodeSQL(b.where, 0, stringTags);
   if (where) parts.push(`WHERE ${where}`);
   if (b.aggFn) parts.push(`AGGREGATE BY ${b.aggFn}`);
   parts.push(`ORDER BY value ${b.orderDir || 'DESC'}`);
