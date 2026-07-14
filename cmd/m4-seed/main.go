@@ -253,34 +253,34 @@ func main() {
 
 	irc := databasev1.NewIndexRuleRegistryServiceClient(conn)
 	irbc := databasev1.NewIndexRuleBindingRegistryServiceClient(conn)
-	// Tree index rules for every trace tag so the query builder can filter and
-	// order by service, duration, timestamp, etc. as well as trace_id.
-	traceIndexTags := []string{
-		"service",
-		"trace_id",
-		"span_id",
-		"parent_span_id",
-		"duration_ms",
-		"status",
-		"endpoint",
-		"timestamp",
-	}
 	beginAt := timestamppb.New(time.UnixMilli(baseTimestamp(*rows)).Truncate(time.Millisecond))
 	expireAt := timestamppb.New(time.Now().Add(7 * 24 * time.Hour).Truncate(time.Millisecond))
-	for _, tagName := range traceIndexTags {
+	// Tree index rules for trace_id (identity lookup) and timestamp (ordering).
+	// Other tags (service, status, endpoint, duration_ms, span_id, parent_span_id)
+	// are intentionally NOT given their own rules: BanyanDB keeps them as tag
+	// filters inside the timestamp SIDX, which is how non-trace_id WHERE clauses
+	// are evaluated when ORDER BY timestamp is used.
+	traceIndexRules := []struct {
+		name string
+		tags []string
+	}{
+		{"trace-by-id", []string{"trace_id"}},
+		{"timestamp", []string{"timestamp"}},
+	}
+	for _, rule := range traceIndexRules {
 		if _, err := irc.Create(ctx, &databasev1.IndexRuleRegistryServiceCreateRequest{
 			IndexRule: &databasev1.IndexRule{
-				Metadata: &commonv1.Metadata{Group: groupTrace, Name: tagName},
+				Metadata: &commonv1.Metadata{Group: groupTrace, Name: rule.name},
 				Type:     databasev1.IndexRule_TYPE_TREE,
-				Tags:     []string{tagName},
+				Tags:     rule.tags,
 			},
 		}); err != nil && !ignoreAlreadyExists(err) {
-			log.Fatalf("create index rule %s: %v", tagName, err)
+			log.Fatalf("create index rule %s: %v", rule.name, err)
 		}
 		if _, err := irbc.Create(ctx, &databasev1.IndexRuleBindingRegistryServiceCreateRequest{
 			IndexRuleBinding: &databasev1.IndexRuleBinding{
-				Metadata: &commonv1.Metadata{Group: groupTrace, Name: tagName + "-on-spans"},
-				Rules:    []string{tagName},
+				Metadata: &commonv1.Metadata{Group: groupTrace, Name: rule.name + "-on-spans"},
+				Rules:    []string{rule.name},
 				Subject: &databasev1.Subject{
 					Catalog: commonv1.Catalog(commonv1.Catalog_value["CATALOG_TRACE"]),
 					Name:    traceName,
@@ -289,7 +289,7 @@ func main() {
 				ExpireAt: expireAt,
 			},
 		}); err != nil && !ignoreAlreadyExists(err) {
-			log.Fatalf("bind index rule %s: %v", tagName, err)
+			log.Fatalf("bind index rule %s: %v", rule.name, err)
 		}
 	}
 	log.Println("trace index rules ready")
