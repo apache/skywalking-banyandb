@@ -1,6 +1,5 @@
 import { mkdirSync } from 'node:fs';
 import { join } from 'node:path';
-
 import { chromium } from '@playwright/test';
 
 const BASE = 'http://127.0.0.1:4000';
@@ -12,37 +11,31 @@ const browser = await chromium.launch({ headless: true });
 const page = await browser.newPage({ viewport: { width: 1440, height: 900 } });
 
 try {
-  // Login
-  await page.goto(`${BASE}/login`);
+  await page.goto(`${BASE}/login`, { waitUntil: 'networkidle' });
   await page.waitForSelector('input#f-username', { timeout: 30_000 });
   await page.locator('input#f-username').fill('admin');
   await page.locator('input#f-password').fill('admin');
   await page.locator('button[type=submit]').click();
   await page.waitForSelector('.shell, .qb-card, nav.sidebar', { timeout: 30_000 });
 
-  // Query page
-  await page.goto(`${BASE}/query`);
-  await page.waitForLoadState('networkidle');
+  await page.goto(`${BASE}/query`, { waitUntil: 'networkidle' });
   await page.waitForSelector('.qb-card', { timeout: 30_000 });
 
-  // Switch to trace catalog and pick service_spans resource
   await page.locator('button.qb-cat-btn', { hasText: /^trace$/i }).first().click();
   await page.locator('.qb-search-input').fill('service_spans');
   await page.locator('.qb-search-item', { hasText: /service_spans/ }).first().click();
-  await page.waitForTimeout(500);
 
-  // Add WHERE trace_id = ...
-  await page.locator('.qb-section', { hasText: /WHERE/i }).locator('button.qb-add').first().click();
-  await page.locator('.qb-cond select[aria-label="Tag"]').first().selectOption('trace_id');
-  await page.locator('.qb-cond input[aria-label="Value"]').first().fill(TRACE_ID);
+  await page.waitForTimeout(2_000);
+  const valueInput = page.locator('.qb-section .qb-cond input[aria-label="Value"]').first();
+  await valueInput.fill(TRACE_ID);
+  await valueInput.press('Tab');
+  await page.waitForTimeout(300);
 
-  // Run
   await page.locator('button.btn-primary', { hasText: /Run/i }).click();
   await page.waitForSelector('.tin-row', { timeout: 60_000 });
 
   await page.screenshot({ path: join(SHOTS, 'trace-result-flat.png'), fullPage: false });
 
-  // Expand first row
   await page.locator('.tin-row').first().locator('.tin-main').click();
   await page.waitForTimeout(300);
   await page.screenshot({ path: join(SHOTS, 'trace-result-expanded.png'), fullPage: false });

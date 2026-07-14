@@ -415,6 +415,26 @@ export const qbEmptyWhere = (): QBWhereGroupWithConn => ({
   children: [],
 });
 
+/** True when the WHERE tree contains an equality filter on trace_id with a non-empty value. */
+export const qbHasTraceIdFilter = (node: QBWhereNode | null | undefined): boolean => {
+  if (!node) return false;
+  if (qbIsGroup(node)) {
+    return node.children.some((c) => qbHasTraceIdFilter(c));
+  }
+  const leaf = node as QBWhereLeafWithConn;
+  return leaf.tag === 'trace_id' && leaf.op === 'BINARY_OP_EQ' && leaf.value.trim() !== '';
+};
+
+/** True when the WHERE tree already has a trace_id equality condition (value may be empty). */
+export const qbHasTraceIdCondition = (node: QBWhereNode | null | undefined): boolean => {
+  if (!node) return false;
+  if (qbIsGroup(node)) {
+    return node.children.some((c) => qbHasTraceIdCondition(c));
+  }
+  const leaf = node as QBWhereLeafWithConn;
+  return leaf.tag === 'trace_id' && leaf.op === 'BINARY_OP_EQ';
+};
+
 /** Drop any condition whose tag no longer exists on the chosen resource. */
 export const qbPruneWhere = (
   node: QBWhereNode | null | undefined,

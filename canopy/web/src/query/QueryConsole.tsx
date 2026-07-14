@@ -34,7 +34,7 @@ import { ResultEmpty } from './results/ResultEmpty.js';
 import { ResultError } from './results/ResultError.js';
 import {
   buildBydbQL, qbDataCatalog, qbEmptyWhere, qbPruneWhere, qbNewCond,
-  qbProtoCatalog,
+  qbProtoCatalog, qbHasTraceIdFilter, qbHasTraceIdCondition,
   type QBBuilderState, type QB_CATALOG_VALUE,
 } from './bydbql.js';
 import { apiDataSource } from '../data/api.js';
@@ -162,12 +162,27 @@ export function QueryConsole() {
     } catch { /* quota */ }
   }, [mode, state, code, codeDirty]);
 
+  const patch = (p: Partial<QBBuilderState>) => setState((s) => ({ ...s, ...p }));
+
   // Persist rail width
   useEffect(() => {
     try { localStorage.setItem('canopy.qb-rail-w', String(railW)); } catch { /* ignore */ }
   }, [railW]);
 
-  const patch = (p: Partial<QBBuilderState>) => setState((s) => ({ ...s, ...p }));
+  // Trace queries require a trace_id equality filter. If the user picks a trace
+  // resource and the WHERE tree has no trace_id condition at all, seed an empty
+  // one so the builder never generates a query that BanyanDB will reject with 500.
+  // We check for the condition (not the value) so a single seed doesn't fight
+  // the user while they type in the value field.
+  useEffect(() => {
+    if (state.catalog !== 'traces' || !state.resource || qbHasTraceIdCondition(state.where)) return;
+    patch({
+      where: {
+        combinator: 'AND',
+        children: [{ tag: 'trace_id', op: 'BINARY_OP_EQ', value: '' }],
+      },
+    });
+  }, [state.catalog, state.resource, state.where, patch]);
 
   // Handler for the From-row fuzzy search: pick any catalog/group/resource
   // combo, cascade-reset SELECT/WHERE/GROUP BY, and stamp fromResource so the
@@ -175,13 +190,18 @@ export function QueryConsole() {
   // .handoff-import/banyandb/project/query-console.jsx.
   const onPickResource = (catalog: QB_CATALOG_VALUE, group: string, resource: string) => {
     const isMeasure = catalog === 'measures';
+    // Trace queries require a trace_id equality filter: the default m4-traces
+    // schema only indexes trace_id, so BanyanDB rejects queries without one.
+    const defaultWhere = catalog === 'traces'
+      ? { combinator: 'AND' as const, children: [{ tag: 'trace_id', op: 'BINARY_OP_EQ' as const, value: '' }] }
+      : qbEmptyWhere();
     patch({
       catalog,
       group,
       resource,
       select: isMeasure ? [] : [],
       projection: isMeasure ? [] : [],
-      where: qbEmptyWhere(),
+      where: defaultWhere,
       groupBy: [],
       // Trace queries filter by trace_id and the default m4 schema has no
       // order-able index, so leave orderField empty to avoid server-side errors.
@@ -376,6 +396,13 @@ export function QueryConsole() {
   const run = async (loadMore = false) => {
     if (timeRangeError) {
       setErrorMsg(timeRangeError);
+      setStatus('error');
+      return;
+    }
+    // Trace queries require a trace_id equality filter. The default m4-traces
+    // schema only indexes trace_id; without it BanyanDB returns 500.
+    if (mode === 'builder' && state.catalog === 'traces' && !qbHasTraceIdFilter(state.where)) {
+      setErrorMsg('Trace queries require a trace_id filter because trace_id is the only indexed tag.');
       setStatus('error');
       return;
     }
