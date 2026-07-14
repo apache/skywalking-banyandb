@@ -571,6 +571,7 @@ function DecodeBytesButton({ bytes, onInspect }: { bytes: Uint8Array | null; onI
 const BYTES_PREVIEW_LIMIT = 64;
 
 function SpanBytesPanel({ bytes }: { bytes: Uint8Array | null }) {
+  const [open, setOpen] = React.useState(false);
   const [mode, setMode] = React.useState<'hex' | 'base64'>('hex');
   const len = bytes?.length ?? 0;
   if (!bytes || len === 0) {
@@ -582,46 +583,58 @@ function SpanBytesPanel({ bytes }: { bytes: Uint8Array | null }) {
   return (
     <div className="tin-raw">
       <div className="tin-raw-head">
-        <span className="tin-raw-size"><IconBinary width={12} height={12} />{formatBytes(len)}<IconCaretDown width={10} height={10} /></span>
+        <button
+          type="button"
+          className="tin-raw-size"
+          onClick={() => setOpen((v) => !v)}
+          aria-expanded={open}
+          title={open ? 'Collapse span bytes inspector' : 'Expand span bytes inspector'}
+        >
+          <IconBinary width={12} height={12} />{formatBytes(len)}<IconCaretDown width={10} height={10} className={open ? 'is-open' : ''} />
+        </button>
       </div>
-      <div className="tin-raw-meta">
-        <span className="tin-raw-type">DATA_BINARY · {len.toLocaleString('en-US')} bytes</span>
-        <div className="tin-raw-modes" role="tablist" aria-label="Span bytes encoding">
-          <button
-            type="button"
-            role="tab"
-            className={mode === 'base64' ? 'is-on' : ''}
-            aria-selected={mode === 'base64'}
-            onClick={() => setMode('base64')}
-          >base64</button>
-          <button
-            type="button"
-            role="tab"
-            className={mode === 'hex' ? 'is-on' : ''}
-            aria-selected={mode === 'hex'}
-            onClick={() => setMode('hex')}
-          >hex</button>
-        </div>
-      </div>
-      {mode === 'hex' ? (
-        <div className="tin-raw-hex">
-          {tdHexDump(previewBytes, 16).map((r, i) => (
-            <div key={i} className="sbin-hexrow">
-              <span className="sbin-off">{r.off}</span>
-              <span className="sbin-bytes">{r.hex}</span>
-              <span className="sbin-ascii">{r.ascii}</span>
+      {open && (
+        <>
+          <div className="tin-raw-meta">
+            <span className="tin-raw-type">DATA_BINARY · {len.toLocaleString('en-US')} bytes</span>
+            <div className="tin-raw-modes" role="tablist" aria-label="Span bytes encoding">
+              <button
+                type="button"
+                role="tab"
+                className={mode === 'base64' ? 'is-on' : ''}
+                aria-selected={mode === 'base64'}
+                onClick={() => setMode('base64')}
+              >base64</button>
+              <button
+                type="button"
+                role="tab"
+                className={mode === 'hex' ? 'is-on' : ''}
+                aria-selected={mode === 'hex'}
+                onClick={() => setMode('hex')}
+              >hex</button>
             </div>
-          ))}
-        </div>
-      ) : (
-        <div className="tin-raw-base64">
-          <pre className="mono">{b64}</pre>
-        </div>
-      )}
-      {mode === 'hex' && remaining > 0 && (
-        <div className="tin-raw-note">
-          {remaining.toLocaleString('en-US')} more bytes. Bytes are opaque to BanyanDB – decode in the client that wrote them.
-        </div>
+          </div>
+          {mode === 'hex' ? (
+            <div className="tin-raw-hex">
+              {tdHexDump(previewBytes, 16).map((r, i) => (
+                <div key={i} className="sbin-hexrow">
+                  <span className="sbin-off">{r.off}</span>
+                  <span className="sbin-bytes">{r.hex}</span>
+                  <span className="sbin-ascii">{r.ascii}</span>
+                </div>
+              ))}
+            </div>
+          ) : (
+            <div className="tin-raw-base64">
+              <pre className="mono">{b64}</pre>
+            </div>
+          )}
+          {mode === 'hex' && remaining > 0 && (
+            <div className="tin-raw-note">
+              {remaining.toLocaleString('en-US')} more bytes. Bytes are opaque to BanyanDB – decode in the client that wrote them.
+            </div>
+          )}
+        </>
       )}
     </div>
   );

@@ -1362,9 +1362,11 @@
   .tin-tag .tin-v .sid { white-space: nowrap; }
   .tin-raw { display: flex; flex-direction: column; gap: 8px; padding: 2px 0 1px; }
   .tin-raw-head { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
-  .tin-raw-size { display: inline-flex; align-items: center; gap: 6px; height: 22px; padding: 0 8px; border-radius: 5px; background: var(--panel-2); border: 1px solid var(--border); color: var(--text-dim); font-family: var(--mono); font-size: 10.5px; }
+  .tin-raw-size { display: inline-flex; align-items: center; gap: 6px; height: 22px; padding: 0 8px; border-radius: 5px; background: var(--panel-2); border: 1px solid var(--border); color: var(--text-dim); font-family: var(--mono); font-size: 10.5px; cursor: pointer; transition: color .12s, border-color .12s, background .12s; }
+  .tin-raw-size:hover { color: var(--text); border-color: var(--border-strong); background: var(--panel-3); }
   .tin-raw-size svg { color: var(--text-faint); }
-  .tin-raw-size svg:last-child { margin-left: -2px; opacity: .75; }
+  .tin-raw-size svg:last-child { margin-left: -2px; opacity: .75; transition: transform .15s; }
+  .tin-raw-size svg:last-child.is-open { transform: rotate(180deg); }
   .tin-raw-empty { font-size: 11px; color: var(--text-faint); }
   .tin-raw-ell { color: var(--text-faint); }
   .tin-raw-meta { display: flex; align-items: center; justify-content: space-between; gap: 12px; }

@@ -39,6 +39,14 @@ import { readFileSync } from 'node:fs';
     await page.waitForTimeout(500);
     await page.screenshot({ path: '/mnt/d/worktree/canopy/canopy/e2e/screenshots/decode-card.png' });
 
+    // Expand the span bytes inspector inside the row.
+    const sizeChip = firstRow.locator('.tin-raw-size').first();
+    if (await sizeChip.count() > 0) {
+      await sizeChip.click();
+      await page.waitForTimeout(500);
+      await page.screenshot({ path: '/mnt/d/worktree/canopy/canopy/e2e/screenshots/decode-card-expanded.png' });
+    }
+
     // Open decode bytes modal.
     const decodeBtn = page.locator('button', { hasText: /Decode bytes/i }).first();
     if (await decodeBtn.count() > 0 && await decodeBtn.isEnabled()) {
