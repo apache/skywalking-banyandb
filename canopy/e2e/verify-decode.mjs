@@ -45,6 +45,9 @@ import { readFileSync } from 'node:fs';
       await sizeChip.click();
       await page.waitForTimeout(500);
       await page.screenshot({ path: '/mnt/d/worktree/canopy/canopy/e2e/screenshots/decode-card-expanded.png' });
+      // Close the popup so the rest of the UI is reachable.
+      await page.locator('.sbin-backdrop').first().click();
+      await page.waitForTimeout(200);
     }
 
     // Open decode bytes modal.

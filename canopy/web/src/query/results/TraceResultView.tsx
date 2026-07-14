@@ -570,73 +570,130 @@ function DecodeBytesButton({ bytes, onInspect }: { bytes: Uint8Array | null; onI
 
 const BYTES_PREVIEW_LIMIT = 64;
 
+function copyText(text: string): boolean {
+  try {
+    if (navigator.clipboard) {
+      navigator.clipboard.writeText(text).catch(() => { /* ignore */ });
+      return true;
+    }
+  } catch { /* ignore */ }
+  try {
+    const ta = document.createElement('textarea');
+    ta.value = text;
+    ta.style.position = 'fixed';
+    ta.style.opacity = '0';
+    document.body.appendChild(ta);
+    ta.select();
+    document.execCommand('copy');
+    document.body.removeChild(ta);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+function toBase64(bytes: Uint8Array): string {
+  let s = '';
+  for (let i = 0; i < bytes.length; i++) s += String.fromCharCode(bytes[i]);
+  try { return btoa(s); } catch { return s; }
+}
+
+interface PopPos {
+  readonly left: number;
+  readonly top: number;
+  readonly maxH: number;
+}
+
 function SpanBytesPanel({ bytes }: { bytes: Uint8Array | null }) {
   const [open, setOpen] = React.useState(false);
-  const [mode, setMode] = React.useState<'hex' | 'base64'>('hex');
+  const [pos, setPos] = React.useState<PopPos | null>(null);
+  const [copied, setCopied] = React.useState<'b64' | 'hex' | ''>('');
+  const btnRef = React.useRef<HTMLButtonElement | null>(null);
   const len = bytes?.length ?? 0;
+  const popoverWidth = 380;
+
+  React.useEffect(() => {
+    if (!open) return;
+    const close = () => setOpen(false);
+    window.addEventListener('scroll', close, true);
+    window.addEventListener('resize', close);
+    return () => {
+      window.removeEventListener('scroll', close, true);
+      window.removeEventListener('resize', close);
+    };
+  }, [open]);
+
   if (!bytes || len === 0) {
     return <div className="tin-raw"><div className="tin-raw-empty">(no span bytes)</div></div>;
   }
-  const b64 = btoa(Array.from(bytes, (b) => String.fromCharCode(b)).join(''));
-  const previewBytes = mode === 'hex' ? bytes.slice(0, BYTES_PREVIEW_LIMIT) : bytes;
+
+  const previewBytes = bytes.slice(0, BYTES_PREVIEW_LIMIT);
+  const rows = tdHexDump(previewBytes, 12);
   const remaining = Math.max(0, len - BYTES_PREVIEW_LIMIT);
+
+  const toggle = () => {
+    if (open) {
+      setOpen(false);
+      return;
+    }
+    const rect = btnRef.current?.getBoundingClientRect();
+    const left = rect ? Math.max(12, Math.min(rect.left, window.innerWidth - popoverWidth - 12)) : 12;
+    const top = rect ? rect.bottom + 6 : 12;
+    const maxH = Math.max(140, window.innerHeight - top - 18);
+    setPos({ left, top, maxH });
+    setOpen(true);
+  };
+
+  const copy = (what: 'b64' | 'hex', text: string) => {
+    if (copyText(text)) {
+      setCopied(what);
+      setTimeout(() => setCopied(''), 1100);
+    }
+  };
+
   return (
-    <div className="tin-raw">
-      <div className="tin-raw-head">
-        <button
-          type="button"
-          className="tin-raw-size"
-          onClick={() => setOpen((v) => !v)}
-          aria-expanded={open}
-          title={open ? 'Collapse span bytes inspector' : 'Expand span bytes inspector'}
-        >
-          <IconBinary width={12} height={12} />{formatBytes(len)}<IconCaretDown width={10} height={10} className={open ? 'is-open' : ''} />
-        </button>
-      </div>
-      {open && (
+    <span className="sbin-wrap">
+      <button
+        ref={btnRef}
+        type="button"
+        className={'tin-raw-size' + (open ? ' is-open' : '')}
+        onClick={toggle}
+        aria-expanded={open}
+        title="Opaque DATA_BINARY — BanyanDB stores no encoding. Click to inspect bytes."
+      >
+        <IconBinary width={12} height={12} />{formatBytes(len)}<span className="sbin-caret">{open ? '▾' : '▸'}</span>
+      </button>
+      {open && pos && (
         <>
-          <div className="tin-raw-meta">
-            <span className="tin-raw-type">DATA_BINARY · {len.toLocaleString('en-US')} bytes</span>
-            <div className="tin-raw-modes" role="tablist" aria-label="Span bytes encoding">
-              <button
-                type="button"
-                role="tab"
-                className={mode === 'base64' ? 'is-on' : ''}
-                aria-selected={mode === 'base64'}
-                onClick={() => setMode('base64')}
-              >base64</button>
-              <button
-                type="button"
-                role="tab"
-                className={mode === 'hex' ? 'is-on' : ''}
-                aria-selected={mode === 'hex'}
-                onClick={() => setMode('hex')}
-              >hex</button>
-            </div>
-          </div>
-          {mode === 'hex' ? (
-            <div className="tin-raw-hex">
-              {tdHexDump(previewBytes, 16).map((r, i) => (
-                <div key={i} className="sbin-hexrow">
+          <span className="sbin-backdrop" onClick={() => setOpen(false)} />
+          <span
+            className="sbin-pop"
+            style={{ position: 'fixed', left: pos.left, top: pos.top, maxHeight: pos.maxH, width: popoverWidth }}
+          >
+            <span className="sbin-pop-head">
+              <span className="mono">DATA_BINARY · {len.toLocaleString('en-US')} bytes</span>
+              <span className="sbin-acts">
+                <button type="button" onClick={() => copy('b64', toBase64(bytes))}>{copied === 'b64' ? 'copied' : 'base64'}</button>
+                <button type="button" onClick={() => copy('hex', rows.map((r) => r.hex).join(' '))}>{copied === 'hex' ? 'copied' : 'hex'}</button>
+              </span>
+            </span>
+            <span className="sbin-hex">
+              {rows.map((r, i) => (
+                <span key={i} className="sbin-hexrow">
                   <span className="sbin-off">{r.off}</span>
                   <span className="sbin-bytes">{r.hex}</span>
                   <span className="sbin-ascii">{r.ascii}</span>
-                </div>
+                </span>
               ))}
-            </div>
-          ) : (
-            <div className="tin-raw-base64">
-              <pre className="mono">{b64}</pre>
-            </div>
-          )}
-          {mode === 'hex' && remaining > 0 && (
-            <div className="tin-raw-note">
-              {remaining.toLocaleString('en-US')} more bytes. Bytes are opaque to BanyanDB – decode in the client that wrote them.
-            </div>
-          )}
+            </span>
+            <span className="sbin-note">
+              {remaining > 0 ? `+ ${remaining.toLocaleString('en-US')} more bytes. ` : ''}
+              Bytes are opaque to BanyanDB – decode in the client that wrote them.
+            </span>
+          </span>
         </>
       )}
-    </div>
+    </span>
   );
 }
 
@@ -725,10 +782,5 @@ const IconEyeOff = (p: React.SVGProps<SVGSVGElement>) => (
 const IconBinary = (p: React.SVGProps<SVGSVGElement>) => (
   <svg {...p} viewBox="0 0 24 24" fill="currentColor" stroke="none">
     <text x="50%" y="54%" dominantBaseline="middle" textAnchor="middle" fontFamily="monospace" fontSize="12" fontWeight="700">{'{ }'}</text>
-  </svg>
-);
-const IconCaretDown = (p: React.SVGProps<SVGSVGElement>) => (
-  <svg {...p} viewBox="0 0 24 24" fill="currentColor" stroke="none">
-    <path d="M6 9l6 6 6-6H6z" />
   </svg>
 );
