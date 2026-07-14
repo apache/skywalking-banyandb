@@ -563,8 +563,6 @@
   .qb-rail-scroll > :last-child { border-bottom: none; }
   .qb-results { flex: 1; min-width: 0; min-height: 0; display: flex; flex-direction: column; overflow-y: auto; }
   .qb-results > .result-card { margin-top: 0; flex: 1 1 auto; min-height: 0; display: flex; flex-direction: column; }
-  .qb-results > .result-card.is-trace { flex: 0 1 auto; }
-  .qb-results > .result-card.is-trace > .rv-root { flex: 0 1 auto; }
   .qb-results .result-pane { flex: 1; display: flex; flex-direction: column; justify-content: center; }
   /* in the rail layout the card fills its container — let the scroll region grow to
      fill and scroll internally (footer pins to the bottom) instead of a fixed cap */
@@ -573,6 +571,7 @@
   .qb-results > .result-card > .slog-foot { flex: 0 0 auto; }
   .qb-results .slog, .qb-results .mtbl-scroll { flex: 1 1 auto; min-height: 0; max-height: none; }
   .qb-results .mtrace { flex: 1 1 auto; min-height: 0; overflow-y: auto; }
+  .qb-results > .result-card.is-trace > .rv-root > .tin { flex: 1 1 auto; min-height: 0; max-height: none; }
 
   /* narrow-rail adjustments: keyword sits above the clause body */
   .qb-rail .qb-clause { grid-template-columns: 1fr; gap: 9px; padding: 13px 14px 15px; }
@@ -610,6 +609,7 @@
     .qb-results .slog { flex: 0 1 auto; max-height: 460px; }
     .qb-results .mtbl-scroll { flex: 0 1 auto; max-height: 420px; }
     .qb-results .mtrace { flex: 0 1 auto; }
+    .qb-results > .result-card.is-trace > .rv-root > .tin { flex: 0 1 auto; max-height: 460px; }
     .qb-rail .editor-area { max-height: 360px; }
   }
   .editor-card { border: 1px solid var(--border-strong); border-radius: 12px; overflow: hidden; background: var(--panel); }

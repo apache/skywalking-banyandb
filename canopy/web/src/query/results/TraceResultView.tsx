@@ -415,13 +415,6 @@ export function TraceResultView({ response, state, showTrace, setShowTrace, exec
               </button>
             </div>
           )}
-          <div className="slog-foot">
-            <span>
-              {count} span{count === 1 ? '' : 's'} · <span className="mono">Span = tags + span bytes</span>
-              {' · reserved '}<span className="mono faint">trace_id · span_id · {tsField}</span>
-            </span>
-            <span className="mr-tool-right mono faint">flat repeated Span · LIMIT {state.limit}</span>
-          </div>
         </>
       )}
       {decoding && (
