@@ -1473,6 +1473,30 @@
   .modal-foot { display: flex; justify-content: flex-end; gap: 10px;
     padding: 16px 24px; border-top: 1px solid var(--border); flex-shrink: 0; }
 
+  /* ============ SPAN BYTES DECODER MODAL ============ */
+  .tdm-drop {
+    display: flex; flex-direction: column; align-items: center; justify-content: center;
+    gap: 8px; padding: 28px 24px;
+    border: 1.5px dashed var(--border-strong); border-radius: 12px;
+    background: rgba(255,255,255,.02); cursor: pointer;
+    transition: border-color .14s, background .14s;
+    text-align: center;
+  }
+  .tdm-drop:hover, .tdm-drop.is-dragover {
+    border-color: var(--accent);
+    background: rgba(255,255,255,.04);
+  }
+  .tdm-drop.has-file { border-style: solid; border-color: var(--accent); }
+  .tdm-drop-icon {
+    font-family: var(--mono); font-size: 26px; color: var(--text-dim);
+    line-height: 1; margin-bottom: 2px;
+  }
+  .tdm-drop-text { font-size: 14px; color: var(--text); font-weight: 500; }
+  .tdm-drop-sub { font-size: 12px; color: var(--text-faint); line-height: 1.45; }
+  .tdm-note {
+    margin: 18px 0 0; font-size: 13px; color: var(--text-dim); line-height: 1.6;
+  }
+
   /* ============ FORM ============ */
   .f-section { margin-bottom: 22px; }
   .f-section:last-child { margin-bottom: 0; }

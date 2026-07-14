@@ -17,111 +17,144 @@
  * under the License.
  */
 
-// TraceDecoderModal.tsx — proto binding + hex fallback for trace span bytes.
-// Ported from .handoff-import/banyandb/project/trace-decoder.jsx. Lets the
-// user upload a .proto, parses it with tdParseProto, stores the binding in
-// localStorage keyed by traceId, and renders the bound preview OR the raw
-// hex dump when unbound.
+// TraceDecoderModal.tsx — proto binding for trace span bytes.
+// Matches the handoff "Span bytes decoder" modal: drop/select a .proto file,
+// parse it locally, then bind it. The inspector itself already shows decoded
+// bytes when a binding exists; this modal is only responsible for picking and
+// persisting the schema.
 
-import React, { useEffect, useState } from 'react';
-import { tdParseProto, tdDecode, tdGetBinding, tdSetBinding, tdClearBinding, tdHexDump, tdPickMessage, type TDBinding } from './proto-decoder.js';
+import React, { useCallback, useEffect, useRef, useState } from 'react';
+import { tdParseProto, tdGetBinding, tdSetBinding, tdClearBinding, tdPickMessage, type TDBinding, type TDMessage } from './proto-decoder.js';
 
 interface Props {
   readonly traceId: string;
-  readonly bytes: Uint8Array;
   readonly onClose: () => void;
 }
 
-export function TraceDecoderModal({ traceId, bytes, onClose }: Props) {
+interface ParsedFile {
+  readonly name: string;
+  readonly src: string;
+  readonly messages: readonly TDMessage[];
+}
+
+export function TraceDecoderModal({ traceId, onClose }: Props) {
   const [binding, setBinding] = useState<TDBinding | null>(() => tdGetBinding(traceId));
+  const [pending, setPending] = useState<ParsedFile | null>(null);
+  const [dragOver, setDragOver] = useState(false);
+  const inputRef = useRef<HTMLInputElement | null>(null);
 
   useEffect(() => {
     setBinding(tdGetBinding(traceId));
   }, [traceId]);
 
-  const decoded = tdDecode(bytes, binding, traceId);
-
-  const onUpload = async (file: File) => {
+  const parseFile = useCallback(async (file: File) => {
     const src = await file.text();
-    const msgs = tdParseProto(src);
-    if (msgs.length === 0) {
+    const messages = tdParseProto(src);
+    if (messages.length === 0) {
       alert('No message definitions found in this .proto file.');
       return;
     }
-    const next = tdSetBinding(traceId, src, msgs);
+    setPending({ name: file.name, src, messages });
+  }, []);
+
+  const handleDrop = useCallback((e: React.DragEvent<HTMLDivElement>) => {
+    e.preventDefault();
+    setDragOver(false);
+    const file = e.dataTransfer.files?.[0];
+    if (file) parseFile(file);
+  }, [parseFile]);
+
+  const handleDragOver = useCallback((e: React.DragEvent<HTMLDivElement>) => {
+    e.preventDefault();
+    setDragOver(true);
+  }, []);
+
+  const handleDragLeave = useCallback((e: React.DragEvent<HTMLDivElement>) => {
+    e.preventDefault();
+    setDragOver(false);
+  }, []);
+
+  const bind = useCallback(() => {
+    if (!pending) return;
+    const next = tdSetBinding(traceId, pending.src, pending.messages);
     setBinding(next);
-  };
+    onClose();
+  }, [pending, traceId, onClose]);
+
+  const unbind = useCallback(() => {
+    tdClearBinding(traceId);
+    setBinding(null);
+    setPending(null);
+  }, [traceId]);
+
+  const rootMessage = pending ? tdPickMessage(pending.messages)?.name : binding ? tdPickMessage(binding.messages)?.name : null;
 
   return (
-    <div className="modal-backdrop" role="dialog" aria-modal="true" aria-labelledby="tdm-title" onClick={onClose}>
-      <div className="modal tdm-modal" onClick={(e) => e.stopPropagation()}>
-        <header className="modal-head">
-          <h2 id="tdm-title" className="modal-title">Trace decoder — {traceId || '(no trace id)'}</h2>
-          <button type="button" className="qb-btn qb-btn-ghost" onClick={onClose}>Close</button>
-        </header>
+    <div className="modal-overlay" role="dialog" aria-modal="true" aria-labelledby="tdm-title" onClick={onClose}>
+      <div className="modal is-wide" onClick={(e) => e.stopPropagation()}>
+        <div className="modal-head">
+          <div>
+            <h2 id="tdm-title" className="modal-title">Span bytes decoder</h2>
+            <p className="modal-sub">Bind a protobuf schema to {traceId || 'this trace'} to decode each span&apos;s opaque bytes.</p>
+          </div>
+          <button type="button" className="modal-x" onClick={onClose} aria-label="Close" />
+        </div>
 
-        <div className="tdm-body">
-          <section className="tdm-bind">
-            <div className="tdm-bind-head">
-              <span>Proto binding</span>
-              {binding ? (
-                <button type="button" className="qb-btn qb-btn-ghost" onClick={() => { tdClearBinding(traceId); setBinding(null); }}>
-                  Unbind
-                </button>
-              ) : (
-                <label className="qb-btn qb-btn-ghost">
-                  Upload .proto
-                  <input
-                    type="file"
-                    accept=".proto,.txt"
-                    hidden
-                    onChange={(e) => {
-                      const f = e.target.files?.[0];
-                      if (f) onUpload(f);
-                      e.target.value = '';
-                    }}
-                  />
-                </label>
-              )}
-            </div>
-            {binding && (
-              <div className="tdm-bind-meta">
-                Bound {new Date(binding.boundAt).toLocaleString()} · {binding.messages.length} message(s):
-                <ul>
-                  {binding.messages.map((m) => <li key={m.name}>{m.name} ({m.fields.length} fields)</li>)}
-                </ul>
-              </div>
-            )}
-          </section>
+        <div className="modal-body">
+          <div
+            className={'tdm-drop' + (dragOver ? ' is-dragover' : '') + (pending || binding ? ' has-file' : '')}
+            onDrop={handleDrop}
+            onDragOver={handleDragOver}
+            onDragLeave={handleDragLeave}
+            onClick={() => inputRef.current?.click()}
+            role="button"
+            tabIndex={0}
+            aria-label="Upload a .proto file"
+          >
+            <input
+              ref={inputRef}
+              type="file"
+              accept=".proto,.txt"
+              hidden
+              onChange={(e) => {
+                const file = e.target.files?.[0];
+                if (file) parseFile(file);
+                e.target.value = '';
+              }}
+            />
+            <span className="tdm-drop-icon">{'{ }'}</span>
+            <span className="tdm-drop-text">
+              {pending ? pending.name : binding ? `${tdPickMessage(binding.messages)?.name ?? 'bound'} · bound` : 'Drop a .proto file here, or click to browse'}
+            </span>
+            <span className="tdm-drop-sub">
+              {pending
+                ? `${pending.messages.length} message(s) · root: ${rootMessage ?? 'none'}`
+                : binding
+                  ? `Bound ${new Date(binding.boundAt).toLocaleString()} · click to replace`
+                  : 'The schema is parsed locally — the root message drives the decode.'}
+            </span>
+          </div>
 
-          <section className="tdm-decoded">
-            <div className="tdm-decoded-head">
-              <span>{binding ? `Decoded preview (${decoded.kind})` : 'Hex fallback (unbound)'}</span>
-              <span className="tdm-bytes">{bytes.length} bytes</span>
-            </div>
-            {decoded.kind === 'empty' ? (
-              <pre className="tdm-empty">(no bytes)</pre>
-            ) : decoded.kind === 'unbound' ? (
-              <pre className="tdm-hex">
-                {tdHexDump(bytes).map((r, i) => <div key={i}><span className="rv-off">{r.off}</span>  {r.hex}  <span className="rv-ascii">{r.ascii}</span></div>)}
-              </pre>
-            ) : (
-              <>
-                <pre className="tdm-preview">{JSON.stringify({
-                  bytes: decoded.bytes,
-                  ascii: decoded.ascii,
-                  ints: decoded.ints,
-                  messages: (decoded.messages ?? []).map((m) => ({
-                    name: m.name,
-                    fields: m.fields.map((f) => `${f.repeated ? 'repeated ' : ''}${f.type} ${f.name}`),
-                  })),
-                }, null, 2)}</pre>
-                <p className="tdm-note">
-                  Bound via {tdPickMessage(decoded.messages ?? [])?.name ?? '?'}. BanyanDB does not preserve proto wire metadata — the preview shows ASCII / int candidates alongside the schema; mark it as a <code>preview</code>, not a verbatim decode.
-                </p>
-              </>
-            )}
-          </section>
+          <p className="tdm-note">
+            Decoding is schema-driven: span bytes are rendered through the root message&apos;s fields.
+            Output is shown as auto-text — recognised JSON is highlighted. With no decoder bound,
+            the inspector shows the raw opaque bytes.
+          </p>
+        </div>
+
+        <div className="modal-foot">
+          {binding && (
+            <button type="button" className="qb-btn qb-btn-ghost" onClick={unbind}>
+              Unbind
+            </button>
+          )}
+          <div style={{ flex: 1 }} />
+          <button type="button" className="qb-btn qb-btn-ghost" onClick={onClose}>
+            Cancel
+          </button>
+          <button type="button" className="qb-btn qb-btn-primary" onClick={bind} disabled={!pending}>
+            Bind decoder
+          </button>
         </div>
       </div>
     </div>

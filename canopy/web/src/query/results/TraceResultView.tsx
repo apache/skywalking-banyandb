@@ -418,7 +418,6 @@ export function TraceResultView({ response, state, showTrace, setShowTrace, exec
       {decoding && (
         <TraceDecoderModal
           traceId={decoding.resource}
-          bytes={decoding.bytes}
           onClose={() => setDecoding(null)}
         />
       )}

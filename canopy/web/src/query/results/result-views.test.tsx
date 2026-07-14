@@ -316,24 +316,24 @@ describe('TraceResultView', () => {
     const enabled = decodes.find((b) => !b.hasAttribute('disabled'));
     expect(enabled).toBeDefined();
     fireEvent.click(enabled!);
-    expect(screen.getByRole('heading', { level: 2, name: /trace decoder/i })).toBeInTheDocument();
+    expect(screen.getByRole('heading', { level: 2, name: /span bytes decoder/i })).toBeInTheDocument();
   });
 });
 
 describe('TraceDecoderModal', () => {
-  it('renders hex fallback when no binding is present', () => {
+  it('renders the upload drop zone when no binding is present', () => {
     // Clear any leftover binding
     localStorage.removeItem('canopy.td.bind.trace-test');
     renderWithRouter(
       <TraceDecoderModal
         traceId="trace-test"
-        bytes={new Uint8Array([0x68, 0x69, 0x0a, 0x21])}
         onClose={() => {}}
       />,
     );
-    expect(screen.getByText(/Hex fallback/i)).toBeInTheDocument();
-    // Hex offset row 0000 + the ASCII rendering
-    expect(screen.getByText('0000')).toBeInTheDocument();
+    expect(screen.getByRole('heading', { level: 2, name: /span bytes decoder/i })).toBeInTheDocument();
+    expect(screen.getByText(/Drop a \.proto file here/i)).toBeInTheDocument();
+    // Bind decoder is disabled until a file is selected.
+    expect(screen.getByRole('button', { name: /bind decoder/i })).toBeDisabled();
   });
 
   it('persists the binding per traceId in localStorage', () => {
@@ -346,9 +346,10 @@ describe('TraceDecoderModal', () => {
     tdSetBinding(traceId, 'message Span { string trace_id = 1; string name = 2; }', messages);
 
     renderWithRouter(
-      <TraceDecoderModal traceId={traceId} bytes={new Uint8Array([1, 2, 3])} onClose={() => {}} />,
+      <TraceDecoderModal traceId={traceId} onClose={() => {}} />,
     );
-    // Bound state — the "Unbind" button is now visible
+    // Bound state — the root message name and an Unbind button are visible.
+    expect(screen.getByText('Span · bound')).toBeInTheDocument();
     expect(screen.getByRole('button', { name: /unbind/i })).toBeInTheDocument();
     // Cleanup
     localStorage.removeItem('canopy.td.bind.' + traceId);
