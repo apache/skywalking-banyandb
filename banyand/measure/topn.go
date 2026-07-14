@@ -149,6 +149,28 @@ func (sr *schemaRepo) stopSteamingManager(sourceMeasure *commonv1.Metadata) {
 	}
 }
 
+// removeTopNAggregation tears down a single top-n aggregation, keeping the other
+// aggregations on the same source measure alive. Only when the source measure has no
+// aggregation left is the whole manager closed and dropped. Deleting one aggregation
+// previously closed every sibling via stopSteamingManager.
+func (sr *schemaRepo) removeTopNAggregation(sourceMeasure *commonv1.Metadata, topNSchema *databasev1.TopNAggregation) {
+	if sourceMeasure == nil {
+		return
+	}
+	key := getKey(sourceMeasure)
+	v, ok := sr.topNProcessorMap.Load(key)
+	if !ok {
+		return
+	}
+	manager := v.(*topNProcessorManager)
+	if manager.unregister(topNSchema) {
+		if err := manager.Close(); err != nil {
+			sr.l.Err(err).Msg("fail to close the emptied top-n manager")
+		}
+		sr.topNProcessorMap.Delete(key)
+	}
+}
+
 type dataPointWithEntityValues struct {
 	tagSpec logical.TagSpecRegistry
 	*measurev1.DataPointValue
@@ -743,6 +765,31 @@ func (manager *topNProcessorManager) start(ctx context.Context, topNSchema *data
 	}
 	manager.processorList = append(manager.processorList, processorList...)
 	return nil
+}
+
+// unregister removes a single top-n aggregation's registered task and processors while
+// leaving sibling aggregations on the same source measure running. It returns true when
+// no registered task remains, so the caller can drop the whole manager.
+func (manager *topNProcessorManager) unregister(topNSchema *databasev1.TopNAggregation) (empty bool) {
+	manager.Lock()
+	if manager.closed {
+		manager.Unlock()
+		return true
+	}
+	manager.registeredTasks = slices.DeleteFunc(manager.registeredTasks, func(task *databasev1.TopNAggregation) bool {
+		return task.GetMetadata().GetName() == topNSchema.GetMetadata().GetName()
+	})
+	removed := manager.removeProcessors(topNSchema)
+	empty = len(manager.registeredTasks) == 0
+	manager.Unlock()
+	// Close outside the lock: processor.Close can block up to ~5s and would otherwise
+	// stall onMeasureWrite readers; the processors are already detached from the manager.
+	for _, processor := range removed {
+		if err := processor.Close(); err != nil {
+			manager.l.Err(err).Msg("fail to close the removed top-n processor")
+		}
+	}
+	return empty
 }
 
 func (manager *topNProcessorManager) removeProcessors(topNSchema *databasev1.TopNAggregation) []topNProcessor {

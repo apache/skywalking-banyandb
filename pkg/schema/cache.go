@@ -22,6 +22,7 @@ import (
 	"io"
 	"path"
 	"runtime/debug"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -192,6 +193,10 @@ func (sr *schemaRepo) processEvent(ctx context.Context, evt MetadataEvent) error
 		case EventKindIndexRule:
 			key := getKey(evt.Metadata.GetMetadata())
 			sr.indexRuleMap.Delete(key)
+			// Re-index resources bound to this rule so the deleted rule is dropped from
+			// their in-memory index; the add path (storeIndexRule) refreshes the same
+			// way, the delete path previously did not, leaving stale index config.
+			sr.reindexBoundSubjects(key)
 		case EventKindIndexRuleBinding:
 			indexRuleBinding := evt.Metadata.(*databasev1.IndexRuleBinding)
 			col, _ := sr.bindingForwardMap.Load(getKey(&commonv1.Metadata{
@@ -215,6 +220,9 @@ func (sr *schemaRepo) processEvent(ctx context.Context, evt MetadataEvent) error
 				tMap := col.(*sync.Map)
 				tMap.Delete(key)
 			}
+			// Refresh the subject's index from the remaining bindings so the unbound
+			// rules stop being applied (mirrors storeIndexRuleBinding's add-path refresh).
+			sr.updateIndex(indexRuleBinding)
 		}
 	}
 	return err
@@ -368,7 +376,10 @@ func (sr *schemaRepo) storeGroup(ctx context.Context, groupMeta *commonv1.Metada
 		return g, nil
 	}
 	sr.l.Info().Str("group", name).Msg("updating the group resource options")
-	g.db.Load().(DB).UpdateOptions(groupSchema.ResourceOpts)
+	// Resolve through the supplier so a data node re-applies the matched lifecycle
+	// stage's interval/ttl/shardNum; passing the raw group default here would silently
+	// clobber a warm/cold node's stage-resolved values.
+	g.db.Load().(DB).UpdateOptions(g.resourceSupplier.ResolveResourceOpts(groupSchema))
 	return g, nil
 }
 
@@ -384,8 +395,34 @@ func (sr *schemaRepo) deleteGroup(groupMeta *commonv1.Metadata) error {
 	if !loaded {
 		return nil
 	}
+	// Defensive cascade: the orchestrated deletion flow removes every child before the
+	// group, but if a group delete arrives without that (a crash mid-sequence, or a
+	// non-orchestrated caller) the child entries would dangle in these caches and keep
+	// serving a closed tsdb. Purge everything under this group.
+	sr.purgeGroupFromCaches(name)
 	grp := g.(*group)
 	return grp.close()
+}
+
+// purgeGroupFromCaches removes every resource/index-rule/binding cache entry belonging
+// to the group. Keys are "group/name" (getKey), so the "group/" prefix cannot collide
+// with a differently named group.
+func (sr *schemaRepo) purgeGroupFromCaches(group string) {
+	prefix := group + "/"
+	deleteByPrefix := func(m *sync.Map) {
+		m.Range(func(k, _ any) bool {
+			if ks, ok := k.(string); ok && strings.HasPrefix(ks, prefix) {
+				m.Delete(k)
+			}
+			return true
+		})
+	}
+	sr.resourceMutex.Lock()
+	deleteByPrefix(&sr.resourceMap)
+	sr.resourceMutex.Unlock()
+	deleteByPrefix(&sr.indexRuleMap)
+	deleteByPrefix(&sr.bindingForwardMap)
+	deleteByPrefix(&sr.bindingBackwardMap)
 }
 
 func (sr *schemaRepo) DropGroup(name string) error {
@@ -461,22 +498,26 @@ func (sr *schemaRepo) storeIndexRule(indexRule *databasev1.IndexRule) {
 		if prev.(*databasev1.IndexRule).GetMetadata().ModRevision <= indexRule.GetMetadata().ModRevision {
 			sr.indexRuleMap.Store(key, indexRule)
 			sr.updateLatestModRevision(indexRule.GetMetadata().GetModRevision())
-			if col, _ := sr.bindingBackwardMap.Load(key); col != nil {
-				col.(*sync.Map).Range(func(_, value any) bool {
-					sr.updateIndex(value.(*databasev1.IndexRuleBinding))
-					return true
-				})
-			}
+			sr.reindexBoundSubjects(key)
 		}
 	} else {
 		sr.updateLatestModRevision(indexRule.GetMetadata().GetModRevision())
-		if col, _ := sr.bindingBackwardMap.Load(key); col != nil {
-			col.(*sync.Map).Range(func(_, value any) bool {
-				sr.updateIndex(value.(*databasev1.IndexRuleBinding))
-				return true
-			})
-		}
+		sr.reindexBoundSubjects(key)
 	}
+}
+
+// reindexBoundSubjects refreshes the in-memory index of every resource bound to the index
+// rule identified by ruleKey (through the backward binding map). Called whenever the rule
+// is added, updated, or deleted, so a stored resource always reflects the current rule set.
+func (sr *schemaRepo) reindexBoundSubjects(ruleKey string) {
+	col, _ := sr.bindingBackwardMap.Load(ruleKey)
+	if col == nil {
+		return
+	}
+	col.(*sync.Map).Range(func(_, value any) bool {
+		sr.updateIndex(value.(*databasev1.IndexRuleBinding))
+		return true
+	})
 }
 
 func (sr *schemaRepo) storeIndexRuleBinding(indexRuleBinding *databasev1.IndexRuleBinding) {
