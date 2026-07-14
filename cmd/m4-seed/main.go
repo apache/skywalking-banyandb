@@ -253,30 +253,46 @@ func main() {
 
 	irc := databasev1.NewIndexRuleRegistryServiceClient(conn)
 	irbc := databasev1.NewIndexRuleBindingRegistryServiceClient(conn)
-	if _, err := irc.Create(ctx, &databasev1.IndexRuleRegistryServiceCreateRequest{
-		IndexRule: &databasev1.IndexRule{
-			Metadata: &commonv1.Metadata{Group: groupTrace, Name: "trace-by-id"},
-			Type:     databasev1.IndexRule_TYPE_TREE,
-			Tags:     []string{"trace_id"},
-		},
-	}); err != nil && !ignoreAlreadyExists(err) {
-		log.Fatalf("create index rule: %v", err)
+	// Tree index rules for every trace tag so the query builder can filter and
+	// order by service, duration, timestamp, etc. as well as trace_id.
+	traceIndexTags := []string{
+		"service",
+		"trace_id",
+		"span_id",
+		"parent_span_id",
+		"duration_ms",
+		"status",
+		"endpoint",
+		"timestamp",
 	}
-	if _, err := irbc.Create(ctx, &databasev1.IndexRuleBindingRegistryServiceCreateRequest{
-		IndexRuleBinding: &databasev1.IndexRuleBinding{
-			Metadata: &commonv1.Metadata{Group: groupTrace, Name: "trace-by-id-on-spans"},
-			Rules:    []string{"trace-by-id"},
-			Subject: &databasev1.Subject{
-				Catalog: commonv1.Catalog(commonv1.Catalog_value["CATALOG_TRACE"]),
-				Name:    traceName,
+	beginAt := timestamppb.New(time.UnixMilli(baseTimestamp(*rows)).Truncate(time.Millisecond))
+	expireAt := timestamppb.New(time.Now().Add(7 * 24 * time.Hour).Truncate(time.Millisecond))
+	for _, tagName := range traceIndexTags {
+		if _, err := irc.Create(ctx, &databasev1.IndexRuleRegistryServiceCreateRequest{
+			IndexRule: &databasev1.IndexRule{
+				Metadata: &commonv1.Metadata{Group: groupTrace, Name: tagName},
+				Type:     databasev1.IndexRule_TYPE_TREE,
+				Tags:     []string{tagName},
 			},
-			BeginAt:  timestamppb.New(time.UnixMilli(baseTimestamp(*rows)).Truncate(time.Millisecond)),
-			ExpireAt: timestamppb.New(time.Now().Add(7 * 24 * time.Hour).Truncate(time.Millisecond)),
-		},
-	}); err != nil && !ignoreAlreadyExists(err) {
-		log.Fatalf("bind index rule: %v", err)
+		}); err != nil && !ignoreAlreadyExists(err) {
+			log.Fatalf("create index rule %s: %v", tagName, err)
+		}
+		if _, err := irbc.Create(ctx, &databasev1.IndexRuleBindingRegistryServiceCreateRequest{
+			IndexRuleBinding: &databasev1.IndexRuleBinding{
+				Metadata: &commonv1.Metadata{Group: groupTrace, Name: tagName + "-on-spans"},
+				Rules:    []string{tagName},
+				Subject: &databasev1.Subject{
+					Catalog: commonv1.Catalog(commonv1.Catalog_value["CATALOG_TRACE"]),
+					Name:    traceName,
+				},
+				BeginAt:  beginAt,
+				ExpireAt: expireAt,
+			},
+		}); err != nil && !ignoreAlreadyExists(err) {
+			log.Fatalf("bind index rule %s: %v", tagName, err)
+		}
 	}
-	log.Println("trace index rule ready")
+	log.Println("trace index rules ready")
 
 	if _, err := topc.Create(ctx, &databasev1.TopNAggregationRegistryServiceCreateRequest{
 		TopNAggregation: &databasev1.TopNAggregation{
