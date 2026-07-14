@@ -700,15 +700,23 @@ export function QueryConsole() {
       </div>
 
       {confirmDiscard && (
-        <div className="modal-backdrop" role="dialog" aria-modal="true" aria-labelledby="qb-discard-title">
-          <div className="modal">
-            <h2 id="qb-discard-title" className="modal-title">
-              {confirmDiscard === 'builder' ? 'Discard code edits?' : 'Discard code edits and resync?'}
-            </h2>
-            <p className="modal-body">The code has been edited manually. {confirmDiscard === 'builder' ? 'Returning to the builder' : 'Resyncing'} will discard those edits.</p>
-            <div className="modal-actions">
-              <button type="button" className="qb-btn qb-btn-ghost" onClick={() => setConfirmDiscard(null)}>Keep edits</button>
-              <button type="button" className="qb-btn qb-btn-danger" onClick={doDiscard}>Discard</button>
+        <div className="modal-overlay" role="dialog" aria-modal="true" aria-labelledby="qb-discard-title">
+          <div className="modal is-danger">
+            <div className="modal-head">
+              <div>
+                <h2 id="qb-discard-title" className="modal-title">
+                  {confirmDiscard === 'builder' ? 'Back to the builder?' : 'Resync from builder?'}
+                </h2>
+                <p className="modal-sub">You have manual edits in the code editor.</p>
+              </div>
+              <button type="button" className="modal-x" onClick={() => setConfirmDiscard(null)} aria-label="Close">×</button>
+            </div>
+            <div className="modal-body">
+              <p>The query will be regenerated from the visual builder, overwriting the changes you made in the code editor.</p>
+            </div>
+            <div className="modal-foot">
+              <button type="button" className="qb-btn qb-btn-ghost" onClick={() => setConfirmDiscard(null)}>Keep my edits</button>
+              <button type="button" className="qb-btn qb-btn-danger" onClick={doDiscard}>Discard edits</button>
             </div>
           </div>
         </div>
