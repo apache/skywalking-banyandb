@@ -564,7 +564,7 @@ export function QueryConsole() {
                 isRunning={runMutation.isPending}
                 onEjectToCode={() => { setCode(generated); setCodeDirty(false); setMode('code'); }}
                 onRun={run}
-                hasRun={status === 'done'}
+                hasRun={status !== 'idle'}
                 compact={builderCompact}
                 setCompact={setBuilderCompact}
                 openSection={builderOpenSection}
