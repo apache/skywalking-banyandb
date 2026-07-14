@@ -597,6 +597,13 @@ func (sc *segmentController[T, O]) updateOptions(resourceOpts *commonv1.Resource
 		sc.l.Panic().Msg("segment interval unit cannot be changed")
 		return
 	}
+	// A live segment-interval change is legitimate (e.g. a stage was re-timed) but
+	// rare; surface it so an unexpected change -- such as a stage node being fed the
+	// group default -- is visible instead of silent.
+	if sc.opts.SegmentInterval.Num != si.Num {
+		sc.l.Info().Int("from", sc.opts.SegmentInterval.Num).Int("to", si.Num).
+			Msg("segment interval number changed on options update; existing segments keep their span, new segments use the new interval")
+	}
 	sc.opts.SegmentInterval = si
 	sc.opts.TTL = MustToIntervalRule(resourceOpts.Ttl)
 	sc.opts.ShardNum = resourceOpts.ShardNum

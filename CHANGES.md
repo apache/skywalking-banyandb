@@ -133,6 +133,11 @@ Release Notes.
 - Fix block metadata reset before unmarshal for stream and trace.
 - Lifecycle only handles stream/measure/trace snapshots, skipping other catalogs.
 - Fix liaison goroutine leak from uncanceled gRPC SyncPart stream context in write-queue part sync.
+- Fix group update overwriting a warm/cold node's stage-resolved segment interval, TTL and shard count with the group default.
+- Re-index bound resources when an index rule or binding is deleted, clearing stale index config.
+- Deleting one TopN aggregation no longer tears down sibling aggregations on the same source measure.
+- Purge a deleted group's resource, index-rule and binding cache entries to avoid dangling references.
+- Clear a trace subject's index when its last index rule or binding is removed.
 
 ### Document
 
