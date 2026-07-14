@@ -87,11 +87,14 @@ describe('Layer 3 — srRoleFromConvention (name-based)', () => {
   it('span_layer → cat', () => {
     expect(srRoleFromConvention('span_layer')).toBe('cat');
   });
+  it('trace_id / span_id → id', () => {
+    expect(srRoleFromConvention('trace_id')).toBe('id');
+    expect(srRoleFromConvention('span_id')).toBe('id');
+  });
   it('returns null for names with no convention', () => {
     expect(srRoleFromConvention('duration')).toBeNull();
     expect(srRoleFromConvention('service')).toBeNull();
     expect(srRoleFromConvention('service_name')).toBeNull();
-    expect(srRoleFromConvention('trace_id')).toBeNull();
     expect(srRoleFromConvention('body')).toBeNull();
     expect(srRoleFromConvention('definitely_not_a_known_field')).toBeNull();
   });
