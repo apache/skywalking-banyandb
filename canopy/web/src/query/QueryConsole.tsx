@@ -170,20 +170,9 @@ export function QueryConsole() {
   }, [railW]);
 
   // BanyanDB's trace query analyzer requires either a trace_id filter or an
-  // ORDER BY clause. If the user picks a trace resource and the WHERE tree has
-  // no trace_id condition at all, seed an empty trace_id one as a convenient
-  // starting point. The user can change the tag; when they do, we default the
-  // order field to 'time' (mapped to timestamp in codegen) so the query stays
-  // valid without forcing them to open the ORDER BY section.
-  useEffect(() => {
-    if (state.catalog !== 'traces' || !state.resource || qbHasTraceIdCondition(state.where)) return;
-    patch({
-      where: {
-        combinator: 'AND',
-        children: [{ tag: 'trace_id', op: 'BINARY_OP_EQ', value: '' }],
-      },
-    });
-  }, [state.catalog, state.resource, state.where, patch]);
+  // ORDER BY clause. When a trace WHERE clause has no trace_id condition, default
+  // the order field to 'time' (mapped to timestamp in codegen) so the query stays
+  // valid without forcing the user to open the ORDER BY section.
   useEffect(() => {
     if (state.catalog !== 'traces' || qbHasTraceIdCondition(state.where) || state.orderField) return;
     patch({ orderField: 'time' });
@@ -197,8 +186,8 @@ export function QueryConsole() {
     const isMeasure = catalog === 'measures';
     // BanyanDB's trace query analyzer requires either a trace_id filter or an
     // ORDER BY clause; seed a trace_id condition for trace resources as a
-    // convenient starting point. If the user later switches to another tag, an
-    // effect above defaults orderField to 'time' (mapped to timestamp in codegen).
+    // convenient starting point. The user can change the tag freely; if no
+    // trace_id condition remains, an effect defaults orderField to 'time'.
     const defaultWhere = catalog === 'traces'
       ? { combinator: 'AND' as const, children: [{ tag: 'trace_id', op: 'BINARY_OP_EQ' as const, value: '' }] }
       : qbEmptyWhere();
