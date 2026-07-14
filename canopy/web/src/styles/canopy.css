@@ -1346,14 +1346,20 @@
   .tin-svc { display: flex; align-items: center; color: var(--text-dim); font-size: 12px; white-space: nowrap; }
   .tin-op { color: var(--text); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; }
   .tin-status { font-size: 12px; }
-  .tin-detail { display: grid; grid-template-columns: minmax(0,1.15fr) minmax(0,1fr); gap: 24px; padding: 8px 16px 16px 50px; background: rgba(0,0,0,.2); }
+  .tin-detail { display: grid; grid-template-columns: minmax(0,1.35fr) minmax(0,0.85fr); gap: 24px; padding: 8px 16px 16px 50px; background: rgba(0,0,0,.2); }
   .tin-col-h { font-size: 10px; letter-spacing: .5px; text-transform: uppercase; color: var(--text-faint); padding: 8px 0 9px; display: flex; gap: 8px; align-items: baseline; }
   .tin-col-h .faint { text-transform: none; letter-spacing: 0; }
   .tin-tags { display: grid; grid-template-columns: 1fr 1fr; gap: 5px 16px; }
   .tin-tag { display: grid; grid-template-columns: minmax(92px,auto) 1fr; align-items: baseline; gap: 10px; padding: 4px 10px; background: var(--panel-2); border: 1px solid var(--border); border-radius: 6px; min-width: 0; }
   .tin-k { font-size: 11px; color: var(--text-faint); white-space: nowrap; display: flex; align-items: center; gap: 5px; }
   .tin-res { font-size: 8px; font-weight: 600; letter-spacing: .3px; color: var(--text-dim); background: rgba(255,255,255,.08); padding: 1px 4px; border-radius: 3px; text-transform: uppercase; }
+  .tin-res.is-trace { color: #e6a14a; background: rgba(230,161,74,.12); }
+  .tin-res.is-span { color: #e6a14a; background: rgba(230,161,74,.12); }
+  .tin-res.is-parent { color: #c9a14a; background: rgba(201,161,74,.12); }
+  .tin-res.is-time { color: var(--info); background: rgba(86,194,214,.12); }
   .tin-v { font-size: 11px; color: var(--text); min-width: 0; overflow-wrap: anywhere; }
+  .tin-tag .tin-v .snum.dim,
+  .tin-tag .tin-v .sid { white-space: nowrap; }
   .tin-raw { display: flex; flex-direction: column; gap: 8px; padding: 2px 0 1px; }
   .tin-raw-head { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
   .tin-raw-size { display: inline-flex; align-items: center; gap: 6px; height: 22px; padding: 0 8px; border-radius: 5px; background: var(--panel-2); border: 1px solid var(--border); color: var(--text-dim); font-family: var(--mono); font-size: 10.5px; }

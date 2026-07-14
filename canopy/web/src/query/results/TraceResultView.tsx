@@ -450,7 +450,7 @@ function TraceInspectorRow({ index, element, tsField, resource, config, detailCo
   const badgeCols = visible.filter((c) => c.role === 'cat');
   const bodyCol = visible.find((c) => c.role === 'body') ?? visible.find((c) => c.role === 'text');
   const metaCols = visible.filter((c) => c.role === 'numeric');
-  const bodyVal = bodyCol ? element[bodyCol.name] : element.name;
+  const bodyVal = bodyCol ? element[bodyCol.name] : undefined;
   const spanId = String(element.span_id ?? '');
   const ts = formatTimestamp(element[tsField]);
   const bytes = normalizeBytes(element.span);
@@ -484,7 +484,7 @@ function TraceInspectorRow({ index, element, tsField, resource, config, detailCo
                 <div key={c.name} className="tin-tag">
                   <span className="tin-k mono">
                     {c.name}
-                    {c.reserved && <span className="tin-res">{reservedLabel(c.reserved)}</span>}
+                    {c.reserved && <span className={`tin-res is-${c.reserved}`}>{reservedLabel(c.reserved)}</span>}
                   </span>
                   <span className="tin-v"><ValuePill tag={c.name} role={c.role} value={element[c.name]} /></span>
                 </div>
@@ -663,7 +663,7 @@ const IconEyeOff = (p: React.SVGProps<SVGSVGElement>) => (
   </svg>
 );
 const IconBinary = (p: React.SVGProps<SVGSVGElement>) => (
-  <svg {...p} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round">
-    <path d="M6 20h4M14 20h4M9 4v12M15 4v12M4 9h4M16 9h4" />
+  <svg {...p} viewBox="0 0 24 24" fill="currentColor" stroke="none">
+    <text x="50%" y="54%" dominantBaseline="middle" textAnchor="middle" fontFamily="monospace" fontSize="12" fontWeight="700">{'{ }'}</text>
   </svg>
 );

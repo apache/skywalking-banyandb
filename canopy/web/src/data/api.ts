@@ -463,10 +463,13 @@ function flattenTraceSpan(
   const flat: Record<string, unknown> = {
     trace_id: s.trace_id ?? parentTraceId,
     span_id: s.span_id,
-    name: s.name,
-    timestamp: s.timestamp,
-    duration: s.duration,
   };
+  // These fields only exist in newer/extended trace wire shapes; don't emit
+  // them when the backend (or test fixture) didn't provide a value, otherwise
+  // the span card shows undefined-looking rows for tags that aren't defined.
+  if (s.name != null) flat.name = s.name;
+  if (s.timestamp != null) flat.timestamp = s.timestamp;
+  if (s.duration != null) flat.duration = s.duration;
   if (s.span !== undefined) flat.span = s.span;
   const tagList = s.tags ?? s.tag_families?.flatMap((f) => f.tags ?? []) ?? [];
   for (const t of tagList) {
