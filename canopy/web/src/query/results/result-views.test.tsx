@@ -309,8 +309,8 @@ describe('TraceResultView', () => {
     renderWithRouter(
       <TraceResultView response={traceResponse} state={TRACE_STATE} showTrace={false} setShowTrace={() => {}} hasMore={false} onLoadMore={() => {}} isLoadingMore={false} />,
     );
-    // Expand the row that carries span bytes.
-    fireEvent.click(screen.getByText('db.query'));
+    // Expand the row that carries span bytes (span_id = s2).
+    fireEvent.click(screen.getByText('s2'));
     const decodes = screen.getAllByRole('button', { name: /decode/i });
     expect(decodes.length).toBeGreaterThan(0);
     const enabled = decodes.find((b) => !b.hasAttribute('disabled'));

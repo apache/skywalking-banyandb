@@ -449,27 +449,22 @@ function flattenMeasureDataPoint(dp: { timestamp?: string; sid?: string; version
 
 function flattenTraceSpan(
   s: {
+    spanId?: string;
     span_id?: string;
+    traceId?: string;
     trace_id?: string;
-    name?: string;
-    timestamp?: string;
-    duration?: number;
     tags?: readonly { key: string; value: unknown }[];
     tag_families?: readonly { tags?: readonly { key: string; value: unknown }[] }[];
     span?: unknown;
   },
   parentTraceId?: string,
 ): Record<string, unknown> {
-  const flat: Record<string, unknown> = {
-    trace_id: s.trace_id ?? parentTraceId,
-    span_id: s.span_id,
-  };
-  // These fields only exist in newer/extended trace wire shapes; don't emit
-  // them when the backend (or test fixture) didn't provide a value, otherwise
-  // the span card shows undefined-looking rows for tags that aren't defined.
-  if (s.name != null) flat.name = s.name;
-  if (s.timestamp != null) flat.timestamp = s.timestamp;
-  if (s.duration != null) flat.duration = s.duration;
+  // BanyanDB's protojson gateway emits camelCase keys at runtime; the hand-
+  // authored fixtures still use snake_case. Accept both so live traces and
+  // tests flatten correctly.
+  const traceId = s.traceId ?? s.trace_id ?? parentTraceId;
+  const spanId = s.spanId ?? s.span_id;
+  const flat: Record<string, unknown> = { trace_id: traceId, span_id: spanId };
   if (s.span !== undefined) flat.span = s.span;
   const tagList = s.tags ?? s.tag_families?.flatMap((f) => f.tags ?? []) ?? [];
   for (const t of tagList) {

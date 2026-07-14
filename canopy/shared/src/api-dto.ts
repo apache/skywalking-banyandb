@@ -259,8 +259,8 @@ export interface QueryResponse {
   readonly property_result?: unknown;
   // Flattened view-model for the result views: each element has been
   // re-shaped into a flat key→value map with reserved keys for timestamp,
-  // element_id, span_id, trace_id, name, duration. The N-row cap status
-  // (totalRowCount + truncated) is set by api.ts after applying MAX_QUERY_ROWS.
+  // element_id, span_id and trace_id. The N-row cap status (totalRowCount +
+  // truncated) is set by api.ts after applying MAX_QUERY_ROWS.
   readonly elements: readonly Record<string, unknown>[];
   readonly totalRowCount?: number;
   readonly truncated?: boolean;
