@@ -45,13 +45,13 @@ func ResolveStageResourceOpts(ro *commonv1.ResourceOpts, nodeLabels map[string]s
 		return nil, nil, -1, nil
 	}
 	resolved = proto.Clone(ro).(*commonv1.ResourceOpts)
+	// The group SegmentInterval and Ttl are always required by storage; reject a missing one
+	// here with a clean error rather than panicking later in storage.MustToIntervalRule.
+	if ro.GetSegmentInterval() == nil || ro.GetTtl() == nil {
+		return nil, nil, -1, fmt.Errorf("group must set both segmentInterval and ttl")
+	}
 	if len(ro.GetStages()) == 0 || len(nodeLabels) == 0 {
 		return resolved, nil, -1, nil
-	}
-	// Reject malformed schemas up front so a missing interval/ttl returns an error here
-	// rather than panicking a data node later in storage.MustToIntervalRule.
-	if ro.GetTtl() == nil {
-		return nil, nil, -1, fmt.Errorf("group ttl must be set when lifecycle stages are configured")
 	}
 	var ttlNum uint32
 	for i, st := range ro.GetStages() {
@@ -59,7 +59,7 @@ func ResolveStageResourceOpts(ro *commonv1.ResourceOpts, nodeLabels map[string]s
 			return nil, nil, -1, fmt.Errorf("lifecycle stage %q must set both ttl and segmentInterval", st.GetName())
 		}
 		if st.GetTtl().GetUnit() != ro.GetTtl().GetUnit() {
-			return nil, nil, -1, fmt.Errorf("ttl unit %s is not consistent with stage %s ttl unit %s",
+			return nil, nil, -1, fmt.Errorf("ttl unit %v is not consistent with stage %s ttl unit %v",
 				ro.GetTtl().GetUnit(), st.GetName(), st.GetTtl().GetUnit())
 		}
 		selector, parseErr := ParseLabelSelector(st.GetNodeSelector())

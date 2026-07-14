@@ -103,6 +103,23 @@ func TestResolveStageResourceOpts_DoesNotMutateInput(t *testing.T) {
 	require.Equal(t, uint32(1), ro.GetShardNum(), "group shard num untouched")
 }
 
+func TestResolveStageResourceOpts_MissingGroupFieldsError(t *testing.T) {
+	// The group SegmentInterval/Ttl are always required by storage; a missing one must
+	// return an error rather than a downstream panic -- for staged and non-staged groups.
+	for _, labels := range []map[string]string{{"type": "cold"}, nil} {
+		roNoSI := stagedOpts()
+		roNoSI.SegmentInterval = nil
+		_, matched, _, err := ResolveStageResourceOpts(roNoSI, labels)
+		require.Error(t, err)
+		require.Nil(t, matched)
+
+		roNoTTL := stagedOpts()
+		roNoTTL.Ttl = nil
+		_, _, _, err = ResolveStageResourceOpts(roNoTTL, labels)
+		require.Error(t, err)
+	}
+}
+
 func TestResolveStageResourceOpts_TTLUnitMismatchErrors(t *testing.T) {
 	ro := stagedOpts()
 	ro.Stages[1].Ttl = &commonv1.IntervalRule{Unit: commonv1.IntervalRule_UNIT_HOUR, Num: 30}

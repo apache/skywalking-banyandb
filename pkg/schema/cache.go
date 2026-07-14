@@ -378,8 +378,11 @@ func (sr *schemaRepo) storeGroup(ctx context.Context, groupMeta *commonv1.Metada
 	sr.l.Info().Str("group", name).Msg("updating the group resource options")
 	// Resolve through the supplier so a data node re-applies the matched lifecycle
 	// stage's interval/ttl/shardNum; passing the raw group default here would silently
-	// clobber a warm/cold node's stage-resolved values.
-	g.db.Load().(DB).UpdateOptions(g.resourceSupplier.ResolveResourceOpts(groupSchema))
+	// clobber a warm/cold node's stage-resolved values. A portable group has no db (and a
+	// nil supplier), so guard on db before touching either.
+	if db := g.db.Load(); db != nil {
+		db.(DB).UpdateOptions(g.resourceSupplier.ResolveResourceOpts(groupSchema))
+	}
 	return g, nil
 }
 
