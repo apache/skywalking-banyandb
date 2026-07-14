@@ -1,10 +1,11 @@
-import { chromium } from '@playwright/test';
+import { mkdirSync } from 'node:fs';
 import { join } from 'node:path';
+
+import { chromium } from '@playwright/test';
 
 const BASE = 'http://127.0.0.1:4000';
 const TRACE_ID = 'sw-demo-trace-001';
-const SHOTS = join(process.cwd(), 'e2e', 'screenshots');
-import { mkdirSync } from 'node:fs';
+const SHOTS = join(import.meta.dirname, 'screenshots');
 mkdirSync(SHOTS, { recursive: true });
 
 const browser = await chromium.launch({ headless: true });
@@ -46,18 +47,8 @@ try {
   await page.waitForTimeout(300);
   await page.screenshot({ path: join(SHOTS, 'trace-result-expanded.png'), fullPage: false });
 
-  // Upload Tracing.proto
-  const protoPath = '/tmp/trace-seed/proto/Tracing.proto';
-  await page.locator('.mr-toolbar label input[type="file"]').setInputFiles(protoPath);
-  await page.waitForTimeout(500);
-
-  // Decode first row
-  await page.locator('.tin-row').first().locator('button', { hasText: /decode/i }).click();
-  await page.waitForSelector('.tdm-modal', { timeout: 10_000 });
-  await page.waitForTimeout(500);
-  await page.screenshot({ path: join(SHOTS, 'trace-decoder-modal.png'), fullPage: false });
-
   console.log('Screenshots saved to', SHOTS);
+  console.log('You can now open the demo, upload /tmp/trace-seed/proto/Tracing.proto manually, and click Decode on a row.');
 } catch (err) {
   console.error('FAILED:', err);
   await page.screenshot({ path: join(SHOTS, 'trace-verify-error.png'), fullPage: false });

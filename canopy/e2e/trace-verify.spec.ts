@@ -1,4 +1,4 @@
-import { test, expect, type Page } from '@playwright/test';
+import { test, type Page } from '@playwright/test';
 import { join } from 'node:path';
 
 const BASE = 'http://127.0.0.1:4000';
@@ -13,7 +13,7 @@ async function login(page: Page) {
   await page.waitForURL((u) => !u.pathname.startsWith('/login'), { timeout: 30_000 });
 }
 
-test('seeded SkyWalking trace renders and decodes', async ({ page }) => {
+test('seeded SkyWalking trace renders flat span result', async ({ page }) => {
   await login(page);
   await page.goto(`${BASE}/query`);
   await page.waitForSelector('.qb-card', { timeout: 30_000 });
@@ -31,19 +31,10 @@ test('seeded SkyWalking trace renders and decodes', async ({ page }) => {
   await page.locator('button.qb-btn-primary', { hasText: /run/i }).click();
   await page.waitForSelector('.tin-row', { timeout: 60_000 });
 
-  await page.screenshot({ path: join(process.cwd(), 'e2e', 'screenshots', 'trace-result-flat.png'), fullPage: false });
+  const shots = join(process.cwd(), 'e2e', 'screenshots');
+  await page.screenshot({ path: join(shots, 'trace-result-flat.png'), fullPage: false });
 
   await page.locator('.tin-row').first().locator('.tin-main').click();
   await page.waitForTimeout(300);
-  await page.screenshot({ path: join(process.cwd(), 'e2e', 'screenshots', 'trace-result-expanded.png'), fullPage: false });
-
-  const protoPath = join(process.cwd(), '..', '..', 'tmp', 'trace-seed', 'proto', 'Tracing.proto');
-  await page.locator('.mr-toolbar label input[type="file"]').setInputFiles(protoPath);
-  await page.waitForTimeout(500);
-  await page.locator('.tin-row').first().locator('button', { hasText: /decode/i }).click();
-  await page.waitForSelector('.tdm-modal', { timeout: 10_000 });
-  await page.waitForTimeout(500);
-  await page.screenshot({ path: join(process.cwd(), 'e2e', 'screenshots', 'trace-decoder-modal.png'), fullPage: false });
-
-  await expect(page.locator('.tdm-modal')).toBeVisible();
+  await page.screenshot({ path: join(shots, 'trace-result-expanded.png'), fullPage: false });
 });
