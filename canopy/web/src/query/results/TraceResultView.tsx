@@ -378,7 +378,7 @@ export function TraceResultView({ response, state, showTrace, setShowTrace, exec
   );
 
   return (
-    <ResultPanel catalog="traces" response={response} execMs={execMs} traceEnabled={state.trace} showTrace={showTrace} setShowTrace={setShowTrace} subBar={subBar}>
+    <ResultPanel catalog="traces" response={response} execMs={execMs} traceEnabled={state.trace} showTrace={showTrace} setShowTrace={setShowTrace} subBar={subBar} className="is-trace">
       {showTrace ? (
         state.trace ? <TraceView response={response} /> : <TraceDisabled />
       ) : elements.length === 0 ? (

@@ -49,6 +49,8 @@ interface ResultPanelProps {
   readonly actions?: React.ReactNode;
   /** Optional content rendered below the result bar (e.g., a secondary toolbar). */
   readonly subBar?: React.ReactNode;
+  /** Optional extra class on the result-card wrapper. */
+  readonly className?: string;
   readonly children: React.ReactNode;
 }
 
@@ -61,6 +63,7 @@ export function ResultPanel({
   setShowTrace,
   actions,
   subBar,
+  className,
   children,
 }: ResultPanelProps) {
   const count = response.elements?.length ?? 0;
@@ -73,7 +76,7 @@ export function ResultPanel({
   }
 
   return (
-    <div className="result-card">
+    <div className={'result-card' + (className ? ' ' + className : '')}>
       <div className="result-bar">
         <div className="result-tabs">
           <button
