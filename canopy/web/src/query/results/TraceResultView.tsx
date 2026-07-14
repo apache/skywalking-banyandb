@@ -44,7 +44,7 @@ import { ResultPanel } from './ResultPanel.js';
 import { ResultEmpty } from './ResultEmpty.js';
 import { TraceView, TraceDisabled } from './TraceView.js';
 import { TraceDecoderModal } from '../TraceDecoderModal.js';
-import { tdHexDump } from '../proto-decoder.js';
+import { tdHexDump, tdGetBinding, tdDecode, tdHighlightJSON, type TDBinding } from '../proto-decoder.js';
 
 type Elem = Record<string, unknown>;
 
@@ -192,7 +192,13 @@ export function TraceResultView({ response, state, showTrace, setShowTrace, exec
   const [expanded, setExpanded] = useState<Set<number>>(new Set());
   const [showFields, setShowFields] = useState(false);
   const [decoding, setDecoding] = useState<{ resource: string; bytes: Uint8Array } | null>(null);
+  const [binding, setBinding] = useState<TDBinding | null>(() => tdGetBinding(state.resource));
   const popoverRef = useRef<HTMLDivElement | null>(null);
+
+  // Reload binding when the trace resource changes.
+  React.useEffect(() => {
+    setBinding(tdGetBinding(state.resource));
+  }, [state.resource]);
 
   const elements = useMemo(() => (response.elements ?? []) as readonly Elem[], [response]);
 
@@ -345,6 +351,7 @@ export function TraceResultView({ response, state, showTrace, setShowTrace, exec
       <div className="mr-tool-right">
         <DecodeBytesButton
           bytes={firstExpandedBytes}
+          binding={binding}
           onInspect={() => setDecoding({ resource: state.resource, bytes: firstExpandedBytes ?? new Uint8Array(0) })}
         />
         <div className="sf-wrap" ref={popoverRef}>
@@ -394,6 +401,7 @@ export function TraceResultView({ response, state, showTrace, setShowTrace, exec
                 resource={state.resource}
                 config={tagConfig}
                 detailConfig={detailConfig}
+                binding={binding}
                 expanded={expanded}
                 setExpanded={setExpanded}
                 setDecoding={setDecoding}
@@ -420,6 +428,7 @@ export function TraceResultView({ response, state, showTrace, setShowTrace, exec
         <TraceDecoderModal
           traceId={decoding.resource}
           onClose={() => setDecoding(null)}
+          onChange={setBinding}
         />
       )}
 
@@ -427,13 +436,14 @@ export function TraceResultView({ response, state, showTrace, setShowTrace, exec
   );
 }
 
-function TraceInspectorRow({ index, element, tsField, resource, config, detailConfig, expanded, setExpanded, setDecoding }: {
+function TraceInspectorRow({ index, element, tsField, resource, config, detailConfig, binding, expanded, setExpanded, setDecoding }: {
   index: number;
   element: Elem;
   tsField: string;
   resource: string;
   config: readonly TraceTagConfig[];
   detailConfig: readonly TraceTagConfig[];
+  binding: TDBinding | null;
   expanded: Set<number>;
   setExpanded: (v: Set<number>) => void;
   setDecoding: (v: { resource: string; bytes: Uint8Array } | null) => void;
@@ -492,8 +502,14 @@ function TraceInspectorRow({ index, element, tsField, resource, config, detailCo
             </div>
           </div>
           <div className="tin-col">
-            <div className="tin-col-h mono">SPAN · BYTES <span className="faint">opaque·not indexed</span></div>
-            <SpanBytesPanel bytes={bytes} />
+            {binding ? (
+              <TDSpanDecoded bytes={bytes} element={element} binding={binding} tsField={tsField} />
+            ) : (
+              <>
+                <div className="tin-col-h mono">SPAN · BYTES <span className="faint">opaque·not indexed</span></div>
+                <SpanBytesPanel bytes={bytes} />
+              </>
+            )}
           </div>
         </div>
       )}
@@ -553,17 +569,20 @@ function ValuePill({ tag, role, value }: {
   }
 }
 
-function DecodeBytesButton({ bytes, onInspect }: { bytes: Uint8Array | null; onInspect: () => void }) {
+function DecodeBytesButton({ bytes, binding, onInspect }: { bytes: Uint8Array | null; binding: TDBinding | null; onInspect: () => void }) {
   const hasBytes = (bytes?.length ?? 0) > 0;
+  const bound = !!binding;
   return (
     <button
       type="button"
-      className="sf-btn"
+      className={'sf-btn td-btn' + (bound ? ' is-bound' : '')}
       onClick={onInspect}
       disabled={!hasBytes}
-      title={hasBytes ? 'Decode span bytes against a bound .proto' : 'Expand a row with span bytes to decode'}
+      title={bound ? `Decoder bound: ${binding.fileName}` : hasBytes ? 'Decode span bytes against a bound .proto' : 'Expand a row with span bytes to decode'}
     >
-      <IconBinary width={12} height={12} /> Decode bytes
+      <IconBinary width={12} height={12} />
+      {bound ? binding.fileName : 'Decode bytes'}
+      {bound && <span className="td-dot" />}
     </button>
   );
 }
@@ -694,6 +713,47 @@ function SpanBytesPanel({ bytes }: { bytes: Uint8Array | null }) {
         </>
       )}
     </span>
+  );
+}
+
+function TDSpanDecoded({ bytes, element, binding, tsField }: { bytes: Uint8Array | null; element: Elem; binding: TDBinding; tsField: string }) {
+  const [showRaw, setShowRaw] = React.useState(false);
+  const decoded = React.useMemo(() => {
+    const spanLike = {
+      traceId: element.trace_id,
+      spanId: element.span_id,
+      parentSpanId: element.parent_span_id,
+      timestamp: element[tsField] ?? element.timestamp,
+      durationMs: element.duration_ms,
+      service: element.service,
+      endpoint: element.endpoint,
+      status: element.status,
+    };
+    return tdDecode(binding, spanLike);
+  }, [element, binding]);
+
+  return (
+    <>
+      <div className="tin-col-h mono">
+        SPAN · {showRaw ? 'BYTES' : 'DECODED'}
+        <span className="faint">{showRaw ? 'opaque·not indexed' : `via ${binding.fileName} · ${binding.primary}`}</span>
+        <button
+          type="button"
+          className="td-raw-toggle"
+          onClick={() => setShowRaw((v) => !v)}
+          title={showRaw ? 'Show the decoded payload' : 'Show the raw opaque bytes'}
+        >
+          {showRaw ? 'decoded' : 'raw bytes'}
+        </button>
+      </div>
+      {showRaw ? (
+        <SpanBytesPanel bytes={bytes} />
+      ) : (
+        <div className="td-decoded">
+          <pre className="td-code"><code>{tdHighlightJSON(decoded)}</code></pre>
+        </div>
+      )}
+    </>
   );
 }
 

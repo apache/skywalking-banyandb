@@ -68,7 +68,8 @@ import { readFileSync } from 'node:fs';
       await page.waitForTimeout(800);
       await page.screenshot({ path: '/mnt/d/worktree/canopy/canopy/e2e/screenshots/decode-modal-file.png' });
 
-      await page.locator('button', { hasText: /Bind decoder/i }).first().click();
+      const bindBtn = page.locator('button', { hasText: /Bind decoder|Replace decoder/i }).first();
+      await bindBtn.click();
       await page.waitForTimeout(500);
       await page.screenshot({ path: '/mnt/d/worktree/canopy/canopy/e2e/screenshots/decode-bound.png' });
     }
