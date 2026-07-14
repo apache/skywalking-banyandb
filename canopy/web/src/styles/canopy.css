@@ -1364,11 +1364,19 @@
   .tin-raw-head { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
   .tin-raw-size { display: inline-flex; align-items: center; gap: 6px; height: 22px; padding: 0 8px; border-radius: 5px; background: var(--panel-2); border: 1px solid var(--border); color: var(--text-dim); font-family: var(--mono); font-size: 10.5px; }
   .tin-raw-size svg { color: var(--text-faint); }
-  .tin-decode-btn { display: inline-flex; align-items: center; gap: 6px; height: 26px; padding: 0 10px; border-radius: 6px; border: 1px solid var(--border-strong); background: var(--panel-2); color: var(--text-dim); font-size: 11px; cursor: pointer; transition: all .13s; }
-  .tin-decode-btn:hover:not(:disabled) { color: var(--text); border-color: var(--text-faint); }
-  .tin-decode-btn:disabled { opacity: .45; cursor: not-allowed; }
+  .tin-raw-size svg:last-child { margin-left: -2px; opacity: .75; }
   .tin-raw-empty { font-size: 11px; color: var(--text-faint); }
   .tin-raw-ell { color: var(--text-faint); }
+  .tin-raw-meta { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+  .tin-raw-type { font-family: var(--mono); font-size: 11px; color: var(--text-dim); }
+  .tin-raw-modes { display: inline-flex; gap: 4px; }
+  .tin-raw-modes button { height: 22px; padding: 0 9px; border-radius: 5px; border: 1px solid var(--border-strong); background: transparent; color: var(--text-faint); font-family: var(--mono); font-size: 10px; cursor: pointer; transition: all .13s; }
+  .tin-raw-modes button:hover { color: var(--text); border-color: var(--text-faint); }
+  .tin-raw-modes button.is-on { background: var(--panel-2); color: var(--text); border-color: var(--border-strong); }
+  .tin-raw-hex { display: flex; flex-direction: column; gap: 2px; padding: 8px 10px; background: var(--panel-2); border: 1px solid var(--border); border-radius: 8px; overflow-x: auto; }
+  .tin-raw-base64 { padding: 10px 12px; background: var(--panel-2); border: 1px solid var(--border); border-radius: 8px; overflow-x: auto; }
+  .tin-raw-base64 pre { margin: 0; font-family: var(--mono); font-size: 11.5px; color: var(--text-dim); line-height: 1.5; word-break: break-all; white-space: pre-wrap; }
+  .tin-raw-note { padding: 6px 10px; color: var(--text-faint); font-size: 10.5px; line-height: 1.45; }
   .tin-note { display: flex; gap: 9px; margin-top: 11px; padding: 10px 12px; background: rgba(217,138,60,.07); border: 1px solid rgba(217,138,60,.22); border-radius: 8px; font-size: 11px; line-height: 1.5; color: var(--text-dim); }
   .tin-note-i { flex-shrink: 0; width: 16px; height: 16px; border-radius: 50%; background: rgba(217,138,60,.2); color: var(--warn); font-weight: 700; font-size: 11px; display: flex; align-items: center; justify-content: center; margin-top: 1px; }
   .tin-note .mono { color: var(--text); }

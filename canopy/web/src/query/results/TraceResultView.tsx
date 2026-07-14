@@ -44,6 +44,7 @@ import { ResultPanel } from './ResultPanel.js';
 import { ResultEmpty } from './ResultEmpty.js';
 import { TraceView, TraceDisabled } from './TraceView.js';
 import { TraceDecoderModal } from '../TraceDecoderModal.js';
+import { tdHexDump } from '../proto-decoder.js';
 
 type Elem = Record<string, unknown>;
 
@@ -492,7 +493,7 @@ function TraceInspectorRow({ index, element, tsField, resource, config, detailCo
           </div>
           <div className="tin-col">
             <div className="tin-col-h mono">SPAN · BYTES <span className="faint">opaque·not indexed</span></div>
-            <SpanBytesPanel bytes={bytes} onInspect={() => setDecoding({ resource, bytes: bytes ?? new Uint8Array(0) })} />
+            <SpanBytesPanel bytes={bytes} />
           </div>
         </div>
       )}
@@ -552,30 +553,77 @@ function ValuePill({ tag, role, value }: {
   }
 }
 
-function SpanBytesPanel({ bytes, onInspect }: { bytes: Uint8Array | null; onInspect: () => void }) {
-  const len = bytes?.length ?? 0;
-  return (
-    <div className="tin-raw">
-      <div className="tin-raw-head">
-        <span className="tin-raw-size"><IconBinary width={12} height={12} />{formatBytes(len)}</span>
-        <DecodeBytesButton bytes={bytes} onInspect={onInspect} />
-      </div>
-      {len === 0 && <div className="tin-raw-empty">(no span bytes)</div>}
-    </div>
-  );
-}
-
 function DecodeBytesButton({ bytes, onInspect }: { bytes: Uint8Array | null; onInspect: () => void }) {
   const hasBytes = (bytes?.length ?? 0) > 0;
   return (
     <button
       type="button"
-      className="tin-decode-btn"
+      className="sf-btn"
       onClick={onInspect}
-      title={hasBytes ? 'Decode span bytes against a bound .proto' : 'Open the trace decoder (upload a .proto to decode span bytes)'}
+      disabled={!hasBytes}
+      title={hasBytes ? 'Decode span bytes against a bound .proto' : 'Expand a row with span bytes to decode'}
     >
       <IconBinary width={12} height={12} /> Decode bytes
     </button>
+  );
+}
+
+const BYTES_PREVIEW_LIMIT = 64;
+
+function SpanBytesPanel({ bytes }: { bytes: Uint8Array | null }) {
+  const [mode, setMode] = React.useState<'hex' | 'base64'>('hex');
+  const len = bytes?.length ?? 0;
+  if (!bytes || len === 0) {
+    return <div className="tin-raw"><div className="tin-raw-empty">(no span bytes)</div></div>;
+  }
+  const b64 = btoa(Array.from(bytes, (b) => String.fromCharCode(b)).join(''));
+  const previewBytes = mode === 'hex' ? bytes.slice(0, BYTES_PREVIEW_LIMIT) : bytes;
+  const remaining = Math.max(0, len - BYTES_PREVIEW_LIMIT);
+  return (
+    <div className="tin-raw">
+      <div className="tin-raw-head">
+        <span className="tin-raw-size"><IconBinary width={12} height={12} />{formatBytes(len)}<IconCaretDown width={10} height={10} /></span>
+      </div>
+      <div className="tin-raw-meta">
+        <span className="tin-raw-type">DATA_BINARY · {len.toLocaleString('en-US')} bytes</span>
+        <div className="tin-raw-modes" role="tablist" aria-label="Span bytes encoding">
+          <button
+            type="button"
+            role="tab"
+            className={mode === 'base64' ? 'is-on' : ''}
+            aria-selected={mode === 'base64'}
+            onClick={() => setMode('base64')}
+          >base64</button>
+          <button
+            type="button"
+            role="tab"
+            className={mode === 'hex' ? 'is-on' : ''}
+            aria-selected={mode === 'hex'}
+            onClick={() => setMode('hex')}
+          >hex</button>
+        </div>
+      </div>
+      {mode === 'hex' ? (
+        <div className="tin-raw-hex">
+          {tdHexDump(previewBytes, 16).map((r, i) => (
+            <div key={i} className="sbin-hexrow">
+              <span className="sbin-off">{r.off}</span>
+              <span className="sbin-bytes">{r.hex}</span>
+              <span className="sbin-ascii">{r.ascii}</span>
+            </div>
+          ))}
+        </div>
+      ) : (
+        <div className="tin-raw-base64">
+          <pre className="mono">{b64}</pre>
+        </div>
+      )}
+      {mode === 'hex' && remaining > 0 && (
+        <div className="tin-raw-note">
+          {remaining.toLocaleString('en-US')} more bytes. Bytes are opaque to BanyanDB – decode in the client that wrote them.
+        </div>
+      )}
+    </div>
   );
 }
 
@@ -664,5 +712,10 @@ const IconEyeOff = (p: React.SVGProps<SVGSVGElement>) => (
 const IconBinary = (p: React.SVGProps<SVGSVGElement>) => (
   <svg {...p} viewBox="0 0 24 24" fill="currentColor" stroke="none">
     <text x="50%" y="54%" dominantBaseline="middle" textAnchor="middle" fontFamily="monospace" fontSize="12" fontWeight="700">{'{ }'}</text>
+  </svg>
+);
+const IconCaretDown = (p: React.SVGProps<SVGSVGElement>) => (
+  <svg {...p} viewBox="0 0 24 24" fill="currentColor" stroke="none">
+    <path d="M6 9l6 6 6-6H6z" />
   </svg>
 );
