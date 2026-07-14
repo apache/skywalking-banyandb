@@ -106,15 +106,22 @@ export function QueryConsole() {
     if (!lastResp) return null;
     return { ...lastResp, elements: paged.elements };
   }, [lastResp, paged.elements]);
-  // Reset paging when the query inputs change. The state object is the
-  // dependency — every setState(...) that mutates it (auto-pick, user
-  // edits, builder <-> code toggle) triggers this once.
+  // Keep the previous result on the screen while the user edits the query;
+  // the handoff only refreshes the result view after a new Run. We do clear
+  // the result when the catalog changes, because the chosen result-view
+  // component (measure/stream/trace/topn) cannot safely render elements from
+  // a different catalog.
+  const lastCatalogRef = useRef(state.catalog);
   useEffect(() => {
-    setPaged({ elements: [], offset: 0, hasMore: false });
-    setLastResp(null);
-    setExecMs(undefined);
-    setStatus('idle');
-  }, [state, code, mode]);
+    if (lastCatalogRef.current !== state.catalog) {
+      lastCatalogRef.current = state.catalog;
+      setPaged({ elements: [], offset: 0, hasMore: false });
+      setLastResp(null);
+      setExecMs(undefined);
+      setStatus('idle');
+      setShowTrace(false);
+    }
+  }, [state.catalog]);
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
   const [showTrace, setShowTrace] = useState(false);
   const [execMs, setExecMs] = useState<number | undefined>(undefined);
