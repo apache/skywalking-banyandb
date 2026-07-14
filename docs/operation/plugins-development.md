@@ -103,7 +103,16 @@ plugin-capable host image (`apache/skywalking-banyandb:<tag>-plugins`) at
 -trace-pipeline-trusted-plugin-dir=/plugins
 ```
 
-Reference the plugin by filename in the group's `TracePipelineConfig`:
+Mount the carrier at `/plugins` via an **OCI image volume** (K8s ≥1.31) or an
+**initContainer + emptyDir** (portable) — full instructions, both mechanisms,
+third-party plugins, and Kubernetes manifests are in [`plugins.md`](plugins.md)
+and [`examples/kubernetes/plugins/`](../../examples/kubernetes/plugins).
+
+**Register the pipeline — this is the step that actually activates the plugin.**
+Mounting only delivers the `.so`. The data node *loads* it when a group's
+`TracePipelineConfig` (referencing the plugin by its trusted-dir-relative
+filename) is registered: the node watches the schema registry and, on the group
+add/update, reconciles the pipeline and calls `plugin.Open` on the mounted `.so`.
 
 ```json
 { "enabled": true, "enabledEvents": ["PIPELINE_EVENT_MERGE"],
@@ -112,10 +121,21 @@ Reference the plugin by filename in the group's `TracePipelineConfig`:
                  "config": { "thresholdMs": 500, "successValue": "success" } } } ] }
 ```
 
-Mount the carrier at `/plugins` via an **OCI image volume** (K8s ≥1.31) or an
-**initContainer + emptyDir** (portable) — full instructions, both mechanisms,
-third-party plugins, and Kubernetes manifests are in [`plugins.md`](plugins.md)
-and [`examples/kubernetes/plugins/`](../../examples/kubernetes/plugins).
+Attach it with any standard schema API — all write through the one schema
+registry (`GroupRegistryService`) and preserve the nested `pipeline` field:
+
+- **bydbctl:** add a `pipeline:` block to the group's YAML, then
+  `bydbctl group update -f group.yaml` (or `group create`).
+- **REST:** `PUT /api/v1/group/schema/{group}` with `{"group": {…, "pipeline": {…}}}`.
+- **gRPC:** `GroupRegistryService.Update` — `Get` the group, set `.pipeline`, then
+  `Update`. Reference: [`test/cases/tracepipeline/ops.go`](../../test/cases/tracepipeline/ops.go)
+  (`applyPipelineConfig`).
+
+**Verify activation** on the data node's metrics port (`2121`):
+`banyandb_trace_pipeline_sampler_active_count{group=…}` goes `>0` once the plugin
+loads. A bad/mismatched `.so` fails **open and loud** — an ERROR log plus
+`banyandb_trace_pipeline_sampler_load_failed{…}` — and the group simply keeps its
+previous sampler set; the node stays up.
 
 ## Step 5 — Validate the deployment shape in Kubernetes
 

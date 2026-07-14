@@ -20,12 +20,15 @@
 // reconciles it and calls plugin.Open on the carrier-mounted .so. It is used
 // by the plugin-sidecar kind ship gate to drive assertion (c).
 //
-// It writes through the PROPERTY schema registry client (the same path
-// test/cases/tracepipeline's PreloadSchemaViaProperty uses), NOT the
-// GroupRegistryService HTTP/gRPC endpoint: only the property schema store is
-// watched by the data node's trace schemaRepo, so only writes through it fire
-// the KindGroup reconcile that loads the plugin. The property store also
-// round-trips the nested pipeline field (the HTTP gateway does not).
+// It writes directly to the property-based schema registry (the single schema
+// store — same path test/cases/tracepipeline's PreloadSchemaViaProperty uses)
+// via the schema server the standalone pod exposes on :17916. That is a
+// TEST-HARNESS convenience: this helper only has that schema-server address
+// wired, not a liaison registry endpoint. The supported OPERATOR path is the
+// public GroupRegistryService (gRPC / REST / bydbctl), which writes through the
+// same store and preserves the nested pipeline field — see
+// docs/operation/plugins-development.md. Either way, the group add/update fires
+// the data node's KindGroup reconcile, which calls plugin.Open on the .so.
 package main
 
 import (
