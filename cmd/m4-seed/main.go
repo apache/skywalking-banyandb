@@ -37,6 +37,7 @@ import (
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/credentials/insecure"
 	"google.golang.org/grpc/status"
+	"google.golang.org/protobuf/proto"
 	"google.golang.org/protobuf/types/known/timestamppb"
 
 	commonv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/common/v1"
@@ -45,6 +46,9 @@ import (
 	modelv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/model/v1"
 	streamv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/stream/v1"
 	tracev1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/trace/v1"
+
+	agentv3 "skywalking.apache.org/repo/goapi/collect/language/agent/v3"
+	commonv3 "skywalking.apache.org/repo/goapi/collect/common/v3"
 )
 
 const (
@@ -466,6 +470,36 @@ func writeStream(ctx context.Context, c streamv1.StreamServiceClient, baseMs int
 	return recvStreamWrites(w)
 }
 
+// skywalkingSegmentBytes builds a minimal but valid SkyWalking SegmentObject
+// protobuf payload for the given trace/span. This lets users exercise the
+// Canopy "Span bytes decoder" by uploading the SkyWalking Tracing.proto.
+func skywalkingSegmentBytes(traceID, spanID, service, endpoint string, startMs, durationMs int64, isError bool) ([]byte, error) {
+	segment := &agentv3.SegmentObject{
+		TraceId:         traceID,
+		TraceSegmentId:  spanID + ".0",
+		Service:         service,
+		ServiceInstance: service + "-instance-1",
+		Spans: []*agentv3.SpanObject{
+			{
+				SpanId:        0,
+				ParentSpanId:  -1,
+				StartTime:     startMs,
+				EndTime:       startMs + durationMs,
+				OperationName: endpoint,
+				SpanType:      agentv3.SpanType_Entry,
+				SpanLayer:     agentv3.SpanLayer_Http,
+				ComponentId:   6000,
+				IsError:       isError,
+				Tags: []*commonv3.KeyStringValuePair{
+					{Key: "http.method", Value: "GET"},
+					{Key: "url", Value: endpoint},
+				},
+			},
+		},
+	}
+	return proto.Marshal(segment)
+}
+
 func writeTrace(ctx context.Context, c tracev1.TraceServiceClient, baseMs int64, rows int) error {
 	rng := rand.New(rand.NewSource(101))
 	w, err := c.Write(ctx)
@@ -478,15 +512,22 @@ func writeTrace(ctx context.Context, c tracev1.TraceServiceClient, baseMs int64,
 		svc := services[rng.Intn(len(services))]
 		ep := endpoints[rng.Intn(len(endpoints))]
 		st := "OK"
+		isErr := false
 		if rng.Float64() < 0.05 {
 			st = "ERROR"
+			isErr = true
 		}
 		duration := int64(20 + rng.Intn(780))
 		span := fmt.Sprintf("%08x", rng.Uint32())
 		t := time.UnixMilli(baseMs + int64(i)*60_000)
+		segmentBytes, segmentErr := skywalkingSegmentBytes(traceID, span, svc, ep, t.UnixMilli(), duration, isErr)
+		if segmentErr != nil {
+			return fmt.Errorf("marshal segment %d: %w", i, segmentErr)
+		}
 		req := &tracev1.WriteRequest{
 			Metadata: md,
 			Version:  uint64(time.Now().UnixNano()),
+			Span:     segmentBytes,
 			TagSpec:  &tracev1.TagSpec{TagNames: []string{"service", "trace_id", "span_id", "parent_span_id", "duration_ms", "status", "endpoint", "timestamp"}},
 			Tags: []*modelv1.TagValue{
 				{Value: &modelv1.TagValue_Str{Str: &modelv1.Str{Value: svc}}},
