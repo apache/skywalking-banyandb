@@ -193,6 +193,26 @@ describe('buildBydbQL', () => {
     expect(buildBydbQL(s)).toContain('TRACE spans');
     expect(buildBydbQL(s)).toContain('WITH QUERY_TRACE');
   });
+  it('orders trace queries by timestamp when no trace_id filter is present', () => {
+    const where: QBWhereGroupWithConn = {
+      combinator: 'AND',
+      children: [{ tag: 'service', op: 'BINARY_OP_EQ', value: 'gateway' }],
+    };
+    const s: QBBuilderState = { ...baseState, catalog: 'traces', resource: 'spans', where };
+    const out = buildBydbQL(s);
+    expect(out).toContain('WHERE service = \'gateway\'');
+    expect(out).toContain('ORDER BY timestamp DESC');
+  });
+  it('skips ORDER BY for trace queries when a trace_id filter is present', () => {
+    const where: QBWhereGroupWithConn = {
+      combinator: 'AND',
+      children: [{ tag: 'trace_id', op: 'BINARY_OP_EQ', value: 't1' }],
+    };
+    const s: QBBuilderState = { ...baseState, catalog: 'traces', resource: 'spans', where };
+    const out = buildBydbQL(s);
+    expect(out).toContain('WHERE trace_id = \'t1\'');
+    expect(out).not.toContain('ORDER BY');
+  });
   it('places WITH QUERY_TRACE before LIMIT/OFFSET to match the parser grammar', () => {
     const s: QBBuilderState = {
       ...baseState,

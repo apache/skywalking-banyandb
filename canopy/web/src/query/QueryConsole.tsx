@@ -34,7 +34,7 @@ import { ResultEmpty } from './results/ResultEmpty.js';
 import { ResultError } from './results/ResultError.js';
 import {
   buildBydbQL, qbDataCatalog, qbEmptyWhere, qbPruneWhere, qbNewCond,
-  qbProtoCatalog, qbHasTraceIdFilter, qbHasTraceIdCondition,
+  qbProtoCatalog, qbHasAnyFilter, qbHasTraceIdCondition,
   type QBBuilderState, type QB_CATALOG_VALUE,
 } from './bydbql.js';
 import { apiDataSource } from '../data/api.js';
@@ -171,10 +171,10 @@ export function QueryConsole() {
 
   // BanyanDB's trace query analyzer requires either a trace_id filter or an
   // ORDER BY clause. If the user picks a trace resource and the WHERE tree has
-  // no trace_id condition at all, seed an empty one so the builder never
-  // generates a query that BanyanDB will reject with 500. We check for the
-  // condition (not the value) so a single seed doesn't fight the user while
-  // they type in the value field.
+  // no trace_id condition at all, seed an empty trace_id one as a convenient
+  // starting point. The user can change the tag; when they do, we default the
+  // order field to 'time' (mapped to timestamp in codegen) so the query stays
+  // valid without forcing them to open the ORDER BY section.
   useEffect(() => {
     if (state.catalog !== 'traces' || !state.resource || qbHasTraceIdCondition(state.where)) return;
     patch({
@@ -184,6 +184,10 @@ export function QueryConsole() {
       },
     });
   }, [state.catalog, state.resource, state.where, patch]);
+  useEffect(() => {
+    if (state.catalog !== 'traces' || qbHasTraceIdCondition(state.where) || state.orderField) return;
+    patch({ orderField: 'time' });
+  }, [state.catalog, state.where, state.orderField, patch]);
 
   // Handler for the From-row fuzzy search: pick any catalog/group/resource
   // combo, cascade-reset SELECT/WHERE/GROUP BY, and stamp fromResource so the
@@ -192,8 +196,9 @@ export function QueryConsole() {
   const onPickResource = (catalog: QB_CATALOG_VALUE, group: string, resource: string) => {
     const isMeasure = catalog === 'measures';
     // BanyanDB's trace query analyzer requires either a trace_id filter or an
-    // ORDER BY clause; seed a trace_id condition for trace resources so the
-    // builder never generates a query that BanyanDB will reject with 500.
+    // ORDER BY clause; seed a trace_id condition for trace resources as a
+    // convenient starting point. If the user later switches to another tag, an
+    // effect above defaults orderField to 'time' (mapped to timestamp in codegen).
     const defaultWhere = catalog === 'traces'
       ? { combinator: 'AND' as const, children: [{ tag: 'trace_id', op: 'BINARY_OP_EQ' as const, value: '' }] }
       : qbEmptyWhere();
@@ -205,8 +210,7 @@ export function QueryConsole() {
       projection: isMeasure ? [] : [],
       where: defaultWhere,
       groupBy: [],
-      // Trace queries filter by trace_id and the default m4 schema has no
-      // order-able index, so leave orderField empty to avoid server-side errors.
+      // trace_id condition is present, so no ORDER BY is required.
       orderField: catalog === 'traces' ? '' : 'time',
       orderDir: 'DESC',
       fromResource: `${group}/${resource}`,
@@ -402,10 +406,12 @@ export function QueryConsole() {
       return;
     }
     // BanyanDB's trace query analyzer requires either a trace_id filter or an
-    // ORDER BY clause. In practice ORDER BY time returns no rows for the default
-    // schema, so enforce a trace_id equality filter in the builder.
-    if (mode === 'builder' && state.catalog === 'traces' && !qbHasTraceIdFilter(state.where)) {
-      setErrorMsg('Trace queries require a trace_id filter.');
+    // ORDER BY clause. Enforce at least one WHERE condition (or an explicit
+    // ORDER BY) in the builder so the user gets a clear message instead of a raw
+    // upstream 500.
+    const hasTraceOrder = state.orderField && state.orderField !== '';
+    if (mode === 'builder' && state.catalog === 'traces' && !qbHasAnyFilter(state.where) && !hasTraceOrder) {
+      setErrorMsg('Trace queries require a trace_id filter or another tag filter with ORDER BY.');
       setStatus('error');
       return;
     }

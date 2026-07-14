@@ -360,9 +360,16 @@ export const buildBydbQL = (b: QBBuilderState, tags?: readonly string[]): string
     parts.push(`GROUP BY ${(b.groupBy ?? []).join(', ')}`);
   }
   // 6. ORDER BY.
-  // Trace queries are filtered by trace_id and have no usable index-based ordering
-  // in the default m4-traces schema; emitting ORDER BY time causes a server error.
-  if (b.orderField && b.catalog !== 'traces') parts.push(`ORDER BY ${b.orderField} ${b.orderDir || 'DESC'}`);
+  // BanyanDB's trace analyzer requires either a trace_id filter or an ORDER BY
+  // clause. When a trace_id condition is present we skip ORDER BY (the examples
+  // in test/cases/trace/data/input/ do the same); otherwise we emit whatever the
+  // builder selected. The builder uses 'time' as a generic alias, which for traces
+  // maps to the timestamp tag.
+  const hasTraceId = qbHasTraceIdCondition(b.where);
+  if (b.catalog !== 'traces' || !hasTraceId) {
+    const orderField = b.catalog === 'traces' && b.orderField === 'time' ? 'timestamp' : b.orderField;
+    if (orderField) parts.push(`ORDER BY ${orderField} ${b.orderDir || 'DESC'}`);
+  }
   // 7. WITH QUERY_TRACE. Must appear BEFORE LIMIT/OFFSET in the actual grammar
   // (grammar.go GrammarSelectStatement: Select -> ... -> OrderBy -> WithQueryTrace -> Limit -> Offset).
   if (b.trace) parts.push('WITH QUERY_TRACE');
@@ -433,6 +440,16 @@ export const qbHasTraceIdCondition = (node: QBWhereNode | null | undefined): boo
   }
   const leaf = node as QBWhereLeafWithConn;
   return leaf.tag === 'trace_id' && leaf.op === 'BINARY_OP_EQ';
+};
+
+/** True when the WHERE tree has at least one condition with a non-empty value. */
+export const qbHasAnyFilter = (node: QBWhereNode | null | undefined): boolean => {
+  if (!node) return false;
+  if (qbIsGroup(node)) {
+    return node.children.some((c) => qbHasAnyFilter(c));
+  }
+  const leaf = node as QBWhereLeafWithConn;
+  return leaf.tag !== '' && leaf.op !== '' && leaf.value.trim() !== '';
 };
 
 /** Drop any condition whose tag no longer exists on the chosen resource. */
