@@ -39,7 +39,7 @@ import {
   type SR_ROLE,
   type SR_TAG_TYPE,
 } from '../role-infer.js';
-import { tdGetBinding, tdSetBinding, tdClearBinding, tdParseProto, tdHexDump, tdPickMessage, type TDBinding } from '../proto-decoder.js';
+
 import { ResultPanel } from './ResultPanel.js';
 import { ResultEmpty } from './ResultEmpty.js';
 import { TraceView, TraceDisabled } from './TraceView.js';
@@ -59,7 +59,7 @@ interface TraceTagConfig {
   readonly inferred: SR_ROLE;
   readonly layer: 1 | 2 | 3 | 4;
   readonly visible: boolean;
-  readonly reserved?: 'trace' | 'span' | 'time';
+  readonly reserved?: 'trace' | 'span' | 'time' | 'parent';
 }
 
 interface Props {
@@ -138,6 +138,36 @@ function formatTimestamp(raw: unknown): string {
   return `${String(d.getUTCHours()).padStart(2, '0')}:${String(d.getUTCMinutes()).padStart(2, '0')}:${String(d.getUTCSeconds()).padStart(2, '0')}.${String(d.getUTCMilliseconds()).padStart(3, '0')}`;
 }
 
+function reservedKind(name: string, tsField: string): TraceTagConfig['reserved'] {
+  if (name === tsField) return 'time';
+  if (name === 'trace_id') return 'trace';
+  if (name === 'span_id') return 'span';
+  if (name === 'parent_span_id') return 'parent';
+  return undefined;
+}
+
+function reservedRole(name: string, tsField: string): SR_ROLE | null {
+  const kind = reservedKind(name, tsField);
+  if (!kind) return null;
+  return kind === 'time' ? 'time' : 'id';
+}
+
+function reservedLabel(kind: NonNullable<TraceTagConfig['reserved']>): string {
+  switch (kind) {
+    case 'trace': return 'TRACE ID';
+    case 'span': return 'SPAN ID';
+    case 'parent': return 'PARENT SPAN ID';
+    case 'time': return 'TIMESTAMP';
+  }
+}
+
+function formatBytes(len: number): string {
+  if (len === 0) return '0 bytes';
+  if (len < 1024) return `${len} bytes`;
+  if (len < 1024 * 1024) return `${(len / 1024).toFixed(len < 10 * 1024 ? 1 : 0)} KB`;
+  return `${(len / (1024 * 1024)).toFixed(1)} MB`;
+}
+
 /** Decide which projected tags surface on the one-line summary vs. stay folded
  *  into the expanded detail. Driven by display ROLE, never by tag name. */
 function trAutoPick(config: readonly Pick<TraceTagConfig, 'name' | 'role'>[]): Set<string> {
@@ -182,12 +212,24 @@ export function TraceResultView({ response, state, showTrace, setShowTrace, exec
     return 'timestamp';
   }, [tagSpecs, elements]);
 
-  // All configurable tag names = element keys minus reserved spine fields.
-  // The opaque `span` bytes are rendered in their own inspector, not as a tag.
+  // Reserved spine fields rendered in the row header (timestamp + span_id) and
+  // the summary line, but they still appear inside the expanded detail card.
+  const reservedNames = useMemo(() => {
+    const set = new Set<string>(['trace_id', 'span_id', 'parent_span_id']);
+    if (tsField) set.add(tsField);
+    return set;
+  }, [tsField]);
+
+  // Configurable tag names = projected/element keys minus reserved spine fields.
   const tagNames = useMemo(() => {
-    const reserved = new Set(['trace_id', 'span_id', tsField, 'span']);
-    return (state.projection.length ? state.projection : Object.keys(elements[0] ?? {})).filter((n) => !reserved.has(n));
-  }, [state.projection, elements, tsField]);
+    return (state.projection.length ? state.projection : Object.keys(elements[0] ?? {}))
+      .filter((n) => !reservedNames.has(n) && n !== 'span');
+  }, [state.projection, elements, reservedNames]);
+
+  // Detail card shows every projected/element tag except the opaque `span` bytes.
+  const detailTagNames = useMemo(() => {
+    return (state.projection.length ? state.projection : Object.keys(elements[0] ?? {})).filter((n) => n !== 'span');
+  }, [state.projection, elements]);
 
   // Load persisted overrides + visibility once per resource.
   const persistedKey = storageKey(state.group, state.resource);
@@ -242,6 +284,23 @@ export function TraceResultView({ response, state, showTrace, setShowTrace, exec
     }));
   }, [inferredConfig, visibility]);
 
+  // Detail grid config: every tag except `span`, with reserved spine fields
+  // pinned to their semantic roles and decorated with type badges.
+  const detailConfig = useMemo((): readonly TraceTagConfig[] => {
+    return detailTagNames.map((name) => {
+      const configurable = tagConfig.find((c) => c.name === name);
+      if (configurable) return { ...configurable, reserved: undefined };
+      const type = typeMap[name] ?? 'TAG_TYPE_STRING';
+      const rrole = reservedRole(name, tsField);
+      if (rrole) {
+        return { name, type, role: rrole, inferred: rrole, layer: 4, visible: false, reserved: reservedKind(name, tsField) };
+      }
+      const sample = elements.map((e) => e[name]).filter((v) => v !== undefined);
+      const inferred = srInferRole(name, type, sample, overrides);
+      return { name, type, role: inferred.role, inferred: inferred.role, layer: inferred.layer, visible: false };
+    });
+  }, [detailTagNames, tagConfig, typeMap, elements, overrides, tsField]);
+
   const setOverride = (name: string, role: SR_ROLE | null) => {
     setOverrides((prev) => {
       const next = { ...prev };
@@ -259,6 +318,15 @@ export function TraceResultView({ response, state, showTrace, setShowTrace, exec
   const total = response.totalRowCount ?? 0;
   const hasReliableTotal = total > count;
 
+  // Bytes of the first expanded row, used by the toolbar Decode button.
+  const firstExpandedBytes = useMemo(() => {
+    for (const idx of expanded) {
+      const rowBytes = normalizeBytes(elements[idx]?.span);
+      if (rowBytes && rowBytes.length > 0) return rowBytes;
+    }
+    return null;
+  }, [expanded, elements]);
+
   const subBar = (
     <div className="mr-toolbar">
       <span className="mr-tool-label">
@@ -274,7 +342,10 @@ export function TraceResultView({ response, state, showTrace, setShowTrace, exec
         {state.orderField && ` · order by ${state.orderField} ${state.orderDir.toLowerCase()}`}
       </span>
       <div className="mr-tool-right">
-        <TraceDecoderControl resource={state.resource} />
+        <DecodeBytesButton
+          bytes={firstExpandedBytes}
+          onInspect={() => setDecoding({ resource: state.resource, bytes: firstExpandedBytes ?? new Uint8Array(0) })}
+        />
         <div className="sf-wrap" ref={popoverRef}>
           <button
             type="button"
@@ -321,6 +392,7 @@ export function TraceResultView({ response, state, showTrace, setShowTrace, exec
                 tsField={tsField}
                 resource={state.resource}
                 config={tagConfig}
+                detailConfig={detailConfig}
                 expanded={expanded}
                 setExpanded={setExpanded}
                 setDecoding={setDecoding}
@@ -355,12 +427,13 @@ export function TraceResultView({ response, state, showTrace, setShowTrace, exec
   );
 }
 
-function TraceInspectorRow({ index, element, tsField, resource, config, expanded, setExpanded, setDecoding }: {
+function TraceInspectorRow({ index, element, tsField, resource, config, detailConfig, expanded, setExpanded, setDecoding }: {
   index: number;
   element: Elem;
   tsField: string;
   resource: string;
   config: readonly TraceTagConfig[];
+  detailConfig: readonly TraceTagConfig[];
   expanded: Set<number>;
   setExpanded: (v: Set<number>) => void;
   setDecoding: (v: { resource: string; bytes: Uint8Array } | null) => void;
@@ -405,19 +478,22 @@ function TraceInspectorRow({ index, element, tsField, resource, config, expanded
       {isOpen && (
         <div className="tin-detail">
           <div className="tin-col">
-            <div className="tin-col-h mono">tags · model.v1.Tag[{config.length}] <span className="faint">key → value</span></div>
+            <div className="tin-col-h mono">TAGS · MODEL.V1.TAG[{detailConfig.length}] <span className="faint">key→value</span></div>
             <div className="tin-tags">
-              {config.map((c) => (
+              {detailConfig.map((c) => (
                 <div key={c.name} className="tin-tag">
-                  <span className="tin-k mono">{c.name}</span>
+                  <span className="tin-k mono">
+                    {c.name}
+                    {c.reserved && <span className="tin-res">{reservedLabel(c.reserved)}</span>}
+                  </span>
                   <span className="tin-v"><ValuePill tag={c.name} role={c.role} value={element[c.name]} /></span>
                 </div>
               ))}
             </div>
           </div>
           <div className="tin-col">
-            <div className="tin-col-h mono">span · bytes <span className="faint">opaque · not indexed</span></div>
-            <SpanBytesPanel bytes={bytes} onInspect={() => bytes && setDecoding({ resource, bytes })} />
+            <div className="tin-col-h mono">SPAN · BYTES <span className="faint">opaque·not indexed</span></div>
+            <SpanBytesPanel bytes={bytes} onInspect={() => setDecoding({ resource, bytes: bytes ?? new Uint8Array(0) })} />
           </div>
         </div>
       )}
@@ -478,65 +554,29 @@ function ValuePill({ tag, role, value }: {
 }
 
 function SpanBytesPanel({ bytes, onInspect }: { bytes: Uint8Array | null; onInspect: () => void }) {
-  if (!bytes || bytes.length === 0) {
-    return <div className="tin-raw"><span className="mono faint">(no span bytes)</span></div>;
-  }
+  const len = bytes?.length ?? 0;
   return (
     <div className="tin-raw">
-      <div className="rv-binary" style={{ flex: 1, minWidth: 0 }}>
-        <pre className="rv-binary-hex" style={{ maxHeight: 160 }}>
-          {tdHexDump(bytes).map((r, i) => (
-            <div key={i}><span className="rv-off">{r.off}</span>  {r.hex}  <span className="rv-ascii">{r.ascii}</span></div>
-          ))}
-        </pre>
+      <div className="tin-raw-head">
+        <span className="tin-raw-size"><IconBinary width={12} height={12} />{formatBytes(len)}</span>
+        <DecodeBytesButton bytes={bytes} onInspect={onInspect} />
       </div>
-      <button type="button" className="qb-btn qb-btn-ghost" style={{ marginLeft: 12, flexShrink: 0 }} onClick={onInspect}>
-        Decode
-      </button>
+      {len === 0 && <div className="tin-raw-empty">(no span bytes)</div>}
     </div>
   );
 }
 
-function TraceDecoderControl({ resource }: { resource: string }) {
-  const [binding, setBinding] = useState<TDBinding | null>(() => tdGetBinding(resource));
-  const onUpload = async (file: File) => {
-    const src = await file.text();
-    const msgs = tdParseProto(src);
-    if (msgs.length === 0) {
-      alert('No message definitions found in this .proto file.');
-      return;
-    }
-    setBinding(tdSetBinding(resource, src, msgs));
-  };
+function DecodeBytesButton({ bytes, onInspect }: { bytes: Uint8Array | null; onInspect: () => void }) {
+  const hasBytes = (bytes?.length ?? 0) > 0;
   return (
-    <div style={{ display: 'inline-flex', alignItems: 'center', gap: 8 }}>
-      {binding ? (
-        <>
-          <span className="mono faint" style={{ fontSize: 11 }}>{tdPickMessage(binding.messages)?.name}</span>
-          <button
-            type="button"
-            className="qb-btn qb-btn-ghost"
-            onClick={() => { tdClearBinding(resource); setBinding(null); }}
-          >
-            Unbind
-          </button>
-        </>
-      ) : (
-        <label className="qb-btn qb-btn-ghost">
-          Upload .proto
-          <input
-            type="file"
-            accept=".proto,.txt"
-            hidden
-            onChange={(e) => {
-              const f = e.target.files?.[0];
-              if (f) onUpload(f);
-              e.target.value = '';
-            }}
-          />
-        </label>
-      )}
-    </div>
+    <button
+      type="button"
+      className="tin-decode-btn"
+      onClick={onInspect}
+      title={hasBytes ? 'Decode span bytes against a bound .proto' : 'Open the trace decoder (upload a .proto to decode span bytes)'}
+    >
+      <IconBinary width={12} height={12} /> Decode bytes
+    </button>
   );
 }
 
@@ -620,5 +660,10 @@ const IconEyeOff = (p: React.SVGProps<SVGSVGElement>) => (
   <svg {...p} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round">
     <path d="M10.6 6.2A9.7 9.7 0 0 1 12 5c6.4 0 10 7 10 7a17 17 0 0 1-3.2 4M6.3 7.4A17 17 0 0 0 2 12s3.6 7 10 7a9.7 9.7 0 0 0 4-.9M9.9 9.9a3 3 0 0 0 4.2 4.2" />
     <path d="M3 3l18 18" />
+  </svg>
+);
+const IconBinary = (p: React.SVGProps<SVGSVGElement>) => (
+  <svg {...p} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round">
+    <path d="M6 20h4M14 20h4M9 4v12M15 4v12M4 9h4M16 9h4" />
   </svg>
 );

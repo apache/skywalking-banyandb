@@ -1352,9 +1352,16 @@
   .tin-tags { display: grid; grid-template-columns: 1fr 1fr; gap: 5px 16px; }
   .tin-tag { display: grid; grid-template-columns: minmax(92px,auto) 1fr; align-items: baseline; gap: 10px; padding: 4px 10px; background: var(--panel-2); border: 1px solid var(--border); border-radius: 6px; min-width: 0; }
   .tin-k { font-size: 11px; color: var(--text-faint); white-space: nowrap; display: flex; align-items: center; gap: 5px; }
-  .tin-res { font-size: 8px; font-weight: 600; letter-spacing: .3px; color: var(--warn); background: rgba(217,138,60,.14); padding: 1px 4px; border-radius: 3px; text-transform: uppercase; }
+  .tin-res { font-size: 8px; font-weight: 600; letter-spacing: .3px; color: var(--text-dim); background: rgba(255,255,255,.08); padding: 1px 4px; border-radius: 3px; text-transform: uppercase; }
   .tin-v { font-size: 11px; color: var(--text); min-width: 0; overflow-wrap: anywhere; }
-  .tin-raw { display: flex; align-items: flex-start; padding: 2px 0 1px; }
+  .tin-raw { display: flex; flex-direction: column; gap: 8px; padding: 2px 0 1px; }
+  .tin-raw-head { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+  .tin-raw-size { display: inline-flex; align-items: center; gap: 6px; height: 22px; padding: 0 8px; border-radius: 5px; background: var(--panel-2); border: 1px solid var(--border); color: var(--text-dim); font-family: var(--mono); font-size: 10.5px; }
+  .tin-raw-size svg { color: var(--text-faint); }
+  .tin-decode-btn { display: inline-flex; align-items: center; gap: 6px; height: 26px; padding: 0 10px; border-radius: 6px; border: 1px solid var(--border-strong); background: var(--panel-2); color: var(--text-dim); font-size: 11px; cursor: pointer; transition: all .13s; }
+  .tin-decode-btn:hover:not(:disabled) { color: var(--text); border-color: var(--text-faint); }
+  .tin-decode-btn:disabled { opacity: .45; cursor: not-allowed; }
+  .tin-raw-empty { font-size: 11px; color: var(--text-faint); }
   .tin-raw-ell { color: var(--text-faint); }
   .tin-note { display: flex; gap: 9px; margin-top: 11px; padding: 10px 12px; background: rgba(217,138,60,.07); border: 1px solid rgba(217,138,60,.22); border-radius: 8px; font-size: 11px; line-height: 1.5; color: var(--text-dim); }
   .tin-note-i { flex-shrink: 0; width: 16px; height: 16px; border-radius: 50%; background: rgba(217,138,60,.2); color: var(--warn); font-weight: 700; font-size: 11px; display: flex; align-items: center; justify-content: center; margin-top: 1px; }
