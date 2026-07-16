@@ -283,25 +283,35 @@ var _ = g.Describe("Schema time-range clamp", func() {
 			"CreatedAt2 must be strictly after T_data1 for the falsification to be meaningful")
 
 		g.By("Querying group1+group2 with Begin far before T_data1 — clamp forwards Begin to CreatedAt2 > T_data1, excluding the datum")
-		queryResp, queryErr := clients.MeasureWriteClient.Query(ctx, &measurev1.QueryRequest{
-			Groups: []string{group1, group2},
-			Name:   measureName,
-			TimeRange: &modelv1.TimeRange{
-				Begin: timestamppb.New(tData1.Add(-time.Hour).Truncate(time.Millisecond)),
-				End:   timestamppb.New(time.Now().Add(time.Hour).Truncate(time.Millisecond)),
-			},
-			GroupModRevisions: map[string]int64{group1: r1, group2: r2},
-			TagProjection: &modelv1.TagProjection{
-				TagFamilies: []*modelv1.TagProjection_TagFamily{
-					{Name: "default", Tags: []string{"host"}},
+		// In distributed mode the newly created group2 topology can still race the
+		// query fan-out even after AwaitRevision confirms the schema cache — the
+		// coordinator transiently reports "group not found". Retry until the query
+		// resolves, then assert the clamp excludes the pre-creation datum. Mirrors
+		// the single-group baseline retry above. Retrying only on error is safe: a
+		// genuine clamp regression surfaces as a non-empty successful response.
+		var queryResp *measurev1.QueryResponse
+		gm.Eventually(func() error {
+			var queryErr error
+			queryResp, queryErr = clients.MeasureWriteClient.Query(ctx, &measurev1.QueryRequest{
+				Groups: []string{group1, group2},
+				Name:   measureName,
+				TimeRange: &modelv1.TimeRange{
+					Begin: timestamppb.New(tData1.Add(-time.Hour).Truncate(time.Millisecond)),
+					End:   timestamppb.New(time.Now().Add(time.Hour).Truncate(time.Millisecond)),
 				},
-			},
-			FieldProjection: &measurev1.QueryRequest_FieldProjection{
-				Names: []string{"value"},
-			},
-			Limit: 100,
-		})
-		gm.Expect(queryErr).ShouldNot(gm.HaveOccurred())
+				GroupModRevisions: map[string]int64{group1: r1, group2: r2},
+				TagProjection: &modelv1.TagProjection{
+					TagFamilies: []*modelv1.TagProjection_TagFamily{
+						{Name: "default", Tags: []string{"host"}},
+					},
+				},
+				FieldProjection: &measurev1.QueryRequest_FieldProjection{
+					Names: []string{"value"},
+				},
+				Limit: 100,
+			})
+			return queryErr
+		}, 10*time.Second, 200*time.Millisecond).ShouldNot(gm.HaveOccurred())
 		gm.Expect(queryResp.GetDataPoints()).Should(gm.BeEmpty(),
 			"Rule 7 clamp invariant: T_data1 < CreatedAt2 must be excluded by the clamp; without clamp the datum would leak")
 
