@@ -45,6 +45,9 @@ interface ResultPanelProps {
   readonly showTrace: boolean;
   /** Toggle between Result and Trace tabs. */
   readonly setShowTrace: (v: boolean) => void;
+  /** Override the default tab labels (defaults: "Result" / "Trace"). Top-N
+   *  uses this to label its primary tab "Ranking" per the handoff design. */
+  readonly tabs?: { readonly result: string; readonly trace: string };
   /** Optional right-side content, usually view-mode segmented pills. */
   readonly actions?: React.ReactNode;
   /** Optional content rendered below the result bar (e.g., a secondary toolbar). */
@@ -61,6 +64,7 @@ export function ResultPanel({
   traceEnabled,
   showTrace,
   setShowTrace,
+  tabs,
   actions,
   subBar,
   className,
@@ -74,6 +78,8 @@ export function ResultPanel({
   if (count > 0) {
     metaParts.push(`${count.toLocaleString('en-US')} ${CATALOG_LABEL[catalog]}`);
   }
+  const resultLabel = tabs?.result ?? 'Result';
+  const traceLabel = tabs?.trace ?? 'Trace';
 
   return (
     <div className={'result-card' + (className ? ' ' + className : '')}>
@@ -84,14 +90,14 @@ export function ResultPanel({
             className={'result-tab' + (!showTrace ? ' is-active' : '')}
             onClick={() => setShowTrace(false)}
           >
-            Result
+            {resultLabel}
           </button>
           <button
             type="button"
             className={'result-tab' + (showTrace ? ' is-active' : '')}
             onClick={() => setShowTrace(true)}
           >
-            Trace
+            {traceLabel}
             {traceEnabled && <span className="mr-trace-on" title="WITH QUERY_TRACE enabled" />}
           </button>
         </div>

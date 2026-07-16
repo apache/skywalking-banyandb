@@ -273,7 +273,162 @@ describe('TopNResultView', () => {
       <TopNResultView response={topn} showTrace={false} setShowTrace={() => {}} />,
     );
     // 5 rows seeded → at least 5 leaderboard bar spans
-    expect(document.querySelectorAll('.rv-topn-bar').length).toBeGreaterThanOrEqual(5);
+    expect(document.querySelectorAll('.tnlb-bar').length).toBeGreaterThanOrEqual(5);
+  });
+  it('renders the Ranking tab (not Result)', () => {
+    renderWithRouter(
+      <TopNResultView response={topn} showTrace={false} setShowTrace={() => {}} />,
+    );
+    expect(screen.getByRole('button', { name: /ranking/i })).toBeInTheDocument();
+  });
+  it('renders "Top N of <resource> by value" toolbar when state is provided', () => {
+    renderWithRouter(
+      <TopNResultView response={topn} showTrace={false} setShowTrace={() => {}} state={{ ...TRACE_STATE, resource: 'endpoint_cpm-service' }} />,
+    );
+    expect(screen.getByText(/Top\s+10 of/i)).toBeInTheDocument();
+    expect(screen.getByText('endpoint_cpm-service')).toBeInTheDocument();
+  });
+  it('renders the topN rank badge with the icon', () => {
+    renderWithRouter(
+      <TopNResultView response={topn} showTrace={false} setShowTrace={() => {}} />,
+    );
+    // The "topN" label appears in two places (rank badge + column header);
+    // target the badge specifically via its class.
+    expect(document.querySelector('.topn-rank')).toBeInTheDocument();
+  });
+  it('always shows "entity_id" as the column header (the wire-format key, regardless of groupByTagNames)', () => {
+    renderWithRouter(
+      <TopNResultView response={topn} showTrace={false} setShowTrace={() => {}} />,
+    );
+    expect(screen.getByText('entity_id')).toBeInTheDocument();
+  });
+});
+
+// Multi-list scenarios can't be exercised against the live cluster: every
+// precomputed topn-agg in the current data returns a single rolled-up list
+// with `list.timestamp: null` (the LRU-stored snapshot doesn't carry per-
+// bucket history). These tests build a synthetic multi-list response so the
+// time-bucket picker is exercised without depending on cluster data.
+describe('TopNResultView — multi-list (time-bucket picker)', () => {
+  const multiListResponse: QueryResponse = {
+    topn_result: {
+      lists: [
+        {
+          timestamp: '2026-07-14T14:25:00Z',
+          items: [
+            { entity: [{ key: 'entity_id', value: { str: { value: 'orders' } } }], value: { int: { value: '500' } } },
+            { entity: [{ key: 'entity_id', value: { str: { value: 'checkout' } } }], value: { int: { value: '450' } } },
+          ],
+        },
+        {
+          timestamp: '2026-07-14T14:26:00Z',
+          items: [
+            { entity: [{ key: 'entity_id', value: { str: { value: 'orders' } } }], value: { int: { value: '520' } } },
+            { entity: [{ key: 'entity_id', value: { str: { value: 'auth' } } }], value: { int: { value: '470' } } },
+          ],
+        },
+        {
+          timestamp: '2026-07-14T14:27:00Z',
+          items: [
+            { entity: [{ key: 'entity_id', value: { str: { value: 'orders' } } }], value: { int: { value: '540' } } },
+            { entity: [{ key: 'entity_id', value: { str: { value: 'inventory' } } }], value: { int: { value: '480' } } },
+          ],
+        },
+      ],
+    },
+    elements: [],
+  };
+
+  it('renders the time-bucket picker when the response has more than one list', () => {
+    renderWithRouter(
+      <TopNResultView response={multiListResponse} showTrace={false} setShowTrace={() => {}} />,
+    );
+    // 3 lists → 3 pills, plus left/right nav buttons
+    expect(document.querySelectorAll('.tnlb-ts-pill').length).toBe(3);
+    expect(document.querySelectorAll('.tnlb-ts-nav').length).toBe(2);
+  });
+
+  it('defaults to the most recent (last) list', () => {
+    renderWithRouter(
+      <TopNResultView response={multiListResponse} showTrace={false} setShowTrace={() => {}} />,
+    );
+    // The meta line should show the last list's timestamp (14:27:00).
+    const meta = document.querySelector('.tnlb-ts-meta')?.textContent?.trim();
+    expect(meta).toBe('14:27:00');
+  });
+
+  it('switches the active list when a pill is clicked', () => {
+    renderWithRouter(
+      <TopNResultView response={multiListResponse} showTrace={false} setShowTrace={() => {}} />,
+    );
+    const pills = Array.from(document.querySelectorAll('.tnlb-ts-pill')) as HTMLButtonElement[];
+    expect(pills.length).toBe(3);
+    // Use fireEvent so React's state update flushes inside `act()`.
+    fireEvent.click(pills[0]);
+    const meta = document.querySelector('.tnlb-ts-meta')?.textContent?.trim();
+    expect(meta).toBe('14:25:00');
+  });
+
+  it('disables the ← nav button on the first list and the → nav button on the last list', () => {
+    renderWithRouter(
+      <TopNResultView response={multiListResponse} showTrace={false} setShowTrace={() => {}} />,
+    );
+    const [prev, next] = Array.from(document.querySelectorAll('.tnlb-ts-nav')) as HTMLButtonElement[];
+    // Default = last list → prev enabled, next disabled
+    expect(prev.disabled).toBe(false);
+    expect(next.disabled).toBe(true);
+    // Click the first pill → prev disabled, next enabled
+    const pills = Array.from(document.querySelectorAll('.tnlb-ts-pill')) as HTMLButtonElement[];
+    fireEvent.click(pills[0]);
+    expect(prev.disabled).toBe(true);
+    expect(next.disabled).toBe(false);
+  });
+
+  it('renders the leaderboard rows for the currently active list', () => {
+    renderWithRouter(
+      <TopNResultView response={multiListResponse} showTrace={false} setShowTrace={() => {}} />,
+    );
+    // Default is the last list (14:27) which has 'orders' + 'inventory'.
+    expect(screen.getByText('orders')).toBeInTheDocument();
+    expect(screen.getByText('inventory')).toBeInTheDocument();
+  });
+
+  it('falls back to the most-recent item timestamp when the list-level one is null', () => {
+    const listWithNullTs: QueryResponse = {
+      topn_result: {
+        lists: [
+          {
+            timestamp: null,
+            items: [
+              {
+                entity: [{ key: 'entity_id', value: { str: { value: 'orders' } } }],
+                value: { int: { value: '500' } },
+                timestamp: '2026-07-14T14:30:00Z',
+              },
+            ],
+          },
+          {
+            timestamp: '2026-07-14T14:31:00Z',
+            items: [
+              {
+                entity: [{ key: 'entity_id', value: { str: { value: 'checkout' } } }],
+                value: { int: { value: '450' } },
+                timestamp: '2026-07-14T14:31:00Z',
+              },
+            ],
+          },
+        ],
+      },
+      elements: [],
+    };
+    renderWithRouter(
+      <TopNResultView response={listWithNullTs} showTrace={false} setShowTrace={() => {}} />,
+    );
+    // First list has null list-level ts but a 14:30 item-level ts — the
+    // picker should still render that pill with the item-level time.
+    const pills = Array.from(document.querySelectorAll('.tnlb-ts-pill')) as HTMLButtonElement[];
+    expect(pills.length).toBe(2);
+    expect(pills[0].textContent).toBe('14:30');
   });
 });
 
@@ -309,8 +464,12 @@ describe('TraceResultView', () => {
     renderWithRouter(
       <TraceResultView response={traceResponse} state={TRACE_STATE} showTrace={false} setShowTrace={() => {}} hasMore={false} onLoadMore={() => {}} isLoadingMore={false} />,
     );
-    // Expand the row that carries span bytes (span_id = s2).
-    fireEvent.click(screen.getByText('s2'));
+    // Expand the row that carries span bytes (span_id = s2). Click the row's
+    // container directly — CopyableId's onClick stops propagation so clicking
+    // the span_id cell no longer toggles the row.
+    const rowMain = document.querySelectorAll('.tin-main')[1];
+    expect(rowMain).toBeTruthy();
+    fireEvent.click(rowMain!);
     const decodes = screen.getAllByRole('button', { name: /decode/i });
     expect(decodes.length).toBeGreaterThan(0);
     const enabled = decodes.find((b) => !b.hasAttribute('disabled'));
