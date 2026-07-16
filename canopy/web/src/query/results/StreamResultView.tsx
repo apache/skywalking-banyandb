@@ -42,6 +42,7 @@ import {
   type SR_ROLE,
   type SR_TAG_TYPE,
 } from '../role-infer.js';
+import { CopyableId } from '../CopyableId.js';
 import { tdHexDump, tdToBase64 } from '../proto-decoder.js';
 import { ResultPanel } from './ResultPanel.js';
 import { ResultEmpty } from './ResultEmpty.js';
@@ -451,8 +452,9 @@ function ValuePill({ tag, role, value, setInspecting }: {
       return <span className="snum strong">{rendered.display}</span>;
     }
     case 'id': {
-      const rendered = srRenderValue(role, value, tag);
-      return <span className="sid" title={rendered.title}>{rendered.display}</span>;
+      const idValue = value == null || value === '' ? '' : String(value);
+      if (!idValue) return <span className="mono dim">∅</span>;
+      return <CopyableId value={idValue} label={tag} className="sid" />;
     }
     case 'cat': {
       const color = srCatColor(tag, value);

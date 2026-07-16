@@ -40,6 +40,9 @@ import {
   type SR_TAG_TYPE,
 } from '../role-infer.js';
 
+import { parseTs, formatTs } from '../time.js';
+import { TimestampText } from '../time.js';
+import { CopyableId } from '../CopyableId.js';
 import { ResultPanel } from './ResultPanel.js';
 import { ResultEmpty } from './ResultEmpty.js';
 import { TraceView, TraceDisabled } from './TraceView.js';
@@ -124,19 +127,6 @@ function normalizeBytes(raw: unknown): Uint8Array | null {
     }
   }
   return null;
-}
-
-function formatTimestamp(raw: unknown): string {
-  if (raw == null) return '';
-  let n: number;
-  if (typeof raw === 'number') {
-    n = raw > 1e12 ? raw : raw * 1000;
-  } else {
-    n = Date.parse(String(raw));
-  }
-  if (!Number.isFinite(n)) return String(raw);
-  const d = new Date(n);
-  return `${String(d.getUTCHours()).padStart(2, '0')}:${String(d.getUTCMinutes()).padStart(2, '0')}:${String(d.getUTCSeconds()).padStart(2, '0')}.${String(d.getUTCMilliseconds()).padStart(3, '0')}`;
 }
 
 function reservedKind(name: string, tsField: string): TraceTagConfig['reserved'] {
@@ -389,6 +379,7 @@ export function TraceResultView({ response, state, showTrace, setShowTrace, exec
             <div className="tin-colhead">
               <span />
               <span>{tsField}</span>
+              <span>trace_id</span>
               <span>span_id</span>
               <span>summary · expand for all tags + span bytes</span>
             </div>
@@ -454,16 +445,18 @@ function TraceInspectorRow({ index, element, tsField, resource, config, detailCo
   const bodyCol = visible.find((c) => c.role === 'body') ?? visible.find((c) => c.role === 'text');
   const metaCols = visible.filter((c) => c.role === 'numeric');
   const bodyVal = bodyCol ? element[bodyCol.name] : undefined;
+  const traceId = String(element.trace_id ?? '');
   const spanId = String(element.span_id ?? '');
-  const ts = formatTimestamp(element[tsField]);
+  const ts = parseTs(element[tsField]);
   const bytes = normalizeBytes(element.span);
 
   return (
     <div className={'tin-row' + (isOpen ? ' is-open' : '')}>
       <div className="tin-main" onClick={toggle}>
         <span className="slog-chev">{isOpen ? '▾' : '▸'}</span>
-        <span className="slog-ts mono">{ts}</span>
-        <span className="tin-sid mono" title={`span_id = ${spanId}`}>{spanId}</span>
+        <TimestampText ts={ts} />
+        <CopyableId value={traceId} label="trace_id" className="tin-tid" />
+        <CopyableId value={spanId} label="span_id" className="tin-sid" />
         <div className="slog-line">
           {badgeCols.length > 0 && (
             <span className="slog-badges">{badgeCols.map((c) => <ValuePill key={c.name} tag={c.name} role={c.role} value={element[c.name]} />)}</span>
@@ -535,14 +528,15 @@ function ValuePill({ tag, role, value }: {
 
   switch (role) {
     case 'time':
-      return <span className="snum dim">{formatTimestamp(value)}</span>;
+      return <span className="snum dim">{formatTs(parseTs(value))}</span>;
     case 'numeric': {
       const rendered = srRenderValue(role, value, tag);
       return <span className="snum strong">{rendered.display}</span>;
     }
     case 'id': {
-      const rendered = srRenderValue(role, value, tag);
-      return <span className="sid" title={rendered.title}>{rendered.display}</span>;
+      const idValue = value == null || value === '' ? '' : String(value);
+      if (!idValue) return <span className="mono dim">∅</span>;
+      return <CopyableId value={idValue} label={tag} className="sid" />;
     }
     case 'cat': {
       const color = srCatColor(tag, value);

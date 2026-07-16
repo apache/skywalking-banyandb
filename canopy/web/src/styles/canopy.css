@@ -1143,8 +1143,15 @@
   .tagpill { display: inline-block; padding: 1px 8px; border-radius: 5px; background: var(--panel-2); border: 1px solid var(--border); color: var(--text-dim); font-size: 11.5px; }
 
   /* timestamp cell tooltip: full ISO + epoch on hover (ported to body so it
-     escapes the scroll container and can be hovered for copying) */
+     escapes the scroll container and can be hovered for copying). Both
+     flavors share .ts-tip; .ts-cell is the <td> variant, .ts-text is the
+     inline-span variant used by trace row headers. */
   .ts-cell { cursor: help; }
+  .ts-text {
+    cursor: help;
+    border-radius: 3px;
+  }
+  .ts-text:focus-visible { outline: 1px solid var(--border-strong); outline-offset: 1px; }
   .ts-tip {
     position: fixed;
     z-index: 1000;
@@ -1174,6 +1181,74 @@
   }
   .ts-tip-row { display: flex; gap: 8px; align-items: baseline; }
   .ts-tip-row b { width: 42px; flex-shrink: 0; color: var(--accent); font-weight: 600; text-transform: uppercase; font-size: 9px; letter-spacing: .5px; }
+
+  /* CopyableId popover: hover the truncated trace_id/span_id cell to see the
+     full value + a Copy button. Reuses .ts-tip chrome (panel-2, border-strong,
+     rounded) and positions with the same translate(-50%, -100%) convention.
+     The cell uses inline-block + max-width:100% so it truncates with
+     ellipsis inside any container — the trace row grid (120px/52px columns),
+     the .tin-v detail-card value cell (flex/grid 1fr), or anywhere else. */
+  .ti-id-cell {
+    cursor: copy;
+    outline: none;
+    display: inline-block;
+    max-width: 100%;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    vertical-align: bottom;
+  }
+  .ti-id-cell:focus-visible { box-shadow: 0 0 0 2px rgba(86,194,214,.32); border-radius: 3px; }
+  .ti-id-tip {
+    z-index: 1000;
+    display: flex;
+    flex-direction: column;
+    gap: 7px;
+    padding: 9px 12px 10px;
+    background: var(--panel-2);
+    border: 1px solid var(--border-strong);
+    border-radius: 8px;
+    box-shadow: 0 6px 20px rgba(0,0,0,.35);
+    color: var(--text-dim);
+    pointer-events: auto;
+    user-select: text;
+  }
+  .ti-id-tip::after {
+    content: '';
+    position: absolute;
+    top: 100%;
+    left: 50%;
+    transform: translateX(-50%);
+    border: 5px solid transparent;
+    border-top-color: var(--border-strong);
+  }
+  .ti-id-head { display: flex; justify-content: space-between; align-items: center; gap: 12px; }
+  .ti-id-label { font-size: 9.5px; letter-spacing: .5px; text-transform: uppercase; color: var(--accent); font-weight: 600; }
+  .ti-id-copy {
+    appearance: none;
+    background: rgba(255,255,255,.06);
+    border: 1px solid var(--border);
+    border-radius: 5px;
+    color: var(--text-dim);
+    font-family: var(--mono);
+    font-size: 10.5px;
+    padding: 2px 8px;
+    cursor: pointer;
+    transition: background .12s, border-color .12s, color .12s;
+  }
+  .ti-id-copy:hover { background: rgba(255,255,255,.10); color: var(--text); border-color: var(--border-strong); }
+  .ti-id-copy.is-on { color: var(--info); border-color: rgba(86,194,214,.4); background: rgba(86,194,214,.12); }
+  .ti-id-value {
+    font-size: 11.5px;
+    color: var(--text);
+    background: rgba(0,0,0,.18);
+    border: 1px solid var(--border);
+    border-radius: 5px;
+    padding: 5px 8px;
+    word-break: break-all;
+    cursor: text;
+    user-select: text;
+  }
 
   /* chart */
   .mchart-wrap { padding: 4px 0 0; }
@@ -1333,7 +1408,7 @@
   /* ============ TRACE RESULT VIEW (span inspector) ============ */
   .layer-tag { font-size: 9.5px; padding: 1px 6px; border-radius: 4px; display: inline-block; white-space: nowrap; justify-self: start; }
   .tin { display: flex; flex-direction: column; font-size: 12.5px; max-height: 460px; overflow: auto; }
-  .tin-colhead, .tin-main { display: grid; grid-template-columns: 22px 116px 52px minmax(0,1fr); align-items: center; gap: 12px; }
+  .tin-colhead, .tin-main { display: grid; grid-template-columns: 22px 116px 120px 52px minmax(0,1fr); align-items: center; gap: 12px; }
   .tin-colhead { padding: 7px 16px; font-family: var(--mono); font-size: 10.5px; color: var(--text-faint); border-bottom: 1px solid var(--border-strong); background: var(--panel-2); position: sticky; top: 0; z-index: 1; }
   .tin-colhead .num { text-align: right; }
   .tin-row { border-bottom: 1px solid var(--border); }
@@ -1344,7 +1419,8 @@
   .tin-row.is-err .tin-main { box-shadow: inset 2px 0 0 var(--danger); }
   .tin-chev { color: var(--text-faint); font-size: 9px; }
   .tin-tid { color: var(--text-dim); font-size: 11.5px; }
-  .tin-sid { color: var(--text-faint); font-size: 11.5px; }
+  .tin-sid { color: var(--text-faint); font-size: 11.5px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; }
+  .tin-tid { color: var(--text-dim); font-size: 11.5px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; }
   .tin-svc { display: flex; align-items: center; color: var(--text-dim); font-size: 12px; white-space: nowrap; }
   .tin-op { color: var(--text); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; }
   .tin-status { font-size: 12px; }

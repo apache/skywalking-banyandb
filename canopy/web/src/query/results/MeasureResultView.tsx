@@ -31,9 +31,10 @@
 // not expose entity tag names.
 
 import React, { useMemo, useRef, useState } from 'react';
-import { createPortal } from 'react-dom';
 import type { QueryResponse } from 'canopy-shared';
 import type { QBBuilderState } from '../bydbql.js';
+import { parseTs, parseIntervalMs, formatTs } from '../time.js';
+import { TimestampCell } from '../time.js';
 import { ResultPanel } from './ResultPanel.js';
 import { ResultEmpty } from './ResultEmpty.js';
 import { TraceView, TraceDisabled } from './TraceView.js';
@@ -61,51 +62,9 @@ type Elem = Record<string, unknown>;
 // Per-series color palette (mirrors .handoff-import/banyandb/project/measure-results.jsx MR_COLORS).
 const MR_COLORS = ['#3d82f6', '#3cc8b4', '#d98a3c', '#9b8cf0', '#e0707a', '#56c2d6'];
 
-function parseTimestamp(raw: unknown): number {
-  if (raw == null) return NaN;
-  if (typeof raw === 'number') return raw > 1e12 ? raw : raw * 1000; // s vs ms
-  const t = Date.parse(String(raw));
-  return Number.isFinite(t) ? t : NaN;
-}
-
 function fmtNum(n: number): string {
   if (!Number.isFinite(n)) return '–';
   return Math.round(n).toLocaleString('en-US');
-}
-
-// Parse a measure interval string (e.g. "30s", "1m", "5m", "1h", "1d") into
-// milliseconds so the result view can choose a timestamp granularity that
-// distinguishes adjacent data points.
-function parseIntervalMs(interval: string | undefined): number | undefined {
-  if (!interval) return undefined;
-  const match = interval.trim().match(/^(\d+(?:\.\d+)?)\s*(ns|us|µs|ms|s|m|h|d)$/i);
-  if (!match) return undefined;
-  const value = parseFloat(match[1]);
-  const unit = match[2].toLowerCase();
-  const multipliers: Record<string, number> = {
-    ns: 1e-6, us: 1e-3, 'µs': 1e-3, ms: 1, s: 1000, m: 60000, h: 3600000, d: 86400000,
-  };
-  return value * (multipliers[unit] ?? 0);
-}
-
-function fmtTimeByInterval(ts: number, intervalMs?: number): string {
-  if (!Number.isFinite(ts)) return '';
-  const d = new Date(ts);
-  const p = (x: number) => String(x).padStart(2, '0');
-  const yyyy = d.getFullYear();
-  const mo = p(d.getMonth() + 1);
-  const dd = p(d.getDate());
-  const hh = p(d.getHours());
-  const mi = p(d.getMinutes());
-  const ss = p(d.getSeconds());
-  const mmm = String(d.getMilliseconds()).padStart(3, '0');
-
-  if (!intervalMs) return `${hh}:${mi}`;
-  if (intervalMs < 1000) return `${hh}:${mi}:${ss}.${mmm}`;
-  if (intervalMs < 60000) return `${hh}:${mi}:${ss}`;
-  if (intervalMs < 3600000) return `${hh}:${mi}`;
-  if (intervalMs < 86400000) return `${yyyy}-${mo}-${dd} ${hh}:00`;
-  return `${yyyy}-${mo}-${dd}`;
 }
 
 function fmtPct(dpct: number): string {
@@ -176,7 +135,7 @@ function groupElements(elements: readonly Elem[], idTags: readonly string[], num
         points: [],
       });
     }
-    const ts = parseTimestamp(e.timestamp);
+    const ts = parseTs(e.timestamp);
     // BanyanDB returns null timestamps for some aggregated rows (e.g. a
     // single MEAN bucket has no per-row timestamp). Fall back to the
     // element index so the chart still has a usable x-axis; flag the chart
@@ -289,64 +248,6 @@ export function MeasureResultView({ response, state, showTrace, setShowTrace, ha
   );
 }
 
-function TimestampCell({ ts, intervalMs }: { readonly ts: number; readonly intervalMs?: number }) {
-  const cellRef = useRef<HTMLTableCellElement | null>(null);
-  const [showTip, setShowTip] = useState(false);
-  const [tipStyle, setTipStyle] = useState<React.CSSProperties>({});
-  const hideTimer = useRef<number | null>(null);
-  if (!Number.isFinite(ts)) return <td className="mono dim">—</td>;
-  const iso = new Date(ts).toISOString();
-
-  const scheduleHide = () => {
-    if (hideTimer.current) window.clearTimeout(hideTimer.current);
-    hideTimer.current = window.setTimeout(() => setShowTip(false), 120);
-  };
-  const cancelHide = () => {
-    if (hideTimer.current) window.clearTimeout(hideTimer.current);
-    hideTimer.current = null;
-  };
-
-  const show = () => {
-    cancelHide();
-    const rect = cellRef.current?.getBoundingClientRect();
-    if (rect) {
-      setTipStyle({
-        position: 'fixed',
-        left: rect.left + rect.width / 2,
-        top: rect.top - 8,
-        transform: 'translate(-50%, -100%)',
-      });
-    }
-    setShowTip(true);
-  };
-
-  return (
-    <>
-      <td
-        ref={cellRef}
-        className="mono dim ts-cell"
-        onMouseEnter={show}
-        onMouseLeave={scheduleHide}
-      >
-        {fmtTimeByInterval(ts, intervalMs)}
-      </td>
-      {showTip && createPortal(
-        <span
-          className="ts-tip"
-          style={tipStyle}
-          onMouseEnter={cancelHide}
-          onMouseLeave={scheduleHide}
-        >
-          <span className="ts-tip-row"><b>ISO</b> {iso}</span>
-          <span className="ts-tip-row"><b>Epoch</b> {ts.toLocaleString('en-US')}</span>
-          <span className="ts-tip-row"><b>Local</b> {new Date(ts).toLocaleString('en-US')}</span>
-        </span>,
-        document.body,
-      )}
-    </>
-  );
-}
-
 function TableView({ elements, fields, idTags, showMeta, intervalMs, hasMore, onLoadMore, isLoadingMore }: {
   elements: readonly Elem[];
   fields: readonly { field: string; fn?: string }[];
@@ -380,7 +281,7 @@ function TableView({ elements, fields, idTags, showMeta, intervalMs, hasMore, on
         <tbody>
           {elements.map((e, i) => (
             <tr key={i}>
-              <TimestampCell ts={parseTimestamp(e.timestamp)} intervalMs={intervalMs} />
+              <TimestampCell ts={parseTs(e.timestamp)} opts={{ intervalMs }} />
               {idTags.map((t, ti) => (
                 <td key={t} className="mono">
                   {ti === 0 ? <span className="tagpill">{String(e[t] ?? '')}</span> : String(e[t] ?? '')}
@@ -458,7 +359,7 @@ function ChartView({ series, fields, activeField, setActiveField, hasTimeAxis, i
   }
   // When timestamps are missing (e.g. MEAN aggregation returns no per-row ts),
   // label the x-axis with row indices instead of HH:MM.
-  const fmtX = (t: number) => hasTimeAxis ? fmtTimeByInterval(t, intervalMs) : `#${Math.round(t)}`;
+  const fmtX = (t: number) => hasTimeAxis ? formatTs(t, { intervalMs }) : `#${Math.round(t)}`;
 
   const activeFieldLabel = (() => {
     const spec = fields.find((f) => f.field === activeField);
