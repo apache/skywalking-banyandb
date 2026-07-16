@@ -25,7 +25,7 @@ import type {
   CreateTraceRequest, UpdateTraceRequest, TraceSchema,
   CreateIndexRuleRequest, UpdateIndexRuleRequest, IndexRuleSchema,
   CreateIndexRuleBindingRequest, UpdateIndexRuleBindingRequest, IndexRuleBindingSchema,
-  PropertySchema,
+  PropertySchema, TopNAggregationSchema,
   QueryRequest, QueryResponse, TopNQueryRequest, TopNQueryResponse,
 } from 'canopy-shared';
 
@@ -174,6 +174,30 @@ export class ApiDataSource implements DataSource {
     const resource = data.stream ?? data.measure ?? data.trace ?? data.property;
     if (!resource) throw new Error(`Resource not found: ${type}/${group}/${name}`);
     return resource;
+  }
+
+  // ── TopNAggregation (Top-N schema) ──────────────────────────────────────
+  //
+  // The Top-N SCHEMA endpoint differs from the per-resource schema endpoints:
+  // BanyanDB's grpc-gateway maps TopNAggregationRegistryService.List to
+  //   GET /api/v1/topn-agg/schema/lists/{group}
+  // (note the `/api/v1/` prefix and the `topNAggregation` response key — NOT
+  // the singular `topnAggregation` that the rpc.proto would suggest).
+  // Top-N queries dispatch through /v1/measure/topn (runQuery below) using
+  // the aggregated name from this list, so the From-row dropdown in the
+  // query builder must surface topn-aggregation names rather than the
+  // underlying measure names.
+
+  async listTopNAggregations(group: string): Promise<TopNAggregationSchema[]> {
+    if (!group) return [];
+    const data = await apiFetch<{ topNAggregation?: TopNAggregationSchema[] }>(
+      `/api/v1/topn-agg/schema/lists/${encodeURIComponent(group)}`,
+    );
+    // Sort by name so the FROM-row dropdown and the fuzzy-search index render
+    // in a stable order (mirrors listResourcesInGroup).
+    return (data.topNAggregation ?? [])
+      .slice()
+      .sort((a, b) => a.metadata.name.localeCompare(b.metadata.name));
   }
 
   // ── Stream CRUD ──────────────────────────────────────────────────────────
@@ -337,6 +361,11 @@ export class ApiDataSource implements DataSource {
       const flat = flattenTopNResponse(data);
       const truncated = flat.length > MAX_QUERY_ROWS;
       return {
+        // Preserve the wire-shape `topn_result.lists` so the result view can
+        // group rows by per-list timestamp for the time-bucket picker. Without
+        // this, the view would have to re-group the flat elements by
+        // `timestamp`, which loses the bucket boundaries.
+        topn_result: data,
         elements: truncated ? flat.slice(0, MAX_QUERY_ROWS) : flat,
         totalRowCount: flat.length,
         truncated,

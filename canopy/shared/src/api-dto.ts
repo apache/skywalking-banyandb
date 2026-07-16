@@ -283,6 +283,34 @@ export interface TopNQueryResponse {
   readonly lists?: readonly TopNList[];
 }
 
+// TopNAggregation schema — BanyanDB's precomputed leaderboard definition.
+// Wire shape (per the v0.x liaison) is camelCase protojson:
+//   { metadata: {group, name}, sourceMeasure: {group, name}, fieldName,
+//     fieldValueSort: 'SORT_ASC'|'SORT_DESC', groupByTagNames: string[],
+//     criteria, countersNumber, lruSize, updatedAt, createdAt }
+// Sourced from GET /api/v1/topn-agg/schema/lists/{group}. The list response
+// repeats under the `topNAggregation` key.
+//
+// Unlike the per-resource schemas (Measure/Stream/Trace), TopNAggregation does
+// not carry tagFamilies directly — only the names of the entity tags it
+// groups by. For richer WHERE-clause support the consumer can fall back to
+// the source measure's tagFamilies via `sourceMeasure.{group,name}`.
+export interface TopNAggregationSchema {
+  readonly metadata: { readonly name: string; readonly group: string };
+  readonly sourceMeasure?: { readonly name: string; readonly group: string };
+  readonly fieldName?: string;
+  readonly fieldValueSort?: 'SORT_ASC' | 'SORT_DESC';
+  readonly groupByTagNames?: readonly string[];
+  readonly countersNumber?: number;
+  readonly lruSize?: number;
+  readonly createdAt?: string;
+  readonly updatedAt?: string;
+}
+
+export interface TopNAggregationListResponse {
+  readonly topNAggregation: readonly TopNAggregationSchema[];
+}
+
 // Re-export schema types for convenience
 export type {
   Group, LifecycleStage, StreamSchema, MeasureSchema, TraceSchema, PropertySchema,

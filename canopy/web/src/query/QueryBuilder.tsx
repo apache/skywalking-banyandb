@@ -28,12 +28,12 @@
 
 import React from 'react';
 import {
-  QB_CATALOGS, QB_CAT, QB_OPS, QB_OP, QB_AGGS, QB_TOPN_OPS, QB_TOPN_AGGS, QB_TIMES, QB_COMBINATORS,
+  QB_CATALOGS, QB_CAT, QB_UI_KW, QB_OPS, QB_OP, QB_AGGS, QB_TOPN_OPS, QB_TOPN_AGGS, QB_TIMES, QB_COMBINATORS,
   qbDataCatalog, qbIsGroup, qbNewCond, qbNewGroup, qbEmptyWhere, qbPruneWhere,
   qbSearchIndex, qbSearchResults, qbConnSummary,
   buildBydbQL,
   type QBWhereNode, type QBWhereLeafWithConn,
-  type QBBuilderState, type QB_CATALOG_VALUE, type QBSearchHit, type GroupResourcesMap,
+  type QBBuilderState, type QB_CATALOG_VALUE, type QBSearchHit, type GroupResourcesMap, type GroupTopnAggMap,
 } from './bydbql.js';
 import type { Group } from 'canopy-shared';
 
@@ -136,20 +136,21 @@ function QBHighlight({ text, marks }: { readonly text: string; readonly marks: r
 interface QBResourceSearchProps {
   readonly groups: readonly Group[];
   readonly groupResources: GroupResourcesMap;
+  readonly groupTopnAggs: GroupTopnAggMap;
   readonly onPick: (catalog: QB_CATALOG_VALUE, group: string, resource: string) => void;
 }
 
 // Search box: type a name, arrow/enter to jump to that resource across every
 // catalog. Ported from the handoff's QBResourceSearch in
 // .handoff-import/banyandb/project/query-builder.jsx.
-function QBResourceSearch({ groups, groupResources, onPick }: QBResourceSearchProps) {
+function QBResourceSearch({ groups, groupResources, groupTopnAggs, onPick }: QBResourceSearchProps) {
   const [q, setQ] = React.useState('');
   const [open, setOpen] = React.useState(false);
   const [active, setActive] = React.useState(0);
   const wrapRef = React.useRef<HTMLDivElement | null>(null);
   const inputRef = React.useRef<HTMLInputElement | null>(null);
 
-  const index = React.useMemo(() => qbSearchIndex(groups, groupResources), [groups, groupResources]);
+  const index = React.useMemo(() => qbSearchIndex(groups, groupResources, groupTopnAggs), [groups, groupResources, groupTopnAggs]);
   const results = React.useMemo(() => qbSearchResults(index, q, 8), [index, q]);
 
   React.useEffect(() => { setActive(0); }, [q]);
@@ -240,10 +241,15 @@ export interface QueryBuilderProps {
   readonly fields: readonly string[];
   readonly groupNames: readonly string[];
   readonly resourceNames: readonly string[];
+  /** Topn-aggregation names for the current group. Rendered in the FROM-row
+   *  dropdown instead of `resourceNames` when `state.catalog === 'topn'`. */
+  readonly topnAggNames: readonly string[];
   /** All groups (used by the From-row fuzzy search to enumerate every catalog). */
   readonly groups: readonly Group[];
   /** Pre-fetched resources keyed by `${dataCatalog}/${groupName}`. */
   readonly groupResources: GroupResourcesMap;
+  /** Pre-fetched topn-aggregation names keyed by `${groupName}`. */
+  readonly groupTopnAggs: GroupTopnAggMap;
   /** Called when the user picks a hit in the From-row fuzzy search. */
   readonly onPickResource: (catalog: QB_CATALOG_VALUE, group: string, resource: string) => void;
   readonly isRunning: boolean;
@@ -474,14 +480,18 @@ function buildSummaries(state: QBBuilderState): Record<string, string> {
 }
 
 export function QueryBuilder({
-  state, onChange, tags, fields, groupNames, resourceNames,
-  groups, groupResources, onPickResource,
+  state, onChange, tags, fields, groupNames, resourceNames, topnAggNames,
+  groups, groupResources, groupTopnAggs, onPickResource,
   isRunning, onEjectToCode, onRun,
   hasRun = false, compact = true, setCompact, openSection = null, setOpenSection,
 }: QueryBuilderProps) {
   const cat = QB_CAT(state.catalog);
   const isTopN = state.catalog === 'topn';
   const isMeasure = state.catalog === 'measures';
+  // Top-N's resource dropdown selects topn-aggregation definitions, not
+  // measures. The FROM-row inline label mirrors this (`uiKw: 'TOPN AGG'`).
+  const fromNames = isTopN ? topnAggNames : resourceNames;
+  const fromKw = QB_UI_KW(state.catalog);
   const where = state.where;
   const accOn = hasRun && compact;
   const sums = React.useMemo(() => buildSummaries(state), [state]);
@@ -496,10 +506,17 @@ export function QueryBuilder({
   });
 
   const setCatalog = (catalog: QB_CATALOG_VALUE) => {
+    // Top-N's underlying data catalog is 'measures' (topn-aggs live alongside
+    // measures in the same group), so switching to Top-N should keep the
+    // current measure group — otherwise setCatalog would reset to the
+    // alphabetically-first group, which may not have any topn-aggregations
+    // registered. For all other catalog switches we reset to the first group
+    // of the new catalog so the FROM-row dropdown doesn't show stale values.
     const first = groupNames[0] ?? '';
+    const nextGroup = catalog === 'topn' ? (state.group || first) : first;
     onChange({
       catalog,
-      group: first,
+      group: nextGroup,
       resource: '',
       select: [],
       projection: catalog === 'measures' ? (tags[0] ? [tags[0]] : []) : [],
@@ -565,6 +582,7 @@ export function QueryBuilder({
         <QBResourceSearch
           groups={groups}
           groupResources={groupResources}
+          groupTopnAggs={groupTopnAggs}
           onPick={onPickResource}
         />
         <div className="qb-cat-seg" role="tablist" aria-label="Target type">
@@ -587,11 +605,11 @@ export function QueryBuilder({
           })}
         </div>
         <div className="qb-row qb-from-row">
-          <span className="qb-inline-kw">{cat.kw}</span>
+          <span className="qb-inline-kw">{fromKw}</span>
           <span className="qb-select-wrap">
             <select aria-label="Resource" value={state.resource} onChange={(e) => setResource(e.target.value)}>
               <option value="">— none —</option>
-              {resourceNames.map((n) => <option key={n} value={n}>{n}</option>)}
+              {fromNames.map((n) => <option key={n} value={n}>{n}</option>)}
             </select>
             <span className="qb-select-chev"><IconChev width={13} height={13} /></span>
           </span>

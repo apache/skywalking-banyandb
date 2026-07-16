@@ -19,11 +19,14 @@
 
 import { describe, it, expect } from 'vitest';
 import {
-  QB_CAT, QB_OP, QB_OPS, QB_CATALOGS, qbDataCatalog,
+  QB_CAT, QB_OP, QB_OPS, QB_UI_KW, QB_CATALOGS, qbDataCatalog,
+  qbSearchIndex, qbSearchResults,
   buildBydbQL, qbNodeSQL, qbQuote, qbTimeSQL,
   qbNewCond, qbEmptyWhere, qbPruneWhere, qbConnSummary,
   type QBBuilderState, type QBWhereGroupWithConn, type QBWhereLeafWithConn,
+  type GroupResourcesMap, type GroupTopnAggMap,
 } from './bydbql.js';
+import type { Group } from 'canopy-shared';
 
 const baseState: QBBuilderState = {
   catalog: 'measures',
@@ -68,6 +71,83 @@ describe('QB vocabulary', () => {
   });
   it('QB_CATALOGS has 4 entries (measures/streams/traces/topn)', () => {
     expect(QB_CATALOGS.map((c) => c.value).sort()).toEqual(['measures', 'streams', 'topn', 'traces']);
+  });
+  it('QB_CAT keeps MEASURE as the topn BydbQL grammar keyword (FROM MEASURE …)', () => {
+    // The Top-N FROM clause in BydbQL is grammatically `FROM MEASURE <name>`
+    // even though the FROM-row dropdown is selecting a topn-aggregation
+    // definition. Distinguishing `kw` (BydbQL grammar) from `uiKw` (UI label)
+    // is what lets us label the dropdown `TOPN AGG` without breaking codegen.
+    expect(QB_CAT('topn').kw).toBe('MEASURE');
+  });
+  it('QB_UI_KW returns TOPN AGG for topn so the FROM-row label is not "MEASURE"', () => {
+    expect(QB_UI_KW('topn')).toBe('TOPN AGG');
+    expect(QB_UI_KW('measures')).toBe('MEASURE');
+    expect(QB_UI_KW('streams')).toBe('STREAM');
+    expect(QB_UI_KW('traces')).toBe('TRACE');
+  });
+});
+
+describe('qbSearchIndex with topn-agg map', () => {
+  const groups: Group[] = [
+    { metadata: { name: 'sw_metricsMinute', id: 0, createRevision: '0', modRevision: '0' }, catalog: 'CATALOG_MEASURE', resourceOpts: { shardNum: 1 }, name: 'sw_metricsMinute' },
+    { metadata: { name: 'sw_recordsLog', id: 0, createRevision: '0', modRevision: '0' }, catalog: 'CATALOG_STREAM', resourceOpts: { shardNum: 1 }, name: 'sw_recordsLog' },
+  ];
+  const groupResources: GroupResourcesMap = new Map([
+    ['measures/sw_metricsMinute', ['service_cpm_minute', 'endpoint_cpm_minute']],
+    ['streams/sw_recordsLog', ['log_record']],
+  ]);
+  const groupTopnAggs: GroupTopnAggMap = new Map([
+    ['sw_metricsMinute', ['endpoint_cpm-service', 'endpoint_resp_time-service', 'browser_app_page_pv-service']],
+  ]);
+
+  it('surfaces measure names for the measures catalog', () => {
+    const idx = qbSearchIndex(groups, groupResources, groupTopnAggs);
+    const hits = idx.filter((h) => h.catalog === 'measures');
+    expect(hits.map((h) => h.resource).sort()).toEqual(['endpoint_cpm_minute', 'service_cpm_minute']);
+  });
+
+  it('surfaces stream names for the streams catalog', () => {
+    const idx = qbSearchIndex(groups, groupResources, groupTopnAggs);
+    const hits = idx.filter((h) => h.catalog === 'streams');
+    expect(hits.map((h) => h.resource)).toEqual(['log_record']);
+  });
+
+  it('surfaces topn-aggregation names (NOT measure names) for the topn catalog', () => {
+    const idx = qbSearchIndex(groups, groupResources, groupTopnAggs);
+    const hits = idx.filter((h) => h.catalog === 'topn');
+    expect(hits.map((h) => h.resource).sort()).toEqual([
+      'browser_app_page_pv-service',
+      'endpoint_cpm-service',
+      'endpoint_resp_time-service',
+    ]);
+  });
+
+  it('omits topn entries when the topn-agg map is empty (groups without topn-aggs)', () => {
+    const idx = qbSearchIndex(groups, groupResources, new Map());
+    const topnHits = idx.filter((h) => h.catalog === 'topn');
+    expect(topnHits).toEqual([]);
+  });
+
+  it('does not include topn-agg names in the measures catalog hits (resources vs aggs stay separate)', () => {
+    // The Top-N FROM row should pick topn-agg names, not the underlying
+    // measure names. Even when the same group has both, the measure list
+    // and the topn-agg list must not bleed into each other.
+    const idx = qbSearchIndex(groups, groupResources, groupTopnAggs);
+    const measureHits = idx.filter((h) => h.catalog === 'measures' && h.group === 'sw_metricsMinute');
+    expect(measureHits.map((h) => h.resource).sort()).toEqual(['endpoint_cpm_minute', 'service_cpm_minute']);
+    for (const h of measureHits) {
+      expect(h.resource.endsWith('-service')).toBe(false);
+    }
+  });
+
+  it('fuzzy-matches topn-agg names in the search results', () => {
+    const idx = qbSearchIndex(groups, groupResources, groupTopnAggs);
+    const results = qbSearchResults(idx, 'cpm', 8);
+    // The topn-agg `endpoint_cpm-service` and the measure `endpoint_cpm_minute`
+    // both match "cpm" — the From-row dropdown should let the user disambiguate
+    // by clicking the topn entry (label "Top-N").
+    const topnHits = results.filter((h) => h.catalog === 'topn');
+    expect(topnHits.map((h) => h.resource)).toContain('endpoint_cpm-service');
   });
 });
 
@@ -255,7 +335,7 @@ describe('buildBydbQL', () => {
     expect(limitIdx).toBeGreaterThan(withIdx);
     expect(offsetIdx).toBeGreaterThan(withIdx);
   });
-  it('builds a Top-N query with TOP / AGGREGATE BY / ORDER BY value', () => {
+  it('builds a Top-N query with TOP / AGGREGATE BY / ORDER BY direction', () => {
     const s: QBBuilderState = {
       ...baseState,
       catalog: 'topn',
@@ -268,7 +348,37 @@ describe('buildBydbQL', () => {
     const out = buildBydbQL(s);
     expect(out).toContain('TOP 5');
     expect(out).toContain('AGGREGATE BY MEAN');
-    expect(out).toContain('ORDER BY value DESC');
+    // Top-N ORDER BY is direction-only — no `value` keyword. BanyanDB's
+    // parser (GrammarTopNOrderByClause) takes only ORDER BY (ASC|DESC)?.
+    expect(out).toContain('ORDER BY DESC');
+    expect(out).not.toContain('ORDER BY value');
+  });
+  it('Top-N query does not emit LIMIT or OFFSET (the BydbQL Top-N grammar has neither — TOP N is the cap)', () => {
+    const s: QBBuilderState = {
+      ...baseState,
+      catalog: 'topn',
+      projection: [],
+      select: [],
+      topN: 7,
+      limit: 100,
+      offset: 5,
+      time: { mode: 'relative', rel: '-30m', from: '', to: '' },
+    };
+    const out = buildBydbQL(s);
+    expect(out).toContain('TOP 7');
+    expect(out).not.toContain('LIMIT 100');
+    expect(out).not.toContain('OFFSET 5');
+  });
+  it('Top-N ORDER BY uses the order direction from state (ASC vs DESC)', () => {
+    const asc: QBBuilderState = {
+      ...baseState,
+      catalog: 'topn', projection: [], select: [], topN: 3,
+      orderDir: 'ASC',
+      time: { mode: 'relative', rel: '-1h', from: '', to: '' },
+    };
+    expect(buildBydbQL(asc)).toContain('ORDER BY ASC');
+    const desc: QBBuilderState = { ...asc, orderDir: 'DESC' };
+    expect(buildBydbQL(desc)).toContain('ORDER BY DESC');
   });
   it('renders a WHERE clause when conditions exist', () => {
     const where: QBWhereGroupWithConn = {

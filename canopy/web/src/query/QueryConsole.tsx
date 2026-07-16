@@ -35,11 +35,11 @@ import { ResultError } from './results/ResultError.js';
 import {
   buildBydbQL, qbDataCatalog, qbEmptyWhere, qbPruneWhere, qbNewCond,
   qbProtoCatalog, qbHasAnyFilter, qbHasTraceIdCondition,
-  type QBBuilderState, type QB_CATALOG_VALUE,
+  type QBBuilderState, type QB_CATALOG_VALUE, type GroupTopnAggMap,
 } from './bydbql.js';
 import { apiDataSource } from '../data/api.js';
 import { useRunQuery } from '../data/hooks.js';
-import type { Group, MeasureSchema, PropertySchema, QueryResponse, QueryRequest, StreamSchema, TraceSchema } from 'canopy-shared';
+import type { Group, MeasureSchema, PropertySchema, QueryResponse, QueryRequest, StreamSchema, TraceSchema, TopNAggregationSchema } from 'canopy-shared';
 
 const QB_STORE = 'canopy.query.v3';
 const QB_RAIL_DEFAULT = 348;
@@ -234,9 +234,16 @@ export function QueryConsole() {
   // primes the current entry; the prefetch effect after this block fills the
   // rest in the background.
   const [groupResources, setGroupResources] = useState<Map<string, readonly string[]>>(new Map());
+  // Topn-aggregation definitions: separate from the per-resource list because
+  // topn-aggs live in their own registry (TopNAggregationRegistryService)
+  // rather than the measure registry. The Top-N tab fetches them per-group;
+  // the prefetch effect after this block fills the rest in the background so
+  // the From-row fuzzy search surfaces topn-agg entries alongside the rest.
+  const [topnAggList, setTopnAggList] = useState<readonly TopNAggregationSchema[]>([]);
+  const [groupTopnAggs, setGroupTopnAggs] = useState<GroupTopnAggMap>(new Map());
   useEffect(() => {
     let cancelled = false;
-    if (!state.group) { setResourceList([]); return; }
+    if (!state.group) { setResourceList([]); setTopnAggList([]); return; }
     const cat = srcCat;
     apiDataSource.listResourcesInGroup(cat, state.group).then(
       (rs) => {
@@ -257,6 +264,26 @@ export function QueryConsole() {
         }
       },
       () => { if (!cancelled) setResourceList([]); },
+    );
+    // Top-N fetches its own list from the topn-aggregation registry, parallel
+    // to the measure list above. We run it unconditionally so switching
+    // catalogs without changing the group still surfaces topn-aggs on the
+    // Top-N tab.
+    apiDataSource.listTopNAggregations(state.group).then(
+      (aggs) => {
+        if (!cancelled) {
+          setTopnAggList(aggs);
+          setGroupTopnAggs((prev) => {
+            const next = new Map(prev);
+            next.set(
+              state.group,
+              aggs.map((a) => a.metadata.name),
+            );
+            return next;
+          });
+        }
+      },
+      () => { if (!cancelled) { setTopnAggList([]); } },
     );
     return () => { cancelled = true; };
   }, [state.group, srcCat]);
@@ -290,12 +317,45 @@ export function QueryConsole() {
         return next;
       });
     });
+    // Pre-fetch topn-aggregations for every group in parallel. Topn-aggs live
+    // in their own registry, NOT in the measure list — even when a group is
+    // catalog=MEASURE, its topn-agg names are distinct. We only query groups
+    // that COULD have topn-aggs (measure groups), but the upstream tolerates
+    // empty results so we can fire against any group safely.
+    const topnFetches = groups.map(async (g) => {
+      const aggs = await apiDataSource.listTopNAggregations(g.name);
+      return {
+        key: g.name,
+        names: aggs.map((a) => a.metadata.name).sort(),
+      };
+    });
+    Promise.allSettled(topnFetches).then((results) => {
+      if (cancelled) return;
+      setGroupTopnAggs((prev) => {
+        const next = new Map(prev);
+        for (const r of results) {
+          if (r.status === 'fulfilled') next.set(r.value.key, r.value.names);
+        }
+        return next;
+      });
+    });
     return () => { cancelled = true; };
   }, [groupsLoaded, groups]);
 
   const currentResource = resourceList.find((r) => r.name === state.resource);
   // Field / tag lists — stream/measure carry tagFamilies; trace/property carry a flat tags array.
+  // For Top-N we resolve tags from the topn-aggregation's `groupByTagNames`
+  // (the entity tags it groups by), since the topn-agg schema does not
+  // carry tagFamilies directly. This is sufficient for the WHERE clause; a
+  // future iteration can layer in the source-measure's tagFamilies for a
+  // richer tag set.
+  const currentTopnAgg = state.catalog === 'topn'
+    ? topnAggList.find((a) => a.metadata.name === state.resource)
+    : undefined;
   const tags: string[] = useMemo(() => {
+    if (state.catalog === 'topn') {
+      return currentTopnAgg ? [...(currentTopnAgg.groupByTagNames ?? [])] : [];
+    }
     if (!currentResource) return [];
     if ('tagFamilies' in currentResource && currentResource.tagFamilies) {
       return currentResource.tagFamilies.flatMap((f) => (f.tags ?? []).map((t) => t.name));
@@ -304,14 +364,21 @@ export function QueryConsole() {
       return currentResource.tags.map((t) => t.name);
     }
     return [];
-  }, [currentResource]);
+  }, [currentResource, currentTopnAgg, state.catalog]);
   const fields: string[] = useMemo(() => {
     const r = currentResource as { fields?: { name: string }[] } | undefined;
     return r?.fields?.map((f) => f.name) ?? [];
   }, [currentResource]);
   // Tag specs carry the schema type so the stream result view can infer roles
   // from storage type (TAG_TYPE_STRING/INT/DATA_BINARY/...) instead of guessing.
+  // For Top-N we don't have a per-tag type (topn-agg schema only carries
+  // groupByTagNames as bare strings) so we surface them all as STRING — the
+  // stringTags set derived from this is used only for IN-list literal quoting
+  // safety, and STRING is the conservative default.
   const tagSpecs = useMemo(() => {
+    if (state.catalog === 'topn') {
+      return (currentTopnAgg?.groupByTagNames ?? []).map((name) => ({ name, type: 'TAG_TYPE_STRING' }));
+    }
     if (!currentResource) return [];
     if ('tagFamilies' in currentResource && currentResource.tagFamilies) {
       return currentResource.tagFamilies.flatMap((f) => (f.tags ?? []).map((t) => ({ name: t.name, type: t.type })));
@@ -320,7 +387,7 @@ export function QueryConsole() {
       return currentResource.tags.map((t) => ({ name: t.name, type: t.type }));
     }
     return [];
-  }, [currentResource]);
+  }, [currentResource, currentTopnAgg, state.catalog]);
   // String-typed tags must have their values quoted even when they look numeric
   // (e.g. trace_id = '00000001'), otherwise BydbQL treats them as int literals.
   const stringTags = useMemo(() => new Set(tagSpecs.filter((t) => t.type === 'TAG_TYPE_STRING').map((t) => t.name)), [tagSpecs]);
@@ -329,6 +396,40 @@ export function QueryConsole() {
   // queries expand "all tags" to the explicit tag list.
   const generated = useMemo(() => buildBydbQL(state, tags, stringTags), [state, tags, stringTags]);
   const codeEdited = codeDirty && code.trim() !== '' && code.trim() !== generated.trim();
+
+  // Convert a builder `time` shape to a fixed RFC3339 time window for the
+  // TopNRequest (the BanyanDB liaison rejects relative durations here, while
+  // the BydbQL query string accepts both forms). Default window: last 30
+  // minutes when the user picked a relative range. Falls back to a 24h
+  // window when nothing is set, so the request always carries a valid
+  // begin/end pair (the liaison returns 400 otherwise).
+  const topnTimeRangeFor = (time: { mode: string; rel: string; from: string; to: string }): { begin: string; end: string } => {
+    const now = Date.now();
+    if (time.mode === 'absolute') {
+      // Use the user's from/to verbatim; if only one is set, derive the
+      // other from a 30-minute default around the provided bound.
+      if (time.from && time.to) {
+        return { begin: new Date(time.from).toISOString(), end: new Date(time.to).toISOString() };
+      }
+      if (time.from) {
+        const beginMs = Date.parse(time.from);
+        return { begin: new Date(beginMs).toISOString(), end: new Date(beginMs + 30 * 60_000).toISOString() };
+      }
+      if (time.to) {
+        const endMs = Date.parse(time.to);
+        return { begin: new Date(endMs - 30 * 60_000).toISOString(), end: new Date(endMs).toISOString() };
+      }
+    }
+    // Relative mode (or unset): resolve `rel` like '-30m' against `now`.
+    const m = /^(-?)(\d+)([smhd])$/.exec(time.rel || '-30m');
+    let beginMs = now - 30 * 60_000;
+    if (m) {
+      const n = Number(m[2]);
+      const unitMs = m[3] === 's' ? 1000 : m[3] === 'm' ? 60_000 : m[3] === 'h' ? 3_600_000 : 86_400_000;
+      beginMs = now - n * unitMs;
+    }
+    return { begin: new Date(beginMs).toISOString(), end: new Date(now).toISOString() };
+  };
 
   // Re-prune WHERE tags when resource changes
   useEffect(() => {
@@ -357,9 +458,18 @@ export function QueryConsole() {
   // the rail matches the handoff's `sw_metric / service_cpm_minute`
   // baseline. Skips the auto-generated `_top_n_result` table the topn
   // registry creates alongside the user's measures. Skipped if the user
-  // (or a deep-link seed) already picked a resource.
+  // (or a deep-link seed) already picked a resource. When the user is on
+  // the Top-N tab we pick from the topn-aggregation list instead, so the
+  // FROM-row surface is correct from the moment Top-N is selected.
   useEffect(() => {
-    if (!state.resource && resourceList.length > 0) {
+    if (state.resource) return;
+    if (state.catalog === 'topn') {
+      if (topnAggList.length === 0) return;
+      const sorted = [...topnAggList].map((a) => a.metadata.name).sort();
+      patch({ resource: sorted[0] ?? '' });
+      return;
+    }
+    if (resourceList.length > 0) {
       const canonical = resourceList.find((r) => r.name === 'service_cpm_minute');
       if (canonical) { patch({ resource: canonical.name }); return; }
       const candidates = resourceList
@@ -369,7 +479,7 @@ export function QueryConsole() {
       const picked = candidates[0] ?? resourceList[0]?.name ?? '';
       if (picked) patch({ resource: picked });
     }
-  }, [resourceList, state.resource]);
+  }, [resourceList, topnAggList, state.resource, state.catalog]);
 
   // Auto-pick a field with MEAN when a measure is selected and no field is
   // set yet. Mirrors the handoff's qbDefaultSelect so the chart view is
@@ -436,6 +546,11 @@ export function QueryConsole() {
     // BanyanDB's BydbQL gateway accepts a single { query: string } and parses
     // it server-side. For TopN, dispatch to /v1/measure/topn with the
     // structured TopNRequest instead.
+    // TopNRequest.time_range is REQUIRED by the BanyanDB liaison (returns
+    // 400 "value is required" if omitted) and its begin/end must be RFC3339
+    // strings, NOT relative durations like `-30m`. Convert the builder's
+    // `time` shape into a fixed begin/end window here.
+    const topnTimeRange = topnTimeRangeFor(state.time);
     const req: QueryRequest = state.catalog === 'topn'
       ? {
           query: activeQuery,
@@ -445,9 +560,7 @@ export function QueryConsole() {
             top_n: state.topN,
             agg: state.aggFn ? { function: state.aggFn, field_name: '' } : undefined,
             field_value_sort: state.orderDir === 'ASC' ? 'SORT_ASC' : 'SORT_DESC',
-            time_range: state.time.mode === 'absolute' && (state.time.from || state.time.to)
-              ? { begin: state.time.from, end: state.time.to }
-              : undefined,
+            time_range: topnTimeRange,
             trace: state.trace,
           },
         }
@@ -558,8 +671,10 @@ export function QueryConsole() {
                 fields={fields}
                 groupNames={groupNames}
                 resourceNames={resourceList.map((r) => r.name)}
+                topnAggNames={topnAggList.map((a) => a.metadata.name)}
                 groups={groups}
                 groupResources={groupResources}
+                groupTopnAggs={groupTopnAggs}
                 onPickResource={onPickResource}
                 isRunning={runMutation.isPending}
                 onEjectToCode={() => { setCode(generated); setCodeDirty(false); setMode('code'); }}
@@ -740,7 +855,7 @@ function ResultViewRouter({ state, response, showTrace, setShowTrace, hasMore, o
 }) {
   switch (state.catalog) {
     case 'topn':
-      return <TopNResultView response={response} showTrace={showTrace} setShowTrace={setShowTrace} execMs={execMs} />;
+      return <TopNResultView response={response} showTrace={showTrace} setShowTrace={setShowTrace} execMs={execMs} state={state} />;
     case 'measures':
       return <MeasureResultView
         response={response}

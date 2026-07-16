@@ -35,7 +35,12 @@ export type QB_CATALOG_VALUE = 'measures' | 'streams' | 'traces' | 'topn';
 
 export interface QB_CATALOG_DEF {
   readonly value: QB_CATALOG_VALUE;
+  /** BydbQL grammar keyword used in the generated `FROM <kw>` clause. */
   readonly kw: string;
+  /** Label rendered in the FROM row of the visual builder. Distinct from
+   *  `kw` because Top-N's BydbQL grammar still says `FROM MEASURE`, but the
+   *  FROM-row dropdown is selecting topn-aggregation names — not measures. */
+  readonly uiKw?: string;
   readonly label: string;
   readonly blurb: string;
 }
@@ -44,11 +49,19 @@ export const QB_CATALOGS: readonly QB_CATALOG_DEF[] = [
   { value: 'measures', kw: 'MEASURE', label: 'Measure', blurb: 'Numeric time-series' },
   { value: 'streams', kw: 'STREAM', label: 'Stream', blurb: 'Append-only events & logs' },
   { value: 'traces', kw: 'TRACE', label: 'Trace', blurb: 'Spans grouped by trace' },
-  { value: 'topn', kw: 'MEASURE', label: 'Top-N', blurb: 'Ranked series leaderboard' },
+  // Top-N keeps `kw: 'MEASURE'` so buildBydbQL continues to emit the
+  // grammatically-correct `FROM MEASURE <name>`; the FROM row's UI label
+  // reads `uiKw: 'TOPN AGG'` so users see the dropdown is selecting a
+  // topn-aggregation definition, not a measure.
+  { value: 'topn', kw: 'MEASURE', uiKw: 'TOPN AGG', label: 'Top-N', blurb: 'Ranked series leaderboard' },
 ];
 
 export const QB_CAT = (v: string): QB_CATALOG_DEF =>
   QB_CATALOGS.find((c) => c.value === v) ?? QB_CATALOGS[0];
+
+/** Inline keyword shown in the FROM row of the visual builder.
+ *  Falls back to the BydbQL grammar keyword when no UI-specific label exists. */
+export const QB_UI_KW = (v: string): string => QB_CAT(v).uiKw ?? QB_CAT(v).kw;
 
 // Top-N queries read from a measure; its schema lives in the measures catalog.
 export const qbDataCatalog = (catalog: string): 'measures' | 'streams' | 'traces' =>
@@ -391,10 +404,15 @@ export const buildBydbQL = (b: QBBuilderState, tags?: readonly string[], stringT
 
 const buildTopNBydbQL = (b: QBBuilderState, cat: QB_CATALOG_DEF, stringTags?: ReadonlySet<string>): string => {
   const parts: string[] = [];
-  // Grammar (docs/interacting/bydbql.md line 620):
-  //   topn_query ::= SHOW TOP <n> from_measure_clause TIME time_condition
-  //                  [WHERE topn_criteria] [AGGREGATE BY agg_function]
-  //                  [ORDER BY value ["ASC"|"DESC"]] [WITH QUERY_TRACE]
+  // Real grammar from pkg/bydbql/grammar.go (GrammarTopNStatement):
+  //   Show / Top / N / From / [Time] / [Where] / [AggregateBy] / [OrderBy] / [WithQueryTrace]
+  // where GrammarTopNOrderByClause takes only 'ORDER' 'BY' ('ASC'|'DESC')? —
+  // no `value` keyword, no LIMIT/OFFSET. The earlier docs in
+  // docs/interacting/bydbql.md line 620 listed `ORDER BY value` and the
+  // BydbQL code generator emitted that form, but BanyanDB's parser rejects
+  // it with "unexpected token 'value'". This generator now matches the
+  // parser: ORDER BY is direction-only and there is no LIMIT clause
+  // (the TOP N in SHOW TOP is the row cap).
   parts.push(`SHOW TOP ${b.topN || 10}`);
   parts.push(`FROM ${cat.kw} ${b.resource || '_'}`);
   parts.push(`IN ${b.group || '_'}`);
@@ -403,9 +421,7 @@ const buildTopNBydbQL = (b: QBBuilderState, cat: QB_CATALOG_DEF, stringTags?: Re
   const where = qbNodeSQL(b.where, 0, stringTags);
   if (where) parts.push(`WHERE ${where}`);
   if (b.aggFn) parts.push(`AGGREGATE BY ${b.aggFn}`);
-  parts.push(`ORDER BY value ${b.orderDir || 'DESC'}`);
-  if (b.limit && b.limit > 0) parts.push(`LIMIT ${b.limit}`);
-  if (b.offset && b.offset > 0) parts.push(`OFFSET ${b.offset}`);
+  parts.push(`ORDER BY ${b.orderDir || 'DESC'}`);
   if (b.trace) parts.push('WITH QUERY_TRACE');
   return parts.join('\n');
 };
@@ -502,6 +518,12 @@ export interface QBSearchHit extends QBSearchHitRaw {
 /** Map of `${dataCatalog}/${groupName}` → resource names for that group. */
 export type GroupResourcesMap = ReadonlyMap<string, readonly string[]>;
 
+/** Map of `${groupName}` → topn-aggregation names registered under it.
+ *  Keyed only by group name (no catalog prefix) because topn-aggs always
+ *  live alongside measures of the same group — they don't have their own
+ *  `CATALOG_*` enum. */
+export type GroupTopnAggMap = ReadonlyMap<string, readonly string[]>;
+
 /** Map BanyanDB's `CATALOG_*` enum to our short catalog key. */
 const protoCatalogToData = (c: Group['catalog']): 'measures' | 'streams' | 'traces' | null => {
   switch (c) {
@@ -518,17 +540,31 @@ const protoCatalogToData = (c: Group['catalog']): 'measures' | 'streams' | 'trac
 
 /**
  * Flatten every queryable target (measures / streams / traces / top-n) into one
- * searchable index. Top-N entries are derived per-measure (their schema lives
- * in the measures catalog).
+ * searchable index. Measures/streams/traces iterate `groupResources`; top-n
+ * iterates `groupTopnAggs` because topn-aggregation definitions live in their
+ * own registry, not the measure registry.
  */
 export const qbSearchIndex = (
   groups: readonly Group[],
   groupResources: GroupResourcesMap,
+  groupTopnAggs: GroupTopnAggMap = new Map(),
 ): readonly QBSearchHitRaw[] => {
   const out: QBSearchHitRaw[] = [];
   for (const c of QB_CATALOGS) {
+    const isTopn = c.value === 'topn';
     const src = qbDataCatalog(c.value); // 'topn' → 'measures'
     for (const g of groups) {
+      if (isTopn) {
+        // Top-N entries are derived from the topn-aggregation registry, not
+        // from the measure resource list. Even though topn-aggs live under
+        // a measure group, their names (e.g. `endpoint_cpm-service`) are
+        // different from the source measure's name (`endpoint_cpm_minute`).
+        const names = groupTopnAggs.get(g.name) ?? [];
+        for (const r of names) {
+          out.push({ catalog: c.value, group: g.name, resource: r, label: c.label });
+        }
+        continue;
+      }
       const dataKey = protoCatalogToData(g.catalog);
       if (dataKey !== src) continue;
       const resources = groupResources.get(`${src}/${g.name}`) ?? [];
