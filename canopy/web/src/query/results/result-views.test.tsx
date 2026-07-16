@@ -501,15 +501,24 @@ describe('TraceDecoderModal', () => {
     // and confirm the modal re-reads it on mount.
     const traceId = 'trace-bind-test';
     localStorage.removeItem('canopy.td.bind.' + traceId);
-    const messages = tdParseProto(`message Span { string trace_id = 1; string name = 2; }`);
-    tdSetBinding(traceId, 'message Span { string trace_id = 1; string name = 2; }', messages);
+    const protoSrc = `message Span { string trace_id = 1; string name = 2; }`;
+    const parsed = tdParseProto(protoSrc);
+    // Signature: tdSetBinding(traceId, fileName, protoSrc, parsed).
+    // The previous test passed 3 args, putting `parsed` in the `protoSrc`
+    // slot and leaving `parsed` undefined — surfacing as
+    // `Cannot read properties of undefined (reading 'primary')` at
+    // proto-decoder.tsx:397.
+    tdSetBinding(traceId, 'span.proto', protoSrc, parsed);
 
     renderWithRouter(
       <TraceDecoderModal traceId={traceId} onClose={() => {}} />,
     );
-    // Bound state — the root message name and an Unbind button are visible.
-    expect(screen.getByText('Span · bound')).toBeInTheDocument();
-    expect(screen.getByRole('button', { name: /unbind/i })).toBeInTheDocument();
+    // Bound state — the summary shows the file name, message count, and root
+    // message ("Span" in this fixture). The modal renders a "Remove decoder"
+    // button when a binding exists.
+    expect(screen.getByText('span.proto')).toBeInTheDocument();
+    expect(screen.getByText('Span')).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: /remove decoder/i })).toBeInTheDocument();
     // Cleanup
     localStorage.removeItem('canopy.td.bind.' + traceId);
   });
