@@ -204,7 +204,7 @@ export function TraceForm({ mode, groupName, initialName, onClose, onDeleted }: 
   if (mode === 'delete') {
     return (
       <div className="modal-overlay" onClick={() => onClose()}>
-        <div className="modal is-danger" onClick={(e) => e.stopPropagation()}>
+        <div className="modal is-danger" role="dialog" aria-modal="true" aria-label="Delete trace" onClick={(e) => e.stopPropagation()}>
           <div className="modal-head">
             <span className="modal-title">Delete trace</span>
             <button className="modal-x" onClick={() => onClose()} aria-label="Close" />
@@ -230,7 +230,7 @@ export function TraceForm({ mode, groupName, initialName, onClose, onDeleted }: 
 
   return (
     <div className="modal-overlay" onClick={() => onClose()}>
-      <form className="modal is-wide" ref={trapRef} onSubmit={handleSubmit} onClick={(e) => e.stopPropagation()}>
+      <form className="modal is-wide" role="dialog" aria-modal="true" aria-label={isEdit ? 'Edit trace' : 'Create trace'} ref={trapRef} onSubmit={handleSubmit} onClick={(e) => e.stopPropagation()}>
         <div className="modal-head">
           <div>
             <span className="modal-title">{isEdit ? 'Edit trace' : 'Create trace'}</span>

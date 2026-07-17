@@ -196,10 +196,10 @@ export function GroupPage({
           </div>
           {isAdmin && (
             <div className="page-actions">
-              <button className="btn btn-ghost" onClick={() => onEditGroup?.()}>
+              <button className="btn btn-ghost" aria-label="Edit group" onClick={() => onEditGroup?.()}>
                 <IconEdit size={15} /> Edit
               </button>
-              <button className="btn btn-danger-ghost" onClick={() => onDeleteGroup?.()}>
+              <button className="btn btn-danger-ghost" aria-label="Delete group" onClick={() => onDeleteGroup?.()}>
                 <IconTrash size={15} /> Delete
               </button>
             </div>
@@ -211,16 +211,16 @@ export function GroupPage({
       </header>
 
       <div className="grp-meta">
-        <div className="meta-chip">
+        <div className="meta-chip" data-testid="meta-catalog">
           <span className="meta-k">catalog</span>
           <span className="meta-v">{catalogEntry.label}</span>
         </div>
-        <div className="meta-chip">
+        <div className="meta-chip" data-testid="meta-shards">
           <span className="meta-k">shards</span>
           <span className="meta-v">{group.resourceOpts.shardNum}</span>
         </div>
         {typeof replicas === 'number' && (
-          <div className="meta-chip">
+          <div className="meta-chip" data-testid="meta-replicas">
             <span className="meta-k">replicas</span>
             <span
               className={'meta-v' + (replicasWarn ? ' is-warn' : '')}
@@ -231,17 +231,17 @@ export function GroupPage({
           </div>
         )}
         {group.resourceOpts.segmentInterval && (
-          <div className="meta-chip">
+          <div className="meta-chip" data-testid="meta-segment">
             <span className="meta-k">segment</span>
             <span className="meta-v">{formatInterval(group.resourceOpts.segmentInterval)}</span>
           </div>
         )}
-        <div className="meta-chip">
+        <div className="meta-chip" data-testid="meta-ttl">
           <span className="meta-k">ttl</span>
           <span className="meta-v">{formatInterval(group.resourceOpts.ttl)}</span>
         </div>
         {stages.length > 0 && (
-          <div className="meta-chip">
+          <div className="meta-chip" data-testid="meta-stages">
             <span className="meta-k">stages</span>
             <span className="meta-v">{stages.map((s) => s.name).join(' → ')}</span>
           </div>
@@ -310,6 +310,7 @@ export function GroupPage({
               <div
                 key={r.metadata.name}
                 className="res-row"
+                data-testid="res-row"
                 role="button"
                 tabIndex={0}
                 onClick={() => navigate(rowPath(r.metadata.name))}

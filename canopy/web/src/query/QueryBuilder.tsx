@@ -385,9 +385,31 @@ function QBRow({ node, tags, fields, ops, isFirst, onChange, onRemove, onAddCond
           aria-label="Value"
           type="text"
           value={leaf.value}
-          placeholder="value"
+          placeholder={leaf.op === 'BINARY_OP_MATCH' ? 'term(s), comma-sep' : 'value'}
           onChange={(e) => onUpdateCond({ value: e.target.value })}
         />
+        {leaf.op === 'BINARY_OP_MATCH' && (
+          <>
+            <input
+              className="qb-input mono"
+              aria-label="Analyzer"
+              type="text"
+              value={leaf.analyzer ?? ''}
+              placeholder="analyzer"
+              // Empty clears the field; the generator still emits an empty
+              // analyzer slot when an operator is chosen (MATCH('v', '', 'AND')).
+              onChange={(e) => onUpdateCond({ analyzer: e.target.value || undefined })}
+            />
+            <span className="qb-select-wrap">
+              <select aria-label="Match operator" value={leaf.matchOp ?? ''} onChange={(e) => onUpdateCond({ matchOp: e.target.value || undefined })}>
+                <option value="">— op —</option>
+                <option value="AND">AND</option>
+                <option value="OR">OR</option>
+              </select>
+              <span className="qb-select-chev"><IconChev width={13} height={13} /></span>
+            </span>
+          </>
+        )}
         <span className="qb-gap" />
         <button type="button" className="qb-del" title="Remove condition" onClick={onRemove} aria-label="Remove condition">
           <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round">
@@ -485,7 +507,6 @@ export function QueryBuilder({
   isRunning, onEjectToCode, onRun,
   hasRun = false, compact = true, setCompact, openSection = null, setOpenSection,
 }: QueryBuilderProps) {
-  const cat = QB_CAT(state.catalog);
   const isTopN = state.catalog === 'topn';
   const isMeasure = state.catalog === 'measures';
   // Top-N's resource dropdown selects topn-aggregation definitions, not
@@ -567,7 +588,7 @@ export function QueryBuilder({
   const setOrder = (patch: Partial<Pick<QBBuilderState, 'orderField' | 'orderDir'>>) => onChange(patch);
 
   return (
-    <div className="qb-card" data-catalog={state.catalog}>
+    <div className="qb-card" data-catalog={state.catalog} role="region" aria-label="Query builder">
       <div className="qb-rail-scroll">
         {hasRun && (
           <div className="qb-viewbar">

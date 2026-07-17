@@ -44,11 +44,11 @@ import type { QueryResponse, TopNQueryResponse } from 'canopy-shared';
 // Build the view-model the result views actually consume.
 const measure: QueryResponse = {
   measure_result: { data_points: measureWire.data_points as never[] },
-  elements: flattenQueryResponse({ measure_result: { data_points: measureWire.data_points as never[] } } as QueryResponse),
+  elements: flattenQueryResponse({ measure_result: { data_points: measureWire.data_points as never[] } } as unknown as QueryResponse),
 };
 const stream: QueryResponse = {
   stream_result: { elements: streamWire.elements as never[] },
-  elements: flattenQueryResponse({ stream_result: { elements: streamWire.elements as never[] } } as QueryResponse),
+  elements: flattenQueryResponse({ stream_result: { elements: streamWire.elements as never[] } } as unknown as QueryResponse),
 };
 const topn: QueryResponse = {
   elements: flattenTopNResponse(topnWire as TopNQueryResponse),
@@ -84,7 +84,7 @@ describe('MeasureResultView', () => {
   it('renders the table view when no aggregation is selected', () => {
     const stateNoAgg = { ...MEASURE_STATE, select: [], projection: ['host_id'] };
     renderWithRouter(
-      <MeasureResultView response={measure} state={stateNoAgg} showTrace={false} setShowTrace={() => {}} />,
+      <MeasureResultView response={measure} state={stateNoAgg} showTrace={false} setShowTrace={() => {}} hasMore={false} onLoadMore={() => {}} isLoadingMore={false} />,
     );
     // Host column header is always present
     expect(screen.getByText('host_id')).toBeInTheDocument();
@@ -92,7 +92,7 @@ describe('MeasureResultView', () => {
 
   it('renders the chart view when an aggregation is selected (auto by hasAgg)', () => {
     renderWithRouter(
-      <MeasureResultView response={measure} state={MEASURE_STATE} showTrace={false} setShowTrace={() => {}} />,
+      <MeasureResultView response={measure} state={MEASURE_STATE} showTrace={false} setShowTrace={() => {}} hasMore={false} onLoadMore={() => {}} isLoadingMore={false} />,
     );
     // Chart polyline should render; SVG aria-label exposes the metric
     expect(screen.getByLabelText(/MEAN\(cpu\) over time/i)).toBeInTheDocument();
@@ -310,7 +310,9 @@ describe('TopNResultView', () => {
 // bucket history). These tests build a synthetic multi-list response so the
 // time-bucket picker is exercised without depending on cluster data.
 describe('TopNResultView — multi-list (time-bucket picker)', () => {
-  const multiListResponse: QueryResponse = {
+  // Wrapped protojson value shapes ({str:{value}}, {int:{value}}) match the
+  // wire, not the DTO — readFieldValue unwraps them at runtime, so cast here.
+  const multiListResponse = {
     topn_result: {
       lists: [
         {
@@ -337,7 +339,7 @@ describe('TopNResultView — multi-list (time-bucket picker)', () => {
       ],
     },
     elements: [],
-  };
+  } as unknown as QueryResponse;
 
   it('renders the time-bucket picker when the response has more than one list', () => {
     renderWithRouter(
@@ -394,7 +396,7 @@ describe('TopNResultView — multi-list (time-bucket picker)', () => {
   });
 
   it('falls back to the most-recent item timestamp when the list-level one is null', () => {
-    const listWithNullTs: QueryResponse = {
+    const listWithNullTs = {
       topn_result: {
         lists: [
           {
@@ -420,7 +422,7 @@ describe('TopNResultView — multi-list (time-bucket picker)', () => {
         ],
       },
       elements: [],
-    };
+    } as unknown as QueryResponse;
     renderWithRouter(
       <TopNResultView response={listWithNullTs} showTrace={false} setShowTrace={() => {}} />,
     );
@@ -435,21 +437,21 @@ describe('TopNResultView — multi-list (time-bucket picker)', () => {
 describe('TraceResultView', () => {
   // Use the real wire-shape trace fixture for the happy-path span test, and
   // a small inline payload for the decode-bytes button test.
+  // Real wire shape: trace.v1.QueryResponse is a flat span list under
+  // `elements`, each span carrying its own trace_id (no per-trace wrapper).
   const traceWire = {
     trace_id: 't1', span_id: 's1', name: 'GET /', timestamp: '2026-06-29T11:55:00Z', duration: 1800,
     tag_families: [],
   };
   const traceWireWithBytes = {
     trace_id: 't1', span_id: 's2', name: 'db.query', timestamp: '2026-06-29T11:55:00.020Z', duration: 12,
-    tag_families: [{ tags: [{ key: 'bytes', value: 'eyJ4IjoxMjN9' }] }],
+    span: new Uint8Array([123, 34, 120, 125]),
   };
   const traceResponse: QueryResponse = {
-    trace_result: { traces: [{ trace_id: 't1', spans: [traceWire, traceWireWithBytes] as never[] }] },
-    elements: [
-      flattenQueryResponse({ trace_result: { traces: [{ trace_id: 't1', spans: [traceWire, traceWireWithBytes] as never[] }] } } as QueryResponse)[0],
-      { trace_id: 't1', span_id: 's2', name: 'db.query', timestamp: '2026-06-29T11:55:00.020Z', duration: 12,
-        span: new Uint8Array([123, 34, 120, 125]) },
-    ],
+    trace_result: { elements: [traceWire, traceWireWithBytes] as never[] },
+    elements: flattenQueryResponse(
+      { trace_result: { elements: [traceWire, traceWireWithBytes] } } as unknown as QueryResponse,
+    ),
     totalRowCount: 2,
     truncated: false,
   };

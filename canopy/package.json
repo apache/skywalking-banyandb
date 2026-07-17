@@ -19,6 +19,9 @@
     "lint": "npm run -w web lint && npm run -w server lint",
     "pree2e": "npm run build",
     "e2e": "npx playwright test --config=e2e/playwright.config.ts",
+    "e2e:vrt": "npx playwright test --config=e2e/playwright.config.ts --grep @vrt",
+    "pree2e:update-baselines": "npm run build",
+    "e2e:update-baselines": "npx playwright test --config=e2e/playwright.config.ts --grep @vrt --update-snapshots",
     "typecheck": "npm run -w shared typecheck && npm run -w web typecheck && npm run -w server typecheck"
   },
   "devDependencies": {

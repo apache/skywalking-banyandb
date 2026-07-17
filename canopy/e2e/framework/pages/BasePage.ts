@@ -17,25 +17,14 @@
  * under the License.
  */
 
-import React, { useState } from 'react';
+// BasePage — the root of the Page Object Model. Every page object holds a
+// Playwright `Page` and exposes intent-level methods (login, run a query),
+// never raw selectors, to the specs. Locators live inside the page objects so
+// a markup change is fixed in one file. See e2e/TESTING.md §"Structural
+// abstraction: fixtures + POM".
 
-import { Sidebar } from './Sidebar.js';
+import type { Page } from '@playwright/test';
 
-interface ShellProps {
-  children: React.ReactNode;
-}
-
-export function Shell({ children }: ShellProps) {
-  const [collapsed, setCollapsed] = useState(false);
-
-  return (
-    <div className="shell">
-      <Sidebar collapsed={collapsed} onToggleCollapse={() => setCollapsed((c) => !c)} />
-      <div className="content">
-        <main className="content-scroll">
-          {children}
-        </main>
-      </div>
-    </div>
-  );
+export abstract class BasePage {
+  protected constructor(protected readonly page: Page) {}
 }

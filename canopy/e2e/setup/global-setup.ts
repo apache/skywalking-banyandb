@@ -57,6 +57,25 @@ async function waitForReady(url: string, maxAttempts = 60): Promise<void> {
   throw new Error(`BanyanDB at ${url} did not become ready after ${maxAttempts}s`);
 }
 
+// Seed deterministic demo data (groups + measures/streams/traces/top-N + rows)
+// so the query-console specs have known resources to select and run against.
+// BanyanDB data writes are gRPC-only, so this uses the native seeder
+// (cmd/m4-seed) rather than the HTTP BFF. Idempotent (the seeder ignores
+// already-exists) and skippable with E2E_SKIP_SEED for schema-only runs.
+function seedDemoData(): void {
+  if (process.env.E2E_SKIP_SEED) {
+    console.log('[e2e] E2E_SKIP_SEED set — skipping demo data seed');
+    return;
+  }
+  console.log(`[e2e] Seeding demo data via cmd/m4-seed → 127.0.0.1:${GRPC_PORT}`);
+  execSync(`go run ./cmd/m4-seed --addr 127.0.0.1:${GRPC_PORT} --rows 80`, {
+    cwd: REPO_ROOT,
+    stdio: 'inherit',
+    timeout: 180_000,
+  });
+  console.log('[e2e] Demo data seeded');
+}
+
 export default async function globalSetup() {
   const buildRoot = findBuildRoot();
   const binaryPath = join(tmpdir(), 'banyand-e2e');
@@ -96,6 +115,8 @@ export default async function globalSetup() {
   console.log(`[e2e] Waiting for BanyanDB to be ready at ${BANYANDB_TARGET}`);
   await waitForReady(BANYANDB_TARGET);
   console.log('[e2e] BanyanDB ready');
+
+  seedDemoData();
 
   writeFileSync(join(tmpdir(), 'canopy-e2e-state.json'), JSON.stringify({
     banyandbTarget: BANYANDB_TARGET,

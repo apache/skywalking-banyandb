@@ -55,7 +55,7 @@ interface Props {
   readonly entityTag?: string;
 }
 
-type Tag = { key: string; value: unknown };
+type Tag = { key: string; value: string | number | boolean | null };
 
 const IconTopN = (p: React.SVGProps<SVGSVGElement>) => (
   <svg {...p} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
@@ -151,7 +151,7 @@ function resolveLists(response: QueryResponse): readonly TopNList[] {
     const arr = byTs.get(ts)!;
     const entity: Tag[] = Object.keys(e)
       .filter((k) => k !== 'value' && k !== 'timestamp')
-      .map((k) => ({ key: k, value: e[k] }));
+      .map((k) => ({ key: k, value: e[k] as Tag['value'] }));
     arr.push({ entity, value: { float: Number(e.value ?? 0) } });
   }
   return [...byTs.entries()]

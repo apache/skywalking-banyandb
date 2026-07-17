@@ -140,6 +140,17 @@ export function StreamResultView({ response, state, showTrace, setShowTrace, exe
 
   const elements = useMemo(() => (response.elements ?? []) as readonly Elem[], [response]);
 
+  // Clear stale row expansion when a fresh result set arrives. Load-more keeps
+  // the existing element objects as a prefix (so elements[0] identity is
+  // preserved) and must NOT reset; a brand-new query re-flattens every row.
+  const prevFirst = useRef<Elem | undefined>(undefined);
+  React.useEffect(() => {
+    if (elements[0] !== prevFirst.current) {
+      if (prevFirst.current !== undefined) setExpanded(new Set());
+      prevFirst.current = elements[0];
+    }
+  }, [elements]);
+
   // Tags to render: explicit projection, or all keys from the first element.
   // element_id and timestamp are reserved spine fields and never configurable.
   const tagNames = useMemo(

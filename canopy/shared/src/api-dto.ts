@@ -246,6 +246,9 @@ export interface TopNResponse {
 export interface QueryRequest {
   // BydbQL QueryRequest is just a single `query` string — BanyanDB parses it.
   readonly query: string;
+  // Top-N queries carry a structured payload instead; the data source
+  // dispatches to /v1/measure/topn when this is present (see runQuery).
+  readonly topN?: TopNQueryRequest;
 }
 
 export interface QueryResponse {

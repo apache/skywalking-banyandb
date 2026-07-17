@@ -25,12 +25,12 @@ package main
 
 import (
 	"context"
-	"errors"
 	"flag"
 	"fmt"
 	"io"
 	"log"
 	"math/rand"
+	"strings"
 	"time"
 
 	"google.golang.org/grpc"
@@ -47,8 +47,8 @@ import (
 	streamv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/stream/v1"
 	tracev1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/trace/v1"
 
-	agentv3 "skywalking.apache.org/repo/goapi/collect/language/agent/v3"
 	commonv3 "skywalking.apache.org/repo/goapi/collect/common/v3"
+	agentv3 "skywalking.apache.org/repo/goapi/collect/language/agent/v3"
 )
 
 const (
@@ -60,11 +60,11 @@ const (
 	groupStream  = "m4-stream"
 	groupTrace   = "m4-traces"
 
-	measureName      = "service_traffic"
-	measureCPMName  = "service_cpm_minute" // canonical handoff-matched measure
-	streamName       = "service_logs"
-	traceName        = "service_spans"
-	topnName         = "top_service"
+	measureName    = "service_traffic"
+	measureCPMName = "service_cpm_minute" // canonical handoff-matched measure
+	streamName     = "service_logs"
+	traceName      = "service_spans"
+	topnName       = "top_service"
 
 	tagFamily = "default"
 )
@@ -89,7 +89,7 @@ func ignoreAlreadyExists(err error) bool {
 		return false
 	}
 	return st.Code() == codes.AlreadyExists ||
-		(st.Code() == codes.InvalidArgument && errors.Is(err, err))
+		(st.Code() == codes.InvalidArgument && strings.Contains(strings.ToLower(st.Message()), "already exist"))
 }
 
 func main() {
@@ -139,8 +139,8 @@ func main() {
 	for _, g := range groups {
 		_, err := gc.Create(ctx, &databasev1.GroupRegistryServiceCreateRequest{
 			Group: &commonv1.Group{
-				Metadata:  &commonv1.Metadata{Name: g.name},
-				Catalog:   commonv1.Catalog(commonv1.Catalog_value[g.catalog]),
+				Metadata: &commonv1.Metadata{Name: g.name},
+				Catalog:  commonv1.Catalog(commonv1.Catalog_value[g.catalog]),
 				ResourceOpts: &commonv1.ResourceOpts{
 					ShardNum:        1,
 					SegmentInterval: &commonv1.IntervalRule{Unit: commonv1.IntervalRule_UNIT_DAY, Num: 1},
@@ -172,10 +172,22 @@ func main() {
 				},
 			}},
 			Fields: []*databasev1.FieldSpec{
-				{Name: "request_count", FieldType: databasev1.FieldType_FIELD_TYPE_INT, EncodingMethod: databasev1.EncodingMethod_ENCODING_METHOD_GORILLA, CompressionMethod: databasev1.CompressionMethod_COMPRESSION_METHOD_ZSTD},
-				{Name: "cpu_usage", FieldType: databasev1.FieldType_FIELD_TYPE_FLOAT, EncodingMethod: databasev1.EncodingMethod_ENCODING_METHOD_GORILLA, CompressionMethod: databasev1.CompressionMethod_COMPRESSION_METHOD_ZSTD},
-				{Name: "memory_usage", FieldType: databasev1.FieldType_FIELD_TYPE_FLOAT, EncodingMethod: databasev1.EncodingMethod_ENCODING_METHOD_GORILLA, CompressionMethod: databasev1.CompressionMethod_COMPRESSION_METHOD_ZSTD},
-				{Name: "latency_ms", FieldType: databasev1.FieldType_FIELD_TYPE_FLOAT, EncodingMethod: databasev1.EncodingMethod_ENCODING_METHOD_GORILLA, CompressionMethod: databasev1.CompressionMethod_COMPRESSION_METHOD_ZSTD},
+				{
+					Name: "request_count", FieldType: databasev1.FieldType_FIELD_TYPE_INT,
+					EncodingMethod: databasev1.EncodingMethod_ENCODING_METHOD_GORILLA, CompressionMethod: databasev1.CompressionMethod_COMPRESSION_METHOD_ZSTD,
+				},
+				{
+					Name: "cpu_usage", FieldType: databasev1.FieldType_FIELD_TYPE_FLOAT,
+					EncodingMethod: databasev1.EncodingMethod_ENCODING_METHOD_GORILLA, CompressionMethod: databasev1.CompressionMethod_COMPRESSION_METHOD_ZSTD,
+				},
+				{
+					Name: "memory_usage", FieldType: databasev1.FieldType_FIELD_TYPE_FLOAT,
+					EncodingMethod: databasev1.EncodingMethod_ENCODING_METHOD_GORILLA, CompressionMethod: databasev1.CompressionMethod_COMPRESSION_METHOD_ZSTD,
+				},
+				{
+					Name: "latency_ms", FieldType: databasev1.FieldType_FIELD_TYPE_FLOAT,
+					EncodingMethod: databasev1.EncodingMethod_ENCODING_METHOD_GORILLA, CompressionMethod: databasev1.CompressionMethod_COMPRESSION_METHOD_ZSTD,
+				},
 			},
 			Interval: "30s",
 		},
@@ -202,8 +214,14 @@ func main() {
 				},
 			}},
 			Fields: []*databasev1.FieldSpec{
-				{Name: "total", FieldType: databasev1.FieldType_FIELD_TYPE_INT, EncodingMethod: databasev1.EncodingMethod_ENCODING_METHOD_GORILLA, CompressionMethod: databasev1.CompressionMethod_COMPRESSION_METHOD_ZSTD},
-				{Name: "value", FieldType: databasev1.FieldType_FIELD_TYPE_INT, EncodingMethod: databasev1.EncodingMethod_ENCODING_METHOD_GORILLA, CompressionMethod: databasev1.CompressionMethod_COMPRESSION_METHOD_ZSTD},
+				{
+					Name: "total", FieldType: databasev1.FieldType_FIELD_TYPE_INT,
+					EncodingMethod: databasev1.EncodingMethod_ENCODING_METHOD_GORILLA, CompressionMethod: databasev1.CompressionMethod_COMPRESSION_METHOD_ZSTD,
+				},
+				{
+					Name: "value", FieldType: databasev1.FieldType_FIELD_TYPE_INT,
+					EncodingMethod: databasev1.EncodingMethod_ENCODING_METHOD_GORILLA, CompressionMethod: databasev1.CompressionMethod_COMPRESSION_METHOD_ZSTD,
+				},
 			},
 			Interval: "1m",
 		},
@@ -235,7 +253,7 @@ func main() {
 
 	if _, err := tc.Create(ctx, &databasev1.TraceRegistryServiceCreateRequest{
 		Trace: &databasev1.Trace{
-			Metadata:         &commonv1.Metadata{Group: groupTrace, Name: traceName},
+			Metadata: &commonv1.Metadata{Group: groupTrace, Name: traceName},
 			Tags: []*databasev1.TraceTagSpec{
 				{Name: "service", Type: databasev1.TagType_TAG_TYPE_STRING},
 				{Name: "trace_id", Type: databasev1.TagType_TAG_TYPE_STRING},
@@ -644,9 +662,9 @@ func countTrace(ctx context.Context, c tracev1.TraceServiceClient, baseMs int64)
 			Begin: timestamppb.New(time.UnixMilli(baseMs - 60_000).Truncate(time.Millisecond)),
 			End:   timestamppb.New(time.Now().Add(60_000 * time.Millisecond).Truncate(time.Millisecond)),
 		},
-		OrderBy:        &modelv1.QueryOrder{Sort: modelv1.Sort_SORT_DESC},
-		Limit:          1000,
-		TagProjection:  []string{"service", "trace_id", "span_id", "duration_ms", "status", "endpoint"},
+		OrderBy:       &modelv1.QueryOrder{Sort: modelv1.Sort_SORT_DESC},
+		Limit:         1000,
+		TagProjection: []string{"service", "trace_id", "span_id", "duration_ms", "status", "endpoint"},
 	})
 	if err != nil {
 		return 0, err

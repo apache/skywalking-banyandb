@@ -192,6 +192,17 @@ export function TraceResultView({ response, state, showTrace, setShowTrace, exec
 
   const elements = useMemo(() => (response.elements ?? []) as readonly Elem[], [response]);
 
+  // Clear stale row expansion when a fresh result set arrives. Load-more keeps
+  // the existing element objects as a prefix (elements[0] identity preserved)
+  // and must NOT reset; a brand-new query re-flattens every row.
+  const prevFirst = useRef<Elem | undefined>(undefined);
+  React.useEffect(() => {
+    if (elements[0] !== prevFirst.current) {
+      if (prevFirst.current !== undefined) setExpanded(new Set());
+      prevFirst.current = elements[0];
+    }
+  }, [elements]);
+
   // Build a type map from schema specs; missing tags default to STRING.
   const typeMap = useMemo(() => {
     const map: Record<string, string> = {};
@@ -389,13 +400,11 @@ export function TraceResultView({ response, state, showTrace, setShowTrace, exec
                 index={i}
                 element={e}
                 tsField={tsField}
-                resource={state.resource}
                 config={tagConfig}
                 detailConfig={detailConfig}
                 binding={binding}
                 expanded={expanded}
                 setExpanded={setExpanded}
-                setDecoding={setDecoding}
               />
             ))}
           </div>
@@ -420,17 +429,15 @@ export function TraceResultView({ response, state, showTrace, setShowTrace, exec
   );
 }
 
-function TraceInspectorRow({ index, element, tsField, resource, config, detailConfig, binding, expanded, setExpanded, setDecoding }: {
+function TraceInspectorRow({ index, element, tsField, config, detailConfig, binding, expanded, setExpanded }: {
   index: number;
   element: Elem;
   tsField: string;
-  resource: string;
   config: readonly TraceTagConfig[];
   detailConfig: readonly TraceTagConfig[];
   binding: TDBinding | null;
   expanded: Set<number>;
   setExpanded: (v: Set<number>) => void;
-  setDecoding: (v: { resource: string; bytes: Uint8Array } | null) => void;
 }) {
   const isOpen = expanded.has(index);
   const toggle = () => {

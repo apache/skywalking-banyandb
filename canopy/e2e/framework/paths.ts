@@ -17,25 +17,9 @@
  * under the License.
  */
 
-import React, { useState } from 'react';
+// Shared path constants. Kept free of any test()/setup() calls so the
+// Playwright config can import it without triggering "test() called here".
 
-import { Sidebar } from './Sidebar.js';
-
-interface ShellProps {
-  children: React.ReactNode;
-}
-
-export function Shell({ children }: ShellProps) {
-  const [collapsed, setCollapsed] = useState(false);
-
-  return (
-    <div className="shell">
-      <Sidebar collapsed={collapsed} onToggleCollapse={() => setCollapsed((c) => !c)} />
-      <div className="content">
-        <main className="content-scroll">
-          {children}
-        </main>
-      </div>
-    </div>
-  );
-}
+// Cached storageState written by auth/auth.setup.ts and loaded by the main
+// project. Gitignored — it holds a live session token.
+export const STORAGE_STATE = 'e2e/.auth/user.json';

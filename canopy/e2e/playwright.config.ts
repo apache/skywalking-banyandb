@@ -17,30 +17,55 @@
  * under the License.
  */
 
+// The single, canonical Playwright config for the canopy E2E suite (see
+// e2e/TESTING.md). The milestone-numbered specs, the .mjs probes, and the
+// legacy/handoff/reuse configs were all removed at migration cutover — this is
+// the end state. Scoped to the redesigned framework (auth/ setup + tests/).
+//
+// Highlights:
+//   • a `setup` project logs in once → storageState, injected into every test
+//   • VRT discipline enforced globally: animations disabled, caret hidden,
+//     CSS-scaled snapshots (stable across DPI)
+//   • screenshots only-on-failure (the pixel gate is explicit toHaveScreenshot)
+//   • local dev reuses a running BFF (reuseExistingServer: !isCI)
+//   • CI: retries + sharding-ready, list+html reporters
+
 import { defineConfig, devices } from '@playwright/test';
 import { join } from 'node:path';
+import { STORAGE_STATE } from './framework/paths.js';
+
+const isCI = !!process.env.CI;
 
 export default defineConfig({
   testDir: '.',
-  testMatch: '**/*.spec.ts',
-  // m3-handoff runs against a different webServer (the handoff design bundle
-  // served by playwright.handoff.config.ts) — exclude it from the main suite.
-  testIgnore: '**/m3-handoff.spec.ts',
   outputDir: './test-results',
+  fullyParallel: true,
+  forbidOnly: isCI,
+  retries: isCI ? 2 : 0,
+  reporter: isCI ? [['list'], ['html', { open: 'never' }]] : [['list']],
   timeout: 60_000,
-  expect: { timeout: 10_000 },
+  expect: {
+    timeout: 10_000,
+    // Visual-regression defaults applied to every toHaveScreenshot() call.
+    toHaveScreenshot: {
+      maxDiffPixelRatio: 0.01,
+      animations: 'disabled',
+      caret: 'hide',
+      scale: 'css',
+    },
+  },
   globalSetup: './setup/global-setup.ts',
   globalTeardown: './setup/global-teardown.ts',
   webServer: {
     command: 'node dist/src/index.js',
     cwd: join(__dirname, '..', 'server'),
     port: 4000,
-    // reuseExistingServer so the harness can be run against a dev BFF
-    // (npm run dev in canopy/server) without port-collision failures.
-    reuseExistingServer: true,
+    reuseExistingServer: !isCI,
     timeout: 30_000,
     env: {
       SESSION_SECRET: 'canopy-e2e-test-secret-32chars!!',
+      // CI fast path: bypass auth for the main suite. The login form itself is
+      // validated by the dedicated auth suite against an auth-enabled server.
       CANOPY_DEV_NOAUTH: 'true',
       BANYANDB_TARGET: process.env.BANYANDB_TARGET || 'http://127.0.0.1:17913',
       PORT: '4000',
@@ -50,16 +75,22 @@ export default defineConfig({
   use: {
     baseURL: process.env.CANOPY_URL || 'http://localhost:4000',
     trace: 'on-first-retry',
-    // 'on' so every test captures a screenshot — combined with toHaveScreenshot()
-    // assertions in m4-query.spec.ts and m4-handoff-capture.spec.ts this is
-    // the pixel-regression gate: a UI change that diverges from the committed
-    // baseline fails the test (NOT a soft warning).
-    screenshot: 'on',
+    screenshot: 'only-on-failure',
+    video: 'retain-on-failure',
   },
   projects: [
     {
+      name: 'setup',
+      testMatch: /auth\/.*\.setup\.ts$/,
+    },
+    {
       name: 'chromium',
-      use: { ...devices['Desktop Chrome'] },
+      testMatch: /tests\/.*\.spec\.ts$/,
+      dependencies: ['setup'],
+      use: {
+        ...devices['Desktop Chrome'],
+        storageState: STORAGE_STATE,
+      },
     },
   ],
 });

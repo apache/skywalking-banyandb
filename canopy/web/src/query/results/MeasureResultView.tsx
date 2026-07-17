@@ -30,7 +30,7 @@
 // we follow a simpler rule (first projection) because QueryBuilder does
 // not expose entity tag names.
 
-import React, { useMemo, useRef, useState } from 'react';
+import React, { useMemo, useState } from 'react';
 import type { QueryResponse } from 'canopy-shared';
 import type { QBBuilderState } from '../bydbql.js';
 import { parseTs, parseIntervalMs, formatTs } from '../time.js';
@@ -64,7 +64,12 @@ const MR_COLORS = ['#3d82f6', '#3cc8b4', '#d98a3c', '#9b8cf0', '#e0707a', '#56c2
 
 function fmtNum(n: number): string {
   if (!Number.isFinite(n)) return '–';
-  return Math.round(n).toLocaleString('en-US');
+  if (Number.isInteger(n)) return n.toLocaleString('en-US');
+  // Keep fractional precision for small-magnitude measures (rates, ratios,
+  // sub-1 aggregates) that Math.round would otherwise flatten to 0.
+  const abs = Math.abs(n);
+  const digits = abs >= 1000 ? 0 : abs >= 1 ? 2 : 4;
+  return n.toLocaleString('en-US', { maximumFractionDigits: digits });
 }
 
 function fmtPct(dpct: number): string {
@@ -103,7 +108,7 @@ interface Series {
   readonly points: readonly SeriesPoint[];
 }
 
-function deriveIdTags(state: QBBuilderState, tags?: readonly string[]): string[] {
+function deriveIdTags(state: QBBuilderState, tags?: readonly string[]): readonly string[] {
   const groupBy = state.groupBy ?? [];
   if (groupBy.length > 0) return groupBy;
   const projection = state.projection ?? [];
@@ -338,8 +343,14 @@ function ChartView({ series, fields, activeField, setActiveField, hasTimeAxis, i
   let vMin = Math.min(...vals), vMax = Math.max(...vals);
   if (vMin === vMax) { vMin -= 1; vMax += 1; }
   const vpad = (vMax - vMin) * 0.14 || 1;
-  vMin = Math.max(0, Math.floor((vMin - vpad) / 50) * 50);
-  vMax = Math.ceil((vMax + vpad) / 50) * 50;
+  const lo = vMin - vpad, hi = vMax + vpad;
+  // Round bounds to a "nice" power-of-ten step derived from the data range so
+  // small-magnitude series (rates, ratios, sub-1 aggregates) are not flattened
+  // to the x-axis by a fixed 50-unit grid.
+  const step = Math.pow(10, Math.floor(Math.log10(hi - lo || 1))) || 1;
+  vMin = Math.max(0, Math.floor(lo / step) * step);
+  vMax = Math.ceil(hi / step) * step;
+  if (vMin === vMax) vMax = vMin + step;
 
   const X = (t: number) => padL + ((t - tMin) / (tMax - tMin || 1)) * innerW;
   const Y = (v: number) => padT + (1 - (v - vMin) / (vMax - vMin || 1)) * innerH;

@@ -89,8 +89,8 @@ describe('QB vocabulary', () => {
 
 describe('qbSearchIndex with topn-agg map', () => {
   const groups: Group[] = [
-    { metadata: { name: 'sw_metricsMinute', id: 0, createRevision: '0', modRevision: '0' }, catalog: 'CATALOG_MEASURE', resourceOpts: { shardNum: 1 }, name: 'sw_metricsMinute' },
-    { metadata: { name: 'sw_recordsLog', id: 0, createRevision: '0', modRevision: '0' }, catalog: 'CATALOG_STREAM', resourceOpts: { shardNum: 1 }, name: 'sw_recordsLog' },
+    { catalog: 'CATALOG_MEASURE', resourceOpts: { shardNum: 1 }, name: 'sw_metricsMinute' },
+    { catalog: 'CATALOG_STREAM', resourceOpts: { shardNum: 1 }, name: 'sw_recordsLog' },
   ];
   const groupResources: GroupResourcesMap = new Map([
     ['measures/sw_metricsMinute', ['service_cpm_minute', 'endpoint_cpm_minute']],

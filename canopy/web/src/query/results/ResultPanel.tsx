@@ -107,7 +107,7 @@ export function ResultPanel({
         {actions && <div className="result-actions">{actions}</div>}
       </div>
       {subBar}
-      <div className="rv-root">{children}</div>
+      <div className="rv-root" role="region" aria-label="Query results">{children}</div>
     </div>
   );
 }

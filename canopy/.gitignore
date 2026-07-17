@@ -5,5 +5,13 @@ web/dist/
 server/dist/
 .env
 *.local
-e2e/screenshots/*.png
-test-results/
+# Screenshots: ignore ALL transient/debug captures and Playwright failure
+# shots. The only screenshots kept in git are the committed VRT baselines
+# under e2e/tests/**/*-snapshots/ (the pixel-regression gate needs them
+# tracked to diff against).
+e2e/screenshots/
+**/test-results/
+# Cached auth storageState — contains a live session token; never commit.
+e2e/.auth/
+# Playwright HTML report output.
+e2e/playwright-report/

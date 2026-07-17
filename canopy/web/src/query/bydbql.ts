@@ -94,15 +94,19 @@ export const QB_OPS: readonly QB_OP_DEF[] = [
   { value: 'BINARY_OP_LE', sql: '<=', label: 'less or equal  ≤' },
   { value: 'BINARY_OP_IN', sql: 'IN', label: 'in  (a, b)' },
   { value: 'BINARY_OP_NOT_IN', sql: 'NOT IN', label: 'not in  (a, b)' },
+  { value: 'BINARY_OP_HAVING', sql: 'HAVING', label: 'having  (array contains all)' },
+  { value: 'BINARY_OP_NOT_HAVING', sql: 'NOT HAVING', label: 'not having' },
   { value: 'BINARY_OP_MATCH', sql: 'MATCH', label: 'match  (full-text)' },
 ];
 
 export const QB_OP = (v: string): QB_OP_DEF =>
   QB_OPS.find((o) => o.value === v) ?? QB_OPS[0];
 
-// Top-N criteria support comparison + set ops but not full-text MATCH.
+// Top-N criteria support comparison + set membership only — not full-text
+// MATCH nor array HAVING (per docs/interacting/bydbql.md §3.1).
+const QB_TOPN_EXCLUDED = new Set(['BINARY_OP_MATCH', 'BINARY_OP_HAVING', 'BINARY_OP_NOT_HAVING']);
 export const QB_TOPN_OPS: readonly QB_OP_DEF[] =
-  QB_OPS.filter((o) => o.value !== 'BINARY_OP_MATCH');
+  QB_OPS.filter((o) => !QB_TOPN_EXCLUDED.has(o.value));
 
 export interface QB_AGG_DEF {
   readonly value: string;
@@ -157,7 +161,12 @@ export const QB_TIMES: readonly { value: string; label: string }[] = [
 export interface QBWhereLeaf {
   readonly tag: string;
   readonly op: string;
+  // For IN / NOT IN / HAVING / MATCH, `value` is a comma-separated list.
   readonly value: string;
+  // MATCH-only options (docs/interacting/bydbql.md §3.1): the text analyzer and
+  // the multi-value operator ('AND' | 'OR'). Rendered as trailing MATCH args.
+  readonly analyzer?: string;
+  readonly matchOp?: string;
 }
 
 export interface QBWhereLeafWithConn extends QBWhereLeaf {
@@ -170,7 +179,11 @@ export interface QBWhereGroup {
 }
 
 export interface QBWhereGroupWithConn extends QBWhereGroup {
-  readonly children: readonly QBWhereLeafWithConn[];
+  // Connector joining this group to its previous sibling (mirrors the leaf
+  // `conn`). Groups can nest arbitrarily, so `children` keeps the base
+  // QBWhereNode[] element type rather than narrowing to leaves only.
+  readonly conn?: 'AND' | 'OR';
+  readonly children: readonly QBWhereNode[];
 }
 
 export type QBWhereNode = QBWhereLeafWithConn | QBWhereGroupWithConn;
@@ -182,22 +195,48 @@ export const qbIsGroup = (n: QBWhereNode | undefined | null): n is QBWhereGroupW
 // to the group-level `combinator`).
 const qbConn = (
   node: QBWhereGroupWithConn,
-  c: QBWhereLeafWithConn,
+  c: QBWhereNode,
 ): 'AND' | 'OR' => c.conn ?? node.combinator ?? 'AND';
+
+// number of conditions a node contributes once empty leaves are pruned; used
+// to decide whether a nested group must be parenthesized when embedded.
+const qbEffectiveCount = (node: QBWhereNode): number => {
+  if (qbIsGroup(node)) return node.children.reduce((sum, c) => sum + qbEffectiveCount(c), 0);
+  const leaf = node as QBWhereLeafWithConn;
+  return leaf.tag && leaf.op ? 1 : 0;
+};
+
+// True when `s` is a single group already fully enclosed in one paren pair
+// (e.g. "(a AND b)" but NOT "(a) OR (b)"). Used to avoid double-wrapping a
+// nested group that the recursion already parenthesized.
+const qbFullyWrapped = (s: string): boolean => {
+  if (!s.startsWith('(') || !s.endsWith(')')) return false;
+  let depth = 0;
+  for (let i = 0; i < s.length; i++) {
+    if (s[i] === '(') depth++;
+    else if (s[i] === ')' && --depth === 0) return i === s.length - 1;
+  }
+  return false;
+};
 
 // split a group's rendered parts into OR-separated runs of ANDed parts.
 // Returns segments where each segment is a list of items joined by ' AND '.
 // A segment is parenthesized only when it has 2+ items (so the outer
-// precedence is unambiguous). Single-item segments stay bare.
+// precedence is unambiguous). Single-item segments stay bare. The connector
+// is read from each item's own source node, so pruning empty children never
+// misaligns the connector-to-child mapping.
+interface QBRenderedItem {
+  readonly sql: string;
+  readonly node: QBWhereNode;
+}
 function qbConnSegments(
   node: QBWhereGroupWithConn,
-  items: readonly { readonly sql: string }[],
-  children: readonly QBWhereLeafWithConn[],
-): readonly (readonly { readonly sql: string }[])[] {
+  items: readonly QBRenderedItem[],
+): readonly (readonly QBRenderedItem[])[] {
   if (items.length === 0) return [];
-  const segs: { readonly sql: string }[][] = [[items[0]]];
+  const segs: QBRenderedItem[][] = [[items[0]]];
   for (let i = 1; i < items.length; i++) {
-    if (qbConn(node, children[i]) === 'OR') segs.push([]);
+    if (qbConn(node, items[i].node) === 'OR') segs.push([]);
     segs[segs.length - 1] = [...segs[segs.length - 1], items[i]];
   }
   return segs;
@@ -213,6 +252,19 @@ export const qbConnSummary = (root: QBWhereGroupWithConn): 'AND' | 'OR' | 'mixed
 
 const QB_NUM = (s: string): boolean => /^-?\d+(\.\d+)?$/.test(s.trim());
 
+/** Wrap a string value in a valid BydbQL string literal. The grammar
+ *  (string_literal ::= "'" [^']* "'" | '"' [^"]* '"') has NO escape syntax,
+ *  so pick whichever delimiter the value does not contain — otherwise an
+ *  embedded quote silently terminates the literal (a malformed query and a
+ *  predicate-injection vector). A value containing both quote characters has
+ *  no representation, so drop the embedded double quotes as a last resort to
+ *  keep the query parseable. */
+const qbQuoteStr = (v: string): string => {
+  if (!v.includes("'")) return `'${v}'`;
+  if (!v.includes('"')) return `"${v}"`;
+  return `"${v.replace(/"/g, '')}"`;
+};
+
 /** Format a literal value for BydbQL. IN / NOT IN expand a comma list.
  *  When forceString is true the value is always quoted, even if it looks
  *  numeric — this is required for string tags such as trace_id that happen
@@ -221,10 +273,69 @@ export const qbQuote = (op: string, raw: string | null | undefined, forceString 
   const value = (raw == null ? '' : String(raw)).trim();
   if (op === 'BINARY_OP_IN' || op === 'BINARY_OP_NOT_IN') {
     const parts = value.split(',').map((x) => x.trim()).filter(Boolean);
-    return '(' + parts.map((p) => (forceString || !QB_NUM(p) ? `'${p}'` : p)).join(', ') + ')';
+    return '(' + parts.map((p) => (forceString || !QB_NUM(p) ? qbQuoteStr(p) : p)).join(', ') + ')';
   }
   if (value === '') return "''";
-  return forceString || !QB_NUM(value) ? `'${value}'` : value;
+  return forceString || !QB_NUM(value) ? qbQuoteStr(value) : value;
+};
+
+// Split a comma list into non-empty trimmed parts.
+const qbParts = (raw: string | null | undefined): string[] =>
+  (raw == null ? '' : String(raw)).split(',').map((x) => x.trim()).filter(Boolean);
+
+/** Render a single scalar literal for a comparison / MATCH / HAVING position.
+ *  Numeric-looking values stay unquoted unless the tag is schema-STRING; the
+ *  bare literal NULL is emitted for null comparisons (value ::= string |
+ *  integer | NULL). Empty renders as ''. */
+const qbLit = (raw: string | null | undefined, forceString: boolean): string => {
+  const v = (raw == null ? '' : String(raw)).trim();
+  if (v.toUpperCase() === 'NULL') return 'NULL';
+  if (v === '') return "''";
+  return forceString || !QB_NUM(v) ? qbQuoteStr(v) : v;
+};
+
+/** Full-text MATCH uses function-call syntax (docs §3.1):
+ *    MATCH(value) | MATCH(value, analyzer) | MATCH(value, analyzer, operator)
+ *  Multiple search terms are wrapped in an inner value list. */
+const qbMatchSQL = (leaf: QBWhereLeaf, forceString: boolean): string => {
+  const vals = qbParts(leaf.value);
+  const valPart = vals.length > 1
+    ? `(${vals.map((v) => qbLit(v, forceString)).join(', ')})`
+    : qbLit(vals[0] ?? '', forceString);
+  const args = [valPart];
+  // Positional args: an operator requires an (possibly empty) analyzer slot.
+  if (leaf.analyzer !== undefined || leaf.matchOp !== undefined) args.push(qbQuoteStr(leaf.analyzer ?? ''));
+  if (leaf.matchOp !== undefined) args.push(qbQuoteStr(leaf.matchOp));
+  return `MATCH(${args.join(', ')})`;
+};
+
+/** HAVING / NOT HAVING (array contains): a single value stays bare, multiple
+ *  values wrap in parens — e.g. `tags HAVING 'c'` vs `tags HAVING ('c', 'b')`. */
+const qbHavingSQL = (opSQL: string, value: string, forceString: boolean): string => {
+  const rendered = qbParts(value).map((v) => qbLit(v, forceString));
+  const arg = rendered.length > 1 ? `(${rendered.join(', ')})` : (rendered[0] ?? "''");
+  return `${opSQL} ${arg}`;
+};
+
+/** Render a single WHERE leaf to BydbQL, dispatching on the operator family:
+ *  MATCH → function-call, HAVING → array-contains, IN → membership list, and
+ *  everything else → `tag op literal` (with NULL / numeric / string rules). */
+export const qbLeafSQL = (leaf: QBWhereLeaf, stringTags?: ReadonlySet<string>): string => {
+  if (!leaf.tag || !leaf.op) return '';
+  const op = QB_OP(leaf.op);
+  const forceString = !!stringTags?.has(leaf.tag);
+  switch (leaf.op) {
+    case 'BINARY_OP_MATCH':
+      return `${leaf.tag} ${qbMatchSQL(leaf, forceString)}`;
+    case 'BINARY_OP_HAVING':
+    case 'BINARY_OP_NOT_HAVING':
+      return `${leaf.tag} ${qbHavingSQL(op.sql, leaf.value, forceString)}`;
+    case 'BINARY_OP_IN':
+    case 'BINARY_OP_NOT_IN':
+      return `${leaf.tag} ${op.sql} ${qbQuote(leaf.op, leaf.value, forceString)}`;
+    default:
+      return `${leaf.tag} ${op.sql} ${qbLit(leaf.value, forceString)}`;
+  }
 };
 
 // ── WHERE expression: recursive groups with () / AND / OR ──────────────────
@@ -254,22 +365,27 @@ export const qbNodeSQL = (node: QBWhereNode | null | undefined, depth: number, s
   if (!node) return '';
   if (qbIsGroup(node)) {
     const items = node.children
-      .map((c) => ({ sql: qbNodeSQL(c, depth + 1, stringTags) }))
+      .map((c) => {
+        let sql = qbNodeSQL(c, depth + 1, stringTags);
+        // A nested group contributing more than one condition must be
+        // parenthesized before it is embedded, or the parent's AND/OR
+        // precedence would silently rewrite its meaning — unless the recursion
+        // already wrapped it (avoids "((a AND b))").
+        if (sql && qbIsGroup(c) && qbEffectiveCount(c) > 1 && !qbFullyWrapped(sql)) sql = `(${sql})`;
+        return { sql, node: c };
+      })
       .filter((x) => x.sql);
     if (items.length === 0) return '';
     // AND binds tighter than OR: split into OR-separated AND-runs and
     // parenthesize multi-condition runs so the meaning is explicit.
-    const segs = qbConnSegments(node, items, node.children);
+    const segs = qbConnSegments(node, items);
     const joined = segs.map((seg) => {
       const j = seg.map((x) => x.sql).join(' AND ');
       return seg.length > 1 ? `(${j})` : j;
     });
     return joined.join(' OR ');
   }
-  const leaf = node as QBWhereLeafWithConn;
-  if (!leaf.tag || !leaf.op) return '';
-  const op = QB_OP(leaf.op);
-  return `${leaf.tag} ${op.sql} ${qbQuote(leaf.op, leaf.value, stringTags?.has(leaf.tag))}`;
+  return qbLeafSQL(node as QBWhereLeafWithConn, stringTags);
 };
 
 /** Render the time range as a BydbQL TIME clause fragment (or '' when unset).

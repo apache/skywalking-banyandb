@@ -26,7 +26,7 @@ import type {
   CreateIndexRuleRequest, UpdateIndexRuleRequest, IndexRuleSchema,
   CreateIndexRuleBindingRequest, UpdateIndexRuleBindingRequest, IndexRuleBindingSchema,
   PropertySchema, TopNAggregationSchema,
-  QueryRequest, QueryResponse, TopNQueryRequest, TopNQueryResponse,
+  QueryRequest, QueryResponse, TopNQueryResponse,
 } from 'canopy-shared';
 
 import type { DataSource } from './DataSource.js';
@@ -352,8 +352,8 @@ export class ApiDataSource implements DataSource {
 
   async runQuery(request: QueryRequest): Promise<QueryResponse> {
     // TopN → /v1/measure/topn (separate endpoint per plan SF5)
-    if ((request as unknown as { topN?: TopNQueryRequest }).topN) {
-      const topN = (request as unknown as { topN: TopNQueryRequest }).topN;
+    if (request.topN) {
+      const topN = request.topN;
       const data = await apiFetch<TopNQueryResponse>('/api/v1/measure/topn', {
         method: 'POST', headers: JSON_HEADERS,
         body: JSON.stringify(topN),
@@ -431,25 +431,18 @@ export function flattenQueryResponse(data: QueryResponse): Record<string, unknow
   // still use snake_case. Accept both so downstream views always get elements.
   const streamResult = (d.streamResult ?? d.stream_result) as { elements?: unknown[] } | undefined;
   const measureResult = (d.measureResult ?? d.measure_result) as { dataPoints?: unknown[]; data_points?: unknown[] } | undefined;
-  const traceResult = (d.traceResult ?? d.trace_result) as { traces?: unknown[] } | undefined;
+  const traceResult = (d.traceResult ?? d.trace_result) as { elements?: unknown[] } | undefined;
   if (streamResult?.elements) return streamResult.elements.map((e) => flattenStreamElement(e as never));
   const measurePoints = measureResult?.dataPoints ?? measureResult?.data_points;
   if (measurePoints) return measurePoints.map((e) => flattenMeasureDataPoint(e as never));
-  if (traceResult?.traces) {
-    const flat: Record<string, unknown>[] = [];
-    for (const t of traceResult.traces) {
-      const trace = t as { trace_id?: string; spans?: unknown[] };
-      for (const s of trace.spans ?? []) {
-        flat.push(flattenTraceSpan(s as never, trace.trace_id));
-      }
-    }
-    return flat;
-  }
+  // trace.v1.QueryResponse is a flat span list: { elements: [Span] }, each
+  // span carrying its own trace_id (there is no per-trace grouping wrapper).
+  if (traceResult?.elements) return traceResult.elements.map((s) => flattenTraceSpan(s as never));
   return [];
 }
 
-function flattenStreamElement(e: { element_id?: string; timestamp?: string; tagFamilies?: readonly { tags?: readonly { key: string; value: unknown }[] }[]; tag_families?: readonly { tags?: readonly { key: string; value: unknown }[] }[] }): Record<string, unknown> {
-  const flat: Record<string, unknown> = { element_id: e.element_id, timestamp: e.timestamp };
+function flattenStreamElement(e: { elementId?: string; element_id?: string; timestamp?: string; tagFamilies?: readonly { tags?: readonly { key: string; value: unknown }[] }[]; tag_families?: readonly { tags?: readonly { key: string; value: unknown }[] }[] }): Record<string, unknown> {
+  const flat: Record<string, unknown> = { element_id: e.elementId ?? e.element_id, timestamp: e.timestamp };
   const families = e.tagFamilies ?? e.tag_families ?? [];
   for (const fam of families) {
     for (const t of fam.tags ?? []) {
@@ -482,7 +475,11 @@ function flattenTraceSpan(
     span_id?: string;
     traceId?: string;
     trace_id?: string;
+    name?: string;
+    timestamp?: string;
+    duration?: number;
     tags?: readonly { key: string; value: unknown }[];
+    tagFamilies?: readonly { tags?: readonly { key: string; value: unknown }[] }[];
     tag_families?: readonly { tags?: readonly { key: string; value: unknown }[] }[];
     span?: unknown;
   },
@@ -494,8 +491,12 @@ function flattenTraceSpan(
   const traceId = s.traceId ?? s.trace_id ?? parentTraceId;
   const spanId = s.spanId ?? s.span_id;
   const flat: Record<string, unknown> = { trace_id: traceId, span_id: spanId };
+  // Spine fields the result view renders (timestamp column, name, duration).
+  if (s.name !== undefined) flat.name = s.name;
+  if (s.timestamp !== undefined) flat.timestamp = s.timestamp;
+  if (s.duration !== undefined) flat.duration = s.duration;
   if (s.span !== undefined) flat.span = s.span;
-  const tagList = s.tags ?? s.tag_families?.flatMap((f) => f.tags ?? []) ?? [];
+  const tagList = s.tags ?? (s.tagFamilies ?? s.tag_families)?.flatMap((f) => f.tags ?? []) ?? [];
   for (const t of tagList) {
     flat[t.key] = readFieldValue(t.value) ?? t.value;
   }
@@ -510,7 +511,9 @@ export function flattenTopNResponse(data: TopNQueryResponse): Record<string, unk
       for (const t of item.entity ?? []) {
         row[t.key] = readFieldValue(t.value) ?? t.value;
       }
-      row.value = item.value?.float ?? item.value?.int ?? item.value?.str;
+      // protojson wraps int64/str values as {"int":{"value":"2600"}} etc.;
+      // readFieldValue unwraps them just like the other flatteners do.
+      row.value = readFieldValue(item.value) ?? item.value?.float ?? item.value?.int ?? item.value?.str;
       flat.push(row);
     }
   }

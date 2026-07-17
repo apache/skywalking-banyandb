@@ -531,8 +531,12 @@ export function QueryConsole() {
     const effectiveOffset = loadMore ? paged.offset : 0;
     let activeQuery = mode === 'code' ? code : generated;
     if (loadMore && effectiveOffset > 0) {
-      // Append an OFFSET if the user's code query doesn't already have one.
-      if (!/\bOFFSET\s+\d+\b/i.test(activeQuery)) {
+      // Advance paging: replace an existing OFFSET with the new one, or append
+      // it when absent. Skipping replacement would re-fetch the same page and
+      // append duplicate rows.
+      if (/\bOFFSET\s+\d+\b/i.test(activeQuery)) {
+        activeQuery = activeQuery.replace(/\bOFFSET\s+\d+\b/i, `OFFSET ${effectiveOffset}`);
+      } else {
         activeQuery = `${activeQuery.replace(/;\s*$/, '')}\nOFFSET ${effectiveOffset}`;
       }
     }
@@ -649,10 +653,10 @@ export function QueryConsole() {
           </div>
           <div className="page-actions">
             <div className="qb-mode-seg" role="tablist" aria-label="Query mode">
-              <button role="tab" className={'qb-mode-btn' + (mode === 'builder' ? ' is-on' : '')} onClick={() => (mode === 'builder' ? undefined : backToBuilder())}>
+              <button role="tab" aria-selected={mode === 'builder'} className={'qb-mode-btn' + (mode === 'builder' ? ' is-on' : '')} onClick={() => (mode === 'builder' ? undefined : backToBuilder())}>
                 Builder
               </button>
-              <button role="tab" className={'qb-mode-btn' + (mode === 'code' ? ' is-on' : '')} onClick={() => (mode === 'code' ? undefined : ejectToCode())}>
+              <button role="tab" aria-selected={mode === 'code'} className={'qb-mode-btn' + (mode === 'code' ? ' is-on' : '')} onClick={() => (mode === 'code' ? undefined : ejectToCode())}>
                 Code
               </button>
             </div>
@@ -802,7 +806,7 @@ export function QueryConsole() {
                 execMs={execMs}
                 tags={tags}
                 tagSpecs={tagSpecs}
-                interval={currentResource?.interval}
+                interval={currentResource && 'interval' in currentResource ? currentResource.interval : undefined}
               />
               {response.truncated && (
                 <div className="qb-trunc">
