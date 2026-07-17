@@ -36,7 +36,7 @@ func newReparseProbe(t *testing.T, size, maxBytes int) (*preparedCache, *topK, f
 	run := func(q string) string {
 		_, result, err := c.getOrPrepare(q)
 		require.NoError(t, err)
-		if result == "reparse" {
+		if result == cacheResultReparse {
 			tk.observe(q, 0)
 		}
 		return result

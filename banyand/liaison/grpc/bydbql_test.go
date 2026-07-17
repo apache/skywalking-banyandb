@@ -101,10 +101,8 @@ func newTestDumper(l *logger.Logger) *topKDumper {
 // attachTestDumper gives svc a dumper without starting its dump goroutine, so the
 // service-level Query path can record re-parses. Query itself decides what to track
 // (if reparse ...), so no further wiring is needed.
-func attachTestDumper(svc *bydbQLService, l *logger.Logger) *topKDumper {
-	d := newTestDumper(l)
-	svc.dumper = d
-	return d
+func attachTestDumper(svc *bydbQLService) {
+	svc.dumper = newTestDumper(nil)
 }
 
 // A first-ever compile is not thrashing: every template pays it exactly once, and it
@@ -112,7 +110,7 @@ func attachTestDumper(svc *bydbQLService, l *logger.Logger) *topKDumper {
 // bydbqlTopKSize distinct templates, inflated every reported count via Space-Saving.
 func TestBydbQLQuery_DoesNotTrackColdStartCompile(t *testing.T) {
 	svc := newTestBydbQLService()
-	attachTestDumper(svc, nil)
+	attachTestDumper(svc)
 	_, _ = svc.Query(context.Background(), &bydbqlv1.QueryRequest{
 		Query: "SELECT * FROM STREAM sw IN default WHERE service_id = ?",
 	})
@@ -124,7 +122,7 @@ func TestBydbQLQuery_DoesNotTrackColdStartCompile(t *testing.T) {
 func TestBydbQLQuery_TracksReparseAfterEviction(t *testing.T) {
 	m := newBypassMetrics()
 	svc := &bydbQLService{metrics: m, cache: newPreparedCache(1, 1<<20, m)} // one slot
-	attachTestDumper(svc, nil)
+	attachTestDumper(svc)
 	victim := &bydbqlv1.QueryRequest{Query: bydbqlQuery(0)}
 	other := &bydbqlv1.QueryRequest{Query: bydbqlQuery(1)}
 
@@ -142,7 +140,7 @@ func TestBydbQLQuery_TracksReparseAfterEviction(t *testing.T) {
 func TestBydbQLQuery_TracksSlowQuery(t *testing.T) {
 	svc := newTestBydbQLService()
 	svc.slowThreshold = time.Nanosecond // any query exceeds it
-	attachTestDumper(svc, nil)
+	attachTestDumper(svc)
 	_, _ = svc.Query(context.Background(), &bydbqlv1.QueryRequest{
 		Query: "SELECT * FROM STREAM sw IN default WHERE service_id = ?",
 	})
@@ -188,7 +186,7 @@ func (c *captureAccessLog) Close() error { return nil }
 func TestBydbQLQuery_ReparseIsLoggedAsMissNotReparse(t *testing.T) {
 	m := newBypassMetrics()
 	svc := &bydbQLService{metrics: m, cache: newPreparedCache(1, 1<<20, m)} // one slot
-	attachTestDumper(svc, nil)
+	attachTestDumper(svc)
 	alog := &captureAccessLog{}
 	svc.queryAccessLog = alog
 

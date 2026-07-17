@@ -44,7 +44,7 @@ type preparedCache struct {
 	metrics *metrics
 	lru     *lru.Cache
 	// evicted remembers the 64-bit hashes of recently evicted keys, so a later miss on
-	// one of them can be recognised as a re-parse rather than a first-ever compile.
+	// one of them can be recognized as a re-parse rather than a first-ever compile.
 	// Hashes, not the query text: the text is multi-KB, the hash is 8 bytes.
 	evicted  *lru.Cache
 	maxBytes int
@@ -71,7 +71,7 @@ func newPreparedCache(size, maxBytes int, m *metrics) *preparedCache {
 			c.lru = l
 		}
 		// Sized to match the cache, so a template evicted at any point while the cache
-		// held its current contents is still recognised when it comes back. At 8 bytes
+		// held its current contents is still recognized when it comes back. At 8 bytes
 		// per hash this is ~16KB for a 2000-entry cache.
 		if e, err := lru.New(size); err == nil {
 			c.evicted = e
@@ -107,6 +107,11 @@ func (c *preparedCache) noteEvicted(key interface{}) {
 func (c *preparedCache) wasEvicted(query string) bool {
 	return c.evicted != nil && c.evicted.Contains(queryHash(query))
 }
+
+// cacheResultReparse is the getOrPrepare result for a miss that re-compiled a template
+// the cache had already compiled once. Only these reach the top-K tracker; to the metrics
+// and the access log a re-parse is an ordinary miss.
+const cacheResultReparse = "reparse"
 
 // getOrPrepare returns the prepared statement for query, parsing and caching it on
 // a miss. It records the cache metrics internally, and returns a result that tags the
@@ -163,7 +168,7 @@ func (c *preparedCache) getOrPrepare(query string) (*bydbql.PreparedStatement, s
 	cached := c.store(query, ps)
 	c.emit("miss") // metrics fold a re-parse into miss; only the result string splits them
 	if evicted || !cached {
-		return ps, "reparse", nil
+		return ps, cacheResultReparse, nil
 	}
 	return ps, "miss", nil
 }

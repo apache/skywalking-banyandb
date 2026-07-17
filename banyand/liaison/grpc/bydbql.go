@@ -94,7 +94,7 @@ func (b *bydbQLService) Query(ctx context.Context, req *bydbqlv1.QueryRequest) (
 			service := "bydbql"
 			if cacheResult != "" {
 				tag := cacheResult
-				if tag == "reparse" {
+				if tag == cacheResultReparse {
 					tag = "miss"
 				}
 				service = "bydbql-" + tag
@@ -115,7 +115,7 @@ func (b *bydbQLService) Query(ctx context.Context, req *bydbqlv1.QueryRequest) (
 	// cold-start compile; feeding those to the tracker both buries the real signal and,
 	// once the distinct-template count passes bydbqlTopKSize, inflates every count through
 	// Space-Saving's inheritance. The cache decides (it alone can), the caller acts.
-	if cacheResult == "reparse" {
+	if cacheResult == cacheResultReparse {
 		b.dumper.observeReparse(req.Query)
 	}
 	bound, err := stmt.Bind(req.Params)
