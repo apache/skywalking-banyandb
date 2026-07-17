@@ -74,6 +74,8 @@ func (b *bydbQLService) Query(ctx context.Context, req *bydbqlv1.QueryRequest) (
 	// cacheResult tags the access-log entry with the prepared-statement cache
 	// outcome so operators can find un-cached queries: entries logged under
 	// "bydbql-miss" / "bydbql-bypass" are the ones that did not hit the cache.
+	// A "reparse" is folded into "miss" here — it is a miss to anyone searching the
+	// access log; only the top-K tracker cares about the distinction.
 	var cacheResult string
 	defer func() {
 		duration := time.Since(start)
@@ -91,7 +93,11 @@ func (b *bydbQLService) Query(ctx context.Context, req *bydbqlv1.QueryRequest) (
 		if b.queryAccessLog != nil {
 			service := "bydbql"
 			if cacheResult != "" {
-				service = "bydbql-" + cacheResult
+				tag := cacheResult
+				if tag == "reparse" {
+					tag = "miss"
+				}
+				service = "bydbql-" + tag
 			}
 			if errAccessLog := b.queryAccessLog.WriteQuery(service, start, duration, req, err); errAccessLog != nil {
 				b.l.Error().Err(errAccessLog).Msg("bydbql access log error")
@@ -105,8 +111,12 @@ func (b *bydbQLService) Query(ctx context.Context, req *bydbqlv1.QueryRequest) (
 	if err != nil {
 		return nil, status.Errorf(codes.InvalidArgument, "failed to parse query: %v", err)
 	}
-	if cacheResult == "miss" {
-		b.dumper.observeMiss(req.Query)
+	// Track only re-parses, not first-ever compiles. Every template pays one unavoidable
+	// cold-start compile; feeding those to the tracker both buries the real signal and,
+	// once the distinct-template count passes bydbqlTopKSize, inflates every count through
+	// Space-Saving's inheritance. The cache decides (it alone can), the caller acts.
+	if cacheResult == "reparse" {
+		b.dumper.observeReparse(req.Query)
 	}
 	bound, err := stmt.Bind(req.Params)
 	if err != nil {
@@ -166,14 +176,18 @@ func (b *bydbQLService) Query(ctx context.Context, req *bydbqlv1.QueryRequest) (
 	return resp, nil
 }
 
-// topKDumper tracks the top cache-miss and slow queries and, on a supervised
+// topKDumper tracks the top re-parsed and slow queries and, on a supervised
 // goroutine, periodically logs the cumulative top-K. All methods are nil-safe, so the
 // call sites need no guards when the top-K log is disabled (the dumper is nil).
 type topKDumper struct {
-	miss   *topK
-	slow   *topK
-	l      *logger.Logger
-	cancel context.CancelFunc
+	// reparse holds only templates the cache had already compiled once and had to
+	// compile again. First-ever compiles are excluded at the call site, which is what
+	// keeps this tracker near-empty on a healthy cluster — and therefore keeps its
+	// counts exact, since Space-Saving only distorts them once it saturates.
+	reparse *topK
+	slow    *topK
+	l       *logger.Logger
+	cancel  context.CancelFunc
 }
 
 // newTopKDumper starts the trackers and the dump goroutine; a non-positive interval
@@ -183,7 +197,7 @@ func newTopKDumper(interval time.Duration, l *logger.Logger) *topKDumper {
 		return nil
 	}
 	ctx, cancel := context.WithCancel(context.Background())
-	d := &topKDumper{miss: newTopK(bydbqlTopKSize), slow: newTopK(bydbqlTopKSize), l: l, cancel: cancel}
+	d := &topKDumper{reparse: newTopK(bydbqlTopKSize), slow: newTopK(bydbqlTopKSize), l: l, cancel: cancel}
 	run.Go(ctx, "liaison.grpc.bydbql.topk-dump", l, func(ctx context.Context) {
 		ticker := time.NewTicker(interval)
 		defer ticker.Stop()
@@ -199,9 +213,9 @@ func newTopKDumper(interval time.Duration, l *logger.Logger) *topKDumper {
 	return d
 }
 
-func (d *topKDumper) observeMiss(query string) {
+func (d *topKDumper) observeReparse(query string) {
 	if d != nil {
-		d.miss.observe(query, 0)
+		d.reparse.observe(query, 0)
 	}
 }
 
@@ -217,13 +231,20 @@ func (d *topKDumper) close() {
 	}
 }
 
-// minReparseMisses is the smallest cumulative miss count worth logging. Every
-// parameterized template misses exactly once on its cold-start lookup, so count==1 is
-// benign; only count>=2 means the template was evicted and re-parsed (thrashing).
-const minReparseMisses = 2
-
 func (d *topKDumper) dump() {
-	d.logTopK(d.miss.snapshot(), minReparseMisses, "top bydbql cache-miss queries", func(s topKSlot) string {
+	// No count threshold, same as the slow dump: the tracker is fed only re-parses, so
+	// every entry already means the cache compiled a template it had compiled before.
+	//
+	// A threshold of 2 used to stand here as the ONLY thing separating thrashing from
+	// cold starts, and it could not do that job. Cold-start misses were fed to the
+	// tracker, and once the distinct-template count passed bydbqlTopKSize, Space-Saving's
+	// "new key inherits the evicted minimum's count + 1" ratcheted every count to N/k.
+	// Measured against SkyWalking OAP (2495 distinct templates, zero evictions, so every
+	// true count was 1): 2495/128 = 19.5, all 128 slots reported 19-20, and every one of
+	// them cleared the threshold. Excluding cold starts at the source fixes that at the
+	// root; keeping the threshold on top of it would only re-hide the real re-parses the
+	// exclusion just made visible.
+	d.logTopK(d.reparse.snapshot(), 1, "top bydbql cache-miss queries", func(s topKSlot) string {
 		return fmt.Sprintf("%q count=%d", s.key, s.count)
 	})
 	d.logTopK(d.slow.snapshotByLatency(), 1, "top bydbql slow queries", func(s topKSlot) string {
