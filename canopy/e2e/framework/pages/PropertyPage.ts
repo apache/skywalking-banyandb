@@ -157,6 +157,8 @@ export class PropertyPage extends BasePage {
   }
 
   codeEditor(): Locator {
-    return this.page.getByLabel('Property query code editor');
+    // The card container and its <textarea> share the accessible name; the
+    // textarea is the actual editor control (role=textbox).
+    return this.page.getByRole('textbox', { name: 'Property query code editor' });
   }
 }

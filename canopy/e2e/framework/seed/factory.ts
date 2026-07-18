@@ -156,12 +156,14 @@ export class SeedFactory {
   }
 
   // Create a property collection (schema) in `group`. Returns the property name.
-  // database/v1 PropertyRegistryService.Create — schema-free, so the body is
-  // minimal (just the name+group; documents are seeded separately below).
+  // database/v1 PropertyRegistryService.Create — the collection is schema-free,
+  // but Property.tags has a proto `min_items = 1` rule, so (like the product's
+  // createPropertySchema) we synthesize one placeholder TagSpec to pass
+  // validation. Documents aren't validated against these declared tags.
   async createPropertySchema(group: string, prefix = 'p'): Promise<string> {
     const name = this.uniqueName(prefix);
     const res = await this.request.post('/api/v1/property/schema', {
-      data: { property: { metadata: { name, group } } },
+      data: { property: { metadata: { name, group }, tags: [{ name: '_placeholder', type: 'TAG_TYPE_STRING' }] } },
     });
     if (!res.ok()) {
       throw new Error(`seed createPropertySchema(${group}/${name}) failed: ${res.status()} ${await res.text()}`);
@@ -178,6 +180,21 @@ export class SeedFactory {
   // flat string-keyed map; every value is written as a `str` TagValue — good
   // enough for e2e fixtures that don't need typed tags.
   async seedPropertyDoc(group: string, name: string, id: string, tags: Readonly<Record<string, string>>): Promise<void> {
+    // The registry rejects Apply with undeclared tag keys, so declare any
+    // missing keys on the collection schema first — mirroring the product's
+    // applyPropertyDocument auto-grow. Seed tags are always `str`.
+    const getRes = await this.request.get(`/api/v1/property/schema/${encodeURIComponent(group)}/${encodeURIComponent(name)}`);
+    if (getRes.ok()) {
+      const body = await getRes.json() as { property?: { tags?: { name: string; type: string }[] } };
+      const declared = body.property?.tags ?? [];
+      const have = new Set(declared.map((t) => t.name));
+      const missing = Object.keys(tags).filter((k) => !have.has(k));
+      if (missing.length) {
+        await this.request.put(`/api/v1/property/schema/${encodeURIComponent(group)}/${encodeURIComponent(name)}`, {
+          data: { property: { metadata: { group, name }, tags: [...declared, ...missing.map((k) => ({ name: k, type: 'TAG_TYPE_STRING' }))] } },
+        });
+      }
+    }
     const res = await this.request.put(
       `/api/v1/property/data/${encodeURIComponent(group)}/${encodeURIComponent(name)}/${encodeURIComponent(id)}`,
       {
