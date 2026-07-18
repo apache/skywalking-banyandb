@@ -33,6 +33,7 @@ import { ShellPage } from './pages/ShellPage.js';
 import { SchemaPage } from './pages/SchemaPage.js';
 import { IndexRulePage } from './pages/IndexRulePage.js';
 import { LifecyclePage } from './pages/LifecyclePage.js';
+import { PropertyPage } from './pages/PropertyPage.js';
 import { SeedFactory } from './seed/factory.js';
 
 type AppFixtures = {
@@ -42,6 +43,7 @@ type AppFixtures = {
   schemaPage: SchemaPage;
   indexRulePage: IndexRulePage;
   lifecyclePage: LifecyclePage;
+  propertyPage: PropertyPage;
   seed: SeedFactory;
 };
 
@@ -63,6 +65,9 @@ export const test = base.extend<AppFixtures>({
   },
   lifecyclePage: async ({ page }, use) => {
     await use(new LifecyclePage(page));
+  },
+  propertyPage: async ({ page }, use) => {
+    await use(new PropertyPage(page));
   },
   seed: async ({ request }, use) => {
     const factory = new SeedFactory(request);

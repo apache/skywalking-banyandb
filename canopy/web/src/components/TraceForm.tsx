@@ -71,11 +71,11 @@ function Field({
 
 const TAG_TYPES = [
   'TAG_TYPE_STRING',
-  'TAG_TYPE_INT64',
-  'TAG_TYPE_FLOAT64',
+  'TAG_TYPE_INT',
   'TAG_TYPE_STRING_ARRAY',
-  'TAG_TYPE_INT64_ARRAY',
+  'TAG_TYPE_INT_ARRAY',
   'TAG_TYPE_DATA_BINARY',
+  'TAG_TYPE_TIMESTAMP',
 ] as const;
 
 interface TagRow { name: string; type: string; }

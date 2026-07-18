@@ -27,17 +27,17 @@ import { useFocusTrap } from './modal-utils.js';
 
 const TAG_TYPE_OPTIONS = [
   { value: 'TAG_TYPE_STRING',       label: 'String' },
-  { value: 'TAG_TYPE_INT64',        label: 'Int64' },
-  { value: 'TAG_TYPE_FLOAT64',      label: 'Float64' },
+  { value: 'TAG_TYPE_INT',          label: 'Int' },
   { value: 'TAG_TYPE_STRING_ARRAY', label: 'String Array' },
-  { value: 'TAG_TYPE_INT64_ARRAY',  label: 'Int64 Array' },
+  { value: 'TAG_TYPE_INT_ARRAY',    label: 'Int Array' },
   { value: 'TAG_TYPE_DATA_BINARY',  label: 'Data Binary' },
+  { value: 'TAG_TYPE_TIMESTAMP',    label: 'Timestamp' },
 ];
 
 const FIELD_TYPE_OPTIONS = [
   { value: 'FIELD_TYPE_STRING',      label: 'String' },
-  { value: 'FIELD_TYPE_INT64',       label: 'Int64' },
-  { value: 'FIELD_TYPE_FLOAT64',     label: 'Float64' },
+  { value: 'FIELD_TYPE_INT',         label: 'Int' },
+  { value: 'FIELD_TYPE_FLOAT',       label: 'Float' },
   { value: 'FIELD_TYPE_DATA_BINARY', label: 'Data Binary' },
 ];
 
@@ -223,7 +223,7 @@ export function MeasureForm({ mode, groupName, initialName, onClose, onDeleted }
 
   function addField() {
     setFields((prev) => [...prev, {
-      name: '', fieldType: 'FIELD_TYPE_INT64',
+      name: '', fieldType: 'FIELD_TYPE_INT',
       encodingMethod: 'ENCODING_METHOD_UNSPECIFIED', compressionMethod: 'COMPRESSION_METHOD_ZSTD',
     }]);
   }

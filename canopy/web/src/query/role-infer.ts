@@ -33,7 +33,6 @@
 export type SR_TAG_TYPE =
   | 'TAG_TYPE_STRING'
   | 'TAG_TYPE_INT'
-  | 'TAG_TYPE_INT64'
   | 'TAG_TYPE_STRING_ARRAY'
   | 'TAG_TYPE_INT_ARRAY'
   | 'TAG_TYPE_DATA_BINARY'
@@ -123,7 +122,6 @@ export const srRoleFromType = (type: SR_TAG_TYPE | string): SR_ROLE => {
     case 'TAG_TYPE_TIMESTAMP':
       return 'time';
     case 'TAG_TYPE_INT':
-    case 'TAG_TYPE_INT64':
       return 'numeric';
     case 'TAG_TYPE_STRING':
     default:
@@ -179,8 +177,7 @@ export const srRoleFromValue = (
   if (sample.length === 0) return hint;
   const stats = srColStats(sample);
   switch (type) {
-    case 'TAG_TYPE_INT':
-    case 'TAG_TYPE_INT64': {
+    case 'TAG_TYPE_INT': {
       // A tiny closed set of ints reads as a category, not a measurement.
       if (stats.distinct <= 6 && stats.total >= stats.distinct * 2) return 'cat';
       return 'numeric';

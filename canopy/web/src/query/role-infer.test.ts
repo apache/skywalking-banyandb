@@ -38,9 +38,8 @@ describe('Layer 1 — srRoleFromType', () => {
   it('TIMESTAMP → time', () => {
     expect(srRoleFromType('TAG_TYPE_TIMESTAMP')).toBe('time');
   });
-  it('INT / INT64 → numeric', () => {
+  it('INT → numeric', () => {
     expect(srRoleFromType('TAG_TYPE_INT')).toBe('numeric');
-    expect(srRoleFromType('TAG_TYPE_INT64')).toBe('numeric');
   });
   it('STRING (and unknown) → text', () => {
     expect(srRoleFromType('TAG_TYPE_STRING')).toBe('text');

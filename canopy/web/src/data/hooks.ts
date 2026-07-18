@@ -26,7 +26,7 @@
 
 import { useMutation, type UseMutationResult } from '@tanstack/react-query';
 import { apiDataSource } from './api.js';
-import type { QueryRequest, QueryResponse } from 'canopy-shared';
+import type { QueryRequest, QueryResponse, PropertyQueryRequest, PropertyDocument } from 'canopy-shared';
 
 /**
  * useRunQuery — TanStack Query mutation hook that calls the BFF-backed
@@ -36,5 +36,17 @@ import type { QueryRequest, QueryResponse } from 'canopy-shared';
 export function useRunQuery(): UseMutationResult<QueryResponse, Error, QueryRequest> {
   return useMutation<QueryResponse, Error, QueryRequest>({
     mutationFn: (request: QueryRequest) => apiDataSource.runQuery(request),
+  });
+}
+
+/**
+ * useRunPropertyQuery — the property/v1 Query RPC equivalent of useRunQuery.
+ * Property document queries go through their own dedicated endpoint (POST
+ * /api/v1/property/data/query), not the generic BydbQL gateway — see
+ * docs/property-design.md §5.
+ */
+export function useRunPropertyQuery(): UseMutationResult<{ readonly documents: readonly PropertyDocument[] }, Error, PropertyQueryRequest> {
+  return useMutation<{ readonly documents: readonly PropertyDocument[] }, Error, PropertyQueryRequest>({
+    mutationFn: (request: PropertyQueryRequest) => apiDataSource.queryPropertyDocuments(request),
   });
 }

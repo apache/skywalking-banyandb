@@ -31,6 +31,8 @@ import type {
   QueryRequest, QueryResponse,
   StreamSchema, MeasureSchema, TraceSchema, PropertySchema, Group,
   IndexRuleSchema, IndexRuleBindingSchema, TopNAggregationSchema,
+  CreatePropertySchemaRequest, PropertyApplyRequest, PropertyApplyResponse,
+  PropertyQueryRequest, PropertyDocument,
 } from 'canopy-shared';
 
 export interface DataSource {
@@ -80,4 +82,14 @@ export interface DataSource {
   deleteResource(type: string, group: string, name: string): Promise<void>;
 
   runQuery(request: QueryRequest): Promise<QueryResponse>;
+
+  // Property schema (collection) CRUD — `database/v1` PropertyRegistryService.
+  // List/Get reuse listResourcesInGroup/getResource above.
+  createPropertySchema(req: CreatePropertySchemaRequest): Promise<PropertySchema>;
+  deletePropertySchema(group: string, name: string): Promise<void>;
+
+  // Property documents — `property/v1` PropertyService.
+  applyPropertyDocument(group: string, name: string, id: string, req: PropertyApplyRequest): Promise<PropertyApplyResponse>;
+  deletePropertyDocument(group: string, name: string, id: string): Promise<void>;
+  queryPropertyDocuments(req: PropertyQueryRequest): Promise<{ readonly documents: readonly PropertyDocument[] }>;
 }

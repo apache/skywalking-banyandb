@@ -27,6 +27,9 @@ import type {
   CreateIndexRuleBindingRequest, UpdateIndexRuleBindingRequest, IndexRuleBindingSchema,
   PropertySchema, TopNAggregationSchema,
   QueryRequest, QueryResponse, TopNQueryResponse,
+  CreatePropertySchemaRequest, PropertyApplyRequest, PropertyApplyResponse,
+  PropertyQueryRequest, PropertyQueryResponse, PropertyDocument, PropertyDocTag,
+  PropertyWireDocument, PropertyWireTag, PropertyTagValue,
 } from 'canopy-shared';
 
 import type { DataSource } from './DataSource.js';
@@ -385,6 +388,175 @@ export class ApiDataSource implements DataSource {
       truncated,
     };
   }
+
+  // ── Property schema (collection) CRUD — database/v1 PropertyRegistryService ──
+  // List/Get reuse listResourcesInGroup/getResource (TYPE_SINGULAR maps
+  // 'properties' -> 'property', matching PropertyRegistryService's REST paths).
+
+  async createPropertySchema(req: CreatePropertySchemaRequest): Promise<PropertySchema> {
+    // database/v1.Property.tags has `min_items = 1` (validate.rules) even
+    // though the collection itself is schema-free — documents aren't
+    // validated against these declared tags at write time (confirmed live:
+    // pkg/index/inverted's BuildPropertyQuery schema stub treats every tag
+    // name as indexed regardless of what's declared here). The UI doesn't
+    // ask the user for a tag just to satisfy this proto formality, so a
+    // single placeholder TagSpec is synthesized here to pass validation.
+    const body = {
+      property: {
+        metadata: req.property.metadata,
+        tags: [{ name: '_placeholder', type: 'TAG_TYPE_STRING' }],
+      },
+    };
+    // The registry Create RPC returns only { modRevision } (see
+    // PropertyRegistryServiceCreateResponse) — echo the request's property
+    // shape back as the created schema.
+    await apiFetch<{ modRevision?: string }>('/api/v1/property/schema', {
+      method: 'POST', headers: JSON_HEADERS, body: JSON.stringify(body),
+    });
+    return { metadata: req.property.metadata, tags: [] };
+  }
+
+  async deletePropertySchema(group: string, name: string): Promise<void> {
+    await apiFetch<void>(`/api/v1/property/schema/${encodeURIComponent(group)}/${encodeURIComponent(name)}`, { method: 'DELETE' });
+  }
+
+  // ── Property documents — property/v1 PropertyService ────────────────────────
+
+  async applyPropertyDocument(group: string, name: string, id: string, req: PropertyApplyRequest): Promise<PropertyApplyResponse> {
+    // Despite being "schema-free" from the UI's perspective, BanyanDB's
+    // property module IS schema-checked server-side (confirmed live):
+    // banyand/liaison/grpc/property.go's validatePropertyTags rejects any
+    // Apply whose tag keys aren't already declared on the collection (or
+    // whose declared type conflicts), and Create requires >=1 TagSpec
+    // up front (createPropertySchema above seeds a "_placeholder" one so
+    // the New-property modal doesn't have to ask for a schema). Auto-grow
+    // the declared tag set here so the tag editor really can add any key —
+    // the user never sees a schema step.
+    await this.ensurePropertyTagsDeclared(group, name, req.property.tags);
+    const data = await apiFetch<PropertyApplyResponse>(
+      `/api/v1/property/data/${encodeURIComponent(group)}/${encodeURIComponent(name)}/${encodeURIComponent(id)}`,
+      { method: 'PUT', headers: JSON_HEADERS, body: JSON.stringify(req) },
+    );
+    return data;
+  }
+
+  private async ensurePropertyTagsDeclared(group: string, name: string, tags: readonly PropertyWireTag[]): Promise<void> {
+    let schema: PropertySchema;
+    try {
+      schema = await this.getResource('properties', group, name) as PropertySchema;
+    } catch {
+      // Collection missing/unreachable — let Apply's own error surface.
+      return;
+    }
+    const declared = schema.tags ?? [];
+    const declaredNames = new Set(declared.map((t) => t.name));
+    const missing = tags.filter((t) => !declaredNames.has(t.key));
+    if (!missing.length) return;
+    const nextTags: Array<{ name: string; type: string }> = [
+      ...declared.map((t) => ({ name: t.name, type: t.type as string })),
+      ...missing.map((t) => ({ name: t.key, type: inferPropertyTagType(t.value) })),
+    ];
+    await apiFetch<{ modRevision?: string }>(
+      `/api/v1/property/schema/${encodeURIComponent(group)}/${encodeURIComponent(name)}`,
+      { method: 'PUT', headers: JSON_HEADERS, body: JSON.stringify({ property: { metadata: { group, name }, tags: nextTags } }) },
+    );
+  }
+
+  async deletePropertyDocument(group: string, name: string, id: string): Promise<void> {
+    await apiFetch<void>(
+      `/api/v1/property/data/${encodeURIComponent(group)}/${encodeURIComponent(name)}/${encodeURIComponent(id)}`,
+      { method: 'DELETE' },
+    );
+  }
+
+  async queryPropertyDocuments(req: PropertyQueryRequest): Promise<{ readonly documents: readonly PropertyDocument[] }> {
+    const data = await apiFetch<PropertyQueryResponse>('/api/v1/property/data/query', {
+      method: 'POST', headers: JSON_HEADERS, body: JSON.stringify(req),
+    });
+    return { documents: (data.properties ?? []).map(flattenPropertyDocument) };
+  }
+}
+
+// ── Property tag value encode/decode ───────────────────────────────────────
+//
+// model.v1.TagValue is a oneof: null, str, str_array, int, int_array,
+// binary_data, timestamp — NO float (unlike model.v1.FieldValue, used for
+// measure Fields, which does carry one). bytes fields (binary_data)
+// serialize as a bare base64 string in protojson; Timestamp serializes as an
+// RFC3339 string; Str/Int/StrArray/IntArray are one-field wrapper messages.
+
+/** Encode a tag editor row (valueType + raw text) into a wire TagValue. */
+// Emits the database/v1.TagType string values the live liaison's grpc-gateway
+// accepts (verified against a running BanyanDB instance). These now match the
+// corrected `TagType` enum in schema.ts (TAG_TYPE_INT / TAG_TYPE_INT_ARRAY /
+// TAG_TYPE_TIMESTAMP — there is no float tag type).
+function inferPropertyTagType(v: PropertyTagValue): string {
+  if (v.int !== undefined) return 'TAG_TYPE_INT';
+  if (v.strArray !== undefined) return 'TAG_TYPE_STRING_ARRAY';
+  if (v.intArray !== undefined) return 'TAG_TYPE_INT_ARRAY';
+  if (v.binaryData !== undefined) return 'TAG_TYPE_DATA_BINARY';
+  if (v.timestamp !== undefined) return 'TAG_TYPE_TIMESTAMP';
+  return 'TAG_TYPE_STRING';
+}
+
+export function encodePropertyTagValue(valueType: PropertyDocTag['valueType'], raw: string): PropertyTagValue {
+  switch (valueType) {
+    case 'int':
+      return { int: { value: raw.trim() } };
+    case 'int_array':
+      return { intArray: { value: raw.split(',').map((v) => v.trim()).filter(Boolean) } };
+    case 'str_array':
+      return { strArray: { value: raw.split(',').map((v) => v.trim()).filter(Boolean) } };
+    case 'binary':
+      return { binaryData: raw };
+    case 'timestamp': {
+      const ms = Date.parse(raw);
+      return { timestamp: Number.isFinite(ms) ? new Date(ms).toISOString() : raw };
+    }
+    case 'null':
+      return { null: null };
+    case 'str':
+    default:
+      return { str: { value: raw } };
+  }
+}
+
+/** Decode a wire TagValue into the flat {valueType, value} shape the UI renders/edits. */
+export function decodePropertyTagValue(v: PropertyTagValue | undefined): { valueType: PropertyDocTag['valueType']; value: string } {
+  if (!v) return { valueType: 'str', value: '' };
+  if (v.str !== undefined) return { valueType: 'str', value: unwrapScalar(v.str) };
+  if (v.int !== undefined) return { valueType: 'int', value: String(unwrapScalar(v.int)) };
+  if (v.strArray !== undefined) return { valueType: 'str_array', value: (unwrapArray(v.strArray)).join(', ') };
+  if (v.intArray !== undefined) return { valueType: 'int_array', value: (unwrapArray(v.intArray)).join(', ') };
+  if (v.binaryData !== undefined) return { valueType: 'binary', value: String(v.binaryData) };
+  if (v.timestamp !== undefined) return { valueType: 'timestamp', value: String(v.timestamp) };
+  return { valueType: 'null', value: '' };
+}
+
+// protojson may render a wrapper message ({"value": "x"}) or (for some
+// gateway versions) flatten it to the bare scalar — accept both.
+function unwrapScalar(w: { value?: unknown } | string | number | undefined): string {
+  if (w == null) return '';
+  if (typeof w === 'object') return String((w as { value?: unknown }).value ?? '');
+  return String(w);
+}
+function unwrapArray(w: { value?: readonly unknown[] } | readonly unknown[] | undefined): string[] {
+  if (w == null) return [];
+  const arr: readonly unknown[] = Array.isArray(w) ? w : ((w as { value?: readonly unknown[] }).value ?? []);
+  return arr.map((x: unknown) => String(x));
+}
+
+function flattenPropertyTag(t: PropertyWireTag): PropertyDocTag {
+  const { valueType, value } = decodePropertyTagValue(t.value);
+  return { key: t.key, valueType, value };
+}
+
+function flattenPropertyDocument(p: PropertyWireDocument): PropertyDocument {
+  return {
+    id: p.id,
+    tags: (p.tags ?? []).map(flattenPropertyTag),
+    updatedAt: p.updatedAt,
+  };
 }
 
 // ── Wire-shape → view-model flatteners ─────────────────────────────────────
