@@ -1,8 +1,10 @@
 # BYDBQL Agent TUI
 
-`bydbctl agent` is a three-page terminal workspace where an agent holds a multi-turn BanyanDB conversation, discovers schemas, proposes typed query plans, and safely runs approved queries.
+`bydbctl agent` is a three-page terminal workspace where an ACP agent holds a multi-turn BanyanDB conversation, discovers schemas, proposes typed query
+plans, and safely runs approved queries.
 
-The default provider is `builtin`, which calls an OpenAI-compatible chat-completions endpoint and requires `BYDBCTL_AGENT_API_KEY`. Configure its model and endpoint with `--agent-model` and `--agent-base-url` (or `BYDBCTL_AGENT_MODEL` and `BYDBCTL_AGENT_BASE_URL`). `codex-acp` and custom ACP-compatible stdio commands remain available through `--agent codex-acp` and `--agent acp --acp-command …`.
+The default provider is `codex-acp`. It starts `@agentclientprotocol/codex-acp` through `npx`; a different ACP-compatible stdio command can be selected
+with `--agent acp --acp-command …`. Authentication is handled by the selected ACP provider, so bydbctl does not require an API key.
 
 ## Start
 
