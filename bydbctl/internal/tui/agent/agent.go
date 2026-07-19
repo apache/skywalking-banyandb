@@ -48,6 +48,16 @@ type ConversationHistoryGateway interface {
 	MaintainsConversationHistory() bool
 }
 
+// ControlledTools dispatches the closed bydbctl tool set to an in-process provider.
+// The bridge satisfies this interface so a gateway can call tools directly without
+// owning server credentials or emitting its own tool lifecycle events.
+type ControlledTools interface {
+	// InvokeTool runs one registered bydbctl tool and returns its provider-safe result.
+	InvokeTool(ctx context.Context, name string, arguments map[string]any) (string, error)
+	// Definitions returns the closed tool schemas exposed to a provider.
+	Definitions() []map[string]any
+}
+
 // Gateway is an alias for AgentGateway.
 type Gateway = AgentGateway
 

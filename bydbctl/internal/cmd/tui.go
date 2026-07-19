@@ -29,6 +29,7 @@ import (
 	"github.com/spf13/viper"
 
 	"github.com/apache/skywalking-banyandb/bydbctl/internal/tui/agent"
+	"github.com/apache/skywalking-banyandb/bydbctl/internal/tui/agent/claude"
 	"github.com/apache/skywalking-banyandb/bydbctl/internal/tui/agent/codex"
 	tuiapp "github.com/apache/skywalking-banyandb/bydbctl/internal/tui/app"
 	"github.com/apache/skywalking-banyandb/bydbctl/internal/tui/applog"
@@ -39,23 +40,36 @@ import (
 	"github.com/apache/skywalking-banyandb/pkg/version"
 )
 
-const agentProviderCodex = "codex"
+const (
+	agentProviderCodex  = "codex"
+	agentProviderClaude = "claude"
+)
 
-var errCodexCommandRequired = errors.New("--codex-command is required")
+var errCodexCommandRequired = errors.New("--codex-command is required when --provider=codex")
 
 func newAgentCmd() *cobra.Command {
+	var provider string
 	var codexCommand string
 	var initialGoal string
 	var initialStart string
 	var initialEnd string
 	var queryTimeout time.Duration
 	var logDir string
+	var claudeModel string
+	var claudeAPIKey string
+	var claudeBaseURL string
+	var claudeMaxTokens int64
 	agentCmd := &cobra.Command{
 		Use:     "agent",
 		Version: version.Build(),
 		Short:   "Open the interactive BYDBQL agent TUI",
 		RunE: func(_ *cobra.Command, _ []string) error {
-			if strings.TrimSpace(codexCommand) == "" {
+			switch strings.TrimSpace(provider) {
+			case agentProviderCodex, agentProviderClaude:
+			default:
+				return fmt.Errorf("unknown agent provider %q", provider)
+			}
+			if provider == agentProviderCodex && strings.TrimSpace(codexCommand) == "" {
 				return errCodexCommandRequired
 			}
 			workingDirectory, wdErr := os.MkdirTemp("", "bydbctl-agent-cwd-")
@@ -80,18 +94,29 @@ func newAgentCmd() *cobra.Command {
 				Executor:  executor,
 				Validator: tuibysql.NewSemanticValidator(),
 			})
-			bridgeServer, bridgeErr := bridge.StartSocketServer(toolBridge)
-			if bridgeErr != nil {
-				return fmt.Errorf("failed to start controlled tool bridge: %w", bridgeErr)
+			var mcpServer agent.ControlledMCPServer
+			if provider == agentProviderCodex {
+				bridgeServer, bridgeErr := bridge.StartSocketServer(toolBridge)
+				if bridgeErr != nil {
+					return fmt.Errorf("failed to start controlled tool bridge: %w", bridgeErr)
+				}
+				defer func() {
+					_ = bridgeServer.Close()
+				}()
+				executable, executableErr := os.Executable()
+				if executableErr != nil {
+					return fmt.Errorf("failed to locate bydbctl executable: %w", executableErr)
+				}
+				mcpServer = bridgeServer.MCPServerConfig(executable)
 			}
-			defer func() {
-				_ = bridgeServer.Close()
-			}()
-			executable, executableErr := os.Executable()
-			if executableErr != nil {
-				return fmt.Errorf("failed to locate bydbctl executable: %w", executableErr)
-			}
-			agentGateway, gatewayErr := newAgentGateway(codexCommand, workingDirectory, bridgeServer.MCPServerConfig(executable))
+			agentGateway, gatewayErr := newAgentGateway(provider, codexCommand, workingDirectory, mcpServer, claude.Config{
+				Model:            claudeModel,
+				APIKey:           claudeAPIKey,
+				BaseURL:          claudeBaseURL,
+				MaxTokens:        claudeMaxTokens,
+				WorkingDirectory: workingDirectory,
+				Tools:            toolBridge,
+			})
 			if gatewayErr != nil {
 				return gatewayErr
 			}
@@ -111,7 +136,7 @@ func newAgentCmd() *cobra.Command {
 				Approvals:    approvals,
 				ToolBridge:   toolBridge,
 				SessionLog:   sessionLog,
-				Provider:     agentProviderCodex,
+				Provider:     provider,
 				Goal:         initialGoal,
 				Start:        initialStart,
 				End:          initialEnd,
@@ -124,7 +149,12 @@ func newAgentCmd() *cobra.Command {
 			return nil
 		},
 	}
-	agentCmd.Flags().StringVar(&codexCommand, "codex-command", "codex", "path to the Codex CLI executable")
+	agentCmd.Flags().StringVar(&provider, "provider", agentProviderCodex, "agent provider: codex|claude")
+	agentCmd.Flags().StringVar(&codexCommand, "codex-command", "codex", "path to the Codex CLI executable (provider=codex)")
+	agentCmd.Flags().StringVar(&claudeModel, "claude-model", "claude-sonnet-5", "Anthropic model id (provider=claude)")
+	agentCmd.Flags().StringVar(&claudeAPIKey, "claude-api-key", "", "Anthropic API key (default: $ANTHROPIC_API_KEY; provider=claude)")
+	agentCmd.Flags().StringVar(&claudeBaseURL, "claude-base-url", "", "optional Anthropic base URL or proxy (provider=claude)")
+	agentCmd.Flags().Int64Var(&claudeMaxTokens, "claude-max-tokens", 4096, "max output tokens per Anthropic message (provider=claude)")
 	agentCmd.Flags().StringVar(&initialGoal, "goal", "", "initial natural language query goal")
 	agentCmd.Flags().StringVar(&initialStart, "start", "-30m", "initial BYDBQL time start")
 	agentCmd.Flags().StringVar(&initialEnd, "end", "", "initial BYDBQL time end")
@@ -134,15 +164,22 @@ func newAgentCmd() *cobra.Command {
 	return agentCmd
 }
 
-func newAgentGateway(codexCommand, workingDirectory string, mcpServer agent.ControlledMCPServer) (agent.Gateway, error) {
-	if strings.TrimSpace(codexCommand) == "" {
-		return nil, errCodexCommandRequired
+func newAgentGateway(provider, codexCommand, workingDirectory string, mcpServer agent.ControlledMCPServer, claudeCfg claude.Config) (agent.Gateway, error) {
+	switch provider {
+	case agentProviderCodex:
+		if strings.TrimSpace(codexCommand) == "" {
+			return nil, errCodexCommandRequired
+		}
+		return codex.NewGateway(codex.Config{
+			Command:             codexCommand,
+			WorkingDirectory:    workingDirectory,
+			ControlledMCPServer: mcpServer,
+		}), nil
+	case agentProviderClaude:
+		return claude.NewGateway(claudeCfg), nil
+	default:
+		return nil, fmt.Errorf("unknown agent provider %q", provider)
 	}
-	return codex.NewGateway(codex.Config{
-		Command:             codexCommand,
-		WorkingDirectory:    workingDirectory,
-		ControlledMCPServer: mcpServer,
-	}), nil
 }
 
 func newAgentToolBridgeCmd() *cobra.Command {

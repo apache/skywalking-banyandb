@@ -165,6 +165,28 @@ func (toolBridge *ToolBridge) Cancel() {
 	}
 }
 
+// InvokeTool dispatches one controlled tool for an in-process provider and returns its
+// provider-safe result. It satisfies agent.ControlledTools; tool lifecycle events are
+// still emitted on Events() by Call, so the runner merges them as usual.
+func (toolBridge *ToolBridge) InvokeTool(ctx context.Context, name string, arguments map[string]any) (string, error) {
+	if toolBridge == nil {
+		return "", fmt.Errorf("tool bridge is not configured")
+	}
+	result := toolBridge.Call(ctx, Call{Name: name, Arguments: arguments})
+	if result.Err != nil {
+		return result.Content, result.Err
+	}
+	return result.Content, nil
+}
+
+// Definitions returns the closed bydbctl controlled tool schemas for an in-process provider.
+func (toolBridge *ToolBridge) Definitions() []map[string]any {
+	if toolBridge == nil {
+		return nil
+	}
+	return ToolDefinitions()
+}
+
 // Call dispatches only the closed, registered bydbctl tool set.
 func (toolBridge *ToolBridge) Call(ctx context.Context, call Call) Result {
 	toolBridge.callMu.Lock()
