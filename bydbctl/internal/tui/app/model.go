@@ -72,47 +72,47 @@ type Config struct {
 
 // Model is the Bubble Tea state for the bydbctl agent TUI.
 type Model struct {
-	runner          *workflow.Runner
-	executor        tools.Executor
-	querySession    *session.QuerySession
-	catalog         catalogBrowser
-	selectedSchema  session.SchemaSnapshot
-	catalogFilter   textinput.Model
-	message         textarea.Model
-	query           textarea.Model
-	start           textinput.Model
-	end             textinput.Model
-	provider        string
-	status          string
-	events          []string
-	sessionLog      *applog.Logger
-	logPathDisplay  string
-	width           int
-	height          int
-	catalogHeight   int
-	activeTab       appTab
-	activityLog     []activityEntry
-	activityScroll       int
-	activityCursor       int
-	activityDetailScroll int
+	runner                *workflow.Runner
+	executor              tools.Executor
+	querySession          *session.QuerySession
+	catalog               catalogBrowser
+	selectedSchema        session.SchemaSnapshot
+	catalogFilter         textinput.Model
+	message               textarea.Model
+	query                 textarea.Model
+	start                 textinput.Model
+	end                   textinput.Model
+	provider              string
+	status                string
+	events                []string
+	sessionLog            *applog.Logger
+	logPathDisplay        string
+	width                 int
+	height                int
+	catalogHeight         int
+	activeTab             appTab
+	activityLog           []activityEntry
+	activityScroll        int
+	activityCursor        int
+	activityDetailScroll  int
 	executionDetailScroll int
 	executionRowCursor    int
 	showExecutionRaw      bool
 	executionExportPath   string
 	detailScroll          int
-	chatScroll       int
-	chatCursor       int
-	chatDetailScroll int
-	focus            int
-	busy            bool
-	showReasoning   bool
-	executionPolicy approval.ExecutionPolicy
-	pendingApproval *approval.Request
-	turnCancel      context.CancelFunc
-	turnEvents      []agent.Event
-	queuedMessage   string
-	liveResponse    string
-	queryRevision   int
+	chatScroll            int
+	chatCursor            int
+	chatDetailScroll      int
+	focus                 int
+	busy                  bool
+	showReasoning         bool
+	executionPolicy       approval.ExecutionPolicy
+	pendingApproval       *approval.Request
+	turnCancel            context.CancelFunc
+	turnEvents            []agent.Event
+	queuedMessage         string
+	liveResponse          string
+	queryRevision         int
 }
 
 // NewModel creates a TUI model with the configured agent gateway.
@@ -261,8 +261,8 @@ func (m Model) Update(teaMsg tea.Msg) (tea.Model, tea.Cmd) {
 		m.busy = false
 		if typedMsg.loadErr != nil {
 			m.catalog.setLoadError(typedMsg.loadErr.Error())
-			m.status = "catalog load failed"
-			m.addUIEvent("catalog: " + typedMsg.loadErr.Error())
+			m.status = "BanyanDB connection failed: " + typedMsg.loadErr.Error()
+			m.addUIEvent(m.status)
 			m.logWriteError("catalog", typedMsg.loadErr)
 			return m, nil
 		}
@@ -350,6 +350,12 @@ func (m Model) View() string {
 	contentWidth := clamp(m.width-4, 48, 200)
 	bodyHeight := clamp(m.height-8, 18, 40)
 	tabBar := m.renderTabBar(contentWidth)
+	header := tabBar
+	if m.catalog.loadError != "" {
+		connectionError := truncate("BanyanDB connection failed: "+singleLine(m.catalog.loadError), contentWidth)
+		header = lipgloss.JoinVertical(lipgloss.Left, tabBar, badStyle.Render(connectionError))
+		bodyHeight = maxInt(bodyHeight-1, 18)
+	}
 	var body string
 	switch m.activeTab {
 	case tabSchema:
@@ -359,7 +365,7 @@ func (m Model) View() string {
 	default:
 		body = m.renderQueryTab(contentWidth, bodyHeight)
 	}
-	return lipgloss.JoinVertical(lipgloss.Left, tabBar, body, m.renderFooter(contentWidth))
+	return lipgloss.JoinVertical(lipgloss.Left, header, body, m.renderFooter(contentWidth))
 }
 
 type catalogMsg struct {

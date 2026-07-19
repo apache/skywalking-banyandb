@@ -22,12 +22,15 @@ import (
 
 func TestAgentCommandUsesACPOnly(t *testing.T) {
 	agentCmd := newAgentCmd()
-	agentFlag := agentCmd.Flags().Lookup("agent")
-	if agentFlag == nil {
-		t.Fatal("agent flag was not registered")
+	if agentCmd.Flags().Lookup("agent") != nil {
+		t.Fatal("agent provider selector should not be registered")
 	}
-	if agentFlag.DefValue != agentProviderCodexACP {
-		t.Fatalf("expected default agent %q, got %q", agentProviderCodexACP, agentFlag.DefValue)
+	acpCommandFlag := agentCmd.Flags().Lookup("acp-command")
+	if acpCommandFlag == nil {
+		t.Fatal("acp-command flag was not registered")
+	}
+	if acpCommandFlag.DefValue != "" {
+		t.Fatalf("expected no default ACP command, got %q", acpCommandFlag.DefValue)
 	}
 	for _, removedFlag := range []string{"agent-model", "agent-base-url"} {
 		if agentCmd.Flags().Lookup(removedFlag) != nil {
@@ -36,8 +39,20 @@ func TestAgentCommandUsesACPOnly(t *testing.T) {
 	}
 }
 
-func TestNewAgentGatewayCreatesDefaultACPProvider(t *testing.T) {
-	agentGateway, gatewayErr := newAgentGateway(agentProviderCodexACP, "", nil, t.TempDir(), nil)
+func TestAgentCommandRequiresACPCommand(t *testing.T) {
+	agentCmd := newAgentCmd()
+	agentCmd.SetArgs(nil)
+	executeErr := agentCmd.Execute()
+	if executeErr == nil {
+		t.Fatal("expected agent command to require an ACP command")
+	}
+	if !strings.Contains(executeErr.Error(), "--acp-command is required") {
+		t.Fatalf("unexpected error: %v", executeErr)
+	}
+}
+
+func TestNewAgentGatewayUsesProvidedACPCommand(t *testing.T) {
+	agentGateway, gatewayErr := newAgentGateway("npx", []string{"-y", "custom-acp-provider"}, t.TempDir(), nil)
 	if gatewayErr != nil {
 		t.Fatalf("newAgentGateway returned error: %v", gatewayErr)
 	}
@@ -47,21 +62,11 @@ func TestNewAgentGatewayCreatesDefaultACPProvider(t *testing.T) {
 }
 
 func TestNewAgentGatewayRequiresCustomACPCommand(t *testing.T) {
-	agentGateway, gatewayErr := newAgentGateway(agentProviderACP, " ", nil, t.TempDir(), nil)
+	agentGateway, gatewayErr := newAgentGateway(" ", nil, t.TempDir(), nil)
 	if gatewayErr == nil {
 		t.Fatalf("expected an error, got gateway %#v", agentGateway)
 	}
 	if !strings.Contains(gatewayErr.Error(), "--acp-command is required") {
-		t.Fatalf("unexpected error: %v", gatewayErr)
-	}
-}
-
-func TestNewAgentGatewayRejectsNonACPProvider(t *testing.T) {
-	agentGateway, gatewayErr := newAgentGateway("builtin", "", nil, t.TempDir(), nil)
-	if gatewayErr == nil {
-		t.Fatalf("expected an error, got gateway %#v", agentGateway)
-	}
-	if !strings.Contains(gatewayErr.Error(), "use codex-acp or acp") {
 		t.Fatalf("unexpected error: %v", gatewayErr)
 	}
 }

@@ -3,13 +3,16 @@
 `bydbctl agent` is a three-page terminal workspace where an ACP agent holds a multi-turn BanyanDB conversation, discovers schemas, proposes typed query
 plans, and safely runs approved queries.
 
-The default provider is `codex-acp`. It starts `@agentclientprotocol/codex-acp` through `npx`; a different ACP-compatible stdio command can be selected
-with `--agent acp --acp-command …`. Authentication is handled by the selected ACP provider, so bydbctl does not require an API key.
+bydbctl does not select or install an ACP provider. Pass the ACP-compatible stdio command explicitly with `--acp-command` and repeat `--acp-arg` for
+each argument. Authentication is handled by that provider, so bydbctl does not require an API key.
 
 ## Start
 
 ```shell
 bydbctl agent \
+  --acp-command npx \
+  --acp-arg -y \
+  --acp-arg @agentclientprotocol/claude-agent-acp \
   --addr http://localhost:17913 \
   --goal "top slow payment endpoints in the last 30 minutes"
 ```
@@ -18,7 +21,6 @@ For a custom ACP provider:
 
 ```shell
 bydbctl agent \
-  --agent acp \
   --acp-command npx \
   --acp-arg -y \
   --acp-arg @agentclientprotocol/claude-agent-acp \
@@ -115,7 +117,8 @@ Session logs are stored in `$HOME/.bydbctl/logs` by default (override with `--lo
 
 ## Troubleshooting
 
-- If ACP cannot start, check the selected ACP command and its local login/runtime prerequisites. `codex-acp` requires `npx` and the Codex ACP package.
+- If ACP cannot start, check the selected ACP command and its local login/runtime prerequisites.
+- If the BanyanDB connection fails, check the error banner, `--addr`, authentication, and TLS settings.
 - If schema discovery fails, verify the normal bydbctl address, authentication, TLS, certificate, and server permissions.
 - If no candidate appears, inspect the Activity page. The provider may have answered a question or requested clarification. To publish QL, it must call `propose_query_plan`; a BYDBQL statement embedded in chat text is intentionally ignored.
 - If an approval fails after `y`, review the local revalidation error, update the query, and request approval again.

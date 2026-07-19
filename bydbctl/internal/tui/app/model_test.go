@@ -141,6 +141,24 @@ func TestNewModelFocusesConversationComposer(t *testing.T) {
 	}
 }
 
+func TestCatalogConnectionErrorIsVisibleOnQueryTab(t *testing.T) {
+	model := NewModel(Config{Provider: "acp"})
+	updatedModel, _ := model.Update(catalogMsg{loadErr: errors.New("failed to list groups: connection refused")})
+	typedModel, ok := updatedModel.(Model)
+	if !ok {
+		t.Fatalf("unexpected model type: %T", updatedModel)
+	}
+	if typedModel.activeTab != tabQuery {
+		t.Fatalf("expected Query tab to remain active, got %d", typedModel.activeTab)
+	}
+	view := typedModel.View()
+	for _, expected := range []string{"provider acp", "BanyanDB connection failed", "connection refused"} {
+		if !strings.Contains(view, expected) {
+			t.Fatalf("expected %q in Query tab:\n%s", expected, view)
+		}
+	}
+}
+
 func TestQueryTabUsesConversationFirstLayout(t *testing.T) {
 	model := NewModel(Config{})
 	model.resize(160, 42)

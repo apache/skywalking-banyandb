@@ -18,6 +18,7 @@
 package cmd
 
 import (
+	"errors"
 	"fmt"
 	"os"
 	"strings"
@@ -38,13 +39,11 @@ import (
 	"github.com/apache/skywalking-banyandb/pkg/version"
 )
 
-const (
-	agentProviderACP      = "acp"
-	agentProviderCodexACP = "codex-acp"
-)
+const agentProviderACP = "acp"
+
+var errACPCommandRequired = errors.New("--acp-command is required")
 
 func newAgentCmd() *cobra.Command {
-	var agentProvider string
 	var acpCommand string
 	var acpArgs []string
 	var mcpConfig string
@@ -60,6 +59,9 @@ func newAgentCmd() *cobra.Command {
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			if cmd.Flags().Changed("mcp-config") {
 				return fmt.Errorf("--mcp-config is no longer supported: bydbctl agent only exposes its built-in controlled tools")
+			}
+			if strings.TrimSpace(acpCommand) == "" {
+				return errACPCommandRequired
 			}
 			workingDirectory, wdErr := os.MkdirTemp("", "bydbctl-agent-cwd-")
 			if wdErr != nil {
@@ -94,7 +96,7 @@ func newAgentCmd() *cobra.Command {
 			if executableErr != nil {
 				return fmt.Errorf("failed to locate bydbctl executable: %w", executableErr)
 			}
-			agentGateway, gatewayErr := newAgentGateway(agentProvider, acpCommand, acpArgs, workingDirectory, bridgeServer.MCPServerConfig(executable))
+			agentGateway, gatewayErr := newAgentGateway(acpCommand, acpArgs, workingDirectory, bridgeServer.MCPServerConfig(executable))
 			if gatewayErr != nil {
 				return gatewayErr
 			}
@@ -111,7 +113,7 @@ func newAgentCmd() *cobra.Command {
 				Approvals:    approvals,
 				ToolBridge:   toolBridge,
 				SessionLog:   sessionLog,
-				Provider:     agentProvider,
+				Provider:     agentProviderACP,
 				Goal:         initialGoal,
 				Start:        initialStart,
 				End:          initialEnd,
@@ -124,8 +126,7 @@ func newAgentCmd() *cobra.Command {
 			return nil
 		},
 	}
-	agentCmd.Flags().StringVar(&agentProvider, "agent", agentProviderCodexACP, "ACP-compatible agent adapter: codex-acp or acp")
-	agentCmd.Flags().StringVar(&acpCommand, "acp-command", "", "ACP-compatible stdio command used by --agent acp")
+	agentCmd.Flags().StringVar(&acpCommand, "acp-command", "", "ACP-compatible stdio command")
 	agentCmd.Flags().StringArrayVar(&acpArgs, "acp-arg", nil, "argument passed to --acp-command; may be repeated")
 	agentCmd.Flags().StringVar(&mcpConfig, "mcp-config", "", "deprecated: external MCP configuration is rejected")
 	agentCmd.Flags().StringVar(&initialGoal, "goal", "", "initial natural language query goal")
@@ -137,18 +138,11 @@ func newAgentCmd() *cobra.Command {
 	return agentCmd
 }
 
-func newAgentGateway(provider, acpCommand string, acpArgs []string, workingDirectory string, mcpServers any) (agent.Gateway, error) {
-	switch provider {
-	case agentProviderACP:
-		if strings.TrimSpace(acpCommand) == "" {
-			return nil, fmt.Errorf("--acp-command is required when --agent acp")
-		}
-		return acp.NewGateway(acpCommand, acpArgs...).WithWorkingDirectory(workingDirectory).WithMCPServers(mcpServers), nil
-	case agentProviderCodexACP:
-		return acp.NewGateway("npx", "-y", "@agentclientprotocol/codex-acp").WithWorkingDirectory(workingDirectory).WithMCPServers(mcpServers), nil
-	default:
-		return nil, fmt.Errorf("unsupported agent provider %q; use codex-acp or acp", provider)
+func newAgentGateway(acpCommand string, acpArgs []string, workingDirectory string, mcpServers any) (agent.Gateway, error) {
+	if strings.TrimSpace(acpCommand) == "" {
+		return nil, errACPCommandRequired
 	}
+	return acp.NewGateway(acpCommand, acpArgs...).WithWorkingDirectory(workingDirectory).WithMCPServers(mcpServers), nil
 }
 
 func newAgentToolBridgeCmd() *cobra.Command {

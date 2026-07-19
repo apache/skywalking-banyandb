@@ -192,8 +192,11 @@ func (executor *HTTPExecutor) listGroups(ctx context.Context) ([]string, error) 
 		request.SetHeader("Authorization", authHeader)
 	}
 	response, requestErr := request.Get(executor.config.Addr + groupListPath)
-	if requestErr != nil || response.StatusCode() != http.StatusOK {
-		return nil, fmt.Errorf("group list unavailable")
+	if requestErr != nil {
+		return nil, fmt.Errorf("failed to list BanyanDB groups from %s: %w", executor.config.Addr, requestErr)
+	}
+	if response.StatusCode() != http.StatusOK {
+		return nil, fmt.Errorf("BanyanDB group list returned %s", response.Status())
 	}
 	listResponse := new(databasev1.GroupRegistryServiceListResponse)
 	if unmarshalErr := protojson.Unmarshal(response.Body(), listResponse); unmarshalErr != nil {

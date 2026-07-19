@@ -483,6 +483,35 @@ func TestHTTPExecutorDiscoverCatalog(t *testing.T) {
 	}
 }
 
+func TestHTTPExecutorDiscoverCatalogReportsServerError(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, _ *http.Request) {
+		writer.WriteHeader(http.StatusServiceUnavailable)
+	}))
+	defer server.Close()
+	executor := NewHTTPExecutor(HTTPConfig{Addr: server.URL})
+	_, discoverErr := executor.DiscoverCatalog(context.Background())
+	if discoverErr == nil {
+		t.Fatal("expected catalog discovery to fail")
+	}
+	if !strings.Contains(discoverErr.Error(), "BanyanDB group list returned 503 Service Unavailable") {
+		t.Fatalf("unexpected catalog error: %v", discoverErr)
+	}
+}
+
+func TestHTTPExecutorDiscoverCatalogReportsConnectionFailure(t *testing.T) {
+	server := httptest.NewServer(http.NotFoundHandler())
+	serverAddress := server.URL
+	server.Close()
+	executor := NewHTTPExecutor(HTTPConfig{Addr: serverAddress})
+	_, discoverErr := executor.DiscoverCatalog(context.Background())
+	if discoverErr == nil {
+		t.Fatal("expected catalog discovery to fail")
+	}
+	if !strings.Contains(discoverErr.Error(), "failed to list BanyanDB groups from "+serverAddress) {
+		t.Fatalf("unexpected catalog error: %v", discoverErr)
+	}
+}
+
 func TestHTTPExecutorUsesBydbctlTLSSettings(t *testing.T) {
 	server := httptest.NewTLSServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
 		if request.URL.Path != "/api/v1/group/schema/lists" {
