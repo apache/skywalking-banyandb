@@ -26,6 +26,7 @@ import (
 	"github.com/stretchr/testify/require"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
+	"google.golang.org/protobuf/proto"
 
 	bydbqlv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/bydbql/v1"
 	modelv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/model/v1"
@@ -94,24 +95,52 @@ func TestBydbQLQuery_ParamTypeMismatch_ReturnsInvalidArgument(t *testing.T) {
 
 // newTestDumper builds a topKDumper without starting the dump goroutine.
 func newTestDumper(l *logger.Logger) *topKDumper {
-	return &topKDumper{miss: newTopK(bydbqlTopKSize), slow: newTopK(bydbqlTopKSize), l: l}
+	return &topKDumper{reparse: newTopK(bydbqlTopKSize), slow: newTopK(bydbqlTopKSize), l: l}
 }
 
-func TestBydbQLQuery_TracksCacheMiss(t *testing.T) {
-	svc := newTestBydbQLService()
+// attachTestDumper gives svc a dumper without starting its dump goroutine, so the
+// service-level Query path can record re-parses. Query itself decides what to track
+// (if reparse ...), so no further wiring is needed.
+func attachTestDumper(svc *bydbQLService) {
 	svc.dumper = newTestDumper(nil)
-	// A cacheable query misses on first sight; the miss is observed before Bind runs
-	// (Bind then fails on missing params, but the miss was already recorded).
+}
+
+// A first-ever compile is not thrashing: every template pays it exactly once, and it
+// is unavoidable. Tracking it was what buried the real signal and, past
+// bydbqlTopKSize distinct templates, inflated every reported count via Space-Saving.
+func TestBydbQLQuery_DoesNotTrackColdStartCompile(t *testing.T) {
+	svc := newTestBydbQLService()
+	attachTestDumper(svc)
 	_, _ = svc.Query(context.Background(), &bydbqlv1.QueryRequest{
 		Query: "SELECT * FROM STREAM sw IN default WHERE service_id = ?",
 	})
-	assert.NotEmpty(t, svc.dumper.miss.snapshot(), "a cacheable miss must be tracked")
+	assert.Empty(t, svc.dumper.reparse.snapshot(), "a first-ever compile must not be tracked")
+}
+
+// A template evicted under cache pressure and then requested again really is being
+// re-parsed, and that is what the log exists to surface.
+func TestBydbQLQuery_TracksReparseAfterEviction(t *testing.T) {
+	m := newBypassMetrics()
+	svc := &bydbQLService{metrics: m, cache: newPreparedCache(1, 1<<20, m)} // one slot
+	attachTestDumper(svc)
+	victim := &bydbqlv1.QueryRequest{Query: bydbqlQuery(0)}
+	other := &bydbqlv1.QueryRequest{Query: bydbqlQuery(1)}
+
+	_, _ = svc.Query(context.Background(), victim) // cold-start compile, not tracked
+	_, _ = svc.Query(context.Background(), other)  // evicts victim
+	assert.Empty(t, svc.dumper.reparse.snapshot(), "cold-start compiles stay untracked")
+
+	_, _ = svc.Query(context.Background(), victim) // victim is back: a real re-parse
+	snap := svc.dumper.reparse.snapshot()
+	require.Len(t, snap, 1, "only the re-parsed template is tracked")
+	assert.Equal(t, bydbqlQuery(0), snap[0].key)
+	assert.Equal(t, uint64(1), snap[0].count, "count is the true re-parse count")
 }
 
 func TestBydbQLQuery_TracksSlowQuery(t *testing.T) {
 	svc := newTestBydbQLService()
 	svc.slowThreshold = time.Nanosecond // any query exceeds it
-	svc.dumper = newTestDumper(nil)
+	attachTestDumper(svc)
 	_, _ = svc.Query(context.Background(), &bydbqlv1.QueryRequest{
 		Query: "SELECT * FROM STREAM sw IN default WHERE service_id = ?",
 	})
@@ -120,19 +149,59 @@ func TestBydbQLQuery_TracksSlowQuery(t *testing.T) {
 
 func TestBydbQLDumpTopK(t *testing.T) {
 	d := newTestDumper(logger.GetLogger("test-bydbql"))
-	d.miss.observe("q-miss", 0)
-	d.miss.observe("q-miss", 0) // count>=2 so it survives the cold-start filter
+	d.observeReparse("q-reparse")
+	d.observeReparse("q-reparse") // a second re-parse of the same template
 	d.slow.observe("q-slow", time.Millisecond)
 	d.dump() // must not panic; the cumulative trackers keep their entries
-	assert.NotEmpty(t, d.miss.snapshot())
+	assert.NotEmpty(t, d.reparse.snapshot())
 	assert.NotEmpty(t, d.slow.snapshot())
 }
 
-func TestFormatTopKFiltersColdStartMisses(t *testing.T) {
+func TestFormatTopKAppliesItsMinCount(t *testing.T) {
 	entries := []topKSlot{
-		{key: "thrashing", count: 5},
-		{key: "cold-start", count: 1},
+		{key: "frequent", count: 5},
+		{key: "once", count: 1},
 	}
-	lines := formatTopK(entries, minReparseMisses, func(s topKSlot) string { return s.key })
-	assert.Equal(t, []string{"thrashing"}, lines, "count==1 cold-start misses are filtered out")
+	assert.Equal(t, []string{"frequent"}, formatTopK(entries, 2, func(s topKSlot) string { return s.key }))
+	// The dumps pass 1, i.e. no filtering: every tracked entry is already meaningful.
+	assert.Equal(t, []string{"frequent", "once"}, formatTopK(entries, 1, func(s topKSlot) string { return s.key }))
+}
+
+// captureAccessLog records the service tag of every WriteQuery call.
+type captureAccessLog struct{ services []string }
+
+func (c *captureAccessLog) Write(proto.Message) error { return nil }
+
+func (c *captureAccessLog) WriteQuery(service string, _ time.Time, _ time.Duration, _ proto.Message, _ error) error {
+	c.services = append(c.services, service)
+	return nil
+}
+
+func (c *captureAccessLog) Close() error { return nil }
+
+// A re-parse is a cache miss to anyone searching the access log for un-cached queries;
+// only the top-K tracker distinguishes it. The access log must therefore tag it
+// "bydbql-miss", never "bydbql-reparse", or a "bydbql-miss" filter would silently drop
+// the re-parsed queries — which are exactly the un-cached ones an operator is after.
+func TestBydbQLQuery_ReparseIsLoggedAsMissNotReparse(t *testing.T) {
+	m := newBypassMetrics()
+	svc := &bydbQLService{metrics: m, cache: newPreparedCache(1, 1<<20, m)} // one slot
+	attachTestDumper(svc)
+	alog := &captureAccessLog{}
+	svc.queryAccessLog = alog
+
+	// Bind fails (no params), but that is after getOrPrepare set cacheResult, and the
+	// access log is written from a defer, so every call is logged with its cache tag.
+	_, _ = svc.Query(context.Background(), &bydbqlv1.QueryRequest{Query: bydbqlQuery(0)}) // cold-start miss
+	_, _ = svc.Query(context.Background(), &bydbqlv1.QueryRequest{Query: bydbqlQuery(1)}) // evicts 0
+	_, _ = svc.Query(context.Background(), &bydbqlv1.QueryRequest{Query: bydbqlQuery(0)}) // re-parse
+
+	require.Len(t, alog.services, 3)
+	assert.Equal(t, "bydbql-miss", alog.services[2], "a re-parse must be logged as a miss")
+	assert.NotContains(t, alog.services, "bydbql-reparse", "reparse must never leak into the access log")
+
+	// The distinction survives — but only in the tracker, which is the whole point.
+	snap := svc.dumper.reparse.snapshot()
+	require.Len(t, snap, 1)
+	assert.Equal(t, bydbqlQuery(0), snap[0].key)
 }
