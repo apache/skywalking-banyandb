@@ -58,8 +58,8 @@ func TestSemanticValidatorRequiresLimitClause(t *testing.T) {
 func TestSemanticValidatorRejectsNonIndexedOrderBy(t *testing.T) {
 	validator := NewSemanticValidator()
 	schema := &session.SchemaSnapshot{
-		Type:          session.ResourceTypeTrace,
-		IndexedFields: []string{"timestamp_millis"},
+		Type:            session.ResourceTypeTrace,
+		SortableIndexes: []session.SortableIndex{{RuleName: "timestamp_rule", Tags: []string{"timestamp_millis"}}},
 	}
 	report, validateErr := validator.Validate(
 		context.Background(),
@@ -72,7 +72,7 @@ func TestSemanticValidatorRejectsNonIndexedOrderBy(t *testing.T) {
 	if report.Valid {
 		t.Fatal("expected non-indexed ORDER BY to be invalid")
 	}
-	if !strings.Contains(report.Message, "not indexed") {
+	if !strings.Contains(report.Message, "not sortable") {
 		t.Fatalf("unexpected message: %s", report.Message)
 	}
 }
@@ -80,12 +80,12 @@ func TestSemanticValidatorRejectsNonIndexedOrderBy(t *testing.T) {
 func TestSemanticValidatorAcceptsIndexedOrderBy(t *testing.T) {
 	validator := NewSemanticValidator()
 	schema := &session.SchemaSnapshot{
-		Type:          session.ResourceTypeTrace,
-		IndexedFields: []string{"timestamp_millis"},
+		Type:            session.ResourceTypeTrace,
+		SortableIndexes: []session.SortableIndex{{RuleName: "timestamp_rule", Tags: []string{"timestamp_millis"}}},
 	}
 	report, validateErr := validator.Validate(
 		context.Background(),
-		"SELECT * FROM TRACE zipkin_span IN default TIME > '-30m' ORDER BY timestamp_millis DESC LIMIT 10",
+		"SELECT * FROM TRACE zipkin_span IN default TIME > '-30m' ORDER BY timestamp_rule DESC LIMIT 10",
 		schema,
 	)
 	if validateErr != nil {

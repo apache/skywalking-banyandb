@@ -19,6 +19,9 @@
 package session
 
 import (
+	"crypto/sha256"
+	"encoding/hex"
+	"sort"
 	"strings"
 	"time"
 
@@ -117,21 +120,106 @@ type SchemaColumn struct {
 	Indexed bool
 }
 
+// SortableIndex describes an index rule that may be used by ORDER BY.
+type SortableIndex struct {
+	RuleName string
+	Tags     []string
+}
+
 // SchemaSnapshot is the schema summary passed across the agent boundary.
 type SchemaSnapshot struct {
-	UpdatedAt       time.Time
-	Type            ResourceType
-	Name            string
-	Groups          []string
-	Tags            []string
-	EntityTags      []string
-	Fields          []string
-	Columns         []SchemaColumn
-	IndexedFields   []string
-	ResourceNames   []string
-	AvailableGroups []string
-	Catalog         []CatalogEntry
-	Loaded          bool
+	UpdatedAt          time.Time
+	Type               ResourceType
+	Name               string
+	Groups             []string
+	Tags               []string
+	EntityTags         []string
+	Fields             []string
+	Columns            []SchemaColumn
+	IndexedFields      []string
+	SortableIndexes    []SortableIndex
+	SourceMeasure      string
+	SourceMeasureGroup string
+	FieldValueSort     string
+	Fingerprint        string
+	ResourceNames      []string
+	AvailableGroups    []string
+	Catalog            []CatalogEntry
+	Loaded             bool
+}
+
+// EnsureFingerprint computes a deterministic schema identity when one is not already set.
+func (snapshot *SchemaSnapshot) EnsureFingerprint() string {
+	if snapshot == nil {
+		return ""
+	}
+	if snapshot.Fingerprint != "" {
+		return snapshot.Fingerprint
+	}
+	groups := append([]string(nil), snapshot.Groups...)
+	sort.Strings(groups)
+	tags := append([]string(nil), snapshot.Tags...)
+	sort.Strings(tags)
+	entityTags := append([]string(nil), snapshot.EntityTags...)
+	sort.Strings(entityTags)
+	fields := append([]string(nil), snapshot.Fields...)
+	sort.Strings(fields)
+	columns := append([]SchemaColumn(nil), snapshot.Columns...)
+	sort.Slice(columns, func(leftIndex, rightIndex int) bool {
+		if columns[leftIndex].Name != columns[rightIndex].Name {
+			return columns[leftIndex].Name < columns[rightIndex].Name
+		}
+		if columns[leftIndex].Kind != columns[rightIndex].Kind {
+			return columns[leftIndex].Kind < columns[rightIndex].Kind
+		}
+		return columns[leftIndex].Type < columns[rightIndex].Type
+	})
+	indexes := cloneSortableIndexes(snapshot.SortableIndexes)
+	for indexPosition := range indexes {
+		sort.Strings(indexes[indexPosition].Tags)
+	}
+	sort.Slice(indexes, func(leftIndex, rightIndex int) bool {
+		return indexes[leftIndex].RuleName < indexes[rightIndex].RuleName
+	})
+	var fingerprintSource strings.Builder
+	fingerprintSource.WriteString(snapshot.Type.String())
+	fingerprintSource.WriteByte('\n')
+	fingerprintSource.WriteString(snapshot.Name)
+	fingerprintSource.WriteByte('\n')
+	fingerprintSource.WriteString(strings.Join(groups, ","))
+	fingerprintSource.WriteByte('\n')
+	fingerprintSource.WriteString(strings.Join(tags, ","))
+	fingerprintSource.WriteByte('\n')
+	fingerprintSource.WriteString(strings.Join(entityTags, ","))
+	fingerprintSource.WriteByte('\n')
+	fingerprintSource.WriteString(strings.Join(fields, ","))
+	fingerprintSource.WriteByte('\n')
+	for _, column := range columns {
+		fingerprintSource.WriteString(column.Name)
+		fingerprintSource.WriteByte(':')
+		fingerprintSource.WriteString(string(column.Kind))
+		fingerprintSource.WriteByte(':')
+		fingerprintSource.WriteString(string(column.Type))
+		if column.Indexed {
+			fingerprintSource.WriteByte(':')
+			fingerprintSource.WriteString("indexed")
+		}
+		fingerprintSource.WriteByte('\n')
+	}
+	for _, index := range indexes {
+		fingerprintSource.WriteString(index.RuleName)
+		fingerprintSource.WriteByte(':')
+		fingerprintSource.WriteString(strings.Join(index.Tags, ","))
+		fingerprintSource.WriteByte('\n')
+	}
+	fingerprintSource.WriteString(snapshot.SourceMeasure)
+	fingerprintSource.WriteByte('\n')
+	fingerprintSource.WriteString(snapshot.SourceMeasureGroup)
+	fingerprintSource.WriteByte('\n')
+	fingerprintSource.WriteString(snapshot.FieldValueSort)
+	digest := sha256.Sum256([]byte(fingerprintSource.String()))
+	snapshot.Fingerprint = hex.EncodeToString(digest[:])
+	return snapshot.Fingerprint
 }
 
 // Column returns a typed schema column by its case-insensitive name.
@@ -146,6 +234,28 @@ func (snapshot SchemaSnapshot) Column(name string) (SchemaColumn, bool) {
 	matchCount := 0
 	for _, column := range snapshot.Columns {
 		if strings.EqualFold(column.Name[strings.LastIndex(column.Name, ".")+1:], trimmedName) {
+			suffixMatch = column
+			matchCount++
+		}
+	}
+	if matchCount == 1 {
+		return suffixMatch, true
+	}
+	return SchemaColumn{}, false
+}
+
+// ExactColumn resolves a schema column without changing identifier case.
+func (snapshot SchemaSnapshot) ExactColumn(name string) (SchemaColumn, bool) {
+	trimmedName := strings.TrimSpace(name)
+	for _, column := range snapshot.Columns {
+		if column.Name == trimmedName {
+			return column, true
+		}
+	}
+	var suffixMatch SchemaColumn
+	matchCount := 0
+	for _, column := range snapshot.Columns {
+		if column.Name[strings.LastIndex(column.Name, ".")+1:] == trimmedName {
 			suffixMatch = column
 			matchCount++
 		}
@@ -223,12 +333,13 @@ type BydbqlCandidate struct {
 
 // PlannedQuery is one independently approved query from an agent workflow plan.
 type PlannedQuery struct {
-	ResourceType ResourceType
-	ID           string
-	Query        string
-	Name         string
-	Groups       []string
-	Completed    bool
+	ResourceType      ResourceType
+	ID                string
+	Query             string
+	Name              string
+	SchemaFingerprint string
+	Groups            []string
+	Completed         bool
 }
 
 // ValidationReport stores local BYDBQL validation output.
@@ -285,30 +396,124 @@ type ConversationTurn struct {
 
 // QuerySession is the workflow contract between the TUI, agent gateway, validator, and tool executor.
 type QuerySession struct {
-	ID                string
-	Phase             Phase
-	UserGoal          string
-	DiscoveryGoal     string
+	ID                  string
+	Phase               Phase
+	UserGoal            string
+	DiscoveryGoal       string
 	CandidateSuperseded bool
-	ResourceType      ResourceType
-	ResourceName      string
-	Groups            []string
-	TimeRange         TimeRange
-	SchemaSnapshot    SchemaSnapshot
-	SlotsPinned       bool
-	AutoMatched       bool
-	AgentSessionID    string
-	Conversation      []ConversationTurn
-	Candidates        []BydbqlCandidate
-	PlannedQueries    []PlannedQuery
-	SelectedCandidate int
-	ActivePlanStep    int
-	Validation        ValidationReport
-	ExecutionResult   ExecutionResult
-	Transcript        []TranscriptEntry
-	ChatMessages      []ChatMessage
-	ExecutionPolicy   approval.ExecutionPolicy
-	PendingProbe      *ProbeSummary
+	ResourceType        ResourceType
+	ResourceName        string
+	Groups              []string
+	TimeRange           TimeRange
+	SchemaSnapshot      SchemaSnapshot
+	Schemas             map[string]SchemaSnapshot
+	SlotsPinned         bool
+	AutoMatched         bool
+	AgentSessionID      string
+	Conversation        []ConversationTurn
+	Candidates          []BydbqlCandidate
+	PlannedQueries      []PlannedQuery
+	SelectedCandidate   int
+	ActivePlanStep      int
+	Validation          ValidationReport
+	ExecutionResult     ExecutionResult
+	Transcript          []TranscriptEntry
+	ChatMessages        []ChatMessage
+	ExecutionPolicy     approval.ExecutionPolicy
+	PendingProbe        *ProbeSummary
+}
+
+// SchemaKey returns a normalized identity for a resource schema.
+func SchemaKey(resourceType ResourceType, name string, groups []string) string {
+	normalizedGroups := make([]string, 0, len(groups))
+	for _, group := range groups {
+		trimmedGroup := strings.TrimSpace(group)
+		if trimmedGroup != "" {
+			normalizedGroups = append(normalizedGroups, trimmedGroup)
+		}
+	}
+	sort.Strings(normalizedGroups)
+	return strings.Join([]string{
+		strings.ToUpper(strings.TrimSpace(resourceType.String())),
+		strings.TrimSpace(name),
+		strings.Join(normalizedGroups, ","),
+	}, "|")
+}
+
+// CacheSchema adds or replaces a resource schema without changing the active TUI selection.
+func (qs *QuerySession) CacheSchema(snapshot SchemaSnapshot) SchemaSnapshot {
+	if qs == nil {
+		return snapshot
+	}
+	preserveSchemaDiscoveryContext(&snapshot, qs.SchemaSnapshot)
+	snapshot.EnsureFingerprint()
+	if qs.Schemas == nil {
+		qs.Schemas = make(map[string]SchemaSnapshot)
+	}
+	qs.Schemas[SchemaKey(snapshot.Type, snapshot.Name, snapshot.Groups)] = cloneSchemaSnapshot(snapshot)
+	return snapshot
+}
+
+// ActivateSchema caches a schema and makes it the active TUI selection.
+func (qs *QuerySession) ActivateSchema(snapshot SchemaSnapshot) {
+	if qs == nil {
+		return
+	}
+	snapshot = qs.CacheSchema(snapshot)
+	qs.ResourceType = snapshot.Type
+	qs.ResourceName = snapshot.Name
+	qs.Groups = append([]string(nil), snapshot.Groups...)
+	qs.SchemaSnapshot = cloneSchemaSnapshot(snapshot)
+}
+
+// CachedSchema returns the exact schema cached for a resource and group set.
+func (qs *QuerySession) CachedSchema(resourceType ResourceType, name string, groups []string) (SchemaSnapshot, bool) {
+	if qs == nil {
+		return SchemaSnapshot{}, false
+	}
+	if qs.Schemas != nil {
+		if snapshot, ok := qs.Schemas[SchemaKey(resourceType, name, groups)]; ok {
+			return cloneSchemaSnapshot(snapshot), true
+		}
+	}
+	activeSnapshot := qs.SchemaSnapshot
+	if SchemaKey(activeSnapshot.Type, activeSnapshot.Name, activeSnapshot.Groups) != SchemaKey(resourceType, name, groups) {
+		return SchemaSnapshot{}, false
+	}
+	activeSnapshot = qs.CacheSchema(activeSnapshot)
+	return cloneSchemaSnapshot(activeSnapshot), activeSnapshot.Loaded
+}
+
+func preserveSchemaDiscoveryContext(target *SchemaSnapshot, existing SchemaSnapshot) {
+	if len(target.AvailableGroups) == 0 {
+		target.AvailableGroups = append([]string(nil), existing.AvailableGroups...)
+	}
+	if len(target.Catalog) == 0 {
+		target.Catalog = append([]CatalogEntry(nil), existing.Catalog...)
+	}
+}
+
+func cloneSchemaSnapshot(snapshot SchemaSnapshot) SchemaSnapshot {
+	clonedSnapshot := snapshot
+	clonedSnapshot.Groups = append([]string(nil), snapshot.Groups...)
+	clonedSnapshot.Tags = append([]string(nil), snapshot.Tags...)
+	clonedSnapshot.EntityTags = append([]string(nil), snapshot.EntityTags...)
+	clonedSnapshot.Fields = append([]string(nil), snapshot.Fields...)
+	clonedSnapshot.Columns = append([]SchemaColumn(nil), snapshot.Columns...)
+	clonedSnapshot.IndexedFields = append([]string(nil), snapshot.IndexedFields...)
+	clonedSnapshot.SortableIndexes = cloneSortableIndexes(snapshot.SortableIndexes)
+	clonedSnapshot.ResourceNames = append([]string(nil), snapshot.ResourceNames...)
+	clonedSnapshot.AvailableGroups = append([]string(nil), snapshot.AvailableGroups...)
+	clonedSnapshot.Catalog = append([]CatalogEntry(nil), snapshot.Catalog...)
+	return clonedSnapshot
+}
+
+func cloneSortableIndexes(indexes []SortableIndex) []SortableIndex {
+	clonedIndexes := append([]SortableIndex(nil), indexes...)
+	for indexPosition := range clonedIndexes {
+		clonedIndexes[indexPosition].Tags = append([]string(nil), indexes[indexPosition].Tags...)
+	}
+	return clonedIndexes
 }
 
 // CurrentCandidate returns the newest candidate query.

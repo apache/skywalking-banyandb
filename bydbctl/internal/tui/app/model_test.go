@@ -145,7 +145,7 @@ func TestQueryTabUsesConversationFirstLayout(t *testing.T) {
 	model := NewModel(Config{})
 	model.resize(160, 42)
 	view := model.View()
-	for _, expected := range []string{"Conversation", "Message · Ctrl+A to send", "Policy: auto read", "Time: start"} {
+	for _, expected := range []string{"Conversation", "Message · Ctrl+A to send", "Policy: ask every time", "Time: start"} {
 		if !strings.Contains(view, expected) {
 			t.Fatalf("expected %q in Query tab:\n%s", expected, view)
 		}

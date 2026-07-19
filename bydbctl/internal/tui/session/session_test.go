@@ -66,3 +66,76 @@ func TestPlannedQueriesAdvanceOnlyAfterTheExactCurrentStatement(t *testing.T) {
 		t.Fatal("expected first planned query to be complete")
 	}
 }
+
+func TestSchemaStoreKeepsMultipleResourceSnapshots(t *testing.T) {
+	querySession := &QuerySession{SchemaSnapshot: SchemaSnapshot{
+		AvailableGroups: []string{"production"},
+		Catalog: []CatalogEntry{
+			{Group: "production", Type: ResourceTypeMeasure, Name: "latency"},
+			{Group: "production", Type: ResourceTypeStream, Name: "logs"},
+		},
+	}}
+	measure := SchemaSnapshot{
+		Type:    ResourceTypeMeasure,
+		Name:    "latency",
+		Groups:  []string{"production"},
+		Loaded:  true,
+		Columns: []SchemaColumn{{Name: "value", Kind: SchemaColumnField, Type: SchemaValueTypeFloat}},
+	}
+	stream := SchemaSnapshot{
+		Type:    ResourceTypeStream,
+		Name:    "logs",
+		Groups:  []string{"production"},
+		Loaded:  true,
+		Columns: []SchemaColumn{{Name: "message", Kind: SchemaColumnTag, Type: SchemaValueTypeString}},
+	}
+	querySession.ActivateSchema(measure)
+	querySession.CacheSchema(stream)
+
+	cachedMeasure, measureFound := querySession.CachedSchema(ResourceTypeMeasure, "latency", []string{"production"})
+	cachedStream, streamFound := querySession.CachedSchema(ResourceTypeStream, "logs", []string{"production"})
+	if !measureFound || !streamFound {
+		t.Fatalf("expected both schemas in cache: measure=%t stream=%t", measureFound, streamFound)
+	}
+	if cachedMeasure.Fingerprint == "" || cachedStream.Fingerprint == "" || cachedMeasure.Fingerprint == cachedStream.Fingerprint {
+		t.Fatalf("expected distinct schema fingerprints: measure=%q stream=%q", cachedMeasure.Fingerprint, cachedStream.Fingerprint)
+	}
+	if querySession.ResourceName != "latency" {
+		t.Fatalf("caching a second schema must not replace the active resource: %s", querySession.ResourceName)
+	}
+	if len(cachedStream.Catalog) != 2 || len(cachedMeasure.AvailableGroups) != 1 {
+		t.Fatal("expected discovery context to be preserved in cached schemas")
+	}
+}
+
+func TestSchemaFingerprintIncludesSortableIndexRules(t *testing.T) {
+	first := SchemaSnapshot{
+		Type:            ResourceTypeStream,
+		Name:            "logs",
+		Groups:          []string{"production"},
+		Columns:         []SchemaColumn{{Name: "service", Kind: SchemaColumnTag, Type: SchemaValueTypeString, Indexed: true}},
+		SortableIndexes: []SortableIndex{{RuleName: "service_sort", Tags: []string{"service"}}},
+	}
+	second := first
+	second.SortableIndexes = []SortableIndex{{RuleName: "service_sort_v2", Tags: []string{"service"}}}
+	if first.EnsureFingerprint() == second.EnsureFingerprint() {
+		t.Fatal("expected index-rule changes to invalidate the schema fingerprint")
+	}
+}
+
+func TestSchemaFingerprintIncludesTopNFilterTags(t *testing.T) {
+	first := SchemaSnapshot{
+		Type:           ResourceTypeTopN,
+		Name:           "service_latency_topn",
+		Groups:         []string{"production"},
+		Tags:           []string{"service"},
+		EntityTags:     []string{"service"},
+		Columns:        []SchemaColumn{{Name: "service", Kind: SchemaColumnEntityTag, Type: SchemaValueTypeString}},
+		FieldValueSort: "SORT_DESC",
+	}
+	second := first
+	second.EntityTags = []string{"endpoint"}
+	if first.EnsureFingerprint() == second.EnsureFingerprint() {
+		t.Fatal("expected TopN filter-tag changes to invalidate the schema fingerprint")
+	}
+}

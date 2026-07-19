@@ -62,14 +62,37 @@ func TestCollapseACPTextSpacingRepairsIdentifiers(t *testing.T) {
 	}
 }
 
-func TestFindExplicitResourceMentionMinuteToHour(t *testing.T) {
+func TestFindExplicitResourceMentionDoesNotChangeGranularity(t *testing.T) {
 	catalog := []session.CatalogEntry{
 		{Group: "sw_metricsHour", Type: session.ResourceTypeMeasure, Name: "meter_instance_host_cpu_used_rate_hour"},
 		{Group: "sw_metricsHour", Type: session.ResourceTypeMeasure, Name: "meter_vm_cpu_average_used_hour"},
 	}
 	got := FindExplicitResourceMention("查询 meter_vm_cpu_average_used_minute 最近30分钟", catalog)
-	if got == nil || got.Name != "meter_vm_cpu_average_used_hour" {
-		t.Fatalf("expected closest cpu hour resource, got %+v", got)
+	if got != nil {
+		t.Fatalf("expected unmatched minute resource, got %+v", got)
+	}
+}
+
+func TestFindExplicitResourceMentionRejectsUnrelatedIdentifier(t *testing.T) {
+	catalog := []session.CatalogEntry{
+		{Group: "sw_metrics", Type: session.ResourceTypeMeasure, Name: "service_cpm_minute"},
+		{Group: "sw_metrics", Type: session.ResourceTypeMeasure, Name: "service_latency_minute"},
+	}
+	if got := FindExplicitResourceMention("query completely_unrelated_metric_name", catalog); got != nil {
+		t.Fatalf("expected unrelated identifier to remain unmatched, got %+v", got)
+	}
+}
+
+func TestMatchResourceFromGoalRejectsAmbiguousCandidates(t *testing.T) {
+	catalog := session.SchemaCatalog{
+		Entries: []session.CatalogEntry{
+			{Group: "metrics_a", Type: session.ResourceTypeMeasure, Name: "service_cpu_minute"},
+			{Group: "metrics_b", Type: session.ResourceTypeMeasure, Name: "service_cpu_minute"},
+		},
+	}
+	match := matchResourceFromGoal("query service_cpu_minute", catalog, session.ResourceTypeMeasure, "", nil)
+	if match.Matched || !match.Ambiguous {
+		t.Fatalf("expected ambiguous match, got %+v", match)
 	}
 }
 
@@ -177,5 +200,39 @@ func TestResolveSessionSlotsPinnedOverridesCatalog(t *testing.T) {
 	}
 	if !resolved.SlotsPinned {
 		t.Fatal("expected pinned slots")
+	}
+}
+
+func TestResolveSessionSlotsUsesExactNameWithoutGuessingType(t *testing.T) {
+	catalog := session.SchemaCatalog{Entries: []session.CatalogEntry{{
+		Group: "production",
+		Type:  session.ResourceTypeStream,
+		Name:  "access_log",
+	}}}
+	resolved := ResolveSessionSlots(StartOptions{
+		Goal:         "inspect this resource",
+		ResourceName: "access_log",
+		NameProvided: true,
+	}, catalog)
+	if !resolved.AutoMatched || resolved.ResourceType != session.ResourceTypeStream {
+		t.Fatalf("expected exact catalog identity, got %+v", resolved)
+	}
+	if len(resolved.Groups) != 1 || resolved.Groups[0] != "production" {
+		t.Fatalf("expected exact resource group, got %+v", resolved.Groups)
+	}
+}
+
+func TestResolveSessionSlotsDoesNotGuessAmbiguousGroup(t *testing.T) {
+	catalog := session.SchemaCatalog{Entries: []session.CatalogEntry{
+		{Group: "production", Type: session.ResourceTypeStream, Name: "access_log"},
+		{Group: "staging", Type: session.ResourceTypeStream, Name: "access_log"},
+	}}
+	resolved := ResolveSessionSlots(StartOptions{
+		Goal:         "inspect this resource",
+		ResourceName: "access_log",
+		NameProvided: true,
+	}, catalog)
+	if resolved.AutoMatched || len(resolved.Groups) != 0 {
+		t.Fatalf("expected ambiguous group to remain unresolved, got %+v", resolved)
 	}
 }

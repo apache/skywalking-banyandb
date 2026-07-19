@@ -49,7 +49,7 @@ func (policy ExecutionPolicy) Label() string {
 	case PolicyTrustSession:
 		return "trust session"
 	default:
-		return "auto read"
+		return "ask every time"
 	}
 }
 
@@ -67,8 +67,8 @@ func (policy ExecutionPolicy) Next() ExecutionPolicy {
 
 // AutoApprove reports whether a request should bypass interactive approval.
 func (policy ExecutionPolicy) AutoApprove(source Source, probe bool, query string) bool {
-	if IsReadOnlyBYDBQL(query) {
-		return true
+	if !IsReadOnlyBYDBQL(query) {
+		return false
 	}
 	switch policy {
 	case PolicyTrustSession:

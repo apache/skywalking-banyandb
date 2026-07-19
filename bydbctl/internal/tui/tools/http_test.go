@@ -27,11 +27,13 @@ import (
 	"testing"
 
 	"google.golang.org/protobuf/encoding/protojson"
+	"google.golang.org/protobuf/proto"
 
 	bydbqlv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/bydbql/v1"
 	commonv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/common/v1"
 	databasev1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/database/v1"
 	measurev1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/measure/v1"
+	modelv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/model/v1"
 	"github.com/apache/skywalking-banyandb/bydbctl/internal/tui/session"
 	"github.com/apache/skywalking-banyandb/pkg/auth"
 )
@@ -172,6 +174,13 @@ func TestHTTPExecutorDiscoverSchema(t *testing.T) {
 	if !reflect.DeepEqual(snapshot.IndexedFields, []string{"endpoint"}) {
 		t.Fatalf("unexpected indexed fields: %v", snapshot.IndexedFields)
 	}
+	if len(snapshot.SortableIndexes) != 1 || snapshot.SortableIndexes[0].RuleName != "endpoint" ||
+		!reflect.DeepEqual(snapshot.SortableIndexes[0].Tags, []string{"endpoint"}) {
+		t.Fatalf("unexpected sortable indexes: %+v", snapshot.SortableIndexes)
+	}
+	if snapshot.Fingerprint == "" {
+		t.Fatal("expected schema fingerprint")
+	}
 	if !reflect.DeepEqual(snapshot.ResourceNames, []string{"service_latency", "service_cpm"}) {
 		t.Fatalf("unexpected resource names: %v", snapshot.ResourceNames)
 	}
@@ -194,6 +203,133 @@ func TestHTTPExecutorFallsBackWhenSchemaUnavailable(t *testing.T) {
 	}
 	if len(snapshot.Tags) != 0 || len(snapshot.Fields) != 0 {
 		t.Fatalf("expected empty fallback schema summary: %+v", snapshot)
+	}
+}
+
+func TestMergeGroupSchemasKeepsOnlyCompatibleCapabilities(t *testing.T) {
+	first := session.SchemaSnapshot{
+		Type:   session.ResourceTypeStream,
+		Name:   "logs",
+		Groups: []string{"production"},
+		Loaded: true,
+		Tags:   []string{"service", "status"},
+		Columns: []session.SchemaColumn{
+			{Name: "service", Kind: session.SchemaColumnTag, Type: session.SchemaValueTypeString, Indexed: true},
+			{Name: "status", Kind: session.SchemaColumnTag, Type: session.SchemaValueTypeInt},
+		},
+		SortableIndexes: []session.SortableIndex{
+			{RuleName: "service_sort", Tags: []string{"service"}},
+			{RuleName: "status_sort", Tags: []string{"status"}},
+		},
+	}
+	second := session.SchemaSnapshot{
+		Type:            session.ResourceTypeStream,
+		Name:            "logs",
+		Groups:          []string{"staging"},
+		Loaded:          true,
+		Tags:            []string{"service"},
+		Columns:         []session.SchemaColumn{{Name: "service", Kind: session.SchemaColumnTag, Type: session.SchemaValueTypeString, Indexed: true}},
+		SortableIndexes: []session.SortableIndex{{RuleName: "service_sort", Tags: []string{"service"}}},
+	}
+	merged, mergeErr := mergeGroupSchemas(SchemaRequest{
+		Type:   session.ResourceTypeStream,
+		Name:   "logs",
+		Groups: []string{"production", "staging"},
+	}, []session.SchemaSnapshot{first, second})
+	if mergeErr != nil {
+		t.Fatalf("mergeGroupSchemas returned error: %v", mergeErr)
+	}
+	if len(merged.Columns) != 1 || merged.Columns[0].Name != "service" {
+		t.Fatalf("expected common column only, got %+v", merged.Columns)
+	}
+	if len(merged.SortableIndexes) != 1 || merged.SortableIndexes[0].RuleName != "service_sort" {
+		t.Fatalf("expected common sortable rule only, got %+v", merged.SortableIndexes)
+	}
+	if !reflect.DeepEqual(merged.Groups, []string{"production", "staging"}) || merged.Fingerprint == "" {
+		t.Fatalf("unexpected merged schema identity: %+v", merged)
+	}
+}
+
+func TestMergeGroupTopNSchemasAllowsGroupScopedSourceMeasure(t *testing.T) {
+	first := session.SchemaSnapshot{
+		Type:               session.ResourceTypeTopN,
+		Name:               "service_latency_topn",
+		Groups:             []string{"production"},
+		Loaded:             true,
+		SourceMeasure:      "service_latency",
+		SourceMeasureGroup: "production",
+		FieldValueSort:     "SORT_DESC",
+	}
+	second := first
+	second.Groups = []string{"staging"}
+	second.SourceMeasureGroup = "staging"
+	merged, mergeErr := mergeGroupSchemas(SchemaRequest{
+		Type:   session.ResourceTypeTopN,
+		Name:   "service_latency_topn",
+		Groups: []string{"production", "staging"},
+	}, []session.SchemaSnapshot{first, second})
+	if mergeErr != nil {
+		t.Fatalf("mergeGroupSchemas returned error: %v", mergeErr)
+	}
+	if merged.SourceMeasure != "service_latency" || merged.SourceMeasureGroup != "" || merged.Fingerprint == "" {
+		t.Fatalf("unexpected merged TopN source identity: %+v", merged)
+	}
+}
+
+func TestHTTPExecutorEnrichesTopNSchemaFromSourceMeasure(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+		var responseMessage proto.Message
+		switch request.URL.Path {
+		case "/api/v1/topn-agg/schema/production/service_latency_topn":
+			responseMessage = &databasev1.TopNAggregationRegistryServiceGetResponse{
+				TopNAggregation: &databasev1.TopNAggregation{
+					Metadata:        &commonv1.Metadata{Name: "service_latency_topn", Group: "production"},
+					SourceMeasure:   &commonv1.Metadata{Name: "service_latency", Group: "production"},
+					FieldName:       "latency",
+					FieldValueSort:  modelv1.Sort_SORT_DESC,
+					GroupByTagNames: []string{"service"},
+				},
+			}
+		case "/api/v1/measure/schema/production/service_latency":
+			responseMessage = &databasev1.MeasureRegistryServiceGetResponse{Measure: &databasev1.Measure{
+				Metadata: &commonv1.Metadata{Name: "service_latency", Group: "production"},
+				TagFamilies: []*databasev1.TagFamilySpec{{
+					Name: "default",
+					Tags: []*databasev1.TagSpec{{Name: "service", Type: databasev1.TagType_TAG_TYPE_STRING}},
+				}},
+				Entity: &databasev1.Entity{TagNames: []string{"service"}},
+				Fields: []*databasev1.FieldSpec{{Name: "latency", FieldType: databasev1.FieldType_FIELD_TYPE_FLOAT}},
+			}}
+		default:
+			http.NotFound(writer, request)
+			return
+		}
+		body, marshalErr := protojson.Marshal(responseMessage)
+		if marshalErr != nil {
+			t.Fatalf("failed to marshal schema response: %v", marshalErr)
+		}
+		_, _ = writer.Write(body)
+	}))
+	defer server.Close()
+	executor := NewHTTPExecutor(HTTPConfig{Addr: server.URL})
+	snapshot, discoverErr := executor.DiscoverSchema(context.Background(), SchemaRequest{
+		Type:   session.ResourceTypeTopN,
+		Name:   "service_latency_topn",
+		Groups: []string{"production"},
+	})
+	if discoverErr != nil {
+		t.Fatalf("DiscoverSchema returned error: %v", discoverErr)
+	}
+	if !snapshot.Loaded || snapshot.SourceMeasure != "service_latency" || snapshot.FieldValueSort != "SORT_DESC" {
+		t.Fatalf("unexpected TopN metadata: %+v", snapshot)
+	}
+	serviceColumn, serviceFound := snapshot.ExactColumn("service")
+	latencyColumn, latencyFound := snapshot.ExactColumn("latency")
+	if !serviceFound || serviceColumn.Kind != session.SchemaColumnTag || serviceColumn.Type != session.SchemaValueTypeString {
+		t.Fatalf("unexpected TopN entity column: %+v", serviceColumn)
+	}
+	if !latencyFound || latencyColumn.Kind != session.SchemaColumnField || latencyColumn.Type != session.SchemaValueTypeFloat {
+		t.Fatalf("unexpected TopN value column: %+v", latencyColumn)
 	}
 }
 

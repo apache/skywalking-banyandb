@@ -226,10 +226,35 @@ func (executor *HTTPExecutor) DiscoverSchema(ctx context.Context, req SchemaRequ
 	if executor.config.Addr == "" || req.Name == "" || len(req.Groups) == 0 {
 		return snapshot, nil
 	}
-	group := req.Groups[0]
 	path, pathErr := schemaPath(req.Type)
 	if pathErr != nil {
 		return snapshot, nil
+	}
+	groupSnapshots := make([]session.SchemaSnapshot, 0, len(req.Groups))
+	for _, group := range req.Groups {
+		groupSnapshot, discoverErr := executor.discoverGroupSchema(ctx, req, group, path)
+		if discoverErr != nil {
+			return snapshot, nil
+		}
+		if !groupSnapshot.Loaded {
+			return snapshot, nil
+		}
+		groupSnapshots = append(groupSnapshots, groupSnapshot)
+	}
+	mergedSnapshot, mergeErr := mergeGroupSchemas(req, groupSnapshots)
+	if mergeErr != nil {
+		return session.SchemaSnapshot{}, mergeErr
+	}
+	mergedSnapshot.EnsureFingerprint()
+	return mergedSnapshot, nil
+}
+
+func (executor *HTTPExecutor) discoverGroupSchema(ctx context.Context, req SchemaRequest, group, path string) (session.SchemaSnapshot, error) {
+	groupRequest := req
+	groupRequest.Groups = []string{group}
+	fallbackSnapshot, fallbackErr := executor.fallback.DiscoverSchema(ctx, groupRequest)
+	if fallbackErr != nil {
+		return session.SchemaSnapshot{}, fallbackErr
 	}
 	request := executor.client.R().
 		SetContext(ctx).
@@ -242,23 +267,205 @@ func (executor *HTTPExecutor) DiscoverSchema(ctx context.Context, req SchemaRequ
 	response, requestErr := request.Get(executor.config.Addr + path)
 	if requestErr != nil || response.StatusCode() != http.StatusOK {
 		if resourceNames, listErr := executor.listResources(ctx, group, req.Type); listErr == nil {
-			snapshot.ResourceNames = resourceNames
+			fallbackSnapshot.ResourceNames = resourceNames
 		}
-		return snapshot, nil
+		return fallbackSnapshot, nil
 	}
-	schemaSnapshot, summarizeErr := summarizeSchema(req, response.Body(), executor.now())
+	schemaSnapshot, summarizeErr := summarizeSchema(groupRequest, response.Body(), executor.now())
 	if summarizeErr != nil {
-		return snapshot, nil
+		return fallbackSnapshot, nil
 	}
 	schemaSnapshot.Loaded = true
+	if schemaSnapshot.Type == session.ResourceTypeTopN && schemaSnapshot.SourceMeasure != "" {
+		sourceGroup := schemaSnapshot.SourceMeasureGroup
+		if sourceGroup == "" {
+			sourceGroup = group
+		}
+		sourceSnapshot, sourceErr := executor.discoverGroupSchema(ctx, SchemaRequest{
+			Type:   session.ResourceTypeMeasure,
+			Name:   schemaSnapshot.SourceMeasure,
+			Groups: []string{sourceGroup},
+		}, sourceGroup, measureSchemaPath)
+		if sourceErr != nil || !sourceSnapshot.Loaded {
+			return fallbackSnapshot, nil
+		}
+		enrichTopNSchema(&schemaSnapshot, sourceSnapshot)
+	}
 	if resourceNames, listErr := executor.listResources(ctx, group, req.Type); listErr == nil {
 		schemaSnapshot.ResourceNames = resourceNames
 	}
-	if indexedTags, indexErr := executor.discoverResourceIndexedTags(ctx, group, req.Type, req.Name); indexErr == nil {
+	if sortableIndexes, indexErr := executor.discoverResourceSortableIndexes(ctx, group, req.Type, req.Name); indexErr == nil {
+		schemaSnapshot.SortableIndexes = sortableIndexes
+		indexedTags := sortableIndexTags(sortableIndexes)
 		schemaSnapshot.IndexedFields = indexedTags
 		schemaSnapshot.Columns = markIndexedColumns(schemaSnapshot.Columns, indexedTags)
 	}
+	schemaSnapshot.EnsureFingerprint()
 	return schemaSnapshot, nil
+}
+
+func mergeGroupSchemas(req SchemaRequest, snapshots []session.SchemaSnapshot) (session.SchemaSnapshot, error) {
+	if len(snapshots) == 0 {
+		return session.SchemaSnapshot{}, fmt.Errorf("schema unavailable for requested groups")
+	}
+	merged := cloneSchemaSummary(snapshots[0])
+	merged.Groups = append([]string(nil), req.Groups...)
+	for snapshotIndex := 1; snapshotIndex < len(snapshots); snapshotIndex++ {
+		current := snapshots[snapshotIndex]
+		if current.Type != merged.Type || current.Name != merged.Name {
+			return session.SchemaSnapshot{}, fmt.Errorf("schema identity differs across requested groups")
+		}
+		if current.SourceMeasure != merged.SourceMeasure || current.FieldValueSort != merged.FieldValueSort {
+			return session.SchemaSnapshot{}, fmt.Errorf("TopN schema differs across requested groups")
+		}
+		if current.SourceMeasureGroup != merged.SourceMeasureGroup {
+			merged.SourceMeasureGroup = ""
+		}
+		merged.Tags = intersectStrings(merged.Tags, current.Tags)
+		merged.EntityTags = intersectStrings(merged.EntityTags, current.EntityTags)
+		merged.Fields = intersectStrings(merged.Fields, current.Fields)
+		merged.Columns = intersectColumns(merged.Columns, current.Columns)
+		merged.IndexedFields = intersectStrings(merged.IndexedFields, current.IndexedFields)
+		merged.SortableIndexes = intersectSortableIndexes(merged.SortableIndexes, current.SortableIndexes)
+		merged.ResourceNames = intersectStrings(merged.ResourceNames, current.ResourceNames)
+		if current.UpdatedAt.Before(merged.UpdatedAt) {
+			merged.UpdatedAt = current.UpdatedAt
+		}
+		merged.Loaded = merged.Loaded && current.Loaded
+	}
+	merged.Fingerprint = ""
+	merged.EnsureFingerprint()
+	return merged, nil
+}
+
+func enrichTopNSchema(topNSnapshot *session.SchemaSnapshot, sourceSnapshot session.SchemaSnapshot) {
+	if topNSnapshot == nil {
+		return
+	}
+	topNSnapshot.EntityTags = make([]string, 0, len(topNSnapshot.Tags))
+	for _, groupByTag := range topNSnapshot.Tags {
+		if column, found := sourceSnapshot.Column(groupByTag); found {
+			topNSnapshot.EntityTags = append(topNSnapshot.EntityTags, column.Name)
+		}
+	}
+	columnByName := make(map[string]session.SchemaColumn, len(sourceSnapshot.Columns))
+	for _, column := range sourceSnapshot.Columns {
+		columnByName[column.Name] = column
+	}
+	columns := make([]session.SchemaColumn, 0, len(topNSnapshot.Tags)+1+len(topNSnapshot.EntityTags))
+	seen := make(map[string]struct{})
+	for _, columnName := range append(append([]string(nil), topNSnapshot.Tags...), topNSnapshot.EntityTags...) {
+		column, ok := columnByName[columnName]
+		if !ok {
+			column, ok = sourceSnapshot.Column(columnName)
+		}
+		if !ok {
+			continue
+		}
+		if _, exists := seen[column.Name]; exists {
+			continue
+		}
+		seen[column.Name] = struct{}{}
+		columns = append(columns, column)
+	}
+	for _, fieldName := range topNSnapshot.Fields {
+		column, ok := columnByName[fieldName]
+		if !ok {
+			column, ok = sourceSnapshot.Column(fieldName)
+		}
+		if !ok {
+			continue
+		}
+		if _, exists := seen[column.Name]; exists {
+			continue
+		}
+		seen[column.Name] = struct{}{}
+		columns = append(columns, column)
+	}
+	topNSnapshot.Columns = columns
+}
+
+func cloneSchemaSummary(snapshot session.SchemaSnapshot) session.SchemaSnapshot {
+	cloned := snapshot
+	cloned.Groups = append([]string(nil), snapshot.Groups...)
+	cloned.Tags = append([]string(nil), snapshot.Tags...)
+	cloned.EntityTags = append([]string(nil), snapshot.EntityTags...)
+	cloned.Fields = append([]string(nil), snapshot.Fields...)
+	cloned.Columns = append([]session.SchemaColumn(nil), snapshot.Columns...)
+	cloned.IndexedFields = append([]string(nil), snapshot.IndexedFields...)
+	cloned.SortableIndexes = cloneSortableIndexSummary(snapshot.SortableIndexes)
+	cloned.ResourceNames = append([]string(nil), snapshot.ResourceNames...)
+	return cloned
+}
+
+func cloneSortableIndexSummary(indexes []session.SortableIndex) []session.SortableIndex {
+	cloned := append([]session.SortableIndex(nil), indexes...)
+	for indexPosition := range cloned {
+		cloned[indexPosition].Tags = append([]string(nil), indexes[indexPosition].Tags...)
+	}
+	return cloned
+}
+
+func intersectStrings(left, right []string) []string {
+	rightValues := make(map[string]struct{}, len(right))
+	for _, value := range right {
+		rightValues[value] = struct{}{}
+	}
+	intersection := make([]string, 0, len(left))
+	for _, value := range left {
+		if _, ok := rightValues[value]; ok {
+			intersection = append(intersection, value)
+		}
+	}
+	return intersection
+}
+
+func intersectColumns(left, right []session.SchemaColumn) []session.SchemaColumn {
+	rightColumns := make(map[string]session.SchemaColumn, len(right))
+	for _, column := range right {
+		rightColumns[column.Name] = column
+	}
+	intersection := make([]session.SchemaColumn, 0, len(left))
+	for _, column := range left {
+		rightColumn, ok := rightColumns[column.Name]
+		if !ok || rightColumn.Kind != column.Kind || rightColumn.Type != column.Type {
+			continue
+		}
+		column.Indexed = column.Indexed && rightColumn.Indexed
+		intersection = append(intersection, column)
+	}
+	return intersection
+}
+
+func intersectSortableIndexes(left, right []session.SortableIndex) []session.SortableIndex {
+	rightIndexes := make(map[string]session.SortableIndex, len(right))
+	for _, index := range right {
+		rightIndexes[index.RuleName] = index
+	}
+	intersection := make([]session.SortableIndex, 0, len(left))
+	for _, index := range left {
+		rightIndex, ok := rightIndexes[index.RuleName]
+		if !ok || !sameStrings(index.Tags, rightIndex.Tags) {
+			continue
+		}
+		intersection = append(intersection, session.SortableIndex{
+			RuleName: index.RuleName,
+			Tags:     append([]string(nil), index.Tags...),
+		})
+	}
+	return intersection
+}
+
+func sameStrings(left, right []string) bool {
+	if len(left) != len(right) {
+		return false
+	}
+	for valueIndex := range left {
+		if left[valueIndex] != right[valueIndex] {
+			return false
+		}
+	}
+	return true
 }
 
 func (executor *HTTPExecutor) listResources(ctx context.Context, group string, resourceType session.ResourceType) ([]string, error) {
@@ -280,12 +487,12 @@ func (executor *HTTPExecutor) listResources(ctx context.Context, group string, r
 	return resourceNamesFromList(resourceType, response.Body())
 }
 
-func (executor *HTTPExecutor) discoverResourceIndexedTags(
+func (executor *HTTPExecutor) discoverResourceSortableIndexes(
 	ctx context.Context,
 	group string,
 	resourceType session.ResourceType,
 	resourceName string,
-) ([]string, error) {
+) ([]session.SortableIndex, error) {
 	indexRules, rulesErr := executor.listIndexRules(ctx, group)
 	if rulesErr != nil {
 		return nil, rulesErr
@@ -295,7 +502,7 @@ func (executor *HTTPExecutor) discoverResourceIndexedTags(
 		return nil, bindingsErr
 	}
 	boundRuleNames := boundRuleNamesForResource(bindings, resourceType, resourceName)
-	var indexedTags []string
+	var sortableIndexes []session.SortableIndex
 	for _, indexRule := range indexRules {
 		ruleName := strings.TrimSpace(indexRule.GetMetadata().GetName())
 		if ruleName == "" {
@@ -307,9 +514,23 @@ func (executor *HTTPExecutor) discoverResourceIndexedTags(
 		if indexRule.GetNoSort() {
 			continue
 		}
-		indexedTags = append(indexedTags, indexRule.GetTags()...)
+		sortableIndexes = append(sortableIndexes, session.SortableIndex{
+			RuleName: ruleName,
+			Tags:     compactStrings(indexRule.GetTags()),
+		})
 	}
-	return compactStrings(indexedTags), nil
+	sort.Slice(sortableIndexes, func(leftIndex, rightIndex int) bool {
+		return sortableIndexes[leftIndex].RuleName < sortableIndexes[rightIndex].RuleName
+	})
+	return sortableIndexes, nil
+}
+
+func sortableIndexTags(indexes []session.SortableIndex) []string {
+	var tags []string
+	for _, index := range indexes {
+		tags = append(tags, index.Tags...)
+	}
+	return compactStrings(tags)
 }
 
 func boundRuleNamesForResource(
@@ -653,6 +874,9 @@ func summarizeSchema(req SchemaRequest, body []byte, updatedAt time.Time) (sessi
 		}
 		base.Tags = append([]string(nil), topN.GetGroupByTagNames()...)
 		base.Fields = compactStrings([]string{topN.GetFieldName()})
+		base.SourceMeasure = strings.TrimSpace(topN.GetSourceMeasure().GetName())
+		base.SourceMeasureGroup = strings.TrimSpace(topN.GetSourceMeasure().GetGroup())
+		base.FieldValueSort = topN.GetFieldValueSort().String()
 		for _, tagName := range base.Tags {
 			base.Columns = append(base.Columns, session.SchemaColumn{Name: tagName, Kind: session.SchemaColumnTag})
 		}

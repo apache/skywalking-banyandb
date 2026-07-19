@@ -45,8 +45,9 @@ type Message struct {
 
 // ChatRequest is one chat completion request with optional tools.
 type ChatRequest struct {
-	Messages []Message
-	Tools    []map[string]any
+	Messages    []Message
+	Tools       []map[string]any
+	Temperature float64
 }
 
 // ChatResponse is one assistant message from the model.
@@ -104,11 +105,13 @@ func NewOpenAIChatModel(config ModelConfig) (*OpenAIChatModel, error) {
 // Chat sends one chat completion request.
 func (chatModel *OpenAIChatModel) Chat(ctx context.Context, request ChatRequest) (ChatResponse, error) {
 	payload := map[string]any{
-		"model":    chatModel.model,
-		"messages": encodeMessages(request.Messages),
+		"model":       chatModel.model,
+		"messages":    encodeMessages(request.Messages),
+		"temperature": request.Temperature,
 	}
 	if len(request.Tools) > 0 {
 		payload["tools"] = encodeTools(request.Tools)
+		payload["parallel_tool_calls"] = false
 	}
 	body, marshalErr := json.Marshal(payload)
 	if marshalErr != nil {

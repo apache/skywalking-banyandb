@@ -21,9 +21,8 @@ import (
 	"fmt"
 	"strings"
 
-	corebydbql "github.com/apache/skywalking-banyandb/pkg/bydbql"
-
 	"github.com/apache/skywalking-banyandb/bydbctl/internal/tui/session"
+	corebydbql "github.com/apache/skywalking-banyandb/pkg/bydbql"
 )
 
 func validateSchemaIdentifiers(query string, schema *session.SchemaSnapshot) string {
@@ -31,21 +30,111 @@ func validateSchemaIdentifiers(query string, schema *session.SchemaSnapshot) str
 		return ""
 	}
 	grammar, parseErr := corebydbql.ParseQuery(query)
-	if parseErr != nil || grammar == nil || grammar.Select == nil {
+	if parseErr != nil || grammar == nil {
+		return ""
+	}
+	if grammar.TopN != nil {
+		if grammar.TopN.Where == nil {
+			return ""
+		}
+		for _, identifier := range andExpressionIdentifiers(grammar.TopN.Where.Expr) {
+			column, found := schema.ExactColumn(identifier)
+			if !found || !containsSchemaIdentifier(schema.EntityTags, column.Name) {
+				return fmt.Sprintf("TOPN filter identifier %q is not an entity tag: %s", identifier, strings.Join(schema.EntityTags, ", "))
+			}
+		}
+		return ""
+	}
+	if grammar.Select == nil {
 		return ""
 	}
 	knownIdentifiers := buildKnownIdentifiers(schema)
 	for _, identifier := range selectIdentifiers(grammar.Select) {
-		if !knownIdentifiers[strings.ToLower(identifier)] {
+		if !knownIdentifiers[identifier] {
 			return fmt.Sprintf("identifier %q is not in schema tags or fields: %s", identifier, strings.Join(schemaIdentifierList(schema), ", "))
 		}
 	}
 	for _, identifier := range groupByIdentifiers(grammar.Select) {
-		if !knownIdentifiers[strings.ToLower(identifier)] {
+		if !knownIdentifiers[identifier] {
 			return fmt.Sprintf("GROUP BY identifier %q is not in schema tags: %s", identifier, strings.Join(schema.Tags, ", "))
 		}
 	}
+	if grammar.Select.Where != nil {
+		for _, identifier := range orExpressionIdentifiers(grammar.Select.Where.Expr) {
+			if schema.Type == session.ResourceTypeProperty && identifier == "ID" {
+				continue
+			}
+			column, found := schema.ExactColumn(identifier)
+			if !found {
+				return fmt.Sprintf("filter identifier %q is not in schema tags: %s", identifier, strings.Join(schema.Tags, ", "))
+			}
+			if column.Kind != session.SchemaColumnTag && column.Kind != session.SchemaColumnEntityTag {
+				return fmt.Sprintf("filter identifier %q must be a tag", identifier)
+			}
+		}
+	}
 	return ""
+}
+
+func orExpressionIdentifiers(expression *corebydbql.GrammarOrExpr) []string {
+	if expression == nil {
+		return nil
+	}
+	identifiers := andExpressionIdentifiers(expression.Left)
+	for _, right := range expression.Right {
+		if right != nil {
+			identifiers = append(identifiers, andExpressionIdentifiers(right.Right)...)
+		}
+	}
+	return identifiers
+}
+
+func andExpressionIdentifiers(expression *corebydbql.GrammarAndExpr) []string {
+	if expression == nil {
+		return nil
+	}
+	identifiers := predicateIdentifiers(expression.Left)
+	for _, right := range expression.Right {
+		if right != nil {
+			identifiers = append(identifiers, predicateIdentifiers(right.Right)...)
+		}
+	}
+	return identifiers
+}
+
+func predicateIdentifiers(predicate *corebydbql.GrammarPredicate) []string {
+	if predicate == nil {
+		return nil
+	}
+	if predicate.Paren != nil {
+		return orExpressionIdentifiers(predicate.Paren)
+	}
+	var identifierPath *corebydbql.GrammarIdentifierPath
+	switch {
+	case predicate.Binary != nil:
+		identifierPath = predicate.Binary.Identifier
+	case predicate.In != nil:
+		identifierPath = predicate.In.Identifier
+	case predicate.Having != nil:
+		identifierPath = predicate.Having.Identifier
+	}
+	if identifierPath == nil {
+		return nil
+	}
+	identifier, identifierErr := identifierPath.ToString(false)
+	if identifierErr != nil {
+		return nil
+	}
+	return []string{identifier}
+}
+
+func containsSchemaIdentifier(values []string, target string) bool {
+	for _, value := range values {
+		if value == target {
+			return true
+		}
+	}
+	return false
 }
 
 func buildKnownIdentifiers(schema *session.SchemaSnapshot) map[string]bool {
@@ -78,7 +167,7 @@ func addKnownIdentifier(identifiers map[string]bool, value string) {
 	if trimmedValue == "" {
 		return
 	}
-	identifiers[strings.ToLower(trimmedValue)] = true
+	identifiers[trimmedValue] = true
 }
 
 func identifierSuffix(identifier string) string {
@@ -87,7 +176,7 @@ func identifierSuffix(identifier string) string {
 	if lastDot < 0 {
 		return ""
 	}
-	return strings.ToLower(strings.TrimSpace(trimmedIdentifier[lastDot+1:]))
+	return strings.TrimSpace(trimmedIdentifier[lastDot+1:])
 }
 
 func schemaIdentifierList(schema *session.SchemaSnapshot) []string {
@@ -102,11 +191,10 @@ func compactIdentifierList(values []string) []string {
 		if trimmedValue == "" {
 			continue
 		}
-		lowerValue := strings.ToLower(trimmedValue)
-		if _, ok := seen[lowerValue]; ok {
+		if _, ok := seen[trimmedValue]; ok {
 			continue
 		}
-		seen[lowerValue] = struct{}{}
+		seen[trimmedValue] = struct{}{}
 		compacted = append(compacted, trimmedValue)
 	}
 	return compacted

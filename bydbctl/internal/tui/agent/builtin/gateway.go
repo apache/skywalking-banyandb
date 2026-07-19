@@ -27,12 +27,13 @@ import (
 	"github.com/google/uuid"
 
 	"github.com/apache/skywalking-banyandb/bydbctl/internal/tui/agent"
+	"github.com/apache/skywalking-banyandb/bydbctl/internal/tui/agent/prompt"
 	"github.com/apache/skywalking-banyandb/bydbctl/internal/tui/bridge"
 )
 
 const (
 	defaultMaxToolRounds     = 20
-	defaultMaxProposeRepairs = 6
+	defaultMaxProposeRepairs = agent.DefaultMaxPlanAttempts
 	eventBufferSize          = 64
 )
 
@@ -98,17 +99,22 @@ func (gateway *Gateway) Start(_ context.Context, req agent.StartRequest) (agent.
 	}, nil
 }
 
+// MaintainsConversationHistory reports that each builtin turn is stateless.
+func (gateway *Gateway) MaintainsConversationHistory() bool {
+	return false
+}
+
 // Send runs one prompt turn with direct controlled tool calls.
 func (gateway *Gateway) Send(ctx context.Context, sessionID string, req agent.TurnRequest) (<-chan agent.Event, error) {
 	if lookupErr := gateway.ensureSession(sessionID); lookupErr != nil {
 		return nil, lookupErr
 	}
-	promptText, promptErr := agent.BuildBydbqlPrompt(req)
+	promptParts, promptErr := agent.BuildBydbqlPromptParts(req)
 	if promptErr != nil {
 		return nil, fmt.Errorf("failed to build builtin prompt: %w", promptErr)
 	}
 	events := make(chan agent.Event, eventBufferSize)
-	go gateway.runTurn(ctx, promptText, events)
+	go gateway.runTurn(ctx, promptParts, events)
 	return events, nil
 }
 
@@ -129,9 +135,12 @@ func (gateway *Gateway) ensureSession(sessionID string) error {
 	return nil
 }
 
-func (gateway *Gateway) runTurn(ctx context.Context, promptText string, events chan<- agent.Event) {
+func (gateway *Gateway) runTurn(ctx context.Context, promptParts prompt.Parts, events chan<- agent.Event) {
 	defer close(events)
-	messages := []Message{{Role: "user", Content: promptText}}
+	messages := []Message{
+		{Role: "system", Content: promptParts.System},
+		{Role: "user", Content: promptParts.User},
+	}
 	tools := bridge.ToolDefinitions()
 	pendingProposeRepair := false
 	proposeRepairCount := 0
@@ -144,7 +153,7 @@ func (gateway *Gateway) runTurn(ctx context.Context, promptText string, events c
 			})
 			return
 		}
-		response, chatErr := gateway.model.Chat(ctx, ChatRequest{Messages: messages, Tools: tools})
+		response, chatErr := gateway.model.Chat(ctx, ChatRequest{Messages: messages, Tools: tools, Temperature: 0})
 		if chatErr != nil {
 			_ = sendEvent(ctx, events, agent.Event{
 				Kind:    agent.EventKindError,

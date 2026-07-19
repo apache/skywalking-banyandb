@@ -23,16 +23,13 @@ import (
 	"regexp"
 	"strings"
 
-	corebydbql "github.com/apache/skywalking-banyandb/pkg/bydbql"
-
 	"github.com/apache/skywalking-banyandb/bydbctl/internal/tui/session"
+	corebydbql "github.com/apache/skywalking-banyandb/pkg/bydbql"
 )
 
 var (
-	timeClausePattern    = regexp.MustCompile(`(?i)\bTIME\b`)
-	limitClausePattern   = regexp.MustCompile(`(?i)\bLIMIT\s+\d+\b`)
-	orderByFieldPattern  = regexp.MustCompile(`(?i)\bORDER\s+BY\s+([A-Za-z_][\w.]*)`)
-	topNOrderOnlyPattern = regexp.MustCompile(`(?i)\bORDER\s+BY\s+(ASC|DESC)\s*$`)
+	timeClausePattern  = regexp.MustCompile(`(?i)\bTIME\b`)
+	limitClausePattern = regexp.MustCompile(`(?i)\bLIMIT\s+\d+\b`)
 )
 
 // SemanticValidator validates BYDBQL syntax and lightweight semantic rules.
@@ -48,8 +45,8 @@ func NewSemanticValidator() *SemanticValidator {
 }
 
 // Validate parses a query and applies semantic checks when schema context is available.
-func (validator *SemanticValidator) Validate(_ context.Context, query string, schema *session.SchemaSnapshot) (session.ValidationReport, error) {
-	report, validateErr := validator.parser.Validate(context.Background(), query, nil)
+func (validator *SemanticValidator) Validate(ctx context.Context, query string, schema *session.SchemaSnapshot) (session.ValidationReport, error) {
+	report, validateErr := validator.parser.Validate(ctx, query, nil)
 	if validateErr != nil || !report.Valid {
 		return report, validateErr
 	}
@@ -64,22 +61,61 @@ func (validator *SemanticValidator) Validate(_ context.Context, query string, sc
 }
 
 func (validator *SemanticValidator) semanticMessage(query string, schema *session.SchemaSnapshot) string {
+	if resourceMessage := validateResourceIdentity(query, schema); resourceMessage != "" {
+		return resourceMessage
+	}
 	if requiresTimeClause(query) && !timeClausePattern.MatchString(query) {
 		return "TIME clause is required for MEASURE, STREAM, TRACE, and SHOW TOP queries"
 	}
 	if requiresLimitClause(query) && !limitClausePattern.MatchString(query) {
 		return "LIMIT clause is required for SELECT queries"
 	}
-	if orderField := extractOrderByField(query); orderField != "" && len(schema.IndexedFields) > 0 {
-		if !containsIndexedField(schema.IndexedFields, orderField) {
-			if suggestion := suggestIndexedField(schema.IndexedFields, orderField); suggestion != "" {
-				return fmt.Sprintf("ORDER BY field %q is not indexed; use %q or omit ORDER BY", orderField, suggestion)
+	sortableRules := sortableIndexRuleNames(schema)
+	if orderField := extractOrderByField(query); orderField != "" && len(sortableRules) > 0 {
+		if !containsIndexedField(sortableRules, orderField) {
+			if suggestion := suggestIndexedField(sortableRules, orderField); suggestion != "" {
+				return fmt.Sprintf("ORDER BY index rule %q is not sortable; use %q or omit ORDER BY", orderField, suggestion)
 			}
-			return fmt.Sprintf("ORDER BY field %q is not indexed; omit ORDER BY or choose one of: %s", orderField, strings.Join(schema.IndexedFields, ", "))
+			return fmt.Sprintf("ORDER BY index rule %q is not sortable; omit ORDER BY or choose one of: %s", orderField, strings.Join(sortableRules, ", "))
 		}
 	}
 	if identifierMessage := validateSchemaIdentifiers(query, schema); identifierMessage != "" {
 		return identifierMessage
+	}
+	return ""
+}
+
+func validateResourceIdentity(query string, schema *session.SchemaSnapshot) string {
+	if schema == nil {
+		return ""
+	}
+	grammar, parseErr := corebydbql.ParseQuery(query)
+	if parseErr != nil || grammar == nil {
+		return ""
+	}
+	var resourceType session.ResourceType
+	var resourceName string
+	var groups []string
+	switch {
+	case grammar.TopN != nil:
+		resourceType = session.ResourceTypeTopN
+		resourceName = grammar.TopN.From.ResourceName
+		groups = grammar.TopN.From.In.Groups
+	case grammar.Select != nil:
+		resourceType = session.ResourceType(strings.ToUpper(grammar.Select.From.ResourceType))
+		resourceName = grammar.Select.From.ResourceName
+		groups = grammar.Select.From.In.Groups
+	default:
+		return ""
+	}
+	if schema.Type != "" && schema.Type != resourceType {
+		return fmt.Sprintf("query resource type %s does not match schema type %s", resourceType, schema.Type)
+	}
+	if schema.Name != "" && schema.Name != resourceName {
+		return fmt.Sprintf("query resource name %q does not match schema name %q", resourceName, schema.Name)
+	}
+	if len(schema.Groups) > 0 && session.SchemaKey(resourceType, resourceName, groups) != session.SchemaKey(schema.Type, schema.Name, schema.Groups) {
+		return fmt.Sprintf("query groups %v do not match schema groups %v", groups, schema.Groups)
 	}
 	return ""
 }
@@ -105,23 +141,44 @@ func requiresTimeClause(query string) bool {
 }
 
 func extractOrderByField(query string) string {
-	if topNOrderOnlyPattern.MatchString(strings.TrimSpace(query)) {
+	grammar, parseErr := corebydbql.ParseQuery(query)
+	if parseErr != nil || grammar == nil || grammar.Select == nil || grammar.Select.OrderBy == nil {
 		return ""
 	}
-	matches := orderByFieldPattern.FindStringSubmatch(query)
-	if len(matches) < 2 {
+	orderBy := grammar.Select.OrderBy
+	if orderBy.Tail.DirOnly != nil || orderBy.Tail.WithIdent == nil || orderBy.Tail.WithIdent.Identifier == nil {
 		return ""
 	}
-	fieldName := strings.TrimSpace(matches[1])
-	if strings.EqualFold(fieldName, "TIME") {
+	fieldName, nameErr := orderBy.Tail.WithIdent.Identifier.ToString(false)
+	if nameErr != nil {
+		return ""
+	}
+	fieldName = strings.TrimSpace(fieldName)
+	if fieldName == "TIME" {
 		return ""
 	}
 	return fieldName
 }
 
+func sortableIndexRuleNames(schema *session.SchemaSnapshot) []string {
+	if schema == nil {
+		return nil
+	}
+	if len(schema.SortableIndexes) == 0 {
+		return append([]string(nil), schema.IndexedFields...)
+	}
+	ruleNames := make([]string, 0, len(schema.SortableIndexes))
+	for _, sortableIndex := range schema.SortableIndexes {
+		if ruleName := strings.TrimSpace(sortableIndex.RuleName); ruleName != "" {
+			ruleNames = append(ruleNames, ruleName)
+		}
+	}
+	return ruleNames
+}
+
 func containsIndexedField(indexedFields []string, fieldName string) bool {
 	for _, indexedField := range indexedFields {
-		if strings.EqualFold(indexedField, fieldName) {
+		if indexedField == fieldName {
 			return true
 		}
 	}

@@ -21,7 +21,6 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"sort"
 	"strings"
 	"sync"
 	"time"
@@ -30,6 +29,7 @@ import (
 
 	"github.com/apache/skywalking-banyandb/bydbctl/internal/tui/agent"
 	"github.com/apache/skywalking-banyandb/bydbctl/internal/tui/approval"
+	tuicatalog "github.com/apache/skywalking-banyandb/bydbctl/internal/tui/catalog"
 	"github.com/apache/skywalking-banyandb/bydbctl/internal/tui/planner"
 	"github.com/apache/skywalking-banyandb/bydbctl/internal/tui/session"
 	"github.com/apache/skywalking-banyandb/bydbctl/internal/tui/tools"
@@ -37,7 +37,7 @@ import (
 
 const (
 	eventBufferSize       = 64
-	maxSchemaDescriptions = 3
+	maxSchemaDescriptions = agent.DefaultMaxSchemaDescriptions
 	maxProbePreviewRows   = 10
 	ToolListGroupsSchemas = "list_groups_schemas"
 	ToolDescribeSchema    = "describe_schema"
@@ -211,6 +211,8 @@ func (toolBridge *ToolBridge) listGroupsSchemas(ctx context.Context) Result {
 	}
 	goal := ""
 	if querySession := toolBridge.session(); querySession != nil {
+		querySession.SchemaSnapshot.AvailableGroups = append([]string(nil), catalog.Groups...)
+		querySession.SchemaSnapshot.Catalog = append([]session.CatalogEntry(nil), catalog.Entries...)
 		goal = strings.TrimSpace(querySession.DiscoveryGoal)
 		if goal == "" {
 			goal = querySession.UserGoal
@@ -218,7 +220,7 @@ func (toolBridge *ToolBridge) listGroupsSchemas(ctx context.Context) Result {
 	}
 	candidates := toolBridge.rankedCatalogCandidates()
 	if len(candidates) == 0 {
-		candidates = rankCatalogCandidates(goal, catalog.Entries)
+		candidates = tuicatalog.Rank(goal, catalog.Entries, maxCatalogCandidates)
 		toolBridge.setRankedCandidates(candidates)
 	}
 	return jsonResult(map[string]any{
@@ -247,11 +249,11 @@ func (toolBridge *ToolBridge) describeSchema(ctx context.Context, arguments map[
 			resourceType = querySession.ResourceType
 		}
 	}
-	if !resourceIsRanked(toolBridge.rankedCatalogCandidates(), resourceType, resourceName, groups) {
-		return Result{Err: fmt.Errorf("schema description requires a resource from the top five catalog candidates")}
+	if querySession != nil && !catalogContainsResource(querySession.SchemaSnapshot.Catalog, resourceType, resourceName, groups) {
+		return Result{Err: fmt.Errorf("schema description requires a resource from the discovered catalog")}
 	}
 	if !toolBridge.reserveSchemaDescription() {
-		return Result{Err: fmt.Errorf("schema discovery limit reached after three detailed schema inspections")}
+		return Result{Err: fmt.Errorf("schema discovery limit reached after %d detailed schema inspections", maxSchemaDescriptions)}
 	}
 	snapshot, schemaErr := toolBridge.executor.DiscoverSchema(ctx, tools.SchemaRequest{
 		Type:   resourceType,
@@ -261,6 +263,7 @@ func (toolBridge *ToolBridge) describeSchema(ctx context.Context, arguments map[
 	if schemaErr != nil {
 		return Result{Err: fmt.Errorf("schema description failed")}
 	}
+	snapshot.EnsureFingerprint()
 	if querySession != nil {
 		setSessionSchema(querySession, snapshot)
 	}
@@ -268,13 +271,16 @@ func (toolBridge *ToolBridge) describeSchema(ctx context.Context, arguments map[
 	toolBridge.planAttempts = 0
 	toolBridge.mu.Unlock()
 	response := map[string]any{
-		"type":           snapshot.Type,
-		"name":           snapshot.Name,
-		"groups":         snapshot.Groups,
-		"tags":           snapshot.Tags,
-		"fields":         snapshot.Fields,
-		"columns":        columnsForProvider(snapshot.Columns),
-		"indexed_fields": snapshot.IndexedFields,
+		"type":               snapshot.Type,
+		"name":               snapshot.Name,
+		"groups":             snapshot.Groups,
+		"tags":               snapshot.Tags,
+		"fields":             snapshot.Fields,
+		"columns":            columnsForProvider(snapshot.Columns),
+		"indexed_fields":     snapshot.IndexedFields,
+		"sortable_indexes":   snapshot.SortableIndexes,
+		"schema_fingerprint": snapshot.Fingerprint,
+		"plan_constraints":   planConstraintsForSnapshot(snapshot),
 	}
 	if planExample := buildDescribePlanExample(snapshot); planExample != nil {
 		response["plan_example"] = planExample
@@ -296,85 +302,6 @@ func (toolBridge *ToolBridge) rankedCatalogCandidates() []session.CatalogEntry {
 	return append([]session.CatalogEntry(nil), toolBridge.rankedCandidates...)
 }
 
-func rankCatalogCandidates(goal string, entries []session.CatalogEntry) []session.CatalogEntry {
-	goalTokens := strings.FieldsFunc(strings.ToLower(strings.ReplaceAll(goal, "_", " ")), func(r rune) bool {
-		return r < 'a' || r > 'z'
-	})
-	normalizedGoal := strings.ToLower(goal)
-	type rankedEntry struct {
-		entry session.CatalogEntry
-		score int
-	}
-	ranked := make([]rankedEntry, 0, len(entries))
-	for _, entry := range entries {
-		if strings.TrimSpace(entry.Name) == "" || strings.HasPrefix(entry.Group, "_") {
-			continue
-		}
-		name := strings.ToLower(entry.Name)
-		group := strings.ToLower(entry.Group)
-		score := 0
-		for _, token := range goalTokens {
-			if strings.Contains(name, token) {
-				score += 3
-			}
-			if strings.Contains(group, token) {
-				score += 2
-			}
-		}
-		if strings.Contains(normalizedGoal, name) {
-			score += 20
-		}
-		if strings.Contains(normalizedGoal, group) {
-			score += 10
-		}
-		if entry.Type == session.ResourceTypeMeasure && (strings.Contains(normalizedGoal, "metric") || strings.Contains(normalizedGoal, "latency") || strings.Contains(normalizedGoal, "endpoint")) {
-			score += 4
-		}
-		if entry.Type == session.ResourceTypeStream && (strings.Contains(normalizedGoal, "log") || strings.Contains(normalizedGoal, "stream")) {
-			score += 2
-		}
-		if entry.Type == session.ResourceTypeTrace && (strings.Contains(normalizedGoal, "trace") || strings.Contains(normalizedGoal, "span")) {
-			score += 2
-		}
-		if strings.Contains(group, "metric") && (strings.Contains(normalizedGoal, "metric") || strings.Contains(normalizedGoal, "endpoint") || strings.Contains(normalizedGoal, "latency")) {
-			score += 6
-		}
-		if strings.Contains(name, "latency") && strings.Contains(normalizedGoal, "slow") {
-			score += 8
-		}
-		if strings.Contains(name, "endpoint") && (strings.Contains(normalizedGoal, "endpoint") || strings.Contains(normalizedGoal, "payment")) {
-			score += 8
-		}
-		if strings.Contains(name, "cpu") && strings.Contains(normalizedGoal, "cpu") {
-			score += 12
-		}
-		if group == "default" && len(entries) > 20 {
-			score -= 8
-		}
-		ranked = append(ranked, rankedEntry{entry: entry, score: score})
-	}
-	sort.SliceStable(ranked, func(leftIndex, rightIndex int) bool {
-		if ranked[leftIndex].score != ranked[rightIndex].score {
-			return ranked[leftIndex].score > ranked[rightIndex].score
-		}
-		if ranked[leftIndex].entry.Group != ranked[rightIndex].entry.Group {
-			return ranked[leftIndex].entry.Group < ranked[rightIndex].entry.Group
-		}
-		if ranked[leftIndex].entry.Type != ranked[rightIndex].entry.Type {
-			return ranked[leftIndex].entry.Type < ranked[rightIndex].entry.Type
-		}
-		return ranked[leftIndex].entry.Name < ranked[rightIndex].entry.Name
-	})
-	if len(ranked) > maxCatalogCandidates {
-		ranked = ranked[:maxCatalogCandidates]
-	}
-	candidates := make([]session.CatalogEntry, 0, len(ranked))
-	for _, entry := range ranked {
-		candidates = append(candidates, entry.entry)
-	}
-	return candidates
-}
-
 func resourceIsRanked(candidates []session.CatalogEntry, resourceType session.ResourceType, resourceName string, groups []string) bool {
 	if len(candidates) == 0 {
 		return false
@@ -383,8 +310,8 @@ func resourceIsRanked(candidates []session.CatalogEntry, resourceType session.Re
 		found := false
 		for _, entry := range candidates {
 			if catalogTypesCompatible(resourceType, entry.Type) &&
-				strings.EqualFold(entry.Name, resourceName) &&
-				strings.EqualFold(entry.Group, group) {
+				entry.Name == resourceName &&
+				entry.Group == group {
 				found = true
 				break
 			}
@@ -397,10 +324,14 @@ func resourceIsRanked(candidates []session.CatalogEntry, resourceType session.Re
 }
 
 func catalogTypesCompatible(planType, catalogType session.ResourceType) bool {
-	if planType == catalogType {
+	return planType == catalogType
+}
+
+func catalogContainsResource(entries []session.CatalogEntry, resourceType session.ResourceType, resourceName string, groups []string) bool {
+	if len(entries) == 0 {
 		return true
 	}
-	return planType == session.ResourceTypeTopN && catalogType == session.ResourceTypeMeasure
+	return resourceIsRanked(entries, resourceType, resourceName, groups)
 }
 
 func (toolBridge *ToolBridge) reserveSchemaDescription() bool {
@@ -430,16 +361,7 @@ func columnsForProvider(columns []session.SchemaColumn) []map[string]any {
 }
 
 func setSessionSchema(querySession *session.QuerySession, schemaSnapshot session.SchemaSnapshot) {
-	if len(schemaSnapshot.AvailableGroups) == 0 {
-		schemaSnapshot.AvailableGroups = append([]string(nil), querySession.SchemaSnapshot.AvailableGroups...)
-	}
-	if len(schemaSnapshot.Catalog) == 0 {
-		schemaSnapshot.Catalog = append([]session.CatalogEntry(nil), querySession.SchemaSnapshot.Catalog...)
-	}
-	querySession.ResourceType = schemaSnapshot.Type
-	querySession.ResourceName = schemaSnapshot.Name
-	querySession.Groups = append([]string(nil), schemaSnapshot.Groups...)
-	querySession.SchemaSnapshot = schemaSnapshot
+	querySession.ActivateSchema(schemaSnapshot)
 }
 
 func (toolBridge *ToolBridge) proposeQueryPlan(ctx context.Context, callID string, arguments map[string]any) Result {
@@ -452,19 +374,22 @@ func (toolBridge *ToolBridge) proposeQueryPlan(ctx context.Context, callID strin
 	}
 	plans, planErr := plannedQueries(arguments)
 	if planErr != nil {
+		diagnostic := planner.Diagnostic{
+			Code:    "PLAN_DECODE_FAILED",
+			Path:    "/",
+			Message: planErr.Error(),
+		}
 		return jsonResult(map[string]any{
 			"valid":       false,
 			"message":     planErr.Error(),
+			"diagnostic":  diagnostic,
 			"schema_hint": queryPlanSchemaHint(),
+			"repair_hint": repairHintForDiagnostic(diagnostic),
 		})
 	}
 	for planIndex, plan := range plans {
-		if rankedCandidates := toolBridge.rankedCatalogCandidates(); len(rankedCandidates) != 0 &&
-			!resourceIsRanked(rankedCandidates, plan.Resource.Type, plan.Resource.Name, plan.Resource.Groups) {
-			return Result{Err: fmt.Errorf("query plan step %d selects a resource outside the top five catalog candidates", planIndex+1)}
-		}
-		if !schemaReadyForPlan(querySession, plan.Resource) {
-			return jsonResult(planFailurePayload(querySession, schemaNotReadyMessage(planIndex+1, plan.Resource), planIndex+1, 0, ""))
+		if !resourceIsDiscoverable(querySession.SchemaSnapshot.Catalog, plan.Resource) {
+			return Result{Err: fmt.Errorf("query plan step %d selects a resource outside the discovered catalog", planIndex+1)}
 		}
 	}
 	attempt, allowed := toolBridge.reservePlanAttempt()
@@ -491,15 +416,27 @@ func (toolBridge *ToolBridge) proposeQueryPlan(ctx context.Context, callID strin
 		if !resourceIsDiscoverable(querySession.SchemaSnapshot.Catalog, plan.Resource) {
 			return Result{Err: fmt.Errorf("query plan step %d selects a resource outside the discovered catalog", planIndex+1)}
 		}
-		snapshot, schemaErr := toolBridge.executor.DiscoverSchema(ctx, schemaRequestForPlan(plan))
-		if schemaErr != nil {
-			return Result{Err: fmt.Errorf("failed to discover schema for plan step %d: %w", planIndex+1, schemaErr)}
+		snapshot, cached := querySession.CachedSchema(plan.Resource.Type, plan.Resource.Name, plan.Resource.Groups)
+		if !cached {
+			var schemaErr error
+			snapshot, schemaErr = toolBridge.executor.DiscoverSchema(ctx, schemaRequestForPlan(plan))
+			if schemaErr != nil {
+				return Result{Err: fmt.Errorf("failed to discover schema for plan step %d: %w", planIndex+1, schemaErr)}
+			}
+			snapshot = querySession.CacheSchema(snapshot)
+		}
+		if !snapshot.Loaded || len(snapshot.Columns) == 0 {
+			return jsonResult(planFailurePayload(querySession, planner.Diagnostic{
+				Code:    "SCHEMA_NOT_READY",
+				Path:    "/resource",
+				Message: schemaNotReadyMessage(planIndex+1, plan.Resource),
+			}, planIndex+1, attempt, ""))
 		}
 		compiled, compileErr := planner.Compile(plan, snapshot)
 		if compileErr != nil {
 			draftQuery := planner.CompileDisplayDraft(plan)
 			toolBridge.emitProposeCandidate(callID, draftQuery, true, compileErr.Error())
-			return jsonResult(planFailurePayload(querySession, compileErr.Error(), planIndex+1, attempt, draftQuery))
+			return jsonResult(planFailurePayload(querySession, planner.DescribeError(compileErr), planIndex+1, attempt, draftQuery))
 		}
 		validation, validationErr := toolBridge.validator.Validate(ctx, compiled.Query, &snapshot)
 		if validationErr != nil {
@@ -507,18 +444,23 @@ func (toolBridge *ToolBridge) proposeQueryPlan(ctx context.Context, callID strin
 		}
 		if !validation.Valid {
 			toolBridge.emitProposeCandidate(callID, compiled.Query, true, validation.Message)
-			return jsonResult(planFailurePayload(querySession, validation.Message, planIndex+1, attempt, compiled.Query))
+			return jsonResult(planFailurePayload(querySession, planner.Diagnostic{
+				Code:    "BYDBQL_VALIDATION_FAILED",
+				Path:    "/",
+				Message: validation.Message,
+			}, planIndex+1, attempt, compiled.Query))
 		}
 		if planIndex == 0 {
 			selectedSnapshot = snapshot
 		}
 		compiledQueries = append(compiledQueries, compiled)
 		plannedQueries = append(plannedQueries, session.PlannedQuery{
-			ID:           compiled.ID,
-			Query:        compiled.Query,
-			ResourceType: compiled.Resource.Type,
-			Name:         compiled.Resource.Name,
-			Groups:       append([]string(nil), compiled.Resource.Groups...),
+			ID:                compiled.ID,
+			Query:             compiled.Query,
+			ResourceType:      compiled.Resource.Type,
+			Name:              compiled.Resource.Name,
+			SchemaFingerprint: snapshot.Fingerprint,
+			Groups:            append([]string(nil), compiled.Resource.Groups...),
 		})
 	}
 	setSessionSchema(querySession, selectedSnapshot)
@@ -531,7 +473,7 @@ func (toolBridge *ToolBridge) proposeQueryPlan(ctx context.Context, callID strin
 		"resource":     firstQuery.Resource,
 		"next_step_id": firstQuery.ID,
 	}
-	if toolBridge.shouldAutoProbeAfterPlan() {
+	if toolBridge.shouldAutoProbeAfterPlan(firstQuery.Query) {
 		probeSummary := toolBridge.probePlannedQuery(ctx, querySession, firstQuery.Query, plannedQueries[0])
 		if probeSummary != nil {
 			querySession.SetPendingProbe(probeSummary)
@@ -558,12 +500,8 @@ func (toolBridge *ToolBridge) proposeQueryPlan(ctx context.Context, callID strin
 }
 
 func schemaRequestForPlan(plan planner.QueryPlan) tools.SchemaRequest {
-	resourceType := plan.Resource.Type
-	if resourceType == session.ResourceTypeTopN {
-		resourceType = session.ResourceTypeMeasure
-	}
 	return tools.SchemaRequest{
-		Type:   resourceType,
+		Type:   plan.Resource.Type,
 		Name:   plan.Resource.Name,
 		Groups: plan.Resource.Groups,
 	}
@@ -577,8 +515,8 @@ func resourceIsDiscoverable(catalog []session.CatalogEntry, resource planner.Res
 		found := false
 		for _, entry := range catalog {
 			if catalogTypesCompatible(resource.Type, entry.Type) &&
-				strings.EqualFold(entry.Name, resource.Name) &&
-				strings.EqualFold(entry.Group, group) {
+				entry.Name == resource.Name &&
+				entry.Group == group {
 				found = true
 				break
 			}
@@ -601,6 +539,9 @@ func (toolBridge *ToolBridge) reservePlanAttempt() (int, bool) {
 }
 
 func plannedQueries(arguments map[string]any) ([]planner.QueryPlan, error) {
+	if len(arguments) != 1 {
+		return nil, fmt.Errorf("propose_query_plan accepts exactly one top-level field: plan or workflow")
+	}
 	planValue, hasPlan := arguments["plan"]
 	workflowValue, hasWorkflow := arguments["workflow"]
 	if hasPlan == hasWorkflow {
@@ -630,6 +571,7 @@ func decodePlanArgument(value any, target any) error {
 	}
 	decoder := json.NewDecoder(bytes.NewReader(encodedValue))
 	decoder.UseNumber()
+	decoder.DisallowUnknownFields()
 	if decodeErr := decoder.Decode(target); decodeErr != nil {
 		return fmt.Errorf("failed to decode plan input: %w", decodeErr)
 	}
@@ -666,19 +608,17 @@ func (toolBridge *ToolBridge) probeBydbQL(ctx context.Context, callID string, ar
 		return Result{Err: fmt.Errorf("query session is not configured")}
 	}
 	query := stringArgument(arguments, "query")
+	if !approval.IsReadOnlyBYDBQL(query) {
+		return Result{Err: fmt.Errorf("probe_bydbql accepts only one read-only SELECT or SHOW TOP statement")}
+	}
 	plannedQuery := querySession.CurrentPlannedQuery()
 	if plannedQuery == nil || plannedQuery.Query != query {
 		return Result{Err: fmt.Errorf("probe_bydbql requires propose_query_plan to return valid=true first; validate_bydbql alone does not register a candidate")}
 	}
-	schemaSnapshot, schemaErr := toolBridge.executor.DiscoverSchema(ctx, tools.SchemaRequest{
-		Type:   plannedQuery.ResourceType,
-		Name:   plannedQuery.Name,
-		Groups: plannedQuery.Groups,
-	})
+	schemaSnapshot, schemaErr := toolBridge.refreshPlannedSchema(ctx, querySession, *plannedQuery)
 	if schemaErr != nil {
 		return Result{Err: fmt.Errorf("failed to refresh planned query schema: %w", schemaErr)}
 	}
-	setSessionSchema(querySession, schemaSnapshot)
 	validation, validationErr := toolBridge.validator.Validate(ctx, query, &schemaSnapshot)
 	if validationErr != nil {
 		return Result{Err: fmt.Errorf("failed to validate probe query: %w", validationErr)}
@@ -720,19 +660,17 @@ func (toolBridge *ToolBridge) executeBydbQL(ctx context.Context, callID string, 
 		return Result{Err: fmt.Errorf("query session is not configured")}
 	}
 	query := stringArgument(arguments, "query")
+	if !approval.IsReadOnlyBYDBQL(query) {
+		return Result{Err: fmt.Errorf("execute_bydbql accepts only one read-only SELECT or SHOW TOP statement")}
+	}
 	plannedQuery := querySession.CurrentPlannedQuery()
 	if plannedQuery == nil || plannedQuery.Query != query {
 		return Result{Err: fmt.Errorf("execute_bydbql requires propose_query_plan to return valid=true first; validate_bydbql alone does not register a candidate")}
 	}
-	schemaSnapshot, schemaErr := toolBridge.executor.DiscoverSchema(ctx, tools.SchemaRequest{
-		Type:   plannedQuery.ResourceType,
-		Name:   plannedQuery.Name,
-		Groups: plannedQuery.Groups,
-	})
+	schemaSnapshot, schemaErr := toolBridge.refreshPlannedSchema(ctx, querySession, *plannedQuery)
 	if schemaErr != nil {
 		return Result{Err: fmt.Errorf("failed to refresh planned query schema: %w", schemaErr)}
 	}
-	setSessionSchema(querySession, schemaSnapshot)
 	validation, validationErr := toolBridge.validator.Validate(ctx, query, &schemaSnapshot)
 	if validationErr != nil {
 		return Result{Err: fmt.Errorf("failed to validate execution query: %w", validationErr)}
@@ -825,6 +763,27 @@ func (toolBridge *ToolBridge) executeBydbQL(ctx context.Context, callID string, 
 	return jsonResult(response)
 }
 
+func (toolBridge *ToolBridge) refreshPlannedSchema(
+	ctx context.Context,
+	querySession *session.QuerySession,
+	plannedQuery session.PlannedQuery,
+) (session.SchemaSnapshot, error) {
+	schemaSnapshot, schemaErr := toolBridge.executor.DiscoverSchema(ctx, tools.SchemaRequest{
+		Type:   plannedQuery.ResourceType,
+		Name:   plannedQuery.Name,
+		Groups: plannedQuery.Groups,
+	})
+	if schemaErr != nil {
+		return session.SchemaSnapshot{}, schemaErr
+	}
+	schemaSnapshot.EnsureFingerprint()
+	if plannedQuery.SchemaFingerprint != "" && plannedQuery.SchemaFingerprint != schemaSnapshot.Fingerprint {
+		return session.SchemaSnapshot{}, fmt.Errorf("resource schema changed after plan compilation; regenerate the query plan")
+	}
+	querySession.ActivateSchema(schemaSnapshot)
+	return schemaSnapshot, nil
+}
+
 func providerError(executionError string) string {
 	if strings.TrimSpace(executionError) == "" {
 		return ""
@@ -857,6 +816,7 @@ func cloneQuerySession(querySession *session.QuerySession) *session.QuerySession
 	clonedSession := *querySession
 	clonedSession.Groups = append([]string(nil), querySession.Groups...)
 	clonedSession.SchemaSnapshot = cloneSchemaSnapshot(querySession.SchemaSnapshot)
+	clonedSession.Schemas = cloneSchemaStore(querySession.Schemas)
 	clonedSession.Conversation = append([]session.ConversationTurn(nil), querySession.Conversation...)
 	clonedSession.Candidates = cloneCandidates(querySession.Candidates)
 	clonedSession.PlannedQueries = clonePlannedQueries(querySession.PlannedQueries)
@@ -875,10 +835,30 @@ func cloneSchemaSnapshot(schemaSnapshot session.SchemaSnapshot) session.SchemaSn
 	clonedSnapshot.Fields = append([]string(nil), schemaSnapshot.Fields...)
 	clonedSnapshot.Columns = append([]session.SchemaColumn(nil), schemaSnapshot.Columns...)
 	clonedSnapshot.IndexedFields = append([]string(nil), schemaSnapshot.IndexedFields...)
+	clonedSnapshot.SortableIndexes = cloneSortableIndexes(schemaSnapshot.SortableIndexes)
 	clonedSnapshot.ResourceNames = append([]string(nil), schemaSnapshot.ResourceNames...)
 	clonedSnapshot.AvailableGroups = append([]string(nil), schemaSnapshot.AvailableGroups...)
 	clonedSnapshot.Catalog = append([]session.CatalogEntry(nil), schemaSnapshot.Catalog...)
 	return clonedSnapshot
+}
+
+func cloneSchemaStore(schemaStore map[string]session.SchemaSnapshot) map[string]session.SchemaSnapshot {
+	if len(schemaStore) == 0 {
+		return nil
+	}
+	clonedStore := make(map[string]session.SchemaSnapshot, len(schemaStore))
+	for schemaKey, schemaSnapshot := range schemaStore {
+		clonedStore[schemaKey] = cloneSchemaSnapshot(schemaSnapshot)
+	}
+	return clonedStore
+}
+
+func cloneSortableIndexes(indexes []session.SortableIndex) []session.SortableIndex {
+	clonedIndexes := append([]session.SortableIndex(nil), indexes...)
+	for indexPosition := range clonedIndexes {
+		clonedIndexes[indexPosition].Tags = append([]string(nil), indexes[indexPosition].Tags...)
+	}
+	return clonedIndexes
 }
 
 func cloneCandidates(candidates []session.BydbqlCandidate) []session.BydbqlCandidate {
@@ -1091,8 +1071,9 @@ func (toolBridge *ToolBridge) executionPolicy() approval.ExecutionPolicy {
 	return toolBridge.activePolicy
 }
 
-func (toolBridge *ToolBridge) shouldAutoProbeAfterPlan() bool {
-	return toolBridge.executor != nil && toolBridge.validator != nil
+func (toolBridge *ToolBridge) shouldAutoProbeAfterPlan(query string) bool {
+	return toolBridge.executor != nil && toolBridge.validator != nil &&
+		toolBridge.executionPolicy().AutoApprove(approval.SourceAgentProbe, true, query)
 }
 
 func probeSummaryPayload(probeSummary *session.ProbeSummary) map[string]any {
@@ -1130,15 +1111,10 @@ func (toolBridge *ToolBridge) runWorkflowProbe(
 	if toolBridge.validator == nil || toolBridge.executor == nil || querySession == nil || plannedQuery == nil {
 		return nil, fmt.Errorf("probe bridge is not configured")
 	}
-	schemaSnapshot, schemaErr := toolBridge.executor.DiscoverSchema(ctx, tools.SchemaRequest{
-		Type:   plannedQuery.ResourceType,
-		Name:   plannedQuery.Name,
-		Groups: plannedQuery.Groups,
-	})
+	schemaSnapshot, schemaErr := toolBridge.refreshPlannedSchema(ctx, querySession, *plannedQuery)
 	if schemaErr != nil {
 		return nil, fmt.Errorf("failed to refresh planned query schema: %w", schemaErr)
 	}
-	setSessionSchema(querySession, schemaSnapshot)
 	validation, validationErr := toolBridge.validator.Validate(ctx, query, &schemaSnapshot)
 	if validationErr != nil {
 		return nil, fmt.Errorf("failed to validate probe query: %w", validationErr)
@@ -1228,46 +1204,6 @@ func executionResultToProbe(query string, executionResult session.ExecutionResul
 		}
 	}
 	return probeSummary
-}
-
-func schemaReadyForPlan(querySession *session.QuerySession, resource planner.Resource) bool {
-	if querySession == nil {
-		return false
-	}
-	snapshot := querySession.SchemaSnapshot
-	if !snapshot.Loaded || len(snapshot.Columns) == 0 {
-		return false
-	}
-	return planResourceMatchesSnapshot(resource, snapshot)
-}
-
-func planResourceMatchesSnapshot(resource planner.Resource, snapshot session.SchemaSnapshot) bool {
-	if !strings.EqualFold(strings.TrimSpace(snapshot.Name), strings.TrimSpace(resource.Name)) {
-		return false
-	}
-	if snapshot.Type != "" && resource.Type != "" && !catalogTypesCompatible(resource.Type, snapshot.Type) {
-		return false
-	}
-	return planGroupsMatchSnapshot(resource.Groups, snapshot.Groups)
-}
-
-func planGroupsMatchSnapshot(planGroups, snapshotGroups []string) bool {
-	if len(planGroups) == 0 {
-		return len(snapshotGroups) > 0
-	}
-	for _, planGroup := range planGroups {
-		groupMatched := false
-		for _, snapshotGroup := range snapshotGroups {
-			if strings.EqualFold(strings.TrimSpace(planGroup), strings.TrimSpace(snapshotGroup)) {
-				groupMatched = true
-				break
-			}
-		}
-		if !groupMatched {
-			return false
-		}
-	}
-	return true
 }
 
 func schemaNotReadyMessage(step int, resource planner.Resource) string {

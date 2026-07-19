@@ -54,6 +54,11 @@ type Gateway struct {
 	sessions         map[string]*connection
 }
 
+// MaintainsConversationHistory reports that an ACP session retains prior turns.
+func (gateway *Gateway) MaintainsConversationHistory() bool {
+	return true
+}
+
 // NewGateway creates an ACP stdio gateway.
 func NewGateway(command string, args ...string) *Gateway {
 	return &Gateway{

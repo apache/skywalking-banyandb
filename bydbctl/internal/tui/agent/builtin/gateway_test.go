@@ -30,12 +30,19 @@ import (
 )
 
 func TestOpenAIChatModelDecodesToolCalls(t *testing.T) {
+	var receivedPayload map[string]any
 	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
 		if request.URL.Path != "/chat/completions" {
 			t.Fatalf("unexpected path: %s", request.URL.Path)
 		}
+		if decodeErr := json.NewDecoder(request.Body).Decode(&receivedPayload); decodeErr != nil {
+			t.Fatalf("failed to decode request payload: %v", decodeErr)
+		}
 		writer.Header().Set("Content-Type", "application/json")
-		_, _ = writer.Write([]byte(`{"choices":[{"message":{"role":"assistant","tool_calls":[{"id":"call-1","type":"function","function":{"name":"describe_schema","arguments":"{\"name\":\"latency\"}"}}]}}]}`))
+		_, _ = writer.Write([]byte(
+			`{"choices":[{"message":{"role":"assistant","tool_calls":[` +
+				`{"id":"call-1","type":"function","function":{"name":"describe_schema","arguments":"{\"name\":\"latency\"}"}}]}}]}`,
+		))
 	}))
 	defer server.Close()
 	chatModel, modelErr := NewOpenAIChatModel(ModelConfig{APIKey: "test-key", BaseURL: server.URL, Model: "test-model"})
@@ -51,6 +58,9 @@ func TestOpenAIChatModelDecodesToolCalls(t *testing.T) {
 	}
 	if len(response.Message.ToolCalls) != 1 || response.Message.ToolCalls[0].Name != "describe_schema" {
 		t.Fatalf("unexpected tool calls: %+v", response.Message.ToolCalls)
+	}
+	if receivedPayload["temperature"] != float64(0) || receivedPayload["parallel_tool_calls"] != false {
+		t.Fatalf("expected deterministic serialized tool request, got %+v", receivedPayload)
 	}
 }
 
@@ -110,6 +120,15 @@ func TestGatewayInvokesToolBridgeDirectly(t *testing.T) {
 	}
 	if sequenceModel.calls != 2 {
 		t.Fatalf("expected two model calls, got %d", sequenceModel.calls)
+	}
+	if len(sequenceModel.requests) == 0 || len(sequenceModel.requests[0].Messages) < 2 {
+		t.Fatalf("expected system and user messages, got %+v", sequenceModel.requests)
+	}
+	if sequenceModel.requests[0].Messages[0].Role != "system" || sequenceModel.requests[0].Messages[1].Role != "user" {
+		t.Fatalf("expected trusted rules to use the system role, got %+v", sequenceModel.requests[0].Messages)
+	}
+	if sequenceModel.requests[0].Temperature != 0 {
+		t.Fatalf("expected deterministic model temperature, got %v", sequenceModel.requests[0].Temperature)
 	}
 	if len(toolBridge.SessionSnapshot().PlannedQueries) != 1 {
 		t.Fatalf("expected compiled plan in bridge session: %+v", toolBridge.SessionSnapshot().PlannedQueries)
@@ -189,10 +208,12 @@ func TestGatewayRetriesAfterProposeFailure(t *testing.T) {
 
 type scriptedChatModel struct {
 	responses []ChatResponse
+	requests  []ChatRequest
 	calls     int
 }
 
-func (model *scriptedChatModel) Chat(_ context.Context, _ ChatRequest) (ChatResponse, error) {
+func (model *scriptedChatModel) Chat(_ context.Context, request ChatRequest) (ChatResponse, error) {
+	model.requests = append(model.requests, request)
 	if model.calls >= len(model.responses) {
 		return ChatResponse{}, nil
 	}

@@ -40,120 +40,285 @@ func TestE2EDerivedGoldenPlans(t *testing.T) {
 		schema session.SchemaSnapshot
 		want   string
 	}{
-		{"measure/all", QueryPlan{Resource: measureResource, TimeRange: defaultRange, Limit: 10}, measure,
-			"SELECT * FROM MEASURE service_latency IN production TIME > '-30m' LIMIT 10"},
-		{"measure/all_latency", QueryPlan{Resource: measureResource, Projection: []Projection{{Column: "latency"}}, TimeRange: defaultRange, Limit: 10}, measure,
-			"SELECT latency FROM MEASURE service_latency IN production TIME > '-30m' LIMIT 10"},
-		{"measure/tag_filter_int", QueryPlan{Resource: measureResource, Filter: equal("status", 500), TimeRange: defaultRange, Limit: 10}, measure,
-			"SELECT * FROM MEASURE service_latency IN production TIME > '-30m' WHERE status = 500 LIMIT 10"},
-		{"measure/tag_filter_ne", QueryPlan{Resource: measureResource, Filter: notEqual("status", 500), TimeRange: defaultRange, Limit: 10}, measure,
-			"SELECT * FROM MEASURE service_latency IN production TIME > '-30m' WHERE status != 500 LIMIT 10"},
-		{"measure/gen_leaf_gt_int", QueryPlan{Resource: measureResource, Filter: comparison("status", OperatorGreaterThan, 400), TimeRange: defaultRange, Limit: 10}, measure,
-			"SELECT * FROM MEASURE service_latency IN production TIME > '-30m' WHERE status > 400 LIMIT 10"},
-		{"measure/gen_leaf_ge_int", QueryPlan{Resource: measureResource, Filter: comparison("status", OperatorGreaterEqual, 400), TimeRange: defaultRange, Limit: 10}, measure,
-			"SELECT * FROM MEASURE service_latency IN production TIME > '-30m' WHERE status >= 400 LIMIT 10"},
-		{"measure/gen_leaf_lt_int", QueryPlan{Resource: measureResource, Filter: comparison("status", OperatorLessThan, 600), TimeRange: defaultRange, Limit: 10}, measure,
-			"SELECT * FROM MEASURE service_latency IN production TIME > '-30m' WHERE status < 600 LIMIT 10"},
-		{"measure/gen_leaf_le_int", QueryPlan{Resource: measureResource, Filter: comparison("status", OperatorLessEqual, 500), TimeRange: defaultRange, Limit: 10}, measure,
-			"SELECT * FROM MEASURE service_latency IN production TIME > '-30m' WHERE status <= 500 LIMIT 10"},
-		{"measure/tag_filter_not_in", QueryPlan{Resource: measureResource, Filter: in("status", OperatorNotIn, 404, 503), TimeRange: defaultRange, Limit: 10}, measure,
-			"SELECT * FROM MEASURE service_latency IN production TIME > '-30m' WHERE status NOT IN (404, 503) LIMIT 10"},
-		{"measure/entity_service", QueryPlan{Resource: measureResource, Filter: equal("service", "payment"), TimeRange: defaultRange, Limit: 10}, measure,
-			"SELECT * FROM MEASURE service_latency IN production TIME > '-30m' WHERE service = 'payment' LIMIT 10"},
-		{"measure/complex_and_or", QueryPlan{
-			Resource: measureResource, Filter: and(equal("service", "payment"), equal("status", 500)), TimeRange: defaultRange, Limit: 10,
-		}, measure,
-			"SELECT * FROM MEASURE service_latency IN production TIME > '-30m' WHERE (service = 'payment') AND (status = 500) LIMIT 10"},
-		{"measure/linked_or", QueryPlan{
-			Resource: measureResource, Filter: or(equal("service", "payment"), equal("service", "checkout")), TimeRange: defaultRange, Limit: 10,
-		}, measure,
-			"SELECT * FROM MEASURE service_latency IN production TIME > '-30m' WHERE (service = 'payment') OR (service = 'checkout') LIMIT 10"},
-		{"measure/group_mean", QueryPlan{
-			Resource: measureResource, Projection: aggregateProjection(AggregateMean, "latency"), GroupBy: []string{"endpoint"}, TimeRange: defaultRange, Limit: 10,
-		}, measure,
-			"SELECT MEAN(latency) FROM MEASURE service_latency IN production TIME > '-30m' GROUP BY endpoint LIMIT 10"},
-		{"measure/group_sum", QueryPlan{
-			Resource: measureResource, Projection: aggregateProjection(AggregateSum, "cpm"), GroupBy: []string{"endpoint"}, TimeRange: defaultRange, Limit: 10,
-		}, measure,
-			"SELECT SUM(cpm) FROM MEASURE service_latency IN production TIME > '-30m' GROUP BY endpoint LIMIT 10"},
-		{"measure/group_count", QueryPlan{
-			Resource: measureResource, Projection: aggregateProjection(AggregateCount, "latency"), GroupBy: []string{"endpoint"}, TimeRange: defaultRange, Limit: 10,
-		}, measure,
-			"SELECT COUNT(latency) FROM MEASURE service_latency IN production TIME > '-30m' GROUP BY endpoint LIMIT 10"},
-		{"measure/group_min", QueryPlan{
-			Resource: measureResource, Projection: aggregateProjection(AggregateMin, "latency"), GroupBy: []string{"endpoint"}, TimeRange: defaultRange, Limit: 10,
-		}, measure,
-			"SELECT MIN(latency) FROM MEASURE service_latency IN production TIME > '-30m' GROUP BY endpoint LIMIT 10"},
-		{"measure/group_max", QueryPlan{
-			Resource: measureResource, Projection: aggregateProjection(AggregateMax, "latency"), GroupBy: []string{"endpoint"}, TimeRange: defaultRange, Limit: 10,
-		}, measure,
-			"SELECT MAX(latency) FROM MEASURE service_latency IN production TIME > '-30m' GROUP BY endpoint LIMIT 10"},
-		{"measure/order_tag_asc", QueryPlan{
-			Resource: measureResource, OrderBy: &Order{Column: "endpoint", Direction: OrderAscending}, TimeRange: defaultRange, Limit: 10,
-		}, measure,
-			"SELECT * FROM MEASURE service_latency IN production TIME > '-30m' ORDER BY endpoint ASC LIMIT 10"},
-		{"measure/order_tag_desc", QueryPlan{
-			Resource: measureResource, OrderBy: &Order{Column: "endpoint", Direction: OrderDescending}, TimeRange: defaultRange, Limit: 10,
-		}, measure,
-			"SELECT * FROM MEASURE service_latency IN production TIME > '-30m' ORDER BY endpoint DESC LIMIT 10"},
-		{"measure/all_max_limit", QueryPlan{Resource: measureResource, TimeRange: defaultRange, Limit: 100}, measure,
-			"SELECT * FROM MEASURE service_latency IN production TIME > '-30m' LIMIT 100"},
-		{"measure/multi_group", QueryPlan{
-			Resource:  Resource{Type: session.ResourceTypeMeasure, Name: "service_latency", Groups: []string{"production", "staging"}},
-			TimeRange: defaultRange, Limit: 10,
-		}, measure,
-			"SELECT * FROM MEASURE service_latency IN (production, staging) TIME > '-30m' LIMIT 10"},
-		{"measure/time_between", QueryPlan{Resource: measureResource, TimeRange: TimeRange{Start: "-2h", End: "-1h"}, Limit: 10}, measure,
-			"SELECT * FROM MEASURE service_latency IN production TIME BETWEEN '-2h' AND '-1h' LIMIT 10"},
-		{"stream/all", QueryPlan{Resource: streamResource, TimeRange: defaultRange, Limit: 10}, stream,
-			"SELECT * FROM STREAM logs IN production TIME > '-30m' LIMIT 10"},
-		{"stream/filter_tag", QueryPlan{Resource: streamResource, Filter: equal("service", "payment"), TimeRange: defaultRange, Limit: 10}, stream,
-			"SELECT * FROM STREAM logs IN production TIME > '-30m' WHERE service = 'payment' LIMIT 10"},
-		{"stream/less_eq", QueryPlan{Resource: streamResource, Filter: comparison("status", OperatorLessEqual, 500), TimeRange: defaultRange, Limit: 10}, stream,
-			"SELECT * FROM STREAM logs IN production TIME > '-30m' WHERE status <= 500 LIMIT 10"},
-		{"stream/logical", QueryPlan{
-			Resource: streamResource, Filter: and(equal("service", "payment"), equal("status", 500)), TimeRange: defaultRange, Limit: 10,
-		}, stream,
-			"SELECT * FROM STREAM logs IN production TIME > '-30m' WHERE (service = 'payment') AND (status = 500) LIMIT 10"},
-		{"stream/order_desc", QueryPlan{Resource: streamResource, OrderBy: &Order{Column: "service", Direction: OrderDescending}, TimeRange: defaultRange, Limit: 10}, stream,
-			"SELECT * FROM STREAM logs IN production TIME > '-30m' ORDER BY service DESC LIMIT 10"},
-		{"trace/all", QueryPlan{Resource: traceResource, TimeRange: defaultRange, Limit: 10}, trace,
-			"SELECT * FROM TRACE traces IN production TIME > '-30m' LIMIT 10"},
-		{"trace/eq_service_order_timestamp_desc", QueryPlan{
-			Resource: traceResource, Filter: equal("service_id", "payment"), OrderBy: &Order{Column: "TIME", Direction: OrderDescending},
-			TimeRange: defaultRange, Limit: 10,
-		}, trace,
-			"SELECT * FROM TRACE traces IN production TIME > '-30m' WHERE service_id = 'payment' ORDER BY TIME DESC LIMIT 10"},
-		{"trace/duration_range_order_timestamp", QueryPlan{
-			Resource: traceResource, Filter: and(comparison("duration", OperatorGreaterEqual, 100), comparison("duration", OperatorLessEqual, 500)),
-			OrderBy: &Order{Column: "TIME", Direction: OrderAscending}, TimeRange: defaultRange, Limit: 10,
-		}, trace,
-			"SELECT * FROM TRACE traces IN production TIME > '-30m' WHERE (duration >= 100) AND (duration <= 500) ORDER BY TIME ASC LIMIT 10"},
-		{"trace/gen_leaf_in_service_id", QueryPlan{
-			Resource: traceResource, Filter: in("service_id", OperatorIn, "payment", "checkout"), TimeRange: defaultRange, Limit: 10,
-		}, trace,
-			"SELECT * FROM TRACE traces IN production TIME > '-30m' WHERE service_id IN ('payment', 'checkout') LIMIT 10"},
-		{"property/all", QueryPlan{Resource: propertyResource, Limit: 10}, property,
-			"SELECT * FROM PROPERTY service_properties IN production LIMIT 10"},
-		{"property/query_by_criteria", QueryPlan{Resource: propertyResource, Filter: equal("in_service", "true"), Limit: 10}, property,
-			"SELECT * FROM PROPERTY service_properties IN production WHERE in_service = 'true' LIMIT 10"},
-		{"property/order_by_asc", QueryPlan{Resource: propertyResource, OrderBy: &Order{Column: "priority", Direction: OrderAscending}, Limit: 10}, property,
-			"SELECT * FROM PROPERTY service_properties IN production ORDER BY priority ASC LIMIT 10"},
-		{"property/order_by_desc", QueryPlan{Resource: propertyResource, OrderBy: &Order{Column: "priority", Direction: OrderDescending}, Limit: 10}, property,
-			"SELECT * FROM PROPERTY service_properties IN production ORDER BY priority DESC LIMIT 10"},
-		{"topn/topn_sum", QueryPlan{Resource: topNResource, Aggregate: &Aggregate{Function: AggregateSum}, TimeRange: defaultRange, TopN: 10}, topN,
-			"SHOW TOP 10 FROM MEASURE service_latency_topn IN production TIME > '-30m' AGGREGATE BY SUM ORDER BY DESC"},
-		{"topn/topn_mean", QueryPlan{Resource: topNResource, Aggregate: &Aggregate{Function: AggregateMean}, TimeRange: defaultRange, TopN: 10}, topN,
-			"SHOW TOP 10 FROM MEASURE service_latency_topn IN production TIME > '-30m' AGGREGATE BY MEAN ORDER BY DESC"},
-		{"topn/topn_min", QueryPlan{
-			Resource: topNResource, Aggregate: &Aggregate{Function: AggregateMin}, OrderBy: &Order{Direction: OrderAscending},
-			TimeRange: defaultRange, TopN: 5,
-		}, topN,
-			"SHOW TOP 5 FROM MEASURE service_latency_topn IN production TIME > '-30m' AGGREGATE BY MIN ORDER BY ASC"},
-		{"topn/topn_max", QueryPlan{Resource: topNResource, Aggregate: &Aggregate{Function: AggregateMax}, TimeRange: defaultRange, TopN: 5}, topN,
-			"SHOW TOP 5 FROM MEASURE service_latency_topn IN production TIME > '-30m' AGGREGATE BY MAX ORDER BY DESC"},
-		{"topn/topn_count", QueryPlan{Resource: topNResource, Aggregate: &Aggregate{Function: AggregateCount}, TimeRange: defaultRange, TopN: 3}, topN,
-			"SHOW TOP 3 FROM MEASURE service_latency_topn IN production TIME > '-30m' AGGREGATE BY COUNT ORDER BY DESC"},
+		{
+			"measure/all",
+			QueryPlan{Resource: measureResource, TimeRange: defaultRange, Limit: 10},
+			measure,
+			"SELECT * FROM MEASURE service_latency IN production TIME > '-30m' LIMIT 10",
+		},
+		{
+			"measure/all_latency",
+			QueryPlan{Resource: measureResource, Projection: []Projection{{Column: "latency"}}, TimeRange: defaultRange, Limit: 10},
+			measure,
+			"SELECT latency FROM MEASURE service_latency IN production TIME > '-30m' LIMIT 10",
+		},
+		{
+			"measure/tag_filter_int",
+			QueryPlan{Resource: measureResource, Filter: equal("status", 500), TimeRange: defaultRange, Limit: 10},
+			measure,
+			"SELECT * FROM MEASURE service_latency IN production TIME > '-30m' WHERE status = 500 LIMIT 10",
+		},
+		{
+			"measure/tag_filter_ne",
+			QueryPlan{Resource: measureResource, Filter: notEqual("status", 500), TimeRange: defaultRange, Limit: 10},
+			measure,
+			"SELECT * FROM MEASURE service_latency IN production TIME > '-30m' WHERE status != 500 LIMIT 10",
+		},
+		{
+			"measure/gen_leaf_gt_int",
+			QueryPlan{Resource: measureResource, Filter: comparison("status", OperatorGreaterThan, 400), TimeRange: defaultRange, Limit: 10},
+			measure,
+			"SELECT * FROM MEASURE service_latency IN production TIME > '-30m' WHERE status > 400 LIMIT 10",
+		},
+		{
+			"measure/gen_leaf_ge_int",
+			QueryPlan{Resource: measureResource, Filter: comparison("status", OperatorGreaterEqual, 400), TimeRange: defaultRange, Limit: 10},
+			measure,
+			"SELECT * FROM MEASURE service_latency IN production TIME > '-30m' WHERE status >= 400 LIMIT 10",
+		},
+		{
+			"measure/gen_leaf_lt_int",
+			QueryPlan{Resource: measureResource, Filter: comparison("status", OperatorLessThan, 600), TimeRange: defaultRange, Limit: 10},
+			measure,
+			"SELECT * FROM MEASURE service_latency IN production TIME > '-30m' WHERE status < 600 LIMIT 10",
+		},
+		{
+			"measure/gen_leaf_le_int",
+			QueryPlan{Resource: measureResource, Filter: comparison("status", OperatorLessEqual, 500), TimeRange: defaultRange, Limit: 10},
+			measure,
+			"SELECT * FROM MEASURE service_latency IN production TIME > '-30m' WHERE status <= 500 LIMIT 10",
+		},
+		{
+			"measure/tag_filter_not_in",
+			QueryPlan{Resource: measureResource, Filter: in("status", OperatorNotIn, 404, 503), TimeRange: defaultRange, Limit: 10},
+			measure,
+			"SELECT * FROM MEASURE service_latency IN production TIME > '-30m' WHERE status NOT IN (404, 503) LIMIT 10",
+		},
+		{
+			"measure/entity_service",
+			QueryPlan{Resource: measureResource, Filter: equal("service", "payment"), TimeRange: defaultRange, Limit: 10},
+			measure,
+			"SELECT * FROM MEASURE service_latency IN production TIME > '-30m' WHERE service = 'payment' LIMIT 10",
+		},
+		{
+			"measure/complex_and_or",
+			QueryPlan{
+				Resource: measureResource, Filter: and(equal("service", "payment"), equal("status", 500)), TimeRange: defaultRange, Limit: 10,
+			},
+			measure,
+			"SELECT * FROM MEASURE service_latency IN production TIME > '-30m' WHERE (service = 'payment') AND (status = 500) LIMIT 10",
+		},
+		{
+			"measure/linked_or",
+			QueryPlan{
+				Resource: measureResource, Filter: or(equal("service", "payment"), equal("service", "checkout")), TimeRange: defaultRange, Limit: 10,
+			},
+			measure,
+			"SELECT * FROM MEASURE service_latency IN production TIME > '-30m' WHERE (service = 'payment') OR (service = 'checkout') LIMIT 10",
+		},
+		{
+			"measure/group_mean",
+			QueryPlan{
+				Resource: measureResource, Projection: aggregateProjection(AggregateMean, "latency"), GroupBy: []string{"endpoint"}, TimeRange: defaultRange, Limit: 10,
+			},
+			measure,
+			"SELECT endpoint, MEAN(latency) FROM MEASURE service_latency IN production TIME > '-30m' GROUP BY endpoint::TAG LIMIT 10",
+		},
+		{
+			"measure/group_sum",
+			QueryPlan{
+				Resource: measureResource, Projection: aggregateProjection(AggregateSum, "cpm"), GroupBy: []string{"endpoint"}, TimeRange: defaultRange, Limit: 10,
+			},
+			measure,
+			"SELECT endpoint, SUM(cpm) FROM MEASURE service_latency IN production TIME > '-30m' GROUP BY endpoint::TAG LIMIT 10",
+		},
+		{
+			"measure/group_count",
+			QueryPlan{
+				Resource: measureResource, Projection: aggregateProjection(AggregateCount, "latency"), GroupBy: []string{"endpoint"}, TimeRange: defaultRange, Limit: 10,
+			},
+			measure,
+			"SELECT endpoint, COUNT(latency) FROM MEASURE service_latency IN production TIME > '-30m' GROUP BY endpoint::TAG LIMIT 10",
+		},
+		{
+			"measure/group_min",
+			QueryPlan{
+				Resource: measureResource, Projection: aggregateProjection(AggregateMin, "latency"), GroupBy: []string{"endpoint"}, TimeRange: defaultRange, Limit: 10,
+			},
+			measure,
+			"SELECT endpoint, MIN(latency) FROM MEASURE service_latency IN production TIME > '-30m' GROUP BY endpoint::TAG LIMIT 10",
+		},
+		{
+			"measure/group_max",
+			QueryPlan{
+				Resource: measureResource, Projection: aggregateProjection(AggregateMax, "latency"), GroupBy: []string{"endpoint"}, TimeRange: defaultRange, Limit: 10,
+			},
+			measure,
+			"SELECT endpoint, MAX(latency) FROM MEASURE service_latency IN production TIME > '-30m' GROUP BY endpoint::TAG LIMIT 10",
+		},
+		{
+			"measure/order_tag_asc",
+			QueryPlan{
+				Resource: measureResource, OrderBy: &Order{IndexRule: "endpoint", Direction: OrderAscending}, TimeRange: defaultRange, Limit: 10,
+			},
+			measure,
+			"SELECT * FROM MEASURE service_latency IN production TIME > '-30m' ORDER BY endpoint ASC LIMIT 10",
+		},
+		{
+			"measure/order_tag_desc",
+			QueryPlan{
+				Resource: measureResource, OrderBy: &Order{IndexRule: "endpoint", Direction: OrderDescending}, TimeRange: defaultRange, Limit: 10,
+			},
+			measure,
+			"SELECT * FROM MEASURE service_latency IN production TIME > '-30m' ORDER BY endpoint DESC LIMIT 10",
+		},
+		{
+			"measure/all_max_limit",
+			QueryPlan{Resource: measureResource, TimeRange: defaultRange, Limit: 100},
+			measure,
+			"SELECT * FROM MEASURE service_latency IN production TIME > '-30m' LIMIT 100",
+		},
+		{
+			"measure/multi_group",
+			QueryPlan{
+				Resource:  Resource{Type: session.ResourceTypeMeasure, Name: "service_latency", Groups: []string{"production", "staging"}},
+				TimeRange: defaultRange, Limit: 10,
+			},
+			goldenMultiGroupMeasureSchema(),
+			"SELECT * FROM MEASURE service_latency IN (production, staging) TIME > '-30m' LIMIT 10",
+		},
+		{
+			"measure/time_between",
+			QueryPlan{Resource: measureResource, TimeRange: TimeRange{Start: "-2h", End: "-1h"}, Limit: 10},
+			measure,
+			"SELECT * FROM MEASURE service_latency IN production TIME BETWEEN '-2h' AND '-1h' LIMIT 10",
+		},
+		{
+			"stream/all",
+			QueryPlan{Resource: streamResource, TimeRange: defaultRange, Limit: 10},
+			stream,
+			"SELECT * FROM STREAM logs IN production TIME > '-30m' LIMIT 10",
+		},
+		{
+			"stream/filter_tag",
+			QueryPlan{Resource: streamResource, Filter: equal("service", "payment"), TimeRange: defaultRange, Limit: 10},
+			stream,
+			"SELECT * FROM STREAM logs IN production TIME > '-30m' WHERE service = 'payment' LIMIT 10",
+		},
+		{
+			"stream/less_eq",
+			QueryPlan{Resource: streamResource, Filter: comparison("status", OperatorLessEqual, 500), TimeRange: defaultRange, Limit: 10},
+			stream,
+			"SELECT * FROM STREAM logs IN production TIME > '-30m' WHERE status <= 500 LIMIT 10",
+		},
+		{
+			"stream/logical",
+			QueryPlan{
+				Resource: streamResource, Filter: and(equal("service", "payment"), equal("status", 500)), TimeRange: defaultRange, Limit: 10,
+			},
+			stream,
+			"SELECT * FROM STREAM logs IN production TIME > '-30m' WHERE (service = 'payment') AND (status = 500) LIMIT 10",
+		},
+		{
+			"stream/order_desc",
+			QueryPlan{
+				Resource:  streamResource,
+				OrderBy:   &Order{IndexRule: "service", Direction: OrderDescending},
+				TimeRange: defaultRange,
+				Limit:     10,
+			},
+			stream,
+			"SELECT * FROM STREAM logs IN production TIME > '-30m' ORDER BY service DESC LIMIT 10",
+		},
+		{
+			"trace/all",
+			QueryPlan{Resource: traceResource, TimeRange: defaultRange, Limit: 10},
+			trace,
+			"SELECT * FROM TRACE traces IN production TIME > '-30m' LIMIT 10",
+		},
+		{
+			"trace/eq_service_order_timestamp_desc",
+			QueryPlan{
+				Resource: traceResource, Filter: equal("service_id", "payment"), OrderBy: &Order{IndexRule: "TIME", Direction: OrderDescending},
+				TimeRange: defaultRange, Limit: 10,
+			},
+			trace,
+			"SELECT * FROM TRACE traces IN production TIME > '-30m' WHERE service_id = 'payment' ORDER BY TIME DESC LIMIT 10",
+		},
+		{
+			"trace/duration_range_order_timestamp",
+			QueryPlan{
+				Resource: traceResource, Filter: and(comparison("duration", OperatorGreaterEqual, 100), comparison("duration", OperatorLessEqual, 500)),
+				OrderBy: &Order{IndexRule: "TIME", Direction: OrderAscending}, TimeRange: defaultRange, Limit: 10,
+			},
+			trace,
+			"SELECT * FROM TRACE traces IN production TIME > '-30m' WHERE (duration >= 100) AND (duration <= 500) ORDER BY TIME ASC LIMIT 10",
+		},
+		{
+			"trace/gen_leaf_in_service_id",
+			QueryPlan{
+				Resource: traceResource, Filter: in("service_id", OperatorIn, "payment", "checkout"), TimeRange: defaultRange, Limit: 10,
+			},
+			trace,
+			"SELECT * FROM TRACE traces IN production TIME > '-30m' WHERE service_id IN ('payment', 'checkout') LIMIT 10",
+		},
+		{
+			"property/all",
+			QueryPlan{Resource: propertyResource, Limit: 10},
+			property,
+			"SELECT * FROM PROPERTY service_properties IN production LIMIT 10",
+		},
+		{
+			"property/query_by_criteria",
+			QueryPlan{Resource: propertyResource, Filter: equal("in_service", "true"), Limit: 10},
+			property,
+			"SELECT * FROM PROPERTY service_properties IN production WHERE in_service = 'true' LIMIT 10",
+		},
+		{
+			"property/order_by_asc",
+			QueryPlan{Resource: propertyResource, OrderBy: &Order{IndexRule: "priority", Direction: OrderAscending}, Limit: 10},
+			property,
+			"SELECT * FROM PROPERTY service_properties IN production ORDER BY priority ASC LIMIT 10",
+		},
+		{
+			"property/order_by_desc",
+			QueryPlan{Resource: propertyResource, OrderBy: &Order{IndexRule: "priority", Direction: OrderDescending}, Limit: 10},
+			property,
+			"SELECT * FROM PROPERTY service_properties IN production ORDER BY priority DESC LIMIT 10",
+		},
+		{
+			"topn/topn_sum",
+			QueryPlan{Resource: topNResource, Aggregate: &Aggregate{Function: AggregateSum}, TimeRange: defaultRange, TopN: 10},
+			topN,
+			"SHOW TOP 10 FROM MEASURE service_latency_topn IN production TIME > '-30m' AGGREGATE BY SUM ORDER BY DESC",
+		},
+		{
+			"topn/topn_mean",
+			QueryPlan{Resource: topNResource, Aggregate: &Aggregate{Function: AggregateMean}, TimeRange: defaultRange, TopN: 10},
+			topN,
+			"SHOW TOP 10 FROM MEASURE service_latency_topn IN production TIME > '-30m' AGGREGATE BY MEAN ORDER BY DESC",
+		},
+		{
+			"topn/topn_min",
+			QueryPlan{
+				Resource: topNResource, Aggregate: &Aggregate{Function: AggregateMin}, OrderBy: &Order{Direction: OrderAscending},
+				TimeRange: defaultRange, TopN: 5,
+			},
+			topN,
+			"SHOW TOP 5 FROM MEASURE service_latency_topn IN production TIME > '-30m' AGGREGATE BY MIN ORDER BY ASC",
+		},
+		{
+			"topn/topn_max",
+			QueryPlan{Resource: topNResource, Aggregate: &Aggregate{Function: AggregateMax}, TimeRange: defaultRange, TopN: 5},
+			topN,
+			"SHOW TOP 5 FROM MEASURE service_latency_topn IN production TIME > '-30m' AGGREGATE BY MAX ORDER BY DESC",
+		},
+		{
+			"topn/topn_count",
+			QueryPlan{Resource: topNResource, Aggregate: &Aggregate{Function: AggregateCount}, TimeRange: defaultRange, TopN: 3},
+			topN,
+			"SHOW TOP 3 FROM MEASURE service_latency_topn IN production TIME > '-30m' AGGREGATE BY COUNT ORDER BY DESC",
+		},
 	}
 	if len(goldens) != 40 {
 		t.Fatalf("expected 40 e2e-derived golden cases, got %d", len(goldens))
@@ -203,6 +368,12 @@ func goldenStreamSchema() session.SchemaSnapshot {
 	}
 }
 
+func goldenMultiGroupMeasureSchema() session.SchemaSnapshot {
+	schema := goldenMeasureSchema()
+	schema.Groups = []string{"production", "staging"}
+	return schema
+}
+
 func goldenTraceSchema() session.SchemaSnapshot {
 	return session.SchemaSnapshot{
 		Type:   session.ResourceTypeTrace,
@@ -230,7 +401,7 @@ func goldenPropertySchema() session.SchemaSnapshot {
 }
 
 func aggregateProjection(function AggregateFunction, column string) []Projection {
-	return []Projection{{Aggregate: &Aggregate{Function: function, Column: column}}}
+	return []Projection{{Column: "endpoint"}, {Aggregate: &Aggregate{Function: function, Column: column}}}
 }
 
 func equal(column string, value any) *Predicate {

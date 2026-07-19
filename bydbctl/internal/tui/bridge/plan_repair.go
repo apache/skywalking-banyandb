@@ -21,20 +21,28 @@ import (
 	"strings"
 
 	"github.com/apache/skywalking-banyandb/bydbctl/internal/tui/agent"
+	"github.com/apache/skywalking-banyandb/bydbctl/internal/tui/planner"
 	"github.com/apache/skywalking-banyandb/bydbctl/internal/tui/session"
 )
 
 // MaxPlanRepairAttempts is the number of compile/validation repairs allowed per describe_schema cycle.
-const MaxPlanRepairAttempts = 8
+const MaxPlanRepairAttempts = agent.DefaultMaxPlanAttempts
 
-func planFailurePayload(querySession *session.QuerySession, message string, step int, attempt int, draftQuery string) map[string]any {
+func planFailurePayload(
+	querySession *session.QuerySession,
+	diagnostic planner.Diagnostic,
+	step int,
+	attempt int,
+	draftQuery string,
+) map[string]any {
 	payload := map[string]any{
 		"valid":              false,
-		"message":            message,
+		"message":            diagnostic.Message,
+		"diagnostic":         diagnostic,
 		"schema_hint":        queryPlanSchemaHint(),
 		"attempt":            attempt,
 		"attempts_remaining": attemptsRemaining(attempt),
-		"repair_hint":        repairHintForMessage(message),
+		"repair_hint":        repairHintForDiagnostic(diagnostic),
 	}
 	if strings.TrimSpace(draftQuery) != "" {
 		payload["draft_query"] = draftQuery
@@ -49,6 +57,7 @@ func planFailurePayload(querySession *session.QuerySession, message string, step
 	if snapshot.Loaded && len(snapshot.Columns) > 0 {
 		payload["columns"] = columnsForProvider(snapshot.Columns)
 		payload["indexed_fields"] = append([]string(nil), snapshot.IndexedFields...)
+		payload["plan_constraints"] = planConstraintsForSnapshot(snapshot)
 	}
 	if planExample := buildDescribePlanExample(snapshot); planExample != nil {
 		payload["plan_example"] = planExample
@@ -64,22 +73,21 @@ func attemptsRemaining(attempt int) int {
 	return remaining
 }
 
-func repairHintForMessage(message string) string {
-	lowerMessage := strings.ToLower(message)
-	switch {
-	case strings.Contains(lowerMessage, "describe_schema"):
+func repairHintForDiagnostic(diagnostic planner.Diagnostic) string {
+	switch diagnostic.Code {
+	case "SCHEMA_NOT_READY":
 		return "Call describe_schema for the target resource, then resubmit propose_query_plan using only returned columns."
-	case strings.Contains(lowerMessage, "typed schema metadata is required"):
+	case "UNKNOWN_COLUMN", "FILTER_COLUMN_NOT_TAG", "TOPN_FILTER_NOT_ENTITY_TAG":
 		return "Replace unknown columns with names from columns or indexed_fields in the latest describe_schema result."
-	case strings.Contains(lowerMessage, "order by column") && strings.Contains(lowerMessage, "not indexed"):
-		return "Use TIME or a column from indexed_fields for order_by.column, or omit order_by."
-	case strings.Contains(lowerMessage, "unsupported filter operator"):
+	case "ORDER_INDEX_NOT_SORTABLE":
+		return "Use TIME or a rule_name from sortable_indexes for order_by.index_rule, or omit order_by."
+	case "UNSUPPORTED_FILTER_OPERATOR":
 		return "Use =, !=, >, >=, <, <=, IN, or NOT IN for filter.operator."
-	case strings.Contains(lowerMessage, "requires exactly one of plan or workflow"):
+	case "PLAN_SHAPE_INVALID":
 		return "Submit {\"plan\":{...}} with resource nested inside plan, not at the root."
-	case strings.Contains(lowerMessage, "invalid query plan") || strings.Contains(lowerMessage, "failed to decode"):
+	case "PLAN_DECODE_FAILED":
 		return "Copy plan_example from describe_schema or the tool error payload and fill only known columns."
-	case strings.Contains(lowerMessage, "repair limit"):
+	case "REPAIR_LIMIT_REACHED":
 		return "Call describe_schema again to reset the repair budget, then submit one corrected plan."
 	default:
 		return "Fix the reported issue, keep the correct resource and time_range, and call propose_query_plan again."
@@ -106,10 +114,23 @@ func buildDescribePlanExample(snapshot session.SchemaSnapshot) map[string]any {
 		"groups": groups,
 	}
 	planExample := map[string]any{
-		"resource":   resource,
-		"time_range": map[string]any{"start": "-30m"},
-		"limit":      10,
+		"resource": resource,
 	}
+	if snapshot.Type == session.ResourceTypeTopN {
+		direction := "DESC"
+		if strings.EqualFold(snapshot.FieldValueSort, "SORT_ASC") {
+			direction = "ASC"
+		}
+		planExample["time_range"] = map[string]any{"start": "-30m"}
+		planExample["top_n"] = 10
+		planExample["aggregate"] = map[string]any{"function": "SUM"}
+		planExample["order_by"] = map[string]any{"direction": direction}
+		return map[string]any{"plan": planExample}
+	}
+	if snapshot.Type != session.ResourceTypeProperty {
+		planExample["time_range"] = map[string]any{"start": "-30m"}
+	}
+	planExample["limit"] = 10
 	if len(snapshot.Columns) > 0 {
 		projection := make([]map[string]any, 0, minInt(3, len(snapshot.Columns)))
 		for columnIdx, column := range snapshot.Columns {
@@ -124,6 +145,8 @@ func buildDescribePlanExample(snapshot session.SchemaSnapshot) map[string]any {
 		if len(projection) > 0 {
 			planExample["projection"] = projection
 		}
+	} else if snapshot.Type == session.ResourceTypeTrace {
+		planExample["projection_mode"] = "NONE"
 	}
 	return map[string]any{"plan": planExample}
 }
@@ -137,7 +160,9 @@ func minInt(left, right int) int {
 
 func planRepairLimitMessage() string {
 	return fmt.Sprintf(
-		"automatic query plan repair limit reached after %d attempts; call describe_schema to reset the repair budget, submit one corrected plan, and do not call validate_bydbql, probe_bydbql, or execute_bydbql until propose_query_plan returns valid=true",
+		"automatic query plan repair limit reached after %d attempts; call describe_schema to reset the repair budget, "+
+			"submit one corrected plan, and do not call validate_bydbql, probe_bydbql, or execute_bydbql until "+
+			"propose_query_plan returns valid=true",
 		MaxPlanRepairAttempts,
 	)
 }

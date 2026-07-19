@@ -417,9 +417,20 @@ func TestFinalCandidateAcceptsOnlyControlledPlanProposals(t *testing.T) {
 		Candidate: query,
 		Origin:    agent.EventOriginToolBridge,
 		ToolName:  "propose_query_plan",
+		Status:    agent.EventStatusSucceeded,
 	}})
 	if candidate != query {
 		t.Fatalf("expected controlled proposal candidate, got %q", candidate)
+	}
+	failedCandidate := finalCandidate([]agent.Event{{
+		Kind:      agent.EventKindCandidate,
+		Candidate: query,
+		Origin:    agent.EventOriginToolBridge,
+		ToolName:  "propose_query_plan",
+		Status:    agent.EventStatusFailed,
+	}})
+	if failedCandidate != "" {
+		t.Fatalf("failed proposal became a workspace candidate: %q", failedCandidate)
 	}
 }
 
@@ -430,6 +441,7 @@ func TestDrainBridgeEventsRetainsProposalAfterAgentStreamCloses(t *testing.T) {
 		Origin:    agent.EventOriginToolBridge,
 		ToolName:  "propose_query_plan",
 		Candidate: "SELECT * FROM MEASURE service_latency IN production TIME > '-30m' LIMIT 10",
+		Status:    agent.EventStatusSucceeded,
 	}
 	updates := make(chan TurnUpdate, 1)
 	events := drainBridgeEvents(toolEvents, &session.QuerySession{}, updates, nil)
@@ -525,7 +537,7 @@ func TestReviseWithAgentAllowsConversationThatMentionsSelect(t *testing.T) {
 	}
 }
 
-func TestCompleteAgentTurnKeepsDraftCandidateFromFailedPropose(t *testing.T) {
+func TestCompleteAgentTurnDoesNotPublishDraftFromFailedPropose(t *testing.T) {
 	runner := NewRunner(Config{})
 	querySession := &session.QuerySession{
 		SchemaSnapshot: session.SchemaSnapshot{
@@ -549,15 +561,15 @@ func TestCompleteAgentTurnKeepsDraftCandidateFromFailedPropose(t *testing.T) {
 	if completeErr != nil {
 		t.Fatalf("completeAgentTurn returned error: %v", completeErr)
 	}
-	if querySession.Phase != session.PhaseValidate {
-		t.Fatalf("expected validate phase, got %s", querySession.Phase)
+	if querySession.Phase != session.PhaseConversation {
+		t.Fatalf("expected conversation phase, got %s", querySession.Phase)
 	}
 	currentCandidate := querySession.CurrentCandidate()
-	if currentCandidate == nil || !strings.Contains(currentCandidate.Query, "STREAM sw") {
-		t.Fatalf("expected draft candidate in session, got %+v", currentCandidate)
+	if currentCandidate != nil {
+		t.Fatalf("failed draft became an executable candidate: %+v", currentCandidate)
 	}
-	if !strings.Contains(querySession.Conversation[0].Response, "typed schema metadata") {
-		t.Fatalf("expected draft failure explanation, got %+v", querySession.Conversation)
+	if len(querySession.Conversation) != 1 || !strings.Contains(querySession.Conversation[0].Response, "could not validate") {
+		t.Fatalf("expected final explanation without a candidate, got %+v", querySession.Conversation)
 	}
 }
 
@@ -746,7 +758,8 @@ func TestReviseWithAgentIncludesExecutionSummary(t *testing.T) {
 				Candidate: "SELECT * FROM MEASURE service_latency IN production TIME > '-30m' LIMIT 10",
 			},
 		},
-		requests: &requests,
+		requests:         &requests,
+		maintainsHistory: true,
 	}
 	runner := NewRunner(Config{AgentGateway: gateway})
 	querySession, startErr := runner.StartSession(context.Background(), StartOptions{
@@ -758,6 +771,8 @@ func TestReviseWithAgentIncludesExecutionSummary(t *testing.T) {
 	if startErr != nil {
 		t.Fatalf("StartSession returned error: %v", startErr)
 	}
+	querySession.AgentSessionID = "scripted"
+	querySession.AddConversationTurn(session.ConversationTurn{Hint: "prior request", Response: "prior response"})
 	query := "SELECT * FROM MEASURE service_latency IN production TIME > '-30m' LIMIT 10"
 	if validateErr := runner.ValidateManualQuery(context.Background(), querySession, query); validateErr != nil {
 		t.Fatalf("ValidateManualQuery returned error: %v", validateErr)
@@ -775,23 +790,27 @@ func TestReviseWithAgentIncludesExecutionSummary(t *testing.T) {
 	if payload.ExecutionSummary == nil {
 		t.Fatal("expected execution summary in agent payload")
 	}
+	if len(payload.Conversation) != 0 {
+		t.Fatalf("persistent provider received duplicated conversation history: %+v", payload.Conversation)
+	}
 	if payload.ExecutionSummary.Query != query {
 		t.Fatalf("unexpected query: %s", payload.ExecutionSummary.Query)
 	}
 	if payload.ExecutionSummary.ResourceType != "" || len(payload.ExecutionSummary.Columns) != 0 {
 		t.Fatalf("unexpected data-bearing execution summary: %+v", payload.ExecutionSummary)
 	}
-	if payload.Constraints.UserMustEditOrConfirmBeforeExecute {
-		t.Fatal("read-only query should not require execution confirmation")
+	if !payload.Constraints.UserMustEditOrConfirmBeforeExecute {
+		t.Fatal("ask_every_time should require execution confirmation")
 	}
-	if !payload.Constraints.AgentMayExecuteWithoutPrompt {
-		t.Fatal("read-only query should allow agent execute without prompt")
+	if payload.Constraints.AgentMayExecuteWithoutPrompt {
+		t.Fatal("ask_every_time should not allow agent execution without a prompt")
 	}
 }
 
 type scriptedGateway struct {
-	events   []agent.Event
-	requests *[]agent.TurnRequest
+	events           []agent.Event
+	requests         *[]agent.TurnRequest
+	maintainsHistory bool
 }
 
 type controlledBridgeGateway struct {
@@ -802,8 +821,8 @@ func (gateway controlledBridgeGateway) Start(_ context.Context, _ agent.StartReq
 	return agent.Session{ID: "controlled-bridge", Provider: "controlled-bridge"}, nil
 }
 
-func (gateway controlledBridgeGateway) Send(_ context.Context, _ string, _ agent.TurnRequest) (<-chan agent.Event, error) {
-	result := gateway.toolBridge.Call(context.Background(), bridge.Call{
+func (gateway controlledBridgeGateway) Send(ctx context.Context, _ string, _ agent.TurnRequest) (<-chan agent.Event, error) {
+	result := gateway.toolBridge.Call(ctx, bridge.Call{
 		Name: bridge.ToolProposeQueryPlan,
 		Arguments: map[string]any{"plan": map[string]any{
 			"resource": map[string]any{"type": "MEASURE", "name": "service_latency", "groups": []any{"production"}},
@@ -872,6 +891,10 @@ func (gateway scriptedGateway) Stop(_ context.Context, _ string) error {
 	return nil
 }
 
+func (gateway scriptedGateway) MaintainsConversationHistory() bool {
+	return gateway.maintainsHistory
+}
+
 func executeAfterApproval(t *testing.T, runner *Runner, querySession *session.QuerySession) error {
 	t.Helper()
 	executeErrCh := make(chan error, 1)
@@ -880,7 +903,8 @@ func executeAfterApproval(t *testing.T, runner *Runner, querySession *session.Qu
 	}()
 	needsInteractiveApproval := true
 	if currentCandidate := querySession.CurrentCandidate(); currentCandidate != nil {
-		needsInteractiveApproval = !approval.IsReadOnlyBYDBQL(currentCandidate.Query)
+		policy := approval.NormalizeExecutionPolicy(string(querySession.ExecutionPolicy))
+		needsInteractiveApproval = !policy.AutoApprove(approval.SourceManual, false, currentCandidate.Query)
 	}
 	if needsInteractiveApproval {
 		request := <-runner.ApprovalRequests()

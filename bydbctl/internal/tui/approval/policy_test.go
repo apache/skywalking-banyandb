@@ -39,8 +39,8 @@ func TestIsReadOnlyBYDBQL(t *testing.T) {
 func TestExecutionPolicyAutoApprove(t *testing.T) {
 	readQuery := "SELECT endpoint FROM MEASURE service_latency IN production TIME > '-30m' LIMIT 10"
 	writeQuery := "CREATE MEASURE foo IN production"
-	if !PolicyAskEveryTime.AutoApprove(SourceManual, false, readQuery) {
-		t.Fatal("default policy should auto-approve read-only queries")
+	if PolicyAskEveryTime.AutoApprove(SourceManual, false, readQuery) {
+		t.Fatal("default policy should require approval for every query")
 	}
 	if PolicyAskEveryTime.AutoApprove(SourceManual, false, writeQuery) {
 		t.Fatal("default policy should require approval for mutating queries")
@@ -48,14 +48,17 @@ func TestExecutionPolicyAutoApprove(t *testing.T) {
 	if !PolicyAutoProbe.AutoApprove(SourceAgentProbe, true, readQuery) {
 		t.Fatal("auto_probe should auto-approve read probes")
 	}
-	if !PolicyAutoProbe.AutoApprove(SourceAgentTool, false, readQuery) {
-		t.Fatal("read-only agent execute should auto-approve")
+	if PolicyAutoProbe.AutoApprove(SourceAgentTool, false, readQuery) {
+		t.Fatal("auto_probe should require approval for full execution")
 	}
 	if PolicyAutoProbe.AutoApprove(SourceManual, false, writeQuery) {
 		t.Fatal("auto_probe should not auto-approve mutating manual execute")
 	}
-	if !PolicyTrustSession.AutoApprove(SourceManual, false, writeQuery) {
-		t.Fatal("trust_session should auto-approve mutating manual execute")
+	if PolicyTrustSession.AutoApprove(SourceManual, false, writeQuery) {
+		t.Fatal("trust_session must never auto-approve a mutating statement")
+	}
+	if !PolicyTrustSession.AutoApprove(SourceManual, false, readQuery) {
+		t.Fatal("trust_session should auto-approve read-only execution")
 	}
 }
 

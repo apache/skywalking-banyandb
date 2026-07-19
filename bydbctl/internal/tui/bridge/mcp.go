@@ -137,8 +137,10 @@ func (socketServer *SocketServer) handleConnection(connection net.Conn) {
 	if decodeErr := decoder.Decode(&request); decodeErr != nil {
 		return
 	}
-	result := socketServer.bridge.Call(connectionContext(connection), request.Call)
-	_ = json.NewEncoder(connection).Encode(bridgeResponse{Result: result.Content, Error: errorString(result.Err)})
+	result := socketServer.bridge.Call(context.Background(), request.Call)
+	if encodeErr := json.NewEncoder(connection).Encode(bridgeResponse{Result: result.Content, Error: errorString(result.Err)}); encodeErr != nil {
+		return
+	}
 }
 
 // ServeMCP serves one standard MCP stdio process connected to the private socket.
@@ -222,8 +224,9 @@ func toolDefinitions() []map[string]any {
 			"inputSchema": map[string]any{"type": "object", "properties": map[string]any{}},
 		},
 		{
-			"name":        ToolDescribeSchema,
-			"description": "Describe a BanyanDB schema and typed columns for one ranked catalog resource. Returns columns, indexed_fields, and plan_example. Call this before propose_query_plan for that resource.",
+			"name": ToolDescribeSchema,
+			"description": "Describe one exact resource from the complete discovered BanyanDB catalog. " +
+				"Returns typed columns, sortable index rules, a schema fingerprint, TOPN source metadata, plan constraints, and an example.",
 			"inputSchema": map[string]any{
 				"type": "object",
 				"properties": map[string]any{
@@ -234,8 +237,10 @@ func toolDefinitions() []map[string]any {
 			},
 		},
 		{
-			"name":        ToolProposeQueryPlan,
-			"description": "Submit a typed query plan after describe_schema returns columns for the same resource. On valid=false, read repair_hint, columns, plan_example, and attempts_remaining, then resubmit. This is the only path that registers a BYDBQL candidate in bydbctl.",
+			"name": ToolProposeQueryPlan,
+			"description": "Submit one strict typed plan or workflow. The bridge discovers and caches an exact catalog resource when needed, " +
+				"then compiles against its fingerprint. On valid=false, repair the structured diagnostic and resubmit. " +
+				"Only valid=true registers a candidate.",
 			"inputSchema": proposeQueryPlanInputSchema(),
 		},
 		{
@@ -283,10 +288,6 @@ func toolErrorResult(callErr error) map[string]any {
 		"content": []map[string]string{{"type": "text", "text": callErr.Error()}},
 		"isError": true,
 	}
-}
-
-func connectionContext(connection net.Conn) context.Context {
-	return context.Background()
 }
 
 func errorString(err error) string {

@@ -26,23 +26,23 @@ import (
 	"github.com/apache/skywalking-banyandb/bydbctl/internal/tui/session"
 )
 
-func TestNormalizePlanArgumentRepairsCommonAgentMistakes(t *testing.T) {
+func TestNormalizePlanArgumentAppliesLexicalNormalizationOnly(t *testing.T) {
 	normalized := normalizePlanArgument(map[string]any{
-		"type":     "MEASURE",
-		"name":     "service_endpoint_latency",
-		"groups":   []any{"sw_metrics"},
-		"top_n":    map[string]any{"value": 10},
-		"aggregate": "MEAN",
-		"order_by":  "DESC",
+		"resource": map[string]any{
+			"type":   "topn",
+			"name":   "service_endpoint_latency_topn",
+			"groups": []any{"sw_metrics"},
+		},
+		"top_n":      10,
+		"aggregate":  map[string]any{"function": "mean"},
+		"order_by":   map[string]any{"direction": "desc"},
+		"filter":     map[string]any{"column": "service_id", "operator": "==", "value": "checkout"},
 		"time_range": map[string]any{"start": "-30m"},
 	}).(map[string]any)
 
 	resource, _ := normalized["resource"].(map[string]any)
-	if resource["type"] != "TOPN" || resource["name"] != "service_endpoint_latency" {
+	if resource["type"] != "TOPN" || resource["name"] != "service_endpoint_latency_topn" {
 		t.Fatalf("unexpected normalized resource: %+v", resource)
-	}
-	if normalized["top_n"] != 10 {
-		t.Fatalf("expected top_n integer, got %#v", normalized["top_n"])
 	}
 	aggregate, _ := normalized["aggregate"].(map[string]any)
 	if aggregate["function"] != "MEAN" {
@@ -53,9 +53,7 @@ func TestNormalizePlanArgumentRepairsCommonAgentMistakes(t *testing.T) {
 		t.Fatalf("unexpected order_by: %+v", orderBy)
 	}
 
-	filterNormalized := normalizeFilter(map[string]any{
-		"column": "status", "operator": "==", "value": 500,
-	}).(map[string]any)
+	filterNormalized, _ := normalized["filter"].(map[string]any)
 	if filterNormalized["operator"] != "=" {
 		t.Fatalf("expected normalized operator, got %#v", filterNormalized["operator"])
 	}
@@ -66,6 +64,21 @@ func TestNormalizePlanArgumentRepairsCommonAgentMistakes(t *testing.T) {
 	}
 	if plan.Resource.Type != session.ResourceTypeTopN || plan.TopN != 10 {
 		t.Fatalf("unexpected decoded plan: %+v", plan)
+	}
+}
+
+func TestPlannedQueriesRejectsStructuralCoercion(t *testing.T) {
+	_, planErr := plannedQueries(map[string]any{
+		"plan": map[string]any{
+			"type":      "MEASURE",
+			"name":      "service_endpoint_latency",
+			"groups":    []any{"sw_metrics"},
+			"top_n":     map[string]any{"value": 10},
+			"aggregate": "MEAN",
+		},
+	})
+	if planErr == nil || !strings.Contains(planErr.Error(), "failed to decode plan input") {
+		t.Fatalf("expected strict decoder rejection, got %v", planErr)
 	}
 }
 
@@ -106,14 +119,15 @@ func TestProposeQueryPlanReturnsSchemaHintForMalformedInput(t *testing.T) {
 	}
 }
 
-func TestProposeQueryPlanCompilesNormalizedShowTopPlanForMeasureCatalogEntry(t *testing.T) {
+func TestProposeQueryPlanCompilesShowTopPlanForTopNCatalogEntry(t *testing.T) {
 	schema := session.SchemaSnapshot{
-		Type:   session.ResourceTypeMeasure,
-		Name:   "service_endpoint_latency",
-		Groups: []string{"sw_metrics"},
-		Loaded: true,
+		Type:       session.ResourceTypeTopN,
+		Name:       "service_endpoint_latency_topn",
+		Groups:     []string{"sw_metrics"},
+		Loaded:     true,
+		EntityTags: []string{"service_id"},
 		Columns: []session.SchemaColumn{
-			{Name: "endpoint", Kind: session.SchemaColumnTag, Type: session.SchemaValueTypeString, Indexed: true},
+			{Name: "service_id", Kind: session.SchemaColumnTag, Type: session.SchemaValueTypeString},
 			{Name: "latency", Kind: session.SchemaColumnField, Type: session.SchemaValueTypeFloat},
 		},
 	}
@@ -122,31 +136,34 @@ func TestProposeQueryPlanCompilesNormalizedShowTopPlanForMeasureCatalogEntry(t *
 		Validator: &stubValidator{report: session.ValidationReport{Valid: true, Message: "valid", QueryType: "TOPN"}},
 	})
 	toolBridge.SetSession(&session.QuerySession{SchemaSnapshot: session.SchemaSnapshot{
-		Loaded: true,
-		Type:   session.ResourceTypeMeasure,
-		Name:   "service_endpoint_latency",
-		Groups: []string{"sw_metrics"},
+		Loaded:     true,
+		Type:       session.ResourceTypeTopN,
+		Name:       "service_endpoint_latency_topn",
+		Groups:     []string{"sw_metrics"},
+		EntityTags: []string{"service_id"},
 		Columns: []session.SchemaColumn{
-			{Name: "endpoint", Kind: session.SchemaColumnTag, Type: session.SchemaValueTypeString, Indexed: true},
+			{Name: "service_id", Kind: session.SchemaColumnTag, Type: session.SchemaValueTypeString},
 			{Name: "latency", Kind: session.SchemaColumnField, Type: session.SchemaValueTypeFloat},
 		},
 		Catalog: []session.CatalogEntry{
-			{Group: "sw_metrics", Type: session.ResourceTypeMeasure, Name: "service_endpoint_latency"},
+			{Group: "sw_metrics", Type: session.ResourceTypeTopN, Name: "service_endpoint_latency_topn"},
 		},
 	}})
 	toolBridge.SetRankedCandidates([]session.CatalogEntry{
-		{Group: "sw_metrics", Type: session.ResourceTypeMeasure, Name: "service_endpoint_latency"},
+		{Group: "sw_metrics", Type: session.ResourceTypeTopN, Name: "service_endpoint_latency_topn"},
 	})
 	result := toolBridge.Call(context.Background(), Call{
 		Name: ToolProposeQueryPlan,
 		Arguments: map[string]any{
 			"plan": map[string]any{
-				"type":      "MEASURE",
-				"name":      "service_endpoint_latency",
-				"groups":    []any{"sw_metrics"},
-				"top_n":     map[string]any{"limit": 10},
-				"aggregate": map[string]any{"function": "MEAN", "column": ""},
-				"order_by":  map[string]any{"direction": "DESC", "column": ""},
+				"resource": map[string]any{
+					"type":   "TOPN",
+					"name":   "service_endpoint_latency_topn",
+					"groups": []any{"sw_metrics"},
+				},
+				"top_n":     10,
+				"aggregate": map[string]any{"function": "MEAN"},
+				"order_by":  map[string]any{"direction": "DESC"},
 				"time_range": map[string]any{
 					"start": "-30m",
 				},
@@ -163,7 +180,7 @@ func TestProposeQueryPlanCompilesNormalizedShowTopPlanForMeasureCatalogEntry(t *
 	if response["valid"] != true {
 		t.Fatalf("expected valid plan, got %s", result.Content)
 	}
-	if query, _ := response["query"].(string); !strings.Contains(query, "SHOW TOP 10 FROM MEASURE service_endpoint_latency") {
+	if query, _ := response["query"].(string); !strings.Contains(query, "SHOW TOP 10 FROM MEASURE service_endpoint_latency_topn") {
 		t.Fatalf("unexpected compiled query: %s", query)
 	}
 }

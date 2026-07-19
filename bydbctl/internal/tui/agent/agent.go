@@ -29,11 +29,22 @@ import (
 	"github.com/apache/skywalking-banyandb/bydbctl/internal/tui/session"
 )
 
+// Controlled workflow limits shared by agent gateways and the tool bridge.
+const (
+	DefaultMaxPlanAttempts       = 3
+	DefaultMaxSchemaDescriptions = 20
+)
+
 // AgentGateway starts sessions and streams provider-neutral agent events.
 type AgentGateway interface {
 	Start(ctx context.Context, req StartRequest) (Session, error)
 	Send(ctx context.Context, sessionID string, req TurnRequest) (<-chan Event, error)
 	Stop(ctx context.Context, sessionID string) error
+}
+
+// ConversationHistoryGateway reports whether a provider session retains prior turns.
+type ConversationHistoryGateway interface {
+	MaintainsConversationHistory() bool
 }
 
 // Gateway is an alias for AgentGateway.
@@ -76,6 +87,18 @@ type ConversationTurnPayload struct {
 	Candidate string `json:"candidate,omitempty"`
 }
 
+// TurnIntent identifies how the current turn relates to prior query state.
+type TurnIntent string
+
+// Supported turn intents.
+const (
+	TurnIntentNewQuery TurnIntent = "NEW_QUERY"
+	TurnIntentRefine   TurnIntent = "REFINE"
+	TurnIntentRepair   TurnIntent = "REPAIR"
+	TurnIntentAnswer   TurnIntent = "ANSWER"
+	TurnIntentNextStep TurnIntent = "NEXT_STEP"
+)
+
 // RequestPayload is the JSON shape sent through ACP/Codex adapters.
 type RequestPayload struct {
 	Constraints      Constraints               `json:"constraints"`
@@ -87,6 +110,7 @@ type RequestPayload struct {
 	ProbeSummary     *ProbeSummaryPayload      `json:"probe_summary,omitempty"`
 	ValidationError  *string                   `json:"validation_error,omitempty"`
 	Conversation     []ConversationTurnPayload `json:"conversation,omitempty"`
+	Intent           TurnIntent                `json:"intent"`
 	Task             string                    `json:"task"`
 	Goal             string                    `json:"goal"`
 	TurnHint         string                    `json:"turn_hint,omitempty"`
@@ -109,25 +133,36 @@ type Constraints struct {
 
 // SchemaSummary is the schema subset exposed to an agent.
 type SchemaSummary struct {
-	Columns            []SchemaColumnSummary `json:"columns,omitempty"`
-	Groups             []string              `json:"groups"`
-	Tags               []string              `json:"tags"`
-	Fields             []string              `json:"fields"`
-	IndexedFields      []string              `json:"indexed_fields,omitempty"`
-	AvailableResources []string              `json:"available_resources,omitempty"`
-	AvailableGroups    []string              `json:"available_groups,omitempty"`
-	Catalog            []CatalogEntrySummary `json:"catalog,omitempty"`
-	CatalogTotal       int                   `json:"catalog_total,omitempty"`
-	RankedCandidates   []CatalogEntrySummary `json:"ranked_candidates,omitempty"`
-	Type               string                `json:"type"`
-	Name               string                `json:"name"`
-	TypedColumnsReady  bool                  `json:"typed_columns_ready,omitempty"`
+	Columns            []SchemaColumnSummary  `json:"columns,omitempty"`
+	SortableIndexes    []SortableIndexSummary `json:"sortable_indexes,omitempty"`
+	Groups             []string               `json:"groups"`
+	Tags               []string               `json:"tags"`
+	Fields             []string               `json:"fields"`
+	IndexedFields      []string               `json:"indexed_fields,omitempty"`
+	AvailableResources []string               `json:"available_resources,omitempty"`
+	AvailableGroups    []string               `json:"available_groups,omitempty"`
+	Catalog            []CatalogEntrySummary  `json:"catalog,omitempty"`
+	CatalogTotal       int                    `json:"catalog_total,omitempty"`
+	RankedCandidates   []CatalogEntrySummary  `json:"ranked_candidates,omitempty"`
+	Type               string                 `json:"type"`
+	Name               string                 `json:"name"`
+	SourceMeasure      string                 `json:"source_measure,omitempty"`
+	SourceMeasureGroup string                 `json:"source_measure_group,omitempty"`
+	FieldValueSort     string                 `json:"field_value_sort,omitempty"`
+	Fingerprint        string                 `json:"fingerprint,omitempty"`
+	TypedColumnsReady  bool                   `json:"typed_columns_ready,omitempty"`
+}
+
+// SortableIndexSummary is one exact ORDER BY rule exposed to an agent.
+type SortableIndexSummary struct {
+	RuleName string   `json:"rule_name"`
+	Tags     []string `json:"tags"`
 }
 
 // WorkflowGuidance exposes orchestration limits and gates to the agent.
 type WorkflowGuidance struct {
-	MaxPlanAttempts                  int  `json:"max_plan_attempts"`
-	MaxSchemaDescriptions            int  `json:"max_schema_descriptions"`
+	MaxPlanAttempts                    int  `json:"max_plan_attempts"`
+	MaxSchemaDescriptions              int  `json:"max_schema_descriptions"`
 	RequireDescribeSchemaBeforePropose bool `json:"require_describe_schema_before_propose"`
 }
 
@@ -184,11 +219,20 @@ type ProbeSummaryPayload struct {
 
 // BuildBydbqlPrompt renders the provider prompt for BYDBQL generation.
 func BuildBydbqlPrompt(req TurnRequest) (string, error) {
+	parts, partsErr := BuildBydbqlPromptParts(req)
+	if partsErr != nil {
+		return "", partsErr
+	}
+	return parts.System + "\n\n" + parts.User, nil
+}
+
+// BuildBydbqlPromptParts separates trusted instructions from untrusted context.
+func BuildBydbqlPromptParts(req TurnRequest) (prompt.Parts, error) {
 	payload, marshalErr := MarshalPayload(req.Payload)
 	if marshalErr != nil {
-		return "", marshalErr
+		return prompt.Parts{}, marshalErr
 	}
-	return prompt.Build(prompt.Input{
+	return prompt.BuildParts(prompt.Input{
 		TaskPrompt:      req.Prompt,
 		PayloadJSON:     payload,
 		Candidate:       req.Payload.Candidate,
@@ -267,19 +311,56 @@ func BuildAgentTurnRequest(querySession *session.QuerySession, hints QueryHints,
 	payload := buildRequestPayload(querySession, hints, templateHint, querySession.ExecutionPolicy)
 	payload.TurnHint = strings.TrimSpace(turnHint)
 	payload.Conversation = conversationSummary(querySession.Conversation)
-	if strings.TrimSpace(payload.Candidate) == "" {
-		payload.Task = "continue_conversation"
-	} else {
-		payload.Task = "revise_query_plan"
+	if querySession.CandidateSuperseded {
+		payload.Candidate = ""
+		payload.ValidationError = nil
+		payload.ProbeSummary = nil
 	}
+	payload.Intent = classifyTurnIntent(querySession, payload)
+	payload.Task = taskForIntent(payload.Intent)
 	return payload
 }
 
 // BuildReviseRequest builds the structured request used by the BYDBQL refinement workflow.
 func BuildReviseRequest(querySession *session.QuerySession, hints QueryHints, templateHint string) RequestPayload {
 	payload := buildRequestPayload(querySession, hints, templateHint, querySession.ExecutionPolicy)
-	payload.Task = "revise_query_plan"
+	payload.Intent = TurnIntentRefine
+	if payload.ValidationError != nil {
+		payload.Intent = TurnIntentRepair
+	}
+	payload.Task = taskForIntent(payload.Intent)
 	return payload
+}
+
+func classifyTurnIntent(querySession *session.QuerySession, payload RequestPayload) TurnIntent {
+	if querySession.CandidateSuperseded {
+		return TurnIntentNewQuery
+	}
+	if payload.ValidationError != nil {
+		return TurnIntentRepair
+	}
+	if strings.TrimSpace(payload.Candidate) == "" {
+		return TurnIntentNewQuery
+	}
+	if strings.TrimSpace(payload.TurnHint) == "" {
+		return TurnIntentNextStep
+	}
+	return TurnIntentRefine
+}
+
+func taskForIntent(intent TurnIntent) string {
+	switch intent {
+	case TurnIntentRefine:
+		return "refine_query_plan"
+	case TurnIntentRepair:
+		return "repair_query_plan"
+	case TurnIntentAnswer:
+		return "answer_question"
+	case TurnIntentNextStep:
+		return "continue_workflow"
+	default:
+		return "new_query"
+	}
 }
 
 func buildRequestPayload(querySession *session.QuerySession, hints QueryHints, templateHint string, executionPolicy approval.ExecutionPolicy) RequestPayload {
@@ -324,9 +405,9 @@ func buildRequestPayload(querySession *session.QuerySession, hints QueryHints, t
 		TemplateHint: strings.TrimSpace(templateHint),
 		QueryHints:   hints,
 		Workflow: WorkflowGuidance{
-			MaxPlanAttempts:                  8,
-			MaxSchemaDescriptions:            3,
-			RequireDescribeSchemaBeforePropose: true,
+			MaxPlanAttempts:                    DefaultMaxPlanAttempts,
+			MaxSchemaDescriptions:              DefaultMaxSchemaDescriptions,
+			RequireDescribeSchemaBeforePropose: false,
 		},
 		TimeRange: TimeRangePayload{
 			Start: strings.TrimSpace(querySession.TimeRange.Start),
@@ -337,14 +418,16 @@ func buildRequestPayload(querySession *session.QuerySession, hints QueryHints, t
 			FinalArtifact:   "structured_query_plan",
 			ReadOnly:        true,
 			MustUseSchema:   true,
-			UserMustEditOrConfirmBeforeExecute: candidate != "" && !readOnlyCandidate &&
-				normalizedPolicy != approval.PolicyTrustSession,
-			MustNotExecuteTools:          false,
-			AgentMayProbeData:            true,
-			AgentMayExecuteWithoutPrompt: readOnlyCandidate || normalizedPolicy == approval.PolicyTrustSession,
+			UserMustEditOrConfirmBeforeExecute: candidate != "" &&
+				!normalizedPolicy.AutoApprove(approval.SourceAgentTool, false, candidate),
+			MustNotExecuteTools: false,
+			AgentMayProbeData:   true,
+			AgentMayExecuteWithoutPrompt: candidate != "" && readOnlyCandidate &&
+				normalizedPolicy.AutoApprove(approval.SourceAgentTool, false, candidate),
 		},
 		Schema: SchemaSummary{
 			Columns:            columnSummary(querySession.SchemaSnapshot.Columns),
+			SortableIndexes:    sortableIndexSummary(querySession.SchemaSnapshot.SortableIndexes),
 			Type:               querySession.SchemaSnapshot.Type.String(),
 			Name:               querySession.SchemaSnapshot.Name,
 			Groups:             append([]string(nil), querySession.SchemaSnapshot.Groups...),
@@ -354,12 +437,30 @@ func buildRequestPayload(querySession *session.QuerySession, hints QueryHints, t
 			AvailableResources: append([]string(nil), querySession.SchemaSnapshot.ResourceNames...),
 			AvailableGroups:    append([]string(nil), querySession.SchemaSnapshot.AvailableGroups...),
 			Catalog:            catalogSummary(querySession.SchemaSnapshot.Catalog),
+			SourceMeasure:      querySession.SchemaSnapshot.SourceMeasure,
+			SourceMeasureGroup: querySession.SchemaSnapshot.SourceMeasureGroup,
+			FieldValueSort:     querySession.SchemaSnapshot.FieldValueSort,
+			Fingerprint:        querySession.SchemaSnapshot.Fingerprint,
 			TypedColumnsReady:  typedColumnsReady,
 		},
 		ExecutionSummary: executionSummary,
 		ProbeSummary:     probeSummary,
 		ValidationError:  validationError,
 	}
+}
+
+func sortableIndexSummary(indexes []session.SortableIndex) []SortableIndexSummary {
+	if len(indexes) == 0 {
+		return nil
+	}
+	summary := make([]SortableIndexSummary, 0, len(indexes))
+	for _, index := range indexes {
+		summary = append(summary, SortableIndexSummary{
+			RuleName: index.RuleName,
+			Tags:     append([]string(nil), index.Tags...),
+		})
+	}
+	return summary
 }
 
 const (

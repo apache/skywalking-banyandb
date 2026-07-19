@@ -17,10 +17,12 @@ package planner
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"regexp"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/apache/skywalking-banyandb/bydbctl/internal/tui/session"
 )
@@ -28,9 +30,13 @@ import (
 const (
 	defaultLimit     = 10
 	defaultTimeStart = "-30m"
+	maximumLimit     = 1000
 )
 
-var identifierPattern = regexp.MustCompile(`^[A-Za-z_][A-Za-z0-9_.-]*$`)
+var (
+	identifierPattern   = regexp.MustCompile(`^[A-Za-z_][A-Za-z0-9_.-]*$`)
+	relativeTimePattern = regexp.MustCompile(`^-[1-9][0-9]*[mhdw]$`)
+)
 
 // AggregateFunction is a supported measure aggregation function.
 type AggregateFunction string
@@ -89,6 +95,15 @@ type Projection struct {
 	Aggregate *Aggregate `json:"aggregate,omitempty"`
 }
 
+// ProjectionMode selects an implicit all-column or empty trace projection.
+type ProjectionMode string
+
+// Projection modes.
+const (
+	ProjectionModeAll  ProjectionMode = "ALL"
+	ProjectionModeNone ProjectionMode = "NONE"
+)
+
 // Predicate is a typed comparison leaf or AND/OR expression tree.
 type Predicate struct {
 	Children []Predicate `json:"children,omitempty"`
@@ -97,9 +112,9 @@ type Predicate struct {
 	Value    any         `json:"value,omitempty"`
 }
 
-// Order specifies an indexed column and direction.
+// Order specifies an index rule and direction. An empty index rule orders by time.
 type Order struct {
-	Column    string         `json:"column"`
+	IndexRule string         `json:"index_rule,omitempty"`
 	Direction OrderDirection `json:"direction"`
 }
 
@@ -111,21 +126,58 @@ type TimeRange struct {
 
 // QueryPlan describes one query without embedding any BYDBQL text.
 type QueryPlan struct {
-	Resource   Resource     `json:"resource"`
-	Projection []Projection `json:"projection,omitempty"`
-	Filter     *Predicate   `json:"filter,omitempty"`
-	Aggregate  *Aggregate   `json:"aggregate,omitempty"`
-	OrderBy    *Order       `json:"order_by,omitempty"`
-	TimeRange  TimeRange    `json:"time_range,omitempty"`
-	GroupBy    []string     `json:"group_by,omitempty"`
-	ID         string       `json:"id,omitempty"`
-	Limit      int          `json:"limit,omitempty"`
-	TopN       int          `json:"top_n,omitempty"`
+	Resource       Resource       `json:"resource"`
+	Projection     []Projection   `json:"projection,omitempty"`
+	ProjectionMode ProjectionMode `json:"projection_mode,omitempty"`
+	Filter         *Predicate     `json:"filter,omitempty"`
+	Aggregate      *Aggregate     `json:"aggregate,omitempty"`
+	OrderBy        *Order         `json:"order_by,omitempty"`
+	TimeRange      TimeRange      `json:"time_range,omitempty"`
+	GroupBy        []string       `json:"group_by,omitempty"`
+	ID             string         `json:"id,omitempty"`
+	Limit          int            `json:"limit,omitempty"`
+	TopN           int            `json:"top_n,omitempty"`
 }
 
 // WorkflowPlan describes a sequence of independently approved query plans.
 type WorkflowPlan struct {
 	Steps []QueryPlan `json:"steps"`
+}
+
+// Diagnostic is a stable, machine-readable query-plan failure.
+type Diagnostic struct {
+	Code    string   `json:"code"`
+	Path    string   `json:"path,omitempty"`
+	Message string   `json:"message"`
+	Allowed []string `json:"allowed,omitempty"`
+}
+
+// PlanError wraps a query-plan diagnostic as an error.
+type PlanError struct {
+	Diagnostic Diagnostic
+}
+
+// Error returns the human-readable diagnostic message.
+func (planErr *PlanError) Error() string {
+	return planErr.Diagnostic.Message
+}
+
+// DescribeError returns a stable diagnostic for any planner failure.
+func DescribeError(planErr error) Diagnostic {
+	var typedError *PlanError
+	if errors.As(planErr, &typedError) {
+		return typedError.Diagnostic
+	}
+	return Diagnostic{Code: "PLAN_SEMANTIC_ERROR", Message: planErr.Error()}
+}
+
+func diagnosticError(code, path, message string, allowed ...string) error {
+	return &PlanError{Diagnostic: Diagnostic{
+		Code:    code,
+		Path:    path,
+		Message: message,
+		Allowed: append([]string(nil), allowed...),
+	}}
 }
 
 // CompiledQuery is a validated deterministic BYDBQL query ready for local validation.
@@ -158,11 +210,34 @@ func Compile(plan QueryPlan, schema session.SchemaSnapshot) (CompiledQuery, erro
 }
 
 func validateSelectShape(plan QueryPlan) error {
+	if plan.TopN != 0 {
+		return fmt.Errorf("SELECT plans cannot set top_n")
+	}
+	if plan.Resource.Type == session.ResourceTypeProperty && (plan.TimeRange.Start != "" || plan.TimeRange.End != "") {
+		return fmt.Errorf("PROPERTY plans cannot set time_range")
+	}
+	if plan.TimeRange.Start == "" && plan.TimeRange.End != "" {
+		return fmt.Errorf("time_range.end requires time_range.start")
+	}
+	if plan.ProjectionMode != "" && plan.ProjectionMode != ProjectionModeAll && plan.ProjectionMode != ProjectionModeNone {
+		return fmt.Errorf("unsupported projection_mode %q", plan.ProjectionMode)
+	}
+	if plan.ProjectionMode != "" && len(plan.Projection) != 0 {
+		return fmt.Errorf("projection_mode cannot be combined with explicit projections")
+	}
+	if plan.ProjectionMode == ProjectionModeNone && plan.Resource.Type != session.ResourceTypeTrace {
+		return fmt.Errorf("projection_mode NONE is supported only for TRACE queries")
+	}
 	aggregateCount := 0
 	if plan.Aggregate != nil {
 		aggregateCount++
 	}
-	for _, projection := range plan.Projection {
+	for projectionIndex, projection := range plan.Projection {
+		hasColumn := strings.TrimSpace(projection.Column) != ""
+		hasAggregate := projection.Aggregate != nil
+		if hasColumn == hasAggregate {
+			return fmt.Errorf("projection %d requires exactly one of column or aggregate", projectionIndex+1)
+		}
 		if projection.Aggregate != nil {
 			aggregateCount++
 		}
@@ -179,15 +254,18 @@ func validateSelectShape(plan QueryPlan) error {
 	if len(plan.GroupBy) != 0 && aggregateCount != 1 {
 		return fmt.Errorf("GROUP BY requires exactly one aggregate")
 	}
+	if plan.ProjectionMode == ProjectionModeNone && aggregateCount != 0 {
+		return fmt.Errorf("projection_mode NONE cannot be combined with an aggregate")
+	}
 	return nil
 }
 
 func compileSelect(plan QueryPlan, schema session.SchemaSnapshot) (string, error) {
-	projections, projectionErr := compileProjections(plan.Projection, plan.Aggregate, plan.Resource, schema)
+	projections, projectionErr := compileProjections(plan.Projection, plan.ProjectionMode, plan.Aggregate, plan.Resource, schema)
 	if projectionErr != nil {
 		return "", projectionErr
 	}
-	groups, groupsErr := compileGroups(plan.GroupBy, schema)
+	groups, groupsErr := compileGroups(plan.GroupBy, plan.Projection, plan.ProjectionMode, schema)
 	if groupsErr != nil {
 		return "", groupsErr
 	}
@@ -205,7 +283,11 @@ func compileSelect(plan QueryPlan, schema session.SchemaSnapshot) (string, error
 	}
 	parts := []string{"SELECT " + projections, "FROM " + string(plan.Resource.Type), plan.Resource.Name, "IN", groupExpression(plan.Resource.Groups)}
 	if plan.Resource.Type != session.ResourceTypeProperty {
-		parts = append(parts, compileTimeRange(plan.TimeRange))
+		timeExpression, timeErr := compileTimeRange(plan.TimeRange)
+		if timeErr != nil {
+			return "", timeErr
+		}
+		parts = append(parts, timeExpression)
 	}
 	if filter != "" {
 		parts = append(parts, "WHERE "+filter)
@@ -221,21 +303,21 @@ func compileSelect(plan QueryPlan, schema session.SchemaSnapshot) (string, error
 }
 
 func compileTopN(plan QueryPlan, schema session.SchemaSnapshot) (string, error) {
-	if len(plan.Projection) != 0 || plan.Filter != nil || len(plan.GroupBy) != 0 || plan.Limit != 0 {
-		return "", fmt.Errorf("TOPN plans support only resource, aggregate function, order direction, time range, and top_n")
+	if len(plan.Projection) != 0 || plan.ProjectionMode != "" || len(plan.GroupBy) != 0 || plan.Limit != 0 {
+		return "", fmt.Errorf("TOPN plans do not support projection, projection_mode, group_by, or limit")
 	}
 	if plan.Aggregate != nil && strings.TrimSpace(plan.Aggregate.Column) != "" {
 		return "", fmt.Errorf("TOPN aggregation cannot select a column")
 	}
-	if plan.OrderBy != nil && strings.TrimSpace(plan.OrderBy.Column) != "" {
-		return "", fmt.Errorf("TOPN order cannot select a column")
+	if plan.OrderBy != nil && strings.TrimSpace(plan.OrderBy.IndexRule) != "" {
+		return "", fmt.Errorf("TOPN order cannot select an index rule")
 	}
 	topN := plan.TopN
-	if topN == 0 {
-		topN = defaultLimit
-	}
 	if topN < 1 {
 		return "", fmt.Errorf("top_n must be greater than zero")
+	}
+	if topN > maximumLimit {
+		return "", fmt.Errorf("top_n cannot exceed %d", maximumLimit)
 	}
 	function := AggregateSum
 	if plan.Aggregate != nil {
@@ -251,18 +333,43 @@ func compileTopN(plan QueryPlan, schema session.SchemaSnapshot) (string, error) 
 	if !isOrderDirection(direction) {
 		return "", fmt.Errorf("unsupported TOPN order direction %q", direction)
 	}
-	return fmt.Sprintf(
-		"SHOW TOP %d FROM MEASURE %s IN %s %s AGGREGATE BY %s ORDER BY %s",
-		topN,
-		plan.Resource.Name,
-		groupExpression(plan.Resource.Groups),
-		compileTimeRange(plan.TimeRange),
-		function,
-		direction,
-	), nil
+	if directionErr := validateTopNDirection(direction, schema.FieldValueSort); directionErr != nil {
+		return "", directionErr
+	}
+	timeExpression, timeErr := compileTimeRange(plan.TimeRange)
+	if timeErr != nil {
+		return "", timeErr
+	}
+	filter, filterErr := compileTopNFilter(plan.Filter, schema)
+	if filterErr != nil {
+		return "", filterErr
+	}
+	parts := []string{
+		fmt.Sprintf("SHOW TOP %d", topN),
+		"FROM MEASURE " + plan.Resource.Name,
+		"IN " + groupExpression(plan.Resource.Groups),
+		timeExpression,
+	}
+	if filter != "" {
+		parts = append(parts, "WHERE "+filter)
+	}
+	parts = append(parts, "AGGREGATE BY "+string(function), "ORDER BY "+string(direction))
+	return strings.Join(parts, " "), nil
 }
 
-func compileProjections(projections []Projection, aggregate *Aggregate, resource Resource, schema session.SchemaSnapshot) (string, error) {
+func compileProjections(
+	projections []Projection,
+	projectionMode ProjectionMode,
+	aggregate *Aggregate,
+	resource Resource,
+	schema session.SchemaSnapshot,
+) (string, error) {
+	if projectionMode == ProjectionModeNone {
+		return "()", nil
+	}
+	if projectionMode == ProjectionModeAll {
+		return "*", nil
+	}
 	if aggregate != nil {
 		projections = append(append([]Projection(nil), projections...), Projection{Aggregate: aggregate})
 	}
@@ -306,25 +413,52 @@ func compileAggregate(aggregate Aggregate, resource Resource, schema session.Sch
 	if columnErr != nil {
 		return "", columnErr
 	}
+	if column.Kind != session.SchemaColumnField {
+		return "", diagnosticError("AGGREGATE_COLUMN_NOT_FIELD", "/aggregate/column", fmt.Sprintf("aggregation column %q must be a field", aggregate.Column))
+	}
 	if column.Type != session.SchemaValueTypeInt && column.Type != session.SchemaValueTypeFloat {
-		return "", fmt.Errorf("aggregation column %q must be numeric", aggregate.Column)
+		return "", diagnosticError("AGGREGATE_FIELD_NOT_NUMERIC", "/aggregate/column", fmt.Sprintf("aggregation field %q must be numeric", aggregate.Column))
 	}
 	return fmt.Sprintf("%s(%s)", aggregate.Function, column.Name), nil
 }
 
-func compileGroups(groups []string, schema session.SchemaSnapshot) (string, error) {
+func compileGroups(groups []string, projections []Projection, projectionMode ProjectionMode, schema session.SchemaSnapshot) (string, error) {
 	if len(groups) == 0 {
 		return "", nil
 	}
 	compiled := make([]string, 0, len(groups))
+	fieldCount := 0
 	for _, group := range groups {
 		column, columnErr := typedColumn(group, schema)
 		if columnErr != nil {
 			return "", columnErr
 		}
-		compiled = append(compiled, column.Name)
+		if projectionMode != ProjectionModeAll && !projectionContainsColumn(projections, column.Name) {
+			return "", fmt.Errorf("GROUP BY column %q must also be projected", column.Name)
+		}
+		if column.Kind == session.SchemaColumnField {
+			fieldCount++
+			if fieldCount > 1 {
+				return "", fmt.Errorf("GROUP BY supports at most one field")
+			}
+			compiled = append(compiled, column.Name+"::FIELD")
+			continue
+		}
+		if column.Kind != session.SchemaColumnTag && column.Kind != session.SchemaColumnEntityTag {
+			return "", fmt.Errorf("GROUP BY column %q must be a tag or field", column.Name)
+		}
+		compiled = append(compiled, column.Name+"::TAG")
 	}
 	return strings.Join(compiled, ", "), nil
+}
+
+func projectionContainsColumn(projections []Projection, columnName string) bool {
+	for _, projection := range projections {
+		if strings.TrimSpace(projection.Column) == columnName {
+			return true
+		}
+	}
+	return false
 }
 
 func compileFilter(predicate *Predicate, schema session.SchemaSnapshot) (string, error) {
@@ -359,7 +493,7 @@ func compileComparison(predicate Predicate, schema session.SchemaSnapshot) (stri
 	if !isComparisonOperator(predicate.Operator) {
 		return "", fmt.Errorf("unsupported filter operator %q", predicate.Operator)
 	}
-	column, columnErr := typedColumn(predicate.Column, schema)
+	column, columnErr := filterColumn(predicate.Column, schema)
 	if columnErr != nil {
 		return "", columnErr
 	}
@@ -385,25 +519,125 @@ func compileComparison(predicate Predicate, schema session.SchemaSnapshot) (stri
 	return fmt.Sprintf("%s %s %s", column.Name, predicate.Operator, compiledValue), nil
 }
 
+func filterColumn(columnName string, schema session.SchemaSnapshot) (session.SchemaColumn, error) {
+	if schema.Type == session.ResourceTypeProperty && strings.TrimSpace(columnName) == "ID" {
+		return session.SchemaColumn{Name: "ID", Kind: session.SchemaColumnTag, Type: session.SchemaValueTypeString}, nil
+	}
+	column, columnErr := typedColumn(columnName, schema)
+	if columnErr != nil {
+		return session.SchemaColumn{}, columnErr
+	}
+	if column.Kind != session.SchemaColumnTag && column.Kind != session.SchemaColumnEntityTag {
+		return session.SchemaColumn{}, diagnosticError("FILTER_COLUMN_NOT_TAG", "/filter/column", fmt.Sprintf("filter column %q must be a tag", columnName))
+	}
+	return column, nil
+}
+
+func compileTopNFilter(predicate *Predicate, schema session.SchemaSnapshot) (string, error) {
+	if predicate == nil {
+		return "", nil
+	}
+	if predicate.Operator == OperatorOr {
+		return "", fmt.Errorf("TOPN filters do not support OR")
+	}
+	if predicate.Operator == OperatorAnd {
+		if len(predicate.Children) < 2 {
+			return "", fmt.Errorf("TOPN AND predicate requires at least two children")
+		}
+		parts := make([]string, 0, len(predicate.Children))
+		for _, child := range predicate.Children {
+			part, childErr := compileTopNFilter(&child, schema)
+			if childErr != nil {
+				return "", childErr
+			}
+			parts = append(parts, part)
+		}
+		return strings.Join(parts, " AND "), nil
+	}
+	if len(predicate.Children) != 0 {
+		return "", fmt.Errorf("TOPN comparison predicate cannot contain children")
+	}
+	if predicate.Operator != OperatorEqual {
+		return "", diagnosticError(
+			"TOPN_FILTER_OPERATOR_UNSUPPORTED",
+			"/filter/operator",
+			fmt.Sprintf("TOPN filter operator %q is unsupported; use =", predicate.Operator),
+			string(OperatorEqual),
+		)
+	}
+	column, columnErr := filterColumn(predicate.Column, schema)
+	if columnErr != nil {
+		return "", columnErr
+	}
+	if !containsExact(schema.EntityTags, column.Name) {
+		return "", diagnosticError(
+			"TOPN_FILTER_NOT_ENTITY_TAG",
+			"/filter/column",
+			fmt.Sprintf("TOPN filter column %q must be an entity tag", column.Name),
+			schema.EntityTags...,
+		)
+	}
+	return compileComparison(*predicate, schema)
+}
+
+func validateTopNDirection(direction OrderDirection, schemaSort string) error {
+	normalizedSort := strings.ToUpper(strings.TrimSpace(schemaSort))
+	if normalizedSort == "" || normalizedSort == "SORT_UNSPECIFIED" {
+		return nil
+	}
+	if normalizedSort == "SORT_ASC" && direction != OrderAscending {
+		return fmt.Errorf("TOPN resource supports only ASC order")
+	}
+	if normalizedSort == "SORT_DESC" && direction != OrderDescending {
+		return fmt.Errorf("TOPN resource supports only DESC order")
+	}
+	return nil
+}
+
+func containsExact(values []string, target string) bool {
+	for _, value := range values {
+		if value == target {
+			return true
+		}
+	}
+	return false
+}
+
 func compileOrder(order *Order, schema session.SchemaSnapshot) (string, error) {
 	if order == nil {
 		return "", nil
 	}
-	columnName := strings.TrimSpace(order.Column)
+	indexRuleName := strings.TrimSpace(order.IndexRule)
 	if !isOrderDirection(order.Direction) {
 		return "", fmt.Errorf("unsupported order direction %q", order.Direction)
 	}
-	if strings.EqualFold(columnName, "TIME") {
+	if indexRuleName == "" {
+		return string(order.Direction), nil
+	}
+	if indexRuleName == "TIME" {
 		return "TIME " + string(order.Direction), nil
 	}
-	column, columnErr := typedColumn(columnName, schema)
-	if columnErr != nil {
-		return "", columnErr
+	for _, sortableIndex := range schema.SortableIndexes {
+		if sortableIndex.RuleName == indexRuleName {
+			return sortableIndex.RuleName + " " + string(order.Direction), nil
+		}
 	}
-	if !column.Indexed {
-		return "", fmt.Errorf("ORDER BY column %q is not indexed", columnName)
+	if len(schema.SortableIndexes) == 0 {
+		column, columnErr := typedColumn(indexRuleName, schema)
+		if columnErr == nil && column.Indexed {
+			return column.Name + " " + string(order.Direction), nil
+		}
 	}
-	return column.Name + " " + string(order.Direction), nil
+	allowedRules := []string{"TIME"}
+	for _, sortableIndex := range schema.SortableIndexes {
+		allowedRules = append(allowedRules, sortableIndex.RuleName)
+	}
+	return "", diagnosticError(
+		"ORDER_INDEX_NOT_SORTABLE",
+		"/order_by/index_rule",
+		fmt.Sprintf("ORDER BY index rule %q is not sortable", indexRuleName),
+		allowedRules...,
+	)
 }
 
 func compileLimit(limit int) (int, error) {
@@ -413,19 +647,38 @@ func compileLimit(limit int) (int, error) {
 	if limit < 0 {
 		return 0, fmt.Errorf("limit must be greater than zero")
 	}
+	if limit > maximumLimit {
+		return 0, diagnosticError("LIMIT_EXCEEDS_MAXIMUM", "/limit", fmt.Sprintf("limit cannot exceed %d", maximumLimit), strconv.Itoa(maximumLimit))
+	}
 	return limit, nil
 }
 
-func compileTimeRange(timeRange TimeRange) string {
+func compileTimeRange(timeRange TimeRange) (string, error) {
 	start := strings.TrimSpace(timeRange.Start)
 	if start == "" {
 		start = defaultTimeStart
 	}
+	if startErr := validateTimeValue(start); startErr != nil {
+		return "", diagnosticError("INVALID_TIME_START", "/time_range/start", fmt.Sprintf("invalid time_range.start: %v", startErr))
+	}
 	end := strings.TrimSpace(timeRange.End)
 	if end == "" {
-		return "TIME > '" + quoteLiteral(start) + "'"
+		return "TIME > '" + quoteLiteral(start) + "'", nil
 	}
-	return "TIME BETWEEN '" + quoteLiteral(start) + "' AND '" + quoteLiteral(end) + "'"
+	if endErr := validateTimeValue(end); endErr != nil {
+		return "", diagnosticError("INVALID_TIME_END", "/time_range/end", fmt.Sprintf("invalid time_range.end: %v", endErr))
+	}
+	return "TIME BETWEEN '" + quoteLiteral(start) + "' AND '" + quoteLiteral(end) + "'", nil
+}
+
+func validateTimeValue(value string) error {
+	if value == "now" || relativeTimePattern.MatchString(value) {
+		return nil
+	}
+	if _, parseErr := time.Parse(time.RFC3339, value); parseErr != nil {
+		return fmt.Errorf("%q must be RFC3339, now, or a relative value such as -30m", value)
+	}
+	return nil
 }
 
 func typedColumn(columnName string, schema session.SchemaSnapshot) (session.SchemaColumn, error) {
@@ -433,7 +686,7 @@ func typedColumn(columnName string, schema session.SchemaSnapshot) (session.Sche
 	if !identifierPattern.MatchString(trimmedName) {
 		return session.SchemaColumn{}, fmt.Errorf("invalid column name %q", columnName)
 	}
-	column, found := schema.Column(trimmedName)
+	column, found := schema.ExactColumn(trimmedName)
 	if !found || column.Type == session.SchemaValueTypeUnknown {
 		return session.SchemaColumn{}, fmt.Errorf("typed schema metadata is required to use column %q", trimmedName)
 	}
@@ -456,18 +709,31 @@ func validateResource(resource Resource, schema session.SchemaSnapshot) error {
 		}
 	}
 	if schema.Type != "" && schema.Type != resource.Type {
-		if resource.Type == session.ResourceTypeTopN && schema.Type == session.ResourceTypeMeasure {
-			return nil
-		}
-		return fmt.Errorf("plan resource type %s does not match discovered schema type %s", resource.Type, schema.Type)
+		return diagnosticError(
+			"RESOURCE_TYPE_MISMATCH",
+			"/resource/type",
+			fmt.Sprintf("plan resource type %s does not match discovered schema type %s", resource.Type, schema.Type),
+			schema.Type.String(),
+		)
 	}
-	if schema.Name != "" && !strings.EqualFold(schema.Name, resource.Name) {
-		return fmt.Errorf("plan resource name %q does not match discovered schema %q", resource.Name, schema.Name)
+	if schema.Name != "" && schema.Name != resource.Name {
+		return diagnosticError(
+			"RESOURCE_NAME_MISMATCH",
+			"/resource/name",
+			fmt.Sprintf("plan resource name %q does not match discovered schema %q", resource.Name, schema.Name),
+			schema.Name,
+		)
+	}
+	if len(schema.Groups) > 0 && session.SchemaKey(resource.Type, resource.Name, resource.Groups) != session.SchemaKey(schema.Type, schema.Name, schema.Groups) {
+		return diagnosticError("RESOURCE_GROUP_MISMATCH", "/resource/groups", "plan resource groups do not match the discovered schema groups", schema.Groups...)
 	}
 	return nil
 }
 
 func compileValue(value any, valueType session.SchemaValueType) (string, error) {
+	if value == nil {
+		return "NULL", nil
+	}
 	switch valueType {
 	case session.SchemaValueTypeString, session.SchemaValueTypeTimestamp:
 		stringValue, isString := value.(string)
@@ -544,7 +810,10 @@ func CompileDisplayDraft(plan QueryPlan) string {
 		return ""
 	}
 	groups := groupExpression(plan.Resource.Groups)
-	timeClause := compileTimeRange(plan.TimeRange)
+	timeClause, timeErr := compileTimeRange(plan.TimeRange)
+	if timeErr != nil {
+		timeClause = "TIME > '" + defaultTimeStart + "'"
+	}
 	if plan.Resource.Type == session.ResourceTypeTopN {
 		topN := plan.TopN
 		if topN == 0 {

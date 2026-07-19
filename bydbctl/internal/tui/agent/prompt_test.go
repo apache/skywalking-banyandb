@@ -52,7 +52,7 @@ func TestBuildBydbqlPromptIncludesOutputContract(t *testing.T) {
 		"Never publish a raw BYDBQL statement in free text",
 		"Controlled workflow",
 		"describe_schema",
-		"Context JSON:",
+		"<untrusted_context_json>",
 		"top slow endpoints",
 		"Use only the provided bydbctl tools",
 		"probe_bydbql",
@@ -117,6 +117,38 @@ func TestBuildAgentTurnRequestKeepsRecentConversationWindow(t *testing.T) {
 	}
 	if payload.Conversation[5].Hint != "request-7" {
 		t.Fatalf("expected latest retained turn, got %+v", payload.Conversation[5])
+	}
+}
+
+func TestBuildAgentTurnRequestDropsSupersededCandidate(t *testing.T) {
+	querySession := &session.QuerySession{
+		CandidateSuperseded: true,
+		Candidates: []session.BydbqlCandidate{{
+			Query: "SELECT * FROM MEASURE old IN production TIME > '-30m' LIMIT 10",
+		}},
+		SelectedCandidate: 0,
+	}
+	payload := BuildAgentTurnRequest(querySession, QueryHints{}, "", "use the new logs resource")
+	if payload.Candidate != "" || payload.Intent != TurnIntentNewQuery || payload.Task != "new_query" {
+		t.Fatalf("superseded candidate leaked into new query turn: %+v", payload)
+	}
+}
+
+func TestBuildAgentTurnRequestIncludesExactSortableRules(t *testing.T) {
+	querySession := &session.QuerySession{SchemaSnapshot: session.SchemaSnapshot{
+		Loaded:      true,
+		Fingerprint: "schema-v1",
+		SortableIndexes: []session.SortableIndex{{
+			RuleName: "latency_rule",
+			Tags:     []string{"service", "endpoint"},
+		}},
+	}}
+	payload := BuildAgentTurnRequest(querySession, QueryHints{}, "", "show latency")
+	if payload.Schema.Fingerprint != "schema-v1" || len(payload.Schema.SortableIndexes) != 1 {
+		t.Fatalf("missing schema identity or sortable rules: %+v", payload.Schema)
+	}
+	if payload.Schema.SortableIndexes[0].RuleName != "latency_rule" {
+		t.Fatalf("unexpected sortable rule: %+v", payload.Schema.SortableIndexes)
 	}
 }
 

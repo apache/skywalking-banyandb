@@ -1,8 +1,8 @@
 # BYDBQL Agent TUI
 
-`bydbctl agent` is a three-page terminal workspace where an ACP agent holds a multi-turn BanyanDB conversation, discovers schemas, proposes typed query plans, and safely runs approved queries.
+`bydbctl agent` is a three-page terminal workspace where an agent holds a multi-turn BanyanDB conversation, discovers schemas, proposes typed query plans, and safely runs approved queries.
 
-The default provider is `codex-acp`. It starts `@agentclientprotocol/codex-acp` through `npx`; a different ACP-compatible stdio command can be selected with `--agent acp --acp-command …`.
+The default provider is `builtin`, which calls an OpenAI-compatible chat-completions endpoint and requires `BYDBCTL_AGENT_API_KEY`. Configure its model and endpoint with `--agent-model` and `--agent-base-url` (or `BYDBCTL_AGENT_MODEL` and `BYDBCTL_AGENT_BASE_URL`). `codex-acp` and custom ACP-compatible stdio commands remain available through `--agent codex-acp` and `--agent acp --acp-command …`.
 
 ## Start
 
@@ -38,9 +38,11 @@ Each TUI session creates a private, local MCP bridge. It exposes exactly these t
 - `probe_bydbql`
 - `execute_bydbql`
 
-The Agent starts with no selected schema. It ranks catalog candidates, inspects at most three detailed schemas, and selects a resource only when its typed metadata supports the request. If the best choices remain ambiguous, it asks one focused clarification question. The Schema page is read-only and cannot pin a resource.
+The Agent starts with no selected schema. It ranks catalog candidates but resolves resources against the complete discovered catalog using exact type, name, and group identity. It never silently substitutes a similar resource or another time granularity. Typed schemas are cached per resource and group set, so a workflow can compile several resources independently. If the best choices remain ambiguous, it asks one focused clarification question. The Schema page is read-only and cannot pin a resource.
 
-`propose_query_plan` accepts a strict JSON plan and uses typed local metadata to render final BYDBQL. The planner supports projections, comparison/`IN` filters with `AND`/`OR`, indexed ordering, Measure aggregation/grouping, and `SHOW TOP`. It rejects `MATCH`, `HAVING`, `OFFSET`, `STAGES`, `WITH QUERY_TRACE`, joins, and unknown column types rather than guessing. `validate_bydbql` remains for manual editor checks; it cannot publish a provider candidate. The bridge rejects every other tool, shell command, external MCP server, dynamic registration, and download.
+`propose_query_plan` accepts a strict JSON plan or a bounded workflow. The bridge loads the exact schema when needed, binds the compiled query to a schema fingerprint, and returns path-based diagnostics with allowed values when compilation fails. The planner supports typed projections, tag/entity comparison and `IN` filters with `AND`/`OR`, exact sortable index-rule ordering, numeric Measure aggregation/grouping, empty Trace projection, and registered TopN aggregations. A normal Measure is never treated as a TopN aggregation. Failed proposals remain visible diagnostics but are not executable candidates.
+
+The planner rejects unknown JSON fields, implicit value coercion, field filters, tag aggregation, invalid time formats, out-of-range limits, `MATCH`, `HAVING`, `OFFSET`, `STAGES`, `WITH QUERY_TRACE`, joins, and unknown columns rather than guessing. `validate_bydbql` remains a parse/safety and manual-editor check; only a successful `propose_query_plan` can publish a provider candidate. The bridge rejects every other tool, shell command, external MCP server, dynamic registration, and download.
 
 The legacy `--mcp-config` option is retained only to produce an explicit error; external MCP injection is not supported. The old `codex-exec` provider is removed. The deterministic `fake` provider is test-only and is not a CLI provider. A normal answer or clarification may complete without a candidate, but raw BYDBQL in provider text is rejected; only the controlled plan tool can publish a query candidate.
 
@@ -50,11 +52,11 @@ Execution policy is configurable in the Query tab with `Ctrl+P`:
 
 | Policy | Behavior |
 | --- | --- |
-| `ask every time` | Agent probes and executes only when you explicitly ask; each probe/execute still requires approval |
-| `auto probe` | Agent may call `probe_bydbql` and auto-probe compiled plans; every execution still requires approval |
-| `trust session` | All agent probes and executes auto-approve for the session; manual `Ctrl+E` also auto-approves |
+| `ask every time` | Every probe and execution requires one-time approval |
+| `auto probe` | Bounded read-only probes auto-approve; every full execution requires one-time approval |
+| `trust session` | Read-only probes and executions auto-approve for the session, including manual `Ctrl+E` |
 
-No execution runs merely because the agent generated a candidate unless the active policy allows it. `execute_bydbql`, `probe_bydbql`, and the manual `Ctrl+E` path can create an approval card containing the exact BYDBQL statement, resource, groups, time range, and limit when policy is `ask every time`.
+No data access runs merely because the agent generated a candidate unless the active policy allows it. `execute_bydbql`, `probe_bydbql`, and the manual `Ctrl+E` path can create an approval card containing the exact BYDBQL statement, resource, groups, time range, and limit. Mutation statements are rejected before approval under every policy.
 
 - `y` approves that exact statement for one request.
 - `n` rejects it.
@@ -99,9 +101,9 @@ Editing the query creates a manual candidate. The editor performs a short deboun
 
 ## Results and data sharing
 
-The Run page shows resource type, duration, row count, and a bounded structured table preview. The raw HTTP response remains available only in the current process as a detail view. It is neither sent to the ACP provider nor written to the normal session log.
+The Run page shows resource type, duration, row count, and a bounded structured table preview. The raw HTTP response remains available only in the current process as a detail view and is not written to the normal session log.
 
-When a user asks a later question, or when a workflow advances to a dependent planned query, bydbctl supplies the provider the current statement, result type, row count, duration, column summary, error, and up to 50 preview rows. No extra sharing option is required. A multi-resource goal is represented as multiple independently compiled and approved queries; BanyanDB joins are never fabricated.
+When a user asks a later question, or when a workflow advances to a dependent planned query, bydbctl supplies the provider the current statement, result type, row count, duration, column summary, sanitized error, and up to 50 preview rows. Preview values are explicitly treated as untrusted data. Persistent ACP sessions retain their own conversation history, so bydbctl does not inject duplicate turns; stateless providers receive only a bounded recent window. A multi-resource goal is represented as multiple independently compiled and approved queries; BanyanDB joins are never fabricated.
 
 ## Activity log and persistence
 
