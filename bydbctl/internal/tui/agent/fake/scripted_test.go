@@ -22,8 +22,8 @@ import (
 	"github.com/apache/skywalking-banyandb/bydbctl/internal/tui/agent"
 )
 
-func TestScriptedACPGatewayStreamsLifecycleEvents(t *testing.T) {
-	gateway := NewScriptedACPGateway(Script{Events: []agent.Event{
+func TestScriptedGatewayStreamsLifecycleEvents(t *testing.T) {
+	gateway := NewScriptedGateway(Script{Events: []agent.Event{
 		{Kind: agent.EventKindMessageDelta, Message: "drafting"},
 		{Kind: agent.EventKindPlanUpdate, Message: "inspect schema"},
 		{Kind: agent.EventKindToolCall, ToolName: "describe_schema", Status: agent.EventStatusRunning},
@@ -32,11 +32,11 @@ func TestScriptedACPGatewayStreamsLifecycleEvents(t *testing.T) {
 		{Kind: agent.EventKindCancelled, Message: "rejected", Status: agent.EventStatusCancelled},
 		{Kind: agent.EventKindError, Message: "temporary failure", Status: agent.EventStatusFailed},
 	}})
-	acpSession, startErr := gateway.Start(context.Background(), agent.StartRequest{Provider: "fake-acp"})
+	agentSession, startErr := gateway.Start(context.Background(), agent.StartRequest{Provider: "fake-agent"})
 	if startErr != nil {
 		t.Fatalf("Start returned error: %v", startErr)
 	}
-	events, sendErr := gateway.Send(context.Background(), acpSession.ID, agent.TurnRequest{})
+	events, sendErr := gateway.Send(context.Background(), agentSession.ID, agent.TurnRequest{})
 	if sendErr != nil {
 		t.Fatalf("Send returned error: %v", sendErr)
 	}

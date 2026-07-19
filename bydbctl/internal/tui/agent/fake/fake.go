@@ -88,8 +88,13 @@ func (gateway *Gateway) Send(ctx context.Context, _ string, req agent.TurnReques
 	return events, nil
 }
 
-// Stop stops a fake session.
-func (gateway *Gateway) Stop(_ context.Context, _ string) error {
+// Interrupt interrupts a fake turn.
+func (gateway *Gateway) Interrupt(_ context.Context, _ string) error {
+	return nil
+}
+
+// Close closes the fake gateway.
+func (gateway *Gateway) Close() error {
 	return nil
 }
 

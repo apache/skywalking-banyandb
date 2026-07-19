@@ -39,7 +39,8 @@ const (
 type AgentGateway interface {
 	Start(ctx context.Context, req StartRequest) (Session, error)
 	Send(ctx context.Context, sessionID string, req TurnRequest) (<-chan Event, error)
-	Stop(ctx context.Context, sessionID string) error
+	Interrupt(ctx context.Context, sessionID string) error
+	Close() error
 }
 
 // ConversationHistoryGateway reports whether a provider session retains prior turns.
@@ -65,6 +66,14 @@ type Session struct {
 	StartedAt time.Time
 	ID        string
 	Provider  string
+}
+
+// ControlledMCPServer describes the only MCP server an agent gateway may expose.
+type ControlledMCPServer struct {
+	Name         string
+	Command      string
+	Args         []string
+	EnabledTools []string
 }
 
 // AgentSession is an alias for Session.
@@ -99,7 +108,7 @@ const (
 	TurnIntentNextStep TurnIntent = "NEXT_STEP"
 )
 
-// RequestPayload is the JSON shape sent through ACP/Codex adapters.
+// RequestPayload is the JSON shape sent through agent adapters.
 type RequestPayload struct {
 	Constraints      Constraints               `json:"constraints"`
 	Schema           SchemaSummary             `json:"schema"`
@@ -166,7 +175,7 @@ type WorkflowGuidance struct {
 	RequireDescribeSchemaBeforePropose bool `json:"require_describe_schema_before_propose"`
 }
 
-// SchemaColumnSummary is a typed column contract exposed to an ACP provider.
+// SchemaColumnSummary is a typed column contract exposed to an agent provider.
 type SchemaColumnSummary struct {
 	Name    string `json:"name"`
 	Kind    string `json:"kind"`
@@ -233,11 +242,14 @@ func BuildBydbqlPromptParts(req TurnRequest) (prompt.Parts, error) {
 		return prompt.Parts{}, marshalErr
 	}
 	return prompt.BuildParts(prompt.Input{
-		TaskPrompt:      req.Prompt,
-		PayloadJSON:     payload,
-		Candidate:       req.Payload.Candidate,
-		ExecutionPolicy: req.Payload.Constraints.ExecutionPolicy,
+		TaskPrompt:  req.Prompt,
+		PayloadJSON: payload,
 	}), nil
+}
+
+// DeveloperInstructions returns the stable trusted instructions for an agent thread.
+func DeveloperInstructions() string {
+	return prompt.DeveloperInstructions()
 }
 
 // EventKind identifies a normalized event emitted by an agent adapter.

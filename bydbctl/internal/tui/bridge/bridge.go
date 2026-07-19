@@ -13,7 +13,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-// Package bridge provides the private, bydbctl-owned tool set exposed to ACP agents.
+// Package bridge provides the private, bydbctl-owned tool set exposed to agents.
 package bridge
 
 import (

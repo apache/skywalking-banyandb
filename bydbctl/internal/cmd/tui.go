@@ -29,7 +29,7 @@ import (
 	"github.com/spf13/viper"
 
 	"github.com/apache/skywalking-banyandb/bydbctl/internal/tui/agent"
-	"github.com/apache/skywalking-banyandb/bydbctl/internal/tui/agent/acp"
+	"github.com/apache/skywalking-banyandb/bydbctl/internal/tui/agent/codex"
 	tuiapp "github.com/apache/skywalking-banyandb/bydbctl/internal/tui/app"
 	"github.com/apache/skywalking-banyandb/bydbctl/internal/tui/applog"
 	"github.com/apache/skywalking-banyandb/bydbctl/internal/tui/approval"
@@ -39,14 +39,12 @@ import (
 	"github.com/apache/skywalking-banyandb/pkg/version"
 )
 
-const agentProviderACP = "acp"
+const agentProviderCodex = "codex"
 
-var errACPCommandRequired = errors.New("--acp-command is required")
+var errCodexCommandRequired = errors.New("--codex-command is required")
 
 func newAgentCmd() *cobra.Command {
-	var acpCommand string
-	var acpArgs []string
-	var mcpConfig string
+	var codexCommand string
 	var initialGoal string
 	var initialStart string
 	var initialEnd string
@@ -56,12 +54,9 @@ func newAgentCmd() *cobra.Command {
 		Use:     "agent",
 		Version: version.Build(),
 		Short:   "Open the interactive BYDBQL agent TUI",
-		RunE: func(cmd *cobra.Command, _ []string) error {
-			if cmd.Flags().Changed("mcp-config") {
-				return fmt.Errorf("--mcp-config is no longer supported: bydbctl agent only exposes its built-in controlled tools")
-			}
-			if strings.TrimSpace(acpCommand) == "" {
-				return errACPCommandRequired
+		RunE: func(_ *cobra.Command, _ []string) error {
+			if strings.TrimSpace(codexCommand) == "" {
+				return errCodexCommandRequired
 			}
 			workingDirectory, wdErr := os.MkdirTemp("", "bydbctl-agent-cwd-")
 			if wdErr != nil {
@@ -96,10 +91,13 @@ func newAgentCmd() *cobra.Command {
 			if executableErr != nil {
 				return fmt.Errorf("failed to locate bydbctl executable: %w", executableErr)
 			}
-			agentGateway, gatewayErr := newAgentGateway(acpCommand, acpArgs, workingDirectory, bridgeServer.MCPServerConfig(executable))
+			agentGateway, gatewayErr := newAgentGateway(codexCommand, workingDirectory, bridgeServer.MCPServerConfig(executable))
 			if gatewayErr != nil {
 				return gatewayErr
 			}
+			defer func() {
+				_ = agentGateway.Close()
+			}()
 			sessionLog, logErr := applog.New(logDir)
 			if logErr != nil {
 				return fmt.Errorf("failed to create agent session log: %w", logErr)
@@ -113,7 +111,7 @@ func newAgentCmd() *cobra.Command {
 				Approvals:    approvals,
 				ToolBridge:   toolBridge,
 				SessionLog:   sessionLog,
-				Provider:     agentProviderACP,
+				Provider:     agentProviderCodex,
 				Goal:         initialGoal,
 				Start:        initialStart,
 				End:          initialEnd,
@@ -126,9 +124,7 @@ func newAgentCmd() *cobra.Command {
 			return nil
 		},
 	}
-	agentCmd.Flags().StringVar(&acpCommand, "acp-command", "", "ACP-compatible stdio command")
-	agentCmd.Flags().StringArrayVar(&acpArgs, "acp-arg", nil, "argument passed to --acp-command; may be repeated")
-	agentCmd.Flags().StringVar(&mcpConfig, "mcp-config", "", "deprecated: external MCP configuration is rejected")
+	agentCmd.Flags().StringVar(&codexCommand, "codex-command", "codex", "path to the Codex CLI executable")
 	agentCmd.Flags().StringVar(&initialGoal, "goal", "", "initial natural language query goal")
 	agentCmd.Flags().StringVar(&initialStart, "start", "-30m", "initial BYDBQL time start")
 	agentCmd.Flags().StringVar(&initialEnd, "end", "", "initial BYDBQL time end")
@@ -138,11 +134,15 @@ func newAgentCmd() *cobra.Command {
 	return agentCmd
 }
 
-func newAgentGateway(acpCommand string, acpArgs []string, workingDirectory string, mcpServers any) (agent.Gateway, error) {
-	if strings.TrimSpace(acpCommand) == "" {
-		return nil, errACPCommandRequired
+func newAgentGateway(codexCommand, workingDirectory string, mcpServer agent.ControlledMCPServer) (agent.Gateway, error) {
+	if strings.TrimSpace(codexCommand) == "" {
+		return nil, errCodexCommandRequired
 	}
-	return acp.NewGateway(acpCommand, acpArgs...).WithWorkingDirectory(workingDirectory).WithMCPServers(mcpServers), nil
+	return codex.NewGateway(codex.Config{
+		Command:             codexCommand,
+		WorkingDirectory:    workingDirectory,
+		ControlledMCPServer: mcpServer,
+	}), nil
 }
 
 func newAgentToolBridgeCmd() *cobra.Command {

@@ -440,7 +440,7 @@ func (runner *Runner) StartAgentTurn(ctx context.Context, querySession *session.
 	return updates, nil
 }
 
-// StopAgentTurn cancels approvals and asks the provider to stop the active session.
+// StopAgentTurn cancels approvals and asks the provider to interrupt the active turn.
 func (runner *Runner) StopAgentTurn(ctx context.Context, querySession *session.QuerySession) error {
 	runner.CancelApprovals()
 	if runner.toolBridge != nil {
@@ -449,10 +449,9 @@ func (runner *Runner) StopAgentTurn(ctx context.Context, querySession *session.Q
 	if querySession == nil || strings.TrimSpace(querySession.AgentSessionID) == "" || runner.agentGateway == nil {
 		return nil
 	}
-	if stopErr := runner.agentGateway.Stop(ctx, querySession.AgentSessionID); stopErr != nil {
-		return fmt.Errorf("failed to stop agent session: %w", stopErr)
+	if interruptErr := runner.agentGateway.Interrupt(ctx, querySession.AgentSessionID); interruptErr != nil {
+		return fmt.Errorf("failed to interrupt agent turn: %w", interruptErr)
 	}
-	querySession.AgentSessionID = ""
 	querySession.AddTranscript("workflow", "agent turn cancelled", runner.now())
 	return nil
 }
@@ -1152,7 +1151,7 @@ func singleLine(value string) string {
 	return strings.Join(strings.Fields(value), " ")
 }
 
-// NormalizeAgentDisplayText repairs ACP fragmented natural-language output for UI display.
+// NormalizeAgentDisplayText repairs fragmented natural-language output for UI display.
 func NormalizeAgentDisplayText(text string) string {
 	normalizedText := singleLine(text)
 	if normalizedText == "" {
@@ -1236,7 +1235,7 @@ func collapseCJKSpacing(text string) string {
 	builder.Grow(len(runes))
 	for runeIdx := 0; runeIdx < len(runes); runeIdx++ {
 		currentRune := runes[runeIdx]
-		if currentRune == ' ' && runeIdx > 0 && runeIdx+1 < len(runes) && shouldCollapseACPSpacing(runes[runeIdx-1], runes[runeIdx+1]) {
+		if currentRune == ' ' && runeIdx > 0 && runeIdx+1 < len(runes) && shouldCollapseProviderSpacing(runes[runeIdx-1], runes[runeIdx+1]) {
 			continue
 		}
 		builder.WriteRune(currentRune)
@@ -1244,11 +1243,11 @@ func collapseCJKSpacing(text string) string {
 	return builder.String()
 }
 
-func shouldCollapseACPSpacing(left, right rune) bool {
-	return isACPCompactRune(left) && isACPCompactRune(right)
+func shouldCollapseProviderSpacing(left, right rune) bool {
+	return isProviderCompactRune(left) && isProviderCompactRune(right)
 }
 
-func isACPCompactRune(value rune) bool {
+func isProviderCompactRune(value rune) bool {
 	if unicode.Is(unicode.Han, value) {
 		return true
 	}
@@ -1260,7 +1259,7 @@ func isACPCompactRune(value rune) bool {
 	}
 }
 
-// RepairFragmentedQuery normalizes ACP fragmented BYDBQL text into a single statement.
+// RepairFragmentedQuery normalizes fragmented BYDBQL text into a single statement.
 func RepairFragmentedQuery(query string) string {
 	normalizedQuery := normalizeFragmentedAgentText(query)
 	if normalizedQuery == "" {

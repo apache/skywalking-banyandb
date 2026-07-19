@@ -26,6 +26,8 @@ import (
 	"path/filepath"
 	"strings"
 	"sync"
+
+	"github.com/apache/skywalking-banyandb/bydbctl/internal/tui/agent"
 )
 
 const (
@@ -83,17 +85,24 @@ func (socketServer *SocketServer) Path() string {
 	return socketServer.socketPath
 }
 
-// MCPServerConfig returns the only MCP server configuration given to an ACP session.
-func (socketServer *SocketServer) MCPServerConfig(executable string) []any {
+// MCPServerConfig returns the only MCP server configuration given to an agent session.
+func (socketServer *SocketServer) MCPServerConfig(executable string) agent.ControlledMCPServer {
 	if socketServer == nil || strings.TrimSpace(executable) == "" {
-		return []any{}
+		return agent.ControlledMCPServer{}
 	}
-	return []any{map[string]any{
-		"name":    "bydbctl-controlled-tools",
-		"command": executable,
-		"args":    []string{"agent-tool-bridge", "--socket", socketServer.Path()},
-		"env":     []any{},
-	}}
+	return agent.ControlledMCPServer{
+		Name:    "bydbctl-controlled-tools",
+		Command: executable,
+		Args:    []string{"agent-tool-bridge", "--socket", socketServer.Path()},
+		EnabledTools: []string{
+			ToolListGroupsSchemas,
+			ToolDescribeSchema,
+			ToolProposeQueryPlan,
+			ToolValidateBydbQL,
+			ToolProbeBydbQL,
+			ToolExecuteBydbQL,
+		},
+	}
 }
 
 // Close stops the private socket server and removes its directory.

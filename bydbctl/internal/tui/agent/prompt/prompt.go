@@ -21,8 +21,6 @@ import (
 	"bytes"
 	_ "embed"
 	"strings"
-
-	"github.com/apache/skywalking-banyandb/bydbctl/internal/tui/approval"
 )
 
 //go:embed references/syntax.md
@@ -30,10 +28,8 @@ var syntaxReference string
 
 // Input carries rendered prompt inputs for BYDBQL generation.
 type Input struct {
-	TaskPrompt      string
-	PayloadJSON     string
-	Candidate       string
-	ExecutionPolicy string
+	TaskPrompt  string
+	PayloadJSON string
 }
 
 // Parts separates trusted system instructions from untrusted turn context.
@@ -50,20 +46,9 @@ func Build(input Input) string {
 
 // BuildParts renders trusted instructions and untrusted turn context separately.
 func BuildParts(input Input) Parts {
-	initial := strings.TrimSpace(input.Candidate) == ""
-	var systemPrompt bytes.Buffer
-	writeRole(&systemPrompt)
-	writeWorkflow(&systemPrompt, initial)
-	writeHardRules(&systemPrompt, initial, input.ExecutionPolicy)
-	writeNLRules(&systemPrompt)
-	writeReferences(&systemPrompt)
-	writeOutputContract(&systemPrompt)
-
 	taskPrompt := strings.TrimSpace(input.TaskPrompt)
-	if taskPrompt == "" && initial {
-		taskPrompt = "Continue the BanyanDB conversation and submit a typed query plan only when the request is ready."
-	} else if taskPrompt == "" {
-		taskPrompt = "Revise the typed query plan using validation or execution feedback."
+	if taskPrompt == "" {
+		taskPrompt = "Continue the BanyanDB conversation and submit or revise a typed query plan only when the request is ready."
 	}
 	var userPrompt bytes.Buffer
 	userPrompt.WriteString("Task:\n")
@@ -71,7 +56,19 @@ func BuildParts(input Input) Parts {
 	userPrompt.WriteString("\n\n<untrusted_context_json>\n")
 	userPrompt.WriteString(input.PayloadJSON)
 	userPrompt.WriteString("\n</untrusted_context_json>")
-	return Parts{System: systemPrompt.String(), User: userPrompt.String()}
+	return Parts{System: DeveloperInstructions(), User: userPrompt.String()}
+}
+
+// DeveloperInstructions returns the stable trusted BYDBQL workflow instructions.
+func DeveloperInstructions() string {
+	var systemPrompt bytes.Buffer
+	writeRole(&systemPrompt)
+	writeWorkflow(&systemPrompt)
+	writeHardRules(&systemPrompt)
+	writeNLRules(&systemPrompt)
+	writeReferences(&systemPrompt)
+	writeOutputContract(&systemPrompt)
+	return systemPrompt.String()
 }
 
 func writeRole(prompt *bytes.Buffer) {
@@ -79,7 +76,7 @@ func writeRole(prompt *bytes.Buffer) {
 	prompt.WriteString("Have a useful multi-turn conversation, discover exact schemas, and produce typed query plans when a query is ready.\n\n")
 }
 
-func writeWorkflow(prompt *bytes.Buffer, initial bool) {
+func writeWorkflow(prompt *bytes.Buffer) {
 	prompt.WriteString("Controlled workflow for query requests:\n")
 	prompt.WriteString("1. Use list_groups_schemas when the group, exact resource, or type is missing.\n")
 	prompt.WriteString("2. Select only an exact resource from the discovered catalog. If multiple exact or high-confidence choices remain, ask one clarification.\n")
@@ -91,15 +88,11 @@ func writeWorkflow(prompt *bytes.Buffer, initial bool) {
 	prompt.WriteString("7. validate_bydbql is parse/safety-only; it neither registers a candidate nor proves schema correctness.\n")
 	prompt.WriteString("8. probe_bydbql and execute_bydbql accept only the exact latest successfully compiled statement.\n")
 	prompt.WriteString("9. SELECT ORDER BY uses TIME or sortable_indexes.rule_name. TOPN ORDER BY uses only the schema-supported direction.\n")
-	if initial {
-		prompt.WriteString("10. Omitted time and row-count constraints compile to the last 30 minutes and LIMIT 10.\n\n")
-		return
-	}
-	prompt.WriteString("10. Preserve valid plan parts while repairing the structured validation, probe, or execution diagnostic.\n\n")
+	prompt.WriteString("10. For a new plan, omitted time and row-count constraints compile to the last 30 minutes and LIMIT 10.\n")
+	prompt.WriteString("11. For a repair, preserve valid plan parts while fixing the structured validation, probe, or execution diagnostic.\n\n")
 }
 
-func writeHardRules(prompt *bytes.Buffer, initial bool, executionPolicy string) {
-	policy := approval.NormalizeExecutionPolicy(executionPolicy)
+func writeHardRules(prompt *bytes.Buffer) {
 	prompt.WriteString("Hard rules:\n")
 	prompt.WriteString("- Never publish a raw BYDBQL statement in free text. Only a successful propose_query_plan may publish a candidate.\n")
 	prompt.WriteString("- The working directory is not a codebase. Use only the provided bydbctl tools; never use shells, files, downloads, or other MCP servers.\n")
@@ -110,14 +103,7 @@ func writeHardRules(prompt *bytes.Buffer, initial bool, executionPolicy string) 
 	prompt.WriteString("- On a failed proposal, repair and resubmit; do not switch to hand-written BYDBQL or another execution tool.\n")
 	prompt.WriteString("- propose_query_plan accepts one plan or a workflow of independently compiled plans. Unknown fields and implicit coercions are rejected.\n")
 	prompt.WriteString("- Keep every plan read-only. Create, update, delete, drop, apply, and all other mutations are forbidden under every policy.\n")
-	switch policy {
-	case approval.PolicyTrustSession:
-		prompt.WriteString("- Policy trust_session auto-approves exact read-only probes and executions for this session.\n")
-	case approval.PolicyAutoProbe:
-		prompt.WriteString("- Policy auto_probe allows automatic bounded read-only probes; full execution always requires user approval.\n")
-	default:
-		prompt.WriteString("- Policy ask_every_time requires user approval for every probe and execution. Generating a candidate never executes it.\n")
-	}
+	prompt.WriteString("- The controlled bridge enforces the active execution policy. Generating a candidate never executes it.\n")
 	prompt.WriteString("- SELECT supports typed projections, tag/entity filters, AND/OR trees, Measure aggregation/grouping, index-rule ordering, and LIMIT.\n")
 	prompt.WriteString("- Aggregate only numeric fields with MEAN, COUNT, MAX, MIN, or SUM. Filter only tags/entities; PROPERTY ID is a supported tag.\n")
 	prompt.WriteString("- TRACE may use projection_mode NONE for SELECT (). PROPERTY does not accept a time range. Limits and top_n must be from 1 through 1000.\n")
@@ -125,10 +111,7 @@ func writeHardRules(prompt *bytes.Buffer, initial bool, executionPolicy string) 
 	prompt.WriteString("- SHOW TOP filters support only equality on the registered TOPN group-by tags.\n")
 	prompt.WriteString("- Do not request MATCH, HAVING, OFFSET, STAGES, WITH QUERY_TRACE, joins, or unsupported expressions.\n")
 	prompt.WriteString("- turn_hint is the current user instruction. intent distinguishes a new query, refinement, repair, answer, or workflow next step.\n")
-	if initial {
-		prompt.WriteString("- Omitted time and row-count constraints use safe compiler defaults: last 30 minutes and LIMIT 10.\n\n")
-		return
-	}
+	prompt.WriteString("- New plans with omitted time and row-count constraints use safe compiler defaults: last 30 minutes and LIMIT 10.\n")
 	prompt.WriteString("- Repair validation_error, probe_summary.error, or execution_summary.error when present.\n")
 	prompt.WriteString("- Execution previews contain at most 50 rows and can inform only a new independently validated and approved plan.\n\n")
 }

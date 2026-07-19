@@ -26,7 +26,6 @@ func TestBuildInitialPrompt(t *testing.T) {
 	promptText := Build(Input{
 		TaskPrompt:  "Generate a query.",
 		PayloadJSON: `{"goal":"top slow endpoints","candidate":""}`,
-		Candidate:   "",
 	})
 	for _, expected := range []string{
 		"Generate a query",
@@ -38,7 +37,7 @@ func TestBuildInitialPrompt(t *testing.T) {
 		"Use only the provided bydbctl tools",
 		"query workspace assistant",
 		"probe_bydbql",
-		"ask_every_time requires user approval",
+		"controlled bridge enforces the active execution policy",
 		"<untrusted_context_json>",
 	} {
 		if !strings.Contains(promptText, expected) {
@@ -60,11 +59,27 @@ func TestBuildPartsSeparatesTrustedRulesFromTurnData(t *testing.T) {
 	}
 }
 
+func TestBuildPartsUsesStableDeveloperInstructions(t *testing.T) {
+	initial := BuildParts(Input{
+		TaskPrompt:  "new query",
+		PayloadJSON: `{"intent":"NEW_QUERY","execution_policy":"ask_every_time"}`,
+	})
+	repair := BuildParts(Input{
+		TaskPrompt:  "repair query",
+		PayloadJSON: `{"intent":"REPAIR","execution_policy":"trust_session","candidate":"SELECT *"}`,
+	})
+	if initial.System != repair.System || initial.System != DeveloperInstructions() {
+		t.Fatalf("developer instructions changed across turns")
+	}
+	if strings.Contains(initial.System, "ask_every_time") || strings.Contains(repair.System, "SELECT *") {
+		t.Fatalf("turn data leaked into stable developer instructions")
+	}
+}
+
 func TestBuildRevisePrompt(t *testing.T) {
 	promptText := Build(Input{
 		TaskPrompt:  "Revise the query.",
 		PayloadJSON: `{"candidate":"SELECT * FROM MEASURE x IN g TIME > '-30m' LIMIT 10"}`,
-		Candidate:   "SELECT * FROM MEASURE x IN g TIME > '-30m' LIMIT 10",
 	})
 	if !strings.Contains(promptText, "Revise the query") {
 		t.Fatalf("expected revise instructions:\n%s", promptText)

@@ -24,31 +24,31 @@ import (
 	"github.com/apache/skywalking-banyandb/bydbctl/internal/tui/agent"
 )
 
-// Script describes normalized ACP lifecycle events emitted by a test-only agent.
+// Script describes normalized lifecycle events emitted by a test-only agent.
 type Script struct {
 	Events  []agent.Event
 	Delay   time.Duration
 	SendErr error
 }
 
-// ScriptedACPGateway is a test-only, scriptable ACP-compatible event source.
-type ScriptedACPGateway struct {
+// ScriptedGateway is a test-only, scriptable agent event source.
+type ScriptedGateway struct {
 	script Script
 	now    func() time.Time
 }
 
-// NewScriptedACPGateway creates a deterministic scripted ACP event source for tests.
-func NewScriptedACPGateway(script Script) *ScriptedACPGateway {
-	return &ScriptedACPGateway{script: script, now: time.Now}
+// NewScriptedGateway creates a deterministic scripted event source for tests.
+func NewScriptedGateway(script Script) *ScriptedGateway {
+	return &ScriptedGateway{script: script, now: time.Now}
 }
 
-// Start creates a test ACP session.
-func (gateway *ScriptedACPGateway) Start(_ context.Context, req agent.StartRequest) (agent.Session, error) {
-	return agent.Session{ID: "fake-acp-" + uuid.NewString(), Provider: req.Provider, StartedAt: gateway.now()}, nil
+// Start creates a test agent session.
+func (gateway *ScriptedGateway) Start(_ context.Context, req agent.StartRequest) (agent.Session, error) {
+	return agent.Session{ID: "fake-agent-" + uuid.NewString(), Provider: req.Provider, StartedAt: gateway.now()}, nil
 }
 
-// Send streams the configured normalized ACP events.
-func (gateway *ScriptedACPGateway) Send(ctx context.Context, _ string, _ agent.TurnRequest) (<-chan agent.Event, error) {
+// Send streams the configured normalized events.
+func (gateway *ScriptedGateway) Send(ctx context.Context, _ string, _ agent.TurnRequest) (<-chan agent.Event, error) {
 	if gateway.script.SendErr != nil {
 		return nil, gateway.script.SendErr
 	}
@@ -73,7 +73,12 @@ func (gateway *ScriptedACPGateway) Send(ctx context.Context, _ string, _ agent.T
 	return events, nil
 }
 
-// Stop stops a scripted ACP session.
-func (gateway *ScriptedACPGateway) Stop(_ context.Context, _ string) error {
+// Interrupt interrupts a scripted turn.
+func (gateway *ScriptedGateway) Interrupt(_ context.Context, _ string) error {
+	return nil
+}
+
+// Close closes a scripted gateway.
+func (gateway *ScriptedGateway) Close() error {
 	return nil
 }

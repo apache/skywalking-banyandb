@@ -54,7 +54,7 @@ func TestCollapseCJKSpacing(t *testing.T) {
 	}
 }
 
-func TestCollapseACPTextSpacingRepairsIdentifiers(t *testing.T) {
+func TestCollapseProviderTextSpacingRepairsIdentifiers(t *testing.T) {
 	input := "你说 得 对 ， 我 目前 受 限于 工具 的限制"
 	got := NormalizeAgentDisplayText(input)
 	if !strings.Contains(got, "你说得对") || strings.Contains(got, "你 说") {

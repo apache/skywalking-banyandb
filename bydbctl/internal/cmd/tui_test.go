@@ -18,41 +18,32 @@ package cmd
 import (
 	"strings"
 	"testing"
+
+	"github.com/apache/skywalking-banyandb/bydbctl/internal/tui/agent"
 )
 
-func TestAgentCommandUsesACPOnly(t *testing.T) {
+func TestAgentCommandUsesCodexOnly(t *testing.T) {
 	agentCmd := newAgentCmd()
 	if agentCmd.Flags().Lookup("agent") != nil {
 		t.Fatal("agent provider selector should not be registered")
 	}
-	acpCommandFlag := agentCmd.Flags().Lookup("acp-command")
-	if acpCommandFlag == nil {
-		t.Fatal("acp-command flag was not registered")
+	codexCommandFlag := agentCmd.Flags().Lookup("codex-command")
+	if codexCommandFlag == nil {
+		t.Fatal("codex-command flag was not registered")
 	}
-	if acpCommandFlag.DefValue != "" {
-		t.Fatalf("expected no default ACP command, got %q", acpCommandFlag.DefValue)
+	if codexCommandFlag.DefValue != "codex" {
+		t.Fatalf("expected default Codex command, got %q", codexCommandFlag.DefValue)
 	}
-	for _, removedFlag := range []string{"agent-model", "agent-base-url"} {
+	for _, removedFlag := range []string{"agent-model", "agent-base-url", "acp-command", "acp-arg", "mcp-config"} {
 		if agentCmd.Flags().Lookup(removedFlag) != nil {
 			t.Fatalf("API-backed agent flag %q is still registered", removedFlag)
 		}
 	}
 }
 
-func TestAgentCommandRequiresACPCommand(t *testing.T) {
-	agentCmd := newAgentCmd()
-	agentCmd.SetArgs(nil)
-	executeErr := agentCmd.Execute()
-	if executeErr == nil {
-		t.Fatal("expected agent command to require an ACP command")
-	}
-	if !strings.Contains(executeErr.Error(), "--acp-command is required") {
-		t.Fatalf("unexpected error: %v", executeErr)
-	}
-}
-
-func TestNewAgentGatewayUsesProvidedACPCommand(t *testing.T) {
-	agentGateway, gatewayErr := newAgentGateway("npx", []string{"-y", "custom-acp-provider"}, t.TempDir(), nil)
+func TestNewAgentGatewayUsesProvidedCodexCommand(t *testing.T) {
+	mcpServer := testControlledMCPServer(t)
+	agentGateway, gatewayErr := newAgentGateway("/custom/codex", t.TempDir(), mcpServer)
 	if gatewayErr != nil {
 		t.Fatalf("newAgentGateway returned error: %v", gatewayErr)
 	}
@@ -61,12 +52,22 @@ func TestNewAgentGatewayUsesProvidedACPCommand(t *testing.T) {
 	}
 }
 
-func TestNewAgentGatewayRequiresCustomACPCommand(t *testing.T) {
-	agentGateway, gatewayErr := newAgentGateway(" ", nil, t.TempDir(), nil)
+func TestNewAgentGatewayRequiresCodexCommand(t *testing.T) {
+	agentGateway, gatewayErr := newAgentGateway(" ", t.TempDir(), testControlledMCPServer(t))
 	if gatewayErr == nil {
 		t.Fatalf("expected an error, got gateway %#v", agentGateway)
 	}
-	if !strings.Contains(gatewayErr.Error(), "--acp-command is required") {
+	if !strings.Contains(gatewayErr.Error(), "--codex-command is required") {
 		t.Fatalf("unexpected error: %v", gatewayErr)
+	}
+}
+
+func testControlledMCPServer(t *testing.T) agent.ControlledMCPServer {
+	t.Helper()
+	return agent.ControlledMCPServer{
+		Name:         "bydbctl-controlled-tools",
+		Command:      "/path/to/bydbctl",
+		Args:         []string{"agent-tool-bridge", "--socket", "/tmp/tools.sock"},
+		EnabledTools: []string{"list_groups_schemas", "describe_schema", "propose_query_plan", "validate_bydbql", "probe_bydbql", "execute_bydbql"},
 	}
 }

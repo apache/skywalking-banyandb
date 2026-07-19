@@ -292,7 +292,7 @@ func TestReviseWithAgentRejectsCandidateEmbeddedInChunkedMessages(t *testing.T) 
 	}
 }
 
-func TestReviseWithAgentRejectsCandidateEmbeddedInFragmentedACPOutput(t *testing.T) {
+func TestReviseWithAgentRejectsCandidateEmbeddedInFragmentedProviderOutput(t *testing.T) {
 	gateway := scriptedGateway{
 		events: []agent.Event{
 			{Kind: agent.EventKindMessageDelta, Message: "```"},
@@ -346,7 +346,7 @@ func TestNormalizeAgentDisplayTextPreservesNaturalLanguage(t *testing.T) {
 	}
 }
 
-func TestNormalizeAgentDisplayTextRepairsACPFragments(t *testing.T) {
+func TestNormalizeAgentDisplayTextRepairsProviderFragments(t *testing.T) {
 	input := "The top candidate is ` end point _m q _ cons ume _l atency _h our ` in ` sw _ metrics Hour `"
 	got := NormalizeAgentDisplayText(input)
 	if strings.Contains(got, "topcandidate") || strings.Contains(got, "end point") {
@@ -381,7 +381,7 @@ func TestRepairFragmentedQueryAggregateAVG(t *testing.T) {
 	}
 }
 
-func TestFinalCandidateDoesNotInferFromClaudeACPMessageFragments(t *testing.T) {
+func TestFinalCandidateDoesNotInferFromProviderMessageFragments(t *testing.T) {
 	fragments := []string{
 		"```", "b", "yd", "b", "ql", "text", "SH", "OW", "TOP", "text", "10", "FROM", "ME", "AS", "URE",
 		"service", "_end", "point", "_l", "at", "ency", "IN", "sw", "_", "metrics", "TIME", ">", "'-", "30", "m", "'",
@@ -747,6 +747,31 @@ func TestCancelledAgentTurnDoesNotPublishPartialConversation(t *testing.T) {
 	}
 }
 
+func TestStopAgentTurnPreservesSessionID(t *testing.T) {
+	var interruptedSessionID string
+	gateway := scriptedGateway{interruptedSessionID: &interruptedSessionID}
+	runner := NewRunner(Config{AgentGateway: gateway})
+	querySession, startErr := runner.StartSession(context.Background(), StartOptions{
+		ResourceType: session.ResourceTypeMeasure,
+		ResourceName: "service_latency",
+		Groups:       []string{"production"},
+		Goal:         "show service latency",
+	})
+	if startErr != nil {
+		t.Fatalf("StartSession returned error: %v", startErr)
+	}
+	originalSessionID := querySession.AgentSessionID
+	if stopErr := runner.StopAgentTurn(context.Background(), querySession); stopErr != nil {
+		t.Fatalf("StopAgentTurn returned error: %v", stopErr)
+	}
+	if interruptedSessionID != originalSessionID {
+		t.Fatalf("interrupted session %q, want %q", interruptedSessionID, originalSessionID)
+	}
+	if querySession.AgentSessionID != originalSessionID {
+		t.Fatalf("StopAgentTurn cleared the reusable session ID: %q", querySession.AgentSessionID)
+	}
+}
+
 func TestReviseWithAgentIncludesExecutionSummary(t *testing.T) {
 	var requests []agent.TurnRequest
 	gateway := scriptedGateway{
@@ -808,9 +833,10 @@ func TestReviseWithAgentIncludesExecutionSummary(t *testing.T) {
 }
 
 type scriptedGateway struct {
-	events           []agent.Event
-	requests         *[]agent.TurnRequest
-	maintainsHistory bool
+	requests             *[]agent.TurnRequest
+	interruptedSessionID *string
+	events               []agent.Event
+	maintainsHistory     bool
 }
 
 type controlledBridgeGateway struct {
@@ -838,7 +864,11 @@ func (gateway controlledBridgeGateway) Send(ctx context.Context, _ string, _ age
 	return events, nil
 }
 
-func (gateway controlledBridgeGateway) Stop(_ context.Context, _ string) error {
+func (gateway controlledBridgeGateway) Interrupt(_ context.Context, _ string) error {
+	return nil
+}
+
+func (gateway controlledBridgeGateway) Close() error {
 	return nil
 }
 
@@ -861,7 +891,11 @@ func (gateway blockingGateway) Send(ctx context.Context, _ string, _ agent.TurnR
 	return events, nil
 }
 
-func (gateway blockingGateway) Stop(_ context.Context, _ string) error {
+func (gateway blockingGateway) Interrupt(_ context.Context, _ string) error {
+	return nil
+}
+
+func (gateway blockingGateway) Close() error {
 	return nil
 }
 
@@ -887,7 +921,14 @@ func (gateway scriptedGateway) Send(ctx context.Context, _ string, req agent.Tur
 	return events, nil
 }
 
-func (gateway scriptedGateway) Stop(_ context.Context, _ string) error {
+func (gateway scriptedGateway) Interrupt(_ context.Context, sessionID string) error {
+	if gateway.interruptedSessionID != nil {
+		*gateway.interruptedSessionID = sessionID
+	}
+	return nil
+}
+
+func (gateway scriptedGateway) Close() error {
 	return nil
 }
 
