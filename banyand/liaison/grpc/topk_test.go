@@ -24,6 +24,8 @@ import (
 	"time"
 
 	"github.com/stretchr/testify/assert"
+
+	"github.com/apache/skywalking-banyandb/pkg/timestamp"
 )
 
 func topKByKey(slots []topKSlot) map[string]topKSlot {
@@ -35,7 +37,7 @@ func topKByKey(slots []topKSlot) map[string]topKSlot {
 }
 
 func TestTopKCountsAndMaxDur(t *testing.T) {
-	tk := newTopK(4)
+	tk := newTopK(4, 0, nil)
 	tk.observe("a", 5*time.Millisecond)
 	tk.observe("a", 8*time.Millisecond) // largest, observed in the middle
 	tk.observe("a", 3*time.Millisecond) // smaller and last: maxDur must stay 8ms, not 3ms
@@ -48,7 +50,7 @@ func TestTopKCountsAndMaxDur(t *testing.T) {
 }
 
 func TestTopKEvictsMinAndInheritsCount(t *testing.T) {
-	tk := newTopK(2)
+	tk := newTopK(2, 0, nil)
 	tk.observe("a", 0)
 	tk.observe("a", 0)
 	tk.observe("a", 0) // a.count = 3
@@ -67,7 +69,7 @@ func TestTopKEvictsMinAndInheritsCount(t *testing.T) {
 }
 
 func TestTopKSnapshotSortedAndCumulative(t *testing.T) {
-	tk := newTopK(4)
+	tk := newTopK(4, 0, nil)
 	tk.observe("hi", 0)
 	tk.observe("hi", 0)
 	tk.observe("lo", 0)
@@ -80,7 +82,7 @@ func TestTopKSnapshotSortedAndCumulative(t *testing.T) {
 }
 
 func TestTopKSnapshotByLatency(t *testing.T) {
-	tk := newTopK(bydbqlTopKSize)
+	tk := newTopK(bydbqlTopKSize, 0, nil)
 	tk.observe("frequent", time.Millisecond) // high count, low latency
 	tk.observe("frequent", time.Millisecond)
 	tk.observe("frequent", time.Millisecond)
@@ -92,9 +94,11 @@ func TestTopKSnapshotByLatency(t *testing.T) {
 }
 
 func TestTopKDeterministicTieBreak(t *testing.T) {
-	// Equal counts and durations must order by key, not by map iteration.
-	a := newTopK(bydbqlTopKSize)
-	b := newTopK(bydbqlTopKSize)
+	// Equal counts and durations must order by key, not by map iteration. Both trackers run
+	// on mock clocks frozen at the same instant, so the compared slots differ only in order.
+	clockA, clockB := timestamp.NewMockClock(), timestamp.NewMockClock()
+	a := newTopK(bydbqlTopKSize, 0, clockA.Now)
+	b := newTopK(bydbqlTopKSize, 0, clockB.Now)
 	for _, k := range []string{"c", "a", "b"} {
 		a.observe(k, 0)
 	}
@@ -106,8 +110,83 @@ func TestTopKDeterministicTieBreak(t *testing.T) {
 	assert.Equal(t, []string{"a", "b", "c"}, []string{snap[0].key, snap[1].key, snap[2].key})
 }
 
+func TestTopKExpiresUnobservedEntry(t *testing.T) {
+	mc := timestamp.NewMockClock()
+	tk := newTopK(4, time.Hour, mc.Now)
+	tk.observe("stale", time.Second)
+
+	mc.Add(time.Hour - time.Minute)
+	assert.Len(t, tk.snapshot(), 1, "still within the TTL")
+
+	mc.Add(2 * time.Minute) // now past the TTL
+	assert.Empty(t, tk.snapshot(), "an entry not seen within the TTL is dropped")
+}
+
+func TestTopKObserveRefreshesTTL(t *testing.T) {
+	mc := timestamp.NewMockClock()
+	tk := newTopK(4, time.Hour, mc.Now)
+	tk.observe("recurring", 0)
+
+	// Re-observing before expiry must reset the clock on the entry, so a query that
+	// keeps happening is never dropped no matter how long the process has run.
+	for i := 0; i < 5; i++ {
+		mc.Add(50 * time.Minute)
+		tk.observe("recurring", 0)
+	}
+	mc.Add(50 * time.Minute)
+
+	snap := tk.snapshot()
+	assert.Len(t, snap, 1, "a repeatedly observed entry survives indefinitely")
+	assert.Equal(t, uint64(6), snap[0].count)
+}
+
+func TestTopKZeroTTLKeepsEntriesForever(t *testing.T) {
+	mc := timestamp.NewMockClock()
+	tk := newTopK(4, 0, mc.Now)
+	tk.observe("kept", 0)
+
+	mc.Add(365 * 24 * time.Hour)
+	assert.Len(t, tk.snapshot(), 1, "ttl <= 0 restores the cumulative behavior")
+}
+
+func TestTopKPurgesExpiredBeforeEvictingLiveEntry(t *testing.T) {
+	mc := timestamp.NewMockClock()
+	tk := newTopK(2, time.Hour, mc.Now)
+	tk.observe("expiring", 0)
+	tk.observe("expiring", 0)
+	tk.observe("expiring", 0) // count 3: the most frequent, so never the evict-min victim
+
+	mc.Add(2 * time.Hour)  // "expiring" is now stale
+	tk.observe("fresh", 0) // fills the second slot
+	tk.observe("newcomer", 0)
+
+	byKey := topKByKey(tk.snapshot())
+	assert.Len(t, byKey, 2)
+	_, hasExpiring := byKey["expiring"]
+	assert.False(t, hasExpiring, "the stale entry is reclaimed even though it had the highest count")
+	assert.Equal(t, uint64(1), byKey["newcomer"].count,
+		"reclaiming a slot lets the new key start at 1 instead of inheriting an evicted count")
+}
+
+func TestTopKMaxDurAtTracksPeakNotLastObserve(t *testing.T) {
+	mc := timestamp.NewMockClock()
+	tk := newTopK(4, time.Hour, mc.Now)
+
+	tk.observe("q", time.Millisecond)
+	mc.Add(time.Minute)
+	tk.observe("q", time.Second) // the peak
+	peakAt := mc.Now()
+	mc.Add(time.Minute)
+	tk.observe("q", time.Millisecond) // slower observation must not move maxDurAt
+
+	snap := tk.snapshot()
+	assert.Equal(t, time.Second, snap[0].maxDur)
+	assert.Equal(t, peakAt, snap[0].maxDurAt, "maxDurAt dates the peak, not the latest observation")
+	assert.Equal(t, mc.Now(), snap[0].lastSeen, "lastSeen tracks the latest observation")
+}
+
 func TestTopKConcurrentObserve(t *testing.T) {
-	tk := newTopK(bydbqlTopKSize)
+	tk := newTopK(bydbqlTopKSize, 0, nil)
 	const workers, iters = 16, 500
 	var wg sync.WaitGroup
 	for w := 0; w < workers; w++ {
