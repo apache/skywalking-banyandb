@@ -97,7 +97,13 @@ The following flags tune the BydbQL prepared-statement cache on the query path. 
 These flags surface the queries behind cache misses and slow responses without exposing high-cardinality query text as metric labels: Prometheus gets only two counters (`bydbql_prepared_cache_total{result="miss"}` and `bydbql_slow_query_total`), while the specific hot queries are logged.
 
 - `--bydbql-slow-query-threshold duration`: End-to-end latency above which a BydbQL query is counted as slow (increments `bydbql_slow_query_total`) and tracked in the slow-query top-K; `0` disables slow-query tracking (default: `1s`).
-- `--bydbql-topk-log-interval duration`: How often to log the hottest cache-miss and slow queries. Counts are cumulative since process start. The cache-miss list only shows templates re-parsed at least twice (`count>=2`): every template misses once on its cold-start lookup, so a `count==1` entry is benign and is filtered out — only repeatedly evicted-and-re-parsed (thrashing) templates are surfaced. The slow-query list is ranked by peak latency (`max_latency`) so a rarely-but-catastrophically slow query is not buried under frequently-mildly-slow ones. Uses a bounded approximate heavy-hitters tracker (128 entries), so it costs O(1) and never grows unbounded; `0` disables the top-K log (default: `5m`).
+- `--bydbql-topk-log-interval duration`: How often to log the hottest cache-miss and slow queries. The cache-miss list holds only templates that were compiled more than once — either evicted and compiled again (thrashing), or too large for the byte bound and therefore re-compiled on every single request; a template's unavoidable first-ever compile is excluded at the source, so every entry is actionable. The slow-query list is ranked by peak latency (`max_latency`) so a rarely-but-catastrophically slow query is not buried under frequently-mildly-slow ones. Uses a bounded approximate heavy-hitters tracker (128 entries), so it costs O(1) and never grows unbounded; `0` disables the top-K log (default: `5m`).
+- `--bydbql-topk-slow-ttl duration`: Drop a slow-query top-K entry whose query has not been slow again for this long; `0` keeps entries for the process lifetime (default: `24h`).
+- `--bydbql-topk-reparse-ttl duration`: Drop a cache-miss top-K entry whose template has not been re-parsed again for this long; `0` keeps entries for the process lifetime (default: `24h`).
+
+Each logged entry carries `last_seen`, and slow entries additionally carry `max_latency_at`. Both trackers accumulate, so `max_latency` is a running peak that can long outlive the incident that produced it: without these timestamps a one-off startup spike keeps being reported as if it were current, and a reader cannot tell a live problem from a stale one. The TTLs bound how long that can happen — an entry whose query stops recurring disappears — while `max_latency_at` dates the peak itself for entries that do keep recurring.
+
+Keep each TTL comfortably above `--bydbql-topk-log-interval`. An entry is only ever reported by a dump, so a TTL shorter than the interval lets an entry expire in the gap between two dumps and never be logged at all — the tracker would go quiet not because nothing is wrong but because it forgets faster than it reports. The defaults (`24h` against `5m`) leave a wide margin.
 
 #### Diagnosing an ineffective BydbQL cache
 
@@ -237,6 +243,14 @@ These flags configure how every node talks to the schema server.
 - `--schema-property-client-max-recv-msg-size bytes`: Max gRPC receive message size for property schema client.
 - `--schema-property-client-tls`: Enable TLS for property schema client connections.
 - `--schema-property-client-ca-cert string`: CA certificate file to verify the property schema server.
+
+### Queue client (liaison to data nodes)
+
+These flags configure the connections a liaison holds to the data nodes it queries and writes to. `<prefix>` is `data` or `liaison` depending on which peer set the client serves.
+
+- `--<prefix>-client-health-check-interval duration`: How often to re-check the nodes the client currently considers active, evicting any that no longer answer; `0` disables the periodic check (default: `10s`). The active set is otherwise only validated when a node is admitted and, after that, when a request happens to fail on it — so a node that dies stays routable until some query picks it and pays that query's full timeout to discover it. Keep this well below the distributed query timeouts (`--dst-broadcast-timeout`, default `15s`), since the interval bounds how long a dead node can keep absorbing queries.
+- `--<prefix>-client-tls`: Enable client TLS.
+- `--<prefix>-client-ca-cert string`: CA certificate file to verify the server.
 
 ### Other
 
