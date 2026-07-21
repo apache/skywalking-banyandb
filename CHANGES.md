@@ -138,6 +138,7 @@ Release Notes.
 - Deleting one TopN aggregation no longer tears down sibling aggregations on the same source measure.
 - Purge a deleted group's resource, index-rule and binding cache entries to avoid dangling references.
 - Clear a trace subject's index when its last index rule or binding is removed.
+- Allow `*` as a non-initial character in BydbQL identifiers, so resources named with `*` become queryable, not just writable.
 
 ### Document
 

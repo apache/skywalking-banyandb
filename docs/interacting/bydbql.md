@@ -98,6 +98,24 @@ FROM STREAM mystream in group1   -- refers to stream "mystream"
 
 **Best Practice**: Use uppercase for reserved words and consistent casing for identifiers to maintain readability.
 
+#### Identifier Character Set
+
+An identifier starts with a letter or underscore and may continue with letters, digits, underscores, hyphens (`-`), and asterisks (`*`):
+
+```
+identifier ::= [a-zA-Z_][a-zA-Z0-9_*-]*
+```
+
+Hyphens and asterisks are allowed only after the first character. This matters because the schema layer accepts such names at creation time — a TopN rule named `endpoint_avg-cluster-excludes-*`, for instance — and a resource that can be created must remain referenceable from a query:
+
+```sql
+SHOW TOP 10 FROM MEASURE endpoint_avg-cluster-excludes-* IN default;
+```
+
+Confining `*` to non-initial positions is what keeps the star projection unambiguous: a bare `*` cannot begin an identifier, so `SELECT *` is always a projection.
+
+**Caveat**: an identifier that begins with a reserved word followed by a non-word character is rejected by the lexer — `IN group-a` fails because `group` matches the keyword rule first. Avoid naming resources with a reserved-word prefix.
+
 ## 2.5. Timestamp Formats
 
 BydbQL supports flexible timestamp specifications in TIME clauses, accommodating both absolute and relative time formats:
@@ -392,7 +410,7 @@ timestamp       ::= string_literal | integer_literal
 	/* timestamp supports both absolute and relative time formats:
 	   - Absolute: RFC3339 format like "2006-01-02T15:04:05Z07:00"
 	   - Relative: duration strings like "-30m", "2h", "1d" (relative to current time) */
-identifier      ::= [a-zA-Z_][a-zA-Z0-9_]*
+identifier      ::= [a-zA-Z_][a-zA-Z0-9_*-]*
 string_literal  ::= "'" [^']* "'" | "\"" [^\"]* "\""
 integer_literal ::= [0-9]+
 ```
@@ -530,7 +548,7 @@ timestamp         ::= string_literal | integer_literal
 	/* timestamp supports both absolute and relative time formats:
 	   - Absolute: RFC3339 format like "2006-01-02T15:04:05Z07:00"
 	   - Relative: duration strings like "-30m", "2h", "1d" (relative to current time) */
-identifier        ::= [a-zA-Z_][a-zA-Z0-9_]*
+identifier        ::= [a-zA-Z_][a-zA-Z0-9_*-]*
 string_literal    ::= "'" [^']* "'" | "\"" [^\"]* "\""
 integer_literal   ::= [0-9]+
 ```
@@ -705,7 +723,7 @@ timestamp          ::= string_literal | integer_literal
 	/* timestamp supports both absolute and relative time formats:
 	   - Absolute: RFC3339 format like "2006-01-02T15:04:05Z07:00"
 	   - Relative: duration strings like "-30m", "2h", "1d" (relative to current time) */
-identifier         ::= [a-zA-Z_][a-zA-Z0-9_]*
+identifier         ::= [a-zA-Z_][a-zA-Z0-9_*-]*
 string_literal     ::= "'" [^']* "'" | "\"" [^\"]* "\""
 integer_literal    ::= [0-9]+
 ```
@@ -825,7 +843,7 @@ condition           ::= identifier binary_op (value | value_list) | "ID" binary_
 binary_op           ::= "=" | "!=" | ">" | "<" | ">=" | "<=" | "IN" | "NOT IN"
 value               ::= string_literal | integer_literal | "NULL"
 value_list          ::= "(" value ("," value)* ")"
-identifier          ::= [a-zA-Z_][a-zA-Z0-9_]*
+identifier          ::= [a-zA-Z_][a-zA-Z0-9_*-]*
 string_literal      ::= "'" [^']* "'" | "\"" [^\"]* "\""
 integer_literal     ::= [0-9]+
 ```
@@ -912,7 +930,7 @@ timestamp             ::= string_literal | integer_literal
 	/* timestamp supports both absolute and relative time formats:
 	   - Absolute: RFC3339 format like "2006-01-02T15:04:05Z07:00"
 	   - Relative: duration strings like "-30m", "2h", "1d" (relative to current time) */
-identifier            ::= [a-zA-Z_][a-zA-Z0-9_]*
+identifier            ::= [a-zA-Z_][a-zA-Z0-9_*-]*
 string_literal        ::= "'" [^']* "'" | "\"" [^\"]* "\""
 integer_literal       ::= [0-9]+
 ```
