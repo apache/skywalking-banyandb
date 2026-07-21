@@ -31,7 +31,7 @@ import (
 // change that broke it. run() returns the cache result for assertions.
 func newReparseProbe(t *testing.T, size, maxBytes int) (*preparedCache, *topK, func(query string) string) {
 	t.Helper()
-	tk := newTopK(bydbqlTopKSize)
+	tk := newTopK(bydbqlTopKSize, 0, nil)
 	c := newPreparedCache(size, maxBytes, nil)
 	run := func(q string) string {
 		_, result, err := c.getOrPrepare(q)

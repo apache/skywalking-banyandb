@@ -79,6 +79,7 @@ Release Notes.
 - Add a Claude/Codex plugin packaging the BanyanDB MCP server with a parse-only `validate_bydbql` tool (backed by the `mcp/tools/bydbql-parse` Go validator) and a BydbQL skill for read-only natural-language-to-BydbQL generation over STREAM/MEASURE/TRACE/PROPERTY resources.
 - Introduce positional parameter binding (`?` placeholders) into BydbQL to eliminate QL injection.
 - Add reusable BydbQL binding: Prepare a query once, then Bind it many times without re-parsing or mutating the template. The liaison caches prepared statements on the gRPC query path (LRU bounded by entry count and bytes, on by default; `--bydbql-prepared-cache-size`/`--bydbql-prepared-cache-max-bytes`, `bydbql_prepared_cache_*` metrics) so repeated templates skip parsing. To pinpoint un-cacheable and slow queries without high-cardinality labels, the query access log tags each entry by cache outcome (`bydbql-hit`/`bydbql-miss`/`bydbql-bypass`), slow queries over `--bydbql-slow-query-threshold` increment `bydbql_slow_query_total`, and a periodic top-10 log (`--bydbql-topk-log-interval`) surfaces the worst cache-miss and slow queries.
+- Expire BydbQL top-K entries not seen within their TTL (`--bydbql-topk-slow-ttl` / `--bydbql-topk-reparse-ttl`, default `24h`), and log `last_seen` / `max_latency_at`.
 
 ### Bug Fixes
 
@@ -138,6 +139,7 @@ Release Notes.
 - Deleting one TopN aggregation no longer tears down sibling aggregations on the same source measure.
 - Purge a deleted group's resource, index-rule and binding cache entries to avoid dangling references.
 - Clear a trace subject's index when its last index rule or binding is removed.
+- Enable periodic health checks on the queue client (`--<prefix>-client-health-check-interval`, default `10s`), evicting dead data nodes proactively.
 
 ### Document
 
