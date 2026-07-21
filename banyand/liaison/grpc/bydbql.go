@@ -176,9 +176,11 @@ func (b *bydbQLService) Query(ctx context.Context, req *bydbqlv1.QueryRequest) (
 	return resp, nil
 }
 
-// topKDumper tracks the top re-parsed and slow queries and, on a supervised
-// goroutine, periodically logs the top-K within each tracker's TTL window. All methods are nil-safe, so the
-// call sites need no guards when the top-K log is disabled (the dumper is nil).
+// topKDumper tracks the top re-parsed and slow queries and, on a supervised goroutine,
+// periodically logs the top-K, having first dropped whatever each tracker has not seen
+// within its TTL. Entries expire by inactivity only: a query that keeps recurring keeps its
+// accumulated count and peak. All methods are nil-safe, so the call sites need no guards
+// when the top-K log is disabled (the dumper is nil).
 type topKDumper struct {
 	// reparse holds only templates the cache had already compiled once and had to
 	// compile again. First-ever compiles are excluded at the call site, which is what

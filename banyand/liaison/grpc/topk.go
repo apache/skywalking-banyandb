@@ -47,9 +47,11 @@ type topKSlot struct {
 // evicted again immediately. With k modest (128) the min scan and the snapshot sort are
 // cheap, and observing an existing key needs no reordering at all.
 //
-// Entries also expire: a key not observed for ttl is dropped, so the tracker reports
-// what is happening now rather than everything since process start. A ttl <= 0 keeps
-// entries for the process lifetime.
+// Entries also expire, by inactivity: a key not observed for ttl is dropped, so a query
+// that stops happening stops being reported. A key that does keep being observed never
+// expires and goes on accumulating, so expiry bounds how long a finished problem lingers,
+// not how far back an ongoing one is counted. A ttl <= 0 keeps entries for the process
+// lifetime.
 type topK struct {
 	slots map[string]*topKSlot
 	now   func() time.Time
@@ -118,9 +120,10 @@ func (t *topK) purgeExpiredLocked(now time.Time) {
 }
 
 // snapshot returns the tracked entries ranked by frequency: (count desc, maxDur desc,
-// key asc). Counts accumulate over an entry's lifetime, which the TTL bounds: a dump
-// reflects the hottest queries within the TTL window, not since process start. The full
-// tie-break makes the order deterministic across dumps.
+// key asc). The TTL expires an entry by inactivity; it does not window the statistics. For
+// as long as a key keeps being observed its count and maxDur stay cumulative, so a
+// still-active entry can report a peak from hours ago — which is what maxDurAt and lastSeen
+// exist to date. The full tie-break makes the order deterministic across dumps.
 func (t *topK) snapshot() []topKSlot {
 	out := t.copyOut()
 	sort.Slice(out, func(i, j int) bool { return lessByCount(out[i], out[j]) })
