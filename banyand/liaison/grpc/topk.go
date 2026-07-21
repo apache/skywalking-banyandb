@@ -30,11 +30,15 @@ import (
 // a normal workload, keeping the reported counts exact while still bounding memory.
 const bydbqlTopKSize = 128
 
-// topKSlot is one tracked query and its accumulated statistics.
+// topKSlot is one tracked query and its accumulated statistics. lastSeen drives TTL
+// expiry; maxDurAt pins when the peak latency happened, so a consumer can tell a live
+// problem from a peak the tracker has merely been carrying since a startup incident.
 type topKSlot struct {
-	key    string
-	count  uint64
-	maxDur time.Duration
+	lastSeen time.Time
+	maxDurAt time.Time
+	key      string
+	count    uint64
+	maxDur   time.Duration
 }
 
 // topK is a bounded approximate heavy-hitters tracker (Space-Saving): it keeps at
@@ -42,17 +46,28 @@ type topKSlot struct {
 // inherit that entry's count + 1 so a fresh key gets a fair chance instead of being
 // evicted again immediately. With k modest (128) the min scan and the snapshot sort are
 // cheap, and observing an existing key needs no reordering at all.
+//
+// Entries also expire: a key not observed for ttl is dropped, so the tracker reports
+// what is happening now rather than everything since process start. A ttl <= 0 keeps
+// entries for the process lifetime.
 type topK struct {
 	slots map[string]*topKSlot
+	now   func() time.Time
 	k     int
+	ttl   time.Duration
 	mu    sync.Mutex
 }
 
-func newTopK(k int) *topK {
+// newTopK builds a tracker holding at most k entries, expiring any entry not observed
+// for ttl. now supplies the clock; passing nil uses time.Now.
+func newTopK(k int, ttl time.Duration, now func() time.Time) *topK {
 	if k < 1 {
 		k = 1
 	}
-	return &topK{slots: make(map[string]*topKSlot, k), k: k}
+	if now == nil {
+		now = time.Now
+	}
+	return &topK{slots: make(map[string]*topKSlot, k), k: k, ttl: ttl, now: now}
 }
 
 // observe records one occurrence of key; dur is the query latency (0 when latency is
@@ -60,15 +75,22 @@ func newTopK(k int) *topK {
 func (t *topK) observe(key string, dur time.Duration) {
 	t.mu.Lock()
 	defer t.mu.Unlock()
+	now := t.now()
 	if s, ok := t.slots[key]; ok {
 		s.count++
+		s.lastSeen = now
 		if dur > s.maxDur {
-			s.maxDur = dur
+			s.maxDur, s.maxDurAt = dur, now
 		}
 		return
 	}
+	if len(t.slots) >= t.k {
+		// Reclaim expired entries before falling back to evicting a live one: a key
+		// nobody has asked about in ttl is a better victim than a merely infrequent one.
+		t.purgeExpiredLocked(now)
+	}
 	if len(t.slots) < t.k {
-		t.slots[key] = &topKSlot{key: key, count: 1, maxDur: dur}
+		t.slots[key] = &topKSlot{key: key, count: 1, maxDur: dur, lastSeen: now, maxDurAt: now}
 		return
 	}
 	// Full: evict the least-frequent entry and let the new key inherit its count.
@@ -80,12 +102,25 @@ func (t *topK) observe(key string, dur time.Duration) {
 		}
 	}
 	delete(t.slots, minKey)
-	t.slots[key] = &topKSlot{key: key, count: minCount + 1, maxDur: dur}
+	t.slots[key] = &topKSlot{key: key, count: minCount + 1, maxDur: dur, lastSeen: now, maxDurAt: now}
+}
+
+// purgeExpiredLocked drops every entry not observed within ttl. Call with the lock held.
+func (t *topK) purgeExpiredLocked(now time.Time) {
+	if t.ttl <= 0 {
+		return
+	}
+	for k, s := range t.slots {
+		if now.Sub(s.lastSeen) > t.ttl {
+			delete(t.slots, k)
+		}
+	}
 }
 
 // snapshot returns the tracked entries ranked by frequency: (count desc, maxDur desc,
-// key asc). The tracker is cumulative, so each dump reflects the hottest queries since
-// process start. The full tie-break makes the order deterministic across dumps.
+// key asc). Counts accumulate over an entry's lifetime, which the TTL bounds: a dump
+// reflects the hottest queries within the TTL window, not since process start. The full
+// tie-break makes the order deterministic across dumps.
 func (t *topK) snapshot() []topKSlot {
 	out := t.copyOut()
 	sort.Slice(out, func(i, j int) bool { return lessByCount(out[i], out[j]) })
@@ -101,8 +136,12 @@ func (t *topK) snapshotByLatency() []topKSlot {
 	return out
 }
 
+// copyOut snapshots the live entries, expiring stale ones first. Purging here rather
+// than only in observe is what lets a tracker that has gone quiet drain: an entry no
+// one observes again would otherwise never be revisited, and would be reported forever.
 func (t *topK) copyOut() []topKSlot {
 	t.mu.Lock()
+	t.purgeExpiredLocked(t.now())
 	out := make([]topKSlot, 0, len(t.slots))
 	for _, s := range t.slots {
 		out = append(out, *s)

@@ -95,7 +95,7 @@ func TestBydbQLQuery_ParamTypeMismatch_ReturnsInvalidArgument(t *testing.T) {
 
 // newTestDumper builds a topKDumper without starting the dump goroutine.
 func newTestDumper(l *logger.Logger) *topKDumper {
-	return &topKDumper{reparse: newTopK(bydbqlTopKSize), slow: newTopK(bydbqlTopKSize), l: l}
+	return &topKDumper{reparse: newTopK(bydbqlTopKSize, 0, nil), slow: newTopK(bydbqlTopKSize, 0, nil), l: l}
 }
 
 // attachTestDumper gives svc a dumper without starting its dump goroutine, so the
@@ -155,6 +155,25 @@ func TestBydbQLDumpTopK(t *testing.T) {
 	d.dump() // must not panic; the cumulative trackers keep their entries
 	assert.NotEmpty(t, d.reparse.snapshot())
 	assert.NotEmpty(t, d.slow.snapshot())
+}
+
+// newTopKDumper takes the two TTLs as adjacent time.Duration parameters, so swapping them
+// would compile and behave plausibly while silently applying each tracker's TTL to the
+// other. Pin each one to its own tracker. The other tests build the dumper struct directly,
+// so this is the only coverage of the real constructor.
+func TestNewTopKDumperWiresEachTTLToItsTracker(t *testing.T) {
+	const reparseTTL, slowTTL = 3 * time.Hour, 7 * time.Hour
+	d := newTopKDumper(time.Hour, reparseTTL, slowTTL, logger.GetLogger("test-bydbql"))
+	require.NotNil(t, d)
+	defer d.close()
+
+	assert.Equal(t, reparseTTL, d.reparse.ttl, "the reparse tracker must get the reparse TTL")
+	assert.Equal(t, slowTTL, d.slow.ttl, "the slow tracker must get the slow TTL")
+}
+
+func TestNewTopKDumperDisabledByNonPositiveInterval(t *testing.T) {
+	assert.Nil(t, newTopKDumper(0, time.Hour, time.Hour, logger.GetLogger("test-bydbql")),
+		"a non-positive interval disables the feature, and the nil dumper's observers no-op")
 }
 
 func TestFormatTopKAppliesItsMinCount(t *testing.T) {
