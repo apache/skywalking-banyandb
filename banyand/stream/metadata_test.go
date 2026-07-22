@@ -513,11 +513,17 @@ var _ = Describe("Schema Change", func() {
 				writeDataOptions{extraTag: extraTagString, traceIDPrefix: "trace_new_", elementIDOffset: 5})
 			partCountBeforeMerge, partCountErr := getTotalStreamPartCount(svcs, groupName)
 			Expect(partCountErr).ShouldNot(HaveOccurred())
+			// The background merge runs asynchronously; under the full parallel -race
+			// suite on CI its goroutine competes for CPU and snapshot locks with every
+			// other test. Poll on a relaxed interval (rather than Gomega's ~10ms
+			// default) so this wait does not starve the merge it is waiting for, with a
+			// generous, environment-scaled budget for merge latency. The post-merge
+			// part count is stable (no further writes), so slow polling never misses it.
 			Eventually(func(innerGm Gomega) int64 {
 				currentPartCount, currentPartCountErr := getTotalStreamPartCount(svcs, groupName)
 				innerGm.Expect(currentPartCountErr).ShouldNot(HaveOccurred())
 				return currentPartCount
-			}, flags.EventuallyTimeout).Should(BeNumerically("<", partCountBeforeMerge))
+			}, 10*flags.EventuallyTimeout, 500*time.Millisecond).Should(BeNumerically("<", partCountBeforeMerge))
 
 			Eventually(func(innerGm Gomega) {
 				elements := querySchemaChangeData(svcs, streamName, groupName,
