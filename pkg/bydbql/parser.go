@@ -48,7 +48,12 @@ func init() {
 			Name:    "Keyword",
 			Pattern: fmt.Sprintf(`(?i)(%s)\b`, keywordStr),
 		},
-		{Name: "Ident", Pattern: `[a-zA-Z_][a-zA-Z0-9_-]*`},
+		// `-` and `*` are accepted as continuation characters, never as the first one, so that
+		// resource names the schema layer already accepts at creation time — e.g. a TopN rule
+		// named `endpoint_avg-cluster-excludes-*` — stay referenceable from a query. Confining
+		// `*` to non-initial positions is what keeps the `SELECT *` projection unambiguous: a
+		// bare `*` cannot begin an identifier, so it still lexes as an operator.
+		{Name: "Ident", Pattern: `[a-zA-Z_][a-zA-Z0-9_*-]*`},
 		{Name: "Int", Pattern: `[-+]?\d+`},
 		{Name: "String", Pattern: `'(?:[^'\\]|\\.)*'|"(?:[^"\\]|\\.)*"`},
 		{Name: "QuotedIdent", Pattern: `"[a-zA-Z_][a-zA-Z0-9_.]*"|'[a-zA-Z_][a-zA-Z0-9_.]*'`},
