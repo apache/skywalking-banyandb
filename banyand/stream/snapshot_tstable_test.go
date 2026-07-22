@@ -27,10 +27,8 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/apache/skywalking-banyandb/api/common"
-	"github.com/apache/skywalking-banyandb/banyand/internal/storage"
 	"github.com/apache/skywalking-banyandb/banyand/protector"
 	"github.com/apache/skywalking-banyandb/pkg/fs"
-	"github.com/apache/skywalking-banyandb/pkg/index/inverted"
 	"github.com/apache/skywalking-banyandb/pkg/logger"
 	"github.com/apache/skywalking-banyandb/pkg/test"
 	"github.com/apache/skywalking-banyandb/pkg/test/flags"
@@ -194,19 +192,17 @@ func TestStreamTolerantLoaderFallbackToOlderSnapshot(t *testing.T) {
 		timestamp.TimeRange{}, streamSnapshotOption(), nil)
 	require.NoError(t, err)
 	tst.mustAddElements(esTS1)
-	time.Sleep(100 * time.Millisecond)
+	// Wait for the flusher to persist a snapshot (.snp) file. The part directory
+	// is introduced before the flusher writes the snapshot, so waiting only for
+	// the part races the async snapshot write and can observe zero snapshots.
 	require.Eventually(t, func() bool {
-		dd := fileSystem.ReadDir(tabDir)
-		for _, d := range dd {
-			if d.IsDir() &&
-				d.Name() != elementIndexFilename &&
-				d.Name() != inverted.ExternalSegmentTempDirName &&
-				d.Name() != storage.FailedPartsDirName {
+		for _, e := range fileSystem.ReadDir(tabDir) {
+			if filepath.Ext(e.Name()) == snapshotSuffix {
 				return true
 			}
 		}
 		return false
-	}, flags.EventuallyTimeout, time.Millisecond, "wait for part")
+	}, flags.EventuallyTimeout, time.Millisecond, "wait for snapshot")
 	tst.Close()
 	snapshots := make([]uint64, 0)
 	for _, e := range fileSystem.ReadDir(tabDir) {
@@ -247,19 +243,17 @@ func TestStreamInitTSTableDeletesMultipleFailedSnapshotsOnFallback(t *testing.T)
 		timestamp.TimeRange{}, streamSnapshotOption(), nil)
 	require.NoError(t, err)
 	tst.mustAddElements(esTS1)
-	time.Sleep(100 * time.Millisecond)
+	// Wait for the flusher to persist a snapshot (.snp) file. The part directory
+	// is introduced before the flusher writes the snapshot, so waiting only for
+	// the part races the async snapshot write and can observe zero snapshots.
 	require.Eventually(t, func() bool {
-		dd := fileSystem.ReadDir(tabDir)
-		for _, d := range dd {
-			if d.IsDir() &&
-				d.Name() != elementIndexFilename &&
-				d.Name() != inverted.ExternalSegmentTempDirName &&
-				d.Name() != storage.FailedPartsDirName {
+		for _, e := range fileSystem.ReadDir(tabDir) {
+			if filepath.Ext(e.Name()) == snapshotSuffix {
 				return true
 			}
 		}
 		return false
-	}, flags.EventuallyTimeout, time.Millisecond, "wait for part")
+	}, flags.EventuallyTimeout, time.Millisecond, "wait for snapshot")
 	tst.Close()
 	snapshots := make([]uint64, 0)
 	for _, e := range fileSystem.ReadDir(tabDir) {
