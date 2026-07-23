@@ -243,9 +243,7 @@ func (v *streamVecScan) fillFromScanner(ctx context.Context) error {
 // batch columns using the exact decode copyTo uses (schemaType match →
 // mustDecodeTagValue; else NullTagValue). Reading a window (not always [0,len))
 // lets NextBatch drain a cursor larger than batchSize across several batches
-// without losing rows.
-//
-//nolint:unparam // error is part of the batch-builder contract and reserved for future decode failures.
+// without losing rows. Returns an error if an order-key tag value fails to marshal.
 func (v *streamVecScan) cursorToBatch(bc *blockCursor, off int) (*vectorized.RecordBatch, error) {
 	total := len(bc.timestamps)
 	n := total - off
@@ -311,10 +309,12 @@ func (v *streamVecScan) cursorToBatch(bc *blockCursor, off int) (*vectorized.Rec
 			for row := 0; row < n; row++ {
 				var keyBytes []byte
 				if orderTagCol != nil {
-					tv := orderTagCol.Data()[row]
-					if b, mErr := pbv1.MarshalTagValue(tv); mErr == nil {
-						keyBytes = b
+					b, mErr := pbv1.MarshalTagValue(orderTagCol.Data()[row])
+					if mErr != nil {
+						return nil, fmt.Errorf("stream vec scan: marshal order key for tag %s.%s: %w",
+							v.orderTagFamily, v.orderTagName, mErr)
 					}
+					keyBytes = b
 				}
 				orderCol.Append(keyBytes)
 			}

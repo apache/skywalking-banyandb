@@ -59,5 +59,15 @@ func ValidateHeader(b []byte) (Header, int, error) {
 	}
 	h.NumCols = ncols
 	offset += ncolsLen
+	// Bound NumRows/NumCols by the body length before any column is parsed, so an
+	// adversarial/corrupt header with a near-2^64 NumRows cannot overflow the
+	// (NumRows+7)/8 validity-byte math or OOM-panic make([]bool, NumRows) in
+	// readColumnData. A frame of length L holds at most L rows and L-offset cols.
+	if h.NumRows > uint64(len(b)) {
+		return Header{}, 0, fmt.Errorf("%w: NumRows=%d exceeds frame length %d", ErrTruncated, h.NumRows, len(b))
+	}
+	if h.NumCols > uint64(len(b)-offset) {
+		return Header{}, 0, fmt.Errorf("%w: NumCols=%d exceeds remaining %d bytes", ErrTruncated, h.NumCols, len(b)-offset)
+	}
 	return h, offset, nil
 }

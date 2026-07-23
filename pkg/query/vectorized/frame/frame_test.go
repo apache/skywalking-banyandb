@@ -19,7 +19,9 @@ package frame
 
 import (
 	"bytes"
+	"encoding/binary"
 	"errors"
+	"math"
 	"testing"
 
 	"google.golang.org/protobuf/proto"
@@ -315,6 +317,36 @@ func TestCodec_Decode_TooShortForHeader(t *testing.T) {
 	_, err := testCodec.Decode([]byte{0x00, 'V'})
 	if !errors.Is(err, ErrTruncated) {
 		t.Fatalf("got %v, want ErrTruncated", err)
+	}
+}
+
+// TestCodec_Decode_NumRowsExceedsBody guards the adversarial-header path: a
+// near-2^64 NumRows must be rejected loudly at ValidateHeader, never reaching
+// the column decoder where (NumRows+7)/8 would overflow and make([]bool, NumRows)
+// would OOM-panic. The test passing without a panic is itself the assertion.
+func TestCodec_Decode_NumRowsExceedsBody(t *testing.T) {
+	var b []byte
+	b = append(b, testCodec.Magic[:]...)
+	b = append(b, testCodec.WireVersion)
+	b = binary.AppendUvarint(b, math.MaxUint64) // NumRows far larger than any body
+	b = binary.AppendUvarint(b, 1)              // NumCols=1
+	b = append(b, 0x01, 0x01)                   // partial column bytes; never reached
+	_, err := testCodec.Decode(b)
+	if !errors.Is(err, ErrTruncated) {
+		t.Fatalf("got %v, want ErrTruncated for NumRows exceeding body", err)
+	}
+}
+
+// TestCodec_Decode_NumColsExceedsBody guards the same class for NumCols.
+func TestCodec_Decode_NumColsExceedsBody(t *testing.T) {
+	var b []byte
+	b = append(b, testCodec.Magic[:]...)
+	b = append(b, testCodec.WireVersion)
+	b = binary.AppendUvarint(b, 0)              // NumRows=0
+	b = binary.AppendUvarint(b, math.MaxUint64) // NumCols far larger than any body
+	_, err := testCodec.Decode(b)
+	if !errors.Is(err, ErrTruncated) {
+		t.Fatalf("got %v, want ErrTruncated for NumCols exceeding body", err)
 	}
 }
 

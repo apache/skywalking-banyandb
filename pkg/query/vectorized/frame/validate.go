@@ -58,5 +58,17 @@ func (c Codec) ValidateHeader(b []byte) (Header, int, error) {
 	}
 	h.NumCols = ncols
 	offset += ncolsLen
+	// Bound NumRows/NumCols by the body length before any column is parsed. A
+	// frame of length L can encode at most L rows (each row costs at least one
+	// byte across its columns) and at most L-offset columns (each column block is
+	// at least a role+type byte). Without this an adversarial/corrupt header with
+	// a near-2^64 NumRows would (a) overflow the (NumRows+7)/8 validity-byte math
+	// and (b) drive make([]bool, NumRows) into an OOM panic in readValidityBitmap.
+	if h.NumRows > uint64(len(b)) {
+		return Header{}, 0, fmt.Errorf("%w: NumRows=%d exceeds frame length %d", ErrTruncated, h.NumRows, len(b))
+	}
+	if h.NumCols > uint64(len(b)-offset) {
+		return Header{}, 0, fmt.Errorf("%w: NumCols=%d exceeds remaining %d bytes", ErrTruncated, h.NumCols, len(b)-offset)
+	}
 	return h, offset, nil
 }
