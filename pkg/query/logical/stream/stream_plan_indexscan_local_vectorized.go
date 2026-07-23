@@ -19,6 +19,7 @@ package stream
 
 import (
 	"context"
+	"math"
 
 	modelv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/model/v1"
 	"github.com/apache/skywalking-banyandb/pkg/index"
@@ -35,16 +36,21 @@ var _ executor.StreamVecExecutable = (*localIndexScan)(nil)
 // of the analyzed plan, or nil when the plan cannot be vectorized.
 //
 // Eligibility: the plan top is the *limit node (stream_analyzer.go:86); its Input
-// must be a bare *localIndexScan. A tag-filter wrapper (criteria tags needing
-// row-side re-matching), a multi-group merger, or any other shape means the Input
-// is not a *localIndexScan, so we decline and the caller runs the row path.
+// must resolve to a *localIndexScan — either directly (no criteria) or wrapped in a
+// *tagFilterPlan (criteria query, stream_plan_tag_filter.go). For the tag-filter
+// case the inner scan already projects the criteria + hidden tags and pushes the
+// INDEXED criteria into its sqo (invertedFilter/skippingFilter); the caller then
+// applies the SAME per-element tagFilter.Match + hidden-tag strip that
+// tagFilterPlan.Execute does (via VecTagFilter) so the result is byte-identical to
+// the row path. A multi-group merger or any other shape does not resolve to a
+// *localIndexScan, so we decline and the caller runs the row path.
 func VecExecutable(plan logical.Plan) executor.StreamVecExecutable {
 	l, ok := plan.(*limit)
 	if !ok {
 		return nil
 	}
-	scan, ok := l.Input.(*localIndexScan)
-	if !ok {
+	scan := scanFromInput(l.Input)
+	if scan == nil {
 		return nil
 	}
 	// An index-order query sorts by an indexed tag. The vec merge keys on the
@@ -58,6 +64,42 @@ func VecExecutable(plan logical.Plan) executor.StreamVecExecutable {
 		return nil
 	}
 	return scan
+}
+
+// scanFromInput resolves the *localIndexScan at the input of the *limit node,
+// unwrapping a *tagFilterPlan (criteria query) whose parent is the scan. Returns
+// nil for any other shape (e.g. a multi-group merger).
+func scanFromInput(input logical.Plan) *localIndexScan {
+	switch in := input.(type) {
+	case *localIndexScan:
+		return in
+	case *tagFilterPlan:
+		if scan, ok := in.parent.(*localIndexScan); ok {
+			// A criteria query applies the tag filter at egress AFTER the scan; the vec
+			// merge must not cap at maxElementSize or it would starve the filter (see
+			// localIndexScan.deferLimitToEgress).
+			scan.deferLimitToEgress = true
+			return scan
+		}
+	}
+	return nil
+}
+
+// VecTagFilter returns the criteria tag filter, the hidden-tag set, and the schema
+// carried by the *limit plan's *tagFilterPlan input, so the standalone vec egress
+// can apply the SAME per-element tagFilter.Match + hidden-tag strip that the row
+// path's tagFilterPlan.Execute applies. Returns ok=false when the plan is not the
+// *limit → *tagFilterPlan shape (a criteria-less query needs no post-filter).
+func VecTagFilter(plan logical.Plan) (tagFilter logical.TagFilter, hiddenTags logical.HiddenTagSet, schema logical.Schema, ok bool) {
+	l, isLimit := plan.(*limit)
+	if !isLimit {
+		return nil, nil, nil, false
+	}
+	tf, isTagFilter := l.Input.(*tagFilterPlan)
+	if !isTagFilter {
+		return nil, nil, nil, false
+	}
+	return tf.tagFilter, tf.hiddenTags, tf.s, true
 }
 
 // orderTagProjected reports whether an index-order query's single ordered tag is
@@ -103,9 +145,12 @@ func VecOffsetLimit(plan logical.Plan) (offsetNum, limitNum uint32, ok bool) {
 // The offset/limit split matches the row path: the localIndexScan's
 // maxElementSize is already limit+offset (PushDownMaxSize at
 // stream_analyzer.go:94), and the enclosing *limit node applies the final
-// offset:offset+limit slice at egress. So the vec pipeline caps at maxElementSize
-// (offset 0, limit=maxElementSize) exactly like the scan-level cap, and the outer
-// limit node trims — no double offset.
+// offset:offset+limit slice at egress. For a criteria-less query the vec pipeline
+// caps at maxElementSize (offset 0, limit=maxElementSize) exactly like the
+// scan-level cap, and the outer limit node trims — no double offset. For a criteria
+// query (deferLimitToEgress) the merge runs UNCAPPED and the egress applies the tag
+// filter before the outer offset:offset+limit slice, so the filter is never starved
+// by a premature cap (row-path parity — the row scan streams the whole ordered set).
 func (i *localIndexScan) ExecuteVectorized(ctx context.Context) ([]*vectorized.RecordBatch, *vectorized.BatchSchema, error) {
 	select {
 	case <-ctx.Done():
@@ -160,14 +205,25 @@ func (i *localIndexScan) ExecuteVectorized(ctx context.Context) ([]*vectorized.R
 	// applies the SAME limit with offset 0 as a defensive client slice; the final
 	// client offset:offset+limit slice is the enclosing *limit node's job (row path
 	// parity).
+	// A criteria query applies a tag filter at egress AFTER this merge. Capping the
+	// merge at maxElementSize here would keep only the top-N BEFORE the filter runs
+	// and starve it (the row path streams the whole ordered set and filters lazily).
+	// So defer the cap to the egress: run the merge UNCAPPED (mergeCap 0) and make the
+	// trailing pipeline Limit a pass-through (MaxUint32, since a 0 limit emits
+	// NOTHING) — the egress then applies the tag filter and the true
+	// offset:offset+limit slice.
 	limitRows := uint32(0)
-	if i.maxElementSize > 0 {
+	mergeCap := i.maxElementSize
+	if i.deferLimitToEgress {
+		mergeCap = 0
+		limitRows = math.MaxUint32
+	} else if i.maxElementSize > 0 {
 		limitRows = uint32(i.maxElementSize)
 	}
 
 	pipeline, buildErr := vstream.BuildStreamMergePipeline(
 		&vecSourceOperator{source: source, schema: schema},
-		schema, desc, 0, limitRows, batchSize, i.maxElementSize)
+		schema, desc, 0, limitRows, batchSize, mergeCap)
 	if buildErr != nil {
 		source.Release()
 		return nil, nil, buildErr

@@ -212,11 +212,18 @@ func (p *streamQueryProcessor) tryStreamVecDispatch(ctx context.Context, plan lo
 		return true, bus.NewMessage(bus.MessageID(now), common.NewError("execute the vectorized query plan for stream %s: %v", queryCriteria.GetName(), execErr))
 	}
 
+	// A criteria query carries a per-element tag filter (VecTagFilter) that must be
+	// applied to materialized Elements (byte-identical to the row tagFilterPlan). The
+	// frame path operates on columnar batches and has no element-level filter stage,
+	// so a filter query forces the proto egress; the liaison merges proto Elements
+	// and frame bodies interchangeably (mixed-mode), so this stays correct.
+	tagFilter, hiddenTags, filterSchema, hasFilter := logical_stream.VecTagFilter(plan)
+
 	// Data-node native wire mode (flag-on, no tracing): emit a columnar frame body
 	// so the send path passes it through and the liaison decodes it. The liaison
 	// applies the global offset/limit slice, so the data node emits the whole
 	// (already per-node-capped) batch set — no slice here.
-	if streamVecEmitAsFrame(p.distributed, data.StreamWireModeRaw(), traced) {
+	if !hasFilter && streamVecEmitAsFrame(p.distributed, data.StreamWireModeRaw(), traced) {
 		merged, mergeErr := mergeStreamBatches(schema, batches)
 		if mergeErr != nil {
 			p.log.Error().Err(mergeErr).RawJSON("req", logger.Proto(queryCriteria)).Msg("fail to merge the vectorized stream batches")
@@ -236,6 +243,19 @@ func (p *streamQueryProcessor) tryStreamVecDispatch(ctx context.Context, plan lo
 	if buildErr != nil {
 		p.log.Error().Err(buildErr).RawJSON("req", logger.Proto(queryCriteria)).Msg("fail to materialize vectorized stream elements")
 		return true, bus.NewMessage(bus.MessageID(now), common.NewError("materialize vectorized stream elements for stream %s: %v", queryCriteria.GetName(), buildErr))
+	}
+	// Criteria query: apply the SAME per-element tagFilter.Match + hidden-tag strip
+	// as the row tagFilterPlan.Execute, over the scan-capped set and BEFORE the outer
+	// offset:offset+limit slice (row-path order: scan → merge → distinct → filter →
+	// limit). The vec path drains all capped batches then filters (no multi-Pull
+	// retry loop); for single-Pull scans this equals the row result.
+	if hasFilter {
+		filtered, filterErr := applyStreamTagFilter(elements, tagFilter, hiddenTags, filterSchema)
+		if filterErr != nil {
+			p.log.Error().Err(filterErr).RawJSON("req", logger.Proto(queryCriteria)).Msg("fail to apply the vectorized stream tag filter")
+			return true, bus.NewMessage(bus.MessageID(now), common.NewError("apply the vectorized stream tag filter for stream %s: %v", queryCriteria.GetName(), filterErr))
+		}
+		elements = filtered
 	}
 	if offset, limit, ok := logical_stream.VecOffsetLimit(plan); ok {
 		elements = sliceStreamElements(elements, offset, limit)
@@ -273,6 +293,27 @@ func mergeStreamBatches(schema *vectorized.BatchSchema, batches []*vectorized.Re
 		}
 	}
 	return out, nil
+}
+
+// applyStreamTagFilter keeps only the elements whose tag families satisfy the
+// criteria tag filter, then strips the filter-only (hidden) tags from the kept
+// elements — mirroring the row tagFilterPlan.Execute per-element loop exactly so
+// the vec result is byte-identical.
+func applyStreamTagFilter(elements []*streamv1.Element, tagFilter logical.TagFilter,
+	hiddenTags logical.HiddenTagSet, s logical.Schema,
+) ([]*streamv1.Element, error) {
+	filtered := make([]*streamv1.Element, 0, len(elements))
+	for _, e := range elements {
+		ok, matchErr := tagFilter.Match(logical.TagFamilies(e.TagFamilies), s)
+		if matchErr != nil {
+			return nil, matchErr
+		}
+		if ok {
+			e.TagFamilies = hiddenTags.StripHiddenTags(e.TagFamilies)
+			filtered = append(filtered, e)
+		}
+	}
+	return filtered, nil
 }
 
 // sliceStreamElements applies the client offset:offset+limit window, matching the
