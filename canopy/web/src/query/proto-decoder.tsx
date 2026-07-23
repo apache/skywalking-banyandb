@@ -65,12 +65,6 @@ export interface TDBinding {
 
 // ── Internal parser helpers ─────────────────────────────────────────────────
 
-const TD_SCALARS = new Set([
-  'double', 'float', 'int32', 'int64', 'uint32', 'uint64',
-  'sint32', 'sint64', 'fixed32', 'fixed64', 'sfixed32', 'sfixed64',
-  'bool', 'string', 'bytes',
-]);
-
 const TD_NONFIELD = new Set([
   'message', 'enum', 'oneof', 'reserved', 'option', 'syntax',
   'package', 'import', 'returns', 'rpc', 'service', 'extend', 'map',
