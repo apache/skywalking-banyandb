@@ -15,6 +15,8 @@
  * limitations under the License.
  */
 
+import type { TagValueParam } from '../client/types.js';
+
 const maxDescriptionLength = 2048;
 const maxIdentifierLength = 256;
 const maxBydbQLLength = 4096;
@@ -24,9 +26,25 @@ const allowedQueryHintResourceTypes = ['stream', 'measure', 'trace', 'property']
 const disallowedQueryTokenPatterns = [/[;]/, /--/, /\/\*/, /\*\//];
 const allowedQueryPrefixPatterns = [/^\s*SELECT\b/i, /^\s*SHOW\s+TOP\b/i];
 
+const maxParamCount = 64;
+const maxParamValueLength = 4096;
+// An int64 is at most 19 digits plus an optional sign.
+const maxIntParamLength = 20;
+const maxParamArrayLength = 256;
+const allowedParamTypes = ['str', 'int', 'str_array', 'int_array', 'null'] as const;
+const integerPattern = /^-?\d+$/;
+const int64Min = BigInt('-9223372036854775808');
+const int64Max = BigInt('9223372036854775807');
+
+export type BydbQLParam = {
+  type: (typeof allowedParamTypes)[number];
+  value?: unknown;
+};
+
 export type QueryHints = {
   description?: string;
   BydbQL?: string;
+  params?: BydbQLParam[];
   resource_type?: string;
   resource_name?: string;
   group?: string;
@@ -96,7 +114,7 @@ function validateQueryHintResourceType(rawValue: string): (typeof allowedQueryHi
   return value as (typeof allowedQueryHintResourceTypes)[number];
 }
 
-function validateBydbQL(rawValue: string): string {
+export function validateBydbQL(rawValue: string): string {
   const value = validateTextInput('BydbQL', rawValue, maxBydbQLLength);
   if (!allowedQueryPrefixPatterns.some((pattern) => pattern.test(value))) {
     throw new Error('BydbQL must be a read-only SELECT or SHOW TOP query');
@@ -119,10 +137,87 @@ export function normalizeQueryHints(args: unknown): QueryHints {
   return {
     description: typeof rawArgs.description === 'string' ? rawArgs.description.trim() : undefined,
     BydbQL: typeof rawArgs.BydbQL === 'string' ? rawArgs.BydbQL.trim() : undefined,
+    params: Array.isArray(rawArgs.params) ? (rawArgs.params as BydbQLParam[]) : undefined,
     resource_type: typeof rawArgs.resource_type === 'string' ? rawArgs.resource_type.trim() : undefined,
     resource_name: typeof rawArgs.resource_name === 'string' ? rawArgs.resource_name.trim() : undefined,
     group: typeof rawArgs.group === 'string' ? rawArgs.group.trim() : undefined,
   };
+}
+
+function validateParamString(value: unknown, position: number): string {
+  if (typeof value !== 'string') {
+    throw new Error(`params[${position}]: str value must be a string`);
+  }
+  if (value.length > maxParamValueLength) {
+    throw new Error(`params[${position}]: value exceeds ${maxParamValueLength} characters`);
+  }
+  return value;
+}
+
+function validateParamInteger(value: unknown, position: number): string {
+  if (typeof value === 'number' && Number.isSafeInteger(value)) {
+    return String(value);
+  }
+  if (typeof value === 'string' && value.length <= maxIntParamLength && integerPattern.test(value)) {
+    // Reject int64 overflow here with a specific message instead of deferring
+    // the failure to an opaque protojson decoding error on the server.
+    const parsed = BigInt(value);
+    if (parsed < int64Min || parsed > int64Max) {
+      throw new Error(`params[${position}]: int value ${value} is out of the int64 range`);
+    }
+    return value;
+  }
+  throw new Error(`params[${position}]: int value must be an integer of at most ${maxIntParamLength} characters`);
+}
+
+function validateParamArray(value: unknown, position: number): unknown[] {
+  if (!Array.isArray(value) || value.length === 0) {
+    throw new Error(`params[${position}]: array value must be a non-empty array`);
+  }
+  if (value.length > maxParamArrayLength) {
+    throw new Error(`params[${position}]: array value exceeds ${maxParamArrayLength} entries`);
+  }
+  return value;
+}
+
+/**
+ * Validate BydbQL parameters and convert them to protojson TagValue form
+ * accepted by the BanyanDB HTTP API.
+ *
+ * The server-side `timestamp` variant is deliberately not exposed here:
+ * an RFC3339 `str` is equivalent for TIME positions.
+ */
+export function toTagValueParams(params: BydbQLParam[]): TagValueParam[] {
+  if (params.length > maxParamCount) {
+    throw new Error(`params exceeds ${maxParamCount} entries`);
+  }
+  return params.map((param, position) => {
+    if (!param || typeof param !== 'object' || typeof param.type !== 'string') {
+      throw new Error(`params[${position}]: each parameter must be an object with a "type" field`);
+    }
+    switch (param.type) {
+      case 'str':
+        return { str: { value: validateParamString(param.value, position) } };
+      case 'int':
+        return { int: { value: validateParamInteger(param.value, position) } };
+      case 'str_array':
+        return {
+          strArray: {
+            value: validateParamArray(param.value, position).map((entry) => validateParamString(entry, position)),
+          },
+        };
+      case 'int_array':
+        return {
+          intArray: {
+            value: validateParamArray(param.value, position).map((entry) => validateParamInteger(entry, position)),
+          },
+        };
+      case 'null':
+        return { null: null };
+      default:
+        throw new Error(`params[${position}]: type must be one of: ${allowedParamTypes.join(', ')}`);
+    }
+  });
 }
 
 export function validateListGroupsArgs(args: unknown): ListGroupsArgs {
@@ -160,6 +255,9 @@ export function validateQueryHints(queryHints: QueryHints): QueryHints {
   }
   if (queryHints.BydbQL) {
     validatedHints.BydbQL = validateBydbQL(queryHints.BydbQL);
+  }
+  if (queryHints.params) {
+    validatedHints.params = queryHints.params;
   }
   if (queryHints.resource_type) {
     validatedHints.resource_type = validateQueryHintResourceType(queryHints.resource_type);

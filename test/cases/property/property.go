@@ -22,6 +22,7 @@ import (
 	g "github.com/onsi/ginkgo/v2"
 	gm "github.com/onsi/gomega"
 
+	"github.com/apache/skywalking-banyandb/pkg/test"
 	"github.com/apache/skywalking-banyandb/pkg/test/flags"
 	"github.com/apache/skywalking-banyandb/pkg/test/helpers"
 	propertyTestData "github.com/apache/skywalking-banyandb/test/cases/property/data"
@@ -31,7 +32,7 @@ var (
 	// SharedContext is the parallel execution context.
 	SharedContext helpers.SharedContext
 	verify        = func(args helpers.Args) {
-		gm.Eventually(func(innerGm gm.Gomega) {
+		test.EventuallyConsistently(func(innerGm gm.Gomega) {
 			propertyTestData.VerifyFn(innerGm, SharedContext, args)
 		}, flags.EventuallyTimeout).Should(gm.Succeed())
 	}
@@ -41,6 +42,7 @@ var propertyEntries = []any{
 	g.Entry("all", helpers.Args{Input: "all"}),
 	g.Entry("limit", helpers.Args{Input: "limit"}),
 	g.Entry("query by criteria", helpers.Args{Input: "query_by_criteria"}),
+	g.Entry("query by criteria with bound parameters", helpers.Args{Input: "params_bind", Want: "query_by_criteria"}),
 	g.Entry("query by ids", helpers.Args{Input: "query_by_ids"}),
 	g.Entry("order by asc", helpers.Args{Input: "order_by_asc"}),
 	g.Entry("order by desc", helpers.Args{Input: "order_by_desc"}),

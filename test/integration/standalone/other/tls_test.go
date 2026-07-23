@@ -35,6 +35,7 @@ import (
 	"google.golang.org/grpc/credentials"
 
 	"github.com/apache/skywalking-banyandb/pkg/grpchelper"
+	"github.com/apache/skywalking-banyandb/pkg/test"
 	"github.com/apache/skywalking-banyandb/pkg/test/flags"
 	"github.com/apache/skywalking-banyandb/pkg/test/helpers"
 	"github.com/apache/skywalking-banyandb/pkg/test/setup"
@@ -75,7 +76,7 @@ var _ = g.Describe("Query service_cpm_minute", func() {
 		gm.Eventually(gleak.Goroutines, flags.EventuallyTimeout).ShouldNot(gleak.HaveLeaked(goods))
 	})
 	g.It("queries a tls server", func() {
-		gm.Eventually(func(innerGm gm.Gomega) {
+		test.EventuallyConsistently(func(innerGm gm.Gomega) {
 			casesMeasureData.VerifyFn(innerGm, helpers.SharedContext{
 				Connection: conn,
 				BaseTime:   baseTime,
@@ -157,7 +158,7 @@ var _ = g.Describe("Query service_cpm_minute", func() {
 		casesMeasureData.Write(grpcConn, "service_cpm_minute", "sw_metric", "service_cpm_minute_data.json", testBaseTime, interval)
 
 		// Verify using the initial connection before updating certificates
-		gm.Eventually(func(innerGm gm.Gomega) {
+		test.EventuallyConsistently(func(innerGm gm.Gomega) {
 			casesMeasureData.VerifyFn(innerGm, helpers.SharedContext{
 				Connection: grpcConn,
 				BaseTime:   testBaseTime,
@@ -221,7 +222,7 @@ var _ = g.Describe("Query service_cpm_minute", func() {
 		defer newGrpcConn.Close()
 
 		// Verify data access works through a new connection
-		gm.Eventually(func(innerGm gm.Gomega) {
+		test.EventuallyConsistently(func(innerGm gm.Gomega) {
 			casesMeasureData.VerifyFn(innerGm, helpers.SharedContext{
 				Connection: newGrpcConn,
 				BaseTime:   testBaseTime,

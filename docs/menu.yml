@@ -129,6 +129,14 @@ catalog:
         path: "/operation/system"
       - name: "Upgrade"
         path: "/operation/upgrade"
+      - name: "Trace Pipeline Plugins"
+        catalog:
+          - name: "Development Guide"
+            path: "/operation/plugins-development"
+          - name: "Packaging and Deployment"
+            path: "/operation/plugins"
+          - name: "Debugging (Offline)"
+            path: "/operation/plugins-debugging"
       - name: "Observability"
         catalog:
           - name: "Overview"
@@ -177,6 +185,8 @@ catalog:
             path: "/operation/mcp/inspector"
           - name: "Build and Package"
             path: "/operation/mcp/build"
+          - name: "Plugin Packaging"
+            path: "/operation/mcp/plugin"
       - name: "First Occurrence Data Collection (FODC)"
         catalog:
           - name: "Overview"

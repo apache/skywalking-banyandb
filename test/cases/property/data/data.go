@@ -91,7 +91,12 @@ func verifyWithContext(ctx context.Context, innerGm gm.Gomega, sharedContext hel
 	helpers.UnmarshalYAML(w, want)
 	innerGm.Expect(resp.GetProperties()).To(gm.HaveLen(len(want.GetProperties())), query.String())
 	if query.OrderBy == nil {
+		// The server returns unordered scans in nondeterministic order, so both
+		// sides must be sorted before the order-sensitive cmp.Equal below.
 		slices.SortFunc(want.GetProperties(), func(a, b *propertyv1.Property) int {
+			return strings.Compare(a.Id, b.Id)
+		})
+		slices.SortFunc(resp.GetProperties(), func(a, b *propertyv1.Property) int {
 			return strings.Compare(a.Id, b.Id)
 		})
 	}
@@ -130,18 +135,8 @@ func verifyQLWithRequest(ctx context.Context, innerGm gm.Gomega, args helpers.Ar
 	}
 	qlContent, err := qlFS.ReadFile("input/" + args.Input + ".ql")
 	innerGm.Expect(err).NotTo(gm.HaveOccurred())
-
-	var qlQueryStr string
-	for _, line := range strings.Split(string(qlContent), "\n") {
-		trimmed := strings.TrimSpace(line)
-		if trimmed == "" || strings.HasPrefix(trimmed, "#") {
-			continue
-		}
-		if qlQueryStr != "" {
-			qlQueryStr += " "
-		}
-		qlQueryStr += trimmed
-	}
+	qlQueryStr, qlParams, err := helpers.ExtractQL(string(qlContent))
+	innerGm.Expect(err).NotTo(gm.HaveOccurred())
 
 	ctrl := gomock.NewController(g.GinkgoT())
 	defer ctrl.Finish()
@@ -160,6 +155,7 @@ func verifyQLWithRequest(ctx context.Context, innerGm gm.Gomega, args helpers.Ar
 
 	parsed, errStrs := bydbql.ParseQuery(qlQueryStr)
 	innerGm.Expect(errStrs).To(gm.BeNil())
+	innerGm.Expect(bydbql.BindParams(parsed, qlParams)).To(gm.Succeed())
 
 	transformer := bydbql.NewTransformer(mockRepo)
 	result, err := transformer.Transform(ctx, parsed)
@@ -175,7 +171,8 @@ func verifyQLWithRequest(ctx context.Context, innerGm gm.Gomega, args helpers.Ar
 
 	bydbqlClient := bydbqlv1.NewBydbQLServiceClient(conn)
 	bydbqlResp, err := bydbqlClient.Query(ctx, &bydbqlv1.QueryRequest{
-		Query: qlQueryStr,
+		Query:  qlQueryStr,
+		Params: qlParams,
 	})
 	innerGm.Expect(err).NotTo(gm.HaveOccurred())
 	innerGm.Expect(bydbqlResp).NotTo(gm.BeNil())

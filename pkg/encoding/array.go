@@ -18,83 +18,29 @@
 package encoding
 
 import (
-	"bytes"
-	"errors"
+	"github.com/apache/skywalking-banyandb/pkg/encoding/vararray"
 )
 
+// EntityDelimiter and Escape are re-exported from the dependency-free vararray
+// leaf so existing encoding.EntityDelimiter / encoding.Escape usages are
+// unchanged, while consumers that need only the var-array codec (e.g. the
+// plugin SDK) can import the leaf without pulling in this package's logging deps.
 const (
 	// EntityDelimiter is the delimiter for entities in a variable-length array.
-	EntityDelimiter = '|'
+	EntityDelimiter = vararray.EntityDelimiter
 	// Escape is the escape character for entities in a variable-length array.
-	Escape = '\\'
+	Escape = vararray.Escape
 )
 
-// MarshalVarArray marshals a byte slice into a variable-length array format.
-// It escapes delimiter and escape characters within the source slice.
+// MarshalVarArray marshals a byte slice into a variable-length array format,
+// escaping delimiter and escape characters. It forwards to the vararray leaf.
 func MarshalVarArray(dest, src []byte) []byte {
-	if bytes.IndexByte(src, EntityDelimiter) < 0 && bytes.IndexByte(src, Escape) < 0 {
-		dest = append(dest, src...)
-		dest = append(dest, EntityDelimiter)
-		return dest
-	}
-	for _, b := range src {
-		if b == EntityDelimiter || b == Escape {
-			dest = append(dest, Escape)
-		}
-		dest = append(dest, b)
-	}
-	dest = append(dest, EntityDelimiter)
-	return dest
+	return vararray.MarshalVarArray(dest, src)
 }
 
 // UnmarshalVarArray unmarshals a variable-length array from src starting at idx.
-//
-// WARNING: This function mutates src. Decoding is performed in-place by
-// overwriting bytes in src[idx:next) to remove escape characters. The decoded
-// value is the view src[idx:end] into the same backing array; copy it (for
-// example, with bytes.Clone or append([]byte(nil), ...)) if you need to
-// preserve the original encoded buffer or keep the decoded value independent of
-// subsequent in-place decoding on the same buffer.
-//
-// It returns:
-//   - end: the index of the first byte after the decoded value (exclusive)
-//   - next: the index of the next element (the byte after the delimiter)
-//
-// The caller can iterate without creating subslices by tracking indices:
-//
-//	for idx < len(src) {
-//	    end, next, err := UnmarshalVarArray(src, idx)
-//	    // use src[idx:end]
-//	    idx = next
-//	}
+// It forwards to the vararray leaf; see vararray.UnmarshalVarArray for the
+// in-place-mutation contract and return semantics.
 func UnmarshalVarArray(src []byte, idx int) (int, int, error) {
-	if idx >= len(src) {
-		return 0, 0, errors.New("empty entity value")
-	}
-	if src[idx] == EntityDelimiter {
-		// Empty value; value is src[idx:idx], next starts after the delimiter.
-		return idx, idx + 1, nil
-	}
-	// Decode in-place: read index i, write index j.
-	writeIdx := idx
-	for readIdx := idx; readIdx < len(src); readIdx++ {
-		b := src[readIdx]
-		switch {
-		case b == Escape:
-			// Escape must be followed by at least one more byte.
-			if readIdx+1 >= len(src) {
-				return 0, 0, errors.New("invalid escape character")
-			}
-			readIdx++
-			src[writeIdx] = src[readIdx]
-			writeIdx++
-		case b == EntityDelimiter:
-			// Return end index of decoded value and index after delimiter.
-			return writeIdx, readIdx + 1, nil
-		default:
-			src[writeIdx] = b
-			writeIdx++
-		}
-	}
-	return 0, 0, errors.New("invalid variable array")
+	return vararray.UnmarshalVarArray(src, idx)
 }

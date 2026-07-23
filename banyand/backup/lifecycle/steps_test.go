@@ -86,7 +86,7 @@ func TestParseGroup_RejectsMissingIntervals(t *testing.T) {
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
 			g := makeGroup(c.mutate)
-			_, _, _, _, err := parseGroup(g, map[string]string{"type": "warm"}, nil, nil, nil, nil, nil)
+			_, _, _, _, err := parseGroup(g, "", map[string]string{"type": "warm"}, nil, nil, nil, nil, nil)
 			require.Error(t, err)
 			assert.Contains(t, err.Error(), c.errFrag)
 		})
@@ -101,12 +101,13 @@ func TestParseGroup_RejectsMissingIntervals(t *testing.T) {
 // unit test requires an integration harness — that coverage lives in
 // test/cases/lifecycle/lifecycle.go.
 
-// TestResolveSelfIdentity exercises the post-fix pod-name primary lookup
-// against representative registry shapes. The first three cases prove
-// the bug fix: a host-portion match on the registry's GrpcAddress
-// (whether loopback, IP, or FQDN) resolves to the co-located data
-// node's Metadata.Name. The last two cases prove the no-match and
-// empty-input guards.
+// TestResolveSelfIdentity exercises both resolution passes against
+// representative registry shapes. The pod-hostname pass (pass 2, empty
+// selfGRPCAddr) is covered by the first block: a host-portion match on
+// the registry's GrpcAddress (whether loopback, IP, or FQDN) resolves to
+// the co-located data node's Metadata.Name, plus the no-match and
+// empty-input guards. The --grpc-addr pass (pass 1) is covered by the
+// TestResolveSelfIdentity_GRPCAddrDisambiguates regression below.
 func TestResolveSelfIdentity(t *testing.T) {
 	nodes := []*databasev1.Node{
 		// Production-bug repro: lifecycle's --grpc-addr is
@@ -127,29 +128,29 @@ func TestResolveSelfIdentity(t *testing.T) {
 		{Metadata: &commonv1.Metadata{Name: "data-cold-0:17912"}, GrpcAddress: "10.116.3.84:17912", Labels: map[string]string{"type": "cold"}},
 	}
 
-	node, tier, ok := resolveSelfIdentity("data-hot-0", nodes)
+	node, tier, ok := resolveSelfIdentity("", "data-hot-0", nodes)
 	assert.True(t, ok, "DNS-form GrpcAddress must match by host portion (the production-bug case)")
 	assert.Equal(t, "data-hot-0:17912", node)
 	assert.Equal(t, "hot", tier)
 
-	node, tier, ok = resolveSelfIdentity("127.0.0.1", nodes)
+	node, tier, ok = resolveSelfIdentity("", "127.0.0.1", nodes)
 	assert.True(t, ok, "loopback GrpcAddress matches a loopback selfPodHost")
 	assert.Equal(t, "data-warm-0:17912", node)
 	assert.Equal(t, "warm", tier)
 
 	// selfPodHost="10.116.3.84" matches the IP-form entry.
-	node, tier, ok = resolveSelfIdentity("10.116.3.84", nodes)
+	node, tier, ok = resolveSelfIdentity("", "10.116.3.84", nodes)
 	assert.True(t, ok, "IP-form GrpcAddress matches an IP selfPodHost")
 	assert.Equal(t, "data-cold-0:17912", node)
 	assert.Equal(t, "cold", tier)
 
 	// selfPodHost="data-warm-1" is not in the registry: no match.
-	_, _, ok = resolveSelfIdentity("data-warm-1", nodes)
+	_, _, ok = resolveSelfIdentity("", "data-warm-1", nodes)
 	assert.False(t, ok, "selfPodHost not in registry must return ok=false (no wildcard)")
 
-	// Empty selfPodHost: no match.
-	_, _, ok = resolveSelfIdentity("", nodes)
-	assert.False(t, ok, "empty selfPodHost must return ok=false (no panic)")
+	// Empty selfGRPCAddr and selfPodHost: no match.
+	_, _, ok = resolveSelfIdentity("", "", nodes)
+	assert.False(t, ok, "empty inputs must return ok=false (no panic)")
 
 	// grpcAddrEqual: post-fix also accepts host-portion exact match.
 	assert.True(t, grpcAddrEqual("data-x.headless:17912", "data-x:17912"),
@@ -160,6 +161,35 @@ func TestResolveSelfIdentity(t *testing.T) {
 		"loopback-vs-loopback still works")
 	assert.False(t, grpcAddrEqual("data-x:17912", "data-y:17912"),
 		"different hosts with same port must not match")
+}
+
+// TestResolveSelfIdentity_GRPCAddrDisambiguates is the regression for the
+// distributed-lifecycle CI flake: a hot and a warm data node both register
+// on 127.0.0.1, differing only by port. Hostname matching (pass 2) strips
+// the port, so both nodes match a loopback selfPodHost and the resolver
+// returns whichever the registry listing happens to order first — here the
+// warm node is listed first, which produced remote_tier="warm" instead of
+// "hot". The --grpc-addr pass (pass 1) compares the full host:port and must
+// pin the co-located hot node regardless of registry order.
+func TestResolveSelfIdentity_GRPCAddrDisambiguates(t *testing.T) {
+	// Warm node deliberately listed first to defeat any first-match bias.
+	nodes := []*databasev1.Node{
+		{Metadata: &commonv1.Metadata{Name: "127.0.0.1:41777"}, GrpcAddress: "127.0.0.1:41777", Labels: map[string]string{"type": "warm"}},
+		{Metadata: &commonv1.Metadata{Name: "127.0.0.1:17912"}, GrpcAddress: "127.0.0.1:17912", Labels: map[string]string{"type": "hot"}},
+	}
+
+	// Pass 1 (--grpc-addr set): resolves the exact co-located hot node.
+	node, tier, ok := resolveSelfIdentity("127.0.0.1:17912", "127.0.0.1", nodes)
+	assert.True(t, ok)
+	assert.Equal(t, "127.0.0.1:17912", node, "--grpc-addr pass must pin the co-located node by full host:port")
+	assert.Equal(t, "hot", tier, "must resolve the hot tier even though the warm node shares the host and is listed first")
+
+	// Pass 2 (--grpc-addr empty): hostname matching alone cannot tell the
+	// two loopback nodes apart and returns the first-listed warm node.
+	// This documents exactly why pass 1 is required.
+	_, tier, ok = resolveSelfIdentity("", "127.0.0.1", nodes)
+	assert.True(t, ok)
+	assert.Equal(t, "warm", tier, "hostname-only matching is order-dependent — the flake this fix eliminates")
 }
 
 // TestSelfPodHostnamePrecedence checks that selfPodHostname() prefers

@@ -717,7 +717,7 @@ projection:
 			return buf.String()
 		}
 		Eventually(issue, flags.EventuallyTimeout).ShouldNot(ContainSubstring("code:"))
-		Eventually(func() int {
+		test.EventuallyConsistently(func() int {
 			out := issue()
 			GinkgoWriter.Println(out)
 			resp := new(streamv1.QueryResponse)
@@ -978,7 +978,12 @@ resource_opts:
 		}
 		return buf.String()
 	}
-	Eventually(createGroup, flags.EventuallyTimeout).Should(ContainSubstring("group ui-template is created"))
+	Eventually(createGroup, flags.EventuallyTimeout).Should(
+		Or(ContainSubstring("group ui-template is created"), ContainSubstring("already exists")))
+	// A reused data dir may have re-registered the group on startup; update
+	// unconditionally so the desired shard/replica opts always win.
+	rootCmd.SetArgs([]string{"group", "update", "-a", addr, "-f", "-"})
+	Eventually(createGroup, flags.EventuallyTimeout).Should(ContainSubstring("group ui-template is updated"))
 
 	rootCmd.SetArgs([]string{"property", "schema", "create", "-a", addr, "-f", "-"})
 	createPropertySchema := func() string {
@@ -1002,18 +1007,24 @@ tags:
 		}
 		return buf.String()
 	}
-	Eventually(createPropertySchema, flags.EventuallyTimeout).Should(ContainSubstring("property schema ui-template.service is created"))
+	Eventually(createPropertySchema, flags.EventuallyTimeout).Should(
+		Or(ContainSubstring("property schema ui-template.service is created"), ContainSubstring("already exists")))
+	rootCmd.SetArgs([]string{"property", "schema", "update", "-a", addr, "-f", "-"})
+	Eventually(createPropertySchema, flags.EventuallyTimeout).Should(ContainSubstring("property schema ui-template.service is updated"))
 }
 
 func applyData(rootCmd *cobra.Command, addr, data string, created bool, tagsNum int) {
 	rootCmd.SetArgs([]string{"property", "data", "apply", "-a", addr, "-f", "-"})
-	rootCmd.SetIn(strings.NewReader(data))
 	var buf bytes.Buffer
-	rootCmd.SetOut(&buf)
-	rootCmd.SetErr(&buf)
-
-	err := rootCmd.Execute()
-	Expect(err).NotTo(HaveOccurred())
+	// Right after a node starts, the property shard topology may not be ready
+	// yet ("failed to get group copies"), so retry until the apply goes through.
+	Eventually(func() error {
+		rootCmd.SetIn(strings.NewReader(data))
+		buf.Reset()
+		rootCmd.SetOut(&buf)
+		rootCmd.SetErr(&buf)
+		return rootCmd.Execute()
+	}, flags.EventuallyTimeout).Should(Succeed())
 	out := buf.String()
 	GinkgoWriter.Println(out)
 	Expect(out).To(ContainSubstring(fmt.Sprintf("created: %t", created)))
@@ -1036,7 +1047,7 @@ func queryData(rootCmd *cobra.Command, addr, group, id string, dataCount int, ve
 		Expect(err).NotTo(HaveOccurred())
 		return buf.String()
 	}
-	Eventually(func() error {
+	test.EventuallyConsistently(func() error {
 		out := issue()
 		resp := new(propertyv1.QueryResponse)
 		helpers.UnmarshalYAML([]byte(out), resp)

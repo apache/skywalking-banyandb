@@ -24,6 +24,7 @@ import (
 	g "github.com/onsi/ginkgo/v2"
 	gm "github.com/onsi/gomega"
 
+	"github.com/apache/skywalking-banyandb/pkg/test"
 	"github.com/apache/skywalking-banyandb/pkg/test/flags"
 	"github.com/apache/skywalking-banyandb/pkg/test/helpers"
 	measureTestData "github.com/apache/skywalking-banyandb/test/cases/measure/data"
@@ -33,7 +34,7 @@ var (
 	// SharedContext is the parallel execution context.
 	SharedContext helpers.SharedContext
 	verify        = func(args helpers.Args) {
-		gm.Eventually(func(innerGm gm.Gomega) {
+		test.EventuallyConsistently(func(innerGm gm.Gomega) {
 			measureTestData.VerifyFn(innerGm, SharedContext, args)
 		}, flags.EventuallyTimeout).Should(gm.Succeed())
 	}
@@ -69,6 +70,7 @@ var measureEntries = []any{
 	g.Entry("match nodes", helpers.Args{Input: "match_nodes", Duration: 25 * time.Minute, Offset: -20 * time.Minute}),
 	g.Entry("filter by entity id", helpers.Args{Input: "entity", Duration: 25 * time.Minute, Offset: -20 * time.Minute, DisOrder: true}),
 	g.Entry("filter by several entity ids", helpers.Args{Input: "entity_in", Duration: 25 * time.Minute, Offset: -20 * time.Minute, DisOrder: true}),
+	g.Entry("filter with bound parameters", helpers.Args{Input: "params_bind", Want: "entity_in", Duration: 25 * time.Minute, Offset: -20 * time.Minute, DisOrder: true}),
 	g.Entry("filter by entity id and service id", helpers.Args{Input: "entity_service", Duration: 25 * time.Minute, Offset: -20 * time.Minute, DisOrder: true}),
 	g.Entry("without field", helpers.Args{Input: "no_field", Duration: 25 * time.Minute, Offset: -20 * time.Minute, DisOrder: true}),
 	g.Entry("invalid logical expression", helpers.Args{Input: "err_invalid_le", Duration: 25 * time.Minute, Offset: -20 * time.Minute, WantErr: true}),

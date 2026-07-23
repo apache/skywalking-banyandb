@@ -47,6 +47,22 @@ func resetRegistries() {
 	localMergeGraceRegistry.m = make(map[string]int64)
 	localMergeGraceRegistry.mu.Unlock()
 
+	localMergeEventRegistry.mu.Lock()
+	localMergeEventRegistry.m = make(map[string]bool)
+	localMergeEventRegistry.mu.Unlock()
+
+	localFinalizeGraceRegistry.mu.Lock()
+	localFinalizeGraceRegistry.m = make(map[string]int64)
+	localFinalizeGraceRegistry.mu.Unlock()
+
+	localFinalizeConfigRegistry.mu.Lock()
+	localFinalizeConfigRegistry.m = make(map[string]finalizeConfig)
+	localFinalizeConfigRegistry.mu.Unlock()
+
+	pluginTelemetryRegistry.mu.Lock()
+	pluginTelemetryRegistry.m = make(map[string][]*pluginTelemetry)
+	pluginTelemetryRegistry.mu.Unlock()
+
 	resetPluginCache()
 }
 
@@ -65,7 +81,7 @@ func makeDataSchemaRepo(trustedDir string) schemaRepo {
 
 // makeSamplerPlugin builds a SamplerPlugin for soName inside trustedDir.
 func makeSamplerPlugin(soName string, thresholdMs float64) (*commonv1.SamplerPlugin, error) {
-	cfgStruct, cfgErr := structpb.NewStruct(map[string]interface{}{
+	cfgStruct, cfgErr := structpb.NewStruct(map[string]any{
 		"thresholdMs":  thresholdMs,
 		"successValue": "ok",
 	})
@@ -260,10 +276,11 @@ func TestReconcilePipeline_DisabledConfig(t *testing.T) {
 	assert.Empty(t, lookupSamplers(group), "disabled config must clear the registry")
 }
 
-// TestReconcilePipeline_MergeEventNotEnabled verifies that an enabled config whose
-// enabled_events does not include PIPELINE_EVENT_MERGE installs no merge samplers
-// (v1 only implements the merge-time filter), clearing any previous set.
-func TestReconcilePipeline_MergeEventNotEnabled(t *testing.T) {
+// TestReconcilePipeline_NoEventOrPluginsClears verifies that an enabled config with
+// no plugins clears any previous sampler set. (A FINALIZE-only config now shares the
+// group's sampler set with MERGE per DD11, so the previous set is torn down and, with
+// no plugins to load, the group ends up empty.)
+func TestReconcilePipeline_NoEventOrPluginsClears(t *testing.T) {
 	resetRegistries()
 	defer resetRegistries()
 
@@ -279,7 +296,7 @@ func TestReconcilePipeline_MergeEventNotEnabled(t *testing.T) {
 		EnabledEvents: []commonv1.PipelineEvent{commonv1.PipelineEvent_PIPELINE_EVENT_FINALIZE},
 	})
 
-	assert.Empty(t, lookupSamplers(group), "config without MERGE event must install no merge samplers")
+	assert.Empty(t, lookupSamplers(group), "a config with no plugins must install no samplers")
 }
 
 // TestReconcilePipeline_OnDeleteKindGroup verifies the OnDelete KindGroup
@@ -404,12 +421,10 @@ func TestReconcilePipeline_ConcurrentRace(t *testing.T) {
 	const workers = 8
 	const iterations = 100
 
-	for wID := 0; wID < workers; wID++ {
-		wg.Add(1)
-		go func(id int) {
-			defer wg.Done()
-			for i := 0; i < iterations; i++ {
-				switch (id + i) % 3 {
+	for wID := range workers {
+		wg.Go(func() {
+			for i := range iterations {
+				switch (wID + i) % 3 {
 				case 0:
 					replaceSamplersForGroup(group, []namedSampler{{name: "d", sampler: dummy}})
 					setMergeGraceForGroup(group, int64(i+1)*int64(time.Second))
@@ -421,7 +436,7 @@ func TestReconcilePipeline_ConcurrentRace(t *testing.T) {
 					_ = lookupMergeGrace(group)
 				}
 			}
-		}(wID)
+		})
 	}
 	wg.Wait()
 }

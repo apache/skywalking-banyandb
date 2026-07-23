@@ -26,6 +26,7 @@ import (
 	gm "github.com/onsi/gomega"
 	"google.golang.org/protobuf/types/known/timestamppb"
 
+	"github.com/apache/skywalking-banyandb/pkg/test"
 	"github.com/apache/skywalking-banyandb/pkg/test/flags"
 	"github.com/apache/skywalking-banyandb/pkg/test/helpers"
 	stream_test_data "github.com/apache/skywalking-banyandb/test/cases/stream/data"
@@ -69,6 +70,7 @@ var streamEntries = []any{
 	g.Entry("global index", helpers.Args{Input: "global_index", Duration: 1 * time.Hour}),
 	g.Entry("multi-global index", helpers.Args{Input: "global_indices", Duration: 1 * time.Hour}),
 	g.Entry("filter by non-indexed tag", helpers.Args{Input: "filter_tag", Duration: 1 * time.Hour}),
+	g.Entry("filter with bound parameters", helpers.Args{Input: "params_bind", Want: "filter_tag", Duration: 1 * time.Hour}),
 	g.Entry("filter hidden tag projection", helpers.Args{Input: "filter_hidden_tag", Duration: 1 * time.Hour}),
 	g.Entry("filter by non-indexed tag order by duration desc with limit 3", helpers.Args{Input: "sort_duration_no_index_limit", Duration: 1 * time.Hour}),
 	g.Entry("get empty result by non-indexed tag", helpers.Args{Input: "filter_tag_empty", Duration: 1 * time.Hour, WantEmpty: true}),
@@ -100,12 +102,129 @@ var streamEntries = []any{
 	g.Entry("filter by non-existent tag", helpers.Args{Input: "filter_non_existent_tag", Duration: 1 * time.Hour, WantErr: true}),
 	g.Entry("project non-existent tag", helpers.Args{Input: "project_non_existent_tag", Duration: 1 * time.Hour, WantErr: true}),
 	g.Entry("write mixed", helpers.Args{Input: "write_mixed", Duration: 1 * time.Hour, IgnoreElementID: true}),
+	// --- generated entries (do not edit by hand; produced by cmd/generate) ---
+	g.Entry("gen_leaf_eq_duration", helpers.Args{Input: "gen_leaf_eq_duration", Duration: 1 * time.Hour}),
+	g.Entry("gen_leaf_ne_duration", helpers.Args{Input: "gen_leaf_ne_duration", Duration: 1 * time.Hour}),
+	g.Entry("gen_leaf_lt_duration", helpers.Args{Input: "gen_leaf_lt_duration", Duration: 1 * time.Hour}),
+	g.Entry("gen_leaf_gt_duration", helpers.Args{Input: "gen_leaf_gt_duration", Duration: 1 * time.Hour}),
+	g.Entry("gen_leaf_le_duration", helpers.Args{Input: "gen_leaf_le_duration", Duration: 1 * time.Hour}),
+	g.Entry("gen_leaf_ge_duration", helpers.Args{Input: "gen_leaf_ge_duration", Duration: 1 * time.Hour}),
+	g.Entry("gen_leaf_eq_state", helpers.Args{Input: "gen_leaf_eq_state", Duration: 1 * time.Hour}),
+	g.Entry("gen_err_ne_state", helpers.Args{Input: "gen_err_ne_state", WantErr: true, Duration: 1 * time.Hour}),
+	g.Entry("gen_err_lt_state", helpers.Args{Input: "gen_err_lt_state", WantErr: true, Duration: 1 * time.Hour}),
+	g.Entry("gen_err_gt_state", helpers.Args{Input: "gen_err_gt_state", WantErr: true, Duration: 1 * time.Hour}),
+	g.Entry("gen_err_le_state", helpers.Args{Input: "gen_err_le_state", WantErr: true, Duration: 1 * time.Hour}),
+	g.Entry("gen_err_ge_state", helpers.Args{Input: "gen_err_ge_state", WantErr: true, Duration: 1 * time.Hour}),
+	g.Entry("gen_leaf_eq_service_id", helpers.Args{Input: "gen_leaf_eq_service_id", Duration: 1 * time.Hour}),
+	g.Entry("gen_err_ne_service_id", helpers.Args{Input: "gen_err_ne_service_id", WantErr: true, Duration: 1 * time.Hour}),
+	g.Entry("gen_leaf_in_service_id", helpers.Args{Input: "gen_leaf_in_service_id", Duration: 1 * time.Hour}),
+	g.Entry("gen_err_not_in_service_id", helpers.Args{Input: "gen_err_not_in_service_id", WantErr: true, Duration: 1 * time.Hour}),
+	g.Entry("gen_leaf_in_state", helpers.Args{Input: "gen_leaf_in_state", Duration: 1 * time.Hour}),
+	g.Entry("gen_err_not_in_state", helpers.Args{Input: "gen_err_not_in_state", WantErr: true, Duration: 1 * time.Hour}),
+	g.Entry("gen_leaf_having_extended_tags", helpers.Args{Input: "gen_leaf_having_extended_tags", Duration: 1 * time.Hour}),
+	g.Entry("gen_leaf_not_having_extended_tags", helpers.Args{Input: "gen_leaf_not_having_extended_tags", Duration: 1 * time.Hour}),
+	g.Entry("gen_leaf_match_db.instance", helpers.Args{Input: "gen_leaf_match_db.instance", Duration: 1 * time.Hour}),
+	g.Entry("gen_err_match_trace_id", helpers.Args{Input: "gen_err_match_trace_id", WantErr: true, Duration: 1 * time.Hour}),
+	g.Entry("gen_tree_depth1_leaf", helpers.Args{Input: "gen_tree_depth1_leaf", Duration: 1 * time.Hour}),
+	g.Entry("gen_tree_depth2_and", helpers.Args{Input: "gen_tree_depth2_and", Duration: 1 * time.Hour}),
+	g.Entry("gen_tree_depth2_or", helpers.Args{Input: "gen_tree_depth2_or", DisOrder: true, Duration: 1 * time.Hour}),
+	g.Entry("gen_tree_depth3_and_or", helpers.Args{Input: "gen_tree_depth3_and_or", DisOrder: true, Duration: 1 * time.Hour}),
+	g.Entry("gen_tree_depth3_or_and", helpers.Args{Input: "gen_tree_depth3_or_and", DisOrder: true, Duration: 1 * time.Hour}),
+	g.Entry("gen_tree_depth5_deep_and", helpers.Args{Input: "gen_tree_depth5_deep_and", DisOrder: true, Duration: 1 * time.Hour}),
+	g.Entry("gen_tree_depth5_deep_or", helpers.Args{Input: "gen_tree_depth5_deep_or", DisOrder: true, Duration: 1 * time.Hour}),
+	g.Entry("gen_tree_depth2_contradict_and", helpers.Args{Input: "gen_tree_depth2_contradict_and", WantEmpty: true, Duration: 1 * time.Hour}),
+	g.Entry("gen_feat_none_filter_none_limit2_proj_explicit_group_single_0", helpers.Args{
+		Input:    "gen_feat_none_filter_none_limit2_proj_explicit_group_single_0",
+		Duration: 1 * time.Hour,
+	}),
+	g.Entry("gen_feat_ts_asc_filter_none_limit5_offset1_proj_all_group_single_1", helpers.Args{
+		Input:           "gen_feat_ts_asc_filter_none_limit5_offset1_proj_all_group_single_1",
+		DisOrder:        true,
+		IgnoreElementID: true,
+		Duration:        1 * time.Hour,
+	}),
+	g.Entry("gen_feat_ts_desc_filter_none_limit2_offset3_proj_all_group_single_2", helpers.Args{
+		Input:           "gen_feat_ts_desc_filter_none_limit2_offset3_proj_all_group_single_2",
+		DisOrder:        true,
+		IgnoreElementID: true,
+		Duration:        1 * time.Hour,
+	}),
+	g.Entry("gen_feat_duration_asc_filter_none_limit2_offset1_proj_explicit_group_single_3", helpers.Args{
+		Input:    "gen_feat_duration_asc_filter_none_limit2_offset1_proj_explicit_group_single_3",
+		Duration: 1 * time.Hour,
+	}),
+	g.Entry("gen_feat_duration_desc_filter_none_limit2_proj_all_group_single_4", helpers.Args{
+		Input:    "gen_feat_duration_desc_filter_none_limit2_proj_all_group_single_4",
+		Duration: 1 * time.Hour,
+	}),
+	g.Entry("gen_feat_ts_asc_filter_none_limit2_proj_explicit_group_single_5", helpers.Args{
+		Input:           "gen_feat_ts_asc_filter_none_limit2_proj_explicit_group_single_5",
+		DisOrder:        true,
+		IgnoreElementID: true,
+		Duration:        1 * time.Hour,
+	}),
+	g.Entry("gen_feat_ts_desc_filter_none_limit2_proj_explicit_group_single_6", helpers.Args{
+		Input:           "gen_feat_ts_desc_filter_none_limit2_proj_explicit_group_single_6",
+		DisOrder:        true,
+		IgnoreElementID: true,
+		Duration:        1 * time.Hour,
+	}),
+	g.Entry("gen_feat_duration_asc_filter_none_limit2_proj_all_group_single_7", helpers.Args{
+		Input:    "gen_feat_duration_asc_filter_none_limit2_proj_all_group_single_7",
+		Duration: 1 * time.Hour,
+	}),
+	g.Entry("gen_feat_none_filter_none_limit2_proj_all_group_single_8", helpers.Args{
+		Input:    "gen_feat_none_filter_none_limit2_proj_all_group_single_8",
+		Duration: 1 * time.Hour,
+	}),
+	g.Entry("gen_feat_none_filter_none_proj_explicit_group_single_9", helpers.Args{
+		Input:    "gen_feat_none_filter_none_proj_explicit_group_single_9",
+		Duration: 1 * time.Hour,
+	}),
+	g.Entry("gen_feat_ts_asc_filter_service_eq_limit2_proj_all_group_single_10", helpers.Args{
+		Input:           "gen_feat_ts_asc_filter_service_eq_limit2_proj_all_group_single_10",
+		DisOrder:        true,
+		IgnoreElementID: true,
+		Duration:        1 * time.Hour,
+	}),
+	g.Entry("gen_feat_ts_desc_filter_state_eq_limit5_offset1_proj_explicit_group_single_11", helpers.Args{
+		Input:           "gen_feat_ts_desc_filter_state_eq_limit5_offset1_proj_explicit_group_single_11",
+		DisOrder:        true,
+		IgnoreElementID: true,
+		Duration:        1 * time.Hour,
+	}),
+	g.Entry("gen_feat_duration_asc_filter_duration_range_limit5_offset3_proj_all_group_single_12", helpers.Args{
+		Input:     "gen_feat_duration_asc_filter_duration_range_limit5_offset3_proj_all_group_single_12",
+		WantEmpty: true,
+		Duration:  1 * time.Hour,
+	}),
+	g.Entry("gen_feat_duration_desc_filter_none_limit2_proj_explicit_group_single_13", helpers.Args{
+		Input:    "gen_feat_duration_desc_filter_none_limit2_proj_explicit_group_single_13",
+		Duration: 1 * time.Hour,
+	}),
+	g.Entry("gen_feat_duration_asc_filter_service_eq_proj_explicit_group_single_14", helpers.Args{
+		Input:    "gen_feat_duration_asc_filter_service_eq_proj_explicit_group_single_14",
+		Duration: 1 * time.Hour,
+	}),
+	g.Entry("gen_feat_duration_desc_filter_duration_range_proj_all_group_multi_15", helpers.Args{
+		Input:           "gen_feat_duration_desc_filter_duration_range_proj_all_group_multi_15",
+		DisOrder:        true,
+		IgnoreElementID: true,
+		Duration:        1 * time.Hour,
+	}),
+	g.Entry("gen_feat_ts_asc_filter_state_eq_proj_all_group_single_16", helpers.Args{
+		Input:           "gen_feat_ts_asc_filter_state_eq_proj_all_group_single_16",
+		DisOrder:        true,
+		IgnoreElementID: true,
+		Duration:        1 * time.Hour,
+	}),
+	// --- end generated entries ---
 }
 
 // RegisterTable registers the stream test table with the given description.
 func RegisterTable(description string) bool {
 	return g.DescribeTable(description, append([]any{func(args helpers.Args) {
-		gm.Eventually(func(innerGm gm.Gomega) {
+		test.EventuallyConsistently(func(innerGm gm.Gomega) {
 			verify(innerGm, args)
 		}, flags.EventuallyTimeout).Should(gm.Succeed())
 	}}, streamEntries...)...)

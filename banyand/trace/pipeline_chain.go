@@ -128,50 +128,21 @@ func (mc *mergeChain) Execute(batch *sdk.TraceBatch, timeout time.Duration) (sdk
 	}
 }
 
-// runChain applies each sampler in order, ANDing the per-link keep mask into the
-// running conjunction. A link that panics, errors, or returns a wrong-length
-// verdict is bypassed (pass-through: the running mask is unchanged).
+// runChain evaluates the chain via the shared sdk.EvaluateChain — the same
+// AND-aggregation + per-link panic/error/length-mismatch fail-open logic the
+// offline sdktest.RunChain harness uses — passing an onBypass observer that
+// reproduces the pre-refactor WARN logs (same fields, same messages) so this
+// change is behavior-preserving.
 func (mc *mergeChain) runChain(batch *sdk.TraceBatch) sdk.Verdict {
-	mask := make([]bool, len(batch.Traces))
-	for i := range mask {
-		mask[i] = true
-	}
-	for _, sampler := range mc.samplers {
-		if sampler == nil {
-			continue
+	onBypass := func(_ int, info sdk.BypassInfo) {
+		if info.Reason == sdk.BypassReasonLengthMismatch {
+			chainLog.Warn().Int("got", info.Got).Int("want", info.Want).
+				Str("group", mc.group).Str("schema", mc.schema).Msg("sampler verdict length mismatch; bypassing (retain)")
+			return
 		}
-		mc.applyLink(sampler, batch, mask)
+		chainLog.Warn().Err(info.Err).Str("group", mc.group).Str("schema", mc.schema).Msg("sampler link failed; bypassing (retain)")
 	}
-	return sdk.Verdict{Keep: mask}
-}
-
-// applyLink calls sampler.Decide under recover and ANDs its keep mask into mask.
-// On panic, error, or length mismatch the link is bypassed (mask unchanged).
-func (mc *mergeChain) applyLink(sampler sdk.Sampler, batch *sdk.TraceBatch, mask []bool) {
-	var (
-		verdict sdk.Verdict
-		decErr  error
-	)
-	func() {
-		defer func() {
-			if r := recover(); r != nil {
-				decErr = fmt.Errorf("plugin panic: %v", r)
-			}
-		}()
-		verdict, decErr = sampler.Decide(batch)
-	}()
-	if decErr != nil {
-		chainLog.Warn().Err(decErr).Str("group", mc.group).Str("schema", mc.schema).Msg("sampler link failed; bypassing (retain)")
-		return
-	}
-	if len(verdict.Keep) != len(batch.Traces) {
-		chainLog.Warn().Int("got", len(verdict.Keep)).Int("want", len(batch.Traces)).
-			Str("group", mc.group).Str("schema", mc.schema).Msg("sampler verdict length mismatch; bypassing (retain)")
-		return
-	}
-	for i := range mask {
-		mask[i] = mask[i] && verdict.Keep[i]
-	}
+	return sdk.EvaluateChain(mc.samplers, batch, onBypass)
 }
 
 // assembleTraceBlock builds a COPY-backed sdk.TraceBlock from a loaded merge

@@ -1,0 +1,20 @@
+{
+  "name": "banyandb",
+  "interface": {
+    "displayName": "BanyanDB"
+  },
+  "plugins": [
+    {
+      "name": "banyandb-bydbql",
+      "source": {
+        "source": "local",
+        "path": "./"
+      },
+      "policy": {
+        "installation": "AVAILABLE",
+        "authentication": "ON_INSTALL"
+      },
+      "category": "Developer Tools"
+    }
+  ]
+}

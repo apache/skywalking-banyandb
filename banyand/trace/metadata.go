@@ -66,27 +66,32 @@ type SchemaService interface {
 
 type schemaRepo struct {
 	resourceSchema.Repository
-	onGroupDelete         func(groupName string)
-	l                     *logger.Logger
-	metadata              metadata.Repo
-	samplerMeter          *samplerMetrics
-	path                  string
-	nodeID                string
-	trustedPluginDir      string
-	role                  databasev1.Role
-	nativePipelineEnabled bool
+	onGroupDelete          func(groupName string)
+	l                      *logger.Logger
+	metadata               metadata.Repo
+	samplerMeter           *samplerMetrics
+	pluginTelemetryFactory observability.Factory
+	path                   string
+	nodeID                 string
+	trustedPluginDir       string
+	finalizeGraceDefault   time.Duration
+	role                   databasev1.Role
+	nativePipelineEnabled  bool
 }
 
 func newSchemaRepo(path string, svc *standalone, nodeLabels map[string]string, nodeID string) schemaRepo {
+	pipelineFactory := svc.omr.With(pipelineScope)
 	sr := schemaRepo{
-		l:                     svc.l,
-		path:                  path,
-		metadata:              svc.metadata,
-		nodeID:                nodeID,
-		role:                  databasev1.Role_ROLE_DATA,
-		nativePipelineEnabled: svc.option.nativePipelineEnabled,
-		trustedPluginDir:      svc.option.trustedPluginDir,
-		samplerMeter:          newSamplerMetrics(svc.omr.With(pipelineScope)),
+		l:                      svc.l,
+		path:                   path,
+		metadata:               svc.metadata,
+		nodeID:                 nodeID,
+		role:                   databasev1.Role_ROLE_DATA,
+		nativePipelineEnabled:  svc.option.nativePipelineEnabled,
+		trustedPluginDir:       svc.option.trustedPluginDir,
+		finalizeGraceDefault:   svc.option.finalizeGraceDefault,
+		samplerMeter:           newSamplerMetrics(pipelineFactory),
+		pluginTelemetryFactory: pipelineFactory,
 		Repository: resourceSchema.NewRepository(
 			svc.metadata,
 			svc.l,
@@ -100,12 +105,14 @@ func newSchemaRepo(path string, svc *standalone, nodeLabels map[string]string, n
 }
 
 func newLiaisonSchemaRepo(path string, svc *liaison, traceDataNodeRegistry grpc.NodeRegistry) schemaRepo {
+	pipelineFactory := svc.omr.With(pipelineScope)
 	sr := schemaRepo{
-		l:            svc.l,
-		path:         path,
-		metadata:     svc.metadata,
-		role:         databasev1.Role_ROLE_LIAISON,
-		samplerMeter: newSamplerMetrics(svc.omr.With(pipelineScope)),
+		l:                      svc.l,
+		path:                   path,
+		metadata:               svc.metadata,
+		role:                   databasev1.Role_ROLE_LIAISON,
+		samplerMeter:           newSamplerMetrics(pipelineFactory),
+		pluginTelemetryFactory: pipelineFactory,
 		Repository: resourceSchema.NewRepository(
 			svc.metadata,
 			svc.l,
@@ -246,6 +253,11 @@ func (sr *schemaRepo) OnDelete(metadata schema.Metadata) {
 		})
 		if sr.role == databasev1.Role_ROLE_DATA && sr.nativePipelineEnabled {
 			removeSamplersForGroup(g.Metadata.Name)
+			teardownGroupTelemetry(g.Metadata.Name)
+			setMergeGraceForGroup(g.Metadata.Name, 0)
+			setMergeEventForGroup(g.Metadata.Name, false)
+			setFinalizeGraceForGroup(g.Metadata.Name, 0)
+			setFinalizeConfigForGroup(g.Metadata.Name, nil)
 			sr.samplerMeter.setActiveCount(g.Metadata.Name, 0)
 			sr.samplerMeter.incRemoveTotal(g.Metadata.Name)
 		}
@@ -291,6 +303,14 @@ func mergeEventEnabled(cfg *commonv1.TracePipelineConfig) bool {
 	return slices.Contains(events, commonv1.PipelineEvent_PIPELINE_EVENT_MERGE)
 }
 
+// finalizeEventEnabled reports whether cfg applies to the scheduled finalization
+// pass. Unlike MERGE, an empty enabled_events list does NOT default finalize on:
+// finalization is an extra background procedure and must be opted into explicitly
+// (empty list keeps only the backward-compatible MERGE default).
+func finalizeEventEnabled(cfg *commonv1.TracePipelineConfig) bool {
+	return slices.Contains(cfg.GetEnabledEvents(), commonv1.PipelineEvent_PIPELINE_EVENT_FINALIZE)
+}
+
 // samplerLoadFailReason maps a plugin load error to a small, stable set of reason
 // codes for the sampler_load_failed metric label, keeping label cardinality bounded
 // (the full error is logged separately). Unrecognized errors fall back to "load_error".
@@ -327,36 +347,96 @@ func samplerLoadFailReason(err error) string {
 // merge_grace. If any plugin fails to load, the previous good set is kept intact
 // (fail-open) and an ERROR log is emitted.
 func (sr *schemaRepo) reconcilePipeline(group string, cfg *commonv1.TracePipelineConfig) {
-	// A nil/disabled config, or one that does not enable the merge event, clears the
-	// group's samplers (retain all). enabled_events is honored here so merge filtering
-	// can be disabled without removing the config.
-	if cfg == nil || !cfg.GetEnabled() || !mergeEventEnabled(cfg) {
+	// A nil/disabled config, or one that enables NEITHER the merge nor the finalize
+	// event, clears the group's samplers (retain all). The sampler set is shared by
+	// both events (DD11: finalize reuses the group's registered samplers), so it is
+	// cleared only when both are off. enabled_events is honored here so filtering can
+	// be disabled without removing the config.
+	if cfg == nil || !cfg.GetEnabled() || (!mergeEventEnabled(cfg) && !finalizeEventEnabled(cfg)) {
 		hadSamplers := len(lookupSamplers(group)) > 0
 		removeSamplersForGroup(group)
+		teardownGroupTelemetry(group)
 		setMergeGraceForGroup(group, 0)
+		setMergeEventForGroup(group, false)
+		setFinalizeGraceForGroup(group, 0)
+		setFinalizeConfigForGroup(group, nil)
 		sr.samplerMeter.setActiveCount(group, 0)
 		if hadSamplers {
 			sr.samplerMeter.incRemoveTotal(group)
 		}
 		return
 	}
+	// Idempotent skip: if the desired identity list (name+configHash in order) equals
+	// the currently registered one, this is a redundant watch-replay re-apply. Return
+	// early with no reload, no UseHost, no teardown, no swap, and no metrics churn.
+	// This is defense-in-depth for the same-group re-reconcile race on top of the
+	// once-only-UseHost invariant enforced inside loadSamplerPlugin.
+	desired := make([]nameHash, 0, len(cfg.GetPlugins()))
+	for _, p := range cfg.GetPlugins() {
+		sp := p.GetSampler()
+		if sp == nil {
+			continue
+		}
+		desired = append(desired, nameHash{
+			name:       p.GetName(),
+			configHash: computeConfigHash(sp),
+			path:       sp.GetPath(),
+			symbol:     sp.GetSymbol(),
+			abiVersion: sp.GetAbiVersion(),
+		})
+	}
+	current := currentSamplerIdentity(group)
+	if len(desired) == len(current) {
+		identical := true
+		for idx := range desired {
+			if desired[idx] != current[idx] {
+				identical = false
+				break
+			}
+		}
+		if identical {
+			return
+		}
+	}
+	// Config actually changed: tear down the old adapters' series before rebuilding
+	// them for the new instances.
+	teardownGroupTelemetry(group)
 	// Distinguish register (no previous set) from update (previous set exists).
-	isUpdate := len(lookupSamplers(group)) > 0
+	isUpdate := len(current) > 0
 	var newSet []namedSampler
 	for _, p := range cfg.GetPlugins() {
 		sp := p.GetSampler()
 		if sp == nil {
 			continue
 		}
+		pluginName := p.GetName()
+		bindHost := func(s sdk.Sampler) {
+			ha, ok := s.(sdk.HostAware)
+			if !ok {
+				return
+			}
+			tel := newPluginTelemetry(sr.pluginTelemetryFactory, logger.GetLogger("trace"), sr.samplerMeter, group, pluginName)
+			func() {
+				defer func() {
+					if r := recover(); r != nil {
+						sr.samplerMeter.incTelemetryPanic(group, pluginName)
+						sr.l.Warn().Str("group", group).Str("plugin", pluginName).Interface("panic", r).
+							Msg("plugin UseHost panicked; telemetry disabled for this plugin")
+					}
+				}()
+				ha.UseHost(tel)
+			}()
+			registerGroupTelemetry(group, tel)
+		}
 		var sampler sdk.Sampler
 		var loadErr error
 		func() {
 			defer func() {
 				if rec := recover(); rec != nil {
-					loadErr = fmt.Errorf("panic loading plugin %q: %v", p.GetName(), rec)
+					loadErr = fmt.Errorf("panic loading plugin %q: %v", pluginName, rec)
 				}
 			}()
-			sampler, loadErr = loadSamplerPlugin(sp, sr.trustedPluginDir)
+			sampler, loadErr = loadSamplerPlugin(sp, sr.trustedPluginDir, group, bindHost)
 		}()
 		if loadErr != nil {
 			sr.samplerMeter.incLoadFailed(group, p.GetName(), samplerLoadFailReason(loadErr))
@@ -376,6 +456,9 @@ func (sr *schemaRepo) reconcilePipeline(group string, cfg *commonv1.TracePipelin
 			name:       p.GetName(),
 			configHash: computeConfigHash(sp),
 			sampler:    sampler,
+			path:       sp.GetPath(),
+			symbol:     sp.GetSymbol(),
+			abiVersion: sp.GetAbiVersion(),
 		})
 	}
 	replaceSamplersForGroup(group, newSet)
@@ -384,6 +467,23 @@ func (sr *schemaRepo) reconcilePipeline(group string, cfg *commonv1.TracePipelin
 		graceNs = gd.AsDuration().Nanoseconds()
 	}
 	setMergeGraceForGroup(group, graceNs)
+	setMergeEventForGroup(group, mergeEventEnabled(cfg))
+	// Store finalize_grace + threshold config ONLY when the FINALIZE event is enabled;
+	// a finalize config entry is what marks a group for the background finalize scanner
+	// (a merge-only group must not be scanned). The proto carries no threshold-override
+	// fields in v1, so the config registry holds defaults (filled by lookupFinalizeConfig).
+	// finalize_grace falls back to option.finalizeGraceDefault at lookup time when unset.
+	if finalizeEventEnabled(cfg) {
+		var finalizeGraceNs int64
+		if fg := cfg.GetFinalizeGrace(); fg != nil {
+			finalizeGraceNs = fg.AsDuration().Nanoseconds()
+		}
+		setFinalizeGraceForGroup(group, finalizeGraceNs)
+		setFinalizeConfigForGroup(group, &finalizeConfig{})
+	} else {
+		setFinalizeGraceForGroup(group, 0)
+		setFinalizeConfigForGroup(group, nil)
+	}
 	sr.samplerMeter.setActiveCount(group, len(newSet))
 	if isUpdate {
 		sr.samplerMeter.incUpdateTotal(group, "success")
@@ -717,65 +817,29 @@ func (s *supplier) OpenDB(groupSchema *commonv1.Group) (resourceSchema.DB, error
 	if ro == nil {
 		return nil, fmt.Errorf("no resource opts in group %s", name)
 	}
-	shardNum := ro.ShardNum
-	ttl := ro.Ttl
-	segInterval := ro.SegmentInterval
-	// Non-zero default so the idle-segment reclaimer ticker actually starts
-	// (storage/rotation.go gates it on >=1s). Staged Close paths override below.
-	segmentIdleTimeout := time.Hour
-	disableRetention := false
-	disableRotation := false
-	foundMatched := false
-	if len(ro.Stages) > 0 && len(s.nodeLabels) > 0 {
-		var ttlNum uint32
-		for i, st := range ro.Stages {
-			if st.Ttl.Unit != ro.Ttl.Unit {
-				return nil, fmt.Errorf("ttl unit %s is not consistent with stage %s", ro.Ttl.Unit, st.Ttl.Unit)
-			}
-			selector, err := pub.ParseLabelSelector(st.NodeSelector)
-			if err != nil {
-				return nil, errors.WithMessagef(err, "failed to parse node selector %s", st.NodeSelector)
-			}
-			ttlNum += st.Ttl.Num
-			if !selector.Matches(s.nodeLabels) {
-				continue
-			}
-			foundMatched = true
-			ttl.Num += ttlNum
-			shardNum = st.ShardNum
-			segInterval = st.SegmentInterval
-			if st.Close {
-				segmentIdleTimeout = 5 * time.Minute
-			}
-			disableRetention = i+1 < len(ro.Stages)
-			disableRotation = true
-			break
-		}
-		if !foundMatched {
-			disableRetention = true
-			disableRotation = true
-		}
+	res, err := pub.ResolveStage(s.l, name, ro, s.nodeLabels)
+	if err != nil {
+		return nil, err
 	}
 	// isHot marks the Hot stage: a group with no staging at all, a node with no
 	// labels (so staging cannot apply), or a node that matched no stage selector.
-	isHot := len(ro.Stages) == 0 || len(s.nodeLabels) == 0 || !foundMatched
 	opt := s.option
-	opt.isHot = isHot
+	opt.isHot = !res.Matched
 	group := groupSchema.Metadata.Name
 	opts := storage.TSDBOpts[*tsTable, option]{
-		ShardNum:                       shardNum,
+		ShardNum:                       res.ResourceOpts.ShardNum,
 		Location:                       path.Join(s.path, group),
 		TSTableCreator:                 newTSTable,
 		TableMetrics:                   s.newMetrics(p),
-		SegmentInterval:                storage.MustToIntervalRule(segInterval),
-		TTL:                            storage.MustToIntervalRule(ttl),
+		SegmentInterval:                storage.MustToIntervalRule(res.ResourceOpts.SegmentInterval),
+		TTL:                            storage.MustToIntervalRule(res.ResourceOpts.Ttl),
 		Option:                         opt,
 		SeriesIndexFlushTimeoutSeconds: s.option.flushTimeout.Nanoseconds() / int64(time.Second),
 		SeriesIndexCacheMaxBytes:       int(s.option.seriesCacheMaxSize),
 		StorageMetricsFactory:          s.omr.With(storageScope.ConstLabels(meter.ToLabelPairs(common.DBLabelNames(), p.DBLabelValues()))),
-		SegmentIdleTimeout:             segmentIdleTimeout,
-		DisableRetention:               disableRetention,
-		DisableRotation:                disableRotation,
+		SegmentIdleTimeout:             res.SegmentIdleTimeout,
+		DisableRetention:               res.DisableRetention,
+		DisableRotation:                res.DisableRotation,
 		MemoryLimit:                    s.pm.GetLimit(),
 	}
 	return storage.OpenTSDB(
@@ -784,6 +848,12 @@ func (s *supplier) OpenDB(groupSchema *commonv1.Group) (resourceSchema.DB, error
 		}),
 		opts, nil, group,
 	)
+}
+
+// ResolveResourceOpts returns the stage-resolved ResourceOpts so a group UpdateOptions
+// applies the matched stage's interval/ttl/shardNum instead of the group default.
+func (s *supplier) ResolveResourceOpts(groupSchema *commonv1.Group) *commonv1.ResourceOpts {
+	return pub.ResolveResourceOptsForUpdate(s.l, groupSchema, s.nodeLabels)
 }
 
 // queueSupplier is the supplier for liaison service.
@@ -831,6 +901,12 @@ func (qs *queueSupplier) ResourceSchema(md *commonv1.Metadata) (resourceSchema.R
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 	return qs.metadata.TraceRegistry().GetTrace(ctx, md)
+}
+
+// ResolveResourceOpts returns the group opts unchanged: the liaison write queue has no
+// lifecycle stages to resolve.
+func (qs *queueSupplier) ResolveResourceOpts(groupSchema *commonv1.Group) *commonv1.ResourceOpts {
+	return groupSchema.GetResourceOpts()
 }
 
 func (qs *queueSupplier) OpenDB(groupSchema *commonv1.Group) (resourceSchema.DB, error) {

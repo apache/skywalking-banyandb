@@ -210,16 +210,8 @@ func loadDataWithSpec(stream streamv1.StreamService_WriteClient, md *commonv1.Me
 func verifyQLWithRequest(innerGm gm.Gomega, args helpers.Args, yamlQuery *streamv1.QueryRequest, conn *grpclib.ClientConn) {
 	qlContent, err := qlFS.ReadFile("input/" + args.Input + ".ql")
 	innerGm.Expect(err).NotTo(gm.HaveOccurred())
-	var qlQueryStr string
-	for _, line := range strings.Split(string(qlContent), "\n") {
-		trimmed := strings.TrimSpace(line)
-		if trimmed != "" && !strings.HasPrefix(trimmed, "#") {
-			if qlQueryStr != "" {
-				qlQueryStr += " "
-			}
-			qlQueryStr += trimmed
-		}
-	}
+	qlQueryStr, qlParams, err := helpers.ExtractQL(string(qlContent))
+	innerGm.Expect(err).NotTo(gm.HaveOccurred())
 
 	// Auto-inject stages clause if args.Stages is not empty
 	if len(args.Stages) > 0 {
@@ -248,6 +240,7 @@ func verifyQLWithRequest(innerGm gm.Gomega, args helpers.Args, yamlQuery *stream
 	// parse QL to QueryRequest
 	query, errStrs := bydbql.ParseQuery(qlQueryStr)
 	innerGm.Expect(errStrs).To(gm.BeNil())
+	innerGm.Expect(bydbql.BindParams(query, qlParams)).To(gm.Succeed())
 	transformer := bydbql.NewTransformer(mockRepo)
 	transformCtx, transformCancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer transformCancel()
@@ -274,7 +267,8 @@ func verifyQLWithRequest(innerGm gm.Gomega, args helpers.Args, yamlQuery *stream
 	qlCtx, qlCancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer qlCancel()
 	bydbqlResp, err := client.Query(qlCtx, &bydbqlv1.QueryRequest{
-		Query: qlQueryStr,
+		Query:  qlQueryStr,
+		Params: qlParams,
 	})
 	if args.WantErr {
 		innerGm.Expect(err).To(gm.HaveOccurred())
@@ -413,6 +407,51 @@ func loadDataWithElementIDMap(stream streamv1.StreamService_WriteClient, metadat
 		})
 		gm.Expect(errInner).ShouldNot(gm.HaveOccurred())
 	}
+}
+
+// SeedAll seeds stream data for the full integration test suite using baseTime as the reference time and interval as the write interval.
+func SeedAll(conn *grpclib.ClientConn, baseTime time.Time, interval time.Duration) {
+	Write(conn, "sw", baseTime, interval)
+	// Seed stream data in a fully expired segment, well past the "default"
+	// group's 3-day TTL. It must never surface in query results: it backs the
+	// "excludes data expired beyond TTL" case, which fails without the retention
+	// filter that drops fully expired segments.
+	WriteToGroup(conn, "sw", "default", "sw", baseTime.AddDate(0, 0, -6), interval)
+	Write(conn, "duplicated", baseTime, 0)
+	WriteDeduplicationTest(conn, "deduplication_test", baseTime, time.Millisecond)
+	WriteToGroup(conn, "sw", "updated", "sw_updated", baseTime.Add(time.Minute), interval)
+	WriteMixed(conn, baseTime.Add(2*time.Minute), interval,
+		WriteSpec{
+			Metadata: &commonv1.Metadata{Name: "sw", Group: "default-spec"},
+			DataFile: "sw_schema_order.json",
+		},
+		WriteSpec{
+			Spec: []*streamv1.TagFamilySpec{
+				{
+					Name:     "data",
+					TagNames: []string{"data_binary"},
+				},
+				{
+					Name:     "searchable",
+					TagNames: []string{"trace_id", "state", "service_id", "service_instance_id", "endpoint_id", "duration", "start_time", "http.method", "status_code", "span_id"},
+				},
+			},
+			DataFile: "sw_spec_order.json",
+		},
+		WriteSpec{
+			Metadata: &commonv1.Metadata{Name: "sw", Group: "default-spec2"},
+			Spec: []*streamv1.TagFamilySpec{
+				{
+					Name:     "searchable",
+					TagNames: []string{"span_id", "status_code", "http.method", "duration", "state", "endpoint_id", "service_instance_id", "start_time", "service_id", "trace_id"},
+				},
+				{
+					Name:     "data",
+					TagNames: []string{"data_binary"},
+				},
+			},
+			DataFile: "sw_spec_order2.json",
+		})
 }
 
 // WriteDeduplicationTest writes data with element IDs specified in the data file for deduplication tests.

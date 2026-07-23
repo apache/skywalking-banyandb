@@ -355,7 +355,7 @@ func (sr *schemaRepo) OnDelete(metadata schema.Metadata) {
 	case schema.KindTopNAggregation:
 		if sr.pipeline != nil {
 			topNAggregation := metadata.Spec.(*databasev1.TopNAggregation)
-			sr.stopSteamingManager(topNAggregation.SourceMeasure)
+			sr.removeTopNAggregation(topNAggregation.SourceMeasure, topNAggregation)
 		}
 	default:
 	}
@@ -524,6 +524,7 @@ func (sr *schemaRepo) collectShardInfo(table any, shardID uint32) *databasev1.Sh
 		PartCount:         int64(partCount),
 		InvertedIndexInfo: &databasev1.InvertedIndexInfo{},
 		SidxInfo:          &databasev1.SIDXInfo{},
+		FilePartCount:     int64(filePartCount),
 	}
 }
 
@@ -728,60 +729,25 @@ func (s *supplier) OpenDB(groupSchema *commonv1.Group) (resourceSchema.DB, error
 	if ro == nil {
 		return nil, fmt.Errorf("no resource opts in group %s", name)
 	}
-	shardNum := ro.ShardNum
-	ttl := ro.Ttl
-	segInterval := ro.SegmentInterval
-	// Non-zero default so the idle-segment reclaimer ticker actually starts
-	// (storage/rotation.go gates it on >=1s). Staged Close paths override below.
-	segmentIdleTimeout := time.Hour
-	disableRetention := false
-	disableRotation := false
-	if len(ro.Stages) > 0 && len(s.nodeLabels) > 0 {
-		var ttlNum uint32
-		foundMatched := false
-		for i, st := range ro.Stages {
-			if st.Ttl.Unit != ro.Ttl.Unit {
-				return nil, fmt.Errorf("ttl unit %s is not consistent with stage %s", ro.Ttl.Unit, st.Ttl.Unit)
-			}
-			selector, err := pub.ParseLabelSelector(st.NodeSelector)
-			if err != nil {
-				return nil, errors.WithMessagef(err, "failed to parse node selector %s", st.NodeSelector)
-			}
-			ttlNum += st.Ttl.Num
-			if !selector.Matches(s.nodeLabels) {
-				continue
-			}
-			foundMatched = true
-			ttl.Num += ttlNum
-			shardNum = st.ShardNum
-			segInterval = st.SegmentInterval
-			if st.Close {
-				segmentIdleTimeout = 5 * time.Minute
-			}
-			disableRetention = i+1 < len(ro.Stages)
-			disableRotation = true
-			break
-		}
-		if !foundMatched {
-			disableRetention = true
-			disableRotation = true
-		}
+	res, err := pub.ResolveStage(s.l, name, ro, s.nodeLabels)
+	if err != nil {
+		return nil, err
 	}
 	group := groupSchema.Metadata.Name
 	opts := storage.TSDBOpts[*tsTable, option]{
-		ShardNum:                       shardNum,
+		ShardNum:                       res.ResourceOpts.ShardNum,
 		Location:                       path.Join(s.path, group),
 		TSTableCreator:                 newTSTable,
 		TableMetrics:                   metrics,
-		SegmentInterval:                storage.MustToIntervalRule(segInterval),
-		TTL:                            storage.MustToIntervalRule(ttl),
+		SegmentInterval:                storage.MustToIntervalRule(res.ResourceOpts.SegmentInterval),
+		TTL:                            storage.MustToIntervalRule(res.ResourceOpts.Ttl),
 		Option:                         s.option,
 		SeriesIndexFlushTimeoutSeconds: s.option.flushTimeout.Nanoseconds() / int64(time.Second),
 		SeriesIndexCacheMaxBytes:       int(s.option.seriesCacheMaxSize),
 		StorageMetricsFactory:          factory,
-		SegmentIdleTimeout:             segmentIdleTimeout,
-		DisableRetention:               disableRetention,
-		DisableRotation:                disableRotation,
+		SegmentIdleTimeout:             res.SegmentIdleTimeout,
+		DisableRetention:               res.DisableRetention,
+		DisableRotation:                res.DisableRotation,
 		MemoryLimit:                    s.pm.GetLimit(),
 	}
 	return storage.OpenTSDB(
@@ -789,6 +755,14 @@ func (s *supplier) OpenDB(groupSchema *commonv1.Group) (resourceSchema.DB, error
 			return p
 		}),
 		opts, s.c, group)
+}
+
+// ResolveResourceOpts returns the stage-resolved ResourceOpts for this node so that a
+// group UpdateOptions applies the matched stage's interval/ttl/shardNum instead of the
+// group default. On resolution error it keeps the group default rather than failing the
+// update.
+func (s *supplier) ResolveResourceOpts(groupSchema *commonv1.Group) *commonv1.ResourceOpts {
+	return pub.ResolveResourceOptsForUpdate(s.l, groupSchema, s.nodeLabels)
 }
 
 type queueSupplier struct {
@@ -831,6 +805,12 @@ func (s *queueSupplier) ResourceSchema(md *commonv1.Metadata) (resourceSchema.Re
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 	return s.metadata.MeasureRegistry().GetMeasure(ctx, md)
+}
+
+// ResolveResourceOpts returns the group opts unchanged: the liaison write queue has no
+// lifecycle stages to resolve.
+func (s *queueSupplier) ResolveResourceOpts(groupSchema *commonv1.Group) *commonv1.ResourceOpts {
+	return groupSchema.GetResourceOpts()
 }
 
 func (s *queueSupplier) OpenDB(groupSchema *commonv1.Group) (resourceSchema.DB, error) {

@@ -29,6 +29,7 @@ import (
 	commonv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/common/v1"
 	databasev1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/database/v1"
 	"github.com/apache/skywalking-banyandb/pkg/grpchelper"
+	"github.com/apache/skywalking-banyandb/pkg/test"
 	"github.com/apache/skywalking-banyandb/pkg/test/flags"
 	"github.com/apache/skywalking-banyandb/pkg/test/helpers"
 	casesmeasuredata "github.com/apache/skywalking-banyandb/test/cases/measure/data"
@@ -116,7 +117,7 @@ func verifyDataContentAfterNodeFailure(conn *grpc.ClientConn, baseTime time.Time
 	// 1. Read entity_replicated.ql and entity_replicated.yaml
 	// 2. Execute the query
 	// 3. Verify results match expected data
-	gm.Eventually(func(innerGm gm.Gomega) {
+	test.EventuallyConsistently(func(innerGm gm.Gomega) {
 		casesmeasuredata.VerifyFn(innerGm, sharedContext, args)
 	}, flags.EventuallyTimeout).Should(gm.Succeed(),
 		"Should be able to query and verify data content after node failure")

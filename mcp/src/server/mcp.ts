@@ -23,7 +23,14 @@ import { BanyanDBClient, ResourceMetadata } from '../client/index.js';
 import { MAX_TOOL_RESPONSE_LENGTH } from '../config.js';
 import { loadQueryContext } from '../query/context.js';
 import { generateBydbQL } from '../query/llm-prompt.js';
-import { normalizeQueryHints, validateListGroupsArgs, validateQueryHints } from '../query/validation.js';
+import type { BydbQLParseValidationResult } from '../query/parse-validator.js';
+import { validateBydbQLSyntax } from '../query/parse-validator.js';
+import {
+  normalizeQueryHints,
+  toTagValueParams,
+  validateListGroupsArgs,
+  validateQueryHints,
+} from '../query/validation.js';
 
 export function truncateText(text: string, maxLength: number): string {
   if (text.length <= maxLength) {
@@ -78,7 +85,29 @@ function buildListToolsResponse() {
           properties: {
             BydbQL: {
               type: 'string',
-              description: 'BydbQL query to execute against BanyanDB.',
+              description:
+                'BydbQL query to execute against BanyanDB. May contain `?` placeholders bound by the params array.',
+            },
+            params: {
+              type: 'array',
+              description:
+                'Positional parameters bound to `?` placeholders in the query, in order of appearance. ' +
+                'Always pass untrusted or user-provided values here instead of concatenating them into the query string.',
+              items: {
+                type: 'object',
+                properties: {
+                  type: {
+                    type: 'string',
+                    description: 'Parameter type',
+                    enum: ['str', 'int', 'str_array', 'int_array', 'null'],
+                  },
+                  value: {
+                    description:
+                      'Parameter value: a string for "str", an integer for "int", an array for "str_array"/"int_array"; omit for "null".',
+                  },
+                },
+                required: ['type'],
+              },
             },
             resource_type: {
               type: 'string',
@@ -124,6 +153,21 @@ function buildListToolsResponse() {
             },
           },
           required: ['description'],
+        },
+      },
+      {
+        name: 'validate_bydbql',
+        description:
+          'Validate a BydbQL query with read-only safety checks and parse-only syntax validation. This does not execute the query or verify live BanyanDB schema existence.',
+        inputSchema: {
+          type: 'object',
+          properties: {
+            BydbQL: {
+              type: 'string',
+              description: 'BydbQL query to validate.',
+            },
+          },
+          required: ['BydbQL'],
         },
       },
     ],
@@ -183,9 +227,10 @@ async function handleListResourcesBydbql(banyandbClient: BanyanDBClient, args: u
   if (!queryHints.BydbQL) {
     throw new Error('BydbQL is required');
   }
+  const params = queryHints.params ? toTagValueParams(queryHints.params) : undefined;
 
   try {
-    const result = await banyandbClient.query(queryHints.BydbQL);
+    const result = await banyandbClient.query(queryHints.BydbQL, params);
     const debugParts: string[] = [];
 
     if (queryHints.resource_type) debugParts.push(`Resource Type: ${queryHints.resource_type}`);
@@ -255,6 +300,34 @@ async function handleGetGenerateBydbqlPrompt(banyandbClient: BanyanDBClient, arg
   const prompt = generateBydbQL(queryHints.description, queryHints, groups, resourcesByGroup);
 
   return { content: [{ type: 'text', text: prompt }] };
+}
+
+function validationResultText(result: BydbQLParseValidationResult): string {
+  return JSON.stringify(result, null, 2);
+}
+
+async function handleValidateBydbql(args: unknown) {
+  const normalizedHints = normalizeQueryHints(args);
+  if (!normalizedHints.BydbQL) {
+    throw new Error('BydbQL is required');
+  }
+
+  try {
+    const queryHints = validateQueryHints(normalizedHints);
+    if (!queryHints.BydbQL) {
+      throw new Error('BydbQL is required');
+    }
+
+    const result = await validateBydbQLSyntax(queryHints.BydbQL);
+    return { content: [{ type: 'text', text: validationResultText(result) }] };
+  } catch (error) {
+    const result: BydbQLParseValidationResult = {
+      valid: false,
+      message: error instanceof Error ? error.message : String(error),
+      syntaxOnly: true,
+    };
+    return { content: [{ type: 'text', text: validationResultText(result) }] };
+  }
 }
 
 export function createMcpServer(banyandbClient: BanyanDBClient): McpServer {
@@ -332,6 +405,9 @@ export function createMcpServer(banyandbClient: BanyanDBClient): McpServer {
     }
     if (name === 'get_generate_bydbql_prompt') {
       return handleGetGenerateBydbqlPrompt(banyandbClient, args);
+    }
+    if (name === 'validate_bydbql') {
+      return handleValidateBydbql(args);
     }
 
     throw new Error(`Unknown tool: ${name}`);

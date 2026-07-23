@@ -24,6 +24,7 @@ import (
 	g "github.com/onsi/ginkgo/v2"
 	gm "github.com/onsi/gomega"
 
+	"github.com/apache/skywalking-banyandb/pkg/test"
 	"github.com/apache/skywalking-banyandb/pkg/test/flags"
 	"github.com/apache/skywalking-banyandb/pkg/test/helpers"
 	trace_test_data "github.com/apache/skywalking-banyandb/test/cases/trace/data"
@@ -50,6 +51,8 @@ var traceEntries = []any{
 	g.Entry("order by duration", helpers.Args{Input: "order_duration_desc", Duration: 1 * time.Hour}),
 	g.Entry("duration range 10-1000 order by timestamp",
 		helpers.Args{Input: "duration_range_order_timestamp", Duration: 1 * time.Hour}),
+	g.Entry("duration range with bound parameters",
+		helpers.Args{Input: "params_bind", Want: "duration_range_order_timestamp", Duration: 1 * time.Hour}),
 	g.Entry("duration range and ipv4 filter order by timestamp",
 		helpers.Args{Input: "duration_range_and_ipv4_order_timestamp", Duration: 1 * time.Hour}),
 	g.Entry("filter by service id", helpers.Args{Input: "eq_service_order_timestamp_desc", Duration: 1 * time.Hour}),
@@ -118,7 +121,7 @@ var traceEntries = []any{
 // RegisterTable registers the trace test table with the given description.
 func RegisterTable(description string) bool {
 	return g.DescribeTable(description, append([]any{func(args helpers.Args) {
-		gm.Eventually(func(innerGm gm.Gomega) {
+		test.EventuallyConsistently(func(innerGm gm.Gomega) {
 			verify(innerGm, args)
 		}, flags.EventuallyTimeout).Should(gm.Succeed())
 	}}, traceEntries...)...)

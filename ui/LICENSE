@@ -29,7 +29,7 @@ Apache-2.0 licenses
 ========================================================================
 
     detect-libc 2.1.2 Apache-2.0
-    echarts 5.6.0 Apache-2.0
+    echarts 6.1.0 Apache-2.0
 
 ========================================================================
 BSD-2-Clause licenses
@@ -43,7 +43,7 @@ BSD-3-Clause licenses
 
     normalize-wheel-es 1.2.0 BSD-3-Clause
     source-map-js 1.2.1 BSD-3-Clause
-    zrender 5.6.1 BSD-3-Clause
+    zrender 6.1.0 BSD-3-Clause
 
 ========================================================================
 ISC licenses
@@ -52,7 +52,7 @@ ISC licenses
     graceful-fs 4.2.11 ISC
     inherits 2.0.4 ISC
     picocolors 1.1.1 ISC
-    semver 7.8.4 ISC
+    semver 7.8.5 ISC
     yaml 2.9.0 ISC
 
 ========================================================================
@@ -74,21 +74,21 @@ MIT licenses
     @parcel/watcher-linux-x64-musl 2.5.6 MIT
     @popperjs/core 2.11.8 MIT
     @tanstack/match-sorter-utils 8.19.4 MIT
-    @tanstack/query-core 5.101.0 MIT
-    @tanstack/vue-query 5.101.0 MIT
+    @tanstack/query-core 5.101.2 MIT
+    @tanstack/vue-query 5.101.2 MIT
     @types/lodash 4.17.24 MIT
     @types/lodash-es 4.17.12 MIT
     @types/web-bluetooth 0.0.21 MIT
-    @vue/compiler-core 3.5.38 MIT
-    @vue/compiler-dom 3.5.38 MIT
-    @vue/compiler-sfc 3.5.38 MIT
-    @vue/compiler-ssr 3.5.38 MIT
+    @vue/compiler-core 3.5.39 MIT
+    @vue/compiler-dom 3.5.39 MIT
+    @vue/compiler-sfc 3.5.39 MIT
+    @vue/compiler-ssr 3.5.39 MIT
     @vue/devtools-api 6.6.4 MIT
-    @vue/reactivity 3.5.38 MIT
-    @vue/runtime-core 3.5.38 MIT
-    @vue/runtime-dom 3.5.38 MIT
-    @vue/server-renderer 3.5.38 MIT
-    @vue/shared 3.5.38 MIT
+    @vue/reactivity 3.5.39 MIT
+    @vue/runtime-core 3.5.39 MIT
+    @vue/runtime-dom 3.5.39 MIT
+    @vue/server-renderer 3.5.39 MIT
+    @vue/shared 3.5.39 MIT
     @vueuse/core 14.3.0 MIT
     @vueuse/metadata 14.3.0 MIT
     @vueuse/shared 14.3.0 MIT
@@ -101,11 +101,11 @@ MIT licenses
     element-plus 2.14.2 MIT
     estree-walker 2.0.2 MIT
     immediate 3.0.6 MIT
-    immutable 5.1.6 MIT
+    immutable 5.1.9 MIT
     is-extglob 2.1.1 MIT
     is-glob 4.0.3 MIT
     isarray 1.0.0 MIT
-    js-yaml 4.2.0 MIT
+    js-yaml 4.3.0 MIT
     jsonfile 6.2.1 MIT
     lie 3.3.0 MIT
     lodash 4.18.1 MIT
@@ -114,11 +114,11 @@ MIT licenses
     magic-string 0.30.21 MIT
     memoize-one 6.0.0 MIT
     mitt 3.0.1 MIT
-    nanoid 3.3.12 MIT
+    nanoid 3.3.15 MIT
     node-addon-api 7.1.1 MIT
-    picomatch 4.0.4 MIT
+    picomatch 4.0.5 MIT
     pinia 2.3.1 MIT
-    postcss 8.5.15 MIT
+    postcss 8.5.16 MIT
     process-nextick-args 2.0.1 MIT
     readable-stream 2.3.8 MIT
     readdirp 5.0.0 MIT
@@ -129,8 +129,8 @@ MIT licenses
     string_decoder 1.1.1 MIT
     universalify 2.0.1 MIT
     util-deprecate 1.0.2 MIT
-    vue 3.5.38 MIT
-    vue-component-type-helpers 3.3.5 MIT
+    vue 3.5.39 MIT
+    vue-component-type-helpers 3.3.6 MIT
     vue-demi 0.14.10 MIT
     vue-router 4.6.4 MIT
 

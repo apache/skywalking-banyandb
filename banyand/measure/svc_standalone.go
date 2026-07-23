@@ -180,6 +180,9 @@ func (s *standalone) FlagSet() *run.FlagSet {
 	flagS.DurationVar(&s.option.memWaitTimeout, "measure-lifecycle-receive-mem-wait-timeout", 5*time.Minute,
 		"max time the migration receiver waits for memory to recover before introducing an external segment")
 	s.option.mergePolicy = newDefaultMergePolicy()
+	flagS.IntVar(&s.option.mergePolicy.maxParts, "measure-max-merge-parts", s.option.mergePolicy.maxParts, "the maximum number of parts to merge at once")
+	flagS.Float64Var(&s.option.mergePolicy.minMergeMultiplier, "measure-min-merge-multiplier", s.option.mergePolicy.minMergeMultiplier,
+		"the minimum write-amplification multiplier required before a set of parts is merged")
 	flagS.VarP(&s.option.mergePolicy.maxFanOutSize, "measure-max-fan-out-size", "", "the upper bound of a single file size after merge of measure")
 	s.option.seriesCacheMaxSize = run.Bytes(32 << 20)
 	flagS.VarP(&s.option.seriesCacheMaxSize, "measure-series-cache-max-size", "", "the max size of series cache in each group")

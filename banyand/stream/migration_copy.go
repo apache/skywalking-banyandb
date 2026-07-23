@@ -590,6 +590,24 @@ func releaseStreamSlowCopyArena(a *streamSlowCopyArena) {
 	streamSlowCopyArenaPool.Put(a)
 }
 
+// releaseArenaElements returns elements to the pool WITHOUT releasing its
+// tagValues into the tagValue pool. The slow-copy path fills elements with
+// tagValues owned by a per-call streamSlowCopyArena; releasing them via the
+// normal releaseElements would put arena-backed *tagValue pointers into the
+// global tagValuePool, where they alias memory the arena still owns and reuses —
+// corrupting later writes. Clearing tagFamilies drops the arena pointers so none
+// linger in the pooled elements.
+func releaseArenaElements(e *elements) {
+	e.seriesIDs = e.seriesIDs[:0]
+	e.timestamps = e.timestamps[:0]
+	e.elementIDs = e.elementIDs[:0]
+	for i := range e.tagFamilies {
+		e.tagFamilies[i] = nil
+	}
+	e.tagFamilies = e.tagFamilies[:0]
+	elementsPool.Put(e)
+}
+
 // appendStreamBlockRowToBuckets routes one row to the correct per-aligned-segment bucket.
 func appendStreamBlockRowToBuckets(
 	ir storage.IntervalRule,
@@ -701,7 +719,7 @@ func slowCopyOneStreamPart(in streamProcessPartInput, srcPartID uint64) (streamP
 	defer releaseLive()
 	defer func() {
 		for _, el := range buckets {
-			releaseElements(el)
+			releaseArenaElements(el)
 		}
 	}()
 
@@ -749,7 +767,7 @@ func slowCopyOneStreamPart(in streamProcessPartInput, srcPartID uint64) (streamP
 			bm := &bms[j]
 			bm.tagProjection = in.tagProjection
 			b := generateBlock()
-			b.mustReadFrom(in.decoder, p, *bm)
+			b.mustReadFrom(in.decoder, p, *bm, nil)
 			liveBlocks = append(liveBlocks, b)
 
 			for k := uint64(0); k < bm.count; k++ {
@@ -806,7 +824,7 @@ func runStreamFlushWorker(flushCh <-chan streamFlushJob, fileSystem fs.FileSyste
 }
 
 func directCopyStreamFlushBucket(el *elements, fileSystem fs.FileSystem, partPath string) (sz int64, err error) {
-	defer releaseElements(el)
+	defer releaseArenaElements(el)
 	if mkErr := os.MkdirAll(filepath.Dir(partPath), storage.DirPerm); mkErr != nil {
 		return 0, mkErr
 	}
