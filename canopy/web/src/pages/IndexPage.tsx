@@ -203,7 +203,7 @@ function RuleTab({
           {pageItems.map((r) => {
             const subjects = subjectsFor(r.metadata.name);
             return (
-              <div key={r.metadata.name} className={'idx-rule-row' + (glow === r.metadata.name ? ' is-focus' : '')}>
+              <div key={r.metadata.name} data-testid="idx-rule-row" className={'idx-rule-row' + (glow === r.metadata.name ? ' is-focus' : '')}>
                 <span className="idx-name-cell">
                   <span className="idx-ico"><IconIndex size={14} /></span>
                   <span className="idx-name mono">{r.metadata.name}</span>
@@ -328,6 +328,7 @@ function BindingTab({
           {scopes.map((s) => (
             <button key={s.id}
               className={'idx-filter-btn' + (scope === s.id ? ' is-on' : '')}
+              aria-pressed={scope === s.id}
               onClick={() => setScope(s.id)}>
               {s.id === 'attention' && s.n > 0 && <span className="idx-filter-warn" />}
               {s.label}<span className="idx-filter-n">{s.n}</span>
@@ -397,7 +398,7 @@ function BindingTab({
             const subjName = b.subject.name;
             const subjExists = subjectNames.has(subjName);
             return (
-              <div key={b.metadata.name} className={'idx-bind-row' + (status === 'orphan' || status === 'expired' ? ' is-attention' : '')}>
+              <div key={b.metadata.name} data-testid="idx-bind-row" className={'idx-bind-row' + (status === 'orphan' || status === 'expired' ? ' is-attention' : '')}>
                 <span className="idx-name-cell">
                   <span className="idx-ico"><IconLink size={14} /></span>
                   <span className="idx-name mono">{b.metadata.name}</span>
@@ -564,14 +565,16 @@ export function IndexPage({
         <p className="page-meta">IndexRules and IndexRuleBindings for group {groupName}</p>
       </header>
 
-      <div className="idx-tabs">
+      <div className="idx-tabs" role="tablist" aria-label="Index views">
         <button
           className={'idx-tab' + (tab === 'rule' ? ' is-active' : '')}
+          role="tab" aria-selected={tab === 'rule'}
           onClick={() => setTab('rule')}>
           <TypeIcon size={15} /> Rule <span className="idx-tab-n">{rules.length}</span>
         </button>
         <button
           className={'idx-tab' + (tab === 'binding' ? ' is-active' : '')}
+          role="tab" aria-selected={tab === 'binding'}
           onClick={() => setTab('binding')}>
           <IconLink size={15} /> Binding <span className="idx-tab-n">{bindings.length}</span>
         </button>

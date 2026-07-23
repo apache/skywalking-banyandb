@@ -1,0 +1,12 @@
+{
+  "description": "Manifest for the query/ fixtures set. The four JSON files in this directory are HAND-AUTHORED to match the current BanyanDB monorepo wire shape (see implement-m4-note.md decision #24 — live capture requires the M0 seed harness, which is out of this session's scope). Wire shape is pinned per banyandbVersion; when BanyanDB upstream evolves, re-run a live capture (planned M5 helper, see `npm run -w web capture:query-fixtures` after the harness lands) and diff against these committed files; a CI guard would warn/fail on shape drift.",
+  "capturedAt": "2026-06-29T12:00:00Z",
+  "banyandbVersion": "monorepo-current",
+  "authorship": "hand-authored (NOT live-captured)",
+  "fixtures": [
+    "measure-query-response.json",
+    "stream-query-response.json",
+    "trace-query-response.json",
+    "topn-data-response.json"
+  ]
+}

@@ -1,0 +1,164 @@
+{
+  "description": "Hand-authored measure query response matching the BanyanDB monorepo's current wire shape (api/proto/banyandb/measure/v1/query.proto). Wire shape: measure.v1.QueryResponse { data_points: [DataPoint] }; each DataPoint carries { timestamp, tag_families: [{tags: [{key, value}]}], fields: [{name, value: FieldValue}] }. The result-view flattens this into { timestamp, host_id, region, MEAN(cpu): number } for rendering. See implement-m4-note.md decision #24.",
+  "capturedAt": "2026-06-29T14:00:00Z",
+  "banyandbVersion": "monorepo-current",
+  "wireShape": "measure.v1.QueryResponse",
+  "data_points": [
+    {
+      "timestamp": "2026-06-29T11:30:00Z",
+      "tag_families": [
+        {
+          "name": "host",
+          "tags": [
+            { "key": "host_id", "value": "h1" },
+            { "key": "region", "value": "us" }
+          ]
+        }
+      ],
+      "fields": [
+        { "name": "cpu", "value": { "float": 0.42 } }
+      ]
+    },
+    {
+      "timestamp": "2026-06-29T11:30:00Z",
+      "tag_families": [
+        { "tags": [{ "key": "host_id", "value": "h2" }, { "key": "region", "value": "us" }] }
+      ],
+      "fields": [{ "name": "cpu", "value": { "float": 0.51 } }]
+    },
+    {
+      "timestamp": "2026-06-29T11:30:00Z",
+      "tag_families": [
+        { "tags": [{ "key": "host_id", "value": "h3" }, { "key": "region", "value": "eu" }] }
+      ],
+      "fields": [{ "name": "cpu", "value": { "float": 0.38 } }]
+    },
+    {
+      "timestamp": "2026-06-29T11:30:00Z",
+      "tag_families": [
+        { "tags": [{ "key": "host_id", "value": "h4" }, { "key": "region", "value": "eu" }] }
+      ],
+      "fields": [{ "name": "cpu", "value": { "float": 0.47 } }]
+    },
+    {
+      "timestamp": "2026-06-29T11:31:00Z",
+      "tag_families": [
+        { "tags": [{ "key": "host_id", "value": "h1" }, { "key": "region", "value": "us" }] }
+      ],
+      "fields": [{ "name": "cpu", "value": { "float": 0.46 } }]
+    },
+    {
+      "timestamp": "2026-06-29T11:31:00Z",
+      "tag_families": [
+        { "tags": [{ "key": "host_id", "value": "h2" }, { "key": "region", "value": "us" }] }
+      ],
+      "fields": [{ "name": "cpu", "value": { "float": 0.55 } }]
+    },
+    {
+      "timestamp": "2026-06-29T11:31:00Z",
+      "tag_families": [
+        { "tags": [{ "key": "host_id", "value": "h3" }, { "key": "region", "value": "eu" }] }
+      ],
+      "fields": [{ "name": "cpu", "value": { "float": 0.41 } }]
+    },
+    {
+      "timestamp": "2026-06-29T11:31:00Z",
+      "tag_families": [
+        { "tags": [{ "key": "host_id", "value": "h4" }, { "key": "region", "value": "eu" }] }
+      ],
+      "fields": [{ "name": "cpu", "value": { "float": 0.49 } }]
+    },
+    {
+      "timestamp": "2026-06-29T11:32:00Z",
+      "tag_families": [
+        { "tags": [{ "key": "host_id", "value": "h1" }, { "key": "region", "value": "us" }] }
+      ],
+      "fields": [{ "name": "cpu", "value": { "float": 0.50 } }]
+    },
+    {
+      "timestamp": "2026-06-29T11:32:00Z",
+      "tag_families": [
+        { "tags": [{ "key": "host_id", "value": "h2" }, { "key": "region", "value": "us" }] }
+      ],
+      "fields": [{ "name": "cpu", "value": { "float": 0.60 } }]
+    },
+    {
+      "timestamp": "2026-06-29T11:32:00Z",
+      "tag_families": [
+        { "tags": [{ "key": "host_id", "value": "h3" }, { "key": "region", "value": "eu" }] }
+      ],
+      "fields": [{ "name": "cpu", "value": { "float": 0.45 } }]
+    },
+    {
+      "timestamp": "2026-06-29T11:32:00Z",
+      "tag_families": [
+        { "tags": [{ "key": "host_id", "value": "h4" }, { "key": "region", "value": "eu" }] }
+      ],
+      "fields": [{ "name": "cpu", "value": { "float": 0.52 } }]
+    },
+    {
+      "timestamp": "2026-06-29T11:33:00Z",
+      "tag_families": [
+        { "tags": [{ "key": "host_id", "value": "h1" }, { "key": "region", "value": "us" }] }
+      ],
+      "fields": [{ "name": "cpu", "value": { "float": 0.55 } }]
+    },
+    {
+      "timestamp": "2026-06-29T11:33:00Z",
+      "tag_families": [
+        { "tags": [{ "key": "host_id", "value": "h2" }, { "key": "region", "value": "us" }] }
+      ],
+      "fields": [{ "name": "cpu", "value": { "float": 0.66 } }]
+    },
+    {
+      "timestamp": "2026-06-29T11:33:00Z",
+      "tag_families": [
+        { "tags": [{ "key": "host_id", "value": "h3" }, { "key": "region", "value": "eu" }] }
+      ],
+      "fields": [{ "name": "cpu", "value": { "float": 0.49 } }]
+    },
+    {
+      "timestamp": "2026-06-29T11:33:00Z",
+      "tag_families": [
+        { "tags": [{ "key": "host_id", "value": "h4" }, { "key": "region", "value": "eu" }] }
+      ],
+      "fields": [{ "name": "cpu", "value": { "float": 0.58 } }]
+    },
+    {
+      "timestamp": "2026-06-29T11:34:00Z",
+      "tag_families": [
+        { "tags": [{ "key": "host_id", "value": "h1" }, { "key": "region", "value": "us" }] }
+      ],
+      "fields": [{ "name": "cpu", "value": { "float": 0.61 } }]
+    },
+    {
+      "timestamp": "2026-06-29T11:34:00Z",
+      "tag_families": [
+        { "tags": [{ "key": "host_id", "value": "h2" }, { "key": "region", "value": "us" }] }
+      ],
+      "fields": [{ "name": "cpu", "value": { "float": 0.72 } }]
+    },
+    {
+      "timestamp": "2026-06-29T11:34:00Z",
+      "tag_families": [
+        { "tags": [{ "key": "host_id", "value": "h3" }, { "key": "region", "value": "eu" }] }
+      ],
+      "fields": [{ "name": "cpu", "value": { "float": 0.55 } }]
+    },
+    {
+      "timestamp": "2026-06-29T11:34:00Z",
+      "tag_families": [
+        { "tags": [{ "key": "host_id", "value": "h4" }, { "key": "region", "value": "eu" }] }
+      ],
+      "fields": [{ "name": "cpu", "value": { "float": 0.63 } }]
+    }
+  ],
+  "trace": {
+    "stages": [
+      { "name": "scan", "shards": 4, "durationMs": 12 },
+      { "name": "agg", "function": "MEAN", "durationMs": 4 },
+      { "name": "order", "field": "timestamp", "durationMs": 1 }
+    ],
+    "totalDurationMs": 17
+  }
+}
