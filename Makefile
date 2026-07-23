@@ -59,6 +59,12 @@ generate-trace-test-cases:  ## Regenerate trace query test cases (input/*.ql, in
 capture-trace-test-cases:  ## Capture trace query want fixtures (data/want/*.yml) against a standalone server
 	CAPTURE_TRACE_WANT_FIXTURES=1 go test -count=1 -timeout 5m -run TestCaptureTrace ./test/cases/trace/cmd/capture/
 
+generate-stream-test-cases:  ## Regenerate stream query test cases (input/*.ql, input/*.yaml)
+	go run ./test/cases/stream/cmd/generate generate test/cases/stream/data
+
+capture-stream-test-cases:  ## Capture stream query want fixtures (data/want/*.yaml) against a standalone server
+	CAPTURE_STREAM_WANT_FIXTURES=1 go test ./test/cases/stream/cmd/capture/ -args test/cases/stream/data
+
 build: TARGET=all
 build: default  ## Build all projects
 
@@ -366,7 +372,7 @@ release-push-candidate: ## Push release candidate
 	${PUSH_RELEASE_SCRIPTS}
 	
 .PHONY: all $(PROJECTS) clean build  default nuke
-.PHONY: lint check tidy format pre-push generate-test-cases capture-test-cases generate-trace-test-cases capture-trace-test-cases check-import-boundaries
+.PHONY: lint check tidy format pre-push generate-test-cases capture-test-cases generate-trace-test-cases capture-trace-test-cases generate-stream-test-cases capture-stream-test-cases check-import-boundaries
 .PHONY: test test-race test-coverage test-ci test-docker
 .PHONY: build-trace-pipeline-plugin build-trace-pipeline-telemetry-plugins build-trace-pipeline-server test-trace-pipeline
 .PHONY: license-check license-fix license-dep

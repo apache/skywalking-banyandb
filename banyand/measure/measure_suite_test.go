@@ -97,7 +97,7 @@ func setUp() (*services, func()) {
 	)
 	rootPath, deferFunc, err := test.NewSpace()
 	gomega.Expect(err).NotTo(gomega.HaveOccurred())
-	flags = append(flags, "--measure-root-path="+rootPath, "--measure-max-merge-parts=2")
+	flags = append(flags, "--measure-root-path="+rootPath, "--measure-max-merge-parts=2", "--measure-min-merge-multiplier=1")
 	moduleDeferFunc := test.SetupModules(
 		flags,
 		pipeline,
