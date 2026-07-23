@@ -19,7 +19,6 @@ package frame
 
 import (
 	"encoding/binary"
-	"errors"
 	"fmt"
 	"math"
 
@@ -29,27 +28,18 @@ import (
 	"github.com/apache/skywalking-banyandb/pkg/query/vectorized"
 )
 
-// errNilBatch signals that Encode was handed a nil batch or nil schema.
-var errNilBatch = errors.New("vectorized.measure.frame: nil batch or schema")
-
-// Encode serializes a vec columnar RecordBatch into a non-proto raw frame
-// body suitable for clusterv1.SendResponse.Body on TopicInternalMeasureQuery
-// under the G9f throughout-vec design. The returned bytes begin with Magic
-// (0x00-leading), so a flag-off node's proto.Unmarshal of the body
-// deterministically fails loud (G9f spec Principle 3).
+// Encode serializes a vec columnar RecordBatch into a non-proto raw frame body.
+// The returned bytes begin with the codec's Magic (0x00-leading), so a flag-off
+// node's proto.Unmarshal of the body deterministically fails loud.
 //
-// Only the batch's active rows are encoded: if b.Selection is nil, every row
-// in [0, b.Len) is active; otherwise the rows listed in b.Selection are
-// active in the order they appear. Empty Selection produces a 0-row frame.
+// Only the batch's active rows are encoded: if b.Selection is nil, every row in
+// [0, b.Len) is active; otherwise the rows listed in b.Selection are active in
+// the order they appear. Empty Selection produces a 0-row frame.
 //
-// Supported column types are int64, float64, string, and []byte. Any other
-// type yields ErrUnsupportedColumnType so unsupported shapes surface here at
-// encode time, not as silently-wrong wire bytes at the consumer. Likewise an
-// unknown column role yields ErrUnsupportedColumnRole.
-//
-// The decoder lives in G9f.3; this package intentionally ships encode-only
-// per the G9f spec (golden-byte exit, no decode(encode(x)) round-trip here).
-func Encode(b *vectorized.RecordBatch) ([]byte, error) {
+// A column whose vectorized.ColumnType has no wire mapping yields
+// ErrUnsupportedColumnType; an unmapped role yields ErrUnsupportedColumnRole —
+// both surface here at encode time, not as silently-wrong wire bytes.
+func (c Codec) Encode(b *vectorized.RecordBatch) ([]byte, error) {
 	if b == nil || b.Schema == nil {
 		return nil, errNilBatch
 	}
@@ -58,29 +48,23 @@ func Encode(b *vectorized.RecordBatch) ([]byte, error) {
 	ncols := uint64(len(b.Schema.Columns))
 
 	buf := make([]byte, 0, MinHeaderLen)
-	buf = append(buf, Magic[:]...)
-	buf = append(buf, WireVersion)
+	buf = append(buf, c.Magic[:]...)
+	buf = append(buf, c.WireVersion)
 	buf = binary.AppendUvarint(buf, nrows)
 	buf = binary.AppendUvarint(buf, ncols)
 
 	for colIdx, def := range b.Schema.Columns {
-		role, roleErr := mapColumnRole(def.Role)
+		role, roleErr := c.RoleToWire(def.Role)
 		if roleErr != nil {
 			return nil, fmt.Errorf("column %d (%q): %w", colIdx, def.Name, roleErr)
 		}
-		ctype, typeErr := mapColumnType(def.Type)
+		ctype, typeErr := c.TypeToWire(def.Type)
 		if typeErr != nil {
 			return nil, fmt.Errorf("column %d (%q): %w", colIdx, def.Name, typeErr)
 		}
-		buf = append(buf, byte(role), byte(ctype))
+		buf = append(buf, role, ctype)
 		buf = binary.AppendUvarint(buf, uint64(len(def.Name)))
 		buf = append(buf, def.Name...)
-		// TagFamily survives the wire: the row path's BuildBatchSchema
-		// groups RoleTag columns by family for serializeBatchToProto's
-		// TagFamilyGroups output. Dropping it on the wire collapsed
-		// every projected tag family into the empty-name family on the
-		// receive side, producing `tagFamilies[].name == ""` and
-		// breaking the integration fixture's expected YAML.
 		buf = binary.AppendUvarint(buf, uint64(len(def.TagFamily)))
 		buf = append(buf, def.TagFamily...)
 
@@ -96,8 +80,8 @@ func Encode(b *vectorized.RecordBatch) ([]byte, error) {
 }
 
 // activeRowIndices materializes the active-row index list per the
-// RecordBatch.Selection contract: nil ⇒ [0, Len); empty ⇒ no rows;
-// non-empty ⇒ rows listed in Selection (in their order).
+// RecordBatch.Selection contract: nil ⇒ [0, Len); empty ⇒ no rows; non-empty ⇒
+// rows listed in Selection (in their order).
 func activeRowIndices(b *vectorized.RecordBatch) []int {
 	if b.Selection == nil {
 		idx := make([]int, b.Len)
@@ -113,11 +97,9 @@ func activeRowIndices(b *vectorized.RecordBatch) []int {
 	return idx
 }
 
-// appendValidityBitmap appends the per-active-row null bitmap for col. Bit j
-// is set ⇔ col.IsNull(active[j]) is true (1 = null), matching the project's
-// validityBitmap convention. ⌈N/8⌉ bytes, little-endian bit packing: byte k
-// holds rows k*8 … k*8+7, with bit (j%8) within that byte. No bytes are
-// appended when N=0.
+// appendValidityBitmap appends the per-active-row null bitmap for col. Bit j is
+// set ⇔ col.IsNull(active[j]) is true (1 = null). ⌈N/8⌉ bytes, little-endian
+// bit packing. No bytes are appended when N=0.
 func appendValidityBitmap(buf []byte, col vectorized.Column, active []int) []byte {
 	n := len(active)
 	if n == 0 {
@@ -137,14 +119,11 @@ func appendValidityBitmap(buf []byte, col vectorized.Column, active []int) []byt
 
 // appendColumnData appends the type-specific data section for col over the
 // active rows. Fixed-width types (int64, float64) write N × 8 bytes regardless
-// of nullness — the validity bitmap is the source of truth, so null slots
-// carry the underlying source value but the decoder ignores them.
-// Variable-width types (string, []byte) write uvarint(len) + len bytes per row;
-// null rows write len=0 + 0 bytes (the validity bitmap disambiguates "null"
-// from "empty string"/"empty bytes").
+// of nullness. Variable-width types (string, []byte, proto passthroughs) write
+// uvarint(len) + len bytes per row; null rows write len=0 + 0 bytes.
 // nolint:gocyclo // switch-dispatch over ColumnType variants is intentionally exhaustive; splitting per-case helpers would obscure the wire-format mapping
 func appendColumnData(buf []byte, col vectorized.Column, t vectorized.ColumnType, active []int) ([]byte, error) {
-	switch t { //nolint:exhaustive // Int64Array/StrArray are handled via passthrough at the dispatcher; this function never receives them
+	switch t { //nolint:exhaustive // array column types are handled via passthrough at the dispatcher; this function never receives them
 	case vectorized.ColumnTypeInt64:
 		tc, ok := col.(*vectorized.TypedColumn[int64])
 		if !ok {
@@ -204,14 +183,6 @@ func appendColumnData(buf []byte, col vectorized.Column, t vectorized.ColumnType
 		}
 		return buf, nil
 	case vectorized.ColumnTypeTagValue:
-		// proto-bytes per cell. Carries the TagValue oneof intact so
-		// cross-group queries where the same logical tag has divergent
-		// variants across groups (e.g. entity_id is STRING in sw_metric
-		// vs INT in sw_updated) survive the wire — a typed wire column
-		// couldn't represent a column whose cells span multiple oneof
-		// variants. Null cells write len=0 + 0 bytes; the validity
-		// bitmap disambiguates null from "TagValue with default-zero
-		// proto bytes".
 		tc, ok := col.(*vectorized.TypedColumn[*modelv1.TagValue])
 		if !ok {
 			return nil, fmt.Errorf("%w: declared TagValue passthrough but column is %T", ErrUnsupportedColumnType, col)
@@ -222,7 +193,7 @@ func appendColumnData(buf []byte, col vectorized.Column, t vectorized.ColumnType
 			if !col.IsNull(srcRow) && srcRow >= 0 && srcRow < len(data) && data[srcRow] != nil {
 				marshaled, marshalErr := proto.Marshal(data[srcRow])
 				if marshalErr != nil {
-					return nil, fmt.Errorf("vectorized.measure.frame: TagValue cell marshal: %w", marshalErr)
+					return nil, fmt.Errorf("vectorized.frame: TagValue cell marshal: %w", marshalErr)
 				}
 				raw = marshaled
 			}
@@ -231,7 +202,6 @@ func appendColumnData(buf []byte, col vectorized.Column, t vectorized.ColumnType
 		}
 		return buf, nil
 	case vectorized.ColumnTypeFieldValue:
-		// Same proto-bytes shape as ColumnTypeTagValue, FieldValue oneof.
 		tc, ok := col.(*vectorized.TypedColumn[*modelv1.FieldValue])
 		if !ok {
 			return nil, fmt.Errorf("%w: declared FieldValue passthrough but column is %T", ErrUnsupportedColumnType, col)
@@ -242,7 +212,7 @@ func appendColumnData(buf []byte, col vectorized.Column, t vectorized.ColumnType
 			if !col.IsNull(srcRow) && srcRow >= 0 && srcRow < len(data) && data[srcRow] != nil {
 				marshaled, marshalErr := proto.Marshal(data[srcRow])
 				if marshalErr != nil {
-					return nil, fmt.Errorf("vectorized.measure.frame: FieldValue cell marshal: %w", marshalErr)
+					return nil, fmt.Errorf("vectorized.frame: FieldValue cell marshal: %w", marshalErr)
 				}
 				raw = marshaled
 			}
@@ -252,48 +222,4 @@ func appendColumnData(buf []byte, col vectorized.Column, t vectorized.ColumnType
 		return buf, nil
 	}
 	return nil, fmt.Errorf("%w: %s", ErrUnsupportedColumnType, t.String())
-}
-
-// mapColumnType translates a vectorized.ColumnType to its wire-stable
-// frameColType. Unsupported types yield ErrUnsupportedColumnType so callers
-// surface the bad input loudly at encode time.
-func mapColumnType(t vectorized.ColumnType) (frameColType, error) {
-	switch t { //nolint:exhaustive // unsupported types (Int64Array/StrArray) fall through to the ErrUnsupportedColumnType return below
-	case vectorized.ColumnTypeInt64:
-		return frameColInt64, nil
-	case vectorized.ColumnTypeFloat64:
-		return frameColFloat64, nil
-	case vectorized.ColumnTypeString:
-		return frameColString, nil
-	case vectorized.ColumnTypeBytes:
-		return frameColBytes, nil
-	case vectorized.ColumnTypeTagValue:
-		return frameColTagValueProto, nil
-	case vectorized.ColumnTypeFieldValue:
-		return frameColFieldValueProto, nil
-	}
-	return 0, fmt.Errorf("%w: %s", ErrUnsupportedColumnType, t.String())
-}
-
-// mapColumnRole translates a vectorized.ColumnRole to its wire-stable
-// frameColRole. Unsupported roles yield ErrUnsupportedColumnRole.
-func mapColumnRole(r vectorized.ColumnRole) (frameColRole, error) {
-	switch r {
-	case vectorized.RoleTimestamp:
-		return frameRoleTimestamp, nil
-	case vectorized.RoleVersion:
-		return frameRoleVersion, nil
-	case vectorized.RoleSeriesID:
-		return frameRoleSeriesID, nil
-	case vectorized.RoleShardID:
-		return frameRoleShardID, nil
-	case vectorized.RoleTag:
-		return frameRoleTag, nil
-	case vectorized.RoleField:
-		return frameRoleField, nil
-	case vectorized.RoleElementID, vectorized.RoleOrderKey:
-		// Stream-only roles; the measure frame does not carry them.
-		return 0, fmt.Errorf("%w: %d", ErrUnsupportedColumnRole, r)
-	}
-	return 0, fmt.Errorf("%w: %d", ErrUnsupportedColumnRole, r)
 }

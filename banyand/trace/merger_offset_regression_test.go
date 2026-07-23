@@ -196,7 +196,7 @@ func mergePartsDirect(t *testing.T, fileSystem fs.FileSystem, tmpPath string, ds
 	closeCh := make(chan struct{})
 	defer close(closeCh)
 
-	pm, tf, tt, err := mergeBlocks(closeCh, bw, br, nil)
+	pm, tf, tt, _, err := mergeBlocks(closeCh, bw, br, nil, nil)
 	require.NoError(t, err)
 	require.NotNil(t, pm)
 

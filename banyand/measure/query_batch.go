@@ -334,7 +334,8 @@ func (iqr *indexSortResult) copyToBatch(b *model.MeasureBatch, schema *vectorize
 			fieldIdx++
 			iqr.fillSegFieldCell(col, def, fr)
 		case vectorized.RoleTimestamp, vectorized.RoleVersion,
-			vectorized.RoleSeriesID, vectorized.RoleShardID:
+			vectorized.RoleSeriesID, vectorized.RoleShardID,
+			vectorized.RoleElementID, vectorized.RoleOrderKey:
 			// Metadata handled via the parallel slices above.
 		}
 	}

@@ -140,8 +140,10 @@ func AcquireMeasureBatch(schema *vectorized.BatchSchema, capacity int) *MeasureB
 			case vectorized.RoleField:
 				b.Fields = append(b.Fields, vectorized.AcquireColumn(def.Type, capacity))
 			case vectorized.RoleTimestamp, vectorized.RoleVersion,
-				vectorized.RoleSeriesID, vectorized.RoleShardID:
-				// Metadata roles use the parallel slices on the batch.
+				vectorized.RoleSeriesID, vectorized.RoleShardID,
+				vectorized.RoleElementID, vectorized.RoleOrderKey:
+				// Metadata roles use the parallel slices on the batch. ElementID/OrderKey
+				// are stream-only roles that never appear in a measure schema.
 			}
 		}
 	}
