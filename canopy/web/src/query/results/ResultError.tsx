@@ -41,7 +41,7 @@ function classify(message: string): ErrorKind {
   if (m.includes('empty query')) return 'empty';
   if (m.includes('to must be later than from')) return 'timeRange';
   if (m.includes('401') || m.includes('403') || m.includes('unauthorized') || m.includes('forbidden') || m.includes('unauthenticated')) return 'auth';
-  if (m.includes('fetch') || m.includes('network') || m.includes('failed to fetch') || m.includes('connection') || m.includes('ENOTFOUND')) return 'network';
+  if (m.includes('fetch') || m.includes('network') || m.includes('failed to fetch') || m.includes('connection') || m.includes('enotfound')) return 'network';
   if (m.includes('400') || m.includes('bad request') || m.includes('cannot parse') || m.includes('syntax error') || m.includes('invalid')) return 'query';
   if (m.includes('500') || m.includes('502') || m.includes('503') || m.includes('504') || m.includes('upstream returned')) return 'server';
   return 'unknown';

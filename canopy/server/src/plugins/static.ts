@@ -38,10 +38,10 @@ export async function registerStatic(app: FastifyInstance): Promise<void> {
     // SPA assets must always revalidate. Without these headers the browser
     // caches the index.html + the hash-named bundle, so a `npm run -w web build`
     // that swaps the bundle filename does NOT clear the browser's view of the
-    // page — the cached HTML still points at the old hash. Sending
-    // no-cache on the HTML and a short max-age on the assets keeps the dev
-    // loop tight while still letting the browser avoid refetching on every
-    // request within a session.
+    // page — the cached HTML still points at the old hash. So index.html is
+    // sent `no-store` (never cached; always refetched) and the hash-named
+    // assets `no-cache, must-revalidate` (cached but revalidated each load,
+    // so a swapped bundle is picked up while unchanged assets 304 cheaply).
     cacheControl: false,
     setHeaders: (res, path) => {
       if (path.endsWith('index.html')) {

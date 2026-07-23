@@ -130,6 +130,12 @@ export function TraceDecoderModal({ traceId, onClose, onChange }: Props) {
             onDragOver={handleDragOver}
             onDragLeave={handleDragLeave}
             onClick={() => inputRef.current?.click()}
+            onKeyDown={(e) => {
+              if (e.key === 'Enter' || e.key === ' ') {
+                e.preventDefault();
+                inputRef.current?.click();
+              }
+            }}
             role="button"
             tabIndex={0}
             aria-label="Upload a .proto file"

@@ -314,7 +314,6 @@ license-check: $(LICENSE_EYE) ## Check license header
 
 license-fix: $(LICENSE_EYE) ## Fix license header issues
 	$(LICENSE_EYE) header fix
-	$(LICENSE_EYE) header fix
 
 license-dep: $(LICENSE_EYE)
 license-dep: TARGET=license-dep

@@ -55,12 +55,16 @@ interface TrackedResource {
 export class SeedFactory {
   private readonly createdGroups: string[] = [];
   private readonly createdResources: TrackedResource[] = [];
+  // Per-instance counter so back-to-back calls within the same millisecond
+  // still produce distinct names (Date.now() alone collides in tight async
+  // seed sequences, which would flake the suite).
+  private seq = 0;
 
   constructor(private readonly request: APIRequestContext) {}
 
   // Append a monotonic suffix so names are unique across workers and re-runs.
   uniqueName(prefix: string): string {
-    return `${prefix}-${Date.now()}`;
+    return `${prefix}-${Date.now()}-${this.seq++}`;
   }
 
   // Register an externally-created group (e.g. one created through the UI under
