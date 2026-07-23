@@ -126,7 +126,7 @@ func (m *mergePlan) Close() {
 // Execute implements executor.StreamExecutable.
 func (m *mergePlan) Execute(ctx context.Context) ([]*streamv1.Element, error) {
 	var allErr error
-	var see []sort.Iterator[*comparableElement]
+	perGroup := make([][]*streamv1.Element, 0, len(m.subPlans))
 
 	for _, sp := range m.subPlans {
 		elements, err := sp.(executor.StreamExecutable).Execute(ctx)
@@ -134,18 +134,29 @@ func (m *mergePlan) Execute(ctx context.Context) ([]*streamv1.Element, error) {
 			allErr = multierr.Append(allErr, err)
 			continue
 		}
-
-		iter := newSortableElements(elements, m.sortByTime, m.sortTagSpec)
-		see = append(see, iter)
+		perGroup = append(perGroup, elements)
 	}
 
-	iter := sort.NewItemIter(see, m.desc)
+	return MergeGroupElements(perGroup, m.sortByTime, m.sortTagSpec, m.desc), allErr
+}
+
+// MergeGroupElements k-way merges the per-group ordered element slices into a
+// single ordered slice, using the SAME comparableElement/sortableElements +
+// sort.NewItemIter primitives the row mergePlan.Execute uses. Both the row path
+// and the vec multi-group dispatch call this so cross-group ordering is
+// byte-identical (DRY). The merge is UNCAPPED — the caller applies the outer
+// offset:offset+limit slice.
+func MergeGroupElements(perGroup [][]*streamv1.Element, sortByTime bool, sortTagSpec logical.TagSpec, desc bool) []*streamv1.Element {
+	see := make([]sort.Iterator[*comparableElement], 0, len(perGroup))
+	for _, elements := range perGroup {
+		see = append(see, newSortableElements(elements, sortByTime, sortTagSpec))
+	}
+	iter := sort.NewItemIter(see, desc)
 	var result []*streamv1.Element
 	for iter.Next() {
 		result = append(result, iter.Val().Element)
 	}
-
-	return result, allErr
+	return result
 }
 
 // Children implements logical.Plan.

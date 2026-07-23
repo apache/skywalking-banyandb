@@ -95,11 +95,86 @@ func VecTagFilter(plan logical.Plan) (tagFilter logical.TagFilter, hiddenTags lo
 	if !isLimit {
 		return nil, nil, nil, false
 	}
-	tf, isTagFilter := l.Input.(*tagFilterPlan)
+	return nodeTagFilter(l.Input)
+}
+
+// nodeTagFilter returns the per-node tag filter, hidden-tag set, and schema when
+// plan is a *tagFilterPlan (a criteria group), else ok=false. It operates on a
+// plan NODE directly (not the *limit wrapper), so both the single-group VecTagFilter
+// (via l.Input) and the multi-group dispatch (via each mergePlan subPlan) share the
+// same extraction — the vec egress then applies the SAME per-element
+// tagFilter.Match + hidden-tag strip that the row tagFilterPlan.Execute applies.
+func nodeTagFilter(plan logical.Plan) (tagFilter logical.TagFilter, hiddenTags logical.HiddenTagSet, schema logical.Schema, ok bool) {
+	tf, isTagFilter := plan.(*tagFilterPlan)
 	if !isTagFilter {
 		return nil, nil, nil, false
 	}
 	return tf.tagFilter, tf.hiddenTags, tf.s, true
+}
+
+// VecMergeGroup is one group's resolved vec scan plus its optional per-element
+// tag filter, for the multi-group dispatch. The processor runs Scan.ExecuteVectorized
+// → BuildElementsFromBatches → (if HasFilter) applyStreamTagFilter, yielding that
+// group's ordered []Element; the caller then cross-group merges via MergeGroupElements.
+type VecMergeGroup struct {
+	Scan         executor.StreamVecExecutable
+	TagFilter    logical.TagFilter
+	HiddenTags   logical.HiddenTagSet
+	FilterSchema logical.Schema
+	HasFilter    bool
+}
+
+// VecMerge is the vec-eligible form of a multi-group query (*limit → *mergePlan).
+// It carries each group's resolved vec node plus the EXACT merge params the row
+// mergePlan.Execute uses (SortByTime, SortTagSpec, Desc), so the dispatch merges
+// across groups via the shared MergeGroupElements and slices with Offset/Limit.
+type VecMerge struct {
+	SortTagSpec logical.TagSpec
+	Groups      []VecMergeGroup
+	Offset      uint32
+	Limit       uint32
+	SortByTime  bool
+	Desc        bool
+}
+
+// VecMergeExecutable returns the vec-eligible multi-group form when the plan is
+// *limit → *mergePlan and EVERY subPlan resolves to a vec-eligible *localIndexScan
+// (via scanFromInput, incl. orderTagProjected). If ANY subPlan is not vec-eligible,
+// it returns ok=false so the whole query runs the row path — vec and row are never
+// mixed across groups. The merge params (sortByTime/sortTagSpec/desc) are taken
+// verbatim from the mergePlan so the cross-group order matches the row path exactly.
+func VecMergeExecutable(plan logical.Plan) (*VecMerge, bool) {
+	l, isLimit := plan.(*limit)
+	if !isLimit {
+		return nil, false
+	}
+	mp, isMerge := l.Input.(*mergePlan)
+	if !isMerge {
+		return nil, false
+	}
+	groups := make([]VecMergeGroup, 0, len(mp.subPlans))
+	for _, sp := range mp.subPlans {
+		scan := scanFromInput(sp)
+		if scan == nil || !scan.orderTagProjected() {
+			return nil, false
+		}
+		filter, hidden, filterSchema, hasFilter := nodeTagFilter(sp)
+		groups = append(groups, VecMergeGroup{
+			Scan:         scan,
+			TagFilter:    filter,
+			HiddenTags:   hidden,
+			FilterSchema: filterSchema,
+			HasFilter:    hasFilter,
+		})
+	}
+	return &VecMerge{
+		Groups:      groups,
+		SortByTime:  mp.sortByTime,
+		SortTagSpec: mp.sortTagSpec,
+		Desc:        mp.desc,
+		Offset:      l.offsetNum,
+		Limit:       l.limitNum,
+	}, true
 }
 
 // orderTagProjected reports whether an index-order query's single ordered tag is

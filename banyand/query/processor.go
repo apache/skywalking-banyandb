@@ -202,6 +202,16 @@ func (p *streamQueryProcessor) tryStreamVecDispatch(ctx context.Context, plan lo
 	queryCriteria *streamv1.QueryRequest, traced bool,
 ) (bool, bus.Message) {
 	now := time.Now().UnixNano()
+
+	// Multi-group query (*limit → *mergePlan): run the vec scan+pipeline per group,
+	// then cross-group merge via the SAME primitives the row mergePlan.Execute uses
+	// (MergeGroupElements) and apply the outer offset:offset+limit slice. The
+	// cross-group merge is element-level (proto Elements), so this always takes the
+	// proto egress — the liaison merges proto/frame bodies interchangeably.
+	if merge, ok := logical_stream.VecMergeExecutable(plan); ok {
+		return p.tryVecMergeDispatch(ctx, merge, queryCriteria, now)
+	}
+
 	vecExec := logical_stream.VecExecutable(plan)
 	if vecExec == nil {
 		return false, bus.Message{}
@@ -261,6 +271,44 @@ func (p *streamQueryProcessor) tryStreamVecDispatch(ctx context.Context, plan lo
 		elements = sliceStreamElements(elements, offset, limit)
 	}
 	return true, bus.NewMessage(bus.MessageID(now), &streamv1.QueryResponse{Elements: elements})
+}
+
+// tryVecMergeDispatch runs the vec path for a multi-group query (*limit →
+// *mergePlan). For EACH group it runs the vec scan → BuildElementsFromBatches →
+// (if the group carries criteria) the SAME per-element tagFilter.Match + hidden-tag
+// strip the row tagFilterPlan.Execute applies. It then cross-group merges via the
+// shared MergeGroupElements (the exact comparableElement/sortableElements +
+// sort.NewItemIter path the row mergePlan.Execute uses) and applies the outer
+// offset:offset+limit slice. Emits proto Elements (element-level merge/filter); the
+// liaison merges proto/frame bodies interchangeably.
+func (p *streamQueryProcessor) tryVecMergeDispatch(ctx context.Context, merge *logical_stream.VecMerge,
+	queryCriteria *streamv1.QueryRequest, now int64,
+) (bool, bus.Message) {
+	perGroup := make([][]*streamv1.Element, 0, len(merge.Groups))
+	for _, group := range merge.Groups {
+		batches, _, execErr := group.Scan.ExecuteVectorized(ctx)
+		if execErr != nil {
+			p.log.Error().Err(execErr).RawJSON("req", logger.Proto(queryCriteria)).Msg("fail to execute the vectorized stream group")
+			return true, bus.NewMessage(bus.MessageID(now), common.NewError("execute the vectorized query plan for stream %s: %v", queryCriteria.GetName(), execErr))
+		}
+		elements, buildErr := stream.BuildElementsFromBatches(batches, group.Scan.ProjectionTags())
+		if buildErr != nil {
+			p.log.Error().Err(buildErr).RawJSON("req", logger.Proto(queryCriteria)).Msg("fail to materialize vectorized stream group elements")
+			return true, bus.NewMessage(bus.MessageID(now), common.NewError("materialize vectorized stream elements for stream %s: %v", queryCriteria.GetName(), buildErr))
+		}
+		if group.HasFilter {
+			filtered, filterErr := applyStreamTagFilter(elements, group.TagFilter, group.HiddenTags, group.FilterSchema)
+			if filterErr != nil {
+				p.log.Error().Err(filterErr).RawJSON("req", logger.Proto(queryCriteria)).Msg("fail to apply the vectorized stream group tag filter")
+				return true, bus.NewMessage(bus.MessageID(now), common.NewError("apply the vectorized stream tag filter for stream %s: %v", queryCriteria.GetName(), filterErr))
+			}
+			elements = filtered
+		}
+		perGroup = append(perGroup, elements)
+	}
+	merged := logical_stream.MergeGroupElements(perGroup, merge.SortByTime, merge.SortTagSpec, merge.Desc)
+	merged = sliceStreamElements(merged, merge.Offset, merge.Limit)
+	return true, bus.NewMessage(bus.MessageID(now), &streamv1.QueryResponse{Elements: merged})
 }
 
 // streamVecEmitAsFrame is the data-node emit gate: emit a native columnar frame
