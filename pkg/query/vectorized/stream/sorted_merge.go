@@ -167,7 +167,15 @@ func (s *SortedMerge) capByDistinctElementID() {
 		}
 		return
 	}
-	seen := make(map[int64]struct{}, s.maxRows)
+	// Size the hint by the actual row count, not maxRows: a client "max limit"
+	// query passes maxRows ≈ MaxUint32, and make(map, maxRows) would try to
+	// pre-allocate billions of buckets (multi-GB) and hang. The distinct-ID count
+	// can never exceed len(s.rows).
+	capHint := s.maxRows
+	if capHint > len(s.rows) {
+		capHint = len(s.rows)
+	}
+	seen := make(map[int64]struct{}, capHint)
 	for i := range s.rows {
 		ref := s.rows[i]
 		id := ref.batch.Columns[s.elemIdx].(*vectorized.TypedColumn[int64]).Data()[ref.row]

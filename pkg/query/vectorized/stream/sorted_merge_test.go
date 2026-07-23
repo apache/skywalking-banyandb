@@ -186,6 +186,28 @@ func TestSortedMergeCapCountsDistinctElementIDs(t *testing.T) {
 	require.Equal(t, []uint64{1, 2, 3}, ids)
 }
 
+// TestSortedMergeHugeCapDoesNotOverAllocate is the regression for the "max limit"
+// query (limit ≈ MaxUint32): the cap must not size the distinct-ID map by maxRows,
+// or make(map, ~4e9) allocates multiple GB and hangs the query (observed as a
+// distributed DeadlineExceeded). With a huge cap and few rows, every row is
+// returned in sort order and the call completes immediately.
+func TestSortedMergeHugeCapDoesNotOverAllocate(t *testing.T) {
+	schema := tsSchema()
+	b := buildBatch(schema, []testRow{
+		{ts: 10, elemID: 1},
+		{ts: 20, elemID: 2},
+		{ts: 30, elemID: 3},
+	})
+	src := newStaticBatchSource(schema, b)
+	hugeCap := int(^uint32(0)) // MaxUint32, as a client "max limit" produces
+	pipe, err := BuildStreamMergePipeline(src, schema, false, 0, 1<<20, 8, hugeCap)
+	require.NoError(t, err)
+	defer func() { require.NoError(t, pipe.Close()) }()
+	tss, ids, _ := drainRows(t, pipe)
+	require.Equal(t, []int64{10, 20, 30}, tss, "huge cap must return all rows, not truncate")
+	require.Equal(t, []uint64{1, 2, 3}, ids)
+}
+
 func bytesCompare(a, b []byte) int {
 	switch {
 	case string(a) < string(b):

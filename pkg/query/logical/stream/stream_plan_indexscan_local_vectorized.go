@@ -112,6 +112,10 @@ func (i *localIndexScan) ExecuteVectorized(ctx context.Context) ([]*vectorized.R
 		return nil, nil, ctx.Err()
 	default:
 	}
+	// Reaching ExecuteVectorized means the dispatch chose the vec path for this
+	// query (VecExecutable returned non-nil). Count it so integration tests can
+	// assert the vec path actually fired rather than silently falling back to row.
+	vstream.IncrQueryCount()
 
 	var orderBy *index.OrderBy
 	if i.order != nil {
