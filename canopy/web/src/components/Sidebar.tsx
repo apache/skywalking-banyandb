@@ -27,7 +27,7 @@ import { apiDataSource } from '../data/api.js';
 import {
   IconHome, IconMetadata, IconMeasures, IconStreams, IconTraces,
   IconProperties, IconPipelines, IconQuery, IconChevron, IconCollapse, IconSignOut,
-  IconShield, IconViewer, IconIndex, IconGroup,
+  IconShield, IconViewer, IconIndex, IconGroup, IconTopN,
 } from './icons.js';
 
 /** One property group's row + its lazily-fetched collection list (fetched
@@ -314,6 +314,7 @@ export function Sidebar({ collapsed, onToggleCollapse }: SidebarProps) {
   const [streamsOpen, setStreamsOpen] = useState(false);
   const [tracesOpen, setTracesOpen] = useState(false);
   const [propertiesOpen, setPropertiesOpen] = useState(false);
+  const [pipelinesOpen, setPipelinesOpen] = useState(false);
   // Per-group "Index" sub-row expansion. Empty by default — every Index is
   // folded so the sidebar doesn't grow noisy when there are many groups. The
   // active group's Index is auto-added below; users can fold/unfold manually
@@ -360,6 +361,24 @@ export function Sidebar({ collapsed, onToggleCollapse }: SidebarProps) {
   const streamGroups  = useMemo(() => groups.filter((g) => g.catalog === 'CATALOG_STREAM'),  [groups]);
   const traceGroups   = useMemo(() => groups.filter((g) => g.catalog === 'CATALOG_TRACE'),   [groups]);
   const propertyGroups = useMemo(() => groups.filter((g) => g.catalog === 'CATALOG_PROPERTY'), [groups]);
+  const measureGroupNames = useMemo(() => measureGroups.map((g) => g.name), [measureGroups]);
+
+  // Total TopN aggregation count, across every measure group — drives the
+  // "Pipelines -> TopN (N)" badge. Pipelines is a flat one-level nav (per
+  // docs/pipelines-design.md §3), so this is the only count the sidebar needs
+  // (a second pipeline type would add its own count the same way).
+  const [topNCount, setTopNCount] = useState(0);
+  useEffect(() => {
+    if (measureGroupNames.length === 0) { setTopNCount(0); return; }
+    let cancelled = false;
+    Promise.allSettled(measureGroupNames.map((g) => apiDataSource.listTopNAggregations(g))).then((results) => {
+      if (cancelled) return;
+      let total = 0;
+      for (const r of results) if (r.status === 'fulfilled') total += r.value.length;
+      setTopNCount(total);
+    });
+    return () => { cancelled = true; };
+  }, [measureGroupNames]);
 
   const active = location.pathname;
 
@@ -371,6 +390,7 @@ export function Sidebar({ collapsed, onToggleCollapse }: SidebarProps) {
     if (active.startsWith('/metadata/streams'))  setStreamsOpen(true);
     if (active.startsWith('/metadata/traces'))   setTracesOpen(true);
     if (active.startsWith('/properties/'))       setPropertiesOpen(true);
+    if (active.startsWith('/pipelines/'))         setPipelinesOpen(true);
   }, [active]);
 
   // When the URL lands on a group's Index page, unfold that group's Index
@@ -537,19 +557,50 @@ export function Sidebar({ collapsed, onToggleCollapse }: SidebarProps) {
           collapsed={collapsed}
         />
 
-        {/* Pipelines */}
+        {/* Pipelines — flat one-level nav: Pipelines -> TopN (count). Simpler
+            than Property's group-expanding tree since v1 has exactly one
+            pipeline type (docs/pipelines-design.md §3). */}
         <div className="nav-node">
           <div className="nav-rowline">
             <button
-              className={'nav-row lvl-0' + (active.startsWith('/pipelines') ? ' is-active' : '')}
-              style={{ paddingLeft: 12 }}
-              onClick={() => navigate('/pipelines')}
+              className={'nav-row lvl-0' + (active.startsWith('/pipelines') ? ' has-active' : '')}
+              style={{ paddingLeft: 12, paddingRight: collapsed ? 12 : 32 }}
+              onClick={() => { if (!collapsed) setPipelinesOpen((o) => !o); navigate('/pipelines'); }}
+              aria-expanded={pipelinesOpen}
               title="Pipelines"
             >
               <span className="nav-ico"><IconPipelines /></span>
               <span className="nav-label">Pipelines</span>
             </button>
+            {!collapsed && (
+              <button
+                type="button"
+                className="nav-chev-btn"
+                aria-label={(pipelinesOpen ? 'Collapse' : 'Expand') + ' Pipelines'}
+                aria-expanded={pipelinesOpen}
+                onClick={() => setPipelinesOpen((o) => !o)}
+              >
+                <span className={'nav-chev' + (pipelinesOpen ? ' is-open' : '')}><IconChevron /></span>
+              </button>
+            )}
           </div>
+          {pipelinesOpen && (
+            <div className="nav-sub is-open">
+              <div className="nav-sub-inner">
+                <span className="nav-guide" style={{ left: 21 }} />
+                <button
+                  className={'nav-row lvl-1' + (active.startsWith('/pipelines/topn') ? ' is-active' : '')}
+                  style={{ paddingLeft: 28 }}
+                  onClick={() => navigate('/pipelines/topn')}
+                  title="TopN"
+                >
+                  <span className="nav-ico"><IconTopN size={16} /></span>
+                  <span className="nav-label">TopN</span>
+                  <span className="nav-count">{topNCount}</span>
+                </button>
+              </div>
+            </div>
+          )}
         </div>
 
         {/* Query */}
