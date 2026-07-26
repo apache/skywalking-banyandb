@@ -1,0 +1,120 @@
+// Licensed to Apache Software Foundation (ASF) under one or more contributor
+// license agreements. See the NOTICE file distributed with this work for
+// additional information regarding copyright ownership. The ASF licenses this
+// file to you under the Apache License, Version 2.0 (the "License"); you may
+// not use this file except in compliance with the License. You may obtain a
+// copy of the License at
+//
+// http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS, WITHOUT
+// WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. See the
+// License for the specific language governing permissions and limitations
+// under the License.
+
+package app
+
+import (
+	"strings"
+	"testing"
+
+	tea "github.com/charmbracelet/bubbletea"
+
+	"github.com/apache/skywalking-banyandb/bydbctl/internal/tui/session"
+)
+
+func TestWorkspaceShowsConversationCandidateAndPreviewWithoutTabs(t *testing.T) {
+	model := NewModel(Config{})
+	model.resize(160, 42)
+	querySession := &session.QuerySession{}
+	querySession.AddCandidate(session.BydbqlCandidate{
+		Query: "SELECT error_rate FROM MEASURE service_cpm IN sw_metrics",
+		Validation: session.ValidationReport{
+			Valid: true,
+		},
+		Probe: &session.ProbeSummary{
+			Rows:    1240,
+			Columns: []string{"time", "service", "error_rate"},
+			Preview: [][]string{{"12:01", "checkout", "0.02"}},
+		},
+	})
+	model.querySession = querySession
+	model.syncQuerySession()
+
+	view := model.View()
+	for _, expected := range []string{"Conversation", "Candidate QL v1", "Data Preview", "1/1,240 rows"} {
+		if !strings.Contains(view, expected) {
+			t.Fatalf("expected %q in workspace:\n%s", expected, view)
+		}
+	}
+	for _, unexpected := range []string{"F1 Schema", "F2 Query", "F3 Run"} {
+		if strings.Contains(view, unexpected) {
+			t.Fatalf("did not expect tab label %q in workspace:\n%s", unexpected, view)
+		}
+	}
+}
+
+func TestWorkspaceStacksEvidenceBelowConversationOnNarrowTerminals(t *testing.T) {
+	model := NewModel(Config{})
+	model.resize(80, 42)
+	model.querySession = &session.QuerySession{ExecutionResult: session.ExecutionResult{
+		Rows:    1,
+		Columns: []string{"service"},
+		Preview: [][]string{{"checkout"}},
+		Summary: "query complete",
+	}}
+
+	view := model.View()
+	conversationAt := strings.Index(view, "Conversation")
+	previewAt := strings.Index(view, "Data Preview")
+	if conversationAt < 0 || previewAt < 0 {
+		t.Fatalf("expected conversation and preview in narrow workspace:\n%s", view)
+	}
+	if conversationAt >= previewAt {
+		t.Fatalf("expected the evidence panel after the conversation on narrow terminals:\n%s", view)
+	}
+}
+
+func TestComposerAtSearchPreviewsAndInsertsResourceReference(t *testing.T) {
+	model := NewModel(Config{})
+	model.catalog.setCatalog(session.SchemaCatalog{Entries: []session.CatalogEntry{
+		{Group: "sw_metrics", Type: session.ResourceTypeMeasure, Name: "service_cpm"},
+		{Group: "sw_metrics", Type: session.ResourceTypeMeasure, Name: "service_latency"},
+	}})
+	model.message.SetValue("show @service_cpm")
+	model.updateSchemaSearch()
+
+	if !model.schemaSearchOpen() {
+		t.Fatal("expected @ search to open")
+	}
+	if !strings.Contains(model.View(), "@ search · local catalog") {
+		t.Fatalf("expected local search in workspace:\n%s", model.View())
+	}
+	if _, handled := model.handleKey(tea.KeyMsg{Type: tea.KeyEnter}); !handled {
+		t.Fatal("expected Enter to insert the selected resource")
+	}
+	if model.message.Value() != "show @sw_metrics/service_cpm" {
+		t.Fatalf("unexpected composer reference: %q", model.message.Value())
+	}
+	if model.composerReference == nil || model.composerReference.Name != "service_cpm" {
+		t.Fatalf("expected selected resource reference, got %+v", model.composerReference)
+	}
+}
+
+func TestInvalidCandidateOffersAgentRepair(t *testing.T) {
+	model := NewModel(Config{})
+	querySession := &session.QuerySession{}
+	querySession.AddCandidate(session.BydbqlCandidate{
+		Query: "SELECT FROM",
+		Validation: session.ValidationReport{
+			Message: "syntax error near FROM",
+		},
+	})
+	model.querySession = querySession
+	model.syncQuerySession()
+
+	if !strings.Contains(model.View(), "Ctrl+F ask Agent to repair") {
+		t.Fatalf("expected repair action for invalid candidate:\n%s", model.View())
+	}
+}

@@ -31,9 +31,9 @@ func TestStartOptionsDoNotExposeManualSchemaSlots(t *testing.T) {
 	}
 }
 
-func TestNewModelDefaultsToAskEveryTime(t *testing.T) {
+func TestNewModelDefaultsToAutoProbe(t *testing.T) {
 	model := NewModel(Config{})
-	if model.executionPolicy != approval.PolicyAskEveryTime {
+	if model.executionPolicy != approval.PolicyAutoProbe {
 		t.Fatalf("unexpected default execution policy: %s", model.executionPolicy)
 	}
 }

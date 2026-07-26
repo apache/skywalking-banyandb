@@ -38,7 +38,7 @@ import (
 const (
 	eventBufferSize       = 64
 	maxSchemaDescriptions = agent.DefaultMaxSchemaDescriptions
-	maxProbePreviewRows   = 10
+	maxProbePreviewRows   = 50
 	ToolListGroupsSchemas = "list_groups_schemas"
 	ToolDescribeSchema    = "describe_schema"
 	ToolProposeQueryPlan  = "propose_query_plan"

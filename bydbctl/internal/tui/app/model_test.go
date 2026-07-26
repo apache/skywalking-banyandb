@@ -148,9 +148,6 @@ func TestCatalogConnectionErrorIsVisibleOnQueryTab(t *testing.T) {
 	if !ok {
 		t.Fatalf("unexpected model type: %T", updatedModel)
 	}
-	if typedModel.activeTab != tabQuery {
-		t.Fatalf("expected Query tab to remain active, got %d", typedModel.activeTab)
-	}
 	view := typedModel.View()
 	for _, expected := range []string{"provider codex", "BanyanDB connection failed", "connection refused"} {
 		if !strings.Contains(view, expected) {
@@ -163,7 +160,7 @@ func TestQueryTabUsesConversationFirstLayout(t *testing.T) {
 	model := NewModel(Config{})
 	model.resize(160, 42)
 	view := model.View()
-	for _, expected := range []string{"Conversation", "Message · Ctrl+A to send", "Policy: ask every time", "Time: start"} {
+	for _, expected := range []string{"Conversation", "Message · Enter to send", "Policy: auto probe", "Time "} {
 		if !strings.Contains(view, expected) {
 			t.Fatalf("expected %q in Query tab:\n%s", expected, view)
 		}
@@ -176,7 +173,7 @@ func TestQueryTabUsesConversationFirstLayout(t *testing.T) {
 	if model.message.Height() < 3 {
 		t.Fatalf("expected a compact message composer, got height %d", model.message.Height())
 	}
-	if model.message.Width() < 80 {
+	if model.message.Width() < 70 {
 		t.Fatalf("expected the message composer to use the conversation width, got width %d", model.message.Width())
 	}
 }

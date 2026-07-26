@@ -23,6 +23,7 @@ import (
 
 	"github.com/charmbracelet/lipgloss"
 
+	"github.com/apache/skywalking-banyandb/bydbctl/internal/tui/approval"
 	"github.com/apache/skywalking-banyandb/bydbctl/internal/tui/session"
 	"github.com/apache/skywalking-banyandb/bydbctl/internal/tui/workflow"
 )
@@ -65,48 +66,6 @@ func (m Model) currentPhaseLabel() string {
 	return "phase " + m.querySession.Phase.String()
 }
 
-func (m Model) renderQueryTab(width, height int) string {
-	if width < 100 {
-		return m.renderNarrowQueryTab(width, height)
-	}
-	leftWidth, rightWidth := queryTabWidths(width)
-	chatHeight := m.chatPanelHeight(height)
-	left := lipgloss.JoinVertical(lipgloss.Left,
-		m.renderChat(leftWidth, chatHeight),
-		m.renderMessage(leftWidth),
-		m.renderStatusLine(leftWidth),
-	)
-	right := lipgloss.JoinVertical(lipgloss.Left,
-		m.renderQuery(rightWidth),
-		m.renderCandidateHistory(rightWidth),
-		m.renderApproval(rightWidth),
-	)
-	return lipgloss.JoinHorizontal(lipgloss.Top, left, "  ", right)
-}
-
-func queryTabWidths(width int) (int, int) {
-	if width < 100 {
-		return width, width
-	}
-	leftWidth := clamp(width*58/100, 52, 108)
-	return leftWidth, width - leftWidth - 2
-}
-
-func (m Model) renderNarrowQueryTab(width, height int) string {
-	chatHeight := m.chatPanelHeight(height)
-	left := lipgloss.JoinVertical(lipgloss.Left,
-		m.renderChat(width, chatHeight),
-		m.renderMessage(width),
-		m.renderStatusLine(width),
-	)
-	right := lipgloss.JoinVertical(lipgloss.Left,
-		m.renderQuery(width),
-		m.renderCandidateHistory(width),
-		m.renderApproval(width),
-	)
-	return lipgloss.JoinVertical(lipgloss.Left, left, right)
-}
-
 func (m Model) renderStatusLine(width int) string {
 	status := m.status
 	if m.busy {
@@ -127,38 +86,37 @@ func (m Model) renderStatusLine(width int) string {
 		m.executionPolicy.Label(),
 		reasoning,
 	))
-	startLabelStyle := mutedStyle
-	if m.focus == focusStart {
-		startLabelStyle = titleStyle
+	if m.trustSessionSuggested {
+		statusLine = lipgloss.JoinVertical(lipgloss.Left,
+			statusLine,
+			warnStyle.Render(fmt.Sprintf(
+				"%d clean reads completed · Ctrl+P can enable trust session",
+				trustSessionCleanReadThreshold,
+			)),
+		)
 	}
-	endLabelStyle := mutedStyle
-	if m.focus == focusEnd {
-		endLabelStyle = titleStyle
-	}
-	timeRangeLine := lipgloss.JoinHorizontal(lipgloss.Top,
-		mutedStyle.Render("Time: "),
-		startLabelStyle.Render("start "),
-		m.start.View(),
-		mutedStyle.Render("  →  "),
-		endLabelStyle.Render("end "),
-		m.end.View(),
-	)
-	return panelStyle.Width(width).Render(lipgloss.JoinVertical(lipgloss.Left, statusLine, timeRangeLine))
+	return panelStyle.Width(width).Render(statusLine)
 }
 
 func (m Model) renderMessage(width int) string {
 	return panelStyle.Width(width).Render(lipgloss.JoinVertical(
 		lipgloss.Left,
-		titleStyle.Render("Message · Ctrl+A to send"),
+		titleStyle.Render("Message · Enter to send"),
 		m.message.View(),
-		mutedStyle.Render("Ask a follow-up, refine the QL, or request a query."),
+		mutedStyle.Render("Ask a follow-up, refine the QL, or type @ to pin a schema resource."),
 	))
 }
 
 func (m Model) renderChat(width, panelHeight int) string {
 	rows := []string{
-		titleStyle.Render("Conversation"),
-		mutedStyle.Render("↑↓ messages · pgup/pgdn detail · Tab focus message"),
+		titleStyle.Render("Conversation · activity"),
+		mutedStyle.Render("↑↓ messages · pgup/pgdn detail · Tab composer"),
+	}
+	if m.busy {
+		rows = append(rows, warnStyle.Render("▸ discover → plan → compile → preview · "+m.status))
+	} else if len(m.activityLog) > 0 {
+		lastActivity := m.activityLog[len(m.activityLog)-1]
+		rows = append(rows, mutedStyle.Render("▸ "+truncate(lastActivity.title, width-8)))
 	}
 	entries := chatEntries(m.querySession, m.showReasoning, m.liveResponse, m.queuedMessage)
 	if len(entries) == 0 {
@@ -321,76 +279,6 @@ func chatRoleLabel(role session.ChatRole) string {
 	}
 }
 
-func (m Model) renderWorkflow(width int) string {
-	return m.renderStatusLine(width)
-}
-
-func (m Model) renderEvents(width int) string {
-	lines := []string{titleStyle.Render("Events")}
-	if len(m.events) == 0 {
-		lines = append(lines, mutedStyle.Render("No events yet"))
-	} else {
-		for _, event := range m.events {
-			lines = append(lines, mutedStyle.Render(truncate(event, width-6)))
-		}
-	}
-	if logHint := formatLogHint(m.logPathDisplay); logHint != "" {
-		lines = append(lines, mutedStyle.Render(truncate(logHint, width-6)))
-	}
-	return panelStyle.Width(width).Render(lipgloss.JoinVertical(lipgloss.Left, lines...))
-}
-
-func (m Model) renderQuery(width int) string {
-	return panelStyle.Width(width).Render(lipgloss.JoinVertical(lipgloss.Left, titleStyle.Render("BYDBQL Candidate"), m.query.View()))
-}
-
-func (m Model) renderCandidateHistory(width int) string {
-	report := session.ValidationReport{Message: "not checked"}
-	candidateCount := 0
-	selectedCandidate := -1
-	diff := "no previous version"
-	probeSummary := "not probed"
-	candidateSuperseded := false
-	if m.querySession != nil {
-		report = m.querySession.Validation
-		candidateCount = len(m.querySession.Candidates)
-		selectedCandidate = m.querySession.SelectedCandidateIndex()
-		candidateSuperseded = m.querySession.CandidateSuperseded
-		diff = candidateDiff(m.querySession)
-		if currentCandidate := m.querySession.CurrentCandidate(); currentCandidate != nil && currentCandidate.Probe != nil {
-			probe := currentCandidate.Probe
-			if probe.Error != "" {
-				probeSummary = probe.Error
-			} else {
-				probeSummary = fmt.Sprintf("%d rows, %d columns", probe.Rows, len(probe.Columns))
-			}
-		}
-	}
-	previewSharing := "automatic (up to 50 rows)"
-	status := badStyle.Render(report.Status())
-	if report.Valid {
-		status = okStyle.Render(report.Status())
-	} else if candidateSuperseded && candidateCount == 0 {
-		status = mutedStyle.Render("not checked")
-	}
-	rows := []string{
-		titleStyle.Render("Versions / validation"),
-		fmt.Sprintf("Validation: %s", status),
-		fmt.Sprintf("Query type: %s", fallback(report.QueryType, "-")),
-		fmt.Sprintf("Version: %d/%d (Ctrl+←/→)", selectedCandidate+1, candidateCount),
-	}
-	if candidateSuperseded {
-		rows = append(rows, warnStyle.Render("Candidate superseded by a new topic — waiting for agent draft"))
-	}
-	rows = append(rows,
-		"Message: "+truncate(fallback(report.Message, "-"), width-12),
-		"Probe: "+truncate(probeSummary, width-9),
-		"Diff: "+truncate(diff, width-9),
-		"Preview sharing: "+previewSharing,
-	)
-	return panelStyle.Width(width).Render(lipgloss.JoinVertical(lipgloss.Left, rows...))
-}
-
 func (m Model) renderApproval(width int) string {
 	if m.pendingApproval == nil {
 		return panelStyle.Width(width).Render(mutedStyle.Render("Read-only BYDBQL runs automatically. Mutating statements still require approval."))
@@ -405,50 +293,27 @@ func (m Model) renderApproval(width int) string {
 		"Time range: " + fallback(request.TimeRange, "-"),
 		"Limit: " + fallback(request.Limit, "-"),
 		"Timeout: " + request.Timeout.String(),
-		fmt.Sprintf("Preview rows: %d", request.PreviewRows),
+		fmt.Sprintf("Preview cap: %d rows", request.PreviewRows),
+		approvalScanEstimate(request),
 		"Source: " + string(request.Source),
 		warnStyle.Render("y execute once · n reject · e copy to editor and revise"),
 	}
 	return panelStyle.Width(width).Render(lipgloss.JoinVertical(lipgloss.Left, rows...))
 }
 
-func candidateDiff(querySession *session.QuerySession) string {
-	if querySession == nil {
-		return "no version"
+func approvalScanEstimate(request approval.Request) string {
+	if request.Limit == "-" || request.TimeRange == "" {
+		return warnStyle.Render("Estimated scan: unbounded from query text; approval is required")
 	}
-	selectedIndex := querySession.SelectedCandidateIndex()
-	if selectedIndex <= 0 || selectedIndex >= len(querySession.Candidates) {
-		return "no previous version"
-	}
-	previousQuery := querySession.Candidates[selectedIndex-1].Query
-	currentQuery := querySession.Candidates[selectedIndex].Query
-	if previousQuery == currentQuery {
-		return "unchanged"
-	}
-	return fmt.Sprintf("- %s + %s", singleLine(previousQuery), singleLine(currentQuery))
-}
-
-func (m Model) renderExecution(width int) string {
-	rows := []string{titleStyle.Render("Execution Preview")}
-	if m.querySession == nil || m.querySession.ExecutionResult.Summary == "" {
-		rows = append(rows, mutedStyle.Render("not executed"))
-		return panelStyle.Width(width).Render(lipgloss.JoinVertical(lipgloss.Left, rows...))
-	}
-	executionResult := m.querySession.ExecutionResult
-	rows = append(rows,
-		"Command: "+truncate(fallback(executionResult.Command, "-"), width-12),
-		"Path: "+truncate(fallback(executionResult.Path, "-"), width-9),
-		fmt.Sprintf("Rows: %d", executionResult.Rows),
-		"Summary: "+truncate(executionResult.Summary, width-12),
-	)
-	if executionResult.Response != "" {
-		rows = append(rows, "Response: "+truncate(singleLine(executionResult.Response), width-12))
-	}
-	return panelStyle.Width(width).Render(lipgloss.JoinVertical(lipgloss.Left, rows...))
+	return "Estimated scan: bounded by the displayed time range and LIMIT " + request.Limit
 }
 
 func (m Model) renderFooter(width int) string {
-	return m.footerForTab(width)
+	commands := []string{
+		"@ schema", "Ctrl+A send", "Ctrl+V validate", "Ctrl+E run", "Ctrl+F repair", "Ctrl+P policy", "Ctrl+R reasoning",
+		"Ctrl+←/→ versions", "Ctrl+O export", "Ctrl+J full response", "Tab focus", "Esc stop/quit",
+	}
+	return lipgloss.NewStyle().Width(width).Foreground(mutedColor).Render(strings.Join(commands, "  "))
 }
 
 func fallback(value, fallbackValue string) string {

@@ -21,6 +21,7 @@ package app
 import (
 	"context"
 	"fmt"
+	"regexp"
 	"strings"
 	"time"
 
@@ -39,8 +40,9 @@ import (
 )
 
 const (
-	defaultWidth  = 120
-	defaultHeight = 36
+	defaultWidth            = 120
+	defaultHeight           = 36
+	queryValidationDebounce = 350 * time.Millisecond
 )
 
 const (
@@ -50,6 +52,7 @@ const (
 	focusMessage
 	focusStart
 	focusEnd
+	focusLimit
 	focusQuery
 	focusActivity
 	focusExecution
@@ -77,11 +80,15 @@ type Model struct {
 	querySession          *session.QuerySession
 	catalog               catalogBrowser
 	selectedSchema        session.SchemaSnapshot
+	schemaCache           map[string]session.SchemaSnapshot
+	schemaLoads           map[string]struct{}
 	catalogFilter         textinput.Model
 	message               textarea.Model
 	query                 textarea.Model
 	start                 textinput.Model
 	end                   textinput.Model
+	limit                 textinput.Model
+	composerReference     *session.CatalogEntry
 	provider              string
 	status                string
 	events                []string
@@ -90,7 +97,6 @@ type Model struct {
 	width                 int
 	height                int
 	catalogHeight         int
-	activeTab             appTab
 	activityLog           []activityEntry
 	activityScroll        int
 	activityCursor        int
@@ -113,6 +119,13 @@ type Model struct {
 	queuedMessage         string
 	liveResponse          string
 	queryRevision         int
+	schemaSearchCursor    int
+	schemaSearchDismissed bool
+	schemaSearchValue     string
+	evidenceMode          evidenceMode
+	turnStartedAt         time.Time
+	cleanReadExecutions   int
+	trustSessionSuggested bool
 }
 
 // NewModel creates a TUI model with the configured agent gateway.
@@ -135,6 +148,7 @@ func NewModel(config Config) Model {
 	query.SetHeight(10)
 	start := newTextInput(config.Start, "time start, for example -30m")
 	end := newTextInput(config.End, "optional time end")
+	limit := newTextInput("", "limit")
 	sessionLog := config.SessionLog
 	if sessionLog == nil {
 		createdLog, createErr := applog.New(config.LogDir)
@@ -151,25 +165,28 @@ func NewModel(config Config) Model {
 		}),
 		executor:        config.Executor,
 		catalog:         newCatalogBrowser(),
+		schemaCache:     make(map[string]session.SchemaSnapshot),
+		schemaLoads:     make(map[string]struct{}),
 		catalogFilter:   catalogFilter,
 		message:         message,
 		query:           query,
 		start:           start,
 		end:             end,
+		limit:           limit,
 		provider:        provider,
 		status:          "ready",
 		sessionLog:      sessionLog,
 		logPathDisplay:  applog.DisplayPath(sessionLogPath(sessionLog)),
-		executionPolicy: approval.PolicyAskEveryTime,
+		executionPolicy: approval.PolicyAutoProbe,
 		width:           defaultWidth,
 		height:          defaultHeight,
-		activeTab:       tabQuery,
 		focus:           focusMessage,
+		showReasoning:   true,
 	}
 	if sessionLog != nil {
 		sessionLog.Write("session", fmt.Sprintf("provider=%s addr=workflow", provider))
 	}
-	model.addEvent("ready: browse Schema Browser, message agent with Ctrl+A")
+	model.addEvent("ready: use @ to browse the local schema catalog, then Ctrl+A to ask the agent")
 	model.resize(defaultWidth, defaultHeight)
 	model.syncFocus()
 	model.syncExecutionPolicy()
@@ -196,6 +213,7 @@ func (m Model) Update(teaMsg tea.Msg) (tea.Model, tea.Cmd) {
 	case agentStartedMsg:
 		if typedMsg.startErr != nil {
 			m.busy = false
+			m.turnStartedAt = time.Time{}
 			m.turnCancel = nil
 			m.status = typedMsg.startErr.Error()
 			m.addUIEvent(summarizeError("agent", typedMsg.startErr.Error()))
@@ -208,6 +226,8 @@ func (m Model) Update(teaMsg tea.Msg) (tea.Model, tea.Cmd) {
 			m.queuedMessage = ""
 		}
 		m.message.SetValue("")
+		m.composerReference = nil
+		m.evidenceMode = evidenceModeData
 		m.liveResponse = ""
 		return m, m.nextAgentUpdateCmd(typedMsg.updates)
 	case agentTurnUpdateMsg:
@@ -228,6 +248,7 @@ func (m Model) Update(teaMsg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, m.nextAgentUpdateCmd(typedMsg.updates)
 		}
 		m.busy = false
+		m.turnStartedAt = time.Time{}
 		m.turnCancel = nil
 		m.querySession = typedMsg.update.QuerySession
 		m.syncQuerySession()
@@ -272,18 +293,23 @@ func (m Model) Update(teaMsg tea.Msg) (tea.Model, tea.Cmd) {
 		m.logWrite("catalog", m.status)
 		return m, nil
 	case schemaDetailMsg:
+		m.clearSchemaLoad(typedMsg.entry)
 		if typedMsg.loadErr != nil {
 			m.addUIEvent("schema detail: " + typedMsg.loadErr.Error())
 			m.logWriteError("schema", typedMsg.loadErr)
 			return m, nil
 		}
-		m.selectedSchema = typedMsg.snapshot
+		m.cacheSchema(typedMsg.snapshot)
+		if !m.schemaSearchOpen() || m.isCurrentSchemaSearchEntry(typedMsg.entry) {
+			m.selectedSchema = typedMsg.snapshot
+		}
 		if typedMsg.snapshot.Loaded {
 			m.detailScroll = 0
 		}
 		return m, nil
 	case workflowMsg:
 		m.busy = false
+		m.turnStartedAt = time.Time{}
 		m.turnCancel = nil
 		if typedMsg.querySession != nil {
 			m.querySession = typedMsg.querySession
@@ -318,7 +344,7 @@ func (m Model) Update(teaMsg tea.Msg) (tea.Model, tea.Cmd) {
 					m.executionRowCursor = -1
 				}
 				m.recordExecutionActivity(m.querySession)
-				m.switchTab(tabRun)
+				m.recordCleanReadExecution()
 				m.focus = focusExecution
 			}
 		}
@@ -336,10 +362,14 @@ func (m Model) Update(teaMsg tea.Msg) (tea.Model, tea.Cmd) {
 			m.status = "invalid candidate — send another message and press Ctrl+A"
 			m.addUIEvent("validation: send another message and press Ctrl+A to refine")
 		}
-		if typedMsg.switchRunTab {
-			m.switchTab(tabRun)
-		}
 		return m, nil
+	case turnTimeoutMsg:
+		if !m.busy || typedMsg.startedAt != m.turnStartedAt {
+			return m, nil
+		}
+		m.status = "still working — Enter waits, Esc cancels"
+		m.addUIEvent("agent: still working")
+		return m, m.turnTimeoutCmd(typedMsg.startedAt)
 	}
 	inputCmd := m.updateFocused(teaMsg)
 	return m, inputCmd
@@ -349,22 +379,13 @@ func (m Model) Update(teaMsg tea.Msg) (tea.Model, tea.Cmd) {
 func (m Model) View() string {
 	contentWidth := clamp(m.width-4, 48, 200)
 	bodyHeight := clamp(m.height-8, 18, 40)
-	tabBar := m.renderTabBar(contentWidth)
-	header := tabBar
+	header := m.renderWorkspaceHeader(contentWidth)
 	if m.catalog.loadError != "" {
 		connectionError := truncate("BanyanDB connection failed: "+singleLine(m.catalog.loadError), contentWidth)
-		header = lipgloss.JoinVertical(lipgloss.Left, tabBar, badStyle.Render(connectionError))
+		header = lipgloss.JoinVertical(lipgloss.Left, header, badStyle.Render(connectionError))
 		bodyHeight = maxInt(bodyHeight-1, 18)
 	}
-	var body string
-	switch m.activeTab {
-	case tabSchema:
-		body = m.renderSchemaTab(contentWidth, bodyHeight)
-	case tabRun:
-		body = m.renderRunTab(contentWidth, bodyHeight)
-	default:
-		body = m.renderQueryTab(contentWidth, bodyHeight)
-	}
+	body := m.renderWorkspace(contentWidth, bodyHeight)
 	return lipgloss.JoinVertical(lipgloss.Left, header, body, m.renderFooter(contentWidth))
 }
 
@@ -375,6 +396,7 @@ type catalogMsg struct {
 
 type schemaDetailMsg struct {
 	snapshot session.SchemaSnapshot
+	entry    session.CatalogEntry
 	loadErr  error
 }
 
@@ -384,7 +406,6 @@ type workflowMsg struct {
 	err           error
 	status        string
 	clearTurnHint bool
-	switchRunTab  bool
 }
 
 type approvalMsg struct {
@@ -406,6 +427,10 @@ type queryDebounceMsg struct {
 	revision int
 }
 
+type turnTimeoutMsg struct {
+	startedAt time.Time
+}
+
 func (m Model) waitApprovalCmd() tea.Cmd {
 	requests := m.runner.ApprovalRequests()
 	return func() tea.Msg {
@@ -425,7 +450,7 @@ func (m Model) nextAgentUpdateCmd(updates <-chan workflow.TurnUpdate) tea.Cmd {
 }
 
 func (m Model) queryDebounceCmd(revision int) tea.Cmd {
-	return tea.Tick(350*time.Millisecond, func(time.Time) tea.Msg {
+	return tea.Tick(queryValidationDebounce, func(time.Time) tea.Msg {
 		return queryDebounceMsg{revision: revision}
 	})
 }
@@ -436,15 +461,50 @@ func (m *Model) syncQuerySession() {
 	}
 	if m.querySession.CandidateSuperseded {
 		m.query.SetValue("")
+		m.limit.SetValue("")
 		return
 	}
 	if currentCandidate := m.querySession.CurrentCandidate(); currentCandidate != nil {
 		m.query.SetValue(currentCandidate.Query)
+		m.limit.SetValue(extractCandidateLimit(currentCandidate.Query))
 	}
 	if strings.TrimSpace(m.querySession.SchemaSnapshot.Name) != "" {
+		m.cacheSchema(m.querySession.SchemaSnapshot)
+		for _, cachedSchema := range m.querySession.Schemas {
+			m.cacheSchema(cachedSchema)
+		}
 		m.selectedSchema = m.querySession.SchemaSnapshot
 	}
 	m.syncChatCursor(true)
+}
+
+var candidateLimitPattern = regexp.MustCompile(`(?i)\bLIMIT\s+(\d+)`)
+
+func extractCandidateLimit(query string) string {
+	matches := candidateLimitPattern.FindStringSubmatch(query)
+	if len(matches) != 2 {
+		return ""
+	}
+	return matches[1]
+}
+
+func (m *Model) applyCandidateLimit() {
+	query := strings.TrimSpace(m.query.Value())
+	if query == "" {
+		return
+	}
+	limitValue := strings.TrimSpace(m.limit.Value())
+	if candidateLimitPattern.MatchString(query) {
+		if limitValue == "" {
+			m.query.SetValue(strings.TrimSpace(candidateLimitPattern.ReplaceAllString(query, "")))
+		} else {
+			m.query.SetValue(candidateLimitPattern.ReplaceAllString(query, "LIMIT "+limitValue))
+		}
+		return
+	}
+	if limitValue != "" {
+		m.query.SetValue(query + " LIMIT " + limitValue)
+	}
 }
 
 func formatApprovalRequest(request approval.Request) string {
@@ -487,7 +547,6 @@ func (m *Model) handleKey(keyMsg tea.KeyMsg) (tea.Cmd, bool) {
 				m.cancelActive()
 				m.query.SetValue(request.Query)
 				m.status = "editing rejected statement"
-				m.switchTab(tabQuery)
 				m.focus = focusQuery
 				return m.syncFocus(), true
 			}
@@ -500,18 +559,6 @@ func (m *Model) handleKey(keyMsg tea.KeyMsg) (tea.Cmd, bool) {
 			return nil, true
 		}
 		return tea.Quit, true
-	case "f1":
-		m.switchTab(tabSchema)
-		return m.syncFocus(), true
-	case "f2":
-		m.switchTab(tabQuery)
-		return m.syncFocus(), true
-	case "f3":
-		m.switchTab(tabRun)
-		return m.syncFocus(), true
-	case "ctrl+]":
-		m.cycleTab(1)
-		return m.syncFocus(), true
 	case "tab":
 		m.cycleFocus(1)
 		return m.syncFocus(), true
@@ -526,19 +573,6 @@ func (m *Model) handleKey(keyMsg tea.KeyMsg) (tea.Cmd, bool) {
 		m.catalog.setLoading()
 		m.status = "refreshing catalog"
 		return m.loadCatalogCmd(), true
-	case "/":
-		if m.activeTab == tabSchema && (m.focus == focusCatalog || m.focus == focusCatalogFilter) {
-			m.catalog.cycleTypeFilter()
-			return nil, true
-		}
-		return nil, false
-	case "[", "]":
-		delta := -1
-		if keyMsg.String() == "]" {
-			delta = 1
-		}
-		m.cycleTab(delta)
-		return m.syncFocus(), true
 	case "ctrl+left", "ctrl+right":
 		if m.querySession == nil || len(m.querySession.Candidates) == 0 {
 			return nil, true
@@ -553,23 +587,15 @@ func (m *Model) handleKey(keyMsg tea.KeyMsg) (tea.Cmd, bool) {
 		}
 		return nil, true
 	case "up", "down":
-		if m.activeTab == tabSchema {
-			if m.focus == focusCatalog {
-				delta := 1
-				if keyMsg.String() == "up" {
-					delta = -1
-				}
-				m.catalog.moveCursor(delta, m.catalogListHeight())
-				return m.loadSchemaDetailCmdForCursor(), true
-			}
+		if m.focus == focusMessage && m.schemaSearchOpen() {
 			delta := 1
 			if keyMsg.String() == "up" {
 				delta = -1
 			}
-			m.scrollSchemaDetail(delta, m.schemaDetailHeight())
-			return nil, true
+			m.moveSchemaSearchCursor(delta)
+			return m.loadSchemaDetailForSearch(), true
 		}
-		if m.activeTab == tabRun && m.focus == focusExecution {
+		if m.focus == focusExecution {
 			delta := 1
 			if keyMsg.String() == "up" {
 				delta = -1
@@ -577,7 +603,7 @@ func (m *Model) handleKey(keyMsg tea.KeyMsg) (tea.Cmd, bool) {
 			m.moveExecutionRowCursor(delta)
 			return nil, true
 		}
-		if m.activeTab == tabRun && m.focus == focusActivity {
+		if m.focus == focusActivity {
 			delta := 1
 			if keyMsg.String() == "up" {
 				delta = -1
@@ -585,7 +611,7 @@ func (m *Model) handleKey(keyMsg tea.KeyMsg) (tea.Cmd, bool) {
 			m.moveActivityCursor(delta, 8)
 			return nil, true
 		}
-		if m.activeTab == tabQuery && m.focus == focusChat {
+		if m.focus == focusChat {
 			delta := 1
 			if keyMsg.String() == "up" {
 				delta = -1
@@ -595,7 +621,7 @@ func (m *Model) handleKey(keyMsg tea.KeyMsg) (tea.Cmd, bool) {
 		}
 		return nil, false
 	case "pgup", "pgdown":
-		if m.activeTab == tabRun && m.focus == focusExecution {
+		if m.focus == focusExecution {
 			delta := 8
 			if keyMsg.String() == "pgup" {
 				delta = -8
@@ -603,7 +629,7 @@ func (m *Model) handleKey(keyMsg tea.KeyMsg) (tea.Cmd, bool) {
 			m.scrollExecutionDetail(delta, m.executionDetailViewportHeight())
 			return nil, true
 		}
-		if m.activeTab == tabRun && m.focus == focusActivity {
+		if m.focus == focusActivity {
 			delta := 8
 			if keyMsg.String() == "pgup" {
 				delta = -8
@@ -617,7 +643,7 @@ func (m *Model) handleKey(keyMsg tea.KeyMsg) (tea.Cmd, bool) {
 			m.moveActivityCursor(delta, 8)
 			return nil, true
 		}
-		if m.activeTab == tabQuery && m.focus == focusChat {
+		if m.focus == focusChat {
 			delta := 8
 			if keyMsg.String() == "pgup" {
 				delta = -8
@@ -627,29 +653,20 @@ func (m *Model) handleKey(keyMsg tea.KeyMsg) (tea.Cmd, bool) {
 		}
 		return nil, false
 	case "enter":
-		if m.focus == focusCatalog {
-			return m.loadSchemaDetailCmdForCursor(), true
+		if m.focus == focusMessage && m.schemaSearchOpen() {
+			m.insertSchemaReference()
+			return nil, true
+		}
+		if m.focus == focusMessage {
+			return m.sendComposerMessage()
+		}
+		if m.busy && strings.Contains(m.status, "still working") {
+			m.status = "still working — Esc cancels"
+			return nil, true
 		}
 		return nil, false
 	case "ctrl+a":
-		if m.busy {
-			return nil, true
-		}
-		messageValue := strings.TrimSpace(m.message.Value())
-		if messageValue == "" {
-			m.addUIEvent("message required before asking agent")
-			return nil, true
-		}
-		m.syncExecutionPolicy()
-		m.queuedMessage = messageValue
-		m.message.SetValue("")
-		m.syncChatCursor(true)
-		m.busy = true
-		m.status = "asking agent"
-		m.logWrite("action", fmt.Sprintf("ctrl+a agent message=%q", messageValue))
-		turnCtx, cancelTurn := context.WithCancel(context.Background())
-		m.turnCancel = cancelTurn
-		return m.agentCmd(turnCtx, messageValue), true
+		return m.sendComposerMessage()
 	case "ctrl+v":
 		if m.busy {
 			return nil, true
@@ -664,12 +681,18 @@ func (m *Model) handleKey(keyMsg tea.KeyMsg) (tea.Cmd, bool) {
 		}
 		m.busy = true
 		m.status = "executing query"
+		m.turnStartedAt = time.Now()
 		m.logWrite("action", "ctrl+e execute query")
 		executeCtx, cancelExecute := context.WithCancel(context.Background())
 		m.turnCancel = cancelExecute
-		return m.executeCmd(executeCtx), true
+		return tea.Batch(m.executeCmd(executeCtx), m.turnTimeoutCmd(m.turnStartedAt)), true
 	case "ctrl+p":
-		m.executionPolicy = m.executionPolicy.Next()
+		nextPolicy := m.executionPolicy.Next()
+		if nextPolicy == approval.PolicyTrustSession && m.cleanReadExecutions < trustSessionCleanReadThreshold {
+			m.status = fmt.Sprintf("trust session requires %d clean read executions", trustSessionCleanReadThreshold)
+			return nil, true
+		}
+		m.executionPolicy = nextPolicy
 		m.syncExecutionPolicy()
 		m.status = "execution policy: " + m.executionPolicy.Label()
 		m.addUIEvent("policy: " + m.executionPolicy.Label())
@@ -682,22 +705,25 @@ func (m *Model) handleKey(keyMsg tea.KeyMsg) (tea.Cmd, bool) {
 			m.status = "agent reasoning stream hidden"
 		}
 		return nil, true
+	case "ctrl+f":
+		return m.repairInvalidCandidate()
 	case "ctrl+o":
-		if m.activeTab == tabRun && m.querySession != nil && strings.TrimSpace(m.querySession.ExecutionResult.Response) != "" {
-			exportPath, exportErr := exportExecutionResult(m.querySession.ExecutionResult)
-			if exportErr != nil {
-				m.status = exportErr.Error()
-				m.addUIEvent("export failed: " + exportErr.Error())
-				return nil, true
-			}
-			m.executionExportPath = exportPath
-			m.status = "exported execution response"
-			m.addUIEvent("exported: " + exportPath)
+		exportResult, ok := m.exportResult()
+		if !ok {
+			return nil, false
+		}
+		exportPath, exportErr := exportExecutionResult(exportResult)
+		if exportErr != nil {
+			m.status = exportErr.Error()
+			m.addUIEvent("export failed: " + exportErr.Error())
 			return nil, true
 		}
-		return nil, false
+		m.executionExportPath = exportPath
+		m.status = "exported preview"
+		m.addUIEvent("exported: " + exportPath)
+		return nil, true
 	case "ctrl+j":
-		if m.activeTab == tabRun && m.querySession != nil && m.querySession.ExecutionResult.Summary != "" {
+		if m.querySession != nil && strings.TrimSpace(m.querySession.ExecutionResult.Response) != "" {
 			m.showExecutionRaw = !m.showExecutionRaw
 			m.executionDetailScroll = 0
 			if m.showExecutionRaw {
@@ -707,7 +733,8 @@ func (m *Model) handleKey(keyMsg tea.KeyMsg) (tea.Cmd, bool) {
 			}
 			return nil, true
 		}
-		return nil, false
+		m.status = "full response is available after a complete execution"
+		return nil, true
 	default:
 		return nil, false
 	}
@@ -746,7 +773,76 @@ func (m *Model) cancelActive() {
 	m.pendingApproval = nil
 	m.status = "cancelled"
 	m.busy = false
+	m.turnStartedAt = time.Time{}
 	m.addUIEvent("workflow: cancelled")
+}
+
+func (m *Model) sendComposerMessage() (tea.Cmd, bool) {
+	if m.busy {
+		return nil, true
+	}
+	messageValue := strings.TrimSpace(m.message.Value())
+	if messageValue == "" {
+		m.addUIEvent("message required before asking agent")
+		return nil, true
+	}
+	m.syncExecutionPolicy()
+	m.queuedMessage = messageValue
+	m.message.SetValue("")
+	m.updateSchemaSearch()
+	m.syncChatCursor(true)
+	m.busy = true
+	m.status = "asking agent"
+	m.turnStartedAt = time.Now()
+	m.logWrite("action", fmt.Sprintf("send agent message=%q", messageValue))
+	turnCtx, cancelTurn := context.WithCancel(context.Background())
+	m.turnCancel = cancelTurn
+	return tea.Batch(m.agentCmd(turnCtx, messageValue), m.turnTimeoutCmd(m.turnStartedAt)), true
+}
+
+func (m *Model) repairInvalidCandidate() (tea.Cmd, bool) {
+	if m.busy || m.querySession == nil {
+		return nil, true
+	}
+	currentCandidate := m.querySession.CurrentCandidate()
+	if currentCandidate == nil || currentCandidate.Validation.Valid || strings.TrimSpace(currentCandidate.Validation.Message) == "" {
+		m.status = "a failed candidate is required before asking Agent to repair"
+		return nil, true
+	}
+	repairMessage := fmt.Sprintf(
+		"Repair this BYDBQL candidate. Keep the user's intent, return a new controlled candidate, and fix this validation error.\n\nCandidate:\n%s\n\nValidation error:\n%s",
+		currentCandidate.Query,
+		currentCandidate.Validation.Message,
+	)
+	m.queuedMessage = repairMessage
+	m.busy = true
+	m.status = "asking agent to repair the candidate"
+	m.turnStartedAt = time.Now()
+	m.logWrite("action", "ctrl+f repair invalid BYDBQL candidate")
+	turnCtx, cancelTurn := context.WithCancel(context.Background())
+	m.turnCancel = cancelTurn
+	return tea.Batch(m.agentCmd(turnCtx, repairMessage), m.turnTimeoutCmd(m.turnStartedAt)), true
+}
+
+func (m Model) exportResult() (session.ExecutionResult, bool) {
+	if m.querySession == nil {
+		return session.ExecutionResult{}, false
+	}
+	executionResult := m.querySession.ExecutionResult
+	if strings.TrimSpace(executionResult.Response) != "" || len(executionResult.Preview) > 0 {
+		return executionResult, true
+	}
+	preview, ok := m.currentPreviewData()
+	if !ok {
+		return session.ExecutionResult{}, false
+	}
+	return session.ExecutionResult{
+		Rows:    preview.totalRows,
+		Columns: append([]string(nil), preview.columns...),
+		Preview: append([][]string(nil), preview.preview...),
+		Query:   preview.query,
+		Summary: "BYDBQL probe preview",
+	}, true
 }
 
 func (m *Model) syncFocus() tea.Cmd {
@@ -754,6 +850,7 @@ func (m *Model) syncFocus() tea.Cmd {
 	m.catalogFilter.Blur()
 	m.start.Blur()
 	m.end.Blur()
+	m.limit.Blur()
 	m.query.Blur()
 	switch m.focus {
 	case focusCatalog:
@@ -768,6 +865,8 @@ func (m *Model) syncFocus() tea.Cmd {
 		return m.start.Focus()
 	case focusEnd:
 		return m.end.Focus()
+	case focusLimit:
+		return m.limit.Focus()
 	case focusQuery:
 		return m.query.Focus()
 	case focusActivity:
@@ -797,18 +896,28 @@ func (m *Model) updateFocused(teaMsg tea.Msg) tea.Cmd {
 		return nil
 	case focusMessage:
 		m.message, updateCmd = m.message.Update(teaMsg)
+		m.updateSchemaSearch()
+		updateCmd = tea.Batch(updateCmd, m.loadSchemaDetailForSearch())
 	case focusStart:
 		m.start, updateCmd = m.start.Update(teaMsg)
 	case focusEnd:
 		m.end, updateCmd = m.end.Update(teaMsg)
+	case focusLimit:
+		m.limit, updateCmd = m.limit.Update(teaMsg)
+		if m.limit.Value() != extractCandidateLimit(previousQuery) {
+			m.applyCandidateLimit()
+		}
 	case focusQuery:
 		m.query, updateCmd = m.query.Update(teaMsg)
+		if previousQuery != m.query.Value() {
+			m.limit.SetValue(extractCandidateLimit(m.query.Value()))
+		}
 	case focusActivity:
 		return nil
 	case focusExecution:
 		return nil
 	}
-	if m.focus == focusQuery && previousQuery != m.query.Value() {
+	if (m.focus == focusQuery || m.focus == focusLimit) && previousQuery != m.query.Value() {
 		m.queryRevision++
 		return tea.Batch(updateCmd, m.queryDebounceCmd(m.queryRevision))
 	}
@@ -820,20 +929,27 @@ func (m *Model) resize(width, height int) {
 	m.height = height
 	contentWidth := clamp(width-4, 48, 200)
 	catalogWidth := clamp(contentWidth*28/100, 28, 44)
-	queryLeftWidth, queryRightWidth := queryTabWidths(contentWidth)
+	queryLeftWidth, _ := workspaceWidths(contentWidth)
 	timeInputWidth := maxInt(10, (queryLeftWidth-24)/2)
 	m.catalogHeight = clamp(height-6, 20, 40)
 	m.catalogFilter.Width = maxInt(12, catalogWidth-8)
 	m.message.SetWidth(maxInt(18, queryLeftWidth-4))
-	m.query.SetWidth(maxInt(18, queryRightWidth-4))
+	m.query.SetWidth(maxInt(18, queryLeftWidth-4))
 	m.start.Width = timeInputWidth
 	m.end.Width = timeInputWidth
+	m.limit.Width = 8
 	if contentWidth < 100 {
 		m.query.SetWidth(maxInt(18, contentWidth-4))
 	}
 	queryHeight := clamp(height-18, 8, 16)
 	m.query.SetHeight(queryHeight)
 	m.message.SetHeight(clamp(height/12, 3, 5))
+}
+
+func (m Model) turnTimeoutCmd(startedAt time.Time) tea.Cmd {
+	return tea.Tick(20*time.Second, func(time.Time) tea.Msg {
+		return turnTimeoutMsg{startedAt: startedAt}
+	})
 }
 
 func (m Model) chatPanelHeight(totalHeight int) int {
@@ -917,7 +1033,7 @@ func (m Model) executeCmd(ctx context.Context) tea.Cmd {
 }
 
 func (m *Model) startOptions() workflow.StartOptions {
-	return workflow.StartOptions{
+	options := workflow.StartOptions{
 		TimeRange: session.TimeRange{
 			Start: m.start.Value(),
 			End:   m.end.Value(),
@@ -925,6 +1041,15 @@ func (m *Model) startOptions() workflow.StartOptions {
 		Goal:            m.currentGoal(),
 		ExecutionPolicy: m.executionPolicy,
 	}
+	if m.composerReference != nil {
+		options.ResourceType = m.composerReference.Type
+		options.ResourceName = m.composerReference.Name
+		options.Groups = []string{m.composerReference.Group}
+		options.NameProvided = true
+		options.GroupsProvided = true
+		options.TypeProvided = true
+	}
+	return options
 }
 
 func (m Model) currentGoal() string {
@@ -962,7 +1087,7 @@ func (m Model) loadSchemaDetailCmd(entry session.CatalogEntry) tea.Cmd {
 	executor := m.executor
 	return func() tea.Msg {
 		if executor == nil {
-			return schemaDetailMsg{loadErr: fmt.Errorf("schema executor is not configured")}
+			return schemaDetailMsg{entry: entry, loadErr: fmt.Errorf("schema executor is not configured")}
 		}
 		snapshot, schemaErr := executor.DiscoverSchema(context.Background(), tools.SchemaRequest{
 			Type:   entry.Type,
@@ -970,9 +1095,9 @@ func (m Model) loadSchemaDetailCmd(entry session.CatalogEntry) tea.Cmd {
 			Groups: []string{entry.Group},
 		})
 		if schemaErr != nil {
-			return schemaDetailMsg{loadErr: schemaErr}
+			return schemaDetailMsg{entry: entry, loadErr: schemaErr}
 		}
-		return schemaDetailMsg{snapshot: snapshot}
+		return schemaDetailMsg{entry: entry, snapshot: snapshot}
 	}
 }
 
@@ -1027,7 +1152,8 @@ func (m *Model) scrollExecutionDetail(delta, viewportHeight int) bool {
 }
 
 func (m *Model) moveExecutionRowCursor(delta int) {
-	if m.querySession == nil || len(m.querySession.ExecutionResult.Preview) == 0 {
+	preview, ok := m.currentPreviewData()
+	if !ok || len(preview.preview) == 0 {
 		m.executionRowCursor = -1
 		return
 	}
@@ -1038,7 +1164,7 @@ func (m *Model) moveExecutionRowCursor(delta int) {
 	if m.executionRowCursor < 0 {
 		m.executionRowCursor = 0
 	}
-	previewLength := len(m.querySession.ExecutionResult.Preview)
+	previewLength := len(preview.preview)
 	if m.executionRowCursor >= previewLength {
 		m.executionRowCursor = previewLength - 1
 	}

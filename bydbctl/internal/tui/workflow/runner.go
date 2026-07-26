@@ -766,6 +766,7 @@ func (runner *Runner) ValidateManualQuery(ctx context.Context, querySession *ses
 		querySession.Phase = session.PhaseError
 		return fmt.Errorf("failed to validate manual query: %w", validationErr)
 	}
+	querySession.SetPlannedQueries(nil)
 	querySession.AddCandidate(session.BydbqlCandidate{
 		ID:          fmt.Sprintf("candidate-%d", len(querySession.Candidates)+1),
 		Query:       strings.TrimSpace(query),

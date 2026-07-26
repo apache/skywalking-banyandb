@@ -22,10 +22,14 @@ import (
 	"strings"
 
 	"github.com/apache/skywalking-banyandb/bydbctl/internal/tui/agent"
+	"github.com/apache/skywalking-banyandb/bydbctl/internal/tui/approval"
 	"github.com/apache/skywalking-banyandb/bydbctl/internal/tui/session"
 )
 
-const maxActivityEntries = 200
+const (
+	maxActivityEntries             = 200
+	trustSessionCleanReadThreshold = 3
+)
 
 type activityEntry struct {
 	category string
@@ -72,7 +76,7 @@ func (m *Model) recordAgentActivities(events []agent.Event) {
 
 func (m *Model) shouldRecordAgentActivity(event agent.Event) bool {
 	if event.Kind == agent.EventKindMessageDelta {
-		return m.showReasoning
+		return false
 	}
 	return shouldShowAgentEvent(event)
 }
@@ -189,6 +193,29 @@ func (m *Model) recordExecutionActivity(querySession *session.QuerySession) {
 		detailParts = append(detailParts, "hint="+executionResult.Hint)
 	}
 	m.recordActivity("execution", title, strings.Join(detailParts, "\n"))
+}
+
+func (m *Model) recordCleanReadExecution() {
+	if m.querySession == nil || m.querySession.ExecutionResult.Error != "" {
+		return
+	}
+	query := m.querySession.ExecutionResult.Query
+	if strings.TrimSpace(query) == "" {
+		if currentCandidate := m.querySession.CurrentCandidate(); currentCandidate != nil {
+			query = currentCandidate.Query
+		}
+	}
+	if !approval.IsReadOnlyBYDBQL(query) {
+		return
+	}
+	m.cleanReadExecutions++
+	if m.cleanReadExecutions == trustSessionCleanReadThreshold && m.executionPolicy != approval.PolicyTrustSession {
+		m.trustSessionSuggested = true
+		m.addUIEvent(fmt.Sprintf(
+			"trust suggestion: %d clean read executions — Ctrl+P can enable trust session",
+			trustSessionCleanReadThreshold,
+		))
+	}
 }
 
 func (m *Model) scrollSchemaDetail(delta int, viewportHeight int) {

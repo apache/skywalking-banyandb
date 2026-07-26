@@ -21,86 +21,8 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/charmbracelet/lipgloss"
-
 	"github.com/apache/skywalking-banyandb/bydbctl/internal/tui/session"
 )
-
-func (m Model) renderSchemaTab(width, height int) string {
-	catalogWidth := clamp(width*38/100, 32, 56)
-	detailWidth := width - catalogWidth - 2
-	catalogPanel := m.renderCatalogList(catalogWidth, height)
-	detailPanel := m.renderSchemaDetailPanel(detailWidth, height)
-	return lipgloss.JoinHorizontal(lipgloss.Top, catalogPanel, " ", detailPanel)
-}
-
-func (m Model) renderCatalogList(width, height int) string {
-	lines := []string{titleStyle.Render("Catalog")}
-	typeLabel := "ALL"
-	if m.catalog.typeFilter != "" {
-		typeLabel = m.catalog.typeFilter.String()
-	}
-	lines = append(lines, mutedStyle.Render(fmt.Sprintf("Type %s · / cycle · ctrl+l refresh", typeLabel)))
-	if m.focus == focusCatalogFilter {
-		lines = append(lines, titleStyle.Render("Filter")+" "+m.catalogFilter.View())
-	} else {
-		filterValue := strings.TrimSpace(m.catalogFilter.Value())
-		if filterValue == "" {
-			lines = append(lines, mutedStyle.Render("Filter: search group or resource name"))
-		} else {
-			lines = append(lines, mutedStyle.Render("Filter: "+filterValue))
-		}
-	}
-	if m.catalog.loading {
-		lines = append(lines, warnStyle.Render("Loading schema catalog..."))
-		return panelStyle.Width(width).Render(lipgloss.JoinVertical(lipgloss.Left, lines...))
-	}
-	if m.catalog.loadError != "" {
-		lines = append(lines, badStyle.Render("Catalog: "+m.catalog.loadError))
-		return panelStyle.Width(width).Render(lipgloss.JoinVertical(lipgloss.Left, lines...))
-	}
-	if len(m.catalog.rows) == 0 {
-		lines = append(lines, mutedStyle.Render("No resources match filter"))
-		return panelStyle.Width(width).Render(lipgloss.JoinVertical(lipgloss.Left, lines...))
-	}
-	lines = append(lines, mutedStyle.Render(fmt.Sprintf("%d groups · %d resources", m.catalog.groupCount(), m.catalog.resourceCount())))
-	listHeight := clamp(height-len(lines)-2, 8, 28)
-	viewportHeight := maxInt(listHeight, 6)
-	endIdx := minInt(m.catalog.scrollOffset+viewportHeight, len(m.catalog.rows))
-	for rowIdx := m.catalog.scrollOffset; rowIdx < endIdx; rowIdx++ {
-		row := m.catalog.rows[rowIdx]
-		line := renderCatalogRow(row, rowIdx == m.catalog.cursor && m.focus == focusCatalog, width-6)
-		lines = append(lines, line)
-	}
-	lines = append(lines, mutedStyle.Render("↑↓ browse · enter inspect schema"))
-	return panelStyle.Width(width).Render(lipgloss.JoinVertical(lipgloss.Left, lines...))
-}
-
-func (m Model) renderSchemaDetailPanel(width, height int) string {
-	lines := []string{titleStyle.Render("Schema Detail")}
-	detailLines := schemaDetailLines(m.selectedSchema)
-	if len(detailLines) == 0 {
-		lines = append(lines, mutedStyle.Render("Select a resource to inspect tags, fields, and indexed columns"))
-		return panelStyle.Width(width).Render(lipgloss.JoinVertical(lipgloss.Left, lines...))
-	}
-	viewportHeight := clamp(height-4, 10, 32)
-	maxScroll := maxInt(len(detailLines)-viewportHeight, 0)
-	scrollOffset := m.detailScroll
-	if scrollOffset > maxScroll {
-		scrollOffset = maxScroll
-	}
-	endIdx := minInt(scrollOffset+viewportHeight, len(detailLines))
-	for lineIdx := scrollOffset; lineIdx < endIdx; lineIdx++ {
-		line := detailLines[lineIdx]
-		if strings.HasPrefix(line, "  ") {
-			lines = append(lines, mutedStyle.Render(truncate(line, width-4)))
-			continue
-		}
-		lines = append(lines, truncate(line, width-4))
-	}
-	lines = append(lines, mutedStyle.Render("↑↓ scroll fields"))
-	return panelStyle.Width(width).Render(lipgloss.JoinVertical(lipgloss.Left, lines...))
-}
 
 func schemaDetailLines(snapshot session.SchemaSnapshot) []string {
 	if strings.TrimSpace(snapshot.Name) == "" {
@@ -113,6 +35,17 @@ func schemaDetailLines(snapshot session.SchemaSnapshot) []string {
 	if !snapshot.Loaded {
 		lines = append(lines, warnStyle.Render("Schema detail not loaded from BanyanDB API"))
 		lines = append(lines, mutedStyle.Render("Check --addr and press enter again on the resource"))
+		return lines
+	}
+	if len(snapshot.Columns) > 0 {
+		lines = append(lines, titleStyle.Render("Typed columns"))
+		for _, column := range snapshot.Columns {
+			columnLabel := fmt.Sprintf("  · %s : %s(%s)", column.Name, strings.ToUpper(string(column.Kind)), column.Type)
+			if column.Indexed {
+				columnLabel += " · indexed"
+			}
+			lines = append(lines, columnLabel)
+		}
 		return lines
 	}
 	if len(snapshot.EntityTags) > 0 {
@@ -143,21 +76,6 @@ func schemaDetailLines(snapshot session.SchemaSnapshot) []string {
 		lines = append(lines, mutedStyle.Render("No tags or fields declared on this resource"))
 	}
 	return lines
-}
-
-func renderCatalogRow(row catalogRow, selected bool, maxWidth int) string {
-	if row.kind == catalogRowKindGroup {
-		label := "▸ " + row.group
-		if selected {
-			return activeChipStyle.Render(truncate(label, maxWidth))
-		}
-		return titleStyle.Render(truncate(label, maxWidth))
-	}
-	label := fmt.Sprintf("  %s  %s", shortTypeLabel(row.entry.Type), row.entry.Name)
-	if selected {
-		return activeChipStyle.Render(truncate(label, maxWidth))
-	}
-	return mutedStyle.Render(truncate(label, maxWidth))
 }
 
 func shortTypeLabel(resourceType session.ResourceType) string {
