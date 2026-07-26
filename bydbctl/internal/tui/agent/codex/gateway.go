@@ -369,7 +369,7 @@ func appServerArgs(server agent.ControlledMCPServer, configuredNames []string) (
 		return nil, toolsErr
 	}
 	controlledServer := fmt.Sprintf(
-		"{ command = %s, args = %s, enabled = true, required = true, enabled_tools = %s }",
+		"{ command = %s, args = %s, enabled = true, required = true, enabled_tools = %s, default_tools_approval_mode = \"auto\" }",
 		commandValue,
 		argsValue,
 		toolsValue,
