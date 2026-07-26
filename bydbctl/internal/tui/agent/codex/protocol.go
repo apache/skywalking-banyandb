@@ -39,9 +39,13 @@ const (
 	eventBufferSize        = 64
 	maxScannerBuffer       = 4 * 1024 * 1024
 	maxStderrBytes         = 64 * 1024
+	maxClarificationRunes  = 320
+	maxUserInputQuestions  = 8
+	maxUserInputOptions    = 4
 	requestTimeout         = 30 * time.Second
 	closeTimeout           = 2 * time.Second
 	unsafeInterruptTimeout = 5 * time.Second
+	userInputRequestMethod = "item/tool/requestUserInput"
 )
 
 type connection struct {
@@ -100,6 +104,34 @@ type incomingMessage struct {
 	ID     json.RawMessage `json:"id"`
 	Params json.RawMessage `json:"params"`
 	Result json.RawMessage `json:"result"`
+}
+
+type toolRequestUserInputParams struct {
+	Questions []toolRequestUserInputQuestion `json:"questions"`
+	ThreadID  string                         `json:"threadId"`
+	TurnID    string                         `json:"turnId"`
+}
+
+type toolRequestUserInputQuestion struct {
+	Header   string                       `json:"header"`
+	ID       string                       `json:"id"`
+	IsOther  bool                         `json:"isOther"`
+	IsSecret bool                         `json:"isSecret"`
+	Options  []toolRequestUserInputOption `json:"options"`
+	Question string                       `json:"question"`
+}
+
+type toolRequestUserInputOption struct {
+	Description string `json:"description"`
+	Label       string `json:"label"`
+}
+
+type toolRequestUserInputResponse struct {
+	Answers map[string]toolRequestUserInputAnswer `json:"answers"`
+}
+
+type toolRequestUserInputAnswer struct {
+	Answers []string `json:"answers"`
 }
 
 type rpcResponse struct {
@@ -459,7 +491,7 @@ func (appConnection *connection) handleLine(ctx context.Context, line []byte) er
 	}
 	hasID := len(message.ID) > 0 && string(message.ID) != "null"
 	if hasID && strings.TrimSpace(message.Method) != "" {
-		appConnection.rejectServerRequest(ctx, message.ID, message.Method)
+		appConnection.rejectServerRequest(ctx, message.ID, message.Method, message.Params)
 		return nil
 	}
 	if hasID {
@@ -481,7 +513,10 @@ func (appConnection *connection) handleLine(ctx context.Context, line []byte) er
 	return nil
 }
 
-func (appConnection *connection) rejectServerRequest(ctx context.Context, id json.RawMessage, method string) {
+func (appConnection *connection) rejectServerRequest(ctx context.Context, id json.RawMessage, method string, params json.RawMessage) {
+	if method == userInputRequestMethod && appConnection.respondToUserInputRequest(id, params) {
+		return
+	}
 	responseBytes, marshalErr := json.Marshal(map[string]any{
 		"id": id,
 		"error": rpcError{
@@ -498,6 +533,106 @@ func (appConnection *connection) rejectServerRequest(ctx context.Context, id jso
 	if turn != nil {
 		appConnection.failUnsafeTurn(ctx, turn, fmt.Errorf("codex attempted forbidden server request %q", method))
 	}
+}
+
+func (appConnection *connection) respondToUserInputRequest(id, params json.RawMessage) bool {
+	var request toolRequestUserInputParams
+	if unmarshalErr := json.Unmarshal(params, &request); unmarshalErr != nil || !request.valid() {
+		return false
+	}
+	turn := appConnection.activeTurn(request.ThreadID, request.TurnID)
+	if turn == nil {
+		return false
+	}
+	if setErr := turn.setID(request.TurnID); setErr != nil {
+		return false
+	}
+	answers := make(map[string]toolRequestUserInputAnswer, len(request.Questions))
+	for _, question := range request.Questions {
+		if _, exists := answers[question.ID]; exists {
+			return false
+		}
+		answers[question.ID] = toolRequestUserInputAnswer{Answers: []string{}}
+	}
+	responseBytes, marshalErr := json.Marshal(map[string]any{
+		"id":     id,
+		"result": toolRequestUserInputResponse{Answers: answers},
+	})
+	if marshalErr != nil {
+		return false
+	}
+	if writeErr := appConnection.writeLine(responseBytes); writeErr != nil {
+		return false
+	}
+	turn.emit(agent.Event{
+		Kind:    agent.EventKindClarification,
+		Message: request.clarificationMessage(),
+		Origin:  agent.EventOriginProvider,
+	})
+	return true
+}
+
+func (request toolRequestUserInputParams) valid() bool {
+	if strings.TrimSpace(request.ThreadID) == "" || strings.TrimSpace(request.TurnID) == "" || len(request.Questions) == 0 || len(request.Questions) > maxUserInputQuestions {
+		return false
+	}
+	for _, question := range request.Questions {
+		if strings.TrimSpace(question.ID) == "" || strings.TrimSpace(question.Question) == "" {
+			return false
+		}
+	}
+	return true
+}
+
+func (request toolRequestUserInputParams) clarificationMessage() string {
+	const secretInputMessage = "Codex requested secret input, which bydbctl declined. Provide only non-secret query details in the composer."
+	var lines []string
+	for _, question := range request.Questions {
+		if question.IsSecret {
+			return secretInputMessage
+		}
+		if header := compactUserInputText(question.Header); header != "" {
+			lines = append(lines, header)
+		}
+		lines = append(lines, compactUserInputText(question.Question))
+		if options := question.optionLabels(); len(options) > 0 {
+			lines = append(lines, "Options: "+strings.Join(options, " | "))
+		}
+		if question.IsOther {
+			lines = append(lines, "You can provide another answer in the composer.")
+		}
+	}
+	return truncateClarification(strings.Join(lines, "\n"))
+}
+
+func (question toolRequestUserInputQuestion) optionLabels() []string {
+	optionCount := len(question.Options)
+	if optionCount > maxUserInputOptions {
+		optionCount = maxUserInputOptions
+	}
+	labels := make([]string, 0, optionCount)
+	for optionIdx := 0; optionIdx < optionCount; optionIdx++ {
+		label := compactUserInputText(question.Options[optionIdx].Label)
+		if label != "" {
+			labels = append(labels, label)
+		}
+	}
+	if len(question.Options) > maxUserInputOptions {
+		labels = append(labels, "…")
+	}
+	return labels
+}
+
+func compactUserInputText(text string) string {
+	return strings.Join(strings.Fields(text), " ")
+}
+
+func truncateClarification(message string) string {
+	runes := []rune(message)
+	if len(runes) > maxClarificationRunes {
+		return string(runes[:maxClarificationRunes-1]) + "…"
+	}
+	return message
 }
 
 func (appConnection *connection) handleNotification(ctx context.Context, method string, params json.RawMessage) {

@@ -65,6 +65,7 @@ var disabledFeatures = []string{
 	"browser_use_external",
 	"browser_use_full_cdp_access",
 	"computer_use",
+	"default_mode_request_user_input",
 	"enable_mcp_apps",
 	"goals",
 	"hooks",
