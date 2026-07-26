@@ -48,6 +48,13 @@ const (
 	userInputRequestMethod = "item/tool/requestUserInput"
 )
 
+const (
+	normalizedControlledMCPApprovalHeader       = "approveapptoolcall?"
+	normalizedControlledMCPApprovalPromptPrefix = "allowthe" + controlledMCPServerName + "mcpservertoruntool\""
+	normalizedControlledMCPApprovalPromptSuffix = "\"?"
+	normalizedAllowSessionOption                = "allowforthissession"
+)
+
 type connection struct {
 	doneErr        error
 	stdin          io.WriteCloser
@@ -547,12 +554,9 @@ func (appConnection *connection) respondToUserInputRequest(id, params json.RawMe
 	if setErr := turn.setID(request.TurnID); setErr != nil {
 		return false
 	}
-	answers := make(map[string]toolRequestUserInputAnswer, len(request.Questions))
-	for _, question := range request.Questions {
-		if _, exists := answers[question.ID]; exists {
-			return false
-		}
-		answers[question.ID] = toolRequestUserInputAnswer{Answers: []string{}}
+	answers, autoApproved := request.responseAnswers()
+	if answers == nil {
+		return false
 	}
 	responseBytes, marshalErr := json.Marshal(map[string]any{
 		"id":     id,
@@ -564,12 +568,34 @@ func (appConnection *connection) respondToUserInputRequest(id, params json.RawMe
 	if writeErr := appConnection.writeLine(responseBytes); writeErr != nil {
 		return false
 	}
+	if autoApproved {
+		return true
+	}
 	turn.emit(agent.Event{
 		Kind:    agent.EventKindClarification,
 		Message: request.clarificationMessage(),
 		Origin:  agent.EventOriginProvider,
 	})
 	return true
+}
+
+func (request toolRequestUserInputParams) responseAnswers() (map[string]toolRequestUserInputAnswer, bool) {
+	if len(request.Questions) == 1 {
+		question := request.Questions[0]
+		if sessionOption := question.allowControlledMCPToolForSession(); sessionOption != "" {
+			return map[string]toolRequestUserInputAnswer{
+				question.ID: {Answers: []string{sessionOption}},
+			}, true
+		}
+	}
+	answers := make(map[string]toolRequestUserInputAnswer, len(request.Questions))
+	for _, question := range request.Questions {
+		if _, exists := answers[question.ID]; exists {
+			return nil, false
+		}
+		answers[question.ID] = toolRequestUserInputAnswer{Answers: []string{}}
+	}
+	return answers, false
 }
 
 func (request toolRequestUserInputParams) valid() bool {
@@ -605,6 +631,25 @@ func (request toolRequestUserInputParams) clarificationMessage() string {
 	return truncateClarification(strings.Join(lines, "\n"))
 }
 
+func (question toolRequestUserInputQuestion) allowControlledMCPToolForSession() string {
+	header := normalizedUserInputText(question.Header)
+	prompt := normalizedUserInputText(question.Question)
+	if question.IsSecret || header != normalizedControlledMCPApprovalHeader ||
+		!strings.HasPrefix(prompt, normalizedControlledMCPApprovalPromptPrefix) || !strings.HasSuffix(prompt, normalizedControlledMCPApprovalPromptSuffix) {
+		return ""
+	}
+	toolName := strings.TrimSuffix(strings.TrimPrefix(prompt, normalizedControlledMCPApprovalPromptPrefix), normalizedControlledMCPApprovalPromptSuffix)
+	if !containsString(controlledToolNames, toolName) {
+		return ""
+	}
+	for _, option := range question.Options {
+		if normalizedUserInputText(option.Label) == normalizedAllowSessionOption {
+			return option.Label
+		}
+	}
+	return ""
+}
+
 func (question toolRequestUserInputQuestion) optionLabels() []string {
 	optionCount := len(question.Options)
 	if optionCount > maxUserInputOptions {
@@ -625,6 +670,10 @@ func (question toolRequestUserInputQuestion) optionLabels() []string {
 
 func compactUserInputText(text string) string {
 	return strings.Join(strings.Fields(text), " ")
+}
+
+func normalizedUserInputText(text string) string {
+	return strings.ToLower(strings.ReplaceAll(compactUserInputText(text), " ", ""))
 }
 
 func truncateClarification(message string) string {
