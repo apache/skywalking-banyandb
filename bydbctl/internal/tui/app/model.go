@@ -467,6 +467,9 @@ func (m *Model) syncQuerySession() {
 	if currentCandidate := m.querySession.CurrentCandidate(); currentCandidate != nil {
 		m.query.SetValue(currentCandidate.Query)
 		m.limit.SetValue(extractCandidateLimit(currentCandidate.Query))
+		start, end := extractCandidateTimeRange(currentCandidate.Query)
+		m.start.SetValue(start)
+		m.end.SetValue(end)
 	}
 	if strings.TrimSpace(m.querySession.SchemaSnapshot.Name) != "" {
 		m.cacheSchema(m.querySession.SchemaSnapshot)
@@ -478,7 +481,10 @@ func (m *Model) syncQuerySession() {
 	m.syncChatCursor(true)
 }
 
-var candidateLimitPattern = regexp.MustCompile(`(?i)\bLIMIT\s+(\d+)`)
+var (
+	candidateLimitPattern = regexp.MustCompile(`(?i)\bLIMIT\s+(\d+)`)
+	candidateTimePattern  = regexp.MustCompile(`(?i)\bTIME\s+(?:BETWEEN\s+'([^']+)'\s+AND\s+'([^']+)'|([><]=?)\s+'([^']+)')`)
+)
 
 func extractCandidateLimit(query string) string {
 	matches := candidateLimitPattern.FindStringSubmatch(query)
@@ -486,6 +492,20 @@ func extractCandidateLimit(query string) string {
 		return ""
 	}
 	return matches[1]
+}
+
+func extractCandidateTimeRange(query string) (string, string) {
+	matches := candidateTimePattern.FindStringSubmatch(query)
+	if len(matches) != 5 {
+		return "", ""
+	}
+	if matches[1] != "" || matches[2] != "" {
+		return matches[1], matches[2]
+	}
+	if strings.HasPrefix(matches[3], ">") {
+		return matches[4], ""
+	}
+	return "", matches[4]
 }
 
 func (m *Model) applyCandidateLimit() {
@@ -505,6 +525,28 @@ func (m *Model) applyCandidateLimit() {
 	if limitValue != "" {
 		m.query.SetValue(query + " LIMIT " + limitValue)
 	}
+}
+
+func (m *Model) applyCandidateTimeRange() {
+	query := strings.TrimSpace(m.query.Value())
+	if query == "" || !candidateTimePattern.MatchString(query) {
+		return
+	}
+	start := strings.TrimSpace(m.start.Value())
+	end := strings.TrimSpace(m.end.Value())
+	if start == "" && end == "" {
+		return
+	}
+	timeClause := ""
+	switch {
+	case start != "" && end != "":
+		timeClause = fmt.Sprintf("TIME BETWEEN '%s' AND '%s'", start, end)
+	case start != "":
+		timeClause = fmt.Sprintf("TIME > '%s'", start)
+	default:
+		timeClause = fmt.Sprintf("TIME < '%s'", end)
+	}
+	m.query.SetValue(candidateTimePattern.ReplaceAllString(query, timeClause))
 }
 
 func formatApprovalRequest(request approval.Request) string {
@@ -900,8 +942,10 @@ func (m *Model) updateFocused(teaMsg tea.Msg) tea.Cmd {
 		updateCmd = tea.Batch(updateCmd, m.loadSchemaDetailForSearch())
 	case focusStart:
 		m.start, updateCmd = m.start.Update(teaMsg)
+		m.applyCandidateTimeRange()
 	case focusEnd:
 		m.end, updateCmd = m.end.Update(teaMsg)
+		m.applyCandidateTimeRange()
 	case focusLimit:
 		m.limit, updateCmd = m.limit.Update(teaMsg)
 		if m.limit.Value() != extractCandidateLimit(previousQuery) {
@@ -911,13 +955,16 @@ func (m *Model) updateFocused(teaMsg tea.Msg) tea.Cmd {
 		m.query, updateCmd = m.query.Update(teaMsg)
 		if previousQuery != m.query.Value() {
 			m.limit.SetValue(extractCandidateLimit(m.query.Value()))
+			start, end := extractCandidateTimeRange(m.query.Value())
+			m.start.SetValue(start)
+			m.end.SetValue(end)
 		}
 	case focusActivity:
 		return nil
 	case focusExecution:
 		return nil
 	}
-	if (m.focus == focusQuery || m.focus == focusLimit) && previousQuery != m.query.Value() {
+	if (m.focus == focusStart || m.focus == focusEnd || m.focus == focusLimit || m.focus == focusQuery) && previousQuery != m.query.Value() {
 		m.queryRevision++
 		return tea.Batch(updateCmd, m.queryDebounceCmd(m.queryRevision))
 	}
