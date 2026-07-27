@@ -21,7 +21,6 @@ package main
 
 import (
 	"bufio"
-	"compress/gzip"
 	"context"
 	"encoding/json"
 	"fmt"
@@ -464,7 +463,7 @@ func newPprofGrabCmd() *cobra.Command {
 			goroutinePath := filepath.Join(outDir, fmt.Sprintf("goroutine-%s.txt", ts))
 
 			baseURL := fmt.Sprintf("http://%s/debug/pprof", addr)
-			if fetchErr := fetchGzip(baseURL+"/heap", heapPath); fetchErr != nil {
+			if fetchErr := fetchProfile(baseURL+"/heap", heapPath); fetchErr != nil {
 				return fmt.Errorf("fetch heap profile: %w", fetchErr)
 			}
 
@@ -760,10 +759,10 @@ func newWriteLoadCmd() *cobra.Command {
 	return cmd
 }
 
-// fetchGzip downloads url and writes the body as a gzip file at dst.
+// fetchProfile downloads url and writes the body as a gzip file at dst.
 // The pprof heap endpoint already returns a gzip-compressed protobuf, so we
 // just pipe the bytes through.
-func fetchGzip(url, dst string) error {
+func fetchProfile(url, dst string) error {
 	body, fetchErr := fetchBytes(url)
 	if fetchErr != nil {
 		return fetchErr
@@ -774,12 +773,15 @@ func fetchGzip(url, dst string) error {
 	}
 	defer f.Close()
 
-	// The pprof heap endpoint returns raw gzip; write it directly.
-	gw := gzip.NewWriter(f)
-	if _, writeErr := gw.Write(body); writeErr != nil {
-		return fmt.Errorf("gzip write: %w", writeErr)
+	// The pprof heap endpoint already returns gzipped protobuf, so write the body
+	// through UNCHANGED. Compressing it again produced a doubly-gzipped file that
+	// `go tool pprof` rejects with "unrecognized profile format" (it gunzips once
+	// and finds gzip, not protobuf) — silently costing every measure/trace/stream
+	// soak its heap evidence until someone gunzipped the artifact by hand.
+	if _, writeErr := f.Write(body); writeErr != nil {
+		return fmt.Errorf("write %s: %w", dst, writeErr)
 	}
-	return gw.Close()
+	return nil
 }
 
 // fetchBytes issues a GET request and returns the response body.

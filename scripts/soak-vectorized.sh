@@ -229,9 +229,12 @@ compose_cmd build banyandb
 log "banyand image built."
 
 # Record image digest for reproducibility.
+# tr -d '\n' because the `|| echo unknown` fallback and docker's own output can
+# each contribute a newline, which lands inside the JSON string in summary.json.
 DRIVER_IMAGE_DIGEST=$(docker inspect \
   "$(SOAK_DIST_DIR="${DIST}" compose_cmd images -q soak-driver 2>/dev/null | head -1)" \
-  --format '{{.Id}}' 2>/dev/null || echo "unknown")
+  --format '{{.Id}}' 2>/dev/null | tr -d '\n' || echo "unknown")
+DRIVER_IMAGE_DIGEST="${DRIVER_IMAGE_DIGEST:-unknown}"
 log "soak-driver image digest: ${DRIVER_IMAGE_DIGEST}"
 
 # ── TRACE PHASE 0 — Baseline (vec-off) ───────────────────────────────────────
@@ -514,7 +517,7 @@ fi
 cat > "${DIST}/summary.json" <<EOF
 {
   "run_ts": "${RUN_TS}",
-  "engine": "trace",
+  "engine": "${SOAK_ENGINE}",
   "smoke": "${SMOKE:-false}",
   "warmup_min": ${WARMUP_MIN},
   "soak_hours": ${SOAK_HOURS},
