@@ -216,7 +216,7 @@ export function StreamForm({ mode, groupName, initialName, onClose, onDeleted }:
   if (mode === 'delete') {
     return (
       <div className="modal-overlay" onClick={() => onClose()}>
-        <div className="modal is-danger" onClick={(e) => e.stopPropagation()}>
+        <div className="modal is-danger" role="dialog" aria-modal="true" aria-label="Delete stream" onClick={(e) => e.stopPropagation()}>
           <div className="modal-head">
             <span className="modal-title">Delete stream</span>
             <button className="modal-x" onClick={() => onClose()} aria-label="Close" />
@@ -244,7 +244,7 @@ export function StreamForm({ mode, groupName, initialName, onClose, onDeleted }:
 
   return (
     <div className="modal-overlay" onClick={() => onClose()}>
-      <form className="modal is-wide" ref={trapRef} onSubmit={handleSubmit} onClick={(e) => e.stopPropagation()}>
+      <form className="modal is-wide" role="dialog" aria-modal="true" aria-label={isEdit ? 'Edit stream' : 'Create stream'} ref={trapRef} onSubmit={handleSubmit} onClick={(e) => e.stopPropagation()}>
         <div className="modal-head">
           <div>
             <span className="modal-title">{isEdit ? 'Edit stream' : 'Create stream'}</span>

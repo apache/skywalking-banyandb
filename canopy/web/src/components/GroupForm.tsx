@@ -63,15 +63,20 @@ interface FormErrors {
   stages?: StageErrors[];
 }
 
-function IntervalField({ value, onChange }: {
+function IntervalField({ value, onChange, label }: {
   value: Interval;
   onChange: (v: Interval) => void;
+  // Accessible name for the interval group and its number input, so tests can
+  // target "Segment interval"/"TTL" without CSS. Unit buttons expose their
+  // selected state via aria-pressed.
+  label?: string;
 }) {
   return (
-    <div className="iv-row">
+    <div className="iv-row" role="group" aria-label={label}>
       <input
         className="f-input mono iv-num"
         type="number" min="1"
+        aria-label={label ? `${label} value` : undefined}
         value={value.num}
         onChange={(e) => onChange({ ...value, num: e.target.value === '' ? '' : Number(e.target.value) })}
       />
@@ -79,6 +84,7 @@ function IntervalField({ value, onChange }: {
         {(['UNIT_HOUR', 'UNIT_DAY'] as const).map((u) => (
           <button type="button" key={u}
             className={`seg-btn${value.unit === u ? ' is-on' : ''}`}
+            aria-pressed={value.unit === u}
             onClick={() => onChange({ ...value, unit: u })}>
             {u === 'UNIT_HOUR' ? 'Hour' : 'Day'}
           </button>
@@ -109,16 +115,18 @@ function Field({ label, hint, error, required, locked, children }: {
   );
 }
 
-function NumField({ value, onChange, min = 0 }: {
+function NumField({ value, onChange, min = 0, ariaLabel }: {
   value: number | '';
   onChange: (v: number | '') => void;
   min?: number;
+  ariaLabel?: string;
 }) {
   return (
     <input
       className="f-input mono"
       type="number"
       min={min}
+      aria-label={ariaLabel}
       value={value}
       onChange={(e) => onChange(e.target.value === '' ? '' : Number(e.target.value))}
     />
@@ -147,31 +155,31 @@ function StagesEditor({ stages, errors, onChange }: {
       {stages.map((s, i) => {
         const er: StageErrors = (errors && errors[i]) || {};
         return (
-          <div key={i} className="stage-card">
+          <div key={i} className="stage-card" role="group" aria-label={`Stage ${i + 1}`}>
             <div className="stage-head">
               <span className="stage-idx">Stage {i + 1}</span>
               <button type="button" className="stage-del" onClick={() => del(i)}>Remove</button>
             </div>
             <div className="f-grid">
               <Field label="Name" required error={er.name}>
-                <input type="text" className="f-input mono" value={s.name} placeholder="warm"
+                <input type="text" className="f-input mono" value={s.name} placeholder="warm" aria-label="Stage name"
                   onChange={(e) => upd(i, { name: e.target.value })} />
               </Field>
               <Field label="Shards" required error={er.shardNum}>
-                <NumField value={s.shardNum} min={1} onChange={(val) => upd(i, { shardNum: val })} />
+                <NumField value={s.shardNum} min={1} ariaLabel="Stage shards" onChange={(val) => upd(i, { shardNum: val })} />
               </Field>
               <Field label="Segment interval" required error={er.segmentInterval}>
-                <IntervalField value={s.segmentInterval} onChange={(val) => upd(i, { segmentInterval: val })} />
+                <IntervalField value={s.segmentInterval} label="Stage segment interval" onChange={(val) => upd(i, { segmentInterval: val })} />
               </Field>
               <Field label="TTL" required error={er.ttl}>
-                <IntervalField value={s.ttl} onChange={(val) => upd(i, { ttl: val })} />
+                <IntervalField value={s.ttl} label="Stage TTL" onChange={(val) => upd(i, { ttl: val })} />
               </Field>
               <Field label="Node selector" required hint="Target node label (e.g. tier=warm)" error={er.nodeSelector}>
-                <input type="text" className="f-input mono" value={s.nodeSelector} placeholder="tier=warm"
+                <input type="text" className="f-input mono" value={s.nodeSelector} placeholder="tier=warm" aria-label="Node selector"
                   onChange={(e) => upd(i, { nodeSelector: e.target.value })} />
               </Field>
               <Field label="Replicas">
-                <NumField value={s.replicas} min={0} onChange={(val) => upd(i, { replicas: val })} />
+                <NumField value={s.replicas} min={0} ariaLabel="Stage replicas" onChange={(val) => upd(i, { replicas: val })} />
               </Field>
             </div>
             <label className="f-check">
@@ -379,7 +387,7 @@ export function GroupForm({ mode, initialName, initialCatalog, onClose, onDelete
     const deleteMatch = deleteConfirm === initialName;
     return (
       <div className="modal-overlay" onClick={() => onClose()}>
-        <div className="modal is-danger" ref={trapRef} onClick={(e) => e.stopPropagation()}>
+        <div className="modal is-danger" role="dialog" aria-modal="true" aria-label="Delete group" ref={trapRef} onClick={(e) => e.stopPropagation()}>
           <div className="modal-head">
             <span className="modal-title">Delete group</span>
             <button className="modal-x" onClick={() => onClose()} />
@@ -427,6 +435,9 @@ export function GroupForm({ mode, initialName, initialCatalog, onClose, onDelete
     <div className="modal-overlay" onClick={() => onClose()}>
       <form
         className="modal is-wide"
+        role="dialog"
+        aria-modal="true"
+        aria-label={isEdit ? 'Edit group' : 'New group'}
         ref={trapRef}
         onSubmit={handleSubmit}
         onClick={(e) => e.stopPropagation()}
@@ -473,6 +484,7 @@ export function GroupForm({ mode, initialName, initialCatalog, onClose, onDelete
                       key={c.value}
                       disabled={isEdit}
                       className={`seg-btn${activeCatalog === c.value ? ' is-on' : ''}`}
+                      aria-pressed={activeCatalog === c.value}
                       onClick={() => setCatalog(c.value)}
                     >
                       {c.label}
@@ -496,6 +508,7 @@ export function GroupForm({ mode, initialName, initialCatalog, onClose, onDelete
                   className="f-input mono"
                   type="number"
                   min={1}
+                  aria-label="Shard number"
                   value={shardNum}
                   onChange={(e) => setShardNum(e.target.value === '' ? '' : Number(e.target.value))}
                 />
@@ -508,6 +521,7 @@ export function GroupForm({ mode, initialName, initialCatalog, onClose, onDelete
                   className="f-input mono"
                   type="number"
                   min={0}
+                  aria-label="Replicas"
                   value={replicas}
                   onChange={(e) => setReplicas(e.target.value === '' ? '' : Number(e.target.value))}
                 />
@@ -515,10 +529,10 @@ export function GroupForm({ mode, initialName, initialCatalog, onClose, onDelete
               {!isPropertyCatalog && (
                 <>
                   <Field label="Segment interval" required error={errors.segmentInterval} hint="Length of each storage segment">
-                    <IntervalField value={segmentInterval} onChange={setSegmentInterval} />
+                    <IntervalField value={segmentInterval} label="Segment interval" onChange={setSegmentInterval} />
                   </Field>
                   <Field label="TTL" required error={errors.ttl} hint="How long data is retained">
-                    <IntervalField value={ttl} onChange={setTtl} />
+                    <IntervalField value={ttl} label="TTL" onChange={setTtl} />
                   </Field>
                 </>
               )}
@@ -539,7 +553,7 @@ export function GroupForm({ mode, initialName, initialCatalog, onClose, onDelete
             </section>
           )}
 
-          {errors._ && <div className="f-error">{errors._}</div>}
+          {errors._ && <div className="f-error" role="alert">{errors._}</div>}
         </div>
 
         <div className="modal-foot">

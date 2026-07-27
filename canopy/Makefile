@@ -21,6 +21,7 @@ NAME := canopy
 mk_path  := $(abspath $(lastword $(MAKEFILE_LIST)))
 mk_dir   := $(dir $(mk_path))
 tool_bin := $(mk_dir)../bin
+repo_root := $(abspath $(mk_dir)../)
 
 include ../scripts/build/license.mk
 
@@ -44,10 +45,15 @@ lint: install
 test: install
 	npm run test
 
+# license-check / license-fix delegate to the ROOT .licenserc.yaml instead of
+# canopy/.licenserc.yaml, so the OMC runtime state + handoff / playwright
+# artefacts (which live outside this directory but inside the repo) are
+# excluded by patterns defined ONCE in the root config. This avoids editing
+# ui/ or any other subproject's .licenserc.yaml.
 .PHONY: license-check
 license-check: $(LICENSE_EYE) ## Check license header
-	$(LICENSE_EYE) header check
+	$(LICENSE_EYE) -c $(repo_root).licenserc.yaml header check
 
 .PHONY: license-fix
 license-fix: $(LICENSE_EYE) ## Fix license header issues
-	$(LICENSE_EYE) header fix
+	$(LICENSE_EYE) -c $(repo_root).licenserc.yaml header fix

@@ -1,0 +1,164 @@
+{
+  "description": "Hand-authored stream query response matching the BanyanDB monorepo's current wire shape (api/proto/banyandb/stream/v1/query.proto). Wire shape: stream.v1.QueryResponse { elements: [Element] }; each Element has { element_id, timestamp, tag_families: [{name, tags: [{key, value}]}] }. The result-view flattens this into { timestamp, service, level, trace_id, duration_ms, body } for rendering. See implement-m4-note.md decision #24.",
+  "capturedAt": "2026-06-29T14:00:00Z",
+  "banyandbVersion": "monorepo-current",
+  "wireShape": "stream.v1.QueryResponse",
+  "elements": [
+    {
+      "element_id": "abc123def456-1",
+      "timestamp": "2026-06-29T11:55:01Z",
+      "tag_families": [
+        { "name": "sw", "tags": [
+          { "key": "service", "value": "order-svc" },
+          { "key": "level", "value": "INFO" },
+          { "key": "trace_id", "value": "abc123def456" },
+          { "key": "duration_ms", "value": "124" },
+          { "key": "body", "value": "received order" }
+        ] }
+      ]
+    },
+    {
+      "element_id": "abc123def456-2",
+      "timestamp": "2026-06-29T11:55:02Z",
+      "tag_families": [
+        { "tags": [
+          { "key": "service", "value": "order-svc" },
+          { "key": "level", "value": "DEBUG" },
+          { "key": "trace_id", "value": "abc123def456" },
+          { "key": "duration_ms", "value": "12" },
+          { "key": "body", "value": "validated cart" }
+        ] }
+      ]
+    },
+    {
+      "element_id": "ghi789jkl012-1",
+      "timestamp": "2026-06-29T11:55:03Z",
+      "tag_families": [
+        { "tags": [
+          { "key": "service", "value": "payment-svc" },
+          { "key": "level", "value": "WARN" },
+          { "key": "trace_id", "value": "ghi789jkl012" },
+          { "key": "duration_ms", "value": "800" },
+          { "key": "body", "value": "payment gateway timeout" }
+        ] }
+      ]
+    },
+    {
+      "element_id": "abc123def456-3",
+      "timestamp": "2026-06-29T11:55:04Z",
+      "tag_families": [
+        { "tags": [
+          { "key": "service", "value": "order-svc" },
+          { "key": "level", "value": "INFO" },
+          { "key": "trace_id", "value": "abc123def456" },
+          { "key": "duration_ms", "value": "32" },
+          { "key": "body", "value": "stock reserved" }
+        ] }
+      ]
+    },
+    {
+      "element_id": "ghi789jkl012-2",
+      "timestamp": "2026-06-29T11:55:05Z",
+      "tag_families": [
+        { "tags": [
+          { "key": "service", "value": "payment-svc" },
+          { "key": "level", "value": "ERROR" },
+          { "key": "trace_id", "value": "ghi789jkl012" },
+          { "key": "duration_ms", "value": "2400" },
+          { "key": "body", "value": "gateway rejected: insufficient funds" }
+        ] }
+      ]
+    },
+    {
+      "element_id": "mno345pqr678-1",
+      "timestamp": "2026-06-29T11:55:06Z",
+      "tag_families": [
+        { "tags": [
+          { "key": "service", "value": "order-svc" },
+          { "key": "level", "value": "INFO" },
+          { "key": "trace_id", "value": "mno345pqr678" },
+          { "key": "duration_ms", "value": "8" },
+          { "key": "body", "value": "saga started" }
+        ] }
+      ]
+    },
+    {
+      "element_id": "mno345pqr678-2",
+      "timestamp": "2026-06-29T11:55:07Z",
+      "tag_families": [
+        { "tags": [
+          { "key": "service", "value": "inventory-svc" },
+          { "key": "level", "value": "WARN" },
+          { "key": "trace_id", "value": "mno345pqr678" },
+          { "key": "duration_ms", "value": "412" },
+          { "key": "body", "value": "low-stock threshold hit" }
+        ] }
+      ]
+    },
+    {
+      "element_id": "mno345pqr678-3",
+      "timestamp": "2026-06-29T11:55:08Z",
+      "tag_families": [
+        { "tags": [
+          { "key": "service", "value": "order-svc" },
+          { "key": "level", "value": "INFO" },
+          { "key": "trace_id", "value": "mno345pqr678" },
+          { "key": "duration_ms", "value": "18" },
+          { "key": "body", "value": "order committed" }
+        ] }
+      ]
+    },
+    {
+      "element_id": "stu901vwx234-1",
+      "timestamp": "2026-06-29T11:55:09Z",
+      "tag_families": [
+        { "tags": [
+          { "key": "service", "value": "frontend-svc" },
+          { "key": "level", "value": "INFO" },
+          { "key": "trace_id", "value": "stu901vwx234" },
+          { "key": "duration_ms", "value": "56" },
+          { "key": "body", "value": "session refreshed" }
+        ] }
+      ]
+    },
+    {
+      "element_id": "stu901vwx234-2",
+      "timestamp": "2026-06-29T11:55:10Z",
+      "tag_families": [
+        { "tags": [
+          { "key": "service", "value": "frontend-svc" },
+          { "key": "level", "value": "DEBUG" },
+          { "key": "trace_id", "value": "stu901vwx234" },
+          { "key": "duration_ms", "value": "4" },
+          { "key": "body", "value": "cache hit" }
+        ] }
+      ]
+    },
+    {
+      "element_id": "ghi789jkl012-3",
+      "timestamp": "2026-06-29T11:55:11Z",
+      "tag_families": [
+        { "tags": [
+          { "key": "service", "value": "payment-svc" },
+          { "key": "level", "value": "INFO" },
+          { "key": "trace_id", "value": "ghi789jkl012" },
+          { "key": "duration_ms", "value": "220" },
+          { "key": "body", "value": "refund issued" }
+        ] }
+      ]
+    },
+    {
+      "element_id": "abc123def456-4",
+      "timestamp": "2026-06-29T11:55:12Z",
+      "tag_families": [
+        { "tags": [
+          { "key": "service", "value": "order-svc" },
+          { "key": "level", "value": "ERROR" },
+          { "key": "trace_id", "value": "abc123def456" },
+          { "key": "duration_ms", "value": "1800" },
+          { "key": "body", "value": "compensation failed" }
+        ] }
+      ]
+    }
+  ]
+}

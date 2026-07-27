@@ -267,7 +267,7 @@ export function Sidebar({ collapsed, onToggleCollapse }: SidebarProps) {
   };
 
   return (
-    <aside className={'sidebar' + (collapsed ? ' is-collapsed' : '')}>
+    <aside className={'sidebar' + (collapsed ? ' is-collapsed' : '')} aria-label="Sidebar">
       <div className="side-head">
         <div className="brand">
           <CanopyMark size={28} className="brand-mark" />
@@ -432,6 +432,8 @@ export function Sidebar({ collapsed, onToggleCollapse }: SidebarProps) {
         <div className="side-foot-row">
           <div
             className={'conn' + (banyandbReachable === false ? ' is-unreachable' : '')}
+            role="status"
+            aria-label="BanyanDB connection"
             title={banyandbReachable === false
               ? `Cannot reach BanyanDB at ${banyandbTarget} — check BANYANDB_TARGET and the BanyanDB process.`
               : 'Connected to ' + banyandbTarget}
@@ -442,7 +444,7 @@ export function Sidebar({ collapsed, onToggleCollapse }: SidebarProps) {
               <span className="conn-host">{displayHost}</span>
             </span>
           </div>
-          <button className="collapse-btn" onClick={onToggleCollapse} title="Toggle sidebar (⌘B)" aria-label="Toggle sidebar">
+          <button className="collapse-btn" onClick={onToggleCollapse} title="Toggle sidebar (⌘B)" aria-label="Toggle sidebar" aria-expanded={!collapsed}>
             <IconCollapse />
           </button>
         </div>

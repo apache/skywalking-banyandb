@@ -35,6 +35,22 @@ export async function registerStatic(app: FastifyInstance): Promise<void> {
   await app.register(fastifyStatic, {
     root: WEB_DIST,
     prefix: '/',
+    // SPA assets must always revalidate. Without these headers the browser
+    // caches the index.html + the hash-named bundle, so a `npm run -w web build`
+    // that swaps the bundle filename does NOT clear the browser's view of the
+    // page — the cached HTML still points at the old hash. So index.html is
+    // sent `no-store` (never cached; always refetched) and the hash-named
+    // assets `no-cache, must-revalidate` (cached but revalidated each load,
+    // so a swapped bundle is picked up while unchanged assets 304 cheaply).
+    cacheControl: false,
+    setHeaders: (res, path) => {
+      if (path.endsWith('index.html')) {
+        res.setHeader('Cache-Control', 'no-store, must-revalidate');
+        res.setHeader('Pragma', 'no-cache');
+      } else {
+        res.setHeader('Cache-Control', 'no-cache, must-revalidate');
+      }
+    },
     // Do NOT use wildcard here — we handle the SPA fallback manually below
     // to ensure /api, /auth, /monitoring, /healthz are NOT shadowed.
   });
@@ -52,7 +68,9 @@ export async function registerStatic(app: FastifyInstance): Promise<void> {
       await reply.status(404).send({ error: 'not_found' });
       return;
     }
-    // SPA fallback
+    // SPA fallback — always re-validate the HTML.
+    reply.header('Cache-Control', 'no-store, must-revalidate');
+    reply.header('Pragma', 'no-cache');
     await reply.sendFile('index.html', WEB_DIST);
   });
 }

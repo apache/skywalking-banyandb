@@ -35,6 +35,7 @@ import { IndexRuleForm } from './components/IndexRuleForm.js';
 import { IndexRuleBindingForm } from './components/IndexRuleBindingForm.js';
 import { IndexPage } from './pages/IndexPage.js';
 import { apiDataSource } from './data/api.js';
+import { QueryConsole } from './query/QueryConsole.js';
 import { useQuery } from '@tanstack/react-query';
 import type {
   Group, MeasureSchema, StreamSchema, TraceSchema,
@@ -71,6 +72,10 @@ const TYPE_CATALOG: Record<string, 'CATALOG_MEASURE' | 'CATALOG_STREAM' | 'CATAL
   traces: 'CATALOG_TRACE',
   properties: 'CATALOG_PROPERTY',
 };
+
+function QueryRoute() {
+  return <QueryConsole />;
+}
 
 function MetadataTypeRoute() {
   const { type = 'measures' } = useParams<{ type: string }>();
@@ -445,7 +450,7 @@ function AppContent() {
         <Route path="/metadata/:type/:group" element={<MetadataGroupRoute />} />
         <Route path="/metadata/:type" element={<MetadataTypeRoute />} />
         <Route path="/pipelines/*" element={<div className="page-body"><h1 className="page-title">Pipelines</h1><p className="page-meta">Coming soon.</p></div>} />
-        <Route path="/query" element={<div className="page-body"><h1 className="page-title">Query</h1><p className="page-meta">Coming in M4.</p></div>} />
+        <Route path="/query" element={<QueryRoute />} />
         <Route path="*" element={<div className="page-body"><h1 className="page-title">Not found</h1></div>} />
       </Routes>
     </Shell>
