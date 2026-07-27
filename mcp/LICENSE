@@ -54,7 +54,7 @@ ISC licenses
 MIT licenses
 ========================================================================
 
-    @hono/node-server 1.19.17 MIT
+    @hono/node-server 2.0.12 MIT
     @modelcontextprotocol/sdk 1.29.0 MIT
     accepts 2.0.0 MIT
     ajv 8.20.0 MIT
