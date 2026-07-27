@@ -41,6 +41,7 @@ services:
       - standalone
       - --measure-vectorized-enabled=${BANYANDB_VEC_ENABLED:-false}
       - --trace-vectorized-enabled=${BANYANDB_VEC_ENABLED:-false}
+      - --stream-vectorized-enabled=${BANYANDB_VEC_ENABLED:-false}
       - --measure-root-path=/data
       - --stream-root-path=/data
       - --property-root-path=/data

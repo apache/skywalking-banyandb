@@ -44,8 +44,8 @@ set -euo pipefail
 
 # ── engine selection ──────────────────────────────────────────────────────────
 SOAK_ENGINE="${SOAK_ENGINE:-measure}"
-if [[ "${SOAK_ENGINE}" != "measure" && "${SOAK_ENGINE}" != "trace" ]]; then
-  echo "ERROR: SOAK_ENGINE must be 'measure' or 'trace' (got '${SOAK_ENGINE}')"
+if [[ "${SOAK_ENGINE}" != "measure" && "${SOAK_ENGINE}" != "trace" && "${SOAK_ENGINE}" != "stream" ]]; then
+  echo "ERROR: SOAK_ENGINE must be 'measure', 'trace' or 'stream' (got '${SOAK_ENGINE}')"
   exit 1
 fi
 
@@ -70,6 +70,9 @@ SEED_ROWS="${SEED_ROWS:-1000}"
 # Trace-engine supplementary knobs (only active when SOAK_ENGINE=trace).
 SOAK_TRACE_SPANS_PER_TRACE="${SOAK_TRACE_SPANS_PER_TRACE:-}"
 SOAK_TRACE_SERVICES="${SOAK_TRACE_SERVICES:-}"
+# Stream-engine supplementary knobs (only active when SOAK_ENGINE=stream).
+SOAK_STREAM_SERIES="${SOAK_STREAM_SERIES:-}"
+SOAK_STREAM_ELEMENTS="${SOAK_STREAM_ELEMENTS:-}"
 SOAK_WRITE_RPS="${SOAK_WRITE_RPS:-500}"
 SOAK_HEAP_GROWTH_MAX_PCT="${SOAK_HEAP_GROWTH_MAX_PCT:-10}"
 
@@ -189,10 +192,22 @@ log "Config: ENGINE=${SOAK_ENGINE} WARMUP_MIN=${WARMUP_MIN} SOAK_HOURS=${SOAK_HO
 # behavior.  The TRACE path is gated entirely in the `if` branch below;
 # nothing in the measure path is touched.
 
-if [[ "${SOAK_ENGINE}" == "trace" ]]; then
+if [[ "${SOAK_ENGINE}" == "trace" || "${SOAK_ENGINE}" == "stream" ]]; then
 # ╔══════════════════════════════════════════════════════════════════════════╗
-# ║  TRACE ENGINE — Instrument 1 (containerized correctness + survival soak)║
+# ║  TRACE/STREAM ENGINE — Instrument 1 (containerized correctness + survival)║
 # ╚══════════════════════════════════════════════════════════════════════════╝
+# This branch is engine-parameterized: everything is driven by ${SOAK_ENGINE}
+# (trace|stream), the ${ENGINE_CATALOG} catalog, and the ${VEC_FLAG} vec flag,
+# so the identical two-phase parity orchestration serves both engines.
+ENGINE="${SOAK_ENGINE}"
+ENGINE_CATALOG="/catalog/${ENGINE}.json"
+VEC_FLAG="--${ENGINE}-vectorized-enabled=true"
+# Engine-specific seed args: trace tunes spans/trace; stream tunes series/elements.
+if [[ "${ENGINE}" == "trace" ]]; then
+  SEED_ARGS=( ${SOAK_TRACE_SPANS_PER_TRACE:+--spans "${SOAK_TRACE_SPANS_PER_TRACE}"} )
+else
+  SEED_ARGS=( ${SOAK_STREAM_SERIES:+--series "${SOAK_STREAM_SERIES}"} ${SOAK_STREAM_ELEMENTS:+--elements "${SOAK_STREAM_ELEMENTS}"} )
+fi
 
 # Bind banyandb's host ports to random free ports (host port 0). The trace
 # driver is containerized and reaches banyandb over the compose network, and
@@ -222,6 +237,14 @@ log "soak-driver image digest: ${DRIVER_IMAGE_DIGEST}"
 # ── TRACE PHASE 0 — Baseline (vec-off) ───────────────────────────────────────
 log "=== TRACE PHASE 0: Baseline (BANYANDB_VEC_ENABLED=false) ==="
 
+# Phase 0 MUST start from an empty data dir. The dir is a host bind mount, so
+# `compose down -v` (which only drops volumes) leaves it behind: a previous run's
+# elements would pollute the baseline, and — worse — its persisted schema would
+# make every registry Create return AlreadyExists, silently keeping the OLD
+# schema (e.g. a stale index-rule type/id) no matter what this run defines.
+log "Wiping ${DATA_DIR} so Phase 0 starts from a clean slate..."
+rm -rf "${DATA_DIR:?}"/*
+
 SOAK_DATA_DIR="${DATA_DIR}" BANYANDB_VEC_ENABLED=false compose_cmd up -d banyandb
 wait_banyandb_container_healthy
 
@@ -240,9 +263,9 @@ log "Seeding deterministic trace fixture..."
 # seed-fixture prints T1_MS as the last line of stdout; the driver also
 # prints a T1_MS=<value> diagnostic line — grab the bare integer final line.
 SEED_OUT=$(soak_driver_container seed-fixture \
-  --engine trace \
+  --engine "${ENGINE}" \
   --addr "${BANYANDB_GRPC_CONTAINER}" \
-  ${SOAK_TRACE_SPANS_PER_TRACE:+--spans "${SOAK_TRACE_SPANS_PER_TRACE}"})
+  "${SEED_ARGS[@]}")
 log "seed-fixture output: ${SEED_OUT}"
 T1_MS=$(echo "${SEED_OUT}" | grep -E '^[0-9]+$' | tail -1)
 if [[ -z "${T1_MS}" ]] || ! [[ "${T1_MS}" =~ ^[0-9]+$ ]]; then
@@ -256,11 +279,11 @@ log "T1 snapshot timestamp: ${T1_MS} ms"
 log "Waiting 8s for schema-server flush to persist..."
 sleep 8
 
-log "Recording trace baseline..."
+log "Recording ${ENGINE} baseline..."
 soak_driver_container record-baseline \
-  --engine trace \
+  --engine "${ENGINE}" \
   --addr "${BANYANDB_GRPC_CONTAINER}" \
-  --catalog /catalog/trace.json \
+  --catalog "${ENGINE_CATALOG}" \
   --until "${T1_MS}" \
   --out /artifacts/baseline.json
 
@@ -268,11 +291,11 @@ soak_driver_container record-baseline \
 # query returns empty traces, so reaching here means the baseline is usable;
 # this count is purely diagnostic.
 baseline_trace_count=$(python3 -c \
-  "import json; d=json.load(open('${DIST}/baseline.json')); print(sum(len(r.get('traces') or []) for r in d))" \
+  "import json; d=json.load(open('${DIST}/baseline.json')); print(sum(len(r.get('traces') or r.get('elements') or r.get('data_points') or []) for r in d))" \
   2>/dev/null || echo 0)
-log "Baseline traces captured: ${baseline_trace_count}"
+log "Baseline records captured: ${baseline_trace_count}"
 if [[ "${baseline_trace_count}" == "0" ]]; then
-  log "ERROR: baseline contains zero traces despite seeding — abort"
+  log "ERROR: baseline contains zero records despite seeding — abort"
   exit 1
 fi
 
@@ -307,7 +330,7 @@ wait_banyandb_container_healthy
 # the log (the log grep is a guaranteed false negative).
 log "Checking vec-flag-honored via container args..."
 VEC_FLAG_HONORED=false
-if docker inspect "${BANYANDB_CONTAINER_NAME}" --format '{{json .Args}}' 2>/dev/null | grep -q -- '--trace-vectorized-enabled=true'; then
+if docker inspect "${BANYANDB_CONTAINER_NAME}" --format '{{json .Args}}' 2>/dev/null | grep -q -- "${VEC_FLAG}"; then
   VEC_FLAG_HONORED=true
 fi
 log "Vec flag honored: ${VEC_FLAG_HONORED}"
@@ -389,9 +412,9 @@ PPROF_LOOP_PID=$!
     DIFF_TS="$(date +%Y%m%dT%H%M%S)"
     DIFF_REPORT="/artifacts/diff-${DIFF_TS}.json"
     soak_driver_container replay-and-diff \
-      --engine trace \
+      --engine "${ENGINE}" \
       --addr "${BANYANDB_GRPC_CONTAINER}" \
-      --catalog /catalog/trace.json \
+      --catalog "${ENGINE_CATALOG}" \
       --baseline /artifacts/baseline.json \
       --report "${DIFF_REPORT}" || \
       log "WARN: parity divergence detected — see ${DIST}/diff-${DIFF_TS}.json"
@@ -414,11 +437,11 @@ echo "never" > "${WRITE_LOAD_LAST_OK_FILE}"
   sweep_total=0
   while (( $(date +%s) < SOAK_END )); do
     SWEEP_ROWS=$(soak_driver_container write-load \
-      --engine trace \
+      --engine "${ENGINE}" \
       --addr "${BANYANDB_GRPC_CONTAINER}" \
       --rps "${SOAK_WRITE_RPS}" \
       --duration "${WRITE_DURATION_SEC}s" 2>&1 | \
-      grep -oE '[0-9]+ spans' | awk '{print $1}' | tail -1)
+      grep -oE '[0-9]+ (spans|elements)' | awk '{print $1}' | tail -1)
     # Sanitize to digits only: under pipefail a non-zero pipeline could otherwise
     # leave a multiline value (e.g. "56000\n0"), breaking the arithmetic below.
     SWEEP_ROWS=${SWEEP_ROWS//[^0-9]/}
@@ -457,9 +480,9 @@ log "Final pprof captured."
 # Final parity check (sets FINAL_PASS).
 FINAL_DIFF="/artifacts/diff-final.json"
 soak_driver_container replay-and-diff \
-  --engine trace \
+  --engine "${ENGINE}" \
   --addr "${BANYANDB_GRPC_CONTAINER}" \
-  --catalog /catalog/trace.json \
+  --catalog "${ENGINE_CATALOG}" \
   --baseline /artifacts/baseline.json \
   --report "${FINAL_DIFF}" && FINAL_PASS=true || FINAL_PASS=false
 log "Final parity check: pass=${FINAL_PASS}"

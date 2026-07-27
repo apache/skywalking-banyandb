@@ -64,16 +64,17 @@ const (
 const (
 	engineMeasure = "measure"
 	engineTrace   = "trace"
+	engineStream  = "stream"
 
-	// parityWindow is the lookback applied to time-bounded trace queries; the
-	// fixture spans one second per version, so a wide window covers them all.
+	// parityWindow is the lookback applied to time-bounded trace/stream queries;
+	// the fixture spans one second per version, so a wide window covers them all.
 	parityWindow = 7 * 24 * time.Hour
 )
 
 // validateEngine returns an error for an unknown --engine value.
 func validateEngine(engine string) error {
-	if engine != engineMeasure && engine != engineTrace {
-		return fmt.Errorf("unknown engine %q: want %q or %q", engine, engineMeasure, engineTrace)
+	if engine != engineMeasure && engine != engineTrace && engine != engineStream {
+		return fmt.Errorf("unknown engine %q: want %q, %q or %q", engine, engineMeasure, engineTrace, engineStream)
 	}
 	return nil
 }
@@ -213,6 +214,14 @@ func newRecordBaselineCmd() *cobra.Command {
 				defer conn.Close()
 				return traceRecordBaseline(context.Background(), conn, catalogPath, outPath, untilMs, parityWindow)
 			}
+			if engine == engineStream {
+				conn, dialErr := dialInsecure(addr)
+				if dialErr != nil {
+					return dialErr
+				}
+				defer conn.Close()
+				return streamRecordBaseline(context.Background(), conn, catalogPath, outPath, untilMs, parityWindow)
+			}
 
 			entries, loadErr := loadCatalog(catalogPath)
 			if loadErr != nil {
@@ -303,6 +312,14 @@ func newReplayAndDiffCmd() *cobra.Command {
 				}
 				defer conn.Close()
 				return traceReplayAndDiff(context.Background(), conn, catalogPath, baselinePath, reportPath, parityWindow)
+			}
+			if engine == engineStream {
+				conn, dialErr := dialInsecure(addr)
+				if dialErr != nil {
+					return dialErr
+				}
+				defer conn.Close()
+				return streamReplayAndDiff(context.Background(), conn, catalogPath, baselinePath, reportPath, parityWindow)
 			}
 
 			raw, readErr := os.ReadFile(baselinePath)
@@ -488,11 +505,11 @@ func newPprofGrabCmd() *cobra.Command {
 // fixture.
 func newSeedFixtureCmd() *cobra.Command {
 	var addr, engine string
-	var rows, traces, spans int
+	var rows, traces, spans, series, elementsPerSeries int
 
 	cmd := &cobra.Command{
 		Use:   "seed-fixture",
-		Short: "Create a deterministic group/measure (or trace) and write fixture data",
+		Short: "Create a deterministic group/measure (or trace/stream) and write fixture data",
 		RunE: func(_ *cobra.Command, _ []string) error {
 			if engineErr := validateEngine(engine); engineErr != nil {
 				return engineErr
@@ -506,6 +523,16 @@ func newSeedFixtureCmd() *cobra.Command {
 				ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
 				defer cancel()
 				return traceSeedFixture(ctx, conn, traces, spans)
+			}
+			if engine == engineStream {
+				conn, dialErr := dialInsecure(addr)
+				if dialErr != nil {
+					return dialErr
+				}
+				defer conn.Close()
+				ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
+				defer cancel()
+				return streamSeedFixture(ctx, conn, series, elementsPerSeries)
 			}
 
 			conn, dialErr := dialInsecure(addr)
@@ -676,10 +703,12 @@ func newSeedFixtureCmd() *cobra.Command {
 		},
 	}
 	cmd.Flags().StringVar(&addr, "addr", "localhost:17912", "BanyanDB gRPC address")
-	cmd.Flags().StringVar(&engine, "engine", engineMeasure, "engine to seed: measure|trace")
+	cmd.Flags().StringVar(&engine, "engine", engineMeasure, "engine to seed: measure|trace|stream")
 	cmd.Flags().IntVar(&rows, "rows", 1000, "number of measure data points to write")
 	cmd.Flags().IntVar(&traces, "traces", traceFixtureTraces, "number of traces to write (trace engine)")
 	cmd.Flags().IntVar(&spans, "spans", traceFixtureSpans, "number of spans per trace (trace engine)")
+	cmd.Flags().IntVar(&series, "series", streamFixtureSeries, "number of series to write (stream engine)")
+	cmd.Flags().IntVar(&elementsPerSeries, "elements", streamFixtureElementsPerSeri, "elements per series (stream engine)")
 	return cmd
 }
 
@@ -698,8 +727,8 @@ func newWriteLoadCmd() *cobra.Command {
 			if engineErr := validateEngine(engine); engineErr != nil {
 				return engineErr
 			}
-			if engine != engineTrace {
-				return fmt.Errorf("write-load is only supported for engine %q", engineTrace)
+			if engine != engineTrace && engine != engineStream {
+				return fmt.Errorf("write-load is only supported for engine %q or %q", engineTrace, engineStream)
 			}
 			conn, dialErr := dialInsecure(addr)
 			if dialErr != nil {
@@ -709,6 +738,11 @@ func newWriteLoadCmd() *cobra.Command {
 
 			ctx, cancel := context.WithTimeout(context.Background(), duration+time.Minute)
 			defer cancel()
+			if engine == engineStream {
+				written, loadErr := streamWriteLoad(ctx, conn, traces, spans, rps, duration)
+				fmt.Printf("[write-load] wrote %d elements over %s\n", written, duration)
+				return loadErr
+			}
 			rowsWritten, loadErr := traceWriteLoad(ctx, conn, traces, spans, rps, duration)
 			fmt.Printf("[write-load] wrote %d spans over %s\n", rowsWritten, duration)
 			if loadErr != nil {
