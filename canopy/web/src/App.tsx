@@ -17,7 +17,7 @@
  * under the License.
  */
 import React, { useState } from 'react';
-import { BrowserRouter, Routes, Route, useParams, useNavigate } from 'react-router-dom';
+import { BrowserRouter, Routes, Route, useParams, useNavigate } from 'react-router';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 
 import { AuthProvider, useAuth } from './auth/AuthContext.js';
