@@ -117,4 +117,3 @@ check:
 	$(MAKE) test
 	$(MAKE) test-coverage
 	$(MAKE) license-dep
-	$(MAKE) vendor-update

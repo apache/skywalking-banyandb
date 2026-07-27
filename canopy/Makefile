@@ -52,8 +52,12 @@ test: install
 # ui/ or any other subproject's .licenserc.yaml.
 .PHONY: license-check
 license-check: $(LICENSE_EYE) ## Check license header
-	$(LICENSE_EYE) -c $(repo_root).licenserc.yaml header check
+	$(LICENSE_EYE) -c $(repo_root)/.licenserc.yaml header check
 
 .PHONY: license-fix
 license-fix: $(LICENSE_EYE) ## Fix license header issues
-	$(LICENSE_EYE) -c $(repo_root).licenserc.yaml header fix
+	$(LICENSE_EYE) -c $(repo_root)/.licenserc.yaml header fix
+
+.PHONY: vendor-update
+vendor-update: ## Update all workspace dependencies
+	npm update
