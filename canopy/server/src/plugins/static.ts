@@ -45,10 +45,10 @@ export async function registerStatic(app: FastifyInstance): Promise<void> {
     cacheControl: false,
     setHeaders: (res, path) => {
       if (path.endsWith('index.html')) {
-        res.setHeader('Cache-Control', 'no-store, must-revalidate');
-        res.setHeader('Pragma', 'no-cache');
+        res.header('Cache-Control', 'no-store, must-revalidate');
+        res.header('Pragma', 'no-cache');
       } else {
-        res.setHeader('Cache-Control', 'no-cache, must-revalidate');
+        res.header('Cache-Control', 'no-cache, must-revalidate');
       }
     },
     // Do NOT use wildcard here — we handle the SPA fallback manually below
