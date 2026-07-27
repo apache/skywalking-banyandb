@@ -75,14 +75,44 @@ func scanFromInput(input logical.Plan) *localIndexScan {
 		return in
 	case *tagFilterPlan:
 		if scan, ok := in.parent.(*localIndexScan); ok {
-			// A criteria query applies the tag filter at egress AFTER the scan; the vec
-			// merge must not cap at maxElementSize or it would starve the filter (see
-			// localIndexScan.deferLimitToEgress).
-			scan.deferLimitToEgress = true
+			// A criteria query applies the tag filter at egress, AFTER the scan, so the
+			// vec merge must reproduce exactly the element set the row scan would hand
+			// its tagFilterPlan. Where the row scan caps depends on the order type —
+			// see scanResumesAcrossPulls.
+			scan.deferLimitToEgress = scanResumesAcrossPulls(scan)
 			return scan
 		}
 	}
 	return nil
+}
+
+// scanResumesAcrossPulls reports whether the row scan backing this plan keeps
+// yielding new elements on successive Pulls, which decides where the vec merge may
+// cap for a criteria (filtered) query.
+//
+// The row path nests three loops: *limit.Execute pulls tagFilterPlan.Execute until
+// it has accumulated limit+offset elements, tagFilterPlan.Execute pulls the scan
+// until a batch yields ≥1 match, and the scan itself caps each batch at
+// maxElementSize. Whether the limit actually gets FILLED therefore depends on the
+// scan resuming:
+//
+//   - index-order (idxResult): the sorted iterator persists across Pulls and each
+//     Pull drains the next maxElementSize entries (query_by_idx.go:262), so row keeps
+//     pulling and DOES fill the limit. The vec merge must stay uncapped, letting the
+//     egress filter the whole ordered set and then apply the limit.
+//   - timestamp order (tsResult): one Pull consumes a whole segment and caps the
+//     result at maxElementSize (query_by_ts.go:136,159); the next Pull only advances
+//     to a further segment. For data inside a single segment the scan is then
+//     exhausted, so row returns only the matches from that first capped batch and
+//     legitimately UNDER-fills the limit (e.g. 30 scanned, 2 rejected ⇒ 28 returned).
+//     The vec merge must cap at maxElementSize to reproduce that same input set.
+//
+// Caveat (documented, not emulated): for timestamp order spanning MULTIPLE segments
+// the row scan does resume per segment, so row could accumulate past the first
+// capped batch where vec stops. Reproducing that needs the scan's segment
+// boundaries, which the vec merge does not see.
+func scanResumesAcrossPulls(scan *localIndexScan) bool {
+	return scan.order != nil && scan.order.Index != nil
 }
 
 // VecTagFilter returns the criteria tag filter, the hidden-tag set, and the schema

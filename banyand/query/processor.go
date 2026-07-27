@@ -255,10 +255,10 @@ func (p *streamQueryProcessor) tryStreamVecDispatch(ctx context.Context, plan lo
 		return true, bus.NewMessage(bus.MessageID(now), common.NewError("materialize vectorized stream elements for stream %s: %v", queryCriteria.GetName(), buildErr))
 	}
 	// Criteria query: apply the SAME per-element tagFilter.Match + hidden-tag strip
-	// as the row tagFilterPlan.Execute, over the scan-capped set and BEFORE the outer
-	// offset:offset+limit slice (row-path order: scan → merge → distinct → filter →
-	// limit). The vec path drains all capped batches then filters (no multi-Pull
-	// retry loop); for single-Pull scans this equals the row result.
+	// as the row tagFilterPlan.Execute, BEFORE the outer offset:offset+limit slice
+	// (row order: scan → merge → distinct → filter → limit). The element set handed
+	// to the filter already matches row's, because the merge capped (or deliberately
+	// did not cap) according to the scan's order type — see scanResumesAcrossPulls.
 	if hasFilter {
 		filtered, filterErr := applyStreamTagFilter(elements, tagFilter, hiddenTags, filterSchema)
 		if filterErr != nil {
