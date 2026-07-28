@@ -23,7 +23,7 @@
 
 import { describe, it, expect, vi } from 'vitest';
 import { render, screen, fireEvent } from '@testing-library/react';
-import { MemoryRouter } from 'react-router-dom';
+import { MemoryRouter } from 'react-router';
 import { QueryBuilder, type QueryBuilderProps } from './QueryBuilder.js';
 import type { QBBuilderState, QBWhereLeafWithConn } from './bydbql.js';
 

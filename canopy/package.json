@@ -32,5 +32,11 @@
   "dependencies": {
     "@rollup/rollup-linux-x64-gnu": "^4.62.2",
     "@vitest/coverage-v8": "^4.1.9"
+  },
+  "overrides": {
+    "brace-expansion": "^5.0.8",
+    "minimatch": "^10.0.3",
+    "react": "^19.2.7",
+    "react-dom": "^19.2.7"
   }
 }

@@ -23,7 +23,7 @@
 // toggle, Eject/Resync, dirty-warning modal on Resync, Run, deep-link seed.
 
 import React, { useEffect, useMemo, useRef, useState } from 'react';
-import { useLocation } from 'react-router-dom';
+import { useLocation } from 'react-router';
 import { QueryBuilder } from './QueryBuilder.js';
 import { CodeEditor } from './CodeEditor.js';
 import { MeasureResultView } from './results/MeasureResultView.js';

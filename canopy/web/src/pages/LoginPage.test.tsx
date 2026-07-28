@@ -20,7 +20,7 @@
 import React from 'react';
 import { render, screen, fireEvent, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
-import { MemoryRouter } from 'react-router-dom';
+import { MemoryRouter } from 'react-router';
 
 import { AuthProvider } from '../auth/AuthContext.js';
 import { LoginPage } from './LoginPage.js';
