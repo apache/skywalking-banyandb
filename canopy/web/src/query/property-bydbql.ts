@@ -87,7 +87,10 @@ export function pqWhereRoot(s: { readonly where?: QBWhereNode }): QBWhereGroupWi
 
 // ── value helpers ────────────────────────────────────────────────────────────
 
-const PQ_NUM = (s: string): boolean => /^-?\d+(\.\d+)?$/.test(String(s).trim());
+// Integer-only: property TagValue has no float variant, so decimals must be
+// treated as strings (quoted in BydbQL, str/strArray in the wire Criteria) —
+// encoding "1.2" as TagValue.int would be rejected or truncated server-side.
+const PQ_NUM = (s: string): boolean => /^-?\d+$/.test(String(s).trim());
 function pqStrip(v: string | null | undefined): string {
   return String(v == null ? '' : v).trim().replace(/^['"]|['"]$/g, '');
 }

@@ -26,10 +26,10 @@
 //
 // ADAPTATION FROM THE HANDOFF: the mock's pqExecuteState filtered an
 // in-memory `entries` prop; this port calls the real property/v1 Query RPC
-// (queryPropertyDocuments) via property-bydbql.ts's pqBuildQueryRequest. Per
-// docs/property-design.md §5, the Code tab is display-only in v1 (the
-// builder is the source of truth for what actually executes) — code mode
-// still round-trips through pqParseCode so hand-edited queries run too.
+// (queryPropertyDocuments) via property-bydbql.ts's pqBuildQueryRequest. Code
+// mode is executable: hand-edited BydbQL round-trips through pqParseCode back
+// into builder state, which pqBuildQueryRequest then turns into the Query
+// RPC — the parsed builder state is the source of truth for what runs.
 
 import React from 'react';
 import { QBSection, QBChips } from './qb-parts.js';

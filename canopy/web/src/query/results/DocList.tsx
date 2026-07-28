@@ -230,11 +230,10 @@ function DLTextValue({ det }: { readonly det: Detected }) {
   );
 }
 
-function DLValue({ tag }: { readonly tag: PropertyDocTag }) {
-  const det = dlDetect(tag);
+function DLValue({ det, valueType }: { readonly det: Detected; readonly valueType: PropertyDocTag['valueType'] }) {
   if (det.kind === 'json') return <DLJsonValue det={det} />;
   if (det.kind === 'text') return <DLTextValue det={det} />;
-  if (tag.valueType === 'int') return <span className="fr-val-int mono">{det.val}</span>;
+  if (valueType === 'int') return <span className="fr-val-int mono">{det.val}</span>;
   return <span className="mono">{det.val === '' ? '∅' : det.val}</span>;
 }
 
@@ -279,7 +278,7 @@ function DocCard({ entry, projection, groupName, propName, onEdit, onDelete }: D
                 <span className={'pd-type' + (t.valueType === 'int' ? ' is-int' : '')}>{PROP_VALUE_LABEL(t.valueType)}</span>
                 {(det.kind === 'json' || det.kind === 'text') && <DLDet kind={det.kind} />}
               </span>
-              <div className="fr-val"><DLValue tag={t} /></div>
+              <div className="fr-val"><DLValue det={det} valueType={t.valueType} /></div>
             </div>
           );
         })}

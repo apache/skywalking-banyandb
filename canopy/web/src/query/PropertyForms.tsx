@@ -17,14 +17,18 @@
  * under the License.
  */
 
-// PropertyForms.tsx — Property CRUD for the schema-free group/name/id model.
+// PropertyForms.tsx — Property CRUD for the group/name/id model.
 // Ported from .handoff-import/banyandb/project/property-form.jsx
-// (window-global JSX -> ES module TSX). A Property collection is a
-// schema-free document container (group/name); documents are keyed by `id`
-// and carry key-value Tags. Mirrors docs/concept/data-model.md (Properties)
-// and property/v1 Apply/Delete + database/v1 PropertyRegistryService
-// Create/Delete. Reuses the Field/modal-overlay pattern every other *Form.tsx
-// in this directory already duplicates locally (GroupForm.tsx et al.).
+// (window-global JSX -> ES module TSX). A Property collection presents as
+// schema-free in the UI (group/name; documents keyed by `id` carrying
+// key-value Tags), but BanyanDB enforces declared TagSpecs server-side:
+// Apply rejects undeclared tag keys, so api.ts's applyPropertyDocument
+// auto-grows the collection's TagSpecs before writing — keep that step in
+// mind before "simplifying" the write path. Mirrors
+// docs/concept/data-model.md (Properties) and property/v1 Apply/Delete +
+// database/v1 PropertyRegistryService Create/Delete. Reuses the
+// Field/modal-overlay pattern every other *Form.tsx in this directory
+// already duplicates locally (GroupForm.tsx et al.).
 //
 // ADAPTATIONS FROM THE HANDOFF:
 //  - PropertyCollectionModal.onSubmit -> createPropertySchema (registry Create).
