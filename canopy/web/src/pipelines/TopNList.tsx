@@ -31,7 +31,7 @@
 // App.tsx's central union — Pipelines is a self-contained route tree).
 
 import React, { useEffect, useMemo, useState } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { useNavigate } from 'react-router';
 import { useQuery } from '@tanstack/react-query';
 
 import type { TopNAggregationSchema } from 'canopy-shared';
