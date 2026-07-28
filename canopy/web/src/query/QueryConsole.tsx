@@ -481,18 +481,19 @@ export function QueryConsole() {
     }
   }, [resourceList, topnAggList, state.resource, state.catalog]);
 
-  // Auto-pick a field with MEAN when a measure is selected and no field is
-  // set yet. Mirrors the handoff's qbDefaultSelect so the chart view is
-  // available immediately on resource pick. Skipped for Top-N (which uses
-  // its own topN/aggFn fields, not select[]) and for users who have
-  // already added a field.
+  // List every field of the selected measure, each defaulting to raw (no
+  // aggregation) — the user picks an aggregation per row when they want one.
+  // Deliberately diverges from the handoff's qbDefaultSelect, which seeded a
+  // single field with MEAN: raw-by-default shows the stored points as-is and
+  // makes the full field list discoverable without clicking "Add field".
+  // Skipped for Top-N (which uses its own topN/aggFn fields, not select[])
+  // and for users who have already added a field.
   useEffect(() => {
     if (state.catalog !== 'measures') return;
     if (!state.resource) return;
     if ((state.select ?? []).length > 0) return;
-    const f = fields[0];
-    if (!f) return;
-    patch({ select: [{ field: f, fn: 'MEAN' }] });
+    if (!fields.length) return;
+    patch({ select: fields.map((f) => ({ field: f, fn: '' })) });
   }, [state.catalog, state.resource, fields, state.select]);
 
   const runMutation = useRunQuery();
