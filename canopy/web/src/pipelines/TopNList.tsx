@@ -43,6 +43,8 @@ import {
 import { RankBadge, SORT_OPTS } from './topn-shared.js';
 import { TopNFormModal, DeleteTopNModal } from './TopNForms.js';
 
+const PAGE_SIZE = 10;
+
 interface Row {
   readonly agg: TopNAggregationSchema;
   readonly group: string;
@@ -147,6 +149,15 @@ export function TopNList() {
   const filtersActive = !!q || sourceF !== 'all' || rankF !== 'all' || groupF !== 'all';
   const newTargetGroup = groupF !== 'all' ? groupF : undefined;
 
+  // Client-side paging over the filtered list (same pattern as DocList):
+  // clamps when a filter change shrinks the list under the current page.
+  const [page, setPage] = useState(0);
+  const pages = Math.max(1, Math.ceil(filtered.length / PAGE_SIZE));
+  const cur = Math.min(page, pages - 1);
+  useEffect(() => { if (page !== cur) setPage(cur); }, [page, cur]);
+  const start = cur * PAGE_SIZE;
+  const paged = filtered.slice(start, start + PAGE_SIZE);
+
   return (
     <div className="page-body">
       <header className="page-head">
@@ -208,16 +219,17 @@ export function TopNList() {
           <p className="empty-text">No aggregation matches the current filters.</p>
         </div>
       ) : (
-        <div className="idx-table topn-x">
-          <div className="topn-head">
-            <span>Aggregation</span>
-            <span>Group</span>
-            <span>Source · field</span>
-            <span>Rank</span>
-            <span>Group by</span>
-            <span className="idx-actions-h" />
-          </div>
-          {filtered.map((r) => {
+        <>
+          <div className="idx-table topn-x">
+            <div className="topn-head">
+              <span>Aggregation</span>
+              <span>Group</span>
+              <span>Source · field</span>
+              <span>Rank</span>
+              <span>Group by</span>
+              <span className="idx-actions-h" />
+            </div>
+            {paged.map((r) => {
             const a = r.agg;
             const src = a.sourceMeasure;
             const srcExists = !!src && (measureNames.get(src.group) ?? []).includes(src.name);
@@ -271,7 +283,18 @@ export function TopNList() {
               </div>
             );
           })}
-        </div>
+          </div>
+          {filtered.length > PAGE_SIZE && (
+            <div className="doc-pager">
+              <span className="mono">showing {start + 1}–{Math.min(start + PAGE_SIZE, filtered.length)} of {filtered.length} aggregations</span>
+              <span className="doc-pager-btns">
+                <button type="button" className="pg-btn" disabled={cur === 0} onClick={() => setPage(cur - 1)}>← Prev</button>
+                <span className="doc-pager-page mono">{cur + 1} / {pages}</span>
+                <button type="button" className="pg-btn" disabled={cur >= pages - 1} onClick={() => setPage(cur + 1)}>Next →</button>
+              </span>
+            </div>
+          )}
+        </>
       )}
 
       {modal?.kind === 'create' && (
