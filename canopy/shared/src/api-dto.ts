@@ -314,6 +314,119 @@ export interface TopNAggregationListResponse {
   readonly topNAggregation: readonly TopNAggregationSchema[];
 }
 
+// Property schema (collection) CRUD — `database/v1` PropertyRegistryService.
+// The collection itself is schema-free (tags are optional at creation time;
+// individual documents carry their own tags). See docs/property-design.md §4a.
+
+export interface CreatePropertySchemaRequest {
+  readonly property: {
+    readonly metadata: { readonly name: string; readonly group: string };
+  };
+}
+
+// Property documents — `property/v1` PropertyService (Apply / Delete / Query).
+// Wire shapes mirror api/proto/banyandb/property/v1/{rpc,property}.proto and
+// model.v1.Tag / model.v1.TagValue (api/proto/banyandb/model/v1/{query,common}.proto).
+//
+// NOTE: model.v1.TagValue has NO float variant (oneof: null, str, str_array,
+// int, int_array, binary_data, timestamp) — unlike model.v1.FieldValue (used
+// for measure Fields), which does carry a float. The tag editor's type
+// dropdown is scoped to the types TagValue actually supports.
+
+export interface PropertyTagValue {
+  readonly str?: { readonly value: string };
+  readonly strArray?: { readonly value: readonly string[] };
+  readonly int?: { readonly value: string | number };
+  readonly intArray?: { readonly value: readonly (string | number)[] };
+  // bytes fields serialize as a base64 string in protojson (no wrapper message).
+  readonly binaryData?: string;
+  // google.protobuf.Timestamp serializes as an RFC3339 string.
+  readonly timestamp?: string;
+  readonly null?: null;
+}
+
+export interface PropertyWireTag {
+  readonly key: string;
+  readonly value: PropertyTagValue;
+}
+
+export interface PropertyWireDocument {
+  readonly metadata: { readonly group: string; readonly name: string };
+  readonly id: string;
+  readonly tags: readonly PropertyWireTag[];
+  readonly updatedAt?: string;
+}
+
+export type PropertyApplyStrategy = 'STRATEGY_UNSPECIFIED' | 'STRATEGY_MERGE' | 'STRATEGY_REPLACE';
+
+export interface PropertyApplyRequest {
+  readonly property: PropertyWireDocument;
+  readonly strategy?: PropertyApplyStrategy;
+}
+
+export interface PropertyApplyResponse {
+  readonly created: boolean;
+  readonly tagsNum?: number;
+}
+
+export interface PropertyDeleteResponse {
+  readonly deleted: boolean;
+}
+
+export interface PropertyQueryOrder {
+  readonly tagName: string;
+  readonly sort: 'SORT_UNSPECIFIED' | 'SORT_DESC' | 'SORT_ASC';
+}
+
+// model.v1.Criteria — a recursive condition/logical-expression tree. Kept as
+// a loosely-typed structural shape here (the builder→request translation in
+// web/src/query/property-bydbql.ts owns constructing it); the wire encodes
+// whichever branch of the `exp` oneof is populated.
+export interface PropertyCriteriaCondition {
+  readonly name: string;
+  readonly op: string;
+  readonly value: PropertyTagValue;
+}
+
+export interface PropertyCriteria {
+  readonly condition?: PropertyCriteriaCondition;
+  readonly le?: {
+    readonly op: 'LOGICAL_OP_AND' | 'LOGICAL_OP_OR';
+    readonly left: PropertyCriteria;
+    readonly right: PropertyCriteria;
+  };
+}
+
+export interface PropertyQueryRequest {
+  readonly groups: readonly string[];
+  readonly name?: string;
+  readonly ids?: readonly string[];
+  readonly criteria?: PropertyCriteria;
+  readonly tagProjection?: readonly string[];
+  readonly limit?: number;
+  readonly trace?: boolean;
+  readonly orderBy?: PropertyQueryOrder;
+}
+
+export interface PropertyQueryResponse {
+  readonly properties?: readonly PropertyWireDocument[];
+  readonly trace?: QueryTrace;
+}
+
+// UI-friendly flattened document + tag shape — what DocList/PropertyForms
+// actually render/edit. api.ts normalizes PropertyWireDocument into this.
+export interface PropertyDocTag {
+  readonly key: string;
+  readonly valueType: 'str' | 'int' | 'binary' | 'timestamp' | 'str_array' | 'int_array' | 'null';
+  readonly value: string;
+}
+
+export interface PropertyDocument {
+  readonly id: string;
+  readonly tags: readonly PropertyDocTag[];
+  readonly updatedAt?: string;
+}
+
 // Re-export schema types for convenience
 export type {
   Group, LifecycleStage, StreamSchema, MeasureSchema, TraceSchema, PropertySchema,

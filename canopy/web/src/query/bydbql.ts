@@ -192,8 +192,10 @@ export const qbIsGroup = (n: QBWhereNode | undefined | null): n is QBWhereGroupW
   !!(n && Array.isArray((n as QBWhereGroupWithConn).children));
 
 // connector joining child i to the previous sibling (legacy trees fall back
-// to the group-level `combinator`).
-const qbConn = (
+// to the group-level `combinator`). Exported so PropertyQuery's WHERE tree
+// (which reuses this same node shape — see property-bydbql.ts) can render
+// its own connector buttons identically.
+export const qbConn = (
   node: QBWhereGroupWithConn,
   c: QBWhereNode,
 ): 'AND' | 'OR' => c.conn ?? node.combinator ?? 'AND';
@@ -225,16 +227,15 @@ const qbFullyWrapped = (s: string): boolean => {
 // precedence is unambiguous). Single-item segments stay bare. The connector
 // is read from each item's own source node, so pruning empty children never
 // misaligns the connector-to-child mapping.
-interface QBRenderedItem {
-  readonly sql: string;
-  readonly node: QBWhereNode;
-}
-function qbConnSegments(
+// Generic over the item shape (only `node` is required) so property-bydbql.ts's
+// pqNodeSQL / pqBuildCriteria can reuse the same "split into OR-separated
+// AND-runs" grouping for its own {criteria, node} items, not just {sql, node}.
+export function qbConnSegments<T extends { readonly node: QBWhereNode }>(
   node: QBWhereGroupWithConn,
-  items: readonly QBRenderedItem[],
-): readonly (readonly QBRenderedItem[])[] {
+  items: readonly T[],
+): readonly (readonly T[])[] {
   if (items.length === 0) return [];
-  const segs: QBRenderedItem[][] = [[items[0]]];
+  const segs: T[][] = [[items[0]]];
   for (let i = 1; i < items.length; i++) {
     if (qbConn(node, items[i].node) === 'OR') segs.push([]);
     segs[segs.length - 1] = [...segs[segs.length - 1], items[i]];

@@ -79,18 +79,26 @@ export class SeedFactory {
   }
 
   // Create a group via the BFF and register it for cleanup. Returns the name.
+  //
+  // CATALOG_PROPERTY groups reject segmentInterval/ttl outright (BanyanDB
+  // returns "segmentInterval should be nil") — property groups have no
+  // storage-segment/TTL lifecycle, mirroring GroupForm.tsx's isPropertyCatalog
+  // branch, which omits those fields for the same reason.
   async createGroup(prefix: string, catalog: Catalog = 'CATALOG_MEASURE'): Promise<string> {
     const name = this.uniqueName(prefix);
+    const isProperty = catalog === 'CATALOG_PROPERTY';
     const res = await this.request.post('/api/v1/group/schema', {
       data: {
         group: {
           metadata: { name },
           catalog,
-          resourceOpts: {
-            shardNum: 1,
-            segmentInterval: { unit: 'UNIT_DAY', num: 1 },
-            ttl: { unit: 'UNIT_DAY', num: 7 },
-          },
+          resourceOpts: isProperty
+            ? { shardNum: 1 }
+            : {
+                shardNum: 1,
+                segmentInterval: { unit: 'UNIT_DAY', num: 1 },
+                ttl: { unit: 'UNIT_DAY', num: 7 },
+              },
         },
       },
     });
@@ -145,6 +153,69 @@ export class SeedFactory {
     }
     this.createdResources.push({ path: `/api/v1/stream/schema/${encodeURIComponent(group)}/${encodeURIComponent(name)}` });
     return name;
+  }
+
+  // Create a property collection (schema) in `group`. Returns the property name.
+  // database/v1 PropertyRegistryService.Create — the collection is schema-free,
+  // but Property.tags has a proto `min_items = 1` rule, so (like the product's
+  // createPropertySchema) we synthesize one placeholder TagSpec to pass
+  // validation. Documents aren't validated against these declared tags.
+  async createPropertySchema(group: string, prefix = 'p'): Promise<string> {
+    const name = this.uniqueName(prefix);
+    const res = await this.request.post('/api/v1/property/schema', {
+      data: { property: { metadata: { name, group }, tags: [{ name: '_placeholder', type: 'TAG_TYPE_STRING' }] } },
+    });
+    if (!res.ok()) {
+      throw new Error(`seed createPropertySchema(${group}/${name}) failed: ${res.status()} ${await res.text()}`);
+    }
+    this.createdResources.push({ path: `/api/v1/property/schema/${encodeURIComponent(group)}/${encodeURIComponent(name)}` });
+    return name;
+  }
+
+  // Seed a property document over REST via the property/v1 Apply endpoint
+  // (PUT /api/v1/property/data/{group}/{name}/{id}) — unlike measure/stream/
+  // trace DATA (gRPC-only, per the framework note at the top of this file),
+  // property document writes ARE exposed over HTTP, so no gRPC seeder is
+  // needed here (see docs/property-design.md §9 / TESTING.md). `tags` is a
+  // flat string-keyed map; every value is written as a `str` TagValue — good
+  // enough for e2e fixtures that don't need typed tags.
+  async seedPropertyDoc(group: string, name: string, id: string, tags: Readonly<Record<string, string>>): Promise<void> {
+    // The registry rejects Apply with undeclared tag keys, so declare any
+    // missing keys on the collection schema first — mirroring the product's
+    // applyPropertyDocument auto-grow. Seed tags are always `str`.
+    const getRes = await this.request.get(`/api/v1/property/schema/${encodeURIComponent(group)}/${encodeURIComponent(name)}`);
+    if (getRes.ok()) {
+      const body = await getRes.json() as { property?: { tags?: { name: string; type: string }[] } };
+      const declared = body.property?.tags ?? [];
+      const have = new Set(declared.map((t) => t.name));
+      const missing = Object.keys(tags).filter((k) => !have.has(k));
+      if (missing.length) {
+        await this.request.put(`/api/v1/property/schema/${encodeURIComponent(group)}/${encodeURIComponent(name)}`, {
+          data: { property: { metadata: { group, name }, tags: [...declared, ...missing.map((k) => ({ name: k, type: 'TAG_TYPE_STRING' }))] } },
+        });
+      }
+    }
+    const res = await this.request.put(
+      `/api/v1/property/data/${encodeURIComponent(group)}/${encodeURIComponent(name)}/${encodeURIComponent(id)}`,
+      {
+        data: {
+          property: {
+            metadata: { group, name },
+            id,
+            tags: Object.entries(tags).map(([key, value]) => ({ key, value: { str: { value } } })),
+          },
+          strategy: 'STRATEGY_MERGE',
+        },
+      },
+    );
+    if (!res.ok()) {
+      throw new Error(`seed seedPropertyDoc(${group}/${name}/${id}) failed: ${res.status()} ${await res.text()}`);
+    }
+    // Tracked for cleanup as a resource (not a group) — deleted via the
+    // property/v1 Delete endpoint, reverse-order before its collection schema.
+    this.createdResources.push({
+      path: `/api/v1/property/data/${encodeURIComponent(group)}/${encodeURIComponent(name)}/${encodeURIComponent(id)}`,
+    });
   }
 
   // Create an index rule over `tags` in `group`. Returns the rule name.

@@ -17,21 +17,27 @@
  * under the License.
  */
 
+// Tag types — MUST match api/proto/banyandb/database/v1/schema.proto TagType.
+// The liaison's grpc-gateway maps unknown enum strings to UNSPECIFIED, so a
+// stale name (e.g. the old TAG_TYPE_INT64) silently corrupts the schema. There
+// is NO float tag type in BanyanDB.
 export enum TagType {
   UNSPECIFIED = 'TAG_TYPE_UNSPECIFIED',
   STRING = 'TAG_TYPE_STRING',
-  INT64 = 'TAG_TYPE_INT64',
-  FLOAT64 = 'TAG_TYPE_FLOAT64',
+  INT = 'TAG_TYPE_INT',
   STRING_ARRAY = 'TAG_TYPE_STRING_ARRAY',
-  INT64_ARRAY = 'TAG_TYPE_INT64_ARRAY',
+  INT_ARRAY = 'TAG_TYPE_INT_ARRAY',
   DATA_BINARY = 'TAG_TYPE_DATA_BINARY',
+  TIMESTAMP = 'TAG_TYPE_TIMESTAMP',
 }
 
+// Field types — MUST match api/proto/banyandb/database/v1/schema.proto
+// FieldType (FIELD_TYPE_INT / FIELD_TYPE_FLOAT, not the 64-suffixed names).
 export enum FieldType {
   UNSPECIFIED = 'FIELD_TYPE_UNSPECIFIED',
   STRING = 'FIELD_TYPE_STRING',
-  INT64 = 'FIELD_TYPE_INT64',
-  FLOAT64 = 'FIELD_TYPE_FLOAT64',
+  INT = 'FIELD_TYPE_INT',
+  FLOAT = 'FIELD_TYPE_FLOAT',
   DATA_BINARY = 'FIELD_TYPE_DATA_BINARY',
 }
 

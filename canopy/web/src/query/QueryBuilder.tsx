@@ -35,6 +35,7 @@ import {
   type QBWhereNode, type QBWhereLeafWithConn,
   type QBBuilderState, type QB_CATALOG_VALUE, type QBSearchHit, type GroupResourcesMap, type GroupTopnAggMap,
 } from './bydbql.js';
+import { QBSection } from './qb-parts.js';
 import type { Group } from 'canopy-shared';
 
 // Catalog icons — same paths as the handoff's icons.jsx (Measure / Stream /
@@ -418,43 +419,6 @@ function QBRow({ node, tags, fields, ops, isFirst, onChange, onRemove, onAddCond
         </button>
       </div>
     </>
-  );
-}
-
-interface QBSectionProps {
-  readonly kw: string;
-  readonly sum: string;
-  readonly hint?: string;
-  readonly optional?: boolean;
-  readonly open: boolean;
-  readonly acc: boolean;
-  readonly onToggle: () => void;
-  readonly children: React.ReactNode;
-}
-
-/** Clause wrapper: flat while composing, accordion row after the first run. */
-function QBSection({ kw, sum, hint, optional, open, acc, onToggle, children }: QBSectionProps) {
-  if (!acc) {
-    return (
-      <div className="qb-section">
-        <div className="qb-section-h" title={hint}>
-          <span>{kw}</span>
-          {optional && <span className="qb-opt">optional</span>}
-        </div>
-        {children}
-      </div>
-    );
-  }
-  return (
-    <div className={'qb-acc' + (open ? ' is-open' : '')}>
-      <button type="button" className="qb-acc-head" title={hint} aria-expanded={open} onClick={onToggle}>
-        <span className="qb-acc-chev">{open ? '▾' : '▸'}</span>
-        <span className="qb-kw">{kw}</span>
-        {!open && <span className="qb-acc-sum mono">{sum}</span>}
-        <span className="qb-acc-edit">{open ? 'collapse' : 'edit'}</span>
-      </button>
-      {open && <div className="qb-acc-body"><div className="qb-body">{children}</div></div>}
-    </div>
   );
 }
 

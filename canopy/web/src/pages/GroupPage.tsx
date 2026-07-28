@@ -368,13 +368,18 @@ export function GroupPage({
                   )}
                   {isAdmin && (
                     <>
-                      <button
-                        className="rc-act"
-                        title="Edit"
-                        onClick={() => onEditResource?.(r)}
-                      >
-                        <IconEdit size={15} />
-                      </button>
+                      {/* Properties have no edit-collection modal — the name is
+                          immutable and there's nothing else to edit at the
+                          collection level (see docs/property-design.md §7). */}
+                      {!isProperties && (
+                        <button
+                          className="rc-act"
+                          title="Edit"
+                          onClick={() => onEditResource?.(r)}
+                        >
+                          <IconEdit size={15} />
+                        </button>
+                      )}
                       <button
                         className="rc-act is-danger"
                         title="Delete"
