@@ -139,6 +139,8 @@ type server struct {
 	grpcBufferMemoryRatio    float64
 	bydbqlSlowThreshold      time.Duration
 	bydbqlTopKLogInterval    time.Duration
+	bydbqlTopKSlowTTL        time.Duration
+	bydbqlTopKReparseTTL     time.Duration
 	bydbqlCacheSize          int
 	bydbqlCacheMaxBytes      int
 	port                     uint32
@@ -372,7 +374,7 @@ func (s *server) PreRun(ctx context.Context) error {
 	s.bydbQLSVC.slowThreshold = s.bydbqlSlowThreshold
 	// The dump goroutine lives for the server's lifetime and is stopped by Close(),
 	// so it is rooted at a background context rather than PreRun's setup context.
-	s.bydbQLSVC.dumper = newTopKDumper(s.bydbqlTopKLogInterval, s.bydbQLSVC.l) //nolint:contextcheck
+	s.bydbQLSVC.dumper = newTopKDumper(s.bydbqlTopKLogInterval, s.bydbqlTopKReparseTTL, s.bydbqlTopKSlowTTL, s.bydbQLSVC.l) //nolint:contextcheck
 	s.propertyServer.metrics = metrics
 	if s.barrierSVC != nil {
 		s.barrierSVC.metrics = metrics
@@ -466,6 +468,10 @@ func (s *server) FlagSet() *run.FlagSet {
 		"end-to-end latency above which a BydbQL query is counted as slow; 0 disables slow-query tracking")
 	fs.DurationVar(&s.bydbqlTopKLogInterval, "bydbql-topk-log-interval", 5*time.Minute,
 		"how often to log the top BydbQL cache-miss and slow queries; 0 disables the top-K log")
+	fs.DurationVar(&s.bydbqlTopKSlowTTL, "bydbql-topk-slow-ttl", 24*time.Hour,
+		"drop a slow-query top-K entry whose query has not been slow again for this long; 0 keeps it for the process lifetime")
+	fs.DurationVar(&s.bydbqlTopKReparseTTL, "bydbql-topk-reparse-ttl", 24*time.Hour,
+		"drop a cache-miss top-K entry whose template has not been re-parsed again for this long; 0 keeps it for the process lifetime")
 	s.grpcBufferMemoryRatio = 0.1
 	fs.Float64Var(&s.grpcBufferMemoryRatio, "grpc-buffer-memory-ratio", 0.1,
 		"ratio of memory limit to use for gRPC buffer size calculation (0.0 < ratio <= 1.0)")

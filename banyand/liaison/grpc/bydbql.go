@@ -176,9 +176,11 @@ func (b *bydbQLService) Query(ctx context.Context, req *bydbqlv1.QueryRequest) (
 	return resp, nil
 }
 
-// topKDumper tracks the top re-parsed and slow queries and, on a supervised
-// goroutine, periodically logs the cumulative top-K. All methods are nil-safe, so the
-// call sites need no guards when the top-K log is disabled (the dumper is nil).
+// topKDumper tracks the top re-parsed and slow queries and, on a supervised goroutine,
+// periodically logs the top-K, having first dropped whatever each tracker has not seen
+// within its TTL. Entries expire by inactivity only: a query that keeps recurring keeps its
+// accumulated count and peak. All methods are nil-safe, so the call sites need no guards
+// when the top-K log is disabled (the dumper is nil).
 type topKDumper struct {
 	// reparse holds only templates the cache had already compiled once and had to
 	// compile again. First-ever compiles are excluded at the call site, which is what
@@ -191,13 +193,19 @@ type topKDumper struct {
 }
 
 // newTopKDumper starts the trackers and the dump goroutine; a non-positive interval
-// disables the feature and returns nil.
-func newTopKDumper(interval time.Duration, l *logger.Logger) *topKDumper {
+// disables the feature and returns nil. Each tracker expires entries on its own TTL:
+// a template nobody has re-parsed, or a query nobody has run slowly, for that long stops
+// being reported. A non-positive TTL keeps that tracker's entries for the process lifetime.
+func newTopKDumper(interval, reparseTTL, slowTTL time.Duration, l *logger.Logger) *topKDumper {
 	if interval <= 0 {
 		return nil
 	}
 	ctx, cancel := context.WithCancel(context.Background())
-	d := &topKDumper{reparse: newTopK(bydbqlTopKSize), slow: newTopK(bydbqlTopKSize), l: l, cancel: cancel}
+	d := &topKDumper{
+		reparse: newTopK(bydbqlTopKSize, reparseTTL, nil),
+		slow:    newTopK(bydbqlTopKSize, slowTTL, nil),
+		l:       l, cancel: cancel,
+	}
 	run.Go(ctx, "liaison.grpc.bydbql.topk-dump", l, func(ctx context.Context) {
 		ticker := time.NewTicker(interval)
 		defer ticker.Stop()
@@ -245,11 +253,20 @@ func (d *topKDumper) dump() {
 	// root; keeping the threshold on top of it would only re-hide the real re-parses the
 	// exclusion just made visible.
 	d.logTopK(d.reparse.snapshot(), 1, "top bydbql cache-miss queries", func(s topKSlot) string {
-		return fmt.Sprintf("%q count=%d", s.key, s.count)
+		return fmt.Sprintf("%q count=%d last_seen=%s", s.key, s.count, formatTopKTime(s.lastSeen))
 	})
+	// max_latency is a running peak, so it can outlive the condition that caused it by
+	// as long as the TTL allows. max_latency_at dates it, and last_seen says when the
+	// query last ran at all, which together separate a live problem from a stale peak.
 	d.logTopK(d.slow.snapshotByLatency(), 1, "top bydbql slow queries", func(s topKSlot) string {
-		return fmt.Sprintf("%q count=%d max_latency=%s", s.key, s.count, s.maxDur)
+		return fmt.Sprintf("%q count=%d max_latency=%s max_latency_at=%s last_seen=%s",
+			s.key, s.count, s.maxDur, formatTopKTime(s.maxDurAt), formatTopKTime(s.lastSeen))
 	})
+}
+
+// formatTopKTime renders a tracker timestamp in the same layout the surrounding logs use.
+func formatTopKTime(t time.Time) string {
+	return t.UTC().Format(time.RFC3339)
 }
 
 // logTopK logs the entries with at least minCount occurrences, formatted by line.

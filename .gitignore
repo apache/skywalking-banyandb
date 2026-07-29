@@ -96,3 +96,17 @@ test/soak/data/
 # Local runtime crash dumps and investigation notes
 crash/
 progress.txt
+
+# Canopy handoff design bundle (extracted from BanyanDB-handoff.zip; not
+# committed — the .zip itself is gitignored, the bundle lives outside
+# any subproject so license-eye wouldn't catch it without an explicit rule).
+.handoff-import/
+
+# Playwright MCP server runtime artefacts (per-session screenshots / traces).
+.playwright-mcp/
+
+# One-off verification / debug screenshots left at repo root during dev.
+# Naming convention: `verify-*.png`, `sw-tiered-*.png`, `handoff-login.png`, etc.
+verify-*.png
+sw-tiered-*.png
+handoff-login.png

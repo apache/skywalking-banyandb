@@ -18,7 +18,7 @@
  */
 
 import React, { useState } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { useNavigate } from 'react-router';
 import { useQuery } from '@tanstack/react-query';
 
 import type {
@@ -45,11 +45,8 @@ const KIND_LABEL: Record<string, string> = {
 const TAG_TYPE_LABEL: Record<string, string> = {
   TAG_TYPE_STRING: 'string',
   TAG_TYPE_INT: 'int',
-  TAG_TYPE_INT64: 'int64',
-  TAG_TYPE_FLOAT: 'float',
-  TAG_TYPE_FLOAT64: 'float64',
   TAG_TYPE_STRING_ARRAY: 'string[]',
-  TAG_TYPE_INT64_ARRAY: 'int64[]',
+  TAG_TYPE_INT_ARRAY: 'int[]',
   TAG_TYPE_DATA_BINARY: 'binary',
   TAG_TYPE_TIMESTAMP: 'timestamp',
 };
@@ -57,9 +54,7 @@ const TAG_TYPE_LABEL: Record<string, string> = {
 const FIELD_TYPE_LABEL: Record<string, string> = {
   FIELD_TYPE_STRING: 'string',
   FIELD_TYPE_INT: 'int',
-  FIELD_TYPE_INT64: 'int64',
   FIELD_TYPE_FLOAT: 'float',
-  FIELD_TYPE_FLOAT64: 'float64',
   FIELD_TYPE_DATA_BINARY: 'binary',
 };
 

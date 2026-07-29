@@ -17,7 +17,7 @@
  * under the License.
  */
 import React, { useState } from 'react';
-import { BrowserRouter, Routes, Route, useParams, useNavigate } from 'react-router-dom';
+import { BrowserRouter, Routes, Route, useParams, useNavigate } from 'react-router';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 
 import { AuthProvider, useAuth } from './auth/AuthContext.js';
@@ -27,6 +27,7 @@ import { HomePage } from './pages/HomePage.js';
 import { TypeOverviewPage } from './pages/TypeOverviewPage.js';
 import { GroupPage } from './pages/GroupPage.js';
 import { ResourceDetailPage } from './pages/ResourceDetailPage.js';
+import { PropertyDetailPage } from './pages/PropertyDetailPage.js';
 import { GroupForm } from './components/GroupForm.js';
 import { MeasureForm } from './components/MeasureForm.js';
 import { StreamForm } from './components/StreamForm.js';
@@ -35,6 +36,8 @@ import { IndexRuleForm } from './components/IndexRuleForm.js';
 import { IndexRuleBindingForm } from './components/IndexRuleBindingForm.js';
 import { IndexPage } from './pages/IndexPage.js';
 import { apiDataSource } from './data/api.js';
+import { QueryConsole } from './query/QueryConsole.js';
+import { PropertyCollectionModal, DeletePropertyCollectionModal } from './query/PropertyForms.js';
 import { useQuery } from '@tanstack/react-query';
 import type {
   Group, MeasureSchema, StreamSchema, TraceSchema,
@@ -63,6 +66,8 @@ type ModalState =
   | { kind: 'indexrulebinding-create'; groupName: string; catalog: string; presetRuleName?: string }
   | { kind: 'indexrulebinding-edit'; groupName: string; bindingName: string; catalog: string }
   | { kind: 'indexrulebinding-delete'; groupName: string; bindingName: string; catalog: string }
+  | { kind: 'property-create'; groupName: string }
+  | { kind: 'property-delete'; groupName: string; resourceName: string }
   | null;
 
 const TYPE_CATALOG: Record<string, 'CATALOG_MEASURE' | 'CATALOG_STREAM' | 'CATALOG_TRACE' | 'CATALOG_PROPERTY'> = {
@@ -71,6 +76,10 @@ const TYPE_CATALOG: Record<string, 'CATALOG_MEASURE' | 'CATALOG_STREAM' | 'CATAL
   traces: 'CATALOG_TRACE',
   properties: 'CATALOG_PROPERTY',
 };
+
+function QueryRoute() {
+  return <QueryConsole />;
+}
 
 function MetadataTypeRoute() {
   const { type = 'measures' } = useParams<{ type: string }>();
@@ -416,6 +425,92 @@ function MetadataResourceRoute() {
   );
 }
 
+// Properties routes — reuse the SAME Metadata pages (TypeOverviewPage /
+// GroupPage already branch on `type === 'properties'` per
+// docs/property-design.md §2) with `type` hardcoded to 'properties' (they
+// aren't reached via the `/metadata/:type` param route), and swap the
+// Measure/Stream/Trace create/delete forms for the property-specific ones.
+
+function PropertiesOverviewRoute() {
+  const navigate = useNavigate();
+  const [modal, setModal] = useState<ModalState>(null);
+
+  return (
+    <>
+      <TypeOverviewPage type="properties" onNewGroup={() => setModal({ kind: 'group-create' })} />
+      {modal?.kind === 'group-create' && (
+        <GroupForm
+          mode="create"
+          initialCatalog="CATALOG_PROPERTY"
+          onClose={(created?: Group) => {
+            setModal(null);
+            if (created) navigate(`/properties/${created.name}`);
+          }}
+        />
+      )}
+    </>
+  );
+}
+
+function PropertiesGroupRoute() {
+  const { group = '' } = useParams<{ group: string }>();
+  const navigate = useNavigate();
+  const [modal, setModal] = useState<ModalState>(null);
+
+  const { data: resources = [] } = useQuery({
+    queryKey: ['resources', 'properties', group],
+    queryFn: () => apiDataSource.listResourcesInGroup('properties', group),
+  });
+  const existingNames = new Set(resources.map((r) => r.metadata.name.toLowerCase()));
+
+  return (
+    <>
+      <GroupPage
+        type="properties"
+        groupName={group}
+        onNewResource={() => setModal({ kind: 'property-create', groupName: group })}
+        onDeleteResource={(r) => setModal({ kind: 'property-delete', groupName: group, resourceName: r.metadata.name })}
+        onEditGroup={() => setModal({ kind: 'group-edit', groupName: group })}
+        onDeleteGroup={() => setModal({ kind: 'group-delete', groupName: group })}
+      />
+      {modal?.kind === 'group-edit' && (
+        <GroupForm mode="edit" initialName={modal.groupName} onClose={() => setModal(null)} />
+      )}
+      {modal?.kind === 'group-delete' && (
+        <GroupForm
+          mode="delete"
+          initialName={modal.groupName}
+          onClose={() => setModal(null)}
+          onDeleted={() => navigate('/properties')}
+        />
+      )}
+      {modal?.kind === 'property-create' && (
+        <PropertyCollectionModal
+          groupName={modal.groupName}
+          existingNames={existingNames}
+          onClose={(created) => {
+            setModal(null);
+            if (created) navigate(`/properties/${group}/${created.name}`);
+          }}
+        />
+      )}
+      {modal?.kind === 'property-delete' && (
+        <DeletePropertyCollectionModal
+          groupName={modal.groupName}
+          propName={modal.resourceName}
+          onClose={() => setModal(null)}
+          onDeleted={() => setModal(null)}
+        />
+      )}
+    </>
+  );
+}
+
+function PropertyDetailRoute() {
+  const { group = '', name = '' } = useParams<{ group: string; name: string }>();
+  return <PropertyDetailPage groupName={group} propName={name} />;
+}
+
 function AppContent() {
   const { session, loading } = useAuth();
 
@@ -444,8 +539,11 @@ function AppContent() {
         <Route path="/metadata/:type/:group/:name" element={<MetadataResourceRoute />} />
         <Route path="/metadata/:type/:group" element={<MetadataGroupRoute />} />
         <Route path="/metadata/:type" element={<MetadataTypeRoute />} />
+        <Route path="/properties/:group/:name" element={<PropertyDetailRoute />} />
+        <Route path="/properties/:group" element={<PropertiesGroupRoute />} />
+        <Route path="/properties" element={<PropertiesOverviewRoute />} />
         <Route path="/pipelines/*" element={<div className="page-body"><h1 className="page-title">Pipelines</h1><p className="page-meta">Coming soon.</p></div>} />
-        <Route path="/query" element={<div className="page-body"><h1 className="page-title">Query</h1><p className="page-meta">Coming in M4.</p></div>} />
+        <Route path="/query" element={<QueryRoute />} />
         <Route path="*" element={<div className="page-body"><h1 className="page-title">Not found</h1></div>} />
       </Routes>
     </Shell>

@@ -223,7 +223,7 @@ export function IndexRuleBindingForm({
   if (mode === 'delete') {
     return (
       <div className="modal-overlay" onClick={() => onClose()}>
-        <div className="modal is-danger" onClick={(e) => e.stopPropagation()}>
+        <div className="modal is-danger" role="dialog" aria-modal="true" aria-label="Delete binding" onClick={(e) => e.stopPropagation()}>
           <div className="modal-head">
             <span className="modal-title">Delete binding</span>
             <button className="modal-x" onClick={() => onClose()} aria-label="Close" />
@@ -253,7 +253,7 @@ export function IndexRuleBindingForm({
 
   return (
     <div className="modal-overlay" onClick={guardedClose}>
-      <form className="modal" ref={trapRef} onSubmit={handleSubmit} onClick={(e) => e.stopPropagation()}>
+      <form className="modal" role="dialog" aria-modal="true" aria-label={isEdit ? 'Edit binding' : 'Create binding'} ref={trapRef} onSubmit={handleSubmit} onClick={(e) => e.stopPropagation()}>
         <div className="modal-head">
           <div>
             <span className="modal-title">{isEdit ? 'Edit binding' : 'Create binding'}</span>

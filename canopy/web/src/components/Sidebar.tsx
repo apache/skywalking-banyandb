@@ -18,7 +18,7 @@
  */
 
 import React, { useEffect, useMemo, useState } from 'react';
-import { useNavigate, useLocation } from 'react-router-dom';
+import { useNavigate, useLocation } from 'react-router';
 import { useQuery } from '@tanstack/react-query';
 
 import { CanopyMark } from './CanopyMark.js';
@@ -29,6 +29,160 @@ import {
   IconProperties, IconPipelines, IconQuery, IconChevron, IconCollapse, IconSignOut,
   IconShield, IconViewer, IconIndex, IconGroup,
 } from './icons.js';
+
+/** One property group's row + its lazily-fetched collection list (fetched
+ *  only once expanded — see the PropertyNav doc comment below for why
+ *  per-collection doc counts are omitted). */
+function PropertyGroupRow({
+  groupName, open, onToggle, active, navigate, collapsed,
+}: {
+  groupName: string;
+  open: boolean;
+  onToggle: () => void;
+  active: string;
+  navigate: (path: string) => void;
+  collapsed: boolean;
+}) {
+  const path = `/properties/${groupName}`;
+  const isActive = active === path;
+  const { data: collections = [] } = useQuery({
+    queryKey: ['resources', 'properties', groupName],
+    queryFn: () => apiDataSource.listResourcesInGroup('properties', groupName),
+    enabled: open,
+  });
+  return (
+    <div className="nav-node">
+      <div className="nav-rowline">
+        <button
+          className={'nav-row lvl-2' + (isActive ? ' is-active' : '')}
+          style={{ paddingLeft: 44, paddingRight: collapsed ? 12 : 32 }}
+          onClick={() => { if (!collapsed) onToggle(); navigate(path); }}
+          aria-expanded={open}
+          title={groupName}
+        >
+          <span className="nav-ico grp"><IconGroup size={14} /></span>
+          <span className="nav-label">{groupName}</span>
+        </button>
+        {!collapsed && (
+          <button
+            type="button"
+            className="nav-chev-btn"
+            aria-label={(open ? 'Collapse' : 'Expand') + ' ' + groupName}
+            aria-expanded={open}
+            onClick={onToggle}
+          >
+            <span className={'nav-chev' + (open ? ' is-open' : '')}><IconChevron /></span>
+          </button>
+        )}
+      </div>
+      {open && (
+        <div className="nav-sub is-open">
+          <div className="nav-sub-inner">
+            <span className="nav-guide" style={{ left: 53 }} />
+            {collections.length === 0 ? (
+              <span className="qb-dim" style={{ paddingLeft: 60, display: 'block' }}>no properties yet</span>
+            ) : collections.map((c) => {
+              const cPath = `${path}/${c.metadata.name}`;
+              return (
+                <button
+                  key={c.metadata.name}
+                  className={'nav-row lvl-3 is-leaf' + (active === cPath ? ' is-active' : '')}
+                  style={{ paddingLeft: 60 }}
+                  onClick={() => navigate(cPath)}
+                  title={c.metadata.name}
+                >
+                  <span className="nav-label">{c.metadata.name}</span>
+                </button>
+              );
+            })}
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+/** Properties -> group (expandable) -> collection (leaf) nav tree.
+ *
+ * Structural nuance vs. CatalogNav (Metadata's section->group-leaf shape):
+ * Properties is one level deeper — group rows expand to a per-collection
+ * list rather than being leaves themselves (see docs/property-design.md §3).
+ * This is the "minimal" option the design calls out, reusing the existing
+ * nav-row/nav-count/flyout CSS rather than replacing Sidebar with the
+ * handoff's generic recursive NavRow tree (the "fuller port" alternative,
+ * deferred — see the PR report).
+ *
+ * Counts: the "Properties" row's nav-count is the number of property groups
+ * (cheap — already fetched for the groups list). Per-collection DOCUMENT
+ * counts are deliberately omitted: showing them would need one
+ * queryPropertyDocuments call per collection per render, an N+1 query burst
+ * every time the sidebar mounts — not worth it for a nav badge. Collection
+ * rows show just the name; the detail page is one click away for the actual
+ * count. */
+function PropertyNav({
+  groups, open, onToggle, active, navigate, collapsed,
+}: {
+  groups: readonly { name: string }[];
+  open: boolean;
+  onToggle: () => void;
+  active: string;
+  navigate: (path: string) => void;
+  collapsed: boolean;
+}) {
+  const [openGroups, setOpenGroups] = useState<Set<string>>(new Set());
+  const toggleGroup = (name: string) => setOpenGroups((prev) => {
+    const next = new Set(prev);
+    if (next.has(name)) next.delete(name); else next.add(name);
+    return next;
+  });
+  const onPath = active === '/properties' || active.startsWith('/properties/');
+  return (
+    <div className="nav-node">
+      <div className="nav-rowline">
+        <button
+          className={'nav-row lvl-0' + (onPath ? ' has-active' : '')}
+          style={{ paddingLeft: 12, paddingRight: collapsed ? 12 : 32 }}
+          onClick={() => { if (!collapsed) onToggle(); navigate('/properties'); }}
+          aria-expanded={open}
+          title="Properties"
+        >
+          <span className="nav-ico"><IconProperties /></span>
+          <span className="nav-label">Properties</span>
+          <span className="nav-count">{groups.length}</span>
+        </button>
+        {!collapsed && groups.length > 0 && (
+          <button
+            type="button"
+            className="nav-chev-btn"
+            aria-label={(open ? 'Collapse' : 'Expand') + ' Properties'}
+            aria-expanded={open}
+            onClick={onToggle}
+          >
+            <span className={'nav-chev' + (open ? ' is-open' : '')}><IconChevron /></span>
+          </button>
+        )}
+      </div>
+      {open && groups.length > 0 && (
+        <div className="nav-sub is-open">
+          <div className="nav-sub-inner">
+            <span className="nav-guide" style={{ left: 21 }} />
+            {groups.map((g) => (
+              <PropertyGroupRow
+                key={g.name}
+                groupName={g.name}
+                open={openGroups.has(g.name)}
+                onToggle={() => toggleGroup(g.name)}
+                active={active}
+                navigate={navigate}
+                collapsed={collapsed}
+              />
+            ))}
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
 
 interface SidebarProps {
   collapsed: boolean;
@@ -159,6 +313,7 @@ export function Sidebar({ collapsed, onToggleCollapse }: SidebarProps) {
   const [measuresOpen, setMeasuresOpen] = useState(false);
   const [streamsOpen, setStreamsOpen] = useState(false);
   const [tracesOpen, setTracesOpen] = useState(false);
+  const [propertiesOpen, setPropertiesOpen] = useState(false);
   // Per-group "Index" sub-row expansion. Empty by default — every Index is
   // folded so the sidebar doesn't grow noisy when there are many groups. The
   // active group's Index is auto-added below; users can fold/unfold manually
@@ -204,6 +359,7 @@ export function Sidebar({ collapsed, onToggleCollapse }: SidebarProps) {
   const measureGroups = useMemo(() => groups.filter((g) => g.catalog === 'CATALOG_MEASURE'), [groups]);
   const streamGroups  = useMemo(() => groups.filter((g) => g.catalog === 'CATALOG_STREAM'),  [groups]);
   const traceGroups   = useMemo(() => groups.filter((g) => g.catalog === 'CATALOG_TRACE'),   [groups]);
+  const propertyGroups = useMemo(() => groups.filter((g) => g.catalog === 'CATALOG_PROPERTY'), [groups]);
 
   const active = location.pathname;
 
@@ -214,6 +370,7 @@ export function Sidebar({ collapsed, onToggleCollapse }: SidebarProps) {
     if (active.startsWith('/metadata/measures')) setMeasuresOpen(true);
     if (active.startsWith('/metadata/streams'))  setStreamsOpen(true);
     if (active.startsWith('/metadata/traces'))   setTracesOpen(true);
+    if (active.startsWith('/properties/'))       setPropertiesOpen(true);
   }, [active]);
 
   // When the URL lands on a group's Index page, unfold that group's Index
@@ -267,7 +424,7 @@ export function Sidebar({ collapsed, onToggleCollapse }: SidebarProps) {
   };
 
   return (
-    <aside className={'sidebar' + (collapsed ? ' is-collapsed' : '')}>
+    <aside className={'sidebar' + (collapsed ? ' is-collapsed' : '')} aria-label="Sidebar">
       <div className="side-head">
         <div className="brand">
           <CanopyMark size={28} className="brand-mark" />
@@ -371,19 +528,14 @@ export function Sidebar({ collapsed, onToggleCollapse }: SidebarProps) {
         </div>
 
         {/* Properties */}
-        <div className="nav-node">
-          <div className="nav-rowline">
-            <button
-              className={'nav-row lvl-0' + (active.startsWith('/properties') ? ' is-active' : '')}
-              style={{ paddingLeft: 12 }}
-              onClick={() => navigate('/properties')}
-              title="Properties"
-            >
-              <span className="nav-ico"><IconProperties /></span>
-              <span className="nav-label">Properties</span>
-            </button>
-          </div>
-        </div>
+        <PropertyNav
+          groups={propertyGroups}
+          open={propertiesOpen}
+          onToggle={() => setPropertiesOpen((o) => !o)}
+          active={active}
+          navigate={navigate}
+          collapsed={collapsed}
+        />
 
         {/* Pipelines */}
         <div className="nav-node">
@@ -432,6 +584,8 @@ export function Sidebar({ collapsed, onToggleCollapse }: SidebarProps) {
         <div className="side-foot-row">
           <div
             className={'conn' + (banyandbReachable === false ? ' is-unreachable' : '')}
+            role="status"
+            aria-label="BanyanDB connection"
             title={banyandbReachable === false
               ? `Cannot reach BanyanDB at ${banyandbTarget} — check BANYANDB_TARGET and the BanyanDB process.`
               : 'Connected to ' + banyandbTarget}
@@ -442,7 +596,7 @@ export function Sidebar({ collapsed, onToggleCollapse }: SidebarProps) {
               <span className="conn-host">{displayHost}</span>
             </span>
           </div>
-          <button className="collapse-btn" onClick={onToggleCollapse} title="Toggle sidebar (⌘B)" aria-label="Toggle sidebar">
+          <button className="collapse-btn" onClick={onToggleCollapse} title="Toggle sidebar (⌘B)" aria-label="Toggle sidebar" aria-expanded={!collapsed}>
             <IconCollapse />
           </button>
         </div>

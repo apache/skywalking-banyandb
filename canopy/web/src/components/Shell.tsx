@@ -32,9 +32,9 @@ export function Shell({ children }: ShellProps) {
     <div className="shell">
       <Sidebar collapsed={collapsed} onToggleCollapse={() => setCollapsed((c) => !c)} />
       <div className="content">
-        <div className="content-scroll">
+        <main className="content-scroll">
           {children}
-        </div>
+        </main>
       </div>
     </div>
   );

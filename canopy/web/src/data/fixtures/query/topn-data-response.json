@@ -1,0 +1,58 @@
+{
+  "description": "Hand-authored TopN data response matching the BanyanDB monorepo's current wire shape (api/proto/banyandb/measure/v1/topn.proto). Wire shape: measure.v1.TopNResponse { lists: [TopNList] }; each TopNList has { timestamp, items: [{ entity: [Tag], value: FieldValue, version, timestamp }] }. The result-view flattens this into { timestamp, host_id, region, value } for rendering. See implement-m4-note.md decision #24.",
+  "capturedAt": "2026-06-29T14:00:00Z",
+  "banyandbVersion": "monorepo-current",
+  "wireShape": "measure.v1.TopNResponse",
+  "lists": [
+    {
+      "timestamp": "2026-06-29T11:30:00Z",
+      "items": [
+        {
+          "entity": [
+            { "key": "host_id", "value": "h2" },
+            { "key": "region", "value": "us" }
+          ],
+          "value": { "float": 0.72 },
+          "version": 1,
+          "timestamp": "2026-06-29T11:30:00Z"
+        },
+        {
+          "entity": [
+            { "key": "host_id", "value": "h4" },
+            { "key": "region", "value": "eu" }
+          ],
+          "value": { "float": 0.63 },
+          "version": 1,
+          "timestamp": "2026-06-29T11:30:00Z"
+        },
+        {
+          "entity": [
+            { "key": "host_id", "value": "h1" },
+            { "key": "region", "value": "us" }
+          ],
+          "value": { "float": 0.61 },
+          "version": 1,
+          "timestamp": "2026-06-29T11:30:00Z"
+        },
+        {
+          "entity": [
+            { "key": "host_id", "value": "h3" },
+            { "key": "region", "value": "eu" }
+          ],
+          "value": { "float": 0.55 },
+          "version": 1,
+          "timestamp": "2026-06-29T11:30:00Z"
+        },
+        {
+          "entity": [
+            { "key": "host_id", "value": "h5" },
+            { "key": "region", "value": "ap" }
+          ],
+          "value": { "float": 0.50 },
+          "version": 1,
+          "timestamp": "2026-06-29T11:30:00Z"
+        }
+      ]
+    }
+  ]
+}

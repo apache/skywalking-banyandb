@@ -442,7 +442,7 @@ describe('Upstream error envelopes', () => {
     expect(body.upstream).toBeDefined();
   });
 
-  it('upstream 5xx → 502 upstream_error envelope', async () => {
+  it('upstream 5xx is forwarded verbatim', async () => {
     const pool = mockAgent.get('http://upstream-a.test:17913');
     pool.intercept({ path: /.*/, method: 'GET' }).reply(500, 'Internal Error')
       .times(2); // loginAs triggers fetchBanyanVersion (consumes 1); actual test request consumes 2nd
@@ -451,8 +451,8 @@ describe('Upstream error envelopes', () => {
     const res = await app.inject({
       method: 'GET', url: '/api/v1/group/schema/lists', headers: { cookie },
     });
-    expect(res.statusCode).toBe(502);
-    expect(JSON.parse(res.body).error).toBe('upstream_error');
+    expect(res.statusCode).toBe(500);
+    expect(res.body).toBe('Internal Error');
   });
 });
 

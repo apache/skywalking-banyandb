@@ -30,7 +30,9 @@ import type {
   CreateIndexRuleBindingRequest, UpdateIndexRuleBindingRequest,
   QueryRequest, QueryResponse,
   StreamSchema, MeasureSchema, TraceSchema, PropertySchema, Group,
-  IndexRuleSchema, IndexRuleBindingSchema,
+  IndexRuleSchema, IndexRuleBindingSchema, TopNAggregationSchema,
+  CreatePropertySchemaRequest, PropertyApplyRequest, PropertyApplyResponse,
+  PropertyQueryRequest, PropertyDocument,
 } from 'canopy-shared';
 
 export interface DataSource {
@@ -43,6 +45,12 @@ export interface DataSource {
   // Resources (read)
   listResourcesInGroup(type: string, group: string): Promise<(StreamSchema | MeasureSchema | TraceSchema | PropertySchema)[]>;
   getResource(type: string, group: string, name: string): Promise<StreamSchema | MeasureSchema | TraceSchema | PropertySchema>;
+
+  // TopNAggregation (Top-N schema) — read
+  // Returns the precomputed leaderboard definitions registered under the
+  // given group. The query builder's FROM row uses this list (instead of
+  // the measure list) when the user is composing a Top-N query.
+  listTopNAggregations(group: string): Promise<TopNAggregationSchema[]>;
 
   // Stream CRUD
   createStream(req: CreateStreamRequest): Promise<StreamSchema>;
@@ -74,4 +82,14 @@ export interface DataSource {
   deleteResource(type: string, group: string, name: string): Promise<void>;
 
   runQuery(request: QueryRequest): Promise<QueryResponse>;
+
+  // Property schema (collection) CRUD — `database/v1` PropertyRegistryService.
+  // List/Get reuse listResourcesInGroup/getResource above.
+  createPropertySchema(req: CreatePropertySchemaRequest): Promise<PropertySchema>;
+  deletePropertySchema(group: string, name: string): Promise<void>;
+
+  // Property documents — `property/v1` PropertyService.
+  applyPropertyDocument(group: string, name: string, id: string, req: PropertyApplyRequest): Promise<PropertyApplyResponse>;
+  deletePropertyDocument(group: string, name: string, id: string): Promise<void>;
+  queryPropertyDocuments(req: PropertyQueryRequest): Promise<{ readonly documents: readonly PropertyDocument[] }>;
 }
