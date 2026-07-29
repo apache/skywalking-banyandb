@@ -580,3 +580,43 @@ describe('flattenQueryResponse — TagValue oneof coverage', () => {
     expect(rows[0].value).toBe(5);
   });
 });
+
+// Long body/text tag values are CSS-truncated, so they render through
+// CopyableId (hover popover with the full value + click-to-copy) — the same
+// affordance id-role cells already had (alarm_record's snapshot/tags_raw_data).
+describe('StreamResultView — long text cells are copyable', () => {
+  it('wraps >40-char body/text values in CopyableId, leaves short values plain', () => {
+    const longMessage = 'Response time of service mesh-svr::app.sample-services is more than 20ms.';
+    const longSnapshot = `{"expression":"sum(service_resp_time)","metrics":"${'x'.repeat(60)}"}`;
+    const longStream: QueryResponse = {
+      stream_result: { elements: [] as never[] },
+      elements: flattenQueryResponse({
+        streamResult: {
+          elements: [{
+            elementId: 'e1', timestamp: '2026-07-28T00:42:25Z',
+            tagFamilies: [{ name: 'default', tags: [
+              { key: 'alarm_message', value: { str: { value: longMessage } } },
+              { key: 'snapshot', value: { str: { value: longSnapshot } } },
+              { key: 'short', value: { str: { value: 'ok' } } },
+            ] }],
+          }],
+        },
+      } as unknown as QueryResponse),
+    };
+    const specs = [
+      { name: 'alarm_message', type: 'TAG_TYPE_STRING' },
+      { name: 'snapshot', type: 'TAG_TYPE_STRING' },
+      { name: 'short', type: 'TAG_TYPE_STRING' },
+    ];
+    renderWithRouter(
+      <StreamResultView response={longStream} state={{ ...STREAM_STATE, projection: ['alarm_message', 'snapshot', 'short'] }} showTrace={false} setShowTrace={() => {}} tagSpecs={specs} hasMore={false} onLoadMore={() => {}} isLoadingMore={false} />,
+    );
+    fireEvent.click(screen.getByRole('button', { name: 'Table' }));
+    // CopyableId cells expose role=button with a "click to copy" aria-label.
+    expect(screen.getByRole('button', { name: /alarm_message Response time of service mesh-svr/ })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: /snapshot \{"expression"/ })).toBeInTheDocument();
+    // Short values stay plain text — no copy cell.
+    expect(screen.queryByRole('button', { name: /short ok/ })).not.toBeInTheDocument();
+    expect(screen.getByText('ok')).toBeInTheDocument();
+  });
+});

@@ -429,6 +429,10 @@ function TableView({ elements, config, setInspecting, hasMore, onLoadMore, isLoa
   );
 }
 
+// Strings longer than this render through CopyableId (hover popover with the
+// full value + Copy button) instead of a plain ellipsised span.
+const LONG_TEXT_COPY_THRESHOLD = 40;
+
 function ValuePill({ tag, role, value, setInspecting }: {
   tag: string;
   role: SR_ROLE;
@@ -478,10 +482,22 @@ function ValuePill({ tag, role, value, setInspecting }: {
         </span>
       );
     }
-    case 'body':
-      return <span className="sbody">{String(value)}</span>;
-    default:
-      return <span className="mono dim">{String(value)}</span>;
+    case 'body': {
+      const bodyText = String(value);
+      // Long bodies are CSS-truncated — give them the hover-popover + copy
+      // affordance id cells already have (alarm_message, snapshot, …).
+      if (bodyText.length > LONG_TEXT_COPY_THRESHOLD) {
+        return <CopyableId value={bodyText} label={tag} className="sbody" popoverWidth={520} />;
+      }
+      return <span className="sbody">{bodyText}</span>;
+    }
+    default: {
+      const plainText = String(value);
+      if (plainText.length > LONG_TEXT_COPY_THRESHOLD) {
+        return <CopyableId value={plainText} label={tag} popoverWidth={520} />;
+      }
+      return <span className="mono dim">{plainText}</span>;
+    }
   }
 }
 
