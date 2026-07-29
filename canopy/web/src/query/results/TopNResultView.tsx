@@ -326,7 +326,9 @@ function decodeEntityValue(raw: unknown): string {
   if (raw == null) return '';
   const o = raw as { str?: { value?: unknown } };
   const wire = o.str && typeof o.str.value === 'string' ? o.str.value : '';
-  if (!wire) return String(raw);
+  // Null-valued entity tags ({"null": null}) render blank — String(raw) on
+  // the raw oneof object would show "[object Object]".
+  if (!wire) return raw && typeof raw === 'object' && 'null' in raw ? '' : String(raw);
 
   // Strategy 1: plain string (no base64, no dot).
   if (!wire.includes('=') && !wire.includes('.')) {
@@ -377,7 +379,7 @@ function TopNEntity({ entity }: { entity: readonly Tag[] }) {
         // and we surface only the decoded name (not the key + raw object).
         const display = decodeEntityValue(t.value);
         return (
-          <span key={i} className="tnlb-ent-v mono" title={`${t.key} = ${String(t.value)}`}>
+          <span key={i} className="tnlb-ent-v mono" title={`${t.key} = ${display || 'null'}`}>
             {display || '—'}
           </span>
         );

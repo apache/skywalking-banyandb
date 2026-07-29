@@ -525,3 +525,58 @@ describe('TraceDecoderModal', () => {
     localStorage.removeItem('canopy.td.bind.' + traceId);
   });
 });
+// Regression: unset tags arrive as the TagValue null variant ({"null": null})
+// and array/binary tags as strArray/intArray/binaryData — every variant must
+// flatten to a scalar, never leak the raw oneof object into a result cell
+// (it rendered as "[object Object]" for SkyWalking's empty attr1-5).
+describe('flattenQueryResponse — TagValue oneof coverage', () => {
+  const tagFamilies = [{
+    name: 'searchable',
+    tags: [
+      { key: 'attr0', value: { str: { value: 'MESH' } } },
+      { key: 'attr1', value: { null: null } },
+      { key: 'labels', value: { strArray: { value: ['a', 'b'] } } },
+      { key: 'ports', value: { intArray: { value: ['80', '443'] } } },
+      { key: 'blob', value: { binaryData: 'aGVsbG8=' } },
+    ],
+  }];
+
+  it('flattens every TagValue variant to a scalar in measure data points', () => {
+    const rows = flattenQueryResponse({
+      measureResult: { dataPoints: [{ timestamp: '2026-07-28T23:42:00Z', tagFamilies, fields: [{ name: 'value', value: { int: { value: '68' } } }] }] },
+    } as unknown as QueryResponse);
+    expect(rows[0].attr0).toBe('MESH');
+    expect(rows[0].attr1).toBe('');
+    expect(rows[0].labels).toBe('a, b');
+    expect(rows[0].ports).toBe('80, 443');
+    expect(rows[0].blob).toBe('aGVsbG8=');
+    expect(rows[0].value).toBe(68);
+    for (const key of ['attr0', 'attr1', 'labels', 'ports', 'blob']) {
+      expect(typeof rows[0][key]).not.toBe('object');
+    }
+  });
+
+  it('flattens null/array tags in stream elements', () => {
+    const rows = flattenQueryResponse({
+      streamResult: { elements: [{ elementId: 'e1', timestamp: '2026-07-28T23:42:00Z', tagFamilies }] },
+    } as unknown as QueryResponse);
+    expect(rows[0].attr1).toBe('');
+    expect(rows[0].labels).toBe('a, b');
+  });
+
+  it('flattens null/array tags in trace spans', () => {
+    const rows = flattenQueryResponse({
+      traceResult: { elements: [{ traceId: 't1', spanId: 's1', tags: tagFamilies[0].tags }] },
+    } as unknown as QueryResponse);
+    expect(rows[0].attr1).toBe('');
+    expect(rows[0].ports).toBe('80, 443');
+  });
+
+  it('flattens null entity tags in topn rows', () => {
+    const rows = flattenTopNResponse({
+      lists: [{ timestamp: '2026-07-28T23:42:00Z', items: [{ entity: [{ key: 'attr1', value: { null: null } }], value: { int: { value: '5' } } }] }],
+    } as unknown as TopNQueryResponse);
+    expect(rows[0].attr1).toBe('');
+    expect(rows[0].value).toBe(5);
+  });
+});
