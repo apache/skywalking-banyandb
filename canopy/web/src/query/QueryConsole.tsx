@@ -794,7 +794,11 @@ export function QueryConsole() {
               </div>
             </div>
           )}
-          {response && (
+          {/* A failed run shows ONLY the error card — the stale result from a
+              previous successful run must not render alongside it (the handoff
+              is an if/else chain: one panel at a time). The response state is
+              kept so a successful Retry re-renders it. */}
+          {response && status !== 'error' && (
             <>
               <ResultViewRouter
                 state={state}
