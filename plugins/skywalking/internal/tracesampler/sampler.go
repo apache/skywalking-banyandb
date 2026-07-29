@@ -622,10 +622,21 @@ func arrayEntries(col *sdk.TagColumn) ([]string, error) {
 	if col == nil {
 		return nil, nil
 	}
+	// Size the copy buffer to the longest row up front so it is allocated exactly once
+	// and never grows mid-loop. This needs no decode — only the raw byte lengths.
+	widest := 0
+	for _, raw := range col.Values {
+		if len(raw) > widest {
+			widest = len(raw)
+		}
+	}
+	if widest == 0 {
+		return nil, nil
+	}
 	var (
 		out     []string
 		scratch = sdk.TagColumn{Name: col.Name, ValueType: col.ValueType, Values: make([][]byte, 1)}
-		buf     []byte
+		buf     = make([]byte, 0, widest)
 	)
 	for row := range col.Values {
 		if col.Values[row] == nil {
@@ -650,7 +661,14 @@ func arrayEntries(col *sdk.TagColumn) ([]string, error) {
 		if v.IsNull() {
 			continue
 		}
-		out = append(out, entriesOf(v)...)
+		entries := entriesOf(v)
+		if out == nil && len(entries) > 0 {
+			// Size from the first decoded row. Rows of one trace carry comparable tag
+			// counts, so this normally reaches the final capacity in a single allocation
+			// instead of growing through every power of two.
+			out = make([]string, 0, len(entries)*len(col.Values))
+		}
+		out = append(out, entries...)
 	}
 	return out, nil
 }
