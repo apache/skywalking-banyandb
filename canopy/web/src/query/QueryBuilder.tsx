@@ -1014,7 +1014,8 @@ export function QueryBuilder({
           disabled={isRunning}
           onClick={() => onRun()}
         >
-          <IconPlay width={15} height={15} /> Run
+          <IconPlay width={15} height={15} /> {isRunning ? 'Running…' : 'Run'}
+          <kbd className="kbd">{typeof navigator !== 'undefined' && /Mac/i.test(navigator.platform) ? '⌘↵' : 'Ctrl↵'}</kbd>
         </button>
       </div>
     </div>

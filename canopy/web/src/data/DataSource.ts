@@ -31,6 +31,7 @@ import type {
   QueryRequest, QueryResponse,
   StreamSchema, MeasureSchema, TraceSchema, PropertySchema, Group,
   IndexRuleSchema, IndexRuleBindingSchema, TopNAggregationSchema,
+  CreateTopNAggregationRequest, UpdateTopNAggregationRequest,
   CreatePropertySchemaRequest, PropertyApplyRequest, PropertyApplyResponse,
   PropertyQueryRequest, PropertyDocument,
 } from 'canopy-shared';
@@ -46,11 +47,14 @@ export interface DataSource {
   listResourcesInGroup(type: string, group: string): Promise<(StreamSchema | MeasureSchema | TraceSchema | PropertySchema)[]>;
   getResource(type: string, group: string, name: string): Promise<StreamSchema | MeasureSchema | TraceSchema | PropertySchema>;
 
-  // TopNAggregation (Top-N schema) — read
-  // Returns the precomputed leaderboard definitions registered under the
-  // given group. The query builder's FROM row uses this list (instead of
+  // TopNAggregation (Top-N schema) — the Pipelines/TopN CRUD surface.
+  // listTopNAggregations also backs the query builder's FROM row (instead of
   // the measure list) when the user is composing a Top-N query.
   listTopNAggregations(group: string): Promise<TopNAggregationSchema[]>;
+  getTopNAggregation(group: string, name: string): Promise<TopNAggregationSchema>;
+  createTopNAggregation(req: CreateTopNAggregationRequest): Promise<TopNAggregationSchema>;
+  updateTopNAggregation(group: string, name: string, req: UpdateTopNAggregationRequest): Promise<TopNAggregationSchema>;
+  deleteTopNAggregation(group: string, name: string): Promise<void>;
 
   // Stream CRUD
   createStream(req: CreateStreamRequest): Promise<StreamSchema>;
