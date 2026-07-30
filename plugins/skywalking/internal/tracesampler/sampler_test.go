@@ -31,15 +31,29 @@ import (
 )
 
 // segmentSchema and zipkinSchema mirror the two first-party plugins' Schema
-// values so the engine is exercised exactly as they configure it.
+// values so the engine is exercised exactly as they configure it — including
+// FirstClassColumns, since a stale copy here would let a never-match rule pass the
+// tests while the shipped plugin rejects it.
 var (
+	segmentColumns = []string{
+		"segment_id", "trace_id", "service_id", "service_instance_id",
+		"endpoint_id", "start_time", "latency", "is_error", "data_binary",
+	}
+	zipkinColumns = []string{
+		"trace_id", "span_id", "parent_id", "name", "duration", "kind",
+		"timestamp_millis", "timestamp", "local_endpoint_service_name",
+		"local_endpoint_port", "remote_endpoint_service_name",
+		"remote_endpoint_port", "annotations", "tags", "debug", "shared",
+	}
 	segmentSchema = Schema{
 		ArrayTagColumn: "tags", ErrorTag: "is_error",
 		DurationTag: "latency", StartTimeTag: "start_time", DurationTagNanosPerUnit: 1_000_000,
+		FirstClassColumns: segmentColumns,
 	}
 	zipkinSchema = Schema{
 		ArrayTagColumn: "query", ErrorTag: "error", ErrorTagInArray: true,
 		DurationTag: "duration", StartTimeTag: "timestamp_millis", DurationTagNanosPerUnit: 1_000,
+		FirstClassColumns: zipkinColumns,
 	}
 	// noErrorSchema has no error signal at all, so keepErrors must be rejected.
 	noErrorSchema = Schema{ArrayTagColumn: "tags"}
@@ -525,6 +539,101 @@ func TestDecide_Int64StartTimeFailsOpen(t *testing.T) {
 	require.NoError(t, e)
 
 	verdict, report := sdktest.Run(s, sdktest.Batch(tr))
+	require.NoError(t, report.Err)
+	assert.Equal(t, []bool{true}, verdict.Keep)
+}
+
+// The never-match guard has to cover the schema's WHOLE column inventory, not just the
+// three the engine reads. "Keep everything from the payment service", written as a rule
+// on service_id, is the motivating case: it admits cleanly and then drops exactly the
+// traces it was meant to save.
+func TestNew_RejectsRulesOnAnyFirstClassColumn(t *testing.T) {
+	for _, c := range []struct {
+		name   string
+		cols   []string
+		schema Schema
+	}{
+		{name: "segment", schema: segmentSchema, cols: segmentColumns},
+		{name: "zipkin", schema: zipkinSchema, cols: zipkinColumns},
+	} {
+		for _, col := range c.cols {
+			t.Run(c.name+"/"+col, func(t *testing.T) {
+				cfg := `{"keepTagRules":[{"tagKey":"` + col + `","exists":true}]}`
+				_, err := New([]byte(cfg), c.schema)
+				require.Error(t, err, "a rule on the %s column %q can never match", c.name, col)
+				assert.Contains(t, err.Error(), "could never match")
+			})
+		}
+	}
+
+	// The array column itself stays legal — it is the escape hatch the error names.
+	for _, c := range []struct {
+		key    string
+		schema Schema
+	}{
+		{"tags", segmentSchema},
+		{"query", zipkinSchema},
+	} {
+		cfg := `{"keepTagRules":[{"tagKey":"` + c.key + `","regex":"^db\\."}]}`
+		_, err := New([]byte(cfg), c.schema)
+		require.NoError(t, err, "a rule on the array column %q must stay legal", c.key)
+	}
+}
+
+// keepErrors must fail the same way as the duration rule: an absent error column is a
+// can't-tell, not "no error". Failing closed here would make {"keepErrors": true} on a
+// mis-paired group drop every trace it was enabled to save.
+func TestDecide_ErrorColumnMissingFailsOpen(t *testing.T) {
+	s, err := New([]byte(`{"keepErrors":true}`), segmentSchema)
+	require.NoError(t, err)
+
+	// Zipkin-shaped rows under the segment plugin: no is_error column anywhere.
+	wrongSchema, e := sdktest.NewTrace("wrong-schema").
+		Tag("query", []string{"http.method=GET"}).Build()
+	require.NoError(t, e)
+
+	verdict, report := sdktest.Run(s, sdktest.Batch(wrongSchema))
+	require.NoError(t, report.Err)
+	assert.Equal(t, []bool{true}, verdict.Keep)
+
+	// A column that is PRESENT but not truthy stays fail-closed — an unset flag really
+	// does mean "not an error", unlike a missing measurement.
+	healthy, e := sdktest.NewTrace("healthy").Tag("is_error", int64(0)).Build()
+	require.NoError(t, e)
+	verdict, report = sdktest.Run(s, sdktest.Batch(healthy))
+	require.NoError(t, report.Err)
+	assert.Equal(t, []bool{false}, verdict.Keep)
+}
+
+// A span carrying a start but no duration must still anchor the envelope's left edge.
+// Zipkin's duration is optional, so dropping such a row would measure the trace from a
+// later span and understate how long it took.
+func TestDecide_StartWithoutDurationStillBoundsEnvelope(t *testing.T) {
+	const ms = int64(1_000_000)
+	z, err := New([]byte(`{"durationThresholdMs":1000}`), zipkinSchema)
+	require.NoError(t, err)
+
+	// Earliest span has no duration; the later one is only 10ms long. Measured from the
+	// earliest start the envelope is 1.51s and the trace is slow; measured from the
+	// later span alone it is 10ms and would be dropped.
+	trace, e := sdktest.NewTrace("one-way-first").
+		TagAs("timestamp_millis", valuetype.ValueTypeTimestamp, int64(0)).
+		TagAs("timestamp_millis", valuetype.ValueTypeTimestamp, 1500*ms).
+		TagAs("duration", valuetype.ValueTypeInt64, nil).
+		Tag("duration", int64(10_000)).Build()
+	require.NoError(t, e)
+
+	verdict, report := sdktest.Run(z, sdktest.Batch(trace))
+	require.NoError(t, report.Err)
+	assert.Equal(t, []bool{true}, verdict.Keep,
+		"the earliest start must anchor minStart even though that span has no duration")
+
+	// With NO duration on any row the trace's end is unknown — a can't-tell, so kept.
+	noDuration, e := sdktest.NewTrace("all-one-way").
+		TagAs("timestamp_millis", valuetype.ValueTypeTimestamp, int64(0)).
+		TagAs("duration", valuetype.ValueTypeInt64, nil).Build()
+	require.NoError(t, e)
+	verdict, report = sdktest.Run(z, sdktest.Batch(noDuration))
 	require.NoError(t, report.Err)
 	assert.Equal(t, []bool{true}, verdict.Keep)
 }

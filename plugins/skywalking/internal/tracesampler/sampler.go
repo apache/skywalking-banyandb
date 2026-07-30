@@ -69,10 +69,18 @@ type Schema struct {
 	// DurationTag and StartTimeTag drive the durationThresholdMs rule, which
 	// keeps a trace whose end-to-end envelope reaches the threshold. The envelope
 	// is max(start + duration) - min(start) over the trace's rows, computed from
-	// these two per-row tags. This is the true trace duration (it catches traces
-	// that are slow only through sequential segments), not the spread of the
-	// intrinsic MinTS/MaxTS (which is per-row start timestamps and 0 for a
-	// single-row trace).
+	// these two per-row tags. This is the true trace duration: it catches traces
+	// that are slow only through sequential segments.
+	//
+	// DO NOT replace this with the intrinsic MaxTS - MinTS, however tempting the
+	// saving. sdk.TraceBlock documents MaxTS as "the latest span end ... trace
+	// duration is MaxTS - MinTS" and _example/segment-tail-sampler computes it that
+	// way, but both are WRONG: banyand/trace/block.go fills MinTS and MaxTS from the
+	// same per-row timestamp column, so they are the spread of span/segment START
+	// times. That understates any trace whose last span outlives the last span to
+	// begin, and is exactly 0 for a single-row trace — which would silently drop
+	// every single-segment slow trace. Reading the two tags costs a decode; being
+	// correct is worth it.
 	//
 	// DurationTag is the per-row duration column: "latency" (segment duration, ms)
 	// for the segment schema, "duration" (span duration, µs) for Zipkin.
@@ -84,6 +92,17 @@ type Schema struct {
 	// DurationTagNanosPerUnit converts one DurationTag unit to nanoseconds so the
 	// envelope math is ns-consistent with StartTimeTag: 1_000_000 for a millisecond
 	// tag (segment latency), 1_000 for a microsecond tag (Zipkin duration).
+	// FirstClassColumns is the schema's full column inventory — every tag OAP stores
+	// as a real column rather than as an entry of ArrayTagColumn. It exists purely to
+	// reject rules that could never match: "keep everything from the payment service",
+	// written as {tagKey: service_id, equals: ...}, is admitted by a schema that does
+	// not list its columns and then drops exactly those traces.
+	//
+	// List every column INCLUDING the duration, start-time and error tags named above
+	// (the dedicated checks simply produce a better message for those), but NOT
+	// ArrayTagColumn itself — a rule on that is the documented escape hatch for a
+	// searchable tag whose key collides with a column name.
+	FirstClassColumns       []string
 	DurationTagNanosPerUnit int64
 	// ErrorTagInArray says the error signal is a KEY INSIDE ArrayTagColumn rather
 	// than a column of its own. The segment schema has a real is_error column
@@ -94,6 +113,14 @@ type Schema struct {
 	// Note this is a tag CONVENTION, not an authoritative field: instrumentations
 	// that signal failure only through http.status_code 5xx or otel.status_code are
 	// not covered, and need an explicit keepTagRules entry.
+	//
+	// It is also subject to an OAP-side truncation. SpanForward.java skips BOTH the
+	// bare key and "key=value" when either the value or the joined string exceeds
+	// Tag.TAG_LENGTH (256 chars), so a Zipkin "error" tag carrying a long exception
+	// message writes nothing into the array and keepErrors cannot see it — precisely
+	// the loudest errors go missing. Catching those needs a keepTagRules entry on a
+	// short-valued tag (an http.status_code regex, say) until OAP records the bare key
+	// before the length check.
 	ErrorTagInArray bool
 }
 
@@ -108,21 +135,30 @@ type Schema struct {
 // rule on the same key matched array entries, the exact silent no-op this guard
 // exists to prevent.
 //
-// Only the columns a Schema names can be checked; a rule on some other first-class
-// column (local_endpoint_service_name, say) is still a silent no-op, since the
-// engine has no column inventory. Callers reject an empty tagKey before calling
-// this, which also stops an unset Schema field from aliasing every rule.
+// Coverage is only as good as Schema.FirstClassColumns: a column the schema does not
+// list is still admitted and then silently never matches. Callers reject an empty
+// tagKey before calling this, which also stops an unset Schema field from aliasing
+// every rule.
 func (s Schema) firstClassColumn(tagKey, errorColumn string) string {
+	if tagKey == s.ArrayTagColumn {
+		// The escape hatch, not a column: a rule here sees the raw "key=value" entries.
+		return ""
+	}
 	switch tagKey {
 	case s.DurationTag, s.StartTimeTag:
-		return "durationThresholdMs"
+		return "the durationThresholdMs option reads it"
 	case errorColumn:
-		return "keepErrors"
+		return "the keepErrors option reads it"
 	}
 	// The schema's own error column stays first-class even when keepErrors is off or
 	// overridden — a rule still cannot reach it.
 	if tagKey == s.ErrorTag && !s.ErrorTagInArray {
-		return "keepErrors"
+		return "the keepErrors option reads it"
+	}
+	for _, col := range s.FirstClassColumns {
+		if tagKey == col {
+			return "no sampler option reads it"
+		}
 	}
 	return ""
 }
@@ -426,16 +462,16 @@ func validateRules(rs []rule, schema Schema, errorColumn string) error {
 			return fmt.Errorf("tracesampler: keepTagRules[%d] (tagKey %q) has no matcher; "+
 				"set one of exists/equals/in/regex", i, r.TagKey)
 		}
-		if firstClass := schema.firstClassColumn(r.TagKey, errorColumn); firstClass != "" {
+		if hint := schema.firstClassColumn(r.TagKey, errorColumn); hint != "" {
 			// A hard error, not a warning: plugins have no log channel, and silently
 			// accepting the rule is the failure mode this check exists to remove. The
 			// array-column escape hatch matters when a searchable tag legitimately shares
 			// a name with a column (a Zipkin span tag literally called "duration").
 			return fmt.Errorf("tracesampler: keepTagRules[%d] targets %q, which this schema stores as a "+
-				"first-class column, not as an entry of %q; such a rule could never match. Use the %s option "+
-				"instead, or — to match a searchable tag that happens to share the name — write the rule "+
-				"against %q itself, e.g. {tagKey: %q, regex: \"^%s=\"}",
-				i, r.TagKey, schema.ArrayTagColumn, firstClass,
+				"first-class column, not as an entry of %q, so the rule could never match (%s). To match a "+
+				"searchable tag that happens to share the name, write the rule against %q itself, "+
+				"e.g. {tagKey: %q, regex: \"^%s=\"}",
+				i, r.TagKey, schema.ArrayTagColumn, hint,
 				schema.ArrayTagColumn, schema.ArrayTagColumn, r.TagKey)
 		}
 		if r.Regex != "" {
@@ -567,7 +603,7 @@ func (s *Sampler) hasSlowTrace(b *sdk.TraceBlock) (bool, error) {
 		rows = len(startCol.Values)
 	}
 	var minStart, maxEnd int64
-	seen := false
+	haveStart, haveEnd := false, false
 	for row := 0; row < rows; row++ {
 		sv, sErr := startCol.At(row)
 		if sErr != nil {
@@ -577,33 +613,34 @@ func (s *Sampler) hasSlowTrace(b *sdk.TraceBlock) (bool, error) {
 		if dErr != nil {
 			return false, dErr
 		}
-		if sv.IsNull() || dv.IsNull() {
-			continue
-		}
 		// StartTimeTag must be a timestamp column, which BanyanDB stores as unix ns
 		// (write_standalone.go: GetTimestamp().AsTime().UnixNano()) — that is what makes
 		// reading it as ns correct. A plain Int64 start time is deliberately NOT accepted:
 		// it carries no unit, and unlike DurationTag there is no nanos-per-unit to scale
 		// it by, so treating it as ns would silently mis-measure a millisecond column.
 		// Skipping the row instead makes it a can't-tell, which fails open.
-		// Duration is an int in the tag's own unit, scaled below.
-		if sv.ValueType() != valuetype.ValueTypeTimestamp || dv.ValueType() != valuetype.ValueTypeInt64 {
+		if sv.IsNull() || sv.ValueType() != valuetype.ValueTypeTimestamp {
 			continue
 		}
+		// A start with no duration still bounds the envelope's LEFT edge. Zipkin's
+		// duration is optional (incomplete and one-way spans carry none), so requiring
+		// both would let the earliest span drop out of minStart and measure the trace
+		// from a later one — understating the envelope and under-keeping slow traces.
 		start := sv.Int64()
-		end := start + dv.Int64()*s.durationTagNanosPerUnit
-		if !seen {
-			minStart, maxEnd, seen = start, end, true
+		if !haveStart || start < minStart {
+			minStart, haveStart = start, true
+		}
+		// Duration is an int in the tag's own unit, scaled to ns here.
+		if dv.IsNull() || dv.ValueType() != valuetype.ValueTypeInt64 {
 			continue
 		}
-		if start < minStart {
-			minStart = start
-		}
-		if end > maxEnd {
-			maxEnd = end
+		if end := start + dv.Int64()*s.durationTagNanosPerUnit; !haveEnd || end > maxEnd {
+			maxEnd, haveEnd = end, true
 		}
 	}
-	if !seen {
+	// Both edges are required: without any duration the trace's end is unknown, which
+	// is a can't-tell rather than "not slow".
+	if !haveStart || !haveEnd {
 		return false, errNoDurationEnvelope
 	}
 	return maxEnd-minStart >= s.durationThresholdMs*nanosPerMillis, nil
@@ -673,11 +710,23 @@ func arrayEntries(col *sdk.TagColumn) ([]string, error) {
 	return out, nil
 }
 
+// errNoErrorColumn reports that the schema's error column is absent from the block.
+// keepTrace treats any error as a keep, which is the intended reading: the column is
+// schema-declared, so its absence means the block was written under a different
+// schema — typically the wrong plugin attached to the group — and answering "no
+// error" there would drop every trace keepErrors was enabled to save. This mirrors
+// errNoDurationEnvelope; the two sure-keep rules must fail the same way.
+//
+// A column that is PRESENT but null on a row is different and stays fail-closed: the
+// duration envelope is a measurement, so an absent one cannot be judged, whereas
+// is_error is a flag, and an unset flag legitimately means "not an error".
+var errNoErrorColumn = errors.New("the schema's error column is absent from this block")
+
 // hasErrorColumn reports whether a dedicated error column is truthy on any row.
 func (s *Sampler) hasErrorColumn(b *sdk.TraceBlock) (bool, error) {
 	col := b.Tag(s.errorTag)
 	if col == nil {
-		return false, nil
+		return false, errNoErrorColumn
 	}
 	for row := range col.Values {
 		v, err := col.At(row)

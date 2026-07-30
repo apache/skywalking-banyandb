@@ -67,6 +67,28 @@ var zipkinSchema = tracesampler.Schema{
 	DurationTag:             "duration",
 	StartTimeTag:            "timestamp_millis",
 	DurationTagNanosPerUnit: 1_000,
+	// Every @Column on OAP's ZipkinSpanRecord except "query", which is the flattened
+	// searchable-tag array above. Note "tags" IS a first-class column here — it holds
+	// the span's tags as a JSON blob, and only "query" is searchable — so a rule on it
+	// is the same never-match trap. Keep in step with ZipkinSpanRecord.java.
+	FirstClassColumns: []string{
+		"trace_id",
+		"span_id",
+		"parent_id",
+		"name",
+		"duration",
+		"kind",
+		"timestamp_millis",
+		"timestamp",
+		"local_endpoint_service_name",
+		"local_endpoint_port",
+		"remote_endpoint_service_name",
+		"remote_endpoint_port",
+		"annotations",
+		"tags",
+		"debug",
+		"shared",
+	},
 }
 
 // NewSampler is the constructor symbol the engine looks up.

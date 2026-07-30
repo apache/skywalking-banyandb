@@ -61,6 +61,21 @@ var segmentSchema = tracesampler.Schema{
 	DurationTag:             "latency",
 	StartTimeTag:            "start_time",
 	DurationTagNanosPerUnit: 1_000_000,
+	// Every @Column on OAP's SegmentRecord except "tags", which is the flattened
+	// searchable-tag array above. A keepTagRules entry naming one of these could never
+	// match, so listing them turns a silently-dropped rule into a startup error. Keep
+	// in step with SegmentRecord.java if a column is added there.
+	FirstClassColumns: []string{
+		"segment_id",
+		"trace_id",
+		"service_id",
+		"service_instance_id",
+		"endpoint_id",
+		"start_time",
+		"latency",
+		"is_error",
+		"data_binary",
+	},
 }
 
 // NewSampler is the constructor symbol the engine looks up.

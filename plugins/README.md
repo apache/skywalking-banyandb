@@ -11,7 +11,6 @@ plugins/
   README.md                             # this file
   skywalking/
     internal/tracesampler/              # shared §6.1/§6.2 sampler engine (not a plugin)
-    latencystatussampler/main.go        # seed: package main; NewSampler; ABIVersion
     sw-trace-sampler/main.go            # segment schema (sw_trace): duration/is_error/tags rules
     zipkin-trace-sampler/main.go        # zipkin_span schema (sw_zipkinTrace): duration/query rules
 ```
@@ -25,9 +24,11 @@ value naming the columns each trace schema keeps the rule inputs in — see
 the keys both plugins accept.
 
 Because every `keepTagRules` entry resolves to the flattened array, a rule naming
-a first-class column could never match; the engine rejects the ones a `Schema`
-names (the error, duration, and start-time columns) at construction instead of
-letting the rule silently never fire.
+a first-class column could never match. Each `Schema` therefore carries its
+model's full column inventory (`FirstClassColumns`) and the engine rejects such a
+rule at construction instead of letting it silently never fire — so
+`{tagKey: service_id, equals: ...}`, the natural way to write "keep everything
+from the payment service", fails loudly rather than dropping exactly those traces.
 
 The `skywalking/` namespace holds plugins maintained by the SkyWalking
 project itself. A future third-party vendor would get its own sibling
@@ -77,7 +78,7 @@ overrides, and tuning guidance, see SkyWalking's
 | Key | Type | Meaning |
 |---|---|---|
 | `durationThresholdMs` | int | Keep a trace whose end-to-end envelope reaches this many **milliseconds**. `0` disables. |
-| `keepErrors` | bool | Keep a trace carrying an error. Rejected on a schema that expresses error neither as a column nor as an array key. |
+| `keepErrors` | bool | Keep a trace carrying an error. Rejected on a schema that expresses error neither as a column nor as an array key. On the Zipkin schema see the truncation caveat below. |
 | `errorTag` | string | Override the tag `keepErrors` reads. Ignored unless `keepErrors` is set. |
 | `keepTagRules` | list \| string | Sure-keep rules over the searchable tags: `{tagKey, exists\|equals\|in\|regex}`, or the compact `key=value,key=~regex,key` string form. |
 | `healthySampleRate` | float | Fraction in `[0,1]` of the remaining traces to keep, by FNV-1a hash of the trace ID. Accepts a quoted number, since SkyWalking's config loader stringifies float placeholders. |
@@ -90,6 +91,14 @@ rejected for the same reason. Note Go matches field names case-insensitively, so
 this catches wrong words, not wrong capitalization; the reference
 `_example/segment-tail-sampler` uses `snake_case`, so a config copied from it is
 refused outright.
+
+**Zipkin `keepErrors` misses long error values.** OAP's `SpanForward` skips both
+the bare key and `key=value` when either the value or the joined string exceeds
+`Tag.TAG_LENGTH` (256 chars), so an `error` tag carrying a long exception message
+reaches `query` in neither form and `keepErrors` cannot see it — the loudest
+errors are the ones that go missing. Until OAP records the bare key before that
+length check, catch those with a `keepTagRules` entry on a short-valued tag, such
+as an `http.status_code` regex.
 
 **Per-schema inputs.** The two mains differ only in this mapping:
 
@@ -117,12 +126,21 @@ the intrinsic `MaxTS − MinTS`, which is the spread of per-row *start* timestam
 (and `0` for a single-row trace).
 
 **Order and fail-open.** Rules are OR-ed in the order duration, errors, tag
-rules, healthy sample; the first match wins, so order affects cost only. A
-rule that cannot be evaluated **keeps** the trace: absent duration columns
-mean "can't tell", not "not slow", since the columns are schema-declared and
-their absence implies the block was written under a different schema. An
-absent tag array is *not* treated that way — a trace with no searchable tags
-is ordinary data, so tag rules simply do not match.
+rules, healthy sample; the first match wins, so order affects cost only.
+
+A rule that cannot be evaluated **keeps** the trace. An absent duration or
+error column means "can't tell", not "not slow" / "no error": those columns
+are schema-declared, so their absence implies the block was written under a
+different schema — typically the wrong plugin attached to the group — and
+dropping there would discard exactly what the option was enabled to save.
+
+Two cases are deliberately NOT treated that way, because they are ordinary
+data rather than a schema mismatch: an absent tag array (a trace with no
+searchable tags simply matches no tag rule), and an error column that is
+present but not truthy (an unset flag really does mean "not an error", unlike
+an absent measurement). A row carrying a start but no duration still anchors
+the envelope's left edge — Zipkin's `duration` is optional, so requiring both
+would measure a trace from a later span and understate it.
 
 ## ABI / toolchain lock (read this before building for production)
 
@@ -182,7 +200,7 @@ runs merge/finalize) with two flags:
 ```
 
 then references a plugin by filename in the group's pipeline config, e.g.
-`SamplerPlugin.path = "latencystatussampler.so"`. See
+`SamplerPlugin.path = "sw-trace-sampler.so"`. See
 `docs/operation/plugins.md` for the full deployment guide (image-volume and
 initContainer mount mechanisms, third-party plugins, and Kubernetes examples).
 
