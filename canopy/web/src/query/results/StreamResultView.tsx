@@ -461,7 +461,7 @@ function ValuePill({ tag, role, value, setInspecting }: {
 
   switch (role) {
     case 'time':
-      return <span className="snum dim">{formatTimestamp(value)}</span>;
+      return <span className="snum dim snum-time">{formatTimestamp(value)}</span>;
     case 'numeric': {
       const rendered = srRenderValue(role, value, tag);
       return <span className="snum strong">{rendered.display}</span>;

@@ -538,8 +538,11 @@ function ValuePill({ tag, role, value }: {
   }
 
   switch (role) {
-    case 'time':
-      return <span className="snum dim">{formatTs(parseTs(value))}</span>;
+    case 'time': {
+      // Full ISO in the tooltip; the cell wraps (never truncates) in narrow cards.
+      const tsMs = parseTs(value);
+      return <span className="snum dim snum-time" title={Number.isFinite(tsMs) ? new Date(tsMs).toISOString() : undefined}>{formatTs(tsMs)}</span>;
+    }
     case 'numeric': {
       const rendered = srRenderValue(role, value, tag);
       return <span className="snum strong">{rendered.display}</span>;

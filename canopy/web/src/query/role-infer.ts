@@ -111,6 +111,16 @@ export const srConventionFor = (name: string): Convention | null => {
   return SR_CONVENTIONS[normalize(name)] ?? null;
 };
 
+// Name-shape heuristic: tags whose names carry an `id` affix are entity
+// identifiers by convention — `id0`/`id1` (alarm_record), `*_id` foreign keys
+// (service_id, element_id, segment_id), camelCase `traceId`. Word-boundary
+// aware so 'grid', 'idle', 'valid', 'is_error', 'uuid' don't match.
+const ID_AFFIX_RE = /^(?:id(?:[\d_]|$)|.+[-_.]id)$/i;
+const CAMEL_ID_RE = /[a-z]Id$/;
+
+/** True when a tag name marks it as an identifier by naming convention. */
+export const srIsIdName = (name: string): boolean => ID_AFFIX_RE.test(name) || CAMEL_ID_RE.test(name);
+
 /** Layer 1 — render a role from the storage type alone. */
 export const srRoleFromType = (type: SR_TAG_TYPE | string): SR_ROLE => {
   switch (type) {
@@ -194,7 +204,11 @@ export const srRoleFromValue = (
 
 /** Layer 3 — name-convention overlay (SkyWalking-flavoured). */
 export const srRoleFromConvention = (name: string): SR_ROLE | null => {
-  return srConventionFor(name)?.role ?? null;
+  const conv = srConventionFor(name)?.role ?? null;
+  if (conv) return conv;
+  // Generic id-affix heuristic (id0, trace_id, serviceId, …) — after the
+  // explicit conventions so e.g. 'endpoint' keeps its 'body' role.
+  return srIsIdName(name) ? 'id' : null;
 };
 
 /** Layer 4 — apply a user override (from the Fields panel). */
