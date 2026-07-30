@@ -20,7 +20,33 @@ package app
 import (
 	"strings"
 	"testing"
+
+	"github.com/apache/skywalking-banyandb/bydbctl/internal/tui/session"
 )
+
+func TestRenderChatWrapsCJKDetailWithoutEllipsis(t *testing.T) {
+	detail := "受控目录中，没有发现：精确资源；请确认，资源名称。"
+	model := NewModel(Config{})
+	model.activityLog = nil
+	model.querySession = &session.QuerySession{ChatMessages: []session.ChatMessage{{
+		Role:    session.ChatRoleAssistant,
+		Content: "查询结果",
+		Detail:  detail,
+	}}}
+	model.chatCursor = 0
+
+	view := stripANSI(model.renderChat(40, 16))
+	if strings.Contains(view, "...") {
+		t.Fatalf("expected CJK detail to wrap without truncation:\n%s", view)
+	}
+	formattedLines := formatChatDetailLines(detail, 36)
+	for lineIndex, line := range formattedLines {
+		formattedLines[lineIndex] = stripANSI(line)
+	}
+	if formattedDetail := strings.Join(formattedLines, ""); formattedDetail != detail {
+		t.Fatalf("expected complete CJK detail, got %q", formattedDetail)
+	}
+}
 
 func TestFormatChatDetailLinesRendersMarkdown(t *testing.T) {
 	content := "你好！\n\n**查询资源：** `meter_vm_cpu_average_used_hour`\n\n- 最近30分钟\n- 限制10条\n\n```bydbql\nSELECT value FROM MEASURE cpu IN g TIME > '-30m' LIMIT 10\n```"

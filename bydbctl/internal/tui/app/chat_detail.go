@@ -20,16 +20,13 @@ package app
 import (
 	"regexp"
 	"strings"
-	"unicode"
 
 	"github.com/charmbracelet/lipgloss"
 
 	"github.com/apache/skywalking-banyandb/bydbctl/internal/tui/workflow"
 )
 
-var (
-	structuredDetailKeyPattern = regexp.MustCompile(`^(?i)(plan|workflow|query|parameters|input|output|candidate|message|hint|command|path|rows|summary|error)\s*[:=]\s*`)
-)
+var structuredDetailKeyPattern = regexp.MustCompile(`^(?i)(plan|workflow|query|parameters|input|output|candidate|message|hint|command|path|rows|summary|error)\s*[:=]\s*`)
 
 var (
 	inlineCodePattern = regexp.MustCompile("`([^`]+)`")
@@ -215,10 +212,7 @@ func wrapRunes(text string, width int) []string {
 			currentWidth = 0
 			continue
 		}
-		runeWidth := 1
-		if unicode.Is(unicode.Han, textRune) {
-			runeWidth = 2
-		}
+		runeWidth := lipgloss.Width(string(textRune))
 		if currentWidth+runeWidth > width && len(current) > 0 {
 			lines = append(lines, string(current))
 			current = []rune{textRune}

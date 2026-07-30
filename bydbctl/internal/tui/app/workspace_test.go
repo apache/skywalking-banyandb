@@ -75,6 +75,29 @@ func TestWorkspaceFitsTerminalWithProviderVisible(t *testing.T) {
 	)
 }
 
+func TestWorkspaceFitsTerminalWithSelectedChatDetail(t *testing.T) {
+	const terminalHeight = 42
+	model := NewModel(Config{Provider: "claude"})
+	model.resize(180, terminalHeight)
+	querySession := &session.QuerySession{}
+	for messageIndex := 0; messageIndex < 19; messageIndex++ {
+		querySession.ChatMessages = append(querySession.ChatMessages, session.ChatMessage{
+			Role:    session.ChatRoleTool,
+			Content: "catalog lookup",
+		})
+	}
+	querySession.ChatMessages = append(querySession.ChatMessages, session.ChatMessage{
+		Role:    session.ChatRoleAssistant,
+		Content: "查询结果",
+		Detail: "我会先按精确资源读取 schema，再提交只读 typed plan。\n" +
+			"受控目录中，没有发现：精确资源；请确认，资源名称或刷新 BanyanDB catalog 后重试。",
+	})
+	model.querySession = querySession
+	model.chatCursor = len(querySession.ChatMessages) - 1
+
+	assertWorkspaceFitsTerminal(t, model.View(), terminalHeight, "provider claude", "Detail · pgup/pgdn scroll", "4/20 messages")
+}
+
 func TestWorkspaceFitsTerminalWithSchemaSearchOpen(t *testing.T) {
 	const terminalHeight = 42
 	model := NewModel(Config{Provider: "claude"})
