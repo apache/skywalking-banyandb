@@ -297,6 +297,15 @@ describe('buildBydbQL', () => {
     expect(out).toContain('WHERE service = \'gateway\'');
     expect(out).toContain('ORDER BY timestamp DESC');
   });
+  it('orders trace queries by the schema timestampTagName when provided', () => {
+    // sw_trace's timestampTagName is start_time, and ORDER BY on a trace
+    // resolves to an index-rule name server-side — emitting 'timestamp' fails
+    // with "index rule timestamp not found" on clusters without that rule.
+    const s: QBBuilderState = { ...baseState, catalog: 'traces', resource: 'segment' };
+    expect(buildBydbQL(s, undefined, undefined, 'start_time')).toContain('ORDER BY start_time DESC');
+    // Pre-schema fallback keeps the loud 'timestamp' behavior.
+    expect(buildBydbQL(s)).toContain('ORDER BY timestamp DESC');
+  });
   it('skips ORDER BY for trace queries when a trace_id filter is present', () => {
     const where: QBWhereGroupWithConn = {
       combinator: 'AND',
