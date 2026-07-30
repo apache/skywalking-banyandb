@@ -264,6 +264,13 @@ export interface QueryBuilderProps {
   /** Key of the currently expanded accordion section, or null when all are collapsed. */
   readonly openSection?: string | null;
   readonly setOpenSection?: (v: string | null) => void;
+  /** Trace schema's timestampTagName — the generated-preview's ORDER BY 'time'
+   *  maps to it (see buildBydbQL). Undefined until the schema loads. */
+  readonly traceTimestampTag?: string;
+  /** Index-rule names bound to the current resource (noSort rules excluded).
+   *  ORDER BY resolves to a rule name server-side, so the dropdown offers only
+   *  these. Undefined = not loaded yet — the raw tag/field list is shown. */
+  readonly orderableRules?: readonly string[];
 }
 
 /* ---- QBRow: one row in the WHERE list — either a leaf condition or a
@@ -470,6 +477,7 @@ export function QueryBuilder({
   groups, groupResources, groupTopnAggs, onPickResource,
   isRunning, onEjectToCode, onRun,
   hasRun = false, compact = true, setCompact, openSection = null, setOpenSection,
+  traceTimestampTag, orderableRules,
 }: QueryBuilderProps) {
   const isTopN = state.catalog === 'topn';
   const isMeasure = state.catalog === 'measures';
@@ -550,6 +558,29 @@ export function QueryBuilder({
   };
   const setTime = (patch: Partial<QBBuilderState['time']>) => onChange({ time: { ...state.time, ...patch } });
   const setOrder = (patch: Partial<Pick<QBBuilderState, 'orderField' | 'orderDir'>>) => onChange(patch);
+
+  // ORDER BY resolves to an index-rule NAME server-side, so once the bound
+  // rules are known the dropdown is confined to them (+ 'time' for measures/
+  // streams, whose element timestamps are always sortable). Traces get no
+  // 'time' alias — on the distributed path it degenerates to a sort by
+  // trace_id; a trace orders by a real rule (usually its timestampTagName).
+  const orderOptions = React.useMemo(
+    () => (orderableRules === undefined
+      ? undefined
+      : [...(state.catalog === 'traces' ? [] : ['time']), ...orderableRules.filter((r) => r !== 'time')]),
+    [orderableRules, state.catalog],
+  );
+  // Reset a stale selection (e.g. a persisted 'time' on a trace) once the
+  // bound rules are known. An EMPTY orderField is a deliberate "no ordering"
+  // choice and is left alone.
+  React.useEffect(() => {
+    if (isTopN || orderOptions === undefined || orderOptions.length === 0) return;
+    if (!state.orderField || orderOptions.includes(state.orderField)) return;
+    const fallback = state.catalog === 'traces'
+      ? (traceTimestampTag && orderOptions.includes(traceTimestampTag) ? traceTimestampTag : orderOptions[0])
+      : 'time';
+    if (state.orderField !== fallback) onChange({ orderField: fallback });
+  }, [isTopN, orderOptions, state.catalog, state.orderField, traceTimestampTag, onChange]);
 
   return (
     <div className="qb-card" data-catalog={state.catalog} role="region" aria-label="Query builder">
@@ -870,8 +901,13 @@ export function QueryBuilder({
           <div className="qb-row">
             <span className="qb-select-wrap">
               <select aria-label="Order field" value={state.orderField} onChange={(e) => setOrder({ orderField: e.target.value })}>
-                <option value="time">time</option>
-                {(isMeasure ? fields : tags).map((f) => <option key={f} value={f}>{f}</option>)}
+                {/* '' = no ORDER BY clause. Measures/streams run unordered fine;
+                    traces allow it only with a trace_id filter (the server
+                    rejects trace queries with neither — QueryConsole re-seeds
+                    an order when the last trace_id condition is removed). */}
+                <option value="">— none —</option>
+                {(orderOptions ?? ['time', ...(isMeasure ? fields : tags).filter((f) => f !== 'time')]).map((f) => <option key={f} value={f}>{f}</option>)}
+                {orderOptions !== undefined && orderOptions.length === 0 && state.catalog === 'traces' && <option value="" disabled>no index rules</option>}
               </select>
               <span className="qb-select-chev"><IconChev width={13} height={13} /></span>
             </span>
@@ -1005,8 +1041,8 @@ export function QueryBuilder({
           <span className="qb-trace-dot" /> Trace
         </button>
         <span className="qb-gap" />
-        <code className="qb-gen-line mono" title={buildBydbQL(state, tags)}>
-          {buildBydbQL(state, tags).replace(/\s*\n\s*/g, ' ')}
+        <code className="qb-gen-line mono" title={buildBydbQL(state, tags, undefined, traceTimestampTag)}>
+          {buildBydbQL(state, tags, undefined, traceTimestampTag).replace(/\s*\n\s*/g, ' ')}
         </code>
         <button
           type="button"
