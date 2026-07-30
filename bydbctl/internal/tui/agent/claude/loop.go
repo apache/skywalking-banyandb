@@ -221,7 +221,6 @@ func claudeArgs(config Config, providerSessionID string, parts prompt.Parts) ([]
 		"--model", config.Model,
 		"--max-turns", strconv.Itoa(config.MaxTurns),
 		"--permission-mode", "dontAsk",
-		"--setting-sources", "",
 		"--disable-slash-commands",
 		"--no-chrome",
 		"--prompt-suggestions", "false",
