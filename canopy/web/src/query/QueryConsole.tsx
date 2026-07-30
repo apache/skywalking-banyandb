@@ -535,6 +535,16 @@ export function QueryConsole() {
     patch({ select: fields.map((f) => ({ field: f, fn: '' })) });
   }, [state.catalog, state.resource, fields, state.select, patch]);
 
+  // Top-N's AGGREGATE BY defaults to MEAN when the catalog loads: the
+  // distributed liaison rejects an unspecified agg (dquery/topn.go
+  // validateRequest), so the page should never start with no function.
+  // Fires only on catalog change — an explicit "none — pre-aggregated value"
+  // pick afterwards stays untouched.
+  useEffect(() => {
+    if (state.catalog !== 'topn') return;
+    setState((s) => (s.aggFn ? s : { ...s, aggFn: 'MEAN' }));
+  }, [state.catalog]);
+
   const runMutation = useRunQuery();
 
   // Surface invalid absolute time ranges (TO <= FROM) as an inline error
@@ -602,7 +612,14 @@ export function QueryConsole() {
             groups: state.group ? [state.group] : [],
             name: state.resource,
             top_n: state.topN,
-            agg: state.aggFn ? { function: state.aggFn, field_name: '' } : undefined,
+            // agg is the bare AggregationFunction enum name (topn.proto:65) —
+            // NOT a {function, field_name} message, which the gateway rejects.
+            // Sent only when the user picked a function: the AGGREGATE BY row
+            // defaults to MEAN when the Top-N page loads (see the effect
+            // below), so an empty aggFn here is an explicit "pre-aggregated
+            // value" choice — standalone BanyanDB serves it (raw per-bucket
+            // lists), the distributed liaison rejects it loudly.
+            agg: state.aggFn ? `AGGREGATION_FUNCTION_${state.aggFn}` : undefined,
             field_value_sort: state.orderDir === 'ASC' ? 'SORT_ASC' : 'SORT_DESC',
             time_range: topnTimeRange,
             trace: state.trace,
