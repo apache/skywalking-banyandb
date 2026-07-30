@@ -483,13 +483,16 @@ export function QueryConsole() {
   // deep-link seed) already picked a group.
   useEffect(() => {
     if (!groupsLoaded) return;
+    // A deep-link seed owns catalog/group/resource — auto-picks would read the
+    // pre-seed closure state and clobber it in the same commit.
+    if (seed) return;
     if (state.group) return;
     const measureGroups = groups.filter((g) => g.catalog === 'CATALOG_MEASURE');
     const canonical = measureGroups.find((g) => g.name === 'sw_metric');
     const first = canonical ?? [...measureGroups].sort((a, b) => a.name.localeCompare(b.name))[0];
     if (!first) return;
     patch({ group: first.name });
-  }, [groupsLoaded, groups, state.group, patch]);
+  }, [groupsLoaded, groups, state.group, seed, patch]);
 
   // Auto-select the canonical resource of the chosen group so the rail
   // renders real content instead of "— none —" on initial load. Prefers
@@ -501,7 +504,7 @@ export function QueryConsole() {
   // the Top-N tab we pick from the topn-aggregation list instead, so the
   // FROM-row surface is correct from the moment Top-N is selected.
   useEffect(() => {
-    if (state.resource) return;
+    if (state.resource || seed) return;
     if (state.catalog === 'topn') {
       if (topnAggList.length === 0) return;
       const sorted = [...topnAggList].map((a) => a.metadata.name).sort();
@@ -518,7 +521,7 @@ export function QueryConsole() {
       const picked = candidates[0] ?? resourceList[0]?.name ?? '';
       if (picked) patch({ resource: picked });
     }
-  }, [resourceList, topnAggList, state.resource, state.catalog, patch]);
+  }, [resourceList, topnAggList, state.resource, state.catalog, seed, patch]);
 
   // List every field of the selected measure, each defaulting to raw (no
   // aggregation) — the user picks an aggregation per row when they want one.
