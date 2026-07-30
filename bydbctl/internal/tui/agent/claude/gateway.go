@@ -8,13 +8,12 @@
 //     http://www.apache.org/licenses/LICENSE-2.0
 //
 // Unless required by applicable law or agreed to in writing, software
-// distributed under the License is distributed on an
-// "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
-// KIND, either express or implied. See the License for the
-// specific language governing permissions and limitations
-// under the License.
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
 
-// Package claude provides an in-process Anthropic Messages API gateway for bydbctl.
+// Package claude provides a fail-closed Claude CLI gateway for bydbctl.
 package claude
 
 import (
@@ -22,71 +21,90 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"os/exec"
+	"path/filepath"
+	"regexp"
 	"strings"
 	"sync"
 	"time"
 
-	"github.com/anthropics/anthropic-sdk-go"
-	"github.com/anthropics/anthropic-sdk-go/option"
-	"github.com/anthropics/anthropic-sdk-go/packages/ssestream"
 	"github.com/google/uuid"
 
 	"github.com/apache/skywalking-banyandb/bydbctl/internal/tui/agent"
 )
 
 const (
-	defaultModel     = "claude-sonnet-5"
-	defaultMaxTokens = int64(4096)
-	apiKeyEnv        = "ANTHROPIC_API_KEY"
-	agentEventBuffer = 64
+	defaultCommand          = "claude"
+	defaultModel            = "sonnet"
+	defaultMaxTurns         = 12
+	controlledMCPServerName = "bydbctl-controlled-tools"
+	agentEventBuffer        = 64
 )
 
-// Config configures one in-process Anthropic Messages API gateway.
+var (
+	claudeVersionPattern = regexp.MustCompile(`^\d+\.\d+\.\d+ \(Claude Code\)$`)
+	controlledToolNames  = []string{
+		"list_groups_schemas",
+		"describe_schema",
+		"propose_query_plan",
+		"validate_bydbql",
+		"probe_bydbql",
+		"execute_bydbql",
+	}
+)
+
+// Config configures one Claude CLI gateway.
 type Config struct {
-	Model            string
-	APIKey           string
-	BaseURL          string
-	MaxTokens        int64
-	WorkingDirectory string
-	Tools            agent.ControlledTools
+	Command             string
+	Model               string
+	APIKey              string
+	BaseURL             string
+	WorkingDirectory    string
+	ControlledMCPServer agent.ControlledMCPServer
+	MaxTurns            int
 }
 
-// turnHandle ties the active turn's cancel func to the gateway so Interrupt can reach it.
+// turnHandle owns the cancellation and process for one Claude CLI turn.
 type turnHandle struct {
-	cancel context.CancelFunc
+	cancel      context.CancelFunc
+	process     *os.Process
+	interrupted bool
 }
 
-// Gateway owns one Anthropic client and the single session used by one TUI.
+// Gateway owns one local session and starts one Claude CLI process per turn.
 type Gateway struct {
-	config    Config
-	now       func() time.Time
-	client    *anthropic.Client
-	session   agent.Session
-	turn      *turnHandle
-	newStream func(ctx context.Context, params anthropic.MessageNewParams) *ssestream.Stream[anthropic.MessageStreamEventUnion]
-	startMu   sync.Mutex
-	mu        sync.Mutex
-	closed    bool
+	now               func() time.Time
+	turn              *turnHandle
+	config            Config
+	session           agent.Session
+	providerSessionID string
+	startMu           sync.Mutex
+	mu                sync.Mutex
+	started           bool
+	closed            bool
 }
 
-// NewGateway creates an in-process Anthropic gateway. The HTTP client is constructed lazily at Start.
+// NewGateway creates a Claude CLI gateway.
 func NewGateway(config Config) *Gateway {
+	if strings.TrimSpace(config.Command) == "" {
+		config.Command = defaultCommand
+	}
 	if strings.TrimSpace(config.Model) == "" {
 		config.Model = defaultModel
 	}
-	if config.MaxTokens <= 0 {
-		config.MaxTokens = defaultMaxTokens
+	if config.MaxTurns <= 0 {
+		config.MaxTurns = defaultMaxTurns
 	}
 	return &Gateway{config: config, now: time.Now}
 }
 
-// MaintainsConversationHistory reports that each Send rebuilds messages from the payload.
+// MaintainsConversationHistory reports that resumed Claude CLI sessions retain prior turns.
 func (gateway *Gateway) MaintainsConversationHistory() bool {
-	return false
+	return true
 }
 
-// Start validates configuration and constructs the Anthropic client.
-func (gateway *Gateway) Start(_ context.Context, req agent.StartRequest) (agent.Session, error) {
+// Start validates the isolated CLI configuration and checks that Claude Code is available.
+func (gateway *Gateway) Start(ctx context.Context, req agent.StartRequest) (agent.Session, error) {
 	gateway.startMu.Lock()
 	defer gateway.startMu.Unlock()
 	gateway.mu.Lock()
@@ -94,74 +112,87 @@ func (gateway *Gateway) Start(_ context.Context, req agent.StartRequest) (agent.
 		gateway.mu.Unlock()
 		return agent.Session{}, errors.New("claude gateway is closed")
 	}
-	if gateway.client != nil {
+	if gateway.started {
 		existingSession := gateway.session
 		gateway.mu.Unlock()
 		return existingSession, nil
 	}
 	gateway.mu.Unlock()
-	if strings.TrimSpace(gateway.config.APIKey) == "" {
-		gateway.config.APIKey = strings.TrimSpace(os.Getenv(apiKeyEnv))
+	if strings.TrimSpace(gateway.config.WorkingDirectory) == "" {
+		gateway.config.WorkingDirectory = req.WorkingDirectory
 	}
 	if validateErr := validateConfig(gateway.config); validateErr != nil {
 		return agent.Session{}, validateErr
 	}
-	clientOptions := []option.RequestOption{option.WithAPIKey(gateway.config.APIKey)}
-	if strings.TrimSpace(gateway.config.BaseURL) != "" {
-		clientOptions = append(clientOptions, option.WithBaseURL(gateway.config.BaseURL))
+	if versionErr := checkClaudeVersion(ctx, gateway.config.Command, gateway.config.WorkingDirectory); versionErr != nil {
+		return agent.Session{}, versionErr
 	}
-	anthropicClient := anthropic.NewClient(clientOptions...)
 	startedSession := agent.Session{
 		ID:        "claude-" + uuid.NewString(),
 		Provider:  req.Provider,
 		StartedAt: gateway.now(),
 	}
 	gateway.mu.Lock()
+	defer gateway.mu.Unlock()
 	if gateway.closed {
-		gateway.mu.Unlock()
 		return agent.Session{}, errors.New("claude gateway was closed during startup")
 	}
-	gateway.client = &anthropicClient
-	if gateway.newStream == nil {
-		gateway.newStream = func(ctx context.Context, params anthropic.MessageNewParams) *ssestream.Stream[anthropic.MessageStreamEventUnion] {
-			return anthropicClient.Messages.NewStreaming(ctx, params)
-		}
-	}
 	gateway.session = startedSession
-	gateway.mu.Unlock()
+	gateway.started = true
 	return startedSession, nil
 }
 
-// Send starts one Anthropic turn and streams provider-neutral events.
+// Send starts one Claude CLI turn and streams provider-neutral events.
 func (gateway *Gateway) Send(ctx context.Context, sessionID string, req agent.TurnRequest) (<-chan agent.Event, error) {
-	if lookupErr := gateway.requireSession(sessionID); lookupErr != nil {
-		return nil, lookupErr
+	parts, promptErr := agent.BuildBydbqlPromptParts(req)
+	if promptErr != nil {
+		return nil, fmt.Errorf("failed to build Claude turn input: %w", promptErr)
 	}
 	turnCtx, cancelTurn := context.WithCancel(ctx)
 	handle := &turnHandle{cancel: cancelTurn}
-	gateway.setTurn(handle)
+	gateway.mu.Lock()
+	if sessionErr := gateway.requireSessionLocked(sessionID); sessionErr != nil {
+		gateway.mu.Unlock()
+		cancelTurn()
+		return nil, sessionErr
+	}
+	if gateway.turn != nil {
+		gateway.mu.Unlock()
+		cancelTurn()
+		return nil, errors.New("a Claude turn is already active")
+	}
+	providerSessionID := gateway.providerSessionID
+	gateway.turn = handle
+	gateway.mu.Unlock()
 	events := make(chan agent.Event, agentEventBuffer)
-	go func() {
-		defer gateway.clearTurn(handle)
-		defer cancelTurn()
-		gateway.runTurn(turnCtx, req, events)
-	}()
+	go gateway.runTurn(turnCtx, handle, providerSessionID, parts, events)
 	return events, nil
 }
 
-// Interrupt cancels the active turn's context.
-func (gateway *Gateway) Interrupt(context.Context, string) error {
+// Interrupt stops the active Claude CLI process while retaining its provider session ID.
+func (gateway *Gateway) Interrupt(_ context.Context, sessionID string) error {
 	gateway.mu.Lock()
+	if sessionErr := gateway.requireSessionLocked(sessionID); sessionErr != nil {
+		gateway.mu.Unlock()
+		return sessionErr
+	}
 	handle := gateway.turn
-	gateway.mu.Unlock()
 	if handle == nil {
+		gateway.mu.Unlock()
 		return nil
 	}
-	handle.cancel()
+	process := cancelTurnLocked(handle)
+	gateway.mu.Unlock()
+	if process == nil {
+		return nil
+	}
+	if killErr := killProcessTree(process); killErr != nil {
+		return fmt.Errorf("failed to interrupt Claude CLI: %w", killErr)
+	}
 	return nil
 }
 
-// Close marks the gateway closed and cancels any active turn. There is no subprocess to terminate.
+// Close marks the gateway closed and stops any active Claude CLI process.
 func (gateway *Gateway) Close() error {
 	gateway.startMu.Lock()
 	defer gateway.startMu.Unlock()
@@ -172,45 +203,114 @@ func (gateway *Gateway) Close() error {
 	}
 	gateway.closed = true
 	handle := gateway.turn
-	gateway.mu.Unlock()
+	var process *os.Process
 	if handle != nil {
-		handle.cancel()
+		process = cancelTurnLocked(handle)
+	}
+	gateway.mu.Unlock()
+	if process == nil {
+		return nil
+	}
+	if killErr := killProcessTree(process); killErr != nil {
+		return fmt.Errorf("failed to stop Claude CLI: %w", killErr)
 	}
 	return nil
 }
 
-func (gateway *Gateway) requireSession(sessionID string) error {
-	gateway.mu.Lock()
-	defer gateway.mu.Unlock()
+func (gateway *Gateway) requireSessionLocked(sessionID string) error {
 	if gateway.closed {
 		return errors.New("claude gateway is closed")
 	}
-	if gateway.client == nil || gateway.newStream == nil || strings.TrimSpace(sessionID) == "" || sessionID != gateway.session.ID {
+	if !gateway.started || strings.TrimSpace(sessionID) == "" || sessionID != gateway.session.ID {
 		return fmt.Errorf("unknown Claude session %q", sessionID)
 	}
 	return nil
 }
 
-func (gateway *Gateway) setTurn(handle *turnHandle) {
+func (gateway *Gateway) attachProcess(handle *turnHandle, process *os.Process) bool {
 	gateway.mu.Lock()
-	gateway.turn = handle
-	gateway.mu.Unlock()
+	defer gateway.mu.Unlock()
+	if gateway.turn != handle || handle.interrupted || gateway.closed {
+		return false
+	}
+	handle.process = process
+	return true
 }
 
-func (gateway *Gateway) clearTurn(handle *turnHandle) {
+func (gateway *Gateway) finishTurn(handle *turnHandle, providerSessionID string) {
 	gateway.mu.Lock()
-	if gateway.turn == handle {
-		gateway.turn = nil
+	defer gateway.mu.Unlock()
+	if gateway.turn != handle {
+		return
 	}
-	gateway.mu.Unlock()
+	if strings.TrimSpace(providerSessionID) != "" {
+		gateway.providerSessionID = providerSessionID
+	}
+	gateway.turn = nil
+}
+
+func (gateway *Gateway) turnWasInterrupted(handle *turnHandle) bool {
+	gateway.mu.Lock()
+	defer gateway.mu.Unlock()
+	return handle.interrupted
+}
+
+func cancelTurnLocked(handle *turnHandle) *os.Process {
+	handle.interrupted = true
+	process := handle.process
+	handle.cancel()
+	return process
 }
 
 func validateConfig(config Config) error {
-	if strings.TrimSpace(config.APIKey) == "" {
-		return fmt.Errorf("claude API key is required (set --claude-api-key or %s)", apiKeyEnv)
+	if strings.TrimSpace(config.Command) == "" {
+		return errors.New("claude command is required")
 	}
-	if config.Tools == nil {
-		return errors.New("claude controlled tools bridge is required")
+	if !filepath.IsAbs(config.WorkingDirectory) {
+		return errors.New("isolated Claude working directory must be absolute")
+	}
+	server := config.ControlledMCPServer
+	if server.Name != controlledMCPServerName {
+		return fmt.Errorf("controlled MCP server must be named %q", controlledMCPServerName)
+	}
+	if !filepath.IsAbs(server.Command) {
+		return errors.New("controlled MCP server command must be absolute")
+	}
+	if !equalStringSets(server.EnabledTools, controlledToolNames) {
+		return fmt.Errorf("controlled MCP tool allowlist must contain exactly %s", strings.Join(controlledToolNames, ", "))
 	}
 	return nil
+}
+
+func checkClaudeVersion(ctx context.Context, command, workingDirectory string) error {
+	versionCmd := exec.CommandContext(ctx, command, "--version")
+	versionCmd.Dir = workingDirectory
+	versionOutput, versionErr := versionCmd.CombinedOutput()
+	if versionErr != nil {
+		return fmt.Errorf("failed to read Claude CLI version: %w", versionErr)
+	}
+	version := strings.TrimSpace(string(versionOutput))
+	if !claudeVersionPattern.MatchString(version) {
+		return fmt.Errorf("failed to parse Claude CLI version from %q", version)
+	}
+	return nil
+}
+
+func equalStringSets(left, right []string) bool {
+	if len(left) != len(right) {
+		return false
+	}
+	leftSet := make(map[string]struct{}, len(left))
+	for _, value := range left {
+		if _, exists := leftSet[value]; exists {
+			return false
+		}
+		leftSet[value] = struct{}{}
+	}
+	for _, value := range right {
+		if _, exists := leftSet[value]; !exists {
+			return false
+		}
+	}
+	return true
 }

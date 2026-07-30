@@ -4,8 +4,8 @@
 
 ## BYDBQL Agent TUI
 
-`bydbctl agent` uses the Codex CLI app-server for multi-turn schema and query conversations in a three-page terminal workspace. bydbctl owns the controlled
-tool bridge, deterministically renders BYDBQL, and requires approval before execution unless the user explicitly trusts the session. See the
+`bydbctl agent` uses either Codex app-server or a directly supervised Claude CLI for multi-turn schema and query conversations in a three-page terminal
+workspace. bydbctl owns the controlled tool bridge, deterministically renders BYDBQL, and requires approval before execution unless the user explicitly trusts the session. See the
 [BYDBQL Agent TUI guide](../docs/interacting/bydbctl/agent.md).
 
 ## Build

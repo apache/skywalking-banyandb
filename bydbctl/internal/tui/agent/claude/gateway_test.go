@@ -16,226 +16,423 @@
 package claude
 
 import (
-	"bytes"
 	"context"
+	"encoding/hex"
 	"encoding/json"
-	"fmt"
-	"io"
-	"net/http"
+	"os"
+	"path/filepath"
 	"strings"
-	"sync/atomic"
 	"testing"
-
-	"github.com/anthropics/anthropic-sdk-go"
-	"github.com/anthropics/anthropic-sdk-go/packages/ssestream"
+	"time"
 
 	"github.com/apache/skywalking-banyandb/bydbctl/internal/tui/agent"
 )
 
-func TestConvertToolsPreservesSchema(t *testing.T) {
-	definitions := []map[string]any{
-		{
-			"name":        "validate_bydbql",
-			"description": "validate one statement",
-			"inputSchema": map[string]any{
-				"type":       "object",
-				"required":   []string{"query"},
-				"properties": map[string]any{"query": map[string]any{"type": "string"}},
-			},
-		},
-		{
-			"name":        "propose_query_plan",
-			"description": "submit a plan",
-			"inputSchema": map[string]any{
-				"type":                 "object",
-				"additionalProperties": false,
-				"oneOf":                []map[string]any{{"required": []string{"plan"}}},
-				"properties":           map[string]any{"plan": map[string]any{"type": "object"}},
-				"$defs":                map[string]any{"predicate": map[string]any{"type": "object"}},
-			},
-		},
-	}
-	tools := convertTools(definitions)
-	if len(tools) != 2 {
-		t.Fatalf("expected 2 tools, got %d", len(tools))
-	}
-	validateSchema := marshalToolSchema(t, tools[0])
-	if validateSchema["type"] != "object" {
-		t.Fatalf("expected validate schema type object, got %v", validateSchema["type"])
-	}
-	if query, _ := validateSchema["properties"].(map[string]any)["query"]; query == nil {
-		t.Fatal("validate schema lost the query property")
-	}
-	if required, _ := validateSchema["required"].([]any); len(required) != 1 || required[0] != "query" {
-		t.Fatalf("validate schema lost required, got %v", validateSchema["required"])
-	}
-	planSchema := marshalToolSchema(t, tools[1])
-	if planSchema["oneOf"] == nil {
-		t.Fatal("propose schema lost the oneOf constraint")
-	}
-	if planSchema["$defs"] == nil {
-		t.Fatal("propose schema lost the $defs")
-	}
-	if planSchema["additionalProperties"] != false {
-		t.Fatalf("propose schema lost additionalProperties, got %v", planSchema["additionalProperties"])
-	}
-	if planSchema["properties"] == nil {
-		t.Fatal("propose schema lost the properties")
+const agentProviderClaude = "claude"
+
+func TestGatewayMaintainsCLIConversationHistory(t *testing.T) {
+	gateway := NewGateway(Config{})
+	if !gateway.MaintainsConversationHistory() {
+		t.Fatal("Claude CLI sessions should retain conversation history")
 	}
 }
 
-func marshalToolSchema(t *testing.T, tool any) map[string]any {
-	t.Helper()
-	encoded, marshalErr := json.Marshal(tool)
-	if marshalErr != nil {
-		t.Fatalf("failed to marshal tool: %v", marshalErr)
-	}
-	var decoded map[string]any
-	if unmarshalErr := json.Unmarshal(encoded, &decoded); unmarshalErr != nil {
-		t.Fatalf("failed to unmarshal tool: %v", unmarshalErr)
-	}
-	schema, _ := decoded["input_schema"].(map[string]any)
-	if schema == nil {
-		t.Fatalf("tool is missing input_schema: %s", string(encoded))
-	}
-	return schema
-}
-
-func TestRunTurnToolUseLoop(t *testing.T) {
-	tools := &recordingControlledTools{}
-	gateway := NewGateway(Config{APIKey: "test-key", Tools: tools})
-	var round atomic.Int32
-	gateway.newStream = func(_ context.Context, _ anthropic.MessageNewParams) *ssestream.Stream[anthropic.MessageStreamEventUnion] {
-		var events []sseEvent
-		switch round.Add(1) {
-		case 1:
-			events = toolUseRound()
-		default:
-			events = endTurnRound()
-		}
-		return ssestream.NewStream[anthropic.MessageStreamEventUnion](ssestream.NewDecoder(fakeSSEResponse(events)), nil)
-	}
+func TestGatewayDrivesClaudeCLIAndResumesProviderSession(t *testing.T) {
+	workingDirectory := t.TempDir()
+	argumentLog := filepath.Join(t.TempDir(), "arguments.log")
+	t.Setenv("CLAUDE_FAKE_ARGUMENT_LOG", argumentLog)
+	t.Setenv("CLAUDE_FAKE_MODE", "success")
+	gateway := NewGateway(Config{
+		Command:             writeFakeClaudeCLI(t),
+		Model:               "test-model",
+		APIKey:              "test-api-key",
+		BaseURL:             "https://claude.example.test",
+		MaxTurns:            7,
+		WorkingDirectory:    workingDirectory,
+		ControlledMCPServer: testControlledMCPServer(),
+	})
 	session, startErr := gateway.Start(context.Background(), agent.StartRequest{Provider: agentProviderClaude})
 	if startErr != nil {
-		t.Fatalf("start failed: %v", startErr)
+		t.Fatalf("Start returned an error: %v", startErr)
 	}
-	events, sendErr := gateway.Send(context.Background(), session.ID, agent.TurnRequest{
-		Prompt: "hello",
-		Task:   "new_query",
-	})
+	firstRequest := agent.TurnRequest{Prompt: "first question", Task: "new_query"}
+	firstEvents, firstSendErr := gateway.Send(context.Background(), session.ID, firstRequest)
+	if firstSendErr != nil {
+		t.Fatalf("first Send returned an error: %v", firstSendErr)
+	}
+	assertSuccessfulTurn(t, collectEvents(firstEvents), "hel", "hello")
+	secondEvents, secondSendErr := gateway.Send(context.Background(), session.ID, agent.TurnRequest{Prompt: "second question", Task: "refine"})
+	if secondSendErr != nil {
+		t.Fatalf("second Send returned an error: %v", secondSendErr)
+	}
+	assertSuccessfulTurn(t, collectEvents(secondEvents), "aga", "again")
+	if closeErr := gateway.Close(); closeErr != nil {
+		t.Fatalf("Close returned an error: %v", closeErr)
+	}
+
+	invocations := readArgumentLog(t, argumentLog)
+	if len(invocations) != 2 {
+		t.Fatalf("expected two Claude turn processes, got %d", len(invocations))
+	}
+	firstArgs := invocations[0]
+	assertArgumentValue(t, firstArgs, "--model", "test-model")
+	assertArgumentValue(t, firstArgs, "--max-turns", "7")
+	assertArgumentValue(t, firstArgs, "--output-format", "stream-json")
+	assertArgumentValue(t, firstArgs, "--permission-mode", "dontAsk")
+	assertArgumentValue(t, firstArgs, "--setting-sources", "")
+	assertArgumentValue(t, firstArgs, "--tools", "")
+	assertArgumentValue(t, firstArgs, "--allowedTools", strings.Join(expectedAllowedToolNames(), ","))
+	assertContainsArgument(t, firstArgs, "--strict-mcp-config")
+	assertContainsArgument(t, firstArgs, "--include-partial-messages")
+	assertContainsArgument(t, firstArgs, "--disable-slash-commands")
+	assertContainsArgument(t, firstArgs, "--no-chrome")
+	assertNotContainsArgument(t, firstArgs, "--resume")
+	parts, partsErr := agent.BuildBydbqlPromptParts(firstRequest)
+	if partsErr != nil {
+		t.Fatalf("failed to build expected prompt parts: %v", partsErr)
+	}
+	assertArgumentValue(t, firstArgs, "--system-prompt", parts.System)
+	if firstArgs[len(firstArgs)-1] != parts.User {
+		t.Fatalf("unexpected positional prompt: %q", firstArgs[len(firstArgs)-1])
+	}
+	assertMCPConfig(t, argumentValue(t, firstArgs, "--mcp-config"))
+	assertArgumentValue(t, invocations[1], "--resume", "provider-session-1")
+}
+
+func TestGatewayRejectsUnexpectedClaudeToolInventory(t *testing.T) {
+	t.Setenv("CLAUDE_FAKE_ARGUMENT_LOG", filepath.Join(t.TempDir(), "arguments.log"))
+	t.Setenv("CLAUDE_FAKE_MODE", "invalid-inventory")
+	gateway := newTestGateway(t)
+	session, startErr := gateway.Start(context.Background(), agent.StartRequest{Provider: agentProviderClaude})
+	if startErr != nil {
+		t.Fatalf("Start returned an error: %v", startErr)
+	}
+	events, sendErr := gateway.Send(context.Background(), session.ID, agent.TurnRequest{Prompt: "question"})
 	if sendErr != nil {
-		t.Fatalf("send failed: %v", sendErr)
+		t.Fatalf("Send returned an error: %v", sendErr)
 	}
+	collected := collectEvents(events)
+	if len(collected) != 1 || collected[0].Kind != agent.EventKindError {
+		t.Fatalf("expected one fail-closed error event, got %#v", collected)
+	}
+	if !strings.Contains(collected[0].Message, "unexpected Claude tool inventory") {
+		t.Fatalf("unexpected inventory error: %q", collected[0].Message)
+	}
+}
+
+func TestGatewayAcceptsControlledMCPWhileClaudeHandshakeIsPending(t *testing.T) {
+	t.Setenv("CLAUDE_FAKE_ARGUMENT_LOG", filepath.Join(t.TempDir(), "arguments.log"))
+	t.Setenv("CLAUDE_FAKE_MODE", "pending-inventory")
+	gateway := newTestGateway(t)
+	session, startErr := gateway.Start(context.Background(), agent.StartRequest{Provider: agentProviderClaude})
+	if startErr != nil {
+		t.Fatalf("Start returned an error: %v", startErr)
+	}
+	events, sendErr := gateway.Send(context.Background(), session.ID, agent.TurnRequest{Prompt: "question"})
+	if sendErr != nil {
+		t.Fatalf("Send returned an error: %v", sendErr)
+	}
+	assertSuccessfulTurn(t, collectEvents(events), "hel", "hello")
+}
+
+func TestGatewayInterruptsActiveClaudeProcess(t *testing.T) {
+	argumentLog := filepath.Join(t.TempDir(), "arguments.log")
+	t.Setenv("CLAUDE_FAKE_ARGUMENT_LOG", argumentLog)
+	t.Setenv("CLAUDE_FAKE_MODE", "block")
+	gateway := newTestGateway(t)
+	session, startErr := gateway.Start(context.Background(), agent.StartRequest{Provider: agentProviderClaude})
+	if startErr != nil {
+		t.Fatalf("Start returned an error: %v", startErr)
+	}
+	events, sendErr := gateway.Send(context.Background(), session.ID, agent.TurnRequest{Prompt: "wait"})
+	if sendErr != nil {
+		t.Fatalf("Send returned an error: %v", sendErr)
+	}
+	waitForFile(t, argumentLog)
+	if interruptErr := gateway.Interrupt(context.Background(), session.ID); interruptErr != nil {
+		t.Fatalf("Interrupt returned an error: %v", interruptErr)
+	}
+	select {
+	case event, open := <-events:
+		if !open || event.Kind != agent.EventKindError || !strings.Contains(event.Message, "interrupted") {
+			t.Fatalf("unexpected interrupt terminal event: %#v (open=%t)", event, open)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("timed out waiting for interrupted Claude process")
+	}
+}
+
+func TestGatewayInterruptCompletesWhenEventBufferIsFull(t *testing.T) {
+	argumentLog := filepath.Join(t.TempDir(), "arguments.log")
+	t.Setenv("CLAUDE_FAKE_ARGUMENT_LOG", argumentLog)
+	t.Setenv("CLAUDE_FAKE_MODE", "flood-block")
+	gateway := newTestGateway(t)
+	session, startErr := gateway.Start(context.Background(), agent.StartRequest{Provider: agentProviderClaude})
+	if startErr != nil {
+		t.Fatalf("Start returned an error: %v", startErr)
+	}
+	events, sendErr := gateway.Send(context.Background(), session.ID, agent.TurnRequest{Prompt: "wait"})
+	if sendErr != nil {
+		t.Fatalf("Send returned an error: %v", sendErr)
+	}
+	waitForFile(t, argumentLog)
+	time.Sleep(50 * time.Millisecond)
+	if interruptErr := gateway.Interrupt(context.Background(), session.ID); interruptErr != nil {
+		t.Fatalf("Interrupt returned an error: %v", interruptErr)
+	}
+	collectedEvents := make(chan []agent.Event, 1)
+	go func() {
+		collectedEvents <- collectEvents(events)
+	}()
+	select {
+	case collected := <-collectedEvents:
+		if len(collected) == 0 || collected[len(collected)-1].Kind != agent.EventKindError {
+			t.Fatalf("expected an interrupt terminal event after buffered deltas, got %#v", collected)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("timed out waiting for a full event buffer to close")
+	}
+}
+
+func TestGatewayCloseStopsActiveClaudeProcess(t *testing.T) {
+	argumentLog := filepath.Join(t.TempDir(), "arguments.log")
+	t.Setenv("CLAUDE_FAKE_ARGUMENT_LOG", argumentLog)
+	t.Setenv("CLAUDE_FAKE_MODE", "block")
+	gateway := newTestGateway(t)
+	session, startErr := gateway.Start(context.Background(), agent.StartRequest{Provider: agentProviderClaude})
+	if startErr != nil {
+		t.Fatalf("Start returned an error: %v", startErr)
+	}
+	events, sendErr := gateway.Send(context.Background(), session.ID, agent.TurnRequest{Prompt: "wait"})
+	if sendErr != nil {
+		t.Fatalf("Send returned an error: %v", sendErr)
+	}
+	waitForFile(t, argumentLog)
+	if closeErr := gateway.Close(); closeErr != nil {
+		t.Fatalf("Close returned an error: %v", closeErr)
+	}
+	collected := collectEvents(events)
+	if len(collected) != 1 || collected[0].Kind != agent.EventKindError || !strings.Contains(collected[0].Message, "interrupted") {
+		t.Fatalf("unexpected close terminal events: %#v", collected)
+	}
+}
+
+func TestGatewayStartRequiresControlledMCPServer(t *testing.T) {
+	gateway := NewGateway(Config{Command: writeFakeClaudeCLI(t), WorkingDirectory: t.TempDir()})
+	_, startErr := gateway.Start(context.Background(), agent.StartRequest{Provider: agentProviderClaude})
+	if startErr == nil || !strings.Contains(startErr.Error(), "controlled MCP server") {
+		t.Fatalf("expected controlled MCP validation error, got %v", startErr)
+	}
+}
+
+func newTestGateway(t *testing.T) *Gateway {
+	t.Helper()
+	return NewGateway(Config{
+		Command:             writeFakeClaudeCLI(t),
+		WorkingDirectory:    t.TempDir(),
+		ControlledMCPServer: testControlledMCPServer(),
+	})
+}
+
+func testControlledMCPServer() agent.ControlledMCPServer {
+	return agent.ControlledMCPServer{
+		Name:         controlledMCPServerName,
+		Command:      "/opt/bydbctl/bin/bydbctl",
+		Args:         []string{"agent-tool-bridge", "--socket", "/tmp/bydbctl-test.sock"},
+		EnabledTools: append([]string(nil), controlledToolNames...),
+	}
+}
+
+func writeFakeClaudeCLI(t *testing.T) string {
+	t.Helper()
+	path := filepath.Join(t.TempDir(), "claude")
+	script := `#!/bin/sh
+set -eu
+if [ "${1:-}" = "--version" ]; then
+  printf '%s\n' '2.1.202 (Claude Code)'
+  exit 0
+fi
+{
+  printf '%s\n' BEGIN
+  for argument in "$@"; do
+    printf '%s' "$argument" | od -An -v -tx1 | tr -d '[:space:]'
+    printf '\n'
+  done
+  printf '%s\n' END
+} >> "$CLAUDE_FAKE_ARGUMENT_LOG"
+tools='["mcp__bydbctl-controlled-tools__list_groups_schemas",'
+tools="${tools}\"mcp__bydbctl-controlled-tools__describe_schema\","
+tools="${tools}\"mcp__bydbctl-controlled-tools__propose_query_plan\","
+tools="${tools}\"mcp__bydbctl-controlled-tools__validate_bydbql\","
+tools="${tools}\"mcp__bydbctl-controlled-tools__probe_bydbql\","
+tools="${tools}\"mcp__bydbctl-controlled-tools__execute_bydbql\"]"
+status=connected
+if [ "$CLAUDE_FAKE_MODE" = invalid-inventory ]; then
+  tools='["Bash"]'
+fi
+if [ "$CLAUDE_FAKE_MODE" = pending-inventory ]; then
+  tools='[]'
+  status=pending
+fi
+printf '%s%s%s%s%s\n' \
+  '{"type":"system","subtype":"init","session_id":"provider-session-1","tools":' "$tools" \
+  ',"mcp_servers":[{"name":"bydbctl-controlled-tools","status":"' "$status" '"}]}'
+if [ "$CLAUDE_FAKE_MODE" = block ]; then
+  trap 'exit 130' INT TERM
+  while :; do sleep 1; done
+fi
+if [ "$CLAUDE_FAKE_MODE" = block-child ]; then
+  sleep 30 &
+  child_pid=$!
+  printf '%s\n' "$child_pid" > "$CLAUDE_FAKE_CHILD_PID"
+  wait "$child_pid"
+fi
+if [ "$CLAUDE_FAKE_MODE" = flood-block ]; then
+  event_idx=0
+  while [ "$event_idx" -lt 100 ]; do
+    printf '%s\n' '{"type":"stream_event","session_id":"provider-session-1","event":{"type":"content_block_delta","delta":{"type":"text_delta","text":"x"}}}'
+    event_idx=$((event_idx + 1))
+  done
+  trap 'exit 130' INT TERM
+  while :; do sleep 1; done
+fi
+if [ "$CLAUDE_FAKE_MODE" = invalid-inventory ]; then
+  printf '%s\n' '{"type":"result","subtype":"success","is_error":false,"result":"unsafe","session_id":"provider-session-1"}'
+  exit 0
+fi
+case " $* " in
+  *" --resume provider-session-1 "*)
+    printf '%s\n' '{"type":"stream_event","session_id":"provider-session-1","event":{"type":"content_block_delta","delta":{"type":"text_delta","text":"aga"}}}'
+    printf '%s\n' '{"type":"result","subtype":"success","is_error":false,"result":"again","session_id":"provider-session-1"}'
+    ;;
+  *)
+    printf '%s\n' '{"type":"stream_event","session_id":"provider-session-1","event":{"type":"content_block_delta","delta":{"type":"text_delta","text":"hel"}}}'
+    printf '%s\n' '{"type":"result","subtype":"success","is_error":false,"result":"hello","session_id":"provider-session-1"}'
+    ;;
+esac
+`
+	// #nosec G306 -- The owner-only fake CLI must be executable by the test process.
+	if writeErr := os.WriteFile(path, []byte(script), 0o700); writeErr != nil {
+		t.Fatalf("failed to write fake Claude CLI: %v", writeErr)
+	}
+	return path
+}
+
+func collectEvents(events <-chan agent.Event) []agent.Event {
 	var collected []agent.Event
 	for event := range events {
 		collected = append(collected, event)
 	}
-	if toolCalls := atomic.LoadInt32(&tools.invocations); toolCalls != 1 {
-		for idx, event := range collected {
-			t.Logf("event[%d] kind=%s origin=%s msg=%q err=%v", idx, event.Kind, event.Origin, event.Message, event.Err)
-		}
-		t.Fatalf("expected one InvokeTool call, got %d", toolCalls)
+	return collected
+}
+
+func assertSuccessfulTurn(t *testing.T, events []agent.Event, delta, final string) {
+	t.Helper()
+	if len(events) != 2 {
+		t.Fatalf("expected a delta and final response, got %#v", events)
 	}
-	if tools.lastQuery != "SELECT 1" {
-		t.Fatalf("expected tool to receive SELECT 1, got %q", tools.lastQuery)
+	if events[0].Kind != agent.EventKindMessageDelta || events[0].Message != delta || events[0].Origin != agent.EventOriginProvider {
+		t.Fatalf("unexpected delta event: %#v", events[0])
 	}
-	var messageDeltas int
-	var finalResponses int
-	var providerToolCalls int
-	for _, event := range collected {
-		switch event.Kind {
-		case agent.EventKindMessageDelta:
-			messageDeltas++
-		case agent.EventKindFinalResponse:
-			finalResponses++
-			if !strings.Contains(event.Message, "done") {
-				t.Fatalf("final response missing text, got %q", event.Message)
+	if events[1].Kind != agent.EventKindFinalResponse || events[1].Message != final || events[1].Origin != agent.EventOriginProvider {
+		t.Fatalf("unexpected final event: %#v", events[1])
+	}
+}
+
+func readArgumentLog(t *testing.T, path string) [][]string {
+	t.Helper()
+	content, readErr := os.ReadFile(path)
+	if readErr != nil {
+		t.Fatalf("failed to read fake Claude argument log: %v", readErr)
+	}
+	var invocations [][]string
+	var current []string
+	for _, line := range strings.Split(strings.TrimSpace(string(content)), "\n") {
+		switch line {
+		case "BEGIN":
+			current = nil
+		case "END":
+			invocations = append(invocations, current)
+		default:
+			decoded, decodeErr := hex.DecodeString(line)
+			if decodeErr != nil {
+				t.Fatalf("failed to decode fake Claude argument: %v", decodeErr)
 			}
-		case agent.EventKindToolCall:
-			if event.Origin == agent.EventOriginProvider {
-				providerToolCalls++
-			}
-		case agent.EventKindError:
-			t.Fatalf("unexpected error event: %s (err=%v)", event.Message, event.Err)
+			current = append(current, string(decoded))
 		}
 	}
-	if messageDeltas == 0 {
-		t.Fatal("expected at least one message delta")
-	}
-	if finalResponses != 1 {
-		t.Fatalf("expected one final response, got %d", finalResponses)
-	}
-	if providerToolCalls != 0 {
-		t.Fatalf("provider must not emit tool_call events, got %d", providerToolCalls)
-	}
+	return invocations
 }
 
-func fakeSSEResponse(events []sseEvent) *http.Response {
-	var buffer bytes.Buffer
-	for _, event := range events {
-		fmt.Fprintf(&buffer, "event: %s\ndata: %s\n\n", event.kind, event.data)
-	}
-	resp := &http.Response{Body: io.NopCloser(&buffer), Header: http.Header{}}
-	resp.Header.Set("content-type", "text/event-stream")
-	return resp
-}
-
-type sseEvent struct {
-	kind string
-	data string
-}
-
-func toolUseRound() []sseEvent {
-	return []sseEvent{
-		{kind: "message_start", data: `{"type":"message_start","message":{"id":"msg_1","type":"message","role":"assistant","content":[],"model":"claude-sonnet-5","stop_reason":null,"stop_sequence":null,"usage":{"input_tokens":1,"output_tokens":0}}}`},
-		{kind: "content_block_start", data: `{"type":"content_block_start","index":0,"content_block":{"type":"tool_use","id":"tool_1","name":"validate_bydbql","input":{}}}`},
-		{kind: "content_block_delta", data: `{"type":"content_block_delta","index":0,"delta":{"type":"input_json_delta","partial_json":"{\"query\":"}}`},
-		{kind: "content_block_delta", data: `{"type":"content_block_delta","index":0,"delta":{"type":"input_json_delta","partial_json":"\"SELECT 1\"}"}}`},
-		{kind: "content_block_stop", data: `{"type":"content_block_stop","index":0}`},
-		{kind: "message_delta", data: `{"type":"message_delta","delta":{"stop_reason":"tool_use","stop_sequence":null},"usage":{"input_tokens":1,"output_tokens":1}}`},
-		{kind: "message_stop", data: `{"type":"message_stop"}`},
+func assertArgumentValue(t *testing.T, args []string, name, expected string) {
+	t.Helper()
+	if actual := argumentValue(t, args, name); actual != expected {
+		t.Fatalf("argument %s=%q, want %q", name, actual, expected)
 	}
 }
 
-func endTurnRound() []sseEvent {
-	return []sseEvent{
-		{kind: "message_start", data: `{"type":"message_start","message":{"id":"msg_2","type":"message","role":"assistant","content":[],"model":"claude-sonnet-5","stop_reason":null,"stop_sequence":null,"usage":{"input_tokens":1,"output_tokens":0}}}`},
-		{kind: "content_block_start", data: `{"type":"content_block_start","index":0,"content_block":{"type":"text","text":""}}`},
-		{kind: "content_block_delta", data: `{"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"done"}}`},
-		{kind: "content_block_stop", data: `{"type":"content_block_stop","index":0}`},
-		{kind: "message_delta", data: `{"type":"message_delta","delta":{"stop_reason":"end_turn","stop_sequence":null},"usage":{"input_tokens":1,"output_tokens":1}}`},
-		{kind: "message_stop", data: `{"type":"message_stop"}`},
+func argumentValue(t *testing.T, args []string, name string) string {
+	t.Helper()
+	for argIdx, argument := range args {
+		if argument == name {
+			if argIdx+1 >= len(args) {
+				t.Fatalf("argument %s has no value in %#v", name, args)
+			}
+			return args[argIdx+1]
+		}
+	}
+	t.Fatalf("argument %s is missing from %#v", name, args)
+	return ""
+}
+
+func assertContainsArgument(t *testing.T, args []string, expected string) {
+	t.Helper()
+	for _, argument := range args {
+		if argument == expected {
+			return
+		}
+	}
+	t.Fatalf("argument %q is missing from %#v", expected, args)
+}
+
+func assertNotContainsArgument(t *testing.T, args []string, unexpected string) {
+	t.Helper()
+	for _, argument := range args {
+		if argument == unexpected {
+			t.Fatalf("unexpected argument %q in %#v", unexpected, args)
+		}
 	}
 }
 
-type recordingControlledTools struct {
-	invocations int32
-	lastQuery   string
-}
-
-func (tools *recordingControlledTools) InvokeTool(_ context.Context, name string, arguments map[string]any) (string, error) {
-	atomic.AddInt32(&tools.invocations, 1)
-	if name != "validate_bydbql" {
-		return "", fmt.Errorf("unexpected tool %q", name)
+func assertMCPConfig(t *testing.T, rawConfig string) {
+	t.Helper()
+	var config struct {
+		MCPServers map[string]struct {
+			Type    string   `json:"type"`
+			Command string   `json:"command"`
+			Args    []string `json:"args"`
+		} `json:"mcpServers"`
 	}
-	query, _ := arguments["query"].(string)
-	tools.lastQuery = query
-	if query != "SELECT 1" {
-		return "", fmt.Errorf("unexpected query %q", query)
+	if unmarshalErr := json.Unmarshal([]byte(rawConfig), &config); unmarshalErr != nil {
+		t.Fatalf("failed to parse MCP config: %v", unmarshalErr)
 	}
-	return `{"valid":true}`, nil
+	server, exists := config.MCPServers[controlledMCPServerName]
+	if !exists || len(config.MCPServers) != 1 {
+		t.Fatalf("unexpected MCP servers: %#v", config.MCPServers)
+	}
+	if server.Type != "stdio" || server.Command != "/opt/bydbctl/bin/bydbctl" || strings.Join(server.Args, " ") != "agent-tool-bridge --socket /tmp/bydbctl-test.sock" {
+		t.Fatalf("unexpected MCP server config: %#v", server)
+	}
 }
 
-func (tools *recordingControlledTools) Definitions() []map[string]any {
-	return []map[string]any{{
-		"name":        "validate_bydbql",
-		"description": "validate one statement",
-		"inputSchema": map[string]any{
-			"type":       "object",
-			"required":   []string{"query"},
-			"properties": map[string]any{"query": map[string]any{"type": "string"}},
-		},
-	}}
+func waitForFile(t *testing.T, path string) {
+	t.Helper()
+	deadline := time.Now().Add(5 * time.Second)
+	for time.Now().Before(deadline) {
+		if info, statErr := os.Stat(path); statErr == nil && info.Size() > 0 {
+			return
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	t.Fatalf("timed out waiting for %s", path)
 }
-
-const agentProviderClaude = "claude"

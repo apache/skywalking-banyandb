@@ -16,7 +16,6 @@
 package cmd
 
 import (
-	"context"
 	"strings"
 	"testing"
 
@@ -43,10 +42,13 @@ func TestAgentCommandRegistersProviderFlags(t *testing.T) {
 	if codexCommandFlag.DefValue != "codex" {
 		t.Fatalf("expected default Codex command, got %q", codexCommandFlag.DefValue)
 	}
-	for _, claudeFlag := range []string{"claude-model", "claude-api-key", "claude-base-url", "claude-max-tokens"} {
+	for _, claudeFlag := range []string{"claude-command", "claude-model", "claude-api-key", "claude-base-url", "claude-max-turns"} {
 		if agentCmd.Flags().Lookup(claudeFlag) == nil {
 			t.Fatalf("Claude flag %q was not registered", claudeFlag)
 		}
+	}
+	if agentCmd.Flags().Lookup("claude-max-tokens") != nil {
+		t.Fatal("obsolete claude-max-tokens flag is still registered")
 	}
 	for _, removedFlag := range []string{"agent-model", "agent-base-url", "acp-command", "acp-arg", "mcp-config"} {
 		if agentCmd.Flags().Lookup(removedFlag) != nil {
@@ -77,10 +79,7 @@ func TestNewAgentGatewayRequiresCodexCommand(t *testing.T) {
 }
 
 func TestNewAgentGatewayClaudeBranch(t *testing.T) {
-	agentGateway, gatewayErr := newAgentGateway(agentProviderClaude, "", t.TempDir(), agent.ControlledMCPServer{}, claude.Config{
-		APIKey: "test-key",
-		Tools:  stubControlledTools{},
-	})
+	agentGateway, gatewayErr := newAgentGateway(agentProviderClaude, "", t.TempDir(), testControlledMCPServer(t), claude.Config{Command: "/custom/claude"})
 	if gatewayErr != nil {
 		t.Fatalf("newAgentGateway returned error: %v", gatewayErr)
 	}
@@ -89,6 +88,16 @@ func TestNewAgentGatewayClaudeBranch(t *testing.T) {
 	}
 	if _, ok := agentGateway.(*claude.Gateway); !ok {
 		t.Fatalf("expected *claude.Gateway, got %T", agentGateway)
+	}
+}
+
+func TestNewAgentGatewayRequiresClaudeCommand(t *testing.T) {
+	agentGateway, gatewayErr := newAgentGateway(agentProviderClaude, "", t.TempDir(), testControlledMCPServer(t), claude.Config{Command: " "})
+	if gatewayErr == nil {
+		t.Fatalf("expected an error, got gateway %#v", agentGateway)
+	}
+	if !strings.Contains(gatewayErr.Error(), "--claude-command is required") {
+		t.Fatalf("unexpected error: %v", gatewayErr)
 	}
 }
 
@@ -110,14 +119,4 @@ func testControlledMCPServer(t *testing.T) agent.ControlledMCPServer {
 		Args:         []string{"agent-tool-bridge", "--socket", "/tmp/tools.sock"},
 		EnabledTools: []string{"list_groups_schemas", "describe_schema", "propose_query_plan", "validate_bydbql", "probe_bydbql", "execute_bydbql"},
 	}
-}
-
-type stubControlledTools struct{}
-
-func (stubControlledTools) InvokeTool(context.Context, string, map[string]any) (string, error) {
-	return "stub", nil
-}
-
-func (stubControlledTools) Definitions() []map[string]any {
-	return nil
 }

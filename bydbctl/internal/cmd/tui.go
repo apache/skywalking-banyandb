@@ -45,7 +45,10 @@ const (
 	agentProviderClaude = "claude"
 )
 
-var errCodexCommandRequired = errors.New("--codex-command is required when --provider=codex")
+var (
+	errCodexCommandRequired  = errors.New("--codex-command is required when --provider=codex")
+	errClaudeCommandRequired = errors.New("--claude-command is required when --provider=claude")
+)
 
 func newAgentCmd() *cobra.Command {
 	var provider string
@@ -55,15 +58,16 @@ func newAgentCmd() *cobra.Command {
 	var initialEnd string
 	var queryTimeout time.Duration
 	var logDir string
+	var claudeCommand string
 	var claudeModel string
 	var claudeAPIKey string
 	var claudeBaseURL string
-	var claudeMaxTokens int64
+	var claudeMaxTurns int
 	agentCmd := &cobra.Command{
 		Use:     "agent",
 		Version: version.Build(),
 		Short:   "Open the interactive BYDBQL agent TUI",
-		RunE: func(_ *cobra.Command, _ []string) error {
+		RunE: func(_ *cobra.Command, _ []string) (runErr error) {
 			switch strings.TrimSpace(provider) {
 			case agentProviderCodex, agentProviderClaude:
 			default:
@@ -72,12 +76,17 @@ func newAgentCmd() *cobra.Command {
 			if provider == agentProviderCodex && strings.TrimSpace(codexCommand) == "" {
 				return errCodexCommandRequired
 			}
+			if provider == agentProviderClaude && strings.TrimSpace(claudeCommand) == "" {
+				return errClaudeCommandRequired
+			}
 			workingDirectory, wdErr := os.MkdirTemp("", "bydbctl-agent-cwd-")
 			if wdErr != nil {
 				return fmt.Errorf("failed to create isolated agent working directory: %w", wdErr)
 			}
 			defer func() {
-				_ = os.RemoveAll(workingDirectory)
+				if removeErr := os.RemoveAll(workingDirectory); removeErr != nil {
+					runErr = errors.Join(runErr, fmt.Errorf("failed to remove isolated agent working directory: %w", removeErr))
+				}
 			}()
 			executor := tools.NewHTTPExecutor(tools.HTTPConfig{
 				Addr:      viper.GetString("addr"),
@@ -94,41 +103,45 @@ func newAgentCmd() *cobra.Command {
 				Executor:  executor,
 				Validator: tuibysql.NewSemanticValidator(),
 			})
-			var mcpServer agent.ControlledMCPServer
-			if provider == agentProviderCodex {
-				bridgeServer, bridgeErr := bridge.StartSocketServer(toolBridge)
-				if bridgeErr != nil {
-					return fmt.Errorf("failed to start controlled tool bridge: %w", bridgeErr)
-				}
-				defer func() {
-					_ = bridgeServer.Close()
-				}()
-				executable, executableErr := os.Executable()
-				if executableErr != nil {
-					return fmt.Errorf("failed to locate bydbctl executable: %w", executableErr)
-				}
-				mcpServer = bridgeServer.MCPServerConfig(executable)
+			bridgeServer, bridgeErr := bridge.StartSocketServer(toolBridge)
+			if bridgeErr != nil {
+				return fmt.Errorf("failed to start controlled tool bridge: %w", bridgeErr)
 			}
+			defer func() {
+				if closeErr := bridgeServer.Close(); closeErr != nil {
+					runErr = errors.Join(runErr, fmt.Errorf("failed to close controlled tool bridge: %w", closeErr))
+				}
+			}()
+			executable, executableErr := os.Executable()
+			if executableErr != nil {
+				return fmt.Errorf("failed to locate bydbctl executable: %w", executableErr)
+			}
+			mcpServer := bridgeServer.MCPServerConfig(executable)
 			agentGateway, gatewayErr := newAgentGateway(provider, codexCommand, workingDirectory, mcpServer, claude.Config{
-				Model:            claudeModel,
-				APIKey:           claudeAPIKey,
-				BaseURL:          claudeBaseURL,
-				MaxTokens:        claudeMaxTokens,
-				WorkingDirectory: workingDirectory,
-				Tools:            toolBridge,
+				Command:             claudeCommand,
+				Model:               claudeModel,
+				APIKey:              claudeAPIKey,
+				BaseURL:             claudeBaseURL,
+				MaxTurns:            claudeMaxTurns,
+				WorkingDirectory:    workingDirectory,
+				ControlledMCPServer: mcpServer,
 			})
 			if gatewayErr != nil {
 				return gatewayErr
 			}
 			defer func() {
-				_ = agentGateway.Close()
+				if closeErr := agentGateway.Close(); closeErr != nil {
+					runErr = errors.Join(runErr, fmt.Errorf("failed to close agent gateway: %w", closeErr))
+				}
 			}()
 			sessionLog, logErr := applog.New(logDir)
 			if logErr != nil {
 				return fmt.Errorf("failed to create agent session log: %w", logErr)
 			}
 			defer func() {
-				_ = sessionLog.Close()
+				if closeErr := sessionLog.Close(); closeErr != nil {
+					runErr = errors.Join(runErr, fmt.Errorf("failed to close agent session log: %w", closeErr))
+				}
 			}()
 			model := tuiapp.NewModel(tuiapp.Config{
 				AgentGateway: agentGateway,
@@ -142,19 +155,22 @@ func newAgentCmd() *cobra.Command {
 				End:          initialEnd,
 			})
 			program := tea.NewProgram(model, tea.WithAltScreen())
-			if _, runErr := program.Run(); runErr != nil {
-				return fmt.Errorf("failed to run agent TUI: %w", runErr)
+			if _, programErr := program.Run(); programErr != nil {
+				return fmt.Errorf("failed to run agent TUI: %w", programErr)
 			}
-			fmt.Fprintf(os.Stderr, "agent session log: %s\n", sessionLog.Path())
+			if _, writeErr := fmt.Fprintf(os.Stderr, "agent session log: %s\n", sessionLog.Path()); writeErr != nil {
+				return fmt.Errorf("failed to report agent session log path: %w", writeErr)
+			}
 			return nil
 		},
 	}
 	agentCmd.Flags().StringVar(&provider, "provider", agentProviderCodex, "agent provider: codex|claude")
 	agentCmd.Flags().StringVar(&codexCommand, "codex-command", "codex", "path to the Codex CLI executable (provider=codex)")
-	agentCmd.Flags().StringVar(&claudeModel, "claude-model", "claude-sonnet-5", "Anthropic model id (provider=claude)")
-	agentCmd.Flags().StringVar(&claudeAPIKey, "claude-api-key", "", "Anthropic API key (default: $ANTHROPIC_API_KEY; provider=claude)")
-	agentCmd.Flags().StringVar(&claudeBaseURL, "claude-base-url", "", "optional Anthropic base URL or proxy (provider=claude)")
-	agentCmd.Flags().Int64Var(&claudeMaxTokens, "claude-max-tokens", 4096, "max output tokens per Anthropic message (provider=claude)")
+	agentCmd.Flags().StringVar(&claudeCommand, "claude-command", "claude", "path to the Claude CLI executable (provider=claude)")
+	agentCmd.Flags().StringVar(&claudeModel, "claude-model", "sonnet", "Claude model id or alias (provider=claude)")
+	agentCmd.Flags().StringVar(&claudeAPIKey, "claude-api-key", "", "optional ANTHROPIC_API_KEY override for Claude CLI (provider=claude)")
+	agentCmd.Flags().StringVar(&claudeBaseURL, "claude-base-url", "", "optional ANTHROPIC_BASE_URL override for Claude CLI (provider=claude)")
+	agentCmd.Flags().IntVar(&claudeMaxTurns, "claude-max-turns", 12, "maximum agentic turns per Claude CLI invocation (provider=claude)")
 	agentCmd.Flags().StringVar(&initialGoal, "goal", "", "initial natural language query goal")
 	agentCmd.Flags().StringVar(&initialStart, "start", "-30m", "initial BYDBQL time start")
 	agentCmd.Flags().StringVar(&initialEnd, "end", "", "initial BYDBQL time end")
@@ -176,6 +192,11 @@ func newAgentGateway(provider, codexCommand, workingDirectory string, mcpServer 
 			ControlledMCPServer: mcpServer,
 		}), nil
 	case agentProviderClaude:
+		if strings.TrimSpace(claudeCfg.Command) == "" {
+			return nil, errClaudeCommandRequired
+		}
+		claudeCfg.WorkingDirectory = workingDirectory
+		claudeCfg.ControlledMCPServer = mcpServer
 		return claude.NewGateway(claudeCfg), nil
 	default:
 		return nil, fmt.Errorf("unknown agent provider %q", provider)

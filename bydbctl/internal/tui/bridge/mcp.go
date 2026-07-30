@@ -220,11 +220,6 @@ func callSocket(socketPath string, call Call) (string, error) {
 	return response.Result, nil
 }
 
-// ToolDefinitions returns the closed bydbctl controlled tool schemas.
-func ToolDefinitions() []map[string]any {
-	return toolDefinitions()
-}
-
 func toolDefinitions() []map[string]any {
 	return []map[string]any{
 		{
