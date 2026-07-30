@@ -30,9 +30,13 @@ import (
 	"github.com/apache/skywalking-banyandb/pkg/pipeline/sdk/sdktest"
 )
 
-// seedPluginPkgPath is the path to the graduated first-party seed plugin,
-// relative to this file's directory (pkg/pipeline/sdk/sdktest).
-const seedPluginPkgPath = "../../../../plugins/skywalking/latencystatussampler"
+// seedPluginPkgPath is the path to the sampler this test builds into a real .so,
+// relative to this file's directory (pkg/pipeline/sdk/sdktest). It points at the
+// test-only copy under test/plugins/, which the trace-pipeline integration suites
+// already build; the first-party plugins/ copy was removed because it projected
+// "duration" and "status", which neither shipped trace schema has, so it kept every
+// trace it was ever given.
+const seedPluginPkgPath = "../../../../test/plugins/_latencystatussampler"
 
 // isToolchainMismatch reports whether err is the Go runtime's rejection of a
 // .so whose build context differs from the host's (compiler version skew).
@@ -45,7 +49,7 @@ func isToolchainMismatch(err error) bool {
 		strings.Contains(msg, "plugin was built with a different version")
 }
 
-// buildSeedPlugin compiles the latencystatussampler seed plugin into dir and
+// buildSeedPlugin compiles the latencystatussampler test plugin into dir and
 // returns the absolute path to the resulting .so, skipping the test with an
 // actionable message when the build is not possible (no C toolchain, no Go).
 func buildSeedPlugin(t *testing.T, dir string) string {
@@ -78,9 +82,10 @@ func buildSeedPlugin(t *testing.T, dir string) string {
 	return soPath
 }
 
-// TestLoadSO_SeedPlugin drives the real, graduated latencystatussampler seed
-// plugin (plugins/skywalking/latencystatussampler) through sdktest.LoadSO and
-// sdktest.Run — the seed's proof-of-use via the offline dev toolkit. It
+// TestLoadSO_SeedPlugin drives the real latencystatussampler
+// (test/plugins/_latencystatussampler) through sdktest.LoadSO and
+// sdktest.Run — proof-of-use for the offline dev toolkit against an actual
+// plugin.Open'd .so rather than an in-process fake. It
 // exercises both the drop case (duration below threshold and status ==
 // successValue) and the fail-open keep case (unrelated status), and confirms
 // the differential projection guard reports no divergence for this
