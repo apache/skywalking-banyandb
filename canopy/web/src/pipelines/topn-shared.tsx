@@ -131,7 +131,9 @@ export interface TopNCondition {
   readonly value: string;
 }
 
-const PQ_NUM = (s: string): boolean => /^-?\d+(\.\d+)?$/.test(s.trim());
+// TagValue has no float variant — only integers encode as int; a decimal
+// like 1.5 falls through to str instead of producing an invalid int payload.
+const PQ_NUM = (s: string): boolean => /^-?\d+$/.test(s.trim());
 
 function topnConditionValue(op: string, raw: string): PropertyTagValue {
   const value = raw.trim();

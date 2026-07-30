@@ -112,6 +112,18 @@ describe('buildTopNCriteria / flattenTopNCriteria — flat AND chain <-> model.v
     });
   });
 
+  it('decimals encode as str — TagValue has no float variant', () => {
+    // 1.5 as TagValue.int would be an invalid payload the server rejects.
+    const rows: TopNCondition[] = [{ tag: 'rate', op: 'BINARY_OP_GT', value: '1.5' }];
+    expect(buildTopNCriteria(rows)).toEqual({
+      condition: { name: 'rate', op: 'BINARY_OP_GT', value: { str: { value: '1.5' } } },
+    });
+    const mixed: TopNCondition[] = [{ tag: 'rate', op: 'BINARY_OP_IN', value: '1.5, 2' }];
+    expect(buildTopNCriteria(mixed)).toEqual({
+      condition: { name: 'rate', op: 'BINARY_OP_IN', value: { strArray: { value: ['1.5', '2'] } } },
+    });
+  });
+
   it('chains multiple rows with LOGICAL_OP_AND, left-associatively', () => {
     const rows: TopNCondition[] = [
       { tag: 'service', op: 'BINARY_OP_EQ', value: 'checkout' },

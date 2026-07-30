@@ -238,7 +238,9 @@ export function TopNList() {
               <div key={`${r.group}/${a.metadata.name}`} className="topn-row" role="button" tabIndex={0}
                 data-testid="topn-row"
                 onClick={() => navigate(path)}
-                onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); navigate(path); } }}>
+                // Ignore keys bubbling from the inner Edit/Delete buttons —
+                // Space/Enter there must activate the button, not navigate.
+                onKeyDown={(e) => { if (e.target !== e.currentTarget) return; if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); navigate(path); } }}>
                 <span className="idx-name-cell">
                   <span className="idx-ico"><IconTopN size={14} /></span>
                   <span className="idx-name mono">{a.metadata.name}</span>

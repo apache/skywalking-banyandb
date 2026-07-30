@@ -54,7 +54,7 @@ import { Combobox, MultiCombobox } from '../components/Combobox.js';
 import { IconChevron, IconPlus, IconCheck } from '../components/icons.js';
 import {
   SORT_OPTS, TOPN_OPS, DEFAULT_COUNTERS, topNTone, topNRank,
-  buildTopNCriteria, flattenTopNCriteria, type TopNCondition,
+  buildTopNCriteria, flattenTopNCriteria, topNAggregationsQueryKey, type TopNCondition,
 } from './topn-shared.js';
 
 const TOPN_NAME_RE = /^[a-zA-Z0-9_-]+$/;
@@ -290,7 +290,7 @@ export function TopNFormModal({ mode, groupName, aggregation, onClose }: TopNFor
   // Existing aggregation names in the target group, for the create-time
   // uniqueness check (the registry itself is authoritative either way).
   const { data: existingAggs = [] } = useQuery({
-    queryKey: ['topNAggregations', targetGroup],
+    queryKey: topNAggregationsQueryKey(targetGroup),
     queryFn: () => apiDataSource.listTopNAggregations(targetGroup),
     enabled: !!targetGroup,
   });
@@ -347,7 +347,7 @@ export function TopNFormModal({ mode, groupName, aggregation, onClose }: TopNFor
   const createMut = useMutation({
     mutationFn: (req: CreateTopNAggregationRequest) => apiDataSource.createTopNAggregation(req),
     onSuccess: (agg) => {
-      void qc.invalidateQueries({ queryKey: ['topNAggregations'] });
+      void qc.invalidateQueries({ queryKey: ['topnAggregations'] });
       resetDirty();
       onClose(agg);
     },
@@ -356,7 +356,7 @@ export function TopNFormModal({ mode, groupName, aggregation, onClose }: TopNFor
   const updateMut = useMutation({
     mutationFn: (req: UpdateTopNAggregationRequest) => apiDataSource.updateTopNAggregation(targetGroup, aggregation!.metadata.name, req),
     onSuccess: (agg) => {
-      void qc.invalidateQueries({ queryKey: ['topNAggregations'] });
+      void qc.invalidateQueries({ queryKey: ['topnAggregations'] });
       void qc.invalidateQueries({ queryKey: ['topNAggregation', targetGroup, aggregation?.metadata.name] });
       resetDirty();
       onClose(agg);
@@ -374,6 +374,15 @@ export function TopNFormModal({ mode, groupName, aggregation, onClose }: TopNFor
         const first = document.querySelector<HTMLElement>('.modal .has-error .f-input, .modal .has-error input');
         first?.focus();
       });
+      return;
+    }
+    // A TopNAggregation ranks measures within its own registry group: the
+    // precomputed result measure is written into metadata.group while the
+    // counters stream from sourceMeasure.group, so a mismatch produces
+    // results the user can't trace. Block it here with a clear message
+    // instead of letting the request fail server-side.
+    if (v.sourceGroup !== targetGroup) {
+      setErrors({ _: `Source measure group "${v.sourceGroup}" must match the aggregation's group "${targetGroup}" — a TopN aggregation ranks measures within its own group.` });
       return;
     }
     // Guard against zeroing group-by tags before the source measure's schema
@@ -543,7 +552,7 @@ export function DeleteTopNModal({ groupName, aggregation, onClose, onDeleted }: 
   const deleteMut = useMutation({
     mutationFn: () => apiDataSource.deleteTopNAggregation(groupName, aggregation.metadata.name),
     onSuccess: () => {
-      void qc.invalidateQueries({ queryKey: ['topNAggregations'] });
+      void qc.invalidateQueries({ queryKey: ['topnAggregations'] });
       onClose();
       onDeleted?.();
     },
