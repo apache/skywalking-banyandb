@@ -22,13 +22,46 @@ import (
 	"os"
 	"strings"
 	"testing"
+	"time"
 
 	tea "github.com/charmbracelet/bubbletea"
 
 	"github.com/apache/skywalking-banyandb/bydbctl/internal/tui/agent"
 	"github.com/apache/skywalking-banyandb/bydbctl/internal/tui/applog"
+	"github.com/apache/skywalking-banyandb/bydbctl/internal/tui/approval"
 	"github.com/apache/skywalking-banyandb/bydbctl/internal/tui/session"
 )
+
+func TestPendingApprovalStatusSurvivesTurnTimeout(t *testing.T) {
+	startedAt := time.Now()
+	model := NewModel(Config{Provider: "claude"})
+	model.busy = true
+	model.turnStartedAt = startedAt
+	updatedModel, _ := model.Update(approvalMsg{request: approval.NewRequest(
+		"SELECT * FROM MEASURE endpoint_traffic_minute IN sw_metadata TIME > '-30m' LIMIT 10",
+		"MEASURE/endpoint_traffic_minute",
+		[]string{"sw_metadata"},
+		approval.SourceManual,
+	)})
+	typedModel, ok := updatedModel.(Model)
+	if !ok {
+		t.Fatalf("unexpected model type: %T", updatedModel)
+	}
+	timedOutModel, timeoutCmd := typedModel.Update(turnTimeoutMsg{startedAt: startedAt})
+	typedTimedOutModel, ok := timedOutModel.(Model)
+	if !ok {
+		t.Fatalf("unexpected timed out model type: %T", timedOutModel)
+	}
+	if typedTimedOutModel.status != "execution approval required" {
+		t.Fatalf("unexpected approval status after timeout: %q", typedTimedOutModel.status)
+	}
+	if timeoutCmd == nil {
+		t.Fatal("expected timeout monitoring to continue while approval is pending")
+	}
+	if strings.Contains(typedTimedOutModel.View(), "agent turn in progress") {
+		t.Fatalf("approval wait must not be labeled as an agent turn:\n%s", typedTimedOutModel.View())
+	}
+}
 
 func TestUpdateSyncsSessionAndEventsBeforeError(t *testing.T) {
 	sessionLog, createErr := applog.New(t.TempDir())

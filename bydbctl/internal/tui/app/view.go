@@ -112,8 +112,10 @@ func (m Model) renderChat(width, panelHeight int) string {
 		titleStyle.Render("Conversation · activity"),
 		mutedStyle.Render("↑↓ messages · pgup/pgdn detail · Tab composer"),
 	}
-	if m.busy {
-		rows = append(rows, warnStyle.Render("▸ discover → plan → compile → preview · "+m.status))
+	if m.pendingApproval != nil {
+		rows = append(rows, warnStyle.Render("▸ execution waiting for approval"))
+	} else if m.busy {
+		rows = append(rows, warnStyle.Render("▸ workflow in progress · "+m.status))
 	} else if len(m.activityLog) > 0 {
 		lastActivity := m.activityLog[len(m.activityLog)-1]
 		rows = append(rows, mutedStyle.Render("▸ "+truncate(lastActivity.title, width-8)))
@@ -178,8 +180,10 @@ func (m Model) renderChat(width, panelHeight int) string {
 		}
 		rows = append(rows, mutedStyle.Render(fmt.Sprintf("%d/%d messages", endIdx, len(entries))))
 	}
-	if m.busy {
-		rows = append(rows, warnStyle.Render("agent turn in progress…"))
+	if m.pendingApproval != nil {
+		rows = append(rows, warnStyle.Render("execution waiting for approval…"))
+	} else if m.busy {
+		rows = append(rows, warnStyle.Render("workflow in progress…"))
 	}
 	return panelStyle.Width(width).Height(panelHeight).Render(lipgloss.JoinVertical(lipgloss.Left, rows...))
 }

@@ -18,10 +18,12 @@ package app
 import (
 	"strings"
 	"testing"
+	"time"
 
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
 
+	"github.com/apache/skywalking-banyandb/bydbctl/internal/tui/approval"
 	"github.com/apache/skywalking-banyandb/bydbctl/internal/tui/session"
 )
 
@@ -96,6 +98,36 @@ func TestWorkspaceFitsTerminalWithSelectedChatDetail(t *testing.T) {
 	model.chatCursor = len(querySession.ChatMessages) - 1
 
 	assertWorkspaceFitsTerminal(t, model.View(), terminalHeight, "provider claude", "Detail · pgup/pgdn scroll", "4/20 messages")
+}
+
+func TestWorkspaceFitsTerminalWithExecutionApproval(t *testing.T) {
+	const terminalHeight = 42
+	model := NewModel(Config{Provider: "claude"})
+	model.resize(180, terminalHeight)
+	model.busy = true
+	model.status = "execution approval required"
+	model.pendingApproval = &approval.Request{
+		Query:       "SELECT * FROM MEASURE endpoint_traffic_minute IN sw_metadata TIME > '-30m' LIMIT 10",
+		Resource:    "MEASURE/endpoint_traffic_minute",
+		Groups:      []string{"sw_metadata"},
+		TimeRange:   "TIME > '-30m'",
+		Limit:       "10",
+		Timeout:     3 * time.Second,
+		PreviewRows: 50,
+		Source:      approval.SourceManual,
+	}
+
+	assertWorkspaceFitsTerminal(
+		t,
+		model.View(),
+		terminalHeight,
+		"provider claude",
+		"Execution approval required",
+		"execution waiting for approval",
+		"y execute once · n reject · e copy to editor and revise",
+		"Esc",
+		"stop/quit",
+	)
 }
 
 func TestWorkspaceFitsTerminalWithSchemaSearchOpen(t *testing.T) {

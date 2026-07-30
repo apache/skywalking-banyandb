@@ -233,16 +233,27 @@ func (m Model) renderSchemaSearch(width, resultLimit int) string {
 }
 
 func (m Model) renderEvidencePanel(width, height int) string {
-	var evidence string
-	if m.schemaSearchOpen() || m.evidenceMode == evidenceModeSchema {
-		evidence = m.renderSchemaEvidence(width, height)
-	} else {
-		evidence = m.renderDataPreview(width, height)
+	approvalPanel := ""
+	evidenceHeight := height
+	if m.pendingApproval != nil {
+		approvalPanel = m.renderApproval(width)
+		evidenceHeight -= lipgloss.Height(approvalPanel)
 	}
-	if m.pendingApproval == nil {
+	var evidence string
+	if evidenceHeight > panelStyle.GetVerticalFrameSize() {
+		if m.schemaSearchOpen() || m.evidenceMode == evidenceModeSchema {
+			evidence = m.renderSchemaEvidence(width, evidenceHeight)
+		} else {
+			evidence = m.renderDataPreview(width, evidenceHeight)
+		}
+	}
+	if approvalPanel == "" {
 		return evidence
 	}
-	return lipgloss.JoinVertical(lipgloss.Left, evidence, m.renderApproval(width))
+	if evidence == "" {
+		return approvalPanel
+	}
+	return lipgloss.JoinVertical(lipgloss.Left, evidence, approvalPanel)
 }
 
 func (m Model) renderDataPreview(width, height int) string {

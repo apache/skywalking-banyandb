@@ -367,8 +367,11 @@ func (m Model) Update(teaMsg tea.Msg) (tea.Model, tea.Cmd) {
 		if !m.busy || typedMsg.startedAt != m.turnStartedAt {
 			return m, nil
 		}
+		if m.pendingApproval != nil {
+			return m, m.turnTimeoutCmd(typedMsg.startedAt)
+		}
 		m.status = "still working — Enter waits, Esc cancels"
-		m.addUIEvent("agent: still working")
+		m.addUIEvent("workflow: still working")
 		return m, m.turnTimeoutCmd(typedMsg.startedAt)
 	}
 	inputCmd := m.updateFocused(teaMsg)
