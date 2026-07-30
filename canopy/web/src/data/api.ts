@@ -652,13 +652,21 @@ export function flattenQueryResponse(data: QueryResponse): Record<string, unknow
   // still use snake_case. Accept both so downstream views always get elements.
   const streamResult = (d.streamResult ?? d.stream_result) as { elements?: unknown[] } | undefined;
   const measureResult = (d.measureResult ?? d.measure_result) as { dataPoints?: unknown[]; data_points?: unknown[] } | undefined;
-  const traceResult = (d.traceResult ?? d.trace_result) as { elements?: unknown[] } | undefined;
+  const traceResult = (d.traceResult ?? d.trace_result) as {
+    elements?: unknown[];
+    traces?: readonly { traceId?: string; trace_id?: string; spans?: readonly unknown[] }[];
+  } | undefined;
   if (streamResult?.elements) return streamResult.elements.map((e) => flattenStreamElement(e as never));
   const measurePoints = measureResult?.dataPoints ?? measureResult?.data_points;
   if (measurePoints) return measurePoints.map((e) => flattenMeasureDataPoint(e as never));
-  // trace.v1.QueryResponse is a flat span list: { elements: [Span] }, each
-  // span carrying its own trace_id (there is no per-trace grouping wrapper).
+  // Older gateways and the hand-authored fixtures use a flat span list
+  // ({ elements: [Span] }); the live v0.10 gateway groups spans per trace
+  // ({ traces: [{ traceId, spans: [Span] }] }, trace/v1 query.proto). Accept
+  // both, carrying the parent's traceId down to each span.
   if (traceResult?.elements) return traceResult.elements.map((s) => flattenTraceSpan(s as never));
+  if (traceResult?.traces) {
+    return traceResult.traces.flatMap((g) => (g.spans ?? []).map((s) => flattenTraceSpan(s as never, g.traceId ?? g.trace_id)));
+  }
   return [];
 }
 

@@ -579,6 +579,28 @@ describe('flattenQueryResponse — TagValue oneof coverage', () => {
     expect(rows[0].attr1).toBe('');
     expect(rows[0].value).toBe(5);
   });
+
+  it('flattens the grouped traces shape the live v0.10 gateway returns', () => {
+    // trace/v1 QueryResponse is { traces: [{ traceId, spans }] } — the flat
+    // `elements` shape above only appears in older gateways and fixtures.
+    const rows = flattenQueryResponse({
+      traceResult: {
+        traces: [{
+          traceId: 'trace-abc',
+          spans: [
+            { spanId: 'span-1', tags: [{ key: 'start_time', value: { timestamp: '2026-07-29T02:19:45.091Z' } }] },
+            { spanId: 'span-2', tags: [{ key: 'attr1', value: { null: null } }] },
+          ],
+        }],
+      },
+    } as unknown as QueryResponse);
+    expect(rows).toHaveLength(2);
+    expect(rows[0].trace_id).toBe('trace-abc');
+    expect(rows[0].span_id).toBe('span-1');
+    expect(rows[0].start_time).toBe(Date.parse('2026-07-29T02:19:45.091Z'));
+    expect(rows[1].trace_id).toBe('trace-abc');
+    expect(rows[1].attr1).toBe('');
+  });
 });
 
 // Long body/text tag values are CSS-truncated, so they render through
