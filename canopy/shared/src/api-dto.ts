@@ -289,10 +289,18 @@ export interface TopNQueryResponse {
 // TopNAggregation schema — BanyanDB's precomputed leaderboard definition.
 // Wire shape (per the v0.x liaison) is camelCase protojson:
 //   { metadata: {group, name}, sourceMeasure: {group, name}, fieldName,
-//     fieldValueSort: 'SORT_ASC'|'SORT_DESC', groupByTagNames: string[],
+//     fieldValueSort: 'SORT_DESC'|'SORT_ASC'|'SORT_UNSPECIFIED', groupByTagNames: string[],
 //     criteria, countersNumber, lruSize, updatedAt, createdAt }
-// Sourced from GET /api/v1/topn-agg/schema/lists/{group}. The list response
-// repeats under the `topNAggregation` key.
+// (schema.proto TopNAggregation, database/v1 TopNAggregationRegistryService,
+// rpc.proto ~L698). Direction<->sort: topN=SORT_DESC, bottomN=SORT_ASC,
+// both=SORT_UNSPECIFIED.
+//
+// List/Get source from GET /api/v1/topn-agg/schema/{lists/{group}|{group}/{name}}.
+// Create/Update are POST /topn-agg/schema and PUT .../{group}/{name}, both with
+// body/response key `topNAggregation`; the registry's write RPCs return only
+// `{modRevision}` (see rpc.proto TopNAggregationRegistryServiceCreateResponse),
+// so api.ts echoes the submitted payload back like it does for
+// IndexRuleBinding/Property writes.
 //
 // Unlike the per-resource schemas (Measure/Stream/Trace), TopNAggregation does
 // not carry tagFamilies directly — only the names of the entity tags it
@@ -302,8 +310,14 @@ export interface TopNAggregationSchema {
   readonly metadata: { readonly name: string; readonly group: string };
   readonly sourceMeasure?: { readonly name: string; readonly group: string };
   readonly fieldName?: string;
-  readonly fieldValueSort?: 'SORT_ASC' | 'SORT_DESC';
+  readonly fieldValueSort?: 'SORT_DESC' | 'SORT_ASC' | 'SORT_UNSPECIFIED';
   readonly groupByTagNames?: readonly string[];
+  // model.v1.Criteria — the same recursive condition/logical-expression tree
+  // as PropertyCriteria below (both wrap model.v1.Criteria verbatim). The
+  // TopN form UI only ever *builds* a flat AND chain of `condition` nodes,
+  // but a schema created another way could carry a richer tree, so the type
+  // stays the full recursive shape rather than a flat array.
+  readonly criteria?: PropertyCriteria;
   readonly countersNumber?: number;
   readonly lruSize?: number;
   readonly createdAt?: string;
@@ -312,6 +326,16 @@ export interface TopNAggregationSchema {
 
 export interface TopNAggregationListResponse {
   readonly topNAggregation: readonly TopNAggregationSchema[];
+}
+
+export interface CreateTopNAggregationRequest {
+  readonly topNAggregation: Omit<TopNAggregationSchema, 'metadata' | 'createdAt' | 'updatedAt'> & {
+    readonly metadata: { readonly name: string; readonly group: string };
+  };
+}
+
+export interface UpdateTopNAggregationRequest {
+  readonly topNAggregation: TopNAggregationSchema;
 }
 
 // Property schema (collection) CRUD — `database/v1` PropertyRegistryService.

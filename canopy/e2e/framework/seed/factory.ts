@@ -218,6 +218,38 @@ export class SeedFactory {
     });
   }
 
+  // Create a TopNAggregation over `sourceMeasure` (in the SAME group, per
+  // schema.proto — a topn-agg is registered inside a measure group and ranks
+  // one of that group's measures). Returns the aggregation name. The source
+  // measure must already exist (create it with createMeasure first).
+  async createTopNAggregation(
+    group: string,
+    sourceMeasureName: string,
+    fieldName: string,
+    prefix = 'topn',
+    opts: { readonly fieldValueSort?: 'SORT_DESC' | 'SORT_ASC' | 'SORT_UNSPECIFIED'; readonly groupByTagNames?: readonly string[] } = {},
+  ): Promise<string> {
+    const name = this.uniqueName(prefix);
+    const res = await this.request.post('/api/v1/topn-agg/schema', {
+      data: {
+        topNAggregation: {
+          metadata: { name, group },
+          sourceMeasure: { group, name: sourceMeasureName },
+          fieldName,
+          fieldValueSort: opts.fieldValueSort ?? 'SORT_DESC',
+          groupByTagNames: opts.groupByTagNames ?? [],
+          countersNumber: 1000,
+          lruSize: 10,
+        },
+      },
+    });
+    if (!res.ok()) {
+      throw new Error(`seed createTopNAggregation(${group}/${name}) failed: ${res.status()} ${await res.text()}`);
+    }
+    this.createdResources.push({ path: `/api/v1/topn-agg/schema/${encodeURIComponent(group)}/${encodeURIComponent(name)}` });
+    return name;
+  }
+
   // Create an index rule over `tags` in `group`. Returns the rule name.
   async createIndexRule(group: string, tags: readonly string[], prefix = 'rule', type: IndexRuleType = 'TYPE_TREE'): Promise<string> {
     const name = this.uniqueName(prefix);

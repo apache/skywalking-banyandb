@@ -26,6 +26,7 @@ import type {
   CreateIndexRuleRequest, UpdateIndexRuleRequest, IndexRuleSchema,
   CreateIndexRuleBindingRequest, UpdateIndexRuleBindingRequest, IndexRuleBindingSchema,
   PropertySchema, TopNAggregationSchema,
+  CreateTopNAggregationRequest, UpdateTopNAggregationRequest,
   QueryRequest, QueryResponse, TopNQueryResponse,
   CreatePropertySchemaRequest, PropertyApplyRequest, PropertyApplyResponse,
   PropertyQueryRequest, PropertyQueryResponse, PropertyDocument, PropertyDocTag,
@@ -201,6 +202,35 @@ export class ApiDataSource implements DataSource {
     return (data.topNAggregation ?? [])
       .slice()
       .sort((a, b) => a.metadata.name.localeCompare(b.metadata.name));
+  }
+
+  async getTopNAggregation(group: string, name: string): Promise<TopNAggregationSchema> {
+    const data = await apiFetch<{ topNAggregation: TopNAggregationSchema }>(
+      `/api/v1/topn-agg/schema/${encodeURIComponent(group)}/${encodeURIComponent(name)}`,
+    );
+    return data.topNAggregation;
+  }
+
+  async createTopNAggregation(req: CreateTopNAggregationRequest): Promise<TopNAggregationSchema> {
+    // TopNAggregationRegistryService.Create returns only {modRevision} (see
+    // rpc.proto) — same write-response shape as IndexRuleBinding/Property.
+    // Echo the request payload back rather than decoding a missing body.
+    await apiFetch<{ modRevision?: string }>('/api/v1/topn-agg/schema', {
+      method: 'POST', headers: JSON_HEADERS, body: JSON.stringify(req),
+    });
+    return req.topNAggregation as unknown as TopNAggregationSchema;
+  }
+
+  async updateTopNAggregation(group: string, name: string, req: UpdateTopNAggregationRequest): Promise<TopNAggregationSchema> {
+    await apiFetch<{ modRevision?: string }>(
+      `/api/v1/topn-agg/schema/${encodeURIComponent(group)}/${encodeURIComponent(name)}`,
+      { method: 'PUT', headers: JSON_HEADERS, body: JSON.stringify(req) },
+    );
+    return req.topNAggregation;
+  }
+
+  async deleteTopNAggregation(group: string, name: string): Promise<void> {
+    await apiFetch<void>(`/api/v1/topn-agg/schema/${encodeURIComponent(group)}/${encodeURIComponent(name)}`, { method: 'DELETE' });
   }
 
   // ── Stream CRUD ──────────────────────────────────────────────────────────

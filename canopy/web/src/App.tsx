@@ -28,6 +28,9 @@ import { TypeOverviewPage } from './pages/TypeOverviewPage.js';
 import { GroupPage } from './pages/GroupPage.js';
 import { ResourceDetailPage } from './pages/ResourceDetailPage.js';
 import { PropertyDetailPage } from './pages/PropertyDetailPage.js';
+import { PipelinesPage } from './pages/PipelinesPage.js';
+import { TopNList } from './pipelines/TopNList.js';
+import { TopNDetail } from './pipelines/TopNDetail.js';
 import { GroupForm } from './components/GroupForm.js';
 import { MeasureForm } from './components/MeasureForm.js';
 import { StreamForm } from './components/StreamForm.js';
@@ -511,6 +514,11 @@ function PropertyDetailRoute() {
   return <PropertyDetailPage groupName={group} propName={name} />;
 }
 
+function TopNDetailRoute() {
+  const { group = '', name = '' } = useParams<{ group: string; name: string }>();
+  return <TopNDetail groupName={group} aggName={name} />;
+}
+
 function AppContent() {
   const { session, loading } = useAuth();
 
@@ -542,7 +550,9 @@ function AppContent() {
         <Route path="/properties/:group/:name" element={<PropertyDetailRoute />} />
         <Route path="/properties/:group" element={<PropertiesGroupRoute />} />
         <Route path="/properties" element={<PropertiesOverviewRoute />} />
-        <Route path="/pipelines/*" element={<div className="page-body"><h1 className="page-title">Pipelines</h1><p className="page-meta">Coming soon.</p></div>} />
+        <Route path="/pipelines/topn/:group/:name" element={<TopNDetailRoute />} />
+        <Route path="/pipelines/topn" element={<TopNList />} />
+        <Route path="/pipelines" element={<PipelinesPage />} />
         <Route path="/query" element={<QueryRoute />} />
         <Route path="*" element={<div className="page-body"><h1 className="page-title">Not found</h1></div>} />
       </Routes>
