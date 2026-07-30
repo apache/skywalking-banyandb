@@ -378,15 +378,15 @@ func (m Model) Update(teaMsg tea.Msg) (tea.Model, tea.Cmd) {
 // View implements tea.Model.
 func (m Model) View() string {
 	contentWidth := clamp(m.width-4, 48, 200)
-	bodyHeight := clamp(m.height-8, 18, 40)
 	header := m.renderWorkspaceHeader(contentWidth)
 	if m.catalog.loadError != "" {
 		connectionError := truncate("BanyanDB connection failed: "+singleLine(m.catalog.loadError), contentWidth)
 		header = lipgloss.JoinVertical(lipgloss.Left, header, badStyle.Render(connectionError))
-		bodyHeight = maxInt(bodyHeight-1, 18)
 	}
+	footer := m.renderFooter(contentWidth)
+	bodyHeight := maxInt(m.height-lipgloss.Height(header)-lipgloss.Height(footer), 1)
 	body := m.renderWorkspace(contentWidth, bodyHeight)
-	return lipgloss.JoinVertical(lipgloss.Left, header, body, m.renderFooter(contentWidth))
+	return lipgloss.JoinVertical(lipgloss.Left, header, body, footer)
 }
 
 type catalogMsg struct {

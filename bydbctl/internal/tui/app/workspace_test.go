@@ -20,6 +20,7 @@ import (
 	"testing"
 
 	tea "github.com/charmbracelet/bubbletea"
+	"github.com/charmbracelet/lipgloss"
 
 	"github.com/apache/skywalking-banyandb/bydbctl/internal/tui/session"
 )
@@ -51,6 +52,67 @@ func TestWorkspaceShowsConversationCandidateAndPreviewWithoutTabs(t *testing.T) 
 	for _, unexpected := range []string{"F1 Schema", "F2 Query", "F3 Run"} {
 		if strings.Contains(view, unexpected) {
 			t.Fatalf("did not expect tab label %q in workspace:\n%s", unexpected, view)
+		}
+	}
+}
+
+func TestWorkspaceFitsTerminalWithProviderVisible(t *testing.T) {
+	const terminalHeight = 42
+	model := NewModel(Config{Provider: "claude"})
+	model.resize(160, terminalHeight)
+
+	assertWorkspaceFitsTerminal(
+		t,
+		model.View(),
+		terminalHeight,
+		"provider claude",
+		"Conversation",
+		"Candidate QL",
+		"Data Preview",
+		"Message · Enter to send",
+		"Status: ready",
+		"Esc stop/quit",
+	)
+}
+
+func TestWorkspaceFitsTerminalWithSchemaSearchOpen(t *testing.T) {
+	const terminalHeight = 42
+	model := NewModel(Config{Provider: "claude"})
+	model.resize(160, terminalHeight)
+	model.catalog.setCatalog(session.SchemaCatalog{Entries: []session.CatalogEntry{
+		{Group: "sw_records", Type: session.ResourceTypeStream, Name: "event"},
+		{Group: "sw_records", Type: session.ResourceTypeTrace, Name: "segment"},
+		{Group: "sw_metrics", Type: session.ResourceTypeMeasure, Name: "service_cpm"},
+		{Group: "sw_metrics", Type: session.ResourceTypeMeasure, Name: "service_resp_time"},
+		{Group: "sw_top_n", Type: session.ResourceTypeTopN, Name: "endpoint_traffic"},
+		{Group: "sw_profile", Type: session.ResourceTypeProperty, Name: "task"},
+	}})
+	model.message.SetValue("show @")
+	model.updateSchemaSearch()
+
+	view := model.View()
+	assertWorkspaceFitsTerminal(
+		t,
+		view,
+		terminalHeight,
+		"provider claude",
+		"Conversation",
+		"Candidate QL",
+		"@ search · local catalog",
+		"Message · Enter to send",
+		"Status: ready",
+		"Esc stop/quit",
+	)
+}
+
+func assertWorkspaceFitsTerminal(t *testing.T, view string, terminalHeight int, expectedValues ...string) {
+	t.Helper()
+	if viewHeight := lipgloss.Height(view); viewHeight > terminalHeight {
+		t.Fatalf("workspace height %d exceeds terminal height %d:\n%s", viewHeight, terminalHeight, view)
+	}
+	for _, expectedValue := range expectedValues {
+		if !strings.Contains(view, expectedValue) {
+			t.Fatalf("expected %q in visible workspace:\n%s", expectedValue, view)
 		}
 	}
 }

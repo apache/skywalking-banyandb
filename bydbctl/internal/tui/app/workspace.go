@@ -26,7 +26,11 @@ import (
 	"github.com/apache/skywalking-banyandb/bydbctl/internal/tui/session"
 )
 
-const maxSchemaSearchResults = 6
+const (
+	maxSchemaSearchResults   = 6
+	minWorkspaceChatHeight   = 4
+	minWorkspaceEditorHeight = 1
+)
 
 type evidenceMode int
 
@@ -43,6 +47,13 @@ type previewData struct {
 	errorText string
 	totalRows int
 	truncated bool
+}
+
+type workspaceLeftLayout struct {
+	chatHeight        int
+	queryHeight       int
+	messageHeight     int
+	schemaResultLimit int
 }
 
 func workspaceWidths(width int) (int, int) {
@@ -92,19 +103,58 @@ func (m Model) renderWorkspaceHeader(width int) string {
 
 func (m Model) renderWorkspace(width, height int) string {
 	leftWidth, rightWidth := workspaceWidths(width)
-	chatHeight := clamp(height-24, 8, 16)
-	left := lipgloss.JoinVertical(lipgloss.Left,
-		m.renderChat(leftWidth, chatHeight),
-		m.renderCandidateCard(leftWidth),
-		m.renderSchemaSearch(leftWidth),
-		m.renderMessage(leftWidth),
-		m.renderStatusLine(leftWidth),
-	)
+	left := m.renderWorkspaceLeft(leftWidth, height)
 	right := m.renderEvidencePanel(rightWidth, height)
 	if width < 100 {
 		return lipgloss.JoinVertical(lipgloss.Left, left, right)
 	}
 	return lipgloss.JoinHorizontal(lipgloss.Top, left, "  ", right)
+}
+
+func (m Model) renderWorkspaceLeft(width, height int) string {
+	layout := workspaceLeftLayout{
+		chatHeight:        clamp(height-24, minWorkspaceChatHeight, 16),
+		queryHeight:       m.query.Height(),
+		messageHeight:     m.message.Height(),
+		schemaResultLimit: len(m.schemaSearchEntries()),
+	}
+	for {
+		left := m.renderWorkspaceLeftWithLayout(width, layout)
+		heightOverflow := lipgloss.Height(left) - height
+		if heightOverflow <= 0 {
+			layout.chatHeight -= heightOverflow
+			return m.renderWorkspaceLeftWithLayout(width, layout)
+		}
+		if layout.queryHeight > minWorkspaceEditorHeight {
+			layout.queryHeight -= minInt(heightOverflow, layout.queryHeight-minWorkspaceEditorHeight)
+			continue
+		}
+		if layout.chatHeight > minWorkspaceChatHeight {
+			layout.chatHeight -= minInt(heightOverflow, layout.chatHeight-minWorkspaceChatHeight)
+			continue
+		}
+		if layout.messageHeight > minWorkspaceEditorHeight {
+			layout.messageHeight -= minInt(heightOverflow, layout.messageHeight-minWorkspaceEditorHeight)
+			continue
+		}
+		if layout.schemaResultLimit > 1 {
+			layout.schemaResultLimit--
+			continue
+		}
+		return left
+	}
+}
+
+func (m Model) renderWorkspaceLeftWithLayout(width int, layout workspaceLeftLayout) string {
+	m.query.SetHeight(layout.queryHeight)
+	m.message.SetHeight(layout.messageHeight)
+	return lipgloss.JoinVertical(lipgloss.Left,
+		m.renderChat(width, layout.chatHeight),
+		m.renderCandidateCard(width),
+		m.renderSchemaSearch(width, layout.schemaResultLimit),
+		m.renderMessage(width),
+		m.renderStatusLine(width),
+	)
 }
 
 func (m Model) renderCandidateCard(width int) string {
@@ -150,7 +200,7 @@ func (m Model) renderCandidateCard(width int) string {
 	return panelStyle.Width(width).Render(lipgloss.JoinVertical(lipgloss.Left, rows...))
 }
 
-func (m Model) renderSchemaSearch(width int) string {
+func (m Model) renderSchemaSearch(width, resultLimit int) string {
 	if !m.schemaSearchOpen() {
 		return ""
 	}
@@ -160,7 +210,13 @@ func (m Model) renderSchemaSearch(width int) string {
 		rows = append(rows, mutedStyle.Render("No group or resource matches · continue typing"))
 		return panelStyle.Width(width).Render(lipgloss.JoinVertical(lipgloss.Left, rows...))
 	}
-	for entryIndex, entry := range entries {
+	visibleStart := 0
+	if resultLimit < len(entries) && m.schemaSearchCursor >= resultLimit {
+		visibleStart = m.schemaSearchCursor - resultLimit + 1
+	}
+	visibleEnd := minInt(visibleStart+maxInt(resultLimit, 1), len(entries))
+	for entryIndex := visibleStart; entryIndex < visibleEnd; entryIndex++ {
+		entry := entries[entryIndex]
 		label := fmt.Sprintf("%s/%s · %s", entry.Group, entry.Name, shortTypeLabel(entry.Type))
 		if entryIndex == m.schemaSearchCursor {
 			rows = append(rows, activeChipStyle.Render(truncate(label, width-4)))
@@ -168,7 +224,11 @@ func (m Model) renderSchemaSearch(width int) string {
 		}
 		rows = append(rows, mutedStyle.Render(truncate(label, width-4)))
 	}
-	rows = append(rows, mutedStyle.Render("↑↓ preview schema · Enter insert resource chip"))
+	searchHint := "↑↓ preview schema · Enter insert resource chip"
+	if visibleEnd-visibleStart < len(entries) {
+		searchHint = fmt.Sprintf("results %d-%d/%d · %s", visibleStart+1, visibleEnd, len(entries), searchHint)
+	}
+	rows = append(rows, mutedStyle.Render(searchHint))
 	return panelStyle.Width(width).Render(lipgloss.JoinVertical(lipgloss.Left, rows...))
 }
 
@@ -190,7 +250,7 @@ func (m Model) renderDataPreview(width, height int) string {
 	rows := []string{titleStyle.Render("Data Preview")}
 	if !ok {
 		rows = append(rows, mutedStyle.Render("A validated query probe or execution result will appear here."))
-		return panelStyle.Width(width).Height(maxInt(height, 8)).Render(lipgloss.JoinVertical(lipgloss.Left, rows...))
+		return panelStyle.Width(width).Height(panelContentHeight(height)).Render(lipgloss.JoinVertical(lipgloss.Left, rows...))
 	}
 	resource := fallback(data.resource, "current query")
 	previewCount := len(data.preview)
@@ -212,7 +272,7 @@ func (m Model) renderDataPreview(width, height int) string {
 		rows = append(rows, formatJSONResponsePreview(m.querySession.ExecutionResult.Response, width-4, maxExecutionResponseLines)...)
 	}
 	rows = append(rows, mutedStyle.Render("Ctrl+O export · Ctrl+J see full response · ↑↓ row"))
-	return panelStyle.Width(width).Height(maxInt(height, 8)).Render(lipgloss.JoinVertical(lipgloss.Left, rows...))
+	return panelStyle.Width(width).Height(panelContentHeight(height)).Render(lipgloss.JoinVertical(lipgloss.Left, rows...))
 }
 
 func (m Model) renderSchemaEvidence(width, height int) string {
@@ -220,7 +280,7 @@ func (m Model) renderSchemaEvidence(width, height int) string {
 	detailLines := schemaDetailLines(m.selectedSchema)
 	if len(detailLines) == 0 {
 		rows = append(rows, mutedStyle.Render("Use @ in the composer to search groups and resources."))
-		return panelStyle.Width(width).Height(maxInt(height, 8)).Render(lipgloss.JoinVertical(lipgloss.Left, rows...))
+		return panelStyle.Width(width).Height(panelContentHeight(height)).Render(lipgloss.JoinVertical(lipgloss.Left, rows...))
 	}
 	viewportHeight := maxInt(height-4, 6)
 	endIndex := minInt(m.detailScroll+viewportHeight, len(detailLines))
@@ -234,7 +294,11 @@ func (m Model) renderSchemaEvidence(width, height int) string {
 			rows = append(rows, mutedStyle.Render("Typed columns are not available from BanyanDB for this resource."))
 		}
 	}
-	return panelStyle.Width(width).Height(maxInt(height, 8)).Render(lipgloss.JoinVertical(lipgloss.Left, rows...))
+	return panelStyle.Width(width).Height(panelContentHeight(height)).Render(lipgloss.JoinVertical(lipgloss.Left, rows...))
+}
+
+func panelContentHeight(totalHeight int) int {
+	return maxInt(totalHeight-panelStyle.GetVerticalFrameSize(), 1)
 }
 
 func (m Model) schemaSearchLoading() bool {
