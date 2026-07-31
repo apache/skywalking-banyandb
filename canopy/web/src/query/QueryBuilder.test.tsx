@@ -153,7 +153,7 @@ describe('QueryBuilder ORDER BY — index-rule-confined options', () => {
     expect(onChange).toHaveBeenCalledWith({ orderField: 'time' });
   });
 
-  it('drops the time alias and the OPTIONAL chip for traces, defaulting to the timestampTagName rule', () => {
+  it('drops the time alias for traces (ORDER BY stays optional), defaulting to the timestampTagName rule', () => {
     const s: QBBuilderState = {
       ...stateWithLeaf({ tag: 'trace_id', op: 'BINARY_OP_EQ', value: '' }),
       catalog: 'traces', resource: 'segment', orderField: 'time',

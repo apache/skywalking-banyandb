@@ -1,15 +1,15 @@
 # Live Demo Verification Checklist
 
-Target: `http://34.180.71.4:4000` (login `admin`/`admin`, pick **Administrator** for write tests).
-Backend: GKE `skywalking-showcase` BanyanDB via port-forward (`BANYANDB_TARGET=http://127.0.0.1:18913`).
-Concrete resources used below (all present on the cluster): `sw_metricsMinute/service_cpm_minute`, `sw_records/alarm_record`, `sw_trace/segment`, `sw_metricsMinute/endpoint_cpm-service` (TopN agg).
+Target: your canopy deployment URL (below: `<DEMO_URL>`). Sign in with the deployment's own account (the dev-noauth demo accepts any credentials; pick **Administrator** for write tests). Do not commit real hosts or credentials here.
+Backend: the checklist assumes a SkyWalking showcase-shaped BanyanDB behind the console (e.g. reached via `kubectl port-forward svc/demo-banyandb-http 18913:17913`, `BANYANDB_TARGET=http://127.0.0.1:18913`).
+Concrete resources used below (all present on such a cluster): `sw_metricsMinute/service_cpm_minute`, `sw_records/alarm_record`, `sw_trace/segment`, `sw_metricsMinute/endpoint_cpm-service` (TopN agg).
 
 Run top to bottom; every box should be checkable without touching the server.
 
 ## 0. Smoke
 
 - [ ] Login page renders; sign in as Administrator lands on Home.
-- [ ] Sidebar header shows `Connected 127.0.0.1:18913` (BanyanDB target reachable).
+- [ ] Sidebar header shows `Connected <banyandb-target>` (BanyanDB reachable).
 - [ ] Sidebar counts load: Measures 4 groups, Streams 3, Traces 2, Properties 1, Pipelines TopN count > 0.
 
 ## 1. Redirect / navigation flows

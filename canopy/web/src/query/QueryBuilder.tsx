@@ -907,7 +907,7 @@ export function QueryBuilder({
                     an order when the last trace_id condition is removed). */}
                 <option value="">— none —</option>
                 {(orderOptions ?? ['time', ...(isMeasure ? fields : tags).filter((f) => f !== 'time')]).map((f) => <option key={f} value={f}>{f}</option>)}
-                {orderOptions !== undefined && orderOptions.length === 0 && state.catalog === 'traces' && <option value="" disabled>no index rules</option>}
+                {orderOptions !== undefined && orderOptions.length === 0 && state.catalog === 'traces' && <option value="__no_index_rules__" disabled>no index rules</option>}
               </select>
               <span className="qb-select-chev"><IconChev width={13} height={13} /></span>
             </span>

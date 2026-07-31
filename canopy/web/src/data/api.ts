@@ -607,7 +607,7 @@ function flattenPropertyDocument(p: PropertyWireDocument): PropertyDocument {
 // leaves service_cpm's attr1-5 unset, which protojson emits as {"null": null}).
 
 /** Read a wire TagValue (7-variant oneof) into a scalar. Null reads as ''. */
-function readTagValue(v: unknown): number | string | undefined {
+export function readTagValue(v: unknown): number | string | undefined {
   // Test fixtures and some gateway versions flatten values to bare scalars.
   if (typeof v === 'string' || typeof v === 'number') return v;
   if (!v || typeof v !== 'object') return undefined;

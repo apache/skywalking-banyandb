@@ -37,6 +37,7 @@
 
 import React, { useEffect, useMemo, useState } from 'react';
 import type { QueryResponse, TopNList, TopNItem } from 'canopy-shared';
+import { readTagValue } from '../../data/api.js';
 import type { QBBuilderState } from '../bydbql.js';
 import { ResultPanel } from './ResultPanel.js';
 import { ResultEmpty } from './ResultEmpty.js';
@@ -326,9 +327,13 @@ function decodeEntityValue(raw: unknown): string {
   if (raw == null) return '';
   const o = raw as { str?: { value?: unknown } };
   const wire = o.str && typeof o.str.value === 'string' ? o.str.value : '';
-  // Null-valued entity tags ({"null": null}) render blank — String(raw) on
-  // the raw oneof object would show "[object Object]".
-  if (!wire) return raw && typeof raw === 'object' && 'null' in raw ? '' : String(raw);
+  // Non-str oneof variants (null / int / strArray / …) never enter the base64
+  // strategies — read them with the oneof-total reader so the cell/tooltip
+  // can never show "[object Object]".
+  if (!wire) {
+    const scalar = readTagValue(raw);
+    return scalar === undefined ? '' : String(scalar);
+  }
 
   // Strategy 1: plain string (no base64, no dot).
   if (!wire.includes('=') && !wire.includes('.')) {
