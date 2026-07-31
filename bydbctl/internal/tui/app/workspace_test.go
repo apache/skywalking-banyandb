@@ -193,7 +193,7 @@ func TestWorkspaceStacksEvidenceBelowConversationOnNarrowTerminals(t *testing.T)
 	}
 }
 
-func TestComposerAtSearchPreviewsAndInsertsResourceReference(t *testing.T) {
+func TestComposerEnterInsertsThenSendsSelectedResourceReference(t *testing.T) {
 	model := NewModel(Config{})
 	model.catalog.setCatalog(session.SchemaCatalog{Entries: []session.CatalogEntry{
 		{Group: "sw_metrics", Type: session.ResourceTypeMeasure, Name: "service_cpm"},
@@ -208,14 +208,30 @@ func TestComposerAtSearchPreviewsAndInsertsResourceReference(t *testing.T) {
 	if !strings.Contains(model.View(), "@ search · local catalog") {
 		t.Fatalf("expected local search in workspace:\n%s", model.View())
 	}
-	if _, handled := model.handleKey(tea.KeyMsg{Type: tea.KeyEnter}); !handled {
-		t.Fatal("expected Enter to insert the selected resource")
+	updatedModel, _ := model.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	typedModel, ok := updatedModel.(Model)
+	if !ok {
+		t.Fatalf("unexpected model type: %T", updatedModel)
 	}
-	if model.message.Value() != "show @sw_metrics/service_cpm" {
-		t.Fatalf("unexpected composer reference: %q", model.message.Value())
+	if typedModel.busy {
+		t.Fatal("first Enter must only insert the selected resource")
 	}
-	if model.composerReference == nil || model.composerReference.Name != "service_cpm" {
-		t.Fatalf("expected selected resource reference, got %+v", model.composerReference)
+	if typedModel.message.Value() != "show @sw_metrics/service_cpm" {
+		t.Fatalf("unexpected composer reference: %q", typedModel.message.Value())
+	}
+	updatedModel, _ = typedModel.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	typedModel, ok = updatedModel.(Model)
+	if !ok {
+		t.Fatalf("unexpected model type: %T", updatedModel)
+	}
+	if !typedModel.busy {
+		t.Fatal("second Enter must start an agent turn")
+	}
+	if typedModel.message.Value() != "" {
+		t.Fatalf("expected second Enter to clear the composer, got %q", typedModel.message.Value())
+	}
+	if !strings.Contains(typedModel.View(), "You › show @sw_metrics/service_cpm") {
+		t.Fatalf("expected second Enter to send the selected resource reference:\n%s", typedModel.View())
 	}
 }
 

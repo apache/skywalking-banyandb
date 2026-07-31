@@ -186,7 +186,7 @@ func NewModel(config Config) Model {
 	if sessionLog != nil {
 		sessionLog.Write("session", fmt.Sprintf("provider=%s addr=workflow", provider))
 	}
-	model.addEvent("ready: use @ to browse the local schema catalog, then Ctrl+A to ask the agent")
+	model.addEvent("ready: use @ to browse the local schema catalog, then Enter to ask the agent")
 	model.resize(defaultWidth, defaultHeight)
 	model.syncFocus()
 	model.syncExecutionPolicy()
@@ -359,8 +359,8 @@ func (m Model) Update(teaMsg tea.Msg) (tea.Model, tea.Cmd) {
 			m.logWrite("workflow", typedMsg.status)
 			m.status = typedMsg.status
 		} else if m.querySession != nil && !m.querySession.Validation.Valid && m.querySession.CurrentCandidate() != nil {
-			m.status = "invalid candidate — send another message and press Ctrl+A"
-			m.addUIEvent("validation: send another message and press Ctrl+A to refine")
+			m.status = "invalid candidate — send another message and press Enter"
+			m.addUIEvent("validation: send another message and press Enter to refine")
 		}
 		return m, nil
 	case turnTimeoutMsg:
@@ -710,8 +710,6 @@ func (m *Model) handleKey(keyMsg tea.KeyMsg) (tea.Cmd, bool) {
 			return nil, true
 		}
 		return nil, false
-	case "ctrl+a":
-		return m.sendComposerMessage()
 	case "ctrl+v":
 		if m.busy {
 			return nil, true

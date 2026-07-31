@@ -149,18 +149,38 @@ func TestAgentStartedShowsSentMessageImmediately(t *testing.T) {
 func TestSendShowsMessageBeforeAgentSessionStarts(t *testing.T) {
 	model := NewModel(Config{})
 	model.message.SetValue("show payment latency")
-	_, handled := model.handleKey(tea.KeyMsg{Type: tea.KeyCtrlA})
-	if !handled {
-		t.Fatal("expected Ctrl+A to start an agent turn")
+	updatedModel, _ := model.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	typedModel, ok := updatedModel.(Model)
+	if !ok {
+		t.Fatalf("unexpected model type: %T", updatedModel)
 	}
-	if model.message.Value() != "" {
-		t.Fatalf("expected the composer to clear immediately, got %q", model.message.Value())
+	if typedModel.message.Value() != "" {
+		t.Fatalf("expected the composer to clear immediately, got %q", typedModel.message.Value())
 	}
-	if model.currentGoal() != "show payment latency" {
-		t.Fatalf("expected the first message to remain available for session setup, got %q", model.currentGoal())
+	if typedModel.currentGoal() != "show payment latency" {
+		t.Fatalf("expected the first message to remain available for session setup, got %q", typedModel.currentGoal())
 	}
-	if !strings.Contains(model.View(), "You › show payment latency") {
-		t.Fatalf("expected the queued user message in conversation:\n%s", model.View())
+	if !strings.Contains(typedModel.View(), "You › show payment latency") {
+		t.Fatalf("expected the queued user message in conversation:\n%s", typedModel.View())
+	}
+}
+
+func TestCtrlADoesNotSendComposerMessage(t *testing.T) {
+	model := NewModel(Config{})
+	model.message.SetValue("show payment latency")
+	updatedModel, _ := model.Update(tea.KeyMsg{Type: tea.KeyCtrlA})
+	typedModel, ok := updatedModel.(Model)
+	if !ok {
+		t.Fatalf("unexpected model type: %T", updatedModel)
+	}
+	if typedModel.busy {
+		t.Fatal("Ctrl+A must not start an agent turn")
+	}
+	if typedModel.message.Value() != "show payment latency" {
+		t.Fatalf("Ctrl+A must preserve the composer message, got %q", typedModel.message.Value())
+	}
+	if strings.Contains(typedModel.View(), "You › show payment latency") {
+		t.Fatalf("Ctrl+A must not submit the composer message:\n%s", typedModel.View())
 	}
 }
 

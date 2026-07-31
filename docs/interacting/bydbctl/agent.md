@@ -121,7 +121,7 @@ On the Query page:
 
 | Shortcut | Action |
 | --- | --- |
-| `Ctrl+A` | Send the current message to the selected agent |
+| `Enter` | Send the current message to the selected agent |
 | `Ctrl+V` | Validate the current editor content immediately |
 | `Ctrl+E` | Request execution approval for the current valid content |
 | `Ctrl+P` | Cycle execution policy (`ask every time` → `auto probe` → `trust session`) |
@@ -129,6 +129,8 @@ On the Query page:
 | `Ctrl+←` / `Ctrl+→` | Select a previous or next BYDBQL candidate version |
 | `Tab` / `Shift+Tab` | Change focus |
 | `Esc` / `Ctrl+C` | Stop active work; quit when idle |
+
+When the `@` schema picker is open, `Enter` inserts the selected `@group/name` reference. Press `Enter` again to send the message.
 
 The Query page places the conversation and multi-line composer on the left. Execution policy and reasoning visibility are compact status values above the visible start/end time controls; the old autonomous-discovery card is intentionally absent. The right side keeps the current BYDBQL candidate, version history, validation, probe summary, and approval state.
 

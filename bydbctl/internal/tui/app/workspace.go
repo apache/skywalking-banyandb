@@ -224,7 +224,7 @@ func (m Model) renderSchemaSearch(width, resultLimit int) string {
 		}
 		rows = append(rows, mutedStyle.Render(truncate(label, width-4)))
 	}
-	searchHint := "↑↓ preview schema · Enter insert resource chip"
+	searchHint := "↑↓ preview schema · Enter insert resource"
 	if visibleEnd-visibleStart < len(entries) {
 		searchHint = fmt.Sprintf("results %d-%d/%d · %s", visibleStart+1, visibleEnd, len(entries), searchHint)
 	}
