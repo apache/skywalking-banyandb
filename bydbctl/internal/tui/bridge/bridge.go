@@ -372,26 +372,6 @@ func (toolBridge *ToolBridge) proposeQueryPlan(ctx context.Context, callID strin
 	if querySession == nil {
 		return Result{Err: fmt.Errorf("query session is not configured")}
 	}
-	plans, planErr := plannedQueries(arguments)
-	if planErr != nil {
-		diagnostic := planner.Diagnostic{
-			Code:    "PLAN_DECODE_FAILED",
-			Path:    "/",
-			Message: planErr.Error(),
-		}
-		return jsonResult(map[string]any{
-			"valid":       false,
-			"message":     planErr.Error(),
-			"diagnostic":  diagnostic,
-			"schema_hint": queryPlanSchemaHint(),
-			"repair_hint": repairHintForDiagnostic(diagnostic),
-		})
-	}
-	for planIndex, plan := range plans {
-		if !resourceIsDiscoverable(querySession.SchemaSnapshot.Catalog, plan.Resource) {
-			return Result{Err: fmt.Errorf("query plan step %d selects a resource outside the discovered catalog", planIndex+1)}
-		}
-	}
 	attempt, allowed := toolBridge.reservePlanAttempt()
 	if !allowed {
 		return jsonResult(map[string]any{
@@ -408,6 +388,20 @@ func (toolBridge *ToolBridge) proposeQueryPlan(ctx context.Context, callID strin
 			Status:    agent.EventStatusRunning,
 			StartedAt: toolBridge.now(),
 		})
+	}
+	plans, planErr := plannedQueries(arguments)
+	if planErr != nil {
+		diagnostic := planner.Diagnostic{
+			Code:    "PLAN_DECODE_FAILED",
+			Path:    "/",
+			Message: planErr.Error(),
+		}
+		return jsonResult(planFailurePayload(querySession, diagnostic, 0, attempt, ""))
+	}
+	for planIndex, plan := range plans {
+		if !resourceIsDiscoverable(querySession.SchemaSnapshot.Catalog, plan.Resource) {
+			return Result{Err: fmt.Errorf("query plan step %d selects a resource outside the discovered catalog", planIndex+1)}
+		}
 	}
 	compiledQueries := make([]planner.CompiledQuery, 0, len(plans))
 	plannedQueries := make([]session.PlannedQuery, 0, len(plans))

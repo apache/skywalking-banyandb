@@ -192,10 +192,7 @@ func (m Model) renderCandidateCard(width int) string {
 		)),
 	}
 	if !report.Valid && report.Message != "" && report.Message != "not checked" {
-		rows = append(rows,
-			badStyle.Render("Validation: "+truncate(report.Message, width-16)),
-			warnStyle.Render("Ctrl+F ask Agent to repair"),
-		)
+		rows = append(rows, badStyle.Render("Validation: "+truncate(report.Message, width-16)))
 	}
 	return panelStyle.Width(width).Render(lipgloss.JoinVertical(lipgloss.Left, rows...))
 }

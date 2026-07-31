@@ -71,6 +71,9 @@ The Agent starts with no selected schema. It ranks catalog candidates but resolv
 
 The planner rejects unknown JSON fields, implicit value coercion, field filters, tag aggregation, invalid time formats, out-of-range limits, `MATCH`, `HAVING`, `OFFSET`, `STAGES`, `WITH QUERY_TRACE`, joins, and unknown columns rather than guessing. `validate_bydbql` remains a parse/safety and manual-editor check; only a successful `propose_query_plan` can publish a provider candidate. The bridge rejects every other tool, shell command, external MCP server, dynamic registration, and download.
 
+When `propose_query_plan` returns `valid=false`, the provider receives the structured diagnostic and repairs the plan within the same agent turn.
+The bridge allows at most three proposal attempts per schema-description cycle and reports the exhausted repair budget instead of looping indefinitely.
+
 For Codex, bydbctl starts one isolated `codex app-server --stdio` process with an ephemeral in-memory thread, read-only sandboxing, and no approval requests. Built-in
 shell, web, app, plugin, hook, sub-agent, goal, memory, and shell-snapshot features are disabled. Existing user MCP servers are disabled for this process.
 Startup fails unless runtime inventory contains exactly the six controlled tools and no uncontrolled tools or resources.

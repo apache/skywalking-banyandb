@@ -740,8 +740,6 @@ func (m *Model) handleKey(keyMsg tea.KeyMsg) (tea.Cmd, bool) {
 			m.status = "agent reasoning stream hidden"
 		}
 		return nil, true
-	case "ctrl+f":
-		return m.repairInvalidCandidate()
 	case "ctrl+o":
 		exportResult, ok := m.exportResult()
 		if !ok {
@@ -833,30 +831,6 @@ func (m *Model) sendComposerMessage() (tea.Cmd, bool) {
 	turnCtx, cancelTurn := context.WithCancel(context.Background())
 	m.turnCancel = cancelTurn
 	return tea.Batch(m.agentCmd(turnCtx, messageValue), m.turnTimeoutCmd(m.turnStartedAt)), true
-}
-
-func (m *Model) repairInvalidCandidate() (tea.Cmd, bool) {
-	if m.busy || m.querySession == nil {
-		return nil, true
-	}
-	currentCandidate := m.querySession.CurrentCandidate()
-	if currentCandidate == nil || currentCandidate.Validation.Valid || strings.TrimSpace(currentCandidate.Validation.Message) == "" {
-		m.status = "a failed candidate is required before asking Agent to repair"
-		return nil, true
-	}
-	repairMessage := fmt.Sprintf(
-		"Repair this BYDBQL candidate. Keep the user's intent, return a new controlled candidate, and fix this validation error.\n\nCandidate:\n%s\n\nValidation error:\n%s",
-		currentCandidate.Query,
-		currentCandidate.Validation.Message,
-	)
-	m.queuedMessage = repairMessage
-	m.busy = true
-	m.status = "asking agent to repair the candidate"
-	m.turnStartedAt = time.Now()
-	m.logWrite("action", "ctrl+f repair invalid BYDBQL candidate")
-	turnCtx, cancelTurn := context.WithCancel(context.Background())
-	m.turnCancel = cancelTurn
-	return tea.Batch(m.agentCmd(turnCtx, repairMessage), m.turnTimeoutCmd(m.turnStartedAt)), true
 }
 
 func (m Model) exportResult() (session.ExecutionResult, bool) {

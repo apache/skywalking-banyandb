@@ -199,6 +199,32 @@ func TestCtrlVDoesNotStartManualValidation(t *testing.T) {
 	}
 }
 
+func TestCtrlFDoesNotStartAgentRepair(t *testing.T) {
+	model := NewModel(Config{})
+	querySession := &session.QuerySession{}
+	querySession.AddCandidate(session.BydbqlCandidate{
+		Query: "SELECT FROM",
+		Validation: session.ValidationReport{
+			Message: "syntax error near FROM",
+		},
+	})
+	model.querySession = querySession
+	model.syncQuerySession()
+	initialView := model.View()
+
+	updatedModel, updateCmd := model.Update(tea.KeyMsg{Type: tea.KeyCtrlF})
+	if updateCmd != nil {
+		t.Fatal("Ctrl+F must not return an agent repair command")
+	}
+	typedModel, ok := updatedModel.(Model)
+	if !ok {
+		t.Fatalf("unexpected model type: %T", updatedModel)
+	}
+	if typedModel.View() != initialView {
+		t.Fatalf("Ctrl+F must not change the workspace:\n%s", typedModel.View())
+	}
+}
+
 func TestViewOmitsManualValidationShortcut(t *testing.T) {
 	model := NewModel(Config{})
 	if strings.Contains(model.View(), "Ctrl+V") {

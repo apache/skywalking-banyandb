@@ -629,6 +629,36 @@ func TestBridgeLimitsAutomaticPlanRepairs(t *testing.T) {
 	}
 }
 
+func TestBridgeLimitsMalformedPlanRepairs(t *testing.T) {
+	schema := session.SchemaSnapshot{
+		Type:   session.ResourceTypeMeasure,
+		Name:   "service_latency",
+		Groups: []string{"production"},
+		Loaded: true,
+		Columns: []session.SchemaColumn{
+			{Name: "latency", Kind: session.SchemaColumnField, Type: session.SchemaValueTypeFloat},
+		},
+	}
+	toolBridge := New(Config{Executor: &stubExecutor{schema: schema}, Validator: &stubValidator{report: session.ValidationReport{Valid: true}}})
+	toolBridge.SetSession(querySessionWithSchema(schema))
+	malformedArguments := map[string]any{
+		"plan": map[string]any{"unexpected": true},
+	}
+	for attempt := 0; attempt < MaxPlanRepairAttempts; attempt++ {
+		result := toolBridge.Call(context.Background(), Call{Name: ToolProposeQueryPlan, Arguments: malformedArguments})
+		if result.Err != nil || !strings.Contains(result.Content, `"valid":false`) || strings.Contains(result.Content, "repair limit") {
+			t.Fatalf("expected repairable malformed proposal at attempt %d, got %+v", attempt+1, result)
+		}
+		if !strings.Contains(result.Content, `"attempts_remaining"`) {
+			t.Fatalf("expected attempts_remaining for malformed proposal at attempt %d, got %s", attempt+1, result.Content)
+		}
+	}
+	result := toolBridge.Call(context.Background(), Call{Name: ToolProposeQueryPlan, Arguments: malformedArguments})
+	if result.Err != nil || !strings.Contains(result.Content, planRepairLimitMessage()) {
+		t.Fatalf("expected repair limit after malformed proposals, got %+v", result)
+	}
+}
+
 func TestBridgeDiscoversExactSchemaDuringProposal(t *testing.T) {
 	schema := session.SchemaSnapshot{
 		Type:   session.ResourceTypeMeasure,

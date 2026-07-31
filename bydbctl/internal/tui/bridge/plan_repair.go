@@ -25,7 +25,7 @@ import (
 	"github.com/apache/skywalking-banyandb/bydbctl/internal/tui/session"
 )
 
-// MaxPlanRepairAttempts is the number of compile/validation repairs allowed per describe_schema cycle.
+// MaxPlanRepairAttempts is the number of query plan proposals allowed per describe_schema cycle.
 const MaxPlanRepairAttempts = agent.DefaultMaxPlanAttempts
 
 func planFailurePayload(

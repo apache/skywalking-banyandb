@@ -246,7 +246,7 @@ func TestComposerEnterInsertsThenSendsSelectedResourceReference(t *testing.T) {
 	}
 }
 
-func TestInvalidCandidateOffersAgentRepair(t *testing.T) {
+func TestInvalidCandidateDoesNotOfferManualAgentRepair(t *testing.T) {
 	model := NewModel(Config{})
 	querySession := &session.QuerySession{}
 	querySession.AddCandidate(session.BydbqlCandidate{
@@ -258,7 +258,7 @@ func TestInvalidCandidateOffersAgentRepair(t *testing.T) {
 	model.querySession = querySession
 	model.syncQuerySession()
 
-	if !strings.Contains(model.View(), "Ctrl+F ask Agent to repair") {
-		t.Fatalf("expected repair action for invalid candidate:\n%s", model.View())
+	if strings.Contains(model.View(), "Ctrl+F") {
+		t.Fatalf("manual repair shortcut must not appear for an invalid candidate:\n%s", model.View())
 	}
 }
