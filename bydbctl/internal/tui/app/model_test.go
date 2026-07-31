@@ -184,6 +184,28 @@ func TestCtrlADoesNotSendComposerMessage(t *testing.T) {
 	}
 }
 
+func TestCtrlVDoesNotStartManualValidation(t *testing.T) {
+	model := NewModel(Config{})
+	updatedModel, _ := model.Update(tea.KeyMsg{Type: tea.KeyCtrlV})
+	typedModel, ok := updatedModel.(Model)
+	if !ok {
+		t.Fatalf("unexpected model type: %T", updatedModel)
+	}
+	if typedModel.busy {
+		t.Fatal("Ctrl+V must not start manual validation")
+	}
+	if typedModel.status == "validating query" {
+		t.Fatalf("Ctrl+V must not change validation status, got %q", typedModel.status)
+	}
+}
+
+func TestViewOmitsManualValidationShortcut(t *testing.T) {
+	model := NewModel(Config{})
+	if strings.Contains(model.View(), "Ctrl+V") {
+		t.Fatalf("manual validation shortcut must not appear in the TUI:\n%s", model.View())
+	}
+}
+
 func TestNewModelFocusesConversationComposer(t *testing.T) {
 	model := NewModel(Config{})
 	if model.focus != focusMessage {

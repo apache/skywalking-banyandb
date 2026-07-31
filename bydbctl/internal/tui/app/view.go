@@ -314,10 +314,27 @@ func approvalScanEstimate(request approval.Request) string {
 
 func (m Model) renderFooter(width int) string {
 	commands := []string{
-		"@ schema", "Enter send", "Ctrl+V validate", "Ctrl+E run", "Ctrl+F repair", "Ctrl+P policy", "Ctrl+R reasoning",
+		"@ schema", "Enter send", "Ctrl+E run", "Ctrl+F repair", "Ctrl+P policy", "Ctrl+R reasoning",
 		"Ctrl+←/→ versions", "Ctrl+O export", "Ctrl+J full response", "Tab focus", "Esc stop/quit",
 	}
-	return lipgloss.NewStyle().Width(width).Foreground(mutedColor).Render(strings.Join(commands, "  "))
+	var lines []string
+	currentLine := ""
+	for _, command := range commands {
+		candidateLine := command
+		if currentLine != "" {
+			candidateLine = currentLine + "  " + command
+		}
+		if currentLine != "" && lipgloss.Width(candidateLine) > width {
+			lines = append(lines, currentLine)
+			currentLine = command
+			continue
+		}
+		currentLine = candidateLine
+	}
+	if currentLine != "" {
+		lines = append(lines, currentLine)
+	}
+	return lipgloss.NewStyle().Width(width).Foreground(mutedColor).Render(strings.Join(lines, "\n"))
 }
 
 func fallback(value, fallbackValue string) string {

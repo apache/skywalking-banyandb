@@ -77,6 +77,17 @@ func TestWorkspaceFitsTerminalWithProviderVisible(t *testing.T) {
 	)
 }
 
+func TestFooterWrapsBetweenShortcutLabels(t *testing.T) {
+	model := NewModel(Config{})
+	model.resize(160, 42)
+	view := model.View()
+	for _, shortcut := range []string{"Tab focus", "Esc stop/quit"} {
+		if !strings.Contains(view, shortcut) {
+			t.Fatalf("expected complete shortcut label %q in workspace:\n%s", shortcut, view)
+		}
+	}
+}
+
 func TestWorkspaceFitsTerminalWithSelectedChatDetail(t *testing.T) {
 	const terminalHeight = 42
 	model := NewModel(Config{Provider: "claude"})

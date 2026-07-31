@@ -710,14 +710,6 @@ func (m *Model) handleKey(keyMsg tea.KeyMsg) (tea.Cmd, bool) {
 			return nil, true
 		}
 		return nil, false
-	case "ctrl+v":
-		if m.busy {
-			return nil, true
-		}
-		m.busy = true
-		m.status = "validating query"
-		m.logWrite("action", "ctrl+v validate query")
-		return m.validateCmd(), true
 	case "ctrl+e":
 		if m.busy {
 			return nil, true

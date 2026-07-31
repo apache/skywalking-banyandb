@@ -122,7 +122,6 @@ On the Query page:
 | Shortcut | Action |
 | --- | --- |
 | `Enter` | Send the current message to the selected agent |
-| `Ctrl+V` | Validate the current editor content immediately |
 | `Ctrl+E` | Request execution approval for the current valid content |
 | `Ctrl+P` | Cycle execution policy (`ask every time` → `auto probe` → `trust session`) |
 | `Ctrl+R` | Toggle visible agent reasoning stream in Activity / Conversation |
