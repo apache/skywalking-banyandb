@@ -31,10 +31,11 @@ trap 'rm -f "$JAR" "$RESP"' EXIT
 fail() { echo "SMOKE FAIL: $*" >&2; exit 1; }
 ok() { echo "ok - $*"; }
 
-# curl helpers: assert HTTP 200, body left in $RESP.
+# curl helpers: assert HTTP 200, body left in $RESP. Every request carries a
+# max-time so a stalled container hangs the job for seconds, not forever.
 post() { # path body
   local code
-  code=$(curl -sS -o "$RESP" -w "%{http_code}" -b "$JAR" -X POST "$BASE$1" \
+  code=$(curl -sS --max-time 30 -o "$RESP" -w "%{http_code}" -b "$JAR" -X POST "$BASE$1" \
     -H 'Content-Type: application/json' -d "$2") || fail "POST $1 transport error"
   [ "$code" = 200 ] || fail "POST $1 -> HTTP $code: $(head -c 300 "$RESP")"
 }
@@ -42,13 +43,13 @@ post() { # path body
 # is idempotent across reruns against a reused topology.
 seed() { # path body
   local code
-  code=$(curl -sS -o "$RESP" -w "%{http_code}" -b "$JAR" -X POST "$BASE$1" \
+  code=$(curl -sS --max-time 30 -o "$RESP" -w "%{http_code}" -b "$JAR" -X POST "$BASE$1" \
     -H 'Content-Type: application/json' -d "$2") || fail "POST $1 transport error"
   [ "$code" = 200 ] || [ "$code" = 409 ] || fail "POST $1 -> HTTP $code: $(head -c 300 "$RESP")"
 }
 get() { # path
   local code
-  code=$(curl -sS -o "$RESP" -w "%{http_code}" -b "$JAR" "$BASE$1") || fail "GET $1 transport error"
+  code=$(curl -sS --max-time 30 -o "$RESP" -w "%{http_code}" -b "$JAR" "$BASE$1") || fail "GET $1 transport error"
   [ "$code" = 200 ] || fail "GET $1 -> HTTP $code: $(head -c 300 "$RESP")"
 }
 
@@ -62,7 +63,7 @@ done
 ok "healthz"
 
 # ── 2. production login (CANOPY_USERS, bcrypt) ─────────────────────────────
-code=$(curl -sS -o "$RESP" -w "%{http_code}" -c "$JAR" -X POST "$BASE/auth/login" \
+code=$(curl -sS --max-time 30 -o "$RESP" -w "%{http_code}" -c "$JAR" -X POST "$BASE/auth/login" \
   -H 'Content-Type: application/json' \
   -d '{"username":"canopy-admin","password":"canopy-it-pass"}')
 [ "$code" = 200 ] || fail "login -> HTTP $code: $(head -c 300 "$RESP")"
@@ -75,7 +76,7 @@ grep -q '"reachable":true' "$RESP" || fail "/api/meta reports unreachable: $(hea
 ok "api/meta reachable"
 
 # ── 4. SPA served ──────────────────────────────────────────────────────────
-code=$(curl -sS -o "$RESP" -w "%{http_code}" "$BASE/")
+code=$(curl -sS --max-time 30 -o "$RESP" -w "%{http_code}" "$BASE/")
 [ "$code" = 200 ] || fail "SPA index -> HTTP $code"
 grep -qi '<div id="root"' "$RESP" || grep -qi '<script' "$RESP" || fail "SPA index has no app markup"
 ok "SPA index"
@@ -110,9 +111,10 @@ ok "trace ORDER BY start_time (bound rule) accepted"
 
 # Negative control: a rule that does NOT exist must fail with the analyzer's
 # message — proves the probe above actually exercised the index-rule path.
-code=$(curl -sS -o "$RESP" -w "%{http_code}" -b "$JAR" -X POST "$BASE/api/v1/bydbql/query" \
+code=$(curl -sS --max-time 30 -o "$RESP" -w "%{http_code}" -b "$JAR" -X POST "$BASE/api/v1/bydbql/query" \
   -H 'Content-Type: application/json' \
-  -d '{"query":"SELECT trace_id FROM TRACE segment IN it_traces TIME > '"'"'-1h'"'"' ORDER BY timestamp DESC LIMIT 5"}')
+  -d '{"query":"SELECT trace_id FROM TRACE segment IN it_traces TIME > '"'"'-1h'"'"' ORDER BY timestamp DESC LIMIT 5"}') \
+  || fail "negative control: transport error"
 grep -q 'index rule timestamp not found' "$RESP" || fail "negative control: expected 'index rule timestamp not found', got HTTP $code: $(head -c 300 "$RESP")"
 ok "negative control: unbound rule name rejected"
 

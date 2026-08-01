@@ -61,9 +61,10 @@ e2e: build
 .PHONY: release
 release: build
 
-# docker / docker.push come from docker.mk (build the web+server bundles first,
-# like mcp does). The image tag gets the "-canopy" suffix inside docker.mk.
-docker: build
+# docker / docker.push come from docker.mk. Unlike mcp, they do NOT depend on
+# the host-side build: the Dockerfile runs the full npm ci + build in-container
+# (and the CI image-build job has no Node setup), so a host toolchain is never
+# required for the image.
 
 # license-check / license-fix delegate to the ROOT .licenserc.yaml instead of
 # canopy/.licenserc.yaml, so the OMC runtime state + handoff / playwright

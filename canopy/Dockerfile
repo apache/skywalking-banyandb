@@ -39,9 +39,14 @@ RUN npm run build
 FROM deps AS prod-deps
 RUN npm ci --omit=dev
 
-# ── runtime: distroless node24. Node >= 23.6 strips TypeScript types natively,
-#    which is how the BFF resolves canopy-shared (exports raw src/index.ts —
-#    see server/tsconfig.json paths). nonroot, no shell, no package manager. ──
+# ── runtime: distroless node24. The compiled server has NO runtime imports of
+#    canopy-shared (verified: `grep -r canopy-shared server/dist/src` is empty
+#    — every shared import is type-only and elided by tsc), so the enums in
+#    shared/src/schema.ts are never executed here. shared/ is still copied so
+#    the node_modules workspace symlink resolves; if a VALUE import of
+#    canopy-shared is ever added, shared must gain a real JS build — Node's
+#    type stripping does not execute `export enum`, and the integration smoke
+#    (boot + all endpoints) is the guardrail that would catch it. ──
 FROM gcr.io/distroless/nodejs24-debian12:nonroot
 WORKDIR /app
 COPY --from=build /app/web/dist web/dist
