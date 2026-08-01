@@ -237,8 +237,8 @@ DRIVER_IMAGE_DIGEST=$(docker inspect \
 DRIVER_IMAGE_DIGEST="${DRIVER_IMAGE_DIGEST:-unknown}"
 log "soak-driver image digest: ${DRIVER_IMAGE_DIGEST}"
 
-# ── TRACE PHASE 0 — Baseline (vec-off) ───────────────────────────────────────
-log "=== TRACE PHASE 0: Baseline (BANYANDB_VEC_ENABLED=false) ==="
+# ── PHASE 0 — Baseline (vec-off) ───────────────────────────────────────
+log "=== ${SOAK_ENGINE} PHASE 0: Baseline (BANYANDB_VEC_ENABLED=false) ==="
 
 # Phase 0 MUST start from an empty data dir. The dir is a host bind mount, so
 # `compose down -v` (which only drops volumes) leaves it behind: a previous run's
@@ -316,8 +316,8 @@ trap - EXIT
 compose_cmd down -v --remove-orphans
 trap cleanup INT TERM EXIT
 
-# ── TRACE PHASE 1 — Soak (vec-on) ────────────────────────────────────────────
-log "=== TRACE PHASE 1: Soak (BANYANDB_VEC_ENABLED=true, duration=${SOAK_HOURS}h) ==="
+# ── PHASE 1 — Soak (vec-on) ────────────────────────────────────────────
+log "=== ${SOAK_ENGINE} PHASE 1: Soak (BANYANDB_VEC_ENABLED=true, duration=${SOAK_HOURS}h) ==="
 
 log "Restoring data snapshot..."
 rm -rf "${DATA_DIR:?}"/*
@@ -458,7 +458,7 @@ echo "never" > "${WRITE_LOAD_LAST_OK_FILE}"
 ) &
 WRITE_LOAD_PID=$!
 
-log "Trace soak running for ${SOAK_HOURS} hours. Loops started (pids: pprof=${PPROF_LOOP_PID} parity=${PARITY_LOOP_PID} write-load=${WRITE_LOAD_PID})."
+log "${SOAK_ENGINE} soak running for ${SOAK_HOURS} hours. Loops started (pids: pprof=${PPROF_LOOP_PID} parity=${PARITY_LOOP_PID} write-load=${WRITE_LOAD_PID})."
 
 # Wait for soak duration.
 REMAINING=$(( SOAK_END - $(date +%s) ))
@@ -540,7 +540,7 @@ cat > "${DIST}/summary.json" <<EOF
 EOF
 
 log "Summary written to ${DIST}/summary.json"
-log "=== Trace soak complete. Artefacts: ${DIST} ==="
+log "=== ${SOAK_ENGINE} soak complete. Artefacts: ${DIST} ==="
 
 trap - EXIT INT TERM
 compose_cmd down -v --remove-orphans
