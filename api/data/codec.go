@@ -212,6 +212,9 @@ func (c *measureQueryResponseCodec) Unmarshal(body []byte) (any, error) {
 		return c.proto.Unmarshal(body)
 	}
 	if len(body) == 0 || body[0] == RawFrameMagicLeadingByte {
+		if len(body) > 0 {
+			measureFrameDecoded.Add(1)
+		}
 		return c.raw.Unmarshal(body)
 	}
 	return c.proto.Unmarshal(body)

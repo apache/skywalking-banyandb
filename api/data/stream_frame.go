@@ -44,6 +44,7 @@ func (c *streamQueryResponseCodec) Marshal(v any) ([]byte, error) {
 // otherwise it is proto-unmarshaled.
 func (c *streamQueryResponseCodec) Unmarshal(body []byte) (any, error) {
 	if StreamWireModeRaw() && len(body) > 0 && body[0] == RawFrameMagicLeadingByte {
+		streamFrameDecoded.Add(1)
 		return c.raw.Unmarshal(body)
 	}
 	return c.proto.Unmarshal(body)

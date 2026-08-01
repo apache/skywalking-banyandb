@@ -321,6 +321,7 @@ func (s *server) marshalResponse(
 			s.replyWithErrType(stream, writeEntity, nil, fmt.Sprintf("invalid response: unexpected raw body on topic %s", topic), identity, "marshal_error")
 			return nil, fmt.Errorf("invalid raw body")
 		}
+		data.IncrFrameEncoded(topic)
 		return d, nil
 	case *common.Error:
 		s.replyWithErrType(stream, writeEntity, nil, d.Error(), identity, "handler_error")
