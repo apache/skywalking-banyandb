@@ -36,10 +36,32 @@ type VectorizedConfig struct {
 	Enabled        bool
 }
 
-// DefaultConfig returns the default stream vectorized configuration.
+// DefaultConfig returns the default stream vectorized configuration — enabled,
+// with the shared default batch size and a 256 MiB per-query memory budget.
+//
+// The query layer dedups by element_id and holds the seen-set for the whole query,
+// because an element_id identifies an element GLOBALLY: two rows carrying one
+// element_id are one element, whatever their timestamps or which parts they were
+// read from. test/cases/stream's "deduplication test" pins that — 50 records over 27
+// distinct ids at 50 different timestamps must come back as 27 rows.
+//
+// The row path uses the same key but allocates its seen-set per merge round
+// (blockCursorHeap.merge / model.MergeStreamResults, one per runTabScanner call), so
+// it only collapses duplicates that land in the same round. That is a weaker
+// guarantee than this path gives, not a different semantic; a fixture that reuses an
+// element_id across two writes is malformed either way.
+//
+// Enabled also selects the liaison<->data wire format: a flag-on distributed data
+// node emits the native columnar frame instead of protobuf. A liaison decodes both
+// (it dispatches on the frame magic byte per message), but an older liaison has no
+// frame decoder at all, so a cluster must upgrade liaison nodes BEFORE data nodes.
+// See docs/operation/upgrade.md.
+//
+// To roll back the vec path entirely, pass --stream-vectorized-enabled=false on the
+// standalone or data-node command line and restart; the row path resumes immediately.
 func DefaultConfig() VectorizedConfig {
 	return VectorizedConfig{
-		Enabled:        false,
+		Enabled:        true,
 		BatchSize:      vectorized.DefaultBatchSize,
 		QueryMemoryMiB: 256,
 	}
