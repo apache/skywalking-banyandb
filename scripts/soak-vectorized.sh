@@ -44,6 +44,19 @@ set -euo pipefail
 
 # ── engine selection ──────────────────────────────────────────────────────────
 SOAK_ENGINE="${SOAK_ENGINE:-measure}"
+# Topology: `standalone` is a single node; `distributed` is 1 liaison + 2 data
+# nodes. The distinction is not cosmetic — a data node only emits the native
+# columnar wire frame when it is distributed, so a standalone run exercises the
+# vec COMPUTE path and always falls back to protobuf on the wire.
+SOAK_TOPOLOGY="${SOAK_TOPOLOGY:-standalone}"
+if [[ "${SOAK_TOPOLOGY}" != "standalone" && "${SOAK_TOPOLOGY}" != "distributed" ]]; then
+  echo "ERROR: SOAK_TOPOLOGY must be 'standalone' or 'distributed' (got '${SOAK_TOPOLOGY}')"
+  exit 1
+fi
+if [[ "${SOAK_TOPOLOGY}" == "distributed" && "${SOAK_ENGINE}" == "measure" ]]; then
+  echo "ERROR: SOAK_TOPOLOGY=distributed is wired for the trace/stream branch only"
+  exit 1
+fi
 if [[ "${SOAK_ENGINE}" != "measure" && "${SOAK_ENGINE}" != "trace" && "${SOAK_ENGINE}" != "stream" ]]; then
   echo "ERROR: SOAK_ENGINE must be 'measure', 'trace' or 'stream' (got '${SOAK_ENGINE}')"
   exit 1
@@ -91,6 +104,26 @@ BANYANDB_PPROF="localhost:6060"
 # Inside the compose network the DB service is reachable by service name.
 BANYANDB_GRPC_CONTAINER="banyandb:17912"
 BANYANDB_PPROF_CONTAINER="banyandb:6060"
+# The service compose brings up (its deps follow), the container health/inspect
+# reads, and the roles pprof is captured from. Standalone has one of each; the
+# distributed topology queries through the liaison but must profile all three,
+# because frame ENCODE buffers live on the data nodes and DECODE plus the
+# cross-node merge live on the liaison — a single-process capture sees neither.
+BANYANDB_UP_SERVICE="banyandb"
+PPROF_ROLES=( "node:banyandb:6060" )
+DATA_DIRS=( "${REPO_ROOT}/test/soak/data" )
+if [[ "${SOAK_TOPOLOGY}" == "distributed" ]]; then
+  COMPOSE_FILE="${REPO_ROOT}/test/soak/docker-compose.soak-distributed.yaml"
+  BANYANDB_GRPC_CONTAINER="soak-liaison:17912"
+  BANYANDB_PPROF_CONTAINER="soak-liaison:6060"
+  BANYANDB_UP_SERVICE="soak-liaison"
+  PPROF_ROLES=( "liaison:soak-liaison:6060" "data-1:soak-data-1:6060" "data-2:soak-data-2:6060" )
+  DATA_DIRS=(
+    "${REPO_ROOT}/test/soak/data-distributed/liaison"
+    "${REPO_ROOT}/test/soak/data-distributed/data-1"
+    "${REPO_ROOT}/test/soak/data-distributed/data-2"
+  )
+fi
 
 # Isolate this soak from other docker-compose workflows on a shared host. The
 # compose project name (default "soak" = the compose-file dir basename) and the
@@ -98,7 +131,12 @@ BANYANDB_PPROF_CONTAINER="banyandb:6060"
 # `compose up`/`down` referencing the same project or a container literally named
 # "banyandb" can replace this soak's DB mid-run. Override both with unique names.
 export COMPOSE_PROJECT_NAME="${SOAK_COMPOSE_PROJECT:-soakvec}"
-export BANYANDB_CONTAINER_NAME="${SOAK_BANYANDB_CONTAINER:-banyandb-soakvec}"
+if [[ "${SOAK_TOPOLOGY}" == "distributed" ]]; then
+  export COMPOSE_PROJECT_NAME="${SOAK_COMPOSE_PROJECT:-soakdist}"
+  export BANYANDB_CONTAINER_NAME="${SOAK_BANYANDB_CONTAINER:-soak-liaison}"
+else
+  export BANYANDB_CONTAINER_NAME="${SOAK_BANYANDB_CONTAINER:-banyandb-soakvec}"
+fi
 
 # Pass host UID/GID to compose so the BanyanDB container writes the
 # bind-mounted /data dir as the host user (otherwise root-owned files
@@ -163,6 +201,60 @@ soak_driver_container() {
     soak-driver "$@"
 }
 
+# pprof_grab_all captures heap+goroutine from every role in PPROF_ROLES into
+# <out_root>/<role>/ (standalone keeps its single "node" role). Returns the
+# goroutine count of the FIRST role so existing callers keep their contract.
+pprof_grab_all() {
+  local out_root="$1" role spec name addr first_count=""
+  for spec in "${PPROF_ROLES[@]}"; do
+    name="${spec%%:*}"
+    addr="${spec#*:}"
+    mkdir -p "${out_root}/${name}"
+    local count
+    count=$(soak_driver_container pprof-grab \
+      --addr "${addr}" \
+      --out-dir "/artifacts/${out_root#${DIST}/}/${name}" 2>/dev/null | tail -1 || true)
+    [[ -z "${first_count}" ]] && first_count="${count}"
+  done
+  echo "${first_count}"
+}
+
+# assert_frames_flowing is the Phase -1 gate. The whole point of the distributed
+# soak is the native columnar frame, and a run that silently falls back to
+# protobuf would still produce six clean hours of parity — which is exactly how a
+# 48h standalone soak passed while never encoding a single frame. So prove the
+# frame is carrying traffic before committing the window, and abort if it is not.
+#
+# The counters are published as gauges refreshed by a periodic collector, so a
+# freshly-served query is not visible until the next tick; poll rather than probe.
+assert_frames_flowing() {
+  local engine="$1" deadline=$(( SECONDS + 180 )) enc_total dec liaison_ok=0
+  log "Phase -1: verifying the ${engine} columnar frame is actually in use..."
+  while (( SECONDS < deadline )); do
+    enc_total=0
+    for spec in "${PPROF_ROLES[@]}"; do
+      local name="${spec%%:*}" host="${spec#*:}"
+      host="${host%%:*}"
+      [[ "${name}" == liaison* ]] && continue
+      local v
+      v=$(docker exec "${host}" sh -c "wget -qO- http://127.0.0.1:2121/metrics" 2>/dev/null \
+        | grep -oE "vec_frame_encoded\{engine=\"${engine}\"\} [0-9]+" | grep -oE '[0-9]+$' || echo 0)
+      enc_total=$(( enc_total + ${v:-0} ))
+    done
+    dec=$(docker exec "${BANYANDB_CONTAINER_NAME}" sh -c "wget -qO- http://127.0.0.1:2121/metrics" 2>/dev/null \
+      | grep -oE "vec_frame_decoded\{engine=\"${engine}\"\} [0-9]+" | grep -oE '[0-9]+$' || echo 0)
+    (( ${dec:-0} > 0 )) && liaison_ok=1
+    if (( enc_total > 0 && liaison_ok == 1 )); then
+      log "Phase -1 OK: frames encoded=${enc_total} across data nodes, decoded=${dec} on the liaison."
+      return 0
+    fi
+    sleep 10
+  done
+  log "ERROR: Phase -1 FAILED — encoded=${enc_total:-0} decoded=${dec:-0} for engine ${engine}."
+  log "       The cluster is not using the columnar wire frame; a soak now would prove nothing."
+  return 1
+}
+
 # soak_driver is kept for the MEASURE path (host binary) — unchanged from the
 # original harness. The TRACE path uses soak_driver_container instead.
 soak_driver() {
@@ -225,7 +317,7 @@ log "soak-driver image built."
 # build Phase 0 can boot a stale binary that lacks new flags and dies with
 # "unknown flag: --trace-vectorized-enabled". Build once; both phases reuse it.
 log "Building banyand container image (current source)..."
-compose_cmd build banyandb
+compose_cmd build "${BANYANDB_UP_SERVICE}"
 log "banyand image built."
 
 # Record image digest for reproducibility.
@@ -245,10 +337,13 @@ log "=== ${SOAK_ENGINE} PHASE 0: Baseline (BANYANDB_VEC_ENABLED=false) ==="
 # elements would pollute the baseline, and — worse — its persisted schema would
 # make every registry Create return AlreadyExists, silently keeping the OLD
 # schema (e.g. a stale index-rule type/id) no matter what this run defines.
-log "Wiping ${DATA_DIR} so Phase 0 starts from a clean slate..."
-rm -rf "${DATA_DIR:?}"/*
+for d in "${DATA_DIRS[@]}"; do
+  log "Wiping ${d} so Phase 0 starts from a clean slate..."
+  mkdir -p "${d}"
+  rm -rf "${d:?}"/*
+done
 
-SOAK_DATA_DIR="${DATA_DIR}" BANYANDB_VEC_ENABLED=false compose_cmd up -d banyandb
+SOAK_DATA_DIR="${DATA_DIR}" BANYANDB_VEC_ENABLED=false compose_cmd up -d "${BANYANDB_UP_SERVICE}"
 wait_banyandb_container_healthy
 
 # Record BanyanDB container image digest.
@@ -303,10 +398,14 @@ if [[ "${baseline_trace_count}" == "0" ]]; then
 fi
 
 log "Stopping BanyanDB to snapshot data..."
-compose_cmd stop banyandb
+compose_cmd stop
 
 log "Copying data to ${SNAPSHOT_DIR}..."
-cp -a "${DATA_DIR}/." "${SNAPSHOT_DIR}/"
+for d in "${DATA_DIRS[@]}"; do
+  sub="$(basename "${d}")"
+  mkdir -p "${SNAPSHOT_DIR}/${sub}"
+  cp -a "${d}/." "${SNAPSHOT_DIR}/${sub}/"
+done
 
 snap_size=$(du -sb "${SNAPSHOT_DIR}" 2>/dev/null | awk '{print $1}')
 log "Snapshot size: ${snap_size:-0} bytes"
@@ -321,9 +420,14 @@ log "=== ${SOAK_ENGINE} PHASE 1: Soak (BANYANDB_VEC_ENABLED=true, duration=${SOA
 
 log "Restoring data snapshot..."
 rm -rf "${DATA_DIR:?}"/*
-cp -a "${SNAPSHOT_DIR}/." "${DATA_DIR}/"
+for d in "${DATA_DIRS[@]}"; do
+  sub="$(basename "${d}")"
+  mkdir -p "${d}"
+  rm -rf "${d:?}"/*
+  cp -a "${SNAPSHOT_DIR}/${sub}/." "${d}/"
+done
 
-SOAK_DATA_DIR="${DATA_DIR}" BANYANDB_VEC_ENABLED=true compose_cmd up -d banyandb
+SOAK_DATA_DIR="${DATA_DIR}" BANYANDB_VEC_ENABLED=true compose_cmd up -d "${BANYANDB_UP_SERVICE}"
 wait_banyandb_container_healthy
 
 # Gate: verify the container actually honored --trace-vectorized-enabled=true.
@@ -338,12 +442,31 @@ if docker inspect "${BANYANDB_CONTAINER_NAME}" --format '{{json .Args}}' 2>/dev/
 fi
 log "Vec flag honored: ${VEC_FLAG_HONORED}"
 
+# Phase -1 (distributed only): the flag being honored proves the vec COMPUTE
+# path is on; it does NOT prove the columnar frame is on the wire. Drive one
+# replay so there is traffic to observe, then gate on the frame counters and
+# abort before committing the soak window if they are flat.
+if [[ "${SOAK_TOPOLOGY}" == "distributed" ]]; then
+  log "Phase -1: driving one replay to generate frame traffic..."
+  # Same invocation the parity loop uses. A divergence here is not fatal — the
+  # frame gate below is what decides — but the command must actually RUN, so its
+  # output is logged rather than discarded: an invocation error produces no
+  # traffic at all, which the gate would then report as "no frames" and blame on
+  # the engine.
+  soak_driver_container replay-and-diff \
+    --engine "${ENGINE}" \
+    --addr "${BANYANDB_GRPC_CONTAINER}" \
+    --catalog "${ENGINE_CATALOG}" \
+    --baseline /artifacts/baseline.json \
+    --report /artifacts/diff-phase-minus-1.json > "${DIST}/phase-minus-1.log" 2>&1 || \
+    { log "WARN: Phase -1 probe replay reported a diff — first failures:"; grep -E "FAIL|error" "${DIST}/phase-minus-1.log" | head -4 | sed "s/^/    /"; }
+  assert_frames_flowing "${ENGINE}" || exit 1
+fi
+
 # Initial pprof grab via the driver container (reaches banyandb:6060 over the
 # compose network).
 mkdir -p "${DIST}/pprof-start"
-soak_driver_container pprof-grab \
-  --addr "${BANYANDB_PPROF_CONTAINER}" \
-  --out-dir /artifacts/pprof-start
+pprof_grab_all "${DIST}/pprof-start" >/dev/null
 log "Initial pprof captured."
 
 # Record driver container resource limits (inspect just after first run so the
@@ -398,9 +521,7 @@ SOAK_END=$(( $(date +%s) + SOAK_HOURS_SEC ))
     (( $(date +%s) >= SOAK_END )) && break
     INTERVAL_TS="$(date +%Y%m%dT%H%M%S)"
     mkdir -p "${DIST}/pprof-${INTERVAL_TS}"
-    soak_driver_container pprof-grab \
-      --addr "${BANYANDB_PPROF_CONTAINER}" \
-      --out-dir "/artifacts/pprof-${INTERVAL_TS}" || \
+    pprof_grab_all "${DIST}/pprof-${INTERVAL_TS}" >/dev/null || \
       log "WARN: pprof-grab failed at ${INTERVAL_TS}"
     log "pprof captured: pprof-${INTERVAL_TS}"
   done
@@ -475,9 +596,7 @@ kill "${LOGS_PID}" "${GREP_PID}" "${RSS_PID}" 2>/dev/null || true
 
 # Final pprof.
 mkdir -p "${DIST}/pprof-end"
-soak_driver_container pprof-grab \
-  --addr "${BANYANDB_PPROF_CONTAINER}" \
-  --out-dir /artifacts/pprof-end
+pprof_grab_all "${DIST}/pprof-end" >/dev/null
 log "Final pprof captured."
 
 # Final parity check (sets FINAL_PASS).
@@ -494,7 +613,17 @@ log "Final parity check: pass=${FINAL_PASS}"
 extract_goroutine_total() {
   local dir="$1"
   local f
+  # Standalone writes goroutine-*.txt directly under the pprof dir; the
+  # distributed topology captures one sub-dir per role, so look one level down
+  # too and prefer the liaison, which is the role the summary's start/end pair
+  # has always described.
   f=$(ls "${dir}"/goroutine-*.txt 2>/dev/null | head -1)
+  if [[ -z "${f}" ]]; then
+    f=$(ls "${dir}"/liaison/goroutine-*.txt 2>/dev/null | head -1)
+  fi
+  if [[ -z "${f}" ]]; then
+    f=$(ls "${dir}"/*/goroutine-*.txt 2>/dev/null | head -1)
+  fi
   if [[ -z "${f}" ]]; then
     echo 0
     return
@@ -732,7 +861,17 @@ kill "${LOGS_PID}" "${GREP_PID}" 2>/dev/null || true
 extract_goroutine_total() {
   local dir="$1"
   local f
+  # Standalone writes goroutine-*.txt directly under the pprof dir; the
+  # distributed topology captures one sub-dir per role, so look one level down
+  # too and prefer the liaison, which is the role the summary's start/end pair
+  # has always described.
   f=$(ls "${dir}"/goroutine-*.txt 2>/dev/null | head -1)
+  if [[ -z "${f}" ]]; then
+    f=$(ls "${dir}"/liaison/goroutine-*.txt 2>/dev/null | head -1)
+  fi
+  if [[ -z "${f}" ]]; then
+    f=$(ls "${dir}"/*/goroutine-*.txt 2>/dev/null | head -1)
+  fi
   if [[ -z "${f}" ]]; then
     echo 0
     return
