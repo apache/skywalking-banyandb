@@ -510,6 +510,10 @@ function TraceInspectorRow({ index, element, tsField, config, detailConfig, bind
   );
 }
 
+// Strings longer than this render through CopyableId (hover popover with the
+// full value + Copy button) instead of a plain ellipsised span.
+const LONG_TEXT_COPY_THRESHOLD = 40;
+
 function ValuePill({ tag, role, value }: {
   tag: string;
   role: SR_ROLE;
@@ -534,8 +538,11 @@ function ValuePill({ tag, role, value }: {
   }
 
   switch (role) {
-    case 'time':
-      return <span className="snum dim">{formatTs(parseTs(value))}</span>;
+    case 'time': {
+      // Full ISO in the tooltip; the cell wraps (never truncates) in narrow cards.
+      const tsMs = parseTs(value);
+      return <span className="snum dim snum-time" title={Number.isFinite(tsMs) ? new Date(tsMs).toISOString() : undefined}>{formatTs(tsMs)}</span>;
+    }
     case 'numeric': {
       const rendered = srRenderValue(role, value, tag);
       return <span className="snum strong">{rendered.display}</span>;
@@ -556,10 +563,22 @@ function ValuePill({ tag, role, value }: {
         </span>
       );
     }
-    case 'body':
-      return <span className="sbody">{String(value)}</span>;
-    default:
-      return <span className="mono dim">{String(value)}</span>;
+    case 'body': {
+      const bodyText = String(value);
+      // Long bodies are CSS-truncated — give them the hover-popover + copy
+      // affordance id cells already have.
+      if (bodyText.length > LONG_TEXT_COPY_THRESHOLD) {
+        return <CopyableId value={bodyText} label={tag} className="sbody" popoverWidth={520} />;
+      }
+      return <span className="sbody">{bodyText}</span>;
+    }
+    default: {
+      const plainText = String(value);
+      if (plainText.length > LONG_TEXT_COPY_THRESHOLD) {
+        return <CopyableId value={plainText} label={tag} popoverWidth={520} />;
+      }
+      return <span className="mono dim">{plainText}</span>;
+    }
   }
 }
 

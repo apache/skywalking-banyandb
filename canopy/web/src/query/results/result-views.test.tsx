@@ -525,3 +525,120 @@ describe('TraceDecoderModal', () => {
     localStorage.removeItem('canopy.td.bind.' + traceId);
   });
 });
+// Regression: unset tags arrive as the TagValue null variant ({"null": null})
+// and array/binary tags as strArray/intArray/binaryData — every variant must
+// flatten to a scalar, never leak the raw oneof object into a result cell
+// (it rendered as "[object Object]" for SkyWalking's empty attr1-5).
+describe('flattenQueryResponse — TagValue oneof coverage', () => {
+  const tagFamilies = [{
+    name: 'searchable',
+    tags: [
+      { key: 'attr0', value: { str: { value: 'MESH' } } },
+      { key: 'attr1', value: { null: null } },
+      { key: 'labels', value: { strArray: { value: ['a', 'b'] } } },
+      { key: 'ports', value: { intArray: { value: ['80', '443'] } } },
+      { key: 'blob', value: { binaryData: 'aGVsbG8=' } },
+    ],
+  }];
+
+  it('flattens every TagValue variant to a scalar in measure data points', () => {
+    const rows = flattenQueryResponse({
+      measureResult: { dataPoints: [{ timestamp: '2026-07-28T23:42:00Z', tagFamilies, fields: [{ name: 'value', value: { int: { value: '68' } } }] }] },
+    } as unknown as QueryResponse);
+    expect(rows[0].attr0).toBe('MESH');
+    expect(rows[0].attr1).toBe('');
+    expect(rows[0].labels).toBe('a, b');
+    expect(rows[0].ports).toBe('80, 443');
+    expect(rows[0].blob).toBe('aGVsbG8=');
+    expect(rows[0].value).toBe(68);
+    for (const key of ['attr0', 'attr1', 'labels', 'ports', 'blob']) {
+      expect(typeof rows[0][key]).not.toBe('object');
+    }
+  });
+
+  it('flattens null/array tags in stream elements', () => {
+    const rows = flattenQueryResponse({
+      streamResult: { elements: [{ elementId: 'e1', timestamp: '2026-07-28T23:42:00Z', tagFamilies }] },
+    } as unknown as QueryResponse);
+    expect(rows[0].attr1).toBe('');
+    expect(rows[0].labels).toBe('a, b');
+  });
+
+  it('flattens null/array tags in trace spans', () => {
+    const rows = flattenQueryResponse({
+      traceResult: { elements: [{ traceId: 't1', spanId: 's1', tags: tagFamilies[0].tags }] },
+    } as unknown as QueryResponse);
+    expect(rows[0].attr1).toBe('');
+    expect(rows[0].ports).toBe('80, 443');
+  });
+
+  it('flattens null entity tags in topn rows', () => {
+    const rows = flattenTopNResponse({
+      lists: [{ timestamp: '2026-07-28T23:42:00Z', items: [{ entity: [{ key: 'attr1', value: { null: null } }], value: { int: { value: '5' } } }] }],
+    } as unknown as TopNQueryResponse);
+    expect(rows[0].attr1).toBe('');
+    expect(rows[0].value).toBe(5);
+  });
+
+  it('flattens the grouped traces shape the live v0.10 gateway returns', () => {
+    // trace/v1 QueryResponse is { traces: [{ traceId, spans }] } — the flat
+    // `elements` shape above only appears in older gateways and fixtures.
+    const rows = flattenQueryResponse({
+      traceResult: {
+        traces: [{
+          traceId: 'trace-abc',
+          spans: [
+            { spanId: 'span-1', tags: [{ key: 'start_time', value: { timestamp: '2026-07-29T02:19:45.091Z' } }] },
+            { spanId: 'span-2', tags: [{ key: 'attr1', value: { null: null } }] },
+          ],
+        }],
+      },
+    } as unknown as QueryResponse);
+    expect(rows).toHaveLength(2);
+    expect(rows[0].trace_id).toBe('trace-abc');
+    expect(rows[0].span_id).toBe('span-1');
+    expect(rows[0].start_time).toBe(Date.parse('2026-07-29T02:19:45.091Z'));
+    expect(rows[1].trace_id).toBe('trace-abc');
+    expect(rows[1].attr1).toBe('');
+  });
+});
+
+// Long body/text tag values are CSS-truncated, so they render through
+// CopyableId (hover popover with the full value + click-to-copy) — the same
+// affordance id-role cells already had (alarm_record's snapshot/tags_raw_data).
+describe('StreamResultView — long text cells are copyable', () => {
+  it('wraps >40-char body/text values in CopyableId, leaves short values plain', () => {
+    const longMessage = 'Response time of service mesh-svr::app.sample-services is more than 20ms.';
+    const longSnapshot = `{"expression":"sum(service_resp_time)","metrics":"${'x'.repeat(60)}"}`;
+    const longStream: QueryResponse = {
+      stream_result: { elements: [] as never[] },
+      elements: flattenQueryResponse({
+        streamResult: {
+          elements: [{
+            elementId: 'e1', timestamp: '2026-07-28T00:42:25Z',
+            tagFamilies: [{ name: 'default', tags: [
+              { key: 'alarm_message', value: { str: { value: longMessage } } },
+              { key: 'snapshot', value: { str: { value: longSnapshot } } },
+              { key: 'short', value: { str: { value: 'ok' } } },
+            ] }],
+          }],
+        },
+      } as unknown as QueryResponse),
+    };
+    const specs = [
+      { name: 'alarm_message', type: 'TAG_TYPE_STRING' },
+      { name: 'snapshot', type: 'TAG_TYPE_STRING' },
+      { name: 'short', type: 'TAG_TYPE_STRING' },
+    ];
+    renderWithRouter(
+      <StreamResultView response={longStream} state={{ ...STREAM_STATE, projection: ['alarm_message', 'snapshot', 'short'] }} showTrace={false} setShowTrace={() => {}} tagSpecs={specs} hasMore={false} onLoadMore={() => {}} isLoadingMore={false} />,
+    );
+    fireEvent.click(screen.getByRole('button', { name: 'Table' }));
+    // CopyableId cells expose role=button with a "click to copy" aria-label.
+    expect(screen.getByRole('button', { name: /alarm_message Response time of service mesh-svr/ })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: /snapshot \{"expression"/ })).toBeInTheDocument();
+    // Short values stay plain text — no copy cell.
+    expect(screen.queryByRole('button', { name: /short ok/ })).not.toBeInTheDocument();
+    expect(screen.getByText('ok')).toBeInTheDocument();
+  });
+});

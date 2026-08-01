@@ -597,24 +597,30 @@ function flattenPropertyDocument(p: PropertyWireDocument): PropertyDocument {
 // is what we actually receive). The DTO types still describe snake_case
 // because that's what the .proto files use, but runtime data is camelCase.
 
-function readFieldValue(v: unknown): number | string | undefined {
+// model/v1 TagValue and FieldValue are different messages with different
+// oneofs (api/proto/banyandb/model/v1/common.proto):
+//   TagValue:   null / str / strArray / int / intArray / binaryData / timestamp
+//   FieldValue: null / str / int / binaryData / float
+// so each gets its own reader. Each reader must be total over its oneof —
+// a missed variant would put the raw object into the flattened row, and the
+// result tables would render it as "[object Object]" (seen live: SkyWalking
+// leaves service_cpm's attr1-5 unset, which protojson emits as {"null": null}).
+
+/** Read a wire TagValue (7-variant oneof) into a scalar. Null reads as ''. */
+export function readTagValue(v: unknown): number | string | undefined {
+  // Test fixtures and some gateway versions flatten values to bare scalars.
+  if (typeof v === 'string' || typeof v === 'number') return v;
   if (!v || typeof v !== 'object') return undefined;
-  const o = v as { float?: unknown; int?: unknown; str?: unknown; timestamp?: unknown };
-  if (typeof o.float === 'number') return o.float;
+  const o = v as { null?: unknown; str?: unknown; strArray?: unknown; int?: unknown; intArray?: unknown; binaryData?: unknown; timestamp?: unknown };
+  // google.protobuf.NullValue serializes as {"null": null}.
+  if ('null' in o) return '';
   // protojson renders int64/str as {"int": {"value": "2600"}} / {"str": {"value": "x"}}
-  // to preserve 64-bit precision. Some BanyanDB versions also flatten to just
-  // {"int": <number>} / {"str": <string>}.
-  const innerInt = (o.int as { value?: unknown } | number | undefined);
-  if (innerInt !== undefined) {
-    const raw = typeof innerInt === 'object' && innerInt !== null ? (innerInt as { value?: unknown }).value : innerInt;
-    if (typeof raw === 'string') return Number(raw);
-    if (typeof raw === 'number') return raw;
-  }
-  const innerStr = (o.str as { value?: unknown } | string | undefined);
-  if (innerStr !== undefined) {
-    const raw = typeof innerStr === 'object' && innerStr !== null ? (innerStr as { value?: unknown }).value : innerStr;
-    if (typeof raw === 'string') return raw;
-  }
+  // to preserve 64-bit precision; unwrapScalar also accepts the bare-scalar form.
+  if (o.str !== undefined) return unwrapScalar(o.str as never);
+  if (o.strArray !== undefined) return unwrapArray(o.strArray as never).join(', ');
+  if (o.int !== undefined) return Number(unwrapScalar(o.int as never));
+  if (o.intArray !== undefined) return unwrapArray(o.intArray as never).join(', ');
+  if (o.binaryData !== undefined) return String(o.binaryData);
   // TIMESTAMP tags are transmitted as {"timestamp": "2026-07-13T...Z"}.
   const ts = (o.timestamp as { value?: unknown } | string | undefined);
   if (ts !== undefined) {
@@ -627,19 +633,40 @@ function readFieldValue(v: unknown): number | string | undefined {
   return undefined;
 }
 
+/** Read a wire FieldValue (5-variant oneof) into a scalar. Null/unreadable → undefined. */
+function readFieldValue(v: unknown): number | string | undefined {
+  if (typeof v === 'string' || typeof v === 'number') return v;
+  if (!v || typeof v !== 'object') return undefined;
+  const o = v as { null?: unknown; float?: unknown; int?: unknown; str?: unknown; binaryData?: unknown };
+  if ('null' in o) return undefined;
+  if (typeof o.float === 'number') return o.float;
+  if (o.int !== undefined) return Number(unwrapScalar(o.int as never));
+  if (o.str !== undefined) return unwrapScalar(o.str as never);
+  if (o.binaryData !== undefined) return String(o.binaryData);
+  return undefined;
+}
+
 export function flattenQueryResponse(data: QueryResponse): Record<string, unknown>[] {
   const d = data as unknown as Record<string, unknown>;
   // Runtime protojson uses camelCase, but test fixtures and some static mocks
   // still use snake_case. Accept both so downstream views always get elements.
   const streamResult = (d.streamResult ?? d.stream_result) as { elements?: unknown[] } | undefined;
   const measureResult = (d.measureResult ?? d.measure_result) as { dataPoints?: unknown[]; data_points?: unknown[] } | undefined;
-  const traceResult = (d.traceResult ?? d.trace_result) as { elements?: unknown[] } | undefined;
+  const traceResult = (d.traceResult ?? d.trace_result) as {
+    elements?: unknown[];
+    traces?: readonly { traceId?: string; trace_id?: string; spans?: readonly unknown[] }[];
+  } | undefined;
   if (streamResult?.elements) return streamResult.elements.map((e) => flattenStreamElement(e as never));
   const measurePoints = measureResult?.dataPoints ?? measureResult?.data_points;
   if (measurePoints) return measurePoints.map((e) => flattenMeasureDataPoint(e as never));
-  // trace.v1.QueryResponse is a flat span list: { elements: [Span] }, each
-  // span carrying its own trace_id (there is no per-trace grouping wrapper).
+  // Older gateways and the hand-authored fixtures use a flat span list
+  // ({ elements: [Span] }); the live v0.10 gateway groups spans per trace
+  // ({ traces: [{ traceId, spans: [Span] }] }, trace/v1 query.proto). Accept
+  // both, carrying the parent's traceId down to each span.
   if (traceResult?.elements) return traceResult.elements.map((s) => flattenTraceSpan(s as never));
+  if (traceResult?.traces) {
+    return traceResult.traces.flatMap((g) => (g.spans ?? []).map((s) => flattenTraceSpan(s as never, g.traceId ?? g.trace_id)));
+  }
   return [];
 }
 
@@ -648,7 +675,8 @@ function flattenStreamElement(e: { elementId?: string; element_id?: string; time
   const families = e.tagFamilies ?? e.tag_families ?? [];
   for (const fam of families) {
     for (const t of fam.tags ?? []) {
-      flat[t.key] = readFieldValue(t.value) ?? t.value;
+      const tagVal = readTagValue(t.value);
+      if (tagVal !== undefined) flat[t.key] = tagVal;
     }
   }
   return flat;
@@ -661,7 +689,8 @@ function flattenMeasureDataPoint(dp: { timestamp?: string; sid?: string; version
   const families = dp.tagFamilies ?? dp.tag_families ?? [];
   for (const fam of families) {
     for (const t of fam.tags ?? []) {
-      flat[t.key] = readFieldValue(t.value) ?? t.value;
+      const tagVal = readTagValue(t.value);
+      if (tagVal !== undefined) flat[t.key] = tagVal;
     }
   }
   for (const f of dp.fields ?? []) {
@@ -700,7 +729,8 @@ function flattenTraceSpan(
   if (s.span !== undefined) flat.span = s.span;
   const tagList = s.tags ?? (s.tagFamilies ?? s.tag_families)?.flatMap((f) => f.tags ?? []) ?? [];
   for (const t of tagList) {
-    flat[t.key] = readFieldValue(t.value) ?? t.value;
+    const tagVal = readTagValue(t.value);
+    if (tagVal !== undefined) flat[t.key] = tagVal;
   }
   return flat;
 }
@@ -711,11 +741,12 @@ export function flattenTopNResponse(data: TopNQueryResponse): Record<string, unk
     for (const item of list.items ?? []) {
       const row: Record<string, unknown> = { timestamp: list.timestamp };
       for (const t of item.entity ?? []) {
-        row[t.key] = readFieldValue(t.value) ?? t.value;
+        const entityVal = readTagValue(t.value);
+        if (entityVal !== undefined) row[t.key] = entityVal;
       }
       // protojson wraps int64/str values as {"int":{"value":"2600"}} etc.;
       // readFieldValue unwraps them just like the other flatteners do.
-      row.value = readFieldValue(item.value) ?? item.value?.float ?? item.value?.int ?? item.value?.str;
+      row.value = readFieldValue(item.value);
       flat.push(row);
     }
   }

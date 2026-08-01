@@ -319,7 +319,18 @@ export function ResourceDetailPage({
           <div className="page-actions">
             <button
               className="btn btn-primary"
-              onClick={() => navigate(`/query?type=${typeBase}&group=${groupName}&name=${resourceName}`)}
+              onClick={() => navigate('/query', {
+                state: {
+                  seed: {
+                    catalog: type === 'measures' ? 'measures'
+                      : type === 'streams' ? 'streams'
+                      : type === 'traces' ? 'traces'
+                      : 'measures',
+                    group: groupName,
+                    resource: resourceName,
+                  },
+                },
+              })}
             >
               <IconPlay size={15} />
               Query

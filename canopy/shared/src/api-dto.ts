@@ -275,7 +275,14 @@ export interface TopNQueryRequest {
   readonly groups: readonly string[];
   readonly name: string;
   readonly top_n: number;
-  readonly agg?: { readonly function: string; readonly field_name: string };
+  // topn.proto:65 — agg is the BARE AggregationFunction enum (its protojson
+  // name string, e.g. 'AGGREGATION_FUNCTION_MEAN'), NOT a {function,
+  // field_name} message (the gateway rejects that form). Omitted only for the
+  // explicit "pre-aggregated value" choice: standalone BanyanDB then returns
+  // raw per-bucket lists, while the distributed liaison rejects it
+  // (banyand/dquery/topn.go validateRequest) — the query console defaults
+  // the AGGREGATE BY selection to MEAN so that path is opt-in.
+  readonly agg?: string;
   readonly conditions?: ReadonlyArray<{ readonly name: string; readonly op: string; readonly value: string | number }>;
   readonly field_value_sort?: 'SORT_ASC' | 'SORT_DESC';
   readonly time_range?: { readonly begin: string; readonly end: string };

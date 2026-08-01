@@ -450,8 +450,13 @@ export interface QBBuilderState {
     can list explicit tags instead of omitting them.
     @param stringTags Optional set of tag names whose schema type is STRING.
     Values for these tags are always quoted so numeric-looking strings such as
-    trace_id are not rendered as integer literals. */
-export const buildBydbQL = (b: QBBuilderState, tags?: readonly string[], stringTags?: ReadonlySet<string>): string => {
+    trace_id are not rendered as integer literals.
+    @param traceTimestampTag The trace schema's timestampTagName (e.g.
+    'start_time'). ORDER BY on a trace resolves to an INDEX RULE NAME on the
+    server, so the builder's generic 'time' alias must be emitted as the
+    schema's timestamp tag — the hardcoded 'timestamp' fails on clusters whose
+    sw_trace has no "timestamp" index rule ("index rule timestamp not found"). */
+export const buildBydbQL = (b: QBBuilderState, tags?: readonly string[], stringTags?: ReadonlySet<string>, traceTimestampTag?: string): string => {
   const cat = QB_CAT(b.catalog);
   // Top-N is a separate BydbQL shape; route through a different codegen path.
   if (b.catalog === 'topn') {
@@ -502,11 +507,14 @@ export const buildBydbQL = (b: QBBuilderState, tags?: readonly string[], stringT
   // BanyanDB's trace analyzer requires either a trace_id filter or an ORDER BY
   // clause. When a trace_id condition is present we skip ORDER BY (the examples
   // in test/cases/trace/data/input/ do the same); otherwise we emit whatever the
-  // builder selected. The builder uses 'time' as a generic alias, which for traces
-  // maps to the timestamp tag.
+  // builder selected. The builder's 'time' alias maps to the trace schema's
+  // timestampTagName (an index rule of that name must exist on the group);
+  // 'timestamp' is only the pre-schema fallback so a missing rule fails loudly
+  // instead of silently ordering by trace_id (what ORDER BY time degenerates
+  // to on the distributed path).
   const hasTraceId = qbHasTraceIdCondition(b.where);
   if (b.catalog !== 'traces' || !hasTraceId) {
-    const orderField = b.catalog === 'traces' && b.orderField === 'time' ? 'timestamp' : b.orderField;
+    const orderField = b.catalog === 'traces' && b.orderField === 'time' ? (traceTimestampTag ?? 'timestamp') : b.orderField;
     if (orderField) parts.push(`ORDER BY ${orderField} ${b.orderDir || 'DESC'}`);
   }
   // 7. WITH QUERY_TRACE. Must appear BEFORE LIMIT/OFFSET in the actual grammar

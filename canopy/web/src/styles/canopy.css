@@ -1319,7 +1319,7 @@
   .slog-foot { display: flex; align-items: center; gap: 12px; padding: 10px 16px; border-top: 1px solid var(--border); font-size: 11.5px; color: var(--text-faint); }
 
   /* ===== tag-render engine: value cells (shared by console + table) ===== */
-  .scat { display: inline-flex; align-items: center; height: 18px; padding: 0 7px; border-radius: 5px; font-family: var(--mono); font-size: 10.5px; font-weight: 600; letter-spacing: .3px; line-height: 1; white-space: nowrap; border: 1px solid transparent; vertical-align: middle; }
+  .scat { display: inline-flex; align-items: center; height: 18px; padding: 0 7px; border-radius: 5px; font-family: var(--mono); font-size: 10.5px; font-weight: 600; letter-spacing: .3px; line-height: 1; white-space: nowrap; border: 1px solid transparent; vertical-align: middle; max-width: 100%; overflow: hidden; text-overflow: ellipsis; }
   .sid { font-family: var(--mono); font-size: 11.5px; color: var(--text-dim); white-space: nowrap; }
   .sid .sid-pre { color: var(--text); }
   .sid .sid-tail { color: var(--text-faint); }
@@ -1426,10 +1426,14 @@
   .tin-status { font-size: 12px; }
   .tin-detail { display: grid; grid-template-columns: minmax(0,1.35fr) minmax(0,0.85fr); gap: 24px; padding: 8px 16px 16px 50px; background: rgba(0,0,0,.2); }
   .tin-col-h { font-size: 10px; letter-spacing: .5px; text-transform: uppercase; color: var(--text-faint); padding: 8px 0 9px; display: flex; gap: 8px; align-items: baseline; }
-  .tin-col-h .faint { text-transform: none; letter-spacing: 0; }
+  .tin-col-h .faint { text-transform: none; letter-spacing: 0; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   .tin-tags { display: grid; grid-template-columns: 1fr 1fr; gap: 5px 16px; }
   .tin-tag { display: grid; grid-template-columns: minmax(92px,auto) 1fr; align-items: baseline; gap: 10px; padding: 4px 10px; background: var(--panel-2); border: 1px solid var(--border); border-radius: 6px; min-width: 0; }
-  .tin-k { font-size: 11px; color: var(--text-faint); white-space: nowrap; display: flex; align-items: center; gap: 5px; }
+  /* Key column is block-level: the type badge (TRACE ID / TIMESTAMP / …)
+     stacks under the tag name, so the grid track sizes to the name alone and
+     narrow cards keep the full value visible (e.g. start_time's 21:08:58.602). */
+  .tin-k { font-size: 11px; color: var(--text-faint); display: block; line-height: 1.35; }
+  .tin-k .tin-res { display: block; width: fit-content; margin-top: 2px; }
   .tin-res { font-size: 8px; font-weight: 600; letter-spacing: .3px; color: var(--text-dim); background: rgba(255,255,255,.08); padding: 1px 4px; border-radius: 3px; text-transform: uppercase; }
   .tin-res.is-trace { color: #e6a14a; background: rgba(230,161,74,.12); }
   .tin-res.is-span { color: #e6a14a; background: rgba(230,161,74,.12); }
@@ -1438,6 +1442,11 @@
   .tin-v { font-size: 11px; color: var(--text); min-width: 0; overflow-wrap: anywhere; }
   .tin-tag .tin-v .snum.dim,
   .tin-tag .tin-v .sid { white-space: nowrap; }
+  /* Timestamps are the exception: break them onto a second line when the
+     card is narrow — truncating a timestamp makes it useless, and the full
+     ISO is one wrap away. Numerics keep the single-line ellipsis. */
+  .tin-tag .tin-v .snum.dim:not(.snum-time) { display: inline-block; max-width: 100%; overflow: hidden; text-overflow: ellipsis; vertical-align: bottom; }
+  .tin-tag .tin-v .snum.dim.snum-time { white-space: normal; overflow-wrap: anywhere; }
   .tin-raw { display: flex; flex-direction: column; gap: 8px; padding: 2px 0 1px; }
   .tin-raw-size { display: inline-flex; align-items: center; gap: 6px; height: 22px; padding: 0 8px; border-radius: 5px; background: var(--panel-2); border: 1px solid var(--border); color: var(--text-faint); font-family: var(--mono); font-size: 10.5px; vertical-align: middle; white-space: nowrap; cursor: pointer; transition: color .12s, border-color .12s, background .12s; }
   .tin-raw-size:hover { color: var(--text-dim); border-color: var(--border-strong); }
@@ -1453,7 +1462,7 @@
   .td-btn.is-bound { color: var(--accent); border-color: color-mix(in srgb, var(--accent) 40%, var(--border-strong)); background: var(--accent-soft); }
   .td-btn.is-bound:hover { color: var(--accent); }
   .td-dot { width: 6px; height: 6px; border-radius: 50%; background: var(--accent); }
-  .td-raw-toggle { margin-left: auto; height: 20px; padding: 0 8px; border-radius: 5px; border: 1px solid var(--border-strong); background: var(--panel-2); color: var(--text-dim); font-size: 10px; letter-spacing: .3px; text-transform: none; cursor: pointer; transition: all .13s; }
+  .td-raw-toggle { margin-left: auto; height: 20px; padding: 0 8px; border-radius: 5px; border: 1px solid var(--border-strong); background: var(--panel-2); color: var(--text-dim); font-size: 10px; letter-spacing: .3px; text-transform: none; cursor: pointer; transition: all .13s; white-space: nowrap; flex-shrink: 0; align-self: center; }
   .td-raw-toggle:hover { color: var(--accent); border-color: var(--accent); }
   .td-decoded { margin-top: 2px; border: 1px solid var(--border); border-radius: 8px; background: var(--bg-deep, rgba(0,0,0,.28)); overflow: hidden; }
   .td-code { margin: 0; padding: 10px 12px; max-height: 280px; overflow: auto; font-family: var(--mono); font-size: 11.5px; line-height: 1.55; color: var(--text-dim); white-space: pre; }

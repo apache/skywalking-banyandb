@@ -104,3 +104,78 @@ describe('QueryBuilder WHERE — MATCH analyzer + operator fields', () => {
     expect((call![0].where.children[0] as QBWhereLeafWithConn).matchOp).toBe('OR');
   });
 });
+
+// ORDER BY resolves to an index-rule NAME server-side, so the dropdown is
+// confined to the rules bound to the current resource once they load.
+describe('QueryBuilder ORDER BY — index-rule-confined options', () => {
+  const orderProps = {
+    tags: ['name', 'message', 'trace_id'],
+    orderableRules: ['name'],
+  };
+
+  it('offers only time + bound index rules once loaded', () => {
+    const s = stateWithLeaf({ tag: 'name', op: 'BINARY_OP_EQ', value: 'x' });
+    const props: QueryBuilderProps = {
+      state: s, onChange: vi.fn(), ...orderProps,
+      fields: [], groupNames: ['g1'], resourceNames: ['logs'], topnAggNames: [],
+      groups: [], groupResources: new Map(), groupTopnAggs: new Map(),
+      onPickResource: vi.fn(), isRunning: false, onEjectToCode: vi.fn(), onRun: vi.fn(),
+    };
+    render(<MemoryRouter><QueryBuilder {...props} /></MemoryRouter>);
+    const options = (screen.getByLabelText('Order field') as HTMLSelectElement).querySelectorAll('option');
+    expect([...options].map((o) => o.value)).toEqual(['', 'time', 'name']);
+  });
+
+  it('keeps a manually cleared orderField — empty means no ORDER BY', () => {
+    const s = { ...stateWithLeaf({ tag: 'name', op: 'BINARY_OP_EQ', value: 'x' }), orderField: '' };
+    const onChange = vi.fn();
+    const props: QueryBuilderProps = {
+      state: s, onChange, ...orderProps,
+      fields: [], groupNames: ['g1'], resourceNames: ['logs'], topnAggNames: [],
+      groups: [], groupResources: new Map(), groupTopnAggs: new Map(),
+      onPickResource: vi.fn(), isRunning: false, onEjectToCode: vi.fn(), onRun: vi.fn(),
+    };
+    render(<MemoryRouter><QueryBuilder {...props} /></MemoryRouter>);
+    expect(onChange).not.toHaveBeenCalled();
+    expect((screen.getByLabelText('Order field') as HTMLSelectElement).value).toBe('');
+  });
+
+  it('resets a stale orderField to a bound rule', () => {
+    const s = { ...stateWithLeaf({ tag: 'name', op: 'BINARY_OP_EQ', value: 'x' }), orderField: 'trace_id' };
+    const onChange = vi.fn();
+    const props: QueryBuilderProps = {
+      state: s, onChange, ...orderProps,
+      fields: [], groupNames: ['g1'], resourceNames: ['logs'], topnAggNames: [],
+      groups: [], groupResources: new Map(), groupTopnAggs: new Map(),
+      onPickResource: vi.fn(), isRunning: false, onEjectToCode: vi.fn(), onRun: vi.fn(),
+    };
+    render(<MemoryRouter><QueryBuilder {...props} /></MemoryRouter>);
+    expect(onChange).toHaveBeenCalledWith({ orderField: 'time' });
+  });
+
+  it('drops the time alias for traces (ORDER BY stays optional), defaulting to the timestampTagName rule', () => {
+    const s: QBBuilderState = {
+      ...stateWithLeaf({ tag: 'trace_id', op: 'BINARY_OP_EQ', value: '' }),
+      catalog: 'traces', resource: 'segment', orderField: 'time',
+    };
+    const onChange = vi.fn();
+    const props: QueryBuilderProps = {
+      state: s, onChange,
+      tags: ['trace_id', 'start_time', 'latency'], orderableRules: ['start_time', 'latency'],
+      traceTimestampTag: 'start_time',
+      fields: [], groupNames: ['sw_trace'], resourceNames: ['segment'], topnAggNames: [],
+      groups: [], groupResources: new Map(), groupTopnAggs: new Map(),
+      onPickResource: vi.fn(), isRunning: false, onEjectToCode: vi.fn(), onRun: vi.fn(),
+    };
+    render(<MemoryRouter><QueryBuilder {...props} /></MemoryRouter>);
+    // 'time' is not a valid trace order on the distributed path — reset to
+    // the schema's timestampTagName (which has a bound rule).
+    expect(onChange).toHaveBeenCalledWith({ orderField: 'start_time' });
+    const options = (screen.getByLabelText('Order field') as HTMLSelectElement).querySelectorAll('option');
+    expect([...options].map((o) => o.value)).toEqual(['', 'start_time', 'latency']);
+    // ORDER BY is optional for traces too — a trace_id filter makes it
+    // unnecessary, and QueryConsole clears the order field when one is added.
+    const orderRow = screen.getByText('ORDER BY').closest('.qb-section');
+    expect(orderRow?.textContent ?? '').toContain('optional');
+  });
+});

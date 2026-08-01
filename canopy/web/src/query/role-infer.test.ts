@@ -97,6 +97,22 @@ describe('Layer 3 — srRoleFromConvention (name-based)', () => {
     expect(srRoleFromConvention('body')).toBeNull();
     expect(srRoleFromConvention('definitely_not_a_known_field')).toBeNull();
   });
+  it('id-affixed names → id (generic heuristic)', () => {
+    // alarm_record's id0/id1, SkyWalking's *_id foreign keys, camelCase.
+    for (const name of ['id', 'id0', 'id1', 'service_id', 'service_instance_id', 'endpoint_id', 'element_id', 'segment_id', 'uuid_id', 'traceId', 'spanId']) {
+      expect(srRoleFromConvention(name)).toBe('id');
+    }
+  });
+  it('id heuristic is word-boundary aware', () => {
+    for (const name of ['grid', 'idle', 'valid', 'uuid', 'is_error', 'start_time', 'identity']) {
+      expect(srRoleFromConvention(name)).toBeNull();
+    }
+  });
+  it('explicit conventions win over the id heuristic', () => {
+    // 'parent_span_id' is in SR_CONVENTIONS; 'endpoint' must stay 'body'.
+    expect(srRoleFromConvention('parent_span_id')).toBe('id');
+    expect(srRoleFromConvention('endpoint')).toBe('body');
+  });
 });
 
 describe('Layer 4 — srRoleFromOverride', () => {
@@ -123,7 +139,9 @@ describe('srInferRole — full 4-layer ladder', () => {
     });
   });
   it('layer 2 (value) refines layer 1 (type)', () => {
-    expect(srInferRole('request_id', 'TAG_TYPE_STRING', ['cb2f9b0583567d4e', 'e466554881174205'], NO_OVERRIDES)).toEqual({
+    // 'checksum' carries no id affix, so the name heuristic (layer 3) passes
+    // and the idLike value stats do the refinement.
+    expect(srInferRole('checksum', 'TAG_TYPE_STRING', ['cb2f9b0583567d4e', 'e466554881174205'], NO_OVERRIDES)).toEqual({
       role: 'id', layer: 2,
     });
   });
