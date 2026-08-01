@@ -25,6 +25,7 @@ import (
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials/insecure"
 
+	"github.com/apache/skywalking-banyandb/api/data"
 	"github.com/apache/skywalking-banyandb/banyand/metadata/schema"
 	"github.com/apache/skywalking-banyandb/pkg/grpchelper"
 	vtrace "github.com/apache/skywalking-banyandb/pkg/query/vectorized/trace"
@@ -57,11 +58,15 @@ var _ = ginkgo.Describe("vec trace independent verification (distributed)", gink
 		vectorizedConn  *grpc.ClientConn
 		stopFn          func()
 		startQueryCount int64
+		startFrameEnc   int64
+		startFrameDec   int64
 		savedTraceCtx   helpers.SharedContext
 	)
 	ginkgo.BeforeAll(func() {
 		savedTraceCtx = casestrace.SharedContext
 		startQueryCount = vtrace.QueryCount()
+		startFrameEnc = data.TraceFrameEncodedCount()
+		startFrameDec = data.TraceFrameDecodedCount()
 
 		tmpDir, tmpDirCleanup, tmpErr := test.NewSpace()
 		gomega.Expect(tmpErr).NotTo(gomega.HaveOccurred())
@@ -102,6 +107,23 @@ var _ = ginkgo.Describe("vec trace independent verification (distributed)", gink
 		gomega.Expect(queryCountDelta).To(gomega.BeNumerically(">", int64(0)),
 			"vec trace dispatch did not fire for any case on the distributed cluster; "+
 				"--trace-vectorized-enabled=true may not have taken effect")
+		// QueryCount above only proves the vec COMPUTE path dispatched — a vec query
+		// still emits protobuf unless the data node is distributed and in raw wire
+		// mode. Assert the columnar frame itself carried traffic, so this suite fails
+		// loudly if the wire format silently regresses to proto (a 48h standalone soak
+		// passed while never encoding a single frame, because nothing checked).
+		frameEncDelta := data.TraceFrameEncodedCount() - startFrameEnc
+		frameDecDelta := data.TraceFrameDecodedCount() - startFrameDec
+		ginkgo.GinkgoWriter.Printf(
+			"vec trace wire (distributed): frames_encoded=%d frames_decoded=%d\n",
+			frameEncDelta, frameDecDelta,
+		)
+		gomega.Expect(frameEncDelta).To(gomega.BeNumerically(">", int64(0)),
+			"no native columnar frame was encoded on the distributed cluster; "+
+				"the data node fell back to protobuf")
+		gomega.Expect(frameDecDelta).To(gomega.BeNumerically(">", int64(0)),
+			"no native columnar frame was decoded on the distributed cluster; "+
+				"the liaison never saw a frame body")
 		if vectorizedConn != nil {
 			gomega.Expect(vectorizedConn.Close()).To(gomega.Succeed())
 		}
