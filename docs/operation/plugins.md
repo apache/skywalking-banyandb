@@ -83,11 +83,11 @@ group's pipeline config (`TracePipelineConfig` on the `Group`,
   "enabledEvents": ["PIPELINE_EVENT_MERGE"],
   "plugins": [
     {
-      "name": "latency-status",
+      "name": "sw-trace-sampler",
       "sampler": {
-        "path": "latencystatussampler.so",
+        "path": "sw-trace-sampler.so",
         "abiVersion": 1,
-        "config": { "thresholdMs": 500, "successValue": "success" }
+        "config": { "durationThresholdMs": 500, "keepErrors": true, "healthySampleRate": 0.1 }
       }
     }
   ]
@@ -147,7 +147,7 @@ previous sampler set. Other groups, and the node itself, are unaffected.
   `Decide` against a sampler (with a differential guard that flags a
   sampler reading a column it never projected), run a chain of samplers, and
   drive a real, loaded `.so` — all without a database or a cluster. See
-  `plugins/skywalking/latencystatussampler/main_test.go` for a worked
+  `plugins/skywalking/sw-trace-sampler/main_test.go` for a worked
   example.
 - `docs/operation/plugins-debugging.md` is the symptom-driven runbook for
   "nothing is being sampled" / "unexpected data is being sampled".

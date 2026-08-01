@@ -24,8 +24,8 @@
 #
 # Required assertions (the gate):
 #   (a) banyand pod reaches Ready              (CGO/dynamic host boots in-cluster)
-#   (b) /plugins/latencystatussampler.so present in the banyand container
-#   (c) register a group whose pipeline references latencystatussampler.so and
+#   (b) /plugins/sw-trace-sampler.so present in the banyand container
+#   (c) register a group whose pipeline references sw-trace-sampler.so and
 #       assert the data node LOADS it with NO failure (plugin.Open succeeded):
 #         - the fail-open ERROR is ABSENT, AND
 #         - sampler_active_count{group}>0 (a positive load-success signal).
@@ -151,13 +151,13 @@ main() {
   # initContainer's own log: it runs `cp /plugins/*.so /shared/ && ls -l /shared`
   # into the emptyDir the host mounts at /plugins, so its log lists the .so it
   # placed there.
-  log "Assertion (b): latencystatussampler.so delivered to the shared /plugins by the carrier initContainer"
+  log "Assertion (b): sw-trace-sampler.so delivered to the shared /plugins by the carrier initContainer"
   local initlog
   initlog="$(kubectl --context "${KCTX}" logs "${POD}" -c install-plugins 2>/dev/null || true)"
   echo "${initlog}"
-  echo "${initlog}" | grep -q "latencystatussampler.so" \
-    || fail "(b) install-plugins initContainer log does not show latencystatussampler.so — the carrier did not populate the shared volume"
-  echo "(b) PASS: latencystatussampler.so delivered to the shared /plugins volume (per the carrier initContainer log)"
+  echo "${initlog}" | grep -q "sw-trace-sampler.so" \
+    || fail "(b) install-plugins initContainer log does not show sw-trace-sampler.so — the carrier did not populate the shared volume"
+  echo "(b) PASS: sw-trace-sampler.so delivered to the shared /plugins volume (per the carrier initContainer log)"
 
   # ---- Assertion (c): register the pipeline; assert the data node LOADS it ----
   # Registered through the property schema registry (the store the data node's
@@ -169,7 +169,7 @@ main() {
   local reg_lport=$(( (RANDOM % 10000) + 40000 ))
   local met_lport=$(( (RANDOM % 10000) + 30000 ))
 
-  log "Assertion (c): registering group + pipeline referencing latencystatussampler.so (property schema :17916 via local ${reg_lport})"
+  log "Assertion (c): registering group + pipeline referencing sw-trace-sampler.so (property schema :17916 via local ${reg_lport})"
   kubectl --context "${KCTX}" port-forward "pod/${POD}" "${reg_lport}:17916" >/tmp/pf-reg.log 2>&1 &
   local reg_pf=$!
   # Wire into the EXIT cleanup trap so an early exit between here and the kill
@@ -182,7 +182,7 @@ main() {
     --property-schema-addr "localhost:${reg_lport}" \
     --node-name "${POD}:17912" \
     --group "${GROUP}" \
-    --so latencystatussampler.so \
+    --so sw-trace-sampler.so \
     || { kill "${reg_pf}" 2>/dev/null || true; PF_PID=""; fail "register helper failed"; }
   kill "${reg_pf}" 2>/dev/null || true
   # Forward is dead; clear PF_PID so cleanup doesn't act on a stale PID (the

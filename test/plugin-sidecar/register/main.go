@@ -53,12 +53,12 @@ func main() {
 		"banyandb property-schema gRPC address (PropertySchemaGrpcAddress)")
 	nodeName := flag.String("node-name", "banyandb-plugin:17912", "target data node name (schema server identity)")
 	group := flag.String("group", "test-trace-pipeline", "target trace group")
-	soName := flag.String("so", "latencystatussampler.so", "trusted-dir-relative .so path")
-	threshold := flag.Float64("threshold-ms", 500, "latency sampler thresholdMs")
-	successValue := flag.String("success-value", "success", "latency sampler successValue")
+	soName := flag.String("so", "sw-trace-sampler.so", "trusted-dir-relative .so path")
+	threshold := flag.Float64("duration-threshold-ms", 500, "sampler durationThresholdMs")
+	keepErrors := flag.Bool("keep-errors", true, "sampler keepErrors")
 	flag.Parse()
 
-	if err := run(*propAddr, *nodeName, *group, *soName, *threshold, *successValue); err != nil {
+	if err := run(*propAddr, *nodeName, *group, *soName, *threshold, *keepErrors); err != nil {
 		fmt.Fprintf(os.Stderr, "register: %v\n", err)
 		os.Exit(1)
 	}
@@ -92,7 +92,7 @@ func (r *nodeRegistry) GetNode(_ context.Context, name string) (*databasev1.Node
 }
 func (r *nodeRegistry) UpdateNode(_ context.Context, _ *databasev1.Node) error { return nil }
 
-func run(propAddr, nodeName, group, soName string, threshold float64, successValue string) error {
+func run(propAddr, nodeName, group, soName string, threshold float64, keepErrors bool) error {
 	reg, regErr := property.NewSchemaRegistryClient(&property.ClientConfig{
 		OMR:         observability.BypassRegistry,
 		GRPCTimeout: 10 * time.Second,
@@ -164,7 +164,7 @@ func run(propAddr, nodeName, group, soName string, threshold float64, successVal
 	time.Sleep(3 * time.Second)
 
 	// Attach the pipeline via UpdateGroup → fires reconcilePipeline → plugin.Open.
-	pc, pcErr := pipelineConfig(soName, threshold, successValue)
+	pc, pcErr := pipelineConfig(soName, threshold, keepErrors)
 	if pcErr != nil {
 		return errors.Wrap(pcErr, "build pipeline config")
 	}
@@ -180,10 +180,14 @@ func run(propAddr, nodeName, group, soName string, threshold float64, successVal
 	return nil
 }
 
-func pipelineConfig(soName string, threshold float64, successValue string) (*commonv1.TracePipelineConfig, error) {
+// pipelineConfig builds the sampler config. The keys must be ones the target plugin
+// accepts: the first-party samplers reject an unrecognized key outright rather than
+// ignoring it, so a stale spelling here surfaces as a plugin load failure, which is
+// exactly the negative signal this gate polls for.
+func pipelineConfig(soName string, threshold float64, keepErrors bool) (*commonv1.TracePipelineConfig, error) {
 	cfgStruct, err := structpb.NewStruct(map[string]any{
-		"thresholdMs":  threshold,
-		"successValue": successValue,
+		"durationThresholdMs": threshold,
+		"keepErrors":          keepErrors,
 	})
 	if err != nil {
 		// NewStruct fails on non-finite numbers (NaN/Inf); fail fast rather than
@@ -196,7 +200,7 @@ func pipelineConfig(soName string, threshold float64, successValue string) (*com
 		EnabledEvents: []commonv1.PipelineEvent{commonv1.PipelineEvent_PIPELINE_EVENT_MERGE},
 		Plugins: []*commonv1.Plugin{
 			{
-				Name: "latency-status",
+				Name: "sw-trace-sampler",
 				Kind: &commonv1.Plugin_Sampler{
 					Sampler: &commonv1.SamplerPlugin{
 						Path:       soName,

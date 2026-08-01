@@ -21,7 +21,7 @@
 # CARRIER image (the `-plugins-carrier`-tagged image) holds the .so at /plugins and is
 # mounted read-only at the host's /plugins. Set the two flags and reference the
 # plugin by filename in the group's TracePipelineConfig
-# (SamplerPlugin.path=latencystatussampler.so).
+# (SamplerPlugin.path=sw-trace-sampler.so).
 #
 # LOCKSTEP: the carrier tag MUST equal the host image tag — the .so and the
 # host binary are built together and plugin.Open requires exact toolchain

@@ -73,7 +73,7 @@ Then build the `.so` locally to confirm it compiles in plugin mode:
 make build-plugins   # → $(PLUGIN_OUTPUT_DIR), default build/bin/plugins
 ```
 
-Worked example: `plugins/skywalking/latencystatussampler/main_test.go`.
+Worked example: `plugins/skywalking/sw-trace-sampler/main_test.go`.
 
 ## Step 3 — Debug
 
@@ -116,9 +116,9 @@ add/update, reconciles the pipeline and calls `plugin.Open` on the mounted `.so`
 
 ```json
 { "enabled": true, "enabledEvents": ["PIPELINE_EVENT_MERGE"],
-  "plugins": [ { "name": "latency-status",
-    "sampler": { "path": "latencystatussampler.so", "abiVersion": 1,
-                 "config": { "thresholdMs": 500, "successValue": "success" } } } ] }
+  "plugins": [ { "name": "sw-trace-sampler",
+    "sampler": { "path": "sw-trace-sampler.so", "abiVersion": 1,
+                 "config": { "durationThresholdMs": 500, "keepErrors": true } } } ] }
 ```
 
 Attach it with any standard schema API — all write through the one schema
