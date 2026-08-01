@@ -403,7 +403,8 @@ func instantFilterSpecs() []traceSpec {
 func TestInMergeFilter_Instant_Standalone(t *testing.T) {
 	svcs, teardown := setUpWithPipelineFlags(t,
 		"--trace-pipeline-native-plugin-enabled=true",
-		"--trace-pipeline-merge-grace-default=0",
+		"--trace-pipeline-merge-grace-default=1ns",
+		"--trace-pipeline-max-fragment-gap=1ns",
 		"--trace-pipeline-decide-timeout=5s",
 		"--trace-pipeline-decide-timeout-circuit-break=0",
 	)
@@ -461,7 +462,8 @@ func TestInMergeFilter_ChunkedStaging_TinyBudget(t *testing.T) {
 
 	svcs, teardown := setUpWithPipelineFlags(t,
 		"--trace-pipeline-native-plugin-enabled=true",
-		"--trace-pipeline-merge-grace-default=0",
+		"--trace-pipeline-merge-grace-default=1ns",
+		"--trace-pipeline-max-fragment-gap=1ns",
 		"--trace-pipeline-decide-timeout=5s",
 		"--trace-pipeline-decide-timeout-circuit-break=0",
 	)
@@ -572,7 +574,8 @@ func TestInMergeFilter_DisabledFlag_LegacyIdentity(t *testing.T) {
 func TestInMergeFilter_FailOpenNegativeControl(t *testing.T) {
 	svcs, teardown := setUpWithPipelineFlags(t,
 		"--trace-pipeline-native-plugin-enabled=true",
-		"--trace-pipeline-merge-grace-default=0",
+		"--trace-pipeline-merge-grace-default=1ns",
+		"--trace-pipeline-max-fragment-gap=1ns",
 		"--trace-pipeline-decide-timeout=5s",
 		"--trace-pipeline-decide-timeout-circuit-break=0",
 	)

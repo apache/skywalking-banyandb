@@ -74,6 +74,8 @@ type schemaRepo struct {
 	path                   string
 	nodeID                 string
 	trustedPluginDir       string
+	mergeGraceDefault      time.Duration
+	maxTraceFragmentGap    time.Duration
 	finalizeGraceDefault   time.Duration
 	role                   databasev1.Role
 	nativePipelineEnabled  bool
@@ -89,6 +91,8 @@ func newSchemaRepo(path string, svc *standalone, nodeLabels map[string]string, n
 		role:                   databasev1.Role_ROLE_DATA,
 		nativePipelineEnabled:  svc.option.nativePipelineEnabled,
 		trustedPluginDir:       svc.option.trustedPluginDir,
+		mergeGraceDefault:      svc.option.mergeGraceDefault,
+		maxTraceFragmentGap:    svc.option.maxTraceFragmentGap,
 		finalizeGraceDefault:   svc.option.finalizeGraceDefault,
 		samplerMeter:           newSamplerMetrics(pipelineFactory),
 		pluginTelemetryFactory: pipelineFactory,

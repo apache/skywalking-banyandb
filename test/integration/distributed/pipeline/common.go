@@ -165,7 +165,8 @@ var _ = ginkgo.SynchronizedBeforeSuite(func() []byte {
 		dn0Ports,
 		"--trace-pipeline-native-plugin-enabled=true",
 		"--trace-pipeline-trusted-plugin-dir="+trustedDir,
-		"--trace-pipeline-merge-grace-default=0",
+		"--trace-pipeline-merge-grace-default=1ns",
+		"--trace-pipeline-max-fragment-gap=1ns",
 		"--trace-max-merge-parts=2",
 		"--trace-flush-timeout=500ms",
 	)
@@ -180,7 +181,8 @@ var _ = ginkgo.SynchronizedBeforeSuite(func() []byte {
 		dn1Ports,
 		"--trace-pipeline-native-plugin-enabled=true",
 		"--trace-pipeline-trusted-plugin-dir="+trustedDir,
-		"--trace-pipeline-merge-grace-default=0",
+		"--trace-pipeline-merge-grace-default=1ns",
+		"--trace-pipeline-max-fragment-gap=1ns",
 		"--trace-max-merge-parts=2",
 		"--trace-flush-timeout=500ms",
 	)
