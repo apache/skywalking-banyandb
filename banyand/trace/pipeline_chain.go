@@ -19,6 +19,7 @@ package trace
 
 import (
 	"fmt"
+	"math"
 	"sync"
 	"time"
 
@@ -195,12 +196,69 @@ func assembleTraceBlock(traceID string, bp *blockPointer, proj sdk.Projection) s
 	return tb
 }
 
-// assembleRawTraceBlock builds a metadata-only sdk.TraceBlock for a trace staged
-// on the raw fast path (empty projection: no tags, no spans).
-func assembleRawTraceBlock(traceID string, bm *blockMetadata) sdk.TraceBlock {
-	return sdk.TraceBlock{
-		TraceID: traceID,
-		MinTS:   bm.timestamps.min,
-		MaxTS:   bm.timestamps.max,
+func projectionRequiresSlowPath(projection sdk.Projection) bool {
+	return len(projection.Tags) > 0 || projection.SpanIDs || projection.Spans
+}
+
+func assembleStagedTraceBlock(traceID string, staged []stagedTrace, projection sdk.Projection) (sdk.TraceBlock, bool) {
+	if traceID == "" || len(staged) == 0 {
+		return sdk.TraceBlock{}, false
 	}
+	minTimestamp := int64(math.MaxInt64)
+	maxTimestamp := int64(math.MinInt64)
+	requiresSlowPath := projectionRequiresSlowPath(projection)
+	var aggregate *blockPointer
+	if requiresSlowPath {
+		aggregate = generateBlockPointer()
+		defer releaseBlockPointer(aggregate)
+		aggregate.bm.traceID = traceID
+	}
+	matched := false
+	for stagedIdx := range staged {
+		stagedBlock := &staged[stagedIdx]
+		if stagedBlock.traceID != traceID {
+			return sdk.TraceBlock{}, false
+		}
+		matched = true
+		var metadata *blockMetadata
+		switch {
+		case stagedBlock.isRaw:
+			if requiresSlowPath {
+				return sdk.TraceBlock{}, false
+			}
+			metadata = &stagedBlock.rawBM
+		case stagedBlock.slowBlock != nil:
+			metadata = &stagedBlock.slowBlock.bm
+			if requiresSlowPath {
+				aggregate.appendAll(stagedBlock.slowBlock)
+			}
+		default:
+			return sdk.TraceBlock{}, false
+		}
+		if metadata.traceID != traceID || !metadata.timestamps.known ||
+			metadata.timestamps.min > metadata.timestamps.max {
+			return sdk.TraceBlock{}, false
+		}
+		minTimestamp = min(minTimestamp, metadata.timestamps.min)
+		maxTimestamp = max(maxTimestamp, metadata.timestamps.max)
+	}
+	if !matched {
+		return sdk.TraceBlock{}, false
+	}
+	if !requiresSlowPath {
+		return sdk.TraceBlock{
+			TraceID: traceID,
+			MinTS:   minTimestamp,
+			MaxTS:   maxTimestamp,
+		}, true
+	}
+	if aggregate.Len() == 0 || aggregate.timestampBoundsUnknown {
+		return sdk.TraceBlock{}, false
+	}
+	aggregate.bm.timestamps = timestampsMetadata{
+		min:   minTimestamp,
+		max:   maxTimestamp,
+		known: true,
+	}
+	return assembleTraceBlock(traceID, aggregate, projection), true
 }

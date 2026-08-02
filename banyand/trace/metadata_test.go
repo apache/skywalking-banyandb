@@ -362,7 +362,8 @@ var _ = Describe("Metadata", func() {
 		Context("Trace schema with changed tag type after merge", func() {
 			It("querying data should return correct values after parts with different types are merged", func() {
 				traceName := "schema_change_tag_type_merge"
-				now := timestamp.NowMilli()
+				// Keep both batches in one daily segment regardless of the wall-clock hour.
+				now := timestamp.NowMilli().UTC().Truncate(24 * time.Hour)
 
 				env := setupSchemaChangeTrace(svcs, traceName, groupName, traceSetupOptions{withExtraTag: true})
 				writeSchemaChangeTraceData(svcs, traceName, groupName, now.Add(-2*time.Hour), 5,

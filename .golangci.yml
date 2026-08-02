@@ -156,6 +156,15 @@ issues:
     linters:
     - errcheck
     - maligned
+  # This executable contract is intentionally kept stable while implementations move
+  # from RED to GREEN. Its table layout and explicit helper arguments favor reviewability.
+  - path: fragment_guard_contract_test\.go$
+    linters:
+    - govet
+    text: fieldalignment
+  - path: fragment_guard_contract_test\.go$
+    linters:
+    - unparam
   - linters:
     - staticcheck
     text: "SA1019: package github.com/golang/protobuf"

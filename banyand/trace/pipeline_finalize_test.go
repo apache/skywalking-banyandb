@@ -26,6 +26,7 @@ import (
 	"google.golang.org/protobuf/types/known/durationpb"
 
 	commonv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/common/v1"
+	"github.com/apache/skywalking-banyandb/pkg/timestamp"
 )
 
 // TestBuildHotMergeFilter_MergeEventGate verifies that the hot merge filter is applied
@@ -38,9 +39,22 @@ func TestBuildHotMergeFilter_MergeEventGate(t *testing.T) {
 
 	const group = "merge-gate-group"
 	replaceSamplersForGroup(group, []namedSampler{{name: "s", sampler: &dummySampler{}}})
-	tst := &tsTable{group: group, option: option{nativePipelineEnabled: true, mergeGraceDefault: time.Second}}
 	// An ancient (non-hot) part so hotness never masks the gate.
 	parts := []*partWrapper{{p: &part{partMetadata: partMetadata{MaxTimestamp: 1, TotalCount: 1}}}}
+	tst := &tsTable{
+		segmentTimeRange: timestamp.NewInclusiveTimeRange(time.Unix(-1, 0), time.Unix(1, 0)),
+		group:            group,
+		snapshot: &snapshot{
+			parts: parts,
+			epoch: 1,
+			ref:   1,
+		},
+		option: option{
+			nativePipelineEnabled: true,
+			mergeGraceDefault:     time.Second,
+			maxTraceFragmentGap:   time.Second,
+		},
+	}
 
 	// FINALIZE-only: samplers registered, MERGE event disabled → no hot-merge filter.
 	setMergeEventForGroup(group, false)
@@ -48,7 +62,9 @@ func TestBuildHotMergeFilter_MergeEventGate(t *testing.T) {
 
 	// MERGE enabled → the filter is built.
 	setMergeEventForGroup(group, true)
-	assert.NotNil(t, tst.buildHotMergeFilter(parts), "MERGE-enabled group must filter hot merges")
+	filter := tst.buildHotMergeFilter(parts)
+	require.NotNil(t, filter, "MERGE-enabled group must filter hot merges")
+	filter.guard.Close()
 }
 
 // TestFinalizeEventEnabled_Matrix verifies the finalize event gate. Unlike MERGE,

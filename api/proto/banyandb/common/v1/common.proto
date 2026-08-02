@@ -160,8 +160,10 @@ message TracePipelineConfig {
   bool enabled = 1;
   // plugins is the ordered chain of plugins evaluated by enabled events.
   repeated Plugin plugins = 2;
-  // merge_grace is the per-trace maturity window for the in-merge filter.
-  // Strictly positive if set; engine default 30s if unset.
+  // merge_grace is the whole-selection maturity delay for destructive in-merge sampling.
+  // Sampling is deferred when any selected part extends beyond now - merge_grace;
+  // this is not a per-trace completeness guarantee.
+  // Strictly positive if set; engine default 2h if unset.
   google.protobuf.Duration merge_grace = 3 [(validate.rules).duration = {
     gt: {seconds: 0}
   }];

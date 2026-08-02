@@ -365,20 +365,39 @@ func (tst *tsTable) buildHotMergeFilter(parts []*partWrapper) *mergeFilter {
 	if !mergeEventEnabledForGroup(tst.group) {
 		return nil
 	}
-	graceNs := lookupMergeGrace(tst.group)
-	if graceNs <= 0 {
-		graceNs = int64(tst.option.mergeGraceDefault)
+	graceNs := tst.effectiveMergeGraceNs()
+	if tst.option.maxTraceFragmentGap <= 0 || time.Duration(graceNs) < tst.option.maxTraceFragmentGap {
+		tst.incPipelineGuardBypassed()
+		return nil
 	}
 	if isMergeHot(parts, graceNs, time.Now().UnixNano()) {
+		tst.incPipelineGuardBypassed()
+		return nil
+	}
+	stageBudget := resolveStageBudget(tst.option)
+	guard := tst.newTraceFragmentGuardSession(parts, tst.option.maxTraceFragmentGap, stageBudget)
+	if guard == nil {
+		tst.incPipelineGuardBypassed()
 		return nil
 	}
 	chain := newMergeChain(tst.group, "", samplers, tst.option.decideTimeoutCircuitBreak)
 	return &mergeFilter{
 		chain:       chain,
+		guard:       guard,
+		ctx:         tst.loopCloser.Ctx(),
+		owner:       tst,
 		timeout:     tst.option.decideTimeout,
-		stageBudget: resolveStageBudget(tst.option),
-		forceSlow:   len(chain.projection.Tags) > 0,
+		stageBudget: stageBudget,
+		forceSlow:   projectionRequiresSlowPath(chain.projection),
 	}
+}
+
+func (tst *tsTable) effectiveMergeGraceNs() int64 {
+	graceNs := lookupMergeGrace(tst.group)
+	if graceNs <= 0 {
+		graceNs = int64(tst.option.mergeGraceDefault)
+	}
+	return graceNs
 }
 
 func (tst *tsTable) mergePartsThenSendIntroduction(creator snapshotCreator, parts []*partWrapper, merged map[uint64]struct{}, merges chan *mergerIntroduction,
@@ -386,32 +405,71 @@ func (tst *tsTable) mergePartsThenSendIntroduction(creator snapshotCreator, part
 ) (*partWrapper, error) {
 	reservedSpace := tst.reserveSpace(parts)
 	defer releaseDiskSpace(reservedSpace)
-	start := time.Now()
-	newPartID := atomic.AddUint64(&tst.curPartID, 1)
 	var filter *mergeFilter
 	var finalizeGenOverride *uint64
 	if ov != nil {
 		filter = ov.filter
 		finalizeGenOverride = ov.finalizeGen
-	}
-	// Hot / flusher path (no pre-built filter): build the in-merge retention filter from
-	// the merge-time rules. The finalize path supplies its own filter via ov, so this
-	// hot build is skipped there.
-	if filter == nil {
+	} else {
 		filter = tst.buildHotMergeFilter(parts)
 	}
-	newPart, dropped, err := tst.mergeParts(tst.fileSystem, closeCh, parts, newPartID, tst.root, filter, finalizeGenOverride)
-	if err != nil {
-		return nil, err
+	var guardSession *traceFragmentGuardSession
+	if filter != nil && filter.guard != nil {
+		guardSession = filter.guard
+		defer guardSession.Close()
 	}
-	elapsed := time.Since(start)
+
+	result, mergeErr := tst.mergePartsThenIntroduceAttempt(
+		creator, parts, merged, merges, closeCh, typ, lane, filter, finalizeGenOverride,
+	)
+	if mergeErr != nil {
+		return nil, mergeErr
+	}
+	if !result.rejected {
+		return result.part, nil
+	}
+
+	tst.incPipelineGuardPublicationRejected(1)
+	tst.l.Warn().
+		Str("group", tst.group).
+		Uint32("shard", uint32(tst.shardID)).
+		Str("mergeType", typ).
+		Str("reason", string(result.revalidation.Reason)).
+		Int("recheckedTraces", result.revalidation.RecheckedTraces).
+		Int("bloomProbes", result.revalidation.BloomProbes).
+		Msg("trace fragment guard rejected filtered output; retrying merge losslessly")
+	if guardSession != nil {
+		guardSession.Close()
+	}
+	tst.incPipelineGuardLosslessRetry(1)
+	losslessResult, losslessErr := tst.mergePartsThenIntroduceAttempt(
+		creator, parts, merged, merges, closeCh, typ, lane, nil, finalizeGenOverride,
+	)
+	if losslessErr != nil {
+		return nil, losslessErr
+	}
+	if losslessResult.rejected {
+		return nil, fmt.Errorf("lossless trace merge was unexpectedly rejected: %s", losslessResult.revalidation.Reason)
+	}
+	return losslessResult.part, nil
+}
+
+type mergeAttemptResult struct {
+	part         *partWrapper
+	revalidation traceFragmentGuardRevalidation
+	rejected     bool
+}
+
+func (tst *tsTable) observeCoreMerge(parts []*partWrapper, newPart *partWrapper, elapsed time.Duration,
+	creator snapshotCreator, typ, lane string,
+) {
 	tst.incTotalMergeLatency(elapsed.Seconds(), typ, lane)
 	tst.incTotalMerged(1, typ, lane)
 	tst.incTotalMergedParts(len(parts), typ, lane)
 	if elapsed > 30*time.Second {
 		var totalCount uint64
-		for _, pw := range parts {
-			totalCount += pw.p.partMetadata.TotalCount
+		for _, partData := range parts {
+			totalCount += partData.p.partMetadata.TotalCount
 		}
 		tst.l.Warn().
 			Uint64("beforeTotalCount", totalCount).
@@ -419,30 +477,46 @@ func (tst *tsTable) mergePartsThenSendIntroduction(creator snapshotCreator, part
 			Int("beforePartCount", len(parts)).
 			Dur("elapsed", elapsed).
 			Msg("background merger takes too long")
-	} else if snapshotCreatorMerger == creator && tst.l.Info().Enabled() && len(parts) > 2 {
-		var minSize, maxSize, totalSize, totalCount uint64
-		for _, pw := range parts {
-			totalCount += pw.p.partMetadata.TotalCount
-			totalSize += pw.p.partMetadata.CompressedSizeBytes
-			if minSize == 0 || minSize > pw.p.partMetadata.CompressedSizeBytes {
-				minSize = pw.p.partMetadata.CompressedSizeBytes
-			}
-			if maxSize < pw.p.partMetadata.CompressedSizeBytes {
-				maxSize = pw.p.partMetadata.CompressedSizeBytes
-			}
-		}
-		if totalSize > 10<<20 && minSize*uint64(len(parts)) < maxSize {
-			// it's an unbalanced merge. but it's ok when the size is small.
-			tst.l.Info().
-				Str("beforeTotalCount", humanize.Comma(int64(totalCount))).
-				Str("afterTotalCount", humanize.Comma(int64(newPart.p.partMetadata.TotalCount))).
-				Int("beforePartCount", len(parts)).
-				Str("minSize", humanize.IBytes(minSize)).
-				Str("maxSize", humanize.IBytes(maxSize)).
-				Dur("elapsedMS", elapsed).
-				Msg("background merger merges unbalanced parts")
-		}
+		return
 	}
+	if snapshotCreatorMerger != creator || !tst.l.Info().Enabled() || len(parts) <= 2 {
+		return
+	}
+	var minSize, maxSize, totalSize, totalCount uint64
+	for _, partData := range parts {
+		metadata := &partData.p.partMetadata
+		totalCount += metadata.TotalCount
+		totalSize += metadata.CompressedSizeBytes
+		if minSize == 0 || minSize > metadata.CompressedSizeBytes {
+			minSize = metadata.CompressedSizeBytes
+		}
+		maxSize = max(maxSize, metadata.CompressedSizeBytes)
+	}
+	if totalSize <= 10<<20 || minSize*uint64(len(parts)) >= maxSize {
+		return
+	}
+	// An unbalanced merge is acceptable while its total size remains small.
+	tst.l.Info().
+		Str("beforeTotalCount", humanize.Comma(int64(totalCount))).
+		Str("afterTotalCount", humanize.Comma(int64(newPart.p.partMetadata.TotalCount))).
+		Int("beforePartCount", len(parts)).
+		Str("minSize", humanize.IBytes(minSize)).
+		Str("maxSize", humanize.IBytes(maxSize)).
+		Dur("elapsedMS", elapsed).
+		Msg("background merger merges unbalanced parts")
+}
+
+func (tst *tsTable) mergePartsThenIntroduceAttempt(creator snapshotCreator, parts []*partWrapper, merged map[uint64]struct{},
+	merges chan *mergerIntroduction, closeCh <-chan struct{}, typ, lane string, filter *mergeFilter, finalizeGenOverride *uint64,
+) (mergeAttemptResult, error) {
+	start := time.Now()
+	newPartID := atomic.AddUint64(&tst.curPartID, 1)
+	newPart, dropped, err := tst.mergeParts(tst.fileSystem, closeCh, parts, newPartID, tst.root, filter, finalizeGenOverride)
+	if err != nil {
+		return mergeAttemptResult{}, err
+	}
+	elapsed := time.Since(start)
+	tst.observeCoreMerge(parts, newPart, elapsed, creator, typ, lane)
 	partIDMap := make(map[uint64]struct{})
 	for _, pw := range parts {
 		partIDMap[pw.ID()] = struct{}{}
@@ -475,7 +549,7 @@ func (tst *tsTable) mergePartsThenSendIntroduction(creator snapshotCreator, part
 				tst.removeSidxPartOnFailure(doneSidxName, newPartID)
 				intro.Release()
 			}
-			return nil, mergeErr
+			return mergeAttemptResult{}, mergeErr
 		}
 		if mergerIntroduction == nil {
 			continue
@@ -497,6 +571,25 @@ func (tst *tsTable) mergePartsThenSendIntroduction(creator snapshotCreator, part
 			}
 		}()
 	}
+	cleanupOutput := func() {
+		for sidxName, mergerIntroduction := range mergerIntroductionMap {
+			mergerIntroduction.ReleaseNewPart()
+			tst.removeSidxPartOnFailure(sidxName, newPartID)
+		}
+		tst.removeTracePartOnFailure(newPart)
+	}
+
+	var revalidation traceFragmentGuardRevalidation
+	hasRevalidation := false
+	if len(dropped) > 0 && filter != nil && filter.guard != nil {
+		revalidation = filter.guard.revalidate(tst)
+		hasRevalidation = true
+		tst.incPipelineGuardBloomProbes(revalidation.BloomProbes)
+		if !revalidation.Publish {
+			cleanupOutput()
+			return mergeAttemptResult{revalidation: revalidation, rejected: true}, nil
+		}
+	}
 
 	mi := generateMergerIntroduction()
 	defer releaseMergerIntroduction(mi)
@@ -504,14 +597,30 @@ func (tst *tsTable) mergePartsThenSendIntroduction(creator snapshotCreator, part
 	mi.newPart = newPart
 	mi.merged = merged
 	mi.sidxMergerIntroduced = mergerIntroductionMap
+	if hasRevalidation {
+		mi.guard = filter.guard
+		mi.guardRevalidation = revalidation
+		mi.guardRevalidated = true
+	}
 	mi.applied = make(chan struct{})
 	select {
 	case merges <- mi:
 	case <-tst.loopCloser.CloseNotify():
-		return newPart, errClosed
+		cleanupOutput()
+		return mergeAttemptResult{}, errClosed
 	}
 	<-mi.applied
-	return newPart, nil
+	if mi.resultErr != nil {
+		cleanupOutput()
+		if mi.guardRejected {
+			return mergeAttemptResult{
+				revalidation: mi.guardRevalidation,
+				rejected:     true,
+			}, nil
+		}
+		return mergeAttemptResult{}, mi.resultErr
+	}
+	return mergeAttemptResult{part: newPart}, nil
 }
 
 func (tst *tsTable) freeDiskSpace(path string) uint64 {
@@ -728,14 +837,29 @@ type stagedTrace struct {
 	isRaw          bool
 }
 
+type stagedTraceRange struct {
+	start int
+	end   int
+}
+
 // mergeFilter carries the resolved in-merge retention hook state into
 // mergeBlocks. When nil, mergeBlocks behaves exactly as before (no staging, no
 // decode changes).
 type mergeFilter struct {
 	chain       *mergeChain
+	guard       *traceFragmentGuardSession
+	ctx         context.Context
+	owner       *tsTable
 	timeout     time.Duration
 	stageBudget uint64 // soft cap on staged bytes; a trace-boundary chunk flush fires once exceeded (0 disables chunking)
-	forceSlow   bool   // forces the slow assembly path when the chain projects tags
+	forceSlow   bool   // forces the slow assembly path when the chain projects row data
+}
+
+func (f *mergeFilter) guardContext() context.Context {
+	if f == nil || f.ctx == nil {
+		return context.Background()
+	}
+	return f.ctx
 }
 
 // approxBytes estimates the deep-copied heap a staged trace holds so mergeBlocks
@@ -769,8 +893,12 @@ func (st *stagedTrace) approxBytes() uint64 {
 // within graceNs of now. A hot merge means some traces may still have in-flight
 // spans arriving in newer parts, so the caller should skip filter evaluation.
 func isMergeHot(parts []*partWrapper, graceNs int64, now int64) bool {
+	if graceNs < 0 {
+		return true
+	}
+	maturityFrontier := traceFragmentSaturatingSub(now, graceNs)
 	for _, pw := range parts {
-		if pw.p.partMetadata.MaxTimestamp > now-graceNs {
+		if pw.p.partMetadata.MaxTimestamp > maturityFrontier {
 			return true
 		}
 	}
@@ -818,45 +946,117 @@ func writeStagedKeep(bw *blockWriter, st *stagedTrace) {
 	bw.mustWriteBlock(st.traceID, &st.slowBlock.block)
 }
 
-// flushStaged evaluates the staged traces through the chain and writes every
-// staged trace back in its original (ascending traceID) order — traces are
-// written only if the verdict keeps them — recording dropped trace ids in
-// droppedSet. Allocated slow blocks are released.
-// fail-open: any chain error retains the whole evaluated batch.
+type stagedEvaluationBatch struct {
+	traceBatch  sdk.TraceBatch
+	traceIDs    []string
+	guardRanges []stagedTraceRange
+}
+
+func assembleStagedEvaluationBatch(filter *mergeFilter, staged []stagedTrace) (stagedEvaluationBatch, bool) {
+	assembledBatch := stagedEvaluationBatch{
+		traceIDs: make([]string, 0, len(staged)),
+	}
+	if filter.guard != nil {
+		assembledBatch.guardRanges = make([]stagedTraceRange, 0, len(staged))
+	}
+	var lastGroupTraceID string
+	hasLastGroup := false
+	for startIdx := 0; startIdx < len(staged); {
+		traceID := staged[startIdx].traceID
+		if hasLastGroup && traceID <= lastGroupTraceID {
+			return stagedEvaluationBatch{}, false
+		}
+		endIdx := startIdx + 1
+		for endIdx < len(staged) && staged[endIdx].traceID == traceID {
+			endIdx++
+		}
+		stagedTraceBlock, assembled := assembleStagedTraceBlock(traceID, staged[startIdx:endIdx], filter.chain.projection)
+		if assembled {
+			assembledBatch.traceIDs = append(assembledBatch.traceIDs, traceID)
+			assembledBatch.traceBatch.Traces = append(assembledBatch.traceBatch.Traces, stagedTraceBlock)
+			if filter.guard != nil {
+				assembledBatch.guardRanges = append(assembledBatch.guardRanges, stagedTraceRange{start: startIdx, end: endIdx})
+			}
+		}
+		lastGroupTraceID = traceID
+		hasLastGroup = true
+		startIdx = endIdx
+	}
+	return assembledBatch, true
+}
+
+func resolveStagedDrops(filter *mergeFilter, staged []stagedTrace, assembledBatch stagedEvaluationBatch) map[string]struct{} {
+	if len(assembledBatch.traceBatch.Traces) == 0 {
+		return nil
+	}
+	verdict, execErr := filter.chain.Execute(&assembledBatch.traceBatch, filter.timeout)
+	keepMask := verdict.Keep
+	if execErr != nil || len(keepMask) != len(assembledBatch.traceIDs) {
+		if filter.owner != nil {
+			filter.owner.incPipelinePluginErrors(1, "decide_failed_open")
+		}
+		return nil
+	}
+	if filter.owner != nil {
+		filter.owner.incPipelineTracesEvaluated(len(assembledBatch.traceIDs))
+	}
+	var dropMature map[string]struct{}
+	for traceIdx, traceID := range assembledBatch.traceIDs {
+		if keepMask[traceIdx] {
+			if filter.owner != nil {
+				filter.owner.incPipelineTracesRetained(1)
+			}
+			continue
+		}
+		if filter.guard == nil {
+			if dropMature == nil {
+				dropMature = make(map[string]struct{})
+			}
+			dropMature[traceID] = struct{}{}
+			if filter.owner != nil {
+				filter.owner.incPipelineTracesDropped(1)
+			}
+			continue
+		}
+		guardRange := assembledBatch.guardRanges[traceIdx]
+		guardTrace := assembleTraceFragmentGuardTrace(traceID, staged[guardRange.start:guardRange.end])
+		decision := filter.guard.guard.Resolve(filter.guardContext(), guardTrace, traceFragmentSamplerActionDrop)
+		if filter.owner != nil {
+			filter.owner.incPipelineGuardBloomProbes(decision.BloomProbes)
+		}
+		if decision.Action == traceFragmentGuardActionDrop && decision.ConfirmedDrop != nil {
+			if dropMature == nil {
+				dropMature = make(map[string]struct{})
+			}
+			dropMature[traceID] = struct{}{}
+			if filter.owner != nil {
+				filter.owner.incPipelineTracesDropped(1)
+			}
+			continue
+		}
+		if filter.owner != nil {
+			filter.owner.incPipelineTracesRetained(1)
+			filter.owner.incPipelineGuardDeferred(1)
+			if decision.Reason == traceFragmentGuardReasonBudgetExhausted {
+				filter.owner.incPipelineGuardBudgetExhausted(1)
+			}
+		}
+	}
+	return dropMature
+}
+
+// flushStaged evaluates staged traces and writes them in ascending trace-ID order.
+// Chain failures retain the whole batch, and allocated slow blocks are released.
 func flushStaged(bw *blockWriter, filter *mergeFilter, staged []stagedTrace, droppedSet map[string]struct{}) {
 	if len(staged) == 0 {
 		return
 	}
-	// Build the Decide batch: one TraceBlock per unique trace_id. A trace split
-	// across multiple staged blocks (spans exceeding maxUncompressedSpanSize) is
-	// decided once and dropped as a unit. The first staged block of each trace
-	// assembles its batch entry.
-	var batch sdk.TraceBatch
-	batchTraceIDs := make([]string, 0, len(staged))
-	seenEval := make(map[string]struct{})
-	for i := range staged {
-		if _, seen := seenEval[staged[i].traceID]; seen {
-			continue
-		}
-		seenEval[staged[i].traceID] = struct{}{}
-		batchTraceIDs = append(batchTraceIDs, staged[i].traceID)
-		if staged[i].isRaw {
-			batch.Traces = append(batch.Traces, assembleRawTraceBlock(staged[i].traceID, &staged[i].rawBM))
-		} else {
-			batch.Traces = append(batch.Traces, assembleTraceBlock(staged[i].traceID, staged[i].slowBlock, filter.chain.projection))
-		}
-	}
-	dropMature := make(map[string]struct{})
-	if len(batch.Traces) > 0 {
-		verdict, execErr := filter.chain.Execute(&batch, filter.timeout)
-		keepMask := verdict.Keep
-		if execErr == nil && len(keepMask) == len(batchTraceIDs) {
-			for j, traceID := range batchTraceIDs {
-				if !keepMask[j] {
-					dropMature[traceID] = struct{}{}
-				}
-			}
-		}
+	// Build one Decide entry per trace ID. A trace split across physical blocks is
+	// assembled completely, decided once, and dropped as a unit.
+	assembledBatch, validOrder := assembleStagedEvaluationBatch(filter, staged)
+	var dropMature map[string]struct{}
+	if validOrder {
+		dropMature = resolveStagedDrops(filter, staged, assembledBatch)
 	}
 	for i := range staged {
 		if _, isDropped := dropMature[staged[i].traceID]; isDropped {
@@ -1065,8 +1265,16 @@ func mergeBlocks(closeCh <-chan struct{}, bw *blockWriter, br *blockReader, conf
 }
 
 func mergeTwoBlocks(target, left, right *blockPointer) {
+	leftBoundsKnown := len(left.spans) == 0 || left.bm.timestamps.known && !left.block.timestampBoundsUnknown
+	rightBoundsKnown := len(right.spans) == 0 || right.bm.timestamps.known && !right.block.timestampBoundsUnknown
 	target.appendAll(left)
 	target.appendAll(right)
+	target.block.timestampBoundsUnknown = len(target.spans) > 0 && (!leftBoundsKnown || !rightBoundsKnown)
+	target.bm.timestamps.known = len(target.spans) > 0 && !target.block.timestampBoundsUnknown
+	if target.bm.timestamps.known {
+		target.bm.timestamps.min = target.block.minTS
+		target.bm.timestamps.max = target.block.maxTS
+	}
 }
 
 func renameConflictTags(b *block, conflictTags map[string]struct{}) {
