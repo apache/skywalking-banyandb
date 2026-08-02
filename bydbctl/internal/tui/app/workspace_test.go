@@ -16,6 +16,7 @@
 package app
 
 import (
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -169,6 +170,126 @@ func TestWorkspaceFitsTerminalWithSchemaSearchOpen(t *testing.T) {
 		"Status: ready",
 		"Esc stop/quit",
 	)
+}
+
+func TestSchemaSearchKeepsAllMatchesAndScrollsVisibleResults(t *testing.T) {
+	const group = "sw_metrics"
+	model := NewModel(Config{})
+	model.catalog.setCatalog(session.SchemaCatalog{Entries: []session.CatalogEntry{
+		{Group: group, Type: session.ResourceTypeMeasure, Name: "match_01"},
+		{Group: group, Type: session.ResourceTypeMeasure, Name: "match_02"},
+		{Group: group, Type: session.ResourceTypeMeasure, Name: "match_03"},
+		{Group: group, Type: session.ResourceTypeMeasure, Name: "match_04"},
+		{Group: group, Type: session.ResourceTypeMeasure, Name: "match_05"},
+		{Group: group, Type: session.ResourceTypeMeasure, Name: "match_06"},
+		{Group: group, Type: session.ResourceTypeMeasure, Name: "match_07"},
+		{Group: group, Type: session.ResourceTypeMeasure, Name: "match_08"},
+	}})
+	model.message.SetValue("@match")
+	model.updateSchemaSearch()
+
+	if got := len(model.schemaSearchEntries()); got != 8 {
+		t.Fatalf("expected all eight matching schemas, got %d", got)
+	}
+	for index := 0; index < 6; index++ {
+		updatedModel, _ := model.Update(tea.KeyMsg{Type: tea.KeyDown})
+		var ok bool
+		model, ok = updatedModel.(Model)
+		if !ok {
+			t.Fatalf("unexpected model type: %T", updatedModel)
+		}
+	}
+
+	view := model.renderSchemaSearch(100, 3)
+	for _, expected := range []string{"match_05", "match_06", "match_07", "results 5-7/8"} {
+		if !strings.Contains(view, expected) {
+			t.Fatalf("expected %q in scrolled schema search:\n%s", expected, view)
+		}
+	}
+	if strings.Contains(view, "match_01") {
+		t.Fatalf("did not expect the first result in the scrolled schema search:\n%s", view)
+	}
+}
+
+func TestSchemaSearchPrioritizesResourceNamesAndRejectsCrossWordSubsequences(t *testing.T) {
+	model := NewModel(Config{})
+	model.catalog.setCatalog(session.SchemaCatalog{Entries: []session.CatalogEntry{
+		{Group: "sw_metadata", Type: session.ResourceTypeMeasure, Name: "ebpf_profiling_schedule_minute"},
+		{Group: "sw_metricsDay", Type: session.ResourceTypeMeasure, Name: "instance_jvm_memory_pool_codeheap_profiled_nmethods_day"},
+		{Group: "sw_metricsDay", Type: session.ResourceTypeMeasure, Name: "meter_rocketmq_topic_producer_offset_day"},
+		{Group: "pprof", Type: session.ResourceTypeMeasure, Name: "cpu"},
+		{Group: "sw_profile", Type: session.ResourceTypeMeasure, Name: "pprof_cpu"},
+		{Group: "sw_profile", Type: session.ResourceTypeMeasure, Name: "pprof_heap"},
+	}})
+	model.message.SetValue("@pprof")
+	model.updateSchemaSearch()
+
+	entries := model.schemaSearchEntries()
+	if len(entries) != 3 {
+		t.Fatalf("expected three direct pprof matches, got %#v", entries)
+	}
+	gotNames := []string{entries[0].Name, entries[1].Name, entries[2].Name}
+	wantNames := []string{"pprof_cpu", "pprof_heap", "cpu"}
+	if !slices.Equal(gotNames, wantNames) {
+		t.Fatalf("unexpected search order: got %v, want %v", gotNames, wantNames)
+	}
+}
+
+func TestSchemaSearchMatchesExplicitGroupResourceReference(t *testing.T) {
+	model := NewModel(Config{})
+	model.catalog.setCatalog(session.SchemaCatalog{Entries: []session.CatalogEntry{
+		{Group: "sw_metadata", Type: session.ResourceTypeMeasure, Name: "endpoint_traffic_minute"},
+		{Group: "sw_metadata", Type: session.ResourceTypeMeasure, Name: "service_traffic_minute"},
+		{Group: "sw_metrics", Type: session.ResourceTypeMeasure, Name: "endpoint_traffic_minute"},
+	}})
+	model.message.SetValue("@sw_metadata/endpoint")
+	model.updateSchemaSearch()
+
+	entries := model.schemaSearchEntries()
+	if len(entries) != 1 {
+		t.Fatalf("expected one explicit group/resource match, got %#v", entries)
+	}
+	if entries[0].Group != "sw_metadata" || entries[0].Name != "endpoint_traffic_minute" {
+		t.Fatalf("unexpected explicit group/resource match: %#v", entries[0])
+	}
+}
+
+func TestSchemaSearchMatchesMultiTokenResourcePrefix(t *testing.T) {
+	model := NewModel(Config{})
+	model.catalog.setCatalog(session.SchemaCatalog{Entries: []session.CatalogEntry{
+		{Group: "sw_metadata", Type: session.ResourceTypeMeasure, Name: "endpoint_traffic_minute"},
+	}})
+	model.message.SetValue("@sw_metadata/endpoint_traffic")
+	model.updateSchemaSearch()
+
+	entries := model.schemaSearchEntries()
+	if len(entries) != 1 || entries[0].Name != "endpoint_traffic_minute" {
+		t.Fatalf("expected multi-token resource prefix to match, got %#v", entries)
+	}
+}
+
+func TestSchemaSearchUsesBestTokenMatch(t *testing.T) {
+	model := NewModel(Config{})
+	model.catalog.setCatalog(session.SchemaCatalog{Entries: []session.CatalogEntry{
+		{Group: "sw_metadata", Type: session.ResourceTypeMeasure, Name: "foobar"},
+		{Group: "sw_metadata", Type: session.ResourceTypeMeasure, Name: "xfoo_foo"},
+	}})
+	model.message.SetValue("@foo")
+	model.updateSchemaSearch()
+
+	entries := model.schemaSearchEntries()
+	if len(entries) != 2 || entries[0].Name != "xfoo_foo" {
+		t.Fatalf("expected exact token match to rank first, got %#v", entries)
+	}
+}
+
+func TestSchemaSearchViewportLimitUsesAvailableHeight(t *testing.T) {
+	if got := schemaSearchViewportLimit(4, 100); got != 1 {
+		t.Fatalf("expected one result in a compact workspace, got %d", got)
+	}
+	if got := schemaSearchViewportLimit(42, 100); got >= 100 {
+		t.Fatalf("expected a bounded viewport for a large catalog, got %d", got)
+	}
 }
 
 func assertWorkspaceFitsTerminal(t *testing.T, view string, terminalHeight int, expectedValues ...string) {

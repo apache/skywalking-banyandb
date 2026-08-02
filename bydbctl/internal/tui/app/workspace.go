@@ -27,7 +27,16 @@ import (
 )
 
 const (
-	maxSchemaSearchResults   = 6
+	schemaSearchNameScore = iota
+	schemaSearchExactTokenScore
+	schemaSearchPrefixScore
+	schemaSearchSubstringScore
+	schemaSearchGroupScore
+	schemaSearchTypeScore = schemaSearchGroupScore * 2
+
+	schemaSearchRowsPerViewport   = 6
+	maxSchemaSearchVisibleResults = 12
+
 	minWorkspaceChatHeight   = 4
 	minWorkspaceEditorHeight = 1
 )
@@ -54,6 +63,11 @@ type workspaceLeftLayout struct {
 	queryHeight       int
 	messageHeight     int
 	schemaResultLimit int
+}
+
+type schemaSearchResult struct {
+	entry session.CatalogEntry
+	score int
 }
 
 func workspaceWidths(width int) (int, int) {
@@ -112,11 +126,12 @@ func (m Model) renderWorkspace(width, height int) string {
 }
 
 func (m Model) renderWorkspaceLeft(width, height int) string {
+	schemaSearchResultLimit := schemaSearchViewportLimit(height, len(m.schemaSearchEntries()))
 	layout := workspaceLeftLayout{
 		chatHeight:        clamp(height-24, minWorkspaceChatHeight, 16),
 		queryHeight:       m.query.Height(),
 		messageHeight:     m.message.Height(),
-		schemaResultLimit: len(m.schemaSearchEntries()),
+		schemaResultLimit: schemaSearchResultLimit,
 	}
 	for {
 		left := m.renderWorkspaceLeftWithLayout(width, layout)
@@ -143,6 +158,13 @@ func (m Model) renderWorkspaceLeft(width, height int) string {
 		}
 		return left
 	}
+}
+
+func schemaSearchViewportLimit(height, resultCount int) int {
+	if resultCount == 0 {
+		return 0
+	}
+	return minInt(resultCount, clamp(height/schemaSearchRowsPerViewport, 1, maxSchemaSearchVisibleResults))
 }
 
 func (m Model) renderWorkspaceLeftWithLayout(width int, layout workspaceLeftLayout) string {
@@ -426,16 +448,25 @@ func (m Model) schemaSearchEntries() []session.CatalogEntry {
 	if !open {
 		return nil
 	}
-	entries := make([]session.CatalogEntry, 0, maxSchemaSearchResults)
+	if normalizeSchemaSearchTerm(term) == "" && term != "" {
+		return nil
+	}
+	results := make([]schemaSearchResult, 0, len(m.catalog.catalog.Entries))
 	for _, entry := range m.catalog.catalog.Entries {
-		if !schemaSearchMatches(entry, term) {
+		score, matches := schemaSearchScore(entry, term)
+		if !matches {
 			continue
 		}
-		entries = append(entries, entry)
+		results = append(results, schemaSearchResult{entry: entry, score: score})
 	}
-	sort.Slice(entries, func(leftIndex, rightIndex int) bool {
-		leftEntry := entries[leftIndex]
-		rightEntry := entries[rightIndex]
+	sort.Slice(results, func(leftIndex, rightIndex int) bool {
+		leftResult := results[leftIndex]
+		rightResult := results[rightIndex]
+		if leftResult.score != rightResult.score {
+			return leftResult.score < rightResult.score
+		}
+		leftEntry := leftResult.entry
+		rightEntry := rightResult.entry
 		if leftEntry.Group != rightEntry.Group {
 			return leftEntry.Group < rightEntry.Group
 		}
@@ -444,44 +475,117 @@ func (m Model) schemaSearchEntries() []session.CatalogEntry {
 		}
 		return leftEntry.Type < rightEntry.Type
 	})
-	if len(entries) > maxSchemaSearchResults {
-		entries = entries[:maxSchemaSearchResults]
+	entries := make([]session.CatalogEntry, len(results))
+	for index, result := range results {
+		entries[index] = result.entry
 	}
 	return entries
 }
 
-func schemaSearchMatches(entry session.CatalogEntry, term string) bool {
-	if term == "" {
-		return true
+func schemaSearchScore(entry session.CatalogEntry, term string) (int, bool) {
+	groupTerm, resourceTerm, hasResourceTerm := strings.Cut(term, "/")
+	if hasResourceTerm {
+		return schemaSearchPathScore(entry, groupTerm, resourceTerm)
 	}
-	candidate := normalizeSchemaSearchTerm(strings.Join([]string{entry.Group, entry.Name, entry.Type.String()}, ""))
 	normalizedTerm := normalizeSchemaSearchTerm(term)
 	if normalizedTerm == "" {
-		return true
+		return 0, true
 	}
-	if strings.Contains(candidate, normalizedTerm) {
-		return true
+	if score, matches := schemaSearchFieldScore(entry.Name, normalizedTerm, schemaSearchNameScore); matches {
+		return score, true
 	}
-	termIndex := 0
-	for _, candidateRune := range candidate {
-		if termIndex >= len(normalizedTerm) {
-			return true
+	if score, matches := schemaSearchFieldScore(entry.Group, normalizedTerm, schemaSearchGroupScore); matches {
+		return score, true
+	}
+	return schemaSearchFieldScore(entry.Type.String(), normalizedTerm, schemaSearchTypeScore)
+}
+
+func schemaSearchPathScore(entry session.CatalogEntry, groupTerm, resourceTerm string) (int, bool) {
+	normalizedGroupTerm := normalizeSchemaSearchTerm(groupTerm)
+	if normalizedGroupTerm == "" {
+		return 0, false
+	}
+	groupScore, matchesGroup := schemaSearchFieldScore(entry.Group, normalizedGroupTerm, schemaSearchNameScore)
+	if !matchesGroup {
+		return 0, false
+	}
+	normalizedResourceTerm := normalizeSchemaSearchTerm(resourceTerm)
+	if normalizedResourceTerm == "" {
+		return groupScore, true
+	}
+	resourceScore, matchesResource := schemaSearchFieldScore(entry.Name, normalizedResourceTerm, schemaSearchNameScore)
+	if !matchesResource {
+		return 0, false
+	}
+	return groupScore + resourceScore, true
+}
+
+func schemaSearchFieldScore(value, normalizedTerm string, baseScore int) (int, bool) {
+	normalizedValue := normalizeSchemaSearchTerm(value)
+	if normalizedValue == normalizedTerm {
+		return baseScore, true
+	}
+	tokens := schemaSearchTokens(value)
+	bestScore := 0
+	matches := false
+	recordMatch := func(score int) {
+		if !matches || score < bestScore {
+			bestScore = score
+			matches = true
 		}
-		if candidateRune == rune(normalizedTerm[termIndex]) {
-			termIndex++
+	}
+	for tokenIndex, token := range tokens {
+		switch {
+		case token == normalizedTerm:
+			recordMatch(baseScore + schemaSearchExactTokenScore)
+		case strings.HasPrefix(token, normalizedTerm):
+			recordMatch(baseScore + schemaSearchPrefixScore)
+		case strings.Contains(token, normalizedTerm):
+			recordMatch(baseScore + schemaSearchSubstringScore)
+		}
+		var sequence strings.Builder
+		for sequenceEnd := tokenIndex; sequenceEnd < len(tokens); sequenceEnd++ {
+			sequence.WriteString(tokens[sequenceEnd])
+			if sequence.Len() > len(normalizedTerm) {
+				break
+			}
+			if sequence.String() != normalizedTerm {
+				continue
+			}
+			matchScore := baseScore + schemaSearchSubstringScore
+			if tokenIndex == 0 {
+				matchScore = baseScore + schemaSearchPrefixScore
+			}
+			recordMatch(matchScore)
+			break
 		}
 	}
-	return termIndex == len(normalizedTerm)
+	return bestScore, matches
 }
 
 func normalizeSchemaSearchTerm(value string) string {
+	return strings.Join(schemaSearchTokens(value), "")
+}
+
+func schemaSearchTokens(value string) []string {
+	tokens := make([]string, 0, 1)
 	var normalized strings.Builder
+	appendToken := func() {
+		if normalized.Len() == 0 {
+			return
+		}
+		tokens = append(tokens, normalized.String())
+		normalized.Reset()
+	}
 	for _, valueRune := range strings.ToLower(value) {
 		if (valueRune >= 'a' && valueRune <= 'z') || (valueRune >= '0' && valueRune <= '9') {
 			normalized.WriteRune(valueRune)
+			continue
 		}
+		appendToken()
 	}
-	return normalized.String()
+	appendToken()
+	return tokens
 }
 
 func (m *Model) moveSchemaSearchCursor(delta int) {
