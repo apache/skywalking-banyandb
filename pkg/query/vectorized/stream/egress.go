@@ -71,10 +71,19 @@ func BuildElementsFromBatch(batch *vectorized.RecordBatch,
 			tagFamily := &modelv1.TagFamily{Name: proj.Family}
 			e.TagFamilies = append(e.TagFamilies, tagFamily)
 			for _, tagName := range proj.Names {
+				// A column carries nullness in its validity bitmap, which is
+				// independent of the stored cell. AppendColumnRange appends the source
+				// value unconditionally and only then marks the destination row null,
+				// so a null row can retain a non-nil pointer — reading Data() alone
+				// would emit that stale value as if it were real. The bitmap is the
+				// source of truth; the nil check stays as a guard for producers that
+				// leave a cell empty without marking it.
 				var tagValue *modelv1.TagValue
 				if colIdx, ok := schema.TagIndex(proj.Family, tagName); ok {
 					tagCol := batch.Columns[colIdx].(*vectorized.TypedColumn[*modelv1.TagValue])
-					tagValue = tagCol.Data()[row]
+					if !tagCol.IsNull(row) {
+						tagValue = tagCol.Data()[row]
+					}
 				}
 				if tagValue == nil {
 					tagValue = pbv1.NullTagValue
