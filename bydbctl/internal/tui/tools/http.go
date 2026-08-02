@@ -137,7 +137,7 @@ func (executor *HTTPExecutor) ExecutionLimits() ExecutionLimits {
 	return executor.limits
 }
 
-const maxCatalogEntries = 400
+const maxCatalogEntries = 10000
 
 // DiscoverCatalog lists groups and resource names across supported resource types.
 func (executor *HTTPExecutor) DiscoverCatalog(ctx context.Context) (session.SchemaCatalog, error) {
@@ -153,25 +153,60 @@ func (executor *HTTPExecutor) DiscoverCatalog(ctx context.Context) (session.Sche
 		return catalog, groupsErr
 	}
 	catalog.Groups = groups
-	for _, group := range groups {
+	catalog.Entries = executor.discoverCatalogEntries(ctx, groups)
+	return catalog, nil
+}
+
+// discoverCatalogEntries lists resources per group and interleaves them fairly so one large
+// group cannot starve later groups under the global entry limit.
+func (executor *HTTPExecutor) discoverCatalogEntries(ctx context.Context, groups []string) []session.CatalogEntry {
+	resourcesByGroup := make([][]session.CatalogEntry, len(groups))
+	for groupIndex, group := range groups {
 		for _, resourceType := range catalogResourceTypes() {
 			resourceNames, listErr := executor.listResources(ctx, group, resourceType)
 			if listErr != nil {
 				continue
 			}
+			groupResources := make([]session.CatalogEntry, 0, len(resourceNames))
 			for _, resourceName := range resourceNames {
-				catalog.Entries = append(catalog.Entries, session.CatalogEntry{
+				groupResources = append(groupResources, session.CatalogEntry{
 					Group: group,
 					Type:  resourceType,
 					Name:  resourceName,
 				})
-				if len(catalog.Entries) >= maxCatalogEntries {
-					return catalog, nil
-				}
 			}
+			resourcesByGroup[groupIndex] = append(resourcesByGroup[groupIndex], groupResources...)
 		}
 	}
-	return catalog, nil
+	return interleaveCatalogEntries(resourcesByGroup, maxCatalogEntries)
+}
+
+// interleaveCatalogEntries fills the catalog fairly by taking one entry per non-empty group in
+// each round until the entry limit is reached, so every group stays represented under the cap.
+func interleaveCatalogEntries(resourcesByGroup [][]session.CatalogEntry, limit int) []session.CatalogEntry {
+	if limit <= 0 {
+		return nil
+	}
+	entries := make([]session.CatalogEntry, 0, limit)
+	cursor := make([]int, len(resourcesByGroup))
+	for len(entries) < limit {
+		addedInRound := 0
+		for groupIndex := range resourcesByGroup {
+			if cursor[groupIndex] >= len(resourcesByGroup[groupIndex]) {
+				continue
+			}
+			entries = append(entries, resourcesByGroup[groupIndex][cursor[groupIndex]])
+			cursor[groupIndex]++
+			addedInRound++
+			if len(entries) >= limit {
+				break
+			}
+		}
+		if addedInRound == 0 {
+			break
+		}
+	}
+	return entries
 }
 
 func catalogResourceTypes() []session.ResourceType {

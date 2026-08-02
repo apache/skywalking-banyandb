@@ -434,6 +434,48 @@ func TestHTTPExecutorExecuteBydbQL(t *testing.T) {
 	}
 }
 
+func TestInterleaveCatalogEntriesKeepsEveryGroupRepresented(t *testing.T) {
+	resourcesByGroup := [][]session.CatalogEntry{
+		{
+			{Group: "sw_metricsHour", Type: session.ResourceTypeMeasure, Name: "browser_app_page_dom_ready_avg_hour"},
+			{Group: "sw_metricsHour", Type: session.ResourceTypeMeasure, Name: "service_cpm_hour"},
+			{Group: "sw_metricsHour", Type: session.ResourceTypeMeasure, Name: "service_resp_time_hour"},
+		},
+		{
+			{Group: "sw_metricsMinute", Type: session.ResourceTypeMeasure, Name: "browser_app_page_dom_ready_avg_minute"},
+			{Group: "sw_metricsMinute", Type: session.ResourceTypeMeasure, Name: "service_cpm_minute"},
+		},
+	}
+	interleaved := interleaveCatalogEntries(resourcesByGroup, 4)
+	if len(interleaved) != 4 {
+		t.Fatalf("expected 4 entries under the limit, got %d", len(interleaved))
+	}
+	var names []string
+	for _, entry := range interleaved {
+		names = append(names, entry.Name)
+	}
+	expected := []string{
+		"browser_app_page_dom_ready_avg_hour",
+		"browser_app_page_dom_ready_avg_minute",
+		"service_cpm_hour",
+		"service_cpm_minute",
+	}
+	if !reflect.DeepEqual(names, expected) {
+		t.Fatalf("expected fair interleaving %v, got %v", expected, names)
+	}
+	allEntries := interleaveCatalogEntries(resourcesByGroup, 100)
+	if len(allEntries) != 5 {
+		t.Fatalf("expected all 5 entries without a tight limit, got %d", len(allEntries))
+	}
+	groups := make(map[string]struct{})
+	for _, entry := range allEntries {
+		groups[entry.Group] = struct{}{}
+	}
+	if len(groups) != 2 {
+		t.Fatalf("expected both groups represented, got %v", groups)
+	}
+}
+
 func TestHTTPExecutorDiscoverCatalog(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
 		switch {
