@@ -27,6 +27,13 @@ import (
 )
 
 const (
+	schemaSearchSelectionPrefix      = "› "
+	schemaSearchTruncationMarker     = "…"
+	minSchemaSearchLabelWidth        = 1
+	schemaSearchMinimumTruncateWidth = 3
+)
+
+const (
 	schemaSearchNameScore = iota
 	schemaSearchExactTokenScore
 	schemaSearchPrefixScore
@@ -229,6 +236,7 @@ func (m Model) renderSchemaSearch(width, resultLimit int) string {
 		rows = append(rows, mutedStyle.Render("No group or resource matches · continue typing"))
 		return panelStyle.Width(width).Render(lipgloss.JoinVertical(lipgloss.Left, rows...))
 	}
+	labelWidth := maxInt(width-panelStyle.GetHorizontalFrameSize(), minSchemaSearchLabelWidth)
 	visibleStart := 0
 	if resultLimit < len(entries) && m.schemaSearchCursor >= resultLimit {
 		visibleStart = m.schemaSearchCursor - resultLimit + 1
@@ -238,10 +246,11 @@ func (m Model) renderSchemaSearch(width, resultLimit int) string {
 		entry := entries[entryIndex]
 		label := fmt.Sprintf("%s/%s · %s", entry.Group, entry.Name, shortTypeLabel(entry.Type))
 		if entryIndex == m.schemaSearchCursor {
-			rows = append(rows, activeChipStyle.Render(truncate(label, width-4)))
+			selectedLabelWidth := maxInt(labelWidth-lipgloss.Width(schemaSearchSelectionPrefix), minSchemaSearchLabelWidth)
+			rows = append(rows, titleStyle.Render(schemaSearchSelectionPrefix+truncateSchemaSearchLabel(label, selectedLabelWidth)))
 			continue
 		}
-		rows = append(rows, mutedStyle.Render(truncate(label, width-4)))
+		rows = append(rows, mutedStyle.Render(truncateSchemaSearchLabel(label, labelWidth)))
 	}
 	searchHint := "↑↓ preview schema · Enter insert resource"
 	if visibleEnd-visibleStart < len(entries) {
@@ -249,6 +258,16 @@ func (m Model) renderSchemaSearch(width, resultLimit int) string {
 	}
 	rows = append(rows, mutedStyle.Render(searchHint))
 	return panelStyle.Width(width).Render(lipgloss.JoinVertical(lipgloss.Left, rows...))
+}
+
+func truncateSchemaSearchLabel(label string, maxWidth int) string {
+	if maxWidth <= 0 {
+		return ""
+	}
+	if maxWidth <= schemaSearchMinimumTruncateWidth && lipgloss.Width(label) > maxWidth {
+		return schemaSearchTruncationMarker
+	}
+	return truncate(label, maxWidth)
 }
 
 func (m Model) renderEvidencePanel(width, height int) string {

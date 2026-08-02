@@ -292,6 +292,43 @@ func TestSchemaSearchViewportLimitUsesAvailableHeight(t *testing.T) {
 	}
 }
 
+func TestSchemaSearchRendersLongSelectedEntryOnOneLine(t *testing.T) {
+	const (
+		searchWidth           = 80
+		schemaSearchFixedRows = 3
+	)
+	model := NewModel(Config{})
+	model.catalog.setCatalog(session.SchemaCatalog{Entries: []session.CatalogEntry{
+		{
+			Group: "sw_metricsMinute",
+			Type:  session.ResourceTypeMeasure,
+			Name:  "instance_jvm_memory_pool_codeheap_non_profiled_nmethods_minute",
+		},
+	}})
+	model.message.SetValue("@prof")
+	model.updateSchemaSearch()
+
+	view := model.renderSchemaSearch(searchWidth, 1)
+	wantHeight := panelStyle.GetVerticalFrameSize() + schemaSearchFixedRows
+	if gotHeight := lipgloss.Height(view); gotHeight != wantHeight {
+		t.Fatalf("expected one-line selected entry, got height %d want %d:\n%s", gotHeight, wantHeight, view)
+	}
+	panelWidth := lipgloss.Width(panelStyle.Width(searchWidth).Render(""))
+	for _, line := range strings.Split(view, "\n") {
+		if lineWidth := lipgloss.Width(line); lineWidth > panelWidth {
+			t.Fatalf("rendered line width %d exceeds panel width %d:\n%s", lineWidth, panelWidth, view)
+		}
+	}
+}
+
+func TestTruncateSchemaSearchLabelFitsNarrowWidth(t *testing.T) {
+	const maxWidth = 1
+	truncatedLabel := truncateSchemaSearchLabel("long schema label", maxWidth)
+	if gotWidth := lipgloss.Width(truncatedLabel); gotWidth > maxWidth {
+		t.Fatalf("truncated label width %d exceeds maximum width %d", gotWidth, maxWidth)
+	}
+}
+
 func assertWorkspaceFitsTerminal(t *testing.T, view string, terminalHeight int, expectedValues ...string) {
 	t.Helper()
 	if viewHeight := lipgloss.Height(view); viewHeight > terminalHeight {
