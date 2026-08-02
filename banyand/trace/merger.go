@@ -93,6 +93,19 @@ func resolveStageBudget(opt option) uint64 {
 	return stageBudgetFromLimit(limit)
 }
 
+// resolveTraceBudget returns the hard limit on bytes retained for one logical
+// trace evaluation. A trace that exceeds it is retained without reaching the
+// sampler, because a partial trace must never be evaluated. It deliberately
+// uses the same memory-derived value as the aggregate staging budget: the two
+// limits protect different scopes even when their numeric values match.
+func resolveTraceBudget(opt option) uint64 {
+	var limit uint64
+	if opt.protector != nil {
+		limit = opt.protector.GetLimit()
+	}
+	return stageBudgetFromLimit(limit)
+}
+
 // stageBudgetFromLimit derives the per-merge staged-byte budget from the memory
 // limit. With up to cgroups.CPUs() merges staging at once, each merge is allowed
 // memLimit/(stageBudgetAggregateDivisor*CPUs) so the aggregate stays ~memLimit/
@@ -388,6 +401,7 @@ func (tst *tsTable) buildHotMergeFilter(parts []*partWrapper) *mergeFilter {
 		owner:       tst,
 		timeout:     tst.option.decideTimeout,
 		stageBudget: stageBudget,
+		traceBudget: resolveTraceBudget(tst.option),
 		forceSlow:   projectionRequiresSlowPath(chain.projection),
 	}
 }
@@ -852,6 +866,7 @@ type mergeFilter struct {
 	owner       *tsTable
 	timeout     time.Duration
 	stageBudget uint64 // soft cap on staged bytes; a trace-boundary chunk flush fires once exceeded (0 disables chunking)
+	traceBudget uint64 // hard cap on one trace's staged bytes; exceeding it retains the trace without evaluation (0 disables bypass)
 	forceSlow   bool   // forces the slow assembly path when the chain projects row data
 }
 
@@ -944,6 +959,14 @@ func writeStagedKeep(bw *blockWriter, st *stagedTrace) {
 		return
 	}
 	bw.mustWriteBlock(st.traceID, &st.slowBlock.block)
+}
+
+func releaseStagedTrace(st *stagedTrace) {
+	if st.isRaw || st.slowBlock == nil {
+		return
+	}
+	releaseBlockPointer(st.slowBlock)
+	st.slowBlock = nil
 }
 
 type stagedEvaluationBatch struct {
@@ -1064,10 +1087,7 @@ func flushStaged(bw *blockWriter, filter *mergeFilter, staged []stagedTrace, dro
 		} else {
 			writeStagedKeep(bw, &staged[i])
 		}
-		if !staged[i].isRaw && staged[i].slowBlock != nil {
-			releaseBlockPointer(staged[i].slowBlock)
-			staged[i].slowBlock = nil
-		}
+		releaseStagedTrace(&staged[i])
 	}
 }
 
@@ -1083,6 +1103,89 @@ func rawFastPathEligible(filter *mergeFilter, nextB, b *blockPointer) bool {
 		return false
 	}
 	return nextB == nil || nextB.bm.traceID != b.bm.traceID
+}
+
+type traceEvaluationStager struct {
+	bw                *blockWriter
+	filter            *mergeFilter
+	droppedSet        map[string]struct{}
+	lastStagedTraceID string
+	bypassedTraceID   string
+	staged            []stagedTrace
+	stagedBytes       uint64
+	currentTraceBytes uint64
+	currentTraceStart int
+}
+
+func (tes *traceEvaluationStager) flush() {
+	if len(tes.staged) == 0 {
+		return
+	}
+	flushStaged(tes.bw, tes.filter, tes.staged, tes.droppedSet)
+	tes.staged = nil
+	tes.stagedBytes = 0
+	tes.currentTraceBytes = 0
+	tes.currentTraceStart = 0
+}
+
+func (tes *traceEvaluationStager) writeBypassed(bypassed []stagedTrace) {
+	for stagedIdx := range bypassed {
+		writeStagedKeep(tes.bw, &bypassed[stagedIdx])
+		releaseStagedTrace(&bypassed[stagedIdx])
+	}
+}
+
+func (tes *traceEvaluationStager) stage(st stagedTrace) {
+	if tes.bypassedTraceID != "" {
+		if st.traceID == tes.bypassedTraceID {
+			writeStagedKeep(tes.bw, &st)
+			releaseStagedTrace(&st)
+			tes.lastStagedTraceID = ""
+			return
+		}
+		tes.bypassedTraceID = ""
+	}
+	if len(tes.staged) == 0 || st.traceID != tes.lastStagedTraceID {
+		tes.currentTraceStart = len(tes.staged)
+		tes.currentTraceBytes = 0
+	}
+	stagedTraceBytes := st.approxBytes()
+	tes.staged = append(tes.staged, st)
+	tes.stagedBytes += stagedTraceBytes
+	tes.currentTraceBytes += stagedTraceBytes
+	tes.lastStagedTraceID = st.traceID
+	if tes.filter.traceBudget == 0 || tes.currentTraceBytes <= tes.filter.traceBudget {
+		return
+	}
+	if tes.currentTraceStart > 0 {
+		flushStaged(tes.bw, tes.filter, tes.staged[:tes.currentTraceStart], tes.droppedSet)
+	}
+	tes.writeBypassed(tes.staged[tes.currentTraceStart:])
+	tes.bypassedTraceID = st.traceID
+	tes.lastStagedTraceID = ""
+	tes.staged = nil
+	tes.stagedBytes = 0
+	tes.currentTraceBytes = 0
+	tes.currentTraceStart = 0
+	if tes.filter.owner != nil {
+		tes.filter.owner.incPipelineOversizedTracesBypassed(1)
+	}
+}
+
+func (tes *traceEvaluationStager) flushBefore(nextTraceID string, pendingBlock *blockPointer, pendingBlockIsEmpty bool) {
+	if tes.filter.stageBudget == 0 || tes.stagedBytes < tes.filter.stageBudget || len(tes.staged) == 0 || nextTraceID == tes.lastStagedTraceID {
+		return
+	}
+	pendingCompletesStagedTrace := !pendingBlockIsEmpty && pendingBlock.bm.traceID == tes.lastStagedTraceID
+	if !pendingCompletesStagedTrace {
+		tes.flush()
+	}
+}
+
+func (tes *traceEvaluationStager) flushAfter(completedTraceID, nextTraceID string) {
+	if tes.filter.stageBudget > 0 && tes.stagedBytes >= tes.filter.stageBudget && completedTraceID != nextTraceID {
+		tes.flush()
+	}
 }
 
 func mergeBlocks(closeCh <-chan struct{}, bw *blockWriter, br *blockReader, conflictTags map[string]struct{},
@@ -1114,29 +1217,15 @@ func mergeBlocks(closeCh <-chan struct{}, bw *blockWriter, br *blockReader, conf
 		br.mustReadRaw(&rawBlk, bm)
 		renameRawConflictTags(&rawBlk, conflictTags)
 	}
-	var staged []stagedTrace
-	var stagedBytes uint64
-	var lastStagedTraceID string
 	var droppedSet map[string]struct{}
+	var evaluationStager *traceEvaluationStager
 	if filter != nil {
 		droppedSet = make(map[string]struct{})
-	}
-	stage := func(st stagedTrace) {
-		staged = append(staged, st)
-		stagedBytes += st.approxBytes()
-		lastStagedTraceID = st.traceID
-	}
-	// flushChunk decides + writes the currently staged traces, then frees them.
-	// It is invoked at trace boundaries once stagedBytes exceeds stageBudget, and
-	// once more at end-of-merge for the remainder. droppedSet accumulates across
-	// chunks so the downstream sidx pruning still sees every dropped trace id.
-	flushChunk := func() {
-		if len(staged) == 0 {
-			return
+		evaluationStager = &traceEvaluationStager{
+			bw:         bw,
+			filter:     filter,
+			droppedSet: droppedSet,
 		}
-		flushStaged(bw, filter, staged, droppedSet)
-		staged = nil
-		stagedBytes = 0
 	}
 	// writeRawBlock writes the just-read rawBlk. When the hook is inactive it
 	// writes immediately (byte-identical to the legacy path). When active the
@@ -1148,7 +1237,7 @@ func mergeBlocks(closeCh <-chan struct{}, bw *blockWriter, br *blockReader, conf
 			bw.mustWriteRawBlock(&rawBlk)
 			return
 		}
-		stage(stageRawTrace(&rawBlk))
+		evaluationStager.stage(stageRawTrace(&rawBlk))
 	}
 	// writeSlowBlock writes (or, on the active hook path, stages) an accumulated
 	// slow-path block.
@@ -1162,7 +1251,7 @@ func mergeBlocks(closeCh <-chan struct{}, bw *blockWriter, br *blockReader, conf
 		// copyFrom copies slice headers only; the bytes alias the decoder's
 		// internal buffer which is reset when the next trace is loaded.
 		newBP.block.deepCopyValues()
-		stage(stagedTrace{
+		evaluationStager.stage(stagedTrace{
 			traceID:   bp.bm.traceID,
 			slowBlock: newBP,
 		})
@@ -1177,14 +1266,12 @@ func mergeBlocks(closeCh <-chan struct{}, bw *blockWriter, br *blockReader, conf
 		// Bounded staging: at a trace boundary (the current block belongs to a
 		// different traceID than the last staged one), once staged bytes exceed
 		// the budget, decide+write the accumulated chunk before reading further.
-		// The boundary guard guarantees a trace's blocks are never split across
-		// chunks, so each trace stays a single Decide unit and the chunk write
-		// order remains ascending. A single trace larger than the budget is still
-		// held whole (a trace is an indivisible decision), so the cap is a soft
-		// per-merge bound, not a hard ceiling.
-		if filter != nil && filter.stageBudget > 0 && stagedBytes >= filter.stageBudget &&
-			len(staged) > 0 && b.bm.traceID != lastStagedTraceID {
-			flushChunk()
+		// A pending output block may still complete the last staged trace even
+		// after the source reader advances to a new trace ID. Do not flush until
+		// that pending block is staged. The separate per-trace budget fails open
+		// and streams an oversized trace without sending a partial trace to Decide.
+		if evaluationStager != nil {
+			evaluationStager.flushBefore(b.bm.traceID, pendingBlock, pendingBlockIsEmpty)
 		}
 		// Fast path: if this is the only block for this traceID AND we have no pending block,
 		// copy it raw without unmarshaling
@@ -1204,9 +1291,14 @@ func mergeBlocks(closeCh <-chan struct{}, bw *blockWriter, br *blockReader, conf
 		}
 
 		if pendingBlock.bm.traceID != b.bm.traceID || pendingBlock.block.spanSize() >= maxUncompressedSpanSize {
+			pendingTraceID := pendingBlock.bm.traceID
 			writeSlowBlock(pendingBlock)
 			releaseDecoder()
 			pendingBlock.reset()
+			pendingBlockIsEmpty = true
+			if evaluationStager != nil {
+				evaluationStager.flushAfter(pendingTraceID, b.bm.traceID)
+			}
 			// After writing the pending block, check if the new block can be copied raw
 			// This is the same fast path check as at the beginning of the loop
 			nextB = br.peek()
@@ -1251,8 +1343,8 @@ func mergeBlocks(closeCh <-chan struct{}, bw *blockWriter, br *blockReader, conf
 		writeSlowBlock(pendingBlock)
 	}
 	releaseDecoder()
-	if filter != nil {
-		flushChunk()
+	if evaluationStager != nil {
+		evaluationStager.flush()
 	}
 	var pm partMetadata
 	var tf traceIDFilter

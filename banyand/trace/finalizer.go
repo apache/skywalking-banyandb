@@ -156,6 +156,7 @@ func (tst *tsTable) runFinalizeRound(samplers []sdk.Sampler, graceNs int64) (boo
 		owner:       tst,
 		timeout:     tst.option.decideTimeout,
 		stageBudget: stageBudget,
+		traceBudget: resolveTraceBudget(tst.option),
 		forceSlow:   projectionRequiresSlowPath(chain.projection),
 	}
 
