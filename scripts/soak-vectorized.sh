@@ -219,6 +219,24 @@ pprof_grab_all() {
   echo "${first_count}"
 }
 
+# capture_frame_totals reads the columnar-frame counters off each node and echoes
+# "encoded_sum decoded" so the summary can record them. Without this the run's
+# central evidence lives only in a live scrape and is gone once compose tears the
+# stack down — the first distributed run finished with no frame numbers on disk.
+capture_frame_totals() {
+  local engine="$1" enc=0 dec=0 spec name host v
+  for spec in "${PPROF_ROLES[@]}"; do
+    name="${spec%%:*}"; host="${spec#*:}"; host="${host%%:*}"
+    [[ "${name}" == liaison* ]] && continue
+    v=$(docker exec "${host}" sh -c "wget -qO- http://127.0.0.1:2121/metrics" 2>/dev/null \
+      | grep -oE "vec_frame_encoded\{engine=\"${engine}\"\} [0-9]+" | grep -oE '[0-9]+$' || echo 0)
+    enc=$(( enc + ${v:-0} ))
+  done
+  dec=$(docker exec "${BANYANDB_CONTAINER_NAME}" sh -c "wget -qO- http://127.0.0.1:2121/metrics" 2>/dev/null \
+    | grep -oE "vec_frame_decoded\{engine=\"${engine}\"\} [0-9]+" | grep -oE '[0-9]+$' || echo 0)
+  echo "${enc} ${dec:-0}"
+}
+
 # assert_frames_flowing is the Phase -1 gate. The whole point of the distributed
 # soak is the native columnar frame, and a run that silently falls back to
 # protobuf would still produce six clean hours of parity — which is exactly how a
@@ -505,7 +523,9 @@ echo "ts_utc,rss_bytes,disk_bytes" > "${RSS_CSV}"
     TS_NOW="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
     RSS=$(docker stats "${BANYANDB_CONTAINER_NAME}" --no-stream --format '{{.MemUsage}}' 2>/dev/null \
       | awk -F'/' '{print $1}' | tr -d ' MiGBkb' || echo 0)
-    DISK=$(du -sb "${DATA_DIR}" 2>/dev/null | awk '{print $1}' || echo 0)
+    # Sum every node's dir: DATA_DIR alone is the standalone path and is empty in
+    # the distributed topology, which silently produced an all-zero disk series.
+    DISK=$(du -sbc "${DATA_DIRS[@]}" 2>/dev/null | tail -1 | awk '{print $1}' || echo 0)
     echo "${TS_NOW},${RSS},${DISK}" >> "${RSS_CSV}" || true
     sleep 60
   done
@@ -599,6 +619,14 @@ mkdir -p "${DIST}/pprof-end"
 pprof_grab_all "${DIST}/pprof-end" >/dev/null
 log "Final pprof captured."
 
+# Read the frame counters before compose tears the stack down.
+FRAME_ENCODED=0
+FRAME_DECODED=0
+if [[ "${SOAK_TOPOLOGY}" == "distributed" ]]; then
+  read -r FRAME_ENCODED FRAME_DECODED <<<"$(capture_frame_totals "${ENGINE}")"
+  log "Columnar frames: encoded=${FRAME_ENCODED} across data nodes, decoded=${FRAME_DECODED} on the liaison."
+fi
+
 # Final parity check (sets FINAL_PASS).
 FINAL_DIFF="/artifacts/diff-final.json"
 soak_driver_container replay-and-diff \
@@ -653,6 +681,9 @@ cat > "${DIST}/summary.json" <<EOF
   "t1_ms": ${T1_MS},
   "final_parity_pass": ${FINAL_PASS},
   "vec_flag_honored": ${VEC_FLAG_HONORED},
+  "topology": "${SOAK_TOPOLOGY}",
+  "frames_encoded": ${FRAME_ENCODED:-0},
+  "frames_decoded": ${FRAME_DECODED:-0},
   "goroutine_count_start": ${GOROUTINE_START},
   "goroutine_count_end": ${GOROUTINE_END},
   "memory_alert_lines": ${MEMORY_ALERTS},
