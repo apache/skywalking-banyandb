@@ -94,7 +94,9 @@ The proto pins bounds with PGV so a malformed config is rejected at parse time r
 
 **PGV-enforced bounds** (rejected at proto parse / `Write` time):
 
-- `TracePipelineConfig.merge_grace`, `TracePipelineConfig.finalize_grace` — strictly positive when set; unset means engine default (30s and 5m respectively). Each is consulted only when its corresponding `PipelineEvent` is in `enabled_events`.
+- `TracePipelineConfig.merge_grace`, `TracePipelineConfig.finalize_grace` — strictly positive when set; unset means
+  engine default (2h and 5m respectively). Each is consulted only when its corresponding `PipelineEvent` is in
+  `enabled_events`.
 - `TracePipelineConfig.enabled_events` — each element must be a defined, non-`UNSPECIFIED` enum value (`repeated.items.enum = {defined_only: true, not_in: [0]}`).
 - `TracePipelineConfig.schema_names` — each element non-empty (`repeated.items.string.min_len = 1`).
 - `StageRule.stage` — non-empty (`min_len: 1`); `Plugin.name` — non-empty (`min_len: 1`); `SamplerPlugin.path` — non-empty (`min_len: 1`); `SamplerPlugin.abi_version` — `gte: 1`.
@@ -323,12 +325,18 @@ Both the plugin gating policy (§1.1) and the per-stage retention plugin (§1.2)
 Retention decisions are therefore **not** made at write time. They are made by the post-trace passes that re-assemble a trace by `trace_id`:
 
 - **In-merge filter, during Hot-phase compaction** — when `PIPELINE_EVENT_MERGE` is enabled (the default), the plugin gating policy is evaluated in-line during Hot-phase LSM compaction (Warm/Cold compactions stay lossless). Compaction is part-count-driven, so it can fire while a trace is still growing; per-trace drops are deferred until `traceMaxTs < now − merge_grace` (§7.1).
-- **Plugin gating, at finalization** — when `PIPELINE_EVENT_FINALIZE` is enabled, the plugin gating policy is evaluated once per **Hot** segment after it has **settled**: its event-time window has closed *and* the event-time watermark has advanced past it by the `finalize_grace` period (§7.3). BanyanDB has no hard "segment sealed" event — `create()` pre-creates the next segment up to an hour *before* the current window ends, and late data keeps routing to an old segment by event time — so "settled" is a watermark heuristic, not a guarantee.
+- **Plugin gating, at finalization** — when `PIPELINE_EVENT_FINALIZE` is enabled, the plugin gating policy is evaluated on a
+  **Hot** segment only after its event-time window has closed and it is older than both the configured `finalize_grace`
+  and the resolved `merge_grace` (§7.3). A destructive decision additionally requires the maximum-fragment-gap guard.
+  BanyanDB has no hard "segment sealed" event, so maturity remains a heuristic rather than a completeness guarantee.
 - **Per-stage retention, at migration-out** — by the time a segment is migrated to the next stage (≥ its stage's TTL, orders of magnitude longer than `finalize_grace`), every trace it holds has settled, so per-stage plugin evaluation is final.
 
 Two completeness caveats follow from event-time segmentation:
 
-1. **Spans arriving after finalization.** A span whose `start_time` falls in an already-finalized segment is still accepted (while the segment is within retention) but is missed by the finalization-time evaluation. The `finalize_grace` period bounds how often this happens; a late span that arrives after the gate has run does not retroactively change the verdict for already-dropped traces.
+1. **Spans arriving after finalization.** A span whose `start_time` falls in an already-finalized segment is still accepted
+   while the segment is within retention. Finalization may run another bounded round after enough new data arrives, but it
+   cannot retroactively restore a trace already dropped before a future fragment was visible. The fragment guard protects
+   the currently visible snapshot; strict future-arrival protection still requires sealing or late-write rejection.
 
 2. **Traces spanning multiple segments.** A trace longer than `segment_interval`, or one that straddles a boundary, is physically split across two segments, and each segment's pass evaluates only its own fragment (`D_total` and the indicators are fragment-local). BanyanDB performs no cross-segment trace assembly at the storage layer. Where trace duration is far below `segment_interval` (e.g. the showcase's ≈2.8 s max trace against 1-day segments) the fragment equals the whole trace and this is a non-issue; for long-running traces it is a known limitation.
 
@@ -453,7 +461,7 @@ Below are two operational scenarios represented as complete `TracePipelineConfig
     }
   ],
   "enabled_events": ["PIPELINE_EVENT_MERGE", "PIPELINE_EVENT_FINALIZE"],
-  "merge_grace": "30s",
+  "merge_grace": "7200s",
   "finalize_grace": "300s"
 }
 ```
@@ -518,7 +526,7 @@ Below are two operational scenarios represented as complete `TracePipelineConfig
       }
     }
   ],
-  "merge_grace": "30s"
+  "merge_grace": "7200s"
 }
 ```
 
@@ -562,13 +570,15 @@ The hook is injected into `mergeBlocks` (`banyand/trace/merger.go`), which is th
 
 ```mermaid
 flowchart TD
-    IP["Immature Parts"] --> BR["blockReader.nextBlockMetadata<br/>streams blocks ordered by trace_id"]
+    IP["Selected Parts"] --> MG{"Merge eligible?<br/>newest selected part at or before now − merge_grace"}
+    MG -->|"NO (whole merge is hot)"| LR["Merge losslessly; defer every verdict"]
+    MG -->|"YES"| BR["blockReader.nextBlockMetadata<br/>streams blocks ordered by trace_id"]
     BR --> PA["Per-trace assembly<br/>existing pending-block accumulation in mergeBlocks"]
-    PA --> M{"Mature?<br/>traceMaxTs (timestampsMetadata.max) older than now − merge_grace"}
-    M -->|"NO (trace may still grow)"| RET["RETAIN unchanged"]
-    M -->|"YES (stopped growing)"| CHK["plugin gating policy check"]
+    PA --> CHK["plugin gating policy check"]
     CHK -->|"KEEP"| WB["mustWriteBlock / mustWriteRawBlock"]
-    CHK -->|"DROP"| SK["blocks skipped; spans, tags, primary entries never written<br/>(space reclaimed in-stream, no delete mutation)"]
+    CHK -->|"provisional DROP"| BG["fragment boundary guard"]
+    BG -->|"uncertain or possible outside fragment"| RET["RETAIN unchanged"]
+    BG -->|"confirmed DROP"| SK["blocks skipped; spans, tags, primary entries never written<br/>(space reclaimed in-stream, no delete mutation)"]
 ```
 
 #### Filter contract and what the merge already gives us for free
@@ -577,13 +587,34 @@ flowchart TD
 
 2. **Decisions are per `trace_id`, not per block.** A single trace may be emitted as multiple blocks when its accumulated span size crosses `maxUncompressedSpanSize`. The filter computes one keep/drop verdict per `trace_id` and applies it to every block carrying that id, so a trace is never partially written.
 
-3. **A trace is dropped only after it stops growing (per-trace `merge_grace`).** Compaction is part-count-driven (`getPartsToMerge`), not time-driven — so a merge routinely runs on the active write window while a trace's remaining spans are still seconds away. Dropping such a trace on its partial spans would orphan the late ones. The filter therefore evaluates a trace only once its latest span timestamp is older than `now − merge_grace` (the trace's max timestamp is read for free from `timestampsMetadata.max`, point 1); traces newer than that frontier are passed through the merge unchanged. The engine default for `merge_grace` is 30s if unset on the config.
+3. **Filtering waits for `merge_grace`, but age is not completeness proof.** Compaction is part-count-driven
+   (`getPartsToMerge`), not time-driven, so a merge routinely runs on the active write window while more fragments may
+   arrive. The current runtime conservatively tests the selected parts as a whole: if any selected part's maximum
+   timestamp is newer than `now − merge_grace`, the entire merge remains lossless. The engine default is 2h when the
+   group does not set `merge_grace`; an explicit group value still wins. No timer reruns a skipped merge, so actual
+   filtering latency is at least the grace plus the wait for a later eligible compaction. A future per-trace maturity
+   check may reduce this delay after complete trace assembly.
+
+   Passing this age check does not prove that a trace has stopped growing and must not make a DROP final by itself. A
+   destructive DROP also requires the fragment boundary guard and its independently enforced maximum-fragment-gap,
+   segment-coverage, and snapshot contracts. The resolved per-group merge grace controls maturity; the separately
+   declared maximum fragment gap controls guard-range expansion and publication revalidation. The runtime receives the
+   external gap contract through
+   `trace-pipeline-max-fragment-gap`. Its default is zero, which keeps in-merge sampling disabled; a positive value must
+   not exceed the resolved merge grace.
 
 4. **Derived part state reflects only retained traces.** When a trace is dropped, its entries are excluded from `partMetadata` counts, the `traceIDFilter` bloom filter (`mustWriteTraceIDFilter`), and the `tagType` set written at `Flush`. The filter runs before these are finalized so the consolidated part stays self-consistent.
 
-5. **Secondary indexes must be pruned in lockstep — this is net-new engine work.** Today `mergePartsThenSendIntroduction` merges sidx parts via `sidxInstance.Merge(closeCh, partIDMap, newPartID)` — a **part-ID-based** merge with no per-`trace_id` predicate, so a core trace drop would leave **dangling sidx entries** pointing at traces no longer in the reduced part. Closing this gap is a required, not-yet-existing contract: the trace filter must surface the set of dropped `trace_id`s, and the sidx merge/rewrite must be extended to accept that predicate and skip the dropped ids when emitting the new sidx part. Until that sidx-filtering contract exists, in-merge dropping cannot ship without index inconsistency; the implementation must land both halves together.
+5. **Secondary indexes are pruned in lockstep.** The core merge surfaces only guard-confirmed dropped trace IDs. Each
+   sibling sidx merge receives a trace-ID predicate derived from that set and omits matching entries. Core and sidx
+   outputs are introduced atomically, so neither side can publish a destructive decision without the other.
 
-6. **Drops are final and the merge is crash-safe.** Because a trace is dropped only after `merge_grace` has elapsed since its last span (point 3), the verdict acts on a trace that has stopped growing, so the drop is final rather than premature. The merge writes the new part atomically and only retires source parts after the introduction is applied, so a crash mid-merge leaves the immature parts intact for retry; re-running compaction on an already-filtered part is a no-op.
+6. **Confirmed drops are publication-safe; maturity alone is not final.** The boundary guard turns a provisional DROP
+   into a confirmed DROP only within its documented visibility, time-gap, and late-arrival contracts. The merge writes
+   the new part atomically and retires source parts only after introduction is applied, so a crash mid-merge leaves the
+   input parts authoritative for retry. Expensive delta-part Bloom revalidation runs before the serialized introducer;
+   the introducer performs a constant-time epoch check. A rejected filtered output is removed and the same inputs are
+   retried once without sampling. Maturity grace alone cannot rule out a later or farther-away fragment.
 
 ### 7.2 Hot-to-Warm Tier Migration (Pre-Migration Filter Rewrite)
 
@@ -617,18 +648,26 @@ Why there is no seal event (grounding in `banyand/internal/storage/rotation.go`)
 - **`closeIdleSegments` is not a seal.** It only releases idle in-memory handles after an idle timeout (`banyand/internal/storage/segment.go`) and reopens them on the next access; it says nothing about window completeness.
 - **The only definitive boundary is TTL removal** (`retentionTask`, cron `5 0`), which deletes the whole segment — far too late to be a finalization trigger.
 
-> **Design decision (accepted):** Drive the gating pass from an **event-time watermark plus a settling grace period**, not from a (non-existent) seal event. The rotation path already tracks the maximum observed event time (`latestTickTime`, fed by `Tick`, `rotation.go`). A segment is treated as **settled** once `watermark > segment.End + finalize_grace`, where `finalize_grace` is `TracePipelineConfig.finalize_grace` — a configured expected-late-arrival lag (engine default `5m` if unset). A new post-trace scheduler — registered on `pkg/timestamp.Scheduler` (cron-backed, like `retentionTask`) — periodically scans for settled-but-unfinalized **Hot** segments and runs the gating policy once per segment. The gating policy is the plugin verdict over a projected `TraceBatch` of the settled segment's traces (§2.5). It is **best-effort final**, not a hard guarantee: data arriving after `finalize_grace` is missed (§3.1, caveat 1). The gating policy is the **only** filter at this pass; per-stage `StageRule` plugins fire later, at the stage's migration-out boundary (§7.2).
+> **Design decision (accepted):** Drive finalization from an event-time maturity threshold, not from a non-existent seal
+> event. A segment is eligible only after its end is older than the greater of `finalize_grace` and resolved
+> `merge_grace`. The scanner periodically finds mature Hot segments and runs bounded per-shard rounds. Destructive DROP
+> still requires the same maximum-fragment-gap, outside-part, and publication checks as an ordinary merge. This is
+> best-effort snapshot protection, not proof against fragments that arrive after publication. Per-stage `StageRule`
+> plugins fire later at migration-out (§7.2).
 
 ```mermaid
 flowchart TD
     WM["Event-time watermark (latestTickTime) advances"]
-    WM -->|"post-trace scheduler cron tick"| SEG["For each segment with watermark past segment.End + finalize_grace, not yet finalized<br/>walk each (segment, shard) tsTable's parts via the trace Visitor<br/>apply pipeline filter once: trace treated as complete, verdict final"]
-    SEG --> RW["Rewrite to reduced parts + mark segment finalized"]
+    WM -->|"scanner tick"| SEG["For each mature segment<br/>select a bounded shard round<br/>apply sampler and fragment guard"]
+    SEG --> RW["Publish guarded reduced parts, or retry losslessly on conflict<br/>persist bounded-round state"]
 ```
 
 1. The scheduler runs the pipeline's plugin gating policy across the settled segment's per-shard `tsTable` parts (a `tsTable` is scoped per `(segment, shard)`).
 
-2. Because the watermark is past `segment.End + finalize_grace`, the segment is very unlikely to gain more spans, so the verdict is stable: this pass decides whether a trace survives at all. Surviving traces continue through the lifecycle and are filtered again at each migration-out boundary by the relevant `StageRule` (§7.2).
+2. Finalization maturity is the greater of `finalize_grace` and `merge_grace`; with the defaults, destructive sampling
+   therefore waits at least 2h rather than becoming eligible after 5m. The independently declared maximum fragment gap
+   controls boundary expansion. A positive value no greater than merge grace is required, otherwise the round remains
+   lossless. Surviving traces continue through the lifecycle and may be filtered again at later rounds or migration-out.
 
 3. The `finalize_grace` period trades latency for completeness: a larger `finalize_grace` catches more late spans before finalizing but delays space reclamation. The cron tick doubles as a catch-up sweep — after a node restart it still finds settled-but-unfinalized segments and applies the filter, after which normal retention/GC proceeds.
 
@@ -639,12 +678,12 @@ To illustrate the relationship, here is the complete processing loop executed by
 ```mermaid
 flowchart TD
     subgraph A["A. In-merge filter at HOT-PHASE LSM COMPACTION (PIPELINE_EVENT_MERGE enabled)"]
-        A1["1. mergeBlocks streams blocks ordered by trace_id (banyand/trace/merger.go).<br/>Maturity check: traceMaxTs (= timestampsMetadata.max) older than now − merge_grace (30s)?"]
+        A1["1. mergeBlocks streams by trace_id.<br/>Are all selected parts older than merge_grace (default 2h)?"]
         A1 -->|"NO"| A2["Pass blocks through unchanged; defer the verdict"]
-        A1 -->|"YES (stopped growing)"| A3["Engine builds a projected TraceBatch; plugin Decide returns a keep-mask.<br/>The §6.1 sw-trace-sampler keeps this trace because is_error is set (config keeps errors);<br/>a healthy trace below the 500ms threshold with no matching tag would fall to the 0.1 sample.<br/>Verdict for 5fcdb353-…: KEEP (drops here reclaim space during routine compaction)"]
+        A1 -->|"YES (settled parts)"| A3["Engine builds a projected TraceBatch; plugin Decide returns a keep-mask.<br/>The §6.1 sw-trace-sampler keeps this trace because is_error is set (config keeps errors).<br/>A provisional DROP passes through the fragment guard; only a confirmed DROP reclaims space."]
     end
     subgraph B["B. Plugin gating pass at HOT FINALIZATION (PIPELINE_EVENT_FINALIZE enabled, once per settled Hot segment)"]
-        B2["2. Post-trace scheduler tick observes a segment with watermark past segment.End + finalize_grace (300s), not yet finalized"]
+        B2["2. Post-trace scanner observes a segment older than max(finalize_grace, merge_grace), not terminal"]
         B2 --> B3["3. Pick the active TracePipelineConfig for (group, schema, stage); match targeting fields (schema_names / schema_name_regex). No match? Skip."]
         B3 --> B4["4. For each surviving trace_id (not already dropped at A), evaluate the plugin gating policy — same as step 1.<br/>Surviving traces continue into the stage lifecycle; failures are dropped from the segment."]
     end
@@ -679,18 +718,24 @@ un-sampled. That is an accepted outcome (there is no finalize-before-delete gate
   introducer loop), so core and sidx follow exactly the code a hot merge uses. It never
   acquires the hot merge semaphore (`mergeMaxConcurrencyCh`).
 - Each cooled part carries a per-part `finalizeGen` stamp; a round force-merges the
-  cooled, non-hot parts through the sampler and stamps the output at the shard's next
-  generation, written to disk **before** the part's metadata is persisted so a crash
-  cannot cause a double-sample on replay. A round re-samples the cooled set (like the
-  in-merge filter re-samples on every merge); re-sampling already-kept survivors through
-  a deterministic sampler is idempotent, and rounds are hard-capped.
+  cooled, non-hot parts through the sampler and the same fragment boundary guard used by
+  ordinary merges, then stamps the output at the shard's next generation. The stamp is
+  written to disk **before** the part's metadata is persisted so a crash cannot cause a
+  double-sample on replay. A round re-samples the cooled set (like the in-merge filter
+  re-samples on every merge); re-sampling already-kept survivors through a deterministic
+  sampler is idempotent, and rounds are hard-capped.
 - Per-shard finalize state (`finalize.json`) records the generation, cooldown clock,
   round count, terminal flag, and an arrival-based unsampled-bytes counter (incremented
   O(1) on the flush path only once the shard has been finalized).
 
 **Knobs** (the proto carries `finalize_grace`; the rest are engine defaults in v1):
-- `finalize_grace` (default **5m**) — per-segment settling window; a segment is eligible
-  only when `segEnd < now − finalize_grace`, and parts hotter than this are skipped.
+- `finalize_grace` (default **5m**) — per-segment settling and cooldown window. For a
+  destructive round, segment and part maturity uses the greater of `finalize_grace` and
+  resolved `merge_grace`; the default therefore remains 2h. The independently enforced
+  maximum fragment gap controls guard-range expansion rather than maturity.
+- `--trace-pipeline-max-fragment-gap` — required for both merge and finalization sampling.
+  Zero disables destructive sampling, and a value greater than resolved `merge_grace`
+  fails open.
 - `--trace-pipeline-finalize-grace-default` — node default when a group sets no
   `finalize_grace`.
 - **FLOOR** (default **8 MiB** uncompressed) — absolute minimum newly-arrived unsampled
@@ -703,7 +748,9 @@ un-sampled. That is an accepted outcome (there is no finalize-before-delete gate
 
 **Observability.** Finalize rounds emit the existing merge metrics under
 `type="finalize"`/`lane="finalize"` (`total_merged`, `total_merge_latency`,
-`total_merged_parts`), distinct from the hot-merge labels.
+`total_merged_parts`), distinct from the hot-merge labels. Guard bypass, Bloom probes,
+deferrals, budget exhaustion, publication rejection, and lossless retries have dedicated
+bounded counters shared with ordinary merge sampling.
 
 ## References
 
