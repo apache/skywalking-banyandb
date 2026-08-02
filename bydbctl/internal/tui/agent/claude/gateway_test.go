@@ -78,13 +78,13 @@ func TestGatewayDrivesClaudeCLIAndResumesProviderSession(t *testing.T) {
 	assertArgumentValue(t, firstArgs, "--model", "test-model")
 	assertArgumentValue(t, firstArgs, "--max-turns", "7")
 	assertArgumentValue(t, firstArgs, "--output-format", "stream-json")
-	assertArgumentValue(t, firstArgs, "--permission-mode", "dontAsk")
-	assertArgumentValue(t, firstArgs, "--tools", "")
 	assertArgumentValue(t, firstArgs, "--allowedTools", strings.Join(expectedAllowedToolNames(), ","))
 	assertContainsArgument(t, firstArgs, "--strict-mcp-config")
 	assertContainsArgument(t, firstArgs, "--include-partial-messages")
 	assertContainsArgument(t, firstArgs, "--disable-slash-commands")
 	assertContainsArgument(t, firstArgs, "--no-chrome")
+	assertNotContainsArgument(t, firstArgs, "--tools")
+	assertNotContainsArgument(t, firstArgs, "--permission-mode")
 	assertNotContainsArgument(t, firstArgs, "--setting-sources")
 	assertNotContainsArgument(t, firstArgs, "--resume")
 	parts, partsErr := agent.BuildBydbqlPromptParts(firstRequest)
@@ -115,7 +115,7 @@ func TestGatewayRejectsUnexpectedClaudeToolInventory(t *testing.T) {
 	if len(collected) != 1 || collected[0].Kind != agent.EventKindError {
 		t.Fatalf("expected one fail-closed error event, got %#v", collected)
 	}
-	if !strings.Contains(collected[0].Message, "unexpected Claude tool inventory") {
+	if !strings.Contains(collected[0].Message, "unexpected Claude MCP tool inventory") {
 		t.Fatalf("unexpected inventory error: %q", collected[0].Message)
 	}
 }
@@ -260,7 +260,8 @@ fi
   done
   printf '%s\n' END
 } >> "$CLAUDE_FAKE_ARGUMENT_LOG"
-tools='["mcp__bydbctl-controlled-tools__list_groups_schemas",'
+tools='["Task","Bash","Read","Edit","Write","WebFetch","WebSearch",'
+tools="${tools}\"mcp__bydbctl-controlled-tools__list_groups_schemas\","
 tools="${tools}\"mcp__bydbctl-controlled-tools__describe_schema\","
 tools="${tools}\"mcp__bydbctl-controlled-tools__propose_query_plan\","
 tools="${tools}\"mcp__bydbctl-controlled-tools__validate_bydbql\","
@@ -268,7 +269,7 @@ tools="${tools}\"mcp__bydbctl-controlled-tools__probe_bydbql\","
 tools="${tools}\"mcp__bydbctl-controlled-tools__execute_bydbql\"]"
 status=connected
 if [ "$CLAUDE_FAKE_MODE" = invalid-inventory ]; then
-  tools='["Bash"]'
+  tools='["mcp__evil__foreign_tool"]'
 fi
 if [ "$CLAUDE_FAKE_MODE" = pending-inventory ]; then
   tools='[]'

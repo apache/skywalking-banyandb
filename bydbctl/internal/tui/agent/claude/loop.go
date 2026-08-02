@@ -213,6 +213,11 @@ func claudeArgs(config Config, providerSessionID string, parts prompt.Parts) ([]
 	if marshalErr != nil {
 		return nil, fmt.Errorf("failed to encode controlled MCP config: %w", marshalErr)
 	}
+	// Do not restrict the tool set with --tools or --permission-mode. The controlled MCP
+	// server connects asynchronously after the CLI's initial tool snapshot, so any --tools
+	// allowlist (including an empty one) hides the controlled tools from the model, which
+	// then writes tool calls as plain text instead of invoking them. Rely on --allowedTools
+	// to grant only the controlled tools and let default permission mode deny the rest.
 	args := []string{
 		"--print",
 		"--verbose",
@@ -220,11 +225,9 @@ func claudeArgs(config Config, providerSessionID string, parts prompt.Parts) ([]
 		"--include-partial-messages",
 		"--model", config.Model,
 		"--max-turns", strconv.Itoa(config.MaxTurns),
-		"--permission-mode", "dontAsk",
 		"--disable-slash-commands",
 		"--no-chrome",
 		"--prompt-suggestions", "false",
-		"--tools", "",
 		"--strict-mcp-config",
 		"--mcp-config", string(mcpJSON),
 		"--allowedTools", strings.Join(expectedAllowedToolNames(), ","),
@@ -253,7 +256,7 @@ func claudeEnvironment(config Config) []string {
 	if strings.TrimSpace(config.BaseURL) != "" {
 		environment = replaceEnvironmentValue(environment, baseURLEnv, config.BaseURL)
 	}
-	return replaceEnvironmentValue(environment, "CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC", "1")
+	return environment
 }
 
 func replaceEnvironmentValue(environment []string, name, value string) []string {
@@ -334,10 +337,6 @@ func consumeClaudeMessage(rawMessage []byte, state *turnStreamState) (*agent.Eve
 }
 
 func validateClaudeInventory(message claudeStreamMessage) error {
-	expectedTools := expectedAllowedToolNames()
-	if !isStringSubset(message.Tools, expectedTools) {
-		return fmt.Errorf("unexpected Claude tool inventory: got %s, allowed %s", strings.Join(message.Tools, ", "), strings.Join(expectedTools, ", "))
-	}
 	if len(message.MCPServers) != 1 {
 		return fmt.Errorf("unexpected Claude MCP inventory: got %d servers", len(message.MCPServers))
 	}
@@ -345,14 +344,21 @@ func validateClaudeInventory(message claudeStreamMessage) error {
 	if server.Name != controlledMCPServerName {
 		return fmt.Errorf("controlled Claude MCP server is unavailable: name=%q status=%q", server.Name, server.Status)
 	}
+	// The CLI exposes its built-in tools alongside the controlled MCP tools; --allowedTools
+	// grants only the controlled ones and default permission mode denies the rest, so reject
+	// only unexpected MCP-owned tools, never built-ins.
+	expectedTools := expectedAllowedToolNames()
+	if foreignTool := firstForeignMCPTool(message.Tools, expectedTools); foreignTool != "" {
+		return fmt.Errorf("unexpected Claude MCP tool inventory: got %q", foreignTool)
+	}
 	switch server.Status {
 	case "connected":
-		if !equalStringSets(message.Tools, expectedTools) {
+		if !containsAllTools(message.Tools, expectedTools) {
 			return fmt.Errorf("connected Claude MCP server exposed %s, want %s", strings.Join(message.Tools, ", "), strings.Join(expectedTools, ", "))
 		}
 		return nil
 	case "pending":
-		if len(message.Tools) != 0 {
+		if containsAnyMCPTool(message.Tools) {
 			return fmt.Errorf("pending Claude MCP server exposed tools unexpectedly: %s", strings.Join(message.Tools, ", "))
 		}
 		return nil
@@ -361,22 +367,44 @@ func validateClaudeInventory(message claudeStreamMessage) error {
 	}
 }
 
-func isStringSubset(values, allowed []string) bool {
-	allowedSet := make(map[string]struct{}, len(allowed))
-	for _, allowedValue := range allowed {
-		allowedSet[allowedValue] = struct{}{}
+// firstForeignMCPTool returns the first tool owned by an unexpected MCP server, if any.
+func firstForeignMCPTool(tools, controlledTools []string) string {
+	controlledSet := make(map[string]struct{}, len(controlledTools))
+	for _, tool := range controlledTools {
+		controlledSet[tool] = struct{}{}
 	}
-	seen := make(map[string]struct{}, len(values))
-	for _, value := range values {
-		if _, exists := allowedSet[value]; !exists {
+	for _, tool := range tools {
+		if strings.HasPrefix(tool, "mcp__") {
+			if _, owned := controlledSet[tool]; !owned {
+				return tool
+			}
+		}
+	}
+	return ""
+}
+
+// containsAllTools reports whether every expected tool is present in the inventory.
+func containsAllTools(tools, expected []string) bool {
+	present := make(map[string]struct{}, len(tools))
+	for _, tool := range tools {
+		present[tool] = struct{}{}
+	}
+	for _, tool := range expected {
+		if _, ok := present[tool]; !ok {
 			return false
 		}
-		if _, exists := seen[value]; exists {
-			return false
-		}
-		seen[value] = struct{}{}
 	}
 	return true
+}
+
+// containsAnyMCPTool reports whether any MCP-owned tool is present in the inventory.
+func containsAnyMCPTool(tools []string) bool {
+	for _, tool := range tools {
+		if strings.HasPrefix(tool, "mcp__") {
+			return true
+		}
+	}
+	return false
 }
 
 func validateProviderSessionID(actual, expected string) error {
