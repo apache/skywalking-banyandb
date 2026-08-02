@@ -92,6 +92,8 @@ dist/bench/
 # G5d soak harness runtime artifacts
 dist/soak/
 test/soak/data/
+# Per-node data dirs for the distributed soak topology (SOAK_TOPOLOGY=distributed).
+test/soak/data-distributed/
 
 # Local runtime crash dumps and investigation notes
 crash/
