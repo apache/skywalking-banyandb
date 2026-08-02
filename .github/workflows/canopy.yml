@@ -88,6 +88,108 @@ jobs:
           fi
           echo "✓ ui/ untouched"
 
+  # ── Canopy console image ────────────────────────────────────────────────────
+  # Builds ghcr.io/apache/skywalking-banyandb:<sha>-canopy (the tag suffix is
+  # applied inside scripts/build/docker.mk). On PRs the image is only built
+  # and handed to the integration test; the dual-arch push happens on main.
+  image-build:
+    name: Image build (canopy)
+    runs-on: ubuntu-latest
+    needs: build-test
+    permissions:
+      contents: read
+      packages: write
+    env:
+      HUB: ghcr.io/apache
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Build canopy image
+        run: TAG=${{ github.sha }} PLATFORMS=linux/amd64 make -C canopy docker
+
+      - name: Save image for the integration test
+        run: docker save "ghcr.io/apache/skywalking-banyandb:${{ github.sha }}-canopy" -o /tmp/canopy-image.tar
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: canopy-image
+          path: /tmp/canopy-image.tar
+          retention-days: 1
+
+      - name: Login to ghcr (main only)
+        if: github.ref == 'refs/heads/main'
+        run: echo "${{ secrets.GITHUB_TOKEN }}" | docker login ghcr.io -u ${{ github.actor }} --password-stdin
+
+      - name: Push canopy image (main only)
+        if: github.ref == 'refs/heads/main'
+        run: TAG=${{ github.sha }} PLATFORMS=linux/amd64,linux/arm64 make -C canopy docker.push
+
+  # ── Integration test: canopy image vs BanyanDB, both topologies ─────────────
+  # Standalone and liaison+data cluster — the cluster leg exercises the
+  # distributed dquery paths (TopN agg validation, trace index-rule
+  # resolution) that a standalone never hits.
+  integration-test:
+    name: Integration test (${{ matrix.mode }})
+    runs-on: ubuntu-latest
+    needs: image-build
+    permissions:
+      contents: read
+      actions: read
+      packages: read
+    strategy:
+      fail-fast: false
+      matrix:
+        mode: [standalone, cluster]
+    env:
+      HUB: ghcr.io/apache
+      CANOPY_IMAGE: ghcr.io/apache/skywalking-banyandb:${{ github.sha }}-canopy
+    defaults:
+      run:
+        working-directory: canopy/e2e/integration
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/download-artifact@v4
+        with:
+          name: canopy-image
+          path: /tmp
+
+      - name: Load canopy image
+        run: docker load -i /tmp/canopy-image.tar
+
+      - name: Login to ghcr (pull the BanyanDB testing image)
+        run: echo "${{ secrets.GITHUB_TOKEN }}" | docker login ghcr.io -u ${{ github.actor }} --password-stdin
+
+      - name: Resolve latest BanyanDB testing image
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          # Always resolve against the upstream repo (forks have no
+          # publish-docker runs); falls back to a pinned known-good sha when
+          # the API or the manifest is unreachable.
+          SHA=$(gh api "repos/apache/skywalking-banyandb/actions/workflows/publish-docker.yml/runs?branch=main&status=success&per_page=1" --jq '.workflow_runs[0].head_sha' 2>/dev/null || true)
+          IMG="ghcr.io/apache/skywalking-banyandb:${SHA}-testing"
+          if [ -z "$SHA" ] || [ "$SHA" = "null" ] || ! docker manifest inspect "$IMG" >/dev/null 2>&1; then
+            IMG="ghcr.io/apache/skywalking-banyandb:0c91de57-testing"
+            echo "latest -testing image not resolvable (sha='${SHA:-none}') — falling back to pinned $IMG"
+            docker manifest inspect "$IMG" >/dev/null
+          fi
+          echo "BANYANDB_IMAGE=$IMG" >> "$GITHUB_ENV"
+
+      - name: Compose up (${{ matrix.mode }})
+        run: docker compose -f docker-compose.${{ matrix.mode }}.yml up -d --wait
+
+      - name: Smoke
+        run: bash smoke.sh http://127.0.0.1:4000
+
+      - name: Compose logs on failure
+        if: failure()
+        run: docker compose -f docker-compose.${{ matrix.mode }}.yml logs --tail=200
+
+      - name: Teardown
+        if: always()
+        run: docker compose -f docker-compose.${{ matrix.mode }}.yml down -v
+
   # ── Required-check shims for canopy-only PRs ────────────────────────────────
   # Branch protection requires the Go pipeline's aggregate checks ("Continuous
   # Integration" from ci.yml and "push-banyandb-image" from publish-docker.yml).

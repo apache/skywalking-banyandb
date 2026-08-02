@@ -33,6 +33,15 @@ ifeq ($(BINARYTYPE),slim)
 	TAG := $(TAG)-slim
 endif
 
+# The canopy web console ships in the SAME repo as every other banyandb image,
+# distinguished only by the "-canopy" TAG suffix (mirrors the slim pattern
+# above): $(HUB)/$(IMG_NAME):$(TAG)-canopy. canopy/Makefile sets NAME=canopy
+# and IMG_NAME=skywalking-banyandb; CI passes TAG via the environment, so this
+# makefile-level assignment wins as it does for slim.
+ifeq ($(NAME),canopy)
+	TAG := $(TAG)-canopy
+endif
+
 # banyand/Dockerfile has a "-plugins" builder stage (BINARYTYPE=plugins) whose
 # COPY --from=reporoot reaches the full repo module (go.mod lives one
 # directory above banyand/, this project's own build context), plus a later
