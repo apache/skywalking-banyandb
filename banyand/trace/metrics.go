@@ -71,6 +71,7 @@ type metrics struct {
 	pipelineTracesDropped            meter.Counter
 	pipelineTracesRetained           meter.Counter
 	pipelineTracesImmature           meter.Counter
+	pipelineOversizedTracesBypassed  meter.Counter
 	pipelinePluginErrors             meter.Counter
 	pipelineAmbiguous                meter.Counter
 	pipelineSidxPruned               meter.Counter
@@ -309,6 +310,14 @@ func (tst *tsTable) incPipelineTracesImmature(delta int) {
 }
 
 //nolint:unused
+func (tst *tsTable) incPipelineOversizedTracesBypassed(delta int) {
+	if tst == nil || tst.metrics == nil {
+		return
+	}
+	tst.metrics.pipelineOversizedTracesBypassed.Inc(float64(delta))
+}
+
+//nolint:unused
 func (tst *tsTable) incPipelinePluginErrors(delta int, reason string) {
 	if tst == nil || tst.metrics == nil {
 		return
@@ -438,6 +447,7 @@ func (m *metrics) DeleteAll() {
 	m.pipelineTracesDropped.Delete()
 	m.pipelineTracesRetained.Delete()
 	m.pipelineTracesImmature.Delete()
+	m.pipelineOversizedTracesBypassed.Delete()
 	m.pipelineAmbiguous.Delete()
 	m.pipelineSidxPruned.Delete()
 	m.pipelineGuardBloomProbes.Delete()
@@ -482,6 +492,7 @@ func (s *supplier) newMetrics(p common.Position) storage.Metrics {
 		pipelineTracesDropped:            factory.NewCounter("pipeline_traces_dropped"),
 		pipelineTracesRetained:           factory.NewCounter("pipeline_traces_retained"),
 		pipelineTracesImmature:           factory.NewCounter("pipeline_traces_immature"),
+		pipelineOversizedTracesBypassed:  factory.NewCounter("pipeline_oversized_traces_bypassed"),
 		pipelinePluginErrors:             factory.NewCounter("pipeline_plugin_errors", "reason"),
 		pipelineAmbiguous:                factory.NewCounter("pipeline_ambiguous"),
 		pipelineSidxPruned:               factory.NewCounter("pipeline_sidx_pruned"),
@@ -542,6 +553,7 @@ func (qs *queueSupplier) newMetrics(p common.Position) (storage.Metrics, observa
 		pipelineTracesDropped:            factory.NewCounter("pipeline_traces_dropped"),
 		pipelineTracesRetained:           factory.NewCounter("pipeline_traces_retained"),
 		pipelineTracesImmature:           factory.NewCounter("pipeline_traces_immature"),
+		pipelineOversizedTracesBypassed:  factory.NewCounter("pipeline_oversized_traces_bypassed"),
 		pipelinePluginErrors:             factory.NewCounter("pipeline_plugin_errors", "reason"),
 		pipelineAmbiguous:                factory.NewCounter("pipeline_ambiguous"),
 		pipelineSidxPruned:               factory.NewCounter("pipeline_sidx_pruned"),
