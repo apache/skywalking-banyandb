@@ -18,6 +18,8 @@
 package trace
 
 import (
+	"fmt"
+
 	"github.com/apache/skywalking-banyandb/banyand/internal/sidx"
 	snapshotpkg "github.com/apache/skywalking-banyandb/banyand/internal/snapshot"
 	"github.com/apache/skywalking-banyandb/pkg/pool"
@@ -95,16 +97,26 @@ type mergerIntroduction struct {
 	merged               map[uint64]struct{}
 	newPart              *partWrapper
 	sidxMergerIntroduced map[string]*sidx.MergerIntroduction
+	guard                *traceFragmentGuardSession
+	resultErr            error
 	applied              chan struct{}
+	guardRevalidation    traceFragmentGuardRevalidation
 	creator              snapshotCreator
+	guardRevalidated     bool
+	guardRejected        bool
 }
 
 func (i *mergerIntroduction) reset() {
 	i.merged = nil
 	i.sidxMergerIntroduced = nil
 	i.newPart = nil
+	i.guard = nil
+	i.guardRevalidation = traceFragmentGuardRevalidation{}
+	i.resultErr = nil
 	i.applied = nil
 	i.creator = 0
+	i.guardRevalidated = false
+	i.guardRejected = false
 }
 
 var mergerIntroductionPool = pool.Register[*mergerIntroduction]("trace-merger-introduction")
@@ -448,6 +460,40 @@ func (tst *tsTable) introduceFlushedForSync(nextIntroduction *flusherIntroductio
 }
 
 func (tst *tsTable) introduceMerged(nextIntroduction *mergerIntroduction, epoch uint64) {
+	if nextIntroduction.guard != nil {
+		revalidation := &nextIntroduction.guardRevalidation
+		switch {
+		case !nextIntroduction.guardRevalidated || !revalidation.Publish:
+			if revalidation.Reason == "" {
+				revalidation.Reason = traceFragmentGuardReasonPublicationFenceMissing
+			}
+		case !nextIntroduction.guard.ownershipUnchanged(tst):
+			revalidation.Publish = false
+			revalidation.Reason = traceFragmentGuardReasonOwnershipChanged
+		default:
+			currentSnapshot := tst.currentSnapshot()
+			if currentSnapshot == nil {
+				revalidation.Publish = false
+				revalidation.Reason = traceFragmentGuardReasonCatalogIncomplete
+			} else {
+				currentEpoch := currentSnapshot.epoch
+				currentSnapshot.decRef()
+				if currentEpoch != revalidation.CurrentEpoch {
+					revalidation.Publish = false
+					revalidation.CurrentEpoch = currentEpoch
+					revalidation.Reason = traceFragmentGuardReasonSnapshotChanged
+				}
+			}
+		}
+		if !revalidation.Publish {
+			nextIntroduction.guardRejected = true
+			nextIntroduction.resultErr = fmt.Errorf("trace fragment guard rejected publication: %s", revalidation.Reason)
+			if nextIntroduction.applied != nil {
+				close(nextIntroduction.applied)
+			}
+			return
+		}
+	}
 	// Create generic transaction
 	txn := snapshotpkg.NewTransaction()
 	defer txn.Release()

@@ -37,11 +37,11 @@ Required assertions (the gate):
 
 - **(a)** the banyand pod reaches **Ready** — the CGO/dynamic host actually
   boots in-cluster;
-- **(b)** `latencystatussampler.so` was delivered into the shared `/plugins`
+- **(b)** `sw-trace-sampler.so` was delivered into the shared `/plugins`
   volume — verified from the carrier `install-plugins` initContainer's log
   (the distroless host container has no shell to `exec ls` into);
 - **(c)** a group whose trace pipeline references
-  `SamplerPlugin.path=latencystatussampler.so` is registered, and the data node
+  `SamplerPlugin.path=sw-trace-sampler.so` is registered, and the data node
   **loads it with no failure** — `plugin.Open` succeeded on the mounted `.so`.
   Evidence: the fail-open ERROR (`sampler plugin load failed; keeping previous
   good set`) is **absent**, and `banyandb_trace_pipeline_sampler_active_count{group="test-trace-pipeline"} > 0`.

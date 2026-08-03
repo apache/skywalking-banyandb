@@ -59,6 +59,8 @@ var (
 
 var _ Service = (*standalone)(nil)
 
+const defaultTracePipelineMergeGrace = 2 * time.Hour
+
 type standalone struct {
 	pm                 protector.Memory
 	pipeline           queue.Server
@@ -103,7 +105,10 @@ func (s *standalone) FlagSet() *run.FlagSet {
 	bindVectorizedFlags(fs, &s.option.vectorized)
 	fs.BoolVar(&s.option.nativePipelineEnabled, "trace-pipeline-native-plugin-enabled", false, "enable the native plugin pipeline for in-merge trace retention")
 	fs.StringVar(&s.option.trustedPluginDir, "trace-pipeline-trusted-plugin-dir", "", "trusted directory for native trace pipeline plugins")
-	fs.DurationVar(&s.option.mergeGraceDefault, "trace-pipeline-merge-grace-default", 30*time.Second, "default merge_grace for in-merge trace retention filter")
+	fs.DurationVar(&s.option.mergeGraceDefault, "trace-pipeline-merge-grace-default", defaultTracePipelineMergeGrace,
+		"default merge_grace for in-merge trace retention filter")
+	fs.DurationVar(&s.option.maxTraceFragmentGap, "trace-pipeline-max-fragment-gap", 0,
+		"externally enforced maximum gap between fragments of one trace; zero disables destructive merge and finalization sampling")
 	fs.DurationVar(&s.option.finalizeGraceDefault, "trace-pipeline-finalize-grace-default", 5*time.Minute,
 		"default finalize_grace (per-segment settling window) for finalization sampling")
 	fs.DurationVar(&s.option.decideTimeout, "trace-pipeline-decide-timeout", 5*time.Second, "hard per-batch Decide timeout for trace pipeline plugins")
@@ -132,6 +137,12 @@ func (s *standalone) Validate() error {
 	}
 	if s.retentionConfig.Cooldown <= 0 {
 		return errors.New("trace-retention-cooldown must be greater than 0")
+	}
+	if s.option.mergeGraceDefault < 0 {
+		return errors.New("trace-pipeline-merge-grace-default must not be negative")
+	}
+	if s.option.maxTraceFragmentGap < 0 {
+		return errors.New("trace-pipeline-max-fragment-gap must not be negative")
 	}
 	return s.option.vectorized.Validate()
 }

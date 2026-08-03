@@ -50,7 +50,7 @@ export function Pager({
         >
           ← Prev
         </button>
-        <span className="doc-pager-page">{page} / {lastPage}</span>
+        <span className="doc-pager-page" data-testid="pager-page">{page} / {lastPage}</span>
         <button
           className="pg-btn"
           disabled={page >= lastPage}

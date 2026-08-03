@@ -18,7 +18,7 @@
  */
 
 import React from 'react';
-import { useNavigate } from 'react-router-dom';
+import { useNavigate } from 'react-router';
 import { useQuery } from '@tanstack/react-query';
 
 import { apiDataSource } from '../data/api.js';
@@ -85,7 +85,7 @@ export function HomePage() {
         ))}
       </div>
 
-      <div className="quick-grid">
+      <div className="quick-grid" role="region" aria-label="Quick navigation">
         {QUICK_ITEMS.map(({ path, Icon, label, desc }) => (
           <button key={path} className="quick-card" onClick={() => navigate(path)}>
             <span className="quick-ico"><Icon size={18} /></span>

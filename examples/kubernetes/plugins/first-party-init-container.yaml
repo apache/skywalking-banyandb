@@ -22,7 +22,7 @@
 # main container. The initContainer runs the CARRIER image
 # (the `-plugins-carrier`-tagged image) — which is busybox-based, so it has a shell +
 # `cp` — and copies its /plugins/*.so into the shared volume. The host then
-# loads them from /plugins. Reference by SamplerPlugin.path=latencystatussampler.so.
+# loads them from /plugins. Reference by SamplerPlugin.path=sw-trace-sampler.so.
 #
 # LOCKSTEP: the carrier tag MUST equal the host image tag (plugin.Open parity).
 apiVersion: apps/v1

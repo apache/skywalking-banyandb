@@ -33,11 +33,12 @@ import (
 )
 
 type block struct {
-	spans   [][]byte
-	tags    []tag
-	spanIDs []string
-	minTS   int64
-	maxTS   int64
+	spans                  [][]byte
+	tags                   []tag
+	spanIDs                []string
+	minTS                  int64
+	maxTS                  int64
+	timestampBoundsUnknown bool
 }
 
 func (b *block) reset() {
@@ -52,6 +53,7 @@ func (b *block) reset() {
 	b.spanIDs = b.spanIDs[:0]
 	b.minTS = 0
 	b.maxTS = 0
+	b.timestampBoundsUnknown = false
 }
 
 // deepCopyValues clones every span and tag-value byte slice so the block owns
@@ -90,6 +92,7 @@ func (b *block) mustInitFromTrace(spans [][]byte, tags [][]*tagValue, timestamps
 	}
 	b.minTS = timestamps[0]
 	b.maxTS = timestamps[0]
+	b.timestampBoundsUnknown = false
 	for _, ts := range timestamps {
 		if ts < b.minTS {
 			b.minTS = ts
@@ -144,6 +147,7 @@ func (b *block) mustWriteTo(tid string, bm *blockMetadata, ww *writers) {
 	bm.count = uint64(b.Len())
 	bm.timestamps.min = b.minTS
 	bm.timestamps.max = b.maxTS
+	bm.timestamps.known = !b.timestampBoundsUnknown
 
 	mustWriteSpansTo(bm.spans, b.spans, b.spanIDs, &ww.spanWriter)
 	for ti := range b.tags {
@@ -248,6 +252,11 @@ func (b *block) spanSize() uint64 {
 
 func (b *block) mustReadFrom(decoder *encoding.BytesBlockDecoder, p *part, bm blockMetadata) {
 	b.reset()
+	b.timestampBoundsUnknown = !bm.timestamps.known
+	if bm.timestamps.known {
+		b.minTS = bm.timestamps.min
+		b.maxTS = bm.timestamps.max
+	}
 
 	b.spans, b.spanIDs = mustReadSpansFrom(decoder, b.spans, b.spanIDs, bm.spans, int(bm.count), p.spans)
 
@@ -269,6 +278,11 @@ func (b *block) mustReadFrom(decoder *encoding.BytesBlockDecoder, p *part, bm bl
 
 func (b *block) mustSeqReadFrom(decoder *encoding.BytesBlockDecoder, seqReaders *seqReaders, bm blockMetadata) {
 	b.reset()
+	b.timestampBoundsUnknown = !bm.timestamps.known
+	if bm.timestamps.known {
+		b.minTS = bm.timestamps.min
+		b.maxTS = bm.timestamps.max
+	}
 
 	b.spans, b.spanIDs = mustSeqReadSpansFrom(decoder, b.spans, b.spanIDs, bm.spans, int(bm.count), &seqReaders.spans)
 
@@ -608,6 +622,17 @@ func (bi *blockPointer) copyFrom(src *blockPointer) {
 func (bi *blockPointer) appendAll(b *blockPointer) {
 	if len(b.spans) == 0 {
 		return
+	}
+	if len(bi.spans) == 0 {
+		bi.minTS = b.minTS
+		bi.maxTS = b.maxTS
+		bi.timestampBoundsUnknown = b.timestampBoundsUnknown
+	} else {
+		if !bi.timestampBoundsUnknown && !b.timestampBoundsUnknown {
+			bi.minTS = min(bi.minTS, b.minTS)
+			bi.maxTS = max(bi.maxTS, b.maxTS)
+		}
+		bi.timestampBoundsUnknown = bi.timestampBoundsUnknown || b.timestampBoundsUnknown
 	}
 	bi.append(b, len(b.spans))
 }

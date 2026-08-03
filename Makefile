@@ -300,16 +300,19 @@ pre-push: ## Check source files before pushing to the remote repo
 
 include scripts/build/license.mk
 
-license-check: $(LICENSE_EYE)
-license-check: TARGET=license-check
-license-check: PROJECTS:=ui mcp canopy
-license-check: default ## Check license header
+# License-check / license-fix run a SINGLE license-eye invocation from the
+# repo root with the root .licenserc.yaml. This avoids:
+#   - editing ui/.licenserc.yaml (forbidden by plan §Principle 3),
+#   - the per-subdir loop over PROJECTS (each subdir would otherwise load
+#     its own .licenserc.yaml and miss the root config's OMC-runtime-state
+#     / handoff-import / playwright-mcp exclusions).
+# The root config already includes 'ui' in paths-ignore so the Vue app is
+# not double-scanned; canopy files are scanned from the root, which is the
+# desired surface for the license header check.
+license-check: $(LICENSE_EYE) ## Check license header
 	$(LICENSE_EYE) header check
 
-license-fix: $(LICENSE_EYE)
-license-fix: TARGET=license-fix
-license-fix: PROJECTS:=ui mcp canopy
-license-fix: default ## Fix license header issues
+license-fix: $(LICENSE_EYE) ## Fix license header issues
 	$(LICENSE_EYE) header fix
 
 license-dep: $(LICENSE_EYE)

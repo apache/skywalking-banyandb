@@ -41,6 +41,10 @@ import (
 )
 
 func Test_mergeTwoBlocks(t *testing.T) {
+	unknownConventionalBlock := conventionalBlock
+	unknownConventionalBlock.timestampBoundsUnknown = true
+	unknownMergedBlock := mergedBlock
+	unknownMergedBlock.timestampBoundsUnknown = true
 	tests := []struct {
 		left  *blockPointer
 		right *blockPointer
@@ -57,13 +61,13 @@ func Test_mergeTwoBlocks(t *testing.T) {
 			name:  "Merge left is non-empty right is empty",
 			left:  &blockPointer{block: conventionalBlock},
 			right: &blockPointer{},
-			want:  &blockPointer{block: conventionalBlock, bm: blockMetadata{}},
+			want:  &blockPointer{block: unknownConventionalBlock, bm: blockMetadata{}},
 		},
 		{
 			name:  "Merge left is empty right is non-empty",
 			left:  &blockPointer{},
 			right: &blockPointer{block: conventionalBlock},
-			want:  &blockPointer{block: conventionalBlock, bm: blockMetadata{}},
+			want:  &blockPointer{block: unknownConventionalBlock, bm: blockMetadata{}},
 		},
 		{
 			name: "Merge two non-empty blocks without overlap",
@@ -91,7 +95,7 @@ func Test_mergeTwoBlocks(t *testing.T) {
 					},
 				},
 			},
-			want: &blockPointer{block: mergedBlock, bm: blockMetadata{}},
+			want: &blockPointer{block: unknownMergedBlock, bm: blockMetadata{}},
 		},
 	}
 

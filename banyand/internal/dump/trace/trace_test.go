@@ -76,6 +76,9 @@ func TestDecodeTracePartFormat(t *testing.T) {
 		require.NoError(t, parseErr, "should parse all block metadata from primary block %d", blockIdx)
 
 		for _, bm := range blockMetadatas {
+			assert.True(t, bm.timestampBoundsKnown, "new trace parts persist timestamp bounds")
+			assert.LessOrEqual(t, bm.minTimestamp, bm.maxTimestamp, "block timestamp bounds must be ordered")
+
 			spans, spanIDs, spanErr := readSpans(decoder, bm.spans, int(bm.count), p.spans)
 			require.NoError(t, spanErr, "should read spans for trace %s", bm.traceID)
 			assert.Len(t, spans, int(bm.count))
