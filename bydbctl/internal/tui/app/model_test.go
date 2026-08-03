@@ -199,7 +199,7 @@ func TestCtrlVDoesNotStartManualValidation(t *testing.T) {
 	}
 }
 
-func TestCtrlFDoesNotStartAgentRepair(t *testing.T) {
+func TestCtrlFFocusesDataPreviewWithoutStartingAgent(t *testing.T) {
 	model := NewModel(Config{})
 	querySession := &session.QuerySession{}
 	querySession.AddCandidate(session.BydbqlCandidate{
@@ -210,18 +210,16 @@ func TestCtrlFDoesNotStartAgentRepair(t *testing.T) {
 	})
 	model.querySession = querySession
 	model.syncQuerySession()
-	initialView := model.View()
-
 	updatedModel, updateCmd := model.Update(tea.KeyMsg{Type: tea.KeyCtrlF})
 	if updateCmd != nil {
-		t.Fatal("Ctrl+F must not return an agent repair command")
+		t.Fatal("Ctrl+F must focus the preview without starting an agent turn")
 	}
 	typedModel, ok := updatedModel.(Model)
 	if !ok {
 		t.Fatalf("unexpected model type: %T", updatedModel)
 	}
-	if typedModel.View() != initialView {
-		t.Fatalf("Ctrl+F must not change the workspace:\n%s", typedModel.View())
+	if !strings.Contains(typedModel.View(), "Data Preview · focused") {
+		t.Fatalf("expected Ctrl+F to visibly focus the Data Preview:\n%s", typedModel.View())
 	}
 }
 

@@ -621,6 +621,10 @@ func (m *Model) handleKey(keyMsg tea.KeyMsg) (tea.Cmd, bool) {
 		m.catalog.setLoading()
 		m.status = "refreshing catalog"
 		return m.loadCatalogCmd(), true
+	case "ctrl+f":
+		m.focus = focusExecution
+		m.status = "data preview focused"
+		return m.syncFocus(), true
 	case "ctrl+left", "ctrl+right":
 		if m.querySession == nil || len(m.querySession.Candidates) == 0 {
 			return nil, true

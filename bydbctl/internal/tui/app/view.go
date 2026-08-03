@@ -39,6 +39,8 @@ var (
 			Border(lipgloss.RoundedBorder()).
 			BorderForeground(borderColor).
 			Padding(0, 1)
+	activePanelStyle = panelStyle.Copy().
+				BorderForeground(tealColor)
 	titleStyle = lipgloss.NewStyle().
 			Foreground(tealColor).
 			Bold(true)
@@ -315,7 +317,7 @@ func approvalScanEstimate(request approval.Request) string {
 func (m Model) renderFooter(width int) string {
 	commands := []string{
 		"@ schema", "Enter send", "Ctrl+E run", "Ctrl+P policy", "Ctrl+R reasoning",
-		"Ctrl+←/→ versions", "Ctrl+O export", "Ctrl+J full response", "Tab focus", "Esc stop/quit",
+		"Ctrl+←/→ versions", "Ctrl+F preview", "Ctrl+O export", "Ctrl+J full response", "Tab focus", "Esc stop/quit",
 	}
 	var lines []string
 	currentLine := ""

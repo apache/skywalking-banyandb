@@ -280,7 +280,7 @@ func (m Model) renderEvidencePanel(width, height int) string {
 	}
 	var evidence string
 	if evidenceHeight > panelStyle.GetVerticalFrameSize() {
-		if m.schemaSearchOpen() || m.evidenceMode == evidenceModeSchema {
+		if m.focus != focusExecution && (m.schemaSearchOpen() || m.evidenceMode == evidenceModeSchema) {
 			evidence = m.renderSchemaEvidence(width, evidenceHeight)
 		} else {
 			evidence = m.renderDataPreview(width, evidenceHeight)
@@ -297,10 +297,18 @@ func (m Model) renderEvidencePanel(width, height int) string {
 
 func (m Model) renderDataPreview(width, height int) string {
 	data, ok := m.currentPreviewData()
-	rows := []string{titleStyle.Render("Data Preview · ←/→ scroll")}
+	panel := panelStyle
+	title := "Data Preview"
+	hint := "Ctrl+F focus preview · then ←/→ horizontal scroll"
+	if m.focus == focusExecution {
+		panel = activePanelStyle
+		title = "Data Preview · focused"
+		hint = "←/→ horizontal scroll · ↑↓ select row · Tab next focus"
+	}
+	rows := []string{titleStyle.Render(title), mutedStyle.Render(hint)}
 	if !ok {
 		rows = append(rows, mutedStyle.Render("A validated query probe or execution result will appear here."))
-		return panelStyle.Width(width).Height(panelContentHeight(height)).Render(lipgloss.JoinVertical(lipgloss.Left, rows...))
+		return panel.Width(width).Height(panelContentHeight(height)).Render(lipgloss.JoinVertical(lipgloss.Left, rows...))
 	}
 	resource := fallback(data.resource, "current query")
 	previewCount := len(data.preview)
@@ -322,7 +330,7 @@ func (m Model) renderDataPreview(width, height int) string {
 		rows = append(rows, formatJSONResponsePreview(m.querySession.ExecutionResult.Response, width-4, maxExecutionResponseLines)...)
 	}
 	rows = append(rows, mutedStyle.Render("Ctrl+O export · Ctrl+J see full response · ↑↓ row"))
-	return panelStyle.Width(width).Height(panelContentHeight(height)).Render(lipgloss.JoinVertical(lipgloss.Left, rows...))
+	return panel.Width(width).Height(panelContentHeight(height)).Render(lipgloss.JoinVertical(lipgloss.Left, rows...))
 }
 
 func (m Model) renderSchemaEvidence(width, height int) string {

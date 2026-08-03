@@ -96,6 +96,35 @@ func TestDataPreviewScrollsHorizontallyWhenFocused(t *testing.T) {
 	}
 }
 
+func TestCtrlFShowsDataPreviewWhenSchemaSearchIsOpen(t *testing.T) {
+	model := NewModel(Config{})
+	model.catalog.setCatalog(session.SchemaCatalog{Entries: []session.CatalogEntry{
+		{Group: "sw_trace", Type: session.ResourceTypeTrace, Name: "segment"},
+	}})
+	model.message.SetValue("@segment")
+	model.updateSchemaSearch()
+	querySession := &session.QuerySession{}
+	querySession.AddCandidate(session.BydbqlCandidate{
+		Query: "SELECT * FROM TRACE segment IN sw_trace TIME > '-30m' LIMIT 10",
+		Validation: session.ValidationReport{
+			Valid: true,
+		},
+		Probe: &session.ProbeSummary{
+			Rows:    1,
+			Columns: []string{"traceId"},
+			Preview: [][]string{{"trace-1"}},
+		},
+	})
+	model.querySession = querySession
+	model.syncQuerySession()
+
+	updatedModel, _ := model.Update(tea.KeyMsg{Type: tea.KeyCtrlF})
+	typedModel := updatedModel.(Model)
+	if !strings.Contains(typedModel.View(), "Data Preview · focused") {
+		t.Fatalf("expected Ctrl+F to show the focused Data Preview:\n%s", typedModel.View())
+	}
+}
+
 func TestWorkspaceFitsTerminalWithProviderVisible(t *testing.T) {
 	const terminalHeight = 42
 	model := NewModel(Config{Provider: "claude"})
@@ -438,22 +467,5 @@ func TestComposerEnterInsertsThenSendsSelectedResourceReference(t *testing.T) {
 	}
 	if !strings.Contains(typedModel.View(), "You › show @sw_metrics/service_cpm") {
 		t.Fatalf("expected second Enter to send the selected resource reference:\n%s", typedModel.View())
-	}
-}
-
-func TestInvalidCandidateDoesNotOfferManualAgentRepair(t *testing.T) {
-	model := NewModel(Config{})
-	querySession := &session.QuerySession{}
-	querySession.AddCandidate(session.BydbqlCandidate{
-		Query: "SELECT FROM",
-		Validation: session.ValidationReport{
-			Message: "syntax error near FROM",
-		},
-	})
-	model.querySession = querySession
-	model.syncQuerySession()
-
-	if strings.Contains(model.View(), "Ctrl+F") {
-		t.Fatalf("manual repair shortcut must not appear for an invalid candidate:\n%s", model.View())
 	}
 }
