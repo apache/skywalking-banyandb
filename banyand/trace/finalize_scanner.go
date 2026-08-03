@@ -52,6 +52,9 @@ func (sr *schemaRepo) finalizeScanLoop(closer *run.Closer, interval time.Duratio
 // runFinalizeScan performs one scan pass over all finalize-enabled groups. It is safe
 // to call directly (tests do) without the surrounding loop.
 func (sr *schemaRepo) runFinalizeScan(closeCh <-chan struct{}) {
+	if sr.maxTraceFragmentGap <= 0 {
+		return
+	}
 	// A local filesystem to read per-shard finalize.json during the pre-filter, without
 	// reopening the segment. finalize.json is always on local disk.
 	lfs := fs.NewLocalFileSystem()
@@ -72,22 +75,32 @@ func (sr *schemaRepo) runFinalizeScan(closeCh <-chan struct{}) {
 		if graceNs <= 0 {
 			continue
 		}
-		sr.scanGroup(group, samplers, graceNs, lookupFinalizeConfig(group, graceNs), lfs, closeCh)
+		mergeGraceNs := lookupMergeGrace(group)
+		if mergeGraceNs <= 0 {
+			mergeGraceNs = int64(sr.mergeGraceDefault)
+		}
+		if mergeGraceNs < int64(sr.maxTraceFragmentGap) {
+			continue
+		}
+		maturityGraceNs := max(graceNs, mergeGraceNs)
+		sr.scanGroup(group, samplers, graceNs, maturityGraceNs, lookupFinalizeConfig(group, graceNs), lfs, closeCh)
 	}
 }
 
-// scanGroup peeks the group's cooled segments WITHOUT reopening them, pre-filters on
+// scanGroup peeks the group's mature segments WITHOUT reopening them, pre-filters on
 // per-shard on-disk state so terminal / in-cooldown / max-rounds segments are never
 // reopened (this is what keeps a backstop from perturbing the hot node with a reopen
 // storm over cold segments), and only reopens the segments that may warrant a round —
 // then applies the precise threshold and finalizes warranting shards sequentially.
-func (sr *schemaRepo) scanGroup(group string, samplers []sdk.Sampler, graceNs int64, cfg finalizeConfig, lfs fs.FileSystem, closeCh <-chan struct{}) {
+func (sr *schemaRepo) scanGroup(group string, samplers []sdk.Sampler, graceNs, maturityGraceNs int64,
+	cfg finalizeConfig, lfs fs.FileSystem, closeCh <-chan struct{},
+) {
 	tsdb, err := sr.loadTSDB(group)
 	if err != nil || tsdb == nil {
 		return
 	}
 	now := time.Now().UnixNano()
-	coolEnd := now - graceNs
+	coolEnd := traceFragmentSaturatingSub(now, maturityGraceNs)
 	coolRange := timestamp.TimeRange{Start: time.Unix(0, 0), End: time.Unix(0, coolEnd)}
 	for _, peek := range tsdb.PeekSegments(coolRange) {
 		select {
@@ -95,7 +108,7 @@ func (sr *schemaRepo) scanGroup(group string, samplers []sdk.Sampler, graceNs in
 			return
 		default:
 		}
-		// Only fully-cooled segments; and skip (without reopening) any whose shards are
+		// Only fully-mature segments; and skip (without reopening) any whose shards are
 		// all terminal / in-cooldown / max-rounds per their on-disk finalize state.
 		if peek.End.UnixNano() > coolEnd || !segmentMayWarrant(lfs, peek.ShardPaths, cfg) {
 			continue

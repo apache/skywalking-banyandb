@@ -66,8 +66,11 @@ type blockMetadata struct {
 	tagType                   map[string]pbv1.ValueType
 	spans                     *dataBlock
 	traceID                   string
+	minTimestamp              int64
+	maxTimestamp              int64
 	uncompressedSpanSizeBytes uint64
 	count                     uint64
+	timestampBoundsKnown      bool
 }
 
 // PartReader provides read-only access to a trace part directory.
@@ -308,6 +311,20 @@ func parseBlockMetadata(src []byte, tagType map[string]pbv1.ValueType) (*blockMe
 
 	src, n = encoding.BytesToVarUint64(src)
 	bm.count = n
+
+	src, knownMarker := encoding.BytesToVarUint64(src)
+	if knownMarker > 1 {
+		return nil, nil, fmt.Errorf("cannot unmarshal timestamp bounds marker: %d", knownMarker)
+	}
+	bm.timestampBoundsKnown = knownMarker == 1
+	src, bm.minTimestamp, err = encoding.BytesToVarInt64(src)
+	if err != nil {
+		return nil, nil, fmt.Errorf("cannot unmarshal minimum timestamp: %w", err)
+	}
+	src, bm.maxTimestamp, err = encoding.BytesToVarInt64(src)
+	if err != nil {
+		return nil, nil, fmt.Errorf("cannot unmarshal maximum timestamp: %w", err)
+	}
 
 	bm.spans = &dataBlock{}
 	src, n = encoding.BytesToVarUint64(src)

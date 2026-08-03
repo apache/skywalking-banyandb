@@ -94,5 +94,9 @@ rules out a cause.
    per merge, over whatever parts are being merged together at that moment;
    a trace whose spans arrive in multiple merges can be evaluated more than
    once as its span-set grows. This is a property of the merge grace window
-   (`TracePipelineConfig.merge_grace`, default 30s) and how the merge
-   scheduler groups parts, not of any single sampler.
+   (`TracePipelineConfig.merge_grace`, default 2h) and how the merge
+   scheduler groups parts, not of any single sampler. Destructive in-merge
+   merge and finalization sampling also require a positive
+   `trace-pipeline-max-fragment-gap` no greater than the resolved merge grace;
+   its default of zero keeps both paths lossless. Merge grace controls maturity,
+   while the maximum fragment gap controls boundary-range expansion.

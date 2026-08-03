@@ -65,6 +65,7 @@ type tsTable struct {
 	// through the same serialized introducer loop the hot merges use.
 	mergeCh          chan *mergerIntroduction
 	p                common.Position
+	segmentTimeRange timestamp.TimeRange
 	group            string
 	root             string
 	gc               garbageCleaner
@@ -338,9 +339,10 @@ func initTSTable(fileSystem fs.FileSystem, rootPath string, p common.Position,
 }
 
 func newTSTable(fileSystem fs.FileSystem, rootPath string, p common.Position,
-	l *logger.Logger, _ timestamp.TimeRange, option option, m any,
+	l *logger.Logger, segmentTimeRange timestamp.TimeRange, option option, m any,
 ) (*tsTable, error) {
 	t, epoch := initTSTable(fileSystem, rootPath, p, l, option, m)
+	t.segmentTimeRange = segmentTimeRange
 	t.startLoop(epoch)
 	return t, nil
 }

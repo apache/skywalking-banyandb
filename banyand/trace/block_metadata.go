@@ -139,6 +139,13 @@ func (bm *blockMetadata) marshal(dst []byte) []byte {
 	dst = encoding.EncodeBytes(dst, convert.StringToBytes(bm.traceID))
 	dst = encoding.VarUint64ToBytes(dst, bm.uncompressedSpanSizeBytes)
 	dst = encoding.VarUint64ToBytes(dst, bm.count)
+	knownMarker := uint64(0)
+	if bm.timestamps.known {
+		knownMarker = 1
+	}
+	dst = encoding.VarUint64ToBytes(dst, knownMarker)
+	dst = encoding.VarInt64ToBytes(dst, bm.timestamps.min)
+	dst = encoding.VarInt64ToBytes(dst, bm.timestamps.max)
 	dst = bm.spans.marshal(dst)
 	dst = encoding.VarUint64ToBytes(dst, uint64(len(bm.tags)))
 	// make sure the order of tags is stable
@@ -171,6 +178,20 @@ func (bm *blockMetadata) unmarshal(src []byte, tagType map[string]pbv1.ValueType
 	bm.uncompressedSpanSizeBytes = n
 	src, n = encoding.BytesToVarUint64(src)
 	bm.count = n
+	src, n = encoding.BytesToVarUint64(src)
+	if n > 1 {
+		return nil, fmt.Errorf("cannot unmarshal timestamp bounds marker: %d", n)
+	}
+	bm.timestamps.known = n == 1
+	var timestampErr error
+	src, bm.timestamps.min, timestampErr = encoding.BytesToVarInt64(src)
+	if timestampErr != nil {
+		return nil, fmt.Errorf("cannot unmarshal minimum timestamp: %w", timestampErr)
+	}
+	src, bm.timestamps.max, timestampErr = encoding.BytesToVarInt64(src)
+	if timestampErr != nil {
+		return nil, fmt.Errorf("cannot unmarshal maximum timestamp: %w", timestampErr)
+	}
 	if bm.spans == nil {
 		bm.spans = &dataBlock{}
 	}
@@ -242,18 +263,21 @@ func releaseBlockMetadataArray(bma *blockMetadataArray) {
 }
 
 type timestampsMetadata struct {
-	min int64
-	max int64
+	min   int64
+	max   int64
+	known bool
 }
 
 func (tm *timestampsMetadata) reset() {
 	tm.min = 0
 	tm.max = 0
+	tm.known = false
 }
 
 func (tm *timestampsMetadata) copyFrom(src *timestampsMetadata) {
 	tm.min = src.min
 	tm.max = src.max
+	tm.known = src.known
 }
 
 func unmarshalBlockMetadata(dst []blockMetadata, src []byte, tagType map[string]pbv1.ValueType) ([]blockMetadata, error) {
@@ -291,6 +315,19 @@ func unmarshalBlockMetadata(dst []blockMetadata, src []byte, tagType map[string]
 func skipBlockMetadataAfterTraceID(src []byte) ([]byte, error) {
 	src, _ = encoding.BytesToVarUint64(src) // uncompressedSpanSizeBytes
 	src, _ = encoding.BytesToVarUint64(src) // count
+	src, knownMarker := encoding.BytesToVarUint64(src)
+	if knownMarker > 1 {
+		return nil, fmt.Errorf("cannot skip timestamp bounds marker: %d", knownMarker)
+	}
+	var timestampErr error
+	src, _, timestampErr = encoding.BytesToVarInt64(src) // timestamps.min
+	if timestampErr != nil {
+		return nil, fmt.Errorf("cannot skip minimum timestamp: %w", timestampErr)
+	}
+	src, _, timestampErr = encoding.BytesToVarInt64(src) // timestamps.max
+	if timestampErr != nil {
+		return nil, fmt.Errorf("cannot skip maximum timestamp: %w", timestampErr)
+	}
 	src, _ = encoding.BytesToVarUint64(src) // spans.offset
 	src, _ = encoding.BytesToVarUint64(src) // spans.size
 	var tagCount uint64

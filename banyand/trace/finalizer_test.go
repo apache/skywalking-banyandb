@@ -184,12 +184,14 @@ func TestRunFinalizeRound_DropsAndStamps(t *testing.T) {
 		fileSystem, tmpPath,
 		common.Position{Database: "fg"},
 		logger.GetLogger("finalize-round-test"),
-		timestamp.TimeRange{},
+		timestamp.NewInclusiveTimeRange(time.Unix(-1, 0), time.Unix(1, 0)),
 		option{
-			flushTimeout:  0,
-			mergePolicy:   newDefaultMergePolicyForTesting(),
-			protector:     protector.Nop{},
-			decideTimeout: time.Second,
+			flushTimeout:        0,
+			mergePolicy:         newDefaultMergePolicyForTesting(),
+			protector:           protector.Nop{},
+			decideTimeout:       time.Second,
+			mergeGraceDefault:   time.Millisecond,
+			maxTraceFragmentGap: time.Nanosecond,
 		},
 		nil,
 	)
@@ -241,8 +243,15 @@ func TestRunFinalizeRound_ReplayExcludesStampedParts(t *testing.T) {
 
 	tst, err := newTSTable(
 		fileSystem, tmpPath, common.Position{Database: "rp"},
-		logger.GetLogger("finalize-replay-test"), timestamp.TimeRange{},
-		option{flushTimeout: 0, mergePolicy: newDefaultMergePolicyForTesting(), protector: protector.Nop{}, decideTimeout: time.Second},
+		logger.GetLogger("finalize-replay-test"), timestamp.NewInclusiveTimeRange(time.Unix(-1, 0), time.Unix(1, 0)),
+		option{
+			flushTimeout:        0,
+			mergePolicy:         newDefaultMergePolicyForTesting(),
+			protector:           protector.Nop{},
+			decideTimeout:       time.Second,
+			mergeGraceDefault:   time.Millisecond,
+			maxTraceFragmentGap: time.Nanosecond,
+		},
 		nil,
 	)
 	require.NoError(t, err)
@@ -283,6 +292,55 @@ func TestRunFinalizeRound_ReplayExcludesStampedParts(t *testing.T) {
 	assert.Equal(t, countAfterFirst, snapshotTotalCount(tst), "replay must not re-sample committed data")
 }
 
+func TestRunFinalizeRoundDefersTracePresentInSkippedPart(t *testing.T) {
+	const group = "finalize-fragment-guard"
+	tst := newImplementationGuardTable(t, group)
+	sampler := &implementationDropSampler{dropID: "trace-a"}
+
+	tst.mustAddTraces(tracesWithIDs("trace-a"), nil)
+	waitForImplementationFilePartCount(t, tst, 1)
+	tst.mustAddTraces(tracesWithIDs("trace-b"), nil)
+	waitForImplementationFilePartCount(t, tst, 2)
+	tst.mustAddTraces(tracesWithIDs("trace-a"), nil)
+	parts := waitForImplementationFileParts(t, tst, 3)
+	defer releaseImplementationParts(parts)
+	outsidePart := parts[2]
+
+	tst.inFlightMu.Lock()
+	if tst.inFlight == nil {
+		tst.inFlight = make(map[uint64]struct{})
+	}
+	tst.inFlight[outsidePart.ID()] = struct{}{}
+	tst.inFlightMu.Unlock()
+	defer func() {
+		tst.inFlightMu.Lock()
+		delete(tst.inFlight, outsidePart.ID())
+		tst.inFlightMu.Unlock()
+	}()
+
+	finalized, finalizeErr := tst.runFinalizeRound([]sdk.Sampler{sampler}, int64(time.Millisecond))
+	require.NoError(t, finalizeErr)
+	require.True(t, finalized)
+	assert.Positive(t, sampler.calls.Load())
+	assert.Equal(t, uint64(3), snapshotTotalCount(tst), "the selected fragment must survive while the trace exists in a skipped part")
+}
+
+func TestRunFinalizeRoundBypassesWithoutFragmentGapProof(t *testing.T) {
+	const group = "finalize-no-gap-proof"
+	tst := newImplementationGuardTableWithMaxGap(t, group, 0)
+	sampler := &implementationDropSampler{dropID: "trace-a"}
+
+	tst.mustAddTraces(tracesWithIDs("trace-a", "trace-b"), nil)
+	waitForImplementationFilePartCount(t, tst, 1)
+
+	finalized, finalizeErr := tst.runFinalizeRound([]sdk.Sampler{sampler}, int64(time.Millisecond))
+	require.NoError(t, finalizeErr)
+	assert.False(t, finalized)
+	assert.Zero(t, sampler.calls.Load())
+	assert.Equal(t, uint64(2), snapshotTotalCount(tst))
+	assert.Zero(t, tst.finalizeGenCached.Load())
+}
+
 // TestFinalizeAndMerge_Compose proves the in-merge filter (PIPELINE_EVENT_MERGE) and
 // finalization sampling (PIPELINE_EVENT_FINALIZE) compose on ONE running shard, using
 // the same registered sampler (DD11): a real hot merge drops its targets during the
@@ -307,7 +365,7 @@ func TestFinalizeAndMerge_Compose(t *testing.T) {
 		fileSystem, tmpPath,
 		common.Position{Database: group},
 		logger.GetLogger("finalize-merge-compose"),
-		timestamp.TimeRange{},
+		timestamp.NewInclusiveTimeRange(time.Unix(-1, 0), time.Unix(1, 0)),
 		option{
 			flushTimeout:              0,
 			mergePolicy:               newMergePolicy(3, 1, run.Bytes(0)), // maxFanOutSize=0 disables auto-merge
@@ -315,7 +373,8 @@ func TestFinalizeAndMerge_Compose(t *testing.T) {
 			decideTimeout:             time.Second,
 			decideTimeoutCircuitBreak: 3,
 			mergeGraceDefault:         time.Millisecond, // ancient parts are never hot
-			nativePipelineEnabled:     true,             // activates the in-merge MERGE filter
+			maxTraceFragmentGap:       time.Millisecond,
+			nativePipelineEnabled:     true, // activates the in-merge MERGE filter
 		},
 		nil,
 	)

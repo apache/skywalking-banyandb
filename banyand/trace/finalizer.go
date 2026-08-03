@@ -32,12 +32,11 @@ import (
 // acquires mergeMaxConcurrencyCh (that lives in the merge-lane worker, not here), so
 // finalize compute cannot starve the hot merge lanes.
 //
-// Selection is all not-hot (by finalize_grace), not-in-flight parts whose FinalizeGen
-// is below the round's target generation Gnext=G+1 (by the invariant that nothing is
-// stamped above the stored generation, this is every cooled part). The round is a full
-// re-sample of the cooled set; re-sampling already-kept survivors through a
-// deterministic sampler is idempotent (DD11), and rounds are hard-capped by the
-// scanner (max_finalize_rounds), so the total rewrite volume is bounded.
+// Selection is all not-hot (by the greater of finalize_grace and merge_grace),
+// not-in-flight parts whose FinalizeGen is below the round's target generation
+// Gnext=G+1. The round is a full re-sample of the cooled set; re-sampling already-kept
+// survivors through a deterministic sampler is idempotent (DD11), and rounds are
+// hard-capped by the scanner (max_finalize_rounds), so total rewrite volume is bounded.
 //
 // It returns (true, nil) when a round committed, (false, nil) when there was nothing
 // to do or it yielded under pressure, and (false, err) on a merge error (fail-open:
@@ -48,6 +47,13 @@ func (tst *tsTable) runFinalizeRound(samplers []sdk.Sampler, graceNs int64) (boo
 	if len(samplers) == 0 {
 		return false, nil
 	}
+	mergeGraceNs := tst.effectiveMergeGraceNs()
+	guardGrace := tst.option.maxTraceFragmentGap
+	if graceNs < 0 || guardGrace <= 0 || mergeGraceNs < int64(guardGrace) {
+		tst.incPipelineGuardBypassed()
+		return false, nil
+	}
+	maturityGraceNs := max(graceNs, mergeGraceNs)
 	// Resource gate: never run finalize compute under memory pressure (constraint 1).
 	if tst.pm != nil && tst.pm.State() == protector.StateHigh {
 		return false, nil
@@ -81,7 +87,8 @@ func (tst *tsTable) runFinalizeRound(samplers []sdk.Sampler, graceNs int64) (boo
 	// two outputs would both survive — duplicating traces. Doing check+pin+incRef in one
 	// Lock (and a matching re-check on the dispatcher side) makes the pin exclusive.
 	// Selection: cooled (non-hot by finalize_grace), not already in-flight, and below the
-	// round generation (excludes a crashed round's stamped outputs — DD6).
+	// round generation (excludes a crashed round's stamped outputs — DD6). Destructive
+	// finalization uses merge_grace as a lower bound on maturity.
 	var parts []*partWrapper
 	var needBytes uint64
 	tst.inFlightMu.Lock()
@@ -98,7 +105,7 @@ func (tst *tsTable) runFinalizeRound(samplers []sdk.Sampler, graceNs int64) (boo
 		if pw.p.partMetadata.FinalizeGen >= gNext {
 			continue
 		}
-		if pw.p.partMetadata.MaxTimestamp > now-graceNs {
+		if pw.p.partMetadata.MaxTimestamp > traceFragmentSaturatingSub(now, maturityGraceNs) {
 			continue
 		}
 		pw.incRef()
@@ -132,15 +139,25 @@ func (tst *tsTable) runFinalizeRound(samplers []sdk.Sampler, graceNs int64) (boo
 		return false, nil
 	}
 
-	// Build the finalize filter. Unlike the hot path there is no isMergeHot gate here
-	// (eligibility was already decided above with finalize_grace); the chain fails open
-	// on any Decide error, retaining the whole batch.
+	stageBudget := resolveStageBudget(tst.option)
+	guard := tst.newTraceFragmentGuardSession(parts, guardGrace, stageBudget)
+	if guard == nil {
+		tst.incPipelineGuardBypassed()
+		return false, nil
+	}
+	// Build the finalize filter. Eligibility uses the greater of finalize_grace and
+	// merge_grace, while boundary discovery expands by the separately enforced maximum
+	// fragment gap. The chain fails open on any Decide error.
 	chain := newMergeChain(tst.group, "", samplers, tst.option.decideTimeoutCircuitBreak)
 	filter := &mergeFilter{
 		chain:       chain,
+		guard:       guard,
+		ctx:         tst.loopCloser.Ctx(),
+		owner:       tst,
 		timeout:     tst.option.decideTimeout,
-		stageBudget: resolveStageBudget(tst.option),
-		forceSlow:   len(chain.projection.Tags) > 0,
+		stageBudget: stageBudget,
+		traceBudget: resolveTraceBudget(tst.option),
+		forceSlow:   projectionRequiresSlowPath(chain.projection),
 	}
 
 	merged := make(map[uint64]struct{}, len(parts))
