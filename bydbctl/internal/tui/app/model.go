@@ -75,57 +75,58 @@ type Config struct {
 
 // Model is the Bubble Tea state for the bydbctl agent TUI.
 type Model struct {
-	runner                *workflow.Runner
-	executor              tools.Executor
-	querySession          *session.QuerySession
-	catalog               catalogBrowser
-	selectedSchema        session.SchemaSnapshot
-	schemaCache           map[string]session.SchemaSnapshot
-	schemaLoads           map[string]struct{}
-	catalogFilter         textinput.Model
-	message               textarea.Model
-	query                 textarea.Model
-	start                 textinput.Model
-	end                   textinput.Model
-	limit                 textinput.Model
-	composerReference     *session.CatalogEntry
-	provider              string
-	status                string
-	events                []string
-	sessionLog            *applog.Logger
-	logPathDisplay        string
-	width                 int
-	height                int
-	catalogHeight         int
-	activityLog           []activityEntry
-	activityScroll        int
-	activityCursor        int
-	activityDetailScroll  int
-	executionDetailScroll int
-	executionRowCursor    int
-	showExecutionRaw      bool
-	executionExportPath   string
-	detailScroll          int
-	chatScroll            int
-	chatCursor            int
-	chatDetailScroll      int
-	focus                 int
-	busy                  bool
-	showReasoning         bool
-	executionPolicy       approval.ExecutionPolicy
-	pendingApproval       *approval.Request
-	turnCancel            context.CancelFunc
-	turnEvents            []agent.Event
-	queuedMessage         string
-	liveResponse          string
-	queryRevision         int
-	schemaSearchCursor    int
-	schemaSearchDismissed bool
-	schemaSearchValue     string
-	evidenceMode          evidenceMode
-	turnStartedAt         time.Time
-	cleanReadExecutions   int
-	trustSessionSuggested bool
+	runner                 *workflow.Runner
+	executor               tools.Executor
+	querySession           *session.QuerySession
+	catalog                catalogBrowser
+	selectedSchema         session.SchemaSnapshot
+	schemaCache            map[string]session.SchemaSnapshot
+	schemaLoads            map[string]struct{}
+	catalogFilter          textinput.Model
+	message                textarea.Model
+	query                  textarea.Model
+	start                  textinput.Model
+	end                    textinput.Model
+	limit                  textinput.Model
+	composerReference      *session.CatalogEntry
+	provider               string
+	status                 string
+	events                 []string
+	sessionLog             *applog.Logger
+	logPathDisplay         string
+	width                  int
+	height                 int
+	catalogHeight          int
+	activityLog            []activityEntry
+	activityScroll         int
+	activityCursor         int
+	activityDetailScroll   int
+	executionDetailScroll  int
+	executionRowCursor     int
+	executionPreviewOffset int
+	showExecutionRaw       bool
+	executionExportPath    string
+	detailScroll           int
+	chatScroll             int
+	chatCursor             int
+	chatDetailScroll       int
+	focus                  int
+	busy                   bool
+	showReasoning          bool
+	executionPolicy        approval.ExecutionPolicy
+	pendingApproval        *approval.Request
+	turnCancel             context.CancelFunc
+	turnEvents             []agent.Event
+	queuedMessage          string
+	liveResponse           string
+	queryRevision          int
+	schemaSearchCursor     int
+	schemaSearchDismissed  bool
+	schemaSearchValue      string
+	evidenceMode           evidenceMode
+	turnStartedAt          time.Time
+	cleanReadExecutions    int
+	trustSessionSuggested  bool
 }
 
 // NewModel creates a TUI model with the configured agent gateway.
@@ -251,6 +252,7 @@ func (m Model) Update(teaMsg tea.Msg) (tea.Model, tea.Cmd) {
 		m.turnStartedAt = time.Time{}
 		m.turnCancel = nil
 		m.querySession = typedMsg.update.QuerySession
+		m.executionPreviewOffset = 0
 		m.syncQuerySession()
 		m.logAgentTurn(m.turnEvents)
 		m.turnEvents = nil
@@ -336,6 +338,7 @@ func (m Model) Update(teaMsg tea.Msg) (tea.Model, tea.Cmd) {
 			m.logQuerySession(m.querySession)
 			if typedMsg.status == "execution complete" {
 				m.executionDetailScroll = 0
+				m.executionPreviewOffset = 0
 				m.showExecutionRaw = false
 				m.executionExportPath = ""
 				if len(m.querySession.ExecutionResult.Preview) > 0 {
@@ -630,6 +633,16 @@ func (m *Model) handleKey(keyMsg tea.KeyMsg) (tea.Cmd, bool) {
 			m.syncQuerySession()
 			m.status = "selected candidate version"
 		}
+		return nil, true
+	case "left", "right":
+		if m.focus != focusExecution {
+			return nil, false
+		}
+		delta := previewHorizontalScrollStep
+		if keyMsg.String() == "left" {
+			delta = -previewHorizontalScrollStep
+		}
+		m.moveExecutionPreviewOffset(delta)
 		return nil, true
 	case "up", "down":
 		if m.focus == focusMessage && m.schemaSearchOpen() {
@@ -1183,6 +1196,28 @@ func (m *Model) moveExecutionRowCursor(delta int) {
 		m.executionRowCursor = previewLength - 1
 	}
 	m.executionDetailScroll = 0
+}
+
+func (m *Model) moveExecutionPreviewOffset(delta int) {
+	tableLines := m.dataPreviewTableLines()
+	maxOffset := previewTableMaxHorizontalOffset(tableLines, m.dataPreviewViewportWidth())
+	m.executionPreviewOffset = clamp(m.executionPreviewOffset+delta, 0, maxOffset)
+}
+
+func (m Model) dataPreviewTableLines() []string {
+	data, ok := m.currentPreviewData()
+	if !ok || data.errorText != "" || len(data.preview) == 0 {
+		return nil
+	}
+	displayColumns := selectDisplayColumns(data.columns)
+	projectedRows := projectPreviewRows(data.preview, data.columns, displayColumns)
+	return formatPreviewTable(displayColumns, projectedRows, 0, m.executionRowCursor)
+}
+
+func (m Model) dataPreviewViewportWidth() int {
+	contentWidth := clamp(m.width-4, 48, 200)
+	_, previewWidth := workspaceWidths(contentWidth)
+	return maxInt(previewWidth-4, 1)
 }
 
 func (m Model) executionBodyLines(width int) []string {

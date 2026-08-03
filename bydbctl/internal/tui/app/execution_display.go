@@ -25,7 +25,8 @@ import (
 	"sort"
 	"strings"
 	"time"
-	"unicode/utf8"
+
+	"github.com/charmbracelet/lipgloss"
 
 	"github.com/apache/skywalking-banyandb/bydbctl/internal/tui/session"
 )
@@ -183,14 +184,14 @@ func formatExecutionRowDetail(columns []string, row []string, rowNumber, rowTota
 	return lines
 }
 
-func formatPreviewTable(columns []string, preview [][]string, width int, selectedRow int) []string {
+func formatPreviewTable(columns []string, preview [][]string, width, selectedRow int) []string {
 	if len(columns) == 0 || len(preview) == 0 {
 		return nil
 	}
 	colWidths := previewColumnWidths(columns, preview, width)
-	header := renderPreviewRow(columns, colWidths)
-	separatorWidth := minInt(sumInts(colWidths)+2*len(columns), width)
-	separator := strings.Repeat("─", maxInt(separatorWidth, 8))
+	header := "  " + renderPreviewRow(columns, colWidths)
+	separatorWidth := sumInts(colWidths) + 3*(len(columns)-1)
+	separator := "  " + strings.Repeat("─", maxInt(separatorWidth, 8))
 	lines := []string{header, separator}
 	for rowIdx, row := range preview {
 		line := renderPreviewRow(row, colWidths)
@@ -207,32 +208,34 @@ func formatPreviewTable(columns []string, preview [][]string, width int, selecte
 func previewColumnWidths(columns []string, preview [][]string, totalWidth int) []int {
 	widths := make([]int, len(columns))
 	for idx, column := range columns {
-		widths[idx] = utf8.RuneCountInString(column)
+		widths[idx] = lipgloss.Width(column)
 	}
 	for _, row := range preview {
 		for idx, cell := range row {
 			if idx >= len(widths) {
 				break
 			}
-			cellWidth := utf8.RuneCountInString(cell)
+			cellWidth := lipgloss.Width(cell)
 			if cellWidth > widths[idx] {
 				widths[idx] = cellWidth
 			}
 		}
+	}
+	for idx := range widths {
+		if widths[idx] < 3 {
+			widths[idx] = 3
+		}
+	}
+	if totalWidth <= 0 {
+		return widths
 	}
 	const maxColumnWidth = 56
 	for idx := range widths {
 		if widths[idx] > maxColumnWidth {
 			widths[idx] = maxColumnWidth
 		}
-		if widths[idx] < 3 {
-			widths[idx] = 3
-		}
 	}
 	usedWidth := sumInts(widths) + 3*len(widths) + 2
-	if usedWidth <= totalWidth || totalWidth <= 0 {
-		return widths
-	}
 	for usedWidth > totalWidth {
 		widestIdx := 0
 		for idx := 1; idx < len(widths); idx++ {
@@ -256,23 +259,74 @@ func renderPreviewRow(cells []string, widths []int) string {
 		if idx < len(widths) {
 			columnWidth = widths[idx]
 		}
-		parts = append(parts, padRunes(cell, columnWidth))
+		parts = append(parts, padDisplayWidth(cell, columnWidth))
 	}
 	return strings.Join(parts, " │ ")
 }
 
-func padRunes(value string, width int) string {
-	runes := []rune(value)
-	if len(runes) > width {
-		if width <= 3 {
-			return string(runes[:width])
+func padDisplayWidth(value string, width int) string {
+	valueWidth := lipgloss.Width(value)
+	if valueWidth > width {
+		return truncate(value, width)
+	}
+	return value + strings.Repeat(" ", maxInt(width-valueWidth, 0))
+}
+
+func previewTableViewport(lines []string, width, offset int) ([]string, int) {
+	maxOffset := previewTableMaxHorizontalOffset(lines, width)
+	offset = clamp(offset, 0, maxOffset)
+	visible := make([]string, 0, len(lines))
+	for _, line := range lines {
+		prefix, content := previewTableLinePrefix(line)
+		visibleWidth := maxInt(width-lipgloss.Width(prefix), 1)
+		visible = append(visible, prefix+horizontalViewport(content, offset, visibleWidth))
+	}
+	return visible, maxOffset
+}
+
+func previewTableMaxHorizontalOffset(lines []string, width int) int {
+	maxWidth := 0
+	for _, line := range lines {
+		prefix, content := previewTableLinePrefix(line)
+		visibleWidth := maxInt(width-lipgloss.Width(prefix), 1)
+		maxWidth = maxInt(maxWidth, lipgloss.Width(content)-visibleWidth)
+	}
+	return maxInt(maxWidth, 0)
+}
+
+func previewTableLinePrefix(line string) (string, string) {
+	if len(line) < 2 {
+		return "", line
+	}
+	return line[:2], line[2:]
+}
+
+func horizontalViewport(value string, offset, width int) string {
+	if width <= 0 {
+		return ""
+	}
+	var visible strings.Builder
+	position := 0
+	visibleWidth := 0
+	for _, valueRune := range value {
+		runeWidth := lipgloss.Width(string(valueRune))
+		runeEnd := position + runeWidth
+		if runeEnd <= offset {
+			position = runeEnd
+			continue
 		}
-		return string(runes[:width-1]) + "…"
+		if position < offset {
+			position = runeEnd
+			continue
+		}
+		if visibleWidth+runeWidth > width {
+			break
+		}
+		visible.WriteRune(valueRune)
+		visibleWidth += runeWidth
+		position = runeEnd
 	}
-	if len(runes) == width {
-		return value
-	}
-	return value + strings.Repeat(" ", width-len(runes))
+	return visible.String()
 }
 
 func formatJSONResponsePreview(response string, width, maxLines int) []string {

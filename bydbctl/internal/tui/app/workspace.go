@@ -44,8 +44,9 @@ const (
 	schemaSearchRowsPerViewport   = 6
 	maxSchemaSearchVisibleResults = 12
 
-	minWorkspaceChatHeight   = 4
-	minWorkspaceEditorHeight = 1
+	minWorkspaceChatHeight      = 4
+	minWorkspaceEditorHeight    = 1
+	previewHorizontalScrollStep = 8
 )
 
 type evidenceMode int
@@ -296,7 +297,7 @@ func (m Model) renderEvidencePanel(width, height int) string {
 
 func (m Model) renderDataPreview(width, height int) string {
 	data, ok := m.currentPreviewData()
-	rows := []string{titleStyle.Render("Data Preview")}
+	rows := []string{titleStyle.Render("Data Preview · ←/→ scroll")}
 	if !ok {
 		rows = append(rows, mutedStyle.Render("A validated query probe or execution result will appear here."))
 		return panelStyle.Width(width).Height(panelContentHeight(height)).Render(lipgloss.JoinVertical(lipgloss.Left, rows...))
@@ -309,9 +310,9 @@ func (m Model) renderDataPreview(width, height int) string {
 	} else if previewCount == 0 {
 		rows = append(rows, mutedStyle.Render("The query returned no preview rows."))
 	} else {
-		displayColumns := selectDisplayColumns(data.columns)
-		projectedRows := projectPreviewRows(data.preview, data.columns, displayColumns)
-		rows = append(rows, formatPreviewTable(displayColumns, projectedRows, width-4, m.executionRowCursor)...)
+		tableLines := m.dataPreviewTableLines()
+		visibleTableLines, _ := previewTableViewport(tableLines, width-4, m.executionPreviewOffset)
+		rows = append(rows, visibleTableLines...)
 	}
 	if data.truncated {
 		rows = append(rows, mutedStyle.Render("… preview is truncated; total row count shown above"))

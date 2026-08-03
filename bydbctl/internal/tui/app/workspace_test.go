@@ -59,6 +59,43 @@ func TestWorkspaceShowsConversationCandidateAndPreviewWithoutTabs(t *testing.T) 
 	}
 }
 
+func TestDataPreviewScrollsHorizontallyWhenFocused(t *testing.T) {
+	model := NewModel(Config{})
+	model.resize(120, 42)
+	querySession := &session.QuerySession{}
+	querySession.AddCandidate(session.BydbqlCandidate{
+		Query: "SELECT * FROM TRACE segment IN sw_trace TIME > '-30m' LIMIT 10",
+		Validation: session.ValidationReport{
+			Valid: true,
+		},
+		Probe: &session.ProbeSummary{
+			Rows:    1,
+			Columns: []string{"spans", "traceId"},
+			Preview: [][]string{{"spans-begin-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa-right-edge", "trace-1"}},
+		},
+	})
+	model.querySession = querySession
+	model.syncQuerySession()
+	model.focus = focusExecution
+
+	if initialView := model.View(); strings.Contains(initialView, "right-edge") {
+		t.Fatalf("expected the right edge to be outside the initial preview viewport:\n%s", initialView)
+	}
+
+	updatedModel := tea.Model(model)
+	for range 20 {
+		updatedModel, _ = updatedModel.Update(tea.KeyMsg{Type: tea.KeyRight})
+	}
+	scrolledModel := updatedModel.(Model)
+	scrolledView := scrolledModel.View()
+	if !strings.Contains(scrolledView, "right-edge") {
+		t.Fatalf("expected horizontal scrolling to reveal the right edge:\n%s", scrolledView)
+	}
+	if !strings.Contains(scrolledView, "│ > ") {
+		t.Fatalf("expected the selected-row marker to remain visible while scrolling:\n%s", scrolledView)
+	}
+}
+
 func TestWorkspaceFitsTerminalWithProviderVisible(t *testing.T) {
 	const terminalHeight = 42
 	model := NewModel(Config{Provider: "claude"})
