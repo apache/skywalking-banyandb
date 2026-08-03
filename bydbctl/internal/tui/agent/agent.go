@@ -476,8 +476,10 @@ func sortableIndexSummary(indexes []session.SortableIndex) []SortableIndexSummar
 }
 
 const (
-	maxProviderConversationTurns = 6
-	maxProviderPreviewRows       = 50
+	maxProviderConversationTurns  = 6
+	maxProviderPreviewRows        = 50
+	maxProviderPreviewCellRunes   = 120
+	providerPreviewTruncationMark = "..."
 )
 
 func previewForProvider(preview [][]string) [][]string {
@@ -490,9 +492,22 @@ func previewForProvider(preview [][]string) [][]string {
 	}
 	sharedPreview := make([][]string, 0, previewLength)
 	for _, row := range preview[:previewLength] {
-		sharedPreview = append(sharedPreview, append([]string(nil), row...))
+		sharedRow := make([]string, len(row))
+		for cellIndex, cell := range row {
+			sharedRow[cellIndex] = truncateProviderPreviewCell(cell)
+		}
+		sharedPreview = append(sharedPreview, sharedRow)
 	}
 	return sharedPreview
+}
+
+func truncateProviderPreviewCell(value string) string {
+	runes := []rune(value)
+	if len(runes) <= maxProviderPreviewCellRunes {
+		return value
+	}
+	maxContentRunes := maxProviderPreviewCellRunes - len([]rune(providerPreviewTruncationMark))
+	return string(runes[:maxContentRunes]) + providerPreviewTruncationMark
 }
 
 func columnSummary(columns []session.SchemaColumn) []SchemaColumnSummary {

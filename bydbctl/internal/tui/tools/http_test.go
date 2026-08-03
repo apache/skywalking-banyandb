@@ -645,6 +645,25 @@ func TestResponsePreviewFlattensStreamTagFamilies(t *testing.T) {
 	}
 }
 
+func TestResponsePreviewPreservesLongCellForHorizontalScrolling(t *testing.T) {
+	longSpans := strings.Repeat("span-data-", 20)
+	body := []byte(`{"traceResult":{"traces":[{"spans":"` + longSpans + `","traceId":"trace-1"}]}}`)
+	columns, preview, truncated := responsePreview(body, 10)
+	if truncated {
+		t.Fatal("expected a single preview row")
+	}
+	if len(preview) != 1 {
+		t.Fatalf("expected one preview row, got %v", preview)
+	}
+	row := make(map[string]string, len(columns))
+	for columnIndex, column := range columns {
+		row[column] = preview[0][columnIndex]
+	}
+	if row["spans"] != longSpans {
+		t.Fatalf("expected the complete spans cell for horizontal scrolling, got %q", row["spans"])
+	}
+}
+
 func containsString(values []string, target string) bool {
 	for _, value := range values {
 		if value == target {

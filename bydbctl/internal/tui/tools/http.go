@@ -41,7 +41,6 @@ import (
 
 const (
 	defaultHTTPTimeout       = 3 * time.Second
-	maxPreviewCellRunes      = 120
 	defaultPreviewRows       = 50
 	groupListPath            = "/api/v1/group/schema/lists"
 	measureSchemaPath        = "/api/v1/measure/schema/{group}/{name}"
@@ -1410,7 +1409,7 @@ func previewTagValue(value any) string {
 		return "<binary>"
 	}
 	if stringWrap, stringOK := valueMap["str"].(map[string]any); stringOK {
-		return truncatePreviewValue(fmt.Sprint(stringWrap["value"]))
+		return fmt.Sprint(stringWrap["value"])
 	}
 	if intWrap, intOK := valueMap["int"].(map[string]any); intOK {
 		return fmt.Sprint(intWrap["value"])
@@ -1424,28 +1423,20 @@ func previewTagValue(value any) string {
 		for _, element := range arrayValue {
 			parts = append(parts, fmt.Sprint(element))
 		}
-		return truncatePreviewValue(strings.Join(parts, ","))
+		return strings.Join(parts, ",")
 	}
 	return previewValue(value)
 }
 
 func previewValue(value any) string {
 	if stringValue, ok := value.(string); ok {
-		return truncatePreviewValue(stringValue)
+		return stringValue
 	}
 	encodedValue, marshalErr := json.Marshal(value)
 	if marshalErr != nil {
 		return "<unavailable>"
 	}
-	return truncatePreviewValue(string(encodedValue))
-}
-
-func truncatePreviewValue(value string) string {
-	runes := []rune(value)
-	if len(runes) <= maxPreviewCellRunes {
-		return value
-	}
-	return string(runes[:maxPreviewCellRunes-3]) + "..."
+	return string(encodedValue)
 }
 
 func minimum(left, right int) int {

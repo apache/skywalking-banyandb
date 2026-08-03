@@ -83,6 +83,26 @@ func TestBuildAgentTurnRequestSharesBoundedPreviewByDefault(t *testing.T) {
 	}
 }
 
+func TestBuildAgentTurnRequestBoundsLongPreviewCells(t *testing.T) {
+	const expectedProviderPreviewCellRunes = 120
+	longPreviewCell := strings.Repeat("span-data-", 20)
+	querySession := &session.QuerySession{
+		ExecutionResult: session.ExecutionResult{
+			Query:   "SELECT * FROM TRACE segment IN sw_trace TIME > '-30m' LIMIT 10",
+			Columns: []string{"spans"},
+			Preview: [][]string{{longPreviewCell}},
+		},
+	}
+	payload := BuildAgentTurnRequest(querySession, QueryHints{}, "", "")
+	if payload.ExecutionSummary == nil || len(payload.ExecutionSummary.Preview) != 1 {
+		t.Fatalf("expected execution preview in agent request: %+v", payload.ExecutionSummary)
+	}
+	previewCell := payload.ExecutionSummary.Preview[0][0]
+	if len([]rune(previewCell)) != expectedProviderPreviewCellRunes || !strings.HasSuffix(previewCell, "...") {
+		t.Fatalf("expected a bounded provider preview cell, got %q", previewCell)
+	}
+}
+
 func TestBuildAgentTurnRequestRedactsTransportErrors(t *testing.T) {
 	querySession := &session.QuerySession{
 		ExecutionResult: session.ExecutionResult{
