@@ -104,6 +104,15 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      # Multi-arch push needs the containerd buildx driver; use the in-repo
+      # composite (docker/setup-*-action is only allowed SHA-pinned by the org
+      # policy — a tagged reference fails the workflow at startup).
+      - name: Setup build environment
+        uses: ./.github/actions/setup-build-env
+        with:
+          download-artifacts: 'false'
+          setup-docker: 'true'
+
       - name: Build canopy image
         run: TAG=${{ github.sha }} PLATFORMS=linux/amd64 make -C canopy docker
 
