@@ -17,9 +17,12 @@
 # canopy web console image — React SPA (web/) + Fastify BFF (server/).
 # Build context: canopy/ — invoked as `make -C canopy docker` (see canopy/Makefile
 # and scripts/build/docker.mk). Runtime is distroless for minimal CVE surface.
+# All build stages run on BUILDPLATFORM: the web bundle is static and every
+# prod dep is pure JS, so nothing needs a target-arch toolchain — this keeps
+# the arm64 leg from tripping over x64-pinned dev deps (EBADPLATFORM).
 
 # ── deps: full workspace install for the build ─────────────────────────────
-FROM node:24.6.0-bookworm AS deps
+FROM --platform=$BUILDPLATFORM node:24.6.0-bookworm AS deps
 WORKDIR /app
 COPY package.json package-lock.json ./
 COPY shared/package.json shared/
