@@ -48,6 +48,9 @@ func TestExecutionPolicyAutoApprove(t *testing.T) {
 	if !PolicyAutoProbe.AutoApprove(SourceAgentProbe, true, readQuery) {
 		t.Fatal("auto_probe should auto-approve read probes")
 	}
+	if !PolicyAutoProbe.AutoApprove(SourceManualProbe, true, readQuery) {
+		t.Fatal("auto_probe should auto-approve manual preview refreshes")
+	}
 	if PolicyAutoProbe.AutoApprove(SourceAgentTool, false, readQuery) {
 		t.Fatal("auto_probe should require approval for full execution")
 	}

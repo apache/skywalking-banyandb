@@ -29,7 +29,9 @@ import (
 	"github.com/apache/skywalking-banyandb/bydbctl/internal/tui/agent"
 	"github.com/apache/skywalking-banyandb/bydbctl/internal/tui/applog"
 	"github.com/apache/skywalking-banyandb/bydbctl/internal/tui/approval"
+	"github.com/apache/skywalking-banyandb/bydbctl/internal/tui/bridge"
 	"github.com/apache/skywalking-banyandb/bydbctl/internal/tui/session"
+	"github.com/apache/skywalking-banyandb/bydbctl/internal/tui/workflow"
 )
 
 func TestPendingApprovalStatusSurvivesTurnTimeout(t *testing.T) {
@@ -223,6 +225,101 @@ func TestCtrlFFocusesDataPreviewWithoutStartingAgent(t *testing.T) {
 	}
 }
 
+func TestCtrlGRepairsInvalidCandidateAndCtrlYRefreshesPreview(t *testing.T) {
+	model := NewModel(Config{})
+	querySession := &session.QuerySession{}
+	querySession.AddCandidate(session.BydbqlCandidate{
+		Query: "SELECT FROM",
+		Validation: session.ValidationReport{
+			Message: "syntax error near FROM",
+		},
+	})
+	model.querySession = querySession
+	model.syncQuerySession()
+
+	repairModel, repairCmd := model.Update(tea.KeyMsg{Type: tea.KeyCtrlG})
+	typedRepairModel, ok := repairModel.(Model)
+	if !ok {
+		t.Fatalf("unexpected model type: %T", repairModel)
+	}
+	if !typedRepairModel.busy || repairCmd == nil {
+		t.Fatal("Ctrl+G must start an Agent repair turn for an invalid candidate")
+	}
+	if !strings.Contains(typedRepairModel.queuedMessage, "Repair") {
+		t.Fatalf("unexpected repair request: %q", typedRepairModel.queuedMessage)
+	}
+
+	querySession.Candidates[0].Validation = session.ValidationReport{Valid: true}
+	model.busy = false
+	previewModel, previewCmd := model.Update(tea.KeyMsg{Type: tea.KeyCtrlY})
+	typedPreviewModel, ok := previewModel.(Model)
+	if !ok {
+		t.Fatalf("unexpected model type: %T", previewModel)
+	}
+	if !typedPreviewModel.busy || previewCmd == nil {
+		t.Fatal("Ctrl+Y must start a bounded preview refresh for a valid candidate")
+	}
+	if typedPreviewModel.status != "refreshing preview" {
+		t.Fatalf("unexpected preview status: %q", typedPreviewModel.status)
+	}
+}
+
+func TestAgentCompletionPrefersOnlyProbeProducedByCurrentTurn(t *testing.T) {
+	query := "SELECT * FROM MEASURE service_cpm IN sw_metrics TIME > '-30m' LIMIT 10"
+	querySession := &session.QuerySession{ExecutionResult: session.ExecutionResult{Query: query, Summary: "full execution"}}
+	querySession.AddCandidate(session.BydbqlCandidate{
+		Query:      query,
+		Validation: session.ValidationReport{Valid: true},
+		Probe:      &session.ProbeSummary{Query: query, Rows: 1},
+	})
+	model := NewModel(Config{})
+	model.querySession = querySession
+	model.preferCandidateProbe = false
+	model.turnEvents = []agent.Event{{Kind: agent.EventKindFinalResponse, Status: agent.EventStatusSucceeded}}
+
+	completedModel, _ := model.Update(agentTurnUpdateMsg{update: workflow.TurnUpdate{Done: true, QuerySession: querySession}})
+	typedCompletedModel, ok := completedModel.(Model)
+	if !ok {
+		t.Fatalf("unexpected model type: %T", completedModel)
+	}
+	if typedCompletedModel.preferCandidateProbe {
+		t.Fatal("a conversational turn must not restore an older probe over the full execution")
+	}
+
+	model = NewModel(Config{})
+	model.querySession = querySession
+	model.turnEvents = []agent.Event{{
+		Kind:     agent.EventKindToolResult,
+		ToolName: bridge.ToolProbeBydbQL,
+		Status:   agent.EventStatusSucceeded,
+	}}
+	completedModel, _ = model.Update(agentTurnUpdateMsg{update: workflow.TurnUpdate{Done: true, QuerySession: querySession}})
+	typedCompletedModel, ok = completedModel.(Model)
+	if !ok {
+		t.Fatalf("unexpected model type: %T", completedModel)
+	}
+	if !typedCompletedModel.preferCandidateProbe {
+		t.Fatal("a successful probe in the current turn must become the visible preview")
+	}
+}
+
+func TestAgentTurnDisplaysLiveResponseWhenEnabled(t *testing.T) {
+	model := NewModel(Config{})
+	model.busy = true
+	event := agent.Event{Kind: agent.EventKindMessageDelta, Message: "Inspecting the schema…"}
+	updatedModel, _ := model.Update(agentTurnUpdateMsg{update: workflow.TurnUpdate{Event: &event}})
+	typedModel, ok := updatedModel.(Model)
+	if !ok {
+		t.Fatalf("unexpected model type: %T", updatedModel)
+	}
+	view := typedModel.View()
+	for _, expected := range []string{"live output:", "Inspecting the schema", "agent output streaming"} {
+		if !strings.Contains(view, expected) {
+			t.Fatalf("expected %q in live update view:\n%s", expected, view)
+		}
+	}
+}
+
 func TestViewOmitsManualValidationShortcut(t *testing.T) {
 	model := NewModel(Config{})
 	if strings.Contains(model.View(), "Ctrl+V") {
@@ -240,7 +337,7 @@ func TestNewModelFocusesConversationComposer(t *testing.T) {
 	}
 }
 
-func TestCatalogConnectionErrorIsVisibleOnQueryTab(t *testing.T) {
+func TestCatalogConnectionErrorIsVisibleInWorkspace(t *testing.T) {
 	model := NewModel(Config{Provider: "codex"})
 	updatedModel, _ := model.Update(catalogMsg{loadErr: errors.New("failed to list groups: connection refused")})
 	typedModel, ok := updatedModel.(Model)
@@ -250,23 +347,23 @@ func TestCatalogConnectionErrorIsVisibleOnQueryTab(t *testing.T) {
 	view := typedModel.View()
 	for _, expected := range []string{"provider codex", "BanyanDB connection failed", "connection refused"} {
 		if !strings.Contains(view, expected) {
-			t.Fatalf("expected %q in Query tab:\n%s", expected, view)
+			t.Fatalf("expected %q in workspace:\n%s", expected, view)
 		}
 	}
 }
 
-func TestQueryTabUsesConversationFirstLayout(t *testing.T) {
+func TestWorkspaceUsesConversationFirstLayout(t *testing.T) {
 	model := NewModel(Config{})
 	model.resize(160, 42)
 	view := model.View()
 	for _, expected := range []string{"Conversation", "Message · Enter to send", "Policy: auto probe", "Time "} {
 		if !strings.Contains(view, expected) {
-			t.Fatalf("expected %q in Query tab:\n%s", expected, view)
+			t.Fatalf("expected %q in workspace:\n%s", expected, view)
 		}
 	}
 	for _, unexpected := range []string{"Autonomous discovery", "Execution policy"} {
 		if strings.Contains(view, unexpected) {
-			t.Fatalf("did not expect %q in Query tab:\n%s", unexpected, view)
+			t.Fatalf("did not expect %q in workspace:\n%s", unexpected, view)
 		}
 	}
 	if model.message.Height() < 3 {

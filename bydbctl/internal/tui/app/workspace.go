@@ -23,6 +23,8 @@ import (
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
 
+	"github.com/apache/skywalking-banyandb/bydbctl/internal/tui/agent"
+	"github.com/apache/skywalking-banyandb/bydbctl/internal/tui/bridge"
 	"github.com/apache/skywalking-banyandb/bydbctl/internal/tui/session"
 )
 
@@ -31,6 +33,7 @@ const (
 	schemaSearchTruncationMarker     = "…"
 	minSchemaSearchLabelWidth        = 1
 	schemaSearchMinimumTruncateWidth = 3
+	maxColdStartGroups               = 3
 )
 
 const (
@@ -55,6 +58,211 @@ const (
 	evidenceModeData evidenceMode = iota
 	evidenceModeSchema
 )
+
+// applyTurnEvidenceMode selects the evidence panel that matches the last completed controlled tool.
+func (m *Model) applyTurnEvidenceMode() {
+	for eventIndex := len(m.turnEvents) - 1; eventIndex >= 0; eventIndex-- {
+		event := m.turnEvents[eventIndex]
+		if event.Status != agent.EventStatusSucceeded ||
+			(event.Kind != agent.EventKindToolResult && event.Kind != agent.EventKindCandidate) {
+			continue
+		}
+		switch event.ToolName {
+		case bridge.ToolDescribeSchema:
+			if m.querySession != nil && strings.TrimSpace(m.querySession.SchemaSnapshot.Name) != "" {
+				m.selectedSchema = m.querySession.SchemaSnapshot
+			}
+			m.evidenceMode = evidenceModeSchema
+			if m.focus == focusExecution {
+				m.focus = focusChat
+			}
+			return
+		case bridge.ToolProposeQueryPlan, bridge.ToolProbeBydbQL, bridge.ToolExecuteBydbQL:
+			m.evidenceMode = evidenceModeData
+			return
+		}
+	}
+}
+
+type turnProgressState int
+
+const (
+	turnProgressPending turnProgressState = iota
+	turnProgressRunning
+	turnProgressSucceeded
+	turnProgressFailed
+)
+
+type turnProgressStage struct {
+	label string
+	state turnProgressState
+}
+
+type turnProgressStageID int
+
+const (
+	turnProgressStageCatalog turnProgressStageID = iota
+	turnProgressStageDescribeSchema
+	turnProgressStageCompilePlan
+	turnProgressStageValidate
+	turnProgressStagePreview
+	turnProgressStageExecute
+	turnProgressStageCount
+)
+
+type progressOperation int
+
+const (
+	progressOperationPreparing progressOperation = iota
+	progressOperationCatalog
+	progressOperationValidate
+	progressOperationPreview
+	progressOperationExecute
+)
+
+func (operation progressOperation) label() string {
+	switch operation {
+	case progressOperationCatalog:
+		return "catalog"
+	case progressOperationValidate:
+		return "validate"
+	case progressOperationPreview:
+		return "preview"
+	case progressOperationExecute:
+		return "execute"
+	default:
+		return "preparing"
+	}
+}
+
+func (m Model) renderTurnProgress() string {
+	if !m.busy && len(m.turnEvents) == 0 {
+		return ""
+	}
+	stages := [turnProgressStageCount]turnProgressStage{
+		turnProgressStageCatalog:        {label: "catalog"},
+		turnProgressStageDescribeSchema: {label: "describe schema"},
+		turnProgressStageCompilePlan:    {label: "compile plan"},
+		turnProgressStageValidate:       {label: "validate"},
+		turnProgressStagePreview:        {label: "preview"},
+		turnProgressStageExecute:        {label: "execute"},
+	}
+	observedStages := [turnProgressStageCount]bool{}
+	for _, event := range m.turnEvents {
+		stageIndex, ok := progressStageForEvent(event)
+		if !ok {
+			continue
+		}
+		observedStages[stageIndex] = true
+		stages[stageIndex].state = progressStateForEvent(event)
+	}
+	parts := make([]string, 0, len(stages))
+	for stageIndex, stage := range stages {
+		if !observedStages[stageIndex] {
+			continue
+		}
+		parts = append(parts, renderTurnProgressStage(stage))
+	}
+	if len(parts) == 0 && m.busy {
+		return mutedStyle.Render("Steps  " + warnStyle.Render("⟳ "+m.progressOperation.label()))
+	}
+	if len(parts) == 0 {
+		return ""
+	}
+	return mutedStyle.Render("Steps  " + strings.Join(parts, " · "))
+}
+
+func progressStageForEvent(event agent.Event) (turnProgressStageID, bool) {
+	switch event.ToolName {
+	case bridge.ToolListGroupsSchemas:
+		return turnProgressStageCatalog, true
+	case bridge.ToolDescribeSchema:
+		return turnProgressStageDescribeSchema, true
+	case bridge.ToolProposeQueryPlan:
+		return turnProgressStageCompilePlan, true
+	case bridge.ToolValidateBydbQL:
+		return turnProgressStageValidate, true
+	case bridge.ToolProbeBydbQL:
+		return turnProgressStagePreview, true
+	case bridge.ToolExecuteBydbQL:
+		return turnProgressStageExecute, true
+	default:
+		return turnProgressStageCatalog, false
+	}
+}
+
+func progressStateForEvent(event agent.Event) turnProgressState {
+	if event.Kind == agent.EventKindToolCall || event.Status == agent.EventStatusRunning || event.Status == agent.EventStatusWaiting {
+		return turnProgressRunning
+	}
+	if event.Status == agent.EventStatusFailed || event.Err != nil {
+		return turnProgressFailed
+	}
+	if event.Status == agent.EventStatusSucceeded {
+		return turnProgressSucceeded
+	}
+	return turnProgressPending
+}
+
+func renderTurnProgressStage(stage turnProgressStage) string {
+	switch stage.state {
+	case turnProgressRunning:
+		return warnStyle.Render("⟳ " + stage.label)
+	case turnProgressSucceeded:
+		return okStyle.Render("✓ " + stage.label)
+	case turnProgressFailed:
+		return badStyle.Render("! " + stage.label)
+	default:
+		return mutedStyle.Render("○ " + stage.label)
+	}
+}
+
+func (m Model) coldStartGuidance(width int) []string {
+	if m.querySession != nil {
+		return nil
+	}
+	rows := []string{titleStyle.Render("Welcome to text2bydbQL")}
+	if len(m.catalog.catalog.Groups) == 0 {
+		catalogStatus := "Type @ to browse groups and resources."
+		if m.catalog.loading {
+			catalogStatus = "Loading the BanyanDB schema catalog…"
+		}
+		return append(rows,
+			mutedStyle.Render(wrapText(catalogStatus, width)),
+			mutedStyle.Render(wrapText("Try: Which resource should I use to inspect errors?", width)),
+			mutedStyle.Render(wrapText("Try: Show the latest 10 rows for the last 30 minutes.", width)),
+		)
+	}
+	groups := append([]string(nil), m.catalog.catalog.Groups...)
+	sort.Strings(groups)
+	groupLabel := strings.Join(groups, ", ")
+	if len(groups) > maxColdStartGroups {
+		groupLabel = strings.Join(groups[:maxColdStartGroups], ", ") + fmt.Sprintf(" (+%d more)", len(groups)-maxColdStartGroups)
+	}
+	rows = append(rows, mutedStyle.Render(wrapText("Available groups: "+groupLabel, width)))
+	if len(m.catalog.catalog.Entries) == 0 {
+		return append(rows, mutedStyle.Render(wrapText("Type @ to search a group or resource, then ask a question.", width)))
+	}
+	entries := append([]session.CatalogEntry(nil), m.catalog.catalog.Entries...)
+	sort.Slice(entries, func(leftIndex, rightIndex int) bool {
+		leftEntry := entries[leftIndex]
+		rightEntry := entries[rightIndex]
+		if leftEntry.Group != rightEntry.Group {
+			return leftEntry.Group < rightEntry.Group
+		}
+		if leftEntry.Name != rightEntry.Name {
+			return leftEntry.Name < rightEntry.Name
+		}
+		return leftEntry.Type < rightEntry.Type
+	})
+	reference := "@" + entries[0].Group + "/" + entries[0].Name
+	rows = append(rows,
+		mutedStyle.Render(wrapText("Try: What fields does "+reference+" have?", width)),
+		mutedStyle.Render(wrapText("Try: Show the latest 10 rows from "+reference+" for the last 30 minutes.", width)),
+		mutedStyle.Render(wrapText("Try: Which resource should I use to inspect errors?", width)),
+	)
+	return rows
+}
 
 type previewData struct {
 	columns   []string
@@ -217,12 +425,14 @@ func (m Model) renderCandidateCard(width int) string {
 		),
 		lipgloss.JoinHorizontal(lipgloss.Top, mutedStyle.Render("Limit "), m.limit.View()),
 		mutedStyle.Render(fmt.Sprintf(
-			"edit inline · validation pauses %s · Ctrl+E run · Ctrl+←/→ history",
+			"edit inline · validation pauses %s · Ctrl+←/→ history",
 			queryValidationDebounce,
 		)),
+		mutedStyle.Render("Ctrl+Y refresh preview · Ctrl+E full execute"),
 	}
 	if !report.Valid && report.Message != "" && report.Message != "not checked" {
 		rows = append(rows, badStyle.Render("Validation: "+truncate(report.Message, width-16)))
+		rows = append(rows, warnStyle.Render("[Ctrl+G let Agent fix]"))
 	}
 	return panelStyle.Width(width).Render(lipgloss.JoinVertical(lipgloss.Left, rows...))
 }
@@ -325,7 +535,9 @@ func (m Model) renderDataPreview(width, height int) string {
 	if data.truncated {
 		rows = append(rows, mutedStyle.Render("… preview is truncated; total row count shown above"))
 	}
-	if m.showExecutionRaw && m.querySession != nil && strings.TrimSpace(m.querySession.ExecutionResult.Response) != "" {
+	if m.showExecutionRaw && m.querySession != nil && !m.preferCandidateProbe &&
+		strings.TrimSpace(m.querySession.ExecutionResult.Response) != "" &&
+		strings.TrimSpace(data.query) == strings.TrimSpace(m.querySession.ExecutionResult.Query) {
 		rows = append(rows, titleStyle.Render("Full response"))
 		rows = append(rows, formatJSONResponsePreview(m.querySession.ExecutionResult.Response, width-4, maxExecutionResponseLines)...)
 	}
@@ -377,7 +589,13 @@ func (m Model) currentPreviewData() (previewData, bool) {
 		return previewData{}, false
 	}
 	executionResult := m.querySession.ExecutionResult
-	if executionResult.Summary != "" || len(executionResult.Preview) > 0 {
+	currentCandidate := m.querySession.CurrentCandidate()
+	hasExecutionResult := executionResult.Summary != "" || len(executionResult.Preview) > 0
+	if currentCandidate != nil && currentCandidate.Probe != nil &&
+		(m.preferCandidateProbe || strings.TrimSpace(executionResult.Query) != strings.TrimSpace(currentCandidate.Query)) {
+		return previewDataFromProbe(m.querySession.ResourceName, currentCandidate.Probe), true
+	}
+	if hasExecutionResult && (currentCandidate == nil || strings.TrimSpace(executionResult.Query) == strings.TrimSpace(currentCandidate.Query)) {
 		return previewData{
 			columns:   executionResult.Columns,
 			preview:   executionResult.Preview,
@@ -388,20 +606,22 @@ func (m Model) currentPreviewData() (previewData, bool) {
 			truncated: executionResult.Truncated || len(executionResult.Preview) < executionResult.Rows,
 		}, true
 	}
-	currentCandidate := m.querySession.CurrentCandidate()
 	if currentCandidate == nil || currentCandidate.Probe == nil {
 		return previewData{}, false
 	}
-	probe := currentCandidate.Probe
+	return previewDataFromProbe(m.querySession.ResourceName, currentCandidate.Probe), true
+}
+
+func previewDataFromProbe(resource string, probe *session.ProbeSummary) previewData {
 	return previewData{
 		columns:   probe.Columns,
 		preview:   probe.Preview,
-		resource:  m.querySession.ResourceName,
+		resource:  resource,
 		query:     probe.Query,
 		errorText: probe.Error,
 		totalRows: probe.Rows,
 		truncated: len(probe.Preview) < probe.Rows,
-	}, true
+	}
 }
 
 func previewLabel(query string) string {

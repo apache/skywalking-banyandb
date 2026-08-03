@@ -77,16 +77,16 @@ func (m Model) renderStatusLine(width int) string {
 	if m.querySession != nil && m.querySession.Validation.Message != "" {
 		validation = m.querySession.Validation.Status()
 	}
-	reasoning := "off"
-	if m.showReasoning {
-		reasoning = "on"
+	liveOutput := "off"
+	if m.showLiveOutput {
+		liveOutput = "on"
 	}
 	statusLine := mutedStyle.Render(fmt.Sprintf(
-		"Status: %s · Validation: %s · Policy: %s (Ctrl+P) · Reasoning: %s (Ctrl+R)",
+		"Status: %s · Validation: %s · Policy: %s (Ctrl+P) · Live output: %s (Ctrl+R)",
 		status,
 		validation,
 		m.executionPolicy.Label(),
-		reasoning,
+		liveOutput,
 	))
 	if m.trustSessionSuggested {
 		statusLine = lipgloss.JoinVertical(lipgloss.Left,
@@ -122,9 +122,16 @@ func (m Model) renderChat(width, panelHeight int) string {
 		lastActivity := m.activityLog[len(m.activityLog)-1]
 		rows = append(rows, mutedStyle.Render("▸ "+truncate(lastActivity.title, width-8)))
 	}
-	entries := chatEntries(m.querySession, m.showReasoning, m.liveResponse, m.queuedMessage)
+	if progress := m.renderTurnProgress(); progress != "" {
+		rows = append(rows, progress)
+	}
+	entries := chatEntries(m.querySession, m.showLiveOutput, m.liveResponse, m.queuedMessage)
 	if len(entries) == 0 {
-		rows = append(rows, mutedStyle.Render("Start a conversation. Your sent message appears here immediately."))
+		if guidance := m.coldStartGuidance(width - 4); len(guidance) > 0 {
+			rows = append(rows, guidance...)
+		} else {
+			rows = append(rows, mutedStyle.Render("Start a conversation. Your sent message appears here immediately."))
+		}
 	} else {
 		detailViewportHeight := 0
 		detailLines := []string(nil)
@@ -196,11 +203,11 @@ type chatEntryView struct {
 	detail   string
 }
 
-func chatEntryCount(querySession *session.QuerySession, showReasoning bool, liveResponse, queuedMessage string) int {
-	return len(chatEntries(querySession, showReasoning, liveResponse, queuedMessage))
+func chatEntryCount(querySession *session.QuerySession, showLiveOutput bool, liveResponse, queuedMessage string) int {
+	return len(chatEntries(querySession, showLiveOutput, liveResponse, queuedMessage))
 }
 
-func chatEntries(querySession *session.QuerySession, showReasoning bool, liveResponse, queuedMessage string) []chatEntryView {
+func chatEntries(querySession *session.QuerySession, showLiveOutput bool, liveResponse, queuedMessage string) []chatEntryView {
 	chatMessageCount := 0
 	if querySession != nil {
 		chatMessageCount = len(querySession.ChatMessages)
@@ -217,10 +224,10 @@ func chatEntries(querySession *session.QuerySession, showReasoning bool, liveRes
 			headline: "You › " + queued,
 		})
 	}
-	if showReasoning && strings.TrimSpace(liveResponse) != "" {
+	if showLiveOutput && strings.TrimSpace(liveResponse) != "" {
 		entries = append(entries, chatEntryView{
 			role:     session.ChatRoleAssistant,
-			headline: "reasoning: " + truncateRunes(singleLine(liveResponse), 96),
+			headline: "live output: " + truncateRunes(singleLine(liveResponse), 96),
 			detail:   workflow.NormalizeAgentDisplayText(liveResponse),
 		})
 	}
@@ -263,8 +270,8 @@ func chatEntryFromMessage(message session.ChatMessage) chatEntryView {
 	return chatEntryView{role: message.Role, headline: headline, detail: detail}
 }
 
-func chatLines(querySession *session.QuerySession, showReasoning bool, liveResponse string) []string {
-	entries := chatEntries(querySession, showReasoning, liveResponse, "")
+func chatLines(querySession *session.QuerySession, showLiveOutput bool, liveResponse string) []string {
+	entries := chatEntries(querySession, showLiveOutput, liveResponse, "")
 	lines := make([]string, 0, len(entries))
 	for _, entry := range entries {
 		lines = append(lines, entry.headline)
@@ -316,7 +323,7 @@ func approvalScanEstimate(request approval.Request) string {
 
 func (m Model) renderFooter(width int) string {
 	commands := []string{
-		"@ schema", "Enter send", "Ctrl+E run", "Ctrl+P policy", "Ctrl+R reasoning",
+		"@ schema", "Enter send", "Ctrl+G Agent fix", "Ctrl+Y refresh preview", "Ctrl+E full execute", "Ctrl+P policy", "Ctrl+R live output",
 		"Ctrl+←/→ versions", "Ctrl+F preview", "Ctrl+O export", "Ctrl+J full response", "Tab focus", "Esc stop/quit",
 	}
 	var lines []string

@@ -74,7 +74,7 @@ func (policy ExecutionPolicy) AutoApprove(source Source, probe bool, query strin
 	case PolicyTrustSession:
 		return true
 	case PolicyAutoProbe:
-		return source == SourceAgentProbe && probe
+		return source.IsProbe() && probe
 	default:
 		return false
 	}

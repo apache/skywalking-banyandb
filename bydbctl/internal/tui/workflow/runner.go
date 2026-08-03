@@ -44,6 +44,7 @@ const (
 	defaultTimeStart    = "-30m"
 	defaultLimit        = 10
 	defaultTopN         = 10
+	maxManualProbeRows  = 50
 )
 
 var fragmentedTimeRangePattern = regexp.MustCompile(`'-\s*(\d+)\s*m\s*'`)
@@ -677,7 +678,7 @@ func bridgeEvents(toolBridge *bridge.ToolBridge) <-chan agent.Event {
 }
 
 func shouldForwardAgentTurnEvent(event agent.Event) bool {
-	return event.Kind != agent.EventKindMessageDelta
+	return true
 }
 
 func (runner *Runner) completeAgentTurn(ctx context.Context, querySession *session.QuerySession, turnHint string, turnEvents []agent.Event) error {
@@ -864,6 +865,121 @@ func (runner *Runner) ExecuteCurrent(ctx context.Context, querySession *session.
 	}
 	querySession.Phase = session.PhaseExecuted
 	return nil
+}
+
+// ProbeCurrent refreshes the bounded preview for the exact current read-only candidate.
+func (runner *Runner) ProbeCurrent(ctx context.Context, querySession *session.QuerySession) error {
+	if querySession == nil {
+		return errors.New("query session is required")
+	}
+	currentCandidate := querySession.CurrentCandidate()
+	if currentCandidate == nil {
+		return errors.New("query candidate is required")
+	}
+	if !currentCandidate.Validation.Valid {
+		querySession.Phase = session.PhaseValidate
+		return errors.New("only a valid BYDBQL candidate can be previewed")
+	}
+	query := currentCandidate.Query
+	if !approval.IsReadOnlyBYDBQL(query) {
+		querySession.Phase = session.PhaseValidate
+		return errors.New("only a read-only BYDBQL candidate can be previewed")
+	}
+	plannedQuery := querySession.CurrentPlannedQuery()
+	if plannedQuery != nil && plannedQuery.Query != query {
+		querySession.Phase = session.PhaseValidate
+		return errors.New("only the current compiled workflow statement can be previewed")
+	}
+	if plannedQuery != nil && runner.executor != nil {
+		schemaSnapshot, schemaErr := runner.executor.DiscoverSchema(ctx, tools.SchemaRequest{
+			Type:   plannedQuery.ResourceType,
+			Name:   plannedQuery.Name,
+			Groups: plannedQuery.Groups,
+		})
+		if schemaErr != nil {
+			querySession.Phase = session.PhaseError
+			return fmt.Errorf("failed to refresh schema before preview: %w", schemaErr)
+		}
+		preserveDiscoveryContext(&schemaSnapshot, querySession.SchemaSnapshot)
+		schemaSnapshot = querySession.CacheSchema(schemaSnapshot)
+		if plannedQuery.SchemaFingerprint != "" && plannedQuery.SchemaFingerprint != schemaSnapshot.Fingerprint {
+			querySession.Phase = session.PhaseValidate
+			return errors.New("resource schema changed after plan compilation; regenerate the query plan")
+		}
+		querySession.ActivateSchema(schemaSnapshot)
+	}
+	previewRows := tools.Limits(runner.executor).PreviewRows
+	if previewRows <= 0 || previewRows > maxManualProbeRows {
+		previewRows = maxManualProbeRows
+	}
+	approvalRequest := runner.executionApproval(querySession, query, approval.SourceManualProbe)
+	approvalRequest.PreviewRows = previewRows
+	decision, approvalErr := runner.approvals.Request(ctx, approvalRequest)
+	if approvalErr != nil {
+		querySession.Phase = session.PhaseReady
+		return fmt.Errorf("preview approval did not complete: %w", approvalErr)
+	}
+	if !decision.Approved {
+		querySession.Phase = session.PhaseReady
+		querySession.AddTranscript("workflow", "preview rejected", runner.now())
+		return errors.New("preview rejected")
+	}
+	validation, validationErr := runner.validator.Validate(ctx, query, &querySession.SchemaSnapshot)
+	if validationErr != nil {
+		querySession.Phase = session.PhaseError
+		return fmt.Errorf("failed to revalidate preview query: %w", validationErr)
+	}
+	currentCandidate.Validation = validation
+	querySession.Validation = validation
+	if !validation.Valid {
+		querySession.Phase = session.PhaseValidate
+		return fmt.Errorf("approved query failed revalidation: %s", validation.Message)
+	}
+	executionResult, executeErr := runner.executor.Execute(ctx, querySession, query)
+	probe := probeSummaryFromExecution(query, executionResult, executeErr, previewRows)
+	currentCandidate.Probe = &probe
+	if executeErr != nil {
+		querySession.Phase = session.PhaseError
+		querySession.AddTranscript("workflow", "preview failed: "+probe.Error, runner.now())
+		return fmt.Errorf("failed to refresh preview: %w", executeErr)
+	}
+	if probe.Error != "" {
+		querySession.Phase = session.PhaseError
+		querySession.AddTranscript("workflow", "preview failed: "+probe.Error, runner.now())
+		return fmt.Errorf("failed to refresh preview: %s", probe.Error)
+	}
+	querySession.Phase = session.PhaseReady
+	querySession.AddTranscript("workflow", fmt.Sprintf("preview refreshed: %d rows", probe.Rows), runner.now())
+	return nil
+}
+
+func probeSummaryFromExecution(
+	query string,
+	executionResult session.ExecutionResult,
+	executeErr error,
+	previewRows int,
+) session.ProbeSummary {
+	probe := session.ProbeSummary{
+		Query:   query,
+		Rows:    executionResult.Rows,
+		Columns: append([]string(nil), executionResult.Columns...),
+	}
+	if previewRows < 0 {
+		previewRows = 0
+	}
+	previewLength := min(len(executionResult.Preview), previewRows)
+	for _, row := range executionResult.Preview[:previewLength] {
+		probe.Preview = append(probe.Preview, append([]string(nil), row...))
+	}
+	rawError := executionResult.Error
+	if executeErr != nil {
+		rawError = executeErr.Error()
+	}
+	probe.Error = agent.SanitizeExecutionErrorForProvider(rawError)
+	if probe.Error == "" && rawError != "" {
+		probe.Error = "BYDBQL preview failed"
+	}
+	return probe
 }
 
 func (runner *Runner) prepareNextPlanStep(

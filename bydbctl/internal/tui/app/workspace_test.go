@@ -24,8 +24,11 @@ import (
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
 
+	"github.com/apache/skywalking-banyandb/bydbctl/internal/tui/agent"
 	"github.com/apache/skywalking-banyandb/bydbctl/internal/tui/approval"
+	"github.com/apache/skywalking-banyandb/bydbctl/internal/tui/bridge"
 	"github.com/apache/skywalking-banyandb/bydbctl/internal/tui/session"
+	"github.com/apache/skywalking-banyandb/bydbctl/internal/tui/workflow"
 )
 
 func TestWorkspaceShowsConversationCandidateAndPreviewWithoutTabs(t *testing.T) {
@@ -55,6 +58,160 @@ func TestWorkspaceShowsConversationCandidateAndPreviewWithoutTabs(t *testing.T) 
 	for _, unexpected := range []string{"F1 Schema", "F2 Query", "F3 Run"} {
 		if strings.Contains(view, unexpected) {
 			t.Fatalf("did not expect tab label %q in workspace:\n%s", unexpected, view)
+		}
+	}
+}
+
+func TestRefreshedProbeTakesPrecedenceOverEarlierFullExecution(t *testing.T) {
+	query := "SELECT * FROM MEASURE service_cpm IN sw_metrics TIME > '-30m' LIMIT 10"
+	model := NewModel(Config{})
+	querySession := &session.QuerySession{
+		ResourceName: "service_cpm",
+		ExecutionResult: session.ExecutionResult{
+			Query:   query,
+			Summary: "earlier full execution",
+			Columns: []string{"value"},
+			Preview: [][]string{{"old"}},
+			Rows:    1,
+		},
+	}
+	querySession.AddCandidate(session.BydbqlCandidate{
+		Query:      query,
+		Validation: session.ValidationReport{Valid: true},
+		Probe: &session.ProbeSummary{
+			Query:   query,
+			Columns: []string{"value"},
+			Preview: [][]string{{"refreshed"}},
+			Rows:    1,
+		},
+	})
+	model.querySession = querySession
+	model.preferCandidateProbe = true
+
+	preview, ok := model.currentPreviewData()
+	if !ok || len(preview.preview) != 1 || preview.preview[0][0] != "refreshed" {
+		t.Fatalf("expected refreshed probe, got %+v", preview)
+	}
+	exportResult, ok := model.exportResult()
+	if !ok || len(exportResult.Preview) != 1 || exportResult.Preview[0][0] != "refreshed" {
+		t.Fatalf("expected export of visible refreshed probe, got %+v", exportResult)
+	}
+}
+
+func TestCompletedDescribeSchemaShowsSchemaEvidence(t *testing.T) {
+	model := NewModel(Config{})
+	model.resize(160, 42)
+	querySession := &session.QuerySession{SchemaSnapshot: session.SchemaSnapshot{
+		Loaded: true,
+		Type:   session.ResourceTypeMeasure,
+		Name:   "service_cpm",
+		Groups: []string{"sw_metrics"},
+		Columns: []session.SchemaColumn{
+			{Name: "service", Kind: session.SchemaColumnTag, Type: session.SchemaValueTypeString},
+			{Name: "value", Kind: session.SchemaColumnField, Type: session.SchemaValueTypeFloat},
+		},
+	}}
+	model.busy = true
+	model.focus = focusExecution
+	event := agent.Event{
+		Kind:     agent.EventKindToolResult,
+		ToolName: bridge.ToolDescribeSchema,
+		Status:   agent.EventStatusSucceeded,
+	}
+	updatedModel, _ := model.Update(agentTurnUpdateMsg{update: workflow.TurnUpdate{
+		Event:        &event,
+		QuerySession: querySession,
+	}})
+	typedModel, ok := updatedModel.(Model)
+	if !ok {
+		t.Fatalf("unexpected model type: %T", updatedModel)
+	}
+	if typedModel.focus == focusExecution {
+		t.Fatal("describe_schema must release stale Data Preview focus")
+	}
+	if interimView := typedModel.View(); !strings.Contains(interimView, "MEASURE service_cpm") ||
+		strings.Contains(interimView, "Data Preview") {
+		t.Fatalf("describe_schema must switch evidence before turn completion:\n%s", interimView)
+	}
+	completedModel, _ := typedModel.Update(agentTurnUpdateMsg{update: workflow.TurnUpdate{
+		Done:         true,
+		QuerySession: querySession,
+	}})
+	model, ok = completedModel.(Model)
+	if !ok {
+		t.Fatalf("unexpected model type: %T", completedModel)
+	}
+
+	view := model.View()
+	for _, expected := range []string{"Schema", "MEASURE service_cpm", "Typed columns", "service"} {
+		if !strings.Contains(view, expected) {
+			t.Fatalf("expected %q in schema evidence:\n%s", expected, view)
+		}
+	}
+	if strings.Contains(view, "Data Preview") {
+		t.Fatalf("describe_schema must select schema evidence, got:\n%s", view)
+	}
+}
+
+func TestWorkspaceExplainsCandidateActionsAndProgress(t *testing.T) {
+	model := NewModel(Config{})
+	model.resize(160, 42)
+	querySession := &session.QuerySession{}
+	querySession.AddCandidate(session.BydbqlCandidate{
+		Query: "SELECT FROM",
+		Validation: session.ValidationReport{
+			Message: "syntax error near FROM",
+		},
+	})
+	model.querySession = querySession
+	model.syncQuerySession()
+	model.busy = true
+	model.turnEvents = []agent.Event{
+		{Kind: agent.EventKindToolResult, ToolName: bridge.ToolListGroupsSchemas, Status: agent.EventStatusSucceeded},
+		{Kind: agent.EventKindToolCall, ToolName: bridge.ToolDescribeSchema, Status: agent.EventStatusRunning},
+	}
+
+	view := model.View()
+	for _, expected := range []string{"Ctrl+G let Agent fix", "Ctrl+Y refresh preview", "Ctrl+E full execute", "Steps", "catalog", "describe schema"} {
+		if !strings.Contains(view, expected) {
+			t.Fatalf("expected %q in workspace:\n%s", expected, view)
+		}
+	}
+}
+
+func TestCandidateProgressRemainsPartOfPlanCompilation(t *testing.T) {
+	stageIndex, ok := progressStageForEvent(agent.Event{
+		Kind:     agent.EventKindCandidate,
+		ToolName: bridge.ToolProposeQueryPlan,
+		Status:   agent.EventStatusSucceeded,
+	})
+	if !ok || stageIndex != 2 {
+		t.Fatalf("candidate event must remain in the compile-plan stage, got stage=%d found=%t", stageIndex, ok)
+	}
+}
+
+func TestWorkspaceShowsColdStartGuidanceAfterCatalogLoads(t *testing.T) {
+	model := NewModel(Config{})
+	model.resize(160, 42)
+	model.catalog.setCatalog(session.SchemaCatalog{
+		Groups: []string{"sw_metrics", "sw_trace"},
+		Entries: []session.CatalogEntry{{
+			Group: "sw_metrics",
+			Type:  session.ResourceTypeMeasure,
+			Name:  "service_cpm",
+		}},
+	})
+
+	view := model.View()
+	for _, expected := range []string{
+		"Welcome to text2bydbQL",
+		"Available groups: sw_metrics, sw_trace",
+		"@sw_metrics/service_cpm",
+		"What fields does",
+		"Show the latest 10 rows",
+	} {
+		if !strings.Contains(view, expected) {
+			t.Fatalf("expected %q in cold-start guidance:\n%s", expected, view)
 		}
 	}
 }

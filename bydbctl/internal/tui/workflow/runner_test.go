@@ -20,6 +20,7 @@ package workflow
 import (
 	"context"
 	"errors"
+	"fmt"
 	"strings"
 	"testing"
 
@@ -159,6 +160,104 @@ func TestExecuteCurrentRejectsInvalidCandidateBeforeApproval(t *testing.T) {
 	}
 	if executeErr := runner.ExecuteCurrent(context.Background(), querySession); executeErr == nil {
 		t.Fatal("expected invalid candidate to be rejected")
+	}
+}
+
+func TestProbeCurrentRefreshesBoundedCandidatePreview(t *testing.T) {
+	query := "SELECT * FROM MEASURE service_latency IN production TIME > '-30m' LIMIT 10"
+	previewRows := make([][]string, tools.DefaultExecutionLimits().PreviewRows+1)
+	for rowIndex := range previewRows {
+		previewRows[rowIndex] = []string{fmt.Sprintf("row-%d", rowIndex)}
+	}
+	schemaSnapshot := session.SchemaSnapshot{
+		Type:   session.ResourceTypeMeasure,
+		Name:   "service_latency",
+		Groups: []string{"production"},
+	}
+	schemaSnapshot.EnsureFingerprint()
+	executor := &catalogExecutor{schema: schemaSnapshot, result: session.ExecutionResult{
+		Rows:    len(previewRows),
+		Columns: []string{"value"},
+		Preview: previewRows,
+	}}
+	runner := NewRunner(Config{
+		Executor:  executor,
+		Validator: &sequenceValidator{reports: []session.ValidationReport{{Valid: true}}},
+	})
+	runner.SetExecutionPolicy(approval.PolicyAutoProbe)
+	querySession := &session.QuerySession{
+		Phase:           session.PhaseReady,
+		ResourceType:    session.ResourceTypeMeasure,
+		ResourceName:    "service_latency",
+		Groups:          []string{"production"},
+		SchemaSnapshot:  schemaSnapshot,
+		ExecutionResult: session.ExecutionResult{Query: query, Summary: "old full execution"},
+		PlannedQueries: []session.PlannedQuery{{
+			ID:                "first",
+			Query:             query,
+			ResourceType:      session.ResourceTypeMeasure,
+			Name:              "service_latency",
+			Groups:            []string{"production"},
+			SchemaFingerprint: schemaSnapshot.Fingerprint,
+		}},
+	}
+	querySession.AddCandidate(session.BydbqlCandidate{
+		Query:      query,
+		Validation: session.ValidationReport{Valid: true},
+	})
+
+	if probeErr := runner.ProbeCurrent(context.Background(), querySession); probeErr != nil {
+		t.Fatalf("ProbeCurrent returned error: %v", probeErr)
+	}
+	currentCandidate := querySession.CurrentCandidate()
+	if currentCandidate == nil || currentCandidate.Probe == nil {
+		t.Fatalf("expected a refreshed candidate probe, got %+v", currentCandidate)
+	}
+	if len(currentCandidate.Probe.Preview) != maxManualProbeRows {
+		t.Fatalf("expected bounded preview, got %d rows", len(currentCandidate.Probe.Preview))
+	}
+	if querySession.ExecutionResult.Summary != "old full execution" {
+		t.Fatalf("preview refresh must preserve full execution evidence: %+v", querySession.ExecutionResult)
+	}
+	if executor.executeCount != 1 {
+		t.Fatalf("expected one preview execution, got %d", executor.executeCount)
+	}
+	if executor.discoverSchemaCount != 1 {
+		t.Fatalf("expected one schema refresh, got %d", executor.discoverSchemaCount)
+	}
+	if querySession.ActivePlanStep != 0 || querySession.PlannedQueries[0].Completed {
+		t.Fatalf("preview refresh must not advance the execution plan: %+v", querySession.PlannedQueries)
+	}
+}
+
+func TestProbeCurrentKeepsPreviewErrorForRetry(t *testing.T) {
+	executor := &catalogExecutor{executeErr: errors.New("gateway unavailable")}
+	runner := NewRunner(Config{
+		Executor:  executor,
+		Validator: &sequenceValidator{reports: []session.ValidationReport{{Valid: true}}},
+	})
+	runner.SetExecutionPolicy(approval.PolicyAutoProbe)
+	querySession := &session.QuerySession{
+		ResourceType: session.ResourceTypeMeasure,
+		ResourceName: "service_latency",
+		Groups:       []string{"production"},
+		SchemaSnapshot: session.SchemaSnapshot{
+			Type:   session.ResourceTypeMeasure,
+			Name:   "service_latency",
+			Groups: []string{"production"},
+		},
+	}
+	querySession.AddCandidate(session.BydbqlCandidate{
+		Query:      "SELECT * FROM MEASURE service_latency IN production TIME > '-30m' LIMIT 10",
+		Validation: session.ValidationReport{Valid: true},
+	})
+
+	if probeErr := runner.ProbeCurrent(context.Background(), querySession); probeErr == nil {
+		t.Fatal("expected preview execution error")
+	}
+	currentCandidate := querySession.CurrentCandidate()
+	if currentCandidate == nil || currentCandidate.Probe == nil || currentCandidate.Probe.Error != "gateway unavailable" {
+		t.Fatalf("expected retained preview error, got %+v", currentCandidate)
 	}
 }
 
@@ -450,6 +549,13 @@ func TestDrainBridgeEventsRetainsProposalAfterAgentStreamCloses(t *testing.T) {
 	}
 	if update := <-updates; update.Event == nil || update.Event.ToolName != "propose_query_plan" {
 		t.Fatalf("unexpected streamed bridge update: %+v", update)
+	}
+}
+
+func TestAgentTurnForwardsReasoningDeltas(t *testing.T) {
+	event := agent.Event{Kind: agent.EventKindMessageDelta, Message: "thinking"}
+	if !shouldForwardAgentTurnEvent(event) {
+		t.Fatal("reasoning deltas must reach the TUI while the turn is active")
 	}
 }
 
@@ -960,7 +1066,9 @@ type catalogExecutor struct {
 	catalog             session.SchemaCatalog
 	schema              session.SchemaSnapshot
 	result              session.ExecutionResult
+	executeErr          error
 	discoverSchemaCount int
+	executeCount        int
 }
 
 func (executor *catalogExecutor) DiscoverCatalog(_ context.Context) (session.SchemaCatalog, error) {
@@ -973,7 +1081,8 @@ func (executor *catalogExecutor) DiscoverSchema(_ context.Context, _ tools.Schem
 }
 
 func (executor *catalogExecutor) Execute(_ context.Context, _ *session.QuerySession, _ string) (session.ExecutionResult, error) {
-	return executor.result, nil
+	executor.executeCount++
+	return executor.result, executor.executeErr
 }
 
 func TestCompleteAgentTurnKeepsClarificationWithoutCandidate(t *testing.T) {

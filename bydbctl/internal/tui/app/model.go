@@ -104,6 +104,7 @@ type Model struct {
 	executionDetailScroll  int
 	executionRowCursor     int
 	executionPreviewOffset int
+	preferCandidateProbe   bool
 	showExecutionRaw       bool
 	executionExportPath    string
 	detailScroll           int
@@ -112,7 +113,8 @@ type Model struct {
 	chatDetailScroll       int
 	focus                  int
 	busy                   bool
-	showReasoning          bool
+	showLiveOutput         bool
+	progressOperation      progressOperation
 	executionPolicy        approval.ExecutionPolicy
 	pendingApproval        *approval.Request
 	turnCancel             context.CancelFunc
@@ -182,7 +184,7 @@ func NewModel(config Config) Model {
 		width:           defaultWidth,
 		height:          defaultHeight,
 		focus:           focusMessage,
-		showReasoning:   true,
+		showLiveOutput:  true,
 	}
 	if sessionLog != nil {
 		sessionLog.Write("session", fmt.Sprintf("provider=%s addr=workflow", provider))
@@ -229,17 +231,26 @@ func (m Model) Update(teaMsg tea.Msg) (tea.Model, tea.Cmd) {
 		m.message.SetValue("")
 		m.composerReference = nil
 		m.evidenceMode = evidenceModeData
+		m.preferCandidateProbe = false
+		m.progressOperation = progressOperationPreparing
+		m.turnEvents = nil
 		m.liveResponse = ""
 		return m, m.nextAgentUpdateCmd(typedMsg.updates)
 	case agentTurnUpdateMsg:
 		if typedMsg.update.Event != nil {
 			event := *typedMsg.update.Event
 			m.turnEvents = append(m.turnEvents, event)
+			if typedMsg.update.QuerySession != nil {
+				m.querySession = typedMsg.update.QuerySession
+				m.syncQuerySession()
+			}
+			m.applyTurnEvidenceMode()
 			m.recordAgentActivities([]agent.Event{event})
 			if event.Kind == agent.EventKindMessageDelta {
-				if m.showReasoning {
+				if m.showLiveOutput {
 					m.liveResponse += event.Message
-					m.status = "agent is reasoning"
+					m.status = "agent output streaming"
+					m.syncChatCursor(true)
 				}
 			} else if summary := summarizeAgentEvent(event); summary != "" {
 				m.addUIEvent(summary)
@@ -254,8 +265,9 @@ func (m Model) Update(teaMsg tea.Msg) (tea.Model, tea.Cmd) {
 		m.querySession = typedMsg.update.QuerySession
 		m.executionPreviewOffset = 0
 		m.syncQuerySession()
+		m.applyTurnEvidenceMode()
+		m.applyTurnPreviewPreference()
 		m.logAgentTurn(m.turnEvents)
-		m.turnEvents = nil
 		m.liveResponse = ""
 		if typedMsg.update.Err != nil {
 			m.status = typedMsg.update.Err.Error()
@@ -273,6 +285,7 @@ func (m Model) Update(teaMsg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, nil
 		}
 		m.busy = true
+		m.progressOperation = progressOperationValidate
 		m.status = "validating edited query"
 		return m, m.validateCmd()
 	case tea.KeyMsg:
@@ -339,6 +352,7 @@ func (m Model) Update(teaMsg tea.Msg) (tea.Model, tea.Cmd) {
 			if typedMsg.status == "execution complete" {
 				m.executionDetailScroll = 0
 				m.executionPreviewOffset = 0
+				m.preferCandidateProbe = false
 				m.showExecutionRaw = false
 				m.executionExportPath = ""
 				if len(m.querySession.ExecutionResult.Preview) > 0 {
@@ -349,6 +363,19 @@ func (m Model) Update(teaMsg tea.Msg) (tea.Model, tea.Cmd) {
 				m.recordExecutionActivity(m.querySession)
 				m.recordCleanReadExecution()
 				m.focus = focusExecution
+			}
+			if typedMsg.previewRefresh {
+				m.executionPreviewOffset = 0
+				m.evidenceMode = evidenceModeData
+				m.preferCandidateProbe = true
+				m.showExecutionRaw = false
+				m.focus = focusExecution
+				if currentCandidate := m.querySession.CurrentCandidate(); currentCandidate != nil && currentCandidate.Probe != nil &&
+					len(currentCandidate.Probe.Preview) > 0 {
+					m.executionRowCursor = 0
+				} else {
+					m.executionRowCursor = -1
+				}
 			}
 		}
 		if typedMsg.err != nil {
@@ -362,8 +389,8 @@ func (m Model) Update(teaMsg tea.Msg) (tea.Model, tea.Cmd) {
 			m.logWrite("workflow", typedMsg.status)
 			m.status = typedMsg.status
 		} else if m.querySession != nil && !m.querySession.Validation.Valid && m.querySession.CurrentCandidate() != nil {
-			m.status = "invalid candidate — send another message and press Enter"
-			m.addUIEvent("validation: send another message and press Enter to refine")
+			m.status = "invalid candidate — Ctrl+G lets Agent fix it, or send a message"
+			m.addUIEvent("validation: Ctrl+G lets Agent fix the candidate")
 		}
 		return m, nil
 	case turnTimeoutMsg:
@@ -407,11 +434,12 @@ type schemaDetailMsg struct {
 }
 
 type workflowMsg struct {
-	querySession  *session.QuerySession
-	events        []agent.Event
-	err           error
-	status        string
-	clearTurnHint bool
+	querySession   *session.QuerySession
+	events         []agent.Event
+	err            error
+	status         string
+	clearTurnHint  bool
+	previewRefresh bool
 }
 
 type approvalMsg struct {
@@ -485,6 +513,25 @@ func (m *Model) syncQuerySession() {
 		m.selectedSchema = m.querySession.SchemaSnapshot
 	}
 	m.syncChatCursor(true)
+}
+
+func (m *Model) applyTurnPreviewPreference() {
+	currentCandidate := m.querySession.CurrentCandidate()
+	for _, event := range m.turnEvents {
+		if event.Status != agent.EventStatusSucceeded {
+			continue
+		}
+		switch event.ToolName {
+		case bridge.ToolProbeBydbQL:
+			m.preferCandidateProbe = true
+		case bridge.ToolExecuteBydbQL:
+			m.preferCandidateProbe = false
+		case bridge.ToolProposeQueryPlan:
+			if event.Kind == agent.EventKindCandidate && currentCandidate != nil && currentCandidate.Probe != nil {
+				m.preferCandidateProbe = true
+			}
+		}
+	}
 }
 
 var (
@@ -619,10 +666,12 @@ func (m *Model) handleKey(keyMsg tea.KeyMsg) (tea.Cmd, bool) {
 		}
 		m.busy = true
 		m.catalog.setLoading()
+		m.progressOperation = progressOperationCatalog
 		m.status = "refreshing catalog"
 		return m.loadCatalogCmd(), true
 	case "ctrl+f":
 		m.focus = focusExecution
+		m.evidenceMode = evidenceModeData
 		m.status = "data preview focused"
 		return m.syncFocus(), true
 	case "ctrl+left", "ctrl+right":
@@ -732,12 +781,18 @@ func (m *Model) handleKey(keyMsg tea.KeyMsg) (tea.Cmd, bool) {
 			return nil, true
 		}
 		m.busy = true
-		m.status = "executing query"
+		m.turnEvents = nil
+		m.progressOperation = progressOperationExecute
+		m.status = "executing full query"
 		m.turnStartedAt = time.Now()
-		m.logWrite("action", "ctrl+e execute query")
+		m.logWrite("action", "ctrl+e full execute query")
 		executeCtx, cancelExecute := context.WithCancel(context.Background())
 		m.turnCancel = cancelExecute
 		return tea.Batch(m.executeCmd(executeCtx), m.turnTimeoutCmd(m.turnStartedAt)), true
+	case "ctrl+g":
+		return m.repairCurrentCandidate()
+	case "ctrl+y":
+		return m.refreshPreview()
 	case "ctrl+p":
 		nextPolicy := m.executionPolicy.Next()
 		if nextPolicy == approval.PolicyTrustSession && m.cleanReadExecutions < trustSessionCleanReadThreshold {
@@ -750,12 +805,13 @@ func (m *Model) handleKey(keyMsg tea.KeyMsg) (tea.Cmd, bool) {
 		m.addUIEvent("policy: " + m.executionPolicy.Label())
 		return nil, true
 	case "ctrl+r":
-		m.showReasoning = !m.showReasoning
-		if m.showReasoning {
-			m.status = "agent reasoning stream visible"
+		m.showLiveOutput = !m.showLiveOutput
+		if m.showLiveOutput {
+			m.status = "agent live output visible"
 		} else {
-			m.status = "agent reasoning stream hidden"
+			m.status = "agent live output hidden"
 		}
+		m.syncChatCursor(true)
 		return nil, true
 	case "ctrl+o":
 		exportResult, ok := m.exportResult()
@@ -773,7 +829,10 @@ func (m *Model) handleKey(keyMsg tea.KeyMsg) (tea.Cmd, bool) {
 		m.addUIEvent("exported: " + exportPath)
 		return nil, true
 	case "ctrl+j":
-		if m.querySession != nil && strings.TrimSpace(m.querySession.ExecutionResult.Response) != "" {
+		preview, hasPreview := m.currentPreviewData()
+		if m.querySession != nil && !m.preferCandidateProbe && hasPreview &&
+			strings.TrimSpace(m.querySession.ExecutionResult.Response) != "" &&
+			strings.TrimSpace(preview.query) == strings.TrimSpace(m.querySession.ExecutionResult.Query) {
 			m.showExecutionRaw = !m.showExecutionRaw
 			m.executionDetailScroll = 0
 			if m.showExecutionRaw {
@@ -838,10 +897,13 @@ func (m *Model) sendComposerMessage() (tea.Cmd, bool) {
 	}
 	m.syncExecutionPolicy()
 	m.queuedMessage = messageValue
+	m.turnEvents = nil
+	m.liveResponse = ""
 	m.message.SetValue("")
 	m.updateSchemaSearch()
 	m.syncChatCursor(true)
 	m.busy = true
+	m.progressOperation = progressOperationPreparing
 	m.status = "asking agent"
 	m.turnStartedAt = time.Now()
 	m.logWrite("action", fmt.Sprintf("send agent message=%q", messageValue))
@@ -850,17 +912,73 @@ func (m *Model) sendComposerMessage() (tea.Cmd, bool) {
 	return tea.Batch(m.agentCmd(turnCtx, messageValue), m.turnTimeoutCmd(m.turnStartedAt)), true
 }
 
+func (m *Model) repairCurrentCandidate() (tea.Cmd, bool) {
+	if m.busy {
+		return nil, true
+	}
+	if m.querySession == nil {
+		m.status = "an invalid candidate is required before Agent repair"
+		return nil, true
+	}
+	currentCandidate := m.querySession.CurrentCandidate()
+	if currentCandidate == nil || currentCandidate.Validation.Valid {
+		m.status = "an invalid candidate is required before Agent repair"
+		return nil, true
+	}
+	const repairRequest = "Repair the current invalid BYDBQL candidate using the validation error."
+	m.syncExecutionPolicy()
+	m.queuedMessage = repairRequest
+	m.turnEvents = nil
+	m.liveResponse = ""
+	m.syncChatCursor(true)
+	m.busy = true
+	m.progressOperation = progressOperationPreparing
+	m.status = "asking Agent to repair candidate"
+	m.turnStartedAt = time.Now()
+	m.logWrite("action", "ctrl+g repair invalid candidate")
+	turnCtx, cancelTurn := context.WithCancel(context.Background())
+	m.turnCancel = cancelTurn
+	return tea.Batch(m.agentCmd(turnCtx, repairRequest), m.turnTimeoutCmd(m.turnStartedAt)), true
+}
+
+func (m *Model) refreshPreview() (tea.Cmd, bool) {
+	if m.busy {
+		return nil, true
+	}
+	if m.querySession == nil {
+		m.status = "a valid candidate is required before preview refresh"
+		return nil, true
+	}
+	currentCandidate := m.querySession.CurrentCandidate()
+	if currentCandidate == nil || !currentCandidate.Validation.Valid {
+		m.status = "a valid candidate is required before preview refresh"
+		return nil, true
+	}
+	m.syncExecutionPolicy()
+	m.busy = true
+	m.turnEvents = nil
+	m.evidenceMode = evidenceModeData
+	m.progressOperation = progressOperationPreview
+	m.status = "refreshing preview"
+	m.turnStartedAt = time.Now()
+	m.logWrite("action", "ctrl+y refresh preview")
+	previewCtx, cancelPreview := context.WithCancel(context.Background())
+	m.turnCancel = cancelPreview
+	return tea.Batch(m.previewCmd(previewCtx), m.turnTimeoutCmd(m.turnStartedAt)), true
+}
+
 func (m Model) exportResult() (session.ExecutionResult, bool) {
 	if m.querySession == nil {
 		return session.ExecutionResult{}, false
 	}
 	executionResult := m.querySession.ExecutionResult
-	if strings.TrimSpace(executionResult.Response) != "" || len(executionResult.Preview) > 0 {
-		return executionResult, true
-	}
 	preview, ok := m.currentPreviewData()
 	if !ok {
 		return session.ExecutionResult{}, false
+	}
+	if !m.preferCandidateProbe && (strings.TrimSpace(executionResult.Response) != "" || len(executionResult.Preview) > 0) &&
+		strings.TrimSpace(executionResult.Query) == strings.TrimSpace(preview.query) {
+		return executionResult, true
 	}
 	return session.ExecutionResult{
 		Rows:    preview.totalRows,
@@ -990,7 +1108,7 @@ func (m Model) chatPanelHeight(totalHeight int) int {
 func (m Model) chatListViewportHeight() int {
 	panelHeight := m.chatPanelHeight(clamp(m.height-8, 18, 40))
 	detailBudget := 0
-	if entries := chatEntries(m.querySession, m.showReasoning, m.liveResponse, m.queuedMessage); m.chatCursor >= 0 &&
+	if entries := chatEntries(m.querySession, m.showLiveOutput, m.liveResponse, m.queuedMessage); m.chatCursor >= 0 &&
 		m.chatCursor < len(entries) && strings.TrimSpace(entries[m.chatCursor].detail) != "" {
 		detailBudget = chatDetailViewportHeight(panelHeight) + 2
 	}
@@ -1059,6 +1177,31 @@ func (m Model) executeCmd(ctx context.Context) tea.Cmd {
 		return workflowMsg{
 			querySession: updatedSession,
 			status:       "execution complete",
+		}
+	}
+}
+
+func (m Model) previewCmd(ctx context.Context) tea.Cmd {
+	runner := m.runner
+	options := m.startOptions()
+	query := m.query.Value()
+	querySession := m.querySession
+	return func() tea.Msg {
+		updatedSession, ensureErr := ensureSession(ctx, runner, querySession, options, query)
+		if ensureErr != nil {
+			return workflowMsg{err: ensureErr}
+		}
+		if previewErr := runner.ProbeCurrent(ctx, updatedSession); previewErr != nil {
+			return workflowMsg{
+				querySession:   updatedSession,
+				err:            previewErr,
+				previewRefresh: true,
+			}
+		}
+		return workflowMsg{
+			querySession:   updatedSession,
+			status:         "preview refreshed",
+			previewRefresh: true,
 		}
 	}
 }
@@ -1262,7 +1405,7 @@ func (m *Model) moveActivityCursor(delta, viewportHeight int) {
 }
 
 func (m *Model) syncChatCursor(scrollToEnd bool) {
-	entryCount := chatEntryCount(m.querySession, m.showReasoning, m.liveResponse, m.queuedMessage)
+	entryCount := chatEntryCount(m.querySession, m.showLiveOutput, m.liveResponse, m.queuedMessage)
 	if entryCount == 0 {
 		m.chatCursor = 0
 		m.chatScroll = 0
@@ -1281,7 +1424,7 @@ func (m *Model) syncChatCursor(scrollToEnd bool) {
 }
 
 func (m *Model) moveChatCursor(delta, viewportHeight int) {
-	entryCount := chatEntryCount(m.querySession, m.showReasoning, m.liveResponse, m.queuedMessage)
+	entryCount := chatEntryCount(m.querySession, m.showLiveOutput, m.liveResponse, m.queuedMessage)
 	if entryCount == 0 {
 		m.chatCursor = 0
 		m.chatScroll = 0
@@ -1304,7 +1447,7 @@ func (m *Model) moveChatCursor(delta, viewportHeight int) {
 }
 
 func (m *Model) moveChatDetailScroll(delta, viewportHeight int) {
-	entries := chatEntries(m.querySession, m.showReasoning, m.liveResponse, m.queuedMessage)
+	entries := chatEntries(m.querySession, m.showLiveOutput, m.liveResponse, m.queuedMessage)
 	if m.chatCursor < 0 || m.chatCursor >= len(entries) {
 		return
 	}

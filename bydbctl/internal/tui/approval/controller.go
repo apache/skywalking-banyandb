@@ -42,8 +42,14 @@ type Source string
 const (
 	SourceAgentTool   Source = "agent_tool"
 	SourceAgentProbe  Source = "agent_probe"
+	SourceManualProbe Source = "manual_probe"
 	SourceManual      Source = "manual"
 )
+
+// IsProbe reports whether the source requests a bounded preview rather than a full execution.
+func (source Source) IsProbe() bool {
+	return source == SourceAgentProbe || source == SourceManualProbe
+}
 
 // Request describes the exact statement that needs a user decision.
 type Request struct {
@@ -141,7 +147,7 @@ func (controller *Controller) Request(ctx context.Context, request Request) (Dec
 	request.ID = uuid.NewString()
 	request.CreatedAt = controller.now()
 	request.Groups = append([]string(nil), request.Groups...)
-	if controller.Policy().AutoApprove(request.Source, request.Source == SourceAgentProbe, request.Query) {
+	if controller.Policy().AutoApprove(request.Source, request.Source.IsProbe(), request.Query) {
 		return Decision{Approved: true}, nil
 	}
 	decisionCh := make(chan Decision, 1)

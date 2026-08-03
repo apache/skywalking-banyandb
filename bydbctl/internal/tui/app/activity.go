@@ -96,7 +96,7 @@ func activityCategory(event agent.Event) string {
 	case agent.EventKindPlanUpdate:
 		return "plan"
 	case agent.EventKindMessageDelta:
-		return "reasoning"
+		return "output"
 	case agent.EventKindError:
 		return "error"
 	case agent.EventKindPermissionRequest:
@@ -128,7 +128,7 @@ func activityTitle(event agent.Event) string {
 		}
 		return "plan update"
 	case agent.EventKindMessageDelta:
-		return "reasoning: " + truncateRunes(singleLine(event.Message), 96)
+		return "output: " + truncateRunes(singleLine(event.Message), 96)
 	case agent.EventKindFinalResponse:
 		if strings.TrimSpace(event.Candidate) != "" {
 			return "agent: BYDBQL candidate"
