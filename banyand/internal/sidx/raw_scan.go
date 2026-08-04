@@ -34,6 +34,7 @@ type RawRow struct {
 	Tags     []Tag
 	SeriesID common.SeriesID
 	PartID   uint64
+	BlockID  uint64
 	Key      int64
 }
 
@@ -103,11 +104,13 @@ func scanRawPart(ctx context.Context, loader queryResult, partData *part, partID
 	partIterator.init(metadataArray, partData, math.MinInt64, math.MaxInt64)
 	decodedBlock := generateBlock()
 	defer releaseBlock(decodedBlock)
+	var blockID uint64
 	for partIterator.nextBlock() {
 		if contextErr := ctx.Err(); contextErr != nil {
 			return fmt.Errorf("raw secondary-index scan canceled in part %016x: %w", partID, contextErr)
 		}
 		if !loader.loadBlockData(decodedBlock, partData, partIterator.curBlock) {
+			blockID++
 			continue
 		}
 		tagNames := make([]string, 0, len(decodedBlock.tags))
@@ -135,12 +138,14 @@ func scanRawPart(ctx context.Context, loader queryResult, partData *part, partID
 				Tags:     tags,
 				SeriesID: partIterator.curBlock.seriesID,
 				PartID:   partID,
+				BlockID:  blockID,
 				Key:      key,
 			}
 			if visitErr := visit(row); visitErr != nil {
 				return fmt.Errorf("raw scan visitor failed for part %016x row %d: %w", partID, rowIdx, visitErr)
 			}
 		}
+		blockID++
 	}
 	if iteratorErr := partIterator.error(); iteratorErr != nil {
 		return fmt.Errorf("cannot scan raw part %016x: %w", partID, iteratorErr)

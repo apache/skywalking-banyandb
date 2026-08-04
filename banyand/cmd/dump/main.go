@@ -42,6 +42,7 @@ It provides subcommands for different data types (trace, stream, measure, etc.).
 	rootCmd.AddCommand(newPropertyCmd())
 	rootCmd.AddCommand(newSidxCmd())
 	rootCmd.AddCommand(newTraceSourceCatalogCmd())
+	rootCmd.AddCommand(newTraceFixtureCmd())
 
 	if err := rootCmd.Execute(); err != nil {
 		fmt.Fprintln(os.Stderr, err)

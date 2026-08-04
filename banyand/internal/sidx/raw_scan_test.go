@@ -60,6 +60,7 @@ func TestScanRawVisitsEveryPhysicalRow(t *testing.T) {
 		require.Len(t, row.Tags, 1)
 		values = append(values, string(row.Tags[0].Value))
 		assert.Equal(t, uint64(1), row.PartID)
+		assert.Equal(t, uint64(0), row.BlockID)
 		assert.Equal(t, common.SeriesID(7), row.SeriesID)
 		assert.Equal(t, "same-trace", string(row.Data))
 		return nil
