@@ -23,6 +23,7 @@ import (
 	"io/fs"
 	"path/filepath"
 	"strconv"
+	"sync"
 	"testing"
 	"time"
 
@@ -84,8 +85,8 @@ func TestTraceWriteRoundTrip(t *testing.T) {
 		"--trace-root-path=" + rootPath,
 		"--trace-flush-timeout=200ms",
 	}
-	moduleDefer := test.SetupModules(flags, pipeline, metaSvc, traceSvc)
-	defer moduleDefer()
+	stopModules := sync.OnceFunc(test.SetupModules(flags, pipeline, metaSvc, traceSvc))
+	defer stopModules()
 
 	registerRoundTripTrace(t, metaSvc)
 	require.Eventually(t, func() bool {
@@ -139,6 +140,7 @@ func TestTraceWriteRoundTrip(t *testing.T) {
 		req.NoError(errPub)
 	}
 	req.Empty(bp.Close())
+	stopModules()
 
 	var partDirs []string
 	require.Eventually(t, func() bool {
