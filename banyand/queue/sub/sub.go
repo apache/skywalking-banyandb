@@ -315,11 +315,13 @@ func (s *server) marshalResponse(
 		return body, nil
 	case []byte:
 		rawAllowed := (topic == data.TopicInternalMeasureQuery && data.MeasureWireModeRaw()) ||
-			(topic == data.TopicTraceQuery && data.TraceWireModeRaw())
+			(topic == data.TopicTraceQuery && data.TraceWireModeRaw()) ||
+			(topic == data.TopicStreamQuery && data.StreamWireModeRaw())
 		if !rawAllowed {
 			s.replyWithErrType(stream, writeEntity, nil, fmt.Sprintf("invalid response: unexpected raw body on topic %s", topic), identity, "marshal_error")
 			return nil, fmt.Errorf("invalid raw body")
 		}
+		data.IncrFrameEncoded(topic)
 		return d, nil
 	case *common.Error:
 		s.replyWithErrType(stream, writeEntity, nil, d.Error(), identity, "handler_error")

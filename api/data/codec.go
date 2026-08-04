@@ -166,6 +166,23 @@ func TraceWireModeRaw() bool {
 	return traceWireModeRaw.Load()
 }
 
+// streamWireModeRaw is the per-process wire mode for TopicStreamQuery. Set once
+// at stream-service startup; raw==true selects the native columnar stream frame
+// body, raw==false keeps the proto body. Default false so any process that never
+// sets it keeps the pre-existing proto behavior.
+var streamWireModeRaw atomic.Bool
+
+// SetStreamWireModeRaw publishes the per-process wire mode for TopicStreamQuery.
+func SetStreamWireModeRaw(raw bool) {
+	streamWireModeRaw.Store(raw)
+}
+
+// StreamWireModeRaw reports whether this process emits/decodes native stream
+// frame bodies for TopicStreamQuery.
+func StreamWireModeRaw() bool {
+	return streamWireModeRaw.Load()
+}
+
 // measureQueryResponseCodec dispatches TopicInternalMeasureQuery encode/decode
 // by the per-process wire mode: flag-on → RawFrameCodec, flag-off → ProtoCodec.
 // One static supplier serves both flag-on raw bodies and flag-off proto bodies
@@ -195,6 +212,9 @@ func (c *measureQueryResponseCodec) Unmarshal(body []byte) (any, error) {
 		return c.proto.Unmarshal(body)
 	}
 	if len(body) == 0 || body[0] == RawFrameMagicLeadingByte {
+		if len(body) > 0 {
+			measureFrameDecoded.Add(1)
+		}
 		return c.raw.Unmarshal(body)
 	}
 	return c.proto.Unmarshal(body)

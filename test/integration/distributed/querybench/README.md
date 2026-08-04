@@ -67,6 +67,7 @@ DQB_CARDINALITIES=1000 \
 DQB_SCENARIOS=trace_by_id,trace_tag_filter \
 DQB_SPANS_PER_TRACE=20 \
 DQB_QUERY_ITERATIONS=10 \
+DQB_TRACE_BY_ID_ITERATIONS=20 \
 DQB_PROFILE=1 \
 test/integration/distributed/querybench/run-docker.sh --cpus 4 --memory 8g
 ```
@@ -99,6 +100,8 @@ test/integration/distributed/querybench/run-docker.sh --cpus 4 --memory 8g
 ```
 
 `DQB_SCENARIOS` selects the scenario set. `DQB_QUERY_WORKERS`, `DQB_WARMUP_ITERATIONS`, `DQB_WRITERS`, and `DQB_SMALL_EXACT_ROWS` map to the corresponding knobs. Trace-specific knobs include `DQB_SPANS_PER_TRACE`, `DQB_SPAN_DIST=uniform|heavytail`, `DQB_FILTER_SELECTIVITY`, `DQB_TRACE_ID_BATCH`, `DQB_SHARD_NUM`, `DQB_DATA_NODES`, `DQB_SPAN_BYTES`, and `DQB_QUERY_MEMORY_MIB`.
+
+`DQB_QUERY_ITERATIONS` (default 50) sets the timed-loop iteration count for most scenarios. The `trace_by_id` scenario is a sub-10ms point lookup, so at 50 iterations its p95/p99 are dominated by a few GC pauses and read as noise; it instead uses `DQB_TRACE_BY_ID_ITERATIONS` (default 1000) to report a stable tail. Lower it for a quick smoke (e.g. `DQB_TRACE_BY_ID_ITERATIONS=20`).
 
 Trace `DQB_MATRIX` modes:
 

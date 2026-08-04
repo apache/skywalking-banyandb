@@ -50,8 +50,10 @@ import (
 	logical_trace "github.com/apache/skywalking-banyandb/pkg/query/logical/trace"
 	"github.com/apache/skywalking-banyandb/pkg/query/model"
 	"github.com/apache/skywalking-banyandb/pkg/query/tracelabels"
+	"github.com/apache/skywalking-banyandb/pkg/query/vectorized"
 	vmeasure "github.com/apache/skywalking-banyandb/pkg/query/vectorized/measure"
 	vecplan "github.com/apache/skywalking-banyandb/pkg/query/vectorized/measure/plan"
+	streamframe "github.com/apache/skywalking-banyandb/pkg/query/vectorized/stream/frame"
 )
 
 const (
@@ -70,6 +72,12 @@ type streamQueryProcessor struct {
 	streamService stream.Service
 	*queryService
 	*bus.UnImplementedHealthyListener
+	// distributed is true on a distributed data node, whose query response is
+	// sent over the wire to a remote liaison that decodes the native columnar
+	// frame. It is false in standalone, where the local grpc service consumes the
+	// response directly and expects the proto body — so the frame must not be
+	// emitted there.
+	distributed bool
 }
 
 func (p *streamQueryProcessor) Rev(ctx context.Context, message bus.Message) (resp bus.Message) {
@@ -143,6 +151,22 @@ func (p *streamQueryProcessor) Rev(ctx context.Context, message bus.Message) (re
 			}
 		}()
 	}
+
+	// Vec dispatch: attempt the native columnar path before the row execution.
+	// Gated on the engine flag (VectorizedConfig().Enabled). The plan must expose
+	// StreamVecExecutable (single localIndexScan, no tag filter / multi-group /
+	// skipping filter) — otherwise the assertion fails and we fall through to the
+	// row path below. When tracing is on we MUST return a proto QueryResponse (it
+	// carries common.v1.Trace); the frame emit is gated on tracer == nil.
+	if p.streamService.VectorizedConfig().Enabled {
+		if handled, vecResp := p.tryStreamVecDispatch(ctx, plan, queryCriteria, tracer != nil); handled {
+			resp = vecResp
+			se := plan.(executor.StreamExecutable)
+			se.Close()
+			return
+		}
+	}
+
 	se := plan.(executor.StreamExecutable)
 	defer se.Close()
 	entities, err := se.Execute(ctx)
@@ -161,6 +185,197 @@ func (p *streamQueryProcessor) Rev(ctx context.Context, message bus.Message) (re
 		}
 	}
 	return
+}
+
+// tryStreamVecDispatch attempts the native columnar (vec) path for a stream
+// query. It returns (false, nil) when the plan is not vec-eligible (the caller
+// then runs the row path). On success it returns (true, resp) where resp is:
+//   - a []byte columnar frame body, when the process is a distributed data node
+//     with the raw wire mode on and tracing off (traced == false);
+//   - a *streamv1.QueryResponse with materialized Elements, for standalone, for a
+//     traced query (the frame has no trace channel), or when the wire mode is off.
+//
+// Any error is surfaced as a *common.Error response (handled=true) rather than
+// falling back to row, matching the measure/trace no-silent-fallback discipline
+// once we have committed to vec.
+func (p *streamQueryProcessor) tryStreamVecDispatch(ctx context.Context, plan logical.Plan,
+	queryCriteria *streamv1.QueryRequest, traced bool,
+) (bool, bus.Message) {
+	now := time.Now().UnixNano()
+
+	// Multi-group query (*limit → *mergePlan): run the vec scan+pipeline per group,
+	// then cross-group merge via the SAME primitives the row mergePlan.Execute uses
+	// (MergeGroupElements) and apply the outer offset:offset+limit slice. The
+	// cross-group merge is element-level (proto Elements), so this always takes the
+	// proto egress — the liaison merges proto/frame bodies interchangeably.
+	if merge, ok := logical_stream.VecMergeExecutable(plan); ok {
+		return p.tryVecMergeDispatch(ctx, merge, queryCriteria, now)
+	}
+
+	vecExec := logical_stream.VecExecutable(plan)
+	if vecExec == nil {
+		return false, bus.Message{}
+	}
+	batches, schema, execErr := vecExec.ExecuteVectorized(ctx)
+	if execErr != nil {
+		p.log.Error().Err(execErr).RawJSON("req", logger.Proto(queryCriteria)).Msg("fail to execute the vectorized query plan")
+		return true, bus.NewMessage(bus.MessageID(now), common.NewError("execute the vectorized query plan for stream %s: %v", queryCriteria.GetName(), execErr))
+	}
+
+	// A criteria query carries a per-element tag filter (VecTagFilter) that must be
+	// applied to materialized Elements (byte-identical to the row tagFilterPlan). The
+	// frame path operates on columnar batches and has no element-level filter stage,
+	// so a filter query forces the proto egress; the liaison merges proto Elements
+	// and frame bodies interchangeably (mixed-mode), so this stays correct.
+	tagFilter, hiddenTags, filterSchema, hasFilter := logical_stream.VecTagFilter(plan)
+
+	// Data-node native wire mode (flag-on, no tracing): emit a columnar frame body
+	// so the send path passes it through and the liaison decodes it. The liaison
+	// applies the global offset/limit slice, so the data node emits the whole
+	// (already per-node-capped) batch set — no slice here.
+	if !hasFilter && streamVecEmitAsFrame(p.distributed, data.StreamWireModeRaw(), traced) {
+		merged, mergeErr := mergeStreamBatches(schema, batches)
+		if mergeErr != nil {
+			p.log.Error().Err(mergeErr).RawJSON("req", logger.Proto(queryCriteria)).Msg("fail to merge the vectorized stream batches")
+			return true, bus.NewMessage(bus.MessageID(now), common.NewError("merge the vectorized stream batches for stream %s: %v", queryCriteria.GetName(), mergeErr))
+		}
+		frameBytes, encErr := streamframe.Encode(merged)
+		if encErr != nil {
+			p.log.Error().Err(encErr).RawJSON("req", logger.Proto(queryCriteria)).Msg("fail to encode the vectorized stream frame")
+			return true, bus.NewMessage(bus.MessageID(now), common.NewError("encode the vectorized stream frame for stream %s: %v", queryCriteria.GetName(), encErr))
+		}
+		return true, bus.NewMessage(bus.MessageID(now), frameBytes)
+	}
+
+	// Standalone (or traced, or wire mode off): materialize Elements in process and
+	// apply the client offset:offset+limit slice the row *limit node would apply.
+	elements, buildErr := stream.BuildElementsFromBatches(batches, vecExec.ProjectionTags())
+	if buildErr != nil {
+		p.log.Error().Err(buildErr).RawJSON("req", logger.Proto(queryCriteria)).Msg("fail to materialize vectorized stream elements")
+		return true, bus.NewMessage(bus.MessageID(now), common.NewError("materialize vectorized stream elements for stream %s: %v", queryCriteria.GetName(), buildErr))
+	}
+	// Criteria query: apply the SAME per-element tagFilter.Match + hidden-tag strip
+	// as the row tagFilterPlan.Execute, BEFORE the outer offset:offset+limit slice
+	// (row order: scan → merge → distinct → filter → limit). The element set handed
+	// to the filter already matches row's, because the merge capped (or deliberately
+	// did not cap) according to the scan's order type — see scanResumesAcrossPulls.
+	if hasFilter {
+		filtered, filterErr := applyStreamTagFilter(elements, tagFilter, hiddenTags, filterSchema)
+		if filterErr != nil {
+			p.log.Error().Err(filterErr).RawJSON("req", logger.Proto(queryCriteria)).Msg("fail to apply the vectorized stream tag filter")
+			return true, bus.NewMessage(bus.MessageID(now), common.NewError("apply the vectorized stream tag filter for stream %s: %v", queryCriteria.GetName(), filterErr))
+		}
+		elements = filtered
+	}
+	if offset, limit, ok := logical_stream.VecOffsetLimit(plan); ok {
+		elements = sliceStreamElements(elements, offset, limit)
+	}
+	return true, bus.NewMessage(bus.MessageID(now), &streamv1.QueryResponse{Elements: elements})
+}
+
+// tryVecMergeDispatch runs the vec path for a multi-group query (*limit →
+// *mergePlan). For EACH group it runs the vec scan → BuildElementsFromBatches →
+// (if the group carries criteria) the SAME per-element tagFilter.Match + hidden-tag
+// strip the row tagFilterPlan.Execute applies. It then cross-group merges via the
+// shared MergeGroupElements (the exact comparableElement/sortableElements +
+// sort.NewItemIter path the row mergePlan.Execute uses) and applies the outer
+// offset:offset+limit slice. Emits proto Elements (element-level merge/filter); the
+// liaison merges proto/frame bodies interchangeably.
+func (p *streamQueryProcessor) tryVecMergeDispatch(ctx context.Context, merge *logical_stream.VecMerge,
+	queryCriteria *streamv1.QueryRequest, now int64,
+) (bool, bus.Message) {
+	perGroup := make([][]*streamv1.Element, 0, len(merge.Groups))
+	for _, group := range merge.Groups {
+		batches, _, execErr := group.Scan.ExecuteVectorized(ctx)
+		if execErr != nil {
+			p.log.Error().Err(execErr).RawJSON("req", logger.Proto(queryCriteria)).Msg("fail to execute the vectorized stream group")
+			return true, bus.NewMessage(bus.MessageID(now), common.NewError("execute the vectorized query plan for stream %s: %v", queryCriteria.GetName(), execErr))
+		}
+		elements, buildErr := stream.BuildElementsFromBatches(batches, group.Scan.ProjectionTags())
+		if buildErr != nil {
+			p.log.Error().Err(buildErr).RawJSON("req", logger.Proto(queryCriteria)).Msg("fail to materialize vectorized stream group elements")
+			return true, bus.NewMessage(bus.MessageID(now), common.NewError("materialize vectorized stream elements for stream %s: %v", queryCriteria.GetName(), buildErr))
+		}
+		if group.HasFilter {
+			filtered, filterErr := applyStreamTagFilter(elements, group.TagFilter, group.HiddenTags, group.FilterSchema)
+			if filterErr != nil {
+				p.log.Error().Err(filterErr).RawJSON("req", logger.Proto(queryCriteria)).Msg("fail to apply the vectorized stream group tag filter")
+				return true, bus.NewMessage(bus.MessageID(now), common.NewError("apply the vectorized stream tag filter for stream %s: %v", queryCriteria.GetName(), filterErr))
+			}
+			elements = filtered
+		}
+		perGroup = append(perGroup, elements)
+	}
+	merged := logical_stream.MergeGroupElements(perGroup, merge.SortByTime, merge.SortTagSpec, merge.Desc)
+	merged = sliceStreamElements(merged, merge.Offset, merge.Limit)
+	return true, bus.NewMessage(bus.MessageID(now), &streamv1.QueryResponse{Elements: merged})
+}
+
+// streamVecEmitAsFrame is the data-node emit gate: emit a native columnar frame
+// ([]byte) only on a distributed data node with the raw wire mode on and tracing
+// OFF. A traced query MUST return a *streamv1.QueryResponse proto (it carries
+// common.v1.Trace, which the frame has no channel for) — so tracing forces the
+// proto egress. Standalone (!distributed) and wire-mode-off also take proto.
+func streamVecEmitAsFrame(distributed, wireModeRaw, traced bool) bool {
+	return distributed && wireModeRaw && !traced
+}
+
+// mergeStreamBatches concatenates the active rows of several columnar batches into
+// a single batch so the frame carries one contiguous columnar block. Selection is
+// respected via the batch schema's active-row semantics at frame encode; here we
+// simply flatten Selection into a fresh dense batch.
+func mergeStreamBatches(schema *vectorized.BatchSchema, batches []*vectorized.RecordBatch) (*vectorized.RecordBatch, error) {
+	total := 0
+	for _, b := range batches {
+		if b != nil {
+			total += b.ActiveLen()
+		}
+	}
+	out := vectorized.NewRecordBatch(schema, total)
+	for _, b := range batches {
+		if b == nil || b.ActiveLen() == 0 {
+			continue
+		}
+		if appendErr := vectorized.AppendActiveRows(out, b); appendErr != nil {
+			return nil, appendErr
+		}
+	}
+	return out, nil
+}
+
+// applyStreamTagFilter keeps only the elements whose tag families satisfy the
+// criteria tag filter, then strips the filter-only (hidden) tags from the kept
+// elements — mirroring the row tagFilterPlan.Execute per-element loop exactly so
+// the vec result is byte-identical.
+func applyStreamTagFilter(elements []*streamv1.Element, tagFilter logical.TagFilter,
+	hiddenTags logical.HiddenTagSet, s logical.Schema,
+) ([]*streamv1.Element, error) {
+	filtered := make([]*streamv1.Element, 0, len(elements))
+	for _, e := range elements {
+		ok, matchErr := tagFilter.Match(logical.TagFamilies(e.TagFamilies), s)
+		if matchErr != nil {
+			return nil, matchErr
+		}
+		if ok {
+			e.TagFamilies = hiddenTags.StripHiddenTags(e.TagFamilies)
+			filtered = append(filtered, e)
+		}
+	}
+	return filtered, nil
+}
+
+// sliceStreamElements applies the client offset:offset+limit window, matching the
+// row *limit.Execute egress slice.
+func sliceStreamElements(elements []*streamv1.Element, offset, limit uint32) []*streamv1.Element {
+	start := int(offset)
+	if start >= len(elements) {
+		return []*streamv1.Element{}
+	}
+	end := start + int(limit)
+	if end > len(elements) {
+		end = len(elements)
+	}
+	return elements[start:end]
 }
 
 type measureQueryProcessor struct {

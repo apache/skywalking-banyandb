@@ -128,7 +128,7 @@ var _ = Describe("Metadata", func() {
 				})
 				Expect(err).ShouldNot(HaveOccurred())
 				Expect(streamSchema).ShouldNot(BeNil())
-				writeData(svcs, size, nil, false)
+				writeData(svcs, size, 0, nil, false)
 				_ = queryAllMeasurements(svcs, size, nil, "")
 
 				l := len(streamSchema.TagFamilies)
@@ -180,7 +180,7 @@ var _ = Describe("Metadata", func() {
 					}
 				})
 				It("get new values for the new added tags", func() {
-					writeData(svcs, size, []string{"test1", "test2", "test3"}, independentFamily)
+					writeData(svcs, size, size, []string{"test1", "test2", "test3"}, independentFamily)
 					dp := queryAllMeasurements(svcs, size*2, []string{"new_tag"}, "")
 					for i := 0; i < size; i++ {
 						Expect(dp[i].TagFamilies[0].Tags[3].Key).Should(Equal("new_tag"))
@@ -211,7 +211,7 @@ var _ = Describe("Metadata", func() {
 					}
 				})
 				It("get new values for the new added tags", func() {
-					writeData(svcs, size, []string{"test1", "test2", "test3"}, independentFamily)
+					writeData(svcs, size, size, []string{"test1", "test2", "test3"}, independentFamily)
 					dp := queryAllMeasurements(svcs, size*2, []string{"new_tag"}, "independent_family")
 
 					for i := 0; i < size; i++ {
@@ -236,7 +236,11 @@ var _ = Describe("Metadata", func() {
 	})
 })
 
-func writeData(svcs *services, expectedSize int, newTag []string, independentFamily bool) {
+// writeData writes expectedSize elements. idOffset shifts the element ids so a
+// second call does not reuse the ids of the first: an element_id identifies an
+// element globally, so reusing one makes the two writes the same element and the
+// query layer is free to collapse them.
+func writeData(svcs *services, expectedSize, idOffset int, newTag []string, independentFamily bool) {
 	bp := svcs.pipeline.NewBatchPublisher(5 * time.Second)
 	defer bp.Close()
 	for i := 0; i < expectedSize; i++ {
@@ -248,7 +252,7 @@ func writeData(svcs *services, expectedSize int, newTag []string, independentFam
 			},
 			Element: &streamv1.ElementValue{
 				Timestamp: timestamppb.New(timestamp.NowMilli()),
-				ElementId: "element" + iStr,
+				ElementId: "element" + strconv.Itoa(idOffset+i),
 				TagFamilies: []*modelv1.TagFamilyForWrite{
 					{
 						Tags: []*modelv1.TagValue{
@@ -396,7 +400,7 @@ var _ = Describe("Schema Change", func() {
 			env := setupSchemaChangeStream(svcs, streamName, groupName, streamSetupOptions{withExtraTag: true})
 			writeSchemaChangeData(svcs, streamName, groupName, now.Add(-2*time.Hour), 5, writeDataOptions{extraTag: extraTagInt})
 			deleteExtraTag(svcs, streamName, groupName)
-			writeSchemaChangeData(svcs, streamName, groupName, now.Add(-1*time.Hour), 3, writeDataOptions{})
+			writeSchemaChangeData(svcs, streamName, groupName, now.Add(-1*time.Hour), 3, writeDataOptions{elementIDOffset: 5})
 
 			test.EventuallyConsistently(func(innerGm Gomega) {
 				elements := querySchemaChangeData(svcs, streamName, groupName, now.Add(-3*time.Hour), now,
@@ -427,7 +431,7 @@ var _ = Describe("Schema Change", func() {
 			env := setupSchemaChangeStream(svcs, streamName, groupName, streamSetupOptions{})
 			writeSchemaChangeData(svcs, streamName, groupName, now.Add(-2*time.Hour), 5, writeDataOptions{})
 			addExtraTag(svcs, streamName, groupName)
-			writeSchemaChangeData(svcs, streamName, groupName, now.Add(-1*time.Hour), 3, writeDataOptions{extraTag: extraTagInt})
+			writeSchemaChangeData(svcs, streamName, groupName, now.Add(-1*time.Hour), 3, writeDataOptions{extraTag: extraTagInt, elementIDOffset: 5})
 
 			Eventually(func(innerGm Gomega) {
 				elements := querySchemaChangeData(svcs, streamName, groupName, now.Add(-3*time.Hour), now,
@@ -467,7 +471,8 @@ var _ = Describe("Schema Change", func() {
 			env := setupSchemaChangeStream(svcs, streamName, groupName, streamSetupOptions{withExtraTag: true})
 			writeSchemaChangeData(svcs, streamName, groupName, now.Add(-2*time.Hour), 5, writeDataOptions{extraTag: extraTagInt})
 			changeExtraTagType(svcs, streamName, groupName)
-			writeSchemaChangeData(svcs, streamName, groupName, now.Add(-1*time.Hour), 3, writeDataOptions{extraTag: extraTagString, traceIDPrefix: "trace_new_"})
+			writeSchemaChangeData(svcs, streamName, groupName, now.Add(-1*time.Hour), 3,
+				writeDataOptions{extraTag: extraTagString, traceIDPrefix: "trace_new_", elementIDOffset: 5})
 
 			Eventually(func(innerGm Gomega) {
 				elements := querySchemaChangeData(svcs, streamName, groupName, now.Add(-3*time.Hour), now,
@@ -567,7 +572,7 @@ var _ = Describe("Schema Change", func() {
 			env := setupSchemaChangeStream(svcs, streamName, groupName, streamSetupOptions{withExtraTag: true})
 			writeSchemaChangeData(svcs, streamName, groupName, now.Add(-2*time.Hour), 5, writeDataOptions{extraTag: extraTagInt})
 			deleteExtraTag(svcs, streamName, groupName)
-			writeSchemaChangeData(svcs, streamName, groupName, now.Add(-1*time.Hour), 3, writeDataOptions{})
+			writeSchemaChangeData(svcs, streamName, groupName, now.Add(-1*time.Hour), 3, writeDataOptions{elementIDOffset: 5})
 
 			test.EventuallyConsistently(func(innerGm Gomega) {
 				err := queryWithDeletedTagCondition(svcs, streamName, groupName, now)
@@ -585,7 +590,7 @@ var _ = Describe("Schema Change", func() {
 			env := setupSchemaChangeStream(svcs, streamName, groupName, streamSetupOptions{withExtraTag: true})
 			writeSchemaChangeData(svcs, streamName, groupName, now.Add(-2*time.Hour), 5, writeDataOptions{extraTag: extraTagInt})
 			deleteExtraTag(svcs, streamName, groupName)
-			writeSchemaChangeData(svcs, streamName, groupName, now.Add(-1*time.Hour), 3, writeDataOptions{})
+			writeSchemaChangeData(svcs, streamName, groupName, now.Add(-1*time.Hour), 3, writeDataOptions{elementIDOffset: 5})
 
 			test.EventuallyConsistently(func(innerGm Gomega) {
 				err := queryWithDeletedTagProjection(svcs, streamName, groupName, now)

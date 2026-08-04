@@ -545,7 +545,7 @@ func (s *supplier) OpenResource(spec resourceSchema.Resource) (resourceSchema.In
 	streamSchema := spec.Schema().(*databasev1.Stream)
 	return openStream(streamSpec{
 		schema: streamSchema,
-	}, s.l, s.pm, s.schemaRepo), nil
+	}, s.l, s.pm, s.schemaRepo, s.option.vectorized), nil
 }
 
 func (s *supplier) ResourceSchema(md *commonv1.Metadata) (resourceSchema.ResourceSchema, error) {
@@ -639,7 +639,7 @@ func (s *queueSupplier) OpenResource(spec resourceSchema.Resource) (resourceSche
 	streamSchema := spec.Schema().(*databasev1.Stream)
 	return openStream(streamSpec{
 		schema: streamSchema,
-	}, s.l, s.pm, s.schemaRepo), nil
+	}, s.l, s.pm, s.schemaRepo, s.option.vectorized), nil
 }
 
 func (s *queueSupplier) ResourceSchema(md *commonv1.Metadata) (resourceSchema.ResourceSchema, error) {
