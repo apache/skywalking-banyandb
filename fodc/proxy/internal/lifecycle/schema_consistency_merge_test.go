@@ -155,6 +155,45 @@ func TestMergeGroups_UnionsObjectNodeFingerprints(t *testing.T) {
 	assert.Equal(t, "liaison-1", objs[0].GetNodeFingerprints()[1].GetNode())
 }
 
+func TestMergeGroups_PrefersNonZeroRegistryFingerprint(t *testing.T) {
+	// One agent reports the object without the registry truth (0 -- an orphan view
+	// or a partial payload during a rolling upgrade) while another reports the real
+	// non-zero fingerprint. The merge must keep the non-zero truth regardless of
+	// which agent's record is folded first.
+	objFrom := func(node string, registryFP uint64) *agentLifecycleData {
+		return &agentLifecycleData{
+			Data: &fodcv1.LifecycleData{
+				Groups: []*fodcv1.GroupLifecycleInfo{{
+					Name: "g",
+					SchemaConsistency: &fodcv1.SchemaConsistency{
+						Status: fodcv1.ConsistencyStatus_CONSISTENCY_STATUS_CONSISTENT,
+						Objects: []*fodcv1.ObjectConsistency{{
+							Kind: "stream", Name: "foo", RegistryFingerprint: registryFP,
+							NodeFingerprints: []*fodcv1.NodeFingerprint{{
+								Node: node, CacheFingerprint: 7, RuntimeFingerprint: 7,
+							}},
+						}},
+					},
+				}},
+			},
+		}
+	}
+	zeroFirst := []*agentLifecycleData{objFrom("data-1", 0), objFrom("liaison-1", 7)}
+	nonZeroFirst := []*agentLifecycleData{objFrom("liaison-1", 7), objFrom("data-1", 0)}
+
+	for name, order := range map[string][]*agentLifecycleData{"zeroFirst": zeroFirst, "nonZeroFirst": nonZeroFirst} {
+		t.Run(name, func(t *testing.T) {
+			mgr := NewManager(nil, nil, logger.GetLogger("test-merge"))
+			got := mgr.mergeGroups(order)
+			require.Len(t, got, 1)
+			objs := got[0].GetSchemaConsistency().GetObjects()
+			require.Len(t, objs, 1)
+			assert.Equal(t, uint64(7), objs[0].GetRegistryFingerprint(),
+				"a non-zero registry fingerprint must win over a zero one")
+		})
+	}
+}
+
 func TestMergeGroups_IsolatesDistinctGroups(t *testing.T) {
 	// mergeGroups reuses each round's freshly received group in place: the gRPC
 	// stream re-unmarshals lifecycle data on every collection and nothing caches

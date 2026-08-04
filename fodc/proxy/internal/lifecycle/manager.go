@@ -373,6 +373,9 @@ func mergeSchemaConsistency(acc, incoming *fodcv1.SchemaConsistency) *fodcv1.Sch
 // mergeObject folds one object's record into the accumulator on a fresh
 // ObjectConsistency, unioning node fingerprints by node id.
 func mergeObject(dst map[string]*fodcv1.ObjectConsistency, obj *fodcv1.ObjectConsistency) {
+	if obj == nil {
+		return
+	}
 	key := obj.GetKind() + "|" + obj.GetName()
 	oc, ok := dst[key]
 	if !ok {
@@ -380,6 +383,12 @@ func mergeObject(dst map[string]*fodcv1.ObjectConsistency, obj *fodcv1.ObjectCon
 			Kind: obj.GetKind(), Name: obj.GetName(), RegistryFingerprint: obj.GetRegistryFingerprint(),
 		}
 		dst[key] = oc
+	} else if oc.GetRegistryFingerprint() == 0 && obj.GetRegistryFingerprint() != 0 {
+		// The entry was created from a record that did not know the registry truth
+		// (an orphan view, or a partial payload during a rolling upgrade); adopt a
+		// non-zero fingerprint once any agent reports it so the merged output keeps
+		// the registry truth rather than a stale zero.
+		oc.RegistryFingerprint = obj.GetRegistryFingerprint()
 	}
 	seen := make(map[string]struct{}, len(oc.NodeFingerprints))
 	for _, nf := range oc.NodeFingerprints {
