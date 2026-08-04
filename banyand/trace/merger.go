@@ -133,6 +133,7 @@ type mergeDispatchRequest struct {
 
 func (tst *tsTable) mergeLoop(merges chan *mergerIntroduction, flusherNotifier watcher.Channel) {
 	defer tst.loopCloser.Done()
+	defer tst.mergeControl.stop()
 
 	var lastProcessedEpoch uint64
 
@@ -145,7 +146,6 @@ func (tst *tsTable) mergeLoop(merges chan *mergerIntroduction, flusherNotifier w
 	fastWorkers := max(1, cgroups.CPUs()/2)
 	fastCh := make(chan *mergeDispatchRequest, fastWorkers)
 	slowCh := make(chan *mergeDispatchRequest, 1)
-	triggerCh := make(chan struct{}, 1)
 
 	var workersWg, dispatcherWg sync.WaitGroup
 
@@ -165,14 +165,13 @@ func (tst *tsTable) mergeLoop(merges chan *mergerIntroduction, flusherNotifier w
 	dispatcherWg.Add(1)
 	run.Go(context.Background(), "trace.merger.dispatcher", tst.l, func(_ context.Context) {
 		defer dispatcherWg.Done()
-		tst.dispatcherLoop(triggerCh, threshold, fastCh, slowCh)
+		tst.dispatcherLoop(threshold, fastCh, slowCh)
 	})
 
 	// Shutdown order: stop dispatcher first so no new work enters the lane
 	// channels, then close the lane channels so idle workers exit their range
 	// loops, then wait for workers to drain any in-flight merges.
 	defer func() {
-		close(triggerCh)
 		dispatcherWg.Wait()
 		close(fastCh)
 		close(slowCh)
@@ -186,9 +185,9 @@ func (tst *tsTable) mergeLoop(merges chan *mergerIntroduction, flusherNotifier w
 		case <-ew.Watch():
 			if curSnapshot := tst.currentSnapshot(); curSnapshot != nil {
 				if curSnapshot.epoch > lastProcessedEpoch {
-					select {
-					case triggerCh <- struct{}{}:
-					default:
+					if triggerErr := tst.triggerMerge(); triggerErr != nil {
+						curSnapshot.decRef()
+						return
 					}
 					lastProcessedEpoch = curSnapshot.epoch
 				}
@@ -202,18 +201,18 @@ func (tst *tsTable) mergeLoop(merges chan *mergerIntroduction, flusherNotifier w
 	}
 }
 
-func (tst *tsTable) dispatcherLoop(triggerCh chan struct{}, threshold uint64, fastCh, slowCh chan *mergeDispatchRequest) {
+func (tst *tsTable) dispatcherLoop(threshold uint64, fastCh, slowCh chan *mergeDispatchRequest) {
 	for {
 		select {
 		case <-tst.loopCloser.CloseNotify():
 			return
-		case _, ok := <-triggerCh:
-			if !ok {
-				return
-			}
+		case <-tst.mergeControl.trigger:
+			tst.mergeControl.beginDispatch()
 			if tst.dispatchAllMerges(threshold, fastCh, slowCh) {
+				tst.mergeControl.endDispatch()
 				return
 			}
+			tst.mergeControl.endDispatch()
 		}
 	}
 }
@@ -222,13 +221,20 @@ func (tst *tsTable) dispatchAllMerges(threshold uint64, fastCh, slowCh chan *mer
 	for {
 		curSnapshot := tst.currentSnapshot()
 		if curSnapshot == nil {
+			if tst.mergeControl != nil {
+				tst.mergeControl.observeEmpty(0)
+			}
 			return false
 		}
 		freeDiskSize := tst.freeDiskSpace(tst.root)
 		var dst []*partWrapper
 		dst, toBeMerged := tst.getPartsToMerge(curSnapshot, freeDiskSize, dst)
 		if len(dst) < 2 {
+			epoch := curSnapshot.epoch
 			curSnapshot.decRef()
+			if tst.mergeControl != nil {
+				tst.mergeControl.observeEmpty(epoch)
+			}
 			return false
 		}
 		for _, pw := range dst {
@@ -293,9 +299,15 @@ func (tst *tsTable) dispatchAllMerges(threshold uint64, fastCh, slowCh chan *mer
 			Int("partCount", len(dst)).
 			Msg("dispatching merge")
 
+		if tst.mergeControl != nil {
+			tst.mergeControl.addQueued()
+		}
 		select {
 		case targetCh <- req:
 		case <-tst.loopCloser.CloseNotify():
+			if tst.mergeControl != nil {
+				tst.mergeControl.cancelQueued()
+			}
 			tst.releaseDispatchRequest(req)
 			return true
 		}
@@ -304,6 +316,9 @@ func (tst *tsTable) dispatchAllMerges(threshold uint64, fastCh, slowCh chan *mer
 
 func (tst *tsTable) mergeLaneWorker(ch chan *mergeDispatchRequest, merges chan *mergerIntroduction) {
 	for req := range ch {
+		if tst.mergeControl != nil {
+			tst.mergeControl.startQueued()
+		}
 		if !req.enqueuedAt.IsZero() {
 			tst.incTotalMergeQueueLatency(time.Since(req.enqueuedAt).Seconds(), req.typ, req.lane)
 		}
@@ -311,12 +326,18 @@ func (tst *tsTable) mergeLaneWorker(ch chan *mergeDispatchRequest, merges chan *
 		case mergeMaxConcurrencyCh <- struct{}{}:
 		case <-tst.loopCloser.CloseNotify():
 			tst.releaseDispatchRequest(req)
+			if tst.mergeControl != nil {
+				tst.mergeControl.finishRunning()
+			}
 			// Drain remaining buffered requests so their inFlight entries and
 			// part references are released. The lane channel is closed by the
 			// mergeLoop shutdown defer after the dispatcher exits, which lets
 			// this range loop terminate.
 			for pending := range ch {
 				tst.releaseDispatchRequest(pending)
+				if tst.mergeControl != nil {
+					tst.mergeControl.cancelQueued()
+				}
 			}
 			return
 		}
@@ -330,6 +351,9 @@ func (tst *tsTable) mergeLaneWorker(ch chan *mergeDispatchRequest, merges chan *
 		<-mergeMaxConcurrencyCh
 
 		tst.releaseDispatchRequest(req)
+		if tst.mergeControl != nil {
+			tst.mergeControl.finishRunning()
+		}
 
 		if mergeErr != nil {
 			if !errors.Is(mergeErr, errClosed) {
@@ -348,6 +372,9 @@ func (tst *tsTable) releaseDispatchRequest(req *mergeDispatchRequest) {
 	tst.inFlightMu.Unlock()
 	for _, pw := range req.parts {
 		pw.decRef()
+	}
+	if tst.mergeControl != nil {
+		tst.mergeControl.notify()
 	}
 }
 
@@ -383,7 +410,7 @@ func (tst *tsTable) buildHotMergeFilter(parts []*partWrapper) *mergeFilter {
 		tst.incPipelineGuardBypassed()
 		return nil
 	}
-	if isMergeHot(parts, graceNs, time.Now().UnixNano()) {
+	if isMergeHot(parts, graceNs, tst.mergeNow().UnixNano()) {
 		tst.incPipelineGuardBypassed()
 		return nil
 	}
@@ -404,6 +431,17 @@ func (tst *tsTable) buildHotMergeFilter(parts []*partWrapper) *mergeFilter {
 		traceBudget: resolveTraceBudget(tst.option),
 		forceSlow:   projectionRequiresSlowPath(chain.projection),
 	}
+}
+
+func (tst *tsTable) mergeNow() time.Time {
+	if logicalNow := tst.mergeNowOverride.Load(); logicalNow != 0 {
+		return time.Unix(0, logicalNow)
+	}
+	return time.Now()
+}
+
+func (tst *tsTable) setMergeNow(now time.Time) {
+	tst.mergeNowOverride.Store(now.UnixNano())
 }
 
 func (tst *tsTable) effectiveMergeGraceNs() int64 {

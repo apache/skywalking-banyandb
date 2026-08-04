@@ -64,6 +64,7 @@ type tsTable struct {
 	// finalize worker (an external goroutine) can introduce its force-merged part
 	// through the same serialized introducer loop the hot merges use.
 	mergeCh          chan *mergerIntroduction
+	mergeControl     *mergeLoopControl
 	p                common.Position
 	segmentTimeRange timestamp.TimeRange
 	group            string
@@ -72,6 +73,7 @@ type tsTable struct {
 	option           option
 	curPartID        uint64
 	pendingDataCount atomic.Int64
+	mergeNowOverride atomic.Int64
 	// finalizeGenCached mirrors the shard's persisted finalizeState.FinalizeGeneration.
 	// Seeded at open, bumped by each finalize round. Read O(1) on the hot introduction
 	// path to decide whether a newly-flushed part is new unsampled data.
@@ -137,6 +139,7 @@ func (tst *tsTable) loadSnapshot(epoch uint64, loadedParts []uint64) error {
 
 func (tst *tsTable) startLoop(cur uint64) {
 	tst.loopCloser = run.NewCloser(1 + 3)
+	tst.mergeControl = newMergeLoopControl()
 	tst.introductions = make(chan *introduction)
 	flushCh := make(chan *flusherIntroduction)
 	mergeCh := make(chan *mergerIntroduction)
@@ -533,6 +536,7 @@ func (tst *tsTable) Close() error {
 }
 
 func (tst *tsTable) mustAddFilePart(partID uint64, sidxFilePartsMap map[string]string) {
+	tst.observePartID(partID)
 	p := mustOpenFilePart(partID, tst.root, tst.fileSystem)
 	p.partMetadata.ID = partID
 
@@ -549,6 +553,18 @@ func (tst *tsTable) mustAddFilePart(partID uint64, sidxFilePartsMap map[string]s
 		return
 	}
 	<-ind.applied
+}
+
+func (tst *tsTable) observePartID(partID uint64) {
+	for {
+		currentPartID := atomic.LoadUint64(&tst.curPartID)
+		if currentPartID >= partID {
+			return
+		}
+		if atomic.CompareAndSwapUint64(&tst.curPartID, currentPartID, partID) {
+			return
+		}
+	}
 }
 
 func (tst *tsTable) mustAddMemPart(mp *memPart, sidxReqsMap map[string]*sidx.MemPart) {

@@ -30,6 +30,12 @@ The database research community usually uses [RUM Conjecture](http://daslab.seas
 - [Dev version doc](https://skywalking.apache.org/docs/skywalking-banyandb/next/readme/)
 - [Latest release doc](https://skywalking.apache.org/docs/skywalking-banyandb/latest/readme/)
 
+## Developer tooling
+
+The `dump trace-source-catalog` subcommand validates the frozen downloaded trace benchmark shard and writes its deterministic
+core and secondary-index ledgers. It requires `--source-path` and a new, outside-source `--output-path`; see the
+[trace pipeline merge performance design](docs/design/trace-pipeline-merge-performance-test.md) for the source contract.
+
 
 ## Contributing
 
