@@ -33,10 +33,14 @@ const bydbqlTopKSize = 128
 // topKSlot is one tracked query and its accumulated statistics. lastSeen drives TTL
 // expiry; maxDurAt pins when the peak latency happened, so a consumer can tell a live
 // problem from a peak the tracker has merely been carrying since a startup incident.
+// params holds the already-redacted parameter sample of the MOST RECENT occurrence — the
+// current shape of a recurring problem is what an operator acts on, and keeping only the
+// latest costs one field instead of an unbounded history.
 type topKSlot struct {
 	lastSeen time.Time
 	maxDurAt time.Time
 	key      string
+	params   string
 	count    uint64
 	maxDur   time.Duration
 }
@@ -73,14 +77,18 @@ func newTopK(k int, ttl time.Duration, now func() time.Time) *topK {
 }
 
 // observe records one occurrence of key; dur is the query latency (0 when latency is
-// not tracked, e.g. the cache-miss queue). maxDur keeps the largest latency seen.
-func (t *topK) observe(key string, dur time.Duration) {
+// not tracked, e.g. the cache-miss queue). maxDur keeps the largest latency seen, while
+// params is overwritten every time, so the slot always reports the parameters of the
+// latest occurrence rather than those of the peak. Pass "" when the caller tracks no
+// parameters.
+func (t *topK) observe(key string, dur time.Duration, params string) {
 	t.mu.Lock()
 	defer t.mu.Unlock()
 	now := t.now()
 	if s, ok := t.slots[key]; ok {
 		s.count++
 		s.lastSeen = now
+		s.params = params
 		if dur > s.maxDur {
 			s.maxDur, s.maxDurAt = dur, now
 		}
@@ -92,7 +100,7 @@ func (t *topK) observe(key string, dur time.Duration) {
 		t.purgeExpiredLocked(now)
 	}
 	if len(t.slots) < t.k {
-		t.slots[key] = &topKSlot{key: key, count: 1, maxDur: dur, lastSeen: now, maxDurAt: now}
+		t.slots[key] = &topKSlot{key: key, params: params, count: 1, maxDur: dur, lastSeen: now, maxDurAt: now}
 		return
 	}
 	// Full: evict the least-frequent entry and let the new key inherit its count.
@@ -104,7 +112,7 @@ func (t *topK) observe(key string, dur time.Duration) {
 		}
 	}
 	delete(t.slots, minKey)
-	t.slots[key] = &topKSlot{key: key, count: minCount + 1, maxDur: dur, lastSeen: now, maxDurAt: now}
+	t.slots[key] = &topKSlot{key: key, params: params, count: minCount + 1, maxDur: dur, lastSeen: now, maxDurAt: now}
 }
 
 // purgeExpiredLocked drops every entry not observed within ttl. Call with the lock held.
