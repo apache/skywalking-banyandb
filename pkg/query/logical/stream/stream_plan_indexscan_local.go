@@ -59,6 +59,14 @@ type localIndexScan struct {
 	projectionTags    []model.TagProjection
 	entities          [][]*modelv1.TagValue
 	maxElementSize    int
+	// deferLimitToEgress is set when this scan is wrapped by a tagFilterPlan (a
+	// criteria query). A non-indexed tag filter is applied AFTER the scan at egress,
+	// so a maxElementSize cap inside the vec merge would truncate the ordered set
+	// BEFORE the filter runs and starve it (row-path divergence: the row scan streams
+	// the whole ordered set in chunks and the filter/limit loops pull as many batches
+	// as needed). When set, ExecuteVectorized runs the merge UNCAPPED and the egress
+	// applies filter → then the client offset:offset+limit slice.
+	deferLimitToEgress bool
 }
 
 func (i *localIndexScan) Close() {

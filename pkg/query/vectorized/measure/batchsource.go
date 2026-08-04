@@ -191,8 +191,10 @@ func (s *BatchSourceFromBatchResult) copyRowsInto(out *vectorized.RecordBatch,
 			}
 			fieldIdx++
 		case vectorized.RoleTimestamp, vectorized.RoleVersion,
-			vectorized.RoleSeriesID, vectorized.RoleShardID:
-			// Metadata roles handled above via parallel slices.
+			vectorized.RoleSeriesID, vectorized.RoleShardID,
+			vectorized.RoleElementID, vectorized.RoleOrderKey:
+			// Metadata roles handled above via parallel slices. ElementID/OrderKey
+			// are stream-only roles that never appear in a measure schema.
 		}
 	}
 	return nil

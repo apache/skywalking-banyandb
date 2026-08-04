@@ -36,6 +36,10 @@ import (
 	"github.com/apache/skywalking-banyandb/pkg/query"
 	"github.com/apache/skywalking-banyandb/pkg/query/executor"
 	"github.com/apache/skywalking-banyandb/pkg/query/logical"
+	"github.com/apache/skywalking-banyandb/pkg/query/model"
+	"github.com/apache/skywalking-banyandb/pkg/query/vectorized"
+	vstream "github.com/apache/skywalking-banyandb/pkg/query/vectorized/stream"
+	streamframe "github.com/apache/skywalking-banyandb/pkg/query/vectorized/stream/frame"
 )
 
 const defaultQueryTimeout = 5 * time.Second
@@ -168,13 +172,14 @@ func (t *distributedPlan) Execute(ctx context.Context) (ee []*streamv1.Element, 
 			if d == nil {
 				continue
 			}
-			resp := d.(*streamv1.QueryResponse)
-			responseCount++
-			if span != nil {
-				span.AddSubTrace(resp.Trace)
+			elements, decodeErr := t.decodeNodeElements(d, span)
+			if decodeErr != nil {
+				allErr = multierr.Append(allErr, decodeErr)
+				continue
 			}
+			responseCount++
 			see = append(see,
-				newSortableElements(resp.Elements, t.sortByTime, t.sortTagSpec))
+				newSortableElements(elements, t.sortByTime, t.sortTagSpec))
 		}
 	}
 	iter := sort.NewItemIter(see, t.desc)
@@ -193,6 +198,62 @@ func (t *distributedPlan) Execute(ctx context.Context) (ee []*streamv1.Element, 
 	}
 
 	return result, allErr
+}
+
+// decodeNodeElements converts a single node response into []*streamv1.Element,
+// accepting either the proto *streamv1.QueryResponse (flag-off / tracing / a data
+// node that has not rolled onto the vec path) or the native columnar frame
+// ([]byte, only when the raw wire mode is on). Both feed the SAME
+// sortableElements/comparableElement k-way merge + seen-dedup + distributedLimit
+// downstream, so mixed proto/frame bodies in one broadcast (rolling deploy) merge
+// correctly.
+func (t *distributedPlan) decodeNodeElements(d any, span *query.Span) ([]*streamv1.Element, error) {
+	switch payload := d.(type) {
+	case *streamv1.QueryResponse:
+		if span != nil {
+			span.AddSubTrace(payload.Trace)
+		}
+		return payload.Elements, nil
+	case []byte:
+		if !data.StreamWireModeRaw() {
+			return nil, fmt.Errorf("unexpected raw stream frame body while wire mode is off")
+		}
+		batch, decodeErr := streamframe.Decode(payload)
+		if decodeErr != nil {
+			return nil, fmt.Errorf("decode stream result frame: %w", decodeErr)
+		}
+		elements, buildErr := vstream.BuildElementsFromBatch(batch, projectionFromBatchSchema(batch))
+		if buildErr != nil {
+			return nil, fmt.Errorf("build elements from stream frame: %w", buildErr)
+		}
+		return elements, nil
+	default:
+		return nil, fmt.Errorf("unexpected stream query response type %T", d)
+	}
+}
+
+// projectionFromBatchSchema reconstructs the tag projection (family → names, in
+// column order) from a decoded batch's tag columns, so the frame egress names the
+// same tag families/tags the data node encoded.
+func projectionFromBatchSchema(batch *vectorized.RecordBatch) []model.TagProjection {
+	if batch == nil || batch.Schema == nil {
+		return nil
+	}
+	var projections []model.TagProjection
+	familyIdx := make(map[string]int)
+	for _, def := range batch.Schema.Columns {
+		if def.Role != vectorized.RoleTag {
+			continue
+		}
+		idx, ok := familyIdx[def.TagFamily]
+		if !ok {
+			idx = len(projections)
+			familyIdx[def.TagFamily] = idx
+			projections = append(projections, model.TagProjection{Family: def.TagFamily})
+		}
+		projections[idx].Names = append(projections[idx].Names, def.Name)
+	}
+	return projections
 }
 
 func (t *distributedPlan) String() string {

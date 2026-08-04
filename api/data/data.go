@@ -181,9 +181,12 @@ var (
 	// mode selection, G9f spec G9f.0).
 	// nolint: exhaustruct
 	TopicResponseMap = map[bus.Topic]ResponseCodec{
-		TopicStreamQuery: NewProtoCodec(func() proto.Message {
-			return &streamv1.QueryResponse{}
-		}),
+		TopicStreamQuery: &streamQueryResponseCodec{
+			proto: NewProtoCodec(func() proto.Message {
+				return &streamv1.QueryResponse{}
+			}),
+			raw: NewRawFrameCodec(),
+		},
 		TopicMeasureQuery: NewProtoCodec(func() proto.Message {
 			return &measurev1.QueryResponse{}
 		}),

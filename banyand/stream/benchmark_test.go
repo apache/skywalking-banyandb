@@ -35,6 +35,7 @@ import (
 	databasev1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/database/v1"
 	modelv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/model/v1"
 	"github.com/apache/skywalking-banyandb/banyand/internal/storage"
+	"github.com/apache/skywalking-banyandb/banyand/protector"
 	"github.com/apache/skywalking-banyandb/pkg/convert"
 	"github.com/apache/skywalking-banyandb/pkg/index"
 	"github.com/apache/skywalking-banyandb/pkg/index/posting"
@@ -51,6 +52,7 @@ const (
 	version                 = "1.0.0"
 	entityTagValuePrefix    = "entity"
 	filterTagValuePrefix    = "value"
+	testGroupName           = "test"
 )
 
 type parameter struct {
@@ -169,7 +171,7 @@ func generateData(p parameter) ([]*elements, []index.Documents, mockIndex) {
 	return esList, docsList, idx
 }
 
-func openDatabase(b *testing.B, path string) storage.TSDB[*tsTable, option] {
+func openDatabase(b testing.TB, path string) storage.TSDB[*tsTable, option] {
 	ir := storage.IntervalRule{
 		Unit: storage.DAY,
 		Num:  1,
@@ -180,9 +182,13 @@ func openDatabase(b *testing.B, path string) storage.TSDB[*tsTable, option] {
 		TSTableCreator:  newTSTable,
 		SegmentInterval: ir,
 		TTL:             ir,
+		Option: option{
+			mergePolicy: newDefaultMergePolicyForTesting(),
+			protector:   protector.Nop{},
+		},
 	}
 
-	group := "test"
+	group := testGroupName
 	db, err := storage.OpenTSDB(
 		common.SetPosition(context.Background(), func(p common.Position) common.Position {
 			p.Module = "stream"
@@ -195,7 +201,7 @@ func openDatabase(b *testing.B, path string) storage.TSDB[*tsTable, option] {
 	return db
 }
 
-func write(b *testing.B, p parameter, esList []*elements, docsList []index.Documents) storage.TSDB[*tsTable, option] {
+func write(b testing.TB, p parameter, esList []*elements, docsList []index.Documents) storage.TSDB[*tsTable, option] {
 	// Initialize a tstIter object.
 	tmpPath, defFn := test.Space(require.New(b))
 	defer defFn()

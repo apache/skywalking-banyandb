@@ -43,6 +43,7 @@ import (
 	"github.com/apache/skywalking-banyandb/pkg/logger"
 	"github.com/apache/skywalking-banyandb/pkg/node"
 	banyandbpath "github.com/apache/skywalking-banyandb/pkg/path"
+	vstream "github.com/apache/skywalking-banyandb/pkg/query/vectorized/stream"
 	"github.com/apache/skywalking-banyandb/pkg/run"
 	resourceSchema "github.com/apache/skywalking-banyandb/pkg/schema"
 	"github.com/apache/skywalking-banyandb/pkg/timestamp"
@@ -83,6 +84,11 @@ func (s *liaison) DropGroup(_ context.Context, groupName string) error {
 
 func (s *liaison) GetRemovalSegmentsTimeRange(group string) *timestamp.TimeRange {
 	return s.schemaRepo.GetRemovalSegmentsTimeRange(group)
+}
+
+// VectorizedConfig returns the stream vectorized query configuration.
+func (s *liaison) VectorizedConfig() vstream.VectorizedConfig {
+	return s.option.vectorized
 }
 
 func (s *liaison) CollectDataInfo(_ context.Context, _ string, _ bool) (*databasev1.DataInfo, error) {
@@ -133,6 +139,7 @@ func (s *liaison) FlagSet() *run.FlagSet {
 		"percentage of BanyanDB's allowed disk usage allocated to failed parts storage. "+
 			"Calculated as: totalDisk * stream-max-disk-usage-percent * failed-parts-max-size-percent / 10000. "+
 			"Set to 0 to disable copying failed parts. Valid range: 0-100")
+	bindVectorizedFlags(flagS, &s.option.vectorized)
 	return flagS
 }
 
@@ -149,7 +156,7 @@ func (s *liaison) Validate() error {
 	if s.failedPartsMaxSizePercent < 0 || s.failedPartsMaxSizePercent > 100 {
 		return errors.New("failed-parts-max-size-percent must be between 0 and 100")
 	}
-	return nil
+	return s.option.vectorized.Validate()
 }
 
 func (s *liaison) Name() string {
@@ -162,6 +169,8 @@ func (s *liaison) Role() databasev1.Role {
 
 func (s *liaison) PreRun(ctx context.Context) error {
 	s.l = logger.GetLogger(s.Name())
+	data.SetStreamWireModeRaw(s.option.vectorized.Enabled)
+	s.l.Info().Bool("stream_wire_mode_raw", s.option.vectorized.Enabled).Msg("stream wire mode published (liaison)")
 	s.l.Info().Msg("memory protector is initialized in PreRun")
 	s.lfs = fs.NewLocalFileSystemWithLoggerAndLimit(s.l, s.pm.GetLimit())
 	var err error

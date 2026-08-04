@@ -126,7 +126,8 @@ func (bc *blockCursor) copyAllToBatch(b *model.MeasureBatch, schema *vectorized.
 			fieldIdx++
 			bc.fillFieldColumnAllRows(col, def, idx, offset, desc)
 		case vectorized.RoleTimestamp, vectorized.RoleVersion,
-			vectorized.RoleSeriesID, vectorized.RoleShardID:
+			vectorized.RoleSeriesID, vectorized.RoleShardID,
+			vectorized.RoleElementID, vectorized.RoleOrderKey:
 			// Metadata handled above.
 		}
 	}
@@ -263,7 +264,8 @@ func (bc *blockCursor) copyToBatch(b *model.MeasureBatch, schema *vectorized.Bat
 			fieldIdx++
 			bc.fillFieldCell(col, def, bc.idx)
 		case vectorized.RoleTimestamp, vectorized.RoleVersion,
-			vectorized.RoleSeriesID, vectorized.RoleShardID:
+			vectorized.RoleSeriesID, vectorized.RoleShardID,
+			vectorized.RoleElementID, vectorized.RoleOrderKey:
 			// Metadata handled via the parallel slices above.
 		}
 	}
@@ -336,7 +338,8 @@ func (bc *blockCursor) replaceInBatch(b *model.MeasureBatch, schema *vectorized.
 			fieldIdx++
 			bc.setFieldCellAt(col, def, bc.idx, lastRow)
 		case vectorized.RoleTimestamp, vectorized.RoleVersion,
-			vectorized.RoleSeriesID, vectorized.RoleShardID:
+			vectorized.RoleSeriesID, vectorized.RoleShardID,
+			vectorized.RoleElementID, vectorized.RoleOrderKey:
 			// Metadata handled above.
 		}
 	}

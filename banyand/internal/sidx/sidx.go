@@ -1000,7 +1000,10 @@ func releaseBlockCursor(bc *blockCursor) {
 	bc.p = nil
 	bc.bm = nil
 	bc.userKeys = bc.userKeys[:0]
-	bc.data = bc.data[:0]
+	// Nil the data slice rather than zero-slicing so that sub-slices into
+	// the BytesBlockDecoder backing array (allocated in loadBlockData) become
+	// unreachable and can be reclaimed by GC when the cursor is pooled.
+	bc.data = nil
 	bc.tags = nil
 	bc.seriesID = 0
 	bc.idx = 0

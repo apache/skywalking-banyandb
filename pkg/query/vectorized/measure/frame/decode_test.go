@@ -19,6 +19,7 @@ package frame
 
 import (
 	"bytes"
+	"encoding/binary"
 	"errors"
 	"math"
 	"testing"
@@ -281,6 +282,22 @@ func TestDecode_RoundTrip_MixedColumns(t *testing.T) {
 	}
 	if got := out.Columns[3].(*vectorized.TypedColumn[float64]).Data(); got[0] != 3 || got[1] != 5 {
 		t.Fatalf("count = %v, want [3 5]", got)
+	}
+}
+
+// TestDecode_NumRowsExceedsBody guards the adversarial-header path: a near-2^64
+// NumRows must be rejected at ValidateHeader before the column decoder, where
+// (NumRows+7)/8 would overflow and make([]bool, NumRows) would OOM-panic. The
+// test completing without a panic is itself the assertion.
+func TestDecode_NumRowsExceedsBody(t *testing.T) {
+	var b []byte
+	b = append(b, Magic[:]...)
+	b = append(b, WireVersion)
+	b = binary.AppendUvarint(b, math.MaxUint64) // NumRows
+	b = binary.AppendUvarint(b, 1)              // NumCols=1
+	b = append(b, 0x01, 0x01)                   // partial column bytes; never reached
+	if _, err := Decode(b); !errors.Is(err, ErrTruncated) {
+		t.Fatalf("got %v, want ErrTruncated for NumRows exceeding body", err)
 	}
 }
 
