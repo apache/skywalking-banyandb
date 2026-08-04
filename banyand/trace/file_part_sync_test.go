@@ -37,6 +37,31 @@ import (
 	"github.com/apache/skywalking-banyandb/pkg/timestamp"
 )
 
+type writeOrderFileSystem struct {
+	fs.FileSystem
+	atomicWrites []string
+}
+
+func (wofs *writeOrderFileSystem) WriteAtomic(buffer []byte, name string, permission fs.Mode) (int, error) {
+	wofs.atomicWrites = append(wofs.atomicWrites, filepath.Base(name))
+	return wofs.FileSystem.WriteAtomic(buffer, name, permission)
+}
+
+func TestMemPartFlushPublishesMetadataLast(t *testing.T) {
+	tmpPath, deferFn := test.Space(require.New(t))
+	defer deferFn()
+	fileSystem := &writeOrderFileSystem{FileSystem: fs.NewLocalFileSystem()}
+
+	mp := generateMemPart()
+	defer releaseMemPart(mp)
+	mp.mustInitFromTraces(ts)
+	mp.mustFlush(fileSystem, partPath(tmpPath, 1))
+
+	require.NotEmpty(t, fileSystem.atomicWrites)
+	require.Equal(t, metadataFilename, fileSystem.atomicWrites[len(fileSystem.atomicWrites)-1],
+		"metadata.json must be the final atomic write that publishes a complete part")
+}
+
 func TestMustAddFilePart_FilesOnDisk(t *testing.T) {
 	require.NoError(t, logger.Init(logger.Logging{Env: "dev", Level: flags.LogLevel}))
 
