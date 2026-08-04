@@ -53,8 +53,8 @@ type Repo interface {
 	RegisterHandler(string, schema.Kind, schema.EventHandler)
 	NodeRegistry() schema.Node
 	PropertyRegistry() schema.Property
-	CollectDataInfo(context.Context, string) ([]*databasev1.DataInfo, []string, error)
-	CollectLiaisonInfo(context.Context, string) ([]*databasev1.LiaisonInfo, error)
+	CollectDataInfo(ctx context.Context, group string, includeSchemaState bool) ([]*databasev1.DataInfo, []string, error)
+	CollectLiaisonInfo(ctx context.Context, group string, includeSchemaState bool) ([]*databasev1.LiaisonInfo, error)
 	DropGroup(ctx context.Context, catalog commonv1.Catalog, group string) error
 }
 

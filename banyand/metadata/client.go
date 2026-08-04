@@ -514,12 +514,12 @@ func (s *clientService) Subjects(ctx context.Context, indexRule *databasev1.Inde
 	return foundSubjects, subjectErr
 }
 
-func (s *clientService) CollectDataInfo(ctx context.Context, group string) ([]*databasev1.DataInfo, []string, error) {
-	return s.infoCollectorRegistry.CollectDataInfo(ctx, group)
+func (s *clientService) CollectDataInfo(ctx context.Context, group string, includeSchemaState bool) ([]*databasev1.DataInfo, []string, error) {
+	return s.infoCollectorRegistry.CollectDataInfo(ctx, group, includeSchemaState)
 }
 
-func (s *clientService) CollectLiaisonInfo(ctx context.Context, group string) ([]*databasev1.LiaisonInfo, error) {
-	return s.infoCollectorRegistry.CollectLiaisonInfo(ctx, group)
+func (s *clientService) CollectLiaisonInfo(ctx context.Context, group string, includeSchemaState bool) ([]*databasev1.LiaisonInfo, error) {
+	return s.infoCollectorRegistry.CollectLiaisonInfo(ctx, group, includeSchemaState)
 }
 
 func (s *clientService) DropGroup(ctx context.Context, catalog commonv1.Catalog, group string) error {

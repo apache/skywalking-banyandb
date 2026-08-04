@@ -587,17 +587,24 @@ func (s *standaloneDeleteTraceSegmentsListener) Rev(_ context.Context, message b
 	return bus.NewMessage(bus.MessageID(time.Now().UnixNano()), deleted)
 }
 
-func (s *standalone) CollectDataInfo(ctx context.Context, group string) (*databasev1.DataInfo, error) {
-	return s.schemaRepo.CollectDataInfo(ctx, group)
+func (s *standalone) CollectDataInfo(ctx context.Context, group string, includeSchemaState bool) (*databasev1.DataInfo, error) {
+	return s.schemaRepo.CollectDataInfo(ctx, group, includeSchemaState)
 }
 
-func (s *standalone) CollectLiaisonInfo(_ context.Context, group string) (*databasev1.LiaisonInfo, error) {
+func (s *standalone) CollectLiaisonInfo(_ context.Context, group string, includeSchemaState bool) (*databasev1.LiaisonInfo, error) {
 	info := &databasev1.LiaisonInfo{}
 	pendingWriteCount, writeErr := s.schemaRepo.collectPendingWriteInfo(group)
 	if writeErr != nil {
 		return nil, fmt.Errorf("failed to collect pending write info: %w", writeErr)
 	}
 	info.PendingWriteDataCount = pendingWriteCount
+	if includeSchemaState {
+		objects, err := s.schemaRepo.collectSchemaState(group)
+		if err != nil {
+			return nil, fmt.Errorf("failed to collect schema state: %w", err)
+		}
+		info.SchemaObjects = objects
+	}
 	return info, nil
 }
 
@@ -611,7 +618,7 @@ func (l *collectDataInfoListener) Rev(ctx context.Context, message bus.Message) 
 	if !ok {
 		return bus.NewMessage(message.ID(), common.NewError("invalid data type for collect data info request"))
 	}
-	dataInfo, collectErr := l.s.schemaRepo.CollectDataInfo(ctx, req.Group)
+	dataInfo, collectErr := l.s.schemaRepo.CollectDataInfo(ctx, req.Group, req.GetIncludeSchemaState())
 	if collectErr != nil {
 		return bus.NewMessage(message.ID(), common.NewError("failed to collect data info: %v", collectErr))
 	}

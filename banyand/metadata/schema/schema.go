@@ -48,14 +48,18 @@ type EventHandler interface {
 	OnDelete(Metadata)
 }
 
-// DataInfoCollector provides methods to collect data node info.
+// DataInfoCollector provides methods to collect data node info. When
+// includeSchemaState is set the returned DataInfo also carries this node's
+// schema consistency evidence.
 type DataInfoCollector interface {
-	CollectDataInfo(ctx context.Context, group string) (*databasev1.DataInfo, error)
+	CollectDataInfo(ctx context.Context, group string, includeSchemaState bool) (*databasev1.DataInfo, error)
 }
 
-// LiaisonInfoCollector provides methods to collect liaison node info.
+// LiaisonInfoCollector provides methods to collect liaison node info. When
+// includeSchemaState is set the returned LiaisonInfo also carries this node's
+// schema consistency evidence.
 type LiaisonInfoCollector interface {
-	CollectLiaisonInfo(ctx context.Context, group string) (*databasev1.LiaisonInfo, error)
+	CollectLiaisonInfo(ctx context.Context, group string, includeSchemaState bool) (*databasev1.LiaisonInfo, error)
 }
 
 // UnimplementedOnInitHandler is a placeholder for unimplemented OnInitHandler.

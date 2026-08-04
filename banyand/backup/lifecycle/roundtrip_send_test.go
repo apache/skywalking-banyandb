@@ -186,7 +186,7 @@ func TestRoundtrip_MeasureSend(t *testing.T) {
 	originals := writeRoundtripE2EPoints(t, pipeline)
 
 	require.Eventually(t, func() bool {
-		info, ciErr := measureService.CollectDataInfo(ctx, roundtripE2EGroup)
+		info, ciErr := measureService.CollectDataInfo(ctx, roundtripE2EGroup, false)
 		if ciErr != nil || info == nil {
 			return false
 		}

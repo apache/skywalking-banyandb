@@ -137,6 +137,7 @@ spec:
             - --prometheus-listen-addr=:9090
             - --heartbeat-interval=5s
             - --pod-name=$(POD_NAME)
+            - --lifecycle-port=17912
           env:
             - name: POD_NAME
               valueFrom:
@@ -219,6 +220,7 @@ spec:
             - --prometheus-listen-addr=:9090
             - --heartbeat-interval=5s
             - --pod-name=$(POD_NAME)
+            - --lifecycle-port=18912
           env:
             - name: POD_NAME
               valueFrom:

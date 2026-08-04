@@ -57,8 +57,8 @@ type Service interface {
 	run.Config
 	run.Service
 	Query
-	CollectDataInfo(context.Context, string) (*databasev1.DataInfo, error)
-	CollectLiaisonInfo(context.Context, string) (*databasev1.LiaisonInfo, error)
+	CollectDataInfo(context.Context, string, bool) (*databasev1.DataInfo, error)
+	CollectLiaisonInfo(context.Context, string, bool) (*databasev1.LiaisonInfo, error)
 }
 
 var _ Service = (*standalone)(nil)
@@ -390,11 +390,11 @@ func NewStandalone(metadata metadata.Repo, pipeline queue.Server, metricPipeline
 	}, nil
 }
 
-func (s *standalone) CollectDataInfo(ctx context.Context, group string) (*databasev1.DataInfo, error) {
-	return s.schemaRepo.CollectDataInfo(ctx, group)
+func (s *standalone) CollectDataInfo(ctx context.Context, group string, includeSchemaState bool) (*databasev1.DataInfo, error) {
+	return s.schemaRepo.CollectDataInfo(ctx, group, includeSchemaState)
 }
 
-func (s *standalone) CollectLiaisonInfo(_ context.Context, group string) (*databasev1.LiaisonInfo, error) {
+func (s *standalone) CollectLiaisonInfo(_ context.Context, group string, includeSchemaState bool) (*databasev1.LiaisonInfo, error) {
 	info := &databasev1.LiaisonInfo{}
 	pendingWriteCount, writeErr := s.schemaRepo.collectPendingWriteInfo(group)
 	if writeErr != nil {
@@ -407,5 +407,12 @@ func (s *standalone) CollectLiaisonInfo(_ context.Context, group string) (*datab
 	}
 	info.PendingSyncPartCount = pendingSyncPartCount
 	info.PendingSyncDataSizeBytes = pendingSyncDataSizeBytes
+	if includeSchemaState {
+		objects, err := s.schemaRepo.collectSchemaState(group)
+		if err != nil {
+			return nil, fmt.Errorf("failed to collect schema state: %w", err)
+		}
+		info.SchemaObjects = objects
+	}
 	return info, nil
 }

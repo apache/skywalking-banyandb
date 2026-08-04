@@ -770,7 +770,7 @@ func (rs *groupRegistryServer) Inspect(ctx context.Context, req *databasev1.Grou
 		rs.metrics.totalRegistryErr.Inc(1, g, "group", "inspect")
 		return nil, schemaErr
 	}
-	dataInfo, collectionErrs, dataErr := rs.schemaRegistry.CollectDataInfo(ctx, g)
+	dataInfo, collectionErrs, dataErr := rs.schemaRegistry.CollectDataInfo(ctx, g, req.GetIncludeSchemaState())
 	if dataErr != nil {
 		rs.metrics.totalRegistryErr.Inc(1, g, "group", "inspect")
 		return nil, dataErr
@@ -780,7 +780,7 @@ func (rs *groupRegistryServer) Inspect(ctx context.Context, req *databasev1.Grou
 		return nil, fmt.Errorf("incomplete data info for group %s: %s",
 			g, strings.Join(collectionErrs, "; "))
 	}
-	liaisonInfo, liaisonErr := rs.schemaRegistry.CollectLiaisonInfo(ctx, g)
+	liaisonInfo, liaisonErr := rs.schemaRegistry.CollectLiaisonInfo(ctx, g, req.GetIncludeSchemaState())
 	if liaisonErr != nil {
 		rs.metrics.totalRegistryErr.Inc(1, g, "group", "inspect")
 		return nil, liaisonErr

@@ -85,12 +85,13 @@ func (s *liaison) GetRemovalSegmentsTimeRange(group string) *timestamp.TimeRange
 	return s.schemaRepo.GetRemovalSegmentsTimeRange(group)
 }
 
-func (s *liaison) CollectDataInfo(_ context.Context, _ string) (*databasev1.DataInfo, error) {
+func (s *liaison) CollectDataInfo(_ context.Context, _ string, _ bool) (*databasev1.DataInfo, error) {
 	return nil, errors.New("collect data info is not supported on liaison node")
 }
 
-// CollectLiaisonInfo collects liaison node info.
-func (s *liaison) CollectLiaisonInfo(_ context.Context, group string) (*databasev1.LiaisonInfo, error) {
+// CollectLiaisonInfo collects liaison node info. When includeSchemaState is set it
+// also attaches this node's schema consistency evidence.
+func (s *liaison) CollectLiaisonInfo(_ context.Context, group string, includeSchemaState bool) (*databasev1.LiaisonInfo, error) {
 	info := &databasev1.LiaisonInfo{
 		PendingWriteDataCount:       0,
 		PendingSyncPartCount:        0,
@@ -109,6 +110,13 @@ func (s *liaison) CollectLiaisonInfo(_ context.Context, group string) (*database
 	}
 	info.PendingSyncPartCount = pendingSyncPartCount
 	info.PendingSyncDataSizeBytes = pendingSyncDataSizeBytes
+	if includeSchemaState {
+		objects, err := s.schemaRepo.collectSchemaState(group)
+		if err != nil {
+			return nil, fmt.Errorf("failed to collect schema state: %w", err)
+		}
+		info.SchemaObjects = objects
+	}
 	return info, nil
 }
 
@@ -251,9 +259,14 @@ func (l *collectLiaisonInfoListener) Rev(ctx context.Context, message bus.Messag
 	if !ok {
 		return bus.NewMessage(message.ID(), common.NewError("invalid data type for collect liaison info request"))
 	}
-	liaisonInfo, collectErr := l.s.CollectLiaisonInfo(ctx, req.Group)
+	liaisonInfo, collectErr := l.s.CollectLiaisonInfo(ctx, req.Group, req.GetIncludeSchemaState())
 	if collectErr != nil {
 		return bus.NewMessage(message.ID(), common.NewError("failed to collect liaison info: %v", collectErr))
+	}
+	if liaisonInfo != nil {
+		if node, nodeErr := l.s.schemaRepo.metadata.NodeRegistry().GetNode(ctx, l.s.schemaRepo.nodeID); nodeErr == nil {
+			liaisonInfo.Node = node
+		}
 	}
 	return bus.NewMessage(message.ID(), liaisonInfo)
 }

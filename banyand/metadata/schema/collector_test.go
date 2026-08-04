@@ -27,6 +27,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	commonv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/common/v1"
+	databasev1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/database/v1"
 	"github.com/apache/skywalking-banyandb/banyand/metadata/schema"
 	"github.com/apache/skywalking-banyandb/pkg/bus"
 	"github.com/apache/skywalking-banyandb/pkg/logger"
@@ -66,7 +67,7 @@ func TestCollectDataInfo_PropertyCatalogShortCircuits(t *testing.T) {
 	})
 	registry.SetDataBroadcaster(&failingBroadcaster{t: t})
 
-	dataInfo, collectionErrs, err := registry.CollectDataInfo(context.Background(), "sw_property")
+	dataInfo, collectionErrs, err := registry.CollectDataInfo(context.Background(), "sw_property", false)
 	require.NoError(t, err)
 	assert.Empty(t, dataInfo)
 	assert.Empty(t, collectionErrs)
@@ -81,7 +82,7 @@ func TestCollectLiaisonInfo_PropertyCatalogShortCircuits(t *testing.T) {
 	})
 	registry.SetLiaisonBroadcaster(&failingBroadcaster{t: t})
 
-	liaisonInfo, err := registry.CollectLiaisonInfo(context.Background(), "_deletion_task")
+	liaisonInfo, err := registry.CollectLiaisonInfo(context.Background(), "_deletion_task", false)
 	require.NoError(t, err)
 	assert.Empty(t, liaisonInfo)
 }
@@ -95,7 +96,7 @@ func TestCollectDataInfo_UnspecifiedCatalogStillReturnsError(t *testing.T) {
 	})
 	registry.SetDataBroadcaster(&failingBroadcaster{t: t})
 
-	dataInfo, collectionErrs, err := registry.CollectDataInfo(context.Background(), "weird_group")
+	dataInfo, collectionErrs, err := registry.CollectDataInfo(context.Background(), "weird_group", false)
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "unsupported catalog type")
 	assert.Nil(t, dataInfo)
@@ -111,8 +112,63 @@ func TestCollectLiaisonInfo_UnspecifiedCatalogStillReturnsError(t *testing.T) {
 	})
 	registry.SetLiaisonBroadcaster(&failingBroadcaster{t: t})
 
-	liaisonInfo, err := registry.CollectLiaisonInfo(context.Background(), "weird_group")
+	liaisonInfo, err := registry.CollectLiaisonInfo(context.Background(), "weird_group", false)
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "unsupported catalog type")
 	assert.Nil(t, liaisonInfo)
+}
+
+// capturingBroadcaster records the include_schema_state flag carried by the
+// inspect request and returns no futures, so the collector completes with an
+// empty result while the test inspects what was broadcast.
+type capturingBroadcaster struct {
+	includeSchemaState bool
+	called             bool
+}
+
+func (b *capturingBroadcaster) Broadcast(_ time.Duration, _ bus.Topic, message bus.Message) ([]bus.Future, error) {
+	b.called = true
+	if req, ok := message.Data().(*databasev1.GroupRegistryServiceInspectRequest); ok {
+		b.includeSchemaState = req.GetIncludeSchemaState()
+	}
+	return nil, nil
+}
+
+func measureGroupGetter() *stubGroupGetter {
+	return &stubGroupGetter{group: &commonv1.Group{
+		Metadata: &commonv1.Metadata{Name: "g"},
+		Catalog:  commonv1.Catalog_CATALOG_MEASURE,
+	}}
+}
+
+// TestCollectDataInfo_PropagatesIncludeSchemaState pins that the includeSchemaState
+// argument reaches the broadcast request unchanged, so only the FODC path (true)
+// makes nodes compute and attach schema fingerprints while inspect/delete (false)
+// do not.
+func TestCollectDataInfo_PropagatesIncludeSchemaState(t *testing.T) {
+	for _, want := range []bool{true, false} {
+		b := &capturingBroadcaster{}
+		registry := schema.NewInfoCollectorRegistry(logger.GetLogger("test"), measureGroupGetter())
+		registry.SetDataBroadcaster(b)
+
+		_, _, err := registry.CollectDataInfo(context.Background(), "g", want)
+		require.NoError(t, err)
+		require.True(t, b.called, "the broadcast must reach the data topic for a measure group")
+		assert.Equal(t, want, b.includeSchemaState)
+	}
+}
+
+// TestCollectLiaisonInfo_PropagatesIncludeSchemaState is the liaison-side twin of
+// the data-side propagation test above.
+func TestCollectLiaisonInfo_PropagatesIncludeSchemaState(t *testing.T) {
+	for _, want := range []bool{true, false} {
+		b := &capturingBroadcaster{}
+		registry := schema.NewInfoCollectorRegistry(logger.GetLogger("test"), measureGroupGetter())
+		registry.SetLiaisonBroadcaster(b)
+
+		_, err := registry.CollectLiaisonInfo(context.Background(), "g", want)
+		require.NoError(t, err)
+		require.True(t, b.called, "the broadcast must reach the liaison topic for a measure group")
+		assert.Equal(t, want, b.includeSchemaState)
+	}
 }

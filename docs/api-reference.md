@@ -265,6 +265,7 @@
     - [MeasureRegistryServiceListResponse](#banyandb-database-v1-MeasureRegistryServiceListResponse)
     - [MeasureRegistryServiceUpdateRequest](#banyandb-database-v1-MeasureRegistryServiceUpdateRequest)
     - [MeasureRegistryServiceUpdateResponse](#banyandb-database-v1-MeasureRegistryServiceUpdateResponse)
+    - [ObjectSchemaState](#banyandb-database-v1-ObjectSchemaState)
     - [PropertyRegistryServiceCreateRequest](#banyandb-database-v1-PropertyRegistryServiceCreateRequest)
     - [PropertyRegistryServiceCreateResponse](#banyandb-database-v1-PropertyRegistryServiceCreateResponse)
     - [PropertyRegistryServiceDeleteRequest](#banyandb-database-v1-PropertyRegistryServiceDeleteRequest)
@@ -354,12 +355,16 @@
     - [ListProfiles](#banyandb-fodc-v1-ListProfiles)
     - [Metric](#banyandb-fodc-v1-Metric)
     - [Metric.LabelsEntry](#banyandb-fodc-v1-Metric-LabelsEntry)
+    - [NodeFingerprint](#banyandb-fodc-v1-NodeFingerprint)
+    - [ObjectConsistency](#banyandb-fodc-v1-ObjectConsistency)
     - [PressureProfileChunk](#banyandb-fodc-v1-PressureProfileChunk)
     - [PressureProfileInfo](#banyandb-fodc-v1-PressureProfileInfo)
     - [PressureProfileRecord](#banyandb-fodc-v1-PressureProfileRecord)
     - [RegisterAgentRequest](#banyandb-fodc-v1-RegisterAgentRequest)
     - [RegisterAgentRequest.LabelsEntry](#banyandb-fodc-v1-RegisterAgentRequest-LabelsEntry)
     - [RegisterAgentResponse](#banyandb-fodc-v1-RegisterAgentResponse)
+    - [SchemaConsistency](#banyandb-fodc-v1-SchemaConsistency)
+    - [SchemaIssue](#banyandb-fodc-v1-SchemaIssue)
     - [StreamClusterTopologyRequest](#banyandb-fodc-v1-StreamClusterTopologyRequest)
     - [StreamClusterTopologyResponse](#banyandb-fodc-v1-StreamClusterTopologyResponse)
     - [StreamCrashDiagnosticsRequest](#banyandb-fodc-v1-StreamCrashDiagnosticsRequest)
@@ -372,7 +377,9 @@
     - [StreamPressureProfilesResponse](#banyandb-fodc-v1-StreamPressureProfilesResponse)
     - [Topology](#banyandb-fodc-v1-Topology)
   
+    - [ConsistencyStatus](#banyandb-fodc-v1-ConsistencyStatus)
     - [MetricType](#banyandb-fodc-v1-MetricType)
+    - [SchemaIssueType](#banyandb-fodc-v1-SchemaIssueType)
   
     - [FODCService](#banyandb-fodc-v1-FODCService)
     - [GroupLifecycleService](#banyandb-fodc-v1-GroupLifecycleService)
@@ -3350,6 +3357,7 @@ DataInfo contains data storage information for a specific node.
 | node | [Node](#banyandb-database-v1-Node) |  | node is the node that stores this data. |
 | segment_info | [SegmentInfo](#banyandb-database-v1-SegmentInfo) | repeated | segment_info contains information about each segment on this node. |
 | data_size_bytes | [int64](#int64) |  | data_size_bytes is the total size of data on this node in bytes. |
+| schema_objects | [ObjectSchemaState](#banyandb-database-v1-ObjectSchemaState) | repeated | schema_objects carries this node&#39;s per-object cache/runtime fingerprints. |
 
 
 
@@ -3610,6 +3618,7 @@ GroupRegistryServiceInspectRequest is the request for inspecting a group&#39;s d
 | Field | Type | Label | Description |
 | ----- | ---- | ----- | ----------- |
 | group | [string](#string) |  | group is the name of the group to inspect. |
+| include_schema_state | [bool](#bool) |  | include_schema_state asks each node to attach its per-object schema fingerprints (ObjectSchemaState) to the response. It is honored wherever this request is handled: the Inspect RPC passes it through, and the FODC schema consistency check sets it. It defaults to false so a caller that does not need the fingerprints (the common case, and every group delete) makes nodes skip the fingerprinting work and the extra payload. |
 
 
 
@@ -4114,6 +4123,8 @@ LiaisonInfo contains information about pending operations in liaison.
 | pending_sync_data_size_bytes | [int64](#int64) |  | pending_sync_data_size_bytes is the size of data waiting to be synchronized in bytes. |
 | pending_handoff_part_count | [int64](#int64) |  | pending_handoff_part_count is the number of parts waiting for handoff. |
 | pending_handoff_data_size_bytes | [int64](#int64) |  | pending_handoff_data_size_bytes is the size of data waiting for handoff in bytes. |
+| node | [Node](#banyandb-database-v1-Node) |  | node identifies which liaison this info came from. |
+| schema_objects | [ObjectSchemaState](#banyandb-database-v1-ObjectSchemaState) | repeated | schema_objects carries this node&#39;s per-object cache/runtime fingerprints. |
 
 
 
@@ -4297,6 +4308,26 @@ LiaisonInfo contains information about pending operations in liaison.
 | Field | Type | Label | Description |
 | ----- | ---- | ----- | ----------- |
 | mod_revision | [int64](#int64) |  |  |
+
+
+
+
+
+
+<a name="banyandb-database-v1-ObjectSchemaState"></a>
+
+### ObjectSchemaState
+ObjectSchemaState is one schema object&#39;s two on-node fingerprints. The registry
+truth is not here -- it is a global value fetched once (see the schema query
+step) and reported in SchemaConsistency.
+
+
+| Field | Type | Label | Description |
+| ----- | ---- | ----- | ----------- |
+| kind | [string](#string) |  | kind is schema.Kind.String(): &#34;group&#34;/&#34;stream&#34;/&#34;measure&#34;/&#34;trace&#34;/&#34;indexRule&#34;. |
+| name | [string](#string) |  |  |
+| cache_fingerprint | [uint64](#uint64) |  | cache_fingerprint is computed from the node&#39;s cached schema plus the rule set derived from its cached bindings. 0 means the object is not cached. |
+| runtime_fingerprint | [uint64](#uint64) |  | runtime_fingerprint is computed from the materialized object and the index rule snapshot it is actually serving. 0 means not materialized. group and indexRule have no derived structure, so this equals cache_fingerprint. |
 
 
 
@@ -5512,6 +5543,7 @@ Phase represents the current phase of the deletion task.
 | resource_opts | [banyandb.common.v1.ResourceOpts](#banyandb-common-v1-ResourceOpts) |  |  |
 | data_info | [banyandb.database.v1.DataInfo](#banyandb-database-v1-DataInfo) | repeated |  |
 | errors | [string](#string) | repeated | errors lists every failure observed while collecting data_info for this group: top-level CollectDataInfo failures (GetGroup, missing collector, dial failure -- prefixed &#34;top-level: &#34;) and per-node broadcast failures (prefixed &#34;future error: &#34;, &#34;node error: &#34;, &#34;broadcast failed: &#34;). Combined with len(data_info), consumers can tell the following four states apart: - data_info empty &amp;&amp; errors empty -&gt; no nodes reported (group inactive) - data_info empty &amp;&amp; errors non-empty -&gt; total failure - data_info non-empty &amp;&amp; errors empty -&gt; full success - data_info non-empty &amp;&amp; errors non-empty -&gt; partial failure |
+| schema_consistency | [SchemaConsistency](#banyandb-fodc-v1-SchemaConsistency) |  | schema_consistency is the verdict on whether this group&#39;s schema agrees across the registry, every node&#39;s cache, and every node&#39;s runtime. Each node&#39;s fingerprints (data and liaison) live in schema_consistency.objects. |
 
 
 
@@ -5643,6 +5675,43 @@ Proxy -&gt; Agent: stream all capture-event metadata for this request id.
 
 
 
+<a name="banyandb-fodc-v1-NodeFingerprint"></a>
+
+### NodeFingerprint
+NodeFingerprint is one node&#39;s cache/runtime fingerprints for a single object.
+Only the node id is carried; full node info lives in DataInfo/LiaisonInfo.
+
+
+| Field | Type | Label | Description |
+| ----- | ---- | ----- | ----------- |
+| node | [string](#string) |  |  |
+| cache_fingerprint | [uint64](#uint64) |  |  |
+| runtime_fingerprint | [uint64](#uint64) |  |  |
+
+
+
+
+
+
+<a name="banyandb-fodc-v1-ObjectConsistency"></a>
+
+### ObjectConsistency
+ObjectConsistency is one schema object&#39;s fingerprints across all layers: the
+registry truth plus every node that reported it.
+
+
+| Field | Type | Label | Description |
+| ----- | ---- | ----- | ----------- |
+| kind | [string](#string) |  | kind is schema.Kind.String(). |
+| name | [string](#string) |  |  |
+| registry_fingerprint | [uint64](#uint64) |  | registry_fingerprint is the registry truth; zero when the object exists only on nodes (an orphan) and not in the registry. |
+| node_fingerprints | [NodeFingerprint](#banyandb-fodc-v1-NodeFingerprint) | repeated |  |
+
+
+
+
+
+
 <a name="banyandb-fodc-v1-PressureProfileChunk"></a>
 
 ### PressureProfileChunk
@@ -5751,6 +5820,46 @@ the proxy enriches them from the registered AgentIdentity, same as crash.
 | message | [string](#string) |  |  |
 | heartbeat_interval_seconds | [int64](#int64) |  |  |
 | agent_id | [string](#string) |  |  |
+
+
+
+
+
+
+<a name="banyandb-fodc-v1-SchemaConsistency"></a>
+
+### SchemaConsistency
+SchemaConsistency is the single, self-contained schema layer: it holds the
+verdict plus every object&#39;s fingerprints across all three layers -- registry
+truth, and each node&#39;s cache and runtime -- so DataInfo/LiaisonInfo carry no
+schema of their own.
+
+
+| Field | Type | Label | Description |
+| ----- | ---- | ----- | ----------- |
+| status | [ConsistencyStatus](#banyandb-fodc-v1-ConsistencyStatus) |  |  |
+| objects | [ObjectConsistency](#banyandb-fodc-v1-ObjectConsistency) | repeated | objects lists every schema object in the group exactly once, pairing its registry-truth fingerprint with each node&#39;s cache/runtime fingerprints. |
+| issues | [SchemaIssue](#banyandb-fodc-v1-SchemaIssue) | repeated |  |
+
+
+
+
+
+
+<a name="banyandb-fodc-v1-SchemaIssue"></a>
+
+### SchemaIssue
+SchemaIssue is one object-on-one-node disagreement. Fingerprint values are not
+repeated here; look them up in SchemaConsistency.objects by kind&#43;name (the
+registry truth and that node&#39;s cache/runtime).
+
+
+| Field | Type | Label | Description |
+| ----- | ---- | ----- | ----------- |
+| kind | [string](#string) |  | kind is schema.Kind.String(). |
+| name | [string](#string) |  |  |
+| node | [string](#string) |  | node is the node id the disagreement was observed on. |
+| type | [SchemaIssueType](#banyandb-fodc-v1-SchemaIssueType) |  |  |
 
 
 
@@ -5938,6 +6047,20 @@ Proxy -&gt; Agent: either &#34;stream all your metadata&#34; or &#34;stream one 
  
 
 
+<a name="banyandb-fodc-v1-ConsistencyStatus"></a>
+
+### ConsistencyStatus
+ConsistencyStatus is the group-level rollup.
+
+| Name | Number | Description |
+| ---- | ------ | ----------- |
+| CONSISTENCY_STATUS_UNSPECIFIED | 0 |  |
+| CONSISTENCY_STATUS_CONSISTENT | 1 |  |
+| CONSISTENCY_STATUS_INCONSISTENT | 2 |  |
+| CONSISTENCY_STATUS_UNKNOWN | 3 | Collection was incomplete, or a disagreement has not yet persisted long enough to be reported. |
+
+
+
 <a name="banyandb-fodc-v1-MetricType"></a>
 
 ### MetricType
@@ -5951,6 +6074,21 @@ MetricType represents the Prometheus metric type.
 | METRIC_TYPE_HISTOGRAM | 3 |  |
 | METRIC_TYPE_SUMMARY | 4 |  |
 | METRIC_TYPE_UNTYPED | 5 |  |
+
+
+
+<a name="banyandb-fodc-v1-SchemaIssueType"></a>
+
+### SchemaIssueType
+SchemaIssueType names which layer boundary the disagreement sits on.
+
+| Name | Number | Description |
+| ---- | ------ | ----------- |
+| SCHEMA_ISSUE_TYPE_UNSPECIFIED | 0 |  |
+| SCHEMA_ISSUE_TYPE_MISSING_IN_CACHE | 1 | Registry has it, the node&#39;s cache does not. A frequent root cause is the node silently rejecting the schema; grep the node log for &#34;is ignored&#34;. |
+| SCHEMA_ISSUE_TYPE_ORPHAN | 2 | The node holds it but the registry does not. |
+| SCHEMA_ISSUE_TYPE_CACHE_STALE | 3 | Registry and cache disagree: the watch is behind. |
+| SCHEMA_ISSUE_TYPE_RUNTIME_NOT_APPLIED | 4 | Cache and runtime disagree: the derived index was never reapplied. |
 
 
  

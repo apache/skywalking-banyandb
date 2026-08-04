@@ -277,8 +277,33 @@ func (sr *schemaRepo) loadTSDB(groupName string) (storage.TSDB[*tsTable, option]
 	return db.(storage.TSDB[*tsTable, option]), nil
 }
 
-// CollectDataInfo collects data info for a specific group.
-func (sr *schemaRepo) CollectDataInfo(ctx context.Context, group string) (*databasev1.DataInfo, error) {
+// collectSchemaState reports this node's schema consistency evidence for the
+// group. The shared collector does the work; only the runtime type assertion
+// below is catalog-specific.
+func (sr *schemaRepo) collectSchemaState(group string) ([]*databasev1.ObjectSchemaState, error) {
+	return resourceSchema.CollectSchemaState(sr.Repository, group,
+		schema.KindStream.String(), streamResourceView)
+}
+
+// streamResourceView reaches the runtime view of a stream. IndexListener exposes
+// only OnIndexUpdate, so the assertion must happen here -- the same pattern the
+// resource loader in this package uses.
+func streamResourceView(res resourceSchema.Resource) (resourceSchema.ResourceView, bool) {
+	cached, ok := res.Schema().(*databasev1.Stream)
+	if !ok {
+		return resourceSchema.ResourceView{}, false
+	}
+	view := resourceSchema.ResourceView{Name: cached.GetMetadata().GetName(), Cached: cached}
+	if r, isTyped := res.Delegated().(*stream); isTyped {
+		view.Runtime = r.GetSchema()
+		view.RuntimeRules = r.GetIndexRules()
+	}
+	return view, true
+}
+
+// CollectDataInfo collects data info for a specific group. When includeSchemaState
+// is set it also attaches this node's schema consistency evidence.
+func (sr *schemaRepo) CollectDataInfo(ctx context.Context, group string, includeSchemaState bool) (*databasev1.DataInfo, error) {
 	if sr.nodeID == "" {
 		return nil, fmt.Errorf("node ID is empty")
 	}
@@ -339,6 +364,13 @@ func (sr *schemaRepo) CollectDataInfo(ctx context.Context, group string) (*datab
 		Node:          node,
 		SegmentInfo:   segmentInfoList,
 		DataSizeBytes: totalDataSize,
+	}
+	if includeSchemaState {
+		objects, err := sr.collectSchemaState(group)
+		if err != nil {
+			return nil, err
+		}
+		dataInfo.SchemaObjects = objects
 	}
 	return dataInfo, nil
 }

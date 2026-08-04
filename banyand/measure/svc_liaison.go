@@ -84,12 +84,13 @@ func (s *liaison) GetRemovalSegmentsTimeRange(group string) *timestamp.TimeRange
 	return s.schemaRepo.GetRemovalSegmentsTimeRange(group)
 }
 
-func (s *liaison) CollectDataInfo(_ context.Context, _ string) (*databasev1.DataInfo, error) {
+func (s *liaison) CollectDataInfo(_ context.Context, _ string, _ bool) (*databasev1.DataInfo, error) {
 	return nil, errors.New("collect data info is not supported on liaison node")
 }
 
-// CollectLiaisonInfo collects liaison node statistics.
-func (s *liaison) CollectLiaisonInfo(_ context.Context, group string) (*databasev1.LiaisonInfo, error) {
+// CollectLiaisonInfo collects liaison node statistics. When includeSchemaState is
+// set it also attaches this node's schema consistency evidence.
+func (s *liaison) CollectLiaisonInfo(_ context.Context, group string, includeSchemaState bool) (*databasev1.LiaisonInfo, error) {
 	info := &databasev1.LiaisonInfo{}
 	pendingWriteCount, writeErr := s.schemaRepo.collectPendingWriteInfo(group)
 	if writeErr != nil {
@@ -102,6 +103,13 @@ func (s *liaison) CollectLiaisonInfo(_ context.Context, group string) (*database
 	}
 	info.PendingSyncPartCount = pendingSyncPartCount
 	info.PendingSyncDataSizeBytes = pendingSyncDataSizeBytes
+	if includeSchemaState {
+		objects, err := s.schemaRepo.collectSchemaState(group)
+		if err != nil {
+			return nil, fmt.Errorf("failed to collect schema state: %w", err)
+		}
+		info.SchemaObjects = objects
+	}
 	return info, nil
 }
 
@@ -202,7 +210,7 @@ func (s *liaison) PreRun(ctx context.Context) error {
 	}
 	topNResultPipeline := queue.Local()
 	measureDataNodeRegistry := grpc.NewClusterNodeRegistry(data.TopicMeasurePartSync, s.option.tire2Client, s.dataNodeSelector)
-	s.schemaRepo = newLiaisonSchemaRepo(s.dataPath, s, measureDataNodeRegistry, topNResultPipeline)
+	s.schemaRepo = newLiaisonSchemaRepo(s.dataPath, s, measureDataNodeRegistry, topNResultPipeline, val.(common.Node).NodeID)
 	writeListener := setUpWriteQueueCallback(s.l, s.schemaRepo, s.maxDiskUsagePercent, s.option.tire2Client)
 	if err := s.pipeline.Subscribe(data.TopicMeasureWrite, writeListener); err != nil {
 		return err
@@ -257,9 +265,14 @@ func (l *collectLiaisonInfoListener) Rev(ctx context.Context, message bus.Messag
 	if !ok {
 		return bus.NewMessage(message.ID(), common.NewError("invalid data type for collect liaison info request"))
 	}
-	liaisonInfo, collectErr := l.s.CollectLiaisonInfo(ctx, req.Group)
+	liaisonInfo, collectErr := l.s.CollectLiaisonInfo(ctx, req.Group, req.GetIncludeSchemaState())
 	if collectErr != nil {
 		return bus.NewMessage(message.ID(), common.NewError("failed to collect liaison info: %v", collectErr))
+	}
+	if liaisonInfo != nil {
+		if node, nodeErr := l.s.schemaRepo.metadata.NodeRegistry().GetNode(ctx, l.s.schemaRepo.nodeID); nodeErr == nil {
+			liaisonInfo.Node = node
+		}
 	}
 	return bus.NewMessage(message.ID(), liaisonInfo)
 }

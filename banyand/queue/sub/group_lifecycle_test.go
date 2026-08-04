@@ -61,7 +61,7 @@ func (m *mockMetadataRepo) GroupRegistry() schema.Group {
 	return m.groupRegistry
 }
 
-func (m *mockMetadataRepo) CollectDataInfo(_ context.Context, group string) ([]*databasev1.DataInfo, []string, error) {
+func (m *mockMetadataRepo) CollectDataInfo(_ context.Context, group string, _ bool) ([]*databasev1.DataInfo, []string, error) {
 	m.collectStarts.Add(1)
 	current := m.concurrentNow.Add(1)
 	defer m.concurrentNow.Add(-1)
@@ -90,6 +90,13 @@ func (m *mockMetadataRepo) CollectDataInfo(_ context.Context, group string) ([]*
 		collectionErrs = m.collectionErrors[group]
 	}
 	return dataInfo, collectionErrs, nil
+}
+
+// CollectLiaisonInfo defaults to no liaison schema; inspectGroup always asks, so
+// the base mock must answer rather than fall through to the nil embedded Repo.
+// consistencyRepo overrides this to serve controlled liaison state.
+func (m *mockMetadataRepo) CollectLiaisonInfo(_ context.Context, _ string, _ bool) ([]*databasev1.LiaisonInfo, error) {
+	return nil, nil
 }
 
 func TestCatalogToString(t *testing.T) {

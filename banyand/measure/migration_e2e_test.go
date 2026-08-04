@@ -129,7 +129,7 @@ var _ = Describe("migration.RunCopy end-to-end (live service)", func() {
 		// Wait until the flusher has materialized two segments on disk.
 		var sourceInfo *databasev1.DataInfo
 		Eventually(func() int {
-			info, err := svcs.measure.CollectDataInfo(ctx, group)
+			info, err := svcs.measure.CollectDataInfo(ctx, group, false)
 			if err != nil || info == nil {
 				return 0
 			}
@@ -270,7 +270,7 @@ var _ = Describe("migration.RunCopy end-to-end (live service)", func() {
 
 		var targetInfo *databasev1.DataInfo
 		Eventually(func() int {
-			info, ierr := svcs2.measure.CollectDataInfo(ctx, group)
+			info, ierr := svcs2.measure.CollectDataInfo(ctx, group, false)
 			if ierr != nil || info == nil {
 				return 0
 			}

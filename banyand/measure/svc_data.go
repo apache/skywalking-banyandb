@@ -592,11 +592,11 @@ func (d *dataDeleteStreamSegmentsListener) Rev(_ context.Context, message bus.Me
 	return bus.NewMessage(bus.MessageID(time.Now().UnixNano()), deleted)
 }
 
-func (s *dataSVC) CollectDataInfo(ctx context.Context, group string) (*databasev1.DataInfo, error) {
-	return s.schemaRepo.CollectDataInfo(ctx, group)
+func (s *dataSVC) CollectDataInfo(ctx context.Context, group string, includeSchemaState bool) (*databasev1.DataInfo, error) {
+	return s.schemaRepo.CollectDataInfo(ctx, group, includeSchemaState)
 }
 
-func (s *dataSVC) CollectLiaisonInfo(_ context.Context, _ string) (*databasev1.LiaisonInfo, error) {
+func (s *dataSVC) CollectLiaisonInfo(_ context.Context, _ string, _ bool) (*databasev1.LiaisonInfo, error) {
 	return nil, errors.New("collect liaison info is not supported on data node")
 }
 
@@ -610,7 +610,7 @@ func (l *collectDataInfoListener) Rev(ctx context.Context, message bus.Message) 
 	if !ok {
 		return bus.NewMessage(message.ID(), common.NewError("invalid data type for collect data info request"))
 	}
-	dataInfo, collectErr := l.s.schemaRepo.CollectDataInfo(ctx, req.Group)
+	dataInfo, collectErr := l.s.schemaRepo.CollectDataInfo(ctx, req.Group, req.GetIncludeSchemaState())
 	if collectErr != nil {
 		return bus.NewMessage(message.ID(), common.NewError("failed to collect data info: %v", collectErr))
 	}

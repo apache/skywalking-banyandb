@@ -628,6 +628,19 @@ func (s *Server) handleClusterLifecycle(w http.ResponseWriter, r *http.Request) 
 		http.Error(w, "Lifecycle manager not available", http.StatusServiceUnavailable)
 		return
 	}
+
+	// CollectLifecycle blocks until the slowest agent answers or times out, which
+	// is far longer than the server-wide WriteTimeout and, crucially, not bounded
+	// by any fixed value we can predict here. If a fixed deadline is too small the
+	// whole response is dropped with "i/o timeout" even though most agents replied.
+	// Clear the write deadline entirely for this handler (the pressure-profile
+	// download below does the same); other endpoints keep the server-wide timeout.
+	controller := http.NewResponseController(w)
+	if deadlineErr := controller.SetWriteDeadline(time.Time{}); deadlineErr != nil {
+		s.logger.Warn().Err(deadlineErr).
+			Msg("Failed to lift write deadline for lifecycle; a slow agent may truncate the response")
+	}
+
 	lifecycleData, agentSummary := s.lifecycleManager.CollectLifecycle(r.Context())
 
 	groupsJSON, err := marshalLifecycleGroups(lifecycleData.Groups)

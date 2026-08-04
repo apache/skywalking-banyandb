@@ -115,6 +115,9 @@ type Repository interface {
 	LoadGroup(name string) (Group, bool)
 	LoadAllGroups() []Group
 	LoadResource(metadata *commonv1.Metadata) (Resource, bool)
+	LoadAllResources(group string) []Resource
+	LoadAllIndexRules(group string) []*databasev1.IndexRule
+	IndexRules(resourceSchema ResourceSchema) []*databasev1.IndexRule
 	Close()
 	StopCh() <-chan struct{}
 	DropGroup(groupName string) error

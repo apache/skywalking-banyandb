@@ -130,7 +130,7 @@ var _ = Describe("measure lifecycle tier-migration RECEIVE path under memory pre
 		writeMigrationE2EPoints(srcSvcs, group, measureName, day2, 4, 2)
 
 		Eventually(func() int {
-			info, err := srcSvcs.measure.CollectDataInfo(ctx, group)
+			info, err := srcSvcs.measure.CollectDataInfo(ctx, group, false)
 			if err != nil || info == nil {
 				return 0
 			}

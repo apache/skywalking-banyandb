@@ -150,7 +150,7 @@ var _ = Describe("migration.RunCopy index-mode end-to-end (live service)", func(
 
 		// Wait until both 1-day source segments have materialized on disk.
 		Eventually(func() int {
-			info, err := svcs.measure.CollectDataInfo(ctx, group)
+			info, err := svcs.measure.CollectDataInfo(ctx, group, false)
 			if err != nil || info == nil {
 				return 0
 			}
@@ -246,7 +246,7 @@ var _ = Describe("migration.RunCopy index-mode end-to-end (live service)", func(
 
 		// The two 1-day source segments collapsed into a single 2-day target segment.
 		Eventually(func() int {
-			info, ierr := svcs2.measure.CollectDataInfo(ctx, group)
+			info, ierr := svcs2.measure.CollectDataInfo(ctx, group, false)
 			if ierr != nil || info == nil {
 				return 0
 			}

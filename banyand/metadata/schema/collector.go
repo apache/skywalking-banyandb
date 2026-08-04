@@ -94,7 +94,7 @@ func NewInfoCollectorRegistry(l *logger.Logger, groupGetter GroupGetter) *InfoCo
 // positionally aligned with DataInfo. The error return is reserved for
 // top-level failures that prevent any aggregation (GetGroup failure,
 // local collector failure, unsupported catalog).
-func (icr *InfoCollectorRegistry) CollectDataInfo(ctx context.Context, group string) ([]*databasev1.DataInfo, []string, error) {
+func (icr *InfoCollectorRegistry) CollectDataInfo(ctx context.Context, group string, includeSchemaState bool) ([]*databasev1.DataInfo, []string, error) {
 	g, getErr := icr.groupGetter.GetGroup(ctx, group)
 	if getErr != nil {
 		return nil, nil, getErr
@@ -108,7 +108,7 @@ func (icr *InfoCollectorRegistry) CollectDataInfo(ctx context.Context, group str
 	if g.Catalog == commonv1.Catalog_CATALOG_PROPERTY {
 		return []*databasev1.DataInfo{}, nil, nil
 	}
-	localInfo, localErr := icr.collectDataInfoLocal(ctx, g.Catalog, group)
+	localInfo, localErr := icr.collectDataInfoLocal(ctx, g.Catalog, group, includeSchemaState)
 	if localErr != nil {
 		return nil, nil, localErr
 	}
@@ -131,12 +131,13 @@ func (icr *InfoCollectorRegistry) CollectDataInfo(ctx context.Context, group str
 	default:
 		return nil, nil, fmt.Errorf("unsupported catalog type: %v", g.Catalog)
 	}
-	remoteInfo, collectionErrors := icr.broadcastCollectDataInfo(topic, group)
+	remoteInfo, collectionErrors := icr.broadcastCollectDataInfo(topic, group, includeSchemaState)
 	return append(localInfoList, remoteInfo...), collectionErrors, nil
 }
 
-func (icr *InfoCollectorRegistry) broadcastCollectDataInfo(topic bus.Topic, group string) ([]*databasev1.DataInfo, []string) {
-	message := bus.NewMessage(bus.MessageID(time.Now().UnixNano()), &databasev1.GroupRegistryServiceInspectRequest{Group: group})
+func (icr *InfoCollectorRegistry) broadcastCollectDataInfo(topic bus.Topic, group string, includeSchemaState bool) ([]*databasev1.DataInfo, []string) {
+	message := bus.NewMessage(bus.MessageID(time.Now().UnixNano()),
+		&databasev1.GroupRegistryServiceInspectRequest{Group: group, IncludeSchemaState: includeSchemaState})
 	futures, broadcastErr := icr.dataBroadcaster.Broadcast(inspectBroadcastTimeout, topic, message)
 	if broadcastErr != nil {
 		icr.l.Warn().Err(broadcastErr).Str("group", group).Msg("failed to broadcast collect data info request")
@@ -166,18 +167,20 @@ func (icr *InfoCollectorRegistry) broadcastCollectDataInfo(topic bus.Topic, grou
 	return dataInfoList, collectionErrors
 }
 
-func (icr *InfoCollectorRegistry) collectDataInfoLocal(ctx context.Context, catalog commonv1.Catalog, group string) (*databasev1.DataInfo, error) {
+func (icr *InfoCollectorRegistry) collectDataInfoLocal(
+	ctx context.Context, catalog commonv1.Catalog, group string, includeSchemaState bool,
+) (*databasev1.DataInfo, error) {
 	icr.mux.RLock()
 	collector, hasCollector := icr.dataCollectors[catalog]
 	icr.mux.RUnlock()
 	if hasCollector && collector != nil {
-		return collector.CollectDataInfo(ctx, group)
+		return collector.CollectDataInfo(ctx, group, includeSchemaState)
 	}
 	return nil, nil
 }
 
 // CollectLiaisonInfo collects liaison information from both local and remote liaison nodes.
-func (icr *InfoCollectorRegistry) CollectLiaisonInfo(ctx context.Context, group string) ([]*databasev1.LiaisonInfo, error) {
+func (icr *InfoCollectorRegistry) CollectLiaisonInfo(ctx context.Context, group string, includeSchemaState bool) ([]*databasev1.LiaisonInfo, error) {
 	g, getErr := icr.groupGetter.GetGroup(ctx, group)
 	if getErr != nil {
 		return nil, getErr
@@ -191,7 +194,7 @@ func (icr *InfoCollectorRegistry) CollectLiaisonInfo(ctx context.Context, group 
 	if g.Catalog == commonv1.Catalog_CATALOG_PROPERTY {
 		return []*databasev1.LiaisonInfo{}, nil
 	}
-	localInfo, localErr := icr.collectLiaisonInfoLocal(ctx, g.Catalog, group)
+	localInfo, localErr := icr.collectLiaisonInfoLocal(ctx, g.Catalog, group, includeSchemaState)
 	if localErr != nil {
 		return nil, localErr
 	}
@@ -214,12 +217,18 @@ func (icr *InfoCollectorRegistry) CollectLiaisonInfo(ctx context.Context, group 
 	default:
 		return nil, fmt.Errorf("unsupported catalog type: %v", g.Catalog)
 	}
-	remoteInfo := icr.broadcastCollectLiaisonInfo(topic, group)
-	return append(localInfoList, remoteInfo...), nil
+	// The broadcast reaches every liaison including this collector's own node, so
+	// its response already carries the full self-entry (identity + schema +
+	// pending stats). localInfoList would report the same liaison a second time
+	// as an identity-less, schema-less shell, so return the broadcast alone.
+	// localInfoList is used only when there is no broadcaster (above).
+	remoteInfo := icr.broadcastCollectLiaisonInfo(topic, group, includeSchemaState)
+	return remoteInfo, nil
 }
 
-func (icr *InfoCollectorRegistry) broadcastCollectLiaisonInfo(topic bus.Topic, group string) []*databasev1.LiaisonInfo {
-	message := bus.NewMessage(bus.MessageID(time.Now().UnixNano()), &databasev1.GroupRegistryServiceInspectRequest{Group: group})
+func (icr *InfoCollectorRegistry) broadcastCollectLiaisonInfo(topic bus.Topic, group string, includeSchemaState bool) []*databasev1.LiaisonInfo {
+	message := bus.NewMessage(bus.MessageID(time.Now().UnixNano()),
+		&databasev1.GroupRegistryServiceInspectRequest{Group: group, IncludeSchemaState: includeSchemaState})
 	futures, broadcastErr := icr.liaisonBroadcaster.Broadcast(inspectBroadcastTimeout, topic, message)
 	if broadcastErr != nil {
 		icr.l.Warn().Err(broadcastErr).Str("group", group).Msg("failed to broadcast collect liaison info request")
@@ -246,12 +255,14 @@ func (icr *InfoCollectorRegistry) broadcastCollectLiaisonInfo(topic bus.Topic, g
 	return liaisonInfoList
 }
 
-func (icr *InfoCollectorRegistry) collectLiaisonInfoLocal(ctx context.Context, catalog commonv1.Catalog, group string) (*databasev1.LiaisonInfo, error) {
+func (icr *InfoCollectorRegistry) collectLiaisonInfoLocal(
+	ctx context.Context, catalog commonv1.Catalog, group string, includeSchemaState bool,
+) (*databasev1.LiaisonInfo, error) {
 	icr.mux.RLock()
 	collector, hasCollector := icr.liaisonCollectors[catalog]
 	icr.mux.RUnlock()
 	if hasCollector && collector != nil {
-		return collector.CollectLiaisonInfo(ctx, group)
+		return collector.CollectLiaisonInfo(ctx, group, includeSchemaState)
 	}
 	return nil, nil
 }

@@ -124,12 +124,13 @@ func newSchemaRepo(path string, svc *standalone, nodeLabels map[string]string, n
 	return sr
 }
 
-func newLiaisonSchemaRepo(path string, svc *liaison, measureDataNodeRegistry grpc.NodeRegistry, pipeline queue.Client) *schemaRepo {
+func newLiaisonSchemaRepo(path string, svc *liaison, measureDataNodeRegistry grpc.NodeRegistry, pipeline queue.Client, nodeID string) *schemaRepo {
 	ctx, cancel := context.WithCancel(context.Background())
 	sr := &schemaRepo{
 		path:          path,
 		l:             svc.l,
 		metadata:      svc.metadata,
+		nodeID:        nodeID,
 		pipeline:      pipeline,
 		closingGroups: make(map[string]struct{}),
 		role:          databasev1.Role_ROLE_LIAISON,
@@ -413,8 +414,33 @@ func (sr *schemaRepo) loadQueue(groupName string) (*wqueue.Queue[*tsTable, optio
 	return db.(*wqueue.Queue[*tsTable, option]), nil
 }
 
-// CollectDataInfo collects data info for a specific group.
-func (sr *schemaRepo) CollectDataInfo(ctx context.Context, group string) (*databasev1.DataInfo, error) {
+// collectSchemaState reports this node's schema consistency evidence for the
+// group. The shared collector does the work; only the runtime type assertion
+// below is catalog-specific.
+func (sr *schemaRepo) collectSchemaState(group string) ([]*databasev1.ObjectSchemaState, error) {
+	return resourceSchema.CollectSchemaState(sr.Repository, group,
+		schema.KindMeasure.String(), measureResourceView)
+}
+
+// measureResourceView reaches the runtime view of a measure. IndexListener exposes
+// only OnIndexUpdate, so the assertion must happen here -- the same pattern the
+// resource loader in this package uses.
+func measureResourceView(res resourceSchema.Resource) (resourceSchema.ResourceView, bool) {
+	cached, ok := res.Schema().(*databasev1.Measure)
+	if !ok {
+		return resourceSchema.ResourceView{}, false
+	}
+	view := resourceSchema.ResourceView{Name: cached.GetMetadata().GetName(), Cached: cached}
+	if r, isTyped := res.Delegated().(*measure); isTyped {
+		view.Runtime = r.GetSchema()
+		view.RuntimeRules = r.GetIndexRules()
+	}
+	return view, true
+}
+
+// CollectDataInfo collects data info for a specific group. When includeSchemaState
+// is set it also attaches this node's schema consistency evidence.
+func (sr *schemaRepo) CollectDataInfo(ctx context.Context, group string, includeSchemaState bool) (*databasev1.DataInfo, error) {
 	if sr.nodeID == "" {
 		return nil, nil
 	}
@@ -475,6 +501,13 @@ func (sr *schemaRepo) CollectDataInfo(ctx context.Context, group string) (*datab
 		Node:          node,
 		SegmentInfo:   segmentInfoList,
 		DataSizeBytes: totalDataSize,
+	}
+	if includeSchemaState {
+		objects, err := sr.collectSchemaState(group)
+		if err != nil {
+			return nil, err
+		}
+		dataInfo.SchemaObjects = objects
 	}
 	return dataInfo, nil
 }

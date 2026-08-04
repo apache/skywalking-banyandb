@@ -77,8 +77,8 @@ type Service interface {
 	run.Config
 	run.Service
 	Query
-	CollectDataInfo(context.Context, string) (*databasev1.DataInfo, error)
-	CollectLiaisonInfo(context.Context, string) (*databasev1.LiaisonInfo, error)
+	CollectDataInfo(context.Context, string, bool) (*databasev1.DataInfo, error)
+	CollectLiaisonInfo(context.Context, string, bool) (*databasev1.LiaisonInfo, error)
 }
 
 // Query allows retrieving traces.

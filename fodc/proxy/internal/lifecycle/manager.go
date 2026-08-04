@@ -29,6 +29,7 @@ import (
 	"github.com/apache/skywalking-banyandb/fodc/proxy/internal/registry"
 	"github.com/apache/skywalking-banyandb/pkg/logger"
 	"github.com/apache/skywalking-banyandb/pkg/panicdiag"
+	"github.com/apache/skywalking-banyandb/pkg/schema/consistency"
 )
 
 // defaultCollectionTimeout bounds how long the proxy waits for each agent to push back
@@ -274,12 +275,17 @@ func (m *Manager) mergeGroups(allData []*agentLifecycleData) []*fodcv1.GroupLife
 	// of the GroupLifecycleInfo is fine -- name/catalog/resource_opts are
 	// agent-invariant -- but errors must be the deduped union.
 	mergedErrors := make(map[string]map[string]struct{})
+	// schema_consistency is merged rather than last-wins for the same reason as
+	// errors: one liaison reporting a healthy group must never mask another
+	// liaison that found a real divergence.
+	mergedConsistency := make(map[string]*fodcv1.SchemaConsistency)
 	for _, ad := range allData {
 		if ad == nil || ad.Data == nil {
 			continue
 		}
 		for _, g := range ad.Data.Groups {
 			groupMap[g.Name] = g
+			mergedConsistency[g.Name] = mergeSchemaConsistency(mergedConsistency[g.Name], g.SchemaConsistency)
 			if len(g.Errors) == 0 {
 				continue
 			}
@@ -295,6 +301,12 @@ func (m *Manager) mergeGroups(allData []*agentLifecycleData) []*fodcv1.GroupLife
 	}
 	groups := make([]*fodcv1.GroupLifecycleInfo, 0, len(groupMap))
 	for name, g := range groupMap {
+		// g is this round's freshly received data: the gRPC stream re-unmarshals
+		// every LifecycleData on arrival and nothing caches it, so overwriting the
+		// two merged fields in place cannot leak into a later round. This keeps
+		// every other field (and any future field) without a copy that must be
+		// kept in lockstep with the message definition.
+		g.SchemaConsistency = mergedConsistency[name]
 		if set := mergedErrors[name]; len(set) > 0 {
 			errs := make([]string, 0, len(set))
 			for e := range set {
@@ -305,7 +317,115 @@ func (m *Manager) mergeGroups(allData []*agentLifecycleData) []*fodcv1.GroupLife
 		}
 		groups = append(groups, g)
 	}
+	// Range over groupMap is nondeterministic; sort so the payload order is
+	// stable across requests (the checker sorts its own slices for the same
+	// reason).
+	sort.Slice(groups, func(i, j int) bool { return groups[i].GetName() < groups[j].GetName() })
 	return groups
+}
+
+// mergeSchemaConsistency folds one liaison's verdict into the accumulated one.
+// The status takes the most severe of the two and the issues are the deduped
+// union, so a finding survives no matter which liaison reported it or in what
+// order the agents answered.
+//
+// The result is always a fresh message: the inputs belong to the agents' cached
+// lifecycle data, and mutating them would let one collection round leak into the
+// next.
+func mergeSchemaConsistency(acc, incoming *fodcv1.SchemaConsistency) *fodcv1.SchemaConsistency {
+	if acc == nil && incoming == nil {
+		return nil
+	}
+	merged := &fodcv1.SchemaConsistency{Status: fodcv1.ConsistencyStatus_CONSISTENCY_STATUS_UNSPECIFIED}
+	seenIssue := make(map[string]struct{})
+	// Every liaison's InspectAll produces the full object table for the group, so
+	// dedup by kind+name and union each object's node fingerprints by node id;
+	// the accumulation belongs on a fresh message, never on an agent's cache.
+	objects := make(map[string]*fodcv1.ObjectConsistency)
+	for _, src := range []*fodcv1.SchemaConsistency{acc, incoming} {
+		if src == nil {
+			continue
+		}
+		if consistencySeverity(src.GetStatus()) > consistencySeverity(merged.GetStatus()) {
+			merged.Status = src.GetStatus()
+		}
+		for _, obj := range src.GetObjects() {
+			mergeObject(objects, obj)
+		}
+		for _, issue := range src.GetIssues() {
+			key := schemaIssueKey(issue)
+			if _, dup := seenIssue[key]; dup {
+				continue
+			}
+			seenIssue[key] = struct{}{}
+			merged.Issues = append(merged.Issues, issue)
+		}
+	}
+	// acc/incoming order follows goroutine-completion order; sort so the merged
+	// payload is deterministic regardless of which liaison answered first.
+	merged.Objects = sortedObjects(objects)
+	sort.Slice(merged.Issues, func(i, j int) bool {
+		return schemaIssueKey(merged.Issues[i]) < schemaIssueKey(merged.Issues[j])
+	})
+	return merged
+}
+
+// mergeObject folds one object's record into the accumulator on a fresh
+// ObjectConsistency, unioning node fingerprints by node id.
+func mergeObject(dst map[string]*fodcv1.ObjectConsistency, obj *fodcv1.ObjectConsistency) {
+	key := obj.GetKind() + "|" + obj.GetName()
+	oc, ok := dst[key]
+	if !ok {
+		oc = &fodcv1.ObjectConsistency{
+			Kind: obj.GetKind(), Name: obj.GetName(), RegistryFingerprint: obj.GetRegistryFingerprint(),
+		}
+		dst[key] = oc
+	}
+	seen := make(map[string]struct{}, len(oc.NodeFingerprints))
+	for _, nf := range oc.NodeFingerprints {
+		seen[nf.GetNode()] = struct{}{}
+	}
+	for _, nf := range obj.GetNodeFingerprints() {
+		if _, dup := seen[nf.GetNode()]; dup {
+			continue
+		}
+		seen[nf.GetNode()] = struct{}{}
+		oc.NodeFingerprints = append(oc.NodeFingerprints, nf)
+	}
+}
+
+// sortedObjects flattens the accumulator and orders it deterministically via the
+// shared sorter, the same ordering the checker emits.
+func sortedObjects(m map[string]*fodcv1.ObjectConsistency) []*fodcv1.ObjectConsistency {
+	out := make([]*fodcv1.ObjectConsistency, 0, len(m))
+	for _, oc := range m {
+		out = append(out, oc)
+	}
+	consistency.SortObjectConsistencies(out)
+	return out
+}
+
+// schemaIssueKey identifies a finding: the same object on the same node with the
+// same failure mode is one finding however many liaisons saw it.
+func schemaIssueKey(issue *fodcv1.SchemaIssue) string {
+	return fmt.Sprintf("%s|%s|%s|%d",
+		issue.GetKind(), issue.GetName(), issue.GetNode(), issue.GetType())
+}
+
+// consistencySeverity orders verdicts so the merge keeps the most alarming one.
+func consistencySeverity(status fodcv1.ConsistencyStatus) int {
+	switch status {
+	case fodcv1.ConsistencyStatus_CONSISTENCY_STATUS_INCONSISTENT:
+		return 3
+	case fodcv1.ConsistencyStatus_CONSISTENCY_STATUS_UNKNOWN:
+		return 2
+	case fodcv1.ConsistencyStatus_CONSISTENCY_STATUS_CONSISTENT:
+		return 1
+	case fodcv1.ConsistencyStatus_CONSISTENCY_STATUS_UNSPECIFIED:
+		return 0
+	default:
+		return 0
+	}
 }
 
 // aggregateLifecycle aggregates lifecycle statuses from multiple agents.

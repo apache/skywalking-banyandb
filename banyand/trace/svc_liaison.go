@@ -96,9 +96,14 @@ func (cl *collectLiaisonInfoListener) Rev(ctx context.Context, message bus.Messa
 	if !ok {
 		return bus.NewMessage(message.ID(), common.NewError("invalid data type for collect liaison info request"))
 	}
-	liaisonInfo, collectErr := cl.l.CollectLiaisonInfo(ctx, req.Group)
+	liaisonInfo, collectErr := cl.l.CollectLiaisonInfo(ctx, req.Group, req.GetIncludeSchemaState())
 	if collectErr != nil {
 		return bus.NewMessage(message.ID(), common.NewError("failed to collect liaison info: %v", collectErr))
+	}
+	if liaisonInfo != nil {
+		if node, nodeErr := cl.l.schemaRepo.metadata.NodeRegistry().GetNode(ctx, cl.l.schemaRepo.nodeID); nodeErr == nil {
+			liaisonInfo.Node = node
+		}
 	}
 	return bus.NewMessage(message.ID(), liaisonInfo)
 }
@@ -272,7 +277,7 @@ func (l *liaison) PreRun(ctx context.Context) error {
 			Msg("handoff controller initialized")
 	}
 
-	l.schemaRepo = newLiaisonSchemaRepo(l.dataPath, l, traceDataNodeRegistry)
+	l.schemaRepo = newLiaisonSchemaRepo(l.dataPath, l, traceDataNodeRegistry, val.(common.Node).NodeID)
 	l.writeListener = setUpWriteQueueCallback(l.l, &l.schemaRepo, l.maxDiskUsagePercent, l.option.tire2Client)
 
 	// Register chunked sync handler for trace and sidx data
@@ -334,12 +339,13 @@ func (l *liaison) GetRemovalSegmentsTimeRange(group string) *timestamp.TimeRange
 	return l.schemaRepo.GetRemovalSegmentsTimeRange(group)
 }
 
-func (l *liaison) CollectDataInfo(_ context.Context, _ string) (*databasev1.DataInfo, error) {
+func (l *liaison) CollectDataInfo(_ context.Context, _ string, _ bool) (*databasev1.DataInfo, error) {
 	return nil, errors.New("collect data info is not supported on liaison node")
 }
 
-// CollectLiaisonInfo collects liaison node info.
-func (l *liaison) CollectLiaisonInfo(_ context.Context, group string) (*databasev1.LiaisonInfo, error) {
+// CollectLiaisonInfo collects liaison node info. When includeSchemaState is set it
+// also attaches this node's schema consistency evidence.
+func (l *liaison) CollectLiaisonInfo(_ context.Context, group string, includeSchemaState bool) (*databasev1.LiaisonInfo, error) {
 	info := &databasev1.LiaisonInfo{
 		PendingWriteDataCount:       0,
 		PendingSyncPartCount:        0,
@@ -362,6 +368,13 @@ func (l *liaison) CollectLiaisonInfo(_ context.Context, group string) (*database
 		partCount, totalSize := l.handoffCtrl.stats()
 		info.PendingHandoffPartCount = partCount
 		info.PendingHandoffDataSizeBytes = totalSize
+	}
+	if includeSchemaState {
+		objects, err := l.schemaRepo.collectSchemaState(group)
+		if err != nil {
+			return nil, fmt.Errorf("failed to collect schema state: %w", err)
+		}
+		info.SchemaObjects = objects
 	}
 	return info, nil
 }

@@ -483,6 +483,13 @@ message GroupRegistryServiceExistResponse {
 message GroupRegistryServiceInspectRequest {
   // group is the name of the group to inspect.
   string group = 1;
+  // include_schema_state asks each node to attach its per-object schema
+  // fingerprints (ObjectSchemaState) to the response. It is honored wherever
+  // this request is handled: the Inspect RPC passes it through, and the FODC
+  // schema consistency check sets it. It defaults to false so a caller that
+  // does not need the fingerprints (the common case, and every group delete)
+  // makes nodes skip the fingerprinting work and the extra payload.
+  bool include_schema_state = 2;
 }
 
 // GroupRegistryServiceInspectResponse is the response for inspecting a group.
@@ -523,6 +530,24 @@ message DataInfo {
   repeated SegmentInfo segment_info = 2;
   // data_size_bytes is the total size of data on this node in bytes.
   int64 data_size_bytes = 3;
+  // schema_objects carries this node's per-object cache/runtime fingerprints.
+  repeated ObjectSchemaState schema_objects = 4;
+}
+
+// ObjectSchemaState is one schema object's two on-node fingerprints. The registry
+// truth is not here -- it is a global value fetched once (see the schema query
+// step) and reported in SchemaConsistency.
+message ObjectSchemaState {
+  // kind is schema.Kind.String(): "group"/"stream"/"measure"/"trace"/"indexRule".
+  string kind = 1;
+  string name = 2;
+  // cache_fingerprint is computed from the node's cached schema plus the rule
+  // set derived from its cached bindings. 0 means the object is not cached.
+  uint64 cache_fingerprint = 3;
+  // runtime_fingerprint is computed from the materialized object and the index
+  // rule snapshot it is actually serving. 0 means not materialized. group and
+  // indexRule have no derived structure, so this equals cache_fingerprint.
+  uint64 runtime_fingerprint = 4;
 }
 
 // SegmentInfo contains information about a specific time segment.
@@ -595,6 +620,10 @@ message LiaisonInfo {
   int64 pending_handoff_part_count = 4;
   // pending_handoff_data_size_bytes is the size of data waiting for handoff in bytes.
   int64 pending_handoff_data_size_bytes = 5;
+  // node identifies which liaison this info came from.
+  banyandb.database.v1.Node node = 6;
+  // schema_objects carries this node's per-object cache/runtime fingerprints.
+  repeated ObjectSchemaState schema_objects = 7;
 }
 
 service GroupRegistryService {
