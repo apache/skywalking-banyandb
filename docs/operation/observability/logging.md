@@ -32,7 +32,7 @@ Because the template and its values are separate here, how much of the values re
 | `fingerprint` (default) | `str(len=12):fp=1a2b3c4d` | the length, and *whether two slow queries used the same value* — not the value |
 | `raw` | `"checkout-svc"` | the value itself |
 
-Numeric, timestamp and null parameters render verbatim under both `fingerprint` and `raw`: time-window width, `LIMIT` and thresholds are usually what explains why a query is slow, and they carry no user-identifying content. Only strings and binary are subject to the mode, and binary is never rendered verbatim.
+Numeric, timestamp and null parameters render verbatim under both `fingerprint` and `raw`: time-window width, `LIMIT` and thresholds are usually what explains why a query is slow, and they carry no user-identifying content. Only `str` and `str_array` are subject to the mode; binary is always digested and never rendered verbatim, not even under `raw`.
 
 The reported sample is the **most recent** slow occurrence of that template, which is why the field is named `last_params` and not `params` — it is not necessarily the occurrence that produced `max_latency`.
 
