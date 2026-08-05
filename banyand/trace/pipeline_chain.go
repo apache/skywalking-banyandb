@@ -87,6 +87,12 @@ func newMergeChain(group, schema string, samplers []sdk.Sampler, circuitBreakN i
 // non-nil error describing the reason (the verdict is then retain-all). The
 // result channel is buffered so an abandoned (timed-out) goroutine never blocks.
 func (mc *mergeChain) Execute(batch *sdk.TraceBatch, timeout time.Duration) (sdk.Verdict, error) {
+	return mc.executeObserved(batch, timeout, nil)
+}
+
+func (mc *mergeChain) executeObserved(batch *sdk.TraceBatch, timeout time.Duration,
+	observation *mergeEvaluationObservation,
+) (sdk.Verdict, error) {
 	retainAll := func() sdk.Verdict {
 		keep := make([]bool, len(batch.Traces))
 		for i := range keep {
@@ -104,7 +110,7 @@ func (mc *mergeChain) Execute(batch *sdk.TraceBatch, timeout time.Duration) (sdk
 
 	resultCh := make(chan sdk.Verdict, 1)
 	go func() {
-		resultCh <- mc.runChain(batch)
+		resultCh <- mc.runChain(batch, observation)
 	}()
 
 	select {
@@ -134,7 +140,7 @@ func (mc *mergeChain) Execute(batch *sdk.TraceBatch, timeout time.Duration) (sdk
 // offline sdktest.RunChain harness uses — passing an onBypass observer that
 // reproduces the pre-refactor WARN logs (same fields, same messages) so this
 // change is behavior-preserving.
-func (mc *mergeChain) runChain(batch *sdk.TraceBatch) sdk.Verdict {
+func (mc *mergeChain) runChain(batch *sdk.TraceBatch, observation *mergeEvaluationObservation) sdk.Verdict {
 	onBypass := func(_ int, info sdk.BypassInfo) {
 		if info.Reason == sdk.BypassReasonLengthMismatch {
 			chainLog.Warn().Int("got", info.Got).Int("want", info.Want).
@@ -143,7 +149,31 @@ func (mc *mergeChain) runChain(batch *sdk.TraceBatch) sdk.Verdict {
 		}
 		chainLog.Warn().Err(info.Err).Str("group", mc.group).Str("schema", mc.schema).Msg("sampler link failed; bypassing (retain)")
 	}
-	return sdk.EvaluateChain(mc.samplers, batch, onBypass)
+	if observation == nil {
+		return sdk.EvaluateChain(mc.samplers, batch, onBypass)
+	}
+	observedSamplers := make([]sdk.Sampler, len(mc.samplers))
+	evaluatedOnce := &sync.Once{}
+	for samplerIdx, sampler := range mc.samplers {
+		if sampler != nil {
+			observedSamplers[samplerIdx] = observedMergeSampler{Sampler: sampler, observation: observation, evaluatedOnce: evaluatedOnce}
+		}
+	}
+	return sdk.EvaluateChain(observedSamplers, batch, onBypass)
+}
+
+type observedMergeSampler struct {
+	sdk.Sampler
+	observation   *mergeEvaluationObservation
+	evaluatedOnce *sync.Once
+}
+
+func (oms observedMergeSampler) Decide(batch *sdk.TraceBatch) (sdk.Verdict, error) {
+	oms.observation.pluginCalls.Add(1)
+	oms.evaluatedOnce.Do(func() {
+		oms.observation.evaluated.Add(uint64(len(batch.Traces)))
+	})
+	return oms.Sampler.Decide(batch)
 }
 
 // assembleTraceBlock builds a COPY-backed sdk.TraceBlock from a loaded merge

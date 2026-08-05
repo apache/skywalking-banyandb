@@ -40,6 +40,10 @@ The `dump trace-generate-fixture` subcommand consumes that catalog and the immut
 SkyWalking sampler ratio, and writes the deterministic one-day core and secondary-index fixture through the data-node part
 receipt path. It requires `--source-path`, `--catalog-path`, a new `--output-path`, and the built sampler `--plugin-path`.
 
+The trace benchmark receiver can enable per-merge JSONL recording for the primary, boundary-drain, and cooldown phases.
+Records classify actual sampler execution, preserve merge depth and input lineage, nest secondary-index work under its core
+merge, and expose reconciled low-cardinality aggregates plus serial-attribution resource deltas.
+
 ## Contributing
 
 For developers who want to contribute to this project, see the [Contribution Guide](CONTRIBUTING.md).

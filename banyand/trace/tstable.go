@@ -65,6 +65,10 @@ type tsTable struct {
 	// through the same serialized introducer loop the hot merges use.
 	mergeCh          chan *mergerIntroduction
 	mergeControl     *mergeLoopControl
+	mergeBenchmark   atomic.Pointer[mergeBenchmarkObserver]
+	mergeAttribution atomic.Bool
+	attributionCh    chan struct{}
+	benchmarkMu      sync.Mutex
 	p                common.Position
 	segmentTimeRange timestamp.TimeRange
 	group            string
@@ -243,14 +247,15 @@ func initTSTable(fileSystem fs.FileSystem, rootPath string, p common.Position,
 			Msg("protector can not be nil")
 	}
 	tst := tsTable{
-		fileSystem: fileSystem,
-		root:       rootPath,
-		option:     option,
-		l:          l,
-		p:          p,
-		group:      p.Database,
-		pm:         option.protector,
-		isHot:      option.isHot,
+		fileSystem:    fileSystem,
+		root:          rootPath,
+		option:        option,
+		l:             l,
+		p:             p,
+		group:         p.Database,
+		pm:            option.protector,
+		isHot:         option.isHot,
+		attributionCh: make(chan struct{}, 1),
 	}
 	if m != nil {
 		tst.metrics = m.(*metrics)

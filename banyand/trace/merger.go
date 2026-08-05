@@ -22,6 +22,7 @@ import (
 	"errors"
 	"fmt"
 	"path/filepath"
+	"sort"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -125,6 +126,7 @@ func stageBudgetFromLimit(limit uint64) uint64 {
 
 type mergeDispatchRequest struct {
 	enqueuedAt time.Time
+	benchmark  *mergeBenchmarkSeed
 	toBeMerged map[uint64]struct{}
 	typ        string
 	lane       string
@@ -207,8 +209,11 @@ func (tst *tsTable) dispatcherLoop(threshold uint64, fastCh, slowCh chan *mergeD
 		case <-tst.loopCloser.CloseNotify():
 			return
 		case <-tst.mergeControl.trigger:
-			tst.mergeControl.beginDispatch()
-			if tst.dispatchAllMerges(threshold, fastCh, slowCh) {
+			dispatch, maxPartID := tst.mergeControl.beginDispatch()
+			if !dispatch {
+				continue
+			}
+			if tst.dispatchAllMergesUpTo(threshold, fastCh, slowCh, maxPartID) {
 				tst.mergeControl.endDispatch()
 				return
 			}
@@ -218,6 +223,10 @@ func (tst *tsTable) dispatcherLoop(threshold uint64, fastCh, slowCh chan *mergeD
 }
 
 func (tst *tsTable) dispatchAllMerges(threshold uint64, fastCh, slowCh chan *mergeDispatchRequest) bool {
+	return tst.dispatchAllMergesUpTo(threshold, fastCh, slowCh, 0)
+}
+
+func (tst *tsTable) dispatchAllMergesUpTo(threshold uint64, fastCh, slowCh chan *mergeDispatchRequest, maxPartID uint64) bool {
 	for {
 		curSnapshot := tst.currentSnapshot()
 		if curSnapshot == nil {
@@ -228,7 +237,7 @@ func (tst *tsTable) dispatchAllMerges(threshold uint64, fastCh, slowCh chan *mer
 		}
 		freeDiskSize := tst.freeDiskSpace(tst.root)
 		var dst []*partWrapper
-		dst, toBeMerged := tst.getPartsToMerge(curSnapshot, freeDiskSize, dst)
+		dst, toBeMerged := tst.getPartsToMergeUpTo(curSnapshot, freeDiskSize, dst, maxPartID)
 		if len(dst) < 2 {
 			epoch := curSnapshot.epoch
 			curSnapshot.decRef()
@@ -291,6 +300,7 @@ func (tst *tsTable) dispatchAllMerges(threshold uint64, fastCh, slowCh chan *mer
 			lane:       lane,
 			enqueuedAt: time.Now(),
 		}
+		req.benchmark = tst.mergeBenchmark.Load().seed(tst, dst, req.typ, req.lane)
 
 		tst.l.Info().
 			Str("lane", lane).
@@ -325,29 +335,30 @@ func (tst *tsTable) mergeLaneWorker(ch chan *mergeDispatchRequest, merges chan *
 		select {
 		case mergeMaxConcurrencyCh <- struct{}{}:
 		case <-tst.loopCloser.CloseNotify():
-			tst.releaseDispatchRequest(req)
-			if tst.mergeControl != nil {
-				tst.mergeControl.finishRunning()
-			}
-			// Drain remaining buffered requests so their inFlight entries and
-			// part references are released. The lane channel is closed by the
-			// mergeLoop shutdown defer after the dispatcher exits, which lets
-			// this range loop terminate.
-			for pending := range ch {
-				tst.releaseDispatchRequest(pending)
-				if tst.mergeControl != nil {
-					tst.mergeControl.cancelQueued()
-				}
-			}
+			tst.stopMergeLaneWorker(req, ch)
 			return
+		}
+		attributionAcquired := false
+		if tst.mergeAttribution.Load() {
+			select {
+			case tst.attributionCh <- struct{}{}:
+				attributionAcquired = true
+			case <-tst.loopCloser.CloseNotify():
+				<-mergeMaxConcurrencyCh
+				tst.stopMergeLaneWorker(req, ch)
+				return
+			}
 		}
 
 		tst.incTotalMergeLoopStarted(1)
-		_, mergeErr := tst.mergePartsThenSendIntroduction(
+		_, mergeErr := tst.mergePartsThenSendIntroductionObserved(
 			snapshotCreatorMerger, req.parts, req.toBeMerged, merges,
-			tst.loopCloser.CloseNotify(), req.typ, req.lane, nil,
+			tst.loopCloser.CloseNotify(), req.typ, req.lane, nil, req.benchmark,
 		)
 		tst.incTotalMergeLoopFinished(1)
+		if attributionAcquired {
+			<-tst.attributionCh
+		}
 		<-mergeMaxConcurrencyCh
 
 		tst.releaseDispatchRequest(req)
@@ -360,6 +371,22 @@ func (tst *tsTable) mergeLaneWorker(ch chan *mergeDispatchRequest, merges chan *
 				tst.l.Logger.Warn().Err(mergeErr).Str("typ", req.typ).Str("lane", req.lane).Msg("merge lane worker error")
 				tst.incTotalMergeLoopErr(1)
 			}
+		}
+	}
+}
+
+func (tst *tsTable) stopMergeLaneWorker(req *mergeDispatchRequest, ch chan *mergeDispatchRequest) {
+	tst.releaseDispatchRequest(req)
+	if tst.mergeControl != nil {
+		tst.mergeControl.finishRunning()
+	}
+	// Drain remaining buffered requests so their inFlight entries and part
+	// references are released. The lane channel is closed by mergeLoop after the
+	// dispatcher exits, which lets this range terminate.
+	for pending := range ch {
+		tst.releaseDispatchRequest(pending)
+		if tst.mergeControl != nil {
+			tst.mergeControl.cancelQueued()
 		}
 	}
 }
@@ -392,33 +419,52 @@ type mergeOverrides struct {
 // returns nil when the native pipeline is off, no samplers are registered, or the merge
 // is still hot (parts younger than merge_grace), in which case the merge runs unfiltered.
 func (tst *tsTable) buildHotMergeFilter(parts []*partWrapper) *mergeFilter {
+	filter, _ := tst.buildHotMergeFilterDecision(parts)
+	return filter
+}
+
+func (tst *tsTable) buildHotMergeFilterDecision(parts []*partWrapper) (*mergeFilter, mergeSamplingReason) {
+	return tst.buildHotMergeFilterDecisionAt(parts, tst.mergeNow().UnixNano())
+}
+
+func (tst *tsTable) buildHotMergeFilterDecisionAt(parts []*partWrapper, logicalNow int64) (*mergeFilter, mergeSamplingReason) {
+	if len(parts) == 0 {
+		return nil, mergeReasonEmptyInput
+	}
 	if !tst.option.nativePipelineEnabled {
-		return nil
+		return nil, mergeReasonPipelineDisabled
 	}
 	samplers := lookupSamplers(tst.group)
-	if len(samplers) == 0 {
-		return nil
+	hasSampler := false
+	for _, sampler := range samplers {
+		if sampler != nil {
+			hasSampler = true
+			break
+		}
+	}
+	if !hasSampler {
+		return nil, mergeReasonNoSampler
 	}
 	// The sampler set is shared with FINALIZE (DD11); only filter hot merges when the
 	// MERGE event is actually enabled for this group, so a FINALIZE-only config does
 	// not silently filter hot merges.
 	if !mergeEventEnabledForGroup(tst.group) {
-		return nil
+		return nil, mergeReasonEventDisabled
 	}
 	graceNs := tst.effectiveMergeGraceNs()
 	if tst.option.maxTraceFragmentGap <= 0 || time.Duration(graceNs) < tst.option.maxTraceFragmentGap {
 		tst.incPipelineGuardBypassed()
-		return nil
+		return nil, mergeReasonFragmentGap
 	}
-	if isMergeHot(parts, graceNs, tst.mergeNow().UnixNano()) {
+	if isMergeHot(parts, graceNs, logicalNow) {
 		tst.incPipelineGuardBypassed()
-		return nil
+		return nil, mergeReasonGrace
 	}
 	stageBudget := resolveStageBudget(tst.option)
 	guard := tst.newTraceFragmentGuardSession(parts, tst.option.maxTraceFragmentGap, stageBudget)
 	if guard == nil {
 		tst.incPipelineGuardBypassed()
-		return nil
+		return nil, mergeReasonGuardUnavailable
 	}
 	chain := newMergeChain(tst.group, "", samplers, tst.option.decideTimeoutCircuitBreak)
 	return &mergeFilter{
@@ -430,7 +476,7 @@ func (tst *tsTable) buildHotMergeFilter(parts []*partWrapper) *mergeFilter {
 		stageBudget: stageBudget,
 		traceBudget: resolveTraceBudget(tst.option),
 		forceSlow:   projectionRequiresSlowPath(chain.projection),
-	}
+	}, ""
 }
 
 func (tst *tsTable) mergeNow() time.Time {
@@ -455,16 +501,45 @@ func (tst *tsTable) effectiveMergeGraceNs() int64 {
 func (tst *tsTable) mergePartsThenSendIntroduction(creator snapshotCreator, parts []*partWrapper, merged map[uint64]struct{}, merges chan *mergerIntroduction,
 	closeCh <-chan struct{}, typ string, lane string, ov *mergeOverrides,
 ) (*partWrapper, error) {
+	return tst.mergePartsThenSendIntroductionObserved(creator, parts, merged, merges, closeCh, typ, lane, ov, nil)
+}
+
+func (tst *tsTable) mergePartsThenSendIntroductionObserved(creator snapshotCreator, parts []*partWrapper, merged map[uint64]struct{},
+	merges chan *mergerIntroduction, closeCh <-chan struct{}, typ string, lane string, ov *mergeOverrides, seed *mergeBenchmarkSeed,
+) (mergedPart *partWrapper, resultErr error) {
 	reservedSpace := tst.reserveSpace(parts)
 	defer releaseDiskSpace(reservedSpace)
+	observer := tst.mergeBenchmark.Load()
+	if seed != nil {
+		observer = seed.observer
+	} else {
+		seed = observer.seed(tst, parts, typ, lane)
+	}
+	operation := observer.beginSeed(seed, "")
 	var filter *mergeFilter
 	var finalizeGenOverride *uint64
+	var initialReason mergeSamplingReason
 	if ov != nil {
 		filter = ov.filter
 		finalizeGenOverride = ov.finalizeGen
+		if filter == nil {
+			initialReason = mergeReasonOther
+		}
 	} else {
-		filter = tst.buildHotMergeFilter(parts)
+		logicalNow := tst.mergeNow().UnixNano()
+		if operation != nil {
+			logicalNow = operation.event.LogicalNow
+		}
+		filter, initialReason = tst.buildHotMergeFilterDecisionAt(parts, logicalNow)
 	}
+	operation.setInitialReason(initialReason)
+	if filter != nil && operation != nil {
+		filter.observation = operation.evaluation
+	}
+	losslessRetry := false
+	defer func() {
+		observer.finish(operation, mergedPart, resultErr, losslessRetry)
+	}()
 	var guardSession *traceFragmentGuardSession
 	if filter != nil && filter.guard != nil {
 		guardSession = filter.guard
@@ -472,7 +547,7 @@ func (tst *tsTable) mergePartsThenSendIntroduction(creator snapshotCreator, part
 	}
 
 	result, mergeErr := tst.mergePartsThenIntroduceAttempt(
-		creator, parts, merged, merges, closeCh, typ, lane, filter, finalizeGenOverride,
+		creator, parts, merged, merges, closeCh, typ, lane, filter, finalizeGenOverride, operation, 1,
 	)
 	if mergeErr != nil {
 		return nil, mergeErr
@@ -494,8 +569,9 @@ func (tst *tsTable) mergePartsThenSendIntroduction(creator snapshotCreator, part
 		guardSession.Close()
 	}
 	tst.incPipelineGuardLosslessRetry(1)
+	losslessRetry = true
 	losslessResult, losslessErr := tst.mergePartsThenIntroduceAttempt(
-		creator, parts, merged, merges, closeCh, typ, lane, nil, finalizeGenOverride,
+		creator, parts, merged, merges, closeCh, typ, lane, nil, finalizeGenOverride, operation, 2,
 	)
 	if losslessErr != nil {
 		return nil, losslessErr
@@ -560,12 +636,16 @@ func (tst *tsTable) observeCoreMerge(parts []*partWrapper, newPart *partWrapper,
 
 func (tst *tsTable) mergePartsThenIntroduceAttempt(creator snapshotCreator, parts []*partWrapper, merged map[uint64]struct{},
 	merges chan *mergerIntroduction, closeCh <-chan struct{}, typ, lane string, filter *mergeFilter, finalizeGenOverride *uint64,
+	operation *mergeBenchmarkOperation, attempt uint32,
 ) (mergeAttemptResult, error) {
 	start := time.Now()
 	newPartID := atomic.AddUint64(&tst.curPartID, 1)
 	newPart, dropped, err := tst.mergeParts(tst.fileSystem, closeCh, parts, newPartID, tst.root, filter, finalizeGenOverride)
 	if err != nil {
 		return mergeAttemptResult{}, err
+	}
+	if operation != nil {
+		newPart.mergeDepth = operation.event.OutputDepth
 	}
 	elapsed := time.Since(start)
 	tst.observeCoreMerge(parts, newPart, elapsed, creator, typ, lane)
@@ -589,7 +669,14 @@ func (tst *tsTable) mergePartsThenIntroduceAttempt(creator snapshotCreator, part
 		}
 	}
 	mergerIntroductionMap := make(map[string]*sidx.MergerIntroduction)
-	for sidxName, sidxInstance := range tst.getAllSidx() {
+	sidxInstances := tst.getAllSidx()
+	mergeSidx := func(sidxName string, sidxInstance sidx.SIDX) error {
+		var childInputBytes, childInputRows uint64
+		if operation != nil {
+			var totalsErr error
+			childInputBytes, childInputRows, totalsErr = benchmarkSidxPartTotals(tst.fileSystem, sidxInstance.PartPaths(partIDMap))
+			operation.recordFailure(totalsErr)
+		}
 		start = time.Now()
 		mergerIntroduction, mergeErr := sidxInstance.Merge(closeCh, partIDMap, newPartID, keepFn)
 		if mergeErr != nil {
@@ -601,19 +688,47 @@ func (tst *tsTable) mergePartsThenIntroduceAttempt(creator snapshotCreator, part
 				tst.removeSidxPartOnFailure(doneSidxName, newPartID)
 				intro.Release()
 			}
-			return mergeAttemptResult{}, mergeErr
+			return mergeErr
 		}
 		if mergerIntroduction == nil {
-			continue
+			return nil
 		}
 		mergerIntroductionMap[sidxName] = mergerIntroduction
 		elapsed = time.Since(start)
+		if operation != nil {
+			childOutputBytes, childOutputRows, totalsErr := benchmarkSidxPartTotals(tst.fileSystem,
+				map[uint64]string{newPartID: sidxPartPath(tst.root, sidxName, newPartID)})
+			operation.recordFailure(totalsErr)
+			operation.recordChild(mergeBenchmarkChild{
+				Name: sidxName, InputBytes: childInputBytes, OutputBytes: childOutputBytes, InputRows: childInputRows,
+				OutputRows: childOutputRows, ElapsedNanos: elapsed.Nanoseconds(), Attempt: attempt,
+			})
+		}
 		sidxTyp := fmt.Sprintf("%s_%s", typ, sidxName)
 		tst.incTotalMergeLatency(elapsed.Seconds(), sidxTyp, lane)
 		tst.incTotalMerged(1, sidxTyp, lane)
 		tst.incTotalMergedParts(len(parts), sidxTyp, lane)
 		if elapsed > 30*time.Second {
 			tst.l.Warn().Int("mergedPartsCount", len(parts)).Str("sidxName", sidxName).Dur("elapsed", elapsed).Msg("sidx merge parts took too long")
+		}
+		return nil
+	}
+	if operation == nil {
+		for sidxName, sidxInstance := range sidxInstances {
+			if mergeErr := mergeSidx(sidxName, sidxInstance); mergeErr != nil {
+				return mergeAttemptResult{}, mergeErr
+			}
+		}
+	} else {
+		sidxNames := make([]string, 0, len(sidxInstances))
+		for sidxName := range sidxInstances {
+			sidxNames = append(sidxNames, sidxName)
+		}
+		sort.Strings(sidxNames)
+		for _, sidxName := range sidxNames {
+			if mergeErr := mergeSidx(sidxName, sidxInstances[sidxName]); mergeErr != nil {
+				return mergeAttemptResult{}, mergeErr
+			}
 		}
 	}
 	if len(mergerIntroductionMap) > 0 {
@@ -672,6 +787,7 @@ func (tst *tsTable) mergePartsThenIntroduceAttempt(creator snapshotCreator, part
 		}
 		return mergeAttemptResult{}, mi.resultErr
 	}
+	operation.publishAttempt(attempt)
 	return mergeAttemptResult{part: newPart}, nil
 }
 
@@ -705,11 +821,20 @@ func releaseDiskSpace(n uint64) {
 var reservedDiskSpace uint64
 
 func (tst *tsTable) getPartsToMerge(snapshot *snapshot, freeDiskSize uint64, dst []*partWrapper) ([]*partWrapper, map[uint64]struct{}) {
+	return tst.getPartsToMergeUpTo(snapshot, freeDiskSize, dst, 0)
+}
+
+func (tst *tsTable) getPartsToMergeUpTo(snapshot *snapshot, freeDiskSize uint64, dst []*partWrapper,
+	maxPartID uint64,
+) ([]*partWrapper, map[uint64]struct{}) {
 	var parts []*partWrapper
 
 	tst.inFlightMu.RLock()
 	for _, pw := range snapshot.parts {
 		if pw.mp != nil || pw.p.partMetadata.TotalCount < 1 {
+			continue
+		}
+		if maxPartID > 0 && pw.ID() > maxPartID {
 			continue
 		}
 		if _, inFlight := tst.inFlight[pw.ID()]; inFlight {
@@ -900,6 +1025,7 @@ type stagedTraceRange struct {
 type mergeFilter struct {
 	chain       *mergeChain
 	guard       *traceFragmentGuardSession
+	observation *mergeEvaluationObservation
 	ctx         context.Context
 	owner       *tsTable
 	timeout     time.Duration
@@ -1050,9 +1176,12 @@ func resolveStagedDrops(filter *mergeFilter, staged []stagedTrace, assembledBatc
 	if len(assembledBatch.traceBatch.Traces) == 0 {
 		return nil
 	}
-	verdict, execErr := filter.chain.Execute(&assembledBatch.traceBatch, filter.timeout)
+	verdict, execErr := filter.chain.executeObserved(&assembledBatch.traceBatch, filter.timeout, filter.observation)
 	keepMask := verdict.Keep
 	if execErr != nil || len(keepMask) != len(assembledBatch.traceIDs) {
+		if filter.observation != nil {
+			filter.observation.retained.Add(uint64(len(assembledBatch.traceIDs)))
+		}
 		if filter.owner != nil {
 			filter.owner.incPipelinePluginErrors(1, "decide_failed_open")
 		}
@@ -1064,6 +1193,9 @@ func resolveStagedDrops(filter *mergeFilter, staged []stagedTrace, assembledBatc
 	var dropMature map[string]struct{}
 	for traceIdx, traceID := range assembledBatch.traceIDs {
 		if keepMask[traceIdx] {
+			if filter.observation != nil {
+				filter.observation.retained.Add(1)
+			}
 			if filter.owner != nil {
 				filter.owner.incPipelineTracesRetained(1)
 			}
@@ -1074,6 +1206,9 @@ func resolveStagedDrops(filter *mergeFilter, staged []stagedTrace, assembledBatc
 				dropMature = make(map[string]struct{})
 			}
 			dropMature[traceID] = struct{}{}
+			if filter.observation != nil {
+				filter.observation.dropped.Add(1)
+			}
 			if filter.owner != nil {
 				filter.owner.incPipelineTracesDropped(1)
 			}
@@ -1090,6 +1225,9 @@ func resolveStagedDrops(filter *mergeFilter, staged []stagedTrace, assembledBatc
 				dropMature = make(map[string]struct{})
 			}
 			dropMature[traceID] = struct{}{}
+			if filter.observation != nil {
+				filter.observation.dropped.Add(1)
+			}
 			if filter.owner != nil {
 				filter.owner.incPipelineTracesDropped(1)
 			}
@@ -1101,6 +1239,9 @@ func resolveStagedDrops(filter *mergeFilter, staged []stagedTrace, assembledBatc
 			if decision.Reason == traceFragmentGuardReasonBudgetExhausted {
 				filter.owner.incPipelineGuardBudgetExhausted(1)
 			}
+		}
+		if filter.observation != nil {
+			filter.observation.retained.Add(1)
 		}
 	}
 	return dropMature
@@ -1207,6 +1348,9 @@ func (tes *traceEvaluationStager) stage(st stagedTrace) {
 	tes.currentTraceStart = 0
 	if tes.filter.owner != nil {
 		tes.filter.owner.incPipelineOversizedTracesBypassed(1)
+	}
+	if tes.filter.observation != nil {
+		tes.filter.observation.oversized.Add(1)
 	}
 }
 

@@ -20,6 +20,7 @@ import (
 	"errors"
 	"fmt"
 	"sync"
+	"sync/atomic"
 )
 
 var errMergeLoopUnavailable = errors.New("merge loop is unavailable")
@@ -31,12 +32,15 @@ type mergeLoopControl struct {
 	workVersion        uint64
 	emptyEpoch         uint64
 	emptyWorkVersion   uint64
+	waveMaxPartID      uint64
 	queued             int
 	running            int
 	triggerPending     bool
 	dispatcherActive   bool
 	emptyEpochObserved bool
 	stopped            bool
+	waveMode           bool
+	waveBlocked        bool
 	mu                 sync.Mutex
 }
 
@@ -52,6 +56,8 @@ type mergeLoopState struct {
 	dispatcherActive   bool
 	emptyEpochObserved bool
 	stopped            bool
+	waveMode           bool
+	waveBlocked        bool
 }
 
 func newMergeLoopControl() *mergeLoopControl {
@@ -77,6 +83,10 @@ func (mc *mergeLoopControl) enqueue(closeCh <-chan struct{}) error {
 		mc.mu.Unlock()
 		return nil
 	}
+	if mc.waveBlocked {
+		mc.mu.Unlock()
+		return nil
+	}
 	mc.triggerPending = true
 	mc.notifyLocked()
 	mc.mu.Unlock()
@@ -95,12 +105,22 @@ func (mc *mergeLoopControl) enqueue(closeCh <-chan struct{}) error {
 	}
 }
 
-func (mc *mergeLoopControl) beginDispatch() {
+func (mc *mergeLoopControl) beginDispatch() (bool, uint64) {
 	mc.mu.Lock()
+	defer mc.mu.Unlock()
 	mc.triggerPending = false
+	if mc.waveBlocked {
+		mc.notifyLocked()
+		return false, 0
+	}
 	mc.dispatcherActive = true
+	if mc.waveMode {
+		// Consume the one wave permit before dispatching so flush notifications
+		// cannot queue another production selection cycle in this wave.
+		mc.waveBlocked = true
+	}
 	mc.notifyLocked()
-	mc.mu.Unlock()
+	return true, mc.waveMaxPartID
 }
 
 func (mc *mergeLoopControl) endDispatch() {
@@ -179,7 +199,35 @@ func (mc *mergeLoopControl) state() mergeLoopState {
 		dispatcherActive:   mc.dispatcherActive,
 		emptyEpochObserved: mc.emptyEpochObserved,
 		stopped:            mc.stopped,
+		waveMode:           mc.waveMode,
+		waveBlocked:        mc.waveBlocked,
 	}
+}
+
+func (mc *mergeLoopControl) blockForWave() {
+	mc.mu.Lock()
+	mc.waveMode = true
+	mc.waveBlocked = true
+	mc.notifyLocked()
+	mc.mu.Unlock()
+}
+
+func (mc *mergeLoopControl) startWave(maxPartID uint64) {
+	mc.mu.Lock()
+	mc.waveMode = true
+	mc.waveBlocked = false
+	mc.waveMaxPartID = maxPartID
+	mc.notifyLocked()
+	mc.mu.Unlock()
+}
+
+func (mc *mergeLoopControl) releaseWave() {
+	mc.mu.Lock()
+	mc.waveMode = false
+	mc.waveBlocked = false
+	mc.waveMaxPartID = 0
+	mc.notifyLocked()
+	mc.mu.Unlock()
 }
 
 func (mc *mergeLoopControl) unchanged(version uint64) bool {
@@ -193,6 +241,57 @@ func (tst *tsTable) triggerMerge() error {
 		return errMergeLoopUnavailable
 	}
 	return tst.mergeControl.enqueue(tst.loopCloser.CloseNotify())
+}
+
+func (tst *tsTable) blockMergeUntilWave() error {
+	if tst.mergeControl == nil || tst.loopCloser == nil {
+		return errMergeLoopUnavailable
+	}
+	tst.mergeControl.blockForWave()
+	for {
+		state := tst.mergeControl.state()
+		quiescent := !state.triggerPending && !state.dispatcherActive && state.queued == 0 && state.running == 0
+		if quiescent && tst.mergeInFlightEmpty() && tst.mergeControl.unchanged(state.version) {
+			return nil
+		}
+		select {
+		case <-tst.loopCloser.CloseNotify():
+			return errMergeLoopUnavailable
+		case <-state.changed:
+		}
+	}
+}
+
+func (tst *tsTable) triggerMergeWave(ctx context.Context) error {
+	if tst.mergeControl == nil || tst.loopCloser == nil {
+		return errMergeLoopUnavailable
+	}
+	tst.mergeControl.startWave(atomic.LoadUint64(&tst.curPartID))
+	if triggerErr := tst.triggerMerge(); triggerErr != nil {
+		tst.mergeControl.blockForWave()
+		return triggerErr
+	}
+	for {
+		state := tst.mergeControl.state()
+		quiescent := !state.triggerPending && !state.dispatcherActive && state.queued == 0 && state.running == 0
+		if state.waveBlocked && quiescent && tst.mergeInFlightEmpty() && tst.mergeControl.unchanged(state.version) {
+			return nil
+		}
+		select {
+		case <-ctx.Done():
+			tst.mergeControl.blockForWave()
+			return fmt.Errorf("waiting for one trace merge wave: %w", ctx.Err())
+		case <-state.changed:
+		}
+	}
+}
+
+func (tst *tsTable) releaseMergeWave() error {
+	if tst.mergeControl == nil {
+		return errMergeLoopUnavailable
+	}
+	tst.mergeControl.releaseWave()
+	return nil
 }
 
 func (tst *tsTable) waitForMergeIdle(ctx context.Context) error {
@@ -211,6 +310,14 @@ func (tst *tsTable) waitForMergeIdle(ctx context.Context) error {
 			return nil
 		}
 		if quiescent && tst.mergeInFlightEmpty() {
+			if state.waveBlocked {
+				select {
+				case <-ctx.Done():
+					return fmt.Errorf("waiting for trace merge idle: %w", ctx.Err())
+				case <-state.changed:
+				}
+				continue
+			}
 			if triggerErr := tst.triggerMerge(); triggerErr != nil {
 				return fmt.Errorf("cannot rescan trace merges while waiting for idle: %w", triggerErr)
 			}
