@@ -6,6 +6,210 @@ Proposed iterative benchmark design. The benchmark is local and opt-in because i
 shard and creates a 24-hour merge workload on local disk. Results from each phase are used to find and fix performance
 problems before the next phase begins; this is not a single final benchmark run.
 
+The first generated fixtures and their reports are invalid for performance conclusions because their timestamp mapper
+used `publication - mergeGrace + 1ns` as a fallback. Although their absolute bounds covered nearly 24 hours, 1,146 of
+3,219 writes had a maximum timestamp exactly one nanosecond inside the two-hour maturity frontier, and 52 writes had a
+maximum timestamp later than publication. Those reports remain discarded.
+
+The corrected two-times fixture has now been regenerated from the frozen 29 July shard backup. It contains 74,576
+traces, 325,570 rows, and 3,219 writes, and the default SkyWalking sampler deletes 35.3733% of its complete traces. All
+3,219 write maxima are no later than publication and strictly inside the hot side of the two-hour frontier when first
+published. None uses the old `frontier + 1ns` fallback. Write maxima span 23.985 logical hours and publications span
+23.993 logical hours, so the workload now represents the intended day rather than a frontier-concentrated timestamp
+artifact.
+
+### No-Pre-Roll Experiment
+
+The historical pipeline-disabled iteration deliberately omitted pre-roll and used two independent production-shaped write
+streams in one 24-hour window. It preserves observed liaison write shapes while assigning unique IDs to every trace
+instance. The resulting fixture contains 74,576 traces, 325,570 rows, and 3,219 writes. Its untimed default SkyWalking
+validation deletes 35.3733% of complete traces.
+
+The original requirement for ten mature selections per repetition is replaced before the next run because selection
+count had 23.6% variation while mature row and byte work varied by only 8.4% and 8.3%. The frozen compound maturity gate
+requires, in every throughput repetition:
+
+- mature input rows of at least 30% of fixture rows;
+- mature core input bytes of at least 30% of raw fixture core bytes;
+- at least three mature selections;
+- at least 95% of mature row work in selections containing an input with merge depth one or greater; and
+- no more than 15% coefficient of variation for mature rows and mature core bytes across five fresh processes.
+
+A mature selection whose every input has depth one or greater remains visible as a non-blocking diagnostic. It is not a
+performance-readiness gate because mixed selections still execute the plugin over earlier merge outputs and represent
+the production picker trajectory. Complete logical ledgers for core, `latency`, and `start_time`, exact row counts, zero
+sampler calls, the Docker resource envelope, and five repetitions remain blocking gates.
+
+The first clean run after freezing these gates remains `HOLD`. Mature selections processed 25.3%-49.4% of fixture rows
+and 24.9%-49.0% of raw core bytes. One repetition fell below both 30% volume floors, while cross-run row and byte
+coefficients of variation were 22.0% and 22.2%, above the 15% limit. Selection diversity and merged-output exposure
+passed: every run had 6-13 mature selections and 97.1%-99.9% exposure. Only one run contained a fully precompacted mature
+selection. Do not lower the frozen gates based on this result; it demonstrates that the two-times, no-pre-roll topology
+does not provide repeatable mature plugin work and is not yet a valid baseline for plugin comparisons.
+
+### Corrected Serialized Pilot Outcome
+
+The corrected empty-shard pilot serialized each publication with its following merge drain while keeping the controller
+and data node in separate processes. It reconciled the core and both secondary-index ledgers exactly, published all 3,219
+parts, completed 286 production-picker merges, and returned every publication barrier with zero queued, running, or
+in-flight merge work. It therefore validates the fixture boundary, logical clock, cross-process barrier, and lossless
+baseline path.
+
+The original report incorrectly treated a merge as mature only when every selected part was mature. A mature merge is a
+selection containing at least one part whose maximum row timestamp is at or before `logical_now - 2h`. A selection may
+therefore be both mature and hot. Reconstructing every selected input from the immutable schedule and preceding merge
+events gives six mature merges, all of which were mixed with at least one hot part; all 286 merges contained a hot part.
+The six mature selections processed 224,788 mature input rows across their merge rounds.
+
+This definition is deliberately independent of whether sampling executes. The event's mature/hot input-part and row
+counters describe the selected data, while its sampling classification, bypass reason, and plugin-call count describe
+what the pipeline did. Under the current whole-selection grace guard, a mixed merge is mature for workload coverage but
+still bypasses sampling because it also contains a hot part.
+
+The corrected report with per-input maturity counters confirms six mature-containing selections, so the pilot is below
+the unchanged ten-mature-round gate but does not establish that the empty-shard topology produces no mature work. Do not
+infer pre-roll necessity from the obsolete zero count. Decide the next fixture iteration from the corrected six-round
+result. The mature-round gate remains ten and is not replaced by merge-depth, row-volume, or input-depth gates.
+
+#### Why 280 Selections Are Pure Hot
+
+Every one of the 286 pilot selections has a newest input maximum equal to its dispatch publication clock. Usually this is
+the raw part just published; in recursive picker passes it is an output created earlier under the same fixed logical
+clock. Consequently, every selection contains a hot input. A selection becomes mature-containing only when the same
+size-compatible picker window also includes an older part whose maximum is at or before the two-hour frontier.
+
+The first merge occurs at `00:08:03` after 19 publications and combines 14 raw parts. The first 24 merge rounds have no
+mature input available in the active inventory. A mature part first exists at the `02:20:54` dispatch, but that merge
+selects 11 newer raw parts and leaves the mature part behind. Across 256 later pure-hot rounds, mature parts are available
+but not selected; the median such inventory has six mature parts and 118,329 mature rows.
+
+This behavior follows the unmodified size-based policy rather than timestamp priority. The picker sorts by compressed
+size, breaking equal-size ties by newer minimum timestamp, and searches size-balanced windows of 8-15 parts. In pure-hot
+rounds with mature inventory, the median mature-part size is about 3.10 MB while the median selected-part size is about
+1.4 KB, a median ratio of roughly 1,765:1. The older parts are predominantly large outputs from earlier compactions, so
+including them with the new small writes would violate the policy's write-amplification balance. They remain parked until
+enough comparable outputs accumulate.
+
+Only six size windows bridge into mature data, at logical times `05:44:00`, `08:42:29`, `12:21:14`, `14:51:33`,
+`17:51:50`, and `21:55:11`. All six are mixed selections. The largest mature rounds are the depth-five merges at
+`12:21:14` (10 mature plus 5 hot inputs) and `21:55:11` (11 mature plus 4 hot inputs); the latter contains only previous
+merge outputs and no raw part. It is still hot because four of those outputs carry data newer than the frontier.
+
+### Revised Two-Track Test Strategy
+
+The primary performance comparison uses one frozen, production-shaped mature merge rather than requiring the continuously
+writing replay to produce a stable number of mature selections. Every framework and plugin variant clones the same
+pre-dispatch shard snapshot, advances the test clock until every selected input is mature, and executes exactly one
+production-picker merge. This controlled round is the pipeline-disabled baseline and the common comparison unit for the
+minimal framework plugin, trace assembly, and native plugin variants.
+
+The seed is not a synthetic part fabricated for the benchmark. Discover it by running the real two-times fixture through
+the unmodified picker with the pipeline disabled and pausing immediately before a representative high-generation
+selection. Freeze the complete core and secondary-index snapshot, selected input IDs, selection checksum, logical clock,
+part metadata, and logical ledgers. Preserve the whole snapshot, not only the selected directories, because conjunction
+parts outside the selected set can affect trace-fragment boundary protection.
+
+The strongest current candidate is pilot sequence 263 at `21:55:11`. Its production selection contains 15 merge outputs,
+no raw parts, input depths two through four, 147,126 rows, and 36,948,453 compressed core input bytes. Eleven inputs and
+113,898 rows were already mature; four inputs and 33,228 rows were hot. For the controlled benchmark, keep the snapshot
+and selection unchanged but set logical time to exactly `selected_max_timestamp + 2h`, making all 15 selected inputs
+mature without changing picker ordering. A discovery rerun must capture this pre-dispatch state because the completed
+pilot has already consumed those input parts.
+
+The controlled discovery rerun has now captured that exact state after 2,941 publications and 262 completed merges. The
+selection checksum is `45aa16460d7ca36fc0ddaa1bc1d2e73f45109dbaab86328012798d5011e60b7b`. The active snapshot contains 1,621 files and
+81,894,144 bytes with tree checksum `24dd0abcadafec97d80fbf99e069777365dbfdfaef07c79a05117f8a8a4e3ddf`. Its manifest also freezes every active part's
+in-memory merge depth because merge generation is not persisted in the production part format and would otherwise reset
+when a seed clone reopens.
+
+The first five pipeline-disabled controlled repetitions all selected the same 15 inputs, matured all 15 parts, merged
+147,126 input rows to 147,126 output rows, completed exactly two secondary-index children, and reconciled all three
+logical ledgers. Median core-round wall time is 7.061 seconds (2.59% CV), median attributed CPU is 7.176 seconds (2.66%
+CV), median allocation is 215.5 MiB (2.19% CV), and median peak RSS is 135.2 MiB (1.99% CV). Compressed logical output
+over core plus both indexes is 1.0009 times compressed input. These values establish the controlled pipeline-disabled
+baseline; filesystem write-byte counters remain a noisier diagnostic at 6.66% CV.
+
+The first minimal-framework comparison now loads the real metadata-only `alwayskeepsampler.so` through the production
+SDK loader before timing. Its plugin checksum is
+`0966c63513576d0f7d35176f1dec172bef760ed40dfaf475faa4b9f2d6baac8c`. Five fresh pipeline-disabled processes and five
+fresh retain-all processes used the same frozen selection in alternating order. Every retain-all repetition made two
+plugin calls, evaluated and retained exactly 33,353 trace IDs, dropped no trace, preserved all 147,126 span rows, merged
+both secondary indexes, and reconciled all three logical ledgers. Compressed logical write amplification remained
+identical at 1.0009 times.
+
+This opening comparison exposes a framework memory issue. Relative to the disabled medians, retain-all allocated 56.2%
+more bytes and made 38.0% more allocations; median peak Go heap increased 83.4% and median peak RSS increased 72.8%.
+The exact-interval allocation profiles identify raw-trace staging as the first optimization target: `stageRawTrace`,
+`blockMetadata.copyFrom`, `traceEvaluationStager.stage`, and `assembleStagedEvaluationBatch` account for the dominant
+plugin-only allocation samples. The profiler is written immediately after the controlled merge, before output-ledger
+verification, although its cumulative allocation view also contains the identical pre-merge input-ledger scan.
+
+Do not interpret the retain-all median wall time (6.262 seconds) or CPU time (6.462 seconds) as a speedup over the
+disabled medians (6.590 and 6.647 seconds). The disabled wall series has 9.87% CV and spans 5.937-7.608 seconds, while
+the CPU profiles are dominated by variable filesystem syscalls. Physical process write-byte counters are likewise not
+a semantic comparison: the two modes produce byte-identical logical core and index outputs even though those counters
+differ. The timing conclusion remains `HOLD`; the stable allocation and memory deltas are actionable. Optimize staging,
+then rerun both modes from the unchanged seed before adding the deterministic-drop matrix.
+
+The controlled-round gates are:
+
+1. the cloned opening snapshot and all three logical ledgers match the frozen seed;
+2. the unmodified production picker chooses the exact frozen input-ID set and selection checksum;
+3. every selected input maximum is at or before the two-hour frontier;
+4. exactly one core merge and its two secondary-index child merges complete, with no recursive merge included in timing;
+5. the pipeline-disabled baseline is lossless, while enabled variants invoke the expected plugin and reconcile against
+   their independently generated output oracle; and
+6. repeated processes use identical inputs and report wall time, CPU, allocation, peak memory, read/write I/O, and write
+   amplification for that one round.
+
+Plugin logic still has independent unit benchmarks over complete trace batches at the frozen 35% SkyWalking deletion
+ratio. The controlled merge measures framework, reader/writer, trace assembly, fragment guard, and plugin integration
+cost; the unit benchmark isolates the sampler algorithm itself.
+
+The 24-hour serialized write-and-merge replay remains the final SkyWalking-settings integration test, not the primary
+performance comparison. It validates real publication, repeated policy selection, hot bypass, secondary-index updates,
+trace correctness, and end-to-end resource behavior. Its acceptance gate must require actual SkyWalking plugin calls;
+otherwise the current whole-selection grace guard can bypass all six mixed mature selections and the test can pass
+without exercising SkyWalking sampling. If the final replay starts from an empty shard, it therefore needs either an
+explicit mature controlled opening round or a sampling policy that evaluates mature data inside mixed selections. This
+choice must be fixed before treating the final replay as plugin integration coverage.
+
+This two-track strategy replaces the unstable ten-mature-round requirement as the performance-comparison gate. Mature
+selection counts in the full replay remain an integration diagnostic rather than a prerequisite for comparing plugin
+costs.
+
+### Full-Replay Integration Gates
+
+Every full-replay integration iteration starts from the same frozen opening snapshot and serializes each publication with
+the following merge drain while keeping the controller and data node in separate processes. The measured 24-hour
+two-times workload remains unchanged.
+
+Only four conditions block a report:
+
+1. **Same test boundary:** fixture, empty opening snapshot, binary, resource envelope, one-shard setting, and repetition count
+   match the frozen suite identity.
+2. **Correct output:** core and both secondary-index logical ledgers reconcile with the variant's expected result, with
+   exact row counts for lossless baseline and retain-all variants.
+3. **SkyWalking exercised:** the configured SkyWalking plugin receives traces, returns decisions, and produces the
+   expected independently verified deletions; a replay containing only grace bypasses is invalid.
+4. **Sustainable execution:** every publication-to-idle barrier and the final drain complete within their timeout without
+   OOM, unexpected sampling, leaked in-flight parts, or unfinished merge work.
+
+Mature merge counts, mature rows and bytes, merge-depth composition, run-to-run CV, write amplification, CPU, memory, and
+I/O remain full-replay report metrics rather than performance-comparison gates. Merge generation is not part of maturity
+validity: it only describes a part's history.
+
+The previous mature-round instability analysis was polluted by the defective timestamp mapper. A part positioned one
+nanosecond inside the frontier became mature after any positive logical-clock advance, so asynchronous picker timing
+changed its classification. The corrected mapper preserves each trace's internal deltas but selects the latest constant
+offset for which every fragment timestamp is no later than its publication. Consequently, at least one fragment of each
+trace is publication-aligned, all fragments are initially hot, and the two-hour grace is a real aging interval. The
+corrected rerun yields six mature-containing selections, below the ten-round gate; it does not by itself choose between
+a warmed opening state and another production-shaped fixture adjustment.
+
+The first discovery replay at 1,400x completed with exact ledgers but used the defective fixture. Its five mature rounds
+and merge-depth results are discarded rather than treated as a failed readiness gate.
+
 ## Objective
 
 Measure and remove the cost added by the plugin framework, complete-trace assembly, and native trace plugins during real
@@ -41,7 +245,7 @@ seed decoding, fixture generation, plugin compilation, or plugin loading in the 
 - Native plugin invocation through the production registry and chain.
 - The merge-grace maturity check and fragment-guard session.
 - Snapshot introduction and deletion of merged input parts.
-- All merge rounds caused by one accelerated 24-hour replay.
+- All merge rounds caused by one serialized 24-hour logical replay.
 - Exactly one trace shard; the fixture is never cloned into additional shard IDs to manufacture concurrency.
 
 ### Excluded
@@ -350,7 +554,7 @@ reweight latency, error, tag, or span content to manufacture it. The hybrid seed
 real small-part tail traces and must naturally pass the 35% actual-plugin validity gate. The fixed 35%
 DeterministicDrop policy controls Phase 2 deletion load.
 
-Measure the latter two from the accelerated production loop. Run the pipeline-disabled loop first, capture every
+Measure the latter two from the serialized production loop. Run the pipeline-disabled loop first, capture every
 selection for which all parts are beyond the two-hour frontier, and replay those selections offline through the actual
 sampler without changing the baseline picker trajectory. Freeze the selection-manifest hash and report any difference
 from `R_calibrated`; do not silently retune the Phase 2 matrix after seeing performance results.
@@ -377,10 +581,11 @@ Fixture construction happens once before profiling and is never timed.
    consulting trace content, sampler verdicts, index size, or benchmark output; copied instances share only the family
    prefix with their source and retain a unique instance suffix.
 6. Calculate `writesPerDay` from the immutable generated-row ledger and the observed 101.1667 rows per write. Create that
-   many evenly spaced slots in one measured logical day. Assign each complete trace a deterministic constant timestamp
-   offset while preserving intra-trace deltas, fragment gaps, and relative row order; ensure every raw part is inside the
-   two-hour grace at its publication. Generate a deterministic preceding pre-roll at the same part rate until the
-   mature-selection dispatch barrier is discoverable.
+   many evenly spaced slots in one measured logical day. For each complete trace, calculate the latest constant timestamp
+   offset for which every fragment maximum is no later than its assigned publication. Preserve intra-trace deltas,
+   fragment gaps, and relative row order. Reject the schedule unless every fragment is non-future and inside the two-hour
+   grace when introduced. This makes trace maxima follow the 24-hour publication schedule instead of concentrating at the
+   grace frontier. Generate a deterministic preceding pre-roll at the same part rate only after validating this mapping.
 7. Divide physical fragments in deterministic event order into immutable liaison raw-write batches.
    Repeat the twelve observed `(blocksCount, totalCount)` templates in ascending source part-ID order. Assign only whole
    physical fragments. At every cumulative template boundary, compare stopping immediately before or after the next
@@ -409,8 +614,10 @@ copy allowlist are chosen before any sampler verdict and cannot be tuned to reac
 
 The complete fixture must satisfy these gates before a measured run:
 
-- the configured measured window is exactly one half-open 24-hour logical day, all measured rows and publications fall
-  inside it, and the timestamp mapping preserves every intra-trace delta and fragment gap;
+- the configured publication window is exactly one half-open 24-hour logical day, every publication and mapped trace
+  maximum falls inside it, mapped maxima span the publication day, and the timestamp mapping preserves every intra-trace
+  delta and fragment gap; an earlier trace row may precede the publication-day boundary only by its preserved trace
+  duration;
 - the measured window contains exactly 37,288 distinct mapped trace IDs;
 - the generated row ledger is within 2% of the 162,238-row source reference, and `writesPerDay` exactly equals
   `ceil(generatedRows * 12 / 1,214)`;
@@ -442,7 +649,8 @@ The complete fixture must satisfy these gates before a measured run:
 - the measured schedule has at most one `partial_tail` batch, it is last, it contains every remaining fragment exactly
   once, and only this batch is excluded from template-fit statistics;
 - the fixture contains exactly `writesPerDay` evenly spaced publication slots, each part is introduced once at its slot,
-  and every newly introduced raw part is inside the two-hour merge grace;
+  every newly introduced raw part is inside the two-hour merge grace, and no fragment timestamp is later than its
+  publication;
 - no compaction, plugin evaluation, or WAL write occurred while creating source parts, and transfer time is outside the
   benchmark interval;
 - the logical checksum before liaison conversion equals the checksum reopened from the received core and secondary-index
@@ -457,14 +665,17 @@ The complete fixture must satisfy these gates before a measured run:
 - the default merge policy can select at least one set of parts;
 - total input rows and the logical checksum match the schedule manifest.
 
-## Accelerated Clock and Publication
+## Logical Clock and Serialized Publication
 
 The test must not wait 24 wall-clock hours. Add a test-only clock seam used by the merge maturity check; production still
-uses the real clock. The logical clock starts at the pre-roll's first timestamp. Attribution mode advances it directly to
-each publication after merge-idle, while throughput mode advances it according to the frozen logical-to-wall-clock
-acceleration mapping.
+uses the real clock. The logical clock starts at the pre-roll's first timestamp and advances directly to the next
+publication only after the preceding merge-idle barrier completes. Before introducing a part scheduled at `P`, the
+controller sets the data node's logical current time to exactly `P`; logical time remains fixed at `P` until every merge
+triggered by that publication has drained.
 
-Determine pre-roll length in an untimed discovery pass. Publish the preceding hybrid schedule through the real production
+Only if the corrected empty-shard serialized pilot fails the mature-round gate for a demonstrated startup-state reason,
+evaluate pre-roll as a separate redesign; it is not part of the current run. Determine any proposed pre-roll length in an
+untimed discovery pass. Publish the preceding hybrid schedule through the real production
 merge loop with the pipeline disabled, advance the logical clock, and inspect each proposed dispatch. Stop when the picker
 first proposes a selection for which every part maximum timestamp is at or before `logical_now - 2h`. A benchmark-only
 dispatch barrier must pause before that merge starts. Fail fixture generation if no such selection appears within 24
@@ -478,8 +689,10 @@ both production-dispatchable and mature. Record opening core and secondary-index
 measured input.
 
 All file parts are generated before measurement. During a run, the driver publishes scheduled parts by atomic rename and
-snapshot introduction, advances the logical clock, and notifies the real merge loop. The serial attribution and
-concurrent throughput runs use different pacing but share the identical publication manifest and logical timestamps.
+snapshot introduction, sets the logical clock to that part's publication, notifies the production merge loop, and waits
+for verified merge-idle before continuing. Merge-output notifications may cause recursive production picker passes, but
+the controller cannot introduce the next write or advance logical time until all of them finish. There is no concurrent
+publisher mode in a reportable run.
 
 The driver is an external controller, not a goroutine in the measured data-node process. Before timing, every immutable
 part is staged on the same filesystem as its destination so publication is an atomic rename rather than a timed byte
@@ -487,30 +700,25 @@ copy. The controller performs the rename and calls a test-only introduction/cloc
 the real part open, snapshot introduction, picker notification, and merge work; those operations remain measured. The
 controller cannot rewrite part contents or invoke the merger directly.
 
-In the attribution run, advance directly to the next logical publication only after an explicit merge-idle barrier. The
-barrier means that the dispatcher found no selectable parts and both worker lanes have no queued or in-flight request;
-fixed sleeps are not acceptable. This closed-loop mode deliberately serializes publications so per-merge resource deltas
-remain attributable.
+The merge-idle barrier is epoch-aware: it may return only after the dispatcher has observed the snapshot epoch created by
+the publication, found no selectable parts for that epoch, and both worker lanes have no queued, running, or in-flight
+work. Checking only empty queue counters is insufficient because the dispatcher might not yet have consumed the
+publication notification. Fixed sleeps are not acceptable.
 
-In the throughput run, map logical publication timestamps onto a frozen accelerated wall-clock schedule. Publish each
-part when due without waiting for any merge to finish. If the publisher falls behind its own schedule, publish overdue
-parts immediately in manifest order and record publisher lag. Merge queue depth, unmerged-part inventory, oldest-part
-age, and time to drain after the final publication are primary results. The opening dispatch barrier and final
-merge-idle barrier remain mandatory.
+The controller and data node remain different processes. The external controller owns file publication and logical-time
+advancement; the resource-limited data-node process owns snapshot introduction, production picking, core and secondary-
+index merging, and plugin execution. Controller CPU and memory remain outside measured data-node resources.
 
-Choose the acceleration factor from a pipeline-disabled capacity calibration on the same immutable fixture and container
-profile. Sweep increasingly faster logical-to-wall-clock mappings until backlog or publisher lag grows without recovery;
-the highest rate that completes the measured window and returns to merge-idle is `A_max`. Freeze the reportable rate at
-70% of `A_max` before running any plugin variant. All variants use that exact rate, including after their picker
-trajectories diverge. Never recalibrate the rate per plugin. A code or environment change starts a new comparison suite,
-reruns the baseline calibration, and records both the sweep and frozen rate.
+The merge grace is exactly two logical hours. At a `12:10` publication, the maturity frontier is exactly `10:10`; a part
+whose maximum timestamp is at or before `10:10` is mature. A merge containing that part is a mature merge even when it
+also contains the newly written `12:10` part. Such a selection is both mature and hot. Under the current whole-selection
+grace guard, the hot part causes sampling to be bypassed; the maturity classification and sampling decision are separate
+reported dimensions. The driver records mature and hot input-part counts, their row counts, the frontier, and the
+sampling decision before dispatch.
 
-The merge grace is exactly two logical hours. A selection is hot if any selected part has a maximum timestamp newer
-than `logical_now - 2h`. The driver records the selection and whether the plugin was bypassed before dispatch.
-
-After the last scheduled publication, advance only to the measured day boundary and hold logical time there. Let all
-queued and policy-selectable work drain to merge-idle. This completes the primary 24-hour phase and captures its final
-backlog drain without prematurely maturing the tail. Record a phase boundary and resource-counter snapshot.
+After the last scheduled publication and its merge-idle barrier, advance only to the measured day boundary and drain one
+final picker epoch. This completes the primary 24-hour phase without prematurely maturing the tail. Record a phase
+boundary and resource-counter snapshot.
 
 The cooldown phase then advances logical time by two hours, triggers the merge loop without creating a synthetic data
 part, and drains to merge-idle again. This trigger requires a test-only notifier seam. Cooldown work is reported
@@ -532,7 +740,7 @@ the fixture rather than forcing a selection.
 ## Per-Merge Sampling Classification
 
 The benchmark monitor must classify every core file merge independently. Inferring sampling from a difference between
-global counters is insufficient because sampled and unsampled merges can occur in the same accelerated replay.
+global counters is insufficient because sampled and unsampled merges can occur in the same logical replay.
 
 Each merge receives a benchmark-local sequence number used only in the JSON event stream, not as a metrics label. At
 dispatch, the monitor records selected part count and bytes, part time envelope, logical time, maturity frontier, lane,
@@ -585,22 +793,22 @@ that latency from changing which parts are available to the picker. Any trajecto
 invalidates attribution until explained and fixed. DeterministicDrop is exempt because deleting output intentionally
 changes later policy inputs.
 
-### Throughput Run
+### Serialized Full-Loop Resource Run
 
 A second full-loop run uses production-derived merge concurrency for the four-CPU container. It reports aggregate daily
-throughput and container resource use. Per-merge wall time, selection, sampling classification, and bytes remain valid,
-but CPU and peak-memory attribution by sampling class is advisory when intervals overlap. The report must not present
-overlapping cgroup deltas as additive per-class CPU totals. Publications follow the fixed accelerated schedule
-independently of merge completion; backlog and drain time are part of the result rather than reasons to slow the input.
-The schedule runs at the frozen 70%-of-baseline-capacity factor; plugin variants cannot select their own rate.
+resource use. Per-merge wall time, selection, sampling classification, and bytes remain valid, but CPU and peak-memory
+attribution by sampling class is advisory when merge workers overlap within one drain epoch. The report must not present
+overlapping cgroup deltas as additive per-class CPU totals. The controller publishes the next part only after the current
+merge loop reaches epoch-aware idle. Report logical input volume per data-node CPU second and active merge wall time; do not
+interpret serialized end-to-end wall time as production ingestion capacity.
 
 Only the downloaded shard is active. Report effective CPU utilization and available headroom, but do not interpret
 unused CPUs as evidence that the data node could sustain a proportional number of additional shards.
 
-In throughput mode, all variants start from the same opening state and publication schedule, but picker trajectories may
-diverge because plugin latency and deletion change part coexistence and output sizes. This divergence is a measured system
-effect, not a correctness failure. Report the first divergence point and all subsequent selection fingerprints rather
-than forcing the baseline plan.
+All variants start from the same opening state and serialized publication schedule. Plugin latency cannot change which
+raw parts coexist at a picker epoch. Pipeline-disabled and AlwaysKeep must therefore have identical selection
+fingerprints. A dropping plugin may diverge because its output sizes and logical contents intentionally differ; report
+the first divergence rather than forcing the baseline plan.
 
 ## Benchmark Variants
 
@@ -689,8 +897,8 @@ Fix plugin-local performance problems and repeat until stable.
 ### Phase 4: SkyWalking Integration
 
 Configure the actual SkyWalking pipeline, projections, thresholds, merge grace, fragment-gap contract, core indexes, and
-secondary indexes. Run the accelerated 24-hour workload with production-derived concurrency inside the same Docker
-resource envelope. This is the final one-shard integration result, not a whole-data-node capacity claim.
+secondary indexes. Run the serialized 24-hour publication schedule with production-derived merge concurrency inside the
+same Docker resource envelope. This is the final one-shard integration result, not a whole-data-node capacity claim.
 
 Every optimization iteration preserves the fixture and environment checksums and reruns all earlier phases affected by
 the change. A final integration improvement is not accepted if it regresses the pipeline-disabled baseline.
@@ -706,7 +914,7 @@ reports kernel-level overhead but does not claim to represent a complete day's c
 
 ### Full Merge-Loop Comparison
 
-Run the actual merge loop for the entire accelerated schedule, the day-boundary backlog drain, and the separately
+Run the actual merge loop for the entire serialized logical schedule, the day-boundary drain, and the separately
 reported cooldown drain. Do not force a precomputed selection plan. Output sizes may cause later picker decisions to
 diverge between baseline and plugin variants; that is a real system effect and must be recorded rather than hidden.
 
@@ -732,7 +940,7 @@ For the controlled first-round layer, timing starts immediately before dispatch 
 
 ### Primary
 
-- primary 24-hour wall-clock seconds and day-boundary backlog-drain seconds;
+- primary serialized-replay wall-clock seconds, active merge seconds, and publication-to-idle barrier latency;
 - cooldown wall-clock seconds, reported separately;
 - process CPU seconds and average effective cores;
 - compressed input MiB per second;
@@ -756,8 +964,8 @@ independently in addition to their combined totals.
 - maximum concurrent merges;
 - final part count and size histogram;
 - merge count, selected bytes, output bytes, and duration grouped by sampling classification and reason;
-- publisher lag, merge queue depth, unmerged-part inventory, oldest-part age, day-boundary drain time, and cooldown drain
-  time for the throughput run.
+- merge queue depth within each epoch, unmerged-part inventory, oldest-part age, publication-to-idle time, and cooldown
+  drain time for the serialized full-loop run.
 
 ### Pipeline
 
@@ -817,16 +1025,16 @@ The performance result is rejected unless all gates pass:
 12. The source downloaded shard and immutable generated fixture remain unchanged.
 13. The monitor event count equals the number of completed core file merges, every event has one sampling
     classification, and aggregate event totals reconcile with engine pipeline counters.
-14. Attribution publications occur only after the preceding merge-idle barrier. Throughput publications preserve
-    manifest order and their frozen wall-clock due times without waiting for merge-idle; every delay is recorded as
-    publisher lag.
+14. Every publication occurs only after the preceding epoch-aware merge-idle barrier. Logical time remains fixed from
+    publication until the dispatcher has observed that publication's snapshot epoch and all recursively eligible merge
+    work has drained.
 15. The primary phase reaches merge-idle at the logical day boundary before the clock advances. Cooldown has independent
     counters and profiles, and primary plus cooldown reconciles with end-to-end part, row, byte, and merge totals.
 16. Every scheduled part moves exactly once from the staging directory through an atomic same-filesystem rename. Its
     checksum is unchanged, the external controller never appears in data-node profiles or cgroup counters, and all
     controller lag and errors are reported separately.
-17. Pipeline-disabled and AlwaysKeep serial-attribution runs have identical ordered selection fingerprints and logical
-    outputs. Throughput divergence is allowed, but its first point and subsequent trajectories are recorded.
+17. Pipeline-disabled and AlwaysKeep runs have identical ordered selection fingerprints and logical outputs. Dropping
+    variants may diverge, but their first point and subsequent trajectories are recorded.
 
 ## Comparison and Acceptance
 
@@ -857,14 +1065,15 @@ Reports should explicitly separate:
    isolated data-node receive fixture builder, whole-fragment batch-template packer, and trace, sampler-ratio, core-byte,
    and index-byte fixture gates.
 5. Add the minimal AlwaysKeep and trace-ID-hash DeterministicDrop native benchmark plugins.
-6. Add the accelerated publisher, mature-selection dispatch barrier, discovery pass, and full merge-loop harness.
+6. Add the serialized external publisher, epoch-aware merge-idle barrier, mature-selection dispatch barrier, discovery
+   pass, and full merge-loop harness.
 7. Add logical checksumming and selection/event recording.
 8. Replay exact mature baseline selections offline through the actual sampler, freeze the selection manifest, and report
    `R_merge_verdict` alongside the fixed 35% `R_calibrated` framework case.
 9. Add per-merge sampling classification and resource-delta monitoring.
 10. Add the pinned, resource-limited data-node Docker runner, separately pinned external controller, and data-node-only
     cgroup v2 collector.
-11. Add pipeline-disabled acceleration calibration, controlled-round, serial-attribution, concurrent full-loop, and
+11. Add pipeline-disabled controlled-round, single-worker attribution, serialized production-concurrency full-loop, and
     plugin-only unit benchmark entry points.
 12. Add per-variant profiling commands and a machine-readable JSON report.
 13. Run a short pre-roll and mature-selection smoke fixture first, then generate and validate the full 24-hour fixture.
@@ -874,6 +1083,6 @@ Reports should explicitly separate:
 ## Known Interpretation Risk
 
 Publishing a 24-hour backlog and then merging it all at once makes old small parts eligible for the plugin, which is not
-the same as steady ingestion. Therefore the primary full-loop run uses scheduled publication and an accelerated logical
-clock. A backlog stress mode may still be useful, but it must be labeled separately and must not be used to claim normal
-two-hour-grace behavior.
+the same as steady ingestion. Therefore the primary full-loop run advances through every scheduled publication and
+drains its picker epoch before moving logical time. A backlog stress mode may still be useful, but it must be labeled
+separately and must not be used to claim normal two-hour-grace behavior.

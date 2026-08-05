@@ -32,7 +32,7 @@ import (
 	pbv1 "github.com/apache/skywalking-banyandb/pkg/pb/v1"
 )
 
-func reconcileFixture(ctx context.Context, receiver *storagetrace.BenchmarkPartReceiver, source Source, plan Plan,
+func reconcileFixture(ctx context.Context, receiver *storagetrace.BenchmarkPartReceiver, plan Plan,
 	lookup sourceLookup, offsets []int64, expectedRows uint64,
 ) error {
 	expectedByTrace, schemaTagTypes, buildErr := expectedTraceRows(plan, lookup)
@@ -60,8 +60,8 @@ func reconcileFixture(ctx context.Context, receiver *storagetrace.BenchmarkPartR
 	if uint64(sumCounts(actualByTrace)) != expectedRows {
 		return fmt.Errorf("generated core row count mismatch after reopen: got %d, want %d", sumCounts(actualByTrace), expectedRows)
 	}
-	if uint64(len(actualByTrace)) != source.Catalog.Core.TraceCount {
-		return fmt.Errorf("generated core trace count mismatch after reopen: got %d, want %d", len(actualByTrace), source.Catalog.Core.TraceCount)
+	if len(actualByTrace) != len(plan.Instances) {
+		return fmt.Errorf("generated core trace count mismatch after reopen: got %d, want %d", len(actualByTrace), len(plan.Instances))
 	}
 	return nil
 }

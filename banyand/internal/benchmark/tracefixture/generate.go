@@ -51,38 +51,50 @@ var fixtureIndexNames = [...]string{"latency", "start_time"}
 
 // GenerateOptions configures production-written fixture generation.
 type GenerateOptions struct {
-	OutputPath  string
 	DayStart    time.Time
+	OutputPath  string
 	DayDuration time.Duration
 	MergeGrace  time.Duration
 }
 
 // Artifact is the reproducibility and acceptance record for one generated fixture.
 type Artifact struct {
-	CoreManifest               benchmark.Manifest            `json:"coreManifest"`
-	CoreCompressedBytes        uint64                        `json:"coreCompressedBytes"`
-	CoreConsolidatedBytes      uint64                        `json:"coreConsolidatedBytes"`
+	DayStart                   time.Time                     `json:"dayStart"`
+	SourceIndexCompressedBytes map[string]uint64             `json:"sourceIndexCompressedBytes"`
+	LogicalLedgerSHA256        map[string]string             `json:"logicalLedgerSHA256"`
 	IndexManifests             map[string]benchmark.Manifest `json:"indexManifests"`
 	IndexCompressedBytes       map[string]uint64             `json:"indexCompressedBytes"`
 	IndexConsolidatedBytes     map[string]uint64             `json:"indexConsolidatedBytes"`
-	SourceIndexCompressedBytes map[string]uint64             `json:"sourceIndexCompressedBytes"`
-	SourceManifestSHA256       string                        `json:"sourceManifestSHA256"`
+	CopyAllowlistSHA256        string                        `json:"copyAllowlistSHA256"`
+	ScheduleSHA256             string                        `json:"scheduleSHA256"`
 	SourceCatalogSHA256        string                        `json:"sourceCatalogSHA256"`
 	ClosureAllowlistSHA256     string                        `json:"closureAllowlistSHA256"`
-	CopyAllowlistSHA256        string                        `json:"copyAllowlistSHA256"`
 	GeneratedIDManifestSHA256  string                        `json:"generatedIDManifestSHA256"`
-	ScheduleSHA256             string                        `json:"scheduleSHA256"`
-	DayStart                   time.Time                     `json:"dayStart"`
+	SourceManifestSHA256       string                        `json:"sourceManifestSHA256"`
+	CoreManifest               benchmark.Manifest            `json:"coreManifest"`
 	DayDuration                time.Duration                 `json:"dayDuration"`
+	CoreCompressedBytes        uint64                        `json:"coreCompressedBytes"`
+	CoreConsolidatedBytes      uint64                        `json:"coreConsolidatedBytes"`
 	MergeGrace                 time.Duration                 `json:"mergeGrace"`
 	TraceCount                 uint64                        `json:"traceCount"`
 	RowCount                   uint64                        `json:"rowCount"`
 	WriteCount                 uint64                        `json:"writeCount"`
 	PartialTailWrites          uint64                        `json:"partialTailWrites"`
+	WriteIntensity             int                           `json:"writeIntensity"`
 	Version                    int                           `json:"version"`
 }
 
 type sourceLookup map[string]LoadedTrace
+
+type fixtureWriteState struct {
+	fileSystem    fs.FileSystem
+	receiver      *storagetrace.BenchmarkPartReceiver
+	indexEncoders map[string]sidx.SIDX
+	lookup        sourceLookup
+	senderRoot    string
+	receiverRoot  string
+	offsets       []int64
+}
 
 // Generate writes a planned fixture through the native encoders and production data-node receipt path.
 func Generate(ctx context.Context, source Source, plan Plan, options GenerateOptions) (artifact Artifact, generateErr error) {
@@ -114,7 +126,7 @@ func Generate(ctx context.Context, source Source, plan Plan, options GenerateOpt
 	if mkdirErr := os.MkdirAll(filepath.Join(senderRoot, "core"), 0o755); mkdirErr != nil {
 		return Artifact{}, fmt.Errorf("cannot create fixture sender root: %w", mkdirErr)
 	}
-	receiver, receiverErr := storagetrace.NewBenchmarkPartReceiver(receiverRoot)
+	receiver, receiverErr := storagetrace.NewBenchmarkPartReceiver(receiverRoot) //nolint:contextcheck // The storage constructor has no context parameter.
 	if receiverErr != nil {
 		return Artifact{}, fmt.Errorf("cannot create fixture receiver: %w", receiverErr)
 	}
@@ -124,7 +136,7 @@ func Generate(ctx context.Context, source Source, plan Plan, options GenerateOpt
 		}
 	}()
 	fileSystem := fs.NewLocalFileSystem()
-	indexEncoders, encoderErr := newIndexEncoders(senderRoot, fileSystem)
+	indexEncoders, encoderErr := newIndexEncoders(senderRoot, fileSystem) //nolint:contextcheck // The SIDX constructor has no context parameter.
 	if encoderErr != nil {
 		return Artifact{}, fmt.Errorf("cannot create fixture index encoders: %w", encoderErr)
 	}
@@ -138,51 +150,27 @@ func Generate(ctx context.Context, source Source, plan Plan, options GenerateOpt
 	if offsetErr != nil {
 		return Artifact{}, fmt.Errorf("cannot map fixture timestamps: %w", offsetErr)
 	}
-	var rowCount uint64
-	for writeIdx := range plan.Writes {
-		if contextErr := ctx.Err(); contextErr != nil {
-			return Artifact{}, fmt.Errorf("fixture generation canceled: %w", contextErr)
-		}
-		write := &plan.Writes[writeIdx]
-		partID := uint64(writeIdx + 1)
-		rows, materializeErr := materializeWriteRows(plan, lookup, offsets, write)
-		if materializeErr != nil {
-			return Artifact{}, fmt.Errorf("cannot materialize fixture write %d: %w", writeIdx, materializeErr)
-		}
-		rowCount += uint64(len(rows))
-		corePath, releaseCore := storagetrace.EncodePart(filepath.Join(senderRoot, "core"), fileSystem, partID, rows)
-		indexPaths, encodeErr := encodeIndexes(indexEncoders, fileSystem, senderRoot, partID, rows)
-		if encodeErr != nil {
-			releaseCore()
-			return Artifact{}, fmt.Errorf("cannot encode fixture write %d indexes: %w", writeIdx, encodeErr)
-		}
-		if receiveErr := receiver.Receive(ctx, corePath, indexPaths); receiveErr != nil {
-			releaseCore()
-			return Artifact{}, fmt.Errorf("cannot receive fixture write %d: %w", writeIdx, receiveErr)
-		}
-		receivedIndexPaths := make(map[string]string, len(indexPaths))
-		partName := fmt.Sprintf("%016x", partID)
-		for indexName := range indexPaths {
-			receivedIndexPaths[indexName] = filepath.Join(receiverRoot, "sidx", indexName, partName)
-		}
-		if evidenceErr := captureWriteEvidence(fileSystem, write, partID, filepath.Join(receiverRoot, partName), receivedIndexPaths); evidenceErr != nil {
-			releaseCore()
-			return Artifact{}, fmt.Errorf("cannot capture received fixture write %d evidence: %w", writeIdx, evidenceErr)
-		}
-		releaseCore()
-		if removeErr := removeSenderParts(corePath, indexPaths); removeErr != nil {
-			return Artifact{}, fmt.Errorf("cannot remove fixture write %d sender files: %w", writeIdx, removeErr)
-		}
+	writeState := fixtureWriteState{
+		receiver: receiver, fileSystem: fileSystem, indexEncoders: indexEncoders, lookup: lookup, offsets: offsets,
+		senderRoot: senderRoot, receiverRoot: receiverRoot,
 	}
-	if reopenErr := receiver.Reopen(); reopenErr != nil {
+	rowCount, writeErr := writeState.materialize(ctx, plan)
+	if writeErr != nil {
+		return Artifact{}, writeErr
+	}
+	if reopenErr := receiver.Reopen(); reopenErr != nil { //nolint:contextcheck // Reopen has no context parameter.
 		return Artifact{}, fmt.Errorf("cannot reopen generated fixture: %w", reopenErr)
 	}
-	consolidatedSizes, consolidateErr := receiver.ConsolidatedCompressedSizes(ctx, int(source.Catalog.Core.PartCount))
+	consolidatedSizes, consolidateErr := receiver.ConsolidatedCompressedSizes(ctx, int(source.Catalog.Core.PartCount)*plan.WriteIntensity)
 	if consolidateErr != nil {
 		return Artifact{}, fmt.Errorf("cannot measure consolidated fixture size: %w", consolidateErr)
 	}
-	if reconcileErr := reconcileFixture(ctx, receiver, source, plan, lookup, offsets, rowCount); reconcileErr != nil {
+	if reconcileErr := reconcileFixture(ctx, receiver, plan, lookup, offsets, rowCount); reconcileErr != nil {
 		return Artifact{}, fmt.Errorf("cannot reconcile generated fixture: %w", reconcileErr)
+	}
+	logicalLedgerChecksums, logicalLedgerErr := LogicalLedgerChecksums(ctx, receiver)
+	if logicalLedgerErr != nil {
+		return Artifact{}, fmt.Errorf("cannot checksum generated fixture ledgers: %w", logicalLedgerErr)
 	}
 	scheduleHash, scheduleErr := writeSchedule(options.OutputPath, plan)
 	if scheduleErr != nil {
@@ -194,6 +182,7 @@ func Generate(ctx context.Context, source Source, plan Plan, options GenerateOpt
 	}
 	artifact.CoreConsolidatedBytes = consolidatedSizes.Core
 	artifact.IndexConsolidatedBytes = consolidatedSizes.Indexes
+	artifact.LogicalLedgerSHA256 = logicalLedgerChecksums
 	if gateErr := validateArtifactSizes(artifact, source); gateErr != nil {
 		return Artifact{}, fmt.Errorf("fixture acceptance gate failed: %w", gateErr)
 	}
@@ -205,6 +194,48 @@ func Generate(ctx context.Context, source Source, plan Plan, options GenerateOpt
 	}
 	keepOutput = true
 	return artifact, nil
+}
+
+func (fws *fixtureWriteState) materialize(ctx context.Context, plan Plan) (uint64, error) {
+	var rowCount uint64
+	for writeIdx := range plan.Writes {
+		if contextErr := ctx.Err(); contextErr != nil {
+			return 0, fmt.Errorf("fixture generation canceled: %w", contextErr)
+		}
+		write := &plan.Writes[writeIdx]
+		partID := uint64(writeIdx + 1)
+		rows, materializeErr := materializeWriteRows(plan, fws.lookup, fws.offsets, write)
+		if materializeErr != nil {
+			return 0, fmt.Errorf("cannot materialize fixture write %d: %w", writeIdx, materializeErr)
+		}
+		rowCount += uint64(len(rows))
+		corePath, releaseCore := storagetrace.EncodePart(filepath.Join(fws.senderRoot, "core"), fws.fileSystem, partID, rows)
+		indexPaths, encodeErr := encodeIndexes(fws.indexEncoders, fws.fileSystem, fws.senderRoot, partID, rows)
+		if encodeErr != nil {
+			releaseCore()
+			return 0, fmt.Errorf("cannot encode fixture write %d indexes: %w", writeIdx, encodeErr)
+		}
+		if receiveErr := fws.receiver.Receive(ctx, corePath, indexPaths); receiveErr != nil {
+			releaseCore()
+			return 0, fmt.Errorf("cannot receive fixture write %d: %w", writeIdx, receiveErr)
+		}
+		receivedIndexPaths := make(map[string]string, len(indexPaths))
+		partName := fmt.Sprintf("%016x", partID)
+		for indexName := range indexPaths {
+			receivedIndexPaths[indexName] = filepath.Join(fws.receiverRoot, "sidx", indexName, partName)
+		}
+		if evidenceErr := captureWriteEvidence(
+			fws.fileSystem, write, partID, filepath.Join(fws.receiverRoot, partName), receivedIndexPaths,
+		); evidenceErr != nil {
+			releaseCore()
+			return 0, fmt.Errorf("cannot capture received fixture write %d evidence: %w", writeIdx, evidenceErr)
+		}
+		releaseCore()
+		if removeErr := removeSenderParts(corePath, indexPaths); removeErr != nil {
+			return 0, fmt.Errorf("cannot remove fixture write %d sender files: %w", writeIdx, removeErr)
+		}
+	}
+	return rowCount, nil
 }
 
 func captureWriteEvidence(fileSystem fs.FileSystem, write *Write, partID uint64, corePath string, indexPaths map[string]string) error {
@@ -267,15 +298,7 @@ func traceOffsets(plan Plan, lookup sourceLookup, options GenerateOptions) ([]in
 	offsets := make([]int64, len(plan.Instances))
 	initialized := make([]bool, len(plan.Instances))
 	hotLowerBound := make([]int64, len(plan.Instances))
-	globalSourceMin := int64(0)
-	globalMinInitialized := false
-	for sourceID := range lookup {
-		minTimestamp, _ := loadedTraceBounds(lookup[sourceID])
-		if !globalMinInitialized || minTimestamp < globalSourceMin {
-			globalSourceMin = minTimestamp
-			globalMinInitialized = true
-		}
-	}
+	publicationUpperBound := make([]int64, len(plan.Instances))
 	for writeIdx := range plan.Writes {
 		write := &plan.Writes[writeIdx]
 		publicationNanos := write.Publication.UnixNano()
@@ -289,11 +312,14 @@ func traceOffsets(plan Plan, lookup sourceLookup, options GenerateOptions) ([]in
 			fragment := &sourceTrace.Fragments[fragmentRef.FragmentOrdinal].Fragment
 			maturityFrontier := saturatingSubInt64(publicationNanos, int64(options.MergeGrace))
 			candidateHotLowerBound := saturatingSubInt64(saturatingAddInt64(maturityFrontier, 1), fragment.MaxTimestamp)
+			candidatePublicationUpperBound := saturatingSubInt64(publicationNanos, fragment.MaxTimestamp)
 			if !initialized[fragmentRef.InstanceOrdinal] {
 				hotLowerBound[fragmentRef.InstanceOrdinal] = candidateHotLowerBound
+				publicationUpperBound[fragmentRef.InstanceOrdinal] = candidatePublicationUpperBound
 				initialized[fragmentRef.InstanceOrdinal] = true
 			} else {
 				hotLowerBound[fragmentRef.InstanceOrdinal] = max(hotLowerBound[fragmentRef.InstanceOrdinal], candidateHotLowerBound)
+				publicationUpperBound[fragmentRef.InstanceOrdinal] = min(publicationUpperBound[fragmentRef.InstanceOrdinal], candidatePublicationUpperBound)
 			}
 		}
 	}
@@ -304,11 +330,13 @@ func traceOffsets(plan Plan, lookup sourceLookup, options GenerateOptions) ([]in
 			return nil, fmt.Errorf("generated trace %q has no scheduled fragments", plan.Instances[instanceIdx].GeneratedID)
 		}
 		sourceTrace := lookup[plan.Instances[instanceIdx].SourceID]
-		minTimestamp, maxTimestamp := loadedTraceBounds(sourceTrace)
-		offset := dayStartNanos - globalSourceMin
-		offset = max(offset, hotLowerBound[instanceIdx])
-		if minTimestamp+offset < dayStartNanos || maxTimestamp+offset >= dayEndNanos {
-			return nil, fmt.Errorf("generated trace %q cannot fit in the half-open logical day", plan.Instances[instanceIdx].GeneratedID)
+		_, maxTimestamp := loadedTraceBounds(sourceTrace)
+		if hotLowerBound[instanceIdx] > publicationUpperBound[instanceIdx] {
+			return nil, fmt.Errorf("generated trace %q cannot be both hot and published after its spans", plan.Instances[instanceIdx].GeneratedID)
+		}
+		offset := publicationUpperBound[instanceIdx]
+		if maxTimestamp+offset < dayStartNanos || maxTimestamp+offset >= dayEndNanos {
+			return nil, fmt.Errorf("generated trace %q maximum timestamp is outside the half-open logical day", plan.Instances[instanceIdx].GeneratedID)
 		}
 		offsets[instanceIdx] = offset
 	}
@@ -323,6 +351,10 @@ func traceOffsets(plan Plan, lookup sourceLookup, options GenerateOptions) ([]in
 			if remappedMax <= maturityFrontier {
 				return nil, fmt.Errorf("write %d trace %q is not hot: max timestamp %d, frontier %d", writeIdx,
 					fragmentRef.GeneratedTraceID, remappedMax, maturityFrontier)
+			}
+			if remappedMax > write.Publication.UnixNano() {
+				return nil, fmt.Errorf("write %d trace %q is published before its maximum timestamp: max timestamp %d, publication %d", writeIdx,
+					fragmentRef.GeneratedTraceID, remappedMax, write.Publication.UnixNano())
 			}
 		}
 	}
@@ -506,7 +538,7 @@ func writeSchedule(root string, plan Plan) (string, error) {
 		return "", fmt.Errorf("cannot marshal fixture schedule: %w", marshalErr)
 	}
 	data = append(data, '\n')
-	if writeErr := os.WriteFile(path, data, 0o644); writeErr != nil {
+	if writeErr := os.WriteFile(path, data, 0o600); writeErr != nil {
 		return "", fmt.Errorf("cannot write fixture schedule: %w", writeErr)
 	}
 	digest := sha256.Sum256(data)
@@ -569,7 +601,8 @@ func buildArtifact(receiverRoot string, source Source, plan Plan, options Genera
 		CopyAllowlistSHA256:        copyAllowlistHash(plan.Instances),
 		GeneratedIDManifestSHA256:  generatedIDManifest(plan.Instances), ScheduleSHA256: scheduleHash,
 		DayStart: options.DayStart, DayDuration: options.DayDuration, MergeGrace: options.MergeGrace,
-		TraceCount: uint64(len(plan.Instances)), RowCount: rowCount, WriteCount: uint64(len(plan.Writes)), PartialTailWrites: partialTails, Version: fixtureVersion,
+		TraceCount: uint64(len(plan.Instances)), RowCount: rowCount, WriteCount: uint64(len(plan.Writes)), PartialTailWrites: partialTails,
+		WriteIntensity: plan.WriteIntensity, Version: fixtureVersion,
 	}, nil
 }
 
@@ -614,30 +647,37 @@ func generatedIDManifest(instances []Instance) string {
 	digest := sha256.New()
 	for instanceIdx := range ordered {
 		instance := &ordered[instanceIdx]
-		mustWriteHashString(digest, fmt.Sprintf("%s\t%s\t%s\t%d\n", instance.GeneratedID, instance.SourceID, instance.Class, instance.CopyOrdinal))
+		mustWriteHashString(digest, fmt.Sprintf("%s\t%s\t%s\t%d\t%d\n", instance.GeneratedID, instance.SourceID, instance.Class,
+			instance.CopyOrdinal, instance.StreamOrdinal))
 	}
 	return hex.EncodeToString(digest.Sum(nil))
 }
 
 func validateArtifactSizes(artifact Artifact, source Source) error {
+	intensity := artifact.WriteIntensity
+	if intensity == 0 {
+		intensity = 1
+	}
+	scaled := func(value uint64) uint64 { return value * uint64(intensity) }
 	var gateErr error
-	if artifact.TraceCount != source.Catalog.Core.TraceCount {
-		gateErr = errors.Join(gateErr, fmt.Errorf("generated trace count mismatch: got %d, want %d", artifact.TraceCount, source.Catalog.Core.TraceCount))
+	if artifact.TraceCount != scaled(source.Catalog.Core.TraceCount) {
+		gateErr = errors.Join(gateErr, fmt.Errorf("generated trace count mismatch: got %d, want %d", artifact.TraceCount,
+			scaled(source.Catalog.Core.TraceCount)))
 	}
-	if !withinTolerance(artifact.RowCount, source.Catalog.Core.RowCount, coreSizeTolerance) {
-		gateErr = errors.Join(gateErr,
-			fmt.Errorf("generated row count %d is outside %.0f%% of source %d", artifact.RowCount, coreSizeTolerance*100, source.Catalog.Core.RowCount))
+	if !withinTolerance(artifact.RowCount, scaled(source.Catalog.Core.RowCount), coreSizeTolerance) {
+		gateErr = errors.Join(gateErr, fmt.Errorf("generated row count %d is outside %.0f%% of scaled source %d", artifact.RowCount,
+			coreSizeTolerance*100, scaled(source.Catalog.Core.RowCount)))
 	}
-	if !withinTolerance(artifact.CoreConsolidatedBytes, source.Catalog.Core.CompressedBytes, coreSizeTolerance) {
-		gateErr = errors.Join(gateErr, fmt.Errorf("generated consolidated core bytes %d are outside %.0f%% of source %d", artifact.CoreConsolidatedBytes,
-			coreSizeTolerance*100, source.Catalog.Core.CompressedBytes))
+	if !withinTolerance(artifact.CoreConsolidatedBytes, scaled(source.Catalog.Core.CompressedBytes), coreSizeTolerance) {
+		gateErr = errors.Join(gateErr, fmt.Errorf("generated consolidated core bytes %d are outside %.0f%% of scaled source %d",
+			artifact.CoreConsolidatedBytes, coreSizeTolerance*100, scaled(source.Catalog.Core.CompressedBytes)))
 	}
 	for indexName := range source.Catalog.Indexes {
 		generatedBytes := artifact.IndexConsolidatedBytes[indexName]
 		sourceBytes := source.IndexCompressedBytes[indexName]
-		if !withinTolerance(generatedBytes, sourceBytes, indexSizeTolerance) {
-			gateErr = errors.Join(gateErr, fmt.Errorf("generated consolidated index %q compressed bytes %d are outside %.0f%% of source %d", indexName,
-				generatedBytes, indexSizeTolerance*100, sourceBytes))
+		if !withinIntensityBounds(generatedBytes, sourceBytes, intensity, indexSizeTolerance) {
+			gateErr = errors.Join(gateErr, fmt.Errorf("generated consolidated index %q compressed bytes %d are outside intensity bounds from %d to %d",
+				indexName, generatedBytes, lowerIntensityBound(sourceBytes, indexSizeTolerance), upperIntensityBound(sourceBytes, intensity, indexSizeTolerance)))
 		}
 	}
 	var generatedIndexTotal, sourceIndexTotal uint64
@@ -645,14 +685,26 @@ func validateArtifactSizes(artifact Artifact, source Source) error {
 		generatedIndexTotal += artifact.IndexConsolidatedBytes[indexName]
 		sourceIndexTotal += source.IndexCompressedBytes[indexName]
 	}
-	if !withinTolerance(generatedIndexTotal, sourceIndexTotal, indexTotalTolerance) {
-		gateErr = errors.Join(gateErr, fmt.Errorf("generated consolidated index total %d is outside %.0f%% of source %d", generatedIndexTotal,
-			indexTotalTolerance*100, sourceIndexTotal))
+	if !withinIntensityBounds(generatedIndexTotal, sourceIndexTotal, intensity, indexTotalTolerance) {
+		gateErr = errors.Join(gateErr, fmt.Errorf("generated consolidated index total %d is outside intensity bounds from %d to %d", generatedIndexTotal,
+			lowerIntensityBound(sourceIndexTotal, indexTotalTolerance), upperIntensityBound(sourceIndexTotal, intensity, indexTotalTolerance)))
 	}
 	if artifact.PartialTailWrites > 1 {
 		gateErr = errors.Join(gateErr, fmt.Errorf("generated %d partial-tail writes, want at most one", artifact.PartialTailWrites))
 	}
 	return gateErr
+}
+
+func withinIntensityBounds(actual, singleStream uint64, intensity int, tolerance float64) bool {
+	return actual >= lowerIntensityBound(singleStream, tolerance) && actual <= upperIntensityBound(singleStream, intensity, tolerance)
+}
+
+func lowerIntensityBound(singleStream uint64, tolerance float64) uint64 {
+	return uint64(float64(singleStream) * (1 - tolerance))
+}
+
+func upperIntensityBound(singleStream uint64, intensity int, tolerance float64) uint64 {
+	return uint64(float64(singleStream) * float64(intensity) * (1 + tolerance))
 }
 
 func withinTolerance(actual, expected uint64, tolerance float64) bool {
@@ -669,7 +721,7 @@ func writeJSON(path string, value any) error {
 		return fmt.Errorf("cannot marshal JSON: %w", marshalErr)
 	}
 	data = append(data, '\n')
-	if writeErr := os.WriteFile(path, data, 0o644); writeErr != nil {
+	if writeErr := os.WriteFile(path, data, 0o600); writeErr != nil {
 		return fmt.Errorf("cannot write JSON %q: %w", path, writeErr)
 	}
 	return nil

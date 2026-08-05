@@ -106,6 +106,47 @@ func TestBuildPlanUsesIndependentStableHashForCopies(t *testing.T) {
 	require.Equal(t, selected, selectedAfterShuffle)
 }
 
+func TestBuildPlanDoublesProductionShapedStreams(t *testing.T) {
+	dayStart := time.Unix(1_700_000_000, 0).UTC()
+	fragments := func(partID uint64, timestamp int64) []Fragment {
+		result := make([]Fragment, 6)
+		for fragmentIdx := range result {
+			rows := uint64(101)
+			if fragmentIdx == len(result)-1 {
+				rows = 102
+			}
+			result[fragmentIdx] = Fragment{SourcePartID: partID, Rows: rows, MinTimestamp: timestamp, MaxTimestamp: timestamp}
+		}
+		return result
+	}
+	mature := []Trace{
+		{SourceID: "mature-a", Fragments: fragments(1, 10)},
+		{SourceID: "mature-b", Fragments: fragments(2, 30)},
+	}
+	one, oneErr := BuildPlan(mature, nil, Options{
+		DayStart: dayStart, DayDuration: 24 * time.Hour, Shapes: DefaultShapes(), WriteIntensity: 1,
+	})
+	require.NoError(t, oneErr)
+	two, twoErr := BuildPlan(mature, nil, Options{
+		DayStart: dayStart, DayDuration: 24 * time.Hour, Shapes: DefaultShapes(), WriteIntensity: 2,
+	})
+	require.NoError(t, twoErr)
+	require.Equal(t, 2, two.WriteIntensity)
+	require.Len(t, two.Instances, 2*len(one.Instances))
+	require.Len(t, two.Writes, 2*len(one.Writes))
+
+	generatedIDs := make(map[string]struct{}, len(two.Instances))
+	streamCounts := make(map[int]int)
+	for instanceIdx := range two.Instances {
+		instance := &two.Instances[instanceIdx]
+		_, exists := generatedIDs[instance.GeneratedID]
+		require.False(t, exists)
+		generatedIDs[instance.GeneratedID] = struct{}{}
+		streamCounts[instance.StreamOrdinal]++
+	}
+	require.Equal(t, map[int]int{0: len(one.Instances), 1: len(one.Instances)}, streamCounts)
+}
+
 func TestBuildPlanPublishesEvenlyAcrossHalfOpenDay(t *testing.T) {
 	dayStart := time.Unix(1_700_000_000, 0).UTC()
 	fragments := make([]Fragment, 12)

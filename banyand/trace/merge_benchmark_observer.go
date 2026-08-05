@@ -149,24 +149,23 @@ type mergeBenchmarkChild struct {
 }
 
 type mergeBenchmarkResources struct {
-	AttributionValid bool   `json:"attributionValid"`
-	Overlapped       bool   `json:"overlapped"`
-	CrossedPhase     bool   `json:"crossedPhase"`
+	Error            string `json:"error,omitempty"`
+	ReadBytes        uint64 `json:"readBytes"`
 	CPUNanos         int64  `json:"cpuNanos"`
 	AllocatedBytes   uint64 `json:"allocatedBytes"`
 	Allocations      uint64 `json:"allocations"`
-	ReadBytes        uint64 `json:"readBytes"`
 	WriteBytes       uint64 `json:"writeBytes"`
 	PeakHeapBytes    uint64 `json:"peakHeapBytes"`
 	EndHeapBytes     uint64 `json:"endHeapBytes"`
 	PeakRSSBytes     uint64 `json:"peakRSSBytes"`
 	EndRSSBytes      uint64 `json:"endRSSBytes"`
 	ElapsedNanos     int64  `json:"elapsedNanos"`
-	Error            string `json:"error,omitempty"`
+	CrossedPhase     bool   `json:"crossedPhase"`
+	AttributionValid bool   `json:"attributionValid"`
+	Overlapped       bool   `json:"overlapped"`
 }
 
 type mergeBenchmarkEvent struct {
-	Version          uint32                      `json:"version"`
 	Sampling         mergeSamplingClassification `json:"sampling"`
 	Reason           mergeSamplingReason         `json:"reason,omitempty"`
 	InitialReason    mergeSamplingReason         `json:"initialReason,omitempty"`
@@ -175,16 +174,19 @@ type mergeBenchmarkEvent struct {
 	Lane             string                      `json:"lane"`
 	Error            string                      `json:"error,omitempty"`
 	RecordingError   string                      `json:"recordingError,omitempty"`
-	InputPartIDs     []uint64                    `json:"inputPartIDs"`
 	SelectionSHA256  string                      `json:"selectionSHA256"`
+	InputPartIDs     []uint64                    `json:"inputPartIDs"`
 	Children         []mergeBenchmarkChild       `json:"children,omitempty"`
 	Resources        mergeBenchmarkResources     `json:"resources"`
+	QueueNanos       int64                       `json:"queueNanos"`
 	Sequence         uint64                      `json:"sequence"`
 	OutputPartID     uint64                      `json:"outputPartID,omitempty"`
 	InputBytes       uint64                      `json:"inputBytes"`
 	OutputBytes      uint64                      `json:"outputBytes"`
 	InputRows        uint64                      `json:"inputRows"`
 	OutputRows       uint64                      `json:"outputRows"`
+	HotInputRows     uint64                      `json:"hotInputRows"`
+	MatureInputRows  uint64                      `json:"matureInputRows"`
 	MinTimestamp     int64                       `json:"minTimestamp"`
 	MaxTimestamp     int64                       `json:"maxTimestamp"`
 	LogicalNow       int64                       `json:"logicalNow"`
@@ -194,11 +196,13 @@ type mergeBenchmarkEvent struct {
 	TracesRetained   uint64                      `json:"tracesRetained"`
 	TracesDropped    uint64                      `json:"tracesDropped"`
 	OversizedTraces  uint64                      `json:"oversizedTraces"`
+	HotInputParts    uint32                      `json:"hotInputParts"`
+	MatureInputParts uint32                      `json:"matureInputParts"`
 	InputMinDepth    uint32                      `json:"inputMinDepth"`
 	InputMaxDepth    uint32                      `json:"inputMaxDepth"`
 	OutputDepth      uint32                      `json:"outputDepth"`
+	Version          uint32                      `json:"version"`
 	LosslessRetry    bool                        `json:"losslessRetry"`
-	QueueNanos       int64                       `json:"queueNanos"`
 }
 
 type mergeBenchmarkAggregate struct {
@@ -226,9 +230,9 @@ type mergeBenchmarkAggregate struct {
 }
 
 type mergeBenchmarkSnapshot struct {
+	Error      string                    `json:"error,omitempty"`
 	Events     []mergeBenchmarkEvent     `json:"events"`
 	Aggregates []mergeBenchmarkAggregate `json:"aggregates"`
-	Error      string                    `json:"error,omitempty"`
 }
 
 type mergeBenchmarkAggregateKey struct {
@@ -240,15 +244,15 @@ type mergeBenchmarkAggregateKey struct {
 
 type mergeBenchmarkObserver struct {
 	writer      io.Writer
+	recordErr   error
 	aggregates  map[mergeBenchmarkAggregateKey]*mergeBenchmarkAggregate
-	events      []mergeBenchmarkEvent
 	phase       mergeBenchmarkPhase
-	attribution bool
+	events      []mergeBenchmarkEvent
 	sequence    atomic.Uint64
 	active      atomic.Int64
 	overlapGen  atomic.Uint64
-	recordErr   error
 	mu          sync.Mutex
+	attribution bool
 }
 
 func newMergeBenchmarkObserver(writer io.Writer, options mergeBenchmarkObserverOptions) *mergeBenchmarkObserver {
@@ -368,22 +372,22 @@ type mergeEvaluationObservation struct {
 }
 
 type mergeBenchmarkOperation struct {
+	startedAt      time.Time
+	recordErr      error
 	observer       *mergeBenchmarkObserver
 	evaluation     *mergeEvaluationObservation
 	monitor        *mergeResourceMonitor
-	event          mergeBenchmarkEvent
-	children       []mergeBenchmarkChild
 	initialReason  mergeSamplingReason
-	startedAt      time.Time
+	children       []mergeBenchmarkChild
+	event          mergeBenchmarkEvent
 	overlapGen     uint64
 	startedOverlap bool
-	recordErr      error
 }
 
 type mergeBenchmarkSeed struct {
+	dispatched time.Time
 	observer   *mergeBenchmarkObserver
 	event      mergeBenchmarkEvent
-	dispatched time.Time
 }
 
 func (mbo *mergeBenchmarkOperation) recordChild(child mergeBenchmarkChild) {
@@ -439,45 +443,53 @@ func (mbo *mergeBenchmarkObserver) seed(tst *tsTable, parts []*partWrapper, typ,
 	mbo.mu.Lock()
 	phase := mbo.phase
 	mbo.mu.Unlock()
+	event := buildMergeBenchmarkEvent(tst, parts, typ, lane, phase)
+	event.Sequence = mbo.sequence.Add(1)
 	seed := &mergeBenchmarkSeed{
-		observer: mbo, dispatched: time.Now(),
-		event: mergeBenchmarkEvent{
-			Version: 1, Sequence: mbo.sequence.Add(1), Phase: phase, Type: typ, Lane: lane,
-			InputPartIDs: make([]uint64, 0, len(parts)),
-		},
+		observer: mbo, dispatched: time.Now(), event: event,
+	}
+	return seed
+}
+
+func buildMergeBenchmarkEvent(tst *tsTable, parts []*partWrapper, typ, lane string, phase mergeBenchmarkPhase) mergeBenchmarkEvent {
+	event := mergeBenchmarkEvent{
+		Version: 1, Phase: phase, Type: typ, Lane: lane, InputPartIDs: make([]uint64, 0, len(parts)),
 	}
 	logicalNow := tst.mergeNow().UnixNano()
-	seed.event.LogicalNow = logicalNow
-	seed.event.MaturityFrontier = traceFragmentSaturatingSub(logicalNow, tst.effectiveMergeGraceNs())
+	event.LogicalNow = logicalNow
+	event.MaturityFrontier = traceFragmentSaturatingSub(logicalNow, tst.effectiveMergeGraceNs())
 	selectionDigest := sha256.New()
 	for partIdx, partData := range parts {
 		metadata := &partData.p.partMetadata
-		seed.event.InputPartIDs = append(seed.event.InputPartIDs, partData.ID())
-		seed.event.InputBytes += metadata.CompressedSizeBytes
-		seed.event.InputRows += metadata.TotalCount
-		if partIdx == 0 || metadata.MinTimestamp < seed.event.MinTimestamp {
-			seed.event.MinTimestamp = metadata.MinTimestamp
+		event.InputPartIDs = append(event.InputPartIDs, partData.ID())
+		event.InputBytes += metadata.CompressedSizeBytes
+		event.InputRows += metadata.TotalCount
+		if metadata.MaxTimestamp <= event.MaturityFrontier {
+			event.MatureInputParts++
+			event.MatureInputRows += metadata.TotalCount
+		} else {
+			event.HotInputParts++
+			event.HotInputRows += metadata.TotalCount
 		}
-		if partIdx == 0 || metadata.MaxTimestamp > seed.event.MaxTimestamp {
-			seed.event.MaxTimestamp = metadata.MaxTimestamp
+		if partIdx == 0 || metadata.MinTimestamp < event.MinTimestamp {
+			event.MinTimestamp = metadata.MinTimestamp
 		}
-		if partIdx == 0 || partData.mergeDepth < seed.event.InputMinDepth {
-			seed.event.InputMinDepth = partData.mergeDepth
+		if partIdx == 0 || metadata.MaxTimestamp > event.MaxTimestamp {
+			event.MaxTimestamp = metadata.MaxTimestamp
 		}
-		if partData.mergeDepth > seed.event.InputMaxDepth {
-			seed.event.InputMaxDepth = partData.mergeDepth
+		if partIdx == 0 || partData.mergeDepth < event.InputMinDepth {
+			event.InputMinDepth = partData.mergeDepth
+		}
+		if partData.mergeDepth > event.InputMaxDepth {
+			event.InputMaxDepth = partData.mergeDepth
 		}
 		var encodedID [8]byte
 		binary.BigEndian.PutUint64(encodedID[:], partData.ID())
 		_, _ = selectionDigest.Write(encodedID[:])
 	}
-	seed.event.OutputDepth = seed.event.InputMaxDepth + 1
-	seed.event.SelectionSHA256 = fmt.Sprintf("%x", selectionDigest.Sum(nil))
-	return seed
-}
-
-func (mbo *mergeBenchmarkObserver) begin(tst *tsTable, parts []*partWrapper, typ, lane string, reason mergeSamplingReason) *mergeBenchmarkOperation {
-	return mbo.beginSeed(mbo.seed(tst, parts, typ, lane), reason)
+	event.OutputDepth = event.InputMaxDepth + 1
+	event.SelectionSHA256 = fmt.Sprintf("%x", selectionDigest.Sum(nil))
+	return event
 }
 
 func (mbo *mergeBenchmarkObserver) beginSeed(seed *mergeBenchmarkSeed, reason mergeSamplingReason) *mergeBenchmarkOperation {
@@ -621,12 +633,12 @@ type mergeProcessResources struct {
 }
 
 type mergeResourceMonitor struct {
+	startErr    error
 	stopCh      chan struct{}
 	doneCh      chan struct{}
 	start       mergeProcessResources
 	peakHeap    atomic.Uint64
 	peakRSS     atomic.Uint64
-	startErr    error
 	attribution bool
 }
 

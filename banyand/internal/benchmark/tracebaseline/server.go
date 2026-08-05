@@ -34,32 +34,43 @@ import (
 	"time"
 
 	"github.com/apache/skywalking-banyandb/banyand/internal/benchmark/controller"
+	"github.com/apache/skywalking-banyandb/banyand/internal/benchmark/tracefixture"
 	storagetrace "github.com/apache/skywalking-banyandb/banyand/trace"
 )
 
 // ServerOptions configures the measured data-node process.
+//
+// ExecutionIdentity holds the harness-recorded fields forwarded by the
+// wrapper; the readiness gate (SAME TEST BOUNDARY) enforces the harness
+// requirement that ImageDigest, CloneMethod, BinarySHA256, and (for
+// retain-all pipeline runs) PluginSHA256 are populated. The server itself
+// tolerates empty values so out-of-harness invocations (e.g. local debug)
+// remain runnable; the readiness gate, not the server, is the enforcement
+// boundary.
 type ServerOptions struct {
-	Root           string
-	SocketPath     string
-	OutputPath     string
-	ProfileDir     string
-	Commit         string
-	FixtureSHA256  string
-	ScheduleSHA256 string
-	RunID          string
-	Mode           string
-	Acceleration   float64
-	ExpectedRows   uint64
-	MaxInputPartID uint64
-	Attribution    bool
+	ExpectedLedger    map[string]string
+	ExecutionIdentity ExecutionIdentity
+	ScheduleSHA256    string
+	ProfileDir        string
+	Commit            string
+	FixtureSHA256     string
+	Root              string
+	RunID             string
+	Mode              string
+	OutputPath        string
+	SocketPath        string
+	Acceleration      float64
+	ExpectedRows      uint64
+	MaxInputPartID    uint64
+	Attribution       bool
 }
 
 type benchmarkServer struct {
 	receiver        *storagetrace.BenchmarkPartReceiver
-	options         ServerOptions
-	report          RunReport
 	primaryProfile  *phaseProfiler
 	cooldownProfile *phaseProfiler
+	options         ServerOptions
+	report          RunReport
 	mu              sync.Mutex
 }
 
@@ -81,10 +92,11 @@ func Serve(ctx context.Context, options ServerOptions) (serveResultErr error) {
 	if eventErr != nil {
 		return fmt.Errorf("cannot create merge event file: %w", eventErr)
 	}
-	receiver, receiverErr := storagetrace.NewBenchmarkMergeReceiver(options.Root, storagetrace.BenchmarkMergeReceiverOptions{
-		LogicalNow: time.Unix(0, 1), MergeGrace: 2 * time.Hour, EventWriter: eventFile, MaxInputPartID: options.MaxInputPartID,
-		Attribution: options.Attribution,
-	})
+	receiver, receiverErr := storagetrace.NewBenchmarkMergeReceiver( //nolint:contextcheck // The storage constructor has no context parameter.
+		options.Root, storagetrace.BenchmarkMergeReceiverOptions{
+			LogicalNow: time.Unix(0, 1), MergeGrace: 2 * time.Hour, EventWriter: eventFile, MaxInputPartID: options.MaxInputPartID,
+			Attribution: options.Attribution,
+		})
 	if receiverErr != nil {
 		return errors.Join(fmt.Errorf("cannot open measured merge receiver: %w", receiverErr), eventFile.Close())
 	}
@@ -95,8 +107,9 @@ func Serve(ctx context.Context, options ServerOptions) (serveResultErr error) {
 	server.report = RunReport{
 		Version: 1, RunID: options.RunID, Mode: options.Mode, Acceleration: options.Acceleration,
 		FixtureSHA256: options.FixtureSHA256, ScheduleSHA256: options.ScheduleSHA256, ExpectedRows: options.ExpectedRows,
+		ExpectedLedger: options.ExpectedLedger,
 	}
-	server.report.Environment = readEnvironment(options.Commit)
+	server.report.Environment = readEnvironment(options.Commit, options)
 	if removeErr := os.RemoveAll(options.SocketPath); removeErr != nil {
 		return fmt.Errorf("cannot remove stale benchmark socket: %w", removeErr)
 	}
@@ -120,13 +133,13 @@ func Serve(ctx context.Context, options ServerOptions) (serveResultErr error) {
 	go func() { serveErrCh <- httpServer.Serve(listener) }()
 	select {
 	case <-ctx.Done():
-		shutdownCtx, cancelShutdown := context.WithTimeout(context.Background(), 10*time.Second)
+		shutdownCtx, cancelShutdown := context.WithTimeout(context.WithoutCancel(ctx), 10*time.Second)
 		defer cancelShutdown()
 		if shutdownErr := httpServer.Shutdown(shutdownCtx); shutdownErr != nil {
 			return fmt.Errorf("cannot shut down benchmark server: %w", shutdownErr)
 		}
 	case serveErr := <-serveErrCh:
-		if serveErr != nil && serveErr != http.ErrServerClosed {
+		if serveErr != nil && !errors.Is(serveErr, http.ErrServerClosed) {
 			return fmt.Errorf("benchmark server failed: %w", serveErr)
 		}
 	}
@@ -164,12 +177,20 @@ func (bs *benchmarkServer) publish(responseWriter http.ResponseWriter, request *
 	partName := fmt.Sprintf("%016x", publish.PartID)
 	corePath := filepath.Join(bs.options.Root, partName)
 	indexPaths := map[string]string{
-		"latency":    filepath.Join(bs.options.Root, "sidx", "latency", partName),
-		"start_time": filepath.Join(bs.options.Root, "sidx", "start_time", partName),
+		LedgerLatency:   filepath.Join(bs.options.Root, "sidx", LedgerLatency, partName),
+		LedgerStartTime: filepath.Join(bs.options.Root, "sidx", LedgerStartTime, partName),
 	}
 	if publishErr := bs.receiver.PublishExistingPart(publish.PartID, corePath, indexPaths, publish.LogicalNow); publishErr != nil {
 		http.Error(responseWriter, publishErr.Error(), http.StatusInternalServerError)
 		return
+	}
+	if bs.options.Mode == ModeSerial {
+		waitCtx, cancelWait := context.WithTimeout(request.Context(), 5*time.Minute)
+		defer cancelWait()
+		if waitErr := bs.receiver.WaitForMergeIdle(waitCtx); waitErr != nil {
+			http.Error(responseWriter, waitErr.Error(), http.StatusInternalServerError)
+			return
+		}
 	}
 	status, statusErr := bs.receiver.MergeStatus()
 	if statusErr != nil {
@@ -238,8 +259,8 @@ func (bs *benchmarkServer) runCooldown(responseWriter http.ResponseWriter, reque
 	waitCtx, cancelWait := context.WithTimeout(request.Context(), 10*time.Minute)
 	defer cancelWait()
 	if advanceErr := bs.receiver.AdvanceMergeTime(waitCtx, boundary.LogicalNow, storagetrace.BenchmarkMergePhaseCooldown); advanceErr != nil {
-		profileErr := bs.stopCooldownProfile()
-		http.Error(responseWriter, errors.Join(advanceErr, profileErr).Error(), http.StatusInternalServerError)
+		stopProfileErr := bs.stopCooldownProfile()
+		http.Error(responseWriter, errors.Join(advanceErr, stopProfileErr).Error(), http.StatusInternalServerError)
 		return
 	}
 	bs.mu.Lock()
@@ -258,7 +279,7 @@ func (bs *benchmarkServer) runCooldown(responseWriter http.ResponseWriter, reque
 	responseWriter.WriteHeader(http.StatusNoContent)
 }
 
-func (bs *benchmarkServer) writeReport(responseWriter http.ResponseWriter, _ *http.Request) {
+func (bs *benchmarkServer) writeReport(responseWriter http.ResponseWriter, request *http.Request) {
 	inventory, inventoryErr := bs.receiver.MergeInventory()
 	if inventoryErr != nil {
 		http.Error(responseWriter, inventoryErr.Error(), http.StatusInternalServerError)
@@ -269,23 +290,27 @@ func (bs *benchmarkServer) writeReport(responseWriter http.ResponseWriter, _ *ht
 		http.Error(responseWriter, mergeErr.Error(), http.StatusInternalServerError)
 		return
 	}
+	ledgerCtx, cancelLedger := context.WithTimeout(request.Context(), 10*time.Minute)
+	defer cancelLedger()
+	actualLedger, ledgerErr := tracefixture.LogicalLedgerChecksums(ledgerCtx, bs.receiver)
+	if ledgerErr != nil {
+		http.Error(responseWriter, ledgerErr.Error(), http.StatusInternalServerError)
+		return
+	}
 	bs.mu.Lock()
 	bs.report.Inventory = inventory
 	bs.report.Merges = mergeReport
+	bs.report.ActualLedger = actualLedger
+	bs.report.LedgerVerified = equalLedgerChecksums(bs.report.ExpectedLedger, actualLedger)
 	bs.report.SamplingCalls = 0
-	bs.report.HotMerges = 0
-	bs.report.MatureMerges = 0
 	for eventIdx := range mergeReport.Events {
 		event := &mergeReport.Events[eventIdx]
 		bs.report.SamplingCalls += event.PluginCalls
-		if event.MaxTimestamp <= event.MaturityFrontier {
-			bs.report.MatureMerges++
-		} else {
-			bs.report.HotMerges++
-		}
 	}
-	bs.report.Correct = inventory.CoreRows == bs.report.ExpectedRows && inventory.IndexRows["latency"] == bs.report.ExpectedRows &&
-		inventory.IndexRows["start_time"] == bs.report.ExpectedRows && bs.report.SamplingCalls == 0
+	bs.report.HotMerges, bs.report.MatureMerges = countMergeTemperatures(mergeReport.Events)
+	bs.report.Correct = inventory.CoreRows == bs.report.ExpectedRows && inventory.IndexRows[LedgerLatency] == bs.report.ExpectedRows &&
+		inventory.IndexRows[LedgerStartTime] == bs.report.ExpectedRows && bs.report.SamplingCalls == 0 && bs.report.LedgerVerified
+	bs.report.LogicalWriteAmplification = logicalWriteAmplification(mergeReport)
 	report := bs.report
 	bs.mu.Unlock()
 	reportData, marshalErr := json.MarshalIndent(report, "", "  ")
@@ -293,11 +318,58 @@ func (bs *benchmarkServer) writeReport(responseWriter http.ResponseWriter, _ *ht
 		http.Error(responseWriter, marshalErr.Error(), http.StatusInternalServerError)
 		return
 	}
-	if writeErr := os.WriteFile(bs.options.OutputPath, reportData, 0o644); writeErr != nil {
+	if writeErr := os.WriteFile(bs.options.OutputPath, reportData, 0o600); writeErr != nil {
 		http.Error(responseWriter, writeErr.Error(), http.StatusInternalServerError)
 		return
 	}
 	writeJSON(responseWriter, report)
+}
+
+func countMergeTemperatures(events []storagetrace.BenchmarkMergeEvent) (hotMerges, matureMerges int) {
+	for eventIdx := range events {
+		event := &events[eventIdx]
+		if event.HotInputParts > 0 {
+			hotMerges++
+		}
+		if event.MatureInputParts > 0 {
+			matureMerges++
+		}
+	}
+	return hotMerges, matureMerges
+}
+
+// logicalWriteAmplification reports logical compressed bytes written by core
+// and secondary-index merges divided by the corresponding selected input
+// bytes. Process I/O counters and final shard inventory are not part of this
+// logical metric.
+func logicalWriteAmplification(report storagetrace.BenchmarkMergeReport) float64 {
+	var inputBytes, outputBytes uint64
+	for eventIdx := range report.Events {
+		event := &report.Events[eventIdx]
+		inputBytes += event.InputBytes
+		outputBytes += event.OutputBytes
+		for childIdx := range event.Children {
+			child := &event.Children[childIdx]
+			inputBytes += child.InputBytes
+			outputBytes += child.OutputBytes
+		}
+	}
+	if inputBytes == 0 {
+		return 0
+	}
+	return float64(outputBytes) / float64(inputBytes)
+}
+
+func equalLedgerChecksums(expected, actual map[string]string) bool {
+	if len(expected) == 0 || len(expected) != len(actual) {
+		return false
+	}
+	for ledgerName, expectedChecksum := range expected {
+		if actual[ledgerName] != expectedChecksum {
+			return false
+		}
+	}
+	return true
 }
 
 func writeJSON(responseWriter http.ResponseWriter, value any) {
@@ -377,16 +449,106 @@ func writeRuntimeProfiles(root, phase string) error {
 	return errors.Join(profileErrs...)
 }
 
-func readEnvironment(commit string) Environment {
+func readEnvironment(commit string, options ServerOptions) Environment {
 	identity, _ := controller.CurrentResourceIdentity(os.Getpid())
 	hostname, _ := os.Hostname()
 	kernelData, _ := os.ReadFile("/proc/sys/kernel/osrelease")
+	filesystem := options.ExecutionIdentity.Filesystem
+	storageDevice := options.ExecutionIdentity.StorageDevice
+	if filesystem == "" || storageDevice == "" {
+		detectedFilesystem, detectedStorageDevice := detectFilesystemAndDevice(options.Root)
+		if filesystem == "" {
+			filesystem = detectedFilesystem
+		}
+		if storageDevice == "" {
+			storageDevice = detectedStorageDevice
+		}
+	}
 	return Environment{
 		Commit: commit, GoVersion: runtime.Version(), Kernel: strings.TrimSpace(string(kernelData)), CgroupVersion: "2",
 		CPUSet: readTextFile("/sys/fs/cgroup/cpuset.cpus.effective"), MemoryMax: readTextFile("/sys/fs/cgroup/memory.max"),
 		MemorySwapMax: readTextFile("/sys/fs/cgroup/memory.swap.max"), PIDsMax: readTextFile("/sys/fs/cgroup/pids.max"),
-		GOMAXPROCS: runtime.GOMAXPROCS(0), OneShardOnly: true, DataNodePID: os.Getpid(), DataNodeCgroup: hostname + ":" + identity.Cgroup,
+		GOMAXPROCS:     runtime.GOMAXPROCS(0),
+		OneShardOnly:   true,
+		DataNodePID:    os.Getpid(),
+		DataNodeCgroup: hostname + ":" + identity.Cgroup,
+		Filesystem:     filesystem,
+		StorageDevice:  storageDevice,
+		ImageDigest:    options.ExecutionIdentity.ImageDigest,
+		CloneMethod:    options.ExecutionIdentity.CloneMethod,
+		BinarySHA256:   options.ExecutionIdentity.BinarySHA256,
+		PluginSHA256:   options.ExecutionIdentity.PluginSHA256,
 	}
+}
+
+// mountInfoReader returns the raw contents of /proc/self/mountinfo. Tests can
+// substitute the function to exercise mount parsing without touching the host
+// filesystem.
+var mountInfoReader = func() ([]byte, error) { return os.ReadFile("/proc/self/mountinfo") }
+
+// detectFilesystemAndDevice reports the filesystem type and underlying device
+// for the mount that backs the given path. It parses /proc/self/mountinfo so the
+// measured process reflects its own view of the data-root mount. The longest
+// matching mount point wins so /run/data is attributed to its actual bind mount
+// rather than to the root filesystem. Returns empty strings when the path is
+// not mounted or the info file is unreadable. readEnvironment uses this live
+// detection only when the harness did not record the host filesystem or device.
+func detectFilesystemAndDevice(path string) (fstype, device string) {
+	return detectFilesystemAndDeviceWithReader(path)
+}
+
+// detectFilesystemAndDeviceWithReader is the indirection-friendly form used by
+// tests; production callers go through detectFilesystemAndDevice which reads
+// the live /proc/self/mountinfo.
+func detectFilesystemAndDeviceWithReader(path string) (fstype, device string) {
+	if path == "" {
+		return "", ""
+	}
+	data, readErr := mountInfoReader()
+	if readErr != nil {
+		return "", ""
+	}
+	absPath, absErr := filepath.Abs(path)
+	if absErr != nil {
+		return "", ""
+	}
+	absPath = filepath.Clean(absPath)
+	var bestMountPoint string
+	for _, line := range strings.Split(string(data), "\n") {
+		fields := strings.Fields(line)
+		// mountinfo format: mount_id parent_major:minor root mount_point options - fstype source super_options
+		if len(fields) < 10 {
+			continue
+		}
+		mountPoint := filepath.Clean(fields[4])
+		if !pathWithinMount(absPath, mountPoint) {
+			continue
+		}
+		if len(mountPoint) <= len(bestMountPoint) {
+			continue
+		}
+		bestMountPoint = mountPoint
+		for sepIdx := 6; sepIdx < len(fields)-1; sepIdx++ {
+			if fields[sepIdx] == "-" {
+				if sepIdx+2 < len(fields) {
+					fstype = fields[sepIdx+1]
+					device = fields[sepIdx+2]
+				}
+				break
+			}
+		}
+	}
+	if bestMountPoint == "" {
+		return "", ""
+	}
+	return fstype, device
+}
+
+func pathWithinMount(path, mountPoint string) bool {
+	if mountPoint == string(filepath.Separator) {
+		return filepath.IsAbs(path)
+	}
+	return path == mountPoint || strings.HasPrefix(path, mountPoint+string(filepath.Separator))
 }
 
 func readResourceSnapshot() ResourceSnapshot {

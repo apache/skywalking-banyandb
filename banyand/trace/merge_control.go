@@ -41,6 +41,8 @@ type mergeLoopControl struct {
 	stopped            bool
 	waveMode           bool
 	waveBlocked        bool
+	waveDispatchLimit  int
+	waveDispatches     int
 	mu                 sync.Mutex
 }
 
@@ -212,13 +214,25 @@ func (mc *mergeLoopControl) blockForWave() {
 	mc.mu.Unlock()
 }
 
-func (mc *mergeLoopControl) startWave(maxPartID uint64) {
+func (mc *mergeLoopControl) startWave(maxPartID uint64, dispatchLimit int) {
 	mc.mu.Lock()
 	mc.waveMode = true
 	mc.waveBlocked = false
 	mc.waveMaxPartID = maxPartID
+	mc.waveDispatchLimit = dispatchLimit
+	mc.waveDispatches = 0
 	mc.notifyLocked()
 	mc.mu.Unlock()
+}
+
+func (mc *mergeLoopControl) finishWaveDispatch() bool {
+	mc.mu.Lock()
+	defer mc.mu.Unlock()
+	if !mc.waveMode || mc.waveDispatchLimit < 1 {
+		return false
+	}
+	mc.waveDispatches++
+	return mc.waveDispatches >= mc.waveDispatchLimit
 }
 
 func (mc *mergeLoopControl) releaseWave() {
@@ -226,6 +240,8 @@ func (mc *mergeLoopControl) releaseWave() {
 	mc.waveMode = false
 	mc.waveBlocked = false
 	mc.waveMaxPartID = 0
+	mc.waveDispatchLimit = 0
+	mc.waveDispatches = 0
 	mc.notifyLocked()
 	mc.mu.Unlock()
 }
@@ -266,7 +282,7 @@ func (tst *tsTable) triggerMergeWave(ctx context.Context) error {
 	if tst.mergeControl == nil || tst.loopCloser == nil {
 		return errMergeLoopUnavailable
 	}
-	tst.mergeControl.startWave(atomic.LoadUint64(&tst.curPartID))
+	tst.mergeControl.startWave(atomic.LoadUint64(&tst.curPartID), 0)
 	if triggerErr := tst.triggerMerge(); triggerErr != nil {
 		tst.mergeControl.blockForWave()
 		return triggerErr
@@ -281,6 +297,31 @@ func (tst *tsTable) triggerMergeWave(ctx context.Context) error {
 		case <-ctx.Done():
 			tst.mergeControl.blockForWave()
 			return fmt.Errorf("waiting for one trace merge wave: %w", ctx.Err())
+		case <-state.changed:
+		}
+	}
+}
+
+func (tst *tsTable) triggerSingleMergeWave(ctx context.Context) (bool, error) {
+	if tst.mergeControl == nil || tst.loopCloser == nil {
+		return false, errMergeLoopUnavailable
+	}
+	before := tst.mergeControl.state().workVersion
+	tst.mergeControl.startWave(atomic.LoadUint64(&tst.curPartID), 1)
+	if triggerErr := tst.triggerMerge(); triggerErr != nil {
+		tst.mergeControl.blockForWave()
+		return false, triggerErr
+	}
+	for {
+		state := tst.mergeControl.state()
+		quiescent := !state.triggerPending && !state.dispatcherActive && state.queued == 0 && state.running == 0
+		if state.waveBlocked && quiescent && tst.mergeInFlightEmpty() && tst.mergeControl.unchanged(state.version) {
+			return state.workVersion > before, nil
+		}
+		select {
+		case <-ctx.Done():
+			tst.mergeControl.blockForWave()
+			return false, fmt.Errorf("waiting for one trace merge: %w", ctx.Err())
 		case <-state.changed:
 		}
 	}

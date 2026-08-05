@@ -76,11 +76,12 @@ type Trace struct {
 
 // Instance is one generated complete logical trace.
 type Instance struct {
-	SourceID    string     `json:"sourceTraceID"`
-	GeneratedID string     `json:"generatedTraceID"`
-	Class       TraceClass `json:"class"`
-	CopyOrdinal int        `json:"copyOrdinal"`
-	Fragments   []Fragment `json:"-"`
+	SourceID      string     `json:"sourceTraceID"`
+	GeneratedID   string     `json:"generatedTraceID"`
+	Class         TraceClass `json:"class"`
+	Fragments     []Fragment `json:"-"`
+	CopyOrdinal   int        `json:"copyOrdinal"`
+	StreamOrdinal int        `json:"streamOrdinal"`
 }
 
 // ScheduledFragment records one whole fragment assigned to a physical write.
@@ -96,16 +97,16 @@ type ScheduledFragment struct {
 // Write schedules one production write in the accelerated logical day.
 type Write struct {
 	Publication              time.Time           `json:"publication"`
-	Shape                    Shape               `json:"shape"`
-	Fragments                []ScheduledFragment `json:"fragments"`
-	PartID                   string              `json:"partID"`
-	CoreSHA256               string              `json:"coreSHA256"`
 	IndexSHA256              map[string]string   `json:"indexSHA256"`
 	IndexCompressedBytes     map[string]uint64   `json:"indexCompressedBytes"`
+	PartID                   string              `json:"partID"`
+	CoreSHA256               string              `json:"coreSHA256"`
 	BoundaryChoice           string              `json:"boundaryChoice"`
-	BeforeDistance           float64             `json:"beforeDistance"`
-	AfterDistance            float64             `json:"afterDistance"`
+	Fragments                []ScheduledFragment `json:"fragments"`
+	Shape                    Shape               `json:"shape"`
 	TargetCumulativeBlocks   uint64              `json:"targetCumulativeBlocks"`
+	AfterDistance            float64             `json:"afterDistance"`
+	BeforeDistance           float64             `json:"beforeDistance"`
 	TargetCumulativeRows     uint64              `json:"targetCumulativeRows"`
 	RealizedCumulativeBlocks uint64              `json:"realizedCumulativeBlocks"`
 	RealizedCumulativeRows   uint64              `json:"realizedCumulativeRows"`
@@ -120,18 +121,20 @@ type Write struct {
 
 // Plan is the deterministic generated-ID and physical-write schedule.
 type Plan struct {
-	DayStart    time.Time     `json:"dayStart"`
-	DayDuration time.Duration `json:"dayDuration"`
-	Instances   []Instance    `json:"instances"`
-	Writes      []Write       `json:"writes"`
+	DayStart       time.Time     `json:"dayStart"`
+	Instances      []Instance    `json:"instances"`
+	Writes         []Write       `json:"writes"`
+	DayDuration    time.Duration `json:"dayDuration"`
+	WriteIntensity int           `json:"writeIntensity"`
 }
 
 // Options configures deterministic fixture scheduling.
 type Options struct {
-	DayStart    time.Time
-	DayDuration time.Duration
-	Shapes      []Shape
-	CopyCount   int
+	DayStart       time.Time
+	Shapes         []Shape
+	DayDuration    time.Duration
+	CopyCount      int
+	WriteIntensity int
 }
 
 type fragmentRef struct {
@@ -169,10 +172,16 @@ func BuildPlan(mature, small []Trace, options Options) (Plan, error) {
 	if options.CopyCount < 0 || options.CopyCount > len(mature) {
 		return Plan{}, fmt.Errorf("copy count %d is outside mature population [0,%d]", options.CopyCount, len(mature))
 	}
+	if options.WriteIntensity < 0 {
+		return Plan{}, fmt.Errorf("write intensity must be positive")
+	}
+	if options.WriteIntensity == 0 {
+		options.WriteIntensity = 1
+	}
 	if sourceErr := validateSourceTraces(mature, small); sourceErr != nil {
 		return Plan{}, sourceErr
 	}
-	instances := buildInstances(mature, small, options.CopyCount)
+	instances := expandWriteStreams(buildInstances(mature, small, options.CopyCount), options.WriteIntensity)
 	generatedIDs := make(map[string]struct{}, len(instances))
 	for instanceIdx := range instances {
 		generatedID := instances[instanceIdx].GeneratedID
@@ -187,11 +196,11 @@ func BuildPlan(mature, small []Trace, options Options) (Plan, error) {
 	if writesCount > len(refs) {
 		return Plan{}, fmt.Errorf("cannot assign %d writes from only %d whole fragments", writesCount, len(refs))
 	}
-	writes, scheduleErr := scheduleWrites(instances, refs, totalRows, writesCount, options)
+	writes, scheduleErr := scheduleWrites(instances, refs, writesCount, options)
 	if scheduleErr != nil {
 		return Plan{}, scheduleErr
 	}
-	return Plan{DayStart: options.DayStart, DayDuration: options.DayDuration, Instances: instances, Writes: writes}, nil
+	return Plan{DayStart: options.DayStart, DayDuration: options.DayDuration, WriteIntensity: options.WriteIntensity, Instances: instances, Writes: writes}, nil
 }
 
 func validateSourceTraces(populations ...[]Trace) error {
@@ -242,6 +251,25 @@ func buildInstances(mature, small []Trace, copyCount int) []Instance {
 	return instances
 }
 
+func expandWriteStreams(base []Instance, intensity int) []Instance {
+	instances := make([]Instance, 0, len(base)*intensity)
+	for streamOrdinal := 0; streamOrdinal < intensity; streamOrdinal++ {
+		for baseIdx := range base {
+			instance := base[baseIdx]
+			instance.Fragments = append([]Fragment(nil), instance.Fragments...)
+			instance.StreamOrdinal = streamOrdinal
+			if streamOrdinal > 0 {
+				instance.GeneratedID = generatedStreamID(instance.Class, instance.SourceID, instance.CopyOrdinal, streamOrdinal)
+			}
+			instances = append(instances, instance)
+		}
+	}
+	sort.Slice(instances, func(leftIdx, rightIdx int) bool {
+		return instances[leftIdx].GeneratedID < instances[rightIdx].GeneratedID
+	})
+	return instances
+}
+
 func newInstance(trace Trace, class TraceClass, ordinal int) Instance {
 	fragments := append([]Fragment(nil), trace.Fragments...)
 	mappedID := generatedID(class, trace.SourceID, ordinal)
@@ -268,6 +296,21 @@ func generatedID(class TraceClass, sourceID string, ordinal int) string {
 	}
 	familyDigest := sha256.Sum256([]byte("trace-merge-fixture-family-v1\x00" + family))
 	instanceDigest := sha256.Sum256([]byte(fmt.Sprintf("trace-merge-fixture-instance-v1\x00%s\x00%s\x00%d", class, sourceID, ordinal)))
+	var mapped [16]byte
+	copy(mapped[:6], familyDigest[:6])
+	copy(mapped[6:], instanceDigest[:10])
+	hexDigest := hex.EncodeToString(mapped[:])
+	return fmt.Sprintf("%s-%s-%s-%s-%s", hexDigest[:8], hexDigest[8:12], hexDigest[12:16], hexDigest[16:20], hexDigest[20:32])
+}
+
+func generatedStreamID(class TraceClass, sourceID string, copyOrdinal, streamOrdinal int) string {
+	family := sourceID
+	if separator := strings.IndexByte(sourceID, '.'); separator > 0 {
+		family = sourceID[:separator]
+	}
+	familyDigest := sha256.Sum256([]byte("trace-merge-fixture-family-v1\x00" + family))
+	instanceDigest := sha256.Sum256([]byte(fmt.Sprintf("trace-merge-fixture-stream-v1\x00%s\x00%s\x00%d\x00%d",
+		class, sourceID, copyOrdinal, streamOrdinal)))
 	var mapped [16]byte
 	copy(mapped[:6], familyDigest[:6])
 	copy(mapped[6:], instanceDigest[:10])
@@ -307,7 +350,7 @@ func sumFragmentRows(refs []fragmentRef) uint64 {
 	return total
 }
 
-func scheduleWrites(instances []Instance, refs []fragmentRef, totalRows uint64, writesCount int, options Options) ([]Write, error) {
+func scheduleWrites(instances []Instance, refs []fragmentRef, writesCount int, options Options) ([]Write, error) {
 	writes := make([]Write, 0, writesCount)
 	remaining := append([]fragmentRef(nil), refs...)
 	var cumulativeBlocks, cumulativeRows uint64

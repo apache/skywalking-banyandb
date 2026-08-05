@@ -34,6 +34,7 @@ const defaultFixtureDayStart = "2026-01-01T00:00:00Z"
 
 func newTraceFixtureCmd() *cobra.Command {
 	var sourcePath, catalogPath, outputPath, pluginPath, dayStartText string
+	var writeIntensity int
 	command := &cobra.Command{
 		Use:   "trace-generate-fixture",
 		Short: "Generate the production-written hybrid trace merge benchmark fixture",
@@ -50,6 +51,7 @@ func newTraceFixtureCmd() *cobra.Command {
 			}
 			plan, planErr := tracefixture.BuildSourcePlan(source, tracefixture.Options{
 				DayStart: dayStart, DayDuration: 24 * time.Hour, Shapes: tracefixture.DefaultShapes(), CopyCount: tracefixture.CopyTraceCount,
+				WriteIntensity: writeIntensity,
 			})
 			if planErr != nil {
 				return fmt.Errorf("cannot plan fixture: %w", planErr)
@@ -89,6 +91,7 @@ func newTraceFixtureCmd() *cobra.Command {
 	command.Flags().StringVar(&outputPath, "output-path", "", "New directory for the generated fixture")
 	command.Flags().StringVar(&pluginPath, "plugin-path", "", "Path to the built sw-trace-sampler shared object")
 	command.Flags().StringVar(&dayStartText, "day-start", defaultFixtureDayStart, "UTC RFC3339 start of the logical day")
+	command.Flags().IntVar(&writeIntensity, "write-intensity", 1, "Production-shaped write streams per logical day")
 	for _, flagName := range []string{"source-path", "catalog-path", "output-path", "plugin-path"} {
 		if requiredErr := command.MarkFlagRequired(flagName); requiredErr != nil {
 			panic(fmt.Sprintf("cannot require %s flag: %v", flagName, requiredErr))

@@ -41,9 +41,10 @@ const benchmarkTransferChunkSize = 64 * 1024
 
 // BenchmarkPartReceiver exposes the production part-receipt and query paths to the trace merge benchmark.
 type BenchmarkPartReceiver struct {
-	table      *tsTable
-	fileSystem fs.FileSystem
-	root       string
+	table          *tsTable
+	fileSystem     fs.FileSystem
+	root           string
+	closeCallbacks []func() error
 }
 
 // BenchmarkConsolidatedSizes reports production-merged compressed sizes without changing the received fixture.
@@ -97,7 +98,7 @@ func (bpr *BenchmarkPartReceiver) Receive(ctx context.Context, corePath string, 
 			ID: metadata.ID, CompressedSizeBytes: metadata.CompressedSizeBytes, UncompressedSizeBytes: metadata.UncompressedSizeBytes,
 			TotalCount: metadata.TotalCount, BlocksCount: metadata.BlocksCount, MinKey: metadata.MinKey, MaxKey: metadata.MaxKey, PartType: indexName,
 		}
-		if newPartErr := partContext.NewPartType(chunkContext); newPartErr != nil {
+		if newPartErr := partContext.NewPartType(chunkContext); newPartErr != nil { //nolint:contextcheck // The receipt API has no context parameter.
 			return fmt.Errorf("cannot start benchmark index receipt %q: %w", indexName, newPartErr)
 		}
 		chunkContext.Handler = partContext
@@ -114,7 +115,7 @@ func (bpr *BenchmarkPartReceiver) Receive(ctx context.Context, corePath string, 
 		TotalCount: metadata.TotalCount, BlocksCount: metadata.BlocksCount, MinTimestamp: metadata.MinTimestamp,
 		MaxTimestamp: metadata.MaxTimestamp, PartType: PartTypeCore,
 	}
-	if newPartErr := partContext.NewPartType(chunkContext); newPartErr != nil {
+	if newPartErr := partContext.NewPartType(chunkContext); newPartErr != nil { //nolint:contextcheck // The receipt API has no context parameter.
 		return fmt.Errorf("cannot start benchmark core receipt: %w", newPartErr)
 	}
 	chunkContext.Handler = partContext
@@ -210,7 +211,9 @@ func (bpr *BenchmarkPartReceiver) ConsolidatedCompressedSizes(ctx context.Contex
 		if _, exists := partIDs[calibrationPartID]; exists {
 			return BenchmarkConsolidatedSizes{}, fmt.Errorf("calibration part ID %016x conflicts with received input", calibrationPartID)
 		}
-		corePart, _, mergeErr := bpr.table.mergeParts(bpr.fileSystem, ctx.Done(), group, calibrationPartID, bpr.root, nil, nil)
+		corePart, _, mergeErr := bpr.table.mergeParts( //nolint:contextcheck // The merge API consumes the caller's cancellation channel.
+			bpr.fileSystem, ctx.Done(), group, calibrationPartID, bpr.root, nil, nil,
+		)
 		if mergeErr != nil {
 			corePath := partPath(bpr.root, calibrationPartID)
 			return BenchmarkConsolidatedSizes{}, errors.Join(
@@ -238,7 +241,7 @@ func (bpr *BenchmarkPartReceiver) ConsolidatedCompressedSizes(ctx context.Contex
 			}
 			indexPath := sidxPartPath(bpr.root, indexName, calibrationPartID)
 			metadata, metadataErr := sidx.ParsePartMetadata(bpr.fileSystem, indexPath)
-			introduction.ReleaseNewPart()
+			introduction.ReleaseNewPart() //nolint:contextcheck // The release API has no context parameter.
 			introduction.Release()
 			if metadataErr != nil {
 				removeErr := os.RemoveAll(indexPath)
@@ -367,10 +370,14 @@ func (bpr *BenchmarkPartReceiver) Root() string {
 
 // Close releases the benchmark table.
 func (bpr *BenchmarkPartReceiver) Close() error {
-	if bpr.table == nil {
-		return nil
+	var closeErr error
+	if bpr.table != nil {
+		closeErr = bpr.table.Close()
+		bpr.table = nil
 	}
-	closeErr := bpr.table.Close()
-	bpr.table = nil
+	for callbackIdx := len(bpr.closeCallbacks) - 1; callbackIdx >= 0; callbackIdx-- {
+		closeErr = errors.Join(closeErr, bpr.closeCallbacks[callbackIdx]())
+	}
+	bpr.closeCallbacks = nil
 	return closeErr
 }

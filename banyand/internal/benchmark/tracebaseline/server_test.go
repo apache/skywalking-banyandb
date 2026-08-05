@@ -20,6 +20,8 @@ import (
 	"testing"
 
 	"github.com/stretchr/testify/require"
+
+	storagetrace "github.com/apache/skywalking-banyandb/banyand/trace"
 )
 
 func TestPhaseProfilerStopsAndClosesIdempotently(t *testing.T) {
@@ -39,4 +41,37 @@ func TestPhaseProfilerClosesFileWhenStartFails(t *testing.T) {
 	_, secondErr := startPhaseProfiler(secondPath)
 	require.ErrorContains(t, secondErr, "cannot start CPU profile")
 	require.NoError(t, first.stop())
+}
+
+func TestEqualLedgerChecksumsRequiresExactNonEmptySet(t *testing.T) {
+	expected := map[string]string{"core": "a", "latency": "b", "start_time": "c"}
+	require.True(t, equalLedgerChecksums(expected, map[string]string{"start_time": "c", "core": "a", "latency": "b"}))
+	require.False(t, equalLedgerChecksums(expected, map[string]string{"core": "a", "latency": "b"}))
+	require.False(t, equalLedgerChecksums(nil, nil))
+}
+
+func TestCountMergeTemperaturesCountsMixedMergeAsMature(t *testing.T) {
+	events := []storagetrace.BenchmarkMergeEvent{
+		{HotInputParts: 2},
+		{MatureInputParts: 2},
+		{HotInputParts: 1, MatureInputParts: 1},
+	}
+
+	hotMerges, matureMerges := countMergeTemperatures(events)
+
+	require.Equal(t, 2, hotMerges)
+	require.Equal(t, 2, matureMerges)
+}
+
+func TestLogicalWriteAmplificationUsesSelectedMergeBytes(t *testing.T) {
+	report := storagetrace.BenchmarkMergeReport{Events: []storagetrace.BenchmarkMergeEvent{{
+		InputBytes: 100, OutputBytes: 90,
+		Children: []storagetrace.BenchmarkMergeChild{
+			{Name: LedgerLatency, InputBytes: 50, OutputBytes: 52},
+			{Name: LedgerStartTime, InputBytes: 25, OutputBytes: 24},
+		},
+	}}}
+
+	require.InDelta(t, 166.0/175.0, logicalWriteAmplification(report), 0.000001)
+	require.Zero(t, logicalWriteAmplification(storagetrace.BenchmarkMergeReport{}))
 }

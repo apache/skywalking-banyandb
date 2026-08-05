@@ -22,6 +22,7 @@ import (
 	"sync/atomic"
 	"testing"
 	"time"
+	"unsafe"
 
 	"github.com/stretchr/testify/require"
 
@@ -311,7 +312,9 @@ func TestTraceEvaluationStager_ExactBudgetDoesNotBypass(t *testing.T) {
 		traceID:  "trace-exact",
 		rawSpans: []byte("exact-budget"),
 	}
-	exactBudget := stagedTraceBlock.approxBytes()
+	budgetProbe := &traceEvaluationStager{filter: &mergeFilter{}}
+	budgetProbe.stage(stagedTraceBlock)
+	exactBudget := budgetProbe.currentTraceBytes
 	stager := &traceEvaluationStager{
 		filter: &mergeFilter{traceBudget: exactBudget},
 	}
@@ -321,6 +324,213 @@ func TestTraceEvaluationStager_ExactBudgetDoesNotBypass(t *testing.T) {
 	require.Len(t, stager.staged, 1)
 	require.Equal(t, exactBudget, stager.currentTraceBytes)
 	require.Empty(t, stager.bypassedTraceID)
+}
+
+func TestStagedTraceBudgetIncludesStructuralOverhead(t *testing.T) {
+	stagedBlock := stagedTrace{
+		isRaw:          true,
+		traceID:        "trace-accounted",
+		rawSpans:       make([]byte, 3, 32),
+		rawTags:        map[string][]byte{"service": make([]byte, 2, 16)},
+		rawTagMetadata: map[string][]byte{"service": make([]byte, 1, 8)},
+	}
+	payloadBytes := uint64(cap(stagedBlock.rawSpans) + cap(stagedBlock.rawTags["service"]) + cap(stagedBlock.rawTagMetadata["service"]))
+
+	require.Greater(t, stagedBlock.approxBytes(), payloadBytes,
+		"the staging budget must reserve metadata, map, trace-group, and verdict structures in addition to payload capacity")
+}
+
+func TestStageRawTraceOwnsOneContiguousArena(t *testing.T) {
+	sourceSpans := []byte("spans")
+	sourceTag := []byte("tag-value")
+	sourceMetadata := []byte("tag-metadata")
+	metadata := &blockMetadata{traceID: "trace-arena", spans: &dataBlock{}}
+	raw := rawBlock{
+		bm: metadata, spans: sourceSpans,
+		tags: map[string][]byte{"service": sourceTag}, tagMetadata: map[string][]byte{"service": sourceMetadata},
+	}
+
+	staged := stageRawTrace(&raw)
+	defer releaseStagedTrace(&staged)
+
+	require.Len(t, staged.rawArena.bytes, len(sourceSpans)+len(sourceTag)+len(sourceMetadata))
+	require.Len(t, staged.rawMetadataBlocks.values, len(metadata.tags),
+		"raw tag metadata descriptors must use one bounded pooled vector instead of one allocation per tag")
+	clear(sourceSpans)
+	clear(sourceTag)
+	clear(sourceMetadata)
+	require.Equal(t, []byte("spans"), staged.rawSpans)
+	require.Equal(t, []byte("tag-value"), staged.rawTags["service"])
+	require.Equal(t, []byte("tag-metadata"), staged.rawTagMetadata["service"])
+}
+
+func TestTraceEvaluationStagerCountsBatchStructures(t *testing.T) {
+	stagedBlock := stagedTrace{isRaw: true, traceID: "trace-structures", rawSpans: []byte("span")}
+	stager := &traceEvaluationStager{
+		filter: &mergeFilter{chain: newTestChain(nil)},
+	}
+
+	stager.stage(stagedBlock)
+
+	require.Greater(t, stager.stagedBytes, stagedBlock.approxBytes(),
+		"the aggregate budget must include staged-slice capacity, a trace-group descriptor, and verdict state")
+	require.Greater(t, stager.currentTraceBytes, stagedBlock.approxBytes(),
+		"the per-trace budget must independently include the trace's staging structures")
+}
+
+func TestTraceEvaluationStagerCountsEvaluationSlotOncePerLogicalTrace(t *testing.T) {
+	metadata := func(minTS, maxTS int64) *blockMetadata {
+		return &blockMetadata{
+			traceID: "trace-group", spans: &dataBlock{},
+			timestamps: timestampsMetadata{min: minTS, max: maxTS, known: true},
+		}
+	}
+	first := stagedTrace{isRaw: true, traceID: "trace-group", rawBM: metadata(1, 2)}
+	second := stagedTrace{isRaw: true, traceID: "trace-group", rawBM: metadata(3, 4)}
+	stager := &traceEvaluationStager{filter: &mergeFilter{chain: newTestChain(nil)}}
+
+	stager.stage(first)
+	firstTraceBytes := stager.currentTraceBytes
+	stager.stage(second)
+	secondBlockBytes := stager.currentTraceBytes - firstTraceBytes
+
+	expectedSecondBlockBytes := second.approxBytes() + uint64(unsafe.Sizeof(stagedTrace{}))
+	require.Equal(t, expectedSecondBlockBytes, secondBlockBytes,
+		"trace IDs, decision masks, SDK blocks, and group descriptors are reserved once per logical trace")
+}
+
+func TestTraceEvaluationStagerReservesProjectedEvaluationCopies(t *testing.T) {
+	block := &blockPointer{}
+	block.bm.traceID = "trace-projected"
+	block.block.spans = [][]byte{make([]byte, 3, 32)}
+	block.block.spanIDs = []string{"span-id"}
+	block.block.tags = []tag{{name: "status", values: [][]byte{make([]byte, 2, 16)}}}
+	stagedBlock := stagedTrace{traceID: "trace-projected", slowBlock: block}
+	metadataOnly := &traceEvaluationStager{filter: &mergeFilter{chain: newTestChain(nil)}}
+	metadataOnly.stage(stagedBlock)
+	projected := &traceEvaluationStager{filter: &mergeFilter{
+		chain: newMergeChain("g", "s", []sdk.Sampler{&fakeSampler{proj: sdk.Projection{
+			Tags: []string{"status"}, SpanIDs: true, Spans: true,
+		}}}, 0),
+	}}
+
+	projected.stage(stagedBlock)
+
+	require.Greater(t, projected.currentTraceBytes, metadataOnly.currentTraceBytes,
+		"the budget must reserve transient TraceBlock vectors and copied projected values")
+}
+
+func TestMergeFilter_TraceCountBudgetBoundsDecideBatch(t *testing.T) {
+	sampler := &wholeTraceErrorSampler{}
+	filter := &mergeFilter{
+		chain:         newMergeChain("g", "s", []sdk.Sampler{sampler}, 0),
+		timeout:       time.Second,
+		maxTraceCount: 2,
+		forceSlow:     true,
+	}
+
+	_, _ = mergeWithFilter(t, singleTraceParts([]string{"trace-a", "trace-b", "trace-c", "trace-d", "trace-e"}), filter)
+
+	require.Equal(t, int64(3), sampler.calls.Load(), "five logical traces with a two-trace cap require three Decide batches")
+	require.Equal(t, int64(5), sampler.traceCount.Load())
+}
+
+func TestTraceEvaluationStagerBuildsTraceGroupsIncrementally(t *testing.T) {
+	stager := &traceEvaluationStager{filter: &mergeFilter{chain: newTestChain(nil)}}
+	stager.stage(stagedTrace{
+		isRaw: true, traceID: "trace-a", rawBM: &blockMetadata{
+			traceID: "trace-a", spans: &dataBlock{}, timestamps: timestampsMetadata{min: 10, max: 20, known: true},
+		},
+	})
+	stager.stage(stagedTrace{
+		isRaw: true, traceID: "trace-a", rawBM: &blockMetadata{
+			traceID: "trace-a", spans: &dataBlock{}, timestamps: timestampsMetadata{min: 5, max: 25, known: true},
+		},
+	})
+
+	require.Len(t, stager.groups, 1)
+	group := stager.groups[0]
+	require.Equal(t, "trace-a", group.traceID)
+	require.Equal(t, 0, group.start)
+	require.Equal(t, 2, group.end)
+	require.Equal(t, int64(5), group.minTS)
+	require.Equal(t, int64(25), group.maxTS)
+	require.Positive(t, group.accountedBytes)
+	require.False(t, stager.invalidOrder)
+
+	stager.stage(stagedTrace{
+		isRaw: true, traceID: "trace-0", rawBM: &blockMetadata{
+			traceID: "trace-0", spans: &dataBlock{}, timestamps: timestampsMetadata{min: 30, max: 40, known: true},
+		},
+	})
+	require.True(t, stager.invalidOrder, "a new trace ID that sorts before the completed group must disable evaluation")
+}
+
+func TestStagingPoolsResetAllReferencesBeforeReuse(t *testing.T) {
+	traceBuffer := stagedTraceBuffer{values: []stagedTrace{{
+		traceID: "trace-a", rawSpans: []byte("span"), rawTags: map[string][]byte{"tag": []byte("value")},
+	}}}
+	groupBuffer := stagedTraceGroupBuffer{values: []stagedTraceGroup{{traceID: "trace-a", start: 1, end: 2, minTS: 3, maxTS: 4}}}
+	evaluationVectors := stagedEvaluationVectors{
+		traceBlocks: []sdk.TraceBlock{{TraceID: "trace-a", Spans: [][]byte{[]byte("span")}}},
+		traceIDs:    []string{"trace-a"}, guardRanges: []stagedTraceRange{{start: 1, end: 2}}, decisionMask: []bool{true},
+	}
+	byteArena := &stagedByteArena{bytes: []byte("sensitive")}
+	metadataBlocks := &stagedDataBlockBuffer{values: []dataBlock{{offset: 1, size: 2}}}
+	metadata := &blockMetadata{
+		traceID: "trace-a", spans: &dataBlock{offset: 1, size: 2},
+		tags: map[string]*dataBlock{"tag": {offset: 3, size: 4}}, tagType: map[string]pbv1.ValueType{"tag": pbv1.ValueTypeStr},
+	}
+
+	traceBuffer.reset()
+	groupBuffer.reset()
+	evaluationVectors.reset()
+	releaseStagedByteArena(byteArena)
+	releaseStagedDataBlockBuffer(metadataBlocks)
+	releaseStagedBlockMetadata(metadata)
+
+	require.Empty(t, traceBuffer.values)
+	require.Empty(t, groupBuffer.values)
+	require.Empty(t, evaluationVectors.traceBlocks)
+	require.Empty(t, evaluationVectors.traceIDs)
+	require.Empty(t, evaluationVectors.guardRanges)
+	require.Empty(t, evaluationVectors.decisionMask)
+	require.Empty(t, byteArena.bytes)
+	require.Empty(t, metadataBlocks.values)
+	require.Empty(t, metadata.traceID)
+	require.Empty(t, metadata.tags)
+	require.Empty(t, metadata.tagType)
+}
+
+func TestEvaluationVectorPoolDiscardsUnsafeAndOversizedBatches(t *testing.T) {
+	unsafeVectors := &stagedEvaluationVectors{traceIDs: []string{"still-in-use"}}
+	require.False(t, releaseStagedEvaluationVectors(unsafeVectors, false))
+	require.Equal(t, []string{"still-in-use"}, unsafeVectors.traceIDs,
+		"a timed-out plugin may still read the vectors, so they must not be reset or pooled")
+
+	oversizedVectors := &stagedEvaluationVectors{traceIDs: make([]string, 0, maxPooledEvaluationTraces+1)}
+	require.False(t, releaseStagedEvaluationVectors(oversizedVectors, true))
+	require.Empty(t, oversizedVectors.traceIDs)
+
+	reusableVectors := &stagedEvaluationVectors{traceIDs: []string{"reset-me"}, decisionMask: []bool{true}}
+	require.True(t, releaseStagedEvaluationVectors(reusableVectors, true))
+	require.Empty(t, reusableVectors.traceIDs)
+	require.Empty(t, reusableVectors.decisionMask)
+}
+
+func TestStagedByteArenaCacheBoundsAggregateRetention(t *testing.T) {
+	cache := stagedByteArenaCache{maxBytes: 8}
+	first := &stagedByteArena{bytes: make([]byte, 6)}
+	second := &stagedByteArena{bytes: make([]byte, 6)}
+
+	require.True(t, cache.put(first))
+	require.False(t, cache.put(second), "the aggregate cache bound must reject individually small arenas once it is full")
+	require.Equal(t, 6, cache.retainedBytes)
+
+	reused := cache.get(5)
+	require.Same(t, first, reused)
+	require.Len(t, reused.bytes, 5)
+	require.Zero(t, cache.retainedBytes)
 }
 
 func TestMergeFilter_RawOversizedTracesBypassEvaluationInOrder(t *testing.T) {
@@ -427,6 +637,20 @@ func TestMergeChain_Timeout_FailsOpen(t *testing.T) {
 	require.Error(t, err)
 	require.Equal(t, "timeout", err.Error())
 	require.Equal(t, []bool{true, true}, verdict.Keep)
+}
+
+func TestMergeChain_TimeoutDoesNotRecycleDecisionStorage(t *testing.T) {
+	chain := newMergeChain("g", "s", []sdk.Sampler{&sleepSampler{d: 200 * time.Millisecond}}, 0)
+	traceX, buildErr := sdktest.NewTrace("x").Build()
+	require.NoError(t, buildErr)
+	batch := sdktest.Batch(traceX)
+	decisionMask := []bool{false}
+
+	verdict, executeErr, reusable := chain.executeObservedInto(batch, 10*time.Millisecond, nil, decisionMask)
+
+	require.Error(t, executeErr)
+	require.Equal(t, []bool{true}, verdict.Keep)
+	require.False(t, reusable, "the timed-out worker may still access the caller-owned decision storage")
 }
 
 func TestMergeChain_CircuitBreakerOpens(t *testing.T) {

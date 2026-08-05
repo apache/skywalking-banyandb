@@ -26,11 +26,6 @@ import (
 	"github.com/apache/skywalking-banyandb/pkg/pipeline/sdk"
 )
 
-type recordingSampler struct {
-	project sdk.Projection
-	blocks  []sdk.TraceBlock
-}
-
 func TestClassifyDefaultSamplerRuleUsesPluginPriority(t *testing.T) {
 	row := func(start, latency, isError int64) Row {
 		return Row{Tags: map[string][]byte{
@@ -41,18 +36,6 @@ func TestClassifyDefaultSamplerRuleUsesPluginPriority(t *testing.T) {
 	require.Equal(t, "error", classifyDefaultSamplerRule(LoadedTrace{Fragments: []LoadedFragment{{Rows: []Row{row(0, 10, 1)}}}}))
 	require.Equal(t, "healthy", classifyDefaultSamplerRule(LoadedTrace{Fragments: []LoadedFragment{{Rows: []Row{row(0, 10, 0)}}}}))
 	require.Contains(t, string(DefaultSkyWalkingSamplerConfig), `"healthySampleRate":"0.1"`)
-}
-
-func (rs *recordingSampler) Kind() sdk.Kind          { return sdk.KindSampler }
-func (rs *recordingSampler) Project() sdk.Projection { return rs.project }
-func (rs *recordingSampler) Close() error            { return nil }
-func (rs *recordingSampler) Decide(batch *sdk.TraceBatch) (sdk.Verdict, error) {
-	rs.blocks = append(rs.blocks, batch.Traces...)
-	keep := make([]bool, len(batch.Traces))
-	for traceIdx := range keep {
-		keep[traceIdx] = traceIdx%3 != 0
-	}
-	return sdk.Verdict{Keep: keep}, nil
 }
 
 func TestBuildSamplerBlockUsesCompleteTrace(t *testing.T) {

@@ -150,14 +150,15 @@ func (tst *tsTable) runFinalizeRound(samplers []sdk.Sampler, graceNs int64) (boo
 	// fragment gap. The chain fails open on any Decide error.
 	chain := newMergeChain(tst.group, "", samplers, tst.option.decideTimeoutCircuitBreak)
 	filter := &mergeFilter{
-		chain:       chain,
-		guard:       guard,
-		ctx:         tst.loopCloser.Ctx(),
-		owner:       tst,
-		timeout:     tst.option.decideTimeout,
-		stageBudget: stageBudget,
-		traceBudget: resolveTraceBudget(tst.option),
-		forceSlow:   projectionRequiresSlowPath(chain.projection),
+		chain:         chain,
+		guard:         guard,
+		ctx:           tst.loopCloser.Ctx(),
+		owner:         tst,
+		timeout:       tst.option.decideTimeout,
+		stageBudget:   stageBudget,
+		traceBudget:   resolveTraceBudget(tst.option),
+		maxTraceCount: maxStagedTraceCountFromBudget(stageBudget),
+		forceSlow:     projectionRequiresSlowPath(chain.projection),
 	}
 
 	merged := make(map[uint64]struct{}, len(parts))

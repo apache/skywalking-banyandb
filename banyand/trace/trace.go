@@ -68,6 +68,7 @@ type option struct {
 	vectorized                   vtrace.VectorizedConfig
 	decideTimeoutCircuitBreak    int
 	nativePipelineEnabled        bool
+	benchmarkMergeBlocked        bool
 	isHot                        bool
 }
 

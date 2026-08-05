@@ -51,8 +51,8 @@ type Row struct {
 
 // LoadedFragment pairs physical fragment metadata with its complete source rows.
 type LoadedFragment struct {
-	Fragment Fragment
 	Rows     []Row
+	Fragment Fragment
 }
 
 // LoadedTrace is a complete logical source trace assembled across allowed parts.
@@ -63,10 +63,10 @@ type LoadedTrace struct {
 
 // Source contains the two disjoint real-data populations used by the fixture.
 type Source struct {
-	Catalog              sourcecatalog.Catalog
 	IndexCompressedBytes map[string]uint64
 	Mature               []LoadedTrace
 	Small                []LoadedTrace
+	Catalog              sourcecatalog.Catalog
 }
 
 // LoadOptions configures immutable source loading.
@@ -280,8 +280,8 @@ type sourceIndexKey struct {
 }
 
 type sourceIndexValue struct {
-	seriesID common.SeriesID
 	tags     []sidx.Tag
+	seriesID common.SeriesID
 }
 
 func attachIndexSeries(ctx context.Context, sourcePath string, selected map[string]TraceClass, populations ...[]LoadedTrace) error {
@@ -415,8 +415,9 @@ func BuildSourcePlan(source Source, options Options) (Plan, error) {
 	if planErr != nil {
 		return Plan{}, fmt.Errorf("cannot build reference fixture plan: %w", planErr)
 	}
-	if len(plan.Instances) != GeneratedTraceCount {
-		return Plan{}, fmt.Errorf("generated trace count mismatch: got %d, want %d", len(plan.Instances), GeneratedTraceCount)
+	expectedInstances := GeneratedTraceCount * plan.WriteIntensity
+	if len(plan.Instances) != expectedInstances {
+		return Plan{}, fmt.Errorf("generated trace count mismatch: got %d, want %d", len(plan.Instances), expectedInstances)
 	}
 	return plan, nil
 }

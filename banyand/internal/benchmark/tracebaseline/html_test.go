@@ -26,22 +26,37 @@ import (
 
 func TestRenderHTMLUsesDiagramsAsPrimaryReportSurface(t *testing.T) {
 	suite := SuiteReport{
-		GeneratedAt: time.Date(2026, time.August, 5, 0, 0, 0, 0, time.UTC), Commit: "abc123", OneShardOnly: true,
-		MaximumRate: 1000, FrozenRate: 700,
-		Sweep:          []SweepPoint{{Acceleration: 1000, Sustainable: true}},
-		ThroughputRuns: []RunReport{{RunID: "run-1", Correct: true, HotMerges: 12, MatureMerges: 14}},
+		GeneratedAt: time.Date(2026, time.August, 5, 0, 0, 0, 0, time.UTC), Commit: "abc123", OneShardOnly: true, WriteIntensity: 2,
+		SerialRuns: []RunReport{{
+			RunID: "run-1", Mode: ModeSerial, Correct: true, HotMerges: 12, MatureMerges: 14,
+			Status: []StatusPoint{{BarrierNanos: int64(time.Millisecond)}},
+		}},
+		DisabledEnabledAlternating: []ControlledMergeRunReport{{
+			RunID: "disabled-1", PipelineMode: ControlledMergePipelineDisabled,
+		}},
 	}
 	var output bytes.Buffer
 	require.NoError(t, RenderHTML(&output, suite))
 	html := output.String()
 	require.Contains(t, html, "ONE SHARD /")
 	require.Contains(t, html, "ORDINARY MERGE")
-	require.Contains(t, html, "id=\"sweep-diagram\"")
+	require.Contains(t, html, "id=\"barrier-diagram\"")
 	require.Contains(t, html, "id=\"variance-diagram\"")
 	require.Contains(t, html, "id=\"backlog-diagram\"")
 	require.Contains(t, html, "id=\"flow-diagram\"")
-	require.Contains(t, html, "LOGICAL LEDGER")
-	require.Contains(t, html, "overallReady=gates.every")
+	require.Contains(t, html, "id=\"controlled-variance-diagram\"")
+	require.Contains(t, html, "id=\"controlled-run-table\"")
+	require.Contains(t, html, "STAGE CAP")
+	require.Contains(t, html, "MAX TRACES")
+	require.Contains(t, html, "disabledEnabledAlternating")
+	require.Contains(t, html, "SAME TEST BOUNDARY")
+	require.Contains(t, html, "CORRECT OUTPUT")
+	require.Contains(t, html, "MATURE MERGE ROUNDS")
+	require.Contains(t, html, "SUSTAINABLE EXECUTION")
+	require.Contains(t, html, "production write intensity")
+	require.Contains(t, html, "Mixed selections may appear in both hot and mature counts")
+	require.Contains(t, html, "event.hotInputParts")
+	require.Contains(t, html, "overallReady=readiness.ready===true")
 	require.Contains(t, html, "application/json")
 	require.GreaterOrEqual(t, strings.Count(html, "<svg"), 4)
 }

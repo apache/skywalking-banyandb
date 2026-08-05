@@ -34,8 +34,8 @@ import (
 
 type scheduleDocument struct {
 	DayStart    time.Time       `json:"dayStart"`
-	DayDuration time.Duration   `json:"dayDuration"`
 	Writes      []scheduleWrite `json:"writes"`
+	DayDuration time.Duration   `json:"dayDuration"`
 }
 
 type scheduleWrite struct {
@@ -64,7 +64,7 @@ func Drive(ctx context.Context, options DriverOptions) (RunReport, error) {
 	if options.Acceleration <= 0 {
 		return RunReport{}, fmt.Errorf("acceleration must be positive")
 	}
-	if options.Mode != "serial" && options.Mode != "throughput" {
+	if options.Mode != ModeSerial && options.Mode != ModeThroughput {
 		return RunReport{}, fmt.Errorf("mode must be serial or throughput")
 	}
 	if options.ControllerCPU >= 0 {
@@ -93,7 +93,7 @@ func Drive(ctx context.Context, options DriverOptions) (RunReport, error) {
 	for writeIdx := range schedule.Writes {
 		write := &schedule.Writes[writeIdx]
 		due := wallStart.Add(time.Duration(float64(write.Publication.Sub(schedule.DayStart)) / options.Acceleration))
-		if options.Mode == "throughput" {
+		if options.Mode == ModeThroughput {
 			if delay := time.Until(due); delay > 0 {
 				timer := time.NewTimer(delay)
 				select {
@@ -119,18 +119,15 @@ func Drive(ctx context.Context, options DriverOptions) (RunReport, error) {
 			RunningMerges   int    `json:"runningMerges"`
 			InFlightParts   int    `json:"inFlightParts"`
 		}
+		barrierStarted := time.Now()
 		if postErr := postJSON(ctx, client, "/publish", PublishRequest{PartID: partID, LogicalNow: write.Publication}, &status); postErr != nil {
 			return RunReport{}, postErr
 		}
-		if options.Mode == "serial" {
-			if idleErr := postNoContent(ctx, client, "/idle", nil); idleErr != nil {
-				return RunReport{}, fmt.Errorf("cannot drain after publishing part %s: %w", write.PartID, idleErr)
-			}
-		}
+		barrierNanos := time.Since(barrierStarted).Nanoseconds()
 		now := time.Now()
 		lag := max(int64(0), now.Sub(due).Nanoseconds())
 		statusPoints = append(statusPoints, StatusPoint{
-			LogicalNow: write.Publication, WallTime: now, LagNanos: lag, CoreBytes: status.CoreBytes, CoreParts: status.CoreParts,
+			LogicalNow: write.Publication, WallTime: now, BarrierNanos: barrierNanos, LagNanos: lag, CoreBytes: status.CoreBytes, CoreParts: status.CoreParts,
 			QueuedMerges: status.QueuedMerges, RunningMerges: status.RunningMerges, InFlightParts: status.InFlightParts,
 			OldestPartAge: max(int64(0), write.Publication.UnixNano()-status.OldestTimestamp), PublishedParts: writeIdx + 1,
 		})
@@ -160,7 +157,7 @@ func Drive(ctx context.Context, options DriverOptions) (RunReport, error) {
 	if marshalErr != nil {
 		return RunReport{}, fmt.Errorf("cannot encode completed run report: %w", marshalErr)
 	}
-	if writeErr := os.WriteFile(options.OutputPath, reportData, 0o644); writeErr != nil {
+	if writeErr := os.WriteFile(options.OutputPath, reportData, 0o600); writeErr != nil {
 		return RunReport{}, fmt.Errorf("cannot write completed run report: %w", writeErr)
 	}
 	return report, nil

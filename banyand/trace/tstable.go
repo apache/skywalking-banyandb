@@ -48,6 +48,7 @@ const (
 	sidxDirName    = "sidx"
 )
 
+//nolint:govet // Field grouping preserves synchronization and hot-path cache-line separation.
 type tsTable struct {
 	fileSystem    fs.FileSystem
 	pm            protector.Memory
@@ -144,6 +145,9 @@ func (tst *tsTable) loadSnapshot(epoch uint64, loadedParts []uint64) error {
 func (tst *tsTable) startLoop(cur uint64) {
 	tst.loopCloser = run.NewCloser(1 + 3)
 	tst.mergeControl = newMergeLoopControl()
+	if tst.option.benchmarkMergeBlocked {
+		tst.mergeControl.blockForWave()
+	}
 	tst.introductions = make(chan *introduction)
 	flushCh := make(chan *flusherIntroduction)
 	mergeCh := make(chan *mergerIntroduction)

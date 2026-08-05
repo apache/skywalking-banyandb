@@ -17,29 +17,70 @@ package trace
 
 import (
 	"context"
+	"crypto/sha256"
 	"errors"
 	"fmt"
 	"io"
+	"math"
 	"os"
 	"path/filepath"
+	"sort"
 	"time"
 
 	"github.com/apache/skywalking-banyandb/api/common"
 	"github.com/apache/skywalking-banyandb/banyand/internal/sidx"
 	"github.com/apache/skywalking-banyandb/banyand/protector"
+	"github.com/apache/skywalking-banyandb/pkg/cgroups"
 	"github.com/apache/skywalking-banyandb/pkg/fs"
 	"github.com/apache/skywalking-banyandb/pkg/logger"
+	"github.com/apache/skywalking-banyandb/pkg/pipeline/sdk"
 	"github.com/apache/skywalking-banyandb/pkg/timestamp"
 )
 
-// BenchmarkMergeReceiverOptions configures a pipeline-disabled production merge benchmark receiver.
+// ErrBenchmarkNoMergeSelection means the production policy has no eligible merge in the current snapshot.
+var ErrBenchmarkNoMergeSelection = errNoPartToMerge
+
+// BenchmarkMergeReceiverOptions configures a production merge benchmark receiver.
 type BenchmarkMergeReceiverOptions struct {
-	EventWriter    io.Writer
-	LogicalNow     time.Time
-	MergeGrace     time.Duration
-	IndexNames     []string
-	MaxInputPartID uint64
-	Attribution    bool
+	LogicalNow       time.Time
+	EventWriter      io.Writer
+	Sampler          sdk.Sampler
+	PartMergeDepths  map[uint64]uint32
+	SegmentTimeRange timestamp.TimeRange
+	IndexNames       []string
+	MergeGrace       time.Duration
+	MemoryLimit      uint64
+	MaxInputPartID   uint64
+	Attribution      bool
+	BlockMerges      bool
+}
+
+// BenchmarkMergeStagingLimits reports the effective limits used by the trace sampler staging path.
+type BenchmarkMergeStagingLimits struct {
+	MemoryLimit   uint64 `json:"memoryLimit"`
+	StageBytes    uint64 `json:"stageBytes"`
+	TraceBytes    uint64 `json:"traceBytes"`
+	MaxTraceCount int    `json:"maxTraceCount"`
+}
+
+type benchmarkMemoryProtector struct {
+	protector.Nop
+	limit uint64
+}
+
+func (bmp *benchmarkMemoryProtector) GetLimit() uint64 {
+	return bmp.limit
+}
+
+func (bmp *benchmarkMemoryProtector) AvailableBytes() int64 {
+	return int64(min(bmp.limit, uint64(math.MaxInt64)))
+}
+
+// BenchmarkOneMergeOptions defines the clock and expected picker result for one controlled mature merge.
+type BenchmarkOneMergeOptions struct {
+	LogicalNow              time.Time
+	ExpectedSelectionSHA256 string
+	RequireAllMature        bool
 }
 
 // BenchmarkMergeInventory summarizes durable core and secondary-index output.
@@ -62,7 +103,7 @@ type BenchmarkMergeStatus struct {
 	InFlightParts   int    `json:"inFlightParts"`
 }
 
-// NewBenchmarkMergeReceiver opens the production merge loop with sampling disabled and benchmark recording enabled.
+// NewBenchmarkMergeReceiver opens the production merge loop with benchmark recording enabled.
 func NewBenchmarkMergeReceiver(root string, options BenchmarkMergeReceiverOptions) (*BenchmarkPartReceiver, error) {
 	absoluteRoot, absoluteErr := filepath.Abs(root)
 	if absoluteErr != nil {
@@ -74,16 +115,41 @@ func NewBenchmarkMergeReceiver(root string, options BenchmarkMergeReceiverOption
 	if mkdirErr := os.MkdirAll(absoluteRoot, 0o755); mkdirErr != nil {
 		return nil, fmt.Errorf("cannot create merge benchmark root %q: %w", absoluteRoot, mkdirErr)
 	}
+	if options.Sampler != nil && options.Sampler.Kind() != sdk.KindSampler {
+		return nil, fmt.Errorf("merge benchmark plugin kind %d is not a sampler", options.Sampler.Kind())
+	}
+	memoryLimit := options.MemoryLimit
+	if memoryLimit == 0 {
+		cgroupLimit, memoryLimitErr := cgroups.MemoryLimit()
+		if memoryLimitErr == nil && cgroupLimit > 0 {
+			memoryLimit = uint64(cgroupLimit)
+		} else if options.Sampler != nil {
+			if memoryLimitErr != nil {
+				return nil, fmt.Errorf("cannot resolve merge benchmark cgroup memory limit: %w", memoryLimitErr)
+			}
+			return nil, fmt.Errorf("merge benchmark sampler requires a finite cgroup memory limit")
+		}
+	}
+	memoryProtector := protector.Memory(protector.Nop{})
+	if memoryLimit > 0 {
+		memoryProtector = &benchmarkMemoryProtector{limit: memoryLimit}
+	}
+	groupDigest := sha256.Sum256([]byte(absoluteRoot))
+	group := fmt.Sprintf("trace-merge-benchmark-%x", groupDigest[:8])
 	fileSystem := fs.NewLocalFileSystem()
-	table, tableErr := newTSTable(fileSystem, absoluteRoot, common.Position{Database: "trace-merge-baseline"},
-		logger.GetLogger("trace-merge-baseline"), timestamp.TimeRange{}, option{
-			flushTimeout: 0, mergePolicy: newDefaultMergePolicy(), protector: protector.Nop{},
-			nativePipelineEnabled: false, maxTraceFragmentGap: time.Minute, mergeGraceDefault: options.MergeGrace,
+	table, tableErr := newTSTable(fileSystem, absoluteRoot, common.Position{Database: group},
+		logger.GetLogger("trace-merge-benchmark"), options.SegmentTimeRange, option{
+			flushTimeout: 0, mergePolicy: newDefaultMergePolicy(), protector: memoryProtector,
+			nativePipelineEnabled: options.Sampler != nil, maxTraceFragmentGap: time.Minute, mergeGraceDefault: options.MergeGrace,
+			benchmarkMergeBlocked: options.BlockMerges,
 		}, nil)
 	if tableErr != nil {
 		return nil, fmt.Errorf("cannot open merge benchmark table %q: %w", absoluteRoot, tableErr)
 	}
 	receiver := &BenchmarkPartReceiver{table: table, fileSystem: fileSystem, root: absoluteRoot}
+	if depthErr := receiver.restoreMergeDepths(options.PartMergeDepths); depthErr != nil {
+		return nil, errors.Join(fmt.Errorf("cannot restore controlled merge depths: %w", depthErr), table.Close())
+	}
 	if options.MaxInputPartID > 0 {
 		table.observePartID(options.MaxInputPartID)
 	}
@@ -94,15 +160,92 @@ func NewBenchmarkMergeReceiver(root string, options BenchmarkMergeReceiverOption
 	for _, indexName := range indexNames {
 		table.mustGetOrCreateSidx(indexName)
 	}
+	if options.Sampler != nil {
+		deregister := registerSampler(group, options.Sampler)
+		receiver.closeCallbacks = append(receiver.closeCallbacks, func() error {
+			deregister()
+			return options.Sampler.Close()
+		})
+	}
 	if !options.LogicalNow.IsZero() {
 		table.setMergeNow(options.LogicalNow)
 	}
 	if recordingErr := receiver.EnableMergeRecording(BenchmarkMergeRecordingOptions{
 		Writer: options.EventWriter, Phase: BenchmarkMergePhasePrimary, Attribution: options.Attribution,
 	}); recordingErr != nil {
-		return nil, errors.Join(fmt.Errorf("cannot enable merge benchmark recording: %w", recordingErr), table.Close())
+		return nil, errors.Join(fmt.Errorf("cannot enable merge benchmark recording: %w", recordingErr), receiver.Close())
 	}
 	return receiver, nil
+}
+
+// MergeStagingLimits returns the memory-derived byte and trace-count limits used by sampler evaluation.
+func (bpr *BenchmarkPartReceiver) MergeStagingLimits() (BenchmarkMergeStagingLimits, error) {
+	if bpr == nil || bpr.table == nil {
+		return BenchmarkMergeStagingLimits{}, fmt.Errorf("benchmark receiver is not open")
+	}
+	memoryLimit := bpr.table.option.protector.GetLimit()
+	stageBytes := resolveStageBudget(bpr.table.option)
+	return BenchmarkMergeStagingLimits{
+		MemoryLimit: memoryLimit, StageBytes: stageBytes, TraceBytes: resolveTraceBudget(bpr.table.option),
+		MaxTraceCount: maxStagedTraceCountFromBudget(stageBytes),
+	}, nil
+}
+
+// MergePartDepths returns the benchmark-only merge generation of every active core part.
+func (bpr *BenchmarkPartReceiver) MergePartDepths() (map[uint64]uint32, error) {
+	if bpr == nil || bpr.table == nil {
+		return nil, fmt.Errorf("benchmark receiver is not open")
+	}
+	snapshot := bpr.table.currentSnapshot()
+	if snapshot == nil {
+		return map[uint64]uint32{}, nil
+	}
+	defer snapshot.decRef()
+	depths := make(map[uint64]uint32, len(snapshot.parts))
+	for _, partData := range snapshot.parts {
+		depths[partData.ID()] = partData.mergeDepth
+	}
+	return depths, nil
+}
+
+// ActivePartIDs returns the core part IDs referenced by the current durable snapshot.
+func (bpr *BenchmarkPartReceiver) ActivePartIDs() ([]uint64, error) {
+	if bpr == nil || bpr.table == nil {
+		return nil, fmt.Errorf("benchmark receiver is not open")
+	}
+	snapshot := bpr.table.currentSnapshot()
+	if snapshot == nil {
+		return nil, nil
+	}
+	defer snapshot.decRef()
+	partIDs := make([]uint64, 0, len(snapshot.parts))
+	for _, partData := range snapshot.parts {
+		partIDs = append(partIDs, partData.ID())
+	}
+	sort.Slice(partIDs, func(leftIdx, rightIdx int) bool { return partIDs[leftIdx] < partIDs[rightIdx] })
+	return partIDs, nil
+}
+
+func (bpr *BenchmarkPartReceiver) restoreMergeDepths(depths map[uint64]uint32) error {
+	if len(depths) == 0 {
+		return nil
+	}
+	snapshot := bpr.table.currentSnapshot()
+	if snapshot == nil {
+		return fmt.Errorf("cannot restore %d merge depths into an empty snapshot", len(depths))
+	}
+	defer snapshot.decRef()
+	if len(depths) != len(snapshot.parts) {
+		return fmt.Errorf("merge depth count %d does not match active part count %d", len(depths), len(snapshot.parts))
+	}
+	for _, partData := range snapshot.parts {
+		depth, found := depths[partData.ID()]
+		if !found {
+			return fmt.Errorf("merge depth for active part %016x is missing", partData.ID())
+		}
+		partData.mergeDepth = depth
+	}
+	return nil
 }
 
 // PublishExistingPart introduces an atomically published core part and its matching secondary-index parts.
@@ -163,6 +306,75 @@ func (bpr *BenchmarkPartReceiver) AdvanceMergeTime(ctx context.Context, logicalN
 		return fmt.Errorf("cannot trigger merge after advancing logical time: %w", triggerErr)
 	}
 	return bpr.WaitForMergeIdle(ctx)
+}
+
+// PreviewMergeSelection reports the next selection from the production merge policy without dispatching it.
+func (bpr *BenchmarkPartReceiver) PreviewMergeSelection() (BenchmarkMergeEvent, error) {
+	if bpr == nil || bpr.table == nil {
+		return BenchmarkMergeEvent{}, fmt.Errorf("benchmark receiver is not open")
+	}
+	snapshot := bpr.table.currentSnapshot()
+	if snapshot == nil {
+		return BenchmarkMergeEvent{}, fmt.Errorf("cannot preview merge selection: %w", errNoPartToMerge)
+	}
+	defer snapshot.decRef()
+	parts, _ := bpr.table.getPartsToMerge(snapshot, bpr.table.freeDiskSpace(bpr.table.root))
+	if len(parts) < 2 {
+		return BenchmarkMergeEvent{}, fmt.Errorf("cannot preview merge selection: %w", errNoPartToMerge)
+	}
+	lane := mergeLaneSlow
+	if sumCompressedSize(parts) < computeSmallMergeThreshold() {
+		lane = mergeLaneFast
+	}
+	return buildMergeBenchmarkEvent(bpr.table, parts, mergeTypeFile, lane, mergePhasePrimary), nil
+}
+
+// RunOneMerge executes exactly one production-picker merge and leaves recursive work blocked.
+func (bpr *BenchmarkPartReceiver) RunOneMerge(ctx context.Context, options BenchmarkOneMergeOptions) (BenchmarkMergeEvent, error) {
+	if bpr == nil || bpr.table == nil {
+		return BenchmarkMergeEvent{}, fmt.Errorf("benchmark receiver is not open")
+	}
+	if options.LogicalNow.IsZero() {
+		return BenchmarkMergeEvent{}, fmt.Errorf("controlled merge logical time is required")
+	}
+	if options.ExpectedSelectionSHA256 == "" {
+		return BenchmarkMergeEvent{}, fmt.Errorf("controlled merge selection checksum is required")
+	}
+	if blockErr := bpr.table.blockMergeUntilWave(); blockErr != nil {
+		return BenchmarkMergeEvent{}, fmt.Errorf("cannot block recursive merge dispatch: %w", blockErr)
+	}
+	bpr.table.setMergeNow(options.LogicalNow)
+	preview, previewErr := bpr.PreviewMergeSelection()
+	if previewErr != nil {
+		return BenchmarkMergeEvent{}, previewErr
+	}
+	if preview.SelectionSHA256 != options.ExpectedSelectionSHA256 {
+		return BenchmarkMergeEvent{}, fmt.Errorf("controlled merge selection checksum %s does not match expected %s",
+			preview.SelectionSHA256, options.ExpectedSelectionSHA256)
+	}
+	if options.RequireAllMature && preview.HotInputParts > 0 {
+		return BenchmarkMergeEvent{}, fmt.Errorf("controlled merge selection contains %d hot input parts", preview.HotInputParts)
+	}
+	beforeReport, beforeReportErr := bpr.MergeRecordingReport()
+	if beforeReportErr != nil {
+		return BenchmarkMergeEvent{}, beforeReportErr
+	}
+	merged, mergeErr := bpr.table.triggerSingleMergeWave(ctx)
+	if mergeErr != nil {
+		return BenchmarkMergeEvent{}, fmt.Errorf("cannot execute controlled merge: %w", mergeErr)
+	}
+	if !merged {
+		return BenchmarkMergeEvent{}, fmt.Errorf("controlled merge did not dispatch")
+	}
+	afterReport, afterReportErr := bpr.MergeRecordingReport()
+	if afterReportErr != nil {
+		return BenchmarkMergeEvent{}, afterReportErr
+	}
+	if len(afterReport.Events) != len(beforeReport.Events)+1 {
+		return BenchmarkMergeEvent{}, fmt.Errorf("controlled merge recorded %d new events instead of one",
+			len(afterReport.Events)-len(beforeReport.Events))
+	}
+	return afterReport.Events[len(afterReport.Events)-1], nil
 }
 
 // MergeInventory returns durable core and secondary-index row, byte, and part totals.

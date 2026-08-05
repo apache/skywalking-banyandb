@@ -34,6 +34,31 @@ import (
 
 type ledgerHashes map[string][][sha256.Size]byte
 
+// LogicalLedgerChecksums calculates layout-independent checksums for core and secondary-index rows.
+func LogicalLedgerChecksums(ctx context.Context, receiver *storagetrace.BenchmarkPartReceiver) (map[string]string, error) {
+	if receiver == nil {
+		return nil, fmt.Errorf("benchmark receiver is required")
+	}
+	checksums := make(map[string]string, len(fixtureIndexNames)+1)
+	partIDs, partIDsErr := receiver.ActivePartIDs()
+	if partIDsErr != nil {
+		return nil, fmt.Errorf("cannot list active core ledger parts: %w", partIDsErr)
+	}
+	core, coreErr := scanCoreLedgerPartIDs(ctx, receiver.Root(), partIDs)
+	if coreErr != nil {
+		return nil, coreErr
+	}
+	checksums["core"] = canonicalLedgerChecksum(core)
+	for _, indexName := range fixtureIndexNames {
+		indexLedger, indexErr := scanIndexLedger(ctx, receiver, indexName)
+		if indexErr != nil {
+			return nil, indexErr
+		}
+		checksums[indexName] = canonicalLedgerChecksum(indexLedger)
+	}
+	return checksums, nil
+}
+
 func reconcileLogicalLedgers(ctx context.Context, receiver *storagetrace.BenchmarkPartReceiver, plan Plan, lookup sourceLookup, offsets []int64) error {
 	expectedCore := make(ledgerHashes)
 	expectedIndexes := map[string]ledgerHashes{"latency": {}, "start_time": {}}
@@ -70,17 +95,9 @@ func reconcileLogicalLedgers(ctx context.Context, receiver *storagetrace.Benchma
 		return compareErr
 	}
 	for _, indexName := range fixtureIndexNames {
-		actualIndex := make(ledgerHashes)
-		scanErr := receiver.ScanRawIndex(ctx, indexName, func(row sidx.RawRow) error {
-			if len(row.Data) < 2 || row.Data[0] != traceIDEncodingV1 {
-				return fmt.Errorf("index %q returned unsupported trace ID encoding", indexName)
-			}
-			traceID := string(row.Data[1:])
-			actualIndex[traceID] = append(actualIndex[traceID], hashIndexLedgerRow(uint64(row.SeriesID), row.Key, row.Data, row.Tags))
-			return nil
-		})
-		if scanErr != nil {
-			return fmt.Errorf("cannot scan generated index %q ledger: %w", indexName, scanErr)
+		actualIndex, indexErr := scanIndexLedger(ctx, receiver, indexName)
+		if indexErr != nil {
+			return indexErr
 		}
 		if compareErr := compareLedger(indexName, expectedIndexes[indexName], actualIndex); compareErr != nil {
 			return compareErr
@@ -89,11 +106,52 @@ func reconcileLogicalLedgers(ctx context.Context, receiver *storagetrace.Benchma
 	return nil
 }
 
+func scanIndexLedger(ctx context.Context, receiver *storagetrace.BenchmarkPartReceiver, indexName string) (ledgerHashes, error) {
+	rows := make(ledgerHashes)
+	scanErr := receiver.ScanRawIndex(ctx, indexName, func(row sidx.RawRow) error {
+		if len(row.Data) < 2 || row.Data[0] != traceIDEncodingV1 {
+			return fmt.Errorf("index %q returned unsupported trace ID encoding", indexName)
+		}
+		traceID := string(row.Data[1:])
+		rows[traceID] = append(rows[traceID], hashIndexLedgerRow(uint64(row.SeriesID), row.Key, row.Data, row.Tags))
+		return nil
+	})
+	if scanErr != nil {
+		return nil, fmt.Errorf("cannot scan generated index %q ledger: %w", indexName, scanErr)
+	}
+	return rows, nil
+}
+
+func canonicalLedgerChecksum(rows ledgerHashes) string {
+	traceIDs := make([]string, 0, len(rows))
+	for traceID := range rows {
+		traceIDs = append(traceIDs, traceID)
+	}
+	sort.Strings(traceIDs)
+	digest := sha256.New()
+	for _, traceID := range traceIDs {
+		writeLedgerBytes(digest, []byte(traceID))
+		traceRows := append([][sha256.Size]byte(nil), rows[traceID]...)
+		sort.Slice(traceRows, func(leftIdx, rightIdx int) bool {
+			return string(traceRows[leftIdx][:]) < string(traceRows[rightIdx][:])
+		})
+		writeLedgerUint64(digest, uint64(len(traceRows)))
+		for rowIdx := range traceRows {
+			writeLedgerBytes(digest, traceRows[rowIdx][:])
+		}
+	}
+	return hex.EncodeToString(digest.Sum(nil))
+}
+
 func scanCoreLedger(ctx context.Context, root string) (ledgerHashes, error) {
 	partIDs, discoverErr := dump.DiscoverPartIDs(root)
 	if discoverErr != nil {
 		return nil, fmt.Errorf("cannot discover generated core ledger parts: %w", discoverErr)
 	}
+	return scanCoreLedgerPartIDs(ctx, root, partIDs)
+}
+
+func scanCoreLedgerPartIDs(ctx context.Context, root string, partIDs []uint64) (ledgerHashes, error) {
 	fileSystem := fs.NewLocalFileSystem()
 	rows := make(ledgerHashes)
 	for _, partID := range partIDs {
