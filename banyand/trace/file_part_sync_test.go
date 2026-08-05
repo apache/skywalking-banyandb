@@ -52,9 +52,19 @@ func TestMemPartFlushPublishesMetadataLast(t *testing.T) {
 	defer deferFn()
 	fileSystem := &writeOrderFileSystem{FileSystem: fs.NewLocalFileSystem()}
 
+	// Use a local fixture so the ordering assertion is independent of the package-level
+	// test fixture; the contract under test is the atomic-write ordering, not the trace content.
+	now := int64(1_000_000_000)
+	localTS := &traces{
+		traceIDs:   []string{"ordering-tid"},
+		timestamps: []int64{now},
+		spanIDs:    []string{"ordering-sid"},
+		spans:      [][]byte{[]byte("ordering-span")},
+		tags:       [][]*tagValue{{}},
+	}
 	mp := generateMemPart()
 	defer releaseMemPart(mp)
-	mp.mustInitFromTraces(ts)
+	mp.mustInitFromTraces(localTS)
 	mp.mustFlush(fileSystem, partPath(tmpPath, 1))
 
 	require.NotEmpty(t, fileSystem.atomicWrites)
