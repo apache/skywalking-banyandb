@@ -156,13 +156,18 @@ func Generate(ctx context.Context, source Source, plan Plan, options GenerateOpt
 			releaseCore()
 			return Artifact{}, fmt.Errorf("cannot encode fixture write %d indexes: %w", writeIdx, encodeErr)
 		}
-		if evidenceErr := captureWriteEvidence(fileSystem, write, partID, corePath, indexPaths); evidenceErr != nil {
-			releaseCore()
-			return Artifact{}, fmt.Errorf("cannot capture fixture write %d evidence: %w", writeIdx, evidenceErr)
-		}
 		if receiveErr := receiver.Receive(ctx, corePath, indexPaths); receiveErr != nil {
 			releaseCore()
 			return Artifact{}, fmt.Errorf("cannot receive fixture write %d: %w", writeIdx, receiveErr)
+		}
+		receivedIndexPaths := make(map[string]string, len(indexPaths))
+		partName := fmt.Sprintf("%016x", partID)
+		for indexName := range indexPaths {
+			receivedIndexPaths[indexName] = filepath.Join(receiverRoot, "sidx", indexName, partName)
+		}
+		if evidenceErr := captureWriteEvidence(fileSystem, write, partID, filepath.Join(receiverRoot, partName), receivedIndexPaths); evidenceErr != nil {
+			releaseCore()
+			return Artifact{}, fmt.Errorf("cannot capture received fixture write %d evidence: %w", writeIdx, evidenceErr)
 		}
 		releaseCore()
 		if removeErr := removeSenderParts(corePath, indexPaths); removeErr != nil {
