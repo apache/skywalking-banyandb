@@ -67,6 +67,8 @@ var _ = ginkgo.Describe("vec independent verification (distributed)", ginkgo.Ord
 		vectorizedConn        *grpc.ClientConn
 		stopFn                func()
 		startHandledCount     int64
+		startFrameEnc         int64
+		startFrameDec         int64
 		startFellThroughCount int64
 		savedMeasureCtx       helpers.SharedContext
 		savedTopNCtx          helpers.SharedContext
@@ -83,6 +85,8 @@ var _ = ginkgo.Describe("vec independent verification (distributed)", ginkgo.Ord
 		// baseline keeps its proto-codec contract end-to-end.
 		savedWireModeRaw = data.MeasureWireModeRaw()
 		startHandledCount = vecplan.HandledCount()
+		startFrameEnc = data.MeasureFrameEncodedCount()
+		startFrameDec = data.MeasureFrameDecodedCount()
 		startFellThroughCount = vecplan.FellThroughCount()
 
 		tmpDir, tmpDirCleanup, tmpErr := test.NewSpace()
@@ -133,6 +137,22 @@ var _ = ginkgo.Describe("vec independent verification (distributed)", ginkgo.Ord
 		)
 		gomega.Expect(handledDelta).To(gomega.BeNumerically(">", int64(0)),
 			"vec dispatch did not fire for any case on the distributed cluster")
+		// HandledCount above only proves the vec COMPUTE path dispatched. A vec query
+		// still emits protobuf unless the data node is distributed and in raw wire
+		// mode, so assert the columnar frame itself carried traffic — otherwise a
+		// silent fallback to proto reads as full coverage.
+		frameEncDelta := data.MeasureFrameEncodedCount() - startFrameEnc
+		frameDecDelta := data.MeasureFrameDecodedCount() - startFrameDec
+		ginkgo.GinkgoWriter.Printf(
+			"vec measure wire (distributed): frames_encoded=%d frames_decoded=%d\n",
+			frameEncDelta, frameDecDelta,
+		)
+		gomega.Expect(frameEncDelta).To(gomega.BeNumerically(">", int64(0)),
+			"no native columnar frame was encoded on the distributed cluster; "+
+				"the data node fell back to protobuf")
+		gomega.Expect(frameDecDelta).To(gomega.BeNumerically(">", int64(0)),
+			"no native columnar frame was decoded on the distributed cluster; "+
+				"the liaison never saw a frame body")
 		if vectorizedConn != nil {
 			gomega.Expect(vectorizedConn.Close()).To(gomega.Succeed())
 		}

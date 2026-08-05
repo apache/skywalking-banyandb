@@ -15,14 +15,14 @@
 // specific language governing permissions and limitations
 // under the License.
 
-// Package frame defines the non-proto, vec-native columnar binary frame
+// Package frame binds the shared vec columnar frame codec
+// (pkg/query/vectorized/frame) to the measure engine. It supplies measure's
+// frame signature, wire version and role/type numbering; the byte layout is
+// the shared base's. It is the non-proto, vec-native columnar binary frame
 // carried as the SendResponse.body for TopicInternalMeasureQuery under the
-// G9f throughout-vec design. Encoders live here (G9f.2); the matching
-// decoder lands in G9f.3. The frame format is version-stamped and uses
-// frame-internal type/role enums with explicit numeric values so the wire
-// is stable against pkg/query/vectorized internal enum refactors.
+// G9f throughout-vec design.
 //
-// Wire layout (version 1):
+// Wire layout (version 3):
 //
 //	off  len       field            description
 //	---  --------  ---------------  ---------------------------------------------
@@ -32,156 +32,207 @@
 //	                                a non-nil error deterministically (G9f spec
 //	                                Principle 3, verified against
 //	                                google.golang.org/protobuf@v1.36.11).
-//	  4  1         WireVersion      currently 1.
+//	  4  1         WireVersion      currently 3.
 //	  5  uvarint   NumRows          number of (active) rows.
 //	  ?  uvarint   NumCols          number of column blocks.
 //	  ?  ...       Columns          NumCols column blocks, in schema order.
 //
-// Each column block (header + body):
+// Each column block carries role+type discriminators, the column name, a tag
+// family name (empty for non-RoleTag columns), a validity bitmap and a
+// type-specific data section; the exact byte shapes live in the shared base's
+// encode.go/decode.go.
 //
-//	off  len       field            description
-//	---  --------  ---------------  ---------------------------------------------
-//	  0  1         Role             frameColRole — explicit-value enum mirroring
-//	                                vectorized.ColumnRole.
-//	  1  1         Type             frameColType — explicit-value enum mirroring
-//	                                vectorized.ColumnType.
-//	  2  uvarint   NameLen          length of the UTF-8 column name.
-//	  ?  NameLen   Name             column name bytes.
-//	  ?  uvarint   TagFamilyLen     length of the UTF-8 tag family name (v2).
-//	                                Empty for non-RoleTag columns.
-//	  ?  TFL       TagFamily        tag family name bytes.
-//	  ?  ⌈N/8⌉     Validity bitmap  N = NumRows; bit i set ⇒ row i is NULL
-//	                                (matches the project's validityBitmap: bit=1
-//	                                means null). Empty for N=0.
-//	  ?  ...       Data             type-specific; see encodeColumn for shapes.
+// v1 → v2: each column block carries a uvarint(TagFamilyLen) + TagFamily byte
+// run after the Name so the row path's TagFamilyGroups grouping does not
+// collapse every projected tag family into the empty-name family.
 //
-// Per-type body encoding (N = NumRows; null-row slots are present but the
-// validity bitmap is the source of truth for nullness — decoders MUST treat
-// null-row data bytes as undefined):
-//
-//   - Int64:     N × 8 bytes little-endian.
-//   - Float64:   N × 8 bytes IEEE-754 little-endian.
-//   - String:    For each row in order: uvarint(len) + len UTF-8 bytes.
-//     Null rows have len=0 and 0 bytes; the validity bitmap
-//     disambiguates "null" from "empty string".
-//   - Bytes:     Same shape as String, opaque bytes.
+// v2 → v3: adds two column types — TagValue (5) and FieldValue (6) — that
+// carry proto-marshaled TagValue / FieldValue bytes per cell, so cross-group
+// queries with type-divergent tag/field declarations cross the wire intact.
 package frame
 
 import (
-	"errors"
+	"fmt"
 
 	"github.com/apache/skywalking-banyandb/api/data"
+	"github.com/apache/skywalking-banyandb/pkg/query/vectorized"
+	baseframe "github.com/apache/skywalking-banyandb/pkg/query/vectorized/frame"
 )
 
-// Magic is the 4-byte prefix every raw vec columnar frame body MUST begin
-// with. The first byte is data.RawFrameMagicLeadingByte (0x00), which decodes
-// as a varint tag for protobuf field number 0 — protowire.ConsumeTag rejects
-// it with errCodeFieldNumber and proto/decode.go converts the negative tag
-// length into a hard errDecode *before* any unknown-field skip (verified
-// against google.golang.org/protobuf@v1.36.11). That deterministically forces
-// a flag-off node's proto.Unmarshal of a raw frame body into
-// *measurev1.InternalQueryResponse{} to return a non-nil error, collapsing
-// the "garbage-but-parsed silently-empty" failure mode into an unmistakable
-// hard decode error (G9f spec Principle 3, codec contract). The remaining
-// three bytes 'V','F','R' are a distinctive signature so a flag-on decoder
-// can recognize a valid frame from random noise on the same wire.
-var Magic = [4]byte{data.RawFrameMagicLeadingByte, 'V', 'F', 'R'}
-
 // WireVersion is the on-wire frame format version emitted by Encode. The
-// flag-on decoder MUST reject frames carrying any other version with a
-// loud typed error: the G9f hard-cutover model forbids dual-wire, so a
-// version skew on the wire is by definition a botched operator rollout,
-// not a coexistence to negotiate.
-//
-// v1 → v2: each column block now also carries a uvarint(TagFamilyLen) +
-// TagFamily byte run right after the Name. Without it, the row-side
-// serializer's TagFamilyGroups grouping collapsed every projected tag
-// family into the empty-name family on the receive side and produced
-// `tagFamilies[].name == ""` on the wire, diverging from the row path's
-// expected output.
-//
-// v2 → v3: adds two column types — frameColTagValueProto (5) and
-// frameColFieldValueProto (6) — that carry proto-marshaled TagValue /
-// FieldValue bytes per cell. These let cross-group queries with
-// type-divergent tag/field declarations (e.g. entity_id is STRING in
-// sw_metric vs INT in sw_updated) cross the wire intact: a typed wire
-// column can't represent mixed oneof variants, but proto-bytes-per-cell
-// can. The decoder reconstructs them as TypedColumn[*modelv1.TagValue]
-// / [*FieldValue] passthrough columns so serializeBatchToProto handles
-// them via the fast pointer-return path.
+// flag-on decoder MUST reject frames carrying any other version with a loud
+// typed error: the G9f hard-cutover model forbids dual-wire, so a version skew
+// on the wire is by definition a botched operator rollout, not a coexistence
+// to negotiate.
 const WireVersion uint8 = 3
 
-// MagicLen is the length of Magic in bytes.
-const MagicLen = 4
+// Magic is the 4-byte prefix every raw measure frame body MUST begin with. The
+// first byte is data.RawFrameMagicLeadingByte (0x00), which decodes as a varint
+// tag for protobuf field number 0 — forcing a flag-off node's proto.Unmarshal
+// of a raw frame body into *measurev1.InternalQueryResponse{} to return a
+// non-nil error (G9f spec Principle 3). The remaining bytes 'V','F','R' are a
+// distinctive signature so a flag-on decoder can recognize a valid frame.
+var Magic = [4]byte{data.RawFrameMagicLeadingByte, 'V', 'F', 'R'}
 
-// MinHeaderLen is the smallest possible frame header — 4 magic bytes,
-// 1 version byte, and the minimal 1-byte uvarint encodings of NumRows=0
-// and NumCols=0.
-const MinHeaderLen = MagicLen + 1 + 1 + 1
+// MagicLen is the length of Magic in bytes.
+const MagicLen = baseframe.MagicLen
+
+// MinHeaderLen is the smallest possible frame header — 4 magic bytes, 1
+// version byte, and the minimal 1-byte uvarint encodings of NumRows=0 and
+// NumCols=0.
+const MinHeaderLen = baseframe.MinHeaderLen
 
 // Header is the parsed frame header (everything up to but not including the
 // first column block).
-type Header struct {
-	NumRows     uint64
-	NumCols     uint64
-	Magic       [4]byte
-	WireVersion uint8
-}
+type Header = baseframe.Header
 
-// Sentinel errors. ValidateHeader (and the future decoder) wrap these with
-// context so callers can errors.Is against specific failure classes — most
-// importantly, ErrBadMagic at the very first byte is the engineered fail-loud
-// guard the G9f spec relies on.
+// Sentinel errors re-exported from the shared base so callers keep using
+// errors.Is against frame.ErrX; the identities are shared across the boundary.
 var (
 	// ErrTruncated signals a frame whose length is below the minimum header
 	// length, or whose declared lengths run past the buffer.
-	ErrTruncated = errors.New("vectorized.measure.frame: truncated frame")
+	ErrTruncated = baseframe.ErrTruncated
 
-	// ErrBadMagic signals a frame whose leading 4 bytes do not match Magic.
-	// In particular a flag-off (proto) body received on the raw path will
-	// fail here loudly, never silently mis-decoded.
-	ErrBadMagic = errors.New("vectorized.measure.frame: bad magic")
+	// ErrBadMagic signals a frame whose leading 4 bytes do not match Magic. A
+	// flag-off (proto) body received on the raw path fails here loudly.
+	ErrBadMagic = baseframe.ErrBadMagic
 
-	// ErrBadVersion signals a frame whose WireVersion byte does not match
-	// the current WireVersion. Hard-cutover means there is no recovery —
-	// the receiver must surface this loudly.
-	ErrBadVersion = errors.New("vectorized.measure.frame: bad wire version")
+	// ErrBadVersion signals a frame whose WireVersion byte does not match the
+	// current WireVersion.
+	ErrBadVersion = baseframe.ErrBadVersion
 
-	// ErrUnsupportedColumnType signals that the encoder was handed a column
-	// whose pkg/query/vectorized.ColumnType does not have a frame mapping.
-	// Surfacing this at encode time prevents silently-wrong wire bytes.
-	ErrUnsupportedColumnType = errors.New("vectorized.measure.frame: unsupported column type")
+	// ErrUnsupportedColumnType signals that a column whose ColumnType has no
+	// wire mapping crossed the codec.
+	ErrUnsupportedColumnType = baseframe.ErrUnsupportedColumnType
 
-	// ErrUnsupportedColumnRole signals that the encoder was handed a column
-	// whose pkg/query/vectorized.ColumnRole does not have a frame mapping.
-	ErrUnsupportedColumnRole = errors.New("vectorized.measure.frame: unsupported column role")
+	// ErrUnsupportedColumnRole signals that a column whose ColumnRole has no
+	// wire mapping crossed the codec.
+	ErrUnsupportedColumnRole = baseframe.ErrUnsupportedColumnRole
 )
 
-// frameColType is the explicit-value, wire-stable column-type discriminator.
-// Numeric values MUST NOT change between WireVersion bumps (or, if they do,
-// the WireVersion MUST bump and decoders MUST refuse the old version).
-type frameColType uint8
-
-// Frame column-type values. Add new types at the end; never reorder.
+// Measure wire-role values. Explicit and stable: add new roles at the end,
+// never reorder.
 const (
-	frameColInt64           frameColType = 1
-	frameColFloat64         frameColType = 2
-	frameColString          frameColType = 3
-	frameColBytes           frameColType = 4
-	frameColTagValueProto   frameColType = 5
-	frameColFieldValueProto frameColType = 6
+	wireRoleTimestamp uint8 = 1
+	wireRoleVersion   uint8 = 2
+	wireRoleSeriesID  uint8 = 3
+	wireRoleShardID   uint8 = 4
+	wireRoleTag       uint8 = 5
+	wireRoleField     uint8 = 6
 )
 
-// frameColRole is the explicit-value, wire-stable column-role discriminator.
-// Same stability contract as frameColType.
-type frameColRole uint8
-
-// Frame column-role values. Add new roles at the end; never reorder.
+// Measure wire-type values. Explicit and stable. TagValue/FieldValue carry
+// proto-marshaled bytes per cell (v3).
 const (
-	frameRoleTimestamp frameColRole = 1
-	frameRoleVersion   frameColRole = 2
-	frameRoleSeriesID  frameColRole = 3
-	frameRoleShardID   frameColRole = 4
-	frameRoleTag       frameColRole = 5
-	frameRoleField     frameColRole = 6
+	wireTypeInt64      uint8 = 1
+	wireTypeFloat64    uint8 = 2
+	wireTypeString     uint8 = 3
+	wireTypeBytes      uint8 = 4
+	wireTypeTagValue   uint8 = 5
+	wireTypeFieldValue uint8 = 6
 )
+
+// codec is the measure-parameterized shared frame codec. All measure frame I/O
+// flows through this single instance so the wire mapping cannot diverge between
+// Encode and Decode.
+var codec = baseframe.Codec{
+	Magic:       Magic,
+	WireVersion: WireVersion,
+	RoleToWire:  roleToWire,
+	WireToRole:  wireToRole,
+	TypeToWire:  typeToWire,
+	WireToType:  wireToType,
+}
+
+func roleToWire(r vectorized.ColumnRole) (uint8, error) {
+	switch r {
+	case vectorized.RoleTimestamp:
+		return wireRoleTimestamp, nil
+	case vectorized.RoleVersion:
+		return wireRoleVersion, nil
+	case vectorized.RoleSeriesID:
+		return wireRoleSeriesID, nil
+	case vectorized.RoleShardID:
+		return wireRoleShardID, nil
+	case vectorized.RoleTag:
+		return wireRoleTag, nil
+	case vectorized.RoleField:
+		return wireRoleField, nil
+	default:
+		return 0, fmt.Errorf("%w: %d", baseframe.ErrUnsupportedColumnRole, r)
+	}
+}
+
+func wireToRole(b uint8) (vectorized.ColumnRole, error) {
+	switch b {
+	case wireRoleTimestamp:
+		return vectorized.RoleTimestamp, nil
+	case wireRoleVersion:
+		return vectorized.RoleVersion, nil
+	case wireRoleSeriesID:
+		return vectorized.RoleSeriesID, nil
+	case wireRoleShardID:
+		return vectorized.RoleShardID, nil
+	case wireRoleTag:
+		return vectorized.RoleTag, nil
+	case wireRoleField:
+		return vectorized.RoleField, nil
+	default:
+		return 0, fmt.Errorf("%w: %d", baseframe.ErrUnsupportedColumnRole, b)
+	}
+}
+
+func typeToWire(t vectorized.ColumnType) (uint8, error) {
+	switch t { //nolint:exhaustive // measure emits only the scalar/passthrough subset; other types fall through to the error return
+	case vectorized.ColumnTypeInt64:
+		return wireTypeInt64, nil
+	case vectorized.ColumnTypeFloat64:
+		return wireTypeFloat64, nil
+	case vectorized.ColumnTypeString:
+		return wireTypeString, nil
+	case vectorized.ColumnTypeBytes:
+		return wireTypeBytes, nil
+	case vectorized.ColumnTypeTagValue:
+		return wireTypeTagValue, nil
+	case vectorized.ColumnTypeFieldValue:
+		return wireTypeFieldValue, nil
+	default:
+		return 0, fmt.Errorf("%w: %s", baseframe.ErrUnsupportedColumnType, t.String())
+	}
+}
+
+func wireToType(b uint8) (vectorized.ColumnType, error) {
+	switch b {
+	case wireTypeInt64:
+		return vectorized.ColumnTypeInt64, nil
+	case wireTypeFloat64:
+		return vectorized.ColumnTypeFloat64, nil
+	case wireTypeString:
+		return vectorized.ColumnTypeString, nil
+	case wireTypeBytes:
+		return vectorized.ColumnTypeBytes, nil
+	case wireTypeTagValue:
+		return vectorized.ColumnTypeTagValue, nil
+	case wireTypeFieldValue:
+		return vectorized.ColumnTypeFieldValue, nil
+	default:
+		return 0, fmt.Errorf("%w: %d", baseframe.ErrUnsupportedColumnType, b)
+	}
+}
+
+// Encode serializes a measure vec columnar RecordBatch into a raw frame body.
+func Encode(b *vectorized.RecordBatch) ([]byte, error) {
+	return codec.Encode(b)
+}
+
+// Decode parses a measure raw frame body back into a RecordBatch.
+func Decode(b []byte) (*vectorized.RecordBatch, error) {
+	return codec.Decode(b)
+}
+
+// ValidateHeader is the fail-loud preflight a decoder calls before parsing any
+// column data. It rejects a frame whose magic or wire-version does not match
+// this codec, and returns the parsed Header plus the bytes consumed.
+func ValidateHeader(b []byte) (Header, int, error) {
+	return codec.ValidateHeader(b)
+}

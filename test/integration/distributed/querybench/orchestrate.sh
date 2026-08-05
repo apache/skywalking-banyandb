@@ -34,6 +34,7 @@ BINARY="/tmp/dqb.test"
 
 ENGINE="${DQB_ENGINE:-measure}"
 MATRIX="${DQB_MATRIX:-A}"
+SOAK="${DQB_SOAK:-0}"
 CARDINALITIES="${DQB_CARDINALITIES:-1024,10000,100000,1000000,2000000}"
 if [[ "${ENGINE}" == "trace" ]]; then
   CARDINALITIES="${DQB_CARDINALITIES:-1000,10000,100000,1000000,2000000}"
@@ -63,6 +64,22 @@ rm -rf "${PROFILE_DIR}"
 
 echo "[orchestrate] building test binary..."
 go test -c -o "${BINARY}" ./test/integration/distributed/querybench
+
+# DQB_SOAK=1: run the in-process sustained soak (Instrument 2) instead of the
+# matrix benchmark. The soak test hard-fails unless DQB_IN_CONTAINER=1 (already
+# set by run-docker.sh). It emits its own JSON artifact; CI gates on the exit
+# status of this run independently from the benchmark summary.json.
+if [[ "${SOAK}" == "1" ]]; then
+  echo "[orchestrate] === soak mode: running TestTraceVecSoak ==="
+  DQB_ENGINE="${ENGINE}" \
+    DQB_SOAK=1 \
+    SOAK_HEAP_GROWTH_MAX_PCT="${SOAK_HEAP_GROWTH_MAX_PCT:-10}" \
+    DQB_QUERY_MEMORY_MIB="${DQB_QUERY_MEMORY_MIB:-256}" \
+    DQB_REPORT_DIR="${REPORT_DIR}" \
+    "${BINARY}" -test.run TestTraceVecSoak -test.v -test.timeout 60m
+  echo "[orchestrate] soak done"
+  exit 0
+fi
 
 IFS=',' read -ra CARD_ARR <<< "${CARDINALITIES}"
 IFS=',' read -ra SCEN_ARR <<< "${SCENARIOS}"

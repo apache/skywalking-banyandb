@@ -45,6 +45,7 @@ func TestLoadConfigSingleShotFromEnv(t *testing.T) {
 	t.Setenv(envCardinality, "1024")
 	t.Setenv(envQueryWorkers, "2")
 	t.Setenv(envQueryIters, "7")
+	t.Setenv(envByIDIters, "2500")
 	t.Setenv(envWriters, "3")
 	t.Setenv(envWarmupIters, "1")
 	cfg := LoadConfig()
@@ -59,6 +60,15 @@ func TestLoadConfigSingleShotFromEnv(t *testing.T) {
 	}
 	if cfg.QueryWorkers != 2 || cfg.QueryIterations != 7 || cfg.Writers != 3 || cfg.WarmupIterations != 1 {
 		t.Fatalf("unexpected worker/iteration settings: %+v", cfg)
+	}
+	if cfg.ByIDIterations != 2500 {
+		t.Fatalf("expected ByIDIterations=2500, got %d", cfg.ByIDIterations)
+	}
+	if got := cfg.effectiveQueryIterations(ScenarioTraceByID); got != 2500 {
+		t.Fatalf("expected trace_by_id to use ByIDIterations=2500, got %d", got)
+	}
+	if got := cfg.effectiveQueryIterations(ScenarioTraceTagFilter); got != 7 {
+		t.Fatalf("expected trace_tag_filter to use QueryIterations=7, got %d", got)
 	}
 	if cfg.Engine != engineMeasure {
 		t.Fatalf("expected default engine=%s, got %s", engineMeasure, cfg.Engine)
@@ -273,6 +283,101 @@ func TestSplitCardinality(t *testing.T) {
 				t.Fatalf("splitCardinality(%d) = (%d,%d), want (%d,%d)", tt.rows, entities, pointsEach, tt.entities, tt.pointsEach)
 			}
 		})
+	}
+}
+
+func TestSoakConfigDefaults(t *testing.T) {
+	// Without any soak env vars, Soak=false and SoakHeapGrowthMaxPct=10 (default).
+	cfg := LoadConfig()
+	if cfg.Soak {
+		t.Fatalf("expected Soak=false by default, got true")
+	}
+	if cfg.SoakHeapGrowthMaxPct != defaultSoakHeapGrowthPct {
+		t.Fatalf("expected SoakHeapGrowthMaxPct=%d by default, got %d", defaultSoakHeapGrowthPct, cfg.SoakHeapGrowthMaxPct)
+	}
+}
+
+func TestSoakConfigParsing(t *testing.T) {
+	t.Setenv(envSoak, "1")
+	t.Setenv(envSoakHeapGrowthPct, "25")
+	t.Setenv(envInContainer, "1")
+	cfg := LoadConfig()
+	if !cfg.Soak {
+		t.Fatalf("expected Soak=true, got false")
+	}
+	if cfg.SoakHeapGrowthMaxPct != 25 {
+		t.Fatalf("expected SoakHeapGrowthMaxPct=25, got %d", cfg.SoakHeapGrowthMaxPct)
+	}
+	if validateErr := cfg.ValidateSoak(); validateErr != nil {
+		t.Fatalf("ValidateSoak() failed: %v", validateErr)
+	}
+}
+
+func TestSoakValidateRejectsHostRun(t *testing.T) {
+	// DQB_SOAK=1 without DQB_IN_CONTAINER=1 must be rejected.
+	cfg := Config{
+		Soak:                 true,
+		InContainer:          false,
+		SoakHeapGrowthMaxPct: defaultSoakHeapGrowthPct,
+	}
+	if validateErr := cfg.ValidateSoak(); validateErr == nil {
+		t.Fatalf("ValidateSoak() succeeded without DQB_IN_CONTAINER=1")
+	}
+}
+
+func TestSoakValidateRejectsZeroGrowthPct(t *testing.T) {
+	cfg := Config{
+		Soak:                 true,
+		InContainer:          true,
+		SoakHeapGrowthMaxPct: 0,
+	}
+	if validateErr := cfg.ValidateSoak(); validateErr == nil {
+		t.Fatalf("ValidateSoak() succeeded with SoakHeapGrowthMaxPct=0")
+	}
+}
+
+func TestSoakValidateRejectsNegativeGrowthPct(t *testing.T) {
+	cfg := Config{
+		Soak:                 true,
+		InContainer:          true,
+		SoakHeapGrowthMaxPct: -5,
+	}
+	if validateErr := cfg.ValidateSoak(); validateErr == nil {
+		t.Fatalf("ValidateSoak() succeeded with SoakHeapGrowthMaxPct=-5")
+	}
+}
+
+func TestSoakValidateRejectsGrowthPctAbove100(t *testing.T) {
+	cfg := Config{
+		Soak:                 true,
+		InContainer:          true,
+		SoakHeapGrowthMaxPct: 101,
+	}
+	if validateErr := cfg.ValidateSoak(); validateErr == nil {
+		t.Fatalf("ValidateSoak() succeeded with SoakHeapGrowthMaxPct=101")
+	}
+}
+
+func TestSoakValidatePassesWhenSoakFalse(t *testing.T) {
+	// ValidateSoak is a no-op when Soak=false.
+	cfg := Config{
+		Soak:                 false,
+		InContainer:          false,
+		SoakHeapGrowthMaxPct: 0,
+	}
+	if validateErr := cfg.ValidateSoak(); validateErr != nil {
+		t.Fatalf("ValidateSoak() failed when Soak=false: %v", validateErr)
+	}
+}
+
+func TestSoakValidateAcceptsMaxGrowthPct100(t *testing.T) {
+	cfg := Config{
+		Soak:                 true,
+		InContainer:          true,
+		SoakHeapGrowthMaxPct: 100,
+	}
+	if validateErr := cfg.ValidateSoak(); validateErr != nil {
+		t.Fatalf("ValidateSoak() rejected SoakHeapGrowthMaxPct=100: %v", validateErr)
 	}
 }
 

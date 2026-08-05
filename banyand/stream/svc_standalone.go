@@ -42,6 +42,7 @@ import (
 	"github.com/apache/skywalking-banyandb/pkg/fs"
 	"github.com/apache/skywalking-banyandb/pkg/logger"
 	banyandbpath "github.com/apache/skywalking-banyandb/pkg/path"
+	vstream "github.com/apache/skywalking-banyandb/pkg/query/vectorized/stream"
 	"github.com/apache/skywalking-banyandb/pkg/run"
 	resourceSchema "github.com/apache/skywalking-banyandb/pkg/schema"
 	"github.com/apache/skywalking-banyandb/pkg/timestamp"
@@ -61,6 +62,7 @@ type Service interface {
 	Query
 	CollectDataInfo(context.Context, string) (*databasev1.DataInfo, error)
 	CollectLiaisonInfo(context.Context, string) (*databasev1.LiaisonInfo, error)
+	VectorizedConfig() vstream.VectorizedConfig
 }
 
 var _ Service = (*standalone)(nil)
@@ -171,6 +173,11 @@ func (s *standalone) GetServiceName() string {
 	return s.Name()
 }
 
+// VectorizedConfig returns the stream vectorized query configuration.
+func (s *standalone) VectorizedConfig() vstream.VectorizedConfig {
+	return s.option.vectorized
+}
+
 func (s *standalone) FlagSet() *run.FlagSet {
 	flagS := run.NewFlagSet("storage")
 	flagS.StringVar(&s.root, "stream-root-path", "/tmp", "the root path of stream")
@@ -197,6 +204,7 @@ func (s *standalone) FlagSet() *run.FlagSet {
 
 	flagS.IntVar(&s.maxFileSnapshotNum, "stream-max-file-snapshot-num", 10, "the maximum number of file snapshots allowed")
 	flagS.DurationVar(&s.minFileSnapshotAge, "stream-min-file-snapshot-age", time.Hour, "minimum age for file snapshots to be eligible for deletion")
+	bindVectorizedFlags(flagS, &s.option.vectorized)
 	return flagS
 }
 
@@ -222,7 +230,7 @@ func (s *standalone) Validate() error {
 		return errors.New("stream-retention-cooldown must be greater than 0")
 	}
 
-	return nil
+	return s.option.vectorized.Validate()
 }
 
 func (s *standalone) Name() string {
@@ -235,6 +243,10 @@ func (s *standalone) Role() databasev1.Role {
 
 func (s *standalone) PreRun(ctx context.Context) error {
 	s.l = logger.GetLogger(s.Name())
+	// Native columnar wire frame for the data↔liaison query hop follows the
+	// vectorized flag (mirrors trace's wire-mode wiring).
+	data.SetStreamWireModeRaw(s.option.vectorized.Enabled)
+	s.l.Info().Bool("stream_wire_mode_raw", s.option.vectorized.Enabled).Msg("stream wire mode published (standalone)")
 	s.l.Info().Msg("memory protector is initialized in PreRun")
 	s.lfs = fs.NewLocalFileSystemWithLoggerAndLimit(s.l, s.pm.GetLimit())
 	var err error

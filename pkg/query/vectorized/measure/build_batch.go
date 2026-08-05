@@ -100,9 +100,11 @@ func BuildMeasureBatchFromResult(r *model.MeasureResult, schema *vectorized.Batc
 			}
 			fieldCols = append(fieldCols, col)
 		case vectorized.RoleTimestamp, vectorized.RoleVersion,
-			vectorized.RoleSeriesID, vectorized.RoleShardID:
+			vectorized.RoleSeriesID, vectorized.RoleShardID,
+			vectorized.RoleElementID, vectorized.RoleOrderKey:
 			// Metadata roles are populated via the parallel slices on the
-			// MeasureBatch itself; no per-column entry is needed.
+			// MeasureBatch itself; no per-column entry is needed. ElementID/OrderKey
+			// are stream-only roles that never appear in a measure schema.
 		}
 	}
 

@@ -44,6 +44,7 @@ func (c *traceQueryResponseCodec) Marshal(v any) ([]byte, error) {
 // otherwise it is proto-unmarshaled.
 func (c *traceQueryResponseCodec) Unmarshal(body []byte) (any, error) {
 	if TraceWireModeRaw() && len(body) > 0 && body[0] == RawFrameMagicLeadingByte {
+		traceFrameDecoded.Add(1)
 		return c.raw.Unmarshal(body)
 	}
 	return c.proto.Unmarshal(body)

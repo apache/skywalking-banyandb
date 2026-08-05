@@ -73,6 +73,7 @@ func NewService(_ context.Context, streamService stream.Service, measureService 
 	svc.sqp = &streamQueryProcessor{
 		streamService: streamService,
 		queryService:  svc,
+		distributed:   distributed,
 	}
 	// topN query processor
 	svc.nqp = &topNQueryProcessor{

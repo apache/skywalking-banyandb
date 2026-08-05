@@ -356,6 +356,9 @@ func mustReadSpansFrom(decoder *encoding.BytesBlockDecoder, spans [][]byte, span
 }
 
 func mustSeqReadSpansFrom(decoder *encoding.BytesBlockDecoder, spans [][]byte, spanIDs []string, sm *dataBlock, count int, reader *seqReader) ([][]byte, []string) {
+	if sm == nil || sm.size == 0 {
+		return spans[:0], spanIDs[:0]
+	}
 	if sm.offset != reader.bytesRead {
 		logger.Panicf("offset %d must be equal to bytesRead %d", sm.offset, reader.bytesRead)
 	}
@@ -472,6 +475,11 @@ func (bc *blockCursor) reset() {
 		bc.tags[i].reset()
 	}
 	bc.tags = bc.tags[:0]
+	// Nil the decoder's backing array rather than zero-slicing it so that
+	// the decompressed span bytes (held by decompressBlock inside the decoder)
+	// become unreachable and can be reclaimed by GC when the cursor is pooled.
+	// Reset() only does data=data[:0] which keeps the backing array alive.
+	bc.tagValuesDecoder = encoding.BytesBlockDecoder{}
 }
 
 func (bc *blockCursor) init(p *part, bm *blockMetadata, opts queryOptions) {

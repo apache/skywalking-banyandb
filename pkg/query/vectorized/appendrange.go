@@ -23,6 +23,38 @@ import (
 	modelv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/model/v1"
 )
 
+// AppendActiveRows appends every active row of src (its Selection when present,
+// else all [0,Len) rows) onto dst, column by column, advancing dst.Len. dst and
+// src must share the same schema/column layout. It is the columnar analog of a
+// row-wise copy used to flatten a Selection-narrowed batch into a dense one (frame
+// emit) or to concatenate per-node batches (liaison merge).
+func AppendActiveRows(dst, src *RecordBatch) error {
+	if src == nil || src.ActiveLen() == 0 {
+		return nil
+	}
+	if len(dst.Columns) != len(src.Columns) {
+		return fmt.Errorf("AppendActiveRows: column count mismatch dst=%d src=%d", len(dst.Columns), len(src.Columns))
+	}
+	if src.Selection == nil {
+		for colIdx := range src.Columns {
+			if appendErr := AppendColumnRange(dst.Columns[colIdx], src.Columns[colIdx], 0, src.Len); appendErr != nil {
+				return appendErr
+			}
+		}
+		dst.Len += src.Len
+		return nil
+	}
+	for _, row := range src.Selection {
+		for colIdx := range src.Columns {
+			if appendErr := AppendColumnRange(dst.Columns[colIdx], src.Columns[colIdx], int(row), 1); appendErr != nil {
+				return appendErr
+			}
+		}
+	}
+	dst.Len += len(src.Selection)
+	return nil
+}
+
 // AppendColumnRange copies n rows starting at srcPos from src into dst.
 // Both columns must share the same TypedColumn[T] type. Validity bits are
 // propagated cell-by-cell via dst.MarkNullAt when src.IsNull reports null at
