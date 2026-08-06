@@ -67,15 +67,15 @@ func (s dropPrefixSampler) Decide(b *sdk.TraceBatch) (sdk.Verdict, error) {
 
 // tracesWithIDs builds a minimal traces fixture (one ancient-timestamp span per id).
 func tracesWithIDs(ids ...string) *traces {
-	ts := &traces{}
+	localTS := &traces{}
 	for _, id := range ids {
-		ts.traceIDs = append(ts.traceIDs, id)
-		ts.timestamps = append(ts.timestamps, int64(1))
-		ts.tags = append(ts.tags, []*tagValue{{tag: "t", valueType: pbv1.ValueTypeStr, value: []byte("v")}})
-		ts.spans = append(ts.spans, []byte("span-"+id))
-		ts.spanIDs = append(ts.spanIDs, "span-"+id)
+		localTS.traceIDs = append(localTS.traceIDs, id)
+		localTS.timestamps = append(localTS.timestamps, int64(1))
+		localTS.tags = append(localTS.tags, []*tagValue{{tag: "t", valueType: pbv1.ValueTypeStr, value: []byte("v")}})
+		localTS.spans = append(localTS.spans, []byte("span-"+id))
+		localTS.spanIDs = append(localTS.spanIDs, "span-"+id)
 	}
-	return ts
+	return localTS
 }
 
 func snapshotTotalCount(tst *tsTable) uint64 {
