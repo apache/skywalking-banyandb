@@ -13,6 +13,7 @@
 // License for the specific language governing permissions and limitations
 // under the License.
 
+// Command trace-merge-benchmark runs controlled trace merge performance experiments.
 package main
 
 import (

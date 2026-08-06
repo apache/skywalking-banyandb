@@ -691,7 +691,7 @@ func TestMergeChain_TimeoutDoesNotRecycleDecisionStorage(t *testing.T) {
 	batch := sdktest.Batch(traceX)
 	decisionMask := []bool{false}
 
-	verdict, executeErr, reusable := chain.executeObservedInto(batch, 10*time.Millisecond, nil, decisionMask)
+	verdict, reusable, executeErr := chain.executeObservedInto(batch, 10*time.Millisecond, nil, decisionMask)
 
 	require.Error(t, executeErr)
 	require.Equal(t, []bool{true}, verdict.Keep)

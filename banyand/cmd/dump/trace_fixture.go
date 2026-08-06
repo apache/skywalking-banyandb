@@ -107,7 +107,7 @@ func writeFixtureSamplerArtifact(root string, artifact tracefixture.SamplerArtif
 	}
 	data = append(data, '\n')
 	path := filepath.Join(root, "sampler.json")
-	if writeErr := os.WriteFile(path, data, 0o644); writeErr != nil {
+	if writeErr := os.WriteFile(path, data, 0o600); writeErr != nil {
 		return fmt.Errorf("cannot write sampler artifact %q: %w", path, writeErr)
 	}
 	return nil

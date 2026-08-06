@@ -303,7 +303,7 @@ func TestMergeExternalControllerSmoke(t *testing.T) {
 		require.NoError(t, statsErr)
 		assert.Equal(t, int64(1), stats.PartCount)
 		var indexRows int
-		require.NoError(t, sidx.ScanRaw(context.Background(), index, func(row sidx.RawRow) error {
+		require.NoError(t, sidx.ScanRaw(context.Background(), index, func(_ sidx.RawRow) error {
 			indexRows++
 			return nil
 		}))

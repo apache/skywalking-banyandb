@@ -1647,7 +1647,7 @@ func resolveStagedDrops(filter *mergeFilter, staged []stagedTrace, assembledBatc
 		return nil, true
 	}
 	traceBatch := sdk.TraceBatch{Traces: assembledBatch.vectors.traceBlocks}
-	verdict, execErr, reusable := filter.chain.executeObservedInto(
+	verdict, reusable, execErr := filter.chain.executeObservedInto(
 		&traceBatch, filter.timeout, filter.observation, assembledBatch.vectors.decisionMask,
 	)
 	keepMask := verdict.Keep

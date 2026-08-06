@@ -92,13 +92,13 @@ func (mc *mergeChain) Execute(batch *sdk.TraceBatch, timeout time.Duration) (sdk
 func (mc *mergeChain) executeObserved(batch *sdk.TraceBatch, timeout time.Duration,
 	observation *mergeEvaluationObservation,
 ) (sdk.Verdict, error) {
-	verdict, executeErr, _ := mc.executeObservedInto(batch, timeout, observation, nil)
+	verdict, _, executeErr := mc.executeObservedInto(batch, timeout, observation, nil)
 	return verdict, executeErr
 }
 
 func (mc *mergeChain) executeObservedInto(batch *sdk.TraceBatch, timeout time.Duration,
 	observation *mergeEvaluationObservation, decisionMask []bool,
-) (sdk.Verdict, error, bool) {
+) (sdk.Verdict, bool, error) {
 	retainAll := func() sdk.Verdict {
 		keep := make([]bool, len(batch.Traces))
 		for i := range keep {
@@ -110,7 +110,7 @@ func (mc *mergeChain) executeObservedInto(batch *sdk.TraceBatch, timeout time.Du
 	mc.mu.Lock()
 	if mc.circuitOpen {
 		mc.mu.Unlock()
-		return retainAll(), nil, true
+		return retainAll(), true, nil
 	}
 	mc.mu.Unlock()
 
@@ -124,7 +124,7 @@ func (mc *mergeChain) executeObservedInto(batch *sdk.TraceBatch, timeout time.Du
 		mc.mu.Lock()
 		mc.consecutiveTOs = 0
 		mc.mu.Unlock()
-		return verdict, nil, true
+		return verdict, true, nil
 	case <-time.After(timeout):
 		mc.mu.Lock()
 		mc.consecutiveTOs++
@@ -135,9 +135,9 @@ func (mc *mergeChain) executeObservedInto(batch *sdk.TraceBatch, timeout time.Du
 		}
 		mc.mu.Unlock()
 		if opened {
-			return retainAll(), fmt.Errorf("circuit_open"), false
+			return retainAll(), false, fmt.Errorf("circuit_open")
 		}
-		return retainAll(), fmt.Errorf("timeout"), false
+		return retainAll(), false, fmt.Errorf("timeout")
 	}
 }
 
