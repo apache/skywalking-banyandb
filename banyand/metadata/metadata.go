@@ -80,6 +80,6 @@ type Service interface {
 	SetLiaisonBroadcaster(broadcaster bus.Broadcaster)
 	RegisterDataCollector(catalog commonv1.Catalog, collector schema.DataInfoCollector)
 	RegisterLiaisonCollector(catalog commonv1.Catalog, collector schema.LiaisonInfoCollector)
-	RegisterSchemaSnapshotCollector(catalog commonv1.Catalog, collector schema.SchemaSnapshotCollector)
+	RegisterSchemaSnapshotCollector(catalog commonv1.Catalog, collector schema.SnapshotCollector)
 	RegisterGroupDropHandler(catalog commonv1.Catalog, handler schema.GroupDropHandler)
 }

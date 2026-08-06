@@ -197,7 +197,6 @@ func (m *Manager) CollectClusterTopology(ctx context.Context) *TopologyMap {
 	return m.aggregateTopologies(allTopologies)
 }
 
-// aggregateTopologies aggregates topology from multiple agents.
 // SchemaServingNodeAddresses returns the gRPC addresses of nodes that serve the
 // client-facing schema registry, discovered from the current cluster topology,
 // so the proxy queries the registry truth without a configured address.
@@ -230,6 +229,7 @@ func (m *Manager) SchemaServingNodeAddresses(ctx context.Context) []string {
 	return addresses
 }
 
+// aggregateTopologies aggregates topology from multiple agents.
 func (m *Manager) aggregateTopologies(topologies []*TopologyMap) *TopologyMap {
 	if len(topologies) == 0 {
 		return &TopologyMap{

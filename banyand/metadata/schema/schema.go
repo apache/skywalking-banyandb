@@ -58,10 +58,10 @@ type LiaisonInfoCollector interface {
 	CollectLiaisonInfo(ctx context.Context, group string) (*databasev1.LiaisonInfo, error)
 }
 
-// SchemaSnapshotCollector streams a node's cached and materialized schema BODIES
+// SnapshotCollector streams a node's cached and materialized schema BODIES
 // for a group so the FODC agent can fingerprint them on receive. Registered per
 // catalog by each banyand service; the data path itself computes no fingerprints.
-type SchemaSnapshotCollector interface {
+type SnapshotCollector interface {
 	// CollectSchemaSnapshot returns this node's cache/runtime bodies for the group
 	// plus the group's deduplicated index-rule table that its bodies reference.
 	CollectSchemaSnapshot(group string) ([]*databasev1.ObjectSnapshot, []*databasev1.IndexRule, error)

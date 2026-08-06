@@ -534,7 +534,7 @@ func (s *clientService) AllCachedGroups() []string {
 	return s.infoCollectorRegistry.AllCachedGroups()
 }
 
-func (s *clientService) RegisterSchemaSnapshotCollector(catalog commonv1.Catalog, collector schema.SchemaSnapshotCollector) {
+func (s *clientService) RegisterSchemaSnapshotCollector(catalog commonv1.Catalog, collector schema.SnapshotCollector) {
 	s.infoCollectorRegistry.RegisterSchemaSnapshotCollector(catalog, collector)
 }
 

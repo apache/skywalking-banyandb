@@ -68,7 +68,7 @@ type InfoCollectorRegistry struct {
 	groupGetter        GroupGetter
 	dataCollectors     map[commonv1.Catalog]DataInfoCollector
 	liaisonCollectors  map[commonv1.Catalog]LiaisonInfoCollector
-	snapshotCollectors map[commonv1.Catalog]SchemaSnapshotCollector
+	snapshotCollectors map[commonv1.Catalog]SnapshotCollector
 	dropHandlers       map[commonv1.Catalog]GroupDropHandler
 	dataBroadcaster    bus.Broadcaster
 	liaisonBroadcaster bus.Broadcaster
@@ -82,7 +82,7 @@ func NewInfoCollectorRegistry(l *logger.Logger, groupGetter GroupGetter) *InfoCo
 		groupGetter:        groupGetter,
 		dataCollectors:     make(map[commonv1.Catalog]DataInfoCollector),
 		liaisonCollectors:  make(map[commonv1.Catalog]LiaisonInfoCollector),
-		snapshotCollectors: make(map[commonv1.Catalog]SchemaSnapshotCollector),
+		snapshotCollectors: make(map[commonv1.Catalog]SnapshotCollector),
 		dropHandlers:       make(map[commonv1.Catalog]GroupDropHandler),
 		l:                  l,
 	}
@@ -357,7 +357,7 @@ func (icr *InfoCollectorRegistry) RegisterGroupDropHandler(catalog commonv1.Cata
 }
 
 // RegisterSchemaSnapshotCollector registers a schema snapshot collector for a catalog.
-func (icr *InfoCollectorRegistry) RegisterSchemaSnapshotCollector(catalog commonv1.Catalog, collector SchemaSnapshotCollector) {
+func (icr *InfoCollectorRegistry) RegisterSchemaSnapshotCollector(catalog commonv1.Catalog, collector SnapshotCollector) {
 	icr.mux.Lock()
 	defer icr.mux.Unlock()
 	icr.snapshotCollectors[catalog] = collector
@@ -391,7 +391,7 @@ func (icr *InfoCollectorRegistry) CollectGroupSchemaSnapshot(
 // collectors, for an all-groups snapshot request that carries no roster.
 func (icr *InfoCollectorRegistry) AllCachedGroups() []string {
 	icr.mux.RLock()
-	collectors := make([]SchemaSnapshotCollector, 0, len(icr.snapshotCollectors))
+	collectors := make([]SnapshotCollector, 0, len(icr.snapshotCollectors))
 	for _, c := range icr.snapshotCollectors {
 		collectors = append(collectors, c)
 	}
