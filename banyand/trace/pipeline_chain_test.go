@@ -313,11 +313,13 @@ func TestTraceEvaluationStager_ExactBudgetDoesNotBypass(t *testing.T) {
 		rawSpans: []byte("exact-budget"),
 	}
 	budgetProbe := &traceEvaluationStager{filter: &mergeFilter{}}
+	defer releaseTestStagerBuffers(budgetProbe)
 	budgetProbe.stage(stagedTraceBlock)
 	exactBudget := budgetProbe.currentTraceBytes
 	stager := &traceEvaluationStager{
 		filter: &mergeFilter{traceBudget: exactBudget},
 	}
+	defer releaseTestStagerBuffers(stager)
 
 	stager.stage(stagedTraceBlock)
 
@@ -353,7 +355,7 @@ func TestStageRawTraceOwnsOneContiguousArena(t *testing.T) {
 	staged := stageRawTrace(&raw)
 	defer releaseStagedTrace(&staged)
 
-	require.Len(t, staged.rawArena.bytes, len(sourceSpans)+len(sourceTag)+len(sourceMetadata))
+	require.Len(t, staged.rawArena.Buf, len(sourceSpans)+len(sourceTag)+len(sourceMetadata))
 	require.Len(t, staged.rawMetadataBlocks.values, len(metadata.tags),
 		"raw tag metadata descriptors must use one bounded pooled vector instead of one allocation per tag")
 	clear(sourceSpans)
@@ -369,6 +371,7 @@ func TestTraceEvaluationStagerCountsBatchStructures(t *testing.T) {
 	stager := &traceEvaluationStager{
 		filter: &mergeFilter{chain: newTestChain(nil)},
 	}
+	defer releaseTestStagerBuffers(stager)
 
 	stager.stage(stagedBlock)
 
@@ -388,6 +391,7 @@ func TestTraceEvaluationStagerCountsEvaluationSlotOncePerLogicalTrace(t *testing
 	first := stagedTrace{isRaw: true, traceID: "trace-group", rawBM: metadata(1, 2)}
 	second := stagedTrace{isRaw: true, traceID: "trace-group", rawBM: metadata(3, 4)}
 	stager := &traceEvaluationStager{filter: &mergeFilter{chain: newTestChain(nil)}}
+	defer releaseTestStagerBuffers(stager)
 
 	stager.stage(first)
 	firstTraceBytes := stager.currentTraceBytes
@@ -407,12 +411,14 @@ func TestTraceEvaluationStagerReservesProjectedEvaluationCopies(t *testing.T) {
 	block.block.tags = []tag{{name: "status", values: [][]byte{make([]byte, 2, 16)}}}
 	stagedBlock := stagedTrace{traceID: "trace-projected", slowBlock: block}
 	metadataOnly := &traceEvaluationStager{filter: &mergeFilter{chain: newTestChain(nil)}}
+	defer releaseTestStagerBuffers(metadataOnly)
 	metadataOnly.stage(stagedBlock)
 	projected := &traceEvaluationStager{filter: &mergeFilter{
 		chain: newMergeChain("g", "s", []sdk.Sampler{&fakeSampler{proj: sdk.Projection{
 			Tags: []string{"status"}, SpanIDs: true, Spans: true,
 		}}}, 0),
 	}}
+	defer releaseTestStagerBuffers(projected)
 
 	projected.stage(stagedBlock)
 
@@ -437,6 +443,7 @@ func TestMergeFilter_TraceCountBudgetBoundsDecideBatch(t *testing.T) {
 
 func TestTraceEvaluationStagerBuildsTraceGroupsIncrementally(t *testing.T) {
 	stager := &traceEvaluationStager{filter: &mergeFilter{chain: newTestChain(nil)}}
+	defer releaseTestStagerBuffers(stager)
 	stager.stage(stagedTrace{
 		isRaw: true, traceID: "trace-a", rawBM: &blockMetadata{
 			traceID: "trace-a", spans: &dataBlock{}, timestamps: timestampsMetadata{min: 10, max: 20, known: true},
@@ -475,12 +482,15 @@ func TestStagingPoolsResetAllReferencesBeforeReuse(t *testing.T) {
 		traceBlocks: []sdk.TraceBlock{{TraceID: "trace-a", Spans: [][]byte{[]byte("span")}}},
 		traceIDs:    []string{"trace-a"}, guardRanges: []stagedTraceRange{{start: 1, end: 2}}, decisionMask: []bool{true},
 	}
-	byteArena := &stagedByteArena{bytes: []byte("sensitive")}
-	metadataBlocks := &stagedDataBlockBuffer{values: []dataBlock{{offset: 1, size: 2}}}
-	metadata := &blockMetadata{
-		traceID: "trace-a", spans: &dataBlock{offset: 1, size: 2},
-		tags: map[string]*dataBlock{"tag": {offset: 3, size: 4}}, tagType: map[string]pbv1.ValueType{"tag": pbv1.ValueTypeStr},
-	}
+	byteArena := acquireStagedByteArena(len("sensitive"))
+	copy(byteArena.Buf, "sensitive")
+	metadataBlocks := acquireStagedDataBlockBuffer(1)
+	metadataBlocks.values[0] = dataBlock{offset: 1, size: 2}
+	metadata := acquireStagedBlockMetadata()
+	metadata.traceID = "trace-a"
+	metadata.spans = &dataBlock{offset: 1, size: 2}
+	metadata.tags = map[string]*dataBlock{"tag": {offset: 3, size: 4}}
+	metadata.tagType = map[string]pbv1.ValueType{"tag": pbv1.ValueTypeStr}
 
 	traceBuffer.reset()
 	groupBuffer.reset()
@@ -495,42 +505,77 @@ func TestStagingPoolsResetAllReferencesBeforeReuse(t *testing.T) {
 	require.Empty(t, evaluationVectors.traceIDs)
 	require.Empty(t, evaluationVectors.guardRanges)
 	require.Empty(t, evaluationVectors.decisionMask)
-	require.Empty(t, byteArena.bytes)
+	require.Empty(t, byteArena.Buf)
 	require.Empty(t, metadataBlocks.values)
 	require.Empty(t, metadata.traceID)
 	require.Empty(t, metadata.tags)
 	require.Empty(t, metadata.tagType)
 }
 
+func releaseTestStagerBuffers(stager *traceEvaluationStager) {
+	clear(stager.staged)
+	stager.staged = stager.staged[:0]
+	clear(stager.groups)
+	stager.groups = stager.groups[:0]
+	stager.releaseBuffers()
+}
+
 func TestEvaluationVectorPoolDiscardsUnsafeAndOversizedBatches(t *testing.T) {
-	unsafeVectors := &stagedEvaluationVectors{traceIDs: []string{"still-in-use"}}
+	unsafeVectors := acquireStagedEvaluationVectors(1, false)
+	unsafeVectors.traceIDs = append(unsafeVectors.traceIDs, "still-in-use")
 	require.False(t, releaseStagedEvaluationVectors(unsafeVectors, false))
 	require.Equal(t, []string{"still-in-use"}, unsafeVectors.traceIDs,
 		"a timed-out plugin may still read the vectors, so they must not be reset or pooled")
 
-	oversizedVectors := &stagedEvaluationVectors{traceIDs: make([]string, 0, maxPooledEvaluationTraces+1)}
+	oversizedVectors := acquireStagedEvaluationVectors(maxPooledEvaluationTraces+1, false)
 	require.False(t, releaseStagedEvaluationVectors(oversizedVectors, true))
 	require.Empty(t, oversizedVectors.traceIDs)
 
-	reusableVectors := &stagedEvaluationVectors{traceIDs: []string{"reset-me"}, decisionMask: []bool{true}}
+	reusableVectors := acquireStagedEvaluationVectors(1, false)
+	reusableVectors.traceIDs = append(reusableVectors.traceIDs, "reset-me")
+	reusableVectors.decisionMask[0] = true
 	require.True(t, releaseStagedEvaluationVectors(reusableVectors, true))
 	require.Empty(t, reusableVectors.traceIDs)
 	require.Empty(t, reusableVectors.decisionMask)
 }
 
 func TestStagedByteArenaCacheBoundsAggregateRetention(t *testing.T) {
-	cache := stagedByteArenaCache{maxBytes: 8}
-	first := &stagedByteArena{bytes: make([]byte, 6)}
-	second := &stagedByteArena{bytes: make([]byte, 6)}
+	cache := newStagedByteArenaPool("trace-test-staged-byte-arena", 8)
+	first := cache.get(6)
+	second := cache.get(6)
 
 	require.True(t, cache.put(first))
 	require.False(t, cache.put(second), "the aggregate cache bound must reject individually small arenas once it is full")
-	require.Equal(t, 6, cache.retainedBytes)
+	require.Equal(t, int64(6), cache.retainedBytes.Load())
 
 	reused := cache.get(5)
 	require.Same(t, first, reused)
-	require.Len(t, reused.bytes, 5)
-	require.Zero(t, cache.retainedBytes)
+	require.Len(t, reused.Buf, 5)
+	require.Zero(t, cache.retainedBytes.Load())
+	cache.pool.Discard(reused)
+	require.Zero(t, cache.pool.RefsCount())
+}
+
+func TestStagingInternalPoolsBalanceReferences(t *testing.T) {
+	arena := acquireStagedByteArena(8)
+	releaseStagedByteArena(arena)
+	metadata := acquireStagedBlockMetadata()
+	releaseStagedBlockMetadata(metadata)
+	metadataBlocks := acquireStagedDataBlockBuffer(1)
+	releaseStagedDataBlockBuffer(metadataBlocks)
+	traceBuffer := acquireStagedTraceBuffer()
+	releaseStagedTraceBuffer(traceBuffer)
+	groupBuffer := acquireStagedTraceGroupBuffer()
+	releaseStagedTraceGroupBuffer(groupBuffer)
+	evaluation := acquireStagedEvaluationVectors(1, true)
+	releaseStagedEvaluationVectors(evaluation, true)
+
+	require.Zero(t, stagedByteArenas.pool.RefsCount())
+	require.Zero(t, stagedBlockMetadataPool.RefsCount())
+	require.Zero(t, stagedDataBlockPool.RefsCount())
+	require.Zero(t, stagedTraceBufferPool.RefsCount())
+	require.Zero(t, stagedTraceGroupPool.RefsCount())
+	require.Zero(t, stagedEvaluationPool.RefsCount())
 }
 
 func TestMergeFilter_RawOversizedTracesBypassEvaluationInOrder(t *testing.T) {

@@ -95,9 +95,21 @@ func (p *Synced[T]) Get() T {
 
 // Put puts an object back to the pool.
 func (p *Synced[T]) Put(v T) {
-	// Remove the stack trace BEFORE returning the object to the pool.
+	p.releaseTracking(v)
+	p.Pool.Put(v)
+	p.refs.Add(-1)
+}
+
+// Discard releases a checked-out object without returning it to the pool.
+func (p *Synced[T]) Discard(v T) {
+	p.releaseTracking(v)
+	p.refs.Add(-1)
+}
+
+func (p *Synced[T]) releaseTracking(v T) {
+	// Remove the stack trace before making the object available again.
 	// Otherwise another goroutine's Get() can reuse the pointer and
-	// overwrite its idMap entry, causing this Put to delete the wrong
+	// overwrite its idMap entry, causing this release to delete the wrong
 	// stack and orphan the original one.
 	if stackTrackingEnabled.Load() {
 		p.stacksMutex.Lock()
@@ -109,8 +121,6 @@ func (p *Synced[T]) Put(v T) {
 		}
 		p.stacksMutex.Unlock()
 	}
-	p.Pool.Put(v)
-	p.refs.Add(-1)
 }
 
 // RefsCount returns the reference count of the pool.

@@ -154,9 +154,11 @@ staged rather than rediscovered before every decision. Staged blocks, group desc
 fragment-guard ranges, and decision masks have bounded reuse. A decision batch that times out is deliberately not reset
 or returned to a pool because the timed-out plugin goroutine may still read it. Raw arena retention is bounded across the
 whole cache, and raw metadata caches are bounded by object count; a per-object limit alone retained almost an entire
-merge and increased heap residency.
+merge and increased heap residency. Arena storage uses BanyanDB's `pkg/bytes.Buffer`; all staging pools are registered
+through `pkg/pool`, with `Discard` balancing internal-pool lifecycle accounting when a timeout or capacity bound makes an
+object unsafe or unsuitable for reuse.
 
-The focused `BenchmarkStageRawTrace` result is 5,552 B/op and 8 allocs/op for the arena path versus 23,856 B/op and 125
+The focused `BenchmarkStageRawTrace` result is approximately 5,584 B/op and 8 allocs/op for the arena path versus 23,856 B/op and 125
 allocs/op for the former per-value-copy shape. The complete package race run passes. A five-pair alternating controlled
 run before bounding aggregate pool retention preserved every correctness ledger and reduced the retain-all allocation
 count, but exposed excess post-merge heap retention. After bounding the caches, a diagnostic controlled retain-all run

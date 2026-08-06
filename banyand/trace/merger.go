@@ -31,11 +31,13 @@ import (
 	"github.com/dustin/go-humanize"
 
 	"github.com/apache/skywalking-banyandb/banyand/internal/sidx"
+	pkgbytes "github.com/apache/skywalking-banyandb/pkg/bytes"
 	"github.com/apache/skywalking-banyandb/pkg/cgroups"
 	"github.com/apache/skywalking-banyandb/pkg/encoding"
 	"github.com/apache/skywalking-banyandb/pkg/fs"
 	pbv1 "github.com/apache/skywalking-banyandb/pkg/pb/v1"
 	"github.com/apache/skywalking-banyandb/pkg/pipeline/sdk"
+	pkgpool "github.com/apache/skywalking-banyandb/pkg/pool"
 	"github.com/apache/skywalking-banyandb/pkg/run"
 	"github.com/apache/skywalking-banyandb/pkg/watcher"
 )
@@ -1027,7 +1029,7 @@ type stagedTrace struct {
 	rawTagMetadata    map[string][]byte
 	slowBlock         *blockPointer
 	rawBM             *blockMetadata
-	rawArena          *stagedByteArena
+	rawArena          *pkgbytes.Buffer
 	rawMetadataBlocks *stagedDataBlockBuffer
 	traceID           string
 	rawSpans          []byte
@@ -1043,50 +1045,55 @@ const (
 	maxPooledEvaluationTraces   = defaultMaxStagedTraceCount
 )
 
-type stagedByteArena struct {
-	bytes []byte
+type stagedByteArenaPool struct {
+	pool          *pkgpool.Synced[*pkgbytes.Buffer]
+	retainedBytes atomic.Int64
+	maxBytes      int64
 }
 
-type stagedByteArenaCache struct {
-	items         []*stagedByteArena
-	retainedBytes int
-	maxBytes      int
-	mu            sync.Mutex
-}
-
-func (cache *stagedByteArenaCache) get(size int) *stagedByteArena {
-	cache.mu.Lock()
-	for itemIdx := len(cache.items) - 1; itemIdx >= 0; itemIdx-- {
-		arena := cache.items[itemIdx]
-		if cap(arena.bytes) < size {
-			continue
-		}
-		cache.items[itemIdx] = cache.items[len(cache.items)-1]
-		cache.items[len(cache.items)-1] = nil
-		cache.items = cache.items[:len(cache.items)-1]
-		cache.retainedBytes -= cap(arena.bytes)
-		cache.mu.Unlock()
-		arena.bytes = arena.bytes[:size]
-		return arena
+func newStagedByteArenaPool(name string, maxBytes int64) *stagedByteArenaPool {
+	return &stagedByteArenaPool{
+		pool:     pkgpool.Register[*pkgbytes.Buffer](name),
+		maxBytes: maxBytes,
 	}
-	cache.mu.Unlock()
-	return &stagedByteArena{bytes: make([]byte, size)}
 }
 
-func (cache *stagedByteArenaCache) put(arena *stagedByteArena) bool {
-	if arena == nil || cap(arena.bytes) > cache.maxBytes {
+func (arenaPool *stagedByteArenaPool) get(size int) *pkgbytes.Buffer {
+	arena := arenaPool.pool.Get()
+	if arena == nil {
+		arena = &pkgbytes.Buffer{}
+	} else {
+		arenaPool.retainedBytes.Add(-int64(cap(arena.Buf)))
+	}
+	arena.Buf = pkgbytes.ResizeExact(arena.Buf[:0], size)
+	return arena
+}
+
+func (arenaPool *stagedByteArenaPool) put(arena *pkgbytes.Buffer) bool {
+	if arena == nil {
 		return false
 	}
-	clear(arena.bytes)
-	arena.bytes = arena.bytes[:0]
-	cache.mu.Lock()
-	defer cache.mu.Unlock()
-	if cache.retainedBytes+cap(arena.bytes) > cache.maxBytes {
+	clear(arena.Buf)
+	arena.Reset()
+	arenaBytes := int64(cap(arena.Buf))
+	if arenaBytes > arenaPool.maxBytes || !reserveStagedPoolCapacity(&arenaPool.retainedBytes, arenaBytes, arenaPool.maxBytes) {
+		arenaPool.pool.Discard(arena)
 		return false
 	}
-	cache.items = append(cache.items, arena)
-	cache.retainedBytes += cap(arena.bytes)
+	arenaPool.pool.Put(arena)
 	return true
+}
+
+func reserveStagedPoolCapacity(retained *atomic.Int64, size, limit int64) bool {
+	for {
+		current := retained.Load()
+		if current+size > limit {
+			return false
+		}
+		if retained.CompareAndSwap(current, current+size) {
+			return true
+		}
+	}
 }
 
 type stagedDataBlockBuffer struct {
@@ -1132,20 +1139,22 @@ func (vectors *stagedEvaluationVectors) reset() {
 }
 
 var (
-	stagedByteArenas        = stagedByteArenaCache{maxBytes: maxPooledStagedArenaBytes}
-	stagedBlockMetadataPool = make(chan *blockMetadata, maxPooledRawMetadataObjects)
-	stagedDataBlockPool     = make(chan *stagedDataBlockBuffer, maxPooledRawMetadataObjects)
-	stagedTraceBufferPool   sync.Pool
-	stagedTraceGroupPool    sync.Pool
-	stagedEvaluationPool    sync.Pool
+	stagedByteArenas             = newStagedByteArenaPool("trace-staged-byte-arena", maxPooledStagedArenaBytes)
+	stagedBlockMetadataPool      = pkgpool.Register[*blockMetadata]("trace-staged-block-metadata")
+	stagedDataBlockPool          = pkgpool.Register[*stagedDataBlockBuffer]("trace-staged-data-blocks")
+	stagedTraceBufferPool        = pkgpool.Register[*stagedTraceBuffer]("trace-staged-traces")
+	stagedTraceGroupPool         = pkgpool.Register[*stagedTraceGroupBuffer]("trace-staged-trace-groups")
+	stagedEvaluationPool         = pkgpool.Register[*stagedEvaluationVectors]("trace-staged-evaluation")
+	stagedBlockMetadataPoolCount atomic.Int64
+	stagedDataBlockPoolCount     atomic.Int64
 )
 
 func acquireStagedDataBlockBuffer(size int) *stagedDataBlockBuffer {
-	var buffer *stagedDataBlockBuffer
-	select {
-	case buffer = <-stagedDataBlockPool:
-	default:
+	buffer := stagedDataBlockPool.Get()
+	if buffer == nil {
 		buffer = &stagedDataBlockBuffer{}
+	} else {
+		stagedDataBlockPoolCount.Add(-1)
 	}
 	if cap(buffer.values) < size {
 		buffer.values = make([]dataBlock, size)
@@ -1163,16 +1172,18 @@ func releaseStagedDataBlockBuffer(buffer *stagedDataBlockBuffer) {
 	clear(buffer.values)
 	buffer.values = buffer.values[:0]
 	if cap(buffer.values) > maxPooledMetadataTags {
+		stagedDataBlockPool.Discard(buffer)
 		return
 	}
-	select {
-	case stagedDataBlockPool <- buffer:
-	default:
+	if !reserveStagedPoolCapacity(&stagedDataBlockPoolCount, 1, maxPooledRawMetadataObjects) {
+		stagedDataBlockPool.Discard(buffer)
+		return
 	}
+	stagedDataBlockPool.Put(buffer)
 }
 
 func acquireStagedTraceBuffer() *stagedTraceBuffer {
-	buffer, _ := stagedTraceBufferPool.Get().(*stagedTraceBuffer)
+	buffer := stagedTraceBufferPool.Get()
 	if buffer == nil {
 		return &stagedTraceBuffer{}
 	}
@@ -1186,11 +1197,13 @@ func releaseStagedTraceBuffer(buffer *stagedTraceBuffer) {
 	buffer.reset()
 	if cap(buffer.values) <= maxPooledStagedBlocks {
 		stagedTraceBufferPool.Put(buffer)
+		return
 	}
+	stagedTraceBufferPool.Discard(buffer)
 }
 
 func acquireStagedTraceGroupBuffer() *stagedTraceGroupBuffer {
-	buffer, _ := stagedTraceGroupPool.Get().(*stagedTraceGroupBuffer)
+	buffer := stagedTraceGroupPool.Get()
 	if buffer == nil {
 		return &stagedTraceGroupBuffer{}
 	}
@@ -1204,11 +1217,13 @@ func releaseStagedTraceGroupBuffer(buffer *stagedTraceGroupBuffer) {
 	buffer.reset()
 	if cap(buffer.values) <= maxPooledTraceGroups {
 		stagedTraceGroupPool.Put(buffer)
+		return
 	}
+	stagedTraceGroupPool.Discard(buffer)
 }
 
 func acquireStagedEvaluationVectors(traceCount int, withGuard bool) *stagedEvaluationVectors {
-	vectors, _ := stagedEvaluationPool.Get().(*stagedEvaluationVectors)
+	vectors := stagedEvaluationPool.Get()
 	if vectors == nil {
 		vectors = &stagedEvaluationVectors{}
 	}
@@ -1231,33 +1246,38 @@ func acquireStagedEvaluationVectors(traceCount int, withGuard bool) *stagedEvalu
 }
 
 func releaseStagedEvaluationVectors(vectors *stagedEvaluationVectors, reusable bool) bool {
-	if vectors == nil || !reusable {
+	if vectors == nil {
+		return false
+	}
+	if !reusable {
+		stagedEvaluationPool.Discard(vectors)
 		return false
 	}
 	vectors.reset()
 	if cap(vectors.traceBlocks) > maxPooledEvaluationTraces || cap(vectors.traceIDs) > maxPooledEvaluationTraces ||
 		cap(vectors.guardRanges) > maxPooledEvaluationTraces || cap(vectors.decisionMask) > maxPooledEvaluationTraces {
+		stagedEvaluationPool.Discard(vectors)
 		return false
 	}
 	stagedEvaluationPool.Put(vectors)
 	return true
 }
 
-func acquireStagedByteArena(size int) *stagedByteArena {
+func acquireStagedByteArena(size int) *pkgbytes.Buffer {
 	return stagedByteArenas.get(size)
 }
 
-func releaseStagedByteArena(arena *stagedByteArena) {
+func releaseStagedByteArena(arena *pkgbytes.Buffer) {
 	stagedByteArenas.put(arena)
 }
 
 func acquireStagedBlockMetadata() *blockMetadata {
-	select {
-	case metadata := <-stagedBlockMetadataPool:
-		return metadata
-	default:
+	metadata := stagedBlockMetadataPool.Get()
+	if metadata == nil {
 		return &blockMetadata{}
 	}
+	stagedBlockMetadataPoolCount.Add(-1)
+	return metadata
 }
 
 func releaseStagedBlockMetadata(metadata *blockMetadata) {
@@ -1267,12 +1287,14 @@ func releaseStagedBlockMetadata(metadata *blockMetadata) {
 	oversized := len(metadata.tags) > maxPooledMetadataTags || len(metadata.tagType) > maxPooledMetadataTags
 	metadata.reset()
 	if oversized {
+		stagedBlockMetadataPool.Discard(metadata)
 		return
 	}
-	select {
-	case stagedBlockMetadataPool <- metadata:
-	default:
+	if !reserveStagedPoolCapacity(&stagedBlockMetadataPoolCount, 1, maxPooledRawMetadataObjects) {
+		stagedBlockMetadataPool.Discard(metadata)
+		return
 	}
+	stagedBlockMetadataPool.Put(metadata)
 }
 
 type stagedTraceRange struct {
@@ -1329,7 +1351,7 @@ func (st *stagedTrace) approxBytes() uint64 {
 	n := uint64(len(st.traceID))
 	if st.isRaw {
 		if st.rawArena != nil {
-			n += uint64(cap(st.rawArena.bytes))
+			n += uint64(cap(st.rawArena.Buf))
 		}
 		n += approximateStringMapBytes(len(st.rawTags), unsafe.Sizeof([]byte{}))
 		for key := range st.rawTags {
@@ -1505,7 +1527,7 @@ func stageRawTrace(rawBlk *rawBlock) stagedTrace {
 		if len(source) == 0 {
 			return nil
 		}
-		target := st.rawArena.bytes[offset : offset+len(source)]
+		target := st.rawArena.Buf[offset : offset+len(source)]
 		copy(target, source)
 		offset += len(source)
 		return target
