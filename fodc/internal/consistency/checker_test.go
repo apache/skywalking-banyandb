@@ -25,7 +25,6 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
-	databasev1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/database/v1"
 	fodcv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/fodc/v1"
 )
 
@@ -34,7 +33,7 @@ import (
 // metadata/schema package (which depends on this one).
 const kindStream = "stream"
 
-func nodeState(nodeID string, objs ...*databasev1.ObjectSchemaState) NodeObjects {
+func nodeState(nodeID string, objs ...*NodeObjectFP) NodeObjects {
 	return NodeObjects{Node: nodeID, Objects: objs}
 }
 
@@ -42,10 +41,8 @@ func nodeState(nodeID string, objs ...*databasev1.ObjectSchemaState) NodeObjects
 // checker's behavior does not depend on the name, only on the fingerprints.
 const testObjectName = "foo"
 
-func obj(cache, runtime uint64) *databasev1.ObjectSchemaState {
-	return &databasev1.ObjectSchemaState{
-		Kind: kindStream, Name: testObjectName, CacheFingerprint: cache, RuntimeFingerprint: runtime,
-	}
+func obj(cache, runtime uint64) *NodeObjectFP {
+	return &NodeObjectFP{Kind: kindStream, Name: testObjectName, Cache: cache, Runtime: runtime}
 }
 
 func streamKey() ObjectKey {

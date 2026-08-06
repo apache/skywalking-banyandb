@@ -48,18 +48,26 @@ type EventHandler interface {
 	OnDelete(Metadata)
 }
 
-// DataInfoCollector provides methods to collect data node info. When
-// includeSchemaState is set the returned DataInfo also carries this node's
-// schema consistency evidence.
+// DataInfoCollector provides methods to collect data node info.
 type DataInfoCollector interface {
-	CollectDataInfo(ctx context.Context, group string, includeSchemaState bool) (*databasev1.DataInfo, error)
+	CollectDataInfo(ctx context.Context, group string) (*databasev1.DataInfo, error)
 }
 
-// LiaisonInfoCollector provides methods to collect liaison node info. When
-// includeSchemaState is set the returned LiaisonInfo also carries this node's
-// schema consistency evidence.
+// LiaisonInfoCollector provides methods to collect liaison node info.
 type LiaisonInfoCollector interface {
-	CollectLiaisonInfo(ctx context.Context, group string, includeSchemaState bool) (*databasev1.LiaisonInfo, error)
+	CollectLiaisonInfo(ctx context.Context, group string) (*databasev1.LiaisonInfo, error)
+}
+
+// SchemaSnapshotCollector streams a node's cached and materialized schema BODIES
+// for a group so the FODC agent can fingerprint them on receive. Registered per
+// catalog by each banyand service; the data path itself computes no fingerprints.
+type SchemaSnapshotCollector interface {
+	// CollectSchemaSnapshot returns this node's cache/runtime bodies for the group
+	// plus the group's deduplicated index-rule table that its bodies reference.
+	CollectSchemaSnapshot(group string) ([]*databasev1.ObjectSnapshot, []*databasev1.IndexRule, error)
+	// CachedGroups lists the groups of this catalog the node currently caches, so
+	// an all-groups request can enumerate without a roster.
+	CachedGroups() []string
 }
 
 // UnimplementedOnInitHandler is a placeholder for unimplemented OnInitHandler.

@@ -53,8 +53,10 @@ type Repo interface {
 	RegisterHandler(string, schema.Kind, schema.EventHandler)
 	NodeRegistry() schema.Node
 	PropertyRegistry() schema.Property
-	CollectDataInfo(ctx context.Context, group string, includeSchemaState bool) ([]*databasev1.DataInfo, []string, error)
-	CollectLiaisonInfo(ctx context.Context, group string, includeSchemaState bool) ([]*databasev1.LiaisonInfo, error)
+	CollectDataInfo(ctx context.Context, group string) ([]*databasev1.DataInfo, []string, error)
+	CollectLiaisonInfo(ctx context.Context, group string) ([]*databasev1.LiaisonInfo, error)
+	CollectGroupSchemaSnapshot(ctx context.Context, group string) ([]*databasev1.ObjectSnapshot, []*databasev1.IndexRule, bool, error)
+	AllCachedGroups() []string
 	DropGroup(ctx context.Context, catalog commonv1.Catalog, group string) error
 }
 
@@ -78,5 +80,6 @@ type Service interface {
 	SetLiaisonBroadcaster(broadcaster bus.Broadcaster)
 	RegisterDataCollector(catalog commonv1.Catalog, collector schema.DataInfoCollector)
 	RegisterLiaisonCollector(catalog commonv1.Catalog, collector schema.LiaisonInfoCollector)
+	RegisterSchemaSnapshotCollector(catalog commonv1.Catalog, collector schema.SchemaSnapshotCollector)
 	RegisterGroupDropHandler(catalog commonv1.Catalog, handler schema.GroupDropHandler)
 }

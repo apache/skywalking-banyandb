@@ -83,7 +83,11 @@ func (s *server) inspectGroup(ctx context.Context, group *commonv1.Group) *fodcv
 	// means DataInfo is populated and collectionErrs may carry per-node
 	// broadcast failures. The two paths never overlap, so the top-level
 	// branch sets a fresh single-element Errors slice.
-	dataInfo, collectionErrs, err := s.metadataRepo.CollectDataInfo(ctx, groupName, true)
+	//
+	// Schema consistency is no longer computed here: each node's schema is
+	// streamed to its co-located FODC agent via NodeSchemaStateService, the agent
+	// fingerprints it, and the proxy runs the checker across the cluster.
+	dataInfo, collectionErrs, err := s.metadataRepo.CollectDataInfo(ctx, groupName)
 	if err != nil {
 		s.log.Warn().Err(err).Str("group", groupName).Msg("Failed to collect data info")
 		info.Errors = []string{schema.TopLevelErrorPrefix + err.Error()}
@@ -91,31 +95,6 @@ func (s *server) inspectGroup(ctx context.Context, group *commonv1.Group) *fodcv
 	}
 	info.DataInfo = dataInfo
 	info.Errors = collectionErrs
-	// Liaison nodes hold the same schema as data nodes; collect their views for
-	// the consistency check only. They are not exposed on the response -- the
-	// liaison fingerprints surface in schema_consistency.objects, not a separate
-	// liaison_info list.
-	liaisonInfo, liaisonErr := s.metadataRepo.CollectLiaisonInfo(ctx, groupName, true)
-	if liaisonErr != nil {
-		s.log.Warn().Err(liaisonErr).Str("group", groupName).Msg("Failed to collect liaison info")
-		info.Errors = append(info.Errors, schemaConsistencyErrorPrefix+"failed to collect liaison info: "+liaisonErr.Error())
-	}
-	verdict, checkErr := s.checkSchemaConsistency(ctx, group, dataInfo, liaisonInfo)
-	if checkErr != nil {
-		info.Errors = append(info.Errors, schemaConsistencyErrorPrefix+checkErr.Error())
-	}
-	info.SchemaConsistency = verdict
-	// Strip the per-node schema copies from data_info only when they were folded
-	// into schema_consistency.objects. checkSchemaConsistency returns nil (folding
-	// nothing) for property groups, a disabled checker, or a registry-build
-	// failure; stripping there would drop the fingerprints from the output. A
-	// non-nil verdict means Check ran and built the object table, so it is a
-	// precise proxy for "the schema now lives in exactly one place".
-	if info.SchemaConsistency != nil {
-		for _, di := range dataInfo {
-			di.SchemaObjects = nil
-		}
-	}
 	return info
 }
 

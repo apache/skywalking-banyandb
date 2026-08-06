@@ -58,7 +58,6 @@ import (
 	"github.com/apache/skywalking-banyandb/pkg/panicdiag"
 	banyandbpath "github.com/apache/skywalking-banyandb/pkg/path"
 	"github.com/apache/skywalking-banyandb/pkg/run"
-	"github.com/apache/skywalking-banyandb/pkg/schema/consistency"
 	pkgtls "github.com/apache/skywalking-banyandb/pkg/tls"
 )
 
@@ -83,12 +82,11 @@ type server struct {
 	databasev1.UnimplementedClusterStateServiceServer
 	clusterv1.UnimplementedServiceServer
 	fodcv1.UnimplementedGroupLifecycleServiceServer
+	databasev1.UnimplementedNodeSchemaStateServiceServer
 	omr                   observability.MetricsRegistry
 	creds                 credentials.TransportCredentials
 	metadataRepo          metadata.Repo
 	nodeSchemaStatusRepo  metadata.Service
-	schemaChecker         *consistency.Checker
-	registrySem           chan struct{}
 	clientCloser          context.CancelFunc
 	ser                   *grpclib.Server
 	listeners             map[bus.Topic][]bus.MessageListener
@@ -131,8 +129,6 @@ func NewServerWithPorts(omr observability.MetricsRegistry, flagNamePrefix string
 		chunkedSyncHandlers: make(map[bus.Topic]queue.ChunkedSyncHandler),
 		omr:                 omr,
 		maxRecvMsgSize:      defaultRecvSize,
-		schemaChecker:       consistency.NewChecker(),
-		registrySem:         make(chan struct{}, registryReadConcurrency),
 		flagNamePrefix:      flagNamePrefix,
 		port:                port,
 		httpPort:            httpPort,
@@ -305,6 +301,7 @@ func (s *server) Serve() run.StopNotify {
 	tracev1.RegisterTraceServiceServer(s.ser, &traceService{ser: s})
 	if s.metadataRepo != nil {
 		fodcv1.RegisterGroupLifecycleServiceServer(s.ser, s)
+		databasev1.RegisterNodeSchemaStateServiceServer(s.ser, s)
 	}
 	if s.nodeSchemaStatusRepo != nil {
 		// The registry is resolved per request (closure) so the service

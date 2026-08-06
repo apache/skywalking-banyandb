@@ -20,16 +20,17 @@ package lifecycle
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"sort"
 	"sync"
 
 	fodcv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/fodc/v1"
+	"github.com/apache/skywalking-banyandb/fodc/internal/consistency"
 	"github.com/apache/skywalking-banyandb/fodc/internal/timeouts"
 	"github.com/apache/skywalking-banyandb/fodc/proxy/internal/registry"
 	"github.com/apache/skywalking-banyandb/pkg/logger"
 	"github.com/apache/skywalking-banyandb/pkg/panicdiag"
-	"github.com/apache/skywalking-banyandb/pkg/schema/consistency"
 )
 
 // defaultCollectionTimeout bounds how long the proxy waits for each agent to push back
@@ -81,12 +82,21 @@ type RequestSender interface {
 	RequestLifecycleData(agentID string) error
 }
 
+// SchemaNodeProvider yields the gRPC addresses of nodes that serve the schema
+// registry (meta/liaison role), discovered from the cluster topology, so the
+// proxy queries the registry truth without any configured address.
+type SchemaNodeProvider interface {
+	SchemaServingNodeAddresses(ctx context.Context) []string
+}
+
 // Manager manages lifecycle data from multiple agents.
 type Manager struct {
 	log          *logger.Logger
 	registry     *registry.AgentRegistry
 	grpcService  RequestSender
+	schemaNodes  SchemaNodeProvider
 	collecting   map[string]chan *agentLifecycleData
+	checker      *consistency.Checker
 	mu           sync.RWMutex
 	collectingMu sync.RWMutex
 	collectingOp sync.Mutex
@@ -99,6 +109,7 @@ func NewManager(registry *registry.AgentRegistry, grpcService RequestSender, log
 		grpcService: grpcService,
 		log:         log,
 		collecting:  make(map[string]chan *agentLifecycleData),
+		checker:     consistency.NewChecker(),
 	}
 }
 
@@ -107,6 +118,15 @@ func (m *Manager) SetGRPCService(grpcService RequestSender) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	m.grpcService = grpcService
+}
+
+// SetSchemaNodeProvider wires the source of schema-serving node addresses (the
+// cluster topology). When unset, the proxy skips the registry fetch and schema
+// consistency degrades to UNKNOWN.
+func (m *Manager) SetSchemaNodeProvider(provider SchemaNodeProvider) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.schemaNodes = provider
 }
 
 // UpdateLifecycle updates lifecycle data for a specific agent.
@@ -192,7 +212,7 @@ func (m *Manager) CollectLifecycle(ctx context.Context) (*InspectionResult, Agen
 	m.log.Info().Int("responses_with_data", len(allData)).
 		Msg("CollectLifecycle: all responses collected, aggregating")
 
-	return m.buildInspectionResult(allData), summary
+	return m.buildInspectionResult(ctx, allData, summary.NotResponded > 0), summary
 }
 
 func (m *Manager) requestAllAgents(ctx context.Context, agents []*registry.AgentInfo,
@@ -260,14 +280,75 @@ func (m *Manager) cleanupSessions(collectChs map[string]chan *agentLifecycleData
 	m.collectingMu.Unlock()
 }
 
-func (m *Manager) buildInspectionResult(allData []*agentLifecycleData) *InspectionResult {
+func (m *Manager) buildInspectionResult(ctx context.Context, allData []*agentLifecycleData, shortfall bool) *InspectionResult {
+	registryByGroup, registryGroupErrs, registryErr := m.fetchRegistry(ctx)
+	verdicts := assembleSchemaConsistency(allData, m.checker, shortfall, registryByGroup)
+	schemaErrors := m.registrySchemaErrors(verdicts, registryGroupErrs, registryErr)
 	return &InspectionResult{
-		Groups:            m.mergeGroups(allData),
+		Groups:            m.mergeGroups(allData, verdicts, schemaErrors),
 		LifecycleStatuses: m.aggregateLifecycle(allData),
 	}
 }
 
-func (m *Manager) mergeGroups(allData []*agentLifecycleData) []*fodcv1.GroupLifecycleInfo {
+// registrySchemaErrors turns the registry-fetch failures into per-group error
+// strings so mergeGroups surfaces them on GroupLifecycleInfo.errors -- the same
+// channel the user already reads -- instead of the reason living only in a log
+// line. A fatal fetch failure is attached to every group the checker had to
+// downgrade, so each UNKNOWN carries its cause; per-group read failures attach to
+// just their group.
+func (m *Manager) registrySchemaErrors(
+	verdicts map[string]*fodcv1.SchemaConsistency, registryGroupErrs map[string]string, registryErr error,
+) map[string][]string {
+	schemaErrors := make(map[string][]string)
+	for group, e := range registryGroupErrs {
+		schemaErrors[group] = append(schemaErrors[group], "registry read failed: "+e)
+	}
+	if registryErr != nil {
+		m.log.Warn().Err(registryErr).Msg("schema registry fetch failed; schema consistency degrades to UNKNOWN")
+		for group := range verdicts {
+			schemaErrors[group] = append(schemaErrors[group], "registry unavailable: "+registryErr.Error())
+		}
+	}
+	return schemaErrors
+}
+
+// fetchRegistry queries the registry truth once from a schema-serving node
+// discovered in the cluster topology, trying each until one answers. It returns
+// the per-group registry fingerprints, the per-group read errors, and a fatal
+// error when no node could be reached. A nil map (fatal error set) makes
+// assembleSchemaConsistency report the affected groups UNKNOWN, and the caller
+// surfaces the returned errors on the groups so the user learns why rather than
+// only seeing a log line.
+func (m *Manager) fetchRegistry(
+	ctx context.Context,
+) (map[string]map[consistency.ObjectKey]uint64, map[string]string, error) {
+	m.mu.RLock()
+	provider := m.schemaNodes
+	m.mu.RUnlock()
+	if provider == nil {
+		return nil, nil, errors.New("no schema-node provider configured")
+	}
+	addrs := provider.SchemaServingNodeAddresses(ctx)
+	if len(addrs) == 0 {
+		return nil, nil, errors.New("no schema-serving (meta/liaison) node discovered in the cluster topology")
+	}
+	var lastErr error
+	for _, addr := range addrs {
+		registryByGroup, groupErrs, err := fetchRegistryFingerprints(ctx, addr)
+		if err != nil {
+			lastErr = err
+			continue
+		}
+		return registryByGroup, groupErrs, nil
+	}
+	return nil, nil, fmt.Errorf("registry fetch failed on all %d schema-serving node(s): %w", len(addrs), lastErr)
+}
+
+func (m *Manager) mergeGroups(
+	allData []*agentLifecycleData,
+	verdicts map[string]*fodcv1.SchemaConsistency,
+	schemaErrors map[string][]string,
+) []*fodcv1.GroupLifecycleInfo {
 	groupMap := make(map[string]*fodcv1.GroupLifecycleInfo)
 	// Errors are unioned across agents because each agent may observe a
 	// different subset of per-node failures (e.g. liaison-0 sees cold-0
@@ -275,29 +356,34 @@ func (m *Manager) mergeGroups(allData []*agentLifecycleData) []*fodcv1.GroupLife
 	// of the GroupLifecycleInfo is fine -- name/catalog/resource_opts are
 	// agent-invariant -- but errors must be the deduped union.
 	mergedErrors := make(map[string]map[string]struct{})
-	// schema_consistency is merged rather than last-wins for the same reason as
-	// errors: one liaison reporting a healthy group must never mask another
-	// liaison that found a real divergence.
-	mergedConsistency := make(map[string]*fodcv1.SchemaConsistency)
+	addErr := func(group string, errs ...string) {
+		if len(errs) == 0 {
+			return
+		}
+		set, ok := mergedErrors[group]
+		if !ok {
+			set = make(map[string]struct{})
+			mergedErrors[group] = set
+		}
+		for _, e := range errs {
+			set[e] = struct{}{}
+		}
+	}
 	for _, ad := range allData {
 		if ad == nil || ad.Data == nil {
 			continue
 		}
 		for _, g := range ad.Data.Groups {
 			groupMap[g.Name] = g
-			mergedConsistency[g.Name] = mergeSchemaConsistency(mergedConsistency[g.Name], g.SchemaConsistency)
-			if len(g.Errors) == 0 {
-				continue
-			}
-			set, ok := mergedErrors[g.Name]
-			if !ok {
-				set = make(map[string]struct{})
-				mergedErrors[g.Name] = set
-			}
-			for _, e := range g.Errors {
-				set[e] = struct{}{}
-			}
+			// g.Errors already carries this agent's schema collection errors (the
+			// agent folds them in before sending), so the union covers them too.
+			addErr(g.Name, g.Errors...)
 		}
+	}
+	// The proxy's own registry-fetch failures (fatal or per-group) surface here so
+	// each affected group tells the user why its verdict is UNKNOWN.
+	for group, errs := range schemaErrors {
+		addErr(group, errs...)
 	}
 	groups := make([]*fodcv1.GroupLifecycleInfo, 0, len(groupMap))
 	for name, g := range groupMap {
@@ -306,7 +392,7 @@ func (m *Manager) mergeGroups(allData []*agentLifecycleData) []*fodcv1.GroupLife
 		// two merged fields in place cannot leak into a later round. This keeps
 		// every other field (and any future field) without a copy that must be
 		// kept in lockstep with the message definition.
-		g.SchemaConsistency = mergedConsistency[name]
+		g.SchemaConsistency = verdicts[name]
 		if set := mergedErrors[name]; len(set) > 0 {
 			errs := make([]string, 0, len(set))
 			for e := range set {
@@ -322,119 +408,6 @@ func (m *Manager) mergeGroups(allData []*agentLifecycleData) []*fodcv1.GroupLife
 	// reason).
 	sort.Slice(groups, func(i, j int) bool { return groups[i].GetName() < groups[j].GetName() })
 	return groups
-}
-
-// mergeSchemaConsistency folds one liaison's verdict into the accumulated one.
-// The status takes the most severe of the two and the issues are the deduped
-// union, so a finding survives no matter which liaison reported it or in what
-// order the agents answered.
-//
-// The result is always a fresh message: the inputs belong to the agents' cached
-// lifecycle data, and mutating them would let one collection round leak into the
-// next.
-func mergeSchemaConsistency(acc, incoming *fodcv1.SchemaConsistency) *fodcv1.SchemaConsistency {
-	if acc == nil && incoming == nil {
-		return nil
-	}
-	merged := &fodcv1.SchemaConsistency{Status: fodcv1.ConsistencyStatus_CONSISTENCY_STATUS_UNSPECIFIED}
-	seenIssue := make(map[string]struct{})
-	// Every liaison's InspectAll produces the full object table for the group, so
-	// dedup by kind+name and union each object's node fingerprints by node id;
-	// the accumulation belongs on a fresh message, never on an agent's cache.
-	objects := make(map[string]*fodcv1.ObjectConsistency)
-	for _, src := range []*fodcv1.SchemaConsistency{acc, incoming} {
-		if src == nil {
-			continue
-		}
-		if consistencySeverity(src.GetStatus()) > consistencySeverity(merged.GetStatus()) {
-			merged.Status = src.GetStatus()
-		}
-		for _, obj := range src.GetObjects() {
-			mergeObject(objects, obj)
-		}
-		for _, issue := range src.GetIssues() {
-			key := schemaIssueKey(issue)
-			if _, dup := seenIssue[key]; dup {
-				continue
-			}
-			seenIssue[key] = struct{}{}
-			merged.Issues = append(merged.Issues, issue)
-		}
-	}
-	// acc/incoming order follows goroutine-completion order; sort so the merged
-	// payload is deterministic regardless of which liaison answered first.
-	merged.Objects = sortedObjects(objects)
-	sort.Slice(merged.Issues, func(i, j int) bool {
-		return schemaIssueKey(merged.Issues[i]) < schemaIssueKey(merged.Issues[j])
-	})
-	return merged
-}
-
-// mergeObject folds one object's record into the accumulator on a fresh
-// ObjectConsistency, unioning node fingerprints by node id.
-func mergeObject(dst map[string]*fodcv1.ObjectConsistency, obj *fodcv1.ObjectConsistency) {
-	if obj == nil {
-		return
-	}
-	key := obj.GetKind() + "|" + obj.GetName()
-	oc, ok := dst[key]
-	if !ok {
-		oc = &fodcv1.ObjectConsistency{
-			Kind: obj.GetKind(), Name: obj.GetName(), RegistryFingerprint: obj.GetRegistryFingerprint(),
-		}
-		dst[key] = oc
-	} else if oc.GetRegistryFingerprint() == 0 && obj.GetRegistryFingerprint() != 0 {
-		// The entry was created from a record that did not know the registry truth
-		// (an orphan view, or a partial payload during a rolling upgrade); adopt a
-		// non-zero fingerprint once any agent reports it so the merged output keeps
-		// the registry truth rather than a stale zero.
-		oc.RegistryFingerprint = obj.GetRegistryFingerprint()
-	}
-	seen := make(map[string]struct{}, len(oc.NodeFingerprints))
-	for _, nf := range oc.NodeFingerprints {
-		seen[nf.GetNode()] = struct{}{}
-	}
-	for _, nf := range obj.GetNodeFingerprints() {
-		if _, dup := seen[nf.GetNode()]; dup {
-			continue
-		}
-		seen[nf.GetNode()] = struct{}{}
-		oc.NodeFingerprints = append(oc.NodeFingerprints, nf)
-	}
-}
-
-// sortedObjects flattens the accumulator and orders it deterministically via the
-// shared sorter, the same ordering the checker emits.
-func sortedObjects(m map[string]*fodcv1.ObjectConsistency) []*fodcv1.ObjectConsistency {
-	out := make([]*fodcv1.ObjectConsistency, 0, len(m))
-	for _, oc := range m {
-		out = append(out, oc)
-	}
-	consistency.SortObjectConsistencies(out)
-	return out
-}
-
-// schemaIssueKey identifies a finding: the same object on the same node with the
-// same failure mode is one finding however many liaisons saw it.
-func schemaIssueKey(issue *fodcv1.SchemaIssue) string {
-	return fmt.Sprintf("%s|%s|%s|%d",
-		issue.GetKind(), issue.GetName(), issue.GetNode(), issue.GetType())
-}
-
-// consistencySeverity orders verdicts so the merge keeps the most alarming one.
-func consistencySeverity(status fodcv1.ConsistencyStatus) int {
-	switch status {
-	case fodcv1.ConsistencyStatus_CONSISTENCY_STATUS_INCONSISTENT:
-		return 3
-	case fodcv1.ConsistencyStatus_CONSISTENCY_STATUS_UNKNOWN:
-		return 2
-	case fodcv1.ConsistencyStatus_CONSISTENCY_STATUS_CONSISTENT:
-		return 1
-	case fodcv1.ConsistencyStatus_CONSISTENCY_STATUS_UNSPECIFIED:
-		return 0
-	default:
-		return 0
-	}
 }
 
 // aggregateLifecycle aggregates lifecycle statuses from multiple agents.

@@ -761,7 +761,7 @@ func querySchemaChangeTraceData(svcs *services, name, group string, begin, end t
 }
 
 func getTotalPartCount(svcs *services, group string) int64 {
-	dataInfo, err := svcs.trace.CollectDataInfo(context.TODO(), group, false)
+	dataInfo, err := svcs.trace.CollectDataInfo(context.TODO(), group)
 	if err != nil || dataInfo == nil {
 		return 0
 	}
@@ -775,7 +775,7 @@ func getTotalPartCount(svcs *services, group string) int64 {
 }
 
 func getFilePartCount(svcs *services, group string) int64 {
-	dataInfo, err := svcs.trace.CollectDataInfo(context.TODO(), group, false)
+	dataInfo, err := svcs.trace.CollectDataInfo(context.TODO(), group)
 	if err != nil || dataInfo == nil {
 		return 0
 	}

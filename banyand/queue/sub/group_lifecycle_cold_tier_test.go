@@ -64,7 +64,7 @@ func (r *coldTierRepo) GroupRegistry() schema.Group {
 	return r.groupRegistry
 }
 
-func (r *coldTierRepo) CollectDataInfo(_ context.Context, group string, _ bool) (out []*databasev1.DataInfo, collectionErrs []string, err error) {
+func (r *coldTierRepo) CollectDataInfo(_ context.Context, group string) (out []*databasev1.DataInfo, collectionErrs []string, err error) {
 	defer func() {
 		if rec := recover(); rec != nil {
 			r.panicCount.Add(1)
@@ -107,9 +107,15 @@ func (r *coldTierRepo) CollectDataInfo(_ context.Context, group string, _ bool) 
 // CollectLiaisonInfo models a cold-tier data node, which serves no liaison
 // schema. inspectGroup now always asks, so the stub must answer rather than
 // fall through to the nil embedded Repo and panic.
-func (r *coldTierRepo) CollectLiaisonInfo(_ context.Context, _ string, _ bool) ([]*databasev1.LiaisonInfo, error) {
+func (r *coldTierRepo) CollectLiaisonInfo(_ context.Context, _ string) ([]*databasev1.LiaisonInfo, error) {
 	return nil, nil
 }
+
+func (r *coldTierRepo) CollectGroupSchemaSnapshot(_ context.Context, _ string) ([]*databasev1.ObjectSnapshot, []*databasev1.IndexRule, bool, error) {
+	return nil, nil, false, nil
+}
+
+func (r *coldTierRepo) AllCachedGroups() []string { return nil }
 
 // coldTierEmptyDataInfo mirrors the DataInfo shape the fixed schemaRepo
 // returns when every selected segment is in the idle-closed residual state

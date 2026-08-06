@@ -127,6 +127,9 @@ func runProxy(_ *cobra.Command, _ []string) error {
 
 	clusterStateMgr := cluster.NewManager(agentRegistry, nil, log)
 	lifecycleMgr := lifecycle.NewManager(agentRegistry, nil, log)
+	// The proxy discovers the schema-serving (meta/liaison) node from the cluster
+	// topology to query the registry truth for the schema consistency check.
+	lifecycleMgr.SetSchemaNodeProvider(clusterStateMgr)
 
 	metricsAggregator := metrics.NewAggregator(agentRegistry, nil, log)
 	diagnosticsAggregator := diagnostics.NewAggregator(agentRegistry, nil, log)

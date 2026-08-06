@@ -18,222 +18,206 @@
 package lifecycle
 
 import (
+	"errors"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
 	fodcv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/fodc/v1"
+	"github.com/apache/skywalking-banyandb/fodc/internal/consistency"
 	"github.com/apache/skywalking-banyandb/pkg/logger"
 )
 
-func groupWithVerdict(status fodcv1.ConsistencyStatus, issues ...*fodcv1.SchemaIssue) *agentLifecycleData {
-	return &agentLifecycleData{
-		Data: &fodcv1.LifecycleData{
-			Groups: []*fodcv1.GroupLifecycleInfo{{
-				Name: "g",
-				SchemaConsistency: &fodcv1.SchemaConsistency{
-					Status: status,
-					Issues: issues,
-				},
-			}},
+// testGroup is the single group the assembly cases operate on.
+const testGroup = "g"
+
+// nodeObj is one object carrying a single node's cache/runtime fingerprints, as
+// that node's agent reports it.
+func nodeObj(kind, name, node string, cache, runtime uint64) *fodcv1.ObjectConsistency {
+	return &fodcv1.ObjectConsistency{
+		Kind: kind, Name: name,
+		NodeFingerprints: []*fodcv1.NodeFingerprint{{Node: node, CacheFingerprint: cache, RuntimeFingerprint: runtime}},
+	}
+}
+
+// agentData is one agent's LifecycleData with a single group whose
+// schema_consistency partial carries the given objects.
+func agentData(objs ...*fodcv1.ObjectConsistency) *agentLifecycleData {
+	return &agentLifecycleData{Data: &fodcv1.LifecycleData{Groups: []*fodcv1.GroupLifecycleInfo{
+		{Name: testGroup, SchemaConsistency: &fodcv1.SchemaConsistency{Objects: objs}},
+	}}}
+}
+
+// registryTruth is what the proxy fetches once from a schema-serving node: the
+// group object plus the stream object, both at their canonical fingerprints. A
+// node whose stream fingerprint differs from 100 is diverging.
+func registryTruth() map[string]map[consistency.ObjectKey]uint64 {
+	return map[string]map[consistency.ObjectKey]uint64{
+		testGroup: {
+			{Kind: "group", Name: testGroup}: 1,
+			{Kind: "stream", Name: "foo"}:    100,
 		},
 	}
 }
 
-func staleIssue(node string) *fodcv1.SchemaIssue {
-	return &fodcv1.SchemaIssue{
-		Kind: "stream", Name: "foo", Node: node,
-		Type: fodcv1.SchemaIssueType_SCHEMA_ISSUE_TYPE_CACHE_STALE,
-	}
+// nodeContribution is one node's fingerprints for the group and stream objects.
+func nodeContribution(node string, cacheFP, runtimeFP uint64) *agentLifecycleData {
+	return agentData(
+		nodeObj("group", testGroup, node, 1, 1),
+		nodeObj("stream", "foo", node, cacheFP, runtimeFP),
+	)
 }
 
-func TestMergeGroups_InconsistentWinsOverConsistent(t *testing.T) {
-	// Two liaisons disagree on the same group. The pessimistic verdict must win
-	// so one healthy reporter cannot hide another's finding.
-	mgr := NewManager(nil, nil, logger.GetLogger("test-merge"))
+func TestAssembleSchemaConsistency_AgreementIsConsistent(t *testing.T) {
+	data := []*agentLifecycleData{nodeContribution("data-1", 100, 100)}
+
+	verdicts := assembleSchemaConsistency(data, consistency.NewChecker(), false, registryTruth())
+
+	require.Contains(t, verdicts, "g")
+	assert.Equal(t, fodcv1.ConsistencyStatus_CONSISTENCY_STATUS_CONSISTENT, verdicts["g"].GetStatus())
+}
+
+func TestAssembleSchemaConsistency_DivergenceReportedAfterTwoRounds(t *testing.T) {
+	// The node's cache (200) disagrees with the registry (100). The checker
+	// suppresses the first round, then reports on the second.
+	checker := consistency.NewChecker()
+	data := []*agentLifecycleData{nodeContribution("data-1", 200, 200)}
+
+	first := assembleSchemaConsistency(data, checker, false, registryTruth())
+	assert.Equal(t, fodcv1.ConsistencyStatus_CONSISTENCY_STATUS_UNKNOWN, first["g"].GetStatus(),
+		"a first-round divergence may still be in-flight propagation")
+
+	second := assembleSchemaConsistency(data, checker, false, registryTruth())
+	assert.Equal(t, fodcv1.ConsistencyStatus_CONSISTENCY_STATUS_INCONSISTENT, second["g"].GetStatus())
+	require.Len(t, second["g"].GetIssues(), 1)
+	assert.Equal(t, "data-1", second["g"].GetIssues()[0].GetNode())
+}
+
+func TestAssembleSchemaConsistency_NoRegistryIsUnknown(t *testing.T) {
+	// A node reported, but the proxy fetched no registry truth for the group
+	// (fetch failed or omitted it), so the objects cannot be verified.
+	data := []*agentLifecycleData{nodeContribution("data-1", 100, 100)}
+
+	verdicts := assembleSchemaConsistency(data, consistency.NewChecker(), false, nil)
+
+	assert.Equal(t, fodcv1.ConsistencyStatus_CONSISTENCY_STATUS_UNKNOWN, verdicts["g"].GetStatus())
+}
+
+func TestAssembleSchemaConsistency_ShortfallForcesUnknown(t *testing.T) {
+	// Every answering node agrees, but an agent went silent this round, so a node
+	// could be silently diverging -> UNKNOWN, never CONSISTENT.
+	data := []*agentLifecycleData{nodeContribution("data-1", 100, 100)}
+
+	verdicts := assembleSchemaConsistency(data, consistency.NewChecker(), true, registryTruth())
+
+	assert.Equal(t, fodcv1.ConsistencyStatus_CONSISTENCY_STATUS_UNKNOWN, verdicts["g"].GetStatus())
+}
+
+func TestAssembleSchemaConsistency_UnionsNodeFingerprints(t *testing.T) {
+	// Each node's fingerprints come from its own agent; the proxy pairs them with
+	// the single registry truth it fetched.
 	data := []*agentLifecycleData{
-		groupWithVerdict(fodcv1.ConsistencyStatus_CONSISTENCY_STATUS_CONSISTENT),
-		groupWithVerdict(fodcv1.ConsistencyStatus_CONSISTENCY_STATUS_INCONSISTENT, staleIssue("data-1")),
+		nodeContribution("data-1", 100, 100),
+		nodeContribution("liaison-1", 100, 100),
 	}
 
-	got := mgr.mergeGroups(data)
+	verdicts := assembleSchemaConsistency(data, consistency.NewChecker(), false, registryTruth())
 
-	require.Len(t, got, 1)
-	assert.Equal(t, fodcv1.ConsistencyStatus_CONSISTENCY_STATUS_INCONSISTENT,
-		got[0].GetSchemaConsistency().GetStatus())
-	assert.Len(t, got[0].GetSchemaConsistency().GetIssues(), 1)
-}
-
-func TestMergeGroups_InconsistentWinsRegardlessOfOrder(t *testing.T) {
-	// The same, with the healthy report arriving last: last-wins would lose it.
-	mgr := NewManager(nil, nil, logger.GetLogger("test-merge"))
-	data := []*agentLifecycleData{
-		groupWithVerdict(fodcv1.ConsistencyStatus_CONSISTENCY_STATUS_INCONSISTENT, staleIssue("data-1")),
-		groupWithVerdict(fodcv1.ConsistencyStatus_CONSISTENCY_STATUS_CONSISTENT),
-	}
-
-	got := mgr.mergeGroups(data)
-
-	require.Len(t, got, 1)
-	assert.Equal(t, fodcv1.ConsistencyStatus_CONSISTENCY_STATUS_INCONSISTENT,
-		got[0].GetSchemaConsistency().GetStatus())
-	require.Len(t, got[0].GetSchemaConsistency().GetIssues(), 1)
-}
-
-func TestMergeGroups_UnknownWinsOverConsistent(t *testing.T) {
-	mgr := NewManager(nil, nil, logger.GetLogger("test-merge"))
-	data := []*agentLifecycleData{
-		groupWithVerdict(fodcv1.ConsistencyStatus_CONSISTENCY_STATUS_CONSISTENT),
-		groupWithVerdict(fodcv1.ConsistencyStatus_CONSISTENCY_STATUS_UNKNOWN),
-	}
-
-	got := mgr.mergeGroups(data)
-
-	require.Len(t, got, 1)
-	assert.Equal(t, fodcv1.ConsistencyStatus_CONSISTENCY_STATUS_UNKNOWN,
-		got[0].GetSchemaConsistency().GetStatus())
-}
-
-func TestMergeGroups_DeduplicatesIdenticalIssues(t *testing.T) {
-	mgr := NewManager(nil, nil, logger.GetLogger("test-merge"))
-	data := []*agentLifecycleData{
-		groupWithVerdict(fodcv1.ConsistencyStatus_CONSISTENCY_STATUS_INCONSISTENT, staleIssue("data-1")),
-		groupWithVerdict(fodcv1.ConsistencyStatus_CONSISTENCY_STATUS_INCONSISTENT, staleIssue("data-1")),
-	}
-
-	got := mgr.mergeGroups(data)
-
-	assert.Len(t, got[0].GetSchemaConsistency().GetIssues(), 1,
-		"the same issue seen by two liaisons must appear once")
-}
-
-func TestMergeGroups_KeepsDistinctIssues(t *testing.T) {
-	mgr := NewManager(nil, nil, logger.GetLogger("test-merge"))
-	data := []*agentLifecycleData{
-		groupWithVerdict(fodcv1.ConsistencyStatus_CONSISTENCY_STATUS_INCONSISTENT, staleIssue("data-1")),
-		groupWithVerdict(fodcv1.ConsistencyStatus_CONSISTENCY_STATUS_INCONSISTENT, staleIssue("data-2")),
-	}
-
-	got := mgr.mergeGroups(data)
-
-	assert.Len(t, got[0].GetSchemaConsistency().GetIssues(), 2,
-		"issues on different nodes are different findings")
-}
-
-func TestMergeGroups_UnionsObjectNodeFingerprints(t *testing.T) {
-	// Each liaison reports the full object table; the merge dedups objects by
-	// kind+name and unions their node fingerprints by node id.
-	mgr := NewManager(nil, nil, logger.GetLogger("test-merge"))
-	objFrom := func(node string) *agentLifecycleData {
-		return &agentLifecycleData{
-			Data: &fodcv1.LifecycleData{
-				Groups: []*fodcv1.GroupLifecycleInfo{{
-					Name: "g",
-					SchemaConsistency: &fodcv1.SchemaConsistency{
-						Status: fodcv1.ConsistencyStatus_CONSISTENCY_STATUS_CONSISTENT,
-						Objects: []*fodcv1.ObjectConsistency{{
-							Kind: "stream", Name: "foo", RegistryFingerprint: 1,
-							NodeFingerprints: []*fodcv1.NodeFingerprint{{
-								Node: node, CacheFingerprint: 1, RuntimeFingerprint: 1,
-							}},
-						}},
-					},
-				}},
-			},
+	objs := verdicts["g"].GetObjects()
+	var stream *fodcv1.ObjectConsistency
+	for _, o := range objs {
+		if o.GetKind() == "stream" {
+			stream = o
 		}
 	}
-
-	got := mgr.mergeGroups([]*agentLifecycleData{objFrom("data-1"), objFrom("liaison-1")})
-
-	require.Len(t, got, 1)
-	objs := got[0].GetSchemaConsistency().GetObjects()
-	require.Len(t, objs, 1, "the same object from two liaisons must appear once")
-	assert.Equal(t, uint64(1), objs[0].GetRegistryFingerprint())
-	require.Len(t, objs[0].GetNodeFingerprints(), 2, "node fingerprints from both liaisons union")
-	assert.Equal(t, "data-1", objs[0].GetNodeFingerprints()[0].GetNode(), "sorted by node id")
-	assert.Equal(t, "liaison-1", objs[0].GetNodeFingerprints()[1].GetNode())
+	require.NotNil(t, stream)
+	assert.Equal(t, uint64(100), stream.GetRegistryFingerprint())
+	require.Len(t, stream.GetNodeFingerprints(), 2, "both nodes' fingerprints appear")
+	assert.Equal(t, "data-1", stream.GetNodeFingerprints()[0].GetNode(), "sorted by node id")
+	assert.Equal(t, "liaison-1", stream.GetNodeFingerprints()[1].GetNode())
 }
 
-func TestMergeGroups_PrefersNonZeroRegistryFingerprint(t *testing.T) {
-	// One agent reports the object without the registry truth (0 -- an orphan view
-	// or a partial payload during a rolling upgrade) while another reports the real
-	// non-zero fingerprint. The merge must keep the non-zero truth regardless of
-	// which agent's record is folded first.
-	objFrom := func(node string, registryFP uint64) *agentLifecycleData {
-		return &agentLifecycleData{
-			Data: &fodcv1.LifecycleData{
-				Groups: []*fodcv1.GroupLifecycleInfo{{
-					Name: "g",
-					SchemaConsistency: &fodcv1.SchemaConsistency{
-						Status: fodcv1.ConsistencyStatus_CONSISTENCY_STATUS_CONSISTENT,
-						Objects: []*fodcv1.ObjectConsistency{{
-							Kind: "stream", Name: "foo", RegistryFingerprint: registryFP,
-							NodeFingerprints: []*fodcv1.NodeFingerprint{{
-								Node: node, CacheFingerprint: 7, RuntimeFingerprint: 7,
-							}},
-						}},
-					},
-				}},
-			},
-		}
+func TestMergeGroups_AppliesVerdictAndUnionsErrors(t *testing.T) {
+	// Two agents each observe the group with a different error; the merge unions
+	// them and stamps on the proxy's verdict.
+	mgr := NewManager(nil, nil, logger.GetLogger("test-merge"))
+	data := []*agentLifecycleData{
+		{Data: &fodcv1.LifecycleData{Groups: []*fodcv1.GroupLifecycleInfo{{Name: "g", Errors: []string{"collect: boom"}}}}},
+		{Data: &fodcv1.LifecycleData{Groups: []*fodcv1.GroupLifecycleInfo{{Name: "g", Errors: []string{"schema: registry unavailable"}}}}},
 	}
-	zeroFirst := []*agentLifecycleData{objFrom("data-1", 0), objFrom("liaison-1", 7)}
-	nonZeroFirst := []*agentLifecycleData{objFrom("liaison-1", 7), objFrom("data-1", 0)}
+	verdicts := map[string]*fodcv1.SchemaConsistency{
+		"g": {Status: fodcv1.ConsistencyStatus_CONSISTENCY_STATUS_INCONSISTENT},
+	}
 
-	for name, order := range map[string][]*agentLifecycleData{"zeroFirst": zeroFirst, "nonZeroFirst": nonZeroFirst} {
-		t.Run(name, func(t *testing.T) {
-			mgr := NewManager(nil, nil, logger.GetLogger("test-merge"))
-			got := mgr.mergeGroups(order)
-			require.Len(t, got, 1)
-			objs := got[0].GetSchemaConsistency().GetObjects()
-			require.Len(t, objs, 1)
-			assert.Equal(t, uint64(7), objs[0].GetRegistryFingerprint(),
-				"a non-zero registry fingerprint must win over a zero one")
-		})
-	}
+	got := mgr.mergeGroups(data, verdicts, nil)
+
+	require.Len(t, got, 1)
+	assert.Equal(t, fodcv1.ConsistencyStatus_CONSISTENCY_STATUS_INCONSISTENT, got[0].GetSchemaConsistency().GetStatus())
+	assert.ElementsMatch(t, []string{"collect: boom", "schema: registry unavailable"}, got[0].GetErrors(),
+		"collection and schema errors are unioned across agents")
+}
+
+func TestMergeGroups_NoVerdictStaysNil(t *testing.T) {
+	// A group with no schema reports (e.g. a property group) gets no verdict.
+	mgr := NewManager(nil, nil, logger.GetLogger("test-merge"))
+	data := []*agentLifecycleData{{Data: &fodcv1.LifecycleData{
+		Groups: []*fodcv1.GroupLifecycleInfo{{Name: "g"}},
+	}}}
+
+	got := mgr.mergeGroups(data, map[string]*fodcv1.SchemaConsistency{}, nil)
+
+	require.Len(t, got, 1)
+	assert.Nil(t, got[0].GetSchemaConsistency())
 }
 
 func TestMergeGroups_IsolatesDistinctGroups(t *testing.T) {
-	// mergeGroups reuses each round's freshly received group in place: the gRPC
-	// stream re-unmarshals lifecycle data on every collection and nothing caches
-	// it, so there is no cross-round leak to guard against. The property that
-	// in-place reuse could still get wrong is cross-group isolation -- merging one
-	// group's verdict must never bleed into a different group's.
 	mgr := NewManager(nil, nil, logger.GetLogger("test-merge"))
-	healthy := &agentLifecycleData{Data: &fodcv1.LifecycleData{Groups: []*fodcv1.GroupLifecycleInfo{{
-		Name:              "a",
-		SchemaConsistency: &fodcv1.SchemaConsistency{Status: fodcv1.ConsistencyStatus_CONSISTENCY_STATUS_CONSISTENT},
+	data := []*agentLifecycleData{{Data: &fodcv1.LifecycleData{Groups: []*fodcv1.GroupLifecycleInfo{
+		{Name: "a"}, {Name: "b"},
 	}}}}
-	broken := &agentLifecycleData{Data: &fodcv1.LifecycleData{Groups: []*fodcv1.GroupLifecycleInfo{{
-		Name: "b",
-		SchemaConsistency: &fodcv1.SchemaConsistency{
-			Status: fodcv1.ConsistencyStatus_CONSISTENCY_STATUS_INCONSISTENT,
-			Issues: []*fodcv1.SchemaIssue{staleIssue("data-1")},
-		},
-	}}}}
+	verdicts := map[string]*fodcv1.SchemaConsistency{
+		"a": {Status: fodcv1.ConsistencyStatus_CONSISTENCY_STATUS_CONSISTENT},
+		"b": {Status: fodcv1.ConsistencyStatus_CONSISTENCY_STATUS_INCONSISTENT},
+	}
 
-	got := mgr.mergeGroups([]*agentLifecycleData{healthy, broken})
+	got := mgr.mergeGroups(data, verdicts, nil)
 
 	require.Len(t, got, 2)
 	byName := map[string]*fodcv1.GroupLifecycleInfo{got[0].GetName(): got[0], got[1].GetName(): got[1]}
 	assert.Equal(t, fodcv1.ConsistencyStatus_CONSISTENCY_STATUS_CONSISTENT, byName["a"].GetSchemaConsistency().GetStatus())
-	assert.Empty(t, byName["a"].GetSchemaConsistency().GetIssues(),
-		"group b's issue must not bleed into group a")
 	assert.Equal(t, fodcv1.ConsistencyStatus_CONSISTENCY_STATUS_INCONSISTENT, byName["b"].GetSchemaConsistency().GetStatus())
 }
 
-func TestMergeGroups_NoVerdictStaysNil(t *testing.T) {
-	// A group inspected by a liaison without the checker must not gain a verdict.
-	mgr := NewManager(nil, nil, logger.GetLogger("test-merge"))
-	data := []*agentLifecycleData{{
-		Data: &fodcv1.LifecycleData{
-			Groups: []*fodcv1.GroupLifecycleInfo{{Name: "g"}},
-		},
-	}}
+func TestRegistrySchemaErrors_FatalAttachesToEveryVerdictGroup(t *testing.T) {
+	mgr := NewManager(nil, nil, logger.GetLogger("test-reg-err"))
+	verdicts := map[string]*fodcv1.SchemaConsistency{"a": {}, "b": {}}
 
-	got := mgr.mergeGroups(data)
+	got := mgr.registrySchemaErrors(verdicts, map[string]string{"a": "boom-a"}, errors.New("unreachable"))
+
+	assert.Contains(t, got["a"], "registry read failed: boom-a", "a per-group read error attaches to its group")
+	assert.Contains(t, got["a"], "registry unavailable: unreachable", "the fatal error also attaches to a")
+	assert.Contains(t, got["b"], "registry unavailable: unreachable", "the fatal error reaches every downgraded group")
+	assert.NotContains(t, got["b"], "registry read failed: boom-a", "a per-group error does not bleed into other groups")
+}
+
+func TestRegistrySchemaErrors_NoErrorIsEmpty(t *testing.T) {
+	mgr := NewManager(nil, nil, logger.GetLogger("test-reg-err"))
+
+	got := mgr.registrySchemaErrors(map[string]*fodcv1.SchemaConsistency{"a": {}}, nil, nil)
+
+	assert.Empty(t, got["a"], "a clean fetch surfaces no schema errors")
+}
+
+func TestMergeGroups_SurfacesRegistryErrors(t *testing.T) {
+	mgr := NewManager(nil, nil, logger.GetLogger("test-merge-reg"))
+	data := []*agentLifecycleData{{Data: &fodcv1.LifecycleData{
+		Groups: []*fodcv1.GroupLifecycleInfo{{Name: "g", Errors: []string{"collect: boom"}}},
+	}}}
+
+	got := mgr.mergeGroups(data, map[string]*fodcv1.SchemaConsistency{}, map[string][]string{"g": {"registry unavailable: down"}})
 
 	require.Len(t, got, 1)
-	assert.Nil(t, got[0].GetSchemaConsistency())
+	assert.ElementsMatch(t, []string{"collect: boom", "registry unavailable: down"}, got[0].GetErrors(),
+		"registry errors are unioned onto the group alongside the agent's own errors")
 }

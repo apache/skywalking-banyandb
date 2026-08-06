@@ -21,7 +21,6 @@ import (
 	"sort"
 	"sync"
 
-	databasev1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/database/v1"
 	fodcv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/fodc/v1"
 )
 
@@ -38,10 +37,20 @@ type ObjectKey struct {
 	Name string
 }
 
+// NodeObjectFP is one object's cache/runtime fingerprints on a node. It is the
+// checker's internal carrier, assembled by the proxy from each agent's partial
+// SchemaConsistency, so the wire format ships no parallel per-node message.
+type NodeObjectFP struct {
+	Kind    string
+	Name    string
+	Cache   uint64
+	Runtime uint64
+}
+
 // NodeObjects is one node's reported schema objects (its cache/runtime layers).
 type NodeObjects struct {
 	Node    string
-	Objects []*databasev1.ObjectSchemaState
+	Objects []*NodeObjectFP
 }
 
 // issueKey identifies one object's divergence on one node, which is the
@@ -96,9 +105,9 @@ func (c *Checker) Check(
 	objects := newObjectAccumulator(registryFingerprints)
 
 	for _, n := range nodes {
-		reported := make(map[ObjectKey]*databasev1.ObjectSchemaState, len(n.Objects))
+		reported := make(map[ObjectKey]*NodeObjectFP, len(n.Objects))
 		for _, o := range n.Objects {
-			reported[ObjectKey{Kind: o.GetKind(), Name: o.GetName()}] = o
+			reported[ObjectKey{Kind: o.Kind, Name: o.Name}] = o
 			objects.addNode(n.Node, o)
 		}
 		// registry has it -> compare against what this node reports.
@@ -169,15 +178,15 @@ func newObjectAccumulator(fps map[ObjectKey]uint64) *objectAccumulator {
 // addNode records one node's cache/runtime fingerprints for an object, creating
 // the entry (with a zero registry fingerprint) when the object is an orphan the
 // registry does not know.
-func (a *objectAccumulator) addNode(node string, o *databasev1.ObjectSchemaState) {
-	key := ObjectKey{Kind: o.GetKind(), Name: o.GetName()}
+func (a *objectAccumulator) addNode(node string, o *NodeObjectFP) {
+	key := ObjectKey{Kind: o.Kind, Name: o.Name}
 	oc, ok := a.m[key]
 	if !ok {
 		oc = &fodcv1.ObjectConsistency{Kind: key.Kind, Name: key.Name}
 		a.m[key] = oc
 	}
 	oc.NodeFingerprints = append(oc.NodeFingerprints, &fodcv1.NodeFingerprint{
-		Node: node, CacheFingerprint: o.GetCacheFingerprint(), RuntimeFingerprint: o.GetRuntimeFingerprint(),
+		Node: node, CacheFingerprint: o.Cache, RuntimeFingerprint: o.Runtime,
 	})
 }
 
@@ -208,14 +217,14 @@ func sortIssues(issues []*fodcv1.SchemaIssue) {
 // when it agrees across all layers. When both boundaries disagree only the
 // upstream one is reported: the downstream difference is a symptom of the same
 // root cause.
-func classify(registryFP uint64, o *databasev1.ObjectSchemaState) fodcv1.SchemaIssueType {
+func classify(registryFP uint64, o *NodeObjectFP) fodcv1.SchemaIssueType {
 	if o == nil {
 		return fodcv1.SchemaIssueType_SCHEMA_ISSUE_TYPE_MISSING_IN_CACHE
 	}
 	switch {
-	case o.GetCacheFingerprint() != registryFP:
+	case o.Cache != registryFP:
 		return fodcv1.SchemaIssueType_SCHEMA_ISSUE_TYPE_CACHE_STALE
-	case o.GetRuntimeFingerprint() != o.GetCacheFingerprint():
+	case o.Runtime != o.Cache:
 		return fodcv1.SchemaIssueType_SCHEMA_ISSUE_TYPE_RUNTIME_NOT_APPLIED
 	default:
 		return fodcv1.SchemaIssueType_SCHEMA_ISSUE_TYPE_UNSPECIFIED

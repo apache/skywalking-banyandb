@@ -442,7 +442,7 @@ func TestManager_MergeGroups_UnionsErrorsAcrossAgents(t *testing.T) {
 		},
 	}
 
-	merged := mgr.mergeGroups([]*agentLifecycleData{agentA, agentB, agentC})
+	merged := mgr.mergeGroups([]*agentLifecycleData{agentA, agentB, agentC}, nil, nil)
 	require.Len(t, merged, 1)
 	g := merged[0]
 	assert.Equal(t, groupName, g.Name)

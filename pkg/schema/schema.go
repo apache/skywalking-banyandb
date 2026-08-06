@@ -118,6 +118,7 @@ type Repository interface {
 	LoadAllResources(group string) []Resource
 	LoadAllIndexRules(group string) []*databasev1.IndexRule
 	IndexRules(resourceSchema ResourceSchema) []*databasev1.IndexRule
+	LatestModRevision() int64
 	Close()
 	StopCh() <-chan struct{}
 	DropGroup(groupName string) error

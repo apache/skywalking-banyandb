@@ -52,6 +52,10 @@ type mockMetadataRepo struct {
 	dataInfoErr      map[string]error
 	collectionErrors map[string][]string
 	slowGroups       map[string]time.Duration
+	snapshotObjects  []*databasev1.ObjectSnapshot
+	snapshotRules    []*databasev1.IndexRule
+	cachedGroups     []string
+	snapshotFound    bool
 	collectStarts    atomic.Int32
 	concurrentMax    atomic.Int32
 	concurrentNow    atomic.Int32
@@ -61,7 +65,7 @@ func (m *mockMetadataRepo) GroupRegistry() schema.Group {
 	return m.groupRegistry
 }
 
-func (m *mockMetadataRepo) CollectDataInfo(_ context.Context, group string, _ bool) ([]*databasev1.DataInfo, []string, error) {
+func (m *mockMetadataRepo) CollectDataInfo(_ context.Context, group string) ([]*databasev1.DataInfo, []string, error) {
 	m.collectStarts.Add(1)
 	current := m.concurrentNow.Add(1)
 	defer m.concurrentNow.Add(-1)
@@ -95,9 +99,15 @@ func (m *mockMetadataRepo) CollectDataInfo(_ context.Context, group string, _ bo
 // CollectLiaisonInfo defaults to no liaison schema; inspectGroup always asks, so
 // the base mock must answer rather than fall through to the nil embedded Repo.
 // consistencyRepo overrides this to serve controlled liaison state.
-func (m *mockMetadataRepo) CollectLiaisonInfo(_ context.Context, _ string, _ bool) ([]*databasev1.LiaisonInfo, error) {
+func (m *mockMetadataRepo) CollectLiaisonInfo(_ context.Context, _ string) ([]*databasev1.LiaisonInfo, error) {
 	return nil, nil
 }
+
+func (m *mockMetadataRepo) CollectGroupSchemaSnapshot(_ context.Context, _ string) ([]*databasev1.ObjectSnapshot, []*databasev1.IndexRule, bool, error) {
+	return m.snapshotObjects, m.snapshotRules, m.snapshotFound, nil
+}
+
+func (m *mockMetadataRepo) AllCachedGroups() []string { return m.cachedGroups }
 
 func TestCatalogToString(t *testing.T) {
 	tests := []struct {

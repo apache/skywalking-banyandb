@@ -91,13 +91,13 @@ func (s *liaison) VectorizedConfig() vstream.VectorizedConfig {
 	return s.option.vectorized
 }
 
-func (s *liaison) CollectDataInfo(_ context.Context, _ string, _ bool) (*databasev1.DataInfo, error) {
+func (s *liaison) CollectDataInfo(_ context.Context, _ string) (*databasev1.DataInfo, error) {
 	return nil, errors.New("collect data info is not supported on liaison node")
 }
 
 // CollectLiaisonInfo collects liaison node info. When includeSchemaState is set it
 // also attaches this node's schema consistency evidence.
-func (s *liaison) CollectLiaisonInfo(_ context.Context, group string, includeSchemaState bool) (*databasev1.LiaisonInfo, error) {
+func (s *liaison) CollectLiaisonInfo(_ context.Context, group string) (*databasev1.LiaisonInfo, error) {
 	info := &databasev1.LiaisonInfo{
 		PendingWriteDataCount:       0,
 		PendingSyncPartCount:        0,
@@ -116,13 +116,6 @@ func (s *liaison) CollectLiaisonInfo(_ context.Context, group string, includeSch
 	}
 	info.PendingSyncPartCount = pendingSyncPartCount
 	info.PendingSyncDataSizeBytes = pendingSyncDataSizeBytes
-	if includeSchemaState {
-		objects, err := s.schemaRepo.collectSchemaState(group)
-		if err != nil {
-			return nil, fmt.Errorf("failed to collect schema state: %w", err)
-		}
-		info.SchemaObjects = objects
-	}
 	return info, nil
 }
 
@@ -220,6 +213,7 @@ func (s *liaison) PreRun(ctx context.Context) error {
 
 	if metaSvc, ok := s.metadata.(metadata.Service); ok {
 		metaSvc.RegisterLiaisonCollector(commonv1.Catalog_CATALOG_STREAM, s)
+		metaSvc.RegisterSchemaSnapshotCollector(commonv1.Catalog_CATALOG_STREAM, &s.schemaRepo)
 		metaSvc.RegisterGroupDropHandler(commonv1.Catalog_CATALOG_STREAM, s)
 	}
 
@@ -268,14 +262,9 @@ func (l *collectLiaisonInfoListener) Rev(ctx context.Context, message bus.Messag
 	if !ok {
 		return bus.NewMessage(message.ID(), common.NewError("invalid data type for collect liaison info request"))
 	}
-	liaisonInfo, collectErr := l.s.CollectLiaisonInfo(ctx, req.Group, req.GetIncludeSchemaState())
+	liaisonInfo, collectErr := l.s.CollectLiaisonInfo(ctx, req.Group)
 	if collectErr != nil {
 		return bus.NewMessage(message.ID(), common.NewError("failed to collect liaison info: %v", collectErr))
-	}
-	if liaisonInfo != nil {
-		if node, nodeErr := l.s.schemaRepo.metadata.NodeRegistry().GetNode(ctx, l.s.schemaRepo.nodeID); nodeErr == nil {
-			liaisonInfo.Node = node
-		}
 	}
 	return bus.NewMessage(message.ID(), liaisonInfo)
 }

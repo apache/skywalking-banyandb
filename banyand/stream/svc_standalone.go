@@ -60,8 +60,8 @@ type Service interface {
 	run.Config
 	run.Service
 	Query
-	CollectDataInfo(context.Context, string, bool) (*databasev1.DataInfo, error)
-	CollectLiaisonInfo(context.Context, string, bool) (*databasev1.LiaisonInfo, error)
+	CollectDataInfo(context.Context, string) (*databasev1.DataInfo, error)
+	CollectLiaisonInfo(context.Context, string) (*databasev1.LiaisonInfo, error)
 	VectorizedConfig() vstream.VectorizedConfig
 }
 
@@ -276,6 +276,7 @@ func (s *standalone) PreRun(ctx context.Context) error {
 	if metaSvc, ok := s.metadata.(metadata.Service); ok {
 		metaSvc.RegisterDataCollector(commonv1.Catalog_CATALOG_STREAM, &s.schemaRepo)
 		metaSvc.RegisterLiaisonCollector(commonv1.Catalog_CATALOG_STREAM, s)
+		metaSvc.RegisterSchemaSnapshotCollector(commonv1.Catalog_CATALOG_STREAM, &s.schemaRepo)
 		metaSvc.RegisterGroupDropHandler(commonv1.Catalog_CATALOG_STREAM, s)
 	}
 	if s.pipeline == nil {
@@ -395,24 +396,17 @@ func (d *deleteStreamSegmentsListener) Rev(_ context.Context, message bus.Messag
 	return bus.NewMessage(bus.MessageID(time.Now().UnixNano()), deleted)
 }
 
-func (s *standalone) CollectDataInfo(ctx context.Context, group string, includeSchemaState bool) (*databasev1.DataInfo, error) {
-	return s.schemaRepo.CollectDataInfo(ctx, group, includeSchemaState)
+func (s *standalone) CollectDataInfo(ctx context.Context, group string) (*databasev1.DataInfo, error) {
+	return s.schemaRepo.CollectDataInfo(ctx, group)
 }
 
-func (s *standalone) CollectLiaisonInfo(_ context.Context, group string, includeSchemaState bool) (*databasev1.LiaisonInfo, error) {
+func (s *standalone) CollectLiaisonInfo(_ context.Context, group string) (*databasev1.LiaisonInfo, error) {
 	info := &databasev1.LiaisonInfo{}
 	pendingWriteCount, writeErr := s.schemaRepo.collectPendingWriteInfo(group)
 	if writeErr != nil {
 		return nil, fmt.Errorf("failed to collect pending write info: %w", writeErr)
 	}
 	info.PendingWriteDataCount = pendingWriteCount
-	if includeSchemaState {
-		objects, err := s.schemaRepo.collectSchemaState(group)
-		if err != nil {
-			return nil, fmt.Errorf("failed to collect schema state: %w", err)
-		}
-		info.SchemaObjects = objects
-	}
 	return info, nil
 }
 
@@ -426,7 +420,7 @@ func (l *collectDataInfoListener) Rev(ctx context.Context, message bus.Message) 
 	if !ok {
 		return bus.NewMessage(message.ID(), common.NewError("invalid data type for collect data info request"))
 	}
-	dataInfo, collectErr := l.s.schemaRepo.CollectDataInfo(ctx, req.Group, req.GetIncludeSchemaState())
+	dataInfo, collectErr := l.s.schemaRepo.CollectDataInfo(ctx, req.Group)
 	if collectErr != nil {
 		return bus.NewMessage(message.ID(), common.NewError("failed to collect data info: %v", collectErr))
 	}

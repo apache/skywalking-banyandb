@@ -979,7 +979,7 @@ func querySchemaChangeData(svcs *services, name, group string, begin, end time.T
 }
 
 func getTotalStreamPartCount(svcs *services, group string) (int64, error) {
-	dataInfo, err := svcs.stream.CollectDataInfo(context.TODO(), group, false)
+	dataInfo, err := svcs.stream.CollectDataInfo(context.TODO(), group)
 	if err != nil {
 		return 0, fmt.Errorf("collect stream data info: %w", err)
 	}

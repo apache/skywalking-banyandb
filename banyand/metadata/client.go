@@ -514,16 +514,28 @@ func (s *clientService) Subjects(ctx context.Context, indexRule *databasev1.Inde
 	return foundSubjects, subjectErr
 }
 
-func (s *clientService) CollectDataInfo(ctx context.Context, group string, includeSchemaState bool) ([]*databasev1.DataInfo, []string, error) {
-	return s.infoCollectorRegistry.CollectDataInfo(ctx, group, includeSchemaState)
+func (s *clientService) CollectDataInfo(ctx context.Context, group string) ([]*databasev1.DataInfo, []string, error) {
+	return s.infoCollectorRegistry.CollectDataInfo(ctx, group)
 }
 
-func (s *clientService) CollectLiaisonInfo(ctx context.Context, group string, includeSchemaState bool) ([]*databasev1.LiaisonInfo, error) {
-	return s.infoCollectorRegistry.CollectLiaisonInfo(ctx, group, includeSchemaState)
+func (s *clientService) CollectLiaisonInfo(ctx context.Context, group string) ([]*databasev1.LiaisonInfo, error) {
+	return s.infoCollectorRegistry.CollectLiaisonInfo(ctx, group)
 }
 
 func (s *clientService) DropGroup(ctx context.Context, catalog commonv1.Catalog, group string) error {
 	return s.infoCollectorRegistry.DropGroup(ctx, catalog, group)
+}
+
+func (s *clientService) CollectGroupSchemaSnapshot(ctx context.Context, group string) ([]*databasev1.ObjectSnapshot, []*databasev1.IndexRule, bool, error) {
+	return s.infoCollectorRegistry.CollectGroupSchemaSnapshot(ctx, group)
+}
+
+func (s *clientService) AllCachedGroups() []string {
+	return s.infoCollectorRegistry.AllCachedGroups()
+}
+
+func (s *clientService) RegisterSchemaSnapshotCollector(catalog commonv1.Catalog, collector schema.SchemaSnapshotCollector) {
+	s.infoCollectorRegistry.RegisterSchemaSnapshotCollector(catalog, collector)
 }
 
 func (s *clientService) RegisterDataCollector(catalog commonv1.Catalog, collector schema.DataInfoCollector) {

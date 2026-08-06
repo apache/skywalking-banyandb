@@ -414,14 +414,6 @@ func (sr *schemaRepo) loadQueue(groupName string) (*wqueue.Queue[*tsTable, optio
 	return db.(*wqueue.Queue[*tsTable, option]), nil
 }
 
-// collectSchemaState reports this node's schema consistency evidence for the
-// group. The shared collector does the work; only the runtime type assertion
-// below is catalog-specific.
-func (sr *schemaRepo) collectSchemaState(group string) ([]*databasev1.ObjectSchemaState, error) {
-	return resourceSchema.CollectSchemaState(sr.Repository, group,
-		schema.KindMeasure.String(), measureResourceView)
-}
-
 // measureResourceView reaches the runtime view of a measure. IndexListener exposes
 // only OnIndexUpdate, so the assertion must happen here -- the same pattern the
 // resource loader in this package uses.
@@ -438,9 +430,21 @@ func measureResourceView(res resourceSchema.Resource) (resourceSchema.ResourceVi
 	return view, true
 }
 
+// CollectSchemaSnapshot returns this node's cache/runtime schema bodies for the
+// group so the FODC agent can fingerprint them on receive.
+func (sr *schemaRepo) CollectSchemaSnapshot(group string) ([]*databasev1.ObjectSnapshot, []*databasev1.IndexRule, error) {
+	return resourceSchema.CollectSchemaSnapshot(sr.Repository, group,
+		schema.KindMeasure.String(), measureResourceView)
+}
+
+// CachedGroups lists the measure groups this node currently caches.
+func (sr *schemaRepo) CachedGroups() []string {
+	return resourceSchema.CachedGroupNames(sr.Repository)
+}
+
 // CollectDataInfo collects data info for a specific group. When includeSchemaState
 // is set it also attaches this node's schema consistency evidence.
-func (sr *schemaRepo) CollectDataInfo(ctx context.Context, group string, includeSchemaState bool) (*databasev1.DataInfo, error) {
+func (sr *schemaRepo) CollectDataInfo(ctx context.Context, group string) (*databasev1.DataInfo, error) {
 	if sr.nodeID == "" {
 		return nil, nil
 	}
@@ -501,13 +505,6 @@ func (sr *schemaRepo) CollectDataInfo(ctx context.Context, group string, include
 		Node:          node,
 		SegmentInfo:   segmentInfoList,
 		DataSizeBytes: totalDataSize,
-	}
-	if includeSchemaState {
-		objects, err := sr.collectSchemaState(group)
-		if err != nil {
-			return nil, err
-		}
-		dataInfo.SchemaObjects = objects
 	}
 	return dataInfo, nil
 }

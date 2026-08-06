@@ -121,7 +121,7 @@ func TestHasNonEmptyResources(t *testing.T) {
 			defer ctrl.Finish()
 
 			mockRepo := metadata.NewMockRepo(ctrl)
-			mockRepo.EXPECT().CollectDataInfo(gomock.Any(), "test-group", false).Return(tt.infos, nil, nil)
+			mockRepo.EXPECT().CollectDataInfo(gomock.Any(), "test-group").Return(tt.infos, nil, nil)
 
 			m := &groupDeletionTaskManager{schemaRegistry: mockRepo}
 			hasResources, checkErr := m.hasNonEmptyResources(context.Background(), "test-group")
@@ -140,7 +140,7 @@ func TestHasNonEmptyResources(t *testing.T) {
 		defer ctrl.Finish()
 
 		mockRepo := metadata.NewMockRepo(ctrl)
-		mockRepo.EXPECT().CollectDataInfo(gomock.Any(), "test-group", false).Return(
+		mockRepo.EXPECT().CollectDataInfo(gomock.Any(), "test-group").Return(
 			[]*databasev1.DataInfo{{DataSizeBytes: 0}}, // looks empty
 			[]string{"node error: cold-0 panic"},       // but cold-0 did not report
 			nil,
@@ -216,7 +216,7 @@ func TestDeletion(t *testing.T) {
 		}
 
 		mockRepo := metadata.NewMockRepo(ctrl)
-		mockRepo.EXPECT().CollectDataInfo(gomock.Any(), group, false).Return([]*databasev1.DataInfo{{DataSizeBytes: 512}}, nil, nil)
+		mockRepo.EXPECT().CollectDataInfo(gomock.Any(), group).Return([]*databasev1.DataInfo{{DataSizeBytes: 512}}, nil, nil)
 		mockRepo.EXPECT().IndexRuleBindingRegistry().Return(&stubIndexRuleBinding{})
 		mockRepo.EXPECT().IndexRuleRegistry().Return(&stubIndexRule{})
 

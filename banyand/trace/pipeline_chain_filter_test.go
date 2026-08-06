@@ -268,7 +268,7 @@ func writeFilterTraces(t *testing.T, svcs *filterTestServices, traceName, groupN
 }
 
 func collectDataInfoPartCount(svcs *filterTestServices, group string) int64 {
-	info, err := svcs.trace.CollectDataInfo(context.TODO(), group, false)
+	info, err := svcs.trace.CollectDataInfo(context.TODO(), group)
 	if err != nil || info == nil {
 		return 0
 	}

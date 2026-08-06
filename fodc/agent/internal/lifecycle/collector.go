@@ -107,7 +107,10 @@ func (c *Collector) Collect(ctx context.Context) (*fodcv1.LifecycleData, error) 
 	return data, nil
 }
 
-// collectGroups invokes InspectAll on the local liaison.
+// collectGroups invokes InspectAll on the local liaison, then attaches this
+// node's cache/runtime schema fingerprints to the returned groups. The registry
+// truth is NOT collected here: the proxy fetches it once from a schema-serving
+// node, so every agent only reports its own node's state.
 //
 // Return contract:
 //   - (nil, nil): no RPC was issued (grpcAddr empty, or InspectAll already known to be Unimplemented).
@@ -141,11 +144,23 @@ func (c *Collector) collectGroups(ctx context.Context) ([]*fodcv1.GroupLifecycle
 		}
 		return nil, fmt.Errorf("InspectAll on %s: %w", c.grpcAddr, err)
 	}
-	got := resp.GetGroups()
-	if got == nil {
-		return []*fodcv1.GroupLifecycleInfo{}, nil
+	groups := resp.GetGroups()
+	if groups == nil {
+		groups = []*fodcv1.GroupLifecycleInfo{}
 	}
-	return got, nil
+	states, schemaErr := c.collectNodeSchemaState(ctx)
+	if schemaErr != nil {
+		if c.log != nil {
+			c.log.Warn().Err(schemaErr).Msg("schema state collection failed; reporting lifecycle without it")
+		}
+		// Surface it to the user, not just the log: every group loses this node's
+		// schema evidence this round, so the proxy will report UNKNOWN -- each group
+		// should carry the reason.
+		for _, g := range groups {
+			g.Errors = append(g.Errors, "node schema state: "+schemaErr.Error())
+		}
+	}
+	return applySchemaStates(groups, states), nil
 }
 
 func (c *Collector) readReportFiles() []*fodcv1.LifecycleReport {

@@ -1110,7 +1110,7 @@ func queryMeasureWithDeletedFieldProjection(svcs *services, measureName string, 
 }
 
 func getTotalMeasurePartCount(svcs *services, group string) (int64, error) {
-	dataInfo, err := svcs.measure.CollectDataInfo(context.TODO(), group, false)
+	dataInfo, err := svcs.measure.CollectDataInfo(context.TODO(), group)
 	if err != nil {
 		return 0, fmt.Errorf("collect measure data info: %w", err)
 	}
@@ -1127,7 +1127,7 @@ func getTotalMeasurePartCount(svcs *services, group string) (int64, error) {
 }
 
 func getMeasureFilePartCount(svcs *services, group string) (int64, error) {
-	dataInfo, err := svcs.measure.CollectDataInfo(context.TODO(), group, false)
+	dataInfo, err := svcs.measure.CollectDataInfo(context.TODO(), group)
 	if err != nil {
 		return 0, fmt.Errorf("collect measure data info: %w", err)
 	}

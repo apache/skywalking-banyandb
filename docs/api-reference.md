@@ -265,7 +265,8 @@
     - [MeasureRegistryServiceListResponse](#banyandb-database-v1-MeasureRegistryServiceListResponse)
     - [MeasureRegistryServiceUpdateRequest](#banyandb-database-v1-MeasureRegistryServiceUpdateRequest)
     - [MeasureRegistryServiceUpdateResponse](#banyandb-database-v1-MeasureRegistryServiceUpdateResponse)
-    - [ObjectSchemaState](#banyandb-database-v1-ObjectSchemaState)
+    - [NodeSchemaStateRequest](#banyandb-database-v1-NodeSchemaStateRequest)
+    - [ObjectSnapshot](#banyandb-database-v1-ObjectSnapshot)
     - [PropertyRegistryServiceCreateRequest](#banyandb-database-v1-PropertyRegistryServiceCreateRequest)
     - [PropertyRegistryServiceCreateResponse](#banyandb-database-v1-PropertyRegistryServiceCreateResponse)
     - [PropertyRegistryServiceDeleteRequest](#banyandb-database-v1-PropertyRegistryServiceDeleteRequest)
@@ -280,7 +281,11 @@
     - [PropertyRegistryServiceUpdateResponse](#banyandb-database-v1-PropertyRegistryServiceUpdateResponse)
     - [RouteTable](#banyandb-database-v1-RouteTable)
     - [SIDXInfo](#banyandb-database-v1-SIDXInfo)
+    - [SchemaBody](#banyandb-database-v1-SchemaBody)
     - [SchemaInfo](#banyandb-database-v1-SchemaInfo)
+    - [SchemaRuleTable](#banyandb-database-v1-SchemaRuleTable)
+    - [SchemaSnapshotEvent](#banyandb-database-v1-SchemaSnapshotEvent)
+    - [SchemaSnapshotTrailer](#banyandb-database-v1-SchemaSnapshotTrailer)
     - [SegmentInfo](#banyandb-database-v1-SegmentInfo)
     - [SeriesIndexInfo](#banyandb-database-v1-SeriesIndexInfo)
     - [ShardInfo](#banyandb-database-v1-ShardInfo)
@@ -333,6 +338,7 @@
     - [IndexRuleRegistryService](#banyandb-database-v1-IndexRuleRegistryService)
     - [MeasureRegistryService](#banyandb-database-v1-MeasureRegistryService)
     - [NodeQueryService](#banyandb-database-v1-NodeQueryService)
+    - [NodeSchemaStateService](#banyandb-database-v1-NodeSchemaStateService)
     - [PropertyRegistryService](#banyandb-database-v1-PropertyRegistryService)
     - [SnapshotService](#banyandb-database-v1-SnapshotService)
     - [StreamRegistryService](#banyandb-database-v1-StreamRegistryService)
@@ -3357,7 +3363,6 @@ DataInfo contains data storage information for a specific node.
 | node | [Node](#banyandb-database-v1-Node) |  | node is the node that stores this data. |
 | segment_info | [SegmentInfo](#banyandb-database-v1-SegmentInfo) | repeated | segment_info contains information about each segment on this node. |
 | data_size_bytes | [int64](#int64) |  | data_size_bytes is the total size of data on this node in bytes. |
-| schema_objects | [ObjectSchemaState](#banyandb-database-v1-ObjectSchemaState) | repeated | schema_objects carries this node&#39;s per-object cache/runtime fingerprints. |
 
 
 
@@ -3618,7 +3623,6 @@ GroupRegistryServiceInspectRequest is the request for inspecting a group&#39;s d
 | Field | Type | Label | Description |
 | ----- | ---- | ----- | ----------- |
 | group | [string](#string) |  | group is the name of the group to inspect. |
-| include_schema_state | [bool](#bool) |  | include_schema_state asks each node to attach its per-object schema fingerprints (ObjectSchemaState) to the response. It is honored wherever this request is handled: the Inspect RPC passes it through, and the FODC schema consistency check sets it. It defaults to false so a caller that does not need the fingerprints (the common case, and every group delete) makes nodes skip the fingerprinting work and the extra payload. |
 
 
 
@@ -4123,8 +4127,6 @@ LiaisonInfo contains information about pending operations in liaison.
 | pending_sync_data_size_bytes | [int64](#int64) |  | pending_sync_data_size_bytes is the size of data waiting to be synchronized in bytes. |
 | pending_handoff_part_count | [int64](#int64) |  | pending_handoff_part_count is the number of parts waiting for handoff. |
 | pending_handoff_data_size_bytes | [int64](#int64) |  | pending_handoff_data_size_bytes is the size of data waiting for handoff in bytes. |
-| node | [Node](#banyandb-database-v1-Node) |  | node identifies which liaison this info came from. |
-| schema_objects | [ObjectSchemaState](#banyandb-database-v1-ObjectSchemaState) | repeated | schema_objects carries this node&#39;s per-object cache/runtime fingerprints. |
 
 
 
@@ -4314,20 +4316,41 @@ LiaisonInfo contains information about pending operations in liaison.
 
 
 
-<a name="banyandb-database-v1-ObjectSchemaState"></a>
+<a name="banyandb-database-v1-NodeSchemaStateRequest"></a>
 
-### ObjectSchemaState
-ObjectSchemaState is one schema object&#39;s two on-node fingerprints. The registry
-truth is not here -- it is a global value fetched once (see the schema query
-step) and reported in SchemaConsistency.
+### NodeSchemaStateRequest
+NodeSchemaStateRequest asks one node for its schema snapshot. An empty group
+requests every group the node caches (each object and trailer is tagged with
+its group), so a data-node agent -- which has no group roster of its own --
+can collect its whole node in one call.
 
 
 | Field | Type | Label | Description |
 | ----- | ---- | ----- | ----------- |
-| kind | [string](#string) |  | kind is schema.Kind.String(): &#34;group&#34;/&#34;stream&#34;/&#34;measure&#34;/&#34;trace&#34;/&#34;indexRule&#34;. |
+| group | [string](#string) |  |  |
+
+
+
+
+
+
+<a name="banyandb-database-v1-ObjectSnapshot"></a>
+
+### ObjectSnapshot
+ObjectSnapshot carries a schema object as two layers so the agent can compute
+both fingerprints: cache is what the node stored, runtime is what it has
+materialized and is actually serving. runtime is omitted when it equals cache
+(group and indexRule have no derived structure) or when nothing is
+materialized yet -- the agent then takes the runtime fingerprint from cache.
+
+
+| Field | Type | Label | Description |
+| ----- | ---- | ----- | ----------- |
+| group | [string](#string) |  | group the object belongs to. Always set, so an all-groups stream (empty request group) is self-describing. |
+| kind | [string](#string) |  |  |
 | name | [string](#string) |  |  |
-| cache_fingerprint | [uint64](#uint64) |  | cache_fingerprint is computed from the node&#39;s cached schema plus the rule set derived from its cached bindings. 0 means the object is not cached. |
-| runtime_fingerprint | [uint64](#uint64) |  | runtime_fingerprint is computed from the materialized object and the index rule snapshot it is actually serving. 0 means not materialized. group and indexRule have no derived structure, so this equals cache_fingerprint. |
+| cache | [SchemaBody](#banyandb-database-v1-SchemaBody) |  |  |
+| runtime | [SchemaBody](#banyandb-database-v1-SchemaBody) |  |  |
 
 
 
@@ -4552,6 +4575,29 @@ SIDXInfo contains information about sidx.
 
 
 
+<a name="banyandb-database-v1-SchemaBody"></a>
+
+### SchemaBody
+SchemaBody is a schema object&#39;s proto body plus the index rules it is hashed
+against. payload holds the object itself as an Any: FODC never discriminates
+the catalog type -- it only needs GetMetadata() (via interface, to clear the
+volatile identity fields) and a deterministic marshal -- so a single Any
+replaces a per-type oneof and keeps the hash algorithm out of the data path.
+bound_index_rule_refs indexes into the group&#39;s SchemaRuleTable, naming the
+derived rule set the agent hashes with the body without shipping each rule
+body per resource.
+
+
+| Field | Type | Label | Description |
+| ----- | ---- | ----- | ----------- |
+| payload | [google.protobuf.Any](#google-protobuf-Any) |  |  |
+| bound_index_rule_refs | [uint32](#uint32) | repeated |  |
+
+
+
+
+
+
 <a name="banyandb-database-v1-SchemaInfo"></a>
 
 ### SchemaInfo
@@ -4567,6 +4613,74 @@ SchemaInfo contains information about all schema objects in a group.
 | index_rules | [string](#string) | repeated | index_rules is the list of index rule names in the group. |
 | index_rule_bindings | [string](#string) | repeated | index_rule_bindings is the list of index rule binding names in the group. |
 | topn_aggregations | [string](#string) | repeated | topn_aggregations is the list of TopN aggregation names in the group. |
+
+
+
+
+
+
+<a name="banyandb-database-v1-SchemaRuleTable"></a>
+
+### SchemaRuleTable
+SchemaRuleTable carries a slice of a group&#39;s content-deduplicated index-rule
+bodies. Every SchemaBody.bound_index_rule_refs in the group indexes into the
+full table, so a rule bound to many resources -- and folded into both the
+cache and runtime layers -- travels the wire once instead of once per
+(resource, layer). A runtime-stale rule body differs in content from its cache
+counterpart, so the two occupy distinct entries and the cache-vs-runtime
+fingerprint divergence stays observable.
+
+A group with hundreds of rules would overflow a single gRPC message, so the
+table is split across multiple SchemaRuleTable events (all preceding the
+group&#39;s object events); the agent concatenates them in arrival order, which
+preserves every ref&#39;s index.
+
+
+| Field | Type | Label | Description |
+| ----- | ---- | ----- | ----------- |
+| group | [string](#string) |  |  |
+| rules | [IndexRule](#banyandb-database-v1-IndexRule) | repeated |  |
+
+
+
+
+
+
+<a name="banyandb-database-v1-SchemaSnapshotEvent"></a>
+
+### SchemaSnapshotEvent
+SchemaSnapshotEvent is the streaming element. Wire-extensible via the oneof so
+new event kinds do not break older agents. Per group the server sends one
+SchemaRuleTable, then that group&#39;s ObjectSnapshot events, then one
+SchemaSnapshotTrailer (clean termination) or a non-EOF status (transport
+error).
+
+
+| Field | Type | Label | Description |
+| ----- | ---- | ----- | ----------- |
+| object | [ObjectSnapshot](#banyandb-database-v1-ObjectSnapshot) |  |  |
+| trailer | [SchemaSnapshotTrailer](#banyandb-database-v1-SchemaSnapshotTrailer) |  |  |
+| rule_table | [SchemaRuleTable](#banyandb-database-v1-SchemaRuleTable) |  |  |
+
+
+
+
+
+
+<a name="banyandb-database-v1-SchemaSnapshotTrailer"></a>
+
+### SchemaSnapshotTrailer
+SchemaSnapshotTrailer terminates one group&#39;s objects. A single-group stream
+sends one trailer before EOF; an all-groups stream sends one trailer per group
+(each following that group&#39;s object events), then EOF.
+
+
+| Field | Type | Label | Description |
+| ----- | ---- | ----- | ----------- |
+| group | [string](#string) |  | group these objects belong to. |
+| node | [string](#string) |  | node echoes the responding node id so the agent can detect a misrouted response in a mixed-version cluster. |
+| object_count | [uint32](#uint32) |  | object_count is the number of object events sent for this group; the agent verifies it against what it received and retries once on a mismatch. |
+| errors | [string](#string) | repeated | errors are failures observed collecting this group. They surface on GroupLifecycleInfo.errors but do not fail the stream. |
 
 
 
@@ -5344,6 +5458,21 @@ Phase represents the current phase of the deletion task.
 | GetCurrentNode | [GetCurrentNodeRequest](#banyandb-database-v1-GetCurrentNodeRequest) | [GetCurrentNodeResponse](#banyandb-database-v1-GetCurrentNodeResponse) |  |
 
 
+<a name="banyandb-database-v1-NodeSchemaStateService"></a>
+
+### NodeSchemaStateService
+NodeSchemaStateService streams a node&#39;s cached and materialized schema bodies
+for one group. FODC&#39;s sidecar agent fingerprints them on receive; the data
+path itself ships no fingerprints. Every data node and liaison that owns a
+group cache implements it.
+
+| Method Name | Request Type | Response Type | Description |
+| ----------- | ------------ | ------------- | ------------|
+| StreamGroupSchemaState | [NodeSchemaStateRequest](#banyandb-database-v1-NodeSchemaStateRequest) | [SchemaSnapshotEvent](#banyandb-database-v1-SchemaSnapshotEvent) stream | StreamGroupSchemaState returns this node&#39;s snapshot for one group as a sequence of ObjectSnapshot events terminated by one SchemaSnapshotTrailer. The server snapshots its cache under a read lock, then streams from that consistent view without holding the lock for the network round-trip; the trailer&#39;s object_count lets the agent detect a torn read.
+
+An empty stream (zero object events, just the trailer) is a normal termination: the agent reads it as &#34;this node does not cache this group&#34;, never as an error. |
+
+
 <a name="banyandb-database-v1-PropertyRegistryService"></a>
 
 ### PropertyRegistryService
@@ -5584,7 +5713,7 @@ Phase represents the current phase of the deletion task.
 | Field | Type | Label | Description |
 | ----- | ---- | ----- | ----------- |
 | reports | [LifecycleReport](#banyandb-fodc-v1-LifecycleReport) | repeated |  |
-| groups | [GroupLifecycleInfo](#banyandb-fodc-v1-GroupLifecycleInfo) | repeated |  |
+| groups | [GroupLifecycleInfo](#banyandb-fodc-v1-GroupLifecycleInfo) | repeated | groups carries each group&#39;s data info and its schema_consistency. Each agent fills schema_consistency with its local node&#39;s fingerprints (and, from the agent co-located with a schema-serving node, the registry truth); the proxy unions these partials across agents and runs the checker to produce the final verdict. The data path itself ships no fingerprints. |
 
 
 

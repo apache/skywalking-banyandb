@@ -238,6 +238,8 @@ func (f *fakeRepository) LoadGroup(name string) (resourceSchema.Group, bool) {
 	return g, ok
 }
 func (f *fakeRepository) LoadAllGroups() []resourceSchema.Group { return nil }
+
+func (f *fakeRepository) LatestModRevision() int64 { return 0 }
 func (f *fakeRepository) LoadResource(_ *commonv1.Metadata) (resourceSchema.Resource, bool) {
 	return nil, false
 }
