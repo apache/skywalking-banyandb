@@ -328,10 +328,11 @@ func releaseMemPart(mp *memPart) {
 var memPartPool = pool.Register[*memPart]("trace-memPart")
 
 type partWrapper struct {
-	mp        *memPart
-	p         *part
-	ref       int32
-	removable atomic.Bool
+	mp         *memPart
+	p          *part
+	mergeDepth uint32
+	ref        int32
+	removable  atomic.Bool
 }
 
 func newPartWrapper(mp *memPart, p *part) *partWrapper {

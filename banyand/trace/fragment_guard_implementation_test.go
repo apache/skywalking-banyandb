@@ -109,7 +109,7 @@ func TestAssembleStagedTraceBlockAggregatesMetadataOnlyBlocks(t *testing.T) {
 		{
 			isRaw:   true,
 			traceID: "trace-a",
-			rawBM: blockMetadata{
+			rawBM: &blockMetadata{
 				traceID:    "trace-a",
 				timestamps: timestampsMetadata{min: 200, max: 210, known: true},
 			},
@@ -117,14 +117,15 @@ func TestAssembleStagedTraceBlockAggregatesMetadataOnlyBlocks(t *testing.T) {
 		{
 			isRaw:   true,
 			traceID: "trace-a",
-			rawBM: blockMetadata{
+			rawBM: &blockMetadata{
 				traceID:    "trace-a",
 				timestamps: timestampsMetadata{min: 100, max: 110, known: true},
 			},
 		},
 	}
 
-	assembled, complete := assembleStagedTraceBlock("trace-a", staged, sdk.Projection{})
+	group := stagedTraceGroup{traceID: "trace-a", start: 0, end: 2, minTS: 100, maxTS: 210, validMetadata: true}
+	assembled, complete := assembleStagedTraceBlock(group, staged, sdk.Projection{})
 
 	require.True(t, complete)
 	assert.Equal(t, "trace-a", assembled.TraceID)
@@ -175,7 +176,8 @@ func TestAssembleStagedTraceBlockAggregatesEveryProjectedRow(t *testing.T) {
 		{traceID: "trace-a", slowBlock: second},
 	}
 
-	assembled, complete := assembleStagedTraceBlock("trace-a", staged, sdk.Projection{
+	group := stagedTraceGroup{traceID: "trace-a", start: 0, end: 2, minTS: 100, maxTS: 210, validMetadata: true}
+	assembled, complete := assembleStagedTraceBlock(group, staged, sdk.Projection{
 		Tags:    []string{"service", "status"},
 		SpanIDs: true,
 		Spans:   true,
@@ -197,13 +199,14 @@ func TestAssembleStagedTraceBlockFailsOpenForUnknownBounds(t *testing.T) {
 	staged := []stagedTrace{{
 		isRaw:   true,
 		traceID: "trace-a",
-		rawBM: blockMetadata{
+		rawBM: &blockMetadata{
 			traceID:    "trace-a",
 			timestamps: timestampsMetadata{min: 100, max: 110},
 		},
 	}}
 
-	_, complete := assembleStagedTraceBlock("trace-a", staged, sdk.Projection{})
+	group := stagedTraceGroup{traceID: "trace-a", start: 0, end: 1, minTS: 100, maxTS: 110}
+	_, complete := assembleStagedTraceBlock(group, staged, sdk.Projection{})
 
 	assert.False(t, complete)
 }

@@ -75,6 +75,15 @@ func TestEvaluateChain_Conjunction(t *testing.T) {
 	require.Equal(t, []bool{true, false, false}, verdict.Keep)
 }
 
+func TestEvaluateChainIntoReusesCallerMask(t *testing.T) {
+	batch := batchOf("a", "b", "c")
+	mask := make([]bool, len(batch.Traces))
+	verdict := sdk.EvaluateChainInto([]sdk.Sampler{&chainFakeSampler{dropIDs: map[string]struct{}{"b": {}}}}, batch, mask, nil)
+
+	require.Equal(t, []bool{true, false, true}, verdict.Keep)
+	require.Equal(t, &mask[0], &verdict.Keep[0])
+}
+
 func TestEvaluateChain_NilSamplerSkipped(t *testing.T) {
 	batch := batchOf("a", "b")
 	verdict := sdk.EvaluateChain([]sdk.Sampler{nil, &chainFakeSampler{}}, batch, nil)

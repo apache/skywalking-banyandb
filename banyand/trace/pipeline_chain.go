@@ -19,7 +19,6 @@ package trace
 
 import (
 	"fmt"
-	"math"
 	"sync"
 	"time"
 
@@ -87,6 +86,19 @@ func newMergeChain(group, schema string, samplers []sdk.Sampler, circuitBreakN i
 // non-nil error describing the reason (the verdict is then retain-all). The
 // result channel is buffered so an abandoned (timed-out) goroutine never blocks.
 func (mc *mergeChain) Execute(batch *sdk.TraceBatch, timeout time.Duration) (sdk.Verdict, error) {
+	return mc.executeObserved(batch, timeout, nil)
+}
+
+func (mc *mergeChain) executeObserved(batch *sdk.TraceBatch, timeout time.Duration,
+	observation *mergeEvaluationObservation,
+) (sdk.Verdict, error) {
+	verdict, _, executeErr := mc.executeObservedInto(batch, timeout, observation, nil)
+	return verdict, executeErr
+}
+
+func (mc *mergeChain) executeObservedInto(batch *sdk.TraceBatch, timeout time.Duration,
+	observation *mergeEvaluationObservation, decisionMask []bool,
+) (sdk.Verdict, bool, error) {
 	retainAll := func() sdk.Verdict {
 		keep := make([]bool, len(batch.Traces))
 		for i := range keep {
@@ -98,13 +110,13 @@ func (mc *mergeChain) Execute(batch *sdk.TraceBatch, timeout time.Duration) (sdk
 	mc.mu.Lock()
 	if mc.circuitOpen {
 		mc.mu.Unlock()
-		return retainAll(), nil
+		return retainAll(), true, nil
 	}
 	mc.mu.Unlock()
 
 	resultCh := make(chan sdk.Verdict, 1)
 	go func() {
-		resultCh <- mc.runChain(batch)
+		resultCh <- mc.runChain(batch, observation, decisionMask)
 	}()
 
 	select {
@@ -112,7 +124,7 @@ func (mc *mergeChain) Execute(batch *sdk.TraceBatch, timeout time.Duration) (sdk
 		mc.mu.Lock()
 		mc.consecutiveTOs = 0
 		mc.mu.Unlock()
-		return verdict, nil
+		return verdict, true, nil
 	case <-time.After(timeout):
 		mc.mu.Lock()
 		mc.consecutiveTOs++
@@ -123,9 +135,9 @@ func (mc *mergeChain) Execute(batch *sdk.TraceBatch, timeout time.Duration) (sdk
 		}
 		mc.mu.Unlock()
 		if opened {
-			return retainAll(), fmt.Errorf("circuit_open")
+			return retainAll(), false, fmt.Errorf("circuit_open")
 		}
-		return retainAll(), fmt.Errorf("timeout")
+		return retainAll(), false, fmt.Errorf("timeout")
 	}
 }
 
@@ -134,7 +146,7 @@ func (mc *mergeChain) Execute(batch *sdk.TraceBatch, timeout time.Duration) (sdk
 // offline sdktest.RunChain harness uses — passing an onBypass observer that
 // reproduces the pre-refactor WARN logs (same fields, same messages) so this
 // change is behavior-preserving.
-func (mc *mergeChain) runChain(batch *sdk.TraceBatch) sdk.Verdict {
+func (mc *mergeChain) runChain(batch *sdk.TraceBatch, observation *mergeEvaluationObservation, decisionMask []bool) sdk.Verdict {
 	onBypass := func(_ int, info sdk.BypassInfo) {
 		if info.Reason == sdk.BypassReasonLengthMismatch {
 			chainLog.Warn().Int("got", info.Got).Int("want", info.Want).
@@ -143,7 +155,31 @@ func (mc *mergeChain) runChain(batch *sdk.TraceBatch) sdk.Verdict {
 		}
 		chainLog.Warn().Err(info.Err).Str("group", mc.group).Str("schema", mc.schema).Msg("sampler link failed; bypassing (retain)")
 	}
-	return sdk.EvaluateChain(mc.samplers, batch, onBypass)
+	if observation == nil {
+		return sdk.EvaluateChainInto(mc.samplers, batch, decisionMask, onBypass)
+	}
+	observedSamplers := make([]sdk.Sampler, len(mc.samplers))
+	evaluatedOnce := &sync.Once{}
+	for samplerIdx, sampler := range mc.samplers {
+		if sampler != nil {
+			observedSamplers[samplerIdx] = observedMergeSampler{Sampler: sampler, observation: observation, evaluatedOnce: evaluatedOnce}
+		}
+	}
+	return sdk.EvaluateChainInto(observedSamplers, batch, decisionMask, onBypass)
+}
+
+type observedMergeSampler struct {
+	sdk.Sampler
+	observation   *mergeEvaluationObservation
+	evaluatedOnce *sync.Once
+}
+
+func (oms observedMergeSampler) Decide(batch *sdk.TraceBatch) (sdk.Verdict, error) {
+	oms.observation.pluginCalls.Add(1)
+	oms.evaluatedOnce.Do(func() {
+		oms.observation.evaluated.Add(uint64(len(batch.Traces)))
+	})
+	return oms.Sampler.Decide(batch)
 }
 
 // assembleTraceBlock builds a COPY-backed sdk.TraceBlock from a loaded merge
@@ -200,65 +236,44 @@ func projectionRequiresSlowPath(projection sdk.Projection) bool {
 	return len(projection.Tags) > 0 || projection.SpanIDs || projection.Spans
 }
 
-func assembleStagedTraceBlock(traceID string, staged []stagedTrace, projection sdk.Projection) (sdk.TraceBlock, bool) {
-	if traceID == "" || len(staged) == 0 {
+func assembleStagedTraceBlock(group stagedTraceGroup, staged []stagedTrace, projection sdk.Projection) (sdk.TraceBlock, bool) {
+	if group.traceID == "" || len(staged) == 0 || !group.validMetadata || group.minTS > group.maxTS {
 		return sdk.TraceBlock{}, false
 	}
-	minTimestamp := int64(math.MaxInt64)
-	maxTimestamp := int64(math.MinInt64)
 	requiresSlowPath := projectionRequiresSlowPath(projection)
-	var aggregate *blockPointer
-	if requiresSlowPath {
-		aggregate = generateBlockPointer()
-		defer releaseBlockPointer(aggregate)
-		aggregate.bm.traceID = traceID
+	if !requiresSlowPath {
+		return sdk.TraceBlock{TraceID: group.traceID, MinTS: group.minTS, MaxTS: group.maxTS}, true
 	}
-	matched := false
+	aggregate := generateBlockPointer()
+	defer releaseBlockPointer(aggregate)
+	aggregate.bm.traceID = group.traceID
 	for stagedIdx := range staged {
 		stagedBlock := &staged[stagedIdx]
-		if stagedBlock.traceID != traceID {
+		if stagedBlock.traceID != group.traceID {
 			return sdk.TraceBlock{}, false
 		}
-		matched = true
 		var metadata *blockMetadata
 		switch {
 		case stagedBlock.isRaw:
-			if requiresSlowPath {
-				return sdk.TraceBlock{}, false
-			}
-			metadata = &stagedBlock.rawBM
+			return sdk.TraceBlock{}, false
 		case stagedBlock.slowBlock != nil:
 			metadata = &stagedBlock.slowBlock.bm
-			if requiresSlowPath {
-				aggregate.appendAll(stagedBlock.slowBlock)
-			}
+			aggregate.appendAll(stagedBlock.slowBlock)
 		default:
 			return sdk.TraceBlock{}, false
 		}
-		if metadata.traceID != traceID || !metadata.timestamps.known ||
+		if metadata.traceID != group.traceID || !metadata.timestamps.known ||
 			metadata.timestamps.min > metadata.timestamps.max {
 			return sdk.TraceBlock{}, false
 		}
-		minTimestamp = min(minTimestamp, metadata.timestamps.min)
-		maxTimestamp = max(maxTimestamp, metadata.timestamps.max)
-	}
-	if !matched {
-		return sdk.TraceBlock{}, false
-	}
-	if !requiresSlowPath {
-		return sdk.TraceBlock{
-			TraceID: traceID,
-			MinTS:   minTimestamp,
-			MaxTS:   maxTimestamp,
-		}, true
 	}
 	if aggregate.Len() == 0 || aggregate.timestampBoundsUnknown {
 		return sdk.TraceBlock{}, false
 	}
 	aggregate.bm.timestamps = timestampsMetadata{
-		min:   minTimestamp,
-		max:   maxTimestamp,
+		min:   group.minTS,
+		max:   group.maxTS,
 		known: true,
 	}
-	return assembleTraceBlock(traceID, aggregate, projection), true
+	return assembleTraceBlock(group.traceID, aggregate, projection), true
 }
