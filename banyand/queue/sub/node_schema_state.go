@@ -38,8 +38,8 @@ const ruleTableChunkSize = 50
 // collection errors surface on the trailer rather than failing the stream so a
 // partial snapshot is still useful.
 func (s *server) StreamGroupSchemaState(
-	req *databasev1.NodeSchemaStateRequest,
-	stream grpclib.ServerStreamingServer[databasev1.SchemaSnapshotEvent],
+	req *databasev1.StreamGroupSchemaStateRequest,
+	stream grpclib.ServerStreamingServer[databasev1.StreamGroupSchemaStateResponse],
 ) error {
 	if s.metadataRepo == nil {
 		return status.Error(codes.Unavailable, "metadata repository not available")
@@ -65,8 +65,8 @@ func (s *server) StreamGroupSchemaState(
 				if end > len(ruleTable) {
 					end = len(ruleTable)
 				}
-				if sendErr := stream.Send(&databasev1.SchemaSnapshotEvent{
-					Event: &databasev1.SchemaSnapshotEvent_RuleTable{
+				if sendErr := stream.Send(&databasev1.StreamGroupSchemaStateResponse{
+					Event: &databasev1.StreamGroupSchemaStateResponse_RuleTable{
 						RuleTable: &databasev1.SchemaRuleTable{Group: group, Rules: ruleTable[start:end]},
 					},
 				}); sendErr != nil {
@@ -74,16 +74,16 @@ func (s *server) StreamGroupSchemaState(
 				}
 			}
 			for _, obj := range objects {
-				if sendErr := stream.Send(&databasev1.SchemaSnapshotEvent{
-					Event: &databasev1.SchemaSnapshotEvent_Object{Object: obj},
+				if sendErr := stream.Send(&databasev1.StreamGroupSchemaStateResponse{
+					Event: &databasev1.StreamGroupSchemaStateResponse_Object{Object: obj},
 				}); sendErr != nil {
 					return sendErr
 				}
 			}
 			trailer.ObjectCount = uint32(len(objects))
 		}
-		if sendErr := stream.Send(&databasev1.SchemaSnapshotEvent{
-			Event: &databasev1.SchemaSnapshotEvent_Trailer{Trailer: trailer},
+		if sendErr := stream.Send(&databasev1.StreamGroupSchemaStateResponse{
+			Event: &databasev1.StreamGroupSchemaStateResponse_Trailer{Trailer: trailer},
 		}); sendErr != nil {
 			return sendErr
 		}

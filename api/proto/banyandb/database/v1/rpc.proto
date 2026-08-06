@@ -540,23 +540,23 @@ service NodeSchemaStateService {
   // An empty stream (zero object events, just the trailer) is a normal
   // termination: the agent reads it as "this node does not cache this group",
   // never as an error.
-  rpc StreamGroupSchemaState(NodeSchemaStateRequest) returns (stream SchemaSnapshotEvent);
+  rpc StreamGroupSchemaState(StreamGroupSchemaStateRequest) returns (stream StreamGroupSchemaStateResponse);
 }
 
-// NodeSchemaStateRequest asks one node for its schema snapshot. An empty group
+// StreamGroupSchemaStateRequest asks one node for its schema snapshot. An empty group
 // requests every group the node caches (each object and trailer is tagged with
 // its group), so a data-node agent -- which has no group roster of its own --
 // can collect its whole node in one call.
-message NodeSchemaStateRequest {
+message StreamGroupSchemaStateRequest {
   string group = 1;
 }
 
-// SchemaSnapshotEvent is the streaming element. Wire-extensible via the oneof so
+// StreamGroupSchemaStateResponse is the streaming element. Wire-extensible via the oneof so
 // new event kinds do not break older agents. Per group the server sends one
 // SchemaRuleTable, then that group's ObjectSnapshot events, then one
 // SchemaSnapshotTrailer (clean termination) or a non-EOF status (transport
 // error).
-message SchemaSnapshotEvent {
+message StreamGroupSchemaStateResponse {
   oneof event {
     ObjectSnapshot object = 1;
     SchemaSnapshotTrailer trailer = 2;

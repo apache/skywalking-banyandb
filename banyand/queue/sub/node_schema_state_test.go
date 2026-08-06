@@ -36,10 +36,10 @@ import (
 type fakeSchemaStream struct {
 	grpclib.ServerStream
 	ctx    context.Context
-	events []*databasev1.SchemaSnapshotEvent
+	events []*databasev1.StreamGroupSchemaStateResponse
 }
 
-func (f *fakeSchemaStream) Send(e *databasev1.SchemaSnapshotEvent) error {
+func (f *fakeSchemaStream) Send(e *databasev1.StreamGroupSchemaStateResponse) error {
 	f.events = append(f.events, e)
 	return nil
 }
@@ -65,7 +65,7 @@ func TestStreamGroupSchemaState_SplitsRuleTableAndPreservesOrder(t *testing.T) {
 	s := &server{metadataRepo: repo, curNode: &databasev1.Node{Metadata: &commonv1.Metadata{Name: "node-1"}}}
 	stream := &fakeSchemaStream{ctx: context.Background()}
 
-	require.NoError(t, s.StreamGroupSchemaState(&databasev1.NodeSchemaStateRequest{}, stream))
+	require.NoError(t, s.StreamGroupSchemaState(&databasev1.StreamGroupSchemaStateRequest{}, stream))
 
 	var tableEvents, objectEvents, trailers, lastTableIdx, firstObjectIdx int
 	firstObjectIdx = -1
@@ -73,17 +73,17 @@ func TestStreamGroupSchemaState_SplitsRuleTableAndPreservesOrder(t *testing.T) {
 	var trailer *databasev1.SchemaSnapshotTrailer
 	for i, e := range stream.events {
 		switch ev := e.GetEvent().(type) {
-		case *databasev1.SchemaSnapshotEvent_RuleTable:
+		case *databasev1.StreamGroupSchemaStateResponse_RuleTable:
 			tableEvents++
 			lastTableIdx = i
 			assert.LessOrEqual(t, len(ev.RuleTable.GetRules()), ruleTableChunkSize, "each chunk is bounded by ruleTableChunkSize")
 			concatenated = append(concatenated, ev.RuleTable.GetRules()...)
-		case *databasev1.SchemaSnapshotEvent_Object:
+		case *databasev1.StreamGroupSchemaStateResponse_Object:
 			objectEvents++
 			if firstObjectIdx < 0 {
 				firstObjectIdx = i
 			}
-		case *databasev1.SchemaSnapshotEvent_Trailer:
+		case *databasev1.StreamGroupSchemaStateResponse_Trailer:
 			trailers++
 			trailer = ev.Trailer
 		}

@@ -134,7 +134,7 @@ func (c *Collector) collectNodeSchemaState(ctx context.Context) (map[string]*gro
 	client := databasev1.NewNodeSchemaStateServiceClient(conn)
 	reqCtx, cancel := context.WithTimeout(ctx, timeouts.AgentInspectAll)
 	defer cancel()
-	stream, err := client.StreamGroupSchemaState(reqCtx, &databasev1.NodeSchemaStateRequest{})
+	stream, err := client.StreamGroupSchemaState(reqCtx, &databasev1.StreamGroupSchemaStateRequest{})
 	if err != nil {
 		if status.Code(err) == codes.Unimplemented {
 			return nil, nil
@@ -165,12 +165,12 @@ func (c *Collector) collectNodeSchemaState(ctx context.Context) (map[string]*gro
 			return nil, fmt.Errorf("recv schema state from %s: %w", c.grpcAddr, recvErr)
 		}
 		switch e := event.GetEvent().(type) {
-		case *databasev1.SchemaSnapshotEvent_RuleTable:
+		case *databasev1.StreamGroupSchemaStateResponse_RuleTable:
 			// The node may split a group's rule table across several events;
 			// concatenating in arrival order keeps bound_index_rule_refs valid.
 			g := e.RuleTable.GetGroup()
 			tables[g] = append(tables[g], e.RuleTable.GetRules()...)
-		case *databasev1.SchemaSnapshotEvent_Object:
+		case *databasev1.StreamGroupSchemaStateResponse_Object:
 			obj := e.Object
 			st := get(obj.GetGroup())
 			cacheFP, runtimeFP, fpErr := fingerprintObjectSnapshot(obj, tables[obj.GetGroup()])
@@ -181,7 +181,7 @@ func (c *Collector) collectNodeSchemaState(ctx context.Context) (map[string]*gro
 			o := st.object(obj.GetKind(), obj.GetName())
 			o.cache, o.runtime, o.hasNode = cacheFP, runtimeFP, true
 			received[obj.GetGroup()]++
-		case *databasev1.SchemaSnapshotEvent_Trailer:
+		case *databasev1.StreamGroupSchemaStateResponse_Trailer:
 			t := e.Trailer
 			st := get(t.GetGroup())
 			st.node = t.GetNode()

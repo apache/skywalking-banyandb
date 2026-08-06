@@ -265,7 +265,6 @@
     - [MeasureRegistryServiceListResponse](#banyandb-database-v1-MeasureRegistryServiceListResponse)
     - [MeasureRegistryServiceUpdateRequest](#banyandb-database-v1-MeasureRegistryServiceUpdateRequest)
     - [MeasureRegistryServiceUpdateResponse](#banyandb-database-v1-MeasureRegistryServiceUpdateResponse)
-    - [NodeSchemaStateRequest](#banyandb-database-v1-NodeSchemaStateRequest)
     - [ObjectSnapshot](#banyandb-database-v1-ObjectSnapshot)
     - [PropertyRegistryServiceCreateRequest](#banyandb-database-v1-PropertyRegistryServiceCreateRequest)
     - [PropertyRegistryServiceCreateResponse](#banyandb-database-v1-PropertyRegistryServiceCreateResponse)
@@ -284,7 +283,6 @@
     - [SchemaBody](#banyandb-database-v1-SchemaBody)
     - [SchemaInfo](#banyandb-database-v1-SchemaInfo)
     - [SchemaRuleTable](#banyandb-database-v1-SchemaRuleTable)
-    - [SchemaSnapshotEvent](#banyandb-database-v1-SchemaSnapshotEvent)
     - [SchemaSnapshotTrailer](#banyandb-database-v1-SchemaSnapshotTrailer)
     - [SegmentInfo](#banyandb-database-v1-SegmentInfo)
     - [SeriesIndexInfo](#banyandb-database-v1-SeriesIndexInfo)
@@ -293,6 +291,8 @@
     - [SnapshotRequest](#banyandb-database-v1-SnapshotRequest)
     - [SnapshotRequest.Group](#banyandb-database-v1-SnapshotRequest-Group)
     - [SnapshotResponse](#banyandb-database-v1-SnapshotResponse)
+    - [StreamGroupSchemaStateRequest](#banyandb-database-v1-StreamGroupSchemaStateRequest)
+    - [StreamGroupSchemaStateResponse](#banyandb-database-v1-StreamGroupSchemaStateResponse)
     - [StreamRegistryServiceCreateRequest](#banyandb-database-v1-StreamRegistryServiceCreateRequest)
     - [StreamRegistryServiceCreateResponse](#banyandb-database-v1-StreamRegistryServiceCreateResponse)
     - [StreamRegistryServiceDeleteRequest](#banyandb-database-v1-StreamRegistryServiceDeleteRequest)
@@ -4316,24 +4316,6 @@ LiaisonInfo contains information about pending operations in liaison.
 
 
 
-<a name="banyandb-database-v1-NodeSchemaStateRequest"></a>
-
-### NodeSchemaStateRequest
-NodeSchemaStateRequest asks one node for its schema snapshot. An empty group
-requests every group the node caches (each object and trailer is tagged with
-its group), so a data-node agent -- which has no group roster of its own --
-can collect its whole node in one call.
-
-
-| Field | Type | Label | Description |
-| ----- | ---- | ----- | ----------- |
-| group | [string](#string) |  |  |
-
-
-
-
-
-
 <a name="banyandb-database-v1-ObjectSnapshot"></a>
 
 ### ObjectSnapshot
@@ -4646,27 +4628,6 @@ preserves every ref&#39;s index.
 
 
 
-<a name="banyandb-database-v1-SchemaSnapshotEvent"></a>
-
-### SchemaSnapshotEvent
-SchemaSnapshotEvent is the streaming element. Wire-extensible via the oneof so
-new event kinds do not break older agents. Per group the server sends one
-SchemaRuleTable, then that group&#39;s ObjectSnapshot events, then one
-SchemaSnapshotTrailer (clean termination) or a non-EOF status (transport
-error).
-
-
-| Field | Type | Label | Description |
-| ----- | ---- | ----- | ----------- |
-| object | [ObjectSnapshot](#banyandb-database-v1-ObjectSnapshot) |  |  |
-| trailer | [SchemaSnapshotTrailer](#banyandb-database-v1-SchemaSnapshotTrailer) |  |  |
-| rule_table | [SchemaRuleTable](#banyandb-database-v1-SchemaRuleTable) |  |  |
-
-
-
-
-
-
 <a name="banyandb-database-v1-SchemaSnapshotTrailer"></a>
 
 ### SchemaSnapshotTrailer
@@ -4800,6 +4761,45 @@ ShardInfo contains information about a specific shard.
 | Field | Type | Label | Description |
 | ----- | ---- | ----- | ----------- |
 | snapshots | [Snapshot](#banyandb-database-v1-Snapshot) | repeated |  |
+
+
+
+
+
+
+<a name="banyandb-database-v1-StreamGroupSchemaStateRequest"></a>
+
+### StreamGroupSchemaStateRequest
+StreamGroupSchemaStateRequest asks one node for its schema snapshot. An empty group
+requests every group the node caches (each object and trailer is tagged with
+its group), so a data-node agent -- which has no group roster of its own --
+can collect its whole node in one call.
+
+
+| Field | Type | Label | Description |
+| ----- | ---- | ----- | ----------- |
+| group | [string](#string) |  |  |
+
+
+
+
+
+
+<a name="banyandb-database-v1-StreamGroupSchemaStateResponse"></a>
+
+### StreamGroupSchemaStateResponse
+StreamGroupSchemaStateResponse is the streaming element. Wire-extensible via the oneof so
+new event kinds do not break older agents. Per group the server sends one
+SchemaRuleTable, then that group&#39;s ObjectSnapshot events, then one
+SchemaSnapshotTrailer (clean termination) or a non-EOF status (transport
+error).
+
+
+| Field | Type | Label | Description |
+| ----- | ---- | ----- | ----------- |
+| object | [ObjectSnapshot](#banyandb-database-v1-ObjectSnapshot) |  |  |
+| trailer | [SchemaSnapshotTrailer](#banyandb-database-v1-SchemaSnapshotTrailer) |  |  |
+| rule_table | [SchemaRuleTable](#banyandb-database-v1-SchemaRuleTable) |  |  |
 
 
 
@@ -5468,7 +5468,7 @@ group cache implements it.
 
 | Method Name | Request Type | Response Type | Description |
 | ----------- | ------------ | ------------- | ------------|
-| StreamGroupSchemaState | [NodeSchemaStateRequest](#banyandb-database-v1-NodeSchemaStateRequest) | [SchemaSnapshotEvent](#banyandb-database-v1-SchemaSnapshotEvent) stream | StreamGroupSchemaState returns this node&#39;s snapshot for one group as a sequence of ObjectSnapshot events terminated by one SchemaSnapshotTrailer. The server snapshots its cache under a read lock, then streams from that consistent view without holding the lock for the network round-trip; the trailer&#39;s object_count lets the agent detect a torn read.
+| StreamGroupSchemaState | [StreamGroupSchemaStateRequest](#banyandb-database-v1-StreamGroupSchemaStateRequest) | [StreamGroupSchemaStateResponse](#banyandb-database-v1-StreamGroupSchemaStateResponse) stream | StreamGroupSchemaState returns this node&#39;s snapshot for one group as a sequence of ObjectSnapshot events terminated by one SchemaSnapshotTrailer. The server snapshots its cache under a read lock, then streams from that consistent view without holding the lock for the network round-trip; the trailer&#39;s object_count lets the agent detect a torn read.
 
 An empty stream (zero object events, just the trailer) is a normal termination: the agent reads it as &#34;this node does not cache this group&#34;, never as an error. |
 
@@ -5713,7 +5713,7 @@ An empty stream (zero object events, just the trailer) is a normal termination: 
 | Field | Type | Label | Description |
 | ----- | ---- | ----- | ----------- |
 | reports | [LifecycleReport](#banyandb-fodc-v1-LifecycleReport) | repeated |  |
-| groups | [GroupLifecycleInfo](#banyandb-fodc-v1-GroupLifecycleInfo) | repeated | groups carries each group&#39;s data info and its schema_consistency. Each agent fills schema_consistency with its local node&#39;s fingerprints (and, from the agent co-located with a schema-serving node, the registry truth); the proxy unions these partials across agents and runs the checker to produce the final verdict. The data path itself ships no fingerprints. |
+| groups | [GroupLifecycleInfo](#banyandb-fodc-v1-GroupLifecycleInfo) | repeated |  |
 
 
 

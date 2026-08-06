@@ -82,9 +82,10 @@ type RequestSender interface {
 	RequestLifecycleData(agentID string) error
 }
 
-// SchemaNodeProvider yields the gRPC addresses of nodes that serve the schema
-// registry (meta/liaison role), discovered from the cluster topology, so the
-// proxy queries the registry truth without any configured address.
+// SchemaNodeProvider yields the gRPC addresses of nodes that serve the
+// client-facing schema registry (liaison role), discovered from the cluster
+// topology, so the proxy queries the registry truth without any configured
+// address.
 type SchemaNodeProvider interface {
 	SchemaServingNodeAddresses(ctx context.Context) []string
 }
@@ -97,6 +98,7 @@ type Manager struct {
 	schemaNodes  SchemaNodeProvider
 	collecting   map[string]chan *agentLifecycleData
 	checker      *consistency.Checker
+	schemaStatus map[string]fodcv1.ConsistencyStatus
 	mu           sync.RWMutex
 	collectingMu sync.RWMutex
 	collectingOp sync.Mutex
@@ -105,12 +107,40 @@ type Manager struct {
 // NewManager creates a new lifecycle manager.
 func NewManager(registry *registry.AgentRegistry, grpcService RequestSender, log *logger.Logger) *Manager {
 	return &Manager{
-		registry:    registry,
-		grpcService: grpcService,
-		log:         log,
-		collecting:  make(map[string]chan *agentLifecycleData),
-		checker:     consistency.NewChecker(),
+		registry:     registry,
+		grpcService:  grpcService,
+		log:          log,
+		collecting:   make(map[string]chan *agentLifecycleData),
+		checker:      consistency.NewChecker(),
+		schemaStatus: make(map[string]fodcv1.ConsistencyStatus),
 	}
+}
+
+// SchemaConsistencySnapshot returns the per-group schema consistency status from
+// the most recent collection, for the proxy to export as a Prometheus gauge. It
+// reflects whatever cadence CollectLifecycle is driven at (the checker needs
+// regular collections anyway for its two-round suppression).
+func (m *Manager) SchemaConsistencySnapshot() map[string]fodcv1.ConsistencyStatus {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	out := make(map[string]fodcv1.ConsistencyStatus, len(m.schemaStatus))
+	for group, status := range m.schemaStatus {
+		out[group] = status
+	}
+	return out
+}
+
+// cacheSchemaStatus records the per-group verdict of a completed collection.
+func (m *Manager) cacheSchemaStatus(groups []*fodcv1.GroupLifecycleInfo) {
+	status := make(map[string]fodcv1.ConsistencyStatus, len(groups))
+	for _, g := range groups {
+		if sc := g.GetSchemaConsistency(); sc != nil {
+			status[g.GetName()] = sc.GetStatus()
+		}
+	}
+	m.mu.Lock()
+	m.schemaStatus = status
+	m.mu.Unlock()
 }
 
 // SetGRPCService sets the gRPC service for sending lifecycle data requests.
@@ -212,7 +242,9 @@ func (m *Manager) CollectLifecycle(ctx context.Context) (*InspectionResult, Agen
 	m.log.Info().Int("responses_with_data", len(allData)).
 		Msg("CollectLifecycle: all responses collected, aggregating")
 
-	return m.buildInspectionResult(ctx, allData, summary.NotResponded > 0), summary
+	result := m.buildInspectionResult(ctx, allData, summary.NotResponded > 0)
+	m.cacheSchemaStatus(result.Groups)
+	return result, summary
 }
 
 func (m *Manager) requestAllAgents(ctx context.Context, agents []*registry.AgentInfo,

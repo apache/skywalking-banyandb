@@ -221,3 +221,23 @@ func TestMergeGroups_SurfacesRegistryErrors(t *testing.T) {
 	assert.ElementsMatch(t, []string{"collect: boom", "registry unavailable: down"}, got[0].GetErrors(),
 		"registry errors are unioned onto the group alongside the agent's own errors")
 }
+
+func TestSchemaConsistencySnapshot_CachesVerdictExcludingNilAndCopies(t *testing.T) {
+	mgr := NewManager(nil, nil, logger.GetLogger("test-snap"))
+	assert.Empty(t, mgr.SchemaConsistencySnapshot(), "no collection yet -> empty")
+
+	mgr.cacheSchemaStatus([]*fodcv1.GroupLifecycleInfo{
+		{Name: "a", SchemaConsistency: &fodcv1.SchemaConsistency{Status: fodcv1.ConsistencyStatus_CONSISTENCY_STATUS_CONSISTENT}},
+		{Name: "b", SchemaConsistency: &fodcv1.SchemaConsistency{Status: fodcv1.ConsistencyStatus_CONSISTENCY_STATUS_INCONSISTENT}},
+		{Name: "prop", SchemaConsistency: nil}, // property group: no verdict -> excluded
+	})
+
+	snap := mgr.SchemaConsistencySnapshot()
+	assert.Equal(t, fodcv1.ConsistencyStatus_CONSISTENCY_STATUS_CONSISTENT, snap["a"])
+	assert.Equal(t, fodcv1.ConsistencyStatus_CONSISTENCY_STATUS_INCONSISTENT, snap["b"])
+	assert.NotContains(t, snap, "prop", "a group without a verdict exports no metric")
+
+	// The returned map is a copy: mutating it must not corrupt the cache.
+	snap["a"] = fodcv1.ConsistencyStatus_CONSISTENCY_STATUS_UNKNOWN
+	assert.Equal(t, fodcv1.ConsistencyStatus_CONSISTENCY_STATUS_CONSISTENT, mgr.SchemaConsistencySnapshot()["a"])
+}
