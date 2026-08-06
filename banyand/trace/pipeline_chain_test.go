@@ -19,6 +19,7 @@ package trace
 
 import (
 	"fmt"
+	"runtime"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -33,6 +34,8 @@ import (
 	"github.com/apache/skywalking-banyandb/pkg/pipeline/sdk/sdktest"
 	"github.com/apache/skywalking-banyandb/pkg/test"
 )
+
+var stagedByteArenaTestPoolID atomic.Uint64
 
 // fakeSampler drops every trace whose TraceID is in dropIDs. It optionally
 // panics, errors, or returns a mismatched verdict to exercise fail-open.
@@ -540,18 +543,20 @@ func TestEvaluationVectorPoolDiscardsUnsafeAndOversizedBatches(t *testing.T) {
 }
 
 func TestStagedByteArenaCacheBoundsAggregateRetention(t *testing.T) {
-	cache := newStagedByteArenaPool("trace-test-staged-byte-arena", 8)
+	poolName := fmt.Sprintf("trace-test-staged-byte-arena-%d", stagedByteArenaTestPoolID.Add(1))
+	cache := newStagedByteArenaPool(poolName, 8)
 	first := cache.get(6)
 	second := cache.get(6)
 
 	require.True(t, cache.put(first))
 	require.False(t, cache.put(second), "the aggregate cache bound must reject individually small arenas once it is full")
-	require.Equal(t, int64(6), cache.retainedBytes.Load())
+	require.Equal(t, int64(6), cache.pool.RetainedSize())
+	runtime.GC()
 
 	reused := cache.get(5)
 	require.Same(t, first, reused)
 	require.Len(t, reused.Buf, 5)
-	require.Zero(t, cache.retainedBytes.Load())
+	require.Zero(t, cache.pool.RetainedSize())
 	cache.pool.Discard(reused)
 	require.Zero(t, cache.pool.RefsCount())
 }

@@ -1046,25 +1046,21 @@ const (
 )
 
 type stagedByteArenaPool struct {
-	pool          *pkgpool.Synced[*pkgbytes.Buffer]
-	retainedBytes atomic.Int64
-	maxBytes      int64
+	pool *pkgpool.Bounded[*pkgbytes.Buffer]
 }
 
 func newStagedByteArenaPool(name string, maxBytes int64) *stagedByteArenaPool {
 	return &stagedByteArenaPool{
-		pool:     pkgpool.Register[*pkgbytes.Buffer](name),
-		maxBytes: maxBytes,
+		pool: pkgpool.RegisterBounded(name, maxBytes, func() *pkgbytes.Buffer {
+			return &pkgbytes.Buffer{}
+		}, func(arena *pkgbytes.Buffer) int64 {
+			return int64(cap(arena.Buf))
+		}),
 	}
 }
 
 func (arenaPool *stagedByteArenaPool) get(size int) *pkgbytes.Buffer {
 	arena := arenaPool.pool.Get()
-	if arena == nil {
-		arena = &pkgbytes.Buffer{}
-	} else {
-		arenaPool.retainedBytes.Add(-int64(cap(arena.Buf)))
-	}
 	arena.Buf = pkgbytes.ResizeExact(arena.Buf[:0], size)
 	return arena
 }
@@ -1075,25 +1071,7 @@ func (arenaPool *stagedByteArenaPool) put(arena *pkgbytes.Buffer) bool {
 	}
 	clear(arena.Buf)
 	arena.Reset()
-	arenaBytes := int64(cap(arena.Buf))
-	if arenaBytes > arenaPool.maxBytes || !reserveStagedPoolCapacity(&arenaPool.retainedBytes, arenaBytes, arenaPool.maxBytes) {
-		arenaPool.pool.Discard(arena)
-		return false
-	}
-	arenaPool.pool.Put(arena)
-	return true
-}
-
-func reserveStagedPoolCapacity(retained *atomic.Int64, size, limit int64) bool {
-	for {
-		current := retained.Load()
-		if current+size > limit {
-			return false
-		}
-		if retained.CompareAndSwap(current, current+size) {
-			return true
-		}
-	}
+	return arenaPool.pool.Put(arena)
 }
 
 type stagedDataBlockBuffer struct {
@@ -1139,23 +1117,24 @@ func (vectors *stagedEvaluationVectors) reset() {
 }
 
 var (
-	stagedByteArenas             = newStagedByteArenaPool("trace-staged-byte-arena", maxPooledStagedArenaBytes)
-	stagedBlockMetadataPool      = pkgpool.Register[*blockMetadata]("trace-staged-block-metadata")
-	stagedDataBlockPool          = pkgpool.Register[*stagedDataBlockBuffer]("trace-staged-data-blocks")
-	stagedTraceBufferPool        = pkgpool.Register[*stagedTraceBuffer]("trace-staged-traces")
-	stagedTraceGroupPool         = pkgpool.Register[*stagedTraceGroupBuffer]("trace-staged-trace-groups")
-	stagedEvaluationPool         = pkgpool.Register[*stagedEvaluationVectors]("trace-staged-evaluation")
-	stagedBlockMetadataPoolCount atomic.Int64
-	stagedDataBlockPoolCount     atomic.Int64
+	stagedByteArenas        = newStagedByteArenaPool("trace-staged-byte-arena", maxPooledStagedArenaBytes)
+	stagedBlockMetadataPool = pkgpool.RegisterBounded("trace-staged-block-metadata", maxPooledRawMetadataObjects, func() *blockMetadata {
+		return &blockMetadata{}
+	}, func(*blockMetadata) int64 {
+		return 1
+	})
+	stagedDataBlockPool = pkgpool.RegisterBounded("trace-staged-data-blocks", maxPooledRawMetadataObjects, func() *stagedDataBlockBuffer {
+		return &stagedDataBlockBuffer{}
+	}, func(*stagedDataBlockBuffer) int64 {
+		return 1
+	})
+	stagedTraceBufferPool = pkgpool.Register[*stagedTraceBuffer]("trace-staged-traces")
+	stagedTraceGroupPool  = pkgpool.Register[*stagedTraceGroupBuffer]("trace-staged-trace-groups")
+	stagedEvaluationPool  = pkgpool.Register[*stagedEvaluationVectors]("trace-staged-evaluation")
 )
 
 func acquireStagedDataBlockBuffer(size int) *stagedDataBlockBuffer {
 	buffer := stagedDataBlockPool.Get()
-	if buffer == nil {
-		buffer = &stagedDataBlockBuffer{}
-	} else {
-		stagedDataBlockPoolCount.Add(-1)
-	}
 	if cap(buffer.values) < size {
 		buffer.values = make([]dataBlock, size)
 	} else {
@@ -1172,10 +1151,6 @@ func releaseStagedDataBlockBuffer(buffer *stagedDataBlockBuffer) {
 	clear(buffer.values)
 	buffer.values = buffer.values[:0]
 	if cap(buffer.values) > maxPooledMetadataTags {
-		stagedDataBlockPool.Discard(buffer)
-		return
-	}
-	if !reserveStagedPoolCapacity(&stagedDataBlockPoolCount, 1, maxPooledRawMetadataObjects) {
 		stagedDataBlockPool.Discard(buffer)
 		return
 	}
@@ -1272,12 +1247,7 @@ func releaseStagedByteArena(arena *pkgbytes.Buffer) {
 }
 
 func acquireStagedBlockMetadata() *blockMetadata {
-	metadata := stagedBlockMetadataPool.Get()
-	if metadata == nil {
-		return &blockMetadata{}
-	}
-	stagedBlockMetadataPoolCount.Add(-1)
-	return metadata
+	return stagedBlockMetadataPool.Get()
 }
 
 func releaseStagedBlockMetadata(metadata *blockMetadata) {
@@ -1287,10 +1257,6 @@ func releaseStagedBlockMetadata(metadata *blockMetadata) {
 	oversized := len(metadata.tags) > maxPooledMetadataTags || len(metadata.tagType) > maxPooledMetadataTags
 	metadata.reset()
 	if oversized {
-		stagedBlockMetadataPool.Discard(metadata)
-		return
-	}
-	if !reserveStagedPoolCapacity(&stagedBlockMetadataPoolCount, 1, maxPooledRawMetadataObjects) {
 		stagedBlockMetadataPool.Discard(metadata)
 		return
 	}

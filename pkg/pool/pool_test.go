@@ -16,13 +16,23 @@
 package pool
 
 import (
+	"fmt"
+	"runtime"
+	"sync/atomic"
 	"testing"
 
 	"github.com/stretchr/testify/require"
 )
 
+var testPoolID atomic.Uint64
+
+func uniqueTestPoolName(t *testing.T) string {
+	t.Helper()
+	return fmt.Sprintf("%s-%d", t.Name(), testPoolID.Add(1))
+}
+
 func TestSyncedDiscardBalancesCheckoutWithoutPooling(t *testing.T) {
-	testPool := Register[*int]("test-synced-discard")
+	testPool := Register[*int](uniqueTestPoolName(t))
 	value := testPool.Get()
 	require.Nil(t, value)
 	require.Equal(t, 1, testPool.RefsCount())
@@ -36,5 +46,30 @@ func TestSyncedDiscardBalancesCheckoutWithoutPooling(t *testing.T) {
 	require.Zero(t, testPool.RefsCount())
 	require.Nil(t, testPool.Get(), "discarded objects must not be returned by the pool")
 	testPool.Discard(new(int))
+	require.Zero(t, testPool.RefsCount())
+}
+
+func TestBoundedEnforcesAggregateSizeAndReusesDeterministically(t *testing.T) {
+	testPool := RegisterBounded(uniqueTestPoolName(t), 8, func() *[]byte {
+		value := make([]byte, 0)
+		return &value
+	}, func(value *[]byte) int64 {
+		return int64(cap(*value))
+	})
+	first := testPool.Get()
+	*first = make([]byte, 0, 6)
+	second := testPool.Get()
+	*second = make([]byte, 0, 6)
+
+	require.True(t, testPool.Put(first))
+	require.False(t, testPool.Put(second))
+	require.Equal(t, int64(6), testPool.RetainedSize())
+	require.Zero(t, testPool.RefsCount())
+	runtime.GC()
+
+	reused := testPool.Get()
+	require.Same(t, first, reused)
+	require.Zero(t, testPool.RetainedSize())
+	testPool.Discard(reused)
 	require.Zero(t, testPool.RefsCount())
 }
