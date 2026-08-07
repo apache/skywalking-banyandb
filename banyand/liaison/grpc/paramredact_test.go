@@ -137,16 +137,20 @@ func TestRedactParamsJoinsEveryParameterInOrder(t *testing.T) {
 // `IN (?)` bound to a str_array is the documented way to express a value set, so an
 // array parameter can legitimately hold thousands of elements.
 func TestRedactParamsCapsLongArraysAndReportsTheRemainder(t *testing.T) {
-	values := make([]string, 0, 20)
-	for idx := 0; idx < 20; idx++ {
+	const total = 20
+	values := make([]string, 0, total)
+	for idx := 0; idx < total; idx++ {
 		values = append(values, "svc-"+string(rune('a'+idx)))
 	}
 	got := redactParams(paramModeFingerprint, []*modelv1.TagValue{strArrayParam(values...)})
 
-	assert.Contains(t, got, "str[n=20]", "the full length must survive the cap")
-	assert.Contains(t, got, "+12 more", "the dropped remainder must be stated, not silently truncated")
-	assert.Equal(t, maxRenderedArrayElems, strings.Count(got, " ")-1,
-		"exactly maxRenderedArrayElems fingerprints plus the '+N more' marker")
+	digests := make([]string, 0, maxRenderedArrayElems)
+	for _, value := range values[:maxRenderedArrayElems] {
+		digests = append(digests, fingerprint(value))
+	}
+	assert.Equal(t, fmt.Sprintf("str[n=%d]:fp=[%s +%d more]",
+		total, strings.Join(digests, " "), total-maxRenderedArrayElems), got,
+		"the true element count, the first maxRenderedArrayElems digests and the dropped remainder must all be exact")
 }
 
 // The array path shares no code with the scalar one, so it needs its own negative
@@ -355,5 +359,68 @@ func TestFingerprintDistinguishesRealisticServiceNames(t *testing.T) {
 			t.Fatalf("digest collision between %q and %q", prev, value)
 		}
 		seen[fp] = value
+	}
+}
+
+// benchSink keeps the compiler from eliminating the benchmarked calls.
+var benchSink string
+
+// BenchmarkRedactParams covers every mode against every TagValue variant, plus an array
+// long enough to exercise joinCapped past the cap.
+//
+// Rendering is reached only by queries already over --bydbql-slow-query-threshold, so these
+// numbers bound a per-slow-query cost rather than a per-request one. They exist as a
+// regression baseline: extending the type switch with a new variant, or swapping the digest
+// (a salted HMAC, SHA-256), should be measured against them rather than against an ad-hoc
+// benchmark written after the fact.
+func BenchmarkRedactParams(b *testing.B) {
+	longArray := make([]string, 0, 64)
+	for idx := 0; idx < 64; idx++ {
+		longArray = append(longArray, fmt.Sprintf("svc-%02d", idx))
+	}
+	variants := []struct {
+		param *modelv1.TagValue
+		name  string
+	}{
+		{name: "null", param: &modelv1.TagValue{Value: &modelv1.TagValue_Null{}}},
+		{name: "int", param: intParam(100000)},
+		{name: "int_array", param: intArrayParam(1, 2, 3)},
+		{name: "timestamp", param: timestampParam(time.Date(2026, 8, 4, 10, 0, 0, 0, time.UTC))},
+		{name: "str", param: strParam("checkout-svc")},
+		{name: "str_array", param: strArrayParam("checkout-svc", "payment-svc")},
+		{name: "str_array_over_cap", param: strArrayParam(longArray...)},
+		{name: "binary", param: binaryParam([]byte{0x01, 0x02, 0x03})},
+	}
+	for _, mode := range []paramMode{paramModeNone, paramModeFingerprint, paramModeRaw} {
+		for _, variant := range variants {
+			params := []*modelv1.TagValue{variant.param}
+			b.Run(string(mode)+"/"+variant.name, func(b *testing.B) {
+				b.ReportAllocs()
+				for i := 0; i < b.N; i++ {
+					benchSink = redactParams(mode, params)
+				}
+			})
+		}
+	}
+}
+
+// BenchmarkFingerprint isolates the digest, which is the inner loop of the default mode:
+// one call per string parameter, and one per element of a string array up to the cap.
+func BenchmarkFingerprint(b *testing.B) {
+	cases := []struct {
+		name  string
+		value string
+	}{
+		{name: "service_name_12B", value: "checkout-svc"},
+		{name: "value_1KiB", value: strings.Repeat("x", 1024)},
+	}
+	for _, tc := range cases {
+		b.Run(tc.name, func(b *testing.B) {
+			b.ReportAllocs()
+			b.SetBytes(int64(len(tc.value)))
+			for i := 0; i < b.N; i++ {
+				benchSink = fingerprint(tc.value)
+			}
+		})
 	}
 }
