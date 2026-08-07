@@ -32,11 +32,12 @@ import (
 	"github.com/apache/skywalking-banyandb/pkg/test/setup"
 	test_stream "github.com/apache/skywalking-banyandb/pkg/test/stream"
 	test_trace "github.com/apache/skywalking-banyandb/pkg/test/trace"
+	integration_distributed "github.com/apache/skywalking-banyandb/test/integration/distributed"
 )
 
 func TestDistributedSyncRetry(t *testing.T) {
 	gomega.RegisterFailHandler(g.Fail)
-	g.RunSpecs(t, "Distributed Sync Retry Suite")
+	g.RunSpecs(t, "Distributed Sync Retry Suite", g.Label(integration_distributed.Labels...))
 }
 
 type suiteConfig struct {

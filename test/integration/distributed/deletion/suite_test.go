@@ -25,6 +25,7 @@ import (
 
 	"github.com/apache/skywalking-banyandb/pkg/test"
 	"github.com/apache/skywalking-banyandb/pkg/test/setup"
+	integration_distributed "github.com/apache/skywalking-banyandb/test/integration/distributed"
 	"github.com/apache/skywalking-banyandb/test/integration/distributed/deletion"
 )
 
@@ -57,5 +58,5 @@ func init() {
 
 func TestDeletion(t *testing.T) {
 	RegisterFailHandler(Fail)
-	RunSpecs(t, "Distributed Deletion Suite")
+	RunSpecs(t, "Distributed Deletion Suite", Label(integration_distributed.Labels...))
 }
