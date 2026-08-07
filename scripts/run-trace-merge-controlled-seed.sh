@@ -21,10 +21,13 @@
 set -euo pipefail
 
 ROOT=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
-FIXTURE=${FIXTURE:-"$ROOT/.scratch/trace-pipeline-merge-performance/generated-fixture-ticket05"}
+FIXTURE=${FIXTURE:-"$ROOT/.scratch/trace-pipeline-merge-performance/generated-fixture-2x-v2-timestamps"}
 OUTPUT=${OUTPUT:-"$ROOT/.scratch/trace-pipeline-merge-performance/baseline-report"}
 IMAGE=${IMAGE:-golang:1.25.12}
-DATA_CPUS=${DATA_CPUS:-0-3}
+DATA_CPUS=${DATA_CPUS:-0-1}
+DATA_CPU_LIMIT=${DATA_CPU_LIMIT:-2}
+DATA_MEMORY=${DATA_MEMORY:-4g}
+DATA_GOMAXPROCS=${DATA_GOMAXPROCS:-2}
 SEED_OUT=${SEED_OUT:-"$OUTPUT/controlled-seed"}
 BIN="$ROOT/.scratch/trace-pipeline-merge-performance/bin/trace-merge-benchmark"
 
@@ -44,8 +47,8 @@ docker run --rm -v "$FIXTURE":/fixture:ro -v "$run_dir":/run "$IMAGE" bash -c \
   'mkdir -p /run/source /run/data/sidx/latency /run/data/sidx/start_time; cp -a /fixture/shard/. /run/source/; chmod 0777 /run'
 container="banyandb-trace-seed-capture"
 docker rm -f "$container" >/dev/null 2>&1 || true
-docker run -d --name "$container" --cpuset-cpus="$DATA_CPUS" --cpus=4 --memory=8g --memory-swap=8g --pids-limit=512 \
-  -e GOMAXPROCS=4 \
+docker run -d --name "$container" --cpuset-cpus="$DATA_CPUS" --cpus="$DATA_CPU_LIMIT" --memory="$DATA_MEMORY" --memory-swap="$DATA_MEMORY" --pids-limit=512 \
+  -e GOMAXPROCS="$DATA_GOMAXPROCS" \
   -v "$ROOT":/workspace:ro -v "$run_dir":/run -w /workspace "$IMAGE" \
   /workspace/.scratch/trace-pipeline-merge-performance/bin/trace-merge-benchmark capture-seed \
   --source=/run/source --data=/run/data --schedule=/workspace/${FIXTURE#"$ROOT/"}/schedule.json \

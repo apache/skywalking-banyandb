@@ -17,11 +17,14 @@
 set -euo pipefail
 
 ROOT=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
-FIXTURE=${FIXTURE:-"$ROOT/.scratch/trace-pipeline-merge-performance/generated-fixture-ticket05"}
+FIXTURE=${FIXTURE:-"$ROOT/.scratch/trace-pipeline-merge-performance/generated-fixture-2x-v2-timestamps"}
 OUTPUT=${OUTPUT:-"$ROOT/.scratch/trace-pipeline-merge-performance/baseline-report"}
 IMAGE=${IMAGE:-golang:1.25.12}
-DATA_CPUS=${DATA_CPUS:-0-3}
-CONTROLLER_CPU=${CONTROLLER_CPU:-4}
+DATA_CPUS=${DATA_CPUS:-0-1}
+DATA_CPU_LIMIT=${DATA_CPU_LIMIT:-2}
+DATA_MEMORY=${DATA_MEMORY:-4g}
+DATA_GOMAXPROCS=${DATA_GOMAXPROCS:-2}
+CONTROLLER_CPU=${CONTROLLER_CPU:-2}
 REPETITIONS=${REPETITIONS:-5}
 PILOT_ACCELERATION=${PILOT_ACCELERATION:-}
 CONTROLLED_ALTERNATING=${CONTROLLED_ALTERNATING:-1}
@@ -29,6 +32,7 @@ CONTROLLED_REPETITIONS=${CONTROLLED_REPETITIONS:-10}
 CONTROLLED_SEED=${CONTROLLED_SEED:-"$OUTPUT/controlled-seed"}
 DEFAULT_CONTROLLED_PLUGIN="$ROOT/.scratch/trace-pipeline-merge-performance/plugins/alwayskeepsampler.so"
 CONTROLLED_PLUGIN=${CONTROLLED_PLUGIN:-"$DEFAULT_CONTROLLED_PLUGIN"}
+FULL_PIPELINE=${FULL_PIPELINE:-disabled}
 BIN="$ROOT/.scratch/trace-pipeline-merge-performance/bin/trace-merge-benchmark"
 COMMIT=$(git -C "$ROOT" rev-parse HEAD)
 
@@ -40,10 +44,15 @@ print(d['scheduleSHA256'])
 print(d['rowCount'])
 print(d['writeCount'])
 print(d['coreCompressedBytes'] + sum(d['indexCompressedBytes'].values()))
-print(d['writeIntensity'])
+print(d.get('writeIntensity', 1))
 print(d['logicalLedgerSHA256']['core'])
 print(d['logicalLedgerSHA256']['latency'])
 print(d['logicalLedgerSHA256']['start_time'])
+import datetime
+day_start=datetime.datetime.fromisoformat(d['dayStart'].replace('Z','+00:00'))
+day_start_ns=int(day_start.timestamp()*1_000_000_000)
+print(day_start_ns-int(d['mergeGrace']))
+print(day_start_ns+int(d['dayDuration'])+int(d['mergeGrace']))
 PY
 )
 FIXTURE_SHA=${META[0]}
@@ -55,10 +64,12 @@ WRITE_INTENSITY=${META[5]}
 CORE_LEDGER_SHA=${META[6]}
 LATENCY_LEDGER_SHA=${META[7]}
 START_TIME_LEDGER_SHA=${META[8]}
+SEGMENT_MIN_TIME_NANOS=${META[9]}
+SEGMENT_MAX_TIME_NANOS=${META[10]}
 
 mkdir -p "$OUTPUT" "$(dirname "$BIN")"
 go build -o "$BIN" "$ROOT/banyand/cmd/trace-merge-benchmark"
-if [[ "$CONTROLLED_ALTERNATING" == "1" && ! -f "$CONTROLLED_PLUGIN" && "$CONTROLLED_PLUGIN" == "$DEFAULT_CONTROLLED_PLUGIN" ]]; then
+if [[ ("$CONTROLLED_ALTERNATING" == "1" || "$FULL_PIPELINE" == "retain-all") && "$CONTROLLED_PLUGIN" == "$DEFAULT_CONTROLLED_PLUGIN" ]]; then
   mkdir -p "$(dirname "$CONTROLLED_PLUGIN")"
   go build -buildmode=plugin -o "$CONTROLLED_PLUGIN" "$ROOT/test/plugins/_alwayskeepsampler"
 fi
@@ -108,8 +119,13 @@ run_once() {
     chmod 0777 /run'
   local attribution_flag=()
   if [[ "$attribution" == true ]]; then attribution_flag=(--attribution); fi
-  docker run -d --name "$container" --cpuset-cpus="$DATA_CPUS" --cpus=4 --memory=8g --memory-swap=8g --pids-limit=512 \
-    -e GOMAXPROCS=4 -e IMAGE_DIGEST="$IMAGE_DIGEST" \
+  local plugin_flag=()
+  if [[ "$FULL_PIPELINE" == "retain-all" ]]; then
+    plugin_flag=(--plugin=/workspace/${CONTROLLED_PLUGIN#"$ROOT/"} --plugin-sha256="$PLUGIN_SHA" \
+      --segment-min-time-nanos="$SEGMENT_MIN_TIME_NANOS" --segment-max-time-nanos="$SEGMENT_MAX_TIME_NANOS")
+  fi
+  docker run -d --name "$container" --cpuset-cpus="$DATA_CPUS" --cpus="$DATA_CPU_LIMIT" --memory="$DATA_MEMORY" --memory-swap="$DATA_MEMORY" --pids-limit=512 \
+    -e GOMAXPROCS="$DATA_GOMAXPROCS" -e IMAGE_DIGEST="$IMAGE_DIGEST" \
     -v "$ROOT":/workspace:ro -v "$run_dir":/run -w /workspace "$IMAGE" \
     /workspace/.scratch/trace-pipeline-merge-performance/bin/trace-merge-benchmark serve \
     --root=/run/data --socket=/run/control.sock --output=/run/report.json --profiles=/run/profiles \
@@ -119,6 +135,7 @@ run_once() {
     --expected-start-time-ledger="$START_TIME_LEDGER_SHA" \
     --image-digest="$IMAGE_DIGEST" --filesystem="$DATA_FILESYSTEM" --storage-device="$DATA_STORAGE_DEVICE" \
     --clone-method="$DATA_CLONE_METHOD" --binary-sha256="$BINARY_SHA" \
+    "${plugin_flag[@]}" \
     "${attribution_flag[@]}" >"$run_dir/container.id"
   if ! docker run --rm --cpuset-cpus="$CONTROLLER_CPU" --cpus=1 --memory=1g --memory-swap=1g --pids-limit=128 \
     -v "$ROOT":/workspace:ro -v "$run_dir":/run -w /workspace "$IMAGE" \
@@ -131,6 +148,7 @@ run_once() {
   fi
   docker logs "$container" >"$run_dir/data-node.log" 2>&1 || true
   docker stop -t 20 "$container" >/dev/null
+  docker run --rm -v "$run_dir":/run "$IMAGE" chmod -R 0777 /run
   active_container=""
 }
 
@@ -162,8 +180,8 @@ run_controlled_once() {
     plugin_flag=(--plugin=/workspace/${CONTROLLED_PLUGIN#"$ROOT/"})
     plugin_identity_flag=(--plugin-sha256="$PLUGIN_SHA")
   fi
-  docker run -d --name "$container" --cpuset-cpus="$DATA_CPUS" --cpus=4 --memory=8g --memory-swap=8g --pids-limit=512 \
-    -e GOMAXPROCS=4 -e IMAGE_DIGEST="$IMAGE_DIGEST" \
+  docker run -d --name "$container" --cpuset-cpus="$DATA_CPUS" --cpus="$DATA_CPU_LIMIT" --memory="$DATA_MEMORY" --memory-swap="$DATA_MEMORY" --pids-limit=512 \
+    -e GOMAXPROCS="$DATA_GOMAXPROCS" -e IMAGE_DIGEST="$IMAGE_DIGEST" \
     -v "$ROOT":/workspace:ro -v "$run_dir":/run -w /workspace "$IMAGE" \
     /workspace/.scratch/trace-pipeline-merge-performance/bin/trace-merge-benchmark run-controlled \
     --seed-manifest=/run/seed.json --data=/run/data --output=/run/report.json \
@@ -192,8 +210,14 @@ run_controlled_once() {
   fi
   docker logs "$container" >"$run_dir/data-node.log" 2>&1 || true
   docker rm -f "$container" >/dev/null 2>&1 || true
+  docker run --rm -v "$run_dir":/run "$IMAGE" chmod -R 0777 /run
   active_container=""
 }
+
+if [[ "$FULL_PIPELINE" != "disabled" && "$FULL_PIPELINE" != "retain-all" ]]; then
+  echo "FULL_PIPELINE must be disabled or retain-all" >&2
+  exit 1
+fi
 
 if [[ -n "$PILOT_ACCELERATION" ]]; then
   run_once pilot serial 1 false
