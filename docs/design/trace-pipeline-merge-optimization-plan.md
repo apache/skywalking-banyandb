@@ -190,7 +190,7 @@ causes complete-trace batch boundaries. Both byte and trace-count limits remain 
 
 - [x] Every sampled merge reports peak charged staging bytes, batch bytes and trace count, flush reason, and peak
   concurrent staged bytes.
-- [ ] Cold first-merge cost and subsequent same-process reuse are reported separately without changing the budget.
+- [x] Cold first-merge cost and subsequent same-process reuse are reported separately without changing the budget.
 - [ ] The serialized 24-hour workload validates naturally varying merge sizes under the canonical two-CPU, 4 GiB
   container and its resource-derived 256 MiB budget.
 - [ ] At least one naturally budget-limited merge, or explicit evidence that the production-shaped workload never
@@ -224,6 +224,23 @@ complete-trace batches, peaked at 28,575,614 staged bytes, evaluated and retaine
 core and secondary-index ledger. Compared with the preceding five-run retain-all medians, this single diagnostic reduced
 peak heap from 167.1 MiB to 106.8 MiB and peak RSS from 199.7 MiB to 151.6 MiB. It is evidence that adaptive batching
 controls the live set, not a replacement for the required alternating acceptance series.
+
+The balanced DR/RD acceptance series subsequently ran five fresh Docker processes per mode against the same selection.
+All ten runs preserved 147,126 rows, all three logical ledgers, the mature-only selection, and complete-trace decisions.
+The retain-all runs consistently made five sampler calls and peaked at 27.25 MiB of charged staged memory. Their median
+was 266.32 MiB allocated, 3,200,439 allocations, 109.28 MiB peak heap, and 158.93 MiB peak RSS. Relative to the previous
+one-call retain-all medians, this is a 12.4% allocated-byte reduction, 2.3% allocation-count reduction, 34.6% peak-heap
+reduction, and 20.4% peak-RSS reduction. Correctness and live-heap control pass, but the allocated-byte,
+allocation-count, and RSS targets remain open. The measured wall and CPU deltas remain non-blocking and are not credited
+as a pipeline speedup.
+
+A separate five-merge retain-all diagnostic used five identical seed clones sequentially in one two-CPU, 4 GiB process,
+without changing the 256 MiB hard ceiling or the metadata-derived preferred limit. The cold merge allocated 263.10 MiB.
+The four reuse merges allocated 225.93-238.53 MiB while CPU time stayed between 6.56 and 6.64 seconds. Reused arena
+capacities are included in the authoritative runtime charge, so the warm merges used six complete-trace sampler calls
+instead of the cold merge's five. Peak staged memory remained 27.25 MiB and every ledger remained correct. Absolute RSS
+in this diagnostic includes the history of earlier merges in the same process and must not be interpreted as an isolated
+per-merge RSS delta.
 
 ---
 
