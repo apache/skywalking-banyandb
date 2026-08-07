@@ -523,43 +523,68 @@ func (s *Sampler) Decide(batch *sdk.TraceBatch) (sdk.Verdict, error) {
 // keepTrace applies the sure-keep rules, then the deterministic healthy sample.
 // Any decode error encountered while evaluating a sure-keep predicate keeps the
 // trace (fail open), never drops it.
+//
+// The flattened-tag-array decode is deferred until a rule that needs it is
+// reached: getEntries runs at most once per call, caches the result (or the
+// error), and never fires when no rule asks for it. For a realistic-mix
+// workload where the error rule keeps most traces, this skips the decode for
+// every error-kept trace and is the dominant cost on the hot path.
+//
+// The single-call guarantee is an optimization, not a correctness requirement.
+// arrayEntries already copies each row before decoding (see its per-row copy
+// comment), so repeated calls would not corrupt the engine buffer. The closure
+// exists to avoid repeated decode work and the per-row allocations it triggers,
+// and to keep failure semantics consistent across every rule in the trace.
 func (s *Sampler) keepTrace(b *sdk.TraceBlock) bool {
 	// Duration keep: the trace's end-to-end envelope reaches the threshold.
 	if s.durationThresholdMs > 0 {
-		hit, err := s.hasSlowTrace(b)
-		if err != nil || hit {
+		hit, durErr := s.hasSlowTrace(b)
+		if durErr != nil || hit {
 			return true
 		}
 	}
-	// Decode the flattened tag array ONCE. DecodeTagValue rewrites its source slice
-	// in place for string arrays (vararray.UnmarshalVarArray shifts bytes left past
-	// every escape), so decoding the same column again — once per rule, as an earlier
-	// version did — reads corrupted entries whenever a value contains "|" or "\\".
-	var entries []string
-	if s.needsArrayColumn() {
-		decoded, err := arrayEntries(b.Tag(s.arrayColumn))
-		if err != nil {
-			return true // fail open
+	// Lazy tag-array decode. Entries are computed on first call and reused for
+	// every subsequent rule in this trace, so a multi-rule config still pays
+	// the decode cost exactly once. A decode error is cached and returned to
+	// every caller, preserving fail-open semantics at every call site.
+	var (
+		entriesCached []string
+		entriesErr    error
+		entriesDone   bool
+	)
+	getEntries := func() ([]string, error) {
+		if entriesDone {
+			return entriesCached, entriesErr
 		}
-		entries = decoded
+		entriesCached, entriesErr = arrayEntries(b.Tag(s.arrayColumn))
+		entriesDone = true
+		return entriesCached, entriesErr
 	}
 	// Error keep.
 	if s.keepErrors {
 		if s.errorTagInArray {
-			if matchEntries(entries, &s.errorRule, s.arrayColumn) {
+			entries, entriesGetErr := getEntries()
+			if entriesGetErr != nil || matchEntries(entries, &s.errorRule, s.arrayColumn) {
 				return true
 			}
 		} else {
-			hit, err := s.hasErrorColumn(b)
-			if err != nil || hit {
+			hit, errColErr := s.hasErrorColumn(b)
+			if errColErr != nil || hit {
 				return true
 			}
 		}
 	}
-	// Sure-keep tag rules, all evaluated against the already-decoded entries.
-	for i := range s.rules {
-		if matchEntries(entries, &s.rules[i], s.arrayColumn) {
+	// Sure-keep tag rules. The decode is hoisted out of the loop so the
+	// closure is called exactly once even when multiple rules are configured.
+	if len(s.rules) > 0 {
+		entries, entriesGetErr := getEntries()
+		if entriesGetErr != nil {
 			return true
+		}
+		for i := range s.rules {
+			if matchEntries(entries, &s.rules[i], s.arrayColumn) {
+				return true
+			}
 		}
 	}
 	// Healthy remainder: deterministic hash(trace_id) < rate, stable across
@@ -644,11 +669,6 @@ func (s *Sampler) hasSlowTrace(b *sdk.TraceBlock) (bool, error) {
 		return false, errNoDurationEnvelope
 	}
 	return maxEnd-minStart >= s.durationThresholdMs*nanosPerMillis, nil
-}
-
-// needsArrayColumn reports whether any predicate reads the flattened tag array.
-func (s *Sampler) needsArrayColumn() bool {
-	return len(s.rules) > 0 || (s.keepErrors && s.errorTagInArray)
 }
 
 // arrayEntries decodes every entry of the flattened tag array, flattened across
