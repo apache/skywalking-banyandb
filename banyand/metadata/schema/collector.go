@@ -219,13 +219,12 @@ func (icr *InfoCollectorRegistry) CollectLiaisonInfo(ctx context.Context, group 
 	default:
 		return nil, fmt.Errorf("unsupported catalog type: %v", g.Catalog)
 	}
-	// The broadcast reaches every liaison including this collector's own node, so
-	// its response already carries the full self-entry (identity + schema +
-	// pending stats). localInfoList would report the same liaison a second time
-	// as an identity-less, schema-less shell, so return the broadcast alone.
-	// localInfoList is used only when there is no broadcaster (above).
+	// Include this node's own liaison info alongside the broadcast. The liaison
+	// collect broadcast targets the pub's registered peers (ActiveRegisteredNodes)
+	// and never loops back to the local node, so the broadcast alone omits the
+	// self-entry -- and in a single-liaison cluster loses it entirely (0 results).
 	remoteInfo := icr.broadcastCollectLiaisonInfo(topic, group)
-	return remoteInfo, nil
+	return append(localInfoList, remoteInfo...), nil
 }
 
 func (icr *InfoCollectorRegistry) broadcastCollectLiaisonInfo(topic bus.Topic, group string) []*databasev1.LiaisonInfo {

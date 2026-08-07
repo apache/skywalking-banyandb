@@ -78,6 +78,7 @@ type Client struct {
 	profileSource        ProfileSource
 	client               fodcv1.FODCServiceClient
 	reconnectFn          func(context.Context) // overridable in tests; nil means use reconnect
+	roleProvider         func() (string, map[string]string)
 
 	proxyAddr      string
 	nodeRole       string
@@ -1319,6 +1320,42 @@ func (c *Client) sendFilteredMetrics(
 	return nil
 }
 
+// SetNodeRoleProvider wires a live source of the node's resolved role (and labels),
+// typically the cluster collector's GetNodeInfo. Heartbeats then carry the current
+// role so the proxy can upgrade a registration made before the role resolved.
+func (c *Client) SetNodeRoleProvider(provider func() (string, map[string]string)) {
+	c.streamsMu.Lock()
+	defer c.streamsMu.Unlock()
+	c.roleProvider = provider
+}
+
+// currentRole returns the role to report on the next heartbeat/registration. When a
+// live provider is wired it prefers the freshly resolved role, updating the cached
+// nodeRole so a later reconnect re-registers with it; a blank or unspecified live
+// role never regresses the last known good value.
+func (c *Client) currentRole() (string, map[string]string) {
+	c.streamsMu.RLock()
+	provider := c.roleProvider
+	role := c.nodeRole
+	labels := c.labels
+	c.streamsMu.RUnlock()
+	if provider == nil {
+		return role, labels
+	}
+	liveRole, liveLabels := provider()
+	if liveRole == "" || liveRole == "ROLE_UNSPECIFIED" || liveRole == role {
+		return role, labels
+	}
+	c.streamsMu.Lock()
+	c.nodeRole = liveRole
+	if liveLabels != nil {
+		c.labels = liveLabels
+	}
+	labels = c.labels
+	c.streamsMu.Unlock()
+	return liveRole, labels
+}
+
 // SendHeartbeat sends heartbeat to Proxy. The provided context bounds the wait so that a
 // stream whose Send is wedged (for example, after the proxy entered graceful_stop and the
 // underlying TCP write queue is no longer being drained) cannot pin the heartbeat goroutine
@@ -1332,9 +1369,13 @@ func (c *Client) SendHeartbeat(ctx context.Context) error {
 	registrationStream := c.registrationStream
 	c.streamsMu.RUnlock()
 
+	// The node role can resolve after the initial registration (e.g. a liaison whose
+	// gRPC came up later than the agent's role-resolution budget), so send the current
+	// value on every heartbeat; the proxy upgrades the stored role from it.
+	role, labels := c.currentRole()
 	req := &fodcv1.RegisterAgentRequest{
-		NodeRole:       c.nodeRole,
-		Labels:         c.labels,
+		NodeRole:       role,
+		Labels:         labels,
 		PodName:        c.podName,
 		ContainerNames: c.containerNames,
 	}

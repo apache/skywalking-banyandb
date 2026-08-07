@@ -513,6 +513,12 @@ func startProxyClient(ctx context.Context, log *logger.Logger, fr *flightrecorde
 	}
 	client := proxy.NewClient(proxyAddr, nodeRole, podName, containerNames, nodeLabels,
 		heartbeatInterval, reconnectInterval, fr, collector, lifecycleCollector, collectionLister, profileSource, log)
+	if collector != nil {
+		// Keep the registered node_role fresh: it can resolve after startup (e.g. a
+		// liaison whose client gRPC comes up later than the role-resolution budget),
+		// so heartbeats carry the live value and the proxy upgrades the stored role.
+		client.SetNodeRoleProvider(collector.GetNodeInfo)
+	}
 	panicdiag.GoWithRecovery(ctx, panicdiag.RecoveryOptions{
 		Component: "fodc-agent-proxy-client",
 		Logger:    log,

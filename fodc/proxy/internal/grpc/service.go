@@ -597,6 +597,10 @@ func (s *FODCService) RegisterAgent(stream fodcv1.FODCService_RegisterAgentServe
 				s.logger.Error().Err(updateErr).Str("agent_id", agentID).Msg("Failed to update heartbeat")
 				return updateErr
 			}
+			// The heartbeat carries the agent's current node_role, which can resolve
+			// after the initial registration (e.g. a liaison whose gRPC came up late),
+			// so upgrade the stored role from it.
+			s.registry.UpdateAgentRole(agentID, req.GetNodeRole(), req.GetLabels())
 
 			if agentConn != nil {
 				agentConn.updateActivity()
