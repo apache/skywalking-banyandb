@@ -22,18 +22,22 @@ import (
 	"errors"
 	"fmt"
 	"path/filepath"
+	"sort"
 	"sync"
 	"sync/atomic"
 	"time"
+	"unsafe"
 
 	"github.com/dustin/go-humanize"
 
 	"github.com/apache/skywalking-banyandb/banyand/internal/sidx"
+	pkgbytes "github.com/apache/skywalking-banyandb/pkg/bytes"
 	"github.com/apache/skywalking-banyandb/pkg/cgroups"
 	"github.com/apache/skywalking-banyandb/pkg/encoding"
 	"github.com/apache/skywalking-banyandb/pkg/fs"
 	pbv1 "github.com/apache/skywalking-banyandb/pkg/pb/v1"
 	"github.com/apache/skywalking-banyandb/pkg/pipeline/sdk"
+	pkgpool "github.com/apache/skywalking-banyandb/pkg/pool"
 	"github.com/apache/skywalking-banyandb/pkg/run"
 	"github.com/apache/skywalking-banyandb/pkg/watcher"
 )
@@ -71,6 +75,9 @@ const (
 	// concurrent merges to ~memLimit/divisor: each of the up-to-CPUs() concurrent
 	// merges gets memLimit/(divisor*CPUs).
 	stageBudgetAggregateDivisor = 4
+	// defaultMaxStagedTraceCount independently bounds the number of logical
+	// traces exposed to one sampler call even when their byte footprint is tiny.
+	defaultMaxStagedTraceCount = 64 * 1024
 )
 
 // testStageBudgetOverride forces the staging budget when non-zero. Test-only
@@ -123,8 +130,19 @@ func stageBudgetFromLimit(limit uint64) uint64 {
 	return budget
 }
 
+func maxStagedTraceCountFromBudget(stageBudget uint64) int {
+	minimumTraceBytes := uint64(unsafe.Sizeof(stagedTrace{})) + uint64(unsafe.Sizeof(stagedTraceGroup{})) +
+		stagedTraceDecisionBytes() + stagedEvaluationSlotBytes(false)
+	if stageBudget == 0 || minimumTraceBytes == 0 {
+		return defaultMaxStagedTraceCount
+	}
+	byteBound := max(uint64(1), stageBudget/minimumTraceBytes)
+	return int(min(byteBound, uint64(defaultMaxStagedTraceCount)))
+}
+
 type mergeDispatchRequest struct {
 	enqueuedAt time.Time
+	benchmark  *mergeBenchmarkSeed
 	toBeMerged map[uint64]struct{}
 	typ        string
 	lane       string
@@ -133,6 +151,7 @@ type mergeDispatchRequest struct {
 
 func (tst *tsTable) mergeLoop(merges chan *mergerIntroduction, flusherNotifier watcher.Channel) {
 	defer tst.loopCloser.Done()
+	defer tst.mergeControl.stop()
 
 	var lastProcessedEpoch uint64
 
@@ -145,7 +164,6 @@ func (tst *tsTable) mergeLoop(merges chan *mergerIntroduction, flusherNotifier w
 	fastWorkers := max(1, cgroups.CPUs()/2)
 	fastCh := make(chan *mergeDispatchRequest, fastWorkers)
 	slowCh := make(chan *mergeDispatchRequest, 1)
-	triggerCh := make(chan struct{}, 1)
 
 	var workersWg, dispatcherWg sync.WaitGroup
 
@@ -165,14 +183,13 @@ func (tst *tsTable) mergeLoop(merges chan *mergerIntroduction, flusherNotifier w
 	dispatcherWg.Add(1)
 	run.Go(context.Background(), "trace.merger.dispatcher", tst.l, func(_ context.Context) {
 		defer dispatcherWg.Done()
-		tst.dispatcherLoop(triggerCh, threshold, fastCh, slowCh)
+		tst.dispatcherLoop(threshold, fastCh, slowCh)
 	})
 
 	// Shutdown order: stop dispatcher first so no new work enters the lane
 	// channels, then close the lane channels so idle workers exit their range
 	// loops, then wait for workers to drain any in-flight merges.
 	defer func() {
-		close(triggerCh)
 		dispatcherWg.Wait()
 		close(fastCh)
 		close(slowCh)
@@ -186,9 +203,9 @@ func (tst *tsTable) mergeLoop(merges chan *mergerIntroduction, flusherNotifier w
 		case <-ew.Watch():
 			if curSnapshot := tst.currentSnapshot(); curSnapshot != nil {
 				if curSnapshot.epoch > lastProcessedEpoch {
-					select {
-					case triggerCh <- struct{}{}:
-					default:
+					if triggerErr := tst.triggerMerge(); triggerErr != nil {
+						curSnapshot.decRef()
+						return
 					}
 					lastProcessedEpoch = curSnapshot.epoch
 				}
@@ -202,33 +219,47 @@ func (tst *tsTable) mergeLoop(merges chan *mergerIntroduction, flusherNotifier w
 	}
 }
 
-func (tst *tsTable) dispatcherLoop(triggerCh chan struct{}, threshold uint64, fastCh, slowCh chan *mergeDispatchRequest) {
+func (tst *tsTable) dispatcherLoop(threshold uint64, fastCh, slowCh chan *mergeDispatchRequest) {
 	for {
 		select {
 		case <-tst.loopCloser.CloseNotify():
 			return
-		case _, ok := <-triggerCh:
-			if !ok {
+		case <-tst.mergeControl.trigger:
+			dispatch, maxPartID := tst.mergeControl.beginDispatch()
+			if !dispatch {
+				continue
+			}
+			if tst.dispatchAllMergesUpTo(threshold, fastCh, slowCh, maxPartID) {
+				tst.mergeControl.endDispatch()
 				return
 			}
-			if tst.dispatchAllMerges(threshold, fastCh, slowCh) {
-				return
-			}
+			tst.mergeControl.endDispatch()
 		}
 	}
 }
 
 func (tst *tsTable) dispatchAllMerges(threshold uint64, fastCh, slowCh chan *mergeDispatchRequest) bool {
+	return tst.dispatchAllMergesUpTo(threshold, fastCh, slowCh, 0)
+}
+
+func (tst *tsTable) dispatchAllMergesUpTo(threshold uint64, fastCh, slowCh chan *mergeDispatchRequest, maxPartID uint64) bool {
 	for {
 		curSnapshot := tst.currentSnapshot()
 		if curSnapshot == nil {
+			if tst.mergeControl != nil {
+				tst.mergeControl.observeEmpty(0)
+			}
 			return false
 		}
 		freeDiskSize := tst.freeDiskSpace(tst.root)
 		var dst []*partWrapper
-		dst, toBeMerged := tst.getPartsToMerge(curSnapshot, freeDiskSize, dst)
+		dst, toBeMerged := tst.getPartsToMergeUpTo(curSnapshot, freeDiskSize, dst, maxPartID)
 		if len(dst) < 2 {
+			epoch := curSnapshot.epoch
 			curSnapshot.decRef()
+			if tst.mergeControl != nil {
+				tst.mergeControl.observeEmpty(epoch)
+			}
 			return false
 		}
 		for _, pw := range dst {
@@ -285,6 +316,7 @@ func (tst *tsTable) dispatchAllMerges(threshold uint64, fastCh, slowCh chan *mer
 			lane:       lane,
 			enqueuedAt: time.Now(),
 		}
+		req.benchmark = tst.mergeBenchmark.Load().seed(tst, dst, req.typ, req.lane)
 
 		tst.l.Info().
 			Str("lane", lane).
@@ -293,49 +325,87 @@ func (tst *tsTable) dispatchAllMerges(threshold uint64, fastCh, slowCh chan *mer
 			Int("partCount", len(dst)).
 			Msg("dispatching merge")
 
+		if tst.mergeControl != nil {
+			tst.mergeControl.addQueued()
+		}
 		select {
 		case targetCh <- req:
 		case <-tst.loopCloser.CloseNotify():
+			if tst.mergeControl != nil {
+				tst.mergeControl.cancelQueued()
+			}
 			tst.releaseDispatchRequest(req)
 			return true
+		}
+		if tst.mergeControl != nil && tst.mergeControl.finishWaveDispatch() {
+			return false
 		}
 	}
 }
 
 func (tst *tsTable) mergeLaneWorker(ch chan *mergeDispatchRequest, merges chan *mergerIntroduction) {
 	for req := range ch {
+		if tst.mergeControl != nil {
+			tst.mergeControl.startQueued()
+		}
 		if !req.enqueuedAt.IsZero() {
 			tst.incTotalMergeQueueLatency(time.Since(req.enqueuedAt).Seconds(), req.typ, req.lane)
 		}
 		select {
 		case mergeMaxConcurrencyCh <- struct{}{}:
 		case <-tst.loopCloser.CloseNotify():
-			tst.releaseDispatchRequest(req)
-			// Drain remaining buffered requests so their inFlight entries and
-			// part references are released. The lane channel is closed by the
-			// mergeLoop shutdown defer after the dispatcher exits, which lets
-			// this range loop terminate.
-			for pending := range ch {
-				tst.releaseDispatchRequest(pending)
-			}
+			tst.stopMergeLaneWorker(req, ch)
 			return
+		}
+		attributionAcquired := false
+		if tst.mergeAttribution.Load() {
+			select {
+			case tst.attributionCh <- struct{}{}:
+				attributionAcquired = true
+			case <-tst.loopCloser.CloseNotify():
+				<-mergeMaxConcurrencyCh
+				tst.stopMergeLaneWorker(req, ch)
+				return
+			}
 		}
 
 		tst.incTotalMergeLoopStarted(1)
-		_, mergeErr := tst.mergePartsThenSendIntroduction(
+		_, mergeErr := tst.mergePartsThenSendIntroductionObserved(
 			snapshotCreatorMerger, req.parts, req.toBeMerged, merges,
-			tst.loopCloser.CloseNotify(), req.typ, req.lane, nil,
+			tst.loopCloser.CloseNotify(), req.typ, req.lane, nil, req.benchmark,
 		)
 		tst.incTotalMergeLoopFinished(1)
+		if attributionAcquired {
+			<-tst.attributionCh
+		}
 		<-mergeMaxConcurrencyCh
 
 		tst.releaseDispatchRequest(req)
+		if tst.mergeControl != nil {
+			tst.mergeControl.finishRunning()
+		}
 
 		if mergeErr != nil {
 			if !errors.Is(mergeErr, errClosed) {
 				tst.l.Logger.Warn().Err(mergeErr).Str("typ", req.typ).Str("lane", req.lane).Msg("merge lane worker error")
 				tst.incTotalMergeLoopErr(1)
 			}
+		}
+	}
+}
+
+func (tst *tsTable) stopMergeLaneWorker(req *mergeDispatchRequest, ch chan *mergeDispatchRequest) {
+	tst.releaseDispatchRequest(req)
+	if tst.mergeControl != nil {
+		tst.mergeControl.finishRunning()
+	}
+	// Drain remaining buffered requests so their inFlight entries and part
+	// references are released. The lane channel is closed by mergeLoop after the
+	// dispatcher exits, which lets this range terminate.
+	for pending := range ch {
+		tst.releaseDispatchRequest(pending)
+		if tst.mergeControl != nil {
+			tst.mergeControl.cancelQueued()
 		}
 	}
 }
@@ -348,6 +418,9 @@ func (tst *tsTable) releaseDispatchRequest(req *mergeDispatchRequest) {
 	tst.inFlightMu.Unlock()
 	for _, pw := range req.parts {
 		pw.decRef()
+	}
+	if tst.mergeControl != nil {
+		tst.mergeControl.notify()
 	}
 }
 
@@ -365,45 +438,76 @@ type mergeOverrides struct {
 // returns nil when the native pipeline is off, no samplers are registered, or the merge
 // is still hot (parts younger than merge_grace), in which case the merge runs unfiltered.
 func (tst *tsTable) buildHotMergeFilter(parts []*partWrapper) *mergeFilter {
+	filter, _ := tst.buildHotMergeFilterDecision(parts)
+	return filter
+}
+
+func (tst *tsTable) buildHotMergeFilterDecision(parts []*partWrapper) (*mergeFilter, mergeSamplingReason) {
+	return tst.buildHotMergeFilterDecisionAt(parts, tst.mergeNow().UnixNano())
+}
+
+func (tst *tsTable) buildHotMergeFilterDecisionAt(parts []*partWrapper, logicalNow int64) (*mergeFilter, mergeSamplingReason) {
+	if len(parts) == 0 {
+		return nil, mergeReasonEmptyInput
+	}
 	if !tst.option.nativePipelineEnabled {
-		return nil
+		return nil, mergeReasonPipelineDisabled
 	}
 	samplers := lookupSamplers(tst.group)
-	if len(samplers) == 0 {
-		return nil
+	hasSampler := false
+	for _, sampler := range samplers {
+		if sampler != nil {
+			hasSampler = true
+			break
+		}
+	}
+	if !hasSampler {
+		return nil, mergeReasonNoSampler
 	}
 	// The sampler set is shared with FINALIZE (DD11); only filter hot merges when the
 	// MERGE event is actually enabled for this group, so a FINALIZE-only config does
 	// not silently filter hot merges.
 	if !mergeEventEnabledForGroup(tst.group) {
-		return nil
+		return nil, mergeReasonEventDisabled
 	}
 	graceNs := tst.effectiveMergeGraceNs()
 	if tst.option.maxTraceFragmentGap <= 0 || time.Duration(graceNs) < tst.option.maxTraceFragmentGap {
 		tst.incPipelineGuardBypassed()
-		return nil
+		return nil, mergeReasonFragmentGap
 	}
-	if isMergeHot(parts, graceNs, time.Now().UnixNano()) {
+	if isMergeHot(parts, graceNs, logicalNow) {
 		tst.incPipelineGuardBypassed()
-		return nil
+		return nil, mergeReasonGrace
 	}
 	stageBudget := resolveStageBudget(tst.option)
 	guard := tst.newTraceFragmentGuardSession(parts, tst.option.maxTraceFragmentGap, stageBudget)
 	if guard == nil {
 		tst.incPipelineGuardBypassed()
-		return nil
+		return nil, mergeReasonGuardUnavailable
 	}
 	chain := newMergeChain(tst.group, "", samplers, tst.option.decideTimeoutCircuitBreak)
 	return &mergeFilter{
-		chain:       chain,
-		guard:       guard,
-		ctx:         tst.loopCloser.Ctx(),
-		owner:       tst,
-		timeout:     tst.option.decideTimeout,
-		stageBudget: stageBudget,
-		traceBudget: resolveTraceBudget(tst.option),
-		forceSlow:   projectionRequiresSlowPath(chain.projection),
+		chain:         chain,
+		guard:         guard,
+		ctx:           tst.loopCloser.Ctx(),
+		owner:         tst,
+		timeout:       tst.option.decideTimeout,
+		stageBudget:   stageBudget,
+		traceBudget:   resolveTraceBudget(tst.option),
+		maxTraceCount: maxStagedTraceCountFromBudget(stageBudget),
+		forceSlow:     projectionRequiresSlowPath(chain.projection),
+	}, ""
+}
+
+func (tst *tsTable) mergeNow() time.Time {
+	if logicalNow := tst.mergeNowOverride.Load(); logicalNow != 0 {
+		return time.Unix(0, logicalNow)
 	}
+	return time.Now()
+}
+
+func (tst *tsTable) setMergeNow(now time.Time) {
+	tst.mergeNowOverride.Store(now.UnixNano())
 }
 
 func (tst *tsTable) effectiveMergeGraceNs() int64 {
@@ -417,16 +521,45 @@ func (tst *tsTable) effectiveMergeGraceNs() int64 {
 func (tst *tsTable) mergePartsThenSendIntroduction(creator snapshotCreator, parts []*partWrapper, merged map[uint64]struct{}, merges chan *mergerIntroduction,
 	closeCh <-chan struct{}, typ string, lane string, ov *mergeOverrides,
 ) (*partWrapper, error) {
+	return tst.mergePartsThenSendIntroductionObserved(creator, parts, merged, merges, closeCh, typ, lane, ov, nil)
+}
+
+func (tst *tsTable) mergePartsThenSendIntroductionObserved(creator snapshotCreator, parts []*partWrapper, merged map[uint64]struct{},
+	merges chan *mergerIntroduction, closeCh <-chan struct{}, typ string, lane string, ov *mergeOverrides, seed *mergeBenchmarkSeed,
+) (mergedPart *partWrapper, resultErr error) {
 	reservedSpace := tst.reserveSpace(parts)
 	defer releaseDiskSpace(reservedSpace)
+	observer := tst.mergeBenchmark.Load()
+	if seed != nil {
+		observer = seed.observer
+	} else {
+		seed = observer.seed(tst, parts, typ, lane)
+	}
+	operation := observer.beginSeed(seed, "")
 	var filter *mergeFilter
 	var finalizeGenOverride *uint64
+	var initialReason mergeSamplingReason
 	if ov != nil {
 		filter = ov.filter
 		finalizeGenOverride = ov.finalizeGen
+		if filter == nil {
+			initialReason = mergeReasonOther
+		}
 	} else {
-		filter = tst.buildHotMergeFilter(parts)
+		logicalNow := tst.mergeNow().UnixNano()
+		if operation != nil {
+			logicalNow = operation.event.LogicalNow
+		}
+		filter, initialReason = tst.buildHotMergeFilterDecisionAt(parts, logicalNow)
 	}
+	operation.setInitialReason(initialReason)
+	if filter != nil && operation != nil {
+		filter.observation = operation.evaluation
+	}
+	losslessRetry := false
+	defer func() {
+		observer.finish(operation, mergedPart, resultErr, losslessRetry)
+	}()
 	var guardSession *traceFragmentGuardSession
 	if filter != nil && filter.guard != nil {
 		guardSession = filter.guard
@@ -434,7 +567,7 @@ func (tst *tsTable) mergePartsThenSendIntroduction(creator snapshotCreator, part
 	}
 
 	result, mergeErr := tst.mergePartsThenIntroduceAttempt(
-		creator, parts, merged, merges, closeCh, typ, lane, filter, finalizeGenOverride,
+		creator, parts, merged, merges, closeCh, typ, lane, filter, finalizeGenOverride, operation, 1,
 	)
 	if mergeErr != nil {
 		return nil, mergeErr
@@ -456,8 +589,9 @@ func (tst *tsTable) mergePartsThenSendIntroduction(creator snapshotCreator, part
 		guardSession.Close()
 	}
 	tst.incPipelineGuardLosslessRetry(1)
+	losslessRetry = true
 	losslessResult, losslessErr := tst.mergePartsThenIntroduceAttempt(
-		creator, parts, merged, merges, closeCh, typ, lane, nil, finalizeGenOverride,
+		creator, parts, merged, merges, closeCh, typ, lane, nil, finalizeGenOverride, operation, 2,
 	)
 	if losslessErr != nil {
 		return nil, losslessErr
@@ -522,12 +656,16 @@ func (tst *tsTable) observeCoreMerge(parts []*partWrapper, newPart *partWrapper,
 
 func (tst *tsTable) mergePartsThenIntroduceAttempt(creator snapshotCreator, parts []*partWrapper, merged map[uint64]struct{},
 	merges chan *mergerIntroduction, closeCh <-chan struct{}, typ, lane string, filter *mergeFilter, finalizeGenOverride *uint64,
+	operation *mergeBenchmarkOperation, attempt uint32,
 ) (mergeAttemptResult, error) {
 	start := time.Now()
 	newPartID := atomic.AddUint64(&tst.curPartID, 1)
 	newPart, dropped, err := tst.mergeParts(tst.fileSystem, closeCh, parts, newPartID, tst.root, filter, finalizeGenOverride)
 	if err != nil {
 		return mergeAttemptResult{}, err
+	}
+	if operation != nil {
+		newPart.mergeDepth = operation.event.OutputDepth
 	}
 	elapsed := time.Since(start)
 	tst.observeCoreMerge(parts, newPart, elapsed, creator, typ, lane)
@@ -551,7 +689,14 @@ func (tst *tsTable) mergePartsThenIntroduceAttempt(creator snapshotCreator, part
 		}
 	}
 	mergerIntroductionMap := make(map[string]*sidx.MergerIntroduction)
-	for sidxName, sidxInstance := range tst.getAllSidx() {
+	sidxInstances := tst.getAllSidx()
+	mergeSidx := func(sidxName string, sidxInstance sidx.SIDX) error {
+		var childInputBytes, childInputRows uint64
+		if operation != nil {
+			var totalsErr error
+			childInputBytes, childInputRows, totalsErr = benchmarkSidxPartTotals(tst.fileSystem, sidxInstance.PartPaths(partIDMap))
+			operation.recordFailure(totalsErr)
+		}
 		start = time.Now()
 		mergerIntroduction, mergeErr := sidxInstance.Merge(closeCh, partIDMap, newPartID, keepFn)
 		if mergeErr != nil {
@@ -563,19 +708,47 @@ func (tst *tsTable) mergePartsThenIntroduceAttempt(creator snapshotCreator, part
 				tst.removeSidxPartOnFailure(doneSidxName, newPartID)
 				intro.Release()
 			}
-			return mergeAttemptResult{}, mergeErr
+			return mergeErr
 		}
 		if mergerIntroduction == nil {
-			continue
+			return nil
 		}
 		mergerIntroductionMap[sidxName] = mergerIntroduction
 		elapsed = time.Since(start)
+		if operation != nil {
+			childOutputBytes, childOutputRows, totalsErr := benchmarkSidxPartTotals(tst.fileSystem,
+				map[uint64]string{newPartID: sidxPartPath(tst.root, sidxName, newPartID)})
+			operation.recordFailure(totalsErr)
+			operation.recordChild(mergeBenchmarkChild{
+				Name: sidxName, InputBytes: childInputBytes, OutputBytes: childOutputBytes, InputRows: childInputRows,
+				OutputRows: childOutputRows, ElapsedNanos: elapsed.Nanoseconds(), Attempt: attempt,
+			})
+		}
 		sidxTyp := fmt.Sprintf("%s_%s", typ, sidxName)
 		tst.incTotalMergeLatency(elapsed.Seconds(), sidxTyp, lane)
 		tst.incTotalMerged(1, sidxTyp, lane)
 		tst.incTotalMergedParts(len(parts), sidxTyp, lane)
 		if elapsed > 30*time.Second {
 			tst.l.Warn().Int("mergedPartsCount", len(parts)).Str("sidxName", sidxName).Dur("elapsed", elapsed).Msg("sidx merge parts took too long")
+		}
+		return nil
+	}
+	if operation == nil {
+		for sidxName, sidxInstance := range sidxInstances {
+			if mergeErr := mergeSidx(sidxName, sidxInstance); mergeErr != nil {
+				return mergeAttemptResult{}, mergeErr
+			}
+		}
+	} else {
+		sidxNames := make([]string, 0, len(sidxInstances))
+		for sidxName := range sidxInstances {
+			sidxNames = append(sidxNames, sidxName)
+		}
+		sort.Strings(sidxNames)
+		for _, sidxName := range sidxNames {
+			if mergeErr := mergeSidx(sidxName, sidxInstances[sidxName]); mergeErr != nil {
+				return mergeAttemptResult{}, mergeErr
+			}
 		}
 	}
 	if len(mergerIntroductionMap) > 0 {
@@ -634,6 +807,7 @@ func (tst *tsTable) mergePartsThenIntroduceAttempt(creator snapshotCreator, part
 		}
 		return mergeAttemptResult{}, mi.resultErr
 	}
+	operation.publishAttempt(attempt)
 	return mergeAttemptResult{part: newPart}, nil
 }
 
@@ -666,12 +840,21 @@ func releaseDiskSpace(n uint64) {
 
 var reservedDiskSpace uint64
 
-func (tst *tsTable) getPartsToMerge(snapshot *snapshot, freeDiskSize uint64, dst []*partWrapper) ([]*partWrapper, map[uint64]struct{}) {
+func (tst *tsTable) getPartsToMerge(snapshot *snapshot, freeDiskSize uint64) ([]*partWrapper, map[uint64]struct{}) {
+	return tst.getPartsToMergeUpTo(snapshot, freeDiskSize, nil, 0)
+}
+
+func (tst *tsTable) getPartsToMergeUpTo(snapshot *snapshot, freeDiskSize uint64, dst []*partWrapper,
+	maxPartID uint64,
+) ([]*partWrapper, map[uint64]struct{}) {
 	var parts []*partWrapper
 
 	tst.inFlightMu.RLock()
 	for _, pw := range snapshot.parts {
 		if pw.mp != nil || pw.p.partMetadata.TotalCount < 1 {
+			continue
+		}
+		if maxPartID > 0 && pw.ID() > maxPartID {
 			continue
 		}
 		if _, inFlight := tst.inFlight[pw.ID()]; inFlight {
@@ -842,13 +1025,242 @@ func collectConflictTags(parts []*partWrapper) map[string]struct{} {
 // trace carries its rawBlock pieces; a slow trace carries an allocated
 // blockPointer (released after the write decision).
 type stagedTrace struct {
-	rawTags        map[string][]byte
-	rawTagMetadata map[string][]byte
-	slowBlock      *blockPointer
-	traceID        string
-	rawSpans       []byte
-	rawBM          blockMetadata
-	isRaw          bool
+	rawTags           map[string][]byte
+	rawTagMetadata    map[string][]byte
+	slowBlock         *blockPointer
+	rawBM             *blockMetadata
+	rawArena          *pkgbytes.Buffer
+	rawMetadataBlocks *stagedDataBlockBuffer
+	traceID           string
+	rawSpans          []byte
+	isRaw             bool
+}
+
+const (
+	maxPooledStagedArenaBytes   = 16 << 20
+	maxPooledMetadataTags       = 256
+	maxPooledRawMetadataObjects = 1024
+	maxPooledStagedBlocks       = 64 * 1024
+	maxPooledTraceGroups        = defaultMaxStagedTraceCount
+	maxPooledEvaluationTraces   = defaultMaxStagedTraceCount
+)
+
+type stagedByteArenaPool struct {
+	pool *pkgpool.Bounded[*pkgbytes.Buffer]
+}
+
+func newStagedByteArenaPool(name string, maxBytes int64) *stagedByteArenaPool {
+	return &stagedByteArenaPool{
+		pool: pkgpool.RegisterBounded(name, maxBytes, func() *pkgbytes.Buffer {
+			return &pkgbytes.Buffer{}
+		}, func(arena *pkgbytes.Buffer) int64 {
+			return int64(cap(arena.Buf))
+		}),
+	}
+}
+
+func (arenaPool *stagedByteArenaPool) get(size int) *pkgbytes.Buffer {
+	arena := arenaPool.pool.Get()
+	arena.Buf = pkgbytes.ResizeExact(arena.Buf[:0], size)
+	return arena
+}
+
+func (arenaPool *stagedByteArenaPool) put(arena *pkgbytes.Buffer) bool {
+	if arena == nil {
+		return false
+	}
+	clear(arena.Buf)
+	arena.Reset()
+	return arenaPool.pool.Put(arena)
+}
+
+type stagedDataBlockBuffer struct {
+	values []dataBlock
+}
+
+type stagedTraceBuffer struct {
+	values []stagedTrace
+}
+
+func (buffer *stagedTraceBuffer) reset() {
+	clear(buffer.values)
+	buffer.values = buffer.values[:0]
+}
+
+type stagedTraceGroupBuffer struct {
+	values []stagedTraceGroup
+}
+
+func (buffer *stagedTraceGroupBuffer) reset() {
+	clear(buffer.values)
+	buffer.values = buffer.values[:0]
+}
+
+type stagedEvaluationVectors struct {
+	traceBlocks  []sdk.TraceBlock
+	traceIDs     []string
+	guardRanges  []stagedTraceRange
+	decisionMask []bool
+}
+
+func (vectors *stagedEvaluationVectors) reset() {
+	for traceIdx := range vectors.traceBlocks {
+		vectors.traceBlocks[traceIdx] = sdk.TraceBlock{}
+	}
+	clear(vectors.traceIDs)
+	clear(vectors.guardRanges)
+	clear(vectors.decisionMask)
+	vectors.traceBlocks = vectors.traceBlocks[:0]
+	vectors.traceIDs = vectors.traceIDs[:0]
+	vectors.guardRanges = vectors.guardRanges[:0]
+	vectors.decisionMask = vectors.decisionMask[:0]
+}
+
+var (
+	stagedByteArenas        = newStagedByteArenaPool("trace-staged-byte-arena", maxPooledStagedArenaBytes)
+	stagedBlockMetadataPool = pkgpool.RegisterBounded("trace-staged-block-metadata", maxPooledRawMetadataObjects, func() *blockMetadata {
+		return &blockMetadata{}
+	}, func(*blockMetadata) int64 {
+		return 1
+	})
+	stagedDataBlockPool = pkgpool.RegisterBounded("trace-staged-data-blocks", maxPooledRawMetadataObjects, func() *stagedDataBlockBuffer {
+		return &stagedDataBlockBuffer{}
+	}, func(*stagedDataBlockBuffer) int64 {
+		return 1
+	})
+	stagedTraceBufferPool = pkgpool.Register[*stagedTraceBuffer]("trace-staged-traces")
+	stagedTraceGroupPool  = pkgpool.Register[*stagedTraceGroupBuffer]("trace-staged-trace-groups")
+	stagedEvaluationPool  = pkgpool.Register[*stagedEvaluationVectors]("trace-staged-evaluation")
+)
+
+func acquireStagedDataBlockBuffer(size int) *stagedDataBlockBuffer {
+	buffer := stagedDataBlockPool.Get()
+	if cap(buffer.values) < size {
+		buffer.values = make([]dataBlock, size)
+	} else {
+		buffer.values = buffer.values[:size]
+		clear(buffer.values)
+	}
+	return buffer
+}
+
+func releaseStagedDataBlockBuffer(buffer *stagedDataBlockBuffer) {
+	if buffer == nil {
+		return
+	}
+	clear(buffer.values)
+	buffer.values = buffer.values[:0]
+	if cap(buffer.values) > maxPooledMetadataTags {
+		stagedDataBlockPool.Discard(buffer)
+		return
+	}
+	stagedDataBlockPool.Put(buffer)
+}
+
+func acquireStagedTraceBuffer() *stagedTraceBuffer {
+	buffer := stagedTraceBufferPool.Get()
+	if buffer == nil {
+		return &stagedTraceBuffer{}
+	}
+	return buffer
+}
+
+func releaseStagedTraceBuffer(buffer *stagedTraceBuffer) {
+	if buffer == nil {
+		return
+	}
+	buffer.reset()
+	if cap(buffer.values) <= maxPooledStagedBlocks {
+		stagedTraceBufferPool.Put(buffer)
+		return
+	}
+	stagedTraceBufferPool.Discard(buffer)
+}
+
+func acquireStagedTraceGroupBuffer() *stagedTraceGroupBuffer {
+	buffer := stagedTraceGroupPool.Get()
+	if buffer == nil {
+		return &stagedTraceGroupBuffer{}
+	}
+	return buffer
+}
+
+func releaseStagedTraceGroupBuffer(buffer *stagedTraceGroupBuffer) {
+	if buffer == nil {
+		return
+	}
+	buffer.reset()
+	if cap(buffer.values) <= maxPooledTraceGroups {
+		stagedTraceGroupPool.Put(buffer)
+		return
+	}
+	stagedTraceGroupPool.Discard(buffer)
+}
+
+func acquireStagedEvaluationVectors(traceCount int, withGuard bool) *stagedEvaluationVectors {
+	vectors := stagedEvaluationPool.Get()
+	if vectors == nil {
+		vectors = &stagedEvaluationVectors{}
+	}
+	if cap(vectors.traceBlocks) < traceCount {
+		vectors.traceBlocks = make([]sdk.TraceBlock, 0, traceCount)
+	}
+	if cap(vectors.traceIDs) < traceCount {
+		vectors.traceIDs = make([]string, 0, traceCount)
+	}
+	if withGuard && cap(vectors.guardRanges) < traceCount {
+		vectors.guardRanges = make([]stagedTraceRange, 0, traceCount)
+	}
+	if cap(vectors.decisionMask) < traceCount {
+		vectors.decisionMask = make([]bool, traceCount)
+	} else {
+		vectors.decisionMask = vectors.decisionMask[:traceCount]
+		clear(vectors.decisionMask)
+	}
+	return vectors
+}
+
+func releaseStagedEvaluationVectors(vectors *stagedEvaluationVectors, reusable bool) bool {
+	if vectors == nil {
+		return false
+	}
+	if !reusable {
+		stagedEvaluationPool.Discard(vectors)
+		return false
+	}
+	vectors.reset()
+	if cap(vectors.traceBlocks) > maxPooledEvaluationTraces || cap(vectors.traceIDs) > maxPooledEvaluationTraces ||
+		cap(vectors.guardRanges) > maxPooledEvaluationTraces || cap(vectors.decisionMask) > maxPooledEvaluationTraces {
+		stagedEvaluationPool.Discard(vectors)
+		return false
+	}
+	stagedEvaluationPool.Put(vectors)
+	return true
+}
+
+func acquireStagedByteArena(size int) *pkgbytes.Buffer {
+	return stagedByteArenas.get(size)
+}
+
+func releaseStagedByteArena(arena *pkgbytes.Buffer) {
+	stagedByteArenas.put(arena)
+}
+
+func acquireStagedBlockMetadata() *blockMetadata {
+	return stagedBlockMetadataPool.Get()
+}
+
+func releaseStagedBlockMetadata(metadata *blockMetadata) {
+	if metadata == nil {
+		return
+	}
+	oversized := len(metadata.tags) > maxPooledMetadataTags || len(metadata.tagType) > maxPooledMetadataTags
+	metadata.reset()
+	if oversized {
+		stagedBlockMetadataPool.Discard(metadata)
+		return
+	}
+	stagedBlockMetadataPool.Put(metadata)
 }
 
 type stagedTraceRange struct {
@@ -856,18 +1268,40 @@ type stagedTraceRange struct {
 	end   int
 }
 
+type stagedTraceGroup struct {
+	traceID        string
+	start          int
+	end            int
+	minTS          int64
+	maxTS          int64
+	accountedBytes uint64
+	validMetadata  bool
+}
+
 // mergeFilter carries the resolved in-merge retention hook state into
 // mergeBlocks. When nil, mergeBlocks behaves exactly as before (no staging, no
 // decode changes).
 type mergeFilter struct {
-	chain       *mergeChain
-	guard       *traceFragmentGuardSession
-	ctx         context.Context
-	owner       *tsTable
-	timeout     time.Duration
-	stageBudget uint64 // soft cap on staged bytes; a trace-boundary chunk flush fires once exceeded (0 disables chunking)
-	traceBudget uint64 // hard cap on one trace's staged bytes; exceeding it retains the trace without evaluation (0 disables bypass)
-	forceSlow   bool   // forces the slow assembly path when the chain projects row data
+	chain         *mergeChain
+	guard         *traceFragmentGuardSession
+	observation   *mergeEvaluationObservation
+	ctx           context.Context
+	owner         *tsTable
+	timeout       time.Duration
+	stageBudget   uint64 // soft cap on staged bytes; a trace-boundary chunk flush fires once exceeded (0 disables chunking)
+	traceBudget   uint64 // hard cap on one trace's staged bytes; exceeding it retains the trace without evaluation (0 disables bypass)
+	maxTraceCount int    // hard cap on logical traces sent to one Decide call (0 disables the count cap)
+	forceSlow     bool   // forces the slow assembly path when the chain projects row data
+}
+
+func (st *stagedTrace) metadata() *blockMetadata {
+	if st.isRaw {
+		return st.rawBM
+	}
+	if st.slowBlock == nil {
+		return nil
+	}
+	return &st.slowBlock.bm
 }
 
 func (f *mergeFilter) guardContext() context.Context {
@@ -880,28 +1314,144 @@ func (f *mergeFilter) guardContext() context.Context {
 // approxBytes estimates the deep-copied heap a staged trace holds so mergeBlocks
 // can bound the total staged set rather than holding the whole merge in memory.
 func (st *stagedTrace) approxBytes() uint64 {
-	var n uint64
+	n := uint64(len(st.traceID))
 	if st.isRaw {
-		n += uint64(len(st.rawSpans))
-		for _, v := range st.rawTags {
-			n += uint64(len(v))
+		if st.rawArena != nil {
+			n += uint64(cap(st.rawArena.Buf))
 		}
-		for _, v := range st.rawTagMetadata {
-			n += uint64(len(v))
+		n += approximateStringMapBytes(len(st.rawTags), unsafe.Sizeof([]byte{}))
+		for key := range st.rawTags {
+			n += uint64(len(key))
+		}
+		n += approximateStringMapBytes(len(st.rawTagMetadata), unsafe.Sizeof([]byte{}))
+		for key := range st.rawTagMetadata {
+			n += uint64(len(key))
+		}
+		if st.rawBM != nil {
+			n += st.rawBM.approxBytes()
+		}
+		if st.rawMetadataBlocks != nil {
+			n += uint64(unsafe.Sizeof(stagedDataBlockBuffer{}))
+			retainedDescriptors := cap(st.rawMetadataBlocks.values)
+			if st.rawBM != nil {
+				retainedDescriptors -= len(st.rawBM.tags)
+			}
+			if retainedDescriptors > 0 {
+				n += uint64(retainedDescriptors) * uint64(unsafe.Sizeof(dataBlock{}))
+			}
 		}
 		return n
 	}
 	if st.slowBlock != nil {
-		for _, s := range st.slowBlock.block.spans {
-			n += uint64(len(s))
+		n += uint64(unsafe.Sizeof(blockPointer{}))
+		n += uint64(cap(st.slowBlock.block.spans)) * uint64(unsafe.Sizeof([]byte{}))
+		for _, span := range st.slowBlock.block.spans {
+			n += uint64(cap(span))
 		}
-		for i := range st.slowBlock.block.tags {
-			for _, v := range st.slowBlock.block.tags[i].values {
-				n += uint64(len(v))
+		n += uint64(cap(st.slowBlock.block.spanIDs)) * uint64(unsafe.Sizeof(""))
+		for _, spanID := range st.slowBlock.block.spanIDs {
+			n += uint64(len(spanID))
+		}
+		n += uint64(cap(st.slowBlock.block.tags)) * uint64(unsafe.Sizeof(tag{}))
+		for tagIdx := range st.slowBlock.block.tags {
+			stagedTag := &st.slowBlock.block.tags[tagIdx]
+			n += uint64(len(stagedTag.name))
+			n += uint64(cap(stagedTag.values)) * uint64(unsafe.Sizeof([]byte{}))
+			for _, value := range stagedTag.values {
+				n += uint64(cap(value))
 			}
+		}
+		n += st.slowBlock.bm.approxBytes()
+	}
+	return n
+}
+
+func (st *stagedTrace) approxEvaluationBytes(projection sdk.Projection) uint64 {
+	if st.slowBlock == nil || !projectionRequiresSlowPath(projection) {
+		return 0
+	}
+	block := &st.slowBlock.block
+	n := uint64(unsafe.Sizeof(blockPointer{}))
+	n += uint64(len(block.spans)) * uint64(unsafe.Sizeof([]byte{}))
+	n += uint64(len(block.spanIDs)) * uint64(unsafe.Sizeof(""))
+	n += uint64(len(block.tags)) * uint64(unsafe.Sizeof(tag{}))
+	for tagIdx := range block.tags {
+		n += uint64(len(block.tags[tagIdx].values)) * uint64(unsafe.Sizeof([]byte{}))
+	}
+	if projection.Spans {
+		n += uint64(len(block.spans)) * uint64(unsafe.Sizeof([]byte{}))
+		for _, span := range block.spans {
+			n += uint64(len(span))
+		}
+	}
+	if projection.SpanIDs {
+		n += uint64(len(block.spanIDs)) * uint64(unsafe.Sizeof(""))
+	}
+	for _, projectedTag := range projection.Tags {
+		for tagIdx := range block.tags {
+			stagedTag := &block.tags[tagIdx]
+			if decodeTypedTag(stagedTag.name) != projectedTag {
+				continue
+			}
+			n += uint64(unsafe.Sizeof(sdk.TagColumn{}))
+			n += uint64(len(stagedTag.values)) * uint64(unsafe.Sizeof([]byte{}))
+			for _, value := range stagedTag.values {
+				n += uint64(len(value))
+			}
+			break
 		}
 	}
 	return n
+}
+
+func (bm *blockMetadata) approxBytes() uint64 {
+	n := uint64(unsafe.Sizeof(dataBlock{}))
+	n += approximateStringMapBytes(len(bm.tags), unsafe.Sizeof((*dataBlock)(nil)))
+	n += uint64(len(bm.tags)) * uint64(unsafe.Sizeof(dataBlock{}))
+	for tagName := range bm.tags {
+		n += uint64(len(tagName))
+	}
+	n += approximateStringMapBytes(len(bm.tagType), unsafe.Sizeof(pbv1.ValueType(0)))
+	for tagName := range bm.tagType {
+		n += uint64(len(tagName))
+	}
+	return n
+}
+
+func approximateStringMapBytes(length int, valueBytes uintptr) uint64 {
+	if length == 0 {
+		return 0
+	}
+	const (
+		mapHeaderBytes = 48
+		mapBucketSlots = 8
+	)
+	bucketCount := 1
+	for bucketCount*mapBucketSlots < length {
+		bucketCount *= 2
+	}
+	bucketBytes := uintptr(16) + mapBucketSlots*(unsafe.Sizeof("")+valueBytes)
+	return mapHeaderBytes + uint64(bucketCount)*uint64(bucketBytes)
+}
+
+func stagedBatchFixedBytes() uint64 {
+	return uint64(unsafe.Sizeof(stagedEvaluationBatch{})) + approximateStringMapBytes(1, unsafe.Sizeof(struct{}{}))
+}
+
+func stagedTraceDecisionBytes() uint64 {
+	decisionBytes := uint64(unsafe.Sizeof(false))
+	// Reserve the exact-drop lookup entry that may be created after Decide.
+	decisionBytes += uint64(unsafe.Sizeof("")) + uint64(unsafe.Sizeof(struct{}{}))
+	return decisionBytes
+}
+
+func stagedEvaluationSlotBytes(hasGuard bool) uint64 {
+	// Evaluation vectors allocate exactly one slot per logical trace group.
+	slotBytes := uint64(unsafe.Sizeof("")) + uint64(unsafe.Sizeof(sdk.TraceBlock{}))
+	if hasGuard {
+		slotBytes += uint64(unsafe.Sizeof(stagedTraceRange{}))
+	}
+	return slotBytes
 }
 
 // isMergeHot reports true when any part being merged contains data written
@@ -924,33 +1474,78 @@ func isMergeHot(parts []*partWrapper, graceNs int64, now int64) bool {
 // mustReadRaw may overwrite rawBlk without corrupting the staged copy.
 func stageRawTrace(rawBlk *rawBlock) stagedTrace {
 	st := stagedTrace{
-		isRaw:   true,
-		traceID: rawBlk.bm.traceID,
+		isRaw:             true,
+		traceID:           rawBlk.bm.traceID,
+		rawBM:             acquireStagedBlockMetadata(),
+		rawMetadataBlocks: acquireStagedDataBlockBuffer(len(rawBlk.bm.tags)),
 	}
-	st.rawBM.copyFrom(rawBlk.bm)
-	if rawBlk.spans != nil {
-		st.rawSpans = append([]byte(nil), rawBlk.spans...)
+	copyStagedBlockMetadata(st.rawBM, rawBlk.bm, st.rawMetadataBlocks.values)
+	arenaSize := len(rawBlk.spans)
+	for _, value := range rawBlk.tags {
+		arenaSize += len(value)
 	}
+	for _, value := range rawBlk.tagMetadata {
+		arenaSize += len(value)
+	}
+	st.rawArena = acquireStagedByteArena(arenaSize)
+	offset := 0
+	copyIntoArena := func(source []byte) []byte {
+		if len(source) == 0 {
+			return nil
+		}
+		target := st.rawArena.Buf[offset : offset+len(source)]
+		copy(target, source)
+		offset += len(source)
+		return target
+	}
+	st.rawSpans = copyIntoArena(rawBlk.spans)
 	if len(rawBlk.tags) > 0 {
 		st.rawTags = make(map[string][]byte, len(rawBlk.tags))
-		for k, v := range rawBlk.tags {
-			st.rawTags[k] = append([]byte(nil), v...)
+		for key, value := range rawBlk.tags {
+			st.rawTags[key] = copyIntoArena(value)
 		}
 	}
 	if len(rawBlk.tagMetadata) > 0 {
 		st.rawTagMetadata = make(map[string][]byte, len(rawBlk.tagMetadata))
-		for k, v := range rawBlk.tagMetadata {
-			st.rawTagMetadata[k] = append([]byte(nil), v...)
+		for key, value := range rawBlk.tagMetadata {
+			st.rawTagMetadata[key] = copyIntoArena(value)
 		}
 	}
 	return st
+}
+
+func copyStagedBlockMetadata(dst, src *blockMetadata, tagBlocks []dataBlock) {
+	dst.traceID = src.traceID
+	dst.uncompressedSpanSizeBytes = src.uncompressedSpanSizeBytes
+	dst.count = src.count
+	if dst.spans == nil {
+		dst.spans = &dataBlock{}
+	}
+	dst.spans.copyFrom(src.spans)
+	dst.timestamps.copyFrom(&src.timestamps)
+	if len(src.tags) > 0 && dst.tags == nil {
+		dst.tags = make(map[string]*dataBlock, len(src.tags))
+	}
+	tagIdx := 0
+	for tagName, sourceBlock := range src.tags {
+		targetBlock := &tagBlocks[tagIdx]
+		targetBlock.copyFrom(sourceBlock)
+		dst.tags[tagName] = targetBlock
+		tagIdx++
+	}
+	if len(src.tagType) > 0 && dst.tagType == nil {
+		dst.tagType = make(map[string]pbv1.ValueType, len(src.tagType))
+	}
+	for tagName, valueType := range src.tagType {
+		dst.tagType[tagName] = valueType
+	}
 }
 
 // writeStagedKeep persists a kept staged trace from its own deep-copied bytes.
 func writeStagedKeep(bw *blockWriter, st *stagedTrace) {
 	if st.isRaw {
 		rawBlk := rawBlock{
-			bm:          &st.rawBM,
+			bm:          st.rawBM,
 			tags:        st.rawTags,
 			tagMetadata: st.rawTagMetadata,
 			spans:       st.rawSpans,
@@ -962,7 +1557,19 @@ func writeStagedKeep(bw *blockWriter, st *stagedTrace) {
 }
 
 func releaseStagedTrace(st *stagedTrace) {
-	if st.isRaw || st.slowBlock == nil {
+	if st.isRaw {
+		releaseStagedBlockMetadata(st.rawBM)
+		releaseStagedDataBlockBuffer(st.rawMetadataBlocks)
+		releaseStagedByteArena(st.rawArena)
+		st.rawBM = nil
+		st.rawMetadataBlocks = nil
+		st.rawArena = nil
+		st.rawSpans = nil
+		st.rawTags = nil
+		st.rawTagMetadata = nil
+		return
+	}
+	if st.slowBlock == nil {
 		return
 	}
 	releaseBlockPointer(st.slowBlock)
@@ -970,62 +1577,64 @@ func releaseStagedTrace(st *stagedTrace) {
 }
 
 type stagedEvaluationBatch struct {
-	traceBatch  sdk.TraceBatch
-	traceIDs    []string
-	guardRanges []stagedTraceRange
+	vectors *stagedEvaluationVectors
 }
 
-func assembleStagedEvaluationBatch(filter *mergeFilter, staged []stagedTrace) (stagedEvaluationBatch, bool) {
-	assembledBatch := stagedEvaluationBatch{
-		traceIDs: make([]string, 0, len(staged)),
-	}
-	if filter.guard != nil {
-		assembledBatch.guardRanges = make([]stagedTraceRange, 0, len(staged))
-	}
-	var lastGroupTraceID string
-	hasLastGroup := false
-	for startIdx := 0; startIdx < len(staged); {
-		traceID := staged[startIdx].traceID
-		if hasLastGroup && traceID <= lastGroupTraceID {
+func assembleStagedEvaluationBatch(filter *mergeFilter, staged []stagedTrace, groups []stagedTraceGroup) (stagedEvaluationBatch, bool) {
+	vectors := acquireStagedEvaluationVectors(len(groups), filter.guard != nil)
+	assembledBatch := stagedEvaluationBatch{vectors: vectors}
+	expectedStart := 0
+	for groupIdx := range groups {
+		group := &groups[groupIdx]
+		if group.traceID == "" || group.start != expectedStart || group.end <= group.start || group.end > len(staged) ||
+			group.minTS > group.maxTS || groupIdx > 0 && group.traceID <= groups[groupIdx-1].traceID {
+			releaseStagedEvaluationVectors(vectors, true)
 			return stagedEvaluationBatch{}, false
 		}
-		endIdx := startIdx + 1
-		for endIdx < len(staged) && staged[endIdx].traceID == traceID {
-			endIdx++
-		}
-		stagedTraceBlock, assembled := assembleStagedTraceBlock(traceID, staged[startIdx:endIdx], filter.chain.projection)
+		stagedTraceBlock, assembled := assembleStagedTraceBlock(*group, staged[group.start:group.end], filter.chain.projection)
 		if assembled {
-			assembledBatch.traceIDs = append(assembledBatch.traceIDs, traceID)
-			assembledBatch.traceBatch.Traces = append(assembledBatch.traceBatch.Traces, stagedTraceBlock)
+			vectors.traceIDs = append(vectors.traceIDs, group.traceID)
+			vectors.traceBlocks = append(vectors.traceBlocks, stagedTraceBlock)
 			if filter.guard != nil {
-				assembledBatch.guardRanges = append(assembledBatch.guardRanges, stagedTraceRange{start: startIdx, end: endIdx})
+				vectors.guardRanges = append(vectors.guardRanges, stagedTraceRange{start: group.start, end: group.end})
 			}
 		}
-		lastGroupTraceID = traceID
-		hasLastGroup = true
-		startIdx = endIdx
+		expectedStart = group.end
+	}
+	if expectedStart != len(staged) {
+		releaseStagedEvaluationVectors(vectors, true)
+		return stagedEvaluationBatch{}, false
 	}
 	return assembledBatch, true
 }
 
-func resolveStagedDrops(filter *mergeFilter, staged []stagedTrace, assembledBatch stagedEvaluationBatch) map[string]struct{} {
-	if len(assembledBatch.traceBatch.Traces) == 0 {
-		return nil
+func resolveStagedDrops(filter *mergeFilter, staged []stagedTrace, assembledBatch stagedEvaluationBatch) (map[string]struct{}, bool) {
+	if len(assembledBatch.vectors.traceBlocks) == 0 {
+		return nil, true
 	}
-	verdict, execErr := filter.chain.Execute(&assembledBatch.traceBatch, filter.timeout)
+	traceBatch := sdk.TraceBatch{Traces: assembledBatch.vectors.traceBlocks}
+	verdict, reusable, execErr := filter.chain.executeObservedInto(
+		&traceBatch, filter.timeout, filter.observation, assembledBatch.vectors.decisionMask,
+	)
 	keepMask := verdict.Keep
-	if execErr != nil || len(keepMask) != len(assembledBatch.traceIDs) {
+	if execErr != nil || len(keepMask) != len(assembledBatch.vectors.traceIDs) {
+		if filter.observation != nil {
+			filter.observation.retained.Add(uint64(len(assembledBatch.vectors.traceIDs)))
+		}
 		if filter.owner != nil {
 			filter.owner.incPipelinePluginErrors(1, "decide_failed_open")
 		}
-		return nil
+		return nil, reusable
 	}
 	if filter.owner != nil {
-		filter.owner.incPipelineTracesEvaluated(len(assembledBatch.traceIDs))
+		filter.owner.incPipelineTracesEvaluated(len(assembledBatch.vectors.traceIDs))
 	}
 	var dropMature map[string]struct{}
-	for traceIdx, traceID := range assembledBatch.traceIDs {
+	for traceIdx, traceID := range assembledBatch.vectors.traceIDs {
 		if keepMask[traceIdx] {
+			if filter.observation != nil {
+				filter.observation.retained.Add(1)
+			}
 			if filter.owner != nil {
 				filter.owner.incPipelineTracesRetained(1)
 			}
@@ -1036,12 +1645,15 @@ func resolveStagedDrops(filter *mergeFilter, staged []stagedTrace, assembledBatc
 				dropMature = make(map[string]struct{})
 			}
 			dropMature[traceID] = struct{}{}
+			if filter.observation != nil {
+				filter.observation.dropped.Add(1)
+			}
 			if filter.owner != nil {
 				filter.owner.incPipelineTracesDropped(1)
 			}
 			continue
 		}
-		guardRange := assembledBatch.guardRanges[traceIdx]
+		guardRange := assembledBatch.vectors.guardRanges[traceIdx]
 		guardTrace := assembleTraceFragmentGuardTrace(traceID, staged[guardRange.start:guardRange.end])
 		decision := filter.guard.guard.Resolve(filter.guardContext(), guardTrace, traceFragmentSamplerActionDrop)
 		if filter.owner != nil {
@@ -1052,6 +1664,9 @@ func resolveStagedDrops(filter *mergeFilter, staged []stagedTrace, assembledBatc
 				dropMature = make(map[string]struct{})
 			}
 			dropMature[traceID] = struct{}{}
+			if filter.observation != nil {
+				filter.observation.dropped.Add(1)
+			}
 			if filter.owner != nil {
 				filter.owner.incPipelineTracesDropped(1)
 			}
@@ -1064,22 +1679,28 @@ func resolveStagedDrops(filter *mergeFilter, staged []stagedTrace, assembledBatc
 				filter.owner.incPipelineGuardBudgetExhausted(1)
 			}
 		}
+		if filter.observation != nil {
+			filter.observation.retained.Add(1)
+		}
 	}
-	return dropMature
+	return dropMature, reusable
 }
 
 // flushStaged evaluates staged traces and writes them in ascending trace-ID order.
 // Chain failures retain the whole batch, and allocated slow blocks are released.
-func flushStaged(bw *blockWriter, filter *mergeFilter, staged []stagedTrace, droppedSet map[string]struct{}) {
+func flushStaged(bw *blockWriter, filter *mergeFilter, staged []stagedTrace, groups []stagedTraceGroup, validBatch bool,
+	droppedSet map[string]struct{},
+) {
 	if len(staged) == 0 {
 		return
 	}
 	// Build one Decide entry per trace ID. A trace split across physical blocks is
 	// assembled completely, decided once, and dropped as a unit.
-	assembledBatch, validOrder := assembleStagedEvaluationBatch(filter, staged)
+	assembledBatch, validOrder := assembleStagedEvaluationBatch(filter, staged, groups)
 	var dropMature map[string]struct{}
-	if validOrder {
-		dropMature = resolveStagedDrops(filter, staged, assembledBatch)
+	reusable := true
+	if validBatch && validOrder {
+		dropMature, reusable = resolveStagedDrops(filter, staged, assembledBatch)
 	}
 	for i := range staged {
 		if _, isDropped := dropMature[staged[i].traceID]; isDropped {
@@ -1088,6 +1709,9 @@ func flushStaged(bw *blockWriter, filter *mergeFilter, staged []stagedTrace, dro
 			writeStagedKeep(bw, &staged[i])
 		}
 		releaseStagedTrace(&staged[i])
+	}
+	if validOrder {
+		releaseStagedEvaluationVectors(assembledBatch.vectors, reusable)
 	}
 }
 
@@ -1109,23 +1733,66 @@ type traceEvaluationStager struct {
 	bw                *blockWriter
 	filter            *mergeFilter
 	droppedSet        map[string]struct{}
+	traceBuffer       *stagedTraceBuffer
+	groupBuffer       *stagedTraceGroupBuffer
 	lastStagedTraceID string
 	bypassedTraceID   string
 	staged            []stagedTrace
+	groups            []stagedTraceGroup
 	stagedBytes       uint64
 	currentTraceBytes uint64
 	currentTraceStart int
+	stagedTraceCount  int
+	invalidOrder      bool
+	invalidMetadata   bool
+}
+
+func (tes *traceEvaluationStager) ensureBuffers() {
+	if tes.traceBuffer == nil {
+		tes.traceBuffer = acquireStagedTraceBuffer()
+		tes.staged = tes.traceBuffer.values
+	}
+	if tes.groupBuffer == nil {
+		tes.groupBuffer = acquireStagedTraceGroupBuffer()
+		tes.groups = tes.groupBuffer.values
+	}
+}
+
+func (tes *traceEvaluationStager) releaseBuffers() {
+	for stagedIdx := range tes.staged {
+		releaseStagedTrace(&tes.staged[stagedIdx])
+	}
+	if tes.traceBuffer != nil {
+		tes.traceBuffer.values = tes.staged
+		releaseStagedTraceBuffer(tes.traceBuffer)
+	}
+	if tes.groupBuffer != nil {
+		tes.groupBuffer.values = tes.groups
+		releaseStagedTraceGroupBuffer(tes.groupBuffer)
+	}
+	tes.traceBuffer = nil
+	tes.groupBuffer = nil
+	tes.staged = nil
+	tes.groups = nil
 }
 
 func (tes *traceEvaluationStager) flush() {
 	if len(tes.staged) == 0 {
 		return
 	}
-	flushStaged(tes.bw, tes.filter, tes.staged, tes.droppedSet)
-	tes.staged = nil
+	flushStaged(tes.bw, tes.filter, tes.staged, tes.groups, !tes.invalidOrder && !tes.invalidMetadata, tes.droppedSet)
+	clear(tes.staged)
+	tes.staged = tes.staged[:0]
+	clear(tes.groups)
+	tes.groups = tes.groups[:0]
+	tes.traceBuffer.values = tes.staged
+	tes.groupBuffer.values = tes.groups
 	tes.stagedBytes = 0
 	tes.currentTraceBytes = 0
 	tes.currentTraceStart = 0
+	tes.stagedTraceCount = 0
+	tes.invalidOrder = false
+	tes.invalidMetadata = false
 }
 
 func (tes *traceEvaluationStager) writeBypassed(bypassed []stagedTrace) {
@@ -1136,6 +1803,7 @@ func (tes *traceEvaluationStager) writeBypassed(bypassed []stagedTrace) {
 }
 
 func (tes *traceEvaluationStager) stage(st stagedTrace) {
+	tes.ensureBuffers()
 	if tes.bypassedTraceID != "" {
 		if st.traceID == tes.bypassedTraceID {
 			writeStagedKeep(tes.bw, &st)
@@ -1145,35 +1813,90 @@ func (tes *traceEvaluationStager) stage(st stagedTrace) {
 		}
 		tes.bypassedTraceID = ""
 	}
-	if len(tes.staged) == 0 || st.traceID != tes.lastStagedTraceID {
+	startsTrace := len(tes.staged) == 0 || st.traceID != tes.lastStagedTraceID
+	var groupSliceGrowthBytes uint64
+	if startsTrace {
 		tes.currentTraceStart = len(tes.staged)
 		tes.currentTraceBytes = 0
+		tes.stagedTraceCount++
+		if len(tes.groups) > 0 && st.traceID <= tes.groups[len(tes.groups)-1].traceID {
+			tes.invalidOrder = true
+		}
+		previousGroupCapacity := cap(tes.groups)
+		tes.groups = append(tes.groups, stagedTraceGroup{
+			traceID: st.traceID, start: len(tes.staged), end: len(tes.staged), validMetadata: true,
+		})
+		tes.groupBuffer.values = tes.groups
+		groupSliceGrowthBytes = uint64(cap(tes.groups)-previousGroupCapacity) * uint64(unsafe.Sizeof(stagedTraceGroup{}))
 	}
 	stagedTraceBytes := st.approxBytes()
+	if tes.filter.chain != nil {
+		stagedTraceBytes += st.approxEvaluationBytes(tes.filter.chain.projection)
+	}
+	previousCapacity := cap(tes.staged)
 	tes.staged = append(tes.staged, st)
-	tes.stagedBytes += stagedTraceBytes
-	tes.currentTraceBytes += stagedTraceBytes
+	tes.traceBuffer.values = tes.staged
+	sliceGrowthBytes := uint64(cap(tes.staged)-previousCapacity) * uint64(unsafe.Sizeof(stagedTrace{}))
+	batchBytes := stagedTraceBytes + sliceGrowthBytes
+	traceBytes := stagedTraceBytes + uint64(unsafe.Sizeof(stagedTrace{}))
+	if startsTrace {
+		traceDecisionBytes := stagedTraceDecisionBytes() + stagedEvaluationSlotBytes(tes.filter.guard != nil)
+		batchBytes += groupSliceGrowthBytes + traceDecisionBytes
+		traceBytes += uint64(unsafe.Sizeof(stagedTraceGroup{})) + traceDecisionBytes
+		if len(tes.staged) == 1 {
+			batchBytes += stagedBatchFixedBytes()
+		}
+	}
+	tes.stagedBytes += batchBytes
+	tes.currentTraceBytes += traceBytes
+	group := &tes.groups[len(tes.groups)-1]
+	group.end = len(tes.staged)
+	group.accountedBytes = tes.currentTraceBytes
+	metadata := st.metadata()
+	switch {
+	case metadata == nil || metadata.traceID != st.traceID || !metadata.timestamps.known || metadata.timestamps.min > metadata.timestamps.max:
+		tes.invalidMetadata = true
+		group.validMetadata = false
+	case group.end-group.start == 1:
+		group.minTS = metadata.timestamps.min
+		group.maxTS = metadata.timestamps.max
+	default:
+		group.minTS = min(group.minTS, metadata.timestamps.min)
+		group.maxTS = max(group.maxTS, metadata.timestamps.max)
+	}
 	tes.lastStagedTraceID = st.traceID
 	if tes.filter.traceBudget == 0 || tes.currentTraceBytes <= tes.filter.traceBudget {
 		return
 	}
 	if tes.currentTraceStart > 0 {
-		flushStaged(tes.bw, tes.filter, tes.staged[:tes.currentTraceStart], tes.droppedSet)
+		flushStaged(tes.bw, tes.filter, tes.staged[:tes.currentTraceStart], tes.groups[:len(tes.groups)-1],
+			!tes.invalidOrder && !tes.invalidMetadata, tes.droppedSet)
 	}
 	tes.writeBypassed(tes.staged[tes.currentTraceStart:])
 	tes.bypassedTraceID = st.traceID
 	tes.lastStagedTraceID = ""
-	tes.staged = nil
+	clear(tes.staged)
+	tes.staged = tes.staged[:0]
+	clear(tes.groups)
+	tes.groups = tes.groups[:0]
+	tes.traceBuffer.values = tes.staged
+	tes.groupBuffer.values = tes.groups
 	tes.stagedBytes = 0
 	tes.currentTraceBytes = 0
 	tes.currentTraceStart = 0
+	tes.stagedTraceCount = 0
+	tes.invalidOrder = false
+	tes.invalidMetadata = false
 	if tes.filter.owner != nil {
 		tes.filter.owner.incPipelineOversizedTracesBypassed(1)
+	}
+	if tes.filter.observation != nil {
+		tes.filter.observation.oversized.Add(1)
 	}
 }
 
 func (tes *traceEvaluationStager) flushBefore(nextTraceID string, pendingBlock *blockPointer, pendingBlockIsEmpty bool) {
-	if tes.filter.stageBudget == 0 || tes.stagedBytes < tes.filter.stageBudget || len(tes.staged) == 0 || nextTraceID == tes.lastStagedTraceID {
+	if !tes.batchBudgetReached() || len(tes.staged) == 0 || nextTraceID == tes.lastStagedTraceID {
 		return
 	}
 	pendingCompletesStagedTrace := !pendingBlockIsEmpty && pendingBlock.bm.traceID == tes.lastStagedTraceID
@@ -1183,9 +1906,15 @@ func (tes *traceEvaluationStager) flushBefore(nextTraceID string, pendingBlock *
 }
 
 func (tes *traceEvaluationStager) flushAfter(completedTraceID, nextTraceID string) {
-	if tes.filter.stageBudget > 0 && tes.stagedBytes >= tes.filter.stageBudget && completedTraceID != nextTraceID {
+	if tes.batchBudgetReached() && completedTraceID != nextTraceID {
 		tes.flush()
 	}
+}
+
+func (tes *traceEvaluationStager) batchBudgetReached() bool {
+	bytesReached := tes.filter.stageBudget > 0 && tes.stagedBytes >= tes.filter.stageBudget
+	tracesReached := tes.filter.maxTraceCount > 0 && tes.stagedTraceCount >= tes.filter.maxTraceCount
+	return bytesReached || tracesReached
 }
 
 func mergeBlocks(closeCh <-chan struct{}, bw *blockWriter, br *blockReader, conflictTags map[string]struct{},
@@ -1226,6 +1955,7 @@ func mergeBlocks(closeCh <-chan struct{}, bw *blockWriter, br *blockReader, conf
 			filter:     filter,
 			droppedSet: droppedSet,
 		}
+		defer evaluationStager.releaseBuffers()
 	}
 	// writeRawBlock writes the just-read rawBlk. When the hook is inactive it
 	// writes immediately (byte-identical to the legacy path). When active the

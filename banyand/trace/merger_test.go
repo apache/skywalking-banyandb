@@ -1510,7 +1510,7 @@ func Test_getPartsToMerge_skipsInFlightParts(t *testing.T) {
 	defer snp.decRef()
 
 	// Without inFlight: all parts should be eligible
-	dst, _ := tst.getPartsToMerge(snp, uint64(1<<30), nil)
+	dst, _ := tst.getPartsToMerge(snp, uint64(1<<30))
 	require.GreaterOrEqual(t, len(dst), 2, "should find parts to merge when none are in-flight")
 
 	// Mark part 100 and 101 as in-flight
@@ -1519,7 +1519,7 @@ func Test_getPartsToMerge_skipsInFlightParts(t *testing.T) {
 	tst.inFlight[101] = struct{}{}
 
 	// With inFlight: parts 100 and 101 should be skipped
-	dst2, _ := tst.getPartsToMerge(snp, uint64(1<<30), nil)
+	dst2, _ := tst.getPartsToMerge(snp, uint64(1<<30))
 	if len(dst2) > 0 {
 		for _, pw := range dst2 {
 			require.NotEqual(t, uint64(100), pw.ID(), "part 100 should be skipped (in-flight)")
@@ -1530,7 +1530,7 @@ func Test_getPartsToMerge_skipsInFlightParts(t *testing.T) {
 	// Mark all parts as in-flight: no parts should be eligible
 	tst.inFlight[102] = struct{}{}
 	tst.inFlight[103] = struct{}{}
-	dst3, _ := tst.getPartsToMerge(snp, uint64(1<<30), nil)
+	dst3, _ := tst.getPartsToMerge(snp, uint64(1<<30))
 	require.Nil(t, dst3, "no parts should be eligible when all are in-flight")
 }
 

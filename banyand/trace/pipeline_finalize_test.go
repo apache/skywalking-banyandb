@@ -67,6 +67,51 @@ func TestBuildHotMergeFilter_MergeEventGate(t *testing.T) {
 	filter.guard.Close()
 }
 
+func TestBuildHotMergeFilter_UsesMergeClock(t *testing.T) {
+	resetRegistries()
+	defer resetRegistries()
+
+	const group = "merge-clock-group"
+	replaceSamplersForGroup(group, []namedSampler{{name: "s", sampler: &dummySampler{}}})
+	setMergeEventForGroup(group, true)
+
+	parts := []*partWrapper{{p: &part{partMetadata: partMetadata{
+		ID:           1,
+		TotalCount:   1,
+		MinTimestamp: int64(9 * time.Hour),
+		MaxTimestamp: int64(9 * time.Hour),
+	}}}}
+	tst := &tsTable{
+		segmentTimeRange: timestamp.NewInclusiveTimeRange(time.Unix(0, 0), time.Unix(0, int64(24*time.Hour))),
+		group:            group,
+		snapshot: &snapshot{
+			parts: parts,
+			epoch: 1,
+			ref:   1,
+		},
+		option: option{
+			nativePipelineEnabled: true,
+			mergeGraceDefault:     2 * time.Hour,
+			maxTraceFragmentGap:   time.Hour,
+		},
+	}
+
+	tst.setMergeNow(time.Unix(0, int64(10*time.Hour)))
+	assert.Nil(t, tst.buildHotMergeFilter(parts), "a part inside the logical grace window must bypass sampling")
+	tst.setMergeNow(time.Unix(0, int64(12*time.Hour)))
+	filter := tst.buildHotMergeFilter(parts)
+	require.NotNil(t, filter, "advancing only the logical clock must make the same part mature")
+	filter.guard.Close()
+}
+
+func TestMergeNowDefaultsToRealClock(t *testing.T) {
+	before := time.Now()
+	actual := (&tsTable{}).mergeNow()
+	after := time.Now()
+	assert.False(t, actual.Before(before))
+	assert.False(t, actual.After(after))
+}
+
 // TestFinalizeEventEnabled_Matrix verifies the finalize event gate. Unlike MERGE,
 // an empty enabled_events list must NOT default finalize on.
 func TestFinalizeEventEnabled_Matrix(t *testing.T) {

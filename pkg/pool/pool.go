@@ -61,6 +61,140 @@ type Synced[T any] struct {
 	refs        atomic.Int32
 }
 
+type boundedEntry[T comparable] struct {
+	value T
+	size  int64
+}
+
+// Bounded is a deterministic pool whose retained objects cannot exceed a configured aggregate size.
+type Bounded[T comparable] struct {
+	newValue     func() T
+	sizeOf       func(T) int64
+	stacks       map[uint64]string
+	idMap        map[T]uint64
+	entries      []boundedEntry[T]
+	retainedSize int64
+	maxSize      int64
+	idCounter    atomic.Uint64
+	mutex        sync.Mutex
+	stacksMutex  sync.Mutex
+	refs         atomic.Int32
+}
+
+// RegisterBounded registers an aggregate-size-bounded pool with the given name.
+func RegisterBounded[T comparable](name string, maxSize int64, newValue func() T, sizeOf func(T) int64) *Bounded[T] {
+	if maxSize < 0 {
+		panic("bounded pool maximum size cannot be negative")
+	}
+	if newValue == nil || sizeOf == nil {
+		panic("bounded pool callbacks cannot be nil")
+	}
+	boundedPool := &Bounded[T]{
+		newValue: newValue,
+		sizeOf:   sizeOf,
+		maxSize:  maxSize,
+	}
+	if _, ok := poolMap.LoadOrStore(name, boundedPool); ok {
+		panic(fmt.Sprintf("duplicated pool: %s", name))
+	}
+	return boundedPool
+}
+
+// Get obtains an object from the pool or creates one when the pool is empty.
+func (p *Bounded[T]) Get() T {
+	p.mutex.Lock()
+	entryCount := len(p.entries)
+	if entryCount == 0 {
+		p.mutex.Unlock()
+		value := p.newValue()
+		p.trackGet(value)
+		return value
+	}
+	entry := p.entries[entryCount-1]
+	var zero boundedEntry[T]
+	p.entries[entryCount-1] = zero
+	p.entries = p.entries[:entryCount-1]
+	p.retainedSize -= entry.size
+	p.mutex.Unlock()
+	p.trackGet(entry.value)
+	return entry.value
+}
+
+// Put releases an object and retains it when the aggregate size limit permits reuse.
+func (p *Bounded[T]) Put(value T) bool {
+	p.releaseTracking(value)
+	valueSize := p.sizeOf(value)
+	if valueSize < 0 || valueSize > p.maxSize {
+		return false
+	}
+	p.mutex.Lock()
+	defer p.mutex.Unlock()
+	if valueSize > p.maxSize-p.retainedSize {
+		return false
+	}
+	p.entries = append(p.entries, boundedEntry[T]{value: value, size: valueSize})
+	p.retainedSize += valueSize
+	return true
+}
+
+// Discard releases an object without retaining it for reuse.
+func (p *Bounded[T]) Discard(value T) {
+	p.releaseTracking(value)
+}
+
+// RetainedSize returns the aggregate size of objects currently retained by the pool.
+func (p *Bounded[T]) RetainedSize() int64 {
+	p.mutex.Lock()
+	defer p.mutex.Unlock()
+	return p.retainedSize
+}
+
+// RefsCount returns the number of objects currently checked out from the pool.
+func (p *Bounded[T]) RefsCount() int {
+	return int(p.refs.Load())
+}
+
+// Stacks returns recorded stack traces for checked-out objects.
+func (p *Bounded[T]) Stacks() []string {
+	p.stacksMutex.Lock()
+	defer p.stacksMutex.Unlock()
+	result := make([]string, 0, len(p.stacks))
+	for _, stack := range p.stacks {
+		result = append(result, stack)
+	}
+	return result
+}
+
+func (p *Bounded[T]) trackGet(value T) {
+	p.refs.Add(1)
+	if !stackTrackingEnabled.Load() {
+		return
+	}
+	p.stacksMutex.Lock()
+	if p.stacks == nil {
+		p.stacks = make(map[uint64]string)
+		p.idMap = make(map[T]uint64)
+	}
+	id := p.idCounter.Add(1)
+	buf := make([]byte, 4096)
+	n := runtime.Stack(buf, false)
+	p.idMap[value] = id
+	p.stacks[id] = "Bounded.Get() called:\n" + string(buf[:n])
+	p.stacksMutex.Unlock()
+}
+
+func (p *Bounded[T]) releaseTracking(value T) {
+	if stackTrackingEnabled.Load() {
+		p.stacksMutex.Lock()
+		if id, exists := p.idMap[value]; exists {
+			delete(p.stacks, id)
+			delete(p.idMap, value)
+		}
+		p.stacksMutex.Unlock()
+	}
+	p.refs.Add(-1)
+}
+
 // Get returns an object from the pool.
 // If the pool is empty, nil is returned.
 func (p *Synced[T]) Get() T {
@@ -95,9 +229,21 @@ func (p *Synced[T]) Get() T {
 
 // Put puts an object back to the pool.
 func (p *Synced[T]) Put(v T) {
-	// Remove the stack trace BEFORE returning the object to the pool.
+	p.releaseTracking(v)
+	p.Pool.Put(v)
+	p.refs.Add(-1)
+}
+
+// Discard releases a checked-out object without returning it to the pool.
+func (p *Synced[T]) Discard(v T) {
+	p.releaseTracking(v)
+	p.refs.Add(-1)
+}
+
+func (p *Synced[T]) releaseTracking(v T) {
+	// Remove the stack trace before making the object available again.
 	// Otherwise another goroutine's Get() can reuse the pointer and
-	// overwrite its idMap entry, causing this Put to delete the wrong
+	// overwrite its idMap entry, causing this release to delete the wrong
 	// stack and orphan the original one.
 	if stackTrackingEnabled.Load() {
 		p.stacksMutex.Lock()
@@ -109,8 +255,6 @@ func (p *Synced[T]) Put(v T) {
 		}
 		p.stacksMutex.Unlock()
 	}
-	p.Pool.Put(v)
-	p.refs.Add(-1)
 }
 
 // RefsCount returns the reference count of the pool.

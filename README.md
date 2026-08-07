@@ -30,6 +30,19 @@ The database research community usually uses [RUM Conjecture](http://daslab.seas
 - [Dev version doc](https://skywalking.apache.org/docs/skywalking-banyandb/next/readme/)
 - [Latest release doc](https://skywalking.apache.org/docs/skywalking-banyandb/latest/readme/)
 
+## Developer tooling
+
+The `dump trace-source-catalog` subcommand validates the frozen downloaded trace benchmark shard and writes its deterministic
+core and secondary-index ledgers. It requires `--source-path` and a new, outside-source `--output-path`; see the
+[trace pipeline merge performance design](docs/design/trace-pipeline-merge-performance-test.md) for the source contract.
+
+The `dump trace-generate-fixture` subcommand consumes that catalog and the immutable downloaded shard, verifies the default
+SkyWalking sampler ratio, and writes the deterministic one-day core and secondary-index fixture through the data-node part
+receipt path. It requires `--source-path`, `--catalog-path`, a new `--output-path`, and the built sampler `--plugin-path`.
+
+The trace benchmark receiver can enable per-merge JSONL recording for the primary, boundary-drain, and cooldown phases.
+Records classify actual sampler execution, preserve merge depth and input lineage, nest secondary-index work under its core
+merge, and expose reconciled low-cardinality aggregates plus serial-attribution resource deltas.
 
 ## Contributing
 
