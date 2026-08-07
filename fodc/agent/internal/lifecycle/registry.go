@@ -26,6 +26,7 @@ import (
 
 	commonv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/common/v1"
 	databasev1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/database/v1"
+	fodcv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/fodc/v1"
 	"github.com/apache/skywalking-banyandb/fodc/internal/consistency"
 	"github.com/apache/skywalking-banyandb/fodc/internal/timeouts"
 )
@@ -47,16 +48,42 @@ type registryObjectFP struct {
 	fp   uint64
 }
 
-// fetchRegistryFingerprints dials one schema-serving node and computes the
-// registry-truth fingerprint of every object in every group, once per collection
-// cycle. Fingerprint compute lives in FODC (this proxy), never in the banyandb
-// data path, and it happens once here rather than on every node's agent.
-//
-// It returns three things: the per-group registry fingerprints; the per-group
-// read errors (a group whose registry read fails is omitted from the map so the
-// checker degrades it to UNKNOWN, but the reason is returned here so the caller
-// can surface it to the user instead of silently dropping it); and a fatal error
-// when the node itself is unreachable.
+// FetchSchemaRegistry reads the authoritative registry from the local liaison
+// client endpoint and returns its per-object fingerprints, one entry per group,
+// which the agent streams to the proxy. Fingerprint compute lives here in the
+// FODC agent, never in the banyandb data path, and it runs only on the one agent
+// the proxy selects, so the authoritative registry is read once per collection
+// cycle. A fatal read failure is returned as an error (the proxy surfaces it
+// rather than silently degrading to UNKNOWN); a group whose own read failed is
+// returned as a group carrying its error and no objects.
+func (c *Collector) FetchSchemaRegistry(ctx context.Context) ([]*fodcv1.SchemaRegistryGroup, error) {
+	if c.registryAddr == "" {
+		return nil, fmt.Errorf("no schema-registry address configured")
+	}
+	byGroup, groupErrs, err := fetchRegistryFingerprints(ctx, c.registryAddr)
+	if err != nil {
+		return nil, err
+	}
+	groups := make([]*fodcv1.SchemaRegistryGroup, 0, len(byGroup)+len(groupErrs))
+	for group, objects := range byGroup {
+		sg := &fodcv1.SchemaRegistryGroup{Group: group, Objects: make([]*fodcv1.SchemaObjectFingerprint, 0, len(objects))}
+		for key, fp := range objects {
+			sg.Objects = append(sg.Objects, &fodcv1.SchemaObjectFingerprint{Kind: key.Kind, Name: key.Name, Fingerprint: fp})
+		}
+		groups = append(groups, sg)
+	}
+	for group, e := range groupErrs {
+		groups = append(groups, &fodcv1.SchemaRegistryGroup{Group: group, Error: e})
+	}
+	return groups, nil
+}
+
+// fetchRegistryFingerprints dials the local schema-serving node and computes the
+// registry-truth fingerprint of every object in every group. It returns the
+// per-group fingerprints; the per-group read errors (a group whose registry read
+// fails is omitted from the map so the checker degrades it to UNKNOWN, but the
+// reason is returned so the caller can surface it); and a fatal error when the
+// node itself is unreachable.
 func fetchRegistryFingerprints(
 	ctx context.Context, address string,
 ) (map[string]map[consistency.ObjectKey]uint64, map[string]string, error) {

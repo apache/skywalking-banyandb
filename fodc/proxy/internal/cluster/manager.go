@@ -197,38 +197,6 @@ func (m *Manager) CollectClusterTopology(ctx context.Context) *TopologyMap {
 	return m.aggregateTopologies(allTopologies)
 }
 
-// SchemaServingNodeAddresses returns the gRPC addresses of nodes that serve the
-// client-facing schema registry, discovered from the current cluster topology,
-// so the proxy queries the registry truth without a configured address.
-//
-// Only ROLE_LIAISON qualifies: the registry RPCs (GroupRegistryService and its
-// siblings) are registered exclusively on the liaison gRPC server
-// (banyand/liaison/grpc/server.go). ROLE_META is the internal metadata store and
-// does NOT expose those RPCs -- dialing a meta/data node for them returns
-// Unimplemented -- so it must not be treated as schema-serving.
-func (m *Manager) SchemaServingNodeAddresses(ctx context.Context) []string {
-	topology := m.CollectClusterTopology(ctx)
-	seen := make(map[string]struct{})
-	var addresses []string
-	for _, node := range topology.Nodes {
-		addr := node.GetGrpcAddress()
-		if addr == "" {
-			continue
-		}
-		for _, role := range node.Roles {
-			if role != databasev1.Role_ROLE_LIAISON.String() {
-				continue
-			}
-			if _, dup := seen[addr]; !dup {
-				seen[addr] = struct{}{}
-				addresses = append(addresses, addr)
-			}
-			break
-		}
-	}
-	return addresses
-}
-
 // aggregateTopologies aggregates topology from multiple agents.
 func (m *Manager) aggregateTopologies(topologies []*TopologyMap) *TopologyMap {
 	if len(topologies) == 0 {

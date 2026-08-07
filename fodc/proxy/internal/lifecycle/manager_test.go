@@ -34,7 +34,11 @@ import (
 
 type mockRequestSender struct {
 	requestErrors   map[string]error
+	schemaRegErr    error
+	failAgents      map[string]error
+	schemaRegistry  []*fodcv1.SchemaRegistryGroup
 	requestedAgents []string
+	schemaFetchedBy []string
 	mu              sync.Mutex
 }
 
@@ -43,6 +47,22 @@ func newMockRequestSender() *mockRequestSender {
 		requestErrors:   make(map[string]error),
 		requestedAgents: make([]string, 0),
 	}
+}
+
+func (m *mockRequestSender) FetchSchemaRegistry(_ context.Context, agentID string) ([]*fodcv1.SchemaRegistryGroup, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.schemaFetchedBy = append(m.schemaFetchedBy, agentID)
+	if err, ok := m.failAgents[agentID]; ok {
+		return nil, err
+	}
+	if m.schemaRegErr != nil {
+		return nil, m.schemaRegErr
+	}
+	if m.schemaRegistry != nil {
+		return m.schemaRegistry, nil
+	}
+	return nil, fmt.Errorf("no schema registry configured")
 }
 
 func (m *mockRequestSender) RequestLifecycleData(agentID string) error {

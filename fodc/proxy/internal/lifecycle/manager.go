@@ -25,6 +25,7 @@ import (
 	"sort"
 	"sync"
 
+	databasev1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/database/v1"
 	fodcv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/fodc/v1"
 	"github.com/apache/skywalking-banyandb/fodc/internal/consistency"
 	"github.com/apache/skywalking-banyandb/fodc/internal/timeouts"
@@ -77,25 +78,19 @@ type agentLifecycleData struct {
 	PodName string
 }
 
-// RequestSender is an interface for sending lifecycle data requests to agents.
+// RequestSender is an interface for sending requests to agents. Beyond driving
+// the lifecycle stream, it reads the authoritative registry from a single
+// schema-serving agent the manager selects by role.
 type RequestSender interface {
 	RequestLifecycleData(agentID string) error
-}
-
-// SchemaNodeProvider yields the gRPC addresses of nodes that serve the
-// client-facing schema registry (liaison role), discovered from the cluster
-// topology, so the proxy queries the registry truth without any configured
-// address.
-type SchemaNodeProvider interface {
-	SchemaServingNodeAddresses(ctx context.Context) []string
+	FetchSchemaRegistry(ctx context.Context, agentID string) ([]*fodcv1.SchemaRegistryGroup, error)
 }
 
 // Manager manages lifecycle data from multiple agents.
 type Manager struct {
+	grpcService  RequestSender
 	log          *logger.Logger
 	registry     *registry.AgentRegistry
-	grpcService  RequestSender
-	schemaNodes  SchemaNodeProvider
 	collecting   map[string]chan *agentLifecycleData
 	checker      *consistency.Checker
 	schemaStatus map[string]fodcv1.ConsistencyStatus
@@ -148,15 +143,6 @@ func (m *Manager) SetGRPCService(grpcService RequestSender) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	m.grpcService = grpcService
-}
-
-// SetSchemaNodeProvider wires the source of schema-serving node addresses (the
-// cluster topology). When unset, the proxy skips the registry fetch and schema
-// consistency degrades to UNKNOWN.
-func (m *Manager) SetSchemaNodeProvider(provider SchemaNodeProvider) {
-	m.mu.Lock()
-	defer m.mu.Unlock()
-	m.schemaNodes = provider
 }
 
 // UpdateLifecycle updates lifecycle data for a specific agent.
@@ -344,36 +330,67 @@ func (m *Manager) registrySchemaErrors(
 	return schemaErrors
 }
 
-// fetchRegistry queries the registry truth once from a schema-serving node
-// discovered in the cluster topology, trying each until one answers. It returns
-// the per-group registry fingerprints, the per-group read errors, and a fatal
-// error when no node could be reached. A nil map (fatal error set) makes
-// assembleSchemaConsistency report the affected groups UNKNOWN, and the caller
-// surfaces the returned errors on the groups so the user learns why rather than
-// only seeing a log line.
+// fetchRegistry reads the authoritative registry truth once per collection by
+// asking a single schema-serving agent, selected by its ROLE_LIAISON node role,
+// to read its local registry and report the fingerprints. It tries each liaison
+// agent in a deterministic order until one succeeds, so a single unhealthy
+// liaison does not blank the schema check. It returns the per-group fingerprints,
+// per-group read errors, and a fatal error when no liaison could be reached; the
+// caller surfaces these on the groups so the user learns why rather than only
+// seeing a log line.
 func (m *Manager) fetchRegistry(
 	ctx context.Context,
 ) (map[string]map[consistency.ObjectKey]uint64, map[string]string, error) {
 	m.mu.RLock()
-	provider := m.schemaNodes
+	reg := m.registry
+	svc := m.grpcService
 	m.mu.RUnlock()
-	if provider == nil {
-		return nil, nil, errors.New("no schema-node provider configured")
+	if reg == nil || svc == nil {
+		return nil, nil, errors.New("registry or grpc service not available for schema registry read")
 	}
-	addrs := provider.SchemaServingNodeAddresses(ctx)
-	if len(addrs) == 0 {
-		return nil, nil, errors.New("no schema-serving (meta/liaison) node discovered in the cluster topology")
+	liaisons := reg.ListAgentsByRole(databasev1.Role_ROLE_LIAISON.String())
+	if len(liaisons) == 0 {
+		return nil, nil, errors.New("no schema-serving (liaison) agent available to read the registry")
 	}
+	sort.Slice(liaisons, func(i, j int) bool { return liaisons[i].AgentID < liaisons[j].AgentID })
 	var lastErr error
-	for _, addr := range addrs {
-		registryByGroup, groupErrs, err := fetchRegistryFingerprints(ctx, addr)
+	for _, agentInfo := range liaisons {
+		// Bound each read so a liaison that dies mid-stream (never sending its done
+		// marker) cannot hang the collection past this deadline.
+		fetchCtx, cancel := context.WithTimeout(ctx, defaultCollectionTimeout)
+		groups, err := svc.FetchSchemaRegistry(fetchCtx, agentInfo.AgentID)
+		cancel()
 		if err != nil {
 			lastErr = err
 			continue
 		}
+		registryByGroup, groupErrs := schemaRegistryToFingerprints(groups)
 		return registryByGroup, groupErrs, nil
 	}
-	return nil, nil, fmt.Errorf("registry fetch failed on all %d schema-serving node(s): %w", len(addrs), lastErr)
+	return nil, nil, fmt.Errorf("schema registry read failed on all %d liaison agent(s): %w", len(liaisons), lastErr)
+}
+
+// schemaRegistryToFingerprints converts the agent's reported registry message
+// into the per-group object fingerprint map the checker consumes, splitting out
+// per-group read errors (a group whose read failed carries no objects and its
+// reason is returned so the caller can surface it).
+func schemaRegistryToFingerprints(
+	groups []*fodcv1.SchemaRegistryGroup,
+) (map[string]map[consistency.ObjectKey]uint64, map[string]string) {
+	byGroup := make(map[string]map[consistency.ObjectKey]uint64, len(groups))
+	groupErrs := make(map[string]string)
+	for _, g := range groups {
+		if e := g.GetError(); e != "" {
+			groupErrs[g.GetGroup()] = e
+			continue
+		}
+		objects := make(map[consistency.ObjectKey]uint64, len(g.GetObjects()))
+		for _, o := range g.GetObjects() {
+			objects[consistency.ObjectKey{Kind: o.GetKind(), Name: o.GetName()}] = o.GetFingerprint()
+		}
+		byGroup[g.GetGroup()] = objects
+	}
+	return byGroup, groupErrs
 }
 
 func (m *Manager) mergeGroups(

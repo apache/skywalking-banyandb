@@ -221,6 +221,7 @@ spec:
             - --heartbeat-interval=5s
             - --pod-name=$(POD_NAME)
             - --lifecycle-port=18912
+            - --schema-registry-port=17912
           env:
             - name: POD_NAME
               valueFrom:

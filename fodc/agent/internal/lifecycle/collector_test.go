@@ -103,7 +103,7 @@ func startLocalServer(t *testing.T, fake *fakeLifecycleService) string {
 func newCollectorForFake(t *testing.T, fake *fakeLifecycleService, cacheTTL time.Duration) *Collector {
 	t.Helper()
 	addr := startLocalServer(t, fake)
-	return NewCollector(initTestLogger(t), addr, t.TempDir(), cacheTTL)
+	return NewCollector(initTestLogger(t), addr, "", t.TempDir(), cacheTTL)
 }
 
 func sampleGroup(name string) *fodcv1.GroupLifecycleInfo {
@@ -112,7 +112,7 @@ func sampleGroup(name string) *fodcv1.GroupLifecycleInfo {
 
 func TestNewCollector(t *testing.T) {
 	log := initTestLogger(t)
-	collector := NewCollector(log, "", "", 10*time.Minute)
+	collector := NewCollector(log, "", "", "", 10*time.Minute)
 	require.NotNil(t, collector)
 	assert.Nil(t, collector.currentData)
 	assert.Equal(t, 10*time.Minute, collector.cacheTTL)
@@ -120,14 +120,14 @@ func TestNewCollector(t *testing.T) {
 
 func TestCollector_ReadReportFiles_EmptyDir(t *testing.T) {
 	log := initTestLogger(t)
-	collector := NewCollector(log, "", t.TempDir(), 0)
+	collector := NewCollector(log, "", "", t.TempDir(), 0)
 	reports := collector.readReportFiles()
 	assert.Empty(t, reports)
 }
 
 func TestCollector_Collect_NoGRPC(t *testing.T) {
 	log := initTestLogger(t)
-	collector := NewCollector(log, "", "", 0)
+	collector := NewCollector(log, "", "", "", 0)
 	data, err := collector.Collect(t.Context())
 	require.NoError(t, err)
 	require.NotNil(t, data)
@@ -136,7 +136,7 @@ func TestCollector_Collect_NoGRPC(t *testing.T) {
 
 func TestCollector_CacheTTL(t *testing.T) {
 	log := initTestLogger(t)
-	collector := NewCollector(log, "", "", 5*time.Minute)
+	collector := NewCollector(log, "", "", "", 5*time.Minute)
 	ctx := t.Context()
 
 	now := time.Now()
@@ -163,7 +163,7 @@ func TestCollector_CacheTTL(t *testing.T) {
 
 func TestCollector_ZeroTTL_AlwaysRefreshes(t *testing.T) {
 	log := initTestLogger(t)
-	collector := NewCollector(log, "", "", 0)
+	collector := NewCollector(log, "", "", "", 0)
 	ctx := t.Context()
 
 	data1, err := collector.Collect(ctx)
@@ -179,7 +179,7 @@ func TestCollector_ZeroTTL_AlwaysRefreshes(t *testing.T) {
 func TestCollector_ReadReportFiles_MaxFiles(t *testing.T) {
 	log := initTestLogger(t)
 	dir := t.TempDir()
-	collector := NewCollector(log, "", dir, 0)
+	collector := NewCollector(log, "", "", dir, 0)
 
 	for idx, name := range []string{
 		"2026-03-20.json",
@@ -211,7 +211,7 @@ func TestCollector_ReadReportFiles_MaxFiles(t *testing.T) {
 func TestCollector_ReadReportFiles_SkipsNonJSON(t *testing.T) {
 	log := initTestLogger(t)
 	dir := t.TempDir()
-	collector := NewCollector(log, "", dir, 0)
+	collector := NewCollector(log, "", "", dir, 0)
 
 	require.NoError(t, os.WriteFile(filepath.Join(dir, "2026-03-26.json"), []byte(`{}`), 0o600))
 	require.NoError(t, os.WriteFile(filepath.Join(dir, "readme.txt"), []byte("text"), 0o600))
@@ -225,7 +225,7 @@ func TestCollector_ReadReportFiles_SkipsNonJSON(t *testing.T) {
 func TestCollector_ReadReportFiles_OversizedFile(t *testing.T) {
 	log := initTestLogger(t)
 	dir := t.TempDir()
-	collector := NewCollector(log, "", dir, 0)
+	collector := NewCollector(log, "", "", dir, 0)
 
 	require.NoError(t, os.WriteFile(filepath.Join(dir, "2026-03-26.json"), []byte(`{"ok":true}`), 0o600))
 	oversized := make([]byte, maxReportFileSize+1)
@@ -238,7 +238,7 @@ func TestCollector_ReadReportFiles_OversizedFile(t *testing.T) {
 
 func TestCollectGroups_NoGRPCAddrShortCircuits(t *testing.T) {
 	log := initTestLogger(t)
-	collector := NewCollector(log, "", "", 0)
+	collector := NewCollector(log, "", "", "", 0)
 	groups, err := collector.collectGroups(t.Context())
 	require.NoError(t, err)
 	assert.Nil(t, groups)

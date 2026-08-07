@@ -371,6 +371,8 @@
     - [RegisterAgentResponse](#banyandb-fodc-v1-RegisterAgentResponse)
     - [SchemaConsistency](#banyandb-fodc-v1-SchemaConsistency)
     - [SchemaIssue](#banyandb-fodc-v1-SchemaIssue)
+    - [SchemaObjectFingerprint](#banyandb-fodc-v1-SchemaObjectFingerprint)
+    - [SchemaRegistryGroup](#banyandb-fodc-v1-SchemaRegistryGroup)
     - [StreamClusterTopologyRequest](#banyandb-fodc-v1-StreamClusterTopologyRequest)
     - [StreamClusterTopologyResponse](#banyandb-fodc-v1-StreamClusterTopologyResponse)
     - [StreamCrashDiagnosticsRequest](#banyandb-fodc-v1-StreamCrashDiagnosticsRequest)
@@ -381,6 +383,8 @@
     - [StreamMetricsResponse](#banyandb-fodc-v1-StreamMetricsResponse)
     - [StreamPressureProfilesRequest](#banyandb-fodc-v1-StreamPressureProfilesRequest)
     - [StreamPressureProfilesResponse](#banyandb-fodc-v1-StreamPressureProfilesResponse)
+    - [StreamSchemaRegistryRequest](#banyandb-fodc-v1-StreamSchemaRegistryRequest)
+    - [StreamSchemaRegistryResponse](#banyandb-fodc-v1-StreamSchemaRegistryResponse)
     - [Topology](#banyandb-fodc-v1-Topology)
   
     - [ConsistencyStatus](#banyandb-fodc-v1-ConsistencyStatus)
@@ -5995,6 +5999,43 @@ registry truth and that node&#39;s cache/runtime).
 
 
 
+<a name="banyandb-fodc-v1-SchemaObjectFingerprint"></a>
+
+### SchemaObjectFingerprint
+
+
+
+| Field | Type | Label | Description |
+| ----- | ---- | ----- | ----------- |
+| kind | [string](#string) |  | kind is schema.Kind.String(), matching ObjectConsistency.kind. |
+| name | [string](#string) |  |  |
+| fingerprint | [uint64](#uint64) |  |  |
+
+
+
+
+
+
+<a name="banyandb-fodc-v1-SchemaRegistryGroup"></a>
+
+### SchemaRegistryGroup
+SchemaRegistryGroup carries one group&#39;s authoritative registry fingerprints.
+The agent computes the fingerprints so the wire carries only uint64 digests,
+never raw schema bodies; a group&#39;s objects may arrive across several chunks
+that share a group name, which the proxy merges.
+
+
+| Field | Type | Label | Description |
+| ----- | ---- | ----- | ----------- |
+| group | [string](#string) |  |  |
+| objects | [SchemaObjectFingerprint](#banyandb-fodc-v1-SchemaObjectFingerprint) | repeated |  |
+| error | [string](#string) |  | error is set when this group&#39;s registry read failed; its objects are then omitted and the group degrades to UNKNOWN with this reason attached. As a special case, an empty group name with error set is the agent&#39;s fatal whole-read failure, which the proxy surfaces across every group. |
+
+
+
+
+
+
 <a name="banyandb-fodc-v1-StreamClusterTopologyRequest"></a>
 
 ### StreamClusterTopologyRequest
@@ -6158,6 +6199,44 @@ Proxy -&gt; Agent: either &#34;stream all your metadata&#34; or &#34;stream one 
 
 
 
+<a name="banyandb-fodc-v1-StreamSchemaRegistryRequest"></a>
+
+### StreamSchemaRegistryRequest
+StreamSchemaRegistryRequest is one message of the selected agent&#39;s streamed
+reply to a request_registry command. A group&#39;s objects are split across
+messages so no single message carries a whole (potentially large) group; the
+proxy merges chunks that share a group name. The agent ends the round with a
+final message that has done set, which is how the proxy knows to stop waiting.
+A group whose own read failed rides on SchemaRegistryGroup.error; a fatal
+whole-read failure (e.g. the local registry endpoint was unreachable) is a
+single group chunk with an empty group name carrying the error.
+
+
+| Field | Type | Label | Description |
+| ----- | ---- | ----- | ----------- |
+| group | [SchemaRegistryGroup](#banyandb-fodc-v1-SchemaRegistryGroup) |  | group carries a chunk of one group&#39;s registry fingerprints; unset on the final message. Chunks that share a group name are merged by the proxy. |
+| done | [bool](#bool) |  | done marks the last message of the round; no group messages follow it. |
+
+
+
+
+
+
+<a name="banyandb-fodc-v1-StreamSchemaRegistryResponse"></a>
+
+### StreamSchemaRegistryResponse
+
+
+
+| Field | Type | Label | Description |
+| ----- | ---- | ----- | ----------- |
+| request_registry | [bool](#bool) |  | Proxy asks the selected agent to read and report the registry fingerprints. |
+
+
+
+
+
+
 <a name="banyandb-fodc-v1-Topology"></a>
 
 ### Topology
@@ -6238,6 +6317,7 @@ SchemaIssueType names which layer boundary the disagreement sits on.
 | StreamLifecycle | [StreamLifecycleRequest](#banyandb-fodc-v1-StreamLifecycleRequest) stream | [StreamLifecycleResponse](#banyandb-fodc-v1-StreamLifecycleResponse) stream | Bi-directional stream for lifecycle data |
 | StreamCrashDiagnostics | [StreamCrashDiagnosticsRequest](#banyandb-fodc-v1-StreamCrashDiagnosticsRequest) stream | [StreamCrashDiagnosticsResponse](#banyandb-fodc-v1-StreamCrashDiagnosticsResponse) stream | Bi-directional stream for crash diagnostics Agent sends StreamCrashDiagnosticsRequest (panic collections), Proxy sends StreamCrashDiagnosticsResponse (requests) |
 | StreamPressureProfiles | [StreamPressureProfilesRequest](#banyandb-fodc-v1-StreamPressureProfilesRequest) stream | [StreamPressureProfilesResponse](#banyandb-fodc-v1-StreamPressureProfilesResponse) stream | Bi-directional stream for memory-pressure pprof profiles. Proxy drives via StreamPressureProfilesResponse (list metadata, or fetch one profile&#39;s bytes); agent replies with StreamPressureProfilesRequest (metadata records, or binary chunks). |
+| StreamSchemaRegistry | [StreamSchemaRegistryRequest](#banyandb-fodc-v1-StreamSchemaRegistryRequest) stream | [StreamSchemaRegistryResponse](#banyandb-fodc-v1-StreamSchemaRegistryResponse) stream | Bi-directional stream for the authoritative schema registry fingerprint. The Proxy picks one schema-serving (liaison) agent by role and drives it via StreamSchemaRegistryResponse (request_registry); that one agent reads the authoritative registry from its local node and replies with StreamSchemaRegistryRequest (the fingerprints). Only the selected agent is ever asked, so the registry is read once per collection, not once per node. |
 
 
 <a name="banyandb-fodc-v1-GroupLifecycleService"></a>

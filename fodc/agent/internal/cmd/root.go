@@ -90,6 +90,7 @@ var (
 	crashOutputCfg                     = panicdiag.NewCrashOutputConfig()
 	maxFODCDiagnosisMemoryUsagePercent int
 	lifecyclePort                      int
+	schemaRegistryPort                 int
 	lifecycleReportDir                 string
 	lifecycleCacheTTL                  time.Duration
 	pressureProfilerEnabled            bool
@@ -150,6 +151,8 @@ func init() {
 		"Maximum percentage of available memory (based on cgroup memory limit) that can be used for storing diagnosis data in the FODC ring buffer. Valid range: 0-100.")
 	rootCmd.Flags().IntVar(&lifecyclePort, "lifecycle-port", 18912,
 		"gRPC port for lifecycle InspectAll service. Set to 0 to disable lifecycle collection")
+	rootCmd.Flags().IntVar(&schemaRegistryPort, "schema-registry-port", 17912,
+		"Local liaison client gRPC port serving the authoritative registry, read only when the proxy selects this agent. Set to 0 to disable")
 	rootCmd.Flags().StringVar(&lifecycleReportDir, "lifecycle-report-dir", lifecycle.DefaultReportDir,
 		"Directory where lifecycle sidecar writes report files")
 	rootCmd.Flags().DurationVar(&lifecycleCacheTTL, "lifecycle-cache-ttl", 10*time.Minute,
@@ -501,8 +504,12 @@ func startProxyClient(ctx context.Context, log *logger.Logger, fr *flightrecorde
 		// IPv6 loopback (::1), which fails with "cannot assign requested address" in pods
 		// without an IPv6 loopback.
 		grpcAddr := fmt.Sprintf("127.0.0.1:%d", lifecyclePort)
-		lifecycleCollector = lifecycle.NewCollector(log, grpcAddr, lifecycleReportDir, lifecycleCacheTTL)
-		log.Info().Str("grpc_addr", grpcAddr).Msg("Lifecycle collector initialized")
+		var registryAddr string
+		if schemaRegistryPort > 0 {
+			registryAddr = fmt.Sprintf("127.0.0.1:%d", schemaRegistryPort)
+		}
+		lifecycleCollector = lifecycle.NewCollector(log, grpcAddr, registryAddr, lifecycleReportDir, lifecycleCacheTTL)
+		log.Info().Str("grpc_addr", grpcAddr).Str("registry_addr", registryAddr).Msg("Lifecycle collector initialized")
 	}
 	client := proxy.NewClient(proxyAddr, nodeRole, podName, containerNames, nodeLabels,
 		heartbeatInterval, reconnectInterval, fr, collector, lifecycleCollector, collectionLister, profileSource, log)

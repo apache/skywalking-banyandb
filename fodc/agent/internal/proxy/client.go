@@ -58,25 +58,26 @@ type MetricsRequestFilter struct {
 
 // Client manages connection and communication with the FODC Proxy.
 type Client struct {
-	logger             *logger.Logger
-	heartbeatTicker    *time.Ticker
-	flightRecorder     *flightrecorder.FlightRecorder
-	connManager        *connManager
-	clusterCollector   *cluster.Collector
-	lifecycleCollector *lifecycle.Collector
-	collectionLister   crashcollector.CollectionLister
-	stopCh             chan struct{}
-	reconnectCh        chan struct{}
-	labels             map[string]string
-	metricsStream      fodcv1.FODCService_StreamMetricsClient
-	registrationStream fodcv1.FODCService_RegisterAgentClient
-	clusterStateStream fodcv1.FODCService_StreamClusterTopologyClient
-	lifecycleStream    fodcv1.FODCService_StreamLifecycleClient
-	crashStream        fodcv1.FODCService_StreamCrashDiagnosticsClient
-	pressureStream     fodcv1.FODCService_StreamPressureProfilesClient
-	profileSource      ProfileSource
-	client             fodcv1.FODCServiceClient
-	reconnectFn        func(context.Context) // overridable in tests; nil means use reconnect
+	logger               *logger.Logger
+	heartbeatTicker      *time.Ticker
+	flightRecorder       *flightrecorder.FlightRecorder
+	connManager          *connManager
+	clusterCollector     *cluster.Collector
+	lifecycleCollector   *lifecycle.Collector
+	collectionLister     crashcollector.CollectionLister
+	stopCh               chan struct{}
+	reconnectCh          chan struct{}
+	labels               map[string]string
+	metricsStream        fodcv1.FODCService_StreamMetricsClient
+	registrationStream   fodcv1.FODCService_RegisterAgentClient
+	clusterStateStream   fodcv1.FODCService_StreamClusterTopologyClient
+	lifecycleStream      fodcv1.FODCService_StreamLifecycleClient
+	schemaRegistryStream fodcv1.FODCService_StreamSchemaRegistryClient
+	crashStream          fodcv1.FODCService_StreamCrashDiagnosticsClient
+	pressureStream       fodcv1.FODCService_StreamPressureProfilesClient
+	profileSource        ProfileSource
+	client               fodcv1.FODCServiceClient
+	reconnectFn          func(context.Context) // overridable in tests; nil means use reconnect
 
 	proxyAddr      string
 	nodeRole       string
@@ -428,6 +429,176 @@ func (c *Client) sendLifecycleData(ctx context.Context) error {
 		Int("reports_count", len(data.Reports)).
 		Int("groups_count", len(data.Groups)).
 		Msg("Successfully sent lifecycle data to proxy")
+	return nil
+}
+
+// StartSchemaRegistryStream establishes the bi-directional schema registry stream
+// with Proxy. Every agent opens it, but the Proxy only ever drives the one
+// schema-serving agent it selects by role, so all other agents' streams sit idle.
+func (c *Client) StartSchemaRegistryStream(ctx context.Context) error {
+	c.streamsMu.Lock()
+	if c.client == nil {
+		c.streamsMu.Unlock()
+		return fmt.Errorf("client not connected, call Connect() first")
+	}
+	client := c.client
+	agentID := c.agentID
+	c.streamsMu.Unlock()
+
+	if agentID == "" {
+		return fmt.Errorf("agent ID not available, register agent first")
+	}
+
+	md := metadata.New(map[string]string{"agent_id": agentID})
+	ctxWithMetadata := metadata.NewOutgoingContext(ctx, md)
+
+	stream, streamErr := client.StreamSchemaRegistry(ctxWithMetadata)
+	if streamErr != nil {
+		return fmt.Errorf("failed to create schema registry stream: %w", streamErr)
+	}
+
+	c.streamsMu.Lock()
+	c.schemaRegistryStream = stream
+	c.streamsMu.Unlock()
+
+	run.Go(ctx, "fodc.agent.proxy.schema-registry-stream", c.logger, func(ctx context.Context) {
+		c.handleSchemaRegistryStream(ctx, stream)
+	})
+
+	c.logger.Info().
+		Str("agent_id", agentID).
+		Msg("Schema registry stream established with Proxy")
+
+	return nil
+}
+
+// handleSchemaRegistryStream reads the Proxy's request_registry commands and
+// replies with the authoritative registry fingerprints read from the local node.
+func (c *Client) handleSchemaRegistryStream(ctx context.Context, stream fodcv1.FODCService_StreamSchemaRegistryClient) {
+	c.streamsMu.RLock()
+	stopCh := c.stopCh
+	c.streamsMu.RUnlock()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-stopCh:
+			return
+		default:
+		}
+		resp, recvErr := stream.Recv()
+		if errors.Is(recvErr, io.EOF) {
+			c.logger.Warn().Msg("Schema registry stream closed by Proxy, reconnecting...")
+			run.Go(ctx, "fodc.agent.proxy.reconnect", c.logger, func(ctx context.Context) {
+				c.reconnect(ctx)
+			})
+			return
+		}
+		if recvErr != nil {
+			c.streamsMu.RLock()
+			disconnected := c.disconnected
+			c.streamsMu.RUnlock()
+			if disconnected {
+				c.logger.Debug().Err(recvErr).Msg("Schema registry stream closed")
+				return
+			}
+			c.logger.Error().Err(recvErr).Msg("Error receiving from schema registry stream, reconnecting...")
+			run.Go(ctx, "fodc.agent.proxy.reconnect", c.logger, func(ctx context.Context) {
+				c.reconnect(ctx)
+			})
+			return
+		}
+		if resp != nil && resp.RequestRegistry {
+			c.logger.Debug().Msg("Received schema registry request from proxy")
+			if sendErr := c.sendSchemaRegistry(ctx); sendErr != nil {
+				c.logger.Error().Err(sendErr).Msg("Failed to send schema registry to proxy")
+			}
+		}
+	}
+}
+
+// schemaObjectChunkSize bounds how many object fingerprints travel in one schema
+// registry message. A group can hold hundreds of objects (one per index rule);
+// splitting them across messages keeps any single message small, and the proxy
+// merges the chunks by group name.
+const schemaObjectChunkSize = 50
+
+// sendSchemaRegistry reads the authoritative registry from the local node and
+// streams its fingerprints to Proxy, splitting each group's objects into chunks
+// so no single message carries a whole large group, then a final done message
+// that ends the round. The round always ends with a done message (carrying any
+// fatal read error) so the proxy never waits past it.
+func (c *Client) sendSchemaRegistry(ctx context.Context) error {
+	c.streamsMu.RLock()
+	if c.disconnected || c.schemaRegistryStream == nil {
+		c.streamsMu.RUnlock()
+		return fmt.Errorf("schema registry stream not established")
+	}
+	stream := c.schemaRegistryStream
+	collector := c.lifecycleCollector
+	c.streamsMu.RUnlock()
+	if collector == nil {
+		return fmt.Errorf("lifecycle collector is nil, cannot read registry")
+	}
+	groups, fetchErr := collector.FetchSchemaRegistry(ctx)
+	send := func(req *fodcv1.StreamSchemaRegistryRequest) error {
+		c.streamsMu.Lock()
+		defer c.streamsMu.Unlock()
+		if c.schemaRegistryStream != stream {
+			return fmt.Errorf("schema registry stream changed during send")
+		}
+		return stream.Send(req)
+	}
+	if fetchErr != nil {
+		// Fatal whole-read failure: a single chunk with an empty group name carries
+		// the reason, so the proxy surfaces it across every group.
+		if sendErr := send(&fodcv1.StreamSchemaRegistryRequest{Group: &fodcv1.SchemaRegistryGroup{Error: fetchErr.Error()}}); sendErr != nil {
+			return fmt.Errorf("failed to send schema registry fatal error: %w", sendErr)
+		}
+	} else {
+		for _, group := range groups {
+			if sendErr := sendSchemaRegistryGroup(group, send); sendErr != nil {
+				return sendErr
+			}
+		}
+	}
+	if sendErr := send(&fodcv1.StreamSchemaRegistryRequest{Done: true}); sendErr != nil {
+		return fmt.Errorf("failed to send schema registry done marker: %w", sendErr)
+	}
+	c.logger.Info().
+		Int("groups_count", len(groups)).
+		Bool("fatal", fetchErr != nil).
+		Msg("Successfully streamed schema registry to proxy")
+	return nil
+}
+
+// sendSchemaRegistryGroup streams one group as one or more chunks. A failed group
+// (carrying an error, no objects) goes as a single message; a group with objects
+// is split into schemaObjectChunkSize-sized messages that share the group name;
+// an empty successful group still goes as one message so the proxy sees it.
+func sendSchemaRegistryGroup(group *fodcv1.SchemaRegistryGroup, send func(*fodcv1.StreamSchemaRegistryRequest) error) error {
+	name := group.GetGroup()
+	if group.GetError() != "" {
+		if sendErr := send(&fodcv1.StreamSchemaRegistryRequest{Group: &fodcv1.SchemaRegistryGroup{Group: name, Error: group.GetError()}}); sendErr != nil {
+			return fmt.Errorf("failed to send schema registry group %q error: %w", name, sendErr)
+		}
+		return nil
+	}
+	objects := group.GetObjects()
+	for start := 0; start < len(objects) || start == 0; start += schemaObjectChunkSize {
+		end := start + schemaObjectChunkSize
+		if end > len(objects) {
+			end = len(objects)
+		}
+		if sendErr := send(&fodcv1.StreamSchemaRegistryRequest{
+			Group: &fodcv1.SchemaRegistryGroup{Group: name, Objects: objects[start:end]},
+		}); sendErr != nil {
+			return fmt.Errorf("failed to send schema registry group %q chunk: %w", name, sendErr)
+		}
+		if end == len(objects) {
+			break
+		}
+	}
 	return nil
 }
 
@@ -1249,6 +1420,13 @@ func (c *Client) cleanupStreams() {
 		c.lifecycleStream = nil
 	}
 
+	if c.schemaRegistryStream != nil {
+		if closeErr := c.schemaRegistryStream.CloseSend(); closeErr != nil {
+			c.logger.Warn().Err(closeErr).Msg("Error closing schema registry stream")
+		}
+		c.schemaRegistryStream = nil
+	}
+
 	if c.crashStream != nil {
 		if closeErr := c.crashStream.CloseSend(); closeErr != nil {
 			c.logger.Warn().Err(closeErr).Msg("Error closing crash diagnostics stream")
@@ -1316,6 +1494,13 @@ func (c *Client) Disconnect() error {
 			c.logger.Warn().Err(closeErr).Msg("Error closing lifecycle stream")
 		}
 		c.lifecycleStream = nil
+	}
+
+	if c.schemaRegistryStream != nil {
+		if closeErr := c.schemaRegistryStream.CloseSend(); closeErr != nil {
+			c.logger.Warn().Err(closeErr).Msg("Error closing schema registry stream")
+		}
+		c.schemaRegistryStream = nil
 	}
 
 	if c.crashStream != nil {
@@ -1390,6 +1575,12 @@ func (c *Client) Start(ctx context.Context) error {
 		if c.lifecycleCollector != nil {
 			if lifecycleErr := c.StartLifecycleStream(ctx); lifecycleErr != nil {
 				c.logger.Error().Err(lifecycleErr).Msg("Failed to start lifecycle stream, reconnecting...")
+				c.cleanupStreams()
+				time.Sleep(c.reconnectInterval)
+				continue
+			}
+			if registryErr := c.StartSchemaRegistryStream(ctx); registryErr != nil {
+				c.logger.Error().Err(registryErr).Msg("Failed to start schema registry stream, reconnecting...")
 				c.cleanupStreams()
 				time.Sleep(c.reconnectInterval)
 				continue
@@ -1576,6 +1767,10 @@ func (c *Client) reconnect(ctx context.Context) {
 		_ = c.lifecycleStream.CloseSend()
 		c.lifecycleStream = nil
 	}
+	if c.schemaRegistryStream != nil {
+		_ = c.schemaRegistryStream.CloseSend()
+		c.schemaRegistryStream = nil
+	}
 	if c.crashStream != nil {
 		_ = c.crashStream.CloseSend()
 		c.crashStream = nil
@@ -1636,6 +1831,11 @@ func (c *Client) reconnect(ctx context.Context) {
 	if c.lifecycleCollector != nil {
 		if lifecycleErr := c.StartLifecycleStream(ctx); lifecycleErr != nil {
 			c.logger.Error().Err(lifecycleErr).Msg("Failed to restart lifecycle stream; will retry")
+			c.scheduleReconnect(ctx)
+			return
+		}
+		if registryErr := c.StartSchemaRegistryStream(ctx); registryErr != nil {
+			c.logger.Error().Err(registryErr).Msg("Failed to restart schema registry stream; will retry")
 			c.scheduleReconnect(ctx)
 			return
 		}

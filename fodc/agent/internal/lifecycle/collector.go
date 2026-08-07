@@ -53,23 +53,28 @@ type Collector struct {
 	nowFunc           func() time.Time
 	currentData       *fodcv1.LifecycleData
 	grpcAddr          string
+	registryAddr      string
 	reportDir         string
 	cacheTTL          time.Duration
 	mu                sync.RWMutex
 	grpcUnimplemented atomic.Bool
 }
 
-// NewCollector creates a new lifecycle data collector.
-func NewCollector(log *logger.Logger, grpcAddr, reportDir string, cacheTTL time.Duration) *Collector {
+// NewCollector creates a new lifecycle data collector. grpcAddr is the local
+// node's lifecycle port (InspectAll + NodeSchemaState, the node's cache view);
+// registryAddr is the local liaison client port that serves the authoritative
+// registry, read only when this agent is the one the proxy selects.
+func NewCollector(log *logger.Logger, grpcAddr, registryAddr, reportDir string, cacheTTL time.Duration) *Collector {
 	if reportDir == "" {
 		reportDir = DefaultReportDir
 	}
 	return &Collector{
-		log:       log,
-		grpcAddr:  grpcAddr,
-		reportDir: reportDir,
-		cacheTTL:  cacheTTL,
-		nowFunc:   time.Now,
+		log:          log,
+		grpcAddr:     grpcAddr,
+		registryAddr: registryAddr,
+		reportDir:    reportDir,
+		cacheTTL:     cacheTTL,
+		nowFunc:      time.Now,
 	}
 }
 

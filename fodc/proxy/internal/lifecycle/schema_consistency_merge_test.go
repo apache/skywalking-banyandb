@@ -18,14 +18,18 @@
 package lifecycle
 
 import (
+	"context"
 	"errors"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
+	databasev1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/database/v1"
 	fodcv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/fodc/v1"
 	"github.com/apache/skywalking-banyandb/fodc/internal/consistency"
+	"github.com/apache/skywalking-banyandb/fodc/proxy/internal/registry"
 	"github.com/apache/skywalking-banyandb/pkg/logger"
 )
 
@@ -240,4 +244,120 @@ func TestSchemaConsistencySnapshot_CachesVerdictExcludingNilAndCopies(t *testing
 	// The returned map is a copy: mutating it must not corrupt the cache.
 	snap["a"] = fodcv1.ConsistencyStatus_CONSISTENCY_STATUS_UNKNOWN
 	assert.Equal(t, fodcv1.ConsistencyStatus_CONSISTENCY_STATUS_CONSISTENT, mgr.SchemaConsistencySnapshot()["a"])
+}
+
+func TestFetchRegistry_NoRegistryOrServiceIsError(t *testing.T) {
+	mgr := NewManager(nil, nil, logger.GetLogger("test-fetch"))
+	_, _, err := mgr.fetchRegistry(context.Background())
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "not available")
+}
+
+func TestFetchRegistry_NoLiaisonAgentIsError(t *testing.T) {
+	log := logger.GetLogger("test-fetch")
+	reg := registry.NewAgentRegistry(log, 5*time.Second, 10*time.Second, 100)
+	defer reg.Stop()
+	// Only a data agent is registered: none can serve the registry.
+	_, err := reg.RegisterAgent(context.Background(), registry.AgentIdentity{Role: databasev1.Role_ROLE_DATA.String(), PodName: "data-0"})
+	require.NoError(t, err)
+
+	mgr := NewManager(reg, newMockRequestSender(), log)
+	_, _, err = mgr.fetchRegistry(context.Background())
+
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "no schema-serving (liaison) agent")
+}
+
+func TestFetchRegistry_SelectsLiaisonAndConverts(t *testing.T) {
+	log := logger.GetLogger("test-fetch")
+	reg := registry.NewAgentRegistry(log, 5*time.Second, 10*time.Second, 100)
+	defer reg.Stop()
+	_, err := reg.RegisterAgent(context.Background(), registry.AgentIdentity{Role: databasev1.Role_ROLE_LIAISON.String(), PodName: "liaison-0"})
+	require.NoError(t, err)
+
+	sender := newMockRequestSender()
+	sender.schemaRegistry = []*fodcv1.SchemaRegistryGroup{
+		{Group: "g", Objects: []*fodcv1.SchemaObjectFingerprint{
+			{Kind: "group", Name: "g", Fingerprint: 1},
+			{Kind: "stream", Name: "foo", Fingerprint: 100},
+		}},
+		{Group: "broken", Error: "list streams of broken: boom"},
+	}
+	mgr := NewManager(reg, sender, log)
+
+	byGroup, groupErrs, err := mgr.fetchRegistry(context.Background())
+
+	require.NoError(t, err)
+	assert.Equal(t, uint64(100), byGroup["g"][consistency.ObjectKey{Kind: "stream", Name: "foo"}])
+	assert.Equal(t, uint64(1), byGroup["g"][consistency.ObjectKey{Kind: "group", Name: "g"}])
+	assert.Contains(t, groupErrs["broken"], "boom", "a per-group read error is surfaced, not the objects")
+	assert.NotContains(t, byGroup, "broken")
+}
+
+func TestFetchRegistry_FatalFromSelectedAgentIsError(t *testing.T) {
+	log := logger.GetLogger("test-fetch")
+	reg := registry.NewAgentRegistry(log, 5*time.Second, 10*time.Second, 100)
+	defer reg.Stop()
+	_, err := reg.RegisterAgent(context.Background(), registry.AgentIdentity{Role: databasev1.Role_ROLE_LIAISON.String(), PodName: "liaison-0"})
+	require.NoError(t, err)
+
+	sender := newMockRequestSender()
+	// The agent read failed wholesale (e.g. its local registry endpoint was down).
+	sender.schemaRegErr = errors.New("dial 127.0.0.1:17912: connection refused")
+	mgr := NewManager(reg, sender, log)
+
+	_, _, err = mgr.fetchRegistry(context.Background())
+
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "connection refused")
+}
+
+func TestFetchRegistry_NeverSelectsDataAgent(t *testing.T) {
+	log := logger.GetLogger("test-fetch")
+	reg := registry.NewAgentRegistry(log, 5*time.Second, 10*time.Second, 100)
+	defer reg.Stop()
+	liaisonID, err := reg.RegisterAgent(context.Background(), registry.AgentIdentity{Role: databasev1.Role_ROLE_LIAISON.String(), PodName: "liaison-0"})
+	require.NoError(t, err)
+	dataID, err := reg.RegisterAgent(context.Background(), registry.AgentIdentity{Role: databasev1.Role_ROLE_DATA.String(), PodName: "data-0"})
+	require.NoError(t, err)
+
+	sender := newMockRequestSender()
+	sender.schemaRegistry = []*fodcv1.SchemaRegistryGroup{
+		{Group: "g", Objects: []*fodcv1.SchemaObjectFingerprint{{Kind: "group", Name: "g", Fingerprint: 1}}},
+	}
+	mgr := NewManager(reg, sender, log)
+
+	_, _, ferr := mgr.fetchRegistry(context.Background())
+
+	require.NoError(t, ferr)
+	assert.Equal(t, []string{liaisonID}, sender.schemaFetchedBy, "only the liaison agent is asked to read the registry")
+	assert.NotContains(t, sender.schemaFetchedBy, dataID, "the data agent is never selected")
+}
+
+func TestFetchRegistry_RetriesNextLiaisonOnFailure(t *testing.T) {
+	log := logger.GetLogger("test-fetch")
+	reg := registry.NewAgentRegistry(log, 5*time.Second, 10*time.Second, 100)
+	defer reg.Stop()
+	idA, err := reg.RegisterAgent(context.Background(), registry.AgentIdentity{Role: databasev1.Role_ROLE_LIAISON.String(), PodName: "liaison-a"})
+	require.NoError(t, err)
+	idB, err := reg.RegisterAgent(context.Background(), registry.AgentIdentity{Role: databasev1.Role_ROLE_LIAISON.String(), PodName: "liaison-b"})
+	require.NoError(t, err)
+
+	// The manager tries liaisons sorted by AgentID; fail the first so it must fall through.
+	first, second := idA, idB
+	if second < first {
+		first, second = second, first
+	}
+	sender := newMockRequestSender()
+	sender.failAgents = map[string]error{first: errors.New("liaison down")}
+	sender.schemaRegistry = []*fodcv1.SchemaRegistryGroup{
+		{Group: "g", Objects: []*fodcv1.SchemaObjectFingerprint{{Kind: "group", Name: "g", Fingerprint: 1}}},
+	}
+	mgr := NewManager(reg, sender, log)
+
+	byGroup, _, ferr := mgr.fetchRegistry(context.Background())
+
+	require.NoError(t, ferr, "the second liaison succeeds after the first fails")
+	assert.Contains(t, byGroup, "g")
+	assert.Equal(t, []string{first, second}, sender.schemaFetchedBy, "tried in sorted order: first (failed) then second")
 }
