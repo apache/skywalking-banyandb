@@ -73,6 +73,16 @@ type blockMetadata struct {
 	timestampBoundsKnown      bool
 }
 
+// PartFormat identifies the trace block-metadata encoding used by a part.
+type PartFormat uint8
+
+const (
+	// PartFormatCurrent is the current trace part encoding with timestamp bounds.
+	PartFormatCurrent PartFormat = iota
+	// PartFormatLegacy is the pre-timestamp-bounds trace part encoding.
+	PartFormatLegacy
+)
+
 // PartReader provides read-only access to a trace part directory.
 // Not safe for concurrent use.
 type PartReader struct {
@@ -85,6 +95,7 @@ type PartReader struct {
 	path                 string
 	primaryBlockMetadata []primaryBlockMetadata
 	partMetadata         PartMetadata
+	format               PartFormat
 }
 
 // Row is one decoded span from a trace part. The []byte / map values alias the
@@ -109,10 +120,19 @@ type Row struct {
 
 // OpenPart opens the trace part directory root/<id> for read-only access.
 func OpenPart(id uint64, root string, fileSystem fs.FileSystem) (*PartReader, error) {
+	return OpenPartWithFormat(id, root, fileSystem, PartFormatCurrent)
+}
+
+// OpenPartWithFormat opens a trace part using the explicitly selected on-disk format.
+func OpenPartWithFormat(id uint64, root string, fileSystem fs.FileSystem, format PartFormat) (*PartReader, error) {
+	if format != PartFormatCurrent && format != PartFormatLegacy {
+		return nil, fmt.Errorf("unsupported trace part format: %d", format)
+	}
 	var p PartReader
 	partPath := filepath.Join(root, fmt.Sprintf("%016x", id))
 	p.path = partPath
 	p.fileSystem = fileSystem
+	p.format = format
 
 	// Read metadata.json
 	metadataPath := filepath.Join(partPath, "metadata.json")
@@ -281,9 +301,13 @@ func unmarshalTagType(src []byte, tagType map[string]pbv1.ValueType) error {
 }
 
 func parseAllBlockMetadata(src []byte, tagType map[string]pbv1.ValueType) ([]*blockMetadata, error) {
+	return parseAllBlockMetadataWithFormat(src, tagType, PartFormatCurrent)
+}
+
+func parseAllBlockMetadataWithFormat(src []byte, tagType map[string]pbv1.ValueType, format PartFormat) ([]*blockMetadata, error) {
 	var result []*blockMetadata
 	for len(src) > 0 {
-		bm, tail, err := parseBlockMetadata(src, tagType)
+		bm, tail, err := parseBlockMetadataWithFormat(src, tagType, format)
 		if err != nil {
 			return nil, err
 		}
@@ -293,7 +317,7 @@ func parseAllBlockMetadata(src []byte, tagType map[string]pbv1.ValueType) ([]*bl
 	return result, nil
 }
 
-func parseBlockMetadata(src []byte, tagType map[string]pbv1.ValueType) (*blockMetadata, []byte, error) {
+func parseBlockMetadataWithFormat(src []byte, tagType map[string]pbv1.ValueType, format PartFormat) (*blockMetadata, []byte, error) {
 	var bm blockMetadata
 	bm.tagType = make(map[string]pbv1.ValueType)
 	for k, v := range tagType {
@@ -312,18 +336,23 @@ func parseBlockMetadata(src []byte, tagType map[string]pbv1.ValueType) (*blockMe
 	src, n = encoding.BytesToVarUint64(src)
 	bm.count = n
 
-	src, knownMarker := encoding.BytesToVarUint64(src)
-	if knownMarker > 1 {
-		return nil, nil, fmt.Errorf("cannot unmarshal timestamp bounds marker: %d", knownMarker)
-	}
-	bm.timestampBoundsKnown = knownMarker == 1
-	src, bm.minTimestamp, err = encoding.BytesToVarInt64(src)
-	if err != nil {
-		return nil, nil, fmt.Errorf("cannot unmarshal minimum timestamp: %w", err)
-	}
-	src, bm.maxTimestamp, err = encoding.BytesToVarInt64(src)
-	if err != nil {
-		return nil, nil, fmt.Errorf("cannot unmarshal maximum timestamp: %w", err)
+	if format == PartFormatCurrent {
+		var knownMarker uint64
+		src, knownMarker = encoding.BytesToVarUint64(src)
+		if knownMarker > 1 {
+			return nil, nil, fmt.Errorf("cannot unmarshal timestamp bounds marker: %d", knownMarker)
+		}
+		bm.timestampBoundsKnown = knownMarker == 1
+		src, bm.minTimestamp, err = encoding.BytesToVarInt64(src)
+		if err != nil {
+			return nil, nil, fmt.Errorf("cannot unmarshal minimum timestamp: %w", err)
+		}
+		src, bm.maxTimestamp, err = encoding.BytesToVarInt64(src)
+		if err != nil {
+			return nil, nil, fmt.Errorf("cannot unmarshal maximum timestamp: %w", err)
+		}
+	} else if format != PartFormatLegacy {
+		return nil, nil, fmt.Errorf("unsupported trace part format: %d", format)
 	}
 
 	bm.spans = &dataBlock{}

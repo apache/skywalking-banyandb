@@ -41,7 +41,7 @@ func (p *PartReader) Iterator() *dump.Iterator[Row] {
 		if err != nil {
 			return dump.NewErrIterator[Row](fmt.Errorf("cannot decompress primary block: %w", err))
 		}
-		bms, err := parseAllBlockMetadata(decompressed, p.tagType)
+		bms, err := parseAllBlockMetadataWithFormat(decompressed, p.tagType, p.format)
 		if err != nil {
 			return dump.NewErrIterator[Row](fmt.Errorf("cannot parse block metadata: %w", err))
 		}

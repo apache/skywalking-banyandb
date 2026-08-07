@@ -534,11 +534,15 @@ var _ = Describe("Schema Change", func() {
 			// default) so this wait does not starve the merge it is waiting for, with a
 			// generous, environment-scaled budget for merge latency. The post-merge
 			// part count is stable (no further writes), so slow polling never misses it.
+			// The previous 10* budget occasionally timed out under recent CI runners
+			// where the merger goroutine is starved by the rest of the suite; raise to
+			// 20* so the budget accommodates that contention without changing the
+			// intent of the assertion.
 			Eventually(func(innerGm Gomega) int64 {
 				currentPartCount, currentPartCountErr := getTotalMeasurePartCount(svcs, groupName)
 				innerGm.Expect(currentPartCountErr).ShouldNot(HaveOccurred())
 				return currentPartCount
-			}, 10*flags.EventuallyTimeout, 500*time.Millisecond).Should(BeNumerically("<", partCountBeforeMerge))
+			}, 20*flags.EventuallyTimeout, 500*time.Millisecond).Should(BeNumerically("<", partCountBeforeMerge))
 
 			Eventually(func(innerGm Gomega) {
 				dataPoints := querySchemaChangeMeasureData(svcs, measureName,

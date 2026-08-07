@@ -73,7 +73,19 @@ type BypassInfo struct {
 // increments a metric); sdktest.RunChain passes a recorder that captures
 // every BypassInfo into its Report for offline inspection.
 func EvaluateChain(samplers []Sampler, batch *TraceBatch, onBypass func(idx int, info BypassInfo)) Verdict {
-	mask := make([]bool, len(batch.Traces))
+	return EvaluateChainInto(samplers, batch, nil, onBypass)
+}
+
+// EvaluateChainInto runs EvaluateChain using mask as reusable verdict storage.
+// The returned verdict aliases mask when its capacity is sufficient. Callers
+// must keep the storage alive and immutable for the duration of every sampler
+// call, including a sampler still running after a host-side timeout.
+func EvaluateChainInto(samplers []Sampler, batch *TraceBatch, mask []bool, onBypass func(idx int, info BypassInfo)) Verdict {
+	if cap(mask) < len(batch.Traces) {
+		mask = make([]bool, len(batch.Traces))
+	} else {
+		mask = mask[:len(batch.Traces)]
+	}
 	for i := range mask {
 		mask[i] = true
 	}
