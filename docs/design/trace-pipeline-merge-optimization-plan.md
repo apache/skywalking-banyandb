@@ -4,13 +4,13 @@
 
 Proposed for review. Do not treat the targets in this document as frozen acceptance gates until they are approved.
 
-## Current Result (Baseline)
+## Opening Baseline (Before Adaptive Batching)
 
-The controlled mature-merge comparison uses the same frozen production selection for the pipeline-disabled and native
+The opening controlled mature-merge comparison used the same frozen production selection for the pipeline-disabled and native
 retain-all variants. Each variant ran in five fresh resource-limited Docker processes. All ten runs passed the selection,
 maturity, row-count, secondary-index, and logical-ledger correctness gates.
 
-Each retain-all run made one plugin call, evaluated and retained 33,353 complete trace IDs, dropped no traces, and
+In that pre-adaptive baseline, each retain-all run made one plugin call, evaluated and retained 33,353 complete trace IDs, dropped no traces, and
 preserved all 147,126 span rows. Compressed logical write amplification over the core and both secondary indexes remained
 identical at 1.0009 times.
 

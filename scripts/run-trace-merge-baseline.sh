@@ -218,6 +218,10 @@ if [[ "$FULL_PIPELINE" != "disabled" && "$FULL_PIPELINE" != "retain-all" ]]; the
   echo "FULL_PIPELINE must be disabled or retain-all" >&2
   exit 1
 fi
+if [[ "$FULL_PIPELINE" == "retain-all" && ! -f "$CONTROLLED_PLUGIN" ]]; then
+  echo "FULL_PIPELINE=retain-all requires sampler plugin $CONTROLLED_PLUGIN" >&2
+  exit 1
+fi
 
 if [[ -n "$PILOT_ACCELERATION" ]]; then
   run_once pilot serial 1 false
