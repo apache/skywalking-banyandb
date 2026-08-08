@@ -58,7 +58,9 @@ jobs:
         uses: ./.github/actions/setup-build-env
         with:
           download-artifacts: 'true'
+          setup-node: 'false'
           setup-docker: 'true'
+          setup-qemu: 'false'
 
       - name: Install kubectl
         run: |
@@ -167,7 +169,9 @@ jobs:
         uses: ./.github/actions/setup-build-env
         with:
           download-artifacts: 'true'
+          setup-node: 'false'
           setup-docker: 'true'
+          setup-qemu: 'false'
 
       - name: Build BanyanDB image
         run: |

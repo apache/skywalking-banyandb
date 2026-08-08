@@ -41,7 +41,9 @@ jobs:
         uses: ./.github/actions/setup-build-env
         with:
           download-artifacts: 'true'
+          setup-node: 'false'
           setup-docker: 'true'
+          setup-qemu: 'false'
       - name: Build and upload docker image
         uses: ./.github/actions/build-docker-image
         with:
@@ -95,14 +97,13 @@ jobs:
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
-        with:
-          fetch-tags: true
       - name: Load env
         run: grep -v '^#' test/e2e-v2/script/env >> "$GITHUB_ENV"
       - name: Setup build environment
         uses: ./.github/actions/setup-build-env
         with:
-          download-artifacts: 'true'
+          download-artifacts: 'false'
+          setup-node: 'false'
           setup-docker: 'false'
       - name: Download docker image artifact
         uses: actions/download-artifact@v4

@@ -22,14 +22,24 @@ on:
 jobs:
   test-integration-distributed:
     strategy:
+      fail-fast: false
       matrix:
         tz: ["UTC", "America/Los_Angeles"]
+        lane:
+          - name: Query
+            pkg: ./test/integration/distributed/query/... ./test/integration/distributed/querybench/...
+            extra-options: ''
+          - name: Multi Segments
+            pkg: ./test/integration/distributed/multi_segments/...
+            extra-options: ''
+          - name: Remainder
+            pkg: ./test/integration/distributed/...
+            extra-options: --skip-package=/query,/multi_segments
     uses: ./.github/workflows/test.yml
     with:
-      test-name: Integration Distributed
-      options: --vv --fail-fast --label-filter \\!slow
+      test-name: Integration Distributed - ${{ matrix.lane.name }}
+      options: --vv --fail-fast --label-filter \\!slow ${{ matrix.lane.extra-options }}
       timeout-minutes: 60
-      pkg: ./test/integration/distributed/...
+      pkg: ${{ matrix.lane.pkg }}
       coverage-flag: integration-distributed
       timezone: ${{ matrix.tz }}
-

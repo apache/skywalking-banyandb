@@ -22,14 +22,24 @@ on:
 jobs:
   test-integration-standalone:
     strategy:
+      fail-fast: false
       matrix:
         tz: ["UTC", "America/Los_Angeles"]
+        lane:
+          - name: Query
+            pkg: ./test/integration/standalone/query/...
+            extra-options: ''
+          - name: Multi Segments
+            pkg: ./test/integration/standalone/multi_segments/...
+            extra-options: ''
+          - name: Remainder
+            pkg: ./test/integration/standalone/...
+            extra-options: --skip-package=/query,/multi_segments
     uses: ./.github/workflows/test.yml
     with:
-      test-name: Integration Standalone
-      options: --vv --fail-fast --label-filter \\!slow
+      test-name: Integration Standalone - ${{ matrix.lane.name }}
+      options: --vv --fail-fast --label-filter \\!slow ${{ matrix.lane.extra-options }}
       timeout-minutes: 60
-      pkg: ./test/integration/standalone/...
+      pkg: ${{ matrix.lane.pkg }}
       coverage-flag: integration-standalone
       timezone: ${{ matrix.tz }}
-
