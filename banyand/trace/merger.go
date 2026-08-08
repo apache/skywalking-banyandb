@@ -489,6 +489,7 @@ func (tst *tsTable) mergeLaneWorker(ch chan *mergeDispatchRequest, merges chan *
 			if !errors.Is(mergeErr, errClosed) {
 				tst.l.Logger.Warn().Err(mergeErr).Str("typ", req.typ).Str("lane", req.lane).Msg("merge lane worker error")
 				tst.incTotalMergeLoopErr(1)
+				tst.recordUnreadablePart(mergeErr)
 			}
 		}
 	}
@@ -957,11 +958,20 @@ func (tst *tsTable) getPartsToMergeUpTo(snapshot *snapshot, freeDiskSize uint64,
 	maxPartID uint64,
 ) ([]*partWrapper, map[uint64]struct{}) {
 	var parts []*partWrapper
+	// Avoid allocating liveIDs on the hot path when nothing is quarantined.
+	sweep := tst.hasQuarantinedParts()
+	var liveIDs map[uint64]struct{}
+	if sweep {
+		liveIDs = make(map[uint64]struct{}, len(snapshot.parts))
+	}
 
 	tst.inFlightMu.RLock()
 	for _, pw := range snapshot.parts {
 		if pw.mp != nil || pw.p.partMetadata.TotalCount < 1 {
 			continue
+		}
+		if sweep {
+			liveIDs[pw.ID()] = struct{}{}
 		}
 		if maxPartID > 0 && pw.ID() > maxPartID {
 			continue
@@ -969,9 +979,16 @@ func (tst *tsTable) getPartsToMergeUpTo(snapshot *snapshot, freeDiskSize uint64,
 		if _, inFlight := tst.inFlight[pw.ID()]; inFlight {
 			continue
 		}
+		if tst.isPartQuarantined(pw.ID()) {
+			continue
+		}
 		parts = append(parts, pw)
 	}
 	tst.inFlightMu.RUnlock()
+
+	if sweep {
+		tst.sweepQuarantine(liveIDs)
+	}
 
 	dst = tst.option.mergePolicy.getPartsToMerge(dst, parts, freeDiskSize)
 	if len(dst) == 0 {
