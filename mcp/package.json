@@ -41,7 +41,7 @@
     "semver": "^7.8.0",
     "tsx": "^4.21.0",
     "typescript": "^5.9.3",
-    "typescript-eslint": "^8.59.2",
+    "typescript-eslint": "^8.66.0",
     "vitest": "^3.2.6"
   },
   "engines": {
