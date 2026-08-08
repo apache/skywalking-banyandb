@@ -67,6 +67,7 @@ type metrics struct {
 	totalMerged               meter.Counter
 	totalMergeQueueLatency    meter.Counter
 	totalMergePartQuarantined meter.Counter
+	totalMergeBackoffSeconds  meter.Counter
 
 	pipelineTracesEvaluated          meter.Counter
 	pipelineTracesDropped            meter.Counter
@@ -283,6 +284,15 @@ func (tst *tsTable) incTotalMergePartQuarantined(delta int) {
 	tst.metrics.totalMergePartQuarantined.Inc(float64(delta))
 }
 
+// incTotalMergeBackoffSeconds accumulates the time the dispatcher spent sleeping due to
+// repeated merge failures (Fix C).
+func (tst *tsTable) incTotalMergeBackoffSeconds(delta float64) {
+	if tst == nil || tst.metrics == nil {
+		return
+	}
+	tst.metrics.totalMergeBackoffSeconds.Inc(delta)
+}
+
 // The pipeline metric increment helpers below are wired into the merge filter by
 // the config-driven activation story.
 
@@ -452,6 +462,7 @@ func (m *metrics) DeleteAll() {
 	m.totalMergeQueueLatency.Delete("file", "fast")
 	m.totalMergeQueueLatency.Delete("file", "slow")
 	m.totalMergePartQuarantined.Delete()
+	m.totalMergeBackoffSeconds.Delete()
 
 	m.pipelineTracesEvaluated.Delete()
 	m.pipelineTracesDropped.Delete()
@@ -499,6 +510,7 @@ func (s *supplier) newMetrics(p common.Position) storage.Metrics {
 		totalMerged:                      factory.NewCounter("total_merged", "type", "lane"),
 		totalMergeQueueLatency:           factory.NewCounter("total_merge_queue_latency", "type", "lane"),
 		totalMergePartQuarantined:        factory.NewCounter("total_merge_part_quarantined"),
+		totalMergeBackoffSeconds:         factory.NewCounter("total_merge_backoff_seconds"),
 		pipelineTracesEvaluated:          factory.NewCounter("pipeline_traces_evaluated"),
 		pipelineTracesDropped:            factory.NewCounter("pipeline_traces_dropped"),
 		pipelineTracesRetained:           factory.NewCounter("pipeline_traces_retained"),
@@ -562,6 +574,7 @@ func (qs *queueSupplier) newMetrics(p common.Position) (storage.Metrics, observa
 		totalMerged:                      factory.NewCounter("total_merged", "type", "lane"),
 		totalMergeQueueLatency:           factory.NewCounter("total_merge_queue_latency", "type", "lane"),
 		totalMergePartQuarantined:        factory.NewCounter("total_merge_part_quarantined"),
+		totalMergeBackoffSeconds:         factory.NewCounter("total_merge_backoff_seconds"),
 		pipelineTracesEvaluated:          factory.NewCounter("pipeline_traces_evaluated"),
 		pipelineTracesDropped:            factory.NewCounter("pipeline_traces_dropped"),
 		pipelineTracesRetained:           factory.NewCounter("pipeline_traces_retained"),

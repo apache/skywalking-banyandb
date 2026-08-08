@@ -325,6 +325,22 @@ func (tst *tsTable) dispatcherLoop(threshold uint64, fastCh, slowCh chan *mergeD
 		case <-tst.loopCloser.CloseNotify():
 			return
 		case <-tst.mergeControl.trigger:
+			for {
+				delay := tst.mergeControl.backoffRemaining()
+				if delay <= 0 {
+					break
+				}
+				state := tst.mergeControl.state()
+				sleepStart := time.Now()
+				select {
+				case <-time.After(delay):
+				case <-state.changed:
+				case <-tst.loopCloser.CloseNotify():
+					tst.incTotalMergeBackoffSeconds(time.Since(sleepStart).Seconds())
+					return
+				}
+				tst.incTotalMergeBackoffSeconds(time.Since(sleepStart).Seconds())
+			}
 			dispatch, maxPartID := tst.mergeControl.beginDispatch()
 			if !dispatch {
 				continue
@@ -490,7 +506,12 @@ func (tst *tsTable) mergeLaneWorker(ch chan *mergeDispatchRequest, merges chan *
 				tst.l.Logger.Warn().Err(mergeErr).Str("typ", req.typ).Str("lane", req.lane).Msg("merge lane worker error")
 				tst.incTotalMergeLoopErr(1)
 				tst.recordUnreadablePart(mergeErr)
+				if tst.mergeControl != nil {
+					tst.mergeControl.recordOutcome(false)
+				}
 			}
+		} else if tst.mergeControl != nil {
+			tst.mergeControl.recordOutcome(true)
 		}
 	}
 }
