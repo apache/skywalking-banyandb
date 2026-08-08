@@ -133,6 +133,8 @@ type server struct {
 	accessLogRootPath        string
 	certFile                 string
 	host                     string
+	bydbqlTopKParamMode      string
+	bydbqlParamMode          paramMode
 	accessLogRecorders       []accessLogRecorder
 	queryAccessLogRecorders  []queryAccessLogRecorder
 	maxRecvMsgSize           run.Bytes
@@ -372,6 +374,7 @@ func (s *server) PreRun(ctx context.Context) error {
 	s.bydbQLSVC.metrics = metrics
 	s.bydbQLSVC.cache = newPreparedCache(s.bydbqlCacheSize, s.bydbqlCacheMaxBytes, metrics)
 	s.bydbQLSVC.slowThreshold = s.bydbqlSlowThreshold
+	s.bydbQLSVC.paramMode = s.bydbqlParamMode
 	// The dump goroutine lives for the server's lifetime and is stopped by Close(),
 	// so it is rooted at a background context rather than PreRun's setup context.
 	s.bydbQLSVC.dumper = newTopKDumper(s.bydbqlTopKLogInterval, s.bydbqlTopKReparseTTL, s.bydbqlTopKSlowTTL, s.bydbQLSVC.l) //nolint:contextcheck
@@ -472,10 +475,33 @@ func (s *server) FlagSet() *run.FlagSet {
 		"drop a slow-query top-K entry whose query has not been slow again for this long; 0 keeps it for the process lifetime")
 	fs.DurationVar(&s.bydbqlTopKReparseTTL, "bydbql-topk-reparse-ttl", 24*time.Hour,
 		"drop a cache-miss top-K entry whose template has not been re-parsed again for this long; 0 keeps it for the process lifetime")
+	fs.StringVar(&s.bydbqlTopKParamMode, "bydbql-topk-param-mode", string(paramModeFingerprint),
+		"how much of a slow query's bound parameters to include in the top-K log: "+
+			"none omits them; fingerprint reports each string's length plus an unsalted digest that "+
+			"correlates repeats of the same value without revealing it; raw logs string values verbatim "+
+			"and must only be used when the log destination is trusted, as parameters may contain user data")
 	s.grpcBufferMemoryRatio = 0.1
 	fs.Float64Var(&s.grpcBufferMemoryRatio, "grpc-buffer-memory-ratio", 0.1,
 		"ratio of memory limit to use for gRPC buffer size calculation (0.0 < ratio <= 1.0)")
 	return fs
+}
+
+// validateParamMode resolves the --bydbql-topk-param-mode flag once, at startup, so an
+// invalid value fails the process instead of silently degrading the log. An empty value
+// means the flag was never registered — a server constructed directly rather than from a
+// parsed FlagSet — and resolves to the same default the flag declares, because "unset" is
+// not the same thing as "invalid".
+func (s *server) validateParamMode() error {
+	if s.bydbqlTopKParamMode == "" {
+		s.bydbqlParamMode = paramModeFingerprint
+		return nil
+	}
+	mode, err := parseParamMode(s.bydbqlTopKParamMode)
+	if err != nil {
+		return err
+	}
+	s.bydbqlParamMode = mode
+	return nil
 }
 
 func (s *server) Validate() error {
@@ -488,6 +514,9 @@ func (s *server) Validate() error {
 	}
 	if s.grpcBufferMemoryRatio <= 0.0 || s.grpcBufferMemoryRatio > 1.0 {
 		return errors.Errorf("grpc-buffer-memory-ratio must be in range (0.0, 1.0], got %f", s.grpcBufferMemoryRatio)
+	}
+	if err := s.validateParamMode(); err != nil {
+		return err
 	}
 	if !s.tls {
 		return nil

@@ -216,6 +216,8 @@ Placeholders are accepted in *value* positions only. The complete list, with the
 | `SHOW TOP N` count | `SHOW TOP ? FROM MEASURE ...` | `int` only |
 | `SELECT TOP N` projection count | `SELECT TOP ? field ...` | `int` only |
 
+Bound values are kept out of the query text, so the server can group requests by template. One consequence worth knowing: if a query is slow enough to be logged, the server may record a sample of its bound values. By default it records only a digest of each string, never the string itself, and the operator can turn that off entirely or turn it up to verbatim — see [BydbQL Slow Queries](../operation/observability/logging.md#bydbql-slow-queries).
+
 Array expansion: an array parameter bound inside a value list expands in place — `WHERE service_id IN (?)` with a three-entry `str_array` behaves exactly like listing the three strings literally, and literals can be mixed around it (`IN ('a', ?, 'b')`). The container keeps the form a literal query would have: a single-value `HAVING ?` stays a single value unless the array holds multiple entries, while a parenthesized `HAVING (?)` stays a list regardless of the entry count.
 
 ### 2.6.2. Unsupported Positions

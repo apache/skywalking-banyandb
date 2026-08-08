@@ -692,3 +692,25 @@ func TestLoadTestUnderMemoryPressure(t *testing.T) {
 	// Even if timing causes some streams to succeed, the logs show rejections are happening
 	// This is acceptable for an integration test - the mechanism is working
 }
+
+func TestServerValidateRejectsAnUnknownParamMode(t *testing.T) {
+	s := &server{bydbqlTopKParamMode: "verbose"}
+	err := s.validateParamMode()
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "none|fingerprint|raw")
+}
+
+func TestServerValidateResolvesTheDefaultParamMode(t *testing.T) {
+	s := &server{bydbqlTopKParamMode: string(paramModeFingerprint)}
+	require.NoError(t, s.validateParamMode())
+	assert.Equal(t, paramModeFingerprint, s.bydbqlParamMode)
+}
+
+// A server built directly, without a parsed FlagSet, has no param mode. Validate must not
+// reject it: unset is not invalid, and this is how every direct-construction test and
+// embedder reaches Validate.
+func TestServerValidateTreatsUnsetParamModeAsTheDefault(t *testing.T) {
+	s := &server{}
+	require.NoError(t, s.validateParamMode())
+	assert.Equal(t, paramModeFingerprint, s.bydbqlParamMode)
+}
