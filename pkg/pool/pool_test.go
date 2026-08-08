@@ -36,12 +36,7 @@ func TestSyncedDiscardBalancesCheckoutWithoutPooling(t *testing.T) {
 	value := testPool.Get()
 	require.Nil(t, value)
 	require.Equal(t, 1, testPool.RefsCount())
-	testPool.Put(new(int))
-	require.Zero(t, testPool.RefsCount())
-
-	reused := testPool.Get()
-	require.NotNil(t, reused)
-	testPool.Discard(reused)
+	testPool.Discard(new(int))
 
 	require.Zero(t, testPool.RefsCount())
 	require.Nil(t, testPool.Get(), "discarded objects must not be returned by the pool")

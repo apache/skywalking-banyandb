@@ -19,6 +19,24 @@ name: Flaky Test
 on:
   schedule:
     - cron: '50 * * * *'
+  # Manual trigger. The sweep is otherwise schedule-only, so a change to this
+  # workflow cannot be exercised before it is merged -- which is how a 50-minute
+  # timeout that no longer fit its suite stayed in place for days.
+  workflow_dispatch:
+
+# One sweep at a time. The schedule fires hourly, the sweep takes longer than an
+# hour once runners are contended, and nothing stopped a second run from starting
+# on top of the first: on 2026-08-06 six were in flight at once, each competing
+# for the same runner pool, which pushed every one of them past its timeout and
+# fed the next hour's pile-up.
+#
+# cancel-in-progress is false here, unlike the PR-triggered workflows that use
+# `true`. A newer commit legitimately supersedes an older one on a PR; a newer
+# schedule tick does not supersede a sweep that is still hunting flakes. With
+# `true` every tick would kill the run in flight and no sweep would ever finish.
+concurrency:
+  group: ${{ github.workflow }}
+  cancel-in-progress: false
 
 env:
   SEGMENT_DOWNLOAD_TIMEOUT_MINS: 5
@@ -26,18 +44,61 @@ env:
 jobs:
   prepare:
     uses: ./.github/workflows/prepare.yml
+  # Split into lanes that run concurrently, rather than one serial sweep.
+  #
+  # The suites are independent and the work is very lopsided: measured on a green
+  # run, three standalone suites were 84% of all spec time, and the sweep spent
+  # 41.5 of its 48.7 minutes executing them one after another. Labelling the
+  # distributed suites adds ~25 minutes more. Serially that is ~75 minutes, which
+  # does not fit the hourly schedule; split by measured cost, the slowest lane is
+  # ~15 minutes of specs and the sweep finishes well inside the hour.
+  #
+  # Lanes are balanced on measured spec time, not on package count:
+  #   standalone-query      15.3m   distributed-query       11.4m
+  #   standalone-bulk       14.7m   distributed-rest        13.4m
+  #   integration-rest       ~4m    unit                     ~6m
+  #
+  # The union of `pkg` across the six lanes MUST equal the single package set this
+  # replaced. A package dropped here does not fail — it silently stops being swept,
+  # which is exactly the failure the distributed suites already had for months.
   test:
     needs: [prepare]
     if: github.repository == 'apache/skywalking-banyandb'
+    strategy:
+      # Every lane reports independently. One flaky lane must not cancel the
+      # others, or a single failure costs the whole sweep's signal.
+      fail-fast: false
+      matrix:
+        include:
+          - lane: standalone-query
+            pkg: ./test/integration/standalone/query/...
+          - lane: standalone-bulk
+            pkg: ./test/integration/standalone/multi_segments/... ./test/integration/standalone/cold_query/...
+          - lane: distributed-query
+            pkg: ./test/integration/distributed/query/...
+          - lane: distributed-rest
+            pkg: ./test/integration/distributed ./test/integration/distributed/backup/... ./test/integration/distributed/cluster_state/... ./test/integration/distributed/deletion/... ./test/integration/distributed/inspection/... ./test/integration/distributed/lifecycle/... ./test/integration/distributed/multi_segments/... ./test/integration/distributed/pipeline/... ./test/integration/distributed/querybench/... ./test/integration/distributed/schema/... ./test/integration/distributed/sync_retry/...
+          - lane: integration-rest
+            pkg: ./test/integration/standalone ./test/integration/standalone/backup/... ./test/integration/standalone/benchmark/... ./test/integration/standalone/deletion/... ./test/integration/standalone/inspection/... ./test/integration/standalone/observability/... ./test/integration/standalone/other/... ./test/integration/standalone/pipeline/... ./test/integration/standalone/schema/... ./test/integration/dockertesthelper/... ./test/integration/handoff/... ./test/integration/load/... ./test/integration/replication/... ./test/cases/... ./test/property_repair/...
+          - lane: unit
+            pkg: ./api/... ./banyand/... ./bydbctl/... ./fodc/... ./mcp/... ./pkg/... ./scripts/...
     uses: ./.github/workflows/test.yml
     with:
-      test-name: Flaky Tests
+      test-name: Flaky Tests ${{ matrix.lane }}
       options:  --vv --repeat 0 --label-filter '(integration&&!slow)||banyand'
-      # Exclude ./test/load/... — those packages are gated behind build tags
-      # (e.g. //go:build loadtest) and trip Ginkgo's compile step on ./... .
-      # Run them via their own make targets (e.g. make load-test-barrier).
-      pkg: ./api/... ./banyand/... ./bydbctl/... ./fodc/... ./mcp/... ./pkg/... ./scripts/... ./test/cases/... ./test/integration/... ./test/property_repair/...
-      timeout-minutes: 50
+      # ./test/integration/load/... is deliberately absent from every lane, as
+      # ./test/load/... was from the single set it replaced: those packages are
+      # gated behind build tags (e.g. //go:build loadtest) and trip Ginkgo's
+      # compile step. Run them via their own make targets (e.g.
+      # make load-test-barrier).
+      pkg: ${{ matrix.pkg }}
+      # 60, applied per lane. The old single job had 50 for the whole sweep while
+      # taking 47-49 minutes of it -- about a minute of headroom -- so roughly 60%
+      # of runs from 2026-08-04 were killed mid-suite. They were not hung: the logs
+      # show steady progress with no gap over 90 seconds, right up to the kill.
+      # The slowest lane is ~15 minutes of specs plus setup, so 60 is generous
+      # rather than marginal, which is the point.
+      timeout-minutes: 60
 
   # Canopy unit suites run here too. vitest has no native repeat flag, so each
   # suite is looped to surface timing-sensitive flakiness (e.g. the web form

@@ -52,7 +52,11 @@ type bydbQLService struct {
 	propertyServer *propertyServer
 	// dumper tracks and periodically logs the top cache-miss and slow queries; it is
 	// nil (its observe methods no-op) unless the periodic top-K log is enabled.
-	dumper        *topKDumper
+	dumper *topKDumper
+	// paramMode decides how much of a slow query's bound parameters reaches the top-K
+	// log. Redaction happens at the call site, so the tracker never holds a raw value;
+	// see redactParams.
+	paramMode     paramMode
 	slowThreshold time.Duration
 }
 
@@ -87,7 +91,7 @@ func (b *bydbQLService) Query(ctx context.Context, req *bydbqlv1.QueryRequest) (
 
 		if b.slowThreshold > 0 && duration > b.slowThreshold {
 			b.metrics.bydbqlSlowQueryTotal.Inc(1)
-			b.dumper.observeSlow(req.Query, duration)
+			b.dumper.observeSlow(req.Query, duration, redactParams(b.paramMode, req.Params))
 		}
 
 		if b.queryAccessLog != nil {
@@ -223,13 +227,15 @@ func newTopKDumper(interval, reparseTTL, slowTTL time.Duration, l *logger.Logger
 
 func (d *topKDumper) observeReparse(query string) {
 	if d != nil {
-		d.reparse.observe(query, 0)
+		d.reparse.observe(query, 0, "")
 	}
 }
 
-func (d *topKDumper) observeSlow(query string, dur time.Duration) {
+// observeSlow records a slow occurrence of query. params must already be redacted by the
+// caller, which is what keeps raw parameter values out of the tracker's memory.
+func (d *topKDumper) observeSlow(query string, dur time.Duration, params string) {
 	if d != nil {
-		d.slow.observe(query, dur)
+		d.slow.observe(query, dur, params)
 	}
 }
 
@@ -258,10 +264,20 @@ func (d *topKDumper) dump() {
 	// max_latency is a running peak, so it can outlive the condition that caused it by
 	// as long as the TTL allows. max_latency_at dates it, and last_seen says when the
 	// query last ran at all, which together separate a live problem from a stale peak.
-	d.logTopK(d.slow.snapshotByLatency(), 1, "top bydbql slow queries", func(s topKSlot) string {
-		return fmt.Sprintf("%q count=%d max_latency=%s max_latency_at=%s last_seen=%s",
-			s.key, s.count, s.maxDur, formatTopKTime(s.maxDurAt), formatTopKTime(s.lastSeen))
-	})
+	d.logTopK(d.slow.snapshotByLatency(), 1, "top bydbql slow queries", formatSlowTopKLine)
+}
+
+// formatSlowTopKLine renders one slow-query entry. The parameter field is named
+// last_params, not params, because it is the sample of the most recent occurrence and not
+// necessarily the one that produced max_latency. It is omitted entirely when empty, so a
+// mode=none deployment shows no vestigial field.
+func formatSlowTopKLine(s topKSlot) string {
+	line := fmt.Sprintf("%q count=%d max_latency=%s max_latency_at=%s last_seen=%s",
+		s.key, s.count, s.maxDur, formatTopKTime(s.maxDurAt), formatTopKTime(s.lastSeen))
+	if s.params != "" {
+		line += fmt.Sprintf(" last_params=[%s]", s.params)
+	}
+	return line
 }
 
 // formatTopKTime renders a tracker timestamp in the same layout the surrounding logs use.

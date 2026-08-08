@@ -15,18 +15,8 @@
 // specific language governing permissions and limitations
 // under the License.
 
-package lifecycle_test
+// Package distributed is a distributed integration test suite.
+package distributed
 
-import (
-	"testing"
-
-	. "github.com/onsi/ginkgo/v2"
-	. "github.com/onsi/gomega"
-
-	integration_distributed "github.com/apache/skywalking-banyandb/test/integration/distributed"
-)
-
-func TestPropertyLifecycle(t *testing.T) {
-	RegisterFailHandler(Fail)
-	RunSpecs(t, "Distributed Property Lifecycle Suite", Label(integration_distributed.Labels...))
-}
+// Labels is the labels for distributed integration test suite.
+var Labels = []string{"integration", "distributed"}
