@@ -26,6 +26,7 @@ import (
 
 	remoteazure "github.com/apache/skywalking-banyandb/pkg/fs/remote/azure"
 	"github.com/apache/skywalking-banyandb/pkg/fs/remote/config"
+	integration_distributed "github.com/apache/skywalking-banyandb/test/integration/distributed"
 	"github.com/apache/skywalking-banyandb/test/integration/distributed/backup"
 	"github.com/apache/skywalking-banyandb/test/integration/dockertesthelper"
 )
@@ -34,7 +35,7 @@ var testVars *backup.CommonTestVars
 
 func TestBackup(t *testing.T) {
 	gomega.RegisterFailHandler(ginkgo.Fail)
-	ginkgo.RunSpecs(t, "Distributed Backup Suite")
+	ginkgo.RunSpecs(t, "Distributed Backup Suite", ginkgo.Label(integration_distributed.Labels...))
 }
 
 var _ = ginkgo.SynchronizedBeforeSuite(func() []byte {

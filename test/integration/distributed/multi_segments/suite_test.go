@@ -22,9 +22,11 @@ import (
 
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
+
+	integration_distributed "github.com/apache/skywalking-banyandb/test/integration/distributed"
 )
 
 func TestPropertyMultiSegments(t *testing.T) {
 	RegisterFailHandler(Fail)
-	RunSpecs(t, "Distributed Property Multi Segments Suite")
+	RunSpecs(t, "Distributed Property Multi Segments Suite", Label(integration_distributed.Labels...))
 }
