@@ -18,6 +18,7 @@
 
 NAME := mcp
 DIST_INDEX := dist/index.js
+NODE_MODULES_STAMP := node_modules/.package-lock.json
 
 IMG_NAME := skywalking-banyandb-mcp
 
@@ -33,8 +34,11 @@ check-version: install
 	@node tools/checkversion
 
 .PHONY: install
-install:
-	npm ci
+install: $(NODE_MODULES_STAMP)
+
+$(NODE_MODULES_STAMP): package.json package-lock.json
+	npm ci --include=dev
+	touch $@
 
 .PHONY: lint
 lint: install
@@ -54,7 +58,7 @@ all: build
 .PHONY: generate
 generate: install
 
-$(DIST_INDEX): install
+$(DIST_INDEX): $(NODE_MODULES_STAMP)
 	@echo "Building $(NAME)"
 	npm run format:check
 	npm run lint
