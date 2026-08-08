@@ -24,8 +24,10 @@ import (
 	"os"
 	"os/signal"
 	"syscall"
+	"time"
 
 	"github.com/apache/skywalking-banyandb/banyand/internal/benchmark/tracebaseline"
+	"github.com/apache/skywalking-banyandb/pkg/timestamp"
 )
 
 func main() {
@@ -159,6 +161,7 @@ func render(arguments []string) {
 func serve(ctx context.Context, arguments []string) {
 	flags := flag.NewFlagSet("serve", flag.ExitOnError)
 	var options tracebaseline.ServerOptions
+	var segmentMinTimeNanos, segmentMaxTimeNanos int64
 	flags.StringVar(&options.Root, "root", "", "data-node shard root")
 	flags.StringVar(&options.SocketPath, "socket", "", "Unix control socket")
 	flags.StringVar(&options.OutputPath, "output", "", "run report JSON path")
@@ -182,7 +185,13 @@ func serve(ctx context.Context, arguments []string) {
 	flags.StringVar(&options.ExecutionIdentity.CloneMethod, "clone-method", "", "clone method recorded in the environment envelope (e.g. os.CopyFS, hardlink)")
 	flags.StringVar(&options.ExecutionIdentity.BinarySHA256, "binary-sha256", "", "measured data-node binary checksum")
 	flags.StringVar(&options.ExecutionIdentity.PluginSHA256, "plugin-sha256", "", "plugin .so checksum for retain-all pipeline mode")
+	flags.StringVar(&options.PluginPath, "plugin", "", "native sampler plugin .so path")
+	flags.Int64Var(&segmentMinTimeNanos, "segment-min-time-nanos", 0, "inclusive minimum fixture timestamp for sampler coverage")
+	flags.Int64Var(&segmentMaxTimeNanos, "segment-max-time-nanos", 0, "inclusive maximum fixture timestamp for sampler coverage")
 	_ = flags.Parse(arguments)
+	if segmentMinTimeNanos != 0 || segmentMaxTimeNanos != 0 {
+		options.SegmentTimeRange = timestamp.NewInclusiveTimeRange(time.Unix(0, segmentMinTimeNanos), time.Unix(0, segmentMaxTimeNanos))
+	}
 	options.ExpectedLedger = map[string]string{
 		tracebaseline.LedgerCore: expectedCoreLedger, tracebaseline.LedgerLatency: expectedLatencyLedger,
 		tracebaseline.LedgerStartTime: expectedStartTimeLedger,

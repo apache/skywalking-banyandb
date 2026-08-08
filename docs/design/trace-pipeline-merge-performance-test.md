@@ -276,9 +276,9 @@ controller is pinned away from the data-node CPUs and reports its own scheduling
 
 The canonical container profile is:
 
-- four pinned logical CPUs with a four-CPU quota;
-- `GOMAXPROCS=4`;
-- 8 GiB memory limit;
+- two pinned logical CPUs with a two-CPU quota;
+- `GOMAXPROCS=2`;
+- 4 GiB memory limit;
 - memory swap limit equal to the memory limit, preventing additional swap use;
 - a fixed PID limit of 512;
 - the same read-only seed mount and a new writable fixture volume for every run;
@@ -289,7 +289,7 @@ must have identical limits. Every report records both the requested Docker limit
 inside the container. A mismatch invalidates the run because merge concurrency and staging budgets are derived from the
 detected cgroup resources.
 
-The four-CPU limit is an upper resource envelope, not a utilization target. Low utilization from the single shard is a
+The two-CPU limit is an upper resource envelope, not a utilization target. Low utilization from the single shard is a
 valid result and must not be corrected by cloning the workload, increasing shard count, or forcing extra merges. This
 design measures plugin impact on the downloaded shard; it does not establish whole-node saturation capacity.
 
@@ -973,7 +973,9 @@ independently in addition to their combined totals.
 - traces retained by duration, error, tag, and healthy-hash rules, plus traces reaching each rule;
 - plugin calls and traces per call;
 - grace-bypassed merge and trace counts;
-- staged bytes and peak staged bytes;
+- metadata-estimated staging bytes, resource-derived staging hard limit, adaptive decision-batch limit, planned batch
+  count, and effective trace-count limit;
+- actual batch bytes, traces, flush reason, peak staged bytes, and peak concurrent staged bytes;
 - fragment-guard candidate parts, Bloom probes, deferrals, and budget exhaustion;
 - plugin errors, panics, timeouts, and malformed verdicts;
 - sampled and unsampled merge counts, including every unsampled reason.

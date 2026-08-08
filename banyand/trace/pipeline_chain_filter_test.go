@@ -534,6 +534,91 @@ func TestStageBudgetFromLimit(t *testing.T) {
 	}
 }
 
+func TestAdaptiveDecisionBatchPlanUsesSelectedPartMetadata(t *testing.T) {
+	const hardLimit = uint64(256 << 20)
+	newPart := func(compressed, uncompressed uint64) *partWrapper {
+		return &partWrapper{p: &part{partMetadata: partMetadata{
+			CompressedSizeBytes:       compressed,
+			UncompressedSpanSizeBytes: uncompressed,
+		}}}
+	}
+
+	tests := []struct {
+		name               string
+		parts              []*partWrapper
+		wantEstimate       uint64
+		wantBatchLimit     uint64
+		wantPlannedBatches uint64
+	}{
+		{
+			name:               "missing metadata uses nominal reusable window",
+			parts:              []*partWrapper{newPart(0, 0)},
+			wantEstimate:       0,
+			wantBatchLimit:     32 << 20,
+			wantPlannedBatches: 1,
+		},
+		{
+			name:               "small merge stays in one decision batch",
+			parts:              []*partWrapper{newPart(8<<20, 20<<20)},
+			wantEstimate:       20 << 20,
+			wantBatchLimit:     20 << 20,
+			wantPlannedBatches: 1,
+		},
+		{
+			name:               "compressed size covers absent uncompressed metadata",
+			parts:              []*partWrapper{newPart(12<<20, 0)},
+			wantEstimate:       12 << 20,
+			wantBatchLimit:     16 << 20,
+			wantPlannedBatches: 1,
+		},
+		{
+			name: "production shaped merge is balanced around reusable window",
+			parts: []*partWrapper{
+				newPart(18<<20, 50<<20),
+				newPart(17<<20, 48<<20),
+			},
+			wantEstimate:       98 << 20,
+			wantBatchLimit:     ceilDivUint64(98<<20, 3),
+			wantPlannedBatches: 3,
+		},
+	}
+
+	for _, testCase := range tests {
+		t.Run(testCase.name, func(t *testing.T) {
+			plan := planAdaptiveDecisionBatch(testCase.parts, hardLimit)
+			require.Equal(t, hardLimit, plan.HardLimit)
+			require.Equal(t, testCase.wantEstimate, plan.EstimatedBytes)
+			require.Equal(t, testCase.wantBatchLimit, plan.BatchLimit)
+			require.Equal(t, testCase.wantPlannedBatches, plan.PlannedBatches)
+		})
+	}
+}
+
+func TestAdaptiveDecisionBatchPlanSaturatesCorruptMetadata(t *testing.T) {
+	parts := []*partWrapper{{p: &part{partMetadata: partMetadata{
+		CompressedSizeBytes:       ^uint64(0),
+		UncompressedSpanSizeBytes: ^uint64(0),
+		BlocksCount:               ^uint64(0),
+	}}}}
+
+	plan := planAdaptiveDecisionBatch(parts, 256<<20)
+	require.Equal(t, ^uint64(0), plan.EstimatedBytes)
+	require.Positive(t, plan.PlannedBatches)
+	require.LessOrEqual(t, plan.BatchLimit, plan.HardLimit)
+}
+
+func TestAdaptiveDecisionBatchPlanChargesBlockStructure(t *testing.T) {
+	const payloadBytes = uint64(20 << 20)
+	parts := []*partWrapper{{p: &part{partMetadata: partMetadata{
+		CompressedSizeBytes:       8 << 20,
+		UncompressedSpanSizeBytes: payloadBytes,
+		BlocksCount:               10_000,
+	}}}}
+
+	plan := planAdaptiveDecisionBatch(parts, 256<<20)
+	require.Greater(t, plan.EstimatedBytes, payloadBytes)
+}
+
 func TestInMergeFilter_DisabledFlag_LegacyIdentity(t *testing.T) {
 	svcs, teardown := setUpWithPipelineFlags(t,
 		"--trace-pipeline-merge-grace-default=0",
