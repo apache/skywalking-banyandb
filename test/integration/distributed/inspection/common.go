@@ -445,13 +445,15 @@ var _ = ginkgo.Describe("Inspect stream in distributed mode", func() {
 	})
 
 	ginkgo.It("should return liaison info", func() {
-		ginkgo.By("Inspecting stream group")
-		resp, err := groupClient.Inspect(ctx, &databasev1.GroupRegistryServiceInspectRequest{Group: groupName})
-		gomega.Expect(err).ShouldNot(gomega.HaveOccurred())
-		gomega.Expect(resp).NotTo(gomega.BeNil())
-
-		ginkgo.By("Verifying stream liaison info collected")
-		gomega.Expect(len(resp.LiaisonInfo)).Should(gomega.BeNumerically(">=", 1), "should collect from at least one liaison node")
+		ginkgo.By("Waiting for stream liaison info to be collected")
+		var resp *databasev1.GroupRegistryServiceInspectResponse
+		gomega.Eventually(func(g gomega.Gomega) {
+			inspectResp, inspectErr := groupClient.Inspect(ctx, &databasev1.GroupRegistryServiceInspectRequest{Group: groupName})
+			g.Expect(inspectErr).ShouldNot(gomega.HaveOccurred())
+			g.Expect(inspectResp).NotTo(gomega.BeNil())
+			g.Expect(len(inspectResp.LiaisonInfo)).Should(gomega.BeNumerically(">=", 1), "should collect from at least one liaison node")
+			resp = inspectResp
+		}, flags.EventuallyTimeout).Should(gomega.Succeed())
 
 		for idx, liaisonInfo := range resp.LiaisonInfo {
 			logger.Infof("Inspecting stream liaison node %d: PendingWrite=%d, PendingSync=%d parts",
