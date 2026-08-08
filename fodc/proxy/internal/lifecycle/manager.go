@@ -20,11 +20,14 @@ package lifecycle
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"sort"
 	"sync"
 
+	databasev1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/database/v1"
 	fodcv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/fodc/v1"
+	"github.com/apache/skywalking-banyandb/fodc/internal/consistency"
 	"github.com/apache/skywalking-banyandb/fodc/internal/timeouts"
 	"github.com/apache/skywalking-banyandb/fodc/proxy/internal/registry"
 	"github.com/apache/skywalking-banyandb/pkg/logger"
@@ -75,17 +78,22 @@ type agentLifecycleData struct {
 	PodName string
 }
 
-// RequestSender is an interface for sending lifecycle data requests to agents.
+// RequestSender is an interface for sending requests to agents. Beyond driving
+// the lifecycle stream, it reads the authoritative registry from a single
+// schema-serving agent the manager selects by role.
 type RequestSender interface {
 	RequestLifecycleData(agentID string) error
+	FetchSchemaRegistry(ctx context.Context, agentID string) ([]*fodcv1.SchemaRegistryGroup, error)
 }
 
 // Manager manages lifecycle data from multiple agents.
 type Manager struct {
+	grpcService  RequestSender
 	log          *logger.Logger
 	registry     *registry.AgentRegistry
-	grpcService  RequestSender
 	collecting   map[string]chan *agentLifecycleData
+	checker      *consistency.Checker
+	schemaStatus map[string]fodcv1.ConsistencyStatus
 	mu           sync.RWMutex
 	collectingMu sync.RWMutex
 	collectingOp sync.Mutex
@@ -94,11 +102,40 @@ type Manager struct {
 // NewManager creates a new lifecycle manager.
 func NewManager(registry *registry.AgentRegistry, grpcService RequestSender, log *logger.Logger) *Manager {
 	return &Manager{
-		registry:    registry,
-		grpcService: grpcService,
-		log:         log,
-		collecting:  make(map[string]chan *agentLifecycleData),
+		registry:     registry,
+		grpcService:  grpcService,
+		log:          log,
+		collecting:   make(map[string]chan *agentLifecycleData),
+		checker:      consistency.NewChecker(),
+		schemaStatus: make(map[string]fodcv1.ConsistencyStatus),
 	}
+}
+
+// SchemaConsistencySnapshot returns the per-group schema consistency status from
+// the most recent collection, for the proxy to export as a Prometheus gauge. It
+// reflects whatever cadence CollectLifecycle is driven at (the checker needs
+// regular collections anyway for its two-round suppression).
+func (m *Manager) SchemaConsistencySnapshot() map[string]fodcv1.ConsistencyStatus {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	out := make(map[string]fodcv1.ConsistencyStatus, len(m.schemaStatus))
+	for group, status := range m.schemaStatus {
+		out[group] = status
+	}
+	return out
+}
+
+// cacheSchemaStatus records the per-group verdict of a completed collection.
+func (m *Manager) cacheSchemaStatus(groups []*fodcv1.GroupLifecycleInfo) {
+	status := make(map[string]fodcv1.ConsistencyStatus, len(groups))
+	for _, g := range groups {
+		if sc := g.GetSchemaConsistency(); sc != nil {
+			status[g.GetName()] = sc.GetStatus()
+		}
+	}
+	m.mu.Lock()
+	m.schemaStatus = status
+	m.mu.Unlock()
 }
 
 // SetGRPCService sets the gRPC service for sending lifecycle data requests.
@@ -191,7 +228,9 @@ func (m *Manager) CollectLifecycle(ctx context.Context) (*InspectionResult, Agen
 	m.log.Info().Int("responses_with_data", len(allData)).
 		Msg("CollectLifecycle: all responses collected, aggregating")
 
-	return m.buildInspectionResult(allData), summary
+	result := m.buildInspectionResult(ctx, allData, summary.NotResponded > 0)
+	m.cacheSchemaStatus(result.Groups)
+	return result, summary
 }
 
 func (m *Manager) requestAllAgents(ctx context.Context, agents []*registry.AgentInfo,
@@ -259,14 +298,106 @@ func (m *Manager) cleanupSessions(collectChs map[string]chan *agentLifecycleData
 	m.collectingMu.Unlock()
 }
 
-func (m *Manager) buildInspectionResult(allData []*agentLifecycleData) *InspectionResult {
+func (m *Manager) buildInspectionResult(ctx context.Context, allData []*agentLifecycleData, shortfall bool) *InspectionResult {
+	registryByGroup, registryGroupErrs, registryErr := m.fetchRegistry(ctx)
+	verdicts := assembleSchemaConsistency(allData, m.checker, shortfall, registryByGroup)
+	schemaErrors := m.registrySchemaErrors(verdicts, registryGroupErrs, registryErr)
 	return &InspectionResult{
-		Groups:            m.mergeGroups(allData),
+		Groups:            m.mergeGroups(allData, verdicts, schemaErrors),
 		LifecycleStatuses: m.aggregateLifecycle(allData),
 	}
 }
 
-func (m *Manager) mergeGroups(allData []*agentLifecycleData) []*fodcv1.GroupLifecycleInfo {
+// registrySchemaErrors turns the registry-fetch failures into per-group error
+// strings so mergeGroups surfaces them on GroupLifecycleInfo.errors -- the same
+// channel the user already reads -- instead of the reason living only in a log
+// line. A fatal fetch failure is attached to every group the checker had to
+// downgrade, so each UNKNOWN carries its cause; per-group read failures attach to
+// just their group.
+func (m *Manager) registrySchemaErrors(
+	verdicts map[string]*fodcv1.SchemaConsistency, registryGroupErrs map[string]string, registryErr error,
+) map[string][]string {
+	schemaErrors := make(map[string][]string)
+	for group, e := range registryGroupErrs {
+		schemaErrors[group] = append(schemaErrors[group], "registry read failed: "+e)
+	}
+	if registryErr != nil {
+		m.log.Warn().Err(registryErr).Msg("schema registry fetch failed; schema consistency degrades to UNKNOWN")
+		for group := range verdicts {
+			schemaErrors[group] = append(schemaErrors[group], "registry unavailable: "+registryErr.Error())
+		}
+	}
+	return schemaErrors
+}
+
+// fetchRegistry reads the authoritative registry truth once per collection by
+// asking a single schema-serving agent, selected by its ROLE_LIAISON node role,
+// to read its local registry and report the fingerprints. It tries each liaison
+// agent in a deterministic order until one succeeds, so a single unhealthy
+// liaison does not blank the schema check. It returns the per-group fingerprints,
+// per-group read errors, and a fatal error when no liaison could be reached; the
+// caller surfaces these on the groups so the user learns why rather than only
+// seeing a log line.
+func (m *Manager) fetchRegistry(
+	ctx context.Context,
+) (map[string]map[consistency.ObjectKey]uint64, map[string]string, error) {
+	m.mu.RLock()
+	reg := m.registry
+	svc := m.grpcService
+	m.mu.RUnlock()
+	if reg == nil || svc == nil {
+		return nil, nil, errors.New("registry or grpc service not available for schema registry read")
+	}
+	liaisons := reg.ListAgentsByRole(databasev1.Role_ROLE_LIAISON.String())
+	if len(liaisons) == 0 {
+		return nil, nil, errors.New("no schema-serving (liaison) agent available to read the registry")
+	}
+	sort.Slice(liaisons, func(i, j int) bool { return liaisons[i].AgentID < liaisons[j].AgentID })
+	var lastErr error
+	for _, agentInfo := range liaisons {
+		// Bound each read so a liaison that dies mid-stream (never sending its done
+		// marker) cannot hang the collection past this deadline.
+		fetchCtx, cancel := context.WithTimeout(ctx, defaultCollectionTimeout)
+		groups, err := svc.FetchSchemaRegistry(fetchCtx, agentInfo.AgentID)
+		cancel()
+		if err != nil {
+			lastErr = err
+			continue
+		}
+		registryByGroup, groupErrs := schemaRegistryToFingerprints(groups)
+		return registryByGroup, groupErrs, nil
+	}
+	return nil, nil, fmt.Errorf("schema registry read failed on all %d liaison agent(s): %w", len(liaisons), lastErr)
+}
+
+// schemaRegistryToFingerprints converts the agent's reported registry message
+// into the per-group object fingerprint map the checker consumes, splitting out
+// per-group read errors (a group whose read failed carries no objects and its
+// reason is returned so the caller can surface it).
+func schemaRegistryToFingerprints(
+	groups []*fodcv1.SchemaRegistryGroup,
+) (map[string]map[consistency.ObjectKey]uint64, map[string]string) {
+	byGroup := make(map[string]map[consistency.ObjectKey]uint64, len(groups))
+	groupErrs := make(map[string]string)
+	for _, g := range groups {
+		if e := g.GetError(); e != "" {
+			groupErrs[g.GetGroup()] = e
+			continue
+		}
+		objects := make(map[consistency.ObjectKey]uint64, len(g.GetObjects()))
+		for _, o := range g.GetObjects() {
+			objects[consistency.ObjectKey{Kind: o.GetKind(), Name: o.GetName()}] = o.GetFingerprint()
+		}
+		byGroup[g.GetGroup()] = objects
+	}
+	return byGroup, groupErrs
+}
+
+func (m *Manager) mergeGroups(
+	allData []*agentLifecycleData,
+	verdicts map[string]*fodcv1.SchemaConsistency,
+	schemaErrors map[string][]string,
+) []*fodcv1.GroupLifecycleInfo {
 	groupMap := make(map[string]*fodcv1.GroupLifecycleInfo)
 	// Errors are unioned across agents because each agent may observe a
 	// different subset of per-node failures (e.g. liaison-0 sees cold-0
@@ -274,27 +405,43 @@ func (m *Manager) mergeGroups(allData []*agentLifecycleData) []*fodcv1.GroupLife
 	// of the GroupLifecycleInfo is fine -- name/catalog/resource_opts are
 	// agent-invariant -- but errors must be the deduped union.
 	mergedErrors := make(map[string]map[string]struct{})
+	addErr := func(group string, errs ...string) {
+		if len(errs) == 0 {
+			return
+		}
+		set, ok := mergedErrors[group]
+		if !ok {
+			set = make(map[string]struct{})
+			mergedErrors[group] = set
+		}
+		for _, e := range errs {
+			set[e] = struct{}{}
+		}
+	}
 	for _, ad := range allData {
 		if ad == nil || ad.Data == nil {
 			continue
 		}
 		for _, g := range ad.Data.Groups {
 			groupMap[g.Name] = g
-			if len(g.Errors) == 0 {
-				continue
-			}
-			set, ok := mergedErrors[g.Name]
-			if !ok {
-				set = make(map[string]struct{})
-				mergedErrors[g.Name] = set
-			}
-			for _, e := range g.Errors {
-				set[e] = struct{}{}
-			}
+			// g.Errors already carries this agent's schema collection errors (the
+			// agent folds them in before sending), so the union covers them too.
+			addErr(g.Name, g.Errors...)
 		}
+	}
+	// The proxy's own registry-fetch failures (fatal or per-group) surface here so
+	// each affected group tells the user why its verdict is UNKNOWN.
+	for group, errs := range schemaErrors {
+		addErr(group, errs...)
 	}
 	groups := make([]*fodcv1.GroupLifecycleInfo, 0, len(groupMap))
 	for name, g := range groupMap {
+		// g is this round's freshly received data: the gRPC stream re-unmarshals
+		// every LifecycleData on arrival and nothing caches it, so overwriting the
+		// two merged fields in place cannot leak into a later round. This keeps
+		// every other field (and any future field) without a copy that must be
+		// kept in lockstep with the message definition.
+		g.SchemaConsistency = verdicts[name]
 		if set := mergedErrors[name]; len(set) > 0 {
 			errs := make([]string, 0, len(set))
 			for e := range set {
@@ -305,6 +452,10 @@ func (m *Manager) mergeGroups(allData []*agentLifecycleData) []*fodcv1.GroupLife
 		}
 		groups = append(groups, g)
 	}
+	// Range over groupMap is nondeterministic; sort so the payload order is
+	// stable across requests (the checker sorts its own slices for the same
+	// reason).
+	sort.Slice(groups, func(i, j int) bool { return groups[i].GetName() < groups[j].GetName() })
 	return groups
 }
 

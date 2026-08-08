@@ -49,6 +49,14 @@ service FODCService {
   // profile's bytes); agent replies with StreamPressureProfilesRequest (metadata
   // records, or binary chunks).
   rpc StreamPressureProfiles(stream StreamPressureProfilesRequest) returns (stream StreamPressureProfilesResponse);
+
+  // Bi-directional stream for the authoritative schema registry fingerprint.
+  // The Proxy picks one schema-serving (liaison) agent by role and drives it via
+  // StreamSchemaRegistryResponse (request_registry); that one agent reads the
+  // authoritative registry from its local node and replies with
+  // StreamSchemaRegistryRequest (the fingerprints). Only the selected agent is
+  // ever asked, so the registry is read once per collection, not once per node.
+  rpc StreamSchemaRegistry(stream StreamSchemaRegistryRequest) returns (stream StreamSchemaRegistryResponse);
 }
 
 message RegisterAgentRequest {
@@ -125,6 +133,48 @@ message StreamLifecycleResponse {
   bool request_lifecycle = 1;
 }
 
+// StreamSchemaRegistryRequest is one message of the selected agent's streamed
+// reply to a request_registry command. A group's objects are split across
+// messages so no single message carries a whole (potentially large) group; the
+// proxy merges chunks that share a group name. The agent ends the round with a
+// final message that has done set, which is how the proxy knows to stop waiting.
+// A group whose own read failed rides on SchemaRegistryGroup.error; a fatal
+// whole-read failure (e.g. the local registry endpoint was unreachable) is a
+// single group chunk with an empty group name carrying the error.
+message StreamSchemaRegistryRequest {
+  // group carries a chunk of one group's registry fingerprints; unset on the
+  // final message. Chunks that share a group name are merged by the proxy.
+  SchemaRegistryGroup group = 1;
+  // done marks the last message of the round; no group messages follow it.
+  bool done = 2;
+}
+
+message StreamSchemaRegistryResponse {
+  // Proxy asks the selected agent to read and report the registry fingerprints.
+  bool request_registry = 1;
+}
+
+// SchemaRegistryGroup carries one group's authoritative registry fingerprints.
+// The agent computes the fingerprints so the wire carries only uint64 digests,
+// never raw schema bodies; a group's objects may arrive across several chunks
+// that share a group name, which the proxy merges.
+message SchemaRegistryGroup {
+  string group = 1;
+  repeated SchemaObjectFingerprint objects = 2;
+  // error is set when this group's registry read failed; its objects are then
+  // omitted and the group degrades to UNKNOWN with this reason attached. As a
+  // special case, an empty group name with error set is the agent's fatal
+  // whole-read failure, which the proxy surfaces across every group.
+  string error = 3;
+}
+
+message SchemaObjectFingerprint {
+  // kind is schema.Kind.String(), matching ObjectConsistency.kind.
+  string kind = 1;
+  string name = 2;
+  uint64 fingerprint = 3;
+}
+
 message LifecycleData {
   repeated LifecycleReport reports = 1;
   repeated GroupLifecycleInfo groups = 2;
@@ -146,6 +196,78 @@ message GroupLifecycleInfo {
   //   - data_info non-empty && errors empty   -> full success
   //   - data_info non-empty && errors non-empty -> partial failure
   repeated string errors = 5;
+  // schema_consistency is the verdict on whether this group's schema agrees
+  // across the registry, every node's cache, and every node's runtime. Each
+  // node's fingerprints (data and liaison) live in schema_consistency.objects.
+  SchemaConsistency schema_consistency = 6;
+}
+
+// SchemaConsistency is the single, self-contained schema layer: it holds the
+// verdict plus every object's fingerprints across all three layers -- registry
+// truth, and each node's cache and runtime -- so DataInfo/LiaisonInfo carry no
+// schema of their own.
+message SchemaConsistency {
+  ConsistencyStatus status = 1;
+  // objects lists every schema object in the group exactly once, pairing its
+  // registry-truth fingerprint with each node's cache/runtime fingerprints.
+  repeated ObjectConsistency objects = 2;
+  repeated SchemaIssue issues = 3;
+}
+
+// ObjectConsistency is one schema object's fingerprints across all layers: the
+// registry truth plus every node that reported it.
+message ObjectConsistency {
+  // kind is schema.Kind.String().
+  string kind = 1;
+  string name = 2;
+  // registry_fingerprint is the registry truth; zero when the object exists
+  // only on nodes (an orphan) and not in the registry.
+  uint64 registry_fingerprint = 3;
+  repeated NodeFingerprint node_fingerprints = 4;
+}
+
+// NodeFingerprint is one node's cache/runtime fingerprints for a single object.
+// Only the node id is carried; full node info lives in DataInfo/LiaisonInfo.
+message NodeFingerprint {
+  string node = 1;
+  uint64 cache_fingerprint = 2;
+  uint64 runtime_fingerprint = 3;
+}
+
+// SchemaIssue is one object-on-one-node disagreement. Fingerprint values are not
+// repeated here; look them up in SchemaConsistency.objects by kind+name (the
+// registry truth and that node's cache/runtime).
+message SchemaIssue {
+  // kind is schema.Kind.String().
+  string kind = 1;
+  string name = 2;
+  // node is the node id the disagreement was observed on.
+  string node = 3;
+  SchemaIssueType type = 4;
+}
+
+// SchemaIssueType names which layer boundary the disagreement sits on.
+enum SchemaIssueType {
+  SCHEMA_ISSUE_TYPE_UNSPECIFIED = 0;
+  // Registry has it, the node's cache does not. A frequent root cause is the
+  // node silently rejecting the schema; grep the node log for "is ignored".
+  SCHEMA_ISSUE_TYPE_MISSING_IN_CACHE = 1;
+  // The node holds it but the registry does not.
+  SCHEMA_ISSUE_TYPE_ORPHAN = 2;
+  // Registry and cache disagree: the watch is behind.
+  SCHEMA_ISSUE_TYPE_CACHE_STALE = 3;
+  // Cache and runtime disagree: the derived index was never reapplied.
+  SCHEMA_ISSUE_TYPE_RUNTIME_NOT_APPLIED = 4;
+}
+
+// ConsistencyStatus is the group-level rollup.
+enum ConsistencyStatus {
+  CONSISTENCY_STATUS_UNSPECIFIED = 0;
+  CONSISTENCY_STATUS_CONSISTENT = 1;
+  CONSISTENCY_STATUS_INCONSISTENT = 2;
+  // Collection was incomplete, or a disagreement has not yet persisted long
+  // enough to be reported.
+  CONSISTENCY_STATUS_UNKNOWN = 3;
 }
 
 message LifecycleReport {

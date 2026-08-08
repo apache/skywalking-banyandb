@@ -95,7 +95,8 @@ func (s *liaison) CollectDataInfo(_ context.Context, _ string) (*databasev1.Data
 	return nil, errors.New("collect data info is not supported on liaison node")
 }
 
-// CollectLiaisonInfo collects liaison node info.
+// CollectLiaisonInfo collects liaison node info. When includeSchemaState is set it
+// also attaches this node's schema consistency evidence.
 func (s *liaison) CollectLiaisonInfo(_ context.Context, group string) (*databasev1.LiaisonInfo, error) {
 	info := &databasev1.LiaisonInfo{
 		PendingWriteDataCount:       0,
@@ -212,6 +213,7 @@ func (s *liaison) PreRun(ctx context.Context) error {
 
 	if metaSvc, ok := s.metadata.(metadata.Service); ok {
 		metaSvc.RegisterLiaisonCollector(commonv1.Catalog_CATALOG_STREAM, s)
+		metaSvc.RegisterSchemaSnapshotCollector(commonv1.Catalog_CATALOG_STREAM, &s.schemaRepo)
 		metaSvc.RegisterGroupDropHandler(commonv1.Catalog_CATALOG_STREAM, s)
 	}
 

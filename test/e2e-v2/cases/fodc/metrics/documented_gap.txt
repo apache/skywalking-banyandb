@@ -49,3 +49,9 @@ banyandb_lifecycle_migration_total_batch_latency_bucket
 banyandb_lifecycle_migration_total_err
 banyandb_lifecycle_migration_total_finished
 banyandb_lifecycle_migration_total_latency_bucket
+#
+# Group 4 -- schema consistency verdict. The proxy exports one gauge per group
+# only after a /cluster/lifecycle collection has populated its verdict cache;
+# check-metrics.sh runs before check-schema-consistency.sh triggers that
+# collection, so the metric may be absent during the metrics window.
+banyandb_fodc_schema_consistency_status

@@ -84,6 +84,10 @@ func (m *mockFODCServiceClient) StreamLifecycle(_ context.Context, _ ...grpc.Cal
 	return nil, errors.New("not implemented")
 }
 
+func (m *mockFODCServiceClient) StreamSchemaRegistry(_ context.Context, _ ...grpc.CallOption) (fodcv1.FODCService_StreamSchemaRegistryClient, error) {
+	return nil, errors.New("not implemented")
+}
+
 func (m *mockFODCServiceClient) StreamCrashDiagnostics(_ context.Context, _ ...grpc.CallOption) (fodcv1.FODCService_StreamCrashDiagnosticsClient, error) {
 	return nil, errors.New("not implemented")
 }

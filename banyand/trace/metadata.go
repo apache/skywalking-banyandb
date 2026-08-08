@@ -108,12 +108,13 @@ func newSchemaRepo(path string, svc *standalone, nodeLabels map[string]string, n
 	return sr
 }
 
-func newLiaisonSchemaRepo(path string, svc *liaison, traceDataNodeRegistry grpc.NodeRegistry) schemaRepo {
+func newLiaisonSchemaRepo(path string, svc *liaison, traceDataNodeRegistry grpc.NodeRegistry, nodeID string) schemaRepo {
 	pipelineFactory := svc.omr.With(pipelineScope)
 	sr := schemaRepo{
 		l:                      svc.l,
 		path:                   path,
 		metadata:               svc.metadata,
+		nodeID:                 nodeID,
 		role:                   databasev1.Role_ROLE_LIAISON,
 		samplerMeter:           newSamplerMetrics(pipelineFactory),
 		pluginTelemetryFactory: pipelineFactory,
@@ -520,7 +521,36 @@ func (sr *schemaRepo) loadTSDB(groupName string) (storage.TSDB[*tsTable, option]
 	return db.(storage.TSDB[*tsTable, option]), nil
 }
 
-// CollectDataInfo collects data info for a specific group.
+// CollectSchemaSnapshot returns this node's cache/runtime schema bodies for the
+// group so the FODC agent can fingerprint them on receive.
+func (sr *schemaRepo) CollectSchemaSnapshot(group string) ([]*databasev1.ObjectSnapshot, []*databasev1.IndexRule, error) {
+	return resourceSchema.CollectSchemaSnapshot(sr.Repository, group,
+		schema.KindTrace.String(), traceResourceView)
+}
+
+// CachedGroups lists the trace groups this node currently caches.
+func (sr *schemaRepo) CachedGroups() []string {
+	return resourceSchema.CachedGroupNames(sr.Repository)
+}
+
+// traceResourceView reaches the runtime view of a trace. IndexListener exposes
+// only OnIndexUpdate, so the assertion must happen here -- the same pattern the
+// resource loader in this package uses.
+func traceResourceView(res resourceSchema.Resource) (resourceSchema.ResourceView, bool) {
+	cached, ok := res.Schema().(*databasev1.Trace)
+	if !ok {
+		return resourceSchema.ResourceView{}, false
+	}
+	view := resourceSchema.ResourceView{Name: cached.GetMetadata().GetName(), Cached: cached}
+	if r, isTyped := res.Delegated().(*trace); isTyped {
+		view.Runtime = r.GetSchema()
+		view.RuntimeRules = r.GetIndexRules()
+	}
+	return view, true
+}
+
+// CollectDataInfo collects data info for a specific group. When includeSchemaState
+// is set it also attaches this node's schema consistency evidence.
 func (sr *schemaRepo) CollectDataInfo(ctx context.Context, group string) (*databasev1.DataInfo, error) {
 	if sr.nodeID == "" {
 		return nil, fmt.Errorf("node ID is empty")
