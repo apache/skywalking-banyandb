@@ -56,6 +56,19 @@ func TestMergeBenchmarkCountsActualSamplerInvocations(t *testing.T) {
 	require.Zero(t, bypassed.evaluated.Load())
 }
 
+func TestMergeBenchmarkObserverReportsConcurrentStagingPeak(t *testing.T) {
+	observer := newMergeBenchmarkObserver(nil, mergeBenchmarkObserverOptions{})
+	first := &mergeEvaluationObservation{observer: observer}
+	second := &mergeEvaluationObservation{observer: observer}
+
+	first.observeStagedBytes(100)
+	second.observeStagedBytes(200)
+	first.observeStagedBytes(0)
+	second.observeStagedBytes(0)
+
+	require.Equal(t, uint64(300), observer.snapshot().PeakConcurrentStagedBytes)
+}
+
 func TestBenchmarkSidxPartTotalsReportsMetadataFailure(t *testing.T) {
 	_, _, totalsErr := benchmarkSidxPartTotals(fs.NewLocalFileSystem(), map[uint64]string{1: filepath.Join(t.TempDir(), "missing")})
 	require.ErrorContains(t, totalsErr, "cannot read secondary-index part metadata")
@@ -93,6 +106,18 @@ func TestMergeBenchmarkObserverClassifiesHotAndMatureMerges(t *testing.T) {
 		require.Equal(t, uint64(2), event.TracesEvaluated)
 		require.Positive(t, samplerCalls)
 		require.Equal(t, samplerCalls, int64(event.PluginCalls))
+		require.Positive(t, event.EstimatedStagingBytes)
+		require.Positive(t, event.StagingHardLimit)
+		require.Positive(t, event.DecisionBatchLimit)
+		require.LessOrEqual(t, event.DecisionBatchLimit, event.StagingHardLimit)
+		require.Positive(t, event.PlannedStagingBatches)
+		require.Positive(t, event.DecisionMaxTraceCount)
+		require.Positive(t, event.PeakStagedBytes)
+		require.Len(t, event.StagingBatches, 1)
+		require.Equal(t, mergeStagingFlushEndOfMerge, event.StagingBatches[0].Reason)
+		require.Equal(t, event.TracesEvaluated, event.StagingBatches[0].Traces)
+		require.Positive(t, event.StagingBatches[0].Bytes)
+		require.Equal(t, event.StagingBatches[0].Bytes, event.ChargedStagingBytes)
 		require.Zero(t, event.HotInputParts)
 		require.Equal(t, uint32(2), event.MatureInputParts)
 		require.Zero(t, event.HotInputRows)
@@ -107,6 +132,22 @@ func TestMergeBenchmarkObserverClassifiesHotAndMatureMerges(t *testing.T) {
 			require.Positive(t, event.Children[childIdx].OutputBytes)
 		}
 	})
+}
+
+func TestMergeBenchmarkObserverReportsBudgetTriggeredBatches(t *testing.T) {
+	previousBudget := testStageBudgetOverride
+	testStageBudgetOverride = 1
+	t.Cleanup(func() { testStageBudgetOverride = previousBudget })
+
+	event, samplerCalls, _ := runObservedBenchmarkMerge(t, true)
+	require.Equal(t, int64(2), samplerCalls)
+	require.Equal(t, uint64(2), event.PluginCalls)
+	require.Len(t, event.StagingBatches, 2)
+	require.Equal(t, mergeStagingFlushByteAndTraceLimit, event.StagingBatches[0].Reason)
+	require.Equal(t, uint64(1), event.StagingBatches[0].Traces)
+	require.Equal(t, mergeStagingFlushEndOfMerge, event.StagingBatches[1].Reason)
+	require.Equal(t, uint64(1), event.StagingBatches[1].Traces)
+	require.GreaterOrEqual(t, event.PeakStagedBytes, event.StagingBatches[0].Bytes)
 }
 
 func TestClassifyMergeObservation(t *testing.T) {
