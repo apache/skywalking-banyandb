@@ -22,6 +22,7 @@ import (
 	"errors"
 	"fmt"
 	"path/filepath"
+	"runtime/debug"
 	"sort"
 	"sync"
 	"sync/atomic"
@@ -341,17 +342,28 @@ func (tst *tsTable) dispatcherLoop(threshold uint64, fastCh, slowCh chan *mergeD
 				}
 				tst.incTotalMergeBackoffSeconds(time.Since(sleepStart).Seconds())
 			}
-			dispatch, maxPartID := tst.mergeControl.beginDispatch()
-			if !dispatch {
-				continue
-			}
-			if tst.dispatchAllMergesUpTo(threshold, fastCh, slowCh, maxPartID) {
-				tst.mergeControl.endDispatch()
+			if tst.runDispatchCycle(threshold, fastCh, slowCh) {
 				return
 			}
-			tst.mergeControl.endDispatch()
 		}
 	}
+}
+
+// runDispatchCycle executes one selection/dispatch cycle, converting panics into a
+// logged, recovered failure so a selection-time panic cannot kill the dispatcher.
+func (tst *tsTable) runDispatchCycle(threshold uint64, fastCh, slowCh chan *mergeDispatchRequest) (stop bool) {
+	dispatch, maxPartID := tst.mergeControl.beginDispatch()
+	if !dispatch {
+		return false
+	}
+	defer tst.mergeControl.endDispatch()
+	defer func() {
+		if panicVal := recover(); panicVal != nil {
+			tst.incTotalMergePanicRecovered(1)
+			tst.l.Error().Str("panic", fmt.Sprintf("%v", panicVal)).Str("stack", string(debug.Stack())).Msg("merge dispatch cycle panicked")
+		}
+	}()
+	return tst.dispatchAllMergesUpTo(threshold, fastCh, slowCh, maxPartID)
 }
 
 func (tst *tsTable) dispatchAllMerges(threshold uint64, fastCh, slowCh chan *mergeDispatchRequest) bool {
@@ -486,10 +498,19 @@ func (tst *tsTable) mergeLaneWorker(ch chan *mergeDispatchRequest, merges chan *
 		}
 
 		tst.incTotalMergeLoopStarted(1)
-		_, mergeErr := tst.mergePartsThenSendIntroductionObserved(
-			snapshotCreatorMerger, req.parts, req.toBeMerged, merges,
-			tst.loopCloser.CloseNotify(), req.typ, req.lane, nil, req.benchmark,
-		)
+		mergeErr := func() (attemptErr error) {
+			defer func() {
+				if panicVal := recover(); panicVal != nil {
+					tst.incTotalMergePanicRecovered(1)
+					attemptErr = fmt.Errorf("merge panicked: %v\n%s", panicVal, debug.Stack())
+				}
+			}()
+			_, attemptErr = tst.mergePartsThenSendIntroductionObserved(
+				snapshotCreatorMerger, req.parts, req.toBeMerged, merges,
+				tst.loopCloser.CloseNotify(), req.typ, req.lane, nil, req.benchmark,
+			)
+			return attemptErr
+		}()
 		tst.incTotalMergeLoopFinished(1)
 		if attributionAcquired {
 			<-tst.attributionCh
