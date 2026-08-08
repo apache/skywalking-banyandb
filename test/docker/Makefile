@@ -28,7 +28,7 @@ IMG := $(HUB)/skywalking-banyandb:$(TAG)-testing
 build:
 	@echo "Building $(IMG)"
 	@pwd
-	time docker buildx build --load --no-cache -t $(IMG) -f Dockerfile --provenance=false ../../
+	time docker buildx build --load -t $(IMG) -f Dockerfile --provenance=false ../../
 
 push:
 	@echo "Pushing $(IMG) with platform linux/amd64,linux/arm64"
