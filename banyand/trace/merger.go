@@ -78,17 +78,117 @@ const (
 	// defaultMaxStagedTraceCount independently bounds the number of logical
 	// traces exposed to one sampler call even when their byte footprint is tiny.
 	defaultMaxStagedTraceCount = 64 * 1024
+	// adaptiveBatchHardLimitDivisor keeps the preferred decision working set
+	// below the resource-derived safety ceiling while leaving room for a whole
+	// trace to cross the preferred boundary.
+	adaptiveBatchHardLimitDivisor = 8
+	// adaptiveBatchArenaMultiplier lets a completed batch reuse the bounded raw
+	// arena cache during the following batch without making the cache itself the
+	// staging safety limit.
+	adaptiveBatchArenaMultiplier = 2
 )
+
+type adaptiveDecisionBatchPlan struct {
+	EstimatedBytes uint64
+	HardLimit      uint64
+	BatchLimit     uint64
+	PlannedBatches uint64
+}
+
+func planAdaptiveDecisionBatch(parts []*partWrapper, hardLimit uint64) adaptiveDecisionBatchPlan {
+	var compressedBytes, uncompressedBytes, blocksCount uint64
+	for _, partData := range parts {
+		if partData == nil || partData.p == nil {
+			continue
+		}
+		metadata := &partData.p.partMetadata
+		compressedBytes = saturatingAddUint64(compressedBytes, metadata.CompressedSizeBytes)
+		uncompressedBytes = saturatingAddUint64(uncompressedBytes, metadata.UncompressedSpanSizeBytes)
+		blocksCount = saturatingAddUint64(blocksCount, metadata.BlocksCount)
+	}
+	payloadBytes := max(compressedBytes, uncompressedBytes)
+	structuralBytes := saturatingMultiplyUint64(blocksCount, estimatedStagedBlockStructuralBytes())
+	estimatedBytes := saturatingAddUint64(payloadBytes, structuralBytes)
+	nominalLimit := nominalDecisionBatchLimit(hardLimit)
+	if estimatedBytes == 0 {
+		return adaptiveDecisionBatchPlan{HardLimit: hardLimit, BatchLimit: nominalLimit, PlannedBatches: 1}
+	}
+	plannedBatches := roundedQuotientUint64(estimatedBytes, nominalLimit)
+	batchLimit := ceilDivUint64(estimatedBytes, plannedBatches)
+	minimumLimit := min(uint64(defaultStageBudgetFloor), hardLimit)
+	batchLimit = min(max(batchLimit, minimumLimit), hardLimit)
+	return adaptiveDecisionBatchPlan{
+		EstimatedBytes: estimatedBytes,
+		HardLimit:      hardLimit,
+		BatchLimit:     batchLimit,
+		PlannedBatches: plannedBatches,
+	}
+}
+
+func estimatedStagedBlockStructuralBytes() uint64 {
+	return uint64(unsafe.Sizeof(stagedTrace{})) + uint64(unsafe.Sizeof(blockMetadata{})) +
+		uint64(unsafe.Sizeof(stagedDataBlockBuffer{})) + uint64(unsafe.Sizeof(stagedTraceGroup{})) +
+		stagedTraceDecisionBytes() + stagedEvaluationSlotBytes(true)
+}
+
+func nominalDecisionBatchLimit(hardLimit uint64) uint64 {
+	if hardLimit == 0 {
+		return defaultSmallMergeThreshold
+	}
+	poolWindow := uint64(maxPooledStagedArenaBytes * adaptiveBatchArenaMultiplier)
+	resourceWindow := hardLimit / adaptiveBatchHardLimitDivisor
+	nominalLimit := max(uint64(defaultStageBudgetFloor), poolWindow, resourceWindow)
+	return min(nominalLimit, hardLimit)
+}
+
+func roundedQuotientUint64(numerator, denominator uint64) uint64 {
+	if denominator == 0 {
+		return 1
+	}
+	quotient := numerator / denominator
+	remainder := numerator % denominator
+	if remainder >= ceilDivUint64(denominator, 2) {
+		quotient++
+	}
+	return max(uint64(1), quotient)
+}
+
+func ceilDivUint64(numerator, denominator uint64) uint64 {
+	if denominator == 0 {
+		return 0
+	}
+	quotient := numerator / denominator
+	if numerator%denominator != 0 {
+		quotient++
+	}
+	return quotient
+}
+
+func saturatingAddUint64(left, right uint64) uint64 {
+	if ^uint64(0)-left < right {
+		return ^uint64(0)
+	}
+	return left + right
+}
+
+func saturatingMultiplyUint64(left, right uint64) uint64 {
+	if left == 0 || right == 0 {
+		return 0
+	}
+	if left > ^uint64(0)/right {
+		return ^uint64(0)
+	}
+	return left * right
+}
 
 // testStageBudgetOverride forces the staging budget when non-zero. Test-only
 // seam (mirrors forceSlowMerge); production always derives it from the memory
 // limit via stageBudgetFromLimit.
 var testStageBudgetOverride uint64
 
-// resolveStageBudget returns the soft cap on bytes the in-merge retention filter
-// may stage before a trace-boundary chunk flush, derived from the protector's
-// memory limit. There is no operator flag; the budget self-tunes from the limit
-// and the merge concurrency.
+// resolveStageBudget returns the resource-derived hard staging ceiling. A
+// selected merge derives its smaller preferred decision-batch limit separately
+// from part metadata. There is no operator flag.
 func resolveStageBudget(opt option) uint64 {
 	if testStageBudgetOverride > 0 {
 		return testStageBudgetOverride
@@ -132,7 +232,7 @@ func stageBudgetFromLimit(limit uint64) uint64 {
 
 func maxStagedTraceCountFromBudget(stageBudget uint64) int {
 	minimumTraceBytes := uint64(unsafe.Sizeof(stagedTrace{})) + uint64(unsafe.Sizeof(stagedTraceGroup{})) +
-		stagedTraceDecisionBytes() + stagedEvaluationSlotBytes(false)
+		stagedTraceDecisionBytes() + stagedEvaluationSlotBytes(true)
 	if stageBudget == 0 || minimumTraceBytes == 0 {
 		return defaultMaxStagedTraceCount
 	}
@@ -479,23 +579,27 @@ func (tst *tsTable) buildHotMergeFilterDecisionAt(parts []*partWrapper, logicalN
 		tst.incPipelineGuardBypassed()
 		return nil, mergeReasonGrace
 	}
-	stageBudget := resolveStageBudget(tst.option)
-	guard := tst.newTraceFragmentGuardSession(parts, tst.option.maxTraceFragmentGap, stageBudget)
+	stagingHardLimit := resolveStageBudget(tst.option)
+	stagingPlan := planAdaptiveDecisionBatch(parts, stagingHardLimit)
+	guard := tst.newTraceFragmentGuardSession(parts, tst.option.maxTraceFragmentGap, stagingHardLimit)
 	if guard == nil {
 		tst.incPipelineGuardBypassed()
 		return nil, mergeReasonGuardUnavailable
 	}
 	chain := newMergeChain(tst.group, "", samplers, tst.option.decideTimeoutCircuitBreak)
 	return &mergeFilter{
-		chain:         chain,
-		guard:         guard,
-		ctx:           tst.loopCloser.Ctx(),
-		owner:         tst,
-		timeout:       tst.option.decideTimeout,
-		stageBudget:   stageBudget,
-		traceBudget:   resolveTraceBudget(tst.option),
-		maxTraceCount: maxStagedTraceCountFromBudget(stageBudget),
-		forceSlow:     projectionRequiresSlowPath(chain.projection),
+		chain:                 chain,
+		guard:                 guard,
+		ctx:                   tst.loopCloser.Ctx(),
+		owner:                 tst,
+		timeout:               tst.option.decideTimeout,
+		stagingHardLimit:      stagingHardLimit,
+		decisionBatchLimit:    stagingPlan.BatchLimit,
+		estimatedStagingBytes: stagingPlan.EstimatedBytes,
+		plannedStagingBatches: stagingPlan.PlannedBatches,
+		traceBudget:           resolveTraceBudget(tst.option),
+		maxTraceCount:         maxStagedTraceCountFromBudget(stagingPlan.BatchLimit),
+		forceSlow:             projectionRequiresSlowPath(chain.projection),
 	}, ""
 }
 
@@ -555,6 +659,11 @@ func (tst *tsTable) mergePartsThenSendIntroductionObserved(creator snapshotCreat
 	operation.setInitialReason(initialReason)
 	if filter != nil && operation != nil {
 		filter.observation = operation.evaluation
+		operation.event.EstimatedStagingBytes = filter.estimatedStagingBytes
+		operation.event.StagingHardLimit = filter.stagingHardLimit
+		operation.event.DecisionBatchLimit = filter.decisionBatchLimit
+		operation.event.PlannedStagingBatches = filter.plannedStagingBatches
+		operation.event.DecisionMaxTraceCount = filter.maxTraceCount
 	}
 	losslessRetry := false
 	defer func() {
@@ -1282,16 +1391,19 @@ type stagedTraceGroup struct {
 // mergeBlocks. When nil, mergeBlocks behaves exactly as before (no staging, no
 // decode changes).
 type mergeFilter struct {
-	chain         *mergeChain
-	guard         *traceFragmentGuardSession
-	observation   *mergeEvaluationObservation
-	ctx           context.Context
-	owner         *tsTable
-	timeout       time.Duration
-	stageBudget   uint64 // soft cap on staged bytes; a trace-boundary chunk flush fires once exceeded (0 disables chunking)
-	traceBudget   uint64 // hard cap on one trace's staged bytes; exceeding it retains the trace without evaluation (0 disables bypass)
-	maxTraceCount int    // hard cap on logical traces sent to one Decide call (0 disables the count cap)
-	forceSlow     bool   // forces the slow assembly path when the chain projects row data
+	chain                 *mergeChain
+	guard                 *traceFragmentGuardSession
+	observation           *mergeEvaluationObservation
+	ctx                   context.Context
+	owner                 *tsTable
+	timeout               time.Duration
+	stagingHardLimit      uint64 // resource-derived safety ceiling for one merge's staged bytes
+	decisionBatchLimit    uint64 // metadata-derived preferred bytes per complete-trace Decide batch
+	estimatedStagingBytes uint64 // selected-part metadata estimate used to plan decision batches
+	plannedStagingBatches uint64 // estimated number of balanced decision batches
+	traceBudget           uint64 // hard cap on one trace's staged bytes; exceeding it retains the trace without evaluation (0 disables bypass)
+	maxTraceCount         int    // hard cap on logical traces sent to one Decide call (0 disables the count cap)
+	forceSlow             bool   // forces the slow assembly path when the chain projects row data
 }
 
 func (st *stagedTrace) metadata() *blockMetadata {
@@ -1759,6 +1871,9 @@ func (tes *traceEvaluationStager) ensureBuffers() {
 }
 
 func (tes *traceEvaluationStager) releaseBuffers() {
+	if tes.filter != nil && tes.filter.observation != nil {
+		tes.filter.observation.observeStagedBytes(0)
+	}
 	for stagedIdx := range tes.staged {
 		releaseStagedTrace(&tes.staged[stagedIdx])
 	}
@@ -1776,9 +1891,12 @@ func (tes *traceEvaluationStager) releaseBuffers() {
 	tes.groups = nil
 }
 
-func (tes *traceEvaluationStager) flush() {
+func (tes *traceEvaluationStager) flush(reason mergeStagingFlushReason) {
 	if len(tes.staged) == 0 {
 		return
+	}
+	if tes.filter.observation != nil {
+		tes.filter.observation.recordStagingBatch(reason, tes.stagedBytes, uint64(len(tes.groups)))
 	}
 	flushStaged(tes.bw, tes.filter, tes.staged, tes.groups, !tes.invalidOrder && !tes.invalidMetadata, tes.droppedSet)
 	clear(tes.staged)
@@ -1793,6 +1911,9 @@ func (tes *traceEvaluationStager) flush() {
 	tes.stagedTraceCount = 0
 	tes.invalidOrder = false
 	tes.invalidMetadata = false
+	if tes.filter.observation != nil {
+		tes.filter.observation.observeStagedBytes(0)
+	}
 }
 
 func (tes *traceEvaluationStager) writeBypassed(bypassed []stagedTrace) {
@@ -1849,6 +1970,9 @@ func (tes *traceEvaluationStager) stage(st stagedTrace) {
 	}
 	tes.stagedBytes += batchBytes
 	tes.currentTraceBytes += traceBytes
+	if tes.filter.observation != nil {
+		tes.filter.observation.observeStagedBytes(tes.stagedBytes)
+	}
 	group := &tes.groups[len(tes.groups)-1]
 	group.end = len(tes.staged)
 	group.accountedBytes = tes.currentTraceBytes
@@ -1869,6 +1993,13 @@ func (tes *traceEvaluationStager) stage(st stagedTrace) {
 		return
 	}
 	if tes.currentTraceStart > 0 {
+		if tes.filter.observation != nil {
+			prefixBytes := stagedBatchFixedBytes()
+			for groupIdx := range tes.groups[:len(tes.groups)-1] {
+				prefixBytes += tes.groups[groupIdx].accountedBytes
+			}
+			tes.filter.observation.recordStagingBatch(mergeStagingFlushOversizedTrace, prefixBytes, uint64(len(tes.groups)-1))
+		}
 		flushStaged(tes.bw, tes.filter, tes.staged[:tes.currentTraceStart], tes.groups[:len(tes.groups)-1],
 			!tes.invalidOrder && !tes.invalidMetadata, tes.droppedSet)
 	}
@@ -1887,6 +2018,9 @@ func (tes *traceEvaluationStager) stage(st stagedTrace) {
 	tes.stagedTraceCount = 0
 	tes.invalidOrder = false
 	tes.invalidMetadata = false
+	if tes.filter.observation != nil {
+		tes.filter.observation.observeStagedBytes(0)
+	}
 	if tes.filter.owner != nil {
 		tes.filter.owner.incPipelineOversizedTracesBypassed(1)
 	}
@@ -1901,18 +2035,31 @@ func (tes *traceEvaluationStager) flushBefore(nextTraceID string, pendingBlock *
 	}
 	pendingCompletesStagedTrace := !pendingBlockIsEmpty && pendingBlock.bm.traceID == tes.lastStagedTraceID
 	if !pendingCompletesStagedTrace {
-		tes.flush()
+		tes.flush(tes.budgetFlushReason())
 	}
 }
 
 func (tes *traceEvaluationStager) flushAfter(completedTraceID, nextTraceID string) {
 	if tes.batchBudgetReached() && completedTraceID != nextTraceID {
-		tes.flush()
+		tes.flush(tes.budgetFlushReason())
+	}
+}
+
+func (tes *traceEvaluationStager) budgetFlushReason() mergeStagingFlushReason {
+	bytesReached := tes.filter.decisionBatchLimit > 0 && tes.stagedBytes >= tes.filter.decisionBatchLimit
+	tracesReached := tes.filter.maxTraceCount > 0 && tes.stagedTraceCount >= tes.filter.maxTraceCount
+	switch {
+	case bytesReached && tracesReached:
+		return mergeStagingFlushByteAndTraceLimit
+	case bytesReached:
+		return mergeStagingFlushByteLimit
+	default:
+		return mergeStagingFlushTraceLimit
 	}
 }
 
 func (tes *traceEvaluationStager) batchBudgetReached() bool {
-	bytesReached := tes.filter.stageBudget > 0 && tes.stagedBytes >= tes.filter.stageBudget
+	bytesReached := tes.filter.decisionBatchLimit > 0 && tes.stagedBytes >= tes.filter.decisionBatchLimit
 	tracesReached := tes.filter.maxTraceCount > 0 && tes.stagedTraceCount >= tes.filter.maxTraceCount
 	return bytesReached || tracesReached
 }
@@ -2074,7 +2221,7 @@ func mergeBlocks(closeCh <-chan struct{}, bw *blockWriter, br *blockReader, conf
 	}
 	releaseDecoder()
 	if evaluationStager != nil {
-		evaluationStager.flush()
+		evaluationStager.flush(mergeStagingFlushEndOfMerge)
 	}
 	var pm partMetadata
 	var tf traceIDFilter

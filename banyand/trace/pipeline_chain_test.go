@@ -242,10 +242,10 @@ func TestMergeFilter_AssemblesEveryPhysicalBlockBeforeDecide(t *testing.T) {
 	sampler := &wholeTraceErrorSampler{}
 	chain := newMergeChain("g", "s", []sdk.Sampler{sampler}, 0)
 	filter := &mergeFilter{
-		chain:       chain,
-		timeout:     time.Second,
-		stageBudget: 1,
-		forceSlow:   true,
+		chain:              chain,
+		timeout:            time.Second,
+		decisionBatchLimit: 1,
+		forceSlow:          true,
 	}
 
 	parts := appendTrace(splitTraceParts("error"), "trace-next", "success")
