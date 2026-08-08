@@ -17,8 +17,8 @@
  * under the License.
  */
 
-  import YAML from 'yaml';
-  import * as yaml from 'js-yaml';
+import YAML from 'yaml';
+import * as yaml from 'js-yaml';
 
 export function jsonToYaml(jsonData) {
   try {
