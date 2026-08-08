@@ -738,3 +738,29 @@ func TestDecide_FailOpenOnDecodeError(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, []bool{true}, verdict.Keep, "a decode error must fail open (keep), never drop")
 }
+
+// TestDecide_MissingTagArrayColumn is a regression test for the nil-pool-element
+// dereference. arrayEntries must return a non-nil *[]string (an empty slice) when
+// the array column is missing from the block, so keepTrace can dereference it
+// without crashing. The pre-pool version of arrayEntries returned a nil slice and
+// matchEntries(nil, ...) was safe by accident; the pool-typed version is not.
+func TestDecide_MissingTagArrayColumn(t *testing.T) {
+	s, err := New([]byte(`{"keepErrors":true,"keepTagRules":[{"tagKey":"db.type","equals":"PostgreSQL"}]}`), segmentSchema)
+	require.NoError(t, err)
+
+	// Block with NO tags column at all — the array-column read returns nil.
+	missing, e := sdktest.NewTrace("missing").
+		TagAs("is_error", valuetype.ValueTypeInt64, int64(0)).Build()
+	require.NoError(t, e)
+
+	// Block with an EMPTY tags column — the column exists but every row's value is nil.
+	empty, e := sdktest.NewTrace("empty").
+		TagAs("is_error", valuetype.ValueTypeInt64, int64(0)).
+		Tag("tags", []string(nil)).Build()
+	require.NoError(t, e)
+
+	verdict, report := sdktest.Run(s, sdktest.Batch(missing, empty))
+	require.NoError(t, report.Err)
+	assert.Equal(t, []bool{false, false}, verdict.Keep,
+		"missing/empty tag arrays must not crash and must drop (no rule matches)")
+}
