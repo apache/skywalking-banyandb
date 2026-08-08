@@ -153,6 +153,7 @@ Release Notes.
 - Clear a trace subject's index when its last index rule or binding is removed.
 - Allow `*` as a non-initial character in BydbQL identifiers, so resources named with `*` become queryable, not just writable.
 - Enable periodic health checks on the queue client (`--<prefix>-client-health-check-interval`, default `10s`), evicting dead data nodes proactively.
+- Build the plugin `.so` with `-tags slim` to match the host binary's ABI. Without this, `pkg/pool` has build-tag-dependent code (`tracker.go` vs `tracker_stub.go`) and the plugin-sidecar E2E failed with "plugin was built with a different version of package `pkg/pool`".
 
 ### Document
 
