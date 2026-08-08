@@ -40,12 +40,12 @@ type mergeLoopControl struct {
 	changed             chan struct{}
 	trigger             chan struct{}
 	nowFunc             func() time.Time
+	backoffUntil        time.Time
 	version             uint64
 	workVersion         uint64
 	emptyEpoch          uint64
 	emptyWorkVersion    uint64
 	waveMaxPartID       uint64
-	backoffUntil        time.Time
 	queued              int
 	running             int
 	consecutiveFailures int
@@ -113,10 +113,7 @@ func (mc *mergeLoopControl) recordOutcome(success bool) {
 	mc.consecutiveFailures++
 	delay := mergeBackoffCap
 	if mc.consecutiveFailures <= mergeBackoffMaxShift {
-		delay = mergeBackoffBase << uint(mc.consecutiveFailures-1)
-		if delay > mergeBackoffCap {
-			delay = mergeBackoffCap
-		}
+		delay = min(mergeBackoffBase<<uint(mc.consecutiveFailures-1), mergeBackoffCap)
 	}
 	mc.backoffUntil = mc.now().Add(delay)
 	mc.notifyLocked()
