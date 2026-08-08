@@ -1042,7 +1042,19 @@ func (tst *tsTable) mergeParts(fileSystem fs.FileSystem, closeCh <-chan struct{}
 	br := generateBlockReader()
 	br.init(pii)
 	bw := generateBlockWriter()
+	outputPublished := false
 	bw.mustInitForFilePart(fileSystem, dstPath, shouldCache, int(traceSize))
+	// Remove the partially-written output on any failure or panic so failed merges never leak part directories.
+	defer func() {
+		if outputPublished {
+			return
+		}
+		if panicVal := recover(); panicVal != nil {
+			fileSystem.MustRMAll(dstPath)
+			panic(panicVal)
+		}
+		fileSystem.MustRMAll(dstPath)
+	}()
 	conflictTags := collectConflictTags(parts)
 
 	var minTimestamp, maxTimestamp int64
@@ -1097,6 +1109,7 @@ func (tst *tsTable) mergeParts(fileSystem fs.FileSystem, closeCh <-chan struct{}
 	// which already fsyncs the parent directory after rename. The last atomic
 	// metadata write covers all prior dirent changes (data file creations).
 	p := mustOpenFilePart(partID, root, fileSystem)
+	outputPublished = true
 	return newPartWrapper(nil, p), dropped, nil
 }
 
