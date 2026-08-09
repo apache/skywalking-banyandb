@@ -20,9 +20,10 @@
 // benchPlugins / benchEntries / benchBatch / mustSampler / runDecide / benchSink
 // helpers are reused rather than re-declared.
 //
-// Layer 1 only covers synthetic-data engine microbenchmarks. No production-ratio
-// claim, no calibrated fixture, no .so loading. See
-// docs/design/phase-9-sw-trace-sampler-bench.md §Layer 1.
+// These cover synthetic-data engine microbenchmarks only: no production-ratio
+// claim, no calibrated fixture, no .so loading. See the Phase 9 workstream in
+// docs/design/trace-pipeline-merge-optimization-plan.md, whose exit gate asks for
+// per-call-site attribution of the plugin-local costs these measure.
 package tracesampler
 
 import (
