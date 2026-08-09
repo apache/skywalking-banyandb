@@ -72,7 +72,7 @@ func (tst *tsTable) runFinalizeRound(samplers []sdk.Sampler, graceNs int64) (boo
 	defer cur.decRef()
 
 	gNext := tst.finalizeGenCached.Load() + 1
-	now := time.Now().UnixNano()
+	now := tst.mergeNow().UnixNano()
 	// Snapshot the counter at round start. On commit we subtract exactly this much
 	// rather than storing 0, so bytes that a concurrent flush accounts DURING the round
 	// (late arrivals not part of this round's merge) are preserved for the next round.

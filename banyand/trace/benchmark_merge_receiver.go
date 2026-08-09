@@ -308,6 +308,32 @@ func (bpr *BenchmarkPartReceiver) AdvanceMergeTime(ctx context.Context, logicalN
 	return bpr.WaitForMergeIdle(ctx)
 }
 
+// RunFinalizeRound runs one production finalization round against all parts cooled at logicalNow.
+func (bpr *BenchmarkPartReceiver) RunFinalizeRound(ctx context.Context, logicalNow time.Time, grace time.Duration) (bool, error) {
+	if bpr == nil || bpr.table == nil {
+		return false, fmt.Errorf("benchmark receiver is not open")
+	}
+	if contextErr := ctx.Err(); contextErr != nil {
+		return false, fmt.Errorf("benchmark finalize round canceled before dispatch: %w", contextErr)
+	}
+	if logicalNow.IsZero() {
+		return false, fmt.Errorf("finalize logical time is required")
+	}
+	if grace <= 0 {
+		return false, fmt.Errorf("finalize grace must be positive")
+	}
+	if phaseErr := bpr.SetMergeRecordingPhase(BenchmarkMergePhaseCooldown); phaseErr != nil {
+		return false, fmt.Errorf("cannot set merge recording phase %q: %w", BenchmarkMergePhaseCooldown, phaseErr)
+	}
+	bpr.table.setMergeNow(logicalNow)
+	// A dispatched finalization is owned by the table lifecycle so its durable introduction is not interrupted by an HTTP disconnect.
+	finalized, finalizeErr := bpr.table.runFinalizeRound(lookupSamplers(bpr.table.group), int64(grace)) //nolint:contextcheck
+	if finalizeErr != nil {
+		return false, fmt.Errorf("cannot run benchmark finalize round: %w", finalizeErr)
+	}
+	return finalized, nil
+}
+
 // PreviewMergeSelection reports the next selection from the production merge policy without dispatching it.
 func (bpr *BenchmarkPartReceiver) PreviewMergeSelection() (BenchmarkMergeEvent, error) {
 	if bpr == nil || bpr.table == nil {

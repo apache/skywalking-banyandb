@@ -33,6 +33,7 @@ CONTROLLED_SEED=${CONTROLLED_SEED:-"$OUTPUT/controlled-seed"}
 DEFAULT_CONTROLLED_PLUGIN="$ROOT/.scratch/trace-pipeline-merge-performance/plugins/alwayskeepsampler.so"
 CONTROLLED_PLUGIN=${CONTROLLED_PLUGIN:-"$DEFAULT_CONTROLLED_PLUGIN"}
 FULL_PIPELINE=${FULL_PIPELINE:-disabled}
+RUN_FINALIZE=${RUN_FINALIZE:-0}
 BIN="$ROOT/.scratch/trace-pipeline-merge-performance/bin/trace-merge-benchmark"
 COMMIT=$(git -C "$ROOT" rev-parse HEAD)
 
@@ -120,10 +121,12 @@ run_once() {
   local attribution_flag=()
   if [[ "$attribution" == true ]]; then attribution_flag=(--attribution); fi
   local plugin_flag=()
+  local finalize_flag=()
   if [[ "$FULL_PIPELINE" == "retain-all" ]]; then
     plugin_flag=(--plugin=/workspace/${CONTROLLED_PLUGIN#"$ROOT/"} --plugin-sha256="$PLUGIN_SHA" \
       --segment-min-time-nanos="$SEGMENT_MIN_TIME_NANOS" --segment-max-time-nanos="$SEGMENT_MAX_TIME_NANOS")
   fi
+  if [[ "$RUN_FINALIZE" == "1" ]]; then finalize_flag=(--finalize); fi
   docker run -d --name "$container" --cpuset-cpus="$DATA_CPUS" --cpus="$DATA_CPU_LIMIT" --memory="$DATA_MEMORY" --memory-swap="$DATA_MEMORY" --pids-limit=512 \
     -e GOMAXPROCS="$DATA_GOMAXPROCS" -e IMAGE_DIGEST="$IMAGE_DIGEST" \
     -v "$ROOT":/workspace:ro -v "$run_dir":/run -w /workspace "$IMAGE" \
@@ -136,6 +139,7 @@ run_once() {
     --image-digest="$IMAGE_DIGEST" --filesystem="$DATA_FILESYSTEM" --storage-device="$DATA_STORAGE_DEVICE" \
     --clone-method="$DATA_CLONE_METHOD" --binary-sha256="$BINARY_SHA" \
     "${plugin_flag[@]}" \
+    "${finalize_flag[@]}" \
     "${attribution_flag[@]}" >"$run_dir/container.id"
   if ! docker run --rm --cpuset-cpus="$CONTROLLER_CPU" --cpus=1 --memory=1g --memory-swap=1g --pids-limit=128 \
     -v "$ROOT":/workspace:ro -v "$run_dir":/run -w /workspace "$IMAGE" \
@@ -216,6 +220,14 @@ run_controlled_once() {
 
 if [[ "$FULL_PIPELINE" != "disabled" && "$FULL_PIPELINE" != "retain-all" ]]; then
   echo "FULL_PIPELINE must be disabled or retain-all" >&2
+  exit 1
+fi
+if [[ "$RUN_FINALIZE" != "0" && "$RUN_FINALIZE" != "1" ]]; then
+  echo "RUN_FINALIZE must be 0 or 1" >&2
+  exit 1
+fi
+if [[ "$RUN_FINALIZE" == "1" && "$FULL_PIPELINE" != "retain-all" ]]; then
+  echo "RUN_FINALIZE=1 requires FULL_PIPELINE=retain-all" >&2
   exit 1
 fi
 if [[ "$FULL_PIPELINE" == "retain-all" && ! -f "$CONTROLLED_PLUGIN" ]]; then
