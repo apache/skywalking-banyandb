@@ -45,12 +45,13 @@ const (
 // when the harness does not provide them. Fields remain optional for local
 // debugging; the SAME TEST BOUNDARY gate enforces them in benchmark suites.
 type ExecutionIdentity struct {
-	ImageDigest   string `json:"imageDigest,omitempty"`
-	Filesystem    string `json:"filesystem,omitempty"`
-	StorageDevice string `json:"storageDevice,omitempty"`
-	CloneMethod   string `json:"cloneMethod,omitempty"`
-	BinarySHA256  string `json:"binarySHA256,omitempty"`
-	PluginSHA256  string `json:"pluginSHA256,omitempty"`
+	ImageDigest        string `json:"imageDigest,omitempty"`
+	Filesystem         string `json:"filesystem,omitempty"`
+	StorageDevice      string `json:"storageDevice,omitempty"`
+	CloneMethod        string `json:"cloneMethod,omitempty"`
+	BinarySHA256       string `json:"binarySHA256,omitempty"`
+	PluginSHA256       string `json:"pluginSHA256,omitempty"`
+	PluginConfigSHA256 string `json:"pluginConfigSHA256,omitempty"`
 }
 
 // PublishRequest introduces one already-renamed fixture part at its logical publication time.
@@ -109,26 +110,27 @@ type PhaseResult struct {
 // and StorageDevice fall back to live mount detection when omitted. SAME TEST
 // BOUNDARY enforces complete and comparable identities for managed suites.
 type Environment struct {
-	Filesystem       string `json:"filesystem,omitempty"`
-	GoVersion        string `json:"goVersion"`
-	Kernel           string `json:"kernel"`
-	CgroupVersion    string `json:"cgroupVersion"`
-	CPUSet           string `json:"cpuSet"`
-	MemoryMax        string `json:"memoryMax"`
-	MemorySwapMax    string `json:"memorySwapMax"`
-	PIDsMax          string `json:"pidsMax"`
-	PluginSHA256     string `json:"pluginSHA256,omitempty"`
-	BinarySHA256     string `json:"binarySHA256,omitempty"`
-	ControllerCgroup string `json:"controllerCgroup"`
-	CloneMethod      string `json:"cloneMethod,omitempty"`
-	StorageDevice    string `json:"storageDevice,omitempty"`
-	DataNodeCgroup   string `json:"dataNodeCgroup"`
-	ImageDigest      string `json:"imageDigest,omitempty"`
-	Commit           string `json:"commit"`
-	ControllerPID    int    `json:"controllerPID"`
-	DataNodePID      int    `json:"dataNodePID"`
-	GOMAXPROCS       int    `json:"gomaxprocs"`
-	OneShardOnly     bool   `json:"oneShardOnly"`
+	Filesystem         string `json:"filesystem,omitempty"`
+	GoVersion          string `json:"goVersion"`
+	Kernel             string `json:"kernel"`
+	CgroupVersion      string `json:"cgroupVersion"`
+	CPUSet             string `json:"cpuSet"`
+	MemoryMax          string `json:"memoryMax"`
+	MemorySwapMax      string `json:"memorySwapMax"`
+	PIDsMax            string `json:"pidsMax"`
+	PluginSHA256       string `json:"pluginSHA256,omitempty"`
+	PluginConfigSHA256 string `json:"pluginConfigSHA256,omitempty"`
+	BinarySHA256       string `json:"binarySHA256,omitempty"`
+	ControllerCgroup   string `json:"controllerCgroup"`
+	CloneMethod        string `json:"cloneMethod,omitempty"`
+	StorageDevice      string `json:"storageDevice,omitempty"`
+	DataNodeCgroup     string `json:"dataNodeCgroup"`
+	ImageDigest        string `json:"imageDigest,omitempty"`
+	Commit             string `json:"commit"`
+	ControllerPID      int    `json:"controllerPID"`
+	DataNodePID        int    `json:"dataNodePID"`
+	GOMAXPROCS         int    `json:"gomaxprocs"`
+	OneShardOnly       bool   `json:"oneShardOnly"`
 }
 
 // RunReport is the machine-readable result of one fresh data-node process.

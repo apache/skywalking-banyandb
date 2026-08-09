@@ -903,6 +903,14 @@ After framework and plugin-unit optimization, run the actual SkyWalking plugins 
 projections and sampling rules. Dropped output reduces write I/O, so compare this result using retained bytes and work
 normalized by input traces, spans, and bytes rather than interpreting a lower elapsed time as lower framework overhead.
 
+The full-loop harness selects this variant with `FULL_PIPELINE=skywalking`. It builds the production
+`sw-trace-sampler`, loads its JSON configuration from `SKYWALKING_PLUGIN_CONFIG`, and passes those exact bytes to the
+native plugin constructor. The default harness configuration is the calibrated 500 ms duration threshold, error
+retention, and 10% deterministic healthy sampling policy. Every report records independent SHA-256 identities for the
+plugin binary and configuration so a result cannot silently mix policies. Custom configuration files are allowed, but
+they must remain inside the read-only repository mount and their observed verdict ratios must be reported as observed
+SkyWalking ratios rather than as the controlled 35% DeterministicDrop case.
+
 ## Iterative Execution Phases
 
 ### Phase 1: Protect the Ordinary Merge Path

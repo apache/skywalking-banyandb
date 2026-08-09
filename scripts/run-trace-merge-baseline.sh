@@ -32,6 +32,10 @@ CONTROLLED_REPETITIONS=${CONTROLLED_REPETITIONS:-10}
 CONTROLLED_SEED=${CONTROLLED_SEED:-"$OUTPUT/controlled-seed"}
 DEFAULT_CONTROLLED_PLUGIN="$ROOT/.scratch/trace-pipeline-merge-performance/plugins/alwayskeepsampler.so"
 CONTROLLED_PLUGIN=${CONTROLLED_PLUGIN:-"$DEFAULT_CONTROLLED_PLUGIN"}
+DEFAULT_SKYWALKING_PLUGIN="$ROOT/.scratch/trace-pipeline-merge-performance/plugins/sw-trace-sampler.so"
+SKYWALKING_PLUGIN=${SKYWALKING_PLUGIN:-"$DEFAULT_SKYWALKING_PLUGIN"}
+DEFAULT_SKYWALKING_PLUGIN_CONFIG="$ROOT/.scratch/trace-pipeline-merge-performance/plugins/sw-trace-sampler.json"
+SKYWALKING_PLUGIN_CONFIG=${SKYWALKING_PLUGIN_CONFIG:-"$DEFAULT_SKYWALKING_PLUGIN_CONFIG"}
 FULL_PIPELINE=${FULL_PIPELINE:-disabled}
 RUN_FINALIZE=${RUN_FINALIZE:-0}
 BIN="$ROOT/.scratch/trace-pipeline-merge-performance/bin/trace-merge-benchmark"
@@ -69,10 +73,50 @@ SEGMENT_MIN_TIME_NANOS=${META[9]}
 SEGMENT_MAX_TIME_NANOS=${META[10]}
 
 mkdir -p "$OUTPUT" "$(dirname "$BIN")"
+if [[ "$FULL_PIPELINE" != "disabled" && "$FULL_PIPELINE" != "retain-all" && "$FULL_PIPELINE" != "skywalking" ]]; then
+  echo "FULL_PIPELINE must be disabled, retain-all, or skywalking" >&2
+  exit 1
+fi
+if [[ "$RUN_FINALIZE" != "0" && "$RUN_FINALIZE" != "1" ]]; then
+  echo "RUN_FINALIZE must be 0 or 1" >&2
+  exit 1
+fi
+if [[ "$RUN_FINALIZE" == "1" && "$FULL_PIPELINE" == "disabled" ]]; then
+  echo "RUN_FINALIZE=1 requires a plugin-enabled FULL_PIPELINE" >&2
+  exit 1
+fi
 go build -o "$BIN" "$ROOT/banyand/cmd/trace-merge-benchmark"
 if [[ ("$CONTROLLED_ALTERNATING" == "1" || "$FULL_PIPELINE" == "retain-all") && "$CONTROLLED_PLUGIN" == "$DEFAULT_CONTROLLED_PLUGIN" ]]; then
   mkdir -p "$(dirname "$CONTROLLED_PLUGIN")"
   go build -buildmode=plugin -o "$CONTROLLED_PLUGIN" "$ROOT/test/plugins/_alwayskeepsampler"
+fi
+if [[ "$FULL_PIPELINE" == "skywalking" && "$SKYWALKING_PLUGIN" == "$DEFAULT_SKYWALKING_PLUGIN" ]]; then
+  mkdir -p "$(dirname "$SKYWALKING_PLUGIN")"
+  go build -buildmode=plugin -o "$SKYWALKING_PLUGIN" "$ROOT/plugins/skywalking/sw-trace-sampler"
+fi
+if [[ "$FULL_PIPELINE" == "skywalking" && "$SKYWALKING_PLUGIN_CONFIG" == "$DEFAULT_SKYWALKING_PLUGIN_CONFIG" ]]; then
+  mkdir -p "$(dirname "$SKYWALKING_PLUGIN_CONFIG")"
+  printf '%s' '{"durationThresholdMs":500,"keepErrors":true,"healthySampleRate":"0.1"}' >"$SKYWALKING_PLUGIN_CONFIG"
+fi
+if [[ "$FULL_PIPELINE" == "retain-all" && ! -f "$CONTROLLED_PLUGIN" ]]; then
+  echo "FULL_PIPELINE=retain-all requires sampler plugin $CONTROLLED_PLUGIN" >&2
+  exit 1
+fi
+if [[ "$FULL_PIPELINE" == "skywalking" && ! -f "$SKYWALKING_PLUGIN" ]]; then
+  echo "FULL_PIPELINE=skywalking requires sampler plugin $SKYWALKING_PLUGIN" >&2
+  exit 1
+fi
+if [[ "$FULL_PIPELINE" == "skywalking" && ! -f "$SKYWALKING_PLUGIN_CONFIG" ]]; then
+  echo "FULL_PIPELINE=skywalking requires sampler config $SKYWALKING_PLUGIN_CONFIG" >&2
+  exit 1
+fi
+if [[ "$FULL_PIPELINE" == "retain-all" && "$CONTROLLED_PLUGIN" != "$ROOT/"* ]]; then
+  echo "CONTROLLED_PLUGIN must be inside $ROOT so the data-node container can mount it" >&2
+  exit 1
+fi
+if [[ "$FULL_PIPELINE" == "skywalking" && ("$SKYWALKING_PLUGIN" != "$ROOT/"* || "$SKYWALKING_PLUGIN_CONFIG" != "$ROOT/"*) ]]; then
+  echo "SKYWALKING_PLUGIN and SKYWALKING_PLUGIN_CONFIG must be inside $ROOT so the data-node container can mount them" >&2
+  exit 1
 fi
 BINARY_SHA=$(sha256sum "$BIN" | awk '{print $1}')
 git -C "$ROOT" diff --binary HEAD -- . ':(exclude).scratch' >"$OUTPUT/source.patch"
@@ -93,9 +137,20 @@ DATA_FILESYSTEM=$(df -T "$OUTPUT" 2>/dev/null | awk 'NR==2 {print $2}' || true)
 DATA_STORAGE_DEVICE=$(df --output=source "$OUTPUT" 2>/dev/null | tail -n1 | tr -d ' ' || true)
 DATA_CLONE_METHOD="cp -a"
 if [[ -n "$CONTROLLED_PLUGIN" && -f "$CONTROLLED_PLUGIN" ]]; then
-  PLUGIN_SHA=$(sha256sum "$CONTROLLED_PLUGIN" | awk '{print $1}')
+  CONTROLLED_PLUGIN_SHA=$(sha256sum "$CONTROLLED_PLUGIN" | awk '{print $1}')
 else
-  PLUGIN_SHA=""
+  CONTROLLED_PLUGIN_SHA=""
+fi
+FULL_PLUGIN=""
+FULL_PLUGIN_SHA=""
+FULL_PLUGIN_CONFIG_SHA=""
+if [[ "$FULL_PIPELINE" == "retain-all" ]]; then
+  FULL_PLUGIN=$CONTROLLED_PLUGIN
+  FULL_PLUGIN_SHA=$CONTROLLED_PLUGIN_SHA
+elif [[ "$FULL_PIPELINE" == "skywalking" ]]; then
+  FULL_PLUGIN=$SKYWALKING_PLUGIN
+  FULL_PLUGIN_SHA=$(sha256sum "$SKYWALKING_PLUGIN" | awk '{print $1}')
+  FULL_PLUGIN_CONFIG_SHA=$(sha256sum "$SKYWALKING_PLUGIN_CONFIG" | awk '{print $1}')
 fi
 
 active_container=""
@@ -122,9 +177,13 @@ run_once() {
   if [[ "$attribution" == true ]]; then attribution_flag=(--attribution); fi
   local plugin_flag=()
   local finalize_flag=()
-  if [[ "$FULL_PIPELINE" == "retain-all" ]]; then
-    plugin_flag=(--plugin=/workspace/${CONTROLLED_PLUGIN#"$ROOT/"} --plugin-sha256="$PLUGIN_SHA" \
+  if [[ "$FULL_PIPELINE" != "disabled" ]]; then
+    plugin_flag=(--plugin=/workspace/${FULL_PLUGIN#"$ROOT/"} --plugin-sha256="$FULL_PLUGIN_SHA" \
       --segment-min-time-nanos="$SEGMENT_MIN_TIME_NANOS" --segment-max-time-nanos="$SEGMENT_MAX_TIME_NANOS")
+    if [[ "$FULL_PIPELINE" == "skywalking" ]]; then
+      plugin_flag+=(--plugin-config=/workspace/${SKYWALKING_PLUGIN_CONFIG#"$ROOT/"} \
+        --plugin-config-sha256="$FULL_PLUGIN_CONFIG_SHA")
+    fi
   fi
   if [[ "$RUN_FINALIZE" == "1" ]]; then finalize_flag=(--finalize); fi
   docker run -d --name "$container" --cpuset-cpus="$DATA_CPUS" --cpus="$DATA_CPU_LIMIT" --memory="$DATA_MEMORY" --memory-swap="$DATA_MEMORY" --pids-limit=512 \
@@ -182,7 +241,7 @@ run_controlled_once() {
   local plugin_identity_flag=()
   if [[ "$pipeline" == "retain-all" ]]; then
     plugin_flag=(--plugin=/workspace/${CONTROLLED_PLUGIN#"$ROOT/"})
-    plugin_identity_flag=(--plugin-sha256="$PLUGIN_SHA")
+    plugin_identity_flag=(--plugin-sha256="$CONTROLLED_PLUGIN_SHA")
   fi
   docker run -d --name "$container" --cpuset-cpus="$DATA_CPUS" --cpus="$DATA_CPU_LIMIT" --memory="$DATA_MEMORY" --memory-swap="$DATA_MEMORY" --pids-limit=512 \
     -e GOMAXPROCS="$DATA_GOMAXPROCS" -e IMAGE_DIGEST="$IMAGE_DIGEST" \
@@ -217,23 +276,6 @@ run_controlled_once() {
   docker run --rm -v "$run_dir":/run "$IMAGE" chmod -R 0777 /run
   active_container=""
 }
-
-if [[ "$FULL_PIPELINE" != "disabled" && "$FULL_PIPELINE" != "retain-all" ]]; then
-  echo "FULL_PIPELINE must be disabled or retain-all" >&2
-  exit 1
-fi
-if [[ "$RUN_FINALIZE" != "0" && "$RUN_FINALIZE" != "1" ]]; then
-  echo "RUN_FINALIZE must be 0 or 1" >&2
-  exit 1
-fi
-if [[ "$RUN_FINALIZE" == "1" && "$FULL_PIPELINE" != "retain-all" ]]; then
-  echo "RUN_FINALIZE=1 requires FULL_PIPELINE=retain-all" >&2
-  exit 1
-fi
-if [[ "$FULL_PIPELINE" == "retain-all" && ! -f "$CONTROLLED_PLUGIN" ]]; then
-  echo "FULL_PIPELINE=retain-all requires sampler plugin $CONTROLLED_PLUGIN" >&2
-  exit 1
-fi
 
 if [[ -n "$PILOT_ACCELERATION" ]]; then
   run_once pilot serial 1 false

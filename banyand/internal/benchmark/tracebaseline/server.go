@@ -18,6 +18,7 @@ package tracebaseline
 import (
 	"bufio"
 	"context"
+	"crypto/sha256"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -44,25 +45,26 @@ import (
 //
 // ExecutionIdentity holds the harness-recorded fields forwarded by the
 // wrapper; the readiness gate (SAME TEST BOUNDARY) enforces the harness
-// requirement that ImageDigest, CloneMethod, BinarySHA256, and (for
-// retain-all pipeline runs) PluginSHA256 are populated. The server itself
+// requirement that ImageDigest, CloneMethod, BinarySHA256, and the applicable
+// plugin and plugin-configuration checksums are populated. The server itself
 // tolerates empty values so out-of-harness invocations (e.g. local debug)
 // remain runnable; the readiness gate, not the server, is the enforcement
 // boundary.
 type ServerOptions struct {
 	ExpectedLedger    map[string]string
 	ExecutionIdentity ExecutionIdentity
-	ScheduleSHA256    string
-	ProfileDir        string
-	Commit            string
+	SegmentTimeRange  timestamp.TimeRange
+	Mode              string
+	SocketPath        string
 	FixtureSHA256     string
 	Root              string
 	RunID             string
-	Mode              string
+	ProfileDir        string
 	OutputPath        string
-	SocketPath        string
+	Commit            string
 	PluginPath        string
-	SegmentTimeRange  timestamp.TimeRange
+	ScheduleSHA256    string
+	PluginConfig      []byte
 	Acceleration      float64
 	ExpectedRows      uint64
 	MaxInputPartID    uint64
@@ -91,6 +93,9 @@ func Serve(ctx context.Context, options ServerOptions) (serveResultErr error) {
 	}
 	if options.RunFinalize && options.PluginPath == "" {
 		return fmt.Errorf("finalize requires a sampler plugin")
+	}
+	if len(options.PluginConfig) > 0 && options.PluginPath == "" {
+		return fmt.Errorf("sampler config requires a sampler plugin")
 	}
 	if mkdirErr := os.MkdirAll(options.ProfileDir, 0o755); mkdirErr != nil {
 		return fmt.Errorf("cannot create profile directory: %w", mkdirErr)
@@ -170,7 +175,12 @@ func openServerSampler(options ServerOptions) (sdk.Sampler, error) {
 		!options.SegmentTimeRange.Start.Before(options.SegmentTimeRange.End) {
 		return nil, fmt.Errorf("valid segment time range is required when the merge benchmark plugin is enabled")
 	}
-	sampler, openErr := sdk.OpenSampler(options.PluginPath, "NewSampler", nil)
+	pluginConfigSHA256 := fmt.Sprintf("%x", sha256.Sum256(options.PluginConfig))
+	if options.ExecutionIdentity.PluginConfigSHA256 != "" && options.ExecutionIdentity.PluginConfigSHA256 != pluginConfigSHA256 {
+		return nil, fmt.Errorf("merge benchmark sampler config checksum %s does not match expected %s",
+			pluginConfigSHA256, options.ExecutionIdentity.PluginConfigSHA256)
+	}
+	sampler, openErr := sdk.OpenSampler(options.PluginPath, "NewSampler", options.PluginConfig)
 	if openErr != nil {
 		return nil, fmt.Errorf("cannot load merge benchmark sampler: %w", openErr)
 	}
@@ -550,16 +560,17 @@ func readEnvironment(commit string, options ServerOptions) Environment {
 		Commit: commit, GoVersion: runtime.Version(), Kernel: strings.TrimSpace(string(kernelData)), CgroupVersion: "2",
 		CPUSet: readTextFile("/sys/fs/cgroup/cpuset.cpus.effective"), MemoryMax: readTextFile("/sys/fs/cgroup/memory.max"),
 		MemorySwapMax: readTextFile("/sys/fs/cgroup/memory.swap.max"), PIDsMax: readTextFile("/sys/fs/cgroup/pids.max"),
-		GOMAXPROCS:     runtime.GOMAXPROCS(0),
-		OneShardOnly:   true,
-		DataNodePID:    os.Getpid(),
-		DataNodeCgroup: hostname + ":" + identity.Cgroup,
-		Filesystem:     filesystem,
-		StorageDevice:  storageDevice,
-		ImageDigest:    options.ExecutionIdentity.ImageDigest,
-		CloneMethod:    options.ExecutionIdentity.CloneMethod,
-		BinarySHA256:   options.ExecutionIdentity.BinarySHA256,
-		PluginSHA256:   options.ExecutionIdentity.PluginSHA256,
+		GOMAXPROCS:         runtime.GOMAXPROCS(0),
+		OneShardOnly:       true,
+		DataNodePID:        os.Getpid(),
+		DataNodeCgroup:     hostname + ":" + identity.Cgroup,
+		Filesystem:         filesystem,
+		StorageDevice:      storageDevice,
+		ImageDigest:        options.ExecutionIdentity.ImageDigest,
+		CloneMethod:        options.ExecutionIdentity.CloneMethod,
+		BinarySHA256:       options.ExecutionIdentity.BinarySHA256,
+		PluginSHA256:       options.ExecutionIdentity.PluginSHA256,
+		PluginConfigSHA256: options.ExecutionIdentity.PluginConfigSHA256,
 	}
 }
 
