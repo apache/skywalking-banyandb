@@ -16,6 +16,7 @@
 package tracebaseline
 
 import (
+	"context"
 	"path/filepath"
 	"testing"
 
@@ -23,6 +24,15 @@ import (
 
 	storagetrace "github.com/apache/skywalking-banyandb/banyand/trace"
 )
+
+func TestServeRejectsFinalizeWithoutSampler(t *testing.T) {
+	root := t.TempDir()
+	serveErr := Serve(context.Background(), ServerOptions{
+		Root: root, SocketPath: filepath.Join(root, "control.sock"), OutputPath: filepath.Join(root, "report.json"),
+		ProfileDir: filepath.Join(root, "profiles"), RunFinalize: true,
+	})
+	require.ErrorContains(t, serveErr, "finalize requires a sampler plugin")
+}
 
 func TestPhaseProfilerStopsAndClosesIdempotently(t *testing.T) {
 	profilePath := filepath.Join(t.TempDir(), "cpu.pprof")
@@ -74,4 +84,44 @@ func TestLogicalWriteAmplificationUsesSelectedMergeBytes(t *testing.T) {
 
 	require.InDelta(t, 166.0/175.0, logicalWriteAmplification(report), 0.000001)
 	require.Zero(t, logicalWriteAmplification(storagetrace.BenchmarkMergeReport{}))
+}
+
+func TestRetainAllFinalizeOutputRequiresExecutedLosslessFinalize(t *testing.T) {
+	baseEvent := storagetrace.BenchmarkMergeEvent{
+		Type: "finalize", Phase: storagetrace.BenchmarkMergePhaseCooldown,
+		Sampling: storagetrace.BenchmarkMergeSamplingExecuted, PluginCalls: 2,
+		TracesEvaluated: 10, TracesRetained: 10, MatureInputParts: 1,
+	}
+	require.True(t, retainAllFinalizeOutputCorrect([]storagetrace.BenchmarkMergeEvent{baseEvent}))
+	hotBypass := storagetrace.BenchmarkMergeEvent{
+		Type: "file", Phase: storagetrace.BenchmarkMergePhasePrimary,
+		Sampling: storagetrace.BenchmarkMergeSamplingNotExecuted, Reason: storagetrace.BenchmarkMergeReasonGrace,
+		HotInputParts: 1,
+	}
+	require.True(t, retainAllFinalizeOutputCorrect([]storagetrace.BenchmarkMergeEvent{hotBypass, baseEvent}))
+
+	hotPluginExecution := hotBypass
+	hotPluginExecution.Sampling = storagetrace.BenchmarkMergeSamplingExecuted
+	hotPluginExecution.Reason = ""
+	hotPluginExecution.PluginCalls = 1
+	hotPluginExecution.TracesEvaluated = 1
+	hotPluginExecution.TracesRetained = 1
+	require.False(t, retainAllFinalizeOutputCorrect([]storagetrace.BenchmarkMergeEvent{hotPluginExecution, baseEvent}))
+
+	missingFinalize := baseEvent
+	missingFinalize.Type = "file"
+	require.False(t, retainAllFinalizeOutputCorrect([]storagetrace.BenchmarkMergeEvent{missingFinalize}))
+
+	droppedTrace := baseEvent
+	droppedTrace.TracesRetained--
+	droppedTrace.TracesDropped = 1
+	require.False(t, retainAllFinalizeOutputCorrect([]storagetrace.BenchmarkMergeEvent{droppedTrace}))
+
+	losslessRetry := baseEvent
+	losslessRetry.LosslessRetry = true
+	require.False(t, retainAllFinalizeOutputCorrect([]storagetrace.BenchmarkMergeEvent{losslessRetry}))
+
+	failedFinalize := baseEvent
+	failedFinalize.Error = "merge failed"
+	require.False(t, retainAllFinalizeOutputCorrect([]storagetrace.BenchmarkMergeEvent{failedFinalize}))
 }
