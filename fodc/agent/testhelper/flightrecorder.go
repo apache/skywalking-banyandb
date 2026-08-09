@@ -286,7 +286,7 @@ func NewProxyClientWrapper(
 		return nil
 	}
 	clusterCollector := &agentcluster.Collector{}
-	lifecycleCollector := agentlifecycle.NewCollector(nil, "", reportDir, 0)
+	lifecycleCollector := agentlifecycle.NewCollector(nil, "", "", reportDir, 0)
 	client := proxy.NewClient(
 		proxyAddr,
 		nodeRole,
