@@ -97,7 +97,19 @@ func (s *sidx) mergeParts(fileSystem fs.FileSystem, closeCh <-chan struct{}, par
 	br := generateBlockReader()
 	br.init(pii)
 	bw := generateBlockWriter()
+	outputPublished := false
 	bw.mustInitForFilePart(fileSystem, dstPath, shouldCache)
+	// Remove the partially-written output on any failure or panic so failed merges never leak part directories.
+	defer func() {
+		if outputPublished {
+			return
+		}
+		if panicVal := recover(); panicVal != nil {
+			fileSystem.MustRMAll(dstPath)
+			panic(panicVal)
+		}
+		fileSystem.MustRMAll(dstPath)
+	}()
 
 	pm, err := mergeBlocks(closeCh, bw, br, conflictTags, keep)
 	releaseBlockWriter(bw)
@@ -134,6 +146,7 @@ func (s *sidx) mergeParts(fileSystem fs.FileSystem, closeCh <-chan struct{}, par
 	// No SyncPath: mustWriteMetadata goes through MustFlushAtomic which
 	// already fsyncs the parent directory after rename.
 	p := mustOpenPart(partID, dstPath, fileSystem)
+	outputPublished = true
 
 	return newPartWrapper(nil, p), nil
 }

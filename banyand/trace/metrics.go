@@ -62,10 +62,13 @@ type metrics struct {
 	totalFlushIntroLatency   meter.Counter
 	totalFlushLatency        meter.Counter
 
-	totalMergedParts       meter.Counter
-	totalMergeLatency      meter.Counter
-	totalMerged            meter.Counter
-	totalMergeQueueLatency meter.Counter
+	totalMergedParts          meter.Counter
+	totalMergeLatency         meter.Counter
+	totalMerged               meter.Counter
+	totalMergeQueueLatency    meter.Counter
+	totalMergePartQuarantined meter.Counter
+	totalMergeBackoffSeconds  meter.Counter
+	totalMergePanicRecovered  meter.Counter
 
 	pipelineTracesEvaluated          meter.Counter
 	pipelineTracesDropped            meter.Counter
@@ -274,6 +277,32 @@ func (tst *tsTable) incTotalMergeQueueLatency(delta float64, typ, lane string) {
 	tst.metrics.totalMergeQueueLatency.Inc(delta, typ, lane)
 }
 
+// incTotalMergePartQuarantined counts a part newly crossing the quarantine threshold.
+func (tst *tsTable) incTotalMergePartQuarantined(delta int) {
+	if tst == nil || tst.metrics == nil {
+		return
+	}
+	tst.metrics.totalMergePartQuarantined.Inc(float64(delta))
+}
+
+// incTotalMergeBackoffSeconds accumulates the time the dispatcher spent sleeping due to
+// repeated merge failures (Fix C).
+func (tst *tsTable) incTotalMergeBackoffSeconds(delta float64) {
+	if tst == nil || tst.metrics == nil {
+		return
+	}
+	tst.metrics.totalMergeBackoffSeconds.Inc(delta)
+}
+
+// incTotalMergePanicRecovered counts a panic caught and converted into an ordinary merge
+// failure by the Fix D backstop (worker or dispatcher).
+func (tst *tsTable) incTotalMergePanicRecovered(delta int) {
+	if tst == nil || tst.metrics == nil {
+		return
+	}
+	tst.metrics.totalMergePanicRecovered.Inc(float64(delta))
+}
+
 // The pipeline metric increment helpers below are wired into the merge filter by
 // the config-driven activation story.
 
@@ -442,6 +471,9 @@ func (m *metrics) DeleteAll() {
 	m.totalMerged.Delete("file", "slow")
 	m.totalMergeQueueLatency.Delete("file", "fast")
 	m.totalMergeQueueLatency.Delete("file", "slow")
+	m.totalMergePartQuarantined.Delete()
+	m.totalMergeBackoffSeconds.Delete()
+	m.totalMergePanicRecovered.Delete()
 
 	m.pipelineTracesEvaluated.Delete()
 	m.pipelineTracesDropped.Delete()
@@ -488,6 +520,9 @@ func (s *supplier) newMetrics(p common.Position) storage.Metrics {
 		totalMergeLatency:                factory.NewCounter("total_merge_latency", "type", "lane"),
 		totalMerged:                      factory.NewCounter("total_merged", "type", "lane"),
 		totalMergeQueueLatency:           factory.NewCounter("total_merge_queue_latency", "type", "lane"),
+		totalMergePartQuarantined:        factory.NewCounter("total_merge_part_quarantined"),
+		totalMergeBackoffSeconds:         factory.NewCounter("total_merge_backoff_seconds"),
+		totalMergePanicRecovered:         factory.NewCounter("total_merge_panic_recovered"),
 		pipelineTracesEvaluated:          factory.NewCounter("pipeline_traces_evaluated"),
 		pipelineTracesDropped:            factory.NewCounter("pipeline_traces_dropped"),
 		pipelineTracesRetained:           factory.NewCounter("pipeline_traces_retained"),
@@ -514,6 +549,7 @@ func (s *supplier) newMetrics(p common.Position) storage.Metrics {
 			totalFilePartBytes:             factory.NewGauge("total_file_part_bytes", common.ShardLabelNames()...),
 			totalFilePartUncompressedBytes: factory.NewGauge("total_file_part_uncompressed_bytes", common.ShardLabelNames()...),
 			pendingDataCount:               factory.NewGauge("pending_data_count", common.ShardLabelNames()...),
+			mergeQuarantinedParts:          factory.NewGauge("merge_quarantined_parts", common.ShardLabelNames()...),
 		},
 		indexMetrics: inverted.NewMetrics(factory, common.SegLabelNames()...),
 	}
@@ -549,6 +585,9 @@ func (qs *queueSupplier) newMetrics(p common.Position) (storage.Metrics, observa
 		totalMergeLatency:                factory.NewCounter("total_merge_latency", "type", "lane"),
 		totalMerged:                      factory.NewCounter("total_merged", "type", "lane"),
 		totalMergeQueueLatency:           factory.NewCounter("total_merge_queue_latency", "type", "lane"),
+		totalMergePartQuarantined:        factory.NewCounter("total_merge_part_quarantined"),
+		totalMergeBackoffSeconds:         factory.NewCounter("total_merge_backoff_seconds"),
+		totalMergePanicRecovered:         factory.NewCounter("total_merge_panic_recovered"),
 		pipelineTracesEvaluated:          factory.NewCounter("pipeline_traces_evaluated"),
 		pipelineTracesDropped:            factory.NewCounter("pipeline_traces_dropped"),
 		pipelineTracesRetained:           factory.NewCounter("pipeline_traces_retained"),
@@ -575,6 +614,7 @@ func (qs *queueSupplier) newMetrics(p common.Position) (storage.Metrics, observa
 			totalFilePartBytes:             factory.NewGauge("total_file_part_bytes", common.ShardLabelNames()...),
 			totalFilePartUncompressedBytes: factory.NewGauge("total_file_part_uncompressed_bytes", common.ShardLabelNames()...),
 			pendingDataCount:               factory.NewGauge("pending_data_count", common.ShardLabelNames()...),
+			mergeQuarantinedParts:          factory.NewGauge("merge_quarantined_parts", common.ShardLabelNames()...),
 		},
 		indexMetrics: inverted.NewMetrics(factory, common.SegLabelNames()...),
 	}, factory
@@ -619,6 +659,16 @@ func (tst *tsTable) Collect(m storage.Metrics) {
 	metrics.totalFileBlocks.Set(float64(totalFileBlocks), tst.p.ShardLabelValues()...)
 	metrics.totalFilePartBytes.Set(float64(totalFilePartBytes), tst.p.ShardLabelValues()...)
 	metrics.totalFilePartUncompressedBytes.Set(float64(totalFilePartUncompressedBytes), tst.p.ShardLabelValues()...)
+
+	tst.quarantineMu.Lock()
+	var quarantinedParts int
+	for _, fails := range tst.quarantineFails {
+		if fails >= quarantineThreshold {
+			quarantinedParts++
+		}
+	}
+	tst.quarantineMu.Unlock()
+	metrics.mergeQuarantinedParts.Set(float64(quarantinedParts), tst.p.ShardLabelValues()...)
 }
 
 func (tst *tsTable) deleteMetrics() {
@@ -636,6 +686,7 @@ func (tst *tsTable) deleteMetrics() {
 	tst.metrics.tbMetrics.totalFilePartBytes.Delete(tst.p.ShardLabelValues()...)
 	tst.metrics.tbMetrics.totalFilePartUncompressedBytes.Delete(tst.p.ShardLabelValues()...)
 	tst.metrics.tbMetrics.pendingDataCount.Delete(tst.p.ShardLabelValues()...)
+	tst.metrics.tbMetrics.mergeQuarantinedParts.Delete(tst.p.ShardLabelValues()...)
 	tst.metrics.indexMetrics.DeleteAll(tst.p.SegLabelValues()...)
 }
 
@@ -653,4 +704,6 @@ type tbMetrics struct {
 	totalFilePartUncompressedBytes meter.Gauge
 
 	pendingDataCount meter.Gauge
+
+	mergeQuarantinedParts meter.Gauge
 }

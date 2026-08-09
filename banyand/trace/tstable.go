@@ -88,6 +88,10 @@ type tsTable struct {
 	// introduction path (atomic add only), reset by a successful finalize round.
 	unsampledBytes atomic.Int64
 	inFlightMu     sync.RWMutex
+	// quarantineFails counts consecutive attributable read failures per partID (Fix B).
+	// Lazily initialized; guarded by quarantineMu.
+	quarantineFails map[uint64]int
+	quarantineMu    sync.Mutex
 	sync.RWMutex
 	shardID common.ShardID
 	isHot   bool

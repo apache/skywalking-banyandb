@@ -22,6 +22,7 @@ import (
 	"errors"
 	"fmt"
 	"path/filepath"
+	"runtime/debug"
 	"sort"
 	"sync"
 	"sync/atomic"
@@ -325,17 +326,48 @@ func (tst *tsTable) dispatcherLoop(threshold uint64, fastCh, slowCh chan *mergeD
 		case <-tst.loopCloser.CloseNotify():
 			return
 		case <-tst.mergeControl.trigger:
-			dispatch, maxPartID := tst.mergeControl.beginDispatch()
-			if !dispatch {
-				continue
+			for {
+				delay := tst.mergeControl.backoffRemaining()
+				if delay <= 0 {
+					break
+				}
+				state := tst.mergeControl.state()
+				sleepStart := time.Now()
+				select {
+				case <-time.After(delay):
+				case <-state.changed:
+				case <-tst.loopCloser.CloseNotify():
+					tst.incTotalMergeBackoffSeconds(time.Since(sleepStart).Seconds())
+					return
+				}
+				tst.incTotalMergeBackoffSeconds(time.Since(sleepStart).Seconds())
 			}
-			if tst.dispatchAllMergesUpTo(threshold, fastCh, slowCh, maxPartID) {
-				tst.mergeControl.endDispatch()
+			if tst.runDispatchCycle(threshold, fastCh, slowCh) {
 				return
 			}
-			tst.mergeControl.endDispatch()
 		}
 	}
+}
+
+// runDispatchCycle executes one selection/dispatch cycle, converting panics into a
+// logged, recovered failure so a selection-time panic cannot kill the dispatcher.
+func (tst *tsTable) runDispatchCycle(threshold uint64, fastCh, slowCh chan *mergeDispatchRequest) (stop bool) {
+	dispatch, maxPartID := tst.mergeControl.beginDispatch()
+	if !dispatch {
+		return false
+	}
+	defer tst.mergeControl.endDispatch()
+	defer func() {
+		if panicVal := recover(); panicVal != nil {
+			tst.incTotalMergePanicRecovered(1)
+			// Feed the failure into the backoff schedule. Without this a dispatch cycle
+			// that panics every time would be retried at trigger cadence forever, which
+			// is the retry storm the backoff exists to stop.
+			tst.mergeControl.recordOutcome(false)
+			tst.l.Error().Str("panic", fmt.Sprintf("%v", panicVal)).Str("stack", string(debug.Stack())).Msg("merge dispatch cycle panicked")
+		}
+	}()
+	return tst.dispatchAllMergesUpTo(threshold, fastCh, slowCh, maxPartID)
 }
 
 func (tst *tsTable) dispatchAllMerges(threshold uint64, fastCh, slowCh chan *mergeDispatchRequest) bool {
@@ -470,10 +502,19 @@ func (tst *tsTable) mergeLaneWorker(ch chan *mergeDispatchRequest, merges chan *
 		}
 
 		tst.incTotalMergeLoopStarted(1)
-		_, mergeErr := tst.mergePartsThenSendIntroductionObserved(
-			snapshotCreatorMerger, req.parts, req.toBeMerged, merges,
-			tst.loopCloser.CloseNotify(), req.typ, req.lane, nil, req.benchmark,
-		)
+		mergeErr := func() (attemptErr error) {
+			defer func() {
+				if panicVal := recover(); panicVal != nil {
+					tst.incTotalMergePanicRecovered(1)
+					attemptErr = fmt.Errorf("merge panicked: %v\n%s", panicVal, debug.Stack())
+				}
+			}()
+			_, attemptErr = tst.mergePartsThenSendIntroductionObserved(
+				snapshotCreatorMerger, req.parts, req.toBeMerged, merges,
+				tst.loopCloser.CloseNotify(), req.typ, req.lane, nil, req.benchmark,
+			)
+			return attemptErr
+		}()
 		tst.incTotalMergeLoopFinished(1)
 		if attributionAcquired {
 			<-tst.attributionCh
@@ -489,7 +530,13 @@ func (tst *tsTable) mergeLaneWorker(ch chan *mergeDispatchRequest, merges chan *
 			if !errors.Is(mergeErr, errClosed) {
 				tst.l.Logger.Warn().Err(mergeErr).Str("typ", req.typ).Str("lane", req.lane).Msg("merge lane worker error")
 				tst.incTotalMergeLoopErr(1)
+				tst.recordUnreadablePart(mergeErr)
+				if tst.mergeControl != nil {
+					tst.mergeControl.recordOutcome(false)
+				}
 			}
+		} else if tst.mergeControl != nil {
+			tst.mergeControl.recordOutcome(true)
 		}
 	}
 }
@@ -957,11 +1004,22 @@ func (tst *tsTable) getPartsToMergeUpTo(snapshot *snapshot, freeDiskSize uint64,
 	maxPartID uint64,
 ) ([]*partWrapper, map[uint64]struct{}) {
 	var parts []*partWrapper
+	// Take the quarantine set once instead of locking per part, and skip the liveIDs
+	// bookkeeping entirely when the registry is empty, which is the common case.
+	quarantined := tst.quarantinedSnapshot()
+	sweep := len(quarantined) > 0 || tst.hasQuarantineEntries()
+	var liveIDs map[uint64]struct{}
+	if sweep {
+		liveIDs = make(map[uint64]struct{}, len(snapshot.parts))
+	}
 
 	tst.inFlightMu.RLock()
 	for _, pw := range snapshot.parts {
 		if pw.mp != nil || pw.p.partMetadata.TotalCount < 1 {
 			continue
+		}
+		if sweep {
+			liveIDs[pw.ID()] = struct{}{}
 		}
 		if maxPartID > 0 && pw.ID() > maxPartID {
 			continue
@@ -969,9 +1027,16 @@ func (tst *tsTable) getPartsToMergeUpTo(snapshot *snapshot, freeDiskSize uint64,
 		if _, inFlight := tst.inFlight[pw.ID()]; inFlight {
 			continue
 		}
+		if _, isQuarantined := quarantined[pw.ID()]; isQuarantined {
+			continue
+		}
 		parts = append(parts, pw)
 	}
 	tst.inFlightMu.RUnlock()
+
+	if sweep {
+		tst.sweepQuarantine(liveIDs)
+	}
 
 	dst = tst.option.mergePolicy.getPartsToMerge(dst, parts, freeDiskSize)
 	if len(dst) == 0 {
@@ -1042,7 +1107,19 @@ func (tst *tsTable) mergeParts(fileSystem fs.FileSystem, closeCh <-chan struct{}
 	br := generateBlockReader()
 	br.init(pii)
 	bw := generateBlockWriter()
+	outputPublished := false
 	bw.mustInitForFilePart(fileSystem, dstPath, shouldCache, int(traceSize))
+	// Remove the partially-written output on any failure or panic so failed merges never leak part directories.
+	defer func() {
+		if outputPublished {
+			return
+		}
+		if panicVal := recover(); panicVal != nil {
+			fileSystem.MustRMAll(dstPath)
+			panic(panicVal)
+		}
+		fileSystem.MustRMAll(dstPath)
+	}()
 	conflictTags := collectConflictTags(parts)
 
 	var minTimestamp, maxTimestamp int64
@@ -1097,6 +1174,7 @@ func (tst *tsTable) mergeParts(fileSystem fs.FileSystem, closeCh <-chan struct{}
 	// which already fsyncs the parent directory after rename. The last atomic
 	// metadata write covers all prior dirent changes (data file creations).
 	p := mustOpenFilePart(partID, root, fileSystem)
+	outputPublished = true
 	return newPartWrapper(nil, p), dropped, nil
 }
 
