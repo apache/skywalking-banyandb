@@ -22,17 +22,14 @@ import (
 	"path/filepath"
 	"sort"
 	"testing"
-	"time"
 
 	"github.com/stretchr/testify/require"
 
 	"github.com/apache/skywalking-banyandb/api/common"
-	"github.com/apache/skywalking-banyandb/banyand/internal/storage"
 	"github.com/apache/skywalking-banyandb/banyand/protector"
 	"github.com/apache/skywalking-banyandb/pkg/fs"
 	"github.com/apache/skywalking-banyandb/pkg/logger"
 	"github.com/apache/skywalking-banyandb/pkg/test"
-	"github.com/apache/skywalking-banyandb/pkg/test/flags"
 	"github.com/apache/skywalking-banyandb/pkg/timestamp"
 )
 
@@ -189,16 +186,7 @@ func TestTraceTolerantLoaderFallbackToOlderSnapshot(t *testing.T) {
 		timestamp.TimeRange{}, traceSnapshotOption(), nil)
 	require.NoError(t, err)
 	tst.mustAddTraces(tsTS1, nil)
-	time.Sleep(100 * time.Millisecond)
-	require.Eventually(t, func() bool {
-		dd := fileSystem.ReadDir(tabDir)
-		for _, d := range dd {
-			if d.IsDir() && d.Name() != sidxDirName && d.Name() != storage.FailedPartsDirName {
-				return true
-			}
-		}
-		return false
-	}, flags.EventuallyTimeout, time.Millisecond, "wait for part")
+	waitForPersistedSnapshot(t, fileSystem, tabDir)
 	tst.Close()
 	snapshots := make([]uint64, 0)
 	for _, e := range fileSystem.ReadDir(tabDir) {
@@ -234,16 +222,7 @@ func TestTraceInitTSTableDeletesMultipleFailedSnapshotsOnFallback(t *testing.T) 
 		timestamp.TimeRange{}, traceSnapshotOption(), nil)
 	require.NoError(t, err)
 	tst.mustAddTraces(tsTS1, nil)
-	time.Sleep(100 * time.Millisecond)
-	require.Eventually(t, func() bool {
-		dd := fileSystem.ReadDir(tabDir)
-		for _, d := range dd {
-			if d.IsDir() && d.Name() != sidxDirName && d.Name() != storage.FailedPartsDirName {
-				return true
-			}
-		}
-		return false
-	}, flags.EventuallyTimeout, time.Millisecond, "wait for part")
+	waitForPersistedSnapshot(t, fileSystem, tabDir)
 	tst.Close()
 	snapshots := make([]uint64, 0)
 	for _, e := range fileSystem.ReadDir(tabDir) {
