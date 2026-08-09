@@ -133,11 +133,30 @@ type Environment struct {
 	OneShardOnly       bool   `json:"oneShardOnly"`
 }
 
+// SamplingOracleArtifact records independently calculated sampler output.
+type SamplingOracleArtifact struct {
+	ExpectedLedger      map[string]string `json:"expectedLedgerSHA256"`
+	ExpectedRows        map[string]uint64 `json:"expectedRows"`
+	PluginSHA256        string            `json:"pluginSHA256"`
+	ConfigSHA256        string            `json:"configSHA256"`
+	VerdictSHA256       string            `json:"verdictSHA256"`
+	ExpectedSamplerSHA  string            `json:"expectedSamplerSHA256,omitempty"`
+	Evaluated           uint64            `json:"evaluated"`
+	Retained            uint64            `json:"retained"`
+	Dropped             uint64            `json:"dropped"`
+	PluginRetained      uint64            `json:"pluginRetained"`
+	PluginDropped       uint64            `json:"pluginDropped"`
+	DeletionRatio       float64           `json:"deletionRatio"`
+	PluginDeletionRatio float64           `json:"pluginDeletionRatio"`
+	Version             uint32            `json:"version"`
+}
+
 // RunReport is the machine-readable result of one fresh data-node process.
 type RunReport struct {
 	ActualLedger              map[string]string                    `json:"actualLedgerSHA256"`
 	ExpectedLedger            map[string]string                    `json:"expectedLedgerSHA256"`
 	Environment               Environment                          `json:"environment"`
+	SamplingOracle            *SamplingOracleArtifact              `json:"samplingOracle,omitempty"`
 	Merges                    storagetrace.BenchmarkMergeReport    `json:"merges"`
 	ScheduleSHA256            string                               `json:"scheduleSHA256"`
 	FixtureSHA256             string                               `json:"fixtureSHA256"`
@@ -151,12 +170,14 @@ type RunReport struct {
 	Acceleration              float64                              `json:"acceleration"`
 	Published                 int                                  `json:"published"`
 	ExpectedRows              uint64                               `json:"expectedRows"`
+	InputRows                 uint64                               `json:"inputRows"`
 	HotMerges                 int                                  `json:"hotMerges"`
 	MatureMerges              int                                  `json:"matureMerges"`
 	SamplingCalls             uint64                               `json:"samplingCalls"`
 	LogicalWriteAmplification float64                              `json:"logicalWriteAmplification,omitempty"`
 	Version                   uint32                               `json:"version"`
 	LedgerVerified            bool                                 `json:"ledgerVerified"`
+	SamplingVerified          bool                                 `json:"samplingVerified"`
 	Correct                   bool                                 `json:"correct"`
 }
 
@@ -182,6 +203,7 @@ type SuiteReport struct {
 	Sweep                      []SweepPoint               `json:"sweep"`
 	SerialRuns                 []RunReport                `json:"serialRuns"`
 	DisabledEnabledAlternating []ControlledMergeRunReport `json:"disabledEnabledAlternating,omitempty"`
+	DeterministicDropMatrix    []ControlledMergeRunReport `json:"deterministicDropMatrix,omitempty"`
 	MaximumRate                float64                    `json:"maximumSustainableAcceleration"`
 	FrozenRate                 float64                    `json:"frozenAcceleration"`
 	WriteIntensity             int                        `json:"writeIntensity"`

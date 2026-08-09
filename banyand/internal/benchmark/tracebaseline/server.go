@@ -52,6 +52,7 @@ import (
 // boundary.
 type ServerOptions struct {
 	ExpectedLedger    map[string]string
+	SamplingOracle    *SamplingOracleArtifact
 	ExecutionIdentity ExecutionIdentity
 	SegmentTimeRange  timestamp.TimeRange
 	Mode              string
@@ -97,6 +98,19 @@ func Serve(ctx context.Context, options ServerOptions) (serveResultErr error) {
 	if len(options.PluginConfig) > 0 && options.PluginPath == "" {
 		return fmt.Errorf("sampler config requires a sampler plugin")
 	}
+	if options.SamplingOracle != nil && options.PluginPath == "" {
+		return fmt.Errorf("sampling oracle requires a sampler plugin")
+	}
+	if options.SamplingOracle != nil {
+		if oracleErr := validateSamplingOracle(options); oracleErr != nil {
+			return oracleErr
+		}
+	}
+	inputRows := options.ExpectedRows
+	if options.SamplingOracle != nil {
+		options.ExpectedLedger = options.SamplingOracle.ExpectedLedger
+		options.ExpectedRows = options.SamplingOracle.ExpectedRows[LedgerCore]
+	}
 	if mkdirErr := os.MkdirAll(options.ProfileDir, 0o755); mkdirErr != nil {
 		return fmt.Errorf("cannot create profile directory: %w", mkdirErr)
 	}
@@ -128,7 +142,7 @@ func Serve(ctx context.Context, options ServerOptions) (serveResultErr error) {
 	server.report = RunReport{
 		Version: 1, RunID: options.RunID, Mode: options.Mode, Acceleration: options.Acceleration,
 		FixtureSHA256: options.FixtureSHA256, ScheduleSHA256: options.ScheduleSHA256, ExpectedRows: options.ExpectedRows,
-		ExpectedLedger: options.ExpectedLedger,
+		ExpectedLedger: options.ExpectedLedger, InputRows: inputRows, SamplingOracle: options.SamplingOracle,
 	}
 	server.report.Environment = readEnvironment(options.Commit, options)
 	if removeErr := os.RemoveAll(options.SocketPath); removeErr != nil {
@@ -371,11 +385,18 @@ func (bs *benchmarkServer) writeReport(responseWriter http.ResponseWriter, reque
 	}
 	bs.report.HotMerges, bs.report.MatureMerges = countMergeTemperatures(mergeReport.Events)
 	samplingCorrect := bs.report.SamplingCalls == 0
-	if bs.options.RunFinalize {
+	if bs.options.SamplingOracle != nil {
+		samplingCorrect = samplingOracleOutputCorrect(mergeReport.Events, *bs.options.SamplingOracle)
+	} else if bs.options.RunFinalize {
 		samplingCorrect = retainAllFinalizeOutputCorrect(mergeReport.Events)
 	}
-	bs.report.Correct = inventory.CoreRows == bs.report.ExpectedRows && inventory.IndexRows[LedgerLatency] == bs.report.ExpectedRows &&
-		inventory.IndexRows[LedgerStartTime] == bs.report.ExpectedRows && samplingCorrect && bs.report.LedgerVerified
+	bs.report.SamplingVerified = samplingCorrect
+	rowsCorrect := inventory.CoreRows == bs.report.ExpectedRows && inventory.IndexRows[LedgerLatency] == bs.report.ExpectedRows &&
+		inventory.IndexRows[LedgerStartTime] == bs.report.ExpectedRows
+	if bs.options.SamplingOracle != nil {
+		rowsCorrect = samplingOracleRowsCorrect(inventory, *bs.options.SamplingOracle)
+	}
+	bs.report.Correct = rowsCorrect && samplingCorrect && bs.report.LedgerVerified
 	bs.report.LogicalWriteAmplification = logicalWriteAmplification(mergeReport)
 	report := bs.report
 	bs.mu.Unlock()
@@ -428,6 +449,65 @@ func retainAllFinalizeOutputCorrect(events []storagetrace.BenchmarkMergeEvent) b
 		finalizeExecuted = true
 	}
 	return finalizeExecuted
+}
+
+func samplingOracleOutputCorrect(events []storagetrace.BenchmarkMergeEvent, oracle SamplingOracleArtifact) bool {
+	var evaluated, retained, dropped uint64
+	finalizeExecuted := false
+	for eventIdx := range events {
+		event := &events[eventIdx]
+		if event.Error != "" || event.RecordingError != "" || event.LosslessRetry || event.OversizedTraces > 0 {
+			return false
+		}
+		if event.HotInputParts > 0 && (event.Sampling != storagetrace.BenchmarkMergeSamplingNotExecuted ||
+			event.Reason != storagetrace.BenchmarkMergeReasonGrace || event.PluginCalls > 0 || event.TracesEvaluated > 0 ||
+			event.TracesRetained > 0 || event.TracesDropped > 0) {
+			return false
+		}
+		if event.TracesRetained+event.TracesDropped != event.TracesEvaluated {
+			return false
+		}
+		evaluated += event.TracesEvaluated
+		retained += event.TracesRetained
+		dropped += event.TracesDropped
+		if event.Type == "finalize" {
+			if event.Phase != storagetrace.BenchmarkMergePhaseCooldown || event.Sampling != storagetrace.BenchmarkMergeSamplingExecuted ||
+				event.PluginCalls == 0 || event.TracesEvaluated == 0 || event.MatureInputParts == 0 {
+				return false
+			}
+			finalizeExecuted = true
+		}
+	}
+	return finalizeExecuted && evaluated == oracle.Evaluated && retained == oracle.Retained && dropped == oracle.Dropped
+}
+
+func samplingOracleRowsCorrect(inventory storagetrace.BenchmarkMergeInventory, oracle SamplingOracleArtifact) bool {
+	return inventory.CoreRows == oracle.ExpectedRows[LedgerCore] && inventory.IndexRows[LedgerLatency] == oracle.ExpectedRows[LedgerLatency] &&
+		inventory.IndexRows[LedgerStartTime] == oracle.ExpectedRows[LedgerStartTime]
+}
+
+func validateSamplingOracle(options ServerOptions) error {
+	oracle := options.SamplingOracle
+	if oracle.Version != 1 || oracle.Evaluated == 0 || oracle.Retained+oracle.Dropped != oracle.Evaluated {
+		return fmt.Errorf("sampling oracle has invalid version or verdict totals")
+	}
+	for _, ledgerName := range []string{LedgerCore, LedgerLatency, LedgerStartTime} {
+		if oracle.ExpectedLedger[ledgerName] == "" {
+			return fmt.Errorf("sampling oracle is missing %s ledger checksum", ledgerName)
+		}
+	}
+	configSHA256 := fmt.Sprintf("%x", sha256.Sum256(options.PluginConfig))
+	if oracle.ConfigSHA256 != configSHA256 {
+		return fmt.Errorf("sampling oracle config checksum %s does not match %s", oracle.ConfigSHA256, configSHA256)
+	}
+	pluginSHA256, pluginErr := fileSHA256(options.PluginPath)
+	if pluginErr != nil {
+		return pluginErr
+	}
+	if oracle.PluginSHA256 != pluginSHA256 {
+		return fmt.Errorf("sampling oracle plugin checksum %s does not match %s", oracle.PluginSHA256, pluginSHA256)
+	}
+	return nil
 }
 
 // logicalWriteAmplification reports logical compressed bytes written by core

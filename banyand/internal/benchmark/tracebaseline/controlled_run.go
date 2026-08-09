@@ -41,10 +41,11 @@ const (
 	ControlledMergePipelineDisabled ControlledMergePipelineMode = "disabled"
 	// ControlledMergePipelineRetainAll measures the pipeline framework with a metadata-only sampler that retains every trace.
 	ControlledMergePipelineRetainAll ControlledMergePipelineMode = "retain-all"
+	// ControlledMergePipelineDeterministicDrop measures deterministic trace deletion and secondary-index pruning.
+	ControlledMergePipelineDeterministicDrop ControlledMergePipelineMode = "deterministic-drop"
 )
 
-// ControlledMergeRunOptions configures one controlled merge process; mode
-// selects between `disabled` and `retain-all`. The ExecutionIdentity field
+// ControlledMergeRunOptions configures one controlled merge process. The ExecutionIdentity field
 // captures the same harness-recorded fields as the primary run; the readiness
 // gate enforces the harness requirement (ImageDigest, CloneMethod,
 // BinarySHA256, plus PluginSHA256 for retain-all runs) at the suite level.
@@ -58,6 +59,8 @@ type ControlledMergeRunOptions struct {
 	PluginPath        string
 	ProfileDir        string
 	ExecutionIdentity ExecutionIdentity
+	SamplingOracle    *SamplingOracleArtifact
+	PluginConfig      []byte
 }
 
 // ControlledMergeRunReport records one exact production-picker merge.
@@ -70,6 +73,8 @@ type ControlledMergeRunReport struct {
 	SelectionSHA256    string                                   `json:"selectionSHA256"`
 	RunID              string                                   `json:"runID"`
 	PluginSHA256       string                                   `json:"pluginSHA256,omitempty"`
+	PluginConfigSHA256 string                                   `json:"pluginConfigSHA256,omitempty"`
+	SamplingOracle     *SamplingOracleArtifact                  `json:"samplingOracle,omitempty"`
 	Inventory          storagetrace.BenchmarkMergeInventory     `json:"inventory"`
 	Environment        Environment                              `json:"environment"`
 	Event              storagetrace.BenchmarkMergeEvent         `json:"event"`
@@ -164,7 +169,8 @@ func RunControlledMerge(ctx context.Context, options ControlledMergeRunOptions) 
 		options, pipelineMode, manifest, mergeEvent, inventory, stagingLimits, pluginSHA256, beforeLedger, afterLedger, recursiveEligible,
 	)
 	if buildErr != nil {
-		return ControlledMergeRunReport{}, buildErr
+		writeErr := writeControlledMergeReport(options.OutputPath, report)
+		return report, errors.Join(buildErr, writeErr)
 	}
 	if writeErr := writeControlledMergeReport(options.OutputPath, report); writeErr != nil {
 		return ControlledMergeRunReport{}, writeErr
@@ -182,6 +188,18 @@ func validateControlledMergeOptions(options ControlledMergeRunOptions) (Controll
 	if pipelineMode == ControlledMergePipelineRetainAll && options.PluginPath == "" {
 		return "", fmt.Errorf("retain-all plugin path is required")
 	}
+	if pipelineMode == ControlledMergePipelineDeterministicDrop && options.PluginPath == "" {
+		return "", fmt.Errorf("deterministic-drop plugin path is required")
+	}
+	if pipelineMode == ControlledMergePipelineDeterministicDrop && options.SamplingOracle == nil {
+		return "", fmt.Errorf("deterministic-drop sampling oracle is required")
+	}
+	if options.SamplingOracle != nil {
+		serverOptions := ServerOptions{PluginPath: options.PluginPath, PluginConfig: options.PluginConfig, SamplingOracle: options.SamplingOracle}
+		if oracleErr := validateSamplingOracle(serverOptions); oracleErr != nil {
+			return "", oracleErr
+		}
+	}
 	if options.SeedManifestPath == "" {
 		return "", fmt.Errorf("controlled seed manifest path is required")
 	}
@@ -191,22 +209,25 @@ func validateControlledMergeOptions(options ControlledMergeRunOptions) (Controll
 	return pipelineMode, nil
 }
 
-// loadControlledMergePlugin opens the retain-all sampler plugin, computes its
+// loadControlledMergePlugin opens the configured sampler plugin, computes its
 // SHA-256, and computes the segment time range used by the receiver. The
 // returned sampler is nil for the pipeline-disabled mode and the caller is
 // responsible for closing it otherwise.
 func loadControlledMergePlugin(pipelineMode ControlledMergePipelineMode, options ControlledMergeRunOptions,
 	manifest ControlledMergeSeedManifest,
 ) (sdk.Sampler, string, timestamp.TimeRange, error) {
-	if pipelineMode != ControlledMergePipelineRetainAll {
+	if pipelineMode == ControlledMergePipelineDisabled {
 		return nil, "", timestamp.TimeRange{}, nil
 	}
 	if options.PluginPath == "" {
-		return nil, "", timestamp.TimeRange{}, fmt.Errorf("retain-all plugin path is required")
+		if pipelineMode == ControlledMergePipelineRetainAll {
+			return nil, "", timestamp.TimeRange{}, fmt.Errorf("retain-all plugin path is required")
+		}
+		return nil, "", timestamp.TimeRange{}, fmt.Errorf("deterministic-drop plugin path is required")
 	}
-	sampler, loadErr := sdk.OpenSampler(options.PluginPath, "NewSampler", nil)
+	sampler, loadErr := sdk.OpenSampler(options.PluginPath, "NewSampler", options.PluginConfig)
 	if loadErr != nil {
-		return nil, "", timestamp.TimeRange{}, fmt.Errorf("cannot load controlled retain-all plugin: %w", loadErr)
+		return nil, "", timestamp.TimeRange{}, fmt.Errorf("cannot load controlled plugin: %w", loadErr)
 	}
 	pluginSHA256, shaErr := fileSHA256(options.PluginPath)
 	if shaErr != nil {
@@ -218,7 +239,19 @@ func loadControlledMergePlugin(pipelineMode ControlledMergePipelineMode, options
 			sampler.Close(),
 		)
 	}
-	coverageMargin := manifest.MergeGrace + time.Hour
+	configDigest := sha256.Sum256(options.PluginConfig)
+	configSHA256 := fmt.Sprintf("%x", configDigest)
+	if options.ExecutionIdentity.PluginConfigSHA256 != "" && options.ExecutionIdentity.PluginConfigSHA256 != configSHA256 {
+		return nil, "", timestamp.TimeRange{}, errors.Join(
+			fmt.Errorf("controlled plugin configuration checksum %s does not match expected %s",
+				configSHA256, options.ExecutionIdentity.PluginConfigSHA256),
+			sampler.Close(),
+		)
+	}
+	// The frozen integration seed spans one logical day. Include that entire day
+	// plus grace so a full-snapshot finalize does not fail closed at an artificial
+	// benchmark segment boundary.
+	coverageMargin := manifest.MergeGrace + 24*time.Hour
 	segmentTimeRange := timestamp.NewInclusiveTimeRange(
 		time.Unix(0, manifest.Selection.MinTimestamp).Add(-coverageMargin),
 		time.Unix(0, manifest.Selection.MaxTimestamp).Add(coverageMargin),
@@ -308,16 +341,27 @@ func buildControlledMergeReport(options ControlledMergeRunOptions, pipelineMode 
 ) (ControlledMergeRunReport, error) {
 	environmentOptions := options
 	environmentOptions.ExecutionIdentity.PluginSHA256 = pluginSHA256
+	configSHA256 := ""
+	if pipelineMode != ControlledMergePipelineDisabled {
+		configDigest := sha256.Sum256(options.PluginConfig)
+		configSHA256 = fmt.Sprintf("%x", configDigest)
+		environmentOptions.ExecutionIdentity.PluginConfigSHA256 = configSHA256
+	}
 	report := ControlledMergeRunReport{
-		Version: 4, RunID: options.RunID, PipelineMode: pipelineMode, PluginSHA256: pluginSHA256, SeedSnapshotSHA256: manifest.Snapshot.SHA256,
+		Version: 5, RunID: options.RunID, PipelineMode: pipelineMode, PluginSHA256: pluginSHA256, SeedSnapshotSHA256: manifest.Snapshot.SHA256,
+		PluginConfigSHA256: configSHA256, SamplingOracle: options.SamplingOracle,
 		SelectionSHA256:  manifest.Selection.SHA256,
 		MatureLogicalNow: manifest.MatureLogicalNow, Event: event, Inventory: inventory, StagingLimits: stagingLimits,
 		BeforeLedger: beforeLedger, AfterLedger: afterLedger, RecursiveEligible: recursiveEligible,
 		Environment: readEnvironmentForControlledMerge(options.DataRoot, environmentOptions),
 	}
+	outputCorrect := event.InputRows == event.OutputRows && maps.Equal(beforeLedger, afterLedger)
+	if options.SamplingOracle != nil {
+		outputCorrect = maps.Equal(options.SamplingOracle.ExpectedLedger, afterLedger) && samplingOracleRowsCorrect(inventory, *options.SamplingOracle)
+	}
 	report.Correct = event.SelectionSHA256 == manifest.Selection.SHA256 && event.HotInputParts == 0 &&
-		int(event.MatureInputParts) == len(event.InputPartIDs) && event.InputRows == event.OutputRows && len(event.Children) == 2 &&
-		controlledMergePipelineCorrect(pipelineMode, event) && maps.Equal(beforeLedger, afterLedger)
+		int(event.MatureInputParts) == len(event.InputPartIDs) && len(event.Children) == 2 &&
+		controlledMergePipelineCorrect(pipelineMode, event, options.SamplingOracle) && outputCorrect
 	if !report.Correct {
 		return report, fmt.Errorf("controlled merge correctness gate failed")
 	}
@@ -348,14 +392,16 @@ func controlledMergePipelineMode(mode string) (ControlledMergePipelineMode, erro
 	}
 	pipelineMode := ControlledMergePipelineMode(mode)
 	switch pipelineMode {
-	case ControlledMergePipelineDisabled, ControlledMergePipelineRetainAll:
+	case ControlledMergePipelineDisabled, ControlledMergePipelineRetainAll, ControlledMergePipelineDeterministicDrop:
 		return pipelineMode, nil
 	default:
 		return "", fmt.Errorf("unsupported controlled merge pipeline mode %q", mode)
 	}
 }
 
-func controlledMergePipelineCorrect(mode ControlledMergePipelineMode, event storagetrace.BenchmarkMergeEvent) bool {
+func controlledMergePipelineCorrect(mode ControlledMergePipelineMode, event storagetrace.BenchmarkMergeEvent,
+	oracle *SamplingOracleArtifact,
+) bool {
 	switch mode {
 	case ControlledMergePipelineDisabled:
 		return event.Sampling == storagetrace.BenchmarkMergeSamplingNotExecuted &&
@@ -363,6 +409,9 @@ func controlledMergePipelineCorrect(mode ControlledMergePipelineMode, event stor
 	case ControlledMergePipelineRetainAll:
 		return event.Sampling == storagetrace.BenchmarkMergeSamplingExecuted && event.PluginCalls > 0 && event.TracesEvaluated > 0 &&
 			event.TracesRetained == event.TracesEvaluated && event.TracesDropped == 0
+	case ControlledMergePipelineDeterministicDrop:
+		return oracle != nil && event.Sampling == storagetrace.BenchmarkMergeSamplingExecuted && event.PluginCalls > 0 &&
+			event.TracesEvaluated == oracle.Evaluated && event.TracesRetained == oracle.Retained && event.TracesDropped == oracle.Dropped
 	default:
 		return false
 	}

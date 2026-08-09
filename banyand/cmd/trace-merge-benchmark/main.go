@@ -32,7 +32,7 @@ import (
 
 func main() {
 	if len(os.Args) < 2 {
-		fatalf("usage: trace-merge-benchmark <serve|drive|capture-seed|run-controlled|render|validate> [flags]")
+		fatalf("usage: trace-merge-benchmark <serve|drive|build-oracle|capture-seed|run-controlled|render|validate> [flags]")
 	}
 	ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer cancel()
@@ -41,6 +41,8 @@ func main() {
 		serve(ctx, os.Args[2:])
 	case "drive":
 		drive(ctx, os.Args[2:])
+	case "build-oracle":
+		buildOracle(ctx, os.Args[2:])
 	case "capture-seed":
 		captureSeed(ctx, os.Args[2:])
 	case "run-controlled":
@@ -54,16 +56,58 @@ func main() {
 	}
 }
 
+func buildOracle(ctx context.Context, arguments []string) {
+	flags := flag.NewFlagSet("build-oracle", flag.ExitOnError)
+	var options tracebaseline.BuildSamplingOracleOptions
+	var pluginConfigPath, selectionManifestPath, outputPath string
+	flags.StringVar(&options.SourceRoot, "source", "", "immutable source shard copy")
+	flags.StringVar(&options.PluginPath, "plugin", "", "native sampler plugin .so path")
+	flags.StringVar(&pluginConfigPath, "plugin-config", "", "sampler configuration JSON file")
+	flags.StringVar(&options.ExpectedSamplerPath, "expected-sampler", "", "optional frozen sampler artifact")
+	flags.StringVar(&selectionManifestPath, "selection-manifest", "", "optional controlled seed selection manifest")
+	flags.StringVar(&outputPath, "output", "", "sampling oracle JSON output")
+	_ = flags.Parse(arguments)
+	if pluginConfigPath != "" {
+		pluginConfig, readErr := os.ReadFile(pluginConfigPath)
+		if readErr != nil {
+			fatalf("cannot read sampler configuration: %v", readErr)
+		}
+		options.PluginConfig = pluginConfig
+	}
+	if selectionManifestPath != "" {
+		manifest, readErr := tracebaseline.ReadControlledMergeSeedManifest(selectionManifestPath)
+		if readErr != nil {
+			fatalf("cannot read sampling oracle selection: %v", readErr)
+		}
+		options.EvaluationPartIDs = append(options.EvaluationPartIDs, manifest.Selection.InputPartIDs...)
+	}
+	artifact, buildErr := tracebaseline.BuildSamplingOracle(ctx, options)
+	if buildErr != nil {
+		fatalf("cannot build sampling oracle: %v", buildErr)
+	}
+	encoded, marshalErr := json.MarshalIndent(artifact, "", "  ")
+	if marshalErr != nil {
+		fatalf("cannot encode sampling oracle: %v", marshalErr)
+	}
+	encoded = append(encoded, '\n')
+	if writeErr := os.WriteFile(outputPath, encoded, 0o600); writeErr != nil {
+		fatalf("cannot write sampling oracle: %v", writeErr)
+	}
+}
+
 func runControlled(ctx context.Context, arguments []string) {
 	flags := flag.NewFlagSet("run-controlled", flag.ExitOnError)
 	var options tracebaseline.ControlledMergeRunOptions
+	var pluginConfigPath, samplingOraclePath string
 	flags.StringVar(&options.SeedManifestPath, "seed-manifest", "", "controlled seed manifest JSON")
 	flags.StringVar(&options.DataRoot, "data", "", "fresh controlled seed shard clone")
 	flags.StringVar(&options.OutputPath, "output", "", "controlled merge report JSON")
 	flags.StringVar(&options.RunID, "run-id", "controlled", "run identifier")
-	flags.StringVar(&options.Mode, "pipeline", string(tracebaseline.ControlledMergePipelineDisabled), "pipeline mode: disabled or retain-all")
+	flags.StringVar(&options.Mode, "pipeline", string(tracebaseline.ControlledMergePipelineDisabled), "pipeline mode: disabled, retain-all, or deterministic-drop")
 	flags.StringVar(&options.Commit, "commit", "", "revision under test")
 	flags.StringVar(&options.PluginPath, "plugin", "", "native retain-all sampler .so path")
+	flags.StringVar(&pluginConfigPath, "plugin-config", "", "sampler configuration JSON file")
+	flags.StringVar(&samplingOraclePath, "sampling-oracle", "", "independent expected sampling output JSON file")
 	flags.StringVar(&options.ProfileDir, "profiles", "", "optional controlled merge profile directory")
 	flags.StringVar(&options.ExecutionIdentity.ImageDigest, "image-digest", "", "Docker image digest recorded in the controlled run environment")
 	flags.StringVar(&options.ExecutionIdentity.CloneMethod, "clone-method", "", "clone method recorded in the controlled run environment")
@@ -71,7 +115,26 @@ func runControlled(ctx context.Context, arguments []string) {
 	flags.StringVar(&options.ExecutionIdentity.Filesystem, "filesystem", "", "data-root filesystem recorded in the controlled run environment")
 	flags.StringVar(&options.ExecutionIdentity.StorageDevice, "storage-device", "", "data-root storage device recorded in the controlled run environment")
 	flags.StringVar(&options.ExecutionIdentity.PluginSHA256, "plugin-sha256", "", "plugin .so checksum for retain-all pipeline mode")
+	flags.StringVar(&options.ExecutionIdentity.PluginConfigSHA256, "plugin-config-sha256", "", "sampler configuration checksum")
 	_ = flags.Parse(arguments)
+	if pluginConfigPath != "" {
+		pluginConfig, readErr := os.ReadFile(pluginConfigPath)
+		if readErr != nil {
+			fatalf("cannot read controlled sampler configuration: %v", readErr)
+		}
+		options.PluginConfig = pluginConfig
+	}
+	if samplingOraclePath != "" {
+		oracleData, readErr := os.ReadFile(samplingOraclePath)
+		if readErr != nil {
+			fatalf("cannot read controlled sampling oracle: %v", readErr)
+		}
+		var oracle tracebaseline.SamplingOracleArtifact
+		if decodeErr := json.Unmarshal(oracleData, &oracle); decodeErr != nil {
+			fatalf("cannot decode controlled sampling oracle: %v", decodeErr)
+		}
+		options.SamplingOracle = &oracle
+	}
 	report, runErr := tracebaseline.RunControlledMerge(ctx, options)
 	if runErr != nil {
 		fatalf("controlled merge failed: %v", runErr)
@@ -161,7 +224,7 @@ func render(arguments []string) {
 func serve(ctx context.Context, arguments []string) {
 	flags := flag.NewFlagSet("serve", flag.ExitOnError)
 	var options tracebaseline.ServerOptions
-	var pluginConfigPath string
+	var pluginConfigPath, samplingOraclePath string
 	var segmentMinTimeNanos, segmentMaxTimeNanos int64
 	flags.StringVar(&options.Root, "root", "", "data-node shard root")
 	flags.StringVar(&options.SocketPath, "socket", "", "Unix control socket")
@@ -190,6 +253,7 @@ func serve(ctx context.Context, arguments []string) {
 	flags.StringVar(&options.ExecutionIdentity.PluginConfigSHA256, "plugin-config-sha256", "", "sampler configuration checksum")
 	flags.StringVar(&options.PluginPath, "plugin", "", "native sampler plugin .so path")
 	flags.StringVar(&pluginConfigPath, "plugin-config", "", "sampler configuration JSON file")
+	flags.StringVar(&samplingOraclePath, "sampling-oracle", "", "independent expected sampling output JSON file")
 	flags.Int64Var(&segmentMinTimeNanos, "segment-min-time-nanos", 0, "inclusive minimum fixture timestamp for sampler coverage")
 	flags.Int64Var(&segmentMaxTimeNanos, "segment-max-time-nanos", 0, "inclusive maximum fixture timestamp for sampler coverage")
 	_ = flags.Parse(arguments)
@@ -199,6 +263,17 @@ func serve(ctx context.Context, arguments []string) {
 			fatalf("cannot read sampler configuration: %v", readErr)
 		}
 		options.PluginConfig = pluginConfig
+	}
+	if samplingOraclePath != "" {
+		oracleData, readErr := os.ReadFile(samplingOraclePath)
+		if readErr != nil {
+			fatalf("cannot read sampling oracle: %v", readErr)
+		}
+		var oracle tracebaseline.SamplingOracleArtifact
+		if decodeErr := json.Unmarshal(oracleData, &oracle); decodeErr != nil {
+			fatalf("cannot decode sampling oracle: %v", decodeErr)
+		}
+		options.SamplingOracle = &oracle
 	}
 	if segmentMinTimeNanos != 0 || segmentMaxTimeNanos != 0 {
 		options.SegmentTimeRange = timestamp.NewInclusiveTimeRange(time.Unix(0, segmentMinTimeNanos), time.Unix(0, segmentMaxTimeNanos))

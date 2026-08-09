@@ -1870,6 +1870,7 @@ func resolveStagedDrops(filter *mergeFilter, staged []stagedTrace, assembledBatc
 			}
 		}
 		if filter.observation != nil {
+			filter.observation.recordGuardDeferred(decision.Reason)
 			filter.observation.retained.Add(1)
 		}
 	}
