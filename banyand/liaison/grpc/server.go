@@ -22,7 +22,6 @@ import (
 	"context"
 	"net"
 	"path/filepath"
-	"runtime/debug"
 	"strconv"
 	"strings"
 	"time"
@@ -551,15 +550,9 @@ func (s *server) Serve() run.StopNotify {
 		}
 		s.log.Info().Str("authConfigFile", s.authConfigFile).Msg("Starting auth config file monitoring")
 	}
-	grpcPanicRecoveryHandler := func(ctx context.Context, p any) (err error) {
-		breadcrumbs := panicdiag.BreadcrumbsFromContext(ctx)
-		stages := make([]string, len(breadcrumbs))
-		for idx, bc := range breadcrumbs {
-			stages[idx] = bc.Stage
-		}
-		s.log.Error().Interface("panic", p).Str("stack", string(debug.Stack())).Strs("breadcrumbs", stages).Msg("recovered from panic")
+	grpcPanicRecoveryHandler := func(ctx context.Context, p any) error {
 		s.metrics.totalPanic.Inc(1)
-		return status.Errorf(codes.Internal, "%s", p)
+		return panicdiag.GRPCRecoveryHandler(s.log, "grpc.liaison")(ctx, p)
 	}
 
 	streamChain := []grpclib.StreamServerInterceptor{
