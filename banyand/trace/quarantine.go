@@ -64,9 +64,32 @@ func (tst *tsTable) isPartQuarantined(partID uint64) bool {
 	return tst.quarantineFails[partID] >= quarantineThreshold
 }
 
-// hasQuarantinedParts reports whether the registry currently holds any entries, so
-// callers on the hot selection path can skip building a liveIDs set when it is empty.
-func (tst *tsTable) hasQuarantinedParts() bool {
+// quarantinedSnapshot returns the set of parts currently excluded from merge selection,
+// or nil when none are. Selection takes this once per cycle rather than locking per part:
+// the common case holds no quarantined parts at all, and a part quarantined mid-scan is
+// simply picked up by the next cycle.
+func (tst *tsTable) quarantinedSnapshot() map[uint64]struct{} {
+	tst.quarantineMu.Lock()
+	defer tst.quarantineMu.Unlock()
+	if len(tst.quarantineFails) == 0 {
+		return nil
+	}
+	var quarantined map[uint64]struct{}
+	for partID, fails := range tst.quarantineFails {
+		if fails < quarantineThreshold {
+			continue
+		}
+		if quarantined == nil {
+			quarantined = make(map[uint64]struct{})
+		}
+		quarantined[partID] = struct{}{}
+	}
+	return quarantined
+}
+
+// hasQuarantineEntries reports whether the registry holds any entries at all, including
+// parts still below the threshold, so selection knows whether a sweep is worthwhile.
+func (tst *tsTable) hasQuarantineEntries() bool {
 	tst.quarantineMu.Lock()
 	defer tst.quarantineMu.Unlock()
 	return len(tst.quarantineFails) > 0

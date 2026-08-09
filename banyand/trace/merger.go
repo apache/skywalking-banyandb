@@ -360,6 +360,10 @@ func (tst *tsTable) runDispatchCycle(threshold uint64, fastCh, slowCh chan *merg
 	defer func() {
 		if panicVal := recover(); panicVal != nil {
 			tst.incTotalMergePanicRecovered(1)
+			// Feed the failure into the backoff schedule. Without this a dispatch cycle
+			// that panics every time would be retried at trigger cadence forever, which
+			// is the retry storm the backoff exists to stop.
+			tst.mergeControl.recordOutcome(false)
 			tst.l.Error().Str("panic", fmt.Sprintf("%v", panicVal)).Str("stack", string(debug.Stack())).Msg("merge dispatch cycle panicked")
 		}
 	}()
@@ -1000,8 +1004,10 @@ func (tst *tsTable) getPartsToMergeUpTo(snapshot *snapshot, freeDiskSize uint64,
 	maxPartID uint64,
 ) ([]*partWrapper, map[uint64]struct{}) {
 	var parts []*partWrapper
-	// Avoid allocating liveIDs on the hot path when nothing is quarantined.
-	sweep := tst.hasQuarantinedParts()
+	// Take the quarantine set once instead of locking per part, and skip the liveIDs
+	// bookkeeping entirely when the registry is empty, which is the common case.
+	quarantined := tst.quarantinedSnapshot()
+	sweep := len(quarantined) > 0 || tst.hasQuarantineEntries()
 	var liveIDs map[uint64]struct{}
 	if sweep {
 		liveIDs = make(map[uint64]struct{}, len(snapshot.parts))
@@ -1021,7 +1027,7 @@ func (tst *tsTable) getPartsToMergeUpTo(snapshot *snapshot, freeDiskSize uint64,
 		if _, inFlight := tst.inFlight[pw.ID()]; inFlight {
 			continue
 		}
-		if tst.isPartQuarantined(pw.ID()) {
+		if _, isQuarantined := quarantined[pw.ID()]; isQuarantined {
 			continue
 		}
 		parts = append(parts, pw)

@@ -27,7 +27,7 @@ type unreadablePartError struct {
 }
 
 func (e *unreadablePartError) Error() string {
-	return fmt.Sprintf("part %016x (%s) is unreadable: %s", e.partID, e.partPath, e.err)
+	return fmt.Sprintf("part %016x (%s) is unreadable: %v", e.partID, e.partPath, e.err)
 }
 
 func (e *unreadablePartError) Unwrap() error {

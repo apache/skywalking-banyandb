@@ -194,3 +194,54 @@ func TestMergeWorkerSurvivesPanic(t *testing.T) {
 	// that safe, so the counter is not asserted numerically here. Its wiring (struct
 	// field, DeleteAll, both newMetrics constructors) is exercised by the package build.
 }
+
+// TestDispatchCyclePanicEngagesBackoff asserts a panicking selection cycle is not just
+// recovered and logged but also recorded as a failure. Without that, a dispatch cycle
+// that panics every time would be retried at trigger cadence forever -- the retry storm
+// the backoff exists to stop. The panic is injected by nil-ing the merge policy, so
+// getPartsToMergeUpTo dereferences a nil receiver inside the real dispatch path.
+func TestDispatchCyclePanicEngagesBackoff(t *testing.T) {
+	fileSystem := fs.NewLocalFileSystem()
+	tmpPath, cleanup := test.Space(require.New(t))
+	t.Cleanup(cleanup)
+
+	tableRoot := filepath.Join(tmpPath, "table")
+	fileSystem.MkdirPanicIfExist(tableRoot, 0o755)
+	tst, tableErr := newTSTable(
+		fileSystem,
+		tableRoot,
+		common.Position{Database: "dispatch-panic-backoff"},
+		logger.GetLogger("dispatch-panic-backoff"),
+		timestamp.TimeRange{},
+		option{
+			flushTimeout: 0,
+			mergePolicy:  newDefaultMergePolicyForTesting(),
+			protector:    protector.Nop{},
+		},
+		nil,
+	)
+	require.NoError(t, tableErr)
+	t.Cleanup(func() { require.NoError(t, tst.Close()) })
+
+	// Two parts: the policy short-circuits on a single candidate before it touches the
+	// receiver, so one part would never reach the nil dereference.
+	const partIDA, partIDB = uint64(1), uint64(2)
+	tst.observePartID(partIDB)
+	flushFilePart(t, fileSystem, tableRoot, partIDA, singleTraceSet("trace-a", 1))
+	flushFilePart(t, fileSystem, tableRoot, partIDB, singleTraceSet("trace-b", 2))
+	tst.mustAddFilePart(partIDA, nil)
+	tst.mustAddFilePart(partIDB, nil)
+
+	// Drive one cycle directly rather than through the loop: the loop's goroutine owns the
+	// dispatcher and injecting the panic under it would race with its own selection.
+	tst.option.mergePolicy = nil
+	require.NotPanics(t, func() {
+		require.False(t, tst.runDispatchCycle(computeSmallMergeThreshold(), nil, nil),
+			"a recovered dispatch panic must not signal loop shutdown")
+	})
+
+	require.GreaterOrEqual(t, consecutiveMergeFailures(tst), 1,
+		"a recovered dispatch panic must be recorded so the backoff schedule engages")
+	require.Positive(t, tst.mergeControl.backoffRemaining(),
+		"the recorded failure must produce an active backoff before the next dispatch")
+}
