@@ -172,6 +172,10 @@ func (s *Server) handleMetrics(w http.ResponseWriter, r *http.Request) {
 			filteredMetrics = append(filteredMetrics, metric)
 		}
 		aggregatedMetrics = filteredMetrics
+	} else {
+		// Schema consistency is a cluster-wide, per-group verdict, not a node-scoped
+		// metric, so it only rides on the unfiltered scrape Grafana uses.
+		aggregatedMetrics = append(aggregatedMetrics, s.schemaConsistencyMetrics()...)
 	}
 
 	prometheusText := s.formatPrometheusText(aggregatedMetrics)
@@ -179,6 +183,33 @@ func (s *Server) handleMetrics(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "text/plain; version=0.0.4; charset=utf-8")
 	w.WriteHeader(http.StatusOK)
 	_, _ = w.Write([]byte(prometheusText))
+}
+
+// schemaConsistencyMetrics turns the cached per-group schema consistency verdict
+// into gauge series for the /metrics scrape so Grafana can chart it. The value is
+// the ConsistencyStatus enum: 1=CONSISTENT, 2=INCONSISTENT, 3=UNKNOWN. It is
+// empty until a lifecycle collection has run.
+func (s *Server) schemaConsistencyMetrics() []*metrics.AggregatedMetric {
+	if s.lifecycleManager == nil {
+		return nil
+	}
+	snapshot := s.lifecycleManager.SchemaConsistencySnapshot()
+	if len(snapshot) == 0 {
+		return nil
+	}
+	now := time.Now()
+	out := make([]*metrics.AggregatedMetric, 0, len(snapshot))
+	for group, status := range snapshot {
+		out = append(out, &metrics.AggregatedMetric{
+			Name:        "banyandb_fodc_schema_consistency_status",
+			Type:        "gauge",
+			Description: "Schema consistency verdict per group (1=CONSISTENT, 2=INCONSISTENT, 3=UNKNOWN).",
+			Labels:      map[string]string{"group": group},
+			Value:       float64(status),
+			Timestamp:   now,
+		})
+	}
+	return out
 }
 
 // handleMetricsWindows handles GET /metrics-windows endpoint.
@@ -628,6 +659,19 @@ func (s *Server) handleClusterLifecycle(w http.ResponseWriter, r *http.Request) 
 		http.Error(w, "Lifecycle manager not available", http.StatusServiceUnavailable)
 		return
 	}
+
+	// CollectLifecycle blocks until the slowest agent answers or times out, which
+	// is far longer than the server-wide WriteTimeout and, crucially, not bounded
+	// by any fixed value we can predict here. If a fixed deadline is too small the
+	// whole response is dropped with "i/o timeout" even though most agents replied.
+	// Clear the write deadline entirely for this handler (the pressure-profile
+	// download below does the same); other endpoints keep the server-wide timeout.
+	controller := http.NewResponseController(w)
+	if deadlineErr := controller.SetWriteDeadline(time.Time{}); deadlineErr != nil {
+		s.logger.Warn().Err(deadlineErr).
+			Msg("Failed to lift write deadline for lifecycle; a slow agent may truncate the response")
+	}
+
 	lifecycleData, agentSummary := s.lifecycleManager.CollectLifecycle(r.Context())
 
 	groupsJSON, err := marshalLifecycleGroups(lifecycleData.Groups)

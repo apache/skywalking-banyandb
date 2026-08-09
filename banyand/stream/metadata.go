@@ -277,7 +277,36 @@ func (sr *schemaRepo) loadTSDB(groupName string) (storage.TSDB[*tsTable, option]
 	return db.(storage.TSDB[*tsTable, option]), nil
 }
 
-// CollectDataInfo collects data info for a specific group.
+// CollectSchemaSnapshot returns this node's cache/runtime schema bodies for the
+// group so the FODC agent can fingerprint them on receive.
+func (sr *schemaRepo) CollectSchemaSnapshot(group string) ([]*databasev1.ObjectSnapshot, []*databasev1.IndexRule, error) {
+	return resourceSchema.CollectSchemaSnapshot(sr.Repository, group,
+		schema.KindStream.String(), streamResourceView)
+}
+
+// CachedGroups lists the stream groups this node currently caches.
+func (sr *schemaRepo) CachedGroups() []string {
+	return resourceSchema.CachedGroupNames(sr.Repository)
+}
+
+// streamResourceView reaches the runtime view of a stream. IndexListener exposes
+// only OnIndexUpdate, so the assertion must happen here -- the same pattern the
+// resource loader in this package uses.
+func streamResourceView(res resourceSchema.Resource) (resourceSchema.ResourceView, bool) {
+	cached, ok := res.Schema().(*databasev1.Stream)
+	if !ok {
+		return resourceSchema.ResourceView{}, false
+	}
+	view := resourceSchema.ResourceView{Name: cached.GetMetadata().GetName(), Cached: cached}
+	if r, isTyped := res.Delegated().(*stream); isTyped {
+		view.Runtime = r.GetSchema()
+		view.RuntimeRules = r.GetIndexRules()
+	}
+	return view, true
+}
+
+// CollectDataInfo collects data info for a specific group. When includeSchemaState
+// is set it also attaches this node's schema consistency evidence.
 func (sr *schemaRepo) CollectDataInfo(ctx context.Context, group string) (*databasev1.DataInfo, error) {
 	if sr.nodeID == "" {
 		return nil, fmt.Errorf("node ID is empty")

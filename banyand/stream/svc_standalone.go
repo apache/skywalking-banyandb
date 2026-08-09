@@ -276,6 +276,7 @@ func (s *standalone) PreRun(ctx context.Context) error {
 	if metaSvc, ok := s.metadata.(metadata.Service); ok {
 		metaSvc.RegisterDataCollector(commonv1.Catalog_CATALOG_STREAM, &s.schemaRepo)
 		metaSvc.RegisterLiaisonCollector(commonv1.Catalog_CATALOG_STREAM, s)
+		metaSvc.RegisterSchemaSnapshotCollector(commonv1.Catalog_CATALOG_STREAM, &s.schemaRepo)
 		metaSvc.RegisterGroupDropHandler(commonv1.Catalog_CATALOG_STREAM, s)
 	}
 	if s.pipeline == nil {

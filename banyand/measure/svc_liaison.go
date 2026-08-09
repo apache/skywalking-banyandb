@@ -88,7 +88,8 @@ func (s *liaison) CollectDataInfo(_ context.Context, _ string) (*databasev1.Data
 	return nil, errors.New("collect data info is not supported on liaison node")
 }
 
-// CollectLiaisonInfo collects liaison node statistics.
+// CollectLiaisonInfo collects liaison node statistics. When includeSchemaState is
+// set it also attaches this node's schema consistency evidence.
 func (s *liaison) CollectLiaisonInfo(_ context.Context, group string) (*databasev1.LiaisonInfo, error) {
 	info := &databasev1.LiaisonInfo{}
 	pendingWriteCount, writeErr := s.schemaRepo.collectPendingWriteInfo(group)
@@ -202,13 +203,14 @@ func (s *liaison) PreRun(ctx context.Context) error {
 	}
 	topNResultPipeline := queue.Local()
 	measureDataNodeRegistry := grpc.NewClusterNodeRegistry(data.TopicMeasurePartSync, s.option.tire2Client, s.dataNodeSelector)
-	s.schemaRepo = newLiaisonSchemaRepo(s.dataPath, s, measureDataNodeRegistry, topNResultPipeline)
+	s.schemaRepo = newLiaisonSchemaRepo(s.dataPath, s, measureDataNodeRegistry, topNResultPipeline, val.(common.Node).NodeID)
 	writeListener := setUpWriteQueueCallback(s.l, s.schemaRepo, s.maxDiskUsagePercent, s.option.tire2Client)
 	if err := s.pipeline.Subscribe(data.TopicMeasureWrite, writeListener); err != nil {
 		return err
 	}
 	if metaSvc, ok := s.metadata.(metadata.Service); ok {
 		metaSvc.RegisterLiaisonCollector(commonv1.Catalog_CATALOG_MEASURE, s)
+		metaSvc.RegisterSchemaSnapshotCollector(commonv1.Catalog_CATALOG_MEASURE, s.schemaRepo)
 		metaSvc.RegisterGroupDropHandler(commonv1.Catalog_CATALOG_MEASURE, s)
 	}
 
